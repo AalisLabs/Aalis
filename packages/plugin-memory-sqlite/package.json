@@ -2,6 +2,16 @@
   "name": "@aalis/plugin-memory-sqlite",
   "version": "0.5.1",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NyanAce/Aalis.git",
+    "directory": "packages/plugin-memory-sqlite"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/NyanAce/Aalis/issues"
+  },
+  "homepage": "https://github.com/NyanAce/Aalis#readme",
   "description": "SQLite 消息历史存储后端（本地文件，推荐）",
   "type": "module",
   "keywords": [

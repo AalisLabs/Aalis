@@ -2,6 +2,16 @@
   "name": "@aalis/plugin-doctor",
   "version": "0.5.0",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NyanAce/Aalis.git",
+    "directory": "packages/plugin-doctor"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/NyanAce/Aalis/issues"
+  },
+  "homepage": "https://github.com/NyanAce/Aalis#readme",
   "description": "自检诊断：体检配置/服务/依赖并给出修复建议",
   "type": "module",
   "keywords": [

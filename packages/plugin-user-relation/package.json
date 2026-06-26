@@ -2,6 +2,16 @@
   "name": "@aalis/plugin-user-relation",
   "version": "0.5.0",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NyanAce/Aalis.git",
+    "directory": "packages/plugin-user-relation"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/NyanAce/Aalis/issues"
+  },
+  "homepage": "https://github.com/NyanAce/Aalis#readme",
   "description": "用户关系图谱：抽取事件/实体/关系",
   "type": "module",
   "keywords": [

@@ -2,6 +2,16 @@
   "name": "@aalis/plugin-tool-search",
   "version": "0.5.0",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NyanAce/Aalis.git",
+    "directory": "packages/plugin-tool-search"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/NyanAce/Aalis/issues"
+  },
+  "homepage": "https://github.com/NyanAce/Aalis#readme",
   "description": "工具搜索层：工具多时按需检索，省 token",
   "type": "module",
   "keywords": [
