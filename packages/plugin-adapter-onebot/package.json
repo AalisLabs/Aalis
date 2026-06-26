@@ -4,14 +4,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/NyanAce/Aalis.git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
     "directory": "packages/plugin-adapter-onebot"
   },
   "author": "Ace Nyan <ace@acenyan.com>",
   "bugs": {
-    "url": "https://github.com/NyanAce/Aalis/issues"
+    "url": "https://github.com/AalisLabs/Aalis/issues"
   },
-  "homepage": "https://github.com/NyanAce/Aalis#readme",
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
   "description": "OneBot v11/v12 协议适配器（QQ 等平台接入，多连接 + 自动重连）",
   "type": "module",
   "keywords": [

@@ -4,14 +4,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/NyanAce/Aalis.git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
     "directory": "packages/plugin-session-confirm"
   },
   "author": "Ace Nyan <ace@acenyan.com>",
   "bugs": {
-    "url": "https://github.com/NyanAce/Aalis/issues"
+    "url": "https://github.com/AalisLabs/Aalis/issues"
   },
-  "homepage": "https://github.com/NyanAce/Aalis#readme",
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
   "description": "会话确认协调器：提供 session-confirm 服务（createChannel）供各平台复用，并经 gateway 总线覆盖 onebot/cli 等会话型平台",
   "type": "module",
   "keywords": [
