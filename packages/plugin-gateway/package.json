@@ -4,14 +4,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/NyanAce/Aalis.git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
     "directory": "packages/plugin-gateway"
   },
   "author": "Ace Nyan <ace@acenyan.com>",
   "bugs": {
-    "url": "https://github.com/NyanAce/Aalis/issues"
+    "url": "https://github.com/AalisLabs/Aalis/issues"
   },
-  "homepage": "https://github.com/NyanAce/Aalis#readme",
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
   "description": "消息网关：入站/出站编排（指令→流控→触发→分发相位）",
   "type": "module",
   "keywords": [
