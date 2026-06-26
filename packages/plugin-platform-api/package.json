@@ -2,6 +2,16 @@
   "name": "@aalis/plugin-platform-api",
   "version": "0.5.0",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NyanAce/Aalis.git",
+    "directory": "packages/plugin-platform-api"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/NyanAce/Aalis/issues"
+  },
+  "homepage": "https://github.com/NyanAce/Aalis#readme",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
