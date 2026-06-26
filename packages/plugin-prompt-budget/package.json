@@ -4,14 +4,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/NyanAce/Aalis.git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
     "directory": "packages/plugin-prompt-budget"
   },
   "author": "Ace Nyan <ace@acenyan.com>",
   "bugs": {
-    "url": "https://github.com/NyanAce/Aalis/issues"
+    "url": "https://github.com/AalisLabs/Aalis/issues"
   },
-  "homepage": "https://github.com/NyanAce/Aalis#readme",
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
   "description": "提示词预算：token 计数与上下文裁剪自检",
   "type": "module",
   "keywords": [

@@ -4,14 +4,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/NyanAce/Aalis.git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
     "directory": "packages/util-bounded-map"
   },
   "author": "Ace Nyan <ace@acenyan.com>",
   "bugs": {
-    "url": "https://github.com/NyanAce/Aalis/issues"
+    "url": "https://github.com/AalisLabs/Aalis/issues"
   },
-  "homepage": "https://github.com/NyanAce/Aalis#readme",
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
   "description": "有界 Map：max 上限 + 可选滑动 TTL + onEvict，纯函数无依赖",
   "type": "module",
   "main": "dist/index.js",
