@@ -2,6 +2,16 @@
   "name": "@aalis/plugin-user-profile",
   "version": "0.5.0",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NyanAce/Aalis.git",
+    "directory": "packages/plugin-user-profile"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/NyanAce/Aalis/issues"
+  },
+  "homepage": "https://github.com/NyanAce/Aalis#readme",
   "description": "用户画像：记录与检索用户信息",
   "type": "module",
   "keywords": [
