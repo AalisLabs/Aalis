@@ -7,7 +7,7 @@
  */
 
 import type { StorageService } from '@aalis/plugin-storage-api';
-import { resolveAgainstCwd } from '@aalis/plugin-storage-api';
+import { parseUriRoot, resolveAgainstCwd } from '@aalis/plugin-storage-api';
 import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import { safeFetch } from '@aalis/util-network-guard';
 
@@ -213,6 +213,12 @@ export function registerHttpTools(tools: ScopedToolService, config: HttpConfig):
 
         if (typeof savePath !== 'string' || !savePath.trim()) throw new Error('保存路径不能为空');
         const storageUri = resolveAgainstCwd(savePath, 'workspace:/');
+        // 与 file_write 一致：下载只准落 agent 工作区，禁止写入 data:/pluginData:/logs 等系统根
+        // （防被提示注入诱导 http_download 覆盖凭据/配置文件）。
+        const root = parseUriRoot(storageUri);
+        if (root !== 'workspace' && root !== 'tmp') {
+          throw new Error(`http_download 仅允许写入 workspace:/ 或 tmp:/，不允许 ${root}:/（系统根受保护）`);
+        }
         await config.storage.writeFile(storageUri, buffer);
 
         return JSON.stringify({
