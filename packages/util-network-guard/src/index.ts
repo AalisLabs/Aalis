@@ -23,9 +23,11 @@ export function isPrivateAddress(addr: string): boolean {
     if (a === 10) return true;
     if (a === 127) return true;
     if (a === 0) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
     if (a === 169 && b === 254) return true; // link-local + AWS metadata
     if (a === 172 && b >= 16 && b <= 31) return true;
     if (a === 192 && b === 168) return true;
+    if (a === 198 && (b === 18 || b === 19)) return true; // benchmark 198.18/15
     if (a >= 224) return true; // multicast / reserved
     return false;
   }
@@ -38,6 +40,21 @@ export function isPrivateAddress(addr: string): boolean {
     return isPrivateAddress(lower.slice('::ffff:'.length));
   }
   return false;
+}
+
+/**
+ * 判定 host（域名或 IP 字面量）是否指向本地 / 内网（字符串级，不做 DNS 解析）。
+ * - localhost / *.localhost / 0.0.0.0 → true
+ * - IP 字面量（可带 `[]`）→ 交给 isPrivateAddress 判
+ * - 非 IP 的域名 → false（字符串级判不出，调用方需 DNS 解析后对每个 address 再调 isPrivateAddress / assertSafeHost）
+ */
+export function isPrivateHost(host: string): boolean {
+  if (!host) return true;
+  const h = host.toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h.endsWith('.localhost')) return true;
+  if (h === '0.0.0.0') return true;
+  if (isIP(h) === 0) return false; // 非 IP 字面量（域名）→ 留给 DNS 解析后再判
+  return isPrivateAddress(h);
 }
 
 // ── 可配网络出口策略（进程级；启动时由 setNetworkPolicy 注入一次，默认拦私网）──
