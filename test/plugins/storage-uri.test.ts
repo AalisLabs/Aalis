@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { isStorageUri, parseUriRoot, toStorageUri } from '../../packages/plugin-storage-api/src/index.js';
+import {
+  isStorageUri,
+  parseUriRoot,
+  toStorageUri,
+  toWorkspaceUri,
+} from '../../packages/plugin-storage-api/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // storage URI 权威文法（isStorageUri / parseUriRoot）—— 收口 onebot/media/asr 6 处重抄。
@@ -65,5 +70,30 @@ describe('toStorageUri（配置路径归一）', () => {
   it('去前导 ./ 与 /', () => {
     expect(toStorageUri('./data/x')).toBe('data:/x');
     expect(toStorageUri('/data/x')).toBe('data:/x');
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// toWorkspaceUri（工具用户输入 → 安全 workspace URI；从 tools-api/utils 并入）。
+// 与 toStorageUri 语义不同：默认 workspace 根、拒绝宿主机绝对路径。
+// ════════════════════════════════════════════════════════════
+describe('toWorkspaceUri（工具输入归一）', () => {
+  it('已是 storage URI → 原样', () => {
+    expect(toWorkspaceUri('workspace:/a/b')).toBe('workspace:/a/b');
+    expect(toWorkspaceUri('tmp:/x.txt')).toBe('tmp:/x.txt');
+  });
+  it('相对路径 → 收到 workspace:/ 下', () => {
+    expect(toWorkspaceUri('foo/bar')).toBe('workspace:/foo/bar');
+    expect(toWorkspaceUri('a.txt')).toBe('workspace:/a.txt');
+  });
+  it('宿主机绝对路径（posix /abs 或 windows C:\\）→ 抛错', () => {
+    expect(() => toWorkspaceUri('/etc/passwd')).toThrow();
+    expect(() => toWorkspaceUri('C:\\Windows')).toThrow();
+  });
+  it('空输入：默认回 workspace:/；requireValue 抛错；自定义 fallback', () => {
+    expect(toWorkspaceUri(undefined)).toBe('workspace:/');
+    expect(toWorkspaceUri('')).toBe('workspace:/');
+    expect(toWorkspaceUri('', { fallback: 'tmp:/' })).toBe('tmp:/');
+    expect(() => toWorkspaceUri('', { requireValue: true, errorContext: 'cwd' })).toThrow('cwd');
   });
 });

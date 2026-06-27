@@ -1,8 +1,9 @@
 import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
 import { createProcessGateway } from '@aalis/plugin-process-api';
-import { isPrivateHost, useToolService } from '@aalis/plugin-tools-api';
+import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
+import { isPrivateHost } from '@aalis/util-network-guard';
 import '@aalis/plugin-tools-api';
 
 // ════════════════════════════════════════════════════════════

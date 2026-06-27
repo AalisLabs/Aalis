@@ -232,17 +232,9 @@ declare module '@aalis/core' {
   }
 }
 
-export type { ToStorageUriOptions } from './utils.js';
-// ===== 可复用 runtime 工具函数 =====
-// 见 utils.ts —— 用于工具实现侧共享 storage URI 规范化与 SSRF 判定，
-// 避免在多个工具插件里重复实现。
-export {
-  isPrivateHost,
-  isPrivateIp,
-  isPrivateIpv4,
-  isPrivateIpv6,
-  toStorageUri,
-} from './utils.js';
+// runtime 工具函数已迁出本契约包：SSRF/私网判定 → @aalis/util-network-guard
+// （isPrivateAddress/isPrivateHost）；工具输入路径规范化 → @aalis/plugin-storage-api
+// （toWorkspaceUri）。本包只保留契约/类型。
 
 // ----- 服务类型注册（declaration merging）-----
 declare module '@aalis/core' {
