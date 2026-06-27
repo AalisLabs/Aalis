@@ -94,7 +94,7 @@ unregisterByPlugin(pluginName: string): void;
 - `toolsWithGroups(tools, groups)`（`index.ts:216-225`）—— 给一组工具批量挂同一分组（合并而非覆盖）。
 - 类型：`ToolFunction` `ToolDefinition` `ToolCallContext` `ToolExecuteMessage` `RegisteredTool` `ToolSummary` `ToolGroupInfo` `ToolService` `ScopedToolService`。
 - 事件：通过 declaration merging 注入 `AalisEvents['tool:execute']: [ToolExecuteMessage]`（`index.ts:229-233`），WebUI 等前端订阅展示工具调用 start/end。
-- runtime helper（来自 `utils.ts`，见 §7 关于「契约污染」的说明）：`toStorageUri` `isPrivateHost` `isPrivateIp` `isPrivateIpv4` `isPrivateIpv6` + 类型 `ToStorageUriOptions`。
+- 本包**纯契约**：不再 re-export 任何 runtime helper。SSRF/私网判定（`isPrivateAddress`/`isPrivateHost`）在 `@aalis/util-network-guard`；路径规范化/解析（`toStorageUri`/`resolveAgainstCwd`/`parseStorageUri`）在 `@aalis/plugin-storage-api`（`src/index.ts:301`）。`index.ts:235-237` 有迁出说明。
 
 ## 3. 谁提供 / 谁消费
 
@@ -211,7 +211,7 @@ const result = await ctx.getService<ToolService>('tools')
 - **`file_read` 的 `allowedRoots`**：现默认 `['workspace', 'tmp']`（`packages/plugin-tool-system/src/index.ts:51,91`），不含 `data` 等系统根，避免裸读 `data:/users.json`。但配置允许设为 `["*"]` 放开全部可读根（`src/tools/file.ts:38-43,83`）——一旦用户改成 `*`，`file_read` 就能读凭证类文件。提供「按根放行」的工具时，默认应收紧、把放开权交给 owner 显式配置。
 - **重名即覆盖**：`name` 全局唯一，重复 `register` 同名工具会 warn 并覆盖（`tools.ts:46-48`）。挑独特、带前缀的工具名（如 `math_eval`），别用 `read`/`run` 这种通用词。
 - **参数校验是「轻量」级**：`execute` 只查 `required` 缺失 + （仅当 `additionalProperties:false` 时）未知键（`tools.ts:228-260`），**不**做类型/嵌套校验。想要严格未知键拦截就显式写 `additionalProperties: false`；handler 内仍要对 `args` 做类型断言与防御。
-- **契约污染（已知）**：`packages/plugin-tools-api/src/utils.ts` 把 `toStorageUri` + 一组 SSRF/私有 IP 判定（`isPrivateHost/isPrivateIp/...`）塞进了 tools 契约包并 re-export（`index.ts:235-245`）。这些是**工具实现侧**的共享 runtime 函数，与「tools 服务契约」无直接关系——属于本应放独立 util 包却塞进 -api 的契约污染（参见仓库治理记录：单一/局部功能不应进通用契约）。当前能用，但请把它当「碰巧同包」的便利函数，别据此认为 SSRF/storage 规范化是 tools 服务的职责；权威实现仍是 storage 服务 + `util-network-guard` 的 `safeFetch`。
+- **契约污染（已解决）**：曾经 `packages/plugin-tools-api/src/utils.ts` 把 `toStorageUri` + 一组 SSRF/私网判定塞进 tools 契约包并 re-export，属契约污染。现已修复：`utils.ts` 删除、helper 迁出——SSRF/私网判定 → `@aalis/util-network-guard`（`isPrivateAddress`/`isPrivateHost`、`safeFetch`），路径规范化/解析 → `@aalis/plugin-storage-api`（`toStorageUri`/`resolveAgainstCwd`/`parseStorageUri`，`src/index.ts:301`）。本包现为纯契约/类型，不再 re-export 任何 runtime 函数（迁出说明见 `index.ts:235-237`）。
 
 ## 8. 交叉链接
 

@@ -46,4 +46,4 @@ meta.inject = {}
 
 `workingDirectory` 必须是 storage URI（`workspace:/project`、`pluginData:/...` 等）或相对 `workspace:/` 的路径。**不接受宿主机绝对路径**。
 
-解析使用共享工具 [`toStorageUri`](../api/plugin-tools-api.md#共享-runtime-工具utilsts)，与 `plugin-tools` 的 shell/file/http 工具保持一致行为。
+解析使用共享工具 [`resolveAgainstCwd`](../api/plugin-storage-api.md#helper)，与 `plugin-tools` 的 shell/file/http 工具保持一致行为。
