@@ -80,23 +80,23 @@ export const inject = {
 - `pluginData:/my-plugin/state.json` —— 插件私有
 - `host:/` —— 宿主机绝对路径（仅在 storage 配置显式开启时存在，**默认关闭**）
 
-文件工具与 SSRF 校验的统一 `toStorageUri()` 实现在 [plugin-tools-api](./plugin-tools-api.md) 的 `utils`。
+文件工具与各后端消费者复用的统一 `toStorageUri()` 实现在本包 `src/index.ts`（契约级文法，勿各自重抄）。
 
 ## 权限
 
-每个 storage 根自带 `readable` / `writable` / `deletable` 读写删开关；`resolveLocalPath(uri, access)` 在解析时按 `access` 校验对应根是否允许该操作，越权即抛错。访问哪些根由 `provide('storage', …, { capabilities })` 时声明的能力决定。
+每个 storage 根自带 `readable` / `writable` / `deletable` 读写删开关；`resolveLocalPath(uri, access)` 在解析时按 `access` 校验对应根是否允许该操作，越权即抛错。能访问哪些操作由根自身的权限位（`readable`/`writable`/`deletable`）决定，而非 DI 能力声明。
 
 ## 实现者
 
-- [@aalis/plugin-storage-local](../plugins/plugin-storage-local.md) — 本地文件系统；`apply()` 里为每个 `roots[]` 条目独立 `ctx.provide('storage', ScopedStorageService, { entryId, capabilities })`。
+- `@aalis/plugin-storage-local` — 本地文件系统；`apply()` 里为每个 `roots[]` 条目独立 `ctx.provide('storage', ScopedStorageService, { entryId, label })`。
 
 ## Helper
 
-- `getStorageEntries(ctx, requiredCaps?)` — 拿到全部注册过的 storage entry。
+- `getStorageEntries(ctx)` — 拿到全部注册过的 storage entry。
 - `aggregateStorageRoots(ctx)` / `getStorageRootConflicts(ctx)` — 跨 entry 汇总根、识别同名冲突。
 - `resolveStorageEntryForRoot(ctx, rootName, requiredCaps?)` / `resolveStorageByPath(ctx, uri, requiredCaps?)` — 按 root 名或 URI 查到负责该路径的 entry。
 - `createStorageGateway(ctx)` — 返回一个在调用点路由 URI 、职责该 entry 的临时 `StorageService`；适用于文件工具、code-runner 、checkpoint 、webui-server 等需要统一入口的使用者。
 
 ## 相关
 
-- 路径安全：[plugin-tools-api](./plugin-tools-api.md) 的 `toStorageUri()`
+- 路径安全：本包 `toStorageUri()` / `parseStorageUri()` / `resolveAgainstCwd()`（契约级路径归一与解析）

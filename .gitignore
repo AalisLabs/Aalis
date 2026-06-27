@@ -25,6 +25,7 @@ coverage/
 .temp/
 .cache/
 marketplace/
+scripts/
 
 # 后训练实验：模型权重 / 虚拟环境 / 微调数据，体积大且含敏感数据，禁止入库
 models/
