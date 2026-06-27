@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   isStorageUri,
   parseUriRoot,
+  resolveAgainstCwd,
   toStorageUri,
-  toWorkspaceUri,
 } from '../../packages/plugin-storage-api/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -74,26 +74,29 @@ describe('toStorageUri（配置路径归一）', () => {
 });
 
 // ════════════════════════════════════════════════════════════
-// toWorkspaceUri（工具用户输入 → 安全 workspace URI；从 tools-api/utils 并入）。
-// 与 toStorageUri 语义不同：默认 workspace 根、拒绝宿主机绝对路径。
+// resolveAgainstCwd（工具用户输入 → 相对 cwd 求值的 storage URI；从 tool-system/path-resolve 并入）。
+// 相对路径相对当前 cwd 解析（与 unix shell 一致）、拒绝宿主机绝对路径、消解 ./..。
 // ════════════════════════════════════════════════════════════
-describe('toWorkspaceUri（工具输入归一）', () => {
-  it('已是 storage URI → 原样', () => {
-    expect(toWorkspaceUri('workspace:/a/b')).toBe('workspace:/a/b');
-    expect(toWorkspaceUri('tmp:/x.txt')).toBe('tmp:/x.txt');
+describe('resolveAgainstCwd（工具路径解析）', () => {
+  it('已是 storage URI → 归一后原样（任意根）', () => {
+    expect(resolveAgainstCwd('workspace:/a/b', 'workspace:/')).toBe('workspace:/a/b');
+    expect(resolveAgainstCwd('tmp:/x.txt', 'workspace:/')).toBe('tmp:/x.txt');
   });
-  it('相对路径 → 收到 workspace:/ 下', () => {
-    expect(toWorkspaceUri('foo/bar')).toBe('workspace:/foo/bar');
-    expect(toWorkspaceUri('a.txt')).toBe('workspace:/a.txt');
+  it('相对路径 → 相对 cwd 解析', () => {
+    expect(resolveAgainstCwd('foo/bar', 'workspace:/')).toBe('workspace:/foo/bar');
+    expect(resolveAgainstCwd('a.txt', 'data:/work')).toBe('data:/work/a.txt');
+  });
+  it('空 / "." → cwd 自身', () => {
+    expect(resolveAgainstCwd(undefined, 'workspace:/')).toBe('workspace:/');
+    expect(resolveAgainstCwd('', 'data:/work')).toBe('data:/work');
+    expect(resolveAgainstCwd('.', 'data:/work')).toBe('data:/work');
+  });
+  it('消解 ./.. （不越过根）', () => {
+    expect(resolveAgainstCwd('a/../b', 'workspace:/')).toBe('workspace:/b');
+    expect(resolveAgainstCwd('../../x', 'workspace:/sub')).toBe('workspace:/x');
   });
   it('宿主机绝对路径（posix /abs 或 windows C:\\）→ 抛错', () => {
-    expect(() => toWorkspaceUri('/etc/passwd')).toThrow();
-    expect(() => toWorkspaceUri('C:\\Windows')).toThrow();
-  });
-  it('空输入：默认回 workspace:/；requireValue 抛错；自定义 fallback', () => {
-    expect(toWorkspaceUri(undefined)).toBe('workspace:/');
-    expect(toWorkspaceUri('')).toBe('workspace:/');
-    expect(toWorkspaceUri('', { fallback: 'tmp:/' })).toBe('tmp:/');
-    expect(() => toWorkspaceUri('', { requireValue: true, errorContext: 'cwd' })).toThrow('cwd');
+    expect(() => resolveAgainstCwd('/etc/passwd', 'workspace:/')).toThrow();
+    expect(() => resolveAgainstCwd('C:\\Windows', 'workspace:/')).toThrow();
   });
 });
