@@ -14,9 +14,9 @@
 import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { StorageService } from '@aalis/plugin-storage-api';
+import { parseUriRoot, resolveAgainstCwd } from '@aalis/plugin-storage-api';
 import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import type { CwdState } from './cwd-state.js';
-import { resolveAgainstCwd, rootOf } from './path-resolve.js';
 
 interface FileConfig {
   maxReadSize: number;
@@ -73,7 +73,7 @@ function toStorageUri(input: string | undefined, config: FileConfig, sessionId: 
 }
 
 function ensureRootAllowed(uri: string, config: FileConfig): void {
-  const root = rootOf(uri);
+  const root = parseUriRoot(uri);
   if (!getAllowedRoots(config).includes(root)) {
     const known = getKnownRoots(config).map(r => r.name);
     const unknown = !known.includes(root);
@@ -825,7 +825,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         const showHidden = (args.showHidden as boolean) ?? false;
         const pattern = args.pattern as string | undefined;
         const excludePatterns = resolveExcludePatterns(args.exclude);
-        const lines: string[] = [`${basename(uri) || `${rootOf(uri)}:/`}`];
+        const lines: string[] = [`${basename(uri) || `${parseUriRoot(uri)}:/`}`];
         let totalFiles = 0;
         let totalDirs = 0;
         let excluded = 0;
