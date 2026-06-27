@@ -8,16 +8,16 @@
  * - cwd: 查询当前工作目录 + 列出所有可用 storage 根（unix `pwd` 的对应物）
  * - cd:  切换当前工作目录（unix `cd` 的对应物，per-session 内存状态）
  *
- * cwd/cd 的设计动机详见 ./cwd-state.ts 与 ./path-resolve.ts；简言之，让
+ * cwd/cd 的设计动机详见 ./cwd-state.ts 与路径解析（已迁入 @aalis/plugin-storage-api）；简言之，让
  * agent 形成稳定的"我在哪"心智模型，并与 file_* 工具的相对路径解析共享。
  */
 
 import * as os from 'node:os';
 import * as process from 'node:process';
 import type { StorageService } from '@aalis/plugin-storage-api';
+import { parseStorageUri, resolveAgainstCwd } from '@aalis/plugin-storage-api';
 import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import type { CwdState } from './cwd-state.js';
-import { parseStorageUri, resolveAgainstCwd } from './path-resolve.js';
 
 interface SystemConfig {
   cwdState: CwdState;
