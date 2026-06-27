@@ -218,10 +218,22 @@ function renderPackageJson(a: Answers): string {
 }
 
 function renderTsconfig(): string {
+  // 自包含：不 extends monorepo 的 tsconfig.base.json，独立目录下也能 `tsc` 通过。
   return `${JSON.stringify(
     {
-      extends: '../../tsconfig.base.json',
-      compilerOptions: { outDir: 'dist', rootDir: 'src' },
+      compilerOptions: {
+        target: 'ES2022',
+        module: 'ESNext',
+        moduleResolution: 'bundler',
+        lib: ['ES2022'],
+        outDir: 'dist',
+        rootDir: 'src',
+        strict: true,
+        esModuleInterop: true,
+        skipLibCheck: true,
+        declaration: true,
+        resolveJsonModule: true,
+      },
       include: ['src'],
     },
     null,
