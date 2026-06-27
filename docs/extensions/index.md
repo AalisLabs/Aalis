@@ -37,7 +37,7 @@
 | [@aalis/plugin-session-manager-api](packages/plugin-session-manager-api/src/index.ts) | `session-manager` |
 | [@aalis/plugin-platform-api](packages/plugin-platform-api/src/index.ts) | `platform`（helper: `resolvePlatformBySession` / `aggregatePlatformDetails`） |
 | [@aalis/plugin-package-manager](packages/plugin-package-manager/src/index.ts) | `package-manager` |
-| [@aalis/plugin-message-archive](packages/plugin-message-archive/src/types.ts) | `message-archive` |
+| [@aalis/plugin-message-archive-api](packages/plugin-message-archive-api/src/index.ts) | `message-archive` |
 | [@aalis/plugin-websearch-serper](packages/plugin-websearch-serper/src/types.ts) | `websearch` |
 
 ---
@@ -153,8 +153,6 @@ export default class MyPlugin {
 **示例**：
 
 - [`LLMCapabilityRegistry`](packages/plugin-llm-api/src/index.ts) — LLM 能力
-- [`MemoryCapabilityRegistry`](packages/plugin-memory-api/src/index.ts) — 记忆服务能力
-- [`WebSearchCapabilityRegistry`](packages/plugin-websearch-serper/src/types.ts) — 搜索能力
 
 第三方扩展示例：
 

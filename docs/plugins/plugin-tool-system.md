@@ -28,7 +28,7 @@ meta.inject = { required: ['tools'] }
 | `file.enabled` | boolean | true | 启用文件工具 |
 | `file.maxReadSize` | number | 1048576 | 最大读取大小 (1MB) |
 | `file.maxWriteSize` | number | 10485760 | 最大写入大小 (10MB) |
-| `file.allowedRoots` | string[] | [`*`] | 文件工具可访问的 storage 根；`*` 表示所有 readable 根，写入/删除仍受根自身权限限制 |
+| `file.allowedRoots` | string[] | [`workspace`, `tmp`] | 文件工具可访问的 storage 根；默认仅 agent 工作区，不含 `data` 等系统根（防裸读 `data:/users.json` 等）。设为 `*` 放开全部 readable 根；写入/删除仍受根自身权限限制 |
 | **system** (分组) | | | |
 | `system.enabled` | boolean | true | 启用系统信息工具（含 `cwd` / `cd`） |
 | **http** (分组) | | | |
@@ -89,7 +89,7 @@ __pycache__/**    *.pyc      .DS_Store   Thumbs.db
 
 ## 共享 runtime 工具
 
-storage URI 规范化与 SSRF 私网判定已**抽取到** [@aalis/plugin-tools-api](../api/plugin-tools-api.md) 的 `utils`，本包内部以及 `plugin-tool-browser` / `plugin-tool-code-runner` 都直接复用，不再各写一份。
+storage URI 规范化（`toStorageUri` / `resolveAgainstCwd` / `parseStorageUri`）已**抽取到** [@aalis/plugin-storage-api](../api/plugin-storage-api.md)，SSRF 私网判定（`isPrivateHost` / `isPrivateAddress`）已**抽取到** [@aalis/util-network-guard](../utils/network-guard.md)；本包内部以及 `plugin-tool-browser` / `plugin-tool-code-runner` 都直接复用，不再各写一份。`plugin-tools-api` 现为纯契约包，原 `utils` 已删除。
 
 ## 指令
 
