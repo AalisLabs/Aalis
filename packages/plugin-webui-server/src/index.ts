@@ -678,7 +678,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       // 贡献插件 = 该分组下所有工具的 pluginName 去重（可能跨多个插件，
       // 例如 'session-history' 同时被 plugin-tool-session 与 plugin-memory-history 贡献）
       const contributingPlugins = [...new Set(toolsInGroup.map(t => t.pluginName))].sort();
-      return { ...g, toolCount: toolsInGroup.length, contributingPlugins };
+      // description 约定：首行=人类可读摘要，其余=给 agent 的长使用指南（经工具定义送达 LLM）。
+      // 管理页只展示摘要，避免倾倒整段指南；完整 description 仍由工具定义抵达 agent，不受影响。
+      let summary = (g.description ?? '').split('\n')[0].trim();
+      if (summary.length > 200) summary = `${summary.slice(0, 200)}…`;
+      return { ...g, description: summary, toolCount: toolsInGroup.length, contributingPlugins };
     });
     // 兜底：未声明任何 group 或 group 不在已注册集合中的工具，聚成 "other" 组
     const orphans = allTools.filter(t => {
