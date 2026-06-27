@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { assertSafeUrl, safeFetch, setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
+import {
+  assertSafeUrl,
+  isPrivateAddress,
+  isPrivateHost,
+  safeFetch,
+  setNetworkPolicy,
+} from '../../packages/util-network-guard/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // util-network-guard：SSRF 安全 fetch（统一原语）
@@ -16,6 +22,54 @@ const mkRes = (status: number, location?: string): Response =>
 afterEach(() => {
   vi.restoreAllMocks();
   setNetworkPolicy({});
+});
+
+describe('isPrivateAddress（含从 tools-api 并入的 CGNAT / benchmark 段）', () => {
+  it('私网 / 回环 / 链路本地 / 元数据 → true', () => {
+    for (const ip of [
+      '10.0.0.1',
+      '127.0.0.1',
+      '0.0.0.0',
+      '169.254.169.254',
+      '172.16.0.1',
+      '192.168.1.1',
+      '::1',
+      'fc00::1',
+      'fe80::1',
+    ]) {
+      expect(isPrivateAddress(ip)).toBe(true);
+    }
+  });
+  it('CGNAT 100.64/10 与 benchmark 198.18/15 → true（并入的新段）', () => {
+    expect(isPrivateAddress('100.64.0.1')).toBe(true);
+    expect(isPrivateAddress('100.127.255.255')).toBe(true);
+    expect(isPrivateAddress('198.18.0.1')).toBe(true);
+    expect(isPrivateAddress('198.19.255.255')).toBe(true);
+    expect(isPrivateAddress('100.63.0.1')).toBe(false); // 100.63 不在 CGNAT
+    expect(isPrivateAddress('198.20.0.1')).toBe(false);
+  });
+  it('公网 IP → false；解析失败 → true（按危险处理）', () => {
+    expect(isPrivateAddress('8.8.8.8')).toBe(false);
+    expect(isPrivateAddress('1.1.1.1')).toBe(false);
+    expect(isPrivateAddress('not-an-ip')).toBe(true);
+  });
+});
+
+describe('isPrivateHost（字符串级 host 判定）', () => {
+  it('localhost / *.localhost / 0.0.0.0 → true', () => {
+    expect(isPrivateHost('localhost')).toBe(true);
+    expect(isPrivateHost('foo.localhost')).toBe(true);
+    expect(isPrivateHost('0.0.0.0')).toBe(true);
+    expect(isPrivateHost('')).toBe(true);
+  });
+  it('私网 IP 字面量（含 [] 包裹的 IPv6）→ true', () => {
+    expect(isPrivateHost('192.168.1.1')).toBe(true);
+    expect(isPrivateHost('[::1]')).toBe(true);
+  });
+  it('公网域名 / 公网 IP → false（域名留给 DNS 解析后再判）', () => {
+    expect(isPrivateHost('example.com')).toBe(false);
+    expect(isPrivateHost('8.8.8.8')).toBe(false);
+  });
 });
 
 describe('assertSafeUrl', () => {

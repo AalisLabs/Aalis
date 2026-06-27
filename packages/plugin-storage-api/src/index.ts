@@ -306,6 +306,39 @@ export function toStorageUri(input: string, fallbackRoot = 'data'): string {
   return idx > 0 ? `${cleaned.slice(0, idx)}:/${cleaned.slice(idx + 1)}` : `${fallbackRoot}:/${cleaned}`;
 }
 
+export interface ToWorkspaceUriOptions {
+  /** 输入为空时使用的回退值（默认 `workspace:/`） */
+  fallback?: string;
+  /** 输入为空时抛错（默认 false） */
+  requireValue?: boolean;
+  /** 错误信息中用于指代该字段的名称（默认 `路径`） */
+  errorContext?: string;
+}
+
+/**
+ * 把**不可信的工具用户输入**规范成 storage URI（与 `toStorageUri` 的配置路径语义不同）：
+ * - 已是 storage URI（`<根>:/...`）→ 原样返回
+ * - 空输入 → `requireValue` 为真时抛错；否则返回 `fallback`（默认 `workspace:/`）
+ * - 宿主机绝对路径（`C:\` 或 `/abs`）→ 抛错（安全：禁止越出存储根访问宿主文件系统）
+ * - 相对路径 → 收到 `workspace:/` 之下
+ */
+export function toWorkspaceUri(input: string | undefined, options: ToWorkspaceUriOptions = {}): string {
+  const { fallback = 'workspace:/', requireValue = false, errorContext = '路径' } = options;
+  const raw = (input ?? '').trim();
+  if (!raw) {
+    if (requireValue) throw new Error(`${errorContext}不能为空`);
+    return fallback.trim() || 'workspace:/';
+  }
+  if (/^[a-zA-Z]:[\\/]/.test(raw)) {
+    throw new Error(`${errorContext}必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径`);
+  }
+  if (/^[a-zA-Z][a-zA-Z0-9_-]*:\//.test(raw)) return raw;
+  if (raw.startsWith('/')) {
+    throw new Error(`${errorContext}必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径`);
+  }
+  return `workspace:/${raw.replace(/^\/+/, '')}`;
+}
+
 /**
  * 创建一个面向调用方的 StorageService 网关：每次方法调用按 URI 路由到对应 entry。
  *

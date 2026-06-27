@@ -7,8 +7,8 @@
  */
 
 import type { StorageService } from '@aalis/plugin-storage-api';
+import { toWorkspaceUri as toStorageUriShared } from '@aalis/plugin-storage-api';
 import type { ScopedToolService } from '@aalis/plugin-tools-api';
-import { toStorageUri as toStorageUriShared } from '@aalis/plugin-tools-api';
 import { safeFetch } from '@aalis/util-network-guard';
 
 interface HttpConfig {
