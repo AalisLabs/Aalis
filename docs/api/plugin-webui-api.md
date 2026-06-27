@@ -34,7 +34,8 @@ interface WebUIService {
 - `actionsMeta?: Record<string, { visibility?: CapabilityVisibility }>` —— action 的默认可见性
   （`'public'` / `'restricted'`）。**未声明的 action 默认 restricted（默认拒绝）**，作者必须
   显式标 `visibility: 'public'` 才放开；闸的 capability 形状为 `action:<plugin>:<method>`，
-  支持 per-user grant/deny（见 plugin-authority-api）。
+  由 authority 数字等级闸裁决——`authorize` 比对用户 `level >= minLevel`（minLevel 由 risk/visibility
+  与 `authorityOverrides` 派生），owner（`*`）放行一切，`deniedCapabilities` 全局硬禁压过一切（见 plugin-authority-api）。
 
 ```ts
 export const actions: PluginModule['actions'] = {
