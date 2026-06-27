@@ -46,6 +46,16 @@ import { registerPluginRoutes } from './routes/plugins.js';
 import { registerProxyRoutes } from './routes/proxy.js';
 import { registerUploadedFilesRoutes } from './routes/uploaded-files.js';
 
+/**
+ * 工具 / 指令 / 工具组 description 约定：首行 = 人类可读摘要，其余 = 给 agent 的长使用指南。
+ * WebUI 管理页只展示首行摘要（避免倾倒整段指南）；完整 description 仍由工具/指令定义抵达 LLM。
+ */
+function descSummary(d?: string): string | undefined {
+  if (!d) return d;
+  const s = d.split('\n')[0].trim();
+  return s.length > 200 ? `${s.slice(0, 200)}…` : s;
+}
+
 // ===== 插件元数据 =====
 
 export const name = '@aalis/plugin-webui-server';
@@ -507,7 +517,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         ?.getAll()
         .map(c => ({
           name: c.name,
-          description: c.description,
+          description: descSummary(c.description),
           visibility: c.visibility,
         })),
     });
@@ -678,11 +688,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       // 贡献插件 = 该分组下所有工具的 pluginName 去重（可能跨多个插件，
       // 例如 'session-history' 同时被 plugin-tool-session 与 plugin-memory-history 贡献）
       const contributingPlugins = [...new Set(toolsInGroup.map(t => t.pluginName))].sort();
-      // description 约定：首行=人类可读摘要，其余=给 agent 的长使用指南（经工具定义送达 LLM）。
-      // 管理页只展示摘要，避免倾倒整段指南；完整 description 仍由工具定义抵达 agent，不受影响。
-      let summary = (g.description ?? '').split('\n')[0].trim();
-      if (summary.length > 200) summary = `${summary.slice(0, 200)}…`;
-      return { ...g, description: summary, toolCount: toolsInGroup.length, contributingPlugins };
+      return { ...g, description: descSummary(g.description), toolCount: toolsInGroup.length, contributingPlugins };
     });
     // 兜底：未声明任何 group 或 group 不在已注册集合中的工具，聚成 "other" 组
     const orphans = allTools.filter(t => {
@@ -869,7 +875,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           details: groups.map(g => ({
             value: g.name,
             label: g.label,
-            description: g.description,
+            description: descSummary(g.description),
             pluginName: g.pluginName,
           })),
         });
