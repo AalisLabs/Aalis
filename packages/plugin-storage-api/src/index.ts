@@ -306,37 +306,74 @@ export function toStorageUri(input: string, fallbackRoot = 'data'): string {
   return idx > 0 ? `${cleaned.slice(0, idx)}:/${cleaned.slice(idx + 1)}` : `${fallbackRoot}:/${cleaned}`;
 }
 
-export interface ToWorkspaceUriOptions {
-  /** 输入为空时使用的回退值（默认 `workspace:/`） */
-  fallback?: string;
-  /** 输入为空时抛错（默认 false） */
-  requireValue?: boolean;
-  /** 错误信息中用于指代该字段的名称（默认 `路径`） */
-  errorContext?: string;
+export interface ParsedStorageUri {
+  root: string;
+  /** 不含前导 `/`；空数组表示根目录 `<root>:/` */
+  segments: string[];
+}
+
+/** 归一化路径段：消除空段、`.`、`..`（`..` 在根处 clamp，永不越过 root）。 */
+function normalizeSegments(input: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const seg of input) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') {
+      if (out.length > 0) out.pop();
+      continue;
+    }
+    out.push(seg);
+  }
+  return out;
+}
+
+/** 拆分完整 storage URI 为根名 + 路径段。仅接受 `<根名>:/<相对路径>`。 */
+export function parseStorageUri(uri: string): ParsedStorageUri {
+  const idx = uri.indexOf(':/');
+  if (idx <= 0) {
+    throw new Error(`存储 URI 不合法: "${uri}"（应为 <根名>:/<相对路径>，例如 workspace:/notes/a.md）`);
+  }
+  const root = uri.slice(0, idx);
+  const rest = uri.slice(idx + 2).replace(/^\/+/, '');
+  const segments = rest ? rest.split('/').filter(Boolean) : [];
+  return { root, segments: normalizeSegments(segments) };
+}
+
+/** 把根名 + 段拼回 URI；空段返回 `<root>:/`。 */
+function joinStorageUri(root: string, segments: readonly string[]): string {
+  return `${root}:/${segments.length ? segments.join('/') : ''}`;
+}
+
+/** 反斜杠/正斜杠混排统一成正斜杠。 */
+function unifySlashes(input: string): string {
+  return input.replace(/\\/g, '/');
 }
 
 /**
- * 把**不可信的工具用户输入**规范成 storage URI（与 `toStorageUri` 的配置路径语义不同）：
- * - 已是 storage URI（`<根>:/...`）→ 原样返回
- * - 空输入 → `requireValue` 为真时抛错；否则返回 `fallback`（默认 `workspace:/`）
- * - 宿主机绝对路径（`C:\` 或 `/abs`）→ 抛错（安全：禁止越出存储根访问宿主文件系统）
- * - 相对路径 → 收到 `workspace:/` 之下
+ * 把**工具用户输入的路径**求值为完整 storage URI —— 工具侧路径解析的唯一入口，
+ * 与 `toStorageUri`（配置路径归一）语义不同。规则（按顺序）：
+ * 1. 空 / `.` → 当前 `cwd` 自身
+ * 2. 含 `:/` → 视为完整 storage URI，归一化（消 `.`/`..`）后返回（任意根；根级访问控制在别处做）
+ * 3. 宿主机绝对路径（`/abs` 或 `C:\path`）→ 抛错（安全：禁止越出存储体系访问宿主文件系统）
+ * 4. 其它 → 相对 `cwd` 求值（与 unix shell 一致：`foo` 落在 cwd 之下）
+ *
+ * `cwd` 必须是合法 storage URI（如 `workspace:/`、`data:/work`）；调用方传各自的工作目录。
  */
-export function toWorkspaceUri(input: string | undefined, options: ToWorkspaceUriOptions = {}): string {
-  const { fallback = 'workspace:/', requireValue = false, errorContext = '路径' } = options;
+export function resolveAgainstCwd(input: string | undefined, cwd: string): string {
   const raw = (input ?? '').trim();
-  if (!raw) {
-    if (requireValue) throw new Error(`${errorContext}不能为空`);
-    return fallback.trim() || 'workspace:/';
+  const cwdParsed = parseStorageUri(cwd);
+  if (!raw || raw === '.') return joinStorageUri(cwdParsed.root, cwdParsed.segments);
+  if (/^[a-zA-Z][a-zA-Z0-9_-]*:\//.test(raw)) {
+    const parsed = parseStorageUri(unifySlashes(raw));
+    return joinStorageUri(parsed.root, parsed.segments);
   }
-  if (/^[a-zA-Z]:[\\/]/.test(raw)) {
-    throw new Error(`${errorContext}必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径`);
+  if (/^[a-zA-Z]:[\\/]/.test(raw) || raw.startsWith('/')) {
+    throw new Error(
+      `不接受宿主机绝对路径 "${raw}"。请改用 storage URI（如 aalis:/packages/core）` +
+        `或相对当前 cwd 的路径。调用 cwd 工具可查看当前目录与所有可用 storage 根。`,
+    );
   }
-  if (/^[a-zA-Z][a-zA-Z0-9_-]*:\//.test(raw)) return raw;
-  if (raw.startsWith('/')) {
-    throw new Error(`${errorContext}必须使用 storage URI 或相对 workspace 的路径，不能使用宿主机绝对路径`);
-  }
-  return `workspace:/${raw.replace(/^\/+/, '')}`;
+  const relSegments = unifySlashes(raw).split('/').filter(Boolean);
+  return joinStorageUri(cwdParsed.root, normalizeSegments([...cwdParsed.segments, ...relSegments]));
 }
 
 /**

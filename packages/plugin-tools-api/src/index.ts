@@ -233,8 +233,8 @@ declare module '@aalis/core' {
 }
 
 // runtime 工具函数已迁出本契约包：SSRF/私网判定 → @aalis/util-network-guard
-// （isPrivateAddress/isPrivateHost）；工具输入路径规范化 → @aalis/plugin-storage-api
-// （toWorkspaceUri）。本包只保留契约/类型。
+// （isPrivateAddress/isPrivateHost）；工具输入路径解析 → @aalis/plugin-storage-api
+// （resolveAgainstCwd/parseStorageUri）。本包只保留契约/类型。
 
 // ----- 服务类型注册（declaration merging）-----
 declare module '@aalis/core' {

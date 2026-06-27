@@ -7,7 +7,7 @@
  */
 
 import type { StorageService } from '@aalis/plugin-storage-api';
-import { toWorkspaceUri as toStorageUriShared } from '@aalis/plugin-storage-api';
+import { resolveAgainstCwd } from '@aalis/plugin-storage-api';
 import type { ScopedToolService } from '@aalis/plugin-tools-api';
 import { safeFetch } from '@aalis/util-network-guard';
 
@@ -211,7 +211,8 @@ export function registerHttpTools(tools: ScopedToolService, config: HttpConfig):
         // 流式读取并设上限：无 Content-Length 时也不会全量缓冲撑爆内存（超限即中止抛错）
         const buffer = await readBodyCapped(response, config.maxResponseSize);
 
-        const storageUri = toStorageUriShared(savePath, { requireValue: true, errorContext: '保存路径' });
+        if (typeof savePath !== 'string' || !savePath.trim()) throw new Error('保存路径不能为空');
+        const storageUri = resolveAgainstCwd(savePath, 'workspace:/');
         await config.storage.writeFile(storageUri, buffer);
 
         return JSON.stringify({

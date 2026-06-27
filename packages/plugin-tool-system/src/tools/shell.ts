@@ -12,7 +12,7 @@
 import type { Context } from '@aalis/core';
 import type { ProcessService, SpawnHandle } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
-import { toWorkspaceUri } from '@aalis/plugin-storage-api';
+import { resolveAgainstCwd } from '@aalis/plugin-storage-api';
 import type { ScopedToolService } from '@aalis/plugin-tools-api';
 
 interface ShellConfig {
@@ -74,10 +74,7 @@ async function resolveCwd(config: ShellConfig, cwdArg: unknown): Promise<{ uri: 
   if (!config.storage?.resolveLocalPath) {
     throw new Error('Shell 工具需要支持 local-path 能力的 storage 服务');
   }
-  const uri = toWorkspaceUri(typeof cwdArg === 'string' ? cwdArg : undefined, {
-    fallback: config.cwdUri,
-    errorContext: 'cwd',
-  });
+  const uri = resolveAgainstCwd(typeof cwdArg === 'string' ? cwdArg : undefined, config.cwdUri);
   return { uri, localPath: await config.storage.resolveLocalPath(uri, 'read') };
 }
 

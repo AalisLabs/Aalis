@@ -2,7 +2,7 @@ import type { ConfigSchema, Context } from '@aalis/core';
 import { useCodeSandbox } from '@aalis/plugin-code-sandbox-api';
 import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
-import { createStorageGateway, toWorkspaceUri } from '@aalis/plugin-storage-api';
+import { createStorageGateway, resolveAgainstCwd } from '@aalis/plugin-storage-api';
 import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
 import { type RunnerConfig, runCode } from './runner.js';
 import '@aalis/plugin-tools-api';
@@ -145,7 +145,7 @@ function resolveConfig(config: Record<string, unknown>): CodeRunnerConfig {
 }
 
 function toRunnerCwdUri(input: string | undefined): string {
-  return toWorkspaceUri(input, { errorContext: '代码执行器工作目录' });
+  return resolveAgainstCwd(input, 'workspace:/');
 }
 
 function safeEnv(): NodeJS.ProcessEnv {
