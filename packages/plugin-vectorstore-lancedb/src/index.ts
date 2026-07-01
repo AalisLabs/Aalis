@@ -23,11 +23,20 @@ export const configSchema: ConfigSchema = {
     description: 'LanceDB 数据存储 storage URI（也兼容裸名/相对路径）',
   },
   tableName: { type: 'string', label: '表名', default: 'vectors', description: '向量表名称' },
+  optimizeEvery: {
+    type: 'number',
+    label: '压实间隔',
+    default: 500,
+    description:
+      '每写入多少条向量后后台压实一次（合并碎片 + 清 7 天前旧版本）。LanceDB 每次 add 产生一个新碎片与版本，' +
+      '不压实会让 data/ 与 _versions/ 无界膨胀、写入越来越慢；设 0 关闭',
+  },
 };
 
 export const defaultConfig = {
   path: 'data:/lancedb',
   tableName: 'vectors',
+  optimizeEvery: 500,
 };
 
 // ===== 配置 =====
@@ -37,6 +46,8 @@ interface LanceDBConfig {
   path: string;
   /** 表名 */
   tableName: string;
+  /** 每写入多少条后台压实一次；<=0 关闭 */
+  optimizeEvery: number;
 }
 
 // ===== LanceDB 向量存储实现 =====
@@ -48,11 +59,18 @@ class LanceDBVectorStore implements VectorStoreService {
   private tableInit: Promise<LanceTable> | null = null;
   private readonly dbPath: string;
   private readonly tableName: string;
+  /** 每写入多少条后台压实一次；<=0 关闭 */
+  private readonly optimizeEvery: number;
+  /** 自上次压实以来的写入计数 */
+  private addsSinceOptimize = 0;
+  /** 压实 single-flight：在途压实期间跳过新一轮，避免叠加（LanceDB 压实与并发写本身安全） */
+  private optimizing: Promise<void> | null = null;
   private logger?: { info: (msg: string, ...a: unknown[]) => void; warn: (msg: string, ...a: unknown[]) => void };
 
-  constructor(dbPath: string, tableName: string, logger?: LanceDBVectorStore['logger']) {
+  constructor(dbPath: string, tableName: string, optimizeEvery: number, logger?: LanceDBVectorStore['logger']) {
     this.dbPath = dbPath;
     this.tableName = tableName;
+    this.optimizeEvery = optimizeEvery;
     this.logger = logger;
   }
 
@@ -86,6 +104,39 @@ class LanceDBVectorStore implements VectorStoreService {
       await this.tableInit; // 并发后续条目：等建表完成再 add 自己
     }
     await this.table!.add([record]);
+    this.maybeOptimize();
+  }
+
+  /**
+   * 达到间隔阈值后后台压实：合并每条 add 产生的碎片、清理 7 天前的旧版本清单。
+   * 不 await（不阻塞写入延迟）、single-flight（在途压实期间跳过）、吞错（压实失败不影响写入，下轮重试）。
+   * LanceDB 压实与并发写入天然安全，故无需停写。
+   */
+  private maybeOptimize(): void {
+    if (this.optimizeEvery <= 0 || this.optimizing) return;
+    if (++this.addsSinceOptimize < this.optimizeEvery) return;
+    this.addsSinceOptimize = 0;
+    const table = this.table;
+    if (!table) return;
+    this.optimizing = table
+      .optimize()
+      .then(stats => {
+        const removed = stats.compaction.fragmentsRemoved;
+        const freedMB = Math.round(stats.prune.bytesRemoved / 1024 / 1024);
+        if (removed > 0 || freedMB > 0) {
+          this.logger?.info(
+            `LanceDB 压实完成：合并 ${removed} 碎片、清理 ${stats.prune.oldVersionsRemoved} 旧版本、回收 ${freedMB} MB`,
+          );
+        }
+      })
+      .catch(err => {
+        this.logger?.warn(
+          `LanceDB 压实失败（不影响写入，下轮重试）：${err instanceof Error ? err.message : String(err)}`,
+        );
+      })
+      .finally(() => {
+        this.optimizing = null;
+      });
   }
 
   async search(queryVector: number[], topK: number): Promise<VectorSearchResult[]> {
@@ -171,6 +222,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const cfg: LanceDBConfig = {
     path: (config.path as string) ?? 'data:/lancedb',
     tableName: (config.tableName as string) ?? 'vectors',
+    optimizeEvery: (config.optimizeEvery as number) ?? 500,
   };
 
   const storage = createStorageGateway(ctx);
@@ -180,7 +232,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     return;
   }
   const dbPath = await storage.resolveLocalPath(dbUri, 'write');
-  const store = new LanceDBVectorStore(dbPath, cfg.tableName, ctx.logger);
+  const store = new LanceDBVectorStore(dbPath, cfg.tableName, cfg.optimizeEvery, ctx.logger);
 
   await store.init();
 
