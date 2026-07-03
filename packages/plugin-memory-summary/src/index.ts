@@ -495,7 +495,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
               tc => tc.function.name === 'manage_todo_list' || tc.function.name === 'todo_manage',
             );
             if (tc?.function.arguments) {
-              todoContext = `\\n\\n当前任务列表状态：\\n${tc.function.arguments}`;
+              todoContext = `\n\n当前任务列表状态：\n${tc.function.arguments}`;
             }
           }
         } catch {
@@ -508,18 +508,18 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
         const taskHint =
           data.reason === 'auto'
-            ? '\\n\\n注意：此次压缩是在任务执行过程中自动触发的，助手可能正在进行多步骤工作。请特别注意保留所有未完成的任务状态和下一步计划。'
+            ? '\n\n注意：此次压缩是在任务执行过程中自动触发的，助手可能正在进行多步骤工作。请特别注意保留所有未完成的任务状态和下一步计划。'
             : '';
 
         if (existing?.summary) {
           summaryMessages.push({
             role: 'user',
-            content: `以下是之前的对话摘要：\\n${existing.summary}\\n\\n以下是新增的对话内容，请在之前摘要的基础上整合生成更新的摘要：\\n${formattedMessages}${todoContext}${taskHint}`,
+            content: `以下是之前的对话摘要：\n${existing.summary}\n\n以下是新增的对话内容，请在之前摘要的基础上整合生成更新的摘要：\n${formattedMessages}${todoContext}${taskHint}`,
           });
         } else {
           summaryMessages.push({
             role: 'user',
-            content: `请为以下对话生成摘要：\\n${formattedMessages}${todoContext}${taskHint}`,
+            content: `请为以下对话生成摘要：\n${formattedMessages}${todoContext}${taskHint}`,
           });
         }
 
