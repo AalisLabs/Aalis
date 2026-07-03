@@ -176,6 +176,21 @@ const TOOL_READ = 'read_uploaded_file';
 const TOOL_LIST = 'list_uploaded_files';
 const TOOL_DELETE = 'delete_uploaded_file';
 
+/**
+ * 文件 ID = sha256(sessionId + '\0' + content) 前 16 hex。
+ * 以 sessionId 加盐（而非纯内容寻址）：同会话内重传同一文件仍秒命中去重，但不同会话上传
+ * 相同内容会得到不同 ID —— 避免内存索引（按 ID 键）跨会话撞键把前一会话的条目挤掉。
+ * Web Crypto 实现，不依赖 node:crypto。
+ */
+export async function computeFileId(sessionId: string, buffer: Buffer): Promise<string> {
+  const salted = Buffer.concat([Buffer.from(`${sessionId}\0`, 'utf-8'), buffer]);
+  const digest = await crypto.subtle.digest('SHA-256', salted);
+  const bytes = new Uint8Array(digest);
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0');
+  return hex.slice(0, 16);
+}
+
 // ===== 插件入口 =====
 
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
@@ -270,15 +285,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     } catch (err) {
       ctx.logger.warn('恢复文件索引失败:', err);
     }
-  }
-
-  /** sha256(content) 前 16 hex → 内容寻址，重传同一文件秒命中（Web Crypto 实现，不依赖 node:crypto） */
-  async function hashId(buffer: Buffer): Promise<string> {
-    const digest = await crypto.subtle.digest('SHA-256', buffer);
-    const bytes = new Uint8Array(digest);
-    let hex = '';
-    for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0');
-    return hex.slice(0, 16);
   }
 
   function dataUrlToBuffer(dataUrl: string): { buffer: Buffer; mimeType: string } {
@@ -414,7 +420,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // ===== 存储 / 删除 =====
 
   async function storeFile(name: string, data: Buffer, mimeType: string, sessionId: string): Promise<FileEntry> {
-    const id = await hashId(data);
+    const id = await computeFileId(sessionId, data);
     // 已存在则直接复用（同一内容，仅刷新 uploadedAt）
     // 防御：若磁盘 data 文件已被外部清理（restoreIndex 恢复了 meta 但数据丢失），
     // 必须重写一遍 data，否则后续 extractText 会 ENOENT 失败。
