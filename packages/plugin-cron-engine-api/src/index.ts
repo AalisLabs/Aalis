@@ -68,6 +68,19 @@ export function parseCronField(field: string, min: number, max: number): Set<num
 }
 
 /**
+ * 星期字段：cron 惯例允许 0-7，其中 0 与 7 均表示周日。以 [0,7] 解析后把 7 归一到 0，
+ * 以匹配 Date/Intl 的 0-6（周日=0）语义 —— 否则 `* * * * 7` 会校验通过却永不触发。
+ */
+function parseWeekdayField(field: string): Set<number> {
+  const set = parseCronField(field, 0, 7);
+  if (set.has(7)) {
+    set.delete(7);
+    set.add(0);
+  }
+  return set;
+}
+
+/**
  * 拆分 Date 为 cron 字段需要的本地化数字。
  * - 未传 `timeZone`（或传空串）：使用进程本地时区（与 `Date.prototype.getXxx` 等价）
  * - 传 IANA tz（如 `Asia/Shanghai` / `Europe/London`）：用 Intl.DateTimeFormat 把同一瞬时换算到该时区
@@ -133,7 +146,7 @@ export function matchesCron(expr: string, date: Date, timeZone?: string): boolea
     parseCronField(hour, 0, 23).has(f.hour) &&
     parseCronField(day, 1, 31).has(f.day) &&
     parseCronField(month, 1, 12).has(f.month) &&
-    parseCronField(weekday, 0, 6).has(f.weekday)
+    parseWeekdayField(weekday).has(f.weekday)
   );
 }
 
@@ -182,7 +195,7 @@ export function validateCronExpr(input: string): ValidateResult {
     [0, 23],
     [1, 31],
     [1, 12],
-    [0, 6],
+    [0, 7], // 星期：0-7，0 与 7 均为周日（cron 惯例）
   ];
   for (let i = 0; i < 5; i++) {
     if (parseCronField(fields[i], ranges[i][0], ranges[i][1]).size === 0) {
