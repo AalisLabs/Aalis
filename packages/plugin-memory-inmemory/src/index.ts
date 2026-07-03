@@ -28,6 +28,7 @@ class InMemoryFallbackService implements MemoryService {
       toolCalls: message.toolCalls,
       toolCallId: message.toolCallId,
       name: message.name,
+      kind: message.kind,
       reasoningContent: message.reasoningContent,
       timestamp: message.timestamp ?? Date.now(),
       metadata: message.metadata,

@@ -337,9 +337,10 @@ function renderPackageJson(projectName: string, enabled: string[], versions: Map
       type: 'module',
       description: `${projectName} —— 基于 Aalis 的 AI 助手`,
       // 默认 dev 模式（startAalis 据 NODE_ENV!=='production' 判定）；
-      // 生产部署用 `NODE_ENV=production node index.mjs`（Windows 用 set/$env:）。
+      // --env-file-if-exists=.env：启动时加载 .env 到 process.env，供 aalis.config.yaml 的 ${VAR} 插值（Node>=20.12）。
+      // 生产部署用 `NODE_ENV=production node --env-file-if-exists=.env index.mjs`（Windows 用 set/$env:）。
       scripts: {
-        start: 'node index.mjs',
+        start: 'node --env-file-if-exists=.env index.mjs',
       },
       dependencies: deps,
     },

@@ -209,7 +209,11 @@ export function extractJsonCandidate(raw: string): string {
       // 跳过整个对象（含其内部的所有嵌套 '{'），只扫顶层
       searchFrom = end + 1;
     } else {
-      searchFrom = brace + 1;
+      // 顶层 '{' 未配平 = 该对象被截断（常见于模型输出触达 token 上限）。其后所有内容都在
+      // 这个未闭合对象内部，不存在更靠后的顶层对象。此时必须停止扫描：若继续 brace+1 前进会
+      // descend 进内层嵌套对象、把配平的内层误当候选，从而丢弃外层已输出的全部字段。停止后交由
+      // 下方降级分支从第一个 '{' 返回截断片段，供 tryParseJsonObject 补全修复。
+      break;
     }
   }
 
