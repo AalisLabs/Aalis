@@ -452,7 +452,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const personaName = (config.persona as string) || 'default';
   const personasDirRaw = (config.personasDir as string) || 'data/personas';
   const statePersistence = (config.statePersistence as boolean) ?? false;
-  const timeInjection = (config.timeInjection as boolean) ?? false;
+  const timeInjection = (config.timeInjection as boolean) ?? true;
   const timeZone = (config.timeZone as string) ?? '';
 
   const storage = createStorageGateway(ctx);
