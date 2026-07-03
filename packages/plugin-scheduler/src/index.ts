@@ -487,10 +487,15 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       };
       // 注入代理身份：authority 守卫优先读 actor 而非 platform/userId，
       // 从而让 scheduler 触发的 AI 走创建者的权限等级（而非匿名 defaultAuthority）。
-      // actorPlatform/actorUserId 在 setJob 时已固化为创建者身份，AI 无法绕过。
-      if (rt.config.actorPlatform && rt.config.actorUserId) {
-        message.actor = { platform: rt.config.actorPlatform, userId: rt.config.actorUserId };
-      }
+      // 动态任务的 actor 在 setJob/loadDynamicJobs 已固化；静态 YAML 任务省略 actor 时在此回填
+      // webui:console（owner 级）——编辑配置文件即 owner 行为，与 loadDynamicJobs 缺省及
+      // SchedulerJobConfig 文档一致；YAML 显式设置 actor 则用其值（可降权）。AI 无法绕过。
+      const actorPlatform = rt.config.actorPlatform?.trim();
+      const actorUserId = rt.config.actorUserId?.trim();
+      message.actor =
+        actorPlatform && actorUserId
+          ? { platform: actorPlatform, userId: actorUserId }
+          : { platform: 'webui', userId: 'console' };
 
       await ctx.emit('inbound:message', message);
 
