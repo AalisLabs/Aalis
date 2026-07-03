@@ -273,6 +273,14 @@ class MongoMemoryService implements MemoryService {
 
 // ===== 插件入口 =====
 
+/**
+ * 脱敏 MongoDB 连接串里的密码（userinfo 的 password 段），用于日志，避免明文口令泄漏。
+ * `mongodb://user:pass@host` → `mongodb://user:***@host`；无凭证的串（如 localhost）原样返回。
+ */
+export function redactMongoUri(uri: string): string {
+  return uri.replace(/^(mongodb(?:\+srv)?:\/\/[^:@/]+:)[^@]*(@)/i, '$1***$2');
+}
+
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const mongoConfig: MongoMemoryConfig = {
     uri: (config.uri as string) ?? 'mongodb://localhost:27017',
@@ -283,7 +291,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     crossSessionMaxLimit: config.crossSessionMaxLimit as number | undefined,
   };
 
-  ctx.logger.info(`正在连接 MongoDB: ${mongoConfig.uri} (超时: ${mongoConfig.connectTimeoutMs}ms)`);
+  ctx.logger.info(`正在连接 MongoDB: ${redactMongoUri(mongoConfig.uri)} (超时: ${mongoConfig.connectTimeoutMs}ms)`);
 
   const client = new MongoClient(mongoConfig.uri, {
     serverSelectionTimeoutMS: mongoConfig.connectTimeoutMs,

@@ -93,3 +93,25 @@ describe('cron-engine-api: 时区感知 matchesCron', () => {
     expect(matchesCron(expr, now)).toBe(true);
   });
 });
+
+describe('cron-engine-api: 星期字段 0-7（0 与 7 均为周日）', () => {
+  const sundayUtc = new Date('2025-06-15T08:00:00Z'); // 周日
+  const mondayUtc = new Date('2025-06-16T08:00:00Z'); // 周一
+
+  it('前置确认：2025-06-15 UTC=周日(0)、06-16=周一(1)', () => {
+    expect(dateFieldsInTimeZone(sundayUtc, 'UTC').weekday).toBe(0);
+    expect(dateFieldsInTimeZone(mondayUtc, 'UTC').weekday).toBe(1);
+  });
+
+  it('validateCronExpr 接受星期 7（周日），仍拒绝越界的 8', () => {
+    expect(validateCronExpr('0 8 * * 7').ok).toBe(true);
+    expect(validateCronExpr('0 8 * * 0').ok).toBe(true);
+    expect(validateCronExpr('0 8 * * 8').ok).toBe(false);
+  });
+
+  it('matchesCron: "* * * * 7" 命中周日、不命中周一（与 0 等价）', () => {
+    expect(matchesCron('0 8 * * 7', sundayUtc, 'UTC')).toBe(true);
+    expect(matchesCron('0 8 * * 0', sundayUtc, 'UTC')).toBe(true);
+    expect(matchesCron('0 8 * * 7', mondayUtc, 'UTC')).toBe(false);
+  });
+});
