@@ -785,7 +785,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     customModels: parseCustomModels(config.customModels),
     modelCapabilities: parseModelCapabilities(config.modelCapabilities),
     providerCapabilities: parseProviderCapabilities(config.providerCapabilities),
-    timeout: ((config.timeout as number) ?? 120) > 0 ? ((config.timeout as number) ?? 120) * 1000 : undefined,
+    timeout: (config.timeout as number) ?? 120,
     temperature: (config.temperature as number) ?? 0.7,
     maxTokens: (config.maxTokens as number) ?? 8192,
     contextLength: (config.contextLength as number) ?? 131072,

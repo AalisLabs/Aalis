@@ -60,4 +60,26 @@ describe('extractJsonCandidate', () => {
     const result = extractJsonCandidate(raw);
     expect(result).toBe('{"mood":"happy","nested":{"key":"val"},"message":"ok"}');
   });
+
+  it('外层对象被截断但含配平内层 — 返回截断的外层（供修复）而非内层，避免丢弃外层字段', () => {
+    // 模型输出触达 token 上限，外层 {"a",...,"c"} 未闭合，但嵌套的 {"b":1} 是配平的。
+    // 旧行为会 descend 进内层、返回 {"b":1}，静默丢弃 "a"/"c"。修复后应返回截断的外层整段。
+    const raw = '{"a":{"b":1},"c":"trunc';
+    const result = extractJsonCandidate(raw);
+    expect(result).toBe(raw);
+    expect(result).not.toBe('{"b":1}');
+    expect(result).toContain('"a"');
+    expect(result).toContain('"c"');
+  });
+
+  it('推理文本 + 被截断的 JSON payload — 返回截断 payload 整段供修复', () => {
+    const raw = '思考中...\n{"result":{"nested":true},"status":"incompl';
+    const result = extractJsonCandidate(raw);
+    expect(result).toBe('{"result":{"nested":true},"status":"incompl');
+  });
+
+  it('先一个配平对象再一个截断对象 — 返回配平的那个', () => {
+    const raw = '{"done":1} 追加 {"more":"trunc';
+    expect(extractJsonCandidate(raw)).toBe('{"done":1}');
+  });
 });
