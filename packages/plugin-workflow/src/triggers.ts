@@ -11,6 +11,10 @@ import type { Context, Logger } from '@aalis/core';
 import { useCronEngine } from '@aalis/plugin-cron-engine-api';
 import type { WorkflowDef } from '@aalis/plugin-workflow-api';
 
+// event 触发器禁止订阅的内部事件：这些承载会话原文/出站内容，若被 workflow 的 send-message
+// 节点转发到任意 sessionId，会构成跨会话内容窃听/外泄通道。只允许订阅编排/信号类事件。
+const BLOCKED_EVENT_TRIGGERS = new Set<string>(['inbound:message', 'outbound:message', 'inbound:command']);
+
 // ─── 触发管理器 ───
 
 type FireFn = (workflowId: string, source: string, payload?: Record<string, unknown>) => void;
@@ -81,6 +85,12 @@ export class TriggerManager {
       }
       case 'event': {
         const evtName = t.event;
+        if (BLOCKED_EVENT_TRIGGERS.has(evtName)) {
+          this.logger.warn(
+            `workflow "${def.id}" 的 event 触发器订阅了受限内部事件 "${evtName}"（承载会话内容，防跨会话外泄），已拒绝注册`,
+          );
+          break;
+        }
         const filter = t.filter ?? {};
         // biome-ignore lint/suspicious/noExplicitAny: 动态事件订阅，事件名不在编译期可知
         const dispose = this.ctx.on(evtName as any, (...args: unknown[]) => {
