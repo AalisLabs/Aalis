@@ -336,10 +336,23 @@ export const actions: PluginModule['actions'] = {
     if (!cron && !interval && !runAt) {
       return { ok: false, error: 'cron / interval / runAt 必须填写其中之一' };
     }
+    // 防资源耗尽（scheduler 工具对聊天访客公开）：interval 下限，挡住 interval:0.5 这类高频任务。
+    if (interval !== undefined && interval < 5) {
+      return { ok: false, error: 'interval 不能小于 5 秒（防高频任务耗尽资源）' };
+    }
     const sessionId = String(args.sessionId ?? '').trim();
     if (!sessionId) return { ok: false, error: 'sessionId 不能为空' };
     const content = String(args.content ?? '').trim();
     if (!content) return { ok: false, error: 'content 不能为空' };
+    // 防资源耗尽：单会话任务数上限；更新已有任务（同名）不计入，仅拦新建。
+    const MAX_JOBS_PER_SESSION = 20;
+    const allJobs = svc.getJobs();
+    if (
+      !allJobs.some(j => j.name === name) &&
+      allJobs.filter(j => j.sessionId === sessionId).length >= MAX_JOBS_PER_SESSION
+    ) {
+      return { ok: false, error: `本会话定时任务数已达上限 ${MAX_JOBS_PER_SESSION}，请先删除部分任务再新建` };
+    }
     try {
       // actor 从权限闸放行后的 caller 快照（登录账户或单 token 模式的 webui:console），
       // 不从 args 读取，避免 WebUI 调用方伪造他人身份。

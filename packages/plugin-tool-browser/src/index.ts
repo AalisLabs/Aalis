@@ -3,7 +3,7 @@ import { createProcessGateway } from '@aalis/plugin-process-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
-import { isPrivateHost } from '@aalis/util-network-guard';
+import { assertSafeHost, isPrivateHost } from '@aalis/util-network-guard';
 import '@aalis/plugin-tools-api';
 
 // ════════════════════════════════════════════════════════════
@@ -234,10 +234,14 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     if (config.blockPrivate) {
       await page.setRequestInterception(true);
       // req 用最小结构类型，避免顶层 import puppeteer（与本文件 page:any 动态导入策略一致）。
-      page.on('request', (req: { url(): string; abort(reason?: string): Promise<void>; continue(): Promise<void> }) => {
-        if (isBlockedRequestUrl(req.url(), config)) req.abort('blockedbyclient').catch(() => {});
-        else req.continue().catch(() => {});
-      });
+      // 异步：isBlockedRequestUrl 现做 DNS 级判定，需 await 后再 abort/continue。
+      page.on(
+        'request',
+        async (req: { url(): string; abort(reason?: string): Promise<void>; continue(): Promise<void> }) => {
+          if (await isBlockedRequestUrl(req.url(), config)) req.abort('blockedbyclient').catch(() => {});
+          else req.continue().catch(() => {});
+        },
+      );
     }
     const newId = `page_${++pageCounter}`;
     const slot: PageSlot = { page, url: 'about:blank', title: '', lastAccess: Date.now() };
@@ -659,7 +663,7 @@ function validateUrl(rawUrl: string, config: BrowserConfig): string | null {
  * 非 http(s)（data:/blob:/about: 等）一律放行，避免误伤正常页面资源。
  * @returns true = 应拦截
  */
-function isBlockedRequestUrl(rawUrl: string, config: BrowserConfig): boolean {
+async function isBlockedRequestUrl(rawUrl: string, config: BrowserConfig): Promise<boolean> {
   if (!config.blockPrivate) return false;
   let parsed: URL;
   try {
@@ -671,5 +675,12 @@ function isBlockedRequestUrl(rawUrl: string, config: BrowserConfig): boolean {
   if (protocol !== 'http' && protocol !== 'https') return false;
   const host = parsed.hostname.toLowerCase();
   if (config.allowedHosts.includes(host)) return false;
-  return isPrivateHost(host);
+  // DNS 级判定：assertSafeHost 对 IP 字面量同步判私网，对域名解析全部 A/AAAA 后逐一判 —— 堵住
+  // 「域名解析到内网/元数据 IP」的 SSRF（旧实现仅 isPrivateHost 字符串级，此类域名可绕过）。
+  try {
+    await assertSafeHost(parsed.hostname);
+    return false;
+  } catch {
+    return true;
+  }
 }

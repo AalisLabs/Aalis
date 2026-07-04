@@ -1052,6 +1052,7 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
 
   // ───────────────────────────── rename_node ─────────────────────────────
   tools.register({
+    risk: 'sensitive',
     definition: {
       type: 'function',
       function: {
@@ -1109,6 +1110,7 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
 
   // ───────────────────────────── correct_edge ────────────────────────────
   tools.register({
+    risk: 'sensitive',
     definition: {
       type: 'function',
       function: {
@@ -1182,6 +1184,9 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
 
   // ───────────────────────────── delete_node ──────────────────────────────
   tools.register({
+    // 图写工具（删/合/改）：与 commands.ts 的等价 restricted 命令对齐，挡住不受信任访客经 LLM
+    // 篡改/删除全局关系图。用 sensitive(L1)，不加逐次 confirm。只读检索工具保持 public。
+    risk: 'sensitive',
     definition: {
       type: 'function',
       function: {
@@ -1234,6 +1239,7 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
 
   // ───────────────────────────── delete_edge ──────────────────────────────
   tools.register({
+    risk: 'sensitive',
     definition: {
       type: 'function',
       function: {
@@ -1274,6 +1280,7 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
 
   // ───────────────────────────── merge_nodes ──────────────────────────────
   tools.register({
+    risk: 'sensitive',
     definition: {
       type: 'function',
       function: {
@@ -1332,6 +1339,7 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
 
   // ─────────────────────────── change_entity_kind ─────────────────────────
   tools.register({
+    risk: 'sensitive',
     definition: {
       type: 'function',
       function: {
@@ -1378,6 +1386,7 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
 
   // ───────────────────────────── split_alias ──────────────────────────────
   tools.register({
+    risk: 'sensitive',
     definition: {
       type: 'function',
       function: {

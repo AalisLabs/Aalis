@@ -309,6 +309,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const session = sm.getSession(subtaskId);
       if (!session) return JSON.stringify({ error: `子任务不存在: ${subtaskId}` });
 
+      // 归属校验：只能向本会话的直接子任务发消息，防越权向任意会话注入消息 / 重激活已完成会话
+      //（与 delete_subtask 一致）。
+      if (session.parentId !== callCtx.sessionId) {
+        return JSON.stringify({
+          error: `无权操作该子任务：${subtaskId} 不是当前会话 (${callCtx.sessionId}) 的子任务 (parentId=${session.parentId})。`,
+        });
+      }
+
       // 如果子任务已完成，重新激活
       if (session.status === 'completed') {
         await sm.updateSession(subtaskId, { status: 'active' });
