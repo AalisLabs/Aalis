@@ -567,11 +567,14 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       if (sessionId && typeof text === 'string' && text.length > 0) {
         const visible = getAllowedSkills();
         const session = ensureSessionSet(sessionId);
+        // ReDoS 兜底：triggers 现仅由 sensitive 门禁的 skill 工具写入，但仍对被测输入截断上界，
+        // 使任意（含病态回溯）正则的匹配耗时有界。触发匹配只需看开头一段，2000 字符足够。
+        const probe = text.length > 2000 ? text.slice(0, 2000) : text;
         for (const skill of visible) {
           if (session.has(skill.name)) continue;
           const regexes = getTriggersFor(skill);
           for (const re of regexes) {
-            if (re.test(text)) {
+            if (re.test(probe)) {
               session.add(skill.name);
               logger.info(`skill "${skill.name}" 已自动激活 (session=${sessionId}, regex=${re})`);
               break;
@@ -880,6 +883,9 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 3. skill_create
   tools.register({
+    // 变更类：写入的技能会被 discovery 注入所有会话 system prompt（持久注入面），标 sensitive
+    // 挡住不受信任访客经 LLM 驱动；无逐次 confirm（避免给 owner 加摩擦）。
+    risk: 'sensitive',
     groups: ['skills'],
     definition: {
       type: 'function',
@@ -947,6 +953,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 4. skill_update
   tools.register({
+    risk: 'sensitive',
     groups: ['skills'],
     definition: {
       type: 'function',
@@ -998,6 +1005,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 5. skill_delete
   tools.register({
+    risk: 'sensitive',
     groups: ['skills'],
     definition: {
       type: 'function',
@@ -1021,6 +1029,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 6. skill_add_file —— 单独添加/覆盖一个附属文件
   tools.register({
+    risk: 'sensitive',
     groups: ['skills'],
     definition: {
       type: 'function',
@@ -1055,6 +1064,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 7. skill_remove_file
   tools.register({
+    risk: 'sensitive',
     groups: ['skills'],
     definition: {
       type: 'function',

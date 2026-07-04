@@ -527,6 +527,9 @@ function registerTools(ctx: Context, service: WorkflowService): void {
   tools.registerGroup({ name: 'workflow', label: '工作流', description: '定义、运行、查询自主工作流（DAG）' });
 
   tools.register({
+    // 编排定义/触发/删除：可定义向任意 sessionId 发消息/跑 agent 的工作流，挡住不受信任访客经
+    // LLM 驱动。sensitive(L1)，不加逐次 confirm。只读 list/get_runs 保持 public。
+    risk: 'sensitive',
     groups: ['workflow'],
     definition: {
       type: 'function',
@@ -590,6 +593,7 @@ function registerTools(ctx: Context, service: WorkflowService): void {
   });
 
   tools.register({
+    risk: 'sensitive',
     groups: ['workflow'],
     definition: {
       type: 'function',
@@ -666,6 +670,7 @@ function registerTools(ctx: Context, service: WorkflowService): void {
   });
 
   tools.register({
+    risk: 'sensitive',
     groups: ['workflow'],
     definition: {
       type: 'function',
