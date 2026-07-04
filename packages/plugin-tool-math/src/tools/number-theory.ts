@@ -199,6 +199,8 @@ function comb(n: number, k: number): number {
   if (k < 0 || k > n) return 0;
   if (k === 0 || k === n) return 1;
   if (k > n - k) k = n - k;
+  // 封顶迭代次数防超大 k 阻塞事件循环（有限结果需 k 极小，10^5 远超之，不误拒）。
+  if (k > 100000) throw new Error('组合数计算量过大（迭代上限 100000）');
   let result = 1;
   for (let i = 0; i < k; i++) {
     result = (result * (n - i)) / (i + 1);
@@ -208,6 +210,7 @@ function comb(n: number, k: number): number {
 
 function perm(n: number, k: number): number {
   if (k < 0 || k > n) return 0;
+  if (k > 100000) throw new Error('排列数计算量过大（迭代上限 100000）');
   let result = 1;
   for (let i = 0; i < k; i++) result *= n - i;
   return result;

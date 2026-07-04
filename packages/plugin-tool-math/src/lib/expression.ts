@@ -106,6 +106,9 @@ function comb(n: number, k: number): number {
   if (k < 0 || k > n) return 0;
   if (k === 0 || k === n) return 1;
   if (k > n - k) k = n - k;
+  // 迭代次数 = k；封顶防 comb(1e15,5e14) 这类超大 k 阻塞事件循环。任何有限结果都需 k 极小
+  // （k≳515 即溢出为 Infinity），10^5 上限远超之，不误拒可表示结果。对齐 factorial 的 170 守卫。
+  if (k > 100000) throw new Error('组合数计算量过大（迭代上限 100000；超此规模结果已溢出）');
   let result = 1;
   for (let i = 0; i < k; i++) {
     result = (result * (n - i)) / (i + 1);
@@ -117,6 +120,7 @@ function perm(n: number, k: number): number {
   n = Math.round(n);
   k = Math.round(k);
   if (k < 0 || k > n) return 0;
+  if (k > 100000) throw new Error('排列数计算量过大（迭代上限 100000；超此规模结果已溢出）');
   let result = 1;
   for (let i = 0; i < k; i++) result *= n - i;
   return result;
