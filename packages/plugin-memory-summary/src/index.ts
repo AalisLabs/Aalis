@@ -6,6 +6,7 @@ import type { LLMModel } from '@aalis/plugin-llm-api';
 import { resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
+import { truncateChars } from '@aalis/util-text-normalize';
 
 /**
  * 摘要用消息格式化：content 已含 [昵称(ID)] 前缀，故不再叠加 m.name（否则双重身份 用户[123]: [Alice(123)]:）。
@@ -389,7 +390,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       // 如果超出预算，截断
       if (summaryTokens > summaryBudget) {
         const maxChars = summaryBudget * 3;
-        summaryContent = `${summaryContent.slice(0, maxChars)}\n... [摘要已截断]`;
+        // 代理安全截断：摘要会落库并每轮重注入上下文，切坏 emoji 出孤代理会让 DeepSeek 请求 400。
+        summaryContent = truncateChars(summaryContent, maxChars, '\n... [摘要已截断]');
       }
 
       const summaryMsg: Message = {

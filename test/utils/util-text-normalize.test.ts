@@ -3,7 +3,43 @@ import {
   fixGfmTables,
   normalizeAssistantContent,
   stripLeakedSpecialTokens,
+  toWellFormedText,
+  truncateChars,
 } from '../../packages/util-text-normalize/src/index.js';
+
+// 高代理 = "😀".charAt(0)（U+D83D），低代理 = "😀".charAt(1)（U+DE00）。
+const HI = '😀'[0];
+
+describe('truncateChars（代理安全截断）', () => {
+  it('切到 emoji 中间时整体丢弃，绝不留孤代理', () => {
+    const out = truncateChars('abc😀def', 4, '…'); // 索引4落在 😀 的低代理位
+    expect(out).toBe('abc…');
+    expect(toWellFormedText(out)).toBe(out); // 无孤代理
+  });
+  it('边界在 emoji 之后则完整保留', () => {
+    expect(truncateChars('abc😀def', 5)).toBe('abc😀');
+  });
+  it('无需截断时原样返回', () => {
+    expect(truncateChars('hi', 10)).toBe('hi');
+  });
+  it('截断边界落在孤高代理上时回退丢弃', () => {
+    // "abc"+HI+"x" 长 5 > max 4，边界索引4的前一位(索引3)是孤高代理 → 回退丢弃
+    expect(truncateChars(`abc${HI}x`, 4)).toBe('abc');
+  });
+});
+
+describe('toWellFormedText（LLM 边界 UTF-16 规整）', () => {
+  it('良构内容原样返回（含完整 emoji）', () => {
+    const s = '正常文本😀中文';
+    expect(toWellFormedText(s)).toBe(s);
+  });
+  it('孤高代理替换为 U+FFFD', () => {
+    expect(toWellFormedText(`abc${HI}def`)).toBe('abc�def');
+  });
+  it('孤低代理也替换', () => {
+    expect(toWellFormedText(`abc${'😀'[1]}def`)).toBe('abc�def');
+  });
+});
 
 describe('fixGfmTables', () => {
   it('truncates separator row that has more columns than header', () => {
