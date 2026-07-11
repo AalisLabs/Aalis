@@ -30,7 +30,8 @@
   "dependencies": {
     "@aalis/plugin-agent-api": "workspace:^",
     "@aalis/plugin-llm-api": "workspace:^",
-    "@aalis/plugin-message-api": "workspace:^"
+    "@aalis/plugin-message-api": "workspace:^",
+    "@aalis/util-text-normalize": "workspace:^"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
