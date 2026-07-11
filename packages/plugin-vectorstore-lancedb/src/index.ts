@@ -28,8 +28,16 @@ export const configSchema: ConfigSchema = {
     label: '压实间隔',
     default: 500,
     description:
-      '每写入多少条向量后后台压实一次（合并碎片 + 清 7 天前旧版本）。LanceDB 每次 add 产生一个新碎片与版本，' +
+      '每写入多少条向量后后台压实一次（合并碎片 + 回收作废数据文件）。LanceDB 每次 add 产生一个新碎片与版本，' +
       '不压实会让 data/ 与 _versions/ 无界膨胀、写入越来越慢；设 0 关闭',
+  },
+  cleanupRetentionMinutes: {
+    type: 'number',
+    label: '数据文件保留窗（分钟）',
+    default: 60,
+    description:
+      '压实时回收「此分钟数以前」的作废数据文件。比它更新的文件（含可能在途的写入）一律保留，故对单进程写入安全。' +
+      '默认 LanceDB 保留 7 天，高频压实下会让 data/ 累到数百 GB —— 收紧到分钟级即可把库压回真实大小。调大更保守、更占盘。',
   },
 };
 
@@ -37,6 +45,7 @@ export const defaultConfig = {
   path: 'data:/lancedb',
   tableName: 'vectors',
   optimizeEvery: 500,
+  cleanupRetentionMinutes: 60,
 };
 
 // ===== 配置 =====
@@ -48,6 +57,8 @@ interface LanceDBConfig {
   tableName: string;
   /** 每写入多少条后台压实一次；<=0 关闭 */
   optimizeEvery: number;
+  /** 压实时回收多久以前的作废数据文件（分钟）；带时间缓冲保护在途写入 */
+  cleanupRetentionMinutes: number;
 }
 
 /**
@@ -74,6 +85,8 @@ class LanceDBVectorStore implements VectorStoreService {
   private readonly tableName: string;
   /** 每写入多少条后台压实一次；<=0 关闭 */
   private readonly optimizeEvery: number;
+  /** 压实时回收多久以前的旧数据文件（分钟）。带时间缓冲，保护可能在途的写入/读取；见 maybeOptimize。 */
+  private readonly cleanupRetentionMs: number;
   /** 自上次压实以来的写入计数 */
   private addsSinceOptimize = 0;
   /** 压实 single-flight：在途压实期间跳过新一轮，避免叠加（LanceDB 压实与并发写本身安全） */
@@ -86,10 +99,17 @@ class LanceDBVectorStore implements VectorStoreService {
   private structuralOps: Promise<unknown> = Promise.resolve();
   private logger?: { info: (msg: string, ...a: unknown[]) => void; warn: (msg: string, ...a: unknown[]) => void };
 
-  constructor(dbPath: string, tableName: string, optimizeEvery: number, logger?: LanceDBVectorStore['logger']) {
+  constructor(
+    dbPath: string,
+    tableName: string,
+    optimizeEvery: number,
+    cleanupRetentionMinutes: number,
+    logger?: LanceDBVectorStore['logger'],
+  ) {
     this.dbPath = dbPath;
     this.tableName = tableName;
     this.optimizeEvery = optimizeEvery;
+    this.cleanupRetentionMs = Math.max(1, cleanupRetentionMinutes) * 60_000;
     this.logger = logger;
   }
 
@@ -137,9 +157,10 @@ class LanceDBVectorStore implements VectorStoreService {
   }
 
   /**
-   * 达到间隔阈值后后台压实：合并每条 add 产生的碎片、清理 7 天前的旧版本清单。
-   * 不 await（不阻塞写入延迟）、single-flight（在途压实期间跳过）、吞错（压实失败不影响写入，下轮重试）。
-   * LanceDB 压实与并发写入天然安全，故无需停写。
+   * 达到间隔阈值后后台压实：合并每条 add 产生的碎片，并回收 cleanupRetentionMinutes 以前的作废数据文件
+   * （见 optimize 调用处注释——不显式传窗口会吃默认 7 天保留、data/ 膨胀到数百 GB）。
+   * 不 await（不阻塞写入延迟）、single-flight（在途压实期间跳过）、经 serialize 与 delete/clear 互斥、
+   * 吞错（压实失败不影响写入，下轮重试）。
    */
   private maybeOptimize(): void {
     if (this.optimizeEvery <= 0 || this.optimizing) return;
@@ -150,7 +171,12 @@ class LanceDBVectorStore implements VectorStoreService {
     // 确保压实的是当前表——若排队期间 /clear 重建了表，则压实新表；若表已被清空则跳过。
     this.optimizing = this.serialize(async () => {
       const t = this.table;
-      return t ? await t.optimize() : null;
+      if (!t) return null;
+      // 关键：显式传 cleanupOlderThan（否则吃默认 7 天保留窗 → 压实作废的数据文件要留 7 天，
+      // 高频压实下 data/ 累到数百 GB）。cleanupOlderThan = 现在 - 保留窗，deleteUnverified 才能真正
+      // 回收 <7 天的作废文件。保留窗留足时间缓冲：比它更新的文件(含可能在途写入)一律不动，故对
+      // Aalis 单进程写入安全。回收现在-保留窗之前的全部作废数据文件。
+      return t.optimize({ cleanupOlderThan: new Date(Date.now() - this.cleanupRetentionMs), deleteUnverified: true });
     })
       .then(stats => {
         if (!stats) return;
@@ -248,6 +274,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     path: (config.path as string) ?? 'data:/lancedb',
     tableName: (config.tableName as string) ?? 'vectors',
     optimizeEvery: (config.optimizeEvery as number) ?? 500,
+    cleanupRetentionMinutes: (config.cleanupRetentionMinutes as number) ?? 60,
   };
 
   const storage = createStorageGateway(ctx);
@@ -257,7 +284,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     return;
   }
   const dbPath = await storage.resolveLocalPath(dbUri, 'write');
-  const store = new LanceDBVectorStore(dbPath, cfg.tableName, cfg.optimizeEvery, ctx.logger);
+  const store = new LanceDBVectorStore(
+    dbPath,
+    cfg.tableName,
+    cfg.optimizeEvery,
+    cfg.cleanupRetentionMinutes,
+    ctx.logger,
+  );
 
   await store.init();
 
