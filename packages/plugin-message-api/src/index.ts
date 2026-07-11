@@ -19,12 +19,13 @@
 //   - 'outbound:message'
 //   - 'outbound:stream'
 //
-// 依赖：仅 @aalis/core。
+// 依赖：@aalis/core（类型锚点）+ @aalis/util-text-normalize（prepareLLMMessages 的 UTF-16 规整）。
 // ============================================================
 
 // declare module 增强需要原模块可见，本包不用 core 的具体类型，
 // 仅以空导入锚点 @aalis/core 让 TS 解析模块身份。
 import type {} from '@aalis/core';
+import { toWellFormedText } from '@aalis/util-text-normalize';
 
 // ----- LLM 协议层消息类型 -----
 
@@ -382,9 +383,15 @@ export function prepareLLMMessages<T extends Pick<Message, 'role' | 'content' | 
     const llmRole = toLLMRole(m.role);
     const prefix = (m.kind && KIND_PREFIX[m.kind]) ?? CUSTOM_ROLE_PREFIX[m.role as string];
     const needsRoleRewrite = llmRole !== m.role;
-    const needsPrefix = !!prefix && typeof m.content === 'string' && m.content.length > 0;
-    if (!needsRoleRewrite && !needsPrefix) return m;
-    const newContent = needsPrefix ? `${prefix} ${m.content}` : (m.content ?? null);
+    // 边界硬保证：所有发往 LLM 的 string content 先规整成良构 UTF-16（孤代理→�）。杜绝孤代理经
+    // JSON.stringify 编成 `\ud83d`（半个代理对）被严格 JSON 解析器（如 DeepSeek 服务端）拒收、
+    // 致整条请求 400。对良构内容为 no-op（原样返回、不新建字符串），故不改变现有行为；对任何插件
+    // 产生的内容在此唯一出口自动生效，第三方插件无需感知"孤代理"、无需调用任何东西。
+    const content = typeof m.content === 'string' ? toWellFormedText(m.content) : m.content;
+    const contentChanged = content !== m.content;
+    const needsPrefix = !!prefix && typeof content === 'string' && content.length > 0;
+    if (!needsRoleRewrite && !needsPrefix && !contentChanged) return m;
+    const newContent = needsPrefix ? `${prefix} ${content}` : (content ?? null);
     return { ...m, role: llmRole, content: newContent } as T;
   });
 }

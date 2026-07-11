@@ -13,7 +13,7 @@ import { getPlatformSelfIdentity } from '@aalis/plugin-platform-api';
 import type { SessionConfig, SessionManagerService } from '@aalis/plugin-session-manager-api';
 import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/plugin-tools-api';
 import '@aalis/plugin-commands-api';
-import { normalizeAssistantContent, stripLeakedSpecialTokens } from '@aalis/util-text-normalize';
+import { normalizeAssistantContent, stripLeakedSpecialTokens, truncateChars } from '@aalis/util-text-normalize';
 import {
   buildFocusGuidance,
   estimateMsgTokens,
@@ -641,7 +641,11 @@ class DefaultAgent implements AgentService {
                 this.logger.info(
                   `工具结果过长 (${result.length} 字符)，截断至 ${toolResultMaxChars} 字符: ${toolBeforeData.name}`,
                 );
-                result = `${result.slice(0, toolResultMaxChars)}\n... [工具输出已截断，原始长度 ${result.length} 字符]`;
+                result = truncateChars(
+                  result,
+                  toolResultMaxChars,
+                  `\n... [工具输出已截断，原始长度 ${result.length} 字符]`,
+                );
               }
               const toolEndTime = Date.now();
 
@@ -1278,7 +1282,7 @@ class DefaultAgent implements AgentService {
           if (msg.content && msg.content.length > 200) {
             const oldTokens = estimateMsgTokens(msg);
             const targetLen = Math.max(200, Math.floor(msg.content.length * ratio));
-            msg.content = `${msg.content.slice(0, targetLen)}\n... [记忆内容已缩减]`;
+            msg.content = truncateChars(msg.content, targetLen, '\n... [记忆内容已缩减]');
             estimated -= oldTokens - estimateMsgTokens(msg);
           }
         }
@@ -1291,7 +1295,7 @@ class DefaultAgent implements AgentService {
       if (estimated <= budget) break;
       if (result[i].role === 'tool' && result[i].content && result[i].content!.length > 1500) {
         const oldTokens = estimateMsgTokens(result[i]);
-        result[i].content = `${result[i].content!.slice(0, 500)}\n... [工具输出已截断]`;
+        result[i].content = truncateChars(result[i].content!, 500, '\n... [工具输出已截断]');
         estimated -= oldTokens - estimateMsgTokens(result[i]);
       }
     }
@@ -1317,7 +1321,7 @@ class DefaultAgent implements AgentService {
         const oldTokens = estimateMsgTokens(msg);
         // 所有条目统一保留头部 200 字符（最新条保留稍多以保持上下文连贯性）
         const keepLen = k < rcIndices.length - 1 ? 200 : 400;
-        msg.reasoningContent = `${msg.reasoningContent!.slice(0, keepLen)}\n... [推理内容已缩减]`;
+        msg.reasoningContent = truncateChars(msg.reasoningContent!, keepLen, '\n... [推理内容已缩减]');
         estimated -= oldTokens - estimateMsgTokens(msg);
       }
     }
