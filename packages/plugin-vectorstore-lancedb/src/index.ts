@@ -65,6 +65,12 @@ class LanceDBVectorStore implements VectorStoreService {
   private addsSinceOptimize = 0;
   /** 压实 single-flight：在途压实期间跳过新一轮，避免叠加（LanceDB 压实与并发写本身安全） */
   private optimizing: Promise<void> | null = null;
+  /**
+   * 结构性表操作串行锁。optimize / deleteByFilter / clear 都会重建或压实整张表文件，
+   * 彼此并发会踩踏同一表目录 —— 典型即「后台压实与 /clear 的 dropTable+createTable 重叠」，
+   * 导致向量删除不生效（旧向量残留被继续召回）甚至表损坏。三者一律排到本链上串行执行。
+   */
+  private structuralOps: Promise<unknown> = Promise.resolve();
   private logger?: { info: (msg: string, ...a: unknown[]) => void; warn: (msg: string, ...a: unknown[]) => void };
 
   constructor(dbPath: string, tableName: string, optimizeEvery: number, logger?: LanceDBVectorStore['logger']) {
@@ -72,6 +78,16 @@ class LanceDBVectorStore implements VectorStoreService {
     this.tableName = tableName;
     this.optimizeEvery = optimizeEvery;
     this.logger = logger;
+  }
+
+  /** 把结构性表操作排到同一条串行链上执行，杜绝压实与重建互相踩踏。 */
+  private serialize<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.structuralOps.then(fn, fn);
+    this.structuralOps = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   /** 初始化连接（必须在使用前调用） */
@@ -116,11 +132,15 @@ class LanceDBVectorStore implements VectorStoreService {
     if (this.optimizeEvery <= 0 || this.optimizing) return;
     if (++this.addsSinceOptimize < this.optimizeEvery) return;
     this.addsSinceOptimize = 0;
-    const table = this.table;
-    if (!table) return;
-    this.optimizing = table
-      .optimize()
+    if (!this.table) return;
+    // 经串行锁执行：与 deleteByFilter/clear 互斥。锁内读 this.table（而非捕获旧引用），
+    // 确保压实的是当前表——若排队期间 /clear 重建了表，则压实新表；若表已被清空则跳过。
+    this.optimizing = this.serialize(async () => {
+      const t = this.table;
+      return t ? await t.optimize() : null;
+    })
       .then(stats => {
+        if (!stats) return;
         const removed = stats.compaction.fragmentsRemoved;
         const freedMB = Math.round(stats.prune.bytesRemoved / 1024 / 1024);
         if (removed > 0 || freedMB > 0) {
@@ -161,7 +181,8 @@ class LanceDBVectorStore implements VectorStoreService {
     return this.table.countRows();
   }
 
-  async clear(): Promise<void> {
+  /** 内部清空（不加串行锁）：供已持锁的 deleteByFilter 复用，避免自锁死。 */
+  private async clearInternal(): Promise<void> {
     if (this.table) {
       this.table.close();
       this.table = null;
@@ -174,33 +195,40 @@ class LanceDBVectorStore implements VectorStoreService {
     }
   }
 
+  async clear(): Promise<void> {
+    await this.serialize(() => this.clearInternal());
+  }
+
   async deleteByFilter(filter: Record<string, unknown>): Promise<number> {
-    if (!this.table) return 0;
-    const before = await this.table.countRows();
-    if (before === 0) return 0;
-    // LanceDB 的 metadata 存储在 metadata_json 字段中，需要通过全表扫描过滤
-    // 读取全部记录，过滤后重建表
-    const allRows = await this.table.query().toArray();
-    const keep = allRows.filter(row => {
-      const meta = JSON.parse(row.metadata_json as string) as Record<string, unknown>;
-      // 保留条件：filter 中任一 key 不匹配则保留（即全部匹配才删除）
-      return Object.entries(filter).some(([key, value]) => meta[key] !== value);
+    // 整个读-过滤-重建过程走串行锁：避免与后台压实 / 另一次清空并发重建同一张表。
+    return this.serialize(async () => {
+      if (!this.table) return 0;
+      const before = await this.table.countRows();
+      if (before === 0) return 0;
+      // LanceDB 的 metadata 存储在 metadata_json 字段中，需要通过全表扫描过滤
+      // 读取全部记录，过滤后重建表
+      const allRows = await this.table.query().toArray();
+      const keep = allRows.filter(row => {
+        const meta = JSON.parse(row.metadata_json as string) as Record<string, unknown>;
+        // 保留条件：filter 中任一 key 不匹配则保留（即全部匹配才删除）
+        return Object.entries(filter).some(([key, value]) => meta[key] !== value);
+      });
+      const deleted = before - keep.length;
+      if (deleted > 0 && keep.length > 0) {
+        // 将 Arrow 格式行转换为纯 JS 对象，避免 schema 推断失败
+        const plainRows = keep.map(row => ({
+          vector: Array.from(row.vector as Iterable<number>),
+          metadata_json: row.metadata_json as string,
+        }));
+        // 重建表
+        this.table.close();
+        await this.db.dropTable(this.tableName);
+        this.table = await this.db.createTable(this.tableName, plainRows);
+      } else if (deleted > 0 && keep.length === 0) {
+        await this.clearInternal();
+      }
+      return deleted;
     });
-    const deleted = before - keep.length;
-    if (deleted > 0 && keep.length > 0) {
-      // 将 Arrow 格式行转换为纯 JS 对象，避免 schema 推断失败
-      const plainRows = keep.map(row => ({
-        vector: Array.from(row.vector as Iterable<number>),
-        metadata_json: row.metadata_json as string,
-      }));
-      // 重建表
-      this.table.close();
-      await this.db.dropTable(this.tableName);
-      this.table = await this.db.createTable(this.tableName, plainRows);
-    } else if (deleted > 0 && keep.length === 0) {
-      await this.clear();
-    }
-    return deleted;
   }
 
   async save(): Promise<void> {
