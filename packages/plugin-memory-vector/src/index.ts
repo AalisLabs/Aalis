@@ -436,16 +436,21 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           data.results.push({ source: 'vector', success: true, message: '所有向量记忆已清空' });
           ctx.logger.info('向量记忆已全部清空');
         } else if (data.sessionId) {
-          let deleted = 0;
           const currentStore = getStore();
           if (currentStore.deleteByFilter) {
-            deleted = await currentStore.deleteByFilter({ sessionId: data.sessionId });
+            const deleted = await currentStore.deleteByFilter({ sessionId: data.sessionId });
             await currentStore.save();
+            data.results.push({ source: 'vector', success: true, message: `向量记忆已清空 (${deleted} 条)` });
+            ctx.logger.info(`向量记忆已清空: session=${data.sessionId}, 删除 ${deleted} 条向量`);
           } else {
+            // 老实报告：不支持会话级删除时不能谎称成功（此前会 push success 且「已清空 0 条」误导用户）。
             ctx.logger.warn('当前向量存储不支持按条件删除，会话级向量清空跳过');
+            data.results.push({
+              source: 'vector',
+              success: false,
+              message: '当前向量存储不支持会话级清空，向量记忆未清除（可改用 /clear.all 或换支持按条件删除的后端）',
+            });
           }
-          data.results.push({ source: 'vector', success: true, message: `向量记忆已清空 (${deleted} 条)` });
-          ctx.logger.info(`向量记忆已清空: session=${data.sessionId}, 删除 ${deleted} 条向量`);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
