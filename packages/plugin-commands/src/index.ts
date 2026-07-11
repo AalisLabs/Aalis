@@ -57,7 +57,9 @@ const CLEAR_TYPES = [
   { id: 'vector', label: '向量记忆' },
   { id: 'image', label: '图片缓存' },
   { id: 'persona', label: '会话角色状态' },
+  { id: 'checkpoint', label: '检查点（对话回滚存档）' },
   { id: 'user-profile', label: '用户档案（仅全局清理）' },
+  { id: 'user-relation', label: '用户关系图谱（仅全局清理）' },
 ] as const;
 
 const CLEAR_TYPE_ALIASES: Record<string, string> = {
