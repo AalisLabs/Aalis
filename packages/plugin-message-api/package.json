@@ -22,6 +22,9 @@
     "build": "tsc",
     "dev": "tsc --watch"
   },
+  "dependencies": {
+    "@aalis/util-text-normalize": "workspace:*"
+  },
   "devDependencies": {
     "@aalis/core": "workspace:*",
     "@types/node": "^22.0.0",
