@@ -190,3 +190,42 @@ export function normalizeAssistantContent(content: string): string {
   const { sanitized } = stripLeakedSpecialTokens(content);
   return fixGfmTables(sanitized);
 }
+
+/**
+ * 代理安全地按字符数截断字符串（可选追加 suffix）。
+ *
+ * 与 `str.slice(0, max)` 语义一致（max 为 UTF-16 码元数），唯一区别：若截断边界正好落在一个
+ * 代理对（emoji / 生僻字，占两个码元）中间，回退一位、整字符丢弃 —— 保证结果绝不以孤代理结尾。
+ *
+ * 为什么要这个：孤代理经 `JSON.stringify` 会编成 `\ud83d`（半个代理对），被严格的 JSON 解析器
+ * （如 DeepSeek 服务端）拒收，报 "unexpected end of hex escape"，导致整条 LLM 请求 400。任何会
+ * 进入 LLM 上下文或落库后被再注入的内容截断，都应改用本函数而非裸 `.slice(0, N)`。
+ *
+ * 第三方无需强制使用：LLM 边界（prepareLLMMessages）另有 toWellFormed 兜底；本函数是"从源头不产生
+ * 孤代理、且保留 emoji 完整"的便利选项。
+ */
+export function truncateChars(str: string, max: number, suffix = ''): string {
+  if (max < 0 || str.length <= max) return str;
+  let end = max;
+  const lastKept = str.charCodeAt(end - 1);
+  // 高代理 0xD800-0xDBFF：它是某个代理对的前半（或本身已是孤代理）——回退一位整体丢弃。
+  if (lastKept >= 0xd800 && lastKept <= 0xdbff) end -= 1;
+  return str.slice(0, end) + suffix;
+}
+
+// 匹配孤代理：高代理后不跟低代理，或低代理前不接高代理。
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/**
+ * 把字符串规整为"良构 UTF-16"：任何孤代理替换为 U+FFFD（`�`）。等价于 ES2024 的
+ * `String.prototype.toWellFormed()`，但不依赖 ES2024 lib（项目 target 为 ES2022）。
+ *
+ * 用途：LLM 请求边界的硬保证。孤代理经 `JSON.stringify` 会成 `\ud83d`（半个代理对），被严格 JSON
+ * 解析器（如 DeepSeek 服务端）拒收致整条请求 400。对良构内容为 no-op（原样返回，不新建字符串），
+ * 故不改变现有行为。
+ */
+export function toWellFormedText(str: string): string {
+  // test 前重置 lastIndex（全局正则的 test 有状态）。
+  LONE_SURROGATE.lastIndex = 0;
+  return LONE_SURROGATE.test(str) ? str.replace(LONE_SURROGATE, '�') : str;
+}
