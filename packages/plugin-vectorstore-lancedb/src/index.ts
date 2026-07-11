@@ -50,6 +50,19 @@ interface LanceDBConfig {
   optimizeEvery: number;
 }
 
+/**
+ * 构造匹配 metadata_json 里某个 JSON 字段的 SQL LIKE 谓词（供 LanceDB 原生 delete 用，不载入 JS）。
+ * metadata 以紧凑 JSON.stringify 存于 metadata_json 字符串列，字段形如 `"key":<json值>`，其后必跟 `,` 或 `}`。
+ * 故按 `"key":<json值>` + 边界 子串匹配：字符串值自带引号（自定界），数字值靠尾随 `,`/`}` 定界，
+ * 杜绝「"timestamp":1751 误配 17510」这类数字前缀误删。转义 LIKE 特殊字符（\ % _）与 SQL 单引号。
+ */
+export function metaJsonFieldPredicate(key: string, value: unknown): string {
+  const kv = `"${key}":${JSON.stringify(value)}`;
+  const esc = (s: string): string => s.replace(/([\\%_])/g, '\\$1').replace(/'/g, "''");
+  const e = esc(kv);
+  return `(metadata_json LIKE '%${e},%' ESCAPE '\\' OR metadata_json LIKE '%${e}}%' ESCAPE '\\')`;
+}
+
 // ===== LanceDB 向量存储实现 =====
 
 class LanceDBVectorStore implements VectorStoreService {
@@ -200,34 +213,18 @@ class LanceDBVectorStore implements VectorStoreService {
   }
 
   async deleteByFilter(filter: Record<string, unknown>): Promise<number> {
-    // 整个读-过滤-重建过程走串行锁：避免与后台压实 / 另一次清空并发重建同一张表。
+    // 走串行锁：与后台压实/clear 互斥。用 LanceDB 原生 delete(SQL 谓词) 原地删除 ——
+    // 绝不把整表读进 JS。旧实现 query().toArray() 全表载入 + 复制重建，在大库（十万+条向量）上
+    // 直接 OOM 硬崩（进程被杀、不留日志、终端未复原），且逐轮回滚会 N 次触发。改原生删除后无此风险。
     return this.serialize(async () => {
       if (!this.table) return 0;
+      const clauses = Object.entries(filter).map(([key, value]) => metaJsonFieldPredicate(key, value));
+      if (clauses.length === 0) return 0; // 空过滤器不删（防误清全库）
       const before = await this.table.countRows();
       if (before === 0) return 0;
-      // LanceDB 的 metadata 存储在 metadata_json 字段中，需要通过全表扫描过滤
-      // 读取全部记录，过滤后重建表
-      const allRows = await this.table.query().toArray();
-      const keep = allRows.filter(row => {
-        const meta = JSON.parse(row.metadata_json as string) as Record<string, unknown>;
-        // 保留条件：filter 中任一 key 不匹配则保留（即全部匹配才删除）
-        return Object.entries(filter).some(([key, value]) => meta[key] !== value);
-      });
-      const deleted = before - keep.length;
-      if (deleted > 0 && keep.length > 0) {
-        // 将 Arrow 格式行转换为纯 JS 对象，避免 schema 推断失败
-        const plainRows = keep.map(row => ({
-          vector: Array.from(row.vector as Iterable<number>),
-          metadata_json: row.metadata_json as string,
-        }));
-        // 重建表
-        this.table.close();
-        await this.db.dropTable(this.tableName);
-        this.table = await this.db.createTable(this.tableName, plainRows);
-      } else if (deleted > 0 && keep.length === 0) {
-        await this.clearInternal();
-      }
-      return deleted;
+      await this.table.delete(clauses.join(' AND '));
+      const after = await this.table.countRows();
+      return before - after;
     });
   }
 
