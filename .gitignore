@@ -36,3 +36,4 @@ models/
 *.sqlite3
 *.local
 **/settings.local.json
+sts2-dev/
