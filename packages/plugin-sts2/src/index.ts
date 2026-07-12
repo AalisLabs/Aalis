@@ -215,6 +215,50 @@ function kbForEnemies(state: GameState, sections: Array<[string, string]>): stri
   return hits.join('\n').slice(0, 1500);
 }
 
+/** 工具结果瘦身:每次 sts2_action 的返回都会留在上下文里被后续所有迭代重复计费,
+ * 战斗只回精简视图(手牌/敌人/意图),非战斗剥掉 full_map 这类大块;
+ * 完整数据在每次新决策的 requestDecision 里仍然全量携带。 */
+function compactState(state: GameState): GameState {
+  try {
+    const powersOf = (o: Record<string, unknown>): string[] =>
+      ((o.powers ?? []) as Array<Record<string, unknown>>).map(pw => `${pw.name}x${pw.amount}`);
+    if (screenOf(state) === 'combat') {
+      const p = (state.player ?? {}) as Record<string, unknown>;
+      return {
+        in_combat: true,
+        round: state.round,
+        player: {
+          hp: p.hp,
+          max_hp: p.max_hp,
+          block: p.block,
+          energy: p.energy,
+          powers: powersOf(p),
+          hand: ((p.hand ?? []) as Array<Record<string, unknown>>).map(c => ({
+            index: c.index,
+            title: c.title,
+            cost: c.cost,
+            desc: String(c.desc ?? '').slice(0, 80),
+          })),
+          draw_count: p.draw_count,
+          discard_count: p.discard_count,
+        },
+        allies: state.allies,
+        enemies: ((state.enemies ?? []) as Array<Record<string, unknown>>).map(e => ({
+          name: e.name,
+          hp: e.hp,
+          block: e.block,
+          intent: e.intent,
+          powers: powersOf(e),
+        })),
+      };
+    }
+    const { full_map: _omit, ...rest } = state as Record<string, unknown>;
+    return rest;
+  } catch {
+    return state;
+  }
+}
+
 /** 确定性账房(与 python 驱动同源移植):LLM 不擅长口算,把账算好它只做选择 */
 function combatMath(state: GameState): string {
   try {
@@ -316,6 +360,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   let playingEnabled = true; // 观众喊"停止爬塔/开始爬塔"的总开关(长期,直到反向指令)
   let nowPlaying = ''; // 最近局面摘要(供其它会话感知"我在爬塔")
   let nowPlayingAt = 0;
+  let lastCommentAt = 0; // 点评播报限频(里程碑豁免),别刷屏群聊
 
   // --- 桥 I/O(裸 fetch:私网直连,不走系统代理,勿用 safeFetch) ---
   async function bridge(path: string): Promise<string> {
@@ -529,15 +574,15 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
     const content = [
       '【杀戮尖塔2·轮到你决策】你正在亲自玩杀戮尖塔2,以下是当前局面的完整数据。',
-      '规则提要:战斗看每个敌人的意图(attack_damage×hits)与双方 powers 的 desc;能斩杀先斩杀;',
-      '半血以下防御优先;药水是免费动作别攥着;地图用 full_map 提前规划路线(休息点/避精英);',
-      '奖励里金币/药水白拿,但卡牌要挑——不契合构筑的卡宁可跳过(卡组越薄越强),直接 proceed;',
-      '商店里"删除卡牌"服务通常是最高价值购买(优先删初始打击/防御);构筑规划:第一幕前期堆爆发伤害,',
-      '中后期补格挡/成长;血量健康时休息点选升级而非回血;',
-      '若出现 screen=card_choice(打出的牌要求选牌,游戏已暂停等你):看 options 里的完整牌面,',
-      '用 {"action":"pick_cards","indexes":"0"} 答复(多选用逗号如 "0,2";min=0 时可传空串跳过)——答复前游戏不会继续;',
-      '工具请一次调用一个动作,看到返回的新局面后再决定下一个,不要一口气排多个;',
-      '未知界面用 controls 里的按钮。',
+      '【快速应对表】(常规局面照做,禁止长篇推理;仅 boss/精英/血线<40%/定流派抉择才值得多想)',
+      '- 敌方全体意图伤害=0 → 全力输出/铺场,不留格挡',
+      '- 账房给出"可斩杀" → 按账房牌序直接执行;能量0且无0费牌 → 直接 end_turn',
+      '- 手牌只剩一张可打 → 直接打出(有残血敌先斩杀)',
+      '- 奖励只剩金币/药水 → 拿走后 proceed(药水槽满跳过药水);不契合构筑的卡直接跳过,卡组越薄越强',
+      '- 商店金<50 → leave_shop;删牌服务通常是最高价值购买;篝火 HP≥65% → 升级,<45% → 休息',
+      '- screen=card_choice(游戏暂停等你选牌) → 用 {"action":"pick_cards","indexes":"0"} 应答(多选逗号;min=0 可空串跳过)',
+      '- 药水是免费动作别攥着;地图用 full_map 倒推路线;未知界面点 controls 里的按钮',
+      '工具一次调用一个动作,看到返回的新局面再决定下一个。',
       '',
       playbookInline ? `【作战手册】\n${playbookInline}\n` : '',
       lessonsText ? `【教练手记(旁观你几十局的教练写的,优先级高于一般直觉)】\n${lessonsText}\n` : '',
@@ -549,7 +594,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       `【当前局面】\n${JSON.stringify(state)}`,
       '',
       '请用 sts2_action 工具执行操作——战斗回合里连续调用直到打完(出牌→看返回的新局面→再出→end_turn),',
-      '非战斗界面执行相应的选择/前进动作。全部操作做完后,再用一句话说说你此刻的想法(会播报给观众)。',
+      '非战斗界面执行相应的选择/前进动作。常规操作直接调工具,推理压到三句内。',
+      '全部做完后点评一两句(会播报给观众);若上面有观众建议,点评第一句先回应建议(采纳与否+一句理由)。',
     ]
       .filter(Boolean)
       .join('\n');
@@ -621,7 +667,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           lastDigest = digestOf(state);
           stuckCount = 0;
         }
-        return JSON.stringify({ result: JSON.parse(res || '{}'), state: state ?? 'unreadable' });
+        return JSON.stringify({ result: JSON.parse(res || '{}'), state: state ? compactState(state) : 'unreadable' });
       } catch (e) {
         return JSON.stringify({ error: String(e) });
       }
@@ -652,7 +698,12 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       const commentary = content.replace(/\{[^{}]*\}\s*$/, '').trim();
       if (commentary) {
         logger.info(`💬 ${commentary.slice(0, 150)}`);
-        if (cfg.broadcast) void broadcast(`🗼 ${commentary.slice(0, 150)}`);
+        // 人体工学:普通点评 ≥45s 一条防刷屏;boss/生死/通关等里程碑即刻播
+        const milestone = /boss|Boss|死|阵亡|通关|胜|翻车|精英/.test(commentary);
+        if (cfg.broadcast && (milestone || Date.now() - lastCommentAt > 45000)) {
+          lastCommentAt = Date.now();
+          void broadcast(`🗼 ${commentary.slice(0, 150)}`);
+        }
       }
     },
   };
@@ -705,6 +756,28 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           void broadcast('🗼 新的一局爬塔开始了!');
           return;
         }
+      }
+
+      // 常见免脑局面:机械处理,一次 LLM 都不花(成本优化的第0层)
+      if (scr === 'map') {
+        const opts = (state.options ?? []) as Array<Record<string, unknown>>;
+        if (opts.length === 1) {
+          await doAction({ action: 'choose_node', index: 0 });
+          return;
+        }
+      }
+      if (scr === 'event') {
+        const opts = (state.options ?? []) as Array<Record<string, unknown>>;
+        if (opts.length === 1 && opts[0]?.is_proceed) {
+          await doAction({ action: 'choose_event', index: 0 });
+          return;
+        }
+      }
+      if (scr === 'other' && String(state.overlay ?? '').includes('GameOver')) {
+        const controls = (state.controls ?? []) as Array<Record<string, unknown>>;
+        const cont = controls.find(c => String(c.name ?? '').includes('Continue')) ?? controls[0];
+        if (cont) await doAction({ action: 'click', id: cont.id });
+        return;
       }
 
       // 战斗中手牌为空 = 抽牌/敌方回合动画,等下一轮
