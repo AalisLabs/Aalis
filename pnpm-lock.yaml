@@ -1747,6 +1747,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:^
         version: link:../plugin-agent-api
+      '@aalis/plugin-memory-api':
+        specifier: workspace:^
+        version: link:../plugin-memory-api
       '@aalis/plugin-tools-api':
         specifier: workspace:^
         version: link:../plugin-tools-api

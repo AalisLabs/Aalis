@@ -127,6 +127,12 @@ declare module '@aalis/core' {
       userId?: string;
       platform?: string;
       triggerType?: IncomingMessage['triggerType'];
+      /**
+       * 干跑标记:本次只为估算上下文体积(token:request 快照),不会真正调用 LLM。
+       * 昂贵/有副作用的注入者(向量检索、档案加载)据此跳过——代价是快照略微
+       * 低估这些块的体积,真实回合的统计不受影响。
+       */
+      dryRun?: boolean;
     };
     'agent:llm:after': { response: ChatResponse; messages: Message[] };
   }
@@ -170,6 +176,40 @@ declare module '@aalis/core' {
   interface ServiceTypeMap {
     agent: AgentService;
   }
+}
+
+// ----- agent:llm:before 注入 helper -----
+
+/**
+ * 幂等地向消息数组注入一条带标签的 system 块——agent:llm:before 注入者的标准写法。
+ *
+ * 收敛三件事,避免各插件手搓 findIndex+splice 的重复与遗漏:
+ * 1. 幂等:同 injector 标签已存在则跳过(钩子在工具循环每轮重跑,不查重会每轮多插一份);
+ * 2. 落点:'head' 插到第一条非 system 消息之前(头部 system 块末尾,默认),
+ *    'afterFirstSystem' 紧贴第一条 system(persona)之后;
+ * 3. 标签:metadata.injector 用于幂等/token 统计/裁剪识别,必填。
+ *
+ * @returns 是否实际插入(已存在时返回 false)
+ */
+export function injectSystemBlock(
+  messages: Message[],
+  opts: { injector: string; content: string; anchor?: 'head' | 'afterFirstSystem' },
+): boolean {
+  if (messages.some(m => m.role === 'system' && m.metadata?.injector === opts.injector)) return false;
+  let insertAt: number;
+  if (opts.anchor === 'afterFirstSystem') {
+    const idx = messages.findIndex(m => m.role === 'system');
+    insertAt = idx >= 0 ? idx + 1 : 0;
+  } else {
+    const idx = messages.findIndex(m => m.role !== 'system');
+    insertAt = idx === -1 ? messages.length : idx;
+  }
+  messages.splice(insertAt, 0, {
+    role: 'system',
+    content: opts.content,
+    metadata: { injector: opts.injector },
+  } as Message);
+  return true;
 }
 
 // ----- token:usage 事件契约 -----
