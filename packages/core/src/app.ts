@@ -135,6 +135,9 @@ export class App {
     this.events.onHandlerError ??= (event, err) => {
       this.logger.warn(`事件 "${event}" 的监听器抛错（已隔离）:`, err);
     };
+    // 广播型钩子相位的"卡链"上报同理（handler 忘调 next 会静默吞掉下游注入）。
+    this.hooks.onStall ??= (hook, contextId, skipped) =>
+      this.logger.warn(`钩子 ${hook}: handler(来自 ${contextId}) 未调用 next()，其后 ${skipped} 个 handler 被跳过`);
     this.pluginLoader = options.pluginLoader;
     this.restartStrategy = options.restartStrategy;
 

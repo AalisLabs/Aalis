@@ -312,7 +312,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   });
 
-  // 注册 agent:llm:before 钩子 —— 高优先级，替换工具列表
+  // 注册 agent:llm:before 钩子 —— 整体替换 data.tools(agent 每轮迭代会重置
+  // tools 为原始全量后重跑本钩子,过滤幂等重算,与其它 handler 顺序无关)
   ctx.middleware('agent:llm:before', async (data, next) => {
     const allDefs = data.tools;
 
