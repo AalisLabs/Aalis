@@ -497,7 +497,7 @@ class DefaultAgent implements AgentService {
           platform: incoming.platform,
           triggerType: incoming.triggerType,
         };
-        await this.ctx.hooks.run('agent:llm:before', llmBeforeData);
+        await this.ctx.hooks.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
 
         // 裁剪消息以确保不超过上下文窗口
         llmBeforeData.messages = this.trimMessages(llmBeforeData.messages, tokenBudget);
@@ -707,7 +707,7 @@ class DefaultAgent implements AgentService {
             platform: incoming.platform,
             triggerType: incoming.triggerType,
           };
-          await this.ctx.hooks.run('agent:llm:before', nextLlmData);
+          await this.ctx.hooks.run('agent:llm:before', nextLlmData, undefined, { warnOnStall: true });
 
           // 裁剪消息以确保不超过上下文窗口
           nextLlmData.messages = this.trimMessages(nextLlmData.messages, tokenBudget);
@@ -1147,6 +1147,7 @@ class DefaultAgent implements AgentService {
     let platformTokens = 0;
     let subtaskTokens = 0;
     let systemOtherTokens = 0;
+    const injectorTokens: Record<string, number> = {};
 
     for (const msg of messages) {
       const t = estimateMsgTokens(msg);
@@ -1158,8 +1159,10 @@ class DefaultAgent implements AgentService {
           memorySummaryTokens += t;
         } else if (source === 'memory-vector') {
           memoryVectorTokens += t;
-        } else if (source === 'platform') {
+        } else if (source?.startsWith('platform')) {
           platformTokens += t;
+        } else if (source === 'skills-discovery' || source?.startsWith('skills-activation')) {
+          skillsTokens += t;
         } else if (source === 'system-other') {
           systemOtherTokens += t;
         } else if (source === 'persona' || !source) {
@@ -1178,7 +1181,10 @@ class DefaultAgent implements AgentService {
             personaTokens += t;
           }
         } else {
+          // 其余注入者(memory-history/user-profile/user-relation/自定义插件等):
+          // 计入 systemOther 汇总之余按标签点名,预算争抢时能看出是谁在吃。
           systemOtherTokens += t;
+          injectorTokens[source] = (injectorTokens[source] ?? 0) + t;
         }
       } else if (msg.role === 'tool') {
         toolResultTokens += t;
@@ -1219,6 +1225,7 @@ class DefaultAgent implements AgentService {
           platform: platformTokens,
           subtask: subtaskTokens,
           systemOther: systemOtherTokens,
+          injectors: injectorTokens,
           history: historyTokens,
           toolResults: toolResultTokens,
           toolDefs: toolDefsTokens,
@@ -1446,12 +1453,16 @@ class DefaultAgent implements AgentService {
     }
 
     // === Phase 5: 极端情况 — 删除 hook 注入的 system 消息 ===
+    // 从最靠前的块开始删:靠头的是档案/长期记忆类(下轮会重注,可再生),
+    // 靠尾的是"解释本轮触发原因"的当轮提示(如平台事件说明),牺牲价值最高,最后动。
     {
       const sysIdx = findSystemIndices();
-      for (let j = sysIdx.length - 1; j >= 0 && estimated > budget; j--) {
-        const idx = sysIdx[j];
+      let removed = 0;
+      for (let j = 0; j < sysIdx.length && estimated > budget; j++) {
+        const idx = sysIdx[j] - removed;
         estimated -= estimateMsgTokens(result[idx]);
         result.splice(idx, 1);
+        removed++;
       }
     }
 
@@ -1856,7 +1867,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         [];
 
       const llmBeforeData = { messages, tools, sessionId: data.sessionId, userId: '', platform: data.platform ?? '' };
-      await ctx.hooks.run('agent:llm:before', llmBeforeData);
+      await ctx.hooks.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
 
       agent.emitTokenUsage(
         data.sessionId,

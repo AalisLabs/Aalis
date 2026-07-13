@@ -184,6 +184,8 @@ export interface TokenUsageBreakdown {
   platform: number;
   subtask: number;
   systemOther: number;
+  /** systemOther 的按注入者明细(injector 标签 → tokens),诊断预算争抢用 */
+  injectors?: Record<string, number>;
   history: number;
   toolResults: number;
   toolDefs: number;

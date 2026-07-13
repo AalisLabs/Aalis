@@ -367,7 +367,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   // === 中间件：在 LLM 调用前注入摘要 ===
-  // 优先级 40（低于 vector-memory 的 50，确保摘要在向量记忆之后注入）
+  // 注:钩子无优先级机制,同相位 handler 按插件激活序执行——本注入是独立 system 块
+  // 且带 injector 标签幂等,不依赖与 memory-vector 的先后顺序。
   ctx.middleware('agent:llm:before', async (data, next) => {
     const sessionId = data.sessionId;
     if (!sessionId) {

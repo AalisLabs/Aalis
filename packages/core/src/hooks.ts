@@ -30,6 +30,14 @@ export class HookRegistry {
   private hooks = new Map<string, HookEntry<any>[]>();
 
   /**
+   * 广播型相位的"卡链"上报回调（由 App 接到 logger）。
+   * 对 run(..., { warnOnStall: true }) 的相位,某 handler 返回却没调 next()
+   * 时触发——这类相位的 handler 都是独立装饰者,忘调 next 意味着下游插件的
+   * 注入被静默丢弃,必须可观测。
+   */
+  onStall?: (hook: string, contextId: string, skippedCount: number) => void;
+
+  /**
    * 注册 handler，返回 dispose 函数。
    * 同一钩子键内的多个 handler 按注册顺序执行。
    */
@@ -77,6 +85,7 @@ export class HookRegistry {
     hook: K,
     data: HookContextMap[K],
     defaultAction?: () => Promise<void>,
+    opts?: { warnOnStall?: boolean },
   ): Promise<boolean> {
     // 快照：handler 执行中 register/dispose（splice 活数组）不能扰动本次遍历的
     // 游标——否则会跳过下一个 handler 或误报 reachedEnd。
@@ -90,7 +99,13 @@ export class HookRegistry {
         // 执行前确认 entry 仍在注册表中——运行途中被 dispose 的 handler 跳过
         const current = this.hooks.get(hook);
         if (!current?.includes(entry)) continue;
+        const posBefore = index;
         await entry.fn(data, next);
+        // 广播型相位(warnOnStall):handler 返回后游标没动过 = 它没调 next(),
+        // 其后所有 handler 被静默跳过——点名肇事者,别让下游注入无声蒸发。
+        if (opts?.warnOnStall && index === posBefore && index < snapshot.length) {
+          this.onStall?.(hook, entry.contextId, snapshot.length - index);
+        }
         return;
       }
       reachedEnd = true;
