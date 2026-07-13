@@ -2160,7 +2160,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ];
 
   ctx.middleware('agent:llm:before', async (data, next) => {
-    if (data.sessionId?.includes(':group:')) {
+    // 本钩子在工具循环每轮迭代都会重跑且 messages 跨轮累积,注入必须按标签幂等,
+    // 否则每轮多插一份(曾实际发生,token 随迭代线性浪费)。
+    if (
+      data.sessionId?.includes(':group:') &&
+      !data.messages.some(m => m.role === 'system' && m.metadata?.injector === 'platform-group-hint')
+    ) {
       // 在最后一条用户消息前插入时间感知提示
       let lastUserIdx = -1;
       for (let i = data.messages.length - 1; i >= 0; i--) {
@@ -2175,13 +2180,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           content:
             '注意：以上是群聊的历史消息记录，包含多位群友的发言。' +
             '请留意消息的时间先后顺序，优先关注近期的对话内容和上下文。',
-          metadata: { injector: 'platform' },
+          metadata: { injector: 'platform-group-hint' },
         });
       }
     }
 
     // 特殊事件触发上下文：检查最后一条用户消息是否为非文本事件
-    if (data.sessionId?.startsWith('onebot:')) {
+    if (
+      data.sessionId?.startsWith('onebot:') &&
+      !data.messages.some(m => m.role === 'system' && m.metadata?.injector === 'platform-event-hint')
+    ) {
       const lastMsg = data.messages[data.messages.length - 1];
       if (lastMsg?.role === 'user' && typeof lastMsg.content === 'string') {
         // 去掉发送者前缀后匹配事件模式
@@ -2192,7 +2200,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             data.messages.splice(data.messages.length - 1, 0, {
               role: 'system',
               content: hint,
-              metadata: { injector: 'platform' },
+              metadata: { injector: 'platform-event-hint' },
             });
             break;
           }
