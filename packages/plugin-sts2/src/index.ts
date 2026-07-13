@@ -17,7 +17,7 @@
 // biome-ignore lint/style/noRestrictedImports: 知识/建议文件是宿主机上仓库外的绝对路径(env 配置,与 sts2 桥同机),不在任何 storage 根内;走 storage gateway 反而要强制配 host:/ 直通根
 import { existsSync, readFileSync, unwatchFile, watchFile } from 'node:fs';
 import type { ConfigSchema, Context } from '@aalis/core';
-import type {} from '@aalis/plugin-agent-api'; // agent:llm:before 钩子类型的模块增强
+import { injectSystemBlock } from '@aalis/plugin-agent-api'; // 含 agent:llm:before 钩子类型的模块增强
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform-api';
@@ -456,18 +456,13 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   ctx.middleware('agent:llm:before', async (data, next) => {
     const fresh = nowPlaying && Date.now() - nowPlayingAt < 5 * 60 * 1000;
     if (fresh && data.sessionId && !String(data.sessionId).startsWith('sts2:')) {
-      const has = data.messages.some(m => m.role === 'system' && m.metadata?.injector === 'sts2-presence');
-      if (!has) {
-        const idx = data.messages.findIndex(m => m.role !== 'system');
-        data.messages.splice(idx === -1 ? data.messages.length : idx, 0, {
-          role: 'system',
-          content:
-            `(状态同步:我此刻正在玩杀戮尖塔2——${nowPlaying}。` +
-            '如果对方在聊我的对局或给建议,自然接话;他们的建议会真实影响我接下来的选路/抓牌/打法。' +
-            '控场口令(在建议会话里说):"暂停"=停手商量,"继续"=恢复,"停止爬塔"=收工,"开始爬塔"=开工。)',
-          metadata: { injector: 'sts2-presence' },
-        });
-      }
+      injectSystemBlock(data.messages, {
+        injector: 'sts2-presence',
+        content:
+          `(状态同步:我此刻正在玩杀戮尖塔2——${nowPlaying}。` +
+          '如果对方在聊我的对局或给建议,自然接话;他们的建议会真实影响我接下来的选路/抓牌/打法。' +
+          '控场口令(在建议会话里说):"暂停"=停手商量,"继续"=恢复,"停止爬塔"=收工,"开始爬塔"=开工。)',
+      });
     }
     await next();
   });

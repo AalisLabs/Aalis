@@ -29,7 +29,8 @@
   },
   "dependencies": {
     "@aalis/plugin-agent-api": "workspace:^",
-    "@aalis/plugin-tools-api": "workspace:^"
+    "@aalis/plugin-tools-api": "workspace:^",
+    "@aalis/plugin-memory-api": "workspace:^"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
