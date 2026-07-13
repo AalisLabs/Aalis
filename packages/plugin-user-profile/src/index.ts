@@ -1766,7 +1766,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   // ─── 关系分数：在 agent 触发回复路径上更新 ───
-  // priority=800：低于 persona(999)，避免干扰主流程，但在 agent 之前执行
+  // 注:钩子无优先级机制,同相位 handler 按插件激活序执行;本 handler 只做副作用
+  // (更新关系分数)不改消息,与其它 handler 顺序无关。
   // 关系强度与"是否触发回复"绑定，因此仍走 agent:input:before 中间件。
   ctx.middleware(
     'agent:input:before',
