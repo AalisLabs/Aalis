@@ -60,11 +60,14 @@ export function registerRelationMiddleware(ctx: Context, service: RelationServic
   if (!cfg.enabled) return;
   ctx.middleware('agent:llm:before', async (data: LLMBeforeData, next) => {
     try {
-      // 工具循环每轮重跑本钩子,按标签幂等——否则每轮多插一份完整子图块
-      const already = data.messages.some(
-        m => m.role === 'system' && (m.metadata as Record<string, unknown> | undefined)?.injector === 'user-relation',
-      );
-      const block = already ? undefined : await buildBlock(service, data, cfg);
+      // 干跑(token 快照)跳过关系图查询;工具循环每轮重跑本钩子,按标签幂等——
+      // 否则每轮多插一份完整子图块
+      const skip =
+        (data as { dryRun?: boolean }).dryRun ||
+        data.messages.some(
+          m => m.role === 'system' && (m.metadata as Record<string, unknown> | undefined)?.injector === 'user-relation',
+        );
+      const block = skip ? undefined : await buildBlock(service, data, cfg);
       if (block) {
         const idx = data.messages.findIndex(m => m.role === 'system');
         const insertAt = idx >= 0 ? idx + 1 : 0;

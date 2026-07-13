@@ -3,6 +3,7 @@ import type { ToolCallContext, ToolDefinition, ToolService, ToolSummary } from '
 import { useToolService } from '@aalis/plugin-tools-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import '@aalis/plugin-agent-api';
+import type {} from '@aalis/plugin-memory-api'; // declaration merging：memory:clear 钩子类型
 
 // ===== 插件元数据 =====
 
@@ -145,7 +146,60 @@ function searchTools(summaries: ToolSummary[], query: string): ToolSummary[] {
  *
  * 返回值按“最近一次出现的时间正序排列”：调用方可对 size 做 FIFO 截断保留最近 N 个。
  */
-function extractDiscoveredTools(
+/**
+ * 会话级已发现工具注册表。
+ *
+ * 根修:发现证据原本只从消息历史反推,而上下文裁剪会把旧 assistant+tool 组
+ * 压成纯文本(toolCalls/toolCallId 结构消失)——长任务中途,已激活的工具会从
+ * 可见列表悄然蒸发,模型突然调不了刚用过的工具。注册表把每轮提取结果做并集
+ * 持久(进程内存级),对消息考古的完整性不再敏感;memory:clear 时同步重置。
+ */
+export class DiscoveredToolsRegistry {
+  private sessions = new Map<string, Map<string, true>>();
+
+  constructor(
+    private maxPerSession: number,
+    private maxSessions = 500,
+  ) {}
+
+  /** 并入一轮提取结果,返回该会话当前完整发现集(名字按最近使用排序的 LRU) */
+  absorb(sessionId: string, names: Iterable<string>): Set<string> {
+    let reg = this.sessions.get(sessionId);
+    if (!reg) {
+      reg = new Map();
+    } else {
+      this.sessions.delete(sessionId); // 活跃会话顶到尾部
+    }
+    this.sessions.set(sessionId, reg);
+    while (this.sessions.size > this.maxSessions) {
+      const oldest = this.sessions.keys().next().value;
+      if (oldest === undefined) break;
+      this.sessions.delete(oldest);
+    }
+    for (const name of names) {
+      if (reg.has(name)) reg.delete(name);
+      reg.set(name, true);
+    }
+    while (this.maxPerSession > 0 && reg.size > this.maxPerSession) {
+      const oldest = reg.keys().next().value;
+      if (oldest === undefined) break;
+      reg.delete(oldest);
+    }
+    return new Set(reg.keys());
+  }
+
+  /** 只读探视(不刷新 LRU、不创建会话) */
+  peek(sessionId: string): Set<string> {
+    return new Set(this.sessions.get(sessionId)?.keys() ?? []);
+  }
+
+  clear(sessionId?: string): void {
+    if (sessionId) this.sessions.delete(sessionId);
+    else this.sessions.clear();
+  }
+}
+
+export function extractDiscoveredTools(
   messages: {
     role: string;
     content?: string | null;
@@ -225,6 +279,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const maxSearchResults = (config.maxSearchResults as number) ?? 5;
   const alwaysDirectTools = normalizeToolNames(config.alwaysDirectTools);
   const maxDiscoveredKeep = Math.max(0, Math.floor(Number(config.maxDiscoveredKeep ?? 20)));
+  const discoveredRegistry = new DiscoveredToolsRegistry(maxDiscoveredKeep);
+  // /clear 等记忆清除时同步遗忘发现集,与"会话重新开始"的语义对齐
+  ctx.middleware('memory:clear', async (data, next) => {
+    if (data.scope === 'all') discoveredRegistry.clear();
+    else if (data.sessionId) discoveredRegistry.clear(data.sessionId);
+    await next();
+  });
   const warnedMissingDirectTools = new Set<string>();
 
   if (!enabled) {
@@ -323,8 +384,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return;
     }
 
-    // 从消息历史提取已发现的工具（含历史调用过的，FIFO 上限保护）
-    const discovered = extractDiscoveredTools(data.messages, maxDiscoveredKeep);
+    // 从消息历史提取已发现的工具,并入会话级注册表(裁剪摧毁消息证据后仍记得)
+    const discovered = discoveredRegistry.absorb(
+      data.sessionId ?? 'default',
+      extractDiscoveredTools(data.messages, maxDiscoveredKeep),
+    );
 
     // 构建 search_tools 定义（showToolNames 时附带工具名列表）
     const otherToolNames = allDefs.map(d => d.function.name).filter(n => n !== SEARCH_TOOL_NAME);

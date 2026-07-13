@@ -1922,6 +1922,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         await next();
         return;
       }
+      // 干跑(token 快照)跳过档案/主观感受加载——该路径 userId 为空串,加载既昂贵又无意义
+      if ((data as { dryRun?: boolean }).dryRun) {
+        await next();
+        return;
+      }
 
       const blocksToInsert: string[] = [];
       const trigger = data.triggerType ?? 'direct';

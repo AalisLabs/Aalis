@@ -467,9 +467,21 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   ctx.middleware(
     'agent:llm:before',
     async (
-      data: { messages: Message[]; tools: unknown[]; sessionId?: string; userId?: string; platform?: string },
+      data: {
+        messages: Message[];
+        tools: unknown[];
+        sessionId?: string;
+        userId?: string;
+        platform?: string;
+        dryRun?: boolean;
+      },
       next: MiddlewareNext,
     ) => {
+      // 干跑(token 快照)不做真实的 embedding+检索——那是纯统计路径的昂贵副作用
+      if (data.dryRun) {
+        await next();
+        return;
+      }
       if (data.messages.some(m => m.role === 'system' && m.metadata?.injector === 'memory-vector')) {
         await next();
         return;
