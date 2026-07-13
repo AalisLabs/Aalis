@@ -1866,7 +1866,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         ctx.getService<ToolService>('tools')?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ??
         [];
 
-      const llmBeforeData = { messages, tools, sessionId: data.sessionId, userId: '', platform: data.platform ?? '' };
+      const llmBeforeData = {
+        messages,
+        tools,
+        sessionId: data.sessionId,
+        userId: '',
+        platform: data.platform ?? '',
+        dryRun: true, // 纯统计路径:昂贵注入者(向量检索/档案加载)据此跳过副作用
+      };
       await ctx.hooks.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
 
       agent.emitTokenUsage(
