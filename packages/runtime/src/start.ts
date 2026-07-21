@@ -91,6 +91,8 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     restartStrategy: createProcessRespawnStrategy(),
     // 宿主层决定 dev/prod；core 不读 process.env
     devMode: opts.devMode ?? process.env.NODE_ENV !== 'production',
+    // 宿主注入时钟：日志时间戳的权威时间来源在此层，core 逻辑不主动取墙上时间。
+    now: () => new Date(),
   });
 
   // 不变量①：App 构造完成后再让 sink 监听终端归属事件——此前没有 ctx 可订阅。
