@@ -68,6 +68,11 @@ export interface AppOptions {
    * core 不读 `process.env`，完全以宿主传入为准。
    */
   devMode?: boolean;
+  /**
+   * 时钟：日志时间戳的时间来源。缺省 `() => new Date()`（保持现行为）；宿主可注入固定时钟做
+   * 确定性测试。core 逻辑不主动取墙上时间，全由此注入——与 `devMode` 同为"宿主决定"注入项。
+   */
+  now?: () => Date;
 }
 
 /**
@@ -129,7 +134,7 @@ export class App {
     this.hooks = options.hooks ?? new HookRegistry();
     this.logger =
       options.logger ??
-      new DefaultLogger('aalis', config.get('logLevel') as LogLevel, options.logHub ?? LogHub.default);
+      new DefaultLogger('aalis', config.get('logLevel') as LogLevel, options.logHub ?? LogHub.default, options.now);
     // EventBus 保持环境无关不持有 Logger，handler 错误经此回调上报。
     // 外部注入的 bus 若已自带上报器则尊重之（??=）。
     this.events.onHandlerError ??= (event, err) => {
