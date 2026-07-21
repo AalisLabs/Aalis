@@ -1564,31 +1564,6 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/plugin-sts2:
-    dependencies:
-      '@aalis/plugin-agent-api':
-        specifier: workspace:^
-        version: link:../plugin-agent-api
-      '@aalis/plugin-memory-api':
-        specifier: workspace:^
-        version: link:../plugin-memory-api
-      '@aalis/plugin-message-api':
-        specifier: workspace:^
-        version: link:../plugin-message-api
-      '@aalis/plugin-platform-api':
-        specifier: workspace:^
-        version: link:../plugin-platform-api
-      '@aalis/plugin-tools-api':
-        specifier: workspace:^
-        version: link:../plugin-tools-api
-    devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
   packages/plugin-subtask:
     dependencies:
       '@aalis/plugin-agent-api':
