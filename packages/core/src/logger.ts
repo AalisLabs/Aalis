@@ -127,13 +127,19 @@ export class DefaultLogger implements Logger {
     private scope: string,
     minLevel: LogLevel = 'info',
     hub: LogHub = LogHub.default,
+    /**
+     * 时钟：日志时间戳的唯一时间来源。缺省 `() => new Date()`（独立运行/测试兜底，保持现行为）；
+     * 宿主（@aalis/runtime）经 `App({ now })` 显式注入,从而 core 逻辑不含 ambient 时间效应、
+     * 测试可注入固定时钟得到确定性时间戳。
+     */
+    private readonly now: () => Date = () => new Date(),
   ) {
     this.minLevel = minLevel;
     this.hub = hub;
   }
 
   child(scope: string): Logger {
-    return new DefaultLogger(`${this.scope}:${scope}`, this.minLevel, this.hub);
+    return new DefaultLogger(`${this.scope}:${scope}`, this.minLevel, this.hub, this.now);
   }
 
   debug(message: string, ...args: unknown[]): void {
@@ -157,7 +163,7 @@ export class DefaultLogger implements Logger {
 
     // 本地时区 ISO 时间戳（YYYY-MM-DDTHH:mm:ss.sss±HH:mm）——信息保真且贴近人读。
     // sink（console / CLI / WebUI）按显示需求自行截取，不在源头丢日期。
-    const timestamp = formatLocalIso(new Date());
+    const timestamp = formatLocalIso(this.now());
     // 将额外参数（错误对象 / 上下文等）序列化并拼到 message 末尾，
     // 避免 sink 只读 message 时丢失错误细节。**保持运行时中立**：只用纯 ES
     // 原语，不依赖 node:util / window 等任何宿主 API。

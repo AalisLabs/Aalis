@@ -90,6 +90,42 @@ describe('LogHub', () => {
   });
 });
 
+describe('DefaultLogger 时钟注入（确定性时间戳）', () => {
+  it('注入固定时钟 → 时间戳确定、不取墙上时间', () => {
+    const hub = new LogHub();
+    const seen: string[] = [];
+    hub.onEntry(e => seen.push(e.timestamp));
+    const fixed = new Date('2020-06-15T08:30:00.000Z');
+    const log = new DefaultLogger('t', 'debug', hub, () => fixed);
+    log.info('a');
+    log.info('b');
+    // 两条都用注入时钟 → 时间戳相同（墙上时钟会各不相同），且解析回等于注入瞬间
+    expect(seen[0]).toBe(seen[1]);
+    expect(new Date(seen[0]).getTime()).toBe(fixed.getTime());
+  });
+
+  it('child 继承注入的时钟', () => {
+    const hub = new LogHub();
+    let ts = '';
+    hub.onEntry(e => {
+      ts = e.timestamp;
+    });
+    const fixed = new Date('2021-01-01T00:00:00.000Z');
+    new DefaultLogger('root', 'info', hub, () => fixed).child('sub').info('x');
+    expect(new Date(ts).getTime()).toBe(fixed.getTime());
+  });
+
+  it('不注入时默认取当前时间（保持现行为、不破坏）', () => {
+    const hub = new LogHub();
+    let ts = '';
+    hub.onEntry(e => {
+      ts = e.timestamp;
+    });
+    new DefaultLogger('t', 'debug', hub).info('x'); // 3 参，走默认时钟
+    expect(Math.abs(Date.parse(ts) - Date.now())).toBeLessThan(1000);
+  });
+});
+
 describe('AppOptions.logger 注入（Logger 接口化）', () => {
   it('注入自定义 Logger 后 core 日志走注入实现，LogHub 管线不再被写入', async () => {
     const { App } = await import('../../packages/core/src/index.js');
