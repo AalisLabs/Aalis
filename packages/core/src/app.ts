@@ -73,6 +73,13 @@ export interface AppOptions {
    * 确定性测试。core 逻辑不主动取墙上时间，全由此注入——与 `devMode` 同为"宿主决定"注入项。
    */
   now?: () => Date;
+  /**
+   * 内核版本号，仅用于启动 banner 展示（如 `Aalis Core 0.6.0 - <name>`）。
+   * core 环境无关、零依赖，不能自读 package.json；由宿主（@aalis/runtime）读取
+   * `@aalis/core` 的实际版本注入——与 `now` / `devMode` 同为"宿主决定"注入项。
+   * 缺省时 banner 省略版本段（嵌入 / 测试场景无宿主注入）。
+   */
+  version?: string;
 }
 
 /**
@@ -178,7 +185,9 @@ export class App {
       }
     });
 
-    this.logger.info(`Aalis v0.1.0 - ${config.get('name')}`);
+    // 版本由宿主注入（core 不自读 package.json）；未注入时省略版本段。
+    const versionSeg = options.version ? ` Core ${options.version}` : ' Core';
+    this.logger.info(`Aalis${versionSeg} - ${config.get('name')}`);
   }
 
   /**
