@@ -126,7 +126,7 @@ export class Context {
   /**
    * 把一个底层退订原语登记到 disposable 链，并返回**自移除**的退订函数：
    * 调用方手动退订时，闭包不再滞留 _disposables（否则它持有 handler 引用直到
-   * ctx.dispose——审计 HIGH #2 的同类泄漏，统一所有注册 API 的退订语义）。
+   * ctx.dispose 才释放——故所有注册 API 的退订都统一走此路径，杜绝该类泄漏）。
    */
   private trackDisposable(off: () => void): () => void {
     const dispose = (): void => {
@@ -175,7 +175,7 @@ export class Context {
 
     const dispose = () => {
       // 自移除：调用方手动 dispose 后，闭包不再滞留 _disposables（否则它持有
-      // entry 引用，instance 无法 GC，多实例热替换场景累积僵尸——审计 HIGH #2）。
+      // entry 引用，instance 无法 GC，多实例热替换场景累积僵尸）。
       // ctx.dispose 经 DisposableChain.dispose 调用本函数时 remove 返回 false，无害。
       this._disposables.remove(dispose);
       const removed = this._services.unregisterEntry(name, entry);
