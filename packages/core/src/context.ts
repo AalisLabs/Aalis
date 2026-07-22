@@ -1,7 +1,7 @@
 import { type ConfigManager, ScopedConfigManager } from './config.js';
 import { DisposableChain } from './disposable-chain.js';
 import type { EventBus } from './events.js';
-import type { HookRegistry } from './hooks.js';
+import type { HookRegistry, HookRunner } from './hooks.js';
 import type { Logger } from './logger.js';
 import type { ServiceContainer } from './service.js';
 import { emitServiceRegistered, validateProvide } from './service-helpers.js';
@@ -27,7 +27,15 @@ export class Context {
   readonly id: string;
   readonly logger: Logger;
   readonly config: ConfigManager;
-  readonly hooks: HookRegistry;
+  /**
+   * 钩子执行面（窄接口 {@link HookRunner}）。
+   *
+   * 插件可 `ctx.hooks.run(hook, data, defaultAction)` 驱动自己定义的钩子链；
+   * 注册 handler 请用 `ctx.middleware(hook, fn)` —— 它绑定当前 ctx.id 并纳入
+   * dispose 链，插件卸载时自动清扫。完整 HookRegistry（register / onStall）
+   * 不对插件暴露，与 `_events` / `_services` 同一门面纪律。
+   */
+  readonly hooks: HookRunner;
   /**
    * 开发模式开关——由 App 注入，子 Context 通过 fork/createScope 继承。
    *
@@ -40,6 +48,8 @@ export class Context {
 
   private _events: EventBus;
   private _services: ServiceContainer;
+  /** 完整钩子注册表——仅 Context 内部（middleware / dispose / fork）使用。 */
+  private readonly _hooks: HookRegistry;
   private _disposables: DisposableChain;
   private _children: Set<Context> = new Set();
   private _parent?: Context;
@@ -58,6 +68,7 @@ export class Context {
     this.id = options.id;
     this._events = options.events;
     this._services = options.services;
+    this._hooks = options.hooks;
     this.hooks = options.hooks;
     this.logger = options.logger;
     this.config = options.config;
@@ -92,7 +103,7 @@ export class Context {
       id,
       events: this._events,
       services: this._services,
-      hooks: this.hooks,
+      hooks: this._hooks,
       logger: this.logger.child(id),
       config: this.config,
       parent: this,
@@ -131,7 +142,7 @@ export class Context {
       id,
       events: this._events,
       services: scopedServices,
-      hooks: this.hooks,
+      hooks: this._hooks,
       logger: this.logger.child(id),
       config: scopedConfig,
       parent: this,
@@ -458,7 +469,7 @@ export class Context {
    * });
    */
   middleware<K extends string & keyof HookContextMap>(hook: K, fn: MiddlewareFn<HookContextMap[K]>): () => void {
-    return this.trackDisposable(this.hooks.register(hook, fn, this.id));
+    return this.trackDisposable(this._hooks.register(hook, fn, this.id));
   }
 
   // ---- 生命周期 ----
@@ -590,7 +601,7 @@ export class Context {
     }
 
     // 清理该上下文注册的钩子
-    this.hooks.unregisterByContext(this.id);
+    this._hooks.unregisterByContext(this.id);
 
     // 服务自清理协议：任何服务实例若实现 `unregisterByPlugin(contextId)`，
     // dispose 时统一通知它清理本上下文相关的注册项（如 plugin-tools 的
