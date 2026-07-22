@@ -199,24 +199,6 @@ describe('Context fork / dispose', () => {
   });
 });
 
-describe('Context createScope (sandbox)', () => {
-  it('沙盒内 provide 不污染父级', () => {
-    const ctx = makeContext();
-    ctx.provide('__outer', { v: 'parent' });
-    const sandbox = ctx.createScope('sandbox');
-    sandbox.provide('__outer', { v: 'sandbox' });
-    expect(sandbox.getService('__outer')).toEqual({ v: 'sandbox' });
-    expect(ctx.getService('__outer')).toEqual({ v: 'parent' });
-  });
-
-  it('沙盒能 fallback 读取父级服务', () => {
-    const ctx = makeContext();
-    ctx.provide('__inherited', { v: 1 });
-    const sandbox = ctx.createScope('sandbox');
-    expect(sandbox.getService('__inherited')).toEqual({ v: 1 });
-  });
-});
-
 describe('Context.getService 即取即用语义（裸实例）', () => {
   interface FooService {
     hello(): string;

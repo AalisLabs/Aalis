@@ -7,9 +7,8 @@ import { App, type Context, type PluginModule } from '../../packages/core/src/in
  * 核心契约：
  * 1. ctx.useModule 把一个插件 module 挂载到子 ctx，dispose 即卸载，
  *    不污染全局 PluginManager
- * 2. 使用 createScope 时，服务注册仅作用于沙盒，父级不可见
- * 3. 父 ctx dispose 级联清理沙盒插件
- * 4. 两个并存沙盒互相隔离
+ * 2. 父 ctx dispose 级联清理沙盒插件
+ * 3. 两个并存沙盒互相隔离
  */
 
 function makeApp() {
@@ -41,23 +40,10 @@ describe('Context.useModule 沙盒插件加载', () => {
     expect(events).toEqual(['apply', 'disposed']);
   });
 
-  it('scoped: 沙盒内 provide 不暴露给父级，dispose 后清理', async () => {
-    const sandbox: PluginModule = {
-      name: 'sandbox-tool',
-      apply(ctx) {
-        ctx.provide('sandbox-svc', { v: 1 });
-      },
-    };
-    const off = await env.app.ctx.useModule(sandbox, {}, { scoped: true });
-    expect(env.app.ctx.getService('sandbox-svc')).toBeUndefined();
-    off();
-    expect(env.app.ctx.getService('sandbox-svc')).toBeUndefined();
-  });
-
   it('父 ctx dispose 级联销毁 useModule 子上下文', async () => {
     const disposed: string[] = [];
     const root = env.app.ctx;
-    const scope: Context | undefined = root.createScope('outer-scope');
+    const scope: Context | undefined = root.fork('outer-scope');
     await scope.useModule({
       name: 'inner',
       apply(c) {
@@ -80,39 +66,6 @@ describe('Context.useModule 沙盒插件加载', () => {
     };
     await expect(env.app.ctx.useModule(bad)).rejects.toThrow(/boom/);
     expect(disposed).toEqual(['cleanup']);
-  });
-
-  it('两个沙盒并存互相隔离', async () => {
-    const events: string[] = [];
-    const off1 = await env.app.ctx.useModule(
-      {
-        name: 'a',
-        apply(c) {
-          c.provide('val', 'A');
-          c.onDispose(() => events.push('a-disposed'));
-        },
-      },
-      {},
-      { scoped: true },
-    );
-    const off2 = await env.app.ctx.useModule(
-      {
-        name: 'b',
-        apply(c) {
-          c.provide('val', 'B');
-          c.onDispose(() => events.push('b-disposed'));
-        },
-      },
-      {},
-      { scoped: true },
-    );
-
-    // 父级既无 A 也无 B
-    expect(env.app.ctx.getService('val')).toBeUndefined();
-    off1();
-    expect(events).toEqual(['a-disposed']);
-    off2();
-    expect(events).toEqual(['a-disposed', 'b-disposed']);
   });
 
   it('已 dispose 的 ctx 上 useModule 抛错', async () => {

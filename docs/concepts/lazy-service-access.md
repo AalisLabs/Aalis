@@ -252,10 +252,6 @@ requiresBounceOnDepChange?: boolean;
 - **败者上下线不会触发 `whenService` 重挂。** 只看胜者。如果你真的要枚举**所有**并存 provider
   （罕见，多为管控/展示场景），用 `ctx.getAllServices(name)` / `ctx.getServiceEntries(name)`，
   且同样每次重新枚举（`context.ts:258-326`）。
-- **作用域容器（沙盒）的 fallback。** `createScope()` 下 `getService` 先查本地、miss 再
-  fallback 到父容器（`ScopedServiceContainer.get`，`packages/core/src/service.ts:235-239`）；
-  惰性查询在 scope 里同样成立——沙盒里临时 `provide` 的覆盖 dispose 后，下次 `getService`
-  自动回落到全局胜者。
 - **手动 dispose 后闭包自移除。** `provide` / `whenService` 返回的 dispose 调用后会把自己从
   disposable 链摘掉，避免持有 entry/handler 引用阻碍 GC（`context.ts:206-218`、`423-432`）；
   你不需要、也不应该缓存实例去"帮忙"延长生命周期。

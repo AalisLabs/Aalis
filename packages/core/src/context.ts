@@ -1,4 +1,4 @@
-import { type ConfigManager, ScopedConfigManager } from './config.js';
+import type { ConfigManager } from './config.js';
 import { DisposableChain } from './disposable-chain.js';
 import type { EventBus } from './events.js';
 import type { HookRegistry, HookRunner } from './hooks.js';
@@ -18,8 +18,6 @@ type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<vo
  * 采用 fork / inject / provide / middleware 等术语，
  * 但 Aalis 在此之上引入若干差异化机制：
  * - **多提供者**：`getService` / `getAllServices` 支持同名多实现并存（偏好 > 优先级 > 注册顺序）
- * - **`ScopedServiceContainer` + `ScopedConfigManager`**：`createScope()` 创建
- *   读取 fallback、写入隔离的子作用域，用于会话/沙盒
  * - **`whenService(name, cb)`**：服务就绪即触发的延迟订阅，回调可返回 cleanup
  *   纳入 dispose 链
  */
@@ -37,7 +35,7 @@ export class Context {
    */
   readonly hooks: HookRunner;
   /**
-   * 开发模式开关——由 App 注入，子 Context 通过 fork/createScope 继承。
+   * 开发模式开关——由 App 注入，子 Context 通过 fork 继承。
    *
    * - `true`（默认）：`provide` 时按声明的能力跑探测器，暴露"声明与实现不符"
    * - `false`（生产）：跳过探测，节省热路径开销
@@ -106,45 +104,6 @@ export class Context {
       hooks: this._hooks,
       logger: this.logger.child(id),
       config: this.config,
-      parent: this,
-      devMode: this.devMode,
-    });
-    this._children.add(child);
-    return child;
-  }
-
-  /**
-   * 创建隔离作用域的子上下文
-   *
-   * 与 fork() 的区别：fork() 共享同一个 ServiceContainer / ConfigManager；
-   * createScope() 同时创建：
-   * - **ScopedServiceContainer**（子容器）：读 fallback、写不影响父级
-   * - **ScopedConfigManager**（cleanup-7 新增）：同样 fallback + overlay 语义
-   *
-   * 适用于沙盒/会话隔离场景：
-   * - 沙盒内 `ctx.provide('agent', sandboxAgent)` 不会污染全局
-   * - 沙盒内 `ctx.getService('authority')` 仍能 fallback 到全局服务
-   * - 沙盒内 `ctx.config.set('logLevel', 'debug')` 仅作用于沙盒
-   * - 沙盒内 `ctx.config.setPluginConfig('llm.openai', { ... })` 给当前沙盒一份
-   *   临时 LLM 配置，dispose 后随作用域消失（写只进 overlay，save() 为内存
-   *   模式 no-op，磁盘不被污染）
-   *
-   * @example
-   * const sandbox = ctx.createScope('sandbox-group-123');
-   * sandbox.provide('agent', myCustomAgent); // 仅此作用域可见
-   * sandbox.config.setPluginConfig('llm.openai', { temperature: 0.1 }); // 临时配置
-   * sandbox.getService('authority'); // fallback 到父级全局服务
-   */
-  createScope(id: string): Context {
-    const scopedServices = this._services.createScope();
-    const scopedConfig = new ScopedConfigManager(this.config);
-    const child = new Context({
-      id,
-      events: this._events,
-      services: scopedServices,
-      hooks: this._hooks,
-      logger: this.logger.child(id),
-      config: scopedConfig,
       parent: this,
       devMode: this.devMode,
     });
@@ -483,18 +442,16 @@ export class Context {
    *
    * 与 `App.plugin(...)` / `PluginManager.register(...)` 的区别：
    * - 不进入全局 `PluginManager`（不参与依赖追踪、softReload）
-   * - 创建一个 fork/createScope 子上下文，调用 `module.apply(child, config)`
+   * - fork 一个子上下文，调用 `module.apply(child, config)`
    * - 返回 dispose：调用即销毁该子上下文，对应子上下文里所有副作用一并清理
    * - 父 ctx dispose 时也会级联销毁
    *
    * 典型场景：
    * - 会话级动态工具/中间件
-   * - 沙盒（`createScope`）内挂载临时 mini 插件
    * - 单元测试里组装最小可运行单元
    *
    * @param module 任意符合 `{ name, apply(ctx, config) }` 的对象
    * @param config 传给 apply 的配置（默认 `{}`）
-   * @param options.scoped 是否使用 `createScope`（服务/配置隔离），默认 false 用 `fork`
    * @returns dispose 函数；返回的 Promise 在 apply 完成后 resolve
    *
    * @example
@@ -516,13 +473,12 @@ export class Context {
       apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
     },
     config: Record<string, unknown> = {},
-    options?: { scoped?: boolean },
   ): Promise<() => void> {
     if (this._disposed) {
       throw new Error(`Context "${this.id}" 已 dispose，无法 useModule`);
     }
     const childId = `${this.id}#${module.name}`;
-    const child = options?.scoped ? this.createScope(childId) : this.fork(childId);
+    const child = this.fork(childId);
     try {
       await module.apply(child, config);
     } catch (err) {
