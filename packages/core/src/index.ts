@@ -22,7 +22,7 @@ export { Context } from './context.js';
 // 注：DisposableChain 是 Context 的内部清理链实现，不再从包根导出（零外部消费，
 // 避免 semver 负担）。嵌入方如确需独立使用，从 './disposable-chain.js' 直接 import。
 export { EventBus } from './events.js';
-export { HookRegistry } from './hooks.js';
+export { HookRegistry, type HookRunner } from './hooks.js';
 // ----- 运行时基础类型 -----
 export type { LogEntry, LogLevel } from './logger.js';
 export { DefaultLogger, formatLogLine, type Logger, LogHub, parseLogLine } from './logger.js';
