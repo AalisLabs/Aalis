@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { App, type PluginLoader } from '@aalis/core';
 import { installBootstrapBuffer } from './bootstrap-buffer.js';
 import { type ConsoleSinkHandle, installConsoleSink } from './console-sink.js';
@@ -46,6 +47,19 @@ export interface StartAalisOptions {
  * 生命周期不变量：① `consoleHandle.bindEvents` 必须在 `new App` 之后（之前无 ctx）；
  * ② 子命令短路必须在 `app.start` 之前。
  */
+/**
+ * 读取 @aalis/core 的实际安装版本，供 App 启动 banner 展示。
+ * core 无 `exports` 限制，package.json 子路径可 require；解析失败则返回 undefined，
+ * banner 自动省略版本段（不因版本读取失败而影响启动）。
+ */
+function readCoreVersion(): string | undefined {
+  try {
+    return (createRequire(import.meta.url)('@aalis/core/package.json') as { version?: string }).version;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   const { consoleSink = true, fileLog = true, terminalRestore = true, subcommands = false } = opts;
 
@@ -93,6 +107,8 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     devMode: opts.devMode ?? process.env.NODE_ENV !== 'production',
     // 宿主注入时钟：日志时间戳的权威时间来源在此层，core 逻辑不主动取墙上时间。
     now: () => new Date(),
+    // 宿主读取 @aalis/core 的实际版本注入启动 banner——core 环境无关、不自读 package.json。
+    version: readCoreVersion(),
   });
 
   // 不变量①：App 构造完成后再让 sink 监听终端归属事件——此前没有 ctx 可订阅。
