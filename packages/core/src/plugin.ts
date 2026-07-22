@@ -40,7 +40,7 @@ export class PluginManager {
    *
    * 用计数器而非布尔：dispose hook 内可能同步级联调用 disablePlugin/unload（级联
    * 禁用），嵌套时内层的 finally 若复位布尔会过早解除外层的挂起态——计数器确保
-   * 只有最外层退出（归零）才解除（审计 HIGH #3）。
+   * 只有最外层退出（归零）才解除。
    */
   private suspendDepth = 0;
   private get suspended(): boolean {
