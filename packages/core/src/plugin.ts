@@ -474,11 +474,25 @@ export class PluginManager {
     let currentReason = reason;
     let changed = true;
     let rounds = 0;
-    const maxRounds = 20;
+    // 收敛上限从图规模推导，不是调优旋钮。紧界推导：单个插件每次 recomputeOnce
+    // 至多翻转 2 次。第 2 轮起 currentReason 退化为 plugin-state-changed（见下方），
+    // 此时目标态 =「required 依赖齐则 active，否则 pending」，是服务可用集的单调
+    // 函数；依赖图无环（静态 required 环由 topoSortByDeps 检出，且只致停滞不致振荡），
+    // 故拆除波与激活波各自单调单向推进，每插件至多翻 1 次。唯一的第 2 次翻转来自
+    // 首轮 optional bounce（active→pending→再 active），而 bounce 仅第 1 轮生效、
+    // 不重复（其下游子树同样至多随之翻 2 次，仍 ≤2）。因此总翻转 ≤2N ⇒ 轮数 ≤2N：
+    // 2N 是紧的最坏界而非余量，+8 只为小 N 垫底。真振荡（激活条件互相矛盾）翻转
+    // 无界，必越过任何线性界——上限把"无限挂死"换成"有界放弃 + 点名"。
+    // 每轮现算而非入口冻结：注册期 recompute 排队立即返回，后续 app.plugin() 会在
+    // 本 recomputeOnce 在飞时追加 entry（每轮快照重取），上限须随图同步增长，否则
+    // 合法的增量注册流会被按旧规模误判为振荡。
+    const maxRounds = (): number => this.plugins.size * 2 + 8;
+    let lastRoundFlips: string[] = [];
 
-    while (changed && rounds < maxRounds) {
+    while (changed && rounds < maxRounds()) {
       changed = false;
       rounds++;
+      lastRoundFlips = [];
 
       const entries = [...this.plugins.values()];
       const order = topoSortByDeps(entries, this.logger);
@@ -520,6 +534,7 @@ export class PluginManager {
           });
         }
         changed = true;
+        lastRoundFlips.push(entry.instanceId);
       }
 
       // 关机不需要再激活
@@ -531,7 +546,10 @@ export class PluginManager {
         const target = computeTargetState(entry, currentReason, this.rootCtx);
         if (target !== 'active') continue;
         await activatePlugin(entry, { plugins: this.plugins, rootCtx: this.rootCtx, logger: this.logger });
-        if ((entry.state as PluginState) === 'active') changed = true;
+        if ((entry.state as PluginState) === 'active') {
+          changed = true;
+          lastRoundFlips.push(entry.instanceId);
+        }
       }
 
       // service-up / service-down 的"特殊语义"只在第一轮生效（避免无限 bounce）；
@@ -541,8 +559,14 @@ export class PluginManager {
       }
     }
 
-    if (rounds >= maxRounds) {
-      this.logger.warn('recompute 达到最大迭代次数，可能存在循环依赖');
+    if (rounds >= maxRounds()) {
+      // 静态 required 环由 topoSortByDeps 检出并另行告警；能撞到这里的只有
+      // 状态振荡（插件间激活条件互相矛盾，状态在轮次间来回翻）。点名末轮
+      // 仍在翻转的插件——矛盾对必在其中。
+      this.logger.warn(
+        `recompute ${rounds} 轮未收敛（上限 ${maxRounds()} = 2×插件数+8），` +
+          `疑似插件间状态振荡。最后一轮仍在翻转: ${lastRoundFlips.join(', ') || '(无记录)'}`,
+      );
     }
 
     if (reason.type === 'shutdown') return;
