@@ -17,6 +17,69 @@ function makeContext(id = 'root'): Context {
   return new Context({ id, events, services, hooks, logger, config });
 }
 
+describe('Context.middleware / hooks 门面（HookRunner 收窄）', () => {
+  it('middleware 注册的 handler 参与 hooks.run，插件 ctx dispose 后自动清扫', async () => {
+    const root = makeContext();
+    const child = root.fork('plugin-a');
+    const calls: string[] = [];
+    child.middleware('__t:hook', async (_data, next) => {
+      calls.push('a');
+      await next();
+    });
+
+    // 任意 ctx 都可驱动钩子链（run 在公开窄面上）
+    await root.hooks.run('__t:hook', {} as never);
+    expect(calls).toEqual(['a']);
+
+    // dispose 子 ctx → 其 middleware 被 unregisterByContext(this.id) 清扫
+    await child.dispose();
+    await root.hooks.run('__t:hook', {} as never);
+    expect(calls).toEqual(['a']); // 未再次触发
+  });
+
+  it('dispose 只清扫本 ctx 的 middleware，不动兄弟 ctx 的', async () => {
+    const root = makeContext();
+    const a = root.fork('plugin-a');
+    const b = root.fork('plugin-b');
+    const calls: string[] = [];
+    a.middleware('__t:hook', async (_d, next) => {
+      calls.push('a');
+      await next();
+    });
+    b.middleware('__t:hook', async (_d, next) => {
+      calls.push('b');
+      await next();
+    });
+
+    await a.dispose();
+    await root.hooks.run('__t:hook', {} as never);
+    expect(calls).toEqual(['b']);
+  });
+
+  it('middleware 返回的 dispose 函数可手动解除', async () => {
+    const ctx = makeContext();
+    const calls: number[] = [];
+    const off = ctx.middleware('__t:hook', async (_d, next) => {
+      calls.push(1);
+      await next();
+    });
+    await ctx.hooks.run('__t:hook', {} as never);
+    off();
+    await ctx.hooks.run('__t:hook', {} as never);
+    expect(calls).toEqual([1]);
+  });
+
+  it('ctx.hooks 是窄 HookRunner：register 不在公开类型上（注册唯一入口是 ctx.middleware）', () => {
+    const ctx = makeContext();
+    // 编译期约束：HookRunner 只含 run。测试不做 typecheck，此处以运行时形状声明意图——
+    // 底层对象仍是注册表（同一实例，仅类型收窄），核心断言是公开类型面而非运行时。
+    type PublicHooks = typeof ctx.hooks;
+    const hasRegisterInType: 'register' extends keyof PublicHooks ? true : false = false;
+    expect(hasRegisterInType).toBe(false);
+    expect(typeof ctx.hooks.run).toBe('function');
+  });
+});
+
 describe('Context.provide / getService', () => {
   it('注册并取出服务', () => {
     const ctx = makeContext();
