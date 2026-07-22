@@ -251,7 +251,7 @@ ctx.onDispose(() => {
 });
 ```
 
-通过 `ctx.on / ctx.middleware / ctx.provide / ctx.fork / ctx.createScope` 注册
+通过 `ctx.on / ctx.middleware / ctx.provide / ctx.fork` 注册
 的所有东西都会被 DisposableChain 按 LIFO 顺序自动注销。手动再做一遍可能 double-free。
 
 ### ⚠️ 在 dispose hook 内访问其它服务
@@ -313,17 +313,17 @@ it('should activate when its dependencies are present', async () => {
 
 ---
 
-## 8. 何时 fork、何时 createScope、何时新 App
+## 8. 何时 fork、何时新 App
 
 | 隔离需求 | 用法 |
 |---|---|
 | 一个独立"插件实例"（默认）| `app.plugin(mod, cfg)` 自动 `ctx.fork(id)` |
-| 同 App 内子作用域且需要**配置/服务隔离** | `ctx.createScope(id)` |
+| 按会话/租户差异化配置或服务 | **键控解析**：按 key 查表（参考 session-manager 的 `resolveConfig(sessionId)` 模式），不需要上下文隔离 |
 | 完全独立的事件总线 / 日志通道（少见，例如沙盒执行用户脚本） | `createApp({ events, services, hooks, ... })` 新建 App |
 
-⚠️ `createScope` 的事件总线和钩子注册仍是**全局**的（dispose 时按 contextId
-反查清理）。所以**沙盒内不要注册"产生跨作用域副作用"的全局事件**（如
-`service:registered`），可能干扰主进程逻辑。
+> 曾经存在的 `ctx.createScope(id)`（服务/配置叠加隔离）已在 0.7.0 移除：全生态零消费者，
+> 且其隔离边界（共享事件/钩子/文件系统）不足以承担"沙盒"语义。按 key 定制用键控解析，
+> 真隔离用新 App。
 
 ---
 

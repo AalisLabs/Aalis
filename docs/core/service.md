@@ -66,20 +66,6 @@ interface ServiceEntry {
 
 > 公开 API 走 `ctx.preferService()` / `ctx.unpreferService()` / `ctx.getPreferredService()`（额外 emit `service:preference-changed` 触发 `whenService` 重挂）；容器层方法仅供 Context 内部转发，插件勿直接调用。所有者也可在 WebUI 的 Services 页面设置偏好。
 
-## 作用域子容器
-
-### `createScope()`
-
-创建作用域子容器（`ScopedServiceContainer`）。子容器读取时先查本地，miss 则 fallback 到父容器；写入（register / unregisterEntry）仅影响子容器自身。支持多层嵌套。
-
-适用于沙盒/会话隔离场景：每个沙盒拥有独立的服务覆盖，同时继承全局公共服务（如 `authority`、`commands`）。
-
-```typescript
-const scoped = container.createScope();
-scoped.register('agent', sandboxAgent); // 仅沙盒可见
-scoped.get('authority'); // fallback 到父容器
-```
-
 ## 依赖规范化
 
 ```typescript
