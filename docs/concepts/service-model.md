@@ -182,14 +182,9 @@ function listLLMEntries(ctx, caps) {
 
 ---
 
-## 7. 作用域子容器（沙盒 / 会话隔离）
+## 7. 作用域子容器已移除（0.7.0）
 
-`ctx.createScope(id)`（`context.ts:127`）创建一个 `ScopedServiceContainer`（`service.ts:227`）+ `ScopedConfigManager` 的子上下文：
-
-- **读 fallback**：`get` / `has` / `getEntries` / `getServiceNames` 先查本地，miss 落到父容器（`service.ts:235-258`）。
-- **写隔离**：子作用域内 `provide` 只影响本地，不污染全局。
-
-典型用途：沙盒内 `provide('agent', sandboxAgent)` 仅此作用域可见，而 `getService('authority')` 仍 fallback 到全局服务（`context.ts:113-125`）。`getEntries` 在 scope 下是「本地条目在前、父容器在后」拼接（`service.ts:249-254`）——本地覆盖优先。
+实验性的 `ctx.createScope(id)` / `ScopedServiceContainer` / `ScopedConfigManager`（叠加式服务/配置隔离）已在 0.7.0 移除：全生态零消费者，且共享事件/钩子/文件系统的边界不足以承担"沙盒"语义。替代：按会话/租户**差异化配置**用键控解析（session-manager 的 `resolveConfig(sessionId)` 模式）；**真隔离**用独立 `App` 实例。
 
 ---
 

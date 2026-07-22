@@ -242,17 +242,13 @@ PluginManager 只有一个外部可见的状态变更入口：`recompute(reason)
 如本轮有变动则进入下一轮，直到稳定（fixed-point）或达到 `maxRounds=20`。`service-up` /
 `service-down` 在第二轮起退化为 `plugin-state-changed`，避免无限 optional bounce。
 
-### 沙盒与隔离作用域
-
-Aalis 提供两种隔离粒度：
+### 隔离粒度
 
 - **`ctx.fork(id)`** — 复用全部根子系统，仅独立 `_disposables`。适合"同 App 内一个独立插件实例"。
-- **`ctx.createScope(id)`** — 创建 `ScopedServiceContainer` + `ScopedConfigManager`（fallback 读、写不影响父），但仍**共享** `EventBus` 与 `HookRegistry`。
-  - 沙盒内 `ctx.provide(...)` / `ctx.config.set(...)` 隔离 ✓
-  - 沙盒内 `ctx.on(event, ...)` / `ctx.middleware(hook, ...)` 仍**全局生效**，dispose 时由 `contextId` 反查清理
-  - ⚠️ 沙盒应避免注册"产生跨作用域副作用"的全局事件（如 `service:registered`），可能干扰主进程逻辑
-  - 🧪 **状态：实验性**。当前生产代码里 `createScope` / `useModule({ scoped: true })` 没有任何插件直接消费，仅 `test/core/sandbox.test.ts` 自测；接口语义稳定可用，但若长期未消费可能在未来版本被精简。`whenService(name, cb)` 是**稳定 API**：每次 provider 上线都调一次 `cb`，下线/ctx dispose 自动调上次返回的 cleanup，跨 bounce 自动重挂——是消费 hub 型服务的推荐入口（参见 [docs/core/context.md](core/context.md)）。
 - **完全隔离** — 需要独立事件总线、独立日志通道时，应直接 `createApp({ events, services, hooks, ... })` 创建新的 `App` 实例。`Logger` 可注入独立 `LogHub` 隔离日志缓冲。
+- 按会话/租户**差异化配置**不需要上下文隔离——用键控解析（参考 session-manager 的 `resolveConfig(sessionId)` 模式）。
+- 曾经的实验性 `ctx.createScope(id)`（`ScopedServiceContainer` + `ScopedConfigManager` 叠加隔离）已在 0.7.0 移除：全生态零消费者，且共享事件/钩子/文件系统的边界不足以承担"沙盒"语义（此前文档即预告"长期未消费可能被精简"）。
+- `whenService(name, cb)` 是**稳定 API**：每次 provider 上线都调一次 `cb`，下线/ctx dispose 自动调上次返回的 cleanup，跨 bounce 自动重挂——是消费 hub 型服务的推荐入口（参见 [docs/core/context.md](core/context.md)）。
 
 #### Context dispose 推荐 API
 

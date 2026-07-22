@@ -531,10 +531,10 @@ Agent → orchestrator:
 9. 用户干预 API（修改正在执行的子任务指令、增加子任务）
 10. 与 scheduler 集成（定时任务自动触发任务链）
 
-### Phase 4: Context Scope 隔离
+### Phase 4: 子任务隔离
 
-11. 利用 `ServiceContainer.createScope()` 为每个子任务创建隔离的 Context
-12. 每个子任务可以拥有完全独立的服务栈（不同的 LLM、不同的 memory）
+11. 为每个子任务 `fork` 独立 Context（生命周期/副作用随子任务清理）
+12. 子任务需要差异化 LLM/memory 时，按 subtaskId 键控解析（session-manager 模式）；需要完全独立服务栈时用独立 App 实例
 13. 适合安全敏感场景（子任务之间不能互相访问数据）
 
 ---
