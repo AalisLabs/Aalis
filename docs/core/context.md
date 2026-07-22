@@ -35,8 +35,8 @@
 | 一次性按名拿服务 | `ctx.getService('name')` | 中频；服务未就绪返回 undefined |
 | 拦截/改写核心流程 | `ctx.middleware(hook, fn)` | 高频；详见 [events.md](events.md) |
 | 注册外部资源清理 | `ctx.onDispose(() => …)` | 高频；**唯一正确的清理 API** |
-| 创建沙盒/子作用域 | `ctx.createScope(id)` / `ctx.fork(id)` | 中频；scope 自带服务隔离 |
-| 动态加载子模块 | `ctx.useModule(mod, cfg, opts?)` | 罕用；多用于沙盒/动态注入 |
+| 创建子上下文 | `ctx.fork(id)` | 中频；独立生命周期、共享服务 |
+| 动态加载子模块 | `ctx.useModule(mod, cfg)` | 罕用；多用于测试装配/动态注入 |
 | 设置全局服务路由偏好 | `ctx.preferService(name, id)` | 罕用；多用于 WebUI/CLI 切换 |
 | 枚举/巡视服务（管控类） | `ctx.getServiceEntries/Names` | 罕用；面向 plugin-doctor / WebUI |
 
@@ -48,17 +48,13 @@
 
 创建子上下文。子 Context 共享父级的 EventBus、ServiceContainer、HookRegistry，但有独立的 disposable 列表。运行时为每个插件实例 fork 一份 ctx。
 
-### `ctx.createScope(id): Context`
-
-创建沙盒子上下文（fork 的强化版）：在共享的 ServiceContainer 之上额外覆盖一层 scope 私有的服务表，沙盒内 `ctx.provide()` 的服务**不会**外泄。沙盒内 `ctx.getService()` 优先看自己的覆盖层，未命中再 fallback 到父级全局服务。
-
 ### `ctx.onDispose(fn): () => void`
 
 注册一个在本 Context dispose 时执行的清理回调。**这是插件清理副作用的唯一正确 API**：
 
 - 直接挂在 `_disposables` 链上，逆序执行
 - 在 `ctx.dispose()` 的任何路径上都会触发（app 停机 / bounce / unload / updatePluginConfig / softReload 级联）
-- 沙盒 / fork 子上下文同样适用
+- fork 子上下文同样适用
 
 > ⚠️ 不要用 `ctx.on('app:stopping', …)` 做资源清理 —— 那只在 app 全局停机时触发一次，**不会**在插件 bounce / hot reload 时触发，会造成旧连接、旧定时器泄漏。
 
