@@ -29,7 +29,7 @@ import { createProcessGateway } from '@aalis/plugin-process-api';
 import type { ConfirmChannel, SessionConfirmService } from '@aalis/plugin-session-confirm-api';
 import type {} from '@aalis/plugin-session-manager-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
-import { createStorageGateway } from '@aalis/plugin-storage-api';
+import { createStorageGateway, readTailLines } from '@aalis/plugin-storage-api';
 import type {} from '@aalis/plugin-todo-list'; // declaration merging：todo:updated 事件
 import type { ToolExecuteMessage, ToolService } from '@aalis/plugin-tools-api';
 import type { WebUIService, WebuiPage } from '@aalis/plugin-webui-api'; // declaration merging WebuiPage.content
@@ -271,31 +271,24 @@ interface WSOutgoing {
 
 const LOG_FILE_URI = 'logs:/latest.log';
 
-async function readAllLogEntries(storage: StorageService): Promise<LogEntry[]> {
-  let raw: string;
-  try {
-    raw = (await storage.readFile(LOG_FILE_URI, 'utf-8')) as string;
-  } catch {
-    return []; // 文件未就绪 / storage 暂不可用 → 无历史
-  }
-  const out: LogEntry[] = [];
-  for (const line of raw.split('\n')) {
-    if (!line) continue;
-    const entry = parseLogLine(line);
-    if (entry) out.push(entry);
-  }
-  return out;
-}
-
+// 尾读/分页均走 readTailLines 的倒序分块读取——latest.log 可能几百 MB，
+// 旧实现每个请求整文件载入+全量解析，日志页一刷服务端就抖一次。
 async function readLogFileTail(storage: StorageService, limit: number): Promise<LogEntry[]> {
-  const all = await readAllLogEntries(storage);
-  return all.slice(-limit);
+  const lines = await readTailLines(storage, LOG_FILE_URI, limit);
+  return lines.map(parseLogLine).filter((e): e is LogEntry => e !== null);
 }
 
 async function readLogFileBefore(storage: StorageService, beforeSeq: number, limit: number): Promise<LogEntry[]> {
-  const all = await readAllLogEntries(storage);
-  const filtered = all.filter(e => e.seq < beforeSeq);
-  return filtered.slice(-limit);
+  // seq 随文件位置单调递增：从尾部向前扫，过滤 seq >= before 的尾段后取 limit 条。
+  // maxBytes 放宽到 16MiB 覆盖较深的向上分页；更深的考古走 data/latest.log 本体。
+  const lines = await readTailLines(storage, LOG_FILE_URI, limit, {
+    maxBytes: 16 * 1024 * 1024,
+    filter: line => {
+      const e = parseLogLine(line);
+      return e !== null && e.seq < beforeSeq;
+    },
+  });
+  return lines.map(parseLogLine).filter((e): e is LogEntry => e !== null && e.seq < beforeSeq);
 }
 
 // ===== 插件入口 =====
