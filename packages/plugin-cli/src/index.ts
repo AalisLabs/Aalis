@@ -641,10 +641,12 @@ class CliTui {
       const end = Math.max(0, raw.length - this.logScroll);
       visible = raw.slice(Math.max(0, end - height), end);
     } else {
-      const scroll = this.view === 'status' ? this.statusScroll : this.helpScroll;
+      // 写回钳制(与 logs 视图一致):按 down 越过底部时不让存储值继续累加,
+      // 否则 footer 的 scroll 数字无限增大,且回滚要先消化整段越界死区
+      const field = this.view === 'status' ? 'statusScroll' : 'helpScroll';
       const maxScroll = Math.max(0, raw.length - height);
-      const offset = Math.min(scroll, maxScroll);
-      visible = raw.slice(offset, offset + height);
+      if (this[field] > maxScroll) this[field] = maxScroll;
+      visible = raw.slice(this[field], this[field] + height);
     }
     while (visible.length < height) visible.push('');
     return visible.slice(0, height).map(line => clipAnsi(line, width));
