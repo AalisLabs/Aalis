@@ -89,6 +89,12 @@ export interface StorageService {
   list(uri: string): Promise<StorageListResult>;
   stat(uri: string): Promise<StorageStat>;
   readFile(uri: string, encoding?: BufferEncoding): Promise<string | Buffer>;
+  /**
+   * 可选：按字节区间读取文件（[start, end) 半开区间）。为大文件的窗口化访问
+   * （日志尾读等）而设，避免整文件载入内存。根/提供者未实现时网关抛错——
+   * 调用方应 try/catch 回退到 readFile（readTailLines 已内置该回退）。
+   */
+  readFileRange?(uri: string, start: number, end: number): Promise<Buffer>;
   createReadStream(uri: string): Promise<StorageReadStreamResult>;
   writeFile(uri: string, data: string | Buffer): Promise<void>;
   rename(uri: string, newName: string): Promise<string>;
@@ -418,6 +424,13 @@ export function createStorageGateway(ctx: Context): StorageService {
     list: uri => dispatch(uri, ['list']).list(uri),
     stat: uri => dispatch(uri).stat(uri),
     readFile: (uri, encoding) => dispatch(uri, ['read']).readFile(uri, encoding),
+    readFileRange: (uri, start, end) => {
+      const target = dispatch(uri, ['read']);
+      if (!target.readFileRange) {
+        throw new Error(`存储根 ${parseUriRoot(uri)} 不支持 readFileRange（提供者未实现字节区间读取）`);
+      }
+      return target.readFileRange(uri, start, end);
+    },
     createReadStream: uri => dispatch(uri, ['read']).createReadStream(uri),
     writeFile: (uri, data) => dispatch(uri, ['write']).writeFile(uri, data),
     rename: (uri, newName) => dispatch(uri, ['write']).rename(uri, newName),
@@ -439,6 +452,90 @@ export function createStorageGateway(ctx: Context): StorageService {
       return target.watch(uri, listener);
     },
   };
+}
+
+// ----- 大文件尾读工具 -----
+
+export interface ReadTailOptions {
+  /** 每次向前读取的字节块大小，默认 64KiB */
+  chunkSize?: number;
+  /** 向前扫描的总字节上限（防超长行/深分页失控），默认 4MiB；触顶时返回已收集的完整行 */
+  maxBytes?: number;
+  /** 行过滤器：仅通过者被计数与返回（如日志分页的 seq < before 判定） */
+  filter?: (line: string) => boolean;
+}
+
+/**
+ * 从文件末尾向前分块读取，返回最后 maxLines 个非空行（保持文件内顺序）。
+ *
+ * 为"日志尾读/向上分页"这类场景而设：文件可能几百 MB，但调用方只要末尾几百行——
+ * 决不能整文件载入。优先走 readFileRange 窗口化读取；提供者不支持时回退整文件
+ * readFile（保守但正确）。
+ *
+ * 字节级精确：UTF-8 的多字节序列中不会出现 0x0A，因此行切分在 Buffer 层进行，
+ * 只对"完整行区间"解码——块边界永远不会把一个多字节字符劈成乱码。
+ */
+export async function readTailLines(
+  storage: StorageService,
+  uri: string,
+  maxLines: number,
+  opts?: ReadTailOptions,
+): Promise<string[]> {
+  const chunkSize = Math.max(4096, opts?.chunkSize ?? 64 * 1024);
+  const maxBytes = Math.max(chunkSize, opts?.maxBytes ?? 4 * 1024 * 1024);
+  const filter = opts?.filter;
+
+  let size: number;
+  try {
+    size = (await storage.stat(uri)).size;
+  } catch {
+    return []; // 文件不存在/暂不可读 → 无历史
+  }
+
+  const collect = (decoded: string, out: string[]): string[] => {
+    let lines = decoded.split('\n').filter(l => l.length > 0);
+    if (filter) lines = lines.filter(filter);
+    return lines.concat(out);
+  };
+
+  try {
+    let pos = size;
+    let pending: Buffer = Buffer.alloc(0); // 已读但头部可能是半行的字节区，字节级保留待下一块补齐
+    let out: string[] = [];
+    let bytes = 0;
+    while (pos > 0 && out.length < maxLines && bytes < maxBytes) {
+      const start = Math.max(0, pos - chunkSize);
+      const buf = await storage.readFileRange?.(uri, start, pos);
+      if (!buf) throw new Error('readFileRange unavailable');
+      pos = start;
+      bytes += buf.length;
+      const combined = pending.length > 0 ? Buffer.concat([buf, pending]) : buf;
+      if (pos > 0) {
+        const nl = combined.indexOf(0x0a);
+        if (nl === -1) {
+          pending = combined; // 一整块都没凑出行边界（超长行），继续向前
+          continue;
+        }
+        pending = combined.subarray(0, nl + 1);
+        out = collect(combined.subarray(nl + 1).toString('utf8'), out);
+      } else {
+        pending = Buffer.alloc(0);
+        out = collect(combined.toString('utf8'), out);
+      }
+    }
+    // pos>0 时 pending 头部是半行，解码会得到残缺内容——丢弃；pos===0 时已并入
+    return out.slice(-maxLines);
+  } catch {
+    // 提供者不支持范围读 → 整文件回退（行为与旧实现一致）
+    try {
+      const raw = (await storage.readFile(uri, 'utf8')) as string;
+      let lines = raw.split('\n').filter(l => l.length > 0);
+      if (filter) lines = lines.filter(filter);
+      return lines.slice(-maxLines);
+    } catch {
+      return [];
+    }
+  }
 }
 
 // ----- 服务类型注册（declaration merging）-----

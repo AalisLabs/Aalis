@@ -6,23 +6,13 @@
 // storage URI 寻址、对 cwd/落盘位置无知。写入方（runtime/file-logger）跑在
 // storage 起来之前，是 bootstrap 期的合法 raw-fs 例外，不在此处管辖。
 import { type LogEntry, parseLogLine } from '@aalis/core';
-import type { StorageService } from '@aalis/plugin-storage-api';
+import { readTailLines, type StorageService } from '@aalis/plugin-storage-api';
 
 /** 日志单一数据源的 storage URI（logs 根默认落在 data/ 下，与写入方 data/latest.log 对偶）。 */
 const LOG_FILE_URI = 'logs:/latest.log';
 
 export async function readLogFileTail(storage: StorageService, limit: number): Promise<LogEntry[]> {
-  let raw: string;
-  try {
-    raw = (await storage.readFile(LOG_FILE_URI, 'utf8')) as string;
-  } catch {
-    return []; // 文件未就绪 / storage 暂不可用 → 无早期历史
-  }
-  const out: LogEntry[] = [];
-  for (const line of raw.split('\n')) {
-    if (!line) continue;
-    const entry = parseLogLine(line);
-    if (entry) out.push(entry);
-  }
-  return out.slice(-limit);
+  // 倒序分块尾读——latest.log 随运行增长,启动恢复只要末尾 limit 条,不整文件载入
+  const lines = await readTailLines(storage, LOG_FILE_URI, limit);
+  return lines.map(parseLogLine).filter((e): e is LogEntry => e !== null);
 }

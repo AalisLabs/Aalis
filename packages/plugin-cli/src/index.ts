@@ -39,6 +39,12 @@ export const provides = ['cli', 'platform'];
 
 export const configSchema: ConfigSchema = {
   prompt: { type: 'string', label: '提示符', default: 'You', description: '命令行输入提示符前缀' },
+  maxLogEntries: {
+    type: 'number',
+    label: '日志内存缓冲上限（条）',
+    default: 50000,
+    description: '日志页内存驻留的最大条数，超出后从最旧成块丢弃；完整日志始终在 data/latest.log',
+  },
   startupView: {
     type: 'select',
     label: '启动视图',
@@ -58,6 +64,7 @@ export const defaultConfig = {
   sessionId: 'cli-default',
   startupView: 'last',
   lastView: 'chat',
+  maxLogEntries: 50000,
 };
 
 type CLIView = 'chat' | 'logs' | 'status' | 'help';
@@ -67,6 +74,8 @@ interface CLIConfig {
   sessionId: string;
   startupView: 'last' | CLIView;
   lastView: CLIView;
+  /** 日志内存缓冲上限（条）；超出后从最旧成块丢弃，完整日志在 data/latest.log */
+  maxLogEntries: number;
 }
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
@@ -75,6 +84,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     sessionId: (config.sessionId as string) ?? defaultConfig.sessionId,
     startupView: parseStartupView(config.startupView),
     lastView: parseView(config.lastView, 'chat'),
+    maxLogEntries: Math.max(1000, Number(config.maxLogEntries) || defaultConfig.maxLogEntries),
   };
 
   const sessionId = cliConfig.sessionId;
@@ -228,6 +238,7 @@ class CliTui {
       lastSeq = entry.seq;
       // 不限长——启动期起累积，渲染仅访问可见窗口，内存价格可接受
       this.logLines.push(entry);
+      if (this.logLines.length > this.config.maxLogEntries) this.trimLogHead();
       // 用户已主动向上滚（logScroll > 0）时，新日志到来应保持视图锚定在原历史位置，
       // 而非随 raw.length 增长把旧内容挤出可见区。logScroll === 0 表示跟随底部。
       if (this.view === 'logs' && this.logScroll > 0) this.logScroll += 1;
@@ -673,7 +684,7 @@ class CliTui {
    * 可以按 (width, wrap) 为键永久复用——每帧只格式化"上次之后新增"的条目，
    * 把日志页渲染从 O(全部日志) 降到 O(新增)；宽度变化 / 换行模式切换时整体
    * 失效重建（罕见操作，一次性代价）。全量历史仍然完整可翻。 */
-  private logViewCache = { width: -1, wrap: false, upto: 0, lines: [] as string[] };
+  private logViewCache = { width: -1, wrap: false, upto: 0, lines: [] as string[], lineCounts: [] as number[] };
 
   private getLogViewLines(width: number): string[] {
     const c = this.logViewCache;
@@ -682,11 +693,30 @@ class CliTui {
       c.wrap = this.logWrap;
       c.upto = 0;
       c.lines = [];
+      c.lineCounts = [];
     }
     for (; c.upto < this.logLines.length; c.upto++) {
+      const before = c.lines.length;
       this.appendLogEntryLines(c.lines, this.logLines[c.upto], width);
+      c.lineCounts.push(c.lines.length - before);
     }
     return c.lines;
+  }
+
+  /** 内存环形上限：超限时从最旧丢弃约 10% 一块（摊销 O(1)），格式化缓存按 lineCounts
+   * 对齐裁剪而非整体失效——避免每次裁剪都 O(全量) 重建。完整日志始终在 data/latest.log。 */
+  private trimLogHead(): void {
+    const drop = Math.max(1, Math.ceil(this.config.maxLogEntries / 10));
+    this.logLines.splice(0, drop);
+    const c = this.logViewCache;
+    const cachedDrop = Math.min(drop, c.upto);
+    if (cachedDrop > 0) {
+      let dropLines = 0;
+      for (let i = 0; i < cachedDrop; i++) dropLines += c.lineCounts[i];
+      c.lines.splice(0, dropLines);
+      c.lineCounts.splice(0, cachedDrop);
+    }
+    c.upto = Math.max(0, c.upto - drop);
   }
 
   /** 把单条日志按当前宽度/换行模式格式化后追加进 lines（与 console 输出格式一致：ts LEVEL scope message）。 */
