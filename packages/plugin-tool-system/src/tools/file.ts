@@ -297,6 +297,8 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         },
       },
     },
+    // 读=信息暴露向量（可含跨会话日志/记忆），朋友档挡 level-0；不弹确认
+    risk: 'sensitive',
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
@@ -553,6 +555,8 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         },
       },
     },
+    // 读=信息暴露向量（可含跨会话日志/记忆），朋友档挡 level-0；不弹确认
+    risk: 'sensitive',
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
@@ -617,6 +621,8 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         },
       },
     },
+    // 读=信息暴露向量（可含跨会话日志/记忆），朋友档挡 level-0；不弹确认
+    risk: 'sensitive',
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
@@ -676,6 +682,8 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         },
       },
     },
+    // 读=信息暴露向量（可含跨会话日志/记忆），朋友档挡 level-0；不弹确认
+    risk: 'sensitive',
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
@@ -816,6 +824,8 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         },
       },
     },
+    // 读=信息暴露向量（可含跨会话日志/记忆），朋友档挡 level-0；不弹确认
+    risk: 'sensitive',
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
