@@ -504,6 +504,8 @@ function registerSessionHistoryTools(ctx: Context, historyService: SessionHistor
         },
       },
     },
+    // 读=信息暴露向量（可含跨会话日志/记忆），朋友档挡 level-0；不弹确认
+    risk: 'sensitive',
     handler: async (args, callCtx) => {
       const targetSessionId = String(args.session_id ?? '').trim();
       if (!targetSessionId) return JSON.stringify({ error: 'session_id 不能为空' });
