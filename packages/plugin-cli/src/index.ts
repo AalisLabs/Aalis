@@ -183,9 +183,6 @@ class CliTui {
   private streamingContent = '';
   private streamedRecently = false;
   private confirmResolver: ((value: boolean) => void) | null = null;
-  /** 鼠标 SGR 序列在处理中：readline 会把序列中间的数字/分号拆成独立 keypress，
-   * 需要从看到 \x1b[< 起到看到 M/m 为止吞掉所有 keypress。 */
-  private inMouseSeq = false;
   private confirmText = '';
   private renderQueued = false;
   private closing = false;
@@ -214,17 +211,14 @@ class CliTui {
     // 宣告"我接管终端"——任何写 stdout 的订阅者（runtime/console-sink 等）
     // 自行响应该事件停止写入，CLI 不直接干预日志系统。
     this.ctx.emit('terminal:claimed', 'cli').catch(() => {});
-    // 1049h: 进入备用屏 / 25l: 隐藏光标 / 1007h: alternate scroll（兜底，部分终端不支持）
-    // 1000h+1006h: SGR 鼠标上报，覆盖滚轮事件以便所有终端都能滚动
-    // 注意：开启 1000h 后终端会把左/右键也发给程序，导致原生选择被吞。
-    // 我们在 handleData 里仅处理滚轮 (button 64/65)，其它按键事件直接忽略。
-    // 选择文本时按住平台修饰键即可绕过鼠标上报（见 help 页提示）。
-    output.write('\x1b[?1049h\x1b[?25l\x1b[?1007h\x1b[?1000h\x1b[?1006h');
+    // 1049h: 进入备用屏 / 25l: 隐藏光标 / 1007h: alternate scroll——支持它的终端会把
+    // 滚轮翻译成方向键，落到我们的键盘滚动路径上。不开启 SGR 鼠标上报（1000h/1006h）：
+    // 终端保持原生的文本选择/复制，程序不接管任何鼠标事件。
+    output.write('\x1b[?1049h\x1b[?25l\x1b[?1007h');
     output.write('\x1b[2J\x1b[H');
     readline.emitKeypressEvents(input);
     if (input.isTTY) input.setRawMode(true);
     input.resume();
-    input.on('data', this.handleData);
     process.once('exit', this.restoreOnExit);
 
     // 已注入 initialEntries 中最大的 seq；onEntry 收到 seq <= 此值的视为重复跳过
@@ -264,7 +258,6 @@ class CliTui {
     this.removeLogListener?.();
     this.removeLogListener = null;
     input.off('keypress', this.handleKeypress);
-    input.off('data', this.handleData);
     output.off('resize', this.queueRender);
     process.off('exit', this.restoreOnExit);
     restoreTerminalState();
@@ -352,57 +345,8 @@ class CliTui {
     return content.split('\n').map((line, i) => (i === 0 ? firstHead : contHead) + line);
   }
 
-  /** SGR 鼠标事件：\x1b[<button;col;row(M|m)。仅处理滚轮（button 64=up, 65=down，加 4/8/16 表示 Shift/Alt/Ctrl）；
-   *  其它按键 (0/1/2 = 左/中/右) 一律丢弃，避免抢走原生选择/复制。 */
-  private handleData = (chunk: Buffer | string): void => {
-    if (!this.running) return;
-    const s = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-    if (!s.includes('\x1b[<')) return;
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: 解析 SGR 鼠标协议需要按字面匹配 ESC
-    const re = /\x1b\[<(\d+);\d+;\d+([Mm])/g;
-    let m: RegExpExecArray | null = re.exec(s);
-    while (m !== null) {
-      if (m[2] === 'M') {
-        const button = parseInt(m[1], 10);
-        const base = button & ~28; // 去掉 Shift(4)/Alt(8)/Ctrl(16)
-        const big = (button & 4) !== 0; // Shift+滚轮 = 翻页
-        if (base === 64) this.scrollCurrentView(+1, big);
-        else if (base === 65) this.scrollCurrentView(-1, big);
-        // base === 0/1/2 (左/中/右) 直接忽略：让用户在终端层做选择/复制
-      }
-      m = re.exec(s);
-    }
-  };
-
-  /** 统一的滚动入口：direction +1 = 往旧/上滚，-1 = 往新/下滚。 */
-  private scrollCurrentView(direction: 1 | -1, big: boolean): void {
-    const step = (big ? 10 : 3) * direction;
-    if (this.view === 'logs') {
-      const max = Math.max(0, this.logLines.length - 1);
-      this.logScroll = Math.max(0, Math.min(max, this.logScroll + step));
-    } else if (this.view === 'status') {
-      this.statusScroll = Math.max(0, this.statusScroll - step);
-    } else if (this.view === 'help') {
-      this.helpScroll = Math.max(0, this.helpScroll - step);
-    } else {
-      return;
-    }
-    this.queueRender();
-  }
-
   private handleKeypress = async (chunk: string, key: readline.Key): Promise<void> => {
     if (!this.running) return;
-    // 鼠标 SGR 序列状态机：从 \x1b[< 到 M/m 之间的所有 keypress 都吞掉
-    if (key.sequence?.startsWith('\x1b[<') || chunk?.startsWith('\x1b[<')) {
-      this.inMouseSeq = true;
-      return;
-    }
-    if (this.inMouseSeq) {
-      if (chunk === 'M' || chunk === 'm' || key.sequence === 'M' || key.sequence === 'm') {
-        this.inMouseSeq = false;
-      }
-      return;
-    }
 
     if (this.confirmResolver) {
       const ok = key.name === 'y' || chunk.toLowerCase() === 'y';
@@ -723,46 +667,62 @@ class CliTui {
     return lines;
   }
 
+  /** 日志视图的增量格式化缓存。logLines 只追加、从不改写，因此已格式化的行
+   * 可以按 (width, wrap) 为键永久复用——每帧只格式化"上次之后新增"的条目，
+   * 把日志页渲染从 O(全部日志) 降到 O(新增)；宽度变化 / 换行模式切换时整体
+   * 失效重建（罕见操作，一次性代价）。全量历史仍然完整可翻。 */
+  private logViewCache = { width: -1, wrap: false, upto: 0, lines: [] as string[] };
+
   private getLogViewLines(width: number): string[] {
+    const c = this.logViewCache;
+    if (c.width !== width || c.wrap !== this.logWrap) {
+      c.width = width;
+      c.wrap = this.logWrap;
+      c.upto = 0;
+      c.lines = [];
+    }
+    for (; c.upto < this.logLines.length; c.upto++) {
+      this.appendLogEntryLines(c.lines, this.logLines[c.upto], width);
+    }
+    return c.lines;
+  }
+
+  /** 把单条日志按当前宽度/换行模式格式化后追加进 lines（与 console 输出格式一致：ts LEVEL scope message）。 */
+  private appendLogEntryLines(lines: string[], entry: LogEntry, width: number): void {
     const inner = width - 2;
-    // 与 console 输出格式保持一致：ts LEVEL scope message
-    const lines: string[] = [];
-    for (const entry of this.logLines) {
-      // LogEntry.timestamp 是完整 ISO，CLI 只需 HH:mm:ss.sss
-      const ts = chalk.gray(entry.timestamp.slice(11, 23));
-      const level = LEVEL_TAG[entry.level];
-      const scope = chalk.magenta(entry.scope);
-      const head = `${ts} ${level} ${scope} `;
-      const headW = visibleLen(head);
-      const msgW = Math.max(1, inner - headW);
+    // LogEntry.timestamp 是完整 ISO，CLI 只需 HH:mm:ss.sss
+    const ts = chalk.gray(entry.timestamp.slice(11, 23));
+    const level = LEVEL_TAG[entry.level];
+    const scope = chalk.magenta(entry.scope);
+    const head = `${ts} ${level} ${scope} `;
+    const headW = visibleLen(head);
+    const msgW = Math.max(1, inner - headW);
 
-      if (!this.logWrap) {
-        // 默认：压成单行展示（避免 alternate screen 中跨行覆盖）
-        const flat = sanitizeForSingleLine(entry.message);
-        const msg = stringWidth(flat) <= msgW ? flat : clipExact(flat, msgW);
-        lines.push(`  ${head}${msg}`);
-        continue;
-      }
+    if (!this.logWrap) {
+      // 默认：压成单行展示（避免 alternate screen 中跨行覆盖）
+      const flat = sanitizeForSingleLine(entry.message);
+      const msg = stringWidth(flat) <= msgW ? flat : clipExact(flat, msgW);
+      lines.push(`  ${head}${msg}`);
+      return;
+    }
 
-      // 换行模式：保留真实换行 + 按宽度软折行；每个续行用 contHead 缩进对齐到消息列
-      const contHead = ' '.repeat(headW);
-      const rawLines = entry.message
-        .replace(/\r\n|\r/g, '\n')
-        .replace(/\t/g, '    ')
-        .split('\n');
-      let isFirst = true;
-      for (const raw of rawLines) {
-        // 按可见宽度软折行
-        const wrapped = wrapByVisibleWidth(raw, msgW);
-        const segs = wrapped.length > 0 ? wrapped : [''];
-        for (const seg of segs) {
-          const prefix = isFirst ? head : contHead;
-          lines.push(`  ${prefix}${seg}`);
-          isFirst = false;
-        }
+    // 换行模式：保留真实换行 + 按宽度软折行；每个续行用 contHead 缩进对齐到消息列
+    const contHead = ' '.repeat(headW);
+    const rawLines = entry.message
+      .replace(/\r\n|\r/g, '\n')
+      .replace(/\t/g, '    ')
+      .split('\n');
+    let isFirst = true;
+    for (const raw of rawLines) {
+      // 按可见宽度软折行
+      const wrapped = wrapByVisibleWidth(raw, msgW);
+      const segs = wrapped.length > 0 ? wrapped : [''];
+      for (const seg of segs) {
+        const prefix = isFirst ? head : contHead;
+        lines.push(`  ${prefix}${seg}`);
+        isFirst = false;
       }
     }
-    return lines;
   }
 
   private getStatusViewLines(): string[] {
@@ -820,8 +780,9 @@ class CliTui {
     out.push(`    ${chalk.gray('• 完整日志写入 data/latest.log（每次启动覆盖）；可用 tail -f 查看。')}`);
     out.push(`    ${chalk.gray('• 退出时自动恢复原终端内容（alternate screen）。')}`);
     out.push(`    ${chalk.gray('• 输入以 / 开头会按命令解析，否则发给 agent。')}`);
-    out.push(`    ${chalk.gray('• 鼠标滚轮可滚动 Logs / Status / Help。')}`);
-    out.push(`    ${chalk.gray(`• 选择 / 复制文本：${selectionHint()}`)}`);
+    out.push(
+      `    ${chalk.gray('• ↑/↓、PgUp/PgDn、Home/End 滚动 Logs / Status / Help；选择 / 复制文本直接用终端原生操作。')}`,
+    );
     return out.map(l => (l.length === 0 ? '' : ` ${l}`));
   }
 
@@ -925,7 +886,7 @@ function restoreTerminalState(): void {
     /* ignore */
   }
   try {
-    output.write('\x1b[?1006l\x1b[?1000l\x1b[?1007l\x1b[?25h\x1b[?1049l');
+    output.write('\x1b[?1007l\x1b[?25h\x1b[?1049l');
   } catch {
     /* ignore */
   }
@@ -1013,20 +974,6 @@ function sanitizeForSingleLine(s: string): string {
       // biome-ignore lint/suspicious/noControlCharactersInRegex: 需要按字面匹配 C0 控制字符以清洗终端输入
       .replace(/[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F]/g, '')
   );
-}
-
-/** 不同平台终端绕过鼠标上报、回到原生选择/复制的指引 */
-function selectionHint(): string {
-  switch (process.platform) {
-    case 'darwin':
-      return '按住 Option（⌥）拖拽选择，再用 ⌘C 复制（iTerm2 / Terminal.app / VS Code 终端通用）';
-    case 'win32':
-      return 'Windows Terminal 按住 Shift 拖拽选择，右键复制；ConEmu 按住 Alt 拖拽';
-    case 'linux':
-      return 'GNOME/Konsole/xterm 按住 Shift 拖拽选择，再用 Ctrl+Shift+C 复制';
-    default:
-      return '按住 Shift（多数终端）或 Option（macOS）拖拽即可绕过鼠标上报';
-  }
 }
 
 // ----- 服务类型注册（declaration merging）-----
