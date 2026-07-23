@@ -1,5 +1,5 @@
 import { createReadStream, type FSWatcher, watch as fsWatch } from 'node:fs';
-import { lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { ConfigSchema, Context, Logger } from '@aalis/core';
 import type { CheckResult } from '@aalis/plugin-doctor-api';
@@ -366,6 +366,26 @@ class ScopedStorageService implements StorageService {
     const dispUri = toUri(this.root.name, relPath);
     this.debugSampled(`read:${dispUri}`, `storage.read ${dispUri} size=${s.size}`);
     return encoding ? readFile(abs, encoding) : readFile(abs);
+  }
+
+  /** 字节区间读取（[start, end) 半开）——大文件窗口化访问，绝不整文件载入 */
+  async readFileRange(uri: string, start: number, end: number): Promise<Buffer> {
+    const relPath = this.parseSelfUri(uri);
+    this.requirePermission('readable');
+    const abs = await this.resolveExisting(relPath);
+    const s = await stat(abs);
+    if (s.isDirectory()) throw new Error('不能读取目录');
+    const from = Math.max(0, Math.floor(start));
+    const to = Math.min(s.size, Math.floor(end));
+    if (to <= from) return Buffer.alloc(0);
+    const fh = await open(abs, 'r');
+    try {
+      const buf = Buffer.alloc(to - from);
+      await fh.read(buf, 0, to - from, from);
+      return buf;
+    } finally {
+      await fh.close();
+    }
   }
 
   async createReadStream(uri: string): Promise<StorageReadStreamResult> {
