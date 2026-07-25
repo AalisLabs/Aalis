@@ -384,6 +384,44 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
     },
   });
 
+  // ==================== file_move ====================
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'file_move',
+        description:
+          '移动或重命名受控存储中的文件/目录。from 与 to 都用 storage URI（如 workspace:/a.txt → workspace:/小说/a.txt），' +
+          '或相对当前 cwd 的路径。自动创建目标父目录；目标已存在则拒绝（不覆盖）。底层原子 rename，大文件也瞬间完成。' +
+          '不允许宿主机绝对路径、不能跨存储根——整理/归档文件请用本工具，勿用 shell mv（shell 不认 storage URI）。',
+        parameters: {
+          type: 'object',
+          properties: {
+            from: { type: 'string', description: '源 storage URI 或相对 cwd 的路径' },
+            to: { type: 'string', description: '目标 storage URI 或相对 cwd 的路径（含新文件名）' },
+          },
+          required: ['from', 'to'],
+          additionalProperties: false,
+        },
+      },
+    },
+    visibility: 'restricted',
+    // 移动是 confused-deputy 向量（注入诱导挪走/覆盖文件）→ owner 也需确认（本会话记住），与 file_write 一致
+    confirm: 'session',
+    handler: async (args, callCtx) => {
+      try {
+        const storage = requireStorage(config);
+        if (!storage.move) return jsonError(new Error('当前存储不支持移动操作（storage.move 未实现）'));
+        const fromUri = toStorageUri(args.from as string, config, callCtx.sessionId);
+        const toUri = toStorageUri(args.to as string, config, callCtx.sessionId);
+        const result = await storage.move(fromUri, toUri);
+        return JSON.stringify({ from: fromUri, to: result, message: '移动成功' });
+      } catch (err) {
+        return jsonError(err);
+      }
+    },
+  });
+
   // ==================== file_edit ====================
   tools.register({
     definition: {
