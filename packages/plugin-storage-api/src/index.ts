@@ -98,6 +98,13 @@ export interface StorageService {
   createReadStream(uri: string): Promise<StorageReadStreamResult>;
   writeFile(uri: string, data: string | Buffer): Promise<void>;
   rename(uri: string, newName: string): Promise<string>;
+  /**
+   * 移动/重命名到任意目标 URI（可跨目录，须同存储根）。自动创建目标父目录，
+   * 目标已存在则拒绝（不覆盖）。底层 fs.rename——原子、零拷贝，大文件也瞬间完成。
+   * 与 `rename`（仅同目录改名、拒绝路径分隔符）的区别：`move` 接受完整目标路径。
+   * 可选：老存储实现可不提供，消费方（file_move 工具）会检查存在性后降级报错。
+   */
+  move?(fromUri: string, toUri: string): Promise<string>;
   delete(uri: string): Promise<void>;
   /**
    * 把 storage URI 解析为本机绝对路径，给必须使用本地路径的子进程（shell、code-runner）用。
@@ -434,6 +441,11 @@ export function createStorageGateway(ctx: Context): StorageService {
     createReadStream: uri => dispatch(uri, ['read']).createReadStream(uri),
     writeFile: (uri, data) => dispatch(uri, ['write']).writeFile(uri, data),
     rename: (uri, newName) => dispatch(uri, ['write']).rename(uri, newName),
+    move: (fromUri, toUri) => {
+      const provider = dispatch(fromUri, ['write']);
+      if (!provider.move) throw new Error(`存储根 ${parseUriRoot(fromUri)} 不支持移动操作`);
+      return provider.move(fromUri, toUri);
+    },
     delete: uri => dispatch(uri, ['delete']).delete(uri),
     resolveLocalPath: (uri, access) => {
       const caps: StorageCapability[] =
