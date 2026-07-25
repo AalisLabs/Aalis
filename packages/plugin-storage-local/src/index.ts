@@ -465,6 +465,20 @@ class ScopedStorageService implements StorageService {
     return toUri(this.root.name, toRel);
   }
 
+  /**
+   * 递归创建目录（自动建缺失父目录；已存在则幂等）。resolveForWrite 约束在根内
+   * （宿主绝对路径 / `..` 逃逸 / symlink 都被挡），与其它写操作同防护。
+   */
+  async mkdir(uri: string): Promise<string> {
+    const relPath = this.parseSelfUri(uri);
+    this.requirePermission('writable');
+    if (!relPath) throw new Error('根目录已存在，无需创建');
+    const abs = await this.resolveForWrite(relPath);
+    await mkdir(abs, { recursive: true }); // recursive：建全路径；已存在则 no-op（幂等）
+    this.logger.info(`storage.mkdir ${toUri(this.root.name, relPath)}`);
+    return toUri(this.root.name, relPath);
+  }
+
   async delete(uri: string): Promise<void> {
     const relPath = this.parseSelfUri(uri);
     this.requirePermission('deletable');
