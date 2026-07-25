@@ -105,6 +105,12 @@ export interface StorageService {
    * 可选：老存储实现可不提供，消费方（file_move 工具）会检查存在性后降级报错。
    */
   move?(fromUri: string, toUri: string): Promise<string>;
+  /**
+   * 创建目录（递归，自动建所有缺失的父目录；已存在则幂等无操作）。约束在存储根内
+   * （拒宿主绝对路径 / `..` 逃逸）。返回创建的目录 URI。
+   * 可选：老存储实现可不提供，消费方（file_mkdir 工具）会检查存在性后降级报错。
+   */
+  mkdir?(uri: string): Promise<string>;
   delete(uri: string): Promise<void>;
   /**
    * 把 storage URI 解析为本机绝对路径，给必须使用本地路径的子进程（shell、code-runner）用。
@@ -445,6 +451,11 @@ export function createStorageGateway(ctx: Context): StorageService {
       const provider = dispatch(fromUri, ['write']);
       if (!provider.move) throw new Error(`存储根 ${parseUriRoot(fromUri)} 不支持移动操作`);
       return provider.move(fromUri, toUri);
+    },
+    mkdir: uri => {
+      const provider = dispatch(uri, ['write']);
+      if (!provider.mkdir) throw new Error(`存储根 ${parseUriRoot(uri)} 不支持创建目录`);
+      return provider.mkdir(uri);
     },
     delete: uri => dispatch(uri, ['delete']).delete(uri),
     resolveLocalPath: (uri, access) => {

@@ -422,6 +422,41 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
     },
   });
 
+  // ==================== file_mkdir ====================
+  tools.register({
+    definition: {
+      type: 'function',
+      function: {
+        name: 'file_mkdir',
+        description:
+          '在受控存储中创建目录（递归，自动建所有缺失的父目录；已存在则无操作）。' +
+          'path 用 storage URI（如 workspace:/小说/淫魔女（原版）），或相对当前 cwd 的路径。' +
+          '不允许宿主机绝对路径。整理/归档需要建目录时用本工具，勿用 shell mkdir（shell 不认 storage URI，会造出字面目录）。',
+        parameters: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'storage URI 或相对当前 cwd 的目录路径' },
+          },
+          required: ['path'],
+          additionalProperties: false,
+        },
+      },
+    },
+    // 建目录约束在存储根内、不覆盖不注入内容，风险低于写/移动；restricted 挡住 level-0 即可，不弹确认。
+    visibility: 'restricted',
+    handler: async (args, callCtx) => {
+      try {
+        const storage = requireStorage(config);
+        if (!storage.mkdir) return jsonError(new Error('当前存储不支持创建目录（storage.mkdir 未实现）'));
+        const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
+        const result = await storage.mkdir(uri);
+        return JSON.stringify({ uri: result, message: '目录已创建' });
+      } catch (err) {
+        return jsonError(err);
+      }
+    },
+  });
+
   // ==================== file_edit ====================
   tools.register({
     definition: {
