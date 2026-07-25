@@ -1737,97 +1737,197 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     ctx.preferService('llm', `${defaultLLM.provider}/${defaultLLM.model}`);
   }
 
-  // ===== /model 指令组（split 为 dot-path 子命令）=====
-  // info / status / reset / set <name>
-  async function modelInfo(sessionId: string, platform: string, listAvailable: boolean): Promise<string> {
+  // ===== 会话级配置指令 =====
+  // /session 查（模型+人设+名+解析链） · /session.set 改 · /session.reset 复位 · /model 列可用模型
+  // 与"会话"相关的模型改写统一收敛到 /session.*；/model 只保留全局的"列可用模型"发现。
+
+  /**
+   * 组装某会话某字段的「解析」视图行：当前值 + 来源 + 解析链（会话 / 父 sessionDefaults / 平台 profile）。
+   * pick 从各层配置提取并格式化该字段——模型与人设复用同一逻辑，展示对称、直观。
+   */
+  type CfgView = { llm?: { provider: string; model: string }; persona?: string } | undefined;
+  function resolutionLines(
+    sessionId: string,
+    platform: string,
+    label: string,
+    pick: (c: CfgView) => string | undefined,
+  ): string[] {
     const smSvc = ctx.getService<SessionManagerService>('session-manager');
-    const sessionLLM = smSvc?.getSession(sessionId)?.config?.llm;
-    const parent = smSvc?.getSession(sessionId)?.parentId
-      ? smSvc?.getSession(smSvc.getSession(sessionId)!.parentId!)
-      : undefined;
-    const parentDefaultsLLM = parent?.config?.sessionDefaults?.llm;
-    const profileLLM = smSvc?.getPlatformProfiles()?.[platform || 'webui']?.llm;
-    const resolvedLLM = smSvc ? smSvc.resolveConfig(sessionId, platform).llm : undefined;
+    if (!smSvc) return [`${label}: (session-manager 不可用)`];
+    const session = smSvc.getSession(sessionId);
+    const own = pick(session?.config);
+    const parent = session?.parentId ? smSvc.getSession(session.parentId) : undefined;
+    const parentDefaults = pick(parent?.config?.sessionDefaults);
+    const profile = pick(smSvc.getPlatformProfiles()?.[platform || 'webui']);
+    const resolved = pick(smSvc.resolveConfig(sessionId, platform));
 
-    const fmt = (r?: { provider: string; model: string }) => (r ? `${r.provider}/${r.model}` : undefined);
+    let source = '默认';
+    if (own) source = '会话覆盖';
+    else if (parentDefaults) source = '父会话 sessionDefaults';
+    else if (profile) source = `平台 profile (${platform})`;
 
-    let source = '(无 / 走 ServicePreference)';
-    if (sessionLLM) source = '会话覆盖';
-    else if (parentDefaultsLLM) source = '父会话 sessionDefaults';
-    else if (profileLLM) source = `平台 profile (${platform})`;
-
-    const lines = [`**当前模型**: ${fmt(resolvedLLM) || '(默认)'}`, `**来源**: ${source}`];
+    const lines = [`${label}: ${resolved ?? '(默认)'}  [来源: ${source}]`];
     const chain: string[] = [];
-    if (sessionLLM) chain.push(`会话: ${fmt(sessionLLM)}`);
-    if (parentDefaultsLLM) chain.push(`父 sessionDefaults: ${fmt(parentDefaultsLLM)}`);
-    if (profileLLM) chain.push(`平台 profile: ${fmt(profileLLM)}`);
+    if (own) chain.push(`会话: ${own}`);
+    if (parentDefaults) chain.push(`父 sessionDefaults: ${parentDefaults}`);
+    if (profile) chain.push(`平台 profile: ${profile}`);
     if (chain.length > 0) {
-      lines.push('', '**解析链**（高优先级在前）:');
-      for (const c of chain) lines.push(`- ${c}`);
+      lines.push('  解析链（高优先级在前）:');
+      for (const c of chain) lines.push(`  - ${c}`);
     }
-    if (sessionLLM) lines.push('', '_使用 `/model reset` 清除会话覆盖_');
+    return lines;
+  }
+  const fmtModel = (c: CfgView): string | undefined => (c?.llm ? `${c.llm.provider}/${c.llm.model}` : undefined);
+  const fmtPersona = (c: CfgView): string | undefined => c?.persona;
 
-    if (listAvailable) {
-      // 直接枚举所有 chat-capable LLMModel entry（按 handle 元数据过滤）
-      const entries = listLLMModels(ctx, { caps: ['chat'] });
-      const seen = new Set<string>();
-      const items: string[] = [];
-      for (const e of entries) {
-        const display = e.label ? `${e.contextId}  _(${e.label})_` : e.contextId;
-        if (seen.has(e.contextId)) continue;
-        seen.add(e.contextId);
-        items.push(display);
-      }
-      if (items.length > 0) {
-        lines.push('', '**可用模型**（contextId 形式 `provider/model`）:');
-        for (const m of items) lines.push(`- ${m}`);
-      }
+  // 分页渲染 helper：限制每页 PAGE_SIZE 条 + 关键词过滤 + 翻页提示（/model 与 /persona 共用）。
+  const PAGE_SIZE = 20;
+  function renderPaged(all: string[], keyword: string, page: number, label: string, cmd: string): string {
+    const kw = keyword.trim().toLowerCase();
+    const list = kw ? all.filter(x => x.toLowerCase().includes(kw)) : all;
+    if (list.length === 0) return kw ? `无匹配 "${keyword}" 的${label}` : `(无可用${label})`;
+    const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+    const p = Math.min(Math.max(1, Math.trunc(page) || 1), pages);
+    const body = list.slice((p - 1) * PAGE_SIZE, p * PAGE_SIZE).map(x => `- ${x}`);
+    const lines = [`${label}（${kw ? `含"${keyword}" ` : ''}共 ${list.length} · 第 ${p}/${pages} 页）:`, ...body];
+    if (pages > 1) {
+      const next = p < pages ? p + 1 : 1;
+      lines.push(`—— 翻页: ${cmd}${kw ? ` ${keyword}` : ''} -p ${next}${kw ? '' : `　搜索: ${cmd} <关键词>`}`);
     }
     return lines.join('\n');
   }
 
   useCommandService(ctx)
-    .command('model', '查看当前会话的对话模型与解析链；并列出可用模型')
-    .action(async argv => modelInfo(argv.session.sessionId, argv.session.platform, true));
-
-  useCommandService(ctx)
-    .command('model.info', '查看当前会话的对话模型与解析链')
-    .action(async argv => modelInfo(argv.session.sessionId, argv.session.platform, false));
-
-  useCommandService(ctx)
-    .command('model.status', '查看当前会话的对话模型与解析链')
-    .action(async argv => modelInfo(argv.session.sessionId, argv.session.platform, false));
-
-  useCommandService(ctx)
-    .command('model.reset', '清除当前会话的模型覆盖')
-    .action(async argv => {
-      const smSvc = ctx.getService<SessionManagerService>('session-manager');
-      if (!smSvc) return 'session-manager 服务不可用';
-      const session = smSvc.getSession(argv.session.sessionId);
-      if (session?.config?.llm) {
-        const { llm: _, ...rest } = session.config;
-        await smSvc.updateSession(argv.session.sessionId, { config: { ...rest, llm: undefined } as SessionConfig });
+    .command('model [keyword:string]', '列出/搜索可用对话模型（分页，-p 翻页；如 /model grok）')
+    .option('page', '-p <n:number>', { description: '页码（默认 1）' })
+    .action(async (argv, keyword) => {
+      const seen = new Set<string>();
+      const ids: string[] = [];
+      for (const e of listLLMModels(ctx, { caps: ['chat'] })) {
+        if (seen.has(e.contextId)) continue;
+        seen.add(e.contextId);
+        ids.push(e.contextId);
       }
-      const fallback = smSvc.resolveConfig(argv.session.sessionId, argv.session.platform).llm;
-      return `已清除会话模型覆盖，回退到: ${fallback ? `${fallback.provider}/${fallback.model}` : '(默认)'}`;
+      const page = typeof argv.options.page === 'number' ? argv.options.page : 1;
+      return renderPaged(ids, String(keyword ?? ''), page, '可用模型', '/model');
     });
 
   useCommandService(ctx)
-    .command('model.set <ref:string>', '设置会话级模型覆盖；ref 形如 `provider/model`（即 LLM entry 的 contextId）')
-    .action(async (argv, ref) => {
-      const refStr = String(ref || '').trim();
-      if (!refStr) return '用法: /model set <provider/model>，例如 /model set @aalis/plugin-openai:main/gpt-4o';
-      // 用最后一个 '/' 切分，因为 provider id 内含有 '/'（如 `@aalis/plugin-openai:main`）。
-      const lastSlash = refStr.lastIndexOf('/');
-      if (lastSlash <= 0 || lastSlash === refStr.length - 1) {
-        return '格式错误。请使用 `provider/model`，例如 `@aalis/plugin-openai:main/gpt-4o`';
-      }
-      const provider = refStr.slice(0, lastSlash);
-      const model = refStr.slice(lastSlash + 1);
+    .command('persona [keyword:string]', '列出/搜索可用人设（分页，-p 翻页）')
+    .option('page', '-p <n:number>', { description: '页码（默认 1）' })
+    .action(async (argv, keyword) => {
+      const persona = ctx.getService<PersonaService>('persona');
+      const names = persona?.listModels ? await persona.listModels() : [];
+      const page = typeof argv.options.page === 'number' ? argv.options.page : 1;
+      return renderPaged(names, String(keyword ?? ''), page, '可用人设', '/persona');
+    });
+
+  // ---- 会话级「模型 + 人设 + 名称」配置（onebot 等平台对话直接改当前对话生效） ----
+  useCommandService(ctx)
+    .command('session', '查看当前对话生效的模型 / 人设 / 名称及来源与解析链', { risk: 'sensitive' })
+    .action(async argv => {
       const smSvc = ctx.getService<SessionManagerService>('session-manager');
       if (!smSvc) return 'session-manager 服务不可用';
-      await smSvc.updateSession(argv.session.sessionId, { config: { llm: { provider, model } } as SessionConfig });
-      return `当前会话模型已切换为: ${provider}/${model}（已持久化）`;
+      const sid = argv.session.sessionId;
+      const session = smSvc.getSession(sid);
+      return [
+        `会话: ${session?.name ?? sid}`,
+        ...resolutionLines(sid, argv.session.platform, '模型', fmtModel),
+        ...resolutionLines(sid, argv.session.platform, '人设', fmtPersona),
+        session ? '' : '（本对话尚无独立配置记录，全部继承默认）',
+        '────',
+        '改配置: /session.set -m <模型> -p <人设> [-n <名>]   （/model 看可用模型/人设名错时也会列出）',
+        '复位:   /session.reset          （-m 仅模型 / -p 仅人设）',
+      ]
+        .filter(Boolean)
+        .join('\n');
+    });
+
+  useCommandService(ctx)
+    .command('session.set', '设定当前对话的模型 / 人设 / 显示名（会话级覆盖，持久化，重启不丢）', {
+      risk: 'sensitive',
+      examples: [
+        '/session.set -m @aalis/plugin-openai:main/gpt-4o -p catgirl',
+        '/session.set -p strict-reviewer',
+        '/session.set -n 深夜助手',
+      ],
+    })
+    .option('model', '-m <ref:string>', { description: '模型 provider/model（LLM entry 的 contextId；/model 可列出）' })
+    .option('persona', '-p <name:string>', { description: '人设卡名（不含后缀）' })
+    .option('name', '-n <label:string>', { description: '会话显示名（可选）' })
+    .action(async argv => {
+      const smSvc = ctx.getService<SessionManagerService>('session-manager');
+      if (!smSvc) return 'session-manager 服务不可用';
+      const modelRef = typeof argv.options.model === 'string' ? argv.options.model.trim() : '';
+      const personaName = typeof argv.options.persona === 'string' ? argv.options.persona.trim() : '';
+      const displayName = typeof argv.options.name === 'string' ? argv.options.name.trim() : '';
+      if (!modelRef && !personaName && !displayName) {
+        return '用法: /session.set -m <provider/model> -p <人设名> [-n <显示名>]（-m / -p 至少给一个）';
+      }
+      const config: SessionConfig = {};
+      // 模型：校验存在再落，避免错名静默回退默认
+      if (modelRef) {
+        const lastSlash = modelRef.lastIndexOf('/');
+        if (lastSlash <= 0 || lastSlash === modelRef.length - 1) {
+          return '模型格式错误。请用 `provider/model`，例如 `@aalis/plugin-openai:main/gpt-4o`';
+        }
+        const chatModels = listLLMModels(ctx, { caps: ['chat'] });
+        if (!chatModels.some(e => e.contextId === modelRef)) {
+          return `未知模型 "${modelRef}"。用 /model <关键词> 搜索（如 /model grok），共 ${chatModels.length} 个可用。`;
+        }
+        config.llm = { provider: modelRef.slice(0, lastSlash), model: modelRef.slice(lastSlash + 1) };
+      }
+      // 人设：listModels 可选，缺失则不校验（persona 插件缺席时不误拒）
+      if (personaName) {
+        const persona = ctx.getService<PersonaService>('persona');
+        if (persona?.listModels) {
+          const names = await persona.listModels();
+          if (!names.includes(personaName)) {
+            return `未知人设 "${personaName}"。用 /persona 查看可用人设（共 ${names.length} 个）。`;
+          }
+        }
+        config.persona = personaName;
+      }
+      await smSvc.ensureSession(argv.session.sessionId, {
+        config,
+        createdBy: 'user',
+        ...(displayName ? { name: displayName } : {}),
+      });
+      const lines = ['本对话已切换 →'];
+      if (config.llm) lines.push(`· 模型: ${config.llm.provider}/${config.llm.model}`);
+      if (config.persona) lines.push(`· 人设: ${config.persona}`);
+      if (displayName) lines.push(`· 名称: ${displayName}`);
+      lines.push('后续消息持续生效（已持久化，重启不丢）。/session.reset 可复位。');
+      return lines.join('\n');
+    });
+
+  useCommandService(ctx)
+    .command('session.reset', '复位当前对话的会话级覆盖（默认清模型+人设；-m 仅模型，-p 仅人设）', {
+      risk: 'sensitive',
+      examples: ['/session.reset', '/session.reset -m', '/session.reset -p'],
+    })
+    .option('model', '-m', { description: '仅复位模型覆盖' })
+    .option('persona', '-p', { description: '仅复位人设覆盖' })
+    .action(async argv => {
+      const smSvc = ctx.getService<SessionManagerService>('session-manager');
+      if (!smSvc) return 'session-manager 服务不可用';
+      const mFlag = argv.options.model === true;
+      const pFlag = argv.options.persona === true;
+      // 都不给 = 清两者；只给 -m 清模型；只给 -p 清人设
+      const clearModel = mFlag || !pFlag;
+      const clearPersona = pFlag || !mFlag;
+      const sid = argv.session.sessionId;
+      const session = smSvc.getSession(sid);
+      const willClear = (clearModel && session?.config?.llm) || (clearPersona && session?.config?.persona);
+      if (session?.config && willClear) {
+        // 写 undefined → resolveConfig 的 stripUndefined 使其回落默认级联
+        const patch: SessionConfig = { ...session.config };
+        if (clearModel) patch.llm = undefined;
+        if (clearPersona) patch.persona = undefined;
+        await smSvc.ensureSession(sid, { config: patch });
+      }
+      const eff = smSvc.resolveConfig(sid, argv.session.platform);
+      return `已复位 → 模型: ${eff.llm ? `${eff.llm.provider}/${eff.llm.model}` : '(默认)'}，人设: ${eff.persona ?? '(默认)'}`;
     });
 
   // 监听 token:request 事件 — 客户端刷新/重连时主动请求 token 用量
