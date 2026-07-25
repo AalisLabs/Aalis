@@ -24,7 +24,7 @@ import { safeFetch } from '@aalis/util-network-guard';
 
 type AttachmentKind = 'image' | 'audio' | 'video' | 'file';
 
-const KIND_DIR: Record<AttachmentKind, string> = {
+export const KIND_DIR: Record<AttachmentKind, string> = {
   image: 'images',
   audio: 'audios',
   video: 'videos',
