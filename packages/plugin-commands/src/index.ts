@@ -51,15 +51,31 @@ async function removeDirCounted(storage: StorageService, dirUri: string): Promis
   }
 }
 
-const CLEAR_TYPES = [
+export const CLEAR_TYPES = [
   { id: 'context', label: '消息历史与会话上下文' },
   { id: 'summary', label: '会话摘要' },
   { id: 'vector', label: '向量记忆' },
   { id: 'image', label: '图片缓存' },
+  { id: 'video', label: '视频缓存' },
+  { id: 'audio', label: '语音缓存' },
+  { id: 'file', label: '文件缓存' },
   { id: 'persona', label: '会话角色状态' },
   { id: 'checkpoint', label: '检查点（对话回滚存档）' },
   { id: 'user-profile', label: '用户档案（仅全局清理）' },
   { id: 'user-relation', label: '用户关系图谱（仅全局清理）' },
+] as const;
+
+/**
+ * 附件缓存种类 → `data:/` 目录 + 中文标签。
+ * 目录名与 @aalis/plugin-adapter-onebot 的 attachment-cache `KIND_DIR` 对齐
+ * （image→images / video→videos / audio→audios / file→files），落盘路径为
+ * `data:/{dir}/{safeSessionId}/{hash}.{ext}`。改这里即同步 /clear 覆盖面。
+ */
+export const ATTACHMENT_KINDS = [
+  { type: 'image', dir: 'images', label: '图片' },
+  { type: 'video', dir: 'videos', label: '视频' },
+  { type: 'audio', dir: 'audios', label: '语音' },
+  { type: 'file', dir: 'files', label: '文件' },
 ] as const;
 
 const CLEAR_TYPE_ALIASES: Record<string, string> = {
@@ -109,11 +125,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 注册服务
   ctx.provide('commands', commands);
 
-  // ===== 统一 memory:clear 中间件：图片缓存清理 =====
+  // ===== 统一 memory:clear 中间件：附件缓存清理（图片/视频/语音/文件）=====
   //
-  // 之前图片缓存清理只内联在 /clear 的 runClear 路径里，导致 deleteSession
-  // 触发的 memory:clear 不会清图片，文件泄漏。改为独立 middleware 后，
-  // /clear 与 deleteSession 走同一处理路径。
+  // 附件按 data:/{images|videos|audios|files}/{safeSessionId} 落盘（与 onebot
+  // attachment-cache 的 KIND_DIR 对齐）。独立 middleware 使 /clear 与 deleteSession
+  // 走同一清理路径——deleteSession 触发的 memory:clear 也清附件，杜绝文件泄漏
+  // （历史上只清图片，视频/语音/文件是缺口，故补齐四类）。
+  //
+  // types 语义：未指定=清全部附件；指定则只清命中的种类（如 /clear -t video）。
   ctx.middleware(
     'memory:clear',
     async (
@@ -125,30 +144,32 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       },
       next,
     ) => {
-      if (data.types && !data.types.includes('image')) {
-        await next();
-        return;
-      }
-      try {
-        if (data.scope === 'all') {
-          const removed = await removeDirCounted(storage, 'data:/images');
-          data.results.push({
-            source: 'image-cache',
-            success: true,
-            message: removed >= 0 ? `所有图片缓存已清空（${removed} 个会话目录）` : '图片缓存目录不存在，无需清空',
-          });
-        } else if (data.sessionId) {
-          const safeSessionId = data.sessionId.replace(/[:/\\]/g, '_');
-          const removed = await removeDirCounted(storage, `data:/images/${safeSessionId}`);
-          data.results.push({
-            source: 'image-cache',
-            success: true,
-            message: removed >= 0 ? `当前会话图片缓存已清空（${removed} 张）` : '当前会话无图片缓存',
-          });
+      const safeSessionId = data.sessionId?.replace(/[:/\\]/g, '_');
+      for (const k of ATTACHMENT_KINDS) {
+        if (data.types && !data.types.includes(k.type)) continue;
+        try {
+          if (data.scope === 'all') {
+            const removed = await removeDirCounted(storage, `data:/${k.dir}`);
+            data.results.push({
+              source: `${k.type}-cache`,
+              success: true,
+              message:
+                removed >= 0
+                  ? `所有${k.label}缓存已清空（${removed} 个会话目录）`
+                  : `${k.label}缓存目录不存在，无需清空`,
+            });
+          } else if (safeSessionId) {
+            const removed = await removeDirCounted(storage, `data:/${k.dir}/${safeSessionId}`);
+            data.results.push({
+              source: `${k.type}-cache`,
+              success: true,
+              message: removed >= 0 ? `当前会话${k.label}缓存已清空（${removed} 个）` : `当前会话无${k.label}缓存`,
+            });
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          data.results.push({ source: `${k.type}-cache`, success: false, message: `${k.label}缓存清空失败: ${msg}` });
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        data.results.push({ source: 'image-cache', success: false, message: `图片缓存清空失败: ${msg}` });
       }
       await next();
     },
