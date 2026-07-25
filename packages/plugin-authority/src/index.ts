@@ -8,7 +8,7 @@ import type {
 import type { CommandService } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
 import { getPlatformNames } from '@aalis/plugin-platform-api';
-import { createStorageGateway } from '@aalis/plugin-storage-api';
+import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
@@ -43,8 +43,16 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
   const cmds = useCommandService(ctx);
   const storage = createStorageGateway(ctx);
   const authority = new AuthorityManager(ctx.config, ctx.logger, storage);
-  await authority.init();
   ctx.provide('authority', authority);
+  // 用户等级存于 data:/users.json，读取依赖 storage 服务。storage provider 可能晚于本插件
+  // 上线（曾因此在 init 阶段 readFile 失败被静默吞 → 重启后等级不回载）；改为 storage 就绪时再
+  // load，规避初始化时序竞态。whenService 对「已在线」的服务也会立即触发，故任意加载序都成立。
+  ctx.whenService<StorageService>('storage', () => {
+    void authority.init().then(
+      () => ctx.logger.debug('授权用户等级已加载'),
+      err => ctx.logger.warn(`授权用户等级加载失败: ${err}`),
+    );
+  });
 
   // 网络出口闸（SSRF）：把 core 配置 network 注入进程级 safeFetch 策略（启动一次）。
   // 安全归属在权限域；本地固定服务走裸 fetch、不过 safeFetch，故不受影响。

@@ -378,6 +378,56 @@ export function AuthorityPage() {
         )}
       </div>
 
+      {/* ═══ Owner ═══ */}
+      <div className="config-block">
+        <div className="config-block-header" onClick={() => toggleSection('owners')}>
+          <span className="config-block-title">Owner</span>
+          <span className="config-block-hint">Owner 拥有全部权限；console（本机登录）恒为 Owner。</span>
+          <span className={`config-block-toggle ${openSections.has('owners') ? 'open' : ''}`}>▶</span>
+        </div>
+        {openSections.has('owners') && (
+          <div className="config-block-body">
+            <button type="button" className="btn btn-sm" onClick={() => setShowAddOwner(s => !s)}>
+              {showAddOwner ? '取消' : '+ 添加 Owner'}
+            </button>
+            {showAddOwner && (
+              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                <input className="config-edit-input" style={{ maxWidth: 160 }} placeholder="平台" list="authority-platforms" value={newOwner.platform} onChange={e => setNewOwner(v => ({ ...v, platform: e.target.value }))} />
+                <input className="config-edit-input" style={{ maxWidth: 160 }} placeholder="用户 ID" value={newOwner.userId} onChange={e => setNewOwner(v => ({ ...v, userId: e.target.value }))} />
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={!newOwner.platform || !newOwner.userId}
+                  onClick={() => {
+                    act('setOwners', { owners: [...data.owners, { ...newOwner }] }, 'Owner 已添加');
+                    setNewOwner({ platform: '', userId: '' });
+                    setShowAddOwner(false);
+                  }}
+                >
+                  确认
+                </button>
+              </div>
+            )}
+            {data.owners.length === 0 ? (
+              <div className="empty-hint" style={{ marginTop: 8 }}>暂无显式 Owner。console 始终拥有全部权限。</div>
+            ) : (
+              <div className="authority-cmd-list" style={{ marginTop: 8 }}>
+                {data.owners.map((o, i) => (
+                  <div className="authority-cmd-row" key={`${o.platform}:${o.userId}`}>
+                    <span style={{ flex: 1 }}>
+                      <strong>{o.platform}</strong>:{o.userId}
+                    </span>
+                    <button type="button" className="btn btn-danger btn-sm" onClick={() => act('setOwners', { owners: data.owners.filter((_, j) => j !== i) }, 'Owner 已移除')}>
+                      移除
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* ═══ 操作（最低等级 + 确认，默认来自风险，偶尔覆盖）═══ */}
       <div className="config-block">
         <div className="config-block-header" onClick={() => toggleSection('ops')}>
@@ -517,56 +567,6 @@ export function AuthorityPage() {
                 </div>
               );
             })}
-          </div>
-        )}
-      </div>
-
-      {/* ═══ Owner ═══ */}
-      <div className="config-block">
-        <div className="config-block-header" onClick={() => toggleSection('owners')}>
-          <span className="config-block-title">Owner</span>
-          <span className="config-block-hint">Owner 拥有全部权限；console（本机登录）恒为 Owner。</span>
-          <span className={`config-block-toggle ${openSections.has('owners') ? 'open' : ''}`}>▶</span>
-        </div>
-        {openSections.has('owners') && (
-          <div className="config-block-body">
-            <button type="button" className="btn btn-sm" onClick={() => setShowAddOwner(s => !s)}>
-              {showAddOwner ? '取消' : '+ 添加 Owner'}
-            </button>
-            {showAddOwner && (
-              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                <input className="config-edit-input" style={{ maxWidth: 160 }} placeholder="平台" list="authority-platforms" value={newOwner.platform} onChange={e => setNewOwner(v => ({ ...v, platform: e.target.value }))} />
-                <input className="config-edit-input" style={{ maxWidth: 160 }} placeholder="用户 ID" value={newOwner.userId} onChange={e => setNewOwner(v => ({ ...v, userId: e.target.value }))} />
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  disabled={!newOwner.platform || !newOwner.userId}
-                  onClick={() => {
-                    act('setOwners', { owners: [...data.owners, { ...newOwner }] }, 'Owner 已添加');
-                    setNewOwner({ platform: '', userId: '' });
-                    setShowAddOwner(false);
-                  }}
-                >
-                  确认
-                </button>
-              </div>
-            )}
-            {data.owners.length === 0 ? (
-              <div className="empty-hint" style={{ marginTop: 8 }}>暂无显式 Owner。console 始终拥有全部权限。</div>
-            ) : (
-              <div className="authority-cmd-list" style={{ marginTop: 8 }}>
-                {data.owners.map((o, i) => (
-                  <div className="authority-cmd-row" key={`${o.platform}:${o.userId}`}>
-                    <span style={{ flex: 1 }}>
-                      <strong>{o.platform}</strong>:{o.userId}
-                    </span>
-                    <button type="button" className="btn btn-danger btn-sm" onClick={() => act('setOwners', { owners: data.owners.filter((_, j) => j !== i) }, 'Owner 已移除')}>
-                      移除
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         )}
       </div>
