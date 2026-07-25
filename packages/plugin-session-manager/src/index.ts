@@ -465,10 +465,42 @@ class SessionManager implements SessionManagerService {
     }
   }
 
-  /** 直接注入一个完整的会话对象（用于默认会话等特殊场景） */
-  injectSession(session: SessionInfo): void {
-    this.sessions.set(session.id, session);
+  /**
+   * 按精确 id 幂等 upsert：命中走 updateSession（合并 config + emit `session:updated`），
+   * 未命中以传入 id 建 active 记录（emit `session:created`）。
+   * 平台派生 sessionId（onebot 等）首次落配置覆盖时用——那些 id 不经 createSession 预建。
+   */
+  async ensureSession(
+    id: string,
+    patch: Partial<Pick<SessionInfo, 'name' | 'config' | 'status' | 'metadata' | 'createdBy'>> = {},
+  ): Promise<SessionInfo> {
+    if (this.sessions.has(id)) {
+      // updateSession 不接受 createdBy（建档专用），命中路径剥离后转发
+      const { createdBy: _ignore, ...updates } = patch;
+      return this.updateSession(id, updates);
+    }
+    const now = Date.now();
+    const session: SessionInfo = {
+      id,
+      name:
+        patch.name ||
+        `会话 ${new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
+      title: patch.metadata?.title as string | undefined,
+      parentId: undefined,
+      children: [],
+      status: patch.status || 'active',
+      config: patch.config || {},
+      createdAt: now,
+      updatedAt: now,
+      createdBy: patch.createdBy || 'user',
+      inputContext: patch.metadata?.inputContext as string | undefined,
+      metadata: patch.metadata,
+    };
+    this.sessions.set(id, session);
     this.markDirty();
+    await this.ctx.emit('session:created', session);
+    this.ctx.logger.info(`会话建档(ensure): ${session.name} (${id})`);
+    return session;
   }
 
   // ---- CRUD ----
