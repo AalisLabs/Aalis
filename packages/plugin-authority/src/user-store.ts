@@ -70,8 +70,11 @@ export class UserStore {
       let raw: string;
       try {
         raw = (await this.storage.readFile(this.fileUri, 'utf-8')) as string;
-      } catch {
-        return; // 无文件 = 全新（owners 配置 seed owner）
+      } catch (err) {
+        // 无文件 = 全新（owners 配置 seed owner）。其它错误（如 storage 未就绪）也落此；
+        // 记 debug 以免像历史上那样被完全静默——调用方应确保 storage 就绪后再 load。
+        this.logger.debug(`users.json 未读取（无文件或 storage 未就绪）: ${err instanceof Error ? err.message : err}`);
+        return;
       }
       const data = JSON.parse(raw) as { version?: number; users?: Record<string, UserRecord> };
       if (data.version === USERS_VERSION && data.users && typeof data.users === 'object') {
