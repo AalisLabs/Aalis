@@ -66,4 +66,16 @@ describe('storage.move (真 fs)', () => {
     await expect(storage.move?.('ws:/a.txt', 'ws:/../escape.txt')).rejects.toThrow();
     expect(existsSync(join(base, 'escape.txt'))).toBe(false);
   });
+
+  it('mkdir：递归建目录 + 幂等（已存在无错）', async () => {
+    const r = await storage.mkdir?.('ws:/小说/淫魔女（原版）');
+    expect(r).toBe('ws:/小说/淫魔女（原版）');
+    expect(existsSync(join(ws, '小说', '淫魔女（原版）'))).toBe(true); // 递归建父目录
+    await expect(storage.mkdir?.('ws:/小说/淫魔女（原版）')).resolves.toBe('ws:/小说/淫魔女（原版）'); // 幂等
+  });
+
+  it('mkdir：.. 逃逸 → 拒绝（不在根外建目录）', async () => {
+    await expect(storage.mkdir?.('ws:/../escape')).rejects.toThrow();
+    expect(existsSync(join(base, 'escape'))).toBe(false);
+  });
 });
