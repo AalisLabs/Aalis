@@ -439,6 +439,32 @@ class ScopedStorageService implements StorageService {
     return toUri(this.root.name, newRel);
   }
 
+  /**
+   * 移动/重命名到完整目标路径（可跨目录，须同根）。自动建目标父目录，目标已存在拒绝。
+   * parseSelfUri 对两端都校验根归属——跨根天然被拒；resolveExisting/resolveForWrite
+   * 各自 isInside 约束在根内——宿主绝对路径与 `..` 逃逸都被挡（与其它写操作同防护）。
+   */
+  async move(fromUri: string, targetUri: string): Promise<string> {
+    const fromRel = this.parseSelfUri(fromUri);
+    const toRel = this.parseSelfUri(targetUri); // 跨根 → root 不匹配抛错
+    this.requirePermission('writable');
+    if (!fromRel) throw new Error('不能移动根目录');
+    if (!toRel) throw new Error('目标不能是根目录');
+    const absFrom = await this.resolveExisting(fromRel);
+    const absTo = await this.resolveForWrite(toRel);
+    try {
+      await lstat(absTo);
+      throw new Error('目标已存在');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+    await mkdir(dirname(absTo), { recursive: true }); // 自动建目标父目录（同 writeFile 语义）
+    await this.snapshot(toUri(this.root.name, fromRel), 'rename', absFrom);
+    await rename(absFrom, absTo); // fs.rename：原子、跨目录、零拷贝
+    this.logger.info(`storage.move ${toUri(this.root.name, fromRel)} -> ${toUri(this.root.name, toRel)}`);
+    return toUri(this.root.name, toRel);
+  }
+
   async delete(uri: string): Promise<void> {
     const relPath = this.parseSelfUri(uri);
     this.requirePermission('deletable');
