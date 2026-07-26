@@ -1,0 +1,167 @@
+/* ============================================================
+ * Aalis 文档主题 —— 紫为主 · 金点缀
+ * 覆盖 VitePress 品牌变量 + 结构性金色 + 正文加宽。真主题包 = 本文件 + Wordmark.vue。
+ * ============================================================ */
+
+:root {
+  /* 品牌紫（brand-1 用于链接文字，需足够对比） */
+  --vp-c-brand-1: #6a2bf0;
+  --vp-c-brand-2: #7c4dff;
+  --vp-c-brand-3: #7c4dff;
+  --vp-c-brand-soft: rgba(124, 77, 255, 0.14);
+  --vp-c-brand-softer: rgba(124, 77, 255, 0.08);
+
+  /* 金色点缀 */
+  --aalis-gold: #e79c00;
+
+  /* 中性色微微偏紫，避免死灰 */
+  --vp-c-bg: #faf9fe;
+  --vp-c-bg-soft: #f4f1fc;
+
+  /* 首页 hero 标题：紫→金渐变（两个品牌色本身即签名） */
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(120deg, #7c4dff 20%, #e79c00);
+  --vp-home-hero-image-background-image: linear-gradient(45deg, rgba(124, 77, 255, 0.28), rgba(231, 156, 0, 0.22));
+  --vp-home-hero-image-filter: blur(56px);
+
+  /* 代码块字体：中英 2:1 等宽优先（更纱黑体等），改善 box-drawing 图对齐；未装则回落 */
+  --vp-font-family-mono: "Sarasa Mono SC", "Sarasa Mono J", "JetBrains Mono",
+    "Noto Sans Mono CJK SC", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* 整站最大宽（配合下方正文加宽） */
+  --vp-layout-max-width: 1600px;
+}
+
+.dark {
+  --vp-c-brand-1: #b39bff;
+  --vp-c-brand-2: #9e7cff;
+  --vp-c-brand-3: #7c4dff;
+  --vp-c-brand-soft: rgba(158, 124, 255, 0.16);
+  --vp-c-brand-softer: rgba(158, 124, 255, 0.1);
+  --aalis-gold: #ffc85c;
+  --vp-c-bg: #120f1e;
+  --vp-c-bg-soft: #1a1628;
+  --vp-home-hero-name-background: linear-gradient(120deg, #9e7cff 20%, #ffc85c);
+}
+
+/* ============================================================
+ * 金色点缀 —— 金 = 结构色（贯穿阅读），紫 = 链接/品牌色。
+ * ============================================================ */
+
+/* 分隔线：显式 --- 与二级标题上边框统一淡金 */
+.vp-doc hr {
+  border-top: 1px solid color-mix(in oklab, var(--aalis-gold) 55%, var(--vp-c-divider));
+}
+.vp-doc h2 {
+  border-top-color: color-mix(in oklab, var(--aalis-gold) 55%, var(--vp-c-divider));
+}
+/* 很多文档在 ## 前写了 ---（灰 hr）→ h2 紧跟 hr 时去掉 h2 自身上边框，双线合一 */
+.vp-doc hr + h2 {
+  border-top: 0;
+  margin-top: 20px;
+  padding-top: 0;
+}
+/* 三级标题：金色短竖条 */
+.vp-doc h3 {
+  padding-left: 12px;
+  border-left: 3px solid var(--aalis-gold);
+}
+/* 标题锚点 # 悬停 → 金 */
+.vp-doc h1:hover .header-anchor,
+.vp-doc h2:hover .header-anchor,
+.vp-doc h3:hover .header-anchor {
+  color: var(--aalis-gold);
+}
+
+/* 列表符号 / 引用块 / 表头 / 代码语言标签 / 高亮 → 金 */
+.vp-doc ul > li::marker {
+  color: var(--aalis-gold);
+}
+.vp-doc ol > li::marker {
+  color: var(--aalis-gold);
+  font-weight: 600;
+}
+.vp-doc blockquote {
+  border-left-color: var(--aalis-gold);
+}
+.vp-doc thead th {
+  border-bottom: 2px solid color-mix(in oklab, var(--aalis-gold) 70%, var(--vp-c-divider));
+}
+.vp-doc div[class*="language-"] > span.lang {
+  color: var(--aalis-gold);
+}
+.vp-doc mark {
+  background: var(--aalis-gold);
+  color: #3a2700;
+  padding: 0 3px;
+  border-radius: 3px;
+}
+
+/* 链接悬停下划线 → 金 */
+.vp-doc a {
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.2s;
+}
+.vp-doc a:hover {
+  text-decoration-color: var(--aalis-gold);
+}
+
+/* TIP 提示块 → 金（warning/danger 保持语义色不动） */
+.vp-doc .custom-block.tip {
+  border-color: var(--aalis-gold);
+  background: color-mix(in oklab, var(--aalis-gold) 8%, var(--vp-c-bg-soft));
+}
+.vp-doc .custom-block.tip .custom-block-title {
+  color: var(--aalis-gold);
+}
+
+/* 侧栏激活项指示条 → 金 */
+.VPSidebarItem.is-active > .item .indicator {
+  background-color: var(--aalis-gold) !important;
+}
+
+/* 首页 alt 按钮描金边 */
+.VPButton.alt {
+  border-color: color-mix(in oklab, var(--aalis-gold) 50%, var(--vp-c-border));
+}
+.VPButton.alt:hover {
+  border-color: var(--aalis-gold);
+  color: var(--vp-c-brand-1);
+}
+
+/* ============================================================
+ * 正文加宽 —— 用 VitePress 同款选择器（3 类特异性）压过 688px，并放开断点上限。
+ * ============================================================ */
+.VPDoc.has-aside .content-container {
+  max-width: 920px;
+}
+@media (min-width: 1280px) {
+  .VPDoc .container {
+    max-width: 1360px;
+  }
+}
+@media (min-width: 1440px) {
+  .VPDoc .content {
+    max-width: 100%;
+  }
+  .VPDoc .container {
+    max-width: 1480px;
+  }
+  .VPDoc.has-aside .content-container {
+    max-width: 1020px;
+  }
+}
+
+/* mermaid 图：留白 + 居中 + 行高兜底防 CJK 标签裁切 */
+.vp-doc .mermaid {
+  margin: 22px 0;
+  text-align: center;
+}
+.vp-doc .mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+.vp-doc .mermaid .nodeLabel,
+.vp-doc .mermaid .nodeLabel * {
+  line-height: 1.5;
+}
