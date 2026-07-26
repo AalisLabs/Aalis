@@ -112,7 +112,7 @@ ctx.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { risk: 
 ## 3. safeFetch：默认的 SSRF 安全出口
 
 任何**由用户 / LLM / 入站消息影响到的 URL** 的远程请求，都必须走
-[`@aalis/util-network-guard`](https://github.com/AalisLabs/Aalis/blob/main/packages/util-network-guard/src/index.ts) 的 `safeFetch`，
+[`@aalis/util-network-guard`](../utils/network-guard.md) 的 `safeFetch`，
 **不要直接用裸 `fetch`**。
 
 `safeFetch`（index.ts:163）= 逐跳 `redirect:'manual'` + 每跳重新 `assertSafeUrl`，挡的是 SSRF：
