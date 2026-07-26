@@ -43,7 +43,7 @@
 
 如果你在做**架构改造**：
 - 顶层视图见 [docs/architecture.md](../architecture.md)
-- 模块边界见 [docs/design/](../design/)
+- 模块边界见 [docs/design/api-packages](../design/api-packages)
 
 ## 约定
 
