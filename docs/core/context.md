@@ -2,7 +2,7 @@
 
 `Context` 是 Aalis 的核心抽象，每个插件获得独立的子 Context，所有副作用在 dispose 时自动清理。它是插件与框架交互的唯一入口。
 
-**源码**: [packages/core/src/context.ts](../../packages/core/src/context.ts)
+**源码**: [packages/core/src/context.ts](https://github.com/AalisLabs/Aalis/blob/main/packages/core/src/context.ts)
 
 ## 设计理念
 

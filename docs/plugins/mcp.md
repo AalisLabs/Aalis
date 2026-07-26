@@ -4,8 +4,8 @@ Aalis 既可以**作为 MCP client** 接入外部生态的工具（GitHub / File
 
 两侧实现位于：
 
-- [packages/plugin-mcp-client](../packages/plugin-mcp-client) — Aalis as client（通过 stdio 连接外部 server）
-- [packages/plugin-mcp-server](../packages/plugin-mcp-server) — Aalis as server（通过 HTTP/SSE 反向暴露）
+- [packages/plugin-mcp-client](https://github.com/AalisLabs/Aalis/tree/main/packages/plugin-mcp-client) — Aalis as client（通过 stdio 连接外部 server）
+- [packages/plugin-mcp-server](https://github.com/AalisLabs/Aalis/tree/main/packages/plugin-mcp-server) — Aalis as server（通过 HTTP/SSE 反向暴露）
 
 ## 为什么 1:1 桥接成本极低
 
@@ -44,12 +44,12 @@ Client 端工具名采用 `mcp_<server-id>_<tool-name>` 前缀避免冲突；非
 ## 配置示例
 
 详见各插件 README：
-- [packages/plugin-mcp-client/README.md](../packages/plugin-mcp-client/README.md)
-- [packages/plugin-mcp-server/README.md](../packages/plugin-mcp-server/README.md)
+- [packages/plugin-mcp-client/README.md](https://github.com/AalisLabs/Aalis/blob/main/packages/plugin-mcp-client/README.md)
+- [packages/plugin-mcp-server/README.md](https://github.com/AalisLabs/Aalis/blob/main/packages/plugin-mcp-server/README.md)
 
 ## 测试与验证
 
-集成测试位于 [test/plugins/mcp.test.ts](../../test/plugins/mcp.test.ts)，使用 SDK 自带的 `InMemoryTransport.createLinkedPair()` 在同进程内拉起一对联通的 client/server，**无需子进程**即可端到端覆盖：
+集成测试位于 [test/plugins/mcp.test.ts](https://github.com/AalisLabs/Aalis/blob/main/test/plugins/mcp.test.ts)，使用 SDK 自带的 `InMemoryTransport.createLinkedPair()` 在同进程内拉起一对联通的 client/server，**无需子进程**即可端到端覆盖：
 
 - mcp-server：`buildMcpServer` 通过 in-memory transport 返回工具列表、调用工具、过滤 restricted
 - mcp-client：`bridgeClientToTools` 将远端工具按 `mcp_<id>_<tool>` 命名注册到 ToolService、callTool 链路透传

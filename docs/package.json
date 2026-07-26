@@ -1,0 +1,19 @@
+{
+  "name": "aalis-docs-site",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Aalis 文档站（VitePress）。自包含子项目，不属于 monorepo workspace，不发布。",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview",
+    "deploy": "vitepress build && wrangler pages deploy .vitepress/dist --project-name aalis-docs --branch main"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.4",
+    "vitepress-plugin-mermaid": "^2.0.17",
+    "mermaid": "^11.16.0",
+    "wrangler": "^4.105.0"
+  }
+}
