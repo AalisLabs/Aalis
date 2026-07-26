@@ -39,7 +39,7 @@ Aalis 是**单 owner 的本地优先（local-first）个人 bot 框架**。整�
 ## 2. 权限两轴（速览 + 链接）
 
 权限裁决拆成两条**互相正交**的轴，纯判定逻辑在
-[`packages/plugin-authority/src/authority-model.ts`](../../packages/plugin-authority/src/authority-model.ts)：
+[`packages/plugin-authority/src/authority-model.ts`](https://github.com/AalisLabs/Aalis/blob/main/packages/plugin-authority/src/authority-model.ts)：
 
 - **轴 A · 授权（谁有资格）**：把触发者**等级**和操作**最低等级**比大小。
   `resolveAccess`（authority-model.ts:76）的优先级，首个命中赢：
@@ -66,7 +66,7 @@ Aalis 是**单 owner 的本地优先（local-first）个人 bot 框架**。整�
 
 **`risk` 是一次声明给两轴设默认的糖**：`dangerous` 一次展开成
 `visibility:'restricted'`（抬高轴 A 门槛）+ `confirm:'session'`（轴 B 需确认）
-（见 [`plugin-authority-api/src/index.ts:51`](../../packages/plugin-authority-api/src/index.ts) 的 `RISK_DEFAULTS`）。
+（见 [`plugin-authority-api/src/index.ts:51`](https://github.com/AalisLabs/Aalis/blob/main/packages/plugin-authority-api/src/index.ts) 的 `RISK_DEFAULTS`）。
 
 > 两轴的完整机制（临时放行 `requestAccess`、会话授予、auto 模式、WebUI 权限页、users.json 持久化、
 > session-confirm 协调）见 [权限系统文档](../core/authority.md) 与 forward-ref
@@ -77,7 +77,7 @@ Aalis 是**单 owner 的本地优先（local-first）个人 bot 框架**。整�
 裁决发生在 commands / tools 的执行边界，你**不需要手动调 `authorize`**——你只要在注册操作时
 把风险**声明对**，框架自动挂闸。
 
-工具注册（同形于 [`plugin-tool-system/src/tools/http.ts:182`](../../packages/plugin-tool-system/src/tools/http.ts) 的 `http_download`）：
+工具注册（同形于 [`plugin-tool-system/src/tools/http.ts:182`](https://github.com/AalisLabs/Aalis/blob/main/packages/plugin-tool-system/src/tools/http.ts) 的 `http_download`）：
 
 ```typescript
 tools.register({
@@ -112,7 +112,7 @@ ctx.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { risk: 
 ## 3. safeFetch：默认的 SSRF 安全出口
 
 任何**由用户 / LLM / 入站消息影响到的 URL** 的远程请求，都必须走
-[`@aalis/util-network-guard`](../../packages/util-network-guard/src/index.ts) 的 `safeFetch`，
+[`@aalis/util-network-guard`](https://github.com/AalisLabs/Aalis/blob/main/packages/util-network-guard/src/index.ts) 的 `safeFetch`，
 **不要直接用裸 `fetch`**。
 
 `safeFetch`（index.ts:163）= 逐跳 `redirect:'manual'` + 每跳重新 `assertSafeUrl`，挡的是 SSRF：
@@ -127,7 +127,7 @@ ctx.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { risk: 
    杜绝「初始 host 受信，但 302 跳到 `http://169.254.169.254/` 内网」的经典绕过。跳数上限 5（`MAX_REDIRECTS`）。
 4. **进程级网络策略**（`setNetworkPolicy`，index.ts:91）：owner 经 core 的 `network` 配置可以
    关私网拦截（`blockPrivate:false`，本地自动化用）、追加 `denyCidrs`、限定 `allowedPorts`。
-   启动时由 `plugin-authority` 注入一次（[`plugin-authority/src/index.ts:51`](../../packages/plugin-authority/src/index.ts)）。
+   启动时由 `plugin-authority` 注入一次（[`plugin-authority/src/index.ts:51`](https://github.com/AalisLabs/Aalis/blob/main/packages/plugin-authority/src/index.ts)）。
 
 消费者侧用法极简（一行替换 `fetch`），全仓已有十几处复用——onebot 附件下载、media、ASR、ollama、
 office、webui 图片代理、http 工具：
@@ -148,7 +148,7 @@ const res = await safeFetch(url, { signal: AbortSignal.timeout(15_000) });
 这意味着：如果你在 `init.headers` 里带了 `Authorization` / cookie 等凭证，而上游返回 302 跳到**另一个 origin**，
 **你的凭证会被原样发到那个新 origin**。`safeFetch` 只保证「跳到的地方不是内网」，**不保证「跳到的地方该不该看到你的 token」**。
 
-插件作者的对策（见 [`webui-server/src/routes/proxy.ts:33`](../../packages/plugin-webui-server/src/routes/proxy.ts) 的图片代理范例）：
+插件作者的对策（见 [`webui-server/src/routes/proxy.ts:33`](https://github.com/AalisLabs/Aalis/blob/main/packages/plugin-webui-server/src/routes/proxy.ts) 的图片代理范例）：
 
 - 对**用户 / LLM 影响的 URL** 调 `safeFetch` 时**不要带任何凭证 / cookie / 用户 referer**——
   图片代理就显式只给一个伪 UA、不带 cookie。
@@ -159,7 +159,7 @@ const res = await safeFetch(url, { signal: AbortSignal.timeout(15_000) });
 ## 4. code-sandbox-os：OS 级边界，不是强隔离
 
 `code_runner` 跑「不可信代码」（LLM 生成的脚本）时，经
-[`@aalis/plugin-code-sandbox-os`](../../packages/plugin-code-sandbox-os/src/index.ts) 把子进程包进
+[`@aalis/plugin-code-sandbox-os`](https://github.com/AalisLabs/Aalis/blob/main/packages/plugin-code-sandbox-os/src/index.ts) 把子进程包进
 OS 原生沙箱：Linux `bubblewrap`（bwrap）、macOS `sandbox-exec`（Seatbelt）。
 
 它**强制**（`sandbox.ts`）：
@@ -169,15 +169,15 @@ OS 原生沙箱：Linux `bubblewrap`（bwrap）、macOS `sandbox-exec`（Seatbel
 - **网络粗粒度开关**：`policy.network` `'deny'` 默认断网（Seatbelt `(deny network*)`、bwrap `--unshare-all` 含 net 命名空间隔离），`'allow'` 才放开——**无法按域名过滤**（sandbox.ts:43、83）。
 - **env 清零仅留白名单**：`sandbox-exec ... env -i <白名单>` / bwrap `--clearenv --setenv`，防宿主 secrets 泄漏给不可信代码（sandbox.ts:7、56、80）。
 
-它**不防**（[`code-sandbox-api/src/index.ts:18-19`](../../packages/plugin-code-sandbox-api/src/index.ts) 明写的 v1 语义）：
+它**不防**（[`code-sandbox-api/src/index.ts:18-19`](https://github.com/AalisLabs/Aalis/blob/main/packages/plugin-code-sandbox-api/src/index.ts) 明写的 v1 语义）：
 
 - **读取本机其它文件**——v1 读放开（解释器需要系统库）。要防读需要更强的 WASM / microVM 实现。
 - 内核漏洞 / 提权 / sandbox 逃逸——这是 OS 减速带，不是 gVisor / 虚拟机级别的强隔离。
 
 **fail-closed 是不变量**：要求隔离（`policy` 非空）但本机无可用后端时，
-`code_runner` **拒绝执行**而不是静默裸跑（[`runner.ts:78-89`](../../packages/plugin-tool-code-runner/src/runner.ts)）；
+`code_runner` **拒绝执行**而不是静默裸跑（[`runner.ts:78-89`](https://github.com/AalisLabs/Aalis/blob/main/packages/plugin-tool-code-runner/src/runner.ts)）；
 后端可用性靠**功能性试跑**探测（真跑一次最小沙箱命令，覆盖「命令存在」+「Linux unprivileged userns 真能用」，
-[`code-sandbox-os/src/index.ts:26`](../../packages/plugin-code-sandbox-os/src/index.ts)）。
+[`code-sandbox-os/src/index.ts:26`](https://github.com/AalisLabs/Aalis/blob/main/packages/plugin-code-sandbox-os/src/index.ts)）。
 
 > 如果你的插件要执行不可信代码，**用 `useCodeSandbox(ctx)` 取服务、`available` 为假就 fail-closed**，
 > 不要自己 `child_process.spawn` 裸跑（参见 [`code-runner` 文档](../plugins/plugin-tool-code-runner.md)、
@@ -187,7 +187,7 @@ OS 原生沙箱：Linux `bubblewrap`（bwrap）、macOS `sandbox-exec`（Seatbel
 
 ## 5. 存储不是沙箱（storage 不 confine 子进程）
 
-[`StorageService`](../../packages/plugin-storage-api/src/index.ts) 把读写收口到声明的 root（`<root>:/path`），
+[`StorageService`](https://github.com/AalisLabs/Aalis/blob/main/packages/plugin-storage-api/src/index.ts) 把读写收口到声明的 root（`<root>:/path`），
 做了根内 `..` 穿越保护和 symlink realpath 校验——但那是**防上层代码 bug**，**不是用来对抗恶意子进程的**
 （storage-api index.ts:79-85 明写）。
 
@@ -203,8 +203,8 @@ storage 那层校验对子进程毫无约束力。真正的隔离要靠 §4 的 
 
 ## 6. readExternalFile：confused-deputy 读任意路径
 
-[`ProcessService.readExternalFile(path)`](../../packages/plugin-process-api/src/index.ts)（契约 index.ts:91-100，
-本地实现 [`process-local/src/index.ts:123`](../../packages/plugin-process-local/src/index.ts)）= **直读 OS 任意本地路径**
+[`ProcessService.readExternalFile(path)`](https://github.com/AalisLabs/Aalis/blob/main/packages/plugin-process-api/src/index.ts)（契约 index.ts:91-100，
+本地实现 [`process-local/src/index.ts:123`](https://github.com/AalisLabs/Aalis/blob/main/packages/plugin-process-local/src/index.ts)）= **直读 OS 任意本地路径**
 （绝对路径或 `file://`），**完全绕过 storage 的 root 沙箱**。它就是 `fs.readFile` 加了个 `file://` 剥壳。
 
 存在的理由：拿到「外部推来的本地路径」的合法场景——OneBot daemon 推送的附件路径、ASR/ollama 探测本地文件等

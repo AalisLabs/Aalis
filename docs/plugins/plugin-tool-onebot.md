@@ -1,7 +1,7 @@
 # plugin-tool-onebot — OneBot 群管/账号/历史工具
 
 **包名**: `@aalis/plugin-tool-onebot`
-**源码**: [packages/plugin-tool-onebot/src/index.ts](../../packages/plugin-tool-onebot/src/index.ts)
+**源码**: [packages/plugin-tool-onebot/src/index.ts](https://github.com/AalisLabs/Aalis/blob/main/packages/plugin-tool-onebot/src/index.ts)
 
 ## 概述
 
