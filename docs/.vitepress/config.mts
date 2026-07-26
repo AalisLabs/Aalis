@@ -113,6 +113,12 @@ export default withMermaid(defineConfig({
     sidebarMenuLabel: '菜单',
     returnToTopLabel: '回到顶部',
     langMenuLabel: '语言',
+    footer: {
+      message:
+        '基于 <a href="https://github.com/AalisLabs/Aalis/blob/main/LICENSE" target="_blank" rel="noreferrer">MIT 许可</a>发布',
+      copyright:
+        'Copyright © 2026 <a href="https://github.com/AalisLabs/Aalis" target="_blank" rel="noreferrer">Ace Nyan</a>',
+    },
   },
   mermaid: {
     theme: 'base',
