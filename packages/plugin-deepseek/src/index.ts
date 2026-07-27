@@ -187,6 +187,13 @@ interface APIChatResponse {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    /**
+     * 上下文缓存命中的输入 token 数（DeepSeek 自动硬盘缓存，无需请求侧声明）。
+     * 命中部分按远低于常规输入的价格计费，故必须上报，否则无法评估缓存收益。
+     * hit + miss = prompt_tokens。
+     */
+    prompt_cache_hit_tokens?: number;
+    prompt_cache_miss_tokens?: number;
   };
 }
 
@@ -351,6 +358,7 @@ class DeepSeekClient {
         promptTokens: data.usage.prompt_tokens,
         completionTokens: data.usage.completion_tokens,
         totalTokens: data.usage.prompt_tokens + data.usage.completion_tokens,
+        cachedPromptTokens: data.usage.prompt_cache_hit_tokens,
       };
     }
 
@@ -578,6 +586,7 @@ class DeepSeekClient {
                 promptTokens: data.usage.prompt_tokens,
                 completionTokens: data.usage.completion_tokens,
                 totalTokens: data.usage.prompt_tokens + data.usage.completion_tokens,
+                cachedPromptTokens: data.usage.prompt_cache_hit_tokens,
               };
             }
 

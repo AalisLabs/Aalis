@@ -146,6 +146,11 @@ interface APIChatResponse {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    /**
+     * OpenAI 自动前缀缓存的命中量（≥1024 token 的相同前缀自动生效，无需请求侧声明）。
+     * 命中部分按折扣价计费，故上报以便评估缓存收益。兼容代理端点不返回该字段的情形。
+     */
+    prompt_tokens_details?: { cached_tokens?: number };
   };
 }
 
@@ -257,6 +262,7 @@ class OpenAIClient {
         promptTokens: data.usage.prompt_tokens,
         completionTokens: data.usage.completion_tokens,
         totalTokens: data.usage.prompt_tokens + data.usage.completion_tokens,
+        cachedPromptTokens: data.usage.prompt_tokens_details?.cached_tokens,
       };
     }
 
@@ -392,6 +398,7 @@ class OpenAIClient {
                 promptTokens: data.usage.prompt_tokens,
                 completionTokens: data.usage.completion_tokens,
                 totalTokens: data.usage.prompt_tokens + data.usage.completion_tokens,
+                cachedPromptTokens: data.usage.prompt_tokens_details?.cached_tokens,
               };
             }
 

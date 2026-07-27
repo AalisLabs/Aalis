@@ -15,6 +15,14 @@ export interface ChatResponse {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+    /**
+     * promptTokens 中由 provider 前缀缓存命中的部分（≤ promptTokens）。
+     *
+     * 计费意义：命中部分通常远低于常规输入价（DeepSeek 上下文缓存约 1/10）。
+     * 不支持或本次无命中的 provider 省略此字段——`undefined` 表示"不可知"，
+     * 与 `0`（明确无命中）语义不同，消费方不要用 `?? 0` 抹平二者。
+     */
+    cachedPromptTokens?: number;
   };
 }
 
@@ -43,6 +51,8 @@ export interface ChatStreamChunk {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+    /** 见 {@link ChatResponse.usage.cachedPromptTokens} */
+    cachedPromptTokens?: number;
   };
 }
 
