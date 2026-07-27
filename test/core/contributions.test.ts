@@ -164,5 +164,9 @@ describe('ContributionRegistry / Context.contribute / collect', () => {
     }
     expect(ctx.collect(POINT)).toHaveLength(0);
     expect(ctx.disposableCount, 'dispose 链不应滞留已退订的贡献闭包').toBe(0);
+    // 登记表是与 dispose 链**独立的第二本账**：前两条断言由 trackDisposable 的
+    // 自摘机制独立满足，看不见登记表泄漏（去掉 contribute 的自移除包装，
+    // 前两条仍全绿）。这一条才真正钉住本机制。
+    expect(ctx.contributionDisposerCount, '贡献登记表不应滞留已退订的条目').toBe(0);
   });
 });

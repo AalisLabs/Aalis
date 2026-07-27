@@ -87,6 +87,35 @@ describe('前缀缓存命中量上报', () => {
     expect(oa.usage?.cachedPromptTokens).toBeUndefined();
   });
 
+  it('流式：usage 挂在 choices 为空的收尾帧上时仍被上报', async () => {
+    // OpenAI 的 include_usage 形态把 usage 单独放在 `choices: []` 的末帧。
+    // 若 usage 提取排在 delta 守卫之后，整帧会被 `continue` 跳过、usage 全丢。
+    const frames = [
+      'data: {"choices":[{"delta":{"content":"hi"}}]}',
+      'data: {"choices":[],"usage":{"prompt_tokens":10000,"completion_tokens":50,"total_tokens":10050,"prompt_tokens_details":{"cached_tokens":8192}}}',
+      'data: [DONE]',
+    ].join('\n\n');
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      if (String(input).includes('/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'gpt-4o' }] }), { status: 200 });
+      }
+      return new Response(frames, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    }) as typeof fetch;
+
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    await app.ctx.useModule(openaiModule as never, { apiKey: 'test-key' });
+    await app.plugins.idle();
+    const llm = app.ctx.getService<LLMModel>('llm');
+    if (!llm?.chatStream) throw new Error('chatStream 不可用');
+
+    let cached: number | undefined;
+    for await (const chunk of llm.chatStream({ messages: [{ role: 'user', content: '在吗' }] })) {
+      if (chunk.usage?.cachedPromptTokens != null) cached = chunk.usage.cachedPromptTokens;
+    }
+    expect(cached, 'usage 收尾帧被 delta 守卫吞掉了').toBe(8192);
+    await app.stop();
+  });
+
   it('明确 0 命中与不可知可区分', async () => {
     const res = await chatWith(deepseekModule, 'deepseek-chat', {
       prompt_tokens: 100,

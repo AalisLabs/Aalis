@@ -80,6 +80,7 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
       'collect',
       'constructor',
       'contribute',
+      'contributionDisposerCount', // @internal 诊断
       'disposableCount', // @internal 诊断
       'dispose',
       'disposeAsync',

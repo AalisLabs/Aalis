@@ -1,6 +1,6 @@
 import type { ConfigManager } from './config.js';
 import type { ContributionHandle, ContributionRegistry, ContributionSpec } from './contributions.js';
-import { DisposableChain } from './disposable-chain.js';
+import { awaitWithTimeout, DisposableChain } from './disposable-chain.js';
 import type { EventBus } from './events.js';
 import type { HookRegistry } from './hooks.js';
 import type { Logger } from './logger.js';
@@ -618,6 +618,17 @@ export class Context {
   }
 
   /**
+   * @internal 当前贡献登记表条目数（诊断 / 测试用）。
+   *
+   * 它与 {@link disposableCount} 是**两条独立的账**：贡献的退订闭包由
+   * trackDisposable 自摘出 dispose 链，而登记表条目由 contribute 返回的包装
+   * 另行摘除。只看 dispose 链长度看不见登记表泄漏，故单开这个口子。
+   */
+  get contributionDisposerCount(): number {
+    return this._contributionDisposers.size;
+  }
+
+  /**
    * 销毁此上下文，清理所有副作用（同步；异步清理不等待）。
    *
    * 需要等待落盘类异步清理完成时用 {@link disposeAsync}——编排层
@@ -644,15 +655,26 @@ export class Context {
    * 就早退（`_disposed` 在清理开始前置位，早退会让调用方拿到"已完成"的假象——
    * 父级联撞上半拆的子 ctx、并发 stop、unload 撞 bounce 都会走到这条路）。
    *
-   * ⚠． **不得在本 ctx 自己的 `onDispose` 回调里 await 本方法**——在飞的拆卸
-   *    正等着那个回调返回，await 它即自等自死锁（与 `PluginManagerService.idle()`
-   *    同类约束）。清理回调只需做自己的收尾，拆卸本身由编排层驱动。
+   * ⚠． **`onDispose` 回调里不得 await 任何最终落到本 ctx 或其祖先 ctx 拆卸上的
+   *    调用**——在飞的拆卸正等着那个回调返回，await 它即自等自。除直接调用本方法
+   *    外，还包括 `plugins.unload/disablePlugin/bouncePlugin`（它们内部 await
+   *    `entry.context.disposeAsync`）、`app.stop()`、`plugins.idle()`。清理回调
+   *    只做自己的收尾，拆卸由编排层驱动。（与 `PluginManagerService.idle()` 同类约束。）
    *
    * @param timeoutMs 单个异步清理项的等待上限；超时放弃该项、继续后续清理
-   *        并 warn 点名（防网络类关闭卡死整个停机）。缺省不设限。
+   *        并 warn 点名（防网络类关闭卡死整个停机）。**join 已有在飞拆卸时同样
+   *        以本值为上限**——在飞方可能是用更松（甚至不设限）的 timeout 启动的，
+   *        无护栏地 join 会让调用方（如 `App.stop`）的停机上限失效。缺省不设限。
    */
   async disposeAsync(timeoutMs?: number): Promise<void> {
-    this._inflightTeardown ??= this._teardown(true, timeoutMs);
+    const inflight = this._inflightTeardown;
+    if (inflight) {
+      await awaitWithTimeout(inflight, timeoutMs, () =>
+        this.logger.warn(`Context "${this.id}": 等待在飞拆卸超过 ${timeoutMs}ms，放弃等待`),
+      );
+      return;
+    }
+    this._inflightTeardown = this._teardown(true, timeoutMs);
     await this._inflightTeardown;
   }
 

@@ -511,10 +511,26 @@ class DeepSeekClient {
 
           try {
             const data = JSON.parse(payload);
-            const delta = data.choices?.[0]?.delta;
-            if (!delta) continue;
-
             const chunk: ChatStreamChunk = {};
+
+            // usage 必须在 delta 守卫**之前**取：兼容端点可能把 usage 挂在
+            // `choices: []` 的收尾帧上，等到守卫之后再取整帧已被跳过。
+            // （DeepSeek 自身把 usage 挂在带 delta 的帧上，本重排对它是无害冗余。）
+            if (data.usage) {
+              chunk.usage = {
+                promptTokens: data.usage.prompt_tokens,
+                completionTokens: data.usage.completion_tokens,
+                totalTokens: data.usage.prompt_tokens + data.usage.completion_tokens,
+                cachedPromptTokens: data.usage.prompt_cache_hit_tokens,
+              };
+            }
+
+            const delta = data.choices?.[0]?.delta;
+            if (!delta) {
+              if (chunk.usage) yield chunk; // 纯 usage 收尾帧照样上报
+              continue;
+            }
+
             if (delta.content) {
               // 无论是否检测到 DSML，都要累积原始 content：
               // - 未检测时：用于 DSML 起始位置定位
@@ -579,15 +595,6 @@ class DeepSeekClient {
                   };
                 }
               }
-            }
-
-            if (data.usage) {
-              chunk.usage = {
-                promptTokens: data.usage.prompt_tokens,
-                completionTokens: data.usage.completion_tokens,
-                totalTokens: data.usage.prompt_tokens + data.usage.completion_tokens,
-                cachedPromptTokens: data.usage.prompt_cache_hit_tokens,
-              };
             }
 
             if (chunk.contentDelta || chunk.reasoningDelta || chunk.usage || chunk.toolCallProgress) {

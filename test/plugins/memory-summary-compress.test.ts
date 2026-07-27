@@ -14,6 +14,9 @@ import * as memorySummary from '../../packages/plugin-memory-summary/src/index.j
 // 实测 37.5 小时零次摘要）。这里用 threshold=240 钉死"探测条数须由配置推导"。
 // ════════════════════════════════════════════════════════════
 
+/** 记下最后一次摘要请求的正文，用来数"这次摘要吃进去了多少条消息" */
+const lastSummaryInput = { text: '' };
+
 /** 假 LLM：摘要路径只需它能返回一段文本 */
 function fakeLLM(): LLMModel {
   return {
@@ -21,13 +24,20 @@ function fakeLLM(): LLMModel {
     providerId: 'fake',
     contextLength: 8192,
     capabilities: [LLMCapabilities.Chat],
-    async chat() {
+    async chat(req) {
+      lastSummaryInput.text = req.messages.map(m => String(m.content ?? '')).join('\n');
       return { content: 'SUMMARY-TEXT' };
     },
   };
 }
 
+/** 摘要正文里出现了多少条 seed 消息（seed 内容形如「第 N 条消息」） */
+function summarizedCount(): number {
+  return (lastSummaryInput.text.match(/第 \d+ 条消息/g) ?? []).length;
+}
+
 async function setup(config: Record<string, unknown>) {
+  lastSummaryInput.text = '';
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
   await app.ctx.useModule(memoryInMemoryModule);
   app.ctx.provide('llm', fakeLLM());
@@ -73,6 +83,33 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
     const after = await memory.getHistory('s-1', 1000);
     expect(after.length, `压缩后应只剩 keepRecent 条，实际 ${after.length}`).toBeLessThanOrEqual(keepRecent + 5);
     expect(after.length).toBeGreaterThan(0);
+    await app.stop();
+  });
+
+  it('小 threshold 配置的摘要输入量不因探测条数推导而缩水', async () => {
+    // 探测条数兼作单次摘要输入上界。若只按 threshold 推导，默认配置（30/20）
+    // 单次只摘 10 条，而 trimHistory 仍按 keepRecent 归档全部活跃历史——
+    // 超出探测窗的那批被归档却从未进摘要。
+    const { app, memory } = await setup({ threshold: 30, keepRecent: 20 });
+    await seedMessages(memory, 's-3', 120);
+
+    await app.ctx.runHook(
+      'agent:turn:after' as never,
+      {
+        message: { sessionId: 's-3' },
+        reply: 'ok',
+        outcome: 'replied',
+        sessionId: 's-3',
+        metadata: {},
+      } as never,
+    );
+    await new Promise<void>(r => setTimeout(r, 50));
+
+    // 120 条积压、keepRecent=20 → 应摘约 100 条；只按 threshold 推导时只有 10 条
+    expect(
+      summarizedCount(),
+      `摘要输入过少（实际 ${summarizedCount()} 条），探测窗口被 threshold 卡死了`,
+    ).toBeGreaterThan(50);
     await app.stop();
   });
 
