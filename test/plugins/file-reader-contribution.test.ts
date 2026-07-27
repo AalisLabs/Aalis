@@ -189,13 +189,28 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       const a = await fx.upload('s-1', 'notes.txt', '第一个文件正文');
       const b = await fx.upload('s-1', 'plan.md', '第二个文件正文');
 
-      // 同槽区对照探针（identity 锚位）：fixture 只有 [system, user] 两条时
-      // 各锚位插入点重合，单看下标无法区分锚位；加一条 identity 贡献做参照
+      // 同槽区对照探针：fixture 只有 [system, ...history, user] 时各锚位插入点重合，
+      // 单看下标无法区分锚位。identity 探针给出上界；knowledge 探针的 ctx id 必须
+      // **码元序排在被测插件全局键之后**（插件经 useModule 加载，键形如
+      // `root#@aalis/plugin-file-reader`，故用 zz- 前缀）——否则 anchor 错标成
+      // knowledge 时两块仍按同样次序落位，断言恒真、变异测不出。
       fx.app.ctx
         .fork('probe-identity')
         .contribute('agent:prompt' as never, { id: 'idn', anchor: 'identity', build: () => 'IDN' } as never);
+      fx.app.ctx
+        .fork('zz-probe-knowledge')
+        .contribute('agent:prompt' as never, { id: 'kn', anchor: 'knowledge', build: () => 'KN' } as never);
 
-      const { messages, injected } = await assemble(fx.app, { sessionId: 's-1', lastUser: '刚才那些文件讲了啥' });
+      // 带一轮历史：没有它时"第一条非 system"与"最后一条 user"重合，
+      // context 与 turn-hint 落点相同，锚位断言对 turn-hint 恒真。
+      const { messages, injected } = await assemble(fx.app, {
+        sessionId: 's-1',
+        lastUser: '刚才那些文件讲了啥',
+        history: [
+          { role: 'user', content: '旧问' },
+          { role: 'assistant', content: '旧答' },
+        ],
+      });
       const text = contentOf(injected);
 
       expect(injected).toBeDefined();
@@ -209,12 +224,16 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       expect(text).toContain('read_uploaded_file');
       expect(text).toContain('list_uploaded_files');
 
-      // context 锚位：IDN（identity 锚）紧跟首条 system（persona），file-reader
-      // 块落在 IDN 之后、首条非 system 之前——anchor 若改成 identity 此断言会挂
+      // context 锚位可判伪：IDN（identity）紧跟 persona；KN（knowledge）在 file-reader
+      // 块**之前**——若 anchor 错标成 knowledge，两块同槽按键序排，zz- 探针会落到
+      // file-reader 之后，下面这条比较即翻转。
       const idnIdx = messages.findIndex(m => String(m.content) === 'IDN');
+      const knIdx = messages.findIndex(m => String(m.content) === 'KN');
       const frIdx = messages.indexOf(injected as Message);
       expect(idnIdx).toBe(1);
       expect(frIdx).toBeGreaterThan(idnIdx);
+      expect(knIdx, 'knowledge 槽须先于 context 槽').toBeLessThan(frIdx);
+      // 落在首条非 system（历史第一条）之前——turn-hint 会落到最后一条 user 前，故可判伪
       expect(frIdx).toBeLessThan(messages.findIndex(m => m.role !== 'system'));
       expect(messages[frIdx].role).toBe('system');
       expect(messages[messages.length - 1].role).toBe('user');
