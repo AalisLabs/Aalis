@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-agent",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -47,7 +47,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.2.0 <1.0.0"
+    "@aalis/core": ">=0.8.0 <1.0.0"
   },
   "aalis": {
     "service": {
