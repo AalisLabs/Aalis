@@ -5,7 +5,7 @@ import { pageAction } from '../api';
 import { buildChatMessages } from '../useSessionManager';
 import { useDetailStream } from '../useDetailStream';
 import type { RawMessage } from '../useSessionManager';
-import type { ChatMessage, ContentSegment } from '../types';
+import type { ChatMessage, ContentSegment, SessionConfigData } from '../types';
 import { preprocessLaTeX } from '../preprocessLaTeX';
 import { REMARK_PLUGINS, REHYPE_PLUGINS, MARKDOWN_COMPONENTS } from '../components/markdownConfig';
 
@@ -24,21 +24,6 @@ interface SessionInfo {
   inputContext?: string;
   result?: string;
   config?: SessionConfigData;
-}
-
-interface SessionConfigData {
-  /** 新版字段：会话级 LLM 覆盖。SessionsPage 编辑器只读写此字段，不再发 legacy model/llmProvider。 */
-  llm?: { provider: string; model: string };
-  /** @deprecated legacy: 旧版 SessionsPage 编辑器写过的 flat 字段；保留仅用于读旧数据并折叠到 llm。 */
-  model?: string;
-  /** @deprecated legacy */
-  llmProvider?: string;
-  persona?: string;
-  enabledToolGroups?: string[];
-  systemPromptExtra?: string;
-  maxToolIterations?: number;
-  disableOutputFormat?: boolean;
-  clientSideJsonRendering?: boolean;
 }
 
 interface ConfigOptions {
@@ -105,7 +90,7 @@ function SessionConfigEditor({ config, resolvedConfig, inheritedConfig, options,
   onCancel: () => void;
 }) {
   // draft 始终基于会话自身 config（非 resolved），保证保存时只写覆盖值。
-  // 同时做一次「legacy → llm」折叠（与 SessionSidebar 保持一致逻辑）：DB 中可能
+  // 同时做一次「legacy → llm」折叠：DB 中可能
   // 残留早期版本写入的 `config.model` flat 字段，需要在 UI 层把它折叠进 llm，
   // 否则用户看到的选择不会反映他当初的真实意图，保存时还会被后端剥离。
   const initialDraft: SessionConfigData = { ...config };
