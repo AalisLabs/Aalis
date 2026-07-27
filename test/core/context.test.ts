@@ -409,3 +409,62 @@ describe('disposable 闭包自移除（审计 HIGH #1/#2）', () => {
     expect(cleanupRan).toBe(1); // 新 cleanup 被立即执行，而非挂上后永不触发
   });
 });
+
+describe('Context.disposeAsync / dispose 同步不变量', () => {
+  const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+  it('disposeAsync 真正等待异步 onDispose 完成', async () => {
+    const ctx = makeContext().fork('plugin-a');
+    let flushed = false;
+    ctx.onDispose(async () => {
+      await sleep(15);
+      flushed = true;
+    });
+    await ctx.disposeAsync();
+    expect(flushed).toBe(true);
+  });
+
+  it('dispose() 在同一同步栈内完成（以同步副作用断言，不用微任务）', () => {
+    const ctx = makeContext().fork('plugin-a');
+    const order: string[] = [];
+    ctx.onDispose(() => order.push('cleanup'));
+    ctx.dispose();
+    order.push('after-return');
+    // 同步清理在 dispose() 返回前已执行完毕——wait=false 分支零 await 命中
+    expect(order).toEqual(['cleanup', 'after-return']);
+    expect(ctx.disposed).toBe(true);
+  });
+
+  it('dispose() 内清理抛错不外泄（同步路径不产生未处理拒绝）', () => {
+    const ctx = makeContext().fork('plugin-a');
+    ctx.onDispose(() => {
+      throw new Error('sync boom');
+    });
+    expect(() => ctx.dispose()).not.toThrow();
+  });
+
+  it('异步 flush 窗口内：中间件已不响应、贡献已不可收集（注销先于清理链）', async () => {
+    const root = makeContext();
+    const ctx = root.fork('plugin-a');
+    let release!: () => void;
+    const gate = new Promise<void>(r => {
+      release = r;
+    });
+    const calls: string[] = [];
+    ctx.middleware('__t:hook' as never, async (_d, next) => {
+      calls.push('mw');
+      await next();
+    });
+    ctx.contribute('agent:prompt' as never, { id: 'blk' } as never);
+    ctx.onDispose(() => gate); // 人为拉长 flush 窗口
+
+    const done = ctx.disposeAsync();
+    await Promise.resolve(); // 进入等待窗口
+    // 窗口内：钩子与贡献都已注销
+    await root.runHook('__t:hook' as never, {} as never);
+    expect(calls).toEqual([]);
+    expect(root.collect('agent:prompt' as never)).toHaveLength(0);
+    release();
+    await done;
+  });
+});

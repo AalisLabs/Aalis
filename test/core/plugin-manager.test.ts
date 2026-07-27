@@ -396,3 +396,56 @@ describe('配置热重载与启动路径同政策（评审修复回归）', () =
     await app.stop();
   });
 });
+
+describe('异步 dispose 编排（bounce/unload 等待落盘）', () => {
+  const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+  it('bounce：异步 onDispose flush 完成先于重激活', async () => {
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const timeline: string[] = [];
+    let flushed = false;
+    const mod: PluginModule = {
+      name: 'flusher',
+      apply(ctx) {
+        timeline.push(`apply(flushed=${flushed})`);
+        ctx.onDispose(async () => {
+          await sleep(15);
+          flushed = true;
+          timeline.push('flush-done');
+        });
+      },
+    };
+    await app.plugin(mod);
+    await app.plugins.bouncePlugin('flusher');
+    // 第二次 apply 时 flush 必须已经完成——disposeAsync 被编排层等待
+    expect(timeline).toEqual(['apply(flushed=false)', 'flush-done', 'apply(flushed=true)']);
+  });
+
+  it('unload：等待异步清理完成后才宣告卸载', async () => {
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    let persisted = false;
+    const mod: PluginModule = {
+      name: 'persister',
+      apply(ctx) {
+        ctx.onDispose(async () => {
+          await sleep(10);
+          persisted = true;
+        });
+      },
+    };
+    await app.plugin(mod);
+    await app.plugins.unload('persister');
+    expect(persisted).toBe(true);
+  });
+
+  it('stop：根 ctx 的异步清理在 stop() 返回前完成', async () => {
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    let rootCleaned = false;
+    app.ctx.onDispose(async () => {
+      await sleep(10);
+      rootCleaned = true;
+    });
+    await app.stop();
+    expect(rootCleaned).toBe(true);
+  });
+});

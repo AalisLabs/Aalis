@@ -598,7 +598,10 @@ export class Context {
       try {
         const ret = fn();
         if (ret && typeof (ret as Promise<void>).then === 'function') {
-          (ret as Promise<void>).catch(err => {
+          // 把 promise 交还给链：异步拆卸路径（disposeAsync）会等待它完成——
+          // 这是 onDispose 异步契约真正兑现的通道。错误就地消化，单个清理
+          // 失败不拖垮链上其他清理；同步 dispose() 忽略返回值（不等待）。
+          return (ret as Promise<void>).catch(err => {
             this.logger.debug('onDispose 异步清理抛错（已忽略）:', err);
           });
         }
@@ -616,24 +619,58 @@ export class Context {
   }
 
   /**
-   * 销毁此上下文，清理所有副作用
+   * 销毁此上下文，清理所有副作用（同步；异步清理不等待）。
+   *
+   * 需要等待落盘类异步清理完成时用 {@link disposeAsync}——编排层
+   * （PluginManager 的 unload / bounce / 停机路径与 App.stop）走的是它。
    */
   dispose(): void {
+    // wait=false 分支不命中任何 await——async 函数体在首个 await 前同步执行，
+    // 本方法的可观察时序与纯同步实现一致（有测试以同步副作用守着）。
+    // 差异仅在抛错路径：异常成为 rejection 而非同步抛出（体内各步骤均自带
+    // 隔离，实际不可达），catch 兜底防 unhandledRejection。
+    this._teardown(false).catch(err => {
+      this.logger.error('dispose 收尾异常:', err);
+    });
+  }
+
+  /**
+   * 可等待的销毁：语义与 {@link dispose} 相同，但逆序**串行等待**每个异步
+   * 清理（`onDispose` 返回的 promise）完成后才返回——bounce / unload / 停机
+   * 路径上落盘类清理从此真正落地，而非只是"开始执行"。
+   *
+   * @param timeoutMs 单个异步清理项的等待上限；超时放弃该项、继续后续清理
+   *        并 warn 点名（防网络类关闭卡死整个停机）。缺省不设限。
+   */
+  async disposeAsync(timeoutMs?: number): Promise<void> {
+    await this._teardown(true, timeoutMs);
+  }
+
+  private async _teardown(wait: boolean, timeoutMs?: number): Promise<void> {
     if (this._disposed) return;
     this._disposed = true;
 
     // 先销毁子上下文（复制避免迭代中修改 Set）
     const children = [...this._children];
     for (const child of children) {
-      child.dispose();
+      if (wait) await child.disposeAsync(timeoutMs);
+      else child.dispose();
     }
     this._children.clear();
 
-    // 记录此上下文注册的服务名，以便 dispose 后发射事件
+    // 记录此上下文注册的服务名，以便清理后发射事件
     const removedServices = this._services.unregisterByContext(this.id);
 
+    // 钩子与贡献在清理链**之前**注销：异步等待清理的整个窗口内，本插件的
+    // 中间件不得再响应消息、贡献不得再被组装器收集——半拆状态不外露。
+    // 同步路径同一 tick 内完成，先后不可观察；清理链里两类注册的 disposer
+    // 靠各自的存在性检查/恒等卫自然 no-op，不会双删。
+    this._hooks.unregisterByContext(this.id);
+    this._contributions.unregisterByContext(this.id);
+
     // 逆序执行清理（unregisterByContext 已整体移除服务，provide 的 dispose 会安全跳过）
-    this._disposables.dispose();
+    if (wait) await this._disposables.disposeAsync(timeoutMs);
+    else this._disposables.dispose();
 
     // 发射服务注销事件，让 App 的自动恢复监听器能响应
     for (const svc of removedServices) {
@@ -642,9 +679,6 @@ export class Context {
       });
     }
 
-    // 清理该上下文注册的钩子与贡献
-    this._hooks.unregisterByContext(this.id);
-    this._contributions.unregisterByContext(this.id);
     // 释放本 ctx 持有的登记表：闭包会捎带 spec（及其 build 捕获的数据），
     // dispose 后不清则外部若仍持有本 ctx 引用，这些对象就跟着活着。
     this._contributionDisposers.clear();
