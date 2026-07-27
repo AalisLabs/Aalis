@@ -240,7 +240,10 @@ ctx.onDispose(() => {
 });
 ```
 
-外部资源（OS handle、网络连接、子进程、定时器）**必须**手动清理。
+外部资源（OS handle、网络连接、子进程、定时器）**必须**手动清理。回调**可以是
+异步的**：unload / bounce / 停机路径走 `disposeAsync`，会逐项等待你的 promise
+完成（单项默认 5s 上限，超时放弃并 warn 点名）——`await client.close()` 这类
+写法从此真正生效。
 
 ### ❌ 不要放
 
@@ -280,7 +283,7 @@ hook **可以**安全访问 `ctx.getService('xxx')`——前提是你在 `inject
 2. 如果当前 active：
    - `evictDownstreamConsumers(entry)` 仅针对声明了 `requiresBounceOnDepChange: true` 的
      active 下游降级 pending（默认 false 不级联）
-   - dispose 你的 ctx → 你的 onDispose hook 执行
+   - `disposeAsync` 你的 ctx → 你的 onDispose hook 执行（**异步清理会被等待完成**，落盘安全）
    - 你的 entry 状态 → pending
    - `recompute({type:'plugin-state-changed'})` 把你和受影响的下游按拓扑序重激活
 3. 如果之前 error：直接 pending → recompute 重试
