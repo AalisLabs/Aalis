@@ -53,6 +53,8 @@ class DefaultAgent implements AgentService {
   private memoryTokenBudget: number;
   private historyLimit: number;
   private maxToolIterations: number;
+  /** 单个 agent:prompt 贡献 build 的等待上限（毫秒；0=不设限）——见 prompt-assembly 的护栏说明 */
+  readonly promptBuildTimeoutMs: number;
   /** 单条工具结果占上下文窗口的最大比例 (0~1)，超出则截断 */
   private toolResultMaxRatio: number;
   /** 内存裁剪触发比例 (0~1)：估算输入 token 占 contextLength 的比例上限，超过则触发本次调用的内存裁剪 */
@@ -87,6 +89,7 @@ class DefaultAgent implements AgentService {
     this.memoryTokenBudget = (config.memoryTokenBudget as number) ?? 4096;
     this.historyLimit = (config.historyLimit as number) ?? 50;
     this.maxToolIterations = (config.maxToolIterations as number) ?? 30;
+    this.promptBuildTimeoutMs = (config.promptBuildTimeoutMs as number) ?? 10000;
     this.toolResultMaxRatio = (config.toolResultMaxRatio as number) ?? 0.15;
     this.trimThresholdRatio = (config.trimThresholdRatio as number) ?? 1.0;
     this.logger.info('默认对话代理已初始化');
@@ -500,7 +503,7 @@ class DefaultAgent implements AgentService {
           triggerType: incoming.triggerType,
         };
         // 组装先于链：贡献块（档案/技能/记忆/即时提示）先物化，拦截者审完整成品
-        await assemblePromptContributions(this.ctx, llmBeforeData);
+        await assemblePromptContributions(this.ctx, llmBeforeData, { buildTimeoutMs: this.promptBuildTimeoutMs });
         await this.ctx.runHook('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
 
         // 裁剪消息以确保不超过上下文窗口
@@ -712,7 +715,7 @@ class DefaultAgent implements AgentService {
             triggerType: incoming.triggerType,
           };
           // 已物化的贡献按全局键跳过；本轮工具调用新注册的贡献（如新激活技能）增量落位
-          await assemblePromptContributions(this.ctx, nextLlmData);
+          await assemblePromptContributions(this.ctx, nextLlmData, { buildTimeoutMs: this.promptBuildTimeoutMs });
           await this.ctx.runHook('agent:llm:before', nextLlmData, undefined, { warnOnStall: true });
 
           // 裁剪消息以确保不超过上下文窗口
@@ -1693,6 +1696,13 @@ export const configSchema: ConfigSchema = {
     default: 30,
     description: '工具调用循环的最大迭代次数',
   },
+  promptBuildTimeoutMs: {
+    type: 'number',
+    label: '提示词贡献构建超时 (ms)',
+    default: 10000,
+    description:
+      '单个 agent:prompt 贡献 build 的等待上限。挂死的构建（如网络检索卡住）超时后本轮缺席、其余照常，避免拖住每次 LLM 调用。0 表示不设限。',
+  },
   toolResultMaxRatio: {
     type: 'number',
     label: '工具结果最大比例',
@@ -1721,6 +1731,7 @@ export const defaultConfig = {
 // （正常 service 消费者走 AgentService 公共接口；此处属于 plugin 自有控制面）
 type InternalAgent = {
   historyLimit: number;
+  promptBuildTimeoutMs: number;
   resolveLLM(platform?: string, sessionId?: string): Promise<LLMModelEntry | undefined>;
   buildSystemPrompt(personaOpts?: PersonaSessionOptions): string;
   emitTokenUsage(
@@ -1985,7 +1996,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         platform: data.platform ?? '',
         dryRun: true, // 纯统计路径:昂贵注入者(向量检索/档案加载)据此跳过副作用
       };
-      await assemblePromptContributions(ctx, llmBeforeData);
+      await assemblePromptContributions(ctx, llmBeforeData, { buildTimeoutMs: agent.promptBuildTimeoutMs });
       await ctx.runHook('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
 
       agent.emitTokenUsage(

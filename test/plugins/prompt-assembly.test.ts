@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ConfigManager,
   Context,
@@ -126,5 +126,61 @@ describe('assemblePromptContributions', () => {
     await assemblePromptContributions(root, { messages, dryRun: true });
     expect(seen).toEqual([true]);
     expect(messages).toHaveLength(1); // turn-hint 无落点被弃置
+  });
+});
+
+describe('组装器护栏：非法锚位与 build 超时', () => {
+  it('未知 anchor：产物丢弃并 warn 点名，其余贡献照常物化', async () => {
+    const root = makeRoot();
+    const warns: string[] = [];
+    vi.spyOn(root.logger, 'warn').mockImplementation((msg: unknown) => {
+      warns.push(String(msg));
+    });
+    root.fork('p-bad').contribute(POINT, spec('b', 'bogus-anchor', 'BAD'));
+    root.fork('p-ok').contribute(POINT, spec('ok', 'context', 'OK'));
+    const messages = baseMessages();
+    await assemblePromptContributions(root, { messages, sessionId: 's' });
+    expect(messages.some(m => String(m.content) === 'OK')).toBe(true);
+    expect(messages.some(m => String(m.content) === 'BAD')).toBe(false);
+    expect(warns.some(w => w.includes('bogus-anchor') && w.includes('不是合法锚位'))).toBe(true);
+  });
+
+  it('build 超时：该贡献本轮缺席并 warn，其余照常；键未物化下一轮重试', async () => {
+    const root = makeRoot();
+    const warns: string[] = [];
+    vi.spyOn(root.logger, 'warn').mockImplementation((msg: unknown) => {
+      warns.push(String(msg));
+    });
+    let stuck = true;
+    root.fork('p-slow').contribute(POINT, {
+      id: 'slow',
+      anchor: 'context',
+      build: () => (stuck ? new Promise<string>(() => {}) : 'SLOW-DONE'),
+    } as never);
+    root.fork('p-fast').contribute(POINT, spec('fast', 'context', 'FAST'));
+
+    const messages = baseMessages();
+    await assemblePromptContributions(root, { messages, sessionId: 's' }, { buildTimeoutMs: 30 });
+    expect(messages.some(m => String(m.content) === 'FAST')).toBe(true);
+    expect(messages.some(m => String(m.content) === 'SLOW-DONE')).toBe(false);
+    expect(warns.some(w => w.includes('/slow') && w.includes('超过 30ms'))).toBe(true);
+
+    // 键未物化 → 下一轮恢复后补上
+    stuck = false;
+    await assemblePromptContributions(root, { messages, sessionId: 's' }, { buildTimeoutMs: 30 });
+    expect(messages.filter(m => String(m.content) === 'SLOW-DONE')).toHaveLength(1);
+    expect(messages.filter(m => String(m.content) === 'FAST')).toHaveLength(1); // 已物化不重复
+  });
+
+  it('buildTimeoutMs 缺省/0 不设限（慢而有终的 build 正常完成）', async () => {
+    const root = makeRoot();
+    root.fork('p-a').contribute(POINT, {
+      id: 'slowok',
+      anchor: 'context',
+      build: () => new Promise<string>(r => setTimeout(() => r('DONE'), 40)),
+    } as never);
+    const messages = baseMessages();
+    await assemblePromptContributions(root, { messages, sessionId: 's' }, { buildTimeoutMs: 0 });
+    expect(messages.some(m => String(m.content) === 'DONE')).toBe(true);
   });
 });
