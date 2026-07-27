@@ -2546,8 +2546,6 @@ export class RelationService {
                   await this.store.saveMergeReject({
                     aId: smaller.id,
                     bId: larger.id,
-                    aReinforcedAt: smaller.lastReinforcedAt ?? 0,
-                    bReinforcedAt: larger.lastReinforcedAt ?? 0,
                     aEvidenceCount: sCount,
                     bEvidenceCount: lCount,
                     reason: v.hierarchy ? `hierarchy: ${v.reason}` : v.reason,
@@ -2941,8 +2939,6 @@ export class RelationService {
           await this.store.saveMergeReject({
             aId: smaller.id,
             bId: larger.id,
-            aReinforcedAt: smaller.lastReinforcedAt ?? 0,
-            bReinforcedAt: larger.lastReinforcedAt ?? 0,
             aEvidenceCount: sCount,
             bEvidenceCount: lCount,
             reason: v.hierarchy ? `hierarchy: ${v.reason}` : v.reason,
@@ -3786,8 +3782,6 @@ export class RelationService {
         await this.store.saveMergeReject({
           aId: smaller.id,
           bId: larger.id,
-          aReinforcedAt: smaller.lastReinforcedAt ?? 0,
-          bReinforcedAt: larger.lastReinforcedAt ?? 0,
           aEvidenceCount: sCount,
           bEvidenceCount: lCount,
           reason: verdict.reason,

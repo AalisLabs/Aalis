@@ -455,7 +455,7 @@ class SessionManager implements SessionManagerService {
       await this.memory.saveMetadata(METADATA_NAMESPACE, id, info as unknown as Record<string, unknown>);
     }
 
-    // 清理已删除的会话（元数据中存在但内存中不存在的；含旧版本残留的 __active__ 指针）
+    // 清理已删除的会话（元数据中存在但内存中不存在的孤儿记录）
     if (this.memory.listMetadata) {
       const existing = await this.memory.listMetadata(METADATA_NAMESPACE);
       for (const { key } of existing) {

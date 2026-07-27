@@ -289,19 +289,8 @@ function buildSkillMd(fm: SkillFrontmatter, body: string): string {
 // ──────────── 辅助 ────────────
 
 function resolveConfig(raw: Record<string, unknown>): SkillsConfig {
-  // 向后兼容：旧字段 skillsDir（如 'data/skills'） → storage URI 'data:/skills'
-  let skillsUri = (raw.skillsUri as string) ?? defaultConfig.skillsUri;
-  if (!raw.skillsUri && typeof raw.skillsDir === 'string') {
-    const s = (raw.skillsDir as string).trim().replace(/^\.?\/+/, '');
-    const slashIdx = s.indexOf('/');
-    if (slashIdx > 0) {
-      skillsUri = `${s.slice(0, slashIdx)}:/${s.slice(slashIdx + 1)}`;
-    } else if (s) {
-      skillsUri = `${s}:/`;
-    }
-  }
   return {
-    skillsUri,
+    skillsUri: (raw.skillsUri as string) ?? defaultConfig.skillsUri,
     maxSkillBytes: (raw.maxSkillBytes as number) ?? defaultConfig.maxSkillBytes,
     maxSkills: (raw.maxSkills as number) ?? defaultConfig.maxSkills,
     discoveryEnabled: (raw.discoveryEnabled as boolean) ?? defaultConfig.discoveryEnabled,

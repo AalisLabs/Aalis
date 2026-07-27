@@ -48,7 +48,6 @@ export function edgeKey(edgeId: string): string {
  * 旧版用 `lastReinforcedAt`，但该字段会被 evictByQuota → rewriteWeights 的衰减回写批量刷新，
  * 导致缓存全量失效、连续 maintain 重复调 LLM。evidence.length 仅在节点真新增 evidence 时增长，
  * 与衰减回写解耦，是更稳定的"分别没有新关系产生"指标。
- * 旧字段 aReinforcedAt/bReinforcedAt 保留作为兼容信息，但**不再参与判断**。
  */
 function mergeRejectKey(aId: string, bId: string): string {
   const [x, y] = aId < bId ? [aId, bId] : [bId, aId];
@@ -61,10 +60,6 @@ interface MergeRejectRecord {
   aId: string;
   /** 排序后的较大 id */
   bId: string;
-  /** 决策时 a 节点的 lastReinforcedAt；保留作为审计信息，不参与失效判断 */
-  aReinforcedAt: number;
-  /** 决策时 b 节点的 lastReinforcedAt；保留作为审计信息，不参与失效判断 */
-  bReinforcedAt: number;
   /**
    * 决策时 a 节点的 evidence 数量。当前值改变 → 节点产生了新关系/新提及 → 缓存失效需重判。
    * 老数据无此字段时回退为"必失效"（一次性影响，下次写入即恢复）。
@@ -190,16 +185,6 @@ export class RelationStore {
 
   async deleteMergeReject(aId: string, bId: string): Promise<void> {
     await this.memory.deleteMetadata!(RELATION_NAMESPACE, mergeRejectKey(aId, bId));
-  }
-
-  /** 列出全部 MergeReject 记录（webui / debug 用，体量预计 < 候选数）。 */
-  async listMergeRejects(): Promise<MergeRejectRecord[]> {
-    const entries = await this.memory.listMetadata!(RELATION_NAMESPACE);
-    const out: MergeRejectRecord[] = [];
-    for (const { key, data } of entries) {
-      if (key.startsWith(MERGE_REJECT_PREFIX)) out.push(data as unknown as MergeRejectRecord);
-    }
-    return out;
   }
 
   /** 当某个节点被合并/删除时，清理所有涉及它的 MergeReject 缓存（旧 id 不再有效）。 */

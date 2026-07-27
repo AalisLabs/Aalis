@@ -8,8 +8,9 @@ import type { DependencyDeclaration } from './types/services.js';
  * 用于 `ctx.provide(name, instance, { priority })`。
  * 同优先级时，先注册的胜出（稳定降序排序）。
  *
- * 设计目的：把『谁是默认胜者』变成静态、可预测的契约，
- * 替代旧版 preferService 那种「需要用户手动激活」的运行时偏好。
+ * 设计目的：把『谁是默认胜者』变成静态、可预测的契约。
+ * 与 preferService 正交、非替代关系：优先级是静态默认序，偏好是用户显式覆盖，
+ * 解析序恒为「偏好 > 优先级 > 注册顺序」。
  *
  * 推荐用法：
  * - `Backend = 0`：普通后端实现（如 plugin-openai / plugin-deepseek）。
