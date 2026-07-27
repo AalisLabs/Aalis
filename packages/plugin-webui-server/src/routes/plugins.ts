@@ -3,7 +3,6 @@ import { parseInstanceId } from '@aalis/core';
 import type { UserIdentity } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
 import { CORE_CONFIG_SCHEMA } from '@aalis/plugin-config-api';
-import type { PackageManagerService } from '@aalis/plugin-package-manager';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebUIService, WebuiPage } from '@aalis/plugin-webui-api';
 import type express from 'express';
@@ -276,60 +275,6 @@ export function registerPluginRoutes(
     try {
       const loaded = await app.rescanPlugins();
       res.json({ ok: true, loaded, message: loaded.length > 0 ? `新加载 ${loaded.length} 个插件` : '无新插件' });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: msg });
-    }
-  });
-
-  // 安装插件（从 npm 下载到 packages/ 并加载）
-  expressApp.post('/api/plugins/install', gate(), async (req, res) => {
-    const app = getApp();
-    const pm = getPluginMgr();
-    if (!app || !pm) {
-      res.status(500).json({ error: 'App 不可用' });
-      return;
-    }
-    const npmPkg = req.body?.name;
-    if (!npmPkg || typeof npmPkg !== 'string') {
-      res.status(400).json({ error: 'name 字段必须是 npm 包名字符串' });
-      return;
-    }
-    if (!/^(@[a-z0-9\-_.]+\/)?[a-z0-9\-_.]+$/i.test(npmPkg)) {
-      res.status(400).json({ error: '非法包名' });
-      return;
-    }
-    try {
-      const pkgMgr = ctx.getService<PackageManagerService>('package-manager');
-      if (!pkgMgr) {
-        res.status(503).json({ error: 'package-manager 服务未启用，无法安装插件' });
-        return;
-      }
-      const result = await pkgMgr.install(npmPkg);
-      res.json(result);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: msg });
-    }
-  });
-
-  // 卸载插件
-  expressApp.post('/api/plugins/:name/uninstall', gate(), async (req, res) => {
-    const app = getApp();
-    const pm = getPluginMgr();
-    if (!app || !pm) {
-      res.status(500).json({ error: 'App 不可用' });
-      return;
-    }
-    const pluginName = req.params.name;
-    try {
-      const pkgMgr = ctx.getService<PackageManagerService>('package-manager');
-      if (!pkgMgr) {
-        res.status(503).json({ error: 'package-manager 服务未启用，无法卸载插件' });
-        return;
-      }
-      const result = await pkgMgr.uninstall(pluginName);
-      res.json(result);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });

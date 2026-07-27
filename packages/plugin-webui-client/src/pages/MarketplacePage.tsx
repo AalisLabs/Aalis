@@ -8,7 +8,14 @@ import type { PluginInfo } from '../types';
 interface MarketPkg {
   name: string;
   description: string;
+  /** npm 上的最新版。**不是**本地已装版本，那是 resolved。 */
   version: string;
+  /** 本地已装版本；与 version 不等即可更新。未装则缺省。 */
+  resolved?: string;
+  /** 根 package.json 里的原始声明（`^0.9.1` / `workspace:*` / `file:../x`）。 */
+  request?: string;
+  /** 本地这份从哪来（后端按根 package.json 的依赖声明判定）。只有 registry 可经市场更新。 */
+  origin?: PkgOrigin;
   author?: string;
   installed: boolean;
   official?: boolean;
@@ -22,6 +29,17 @@ interface MarketPkg {
   license?: string;
   links?: { npm?: string; homepage?: string; repository?: string };
 }
+
+/** 镜像后端 PkgOrigin。判据是根 package.json 的依赖声明，非文件路径。 */
+type PkgOrigin = 'registry' | 'workspace' | 'link' | 'git' | 'transitive';
+
+/** 非 registry 来源的角标与解释——市场更新对它们无效，说明原因好过给一个按不动的按钮。 */
+const ORIGIN_BADGE: Record<Exclude<PkgOrigin, 'registry'>, { label: string; hint: string }> = {
+  workspace: { label: '工作区', hint: '源码在本仓库内，改代码即生效，不经市场更新' },
+  link: { label: '本地链接', hint: '由 file: / link: 指向本地目录，更新请改那份源码' },
+  git: { label: '外部源', hint: '由 git / URL 安装，更新请改依赖声明' },
+  transitive: { label: '依赖引入', hint: '由其它包引入，版本随父包的范围，不单独更新' },
+};
 
 type SortKey = 'relevance' | 'downloads' | 'updated' | 'score';
 type Source = 'all' | 'official' | 'community';
@@ -169,12 +187,14 @@ export function MarketplacePage({
     if (!ok) return;
     setInstalling(name);
     try {
-      const res = await api<{ ok?: boolean; error?: string }>('/api/marketplace/install', {
+      const res = await api<{ ok?: boolean; error?: string; message?: string }>('/api/marketplace/install', {
         method: 'POST',
         body: JSON.stringify({ name }),
       });
       if (res.ok) {
-        showToast(`${name} 安装成功，正在重启...`);
+        // 展示服务端原话而非固定文案：它区分了「已安装并加载」与「已安装但未发现新插件」，
+        // 后者恰恰是需要用户知道的失败态。旧文案还谎称「正在重启」——安装路径从不触发重启。
+        showToast(res.message ?? `${name} 已安装`);
         onRefresh();
       } else {
         showToast(res.error ?? '安装失败');
@@ -318,7 +338,8 @@ export function MarketplacePage({
               ) : (
                 <span className="marketplace-card-name">{pkg.name}</span>
               )}
-              <span className="marketplace-card-version">v{pkg.version}</span>
+              {/* 已装时展示本地版本（resolved），未装时展示 npm 最新版。两者混同会让用户以为自己装的就是最新版。 */}
+              <span className="marketplace-card-version">v{pkg.resolved ?? pkg.version}</span>
               <span className={`badge ${pkg.official ? 'official' : 'community'}`}>{pkg.official ? '官方' : '社区'}</span>
               {pkg.category && pkg.category !== 'plugin' && (
                 <span className="badge" title="组件类别">{CATEGORY_LABELS[pkg.category]}</span>
@@ -334,6 +355,21 @@ export function MarketplacePage({
               )}
               {pkg.author && <span className="marketplace-card-author">by {pkg.author}</span>}
               {pkg.installed && <span className="badge active">已安装</span>}
+              {/* 非 registry 来源先判：它们更新不了，提示原因而非「可更新」。 */}
+              {pkg.installed && pkg.origin && pkg.origin !== 'registry' && (
+                <span className="badge" title={ORIGIN_BADGE[pkg.origin].hint}>
+                  {ORIGIN_BADGE[pkg.origin].label}
+                </span>
+              )}
+              {pkg.installed && pkg.origin === 'registry' && pkg.resolved && pkg.version && pkg.resolved !== pkg.version && (
+                <span
+                  className="badge"
+                  style={{ background: 'var(--warning)', color: '#1a1a1a' }}
+                  title={`本地 v${pkg.resolved}（声明 ${pkg.request ?? '?'}），npm 最新 v${pkg.version}`}
+                >
+                  可更新 v{pkg.version}
+                </span>
+              )}
             </div>
 
             <div className="marketplace-card-desc">{pkg.description || '（无描述）'}</div>
