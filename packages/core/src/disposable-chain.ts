@@ -114,27 +114,41 @@ export class DisposableChain {
    * 不引入环境假设。
    */
   private async awaitWithTimeout(p: Promise<unknown>, timeoutMs?: number): Promise<void> {
-    if (!timeoutMs || timeoutMs <= 0) {
-      await p;
-      return;
+    await awaitWithTimeout(p, timeoutMs, () =>
+      this.logger?.warn(`DisposableChain: 异步清理超过 ${timeoutMs}ms，放弃等待，继续后续清理`),
+    );
+  }
+}
+
+/**
+ * 等待一个 promise，可选超时护栏；超时则放弃等待并调 `onTimeout` 上报。
+ *
+ * 环境无关性记账：`setTimeout`/`clearTimeout` 是所有 JS 运行时（浏览器/Node/
+ * Deno/Worker）的共有全局，非 `node:` 专属，不引入环境假设。
+ *
+ * @internal 仅供 core 内部（DisposableChain 逐项等待、Context join 在飞拆卸）复用，
+ *   不从包根导出。
+ */
+export async function awaitWithTimeout(p: Promise<unknown>, timeoutMs: number | undefined, onTimeout: () => void) {
+  if (!timeoutMs || timeoutMs <= 0) {
+    await p;
+    return;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const winner = await Promise.race([
+      p.then(() => 'done' as const),
+      new Promise<'timeout'>(resolve => {
+        timer = setTimeout(() => resolve('timeout'), timeoutMs);
+      }),
+    ]);
+    if (winner === 'timeout') {
+      // 放弃等待，但给原 promise 挂空 catch——迟到的 rejection 不得逃逸成 unhandledRejection
+      p.catch(() => {});
+      onTimeout();
     }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const winner = await Promise.race([
-        p.then(() => 'done' as const),
-        new Promise<'timeout'>(resolve => {
-          timer = setTimeout(() => resolve('timeout'), timeoutMs);
-        }),
-      ]);
-      if (winner === 'timeout') {
-        // 放弃等待，但给原 promise 挂空 catch——迟到的 rejection 不得逃逸成
-        // unhandledRejection
-        p.catch(() => {});
-        this.logger?.warn(`DisposableChain: 异步清理超过 ${timeoutMs}ms，放弃等待，继续后续清理`);
-      }
-    } finally {
-      // clearTimeout 必须在 finally：悬空定时器会拖住事件循环，延迟进程退出
-      if (timer !== undefined) clearTimeout(timer);
-    }
+  } finally {
+    // clearTimeout 必须在 finally：悬空定时器会拖住事件循环，延迟进程退出
+    if (timer !== undefined) clearTimeout(timer);
   }
 }

@@ -366,10 +366,25 @@ class OpenAIClient {
 
           try {
             const data = JSON.parse(payload);
-            const delta = data.choices?.[0]?.delta;
-            if (!delta) continue;
-
             const chunk: ChatStreamChunk = {};
+
+            // usage 必须在 delta 守卫**之前**取：OpenAI 的 include_usage 形态把
+            // usage 挂在 `choices: []` 的收尾帧上，等到守卫之后再取整帧已被跳过。
+            if (data.usage) {
+              chunk.usage = {
+                promptTokens: data.usage.prompt_tokens,
+                completionTokens: data.usage.completion_tokens,
+                totalTokens: data.usage.prompt_tokens + data.usage.completion_tokens,
+                cachedPromptTokens: data.usage.prompt_tokens_details?.cached_tokens,
+              };
+            }
+
+            const delta = data.choices?.[0]?.delta;
+            if (!delta) {
+              if (chunk.usage) yield chunk; // 纯 usage 收尾帧照样上报
+              continue;
+            }
+
             if (delta.content) chunk.contentDelta = delta.content;
 
             // 累积工具调用
@@ -391,15 +406,6 @@ class OpenAIClient {
                   };
                 }
               }
-            }
-
-            if (data.usage) {
-              chunk.usage = {
-                promptTokens: data.usage.prompt_tokens,
-                completionTokens: data.usage.completion_tokens,
-                totalTokens: data.usage.prompt_tokens + data.usage.completion_tokens,
-                cachedPromptTokens: data.usage.prompt_tokens_details?.cached_tokens,
-              };
             }
 
             if (chunk.contentDelta || chunk.usage || chunk.toolCallProgress) {

@@ -10,6 +10,13 @@ import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import { truncateChars } from '@aalis/util-text-normalize';
 
 /**
+ * 历史探测条数的下限（即历史写死值）。见 {@link getHistoryProbeLimit}：
+ * 探测条数兼作单次摘要输入上界，故不能只按 threshold 推导，否则小 threshold
+ * 配置的摘要覆盖面会成倍缩水。
+ */
+const DEFAULT_PROBE_FLOOR = 200;
+
+/**
  * 摘要用消息格式化：content 已含 [昵称(ID)] 前缀，故不再叠加 m.name（否则双重身份 用户[123]: [Alice(123)]:）。
  * generateSummary 与 session:compress 两条路径共用，避免格式漂移。
  */
@@ -245,15 +252,24 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   /**
-   * 取多少条历史来判定"是否该压缩"。
+   * 取多少条历史来判定"是否该压缩"，同时是单次摘要输入量的上界
+   * （摘要区间是 `[0, total - keepRecent)`）。这两个职责耦合在同一个数上。
    *
-   * 必须 ≥ threshold：`totalCount` 同时充当阈值判定的样本，取少了会让
-   * `totalCount < threshold` 恒真、压缩永不触发且零日志（曾写死 200，
-   * threshold>200 的配置全部静默失效）。它也天然是单次摘要输入量的上界——
-   * 摘要区间是 `[0, total - keepRecent)`，故单次至多 `threshold - keepRecent` 条。
+   * 三个下界缺一不可：
+   * - `cfg.threshold`：`totalCount` 充当阈值判定的样本，取少了会让
+   *   `totalCount < threshold` 恒真、压缩永不触发且零日志（曾写死 200，
+   *   threshold>200 的配置全部静默失效）。
+   * - `cfg.keepRecent + 1`：否则摘要区间为空，压缩空转。
+   * - `DEFAULT_PROBE_FLOOR`：**摘要输入量的下限**。只取前两者的话，
+   *   小 threshold 配置（如默认 30/20）单次只摘 10 条，而 `trimHistory` 仍按
+   *   keepRecent 归档**全部**活跃历史——超出探测窗的那批被归档却从未进摘要。
+   *   实测积压 800 条时摘要输入 180→10 条。此下界即原写死值，保住旧行为。
+   *
+   * 注：「归档范围 > 摘要范围」在积压极大时仍然存在，那是本函数解决不了的
+   * 设计耦合（判定样本与摘要窗口应当拆开），留待后续处理。
    */
   function getHistoryProbeLimit(): number {
-    return Math.max(cfg.threshold, cfg.keepRecent + 1);
+    return Math.max(cfg.threshold, cfg.keepRecent + 1, DEFAULT_PROBE_FLOOR);
   }
 
   // 摘要生成提示词
