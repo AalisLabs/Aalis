@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { getSessionId, setSessionId, pageAction } from './api';
 import type { WebuiPageDef, ChatMessage, ContentSegment } from './types';
-import type { SessionItem } from './components/SessionSidebar';
+import type { SessionItem } from './types';
 
 /** 生成时间格式的会话名：会话 04-02 15:30 */
 function makeSessionName(): string {

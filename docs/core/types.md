@@ -599,7 +599,7 @@ type ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArray>;
 core 自身只声明通用 IoC / 生命周期事件；业务事件（消息 / 工具 / 会话 / gateway）由各 `plugin-*-api` 通过 declaration merging 注入。
 
 ```typescript
-// core 内置（packages/core/src/types/core.ts）
+// core 内置（packages/core/src/types/events.ts）
 interface AalisEvents {
   'service:registered': [name: string];
   'service:unregistered': [name: string];

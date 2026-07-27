@@ -25,9 +25,7 @@
     "packages/plugin-webui-client/src/useSessionManager.ts": ["exports", "types"],
     "packages/plugin-webui-client/src/useWebSocket.ts": ["exports"],
     "packages/plugin-webui-client/src/components/SchemaForm.tsx": ["exports"],
-    "packages/plugin-webui-client/src/components/SessionSidebar.tsx": ["exports"],
     "packages/plugin-webui-client/src/icons.tsx": ["exports"],
-    "packages/plugin-webui-client/src/pages/SessionTreePage.tsx": ["files"],
     "packages/plugin-webui-server/src/auth.ts": ["types"],
     "packages/plugin-webui-server/src/routes/files.ts": ["types"],
     "packages/plugin-authority/src/user-store.ts": ["types"],
@@ -37,10 +35,7 @@
     "packages/plugin-user-relation/src/service.ts": ["types"],
     "packages/plugin-user-relation/src/tools.ts": ["exports", "types"],
     "packages/util-text-normalize/src/index.ts": ["duplicates"],
-    "packages/core/src/types/capabilities.ts": ["types"],
     "packages/core/src/types/services.ts": ["types"],
-    "packages/core/src/types/index.ts": ["types"],
-    "src/runtime/console-sink.ts": ["types"],
-    "src/runtime/terminal.ts": ["exports"]
+    "packages/core/src/types/index.ts": ["types"]
   }
 }

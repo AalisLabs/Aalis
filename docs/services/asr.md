@@ -136,7 +136,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
 ### 注册要点
 
 - `ctx.provide(name, instance, { priority, label, entryId })`（签名 `packages/core/src/context.ts`）。同名多 provider 共存，胜者按「偏好 > 优先级 > 注册顺序」（`docs/concepts/service-model.md`、`docs/core/service.md`）。
-- **priority 用约定锚点**：裸数字会 dev-mode warn（`packages/core/src/service-helpers.ts`），约定锚点为 `ServicePriority` 的 Backend=0 / Override=50 / System=200。asr 后端属业务后端，参考实现用 50（云）/ 80（本地，质量更高默认更优先），把 priority 暴露为可配置项让用户重排。
+- **priority 用约定锚点**：约定锚点为 `ServicePriority` 的 Backend=0 / Override=50 / System=200（定义见 `packages/core/src/services.ts`）。裸数字是允许的——`services-helpers.ts` 仅 `logger.debug` 记一笔、不告警，把裸数字视作细粒度预留滩位的合理设计；用了就自行记载其含义，以便下游推断胜者。asr 后端属业务后端，参考实现用 50（云）/ 80（本地，质量更高默认更优先），把 priority 暴露为可配置项让用户重排。
 - **缺必填配置要抛错，不要静默 `return`**：因为声明了 `provides:['asr']` 却没 `ctx.provide`，core 激活后校验会把插件打成 error（`docs/concepts/manifest-metadata.md` §`provides` / `plugin-activation.ts`），错误信息很难懂。参考实现的做法是抛清晰中文错误（`plugin-asr-openai/src/index.ts`、`plugin-asr-whisper-cpp/src/index.ts`）。
 - 若你想被 media 的 `audio.prefer` 精确选中，记得 media 生成的 processor 名是 `asr:${contextId}`，可在 `provide` 时传 `label` 让 WebUI 列表更可读（media 在 `displayName` 里用了它，`service.ts`）。
 
