@@ -320,7 +320,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       results: [] as Array<{ source: string; success: boolean; message: string }>,
     };
 
-    await ctx.hooks.run('memory:clear', clearData, async () => {
+    await ctx.runHook('memory:clear', clearData, async () => {
       const memory = ctx.getService<MemoryService>('memory');
       if (!memory) {
         clearData.results.push({ source: 'memory', success: false, message: '记忆服务不可用' });

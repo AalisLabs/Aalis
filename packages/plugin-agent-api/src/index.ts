@@ -178,38 +178,70 @@ declare module '@aalis/core' {
   }
 }
 
-// ----- agent:llm:before 注入 helper -----
+// ----- agent:prompt 贡献点（通过 declaration merging 注入 core 的 ContributionPointMap）-----
 
 /**
- * 幂等地向消息数组注入一条带标签的 system 块——agent:llm:before 注入者的标准写法。
+ * 提示词锚位——组装器的槽位词汇表（封闭联合，新增锚位是纯增量的类型变更）：
  *
- * 收敛三件事,避免各插件手搓 findIndex+splice 的重复与遗漏:
- * 1. 幂等:同 injector 标签已存在则跳过(钩子在工具循环每轮重跑,不查重会每轮多插一份);
- * 2. 落点:'head' 插到第一条非 system 消息之前(头部 system 块末尾,默认),
- *    'afterFirstSystem' 紧贴第一条 system(persona)之后;
- * 3. 标签:metadata.injector 用于幂等/token 统计/裁剪识别,必填。
+ * - `identity`：紧贴首条 system（persona）之后。你是谁 / 对话者是谁
+ *   （档案、关系、行为准则）。
+ * - `knowledge`：头部 system 区末尾，先于 context。可用能力与操作知识
+ *   （技能清单、已激活技能正文）。
+ * - `context`：头部 system 区末尾，居 knowledge 之后。检索到的对话上下文
+ *   （向量记忆、摘要、跨会话历史、文件清单）。
+ * - `turn-hint`：最后一条 user 消息之前。仅与当前这一轮相关的即时提示
+ *   （群聊时间线提醒、特殊事件说明）。messages 中无 user 消息时该槽弃置。
  *
- * @returns 是否实际插入(已存在时返回 false)
+ * 同槽内多块按全局键码元序排布——**顺序确定但无语义**，契约要求同槽贡献
+ * 互不依赖先后；若两块内容有顺序依赖，它们应属于同一个贡献（build 返回
+ * 数组，块间保序）。
  */
-export function injectSystemBlock(
-  messages: Message[],
-  opts: { injector: string; content: string; anchor?: 'head' | 'afterFirstSystem' },
-): boolean {
-  if (messages.some(m => m.role === 'system' && m.metadata?.injector === opts.injector)) return false;
-  let insertAt: number;
-  if (opts.anchor === 'afterFirstSystem') {
-    const idx = messages.findIndex(m => m.role === 'system');
-    insertAt = idx >= 0 ? idx + 1 : 0;
-  } else {
-    const idx = messages.findIndex(m => m.role !== 'system');
-    insertAt = idx === -1 ? messages.length : idx;
+export type PromptAnchor = 'identity' | 'knowledge' | 'context' | 'turn-hint';
+
+/**
+ * build 的只读视图——贡献者能看到的全部信息。
+ *
+ * 贡献者不掌握控制流：看不到其他贡献的产出，不能改写 messages，
+ * 不能影响排布；只能决定"这一轮交不交料、交什么"。
+ *
+ * `messages` 是组装开始时的浅拷贝快照：build 之间并行执行，禁止（也无法
+ * 经由本数组）改写真实消息序列；消息对象本身未深拷贝，不要变更其字段。
+ */
+export interface PromptContributionView {
+  readonly sessionId?: string;
+  readonly userId?: string;
+  readonly platform?: string;
+  readonly triggerType?: IncomingMessage['triggerType'];
+  /**
+   * 干跑标记：本次只为估算上下文体积（token:request 快照），不会真正调用 LLM。
+   * 昂贵/有副作用的构建（向量检索、档案加载）据此返回 null 跳过——代价是
+   * 快照略微低估这些块的体积，真实回合的统计不受影响。
+   */
+  readonly dryRun: boolean;
+  readonly messages: readonly Message[];
+}
+
+/**
+ * `agent:prompt` 贡献点的 spec——经 `ctx.contribute('agent:prompt', spec)` 注册。
+ *
+ * - `id`：局部幂等键（如 'context'、`activation:${skillName}`），注册时被内核
+ *   冠 `${ctx.id}/` 前缀成全局键；全局键即物化块的 `metadata.injector`
+ *   （token 统计 / 裁剪 / 幂等识别的归属标识）。
+ * - `build`：每次 LLM 调用前被组装器调用（含工具循环各轮；已物化过的贡献
+ *   按全局键跳过，不会重复 build）。返回 null = 本轮不交料；返回数组 =
+ *   多块，块间保序、共用同一全局键。**抛错只导致本贡献缺席，不影响他人、
+ *   不中断流程**（与 hooks 的上溯中断相反，这是设计意图）。
+ */
+export interface PromptContribution {
+  id: string;
+  anchor: PromptAnchor;
+  build(view: PromptContributionView): string | readonly string[] | null | Promise<string | readonly string[] | null>;
+}
+
+declare module '@aalis/core' {
+  interface ContributionPointMap {
+    'agent:prompt': PromptContribution;
   }
-  messages.splice(insertAt, 0, {
-    role: 'system',
-    content: opts.content,
-    metadata: { injector: opts.injector },
-  } as Message);
-  return true;
 }
 
 // ----- token:usage 事件契约 -----

@@ -505,57 +505,64 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   const DISCOVERY_SOURCE = 'skills-discovery';
   const ACTIVATION_SOURCE_PREFIX = 'skills-activation:';
 
-  // ── Discovery: agent:llm:before 注入可用 skill 列表 ──
+  // ── Discovery: agent:prompt 贡献（knowledge 槽）注入可用 skill 列表 ──
   if (config.discoveryEnabled) {
-    ctx.middleware('agent:llm:before', async (data, next) => {
-      // 防重：同一 messages 数组中已有 discovery system 块就跳过
-      const hasDiscovery = data.messages.some(m => m.role === 'system' && m.metadata?.injector === DISCOVERY_SOURCE);
-      const visible = getAllowedSkills();
-      if (!hasDiscovery && visible.length > 0) {
+    ctx.contribute('agent:prompt', {
+      id: DISCOVERY_SOURCE,
+      anchor: 'knowledge',
+      build() {
+        const visible = getAllowedSkills();
+        if (visible.length === 0) return null;
         const lines = visible.map(s => `- ${s.name}: ${s.description}`);
-        const block =
+        return (
           `📚 可用技能（共 ${visible.length}，按需调用 load_skill(name="...") 加载完整指令）：\n${lines.join('\n')}\n\n` +
-          '当你识别到当前任务匹配某个技能时，先调用 load_skill 获取详细操作步骤，再继续执行。';
-        const idx = data.messages.findIndex(m => m.role !== 'system');
-        const insertIdx = idx === -1 ? data.messages.length : idx;
-        data.messages.splice(insertIdx, 0, {
-          role: 'system',
-          content: block,
-          metadata: { injector: DISCOVERY_SOURCE },
-        });
-      }
+          '当你识别到当前任务匹配某个技能时，先调用 load_skill 获取详细操作步骤，再继续执行。'
+        );
+      },
+    });
+  }
 
-      // 注入 session 已激活的 skill body（每个 skill 一个 system 块，按需）
-      if (data.sessionId) {
-        const loaded = sessionLoaded.get(data.sessionId);
-        if (loaded && loaded.size > 0) {
-          for (const skillName of loaded) {
-            const sourceTag = ACTIVATION_SOURCE_PREFIX + skillName;
-            const already = data.messages.some(m => m.role === 'system' && m.metadata?.injector === sourceTag);
-            if (already) continue;
-            const skill = skillsCache.get(skillName);
-            if (!skill) continue;
-            const resourceLines: string[] = [];
-            if (skill.scripts.length > 0)
-              resourceLines.push(`- scripts/: ${skill.scripts.join(', ')}（可用 code_runner 等工具执行）`);
-            if (skill.references.length > 0)
-              resourceLines.push(`- references/: ${skill.references.join(', ')}（按需读取该文件获取详细参考）`);
-            if (skill.assets.length > 0) resourceLines.push(`- assets/: ${skill.assets.join(', ')}（模板/资源）`);
-            const resources =
-              resourceLines.length > 0 ? `\n\n附属资源（位于 ${skill.uri}）：\n${resourceLines.join('\n')}` : '';
-            const block = `═══ Skill 已激活: ${skill.name} ═══\n${skill.body}${resources}\n═════════════════════════════`;
-            const idx = data.messages.findIndex(m => m.role !== 'system');
-            const insertIdx = idx === -1 ? data.messages.length : idx;
-            data.messages.splice(insertIdx, 0, {
-              role: 'system',
-              content: block,
-              metadata: { injector: sourceTag },
-            });
-          }
-        }
-      }
-
-      await next();
+  // ── 激活正文：每个被激活过的 skill 一份贡献（knowledge 槽）──
+  // spec 在技能首次激活时注册（同名幂等）；build 按 view.sessionId 判断该会话
+  // 是否加载。回合中途 load_skill 新激活的技能，其贡献键尚未物化，组装器在
+  // 下一轮 LLM 调用前增量落位——这是旧 middleware 逐轮补注语义的等价表达。
+  const activationContributed = new Set<string>();
+  /** 归一后的局部 id → 首个占用它的 skill 名（检测 '/'→'_' 替换造成的同形碰撞） */
+  const activationIdOwner = new Map<string, string>();
+  function contributeActivation(skillName: string): void {
+    // 与旧行为一致：skills 的 prompt 注入（含激活正文）整体随 discoveryEnabled 开关
+    if (!config.discoveryEnabled || activationContributed.has(skillName)) return;
+    // 内核全局键禁含 '/'，病态 skill 名（如 'a/b'）需归一。归一后可能与另一个
+    // 真实存在的名字（'a_b'）撞成同一贡献键——注册表是替换语义，撞了就有一方的
+    // 正文永远注入不进去。保住先占者并点名告警，别让它静默消失。
+    const localId = ACTIVATION_SOURCE_PREFIX + skillName.replaceAll('/', '_');
+    const owner = activationIdOwner.get(localId);
+    if (owner !== undefined && owner !== skillName) {
+      logger.warn(
+        `skill "${skillName}" 与 "${owner}" 归一后共用同一贡献键 "${localId}"（'/' 被替换为 '_'）；` +
+          `保留先注册的 "${owner}"，"${skillName}" 的正文将无法注入——请重命名其中一个（避免名字里用 '/'）。`,
+      );
+      return;
+    }
+    activationIdOwner.set(localId, skillName);
+    activationContributed.add(skillName);
+    ctx.contribute('agent:prompt', {
+      id: localId,
+      anchor: 'knowledge',
+      build(view) {
+        if (!view.sessionId || !sessionLoaded.get(view.sessionId)?.has(skillName)) return null;
+        const skill = skillsCache.get(skillName);
+        if (!skill) return null;
+        const resourceLines: string[] = [];
+        if (skill.scripts.length > 0)
+          resourceLines.push(`- scripts/: ${skill.scripts.join(', ')}（可用 code_runner 等工具执行）`);
+        if (skill.references.length > 0)
+          resourceLines.push(`- references/: ${skill.references.join(', ')}（按需读取该文件获取详细参考）`);
+        if (skill.assets.length > 0) resourceLines.push(`- assets/: ${skill.assets.join(', ')}（模板/资源）`);
+        const resources =
+          resourceLines.length > 0 ? `\n\n附属资源（位于 ${skill.uri}）：\n${resourceLines.join('\n')}` : '';
+        return `═══ Skill 已激活: ${skill.name} ═══\n${skill.body}${resources}\n═════════════════════════════`;
+      },
     });
   }
 
@@ -576,6 +583,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           for (const re of regexes) {
             if (re.test(probe)) {
               session.add(skill.name);
+              contributeActivation(skill.name);
               logger.info(`skill "${skill.name}" 已自动激活 (session=${sessionId}, regex=${re})`);
               break;
             }
@@ -761,6 +769,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     loadSkillForSession(sessionId, skillName) {
       if (!skillsCache.has(skillName)) return false;
       ensureSessionSet(sessionId).add(skillName);
+      contributeActivation(skillName);
       return true;
     },
     getLoadedSkills(sessionId) {
@@ -821,6 +830,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         });
       }
       ensureSessionSet(sessionId).add(skill.name);
+      contributeActivation(skill.name);
       return JSON.stringify({
         ok: true,
         message: `skill "${skill.name}" 已激活；详细指令将在下一次模型调用时注入上下文。`,

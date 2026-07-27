@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ConfigManager,
   Context,
+  ContributionRegistry,
   DefaultLogger,
   EventBus,
   HookRegistry,
@@ -12,13 +13,14 @@ function makeContext(id = 'root'): Context {
   const events = new EventBus();
   const services = new ServiceContainer();
   const hooks = new HookRegistry();
+  const contributions = new ContributionRegistry();
   const logger = new DefaultLogger('test');
   const config = new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} });
-  return new Context({ id, events, services, hooks, logger, config });
+  return new Context({ id, events, services, hooks, contributions, logger, config });
 }
 
-describe('Context.middleware / hooks 门面（HookRunner 收窄）', () => {
-  it('middleware 注册的 handler 参与 hooks.run，插件 ctx dispose 后自动清扫', async () => {
+describe('Context.middleware / runHook 门面', () => {
+  it('middleware 注册的 handler 参与 runHook，插件 ctx dispose 后自动清扫', async () => {
     const root = makeContext();
     const child = root.fork('plugin-a');
     const calls: string[] = [];
@@ -27,13 +29,13 @@ describe('Context.middleware / hooks 门面（HookRunner 收窄）', () => {
       await next();
     });
 
-    // 任意 ctx 都可驱动钩子链（run 在公开窄面上）
-    await root.hooks.run('__t:hook', {} as never);
+    // 任意 ctx 都可驱动钩子链（runHook 在公开窄面上，地位等价 ctx.emit）
+    await root.runHook('__t:hook', {} as never);
     expect(calls).toEqual(['a']);
 
     // dispose 子 ctx → 其 middleware 被 unregisterByContext(this.id) 清扫
     await child.dispose();
-    await root.hooks.run('__t:hook', {} as never);
+    await root.runHook('__t:hook', {} as never);
     expect(calls).toEqual(['a']); // 未再次触发
   });
 
@@ -52,7 +54,7 @@ describe('Context.middleware / hooks 门面（HookRunner 收窄）', () => {
     });
 
     await a.dispose();
-    await root.hooks.run('__t:hook', {} as never);
+    await root.runHook('__t:hook', {} as never);
     expect(calls).toEqual(['b']);
   });
 
@@ -63,20 +65,18 @@ describe('Context.middleware / hooks 门面（HookRunner 收窄）', () => {
       calls.push(1);
       await next();
     });
-    await ctx.hooks.run('__t:hook', {} as never);
+    await ctx.runHook('__t:hook', {} as never);
     off();
-    await ctx.hooks.run('__t:hook', {} as never);
+    await ctx.runHook('__t:hook', {} as never);
     expect(calls).toEqual([1]);
   });
 
-  it('ctx.hooks 是窄 HookRunner：register 不在公开类型上（注册唯一入口是 ctx.middleware）', () => {
+  it('注册表对象不外露：执行面是 ctx.runHook 方法，注册唯一入口是 ctx.middleware', () => {
     const ctx = makeContext();
-    // 编译期约束：HookRunner 只含 run。测试不做 typecheck，此处以运行时形状声明意图——
-    // 底层对象仍是注册表（同一实例，仅类型收窄），核心断言是公开类型面而非运行时。
-    type PublicHooks = typeof ctx.hooks;
-    const hasRegisterInType: 'register' extends keyof PublicHooks ? true : false = false;
-    expect(hasRegisterInType).toBe(false);
-    expect(typeof ctx.hooks.run).toBe('function');
+    // 与 events / services 同一门面纪律：插件在运行时就拿不到 HookRegistry
+    // （此前 ctx.hooks 是同一实例仅类型收窄，cast 可绕过 id-stamping——现已封死）。
+    expect('hooks' in ctx).toBe(false);
+    expect(typeof ctx.runHook).toBe('function');
   });
 });
 

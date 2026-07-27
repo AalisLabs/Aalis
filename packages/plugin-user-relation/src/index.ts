@@ -21,7 +21,7 @@ import { useWebuiService, type WebuiPage } from '@aalis/plugin-webui-api';
 import { actions as baseActions } from './actions.js';
 import { registerRelationCommands } from './commands.js';
 import { RelationExtractor } from './extractor.js';
-import { registerRelationMiddleware } from './middleware.js';
+import { registerRelationContribution } from './middleware.js';
 import { startRenameWatcher } from './rename-watcher.js';
 import { RelationService } from './service.js';
 import { RELATION_NAMESPACE, RelationStore } from './store.js';
@@ -260,7 +260,7 @@ export const configSchema: ConfigSchema = {
   agentInjection: {
     type: 'boolean',
     label: '向 agent 注入关系上下文',
-    description: '在 agent:llm:before 时把当前用户的子图速览注入 system prompt',
+    description: '把当前用户的子图速览作为 agent:prompt 贡献注入 system prompt（identity 槽）',
     default: true,
   },
   injectionMaxDepth: {
@@ -561,7 +561,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ─── Middleware 注入（读取）─── 受 agentInjection 控制
   if (config.agentInjection !== false) {
-    registerRelationMiddleware(ctx, service, {
+    registerRelationContribution(ctx, service, {
       enabled: true,
       maxDepth: numCfg(config.injectionMaxDepth, 2),
       maxBreadth: numCfg(config.injectionMaxBreadth, 10),

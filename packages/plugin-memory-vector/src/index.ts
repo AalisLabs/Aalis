@@ -1,4 +1,4 @@
-import type { ConfigSchema, Context, MiddlewareNext } from '@aalis/core';
+import type { ConfigSchema, Context } from '@aalis/core';
 import type { EmbeddingService } from '@aalis/plugin-embedding-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
@@ -462,37 +462,18 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     },
   );
 
-  // === 检索并注入上下文 ===
+  // === 检索并注入上下文（agent:prompt 贡献 / context 槽）===
 
-  ctx.middleware(
-    'agent:llm:before',
-    async (
-      data: {
-        messages: Message[];
-        tools: unknown[];
-        sessionId?: string;
-        userId?: string;
-        platform?: string;
-        dryRun?: boolean;
-      },
-      next: MiddlewareNext,
-    ) => {
+  ctx.contribute('agent:prompt', {
+    id: 'memory-vector',
+    anchor: 'context',
+    async build(data) {
       // 干跑(token 快照)不做真实的 embedding+检索——那是纯统计路径的昂贵副作用
-      if (data.dryRun) {
-        await next();
-        return;
-      }
-      if (data.messages.some(m => m.role === 'system' && m.metadata?.injector === 'memory-vector')) {
-        await next();
-        return;
-      }
+      if (data.dryRun) return null;
 
       const userMessages = data.messages.filter(m => m.role === 'user');
       const lastUserMsg = userMessages[userMessages.length - 1];
-      if (!lastUserMsg?.content) {
-        await next();
-        return;
-      }
+      if (!lastUserMsg?.content) return null;
 
       try {
         const mode = cfg.crossSessionMode;
@@ -501,10 +482,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         const curUserId = data.userId ?? '';
 
         const candidateCount = Math.min(cfg.search.topK * 4, await getStore().size());
-        if (candidateCount === 0) {
-          await next();
-          return;
-        }
+        if (candidateCount === 0) return null;
 
         const queryVec = await getEmbedder().embed(stripTimeLabel(lastUserMsg.content));
         const candidates = await getStore().search(queryVec, candidateCount);
@@ -546,10 +524,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         ranked.sort((a, b) => b.finalScore - a.finalScore);
 
         const topResults = ranked.slice(0, cfg.search.topK);
-        if (topResults.length === 0) {
-          await next();
-          return;
-        }
+        if (topResults.length === 0) return null;
 
         // 4. 命中点 + 上下文窗口扩展（合并区间，去重）
         const W = cfg.contextExpand.window;
@@ -642,34 +617,23 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           if (!collected.has(key)) collected.set(key, { sessionId: sid, msg: fakeMsg });
         }
 
-        if (collected.size === 0) {
-          await next();
-          return;
-        }
+        if (collected.size === 0) return null;
 
         // 5. 按时间排序混排
         const sortedAll = [...collected.values()].sort((a, b) => (a.msg.timestamp ?? 0) - (b.msg.timestamp ?? 0));
 
         const lines = sortedAll.map(({ msg }) => renderMemoryEntry(msg, cfg.search.perItemMaxChars));
 
-        const contextBlock =
+        return (
           '以下是从长期记忆中检索到的相关聊天记录片段（可能跨会话/跨群），按时间顺序呈现，仅供参考：\n' +
-          lines.join('\n');
-
-        const insertAt = data.messages.findIndex(m => m.role !== 'system');
-        const insertIdx = insertAt === -1 ? data.messages.length : insertAt;
-        data.messages.splice(insertIdx, 0, {
-          role: 'system',
-          content: contextBlock,
-          metadata: { injector: 'memory-vector' },
-        });
+          lines.join('\n')
+        );
       } catch (err) {
         ctx.logger.warn(`向量记忆检索失败: ${formatError(err)}`);
+        return null;
       }
-
-      await next();
     },
-  );
+  });
 
   // === 工具：主动语义召回 ===
   // LLM 可在判断"被动注入不够用"时主动调用，按任意 query 检索
