@@ -1,4 +1,5 @@
 import type { AppService, Context } from '@aalis/core';
+import type { AuthorityService } from '@aalis/plugin-authority-api';
 import type { CommandArgv } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
 import type { ConfigSchema } from '@aalis/plugin-config-api';
@@ -360,6 +361,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return clearData.results.map(r => `${r.success ? '✅' : '⚠'} ${r.message}`).join('\n');
   }
 
+  /**
+   * 清空共享会话（群/频道）所需的最低等级。私聊会话归用户本人，不受此限——
+   * 清自己的记忆是自助行为；群会话一人清掉会毁掉所有人的上下文，故要求同
+   * `visibility:'restricted'` 的等级 2。
+   */
+  const CLEAR_SHARED_MIN_LEVEL = 2;
+
   async function runClearFromOptions(argv: CommandArgv, scope: ClearScope): Promise<string> {
     let types: string[] | undefined;
     try {
@@ -367,13 +375,31 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     } catch (err) {
       return err instanceof Error ? err.message : String(err);
     }
+    // 共享会话设防：静态声明只能给出与会话归属无关的策略，这一档必须在运行期判。
+    if (argv.session.sessionType && argv.session.sessionType !== 'private') {
+      const auth = ctx.getService<AuthorityService>('authority');
+      const isOwner = auth?.isOwner(argv.session.platform, argv.session.userId) ?? false;
+      const level =
+        auth?.listUsers().find(u => u.platform === argv.session.platform && u.userId === argv.session.userId)?.level ??
+        0;
+      if (!isOwner && level < CLEAR_SHARED_MIN_LEVEL) {
+        return `清空共享会话需要等级 ${CLEAR_SHARED_MIN_LEVEL}（当前 ${level}）。私聊里可以随时清理自己的会话。`;
+      }
+    }
     return runClear({ sessionId: argv.session.sessionId }, scope, types);
   }
 
   const clearTypeOptDesc = `清理类型，可重复或用逗号分隔。可用: all, ${CLEAR_TYPES.map(t => t.id).join(', ')}`;
 
   useCommandService(ctx)
-    .command('clear', '清空当前会话记忆；用 --type 选择消息、摘要、向量、图片等清理类型')
+    // 清空**当前会话**的记忆。风险随会话归属而变，静态声明取「最松的安全默认」：
+    // confirm:'session' 但不抬等级——私聊里会话是用户自己的，清自己的记忆属自助行为，
+    // 要 2 级等于剥夺；确认则挡住提示词注入触发的误清（需真人点一下）。
+    // 群聊会话是共享的，一人清掉毁掉所有人的上下文——那一档在 action 里按
+    // sessionType 另行设防（与 /bind 等私聊敏感指令同一模式）。
+    .command('clear', '清空当前会话记忆；用 --type 选择消息、摘要、向量、图片等清理类型', {
+      confirm: 'session',
+    })
     .option('type', '-t <type:string[]>', { description: clearTypeOptDesc })
     .example('/clear')
     .example('/clear --type context,summary')
@@ -386,8 +412,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     .action(async () => renderClearTypeList());
 
   useCommandService(ctx)
+    // 全局清空，比 /clear 更重：同样 dangerous（等级 2 + 二次确认）。
+    // 原先只写 visibility:'restricted' 拿到了等级 2 但漏了 confirm。
     .command('clear.all', '【危险】按 --type 清空全部会话；未指定类型时清空全部类型', {
-      visibility: 'restricted',
+      risk: 'dangerous',
     })
     .option('type', '-t <type:string[]>', { description: clearTypeOptDesc })
     .action(async argv => runClearFromOptions(argv, 'all'));
