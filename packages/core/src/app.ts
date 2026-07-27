@@ -6,7 +6,7 @@ import { HookRegistry } from './hooks.js';
 import { DefaultLogger, type Logger, LogHub, type LogLevel } from './logger.js';
 import { PluginManager, type PluginModule, parseInstanceId } from './plugin.js';
 import type { ConfigProvider, PluginDescriptor, PluginLoader, RestartStrategy } from './providers.js';
-import { ServiceContainer } from './service.js';
+import { ServiceContainer } from './services.js';
 
 // ----- 应用配置选项 -----
 

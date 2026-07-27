@@ -31,8 +31,8 @@ const BASE_LAYER = [
   'events.ts',
   'hooks.ts',
   'logger.ts',
-  'service-helpers.ts',
-  'service.ts',
+  'services-helpers.ts',
+  'services.ts',
 ];
 
 /** 编排层：插件生命周期 + 应用骨架（允许向下依赖基底层） */
