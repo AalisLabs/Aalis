@@ -1,7 +1,7 @@
 # plugin-webui-client — WebUI 前端
 
 **包名**: `@aalis/plugin-webui-client`  
-**源码**: `packages/plugin-webui-client/src/index.ts`
+**源码**: `packages/plugin-webui-client/src/main.tsx`
 
 ## 概述
 
