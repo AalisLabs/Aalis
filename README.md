@@ -325,8 +325,38 @@ outputFormat:
 - [ ] 数据库定时清理/压缩策略（按 TTL 或条数上限淘汰旧消息）
 - [ ] 反向 WebSocket 支持（OneBot 适配器）
 - [ ] 更多平台适配器（Discord、Telegram 等）
-- [ ] 插件市场与远程安装
-- [ ] npm 包发布与第三方插件生态
+
+### 插件市场（已知缺陷，均经实测确认）
+
+市场的检索、依赖披露、版本显示已可用；**安装与更新链路尚不完整**。
+
+- [ ] **脚手架部署下安装无效**：`package-manager` 把包解包到 `packages/` 并
+      `pnpm install --filter`，但**从不写入根 `package.json` 的 dependencies**，
+      而脚手架用的 node_modules 加载器只读根 dependencies —— 结果是一个永不加载的
+      死目录，接口却返回 `{ok:true}`。修法是改写根依赖（`npm install <pkg>`），
+      并对 pnpm 工作区形态加硬护栏（工作区根含 `workspace:` 协议时 npm 直接
+      `EUNSUPPORTEDPROTOCOL` 失败）。
+- [ ] **升级已装插件不生效**：`App.rescanPlugins()` 对已注册插件直接跳过，装了新版
+      等于没装。正解原语是 `bouncePlugin(id, { module })`，而非 unload + register
+      —— 后者会丢插件配置（`PluginManagerService.register` 不合并 defaultConfig）。
+- [ ] **热升级的适用边界**：`import(url + '?t=…')` 只让**入口模块**重新求值，同包兄弟
+      文件与全部依赖仍命中旧 ESM 缓存。一方插件中约三分之一是多文件 dist，对它们
+      热重载无效或造成同包混版。判据应为「本次安装改动的包集合 ⊆ 目标插件自身」，
+      数据源取 `npm install --json` 的 added/updated/removed；越界则全量重启。
+- [ ] **core / runtime 的可见与更新**：二者带 `aalis-core` / `aalis-runtime` 关键词，
+      不在市场检索的四类之内。应经「根依赖表」呈现（脚手架已把它们写进根
+      dependencies），而非塞进插件检索通道。更新必须全量重启。
+- [ ] **peer 兼容门禁**：`npm` 的 ERESOLVE 只在「peer 需求方被装」方向硬失败；
+      core/runtime 被根显式指定时只 warn 且 exit 0，照样换掉。故 core 更新路径需自带
+      门禁，可用 `--strict-peer-deps` 一次性判定一组目标版本是否互相兼容。
+- [ ] **禁卸 core / runtime**：卸载路径没有「不可卸」概念，服务依赖闸对 core 结构性
+      失效（core 不进 `getStatus()`）。护栏应落在 `createPackageManager.uninstall()`
+      这一服务层汇流点——该服务经 `ctx.provide` 公开，任何插件都能绕过 HTTP 路由直接调用。
+- [ ] **前端类包装后不生效**：WebUI 的前端候选发现只在 `ready` 事件里跑一次，热装
+      `aalis-interface` 包不会出现在服务页下拉；且此类包不注册插件，装后前端零反馈。
+- [ ] **重启丢失 Node 执行选项**：`createProcessRespawnStrategy` 以 `process.argv` 重生，
+      丢掉 `execArgv`，脚手架启动脚本的 `--env-file-if-exists=.env` 在重启后静默失效；
+      且 `stop()` 若 reject 则既不 spawn 也不 exit，进程停在僵尸态。
 
 ## 开发进度
 
