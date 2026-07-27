@@ -85,6 +85,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ---- create_subtask ----
   useToolService(ctx).register({
     groups: ['subtask'],
+    // 每个子任务是一条独立的 LLM 会话链——不受信任的调用方可连续创建以放大 API 开销。
+    // sensitive(L1) 挡住 level-0，不加逐次 confirm（正常用法是 agent 连续创建多个并行子任务）。
+    risk: 'sensitive',
     definition: {
       type: 'function',
       function: {
@@ -273,6 +276,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ---- send_to_subtask ----
   useToolService(ctx).register({
     groups: ['subtask'],
+    // 向子任务追加指令 = 驱动其再跑一轮 LLM，同 create_subtask 的开销放大面。
+    risk: 'sensitive',
     definition: {
       type: 'function',
       function: {
@@ -347,6 +352,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ---- delete_subtask ----
   useToolService(ctx).register({
     groups: ['subtask'],
+    // 销毁子任务会话（含其未完成工作）——破坏性且影响他人发起的任务。
+    risk: 'sensitive',
     definition: {
       type: 'function',
       function: {
