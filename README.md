@@ -325,38 +325,35 @@ outputFormat:
 - [ ] 数据库定时清理/压缩策略（按 TTL 或条数上限淘汰旧消息）
 - [ ] 反向 WebSocket 支持（OneBot 适配器）
 - [ ] 更多平台适配器（Discord、Telegram 等）
+- [ ] 插件市场：安装与更新链路（检索/依赖披露/版本显示已可用）
+      —— 详见 [已知缺陷与待办](docs/plugins/marketplace-known-issues.md)
 
-### 插件市场（已知缺陷，均经实测确认）
+### 指令系统（已知缺陷，均经实测确认）
 
-市场的检索、依赖披露、版本显示已可用；**安装与更新链路尚不完整**。
+- [ ] **同名指令静默覆盖**：两插件注册同名指令时后者直接顶掉前者（复用旧节点并
+      清空 handler / options / aliases / examples），只留一行 `logger.warn`，用户
+      在聊天界面完全无感知。见 `packages/plugin-commands/src/commands.ts:101-110`。
+      待定修法：改为拒绝注册 + 显式报错，或保留覆盖但把冲突提到用户可见层。
+      Koishi 兼容层落地后此问题会被放大（`help` / `status` / `echo` 等常见名两边
+      都有），故兼容层方案已定为把 Koishi 指令统一挂 `/koishi` 命名空间隔离。
+- [ ] **`/help` 与 `formatUsage` 无权限过滤**：`getAll()` 全量返回，`visibility:
+      'restricted'` 的指令对任何等级都可见；裸敲分组指令（如 `/relation`）经
+      `execute()` 在守卫**之前**就返回完整子指令清单（`commands.ts:292-294`），
+      未知选项报错路径同理（`:451` / `:472`）。开源项目里指令存在性本就公开，
+      故定位为**降噪**而非防泄漏，优先级低。修法：注入与执行侧同源的 authorize
+      判定（只取轴 A 可见性，排除轴 B confirm 与临时授予，否则列表会随会话漂移）。
+- [ ] **执行侧存在性泄漏**（上一条的另一半）：低权限用户直敲受限指令会收到
+      「权限不足: command:xxx 需等级 N」，仍暴露存在性。触及 authority 拒绝文案，
+      改动面大于收益，暂不动——但需与上一条一并决策，否则只堵一半。
 
-- [ ] **脚手架部署下安装无效**：`package-manager` 把包解包到 `packages/` 并
-      `pnpm install --filter`，但**从不写入根 `package.json` 的 dependencies**，
-      而脚手架用的 node_modules 加载器只读根 dependencies —— 结果是一个永不加载的
-      死目录，接口却返回 `{ok:true}`。修法是改写根依赖（`npm install <pkg>`），
-      并对 pnpm 工作区形态加硬护栏（工作区根含 `workspace:` 协议时 npm 直接
-      `EUNSUPPORTEDPROTOCOL` 失败）。
-- [ ] **升级已装插件不生效**：`App.rescanPlugins()` 对已注册插件直接跳过，装了新版
-      等于没装。正解原语是 `bouncePlugin(id, { module })`，而非 unload + register
-      —— 后者会丢插件配置（`PluginManagerService.register` 不合并 defaultConfig）。
-- [ ] **热升级的适用边界**：`import(url + '?t=…')` 只让**入口模块**重新求值，同包兄弟
-      文件与全部依赖仍命中旧 ESM 缓存。一方插件中约三分之一是多文件 dist，对它们
-      热重载无效或造成同包混版。判据应为「本次安装改动的包集合 ⊆ 目标插件自身」，
-      数据源取 `npm install --json` 的 added/updated/removed；越界则全量重启。
-- [ ] **core / runtime 的可见与更新**：二者带 `aalis-core` / `aalis-runtime` 关键词，
-      不在市场检索的四类之内。应经「根依赖表」呈现（脚手架已把它们写进根
-      dependencies），而非塞进插件检索通道。更新必须全量重启。
-- [ ] **peer 兼容门禁**：`npm` 的 ERESOLVE 只在「peer 需求方被装」方向硬失败；
-      core/runtime 被根显式指定时只 warn 且 exit 0，照样换掉。故 core 更新路径需自带
-      门禁，可用 `--strict-peer-deps` 一次性判定一组目标版本是否互相兼容。
-- [ ] **禁卸 core / runtime**：卸载路径没有「不可卸」概念，服务依赖闸对 core 结构性
-      失效（core 不进 `getStatus()`）。护栏应落在 `createPackageManager.uninstall()`
-      这一服务层汇流点——该服务经 `ctx.provide` 公开，任何插件都能绕过 HTTP 路由直接调用。
-- [ ] **前端类包装后不生效**：WebUI 的前端候选发现只在 `ready` 事件里跑一次，热装
-      `aalis-interface` 包不会出现在服务页下拉；且此类包不注册插件，装后前端零反馈。
-- [ ] **重启丢失 Node 执行选项**：`createProcessRespawnStrategy` 以 `process.argv` 重生，
-      丢掉 `execArgv`，脚手架启动脚本的 `--env-file-if-exists=.env` 在重启后静默失效；
-      且 `stop()` 若 reject 则既不 spawn 也不 exit，进程停在僵尸态。
+### 存储层（结构性欠缺）
+
+- [ ] **缺结构化存储原语**：插件持久化目前只有两条路——`memory.saveMetadata`
+      （命名空间 + 键 → JSON，11 个插件在用）与 `storage` 的 `pluginData:` 根
+      （文件语义，4 个插件在用）。前者无查询、无索引、无事务，`listMetadata(ns)`
+      是全量拉取 + 内存过滤：`user-relation`（关系图）、`user-profile`（用户档案）
+      数据量上来即全表扫。此缺口与 Koishi 兼容层的 `ctx.model` / `ctx.database`
+      需求撞在同一处，可一并设计。
 
 ## 开发进度
 
@@ -403,6 +400,15 @@ outputFormat:
 - [ ] 热重载支持（部分已实现）
 - [ ] 更多 LLM 接口（Gemini 等）
 - [ ] npm 包发布与第三方插件生态
+- [ ] **Koishi 插件兼容层**：嵌入真实 koishi 内核而非重新实现其 API（PoC 已验证
+      可行：装载 `@koishijs/plugin-echo` / `plugin-repeater` / `koishi-plugin-novelai`
+      端到端跑通，冷启动到首条消息往返 6.8ms）。形态为一个桥插件 + `data/` 下的
+      独立 koishi 沙盒（自身是 npm project，主仓零 koishi 依赖）；指令挂 `/koishi`
+      命名空间；市场加 Koishi 来源（按 `koishi-plugin` 关键词检索，与 `aalis-*`
+      分类天然隔离）。两个已知坑：koishi 的 ESM 入口有 CJS interop 缺陷必须走
+      `createRequire`；`ctx.stop()` 是终态，热重载只能重建 Context。
+- [ ] **`/help` 权限过滤**：概览与详情按调用者能力裁剪（见「指令系统」已知缺陷）。
+- [ ] **结构化存储层**：替代当前拿 KV 硬顶结构化数据的现状（见「存储层」）。
 
 ## 许可证
 
