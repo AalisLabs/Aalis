@@ -4,10 +4,10 @@
 // core 仅提供：
 //   - 运行时基础设施（App / Context / EventBus / ServiceContainer / HookRegistry / ConfigManager / Logger / PluginManager 等）
 //   - 通用 IoC 数据契约（Schema / AalisEvents / Middleware / Dependency 声明 等）
-//   - 扩展点（AalisEvents / HookContextMap / ServiceTypeMap）+ PluginModule augmentation
+//   - 扩展点（AalisEvents / HookContextMap / ServiceTypeMap / ContributionPointMap）+ PluginModule augmentation
 //
 // 所有业务/领域类型均由各 @aalis/plugin-*-api 包导出：
-//   - Message / ContentSegment           → @aalis/plugin-agent-api
+//   - Message / ContentSegment           → @aalis/plugin-message-api
 //   - ToolCall / ToolDefinition / ToolFunction → @aalis/plugin-tools-api
 //   - LLM / Memory / Storage / Embedding / VectorStore / Tools / Commands / Gateway /
 //     WebUI / Authority / Agent / Platform 等服务接口及关联业务类型同样在各自的 plugin-*-api。
@@ -21,8 +21,9 @@ export { CORE_CONFIG_SCHEMA, ConfigManager } from './config.js';
 export { Context } from './context.js';
 // 注：DisposableChain 是 Context 的内部清理链实现，不再从包根导出（零外部消费，
 // 避免 semver 负担）。嵌入方如确需独立使用，从 './disposable-chain.js' 直接 import。
+export { type ContributionHandle, ContributionRegistry, type ContributionSpec } from './contributions.js';
 export { EventBus } from './events.js';
-export { HookRegistry, type HookRunner } from './hooks.js';
+export { HookRegistry } from './hooks.js';
 // ----- 运行时基础类型 -----
 export type { LogEntry, LogLevel } from './logger.js';
 export { DefaultLogger, formatLogLine, type Logger, LogHub, parseLogLine } from './logger.js';
@@ -37,6 +38,7 @@ export type {
   AalisEvents,
   AppService,
   ConfigSchema,
+  ContributionPointMap,
   DependencyDeclaration,
   DisposableService,
   HookContextMap,

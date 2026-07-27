@@ -12,6 +12,7 @@ import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-person
 import { getPlatformSelfIdentity } from '@aalis/plugin-platform-api';
 import type { SessionConfig, SessionManagerService } from '@aalis/plugin-session-manager-api';
 import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/plugin-tools-api';
+import { assemblePromptContributions } from './prompt-assembly.js';
 import '@aalis/plugin-commands-api';
 import { normalizeAssistantContent, stripLeakedSpecialTokens, truncateChars } from '@aalis/util-text-normalize';
 import {
@@ -410,7 +411,7 @@ class DefaultAgent implements AgentService {
 
     let handled = false;
 
-    await this.ctx.hooks.run('agent:input:before', msgHookData, async () => {
+    await this.ctx.runHook('agent:input:before', msgHookData, async () => {
       handled = true;
       // ===== defaultAction: 全部消息处理逻辑在此 =====
       // 中间件不调用 next() → 此处永远不执行 → 消息被拦截
@@ -497,7 +498,9 @@ class DefaultAgent implements AgentService {
           platform: incoming.platform,
           triggerType: incoming.triggerType,
         };
-        await this.ctx.hooks.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
+        // 组装先于链：贡献块（档案/技能/记忆/即时提示）先物化，拦截者审完整成品
+        await assemblePromptContributions(this.ctx, llmBeforeData);
+        await this.ctx.runHook('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
 
         // 裁剪消息以确保不超过上下文窗口
         llmBeforeData.messages = this.trimMessages(llmBeforeData.messages, tokenBudget);
@@ -560,7 +563,7 @@ class DefaultAgent implements AgentService {
 
         // Hook: agent:llm:after — 插件可以处理 LLM 返回结果
         const llmAfterData = { response, messages: llmBeforeData.messages };
-        await this.ctx.hooks.run('agent:llm:after', llmAfterData);
+        await this.ctx.runHook('agent:llm:after', llmAfterData);
         response = llmAfterData.response;
 
         // 收集所有思考内容
@@ -613,7 +616,7 @@ class DefaultAgent implements AgentService {
 
               // Hook: agent:tool:before — 插件可以拦截或修改工具调用
               const toolBeforeData = { name: toolCall.function.name, args, toolCallContext: toolCtx };
-              await this.ctx.hooks.run('agent:tool:before', toolBeforeData);
+              await this.ctx.runHook('agent:tool:before', toolBeforeData);
 
               // 通知平台：工具开始执行
               await this.ctx.emit('tool:execute', {
@@ -633,7 +636,7 @@ class DefaultAgent implements AgentService {
 
               // Hook: agent:tool:after — 插件可以处理工具执行结果
               const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: toolCtx };
-              await this.ctx.hooks.run('agent:tool:after', toolAfterData);
+              await this.ctx.runHook('agent:tool:after', toolAfterData);
               result = toolAfterData.result;
 
               // 工具结果截断：按上下文窗口比例限制单条工具结果长度
@@ -707,7 +710,9 @@ class DefaultAgent implements AgentService {
             platform: incoming.platform,
             triggerType: incoming.triggerType,
           };
-          await this.ctx.hooks.run('agent:llm:before', nextLlmData, undefined, { warnOnStall: true });
+          // 已物化的贡献按全局键跳过；本轮工具调用新注册的贡献（如新激活技能）增量落位
+          await assemblePromptContributions(this.ctx, nextLlmData);
+          await this.ctx.runHook('agent:llm:before', nextLlmData, undefined, { warnOnStall: true });
 
           // 裁剪消息以确保不超过上下文窗口
           nextLlmData.messages = this.trimMessages(nextLlmData.messages, tokenBudget);
@@ -743,7 +748,7 @@ class DefaultAgent implements AgentService {
           this.debugLogResponse(response, Date.now() - tN, iterations);
 
           const nextLlmAfterData = { response, messages: nextLlmData.messages };
-          await this.ctx.hooks.run('agent:llm:after', nextLlmAfterData);
+          await this.ctx.runHook('agent:llm:after', nextLlmAfterData);
           response = nextLlmAfterData.response;
 
           if (response.reasoningContent) {
@@ -784,7 +789,7 @@ class DefaultAgent implements AgentService {
           triggerType: incoming.triggerType,
           attempt: 0,
         };
-        await this.ctx.hooks.run('agent:reply:before', responseData);
+        await this.ctx.runHook('agent:reply:before', responseData);
 
         // 重试循环：当 hook（如 persona 的 outputFormat 解析）报告 retryRequested 时，
         // 把失败的 assistant 输出 + 系统反馈追加到消息列表，重新请求 LLM；最多按 maxRetries 次。
@@ -827,7 +832,7 @@ class DefaultAgent implements AgentService {
           responseData.retryRequested = false;
           responseData.retryFeedback = undefined;
           responseData.attempt = attempt;
-          await this.ctx.hooks.run('agent:reply:before', responseData);
+          await this.ctx.runHook('agent:reply:before', responseData);
         }
 
         // 双保险：循环结束后若 hook 仍标记 retryRequested（理论上 persona 已在用尽时自动走兜底），
@@ -904,7 +909,7 @@ class DefaultAgent implements AgentService {
 
         // Hook: agent:turn:after — 插件可以在完整消息周期结束后做后处理
         const turnOutcome: 'replied' | 'silent' = replyContent.trim().length === 0 ? 'silent' : 'replied';
-        await this.ctx.hooks.run('agent:turn:after', {
+        await this.ctx.runHook('agent:turn:after', {
           message: incoming,
           reply: replyContent,
           outcome: turnOutcome,
@@ -941,7 +946,7 @@ class DefaultAgent implements AgentService {
           // session-manager 把会话状态从 active 收口为 completed（否则永远停在"进行中"），
           // checkpoint 关闭当前回合（否则中止后回合不关闭、长期泄漏）。
           // 文档与 agent-api 早已声明 outcome 含 aborted，此处兑现契约。
-          await this.ctx.hooks.run('agent:turn:after', {
+          await this.ctx.runHook('agent:turn:after', {
             message: incoming,
             reply: '',
             outcome: 'aborted',
@@ -964,7 +969,7 @@ class DefaultAgent implements AgentService {
         // 异常也是回合终态：同样发 turn:after(outcome=error) 让 checkpoint 关闭回合、
         // session-manager 收口状态。dispatchOutbound 已发系统错误消息，状态可被 outbound:message
         // 与本钩子双路径幂等收口。
-        await this.ctx.hooks.run('agent:turn:after', {
+        await this.ctx.runHook('agent:turn:after', {
           message: incoming,
           reply: '',
           outcome: 'error',
@@ -1152,7 +1157,11 @@ class DefaultAgent implements AgentService {
     for (const msg of messages) {
       const t = estimateMsgTokens(msg);
       if (msg.role === 'system') {
-        const source = msg.metadata?.injector as string | undefined;
+        // 贡献点物化块的 injector 是全局键 `${ctx.id}/${局部标签}`（ctx.id 含 '/'），
+        // 归桶按局部标签（末段）匹配——桶规则与统计明细键保持迁移前的稳定值；
+        // 非贡献来源（persona / system-other 等）无 '/'，末段即原值，不受影响。
+        const rawSource = msg.metadata?.injector as string | undefined;
+        const source = rawSource?.slice(rawSource.lastIndexOf('/') + 1);
         const contributions = msg.metadata?._tokenContributions as Record<string, number> | undefined;
 
         if (source === 'memory-summary') {
@@ -1958,7 +1967,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         messages.push(...history.filter(m => !CONTROL_KINDS.includes(m.kind ?? '')));
       }
 
-      // 运行 agent:llm:before 中间件以获取注入的 system 消息（摘要、向量记忆等）+ 工具搜索层过滤
+      // 与真实回合同序：先组装 agent:prompt 贡献（摘要/向量记忆/档案等物化为 system 块），
+      // 再跑 agent:llm:before（工具搜索层过滤等拦截职责），使快照贴近实际送入 LLM 的形态
       const sm = ctx.getService<SessionManagerService>('session-manager');
       const sessionResolved = sm ? sm.resolveConfig(data.sessionId, data.platform) : undefined;
       const enabledGroups = sessionResolved?.enabledToolGroups?.length ? sessionResolved.enabledToolGroups : undefined;
@@ -1974,7 +1984,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         platform: data.platform ?? '',
         dryRun: true, // 纯统计路径:昂贵注入者(向量检索/档案加载)据此跳过副作用
       };
-      await ctx.hooks.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
+      await assemblePromptContributions(ctx, llmBeforeData);
+      await ctx.runHook('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
 
       agent.emitTokenUsage(
         data.sessionId,

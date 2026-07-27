@@ -1,5 +1,6 @@
 import { type AalisConfig, ConfigManager } from './config.js';
 import { Context } from './context.js';
+import { ContributionRegistry } from './contributions.js';
 import { EventBus } from './events.js';
 import { HookRegistry } from './hooks.js';
 import { DefaultLogger, type Logger, LogHub, type LogLevel } from './logger.js';
@@ -44,6 +45,8 @@ export interface AppOptions {
   services?: ServiceContainer;
   /** 注入自定义钩子注册表 */
   hooks?: HookRegistry;
+  /** 注入自定义贡献点注册表 */
+  contributions?: ContributionRegistry;
   /**
    * 注入自定义 LogHub。多 App 沙盒 / 集成测试 / 嵌入多实例场景下
    * 可以传入 `new LogHub()`使每个 App 拥有独立的日志通道，不互相串台。
@@ -112,6 +115,7 @@ export class App {
   readonly events: EventBus;
   readonly services: ServiceContainer;
   readonly hooks: HookRegistry;
+  readonly contributions: ContributionRegistry;
 
   private readonly pluginLoader?: PluginLoader;
   private readonly restartStrategy?: RestartStrategy;
@@ -139,6 +143,7 @@ export class App {
     this.events.markSticky('app:started');
     this.services = options.services ?? new ServiceContainer();
     this.hooks = options.hooks ?? new HookRegistry();
+    this.contributions = options.contributions ?? new ContributionRegistry();
     this.logger =
       options.logger ??
       new DefaultLogger('aalis', config.get('logLevel') as LogLevel, options.logHub ?? LogHub.default, options.now);
@@ -159,6 +164,7 @@ export class App {
       events: this.events,
       services: this.services,
       hooks: this.hooks,
+      contributions: this.contributions,
       logger: this.logger,
       config,
       devMode: options.devMode ?? true,

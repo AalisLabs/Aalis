@@ -1,11 +1,12 @@
 import type { ConfigManager } from './config.js';
+import type { ContributionHandle, ContributionRegistry, ContributionSpec } from './contributions.js';
 import { DisposableChain } from './disposable-chain.js';
 import type { EventBus } from './events.js';
-import type { HookRegistry, HookRunner } from './hooks.js';
+import type { HookRegistry } from './hooks.js';
 import type { Logger } from './logger.js';
 import type { ServiceContainer } from './service.js';
 import { emitServiceRegistered, validateProvide } from './service-helpers.js';
-import type { AalisEvents, HookContextMap, MiddlewareFn, ServiceTypeMap } from './types/index.js';
+import type { AalisEvents, ContributionPointMap, HookContextMap, MiddlewareFn, ServiceTypeMap } from './types/index.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
@@ -26,15 +27,6 @@ export class Context {
   readonly logger: Logger;
   readonly config: ConfigManager;
   /**
-   * 钩子执行面（窄接口 {@link HookRunner}）。
-   *
-   * 插件可 `ctx.hooks.run(hook, data, defaultAction)` 驱动自己定义的钩子链；
-   * 注册 handler 请用 `ctx.middleware(hook, fn)` —— 它绑定当前 ctx.id 并纳入
-   * dispose 链，插件卸载时自动清扫。完整 HookRegistry（register / onStall）
-   * 不对插件暴露，与 `_events` / `_services` 同一门面纪律。
-   */
-  readonly hooks: HookRunner;
-  /**
    * 开发模式开关——由 App 注入，子 Context 通过 fork 继承。
    *
    * - `true`（默认）：`provide` 时按声明的能力跑探测器，暴露"声明与实现不符"
@@ -46,8 +38,22 @@ export class Context {
 
   private _events: EventBus;
   private _services: ServiceContainer;
-  /** 完整钩子注册表——仅 Context 内部（middleware / dispose / fork）使用。 */
+  /** 完整钩子注册表——仅 Context 内部（middleware / runHook / dispose / fork）使用。 */
   private readonly _hooks: HookRegistry;
+  /** 完整贡献点注册表——仅 Context 内部（contribute / collect / dispose / fork）使用。 */
+  private readonly _contributions: ContributionRegistry;
+  /**
+   * 本 ctx 已登记的贡献退订函数（键 = point + '\u0000' + 局部 id，与
+   * contribute 内 mapKey 的构造保持一致；NUL 不会出现在合法键名中）。
+   *
+   * 用于同键重注册时先摘旧登记：注册表本身是替换语义，但门面每次 contribute
+   * 都会往 _disposables 压一个闭包——不摘旧的，反复刷新贡献（文档明示的合法
+   * 用法）会让 dispose 链无界增长且旧 build 闭包无法 GC。
+   * 条目数有界于本 ctx 用过的 (point, id) 组合数。
+   */
+  private readonly _contributionDisposers = new Map<string, () => void>();
+  /** 活跃沙盒子上下文 id（useModule）——用于同名重复挂载时唯一化 childId。 */
+  private readonly _moduleIds = new Set<string>();
   private _disposables: DisposableChain;
   private _children: Set<Context> = new Set();
   private _parent?: Context;
@@ -58,6 +64,7 @@ export class Context {
     events: EventBus;
     services: ServiceContainer;
     hooks: HookRegistry;
+    contributions: ContributionRegistry;
     logger: Logger;
     config: ConfigManager;
     parent?: Context;
@@ -67,7 +74,7 @@ export class Context {
     this._events = options.events;
     this._services = options.services;
     this._hooks = options.hooks;
-    this.hooks = options.hooks;
+    this._contributions = options.contributions;
     this.logger = options.logger;
     this.config = options.config;
     this._parent = options.parent;
@@ -102,6 +109,7 @@ export class Context {
       events: this._events,
       services: this._services,
       hooks: this._hooks,
+      contributions: this._contributions,
       logger: this.logger.child(id),
       config: this.config,
       parent: this,
@@ -431,6 +439,72 @@ export class Context {
     return this.trackDisposable(this._hooks.register(hook, fn, this.id));
   }
 
+  /**
+   * 执行钩子链（语义见 {@link HookRegistry.run}）。
+   *
+   * 任何插件都可驱动自己定义的钩子链——对称钩子系统的立身之本，地位等价于
+   * `ctx.emit`。注册 handler 请用 `ctx.middleware(hook, fn)`。完整 HookRegistry
+   * （register / unregisterByContext / onStall）不对插件暴露，与 `_events` /
+   * `_services` 同一门面纪律。
+   *
+   * @returns `true` = 链路完整走完（执行了 defaultAction，或本就没有 handler）；
+   *          `false` = 被某个 handler swallow（不调 next 中断）
+   */
+  runHook<K extends string & keyof HookContextMap>(
+    hook: K,
+    data: HookContextMap[K],
+    defaultAction?: () => Promise<void>,
+    opts?: { warnOnStall?: boolean },
+  ): Promise<boolean> {
+    return this._hooks.run(hook, data, defaultAction, opts);
+  }
+
+  // ---- 贡献点 ----
+
+  /**
+   * 向贡献点交付一份 spec，返回 dispose 函数（并挂 dispose 链，卸载自动清扫）。
+   *
+   * spec.id 是**局部名**，注册时自动冠 `${ctx.id}/` 前缀成全局键——同一 ctx 内
+   * 同 id 重复注册为替换（幂等）；spec.id 侧无法顶替他人贡献（信任边界的
+   * 如实声明见 {@link ContributionSpec}）。贡献者不掌握任何控制流：无排序
+   * 影响力（顺序是全局键的纯函数）、无短路、不可见其他贡献——排布与执行
+   * 策略全归贡献点 owner（{@link collect} 的调用方）。
+   *
+   * 贡献点的键与 spec 类型由各 -api 包 declaration merging 扩展
+   * ContributionPointMap 定义。
+   */
+  contribute<K extends string & keyof ContributionPointMap>(
+    point: K,
+    spec: ContributionPointMap[K] & ContributionSpec,
+  ): () => void {
+    // 窄化取 id：core 内 ContributionPointMap 是空接口，`ContributionPointMap[K]`
+    // 索引不出成员，但交叉的 ContributionSpec 保证 id 存在。
+    const mapKey = `${point}\u0000${(spec as ContributionSpec).id}`;
+    // 同键重注册 = 替换：先撤旧登记（自移除出 dispose 链 + 撤注册表旧条目），
+    // 再写新的——先删后写，避免旧闭包滞留（见 _contributionDisposers）。
+    this._contributionDisposers.get(mapKey)?.();
+    const off = this.trackDisposable(this._contributions.register(point, spec, this.id));
+    this._contributionDisposers.set(mapKey, off);
+    return off;
+  }
+
+  /**
+   * 枚举某贡献点的全部条目（语义见 {@link ContributionRegistry.collect}）。
+   *
+   * 驱动公开——任何插件都可拥有并收集自己定义的贡献点，地位等价于
+   * `ctx.emit` / `ctx.runHook`。返回数组快照，每项是 `{ key, spec }`：
+   * `key` 是全局键（含贡献方 ctx.id 前缀）供归属标注与统计，`spec` 是注册
+   * 方交付的本体（引用，`spec.id` 仍是其局部名）。如何执行 spec（并行 /
+   * 隔离 / 超时）是收集方的策略，内核不执行任何插件代码。
+   */
+  collect<K extends string & keyof ContributionPointMap>(
+    point: K,
+  ): ReadonlyArray<ContributionHandle<ContributionPointMap[K] & ContributionSpec>> {
+    return this._contributions.collect(point) as ReadonlyArray<
+      ContributionHandle<ContributionPointMap[K] & ContributionSpec>
+    >;
+  }
+
   // ---- 生命周期 ----
 
   get disposed(): boolean {
@@ -477,15 +551,27 @@ export class Context {
     if (this._disposed) {
       throw new Error(`Context "${this.id}" 已 dispose，无法 useModule`);
     }
-    const childId = `${this.id}#${module.name}`;
+    // 同一父 ctx 重复挂载同名 module（文档背书的"每会话一实例"用法）必须拿到
+    // 互不相同的 ctx.id：id 是 contributions 全局键与 unregisterByContext 的
+    // 归属锚，重复 id 会让后挂载者静默顶替先挂载者的贡献、且任一方 dispose
+    // 连带清掉对方的。活跃集合随 dispose 收缩，长期反复挂载不会无界增长。
+    const baseId = `${this.id}#${module.name}`;
+    let childId = baseId;
+    for (let n = 2; this._moduleIds.has(childId); n++) childId = `${baseId}~${n}`;
+    this._moduleIds.add(childId);
+
     const child = this.fork(childId);
     try {
       await module.apply(child, config);
     } catch (err) {
+      this._moduleIds.delete(childId);
       child.dispose();
       throw err;
     }
-    return () => child.dispose();
+    return () => {
+      this._moduleIds.delete(childId);
+      child.dispose();
+    };
   }
 
   /**
@@ -556,8 +642,13 @@ export class Context {
       });
     }
 
-    // 清理该上下文注册的钩子
+    // 清理该上下文注册的钩子与贡献
     this._hooks.unregisterByContext(this.id);
+    this._contributions.unregisterByContext(this.id);
+    // 释放本 ctx 持有的登记表：闭包会捎带 spec（及其 build 捕获的数据），
+    // dispose 后不清则外部若仍持有本 ctx 引用，这些对象就跟着活着。
+    this._contributionDisposers.clear();
+    this._moduleIds.clear();
 
     // 服务自清理协议：任何服务实例若实现 `unregisterByPlugin(contextId)`，
     // dispose 时统一通知它清理本上下文相关的注册项（如 plugin-tools 的

@@ -58,7 +58,7 @@ export function apply(ctx: Context): void {
       const preDispatch = INBOUND_PHASE_ORDER.filter(p => p !== INBOUND_PHASE.DISPATCH);
       for (const phase of preDispatch) {
         const t0 = performance.now();
-        const reachedEnd = await ctx.hooks.run(phase, data);
+        const reachedEnd = await ctx.runHook(phase, data);
         ctx.emit('gateway:phase:done', {
           phase,
           reachedEnd,
@@ -76,7 +76,7 @@ export function apply(ctx: Context): void {
 
       // 终相：dispatch —— 默认动作为调用 agent
       const t0 = performance.now();
-      const reachedEnd = await ctx.hooks.run(INBOUND_PHASE.DISPATCH, data, async () => {
+      const reachedEnd = await ctx.runHook(INBOUND_PHASE.DISPATCH, data, async () => {
         await defaultDispatch(data.message, data.agent);
       });
       ctx.emit('gateway:phase:done', {
@@ -95,7 +95,7 @@ export function apply(ctx: Context): void {
   async function dispatchOutbound(message: OutgoingMessage): Promise<void> {
     const data = { message, metadata: {} as Record<string, unknown> };
     try {
-      await ctx.hooks.run('outbound:dispatch', data, async () => {
+      await ctx.runHook('outbound:dispatch', data, async () => {
         await ctx.emit('outbound:message', data.message);
       });
     } catch (err) {

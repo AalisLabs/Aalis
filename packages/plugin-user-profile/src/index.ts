@@ -1901,32 +1901,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return `关系强度：${score.toFixed(relationScorePrecision)}/100；累计互动：${count} 次。`;
   }
 
-  // ─── LLM 调用前注入：根据 triggerType 区分主发言者语义 ───
-  //   direct/immediate/undefined → data.userId 是主发言者，注入完整档案 + 其他参与者摘要
+  // ─── LLM 调用前注入（agent:prompt 贡献 / identity 槽）：根据 triggerType 区分主发言者语义 ───
+  //   direct/immediate/undefined → view.userId 是主发言者，注入完整档案 + 其他参与者摘要
   //   interval                   → 无主发言者（只是恰好撞上频率），所有参与者一律 compact 摘要
   //   idle                       → 无 userId，只注入历史 messages 中出现的参与者 compact 摘要
-  ctx.middleware(
-    'agent:llm:before',
-    async (
-      data: {
-        messages: Message[];
-        tools: unknown[];
-        sessionId?: string;
-        userId?: string;
-        platform?: string;
-        triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
-      },
-      next,
-    ) => {
-      if (data.messages.some(m => m.role === 'system' && m.metadata?.injector === 'user-profile')) {
-        await next();
-        return;
-      }
+  // 多块返回保序共键：准则 → 自档案 → 主发言者档案 → 主观感受 → 其他参与者。
+  ctx.contribute('agent:prompt', {
+    id: 'user-profile',
+    anchor: 'identity',
+    async build(data) {
       // 干跑(token 快照)跳过档案/主观感受加载——该路径 userId 为空串,加载既昂贵又无意义
-      if ((data as { dryRun?: boolean }).dryRun) {
-        await next();
-        return;
-      }
+      if (data.dryRun) return null;
 
       const blocksToInsert: string[] = [];
       const trigger = data.triggerType ?? 'direct';
@@ -2126,23 +2111,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
       }
 
-      if (blocksToInsert.length > 0) {
-        const idx = data.messages.findIndex(m => m.role === 'system');
-        const insertAt = idx >= 0 ? idx + 1 : 0;
-        data.messages.splice(
-          insertAt,
-          0,
-          ...blocksToInsert.map(content => ({
-            role: 'system' as const,
-            content,
-            metadata: { injector: 'user-profile' },
-          })),
-        );
-      }
-
-      await next();
+      return blocksToInsert.length > 0 ? blocksToInsert : null;
     },
-  );
+  });
 
   // ─── 参与统一的 memory:clear ───
   ctx.middleware(

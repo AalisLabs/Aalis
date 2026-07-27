@@ -26,6 +26,7 @@ const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../packages/co
 const BASE_LAYER = [
   'config.ts',
   'context.ts',
+  'contributions.ts',
   'disposable-chain.ts',
   'events.ts',
   'hooks.ts',
