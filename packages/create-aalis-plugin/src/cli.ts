@@ -178,8 +178,9 @@ function renderPackageJson(a: Answers): string {
   // 注意：这里写进的是【生成给外部作者项目】的字面版本，不能用 workspace:（脚手架产物不在
   // 本 monorepo，workspace: 协议在外部装不上）——统一用 'latest'：npm install 时取最新、自我
   // 修正，不硬编码会过时的版本（与 create-aalis 同策略）。
-  // core peerDep 用宽松区间 `>=0.2.0 <1.0.0`：兼容任何 0.x 宿主 core（core 承诺 0.x 内
-  // 向后兼容、破坏性变更才升 1.0.0），插件不必随 core 次版本升级而重发——慢更新插件也跟得上。
+  // core peerDep 用宽松区间 `>=0.2.0 <1.0.0`：接受任何 0.x 宿主 core，插件不必随 core
+  // 次版本升级而重发。注意 1.0 之前 core 的公开面可能在次版本被删（0.7.0 / 0.9.0 都删过）——
+  // 用了某版本才有的 API，就把下限抬到那个版本。稳定性承诺自 1.0 起生效。
   const deps: Record<string, string> = {};
   if (a.features.tool) deps['@aalis/plugin-tools-api'] = 'latest';
   if (a.features.command) deps['@aalis/plugin-commands-api'] = 'latest';

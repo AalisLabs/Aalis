@@ -90,19 +90,7 @@ function SessionConfigEditor({ config, resolvedConfig, inheritedConfig, options,
   onCancel: () => void;
 }) {
   // draft 始终基于会话自身 config（非 resolved），保证保存时只写覆盖值。
-  // 同时做一次「legacy → llm」折叠：DB 中可能
-  // 残留早期版本写入的 `config.model` flat 字段，需要在 UI 层把它折叠进 llm，
-  // 否则用户看到的选择不会反映他当初的真实意图，保存时还会被后端剥离。
-  const initialDraft: SessionConfigData = { ...config };
-  const legacyModel = typeof config.model === 'string' ? config.model : undefined;
-  const legacyProvider = typeof config.llmProvider === 'string' ? config.llmProvider : undefined;
-  if (legacyModel) {
-    const provider = legacyProvider ?? config.llm?.provider;
-    if (provider) initialDraft.llm = { provider, model: legacyModel };
-  }
-  delete (initialDraft as Record<string, unknown>).model;
-  delete (initialDraft as Record<string, unknown>).llmProvider;
-  const [draft, setDraft] = useState<SessionConfigData>(initialDraft);
+  const [draft, setDraft] = useState<SessionConfigData>({ ...config });
   // resolved 用于 checkbox 默认勾选（当前生效值，含 session 自身覆盖）
   const resolved = resolvedConfig || {};
   // inherited = platform profile + 父 sessionDefaults（不含 session 自身），用于「继承 (xxx)」提示
