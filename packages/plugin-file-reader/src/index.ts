@@ -58,12 +58,6 @@ export const configSchema: ConfigSchema = {
     default: 500,
     description: '上传文件总目录占用超过该上限时，按 mtime 由旧到新淘汰直到回落到上限以下。0 表示不限。',
   },
-  fileRetentionMinutes: {
-    type: 'number',
-    label: '【已弃用】内存保留时间 (分钟)',
-    default: 0,
-    description: '旧版兼容字段，不再使用——现在所有文件都持久化到 pluginData。',
-  },
   historyHintEnabled: {
     type: 'boolean',
     label: '在本轮无新上传时注入历史文件清单提示',
@@ -92,7 +86,6 @@ export const defaultConfig = {
   toolDefaultMaxLength: 50000,
   retentionDays: 30,
   lruMaxTotalMB: 500,
-  fileRetentionMinutes: 0,
   historyHintEnabled: true,
   recognizeDocImages: true,
   maxDocImages: 8,
