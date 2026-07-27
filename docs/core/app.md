@@ -63,10 +63,12 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 ### `app.stop()`
 
 1. `ctx.config.unwatch()` 停止监听配置变更
-2. 发出 `app:stopping` 事件
-3. `plugins.stopAll()`：按拓扑逆序 dispose 所有 active 插件（消费者先关、提供者后关，触发其 `ctx.onDispose` 回调）
+2. 发出 `app:stopping` 事件（通知用；清理一律走 `ctx.onDispose`）
+3. `plugins.stopAll()`：按拓扑逆序 `disposeAsync` 所有 active 插件（消费者先关、提供者后关，**逐项等待**其 `ctx.onDispose` 的异步清理完成——落盘/关连接真正结束才轮到下一个）
 4. 清空 sticky 缓存（`ready` / `app:started`）
-5. 销毁根 Context
+5. `disposeAsync` 根 Context（同样等待异步清理）
+
+单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 控制（默认 5000ms；0=不设限）：超时放弃该项、继续后续清理并 warn 点名，防网络类关闭卡死停机。
 
 ### `app.plugin(module, config?, instanceId?)`
 
