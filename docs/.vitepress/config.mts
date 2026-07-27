@@ -66,9 +66,10 @@ const GROUP_LABELS: Record<string, string> = {
   utils: '工具库',
   extensions: '扩展',
   architecture: '架构',
+  roadmap: '规划与已知问题',
 }
-const ORDER = ['guide', 'concepts', 'core', 'services', 'plugins', 'api', 'design', 'utils', 'extensions']
-const COLLAPSED = new Set(['services', 'plugins', 'api', 'design', 'utils', 'extensions', 'architecture'])
+const ORDER = ['guide', 'concepts', 'core', 'services', 'plugins', 'api', 'design', 'utils', 'extensions', 'roadmap']
+const COLLAPSED = new Set(['services', 'plugins', 'api', 'design', 'utils', 'extensions', 'architecture', 'roadmap'])
 
 const dirs = allDirs()
 const orderedDirs = [...ORDER.filter(d => dirs.includes(d)), ...dirs.filter(d => !ORDER.includes(d)).sort()]
