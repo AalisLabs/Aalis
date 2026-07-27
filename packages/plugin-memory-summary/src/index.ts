@@ -366,22 +366,16 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   }
 
-  // === 中间件：在 LLM 调用前注入摘要 ===
-  // 注:钩子无优先级机制,同相位 handler 按插件激活序执行——本注入是独立 system 块
-  // 且带 injector 标签幂等,不依赖与 memory-vector 的先后顺序。
-  ctx.middleware('agent:llm:before', async (data, next) => {
-    const sessionId = data.sessionId;
-    if (!sessionId) {
-      await next();
-      return;
-    }
+  // === 贡献：在 LLM 调用前注入摘要（agent:prompt / context 槽）===
+  ctx.contribute('agent:prompt', {
+    id: 'memory-summary',
+    anchor: 'context',
+    async build(view) {
+      const sessionId = view.sessionId;
+      if (!sessionId) return null;
 
-    const existing = await store.getSummary(sessionId);
-    if (existing?.summary) {
-      if (data.messages.some(m => m.role === 'system' && m.metadata?.injector === 'memory-summary')) {
-        await next();
-        return;
-      }
+      const existing = await store.getSummary(sessionId);
+      if (!existing?.summary) return null;
 
       // 动态计算摘要 token 预算
       const summaryBudget = getSummaryTokenBudget();
@@ -395,19 +389,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         summaryContent = truncateChars(summaryContent, maxChars, '\n... [摘要已截断]');
       }
 
-      const summaryMsg: Message = {
-        role: 'system',
-        content: `以下是之前对话的摘要，包含了较早的对话上下文：\n${summaryContent}`,
-        metadata: { injector: 'memory-summary' },
-      };
-
-      // 插入到第一个 system 消息之后、其他消息之前
-      const idx = data.messages.findIndex(m => m.role !== 'system');
-      const insertIdx = idx === -1 ? data.messages.length : idx;
-      data.messages.splice(insertIdx, 0, summaryMsg);
-    }
-
-    await next();
+      return `以下是之前对话的摘要，包含了较早的对话上下文：\n${summaryContent}`;
+    },
   });
 
   // === 在 agent:turn:after 钩子触发摘要生成 ===

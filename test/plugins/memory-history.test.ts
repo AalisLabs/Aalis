@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { App, type Message } from '../../packages/core/src/index.js';
+import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryHistory from '../../packages/plugin-memory-history/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
@@ -46,9 +47,8 @@ describe('plugin-memory-history', () => {
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'now' },
     ];
-    await app.ctx.hooks.run('agent:llm:before', {
+    await assemblePromptContributions(app.ctx, {
       messages,
-      tools: [],
       sessionId: 'current',
       platform: 'onebot',
     });
@@ -56,7 +56,7 @@ describe('plugin-memory-history', () => {
     expect(messages.length).toBe(3);
     expect(messages[0].role).toBe('system');
     expect(messages[1].role).toBe('system');
-    expect(messages[1].metadata?.injector).toBe('memory-history');
+    expect(String(messages[1].metadata?.injector)).toMatch(/\/memory-history$/);
     expect(messages[1].content).toContain('[TEST-HEADER]');
     expect(messages[1].content).toContain('A1');
     expect(messages[1].content).toContain('B1');
@@ -82,9 +82,8 @@ describe('plugin-memory-history', () => {
     });
 
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await app.ctx.hooks.run('agent:llm:before', {
+    await assemblePromptContributions(app.ctx, {
       messages,
-      tools: [],
       sessionId: 'current',
       platform: 'onebot',
     });
@@ -107,9 +106,8 @@ describe('plugin-memory-history', () => {
 
     await app.ctx.useModule(memoryHistory, { scope: 'cross-platform', maxAgeMinutes: 0 });
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await app.ctx.hooks.run('agent:llm:before', {
+    await assemblePromptContributions(app.ctx, {
       messages,
-      tools: [],
       sessionId: 'current',
       platform: 'onebot',
     });
@@ -127,9 +125,8 @@ describe('plugin-memory-history', () => {
     // 同时传旧字段 scope:'off' 验证向后兼容
     await app.ctx.useModule(memoryHistory, { scope: 'off' });
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await app.ctx.hooks.run('agent:llm:before', {
+    await assemblePromptContributions(app.ctx, {
       messages,
-      tools: [],
       sessionId: 'current',
       platform: 'onebot',
     });
@@ -152,9 +149,8 @@ describe('plugin-memory-history', () => {
       excludeCurrentSession: false,
     });
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await app.ctx.hooks.run('agent:llm:before', {
+    await assemblePromptContributions(app.ctx, {
       messages,
-      tools: [],
       sessionId: 'current',
       platform: 'onebot',
     });
@@ -174,9 +170,9 @@ describe('plugin-memory-history', () => {
       excludeCurrentSession: false,
     });
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await app.ctx.hooks.run('agent:llm:before', { messages, tools: [], sessionId: 'current', platform: 'onebot' });
-    await app.ctx.hooks.run('agent:llm:before', { messages, tools: [], sessionId: 'current', platform: 'onebot' });
-    const injected = messages.filter(m => m.metadata?.injector === 'memory-history');
+    await assemblePromptContributions(app.ctx, { messages, sessionId: 'current', platform: 'onebot' });
+    await assemblePromptContributions(app.ctx, { messages, sessionId: 'current', platform: 'onebot' });
+    const injected = messages.filter(m => String(m.metadata?.injector ?? '').endsWith('/memory-history'));
     expect(injected.length).toBe(1);
   });
 
@@ -211,7 +207,7 @@ describe('plugin-memory-history', () => {
     });
 
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await app.ctx.hooks.run('agent:llm:before', { messages, tools: [], sessionId: 'current', platform: 'onebot' });
+    await assemblePromptContributions(app.ctx, { messages, sessionId: 'current', platform: 'onebot' });
     const block = messages[0].content as string;
     // s-spam 只允许 3 条
     const spamCount = (block.match(/spam-/g) ?? []).length;
