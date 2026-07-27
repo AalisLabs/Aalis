@@ -8,6 +8,44 @@
 
 ---
 
+## 0.9.1
+
+安全收紧与遗留清理。11 个包，其中 7 个有用户可见的行为变化——**权限收紧修的是非预期
+的默认值，不是功能变更**，故走 patch。
+
+### 安全（都是「默认 public」这个坑的实例）
+
+- **`/clear` 的保护此前完全失效**：它原先挂在配置键 `visibilityOverrides` 上，该键在权限
+  重构中失效（全仓零处读它），而指令注册时无任何 risk/visibility 声明 → 按默认落到等级 0。
+  结果是任意 level-0 群成员可清空会话的消息/摘要/向量/图片。现按会话归属分场景：
+  私聊 `confirm` 即可（会话归用户本人，清自己的记忆是自助行为），群/频道需等级 2 或 owner。
+- **`/clear.all`** 从 `visibility:'restricted'` 改为 `risk:'dangerous'`——原写法拿到了等级 2
+  但**漏了确认**，dangerous 一档同时推出两者。
+- **`/authority`** 标 `risk:'sensitive'`（会披露他人权限等级）。
+- **`plugin-subtask` 的 create/send_to/delete** 标 `sensitive`：每个子任务是一条独立的 LLM
+  会话链，不受信任的调用方可连续调用放大 API 开销。只读的 check/wait 保持 public。
+- **`plugin-tool-browser` 的 navigate/click/type/close_page** 标 `sensitive`：页面池是进程级
+  共享 Map、取页时不校验会话归属，拿到 pageId 就能操作他人（含 owner）已登录的页面。
+  只读的 get_text/get_links 保持 public。
+
+新增 `test/plugins/tool-policy-guard.test.ts` 与 `clear-authorization.test.ts`：读**生效策略**
+而非源码文本（防护机制异构，只有生效值可信），正反双向钉住——写类退回 public 会红、
+只读被误伤也会红。
+
+### 移除（均经对抗验证确认零消费面）
+
+- session 配置的 legacy `model` / `llmProvider` 字段与其折叠逻辑（服务端 30 行 + 前端 13 行）
+- `plugin-skills` 的 `skillsDir` → `skillsUri` 迁移分支
+- `plugin-file-reader` 的 `fileRetentionMinutes` 配置项（schema 自身已标【已弃用】）
+- `plugin-user-relation` 的 `MergeRejectRecord.aReinforcedAt` / `bReinforcedAt` 及孤儿方法
+  `listMergeRejects`
+- `plugin-webui-client` 中 `SessionConfigData` 的重复定义
+
+### 文档
+
+README 与脚手架模板里「core 在 0.x 内承诺向后兼容」的表述作废（0.7.0 / 0.9.0 均删过公开面）；
+`core-contract.md` 增「1.0 之前的实况」一节列出删除清单与版本号语义。
+
 ## 0.9.0
 
 本批 58 个包统一版号 `0.9.0`（未改动的包停在原版号）。**升级 core 必须同批升级
