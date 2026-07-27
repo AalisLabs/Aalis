@@ -6,8 +6,9 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
-import type { ConfigSchema, Context } from '@aalis/core';
+import type { Context } from '@aalis/core';
 import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/plugin-asr-api';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
 import { createStorageGateway, isStorageUri, type StorageService } from '@aalis/plugin-storage-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）

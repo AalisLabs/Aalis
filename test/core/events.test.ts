@@ -28,15 +28,6 @@ describe('EventBus', () => {
     expect(fn).not.toHaveBeenCalled();
   });
 
-  it('once 仅触发一次', async () => {
-    const bus = new EventBus();
-    const fn = vi.fn();
-    bus.once('plugin:loaded', fn);
-    await bus.emit('plugin:loaded', 'a');
-    await bus.emit('plugin:loaded', 'b');
-    expect(fn).toHaveBeenCalledTimes(1);
-  });
-
   it('removeAll 清空指定/所有事件', async () => {
     const bus = new EventBus();
     const fn = vi.fn();

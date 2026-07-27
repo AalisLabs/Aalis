@@ -99,6 +99,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:^
         version: link:../plugin-agent-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-llm-api':
         specifier: workspace:^
         version: link:../plugin-llm-api
@@ -154,6 +157,9 @@ importers:
       '@aalis/plugin-commands-api':
         specifier: workspace:^
         version: link:../plugin-commands-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-llm-api':
         specifier: workspace:^
         version: link:../plugin-llm-api
@@ -238,6 +244,9 @@ importers:
 
   packages/plugin-asr-openai:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-process-api':
         specifier: workspace:^
         version: link:../plugin-process-api
@@ -266,6 +275,9 @@ importers:
 
   packages/plugin-asr-whisper-cpp:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-process-api':
         specifier: workspace:^
         version: link:../plugin-process-api
@@ -340,6 +352,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:^
         version: link:../plugin-agent-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-storage-api':
         specifier: workspace:^
         version: link:../plugin-storage-api
@@ -362,6 +377,9 @@ importers:
 
   packages/plugin-cli:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-storage-api':
         specifier: workspace:^
         version: link:../plugin-storage-api
@@ -439,6 +457,9 @@ importers:
       '@aalis/plugin-commands-api':
         specifier: workspace:^
         version: link:../plugin-commands-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-gateway-api':
         specifier: workspace:^
         version: link:../plugin-gateway-api
@@ -478,6 +499,12 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-config-api:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-cron-engine:
     dependencies:
       '@aalis/plugin-cron-engine-api':
@@ -508,6 +535,9 @@ importers:
 
   packages/plugin-deepseek:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-llm-api':
         specifier: workspace:^
         version: link:../plugin-llm-api
@@ -581,6 +611,10 @@ importers:
         version: 5.9.3
 
   packages/plugin-embedding-ollama:
+    dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -599,6 +633,10 @@ importers:
         version: 5.9.3
 
   packages/plugin-embedding-openai:
+    dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -621,6 +659,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:^
         version: link:../plugin-agent-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-storage-api':
         specifier: workspace:^
         version: link:../plugin-storage-api
@@ -658,6 +699,9 @@ importers:
 
   packages/plugin-flow-control:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-flow-control-api':
         specifier: workspace:^
         version: link:../plugin-flow-control-api
@@ -773,6 +817,9 @@ importers:
 
   packages/plugin-llm-api:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-message-api':
         specifier: workspace:^
         version: link:../plugin-message-api
@@ -795,6 +842,9 @@ importers:
       '@aalis/plugin-commands-api':
         specifier: workspace:^
         version: link:../plugin-commands-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-tools-api':
         specifier: workspace:^
         version: link:../plugin-tools-api
@@ -817,6 +867,9 @@ importers:
 
   packages/plugin-mcp-client:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-tools-api':
         specifier: workspace:^
         version: link:../plugin-tools-api
@@ -839,6 +892,9 @@ importers:
 
   packages/plugin-mcp-server:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-tools-api':
         specifier: workspace:^
         version: link:../plugin-tools-api
@@ -861,6 +917,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:^
         version: link:../plugin-agent-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-llm-api':
         specifier: workspace:^
         version: link:../plugin-llm-api
@@ -942,6 +1001,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:^
         version: link:../plugin-agent-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-tools-api':
         specifier: workspace:^
         version: link:../plugin-tools-api
@@ -952,9 +1014,6 @@ importers:
       '@aalis/plugin-memory-api':
         specifier: workspace:*
         version: link:../plugin-memory-api
-      '@aalis/plugin-message-api':
-        specifier: workspace:*
-        version: link:../plugin-message-api
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -964,6 +1023,9 @@ importers:
 
   packages/plugin-memory-inmemory:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-memory-api':
         specifier: workspace:^
         version: link:../plugin-memory-api
@@ -983,6 +1045,9 @@ importers:
 
   packages/plugin-memory-mongodb:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-memory-api':
         specifier: workspace:^
         version: link:../plugin-memory-api
@@ -1005,6 +1070,9 @@ importers:
 
   packages/plugin-memory-sqlite:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-memory-api':
         specifier: workspace:^
         version: link:../plugin-memory-api
@@ -1036,6 +1104,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:^
         version: link:../plugin-agent-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-llm-api':
         specifier: workspace:^
         version: link:../plugin-llm-api
@@ -1067,6 +1138,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:^
         version: link:../plugin-agent-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-message-api':
         specifier: workspace:^
         version: link:../plugin-message-api
@@ -1111,6 +1185,9 @@ importers:
 
   packages/plugin-message-archive:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-message-api':
         specifier: workspace:^
         version: link:../plugin-message-api
@@ -1149,6 +1226,9 @@ importers:
 
   packages/plugin-office:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-process-api':
         specifier: workspace:^
         version: link:../plugin-process-api
@@ -1189,6 +1269,9 @@ importers:
 
   packages/plugin-okx-trading:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-tools-api':
         specifier: workspace:^
         version: link:../plugin-tools-api
@@ -1208,6 +1291,9 @@ importers:
 
   packages/plugin-ollama:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-llm-api':
         specifier: workspace:^
         version: link:../plugin-llm-api
@@ -1236,6 +1322,9 @@ importers:
 
   packages/plugin-openai:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-llm-api':
         specifier: workspace:^
         version: link:../plugin-llm-api
@@ -1280,6 +1369,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:^
         version: link:../plugin-agent-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-memory-api':
         specifier: workspace:^
         version: link:../plugin-memory-api
@@ -1389,6 +1481,9 @@ importers:
 
   packages/plugin-scheduler:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-cron-engine-api':
         specifier: workspace:^
         version: link:../plugin-cron-engine-api
@@ -1458,6 +1553,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:^
         version: link:../plugin-agent-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-llm-api':
         specifier: workspace:^
         version: link:../plugin-llm-api
@@ -1507,6 +1605,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:^
         version: link:../plugin-agent-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-storage-api':
         specifier: workspace:^
         version: link:../plugin-storage-api
@@ -1547,6 +1648,9 @@ importers:
 
   packages/plugin-storage-local:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-doctor-api':
         specifier: workspace:^
         version: link:../plugin-doctor-api
@@ -1569,6 +1673,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:^
         version: link:../plugin-agent-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-tools-api':
         specifier: workspace:^
         version: link:../plugin-tools-api
@@ -1594,6 +1701,9 @@ importers:
 
   packages/plugin-todo-list:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-tools-api':
         specifier: workspace:^
         version: link:../plugin-tools-api
@@ -1619,6 +1729,9 @@ importers:
 
   packages/plugin-tool-browser:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-process-api':
         specifier: workspace:^
         version: link:../plugin-process-api
@@ -1650,6 +1763,9 @@ importers:
       '@aalis/plugin-code-sandbox-api':
         specifier: workspace:^
         version: link:../plugin-code-sandbox-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-process-api':
         specifier: workspace:^
         version: link:../plugin-process-api
@@ -1672,6 +1788,9 @@ importers:
 
   packages/plugin-tool-math:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-tools-api':
         specifier: workspace:^
         version: link:../plugin-tools-api
@@ -1691,6 +1810,9 @@ importers:
 
   packages/plugin-tool-onebot:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-platform-api':
         specifier: workspace:^
         version: link:../plugin-platform-api
@@ -1722,6 +1844,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:^
         version: link:../plugin-agent-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-memory-api':
         specifier: workspace:^
         version: link:../plugin-memory-api
@@ -1747,6 +1872,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:^
         version: link:../plugin-agent-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-platform-api':
         specifier: workspace:^
         version: link:../plugin-platform-api
@@ -1794,6 +1922,9 @@ importers:
       '@aalis/plugin-commands-api':
         specifier: workspace:^
         version: link:../plugin-commands-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-process-api':
         specifier: workspace:^
         version: link:../plugin-process-api
@@ -1857,6 +1988,9 @@ importers:
 
   packages/plugin-trigger-policy:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-gateway-api':
         specifier: workspace:^
         version: link:../plugin-gateway-api
@@ -1894,6 +2028,9 @@ importers:
       '@aalis/plugin-commands-api':
         specifier: workspace:^
         version: link:../plugin-commands-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-llm-api':
         specifier: workspace:^
         version: link:../plugin-llm-api
@@ -1928,6 +2065,9 @@ importers:
       '@aalis/plugin-commands-api':
         specifier: workspace:^
         version: link:../plugin-commands-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-llm-api':
         specifier: workspace:^
         version: link:../plugin-llm-api
@@ -1977,6 +2117,9 @@ importers:
 
   packages/plugin-vectorstore-flat:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-storage-api':
         specifier: workspace:^
         version: link:../plugin-storage-api
@@ -1996,6 +2139,9 @@ importers:
 
   packages/plugin-vectorstore-lancedb:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-storage-api':
         specifier: workspace:^
         version: link:../plugin-storage-api
@@ -2021,6 +2167,9 @@ importers:
 
   packages/plugin-websearch-serper:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-llm-api':
         specifier: workspace:^
         version: link:../plugin-llm-api
@@ -2049,6 +2198,9 @@ importers:
       '@aalis/plugin-authority-api':
         specifier: workspace:^
         version: link:../plugin-authority-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -2125,6 +2277,9 @@ importers:
 
   packages/plugin-webui-server:
     dependencies:
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-platform-api':
         specifier: workspace:^
         version: link:../plugin-platform-api
@@ -2210,6 +2365,9 @@ importers:
       '@aalis/plugin-agent-api':
         specifier: workspace:^
         version: link:../plugin-agent-api
+      '@aalis/plugin-config-api':
+        specifier: workspace:^
+        version: link:../plugin-config-api
       '@aalis/plugin-cron-engine-api':
         specifier: workspace:^
         version: link:../plugin-cron-engine-api

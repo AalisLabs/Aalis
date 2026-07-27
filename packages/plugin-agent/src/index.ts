@@ -1,6 +1,7 @@
-import type { ConfigSchema, Context, Logger, PluginManagerService } from '@aalis/core';
+import type { Context, Logger, PluginManagerService } from '@aalis/core';
 import type { AgentService, PluginGroupInfo, PreprocessorFn, PreprocessorInfo } from '@aalis/plugin-agent-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@aalis/plugin-llm-api';
 import { listLLMModels, resolveLLMModel } from '@aalis/plugin-llm-api';

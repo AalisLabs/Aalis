@@ -1,4 +1,5 @@
-import type { ConfigSchema, Context } from '@aalis/core';
+import type { Context } from '@aalis/core';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import type { OutgoingMessage } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
