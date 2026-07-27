@@ -422,7 +422,7 @@ declare module '@aalis/core' {
 | ① | `useXxxService(ctx)` | -api 包里有对应 helper（如 `useToolService` / `useCommandService`） |
 | ② | `ctx.whenService('xxx', svc => …)` | 跨插件消费 + 需要在 provider 重启/替换时**自动**重接 |
 | ③ | `inject.required: ['xxx']` + `ctx.getService('xxx')!` | 你已显式声明依赖、PluginManager 保证你被激活时 provider 一定在 |
-| ④ | `ctx.hasService('xxx')` + `ctx.getService('xxx')` | 探测性可选依赖（更推荐 `inject.optional` + bounce） |
+| ④ | `ctx.getService('xxx') !== undefined` + `ctx.getService('xxx')` | 探测性可选依赖（更推荐 `inject.optional` + bounce） |
 
 ### 反模式
 

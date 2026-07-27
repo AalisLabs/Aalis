@@ -1,5 +1,6 @@
-import type { ConfigSchema, Context } from '@aalis/core';
+import type { Context } from '@aalis/core';
 import { useCodeSandbox } from '@aalis/plugin-code-sandbox-api';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway, resolveAgainstCwd } from '@aalis/plugin-storage-api';

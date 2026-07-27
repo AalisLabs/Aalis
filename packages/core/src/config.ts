@@ -1,5 +1,4 @@
 import type { ConfigProvider } from './providers.js';
-import type { ConfigSchema } from './types/index.js';
 
 /**
  * Aalis 应用配置（基础设施字段）
@@ -41,23 +40,6 @@ const DEFAULT_CONFIG: AalisConfig = {
   disabledPlugins: [],
 };
 
-/** 核心配置的 Schema，与插件 configSchema 走同一套渲染路径 */
-export const CORE_CONFIG_SCHEMA: ConfigSchema = {
-  name: { type: 'string', label: '应用名称', description: '应用显示名称，用于日志和界面展示', default: 'Aalis' },
-  logLevel: {
-    type: 'select',
-    label: '日志等级',
-    description: '日志输出等级',
-    default: 'info',
-    options: [
-      { label: 'debug', value: 'debug' },
-      { label: 'info', value: 'info' },
-      { label: 'warn', value: 'warn' },
-      { label: 'error', value: 'error' },
-    ],
-  },
-};
-
 export interface ConfigManagerOptions {
   /** 持久化与外部变更监听由 provider 提供；省略则进入纯内存模式（save() 静默） */
   provider?: ConfigProvider;
@@ -66,12 +48,6 @@ export interface ConfigManagerOptions {
    * core 自己不读写它；语义由宿主与插件约定。默认 `'.'`。
    */
   dataDir?: string;
-  /**
-   * `syncPluginDefaults` 是否按 configSchema 裁剪未知字段（默认 `true`）。
-   * 设为 `false` 时保留 schema 外的字段——适合宿主允许手写实验性配置、
-   * 或 schema 滞后于实现的场景。这是政策而非机制，故开放给宿主注入。
-   */
-  trimUnknownFields?: boolean;
 }
 
 /**
@@ -94,8 +70,6 @@ export class ConfigManager {
   private config: AalisConfig;
   private readonly provider?: ConfigProvider;
   private readonly dataDir: string;
-  /** syncPluginDefaults 的字段裁剪政策（公开只读：scope 继承、宿主可内省） */
-  readonly trimUnknownFields: boolean;
   private unwatchFn: (() => void) | null = null;
   private onChangeCallback: (() => void) | null = null;
 
@@ -103,7 +77,6 @@ export class ConfigManager {
     this.config = mergeDefaultsConfig(initial);
     this.provider = options?.provider;
     this.dataDir = options?.dataDir ?? '.';
-    this.trimUnknownFields = options?.trimUnknownFields ?? true;
   }
 
   get<K extends keyof AalisConfig>(key: K): AalisConfig[K] {
@@ -136,39 +109,6 @@ export class ConfigManager {
 
   removePluginConfig(pluginName: string): void {
     delete this.config.plugins[pluginName];
-  }
-
-  /**
-   * 将插件 defaultConfig 中缺失的字段合并到配置；同时按 configSchema
-   * 移除多余字段。返回发生变更的插件 instanceId 列表（调用方可决定要不要 log）。
-   *
-   * 副作用：内部对每个发生变化的条目调用 setPluginConfig；若有变化最终调用 save()。
-   */
-  syncPluginDefaults(
-    plugins: ReadonlyArray<{
-      instanceId: string;
-      defaultConfig?: Record<string, unknown>;
-      configSchema?: Record<string, unknown>;
-    }>,
-  ): string[] {
-    const changed: string[] = [];
-    for (const plugin of plugins) {
-      const defaults = plugin.defaultConfig ?? {};
-      const schema = plugin.configSchema;
-      const fileConfig = this.getPluginConfig(plugin.instanceId);
-
-      let merged = deepMergeDefaults(defaults, fileConfig);
-      if (this.trimUnknownFields && schema && Object.keys(schema).length > 0) {
-        merged = removeExtraFields(merged, schema);
-      }
-
-      if (JSON.stringify(merged) !== JSON.stringify(fileConfig)) {
-        this.setPluginConfig(plugin.instanceId, merged);
-        changed.push(plugin.instanceId);
-      }
-    }
-    if (changed.length > 0) this.save();
-    return changed;
   }
 
   isPluginDisabled(pluginName: string): boolean {
@@ -221,9 +161,8 @@ export class ConfigManager {
    * 历史上这是"从磁盘 re-read"的入口；现在交由 provider 决定何时
    * 通过 `watch(onChange)` 把新快照推过来；本方法仅供 watch 回调使用。
    *
-   * 注意：本方法（与 watch 回调）**不应用 trimUnknownFields 政策**——
-   * ConfigManager 不持有插件 schema，裁剪统一发生在 syncPluginDefaults
-   * （App.handleConfigFileChanged 热重载时会重新调用它对齐政策）。
+   * 注意：本方法（与 watch 回调）不应用任何字段政策（默认回填/裁剪）——
+   * 政策归宿主（@aalis/runtime 的 config-sync），机制与政策分层。
    */
   reloadFrom(next: AalisConfig): AalisConfig {
     this.config = mergeDefaultsConfig(next);
@@ -264,58 +203,4 @@ function mergeDefaultsConfig(input: AalisConfig | Partial<AalisConfig>): AalisCo
     merged[key] = value;
   }
   return merged;
-}
-
-/**
- * 深度合并默认值：只填充缺失的键，不覆盖已有值。
- * 嵌套对象会递归合并；数组与基础类型按"已存在则保留"处理。
- */
-function deepMergeDefaults(
-  defaults: Record<string, unknown>,
-  current: Record<string, unknown>,
-): Record<string, unknown> {
-  const result = { ...current };
-  for (const [key, defaultValue] of Object.entries(defaults)) {
-    if (!(key in result)) {
-      result[key] = defaultValue;
-    } else if (
-      defaultValue !== null &&
-      typeof defaultValue === 'object' &&
-      !Array.isArray(defaultValue) &&
-      result[key] !== null &&
-      typeof result[key] === 'object' &&
-      !Array.isArray(result[key])
-    ) {
-      result[key] = deepMergeDefaults(defaultValue as Record<string, unknown>, result[key] as Record<string, unknown>);
-    }
-  }
-  return result;
-}
-
-/**
- * 根据 configSchema 移除多余字段。
- * SchemaGroup（含 fields）对应嵌套对象，递归清理；
- * SchemaArray（type=array）直接保留；
- * SchemaField 对应普通字段。
- */
-function removeExtraFields(config: Record<string, unknown>, schema: Record<string, unknown>): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(config)) {
-    if (!(key in schema)) continue;
-    const schemaDef = schema[key] as Record<string, unknown>;
-    if (schemaDef.type === 'array') {
-      result[key] = value;
-    } else if (
-      schemaDef.fields &&
-      typeof schemaDef.fields === 'object' &&
-      value !== null &&
-      typeof value === 'object' &&
-      !Array.isArray(value)
-    ) {
-      result[key] = removeExtraFields(value as Record<string, unknown>, schemaDef.fields as Record<string, unknown>);
-    } else {
-      result[key] = value;
-    }
-  }
-  return result;
 }

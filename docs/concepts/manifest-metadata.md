@@ -65,7 +65,7 @@ const requiredDeps = (inject.required ?? []).map(normalizeDependency);
 const optionalDeps = (inject.optional ?? []).map(normalizeDependency);
 ```
 
-- `required` 的每个服务名必须都 `hasService` 才会激活，且参与拓扑建图——provider 先起、consumer 后起。
+- `required` 的每个服务名必须都已注册（`getService` 非空）才会激活，且参与拓扑建图——provider 先起、consumer 后起。
 - `optional` **不**参与拓扑建图（这是为了避免互相 optional 造成伪环），改由 `service-up` / `service-down` 的 reactive recompute 补救。
 
 `inject` 的元素是 `string | { service: string }`，只有服务名。从 0.5.0 起，它没有 capability 维（见 `InjectDeclaration`）。

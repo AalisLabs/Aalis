@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { App, type PluginLoader } from '@aalis/core';
 import { installBootstrapBuffer } from './bootstrap-buffer.js';
+import { type ConfigSyncOptions, installConfigHotReload, syncPluginDefaults } from './config-sync.js';
 import { type ConsoleSinkHandle, installConsoleSink } from './console-sink.js';
 import { appendCrashLog, DEFAULT_LOG_FILE, type FileLoggerHandle, setupFileLogger } from './file-logger.js';
 import { createNodeModulesPluginLoader } from './node-modules-loader.js';
@@ -38,6 +39,11 @@ export interface StartAalisOptions {
   subcommands?: boolean | string[];
   /** 覆盖 dev/prod 判定，默认按 NODE_ENV !== 'production' */
   devMode?: boolean;
+  /**
+   * 插件配置同步政策（defaultConfig 回填 / schema 裁剪 / 热重载）。
+   * `trimUnknownFields=false` 时保留 configSchema 之外的未知字段（默认裁剪）。
+   */
+  configSync?: ConfigSyncOptions;
 }
 
 /**
@@ -116,6 +122,11 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
 
   await app.autoLoadPlugins();
 
+  // 配置同步政策：defaultConfig 回填 + 按 schema 裁剪未知字段，有变化则落盘。
+  const synced = syncPluginDefaults(app, opts.configSync);
+  for (const id of synced) app.logger.debug(`同步插件配置: ${id}`);
+  if (synced.length > 0) app.logger.info('已将插件配置同步到配置文件');
+
   // ── 不变量②：子命令短路在 app.start 之前 ──
   // `aalis <name> [args...]` 等价于聊天里 `/<name> args...`：命中则执行返回串并干净退出，
   // 不命中则按正常守护进程模式继续启动。与具体命令解耦——各插件自行注册命令。
@@ -134,6 +145,9 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
 
   // ── 启动 + 优雅退出（防止重复调用）──
   await app.start();
+
+  // 配置外部变更热重载（provider 不支持 watch 时为 no-op）。
+  installConfigHotReload(app, opts.configSync);
   let stopping = false;
   const shutdown = async () => {
     if (stopping) return;

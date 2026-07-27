@@ -113,22 +113,24 @@ describe('App plugin lifecycle', () => {
       },
     };
     await env.app.plugin(reusable);
-    await env.app.plugins.createInstance('multi', 'one', {});
-    await env.app.plugins.createInstance('multi', 'two', {});
+    // 多实例机制 = register 带 instanceId(配置文件编排属管理面,不在内核)
+    await env.app.plugins.register(reusable, {}, 'multi:one');
+    await env.app.plugins.register(reusable, {}, 'multi:two');
     expect(env.state.applied).toContain('multi');
     expect(env.state.applied).toContain('multi:one');
     expect(env.state.applied).toContain('multi:two');
 
-    await env.app.plugins.removeInstance('multi:one');
+    await env.app.plugins.unload('multi:one');
     expect(env.state.disposed).toContain('multi:one');
     expect(env.app.plugins.getPlugin('multi:one')).toBeUndefined();
     expect(env.app.plugins.getPlugin('multi')).toBeDefined();
   });
 
   it('非 reusable 插件不允许多实例', async () => {
-    await env.app.plugin(makePlugin('solo', env.state));
-    const id = await env.app.plugins.createInstance('solo', 'extra');
-    expect(id).toBeUndefined();
+    const solo = makePlugin('solo', env.state);
+    await env.app.plugin(solo);
+    await env.app.plugins.register(solo, {}, 'solo:extra');
+    expect(env.app.plugins.getPlugin('solo:extra')).toBeUndefined();
   });
 
   it('provides 声明与实际注册不符 → state=error', async () => {
@@ -364,38 +366,8 @@ describe('激活归因与级联（#8.1 / #8.6 回归）', () => {
   });
 });
 
-describe('配置热重载与启动路径同政策（评审修复回归）', () => {
-  it('watch 推送的快照在热重载时按 trimUnknownFields 裁剪 schema 外字段', async () => {
-    let pushSnapshot: ((next: Record<string, unknown>) => void) | undefined;
-    const app = new App({
-      config: { name: 'T', logLevel: 'error', plugins: { p1: { known: 1 } } },
-      configProvider: {
-        save: () => {},
-        watch: cb => {
-          pushSnapshot = cb as (next: Record<string, unknown>) => void;
-          return () => {};
-        },
-      },
-    });
-    const mod: PluginModule = {
-      name: 'p1',
-      defaultConfig: { known: 0 },
-      configSchema: { known: { type: 'number', label: 'K' } },
-      apply() {},
-    };
-    await app.plugin(mod);
-    await app.start();
-
-    // 模拟外部把 schema 外字段写进配置文件
-    pushSnapshot?.({ name: 'T', logLevel: 'error', plugins: { p1: { known: 2, sneaky: true } } });
-    // 热重载是异步链（watch 回调 → handleConfigFileChanged → bounce）
-    await new Promise(r => setTimeout(r, 20));
-
-    // 政策默认裁剪：sneaky 不应留在内存态
-    expect(app.ctx.config.getPluginConfig('p1')).toEqual({ known: 2 });
-    await app.stop();
-  });
-});
+// 注：配置热重载编排（watch → diff → bounce）属宿主层,测试在
+// test/runtime/config-sync.test.ts;core 的 App 不再接管 config.watch。
 
 describe('异步 dispose 编排（bounce/unload 等待落盘）', () => {
   const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));

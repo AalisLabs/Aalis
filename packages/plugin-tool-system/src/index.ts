@@ -1,5 +1,6 @@
-import type { ConfigSchema, Context } from '@aalis/core';
+import type { Context } from '@aalis/core';
 import { useCommandService } from '@aalis/plugin-commands-api';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { createProcessGateway } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
@@ -133,7 +134,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 注册各工具组
   if (cfg.shell.enabled) {
-    const hasProc = ctx.hasService('process');
+    const hasProc = ctx.getService('process') !== undefined;
     if (hasStorage && hasProc) {
       const storage = createStorageGateway(ctx);
       const proc = createProcessGateway(ctx);

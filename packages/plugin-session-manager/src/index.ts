@@ -1,4 +1,5 @@
-import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
+import type { Context, PluginModule } from '@aalis/core';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 // 副作用导入：注入 agent:turn:after 等 agent 域钩子到 HookContextMap（declaration merging），
 // 使 ctx.middleware('agent:turn:after', ...) 的类型可见。
 import '@aalis/plugin-agent-api';
@@ -976,7 +977,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const webui = useWebuiService(ctx);
   for (const page of webuiPages) webui.registerPage(page);
 
-  if (!ctx.hasService('memory')) {
+  if (ctx.getService('memory') === undefined) {
     ctx.logger.error('memory 服务不可用，会话管理无法启动');
     return;
   }

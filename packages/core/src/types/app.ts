@@ -1,6 +1,5 @@
 // ----- App 服务接口 -----
 
-import type { ConfigSchema } from './core.js';
 import type { PluginEntry, PluginState } from './plugin.js';
 
 /**
@@ -34,10 +33,9 @@ export interface PluginStatusEntry {
   requiredServices?: string[];
   /** 可选依赖的服务名（来自 inject.optional） */
   optionalServices?: string[];
-  config: Record<string, unknown>;
-  configSchema?: ConfigSchema;
-  defaultConfig?: Record<string, unknown>;
   error?: string;
+  // 配置详情（config / configSchema / defaultConfig）不属状态摘要——
+  // 消费者经 getPlugin(instanceId) 从 entry.config / entry.module 读取。
 }
 
 /**
@@ -59,10 +57,8 @@ export interface PluginManagerService {
   disablePlugin(name: string): Promise<boolean>;
   /** 彻底卸载插件：dispose 上下文并从注册表移除（用于市场卸载，区别于 disablePlugin 仅置禁用态） */
   unload(name: string): Promise<void>;
-  /** 基于 reusable 插件创建新实例，返回 instanceId */
-  createInstance(moduleName: string, suffix: string, config?: Record<string, unknown>): Promise<string | undefined>;
-  /** 删除实例 */
-  removeInstance(instanceId: string): Promise<boolean>;
+  /** 注册并尝试激活一个插件模块（多实例经 instanceId 区分；供管理面基于 register/unload 组合实例编排） */
+  register(module: PluginEntry['module'], config?: Record<string, unknown>, instanceId?: string): Promise<void>;
   /**
    * 等待插件状态机静置（无在飞/排队的 recompute）。变更 API 在 flight 在飞时
    * 排队早退，需要"尘埃落定后再观察"的调用方在变更后 await 本方法。

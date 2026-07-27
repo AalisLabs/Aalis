@@ -100,7 +100,7 @@ export interface MediaProcessor {
 | `plugin-image-sender` | `media.describeImage(url, { detailLevel: 'casual' })` | 给候选图打描述以挑图 |
 | `plugin-adapter-onebot` | `media.lookupDescription(url)` | 只复用缓存、不触发识别 |
 | `plugin-message-archive` | `getService('media')` | 归档时取描述；`inject.optional:['media']` |
-| `plugin-webui-server` | `ctx.hasService('media')` | 探测是否启用 |
+| `plugin-webui-server` | `ctx.getService('media') !== undefined` | 探测是否启用 |
 
 ---
 

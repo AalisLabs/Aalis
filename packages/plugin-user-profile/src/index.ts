@@ -1,5 +1,6 @@
-import type { ConfigSchema, Context } from '@aalis/core';
+import type { Context } from '@aalis/core';
 import { useCommandService } from '@aalis/plugin-commands-api';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';

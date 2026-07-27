@@ -43,5 +43,8 @@
         "embedding"
       ]
     }
+  },
+  "dependencies": {
+    "@aalis/plugin-config-api": "workspace:^"
   }
 }
