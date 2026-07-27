@@ -6,29 +6,6 @@ interface HookEntry<T> {
 }
 
 /**
- * 钩子执行面 —— `ctx.hooks` 暴露给插件的窄接口。
- *
- * 与 events / services 相同的门面纪律（驱动公开、挂载走 id 绑定门面）：
- * - **驱动公开**：任何插件都可 `ctx.hooks.run(...)` 驱动自己定义的钩子链
- *   （对称钩子系统的立身之本，地位等价于 `ctx.emit`）；
- * - **挂载走门面**：注册 handler 只经 `ctx.middleware(hook, fn)` —— 它闭包当前
- *   ctx.id 作 contextId 并登记 dispose 链，插件卸载时才能被 `unregisterByContext`
- *   清扫。裸 `register` 默认落到 'root'，会静默泄漏进全局管道，故不在本接口上。
- *
- * 完整的 {@link HookRegistry}（register / unregisterByContext / onStall）仅
- * App（组合根，接 onStall 到 logger）与 Context 内部持有。
- */
-export interface HookRunner {
-  /** 执行钩子链；语义见 {@link HookRegistry.run}。 */
-  run<K extends string & keyof HookContextMap>(
-    hook: K,
-    data: HookContextMap[K],
-    defaultAction?: () => Promise<void>,
-    opts?: { warnOnStall?: boolean },
-  ): Promise<boolean>;
-}
-
-/**
  * 钩子注册表 —— 命名生命周期事件的 handler 总线
  *
  * 设计哲学：每个钩子键代表一个 **语义清晰的生命周期事件**（例如
@@ -38,8 +15,12 @@ export interface HookRunner {
  * 不再使用数字 priority：相位之间的次序由调度方（plugin-gateway 等）
  * 显式表达；相位内部的 handler 应顺序无关，或由相位拥有方约定。
  *
- * 插件通过 `ctx.middleware(hook, fn)` 注册 handler。
- * 服务在关键流程点执行 `hooks.run(hook, data, defaultAction)`。
+ * 插件面与 events / services 同一门面纪律（方法窄面，对象不外露）：
+ * 注册 handler 只经 `ctx.middleware(hook, fn)`（闭包 ctx.id 作 contextId 并登记
+ * dispose 链，插件卸载时被 `unregisterByContext` 清扫；裸 `register` 默认落
+ * 'root'，会静默泄漏进全局管道）；驱动钩子链经 `ctx.runHook(hook, data,
+ * defaultAction)`。完整注册表仅 App（组合根，接 onStall 到 logger）与
+ * Context 内部持有。
  *
  * Handler 可以：
  * - 修改 data 对象（引用传递）
@@ -48,7 +29,7 @@ export interface HookRunner {
  *
  * 第三方插件可通过 TS declaration merging 扩展 HookContextMap。
  */
-export class HookRegistry implements HookRunner {
+export class HookRegistry {
   // biome-ignore lint/suspicious/noExplicitAny: 泛型擦除场景，hooks 容器持有不同钩子键的 entry，运行时按 key 分发
   private hooks = new Map<string, HookEntry<any>[]>();
 

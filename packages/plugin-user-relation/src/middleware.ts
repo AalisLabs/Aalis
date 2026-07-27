@@ -1,5 +1,5 @@
 /**
- * 关系图注入 middleware —— 在 LLM 调用前，向 system 提示注入：
+ * 关系图注入 —— agent:prompt 贡献点（identity 槽），向 system 提示注入：
  * - 当前主发言者的子图速览（按 BFS 深度/宽度展开）
  * - 每个事件的"其他参与者"（揭示群体动态）
  * - 高频共现伙伴（基于事件桥的隐式二跳）
@@ -11,8 +11,7 @@
  * - 失败优雅降级：任何异常仅 debug log，绝不阻断 agent 流程
  */
 import type { Context } from '@aalis/core';
-import '@aalis/plugin-agent-api'; // declaration merging：注册 'agent:llm:before' HookContextMap
-import type { Message } from '@aalis/plugin-message-api';
+import type { PromptContributionView } from '@aalis/plugin-agent-api';
 import type { RelationService } from './service.js';
 import type {
   EntityNode,
@@ -47,46 +46,27 @@ interface MiddlewareConfig {
   debug: boolean;
 }
 
-interface LLMBeforeData {
-  messages: Message[];
-  tools: unknown[];
-  sessionId?: string;
-  userId?: string;
-  platform?: string;
-  triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
-}
-
-export function registerRelationMiddleware(ctx: Context, service: RelationService, cfg: MiddlewareConfig): void {
+export function registerRelationContribution(ctx: Context, service: RelationService, cfg: MiddlewareConfig): void {
   if (!cfg.enabled) return;
-  ctx.middleware('agent:llm:before', async (data: LLMBeforeData, next) => {
-    try {
-      // 干跑(token 快照)跳过关系图查询;工具循环每轮重跑本钩子,按标签幂等——
-      // 否则每轮多插一份完整子图块
-      const skip =
-        (data as { dryRun?: boolean }).dryRun ||
-        data.messages.some(
-          m => m.role === 'system' && (m.metadata as Record<string, unknown> | undefined)?.injector === 'user-relation',
-        );
-      const block = skip ? undefined : await buildBlock(service, data, cfg);
-      if (block) {
-        const idx = data.messages.findIndex(m => m.role === 'system');
-        const insertAt = idx >= 0 ? idx + 1 : 0;
-        data.messages.splice(insertAt, 0, {
-          role: 'system',
-          content: block,
-          metadata: { injector: 'user-relation' },
-        });
+  ctx.contribute('agent:prompt', {
+    id: 'user-relation',
+    anchor: 'identity',
+    async build(view) {
+      // 干跑(token 快照)跳过关系图查询；幂等/落点/查重由组装器按全局键统一保障
+      if (view.dryRun) return null;
+      try {
+        return await buildBlock(service, view, cfg);
+      } catch (err) {
+        if (cfg.debug) ctx.logger.debug(`[user-relation] 贡献构建异常: ${stringifyErr(err)}`);
+        return null;
       }
-    } catch (err) {
-      if (cfg.debug) ctx.logger.debug(`[user-relation] middleware 异常: ${stringifyErr(err)}`);
-    }
-    await next();
+    },
   });
 }
 
 async function buildBlock(
   service: RelationService,
-  data: LLMBeforeData,
+  data: PromptContributionView,
   cfg: MiddlewareConfig,
 ): Promise<string | null> {
   const trigger = data.triggerType ?? 'direct';

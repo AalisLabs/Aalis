@@ -657,7 +657,7 @@ class SessionManager implements SessionManagerService {
       results: [],
     };
 
-    await this.ctx.hooks.run('memory:clear', clearData, async () => {
+    await this.ctx.runHook('memory:clear', clearData, async () => {
       try {
         await this.memory.clearSession(id);
         clearData.results.push({ source: 'memory', success: true, message: '会话消息历史已清空' });
