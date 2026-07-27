@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-session-manager",
-  "version": "0.5.3",
+  "version": "0.9.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@aalis/plugin-agent-api": "workspace:^",
-    "@aalis/plugin-config-api": "workspace:^",
+    "@aalis/plugin-config-api": "workspace:>=0.9.0 <1.0.0",
     "@aalis/plugin-llm-api": "workspace:^",
     "@aalis/plugin-session-manager-api": "workspace:^",
     "@aalis/plugin-webui-api": "workspace:^"
@@ -44,7 +44,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.8.0 <1.0.0"
+    "@aalis/core": ">=0.9.0 <1.0.0"
   },
   "aalis": {
     "service": {
