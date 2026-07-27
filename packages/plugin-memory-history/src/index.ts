@@ -21,7 +21,6 @@
 import type { ConfigSchema, Context } from '@aalis/core';
 import '@aalis/plugin-agent-api';
 import type { MemoryService, RecentMessageRecord } from '@aalis/plugin-memory-api';
-import type { Message } from '@aalis/plugin-message-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
@@ -118,7 +117,6 @@ interface HistoryConfig {
   excludeCurrentSession: boolean;
   headerText: string;
   toolEnabled: boolean;
-  injectMetadataSource: string;
 }
 
 /** 工具名硬编码：避免运行期改名导致 prompt/agent hardcode 失效，与其他插件（subtask/scheduler/todo 等）保持一致 */
@@ -150,7 +148,6 @@ function normalizeConfig(raw: Record<string, unknown>): HistoryConfig {
     excludeCurrentSession: raw.excludeCurrentSession !== false,
     headerText: typeof raw.headerText === 'string' ? raw.headerText : (defaultConfig.headerText as string),
     toolEnabled: raw.toolEnabled !== false,
-    injectMetadataSource: 'memory-history',
   };
 }
 
@@ -243,51 +240,37 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     return picked;
   }
 
-  // ---- 注入 hook ----
+  // ---- 注入贡献（agent:prompt / context 槽；幂等与落点由组装器统一保障）----
 
-  ctx.middleware('agent:llm:before', async (data, next) => {
-    if (!cfg.injectEnabled) {
-      await next();
-      return;
-    }
-    if (data.messages.some(m => m.role === 'system' && m.metadata?.injector === cfg.injectMetadataSource)) {
-      await next();
-      return;
-    }
-    let records: RecentMessageRecord[];
-    try {
-      records = await queryRecent({
-        currentPlatform: data.platform,
-        currentSessionId: data.sessionId,
-      });
-    } catch (err) {
-      ctx.logger.warn('memory-history: 查询近期消息失败，跳过注入:', err);
-      await next();
-      return;
-    }
-    if (records.length === 0) {
-      ctx.logger.debug(
-        `memory-history: 未找到可注入的跨会话消息 (scope=${cfg.scope}, platform=${data.platform ?? '?'}, session=${data.sessionId ?? '?'})`,
-      );
-      await next();
-      return;
-    }
-
-    const block = `${cfg.headerText}\n\n${formatRecords(records)}\n\n（以上为参考片段结束；请按当前 system 提示的输出格式作答。）`;
-    const injectMsg: Message = {
-      role: 'system',
-      content: block,
-      metadata: { injector: cfg.injectMetadataSource },
-    };
-    const idx = data.messages.findIndex(m => m.role !== 'system');
-    const insertIdx = idx === -1 ? data.messages.length : idx;
-    data.messages.splice(insertIdx, 0, injectMsg);
-    ctx.logger.debug(
-      `memory-history: 已注入 ${records.length} 条跨会话消息 (scope=${cfg.scope}, platform=${data.platform ?? '?'}, sessions=${new Set(records.map(r => r.sessionId)).size}, bytes=${block.length})`,
-    );
-
-    await next();
-  });
+  if (cfg.injectEnabled) {
+    ctx.contribute('agent:prompt', {
+      id: 'memory-history',
+      anchor: 'context',
+      async build(view) {
+        let records: RecentMessageRecord[];
+        try {
+          records = await queryRecent({
+            currentPlatform: view.platform,
+            currentSessionId: view.sessionId,
+          });
+        } catch (err) {
+          ctx.logger.warn('memory-history: 查询近期消息失败，跳过注入:', err);
+          return null;
+        }
+        if (records.length === 0) {
+          ctx.logger.debug(
+            `memory-history: 未找到可注入的跨会话消息 (scope=${cfg.scope}, platform=${view.platform ?? '?'}, session=${view.sessionId ?? '?'})`,
+          );
+          return null;
+        }
+        const block = `${cfg.headerText}\n\n${formatRecords(records)}\n\n（以上为参考片段结束；请按当前 system 提示的输出格式作答。）`;
+        ctx.logger.debug(
+          `memory-history: 已注入 ${records.length} 条跨会话消息 (scope=${cfg.scope}, platform=${view.platform ?? '?'}, sessions=${new Set(records.map(r => r.sessionId)).size}, bytes=${block.length})`,
+        );
+        return block;
+      },
+    });
+  }
 
   // ---- 工具注册 ----
 

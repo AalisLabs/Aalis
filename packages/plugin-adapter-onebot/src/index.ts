@@ -2159,56 +2159,57 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     { pattern: /^\[文件上传:/, hint: '这条消息不是用户手动输入的文字，而是一个文件上传通知事件。' },
   ];
 
-  ctx.middleware('agent:llm:before', async (data, next) => {
-    // 本钩子在工具循环每轮迭代都会重跑且 messages 跨轮累积,注入必须按标签幂等,
-    // 否则每轮多插一份(曾实际发生,token 随迭代线性浪费)。
-    if (
-      data.sessionId?.includes(':group:') &&
-      !data.messages.some(m => m.role === 'system' && m.metadata?.injector === 'platform-group-hint')
-    ) {
-      // 在最后一条用户消息前插入时间感知提示
-      let lastUserIdx = -1;
-      for (let i = data.messages.length - 1; i >= 0; i--) {
-        if (data.messages[i].role === 'user') {
-          lastUserIdx = i;
-          break;
-        }
-      }
-      if (lastUserIdx > 0) {
-        data.messages.splice(lastUserIdx, 0, {
-          role: 'system',
-          content:
-            '注意：以上是群聊的历史消息记录，包含多位群友的发言。' +
-            '请留意消息的时间先后顺序，优先关注近期的对话内容和上下文。',
-          metadata: { injector: 'platform-group-hint' },
-        });
-      }
-    }
+  /**
+   * 该会话是否该由本插件实例出声——多实例（reusable）下各管各的会话，避免
+   * 每个实例都注一份同样的提示。
+   *
+   * 判定取"疑罪从无"：只有当 selfId 明确指向**别的**实例时才拒绝。selfId 尚未
+   * 握手获取时 sessionId 会以 'unknown' 兜底（见 fallbackSelfId），这种判不出
+   * 归属的情形一律放行——宁可多实例下偶有重复，也不让单实例场景静默缺提示。
+   */
+  function ownsSession(sessionId: string | undefined): boolean {
+    if (!sessionId) return false;
+    const parsed = parseSessionId(sessionId);
+    if (!parsed) return false;
+    if (findStateBySelfId(parsed.selfId)) return true;
+    return parsed.selfId === 'unknown' || states.every(s => s.selfId == null);
+  }
 
-    // 特殊事件触发上下文：检查最后一条用户消息是否为非文本事件
-    if (
-      data.sessionId?.startsWith('onebot:') &&
-      !data.messages.some(m => m.role === 'system' && m.metadata?.injector === 'platform-event-hint')
-    ) {
-      const lastMsg = data.messages[data.messages.length - 1];
+  // 群提示 + 事件提示同属 turn-hint 槽（落点 = 最后一条 user 消息之前）。
+  // 合成**一个**贡献返回多块：同槽多贡献按全局键排序、槽内顺序无语义，而这两块
+  // 有位置语义——事件提示的"这条消息"必须紧贴它描述的那条 user 消息（组装器把
+  // 多块保序物化，故事件提示恒为末块）。幂等由组装器按全局键保障。
+  ctx.contribute('agent:prompt', {
+    id: 'platform-hint',
+    anchor: 'turn-hint',
+    build(view) {
+      // 会话不属于本实例就不出声——否则多账号并存时每个实例都注一份重复提示
+      if (!ownsSession(view.sessionId)) return null;
+      const blocks: string[] = [];
+
+      if (view.sessionId?.includes(':group:')) {
+        blocks.push(
+          '注意：以上是群聊的历史消息记录，包含多位群友的发言。' +
+            '请留意消息的时间先后顺序，优先关注近期的对话内容和上下文。',
+        );
+      }
+
+      // 特殊事件触发上下文：最后一条消息是非文本事件（戳一戳/文件上传）时说明缘由。
+      // 剥离顺序须与 agent 的消息装配一致：时间标签 `(今天 HH:MM) ` 在最外层，
+      // 其内才是发送者前缀 `[昵称(id)]: `——只剥后者会让事件正则永不命中。
+      const lastMsg = view.messages[view.messages.length - 1];
       if (lastMsg?.role === 'user' && typeof lastMsg.content === 'string') {
-        // 去掉发送者前缀后匹配事件模式
-        const bare = lastMsg.content.replace(/^\[[^\]]*\]:\s*/, '');
+        const bare = lastMsg.content.replace(/^\([^)]*\)\s*/, '').replace(/^\[[^\]]*\]:\s*/, '');
         for (const { pattern, hint } of noticePatterns) {
           if (pattern.test(bare)) {
-            // 在用户消息前插入事件说明
-            data.messages.splice(data.messages.length - 1, 0, {
-              role: 'system',
-              content: hint,
-              metadata: { injector: 'platform-event-hint' },
-            });
+            blocks.push(hint);
             break;
           }
         }
       }
-    }
 
-    await next();
+      return blocks.length > 0 ? blocks : null;
+    },
   });
 
   // ----- 监听消息回复事件 -----

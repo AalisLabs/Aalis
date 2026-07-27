@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { App } from '../../packages/core/src/index.js';
+import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 import type { Message } from '../../packages/plugin-message-api/src/index.js';
-import { registerRelationMiddleware } from '../../packages/plugin-user-relation/src/middleware.js';
+import { registerRelationContribution } from '../../packages/plugin-user-relation/src/middleware.js';
 import { RelationService } from '../../packages/plugin-user-relation/src/service.js';
 import { RelationStore } from '../../packages/plugin-user-relation/src/store.js';
 
@@ -29,7 +30,7 @@ async function runMiddleware(
     maxDepth?: number;
   },
 ): Promise<Message[]> {
-  registerRelationMiddleware(app.ctx, service, {
+  registerRelationContribution(app.ctx, service, {
     enabled: true,
     maxDepth: opts.maxDepth ?? 1,
     maxBreadth: 5,
@@ -45,13 +46,12 @@ async function runMiddleware(
       { role: 'system' as const, content: '原 system' },
       { role: 'user' as const, content: '你好', metadata: { groupId: 'g1', sessionType: 'group' } },
     ],
-    tools: [],
     sessionId: 'sess1',
     userId: opts.userId,
     platform: opts.platform,
     triggerType: opts.triggerType,
   };
-  await app.ctx.hooks.run('agent:llm:before', data);
+  await assemblePromptContributions(app.ctx, data);
   return data.messages;
 }
 
@@ -59,7 +59,7 @@ describe('plugin-user-relation: middleware', () => {
   it('无 userId / platform → 不注入', async () => {
     const { app, service } = await setup();
     const messages = await runMiddleware(app, service, { triggerType: 'direct' });
-    expect(messages.some(m => m.metadata?.injector === 'user-relation')).toBe(false);
+    expect(messages.some(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'))).toBe(false);
   });
 
   it('triggerType=interval → 不注入（focus 不在该用户）', async () => {
@@ -71,7 +71,7 @@ describe('plugin-user-relation: middleware', () => {
       platform: 'onebot',
       triggerType: 'interval',
     });
-    expect(messages.some(m => m.metadata?.injector === 'user-relation')).toBe(false);
+    expect(messages.some(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'))).toBe(false);
   });
 
   it('用户在关系图中有事件 → 注入摘要 system 块', async () => {
@@ -89,7 +89,7 @@ describe('plugin-user-relation: middleware', () => {
       platform: 'onebot',
       triggerType: 'direct',
     });
-    const injected = messages.find(m => m.metadata?.injector === 'user-relation');
+    const injected = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'));
     expect(injected).toBeDefined();
     const content = typeof injected?.content === 'string' ? injected.content : '';
     expect(content).toContain('讨论直播');
@@ -110,7 +110,7 @@ describe('plugin-user-relation: middleware', () => {
       platform: 'onebot',
       triggerType: 'immediate',
     });
-    const injected = messages.find(m => m.metadata?.injector === 'user-relation');
+    const injected = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'));
     expect(injected).toBeDefined();
     const content = typeof injected?.content === 'string' ? injected.content : '';
     expect(content).toContain('friend');
@@ -132,7 +132,7 @@ describe('plugin-user-relation: middleware', () => {
         { role: 'user', content: '你好' }, // 无 groupId
       ],
     });
-    expect(messages.some(m => m.metadata?.injector === 'user-relation')).toBe(false);
+    expect(messages.some(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'))).toBe(false);
   });
 
   it('实体别名 → 注入显示「（别名: …）」', async () => {
@@ -154,7 +154,7 @@ describe('plugin-user-relation: middleware', () => {
       platform: 'onebot',
       triggerType: 'direct',
     });
-    const injected = messages.find(m => m.metadata?.injector === 'user-relation');
+    const injected = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'));
     const content = typeof injected?.content === 'string' ? injected.content : '';
     expect(content).toContain('别名:');
     expect(content).toContain('Civ6');
@@ -181,7 +181,7 @@ describe('plugin-user-relation: middleware', () => {
       triggerType: 'direct',
       maxDepth: 2,
     });
-    const injected = messages.find(m => m.metadata?.injector === 'user-relation');
+    const injected = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'));
     const content = typeof injected?.content === 'string' ? injected.content : '';
     expect(content).toContain('所属跨会话话题');
     expect(content).toContain('直播相关讨论');
@@ -217,7 +217,7 @@ describe('plugin-user-relation: middleware', () => {
       triggerType: 'direct',
       maxDepth: 2,
     });
-    const injected = messages.find(m => m.metadata?.injector === 'user-relation');
+    const injected = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'));
     const content = typeof injected?.content === 'string' ? injected.content : '';
     expect(content).toContain('共同关注');
     expect(content).toContain('文明6');
