@@ -325,35 +325,16 @@ outputFormat:
 - [ ] 数据库定时清理/压缩策略（按 TTL 或条数上限淘汰旧消息）
 - [ ] 反向 WebSocket 支持（OneBot 适配器）
 - [ ] 更多平台适配器（Discord、Telegram 等）
-- [ ] 插件市场：安装与更新链路（检索/依赖披露/版本显示已可用）
-      —— 详见 [已知缺陷与待办](docs/plugins/marketplace-known-issues.md)
 
-### 指令系统（已知缺陷，均经实测确认）
+已知缺陷与未来规划均记录在 **[docs/roadmap/](docs/roadmap/README.md)**——每条经实测
+确认、附 `file:line` 根因与修法方向：
 
-- [ ] **同名指令静默覆盖**：两插件注册同名指令时后者直接顶掉前者（复用旧节点并
-      清空 handler / options / aliases / examples），只留一行 `logger.warn`，用户
-      在聊天界面完全无感知。见 `packages/plugin-commands/src/commands.ts:101-110`。
-      待定修法：改为拒绝注册 + 显式报错，或保留覆盖但把冲突提到用户可见层。
-      Koishi 兼容层落地后此问题会被放大（`help` / `status` / `echo` 等常见名两边
-      都有），故兼容层方案已定为把 Koishi 指令统一挂 `/koishi` 命名空间隔离。
-- [ ] **`/help` 与 `formatUsage` 无权限过滤**：`getAll()` 全量返回，`visibility:
-      'restricted'` 的指令对任何等级都可见；裸敲分组指令（如 `/relation`）经
-      `execute()` 在守卫**之前**就返回完整子指令清单（`commands.ts:292-294`），
-      未知选项报错路径同理（`:451` / `:472`）。开源项目里指令存在性本就公开，
-      故定位为**降噪**而非防泄漏，优先级低。修法：注入与执行侧同源的 authorize
-      判定（只取轴 A 可见性，排除轴 B confirm 与临时授予，否则列表会随会话漂移）。
-- [ ] **执行侧存在性泄漏**（上一条的另一半）：低权限用户直敲受限指令会收到
-      「权限不足: command:xxx 需等级 N」，仍暴露存在性。触及 authority 拒绝文案，
-      改动面大于收益，暂不动——但需与上一条一并决策，否则只堵一半。
-
-### 存储层（结构性欠缺）
-
-- [ ] **缺结构化存储原语**：插件持久化目前只有两条路——`memory.saveMetadata`
-      （命名空间 + 键 → JSON，11 个插件在用）与 `storage` 的 `pluginData:` 根
-      （文件语义，4 个插件在用）。前者无查询、无索引、无事务，`listMetadata(ns)`
-      是全量拉取 + 内存过滤：`user-relation`（关系图）、`user-profile`（用户档案）
-      数据量上来即全表扫。此缺口与 Koishi 兼容层的 `ctx.model` / `ctx.database`
-      需求撞在同一处，可一并设计。
+| 主题 | 一句话 | 状态 |
+|---|---|---|
+| [插件市场](docs/roadmap/marketplace.md) | 安装与更新链路不完整（检索/依赖披露/版本显示已可用） | 待修 |
+| [指令系统](docs/roadmap/commands.md) | 同名指令覆盖后者顶掉前者；`/help` 与 `formatUsage` 无权限过滤 | 待修 |
+| [存储层](docs/roadmap/storage.md) | 缺结构化存储原语，`saveMetadata` 被当结构化存储用（无查询/索引/事务） | 待决策 |
+| [Koishi 兼容层](docs/roadmap/koishi-compat.md) | 嵌入真实 Koishi 内核让其插件直接运行 | 已验证可行，待实施 |
 
 ## 开发进度
 
