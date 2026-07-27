@@ -108,13 +108,13 @@ ctx.on(`myplugin:channel:${channelId}`, async (msg) => { ... }); // msg: Channel
 中间件采用 `(data, next)` 签名。调用 `next()` 将控制权传递给下一个中间件（或最终的 defaultAction）。**不调用 `next()` 即中断整个管道**——这是拦截消息的标准做法。
 
 ```
-hooks.run(hookName, data, defaultAction)
+ctx.runHook(hookName, data, defaultAction)
   │
   ▼
-中间件 A (priority=200) ─── await fn(data, next)
+中间件 A（先注册） ───── await fn(data, next)
   │ next()                     │ 不调用 next() → 中断
   ▼                             ▼
-中间件 B (priority=100)      管道终止，defaultAction 不执行
+中间件 B（后注册）        管道终止，defaultAction 不执行
   │ next()
   ▼
 defaultAction() ← 所有中间件都 next() 后执行
@@ -123,19 +123,18 @@ defaultAction() ← 所有中间件都 next() 后执行
 ### API
 
 ```typescript
-// 注册中间件（优先级越高越先执行）
+// 注册中间件（同一钩子内按注册顺序执行）
 const dispose = ctx.middleware('agent:reply:before', async (data, next) => {
   data.content = processContent(data.content);
   await next();
-}, 50); // priority=50
+});
 
 // 执行管道（由 Agent 或其他插件调用）
-await ctx.hooks.run('agent:reply:before', { content: '...' }, async () => {
+await ctx.runHook('agent:reply:before', { content: '...' }, async () => {
   // defaultAction: 所有中间件通过后才执行
 });
 
-// 按 contextId 移除所有中间件（插件卸载时自动执行）
-ctx.hooks.unregisterByContext(contextId);
+// dispose() 可手动解除；插件卸载时本 ctx 注册的中间件自动清扫
 ```
 
 ### 内置钩子
@@ -153,37 +152,35 @@ ctx.hooks.unregisterByContext(contextId);
 
 ### 中间件特性
 
-- **优先级排序**: 按 priority 降序执行（数字越大越先执行）
+- **注册顺序执行**: 同一钩子内按注册顺序串行执行（无优先级数字；相位间次序由调度方显式表达）
 - **数据修改**: data 通过引用传递，修改 data 对象即影响后续中间件和 defaultAction
 - **流程控制**: 调用 `next()` 继续管道；不调用则中止后续中间件和 defaultAction
 - **上下文绑定**: 每个中间件关联 contextId，插件卸载时自动清理（通过 `unregisterByContext`）
 
 ### 典型用法
 
+> **往提示词里加内容不要用本钩子**——那是 `agent:prompt` 贡献点的活（`ctx.contribute`，
+> 见 [architecture.md 扩展机制](../architecture.md#核心扩展机制)）：贡献点自带幂等、确定性排布与
+> 错误隔离，中间件手搓 `unshift` 三者全无。本钩子留给**改写 / 截停**语义。
+
 ```typescript
 // 1. 拦截消息（不调用 next = 中断管道）
 ctx.middleware('agent:input:before', async (data, next) => {
   if (shouldBlock(data.message)) return; // 不调用 next，整个管道终止
   await next();
-}, 100);
-
-// 2. 注入上下文到 LLM 调用
-ctx.middleware('agent:llm:before', async (data, next) => {
-  data.messages.unshift({ role: 'system', content: '额外上下文...' });
-  await next();
 });
 
-// 3. 后处理回复内容
+// 2. 后处理回复内容
 ctx.middleware('agent:reply:before', async (data, next) => {
   await next();
   data.content = transform(data.content);
 });
 
-// 4. 替换工具列表（如工具搜索层）
+// 3. 替换工具列表（如工具搜索层）
 ctx.middleware('agent:llm:before', async (data, next) => {
   data.tools = await searchRelevantTools(data.messages);
   await next();
-}, 50);
+});
 ```
 
 ### 扩展自定义钩子
@@ -198,8 +195,8 @@ declare module '@aalis/core' {
   }
 }
 
-// 定义钩子的插件：在关键路径上调用 hooks.run
-await ctx.hooks.run('schedule:before', { jobId, cron }, async () => {
+// 定义钩子的插件：在关键路径上调用 ctx.runHook
+await ctx.runHook('schedule:before', { jobId, cron }, async () => {
   // defaultAction: 执行调度任务
   await executeJob(jobId);
 });
@@ -212,4 +209,4 @@ ctx.middleware('schedule:before', async (data, next) => {
 });
 ```
 
-自定义 hook 需要通过 declaration merging 扩展 `HookContextMap`，这样 `ctx.middleware()` 和 `ctx.hooks.run()` 都能获得精确类型。
+自定义 hook 需要通过 declaration merging 扩展 `HookContextMap`，这样 `ctx.middleware()` 和 `ctx.runHook()` 都能获得精确类型。

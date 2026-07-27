@@ -13,7 +13,7 @@
 `@aalis/plugin-embedding-api` 的全部导出（`packages/plugin-embedding-api/src/index.ts`）：
 
 ```ts
-// packages/plugin-embedding-api/src/index.ts:6-11
+// packages/plugin-embedding-api/src/index.ts
 export interface EmbeddingService {
   /** 将文本转为向量 */
   embed(text: string): Promise<number[]>;
@@ -25,7 +25,7 @@ export interface EmbeddingService {
 并通过 declaration merging 把服务名登记进核心的 `ServiceTypeMap`，使 `getService('embedding')` 拿到强类型：
 
 ```ts
-// packages/plugin-embedding-api/src/index.ts:14-18
+// packages/plugin-embedding-api/src/index.ts
 declare module '@aalis/core' {
   interface ServiceTypeMap {
     embedding: EmbeddingService;
@@ -67,15 +67,15 @@ Ollama 实现（`packages/plugin-embedding-ollama/src/index.ts`）：
 ### 典型消费点
 
 **参考消费者 `@aalis/plugin-memory-vector`**（向量记忆，硬依赖）：
-- 声明依赖：`export const inject = { required: ['vectorstore', 'embedding'], optional: ['memory'] }`（`packages/plugin-memory-vector/src/index.ts:17-20`），并同步写在 `package.json` 的 `aalis.service.required`。
+- 声明依赖：`export const inject = { required: ['vectorstore', 'embedding'], optional: ['memory'] }`（`packages/plugin-memory-vector/src/index.ts`），并同步写在 `package.json` 的 `aalis.service.required`。
 - 取用：`function getEmbedder() { return ctx.getService<EmbeddingService>('embedding')!; }`（`:254-256`）——封装成函数，**每次用都重新 getService**（lazy）。
 - 调用点：索引时 `await getEmbedder().embed(embedText)`（`:355`），查询时 `await getEmbedder().embed(query)`（`:492`、`:751`），得到向量后交给 `vectorstore` 检索。
 
 **可选消费者 `@aalis/plugin-user-relation`**（实体/事件去重的语义召回，软依赖）：
-- 取用：`const embedding = this.ctx?.getService<EmbeddingService>('embedding')`（`packages/plugin-user-relation/src/service.ts:2632`、`:3418`、`:3882`）。
+- 取用：`const embedding = this.ctx?.getService<EmbeddingService>('embedding')`（`packages/plugin-user-relation/src/service.ts`、`:3418`、`:3882`）。
 - 缺失即降级：`if (!embedding) return null;`（`:2637` 附近的 `ensureEntityEmbedding`），不报错、走非语义路径。
 
-**WebUI（`@aalis/plugin-webui-server`）** 通过 `listModels` 聚合下拉：对配置里 `dynamicOptions: 'embedding'` 的字段，调 `ctx.getAllServices('embedding')` 遍历所有提供者，逐个 `await provider.instance.listModels()` 汇总（`packages/plugin-webui-server/src/index.ts:904-944`）。单个提供者失败不影响整体。
+**WebUI（`@aalis/plugin-webui-server`）** 通过 `listModels` 聚合下拉：对配置里 `dynamicOptions: 'embedding'` 的字段，调 `ctx.getAllServices('embedding')` 遍历所有提供者，逐个 `await provider.instance.listModels()` 汇总（`packages/plugin-webui-server/src/index.ts`）。单个提供者失败不影响整体。
 
 ## 4. 写一个 provider
 
@@ -160,10 +160,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
 ### priority / entryId / label
 
-`ctx.provide(name, instance, { priority?, label?, entryId? })`（`packages/core/src/context.ts:185-204`）：
+`ctx.provide(name, instance, { priority?, label?, entryId? })`（`packages/core/src/context.ts`）：
 
-- `priority`：默认 `0`（`ServicePriority.Backend`）。同名服务竞争时，winner = **preference > priority > 注册顺序**；要让自己默认压过普通后端用 `ServicePriority.Override = 50`，系统级覆盖才用 `200`（`packages/core/src/types/service.ts:18-31`）。普通第三方提供者保持 `0` 即可，让用户在 WebUI 里用 preference 选。
-- `entryId`：默认 `this.id`，**必须以 `this.id` 为前缀（`/` 分隔）**，否则卸载时无法连带注销（`context.ts:179-183`）。一个插件想登记多个 embedding 实例（如多端点）时用 `${ctx.id}/${sub}`。
+- `priority`：默认 `0`（`ServicePriority.Backend`）。同名服务竞争时，winner = **preference > priority > 注册顺序**；要让自己默认压过普通后端用 `ServicePriority.Override = 50`，系统级覆盖才用 `200`（`packages/core/src/types/service.ts`）。普通第三方提供者保持 `0` 即可，让用户在 WebUI 里用 preference 选。
+- `entryId`：默认 `this.id`，**必须以 `this.id` 为前缀（`/` 分隔）**，否则卸载时无法连带注销（`context.ts`）。一个插件想登记多个 embedding 实例（如多端点）时用 `${ctx.id}/${sub}`。
 - `label`：人类可读名，WebUI 选择器和 `getAllServices` 里展示（两个参考实现都用 `\`OpenAI / ${model}\`` 这种形态）。
 
 详见 [service-model](../concepts/service-model.md) 与 [core/service](../core/service.md)。
@@ -197,7 +197,7 @@ const vec = await embedding.embed(text);
 
 ### 错误边界
 
-`embed()` 会抛（网络错误 / 非 2xx）。消费者批量索引时要自己兜异常，别让单条失败炸掉整批——memory-vector 是逐条入队 + 后台并发索引（`indexing.concurrency`，`index.ts:293`、默认 10），并提示「过高可能压垮本地 embedding 服务」（`:85`）。`listModels()` 按约定**永不抛**（失败返回 `[]`），消费方仍应防御性兜底。
+`embed()` 会抛（网络错误 / 非 2xx）。消费者批量索引时要自己兜异常，别让单条失败炸掉整批——memory-vector 是逐条入队 + 后台并发索引（`indexing.concurrency`，`index.ts`、默认 10），并提示「过高可能压垮本地 embedding 服务」（`:85`）。`listModels()` 按约定**永不抛**（失败返回 `[]`），消费方仍应防御性兜底。
 
 ## 6. 能力 / 风险 → 影响
 
@@ -210,7 +210,7 @@ const vec = await embedding.embed(text);
 
 - **「注册成功 ≠ 可用」**：连通性自检失败只 warn（§3），服务照样注册。消费者第一次 `embed` 才会真正暴露端点不可达 / key 错误，要做好首调错误处理。
 - **无批量 API**：契约只有单条 `embed`。大批量索引靠消费者并发，注意限流（memory-vector 的 `indexing.concurrency` / `maxQueueSize`）以免压垮本地服务。
-- **`listModels` 语义弱**：Ollama 实现把 `/api/tags` 的**所有**模型都返回（未真正过滤 embedding 类，见 `ollama/src/index.ts:124-126` 的注释「没有特征可辨别就全返回」），下拉里会混入非 embedding 模型，用户可能选错。
+- **`listModels` 语义弱**：Ollama 实现把 `/api/tags` 的**所有**模型都返回（未真正过滤 embedding 类，见 `ollama/src/index.ts` 的注释「没有特征可辨别就全返回」），下拉里会混入非 embedding 模型，用户可能选错。
 - **OpenAI 端点形态固定**：openai provider 硬编码 `/v1/embeddings` 路径，仅适配 OpenAI 兼容协议；非兼容服务要单独写 provider。
 - **维度漂移**（承 §6）：换模型后老向量与新查询向量不可比，余弦相似度结果无意义；这是运维层最常见的坑，文档/配置项应显式提醒重建。
 
