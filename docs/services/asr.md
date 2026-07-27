@@ -45,15 +45,7 @@ export interface TranscribeResult {
 
 输入的 `attachment.data` 是一个字符串，约定承载多种来源（`packages/plugin-message-api/src/index.ts`）：base64 data URL / `http(s)://` URL / `file://` URI / storage URI（`<root>:/path`）。provider 负责把它物化成可读字节，下文「写一个 provider」详述。
 
-取服务助手（`index.ts`）——等价于 `ctx.getService('asr')`，无可用后端返回 `undefined`：
-
-```ts
-export function useASRService(ctx: Context): ASRService | undefined {
-  return ctx.getService<ASRService>('asr');
-}
-```
-
-接口经 declaration merging 登记到 `ServiceTypeMap`（`index.ts`），所以 `ctx.getService('asr')` 在装了本契约包的工程里能自动推断为 `ASRService | undefined`。
+接口经 declaration merging 登记到 `ServiceTypeMap`（`index.ts`），所以 `ctx.getService('asr')` 在装了本契约包的工程里能自动推断为 `ASRService | undefined`——无可用后端时即为 `undefined`。
 
 > 注意契约包头部注释（`index.ts`）写的 `getService('asr', ['audio'])`「按偏好 > 优先级 > capability 解析」是**过时措辞**：0.5.0 已删除内核的「服务能力选择层」，`getService(name)` 只接受名字一个参数（`packages/core/src/context.ts`），仲裁只看「偏好 > 优先级 > 注册顺序」。详见 `docs/concepts/service-model.md`。
 
@@ -168,10 +160,10 @@ manifest 是双源的（`docs/concepts/manifest-metadata.md`）：
 ### lazy 取服务，不要缓存实例
 
 ```ts
-import { useASRService } from '@aalis/plugin-asr-api';
+import type { ASRService } from '@aalis/plugin-asr-api';
 
 async function transcribeOne(ctx: Context, att: MessageAttachment) {
-  const asr = useASRService(ctx);       // 即取即用；等价 ctx.getService('asr')
+  const asr = ctx.getService<ASRService>('asr');   // 即取即用，别存进字段
   if (!asr) return undefined;           // 没装任何 asr 后端 → 优雅降级
   const { text } = await asr.transcribe({ attachment: att, language: 'zh' }, ctx);
   return text;

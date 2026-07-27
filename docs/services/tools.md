@@ -10,8 +10,6 @@
 
 工具是「能力（capability）」在 LLM 侧的一种 surface（另一种是指令 command，见 [`docs/core/commands.md`](../core/commands.md)）。两者共用同一套 authority 执行守卫，详见 [`docs/concepts/security-model.md`](../concepts/security-model.md)、[`docs/core/authority.md`](../core/authority.md)。
 
-> 既有 [`docs/core/tools.md`](../core/tools.md) 还把源码标成 `packages/core/src/tools.ts`，那是迁移前的旧路径；以本文与上述 file:line 为准。
-
 ## 2. 契约（`@aalis/plugin-tools-api`）
 
 ### 2.1 LLM 函数声明协议

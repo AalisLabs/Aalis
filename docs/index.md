@@ -2,8 +2,8 @@
 layout: home
 hero:
   name: Aalis
-  text: 可扩展的 LLM 聊天机器人框架
-  tagline: 接入 QQ 等平台，按需装插件，接你想用的大模型——一行命令起一个自己的 bot，数据留在自己机器上。
+  text: 可扩展的插件化框架
+  tagline: 当下主场是 LLM Agent / Bot 混合，但不止于此。
   actions:
     - theme: brand
       text: 快速上手
