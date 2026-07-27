@@ -215,3 +215,37 @@ export interface WebuiPageDef {
   renderer?: string;
   content?: WebuiComponent[];
 }
+
+// ===== 会话 =====
+
+/** 会话级配置覆盖。字段与 `@aalis/plugin-session-manager-api` 的 SessionConfig 同义。 */
+export interface SessionConfigData {
+  /** 会话级 LLM 覆盖：`{ provider, model }` 二元组。编辑器只读写此字段。 */
+  llm?: { provider: string; model: string };
+  /** @deprecated legacy：旧版编辑器写过的 flat 字段，保留仅用于读旧数据并折叠到 llm。 */
+  model?: string;
+  /** @deprecated legacy */
+  llmProvider?: string;
+  persona?: string;
+  enabledToolGroups?: string[];
+  systemPromptExtra?: string;
+  maxToolIterations?: number;
+  disableOutputFormat?: boolean;
+  clientSideJsonRendering?: boolean;
+}
+
+/** 会话列表项（listSessions 的返回元素）。 */
+export interface SessionItem {
+  id: string;
+  name: string;
+  title?: string;
+  displayTitle?: string;
+  status: string;
+  children: string[];
+  childCount: number;
+  parentId?: string;
+  inputContext?: string;
+  result?: string;
+  createdAt: number;
+  config?: SessionConfigData;
+}

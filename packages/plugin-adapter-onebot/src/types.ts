@@ -163,14 +163,6 @@ export interface OneBotProtocol {
   parseRequestEvent(raw: OneBotRawEvent, fallbackSelfId: string): NormalizedRequestEvent | null;
 }
 
-/** 从 OneBot 消息段数组中提取纯文本 */
-export function extractText(segments: OneBotMessageSegment[]): string {
-  return segments
-    .filter(seg => seg.type === 'text')
-    .map(seg => String(seg.data.text ?? ''))
-    .join('');
-}
-
 /**
  * 将 OneBot 消息段数组转换为富文本（含 XML 标记），供 LLM 消费。
  * @param segments 消息段数组
@@ -252,101 +244,6 @@ export function getForwardNodes(data: unknown): unknown[] {
   if (Array.isArray(obj.message)) return obj.message;
   if (Array.isArray(obj.content)) return obj.content;
   return [];
-}
-
-function getForwardNodeData(item: unknown): Record<string, unknown> {
-  if (!item || typeof item !== 'object') return {};
-  const node = item as Record<string, unknown>;
-  if (node.type === 'node' && node.data && typeof node.data === 'object') {
-    return node.data as Record<string, unknown>;
-  }
-  return node;
-}
-
-function getForwardNodeContent(item: unknown): unknown {
-  const node = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
-  const nodeData = getForwardNodeData(item);
-  return nodeData.content ?? node.content ?? nodeData.message ?? node.message;
-}
-
-/** 把节点 content（消息段数组或 CQ 字符串）渲染成短文本（无图像识别） */
-function renderForwardNodeContent(content: unknown): string {
-  if (typeof content === 'string') {
-    // 简单去掉 CQ 富码占位
-    return content
-      .replace(/\[CQ:image[^\]]*\]/g, '[图片]')
-      .replace(/\[CQ:face,[^\]]*id=(\d+)[^\]]*\]/g, '[表情:$1]')
-      .replace(/\[CQ:at,[^\]]*qq=(\d+)[^\]]*\]/g, '<at id="$1">$1</at>')
-      .replace(/\[CQ:reply[^\]]*\]/g, '')
-      .replace(/\[CQ:forward,[^\]]*id=([^,\]]+)[^\]]*\]/g, '<forward id="$1">[合并转发消息]</forward>')
-      .replace(/\[CQ:[a-z]+[^\]]*\]/g, '');
-  }
-  if (!Array.isArray(content)) return '';
-  return content
-    .map(seg => {
-      if (!seg || typeof seg !== 'object') return '';
-      const s = seg as { type?: string; data?: Record<string, unknown> };
-      const data = s.data ?? {};
-      switch (s.type) {
-        case 'text':
-          return String(data.text ?? '');
-        case 'at':
-          return data.qq === 'all' ? '<at>all</at>' : `<at id="${String(data.qq ?? '')}">${String(data.qq ?? '')}</at>`;
-        case 'face':
-          return `[表情:${String(data.id ?? '')}]`;
-        case 'image':
-          return '[图片]';
-        case 'reply':
-          return '';
-        case 'forward':
-          return data.id ? `<forward id="${String(data.id)}">[合并转发消息]</forward>` : '[合并转发消息]';
-        case 'record':
-          return '[语音]';
-        case 'video':
-          return '[视频]';
-        case 'share':
-          return `[分享:${String(data.title ?? '')}]`;
-        case 'json':
-          return '[JSON卡片]';
-        case 'xml':
-          return '[XML卡片]';
-        default:
-          return s.type ? `[${s.type}]` : '';
-      }
-    })
-    .join('');
-}
-
-/**
- * 把 get_forward_msg 返回的数据格式化为内联可读文本，
- * 用 <forward id="..."> ... </forward> 包裹，便于和原始占位符替换。
- */
-export function formatForwardInline(forwardId: string, data: unknown, limit = 30): string {
-  const nodes = getForwardNodes(data);
-  if (nodes.length === 0) {
-    return `<forward id="${forwardId}">[合并转发消息：内容为空或当前 OneBot 实现未返回节点]</forward>`;
-  }
-  const shown = nodes.slice(0, limit);
-  const lines = shown.map((item, i) => {
-    const nodeData = getForwardNodeData(item);
-    const senderObj = (item && typeof item === 'object' ? (item as Record<string, unknown>).sender : undefined) as
-      | Record<string, unknown>
-      | undefined;
-    const name = String(
-      nodeData.nickname ??
-        senderObj?.nickname ??
-        nodeData.name ??
-        nodeData.user_id ??
-        senderObj?.user_id ??
-        `节点${i + 1}`,
-    );
-    const userId = nodeData.user_id ?? nodeData.uin ?? senderObj?.user_id;
-    const prefix = userId != null ? `${name}(${String(userId)})` : name;
-    const text = renderForwardNodeContent(getForwardNodeContent(item)).trim() || '[空消息]';
-    return `${i + 1}. ${prefix}: ${text}`;
-  });
-  const more = nodes.length > shown.length ? `（仅显示前 ${shown.length}/${nodes.length} 条）` : '';
-  return `<forward id="${forwardId}">\n合并转发共 ${nodes.length} 条${more}：\n${lines.join('\n')}\n</forward>`;
 }
 
 /** 扫描消息段中的所有 forward 段，返回 {id, inlineNodes?} 列表 */

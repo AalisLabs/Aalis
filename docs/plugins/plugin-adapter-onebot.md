@@ -35,7 +35,7 @@ meta.inject = { optional: ['llm'] }
 | 文件 | 说明 |
 |---|---|
 | `index.ts` | 主入口，连接管理、事件分发、PlatformAdapter 实现 |
-| `types.ts` | 类型定义、`extractText()` 工具函数 |
+| `types.ts` | 类型定义、`segmentsToText()` 富文本渲染、forward 段解析工具 |
 | `v11.ts` | OneBot v11 协议处理器 |
 | `v12.ts` | OneBot v12 协议处理器 |
 
