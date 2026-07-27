@@ -20,6 +20,7 @@ import type {
   PositionalArgSpec,
   PositionalArgType,
 } from '@aalis/plugin-commands-api';
+import { renderDetail } from './help.js';
 
 // ============================================================================
 // 命令注册表（v2 — 链式 builder）
@@ -373,45 +374,17 @@ export class CommandRegistry implements CommandService {
 
   // ---- usage 自动格式化 ----
 
+  /**
+   * 单条指令的用法详情。与 `/help <指令>` 共用同一个渲染器（help.ts 的
+   * renderDetail）——裸调用分组、未知选项报错、help 详情三条路径一处修全部好。
+   */
   private formatUsage(cmd: Command): string {
     if (cmd.usage) return cmd.usage;
-    const head = `${this.prefix}${cmd.name.replace(/\./g, ' ')}`;
-    const argText = cmd.positionalArgs
-      .map(a => (a.required ? `<${a.name}:${a.type}>` : `[${a.name}:${a.type}]`))
-      .join(' ');
-    const optionText = cmd.options.length > 0 ? ' [options]' : '';
-    const subs = this.directChildren(cmd.name);
-    const subText = subs.length > 0 && !cmd.handler ? ' <subcommand>' : '';
-    const lines: string[] = [`用法: ${head}${subText}${argText ? ` ${argText}` : ''}${optionText}`, ''];
-    lines.push(cmd.description);
-    if (cmd.positionalArgs.length > 0) {
-      lines.push('', '参数：');
-      for (const a of cmd.positionalArgs) {
-        lines.push(`  ${a.required ? '<' : '['}${a.name}:${a.type}${a.required ? '>' : ']'}`);
-      }
-    }
-    if (cmd.options.length > 0) {
-      lines.push('', '选项：');
-      for (const o of cmd.options) {
-        const flags = [`--${o.name}`, ...o.aliases.map(a => `-${a}`)].join(', ');
-        const val =
-          o.type === 'boolean' ? '' : o.valueOptional ? ` [${o.valueName ?? o.name}]` : ` <${o.valueName ?? o.name}>`;
-        const choices = o.choices && o.choices.length > 0 ? ` (${o.choices.join('|')})` : '';
-        lines.push(`  ${flags}${val} — ${o.description ?? o.type}${choices}`);
-      }
-    }
-    if (subs.length > 0) {
-      lines.push('', '可用子指令：');
-      for (const s of subs) {
-        const child = this.materialize(s);
-        lines.push(`  ${child.name.split('.').pop()} — ${child.description}`);
-      }
-    }
-    if (cmd.examples && cmd.examples.length > 0) {
-      lines.push('', '示例：');
-      for (const e of cmd.examples) lines.push(`  ${e}`);
-    }
-    return lines.join('\n');
+    return renderDetail(
+      cmd,
+      this.directChildren(cmd.name).map(n => this.materialize(n)),
+      this.prefix,
+    );
   }
 
   private directChildren(parent: string): string[] {
