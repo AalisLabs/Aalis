@@ -55,15 +55,23 @@
 - 直接挂在 `_disposables` 链上，逆序执行
 - 在 `ctx.dispose()` 的任何路径上都会触发（app 停机 / bounce / unload / updatePluginConfig / softReload 级联）
 - fork 子上下文同样适用
+- **可以返回 Promise**：编排层（PluginManager / App）在 unload / bounce / 停机
+  路径上走 `disposeAsync`，会逐项**等待**异步清理完成——落盘、关连接类收尾
+  从此真正落地，不再是"开始执行就算完"
 
-> ⚠️ 不要用 `ctx.on('app:stopping', …)` 做资源清理 —— 那只在 app 全局停机时触发一次，**不会**在插件 bounce / hot reload 时触发，会造成旧连接、旧定时器泄漏。
+> ⚠️ 不要用 `ctx.on('app:stopping', …)` 做资源清理 —— 那只在 app 全局停机时触发一次，**不会**在插件 bounce / hot reload 时触发，会造成旧连接、旧定时器泄漏与数据丢失。该事件定位是通知（如 CLI 打印告别语），不是清理通道。
 
-### `ctx.dispose()`
+### `ctx.dispose()` / `ctx.disposeAsync(timeoutMs?)`
+
+两者语义相同，`dispose()` 同步返回（异步清理不等待）、`disposeAsync` 逆序串行等待每个异步清理完成（编排层用）：
 
 1. 级联销毁所有子 Context
 2. 通过 `ServiceContainer.unregisterByContext()` 移除该 Context 注册的服务
-3. 逆序执行所有注册的 disposable（事件监听、中间件、命令注册等）
-4. 触发服务自清理协议：实现 `unregisterByPlugin(id)` 的服务会被通知清理该 Context 的注册项
+3. 注销该 Context 的中间件与贡献（在清理链**之前**——异步等待窗口内半拆插件不再响应消息、不再被组装器收集）
+4. 逆序执行所有注册的 disposable（事件监听、命令注册、onDispose 回调等）
+5. 触发服务自清理协议：实现 `unregisterByPlugin(id)` 的服务会被通知清理该 Context 的注册项
+
+`disposeAsync` 的 `timeoutMs`（App 经 `AppOptions.disposeTimeoutMs` 注入，默认 5000）是单个异步清理项的等待上限：超时放弃该项、继续后续清理并 warn 点名，保证网络类关闭卡死时停机仍能走完。
 
 ## 事件 API
 
