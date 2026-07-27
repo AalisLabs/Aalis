@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,16 +16,29 @@ const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 // npm search 的 keywords: 逗号分隔 = 任一命中（核心/工具链不带任何类型词，自然不进市场）。
 const AALIS_KEYWORDS = ['aalis-plugin', 'aalis-util', 'aalis-api', 'aalis-interface'];
 const SEARCH_TIMEOUT_MS = 8000;
-// 合法 npm 包名（可选 scope）+ 可选 @version 后缀（支持指定版本安装）
-const PKG_NAME_RE = /^(@[a-z0-9\-_.]+\/)?[a-z0-9\-_.]+(@[a-z0-9.-]+)?$/i;
+// 合法 npm 包名（可选 scope）+ 可选 @version 后缀（支持指定版本安装）。
+//
+// 名段与版本段的首字符**都**必须是字母数字。该值最终作为一个 argv 传给 npm，而 npm 会：
+//   - 把以 `-` 开头的 token 当命令行标志（`--force`、`--ignore-scripts` 都是 npm 上真实存在的可发布包名）；
+//   - 把 `.` / `..` / `./x` 当本地目录 spec —— **`foo@.` 与 `@a/b@..` 同样是目录 spec**，
+//     只锚名段挡不住；实测这条能让 npm 转去打包宿主工作目录并执行其 prepack/prepare 生命周期脚本。
+// 两段各自锚住首字符，即封死目录 spec 与标志注入两条面。
+const PKG_NAME_RE = /^(@[a-z0-9][a-z0-9\-_.]*\/)?[a-z0-9][a-z0-9\-_.]*(@[a-z0-9][a-z0-9.-]*)?$/i;
 
 interface MarketplacePackage {
   name: string;
+  /** npm 上的最新版（检索结果自带）。注意：**不是**本地已装版本，那是 resolved。 */
   version: string;
   description: string;
   author?: string;
   /** 该插件名是否已在本地激活/注册 */
   installed: boolean;
+  /** 本地已装版本。与 version 不等即「可更新」；未装 / 版本读不到则缺省。 */
+  resolved?: string;
+  /** 根 package.json 里的原始声明（`^0.9.1` / `workspace:*` / `file:../x`）。未装或非直接依赖为 undefined。 */
+  request?: string;
+  /** 本地这份从哪来。只有 registry 谈得上经市场更新。未装则缺省。 */
+  origin?: PkgOrigin;
   /** @aalis/ scope = 官方插件；其余为社区（npm 自带信号，零额外维护） */
   official: boolean;
   /** 组件类别（按包名分类，供前端分页/筛选）：功能插件 / api 契约 / 前端 */
@@ -173,24 +187,126 @@ export function buildDependencyChain(
   return build(target, 0, new Set());
 }
 
+/**
+ * 本地这份包从哪来。
+ *
+ * 判据是**根 package.json 的依赖声明**，不是解析出来的文件路径——路径只说明代码躺在哪，
+ * 说明不了它归谁管。典型反例：传递依赖（父包拉进来的）和直装包一样躺在 node_modules 里，
+ * 路径完全相同，但前者的版本由父包的范围决定，市场独立升它只会和父包打架。
+ *
+ * 只有 registry 一档谈得上「经市场更新」；其余各有自己的更新途径，市场应如实说明而非给一个做不到的按钮。
+ */
+export type PkgOrigin =
+  /** 根 dependencies 声明了 semver 范围 —— npm 装的，可经市场更新 */
+  | 'registry'
+  /** `workspace:` —— pnpm 工作区包，源码在仓库里 */
+  | 'workspace'
+  /** `file:` / `link:` —— 本地链接 */
+  | 'link'
+  /** git / URL / tarball —— 外部源 */
+  | 'git'
+  /** 不在根 dependencies，但本地存在 —— 传递依赖，或 monorepo 工作区源码 */
+  | 'transitive';
+
+/** 依赖声明字符串 → 来源分档。纯函数，便于单测。 */
+export function classifyOrigin(spec: string | undefined): PkgOrigin {
+  if (spec === undefined) return 'transitive';
+  if (spec.startsWith('workspace:')) return 'workspace';
+  if (spec.startsWith('file:') || spec.startsWith('link:') || spec.startsWith('portal:')) return 'link';
+  if (/^(git|github:|gitlab:|bitbucket:|https?:)/.test(spec)) return 'git';
+  return 'registry'; // semver 范围 / dist-tag（latest 等）/ npm: 别名
+}
+
+/** 本地已装包的实况。未装则 undefined。 */
+export interface LocalPkgInfo {
+  version?: string;
+  request?: string;
+  origin: PkgOrigin;
+  keywords?: string[];
+  description?: string;
+}
+
+/**
+ * 汇总三路信号判定本地实况。纯函数，便于单测——这处判断依赖部署形态，易错，必须能被测住。
+ *
+ * @param request 根 package.json 里该包的依赖声明；不在其中则 undefined
+ * @param meta    从项目根 resolve 到并读出的 package.json；resolve 不到则 undefined
+ * @param inScan  该包是否出现在本地目录扫描结果里（扫 monorepo packages/ 与 node_modules/@aalis）
+ */
+export function resolveLocalInfo(
+  request: string | undefined,
+  meta: { version?: string; keywords?: string[]; description?: string } | undefined,
+  inScan: boolean,
+): LocalPkgInfo | undefined {
+  if (meta) {
+    return {
+      version: meta.version,
+      request,
+      origin: classifyOrigin(request),
+      keywords: meta.keywords,
+      description: meta.description,
+    };
+  }
+  // resolve 不到（不在 node_modules）却被扫描扫出来 → 只能来自 monorepo 的 packages/ 源码目录。
+  // 此处不可沿用 classifyOrigin(undefined)=transitive：那是「在 node_modules 里但非直接依赖」的语义，
+  // 而这里的包压根不在 node_modules。实测本仓库 @aalis/plugin-commands 等全部走这条分支。
+  if (inScan) return { request, origin: 'workspace' };
+  return undefined;
+}
+
 /** npm search 响应 → 市场卡片列表（标注已装 + 官方 + 富信息）。纯函数，便于单测。 */
-export function toMarketplacePackages(data: NpmSearchResponse, installed: Set<string>): MarketplacePackage[] {
-  return (data.objects ?? []).map(o => ({
-    name: o.package.name,
-    version: o.package.version,
-    description: o.package.description ?? '',
-    author: o.package.publisher?.username,
-    installed: installed.has(o.package.name),
-    official: o.package.name.startsWith('@aalis/'),
-    category: classifyPackage(o.package.keywords ?? []),
-    keywords: (o.package.keywords ?? []).filter(k => !AALIS_KEYWORDS.includes(k)),
-    downloads: o.downloads?.monthly,
-    updated: o.updated ?? o.package.date,
-    score: o.score?.final,
-    insecure: o.flags?.insecure ? true : undefined,
-    license: o.package.license,
-    links: o.package.links,
-  }));
+export function toMarketplacePackages(
+  data: NpmSearchResponse,
+  installed: Set<string>,
+  /** 本地实况查询。缺省则卡片无 resolved，前端退化为「已安装但版本未知」。 */
+  localOf: (name: string) => LocalPkgInfo | undefined = () => undefined,
+): MarketplacePackage[] {
+  return (data.objects ?? []).map(o => {
+    const local = localOf(o.package.name);
+    return {
+      name: o.package.name,
+      version: o.package.version,
+      resolved: local?.version,
+      request: local?.request,
+      origin: local?.origin,
+      description: o.package.description ?? '',
+      author: o.package.publisher?.username,
+      installed: installed.has(o.package.name),
+      official: o.package.name.startsWith('@aalis/'),
+      category: classifyPackage(o.package.keywords ?? []),
+      keywords: (o.package.keywords ?? []).filter(k => !AALIS_KEYWORDS.includes(k)),
+      downloads: o.downloads?.monthly,
+      updated: o.updated ?? o.package.date,
+      score: o.score?.final,
+      insecure: o.flags?.insecure ? true : undefined,
+      license: o.package.license,
+      links: o.package.links,
+    };
+  });
+}
+
+/**
+ * npm 检索不可达时的降级卡片：只用本地实况拼。
+ * 国内多数镜像不支持 search API，这是常态而非边角情形——降级必须仍能管理已装插件，
+ * 而不是给一句 warning 配一张空列表。分类走本地 keywords，与在线路径同一判据。纯函数，便于单测。
+ */
+export function toLocalPackages(local: ReadonlyMap<string, LocalPkgInfo>): MarketplacePackage[] {
+  return [...local.entries()]
+    .filter(([, info]) => (info.keywords ?? []).some(k => AALIS_KEYWORDS.includes(k)))
+    .map(([name, info]) => ({
+      name,
+      // 离线拿不到 npm latest，用本地版本占位，前端因 resolved === version 而不显示「可更新」。
+      version: info.version ?? '',
+      resolved: info.version,
+      request: info.request,
+      origin: info.origin,
+      description: info.description ?? '',
+      installed: true,
+      official: name.startsWith('@aalis/'),
+      category: classifyPackage(info.keywords ?? []),
+      keywords: (info.keywords ?? []).filter(k => !AALIS_KEYWORDS.includes(k)),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** npm packument → 装前能力清单（读 latest 版本的 aalis.service + 依赖名）。纯函数，便于单测。 */
@@ -240,18 +356,42 @@ export function registerMarketplaceRoutes(
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     const status = getPluginMgr()?.getStatus() ?? [];
     // 已装判定独立于 getStatus（后者只含已加载运行时插件，漏掉带 marker 不加载的 api/前端/核心）。
-    // 两路补判：① 本地物理存在（含 monorepo packages/ 工作区包——require.resolve 从仓库根解析不到）；
-    // ② 项目根能 resolve（独立部署的扁平 node_modules / 第三方根依赖）。
+    // 同一次解析顺带取出本地版本：卡片上的 version 是 npm latest，只有拿到本地 resolved
+    // 才能判「可更新」，否则已装包会显示成远端最新版而用户永远看不出落后。
     const localPkgs = getLocalPackages();
     const projectRequire = createRequire(pathToFileURL(resolve(process.cwd(), 'package.json')));
-    const isPresent = (name: string): boolean => {
-      if (localPkgs.has(name)) return true;
+    // 来源判据的唯一真相源：根 package.json 的依赖声明。每请求重读（安装/更新会改写它）。
+    const rootDeps = ((): Record<string, string> => {
       try {
-        projectRequire.resolve(`${name}/package.json`);
-        return true;
+        const root = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf-8')) as {
+          dependencies?: Record<string, string>;
+        };
+        return root.dependencies ?? {};
       } catch {
-        return false;
+        return {};
       }
+    })();
+    /** 读本地 package.json。用 resolve+readFileSync 而非 require()：require 有模块缓存，更新后会返回旧版本号。 */
+    const readPkgJson = (name: string) => {
+      try {
+        return JSON.parse(readFileSync(projectRequire.resolve(`${name}/package.json`), 'utf-8')) as {
+          version?: string;
+          keywords?: string[];
+          description?: string;
+        };
+      } catch {
+        return undefined;
+      }
+    };
+    const readLocal = (name: string): LocalPkgInfo | undefined =>
+      resolveLocalInfo(rootDeps[name], readPkgJson(name), localPkgs.has(name));
+    /** 每个包名只读一次盘，已装判定与版本展示共用。 */
+    const localCache = new Map<string, LocalPkgInfo>();
+    const localOf = (name: string): LocalPkgInfo | undefined => {
+      if (localCache.has(name)) return localCache.get(name);
+      const info = readLocal(name);
+      if (info) localCache.set(name, info);
+      return info;
     };
     // 四类关键词各发一条检索（npm 的 keywords 逗号是 AND 非 OR），并行后按包名合并去重 = OR。
     const fetchKw = async (kw: string): Promise<NpmSearchResponse> => {
@@ -265,14 +405,24 @@ export function registerMarketplaceRoutes(
       const reason = settled.find(s => s.status === 'rejected') as PromiseRejectedResult | undefined;
       const msg = reason?.reason instanceof Error ? reason.reason.message : String(reason?.reason ?? '未知错误');
       ctx.logger.debug(`market: npm registry 检索失败: ${msg}`);
-      res.json({ packages: [], warning: `无法连接 npm 仓库（${msg}），暂时只能管理本地已装插件` });
+      // 降级：只列本地已装。名单取自本地扫描 + 运行时已加载插件（后者覆盖扫描目录之外的部署）。
+      const names = new Set([...localPkgs.keys(), ...status.map(p => p.name)]);
+      for (const n of names) localOf(n);
+      res.json({
+        packages: toLocalPackages(localCache),
+        warning: `无法连接 npm 仓库（${msg}），暂时只能管理本地已装插件`,
+      });
       return;
     }
     const byName = new Map<string, NonNullable<NpmSearchResponse['objects']>[number]>();
     for (const r of okResults) for (const o of r.value.objects ?? []) byName.set(o.package.name, o);
     const merged: NpmSearchResponse = { objects: [...byName.values()] };
-    const installed = augmentInstalled([...byName.keys()], new Set(status.map(p => p.name)), isPresent);
-    res.json({ packages: toMarketplacePackages(merged, installed) });
+    const installed = augmentInstalled(
+      [...byName.keys()],
+      new Set(status.map(p => p.name)),
+      n => localOf(n) !== undefined,
+    );
+    res.json({ packages: toMarketplacePackages(merged, installed, localOf) });
   });
 
   // 依赖图：本地 import 依赖图（name→deps 扫描）+ 运行时服务图（getStatus）合成，供装/卸/装前展示。

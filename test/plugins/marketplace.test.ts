@@ -3,9 +3,13 @@ import {
   augmentInstalled,
   buildDependencyChain,
   buildSearchUrl,
+  classifyOrigin,
   classifyPackage,
   findPackageDependents,
   findServiceDependents,
+  type LocalPkgInfo,
+  resolveLocalInfo,
+  toLocalPackages,
   toManifest,
   toMarketplacePackages,
 } from '../../packages/plugin-webui-server/src/routes/marketplace.js';
@@ -263,5 +267,143 @@ describe('classifyPackage（按类型关键词分类）', () => {
       new Set(),
     );
     expect(pkgs.map(p => p.category)).toEqual(['plugin', 'api', 'interface']);
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 来源判定 —— 一个包「从哪来」由根 package.json 的依赖声明决定，不由文件路径决定。
+//
+// 路径判据（「解析路径含不含 node_modules」）看着能用，实则分不清两类东西：
+// 直装包与传递依赖躺在同一个 node_modules 里、路径完全相同，但后者的版本由父包的
+// 范围决定——市场独立升它只会和父包打架。实测（脚手架部署）：
+//   @aalis/core             根声明 ^0.9.1              → node_modules/@aalis/core
+//   @aalis/plugin-memory-api 不在根 dependencies（传递） → node_modules/@aalis/plugin-memory-api
+// 两者路径同形，唯有根声明能把它们分开。
+// ════════════════════════════════════════════════════════════
+
+describe('classifyOrigin（来源判据 = 根依赖声明）', () => {
+  it('semver 范围与 dist-tag → registry（唯一可经市场更新的一档）', () => {
+    for (const spec of ['^0.9.1', '~1.2.0', '1.x', '*', 'latest', '>=0.2.0 <1.0.0', 'npm:other-pkg@^1']) {
+      expect(classifyOrigin(spec), `${spec} 应判为 registry`).toBe('registry');
+    }
+  });
+
+  it('workspace: → workspace（monorepo 实况：本仓库 @aalis/core 即 workspace:*）', () => {
+    expect(classifyOrigin('workspace:*')).toBe('workspace');
+    expect(classifyOrigin('workspace:^')).toBe('workspace');
+  });
+
+  it('file: / link: / portal: → link', () => {
+    for (const spec of ['file:../local-plugin', 'link:../x', 'portal:../y']) {
+      expect(classifyOrigin(spec), `${spec} 应判为 link`).toBe('link');
+    }
+  });
+
+  it('git 与 URL → git', () => {
+    for (const spec of ['git+ssh://git@github.com/u/r.git', 'github:u/r', 'gitlab:u/r', 'https://x.com/a.tgz']) {
+      expect(classifyOrigin(spec), `${spec} 应判为 git`).toBe('git');
+    }
+  });
+
+  it('不在根 dependencies → transitive（本地存在但非直接依赖，市场不该动它）', () => {
+    expect(classifyOrigin(undefined)).toBe('transitive');
+  });
+});
+
+describe('resolveLocalInfo（三路信号汇总；两种部署形态各有陷阱）', () => {
+  it('脚手架形态：根声明了 semver + 装在 node_modules → registry，可更新', () => {
+    const info = resolveLocalInfo('^0.9.1', { version: '0.9.1', keywords: ['aalis-plugin'] }, false);
+    expect(info?.origin).toBe('registry');
+    expect(info?.version).toBe('0.9.1');
+    expect(info?.request).toBe('^0.9.1');
+  });
+
+  it('脚手架形态：装在 node_modules 但不在根 dependencies → transitive（父包拉进来的）', () => {
+    // 实测：@aalis/plugin-memory-api 由 plugin-memory-inmemory 引入，与直装包路径同形，
+    // 只有「不在根 dependencies」这一条能把它们分开。
+    expect(resolveLocalInfo(undefined, { version: '0.9.0' }, false)?.origin).toBe('transitive');
+  });
+
+  it('monorepo 形态：resolve 不到但扫描扫得到 → workspace，不是 transitive', () => {
+    // 实测：本仓库 @aalis/plugin-commands 不在根 dependencies 且从仓库根 resolve 失败，
+    // 但它是 packages/ 下的工作区源码。若沿用 classifyOrigin(undefined) 会误判为「依赖引入」。
+    const info = resolveLocalInfo(undefined, undefined, true);
+    expect(info?.origin).toBe('workspace');
+    expect(info?.version, '扫描路径拿不到版本号').toBeUndefined();
+  });
+
+  it('monorepo 形态：根声明 workspace: 且能 resolve → workspace（本仓库 @aalis/core 即如此）', () => {
+    expect(resolveLocalInfo('workspace:*', { version: '0.9.1' }, true)?.origin).toBe('workspace');
+  });
+
+  it('三路都没有 → undefined（未安装）', () => {
+    expect(resolveLocalInfo(undefined, undefined, false)).toBeUndefined();
+  });
+});
+
+describe('toLocalPackages（npm 检索不可达时的降级卡片）', () => {
+  const local = new Map<string, LocalPkgInfo>([
+    ['@aalis/plugin-b', { version: '0.9.0', request: '^0.9.0', origin: 'registry', keywords: ['aalis-plugin'] }],
+    ['@aalis/plugin-a', { version: '0.9.1', request: 'workspace:*', origin: 'workspace', keywords: ['aalis-plugin'] }],
+    ['express', { version: '4.0.0', request: '^4', origin: 'registry', keywords: ['http'] }],
+    ['@aalis/plugin-c-api', { version: '0.9.0', origin: 'transitive', keywords: ['aalis-api'] }],
+  ]);
+
+  it('只收带 Aalis 类型关键词的包，按名排序', () => {
+    expect(toLocalPackages(local).map(p => p.name)).toEqual([
+      '@aalis/plugin-a',
+      '@aalis/plugin-b',
+      '@aalis/plugin-c-api',
+    ]);
+  });
+
+  it('剔掉无关第三方库（express 不该出现在插件市场里）', () => {
+    expect(toLocalPackages(local).some(p => p.name === 'express')).toBe(false);
+  });
+
+  it('离线时 version 用本地版本占位，故 resolved === version → 前端不会误报「可更新」', () => {
+    const a = toLocalPackages(local).find(p => p.name === '@aalis/plugin-a');
+    expect(a?.version).toBe(a?.resolved);
+  });
+
+  it('如实带出 origin 与 request，供前端区分工作区 / 传递依赖 / 可更新', () => {
+    const byName = new Map(toLocalPackages(local).map(p => [p.name, p]));
+    expect(byName.get('@aalis/plugin-a')?.origin).toBe('workspace');
+    expect(byName.get('@aalis/plugin-b')?.origin).toBe('registry');
+    expect(byName.get('@aalis/plugin-c-api')?.origin).toBe('transitive');
+    expect(byName.get('@aalis/plugin-c-api')?.request).toBeUndefined();
+  });
+
+  it('全部标 installed（本地扫出来的必然已装）+ 按 scope 标官方', () => {
+    for (const p of toLocalPackages(local)) expect(p.installed).toBe(true);
+    expect(toLocalPackages(local).every(p => p.official)).toBe(true);
+  });
+});
+
+describe('toMarketplacePackages 的本地实况注入', () => {
+  const data = {
+    objects: [
+      { package: { name: '@aalis/plugin-x', version: '1.2.0', keywords: ['aalis-plugin'] } },
+      { package: { name: '@aalis/plugin-y', version: '1.0.0', keywords: ['aalis-plugin'] } },
+    ],
+  };
+
+  it('version 保持 npm latest，resolved 才是本地已装版本——两者不可混同', () => {
+    const pkgs = toMarketplacePackages(data, new Set(['@aalis/plugin-x']), name =>
+      name === '@aalis/plugin-x' ? { version: '1.0.0', request: '^1.0.0', origin: 'registry' } : undefined,
+    );
+    const x = pkgs.find(p => p.name === '@aalis/plugin-x');
+    expect(x?.version, 'version 必须仍是 npm latest').toBe('1.2.0');
+    expect(x?.resolved, 'resolved 必须是本地已装版本').toBe('1.0.0');
+  });
+
+  it('未装的包没有 resolved / origin（前端据此不显示任何版本落后提示）', () => {
+    const pkgs = toMarketplacePackages(data, new Set(), () => undefined);
+    expect(pkgs.every(p => p.resolved === undefined && p.origin === undefined)).toBe(true);
+  });
+
+  it('不给 localOf 时保持旧行为（缺省参数，老调用点不受影响）', () => {
+    const pkgs = toMarketplacePackages(data, new Set(['@aalis/plugin-x']));
+    expect(pkgs.find(p => p.name === '@aalis/plugin-x')?.resolved).toBeUndefined();
   });
 });
