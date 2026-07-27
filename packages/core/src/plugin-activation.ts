@@ -18,6 +18,8 @@ interface ActivationDeps {
   plugins: Map<string, PluginEntry>;
   rootCtx: Context;
   logger: Logger;
+  /** 激活失败回滚 disposeAsync 时单个异步清理项的等待上限（毫秒；缺省不设限） */
+  disposeTimeoutMs?: number;
 }
 
 /**
@@ -104,10 +106,14 @@ export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): 
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`插件 "${entry.instanceId}" 激活失败: ${message}`);
-    ctx.dispose();
-    entry.context = undefined;
+    // 先写终态、再等清理：recompute 的单飞早退是刻意设计（见 recompute 内
+    // 注释——join 在飞 promise 会在 apply 内同步触发 recompute 时自我死锁），
+    // 并发观察者（getStatus / 早退返回的调用方）依赖状态机即时转移；异步
+    // 清理只影响本函数何时返回，不该拖延 'error' 的可见时点。
     entry.state = 'error';
     entry.error = message;
+    await ctx.disposeAsync(deps.disposeTimeoutMs);
+    entry.context = undefined;
     return;
   }
 

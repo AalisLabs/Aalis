@@ -48,6 +48,13 @@ export interface AppOptions {
   /** 注入自定义贡献点注册表 */
   contributions?: ContributionRegistry;
   /**
+   * 单个异步清理项（onDispose 返回的 promise）的等待上限（毫秒），默认 5000。
+   * 用于插件 unload / bounce / 停机路径的 disposeAsync——网络类关闭（数据库/
+   * 浏览器/MCP 连接）卡死时放弃等待该项、继续后续清理并 warn 点名，保证
+   * 停机始终能走完。传 0 表示不设限。
+   */
+  disposeTimeoutMs?: number;
+  /**
    * 注入自定义 LogHub。多 App 沙盒 / 集成测试 / 嵌入多实例场景下
    * 可以传入 `new LogHub()`使每个 App 拥有独立的日志通道，不互相串台。
    * 缺省 = `LogHub.default`（进程级共享，runtime sink 默认订阅的也是它）。
@@ -119,6 +126,7 @@ export class App {
 
   private readonly pluginLoader?: PluginLoader;
   private readonly restartStrategy?: RestartStrategy;
+  private readonly disposeTimeoutMs: number;
   /** 已发现插件的描述符索引（按模块名）。用于热重载时拿到 source/metadata。 */
   private readonly discoveredCache: Map<string, PluginDescriptor> = new Map();
 
@@ -157,6 +165,7 @@ export class App {
       this.logger.warn(`钩子 ${hook}: handler(来自 ${contextId}) 未调用 next()，其后 ${skipped} 个 handler 被跳过`);
     this.pluginLoader = options.pluginLoader;
     this.restartStrategy = options.restartStrategy;
+    this.disposeTimeoutMs = options.disposeTimeoutMs ?? 5000;
 
     // 2. 根上下文
     this.ctx = new Context({
@@ -171,7 +180,7 @@ export class App {
     });
 
     // 3. 插件管理器
-    this.plugins = new PluginManager(this.ctx, this.logger);
+    this.plugins = new PluginManager(this.ctx, this.logger, this.disposeTimeoutMs);
 
     // 4. 注册核心服务
     this.ctx.provide('app', this);
@@ -411,7 +420,8 @@ export class App {
     // 清掉全部 sticky 缓存（'ready' + 'app:started'），防止后续 restart
     // 复用过时的"已启动"标记
     this.events.clearSticky();
-    this.ctx.dispose();
+    // 等待根 ctx 的异步清理（含各插件 onDispose 的落盘）真正完成再宣告停止
+    await this.ctx.disposeAsync(this.disposeTimeoutMs);
     this.logger.info('已停止');
   }
 }

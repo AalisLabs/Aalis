@@ -90,15 +90,19 @@ export function topoSortByDeps(entries: PluginEntry[], logger: Logger): PluginEn
  * `requiresBounceOnDepChange: true` 是给少数无法响应式处理状态的插件
  * （或迁移成本高的第三方插件）的逃生舱。
  *
- * 同步执行（不 await），caller 紧接着会 await softReload 完成全部重激活。
+ * 异步执行：逐个 await 被 evict 插件的 disposeAsync——它们正是声明了
+ * `requiresBounceOnDepChange` 的状态敏感插件，落盘类清理更需要真正完成。
+ * caller 紧接着会 await softReload 完成全部重激活。
  */
-export function evictDownstreamConsumers(args: {
+export async function evictDownstreamConsumers(args: {
   provider: PluginEntry;
   plugins: ReadonlyMap<string, PluginEntry>;
   rootCtx: Context;
   logger: Logger;
-}): void {
-  const { provider, plugins, rootCtx, logger } = args;
+  /** 单个异步清理项的等待上限（毫秒；缺省不设限） */
+  disposeTimeoutMs?: number;
+}): Promise<void> {
+  const { provider, plugins, rootCtx, logger, disposeTimeoutMs } = args;
   const provided = provider.module.provides ?? [];
   if (provided.length === 0) return;
   const providedSet = new Set(provided);
@@ -109,7 +113,7 @@ export function evictDownstreamConsumers(args: {
     if (!allDeps.some(d => providedSet.has(d.service))) continue;
     if (other.context) {
       try {
-        other.context.dispose();
+        await other.context.disposeAsync(disposeTimeoutMs);
       } catch (err) {
         logger.error(
           `下游消费者 "${other.instanceId}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`,

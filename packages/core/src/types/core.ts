@@ -125,10 +125,13 @@ export interface AalisEvents {
   /**
    * 应用正在停止（stop() 开头，在插件拓扑逆序 dispose 之前）。
    *
-   * ⚠． 插件内部清理副作用（关连接、停计时器、flush 缓冲区等）请用
-   *    `ctx.onDispose(cb)` 而不是订阅任何事件。事件只在 app 全局停机
-   *    时触发一次，**不会**在插件 bounce / unload / updatePluginConfig 等
-   *    增量重载路径上触发——会造成资源泄漏（旧 ws/db 连接未关闭等）。
+   * 本事件的定位是**通知**（如 CLI 打印告别语、状态条切换），**不是清理通道**。
+   *
+   * ⚠． 插件内部清理副作用（关连接、停计时器、flush 缓冲区、落盘等）一律用
+   *    `ctx.onDispose(cb)`：它覆盖 bounce / unload / updatePluginConfig 等
+   *    全部拆卸路径，且异步清理会被编排层的 disposeAsync 等待完成。
+   *    本事件只在 app 全局停机时触发一次，用它做清理会在热重载路径上
+   *    造成资源泄漏与数据丢失。
    */
   'app:stopping': [];
 }
