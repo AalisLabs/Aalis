@@ -8,6 +8,7 @@ import type { MemoryService } from '@aalis/plugin-memory-api';
 import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import { CommandRegistry } from './commands.js';
+import { renderDetail, renderOverview } from './help.js';
 
 // ===== 插件元数据 =====
 
@@ -247,18 +248,25 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ===== 内置指令 =====
 
   useCommandService(ctx)
-    .command('help', '显示可用指令列表')
-    .action(async () => {
-      const nodes = commands.getAll();
-      const lines = ['**可用指令：**', ''];
-      for (const n of nodes) {
-        const depth = n.name.split('.').length - 1;
-        const indent = '  '.repeat(depth);
-        const display = depth === 0 ? `\`${commands.prefix}${n.name}\`` : `\`${n.name.split('.').pop()}\``;
-        const tag = n.isGroup ? '（分组）' : '';
-        lines.push(`${indent}- ${display} — ${n.description}${tag}`);
+    .command('help [name:text]', '显示指令列表；带指令名看用法详情')
+    .action(async (_argv, name) => {
+      const all = commands.getAll();
+      // 无参 → 概览（只列顶层，子指令折成计数）
+      if (!name) {
+        const childCount = (top: string): number =>
+          all.filter(c => c.name.startsWith(`${top}.`) && !c.name.slice(top.length + 1).includes('.')).length;
+        return renderOverview(all, commands.prefix, childCount);
       }
-      return lines.join('\n');
+      // 有参 → 详情。接受空格与点两种写法：`help session set` ≡ `help session.set`
+      const path = String(name)
+        .trim()
+        .split(/[\s.]+/)
+        .filter(Boolean);
+      const cmd = commands.getNode(path);
+      if (!cmd) return `没有指令 ${path.join(' ')}。敲 ${commands.prefix}help 看可用指令。`;
+      const prefixDot = `${cmd.name}.`;
+      const children = all.filter(c => c.name.startsWith(prefixDot) && !c.name.slice(prefixDot.length).includes('.'));
+      return renderDetail(cmd, children, commands.prefix);
     });
 
   useCommandService(ctx)
