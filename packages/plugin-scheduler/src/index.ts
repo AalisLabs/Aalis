@@ -1,4 +1,5 @@
-import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
+import type { Context, PluginModule } from '@aalis/core';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { parseEverySeconds, useCronEngine } from '@aalis/plugin-cron-engine-api';
 import type { IncomingMessage } from '@aalis/plugin-message-api';
 import { createStorageGateway, toStorageUri } from '@aalis/plugin-storage-api';

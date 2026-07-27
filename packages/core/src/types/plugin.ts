@@ -4,7 +4,7 @@
 // 实现详见 ../plugin.ts。
 
 import type { Context } from '../context.js';
-import type { ConfigSchema, InjectDeclaration } from './core.js';
+import type { InjectDeclaration } from './core.js';
 
 // 注：NormalizedDependency 来自 types/service.ts，但为避免在 PluginEntry
 // 中再循环引入，这里直接 import type。
@@ -30,8 +30,12 @@ export interface PluginModule {
    * 适合多实例的插件：LLM adapters、embedding adapters、platform adapters、memory backends。
    */
   reusable?: boolean;
-  /** 配置 Schema，用于前端自动生成配置表单 */
-  configSchema?: ConfigSchema;
+  /**
+   * 配置 Schema——core 视为 **opaque 数据**原样透传，不解释任何字段。
+   * 表单形状类型由 @aalis/plugin-config-api 定义，渲染宿主与配置同步
+   * 政策（@aalis/runtime）自行消费。
+   */
+  configSchema?: Record<string, unknown>;
   /** 插件默认配置，当主配置文件中无此插件配置时使用 */
   defaultConfig?: Record<string, unknown>;
   /**

@@ -18,7 +18,8 @@
  *   - 两者可能内容重叠，header 文本中已说明"仅供参考"。
  */
 
-import type { ConfigSchema, Context } from '@aalis/core';
+import type { Context } from '@aalis/core';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import '@aalis/plugin-agent-api';
 import type { MemoryService, RecentMessageRecord } from '@aalis/plugin-memory-api';
 import { useToolService } from '@aalis/plugin-tools-api';

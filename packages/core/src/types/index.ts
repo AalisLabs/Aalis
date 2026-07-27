@@ -19,19 +19,13 @@
 export type { AppService, PluginManagerService, PluginStatusEntry } from './app.js';
 // 贡献点扩展点（空接口；由各 plugin-*-api 通过 declaration merging 注入「贡献点名→spec 类型」）
 export type { ContributionPointMap } from './contributions.js';
-// 通用 IoC 数据契约
+// 通用 IoC 数据契约（配置表单词汇属呈现层，住 @aalis/plugin-config-api）
 export type {
   AalisEvents,
-  ConfigSchema,
   DependencyDeclaration,
   InjectDeclaration,
   MiddlewareFn,
   MiddlewareNext,
-  SchemaArray,
-  SchemaField,
-  SchemaFieldType,
-  SchemaFieldTypes,
-  SchemaGroup,
   ServiceDependency,
 } from './core.js';
 // 服务自清理协议

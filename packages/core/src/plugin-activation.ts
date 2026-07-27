@@ -37,11 +37,11 @@ export function computeTargetState(entry: PluginEntry, reason: RecomputeReason, 
     return entry.state;
   }
   if (reason.type === 'shutdown') return 'disposed';
-  const reqUnmet = entry.requiredDeps.some(d => !rootCtx.hasService(d.service));
+  const reqUnmet = entry.requiredDeps.some(d => rootCtx.getService(d.service) === undefined);
   if (reqUnmet) return 'pending';
   if (reason.type === 'service-down' && entry.module.requiresBounceOnDepChange) {
     const optHit = entry.optionalDeps.find(d => d.service === reason.service);
-    if (optHit && !rootCtx.hasService(optHit.service)) {
+    if (optHit && rootCtx.getService(optHit.service) === undefined) {
       return 'pending';
     }
   }
@@ -59,7 +59,7 @@ export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): 
   if (entry.state !== 'pending') return;
 
   for (const dep of entry.requiredDeps) {
-    if (!rootCtx.hasService(dep.service)) {
+    if (rootCtx.getService(dep.service) === undefined) {
       logger.debug(`插件 "${entry.instanceId}" 等待服务: ${dep.service}`);
       return;
     }

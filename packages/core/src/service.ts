@@ -155,14 +155,15 @@ export class ServiceContainer {
   }
 
   /**
-   * 获取某个服务的所有实例（带提供者信息）
+   * 获取某个服务的所有实例（带提供者信息与优先级）
    *
    * 返回顺序遵循「偏好 > 优先级 > 注册顺序」。
    */
-  getAll<T>(name: string): Array<{ instance: T; contextId: string; label?: string }> {
+  getAll<T>(name: string): Array<{ instance: T; contextId: string; priority: number; label?: string }> {
     return this.resolveEntries(name).map(entry => ({
       instance: entry.instance as T,
       contextId: entry.contextId,
+      priority: entry.priority,
       label: entry.label,
     }));
   }

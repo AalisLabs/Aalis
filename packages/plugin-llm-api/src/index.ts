@@ -155,7 +155,11 @@ export const LLMCapabilities = {
   Video: 'video',
 } as const satisfies LLMCapabilityRegistry;
 
-declare module '@aalis/core' {
+// SchemaFieldTypes 属配置表单词汇,扩展点随词汇一起住在 @aalis/plugin-config-api
+// （空 import 使本文件对其构成 module augmentation 而非 ambient 声明）。
+import type {} from '@aalis/plugin-config-api';
+
+declare module '@aalis/plugin-config-api' {
   interface SchemaFieldTypes {
     /**
      * LLM 模型引用：值形如 `{ provider: string; model: string }`，前端渲染为

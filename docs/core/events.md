@@ -15,7 +15,7 @@ Aalis 提供两种互补的扩展机制：**事件**（单向通知）和**中�
 const off = ctx.on('inbound:message', async (msg) => { ... });
 
 // 一次性监听
-ctx.once('ready', () => { ... });
+ctx.on('ready', () => { ... });
 
 // 发出事件（按注册顺序依次 await 每个 handler）
 await ctx.emit('outbound:message', outMsg);

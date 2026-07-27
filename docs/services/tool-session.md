@@ -210,7 +210,7 @@ LLM 侧工具（不在服务接口里，是插件内注册的）：`read_uploade
 **提供**：`@aalis/plugin-file-reader`（`index.ts` `provides = ['file-reader']`；`package.json` `aalis.service.provides: ['file-reader']`，required `storage`，optional `agent`/`memory`/`media`）。
 
 **消费**：`@aalis/plugin-webui-server`
-- 能力探测：`ctx.hasService('file-reader')` 决定前端是否显示文件上传按钮（`packages/plugin-webui-server/src/index.ts`）。
+- 能力探测：`ctx.getService('file-reader') !== undefined` 决定前端是否显示文件上传按钮（`packages/plugin-webui-server/src/index.ts`）。
 - 删除同步：删文件后通知服务清内存索引（`packages/plugin-webui-server/src/routes/uploaded-files.ts`）——注意这里**故意只用 duck-typed 子集** `{ deleteFile?: ... }` 取用，避免 webui-server 反向依赖 file-reader 插件包（`uploaded-files.ts` 有注释，连 `FileMeta` 都是各自定义而非 import）。
 
 ## B.4 标准消费姿势
@@ -222,7 +222,7 @@ const reader = ctx.getService<{ deleteFile?: (id: string) => Promise<boolean> }>
 if (reader?.deleteFile) await reader.deleteFile(fileId);
 ```
 
-或先 `ctx.hasService('file-reader')` 做能力位探测。**不要缓存实例**（[惰性服务访问](../concepts/lazy-service-access.md)）。
+或先 `ctx.getService('file-reader') !== undefined` 做能力位探测。**不要缓存实例**（[惰性服务访问](../concepts/lazy-service-access.md)）。
 
 ## B.5 会话隔离 —— LLM 工具层（重点：审计 caveat 已修复）
 

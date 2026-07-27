@@ -90,19 +90,20 @@ const target = resolveStorageByPath(ctx, 'data:/foo', ['local-path']);
 
 ## 当前 api 包索引
 
-| api 包 | 注入到 `HookContextMap` | 注入到 `ServiceTypeMap`（服务名） | 主要服务接口 |
-|---|---|---|---|
-| `plugin-llm-api` | — | `llm` | `LLMModel`, `ChatModelRequest`, `ChatResponse`, `ChatStreamChunk`, `ModelInfo`；导出 `resolveLLMModel` / `listLLMModels` helper（按能力过滤） |
-| `plugin-memory-api` | `memory:clear` | `memory` | `MemoryService` |
-| `plugin-storage-api` | — | `storage` | `StorageService`；导出 `resolveStorageByPath` / `createStorageGateway` helper（按 root 权限位过滤） |
-| `plugin-embedding-api` | — | `embedding` | `EmbeddingService` |
-| `plugin-vectorstore-api` | — | `vectorstore` | `VectorStoreService` |
-| `plugin-tools-api` | — | `tools` | `ToolService` |
-| `plugin-commands-api` | — | `commands` | `CommandService` |
-| `plugin-gateway-api` | `inbound:command` / `inbound:flow` / `inbound:trigger` / `inbound:dispatch` / `outbound:dispatch` | — | `GatewayService`, `InboundPhaseData` |
-| `plugin-webui-api` | — | `webui-server` | `WebUIService`, `WebuiPage`, `WebuiComponent` 等；导出 `useWebuiService(ctx)` helper 用于注册页面 |
-| `plugin-authority-api` | — | `authority` | `AuthorityService`, `ExecutionGuard`, `ExecutionGuardContext`, `CapabilityVisibility`, `AccessConfirmHandler`, `TemporaryGrant` 等 |
-| `plugin-agent-api` | `agent:input:before` / `agent:turn:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:llm:before` / `agent:llm:after` | — | `AgentService`, `PreprocessorFn`, `PluginGroupInfo` |
+| api 包 | 注入到 `HookContextMap` | 注入到 `ServiceTypeMap`（服务名） | 注入到 `ContributionPointMap` | 主要服务接口 |
+|---|---|---|---|---|
+| `plugin-llm-api` | — | `llm` | — | `LLMModel`, `ChatModelRequest`, `ChatResponse`, `ChatStreamChunk`, `ModelInfo`；导出 `resolveLLMModel` / `listLLMModels` helper（按能力过滤）；向 config-api 注入 `'llm-ref'` 字段类型 |
+| `plugin-config-api` | — | — | — | 配置表单词汇：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` + `SchemaFieldTypes` 扩展点、`CORE_CONFIG_SCHEMA`（零依赖纯类型包，core 把 configSchema 当 opaque 透传） |
+| `plugin-memory-api` | `memory:clear` | `memory` | — | `MemoryService` |
+| `plugin-storage-api` | — | `storage` | — | `StorageService`；导出 `resolveStorageByPath` / `createStorageGateway` helper（按 root 权限位过滤） |
+| `plugin-embedding-api` | — | `embedding` | — | `EmbeddingService` |
+| `plugin-vectorstore-api` | — | `vectorstore` | — | `VectorStoreService` |
+| `plugin-tools-api` | — | `tools` | — | `ToolService` |
+| `plugin-commands-api` | — | `commands` | — | `CommandService` |
+| `plugin-gateway-api` | `inbound:confirm` / `inbound:command` / `inbound:flow` / `inbound:trigger` / `inbound:dispatch` / `outbound:dispatch` | `gateway` | — | `GatewayService`, `InboundPhaseData`；注入事件 `gateway:phase:done` |
+| `plugin-webui-api` | — | `webui-server` | — | `WebUIService`, `WebuiPage`, `WebuiComponent` 等；导出 `useWebuiService(ctx)` helper 用于注册页面；向 config-api 注入 SchemaField 表单交互属性 |
+| `plugin-authority-api` | — | `authority` | — | `AuthorityService`, `ExecutionGuard`, `ExecutionGuardContext`, `CapabilityVisibility`, `AccessConfirmHandler`, `TemporaryGrant` 等 |
+| `plugin-agent-api` | `agent:input:before` / `agent:turn:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:llm:before` / `agent:llm:after` | `agent` | `agent:prompt` | `AgentService`, `PreprocessorFn`, `PluginGroupInfo` |
 
 ## 何时需要新建 api 包
 

@@ -251,8 +251,9 @@ export class PluginManager {
    * 编译期保证两边不漂移。
    */
   getStatus(): PluginStatusEntry[] {
-    // 注：WebUI 展示概念（subsystem/extends）不在 core 状态契约里——webui-server 直接从
-    // 插件 module（getPlugin(name).module，由 @aalis/plugin-webui-api 声明合并）读取，core 不感知。
+    // 状态摘要只含内核事实。配置详情（config / configSchema / defaultConfig）与
+    // WebUI 展示概念（subsystem/extends）由消费者经 getPlugin(instanceId) 从
+    // entry.config / entry.module 读取——core 状态契约不携带。
     return [...this.plugins.entries()].map(([, entry]) => {
       return {
         name: entry.module.name,
@@ -264,9 +265,6 @@ export class PluginManager {
         reusable: entry.module.reusable,
         requiredServices: entry.requiredDeps.length > 0 ? entry.requiredDeps.map(d => d.service) : undefined,
         optionalServices: entry.optionalDeps.length > 0 ? entry.optionalDeps.map(d => d.service) : undefined,
-        config: entry.config,
-        configSchema: entry.module.configSchema,
-        defaultConfig: entry.module.defaultConfig,
         error: entry.error,
       };
     });
@@ -346,77 +344,8 @@ export class PluginManager {
     return true;
   }
 
-  /**
-   * 在运行时基于 reusable 模块新增一个实例（写入配置 + 触发激活）。
-   *
-   * @param moduleName 原始模块名（如 `@aalis/plugin-openai`）
-   * @param suffix     实例后缀（如 `vision`），将生成 instanceId `moduleName:suffix`
-   * @param config     新实例的配置
-   * @returns 新实例的 instanceId，失败返回 undefined
-   */
-  async createInstance(
-    moduleName: string,
-    suffix: string,
-    config: Record<string, unknown> = {},
-  ): Promise<string | undefined> {
-    // 从已注册的插件中查找同 module 的 entry
-    let sourceModule: PluginModule | undefined;
-    for (const entry of this.plugins.values()) {
-      if (entry.module.name === moduleName) {
-        sourceModule = entry.module;
-        break;
-      }
-    }
-    if (!sourceModule) {
-      this.logger.warn(`创建实例失败: 模块 "${moduleName}" 未找到`);
-      return undefined;
-    }
-    if (!sourceModule.reusable) {
-      this.logger.warn(`创建实例失败: 模块 "${moduleName}" 未声明 reusable`);
-      return undefined;
-    }
-
-    const instanceId = `${moduleName}:${suffix}`;
-    if (this.plugins.has(instanceId)) {
-      this.logger.warn(`创建实例失败: "${instanceId}" 已存在`);
-      return undefined;
-    }
-
-    // 合并配置：默认配置 ← 传入配置
-    const defaults = sourceModule.defaultConfig ?? {};
-    const mergedConfig = { ...defaults, ...config };
-
-    // 写入配置文件
-    this.rootCtx.config.setPluginConfig(instanceId, mergedConfig);
-
-    // 注册并尝试激活
-    await this.register(sourceModule, mergedConfig, instanceId);
-
-    return instanceId;
-  }
-
-  /**
-   * 移除一个多实例插件（不允许移除主实例）
-   */
-  async removeInstance(instanceId: string): Promise<boolean> {
-    const { suffix } = parseInstanceId(instanceId);
-    if (!suffix) {
-      this.logger.warn(`不能移除主实例 "${instanceId}"`);
-      return false;
-    }
-
-    const entry = this.plugins.get(instanceId);
-    if (!entry) return false;
-
-    // 卸载
-    await this.unload(instanceId);
-
-    // 从配置文件中移除
-    this.rootCtx.config.removePluginConfig(instanceId);
-
-    await this.softReload();
-    return true;
-  }
+  // 多实例的配置文件编排属管理面（消费者基于公开的 register / unload / config API 组合实现）；
+  // 内核只保留多实例机制本身（register 带 instanceId + reusable 校验）。
 
   /**
    * 全局停机：按依赖拓扑逆序 dispose 所有 active 插件。
@@ -542,7 +471,7 @@ export class PluginManager {
         if (currentReason.type === 'shutdown') {
           // 静默
         } else {
-          const unmet = entry.requiredDeps.find(d => !this.rootCtx.hasService(d.service));
+          const unmet = entry.requiredDeps.find(d => this.rootCtx.getService(d.service) === undefined);
           if (unmet) {
             this.logger.info(`依赖 "${unmet.service}" 不可用，停用插件: ${entry.instanceId}`);
           } else if (currentReason.type === 'service-down') {
