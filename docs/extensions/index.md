@@ -76,7 +76,24 @@ EventBus 事件签名表。`ctx.events.on(name, handler)` 在编译期靠它做�
 
 ---
 
-## 4. `AalisConfig`（配置 schema 业务字段）
+## 4. `ContributionPointMap`
+
+贡献点表：贡献点名 → spec 类型。`ctx.contribute(point, spec)` / `ctx.collect(point)` 在编译期靠它推 spec 类型。
+
+与 `HookContextMap` 的分工：**改写或截停既有流程 → hooks；往共享产物添自己的一块 → 贡献点**。
+贡献者拿只读视图、无短路、无排序影响力；排布与执行策略归收集方（贡献点 owner）。
+
+**位置**：[packages/core/src/types/contributions.ts](packages/core/src/types/contributions.ts)（空 interface）
+
+**扩展者**：
+
+| api 包 | 注入的贡献点键 |
+|---|---|
+| [@aalis/plugin-agent-api](packages/plugin-agent-api/src/index.ts) | `agent:prompt`（提示词块，锚位 identity / knowledge / context / turn-hint） |
+
+---
+
+## 5. `AalisConfig`（配置 schema 业务字段）
 
 应用根配置的字段表。core 只声明**自身管理的字段**（`logLevel` / `logBufferSize` / `dataDir`...），
 业务字段由 plugin-*-api 通过 declaration merging 注入。
@@ -91,7 +108,7 @@ EventBus 事件签名表。`ctx.events.on(name, handler)` 在编译期靠它做�
 
 ---
 
-## 5. `Context` 领域 Helper
+## 6. `Context` 领域 Helper
 
 各契约包导出 **领域 helper**（一个普通函数，输入 `ctx`，输出 typed scoped service），调用方在 `apply()` 内自取自用。helper 内部封装 `ctx.getService` 与 `whenService` 延迟逻辑，保留「即插即用、无需关心顺序」的体验。
 
@@ -132,7 +149,7 @@ export default class MyPlugin {
 
 ---
 
-## 6. `PluginModule`
+## 7. `PluginModule`
 
 插件模块的元数据接口（`apply` / `name` / `inject` / `services` 等）。
 仅供"插件类型自身"扩展使用，业务很少 augment 这个。
@@ -145,7 +162,7 @@ export default class MyPlugin {
 
 ---
 
-## 7. 各服务的 `XxxCapabilityRegistry`
+## 8. 各服务的 `XxxCapabilityRegistry`
 
 按服务隔离的能力注册表。每个服务自己定义一个 `XxxCapabilityRegistry` interface，
 第三方插件可以 augment 它新增能力字面量。
@@ -170,6 +187,7 @@ declare module '@aalis/plugin-llm-api' {
 
 - 加一个**新事件** → 在自己的 `*-api` 包内 `declare module '@aalis/core' { interface AalisEvents { ... } }`
 - 加一个**新钩子** → 同上但写 `HookContextMap`
-- 加一个**新服务名** → 同上但写 `ServiceTypeMap`（服务名 → 服务实例接口类型）。领域能力不在这里登记——按需在自己的 `*-api` 里把它们放到服务实例 / model-handle 元数据上，用 helper 筛选（可选 `XxxCapabilityRegistry` 见第 7 节）
+- 加一个**新贡献点** → 同上但写 `ContributionPointMap`（spec 须含 `id: string`）
+- 加一个**新服务名** → 同上但写 `ServiceTypeMap`（服务名 → 服务实例接口类型）。领域能力不在这里登记——按需在自己的 `*-api` 里把它们放到服务实例 / model-handle 元数据上，用 helper 筛选（可选 `XxxCapabilityRegistry` 见第 8 节）
 - 加一个 **`ctx.xxx()` 便捷方法** → 在 `*-api` 包用 `declare module '@aalis/core' { interface Context { xxx(...): ...; } }`，并在 plugin 实现里 `Context.prototype.xxx = ...`。**慎用**——优先考虑改成 Service。
 - 加一个**配置字段** → 在 `*-api` 包 `declare module '@aalis/core' { interface AalisConfig { myField: ... } }`，并提供 schema 给 ConfigManager

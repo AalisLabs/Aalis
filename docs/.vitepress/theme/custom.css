@@ -28,8 +28,9 @@
   --vp-font-family-mono: "Sarasa Mono SC", "Sarasa Mono J", "JetBrains Mono",
     "Noto Sans Mono CJK SC", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
-  /* 整站最大宽（配合下方正文加宽） */
-  --vp-layout-max-width: 1600px;
+  /* 内容带宽跟随视口（band = 视宽 - 16px），左右留白恒定约 40px、不随屏变大。
+     纯变量：不覆写任何 nav / 侧栏内部，VitePress 自己的对齐公式全程成立，顶栏分隔线不会错位。 */
+  --vp-layout-max-width: calc(100vw - 16px);
 }
 
 .dark {
@@ -118,6 +119,11 @@
 /* 侧栏激活项指示条 → 金 */
 .VPSidebarItem.is-active > .item .indicator {
   background-color: var(--aalis-gold) !important;
+}
+
+/* 顶栏分隔线：浅色保持默认（近白中性），仅深色用暗金点缀且压低亮度、不刺眼 */
+.dark .VPNavBar .divider-line {
+  background-color: color-mix(in oklab, var(--aalis-gold) 30%, var(--vp-c-divider)) !important;
 }
 
 /* 首页 alt 按钮描金边 */

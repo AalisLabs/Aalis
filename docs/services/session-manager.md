@@ -9,14 +9,14 @@
 
 核心职责两件：
 
-- **配置解析**：会话自身 config → 父会话 `sessionDefaults` → 平台 profile → 全局 defaults，按优先级合并出一份 `resolveConfig(sessionId, platform)`（`plugin-session-manager-api/src/index.ts:148-154`、实现 `plugin-session-manager/src/index.ts:798-829`）。Agent 每条消息都查它来决定用哪个 LLM / persona / 工具分组。
-- **生命周期与会话树**：CRUD + 父子树 + `active/waiting/completed/error/archived` 状态机；会话状态由本插件**自治维护**（监听 `inbound:message` / `outbound:message` / `agent:turn:after`），并通过 `session:*` 事件广播（`plugin-session-manager/src/index.ts:967-999`）。
+- **配置解析**：会话自身 config → 父会话 `sessionDefaults` → 平台 profile → 全局 defaults，按优先级合并出一份 `resolveConfig(sessionId, platform)`（`plugin-session-manager-api/src/index.ts`、实现 `plugin-session-manager/src/index.ts`）。Agent 每条消息都查它来决定用哪个 LLM / persona / 工具分组。
+- **生命周期与会话树**：CRUD + 父子树 + `active/waiting/completed/error/archived` 状态机；会话状态由本插件**自治维护**（监听 `inbound:message` / `outbound:message` / `agent:turn:after`），并通过 `session:*` 事件广播（`plugin-session-manager/src/index.ts`）。
 
-它**不是**消息存储——历史消息存在 `memory` 服务里；本服务只把会话元数据持久化到 `memory` 的 metadata 命名空间 `sessions`（`plugin-session-manager/src/index.ts:108, 448-466`）。
+它**不是**消息存储——历史消息存在 `memory` 服务里；本服务只把会话元数据持久化到 `memory` 的 metadata 命名空间 `sessions`（`plugin-session-manager/src/index.ts`）。
 
 ## 2. 契约（`@aalis/plugin-session-manager-api/src/index.ts`）
 
-### 2.1 服务接口 `SessionManagerService`（`index.ts:112-187`）
+### 2.1 服务接口 `SessionManagerService`（`index.ts`）
 
 ```ts
 // CRUD
@@ -50,7 +50,7 @@ updateSessionTitle(sessionId: string, title: string): Promise<void>;
 
 ### 2.2 重要类型
 
-`SessionConfig`（`index.ts:23-45`）——会话级覆盖，全部字段可选：
+`SessionConfig`（`index.ts`）——会话级覆盖，全部字段可选：
 
 ```ts
 interface SessionConfig {
@@ -65,9 +65,9 @@ interface SessionConfig {
 }
 ```
 
-`PlatformProfile = SessionConfig`（`index.ts:54`）——每个平台一份模板。
+`PlatformProfile = SessionConfig`（`index.ts`）——每个平台一份模板。
 
-`SessionInfo`（`index.ts:62-89`）——会话本体：
+`SessionInfo`（`index.ts`）——会话本体：
 
 ```ts
 interface SessionInfo {
@@ -86,9 +86,9 @@ interface SessionInfo {
 }
 ```
 
-`SessionTreeNode = { session: SessionInfo; children: SessionTreeNode[] }`（`index.ts:96-99`，递归）。
+`SessionTreeNode = { session: SessionInfo; children: SessionTreeNode[] }`（`index.ts`，递归）。
 
-### 2.3 事件 augmentation（`index.ts:189-197`）
+### 2.3 事件 augmentation（`index.ts`）
 
 本 `-api` 包通过 `declare module '@aalis/core'` 增量声明了四个生命周期事件到 `AalisEvents`：
 
@@ -99,20 +99,20 @@ interface SessionInfo {
 'session:deleted':   [sessionId: string];
 ```
 
-**只想监听这些事件**（而不调用服务）的插件也应当依赖本 `-api` 包——它锚定了 `import type {} from '@aalis/core'` 让 augmentation 生效（`index.ts:9`）。`plugin-file-reader` 就是仅为 `session:deleted` 事件而 `import type {} from '@aalis/plugin-session-manager-api'`（`plugin-file-reader/src/index.ts:8`）。
+**只想监听这些事件**（而不调用服务）的插件也应当依赖本 `-api` 包——它锚定了 `import type {} from '@aalis/core'` 让 augmentation 生效（`index.ts`）。`plugin-file-reader` 就是仅为 `session:deleted` 事件而 `import type {} from '@aalis/plugin-session-manager-api'`（`plugin-file-reader/src/index.ts`）。
 
 ## 3. 谁提供 / 谁消费
 
-**提供方（唯一参考实现）**：`@aalis/plugin-session-manager`，在 `apply()` 里 `ctx.provide('session-manager', manager, { label: '会话管理' })`（`plugin-session-manager/src/index.ts:963-965`）。它 `inject.required = ['memory']`、`optional = ['agent','platform','persona','llm']`（`index.ts:34-38`）。没有 `memory` 时直接拒绝启动（`index.ts:947-950`）。
+**提供方（唯一参考实现）**：`@aalis/plugin-session-manager`，在 `apply()` 里 `ctx.provide('session-manager', manager, { label: '会话管理' })`（`plugin-session-manager/src/index.ts`）。它 `inject.required = ['memory']`、`optional = ['agent','platform','persona','llm']`（`index.ts`）。没有 `memory` 时直接拒绝启动（`index.ts`）。
 
 **典型消费点**：
 
 | 消费方 | 用法 | file:line |
 | --- | --- | --- |
-| `plugin-agent` | 每条消息 `resolveConfig()` 决定 LLM / persona / 工具分组 | `plugin-agent/src/index.ts:108-112, 451-464` |
-| `plugin-subtask` | `createChildSession(parentId, { inputContext: task, ... })` 派发子任务；`agent:turn:after` 里 `completeSession()` 回报父会话 | `plugin-subtask/src/index.ts:171-177, 671-712` |
-| `plugin-persona` | `resolveConfig()` 取 `persona/disableOutputFormat/clientSideJsonRendering`（消费侧**窄化类型**，见 §5.2） | `plugin-persona/src/index.ts:36-44, 653-655` |
-| `plugin-session-manager` 自身 actions | WebUI 通过 action 调 `listSessions/createSession/getResolvedConfig/...` | `plugin-session-manager/src/index.ts:131-377` |
+| `plugin-agent` | 每条消息 `resolveConfig()` 决定 LLM / persona / 工具分组 | `plugin-agent/src/index.ts` |
+| `plugin-subtask` | `createChildSession(parentId, { inputContext: task, ... })` 派发子任务；`agent:turn:after` 里 `completeSession()` 回报父会话 | `plugin-subtask/src/index.ts` |
+| `plugin-persona` | `resolveConfig()` 取 `persona/disableOutputFormat/clientSideJsonRendering`（消费侧**窄化类型**，见 §5.2） | `plugin-persona/src/index.ts` |
+| `plugin-session-manager` 自身 actions | WebUI 通过 action 调 `listSessions/createSession/getResolvedConfig/...` | `plugin-session-manager/src/index.ts` |
 
 ## 4. 写一个 provider（替换实现）
 
@@ -120,7 +120,7 @@ interface SessionInfo {
 
 **最小必须**：接口里 8 个被实际消费的方法务必正确——`createSession` / `getSession` / `listSessions` / `updateSession` / `createChildSession` / `completeSession` / `resolveConfig` / `getPlatformProfiles`。其余（`getTree` / `resolveInheritedDefaults` / `generateTitle` / ...）主要服务于 WebUI，可保守实现。
 
-**配置解析的合并语义必须复刻**（否则 Agent 会拿错 LLM）：`resolveConfig` 优先级从高到低 = 会话自身 config > 父会话 `sessionDefaults` > 平台 profile > 全局 defaults，且**返回结果必须删除 `sessionDefaults` 字段**（不传递给消费方）（`plugin-session-manager/src/index.ts:798-829`）。
+**配置解析的合并语义必须复刻**（否则 Agent 会拿错 LLM）：`resolveConfig` 优先级从高到低 = 会话自身 config > 父会话 `sessionDefaults` > 平台 profile > 全局 defaults，且**返回结果必须删除 `sessionDefaults` 字段**（不传递给消费方）（`plugin-session-manager/src/index.ts`）。
 
 ```ts
 // my-session-manager/src/index.ts —— 可编译最小骨架
@@ -203,17 +203,17 @@ export const apply: PluginModule['apply'] = async ctx => {
 `session-manager` 在很多场景是**可选依赖**（`inject.optional`）——它可能没装。每次用都现取，**不要缓存到字段**（provider bounce 会让旧引用失效，见 [惰性服务访问](../concepts/lazy-service-access.md)）：
 
 ```ts
-// Agent 的标准姿势（plugin-agent/src/index.ts:451-464）
+// Agent 的标准姿势（plugin-agent/src/index.ts）
 const sm = ctx.getService<SessionManagerService>('session-manager');
 const resolved = sm && sessionId ? sm.resolveConfig(sessionId, platform) : undefined;
 // sm 缺失 → resolved 为 undefined → 回落到全局 ServicePreference / 默认行为，不崩
 ```
 
-写操作的标准错误边界是「服务不可用即报错或返回错误对象」，参考 action 写法 `if (!sm) throw new Error('session-manager 服务不可用')`（`plugin-session-manager/src/index.ts:145-146`）或工具里 `return JSON.stringify({ error: 'session-manager 服务不可用' })`（`plugin-subtask/src/index.ts:136-137`）。
+写操作的标准错误边界是「服务不可用即报错或返回错误对象」，参考 action 写法 `if (!sm) throw new Error('session-manager 服务不可用')`（`plugin-session-manager/src/index.ts`）或工具里 `return JSON.stringify({ error: 'session-manager 服务不可用' })`（`plugin-subtask/src/index.ts`）。
 
 ### 5.2 消费侧窄化类型（推荐）
 
-只用到 `resolveConfig` 的少数字段时，可声明一个**窄接口**而非 import 全量 `SessionManagerService`，避免包循环 / 不必要依赖。`plugin-persona` 就这么做（`plugin-persona/src/index.ts:31-44`）：
+只用到 `resolveConfig` 的少数字段时，可声明一个**窄接口**而非 import 全量 `SessionManagerService`，避免包循环 / 不必要依赖。`plugin-persona` 就这么做（`plugin-persona/src/index.ts`）：
 
 ```ts
 interface SessionConfigResolver {
@@ -225,47 +225,47 @@ const sm = ctx.getService<SessionConfigResolver>('session-manager');
 
 ### 5.3 监听生命周期事件
 
-子任务完成感知就是事件驱动：`completeSession()` 发 `session:completed`，等待方据此收尾（`plugin-session-manager/src/index.ts:697-698`）。
+子任务完成感知就是事件驱动：`completeSession()` 发 `session:completed`，等待方据此收尾（`plugin-session-manager/src/index.ts`）。
 
 ## 6. 配置 / 风险 → 影响（provider 与 consumer 必守）
 
 ### 6.1 `resolveConfig` 是 Agent 行为的单一事实源
 
-LLM 选择、persona、工具分组、是否结构化输出全部从这里来。Provider 若漏掉某层合并或不删 `sessionDefaults`，会导致 Agent 静默用错模型/人设。实现里有一段**legacy 字段折叠**（老 WebUI 只发 flat `model` 不发 `provider`，需用已注册 llm entries 反查 provider 补齐 `llm:{provider,model}`），重写时这是真实存在过的坑——别只 delete 不折叠，否则用户切模型 100% 静默失败（`plugin-session-manager/src/index.ts:557-584`）。
+LLM 选择、persona、工具分组、是否结构化输出全部从这里来。Provider 若漏掉某层合并或不删 `sessionDefaults`，会导致 Agent 静默用错模型/人设。实现里有一段**legacy 字段折叠**（老 WebUI 只发 flat `model` 不发 `provider`，需用已注册 llm entries 反查 provider 补齐 `llm:{provider,model}`），重写时这是真实存在过的坑——别只 delete 不折叠，否则用户切模型 100% 静默失败（`plugin-session-manager/src/index.ts`）。
 
 ### 6.2 会话隔离边界
 
-`sessionId` 是隔离边界：`deleteSession` 会**递归删子会话**并经 `memory:clear` 钩子清空该会话历史（`plugin-session-manager/src/index.ts:594-644`）。消费方不要跨 `sessionId` 复用配置或历史。
+`sessionId` 是隔离边界：`deleteSession` 会**递归删子会话**并经 `memory:clear` 钩子清空该会话历史（`plugin-session-manager/src/index.ts`）。消费方不要跨 `sessionId` 复用配置或历史。
 
 ### 6.3 子任务指令走顶层 `inputContext`（关键约定）
 
 父会话给子任务下达的指令通过 **顶层 `SessionInfo.inputContext`** 传递，**不是**塞进 `metadata`：
 
-- 写入：`plugin-subtask` `createChildSession(parentId, { inputContext: task, ... })`（`plugin-subtask/src/index.ts:171-177`）。
-- 读取：子任务上下文注入中间件读 `session.inputContext`（顶层，`plugin-subtask/src/index.ts:558`）；返回给父会话时也是 `session.inputContext`（`plugin-subtask/src/index.ts:257, 501`）。
+- 写入：`plugin-subtask` `createChildSession(parentId, { inputContext: task, ... })`（`plugin-subtask/src/index.ts`）。
+- 读取：子任务上下文注入中间件读 `session.inputContext`（顶层，`plugin-subtask/src/index.ts`）；返回给父会话时也是 `session.inputContext`（`plugin-subtask/src/index.ts`）。
 
-实现的 `createSession` 兼容两种来源但**顶层优先**：`inputContext: opts?.inputContext ?? (opts?.metadata?.inputContext)`（`plugin-session-manager/src/index.ts:497`）。Provider 必须保证 `inputContext` 能从顶层读出来——**只写进 metadata 不写顶层会让子任务读不到任务指令**。
+实现的 `createSession` 兼容两种来源但**顶层优先**：`inputContext: opts?.inputContext ?? (opts?.metadata?.inputContext)`（`plugin-session-manager/src/index.ts`）。Provider 必须保证 `inputContext` 能从顶层读出来——**只写进 metadata 不写顶层会让子任务读不到任务指令**。
 
 ### 6.4 子任务不可嵌套
 
-`plugin-subtask` 在创建前检查 `parentSession?.parentId`，禁止子任务再开子任务（`plugin-subtask/src/index.ts:145-148`）。这是消费侧约定，不是服务硬约束——自定义协调器若复用会话树请自行守住，否则会无限递归派发。
+`plugin-subtask` 在创建前检查 `parentSession?.parentId`，禁止子任务再开子任务（`plugin-subtask/src/index.ts`）。这是消费侧约定，不是服务硬约束——自定义协调器若复用会话树请自行守住，否则会无限递归派发。
 
 ### 6.5 标题生成会调 LLM
 
-`generateTitle` 会真发一次 LLM `chat`（`think:false`，`temperature:0.3`），有成本与延迟；参考实现只对 `webui` / `cli` 平台自动触发，且异步不阻塞消息处理（`plugin-session-manager/src/index.ts:1004-1029, 705-776`）。第三方平台慎自动调。
+`generateTitle` 会真发一次 LLM `chat`（`think:false`，`temperature:0.3`），有成本与延迟；参考实现只对 `webui` / `cli` 平台自动触发，且异步不阻塞消息处理（`plugin-session-manager/src/index.ts`）。第三方平台慎自动调。
 
 ## 7. 边界与坑
 
 ### 7.1 ★ 被「吞掉」的群消息会让会话卡在 `active`（审计标注）
 
-会话状态由本插件**根据事件自治推进**：`inbound:message` 把会话翻到 `active`，再靠 `outbound:message` 或 `agent:turn:after` 翻回 `completed`（`plugin-session-manager/src/index.ts:970-999`）。但 Agent 的消息处理跑在 `agent:input:before` 中间件的 `next()` 内——**任何中间件不调用 `next()` 即可拦截整条消息**（`plugin-agent/src/index.ts:411-417`）。
+会话状态由本插件**根据事件自治推进**：`inbound:message` 把会话翻到 `active`，再靠 `outbound:message` 或 `agent:turn:after` 翻回 `completed`（`plugin-session-manager/src/index.ts`）。但 Agent 的消息处理跑在 `agent:input:before` 中间件的 `next()` 内——**任何中间件不调用 `next()` 即可拦截整条消息**（`plugin-agent/src/index.ts`）。
 
 群聊场景常见：一个「是否被 @ / 是否该响应」的门控中间件判定本条群消息不该回，于是**不调用 `next()` 直接吞掉**。此时：
 
 - `inbound:message` 已经把会话置为 `active`；
 - 但既没有 `outbound:message`（没回复），也没有 `agent:turn:after`（默认动作根本没进入，turn 没开始）；
 
-→ 会话**永远停在 `active`（"进行中"）**。这与 silent/aborted 不同——后两者 Agent 仍会发 `agent:turn:after(outcome=silent|aborted)`，由 `agent:turn:after` 中间件兜底收口（`plugin-session-manager/src/index.ts:987-999`、`plugin-agent/src/index.ts:901-963`）；而**被中间件吞掉的消息连 turn 都没开始，没有任何终态事件**。
+→ 会话**永远停在 `active`（"进行中"）**。这与 silent/aborted 不同——后两者 Agent 仍会发 `agent:turn:after(outcome=silent|aborted)`，由 `agent:turn:after` 中间件兜底收口（`plugin-session-manager/src/index.ts`、`plugin-agent/src/index.ts`）；而**被中间件吞掉的消息连 turn 都没开始，没有任何终态事件**。
 
 规避：
 
@@ -279,7 +279,7 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 
 ### 7.3 持久化是延迟刷盘 + 进程退出兜底
 
-写操作走 `markDirty()` → 1s 防抖刷盘，进程退出在 `app:stopping` 阶段强制 `shutdown()` 落盘（`plugin-session-manager/src/index.ts:436-466, 915-922, 1031-1034`）。崩溃（非正常退出）可能丢失最后 ~1s 的会话元数据变更。重写 provider 时若要更强一致性，请在关键写操作后同步落盘。
+写操作走 `markDirty()` → 1s 防抖刷盘，进程退出在 `app:stopping` 阶段强制 `shutdown()` 落盘（`plugin-session-manager/src/index.ts`）。崩溃（非正常退出）可能丢失最后 ~1s 的会话元数据变更。重写 provider 时若要更强一致性，请在关键写操作后同步落盘。
 
 ## 8. 交叉链接
 

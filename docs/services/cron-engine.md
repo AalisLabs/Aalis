@@ -4,17 +4,17 @@
 
 `cron-engine` 是 Aalis 的**共享定时引擎原语**：把「cron 表达式 / 别名 / `@every` 间隔」解析为统一的订阅协议，所有周期型触发器（scheduler 任务、workflow 的 cron/interval 触发器）都挂接到它共享的一条整分钟 tick 上，而不是各自 `setInterval`。
 
-- 服务注册名：`getService('cron-engine')`（`packages/plugin-cron-engine-api/src/index.ts:232-234`）。
+- 服务注册名：`getService('cron-engine')`（`packages/plugin-cron-engine-api/src/index.ts`）。
 - 契约包：`@aalis/plugin-cron-engine-api`（纯类型 + 无状态纯函数）。
 - 参考实现：`@aalis/plugin-cron-engine`（`packages/plugin-cron-engine/src/index.ts`）。
 
-注意它**只负责定时与触发**，不负责任务定义、持久化、权限或执行——那些属于上层（scheduler / workflow）。失败的 handler 仅记日志，不影响其他订阅者（`packages/plugin-cron-engine/src/index.ts:6-7`）。
+注意它**只负责定时与触发**，不负责任务定义、持久化、权限或执行——那些属于上层（scheduler / workflow）。失败的 handler 仅记日志，不影响其他订阅者（`packages/plugin-cron-engine/src/index.ts`）。
 
 ## 2. 契约
 
 ### 2.1 服务接口 `CronEngine`
 
-`packages/plugin-cron-engine-api/src/index.ts:207-228`：
+`packages/plugin-cron-engine-api/src/index.ts`：
 
 ```ts
 export interface CronEngine {
@@ -73,14 +73,14 @@ export type ValidateResult =
 ## 3. 谁提供 / 谁消费
 
 **提供方（唯一参考实现）**：`@aalis/plugin-cron-engine`
-- `provides = ['cron-engine']`（`packages/plugin-cron-engine/src/index.ts:25`）
+- `provides = ['cron-engine']`（`packages/plugin-cron-engine/src/index.ts`）
 - `package.json` 双源对应 `aalis.service.provides: ['cron-engine']`（`packages/plugin-cron-engine/package.json`）
-- 注册点 `ctx.provide('cron-engine', service)`（`...src/index.ts:143`）
+- 注册点 `ctx.provide('cron-engine', service)`（`...src/index.ts`）
 
 **消费方**：
 
-- `@aalis/plugin-scheduler`：`inject.required = ['tools', 'cron-engine']`（`packages/plugin-scheduler/src/index.ts:123-126`）。`const cronEngine = useCronEngine(ctx)`（`:371`），cron 任务 `cronEngine.subscribe(jobCfg.cron, ..., tz ? { timeZone: tz } : undefined)`（`:570-578`），并用 `cronEngine.nextFireTime(job.cron, new Date(), undefined, tz ? {timeZone} : undefined)` 估算下次运行（`:523`）。注意它在 `initJob` 里先用 `parseEverySeconds` 把 `@every Ns` 折进自己的 interval 通道（`:534-540`）。
-- `@aalis/plugin-workflow`：`inject.required = ['cron-engine']`（`packages/plugin-workflow/src/index.ts:34`）。`cron` 触发器 `useCronEngine(ctx).subscribe(t.expr, ...)`（`packages/plugin-workflow/src/triggers.ts:41-44`）；`interval` 触发器统一转成 `@every ${sec}s` 再 subscribe，避免与 scheduler 维护两份 setInterval（`triggers.ts:50-58`）。
+- `@aalis/plugin-scheduler`：`inject.required = ['tools', 'cron-engine']`（`packages/plugin-scheduler/src/index.ts`）。`const cronEngine = useCronEngine(ctx)`（`:371`），cron 任务 `cronEngine.subscribe(jobCfg.cron, ..., tz ? { timeZone: tz } : undefined)`（`:570-578`），并用 `cronEngine.nextFireTime(job.cron, new Date(), undefined, tz ? {timeZone} : undefined)` 估算下次运行（`:523`）。注意它在 `initJob` 里先用 `parseEverySeconds` 把 `@every Ns` 折进自己的 interval 通道（`:534-540`）。
+- `@aalis/plugin-workflow`：`inject.required = ['cron-engine']`（`packages/plugin-workflow/src/index.ts`）。`cron` 触发器 `useCronEngine(ctx).subscribe(t.expr, ...)`（`packages/plugin-workflow/src/triggers.ts`）；`interval` 触发器统一转成 `@every ${sec}s` 再 subscribe，避免与 scheduler 维护两份 setInterval（`triggers.ts`）。
 
 ## 4. 写一个 provider
 
@@ -149,10 +149,10 @@ export function apply(ctx: Context): void {
 "aalis": { "service": { "provides": ["cron-engine"] } }
 ```
 
-与代码里的 `export const provides = ['cron-engine']` 一致（参考实现 `package.json` + `index.ts:25`）。详见 [manifest-metadata](../concepts/manifest-metadata.md)。
+与代码里的 `export const provides = ['cron-engine']` 一致（参考实现 `package.json` + `index.ts`）。详见 [manifest-metadata](../concepts/manifest-metadata.md)。
 
 实现要点（照搬参考实现）：
-- 多订阅者**共享一条对齐到整分钟的 tick**（`ensureCronLoop` 用 `setTimeout` 对齐到下一整分钟再 `setInterval(_, 60_000)`，`...src/index.ts:48-58`），`cronTick` 把当前分钟的秒/毫秒清零后逐个 `matchesCron`（`:60-75`）。
+- 多订阅者**共享一条对齐到整分钟的 tick**（`ensureCronLoop` 用 `setTimeout` 对齐到下一整分钟再 `setInterval(_, 60_000)`，`...src/index.ts`），`cronTick` 把当前分钟的秒/毫秒清零后逐个 `matchesCron`（`:60-75`）。
 - handler 必须包 try/catch，且对 Promise 返回值 `.catch` 记日志——**一个订阅者抛错不能影响其余**（`:64-74`、`:85-92`）。
 - `subscribe` 里若给了 `timeZone`，应提前 `new Intl.DateTimeFormat({ timeZone })` 探测合法性并抛「非法时区」，不要拖到分钟 tick 才静默失败（`:106-113`）。
 - `onDispose` 清空所有 timer 与订阅表（`:145-151`）。
@@ -160,28 +160,28 @@ export function apply(ctx: Context): void {
 ## 5. 标准消费姿势
 
 1. 在 `inject.required` 声明 `'cron-engine'`，让运行时保证服务就绪后才 `apply`（scheduler `:123-126`、workflow `:34`）。
-2. 用 `useCronEngine(ctx)` 取服务——它内部就是 `getService<CronEngine>('cron-engine')`，缺失即抛带提示的 Error（`...api/src/index.ts:237-241`）。**不要缓存返回值**：provider 反弹会失效，每次用时重新取（见 [lazy-service-access](../concepts/lazy-service-access.md)）。
-3. 创建前先 `validate` 或捕获 `subscribe` 的抛错——参考实现两个消费方都用 `try/catch` 包住 subscribe 并 `logger.warn`，避免一条坏表达式中断整批注册（scheduler `:579-581`、workflow `triggers.ts:45-47`）。
+2. 用 `useCronEngine(ctx)` 取服务——它内部就是 `getService<CronEngine>('cron-engine')`，缺失即抛带提示的 Error（`...api/src/index.ts`）。**不要缓存返回值**：provider 反弹会失效，每次用时重新取（见 [lazy-service-access](../concepts/lazy-service-access.md)）。
+3. 创建前先 `validate` 或捕获 `subscribe` 的抛错——参考实现两个消费方都用 `try/catch` 包住 subscribe 并 `logger.warn`，避免一条坏表达式中断整批注册（scheduler `:579-581`、workflow `triggers.ts`）。
 4. 保存好 `subscribe` 返回的 dispose，在任务删除/禁用/插件卸载时调用（scheduler 存 `rt.cronDispose`、workflow 存 `cronDisposers` Map）。
 5. 可选依赖：若你的插件在没有 cron-engine 时仍能降级运行，则不要放进 `required`，改为运行时 `const eng = ctx.getService<CronEngine>('cron-engine')` 判空处理。
 
-`@every Ns` 与 5 字段 cron 都可直接交给 `subscribe`——无需自己预 normalize（scheduler `:540` 注释）。`interval` 语义统一委托 `@every Ns` 表达式，别再自己起 `setInterval`（workflow `triggers.ts:50-51` 注释）。
+`@every Ns` 与 5 字段 cron 都可直接交给 `subscribe`——无需自己预 normalize（scheduler `:540` 注释）。`interval` 语义统一委托 `@every Ns` 表达式，别再自己起 `setInterval`（workflow `triggers.ts` 注释）。
 
 ## 6. 能力 / 风险 → 影响
 
 `cron-engine` 本身**不触及 authority、storage、网络**——它只回调 handler。安全责任完全落在 handler 内部和上层：
 
-- **触发无人类调用者 → 匿名最低权限**。cron/interval/event 触发器没有触发人，workflow 据此把这类运行视作匿名 level-0，**只能跑 public 工具**，杜绝借他人 workflow 提权（`packages/plugin-workflow/src/index.ts:422-424`）。你的 handler 若要执行带风险的动作，必须自己经 [authority](../concepts/security-model.md) 闸，且不能假冒 owner 身份。
+- **触发无人类调用者 → 匿名最低权限**。cron/interval/event 触发器没有触发人，workflow 据此把这类运行视作匿名 level-0，**只能跑 public 工具**，杜绝借他人 workflow 提权（`packages/plugin-workflow/src/index.ts`）。你的 handler 若要执行带风险的动作，必须自己经 [authority](../concepts/security-model.md) 闸，且不能假冒 owner 身份。
 - **handler 隔离**：provider 保证单个 handler 抛错不波及其他订阅者，但 handler 自身**不得阻塞**——它跑在共享 tick 上，长任务应 `void`/fire-and-forget（scheduler 与 workflow 都是异步 fire，不阻塞 tick）。
 - **风险标注的副作用**属于上层工具调用，不在本服务范畴；定时只是触发器。
 
 ## 7. 边界与坑
 
-- **最小粒度是分钟**：cron tick 对齐整分钟、`cronTick` 把秒清零（`...src/index.ts:62`），秒级 cron 不支持；要更细只能用 `@every Ns`（走独立 `setInterval`）。
-- **`@every` 不参与 cron 匹配也不认时区**：`matchesCron`/`normalizeCronExpr` 对 `@every` 直接放过/原样返回（`api/src/index.ts:19,126`），间隔从注册时刻起算、`timeZone` 对它无意义。
+- **最小粒度是分钟**：cron tick 对齐整分钟、`cronTick` 把秒清零（`...src/index.ts`），秒级 cron 不支持；要更细只能用 `@every Ns`（走独立 `setInterval`）。
+- **`@every` 不参与 cron 匹配也不认时区**：`matchesCron`/`normalizeCronExpr` 对 `@every` 直接放过/原样返回（`api/src/index.ts`），间隔从注册时刻起算、`timeZone` 对它无意义。
 - **`nextFireTime` 有上限**：cron 在 `lookaheadMinutes`（默认 366×24×60 ≈ 一年零一天）内没命中就返回 `null`，极稀疏的表达式（如 `2/30` 月）可能落空。
 - **进程内、非持久化**：所有订阅都是内存 timer，进程重启即丢；持久化任务定义、重启恢复属上层（scheduler/workflow 各自落盘后重新 `subscribe`）。**进程停机期间错过的触发不会补跑**。
-- **`day` 与 `weekday` 取交集而非并集**：`matchesCron` 用 `&&` 串联五个字段（`api/src/index.ts:131-137`），与 Vixie cron「日/周谁限定取并集」的传统行为**不同**——同时写日和周会变成「既是某日又是某周几」才触发。
+- **`day` 与 `weekday` 取交集而非并集**：`matchesCron` 用 `&&` 串联五个字段（`api/src/index.ts`），与 Vixie cron「日/周谁限定取并集」的传统行为**不同**——同时写日和周会变成「既是某日又是某周几」才触发。
 - **字段越界被静默夹取**：`parseCronField` 把范围夹到 `[min,max]`（`:64-65`），如分钟字段 `1-100` 不会塞入 60-99；但**整字段解析为空集**会在 `validate` 阶段被拒（`:187-191`），不会生成死任务。
 - **`午夜 hour=24` 的修正**：用 IANA 时区且 `hour12=false` 时 Intl 午夜可能返回 `"24"`，已换回 `0` 以匹配 cron 0-23（`:105-107`）——自实现 provider 别漏这点。
 

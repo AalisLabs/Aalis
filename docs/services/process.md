@@ -16,7 +16,7 @@
 
 接口与类型全部由 `@aalis/plugin-process-api` 导出。真实签名（贴 file:line）：
 
-### 2.1 `ProcessService`（`plugin-process-api/src/index.ts:76-101`）
+### 2.1 `ProcessService`（`plugin-process-api/src/index.ts`）
 
 ```ts
 interface ProcessService {
@@ -102,13 +102,13 @@ interface TempDirHandle {
 
 | 包 | 用途 | file:line |
 | --- | --- | --- |
-| `plugin-tool-system` | `exec` / `exec_background` shell 工具组 | `src/tools/shell.ts`（`index.ts:139` 取网关） |
-| `plugin-tool-code-runner` | 代码执行（fail-closed 到 code-sandbox） | `src/index.ts:188` |
-| `plugin-code-sandbox-os` | 在 process.spawn 外再裹 bwrap/seatbelt 沙箱 | `src/index.ts:73` |
-| `plugin-media` | ffmpeg 抽帧/转音轨 + makeTempDir | `src/ffmpeg.ts`（`index.ts:314` 注入 runtime） |
-| `plugin-office` | PDF 工具（可选依赖，见第 5 节） | `src/index.ts:112` |
-| `plugin-adapter-onebot` | `readExternalFile` 读 daemon 推来的附件路径 | `src/attachment-cache.ts:117` |
-| `plugin-asr-whisper-cpp` / `plugin-asr-openai` | 调本地 whisper / 转码 | `src/index.ts:108` / `:96` |
+| `plugin-tool-system` | `exec` / `exec_background` shell 工具组 | `src/tools/shell.ts`（`index.ts` 取网关） |
+| `plugin-tool-code-runner` | 代码执行（fail-closed 到 code-sandbox） | `src/index.ts` |
+| `plugin-code-sandbox-os` | 在 process.spawn 外再裹 bwrap/seatbelt 沙箱 | `src/index.ts` |
+| `plugin-media` | ffmpeg 抽帧/转音轨 + makeTempDir | `src/ffmpeg.ts`（`index.ts` 注入 runtime） |
+| `plugin-office` | PDF 工具（可选依赖，见第 5 节） | `src/index.ts` |
+| `plugin-adapter-onebot` | `readExternalFile` 读 daemon 推来的附件路径 | `src/attachment-cache.ts` |
+| `plugin-asr-whisper-cpp` / `plugin-asr-openai` | 调本地 whisper / 转码 | `src/index.ts` / `:96` |
 | `plugin-ollama` / `plugin-package-manager` / `plugin-tool-browser` / `plugin-webui-server` | 拉起本地进程 / 装包 / 起浏览器 | 各 `src/index.ts` |
 
 ---
@@ -119,8 +119,8 @@ interface TempDirHandle {
 
 接口四个方法**都必须实现**，没有可选方法。但常见做法是复用本地实现的骨架：
 
-- `makeTempDir` 可直接转发 `makeTempDirViaStorage(storage, prefix)`（`process-local` 即如此，`index.ts:119-121`）——你只需注入一个支持 `resolveLocalPath` 的 storage。
-- `execFile` 通常用 `spawn(...).wait()` 包一层（本地实现 `index.ts:106-117`：非零退出 reject 并把 `ExecResult` 挂在 `err.result`）。
+- `makeTempDir` 可直接转发 `makeTempDirViaStorage(storage, prefix)`（`process-local` 即如此，`index.ts`）——你只需注入一个支持 `resolveLocalPath` 的 storage。
+- `execFile` 通常用 `spawn(...).wait()` 包一层（本地实现 `index.ts`：非零退出 reject 并把 `ExecResult` 挂在 `err.result`）。
 
 替换默认实现（如远程执行 / 容器内执行）时用 `priority` 抬高；不替换、只想并存请用 `entryId`。
 
@@ -186,7 +186,7 @@ export default plugin;
 
 ### 懒取（必须）
 
-永远用 `createProcessGateway(ctx)`，**不要缓存它转发到的实例**——网关内部每次方法调用都重新 `ctx.getService('process')`（`plugin-process-api/src/index.ts:113-119`），这样 provider 被换人/下线（provider bounce）后下一次调用自动命中新胜者。详见 [懒服务访问](../concepts/lazy-service-access.md)。
+永远用 `createProcessGateway(ctx)`，**不要缓存它转发到的实例**——网关内部每次方法调用都重新 `ctx.getService('process')`（`plugin-process-api/src/index.ts`），这样 provider 被换人/下线（provider bounce）后下一次调用自动命中新胜者。详见 [懒服务访问](../concepts/lazy-service-access.md)。
 
 ```ts
 import { createProcessGateway } from '@aalis/plugin-process-api';
@@ -201,7 +201,7 @@ export async function apply(ctx: Context): Promise<void> {
 
 ### 临时目录：try/finally cleanup
 
-`makeTempDir` 拿到的目录**必须在 finally 里 cleanup**，否则 `tmp:/` 下泄漏。参考 `plugin-media/src/ffmpeg.ts:108-140`：
+`makeTempDir` 拿到的目录**必须在 finally 里 cleanup**，否则 `tmp:/` 下泄漏。参考 `plugin-media/src/ffmpeg.ts`：
 
 ```ts
 const tmp = await proc.makeTempDir('media-frames');
@@ -215,13 +215,13 @@ try {
 
 ### 服务缺失 / 可选依赖
 
-- **硬依赖**：声明 `inject = ['process']`，框架在 process 就绪前不会 `apply` 你的插件；网关在缺失时也会抛 `未找到 process 服务...`（`plugin-process-api/src/index.ts:115-117`）。
-- **可选依赖**：先 `ctx.hasService('process')` 探测再决定。参考 `plugin-office/src/index.ts:112`：`const proc = ctx.hasService('process') ? createProcessGateway(ctx) : undefined;`——没有 process 时 PDF 工具优雅降级。
+- **硬依赖**：声明 `inject = ['process']`，框架在 process 就绪前不会 `apply` 你的插件；网关在缺失时也会抛 `未找到 process 服务...`（`plugin-process-api/src/index.ts`）。
+- **可选依赖**：先 `ctx.hasService('process')` 探测再决定。参考 `plugin-office/src/index.ts`：`const proc = ctx.hasService('process') ? createProcessGateway(ctx) : undefined;`——没有 process 时 PDF 工具优雅降级。
 
 ### 错误边界
 
-- `execFile` 非零退出会 **reject**，错误对象上挂 `result: ExecResult`（`plugin-process-local/src/index.ts:109-115`）——需要部分输出时从 `err.result.stderr` 取。
-- `spawn().wait()` **不会**因非零退出 reject，只在子进程 `'error'`（如可执行文件不存在）时 reject；超时是正常 resolve（`signal` 为 `SIGKILL`/`SIGTERM`），不抛错。`plugin-tool-system` 的 `exec` 据此判断 `timedOut`（`shell.ts:158-173`）。
+- `execFile` 非零退出会 **reject**，错误对象上挂 `result: ExecResult`（`plugin-process-local/src/index.ts`）——需要部分输出时从 `err.result.stderr` 取。
+- `spawn().wait()` **不会**因非零退出 reject，只在子进程 `'error'`（如可执行文件不存在）时 reject；超时是正常 resolve（`signal` 为 `SIGKILL`/`SIGTERM`），不抛错。`plugin-tool-system` 的 `exec` 据此判断 `timedOut`（`shell.ts`）。
 
 ---
 
@@ -231,37 +231,37 @@ process 是框架里**权限最高的能力**之一（任意子进程 = 完整�
 
 ### Provider 侧
 
-- **maxBuffer 边读边计数**：本地实现在 `wait()` 里边读边累计、超限即停止累积并标 `truncated`，**不杀进程**（后台 dev server/`--watch` 本应长跑，杀掉会误伤）——见 `plugin-process-local/src/index.ts:62-101`。自写 provider 也应有上限，**禁止**无限 `stdout += chunk` 再在 `Buffer.concat` 前累积（OOM 向量，见第 7 节）。
-- **stdin error 必须挂监听**：`child.stdin.on('error', () => {})`——否则 EPIPE 这类异步错误无监听器会 `uncaughtException` 崩整个宿主进程（`index.ts:31-32`）。
+- **maxBuffer 边读边计数**：本地实现在 `wait()` 里边读边累计、超限即停止累积并标 `truncated`，**不杀进程**（后台 dev server/`--watch` 本应长跑，杀掉会误伤）——见 `plugin-process-local/src/index.ts`。自写 provider 也应有上限，**禁止**无限 `stdout += chunk` 再在 `Buffer.concat` 前累积（OOM 向量，见第 7 节）。
+- **stdin error 必须挂监听**：`child.stdin.on('error', () => {})`——否则 EPIPE 这类异步错误无监听器会 `uncaughtException` 崩整个宿主进程（`index.ts`）。
 
 ### Consumer 侧（鉴权 / 确认）
 
 process 本身**没有内核级鉴权门**——风险控制落在**调用它的工具**上。把 process 暴露给 LLM 的工具，要在工具层按 [鉴权模型](../concepts/security-model.md) / [authority](../core/authority.md) 设门：
 
-- 任意 shell 命令是最强的 confused-deputy 向量。`plugin-tool-system` 的 `exec` / `exec_background` / `process_kill` 都设 `visibility: 'restricted'` + `confirm: 'session'`——**连 owner 也要本会话确认一次**（`shell.ts:139-141`、`:376-377`）。你的工具若直通 `spawn`，应比照此设级别 + 确认。
-- shell 工具用 `safeEnv()` 只透传白名单环境变量（PATH/LANG/TERM 等），不暴露宿主全量 env（`shell.ts:84-91`）。注意这是工具自己做的——**`SpawnOptions.env` 不传时本地实现默认 `{ ...process.env, ...opts.env }` 继承全量宿主 env**（`plugin-process-local/src/index.ts:26`），敏感场景请显式传白名单 env。
+- 任意 shell 命令是最强的 confused-deputy 向量。`plugin-tool-system` 的 `exec` / `exec_background` / `process_kill` 都设 `visibility: 'restricted'` + `confirm: 'session'`——**连 owner 也要本会话确认一次**（`shell.ts`、`:376-377`）。你的工具若直通 `spawn`，应比照此设级别 + 确认。
+- shell 工具用 `safeEnv()` 只透传白名单环境变量（PATH/LANG/TERM 等），不暴露宿主全量 env（`shell.ts`）。注意这是工具自己做的——**`SpawnOptions.env` 不传时本地实现默认 `{ ...process.env, ...opts.env }` 继承全量宿主 env**（`plugin-process-local/src/index.ts`），敏感场景请显式传白名单 env。
 
 ### 不是沙箱
 
-`readExternalFile` 显式**绕过 storage root 沙箱**读任意 OS 路径——契约注释（`plugin-process-api/src/index.ts:91-98`）限定它只用于「外部推来的本地路径」场景（如 OneBot daemon/NapCat 容器挂载的 `/tmp` 附件，`adapter-onebot/src/attachment-cache.ts:14-17`、`:116-118`）。它**不是** storage 的替代品：受沙箱约束的「在声明 root 内读写」请走 [storage 服务](./storage.md)。
+`readExternalFile` 显式**绕过 storage root 沙箱**读任意 OS 路径——契约注释（`plugin-process-api/src/index.ts`）限定它只用于「外部推来的本地路径」场景（如 OneBot daemon/NapCat 容器挂载的 `/tmp` 附件，`adapter-onebot/src/attachment-cache.ts`、`:116-118`）。它**不是** storage 的替代品：受沙箱约束的「在声明 root 内读写」请走 [storage 服务](./storage.md)。
 
-需要在隔离环境跑不可信代码：用 [code-sandbox 服务](./code-sandbox.md)。`plugin-code-sandbox-os` 正是把 process.spawn 再裹一层 bwrap/seatbelt 启动器（`src/index.ts:60-68`），且后端不可用时 fail-closed。
+需要在隔离环境跑不可信代码：用 [code-sandbox 服务](./code-sandbox.md)。`plugin-code-sandbox-os` 正是把 process.spawn 再裹一层 bwrap/seatbelt 启动器（`src/index.ts`），且后端不可用时 fail-closed。
 
 ### detached fire-and-forget
 
-启动「打开浏览器」这类不需要等待的进程：`detached: true` + `stdio: 'ignore'` + `.unref()` 三件套缺一不可（`webui-server/src/auth.ts:180-195`），否则父进程会被吊住或无法独立退出。
+启动「打开浏览器」这类不需要等待的进程：`detached: true` + `stdio: 'ignore'` + `.unref()` 三件套缺一不可（`webui-server/src/auth.ts`），否则父进程会被吊住或无法独立退出。
 
 ---
 
 ## 7. 边界与坑（审计标注）
 
-1. **`maxOutputSize` 是事后截断，不是流式限额（消费侧坑）。** 工具层常见的 `maxOutputSize` 只在拿到完整字符串后 `truncateOutput`（`plugin-tool-system/src/tools/shell.ts:67-71`），**真正的内存上限是 provider 的 `maxBuffer`**（本地默认 10MB，`plugin-process-local/src/index.ts:17`）。历史上 `exec` 自起无上限 `stdout += chunk` 累加器，在「超限只停累积不杀进程」改动之后会无界增长 → OOM；现已改为直接用 `wait()` 内部带 `maxBuffer` 上限的 `result.stdout/stderr`（`shell.ts:155-157`）。**自写工具切勿在 process 之上再叠一个无上限累加器**；`exec_background` 这类需要持续读流的，要像 `shell.ts:229-241` 那样自己滚动裁剪缓冲区。
+1. **`maxOutputSize` 是事后截断，不是流式限额（消费侧坑）。** 工具层常见的 `maxOutputSize` 只在拿到完整字符串后 `truncateOutput`（`plugin-tool-system/src/tools/shell.ts`），**真正的内存上限是 provider 的 `maxBuffer`**（本地默认 10MB，`plugin-process-local/src/index.ts`）。历史上 `exec` 自起无上限 `stdout += chunk` 累加器，在「超限只停累积不杀进程」改动之后会无界增长 → OOM；现已改为直接用 `wait()` 内部带 `maxBuffer` 上限的 `result.stdout/stderr`（`shell.ts`）。**自写工具切勿在 process 之上再叠一个无上限累加器**；`exec_background` 这类需要持续读流的，要像 `shell.ts` 那样自己滚动裁剪缓冲区。
 
-2. **`readExternalFile` = confused-deputy + 无大小上限。** 它 `fs.readFile` 任意路径（`plugin-process-local/src/index.ts:123-126`），daemon 给什么路径就读什么、一次性全量进内存、且**不校验路径来源**。这是「daemon-trusted」的信任面——只在「确实是外部可信组件推来的路径」时用，不要把用户/LLM 可控字符串直接喂进去（路径遍历读取宿主任意文件）。下载的体积上限要由调用方自己加（参考 onebot 的 `readBodyCapped`，但那只覆盖 http，`readExternalFile` 路径无此保护）。
+2. **`readExternalFile` = confused-deputy + 无大小上限。** 它 `fs.readFile` 任意路径（`plugin-process-local/src/index.ts`），daemon 给什么路径就读什么、一次性全量进内存、且**不校验路径来源**。这是「daemon-trusted」的信任面——只在「确实是外部可信组件推来的路径」时用，不要把用户/LLM 可控字符串直接喂进去（路径遍历读取宿主任意文件）。下载的体积上限要由调用方自己加（参考 onebot 的 `readBodyCapped`，但那只覆盖 http，`readExternalFile` 路径无此保护）。
 
-3. **`timeout` 走 SIGKILL，无优雅期。** 超时直接 `child.kill('SIGKILL')`（`index.ts:40-48`），子进程没有清理机会。需要 graceful 关停的长进程，自己拿 `handle.kill('SIGTERM')` 管理（`shell.ts` 的 `process_kill` 即如此）。
+3. **`timeout` 走 SIGKILL，无优雅期。** 超时直接 `child.kill('SIGKILL')`（`index.ts`），子进程没有清理机会。需要 graceful 关停的长进程，自己拿 `handle.kill('SIGTERM')` 管理（`shell.ts` 的 `process_kill` 即如此）。
 
-4. **`spawn` 不接 shell 字符串。** 只接 `(cmd, args[])`，要 shell 特性须显式 `spawn('/bin/sh', ['-c', cmd])`（`shell.ts:96-98`、`:149`）——这是有意为之，避免隐式 shell 注入面，但也意味着 provider/consumer 都要自己负责 shell 语义。
+4. **`spawn` 不接 shell 字符串。** 只接 `(cmd, args[])`，要 shell 特性须显式 `spawn('/bin/sh', ['-c', cmd])`（`shell.ts`、`:149`）——这是有意为之，避免隐式 shell 注入面，但也意味着 provider/consumer 都要自己负责 shell 语义。
 
 ---
 
