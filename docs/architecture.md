@@ -11,7 +11,7 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 `@aalis/core` 对外暴露：
 
 - 运行时基础设施：`App` / `Context` / `EventBus` / `ServiceContainer` / `HookRegistry` / `ConfigManager` / `Logger` / `PluginManager`
-- 三个扩展点：`ServiceTypeMap` / `AalisEvents` / `HookContextMap`（均通过 declaration merging 由 `@aalis/plugin-*-api` 注入业务键）
+- 四个扩展点：`ServiceTypeMap` / `AalisEvents` / `HookContextMap` / `ContributionPointMap`（均通过 declaration merging 由 `@aalis/plugin-*-api` 注入业务键）
 - 核心数据契约：`Message` / `ContentSegment` / `ToolCall` / `ToolDefinition` / `ToolFunction`（OpenAI 协议形状，跨载体复用）
 - `AalisConfig` 仅声明基础字段（`name` / `logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`）加 `[key: string]: unknown` 兜底；业务字段（owners / deniedCapabilities / authorityOverrides / confirmOverrides 等）由对应 plugin-*-api 通过 declaration merging 注入，core 不知晓其语义
 - `ConfigManager` 是纯内存配置中枢：自身不读写文件，`save()` 把整份配置快照原样委托给宿主注入的 `ConfigProvider.save()`（无 provider 时静默忽略），对所有顶层字段一视同仁、不含任何业务特例（合并默认值时 `mergeDefaultsConfig()` 也是先填 core 已知字段、再透传其余）
@@ -62,7 +62,8 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 │                    核心框架层 (Core Layer)                     │
 │   App · Context · ServiceContainer · PluginManager            │
 │   EventBus · HookRegistry · ConfigManager · Logger             │
-│   3 个扩展点：ServiceTypeMap / AalisEvents / HookContextMap        │
+│   4 个扩展点：ServiceTypeMap / AalisEvents / HookContextMap        │
+│                / ContributionPointMap                          │
 │   （业务接口均在 plugin-*-api，core 不持有）                  │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -78,7 +79,7 @@ Platform 适配器接收 → 发出 inbound:message 事件
   ▼
 App 路由 → Agent.handleMessage(incoming) 作为中间件默认行为
   │
-  ├─ 1. hooks.run('agent:input:before', { message, metadata }, defaultAction)
+  ├─ 1. ctx.runHook('agent:input:before', { message, metadata }, defaultAction)
   │     │
   │     ├─ [ChatFlow 中间件] 流控拦截/缓冲
   │     ├─ [其他插件中间件]
@@ -87,33 +88,37 @@ App 路由 → Agent.handleMessage(incoming) 作为中间件默认行为
   ├─ 2. buildMessages()
   │     └─ [系统提示词] + [历史消息(≤50)] + [当前用户消息]
   │
-  ├─ 3. hooks.run('agent:llm:before')
-  │     ├─ plugin-memory-vector: 注入语义记忆上下文
+  ├─ 3. 组装 agent:prompt 贡献 → 物化为带归属标识的 system 块
+  │     ├─ plugin-memory-vector / memory-summary: 语义记忆、摘要（context 槽）
+  │     ├─ plugin-user-profile / user-relation: 档案、关系（identity 槽）
+  │     └─ plugin-skills: 技能清单与已激活正文（knowledge 槽）
+  │
+  ├─ 4. ctx.runHook('agent:llm:before') ← 拦截者审已成型的 messages
   │     └─ plugin-tool-search: 替换工具列表为搜索层
   │
-  ├─ 4. trimMessages() ← 按 token 预算裁剪
+  ├─ 5. trimMessages() ← 按 token 预算裁剪
   │
-  ├─ 5. LLM.chatStream() → 流式输出 → outbound:stream 事件
+  ├─ 6. LLM.chatStream() → 流式输出 → outbound:stream 事件
   │
-  ├─ 6. hooks.run('agent:llm:after')
+  ├─ 7. ctx.runHook('agent:llm:after')
   │
-  ├─ 7. 工具调用循环 (最多 maxToolIterations 次)
-  │     ├─ hooks.run('agent:tool:before')
+  ├─ 8. 工具调用循环 (最多 maxToolIterations 次)
+  │     ├─ ctx.runHook('agent:tool:before')
   │     ├─ ctx.getService<ToolService>('tools')!.execute() ← 权限检查 + 执行
-  │     ├─ hooks.run('agent:tool:after')
+  │     ├─ ctx.runHook('agent:tool:after')
   │     └─ 追加工具结果 → 继续调用 LLM
   │
-  ├─ 8. hooks.run('agent:reply:before')
+  ├─ 9. ctx.runHook('agent:reply:before')
   │     └─ plugin-persona: outputFormat JSON 解析
   │
-  ├─ 9. 保存到 memory (用户+助手消息)
+  ├─ 10. 保存到 memory (用户+助手消息)
   │
-  └─ 10. emit('outbound:message') → 各平台输出给用户
+  └─ 11. emit('outbound:message') → 各平台输出给用户
 ```
 
 ## 核心扩展机制
 
-Aalis 提供三种互补的扩展手段，覆盖不同粒度的定制需求：
+Aalis 提供四种互补的扩展手段，覆盖不同粒度的定制需求：
 
 ### 1. 中间件管道 (Hooks)
 
@@ -149,7 +154,23 @@ ctx.provide('agent', myAgent, { priority: 20 });
 ctx.on('outbound:message', async (msg) => { /* 记录日志、统计等 */ });
 ```
 
-### 4. Declaration Merging
+### 4. 贡献点 (Contribution Points)
+
+往共享产物里"交一块料"，排布权归收集方。与 hooks 的分工：**改写或截停既有流程 → hooks；往共享产物添自己的一块 → 贡献点**。贡献者拿只读视图、不掌握控制流（无短路、无排序影响力、看不到他人产出），因此重复注入、排布漂移、错误连坐在 API 上无法表达。
+
+```typescript
+// 往 LLM 提示词交一块（agent:prompt 是 plugin-agent 定义的贡献点）
+ctx.contribute('agent:prompt', {
+  id: 'my-block',
+  anchor: 'context',
+  build: async view => (view.dryRun ? null : `补充上下文：${await load(view.sessionId)}`),
+});
+
+// 任何插件也可拥有自己的贡献点：收集并自行决定执行策略
+for (const { key, spec } of ctx.collect('my-plugin:panel')) { /* ... */ }
+```
+
+### 5. Declaration Merging
 
 第三方插件可通过 TypeScript 声明合并来扩展核心类型：
 
@@ -160,6 +181,9 @@ declare module '@aalis/core' {
   }
   interface HookContextMap {
     'schedule:before': { jobId: string; cron: string };
+  }
+  interface ContributionPointMap {
+    'my-plugin:panel': { id: string; render(): string };
   }
 }
 ```
@@ -267,7 +291,7 @@ PluginManager 只有一个外部可见的状态变更入口：`recompute(reason)
 ### 执行模型
 
 ```
-hooks.run(hookName, data, defaultAction?) → reachedEnd: boolean
+ctx.runHook(hookName, data, defaultAction?) → reachedEnd: boolean
   │
   ▼
 handler A（先注册）─── await fn(data, next)
@@ -281,7 +305,7 @@ defaultAction()        ← 所有 handler 通过后执行
 
 **关键约定**：
 - 同一钩子内多个 handler 按 **注册顺序** 执行洋葱模型，无优先级数字
-- 不调用 `next()` 即中止整个管道（含 defaultAction）；`hooks.run()` 返回 `false`
+- 不调用 `next()` 即中止整个管道（含 defaultAction）；`ctx.runHook()` 返回 `false`
 - 跨钩子的顺序由调度方（如 plugin-gateway）显式决定
 
 ### Gateway 入站生命周期相位
@@ -323,7 +347,7 @@ defaultAction()        ← 所有 handler 通过后执行
 
 ```typescript
 // 定义钩子的插件
-await ctx.hooks.run('my-plugin:before', { task: taskData }, async () => {
+await ctx.runHook('my-plugin:before', { task: taskData }, async () => {
   // defaultAction
 });
 

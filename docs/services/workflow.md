@@ -7,14 +7,14 @@
 - 服务注册名：`'workflow'`（`ctx.getService<WorkflowService>('workflow')`）。
 - 契约包：`@aalis/plugin-workflow-api`。
 - 该契约**有运行时服务**：`-api` 包只导出 interface + DSL 类型 + 事件契约 + helper（`useWorkflowService`），实现由 `@aalis/plugin-workflow` 提供。
-- 设计取向（`packages/plugin-workflow-api/src/index.ts:7-13`）：工作流「定义」是用户/AI 资产，存 `workspace`；「运行实例」是运行时记录，存 `data`。
+- 设计取向（`packages/plugin-workflow-api/src/index.ts`）：工作流「定义」是用户/AI 资产，存 `workspace`；「运行实例」是运行时记录，存 `data`。
 
 ## 2. 契约
 
 ### 服务接口
 
 ```ts
-// packages/plugin-workflow-api/src/index.ts:145-168
+// packages/plugin-workflow-api/src/index.ts
 export interface WorkflowService {
   /** 列出全部工作流定义 */
   listWorkflows(): WorkflowDef[];
@@ -44,18 +44,18 @@ export interface WorkflowService {
 helper（取服务，可能 undefined）：
 
 ```ts
-// packages/plugin-workflow-api/src/index.ts:172-174
+// packages/plugin-workflow-api/src/index.ts
 export function useWorkflowService(ctx: Context): WorkflowService | undefined {
   return ctx.getService<WorkflowService>('workflow');
 }
 ```
 
-并通过 declaration merging 把服务名登记进核心 `ServiceTypeMap`（`packages/plugin-workflow-api/src/index.ts:201-205`），使 `getService('workflow')` 得到强类型。
+并通过 declaration merging 把服务名登记进核心 `ServiceTypeMap`（`packages/plugin-workflow-api/src/index.ts`），使 `getService('workflow')` 得到强类型。
 
 ### 工作流定义（DSL）
 
 ```ts
-// packages/plugin-workflow-api/src/index.ts:92-107
+// packages/plugin-workflow-api/src/index.ts
 export interface WorkflowDef {
   id: string;            // 唯一 id（文件名/外部引用键）
   name?: string;
@@ -67,7 +67,7 @@ export interface WorkflowDef {
 }
 ```
 
-触发器（`packages/plugin-workflow-api/src/index.ts:19-24`）：
+触发器（`packages/plugin-workflow-api/src/index.ts`）：
 
 ```ts
 export type TriggerSpec =
@@ -78,7 +78,7 @@ export type TriggerSpec =
   | { type: 'manual' };
 ```
 
-节点（`packages/plugin-workflow-api/src/index.ts:28-88`）。基础字段 `id` / `type` / `deps?`（上游依赖，空=根节点）/ `out?`（把结果存入 `outputs[out]` 供下游 `{{outputs.<out>}}` 插值）。四种类型：
+节点（`packages/plugin-workflow-api/src/index.ts`）。基础字段 `id` / `type` / `deps?`（上游依赖，空=根节点）/ `out?`（把结果存入 `outputs[out]` 供下游 `{{outputs.<out>}}` 插值）。四种类型：
 
 - `tool`：`{ tool: string; args?: Record<string, unknown> }`——调用已注册工具；`args` 内字符串值会被插值（`:41-47`）。
 - `send-message`：`{ sessionId: string; platform?: string; content: string }`——fire-and-forget 发一条消息（`:49-55`）。
@@ -88,7 +88,7 @@ export type TriggerSpec =
 ### 运行实例
 
 ```ts
-// packages/plugin-workflow-api/src/index.ts:111-141
+// packages/plugin-workflow-api/src/index.ts
 export type RunStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
 export type NodeStatus = 'pending' | 'running' | 'success' | 'failed' | 'skipped';
 
@@ -107,7 +107,7 @@ export interface WorkflowRun {
 
 ### 事件契约
 
-`-api` 通过 declaration merging 往 `AalisEvents` 注入以下事件（`packages/plugin-workflow-api/src/index.ts:178-198`）：
+`-api` 通过 declaration merging 往 `AalisEvents` 注入以下事件（`packages/plugin-workflow-api/src/index.ts`）：
 
 - `'trigger:fired'`：**入站**——由 scheduler / 其它触发源 emit，workflow 订阅。payload 形如 `{ source, type, workflowId?, payload? }`，其中 `payload` 会被透传进运行实例 `vars`。
 - `'workflow:run:start'` / `'workflow:run:done'` / `'workflow:run:error'`：以 `WorkflowRun` 为参数，**出站**——workflow 在运行各阶段 emit。
@@ -120,13 +120,13 @@ export interface WorkflowRun {
 ### 参考实现（provider）
 
 唯一一等实现 **`@aalis/plugin-workflow`**：
-- 注册：`ctx.provide('workflow', service)`（`packages/plugin-workflow/src/index.ts:503`）。
+- 注册：`ctx.provide('workflow', service)`（`packages/plugin-workflow/src/index.ts`）。
 - 模块拆分：`engine.ts`（DAG 拓扑调度 + 节点执行 + `{{...}}` 插值）、`triggers.ts`（`TriggerManager`，cron/interval/once/event 接线）、`loader.ts`（YAML 定义加载/持久化）、`persistence.ts`（`RunStore` 运行历史滚动写盘）、`index.ts`（服务装配 + AI 工具 + WebUI 页）。
-- 依赖（`package.json` `aalis.service` 与 `index.ts:31-36` 双源）：`required: ['cron-engine']`（周期型触发器全部委托 cron-engine，见 §6）；`optional: ['tools', 'storage', 'webui']`。
+- 依赖（`package.json` `aalis.service` 与 `index.ts` 双源）：`required: ['cron-engine']`（周期型触发器全部委托 cron-engine，见 §6）；`optional: ['tools', 'storage', 'webui']`。
 
 ### 触发源（trigger:fired 的 emit 者）
 
-**`@aalis/plugin-scheduler`** 在执行调度任务时同时广播 `trigger:fired`，供 workflow 订阅（`packages/plugin-scheduler/src/index.ts:471-480`）：
+**`@aalis/plugin-scheduler`** 在执行调度任务时同时广播 `trigger:fired`，供 workflow 订阅（`packages/plugin-scheduler/src/index.ts`）：
 
 ```ts
 await ctx.emit('trigger:fired' as any, {
@@ -140,7 +140,7 @@ await ctx.emit('trigger:fired' as any, {
 
 ### 典型消费点
 
-- **AI 工具**（同插件内自我消费）：`enableTools` 开启时向 LLM 暴露 `workflow_define` / `workflow_list` / `workflow_run` / `workflow_get_runs` / `workflow_remove`（`packages/plugin-workflow/src/index.ts:525-689`），全部走 `tools` 服务注册（optional 依赖，`getService('tools')` 缺失则跳过，`:506`）。
+- **AI 工具**（同插件内自我消费）：`enableTools` 开启时向 LLM 暴露 `workflow_define` / `workflow_list` / `workflow_run` / `workflow_get_runs` / `workflow_remove`（`packages/plugin-workflow/src/index.ts`），全部走 `tools` 服务注册（optional 依赖，`getService('tools')` 缺失则跳过，`:506`）。
 - **WebUI actions**（同插件内）：`workflowStats` / `listWorkflowsTable` / `listRunsTable` / `triggerWorkflow` / `toggleWorkflow` / `removeWorkflow` / `upsertWorkflowYaml` 等都以 `const svc = ctx.getService<WorkflowService>('workflow')` 取服务、判空降级（`:200-330`）——这是**每次用都重新 getService** 的标准范例。
 - 跨插件外部消费者：当前仓内 workflow 服务的主要消费方就是 workflow 自身的工具/WebUI 层 + scheduler 的事件桥；第三方插件可经 `useWorkflowService(ctx)` 编程式触发/查询。
 
@@ -174,7 +174,7 @@ DI 靠包清单 + 代码导出**双源**声明（见 [manifest-metadata](../conc
 }
 ```
 
-`src/index.ts` 导出（`packages/plugin-workflow/src/index.ts:29-40`）：
+`src/index.ts` 导出（`packages/plugin-workflow/src/index.ts`）：
 ```ts
 export const subsystem = 'workflow';
 export const provides = ['workflow'];
@@ -241,7 +241,7 @@ export async function apply(ctx: Context): Promise<void> {
 ### priority / entryId / label
 
 `ctx.provide(name, instance, { priority?, label?, entryId? })`：
-- `priority`：默认 `ServicePriority.Backend = 0`。同名服务竞争时 winner = **preference > priority > 注册顺序**（无能力匹配，0.5.0 已移除——能力挂在实例上而非 DI 层）。普通第三方实现保持 `0`，让用户在 WebUI 用 preference 选；要默认压过参考实现才用 `Override = 50`（`ServicePriority` 定义见 `packages/core/src/types/service.ts:27-31`）。
+- `priority`：默认 `ServicePriority.Backend = 0`。同名服务竞争时 winner = **preference > priority > 注册顺序**（无能力匹配，0.5.0 已移除——能力挂在实例上而非 DI 层）。普通第三方实现保持 `0`，让用户在 WebUI 用 preference 选；要默认压过参考实现才用 `Override = 50`（`ServicePriority` 定义见 `packages/core/src/types/service.ts`）。
 - `entryId`：默认 `ctx.id`，**必须以 `ctx.id` 为前缀**，否则卸载时无法连带注销。
 - `label`：WebUI 选择器展示名。
 
@@ -283,47 +283,47 @@ await ctx.emit('trigger:fired', {
 });
 ```
 
-注意：`trigger:fired` 只有携带 `workflowId` 时才会被执行（`packages/plugin-workflow/src/index.ts:378-383`：`if (!info?.workflowId) return;`）。scheduler 当前广播的 `trigger:fired` **不带 workflowId**，因此那条桥目前不会自动触发任何 workflow——它是为平滑迁移预留的（`scheduler/src/index.ts:467-469` 注释）。
+注意：`trigger:fired` 只有携带 `workflowId` 时才会被执行（`packages/plugin-workflow/src/index.ts`：`if (!info?.workflowId) return;`）。scheduler 当前广播的 `trigger:fired` **不带 workflowId**，因此那条桥目前不会自动触发任何 workflow——它是为平滑迁移预留的（`scheduler/src/index.ts` 注释）。
 
 ### 错误边界
 
-- `runWorkflow` 在「workflow 不存在 / 已禁用」时**会抛**（`index.ts:393-394`），消费者要兜 try/catch（工具 handler 与 WebUI action 都这么做）。
-- DAG 内部某节点失败**不抛到 `runWorkflow`**——整个 run 标记 `failed`、`run.error` 带首个失败原因，`runWorkflow` 仍正常 resolve（`engine.ts:317-322`、`350-352`）。所以判结果要看 `run.status`，不能只靠 try/catch。
+- `runWorkflow` 在「workflow 不存在 / 已禁用」时**会抛**（`index.ts`），消费者要兜 try/catch（工具 handler 与 WebUI action 都这么做）。
+- DAG 内部某节点失败**不抛到 `runWorkflow`**——整个 run 标记 `failed`、`run.error` 带首个失败原因，`runWorkflow` 仍正常 resolve（`engine.ts`）。所以判结果要看 `run.status`，不能只靠 try/catch。
 
 ## 6. 能力 / 风险 → 影响
 
 ### authority：调用者身份透传（核心安全约束）
 
-工作流定义是 owner 资产，但**「谁触发就按谁的权限裁决」**，杜绝借他人 workflow 提权（`packages/plugin-workflow/src/index.ts:421-429`）：
+工作流定义是 owner 资产，但**「谁触发就按谁的权限裁决」**，杜绝借他人 workflow 提权（`packages/plugin-workflow/src/index.ts`）：
 
-- `workflow_run` 工具触发时把调用者 `{ platform, userId }` 透传给 `runWorkflow` 的 `caller`（`:612-616`），引擎再据此构造 `toolCallContext`，让工作流内部的 `tool` 节点按**调用者**等级过 authority 闸（`engine.ts:147` 把 `toolCallContext` 传给 `tools.execute`）。
-- cron / event / once / WebUI「立即运行」触发**无调用者** → 保持匿名（`platform: 'workflow'`、`userId: undefined`），只能跑 `public`（risk safe、minLevel 0）工具（`index.ts:424-428`）。
+- `workflow_run` 工具触发时把调用者 `{ platform, userId }` 透传给 `runWorkflow` 的 `caller`（`:612-616`），引擎再据此构造 `toolCallContext`，让工作流内部的 `tool` 节点按**调用者**等级过 authority 闸（`engine.ts` 把 `toolCallContext` 传给 `tools.execute`）。
+- cron / event / once / WebUI「立即运行」触发**无调用者** → 保持匿名（`platform: 'workflow'`、`userId: undefined`），只能跑 `public`（risk safe、minLevel 0）工具（`index.ts`）。
 - provider 作者重实现时**必须保留这条透传链**：否则匿名触发的工作流能跑 owner 才允许的危险工具，等于绕过 [authority](../core/authority.md)。risk{safe/sensitive/dangerous}→minLevel、确认（confirm 轴）等都在 `tools.execute` 那层裁决，workflow 只负责传对身份。
 
 ### agent 节点：join 串扰与隔离
 
-`agent` 节点复用 `delegate_to_session` 的 join 机制——emit `inbound:message`（`triggerType: 'proactive'`）前先注册 `agent:turn:after` middleware，按 `sessionId` 捕获首条回复（`engine.ts:185-235`）。约束：
-- **同一并行层内不要让多个 agent 节点指向相同的显式 `sessionId`**：`agent:turn:after` 按 sessionId 匹配会串扰捕获（A 拿到 B 的回复）。需要隔离子任务就**省略 sessionId**，引擎自动生成一次性子会话 `workflow:agent:<runId>:<nodeId>`（`engine.ts:188-190`，`-api:74-81` 文档）。
-- `source` 含 nodeId（`workflow:<wf>:<nodeId>`）以隔离 agent 的并发 lane，避免同会话两回合互相 abort（`engine.ts:212-214`）。
-- 默认 `timeoutSeconds = 120`；超时或 `outcome=error/aborted` → 节点失败（`engine.ts:170,228-233`）。
-- 若目标 platform/sessionType 落入 trigger-policy / flow-control 生效 scope，proactive 消息可能被吞，节点会等满超时才失败——放宽 scope 时要为编排消息留通路（`engine.ts:182-183`）。
+`agent` 节点复用 `delegate_to_session` 的 join 机制——emit `inbound:message`（`triggerType: 'proactive'`）前先注册 `agent:turn:after` middleware，按 `sessionId` 捕获首条回复（`engine.ts`）。约束：
+- **同一并行层内不要让多个 agent 节点指向相同的显式 `sessionId`**：`agent:turn:after` 按 sessionId 匹配会串扰捕获（A 拿到 B 的回复）。需要隔离子任务就**省略 sessionId**，引擎自动生成一次性子会话 `workflow:agent:<runId>:<nodeId>`（`engine.ts`，`-api:74-81` 文档）。
+- `source` 含 nodeId（`workflow:<wf>:<nodeId>`）以隔离 agent 的并发 lane，避免同会话两回合互相 abort（`engine.ts`）。
+- 默认 `timeoutSeconds = 120`；超时或 `outcome=error/aborted` → 节点失败（`engine.ts`）。
+- 若目标 platform/sessionType 落入 trigger-policy / flow-control 生效 scope，proactive 消息可能被吞，节点会等满超时才失败——放宽 scope 时要为编排消息留通路（`engine.ts`）。
 
 ### 触发器全部委托 cron-engine
 
-`cron` / `interval` 触发器都转成 cron-engine 的 `subscribe`（`interval` → `@every Ns`），与 scheduler 共享整分钟 tick，不再各自 `setInterval`（`triggers.ts:39-62`）。所以 `cron-engine` 是**硬依赖**（`required`）。`once` 用 `setTimeout`、`event` 用 `ctx.on` 订阅（`triggers.ts:64-92`）。
+`cron` / `interval` 触发器都转成 cron-engine 的 `subscribe`（`interval` → `@every Ns`），与 scheduler 共享整分钟 tick，不再各自 `setInterval`（`triggers.ts`）。所以 `cron-engine` 是**硬依赖**（`required`）。`once` 用 `setTimeout`、`event` 用 `ctx.on` 订阅（`triggers.ts`）。
 
 ### storage 不是沙盒
 
-定义存 `defsDir`（默认 `workspace:/workflows`）、运行历史存 `runsFile`（默认 `data:/workflow-runs.json`），都走 storage URI（`index.ts:51-77`、`createStorageGateway`）。storage 按 root 做权限位但**不是沙盒**，见 [storage-uri-grammar](../concepts/storage-uri-grammar.md)。`send-message` / `tool` 节点能触达任意会话与已注册工具，等价于 owner 资产的执行面——把 `workflow_define` 暴露给低权限用户即等于给了编排执行能力，注意 authority 配置。
+定义存 `defsDir`（默认 `workspace:/workflows`）、运行历史存 `runsFile`（默认 `data:/workflow-runs.json`），都走 storage URI（`index.ts`、`createStorageGateway`）。storage 按 root 做权限位但**不是沙盒**，见 [storage-uri-grammar](../concepts/storage-uri-grammar.md)。`send-message` / `tool` 节点能触达任意会话与已注册工具，等价于 owner 资产的执行面——把 `workflow_define` 暴露给低权限用户即等于给了编排执行能力，注意 authority 配置。
 
 ## 7. 边界与坑
 
-- **event 触发的 payload 形态（近期修复）**：`event` 触发时 `TriggerManager` 把监听到的事件参数**包成 `{ args }`** 传给 fire（`triggers.ts:88`：`this.fire(def.id, ..., { args })`），fire 再把它整体作为 `extraVars` 注入运行实例 `vars`（`index.ts:367-374`）。因此事件触发的工作流里要用 **`{{vars.args}}`**（或 `{{vars.args[0].xxx}}` 走路径访问）读取事件负载，而**不是** `{{vars.xxx}}` 直接读事件字段。对比之下 `trigger:fired`（含 webhook/scheduler 桥）的 `info.payload` 是**直接展开**进 vars 的（`index.ts:380`），其字段名直接用 `{{vars.字段}}`。两条入口的 vars 形态不同，写定义时别混。
-- **event filter 只做顶层等值匹配**：`filter` 的每个 key 必须在事件第一个参数（顶层）等值命中；payload 不是对象时只有空 filter 通过（`triggers.ts:128-141`）。无嵌套/范围匹配。
-- **DAG 失败即停**：任一节点失败，引擎不再调度新批次，未跑的节点标 `skipped`，整 run = `failed`（`engine.ts:330,344-352`）。没有节点级重试 / 部分继续。
-- **取消不打断进行中的节点**：`cancelRun` 置 cancelToken，引擎只在**下一批调度前**检查；已 `running` 的节点（尤其 `wait` / `agent` 的阻塞等待）不会被中断（`engine.ts:302,330`）。
-- **运行历史是滚动 + 整体重写**：`RunStore` 超过 `maxRuns`（默认 200、最小 10）裁剪最旧，每次变更整体重写文件、写入串行化（`persistence.ts:22-23,41-67`）。历史不是无限审计日志。
-- **节点 `output` 截断**：存入 `outputs` 的是完整结果，但 `NodeRunInfo.output` 展示字段截断到 1000 字符（`engine.ts:20,314`）。下游插值用的是完整值，UI 看到的是预览。
+- **event 触发的 payload 形态（近期修复）**：`event` 触发时 `TriggerManager` 把监听到的事件参数**包成 `{ args }`** 传给 fire（`triggers.ts`：`this.fire(def.id, ..., { args })`），fire 再把它整体作为 `extraVars` 注入运行实例 `vars`（`index.ts`）。因此事件触发的工作流里要用 **`{{vars.args}}`**（或 `{{vars.args[0].xxx}}` 走路径访问）读取事件负载，而**不是** `{{vars.xxx}}` 直接读事件字段。对比之下 `trigger:fired`（含 webhook/scheduler 桥）的 `info.payload` 是**直接展开**进 vars 的（`index.ts`），其字段名直接用 `{{vars.字段}}`。两条入口的 vars 形态不同，写定义时别混。
+- **event filter 只做顶层等值匹配**：`filter` 的每个 key 必须在事件第一个参数（顶层）等值命中；payload 不是对象时只有空 filter 通过（`triggers.ts`）。无嵌套/范围匹配。
+- **DAG 失败即停**：任一节点失败，引擎不再调度新批次，未跑的节点标 `skipped`，整 run = `failed`（`engine.ts`）。没有节点级重试 / 部分继续。
+- **取消不打断进行中的节点**：`cancelRun` 置 cancelToken，引擎只在**下一批调度前**检查；已 `running` 的节点（尤其 `wait` / `agent` 的阻塞等待）不会被中断（`engine.ts`）。
+- **运行历史是滚动 + 整体重写**：`RunStore` 超过 `maxRuns`（默认 200、最小 10）裁剪最旧，每次变更整体重写文件、写入串行化（`persistence.ts`）。历史不是无限审计日志。
+- **节点 `output` 截断**：存入 `outputs` 的是完整结果，但 `NodeRunInfo.output` 展示字段截断到 1000 字符（`engine.ts`）。下游插值用的是完整值，UI 看到的是预览。
 - **同名服务无能力选择**：0.5.0 起 DI 不做能力匹配；多个 workflow provider 并存时靠 preference/priority 选，能力信息在实例上自管（见 [service-model](../concepts/service-model.md)）。
 
 ## 8. 交叉链接

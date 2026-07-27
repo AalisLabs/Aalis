@@ -13,7 +13,7 @@
 `packages/plugin-vectorstore-api/src/index.ts`：
 
 ```ts
-// VectorSearchResult（index.ts:7-12）
+// VectorSearchResult（index.ts）
 export interface VectorSearchResult {
   /** 余弦相似度分数 */
   score: number;
@@ -21,7 +21,7 @@ export interface VectorSearchResult {
   metadata: Record<string, unknown>;
 }
 
-// VectorStoreService（index.ts:15-28）
+// VectorStoreService（index.ts）
 export interface VectorStoreService {
   add(vector: number[], metadata: Record<string, unknown>): Promise<void>;        // :17
   search(queryVector: number[], topK: number): Promise<VectorSearchResult[]>;     // :19
@@ -32,7 +32,7 @@ export interface VectorStoreService {
 }
 ```
 
-类型通过 declaration merging 注入内核映射（`index.ts:31-35`），因此 `getService('vectorstore')` 自动得到 `VectorStoreService` 类型——只要消费者 `import '@aalis/plugin-vectorstore-api'`（哪怕只是触发模块）即可。
+类型通过 declaration merging 注入内核映射（`index.ts`），因此 `getService('vectorstore')` 自动得到 `VectorStoreService` 类型——只要消费者 `import '@aalis/plugin-vectorstore-api'`（哪怕只是触发模块）即可。
 
 方法语义（以契约注释 + 参考实现为准）：
 
@@ -40,15 +40,15 @@ export interface VectorStoreService {
 - `search(queryVector, topK)`：返回**最多** topK 条，按 `score` 降序。`score` 约定为**余弦相似度**（见 §6 跨后端可比性）。
 - `size()`：当前向量总数。
 - `clear()`：清空全部数据。
-- `deleteByFilter?(filter)`：删除「metadata 中 filter 的每个键都精确相等」的条目，返回删除条数。是**可选方法**——消费者调用前必须判存在性（`!!store.deleteByFilter`）。语义是「全部键匹配才删」，flat 与 lancedb 实现一致（flat `index.ts:107-118`、lancedb `index.ts:126-153`）。
+- `deleteByFilter?(filter)`：删除「metadata 中 filter 的每个键都精确相等」的条目，返回删除条数。是**可选方法**——消费者调用前必须判存在性（`!!store.deleteByFilter`）。语义是「全部键匹配才删」，flat 与 lancedb 实现一致（flat `index.ts`、lancedb `index.ts`）。
 - `save()`：持久化。契约把持久化时机交给调用方：消费者在写入后应显式 `save()`（参考实现里 LanceDB 是 no-op，flat 才真正落盘）。
 
 ## 3. 谁提供 / 谁消费
 
 提供方（`provides = ['vectorstore']`）：
 
-- `@aalis/plugin-vectorstore-flat`：`FlatVectorStore`，`packages/plugin-vectorstore-flat/src/index.ts:58`，注册于 `:180`（默认 priority）。
-- `@aalis/plugin-vectorstore-lancedb`：`LanceDBVectorStore`，`packages/plugin-vectorstore-lancedb/src/index.ts:44`，注册于 `:190`（`{ priority: 10 }`，比 flat 高 → 同时装两个时 lancedb 胜出）。
+- `@aalis/plugin-vectorstore-flat`：`FlatVectorStore`，`packages/plugin-vectorstore-flat/src/index.ts`，注册于 `:180`（默认 priority）。
+- `@aalis/plugin-vectorstore-lancedb`：`LanceDBVectorStore`，`packages/plugin-vectorstore-lancedb/src/index.ts`，注册于 `:190`（`{ priority: 10 }`，比 flat 高 → 同时装两个时 lancedb 胜出）。
 
 消费方：
 
@@ -56,7 +56,7 @@ export interface VectorStoreService {
   - 声明依赖：`inject.required = ['vectorstore', 'embedding']`（`:17-20`）。
   - 取服务：`ctx.getService<VectorStoreService>('vectorstore')!`（`:251-253`，封装为 `getStore()`，每次用都重取）。
   - 典型调用：索引时 `add` + `save`（`:371-372`）；按会话删 `deleteByFilter`（`:399`、`:442`）；清库 `clear` + `save`（`:434-435`）；检索 `search`（`:493`、`:752`），并对结果做 `score >= minScore` 过滤（`:496`、`:754`）。
-- `@aalis/plugin-commands` 仅探测可用性：`ctx.hasService('vectorstore')`（`packages/plugin-commands/src/index.ts:252`）。
+- `@aalis/plugin-commands` 仅探测可用性：`ctx.hasService('vectorstore')`（`packages/plugin-commands/src/index.ts`）。
 
 ## 4. 写一个 provider
 
@@ -126,8 +126,8 @@ export async function apply(ctx: Context): Promise<void> {
 
 注册细节：
 
-- `ctx.provide('vectorstore', store, opts?)`。`opts.priority` 建议用 `ServicePriority` 枚举（`Backend=0/Override=50/System=200`，见 `packages/core/src/service-helpers.ts:62`）；lancedb 用了裸数字 `10` 表「优先于 flat 默认」。同名竞争胜者顺序：**preference > priority > 注册顺序**（DI 仅按名，无能力匹配，见 docs/concepts/service-model.md）。
-- 存储路径用 storage URI（如 `data:/vectorstore`），经 `toStorageUri()` 归一；需要本地真实路径（LanceDB 这类原生库）用 `createStorageGateway(ctx).resolveLocalPath(uri, 'write')`，且要先判该方法存在（lancedb `index.ts:178-182`）。注意：vectorstore 自身不是单 owner 上下文里的「按会话隔离」资源，隔离靠消费者写进 metadata 的字段（见 §6）。
+- `ctx.provide('vectorstore', store, opts?)`。`opts.priority` 建议用 `ServicePriority` 枚举（`Backend=0/Override=50/System=200`，见 `packages/core/src/service-helpers.ts`）；lancedb 用了裸数字 `10` 表「优先于 flat 默认」。同名竞争胜者顺序：**preference > priority > 注册顺序**（DI 仅按名，无能力匹配，见 docs/concepts/service-model.md）。
+- 存储路径用 storage URI（如 `data:/vectorstore`），经 `toStorageUri()` 归一；需要本地真实路径（LanceDB 这类原生库）用 `createStorageGateway(ctx).resolveLocalPath(uri, 'write')`，且要先判该方法存在（lancedb `index.ts`）。注意：vectorstore 自身不是单 owner 上下文里的「按会话隔离」资源，隔离靠消费者写进 metadata 的字段（见 §6）。
 
 ## 5. 标准消费姿势
 
@@ -160,7 +160,7 @@ export async function apply(ctx: Context) {
 
 ## 6. 跨后端可比性、风险与隔离
 
-- **score 必须是余弦相似度语义**。flat 用归一化点积（真余弦，`:43-49`/`:97`/`:120-122`）；lancedb 显式用 `distanceType('cosine')` 后取 `1 - _distance`（`index.ts:100-104`），与 flat 量纲对齐。**provider 若返回别的度量（如 1 − L2、内积未归一），会破坏消费者跨后端通用的阈值** ——`memory-vector` 的 `minScore`（0~1）与时间加权融合（`search.timeWeight`）都假设 score 是余弦相似度。换后端不应要求用户重调阈值。
+- **score 必须是余弦相似度语义**。flat 用归一化点积（真余弦，`:43-49`/`:97`/`:120-122`）；lancedb 显式用 `distanceType('cosine')` 后取 `1 - _distance`（`index.ts`），与 flat 量纲对齐。**provider 若返回别的度量（如 1 − L2、内积未归一），会破坏消费者跨后端通用的阈值** ——`memory-vector` 的 `minScore`（0~1）与时间加权融合（`search.timeWeight`）都假设 score 是余弦相似度。换后端不应要求用户重调阈值。
 - **跨会话/隔离不在本服务**。Aalis 是单 owner，但向量库会混装所有会话的数据；隔离由消费者写入 metadata（如 `{ sessionId }`）并用 `deleteByFilter`/检索过滤实现。provider 不得擅自基于 metadata 做可见性裁剪——它不懂业务语义。
 - 本服务不涉及 authority risk/visibility 标注、确认（session-confirm）、SSRF（safeFetch）——它不直接对外发请求，也不暴露危险动作。涉及落盘的安全边界归 storage（storage **不是沙箱**，见 docs/concepts/security-model.md / storage-uri-grammar.md）。LanceDB 的 `resolveLocalPath` 把绝对路径交给原生库，仍受 storage root 授权约束，但绕过了 storage 的 URI 边界——provider 应只用它指向自有数据目录。
 
