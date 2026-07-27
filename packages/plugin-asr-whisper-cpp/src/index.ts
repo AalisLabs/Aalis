@@ -9,8 +9,9 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
-import type { ConfigSchema, Context } from '@aalis/core';
+import type { Context } from '@aalis/core';
 import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/plugin-asr-api';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { ProcessService } from '@aalis/plugin-process-api';
 import { createProcessGateway } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';

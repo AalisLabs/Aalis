@@ -30,6 +30,7 @@
   "dependencies": {
     "@aalis/plugin-authority-api": "workspace:^",
     "@aalis/plugin-commands-api": "workspace:^",
+    "@aalis/plugin-config-api": "workspace:^",
     "@aalis/plugin-gateway-api": "workspace:^",
     "@aalis/plugin-storage-api": "workspace:^"
   },

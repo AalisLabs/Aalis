@@ -6,7 +6,8 @@
 // 定义存 workspace/workflows/*.yaml。
 // ============================================================
 
-import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
+import type { Context, PluginModule } from '@aalis/core';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import { useToolService } from '@aalis/plugin-tools-api';

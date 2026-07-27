@@ -78,7 +78,7 @@ export function useASRService(ctx: Context): ASRService | undefined {
 
 ```ts
 private asrProcessors(): MediaProcessor[] {
-  return this.ctx.getServiceEntries('asr').map(e => {
+  return this.ctx.getAllServices('asr').map(e => {
     const asr = e.instance as ASRService;
     const name = `asr:${e.contextId}`;
     return {
@@ -93,7 +93,7 @@ private asrProcessors(): MediaProcessor[] {
 }
 ```
 
-注意它用 `getServiceEntries('asr')` 拿**全部** provider（不是单一胜者），让用户在 media 的 `audio.prefer` 里按 processor 名挑后端，再回退到按 priority 取最高（`service.ts`）。当 `name === 'asr'` 的 provider 注册/注销时，media 监听服务事件刷新候选（`plugin-media/src/index.ts`）。
+注意它用 `getAllServices('asr')` 拿**全部** provider（不是单一胜者），让用户在 media 的 `audio.prefer` 里按 processor 名挑后端，再回退到按 priority 取最高（`service.ts`）。当 `name === 'asr'` 的 provider 注册/注销时，media 监听服务事件刷新候选（`plugin-media/src/index.ts`）。
 
 ---
 

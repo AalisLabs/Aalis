@@ -1,7 +1,8 @@
 import path from 'node:path';
-import type { ConfigSchema, Context } from '@aalis/core';
+import type { Context } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
 import { useAgent } from '@aalis/plugin-agent-api';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { MediaService } from '@aalis/plugin-media-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage } from '@aalis/plugin-message-api';

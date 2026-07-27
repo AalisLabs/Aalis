@@ -21,7 +21,7 @@
 | `hooks` | `HookRegistry` | 钩子管道注册表（中间件底层） |
 | `disposed` | `boolean` | 是否已销毁 |
 
-> ⚠️ `ctx.serviceContainer` 标 `@internal`，仅 core 自身（如 `plugin-activation` 检查 provides 完整性）使用。**业务插件不要直接访问** —— 走 `ctx.on/emit/provide/getService/getServiceEntries` 等公共 API，副作用才能进入自动清理链。
+> ⚠️ `ctx.serviceContainer` 标 `@internal`，仅 core 自身（如 `plugin-activation` 检查 provides 完整性）使用。**业务插件不要直接访问** —— 走 `ctx.on/emit/provide/getService/getAllServices` 等公共 API，副作用才能进入自动清理链。
 
 ## 按场景选 API（速查）
 
@@ -38,7 +38,7 @@
 | 创建子上下文 | `ctx.fork(id)` | 中频；独立生命周期、共享服务 |
 | 动态加载子模块 | `ctx.useModule(mod, cfg)` | 罕用；多用于测试装配/动态注入 |
 | 设置全局服务路由偏好 | `ctx.preferService(name, id)` | 罕用；多用于 WebUI/CLI 切换 |
-| 枚举/巡视服务（管控类） | `ctx.getServiceEntries/Names` | 罕用；面向 plugin-doctor / WebUI |
+| 枚举/巡视服务（管控类） | `ctx.getAllServices/Names` | 罕用；面向 plugin-doctor / WebUI |
 
 > 大多数插件只会用到 **on / emit / provide / whenService / middleware / onDispose** 加 `useXxxService(ctx)` 系列 helper。表里"罕用"那几条主要是 WebUI、调度、诊断、权限管控类插件才会接触。
 
@@ -80,7 +80,7 @@
 const off = ctx.on('inbound:message', async msg => { ... });
 
 // 一次性监听
-ctx.once('app:ready', () => { ... });
+ctx.on('app:ready', () => { ... });
 
 // 发出事件
 await ctx.emit('outbound:message', outMsg);
@@ -111,7 +111,7 @@ const memory = ctx.getService<MemoryService>('memory');
 const allLLMs = ctx.getAllServices('llm');
 
 // 检查可用性
-if (ctx.hasService('memory')) { ... }
+if (ctx.getService('memory') !== undefined) { ... }
 ```
 
 > 0.5.0 起 core 不再做「服务能力匹配」：`provide` 不接受 `capabilities` 选项，

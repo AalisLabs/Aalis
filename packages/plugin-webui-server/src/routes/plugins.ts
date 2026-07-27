@@ -1,7 +1,8 @@
 import type { AppService, Context, PluginManagerService } from '@aalis/core';
-import { CORE_CONFIG_SCHEMA } from '@aalis/core';
+import { parseInstanceId } from '@aalis/core';
 import type { UserIdentity } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
+import { CORE_CONFIG_SCHEMA } from '@aalis/plugin-config-api';
 import type { PackageManagerService } from '@aalis/plugin-package-manager';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebUIService, WebuiPage } from '@aalis/plugin-webui-api';
@@ -65,12 +66,12 @@ export function registerPluginRoutes(
       commands: commandsByPlugin.get(p.name) ?? [],
       core: p.core ?? false,
       reusable: p.reusable ?? false,
-      // extends 是 WebUI 展示概念（声明合并到 PluginModule，core 状态契约不含）：
-      // 直接从插件 module 读取并转发给前端，让「扩展 Core」标签真正渲染。
+      // extends / config / configSchema / defaultConfig 非内核状态摘要字段
+      // （getStatus 只含内核事实）：从 entry.config / entry.module 补齐给前端。
       extends: pm.getPlugin(p.instanceId)?.module?.extends,
-      config: p.config,
-      configSchema: p.configSchema,
-      defaultConfig: p.defaultConfig,
+      config: pm.getPlugin(p.instanceId)?.config ?? {},
+      configSchema: pm.getPlugin(p.instanceId)?.module?.configSchema,
+      defaultConfig: pm.getPlugin(p.instanceId)?.module?.defaultConfig,
       error: p.error,
     }));
     res.json({ plugins });
@@ -354,13 +355,30 @@ export function registerPluginRoutes(
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
-    const instanceId = await pm.createInstance(moduleName, suffix, config as Record<string, unknown>);
-    if (instanceId) {
-      app.saveConfig();
-      res.json({ ok: true, instanceId, message: `已创建实例 ${instanceId}` });
-    } else {
-      res.status(400).json({ error: `无法创建实例（模块不存在、未声明 reusable 或实例已存在）` });
+    // 实例创建编排（配置文件编排属管理面,内核只出 register 机制）：
+    // 查同名 module → reusable/查重校验 → 合并默认配置写入 → register 激活。
+    const sourceModule = pm
+      .getStatus()
+      .map(p => pm.getPlugin(p.instanceId)?.module)
+      .find(m => m?.name === moduleName);
+    if (!sourceModule) {
+      res.status(400).json({ error: `无法创建实例：模块 "${moduleName}" 未找到` });
+      return;
     }
+    if (!sourceModule.reusable) {
+      res.status(400).json({ error: `无法创建实例：模块 "${moduleName}" 未声明 reusable` });
+      return;
+    }
+    const instanceId = `${moduleName}:${suffix}`;
+    if (pm.getPlugin(instanceId)) {
+      res.status(400).json({ error: `无法创建实例："${instanceId}" 已存在` });
+      return;
+    }
+    const mergedConfig = { ...(sourceModule.defaultConfig ?? {}), ...(config as Record<string, unknown>) };
+    ctx.config.setPluginConfig(instanceId, mergedConfig);
+    await pm.register(sourceModule, mergedConfig, instanceId);
+    app.saveConfig();
+    res.json({ ok: true, instanceId, message: `已创建实例 ${instanceId}` });
   });
 
   // 删除插件多实例
@@ -372,13 +390,16 @@ export function registerPluginRoutes(
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
-    const ok = await pm.removeInstance(instanceId);
-    if (ok) {
-      app.saveConfig();
-      res.json({ ok: true, message: `已删除实例 ${instanceId}` });
-    } else {
+    // 实例删除编排：主实例保护 → unload（内部含级联重算）→ 移除配置条目。
+    const { suffix } = parseInstanceId(instanceId);
+    if (!suffix || !pm.getPlugin(instanceId)) {
       res.status(400).json({ error: `无法删除（实例不存在或不允许删除主实例）` });
+      return;
     }
+    await pm.unload(instanceId);
+    ctx.config.removePluginConfig(instanceId);
+    app.saveConfig();
+    res.json({ ok: true, message: `已删除实例 ${instanceId}` });
   });
 
   // 保存配置到磁盘

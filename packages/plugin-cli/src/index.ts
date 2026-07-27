@@ -1,7 +1,8 @@
 import { stdin as input, stdout as output } from 'node:process';
 import * as readline from 'node:readline';
-import type { AppService, ConfigSchema, Context, LogEntry } from '@aalis/core';
+import type { AppService, Context, LogEntry } from '@aalis/core';
 import type { AuthorityService } from '@aalis/plugin-authority-api';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { StreamChunkMessage } from '@aalis/plugin-message-api';
 import type { PersonaService } from '@aalis/plugin-persona-api';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform-api';

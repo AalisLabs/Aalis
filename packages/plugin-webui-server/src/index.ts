@@ -7,11 +7,12 @@ import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { AppService, ConfigSchema, Context, LogEntry, PluginManagerService } from '@aalis/core';
+import type { AppService, Context, LogEntry, PluginManagerService } from '@aalis/core';
 import { LogHub, parseLogLine } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
 import type { AuthorityService } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type {} from '@aalis/plugin-doctor-api'; // declaration merging：doctor:updated 事件
 import type { LLMModel, ModelInfo } from '@aalis/plugin-llm-api';
 import { listLLMModels } from '@aalis/plugin-llm-api';
@@ -479,19 +480,19 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   expressApp.get('/api/status', gate(), (_req, res) => {
     const persona = ctx.getService<PersonaService>('persona');
     // 判断上传能力
-    const hasMedia = ctx.hasService('media');
+    const hasMedia = ctx.getService('media') !== undefined;
     const llmHasVision = listLLMModels(ctx).some(e => e.instance.capabilities.includes('vision'));
-    const hasFileReader = ctx.hasService('file-reader');
+    const hasFileReader = ctx.getService('file-reader') !== undefined;
 
     res.json({
       name: persona?.getPersonaName() ?? ctx.config.get('name'),
       services: {
-        'webui-server': ctx.hasService('webui-server'),
-        cli: ctx.hasService('cli'),
-        llm: ctx.hasService('llm'),
-        agent: ctx.hasService('agent'),
-        memory: ctx.hasService('memory'),
-        persona: ctx.hasService('persona'),
+        'webui-server': ctx.getService('webui-server') !== undefined,
+        cli: ctx.getService('cli') !== undefined,
+        llm: ctx.getService('llm') !== undefined,
+        agent: ctx.getService('agent') !== undefined,
+        memory: ctx.getService('memory') !== undefined,
+        persona: ctx.getService('persona') !== undefined,
       },
       /** 上传能力：客户端据此决定显示哪些上传按钮 */
       uploadCapabilities: {
@@ -611,8 +612,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     > = {};
 
     for (const svcName of serviceNames) {
-      // getServiceEntries 已经按「偏好 > 优先级 > 注册顺序」排序，附带 priority 字段
-      const entries = ctx.getServiceEntries(svcName);
+      // getAllServices 已按「偏好 > 优先级 > 注册顺序」排序，附带 priority 字段
+      const entries = ctx.getAllServices(svcName);
       services[svcName] = {
         providers: entries.map(e => ({
           contextId: e.contextId,
@@ -639,7 +640,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       return;
     }
     // 校验 entry 存在
-    const entries = ctx.getServiceEntries(svcName);
+    const entries = ctx.getAllServices(svcName);
     if (!entries.some(e => e.contextId === contextId)) {
       res.status(404).json({ ok: false, error: `service "${svcName}" has no provider with contextId "${contextId}"` });
       return;

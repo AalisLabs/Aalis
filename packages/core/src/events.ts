@@ -37,7 +37,7 @@ export class EventBus {
   }
 
   /**
-   * 一次性事件（sticky）：emit 后保留最近一次参数；后续 on/once 监听该事件时
+   * 一次性事件（sticky）：emit 后保留最近一次参数；后续 on 监听该事件时
    * 立即用缓存参数同步触发回调。用于"应用生命周期里只发一次的里程碑事件"，
    * 让被热重载的插件在 reactivate 后仍能拿到启动通知。
    * 当前标记为 sticky 的事件：'ready'、'app:started'。
@@ -99,18 +99,6 @@ export class EventBus {
       set!.delete(handler);
       if (set!.size === 0) this.handlers.delete(event);
     };
-  }
-
-  /**
-   * 监听事件一次
-   */
-  once<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<AalisEvents[E]>): () => void {
-    const wrapper: EventHandler<AalisEvents[E]> = (...args) => {
-      dispose();
-      return handler(...args);
-    };
-    const dispose = this.on(event, wrapper);
-    return dispose;
   }
 
   /**

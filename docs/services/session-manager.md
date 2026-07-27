@@ -171,7 +171,7 @@ class MySessionManager implements SessionManagerService {
 }
 
 export const apply: PluginModule['apply'] = async ctx => {
-  if (!ctx.hasService('memory')) { ctx.logger.error('需要 memory 服务'); return; }
+  if (ctx.getService('memory') === undefined) { ctx.logger.error('需要 memory 服务'); return; }
   const mgr = new MySessionManager(ctx);
   ctx.provide('session-manager', mgr, {
     label: '会话管理',

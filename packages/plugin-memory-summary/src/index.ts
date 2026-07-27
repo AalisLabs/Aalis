@@ -1,4 +1,5 @@
-import type { ConfigSchema, Context } from '@aalis/core';
+import type { Context } from '@aalis/core';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { Message } from '@aalis/plugin-message-api';
 import { WellKnownKinds } from '@aalis/plugin-message-api';
 import '@aalis/plugin-agent-api';

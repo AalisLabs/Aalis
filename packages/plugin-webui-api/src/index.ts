@@ -4,8 +4,9 @@
 // 以及所有声明式页面组件类型。
 // 任何需要声明 webuiPages 的插件应从本包导入相关类型。
 
-import type { ConfigSchema, Context } from '@aalis/core';
+import type { Context } from '@aalis/core';
 import type { UserIdentity } from '@aalis/plugin-authority-api';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 
 /**
  * WebUI 服务 —— Web 管理后台
@@ -200,9 +201,11 @@ declare module '@aalis/core' {
      */
     actions?: Record<string, (ctx: Context, args: Record<string, unknown>, caller?: UserIdentity) => Promise<unknown>>;
   }
+}
 
+declare module '@aalis/plugin-config-api' {
   /**
-   * WebUI 表单交互属性 —— 由本包注入（core 的 SchemaField 只声明环境中立字段）。
+   * WebUI 表单交互属性 —— 由本包注入（config-api 的 SchemaField 只声明各宿主共需字段）。
    * 这些属性只被 WebUI 配置表单消费；其他宿主可以忽略。
    */
   interface SchemaField {
