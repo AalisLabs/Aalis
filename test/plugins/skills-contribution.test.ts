@@ -222,6 +222,17 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     expect(skills.loadSkillForSession('s-1', 'alpha')).toBe(true);
     expect(skills.getLoadedSkills('s-1')).toEqual(['alpha']);
 
+    // 锚位探针：identity 给上界，context 给下界。两个探针的 ctx id 必须把插件全局键
+    // （经 useModule 加载，形如 `root#@aalis/plugin-skills`）**夹在中间**——同槽内按
+    // 全局键码元序排布，探针若落在被测块同侧，错标锚位后次序不变、断言恒真。
+    // 故 identity 探针取 zz-（排在插件键之后）、context 探针取 aa-（排在之前）。
+    app.ctx
+      .fork('zz-probe-identity')
+      .contribute('agent:prompt' as never, { id: 'idn', anchor: 'identity', build: () => 'IDN' } as never);
+    app.ctx
+      .fork('aa-probe-context')
+      .contribute('agent:prompt' as never, { id: 'cx', anchor: 'context', build: () => 'CX' } as never);
+
     const loaded = baseMessages();
     await assemblePromptContributions(app.ctx, { messages: loaded, sessionId: 's-1' });
     const block = loaded.find(activationOf('alpha'));
@@ -229,6 +240,13 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     const content = String(block?.content ?? '');
     expect(content).toContain('Skill 已激活: alpha');
     expect(content).toContain('ALPHA-BODY-步骤一');
+
+    // 激活块落 knowledge 槽：在 IDN(identity) 之后、CX(context) 之前
+    const idnIdx = loaded.findIndex(m => String(m.content) === 'IDN');
+    const cxIdx = loaded.findIndex(m => String(m.content) === 'CX');
+    const actIdx = loaded.indexOf(block as Message);
+    expect(idnIdx).toBeLessThan(actIdx);
+    expect(actIdx, '激活块须落 knowledge 槽（identity 之后、context 之前）').toBeLessThan(cxIdx);
     // 渐进披露对称面：同一次组装里 discovery 块仍不含正文，正文只在激活块
     const discovery = loaded.find(isDiscovery);
     expect(discovery).toBeDefined();

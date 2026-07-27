@@ -183,18 +183,35 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       ],
     });
 
-    // 前缀时间标签（agent 注入的 "(刚刚) "）应在 embed 前被剥掉
-    const messages = baseMessages('(刚刚) 还记得我上次说的吗');
+    // knowledge 侧对照探针：ctx id 必须**码元序排在被测插件全局键之后**（插件经
+    // useModule 加载，键形如 `root#@aalis/plugin-memory-vector`，故用 zz- 前缀）。
+    // 否则 anchor 错标成 knowledge 时两块仍按同样次序落位，锚位断言恒真。
+    app.ctx.fork('zz-probe-knowledge').contribute(POINT, { id: 'kn', anchor: 'knowledge', build: () => 'KN' } as never);
+
+    // 前缀时间标签（agent 注入的 "(刚刚) "）应在 embed 前被剥掉。
+    // fixture 带一轮历史：没有它时"第一条非 system"与"最后一条 user"重合，
+    // context 与 turn-hint 落点相同、锚位断言对 turn-hint 恒真。
+    const messages: Message[] = [
+      { role: 'system', content: '人设' },
+      { role: 'user', content: '旧问' },
+      { role: 'assistant', content: '旧答' },
+      { role: 'user', content: '(刚刚) 还记得我上次说的吗' },
+    ];
     await assemblePromptContributions(app.ctx, { messages, sessionId: 'onebot:g1', platform: 'onebot' });
 
-    expect(messages).toHaveLength(3);
-    // context 锚位落在头部 system 区末尾（原 system 之后、user 之前）
+    expect(messages).toHaveLength(6);
+    // context 锚位落在头部 system 区末尾（原 system 之后、首条非 system 之前），
+    // 且在 knowledge 槽之后、历史之前——四种锚位错标均可判伪
     expect(messages[0].content).toBe('人设');
-    expect(messages[1].role).toBe('system');
-    expect(String(messages[1].metadata?.injector ?? '').endsWith('/memory-vector')).toBe(true);
-    expect(messages[2].role).toBe('user');
+    expect(messages[1].content, 'knowledge 槽须先于 context 槽').toBe('KN');
+    expect(messages[2].role).toBe('system');
+    expect(String(messages[2].metadata?.injector ?? '').endsWith('/memory-vector')).toBe(true);
+    expect(messages[3], 'context 槽须在历史之前（turn-hint 会落到最后一条 user 前）').toMatchObject({
+      role: 'user',
+      content: '旧问',
+    });
 
-    const block = String(messages[1].content);
+    const block = String(messages[2].content);
     expect(block).toContain('以下是从长期记忆中检索到的相关聊天记录片段');
     expect(block).toContain('我最喜欢吃火锅');
     expect(block).toContain('周末去爬山了');
