@@ -2,7 +2,7 @@
 
 服务容器实现同名多实现的 IoC 查找。
 
-**源码**: `packages/core/src/service.ts`
+**源码**: `packages/core/src/services.ts`
 
 ## 核心概念
 

@@ -140,7 +140,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
 注册选项（`ctx.provide(name, instance, { priority?, label?, entryId? })`，`packages/core/src/context.ts`）：
 
-- **priority**：`ServicePriority`（`packages/core/src/types/service.ts`）`Backend=0` / `Override=50` / `System=200`。platform 通常用默认 `0`。
+- **priority**：`ServicePriority`（`packages/core/src/services.ts`）`Backend=0` / `Override=50` / `System=200`。platform 通常用默认 `0`。
 - **entryId**：单插件多连接想拆成多 entry 时用 `'${ctx.id}/${sub}'`（per-entry provide，见 [service-model](../concepts/service-model.md)）；单 adapter 内自管多连接（如 OneBot 的 `states[]`）则不需要。
 - **label**：展示用，会进 `getAllServices` 的 `label` 字段。
 - **双源同步**：`export const provides = ['platform']` 与 `package.json` 的 `aalis.service.provides` 必须一致；激活后 core 会校验「声明了 `provides` 却没真 `ctx.provide`」直接打成 error，dev-mode 还会反向 warn「provide 了但没声明」。见 [manifest-metadata](../concepts/manifest-metadata.md)。
