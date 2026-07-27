@@ -27,13 +27,6 @@ import {
 } from './helpers.js';
 
 /**
- * 单条工具结果的绝对字符上限（不随 contextLength 膨胀）。
- * 宽于各工具自带的上限（browser 5 万字符 / shell 64 KiB），故正常配置下不会更早生效，
- * 只在比例式上限被巨大 contextLength 架空时兜底。
- */
-const TOOL_RESULT_HARD_CAP_CHARS = 65_536;
-
-/**
  * 默认 Agent 实现 —— 对话编排器
  *
  * 负责:
@@ -614,13 +607,7 @@ class DefaultAgent implements AgentService {
           const toolMessages: Message[] = [];
 
           // 并行执行所有工具调用（互不依赖的工具无需串行等待）
-          // 绝对上限兜底：比例式上限在大窗口模型下会算出几十万字符（1e6×0.15×3.5≈52.5 万），
-          // 等于此处的截断整体失效、单条工具结果可独占上下文。取 TOOL_RESULT_HARD_CAP_CHARS
-          // 作为不随窗口膨胀的天花板——它宽于各工具自带的上限，正常配置下不会更早生效。
-          const toolResultMaxChars = Math.min(
-            TOOL_RESULT_HARD_CAP_CHARS,
-            Math.floor(contextLength * this.toolResultMaxRatio * 3.5),
-          );
+          const toolResultMaxChars = Math.floor(contextLength * this.toolResultMaxRatio * 3.5);
 
           const parallelResults = await Promise.all(
             response.toolCalls.map(async toolCall => {
