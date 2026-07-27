@@ -48,6 +48,22 @@ describe('Context 并发拆卸', () => {
     await app.stop();
   });
 
+  it('join 在飞拆卸时受本次调用者的 timeoutMs 约束（在飞方用更松的上限也不拖垮停机）', async () => {
+    // disposeTimeoutMs 配短：末尾 app.stop 同样要等这个永不 resolve 的清理项
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, disposeTimeoutMs: 100 });
+    const child = app.ctx.fork('never-settles');
+    child.onDispose(() => new Promise<void>(() => {})); // 永不 resolve
+
+    void child.disposeAsync(); // 先以「不设限」启动在飞拆卸
+    await sleep(5);
+    const t0 = Date.now();
+    await child.disposeAsync(80); // 后来者要求 80ms 上限
+    const elapsed = Date.now() - t0;
+    expect(elapsed, `join 必须受调用者 timeoutMs 约束，实际等了 ${elapsed}ms`).toBeLessThan(1000);
+    // app.stop 同理不得被拖住（它传的是 disposeTimeoutMs）
+    await app.stop();
+  });
+
   it('拆卸完成后再次 disposeAsync 立即返回（幂等，不重跑清理）', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     let runs = 0;
