@@ -270,6 +270,10 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   // 1. 导航 (navigate)
   useToolService(ctx).register({
     groups: ['browser'],
+    // 浏览器页面池是**进程级共享**、取页时不校验会话归属：拿到 pageId 就能操作
+    // 别人（含 owner）打开的页面，那页面可能带着登录态。写类浏览器操作一律 sensitive(L1)。
+    // 导航本身有 SSRF 闸（assertSafeHost/isPrivateHost），但仍会占用与复用共享页面槽位。
+    risk: 'sensitive',
     definition: {
       type: 'function',
       function: {
@@ -353,6 +357,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   // 3. 点击元素
   useToolService(ctx).register({
     groups: ['browser'],
+    // 对共享页面池里的任意页面点击——见 browser_navigate 处的说明。
+    risk: 'sensitive',
     definition: {
       type: 'function',
       function: {
@@ -387,6 +393,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   // 4. 输入文本
   useToolService(ctx).register({
     groups: ['browser'],
+    // 向共享页面池里的任意页面输入文本（可能是他人已登录的表单）。
+    risk: 'sensitive',
     definition: {
       type: 'function',
       function: {
@@ -513,6 +521,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   // 7. 关闭页面
   useToolService(ctx).register({
     groups: ['browser'],
+    // 关闭他人正在用的页面。
+    risk: 'sensitive',
     definition: {
       type: 'function',
       function: {
