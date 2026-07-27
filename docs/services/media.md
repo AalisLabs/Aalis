@@ -38,7 +38,7 @@ export interface MediaService {
 }
 ```
 
-`useMediaService(ctx)` 是取服务的 helper，等价于 `ctx.getService<MediaService>('media')`。
+取服务：`ctx.getService<MediaService>('media')`；`plugin-media` 未就绪时返回 `undefined`。
 
 ### `MediaProcessor`（backend 子契约）
 
@@ -132,14 +132,13 @@ export interface MediaProcessor {
 
 ```ts
 import type { Context } from '@aalis/core';
-import { useMediaService } from '@aalis/plugin-media-api';
-import type { DescribeInput, DescribeResult } from '@aalis/plugin-media-api';
+import type { DescribeInput, DescribeResult, MediaService } from '@aalis/plugin-media-api';
 
 export const name = '@aalis/plugin-my-ocr';
 export const inject = { required: ['media'] }; // media 是硬依赖时写 required
 
 export function apply(ctx: Context): void {
-  const media = useMediaService(ctx);
+  const media = ctx.getService<MediaService>('media');
   if (!media) return; // 防御：media 未就绪
 
   const dispose = media.registerProcessor({

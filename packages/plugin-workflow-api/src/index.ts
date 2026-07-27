@@ -12,7 +12,7 @@
 //   - 工作流"定义"是用户/AI 资产，存 workspace；"运行实例"是运行时，存 data
 // ============================================================
 
-import type { Context } from '@aalis/core';
+import type {} from '@aalis/core'; // declaration merging 锚点（下方 ServiceTypeMap / AalisEvents 增强）
 
 // ============ 触发器 ============
 
@@ -165,12 +165,6 @@ export interface WorkflowService {
   getRun(runId: string): WorkflowRun | undefined;
   /** 列出最近 N 个运行实例（按时间倒序） */
   listRuns(limit?: number, workflowId?: string): WorkflowRun[];
-}
-
-// ============ Helper ============
-
-export function useWorkflowService(ctx: Context): WorkflowService | undefined {
-  return ctx.getService<WorkflowService>('workflow');
 }
 
 // ============ 事件契约 ============

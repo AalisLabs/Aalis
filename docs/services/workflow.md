@@ -6,7 +6,7 @@
 
 - 服务注册名：`'workflow'`（`ctx.getService<WorkflowService>('workflow')`）。
 - 契约包：`@aalis/plugin-workflow-api`。
-- 该契约**有运行时服务**：`-api` 包只导出 interface + DSL 类型 + 事件契约 + helper（`useWorkflowService`），实现由 `@aalis/plugin-workflow` 提供。
+- 该契约**有运行时服务**：`-api` 包只导出 interface + DSL 类型 + 事件契约，实现由 `@aalis/plugin-workflow` 提供。
 - 设计取向（`packages/plugin-workflow-api/src/index.ts`）：工作流「定义」是用户/AI 资产，存 `workspace`；「运行实例」是运行时记录，存 `data`。
 
 ## 2. 契约
@@ -38,15 +38,6 @@ export interface WorkflowService {
   getRun(runId: string): WorkflowRun | undefined;
   /** 列出最近 N 个运行实例（按时间倒序） */
   listRuns(limit?: number, workflowId?: string): WorkflowRun[];
-}
-```
-
-helper（取服务，可能 undefined）：
-
-```ts
-// packages/plugin-workflow-api/src/index.ts
-export function useWorkflowService(ctx: Context): WorkflowService | undefined {
-  return ctx.getService<WorkflowService>('workflow');
 }
 ```
 
@@ -142,7 +133,7 @@ await ctx.emit('trigger:fired' as any, {
 
 - **AI 工具**（同插件内自我消费）：`enableTools` 开启时向 LLM 暴露 `workflow_define` / `workflow_list` / `workflow_run` / `workflow_get_runs` / `workflow_remove`（`packages/plugin-workflow/src/index.ts`），全部走 `tools` 服务注册（optional 依赖，`getService('tools')` 缺失则跳过，`:506`）。
 - **WebUI actions**（同插件内）：`workflowStats` / `listWorkflowsTable` / `listRunsTable` / `triggerWorkflow` / `toggleWorkflow` / `removeWorkflow` / `upsertWorkflowYaml` 等都以 `const svc = ctx.getService<WorkflowService>('workflow')` 取服务、判空降级（`:200-330`）——这是**每次用都重新 getService** 的标准范例。
-- 跨插件外部消费者：当前仓内 workflow 服务的主要消费方就是 workflow 自身的工具/WebUI 层 + scheduler 的事件桥；第三方插件可经 `useWorkflowService(ctx)` 编程式触发/查询。
+- 跨插件外部消费者：当前仓内 workflow 服务的主要消费方就是 workflow 自身的工具/WebUI 层 + scheduler 的事件桥；第三方插件可经 `ctx.getService<WorkflowService>('workflow')` 编程式触发/查询。
 
 ## 4. 写一个 provider
 
@@ -262,9 +253,9 @@ const run = await svc.runWorkflow(id, vars, 'manual:foo', { platform, userId });
 ### 编程式触发
 
 ```ts
-import { useWorkflowService } from '@aalis/plugin-workflow-api';
+import type { WorkflowService } from '@aalis/plugin-workflow-api';
 
-const wf = useWorkflowService(ctx);          // 可能 undefined
+const wf = ctx.getService<WorkflowService>('workflow');   // 可能 undefined
 if (!wf) return;                             // optional 依赖：判空降级
 const run = await wf.runWorkflow('daily-report', { date: '2026-06-22' }, 'event:custom');
 if (run.status !== 'success') ctx.logger.warn(run.error);
