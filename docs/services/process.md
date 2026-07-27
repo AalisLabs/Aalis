@@ -216,7 +216,7 @@ try {
 ### 服务缺失 / 可选依赖
 
 - **硬依赖**：声明 `inject = ['process']`，框架在 process 就绪前不会 `apply` 你的插件；网关在缺失时也会抛 `未找到 process 服务...`（`plugin-process-api/src/index.ts`）。
-- **可选依赖**：先 `ctx.hasService('process')` 探测再决定。参考 `plugin-office/src/index.ts`：`const proc = ctx.hasService('process') ? createProcessGateway(ctx) : undefined;`——没有 process 时 PDF 工具优雅降级。
+- **可选依赖**：先 `ctx.getService('process') !== undefined` 探测再决定。参考 `plugin-office/src/index.ts`：`const proc = ctx.getService('process') !== undefined ? createProcessGateway(ctx) : undefined;`——没有 process 时 PDF 工具优雅降级。
 
 ### 错误边界
 
@@ -274,4 +274,4 @@ process 本身**没有内核级鉴权门**——风险控制落在**调用它的
 - [安全模型](../concepts/security-model.md) / [authority](../core/authority.md) —— 给暴露 process 的工具设级别 + 确认。
 - [storage 服务](./storage.md) —— 受沙箱约束的「在 root 内读写」（对照 `readExternalFile` 的直通）。
 - [code-sandbox 服务](./code-sandbox.md) —— 隔离执行不可信代码（process 不是沙箱）。
-- [tools](../core/tools.md) / [context](../core/context.md) —— 工具注册的 visibility/confirm、`ctx.provide`/`hasService`/`getService`。
+- [tools](../core/tools.md) / [context](../core/context.md) —— 工具注册的 visibility/confirm、`ctx.provide`/`getService`。

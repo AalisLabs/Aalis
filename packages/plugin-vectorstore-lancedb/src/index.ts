@@ -1,4 +1,5 @@
-import type { ConfigSchema, Context } from '@aalis/core';
+import type { Context } from '@aalis/core';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { createStorageGateway, toStorageUri } from '@aalis/plugin-storage-api';
 import type { VectorSearchResult, VectorStoreService } from '@aalis/plugin-vectorstore-api';
 import { type Connection, connect, type Table as LanceTable } from '@lancedb/lancedb';

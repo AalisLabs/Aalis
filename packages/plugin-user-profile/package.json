@@ -31,6 +31,7 @@
   "dependencies": {
     "@aalis/plugin-agent-api": "workspace:^",
     "@aalis/plugin-commands-api": "workspace:^",
+    "@aalis/plugin-config-api": "workspace:^",
     "@aalis/plugin-llm-api": "workspace:^",
     "@aalis/plugin-message-api": "workspace:^",
     "@aalis/plugin-tools-api": "workspace:^",

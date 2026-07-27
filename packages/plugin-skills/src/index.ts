@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
-import type { ConfigSchema, Context, PluginModule } from '@aalis/core';
+import type { Context, PluginModule } from '@aalis/core';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { PersonaService } from '@aalis/plugin-persona-api';
 import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
 import { useToolService } from '@aalis/plugin-tools-api';

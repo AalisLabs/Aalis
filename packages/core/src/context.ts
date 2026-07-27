@@ -91,8 +91,8 @@ export class Context {
    * 完整性）使用。
    *
    * **插件请勿直接使用**：
-   * - 枚举某服务的所有 entry（含 contextId / capabilities / priority）：
-   *   → 用公开 API `ctx.getServiceEntries(name)`
+   * - 枚举某服务的所有 entry（含 contextId / priority / label）：
+   *   → 用公开 API `ctx.getAllServices(name)`
    * - 获取服务实例：用 `ctx.getService()` / `ctx.getAllServices()`
    * - 注册服务：用 `ctx.provide()`（会自动登记到 _disposables 链）
    */
@@ -123,11 +123,6 @@ export class Context {
 
   on<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<AalisEvents[E]>): () => void {
     const off = this._events.on(event, handler);
-    return this.trackDisposable(off);
-  }
-
-  once<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<AalisEvents[E]>): () => void {
-    const off = this._events.once(event, handler);
     return this.trackDisposable(off);
   }
 
@@ -220,13 +215,6 @@ export class Context {
   }
 
   /**
-   * 检查服务是否可用
-   */
-  hasService(name: string): boolean {
-    return this._services.has(name);
-  }
-
-  /**
    * 列出所有已注册的服务名
    */
   getServiceNames(): string[] {
@@ -234,16 +222,20 @@ export class Context {
   }
 
   /**
-   * 获取某个服务的所有实例（带提供者信息）。
+   * 获取某个服务的所有实例（带提供者信息与优先级），按「偏好 > 优先级 > 注册顺序」排序。
+   *
+   * 业务消费（遍历所有 provider）与管控展示（WebUI / CLI 枚举视图）共用此一个读口。
    *
    * @example
    * const allLLMs = ctx.getAllServices('llm');
    */
   getAllServices<TName extends keyof ServiceTypeMap>(
     name: TName,
-  ): Array<{ instance: ServiceTypeMap[TName]; contextId: string; label?: string }>;
-  getAllServices<T = unknown>(name: string): Array<{ instance: T; contextId: string; label?: string }>;
-  getAllServices<T>(name: string): Array<{ instance: T; contextId: string; label?: string }> {
+  ): Array<{ instance: ServiceTypeMap[TName]; contextId: string; priority: number; label?: string }>;
+  getAllServices<T = unknown>(
+    name: string,
+  ): Array<{ instance: T; contextId: string; priority: number; label?: string }>;
+  getAllServices<T>(name: string): Array<{ instance: T; contextId: string; priority: number; label?: string }> {
     return this._services.getAll<T>(name);
   }
 
@@ -286,21 +278,6 @@ export class Context {
    */
   getPreferredService(name: string): string | undefined {
     return this._services.getPreferred(name);
-  }
-
-  /**
-   * 获取某服务的全部 entry（含 priority），按「偏好 > 优先级 > 注册顺序」排序。
-   *
-   * 主要给管控类消费者（如 WebUI / CLI status 视图）枚举展示用。
-   * 业务消费者应优先使用 `getService` / `getAllServices`。
-   */
-  getServiceEntries(name: string): ReadonlyArray<{
-    instance: unknown;
-    contextId: string;
-    priority: number;
-    label?: string;
-  }> {
-    return this._services.getEntries(name);
   }
 
   /**

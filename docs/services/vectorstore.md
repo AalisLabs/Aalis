@@ -56,7 +56,7 @@ export interface VectorStoreService {
   - 声明依赖：`inject.required = ['vectorstore', 'embedding']`（`:17-20`）。
   - 取服务：`ctx.getService<VectorStoreService>('vectorstore')!`（`:251-253`，封装为 `getStore()`，每次用都重取）。
   - 典型调用：索引时 `add` + `save`（`:371-372`）；按会话删 `deleteByFilter`（`:399`、`:442`）；清库 `clear` + `save`（`:434-435`）；检索 `search`（`:493`、`:752`），并对结果做 `score >= minScore` 过滤（`:496`、`:754`）。
-- `@aalis/plugin-commands` 仅探测可用性：`ctx.hasService('vectorstore')`（`packages/plugin-commands/src/index.ts`）。
+- `@aalis/plugin-commands` 仅探测可用性：`ctx.getService('vectorstore') !== undefined`（`packages/plugin-commands/src/index.ts`）。
 
 ## 4. 写一个 provider
 

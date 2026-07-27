@@ -1,6 +1,7 @@
-import type { AppService, ConfigSchema, Context } from '@aalis/core';
+import type { AppService, Context } from '@aalis/core';
 import type { CommandArgv } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
@@ -265,14 +266,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     .action(async () => {
       const lines = ['**系统状态：**', ''];
       const checks = [
-        ['WebUI Server', ctx.hasService('webui-server')],
-        ['CLI', ctx.hasService('cli')],
-        ['LLM 服务', ctx.hasService('llm')],
-        ['Agent', ctx.hasService('agent')],
-        ['记忆服务', ctx.hasService('memory')],
-        ['人格服务', ctx.hasService('persona')],
-        ['Embedding', ctx.hasService('embedding')],
-        ['向量库', ctx.hasService('vectorstore')],
+        ['WebUI Server', ctx.getService('webui-server') !== undefined],
+        ['CLI', ctx.getService('cli') !== undefined],
+        ['LLM 服务', ctx.getService('llm') !== undefined],
+        ['Agent', ctx.getService('agent') !== undefined],
+        ['记忆服务', ctx.getService('memory') !== undefined],
+        ['人格服务', ctx.getService('persona') !== undefined],
+        ['Embedding', ctx.getService('embedding') !== undefined],
+        ['向量库', ctx.getService('vectorstore') !== undefined],
       ] as const;
       for (const [label, ok] of checks) {
         lines.push(`- ${label}: ${ok ? '✅ 可用' : '❌ 不可用'}`);

@@ -9,6 +9,12 @@
 //   - install*/setup*/tryDispatchSubcommand：宿主件，供高级 opt-in 组装
 
 export { getBootstrapBuffer, installBootstrapBuffer } from './bootstrap-buffer.js';
+export {
+  type ConfigSyncOptions,
+  handleConfigChanged,
+  installConfigHotReload,
+  syncPluginDefaults,
+} from './config-sync.js';
 export { type ConsoleSinkHandle, installConsoleSink } from './console-sink.js';
 export { appendCrashLog, DEFAULT_LOG_FILE, type FileLoggerHandle, setupFileLogger } from './file-logger.js';
 export { createNodeModulesPluginLoader } from './node-modules-loader.js';

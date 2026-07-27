@@ -67,12 +67,6 @@ export interface AppOptions {
    */
   logger?: Logger;
   /**
-   * 插件配置同步政策。`trimUnknownFields=false` 时 `syncPluginDefaults`
-   * 保留 configSchema 之外的未知字段（默认 `true`：按 schema 裁剪）。
-   * 仅在传入配置快照时生效；传入现成 ConfigManager 时政策属于该实例自身。
-   */
-  configSync?: { trimUnknownFields?: boolean };
-  /**
    * 开发模式开关——传递给根 Context，决定 `provide` 是否跑能力探测。
    * 默认 `true`（dev-safe）；生产宿主应显式传入 `false` 跳过热路径开销。
    * core 不读 `process.env`，完全以宿主传入为准。
@@ -138,7 +132,6 @@ export class App {
         : new ConfigManager(options.config, {
             provider: options.configProvider,
             dataDir: options.dataDir,
-            trimUnknownFields: options.configSync?.trimUnknownFields,
           });
 
     this.events = options.events ?? new EventBus();
@@ -281,10 +274,7 @@ export class App {
       }
     }
 
-    // 同步插件 defaultConfig
-    const changed = this.ctx.config.syncPluginDefaults(this.plugins.getStatus());
-    for (const id of changed) this.logger.debug(`同步插件配置: ${id}`);
-    if (changed.length > 0) this.logger.info('已将插件配置同步到配置文件');
+    // 配置同步政策（defaultConfig 回填 / schema 裁剪）属宿主层，由宿主在本方法之后自行执行。
   }
 
   /**
@@ -333,39 +323,10 @@ export class App {
   }
 
   /**
-   * 配置外部变更时的处理：重新计算各插件配置并热重载差异。
-   */
-  private async handleConfigFileChanged(): Promise<void> {
-    this.logger.info('检测到配置变更，正在热重载...');
-    try {
-      // 先按与启动路径相同的政策同步一遍（补 defaultConfig 缺失字段 +
-      // 按 trimUnknownFields 裁剪 schema 外字段）——否则热重载读入的
-      // 原始快照会绕过政策，内存态与启动态在字段清理上不一致。
-      const synced = this.ctx.config.syncPluginDefaults(this.plugins.getStatus());
-      for (const id of synced) this.logger.debug(`热重载配置同步: ${id}`);
-
-      let changed = false;
-      for (const p of this.plugins.getStatus()) {
-        const defaults = p.defaultConfig ?? {};
-        const fileConfig = this.ctx.config.getPluginConfig(p.instanceId);
-        const newConfig = { ...defaults, ...fileConfig };
-        if (JSON.stringify(newConfig) !== JSON.stringify(p.config)) {
-          this.logger.info(`插件 ${p.instanceId} 配置已变更，正在重新加载...`);
-          await this.plugins.updatePluginConfig(p.instanceId, newConfig);
-          changed = true;
-        }
-      }
-      if (changed) {
-        await this.ctx.emit('plugins:changed');
-      }
-      this.logger.info('配置热重载完成');
-    } catch (e) {
-      this.logger.error('配置热重载失败:', e);
-    }
-  }
-
-  /**
    * 启动应用
+   *
+   * 配置外部变更的热重载编排（diff + bounce）属宿主政策：
+   * 宿主自行 `app.ctx.config.watch(cb)` 接管。
    */
   async start(): Promise<void> {
     this.logger.info('正在启动...');
@@ -373,9 +334,6 @@ export class App {
 
     // 注：消息路由由 @aalis/plugin-gateway 承担。
     await this.ctx.emit('ready');
-
-    // 监听配置外部变更（provider 不支持 watch 时为 no-op）
-    this.ctx.config.watch(() => this.handleConfigFileChanged());
 
     this.logger.info('启动完成');
     await this.ctx.emit('app:started');

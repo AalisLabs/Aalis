@@ -30,7 +30,6 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 | `hooks` | `HookRegistry` | 自定义钩子注册表 |
 | `logHub` | `LogHub` | 自定义日志通道；缺省=`LogHub.default`（进程级共享） |
 | `logger` | `Logger` | 自定义 Logger 实现；缺省=`DefaultLogger`（写入 logHub） |
-| `configSync` | `{ trimUnknownFields?: boolean }` | 插件配置同步政策（默认裁剪 schema 外字段） |
 | `devMode` | `boolean` | 传给根 Context，决定 `provide` 是否跑能力探测；默认 `true` |
 
 构造时：
@@ -78,7 +77,7 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 
 通过注入的 `pluginLoader` 自动发现并注册所有插件；未注入 loader 时为 no-op。流程：
 `discover()` 发现插件 → 逐个 `load()` 并 `app.plugin(mod)` 注册 → 扫描配置中的多实例条目
-（`name:suffix`，要求模块声明 `reusable`）→ `syncPluginDefaults` 同步默认配置。
+（`name:suffix`，要求模块声明 `reusable`）。
 
 ### `app.rescanPlugins()`
 
@@ -112,10 +111,10 @@ App 本身不注册指令。基础指令由插件提供，例如 `@aalis/plugin-
 | `/level <target> <level>` | restricted | owner 给某外部身份设置权限等级（整数；0 默认，负数封禁；仅 owner 可用，防自授） |
 | `/auto [<分钟>\|on\|off]` | restricted | owner 临时免 dangerous 二次确认（仅 owner 本人） |
 
-## 配置同步
+## 配置同步（宿主政策，不在 core）
 
-`App` 在 `autoLoadPlugins()` 末尾及配置热重载时调用 `ConfigManager.syncPluginDefaults` 自动同步配置：
-- 深合并补填插件 `defaultConfig` 中缺失的字段（已存在的配置值不被覆盖）
-- 删除 `configSchema` 中未定义的多余字段（递归清理）——这是可注入政策，
-  宿主传 `AppOptions.configSync = { trimUnknownFields: false }` 可改为保留未知字段
-- 仅当合并结果与原文件配置不同才写回，并经 `configProvider` 持久化
+defaultConfig 回填、按 configSchema 裁剪未知字段、配置外部变更的热重载编排均属**宿主政策**，
+由 `@aalis/runtime` 的 config-sync 模块提供（`syncPluginDefaults` / `installConfigHotReload`，
+`startAalis` 默认接线；`configSync.trimUnknownFields=false` 可保留未知字段）。
+core 只持有机制：配置快照 get/set、`config.watch` 透传、`updatePluginConfig`。
+不经 runtime 的嵌入式宿主需要时用这些公开 API 自行编排。

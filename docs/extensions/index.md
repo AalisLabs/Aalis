@@ -98,7 +98,7 @@ EventBus 事件签名表。`ctx.events.on(name, handler)` 在编译期靠它做�
 应用根配置的字段表。core 只声明**自身管理的字段**（`logLevel` / `logBufferSize` / `dataDir`...），
 业务字段由 plugin-*-api 通过 declaration merging 注入。
 
-**位置**：[packages/core/src/config.ts](packages/core/src/config.ts)（`CORE_CONFIG_SCHEMA`）
+**位置**：[packages/plugin-config-api/src/index.ts](packages/plugin-config-api/src/index.ts)（`CORE_CONFIG_SCHEMA`）
 
 **扩展者**：
 

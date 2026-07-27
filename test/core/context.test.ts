@@ -88,11 +88,11 @@ describe('Context.provide / getService', () => {
     expect(ctx.getService<typeof svc>('__greeter')?.greet()).toBe('hello');
   });
 
-  it('hasService 检查能力存在', () => {
+  it('getService 判定服务存在与否', () => {
     const ctx = makeContext();
     ctx.provide('__svc', { run: () => 1 });
-    expect(ctx.hasService('__svc')).toBe(true);
-    expect(ctx.hasService('__nonexistent')).toBe(false);
+    expect(ctx.getService('__svc') !== undefined).toBe(true);
+    expect(ctx.getService('__nonexistent') !== undefined).toBe(false);
   });
 });
 

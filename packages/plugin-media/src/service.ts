@@ -125,7 +125,7 @@ export class MediaServiceImpl implements MediaService {
    * 与「audio 能力的 LLM」同池，供 pickProcessor('audio', prefer) 统一仲裁。transcribe 直接转调 asr 服务。
    */
   private asrProcessors(): MediaProcessor[] {
-    return this.ctx.getServiceEntries('asr').map(e => {
+    return this.ctx.getAllServices('asr').map(e => {
       const asr = e.instance as ASRService;
       const name = `asr:${e.contextId}`;
       return {

@@ -12,7 +12,7 @@ import type { MessageAttachment } from '../../packages/plugin-message-api/src/in
 // 匹配不到时确定性按 priority 回落（而非静默乱用）。无 LLM 服务（getAllServices→[]）时只用外部注册的 processor。
 // ════════════════════════════════════════════════════════════
 
-const ctx = { getAllServices: () => [], getServiceEntries: () => [] } as unknown as Context;
+const ctx = { getAllServices: () => [] } as unknown as Context;
 const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
 const cfg = {
   vision: { maxTokens: 300, think: false },
@@ -81,8 +81,7 @@ describe('MediaService 音频统一池（asr 桥 + 音频 LLM 一个池）', () 
       transcribe: async (i: { attachment: MessageAttachment }) => ({ text: `[whisper] ${i.attachment.data}` }),
     };
     const audioCtx = {
-      getAllServices: () => [],
-      getServiceEntries: (name: string) =>
+      getAllServices: (name: string) =>
         name === 'asr'
           ? [{ instance: asrSvc, contextId: '@aalis/plugin-asr-whisper-cpp', priority: 5, label: 'whisper.cpp' }]
           : [],
@@ -138,8 +137,9 @@ describe('MediaService 音频统一池（asr 桥 + 音频 LLM 一个池）', () 
     const audioLLM = { id: 'gemma:e4b', capabilities: ['audio'], chat: async () => ({ content: '' }) };
     const llmCtx = {
       getAllServices: (n: string) =>
-        n === 'llm' ? [{ instance: audioLLM, contextId: '@aalis/plugin-ollama:main/gemma', label: 'ollama' }] : [],
-      getServiceEntries: () => [],
+        n === 'llm'
+          ? [{ instance: audioLLM, contextId: '@aalis/plugin-ollama:main/gemma', priority: 0, label: 'ollama' }]
+          : [],
     } as unknown as Context;
     const s = new MediaServiceImpl(llmCtx, logger, {
       ...cfg,

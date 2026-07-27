@@ -1,4 +1,5 @@
-import type { ConfigSchema, Context } from '@aalis/core';
+import type { Context } from '@aalis/core';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { createProcessGateway } from '@aalis/plugin-process-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
 import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
@@ -109,7 +110,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   if (cfg.pdf.enabled) {
-    const proc = ctx.hasService('process') ? createProcessGateway(ctx) : undefined;
+    const proc = ctx.getService('process') !== undefined ? createProcessGateway(ctx) : undefined;
     registerPdfTools(tools, sessions, storage, outputUri, proc);
     ctx.logger.info('PDF 工具已启用');
   }
