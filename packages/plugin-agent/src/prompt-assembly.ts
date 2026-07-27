@@ -12,11 +12,43 @@
 // ============================================================
 
 import type { Context } from '@aalis/core';
-import type { PromptAnchor, PromptContributionView } from '@aalis/plugin-agent-api';
+import type { PromptAnchor, PromptContribution, PromptContributionView } from '@aalis/plugin-agent-api';
 import type { Message } from '@aalis/plugin-message-api';
 
 /** 锚位排布次序（同一轮组装内生效；语义见 agent-api 的 PromptAnchor 文档） */
 const ANCHOR_ORDER: readonly PromptAnchor[] = ['identity', 'knowledge', 'context', 'turn-hint'];
+
+/**
+ * 执行单个 build，可选超时。超时返回 null（本轮缺席）并 warn 点名；
+ * 迟到的 settle 挂空 catch 防 unhandledRejection，clearTimeout 进 finally
+ * 防悬空定时器拖住事件循环。
+ */
+async function buildWithTimeout(
+  ctx: Context,
+  key: string,
+  run: () => ReturnType<PromptContribution['build']>,
+  timeoutMs?: number,
+): Promise<Awaited<ReturnType<PromptContribution['build']>>> {
+  const p = Promise.resolve(run());
+  if (!timeoutMs || timeoutMs <= 0) return p;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const winner = await Promise.race([
+      p.then(out => ({ out })),
+      new Promise<'timeout'>(resolve => {
+        timer = setTimeout(() => resolve('timeout'), timeoutMs);
+      }),
+    ]);
+    if (winner === 'timeout') {
+      p.catch(() => {});
+      ctx.logger.warn(`agent:prompt 贡献 "${key}" 构建超过 ${timeoutMs}ms，本轮缺席（键未物化，下一轮重试）`);
+      return null;
+    }
+    return winner.out;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 /** 各锚位在 messages 中的插入位置；返回 -1 = 本轮弃置该槽 */
 function anchorInsertAt(anchor: PromptAnchor, messages: readonly Message[]): number {
@@ -60,6 +92,15 @@ export async function assemblePromptContributions(
     triggerType?: PromptContributionView['triggerType'];
     dryRun?: boolean;
   },
+  opts?: {
+    /**
+     * 单个 build 的等待上限（毫秒；缺省/0 = 不设限）。挂死的 build（如网络
+     * embedding 卡住）会拖住每一次 LLM 调用——超时后该贡献本轮缺席、warn
+     * 点名、其余照常物化；键未物化，下一轮会重试。执行策略属收集方，故此
+     * 护栏在组装器而非内核（与 DisposableChain.disposeAsync 的逐项超时同构）。
+     */
+    buildTimeoutMs?: number;
+  },
 ): Promise<void> {
   const entries = ctx.collect('agent:prompt');
   if (entries.length === 0) return;
@@ -81,11 +122,12 @@ export async function assemblePromptContributions(
   };
 
   type Built = { key: string; anchor: PromptAnchor; blocks: string[] };
+  const timeoutMs = opts?.buildTimeoutMs;
   const built = (
     await Promise.all(
       pending.map(async ({ key, spec }): Promise<Built | null> => {
         try {
-          const out = await spec.build(view);
+          const out = await buildWithTimeout(ctx, key, () => spec.build(view), timeoutMs);
           if (out == null) return null;
           const blocks = (typeof out === 'string' ? [out] : out).filter(b => b.length > 0);
           return blocks.length > 0 ? { key, anchor: spec.anchor, blocks } : null;
