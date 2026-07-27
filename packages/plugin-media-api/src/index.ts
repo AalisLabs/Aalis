@@ -217,11 +217,6 @@ export interface MediaProcessReport {
   }>;
 }
 
-/** 助手：从 ctx 取媒体服务（subsystem='media' 唯一服务）。 */
-export function useMediaService(ctx: Context): MediaService | undefined {
-  return ctx.getService<MediaService>('media');
-}
-
 // ----- 事件 -----
 
 declare module '@aalis/core' {
