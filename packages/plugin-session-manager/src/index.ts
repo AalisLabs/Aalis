@@ -3,7 +3,6 @@ import type { ConfigSchema } from '@aalis/plugin-config-api';
 // 副作用导入：注入 agent:turn:after 等 agent 域钩子到 HookContextMap（declaration merging），
 // 使 ctx.middleware('agent:turn:after', ...) 的类型可见。
 import '@aalis/plugin-agent-api';
-import type { LLMModel } from '@aalis/plugin-llm-api';
 import { listLLMModels, resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
