@@ -222,10 +222,6 @@ export interface WebuiPageDef {
 export interface SessionConfigData {
   /** 会话级 LLM 覆盖：`{ provider, model }` 二元组。编辑器只读写此字段。 */
   llm?: { provider: string; model: string };
-  /** @deprecated legacy：旧版编辑器写过的 flat 字段，保留仅用于读旧数据并折叠到 llm。 */
-  model?: string;
-  /** @deprecated legacy */
-  llmProvider?: string;
   persona?: string;
   enabledToolGroups?: string[];
   systemPromptExtra?: string;
