@@ -126,14 +126,4 @@ export class EventBus {
     }
   }
 
-  /**
-   * 移除指定事件的所有监听器
-   */
-  removeAll(event?: string): void {
-    if (event) {
-      this.handlers.delete(event);
-    } else {
-      this.handlers.clear();
-    }
-  }
 }

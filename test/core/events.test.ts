@@ -28,21 +28,6 @@ describe('EventBus', () => {
     expect(fn).not.toHaveBeenCalled();
   });
 
-  it('removeAll 清空指定/所有事件', async () => {
-    const bus = new EventBus();
-    const fn = vi.fn();
-    bus.on('plugin:loaded', fn);
-    bus.on('plugin:unloaded', fn);
-    bus.removeAll('plugin:loaded');
-    await bus.emit('plugin:loaded', 'a');
-    await bus.emit('plugin:unloaded', 'b');
-    expect(fn).toHaveBeenCalledTimes(1);
-
-    bus.removeAll();
-    await bus.emit('plugin:unloaded', 'c');
-    expect(fn).toHaveBeenCalledTimes(1);
-  });
-
   it('emit 无监听器时安全 noop', async () => {
     const bus = new EventBus();
     await expect(bus.emit('plugin:loaded', 'x')).resolves.toBeUndefined();
