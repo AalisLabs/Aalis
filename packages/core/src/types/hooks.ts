@@ -16,3 +16,15 @@
 //   }
 
 export interface HookContextMap {}
+
+// ----- 中间件签名（钩子域词汇） -----
+
+/**
+ * 中间件 next 函数，调用它将控制传递给下一个中间件或默认行为
+ */
+export type MiddlewareNext = () => Promise<void>;
+
+/**
+ * 中间件函数签名：接收数据和 next，可选择修改数据或中断流程
+ */
+export type MiddlewareFn<T> = (data: T, next: MiddlewareNext) => Promise<void>;

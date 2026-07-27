@@ -2,7 +2,7 @@ import type { Context } from './context.js';
 import type { Logger } from './logger.js';
 import { activatePlugin, computeTargetState } from './plugin-activation.js';
 import { evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
-import { normalizeDependency } from './service.js';
+import { normalizeDependency } from './services.js';
 import type { PluginStatusEntry } from './types/index.js';
 import {
   type PluginEntry,

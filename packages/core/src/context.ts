@@ -4,8 +4,8 @@ import { DisposableChain } from './disposable-chain.js';
 import type { EventBus } from './events.js';
 import type { HookRegistry } from './hooks.js';
 import type { Logger } from './logger.js';
-import type { ServiceContainer } from './service.js';
-import { emitServiceRegistered, validateProvide } from './service-helpers.js';
+import type { ServiceContainer } from './services.js';
+import { emitServiceRegistered, validateProvide } from './services-helpers.js';
 import type { AalisEvents, ContributionPointMap, HookContextMap, MiddlewareFn, ServiceTypeMap } from './types/index.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;

@@ -10,8 +10,8 @@
 
 import type { EventBus } from './events.js';
 import type { Logger } from './logger.js';
-import type { ServiceContainer } from './service.js';
-import { ServicePriority } from './types/service.js';
+import type { ServiceContainer } from './services.js';
+import { ServicePriority } from './services.js';
 
 /**
  * provide() 的 dev-mode 校验集合：
