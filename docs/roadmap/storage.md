@@ -77,26 +77,44 @@ CREATE TABLE IF NOT EXISTS metadata (
 
 没有 `where`、没有 `orderBy`、没有 `limit`、没有前缀扫描。凡是「按某字段找」的需求，唯一走法就是拉全表再在 JS 里 filter。
 
-### 关系图每轮对话全表扫两次
+### 关系图每轮对话全量加载两次
 
-**现象**：`user-relation` 的 prompt 注入在每次 direct / immediate 触发时都要把整个关系图从磁盘读出来解析一遍，且读两次。
+**现象**：`user-relation` 的 prompt 注入在每次 direct / immediate 触发时，都要把**整个关系图**从存储读出来解析一遍，且同一次 build 里读两次。
 
-**根因**：`plugin-user-relation/src/middleware.ts:51-64` 注册 `agent:prompt` 贡献 → `:85-89` 调 `service.traverseSubgraph(...)` → `src/service.ts:1676` `await this.store.loadAll()` → `src/store.ts:208` `listMetadata(RELATION_NAMESPACE)`，即**一次全 namespace 扫描 + 全量 `JSON.parse`**，然后靠 `key.startsWith('person:' | 'event:' | 'entity:' | 'edge:')` 在内存里分桶（`store.ts:214-220`）。同一次 build 里，`middleware.ts:251` 为了「全局热点」小节**再 `loadAll()` 一次**。
+**实测（本仓库生产库，2026-07-28，MongoDB 后端）**：
 
-`RelationStore` 与 `RelationService` **一处缓存都没有**（`grep -n "cache" src/store.ts` 零命中，service 也无快照字段），两次调用是两次真实全表读。全插件共 **65 处 `loadAll()` 调用点**（`grep -rn '\.loadAll()' src` 得 67 行，除去 2 行注释），分布：`service.ts` 46、`commands.ts` 10、`actions.ts` 5、`store.ts` 3、`extractor.ts` 1、`middleware.ts` 1。
+| 指标 | 实测值 |
+|---|---|
+| `user-relation` 命名空间条目数 | **3090** |
+| 全量拉取字节数 | **41 MB** |
+| `find({namespace}).toArray()` 耗时 | **185 ms** |
+| 全量 `JSON` 解析耗时 | **352 ms** |
+| 单次 `loadAll()` 合计 | **≈ 540 ms** |
 
-设计当初是有意的取舍，写在 `src/store.ts:16-17`：「不维护倒排索引：关系图体量预期 < 数千节点，全量加载完全可接受；真要扩到 10k+ 再加索引」。这个假设**已经被自己的代码打脸** —— `src/service.ts:3664-3665` 留着这行注释：
+**根因**：`plugin-user-relation/src/middleware.ts:51-64` 注册 `agent:prompt` 贡献 → `:85-89` 调 `service.traverseSubgraph(...)` → `src/service.ts:1676` `await this.store.loadAll()` → `src/store.ts:208` `listMetadata(RELATION_NAMESPACE)`。而 mongo 后端的 `listMetadata` 就是 `find({ namespace }).toArray()`（`plugin-memory-mongodb/src/index.ts`），**无投影、无分页、无索引利用**——一次全 namespace 拉取 + 全量反序列化，然后靠 `key.startsWith('person:' | 'event:' | 'entity:' | 'edge:')` 在内存里分桶（`store.ts:214-220`）。同一次 build 里，`middleware.ts:251` 为了「全局热点」小节**再 `loadAll()` 一次**。
+
+`RelationStore` 与 `RelationService` **一处缓存都没有**（`grep -n "cache" src/store.ts` 零命中，service 也无快照字段），两次调用是两次真实全量读。全插件共 **65 处 `loadAll()` 调用点**（`grep -rn '\.loadAll()' src` 得 67 行，除去 2 行注释），分布：`service.ts` 46、`commands.ts` 10、`actions.ts` 5、`store.ts` 3、`extractor.ts` 1、`middleware.ts` 1。
+
+**如何定性（重要）**：这**不是**「慢到不可用」的事故——540 ms 淹没在 LLM 数秒的响应里，日常对话中用户无感知。它的问题在于**代价与收益完全不成比例**：传输 + 解析 41 MB，只为了 BFS 出一个几十节点的子图；且复杂度是 **O(全图)** 而非 O(子图)，与实际用到的数据量无关，节点数翻倍则开销翻倍。真正的成本是**每条触发消息都付一次**的持续开销与规模脆弱性。
+
+**一处失真的既有注释**：`src/service.ts:3664-3665` 写着
 
 ```
 // 复用本函数顶部已加载的 snapshot，避免 scoreBetween 内部对每个 pair 重新
 // store.loadAll()——N=300 时这一步会从 ~10s 膨胀到 ~100s。
 ```
 
-**N=300 就已经是 10 秒到 100 秒的量级**，离「数千节点」还差一个数量级。修法是往调用链里手工穿 `_snapshot` 参数（`service.ts:1900` 的 `_snapshot` 内部优化选项、`:1939` 的 `opts._snapshot ?? await this.store.loadAll()`）—— 这是**在应用层手搓查询计划**，缺口的最直接证据。
+该估算与实测严重不符（实测 N=3090 时单次 `loadAll()` 仅 ≈540 ms）。它描述的应是「在 pair 循环里反复 loadAll」这一 **N² 退化场景**的累计耗时，而非单次调用的代价——阅读时不要据此判断单次开销的量级。设计取舍写在 `src/store.ts:16-17`：「不维护倒排索引：关系图体量预期 < 数千节点，全量加载完全可接受；真要扩到 10k+ 再加索引」——**当前 3090 条已逼近该假设的上界**。
 
-**修法方向**：这一条不该在 `user-relation` 里修。手工传 snapshot 只能覆盖已知热点，65 个调用点靠人肉审查保证不退化不现实。正解是存储层给出带谓词的查询原语（至少是 key 前缀扫描 + 单字段索引），让「取某人的一跳邻居」是一次索引查询而非一次全表读。
+既有的局部缓解是往调用链里手工穿 `_snapshot` 参数（`service.ts:1900` 的内部优化选项、`:1939` 的 `opts._snapshot ?? await this.store.loadAll()`）——这是**在应用层手搓查询计划**，也是缺口最直接的证据。
 
-**为什么现在不做**：见文末「方案取舍」—— 加什么原语取决于走哪个方向，先定方向再动手，否则就是往 `memory-api` 上贴补丁。
+**修法：分两层，可独立推进**
+
+*止血（局部，不预设存储层方向）*：给 `RelationStore` 加进程内快照缓存，写操作失效。关系图是**读远多于写**的负载（每条消息读，仅在提取到新关系时写），缓存命中后每条消息省下 ≈540 ms 且省掉 41 MB 传输。风险面小：单进程、单实例服务，失效点集中在 store 的写方法。代价是内存常驻约 41 MB 的图快照——需与 `maxOldSpaceSize` 一并评估，若不可接受则退为「带 TTL 的短期缓存」，只合并同一回合内的重复读（本身就有两次）。
+
+*根治（存储层）*：让「取某人的一跳邻居」是一次索引查询而非一次全量读。需要存储层提供带谓词的查询原语（至少 key 前缀扫描 + 单字段索引）。手工传 snapshot 只能覆盖已知热点，65 个调用点靠人肉审查保证不退化不现实。
+
+**为什么根治现在不做**：见文末「方案取舍」——加什么原语取决于走哪个方向，先定方向再动手，否则就是往 `memory-api` 上贴补丁。但**止血不依赖方向**，可以先落。
 
 ### 档案的全局回填也是全表扫（但默认关）
 
@@ -185,6 +203,31 @@ Koishi 生态的结构化存储是 `ctx.model.extend` + `ctx.database.get/set/cr
 3. **是否与 Koishi 兼容层共用一个 ORM 实现**？这个问题只在选 B 时才存在，且答案不必与 B 同时给出 —— 契约先立，实现可以先用简单的、之后再换。
 
 在 1 定下来之前，`user-relation` 的性能问题**可以走 C 的局部版本**（插件内加一层进程内快照缓存 + 失效信号），这不预设任何方向，也不制造迁移债。
+
+## 附：实测方法（数字可复核）
+
+上文关系图一节的实测数据取自本仓库生产库（MongoDB 后端，`servicePreferences.memory = "@aalis/plugin-memory-mongodb"`）。复现方式：
+
+```bash
+# 注意：若 shell 设了全局代理，mongosh 连 localhost 会被拦，需绕过
+env -u ALL_PROXY -u all_proxy -u HTTP_PROXY -u http_proxy NO_PROXY='*' \
+  mongosh "mongodb://127.0.0.1:27017/aalis" --quiet --eval '
+    db.metadata.aggregate([
+      { $group: { _id: "$namespace", n: { $sum: 1 }, bytes: { $sum: { $bsonSize: "$$ROOT" } } } },
+      { $sort: { n: -1 } }
+    ]).forEach(d => print(d._id + "\t" + d.n + "\t" + (d.bytes / 1024).toFixed(1) + "KB"))'
+```
+
+2026-07-28 的快照（各 namespace 的量级对比，可见关系图是绝对大头）：
+
+| namespace | 条数 | 体积 |
+|---|---|---|
+| `user-relation` | 3079 | ≈ 44 MB |
+| `user:profile` | 622 | 242 KB |
+| `onebot:forward` | 60 | 468 KB |
+| `sessions` | 9 | 6.9 KB |
+
+耗时用同一连接内的 `Date.now()` 前后夹取 `find({namespace:"user-relation"}).toArray()` 与全量 `JSON.parse` 得到。**这是纯存储侧代价，不含 `loadAll()` 之后的分桶与 BFS**，故是下界。
 
 ## 相关文档
 
