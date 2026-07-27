@@ -79,13 +79,6 @@ export class ServiceContainer {
   }
 
   /**
-   * 检查某个服务是否存在
-   */
-  has(name: string): boolean {
-    return this.get(name) !== undefined;
-  }
-
-  /**
    * 检查指定 contextId 是否注册了某个服务。
    *
    * "拥有" 语义：同时匹配 `contextId === ownerId` 和 per-entry 拆粒度的
