@@ -42,8 +42,10 @@ describe('recompute 深级联收敛（maxRounds 推导式上限）', () => {
     const before = app.plugins.getStatus();
     expect(before.filter(p => p.state === 'active')).toHaveLength(DEPTH + 1);
 
-    // 拔掉根 → 拆除级联逐层传播 DEPTH 轮
+    // 拔掉根 → 拆除级联逐层传播 DEPTH 轮。unload 在已有 flight 在飞时排队
+    // 早退（单飞契约），断言前先等状态机静置。
     await app.plugins.unload('root');
+    await app.plugins.idle();
 
     const after = app.plugins.getStatus();
     const chain = after.filter(p => p.name.startsWith('chain-'));

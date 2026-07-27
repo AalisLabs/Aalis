@@ -65,7 +65,40 @@ export class PluginManager {
     return this.shuttingDown;
   }
 
-  constructor(rootCtx: Context, logger: Logger) {
+  /** idle() 的等待者——在 recompute flight 排干（无在飞、无排队、无挂起段）时统一放行 */
+  private idleWaiters: Array<() => void> = [];
+
+  /**
+   * 等待插件状态机静置：无在飞 recompute、无排队请求、无手动 dispose 段。
+   *
+   * register/unload/enable/disable 等变更 API 在已有 flight 在飞时会**排队并
+   * 立即返回**（单飞早退是刻意设计，join 在飞 promise 会在 apply/onDispose 内
+   * 同步触发的变更调用上自我死锁）。需要"尘埃落定后再观察"的外部调用方
+   * （宿主引导、WebUI 刷新、测试断言）在变更后 await 本方法。
+   *
+   * ⚠． **不得在插件 apply / onDispose 内调用**——flight 正等着你返回，
+   *    等 flight 结束即互等死锁。
+   */
+  idle(): Promise<void> {
+    if (!this.reloading && !this.suspended && this.queuedReason === null) return Promise.resolve();
+    return new Promise(resolve => {
+      this.idleWaiters.push(resolve);
+    });
+  }
+
+  private settleIdleWaiters(): void {
+    if (this.reloading || this.suspended || this.queuedReason !== null) return;
+    const waiters = this.idleWaiters;
+    this.idleWaiters = [];
+    for (const w of waiters) w();
+  }
+
+  constructor(
+    rootCtx: Context,
+    logger: Logger,
+    /** 单个异步清理项的等待上限（毫秒；0=不设限），由 App 从 AppOptions 注入 */
+    private readonly disposeTimeoutMs?: number,
+  ) {
     this.rootCtx = rootCtx;
     this.logger = logger.child('plugins');
 
@@ -142,7 +175,7 @@ export class PluginManager {
     this.suspendDepth++;
     try {
       if (entry.state === 'active' && entry.context) {
-        entry.context.dispose();
+        await entry.context.disposeAsync(this.disposeTimeoutMs);
         entry.context = undefined;
         this.rootCtx.emit('plugin:unloaded', name).catch(err => {
           this.logger.warn(`emit plugin:unloaded 失败 (${name}): ${err}`);
@@ -193,7 +226,7 @@ export class PluginManager {
     this.suspendDepth++;
     try {
       if (entry.state === 'active' && entry.context) {
-        entry.context.dispose();
+        await entry.context.disposeAsync(this.disposeTimeoutMs);
         entry.context = undefined;
         this.rootCtx.emit('plugin:unloaded', name).catch(err => {
           this.logger.warn(`emit plugin:unloaded 失败 (${name}): ${err}`);
@@ -291,13 +324,14 @@ export class PluginManager {
     this.suspendDepth++;
     try {
       if (entry.state === 'active' && entry.context) {
-        evictDownstreamConsumers({
+        await evictDownstreamConsumers({
           provider: entry,
           plugins: this.plugins,
           rootCtx: this.rootCtx,
           logger: this.logger,
+          disposeTimeoutMs: this.disposeTimeoutMs,
         });
-        entry.context.dispose();
+        await entry.context.disposeAsync(this.disposeTimeoutMs);
         entry.context = undefined;
         this.rootCtx.emit('plugin:unloaded', name).catch(err => {
           this.logger.warn(`emit plugin:unloaded 失败 (${name}): ${err}`);
@@ -466,6 +500,7 @@ export class PluginManager {
       }
     } finally {
       this.reloading = false;
+      this.settleIdleWaiters();
     }
   }
 
@@ -519,7 +554,7 @@ export class PluginManager {
 
         if (entry.context) {
           try {
-            entry.context.dispose();
+            await entry.context.disposeAsync(this.disposeTimeoutMs);
           } catch (err) {
             this.logger.error(
               `插件 "${entry.instanceId}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`,
@@ -545,7 +580,12 @@ export class PluginManager {
         if (entry.state !== 'pending') continue;
         const target = computeTargetState(entry, currentReason, this.rootCtx);
         if (target !== 'active') continue;
-        await activatePlugin(entry, { plugins: this.plugins, rootCtx: this.rootCtx, logger: this.logger });
+        await activatePlugin(entry, {
+          plugins: this.plugins,
+          rootCtx: this.rootCtx,
+          logger: this.logger,
+          disposeTimeoutMs: this.disposeTimeoutMs,
+        });
         if ((entry.state as PluginState) === 'active') {
           changed = true;
           lastRoundFlips.push(entry.instanceId);
