@@ -534,21 +534,14 @@ class DefaultAgent implements AgentService {
         const t0 = Date.now();
         // 本轮初始时间与累加用量，用于最终 assistant 消息的 modelInfo 元数据。
         const turnStartTs = t0;
-        const turnUsageAcc: {
-          promptTokens: number;
-          completionTokens: number;
-          totalTokens: number;
-          cachedPromptTokens?: number;
-        } = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+        // 注：缓存命中量（usage.cachedPromptTokens）不进这里——本对象只喂
+        // assistant 消息的 modelInfo，而其字段是逐个挑的（见下方 :896 附近），
+        // 加进来也不会流到下游。命中率的观测出口是 LLM 响应日志那一行。
+        const turnUsageAcc = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
         const accUsage = (
-          u:
-            | { promptTokens?: number; completionTokens?: number; totalTokens?: number; cachedPromptTokens?: number }
-            | undefined,
+          u: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined,
         ) => {
           if (!u) return;
-          // 与 promptTokens 同为"最后一次调用的上下文"属性，故同样覆盖而非累加。
-          // provider 不报时保持 undefined（"不可知"），不要落成 0（"明确无命中"）。
-          if (u.cachedPromptTokens != null) turnUsageAcc.cachedPromptTokens = u.cachedPromptTokens;
           // promptTokens 语义 = "生成这条回复时的上下文大小"。工具迭代循环里每轮都把同一份
           // （不断增长的）上下文重新发给模型，若累加会把重复发送的上下文重复计入，导致单条
           // 回复虚高到几十万 token。故取最后一次调用的 prompt（覆盖而非累加）= 回复定稿时的真实上下文。
