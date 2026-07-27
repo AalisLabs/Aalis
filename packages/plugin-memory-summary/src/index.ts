@@ -10,6 +10,13 @@ import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import { truncateChars } from '@aalis/util-text-normalize';
 
 /**
+ * 摘要 token 预算的绝对上限。摘要是压缩后的常驻块、每轮随提示词重发，
+ * 篇幅应与信息密度挂钩而非与上下文窗口成正比（1e6 窗口会算出 5 万 token 的
+ * 预算，还被写进提示词鼓励模型照着写满——压缩反成最大的常驻开销）。
+ */
+const MAX_SUMMARY_TOKENS = 4096;
+
+/**
  * 摘要用消息格式化：content 已含 [昵称(ID)] 前缀，故不再叠加 m.name（否则双重身份 用户[123]: [Alice(123)]:）。
  * generateSummary 与 session:compress 两条路径共用，避免格式漂移。
  */
@@ -238,7 +245,19 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   function getSummaryTokenBudget(): number {
     const model = resolveSummaryModel();
     const contextLength = model?.contextLength ?? 4096;
-    return Math.max(512, Math.floor(contextLength * cfg.summaryTokenRatio));
+    return Math.min(MAX_SUMMARY_TOKENS, Math.max(512, Math.floor(contextLength * cfg.summaryTokenRatio)));
+  }
+
+  /**
+   * 取多少条历史来判定"是否该压缩"。
+   *
+   * 必须 ≥ threshold：`totalCount` 同时充当阈值判定的样本，取少了会让
+   * `totalCount < threshold` 恒真、压缩永不触发且零日志（曾写死 200，
+   * threshold>200 的配置全部静默失效）。它也天然是单次摘要输入量的上界——
+   * 摘要区间是 `[0, total - keepRecent)`，故单次至多 `threshold - keepRecent` 条。
+   */
+  function getHistoryProbeLimit(): number {
+    return Math.max(cfg.threshold, cfg.keepRecent + 1);
   }
 
   // 摘要生成提示词
@@ -264,7 +283,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       if (!memory || !summaryModel) return;
 
       // 获取较多的历史消息来判断是否需要摘要
-      const allHistory = await memory.getHistory(sessionId, 200);
+      const allHistory = await memory.getHistory(sessionId, getHistoryProbeLimit());
       const totalCount = allHistory.length;
 
       if (totalCount < cfg.threshold) return;
@@ -447,7 +466,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           return;
         }
 
-        const allHistory = await memory.getHistory(data.sessionId, 200);
+        const allHistory = await memory.getHistory(data.sessionId, getHistoryProbeLimit());
         // 手动压缩：只要有 > keepRecent 条消息就压缩
         if (allHistory.length <= cfg.keepRecent) {
           ctx.logger.info(`会话消息数 ${allHistory.length} ≤ keepRecent(${cfg.keepRecent})，无需压缩`);
