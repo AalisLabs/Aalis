@@ -73,3 +73,25 @@
 | stable | 四原语门面全部动词、`fork` / `useModule` / `onDispose` / `dispose` / `disposeAsync`、`App` / `createApp` / `AppOptions` providers、`ConfigManager` 快照读写、`PluginManager`（register/unload/enable/disable/bounce/getStatus/getPlugin/idle） | 1.x 内不破坏 |
 | experimental | 无（0.9 收束后暂无试验面；新增能力先以此层进入） | 1.x 内可变，变更走 minor |
 | internal | `@internal` 标注成员、私有方法、`DisposableChain` 等未从包根导出者 | 无承诺 |
+
+## 七、1.0 之前的实况（避免误读上表）
+
+**上表的承诺自 1.0 起生效。1.0 之前 core 的公开面在次版本里被删过，且不止一次：**
+
+| 版本 | 删除的公开面 |
+|---|---|
+| 0.7.0 | `Context.createScope`、`ScopedConfigManager`、`ScopedServiceContainer` |
+| 0.9.0 | `CORE_CONFIG_SCHEMA` / `ConfigSchema` 全家、`Context.once` / `hasService` / `getServiceEntries`、`PluginManager.createInstance` / `removeInstance`、`ServiceContainer.has`、`EventBus.removeAll`、`ConfigManager.syncPluginDefaults`、`AppOptions.configSync` |
+
+因此插件生态里常见的 `peerDependencies: { "@aalis/core": ">=0.2.0 <1.0.0" }` **不是**"core 保证
+0.x 内兼容"的推论——它只是"没用到新 API 的插件不必随次版本重发"的便利区间。用了某个版本才有的
+API，就把下限抬到那个版本（如本批的 plugin-webui-server / plugin-media / plugin-session-manager /
+runtime 抬到 `>=0.9.0 <1.0.0`）。
+
+**版本号语义**：core 在 1.0 之前，次版本（0.x.0）可含破坏性变更并在发布说明中列出迁移路径；
+补丁版本（0.x.y）只做修复与加法。1.0 之后按标准 semver。
+
+**禁 caret，一律用宽区间**：`@aalis/core` 的 peerDep 用 `>=x.y.z <1.0.0`；`@aalis/plugin-config-api`
+被五十余个包依赖，同样用 `workspace:>=0.9.0 <1.0.0`（发布时原样保留）。0.x 的 caret 锁死 minor——
+用了 caret，被依赖包加一个词汇就会让所有已发布消费者拒收新版，node_modules 里出现两份副本，
+而 declaration merging 按模块副本生效，扩展点的合并面会就此裂开。

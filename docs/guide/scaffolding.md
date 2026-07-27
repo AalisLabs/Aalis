@@ -194,7 +194,7 @@ my-plugin/
 ```
 
 - **`keywords: ["aalis-plugin"]` 是加载硬门**：两个加载器都只认这个关键词来判定「这是不是可加载插件」（`isLoadablePlugin`，`node-modules-loader.ts`）。漏了它，插件永远不被发现。
-- **`@aalis/core` 走 peerDependency**，区间 `>=0.2.0 <1.0.0`：core 承诺 0.x 内向后兼容、破坏性变更才升 1.0.0，所以接受任何 0.x 宿主——插件不必随 core 次版本升级重发（别用 `^0.x` caret 把自己锁死，也别用裸 `*`）。
+- **`@aalis/core` 走 peerDependency**，区间 `>=0.2.0 <1.0.0`：接受任何 0.x 宿主，插件不必随 core 次版本升级重发（别用 `^0.x` caret 把自己锁死，也别用裸 `*`）。**注意 1.0 之前 core 的公开面可能在次版本被删**（0.7.0 / 0.9.0 都删过），用了新 API 就把下限抬到对应版本；稳定性承诺自 1.0 起生效，见 `docs/design/core-contract.md`。
 - **选了哪个扩展点，才把对应 `*-api` 进 `dependencies`**：tool→`@aalis/plugin-tools-api`、command→`@aalis/plugin-commands-api`、webui→`@aalis/plugin-webui-api`，统一写 `"latest"`（`cli.ts`）。
 - **不带 `aalis` 字段**：示例插件无服务依赖，模板只留一行注释提示往哪写（`cli.ts`）。一旦你 `ctx.provide(...)` 或在 `inject` 加依赖，要**同步**补 `aalis.service.{provides,required,optional}`，否则市场「装前披露」会缺项——这两套元数据的对账纪律见 [concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。
 
