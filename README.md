@@ -189,7 +189,8 @@ pnpm build && pnpm start
 一个 Aalis 插件需要导出 `name`、可选的 `inject`/`provides`/`configSchema` 和 `apply` 函数：
 
 ```typescript
-import type { Context, ConfigSchema } from '@aalis/core';
+import type { Context } from '@aalis/core';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 
 export const name = 'my-plugin';
 

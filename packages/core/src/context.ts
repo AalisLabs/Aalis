@@ -49,7 +49,7 @@ export class Context {
    * 用于同键重注册时先摘旧登记：注册表本身是替换语义，但门面每次 contribute
    * 都会往 _disposables 压一个闭包——不摘旧的，反复刷新贡献（文档明示的合法
    * 用法）会让 dispose 链无界增长且旧 build 闭包无法 GC。
-   * 条目数有界于本 ctx 用过的 (point, id) 组合数。
+   * 条目数有界于**当前存活**的贡献数：退订时由 off 的自移除逻辑摘掉本条。
    */
   private readonly _contributionDisposers = new Map<string, () => void>();
   /** 活跃沙盒子上下文 id（useModule）——用于同名重复挂载时唯一化 childId。 */
@@ -58,6 +58,13 @@ export class Context {
   private _children: Set<Context> = new Set();
   private _parent?: Context;
   private _disposed = false;
+  /**
+   * 在飞的拆卸 promise。`_disposed` 在清理**开始前**置位，仅凭它早退会让后来者
+   * 拿到"已完成"的假象（并发 disposeAsync、父级联撞上半拆的子 ctx、unload 撞
+   * bounce、并发 app.stop 都会 0ms 返回而清理其实没落）。记住它之后，后来者
+   * join 而非早退。
+   */
+  private _inflightTeardown?: Promise<void>;
 
   constructor(options: {
     id: string;
@@ -456,11 +463,26 @@ export class Context {
   ): () => void {
     // 窄化取 id：core 内 ContributionPointMap 是空接口，`ContributionPointMap[K]`
     // 索引不出成员，但交叉的 ContributionSpec 保证 id 存在。
+    // 已 dispose 的 ctx 不得再注册：注册表是键控替换语义，死 ctx 写进去会顶掉
+    // 同 id 活实例（如 bounce 后的新实例）的条目，随即又被立即执行的 disposer
+    // 连带删除——活实例的贡献静默消失。与 useModule 同为拒绝，但取 warn+no-op
+    // 而非抛错：调用方常是插件的异步续段，不该在清理路径上再抛。
+    if (this._disposed) {
+      this.logger.warn(`Context "${this.id}" 已 dispose，忽略 contribute("${point}")`);
+      return () => {};
+    }
     const mapKey = `${point}\u0000${(spec as ContributionSpec).id}`;
     // 同键重注册 = 替换：先撤旧登记（自移除出 dispose 链 + 撤注册表旧条目），
     // 再写新的——先删后写，避免旧闭包滞留（见 _contributionDisposers）。
     this._contributionDisposers.get(mapKey)?.();
-    const off = this.trackDisposable(this._contributions.register(point, spec, this.id));
+    const rawOff = this.trackDisposable(this._contributions.register(point, spec, this.id));
+    // 包一层做自移除：不删登记表条目的话，`Map → dispose 闭包 → off 闭包 →
+    // entry → spec（及其 build 捕获的数据）` 这条持有链会让退订过的贡献一直
+    // 活到 ctx.dispose（动态 id 场景下无界增长）。恒等卫防误删同键新注册。
+    const off = (): void => {
+      if (this._contributionDisposers.get(mapKey) === off) this._contributionDisposers.delete(mapKey);
+      rawOff();
+    };
     this._contributionDisposers.set(mapKey, off);
     return off;
   }
@@ -606,7 +628,9 @@ export class Context {
     // 本方法的可观察时序与纯同步实现一致（有测试以同步副作用守着）。
     // 差异仅在抛错路径：异常成为 rejection 而非同步抛出（体内各步骤均自带
     // 隔离，实际不可达），catch 兜底防 unhandledRejection。
-    this._teardown(false).catch(err => {
+    const p = this._teardown(false);
+    this._inflightTeardown ??= p;
+    p.catch(err => {
       this.logger.error('dispose 收尾异常:', err);
     });
   }
@@ -616,11 +640,20 @@ export class Context {
    * 清理（`onDispose` 返回的 promise）完成后才返回——bounce / unload / 停机
    * 路径上落盘类清理从此真正落地，而非只是"开始执行"。
    *
+   * 幂等且**可 join**：已有拆卸在飞时等待它完成再返回，而不是看到 `_disposed`
+   * 就早退（`_disposed` 在清理开始前置位，早退会让调用方拿到"已完成"的假象——
+   * 父级联撞上半拆的子 ctx、并发 stop、unload 撞 bounce 都会走到这条路）。
+   *
+   * ⚠． **不得在本 ctx 自己的 `onDispose` 回调里 await 本方法**——在飞的拆卸
+   *    正等着那个回调返回，await 它即自等自死锁（与 `PluginManagerService.idle()`
+   *    同类约束）。清理回调只需做自己的收尾，拆卸本身由编排层驱动。
+   *
    * @param timeoutMs 单个异步清理项的等待上限；超时放弃该项、继续后续清理
    *        并 warn 点名（防网络类关闭卡死整个停机）。缺省不设限。
    */
   async disposeAsync(timeoutMs?: number): Promise<void> {
-    await this._teardown(true, timeoutMs);
+    this._inflightTeardown ??= this._teardown(true, timeoutMs);
+    await this._inflightTeardown;
   }
 
   private async _teardown(wait: boolean, timeoutMs?: number): Promise<void> {
