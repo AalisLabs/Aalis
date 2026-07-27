@@ -133,24 +133,27 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
   // ===== 权限指令 =====
 
   // /authority [target] — 查看自己或指定用户的权限等级
-  cmds.command('authority [target:string]', '查看自己或指定用户的权限等级').action(async (argv, target) => {
-    const describe = (platform: string, userId: string | undefined, self: boolean): string => {
-      const isOwner = authority.isOwner(platform, userId);
-      const who = self ? '您' : `${platform}:${userId}`;
-      if (isOwner) return `${who}（owner，等级 ∞，拥有全部权限）`;
-      const entry = userId
-        ? authority.listUsers().find(u => u.platform === platform && u.userId === userId)
-        : undefined;
-      return `${who} 等级: ${entry?.level ?? DEFAULT_AUTHORITY}`;
-    };
-    const t = target as string | undefined;
-    if (t) {
-      const sep = t.indexOf(':');
-      if (sep < 1) return '目标格式: <platform:userId>';
-      return describe(t.slice(0, sep), t.slice(sep + 1), false);
-    }
-    return describe(argv.session.platform, argv.session.userId, true);
-  });
+  // 读类敏感操作：会披露他人的权限等级 → risk:'sensitive'（推出 restricted=等级 2，不强制确认）。
+  cmds
+    .command('authority [target:string]', '查看自己或指定用户的权限等级', { risk: 'sensitive' })
+    .action(async (argv, target) => {
+      const describe = (platform: string, userId: string | undefined, self: boolean): string => {
+        const isOwner = authority.isOwner(platform, userId);
+        const who = self ? '您' : `${platform}:${userId}`;
+        if (isOwner) return `${who}（owner，等级 ∞，拥有全部权限）`;
+        const entry = userId
+          ? authority.listUsers().find(u => u.platform === platform && u.userId === userId)
+          : undefined;
+        return `${who} 等级: ${entry?.level ?? DEFAULT_AUTHORITY}`;
+      };
+      const t = target as string | undefined;
+      if (t) {
+        const sep = t.indexOf(':');
+        if (sep < 1) return '目标格式: <platform:userId>';
+        return describe(t.slice(0, sep), t.slice(sep + 1), false);
+      }
+      return describe(argv.session.platform, argv.session.userId, true);
+    });
 
   // /level <target> <整数> — owner 给外部身份设等级（越大越高，0=默认，负数=封禁）。权限管理仅 owner 可达（防自授）。
   cmds
