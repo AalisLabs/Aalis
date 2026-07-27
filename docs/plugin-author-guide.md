@@ -247,7 +247,7 @@ ctx.onDispose(() => {
 ```typescript
 ctx.onDispose(() => {
   ctx.serviceContainer.unregister('mysvc');     // 已自动处理
-  ctx.hooks.unregister('bar', handler);          // ctx.middleware() 已自动处理
+  offMiddleware();                               // ctx.middleware() 返回的 dispose 已自动处理
 });
 ```
 
@@ -352,7 +352,7 @@ it('should activate when its dependencies are present', async () => {
 ## 10. 领域能力（domain capabilities）—— 写在实例 / 句柄上，不进 core 的 map
 
 > ⚠️ 0.5.0 起 **core 不再有 `ServiceCapabilityMap`**。core 的 declaration-merging
-> 扩展点只剩三个：`ServiceTypeMap`（服务名→实例接口）、`HookContextMap`、`AalisEvents`
+> 扩展点共四个：`ServiceTypeMap`（服务名→实例接口）、`HookContextMap`、`AalisEvents`、`ContributionPointMap`（贡献点名→spec 类型）
 > （外加配置层的 `SchemaFieldTypes`）。`getService(name)` / `inject` 只认**服务名**，
 > 不再有 `{ capabilities: [...] }` 这一维。
 
@@ -384,7 +384,7 @@ export const StorageCapabilities = { /* ...as const... */ } satisfies StorageCap
 
 **不要**在每个实现包里也声明自己的能力枚举——只 `-api` 包声明，实现包按需引用。
 
-至于 core 自己的三个 declaration-merging 扩展点（`ServiceTypeMap` / `AalisEvents` /
+至于 core 自己的四个 declaration-merging 扩展点（`ServiceTypeMap` / `AalisEvents` / `ContributionPointMap` /
 `HookContextMap`），同样遵循"契约由 `-api` 包定义、实现包消费"的纪律。
 
 ### `AalisEvents` 是封闭的：动态事件名怎么办？

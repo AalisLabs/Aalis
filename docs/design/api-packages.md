@@ -10,38 +10,17 @@
    - **api 包**（`@aalis/plugin-X-api`）：仅类型与扩展点声明，零运行时副作用
    - **实现包**（`@aalis/plugin-X` 或多个具体实现）：依赖对应 api 包，提供运行时
 3. **单向依赖**：`实现包 → api 包 → core`，永不反向。多实现可共存。
-4. **扩展点显式化**：core 仅保留 3 个空 extension-point 接口，业务键由 api 包通过 declaration merging 注入。领域能力（LLM 工具调用/视觉、storage 本地路径权限等）不是 core 扩展点——它们是服务实例 / model handle 上的元数据，由各领域 `*-api` 的 helper 函数（如 `resolveLLMModel`）过滤，不进内核 DI。
+4. **扩展点显式化**：core 仅保留 4 个空 extension-point 接口，业务键由 api 包通过 declaration merging 注入。领域能力（LLM 工具调用/视觉、storage 本地路径权限等）不是 core 扩展点——它们是服务实例 / model handle 上的元数据，由各领域 `*-api` 的 helper 函数（如 `resolveLLMModel`）过滤，不进内核 DI。
 
 ## 包分层
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  实现包（runtime + business logic）                              │
-│  plugin-deepseek / plugin-openai / plugin-ollama                │
-│  plugin-memory-sqlite / plugin-memory-mongodb / …               │
-│  plugin-tools / plugin-commands / plugin-gateway / …     │
-└────────────────────────────┬────────────────────────────────────┘
-                             │  imports types
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  api 包（types + service/hook augmentation + 领域 helper）        │
-│  plugin-llm-api / plugin-memory-api / plugin-storage-api        │
-│  plugin-embedding-api / plugin-vectorstore-api                  │
-│  plugin-tools-api / plugin-commands-api / plugin-gateway-api    │
-│  plugin-webui-api / plugin-authority-api / plugin-agent-api     │
-└────────────────────────────┬────────────────────────────────────┘
-                             │  imports types + augments
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  @aalis/core（runtime infra + extension points only）            │
-│  App / Context / EventBus / ServiceContainer / HookRegistry     │
-│  PluginManager / ConfigManager / Logger / ……                    │
-│                                                                  │
-│  3 个扩展点（空接口，由 api 包 declaration merging 注入）：       │
-│   - ServiceTypeMap         (服务名 → 服务实例接口)               │
-│   - AalisEvents            (事件名 → 参数元组)                   │
-│   - HookContextMap         (钩子名 → 中间件上下文)               │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+  impl["<b>实现包</b>（runtime + business logic）<br/>plugin-deepseek / plugin-openai / plugin-ollama<br/>plugin-memory-sqlite / plugin-memory-mongodb / …<br/>plugin-tools / plugin-commands / plugin-gateway / …"]
+  api["<b>api 包</b>（types + service/hook augmentation + 领域 helper）<br/>plugin-llm-api / plugin-memory-api / plugin-storage-api<br/>plugin-embedding-api / plugin-vectorstore-api<br/>plugin-tools-api / plugin-commands-api / plugin-gateway-api<br/>plugin-webui-api / plugin-authority-api / plugin-agent-api"]
+  core["<b>@aalis/core</b>（runtime infra + extension points only）<br/>App · Context · EventBus · ServiceContainer · HookRegistry<br/>PluginManager · ConfigManager · Logger · ……<br/> <br/><b>4 个扩展点</b>（空接口，由 api 包 declaration merging 注入）<br/>· ServiceTypeMap（服务名 → 服务实例接口）<br/>· AalisEvents（事件名 → 参数元组）<br/>· HookContextMap（钩子名 → 中间件上下文）<br/>· ContributionPointMap（贡献点名 → spec 类型）"]
+  impl -->|imports types| api
+  api -->|imports types + augments| core
 ```
 
 ## core 提供的扩展点

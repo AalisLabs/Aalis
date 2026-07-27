@@ -13,7 +13,7 @@
 
 ## 1. 契约：`StorageService` 接口
 
-定义在 `packages/plugin-storage-api/src/index.ts:87-112`。所有方法的 `uri` 参数都是 `<root>:/相对路径`。
+定义在 `packages/plugin-storage-api/src/index.ts`。所有方法的 `uri` 参数都是 `<root>:/相对路径`。
 
 ```ts
 export interface StorageService {
@@ -85,15 +85,15 @@ export interface StorageRootInfo {
 
 | 消费者 | file:line | 用法 |
 | --- | --- | --- |
-| 文件工具组 | `packages/plugin-tool-system/src/index.ts:149` | `createStorageGateway(ctx)` 做 read/write/list（注册段把网关传给 `file.ts` 的 `storage` 配置字段） |
-| shell 工具 | `packages/plugin-tool-system/src/index.ts:138` | `createStorageGateway(ctx)`；网关传给 `shell.ts` 后用 `resolveLocalPath(uri,'read')` 取 cwd 本地路径 |
-| code-runner | `packages/plugin-tool-code-runner/src/index.ts:161-170` | 运行时探测 `resolveLocalPath`，解析子进程 cwd |
-| skills | `packages/plugin-skills/src/index.ts:1164` | `storage.watch?.(skillsUri, …)` 监听技能目录增量同步 |
-| file-reader | `packages/plugin-file-reader/src/index.ts:199` | `createStorageGateway(ctx)` |
-| checkpoint | `packages/plugin-checkpoint/src/index.ts:113` | 同上（同时被 storage 反向调用做写前快照，见 §7） |
+| 文件工具组 | `packages/plugin-tool-system/src/index.ts` | `createStorageGateway(ctx)` 做 read/write/list（注册段把网关传给 `file.ts` 的 `storage` 配置字段） |
+| shell 工具 | `packages/plugin-tool-system/src/index.ts` | `createStorageGateway(ctx)`；网关传给 `shell.ts` 后用 `resolveLocalPath(uri,'read')` 取 cwd 本地路径 |
+| code-runner | `packages/plugin-tool-code-runner/src/index.ts` | 运行时探测 `resolveLocalPath`，解析子进程 cwd |
+| skills | `packages/plugin-skills/src/index.ts` | `storage.watch?.(skillsUri, …)` 监听技能目录增量同步 |
+| file-reader | `packages/plugin-file-reader/src/index.ts` | `createStorageGateway(ctx)` |
+| checkpoint | `packages/plugin-checkpoint/src/index.ts` | 同上（同时被 storage 反向调用做写前快照，见 §7） |
 | memory / persona / scheduler / media / onebot / asr / authority / office… | （`grep createStorageGateway`） | 均经 `createStorageGateway(ctx)` 消费 |
 
-`createStorageGateway` 是所有消费者的统一入口——含 plugin-tool-system 里的全部工具组：shell（`index.ts:138`）、file（`:149`）、system（`:160`）、http（`:166`）都经它取网关。`file.ts:28` / `shell.ts:22` 上的 `storage?: StorageService` 只是配置字段的类型标注；注册段实际传入的是该网关，没有任何消费者经 DI 拿到单 root 的 `StorageService` 句柄。
+`createStorageGateway` 是所有消费者的统一入口——含 plugin-tool-system 里的全部工具组：shell（`index.ts`）、file（`:149`）、system（`:160`）、http（`:166`）都经它取网关。`file.ts` / `shell.ts` 上的 `storage?: StorageService` 只是配置字段的类型标注；注册段实际传入的是该网关，没有任何消费者经 DI 拿到单 root 的 `StorageService` 句柄。
 
 ---
 
@@ -109,7 +109,7 @@ export interface StorageRootInfo {
 
 ### 4.2 注册：`ctx.provide` + per-root entryId
 
-参考实现的注册段（`packages/plugin-storage-local/src/index.ts:682-692`）——**一个 root 一个 entry**：
+参考实现的注册段（`packages/plugin-storage-local/src/index.ts`）——**一个 root 一个 entry**：
 
 ```ts
 for (const root of roots) {
@@ -139,7 +139,7 @@ for (const root of roots) {
 }
 ```
 
-源码侧（`packages/plugin-storage-local/src/index.ts:22-25`）：
+源码侧（`packages/plugin-storage-local/src/index.ts`）：
 
 ```ts
 export const provides = ['storage'];
@@ -204,7 +204,7 @@ export async function apply(ctx: Context) {
 
 ### 5.2 把 storage 设为 `required` 还是 `optional`
 
-- 离不开文件（file-reader、skills、checkpoint）→ `required: ['storage']`（参考 `plugin-file-reader/src/index.ts:22-25`）。框架保证 `apply` 时 storage 已就绪。
+- 离不开文件（file-reader、skills、checkpoint）→ `required: ['storage']`（参考 `plugin-file-reader/src/index.ts`）。框架保证 `apply` 时 storage 已就绪。
 - 锦上添花（如某 UI 仅在有 storage 时显示文件页）→ `optional`；消费时 `createStorageGateway` 仍可调用，但若没有任何 storage entry，`dispatch` 会抛「未知存储根」。
 
 ### 5.3 错误边界
@@ -212,8 +212,8 @@ export async function apply(ctx: Context) {
 `createStorageGateway` 的 `dispatch`（`:325-336`）在路由不到 root 时抛带「已注册根列表」的 Error。常见失败：
 
 - **未知根 / 根没有所需权限**：`未知存储根: X（已注册根: …, 需能力 [write]）`。
-- **可选方法缺失**：`存储根 X 不支持 local-path/watch（远程协议或纯虚拟根）`——调用 `resolveLocalPath`/`watch` 前可先判 `if (storage.resolveLocalPath)`（参考 shell 工具 `shell.ts:74`）。
-- **权限位拒绝**：provider 内 `requirePermission` 抛 `存储根 X 不允许该操作 (writable)`（`plugin-storage-local/src/index.ts:534-538`）。
+- **可选方法缺失**：`存储根 X 不支持 local-path/watch（远程协议或纯虚拟根）`——调用 `resolveLocalPath`/`watch` 前可先判 `if (storage.resolveLocalPath)`（参考 shell 工具 `shell.ts`）。
+- **权限位拒绝**：provider 内 `requirePermission` 抛 `存储根 X 不允许该操作 (writable)`（`plugin-storage-local/src/index.ts`）。
 - **路径越界**：抛 `路径不合法`。
 
 消费者应捕获并转成对 LLM/用户友好的提示，而不是把原始栈抛给模型。
@@ -224,16 +224,16 @@ export async function apply(ctx: Context) {
 
 ### `resolveLocalPath` 不是沙箱 —— provider 与 consumer 都必须懂
 
-契约注释写死了这条边界（`packages/plugin-storage-api/src/index.ts:73-85`、`:96-101`，参考实现 `:27-48`）：
+契约注释写死了这条边界（`packages/plugin-storage-api/src/index.ts`、`:96-101`，参考实现 `:27-48`）：
 
 - `resolveLocalPath` 把 URI 解析成宿主机**绝对路径**，交给 `run_python`/shell/code-runner 当 cwd 或起点用。
 - 解析过程**只校验目标在声明根内**（lexical + realpath 双查，`:540-562`），**不约束子进程之后的访问范围**。子进程拿到路径后能访问当前 OS 用户可访问的任何文件。
-- **真正的隔离靠 OS 用户权限 / 容器 / OS 沙箱**（bwrap、seatbelt），不是这一层。code-runner 据此运行时探测 `resolveLocalPath` 并自建沙箱策略（`plugin-tool-code-runner/src/runner.ts:73`）。
+- **真正的隔离靠 OS 用户权限 / 容器 / OS 沙箱**（bwrap、seatbelt），不是这一层。code-runner 据此运行时探测 `resolveLocalPath` 并自建沙箱策略（`plugin-tool-code-runner/src/runner.ts`）。
 - 因此：consumer 不要把 `resolveLocalPath` 的返回值当成「越不出去的边界」；provider 也别暗示它是。
 
 ### 高危直通根
 
-参考实现允许 `{ name:'host', path:'/' }` 这种直通根（`plugin-storage-local/src/index.ts:110-111`、`:658-663`）——agent 即可 `host:/绝对路径` 访问宿主机任意位置。注册时会打 WARN。provider 作者若开放此类根，须明确这是高危配置。
+参考实现允许 `{ name:'host', path:'/' }` 这种直通根（`plugin-storage-local/src/index.ts`、`:658-663`）——agent 即可 `host:/绝对路径` 访问宿主机任意位置。注册时会打 WARN。provider 作者若开放此类根，须明确这是高危配置。
 
 ### 权限位即授权语义
 
@@ -245,16 +245,16 @@ root 的 `readable/writable/deletable`（`StorageRootInfo`）就是该根的访�
 
 ### data 根：默认不可删 + 持久化原子写
 
-内置 `data` 根默认 `deletable: false`（`plugin-storage-local/src/index.ts:74-79`）——它存放 users.json / scheduler-jobs / skills / persona 等关键持久化数据，参考实现对写操作做「临时文件 + rename」原子覆盖（`:388-397`）防半写损坏。若你实现自己的后端用于承载这些数据，应保证写的原子性与默认不可删的保守策略。
+内置 `data` 根默认 `deletable: false`（`plugin-storage-local/src/index.ts`）——它存放 users.json / scheduler-jobs / skills / persona 等关键持久化数据，参考实现对写操作做「临时文件 + rename」原子覆盖（`:388-397`）防半写损坏。若你实现自己的后端用于承载这些数据，应保证写的原子性与默认不可删的保守策略。
 
 ---
 
 ## 7. 边界与坑
 
-1. **`browsable` 当前是半失效的 hint**：参考实现注释明说（`plugin-storage-local/src/index.ts:42-47`、configSchema `:131-136`）——`plugin-webui-server` 的文件页**只显示其 `fileRoot` 配置指向的那一个根**（默认 workspace），其它根即便 `browsable:true` 也不会出现在文件页里，仅供 agent/工具按 URI 寻址。别指望把某根设 `browsable` 就能在 WebUI 里浏览。
+1. **`browsable` 当前是半失效的 hint**：参考实现注释明说（`plugin-storage-local/src/index.ts`、configSchema `:131-136`）——`plugin-webui-server` 的文件页**只显示其 `fileRoot` 配置指向的那一个根**（默认 workspace），其它根即便 `browsable:true` 也不会出现在文件页里，仅供 agent/工具按 URI 寻址。别指望把某根设 `browsable` 就能在 WebUI 里浏览。
 2. **rename 仅同目录改名**：`rename(uri, newName)` 的 `newName` 不能含 `/`、`\`、`.`、`..`（`:401-403`），不是「移动」。跨目录移动需 read+write+delete 组合。
 3. **同名 root 静默遮蔽**：多个 provider 各注册一个 `data` 根时，gateway 按枚举顺序取首个，其余被遮蔽且不报错。用 `getStorageRootConflicts(ctx)`（`:195`）在 doctor/启动日志里暴露。
-4. **watch 去抖 + 平台降级**：参考实现 `watch` 基于 `fs.watch` + 50ms 去抖，且事件统一为 `change`（`plugin-storage-local/src/index.ts:448-522`）；不支持 recursive 的平台降级为只监听顶层并打 WARN。消费者不应假定「一次写 = 一次事件」，也不应依赖事件类型细分。
+4. **watch 去抖 + 平台降级**：参考实现 `watch` 基于 `fs.watch` + 50ms 去抖，且事件统一为 `change`（`plugin-storage-local/src/index.ts`）；不支持 recursive 的平台降级为只监听顶层并打 WARN。消费者不应假定「一次写 = 一次事件」，也不应依赖事件类型细分。
 5. **checkpoint 写前快照耦合**：参考实现在 write/delete/rename 前调用 `checkpoint` 服务做快照（`:290-303`、`:386`）。若你写自定义 storage 后端但希望兼容 checkpoint 回滚，需复刻这一 `beforeMutate` 钩子；否则该后端的写操作不可回滚。
 
 ---

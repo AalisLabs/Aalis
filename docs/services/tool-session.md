@@ -22,11 +22,11 @@
 
 一句话：**按 Aalis `sessionId` 读取某会话的消息历史，并提供平台插件注入「跨会话读取访问规则」的钩子。** 取用名 `getService<SessionHistoryService>('session-history')`，契约包 `@aalis/plugin-tool-session-api`。
 
-它不是存储后端——历史数据来自 `memory` 服务；本服务是「读取入口 + 访问控制链 + 给 LLM 的工具壳（`session_get_history`）」。设计上保证**通用工具与平台专属工具都走同一条 access-checker 链，不存在绕过路径**（`packages/plugin-tool-session-api/src/index.ts:6-8`）。
+它不是存储后端——历史数据来自 `memory` 服务；本服务是「读取入口 + 访问控制链 + 给 LLM 的工具壳（`session_get_history`）」。设计上保证**通用工具与平台专属工具都走同一条 access-checker 链，不存在绕过路径**（`packages/plugin-tool-session-api/src/index.ts`）。
 
 ## A.2 契约（`@aalis/plugin-tool-session-api/src/index.ts`）
 
-核心接口（`index.ts:73-91`）：
+核心接口（`index.ts`）：
 
 ```ts
 export interface SessionHistoryService {
@@ -45,34 +45,34 @@ export interface SessionHistoryService {
 }
 ```
 
-返回类型 `SessionHistoryReadResult`（`index.ts:54-67`）是判别联合：成功为 `{ ok: true; sessionId; count; limit; includeArchived; range?; truncated?; messages }`，失败为 `{ error: string }`——**没有 `ok: false` 形态，错误分支只有 `error` 字段**，消费方用 `'error' in result` 判别。
+返回类型 `SessionHistoryReadResult`（`index.ts`）是判别联合：成功为 `{ ok: true; sessionId; count; limit; includeArchived; range?; truncated?; messages }`，失败为 `{ error: string }`——**没有 `ok: false` 形态，错误分支只有 `error` 字段**，消费方用 `'error' in result` 判别。
 
 访问规则三件套：
-- `AccessChecker`（`index.ts:33-44`）：`{ platform: string; check(args): AccessDecision | undefined }`。`check` 是**同步**的；只对 `targetSessionId.startsWith(platform + ':')` 的目标生效。
-- `AccessCheckArgs`（`index.ts:24-31`）：`{ currentSessionId; targetSessionId; callCtx }`。
-- `AccessDecision`（`index.ts:22`）：`{ decision: 'allow' | 'deny'; reason? }`；返回 `undefined` 表示「不表态，交给后续 checker / 默认放行」。
-- `AccessCheckerDisposer`（`index.ts:49`）：`() => void`，插件 dispose 时调用解绑。
+- `AccessChecker`（`index.ts`）：`{ platform: string; check(args): AccessDecision | undefined }`。`check` 是**同步**的；只对 `targetSessionId.startsWith(platform + ':')` 的目标生效。
+- `AccessCheckArgs`（`index.ts`）：`{ currentSessionId; targetSessionId; callCtx }`。
+- `AccessDecision`（`index.ts`）：`{ decision: 'allow' | 'deny'; reason? }`；返回 `undefined` 表示「不表态，交给后续 checker / 默认放行」。
+- `AccessCheckerDisposer`（`index.ts`）：`() => void`，插件 dispose 时调用解绑。
 
-判定语义：**any-deny 短路** —— 同一 platform 多个 checker，任一返回 `deny` 即拒绝（`index.ts:12`，实现见 `plugin-tool-session/src/index.ts:344-349`）。
+判定语义：**any-deny 短路** —— 同一 platform 多个 checker，任一返回 `deny` 即拒绝（`index.ts`，实现见 `plugin-tool-session/src/index.ts`）。
 
-契约里还通过 declaration merging 把名字登记进 `ServiceTypeMap`（`index.ts:93-97`），所以 `ctx.getService('session-history')` 无需手写泛型即有类型。消费方源码顶部要 `import '@aalis/plugin-tool-session-api'` 触发该 merge。
+契约里还通过 declaration merging 把名字登记进 `ServiceTypeMap`（`index.ts`），所以 `ctx.getService('session-history')` 无需手写泛型即有类型。消费方源码顶部要 `import '@aalis/plugin-tool-session-api'` 触发该 merge。
 
 ## A.3 谁提供 / 谁消费
 
-**唯一参考实现**：`@aalis/plugin-tool-session`（`packages/plugin-tool-session/src/index.ts:915-916`）
+**唯一参考实现**：`@aalis/plugin-tool-session`（`packages/plugin-tool-session/src/index.ts`）
 
 ```ts
 const historyService = createSessionHistoryService(ctx, cfg);
 ctx.provide('session-history', historyService, { label: '会话历史读取' });
 ```
 
-它还顺带注册了 LLM 工具 `session_get_history`（`index.ts:460-524`，handler 转调 `historyService.getHistory`）以及跨会话委派工具组 `session-delegate`（`delegate_to_session` / `list_known_sessions`，`index.ts:529-907`，这部分不经本服务接口，是直接的工具实现）。
+它还顺带注册了 LLM 工具 `session_get_history`（`index.ts`，handler 转调 `historyService.getHistory`）以及跨会话委派工具组 `session-delegate`（`delegate_to_session` / `list_known_sessions`，`index.ts`，这部分不经本服务接口，是直接的工具实现）。
 
 **消费点**：
-- `@aalis/plugin-tool-onebot`：注入访问规则（`packages/plugin-tool-onebot/src/index.ts:1715-1761`）+ 平台专属工具 `onebot_get_session_history` 转调本服务（`index.ts:1860-1874`）。这是**最权威的「写 provider 之外的消费」范例**。
-- `@aalis/plugin-memory-history`：把它的跨会话查询工具挂进 `'session-history'` 工具分组（`packages/plugin-memory-history/src/index.ts:297-299`），属于 UI 分组复用，不调用服务接口本身。
+- `@aalis/plugin-tool-onebot`：注入访问规则（`packages/plugin-tool-onebot/src/index.ts`）+ 平台专属工具 `onebot_get_session_history` 转调本服务（`index.ts`）。这是**最权威的「写 provider 之外的消费」范例**。
+- `@aalis/plugin-memory-history`：把它的跨会话查询工具挂进 `'session-history'` 工具分组（`packages/plugin-memory-history/src/index.ts`），属于 UI 分组复用，不调用服务接口本身。
 
-注意：`session-history` 这个名字**在工具分组层面被多个插件共享贡献**（`plugin-webui-server/src/index.ts:679` 有相关注释），但**服务实例**目前只有 `plugin-tool-session` 一个 provider。
+注意：`session-history` 这个名字**在工具分组层面被多个插件共享贡献**（`plugin-webui-server/src/index.ts` 有相关注释），但**服务实例**目前只有 `plugin-tool-session` 一个 provider。
 
 ## A.4 写一个 provider
 
@@ -120,7 +120,7 @@ export function apply(ctx: Context): void {
 
 ## A.5 标准消费姿势
 
-**注入平台访问规则**（OneBot 的范式，`plugin-tool-onebot/src/index.ts:1716-1760`）：
+**注入平台访问规则**（OneBot 的范式，`plugin-tool-onebot/src/index.ts`）：
 
 ```ts
 ctx.on('ready', () => {
@@ -141,7 +141,7 @@ ctx.on('ready', () => {
 });
 ```
 
-**直接读取历史**（平台专属工具的范式，`plugin-tool-onebot/src/index.ts:1860-1874`）：每次现取，不要缓存实例（provider bounce 会失效，见 [惰性服务访问](../concepts/lazy-service-access.md)）：
+**直接读取历史**（平台专属工具的范式，`plugin-tool-onebot/src/index.ts`）：每次现取，不要缓存实例（provider bounce 会失效，见 [惰性服务访问](../concepts/lazy-service-access.md)）：
 
 ```ts
 const history = ctx.getService<SessionHistoryService>('session-history');
@@ -149,19 +149,19 @@ if (!history) return JSON.stringify({ error: 'session-history 服务不可用，
 const result = await history.getHistory({ sessionId, limit }, callCtx);
 ```
 
-`inject` 里把它列为 `optional`（`plugin-tool-onebot/src/index.ts:17`：`optional: ['platform', 'session-history']`）——它不是硬依赖，缺失时优雅降级。
+`inject` 里把它列为 `optional`（`plugin-tool-onebot/src/index.ts`：`optional: ['platform', 'session-history']`）——它不是硬依赖，缺失时优雅降级。
 
 ## A.6 能力 / 风险
 
-- **访问控制是跨会话读取的唯一闸门**，分两段（实现 `plugin-tool-session/src/index.ts:316-351`）：①service 自带的 `scope` 配置粗筛（`current` / `platform` / `all`，默认 `platform`，`index.ts:144-153`）；②匹配 `targetPlatform` 的 checker 链 any-deny 精筛。`scope=all` 时只剩 checker 链兜底——**平台插件若没注册 checker，`all` 模式下等于裸奔**。
+- **访问控制是跨会话读取的唯一闸门**，分两段（实现 `plugin-tool-session/src/index.ts`）：①service 自带的 `scope` 配置粗筛（`current` / `platform` / `all`，默认 `platform`，`index.ts`）；②匹配 `targetPlatform` 的 checker 链 any-deny 精筛。`scope=all` 时只剩 checker 链兜底——**平台插件若没注册 checker，`all` 模式下等于裸奔**。
 - 这与 [鉴权系统](../core/authority.md) 的 level/risk 是两套机制：`session_get_history` 工具本身的 minLevel 由工具的 risk 决定（见 [工具](../core/tools.md)），而**跨会话边界**则由本服务的 scope+checker 决定。二者叠加，缺一不可。
 - 本服务**不做** SSRF / 沙箱：它只读已落库的会话消息，无外部 egress。
 
 ## A.7 边界与坑
 
-- **坑①（已在 OneBot 修复，新接入者照抄）**：总线上**不存在 `'dispose'` 事件**。早期写法 `ctx.on('dispose', disposeChecker)` 永远不触发，导致插件 bounce 后 access-checker 泄漏。正确写法是 `ctx.onDispose(dispose)`（`plugin-tool-onebot/src/index.ts:1757-1759` 有明确注释）。
-- **时间区间模式**：给 `sinceTs`/`untilTs` 任一即进入区间检索；此模式恒含归档记录，结果 `includeArchived` 字段会回显实际生效值（`plugin-tool-session/src/index.ts:386-440`）。后端无原生区间查询（`memory.getMessagesBySessionRange` 缺失）时退回扫描 `RANGE_FALLBACK_SCAN=5000` 条客户端过滤，极早窗口可能不全；窗口内超 `limit` 时置 `truncated: true` 而非静默丢弃。
-- `getHistory` 强依赖 `memory` 服务：缺失直接返回 `{ error: 'memory 服务不可用' }`（`index.ts:366-367`）。所以参考实现把 `memory` 列为 `optional`（运行期检测）而非 `required`。
+- **坑①（已在 OneBot 修复，新接入者照抄）**：总线上**不存在 `'dispose'` 事件**。早期写法 `ctx.on('dispose', disposeChecker)` 永远不触发，导致插件 bounce 后 access-checker 泄漏。正确写法是 `ctx.onDispose(dispose)`（`plugin-tool-onebot/src/index.ts` 有明确注释）。
+- **时间区间模式**：给 `sinceTs`/`untilTs` 任一即进入区间检索；此模式恒含归档记录，结果 `includeArchived` 字段会回显实际生效值（`plugin-tool-session/src/index.ts`）。后端无原生区间查询（`memory.getMessagesBySessionRange` 缺失）时退回扫描 `RANGE_FALLBACK_SCAN=5000` 条客户端过滤，极早窗口可能不全；窗口内超 `limit` 时置 `truncated: true` 而非静默丢弃。
+- `getHistory` 强依赖 `memory` 服务：缺失直接返回 `{ error: 'memory 服务不可用' }`（`index.ts`）。所以参考实现把 `memory` 列为 `optional`（运行期检测）而非 `required`。
 
 ---
 
@@ -171,11 +171,11 @@ const result = await history.getHistory({ sessionId, limit }, callCtx);
 
 一句话：**登记并按会话隔离地访问「用户上传的文件」的元信息与本地路径。** 取用名 `getService('file-reader')`，实现包 `@aalis/plugin-file-reader`。
 
-**没有 `@aalis/plugin-file-reader-api`**——服务接口是内联在 `ctx.provide` 处的匿名对象（`packages/plugin-file-reader/src/index.ts:875-898`），消费方按 duck-typing 取用。这是它与 `session-history` 的关键差异：没有可 import 的 `interface`，作者只能照下面的形状自己声明泛型。
+**没有 `@aalis/plugin-file-reader-api`**——服务接口是内联在 `ctx.provide` 处的匿名对象（`packages/plugin-file-reader/src/index.ts`），消费方按 duck-typing 取用。这是它与 `session-history` 的关键差异：没有可 import 的 `interface`，作者只能照下面的形状自己声明泛型。
 
 ## B.2 「契约」（内联 provide 形状）
 
-provide 处（`plugin-file-reader/src/index.ts:875-898`）暴露的对象等价于：
+provide 处（`plugin-file-reader/src/index.ts`）暴露的对象等价于：
 
 ```ts
 interface FileReaderService {
@@ -187,7 +187,7 @@ interface FileReaderService {
 }
 ```
 
-`FileMeta`（`plugin-file-reader/src/index.ts:155-164`，注意 provide 出去的版本剥掉了 `dataUri`/`metaUri`）：
+`FileMeta`（`plugin-file-reader/src/index.ts`，注意 provide 出去的版本剥掉了 `dataUri`/`metaUri`）：
 
 ```ts
 interface FileMeta {
@@ -201,17 +201,17 @@ interface FileMeta {
 }
 ```
 
-存储布局：所有文件落在 `pluginData:/file-reader/<sessionId>/<id><ext>`（`index.ts:152, 216-220`），元信息走同名 `.meta.json` sidecar。这是 [storage URI 文法](../concepts/storage-uri-grammar.md) 的 `pluginData:` 根；**storage 不是沙箱**——隔离靠的是路径里的 `sessionId` 段 + 服务层校验，不是文件系统强隔离。
+存储布局：所有文件落在 `pluginData:/file-reader/<sessionId>/<id><ext>`（`index.ts`），元信息走同名 `.meta.json` sidecar。这是 [storage URI 文法](../concepts/storage-uri-grammar.md) 的 `pluginData:` 根；**storage 不是沙箱**——隔离靠的是路径里的 `sessionId` 段 + 服务层校验，不是文件系统强隔离。
 
-LLM 侧工具（不在服务接口里，是插件内注册的）：`read_uploaded_file` / `list_uploaded_files` / `delete_uploaded_file`（`index.ts:175-177`）。
+LLM 侧工具（不在服务接口里，是插件内注册的）：`read_uploaded_file` / `list_uploaded_files` / `delete_uploaded_file`（`index.ts`）。
 
 ## B.3 谁提供 / 谁消费
 
-**提供**：`@aalis/plugin-file-reader`（`index.ts:21` `provides = ['file-reader']`；`package.json` `aalis.service.provides: ['file-reader']`，required `storage`，optional `agent`/`memory`/`media`）。
+**提供**：`@aalis/plugin-file-reader`（`index.ts` `provides = ['file-reader']`；`package.json` `aalis.service.provides: ['file-reader']`，required `storage`，optional `agent`/`memory`/`media`）。
 
 **消费**：`@aalis/plugin-webui-server`
-- 能力探测：`ctx.hasService('file-reader')` 决定前端是否显示文件上传按钮（`packages/plugin-webui-server/src/index.ts:481, 497-498`）。
-- 删除同步：删文件后通知服务清内存索引（`packages/plugin-webui-server/src/routes/uploaded-files.ts:170-176`）——注意这里**故意只用 duck-typed 子集** `{ deleteFile?: ... }` 取用，避免 webui-server 反向依赖 file-reader 插件包（`uploaded-files.ts:8-9` 有注释，连 `FileMeta` 都是各自定义而非 import）。
+- 能力探测：`ctx.hasService('file-reader')` 决定前端是否显示文件上传按钮（`packages/plugin-webui-server/src/index.ts`）。
+- 删除同步：删文件后通知服务清内存索引（`packages/plugin-webui-server/src/routes/uploaded-files.ts`）——注意这里**故意只用 duck-typed 子集** `{ deleteFile?: ... }` 取用，避免 webui-server 反向依赖 file-reader 插件包（`uploaded-files.ts` 有注释，连 `FileMeta` 都是各自定义而非 import）。
 
 ## B.4 标准消费姿势
 
@@ -228,17 +228,17 @@ if (reader?.deleteFile) await reader.deleteFile(fileId);
 
 > **审计历史 caveat 与当前状态**：曾有审计指出 `read_uploaded_file` / `delete_uploaded_file` 不校验 `entry.sessionId === callCtx.sessionId`，导致 `fileId`（内容寻址、可预测）可被跨会话读取/删除。**该问题在当前代码已修复**，新接入者应以现状为准：
 
-- `read_uploaded_file`：`if (!entry || entry.sessionId !== callCtx.sessionId)` → 走 memory 兜底或当作不存在，**不泄漏他人会话文件的存在性与内容**（`plugin-file-reader/src/index.ts:591-604`）。
-- `delete_uploaded_file`：`if (!entry || entry.sessionId !== callCtx.sessionId) return '文件不存在或已被删除'`（`index.ts:670-671`），且标了 `visibility: 'restricted'`（`index.ts:675`）。
-- `list_uploaded_files`：移除了 `'*'` 跨会话枚举，只列 `f.sessionId === callCtx.sessionId`（`index.ts:632-634`）。
+- `read_uploaded_file`：`if (!entry || entry.sessionId !== callCtx.sessionId)` → 走 memory 兜底或当作不存在，**不泄漏他人会话文件的存在性与内容**（`plugin-file-reader/src/index.ts`）。
+- `delete_uploaded_file`：`if (!entry || entry.sessionId !== callCtx.sessionId) return '文件不存在或已被删除'`（`index.ts`），且标了 `visibility: 'restricted'`（`index.ts`）。
+- `list_uploaded_files`：移除了 `'*'` 跨会话枚举，只列 `f.sessionId === callCtx.sessionId`（`index.ts`）。
 
-**给 provider 作者的强约束**：`fileId` 是 `sha256(content)` 前 16 hex（`index.ts:417` `hashId`），**内容相同则 id 相同、完全可预测**。任何按 `fileId` 取数据的工具/接口路径**必须**校验 `entry.sessionId === callCtx.sessionId`，否则知道（或猜到）文件内容的攻击者可越权访问。这是会话隔离的硬要求，见 [安全模型](../concepts/security-model.md)。
+**给 provider 作者的强约束**：`fileId` 是 `sha256(content)` 前 16 hex（`index.ts` `hashId`），**内容相同则 id 相同、完全可预测**。任何按 `fileId` 取数据的工具/接口路径**必须**校验 `entry.sessionId === callCtx.sessionId`，否则知道（或猜到）文件内容的攻击者可越权访问。这是会话隔离的硬要求，见 [安全模型](../concepts/security-model.md)。
 
 注意：**服务接口本身**（`getMeta`/`resolveLocalPath`/`deleteFile`）**不带 `sessionId` 校验**——它们设计给同进程内可信消费方（webui-server）用，调用方自己负责鉴权。隔离闸门在 LLM 工具层，不在服务层。
 
 ## B.6 会话生命周期
 
-文件态随会话清理：监听 `session:deleted` 事件 → `deleteSessionFiles(sessionId)` 删该会话全部文件（`index.ts:464-470, 544-547`）。另有 retention（按天）+ LRU（按总量 MB）后台清理（`index.ts:474-501`，每小时跑一次）。provider 替换实现时要保留这层生命周期联动，否则文件会泄漏堆积。
+文件态随会话清理：监听 `session:deleted` 事件 → `deleteSessionFiles(sessionId)` 删该会话全部文件（`index.ts`）。另有 retention（按天）+ LRU（按总量 MB）后台清理（`index.ts`，每小时跑一次）。provider 替换实现时要保留这层生命周期联动，否则文件会泄漏堆积。
 
 ---
 

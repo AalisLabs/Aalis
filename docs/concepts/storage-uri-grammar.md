@@ -32,7 +32,7 @@ checkpoint …）都复用它们；你重抄一份正则迟早和它们漂移，
 
 ### 1. 基本形态：`<root>:/<path>`
 
-正则定义在 `index.ts:268`：
+正则定义在 `index.ts`：
 
 ```ts
 const STORAGE_URI_RE = /^[a-zA-Z][a-zA-Z0-9_-]*:\//;
@@ -40,14 +40,14 @@ const STORAGE_URI_RE = /^[a-zA-Z][a-zA-Z0-9_-]*:\//;
 
 - 根名（scheme）**以字母开头**，后接字母/数字/下划线/连字符。
 - 紧跟 `:/`（冒号 + 斜杠）——这一点是整套歧义消解的关键（见下文 data 根）。
-- `:/` 之后是根内相对路径。前导斜杠会被各后端归一掉（`plugin-storage-local` 的 `normalizeRelPath`，`index.ts:219`）。
+- `:/` 之后是根内相对路径。前导斜杠会被各后端归一掉（`plugin-storage-local` 的 `normalizeRelPath`，`index.ts`）。
 
-后端对根名的合法性还有一道更严的校验（`plugin-storage-local` 的 `ROOT_NAME_RE`，`index.ts:622`，
+后端对根名的合法性还有一道更严的校验（`plugin-storage-local` 的 `ROOT_NAME_RE`，`index.ts`，
 等价于 `/^[a-zA-Z][a-zA-Z0-9_-]*$/`），非法根名会被跳过并打 warn。
 
 ### 2. 保留 scheme：`http` / `https` / `file` 不是 storage URI
 
-定义在 `index.ts:270`：
+定义在 `index.ts`：
 
 ```ts
 const RESERVED_URI_SCHEMES = new Set(['http', 'https', 'file']);
@@ -58,12 +58,12 @@ const RESERVED_URI_SCHEMES = new Set(['http', 'https', 'file']);
 - `http(s)://` → 经 `safeFetch`（`@aalis/util-network-guard`，SSRF 守卫的出网通道）下载。
 - `file://` / 裸本地路径 → 经 `readExternalFile`（任意 OS 路径读取，受 daemon 信任边界约束）。
 
-`isStorageUri` 在正则匹配后**还会**取出 scheme 小写比对这个保留集（`index.ts:280-282`），命中即判 false。
+`isStorageUri` 在正则匹配后**还会**取出 scheme 小写比对这个保留集（`index.ts`），命中即判 false。
 所以 `http://...`、`HTTPS://...`、`file:///etc/passwd` 都不会被误当成 storage URI。
 
 ### 3. `data:/` vs 标准 data-URI（最容易混的一处）
 
-存储根名 `data`（内置 5 根之一，见 `plugin-storage-local` 默认配置 `index.ts:71-79`）和
+存储根名 `data`（内置 5 根之一，见 `plugin-storage-local` 默认配置 `index.ts`）和
 浏览器/WebUI 上传常见的 base64 **data-URI** 前缀冲突。文法靠 `:/` 天然区分二者：
 
 | 字符串 | 形态 | 是 storage URI？ |
@@ -72,8 +72,8 @@ const RESERVED_URI_SCHEMES = new Set(['http', 'https', 'file']);
 | `data:image/png;base64,iVBOR...` | 冒号后跟 **MIME 类型** | ❌ 否，正则 `:\/` 不匹配 `data:image`（`i` 不是 `/`） |
 | `data:text/plain;base64,SGk=` | 同上 | ❌ 否 |
 
-判别全靠 `STORAGE_URI_RE` 里那个 `:\/`：`data:/` 命中，`data:image/...` 不命中（注释见 `index.ts:272-278`）。
-真实消费侧分流见 `plugin-media/src/service.ts:266-271`：先 `isStorageUri(data)`（命中即 storage 路径），
+判别全靠 `STORAGE_URI_RE` 里那个 `:\/`：`data:/` 命中，`data:image/...` 不命中（注释见 `index.ts`）。
+真实消费侧分流见 `plugin-media/src/service.ts`：先 `isStorageUri(data)`（命中即 storage 路径），
 不命中再 `data.startsWith('data:')` 当 base64 data-URI 解码。**顺序很重要——先问 `isStorageUri` 再问 data-URI。**
 
 ---
@@ -84,7 +84,7 @@ const RESERVED_URI_SCHEMES = new Set(['http', 'https', 'file']);
 
 ### `isStorageUri(s: string): boolean` — 判别
 
-`index.ts:279`。判定一个字符串是否 storage URI。用于把混合来源的字符串分流到
+`index.ts`。判定一个字符串是否 storage URI。用于把混合来源的字符串分流到
 storage / safeFetch / readExternalFile / data-URI 解码不同分支。
 
 ```ts
@@ -101,7 +101,7 @@ if (isStorageUri(data)) {
 
 ### `parseUriRoot(uri: string): string` — 取根名
 
-`index.ts:286`。`data:/images/x.jpg` → `'data'`。**非 `<根名>:/...` 形态会抛错**
+`index.ts`。`data:/images/x.jpg` → `'data'`。**非 `<根名>:/...` 形态会抛错**
 （按 `:/` 的位置判定，`idx <= 0` 即非法）。
 
 ```ts
@@ -111,11 +111,11 @@ parseUriRoot('not-a-uri');          // throws: 存储 URI 不合法
 ```
 
 > 取根名后想拿到根内相对路径，用 `uri.slice(root.length + 2)`（跳过 `root` + `:/`），
-> 见 `plugin-media/src/service.ts:267-268`。
+> 见 `plugin-media/src/service.ts`。
 
 ### `toStorageUri(input, fallbackRoot = 'data'): string` — 归一
 
-`index.ts:301`。把用户在配置里填的路径/裸名归一成合法 URI。**契约级文法**，
+`index.ts`。把用户在配置里填的路径/裸名归一成合法 URI。**契约级文法**，
 memory / vectorstore / checkpoint / scheduler / persona 等全体后端消费者复用它。三条规则：
 
 | 输入 | 输出 | 说明 |
@@ -132,16 +132,16 @@ toStorageUri('checkpoints');        // 'data:/checkpoints'（单段 → data 根
 toStorageUri('persona', 'data');    // 'data:/persona'
 ```
 
-输入还会先 `trim()` 并剥掉前导 `./` 和 `/`（`index.ts:303-305` 的 `replace(/^\.?\/+/, '')`）。
-真实用法：`plugin-checkpoint/src/service.ts:502` 的 `toStorageUri(s) : 'data:/checkpoints'`、
-`plugin-persona/src/index.ts:461` 的 `toStorageUri(personasDirRaw)`。
+输入还会先 `trim()` 并剥掉前导 `./` 和 `/`（`index.ts` 的 `replace(/^\.?\/+/, '')`）。
+真实用法：`plugin-checkpoint/src/service.ts` 的 `toStorageUri(s) : 'data:/checkpoints'`、
+`plugin-persona/src/index.ts` 的 `toStorageUri(personasDirRaw)`。
 
-> **单段裸名归一的设计动机**（`index.ts:295-298`）：如果把单段裸名当**根名**处理（→ `name:/`），
+> **单段裸名归一的设计动机**（`index.ts`）：如果把单段裸名当**根名**处理（→ `name:/`），
 > gateway 找不到这个根就抛「未知根」。所以约定单段名是 `data` 根下的相对路径——这通常是用户想要的。
 
 ### `createStorageGateway(ctx): StorageService` — 跨根句柄
 
-`index.ts:317`。返回一个 `StorageService`，每次方法调用按 URI 自动路由到对应后端 entry。
+`index.ts`。返回一个 `StorageService`，每次方法调用按 URI 自动路由到对应后端 entry。
 **它不注册进 ServiceContainer**——纯本地构造，没有 facade entry。适用于 tools / shell / checkpoint
 这类「想要单一 storage 句柄、又想透明跨多个根调度」的场景。
 
@@ -154,7 +154,7 @@ await storage.readFile('workspace:/a.txt');        // 路由到提供 workspace 
 ```
 
 URI 即标识 + 路由 key，调用方无需关心哪个根由哪个后端提供。根不存在时抛
-「未知存储根: X（已注册根: ...）」（`index.ts:329-333`）。
+「未知存储根: X（已注册根: ...）」（`index.ts`）。
 
 ---
 
@@ -163,7 +163,7 @@ URI 即标识 + 路由 key，调用方无需关心哪个根由哪个后端提供
 ### 按根拆分 entry（per-root service granularity）
 
 0.5.0 之后**没有 router facade**：每个根注册成一个独立的 ServiceContainer entry，约定 entryId 为
-`${ctx.id}/${root.name}`（`plugin-storage-local/src/index.ts:688-691`）：
+`${ctx.id}/${root.name}`（`plugin-storage-local/src/index.ts`）：
 
 ```ts
 ctx.provide('storage', scopedStorageService, {
@@ -175,26 +175,26 @@ ctx.provide('storage', scopedStorageService, {
 URI → 根 → entry 的路由由调用方的 `createStorageGateway(ctx)` 完成。后端只要：
 
 - `listRoots()` 返回自己提供的根（含权限位）。
-- 每个数据方法收到 URI 后，自己 parse 出相对路径并校验根名归属（参考实现 `parseSelfUri`，`index.ts:526-532`）。
+- 每个数据方法收到 URI 后，自己 parse 出相对路径并校验根名归属（参考实现 `parseSelfUri`，`index.ts`）。
 
 ### 权限位携带在 `StorageRootInfo` 上
 
-根的真实权限由 `StorageRootInfo` 的 `readable` / `writable` / `deletable` 位携带（`index.ts:16-21`），
-**不是**靠 DI 能力声明（0.5.0 的能力选择层已删除）。storage-api 的 `rootSatisfies`（`index.ts:220-243`）
+根的真实权限由 `StorageRootInfo` 的 `readable` / `writable` / `deletable` 位携带（`index.ts`），
+**不是**靠 DI 能力声明（0.5.0 的能力选择层已删除）。storage-api 的 `rootSatisfies`（`index.ts`）
 按这些位 + `resolveLocalPath`/`watch` 方法存在性来判定根是否满足所需能力，gateway 据此路由。
 
 ---
 
 ## 「存储不是沙箱」边界
 
-这是审计反复强调、也是最容易被插件作者误解的一点。明确写在接口注释里（`index.ts:73-86`、
-`plugin-storage-local/src/index.ts:27-48`）：
+这是审计反复强调、也是最容易被插件作者误解的一点。明确写在接口注释里（`index.ts`、
+`plugin-storage-local/src/index.ts`）：
 
 - 存储层做三件事：**命名根**、**路径解析**（根内 `..` 穿越保护 + symlink realpath 校验）、**审计点**（读写删过 logger）。
 - 路径校验只防**上层代码意外越界的 bug**（如 `workspace:/../../etc/passwd` 会被 `isInside` 拒掉，
-  `plugin-storage-local/src/index.ts:540-546`），**不是用来对抗恶意子进程**。
+  `plugin-storage-local/src/index.ts`），**不是用来对抗恶意子进程**。
 
-`resolveLocalPath(uri, access)`（`index.ts:96-102`）把 URI 解析成宿主机绝对路径，交给必须用本地路径的
+`resolveLocalPath(uri, access)`（`index.ts`）把 URI 解析成宿主机绝对路径，交给必须用本地路径的
 子进程（shell / code-runner）。**解析过程校验目标在声明的根内，但不会限制后续子进程的访问范围**：
 
 ```ts
@@ -215,25 +215,25 @@ const cwd = await storage.resolveLocalPath('workspace:/proj', 'read');
    或把 `http://` 漏过保留 scheme 检查。
 
 2. **`data:/` 与 base64 data-URI 的分流顺序**：先 `isStorageUri(data)`，**再** `data.startsWith('data:')`。
-   反过来会把 `data:/...` 当成残缺 data-URI 处理。见 `plugin-media/src/service.ts:266-271`。
+   反过来会把 `data:/...` 当成残缺 data-URI 处理。见 `plugin-media/src/service.ts`。
 
 3. **单段裸名不当根名**。`toStorageUri('checkpoints')` → `data:/checkpoints`（data 根相对路径），
    不是 `checkpoints:/`。想让它当根名，得显式写 `checkpoints/` 带斜杠或 `checkpoints:/`。
 
-4. **`parseUriRoot` 会抛**。对非 `<根名>:/...` 形态（`idx <= 0`）直接抛错（`index.ts:288`）；
+4. **`parseUriRoot` 会抛**。对非 `<根名>:/...` 形态（`idx <= 0`）直接抛错（`index.ts`）；
    不确定输入时先 `isStorageUri` 守卫，或包 try/catch。
 
-5. **未知根抛错**。gateway dispatch 找不到根名对应 entry 时抛「未知存储根」（`index.ts:329-333`）。
+5. **未知根抛错**。gateway dispatch 找不到根名对应 entry 时抛「未知存储根」（`index.ts`）。
    `toStorageUri` 的单段裸名归到 `data` 根，正是为了避免把裸名当根名后必然命中这个错误。
 
 6. **同名根冲突**：多个后端各自声明同名根时，gateway 按 entry 枚举顺序取首个，其余被遮蔽。
-   用 `getStorageRootConflicts(ctx)`（`index.ts:195`）做 doctor / 启动日志诊断。
+   用 `getStorageRootConflicts(ctx)`（`index.ts`）做 doctor / 启动日志诊断。
 
 7. **`resolveLocalPath` / `watch` 可能不存在**：远程协议或纯虚拟根的后端可能不实现这两个可选方法
-   （`index.ts:102`、`index.ts:111`）；gateway 会抛「不支持 local-path/watch」（`index.ts:359-369`）。
+   （`index.ts`、`index.ts`）；gateway 会抛「不支持 local-path/watch」（`index.ts`）。
    调用前判存在性，别假定所有根都能落地到本地路径。
 
-8. **路径分隔符**：URI 路径统一用 `/`；后端在归一时会把 `\\` 转成 `/`（`plugin-storage-local` 的 `toUri`，`index.ts:223-226`）。
+8. **路径分隔符**：URI 路径统一用 `/`；后端在归一时会把 `\\` 转成 `/`（`plugin-storage-local` 的 `toUri`，`index.ts`）。
 
 ---
 

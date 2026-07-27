@@ -14,7 +14,7 @@
 
 ## 2. 契约
 
-`AgentService` 接口（`packages/plugin-agent-api/src/index.ts:51-75`）。注意只有 `handleMessage` 是必须的，其余全为可选方法：
+`AgentService` 接口（`packages/plugin-agent-api/src/index.ts`）。注意只有 `handleMessage` 是必须的，其余全为可选方法：
 
 ```ts
 export interface AgentService {
@@ -49,20 +49,22 @@ export interface AgentService {
 | `agent:reply:before` | 定稿前，回复校验/修复 | `{ content, sessionId, ...; retryRequested?, retryFeedback?, attempt?, maxRetries? }`（`:94-122`）。重试协议见 §6 |
 | `agent:turn:after` | 回合终态（四条路径都发） | `{ message, reply, outcome, sessionId, metadata }`（`:85-91`）。`outcome ∈ 'replied'｜'silent'｜'aborted'｜'error'` |
 
-钩子用 `ctx.middleware(hook, fn)` 注册（`packages/core/src/context.ts:460`）；要让 TS 看到这些键的类型，需把 `@aalis/plugin-agent-api` 加进依赖或 side-effect import 一次（`packages/plugin-agent-api/src/index.ts:6-7`）。
+钩子用 `ctx.middleware(hook, fn)` 注册（`packages/core/src/context.ts`）；要让 TS 看到这些键的类型，需把 `@aalis/plugin-agent-api` 加进依赖或 side-effect import 一次（`packages/plugin-agent-api/src/index.ts`）。
 
 ## 3. 谁提供 / 谁消费
 
-**提供方**：`@aalis/plugin-agent`（唯一默认实现）。注册见 `packages/plugin-agent/src/index.ts:1712-1714`：`ctx.provide('agent', agentImpl)`，未声明 priority（= `Backend` 0）。
+**提供方**：`@aalis/plugin-agent`（唯一默认实现）。注册见 `packages/plugin-agent/src/index.ts`：`ctx.provide('agent', agentImpl)`，未声明 priority（= `Backend` 0）。
 
 **消费方（典型且真实）**：
 
-- `plugin-gateway`（`packages/plugin-gateway/src/index.ts:52`）：入站终相 `inbound:dispatch` 调 `agent.handleMessage(message)`——**这是 agent 被驱动的主入口**。前置相位（command/flow/trigger）任一 swallow 即不进 dispatch（`:43-49`）。
-- `plugin-webui-server`（`packages/plugin-webui-server/src/index.ts:1048-1049`）：收到 WS `abort` 消息时调 `agent?.abort(sessionId)`。
-- `plugin-file-reader`（`packages/plugin-file-reader/src/index.ts:772-780`）：`useAgent(ctx).registerPreprocessor('file-reader', ...)` 注册文件读取预处理器，降级见 §5。
-- `plugin-media`（`packages/plugin-media/src/index.ts:350-354`）：`useAgent(ctx).registerPreprocessor('media', ...)` 注册图片/音视频识别预处理器。
+- `plugin-gateway`（`packages/plugin-gateway/src/index.ts`）：入站终相 `inbound:dispatch` 调 `agent.handleMessage(message)`——**这是 agent 被驱动的主入口**。前置相位（command/flow/trigger）任一 swallow 即不进 dispatch（`:43-49`）。
+- `plugin-webui-server`（`packages/plugin-webui-server/src/index.ts`）：收到 WS `abort` 消息时调 `agent?.abort(sessionId)`。
+- `plugin-file-reader`（`packages/plugin-file-reader/src/index.ts`）：`useAgent(ctx).registerPreprocessor('file-reader', ...)` 注册文件读取预处理器，降级见 §5。
+- `plugin-media`（`packages/plugin-media/src/index.ts`）：`useAgent(ctx).registerPreprocessor('media', ...)` 注册图片/音视频识别预处理器。
 
-**钩子订阅方（不直接拿 service，只挂 `agent:*` 中间件）**：`plugin-persona`（`agent:reply:before` 做 outputFormat 解析/修复，`packages/plugin-persona/src/index.ts:647`）、`plugin-checkpoint`（`input:before`/`turn:after` 维护回合生命周期，`packages/plugin-checkpoint/src/index.ts:171,179`）、`plugin-session-manager`（`turn:after` 把根会话收口为 `completed`，`packages/plugin-session-manager/src/index.ts:991`）、`plugin-memory-summary`（`agent:llm:before` 注入摘要、`agent:turn:after` 触发压缩，`packages/plugin-memory-summary/src/index.ts:370,412`）、`plugin-memory-vector` / `plugin-skills` / `plugin-subtask` / `plugin-tool-search` 等。
+**钩子订阅方（不直接拿 service，只挂 `agent:*` 中间件）**：`plugin-persona`（`agent:reply:before` 做 outputFormat 解析/修复，`packages/plugin-persona/src/index.ts`）、`plugin-checkpoint`（`input:before`/`turn:after` 维护回合生命周期，`packages/plugin-checkpoint/src/index.ts`）、`plugin-session-manager`（`turn:after` 把根会话收口为 `completed`，`packages/plugin-session-manager/src/index.ts`）、`plugin-memory-summary`（`agent:turn:after` 触发压缩，`packages/plugin-memory-summary/src/index.ts`）、`plugin-subtask` / `plugin-tool-search` 等。
+
+> **提示词注入不在这条链上**：摘要、语义记忆、用户档案、关系图、技能正文、平台提示等已迁往 `agent:prompt` 贡献点（`ctx.contribute`），由 plugin-agent 的组装器在 `agent:llm:before` **之前**统一物化——故本钩子的 handler 看到的是已成型的 messages。往提示词加内容请用贡献点，本钩子留给改写/截停语义（如 tool-search 整体替换工具列表）。
 
 ## 4. 写一个 provider
 
@@ -82,7 +84,7 @@ export interface AgentService {
 }
 ```
 
-并在源码导出 `export const provides = ['agent']` 与 `export const inject = { optional: [...] }`（`packages/plugin-agent/src/index.ts:1635-1639`）。两套元数据各自独立、缺一不可，详见 [manifest-metadata](../concepts/manifest-metadata.md)。
+并在源码导出 `export const provides = ['agent']` 与 `export const inject = { optional: [...] }`（`packages/plugin-agent/src/index.ts`）。两套元数据各自独立、缺一不可，详见 [manifest-metadata](../concepts/manifest-metadata.md)。
 
 可编译最小骨架：
 
@@ -126,7 +128,7 @@ const agent = ctx.getService<AgentService>('agent');
 if (agent?.abort) agent.abort(sessionId);  // 可选方法先判存在
 ```
 
-**注册预处理器**——用 `useAgent`，它自带延迟订阅 + bounce 重挂，并把 dispose 挂到 `ctx.onDispose`（**必须**，否则插件 reload 时旧中间件残留在 agent.ctx 上重复执行，`packages/plugin-media/src/index.ts:347-354`）：
+**注册预处理器**——用 `useAgent`，它自带延迟订阅 + bounce 重挂，并把 dispose 挂到 `ctx.onDispose`（**必须**，否则插件 reload 时旧中间件残留在 agent.ctx 上重复执行，`packages/plugin-media/src/index.ts`）：
 
 ```ts
 import { useAgent } from '@aalis/plugin-agent-api';
@@ -137,17 +139,17 @@ const dispose = useAgent(ctx).registerPreprocessor('my-pre', async (msg, next) =
 ctx.onDispose(dispose);
 ```
 
-**实现不支持 `registerPreprocessor` 时的降级**——`file-reader` 的范式（`packages/plugin-file-reader/src/index.ts:772-780`）：探测 `agent.registerPreprocessor` 是否存在，缺失则直接 `ctx.middleware('agent:input:before', ...)`。
+**实现不支持 `registerPreprocessor` 时的降级**——`file-reader` 的范式（`packages/plugin-file-reader/src/index.ts`）：探测 `agent.registerPreprocessor` 是否存在，缺失则直接 `ctx.middleware('agent:input:before', ...)`。
 
-**服务缺失**：`agent` 全 optional 依赖，自身可激活但运行期降级——`llm` 缺失会直接回 `[系统] LLM 服务不可用`（`packages/plugin-agent/src/index.ts:422-431`）；`memory` 缺失则无历史；`gateway` 缺失则 fallback 到 `ctx.emit('outbound:message')`（**跳过审计/脱敏/限速/authority 中间件链，仅限测试/嵌入式**，`:1618-1626`）。
+**服务缺失**：`agent` 全 optional 依赖，自身可激活但运行期降级——`llm` 缺失会直接回 `[系统] LLM 服务不可用`（`packages/plugin-agent/src/index.ts`）；`memory` 缺失则无历史；`gateway` 缺失则 fallback 到 `ctx.emit('outbound:message')`（**跳过审计/脱敏/限速/authority 中间件链，仅限测试/嵌入式**，`:1618-1626`）。
 
 ## 6. 能力 / 风险 → 影响
 
-**ToolCallContext 的 actor 优先**：agent 构造工具上下文时优先用 `incoming.actor?.{userId,platform}`，fallback 才到 `incoming.userId/platform`（`packages/plugin-agent/src/index.ts:481-486`）。这让 scheduler/idle/proactive 触发的 AI 走**创建者的 authority**（而非匿名 `defaultAuthority`）。自定义 provider 必须保留此语义，否则系统触发的工具会以错误身份执权。工具侧的风险等级 → minLevel 鉴权由 `tools` 服务在 `execute` 内做，见 [core/tools](../core/tools.md) 与 [core/authority](../core/authority.md)。
+**ToolCallContext 的 actor 优先**：agent 构造工具上下文时优先用 `incoming.actor?.{userId,platform}`，fallback 才到 `incoming.userId/platform`（`packages/plugin-agent/src/index.ts`）。这让 scheduler/idle/proactive 触发的 AI 走**创建者的 authority**（而非匿名 `defaultAuthority`）。自定义 provider 必须保留此语义，否则系统触发的工具会以错误身份执权。工具侧的风险等级 → minLevel 鉴权由 `tools` 服务在 `execute` 内做，见 [core/tools](../core/tools.md) 与 [core/authority](../core/authority.md)。
 
-**reply:before 重试协议**（`agent:reply:before`，`packages/plugin-agent-api/src/index.ts:94-122`，消费方 `plugin-persona` `packages/plugin-persona/src/index.ts:819-850`）：钩子可置 `retryRequested=true` + `retryFeedback` + `maxRetries` 让 agent 重新请求 LLM；agent 按 `maxRetries` 循环（`packages/plugin-agent/src/index.ts:788-827`），用尽后若仍 `retryRequested` 强制把 `content` 置空避免坏内容外发（`:831-837`）。自定义 provider 若不实现重试循环，persona 的 outputFormat 校验将失效。
+**reply:before 重试协议**（`agent:reply:before`，`packages/plugin-agent-api/src/index.ts`，消费方 `plugin-persona` `packages/plugin-persona/src/index.ts`）：钩子可置 `retryRequested=true` + `retryFeedback` + `maxRetries` 让 agent 重新请求 LLM；agent 按 `maxRetries` 循环（`packages/plugin-agent/src/index.ts`），用尽后若仍 `retryRequested` 强制把 `content` 置空避免坏内容外发（`:831-837`）。自定义 provider 若不实现重试循环，persona 的 outputFormat 校验将失效。
 
-**token 预算契约**（`token:usage` / `token:request` 事件，`packages/plugin-agent-api/src/index.ts:211-218`）：agent 每次 LLM 调用后 emit `token:usage`（12 桶 breakdown，`packages/plugin-agent/src/index.ts:1200-1224`）；并监听 `token:request` 在客户端重连时重算快照（`:1819-1869`）。消费方：`plugin-webui-server`（面板）、`plugin-memory-summary`（预压缩触发）。
+**token 预算契约**（`token:usage` / `token:request` 事件，`packages/plugin-agent-api/src/index.ts`）：agent 每次 LLM 调用后 emit `token:usage`（12 桶 breakdown，`packages/plugin-agent/src/index.ts`）；并监听 `token:request` 在客户端重连时重算快照（`:1819-1869`）。消费方：`plugin-webui-server`（面板）、`plugin-memory-summary`（预压缩触发）。
 
 **出站走 gateway**：回复经 `dispatchOutbound` → `gateway.dispatchOutbound`，由 gateway 中间件链做审计/脱敏/限速/authority（[security-model](../concepts/security-model.md)）。provider 务必经 gateway，不要直接 emit。
 
@@ -155,7 +157,7 @@ ctx.onDispose(dispose);
 
 ## 7. 边界与坑（审计标注）
 
-**`abort(sessionId)` 用 `startsWith` 误匹配兄弟 session 的 lane**：`abort` 遍历 `activeControllers`，对 key 做 `startsWith(`${sessionId}::`)` 匹配（`packages/plugin-agent/src/index.ts:129-134`）。lane key = `${sessionId}::${source}`（`:118-123`），同一 session 不同来源（user / scheduler / proactive）是独立 lane，互不打断——`abort('S')` 会一次性中止 `S` 的**所有** lane，这是设计如此。但若存在 sessionId 互为前缀的子会话/分身命名（如 `S` 与 `S::sub`、或某些前缀重叠的 ID 方案），`startsWith` 可能误伤——前端「停止生成」的语义被限定为「按整个 sessionId 前缀停」，provider/调用方需保证 sessionId 不互为前缀，否则会中止到不该中止的 lane。
+**`abort(sessionId)` 用 `startsWith` 误匹配兄弟 session 的 lane**：`abort` 遍历 `activeControllers`，对 key 做 `startsWith(`${sessionId}::`)` 匹配（`packages/plugin-agent/src/index.ts`）。lane key = `${sessionId}::${source}`（`:118-123`），同一 session 不同来源（user / scheduler / proactive）是独立 lane，互不打断——`abort('S')` 会一次性中止 `S` 的**所有** lane，这是设计如此。但若存在 sessionId 互为前缀的子会话/分身命名（如 `S` 与 `S::sub`、或某些前缀重叠的 ID 方案），`startsWith` 可能误伤——前端「停止生成」的语义被限定为「按整个 sessionId 前缀停」，provider/调用方需保证 sessionId 不互为前缀，否则会中止到不该中止的 lane。
 
 **`abort` 中止不了执行中的工具**：`AbortSignal` 只在 LLM 流式消费（`:226-230`）和工具循环每次迭代头部（`:580`）被检查。一旦进入 `Promise.all(toolCalls.map(...))` 的并行工具执行（`:605-669`），**当前在飞的 `tools.execute()` 不会被打断**——它会跑完，副作用照常发生（戳一戳/发消息/调度），只是下一轮 LLM 不再发起。自定义 provider 若想真正可中断工具，需把 `signal` 透传进 `ToolService.execute`（当前契约未强制）。
 
