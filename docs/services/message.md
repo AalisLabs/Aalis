@@ -20,54 +20,54 @@
 
 | 符号 | 类别 | file:line | 一句话 |
 | --- | --- | --- | --- |
-| `Message` | interface | `index.ts:82-120` | LLM 对话上下文消息主体：`role`/`content`/`toolCalls`/`name`/`kind`/`segments`/`images`/`audios`/`metadata` 等 |
-| `ToolCall` | interface | `index.ts:35-42` | assistant 消息的 `tool_calls` 载荷（OpenAI 协议字段：`id`/`type:'function'`/`function{name,arguments}`） |
-| `ContentSegment` | type（三联合） | `index.ts:53-63` | assistant 输出的有序时间线：`text` / `reasoning_text` / `tool_call`（后者带 `startTime`/`endTime`） |
-| `WellKnownRole` | type | `index.ts:69` | `'system' \| 'user' \| 'assistant' \| 'tool'`——chat 协议直接接受的四种 |
-| `MessageRole` | type | `index.ts:80` | `WellKnownRole \| (string & {})`——四种标准 + 任意扩展 role（如 `'notice'`） |
+| `Message` | interface | `index.ts` | LLM 对话上下文消息主体：`role`/`content`/`toolCalls`/`name`/`kind`/`segments`/`images`/`audios`/`metadata` 等 |
+| `ToolCall` | interface | `index.ts` | assistant 消息的 `tool_calls` 载荷（OpenAI 协议字段：`id`/`type:'function'`/`function{name,arguments}`） |
+| `ContentSegment` | type（三联合） | `index.ts` | assistant 输出的有序时间线：`text` / `reasoning_text` / `tool_call`（后者带 `startTime`/`endTime`） |
+| `WellKnownRole` | type | `index.ts` | `'system' \| 'user' \| 'assistant' \| 'tool'`——chat 协议直接接受的四种 |
+| `MessageRole` | type | `index.ts` | `WellKnownRole \| (string & {})`——四种标准 + 任意扩展 role（如 `'notice'`） |
 
 ### 平台适配层类型 — `src/index.ts`
 
 | 符号 | 类别 | file:line | 一句话 |
 | --- | --- | --- | --- |
-| `IncomingMessage` | interface | `index.ts:161-241` | 从适配器流入的原始消息：会话上下文 + `attachments` + `triggerType` + `actor`（授权身份）等 |
-| `OutgoingMessage` | interface | `index.ts:245-269` | 发往平台的回复：`content`/`segments`/`attachments`/`source`/`modelInfo` |
-| `StreamChunkMessage` | interface | `index.ts:274-292` | 流式片段（经 `'outbound:stream'` 事件发往前端）：`contentDelta`/`reasoningDelta`/`toolCallProgress`/`done`/`toolLimitReached` |
-| `MessageAttachment` | interface | `index.ts:129-159` | v2 多模态附件统一载体：`kind`/`data`/`mimeType`/`description`/`ref`/`skipArchive` 等 |
+| `IncomingMessage` | interface | `index.ts` | 从适配器流入的原始消息：会话上下文 + `attachments` + `triggerType` + `actor`（授权身份）等 |
+| `OutgoingMessage` | interface | `index.ts` | 发往平台的回复：`content`/`segments`/`attachments`/`source`/`modelInfo` |
+| `StreamChunkMessage` | interface | `index.ts` | 流式片段（经 `'outbound:stream'` 事件发往前端）：`contentDelta`/`reasoningDelta`/`toolCallProgress`/`done`/`toolLimitReached` |
+| `MessageAttachment` | interface | `index.ts` | v2 多模态附件统一载体：`kind`/`data`/`mimeType`/`description`/`ref`/`skipArchive` 等 |
 
 ### LLM 出口工具（值导出）— `src/index.ts`
 
 | 符号 | 类别 | file:line | 一句话 |
 | --- | --- | --- | --- |
-| `WellKnownKinds` | const 对象 | `index.ts:328-334` | 约定 kind 常量：`EventMarker`/`CrossSessionDelegation`/`OutboundImage`/`OutboundAudio`/`OutboundVideo` |
-| `WellKnownKind` | type | `index.ts:336` | `WellKnownKinds` 值的联合 |
-| `CONTROL_KINDS` | const 数组 | `index.ts:342` | 控制类 kind（当前仅 `EventMarker`）——**消费方拼历史时须自行过滤**（不是 `prepareLLMMessages` 干的） |
-| `toLLMRole(role)` | function | `index.ts:366-371` | 自定义 role → `WellKnownRole`；未知一律回落 `'system'`；`notice → system` |
-| `prepareLLMMessages(messages)` | function | `index.ts:380-390` | **LLM provider 出口铁律**：归一 role + 拼前缀；不改原对象返回浅拷贝；幂等 |
+| `WellKnownKinds` | const 对象 | `index.ts` | 约定 kind 常量：`EventMarker`/`CrossSessionDelegation`/`OutboundImage`/`OutboundAudio`/`OutboundVideo` |
+| `WellKnownKind` | type | `index.ts` | `WellKnownKinds` 值的联合 |
+| `CONTROL_KINDS` | const 数组 | `index.ts` | 控制类 kind（当前仅 `EventMarker`）——**消费方拼历史时须自行过滤**（不是 `prepareLLMMessages` 干的） |
+| `toLLMRole(role)` | function | `index.ts` | 自定义 role → `WellKnownRole`；未知一律回落 `'system'`；`notice → system` |
+| `prepareLLMMessages(messages)` | function | `index.ts` | **LLM provider 出口铁律**：归一 role + 拼前缀；不改原对象返回浅拷贝；幂等 |
 
-> `prepareLLMMessages` 签名：`<T extends Pick<Message, 'role' \| 'content' \| 'kind'>>(messages: T[]): T[]`（`index.ts:380`）。语义、为何必调、为何不剔 event-marker——见概念文档 §3 + §9。
+> `prepareLLMMessages` 签名：`<T extends Pick<Message, 'role' \| 'content' \| 'kind'>>(messages: T[]): T[]`（`index.ts`）。语义、为何必调、为何不剔 event-marker——见概念文档 §3 + §9。
 
-### 附件占位符文法 — `src/attachment-ref.ts`（经 `index.ts:392-398` 转出）
+### 附件占位符文法 — `src/attachment-ref.ts`（经 `index.ts` 转出）
 
 | 符号 | 类别 | file:line | 一句话 |
 | --- | --- | --- | --- |
-| `AttachmentRefKind` | const 对象 + type | `attachment-ref.ts:27-34` | 中文显示名：`图片`/`音频`/`视频`/`文件` |
-| `AttachmentRef` | interface | `attachment-ref.ts:39-45` | `{ kind, desc?, ref }` |
-| `formatAttachmentRef(r)` | function | `attachment-ref.ts:55-59` | `→ '[图片: desc \| ref:xxx]'`（desc 空则省冒号段） |
-| `parseAttachmentRefs(text)` | function | `attachment-ref.ts:70-80` | 扫描全部 `[<kind>(: <desc>)? \| ref:<ref>]` 占位符 |
-| `buildAttachmentRefMatcher(kind, ref)` | function | `attachment-ref.ts:86-90` | 构造匹配「指定 kind + 指定 ref」全部占位符的正则 |
+| `AttachmentRefKind` | const 对象 + type | `attachment-ref.ts` | 中文显示名：`图片`/`音频`/`视频`/`文件` |
+| `AttachmentRef` | interface | `attachment-ref.ts` | `{ kind, desc?, ref }` |
+| `formatAttachmentRef(r)` | function | `attachment-ref.ts` | `→ '[图片: desc \| ref:xxx]'`（desc 空则省冒号段） |
+| `parseAttachmentRefs(text)` | function | `attachment-ref.ts` | 扫描全部 `[<kind>(: <desc>)? \| ref:<ref>]` 占位符 |
+| `buildAttachmentRefMatcher(kind, ref)` | function | `attachment-ref.ts` | 构造匹配「指定 kind + 指定 ref」全部占位符的正则 |
 
 > 契约约束：byte-for-byte 兼容历史；写入方须保证 `desc`/`ref` 不含 `]`/`|`。别手搓字符串——见概念文档 §4。
 
-### 发送者标识工具 — `src/identity.ts`（经 `index.ts:400` 转出）
+### 发送者标识工具 — `src/identity.ts`（经 `index.ts` 转出）
 
 | 符号 | file:line | 一句话 |
 | --- | --- | --- |
-| `getSenderLabel(nickname?, userId?)` | `identity.ts:18-22` | 两者都有 → `昵称(ID)`；否则取其一；都无 → `undefined` |
-| `prefixSender(content, nickname?, userId?)` | `identity.ts:28-31` | 有标签 → `[label]: content`，否则原样 |
-| `getMessageName(userId?)` | `identity.ts:38-40` | 给 `Message.name` / OpenAI `name` 字段用的稳定标识符（用 userId 不用 nickname） |
+| `getSenderLabel(nickname?, userId?)` | `identity.ts` | 两者都有 → `昵称(ID)`；否则取其一；都无 → `undefined` |
+| `prefixSender(content, nickname?, userId?)` | `identity.ts` | 有标签 → `[label]: content`，否则原样 |
+| `getMessageName(userId?)` | `identity.ts` | 给 `Message.name` / OpenAI `name` 字段用的稳定标识符（用 userId 不用 nickname） |
 
-### 事件（declaration merging 注入 `@aalis/core` 的 `AalisEvents`）— `src/index.ts:296-310`
+### 事件（declaration merging 注入 `@aalis/core` 的 `AalisEvents`）— `src/index.ts`
 
 | 事件名 | payload | 说明 |
 | --- | --- | --- |
@@ -76,7 +76,7 @@
 | `'outbound:message'` | `[OutgoingMessage]` | 发往平台的回复 |
 | `'outbound:stream'` | `[StreamChunkMessage]` | 流式片段（发往 WebUI 等前端） |
 
-> 该包仅以 `import type {} from '@aalis/core'` 锚定模块身份做增强（`index.ts:27`），运行时无副作用。listen/emit 这些事件的姿势见 `docs/core/context.md` / `docs/concepts/service-model.md`。
+> 该包仅以 `import type {} from '@aalis/core'` 锚定模块身份做增强（`index.ts`），运行时无副作用。listen/emit 这些事件的姿势见 `docs/core/context.md` / `docs/concepts/service-model.md`。
 
 ---
 
@@ -84,10 +84,10 @@
 
 不是"消费 message 服务"，而是 import 上面这些符号。代表性站点：
 
-- **LLM provider 出口必调 `prepareLLMMessages`**：`plugin-deepseek/src/index.ts:239,360`、`plugin-ollama/src/index.ts:259,357,707`、`plugin-openai`（同模式，概念文档 §3.1）。
-- **`CONTROL_KINDS` 过滤**（消费方职责）：`plugin-agent/src/index.ts:1008,1843`。
-- **附件占位符**：产出于 `plugin-adapter-onebot/src/index.ts:408,413`、`plugin-image-sender/src/index.ts:337`；重写/解析于 `plugin-media/src/tools.ts:59,186,191`。
-- **发送者标识**：`plugin-agent/src/index.ts:1028,1082`、`plugin-message-archive/src/index.ts:60`、`plugin-memory-vector/src/index.ts:354`、`plugin-adapter-onebot/src/index.ts:937`。
+- **LLM provider 出口必调 `prepareLLMMessages`**：`plugin-deepseek/src/index.ts`、`plugin-ollama/src/index.ts`、`plugin-openai`（同模式，概念文档 §3.1）。
+- **`CONTROL_KINDS` 过滤**（消费方职责）：`plugin-agent/src/index.ts`。
+- **附件占位符**：产出于 `plugin-adapter-onebot/src/index.ts`、`plugin-image-sender/src/index.ts`；重写/解析于 `plugin-media/src/tools.ts`。
+- **发送者标识**：`plugin-agent/src/index.ts`、`plugin-message-archive/src/index.ts`、`plugin-memory-vector/src/index.ts`、`plugin-adapter-onebot/src/index.ts`。
 - 全仓有 ~40 个包 import `@aalis/plugin-message-api`（消息是跨层公共载体）。
 
 ---
