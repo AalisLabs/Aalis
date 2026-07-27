@@ -563,9 +563,11 @@ keyword 检索，分发靠 npm 包本身。要让你的插件出现在市场里�
    （市场标"官方"）；社区插件任意包名（标"社区"）。
 2. **依赖正确归类**（决定发布后能否被正确安装——脚手架已产出正确形态）：
    - `@aalis/core` → **`peerDependencies: ">=0.2.0 <1.0.0"`**（宿主提供核心，不每插件 bundle 一份）
-     + `devDependencies: workspace:*`（开发期编译）。**宽松区间是刻意的**：core 承诺 0.x 内向后
-     兼容、破坏性变更才升 1.0.0，所以 `>=0.2.0 <1.0.0` 接受任何 0.x 宿主 core——你的插件不必
-     随 core 次版本升级而重发，慢更新的插件也永远跟得上官方框架。**不要用 caret**（`^0.2.0` 只
+     + `devDependencies: workspace:*`（开发期编译）。**宽松区间是刻意的**：它接受任何 0.x 宿主
+     core，你的插件不必随 core 次版本升级而重发。**但注意 core 在 1.0 之前并未承诺 0.x 内绝不
+     破坏公开面**（0.7.0 删过 `createScope` 等、0.9.0 删过 `hasService` / `getServiceEntries` /
+     `ConfigSchema` 全家）——用了新 API 就把下限抬到对应版本（如 `>=0.9.0 <1.0.0`）。稳定性承诺
+     自 1.0 起生效，以 `docs/design/core-contract.md` 为准。**不要用 caret**（`^0.2.0` 只
      匹配 `0.2.x`，会把插件锁死在某个 core 次版本，core 一升就显示不兼容）。
      > ⚠️ **这条 0.x 兼容承诺只针对 `@aalis/core` 本身。** 你依赖的 `@aalis/plugin-*-api`
      > 契约包（服务接口 / 类型 / 工具定义形状）**不在该承诺内**——0.x 期间仍可能改签名、增删
@@ -583,9 +585,10 @@ keyword 检索，分发靠 npm 包本身。要让你的插件出现在市场里�
    ```
    保持与代码 `inject.required/optional` + `provides` 一致。装后市场仍会按实际 `inject` +
    工具/指令的 restricted 可见性聚合细化（双重披露）。
-4. **breaking change 记 changelog**：core 在 0.x 内**承诺向后兼容**（次版本只做加法/温和改），
-   真正的破坏性变更才升 **1.0.0**——那是唯一会要求插件适配的线（`>=0.2.0 <1.0.0` 区间正建立
-   在这承诺上）。core/契约包的不兼容变更必须在 `CHANGELOG.md` 记录迁移说明。
+4. **breaking change 记 changelog**：**1.0 之前 core 的公开面可能在次版本被删**（已发生过：
+   0.7.0 / 0.9.0）。宽 peerDep 区间是为了让不用新 API 的插件少受打扰，不是兼容性承诺。
+   稳定性承诺自 **1.0** 起生效，条款见 `docs/design/core-contract.md`。core/契约包的不兼容变更
+   必须在 `CHANGELOG.md` 记录迁移说明。
 5. **发布**：`pnpm publish:all`（仓库根，递归拓扑序发 core→api→util→插件、跳 private、
    转 workspace 协议）。单插件 `npm publish`。私有/未发布插件仍可走 monorepo 本地安装。
 
