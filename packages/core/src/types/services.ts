@@ -52,3 +52,11 @@ export interface ServiceTypeMap {}
  * 用户便利类型；core 自己用 `ServiceTypeMap[TName]` 直接索引。
  */
 export type ServiceOf<TName extends string> = TName extends keyof ServiceTypeMap ? ServiceTypeMap[TName] : unknown;
+
+// ----- 服务依赖声明（插件 inject 与 whenService 等消费的服务域词汇） -----
+
+export interface ServiceDependency {
+  service: string;
+}
+
+export type DependencyDeclaration = string | ServiceDependency;

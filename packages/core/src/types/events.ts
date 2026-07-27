@@ -1,28 +1,7 @@
-// ===== 核心机制类型 =====
-
-// 注：SafetyLevel / PermissionId 已迁出到 @aalis/plugin-authority-api（权限词汇归位）
-
-// 注：Message / ContentSegment 已迁出到 @aalis/plugin-agent-api（cleanup-N，core 纯通用 IoC 化）
-// 注：ToolCall / ToolDefinition / ToolFunction 已迁出到 @aalis/plugin-tools-api（cleanup-N）
-// 注：IncomingMessage / OutgoingMessage / StreamChunkMessage 已迁出到 @aalis/plugin-message-api（cleanup-8）
-// 注：ToolCallContext / ToolExecuteMessage 已迁出到 @aalis/plugin-tools-api（cleanup-8）
-// 注：RegisteredTool / ToolSummary / ToolGroupInfo 已迁出到 @aalis/plugin-tools-api（cleanup-6）
-// 注：CommandContext / CommandDefinition / SubcommandDefinition / RegisteredCommand 等已迁出到 @aalis/plugin-commands-api（cleanup-6）
-
-// ----- 服务依赖声明 -----
-
-export interface ServiceDependency {
-  service: string;
-}
-
-export type DependencyDeclaration = string | ServiceDependency;
-
-export interface InjectDeclaration {
-  required?: DependencyDeclaration[];
-  optional?: DependencyDeclaration[];
-}
-
-// ----- 事件类型 -----
+// ============================================================
+// 事件扩展点：内置事件表 + declaration merging 靶子。
+// 与 hooks / services / contributions 的扩展点文件同构——一原语一文件。
+// ============================================================
 
 /**
  * 内置事件表
@@ -71,19 +50,3 @@ export interface AalisEvents {
    */
   'app:stopping': [];
 }
-
-// ----- 钩子/中间件类型 -----
-
-/**
- * 中间件 next 函数，调用它将控制传递给下一个中间件或默认行为
- */
-export type MiddlewareNext = () => Promise<void>;
-
-/**
- * 中间件函数签名：接收数据和 next，可选择修改数据或中断流程
- */
-export type MiddlewareFn<T> = (data: T, next: MiddlewareNext) => Promise<void>;
-
-// 注：指令系统类型（CommandContext / CommandValueType / CommandArgumentDefinition /
-// CommandOptionDefinition / CommandDefinition / SubcommandDefinition / RegisteredCommand）
-// 已迁出到 @aalis/plugin-commands-api（cleanup-6）
