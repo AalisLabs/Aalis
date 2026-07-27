@@ -4,11 +4,17 @@
 // 实现详见 ../plugin.ts。
 
 import type { Context } from '../context.js';
-import type { InjectDeclaration } from './core.js';
-
 // 注：NormalizedDependency 来自 types/service.ts，但为避免在 PluginEntry
 // 中再循环引入，这里直接 import type。
-import type { NormalizedDependency } from './service.js';
+import type { NormalizedDependency } from '../services.js';
+import type { DependencyDeclaration } from './services.js';
+
+// ----- 插件依赖声明（module.inject 的词汇） -----
+
+export interface InjectDeclaration {
+  required?: DependencyDeclaration[];
+  optional?: DependencyDeclaration[];
+}
 
 // ----- 插件定义格式 -----
 
