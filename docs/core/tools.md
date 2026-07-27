@@ -2,7 +2,7 @@
 
 管理 AI 工具的注册、权限检查和执行。
 
-**源码**: `packages/core/src/tools.ts`
+**源码**: `packages/plugin-tools/src/tools.ts` 的 `ToolRegistry`（已迁出 core，完整说明见 [tools 服务](../services/tools.md)）
 
 ## 工具定义
 

@@ -36,7 +36,7 @@ interface Registration {
 }
 
 /**
- * 贡献点注册表 —— 第四内核原语（与 services 成对偶的数据原语）。
+ * 贡献点注册表 —— 与 services 成对偶的数据原语。
  *
  * 四原语按「执行/数据」二分：events（执行·无返回·隔离）、hooks（执行·可变·
  * 短路）、services（数据·解析单胜者）、contributions（数据·确定性枚举全量）。
