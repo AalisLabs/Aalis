@@ -125,7 +125,10 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
     }
   });
 
-  ctx.on('app:stopping', () => authority.save());
+  // 落盘走 onDispose 而非 app:stopping：后者只在全局停机触发一次，覆盖不了
+  // bounce / unload / disable / 依赖降级级联这些拆卸路径，热重载即丢等级数据。
+  // save() 是同步的，onDispose 在所有拆卸路径上当场生效。
+  ctx.onDispose(() => authority.save());
 
   // ===== 权限指令 =====
 
