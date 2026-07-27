@@ -44,6 +44,7 @@ describe('插件错误恢复', () => {
         },
       };
       await app.plugins.register(ok);
+      await app.plugins.idle(); // register 在 flight 在飞时排队早退，静置后再断言
       expect(app.ctx.getService('marker')).toEqual({ ok: true });
     } finally {
       await cleanup();
