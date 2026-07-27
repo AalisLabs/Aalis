@@ -137,4 +137,32 @@ describe('ContributionRegistry / Context.contribute / collect', () => {
     // 卸载其一不连带清掉另一个仍在役沙盒的贡献
     expect(root.collect(POINT)).toHaveLength(1);
   });
+
+  it('dispose 后的 contribute 被拒，不得顶替同 id 活实例的贡献', () => {
+    const root = makeContext();
+    const dead = root.fork('plugin-a');
+    dead.contribute(POINT, { id: 'blk', payload: 'old' } as never);
+    dead.dispose();
+
+    // bounce 后的新实例（同 ctx.id → 同全局键）
+    const alive = root.fork('plugin-a');
+    alive.contribute(POINT, { id: 'blk', payload: 'new' } as never);
+
+    // 死 ctx 的迟到注册若被接受，会顶掉活实例的条目并被立即执行的 disposer 连带删除
+    dead.contribute(POINT, { id: 'blk', payload: 'zombie' } as never);
+
+    const entries = root.collect(POINT);
+    expect(entries).toHaveLength(1);
+    expect((entries[0].spec as Spec).payload).toBe('new');
+  });
+
+  it('退订即摘登记表条目：反复 contribute+off 不无界增长', () => {
+    const ctx = makeContext().fork('plugin-a');
+    for (let i = 0; i < 200; i++) {
+      const off = ctx.contribute(POINT, { id: `dyn-${i}` } as never);
+      off();
+    }
+    expect(ctx.collect(POINT)).toHaveLength(0);
+    expect(ctx.disposableCount, 'dispose 链不应滞留已退订的贡献闭包').toBe(0);
+  });
 });

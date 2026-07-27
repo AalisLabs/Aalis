@@ -104,7 +104,8 @@ private asrProcessors(): MediaProcessor[] {
 最小必须实现：一个返回 `{ text }` 的 `transcribe`，加 `provides`/`apply`。`segments`/`language`/`meta` 全可选。
 
 ```ts
-import type { ConfigSchema, Context } from '@aalis/core';
+import type { Context } from '@aalis/core';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/plugin-asr-api';
 import { safeFetch } from '@aalis/util-network-guard';
 
