@@ -46,7 +46,9 @@
 
 ### `ctx.fork(id): Context`
 
-创建子上下文。子 Context 共享父级的 EventBus、ServiceContainer、HookRegistry，但有独立的 disposable 列表。运行时为每个插件实例 fork 一份 ctx。
+创建子上下文。子 Context 共享父级的 EventBus、ServiceContainer、HookRegistry、ContributionRegistry，但有独立的 disposable 列表。运行时为每个插件实例 fork 一份 ctx。
+
+> ⚠． **`id` 必须全局唯一**。`ctx.id` 是服务 entry、钩子、贡献三类注册的归属锚：两个同 id 的 Context 共用同一命名空间——贡献按 `${ctx.id}/${局部id}` 成键，后注册者替换先注册者；任一方 dispose 会按 contextId 连带清掉对方的注册。运行时侧已保证唯一（插件用 instanceId、`useModule` 自动唯一化 childId），手工 fork 时自行保证。
 
 ### `ctx.onDispose(fn): () => void`
 

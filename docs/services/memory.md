@@ -127,7 +127,8 @@ export const inject = { required: ['storage'] };
 ### 可编译最小骨架
 
 ```ts
-import type { ConfigSchema, Context } from '@aalis/core';
+import type { Context } from '@aalis/core';
+import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { Message } from '@aalis/plugin-message-api';
 
