@@ -10,13 +10,6 @@ import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import { truncateChars } from '@aalis/util-text-normalize';
 
 /**
- * 摘要 token 预算的绝对上限。摘要是压缩后的常驻块、每轮随提示词重发，
- * 篇幅应与信息密度挂钩而非与上下文窗口成正比（1e6 窗口会算出 5 万 token 的
- * 预算，还被写进提示词鼓励模型照着写满——压缩反成最大的常驻开销）。
- */
-const MAX_SUMMARY_TOKENS = 4096;
-
-/**
  * 摘要用消息格式化：content 已含 [昵称(ID)] 前缀，故不再叠加 m.name（否则双重身份 用户[123]: [Alice(123)]:）。
  * generateSummary 与 session:compress 两条路径共用，避免格式漂移。
  */
@@ -245,7 +238,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   function getSummaryTokenBudget(): number {
     const model = resolveSummaryModel();
     const contextLength = model?.contextLength ?? 4096;
-    return Math.min(MAX_SUMMARY_TOKENS, Math.max(512, Math.floor(contextLength * cfg.summaryTokenRatio)));
+    // 注：摘要是每轮重发的常驻块，大窗口下 contextLength × ratio 会给出很大的预算
+    // （1e6 × 0.05 = 5 万 token）并被写进提示词。要收紧请调 summaryTokenRatio，
+    // 内核不代替宿主设绝对上限——窗口大小与"愿意为常驻块付多少"是宿主的决定。
+    return Math.max(512, Math.floor(contextLength * cfg.summaryTokenRatio));
   }
 
   /**
