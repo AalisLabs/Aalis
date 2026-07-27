@@ -111,9 +111,12 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
     const { app, memory } = await setup();
     await seedSummary(memory, 's-a', 'SUM-BODY 用户偏好夜间工作');
 
-    // 同槽区对照：identity 落首条 system 后，knowledge 落头部 system 区末尾并先于 context
+    // 同槽区对照：identity 落首条 system 后，knowledge 落头部 system 区末尾并先于 context。
+    // knowledge 探针的 ctx id 必须**码元序排在被测插件全局键之后**（插件经 useModule
+    // 加载，键形如 `root#@aalis/plugin-...`，故用 zz- 前缀）——否则被测块错标成
+    // knowledge 时两者仍按同样次序落位，断言恒真、变异测不出。
     app.ctx.fork('probe-identity').contribute(POINT, { id: 'idn', anchor: 'identity', build: () => 'IDN' } as never);
-    app.ctx.fork('probe-knowledge').contribute(POINT, { id: 'kn', anchor: 'knowledge', build: () => 'KN' } as never);
+    app.ctx.fork('zz-probe-knowledge').contribute(POINT, { id: 'kn', anchor: 'knowledge', build: () => 'KN' } as never);
 
     const messages = baseMessages();
     await assemblePromptContributions(app.ctx, { messages, sessionId: 's-a' });
