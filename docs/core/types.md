@@ -6,7 +6,9 @@
 > 自 cleanup-1 ~ cleanup-4 起，**所有业务服务接口**（`LLMModel`（per-model entry，取代旧 `LLMService`）/ `MemoryService` / `StorageService` / `EmbeddingService` / `VectorStoreService` / `ToolService` / `CommandService` / `GatewayService` / `WebUIService` / `AuthorityService` / `AgentService`）以及它们的关联类型（`ChatModelRequest` / `ChatResponse` / `WebuiPage` / `ExecutionGuard*` / `PluginGroupInfo` 等）**已迁出 core**，分别归属到对应的 `@aalis/plugin-*-api` 包。详见 [api 包架构](../design/api-packages.md)。
 >
 > 本文档保留接口定义文本以供查阅，但**实际源码不再位于 packages/core**。
-> core 仅保留：通用 IoC 数据契约（配置 Schema / 依赖声明 / 中间件 / `AalisEvents`）、App 生命周期接口、服务自清理协议（`DisposableService`），以及 3 个空扩展点（`AalisEvents` / `HookContextMap` / `ServiceTypeMap`）——后者供各 `plugin-*-api` 通过 declaration merging 注入「服务名 → 服务接口」。
+> core 仅保留：通用 IoC 数据契约（依赖声明 / 中间件 / `AalisEvents`）、App 生命周期接口、服务自清理协议（`DisposableService`），以及 4 个空扩展点（`AalisEvents` / `HookContextMap` / `ServiceTypeMap` / `ContributionPointMap`）——供各 `plugin-*-api` 通过 declaration merging 注入领域键。
+>
+> 注：**配置表单 Schema 词汇**（`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` / `SchemaFieldTypes` / `CORE_CONFIG_SCHEMA`）已迁至 `@aalis/plugin-config-api`——它是呈现层词汇，core 把 `PluginModule.configSchema` 当 opaque 数据透传、不解释任何字段。下文相关小节仅供查阅，import 请从 config-api。
 >
 > 注：0.5.0 已**移除内核的「服务能力选择/匹配」层**——`ServiceCapabilityMap` / `getServiceCapabilities` / 按能力筛选服务的整套机制不再存在。服务选择只走「偏好 > 优先级 > 注册顺序」；领域级筛选（如按 LLM 模型能力）由各 `*-api` 的 helper 自理，不进内核 DI。
 
