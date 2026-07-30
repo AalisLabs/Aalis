@@ -5,7 +5,7 @@ import { type ConfigSyncOptions, installConfigHotReload, syncPluginDefaults } fr
 import { type ConsoleSinkHandle, installConsoleSink } from './console-sink.js';
 import { appendCrashLog, DEFAULT_LOG_FILE, type FileLoggerHandle, setupFileLogger } from './file-logger.js';
 import { createNodeModulesPluginLoader } from './node-modules-loader.js';
-import { createFsYamlConfigProvider, createProcessRespawnStrategy } from './providers.js';
+import { createFsYamlConfigProvider, createProcessRespawnStrategy, READY_MESSAGE } from './providers.js';
 import { tryDispatchSubcommand } from './subcommand.js';
 import { installTerminalStateRestorer } from './terminal.js';
 
@@ -145,6 +145,21 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
 
   // ── 启动 + 优雅退出（防止重复调用）──
   await app.start();
+
+  // 向重启我们的父进程回报「起来了」。父进程据此决定放手退出，还是判定本次
+  // 更新失败并回滚（见 providers.ts 的 createProcessRespawnStrategy）。
+  //
+  // 两道防护缺一不可，都为了「本进程绝不能因为报喜而死」：
+  // 1. `process.connected` —— 父进程等 ready 超时后会 disconnect + exit，此时通道已关，
+  //    但 `process.send` 仍是 function（`?.` 只挡「从来没有 IPC」的非重启启动），
+  //    照发会得到 ERR_IPC_CHANNEL_CLOSED；
+  // 2. callback —— 通道在判断与发送之间关闭（TOCTOU）时，错误改走 callback。没有它，
+  //    Node 会在 nextTick 往 process 上 emit 无监听者的 'error'，直接升级成
+  //    uncaughtException 被 start.ts 顶部的 handler 捕获并 exit(1)——**同步 try/catch
+  //    接不住**（错误是异步抛的）。症状会是「一重启就没、手动起就好」。
+  if (process.connected) process.send?.({ type: READY_MESSAGE }, undefined, undefined, () => {});
+  // 握手完成后解除 IPC 对事件循环的持有——否则父进程退出前本进程无法自然结束。
+  process.channel?.unref();
 
   // 配置外部变更热重载（provider 不支持 watch 时为 no-op）。
   installConfigHotReload(app, opts.configSync);
