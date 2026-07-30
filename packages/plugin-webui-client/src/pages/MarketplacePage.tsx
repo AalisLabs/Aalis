@@ -407,11 +407,14 @@ export function MarketplacePage({
             </div>
 
             <div style={{ marginTop: 8 }}>
+              {/* 任一操作进行中就全禁：服务层是串行闸（一次一个），只锁当前卡片的话
+                  用户点得动别的卡片，却只会撞上后端的「有操作正在进行中」。 */}
               {!pkg.installed && (
                 <button
                   className="btn btn-primary btn-sm"
                   onClick={() => handleInstall(pkg.name, pkg.official)}
-                  disabled={installing === pkg.name}
+                  disabled={installing !== null}
+                  title={installing && installing !== pkg.name ? `请等待 ${installing} 处理完成` : undefined}
                 >
                   {installing === pkg.name ? '安装中...' : '安装'}
                 </button>
@@ -421,8 +424,12 @@ export function MarketplacePage({
                   className="btn btn-sm"
                   style={{ color: 'var(--danger)' }}
                   onClick={() => handleUninstall(pkg.name)}
-                  disabled={installing === pkg.name}
-                  title="卸载插件（删包 + 清配置）"
+                  disabled={installing !== null}
+                  title={
+                    installing && installing !== pkg.name
+                      ? `请等待 ${installing} 处理完成`
+                      : '卸载插件（删包 + 清配置）'
+                  }
                 >
                   {installing === pkg.name ? '处理中...' : '卸载'}
                 </button>

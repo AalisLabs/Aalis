@@ -383,6 +383,48 @@ export function findUnmetPeers(output: string, targetNames: readonly string[]): 
 export function createPackageManager(deps: PackageManagerDeps): PackageManagerService {
   const { proc, log } = deps;
 
+  /**
+   * 当前占用的操作描述；`null` = 空闲。
+   *
+   * install / uninstall / update 三者都会改**同一个**根 `package.json`，而 npm 的写法是
+   * 「读整份 → 改内存 → 整份写回」。并行时是经典的丢失更新：A 与 B 各自读到同一份旧内容，
+   * 后写者整份覆盖，先写者新增的那条依赖消失——包的文件却已经落进 node_modules。而
+   * `createNodeModulesPluginLoader` **只遍历根依赖的键、从不扫 node_modules 目录**，
+   * 于是那个包永远不会被加载：装成功了，重启后插件不见了，用户无从判断。
+   *
+   * 锁必须在**服务层**：本服务经 `ctx.provide` 公开，任何插件都能绕过 HTTP 路由直接调，
+   * 加在路由或前端都不算数。
+   */
+  let inflight: string | null = null;
+  /**
+   * 进程即将重启（update 成功后置位），此后**永不释放**锁。
+   *
+   * 重启不是立刻发生的（延迟 500ms + stop + spawn），这段窗口里若放新操作进来，
+   * 它会被 `process.exit` 腰斩在半路，留下半装状态。
+   */
+  let terminal = false;
+
+  /**
+   * 串行闸：占用中直接**拒绝**而非排队。
+   *
+   * 拒绝而非排队的决定性理由：update 成功后进程立即重启，排在它后面的操作必然被腰斩。
+   * 排队在这里是错的语义——「一次一个」才是这三个操作的真实约束，只是此前没人强制它。
+   */
+  async function exclusive<T extends { ok: boolean; message: string }>(
+    what: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    if (inflight) {
+      return { ok: false, message: `有包管理操作正在进行中（${inflight}），请稍候重试` } as T;
+    }
+    inflight = what;
+    try {
+      return await run();
+    } finally {
+      if (!terminal) inflight = null;
+    }
+  }
+
   /** 路径存在性：`test -d|-f <abs>`（不存在 → exit 1 → 抛 → false）。绝对路径，cwd 无关。 */
   async function pathExists(absPath: string, kind: 'd' | 'f'): Promise<boolean> {
     try {
@@ -593,6 +635,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // 回滚凭据交给重启策略：只有它能观察到「新实例 ready 前夭折」。插件级失败不在此列
     // ——插件起不来会停在 error 态且 WebUI 可见，自动回滚反而会掩盖问题。
     log.info(`更新完成，正在重启接管: ${specs.join(' ')}`);
+    // 置位后锁不再释放：重启是延迟发生的，这段窗口放新操作进来会被 process.exit 腰斩。
+    terminal = true;
     deps.restartApp({
       reason: `marketplace-update:${specs.join(',')}`,
       restore,
@@ -602,21 +646,26 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
   }
 
   return {
-    update: updateAll,
+    update: t => exclusive(`更新 ${t.map(x => x.name).join('、')}`, () => updateAll(t)),
 
-    async install(npmPkg) {
-      const layout = await detectLayout();
-      if (layout === 'workspace') return installWorkspace(npmPkg);
-      try {
-        return await installStandalone(npmPkg);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        log.error(`安装 "${npmPkg}" 失败: ${message}`);
-        return { ok: false, message };
-      }
-    },
+    install: npmPkg =>
+      exclusive(`安装 ${npmPkg}`, async () => {
+        const layout = await detectLayout();
+        if (layout === 'workspace') return installWorkspace(npmPkg);
+        try {
+          return await installStandalone(npmPkg);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          log.error(`安装 "${npmPkg}" 失败: ${message}`);
+          return { ok: false, message };
+        }
+      }),
 
-    async uninstall(pluginName) {
+    uninstall: pluginName => exclusive(`卸载 ${pluginName}`, () => uninstallOne(pluginName)),
+  };
+
+  async function uninstallOne(pluginName: string): Promise<{ ok: boolean; message: string }> {
+    {
       const dirName = pluginName.replace(/^@[^/]+\//, '');
       // 安全闸：dirName 必须是合法 npm 包段名——杜绝路径穿越（如 `../../x`）导致
       // `rm -rf packages/../../x` 删到 packages 外的任意目录。
@@ -651,8 +700,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
         const message = err instanceof Error ? err.message : String(err);
         return { ok: false, message };
       }
-    },
-  };
+    }
+  }
 }
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {

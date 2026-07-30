@@ -525,6 +525,99 @@ describe('update — 流程', () => {
   });
 });
 
+// ════════════════════════════════════════════════════════════
+// 串行闸
+//
+// install / uninstall / update 都改**同一个**根 package.json，而 npm 是「读整份 →
+// 改内存 → 整份写回」。并行 = 丢失更新：后写者整份覆盖，先写者新增的依赖消失，而包的
+// 文件已落进 node_modules —— 加载器只遍历根依赖的键、从不扫目录，那个包就此永不加载。
+//
+// 拒绝而非排队：update 成功后进程立即重启，排在后面的操作必然被腰斩在半路。
+// ════════════════════════════════════════════════════════════
+
+describe('串行闸（一次只允许一个包管理操作）', () => {
+  const rootPkgPath = `${ROOT}/package.json`;
+
+  /** 让 npm 命令挂起到我们放行为止，好制造「操作进行中」的窗口。 */
+  function gatedHarness() {
+    let release!: () => void;
+    const gate = new Promise<void>(r => {
+      release = r;
+    });
+    const h = makeHarness({
+      layout: 'standalone',
+      text: { [rootPkgPath]: '{"dependencies":{"foo":"^1.0.0","bar":"^1.0.0"}}' },
+    });
+    const orig = h.deps.proc.execFile;
+    h.deps.proc.execFile = (async (cmd: string, args: readonly string[], opts: unknown) => {
+      if (cmd === 'npm') await gate;
+      return (orig as (...a: unknown[]) => unknown)(cmd, args, opts);
+    }) as typeof h.deps.proc.execFile;
+    return { h, release };
+  }
+
+  it('安装进行中时，第二个安装被拒绝而非排队', async () => {
+    const { h, release } = gatedHarness();
+    const pm = createPackageManager(h.deps);
+    const first = pm.install('foo');
+    // 让第一个走到挂起的 npm 调用
+    await new Promise(r => setTimeout(r, 0));
+    const second = await pm.install('bar');
+    expect(second.ok).toBe(false);
+    expect(second.message).toContain('正在进行中');
+    release();
+    expect((await first).ok).toBe(true);
+  });
+
+  it('闸跨操作类型生效：安装进行中时卸载与更新同样被拒', async () => {
+    const { h, release } = gatedHarness();
+    const pm = createPackageManager(h.deps);
+    const first = pm.install('foo');
+    await new Promise(r => setTimeout(r, 0));
+    expect((await pm.uninstall('bar')).message).toContain('正在进行中');
+    expect((await pm.update([{ name: 'foo', version: '1.0.1' }])).message).toContain('正在进行中');
+    release();
+    await first;
+  });
+
+  it('操作结束后释放，后续可正常进行', async () => {
+    const { h, release } = gatedHarness();
+    const pm = createPackageManager(h.deps);
+    const first = pm.install('foo');
+    await new Promise(r => setTimeout(r, 0));
+    release();
+    await first;
+    const second = await pm.install('bar');
+    expect(second.ok).toBe(true); // 闸已放开
+  });
+
+  it('失败也释放：不会因一次报错就把闸永久卡死', async () => {
+    const h = makeHarness({
+      layout: 'standalone',
+      failOn: 'npm',
+      text: { [rootPkgPath]: '{"dependencies":{"foo":"^1.0.0"}}' },
+    });
+    const pm = createPackageManager(h.deps);
+    expect((await pm.install('foo')).ok).toBe(false);
+    const again = await pm.install('foo');
+    expect(again.message).not.toContain('正在进行中'); // 闸已释放，是真的又跑了一次
+  });
+
+  it('update 成功后**不释放**：重启是延迟发生的，此窗口内的新操作会被 process.exit 腰斩', async () => {
+    const h = makeHarness({
+      layout: 'standalone',
+      text: { [rootPkgPath]: '{"dependencies":{"foo":"^1.0.0"}}' },
+    });
+    const pm = createPackageManager(h.deps);
+    const r = await pm.update([{ name: 'foo', version: '1.0.1' }]);
+    expect(r.ok).toBe(true);
+    expect(r.restarting).toBe(true);
+    const after = await pm.install('bar');
+    expect(after.ok).toBe(false);
+    expect(after.message).toContain('正在进行中');
+  });
+});
+
 describe('uninstall', () => {
   it('删目录 + 从运行时移除(unload) + 清残留配置', async () => {
     const h = makeHarness({ exists: new Set([`${PKG_DIR}/foo`]) });
