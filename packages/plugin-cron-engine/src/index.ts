@@ -10,14 +10,8 @@
 // ============================================================
 
 import type { Context } from '@aalis/core';
-import {
-  type CronEngine,
-  type CronSubscribeOptions,
-  matchesCron,
-  normalizeCronExpr,
-  type ValidateResult,
-  validateCronExpr,
-} from '@aalis/plugin-cron-engine-api';
+import type { CronEngine, CronSubscribeOptions, ValidateResult } from '@aalis/plugin-cron-engine-api';
+import { matchesCron, normalizeCronExpr, validateCronExpr } from '@aalis/util-cron';
 
 export const name = '@aalis/plugin-cron-engine';
 export const displayName = 'Cron 调度引擎';
