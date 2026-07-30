@@ -11,7 +11,6 @@ import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
-import '@aalis/plugin-tools-api';
 import { formatImageSection, recognizeImages } from './doc-images.js';
 
 // ===== 插件元数据 =====

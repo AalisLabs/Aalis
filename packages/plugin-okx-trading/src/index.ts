@@ -10,7 +10,6 @@ import { registerOrderQueryTools } from './tools/orders.js';
 import { registerRubikTools } from './tools/rubik.js';
 import { registerTradeTools } from './tools/trade.js';
 import { registerTransferTools } from './tools/transfer.js';
-import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
 

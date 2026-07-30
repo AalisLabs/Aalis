@@ -18,7 +18,6 @@ import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 // 引入 plugin-tools-api 触发 declaration merging，使 ctx.registerTool 类型生效
-import '@aalis/plugin-tools-api';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 

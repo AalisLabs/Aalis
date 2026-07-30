@@ -7,8 +7,7 @@ import type { Message } from '@aalis/plugin-message-api';
 import { WellKnownKinds } from '@aalis/plugin-message-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
-import '@aalis/plugin-agent-api';
-import '@aalis/plugin-commands-api';
+import '@aalis/plugin-agent-api'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 
 // ════════════════════════════════════════════════════════════
 // plugin-user-profile — 用户事实档案

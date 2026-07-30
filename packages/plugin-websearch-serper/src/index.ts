@@ -5,7 +5,6 @@ import type { Message } from '@aalis/plugin-message-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { WebSearchRequest, WebSearchResponse, WebSearchResult, WebSearchService } from './types.js';
-import '@aalis/plugin-tools-api';
 
 export type {
   WebSearchRequest,

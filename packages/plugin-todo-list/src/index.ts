@@ -4,7 +4,6 @@ import type { MemoryService } from '@aalis/plugin-memory-api';
 import type {} from '@aalis/plugin-session-manager-api';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import { useToolService } from '@aalis/plugin-tools-api';
-import '@aalis/plugin-tools-api';
 import type {} from '@aalis/plugin-webui-api'; // PluginModule.actions 槽位的 merging 可见性
 
 // ===== 插件元数据 =====

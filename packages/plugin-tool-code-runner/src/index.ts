@@ -6,7 +6,6 @@ import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway, resolveAgainstCwd } from '@aalis/plugin-storage-api';
 import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
 import { type RunnerConfig, runCode } from './runner.js';
-import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
 
