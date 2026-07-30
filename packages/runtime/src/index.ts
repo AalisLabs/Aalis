@@ -18,7 +18,19 @@ export {
 export { type ConsoleSinkHandle, installConsoleSink } from './console-sink.js';
 export { appendCrashLog, DEFAULT_LOG_FILE, type FileLoggerHandle, setupFileLogger } from './file-logger.js';
 export { createNodeModulesPluginLoader } from './node-modules-loader.js';
-export { createFsPluginLoader, createFsYamlConfigProvider, createProcessRespawnStrategy } from './providers.js';
+export {
+  buildRespawnCommand,
+  createFsPluginLoader,
+  createFsYamlConfigProvider,
+  createProcessRespawnStrategy,
+  envKeysOwnedByFile,
+  isRestartRollback,
+  parseDotenvKeys,
+  parseEnvFileArgs,
+  READY_MESSAGE,
+  type RespawnOptions,
+  type RestartRollback,
+} from './providers.js';
 export { type StartAalisOptions, startAalis } from './start.js';
 export { tryDispatchSubcommand } from './subcommand.js';
 export { installTerminalStateRestorer, restoreTerminalState } from './terminal.js';
