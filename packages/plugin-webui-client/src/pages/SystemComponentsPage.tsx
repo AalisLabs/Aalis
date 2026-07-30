@@ -24,6 +24,12 @@ interface SystemComponent {
   request?: string;
   description?: string;
   kind: 'core' | 'runtime' | 'api' | 'schema' | 'util';
+  /**
+   * 是否可经市场更新（服务端按「根依赖里是否以 semver 范围声明」判定）。
+   * 传递依赖为 false：npm 会把它提升进根依赖并留下嵌套的第二份副本，
+   * 而插件运行时加载的仍是自己那份旧版——更新对它零效果，故不给按钮。
+   */
+  updatable?: boolean;
 }
 
 interface UpdateResult {
@@ -66,8 +72,9 @@ export function SystemComponentsPage({ onRestart }: { onRestart?: (msg: string) 
     refresh();
   }, [refresh]);
 
+  // updatable !== false：服务端未给该字段时（旧后端）保持可更新，不因升级前端而失能。
   const updatable = useMemo(
-    () => components.filter(c => c.latest && c.version && c.latest !== c.version),
+    () => components.filter(c => c.updatable !== false && c.latest && c.version && c.latest !== c.version),
     [components],
   );
 
@@ -163,7 +170,8 @@ export function SystemComponentsPage({ onRestart }: { onRestart?: (msg: string) 
 
       <div className="component-list">
         {components.map(c => {
-          const canUpdate = !!c.latest && !!c.version && c.latest !== c.version;
+          const hasNewer = !!c.latest && !!c.version && c.latest !== c.version;
+          const canUpdate = hasNewer && c.updatable !== false;
           return (
             <div key={c.name} className="component-row">
               <label className="component-pick">
@@ -189,7 +197,13 @@ export function SystemComponentsPage({ onRestart }: { onRestart?: (msg: string) 
                     <span className="component-latest">{c.latest}</span>
                   </>
                 )}
-                {!canUpdate && c.latest && <span className="component-uptodate">已是最新</span>}
+                {/* 有新版但不可更新 = 传递依赖：说清原因，别让用户以为是 bug */}
+                {hasNewer && !canUpdate && (
+                  <span className="component-transitive" title="由某个插件带入，不在根依赖中；单独升它只会装出第二份副本，请改为更新带入它的插件">
+                    随插件更新
+                  </span>
+                )}
+                {!hasNewer && c.latest && <span className="component-uptodate">已是最新</span>}
                 {!c.latest && <span className="component-unknown">版本未知</span>}
               </div>
             </div>

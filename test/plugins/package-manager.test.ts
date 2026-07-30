@@ -6,6 +6,7 @@ import {
   extractPeerConflicts,
   findUnmetPeers,
   hasWorkspaceProtocol,
+  isRegistryDep,
   layoutFromWorkspaceFile,
   type PackageManagerDeps,
   parsePackInfo,
@@ -201,6 +202,25 @@ describe('纯函数判据', () => {
     expect(declaresPlugin({ keywords: [] })).toBe(false);
     expect(declaresPlugin({})).toBe(false);
     expect(declaresPlugin(undefined)).toBe(false);
+  });
+
+  it('isRegistryDep：只认 registry 来源的 semver 范围', () => {
+    expect(isRegistryDep('^0.9.0')).toBe(true);
+    expect(isRegistryDep('0.9.0')).toBe(true);
+    expect(isRegistryDep('>=0.9.0 <1.0.0')).toBe(true);
+    expect(isRegistryDep('latest')).toBe(true);
+    // 传递依赖（不在根依赖里）——npm 会提升进根依赖并留下嵌套第二份
+    expect(isRegistryDep(undefined)).toBe(false);
+    expect(isRegistryDep('')).toBe(false);
+    // 非 registry 来源
+    expect(isRegistryDep('workspace:*')).toBe(false);
+    expect(isRegistryDep('file:../local')).toBe(false);
+    expect(isRegistryDep('link:../x')).toBe(false);
+    expect(isRegistryDep('portal:../y')).toBe(false);
+    expect(isRegistryDep('git+ssh://git@github.com/u/r.git')).toBe(false);
+    expect(isRegistryDep('https://example.com/a.tgz')).toBe(false);
+    expect(isRegistryDep('github:user/repo')).toBe(false);
+    expect(isRegistryDep('user/repo')).toBe(false);
   });
 
   it('stripVersion：剥版本保 scope', () => {
@@ -424,18 +444,51 @@ describe('update — 流程', () => {
     expect(restarts[0].restore[0].content).toContain('@aalis/core');
   });
 
-  it('无 lockfile 时只快照 package.json', async () => {
-    const restarts: Array<{ reason: string; restore: Array<{ path: string; content: string }> }> = [];
-    const h = makeHarness({ layout: 'standalone', text: { [rootPkgPath]: '{}' }, restarts });
+  it('无 lockfile 时把 lockfile 标记为「更新前不存在」（回滚要删而非写空）', async () => {
+    const restarts: Array<{ reason: string; restore: Array<{ path: string; deleteIfEmpty?: boolean }> }> = [];
+    const h = makeHarness({
+      layout: 'standalone',
+      text: { [rootPkgPath]: '{"dependencies":{"foo":"^1.0.0"}}' },
+      restarts,
+    });
     const r = await createPackageManager(h.deps).update([{ name: 'foo', version: '1.0.0' }]);
     expect(r.ok).toBe(true);
-    expect(restarts[0].restore.map(f => f.path)).toEqual([rootPkgPath]);
+    const lock = restarts[0].restore.find(f => f.path === lockPath);
+    // 留着这个 npm 新建的 lockfile 会让 postRestore 判定 up-to-date，把回滚变成谎话
+    expect(lock?.deleteIfEmpty).toBe(true);
+  });
+
+  it('拒绝更新传递依赖：npm 会提升进根依赖并留下嵌套第二份（两份 declare module 撞 TS2717）', async () => {
+    // 闸在服务层而非路由——服务经 ctx.provide 公开，插件能绕过前端直接调
+    const h = makeHarness({
+      layout: 'standalone',
+      text: { [rootPkgPath]: '{"dependencies":{"@aalis/plugin-agent":"^0.9.0"}}' },
+    });
+    const r = await createPackageManager(h.deps).update([{ name: '@aalis/schema-message', version: '0.6.0' }]);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('第二份副本');
+    expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false); // 一次 npm 都不发
+  });
+
+  it('拒绝更新非 registry 来源（file:/git 等）', async () => {
+    for (const spec of ['file:../local', 'link:../x', 'github:user/repo', 'https://example.com/a.tgz']) {
+      const h = makeHarness({
+        layout: 'standalone',
+        text: { [rootPkgPath]: JSON.stringify({ dependencies: { foo: spec } }) },
+      });
+      const r = await createPackageManager(h.deps).update([{ name: 'foo', version: '1.0.0' }]);
+      expect(r.ok, spec).toBe(false);
+      expect(
+        h.execCalls.some(c => c.cmd === 'npm'),
+        spec,
+      ).toBe(false);
+    }
   });
 
   it('预检失败 → 不改任何文件、不重启，返回冲突要点', async () => {
     const restarts: Array<never> = [];
     const h = okHarness({ failOn: 'npm', restarts });
-    const r = await createPackageManager(h.deps).update([{ name: 'foo', version: '1.0.0' }]);
+    const r = await createPackageManager(h.deps).update([{ name: '@aalis/core', version: '0.9.2' }]);
     expect(r.ok).toBe(false);
     expect(r.message).toContain('预检未通过');
     expect(h.execCalls.filter(c => c.cmd === 'npm')).toHaveLength(1); // 止于预检，没跑真装
