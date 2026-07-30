@@ -6,8 +6,6 @@ import { createStorageGateway, type StorageService } from '@aalis/plugin-storage
 import type { AccessChecker, SessionHistoryService } from '@aalis/plugin-tool-session-api';
 import type { ScopedToolService, ToolCallContext } from '@aalis/plugin-tools-api';
 import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
-import '@aalis/plugin-tool-session-api';
-import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
 
