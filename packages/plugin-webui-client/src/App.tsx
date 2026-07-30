@@ -3,7 +3,7 @@ import 'highlight.js/styles/github-dark-dimmed.css';
 
 import { api, getSessionId, pageAction } from './api';
 import type { LogEntry, SystemStatus, PluginInfo, ServiceInfo, WebuiPageDef, ContentSegment, ChatMessage, PageTab, TodoItem } from './types';
-import { IconDashboard, IconMarketplace, IconPluginConfig, IconPlatform, IconAuthority, IconLogs, IconFiles } from './icons';
+import { IconDashboard, IconMarketplace, IconPluginConfig, IconPlatform, IconAuthority, IconLogs, IconFiles, IconSystem } from './icons';
 import { useWebSocket } from './useWebSocket';
 import type { TokenUsageData } from './useWebSocket';
 import { useSessionManager } from './useSessionManager';
@@ -13,6 +13,7 @@ import { ChatPanel } from './pages/ChatPanel';
 
 const PluginConfigPage = lazy(() => import('./pages/PluginConfigPage').then(m => ({ default: m.PluginConfigPage })));
 const MarketplacePage = lazy(() => import('./pages/MarketplacePage').then(m => ({ default: m.MarketplacePage })));
+const SystemComponentsPage = lazy(() => import('./pages/SystemComponentsPage').then(m => ({ default: m.SystemComponentsPage })));
 const PlatformPage = lazy(() => import('./pages/PlatformPage').then(m => ({ default: m.PlatformPage })));
 const AuthorityPage = lazy(() => import('./pages/AuthorityPage').then(m => ({ default: m.AuthorityPage })));
 const LogPage = lazy(() => import('./pages/LogPage').then(m => ({ default: m.LogPage })));
@@ -695,6 +696,7 @@ export function App() {
   const builtinIconMap: Record<string, React.ReactNode> = {
     dashboard: <IconDashboard />,
     marketplace: <IconMarketplace />,
+    'system-components': <IconSystem />,
     'plugin-config': <IconPluginConfig />,
     platforms: <IconPlatform />,
     authority: <IconAuthority />,
@@ -744,6 +746,7 @@ export function App() {
     switch (renderer) {
       case 'dashboard': return <DashboardPage status={status} connected={connected} plugins={plugins} servicesData={servicesData} onRefreshServices={refreshServices} />;
       case 'marketplace': return <MarketplacePage plugins={plugins} onRefresh={refreshPlugins} />;
+      case 'system-components': return <SystemComponentsPage onRestart={(msg) => { setRestarting(true); setWasDisconnected(false); setRestartMessage(msg); }} />;
       case 'plugin-config': return <PluginConfigPage plugins={plugins} config={config} onRefresh={refreshPlugins} onConfigSaved={refreshConfig} onRestart={() => { setRestarting(true); setWasDisconnected(false); setRestartMessage('正在重启…'); }} />;
       case 'platforms': return <PlatformPage />;
       case 'authority': return <AuthorityPage />;

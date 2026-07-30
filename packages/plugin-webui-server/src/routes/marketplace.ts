@@ -15,6 +15,8 @@ const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 // 市场收录四类：功能插件 aalis-plugin / 工具库 aalis-util / 契约 aalis-api / 前端 aalis-interface。
 // npm search 的 keywords: 逗号分隔 = 任一命中（核心/工具链不带任何类型词，自然不进市场）。
 const AALIS_KEYWORDS = ['aalis-plugin', 'aalis-util', 'aalis-api', 'aalis-schema', 'aalis-interface'];
+/** 一次批量更新的目标上限：防误传超大数组把 npm 命令行撑爆。 */
+const MAX_UPDATE_TARGETS = 50;
 const SEARCH_TIMEOUT_MS = 8000;
 // 合法 npm 包名（可选 scope）+ 可选 @version 后缀（支持指定版本安装）。
 //
@@ -262,6 +264,61 @@ export function resolveLocalInfo(
   return undefined;
 }
 
+/**
+ * 读根 package.json 的 dependencies —— 来源判据与系统组件名单的唯一真相源。
+ * **每次调用重读**：安装/卸载/更新都会改写它，缓存会让页面显示陈旧来源。
+ */
+function readRootDependencies(): Record<string, string> {
+  try {
+    const root = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf-8')) as {
+      dependencies?: Record<string, string>;
+    };
+    return root.dependencies ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** 系统组件卡片：本地实况为准，`latest` 由按精确包名的 registry 查询补齐（拿不到则 undefined）。 */
+export interface SystemComponent {
+  name: string;
+  /** 本地已装版本 */
+  version?: string;
+  /** registry 上的最新版；与 version 不等即可更新。离线/查不到时 undefined。 */
+  latest?: string;
+  /** 根 package.json 里的依赖声明；不在根依赖里（传递依赖/工作区包）则 undefined。 */
+  request?: string;
+  description?: string;
+  /** 分类：内核 / 宿主 / 服务契约 / 数据规范 / 工具库 */
+  kind: 'core' | 'runtime' | 'api' | 'schema' | 'util';
+}
+
+/**
+ * 按 keywords 判定系统组件分类；非系统组件返回 undefined。
+ *
+ * `aalis-core` / `aalis-runtime` **故意不进 `AALIS_KEYWORDS`**——那个常量是 npm 检索轴，
+ * 而关键词是开放命名空间：任何人都能发一个带 `aalis-core` 关键词的包，在市场里拿到一张
+ * 「内核」卡片。本函数的输入只来自**本地已装包**的 keywords（不可伪造），关键词在这里
+ * 只作分类标注；版本查询按精确包名而非关键词搜索，故不存在冒名空间。纯函数，便于单测。
+ */
+export function classifySystemComponent(keywords: readonly string[] | undefined): SystemComponent['kind'] | undefined {
+  const kw = keywords ?? [];
+  if (kw.includes('aalis-core')) return 'core';
+  if (kw.includes('aalis-runtime')) return 'runtime';
+  if (kw.includes('aalis-api')) return 'api';
+  if (kw.includes('aalis-schema')) return 'schema';
+  if (kw.includes('aalis-util')) return 'util';
+  return undefined;
+}
+
+/** 组件排序：内核与宿主置顶（更新它们必须全量重启），其余按类型再按名。 */
+const SYSTEM_KIND_ORDER: Record<SystemComponent['kind'], number> = { core: 0, runtime: 1, api: 2, schema: 3, util: 4 };
+export function sortSystemComponents(list: SystemComponent[]): SystemComponent[] {
+  return [...list].sort(
+    (a, b) => SYSTEM_KIND_ORDER[a.kind] - SYSTEM_KIND_ORDER[b.kind] || a.name.localeCompare(b.name),
+  );
+}
+
 /** npm search 响应 → 市场卡片列表（标注已装 + 官方 + 富信息）。纯函数，便于单测。 */
 export function toMarketplacePackages(
   data: NpmSearchResponse,
@@ -368,17 +425,7 @@ export function registerMarketplaceRoutes(
     // 才能判「可更新」，否则已装包会显示成远端最新版而用户永远看不出落后。
     const localPkgs = getLocalPackages();
     const projectRequire = createRequire(pathToFileURL(resolve(process.cwd(), 'package.json')));
-    // 来源判据的唯一真相源：根 package.json 的依赖声明。每请求重读（安装/更新会改写它）。
-    const rootDeps = ((): Record<string, string> => {
-      try {
-        const root = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf-8')) as {
-          dependencies?: Record<string, string>;
-        };
-        return root.dependencies ?? {};
-      } catch {
-        return {};
-      }
-    })();
+    const rootDeps = readRootDependencies();
     /** 读本地 package.json。用 resolve+readFileSync 而非 require()：require 有模块缓存，更新后会返回旧版本号。 */
     const readPkgJson = (name: string) => {
       try {
@@ -431,6 +478,56 @@ export function registerMarketplaceRoutes(
       n => localOf(n) !== undefined,
     );
     res.json({ packages: toMarketplacePackages(merged, installed, localOf) });
+  });
+
+  // 系统组件：内核 / 宿主 / 契约 / 规范 / 工具库。**列表只来自本地实况**（已装包 + 根依赖表），
+  // 不走 npm 关键词检索——关键词是开放命名空间，任何人都能发一个带 aalis-core 关键词的包，
+  // 在市场里拿到一张「内核」卡片。版本查询按精确包名，故不存在冒名空间。
+  // 这一页只提供更新，无安装无卸载：它们要么随脚手架就位，要么是插件的依赖被自动带入。
+  expressApp.get('/api/system-components', gate(), async (_req, res) => {
+    const localPkgs = getLocalPackages();
+    const projectRequire = createRequire(pathToFileURL(resolve(process.cwd(), 'package.json')));
+    const rootDeps = readRootDependencies();
+    /** 候选名单：本地扫描到的 + 根依赖里声明的。两路并集才覆盖两种部署形态。 */
+    const candidates = new Set([...localPkgs.keys(), ...Object.keys(rootDeps)]);
+
+    const components: SystemComponent[] = [];
+    for (const name of candidates) {
+      let meta: { version?: string; keywords?: string[]; description?: string } | undefined;
+      try {
+        // readFileSync 而非 require()：require 有模块缓存，更新后会返回旧版本号。
+        meta = JSON.parse(readFileSync(projectRequire.resolve(`${name}/package.json`), 'utf-8'));
+      } catch {
+        continue; // resolve 不到（工作区源码目录里的包）——无版本可比，不进本页
+      }
+      const kind = classifySystemComponent(meta?.keywords);
+      if (!kind) continue;
+      components.push({
+        name,
+        version: meta?.version,
+        request: rootDeps[name],
+        description: meta?.description,
+        kind,
+      });
+    }
+
+    // 按精确包名并发查 latest；任何一条失败只让该行缺 latest（显示"—"），不拖垮整页。
+    const base = registryBase.replace(/\/+$/, '') || DEFAULT_REGISTRY;
+    await Promise.all(
+      components.map(async c => {
+        try {
+          const r = await fetch(`${base}/${c.name.replace('/', '%2F')}`, {
+            signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
+          });
+          if (!r.ok) return;
+          const p = (await r.json()) as { 'dist-tags'?: { latest?: string } };
+          c.latest = p['dist-tags']?.latest;
+        } catch {
+          /* 离线/镜像不支持：该行不显示可更新，不报错 */
+        }
+      }),
+    );
+    res.json({ components: sortSystemComponents(components) });
   });
 
   // 依赖图：本地 import 依赖图（name→deps 扫描）+ 运行时服务图（getStatus）合成，供装/卸/装前展示。
@@ -533,6 +630,38 @@ export function registerMarketplaceRoutes(
     }
     try {
       res.json(await pkgMgr.uninstall(name));
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // 批量更新：owner 级。**整批提交**，不是每张卡片各调一次——
+  // peer 冲突只有对整张版本映射一次预检才能发现，且重启次数恒为 1（与改了多少包无关）。
+  expressApp.post('/api/marketplace/update', gate(), async (req, res) => {
+    const raw = req.body?.targets;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      res.status(400).json({ error: 'targets 必须是非空数组' });
+      return;
+    }
+    if (raw.length > MAX_UPDATE_TARGETS) {
+      res.status(400).json({ error: `一次最多更新 ${MAX_UPDATE_TARGETS} 个包` });
+      return;
+    }
+    // 形状校验只做「是不是两个字符串」；包名/版本的安全校验在 package-manager 的
+    // buildUpdateSpecs 里统一做——那里是所有调用方（含直接拿服务的插件）的必经之路。
+    const targets = raw.map((t: unknown) => ({
+      name: typeof (t as { name?: unknown })?.name === 'string' ? (t as { name: string }).name : '',
+      version: typeof (t as { version?: unknown })?.version === 'string' ? (t as { version: string }).version : '',
+    }));
+    const pkgMgr = ctx.getService<PackageManagerService>('package-manager');
+    if (!pkgMgr) {
+      res.status(503).json({ error: 'package-manager 服务未启用，无法更新' });
+      return;
+    }
+    try {
+      const result = await pkgMgr.update(targets);
+      // 成功时进程即将重启：先把响应刷出去，否则客户端只会看到连接被切断。
+      res.json(result);
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
     }
