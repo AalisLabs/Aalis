@@ -18,19 +18,6 @@
 
 `package-manager` 按 `pnpm-workspace.yaml` 是否存在判别形态，两条分支各自走对应的安装语义。
 
-## 并发
-
-### `install` / `uninstall` / `update` 全程无互斥
-
-三者都会写同一个根 `package.json`，而路由层与服务层都没有锁。两个 `npm` 进程并发时后写覆盖先写，
-依赖声明被静默丢弃；卸载与安装并发时，卸载掉的包可能被并行安装的那次写回。
-
-前端只对当前卡片禁用按钮（`packages/plugin-webui-client/src/pages/MarketplacePage.tsx` 的
-`disabled={installing === pkg.name}` 是单值 state），点了 A 立刻能点 B。
-
-修法：在 `createPackageManager` 内加一把串行锁（同一服务实例内所有写操作排队）。注意锁要覆盖
-`update`——它的预检与真装之间有窗口，期间若有 `install` 插入，装出来的树与预检过的不是同一张。
-
 ## 安全
 
 ### 禁卸 core / runtime
@@ -98,6 +85,7 @@ required 依赖缺失的新插件停在 pending，等提供者装上后自动补
 | 无更新入口（卡片显示「可更新 vX」但无动作） | 系统组件页的批量勾选 + 「更新所选」 |
 | 重启丢 `execArgv`、不验证子进程、`stop()` reject 成僵尸态 | 见 `packages/runtime/src/providers.ts` 的 `createProcessRespawnStrategy` |
 | 更新 core / runtime 不可逆 | IPC ready 握手；新实例 ready 前夭折则还原 `package.json` + lockfile 并重生旧版 |
+| `install` / `uninstall` / `update` 无互斥（丢失更新） | `createPackageManager` 内的串行闸，占用中**拒绝**而非排队 |
 
 ### 更正：`--strict-peer-deps` 并不能把 warn-override 变成硬失败
 
