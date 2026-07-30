@@ -49,7 +49,7 @@ export interface UpdateTarget {
 export interface UpdateResult {
   ok: boolean;
   message: string;
-  /** 预检失败时的逐条冲突说明（npm --strict-peer-deps 的报告摘要），供前端直接展示。 */
+  /** 预检失败时的逐条冲突说明（npm dry-run 的报告摘要），供前端直接展示。 */
   conflicts?: string[];
   /** 本次是否会重启进程。ok 且 restarting 时前端应进入「等待重连」状态。 */
   restarting?: boolean;
@@ -91,9 +91,20 @@ async function execProc(
   cwd: string,
   timeout: number = QUICK_TIMEOUT_MS,
 ): Promise<string> {
+  return (await execProcBoth(proc, cmd, args, cwd, timeout)).stdout;
+}
+
+/** 同 {@link execProc}，但同时给出 stderr——npm 的诊断（含 peer 告警）都写在 stderr。 */
+async function execProcBoth(
+  proc: ProcessService,
+  cmd: string,
+  args: string[],
+  cwd: string,
+  timeout: number = QUICK_TIMEOUT_MS,
+): Promise<{ stdout: string; stderr: string }> {
   try {
     const result: ExecResult = await proc.execFile(cmd, args, { cwd, timeout });
-    return result.stdout;
+    return { stdout: result.stdout, stderr: result.stderr ?? '' };
   } catch (err) {
     const withResult = err as { result?: ExecResult } & Error;
     const stderr = withResult.result?.stderr ?? '';
@@ -309,16 +320,38 @@ export function buildUpdateSpecs(targets: readonly UpdateTarget[]): { specs?: st
 }
 
 /**
- * 从 npm 的失败输出里摘出 peer 冲突要点，供前端直接展示。
- *
- * `--strict-peer-deps` 把 npm 原本「只 warn 就装」的 peer 覆盖变成硬失败——正是我们
- * 需要的：core 被根显式指定时 npm 默认只 warn 且 exit 0，照样把 core 换掉。
- * 纯函数，便于单测。
+ * 从 npm 的失败输出里摘出冲突要点，供前端直接展示。纯函数，便于单测。
  */
 export function extractPeerConflicts(output: string): string[] {
   const lines = output.split('\n');
   const picked = lines.filter(l => /ERESOLVE|peer |Conflicting peer|Found:|Could not resolve/i.test(l));
   return picked.map(l => l.replace(/^npm (ERR!|error|warn)\s*/i, '').trim()).filter(l => l.length > 0);
+}
+
+/**
+ * 从 **成功**（exit 0）的 dry-run 输出里找出因本次目标而无法满足的 peer 依赖。
+ *
+ * 为什么不能只靠退出码——已实测（npm 10.9.2）：
+ * - 「装一个新包、其 peer 不满足」→ npm 本就 exit 1，`--strict-peer-deps` 无增量价值；
+ * - 「**改一个已被别人 peer 依赖的包的版本**」（正是更新 core 的形状）→ npm 把命令行上
+ *   显式指定的 spec 当作用户意图，**只打 warn 且 exit 0**，`--strict-peer-deps` 同样不生效，
+ *   把目标版本先写进 package.json 再裸装也一样。
+ *
+ * 而它确实会在 stderr 打出 `peer <name>@"<range>" from <dependent>`。只认**提到本次目标**
+ * 的那些行：工程里原有的、与本次无关的未满足 peer 不该阻断更新。
+ */
+export function findUnmetPeers(output: string, targetNames: readonly string[]): string[] {
+  const names = new Set(targetNames);
+  // npm 会把同一条 peer 冲突在不同上下文里重复打印，去重后再给用户。
+  const out = new Set<string>();
+  for (const raw of output.split('\n')) {
+    const line = raw.replace(/^npm (ERR!|error|warn)\s*/i, '').trim();
+    const m = /^peer\s+(\S+?)@"([^"]+)"\s+from\s+(.+)$/.exec(line);
+    if (!m) continue;
+    if (!names.has(m[1])) continue;
+    out.add(`${m[3]} 需要 ${m[1]}@${m[2]}`);
+  }
+  return [...out];
 }
 
 /**
@@ -457,8 +490,14 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // ── 预检：整组一次，不逐个 ──
     // 逐个预检发现不了「A@new 要 core>=0.10、B@new 要 core<0.10」这类只在合并时冲突的组合。
     log.info(`更新预检: ${specs.join(' ')}`);
+    const reject = (conflicts: string[]): UpdateResult => ({
+      ok: false,
+      message: '依赖预检未通过，未改动任何文件。若是 peer 版本要求，请把被依赖方一并勾选后重试。',
+      conflicts,
+    });
+    let preflight: { stdout: string; stderr: string };
     try {
-      await execProc(
+      preflight = await execProcBoth(
         proc,
         'npm',
         ['install', ...specs, '--strict-peer-deps', '--dry-run', '--no-audit', '--no-fund'],
@@ -468,12 +507,15 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
       const conflicts = extractPeerConflicts(raw);
-      return {
-        ok: false,
-        message: '依赖预检未通过，未改动任何文件。若是 peer 版本要求，请把被依赖方一并勾选后重试。',
-        conflicts: conflicts.length > 0 ? conflicts : [raw.slice(0, 2000)],
-      };
+      return reject(conflicts.length > 0 ? conflicts : [raw.slice(0, 2000)]);
     }
+    // 退出码 0 **不代表没冲突**：npm 对命令行显式指定的 spec 只 warn 就放行（实测见
+    // findUnmetPeers 的注释），而更新 core 恰好就是这个形状。必须再查输出。
+    const unmet = findUnmetPeers(
+      `${preflight.stderr}\n${preflight.stdout}`,
+      targets.map(t => t.name),
+    );
+    if (unmet.length > 0) return reject(unmet);
 
     // ── 快照：预检过了才有必要 ──
     // lockfile 与 package.json 必须一起回退，否则还原后的树是「声明旧版、锁定新版」。

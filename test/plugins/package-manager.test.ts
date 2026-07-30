@@ -4,6 +4,7 @@ import {
   createPackageManager,
   declaresPlugin,
   extractPeerConflicts,
+  findUnmetPeers,
   hasWorkspaceProtocol,
   layoutFromWorkspaceFile,
   type PackageManagerDeps,
@@ -348,6 +349,37 @@ describe('update — 参数校验（纯函数）', () => {
         { name: 'foo', version: '2.0.0' },
       ]).error,
     ).toContain('多次');
+  });
+
+  // ── 退出码不够用 ──
+  // 实测 npm 10.9.2：「改一个已被别人 peer 依赖的包的版本」（正是更新 core 的形状）
+  // 只打 warn 且 exit 0，--strict-peer-deps 也不生效。必须再查 dry-run 的输出。
+  it('findUnmetPeers 从 exit 0 的 dry-run 输出里揪出与目标相关的未满足 peer', () => {
+    const out = [
+      'npm warn Could not resolve dependency:',
+      'npm warn peer react@"^18.3.1" from react-dom@18.3.1',
+      'npm warn node_modules/react-dom',
+      'change react 18.3.1 => 17.0.2',
+    ].join('\n');
+    expect(findUnmetPeers(out, ['react'])).toEqual(['react-dom@18.3.1 需要 react@^18.3.1']);
+  });
+
+  it('findUnmetPeers 只认与本次目标相关的：工程里原有的无关未满足 peer 不该阻断更新', () => {
+    const out = 'npm warn peer other-lib@"^1.0.0" from someone@2.0.0';
+    expect(findUnmetPeers(out, ['react'])).toEqual([]);
+  });
+
+  it('findUnmetPeers 去重（npm 会在不同上下文重复打印同一条）', () => {
+    const out = [
+      'npm warn peer react@"^18.3.1" from react-dom@18.3.1',
+      'npm warn peer react@"^18.3.1" from react-dom@18.3.1',
+    ].join('\n');
+    expect(findUnmetPeers(out, ['react'])).toHaveLength(1);
+  });
+
+  it('findUnmetPeers 对无 peer 行的正常输出返回空', () => {
+    expect(findUnmetPeers('added 1 package in 200ms', ['react'])).toEqual([]);
+    expect(findUnmetPeers('', ['react'])).toEqual([]);
   });
 
   it('extractPeerConflicts 摘出要点并剥掉 npm 前缀', () => {
