@@ -68,49 +68,18 @@ required 依赖缺失的新插件停在 pending，等提供者装上后自动补
   的 `webui-client` 下拉里，必须重启。应提成幂等函数供安装成功后复用（重复
   `fork().provide()` 会在容器里堆同名重复项，幂等是硬要求）。
 
-## 已实现
+## 已实现（勿按旧描述施工）
 
-以下条目已落地，保留在此仅供追溯，勿再按旧描述施工：
+安装（双形态）、卸载、批量更新、peer 预检、系统组件页、回滚、串行闸均已落地。机制与实测
+数据写在代码注释里（`plugin-package-manager/src/index.ts`、`runtime/src/providers.ts`），
+回归测试见 `test/integration/install-chain.test.ts`（真跑 npm）。
 
-| 原缺陷 | 现状 |
-|---|---|
-| 脚手架部署下安装无效（写不进根依赖，死目录 + 假成功） | 按形态分支，standalone 走 `npm install` 写根依赖 |
-| 卸载只 dispose 运行时实例，重启后插件复活 | standalone 走 `npm uninstall` 摘根依赖 |
-| 未发现新插件仍返回 `ok` | 判据改为「目标是否进了运行时注册表」；非插件包（如 `aalis-interface`）正常成功 |
-| 超时按 `npm pack` 定，对 `npm install` 不足 | 安装类命令 600s，短命令仍 120s |
-| 升级已装插件不生效（`rescanPlugins` 跳过已注册） | 新增 `update(targets)`：整组预检 → 一次安装 → 一次重启 |
-| 更新无拓扑序 | 一次 `npm install` 提交整张版本映射，重启次数恒为 1 |
-| peer 兼容门禁（npm 只 warn 就把 core 换掉） | dry-run 预检 + **解析输出**判定，冲突则整批拒绝且不改文件（见下方更正） |
-| core / runtime 检索不到 | 独立的「系统组件」页，数据源是本地已装 + 根依赖表，只提供更新 |
-| 无更新入口（卡片显示「可更新 vX」但无动作） | 系统组件页的批量勾选 + 「更新所选」 |
-| 重启丢 `execArgv`、不验证子进程、`stop()` reject 成僵尸态 | 见 `packages/runtime/src/providers.ts` 的 `createProcessRespawnStrategy` |
-| 更新 core / runtime 不可逆 | IPC ready 握手；新实例 ready 前夭折则还原 `package.json` + lockfile 并重生旧版 |
-| `install` / `uninstall` / `update` 无互斥（丢失更新） | `createPackageManager` 内的串行闸，占用中**拒绝**而非排队 |
+一处旧论断需注意：本文曾写「`--strict-peer-deps` 可把 warn-override 变成硬失败」，**这是错的**
+（实测 npm 10.9.2：改「已被别人 peer 依赖的包」的版本时只 warn 且 exit 0）。现行判据是
+解析 dry-run 输出，见 `findUnmetPeers` 的注释。
 
-### 更正：`--strict-peer-deps` 并不能把 warn-override 变成硬失败
-
-本文旧版写着「`--strict-peer-deps` 可把上述 warn-override 变成硬失败 —— 一次性判定一组
-目标版本是否互相兼容，不需要自研版本求解算法」。**这句话是错的**，实施时照搬后被端到端
-验证抓出来。实测（npm 10.9.2，基线 `react@18.3.1` + `react-dom@18.3.1`，后者 peer 要
-`react@^18.3.1`）：
-
-| 方向 | 不带 strict | 带 `--strict-peer-deps` |
-|---|---|---|
-| 装一个新包、其 peer 不满足（`npm i react-dom@18` 而已有 `react@17`） | exit 1 | exit 1（**无增量价值**） |
-| **改一个已被别人 peer 依赖的包的版本**（`npm i react@17`）——正是更新 core 的形状 | exit 0 | **exit 0，无效** |
-
-把目标版本先写进 `package.json` 再裸装，同样 exit 0。npm 把命令行上显式指定的 spec 视为
-用户意图，只打 warn 就放行。
-
-但它确实会在 **stderr** 打出 `peer <name>@"<range>" from <dependent>`。现行实现因此是
-「dry-run + 解析输出」：只认**提到本次目标**的那些行（工程里原有的无关未满足 peer 不该
-阻断更新），命中即整批拒绝。`--strict-peer-deps` 仍然保留，但不再作为唯一判据。
-
-**热升级（`import(url + '?t=…')`）已决定不做。** 理由：它只让入口模块重新求值，同包兄弟文件
-与全部依赖仍命中旧 ESM 缓存，而一方插件约三分之一是多文件 tsc dist，对它们要么无效、要么造成
-同包内「新 `index.js` + 旧 `helpers.js`」混版；判据（改动包集合 ⊆ 目标插件）还要依赖解析
-`npm install --json` 的输出。而重启路径无论如何都必须做对（core / runtime 更新只能重启），
-做对之后插件升级复用它是零边际成本。升级是低频操作，几秒中断可接受。
+**热升级（`import(url + '?t=…')`）已决定不做**：只重新求值入口模块，多文件 dist 会混版；
+而重启路径本就必须做对（core / runtime 只能重启），做对后插件升级复用它零边际成本。
 
 ## 相关文档
 
