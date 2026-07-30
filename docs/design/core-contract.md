@@ -91,7 +91,7 @@ runtime 抬到 `>=0.9.0 <1.0.0`）。
 **版本号语义**：core 在 1.0 之前，次版本（0.x.0）可含破坏性变更并在发布说明中列出迁移路径；
 补丁版本（0.x.y）只做修复与加法。1.0 之后按标准 semver。
 
-**禁 caret，一律用宽区间**：`@aalis/core` 的 peerDep 用 `>=x.y.z <1.0.0`；`@aalis/plugin-config-api`
+**禁 caret，一律用宽区间**：`@aalis/core` 的 peerDep 用 `>=x.y.z <1.0.0`；`@aalis/schema-config`
 被五十余个包依赖，同样用 `workspace:>=0.9.0 <1.0.0`（发布时原样保留）。0.x 的 caret 锁死 minor——
 用了 caret，被依赖包加一个词汇就会让所有已发布消费者拒收新版，node_modules 里出现两份副本，
 而 declaration merging 按模块副本生效，扩展点的合并面会就此裂开。

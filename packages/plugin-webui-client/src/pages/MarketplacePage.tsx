@@ -19,8 +19,8 @@ interface MarketPkg {
   author?: string;
   installed: boolean;
   official?: boolean;
-  /** 组件类别（后端按类型关键词分类）：功能插件 / api 契约 / 前端界面 / 工具库 */
-  category?: 'plugin' | 'api' | 'interface' | 'util';
+  /** 组件类别（后端按类型关键词分类）：功能插件 / api 契约 / 数据规范 / 前端界面 / 工具库 */
+  category?: 'plugin' | 'api' | 'schema' | 'interface' | 'util';
   keywords?: string[];
   downloads?: number;
   updated?: string;
@@ -44,7 +44,7 @@ const ORIGIN_BADGE: Record<Exclude<PkgOrigin, 'registry'>, { label: string; hint
 type SortKey = 'relevance' | 'downloads' | 'updated' | 'score';
 type Source = 'all' | 'official' | 'community';
 type Status = 'all' | 'installed' | 'available';
-type Category = 'all' | 'plugin' | 'api' | 'interface' | 'util';
+type Category = 'all' | 'plugin' | 'api' | 'schema' | 'interface' | 'util';
 
 const SORT_LABELS: Record<SortKey, string> = {
   relevance: '默认排序',
@@ -58,6 +58,7 @@ const CATEGORY_LABELS: Record<Category, string> = {
   all: '全部类型',
   plugin: '功能插件',
   api: 'API 契约',
+  schema: '数据规范',
   interface: '前端界面',
   util: '工具库',
 };

@@ -16,9 +16,9 @@ import type {
   MediaService,
   TranscribeOptions,
 } from '@aalis/plugin-media-api';
-import type { IncomingMessage, MessageAttachment } from '@aalis/plugin-message-api';
-import { AttachmentRefKind, formatAttachmentRef } from '@aalis/plugin-message-api';
 import { isStorageUri, parseUriRoot } from '@aalis/plugin-storage-api';
+import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
+import { AttachmentRefKind, formatAttachmentRef } from '@aalis/schema-message';
 import { lookupCachedDescription, rememberDescription } from './cache.js';
 import { buildIncomingImageContext } from './context.js';
 import {

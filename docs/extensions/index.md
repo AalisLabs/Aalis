@@ -52,7 +52,7 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 
 | api 包 | 注入的事件键 |
 |---|---|
-| [@aalis/plugin-message-api](packages/plugin-message-api/src/index.ts) | `inbound:message` / `inbound:message:archived` / `outbound:message` / `outbound:stream` |
+| [@aalis/schema-message](packages/schema-message/src/index.ts) | `inbound:message` / `inbound:message:archived` / `outbound:message` / `outbound:stream` |
 | [@aalis/plugin-gateway-api](packages/plugin-gateway-api/src/index.ts) | `gateway:phase:done` |
 | [@aalis/plugin-tools-api](packages/plugin-tools-api/src/index.ts) | `tool:execute` |
 | [@aalis/plugin-session-manager-api](packages/plugin-session-manager-api/src/index.ts) | `session:*` |
@@ -98,7 +98,7 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 应用根配置的字段表。core 只声明**自身管理的字段**（`logLevel` / `logBufferSize` / `dataDir`...），
 业务字段由 plugin-*-api 通过 declaration merging 注入。
 
-**位置**：[packages/plugin-config-api/src/index.ts](packages/plugin-config-api/src/index.ts)（`CORE_CONFIG_SCHEMA`）
+**位置**：[packages/schema-config/src/index.ts](packages/schema-config/src/index.ts)（`CORE_CONFIG_SCHEMA`）
 
 **扩展者**：
 

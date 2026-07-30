@@ -9,7 +9,7 @@ import {
   ServiceContainer,
 } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
-import type { Message } from '../../packages/plugin-message-api/src/index.js';
+import type { Message } from '../../packages/schema-message/src/index.js';
 
 // 测试直接从 core 源码路径导入，agent-api 对 '@aalis/core' 的 declaration
 // merging 不在此路径生效——vitest 不做类型检查，用 never 断言绕过键约束。

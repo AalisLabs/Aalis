@@ -25,7 +25,6 @@
     "dev": "vite"
   },
   "dependencies": {
-    "@aalis/util-text-normalize": "workspace:>=0.5.1 <1.0.0",
     "cytoscape": "^3.33.4",
     "cytoscape-fcose": "^2.2.0",
     "highlight.js": "^11.11.1",
@@ -41,6 +40,7 @@
     "remark-math": "^6.0.0"
   },
   "devDependencies": {
+    "@aalis/util-text-normalize": "workspace:*",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",

@@ -1,9 +1,9 @@
 import type { Context, PluginModule } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { createProcessGateway } from '@aalis/plugin-process-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
+import type { ConfigSchema } from '@aalis/schema-config';
 import { assertSafeHost, isPrivateHost } from '@aalis/util-network-guard';
 
 // ════════════════════════════════════════════════════════════

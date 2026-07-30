@@ -13,7 +13,7 @@
 // 由 core fallback 入站路由直接派发给 agent。
 
 import type { AgentService } from '@aalis/plugin-agent-api';
-import type { IncomingMessage, OutgoingMessage } from '@aalis/plugin-message-api';
+import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
 
 /**
  * 入站相位共享数据结构

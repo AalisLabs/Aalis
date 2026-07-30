@@ -304,7 +304,7 @@ scope 先拆掉 satori 服务，`Bot.dispose()` 里 `this.ctx.bots` 已是 `unde
 | 消息出 | 转 `OutgoingMessage` | 覆写 `Bot#createMessage` |
 | 生命周期 | 插件 `apply` 建 Context、`ctx.onDispose` 拆 | 先拆 bot fork，再 `ctx.stop()` |
 
-`inbound:message` / `OutgoingMessage` 的定义在 `packages/plugin-message-api/src/index.ts:246`
+`inbound:message` / `OutgoingMessage` 的定义在 `packages/schema-message/src/index.ts:246`
 （`OutgoingMessage`）与 `:299`（事件签名）。插件的 `apply(ctx, config)` 契约见
 `packages/core/src/types/plugin.ts:60`，`ctx.onDispose` 见 `packages/core/src/context.ts:595`。
 

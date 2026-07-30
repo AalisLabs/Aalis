@@ -16,9 +16,9 @@
  * - view.*：WebUI / actions 查询用，给人看，可中等深度。
  */
 import type { Context, PluginModule } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import { useWebuiService, type WebuiPage } from '@aalis/plugin-webui-api';
+import type { ConfigSchema } from '@aalis/schema-config';
 import { actions as baseActions } from './actions.js';
 import { registerRelationCommands } from './commands.js';
 import { RelationExtractor } from './extractor.js';

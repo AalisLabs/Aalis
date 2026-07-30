@@ -1,11 +1,11 @@
 import type { Context, PluginModule } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { useCronEngine } from '@aalis/plugin-cron-engine-api';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
 import { createStorageGateway, toStorageUri } from '@aalis/plugin-storage-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
+import type { ConfigSchema } from '@aalis/schema-config';
+import type { IncomingMessage } from '@aalis/schema-message';
 import { parseEverySeconds } from '@aalis/util-cron';
 
 // ════════════════════════════════════════════════════════════

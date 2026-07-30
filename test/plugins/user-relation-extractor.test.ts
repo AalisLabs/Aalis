@@ -3,11 +3,11 @@ import { describe, expect, it } from 'vitest';
 import type { ChatModelRequest, ChatResponse, LLMModel } from '../../packages/plugin-llm-api/src/index.js';
 import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import type { Message } from '../../packages/plugin-message-api/src/index.js';
 import type { ExtractorConfig } from '../../packages/plugin-user-relation/src/extractor.js';
 import { EXTRACTOR_CONFIG_DEFAULTS, RelationExtractor } from '../../packages/plugin-user-relation/src/extractor.js';
 import { RelationService } from '../../packages/plugin-user-relation/src/service.js';
 import { RelationStore } from '../../packages/plugin-user-relation/src/store.js';
+import type { Message } from '../../packages/schema-message/src/index.js';
 
 /**
  * ExtractorConfig 中测试用例普遍不关心的字段，统一从 extractor.ts 导出的单一真源
