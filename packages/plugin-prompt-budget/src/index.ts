@@ -14,7 +14,6 @@ import type { Context } from '@aalis/core';
 import type { TokenUsageEvent } from '@aalis/plugin-agent-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import { createBoundedMap } from '@aalis/util-bounded-map';
-import '@aalis/plugin-tools-api';
 
 export const name = '@aalis/plugin-prompt-budget';
 export const displayName = 'Prompt 预算自检';

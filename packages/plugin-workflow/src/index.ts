@@ -12,7 +12,6 @@ import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 // 引入 plugin-webui-api 的副作用以激活 PluginModule.extends/subsystem 类型增广
-import '@aalis/plugin-webui-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
 import type { NodeRunInfo, WorkflowRun, WorkflowService } from '@aalis/plugin-workflow-api';

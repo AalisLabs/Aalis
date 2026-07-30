@@ -20,7 +20,7 @@
 
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/plugin-config-api';
-import '@aalis/plugin-agent-api';
+import '@aalis/plugin-agent-api'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import type { MemoryService, RecentMessageRecord } from '@aalis/plugin-memory-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 

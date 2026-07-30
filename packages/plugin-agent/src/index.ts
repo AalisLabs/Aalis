@@ -13,8 +13,6 @@ import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-person
 import { getPlatformSelfIdentity } from '@aalis/plugin-platform-api';
 import type { SessionConfig, SessionManagerService } from '@aalis/plugin-session-manager-api';
 import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/plugin-tools-api';
-import { assemblePromptContributions } from './prompt-assembly.js';
-import '@aalis/plugin-commands-api';
 import { normalizeAssistantContent, stripLeakedSpecialTokens, truncateChars } from '@aalis/util-text-normalize';
 import {
   buildFocusGuidance,
@@ -25,6 +23,7 @@ import {
   INPUT_CONVENTIONS,
   isSameMessage,
 } from './helpers.js';
+import { assemblePromptContributions } from './prompt-assembly.js';
 
 /**
  * 默认 Agent 实现 —— 对话编排器

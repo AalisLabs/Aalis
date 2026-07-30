@@ -5,7 +5,6 @@ import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
 import { assertSafeHost, isPrivateHost } from '@aalis/util-network-guard';
-import '@aalis/plugin-tools-api';
 
 // ════════════════════════════════════════════════════════════
 // plugin-tool-browser — 浏览器自动化工具

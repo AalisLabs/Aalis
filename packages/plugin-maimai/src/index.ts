@@ -5,7 +5,6 @@ import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
 

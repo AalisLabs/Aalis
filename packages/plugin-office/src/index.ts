@@ -8,7 +8,6 @@ import { registerDocxTools } from './tools/docx.js';
 import { registerPdfTools } from './tools/pdf.js';
 import { registerPptTools } from './tools/pptx.js';
 import { registerExcelTools } from './tools/xlsx.js';
-import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
 
