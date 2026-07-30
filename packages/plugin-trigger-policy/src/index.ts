@@ -1,9 +1,9 @@
 import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { FlowControlService } from '@aalis/plugin-flow-control-api';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
+import type { ConfigSchema } from '@aalis/schema-config';
+import type { IncomingMessage } from '@aalis/schema-message';
 import type { TriggerDecision, TriggerPolicyService } from './types.js';
 
 export type { TriggerDecision, TriggerKind, TriggerPolicyService } from './types.js';

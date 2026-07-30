@@ -1,8 +1,8 @@
 import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { createProcessGateway } from '@aalis/plugin-process-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
 import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
+import type { ConfigSchema } from '@aalis/schema-config';
 import { DocSessionManager } from './session.js';
 import { registerDocxTools } from './tools/docx.js';
 import { registerPdfTools } from './tools/pdf.js';

@@ -19,9 +19,9 @@
 import type { Context } from '@aalis/core';
 import { LLMCapabilities, type LLMModel, type ModelRef, resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService, RecentMessageRecord } from '@aalis/plugin-memory-api';
-import type { Message } from '@aalis/plugin-message-api';
-import { WellKnownKinds } from '@aalis/plugin-message-api';
 import { getPlatformNames } from '@aalis/plugin-platform-api';
+import type { Message } from '@aalis/schema-message';
+import { WellKnownKinds } from '@aalis/schema-message';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
 import type { RelationService } from './service.js';
 import type {

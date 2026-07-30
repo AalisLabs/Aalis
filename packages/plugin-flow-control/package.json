@@ -28,14 +28,14 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/plugin-config-api": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
     "@aalis/plugin-flow-control-api": "workspace:>=0.5.0 <1.0.0",
     "@aalis/plugin-gateway-api": "workspace:>=0.5.0 <1.0.0",
-    "@aalis/plugin-message-api": "workspace:>=0.5.1 <1.0.0",
     "@aalis/plugin-storage-api": "workspace:>=0.5.5 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
+    "@aalis/schema-message": "workspace:*",
     "@aalis/plugin-message-archive-api": "workspace:*",
     "@aalis/plugin-webui-api": "workspace:*",
     "@types/node": "^22.0.0",

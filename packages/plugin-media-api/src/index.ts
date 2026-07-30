@@ -6,12 +6,12 @@
 // （任意声明了 vision / audio 能力的 LLM 都自动暴露为对应 processor）。
 // 真正"非 LLM"的 backend（如 whisper.cpp / 云 ASR）则注册为独立 processor。
 //
-// 依赖：仅 @aalis/core 与 @aalis/plugin-message-api。
+// 依赖：仅 @aalis/core 与 @aalis/schema-message。
 // ============================================================
 
 import type { Context } from '@aalis/core';
 import type { ModelRef } from '@aalis/plugin-llm-api';
-import type { IncomingMessage, MessageAttachment } from '@aalis/plugin-message-api';
+import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
 
 /** 媒体能力枚举（与 LLM Capability 互不重叠：LLM 描述模型能力，Media 描述处理动作） */
 export type MediaCapability =

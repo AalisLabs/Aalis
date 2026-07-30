@@ -6,7 +6,7 @@
 
 import type { Context } from '@aalis/core';
 import type { UserIdentity } from '@aalis/plugin-authority-api';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
+import type { ConfigSchema } from '@aalis/schema-config';
 
 /**
  * WebUI 服务 —— Web 管理后台
@@ -203,7 +203,7 @@ declare module '@aalis/core' {
   }
 }
 
-declare module '@aalis/plugin-config-api' {
+declare module '@aalis/schema-config' {
   /**
    * WebUI 表单交互属性 —— 由本包注入（config-api 的 SchemaField 只声明各宿主共需字段）。
    * 这些属性只被 WebUI 配置表单消费；其他宿主可以忽略。

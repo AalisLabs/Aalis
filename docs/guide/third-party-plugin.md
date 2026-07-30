@@ -144,7 +144,7 @@ for (const root of roots) {
 
 ```ts
 import type { Context, PluginModule } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
+import type { ConfigSchema } from '@aalis/schema-config';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret 等）
 
 // ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArray>；
@@ -165,11 +165,11 @@ export default {
 ```
 
 > `secret`（以及 `dynamicOptions` / `allowCustom` 等表单属性）不是 `SchemaField` 的自带字段——
-> `@aalis/plugin-config-api` 只声明各宿主共需的中立字段（`type` / `label` / `description` /
+> `@aalis/schema-config` 只声明各宿主共需的中立字段（`type` / `label` / `description` /
 > `default` / `required` / `options`），渲染相关属性由 `@aalis/plugin-webui-api` 经
 > declaration merging 注入。用到这些属性时**必须** `import type {} from '@aalis/plugin-webui-api'`
 > 才能通过类型检查。同理，自定义字段类型（如 `'llm-ref'`）要 merging 到
-> `@aalis/plugin-config-api` 的 `SchemaFieldTypes`，merging 到 `@aalis/core` **不会报错但静默失效**。
+> `@aalis/schema-config` 的 `SchemaFieldTypes`，merging 到 `@aalis/core` **不会报错但静默失效**。
 
 WebUI 会自动根据 schema 渲染配置表单。
 
@@ -208,8 +208,8 @@ helper 内部已封装 `whenService` 延迟语义：即使在 `apply()` 阶段�
 | 你想 import 的类型 | 真正归属包 | 是否需要进 `dependencies` |
 |---|---|---|
 | `Context` / `PluginModule` | `@aalis/core` | peerDep |
-| `ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` | `@aalis/plugin-config-api` | 是 |
-| `Message` / `ContentSegment` / `IncomingMessage` / `OutgoingMessage` | `@aalis/plugin-message-api` | 是 |
+| `ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` | `@aalis/schema-config` | 是 |
+| `Message` / `ContentSegment` / `IncomingMessage` / `OutgoingMessage` | `@aalis/schema-message` | 是 |
 | `ToolCall` / `ToolDefinition` / `ToolFunction` / `ToolCallContext` / `RegisteredTool` | `@aalis/plugin-tools-api` | 是 |
 | `ChatRequest` / `ChatResponse` / `LLMService` | `@aalis/plugin-llm-api` | 是 |
 | `MemoryService` | `@aalis/plugin-memory-api` | 是 |

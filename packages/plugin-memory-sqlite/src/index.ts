@@ -1,8 +1,8 @@
 import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { MemoryService, RecentMessageRecord, RecentMessagesAcrossSessionsQuery } from '@aalis/plugin-memory-api';
-import type { ContentSegment, Message } from '@aalis/plugin-message-api';
 import { createStorageGateway, toStorageUri } from '@aalis/plugin-storage-api';
+import type { ConfigSchema } from '@aalis/schema-config';
+import type { ContentSegment, Message } from '@aalis/schema-message';
 import Database from 'better-sqlite3';
 
 function toUri(input: string): string {

@@ -1,10 +1,10 @@
 import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
-import type { OutgoingMessage } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
+import type { ConfigSchema } from '@aalis/schema-config';
+import type { OutgoingMessage } from '@aalis/schema-message';
 import type { FlowControlService, FlowSessionStateSnapshot } from './types.js';
 
 export type { FlowControlService, FlowSessionStateSnapshot } from './types.js';
@@ -206,7 +206,7 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
   await loadMuteState();
 
   /** 从 IncomingMessage 派生 per-scope override 用的 targetId（群=groupId / 私=userId / 其他=空） */
-  function extractTargetId(message: import('@aalis/plugin-message-api').IncomingMessage): string {
+  function extractTargetId(message: import('@aalis/schema-message').IncomingMessage): string {
     if (message.sessionType === 'group') return message.groupId ?? '';
     if (message.sessionType === 'private') return message.userId ?? '';
     return '';
@@ -242,7 +242,7 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
   }
 
   /** 把"被流控吞掉"的入站消息归档到 message-archive，下次触发时作为上下文 */
-  async function shadowArchive(message: import('@aalis/plugin-message-api').IncomingMessage): Promise<void> {
+  async function shadowArchive(message: import('@aalis/schema-message').IncomingMessage): Promise<void> {
     const archive = ctx.getService<MessageArchiveService>('message-archive');
     if (!archive) return;
     try {

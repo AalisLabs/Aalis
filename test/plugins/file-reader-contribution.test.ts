@@ -4,7 +4,6 @@ import { assemblePromptContributions } from '../../packages/plugin-agent/src/pro
 import type { AgentService, PreprocessorFn } from '../../packages/plugin-agent-api/src/index.js';
 import * as fileReaderModule from '../../packages/plugin-file-reader/src/index.js';
 import { computeFileId } from '../../packages/plugin-file-reader/src/index.js';
-import type { IncomingMessage, Message } from '../../packages/plugin-message-api/src/index.js';
 import type {
   StorageEntry,
   StorageListResult,
@@ -12,6 +11,7 @@ import type {
   StorageService,
   StorageStat,
 } from '../../packages/plugin-storage-api/src/index.js';
+import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-file-reader 的 agent:prompt 贡献（局部 id = file-reader-history，

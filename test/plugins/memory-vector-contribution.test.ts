@@ -5,8 +5,8 @@ import type { EmbeddingService } from '../../packages/plugin-embedding-api/src/i
 import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 import * as memoryVectorModule from '../../packages/plugin-memory-vector/src/index.js';
-import type { Message } from '../../packages/plugin-message-api/src/index.js';
 import type { VectorSearchResult, VectorStoreService } from '../../packages/plugin-vectorstore-api/src/index.js';
+import type { Message } from '../../packages/schema-message/src/index.js';
 
 // 直接从 core 源码路径导入，agent-api 对 '@aalis/core' 的 declaration merging 不在
 // 该路径生效——vitest 不做类型检查，用 never 断言绕过贡献点键约束（同 prompt-assembly.test.ts）。

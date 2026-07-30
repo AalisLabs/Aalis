@@ -2,12 +2,12 @@ import type { AppService, Context } from '@aalis/core';
 import type { AuthorityService } from '@aalis/plugin-authority-api';
 import type { CommandArgv } from '@aalis/plugin-commands-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
 import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
+import type { ConfigSchema } from '@aalis/schema-config';
 import { CommandRegistry } from './commands.js';
 import { renderDetail, renderOverview } from './help.js';
 

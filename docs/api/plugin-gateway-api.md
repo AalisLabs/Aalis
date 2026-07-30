@@ -75,5 +75,5 @@ await gateway.dispatchOutbound({
 
 ## 相关
 
-- 入站消息类型见 [plugin-message-api](./plugin-message-api.md)
+- 入站消息类型见 [schema-message](./schema-message.md)
 - 业务层**不应**再直接 `emit('outbound:message')` —— 改用 `dispatchOutbound` 走钩子链

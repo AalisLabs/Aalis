@@ -38,7 +38,7 @@ interface LLMModel {
 
 ```ts
 interface ChatModelRequest {
-  messages: Message[];          // 来自 @aalis/plugin-message-api
+  messages: Message[];          // 来自 @aalis/schema-message
   tools?: ToolDefinition[];     // 来自 @aalis/plugin-tools-api
   temperature?: number;
   maxTokens?: number;           // 调用方期望的输出上限——provider 必须尊重（见 §6/§7）
@@ -198,7 +198,7 @@ agent 直接调 `llm.chatStream!(request)`（`packages/plugin-agent/src/index.ts
 
 ### 出口必须调 `prepareLLMMessages`（强约束）
 
-provider 在**序列化前**（流式与非流式两条路径都要）必须先调 `prepareLLMMessages(request.messages)`（`@aalis/plugin-message-api`，`packages/plugin-message-api/src/index.ts`）。它把自定义 role 转成 `WellKnownRole`（`system/user/assistant/tool`，`:69`）并给 content 加前缀（如 `notice`→system 加 `[系统通知]`、kind `cross-session-delegation` 加 `[跨会话委派]`，`:344-360`）。逐条再用 `toLLMRole`（`:366-371`）做幂等防御。**跳过它会导致**：① provider 收到非法 role 报错；② `[系统通知]`/`[跨会话委派]` 等语义前缀丢失。详见 [消息→LLM 管线](../concepts/message-llm-pipeline.md)。
+provider 在**序列化前**（流式与非流式两条路径都要）必须先调 `prepareLLMMessages(request.messages)`（`@aalis/schema-message`，`packages/schema-message/src/index.ts`）。它把自定义 role 转成 `WellKnownRole`（`system/user/assistant/tool`，`:69`）并给 content 加前缀（如 `notice`→system 加 `[系统通知]`、kind `cross-session-delegation` 加 `[跨会话委派]`，`:344-360`）。逐条再用 `toLLMRole`（`:366-371`）做幂等防御。**跳过它会导致**：① provider 收到非法 role 报错；② `[系统通知]`/`[跨会话委派]` 等语义前缀丢失。详见 [消息→LLM 管线](../concepts/message-llm-pipeline.md)。
 
 ### 任何 message-URL 抓取必须走 `safeFetch`
 

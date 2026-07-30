@@ -21,7 +21,7 @@ interface PluginModule {
    * 详见 [plugin-author-guide §3.5](../plugin-author-guide.md#35-级联契约opt-in)。
    */
   requiresBounceOnDepChange?: boolean;
-  /** core 视为 opaque 数据原样透传；形状类型 ConfigSchema 在 @aalis/plugin-config-api */
+  /** core 视为 opaque 数据原样透传；形状类型 ConfigSchema 在 @aalis/schema-config */
   configSchema?: Record<string, unknown>;
   defaultConfig?: Record<string, unknown>;
   apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;

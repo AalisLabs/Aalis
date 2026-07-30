@@ -4,7 +4,7 @@ import type { ModelRef } from '../../packages/plugin-llm-api/src/index.js';
 import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import type { MediaProcessor } from '../../packages/plugin-media-api/src/index.js';
-import type { MessageAttachment } from '../../packages/plugin-message-api/src/index.js';
+import type { MessageAttachment } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // MediaService.pickProcessor — 模型选择

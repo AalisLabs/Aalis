@@ -27,7 +27,7 @@
 | [plugin-media-api](../services/media.md) | `MediaService` —— 多模态预处理（vision/audio/video） | plugin-media |
 | [plugin-llm-api](./plugin-llm-api.md) | `LLMService` + capability 框架 | plugin-openai / plugin-ollama / plugin-deepseek 等 |
 | [plugin-memory-api](./plugin-memory-api.md) | `MemoryService` —— 历史与元数据存储 | plugin-memory-inmemory / sqlite / mongodb / vector |
-| [plugin-message-api](./plugin-message-api.md) | 消息数据契约（无 service） | 由各 adapter 直接 emit |
+| [schema-message](./schema-message.md) | 消息数据契约（无 service） | 由各 adapter 直接 emit |
 | [plugin-session-manager-api](./plugin-session-manager-api.md) | `SessionManagerService` —— 会话配置 | plugin-session-manager |
 | [plugin-storage-api](./plugin-storage-api.md) | `StorageService` —— 受控文件/对象存储 + `createStorageGateway` / `getStorageRootConflicts` helper | plugin-storage-local |
 | [plugin-tools-api](./plugin-tools-api.md) | `ToolService` + 共享 SSRF/路径工具 | plugin-tools |

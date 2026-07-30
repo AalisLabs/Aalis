@@ -23,7 +23,7 @@
 //
 // 兼容变体：[｜|]+ 任意数量的全角/半角竖线。
 
-import type { ToolCall } from '@aalis/plugin-message-api';
+import type { ToolCall } from '@aalis/schema-message';
 
 /**
  * 解析 DSML 文本块为 ToolCall 数组。
