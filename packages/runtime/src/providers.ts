@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, type FSWatcher, watch as fsWatch, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, type FSWatcher, watch as fsWatch, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -294,8 +294,14 @@ export const READY_MESSAGE = 'aalis:ready';
 export interface RestartRollback {
   /** 人类可读的来由，仅用于日志（如 `marketplace-update:@aalis/core`）。 */
   reason: string;
-  /** 需要还原的文件：绝对路径 → 更新前的原始内容。 */
-  restore: Array<{ path: string; content: string }>;
+  /**
+   * 需要还原的文件：绝对路径 → 更新前的原始内容。
+   *
+   * `deleteIfEmpty` 表示该文件**更新前并不存在**（如原本无 lockfile 的工程被
+   * `npm install` 新建了一个），回滚时应删除而非写空——留着它会让后续的重装判定
+   * 新版仍然满足，从而什么都不做，把回滚变成一句谎话。
+   */
+  restore: Array<{ path: string; content: string; deleteIfEmpty?: boolean }>;
   /**
    * 还原文件后需要跑的命令——`package.json` 回退了，`node_modules` 还停在新版，
    * 必须再跑一次安装才能真正回到旧状态。省略则只还原文件。
@@ -497,11 +503,13 @@ export function createProcessRespawnStrategy(opts: RespawnOptions = {}): Restart
       const failed: string[] = [];
       for (const f of rollback.restore) {
         try {
-          writeFileSync(f.path, f.content);
+          // 更新前不存在的文件（deleteIfEmpty）要删掉而非写空——见 RestartRollback.restore。
+          if (f.deleteIfEmpty && f.content === '') rmSync(f.path, { force: true });
+          else writeFileSync(f.path, f.content);
         } catch (err) {
           failed.push(f.path);
-          console.error(`[aalis] 回滚写入失败 ${f.path}:`, err);
-          console.error(`[aalis] 该文件的更新前内容如下，请手工恢复：\n${f.content}`);
+          console.error(`[aalis] 回滚${f.deleteIfEmpty ? '删除' : '写入'}失败 ${f.path}:`, err);
+          if (!f.deleteIfEmpty) console.error(`[aalis] 该文件的更新前内容如下，请手工恢复：\n${f.content}`);
         }
       }
       if (failed.length > 0) {

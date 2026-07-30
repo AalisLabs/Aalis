@@ -291,6 +291,16 @@ export interface SystemComponent {
   description?: string;
   /** 分类：内核 / 宿主 / 服务契约 / 数据规范 / 工具库 */
   kind: 'core' | 'runtime' | 'api' | 'schema' | 'util';
+  /**
+   * 是否可经市场更新。**只有根 `dependencies` 里以 semver 范围声明的才可以**。
+   *
+   * 传递依赖（被某个插件带进来的 `-api` / `schema` / `util`）不可更新：`npm install <name>@<ver>`
+   * 对它们的语义是「加进根 dependencies」，而父包声明的范围若不含新版就会**嵌套装第二份**——
+   * 于是同一个契约包出现两份，两份 `declare module` 撞成 TS2717 且被 `skipLibCheck` 静默吞掉，
+   * 而插件运行时加载的仍是自己 node_modules 里的旧版，更新对它零效果。
+   * 这与市场页用 `origin === 'registry'` 挡住传递依赖是同一道闸。
+   */
+  updatable: boolean;
 }
 
 /**
@@ -508,6 +518,8 @@ export function registerMarketplaceRoutes(
         request: rootDeps[name],
         description: meta?.description,
         kind,
+        // 与市场页同一道闸：只有根依赖里以 semver 范围声明的才可经 npm 更新。
+        updatable: classifyOrigin(rootDeps[name]) === 'registry',
       });
     }
 

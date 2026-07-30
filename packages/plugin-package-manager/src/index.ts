@@ -274,7 +274,8 @@ export interface PackageManagerDeps {
   /** 重启进程并交付回滚凭据（新实例起不来时由重启策略消费）。缺省则 update 不可用。 */
   restartApp?(rollback: {
     reason: string;
-    restore: Array<{ path: string; content: string }>;
+    /** `deleteIfEmpty` 表示该文件更新前并不存在，回滚时应删除而非写空（见 runtime 的 RestartRollback）。 */
+    restore: Array<{ path: string; content: string; deleteIfEmpty?: boolean }>;
     postRestore?: { cmd: string; args: string[]; cwd: string };
   }): void;
 }
@@ -317,6 +318,25 @@ export function buildUpdateSpecs(targets: readonly UpdateTarget[]): { specs?: st
     specs.push(`${name}@${version}`);
   }
   return { specs };
+}
+
+/**
+ * 该依赖声明是否「由 npm 从 registry 装的 semver 范围」——只有这种才能经市场更新。
+ *
+ * 排除的四类各有理由：`undefined` = 不在根依赖里（**传递依赖**，被某个插件带进来的
+ * `-api` / `schema` / `util`）；`workspace:` = 工作区源码；`file:`/`link:`/`portal:` =
+ * 本地链接；git / URL / tarball = 外部源。它们都不该被 `npm install <name>@<ver>` 动。
+ *
+ * 传递依赖尤其危险：npm 对它的语义是「加进根 dependencies」，而父包声明的范围若不含新版
+ * 就会**嵌套装第二份**——同一个契约包出现两份，两份 `declare module` 撞成 TS2717 且被
+ * `skipLibCheck` 静默吞掉，而插件运行时加载的仍是自己那份旧版，更新对它零效果。
+ * 纯函数，便于单测。
+ */
+export function isRegistryDep(spec: string | undefined): boolean {
+  if (typeof spec !== 'string' || spec.length === 0) return false;
+  if (/^(workspace|file|link|portal|git|git\+ssh|git\+https|https?):/.test(spec)) return false;
+  if (spec.includes('/')) return false; // github:user/repo、user/repo 简写
+  return true;
 }
 
 /**
@@ -483,8 +503,21 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     const rootPkgPath = `${root}/package.json`;
     const rootPkgText = await deps.readText(rootPkgPath);
     if (rootPkgText === undefined) return { ok: false, message: `读不到根 package.json: ${rootPkgPath}` };
-    if (hasWorkspaceProtocol(await readJson(rootPkgPath))) {
+    const rootPkg = await readJson(rootPkgPath);
+    if (hasWorkspaceProtocol(rootPkg)) {
       return { ok: false, message: '根依赖含 workspace: 协议，拒绝在此运行 npm install' };
+    }
+    // 只允许更新「根依赖里以 semver 范围声明」的包。闸放在服务层而非 HTTP 路由——
+    // 本服务经 ctx.provide 公开，任何插件都能绕过路由直接调用（理由见 isRegistryDep）。
+    const rootDependencies = (rootPkg?.dependencies ?? {}) as Record<string, string>;
+    const notUpdatable = targets.filter(t => !isRegistryDep(rootDependencies[t.name]));
+    if (notUpdatable.length > 0) {
+      return {
+        ok: false,
+        message:
+          '以下包不在根依赖中（由其它插件带入）或不是 registry 来源，单独更新只会装出第二份副本；' +
+          `请改为更新带入它们的插件：${notUpdatable.map(t => t.name).join('、')}`,
+      };
     }
 
     // ── 预检：整组一次，不逐个 ──
@@ -519,12 +552,29 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
 
     // ── 快照：预检过了才有必要 ──
     // lockfile 与 package.json 必须一起回退，否则还原后的树是「声明旧版、锁定新版」。
-    const restore = [{ path: rootPkgPath, content: rootPkgText }];
+    const restore: Array<{ path: string; content: string; deleteIfEmpty?: boolean }> = [
+      { path: rootPkgPath, content: rootPkgText },
+    ];
     const lockPath = `${root}/package-lock.json`;
     const lockText = await deps.readText(lockPath);
-    if (lockText !== undefined) restore.push({ path: lockPath, content: lockText });
+    if (lockText !== undefined) {
+      restore.push({ path: lockPath, content: lockText });
+    } else {
+      // 原本没有 lockfile（pnpm/yarn 装的工程），而 npm install 会**新建**一个锁到新版。
+      // 回滚只能写回文件、不能删除新增文件，留着它会让 postRestore 的 `npm install`
+      // 判定新版仍满足还原后的范围 → `up to date` → node_modules 纹丝不动，回滚变成
+      // 一句谎话。用空内容占位不行（会得到坏 JSON），故记为「回滚时删掉它」。
+      restore.push({ path: lockPath, content: '', deleteIfEmpty: true });
+    }
 
     // ── 提交 ──
+    // **必须先清掉 hidden lockfile。** 实测（npm 10.9.2）：上面的 `--dry-run` 不碰
+    // package.json 与 package-lock.json，却会把 `node_modules/.package-lock.json`
+    // 重写成「目标版本已装」。紧接着的真装读到它便判定树已就绪，直接 `up to date`
+    // 什么都不做——于是 package.json 与 lockfile 都成了新版，node_modules 里仍是旧代码。
+    // 旧代码起得来，重启永远成功、回滚永不触发，整次更新空转却报成功；而 lockfile
+    // 从此在撒谎，日后 `npm ci` 会在没有任何看守的时刻突然跳版。
+    await execProc(proc, 'rm', ['-f', `${root}/node_modules/.package-lock.json`], root).catch(() => {});
     try {
       await execProc(
         proc,
