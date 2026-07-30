@@ -5,7 +5,8 @@
 `cron-engine` 是 Aalis 的**共享定时引擎原语**：把「cron 表达式 / 别名 / `@every` 间隔」解析为统一的订阅协议，所有周期型触发器（scheduler 任务、workflow 的 cron/interval 触发器）都挂接到它共享的一条整分钟 tick 上，而不是各自 `setInterval`。
 
 - 服务注册名：`getService('cron-engine')`（`packages/plugin-cron-engine-api/src/index.ts`）。
-- 契约包：`@aalis/plugin-cron-engine-api`（纯类型 + 无状态纯函数）。
+- 契约包：`@aalis/plugin-cron-engine-api`（订阅协议：接口 + 服务访问器）。
+- 表达式算法：`@aalis/util-cron`（无状态纯函数，零依赖，与 Aalis 无关，可单独用）。
 - 参考实现：`@aalis/plugin-cron-engine`（`packages/plugin-cron-engine/src/index.ts`）。
 
 注意它**只负责定时与触发**，不负责任务定义、持久化、权限或执行——那些属于上层（scheduler / workflow）。失败的 handler 仅记日志，不影响其他订阅者（`packages/plugin-cron-engine/src/index.ts`）。
@@ -52,23 +53,25 @@ export type ValidateResult =
   | { ok: false; reason: string };
 ```
 
-`validate`（即 `validateCronExpr`，`...:167-193`）是创建期的护栏：逐字段校验，任一字段解析为空集（如 `abc`、`5-`、超界单值）即拒绝，避免静默生成永不触发的死任务。
+`validate`（即 `util-cron` 的 `validateCronExpr`，`:179-205`）是创建期的护栏：逐字段校验，任一字段解析为空集（如 `abc`、`5-`、超界单值）即拒绝，避免静默生成永不触发的死任务。
 
-### 2.3 无状态纯函数（可独立 import，不必经服务）
+### 2.3 无状态纯函数（`@aalis/util-cron`，可独立 import，不必经服务）
 
-契约包同时直接导出一组无状态函数，scheduler / workflow 也在编译期 import 它们做预处理：
+表达式的解析与匹配是 POSIX cron 标准算法，与 Aalis 无关，故落在 util 层而非契约包——
+契约包只管订阅协议。scheduler / cron-engine 在编译期直接 import 它们做预处理。
+下表行号指 `packages/util-cron/src/index.ts`：
 
 | 函数 | 签名 | 用途 | 行 |
 | --- | --- | --- | --- |
-| `normalizeCronExpr` | `(input: string) => string \| null` | 别名（`@daily` 等）展开为 5 字段；`@every` 原样；不识别返回 null | `:17` |
-| `parseCronField` | `(field, min, max) => Set<number>` | 解析单字段命中集合，支持 `*` `*/5` `1-5` `1,3,5` `1-30/5` `0/15` | `:40` |
-| `dateFieldsInTimeZone` | `(date, timeZone?) => {minute,hour,day,month,weekday}` | 按时区拆 Date 为 cron 字段数字 | `:77` |
-| `matchesCron` | `(expr, date, timeZone?) => boolean` | 判断某时刻是否命中（不处理 `@every`） | `:124` |
-| `parseEverySeconds` | `(input: string) => number` | 把 `@every 30s/5m/2h` 解析为秒；不识别返回 0 | `:143` |
-| `validateCronExpr` | `(input) => ValidateResult` | 见 §2.2 | `:167` |
-| `useCronEngine` | `(ctx: Context) => CronEngine` | 取服务的便捷封装，缺失即抛 | `:237` |
+| `normalizeCronExpr` | `(input: string) => string \| null` | 别名（`@daily` 等）展开为 5 字段；`@every` 原样；不识别返回 null | `:16` |
+| `parseCronField` | `(field, min, max) => Set<number>` | 解析单字段命中集合，支持 `*` `*/5` `1-5` `1,3,5` `1-30/5` `0/15` | `:39` |
+| `dateFieldsInTimeZone` | `(date, timeZone?) => {minute,hour,day,month,weekday}` | 按时区拆 Date 为 cron 字段数字 | `:89` |
+| `matchesCron` | `(expr, date, timeZone?) => boolean` | 判断某时刻是否命中（不处理 `@every`） | `:136` |
+| `parseEverySeconds` | `(input: string) => number` | 把 `@every 30s/5m/2h` 解析为秒；不识别返回 0 | `:155` |
+| `validateCronExpr` | `(input) => ValidateResult` | 见 §2.2 | `:179` |
+| `useCronEngine` | `(ctx: Context) => CronEngine` | 取服务的便捷封装，缺失即抛（**在契约包**，非 util） | `:57` |
 
-支持的表达式：5 字段标准 cron、别名 `@hourly` `@daily` `@midnight` `@weekly` `@monthly` `@yearly` `@annually`（`:20-28`）、以及间隔 `@every Ns`/`Nm`/`Nh`（`:143-154`）。
+支持的表达式：5 字段标准 cron、别名 `@hourly` `@daily` `@midnight` `@weekly` `@monthly` `@yearly` `@annually`（`:19-27`）、以及间隔 `@every Ns`/`Nm`/`Nh`（`:155-166`）。
 
 ## 3. 谁提供 / 谁消费
 
@@ -90,14 +93,8 @@ export type ValidateResult =
 
 ```ts
 import type { Context } from '@aalis/core';
-import {
-  type CronEngine,
-  type CronSubscribeOptions,
-  matchesCron,
-  normalizeCronExpr,
-  parseEverySeconds,
-  validateCronExpr,
-} from '@aalis/plugin-cron-engine-api';
+import type { CronEngine, CronSubscribeOptions } from '@aalis/plugin-cron-engine-api';
+import { matchesCron, normalizeCronExpr, validateCronExpr } from '@aalis/util-cron';
 
 export const name = 'my-cron-backend';
 export const provides = ['cron-engine'];          // ← 双源之一
