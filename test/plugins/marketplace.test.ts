@@ -5,10 +5,13 @@ import {
   buildSearchUrl,
   classifyOrigin,
   classifyPackage,
+  classifySystemComponent,
   findPackageDependents,
   findServiceDependents,
   type LocalPkgInfo,
   resolveLocalInfo,
+  type SystemComponent,
+  sortSystemComponents,
   toLocalPackages,
   toManifest,
   toMarketplacePackages,
@@ -405,5 +408,67 @@ describe('toMarketplacePackages 的本地实况注入', () => {
   it('不给 localOf 时保持旧行为（缺省参数，老调用点不受影响）', () => {
     const pkgs = toMarketplacePackages(data, new Set(['@aalis/plugin-x']));
     expect(pkgs.find(p => p.name === '@aalis/plugin-x')?.resolved).toBeUndefined();
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 系统组件（内核 / 宿主 / 契约 / 规范 / 工具库）
+//
+// 这一页与市场检索的**数据源不同**：列表只来自本地已装 + 根依赖表（不可伪造），
+// 版本按精确包名查询。npm 关键词是开放命名空间，任何人都能发一个带 aalis-core
+// 关键词的包——若走检索，它就能在市场里拿到一张「内核」卡片。
+// ════════════════════════════════════════════════════════════
+
+describe('classifySystemComponent（本地已装包 → 系统组件分类）', () => {
+  it('五类各自命中', () => {
+    expect(classifySystemComponent(['aalis', 'aalis-core'])).toBe('core');
+    expect(classifySystemComponent(['aalis', 'aalis-runtime'])).toBe('runtime');
+    expect(classifySystemComponent(['aalis', 'aalis-api'])).toBe('api');
+    expect(classifySystemComponent(['aalis', 'aalis-schema'])).toBe('schema');
+    expect(classifySystemComponent(['aalis', 'aalis-util'])).toBe('util');
+  });
+
+  it('功能插件与前端界面不属系统组件（它们在市场页可装可卸）', () => {
+    expect(classifySystemComponent(['aalis', 'aalis-plugin'])).toBeUndefined();
+    expect(classifySystemComponent(['aalis', 'aalis-interface'])).toBeUndefined();
+  });
+
+  it('无关键词 / undefined 一律不收', () => {
+    expect(classifySystemComponent([])).toBeUndefined();
+    expect(classifySystemComponent(undefined)).toBeUndefined();
+    expect(classifySystemComponent(['express'])).toBeUndefined();
+  });
+
+  it('同时带多个类型词时按 core > runtime > api > schema > util 取先', () => {
+    expect(classifySystemComponent(['aalis-util', 'aalis-core'])).toBe('core');
+  });
+});
+
+describe('sortSystemComponents', () => {
+  it('内核与宿主置顶（更新它们必须全量重启），其余按类型再按名', () => {
+    const list: SystemComponent[] = [
+      { name: '@aalis/util-cron', kind: 'util' },
+      { name: '@aalis/schema-message', kind: 'schema' },
+      { name: '@aalis/runtime', kind: 'runtime' },
+      { name: '@aalis/plugin-tools-api', kind: 'api' },
+      { name: '@aalis/core', kind: 'core' },
+    ];
+    expect(sortSystemComponents(list).map(c => c.name)).toEqual([
+      '@aalis/core',
+      '@aalis/runtime',
+      '@aalis/plugin-tools-api',
+      '@aalis/schema-message',
+      '@aalis/util-cron',
+    ]);
+  });
+
+  it('同类按包名字典序，且不改写入参', () => {
+    const list: SystemComponent[] = [
+      { name: '@aalis/plugin-z-api', kind: 'api' },
+      { name: '@aalis/plugin-a-api', kind: 'api' },
+    ];
+    const sorted = sortSystemComponents(list);
+    expect(sorted.map(c => c.name)).toEqual(['@aalis/plugin-a-api', '@aalis/plugin-z-api']);
+    expect(list[0].name).toBe('@aalis/plugin-z-api'); // 原数组未被排序
   });
 });
