@@ -5,9 +5,9 @@ import {
   normalizeCronExpr,
   parseCronField,
   validateCronExpr,
-} from '../../packages/plugin-cron-engine-api/src/index.js';
+} from '../../packages/util-cron/src/index.js';
 
-describe('cron-engine-api: 表达式解析', () => {
+describe('util-cron: 表达式解析', () => {
   it('normalizeCronExpr: 别名展开 & 非法返回 null', () => {
     expect(normalizeCronExpr('@daily')).toBe('0 0 * * *');
     expect(normalizeCronExpr('@hourly')).toBe('0 * * * *');
@@ -55,7 +55,7 @@ describe('cron-engine-api: 表达式解析', () => {
   });
 });
 
-describe('cron-engine-api: 时区感知 matchesCron', () => {
+describe('util-cron: 时区感知 matchesCron', () => {
   // 选定一个无 DST 的稳定瞬间：2025-06-15 08:00:00 UTC
   // - 此时 Asia/Shanghai 是 16:00（+08:00 永远）
   // - 此时 Europe/London 是 09:00（BST = UTC+1）
@@ -94,7 +94,7 @@ describe('cron-engine-api: 时区感知 matchesCron', () => {
   });
 });
 
-describe('cron-engine-api: 星期字段 0-7（0 与 7 均为周日）', () => {
+describe('util-cron: 星期字段 0-7（0 与 7 均为周日）', () => {
   const sundayUtc = new Date('2025-06-15T08:00:00Z'); // 周日
   const mondayUtc = new Date('2025-06-16T08:00:00Z'); // 周一
 
