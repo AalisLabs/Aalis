@@ -1,4 +1,4 @@
-# @aalis/plugin-message-api
+# @aalis/schema-message
 
 类型/接口/能力声明包（只导出 `type` 与 `*Capabilities`，不含运行时逻辑）
 
@@ -9,13 +9,13 @@
 ## 安装
 
 ```bash
-pnpm add @aalis/plugin-message-api
+pnpm add @aalis/schema-message
 ```
 
 ## 使用
 
 ```ts
-import type { /* ... */ } from '@aalis/plugin-message-api';
+import type { /* ... */ } from '@aalis/schema-message';
 ```
 
 本包为 *-api 类型包；实现见对应的运行时插件。

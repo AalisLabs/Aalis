@@ -9,7 +9,7 @@
 import type { Context } from '@aalis/core';
 import type { PreprocessorFn } from '@aalis/plugin-agent-api';
 import type { MediaService } from '@aalis/plugin-media-api';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
+import type { IncomingMessage } from '@aalis/schema-message';
 
 export function buildPreprocessor(ctx: Context, getService: () => MediaService): PreprocessorFn {
   return async function mediaPreprocessor(message: IncomingMessage, next: () => Promise<void>) {

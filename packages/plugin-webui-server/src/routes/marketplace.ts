@@ -14,7 +14,7 @@ import type { RouteGate } from '../gate.js';
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 // 市场收录四类：功能插件 aalis-plugin / 工具库 aalis-util / 契约 aalis-api / 前端 aalis-interface。
 // npm search 的 keywords: 逗号分隔 = 任一命中（核心/工具链不带任何类型词，自然不进市场）。
-const AALIS_KEYWORDS = ['aalis-plugin', 'aalis-util', 'aalis-api', 'aalis-interface'];
+const AALIS_KEYWORDS = ['aalis-plugin', 'aalis-util', 'aalis-api', 'aalis-schema', 'aalis-interface'];
 const SEARCH_TIMEOUT_MS = 8000;
 // 合法 npm 包名（可选 scope）+ 可选 @version 后缀（支持指定版本安装）。
 //
@@ -86,18 +86,26 @@ interface PluginManifest {
   dependencies?: string[];
 }
 
-/** 市场组件类别。'plugin'=可装卸功能；'api'=契约/SDK（只读）；'interface'=前端界面（可换）；'util'=工具库（被插件 import） */
-type PackageCategory = 'plugin' | 'api' | 'interface' | 'util';
+/**
+ * 市场组件类别。'plugin'=可装卸功能；'api'=服务契约（只读）；'schema'=数据格式规范（只读）；
+ * 'interface'=前端界面（可换）；'util'=工具库（被插件 import）
+ *
+ * 'api' 与 'schema' 的界线：`-api` 必然 declare 一个 `ServiceTypeMap` 成员（有服务可
+ * `ctx.getService`）；`schema-*` 只定义跨服务流动的数据形状（`Message` / `ConfigSchema`），
+ * 无对应服务、不可能有第二实现。
+ */
+type PackageCategory = 'plugin' | 'api' | 'schema' | 'interface' | 'util';
 
 /**
  * 按**类型关键词**分类（npm search 直接返回 keywords，与加载约定的类型词 1:1，可靠）。
- * 市场搜索已保证结果只含 aalis-plugin/util/api/interface 之一，无需再靠包名猜测。纯函数，便于单测。
+ * 市场搜索已保证结果只含 aalis-plugin/util/api/schema/interface 之一，无需再靠包名猜测。纯函数，便于单测。
  */
 export function classifyPackage(keywords: string[]): PackageCategory {
   if (keywords.includes('aalis-interface')) return 'interface';
   if (keywords.includes('aalis-api')) return 'api';
+  if (keywords.includes('aalis-schema')) return 'schema';
   if (keywords.includes('aalis-util')) return 'util';
-  return 'plugin'; // 进了市场却非上述三类 → 必是功能插件（aalis-plugin）
+  return 'plugin'; // 进了市场却非上述四类 → 必是功能插件（aalis-plugin）
 }
 
 /**

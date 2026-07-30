@@ -1,11 +1,10 @@
 import type { Context, PluginModule } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
+import type { ConfigSchema } from '@aalis/schema-config';
 // 副作用导入：注入 agent:turn:after 等 agent 域钩子到 HookContextMap（declaration merging），
 // 使 ctx.middleware('agent:turn:after', ...) 的类型可见。
 import '@aalis/plugin-agent-api'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { listLLMModels, resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { Message } from '@aalis/plugin-message-api';
 import type { PersonaService } from '@aalis/plugin-persona-api';
 import type {
   PlatformProfile,
@@ -17,6 +16,7 @@ import type {
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
+import type { Message } from '@aalis/schema-message';
 
 export type {
   PlatformProfile,

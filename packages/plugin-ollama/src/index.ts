@@ -1,11 +1,11 @@
 import type { Context, Logger } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
-import type { Message } from '@aalis/plugin-message-api';
-import { prepareLLMMessages, toLLMRole } from '@aalis/plugin-message-api';
 import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
+import type { ConfigSchema } from '@aalis/schema-config';
+import type { Message } from '@aalis/schema-message';
+import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
 import { safeFetch } from '@aalis/util-network-guard';
 
 // ===== 插件元数据 =====

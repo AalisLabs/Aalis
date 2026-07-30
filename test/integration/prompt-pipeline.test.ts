@@ -13,13 +13,8 @@ import type { MemoryService } from '../../packages/plugin-memory-api/src/index.j
 import * as memoryHistoryModule from '../../packages/plugin-memory-history/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 import * as memorySummaryModule from '../../packages/plugin-memory-summary/src/index.js';
-import type {
-  IncomingMessage,
-  Message,
-  OutgoingMessage,
-  ToolCall,
-} from '../../packages/plugin-message-api/src/index.js';
 import * as messageArchiveModule from '../../packages/plugin-message-archive/src/index.js';
+import type { IncomingMessage, Message, OutgoingMessage, ToolCall } from '../../packages/schema-message/src/index.js';
 
 /**
  * 提示词管线端到端集成测试

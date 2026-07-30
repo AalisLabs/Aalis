@@ -1,6 +1,6 @@
 // ----- 记忆服务接口 -----
 import type {} from '@aalis/core';
-import type { Message } from '@aalis/plugin-message-api';
+import type { Message } from '@aalis/schema-message';
 
 /** 跨会话最近消息查询参数 */
 export interface RecentMessagesAcrossSessionsQuery {

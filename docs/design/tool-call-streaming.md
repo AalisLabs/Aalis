@@ -40,7 +40,7 @@ export interface ChatStreamChunk {
 | `@aalis/plugin-deepseek` | ✅ | 同 OpenAI |
 | `@aalis/plugin-ollama` | ✅（受限）| Ollama 一次性返回完整 tool_calls，故每个 tool 仅 emit 一次 progress |
 
-### `StreamChunkMessage.toolCallProgress`（`@aalis/plugin-message-api`）
+### `StreamChunkMessage.toolCallProgress`（`@aalis/schema-message`）
 
 agent 接到 provider 的 `toolCallProgress` 后，转发到 `outbound:stream` 事件：
 

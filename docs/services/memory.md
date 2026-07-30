@@ -14,7 +14,7 @@ agent 构建 LLM 上下文、checkpoint 回滚、summary 压缩等所有依赖�
 
 ## 2. 契约
 
-接口与类型来自 `@aalis/plugin-memory-api`。消息类型 `Message` 来自 `@aalis/plugin-message-api`，包含 `role / content / kind / timestamp / segments / metadata / reasoningContent / toolCalls`。
+接口与类型来自 `@aalis/plugin-memory-api`。消息类型 `Message` 来自 `@aalis/schema-message`，包含 `role / content / kind / timestamp / segments / metadata / reasoningContent / toolCalls`。
 
 ### 2.1 核心接口（必须实现）
 
@@ -128,9 +128,9 @@ export const inject = { required: ['storage'] };
 
 ```ts
 import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
+import type { ConfigSchema } from '@aalis/schema-config';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { Message } from '@aalis/plugin-message-api';
+import type { Message } from '@aalis/schema-message';
 
 export const name = '@aalis/plugin-memory-myimpl';
 export const provides = ['memory'];

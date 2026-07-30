@@ -5,7 +5,7 @@
 
 import type { Context } from '@aalis/core';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
+import type { IncomingMessage } from '@aalis/schema-message';
 import { type FlowControlConfig, resolveEffectiveConfig } from './config.js';
 import type { MutableFlowSessionState } from './state.js';
 

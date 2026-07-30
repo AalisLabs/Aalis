@@ -17,7 +17,7 @@
  */
 export interface AalisEvents {
   // 业务消息事件（inbound:message / inbound:message:archived / outbound:message / outbound:stream）
-  // 已通过 declaration merging 由 @aalis/plugin-message-api 注入（cleanup-8）。
+  // 已通过 declaration merging 由 @aalis/schema-message 注入（cleanup-8）。
   // 业务工具事件（tool:execute）已通过 declaration merging 由 @aalis/plugin-tools-api 注入（cleanup-8）。
   // gateway:phase:done 由 @aalis/plugin-gateway-api 注入（cleanup-7）。
   'service:registered': [name: string];

@@ -10,7 +10,7 @@
 //     types/disposable-service.ts（服务自清理协议）。
 //
 // 业务/领域类型一律由 plugin-*-api 包导出：
-//   - Message / ContentSegment           → @aalis/plugin-message-api
+//   - Message / ContentSegment           → @aalis/schema-message
 //   - ToolCall / ToolDefinition / ToolFunction → @aalis/plugin-tools-api
 //   - LLM / Memory / Storage / Embedding / VectorStore / Tools / Commands / Gateway /
 //     WebUI / Authority / Agent / Platform 等服务接口同样在各自的 plugin-*-api。

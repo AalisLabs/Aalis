@@ -89,7 +89,7 @@ export interface PlatformAdapter {
 
 ### 入站消息：发服务之外还要 emit
 
-`PlatformAdapter` 只覆盖**出站**与查询。**入站**不在接口里——adapter 收到平台消息后须 `ctx.emit('inbound:message', msg)`（msg 为 `IncomingMessage`，`packages/plugin-message-api/src/index.ts`），由 `plugin-gateway`（`src/index.ts` 监听）接管路由到 agent。OneBot 见 `src/index.ts` 一带的 `ctx.emit('inbound:message', …)`；CLI 见 `src/index.ts`。出站文本回显则可订阅 `ctx.on('outbound:message', …)`（CLI `src/index.ts`）。详见 [message-llm-pipeline](../concepts/message-llm-pipeline.md)。
+`PlatformAdapter` 只覆盖**出站**与查询。**入站**不在接口里——adapter 收到平台消息后须 `ctx.emit('inbound:message', msg)`（msg 为 `IncomingMessage`，`packages/schema-message/src/index.ts`），由 `plugin-gateway`（`src/index.ts` 监听）接管路由到 agent。OneBot 见 `src/index.ts` 一带的 `ctx.emit('inbound:message', …)`；CLI 见 `src/index.ts`。出站文本回显则可订阅 `ctx.on('outbound:message', …)`（CLI `src/index.ts`）。详见 [message-llm-pipeline](../concepts/message-llm-pipeline.md)。
 
 ### 注册（`ctx.provide`）
 
@@ -102,7 +102,7 @@ export interface PlatformAdapter {
 
 import type { Context } from '@aalis/core';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform-api';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
+import type { IncomingMessage } from '@aalis/schema-message';
 
 // 运行时 DI 源（A 源）—— 与 package.json aalis.service 双源同步
 export const name = '@your-scope/plugin-adapter-foo';
@@ -170,4 +170,4 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
 - 概念：[service-model](../concepts/service-model.md)（DI 按名、多 entry、per-entry provide）、[lazy-service-access](../concepts/lazy-service-access.md)（勿缓存、bounce 失效）、[manifest-metadata](../concepts/manifest-metadata.md)（`provides`/`inject` 双源 + `subsystem`）、[message-llm-pipeline](../concepts/message-llm-pipeline.md)（`inbound:message`/`outbound:message` 与 agent 路由）、[security-model](../concepts/security-model.md)、[storage-uri-grammar](../concepts/storage-uri-grammar.md)。
 - 核心：`docs/core/service.md`、`docs/core/authority.md`、`docs/core/context.md`、`docs/core/events.md`。
-- 相关契约包：`@aalis/plugin-message-api`（`IncomingMessage`/`OutgoingMessage`）、`plugin-gateway`（入站路由）、`plugin-flow-control`（限速闸门后端）。
+- 相关契约包：`@aalis/schema-message`（`IncomingMessage`/`OutgoingMessage`）、`plugin-gateway`（入站路由）、`plugin-flow-control`（限速闸门后端）。

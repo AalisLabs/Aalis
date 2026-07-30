@@ -4,8 +4,8 @@
 // 任何需要调用或实现 LLM 服务的插件都应从本包导入相关类型。
 
 import type { Context } from '@aalis/core';
-import type { Message, ToolCall } from '@aalis/plugin-message-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
+import type { Message, ToolCall } from '@aalis/schema-message';
 
 export interface ChatResponse {
   content: string | null;
@@ -165,11 +165,11 @@ export const LLMCapabilities = {
   Video: 'video',
 } as const satisfies LLMCapabilityRegistry;
 
-// SchemaFieldTypes 属配置表单词汇,扩展点随词汇一起住在 @aalis/plugin-config-api
+// SchemaFieldTypes 属配置表单词汇,扩展点随词汇一起住在 @aalis/schema-config
 // （空 import 使本文件对其构成 module augmentation 而非 ambient 声明）。
-import type {} from '@aalis/plugin-config-api';
+import type {} from '@aalis/schema-config';
 
-declare module '@aalis/plugin-config-api' {
+declare module '@aalis/schema-config' {
   interface SchemaFieldTypes {
     /**
      * LLM 模型引用：值形如 `{ provider: string; model: string }`，前端渲染为
