@@ -23,7 +23,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/util-text-normalize": "workspace:*"
+    "@aalis/util-text-normalize": "workspace:>=0.5.1 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

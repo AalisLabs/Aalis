@@ -576,7 +576,10 @@ keyword 检索，分发靠 npm 包本身。要让你的插件出现在市场里�
    - 仅 `import type` / declaration merging 的 api 包 → **`devDependencies`**（编译期擦除，
      运行时不装）。**注意**：若你写的是 `-api` 契约包且其导出类型引用别的包，那些要留
      `dependencies`（类型会传递给消费方）。
-   - 运行时用到值（`useXxxService`、helper、常量）的 api/util 包 → `dependencies: workspace:^`。
+   - 运行时用到值（`useXxxService`、helper、常量）的 api/util 包 → `dependencies: workspace:>=<被依赖包当前版本> <1.0.0`。
+     **不要用 `workspace:^` 或 `workspace:*`**：`^` 发布成 `^0.x.y`，caret 在 0.x 下只匹配 `0.x.*`，**跨 minor 就断**——消费者会装到滞后的旧版；若同时依赖两个包而它们各锁不同 minor，
+     npm 会装进**两份**同一 api 包，两份 `declare module '@aalis/core'` 撞成 `TS2717`，而 `skipLibCheck: true` 会把这个错误彻底吞掉，于是服务名静默解析成其中任意一份。`*` 发布成
+     精确版本，同样锁死。写成 `>=x.y.z <1.0.0` 范围时 pnpm **原样保留**，跨 minor 自动拉新版。
    - 市场展示字段直接读 `package.json`：`description`/`author`/`license`/`repository`/`version`。
 3. **声明 `aalis.service` 供装前披露**：市场在 npm 上**安装前**只能读 `package.json`
    （拿不到代码里的 `inject`），所以在 `package.json` 加：
