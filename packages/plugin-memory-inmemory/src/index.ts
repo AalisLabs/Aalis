@@ -1,7 +1,7 @@
 import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { MemoryService, RecentMessageRecord, RecentMessagesAcrossSessionsQuery } from '@aalis/plugin-memory-api';
-import type { Message } from '@aalis/plugin-message-api';
+import type { ConfigSchema } from '@aalis/schema-config';
+import type { Message } from '@aalis/schema-message';
 
 // ===== InMemoryFallbackService 实现 =====
 

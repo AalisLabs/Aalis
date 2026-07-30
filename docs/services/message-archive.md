@@ -36,8 +36,8 @@ export interface MessageArchiveService {
 
 - `ArchiveIncomingResult { message: Message; content: string }`（`:4-7`）——`message` 是落库实体，`content` 是烘焙后的纯文本，调用方常直接拿去喂 LLM。
 - `ArchiveNoticeOptions`（`:9-33`）：`sessionId` / `noticeType` / `content` 必填（`content` 为人类可读描述，作为 system 消息正文写入）；`subType` / `platform` / `userId` / `targetId` / `groupId` / `operatorId` / `timestamp` / `data` 可选，`data` 整体透传进 `metadata`。字段语义对齐 OneBot v11/v12 notice 规范。
-- `Message`（来自 `@aalis/plugin-message-api`，`packages/plugin-message-api/src/index.ts`）：`role` + `content: string | null` + 可选 `name` / `kind` / `timestamp` / `metadata`。
-- `inbound:message:archived` 事件 payload（`packages/plugin-message-api/src/index.ts`）：`{ sessionId, incoming: IncomingMessage, archivedMessage: Message }`。注意 `archivedMessage.content` 可能已不同于 `incoming.content`（已烘焙）。
+- `Message`（来自 `@aalis/schema-message`，`packages/schema-message/src/index.ts`）：`role` + `content: string | null` + 可选 `name` / `kind` / `timestamp` / `metadata`。
+- `inbound:message:archived` 事件 payload（`packages/schema-message/src/index.ts`）：`{ sessionId, incoming: IncomingMessage, archivedMessage: Message }`。注意 `archivedMessage.content` 可能已不同于 `incoming.content`（已烘焙）。
 
 > `message-archive-api` 标了 `aalis.types: true`（纯类型/契约包，仅在 `@aalis/core` 的 `ServiceTypeMap` 上做 declaration merging，见 `:49-53`），运行时服务由 `plugin-message-archive` 提供。
 
@@ -80,7 +80,7 @@ manifest 双源必须同步写（`package.json` `aalis.service` 与源码 `expor
 ```ts
 import type { Context } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
+import type { IncomingMessage, Message } from '@aalis/schema-message';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 
 export const name = '@aalis/plugin-my-archive';
@@ -178,4 +178,4 @@ private async archiveIncomingMessageInOrder(lane: string, incoming: IncomingMess
 
 - 概念：[服务模型](../concepts/service-model.md)、[懒服务访问](../concepts/lazy-service-access.md)、[manifest 元数据](../concepts/manifest-metadata.md)、[消息-LLM 管线](../concepts/message-llm-pipeline.md)、[安全模型](../concepts/security-model.md)、[storage URI 文法](../concepts/storage-uri-grammar.md)
 - 核心：[service](../core/service.md)、[context](../core/context.md)、[events](../core/events.md)、[types](../core/types.md)
-- 相关服务/契约：`@aalis/plugin-memory-api`（落库后端）、`@aalis/plugin-media-api`（附件识别）、`@aalis/plugin-message-api`（`Message` / `IncomingMessage` / `WellKnownKinds` / `inbound:message:archived` 事件）
+- 相关服务/契约：`@aalis/plugin-memory-api`（落库后端）、`@aalis/plugin-media-api`（附件识别）、`@aalis/schema-message`（`Message` / `IncomingMessage` / `WellKnownKinds` / `inbound:message:archived` 事件）

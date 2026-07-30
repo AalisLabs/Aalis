@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { App } from '../../packages/core/src/index.js';
 import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import type { Message } from '../../packages/plugin-message-api/src/index.js';
+import type { Message } from '../../packages/schema-message/src/index.js';
 
 function makeApp() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });

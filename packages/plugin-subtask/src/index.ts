@@ -1,9 +1,9 @@
 import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { SessionInfo, SessionManagerService } from '@aalis/plugin-session-manager-api';
 import { useToolService } from '@aalis/plugin-tools-api';
+import type { ConfigSchema } from '@aalis/schema-config';
+import type { IncomingMessage } from '@aalis/schema-message';
 import '@aalis/plugin-agent-api'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 
 // =====================================================================

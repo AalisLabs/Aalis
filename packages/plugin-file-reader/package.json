@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@aalis/plugin-agent-api": "workspace:>=0.6.0 <1.0.0",
-    "@aalis/plugin-config-api": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
     "@aalis/plugin-storage-api": "workspace:>=0.5.5 <1.0.0",
     "@aalis/plugin-tools-api": "workspace:>=0.5.1 <1.0.0",
     "mammoth": "^1.8.0",
@@ -39,7 +39,7 @@
     "@aalis/core": "workspace:*",
     "@aalis/plugin-media-api": "workspace:*",
     "@aalis/plugin-memory-api": "workspace:*",
-    "@aalis/plugin-message-api": "workspace:*",
+    "@aalis/schema-message": "workspace:*",
     "@aalis/plugin-session-manager-api": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"

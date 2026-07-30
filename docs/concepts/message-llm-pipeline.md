@@ -2,7 +2,7 @@
 
 本文面向两类作者：写 LLM provider 插件的人，以及写「会发消息 / 会读历史」插件的人。它讲清一条聊天消息如何从平台流到 LLM，包括四个必须掌握的概念：`role × kind` 正交模型、每个 provider 出口必须调用的 `prepareLLMMessages`、附件占位符 `[图片 | ref:…]` 格式，以及 `<at id="X">` @提及 token 文法。
 
-所有消息类型契约由 `@aalis/plugin-message-api` 持有，LLM 调用契约由 `@aalis/plugin-llm-api` 持有。
+所有消息类型契约由 `@aalis/schema-message` 持有，LLM 调用契约由 `@aalis/plugin-llm-api` 持有。
 
 ---
 
@@ -99,7 +99,7 @@ export function prepareLLMMessages<T extends Pick<Message, 'role' | 'content' | 
 三家官方 provider（OpenAI、DeepSeek、Ollama）都遵循同一模式：
 
 ```ts
-import { prepareLLMMessages, toLLMRole } from '@aalis/plugin-message-api';
+import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
 
 // chat() / chatStream() 入口第一步：
 const messages = prepareLLMMessages(request.messages).map(m => this.toAPIMessage(m));
@@ -176,7 +176,7 @@ parseAttachmentRefs(text): AttachmentRef[]
 
 ## 5. `<at id="X">` @提及 token 文法
 
-`<at>` token 不是 `plugin-message-api` 导出的 API，而是一套由适配器产出、跨插件复用的纯文本约定。`plugin-message-api` 的源码里没有任何 `<at>` 代码。它由各 adapter 产出，由下游插件以正则解析。
+`<at>` token 不是 `schema-message` 导出的 API，而是一套由适配器产出、跨插件复用的纯文本约定。`schema-message` 的源码里没有任何 `<at>` 代码。它由各 adapter 产出，由下游插件以正则解析。
 
 ### 5.1 产出方（adapter，以 OneBot 为例）
 

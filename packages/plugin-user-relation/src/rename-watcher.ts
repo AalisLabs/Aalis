@@ -11,7 +11,7 @@
  * - 与 extractionEnabled 解耦：即便关掉写入提取，改名同步仍生效。
  */
 import type { Context } from '@aalis/core';
-import type { Message } from '@aalis/plugin-message-api';
+import type { Message } from '@aalis/schema-message';
 import type { RelationService } from './service.js';
 
 interface ArchivedPayload {

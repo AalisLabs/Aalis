@@ -15,6 +15,9 @@
 import type { Context } from '@aalis/core';
 import type { MediaService } from '@aalis/plugin-media-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
+import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
+import { useToolService } from '@aalis/plugin-tools-api';
 import {
   AttachmentRefKind,
   formatAttachmentRef,
@@ -22,10 +25,7 @@ import {
   type MessageAttachment,
   type OutgoingMessage,
   WellKnownKinds,
-} from '@aalis/plugin-message-api';
-import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
-import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
-import { useToolService } from '@aalis/plugin-tools-api';
+} from '@aalis/schema-message';
 
 export const name = '@aalis/plugin-image-sender';
 export const displayName = '图片发送';

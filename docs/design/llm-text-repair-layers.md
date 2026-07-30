@@ -56,7 +56,7 @@ LLM API 响应存在两类常见的"脏输出"问题，需要在不同的系统�
 | `fixGfmTables` | 修复 GFM 表格分隔行与表头列数不一致 | 跳过代码块，仅修正明确错误 |
 | `normalizeAssistantContent` | 两者的组合应用 | 顺序：先剥标记，再修表格 |
 
-**设计约束**：该包不能依赖 `@aalis/plugin-message-api` 等业务包，以便在 webui 客户端（browser bundle）中也能使用。返回类型只能是 `string` 或 `{ string, boolean }`。
+**设计约束**：该包不能依赖 `@aalis/schema-message` 等业务包，以便在 webui 客户端（browser bundle）中也能使用。返回类型只能是 `string` 或 `{ string, boolean }`。
 
 ### 层 3：`plugin-agent`
 
@@ -169,7 +169,7 @@ util-text-normalize
   └── （无业务依赖）
 ```
 
-`dsml-parser` 依赖 `@aalis/plugin-message-api`（`ToolCall` 类型），**不能**放入 `util-text-normalize`，这是唯一的隔离边界。
+`dsml-parser` 依赖 `@aalis/schema-message`（`ToolCall` 类型），**不能**放入 `util-text-normalize`，这是唯一的隔离边界。
 
 ---
 

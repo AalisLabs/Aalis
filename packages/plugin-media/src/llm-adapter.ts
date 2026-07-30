@@ -14,7 +14,7 @@ import type {
   TranscribeInput,
   TranscribeResult,
 } from '@aalis/plugin-media-api';
-import type { Message } from '@aalis/plugin-message-api';
+import type { Message } from '@aalis/schema-message';
 import { materializeAttachment, transcodeAudioToWav } from './ffmpeg.js';
 
 export const DEFAULT_VISION_PROMPT =

@@ -17,8 +17,8 @@
 
 import { Buffer } from 'node:buffer';
 import type { Logger } from '@aalis/core';
-import type { MessageAttachment } from '@aalis/plugin-message-api';
 import { isStorageUri, type StorageService } from '@aalis/plugin-storage-api';
+import type { MessageAttachment } from '@aalis/schema-message';
 import { safeFetch } from '@aalis/util-network-guard';
 import { readBodyCapped } from './attachment-cache.js';
 

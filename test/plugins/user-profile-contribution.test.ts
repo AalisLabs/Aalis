@@ -3,8 +3,8 @@ import { App } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import type { Message } from '../../packages/plugin-message-api/src/index.js';
 import * as userProfileModule from '../../packages/plugin-user-profile/src/index.js';
+import type { Message } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-user-profile 的 agent:prompt 贡献 build（anchor='identity'，多块返回）

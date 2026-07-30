@@ -1,5 +1,5 @@
 import type {} from '@aalis/core';
-import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
+import type { IncomingMessage, Message } from '@aalis/schema-message';
 
 export interface ArchiveIncomingResult {
   message: Message;

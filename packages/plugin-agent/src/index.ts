@@ -1,18 +1,18 @@
 import type { Context, Logger, PluginManagerService } from '@aalis/core';
 import type { AgentService, PluginGroupInfo, PreprocessorFn, PreprocessorInfo } from '@aalis/plugin-agent-api';
 import { useCommandService } from '@aalis/plugin-commands-api';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { GatewayService } from '@aalis/plugin-gateway-api';
 import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@aalis/plugin-llm-api';
 import { listLLMModels, resolveLLMModel } from '@aalis/plugin-llm-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/plugin-message-api';
-import { CONTROL_KINDS, getMessageName, getSenderLabel, WellKnownKinds } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona-api';
 import { getPlatformSelfIdentity } from '@aalis/plugin-platform-api';
 import type { SessionConfig, SessionManagerService } from '@aalis/plugin-session-manager-api';
 import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/plugin-tools-api';
+import type { ConfigSchema } from '@aalis/schema-config';
+import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/schema-message';
+import { CONTROL_KINDS, getMessageName, getSenderLabel, WellKnownKinds } from '@aalis/schema-message';
 import { normalizeAssistantContent, stripLeakedSpecialTokens, truncateChars } from '@aalis/util-text-normalize';
 import {
   buildFocusGuidance,

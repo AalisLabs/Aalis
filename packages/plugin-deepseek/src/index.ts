@@ -1,11 +1,11 @@
 import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/plugin-llm-api';
 import { LLMCapabilities } from '@aalis/plugin-llm-api';
-import type { Message, ToolCall } from '@aalis/plugin-message-api';
-import { prepareLLMMessages, toLLMRole } from '@aalis/plugin-message-api';
 import type { ToolDefinition } from '@aalis/plugin-tools-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
+import type { ConfigSchema } from '@aalis/schema-config';
+import type { Message, ToolCall } from '@aalis/schema-message';
+import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
 import { stripLeakedSpecialTokens } from '@aalis/util-text-normalize';
 import { parseDsmlToolCalls } from './dsml-parser.js';
 

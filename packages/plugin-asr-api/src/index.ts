@@ -7,11 +7,11 @@
 // 用哪个 provider 经核心 servicePreferences（WebUI「服务」页下拉框）切换——
 // 多个 whisper / whisper+云ASR / LLM-as-audio 在同一下拉框里平等可选。
 //
-// 依赖：仅 @aalis/core 与 @aalis/plugin-message-api。
+// 依赖：仅 @aalis/core 与 @aalis/schema-message。
 // ============================================================
 
 import type { Context } from '@aalis/core';
-import type { MessageAttachment } from '@aalis/plugin-message-api';
+import type { MessageAttachment } from '@aalis/schema-message';
 
 export interface TranscribeInput {
   /** 单条音频 attachment */

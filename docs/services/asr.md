@@ -43,7 +43,7 @@ export interface TranscribeResult {
 }
 ```
 
-输入的 `attachment.data` 是一个字符串，约定承载多种来源（`packages/plugin-message-api/src/index.ts`）：base64 data URL / `http(s)://` URL / `file://` URI / storage URI（`<root>:/path`）。provider 负责把它物化成可读字节，下文「写一个 provider」详述。
+输入的 `attachment.data` 是一个字符串，约定承载多种来源（`packages/schema-message/src/index.ts`）：base64 data URL / `http(s)://` URL / `file://` URI / storage URI（`<root>:/path`）。provider 负责把它物化成可读字节，下文「写一个 provider」详述。
 
 接口经 declaration merging 登记到 `ServiceTypeMap`（`index.ts`），所以 `ctx.getService('asr')` 在装了本契约包的工程里能自动推断为 `ASRService | undefined`——无可用后端时即为 `undefined`。
 
@@ -97,7 +97,7 @@ private asrProcessors(): MediaProcessor[] {
 
 ```ts
 import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
+import type { ConfigSchema } from '@aalis/schema-config';
 import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/plugin-asr-api';
 import { safeFetch } from '@aalis/util-network-guard';
 

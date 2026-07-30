@@ -8,13 +8,8 @@
 import type { Context } from '@aalis/core';
 import type { MediaService } from '@aalis/plugin-media-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import {
-  AttachmentRefKind,
-  buildAttachmentRefMatcher,
-  formatAttachmentRef,
-  type Message,
-} from '@aalis/plugin-message-api';
 import { useToolService } from '@aalis/plugin-tools-api';
+import { AttachmentRefKind, buildAttachmentRefMatcher, formatAttachmentRef, type Message } from '@aalis/schema-message';
 import { fileToDataUri } from './ffmpeg.js';
 import { getMediaRuntime } from './runtime.js';
 

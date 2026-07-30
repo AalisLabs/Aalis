@@ -92,7 +92,7 @@ export interface AgentService {
 import type { Context } from '@aalis/core';
 import { ServicePriority } from '@aalis/core';
 import type { AgentService } from '@aalis/plugin-agent-api';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
+import type { IncomingMessage } from '@aalis/schema-message';
 
 export const name = '@acme/plugin-my-agent';
 export const provides = ['agent'];

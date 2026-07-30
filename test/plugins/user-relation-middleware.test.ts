@@ -3,10 +3,10 @@ import { App } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import type { Message } from '../../packages/plugin-message-api/src/index.js';
 import { registerRelationContribution } from '../../packages/plugin-user-relation/src/middleware.js';
 import { RelationService } from '../../packages/plugin-user-relation/src/service.js';
 import { RelationStore } from '../../packages/plugin-user-relation/src/store.js';
+import type { Message } from '../../packages/schema-message/src/index.js';
 
 async function setup() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });

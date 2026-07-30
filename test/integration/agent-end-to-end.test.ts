@@ -11,7 +11,7 @@ import * as messageArchiveModule from '../../packages/plugin-message-archive/src
 import type { AgentService } from '../../packages/plugin-agent-api/src/index.js';
 import type { ChatRequest, ChatResponse } from '../../packages/plugin-llm-api/src/index.js';
 import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
-import type { IncomingMessage, OutgoingMessage } from '../../packages/plugin-message-api/src/index.js';
+import type { IncomingMessage, OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 /**

@@ -103,7 +103,7 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
     if (msg.role === 'system') {
       // 系统事件消息（如压缩记录）→ 渲染为分隔线。
       // 注：'event-marker' 是后端 WellKnownKinds.EventMarker 的前端副本字面量——
-      // webui-client 是独立浏览器 bundle，刻意不依赖后端 @aalis/plugin-message-api。
+      // webui-client 是独立浏览器 bundle，刻意不依赖后端 @aalis/schema-message。
       if (msg.kind === 'event-marker') {
         result.push({
           role: 'system',

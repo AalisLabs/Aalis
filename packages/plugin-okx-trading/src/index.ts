@@ -1,7 +1,7 @@
 import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
+import type { ConfigSchema } from '@aalis/schema-config';
 import { OkxClient } from './client.js';
 import { registerAccountTools } from './tools/account.js';
 import { registerAlgoTools } from './tools/algo.js';

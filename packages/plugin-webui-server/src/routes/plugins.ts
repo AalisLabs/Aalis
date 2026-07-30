@@ -2,9 +2,9 @@ import type { AppService, Context, PluginManagerService } from '@aalis/core';
 import { parseInstanceId } from '@aalis/core';
 import type { UserIdentity } from '@aalis/plugin-authority-api';
 import type { CommandService } from '@aalis/plugin-commands-api';
-import { CORE_CONFIG_SCHEMA } from '@aalis/plugin-config-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import type { WebUIService, WebuiPage } from '@aalis/plugin-webui-api';
+import { CORE_CONFIG_SCHEMA } from '@aalis/schema-config';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 
