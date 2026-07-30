@@ -73,6 +73,14 @@
 .vp-doc h3:hover .header-anchor {
   color: var(--aalis-gold);
 }
+/* # 锚点对齐标题文字：h2 有 24px 上内边距（文字被顶下去），默认锚点 top:0 会浮在
+   金线与文字之间的空隙里，挪到文字行；hr+h2 无上内边距，锚点回到顶部即对齐。 */
+.vp-doc h2 .header-anchor {
+  top: 24px;
+}
+.vp-doc hr + h2 .header-anchor {
+  top: 0;
+}
 
 /* 列表符号 / 引用块 / 表头 / 代码语言标签 / 高亮 → 金 */
 .vp-doc ul > li::marker {
