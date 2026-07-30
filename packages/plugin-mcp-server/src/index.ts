@@ -15,7 +15,6 @@
 import { createServer, type Server } from 'node:http';
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/plugin-config-api';
-import '@aalis/plugin-tools-api';
 import type { RegisteredTool, ToolCallContext, ToolService, ToolSummary } from '@aalis/plugin-tools-api';
 import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
