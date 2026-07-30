@@ -82,26 +82,11 @@
 **改动面大于收益**，暂不动。但需与上一条**一并决策**：要么两条都做（含文案），要么两条都不做，
 只做 `/help` 过滤是自欺。
 
-## 已完成
+## 遗留：WebUI 的 markdown 渲染管线缺两个插件
 
-### `/help` 两段式与统一渲染器
+`/help` 两段式与统一渲染器已落地（`db487bad`，见 `plugin-commands/src/help.ts`），
+其中详情正文整体包进代码块是**绕开**而非解决：
 
-commit `db487bad` 已落地：
-
-- **概览**（`packages/plugin-commands/src/help.ts:78-93`）只列顶层，子指令折成计数；描述按首个句读切分
-  （`help.ts:18` 的 `CLAUSE_BREAK`）再硬截 24 字（`help.ts:21` 的 `BRIEF_MAX`）；自动分组节点的占位描述
-  （`commands.ts:168-178` 的 `ensureGroups` 塞的「xxx 命令组」）改报子指令数
-  （`help.ts:38-40` 的 `isPlaceholderGroup`）。按该 commit 当时的实测，45 行压到 17 行（45 条指令 = 17 顶层 + 28 子）。
-- **详情** `/help <指令>`（`help.ts:103-153`）呈现用法、参数、选项（含取值与候选）、子指令、别名、示例。
-- **统一渲染器**：`commands.ts:381-388` 的 `formatUsage` 委托同一个 `renderDetail`，
-  裸调用分组、未知选项报错、`/help` 详情三条路径共用一份渲染。
-
-顺带修掉一个**现存显示 bug**：详情正文整体包进代码块（`help.ts:152`）。WebUI 的 ReactMarkdown 只挂
-`remarkGfm` + `remarkMath`（`packages/plugin-webui-client/src/components/markdownConfig.tsx:10`）与
-`rehypeHighlight` + `rehypeKatex`（同文件 `:25-29`），**既无 `remark-breaks`**（裸换行被合并成一段），
-**也无 `rehype-raw`**（`<type>` / `<subcommand>` 是合法 HTML 标签名，会被当 HTML 节点整段丢弃）——
-在修复前裸敲 `/relation` 就中招。代码块同时让选项与子指令两列在等宽字体下对齐（按 CJK 显示宽度补位，
-非 code point 数）。
-
-注意这是**绕开**而非解决：markdown 渲染管线的这两项缺失依然存在，任何新的指令输出若不走代码块，
-同样会被吞掉占位符、合并裸换行。
+`markdownConfig.tsx` 只挂了 `remarkGfm` + `remarkMath` + `rehypeHighlight` + `rehypeKatex`，
+**无 `remark-breaks`**（裸换行被合并成一段）、**无 `rehype-raw`**（`<type>` / `<subcommand>`
+是合法 HTML 标签名，会被当 HTML 节点整段丢弃）。任何新的指令输出若不走代码块，同样中招。
