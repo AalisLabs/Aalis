@@ -28,11 +28,11 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/plugin-agent-api": "workspace:^",
+    "@aalis/plugin-agent-api": "workspace:>=0.6.0 <1.0.0",
     "@aalis/plugin-config-api": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/plugin-llm-api": "workspace:^",
-    "@aalis/plugin-session-manager-api": "workspace:^",
-    "@aalis/plugin-webui-api": "workspace:^"
+    "@aalis/plugin-llm-api": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/plugin-session-manager-api": "workspace:>=0.6.0 <1.0.0",
+    "@aalis/plugin-webui-api": "workspace:>=0.9.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
