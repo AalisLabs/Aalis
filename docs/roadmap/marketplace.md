@@ -93,11 +93,30 @@ required 依赖缺失的新插件停在 pending，等提供者装上后自动补
 | 超时按 `npm pack` 定，对 `npm install` 不足 | 安装类命令 600s，短命令仍 120s |
 | 升级已装插件不生效（`rescanPlugins` 跳过已注册） | 新增 `update(targets)`：整组预检 → 一次安装 → 一次重启 |
 | 更新无拓扑序 | 一次 `npm install` 提交整张版本映射，重启次数恒为 1 |
-| peer 兼容门禁（npm 只 warn 就把 core 换掉） | 预检与真装都带 `--strict-peer-deps`，冲突则整批拒绝且不改文件 |
+| peer 兼容门禁（npm 只 warn 就把 core 换掉） | dry-run 预检 + **解析输出**判定，冲突则整批拒绝且不改文件（见下方更正） |
 | core / runtime 检索不到 | 独立的「系统组件」页，数据源是本地已装 + 根依赖表，只提供更新 |
 | 无更新入口（卡片显示「可更新 vX」但无动作） | 系统组件页的批量勾选 + 「更新所选」 |
 | 重启丢 `execArgv`、不验证子进程、`stop()` reject 成僵尸态 | 见 `packages/runtime/src/providers.ts` 的 `createProcessRespawnStrategy` |
 | 更新 core / runtime 不可逆 | IPC ready 握手；新实例 ready 前夭折则还原 `package.json` + lockfile 并重生旧版 |
+
+### 更正：`--strict-peer-deps` 并不能把 warn-override 变成硬失败
+
+本文旧版写着「`--strict-peer-deps` 可把上述 warn-override 变成硬失败 —— 一次性判定一组
+目标版本是否互相兼容，不需要自研版本求解算法」。**这句话是错的**，实施时照搬后被端到端
+验证抓出来。实测（npm 10.9.2，基线 `react@18.3.1` + `react-dom@18.3.1`，后者 peer 要
+`react@^18.3.1`）：
+
+| 方向 | 不带 strict | 带 `--strict-peer-deps` |
+|---|---|---|
+| 装一个新包、其 peer 不满足（`npm i react-dom@18` 而已有 `react@17`） | exit 1 | exit 1（**无增量价值**） |
+| **改一个已被别人 peer 依赖的包的版本**（`npm i react@17`）——正是更新 core 的形状 | exit 0 | **exit 0，无效** |
+
+把目标版本先写进 `package.json` 再裸装，同样 exit 0。npm 把命令行上显式指定的 spec 视为
+用户意图，只打 warn 就放行。
+
+但它确实会在 **stderr** 打出 `peer <name>@"<range>" from <dependent>`。现行实现因此是
+「dry-run + 解析输出」：只认**提到本次目标**的那些行（工程里原有的无关未满足 peer 不该
+阻断更新），命中即整批拒绝。`--strict-peer-deps` 仍然保留，但不再作为唯一判据。
 
 **热升级（`import(url + '?t=…')`）已决定不做。** 理由：它只让入口模块重新求值，同包兄弟文件
 与全部依赖仍命中旧 ESM 缓存，而一方插件约三分之一是多文件 tsc dist，对它们要么无效、要么造成
