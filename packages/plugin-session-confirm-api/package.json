@@ -24,7 +24,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/plugin-authority-api": "workspace:^"
+    "@aalis/plugin-authority-api": "workspace:>=0.5.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

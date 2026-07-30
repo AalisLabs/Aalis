@@ -28,7 +28,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/plugin-cron-engine-api": "workspace:^"
+    "@aalis/plugin-cron-engine-api": "workspace:>=0.5.1 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

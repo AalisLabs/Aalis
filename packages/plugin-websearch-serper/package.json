@@ -29,8 +29,8 @@
   },
   "dependencies": {
     "@aalis/plugin-config-api": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/plugin-llm-api": "workspace:^",
-    "@aalis/plugin-tools-api": "workspace:^"
+    "@aalis/plugin-llm-api": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/plugin-tools-api": "workspace:>=0.5.1 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

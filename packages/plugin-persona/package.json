@@ -28,12 +28,12 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/plugin-agent-api": "workspace:^",
+    "@aalis/plugin-agent-api": "workspace:>=0.6.0 <1.0.0",
     "@aalis/plugin-config-api": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/plugin-memory-api": "workspace:^",
-    "@aalis/plugin-platform-api": "workspace:^",
-    "@aalis/plugin-storage-api": "workspace:^",
-    "@aalis/util-json-repair": "workspace:^",
+    "@aalis/plugin-memory-api": "workspace:>=0.5.0 <1.0.0",
+    "@aalis/plugin-platform-api": "workspace:>=0.5.0 <1.0.0",
+    "@aalis/plugin-storage-api": "workspace:>=0.5.5 <1.0.0",
+    "@aalis/util-json-repair": "workspace:>=0.5.1 <1.0.0",
     "yaml": "^2.7.0"
   },
   "devDependencies": {
