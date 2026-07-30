@@ -28,10 +28,10 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/plugin-agent-api": "workspace:^",
+    "@aalis/plugin-agent-api": "workspace:>=0.6.0 <1.0.0",
     "@aalis/plugin-config-api": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/plugin-message-api": "workspace:^",
-    "@aalis/plugin-tools-api": "workspace:^"
+    "@aalis/plugin-message-api": "workspace:>=0.5.1 <1.0.0",
+    "@aalis/plugin-tools-api": "workspace:>=0.5.1 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
