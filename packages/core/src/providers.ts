@@ -96,5 +96,11 @@ export interface PluginLoader {
  * CLI/嵌入式宿主可能直接 `await stop()` 后立刻重启，core 不再硬编码时延。
  */
 export interface RestartStrategy {
-  restart(opts: { stop: () => Promise<void> }): void | Promise<void>;
+  /**
+   * @param opts.stop 优雅停掉当前 App。
+   * @param opts.rollback 发起方交给策略的**不透明**回滚凭据：仅当策略判定「新实例未能
+   *   接管」时才使用。core 不解释它的形状——回滚内容只有发起方（如市场更新）知道，
+   *   触发条件只有策略（父进程）观察得到，core 只做透传。
+   */
+  restart(opts: { stop: () => Promise<void>; rollback?: unknown }): void | Promise<void>;
 }

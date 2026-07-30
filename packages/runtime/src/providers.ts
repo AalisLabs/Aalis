@@ -281,39 +281,248 @@ export function createFsPluginLoader(packagesDir?: string): PluginLoader {
 // ProcessRespawnStrategy —— spawn 新 Node 进程然后退出当前
 // ============================================================
 
+/** 子进程 `app.start()` 成功后经 IPC 回传的握手消息。 */
+export const READY_MESSAGE = 'aalis:ready';
+
 /**
- * Node 进程重启策略：spawn 一个 detached 子进程沿用当前 argv，然后 `process.exit(0)`。
+ * 重启回滚凭据——「更新后新实例起不来」时把工程恢复到更新前的手段。
+ *
+ * 由发起方（市场的 core/runtime 更新）在改写 `package.json` **之前**构造，经
+ * `app.restart({ rollback })` 交给策略，**全程只在父进程内存里**：触发条件（新进程
+ * ready 前退出）与执行者都是父进程，不跨 spawn 边界，因此不需要落盘。
+ */
+export interface RestartRollback {
+  /** 人类可读的来由，仅用于日志（如 `marketplace-update:@aalis/core`）。 */
+  reason: string;
+  /** 需要还原的文件：绝对路径 → 更新前的原始内容。 */
+  restore: Array<{ path: string; content: string }>;
+  /**
+   * 还原文件后需要跑的命令——`package.json` 回退了，`node_modules` 还停在新版，
+   * 必须再跑一次安装才能真正回到旧状态。省略则只还原文件。
+   */
+  postRestore?: { cmd: string; args: string[]; cwd: string };
+}
+
+/** 判定不透明的 rollback 透传值是否是可用的凭据（core 不解释形状，由本层校验）。 */
+export function isRestartRollback(v: unknown): v is RestartRollback {
+  const r = v as RestartRollback | null;
+  return !!r && typeof r.reason === 'string' && Array.isArray(r.restore);
+}
+
+export interface RespawnOptions {
+  /**
+   * 等待子进程 IPC ready 的超时（毫秒，默认 30000）。
+   *
+   * **超时按成功处理**——不发 ready 的旧 runtime 必须仍能重启。真正的失败信号是
+   * 「子进程在 ready 之前退出」，不是超时。
+   */
+  readyTimeoutMs?: number;
+}
+
+/**
+ * 从 execArgv 里解析出 `--env-file` / `--env-file-if-exists` 指向的文件路径。
+ * 两种写法都要认：`--env-file=x` 与 `--env-file x`。纯函数，便于单测。
+ */
+export function parseEnvFileArgs(execArgv: readonly string[]): string[] {
+  const files: string[] = [];
+  for (let i = 0; i < execArgv.length; i++) {
+    const a = execArgv[i];
+    const inline = /^--env-file(?:-if-exists)?=(.+)$/.exec(a);
+    if (inline) files.push(inline[1]);
+    else if (/^--env-file(?:-if-exists)?$/.test(a) && execArgv[i + 1]) files.push(execArgv[++i]);
+  }
+  return files;
+}
+
+/** 极简 dotenv 解析：`KEY=VALUE`，容忍 `export ` 前缀、行内注释外的引号包裹。纯函数。 */
+export function parseDotenvKeys(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const line of text.split('\n')) {
+    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+    if (!m) continue;
+    out.set(m[1], m[2].trim().replace(/^(['"])([\s\S]*)\1$/, '$2'));
+  }
+  return out;
+}
+
+/**
+ * 算出「本进程环境里，哪些键的值确实来自 env 文件」。
+ *
+ * 为什么需要：Node 的 `--env-file` **不覆盖环境里已存在的键**（已实测）。而重生子进程
+ * 会继承父进程解析后的 `process.env`，于是那些键在子进程里已经"存在"，`--env-file`
+ * 便不再写入——「改完 .env 再重启」永远读到旧值，仅保留 execArgv 是不够的。
+ *
+ * 判据取「当前值 == 文件里的值」而非「文件里有这个键」：若用户在 shell 里显式覆盖了
+ * 某个键（Node 让 shell 赢），两者不等 → 不算文件所有 → 重生时保留 shell 值，
+ * 优先级语义不被这项修复改变。
+ */
+export function envKeysOwnedByFile(
+  execArgv: readonly string[],
+  env: NodeJS.ProcessEnv,
+  readText: (p: string) => string | undefined,
+): Set<string> {
+  const owned = new Set<string>();
+  for (const file of parseEnvFileArgs(execArgv)) {
+    const text = readText(file);
+    if (text === undefined) continue;
+    for (const [k, v] of parseDotenvKeys(text)) {
+      if (env[k] === v) owned.add(k);
+    }
+  }
+  return owned;
+}
+
+/** 组装重生用的 exec + argv。分离出来是为了单测覆盖 execArgv 保留。 */
+export function buildRespawnCommand(
+  argv: readonly string[] = process.argv,
+  execArgv: readonly string[] = process.execArgv,
+  cwd: string = process.cwd(),
+): { exec: string; args: string[] } {
+  const scriptFile = argv[1];
+  if (scriptFile?.endsWith('.ts')) {
+    // tsx 是包装脚本，node 层 flag 由它自己转交，不能塞在它前面。
+    const tsxBin = resolve(cwd, 'node_modules', '.bin', 'tsx');
+    return { exec: existsSync(tsxBin) ? tsxBin : 'tsx', args: [...argv.slice(1)] };
+  }
+  // execArgv 不在 argv 里：`node --env-file-if-exists=.env dist/start.js` 的
+  // `--env-file-if-exists` 只出现在 execArgv。不透传的话，脚手架启动脚本的 .env 加载与
+  // 用户自加的 --max-old-space-size 会在重启后静默失效。
+  const [exec, ...rest] = argv;
+  return { exec: exec ?? process.execPath, args: [...execArgv, ...rest] };
+}
+
+/**
+ * Node 进程重启策略：spawn 一个 detached 子进程接管，确认其起得来后再退出当前进程。
  *
  * 时序：
  * 1. 等 500ms 让正在飞行的 HTTP/WS 响应有机会先返回客户端
- * 2. 调 `stop()` 优雅停掉当前 App（关闭网关、断开适配器等）
- * 3. spawn 新进程 + `process.exit(0)`
+ * 2. 调 `stop()` 优雅停掉当前 App；**抛错也继续**——否则进程会停在「插件已半拆、
+ *    HTTP 已关、但还活着」的僵尸态，而脚手架不生成 supervisor，无人可救
+ * 3. spawn 新进程（保留 execArgv、剔除 env 文件所有的键，带 IPC 通道）
+ * 4. 等 ready / 夭折 / 超时三者之一：
+ *    - ready 或超时 → 放手、`exit(0)`
+ *    - **ready 前夭折** → 有回滚凭据则还原工程并重生旧版；否则记 fatal 后 `exit(1)`
+ *
+ * 第 4 步是「更新 core 从不可逆赌博变成可接受操作」的关键：没有它，新 core 起不来时
+ * 父进程已经退了，用户只剩手改 package.json 一条路。
+ *
+ * **单飞**：重启期间的第二次调用直接忽略。窗口是 500ms + stop 耗时 + 等 ready 的全程
+ * （最长 30s），期间 HTTP/指令入口仍可能再次触发；不设防会 spawn 出两个 detached
+ * 子进程——非独占端口的部署（如 onebot 反向 WS）两个都能活，每条消息回两遍，而它们
+ * 自成进程组，Ctrl+C 打不到。
  *
  * 对 .ts 入口（开发模式）会优先使用本地 `tsx` 二进制。
  */
-export function createProcessRespawnStrategy(): RestartStrategy {
+export function createProcessRespawnStrategy(opts: RespawnOptions = {}): RestartStrategy {
+  const readyTimeoutMs = opts.readyTimeoutMs ?? 30_000;
+  let restarting = false;
+
+  // 启动时（而非重启时）快照：此刻 process.env 还是本进程启动时解析出来的那一份，
+  // 能准确判定哪些键的值来自 env 文件。重启时文件可能已被用户改过，那时再比就错了。
+  const envFileOwnedKeys = envKeysOwnedByFile(process.execArgv, process.env, p => {
+    try {
+      return readFileSync(resolve(process.cwd(), p), 'utf-8');
+    } catch {
+      return undefined;
+    }
+  });
+
+  /** 子进程环境：剔掉 env 文件所有的键，让新进程的 `--env-file` 能重新写入最新值。 */
+  function childEnv(): NodeJS.ProcessEnv {
+    if (envFileOwnedKeys.size === 0) return process.env;
+    const env = { ...process.env };
+    for (const k of envFileOwnedKeys) delete env[k];
+    return env;
+  }
+
+  function spawnChild(withIpc: boolean): ReturnType<typeof spawn> {
+    const { exec, args } = buildRespawnCommand();
+    return spawn(exec, args, {
+      cwd: process.cwd(),
+      stdio: withIpc ? ['inherit', 'inherit', 'inherit', 'ipc'] : 'inherit',
+      detached: true,
+      env: childEnv(),
+    });
+  }
+
   return {
-    async restart({ stop }) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      await stop();
-      const scriptFile = process.argv[1];
-      let exec: string;
-      let args: string[];
-      if (scriptFile?.endsWith('.ts')) {
-        const tsxBin = resolve(process.cwd(), 'node_modules', '.bin', 'tsx');
-        exec = existsSync(tsxBin) ? tsxBin : 'tsx';
-        args = process.argv.slice(1);
-      } else {
-        [exec, ...args] = process.argv;
+    async restart({ stop, rollback }) {
+      if (restarting) {
+        console.error('[aalis] 已有重启在进行中，忽略本次请求。');
+        return;
       }
-      const child = spawn(exec, args, {
-        cwd: process.cwd(),
-        stdio: 'inherit',
-        detached: true,
-        env: process.env,
+      restarting = true;
+
+      await new Promise(r => setTimeout(r, 500));
+      try {
+        await stop();
+      } catch (err) {
+        // 停不干净也要往下走：僵尸态比一次不完全的重启更糟。
+        console.error('[aalis] 停止应用时出错，仍继续重启:', err);
+      }
+
+      const child = spawnChild(true);
+      const outcome = await new Promise<'ready' | 'timeout' | 'died'>(resolveOutcome => {
+        const timer = setTimeout(() => resolveOutcome('timeout'), readyTimeoutMs);
+        const done = (o: 'ready' | 'timeout' | 'died') => {
+          clearTimeout(timer);
+          resolveOutcome(o);
+        };
+        child.on('message', (msg: unknown) => {
+          if ((msg as { type?: unknown } | null)?.type === READY_MESSAGE) done('ready');
+        });
+        child.on('exit', () => done('died'));
+        child.on('error', () => done('died'));
       });
-      child.unref();
-      process.exit(0);
+
+      if (outcome !== 'died') {
+        try {
+          child.disconnect();
+        } catch {
+          /* 通道可能已关，忽略 */
+        }
+        child.unref();
+        process.exit(0);
+      }
+
+      // ── 新进程在就绪前夭折 ──
+      if (!isRestartRollback(rollback)) {
+        console.error('[aalis] 重启失败：新进程未能启动，且本次重启未带回滚凭据。请检查上方日志。');
+        process.exit(1);
+      }
+      console.error(`[aalis] 新进程未能启动，正在回滚（${rollback.reason}）…`);
+      // 任一还原失败就不再往下走：部分还原后跑 postRestore 会在「package.json 已回退、
+      // lockfile 未回退」的混合树上安装，比不回滚更糟。此时把原始内容打进日志——
+      // 它是盘外仅存的一份，用户据此可手工恢复。
+      const failed: string[] = [];
+      for (const f of rollback.restore) {
+        try {
+          writeFileSync(f.path, f.content);
+        } catch (err) {
+          failed.push(f.path);
+          console.error(`[aalis] 回滚写入失败 ${f.path}:`, err);
+          console.error(`[aalis] 该文件的更新前内容如下，请手工恢复：\n${f.content}`);
+        }
+      }
+      if (failed.length > 0) {
+        console.error(`[aalis] 回滚未完成（${failed.length} 个文件写入失败），已跳过重装以免留下混合状态。`);
+        process.exit(1);
+      }
+      if (rollback.postRestore) {
+        const { cmd, args, cwd } = rollback.postRestore;
+        await new Promise<void>(r => {
+          const p = spawn(cmd, args, { cwd, stdio: 'inherit' });
+          p.on('exit', () => r());
+          p.on('error', err => {
+            console.error('[aalis] 回滚命令执行失败:', err);
+            r();
+          });
+        });
+      }
+      const revived = spawnChild(false);
+      revived.unref();
+      console.error('[aalis] 已回滚并重新启动旧版本。');
+      process.exit(1);
     },
   };
 }

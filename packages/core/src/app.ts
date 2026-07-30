@@ -347,7 +347,7 @@ export class App {
    *
    * 未注入策略时抛错（明确暴露"嵌入式宿主没声明重启能力"的事实）。
    */
-  restart(): void {
+  restart(opts?: { rollback?: unknown }): void {
     if (!this.restartStrategy) {
       throw new Error('App.restart() 不可用：未注入 restartStrategy。');
     }
@@ -358,7 +358,7 @@ export class App {
     this.events.clearSticky();
     this.ctx
       .emit('restarting')
-      .then(() => strategy.restart({ stop: () => this.stop() }))
+      .then(() => strategy.restart({ stop: () => this.stop(), rollback: opts?.rollback }))
       .catch(err => {
         this.logger.warn(`restart 失败: ${err}`);
       });
