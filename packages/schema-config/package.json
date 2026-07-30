@@ -1,11 +1,11 @@
 {
-  "name": "@aalis/plugin-message-api",
-  "version": "0.5.1",
+  "name": "@aalis/schema-config",
+  "version": "0.9.0",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/AalisLabs/Aalis.git",
-    "directory": "packages/plugin-message-api"
+    "directory": "packages/schema-config"
   },
   "author": "Ace Nyan <ace@acenyan.com>",
   "bugs": {
@@ -22,22 +22,14 @@
     "build": "tsc",
     "dev": "tsc --watch"
   },
-  "dependencies": {
-    "@aalis/util-text-normalize": "workspace:>=0.5.1 <1.0.0"
-  },
   "devDependencies": {
-    "@aalis/core": "workspace:*",
-    "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },
   "aalis": {
     "types": true
   },
-  "peerDependencies": {
-    "@aalis/core": ">=0.2.0 <1.0.0"
-  },
   "keywords": [
     "aalis",
-    "aalis-api"
+    "aalis-schema"
   ]
 }

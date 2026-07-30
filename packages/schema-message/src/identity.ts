@@ -3,7 +3,7 @@
  *
  * 统一 userId / nickname 的使用模式，避免各插件实现不一致。
  *
- * 由 plugin-message-api 提供（cleanup-9 从 core 迁出——core 不应知晓
+ * 由 schema-message 提供（cleanup-9 从 core 迁出——core 不应知晓
  * IM 平台层的「发送者」「昵称」「OpenAI Message.name 字段」等概念）。
  */
 

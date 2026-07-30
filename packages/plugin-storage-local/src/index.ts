@@ -2,7 +2,6 @@ import { createReadStream, type FSWatcher, watch as fsWatch } from 'node:fs';
 import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { Context, Logger } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { CheckResult } from '@aalis/plugin-doctor-api';
 import { useDoctorService } from '@aalis/plugin-doctor-api';
 import type {
@@ -16,6 +15,7 @@ import type {
   StorageWatchEvent,
   StorageWatchListener,
 } from '@aalis/plugin-storage-api';
+import type { ConfigSchema } from '@aalis/schema-config';
 
 export const name = '@aalis/plugin-storage-local';
 export const displayName = '本地存储根（命名 + 路径解析）';

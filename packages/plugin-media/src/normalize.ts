@@ -6,7 +6,7 @@
 // 处自行装入 attachments[]。
 // ============================================================
 
-import type { IncomingMessage, MessageAttachment } from '@aalis/plugin-message-api';
+import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
 
 const IMAGE_MIME_BY_EXT: Record<string, string> = {
   jpg: 'image/jpeg',

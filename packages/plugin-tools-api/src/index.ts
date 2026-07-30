@@ -9,7 +9,7 @@
 // - useToolService(ctx) helper（M2 后取代 ctx.registerTool mixin）
 // - 通过 declaration merging 向 AalisEvents 注入 'tool:execute'
 //
-// 注：`ToolCall`（assistant 消息携带的调用载荷）位于 @aalis/plugin-message-api，
+// 注：`ToolCall`（assistant 消息携带的调用载荷）位于 @aalis/schema-message，
 // 与 Message 同源同生命周期。本包不依赖 message-api（双向解耦）。
 //
 // 实现见 @aalis/plugin-tool-system。

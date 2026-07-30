@@ -4,7 +4,7 @@ import {
   buildAttachmentRefMatcher,
   formatAttachmentRef,
   parseAttachmentRefs,
-} from '../../packages/plugin-message-api/src/attachment-ref.js';
+} from '../../packages/schema-message/src/attachment-ref.js';
 
 describe('attachment-ref helpers', () => {
   describe('formatAttachmentRef', () => {

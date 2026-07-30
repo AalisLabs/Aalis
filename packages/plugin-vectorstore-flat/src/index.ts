@@ -1,7 +1,7 @@
 import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { createStorageGateway, type StorageService, toStorageUri } from '@aalis/plugin-storage-api';
 import type { VectorSearchResult, VectorStoreService } from '@aalis/plugin-vectorstore-api';
+import type { ConfigSchema } from '@aalis/schema-config';
 
 // ===== 插件元数据 =====
 

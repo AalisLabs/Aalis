@@ -70,7 +70,7 @@ plugins:
 
 ## 核心配置字段
 
-> 表单描述（`CORE_CONFIG_SCHEMA`）随全部表单词汇住在 `@aalis/plugin-config-api`；core 不持有 schema。
+> 表单描述（`CORE_CONFIG_SCHEMA`）随全部表单词汇住在 `@aalis/schema-config`；core 不持有 schema。
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|

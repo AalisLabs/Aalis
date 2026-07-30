@@ -14,9 +14,9 @@
 
 import type { Context } from '@aalis/core';
 import { useAgent } from '@aalis/plugin-agent-api';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { createProcessGateway } from '@aalis/plugin-process-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
+import type { ConfigSchema } from '@aalis/schema-config';
 import { DEFAULT_AUDIO_PROMPT, DEFAULT_VISION_BATCH_PROMPT, DEFAULT_VISION_PROMPT } from './llm-adapter.js';
 import { buildPreprocessor } from './preprocessor.js';
 import { setMediaRuntime } from './runtime.js';

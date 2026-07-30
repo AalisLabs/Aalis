@@ -13,7 +13,7 @@
 
 import type { Context } from '@aalis/core';
 import type { PromptAnchor, PromptContribution, PromptContributionView } from '@aalis/plugin-agent-api';
-import type { Message } from '@aalis/plugin-message-api';
+import type { Message } from '@aalis/schema-message';
 
 /** 锚位排布次序（同一轮组装内生效；语义见 agent-api 的 PromptAnchor 文档） */
 const ANCHOR_ORDER: readonly PromptAnchor[] = ['identity', 'knowledge', 'context', 'turn-hint'];

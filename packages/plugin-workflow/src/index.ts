@@ -7,7 +7,6 @@
 // ============================================================
 
 import type { Context, PluginModule } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { ToolService } from '@aalis/plugin-tools-api';
 import { useToolService } from '@aalis/plugin-tools-api';
@@ -15,6 +14,7 @@ import { useToolService } from '@aalis/plugin-tools-api';
 import type { WebuiPage } from '@aalis/plugin-webui-api';
 import { useWebuiService } from '@aalis/plugin-webui-api';
 import type { NodeRunInfo, WorkflowRun, WorkflowService } from '@aalis/plugin-workflow-api';
+import type { ConfigSchema } from '@aalis/schema-config';
 import { parse, stringify } from 'yaml';
 
 import { runDag, validateGraph } from './engine.js';

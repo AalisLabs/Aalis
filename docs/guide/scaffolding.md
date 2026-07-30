@@ -274,7 +274,7 @@ export function apply(ctx: Context) {
 需要 API key / 地址等参数时，导出 `configSchema`（WebUI 据此自动渲染表单），在 `apply` 里读已校验过的 `config`：
 
 ```ts
-import type { ConfigSchema } from '@aalis/plugin-config-api';
+import type { ConfigSchema } from '@aalis/schema-config';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：secret 等表单属性
 
 export const configSchema: ConfigSchema = {

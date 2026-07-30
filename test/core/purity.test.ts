@@ -8,7 +8,7 @@ import * as core from '../../packages/core/src/index.js';
 // core 纯度守卫
 //
 // 1) 词汇禁令：呈现层/政策词汇不得出现在 core 源码——表单词汇归
-//    @aalis/plugin-config-api，配置同步政策归 @aalis/runtime。
+//    @aalis/schema-config，配置同步政策归 @aalis/runtime。
 // 2) 公开面快照：core 的运行时导出与 Context 表面是版本承诺面，
 //    任何增删必须是有意识的决定（同步更新本清单 = 留下决策记录）。
 // ════════════════════════════════════════════════════════════
@@ -49,7 +49,7 @@ describe('core 词汇禁令（呈现层/政策词汇不得渗回内核）', () =
         }
       }
     }
-    expect(violations, '表单词汇归 plugin-config-api、配置政策归 runtime——不要加回 core').toEqual([]);
+    expect(violations, '表单词汇归 schema-config、配置政策归 runtime——不要加回 core').toEqual([]);
   });
 });
 

@@ -38,7 +38,7 @@ export interface PluginModule {
   reusable?: boolean;
   /**
    * 配置 Schema——core 视为 **opaque 数据**原样透传，不解释任何字段。
-   * 表单形状类型由 @aalis/plugin-config-api 定义，渲染宿主与配置同步
+   * 表单形状类型由 @aalis/schema-config 定义，渲染宿主与配置同步
    * 政策（@aalis/runtime）自行消费。
    */
   configSchema?: Record<string, unknown>;

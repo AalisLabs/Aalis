@@ -11,11 +11,11 @@
 import { Buffer } from 'node:buffer';
 import type { Context } from '@aalis/core';
 import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/plugin-asr-api';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { ProcessService } from '@aalis/plugin-process-api';
 import { createProcessGateway } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway, isStorageUri } from '@aalis/plugin-storage-api';
+import type { ConfigSchema } from '@aalis/schema-config';
 import { safeFetch } from '@aalis/util-network-guard';
 
 export const name = '@aalis/plugin-asr-whisper-cpp';

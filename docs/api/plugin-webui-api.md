@@ -142,5 +142,5 @@ export function apply(ctx: Context) {
 
 ## 相关
 
-- ConfigSchema 来自 `@aalis/plugin-config-api`（本包经 declaration merging 向其 `SchemaField` 注入 `secret` / `dynamicOptions` / `allowCustom` 等表单属性）
+- ConfigSchema 来自 `@aalis/schema-config`（本包经 declaration merging 向其 `SchemaField` 注入 `secret` / `dynamicOptions` / `allowCustom` 等表单属性）
 - 事件 `'tool:execute'` 与 `'token:usage'` 都被 webui-server 转 WebSocket 推送给前端

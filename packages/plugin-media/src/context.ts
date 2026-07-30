@@ -14,7 +14,7 @@
 
 import type { Context } from '@aalis/core';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { IncomingMessage } from '@aalis/plugin-message-api';
+import type { IncomingMessage } from '@aalis/schema-message';
 
 const HISTORY_LIMIT_DEFAULT = 4;
 /** plugin-user-profile 写入 metadata 时使用的 namespace；保持同步！ */

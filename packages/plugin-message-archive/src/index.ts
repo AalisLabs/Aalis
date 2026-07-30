@@ -1,11 +1,10 @@
 import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
-
 import type { MediaService } from '@aalis/plugin-media-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
-import { getMessageName, getSenderLabel, prefixSender, WellKnownKinds } from '@aalis/plugin-message-api';
 import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/plugin-message-archive-api';
+import type { ConfigSchema } from '@aalis/schema-config';
+import type { IncomingMessage, Message } from '@aalis/schema-message';
+import { getMessageName, getSenderLabel, prefixSender, WellKnownKinds } from '@aalis/schema-message';
 
 export type {
   ArchiveIncomingResult,

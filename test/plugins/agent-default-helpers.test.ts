@@ -9,7 +9,7 @@ import {
   INPUT_CONVENTIONS,
   isSameMessage,
 } from '../../packages/plugin-agent/src/helpers.js';
-import type { IncomingMessage } from '../../packages/plugin-message-api/src/index.js';
+import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 
 describe('formatTimeLabel', () => {
   it('同一天显示「今天 HH:mm」', () => {

@@ -1,4 +1,4 @@
-# @aalis/plugin-config-api
+# @aalis/schema-config
 
 配置表单 Schema 词汇契约包：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` 及 `SchemaFieldTypes` 扩展点。
 
@@ -11,7 +11,7 @@
 仓内五十余个包这样依赖本包（与 `@aalis/core` 的 peerDep 同一风格）：
 
 ```jsonc
-"dependencies": { "@aalis/plugin-config-api": "workspace:>=0.9.0 <1.0.0" }
+"dependencies": { "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0" }
 ```
 
 发布时该区间**原样保留**（实测 `pnpm pack` 产物即 `>=0.9.0 <1.0.0`），本地仍照常 link 到 workspace。

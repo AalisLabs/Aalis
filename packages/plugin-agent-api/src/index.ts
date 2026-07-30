@@ -8,8 +8,8 @@
 
 import type { Context } from '@aalis/core';
 import type { ChatResponse } from '@aalis/plugin-llm-api';
-import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
 import type { ToolCallContext, ToolDefinition } from '@aalis/plugin-tools-api';
+import type { IncomingMessage, Message } from '@aalis/schema-message';
 
 /**
  * 插件分组信息（按子系统聚合，供 WebUI Dashboard 等使用）

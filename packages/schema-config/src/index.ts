@@ -1,5 +1,5 @@
 // ============================================================
-// @aalis/plugin-config-api — 配置表单 Schema 词汇契约
+// @aalis/schema-config — 配置表单 Schema 词汇契约
 //
 // 这里的类型描述"配置如何呈现为表单"（label / options / textarea …），
 // 是**呈现层词汇**，因此不属于 @aalis/core——core 只把 `PluginModule.configSchema`
@@ -20,7 +20,7 @@
  * （如 `'llm-ref'` 由 @aalis/plugin-llm-api 注入）。key 即类型名，value 恒为 true。
  *
  * ```ts
- * declare module '@aalis/plugin-config-api' {
+ * declare module '@aalis/schema-config' {
  *   interface SchemaFieldTypes {
  *     'llm-ref': true;
  *   }

@@ -8,7 +8,7 @@
 > 本文档保留接口定义文本以供查阅，但**实际源码不再位于 packages/core**。
 > core 仅保留：通用 IoC 数据契约（依赖声明 / 中间件 / `AalisEvents`）、App 生命周期接口、服务自清理协议（`DisposableService`），以及 4 个空扩展点（`AalisEvents` / `HookContextMap` / `ServiceTypeMap` / `ContributionPointMap`）——供各 `plugin-*-api` 通过 declaration merging 注入领域键。
 >
-> 注：**配置表单 Schema 词汇**（`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` / `SchemaFieldTypes` / `CORE_CONFIG_SCHEMA`）已迁至 `@aalis/plugin-config-api`——它是呈现层词汇，core 把 `PluginModule.configSchema` 当 opaque 数据透传、不解释任何字段。下文相关小节仅供查阅，import 请从 config-api。
+> 注：**配置表单 Schema 词汇**（`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` / `SchemaFieldTypes` / `CORE_CONFIG_SCHEMA`）已迁至 `@aalis/schema-config`——它是呈现层词汇，core 把 `PluginModule.configSchema` 当 opaque 数据透传、不解释任何字段。下文相关小节仅供查阅，import 请从 config-api。
 >
 > 注：0.5.0 已**移除内核的「服务能力选择/匹配」层**——`ServiceCapabilityMap` / `getServiceCapabilities` / 按能力筛选服务的整套机制不再存在。服务选择只走「偏好 > 优先级 > 注册顺序」；领域级筛选（如按 LLM 模型能力）由各 `*-api` 的 helper 自理，不进内核 DI。
 
@@ -616,7 +616,7 @@ interface AalisEvents {
 }
 
 // 由 api 包注入的业务事件示例（declaration merging）：
-//   @aalis/plugin-message-api  → 'inbound:message' / 'inbound:message:archived' / 'outbound:message' / 'outbound:stream'
+//   @aalis/schema-message  → 'inbound:message' / 'inbound:message:archived' / 'outbound:message' / 'outbound:stream'
 //   @aalis/plugin-tools-api    → 'tool:execute'
 //   @aalis/plugin-gateway-api  → 'gateway:phase:done'
 //   @aalis/plugin-session-manager → 'session:created' / 'session:updated' / 'session:completed' / ...

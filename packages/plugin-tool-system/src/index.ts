@@ -1,11 +1,11 @@
 import type { Context } from '@aalis/core';
 import { useCommandService } from '@aalis/plugin-commands-api';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import { createProcessGateway } from '@aalis/plugin-process-api';
 import type { StorageService } from '@aalis/plugin-storage-api';
 import { createStorageGateway } from '@aalis/plugin-storage-api';
 import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
+import type { ConfigSchema } from '@aalis/schema-config';
 import { CwdState } from './tools/cwd-state.js';
 import { registerFileTools } from './tools/file.js';
 import { registerHttpTools } from './tools/http.js';

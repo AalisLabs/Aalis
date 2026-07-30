@@ -1,11 +1,11 @@
 import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
 import { resolvePlatformBySession } from '@aalis/plugin-platform-api';
 import type { AccessChecker, AccessCheckerDisposer, SessionHistoryService } from '@aalis/plugin-tool-session-api';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import { useToolService } from '@aalis/plugin-tools-api';
+import type { ConfigSchema } from '@aalis/schema-config';
+import type { IncomingMessage, Message } from '@aalis/schema-message';
 import '@aalis/plugin-agent-api'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 
 // ===== 跨会话委派：proactive depth 防雪崩 =====

@@ -1,7 +1,7 @@
-# plugin-message-api — 平台消息数据契约
+# schema-message — 平台消息数据契约
 
-**包名**: `@aalis/plugin-message-api`  
-**源码**: `packages/plugin-message-api/src/index.ts`  
+**包名**: `@aalis/schema-message`  
+**源码**: `packages/schema-message/src/index.ts`  
 **实现**: 由各 adapter 直接 emit；本包不提供 service
 
 ## 概述

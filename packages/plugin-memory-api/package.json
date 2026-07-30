@@ -23,7 +23,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/plugin-message-api": "workspace:>=0.5.1 <1.0.0"
+    "@aalis/schema-message": "workspace:>=0.5.1 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
