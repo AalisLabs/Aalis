@@ -510,6 +510,9 @@ importers:
       '@aalis/plugin-cron-engine-api':
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../plugin-cron-engine-api
+      '@aalis/util-cron':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-cron
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -522,6 +525,10 @@ importers:
         version: 5.9.3
 
   packages/plugin-cron-engine-api:
+    dependencies:
+      '@aalis/util-cron':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-cron
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -1496,6 +1503,9 @@ importers:
       '@aalis/plugin-webui-api':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../plugin-webui-api
+      '@aalis/util-cron':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-cron
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -2435,6 +2445,12 @@ importers:
         version: 5.9.3
 
   packages/util-bounded-map:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/util-cron:
     devDependencies:
       typescript:
         specifier: ^5.7.0

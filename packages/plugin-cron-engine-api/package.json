@@ -36,5 +36,8 @@
   "keywords": [
     "aalis",
     "aalis-api"
-  ]
+  ],
+  "dependencies": {
+    "@aalis/util-cron": "workspace:>=0.1.0 <1.0.0"
+  }
 }
