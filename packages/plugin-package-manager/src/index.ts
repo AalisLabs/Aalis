@@ -26,6 +26,33 @@ export interface PackageManagerService {
   install(npmPkg: string): Promise<{ ok: boolean; message: string }>;
   /** 停用并删除 packages/ 下对应目录 */
   uninstall(pluginName: string): Promise<{ ok: boolean; message: string }>;
+  /**
+   * 批量更新到指定版本，随后重启进程接管。
+   *
+   * **必须整批提交**，不能每个包各调一次：
+   * - peer 冲突只有对整张版本映射一次预检才能发现（A@new 要 core>=0.10、B@new 要
+   *   core<0.10，逐个预检各自都过，一起装才冲突）；
+   * - 更新是文件系统操作而进程只在启动那一刻读文件系统，所以重启次数恒为 1，
+   *   与改了多少个包无关。逐个更新 = 重启 N 次，且中间态是半新半旧。
+   *
+   * 返回 `ok: true` 表示已提交安装并即将重启——此时 HTTP 响应要抢在进程退出前发出。
+   */
+  update(targets: UpdateTarget[]): Promise<UpdateResult>;
+}
+
+/** 一个待更新目标：包名 + 目标版本（不带范围符，由调用方从市场卡片取 npm latest）。 */
+export interface UpdateTarget {
+  name: string;
+  version: string;
+}
+
+export interface UpdateResult {
+  ok: boolean;
+  message: string;
+  /** 预检失败时的逐条冲突说明（npm --strict-peer-deps 的报告摘要），供前端直接展示。 */
+  conflicts?: string[];
+  /** 本次是否会重启进程。ok 且 restarting 时前端应进入「等待重连」状态。 */
+  restarting?: boolean;
 }
 
 // ===== 实现 =====
@@ -136,8 +163,17 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
     return app;
   }
 
+  /** 把配置里的相对/绝对路径归一成绝对路径；未配置则用 fallback。 */
+  function resolveConfigured(key: 'packagesDir' | 'projectRoot', fallback: string): string {
+    const override = (config as Record<string, unknown>)[key];
+    if (typeof override === 'string' && override.length > 0) {
+      return override.startsWith('/') ? override : `${process.cwd()}/${override.replace(/^\.?\/+/, '')}`;
+    }
+    return fallback;
+  }
+
   /**
-   * 真实插件目录的绝对路径。
+   * 真实插件目录的绝对路径（仅 workspace 形态用到）。
    *
    * 必须与 core 的 createFsPluginLoader 一致——后者扫描 `<cwd>/packages`。
    * 关键：**不能**走 storage 的 `workspace:` 根（那是 agent 沙盒 `<cwd>/workspace`，
@@ -145,34 +181,44 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
    * 卸载报"目录不存在"）。可用插件配置 `packagesDir` 覆盖（相对 cwd 或绝对路径）。
    */
   function packagesDir(): string {
-    const override = (config as { packagesDir?: unknown }).packagesDir;
-    const base = process.cwd();
-    if (typeof override === 'string' && override.length > 0) {
-      return override.startsWith('/') ? override : `${base}/${override.replace(/^\.?\/+/, '')}`;
-    }
-    return `${base}/packages`;
+    return resolveConfigured('packagesDir', `${process.cwd()}/packages`);
+  }
+
+  function projectRoot(): string {
+    return resolveConfigured('projectRoot', process.cwd());
   }
 
   return createPackageManager({
     proc,
     log,
     packagesDir,
-    // 项目根 = cwd：与 createNodeModulesPluginLoader(projectDir = process.cwd()) 的默认
-    // 以及 packagesDir() 的基准同源，三者必须指同一处，否则「写的 package.json」与
-    // 「加载器读的 package.json」会是两份。
-    projectRoot: () => process.cwd(),
+    // 项目根：默认 cwd，与 createNodeModulesPluginLoader(projectDir = process.cwd()) 的
+    // 默认值及 packagesDir() 的基准同源——三者必须指同一处，否则「我们写的 package.json」
+    // 与「加载器读的 package.json」是两份，装了永远不加载。
+    // 宿主若给 startAalis 传了非 cwd 的 projectDir（公开选项），必须用本配置项对齐。
+    projectRoot,
     // 经 process 网关的 readExternalFile 读，而非 node:fs：目标（项目根 package.json、
-    // node_modules/<pkg>/package.json）在 storage 沙盒之外，而 readExternalFile 正是
-    // 文档给这一场景指定的「OS 直通读外部路径」通道——本插件也不在 biome 的 node:* 例外清单里。
-    readJson: async absPath => {
+    // lockfile、node_modules/<pkg>/package.json）在 storage 沙盒之外，而 readExternalFile
+    // 正是文档给这一场景指定的「OS 直通读外部路径」通道——本插件也不在 biome 的 node:* 例外清单里。
+    readText: async absPath => {
       try {
-        const bytes = await proc.readExternalFile(absPath);
-        return JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+        return new TextDecoder().decode(await proc.readExternalFile(absPath));
       } catch {
         return undefined;
       }
     },
     rescanPlugins: () => getApp().rescanPlugins(),
+    // 判据取运行时注册表而非 rescan 返回值（理由见 PackageManagerDeps.isPluginRegistered）。
+    // plugins 服务缺席时保守返回 false——宁可让「声明为插件却没加载」的诊断多报一次，
+    // 也不要在真没装上时谎报成功。
+    isPluginRegistered: name =>
+      ctx
+        .getService<{ getStatus(): Array<{ name: string }> }>('plugins')
+        ?.getStatus()
+        .some(p => p.name === name) ?? false,
+    // 重启并交付回滚凭据。core 只透传 rollback（不解释形状），由 runtime 的重启策略
+    // 在「新实例 ready 前夭折」时消费——触发者与执行者同为父进程，全程内存不落盘。
+    restartApp: rollback => getApp().restart({ rollback }),
     // 彻底卸载：dispose 上下文并从注册表移除（plugins 服务缺席则 no-op）。
     // 区别于 disablePlugin（仅置禁用态，仍滞留在插件列表里）。
     unloadPlugin: async name => {
@@ -197,19 +243,82 @@ export interface PackageManagerDeps {
   packagesDir(): string;
   /** 项目根绝对路径（= `<cwd>`）：形态探测、根 package.json 读取、npm 的 cwd。 */
   projectRoot(): string;
-  /** 读 JSON 文件；不存在或解析失败返回 undefined。注入以便单测。 */
-  readJson(absPath: string): Promise<Record<string, unknown> | undefined>;
+  /** 读文本文件；不存在或读失败返回 undefined。注入以便单测。 */
+  readText(absPath: string): Promise<string | undefined>;
   rescanPlugins(): Promise<string[]>;
+  /**
+   * 目标插件此刻是否已在运行时注册表里。
+   *
+   * 这是判定「本次安装是否就位」的**唯一正确判据**。不能用 `rescanPlugins()` 的返回值：
+   * 它是全局副作用的产物——core 的 rescan 对已注册插件直接跳过，返回的是「本次扫描新
+   * 加载的**全部**插件」，与本次目标无对应关系。用它会在两个场景下给出错误结论：
+   * 重装已注册插件时恒返回空（误报失败）；两个安装并发时先跑完的那个会把对方的战果
+   * 一并算作自己的（谎报），后跑的则拿到空数组（误报失败）。
+   */
+  isPluginRegistered(name: string): boolean;
   /** 彻底卸载插件（dispose + 从注册表移除）。plugins 服务缺席则 no-op。 */
   unloadPlugin(name: string): Promise<void>;
   /** 卸载后清理残留配置（删配置块 + 解除禁用标记 + 持久化）。可选：缺省则不清理。 */
   cleanupConfig?(name: string): void;
+  /** 重启进程并交付回滚凭据（新实例起不来时由重启策略消费）。缺省则 update 不可用。 */
+  restartApp?(rollback: {
+    reason: string;
+    restore: Array<{ path: string; content: string }>;
+    postRestore?: { cmd: string; args: string[]; cwd: string };
+  }): void;
 }
 
 /** `@scope/foo@1.2.3` → `@scope/foo`（剥掉版本后缀，保留 scope）。 */
 export function stripVersion(spec: string): string {
   const at = spec.lastIndexOf('@');
   return at > 0 ? spec.slice(0, at) : spec;
+}
+
+/**
+ * 合法 npm 包名（可选 scope），**不含**版本后缀。
+ *
+ * 首字符锚死字母数字：npm 会把 `-` 开头的 token 当命令行标志，把 `.` / `..` / `./x`
+ * 当本地目录 spec（`foo@.` 能让 npm 转去打包宿主工作目录并执行其 prepack 脚本）。
+ * 版本段单独用 {@link isSafeVersion} 校验，两段各自锚住首字符才封得死。
+ */
+const PKG_NAME_ONLY_RE = /^(@[a-z0-9][a-z0-9\-_.]*\/)?[a-z0-9][a-z0-9\-_.]*$/i;
+/** 精确版本号：只收字母数字打头、不含路径与标志字符的形态。 */
+const VERSION_RE = /^[a-z0-9][a-z0-9.\-+]*$/i;
+
+/**
+ * 校验一批更新目标，产出可直接交给 npm 的 `name@version` spec。
+ *
+ * 拒绝而非净化：这些值最终作为独立 argv 交给 npm，任何一条可疑就整批停下，
+ * 不猜用户意图。纯函数，便于单测。
+ */
+export function buildUpdateSpecs(targets: readonly UpdateTarget[]): { specs?: string[]; error?: string } {
+  if (!Array.isArray(targets) || targets.length === 0) return { error: '未指定更新目标' };
+  const specs: string[] = [];
+  const seen = new Set<string>();
+  for (const t of targets) {
+    const name = typeof t?.name === 'string' ? t.name : '';
+    const version = typeof t?.version === 'string' ? t.version : '';
+    if (!PKG_NAME_ONLY_RE.test(name)) return { error: `非法包名: ${JSON.stringify(name)}` };
+    if (!VERSION_RE.test(version)) return { error: `非法版本号: ${name}@${JSON.stringify(version)}` };
+    // 同名多版本会让 npm 取最后一个，静默丢弃前面的选择——宁可让用户重选。
+    if (seen.has(name)) return { error: `同一包被指定了多次: ${name}` };
+    seen.add(name);
+    specs.push(`${name}@${version}`);
+  }
+  return { specs };
+}
+
+/**
+ * 从 npm 的失败输出里摘出 peer 冲突要点，供前端直接展示。
+ *
+ * `--strict-peer-deps` 把 npm 原本「只 warn 就装」的 peer 覆盖变成硬失败——正是我们
+ * 需要的：core 被根显式指定时 npm 默认只 warn 且 exit 0，照样把 core 换掉。
+ * 纯函数，便于单测。
+ */
+export function extractPeerConflicts(output: string): string[] {
+  const lines = output.split('\n');
+  const picked = lines.filter(l => /ERESOLVE|peer |Conflicting peer|Found:|Could not resolve/i.test(l));
+  return picked.map(l => l.replace(/^npm (ERR!|error|warn)\s*/i, '').trim()).filter(l => l.length > 0);
 }
 
 /**
@@ -231,6 +340,17 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     }
   }
 
+  /** 读 JSON；不存在或解析失败一律 undefined（调用方按「读不到」处理，不区分原因）。 */
+  async function readJson(absPath: string): Promise<Record<string, unknown> | undefined> {
+    const text = await deps.readText(absPath);
+    if (text === undefined) return undefined;
+    try {
+      return JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      return undefined;
+    }
+  }
+
   async function detectLayout(): Promise<ProjectLayout> {
     return layoutFromWorkspaceFile(await pathExists(`${deps.projectRoot()}/pnpm-workspace.yaml`, 'f'));
   }
@@ -244,19 +364,21 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     installedPkgJsonPath: string,
     where: string,
   ): Promise<{ ok: boolean; message: string }> {
-    const newPlugins = await deps.rescanPlugins();
-    if (newPlugins.length > 0) return { ok: true, message: `已安装并加载: ${newPlugins.join(', ')}` };
-    const meta = await deps.readJson(installedPkgJsonPath);
+    const target = stripVersion(npmPkg);
+    // rescan 只当副作用用（让加载器发现新包），**不看返回值**——判据是目标自身是否就位。
+    await deps.rescanPlugins();
+    if (deps.isPluginRegistered(target)) return { ok: true, message: `已安装并加载: ${target}` };
+    const meta = await readJson(installedPkgJsonPath);
     if (declaresPlugin(meta)) {
       return { ok: false, message: `已装到 ${where}，但它声明为插件却未被加载——请检查其 keywords 与入口导出` };
     }
-    return { ok: true, message: `已安装 ${stripVersion(npmPkg)}（非插件包，不进入插件列表）` };
+    return { ok: true, message: `已安装 ${target}（非插件包，不进入插件列表）` };
   }
 
   /** standalone：写根 `dependencies`——这是 node_modules 加载器**唯一**的发现来源。 */
   async function installStandalone(npmPkg: string): Promise<{ ok: boolean; message: string }> {
     const root = deps.projectRoot();
-    const rootPkg = await deps.readJson(`${root}/package.json`);
+    const rootPkg = await readJson(`${root}/package.json`);
     if (hasWorkspaceProtocol(rootPkg)) {
       return {
         ok: false,
@@ -311,7 +433,85 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     }
   }
 
+  /**
+   * 批量更新。形状是「一次算全量 → 整组预检 → 一次 install → 一次重启」，
+   * 重启次数恒为 1，与改了多少个包无关（语义见 {@link PackageManagerService.update}）。
+   */
+  async function updateAll(targets: UpdateTarget[]): Promise<UpdateResult> {
+    const { specs, error } = buildUpdateSpecs(targets);
+    if (!specs) return { ok: false, message: error ?? '参数非法' };
+    if (!deps.restartApp) return { ok: false, message: '当前宿主未提供重启能力，无法完成更新' };
+
+    const root = deps.projectRoot();
+    if ((await detectLayout()) === 'workspace') {
+      // 工作区形态的包是 workspace: 协议的本地包，不从 npm 取版本——升级走 git。
+      return { ok: false, message: '工作区（monorepo）形态不支持市场更新：包来自本地 packages/，请用 git 升级' };
+    }
+    const rootPkgPath = `${root}/package.json`;
+    const rootPkgText = await deps.readText(rootPkgPath);
+    if (rootPkgText === undefined) return { ok: false, message: `读不到根 package.json: ${rootPkgPath}` };
+    if (hasWorkspaceProtocol(await readJson(rootPkgPath))) {
+      return { ok: false, message: '根依赖含 workspace: 协议，拒绝在此运行 npm install' };
+    }
+
+    // ── 预检：整组一次，不逐个 ──
+    // 逐个预检发现不了「A@new 要 core>=0.10、B@new 要 core<0.10」这类只在合并时冲突的组合。
+    log.info(`更新预检: ${specs.join(' ')}`);
+    try {
+      await execProc(
+        proc,
+        'npm',
+        ['install', ...specs, '--strict-peer-deps', '--dry-run', '--no-audit', '--no-fund'],
+        root,
+        INSTALL_TIMEOUT_MS,
+      );
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      const conflicts = extractPeerConflicts(raw);
+      return {
+        ok: false,
+        message: '依赖预检未通过，未改动任何文件。若是 peer 版本要求，请把被依赖方一并勾选后重试。',
+        conflicts: conflicts.length > 0 ? conflicts : [raw.slice(0, 2000)],
+      };
+    }
+
+    // ── 快照：预检过了才有必要 ──
+    // lockfile 与 package.json 必须一起回退，否则还原后的树是「声明旧版、锁定新版」。
+    const restore = [{ path: rootPkgPath, content: rootPkgText }];
+    const lockPath = `${root}/package-lock.json`;
+    const lockText = await deps.readText(lockPath);
+    if (lockText !== undefined) restore.push({ path: lockPath, content: lockText });
+
+    // ── 提交 ──
+    try {
+      await execProc(
+        proc,
+        'npm',
+        ['install', ...specs, '--strict-peer-deps', '--no-audit', '--no-fund'],
+        root,
+        INSTALL_TIMEOUT_MS,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.error(`更新安装失败: ${message}`);
+      return { ok: false, message: `安装失败（工程未重启，可重试）: ${message}` };
+    }
+
+    // ── 重启接管 ──
+    // 回滚凭据交给重启策略：只有它能观察到「新实例 ready 前夭折」。插件级失败不在此列
+    // ——插件起不来会停在 error 态且 WebUI 可见，自动回滚反而会掩盖问题。
+    log.info(`更新完成，正在重启接管: ${specs.join(' ')}`);
+    deps.restartApp({
+      reason: `marketplace-update:${specs.join(',')}`,
+      restore,
+      postRestore: { cmd: 'npm', args: ['install', '--no-audit', '--no-fund'], cwd: root },
+    });
+    return { ok: true, restarting: true, message: `已更新 ${specs.join('、')}，正在重启…` };
+  }
+
   return {
+    update: updateAll,
+
     async install(npmPkg) {
       const layout = await detectLayout();
       if (layout === 'workspace') return installWorkspace(npmPkg);

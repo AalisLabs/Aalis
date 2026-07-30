@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  buildUpdateSpecs,
   createPackageManager,
   declaresPlugin,
+  extractPeerConflicts,
   hasWorkspaceProtocol,
   layoutFromWorkspaceFile,
   type PackageManagerDeps,
@@ -49,8 +51,13 @@ function makeHarness(
     packOut?: string;
     failOn?: string; // npm/mkdir/tar/pnpm
     rescan?: string[];
+    /** 运行时注册表里已有的插件名——settleInstall 的真正判据。 */
+    registered?: string[];
     layout?: 'workspace' | 'standalone';
     json?: Record<string, Record<string, unknown>>;
+    /** 原样返回的文本文件（优先于 json）；用于快照类断言。 */
+    text?: Record<string, string>;
+    restarts?: Array<{ reason: string; restore: Array<{ path: string; content: string }> }>;
   } = {},
 ): Harness {
   const execCalls: Array<{ cmd: string; args: string[] }> = [];
@@ -87,10 +94,19 @@ function makeHarness(
     log: { info: () => {}, error: () => {} },
     packagesDir: () => PKG_DIR,
     projectRoot: () => ROOT,
-    readJson: async abs => opts.json?.[abs],
+    readText: async abs => {
+      if (opts.text && abs in opts.text) return opts.text[abs];
+      const j = opts.json?.[abs];
+      return j === undefined ? undefined : JSON.stringify(j);
+    },
     rescanPlugins: async () => opts.rescan ?? ['@scope/foo'],
+    // 默认认为目标已就位（多数用例走成功路径）；需要测失败态的用例显式传 registered: []
+    isPluginRegistered: name => (opts.registered ?? ['@scope/foo', 'foo', '@scope/ui']).includes(name),
     unloadPlugin: vi.fn(async () => {}),
     cleanupConfig: vi.fn(() => {}),
+    restartApp: vi.fn(r => {
+      opts.restarts?.push(r);
+    }),
   };
   return { deps, execCalls, deleted };
 }
@@ -225,10 +241,10 @@ describe('install — standalone（脚手架形态，第一等公民）', () => 
     expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false); // 一次都不能发
   });
 
-  it('装完没发现新插件、且目标声明了 aalis-plugin → 显式失败（不再静默假成功）', async () => {
+  it('目标未进注册表、且声明了 aalis-plugin → 显式失败（不再静默假成功）', async () => {
     const h = makeHarness({
       layout: 'standalone',
-      rescan: [],
+      registered: [],
       json: {
         [rootPkg]: {},
         [`${ROOT}/node_modules/@scope/foo/package.json`]: { keywords: ['aalis', 'aalis-plugin'] },
@@ -239,10 +255,10 @@ describe('install — standalone（脚手架形态，第一等公民）', () => 
     expect(r.message).toContain('未被加载');
   });
 
-  it('装完没发现新插件、但目标本就不是插件（如 aalis-interface）→ 正常成功', async () => {
+  it('目标未进注册表、但本就不是插件（如 aalis-interface）→ 正常成功', async () => {
     const h = makeHarness({
       layout: 'standalone',
-      rescan: [],
+      registered: [],
       json: {
         [rootPkg]: {},
         [`${ROOT}/node_modules/@scope/ui/package.json`]: { keywords: ['aalis', 'aalis-interface'] },
@@ -253,6 +269,35 @@ describe('install — standalone（脚手架形态，第一等公民）', () => 
     expect(r.message).toContain('非插件包');
   });
 
+  // ── 判据必须是「目标自身是否就位」，不能是 rescan 的返回值 ──
+  // rescan 返回的是本次扫描**新加载的全部**插件（core 对已注册者直接跳过），与本次目标无对应。
+  // 下面两条是对抗审计实测复现过的误判，用测试钉住。
+
+  it('重装已注册的插件：rescan 恒为空，但目标在注册表里 → 成功（旧判据必然误报失败）', async () => {
+    const h = makeHarness({
+      layout: 'standalone',
+      rescan: [], // core 跳过已注册者
+      registered: ['@scope/foo'], // 但它确实在跑
+      json: { [rootPkg]: {} },
+    });
+    const r = await createPackageManager(h.deps).install('@scope/foo@0.9.1');
+    expect(r.ok).toBe(true);
+    expect(r.message).toContain('@scope/foo');
+  });
+
+  it('并发安装：不把别人的战果算作自己的（旧判据会谎报装了 B）', async () => {
+    const h = makeHarness({
+      layout: 'standalone',
+      rescan: ['@scope/foo', '@other/bar'], // 并发时 rescan 把两个都捞了
+      registered: ['@scope/foo', '@other/bar'],
+      json: { [rootPkg]: {} },
+    });
+    const r = await createPackageManager(h.deps).install('@scope/foo');
+    expect(r.ok).toBe(true);
+    expect(r.message).toContain('@scope/foo');
+    expect(r.message).not.toContain('@other/bar'); // 只报自己的
+  });
+
   it('npm install 失败 → 返回失败而非抛出', async () => {
     const h = makeHarness({ layout: 'standalone', failOn: 'npm', json: { [rootPkg]: {} } });
     const r = await createPackageManager(h.deps).install('@scope/foo');
@@ -261,15 +306,137 @@ describe('install — standalone（脚手架形态，第一等公民）', () => 
   });
 });
 
-describe('install — workspace 形态下的空 rescan', () => {
-  it('声明了插件却没被发现 → 显式失败（旧行为是 ok:true 的静默假成功）', async () => {
+describe('install — workspace 形态下目标未就位', () => {
+  it('声明了插件却没进注册表 → 显式失败（旧行为是 ok:true 的静默假成功）', async () => {
     const h = makeHarness({
-      rescan: [],
+      registered: [],
       json: { [`${PKG_DIR}/foo/package.json`]: { keywords: ['aalis-plugin'] } },
     });
     const r = await createPackageManager(h.deps).install('@scope/foo');
     expect(r.ok).toBe(false);
     expect(r.message).toContain('未被加载');
+  });
+});
+
+describe('update — 参数校验（纯函数）', () => {
+  it('产出 name@version spec，保序', () => {
+    const r = buildUpdateSpecs([
+      { name: '@aalis/core', version: '0.9.2' },
+      { name: 'foo', version: '1.0.0-beta.1' },
+    ]);
+    expect(r.specs).toEqual(['@aalis/core@0.9.2', 'foo@1.0.0-beta.1']);
+  });
+
+  it('拒绝空批次', () => {
+    expect(buildUpdateSpecs([]).error).toContain('未指定');
+  });
+
+  it('拒绝会被 npm 当标志或目录 spec 的名字与版本', () => {
+    // npm 把 `-` 开头当命令行标志，把 `.` / `..` 当本地目录 spec（能触发宿主 prepack 脚本）
+    for (const bad of ['--force', '.', '..', './x', 'a b', 'a;rm -rf /', '', '@scope/']) {
+      expect(buildUpdateSpecs([{ name: bad, version: '1.0.0' }]).error, bad).toContain('非法包名');
+    }
+    for (const bad of ['-1.0.0', '.', '../x', '1.0.0 && x', '']) {
+      expect(buildUpdateSpecs([{ name: 'foo', version: bad }]).error, bad).toContain('非法版本号');
+    }
+  });
+
+  it('拒绝同一包被指定多次（npm 会静默取最后一个）', () => {
+    expect(
+      buildUpdateSpecs([
+        { name: 'foo', version: '1.0.0' },
+        { name: 'foo', version: '2.0.0' },
+      ]).error,
+    ).toContain('多次');
+  });
+
+  it('extractPeerConflicts 摘出要点并剥掉 npm 前缀', () => {
+    const out = [
+      'npm ERR! code ERESOLVE',
+      'npm ERR! ERESOLVE could not resolve',
+      'npm ERR! Found: @aalis/core@0.9.0',
+      'npm ERR! Conflicting peer dependency: @aalis/core@0.10.0',
+      'npm ERR! 无关噪声',
+    ].join('\n');
+    const c = extractPeerConflicts(out);
+    expect(c).toContain('Found: @aalis/core@0.9.0');
+    expect(c.some(l => l.includes('Conflicting peer'))).toBe(true);
+    expect(c.some(l => l.startsWith('npm ERR!'))).toBe(false);
+  });
+});
+
+describe('update — 流程', () => {
+  const rootPkgPath = `${ROOT}/package.json`;
+  const lockPath = `${ROOT}/package-lock.json`;
+  const okHarness = (extra: Record<string, unknown> = {}) =>
+    makeHarness({
+      layout: 'standalone',
+      text: { [rootPkgPath]: '{"dependencies":{"@aalis/core":"^0.9.0"}}', [lockPath]: '{"lockfileVersion":3}' },
+      ...extra,
+    });
+
+  it('预检 → 提交 → 重启，且两次 npm 都带 --strict-peer-deps', async () => {
+    const restarts: Array<{ reason: string; restore: Array<{ path: string; content: string }> }> = [];
+    const h = okHarness({ restarts });
+    const r = await createPackageManager(h.deps).update([{ name: '@aalis/core', version: '0.9.2' }]);
+    expect(r.ok).toBe(true);
+    expect(r.restarting).toBe(true);
+    const npm = h.execCalls.filter(c => c.cmd === 'npm');
+    expect(npm).toHaveLength(2);
+    expect(npm[0].args).toContain('--dry-run'); // 先预检
+    expect(npm[1].args).not.toContain('--dry-run'); // 再真装
+    for (const call of npm) expect(call.args).toContain('--strict-peer-deps');
+    // 回滚凭据带上 package.json 与 lockfile —— 只回退其一会得到「声明旧版、锁定新版」
+    expect(restarts).toHaveLength(1);
+    expect(restarts[0].restore.map(f => f.path)).toEqual([rootPkgPath, lockPath]);
+    expect(restarts[0].restore[0].content).toContain('@aalis/core');
+  });
+
+  it('无 lockfile 时只快照 package.json', async () => {
+    const restarts: Array<{ reason: string; restore: Array<{ path: string; content: string }> }> = [];
+    const h = makeHarness({ layout: 'standalone', text: { [rootPkgPath]: '{}' }, restarts });
+    const r = await createPackageManager(h.deps).update([{ name: 'foo', version: '1.0.0' }]);
+    expect(r.ok).toBe(true);
+    expect(restarts[0].restore.map(f => f.path)).toEqual([rootPkgPath]);
+  });
+
+  it('预检失败 → 不改任何文件、不重启，返回冲突要点', async () => {
+    const restarts: Array<never> = [];
+    const h = okHarness({ failOn: 'npm', restarts });
+    const r = await createPackageManager(h.deps).update([{ name: 'foo', version: '1.0.0' }]);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('预检未通过');
+    expect(h.execCalls.filter(c => c.cmd === 'npm')).toHaveLength(1); // 止于预检，没跑真装
+    expect(h.deps.restartApp).not.toHaveBeenCalled();
+    expect(restarts).toHaveLength(0);
+  });
+
+  it('工作区形态拒绝：包来自本地 packages/，升级走 git', async () => {
+    const h = makeHarness({ layout: 'workspace' });
+    const r = await createPackageManager(h.deps).update([{ name: 'foo', version: '1.0.0' }]);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('工作区');
+    expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
+  });
+
+  it('根依赖含 workspace: 协议 → 拒绝（与 install 同一护栏）', async () => {
+    const h = makeHarness({
+      layout: 'standalone',
+      text: { [rootPkgPath]: '{"dependencies":{"@aalis/core":"workspace:*"}}' },
+    });
+    const r = await createPackageManager(h.deps).update([{ name: 'foo', version: '1.0.0' }]);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('workspace:');
+    expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
+  });
+
+  it('宿主未提供重启能力 → 提前拒绝，不跑任何 npm', async () => {
+    const h = okHarness();
+    h.deps.restartApp = undefined;
+    const r = await createPackageManager(h.deps).update([{ name: 'foo', version: '1.0.0' }]);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('重启');
+    expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
   });
 });
 

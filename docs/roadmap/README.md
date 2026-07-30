@@ -10,7 +10,7 @@
 
 | 文档 | 主题 | 状态 |
 |---|---|---|
-| [插件市场](./marketplace.md) | 安装与更新链路的缺陷（检索、依赖披露、版本显示已可用） | 待修 |
+| [插件市场](./marketplace.md) | 并发互斥、禁卸 core/runtime、服务劫持面（安装/卸载/更新链路已实现） | 待修 |
 | [指令系统](./commands.md) | 同名指令覆盖、`/help` 与 `formatUsage` 的权限过滤缺位 | 待修（展示层已重做） |
 | [存储层](./storage.md) | 缺结构化存储原语，`saveMetadata` 被当结构化存储用 | 待决策 |
 | [Koishi 兼容层](./koishi-compat.md) | 嵌入真实 Koishi 内核让其插件直接运行 | 已验证可行，待实施 |

@@ -198,7 +198,10 @@ export function MarketplacePage({
         showToast(res.message ?? `${name} 已安装`);
         onRefresh();
       } else {
-        showToast(res.error ?? '安装失败');
+        // error 只有路由自身的 400/503/500 分支才有；服务层的结构化失败走 message + HTTP 200。
+        // 少读一个就会把「它声明为插件却未被加载」「根依赖含 workspace: 协议」这类可操作的
+        // 诊断整条吞掉，用户只看到「安装失败」四个字。
+        showToast(res.error ?? res.message ?? '安装失败');
       }
     } catch {
       showToast('安装失败');
@@ -237,7 +240,7 @@ export function MarketplacePage({
         showToast(res.message ?? `${name} 已卸载`);
         onRefresh();
       } else {
-        showToast(res.error ?? '卸载失败');
+        showToast(res.error ?? res.message ?? '卸载失败'); // 同 install：服务层失败走 message
       }
     } catch {
       showToast('卸载失败');
