@@ -3,7 +3,7 @@ import type { ConfigSchema } from '@aalis/plugin-config-api';
 import type { ToolCallContext, ToolDefinition, ToolService, ToolSummary } from '@aalis/plugin-tools-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import '@aalis/plugin-agent-api';
+import '@aalis/plugin-agent-api'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import type {} from '@aalis/plugin-memory-api'; // declaration merging：memory:clear 钩子类型
 
 // ===== 插件元数据 =====

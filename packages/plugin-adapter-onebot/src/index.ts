@@ -24,7 +24,7 @@ import type {
   OneBotProtocol,
   OneBotRawEvent,
 } from './types.js';
-import '@aalis/plugin-agent-api';
+import '@aalis/plugin-agent-api'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { createForwardExpander, DEFAULT_FORWARD_SUMMARY_PROMPT, type ForwardConfig } from './forward-expand.js';
 import { segmentsToText } from './types.js';
 import { OneBotV11 } from './v11.js';

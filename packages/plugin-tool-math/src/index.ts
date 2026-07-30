@@ -12,7 +12,6 @@ import { registerMatrixTools } from './tools/matrix.js';
 import { registerNumberTheoryTools } from './tools/number-theory.js';
 import { registerStatisticsTools } from './tools/statistics.js';
 import { registerSymbolicTools } from './tools/symbolic.js';
-import '@aalis/plugin-tools-api';
 
 // ===== 插件元数据 =====
 

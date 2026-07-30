@@ -6,9 +6,7 @@ import { resolvePlatformBySession } from '@aalis/plugin-platform-api';
 import type { AccessChecker, AccessCheckerDisposer, SessionHistoryService } from '@aalis/plugin-tool-session-api';
 import type { ToolCallContext } from '@aalis/plugin-tools-api';
 import { useToolService } from '@aalis/plugin-tools-api';
-import '@aalis/plugin-agent-api';
-import '@aalis/plugin-tools-api';
-import '@aalis/plugin-tool-session-api';
+import '@aalis/plugin-agent-api'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 
 // ===== 跨会话委派：proactive depth 防雪崩 =====
 // 防止 A→B→C→... 无限链；任一会话被 delegate 进入 proactive 链路后，链上下一跳禁止再次 delegate。

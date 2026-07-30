@@ -6,8 +6,7 @@ import type { IncomingMessage, Message } from '@aalis/plugin-message-api';
 import { prefixSender, WellKnownKinds } from '@aalis/plugin-message-api';
 import { useToolService } from '@aalis/plugin-tools-api';
 import type { VectorStoreService } from '@aalis/plugin-vectorstore-api';
-import '@aalis/plugin-agent-api';
-import '@aalis/plugin-tools-api';
+import '@aalis/plugin-agent-api'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 
 // ===== 插件元数据 =====
 

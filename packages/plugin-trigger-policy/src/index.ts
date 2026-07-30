@@ -5,7 +5,6 @@ import type { IncomingMessage } from '@aalis/plugin-message-api';
 import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { TriggerDecision, TriggerPolicyService } from './types.js';
-import '@aalis/plugin-gateway-api';
 
 export type { TriggerDecision, TriggerKind, TriggerPolicyService } from './types.js';
 
