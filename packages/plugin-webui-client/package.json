@@ -25,7 +25,7 @@
     "dev": "vite"
   },
   "dependencies": {
-    "@aalis/util-text-normalize": "workspace:*",
+    "@aalis/util-text-normalize": "workspace:>=0.5.1 <1.0.0",
     "cytoscape": "^3.33.4",
     "cytoscape-fcose": "^2.2.0",
     "highlight.js": "^11.11.1",

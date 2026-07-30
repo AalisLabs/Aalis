@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@aalis/plugin-config-api": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/plugin-tools-api": "workspace:^",
+    "@aalis/plugin-tools-api": "workspace:>=0.5.1 <1.0.0",
     "mathjs": "^14.9.1"
   },
   "devDependencies": {
