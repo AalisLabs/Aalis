@@ -1,7 +1,7 @@
 # plugin-workflow — DAG 工作流编排
 
 **包名**: `@aalis/plugin-workflow`  
-**契约**: `@aalis/plugin-workflow-api`  
+**契约**: `@aalis/api-workflow`  
 **源码**: `packages/plugin-workflow/src/index.ts`（引擎 `engine.ts`）
 
 ## 概述

@@ -5,8 +5,9 @@
 // 路径（宿主目录布局）是「环境知识」，归 storage 的 logs 根所有；本插件只用
 // storage URI 寻址、对 cwd/落盘位置无知。写入方（runtime/file-logger）跑在
 // storage 起来之前，是 bootstrap 期的合法 raw-fs 例外，不在此处管辖。
+
+import { readTailLines, type StorageService } from '@aalis/api-storage';
 import { type LogEntry, parseLogLine } from '@aalis/core';
-import { readTailLines, type StorageService } from '@aalis/plugin-storage-api';
 
 /** 日志单一数据源的 storage URI（logs 根默认落在 data/ 下，与写入方 data/latest.log 对偶）。 */
 const LOG_FILE_URI = 'logs:/latest.log';

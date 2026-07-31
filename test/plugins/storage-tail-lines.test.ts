@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readTailLines, type StorageService } from '../../packages/plugin-storage-api/src/index.js';
+import { readTailLines, type StorageService } from '../../packages/api-storage/src/index.js';
 
 /** 内存文件伪 storage:可选是否提供 readFileRange(测回退路径) */
 function fakeStorage(content: string, withRange = true): StorageService {

@@ -5,10 +5,10 @@
 // （本地路径 / URL / data URI），以及把识别结果写回历史消息。
 // ============================================================
 
+import type { MediaService } from '@aalis/api-media';
+import type { MemoryService } from '@aalis/api-memory';
+import { useToolService } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
-import type { MediaService } from '@aalis/plugin-media-api';
-import type { MemoryService } from '@aalis/plugin-memory-api';
-import { useToolService } from '@aalis/plugin-tools-api';
 import { AttachmentRefKind, buildAttachmentRefMatcher, formatAttachmentRef, type Message } from '@aalis/schema-message';
 import { fileToDataUri } from './ffmpeg.js';
 import { getMediaRuntime } from './runtime.js';

@@ -8,7 +8,7 @@ OpenAI 自家的 ChatGPT / Codex CLI 都通过显示「Generating tool call…�
 
 ## 协议契约
 
-### `ChatStreamChunk.toolCallProgress`（`@aalis/plugin-llm-api`）
+### `ChatStreamChunk.toolCallProgress`（`@aalis/api-llm`）
 
 ```ts
 export interface ToolCallProgress {

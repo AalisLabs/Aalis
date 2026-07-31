@@ -1,7 +1,7 @@
+import type { MediaService } from '@aalis/api-media';
+import type { MemoryService } from '@aalis/api-memory';
+import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/api-message-archive';
 import type { Context } from '@aalis/core';
-import type { MediaService } from '@aalis/plugin-media-api';
-import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/plugin-message-archive-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { getMessageName, getSenderLabel, prefixSender, WellKnownKinds } from '@aalis/schema-message';
@@ -10,7 +10,7 @@ export type {
   ArchiveIncomingResult,
   ArchiveNoticeOptions,
   MessageArchiveService,
-} from '@aalis/plugin-message-archive-api';
+} from '@aalis/api-message-archive';
 
 export const name = '@aalis/plugin-message-archive';
 export const displayName = '消息归档';

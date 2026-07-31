@@ -2,7 +2,7 @@
 
 > 面向：要为 Aalis 写一个代码沙箱后端（provider），或在自己的插件里安全执行不可信代码（consumer）的第三方作者。
 
-`code-sandbox` 把「在 OS 隔离下执行不可信代码」收口成一个独立服务。注册名是字符串 `'code-sandbox'`，通过 `ctx.getService('code-sandbox')` 取用；契约包是 `@aalis/plugin-code-sandbox-api`。
+`code-sandbox` 把「在 OS 隔离下执行不可信代码」收口成一个独立服务。注册名是字符串 `'code-sandbox'`，通过 `ctx.getService('code-sandbox')` 取用；契约包是 `@aalis/api-code-sandbox`。
 
 它为什么单独成服务，而不塞进通用的 `process`？「在 OS 隔离里跑不可信代码」是 `code_runner` 独有的诉求。package-manager、scheduler 等同样会跑子进程的插件都不需要它，把它塞进共享的 `process` 契约会污染公共面。
 
@@ -74,7 +74,7 @@ export function useCodeSandbox(ctx: Context): CodeSandboxService | undefined;
 
 | 角色 | 包 | 关键 API |
 |---|---|---|
-| 契约 | `@aalis/plugin-code-sandbox-api` | 导出 interface / type / `useCodeSandbox` |
+| 契约 | `@aalis/api-code-sandbox` | 导出 interface / type / `useCodeSandbox` |
 | 参考实现 | `@aalis/plugin-code-sandbox-os` | `ctx.provide('code-sandbox', …)` |
 | 唯一消费方 | `@aalis/plugin-tool-code-runner` | `useCodeSandbox(ctx)` → `codeSandbox.run(...)` |
 
@@ -138,8 +138,8 @@ priority 的取值是 `Backend=0` / `Override=50` / `System=200`。不要用裸�
 
 ```ts
 import type { Context, PluginModule } from '@aalis/core';
-import type { CodeSandboxService, SandboxRunRequest } from '@aalis/plugin-code-sandbox-api';
-import { type ExecResult, type ProcessService, createProcessGateway } from '@aalis/plugin-process-api';
+import type { CodeSandboxService, SandboxRunRequest } from '@aalis/api-code-sandbox';
+import { type ExecResult, type ProcessService, createProcessGateway } from '@aalis/api-process';
 
 export const name = '@example/plugin-code-sandbox-mybackend';
 export const provides = ['code-sandbox'];

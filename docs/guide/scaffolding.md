@@ -186,7 +186,7 @@ my-plugin/
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": ["dist"],                      // 发布包只含编译产物
-  "dependencies": { "@aalis/plugin-tools-api": "latest" },  // 仅当选了对应扩展点
+  "dependencies": { "@aalis/api-tools": "latest" },  // 仅当选了对应扩展点
   "peerDependencies": { "@aalis/core": ">=0.2.0 <1.0.0" },  // 宽松区间，兼容任何 0.x 宿主
   "devDependencies": { "@aalis/core": "latest", "typescript": "^5.7.0", "@types/node": "^22.0.0" }
   // 有服务依赖/提供时在此补 aalis.service（注释占位，见下）
@@ -195,7 +195,7 @@ my-plugin/
 
 - **`keywords: ["aalis-plugin"]` 是加载硬门**：两个加载器都只认这个关键词来判定「这是不是可加载插件」（`isLoadablePlugin`，`node-modules-loader.ts`）。漏了它，插件永远不被发现。
 - **`@aalis/core` 走 peerDependency**，区间 `>=0.2.0 <1.0.0`：接受任何 0.x 宿主，插件不必随 core 次版本升级重发（别用 `^0.x` caret 把自己锁死，也别用裸 `*`）。**注意 1.0 之前 core 的公开面可能在次版本被删**（0.7.0 / 0.9.0 都删过），用了新 API 就把下限抬到对应版本；稳定性承诺自 1.0 起生效，见 `docs/design/core-contract.md`。
-- **选了哪个扩展点，才把对应 `*-api` 进 `dependencies`**：tool→`@aalis/plugin-tools-api`、command→`@aalis/plugin-commands-api`、webui→`@aalis/plugin-webui-api`，统一写 `"latest"`（`cli.ts`）。
+- **选了哪个扩展点，才把对应 `*-api` 进 `dependencies`**：tool→`@aalis/api-tools`、command→`@aalis/api-commands`、webui→`@aalis/api-webui`，统一写 `"latest"`（`cli.ts`）。
 - **不带 `aalis` 字段**：示例插件无服务依赖，模板只留一行注释提示往哪写（`cli.ts`）。一旦你 `ctx.provide(...)` 或在 `inject` 加依赖，要**同步**补 `aalis.service.{provides,required,optional}`，否则市场「装前披露」会缺项——这两套元数据的对账纪律见 [concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。
 
 ### 生成的 `src/index.ts` 形状
@@ -219,7 +219,7 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
 选了 tool 时生成的工具模板（`cli.ts`）——注意这个**确切形状**：
 
 ```ts
-import { useToolService } from '@aalis/plugin-tools-api';
+import { useToolService } from '@aalis/api-tools';
 
 useToolService(ctx).register({
   definition: {
@@ -238,8 +238,8 @@ useToolService(ctx).register({
 ```
 
 两个易踩点，都已在模板里钉死：
-- 工具声明用 OpenAI 函数调用协议的嵌套形状 `{ type: 'function', function: { name, description, parameters } }`（`ToolDefinition`，`plugin-tools-api/src/index.ts`），不是平铺的 `{ name, description }`。
-- `handler` 的返回类型是 `Promise<string>`（`RegisteredTool.handler`，`plugin-tools-api/src/index.ts`）——返回**工具结果文本**，不要返回对象。
+- 工具声明用 OpenAI 函数调用协议的嵌套形状 `{ type: 'function', function: { name, description, parameters } }`（`ToolDefinition`，`api-tools/src/index.ts`），不是平铺的 `{ name, description }`。
+- `handler` 的返回类型是 `Promise<string>`（`RegisteredTool.handler`，`api-tools/src/index.ts`）——返回**工具结果文本**，不要返回对象。
 
 选了 command / webui 时分别追加 `useCommandService(ctx).command(...).action(...)` 与 `useWebuiService(ctx).registerPage(...)` 示例（`cli.ts`）。这些注册 helper 都来自各自的 `*-api` 包，**不**来自 core——这也是为什么对应 `*-api` 要进 `dependencies`。各扩展点的 helper 一览见 [第三方插件开发者指南](./third-party-plugin.md) 第 5 节。
 
@@ -275,7 +275,7 @@ export function apply(ctx: Context) {
 
 ```ts
 import type { ConfigSchema } from '@aalis/schema-config';
-import type {} from '@aalis/plugin-webui-api'; // declaration merging：secret 等表单属性
+import type {} from '@aalis/api-webui'; // declaration merging：secret 等表单属性
 
 export const configSchema: ConfigSchema = {
   apiKey: { type: 'string', label: 'API Key', required: true, secret: true },

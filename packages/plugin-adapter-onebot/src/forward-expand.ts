@@ -1,7 +1,7 @@
+import { resolveLLMModel } from '@aalis/api-llm';
+import type { MediaService } from '@aalis/api-media';
+import type { MemoryService } from '@aalis/api-memory';
 import type { Context } from '@aalis/core';
-import { resolveLLMModel } from '@aalis/plugin-llm-api';
-import type { MediaService } from '@aalis/plugin-media-api';
-import type { MemoryService } from '@aalis/plugin-memory-api';
 import { buildEnvelope, expandForward } from './forward.js';
 import type { OneBotMessageSegment } from './types.js';
 import { collectForwardSegments } from './types.js';

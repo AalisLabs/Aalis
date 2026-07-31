@@ -8,9 +8,10 @@
  * - `relation cleanup orphans`：一键清理所有孤立点（authority=3）
  * - `relation cleanup all`：清空整个关系图（authority=4, dangerous，需要二次确认 --yes）
  */
+
+import { useCommandService } from '@aalis/api-commands';
+import { sendPlatformMessage } from '@aalis/api-platform';
 import type { Context } from '@aalis/core';
-import { useCommandService } from '@aalis/plugin-commands-api';
-import { sendPlatformMessage } from '@aalis/plugin-platform-api';
 import { getKnownPlatformsLower, isPlaceholderSelfPersonId } from './extractor.js';
 import type { RelationService } from './service.js';
 import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js';

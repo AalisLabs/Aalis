@@ -1,9 +1,9 @@
+import type { CommandArgv } from '@aalis/api-commands';
+import { useCommandService } from '@aalis/api-commands';
+import type { MemoryService } from '@aalis/api-memory';
+import { useToolService } from '@aalis/api-tools';
+import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { Context } from '@aalis/core';
-import type { CommandArgv } from '@aalis/plugin-commands-api';
-import { useCommandService } from '@aalis/plugin-commands-api';
-import type { MemoryService } from '@aalis/plugin-memory-api';
-import { useToolService } from '@aalis/plugin-tools-api';
-import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { ConfigSchema } from '@aalis/schema-config';
 
 // ===== 插件元数据 =====

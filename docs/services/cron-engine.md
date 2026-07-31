@@ -4,8 +4,8 @@
 
 `cron-engine` 是 Aalis 的**共享定时引擎原语**：把「cron 表达式 / 别名 / `@every` 间隔」解析为统一的订阅协议，所有周期型触发器（scheduler 任务、workflow 的 cron/interval 触发器）都挂接到它共享的一条整分钟 tick 上，而不是各自 `setInterval`。
 
-- 服务注册名：`getService('cron-engine')`（`packages/plugin-cron-engine-api/src/index.ts`）。
-- 契约包：`@aalis/plugin-cron-engine-api`（订阅协议：接口 + 服务访问器）。
+- 服务注册名：`getService('cron-engine')`（`packages/api-cron-engine/src/index.ts`）。
+- 契约包：`@aalis/api-cron-engine`（订阅协议：接口 + 服务访问器）。
 - 表达式算法：`@aalis/util-cron`（无状态纯函数，零依赖，与 Aalis 无关，可单独用）。
 - 参考实现：`@aalis/plugin-cron-engine`（`packages/plugin-cron-engine/src/index.ts`）。
 
@@ -15,7 +15,7 @@
 
 ### 2.1 服务接口 `CronEngine`
 
-`packages/plugin-cron-engine-api/src/index.ts`：
+`packages/api-cron-engine/src/index.ts`：
 
 ```ts
 export interface CronEngine {
@@ -93,7 +93,7 @@ export type ValidateResult =
 
 ```ts
 import type { Context } from '@aalis/core';
-import type { CronEngine, CronSubscribeOptions } from '@aalis/plugin-cron-engine-api';
+import type { CronEngine, CronSubscribeOptions } from '@aalis/api-cron-engine';
 import { matchesCron, normalizeCronExpr, validateCronExpr } from '@aalis/util-cron';
 
 export const name = 'my-cron-backend';

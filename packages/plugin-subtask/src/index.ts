@@ -1,10 +1,10 @@
+import type { MessageArchiveService } from '@aalis/api-message-archive';
+import type { SessionInfo, SessionManagerService } from '@aalis/api-session-manager';
+import { useToolService } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
-import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
-import type { SessionInfo, SessionManagerService } from '@aalis/plugin-session-manager-api';
-import { useToolService } from '@aalis/plugin-tools-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage } from '@aalis/schema-message';
-import '@aalis/plugin-agent-api'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 
 // =====================================================================
 // plugin-subtask —— 派发并行子会话（独立 sessionId 的子 agent）

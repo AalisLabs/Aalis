@@ -89,7 +89,7 @@ __pycache__/**    *.pyc      .DS_Store   Thumbs.db
 
 ## 共享 runtime 工具
 
-storage URI 规范化（`toStorageUri` / `resolveAgainstCwd` / `parseStorageUri`）已**抽取到** [@aalis/plugin-storage-api](../api/plugin-storage-api.md)，SSRF 私网判定（`isPrivateHost` / `isPrivateAddress`）已**抽取到** [@aalis/util-network-guard](../utils/network-guard.md)；本包内部以及 `plugin-tool-browser` / `plugin-tool-code-runner` 都直接复用，不再各写一份。`plugin-tools-api` 现为纯契约包，原 `utils` 已删除。
+storage URI 规范化（`toStorageUri` / `resolveAgainstCwd` / `parseStorageUri`）已**抽取到** [@aalis/api-storage](../api/api-storage.md)，SSRF 私网判定（`isPrivateHost` / `isPrivateAddress`）已**抽取到** [@aalis/util-network-guard](../utils/network-guard.md)；本包内部以及 `plugin-tool-browser` / `plugin-tool-code-runner` 都直接复用，不再各写一份。`api-tools` 现为纯契约包，原 `utils` 已删除。
 
 ## 指令
 

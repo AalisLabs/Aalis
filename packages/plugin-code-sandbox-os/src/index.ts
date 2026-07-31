@@ -6,10 +6,10 @@
 // 也不直接 import node:child_process / node:fs——OS 探测靠经网关功能性试跑）。
 // ============================================================
 
+import type { CodeSandboxService, SandboxRunRequest } from '@aalis/api-code-sandbox';
+import type { ExecResult, ProcessService } from '@aalis/api-process';
+import { createProcessGateway } from '@aalis/api-process';
 import type { Context, Logger, PluginModule } from '@aalis/core';
-import type { CodeSandboxService, SandboxRunRequest } from '@aalis/plugin-code-sandbox-api';
-import type { ExecResult, ProcessService } from '@aalis/plugin-process-api';
-import { createProcessGateway } from '@aalis/plugin-process-api';
 import { type SandboxBackend, wrapForSandbox } from './sandbox.js';
 
 export const name = '@aalis/plugin-code-sandbox-os';

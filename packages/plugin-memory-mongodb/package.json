@@ -33,7 +33,7 @@
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-memory-api": "workspace:*",
+    "@aalis/api-memory": "workspace:*",
     "@aalis/schema-message": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"

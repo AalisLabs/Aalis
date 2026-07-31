@@ -7,7 +7,7 @@
 // 每个 service api 包通过 declaration merging 反向注入自己一条：
 //
 // ```ts
-// // packages/plugin-memory-api/src/index.ts
+// // packages/api-memory/src/index.ts
 // declare module '@aalis/core' {
 //   interface ServiceTypeMap {
 //     memory: MemoryService;

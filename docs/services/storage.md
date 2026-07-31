@@ -3,7 +3,7 @@
 **一句话定位**：命名根（named root）+ storage URI（`<root>:/path`）的文件后端——把宿主机若干目录起稳定名字，对外提供 `read/write/delete/rename/list/stat` 等基于 URI 的文件操作，让上层不必硬编码绝对路径。
 
 - **服务注册名**：`getService('storage')` / `getAllServices('storage')`（字符串键 `storage`）。
-- **契约包**：`@aalis/plugin-storage-api`（`packages/plugin-storage-api/src/index.ts`）。
+- **契约包**：`@aalis/api-storage`（`packages/api-storage/src/index.ts`）。
 - **参考实现**：`@aalis/plugin-storage-local`（`packages/plugin-storage-local/src/index.ts`）。
 - **它不是沙箱**：见 [§6](#6-能力风险--影响安全边界)。
 
@@ -13,7 +13,7 @@
 
 ## 1. 契约：`StorageService` 接口
 
-定义在 `packages/plugin-storage-api/src/index.ts`。所有方法的 `uri` 参数都是 `<root>:/相对路径`。
+定义在 `packages/api-storage/src/index.ts`。所有方法的 `uri` 参数都是 `<root>:/相对路径`。
 
 ```ts
 export interface StorageService {
@@ -60,7 +60,7 @@ export interface StorageRootInfo {
 
 ## 2. 契约包导出的 helper（消费者复用，勿各自重抄）
 
-`@aalis/plugin-storage-api` 不只是类型——它导出一组纯函数 helper（`packages/plugin-storage-api/src/index.ts`），是消费者的标准入口：
+`@aalis/api-storage` 不只是类型——它导出一组纯函数 helper（`packages/api-storage/src/index.ts`），是消费者的标准入口：
 
 | 函数 | file:line | 用途 |
 | --- | --- | --- |
@@ -154,7 +154,7 @@ export const inject = { optional: ['doctor'] };
 import type { Context } from '@aalis/core';
 import type {
   StorageService, StorageRootInfo, StorageListResult, StorageStat, StorageReadStreamResult,
-} from '@aalis/plugin-storage-api';
+} from '@aalis/api-storage';
 
 export const name = '@aalis/plugin-storage-mybackend';
 export const provides = ['storage'];
@@ -190,7 +190,7 @@ export async function apply(ctx: Context): Promise<void> {
 ### 5.1 lazy + gateway（推荐）
 
 ```ts
-import { createStorageGateway } from '@aalis/plugin-storage-api';
+import { createStorageGateway } from '@aalis/api-storage';
 
 export const inject = { required: ['storage'] };          // 双源，package.json 同步
 export async function apply(ctx: Context) {
@@ -224,7 +224,7 @@ export async function apply(ctx: Context) {
 
 ### `resolveLocalPath` 不是沙箱 —— provider 与 consumer 都必须懂
 
-契约注释写死了这条边界（`packages/plugin-storage-api/src/index.ts`、`:96-101`，参考实现 `:27-48`）：
+契约注释写死了这条边界（`packages/api-storage/src/index.ts`、`:96-101`，参考实现 `:27-48`）：
 
 - `resolveLocalPath` 把 URI 解析成宿主机**绝对路径**，交给 `run_python`/shell/code-runner 当 cwd 或起点用。
 - 解析过程**只校验目标在声明根内**（lexical + realpath 双查，`:540-562`），**不约束子进程之后的访问范围**。子进程拿到路径后能访问当前 OS 用户可访问的任何文件。

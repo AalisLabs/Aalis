@@ -5,15 +5,15 @@
 把一段文本编码成稠密向量（`text → number[]`）的提供者，是语义检索 / 向量记忆的底层能力。
 
 - 服务注册名：`'embedding'`（`ctx.getService<EmbeddingService>('embedding')`）。
-- 契约包：`@aalis/plugin-embedding-api`。
+- 契约包：`@aalis/api-embedding`。
 - 该契约**有运行时服务**（非纯类型契约），但 `-api` 包本身只导出 interface + declaration merging，不含实现；实现来自 `plugin-embedding-*` 提供者插件。
 
 ## 2. 契约
 
-`@aalis/plugin-embedding-api` 的全部导出（`packages/plugin-embedding-api/src/index.ts`）：
+`@aalis/api-embedding` 的全部导出（`packages/api-embedding/src/index.ts`）：
 
 ```ts
-// packages/plugin-embedding-api/src/index.ts
+// packages/api-embedding/src/index.ts
 export interface EmbeddingService {
   /** 将文本转为向量 */
   embed(text: string): Promise<number[]>;
@@ -25,7 +25,7 @@ export interface EmbeddingService {
 并通过 declaration merging 把服务名登记进核心的 `ServiceTypeMap`，使 `getService('embedding')` 拿到强类型：
 
 ```ts
-// packages/plugin-embedding-api/src/index.ts
+// packages/api-embedding/src/index.ts
 declare module '@aalis/core' {
   interface ServiceTypeMap {
     embedding: EmbeddingService;
@@ -39,7 +39,7 @@ declare module '@aalis/core' {
 - `listModels()` 可选，**仅服务于 WebUI 配置表单的动态下拉**（`configSchema` 里 `dynamicOptions: 'embedding'`，见 §4）。不参与 embed 主链路。
 - 契约**没有批量接口**（如 `embedBatch`）。消费者要批量时只能自己并发调 `embed()`（参考实现的连接细节见 §3）。
 
-`@aalis/plugin-embedding-api/package.json` 标记 `aalis.types: true` 且 `keywords` 含 `aalis-api`——是纯契约包，不是可加载插件。
+`@aalis/api-embedding/package.json` 标记 `aalis.types: true` 且 `keywords` 含 `aalis-api`——是纯契约包，不是可加载插件。
 
 ## 3. 谁提供 / 谁消费
 
@@ -108,7 +108,7 @@ export const reusable = true;          // 允许同插件多实例（多账号/�
 
 ```ts
 import type { Context } from '@aalis/core';
-import type { EmbeddingService } from '@aalis/plugin-embedding-api';
+import type { EmbeddingService } from '@aalis/api-embedding';
 
 export const name = '@yourscope/plugin-embedding-foo';
 export const provides = ['embedding'];

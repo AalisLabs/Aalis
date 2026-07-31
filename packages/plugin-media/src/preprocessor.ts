@@ -6,9 +6,9 @@
 // 避免双轨制导致的描述重复（preprocessor 与 archive 之前都会拼描述 → 出现两遍）。
 // ============================================================
 
+import type { PreprocessorFn } from '@aalis/api-agent';
+import type { MediaService } from '@aalis/api-media';
 import type { Context } from '@aalis/core';
-import type { PreprocessorFn } from '@aalis/plugin-agent-api';
-import type { MediaService } from '@aalis/plugin-media-api';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 export function buildPreprocessor(ctx: Context, getService: () => MediaService): PreprocessorFn {

@@ -1,8 +1,8 @@
+import { createProcessGateway } from '@aalis/api-process';
+import { useToolService } from '@aalis/api-tools';
+import type { WebuiPage } from '@aalis/api-webui';
+import { useWebuiService } from '@aalis/api-webui';
 import type { Context, PluginModule } from '@aalis/core';
-import { createProcessGateway } from '@aalis/plugin-process-api';
-import { useToolService } from '@aalis/plugin-tools-api';
-import type { WebuiPage } from '@aalis/plugin-webui-api';
-import { useWebuiService } from '@aalis/plugin-webui-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { assertSafeHost, isPrivateHost } from '@aalis/util-network-guard';
 

@@ -1,22 +1,17 @@
+import type { AuthorityService, CapabilityConfirm, ExecutionGuardContext, UserIdentity } from '@aalis/api-authority';
+import type { CommandService } from '@aalis/api-commands';
+import { useCommandService } from '@aalis/api-commands';
+import { getPlatformNames } from '@aalis/api-platform';
+import { createStorageGateway, type StorageService } from '@aalis/api-storage';
+import type { ToolService } from '@aalis/api-tools';
+import type { WebuiPage } from '@aalis/api-webui';
+import { useWebuiService } from '@aalis/api-webui';
 import type { AppService, Context, PluginModule } from '@aalis/core';
-import type {
-  AuthorityService,
-  CapabilityConfirm,
-  ExecutionGuardContext,
-  UserIdentity,
-} from '@aalis/plugin-authority-api';
-import type { CommandService } from '@aalis/plugin-commands-api';
-import { useCommandService } from '@aalis/plugin-commands-api';
-import { getPlatformNames } from '@aalis/plugin-platform-api';
-import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
-import type { ToolService } from '@aalis/plugin-tools-api';
-import type { WebuiPage } from '@aalis/plugin-webui-api';
-import { useWebuiService } from '@aalis/plugin-webui-api';
 import { setNetworkPolicy } from '@aalis/util-network-guard';
 import { AuthorityManager } from './authority-manager.js';
 import { autoConfirmActive, DEFAULT_AUTHORITY, shouldSkipConfirm } from './authority-model.js';
 
-export type { AuthorityService } from '@aalis/plugin-authority-api';
+export type { AuthorityService } from '@aalis/api-authority';
 export { AuthorityManager } from './authority-manager.js';
 
 // ===== 插件元数据 =====

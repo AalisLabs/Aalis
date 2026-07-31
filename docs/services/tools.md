@@ -5,16 +5,16 @@
 **工具注册表（Tool Registry）**：管理「AI 可调用工具」的注册、查询、执行与统一权限闸。LLM function-calling 的工具池就是这个服务里的一张 `Map<name, RegisteredTool>`。
 
 - 服务注册名：`'tools'`，消费方 `ctx.getService<ToolService>('tools')`。
-- 契约包：`@aalis/plugin-tools-api`（`packages/plugin-tools-api/src/index.ts`）。
+- 契约包：`@aalis/api-tools`（`packages/api-tools/src/index.ts`）。
 - 参考实现：`@aalis/plugin-tools`（`packages/plugin-tools/src/tools.ts` 的 `ToolRegistry`）。
 
 工具是「能力（capability）」在 LLM 侧的一种 surface（另一种是指令 command，见 [`docs/core/commands.md`](../core/commands.md)）。两者共用同一套 authority 执行守卫，详见 [`docs/concepts/security-model.md`](../concepts/security-model.md)、[`docs/core/authority.md`](../core/authority.md)。
 
-## 2. 契约（`@aalis/plugin-tools-api`）
+## 2. 契约（`@aalis/api-tools`）
 
 ### 2.1 LLM 函数声明协议
 
-`packages/plugin-tools-api/src/index.ts`：
+`packages/api-tools/src/index.ts`：
 
 ```ts
 export interface ToolFunction {
@@ -66,7 +66,7 @@ export interface ToolCallContext {
 }
 ```
 
-`risk`/`visibility`/`confirm` 三者关系（`@aalis/plugin-authority-api`，`packages/plugin-authority-api/src/index.ts`）：`risk` 是糖，`safe→{public}`、`sensitive→{restricted}`、`dangerous→{restricted, confirm:'session'}`；显式 `visibility`/`confirm` 覆盖 `risk` 推导；三者全缺省 → `public`。`resolveCapabilityPolicy()` 做这步展开（纯函数）。
+`risk`/`visibility`/`confirm` 三者关系（`@aalis/api-authority`，`packages/api-authority/src/index.ts`）：`risk` 是糖，`safe→{public}`、`sensitive→{restricted}`、`dangerous→{restricted, confirm:'session'}`；显式 `visibility`/`confirm` 覆盖 `risk` 推导；三者全缺省 → `public`。`resolveCapabilityPolicy()` 做这步展开（纯函数）。
 
 ### 2.3 服务接口 `ToolService`
 
@@ -92,7 +92,7 @@ unregisterByPlugin(pluginName: string): void;
 - `toolsWithGroups(tools, groups)`（`index.ts`）—— 给一组工具批量挂同一分组（合并而非覆盖）。
 - 类型：`ToolFunction` `ToolDefinition` `ToolCallContext` `ToolExecuteMessage` `RegisteredTool` `ToolSummary` `ToolGroupInfo` `ToolService` `ScopedToolService`。
 - 事件：通过 declaration merging 注入 `AalisEvents['tool:execute']: [ToolExecuteMessage]`（`index.ts`），WebUI 等前端订阅展示工具调用 start/end。
-- 本包**纯契约**：不再 re-export 任何 runtime helper。SSRF/私网判定（`isPrivateAddress`/`isPrivateHost`）在 `@aalis/util-network-guard`；路径规范化/解析（`toStorageUri`/`resolveAgainstCwd`/`parseStorageUri`）在 `@aalis/plugin-storage-api`（`src/index.ts`）。`index.ts` 有迁出说明。
+- 本包**纯契约**：不再 re-export 任何 runtime helper。SSRF/私网判定（`isPrivateAddress`/`isPrivateHost`）在 `@aalis/util-network-guard`；路径规范化/解析（`toStorageUri`/`resolveAgainstCwd`/`parseStorageUri`）在 `@aalis/api-storage`（`src/index.ts`）。`index.ts` 有迁出说明。
 
 ## 3. 谁提供 / 谁消费
 
@@ -117,8 +117,8 @@ unregisterByPlugin(pluginName: string): void;
 
 ```ts
 import type { Context } from '@aalis/core';
-import { useToolService } from '@aalis/plugin-tools-api';
-import '@aalis/plugin-tools-api'; // 触发 ServiceTypeMap / AalisEvents 的 declaration merging
+import { useToolService } from '@aalis/api-tools';
+import '@aalis/api-tools'; // 触发 ServiceTypeMap / AalisEvents 的 declaration merging
 
 export const name = '@aalis/plugin-tool-hello';
 
@@ -190,7 +190,7 @@ const result = await ctx.getService<ToolService>('tools')
 
 ## 6. 能力 / 风险 → 影响
 
-工具是受 authority 管的「能力」，`tool:<name>` 即其 capability id。两条正交轴（`packages/plugin-authority-api/src/index.ts`）：
+工具是受 authority 管的「能力」，`tool:<name>` 即其 capability id。两条正交轴（`packages/api-authority/src/index.ts`）：
 - **轴 A 可见性** `visibility: 'public' | 'restricted'`。`restricted` 须 owner 或被委托授予才可执行；`public` 默认放行。
 - **轴 B 确认** `confirm: 'session' | 'always'`。即便有权限（含 owner），命中 confirm 会触发交互确认（HITL）；`always` 不接受会话记忆，每次都问。
 - `risk` 是糖：`safe→公开`、`sensitive→受限`、`dangerous→受限+每次确认`。`getAll()` **原样透传 `risk`**（`tools.ts`）让 authority 派生操作最低等级 minLevel（`riskToLevel`：safe→0 / sensitive→1 / dangerous→2，`packages/plugin-authority/src/authority-model.ts`）。
@@ -209,7 +209,7 @@ const result = await ctx.getService<ToolService>('tools')
 - **`file_read` 的 `allowedRoots`**：现默认 `['workspace', 'tmp']`（`packages/plugin-tool-system/src/index.ts`），不含 `data` 等系统根，避免裸读 `data:/users.json`。但配置允许设为 `["*"]` 放开全部可读根（`src/tools/file.ts`）——一旦用户改成 `*`，`file_read` 就能读凭证类文件。提供「按根放行」的工具时，默认应收紧、把放开权交给 owner 显式配置。
 - **重名即覆盖**：`name` 全局唯一，重复 `register` 同名工具会 warn 并覆盖（`tools.ts`）。挑独特、带前缀的工具名（如 `math_eval`），别用 `read`/`run` 这种通用词。
 - **参数校验是「轻量」级**：`execute` 只查 `required` 缺失 + （仅当 `additionalProperties:false` 时）未知键（`tools.ts`），**不**做类型/嵌套校验。想要严格未知键拦截就显式写 `additionalProperties: false`；handler 内仍要对 `args` 做类型断言与防御。
-- **契约污染（已解决）**：曾经 `packages/plugin-tools-api/src/utils.ts` 把 `toStorageUri` + 一组 SSRF/私网判定塞进 tools 契约包并 re-export，属契约污染。现已修复：`utils.ts` 删除、helper 迁出——SSRF/私网判定 → `@aalis/util-network-guard`（`isPrivateAddress`/`isPrivateHost`、`safeFetch`），路径规范化/解析 → `@aalis/plugin-storage-api`（`toStorageUri`/`resolveAgainstCwd`/`parseStorageUri`，`src/index.ts`）。本包现为纯契约/类型，不再 re-export 任何 runtime 函数（迁出说明见 `index.ts`）。
+- **契约污染（已解决）**：曾经 `packages/api-tools/src/utils.ts` 把 `toStorageUri` + 一组 SSRF/私网判定塞进 tools 契约包并 re-export，属契约污染。现已修复：`utils.ts` 删除、helper 迁出——SSRF/私网判定 → `@aalis/util-network-guard`（`isPrivateAddress`/`isPrivateHost`、`safeFetch`），路径规范化/解析 → `@aalis/api-storage`（`toStorageUri`/`resolveAgainstCwd`/`parseStorageUri`，`src/index.ts`）。本包现为纯契约/类型，不再 re-export 任何 runtime 函数（迁出说明见 `index.ts`）。
 
 ## 8. 交叉链接
 

@@ -1,7 +1,7 @@
 // ----- 会话确认：协调器实现 + onebot/cli 等「仅消息总线」平台的确认传输 -----
 //
 // 协调器（待确认登记 / 超时 / 解析 Y-YS / 文案）是平台无关的功能，**实现一份**于此，经
-// `session-confirm` 服务（契约在 plugin-session-confirm-api）暴露 createChannel，供任何平台复用：
+// `session-confirm` 服务（契约在 api-session-confirm）暴露 createChannel，供任何平台复用：
 //   - 本插件自用：bus 通道（投递走 gateway 总线）+ '*' fallback handler + inbound:confirm 相位拦截，
 //     覆盖 onebot/cli 等仅靠消息总线的会话型平台。
 //   - WebUI：注入自己的 WS 投递拿一条通道，保留 WS type:'confirm'（前端「确认模式」信号），在
@@ -10,16 +10,11 @@
 // 纯协议（parseConfirmReply / composeConfirmPrompt）是本插件私有的无状态实现，内联于此——
 // 契约包（authority-api）只放类型、不放实现（避免运行时跨包边 + 版本漂移）。
 
+import type { AccessConfirmHandler, AccessDecision, AccessRequest, AuthorityService } from '@aalis/api-authority';
+import type { GatewayService } from '@aalis/api-gateway';
+import { INBOUND_PHASE } from '@aalis/api-gateway';
+import type { ConfirmChannel, SessionConfirmService } from '@aalis/api-session-confirm';
 import type { Context } from '@aalis/core';
-import type {
-  AccessConfirmHandler,
-  AccessDecision,
-  AccessRequest,
-  AuthorityService,
-} from '@aalis/plugin-authority-api';
-import type { GatewayService } from '@aalis/plugin-gateway-api';
-import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
-import type { ConfirmChannel, SessionConfirmService } from '@aalis/plugin-session-confirm-api';
 
 export const name = '@aalis/plugin-session-confirm';
 export const displayName = '会话确认';

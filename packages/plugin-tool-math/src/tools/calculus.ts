@@ -1,4 +1,4 @@
-import type { ScopedToolService } from '@aalis/plugin-tools-api';
+import type { ScopedToolService } from '@aalis/api-tools';
 export function registerCalculusTools(tools: ScopedToolService): void {
   tools.register({
     definition: {
