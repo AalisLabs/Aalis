@@ -18,13 +18,10 @@ const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 // npm search 的 keywords: 逗号分隔 = 任一命中（核心/工具链不带任何类型词，自然不进市场）。
 const AALIS_KEYWORDS = ['aalis-plugin', 'aalis-util', 'aalis-api', 'aalis-schema', 'aalis-interface'];
 const SEARCH_TIMEOUT_MS = 8000;
-// 合法 npm 包名（可选 scope）+ 可选 @version 后缀（支持指定版本安装）。
-//
-// 名段与版本段的首字符**都**必须是字母数字。该值最终作为一个 argv 传给 npm，而 npm 会：
-//   - 把以 `-` 开头的 token 当命令行标志（`--force`、`--ignore-scripts` 都是 npm 上真实存在的可发布包名）；
-//   - 把 `.` / `..` / `./x` 当本地目录 spec —— **`foo@.` 与 `@a/b@..` 同样是目录 spec**，
-//     只锚名段挡不住；实测这条能让 npm 转去打包宿主工作目录并执行其 prepack/prepare 生命周期脚本。
-// 两段各自锚住首字符，即封死目录 spec 与标志注入两条面。
+// 依赖图端点专用：这里的 name 被拼进 **registry URL 的路径段**（`${base}/${name}`），
+// 需要挡的是 `..` / 查询串注入，不是 npm 的 argv 面。
+// 装/卸/更新三条路径的包名校验都在 package-manager 服务层（validatePackageSpec /
+// buildUpdateSpecs）——那里是所有调用方的必经之路，路由不再自带第二份。
 const PKG_NAME_RE = /^(@[a-z0-9][a-z0-9\-_.]*\/)?[a-z0-9][a-z0-9\-_.]*(@[a-z0-9][a-z0-9.-]*)?$/i;
 
 interface MarketplacePackage {
@@ -622,11 +619,13 @@ export function registerMarketplaceRoutes(
     });
   });
 
-  // 安装：复用 package-manager 的 npm pack 流程；owner 级（安装第三方代码 = 高危）。
+  // 安装：owner 级（安装第三方代码 = 高危）。
+  // 形状校验只做「是不是字符串」；包名的安全校验在 package-manager 的 validatePackageSpec
+  // 里统一做——那里是所有调用方（含直接拿服务的插件）的必经之路，也只有那一份实现。
   expressApp.post('/api/marketplace/install', gate(), async (req, res) => {
     const npmPkg = req.body?.name;
-    if (!npmPkg || typeof npmPkg !== 'string' || !PKG_NAME_RE.test(npmPkg)) {
-      res.status(400).json({ error: 'name 字段必须是合法 npm 包名' });
+    if (typeof npmPkg !== 'string') {
+      res.status(400).json({ error: 'name 字段必须是字符串' });
       return;
     }
     const pkgMgr = ctx.getService<PackageManagerService>('package-manager');
@@ -641,13 +640,14 @@ export function registerMarketplaceRoutes(
     }
   });
 
-  // 卸载：owner 级。唯一护栏——禁卸"删了会断别人服务依赖"的包（无替代提供者）。
-  // 不再保护核心/契约/WebUI 基础设施：用户要切就让其切（基础设施自删的后果自负）。
-  // 真正删目录 + 清残留配置由 package-manager.uninstall 负责。
+  // 卸载：owner 级。这里只挡"删了会断别人服务依赖"的包（无替代提供者）——它需要运行时
+  // getStatus，只有路由这一层拿得到。**包类型与来源的两道闸在服务层**（见
+  // package-manager 的 uninstallOne）：市场只卸插件与前端界面，内核/宿主/契约/规范/工具库
+  // 不在职权内；非 registry 来源（工作区源码、file:/git、传递依赖）同样拒绝。
   expressApp.post('/api/marketplace/uninstall', gate(), async (req, res) => {
     const name = req.body?.name;
-    if (!name || typeof name !== 'string' || !PKG_NAME_RE.test(name)) {
-      res.status(400).json({ error: 'name 字段必须是合法 npm 包名' });
+    if (typeof name !== 'string') {
+      res.status(400).json({ error: 'name 字段必须是字符串' });
       return;
     }
     const status = getPluginMgr()?.getStatus() ?? [];
