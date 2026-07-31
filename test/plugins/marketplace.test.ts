@@ -3,7 +3,6 @@ import {
   augmentInstalled,
   buildDependencyChain,
   buildSearchUrl,
-  classifyOrigin,
   classifyPackage,
   classifySystemComponent,
   findPackageDependents,
@@ -289,38 +288,9 @@ describe('classifyPackage（按类型关键词分类）', () => {
 // 两者路径同形，唯有根声明能把它们分开。
 // ════════════════════════════════════════════════════════════
 
-describe('classifyOrigin（来源判据 = 根依赖声明）', () => {
-  it('semver 范围与 dist-tag → registry（唯一可经市场更新的一档）', () => {
-    for (const spec of ['^0.9.1', '~1.2.0', '1.x', '*', 'latest', '>=0.2.0 <1.0.0', 'npm:other-pkg@^1']) {
-      expect(classifyOrigin(spec), `${spec} 应判为 registry`).toBe('registry');
-    }
-  });
-
-  it('workspace: → workspace（monorepo 实况：本仓库 @aalis/core 即 workspace:*）', () => {
-    expect(classifyOrigin('workspace:*')).toBe('workspace');
-    expect(classifyOrigin('workspace:^')).toBe('workspace');
-  });
-
-  it('file: / link: / portal: → link', () => {
-    for (const spec of ['file:../local-plugin', 'link:../x', 'portal:../y']) {
-      expect(classifyOrigin(spec), `${spec} 应判为 link`).toBe('link');
-    }
-  });
-
-  it('git 与 URL → git', () => {
-    for (const spec of ['git+ssh://git@github.com/u/r.git', 'github:u/r', 'gitlab:u/r', 'https://x.com/a.tgz']) {
-      expect(classifyOrigin(spec), `${spec} 应判为 git`).toBe('git');
-    }
-  });
-
-  it('不在根 dependencies → transitive（本地存在但非直接依赖，市场不该动它）', () => {
-    expect(classifyOrigin(undefined)).toBe('transitive');
-  });
-});
-
 describe('resolveLocalInfo（三路信号汇总；两种部署形态各有陷阱）', () => {
   it('脚手架形态：根声明了 semver + 装在 node_modules → registry，可更新', () => {
-    const info = resolveLocalInfo('^0.9.1', { version: '0.9.1', keywords: ['aalis-plugin'] }, false);
+    const info = resolveLocalInfo('^0.9.1', { version: '0.9.1', keywords: ['aalis-plugin'] }, undefined);
     expect(info?.origin).toBe('registry');
     expect(info?.version).toBe('0.9.1');
     expect(info?.request).toBe('^0.9.1');
@@ -329,23 +299,25 @@ describe('resolveLocalInfo（三路信号汇总；两种部署形态各有陷阱
   it('脚手架形态：装在 node_modules 但不在根 dependencies → transitive（父包拉进来的）', () => {
     // 实测：@aalis/plugin-memory-api 由 plugin-memory-inmemory 引入，与直装包路径同形，
     // 只有「不在根 dependencies」这一条能把它们分开。
-    expect(resolveLocalInfo(undefined, { version: '0.9.0' }, false)?.origin).toBe('transitive');
+    expect(resolveLocalInfo(undefined, { version: '0.9.0' }, undefined)?.origin).toBe('transitive');
   });
 
   it('monorepo 形态：resolve 不到但扫描扫得到 → workspace，不是 transitive', () => {
     // 实测：本仓库 @aalis/plugin-commands 不在根 dependencies 且从仓库根 resolve 失败，
-    // 但它是 packages/ 下的工作区源码。若沿用 classifyOrigin(undefined) 会误判为「依赖引入」。
-    const info = resolveLocalInfo(undefined, undefined, true);
+    // 但它是 packages/ 下的工作区源码。若沿用 classifyDepSpec(undefined) 会误判为「依赖引入」。
+    const info = resolveLocalInfo(undefined, undefined, { version: '0.9.0' });
     expect(info?.origin).toBe('workspace');
-    expect(info?.version, '扫描路径拿不到版本号').toBeUndefined();
+    // 版本取自扫描时读到的那份 package.json。不带上它，前端的 `resolved ?? version` 兜底就会
+    // 把 npm latest 当成已装版本显示——实测本仓库 93 张卡片里 91 张显示的是远端版本号。
+    expect(info?.version, '工作区包的版本来自扫描').toBe('0.9.0');
   });
 
   it('monorepo 形态：根声明 workspace: 且能 resolve → workspace（本仓库 @aalis/core 即如此）', () => {
-    expect(resolveLocalInfo('workspace:*', { version: '0.9.1' }, true)?.origin).toBe('workspace');
+    expect(resolveLocalInfo('workspace:*', { version: '0.9.1' }, { version: '0.9.1' })?.origin).toBe('workspace');
   });
 
   it('三路都没有 → undefined（未安装）', () => {
-    expect(resolveLocalInfo(undefined, undefined, false)).toBeUndefined();
+    expect(resolveLocalInfo(undefined, undefined, undefined)).toBeUndefined();
   });
 });
 
