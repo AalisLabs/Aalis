@@ -38,7 +38,7 @@ import type { OutgoingMessage, StreamChunkMessage } from '@aalis/schema-message'
 import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createAuthSystem, openBrowser } from './auth.js';
-import { collectLocalPackageDeps, type DiscoveryEnv, discoverClients } from './client-discovery.js';
+import { collectLocalPackageDeps, type DiscoveryEnv, discoverClients, pickFreshClients } from './client-discovery.js';
 import { renderClientSwitchPage } from './client-switch-page.js';
 import { createRouteGate } from './gate.js';
 import { registerFileRoutes } from './routes/files.js';
@@ -547,8 +547,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     resolve(dirname(fileURLToPath(import.meta.url)), '../../'),
     resolve(process.cwd(), 'node_modules/@aalis'),
   ];
-  registerMarketplaceRoutes(expressApp, ctx, getPluginMgr, gate, uiConfig.marketplaceRegistry, () =>
-    collectLocalPackageDeps(localScanDirs, fsScanEnv),
+  registerMarketplaceRoutes(
+    expressApp,
+    ctx,
+    getPluginMgr,
+    gate,
+    uiConfig.marketplaceRegistry,
+    () => collectLocalPackageDeps(localScanDirs, fsScanEnv),
+    () => discoverAndProvideClients(),
   );
 
   // 获取历史日志：从 data/latest.log 读尾部 N 条（lazy load）。
@@ -1455,11 +1461,21 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   });
 
-  // 启动服务器
-  ctx.on('ready', () => {
-    // 全动态发现前端：按 `aalis.client:true` 标记扫描，**不硬编码任何前端包名**
-    // （与 runtime 加载器的 marker 驱动一致；忒修斯之船——任意第三方前端带标记+dist 即被发现）。
-    // 覆盖三种拓扑：monorepo（扫 packages 同级目录）/ 独立项目（扫 node_modules/@aalis + 根 deps）。
+  /**
+   * 全动态发现前端：按 `aalis.client:true` 标记扫描，**不硬编码任何前端包名**
+   * （与 runtime 加载器的 marker 驱动一致；忒修斯之船——任意第三方前端带标记+dist 即被发现）。
+   * 覆盖三种拓扑：monorepo（扫 packages 同级目录）/ 独立项目（扫 node_modules/@aalis + 根 deps）。
+   *
+   * **幂等**，可重复调用：装完一个 `aalis-interface` 包后要立刻重跑，否则它不会出现在服务页
+   * 的下拉里、必须重启才看得见。幂等是硬要求而非优化——重复 `fork().provide()` 会在服务
+   * 容器里堆同名重复项。已登记过的 id 直接跳过。
+   *
+   * 只登记新候选，**不切换活跃前端**：换前端是用户在服务页的显式选择，装了个新的不该把
+   * 他正在用的顶掉。
+   *
+   * @returns 本次新发现的候选数
+   */
+  function discoverAndProvideClients(): number {
     const here = dirname(fileURLToPath(import.meta.url));
     const projectRequire = createRequire(pathToFileURL(resolve(process.cwd(), 'package.json')));
     const env: DiscoveryEnv = {
@@ -1477,6 +1493,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const scanDirs = [resolve(here, '../../'), resolve(process.cwd(), 'node_modules/@aalis')];
     let depIds: string[] = [];
     try {
+      // 每次重读：装完新包后根 dependencies 已变，缓存会让新前端发现不到。
       const rootPkg = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf-8')) as {
         dependencies?: Record<string, string>;
         optionalDependencies?: Record<string, string>;
@@ -1485,14 +1502,24 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     } catch {
       /* 无项目根 package.json（如 monorepo 直跑），跳过 deps 扫描 */
     }
-    clientCandidates.push(...discoverClients(scanDirs, depIds, env));
 
-    // 把每个发现到的前端注册为 webui-client 服务的一个 provider（带 label，供「服务」页下拉切换）。
+    const fresh = pickFreshClients(
+      clientCandidates.map(c => c.id),
+      discoverClients(scanDirs, depIds, env),
+    );
+    clientCandidates.push(...fresh);
+    // 把每个新发现的前端注册为 webui-client 服务的一个 provider（带 label，供「服务」页下拉切换）。
     // 外部插件在 apply 里主动 provide('webui-client') 的也已在服务池中（注册更早 → 默认胜出，仍可被偏好切换）。
-    for (const candidate of clientCandidates) {
+    for (const candidate of fresh) {
       ctx.fork(candidate.id).provide('webui-client', { getClientDir: () => candidate.dir }, { label: candidate.label });
       ctx.logger.info(`发现前端: ${candidate.label} (${candidate.dir})`);
     }
+    return fresh.length;
+  }
+
+  // 启动服务器
+  ctx.on('ready', () => {
+    discoverAndProvideClients();
     // 活跃前端 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 注册顺序）；零前端则 404。
     const activeDir = currentClientDir();
     if (activeDir) {
