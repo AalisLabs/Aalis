@@ -100,9 +100,20 @@ afterAll(() => {
 
 describe('安装链（真实 npm）', () => {
   it.runIf(npmUsable)(
-    'standalone 卸载：把包从根 dependencies 里摘掉（只 dispose 运行时实例不够，重启后会复活）',
+    '卸载：把包从根 dependencies 里摘掉（只 dispose 运行时实例不够，重启后会复活）',
     async () => {
       expect(deps(root)['is-odd']).toBeDefined();
+      const metaPath = join(root, 'node_modules/is-odd/package.json');
+      const orig = JSON.parse(readFileSync(metaPath, 'utf-8')) as Record<string, unknown>;
+
+      // 类型闸先验：is-odd 原样（无 aalis 关键词）不该被市场卸载——它不是插件。
+      const refused = await makePm(root).uninstall('is-odd');
+      expect(refused.ok).toBe(false);
+      expect(refused.message).toContain('不是可装卸的插件');
+      expect(deps(root)['is-odd'], '被拒时根依赖不能动').toBeDefined();
+
+      // 打上关键词让它成为「插件」，再验真正的卸载路径。
+      writeFileSync(metaPath, JSON.stringify({ ...orig, keywords: ['aalis', 'aalis-plugin'] }, null, 2));
       const r = await makePm(root).uninstall('is-odd');
       expect(r.ok).toBe(true);
       expect(deps(root)['is-odd']).toBeUndefined();
@@ -299,7 +310,9 @@ describe('安装链（真实 npm）', () => {
       );
       const pm = makePm(p);
       expect((await pm.install('is-odd')).ok).toBe(false);
-      expect((await pm.update([{ name: 'is-odd', version: '3.0.1' }])).ok).toBe(false);
+      const upd = await pm.update([{ name: 'is-odd', version: '3.0.1' }]);
+      expect(upd.ok).toBe(false);
+      expect(upd.message).toContain('workspace:');
       // npm 一次都不该被执行：它会在 pnpm 仓库根写出 package-lock.json 与扁平 node_modules
       expect(existsSync(join(p, 'node_modules'))).toBe(false);
       expect(existsSync(join(p, 'package-lock.json'))).toBe(false);
@@ -308,15 +321,24 @@ describe('安装链（真实 npm）', () => {
     }
   }, 60_000);
 
-  it('工作区形态拒绝市场更新：包来自本地 packages/，升级走 git（不联网也能验）', async () => {
+  it('`pnpm-workspace.yaml` 的存在**不再**影响任何判定（形态开关已删）', async () => {
+    // 旧实现拿这个文件当整体开关，检测到就把整个项目的更新一律拒掉。但它与真正生效的
+    // 加载器没有因果关系——加载器是入口文件传给 startAalis 的。于是「私有插件在 packages/、
+    // 第三方插件从 npm 来」这种合法分发形态被整体挡死。
+    // 现在能不能更新只看**该包自己的来源**。此处根依赖是正常的 registry 范围，故不会再
+    // 撞上任何形态类拒绝；它止步于版本守卫（本地没装，读不到已装版本 → 无从判断方向）。
     const p = mkdtempSync(join(tmpdir(), 'aalis-wsl-'));
     try {
       mkdirSync(join(p, 'packages'), { recursive: true });
-      writeFileSync(join(p, 'package.json'), JSON.stringify({ name: 'w', version: '1.0.0', private: true }));
+      writeFileSync(
+        join(p, 'package.json'),
+        JSON.stringify({ name: 'w', version: '1.0.0', private: true, dependencies: { 'is-odd': '^3.0.0' } }),
+      );
       writeFileSync(join(p, 'pnpm-workspace.yaml'), "packages:\n  - 'packages/*'\n");
       const r = await makePm(p).update([{ name: 'is-odd', version: '3.0.1' }]);
       expect(r.ok).toBe(false);
-      expect(r.message).toContain('工作区');
+      expect(r.message, '不该再出现形态类拒绝').not.toContain('工作区');
+      expect(r.message).toContain('未知'); // 本地版本读不到 → 版本守卫拒绝
     } finally {
       rmSync(p, { recursive: true, force: true });
     }
