@@ -1,18 +1,18 @@
 {
-  "name": "@aalis/plugin-deepseek",
+  "name": "@aalis/plugin-llm-openai",
   "version": "0.9.0",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/AalisLabs/Aalis.git",
-    "directory": "packages/plugin-deepseek"
+    "directory": "packages/plugin-llm-openai"
   },
   "author": "Ace Nyan <ace@acenyan.com>",
   "bugs": {
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "DeepSeek LLM 提供者（深度思考 + 工具调用）",
+  "description": "OpenAI / 兼容接口 LLM 提供者（对话、工具、流式）",
   "type": "module",
   "keywords": [
     "aalis",
@@ -30,8 +30,7 @@
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
     "@aalis/plugin-llm-api": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/schema-message": "workspace:>=0.5.1 <1.0.0",
-    "@aalis/util-text-normalize": "workspace:>=0.5.1 <1.0.0"
+    "@aalis/schema-message": "workspace:>=0.5.1 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

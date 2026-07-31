@@ -39,7 +39,7 @@ interface ServiceEntry {
 
 ```ts
 export const ServicePriority = {
-  Backend: 0,    // 普通后端实现（plugin-openai / plugin-deepseek 等）
+  Backend: 0,    // 普通后端实现（plugin-llm-openai / plugin-llm-deepseek 等）
   Override: 50,  // 用户级覆盖：希望默认胜过普通后端
   System: 200,   // 保留给核心系统级覆盖
 } as const;
@@ -90,12 +90,12 @@ const dispose = ctx.provide('memory', myMemoryService, {
 
 这种情况下用 `options.entryId` 覆盖默认的 contextId。约定是：`entryId` 必须以 `ctx.id` 为前缀、以 `/` 分隔，即 `'${ctx.id}/${子粒度标识}'`。
 
-以 plugin-openai 为例：
+以 plugin-llm-openai 为例：
 
 ```ts
 const dispose = ctx.provide('llm', handle, {
   label: `${baseLabel} / ${modelId}`,
-  entryId: `${ctx.id}/${modelId}`,  // 如 "@aalis/plugin-openai:main/gpt-4o"
+  entryId: `${ctx.id}/${modelId}`,  // 如 "@aalis/plugin-llm-openai:main/gpt-4o"
 });
 ```
 
@@ -201,7 +201,7 @@ function listLLMEntries(ctx, caps) {
 | **包级 manifest** | `package.json` 的 `aalis.service.{provides,required,optional}` | 市场 / 安装前的静态披露（用户装前就知道这插件提供 / 依赖什么） |
 | **运行时 DI 声明** | 模块导出 `export const provides` / `export const inject`（或 module 字段 `provides` / `inject`） | core 实际据此做依赖解析与激活时序 |
 
-以 plugin-openai 为例，两处声明分别是：
+以 plugin-llm-openai 为例，两处声明分别是：
 
 - `package.json` → `"aalis": { "service": { "provides": ["llm"] } }`
 - 模块导出 → `export const provides = ['llm']`

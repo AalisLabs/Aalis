@@ -113,7 +113,7 @@ const model = resolveLLMModel(ctx, ref, [LLMCapabilities.Vision])?.instance;
 
 | 范围 | 用途 |
 |-------|------|
-| `0`（默认） | 普通真实提供者（plugin-openai / plugin-deepseek …） |
+| `0`（默认） | 普通真实提供者（plugin-llm-openai / plugin-llm-deepseek …） |
 | `10–50` | 用户希望覆盖默认的次级提供者（`Override`） |
 | `200` | `System`；仅供 core 与系统级别使用 |
 
@@ -252,8 +252,8 @@ plugins:
 
 | 类型 | 参考包 |
 |------|--------|
-| 单一服务提供者 | `plugin-openai`, `plugin-deepseek` |
-| 多 entry 注册 | `plugin-storage-local`（每 root）、`plugin-ollama`（每 model） |
+| 单一服务提供者 | `plugin-llm-openai`, `plugin-llm-deepseek` |
+| 多 entry 注册 | `plugin-storage-local`（每 root）、`plugin-llm-ollama`（每 model） |
 | 跨 entry helper | `plugin-storage-api` (`createStorageGateway`)、`plugin-platform-api` (`resolvePlatformBySession`) |
 | 工具注入 | `plugin-tool-search`, `plugin-tool-browser` |
 | 命令注入 | `plugin-commands` |

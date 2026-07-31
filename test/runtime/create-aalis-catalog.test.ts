@@ -28,7 +28,7 @@ describe('toPluginCatalog（npm search → 插件目录）', () => {
     const data = {
       objects: [
         { package: { name: '@aalis/plugin-workflow', description: '工作流', version: '0.3.0' } },
-        { package: { name: '@aalis/plugin-openai', description: 'LLM' } }, // 无 version
+        { package: { name: '@aalis/plugin-llm-openai', description: 'LLM' } }, // 无 version
       ],
     };
     const out = toPluginCatalog(data);
@@ -39,7 +39,7 @@ describe('toPluginCatalog（npm search → 插件目录）', () => {
   it('剔除 *-api 契约、webui-client 前端、code-sandbox 沙箱基建（脚手架只列可装功能插件）', () => {
     const data = {
       objects: [
-        { package: { name: '@aalis/plugin-openai', description: 'LLM' } },
+        { package: { name: '@aalis/plugin-llm-openai', description: 'LLM' } },
         { package: { name: '@aalis/plugin-tools-api', description: '契约' } },
         { package: { name: '@aalis/plugin-webui-client', description: '前端' } },
         // 沙箱基建：选 code-runner 时自动带入，不应单独可选。短名带 plugin- 前缀，
@@ -49,6 +49,6 @@ describe('toPluginCatalog（npm search → 插件目录）', () => {
         { package: { name: '@aalis/plugin-mcp-client', description: 'MCP 客户端' } }, // 功能插件，保留
       ],
     };
-    expect(toPluginCatalog(data).map(e => e.name)).toEqual(['@aalis/plugin-openai', '@aalis/plugin-mcp-client']);
+    expect(toPluginCatalog(data).map(e => e.name)).toEqual(['@aalis/plugin-llm-openai', '@aalis/plugin-mcp-client']);
   });
 });

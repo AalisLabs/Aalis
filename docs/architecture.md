@@ -216,8 +216,8 @@ const llm = ctx.getService<LLMService>('llm');
 
 ```
 llm 服务:
-  [0] plugin-deepseek (priority=10)   ← getService('llm') 默认胜者
-  [1] plugin-openai   (priority=0)
+  [0] plugin-llm-deepseek (priority=10)   ← getService('llm') 默认胜者
+  [1] plugin-llm-openai   (priority=0)
 ```
 
 ### 服务偏好

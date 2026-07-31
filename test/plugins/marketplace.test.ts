@@ -106,19 +106,19 @@ describe('toMarketplacePackages（响应映射 + 已装 + 官方标注 + 富信�
 
 describe('findServiceDependents（卸载护栏：断服务依赖检测）', () => {
   const status = [
-    { name: '@aalis/plugin-openai', provides: ['llm'], requiredServices: [] },
+    { name: '@aalis/plugin-llm-openai', provides: ['llm'], requiredServices: [] },
     { name: '@aalis/plugin-agent', provides: ['agent'], requiredServices: ['llm'] },
-    { name: '@aalis/plugin-deepseek', provides: ['llm'], requiredServices: [] },
+    { name: '@aalis/plugin-llm-deepseek', provides: ['llm'], requiredServices: [] },
   ];
 
   it('删了某服务的唯一提供者 → 列出受影响的依赖方', () => {
     const onlyProvider = [status[0], status[1]]; // 仅 openai 提供 llm，agent 需要 llm
-    expect(findServiceDependents('@aalis/plugin-openai', onlyProvider)).toEqual(['@aalis/plugin-agent']);
+    expect(findServiceDependents('@aalis/plugin-llm-openai', onlyProvider)).toEqual(['@aalis/plugin-agent']);
   });
 
   it('还有别的提供者 → 删了不致命，无依赖方阻断', () => {
     // openai 与 deepseek 都提供 llm；删 openai，deepseek 仍在
-    expect(findServiceDependents('@aalis/plugin-openai', status)).toEqual([]);
+    expect(findServiceDependents('@aalis/plugin-llm-openai', status)).toEqual([]);
   });
 
   it('目标不提供任何服务 → 空', () => {
@@ -243,12 +243,17 @@ describe('classifyPackage（按类型关键词分类）', () => {
   });
   it('augmentInstalled：已装的 api/前端经 resolve 补判为已安装（getStatus 漏掉它们）', () => {
     // base = getStatus 仅含已加载运行时插件；api/client 带 marker 不在其中
-    const base = new Set(['@aalis/plugin-openai']);
-    const names = ['@aalis/plugin-openai', '@aalis/plugin-llm-api', '@aalis/plugin-webui-client', '@aalis/plugin-x'];
+    const base = new Set(['@aalis/plugin-llm-openai']);
+    const names = [
+      '@aalis/plugin-llm-openai',
+      '@aalis/plugin-llm-api',
+      '@aalis/plugin-webui-client',
+      '@aalis/plugin-x',
+    ];
     // 模拟 node_modules：llm-api 与 webui-client 已装（可 resolve），plugin-x 未装
     const canResolve = (n: string) => n === '@aalis/plugin-llm-api' || n === '@aalis/plugin-webui-client';
     const out = augmentInstalled(names, base, canResolve);
-    expect(out.has('@aalis/plugin-openai')).toBe(true); // base 保留
+    expect(out.has('@aalis/plugin-llm-openai')).toBe(true); // base 保留
     expect(out.has('@aalis/plugin-llm-api')).toBe(true); // 补判已装（修复"永远未安装"bug）
     expect(out.has('@aalis/plugin-webui-client')).toBe(true);
     expect(out.has('@aalis/plugin-x')).toBe(false); // 未装
@@ -262,7 +267,7 @@ describe('classifyPackage（按类型关键词分类）', () => {
     const pkgs = toMarketplacePackages(
       {
         objects: [
-          { package: { name: '@aalis/plugin-openai', version: '1.0.0', keywords: ['aalis-plugin'] } },
+          { package: { name: '@aalis/plugin-llm-openai', version: '1.0.0', keywords: ['aalis-plugin'] } },
           { package: { name: '@aalis/plugin-tools-api', version: '1.0.0', keywords: ['aalis-api'] } },
           { package: { name: '@aalis/plugin-webui-client', version: '1.0.0', keywords: ['aalis-interface'] } },
         ],
