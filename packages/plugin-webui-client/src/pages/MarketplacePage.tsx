@@ -1,5 +1,5 @@
 import { AlertTriangle, Clock, Download, Scale } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { useConfirm } from '../components/ConfirmDialog';
 import { type DepGraph, InstallDepDisclosure, UninstallDepWarning } from '../components/DependencyTree';
@@ -43,6 +43,8 @@ interface SystemComponent {
   request?: string;
   description?: string;
   kind: 'core' | 'runtime' | 'api' | 'schema' | 'util';
+  /** 来源分档（服务端下发，展示徽章用）。与 updatable 是两件事。 */
+  origin?: PkgOrigin;
   updatable?: boolean;
 }
 
@@ -108,13 +110,6 @@ interface UpdateResult {
   restarting?: boolean;
 }
 
-/**
- * 一次批量更新的目标上限，与服务端 `MAX_UPDATE_TARGETS` 对齐。
- * 「全选」按此截断而非全量勾上：超限时服务端 400 整批拒绝，而那恰恰是本面板最该工作的
- * 场景（一次协调发版后一大批包同时可更新）。
- */
-const MAX_UPDATE_TARGETS = 50;
-
 /** 1234 → 1.2k；1200000 → 1.2M */
 function fmtDownloads(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -169,6 +164,8 @@ export function MarketplacePage({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [updating, setUpdating] = useState(false);
   const [updateResult, setUpdateResult] = useState<UpdateResult | null>(null);
+  /** loadRegistry 的请求序号，用于丢弃后到的陈旧响应（理由见 loadRegistry 内注释）。 */
+  const loadSeq = useRef(0);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -179,6 +176,10 @@ export function MarketplacePage({
   // 前端做（同 koishi：拉一次索引、本地即时过滤），不再每次按键打 npm，既能真正筛选
   // 又更跟手。安装状态在渲染期按当前 plugins 实时合并，故本函数不依赖 plugins。
   const loadRegistry = useCallback(async () => {
+    // 请求序号护栏：装/卸后会立刻重拉，而 /api/marketplace 每次并行打 5 条 npm search，
+    // 耗时从 ~90ms 到 SEARCH_TIMEOUT_MS=8s 不等。没有序号的话，先发的陈旧响应后到就会
+    // 覆盖掉装/卸后的新鲜结果，卡片被顶回旧态且本页无自愈。
+    const seq = ++loadSeq.current;
     setLoading(true);
     setWarning(null);
     try {
@@ -199,18 +200,22 @@ export function MarketplacePage({
           version: c.latest ?? c.version ?? '',
           resolved: c.version,
           request: c.request,
-          origin: c.updatable ? 'registry' : 'transitive',
-          // 系统组件的 updatable 由 /api/system-components 算好（来源 + latest 版本序），直接沿用。
+          // 来源与「可更新」是两件事，各自从服务端取，**不互相反推**：updatable 里折进了版本序，
+          // 拿它推 origin 会把「已是最新版」和「离线查不到 latest」的 registry 组件错标成「依赖引入」。
+          origin: c.origin,
           updatable: c.updatable ?? false,
           installed: true,
           official: c.name.startsWith('@aalis/'),
           category: c.kind,
         }));
+      if (seq !== loadSeq.current) return; // 已有更新的一次重拉在途，丢弃本次结果
       setRegistry([...fromNpm, ...extra]);
       if (res.warning) setWarning(res.warning);
     } catch {
+      if (seq !== loadSeq.current) return;
       showToast('无法加载插件市场');
     }
+    if (seq !== loadSeq.current) return;
     setLoading(false);
     setLoaded(true);
   }, []);
@@ -251,6 +256,9 @@ export function MarketplacePage({
 
   const applyUpdates = async () => {
     if (selectedTargets.length === 0 || updating) return;
+    // 不在前端设批量上限：真实约束是 argv 的**字节数**（execve 的 ARG_MAX），由服务层的
+    // buildUpdateSpecs 统一判。在这里复制一个包**个数**的常量，既是错的单位，两处还会漂移。
+    // 超限时服务端返回可读理由，本页的结果框会如实展示。
     setUpdating(true);
     setUpdateResult(null);
     try {
@@ -406,10 +414,10 @@ export function MarketplacePage({
               <button
                 type="button"
                 className="btn btn-sm"
-                onClick={() => setSelected(new Set(updatable.slice(0, MAX_UPDATE_TARGETS).map(p => p.name)))}
+                onClick={() => setSelected(new Set(updatable.map(p => p.name)))}
                 disabled={updating}
               >
-                {updatable.length > MAX_UPDATE_TARGETS ? `全选（前 ${MAX_UPDATE_TARGETS} 项）` : '全选'}
+                全选
               </button>
               <button
                 type="button"
@@ -556,8 +564,12 @@ export function MarketplacePage({
                   {ORIGIN_BADGE[pkg.origin].label}
                 </span>
               )}
-              {pkg.installed && pkg.origin === 'registry' && pkg.resolved && pkg.version && pkg.resolved !== pkg.version && (
-                // 徽章即勾选框——此前它只是个悬空提示，点不动
+              {pkg.updatable && (
+                // 徽章即勾选框——此前它只是个悬空提示，点不动。
+                // 判据必须与顶部面板、与服务端更新闸**同一个** `updatable`：曾经这里自算
+                // `origin === 'registry' && resolved !== version`，于是「latest 低于本地」时
+                // 服务端下发 updatable:false，卡片却照样渲染黄徽章「可更新 v<更旧的版本>」
+                // 并给出一个勾得上、却因为不在 updatable 列表里而永远提交不出去的死勾选框。
                 <label
                   className="badge"
                   style={{ background: 'var(--warning)', color: '#1a1a1a', cursor: 'pointer' }}

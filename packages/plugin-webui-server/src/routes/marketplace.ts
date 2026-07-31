@@ -17,8 +17,6 @@ const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 // 市场收录四类：功能插件 aalis-plugin / 工具库 aalis-util / 契约 aalis-api / 前端 aalis-interface。
 // npm search 的 keywords: 逗号分隔 = 任一命中（核心/工具链不带任何类型词，自然不进市场）。
 const AALIS_KEYWORDS = ['aalis-plugin', 'aalis-util', 'aalis-api', 'aalis-schema', 'aalis-interface'];
-/** 一次批量更新的目标上限：防误传超大数组把 npm 命令行撑爆。 */
-const MAX_UPDATE_TARGETS = 50;
 const SEARCH_TIMEOUT_MS = 8000;
 // 合法 npm 包名（可选 scope）+ 可选 @version 后缀（支持指定版本安装）。
 //
@@ -238,7 +236,7 @@ export interface LocalPkgInfo {
 export function resolveLocalInfo(
   request: string | undefined,
   meta: { version?: string; keywords?: string[]; description?: string } | undefined,
-  scanned: { version?: string } | undefined,
+  scanned: { version?: string; keywords?: string[]; description?: string } | undefined,
 ): LocalPkgInfo | undefined {
   if (meta) {
     return {
@@ -253,11 +251,22 @@ export function resolveLocalInfo(
   // 此处不可沿用 classifyDepSpec(undefined)=transitive：那是「在 node_modules 里但非直接依赖」
   // 的语义，而这里的包压根不在 node_modules。实测本仓库 @aalis/plugin-commands 等全走这条分支。
   //
-  // version 取自扫描时读到的那份 package.json：pnpm 工作区下根 node_modules 只链根依赖
+  // 元数据取自扫描时读到的那份 package.json：pnpm 工作区下根 node_modules 只链根依赖
   // （本仓库根 dependencies 仅 core 与 runtime），packages/ 下的包一律 resolve 不到，故这条
-  // 分支是工作区形态的**常态**而非边角。此前不带 version，前端的 `resolved ?? version`
-  // 兜底就把 npm latest 当成已装版本显示——实测 93 张卡片里 91 张显示的是远端版本号。
-  if (scanned) return { version: scanned.version, request, origin: 'workspace' };
+  // 分支是工作区形态的**常态**而非边角。两处都不能省：
+  //   - 不带 version，前端的 `resolved ?? version` 兜底就把 npm latest 当成已装版本显示
+  //     （实测 93 张卡片里 91 张显示的是远端版本号）；
+  //   - 不带 keywords，**离线降级列表整批看不见工作区包**——toLocalPackages 按 keywords 筛
+  //     aalis 组件，而国内多数镜像不支持 search API，降级是常态路径。
+  if (scanned) {
+    return {
+      version: scanned.version,
+      request,
+      origin: 'workspace',
+      keywords: scanned.keywords,
+      description: scanned.description,
+    };
+  }
   return undefined;
 }
 
@@ -285,6 +294,12 @@ export interface SystemComponent {
   latest?: string;
   /** 根 package.json 里的依赖声明；不在根依赖里（传递依赖/工作区包）则 undefined。 */
   request?: string;
+  /**
+   * 来源分档（展示徽章用）。**必须独立下发，不能让前端从 updatable 反推**：
+   * updatable 里折进了版本序，于是「已是最新版的 registry 组件」和「离线查不到 latest 的组件」
+   * 都会 updatable=false，反推就把它们错标成「依赖引入」。
+   */
+  origin: DepOrigin;
   description?: string;
   /** 分类：内核 / 宿主 / 服务契约 / 数据规范 / 工具库 */
   kind: 'core' | 'runtime' | 'api' | 'schema' | 'util';
@@ -433,7 +448,7 @@ export function registerMarketplaceRoutes(
     const status = getPluginMgr()?.getStatus() ?? [];
     // 已装判定独立于 getStatus（后者只含已加载运行时插件，漏掉带 marker 不加载的 api/前端/核心）。
     // 同一次解析顺带取出本地版本：卡片上的 version 是 npm latest，只有拿到本地 resolved
-    // 才能判「可更新」，否则已装包会显示成远端最新版而用户永远看不出落后。
+    // 才能判「可更新」（版本序由服务端算进 updatable 下发，前端不自算）。
     const localPkgs = getLocalPackages();
     const projectRequire = createRequire(pathToFileURL(resolve(process.cwd(), 'package.json')));
     const rootDeps = readRootDependencies();
@@ -517,6 +532,7 @@ export function registerMarketplaceRoutes(
         name,
         version: meta?.version,
         request: rootDeps[name],
+        origin: classifyDepSpec(rootDeps[name]),
         description: meta?.description,
         kind,
         // 与市场页、与 package-manager 的闸同一份实现。latest 尚未查到，故版本序在下面补判。
@@ -662,12 +678,9 @@ export function registerMarketplaceRoutes(
       res.status(400).json({ error: 'targets 必须是非空数组' });
       return;
     }
-    if (raw.length > MAX_UPDATE_TARGETS) {
-      res.status(400).json({ error: `一次最多更新 ${MAX_UPDATE_TARGETS} 个包` });
-      return;
-    }
-    // 形状校验只做「是不是两个字符串」；包名/版本的安全校验在 package-manager 的
-    // buildUpdateSpecs 里统一做——那里是所有调用方（含直接拿服务的插件）的必经之路。
+    // 形状校验只做「是不是两个字符串」；包名/版本/总量的校验都在 package-manager 的
+    // buildUpdateSpecs 里统一做——那里是所有调用方（含直接拿服务的插件）的必经之路，
+    // 而总量的真实约束是 argv 字节数（见该处 SPEC_ARGV_BUDGET），不是包个数。
     const targets = raw.map((t: unknown) => ({
       name: typeof (t as { name?: unknown })?.name === 'string' ? (t as { name: string }).name : '',
       version: typeof (t as { version?: unknown })?.version === 'string' ? (t as { version: string }).version : '',

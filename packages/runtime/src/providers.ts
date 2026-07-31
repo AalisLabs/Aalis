@@ -518,14 +518,29 @@ export function createProcessRespawnStrategy(opts: RespawnOptions = {}): Restart
       }
       if (rollback.postRestore) {
         const { cmd, args, cwd } = rollback.postRestore;
-        await new Promise<void>(r => {
+        // **必须看退出码**。这条命令把 node_modules 装回旧版，文件还原只完成了一半的工作。
+        // 它失败的途径是现实的：回滚窗口内 registry 不可达、私有源 token 过期、旧版被
+        // unpublish、npm cache 为空（pnpm 装的工程正是这种）、原生模块 postinstall 挂掉。
+        // 不看退出码就宣告「已回滚」的话，留下的是比原状态更糟的错位树——package.json 声明
+        // 旧版、node_modules 实装新版、锁已被删；而 caret 范围仍满足新版，后续 `npm install`
+        // 也不会自愈。然后拿旧版进程去加载新版代码，进 crash loop，用户却被告知回滚成功。
+        const code = await new Promise<number | null>(r => {
           const p = spawn(cmd, args, { cwd, stdio: 'inherit' });
-          p.on('exit', () => r());
+          p.on('exit', c => r(c));
           p.on('error', err => {
             console.error('[aalis] 回滚命令执行失败:', err);
-            r();
+            r(-1);
           });
         });
+        if (code !== 0) {
+          console.error(
+            `[aalis] 回滚未完成：依赖重装失败（${cmd} 退出码 ${code}）。\n` +
+              `[aalis] 配置文件已还原，但 node_modules 仍是更新后的版本 —— 工程处于「声明旧版、实装新版」的错位状态。\n` +
+              `[aalis] 请联网后手工执行：${[cmd, ...args].join(' ')}（cwd: ${cwd}）\n` +
+              '[aalis] 未重新拉起旧版进程：它会加载到新版代码，很可能反复崩溃。',
+          );
+          process.exit(1);
+        }
       }
       const revived = spawnChild(false);
       revived.unref();
