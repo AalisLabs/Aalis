@@ -1,8 +1,8 @@
 import { App } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import * as deepseekModule from '../../packages/plugin-deepseek/src/index.js';
 import type { LLMModel } from '../../packages/plugin-llm-api/src/index.js';
-import * as openaiModule from '../../packages/plugin-openai/src/index.js';
+import * as deepseekModule from '../../packages/plugin-llm-deepseek/src/index.js';
+import * as openaiModule from '../../packages/plugin-llm-openai/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 前缀缓存命中量的上报（打真实适配器，非重抄映射）

@@ -23,7 +23,7 @@ import type {} from '@aalis/core';
 export interface SessionConfig {
   /**
    * 会话使用的 LLM 模型引用：`{ provider, model }` 二元组。
-   * provider 为 LLM 插件实例 contextId（如 `@aalis/plugin-openai:main`），
+   * provider 为 LLM 插件实例 contextId（如 `@aalis/plugin-llm-openai:main`），
    * model 为该 provider 注册的 model id（如 `gpt-4o`）。
    * 由 ConfigSchema type='llm-ref' 字段统一编辑。
    */

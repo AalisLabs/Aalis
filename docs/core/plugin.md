@@ -8,7 +8,7 @@
 
 ```typescript
 interface PluginModule {
-  name: string;               // 插件名（如 '@aalis/plugin-deepseek'）
+  name: string;               // 插件名（如 '@aalis/plugin-llm-deepseek'）
   inject?: InjectDeclaration; // 依赖声明
   provides?: string[];        // 提供的服务名
   core?: boolean;             // 核心插件标记（不可禁用）

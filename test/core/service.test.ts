@@ -4,15 +4,15 @@ import { ServiceContainer } from '../../packages/core/src/index.js';
 describe('ServiceContainer', () => {
   it('注册并查询单个服务', () => {
     const c = new ServiceContainer();
-    c.register('llm', { name: 'openai' }, 0, 'plugin-openai');
+    c.register('llm', { name: 'openai' }, 0, 'plugin-llm-openai');
     const svc = c.get<{ name: string }>('llm');
     expect(svc?.name).toBe('openai');
   });
 
   it('getAll 返回所有提供者', () => {
     const c = new ServiceContainer();
-    c.register('llm', { name: 'openai' }, 0, 'plugin-openai');
-    c.register('llm', { name: 'deepseek' }, 0, 'plugin-deepseek');
+    c.register('llm', { name: 'openai' }, 0, 'plugin-llm-openai');
+    c.register('llm', { name: 'deepseek' }, 0, 'plugin-llm-deepseek');
     const all = c.getAll('llm');
     expect(all).toHaveLength(2);
   });

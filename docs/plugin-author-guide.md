@@ -222,7 +222,7 @@ export async function apply(ctx, cfg) {
 
 下游走 preference 机制选默认胜者（高优先级 / 偏好），或在请求参数中显式传
 `provider` / `model` hint，由 `*-api` helper（如 `resolveLLMModel(ctx, { provider, model })`）
-按 model-handle 元数据定位实例（参见 plugin-openai / plugin-deepseek 实现）——
+按 model-handle 元数据定位实例（参见 plugin-llm-openai / plugin-llm-deepseek 实现）——
 **能力过滤在 helper 这层，不在 core DI**。
 
 ---

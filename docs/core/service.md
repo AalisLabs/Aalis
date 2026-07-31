@@ -38,7 +38,7 @@ interface ServiceEntry {
 
 ### `hasByContext(name, contextId)`
 
-检查指定 contextId 是否注册了某服务。"拥有" 语义同时匹配 `contextId === ownerId` 和以 `ownerId + '/'` 为前缀的 per-entry 子 entry（如 `@aalis/plugin-ollama:main/llama3`）。
+检查指定 contextId 是否注册了某服务。"拥有" 语义同时匹配 `contextId === ownerId` 和以 `ownerId + '/'` 为前缀的 per-entry 子 entry（如 `@aalis/plugin-llm-ollama:main/llama3`）。
 
 ### `getEntries(name)` / `getAll<T>(name)`
 

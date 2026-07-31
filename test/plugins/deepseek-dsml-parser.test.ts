@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseDsmlToolCalls } from '../../packages/plugin-deepseek/src/dsml-parser.js';
+import { parseDsmlToolCalls } from '../../packages/plugin-llm-deepseek/src/dsml-parser.js';
 
 // 全角竖线 U+FF5C
 const FW = '｜';
