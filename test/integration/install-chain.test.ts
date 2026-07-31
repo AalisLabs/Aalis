@@ -113,7 +113,7 @@ describe('安装链（真实 npm）', () => {
   it.runIf(npmUsable)(
     'standalone 安装：写根 dependencies + node_modules，且不建 packages/ 死目录',
     async () => {
-      const r = await makePm(root).install('is-odd@3.0.1');
+      const r = await makePm(root).install('is-odd@3.0.0');
       expect(r.ok).toBe(true);
       expect(deps(root)['is-odd']).toBeDefined();
       expect(existsSync(join(root, 'node_modules/is-odd/package.json'))).toBe(true);
@@ -128,7 +128,7 @@ describe('安装链（真实 npm）', () => {
     async () => {
       const restarts: Array<{ restore: Array<{ path: string; content: string }> }> = [];
       const before = readFileSync(join(root, 'package.json'), 'utf-8');
-      const r = await makePm(root, restarts).update([{ name: 'is-odd', version: '3.0.0' }]);
+      const r = await makePm(root, restarts).update([{ name: 'is-odd', version: '3.0.1' }]);
       expect(r.ok).toBe(true);
       expect(r.restarting).toBe(true);
       expect(restarts).toHaveLength(1);
@@ -148,7 +148,7 @@ describe('安装链（真实 npm）', () => {
         writeFileSync(
           join(p, 'package.json'),
           JSON.stringify(
-            { name: 'peer', version: '1.0.0', private: true, dependencies: { react: '18.3.1', 'react-dom': '18.3.1' } },
+            { name: 'peer', version: '1.0.0', private: true, dependencies: { react: '18.2.0', 'react-dom': '18.2.0' } },
             null,
             2,
           ),
@@ -156,13 +156,14 @@ describe('安装链（真实 npm）', () => {
         await pexec('npm', ['install', '--no-audit', '--no-fund'], { cwd: p, timeout: 240_000 });
         const before = readFileSync(join(p, 'package.json'), 'utf-8');
         const restarts: unknown[] = [];
-        // react-dom@18.3.1 的 peer 要 react@^18.3.1，把 react 降到 17 必须被挡下
-        const r = await makePm(p, restarts).update([{ name: 'react', version: '17.0.2' }]);
+        // react-dom@18.2.0 的 peer 要 react@^18.2.0，把 react 升到 19 必须被挡下
+        // （用升级而非降级：降级另有守卫会更早拒掉，就测不到预检这一层了）
+        const r = await makePm(p, restarts).update([{ name: 'react', version: '19.0.0' }]);
         expect(r.ok).toBe(false);
         expect(r.conflicts?.some(c => c.includes('react-dom'))).toBe(true);
         expect(restarts).toHaveLength(0);
         expect(readFileSync(join(p, 'package.json'), 'utf-8')).toBe(before);
-        expect(JSON.parse(readFileSync(join(p, 'node_modules/react/package.json'), 'utf-8')).version).toBe('18.3.1');
+        expect(JSON.parse(readFileSync(join(p, 'node_modules/react/package.json'), 'utf-8')).version).toBe('18.2.0');
       } finally {
         rmSync(p, { recursive: true, force: true });
       }
@@ -181,7 +182,7 @@ describe('安装链（真实 npm）', () => {
         writeFileSync(
           join(p, 'package.json'),
           JSON.stringify(
-            { name: 'lg', version: '1.0.0', private: true, dependencies: { react: '18.3.1', 'react-dom': '18.3.1' } },
+            { name: 'lg', version: '1.0.0', private: true, dependencies: { react: '18.2.0', 'react-dom': '18.2.0' } },
             null,
             2,
           ),
@@ -189,7 +190,7 @@ describe('安装链（真实 npm）', () => {
         writeFileSync(join(p, '.npmrc'), 'legacy-peer-deps=true\n');
         await pexec('npm', ['install', '--no-audit', '--no-fund'], { cwd: p, timeout: 240_000 });
         const before = readFileSync(join(p, 'package.json'), 'utf-8');
-        const r = await makePm(p, []).update([{ name: 'react', version: '17.0.2' }]);
+        const r = await makePm(p, []).update([{ name: 'react', version: '19.0.0' }]);
         expect(r.ok).toBe(false);
         expect(r.conflicts?.some(c => c.includes('react-dom'))).toBe(true);
         expect(readFileSync(join(p, 'package.json'), 'utf-8')).toBe(before);
@@ -235,28 +236,58 @@ describe('安装链（真实 npm）', () => {
   );
 
   it.runIf(npmUsable)(
-    '原本无 lockfile 时，回滚凭据标记「该文件更新前不存在」（留着它会让重装判定 up-to-date，回滚变谎话）',
+    '无 lockfile + caret 范围声明时，执行回滚凭据真的把 node_modules 换回旧版（不能靠范围重解析）',
     async () => {
+      // 这是回滚最危险的形态，且是 `create-aalis` 脚手架 + pnpm 的常态组合：
+      //   声明是 `^3.0.0`（范围）、无 package-lock.json、node_modules 里是 3.0.0。
+      // 更新到 3.0.1 后夭折 → 回滚写回 package.json（仍是 `^3.0.0`）、删掉 npm 新建的锁。
+      // 若 postRestore 是裸 `npm install`，它只能按范围重解析 —— 而 `^3.0.0` **覆盖** 3.0.1，
+      // 于是刚崩掉的版本被原样装回，node_modules 分毫未变，重启策略却照样打印「已回滚」。
+      // 故本用例不止看凭据长相，而是**真跑一遍回滚**再验 node_modules 的实际版本。
       const p = mkdtempSync(join(tmpdir(), 'aalis-nolock-'));
       try {
-        // 模拟 pnpm/yarn 装出来的工程：有 node_modules 与 package.json，但无 package-lock.json
+        writeFileSync(
+          join(p, 'package.json'),
+          JSON.stringify({ name: 'n', version: '1.0.0', private: true, dependencies: { 'is-odd': '3.0.0' } }, null, 2),
+        );
+        await pexec('npm', ['install', '--no-audit', '--no-fund'], { cwd: p, timeout: 240_000 });
+        // 装好 3.0.0 后把声明改成 caret 范围、删掉锁 —— 即 pnpm/yarn 装出来的工程形态
         writeFileSync(
           join(p, 'package.json'),
           JSON.stringify({ name: 'n', version: '1.0.0', private: true, dependencies: { 'is-odd': '^3.0.0' } }, null, 2),
         );
-        await pexec('npm', ['install', '--no-audit', '--no-fund'], { cwd: p, timeout: 240_000 });
         rmSync(join(p, 'package-lock.json'), { force: true });
+        const installed = () =>
+          JSON.parse(readFileSync(join(p, 'node_modules/is-odd/package.json'), 'utf-8')).version as string;
+        expect(installed()).toBe('3.0.0');
 
-        const restarts: Array<{ restore: Array<{ path: string; deleteIfEmpty?: boolean }> }> = [];
+        const restarts: Array<{
+          restore: Array<{ path: string; content: string; deleteIfEmpty?: boolean }>;
+          postRestore?: { cmd: string; args: string[]; cwd: string };
+        }> = [];
         const r = await makePm(p, restarts).update([{ name: 'is-odd', version: '3.0.1' }]);
         expect(r.ok).toBe(true);
-        const lockEntry = restarts[0].restore.find(f => f.path.endsWith('package-lock.json'));
-        expect(lockEntry?.deleteIfEmpty).toBe(true); // 回滚时删除而非写空
+        expect(installed(), '更新本身生效').toBe('3.0.1');
+
+        // ── 逐字执行回滚凭据（与 runtime/src/providers.ts 的 restartApp 一致）──
+        const cred = restarts[0];
+        for (const f of cred.restore) {
+          if (f.deleteIfEmpty && f.content === '') rmSync(f.path, { force: true });
+          else writeFileSync(f.path, f.content);
+        }
+        expect(existsSync(join(p, 'package-lock.json')), '无锁工程回滚后仍无锁').toBe(false);
+        expect(cred.postRestore).toBeDefined();
+        await pexec(cred.postRestore!.cmd, cred.postRestore!.args, { cwd: cred.postRestore!.cwd, timeout: 240_000 });
+
+        // 真正的判据：跑回旧代码。此前实测这里仍是 3.0.1（回滚是一句谎话）。
+        expect(installed(), '回滚后 node_modules 必须回到旧版').toBe('3.0.0');
+        // --no-save 保证声明维持 restore 写回的原样，不被 npm 改写成 `^3.0.0` 之外的东西
+        expect(deps(p)['is-odd']).toBe('^3.0.0');
       } finally {
         rmSync(p, { recursive: true, force: true });
       }
     },
-    480_000,
+    600_000,
   );
 
   it('工作区护栏：根依赖含 workspace: 协议时拒绝跑 npm（不联网也能验）', async () => {

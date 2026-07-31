@@ -10,12 +10,14 @@ interface MarketPkg {
   description: string;
   /** npm 上的最新版。**不是**本地已装版本，那是 resolved。 */
   version: string;
-  /** 本地已装版本；与 version 不等即可更新。未装则缺省。 */
+  /** 本地已装版本。未装或读不到则缺省。**判可更新看 updatable，别自己比版本。** */
   resolved?: string;
   /** 根 package.json 里的原始声明（`^0.9.1` / `workspace:*` / `file:../x`）。 */
   request?: string;
-  /** 本地这份从哪来（后端按根 package.json 的依赖声明判定）。只有 registry 可经市场更新。 */
+  /** 本地这份从哪来（后端按根 package.json 的依赖声明判定）。展示来源徽章用。 */
   origin?: PkgOrigin;
+  /** 此刻能否经市场更新。后端算（来源 + 版本序），与更新闸同一份实现。 */
+  updatable?: boolean;
   author?: string;
   installed: boolean;
   official?: boolean;
@@ -30,8 +32,8 @@ interface MarketPkg {
   links?: { npm?: string; homepage?: string; repository?: string };
 }
 
-/** 镜像后端 PkgOrigin。判据是根 package.json 的依赖声明，非文件路径。 */
-type PkgOrigin = 'registry' | 'workspace' | 'link' | 'git' | 'transitive';
+/** 镜像后端 PkgOrigin（`@aalis/util-dep-spec` 的 DepOrigin）。判据是根 package.json 的依赖声明，非文件路径。 */
+type PkgOrigin = 'registry' | 'workspace' | 'link' | 'git' | 'alias' | 'transitive';
 
 /** 镜像 /api/system-components 的条目（core / runtime / api / schema / util）。 */
 interface SystemComponent {
@@ -48,7 +50,8 @@ interface SystemComponent {
 const ORIGIN_BADGE: Record<Exclude<PkgOrigin, 'registry'>, { label: string; hint: string }> = {
   workspace: { label: '工作区', hint: '源码在本仓库内，改代码即生效，不经市场更新' },
   link: { label: '本地链接', hint: '由 file: / link: 指向本地目录，更新请改那份源码' },
-  git: { label: '外部源', hint: '由 git / URL 安装，更新请改依赖声明' },
+  git: { label: '外部源', hint: '由 git / URL / user-repo 简写安装，更新请改依赖声明' },
+  alias: { label: '别名', hint: '由 npm: 别名指向另一个包，市场更新会拆掉别名，故不提供' },
   transitive: { label: '依赖引入', hint: '由其它包引入，版本随父包的范围，不单独更新' },
 };
 
@@ -89,15 +92,28 @@ const CATEGORY_LABELS: Record<Category, string> = {
  */
 const INSTALLABLE_CATEGORIES: ReadonlySet<string> = new Set(['plugin', 'interface']);
 
+/**
+ * 更新接口的响应。
+ *
+ * `error` 与 `message` 是**两条不同来源**：路由自身的 400/503/500 分支只给 `error`
+ * （无 ok/无 message），服务层的结构化失败走 HTTP 200 + `{ok:false, message}`。
+ * 只读其一就会得到一个没有任何文字的红框——曾实测发生：服务未启用、超过 50 个上限、
+ * npm 报错三条全部渲染成空白。
+ */
 interface UpdateResult {
-  ok: boolean;
-  message: string;
+  ok?: boolean;
+  message?: string;
+  error?: string;
   conflicts?: string[];
   restarting?: boolean;
 }
 
-/** 只有根依赖里以 semver 范围声明的才能经市场更新（与服务端 isRegistryDep 同一判据）。 */
-const isUpdatable = (p: { origin?: PkgOrigin }): boolean => (p.origin ?? 'transitive') === 'registry';
+/**
+ * 一次批量更新的目标上限，与服务端 `MAX_UPDATE_TARGETS` 对齐。
+ * 「全选」按此截断而非全量勾上：超限时服务端 400 整批拒绝，而那恰恰是本面板最该工作的
+ * 场景（一次协调发版后一大批包同时可更新）。
+ */
+const MAX_UPDATE_TARGETS = 50;
 
 /** 1234 → 1.2k；1200000 → 1.2M */
 function fmtDownloads(n: number): string {
@@ -184,6 +200,8 @@ export function MarketplacePage({
           resolved: c.version,
           request: c.request,
           origin: c.updatable ? 'registry' : 'transitive',
+          // 系统组件的 updatable 由 /api/system-components 算好（来源 + latest 版本序），直接沿用。
+          updatable: c.updatable ?? false,
           installed: true,
           official: c.name.startsWith('@aalis/'),
           category: c.kind,
@@ -203,11 +221,14 @@ export function MarketplacePage({
 
   const installedNames = useMemo(() => new Set(plugins.map(p => p.name)), [plugins]);
 
-  /** 可更新 = 已装 + 有更高版本 + 来源是 registry（传递依赖/工作区包单独升只会装出第二份）。 */
-  const updatable = useMemo(
-    () => registry.filter(p => p.installed && p.resolved && p.version && p.resolved !== p.version && isUpdatable(p)),
-    [registry],
-  );
+  /**
+   * 可更新完全由服务端判定（来源是 registry + 版本严格新于本地）。
+   *
+   * 前端**不再自算**：曾经这里写 `p.resolved !== p.version` 再叠一个 origin 判断，与服务端的
+   * 更新闸是两份实现，实测出过两类错——字符串不等把「registry 的 latest 低于本地」渲染成
+   * 可更新并真的降级重启；GitHub 简写依赖出了勾选框却在提交后被闸整批否决。
+   */
+  const updatable = useMemo(() => registry.filter(p => p.updatable), [registry]);
   // 勾选集随可更新列表收敛：刷新后不再可更新的项不该继续留在待更新集里。
   useEffect(() => {
     setSelected(prev => {
@@ -305,6 +326,9 @@ export function MarketplacePage({
         // 后者恰恰是需要用户知道的失败态。旧文案还谎称「正在重启」——安装路径从不触发重启。
         showToast(res.message ?? `${name} 已安装`);
         onRefresh();
+        // 市场卡片的已装态来自 /api/marketplace 的快照，onRefresh 只刷运行时插件列表：
+        // 不重拉市场，装完的 interface 类包（不是运行时插件，永不进 plugins 列表）会一直显示「安装」。
+        loadRegistry();
       } else {
         // error 只有路由自身的 400/503/500 分支才有；服务层的结构化失败走 message + HTTP 200。
         // 少读一个就会把「它声明为插件却未被加载」「根依赖含 workspace: 协议」这类可操作的
@@ -347,6 +371,8 @@ export function MarketplacePage({
       if (res.ok) {
         showToast(res.message ?? `${name} 已卸载`);
         onRefresh();
+        // 同 install：不重拉市场，registry 快照里的 installed:true 会让卡片继续显示「卸载」按钮。
+        loadRegistry();
       } else {
         showToast(res.error ?? res.message ?? '卸载失败'); // 同 install：服务层失败走 message
       }
@@ -380,10 +406,10 @@ export function MarketplacePage({
               <button
                 type="button"
                 className="btn btn-sm"
-                onClick={() => setSelected(new Set(updatable.map(p => p.name)))}
+                onClick={() => setSelected(new Set(updatable.slice(0, MAX_UPDATE_TARGETS).map(p => p.name)))}
                 disabled={updating}
               >
-                全选
+                {updatable.length > MAX_UPDATE_TARGETS ? `全选（前 ${MAX_UPDATE_TARGETS} 项）` : '全选'}
               </button>
               <button
                 type="button"
@@ -409,7 +435,8 @@ export function MarketplacePage({
 
       {updateResult && (
         <div className={updateResult.ok ? 'update-result ok' : 'update-result err'}>
-          <div>{updateResult.message}</div>
+          {/* error 与 message 两条来源都要读，否则路由的 400/503/500 会渲染成空红框（见 UpdateResult 注释）。 */}
+          <div>{updateResult.error ?? updateResult.message ?? '更新失败'}</div>
           {updateResult.conflicts && updateResult.conflicts.length > 0 && (
             <ul className="update-conflicts">
               {updateResult.conflicts.map(c => (
@@ -500,8 +527,14 @@ export function MarketplacePage({
               ) : (
                 <span className="marketplace-card-name">{pkg.name}</span>
               )}
-              {/* 已装时展示本地版本（resolved），未装时展示 npm 最新版。两者混同会让用户以为自己装的就是最新版。 */}
-              <span className="marketplace-card-version">v{pkg.resolved ?? pkg.version}</span>
+              {/*
+                已装时展示本地版本（resolved），未装时展示 npm 最新版。两者混同会让用户以为自己装的就是最新版。
+                已装但 resolved 缺失（版本号读不到）时显示「版本未知」而**不回退到 npm latest**——
+                回退正是这条注释要防的事：那会把远端版本号当成本地已装版本显示。
+              */}
+              <span className="marketplace-card-version">
+                {pkg.installed ? (pkg.resolved ? `v${pkg.resolved}` : '版本未知') : `v${pkg.version}`}
+              </span>
               <span className={`badge ${pkg.official ? 'official' : 'community'}`}>{pkg.official ? '官方' : '社区'}</span>
               {pkg.category && pkg.category !== 'plugin' && (
                 <span className="badge" title="组件类别">{CATEGORY_LABELS[pkg.category]}</span>
