@@ -68,6 +68,8 @@ function makeHarness(
   if ((opts.layout ?? 'workspace') === 'workspace') exists.add(WORKSPACE_FILE);
 
   const proc = {
+    // 预检在副本目录里跑，避免 --dry-run 污染 live tree 的 hidden lockfile
+    makeTempDir: vi.fn(async () => ({ path: '/tmp/fake-preflight', cleanup: async () => {} })),
     execFile: vi.fn(async (cmd: string, args: readonly string[]): Promise<ExecResult> => {
       execCalls.push({ cmd, args: [...args] });
       if (cmd === 'test') {
@@ -427,7 +429,7 @@ describe('update — 流程', () => {
       ...extra,
     });
 
-  it('预检 → 提交 → 重启，且两次 npm 都带 --strict-peer-deps', async () => {
+  it('预检在副本目录里跑，真装在项目根——live tree 不被 --dry-run 触碰', async () => {
     const restarts: Array<{ reason: string; restore: Array<{ path: string; content: string }> }> = [];
     const h = okHarness({ restarts });
     const r = await createPackageManager(h.deps).update([{ name: '@aalis/core', version: '0.9.2' }]);
@@ -437,7 +439,10 @@ describe('update — 流程', () => {
     expect(npm).toHaveLength(2);
     expect(npm[0].args).toContain('--dry-run'); // 先预检
     expect(npm[1].args).not.toContain('--dry-run'); // 再真装
-    for (const call of npm) expect(call.args).toContain('--strict-peer-deps');
+    // 副本里跑：先把 package.json / lockfile cp 过去
+    expect(h.execCalls.filter(c => c.cmd === 'cp').length).toBeGreaterThan(0);
+    // --strict-peer-deps 已删：实测在副本里带不带都 exit 0，留着只会让人误以为有额外保障
+    for (const call of npm) expect(call.args).not.toContain('--strict-peer-deps');
     // 回滚凭据带上 package.json 与 lockfile —— 只回退其一会得到「声明旧版、锁定新版」
     expect(restarts).toHaveLength(1);
     expect(restarts[0].restore.map(f => f.path)).toEqual([rootPkgPath, lockPath]);
