@@ -77,8 +77,13 @@ interface Parsed {
 function parse(v: string): Parsed | undefined {
   const m = EXACT_VERSION_RE.exec(v.trim());
   if (!m) return undefined;
+  const main: [number, number, number] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  // 超出安全整数就当作无法解析（node-semver 同样以 MAX_SAFE_INTEGER 为界）。
+  // 不设这道闸的话，300+ 位的数字段会被 Number() 读成 Infinity，两个 Infinity 相减得 NaN，
+  // 而 `NaN < 0` 为假 → 比较函数返回 1 → **任意降级都会被判成升级**。
+  if (!main.every(Number.isSafeInteger)) return undefined;
   return {
-    main: [Number(m[1]), Number(m[2]), Number(m[3])],
+    main,
     // 无 prerelease 用空数组表示；semver 规定「有 prerelease < 无 prerelease」，见下。
     pre: m[4] ? m[4].split('.') : [],
   };
@@ -98,8 +103,12 @@ function comparePre(a: string[], b: string[]): number {
     const xn = /^\d+$/.test(x);
     const yn = /^\d+$/.test(y);
     if (xn && yn) {
-      const d = Number(x) - Number(y);
-      if (d !== 0) return d < 0 ? -1 : 1;
+      // 按十进制字符串比，不经 Number()：超长数字段会溢出成 Infinity，相减得 NaN（同 parse 的注释）。
+      // 先剥前导零再比长度，长度相同才逐字符比。
+      const a2 = x.replace(/^0+(?=\d)/, '');
+      const b2 = y.replace(/^0+(?=\d)/, '');
+      if (a2.length !== b2.length) return a2.length < b2.length ? -1 : 1;
+      if (a2 !== b2) return a2 < b2 ? -1 : 1;
     } else if (xn !== yn) {
       return xn ? -1 : 1; // 数字段永远小于非数字段
     } else if (x !== y) {
