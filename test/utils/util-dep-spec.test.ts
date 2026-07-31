@@ -111,6 +111,17 @@ describe('compareVersions / isUpgrade（版本序，堵降级）', () => {
     expect(isUpgrade('1.0.0-rc.1', '1.0.0')).toBe(true);
   });
 
+  it('超长数字段不会溢出成 NaN —— 那会让任意降级被判成升级', () => {
+    // Number('9'.repeat(309)) === Infinity，两个 Infinity 相减得 NaN，而 `NaN < 0` 为假，
+    // 于是比较函数返回 1（升级）。此处必须判为「无法解析」而非给一个错的方向。
+    const huge = '9'.repeat(400);
+    expect(compareVersions(`${huge}.0.0`, '1.0.0')).toBeUndefined();
+    expect(isUpgrade('9999.0.0', `${huge}.0.0`)).toBe(false);
+    // prerelease 段同理：那里走字符串数值比较，长度不同即可分出大小
+    expect(compareVersions(`1.0.0-alpha.${huge}`, '1.0.0-alpha.1')).toBe(1);
+    expect(compareVersions(`1.0.0-alpha.1`, `1.0.0-alpha.${huge}`)).toBe(-1);
+  });
+
   it('版本号读不到 → false（宁可不给更新按钮，也不给错的）', () => {
     expect(isUpgrade(undefined, '1.0.0')).toBe(false);
     expect(isUpgrade('1.0.0', undefined)).toBe(false);

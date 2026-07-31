@@ -304,6 +304,57 @@ const PKG_NAME_ONLY_RE = /^(@[a-z0-9][a-z0-9\-_.]*\/)?[a-z0-9][a-z0-9\-_.]*$/i;
 const VERSION_RE = /^[a-z0-9][a-z0-9.\-+]*$/i;
 
 /**
+ * 读 npm 的隐藏锁 `node_modules/.package-lock.json`，得到「此刻树上装的是哪些版本」。
+ *
+ * 这是 npm 自己维护的、对**实际 node_modules 树**的记录，比 package.json 的范围声明精确，
+ * 也比逐个读 `node_modules/<name>/package.json` 便宜（一次读盘拿全树）。
+ *
+ * 只取顶层条目（`node_modules/<name>`）：嵌套安装（`node_modules/a/node_modules/b`）的 b 与
+ * 顶层的 b 不是一回事，把它按裸名钉在顶层会装错位置。
+ *
+ * 文件不存在（pnpm/yarn 装的工程，它们不写这个文件）或坏 JSON 时返回空 Map，调用方退化为
+ * 「只钉被点名的包」——不如全树精确，但不会更糟。
+ */
+async function readInstalledTree(
+  deps: Pick<PackageManagerDeps, 'readText'>,
+  root: string,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const text = await deps.readText(`${root}/node_modules/.package-lock.json`);
+  if (text === undefined) return out;
+  try {
+    const parsed = JSON.parse(text) as { packages?: Record<string, { version?: unknown }> };
+    for (const [path, entry] of Object.entries(parsed.packages ?? {})) {
+      if (!path.startsWith('node_modules/')) continue;
+      const name = path.slice('node_modules/'.length);
+      if (name.includes('/node_modules/')) continue; // 嵌套安装，不是顶层那一份
+      if (typeof entry?.version === 'string') out.set(name, entry.version);
+    }
+  } catch {
+    /* 坏 JSON：当作读不到 */
+  }
+  return out;
+}
+
+/**
+ * 一批更新目标拼成 argv 后允许的总字节数。
+ *
+ * 约束的来源是 `execve(2)` 的 `ARG_MAX`：exec 要把 argv 与 envp 从旧地址空间复制到新地址
+ * 空间，内核必须在拆掉旧映像前把这些字节暂存下来，故这块缓冲有界——否则任何非特权进程
+ * 都能靠 execve 让内核任意分配内存。实测本机 `kern.argmax` = 1048576（macOS）；Linux 自
+ * 2.6.23 起改为跟 `RLIMIT_STACK/4` 挂钩，默认 8MB 栈 → 约 2MiB，故 1MiB 是跨平台的下界。
+ *
+ * **按字节而不是按包数**：包名长度差着数量级（`ms@2.0.0` 8 字节 vs
+ * `@aalis/plugin-session-manager-api@0.9.1` 38 字节），拿个数近似字节等于用一个与约束无关的
+ * 量设闸——曾经这里是「最多 50 个包」，比真实约束低了约 600 倍，把本仓 99 个包的协调发版
+ * 场景直接挡死。
+ *
+ * 128 KiB 只占 ARG_MAX 的 1/8，余下留给 envp（它与 argv 共享同一预算）与 npm 的固定参数；
+ * 按最长的 @aalis 包名算仍容得下三千余个包，任何真实实例都够不到。
+ */
+const SPEC_ARGV_BUDGET = 128 * 1024;
+
+/**
  * 校验一批更新目标，产出可直接交给 npm 的 `name@version` spec。
  *
  * 拒绝而非净化：这些值最终作为独立 argv 交给 npm，任何一条可疑就整批停下，
@@ -313,6 +364,7 @@ export function buildUpdateSpecs(targets: readonly UpdateTarget[]): { specs?: st
   if (!Array.isArray(targets) || targets.length === 0) return { error: '未指定更新目标' };
   const specs: string[] = [];
   const seen = new Set<string>();
+  let bytes = 0;
   for (const t of targets) {
     const name = typeof t?.name === 'string' ? t.name : '';
     const version = typeof t?.version === 'string' ? t.version : '';
@@ -321,7 +373,15 @@ export function buildUpdateSpecs(targets: readonly UpdateTarget[]): { specs?: st
     // 同名多版本会让 npm 取最后一个，静默丢弃前面的选择——宁可让用户重选。
     if (seen.has(name)) return { error: `同一包被指定了多次: ${name}` };
     seen.add(name);
-    specs.push(`${name}@${version}`);
+    const spec = `${name}@${version}`;
+    // 按**字节**计而非按个数：这些 spec 逐条成为 argv，而 execve 的约束是参数块的总字节数，
+    // 与包数无关（`ms@2.0.0` 8 字节，`@aalis/plugin-session-manager-api@0.9.1` 38 字节）。
+    // 超限即整批停下，与本函数其余校验同一策略：不猜、不截断。
+    bytes += Buffer.byteLength(spec) + 1; // +1 = argv 之间的 NUL 分隔
+    if (bytes > SPEC_ARGV_BUDGET) {
+      return { error: `更新目标过多：参数总长已超 ${SPEC_ARGV_BUDGET} 字节，请分批提交` };
+    }
+    specs.push(spec);
   }
   return { specs };
 }
@@ -658,6 +718,17 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       restore.push({ path: lockPath, content: '', deleteIfEmpty: true });
     }
 
+    // 装之前记下整棵树的实装版本。回滚不能只钉被点名的包：npm 会顺带把**传递依赖**升上去
+    // （新版把某个依赖的下界抬高了），而回滚时 `npm install <被点名的包>@<旧版>` 只会
+    // `changed 1 package` —— 被顺带升上去的那个仍满足旧版声明的范围，npm 不动它，于是它
+    // 永久停在新版。有 lockfile 时不会（还原锁即还原全树），这是**无锁形态专有**的残留。
+    //
+    // 这条正落在本仓自己的依赖形状上：包间依赖写 `>=<当前版本> <1.0.0`，api 每 bump 一个
+    // minor，下一版插件的下界就抬一格 —— plugin@old 要 `>=0.9.0`、plugin@new 要 `>=0.10.0`，
+    // 更新把 api 拉到 0.10.0，回滚把插件退回 old，而 0.10.0 仍满足 `>=0.9.0`。若崩溃本来
+    // 就是这次 api 升级引起的，回滚等于没做，进程 crash loop 而用户被告知已回滚。
+    const treeBefore = await readInstalledTree(deps, root);
+
     // ── 提交 ──
     // 预检在副本里做，live tree 此刻**未被任何 dry-run 触碰**，可以直接装。
     try {
@@ -687,6 +758,15 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
         return v === undefined ? undefined : `${t.name}@${v}`;
       })
       .filter((s): s is string => s !== undefined);
+    // 再把「被这次安装顺带改了版本」的包一并钉回旧版（理由见上面 treeBefore 处的注释）。
+    // 只回退**本来就在**的包：新增的包钉不回去（它更新前不存在），留给 npm 的 extraneous。
+    const named = new Set(targets.map(t => t.name));
+    const treeAfter = await readInstalledTree(deps, root);
+    for (const [name, before] of treeBefore) {
+      if (named.has(name)) continue;
+      const after = treeAfter.get(name);
+      if (after !== undefined && after !== before) pinned.push(`${name}@${before}`);
+    }
     deps.restartApp({
       reason: `marketplace-update:${specs.join(',')}`,
       restore,
