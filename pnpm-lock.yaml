@@ -67,6 +67,378 @@ importers:
         specifier: ^2.7.0
         version: 2.8.3
 
+  packages/api-agent:
+    dependencies:
+      '@aalis/api-llm':
+        specifier: workspace:>=0.9.0 <1.0.0
+        version: link:../api-llm
+      '@aalis/api-tools':
+        specifier: workspace:>=0.5.1 <1.0.0
+        version: link:../api-tools
+      '@aalis/schema-message':
+        specifier: workspace:>=0.5.1 <1.0.0
+        version: link:../schema-message
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-asr:
+    dependencies:
+      '@aalis/schema-message':
+        specifier: workspace:>=0.5.1 <1.0.0
+        version: link:../schema-message
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-authority:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-code-sandbox:
+    dependencies:
+      '@aalis/api-process':
+        specifier: workspace:>=0.5.0 <1.0.0
+        version: link:../api-process
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-commands:
+    dependencies:
+      '@aalis/api-authority':
+        specifier: workspace:>=0.5.0 <1.0.0
+        version: link:../api-authority
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-cron-engine:
+    dependencies:
+      '@aalis/util-cron':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-cron
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-doctor:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-embedding:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-flow-control:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-gateway:
+    dependencies:
+      '@aalis/api-agent':
+        specifier: workspace:>=0.6.0 <1.0.0
+        version: link:../api-agent
+      '@aalis/schema-message':
+        specifier: workspace:>=0.5.1 <1.0.0
+        version: link:../schema-message
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-llm:
+    dependencies:
+      '@aalis/api-tools':
+        specifier: workspace:>=0.5.1 <1.0.0
+        version: link:../api-tools
+      '@aalis/schema-message':
+        specifier: workspace:>=0.5.1 <1.0.0
+        version: link:../schema-message
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/schema-config':
+        specifier: workspace:*
+        version: link:../schema-config
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-media:
+    dependencies:
+      '@aalis/api-llm':
+        specifier: workspace:>=0.9.0 <1.0.0
+        version: link:../api-llm
+      '@aalis/schema-message':
+        specifier: workspace:>=0.5.1 <1.0.0
+        version: link:../schema-message
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-memory:
+    dependencies:
+      '@aalis/schema-message':
+        specifier: workspace:>=0.5.1 <1.0.0
+        version: link:../schema-message
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-message-archive:
+    dependencies:
+      '@aalis/schema-message':
+        specifier: workspace:>=0.5.1 <1.0.0
+        version: link:../schema-message
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-persona:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-platform:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-process:
+    dependencies:
+      '@aalis/api-storage':
+        specifier: workspace:>=0.5.5 <1.0.0
+        version: link:../api-storage
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-session-confirm:
+    dependencies:
+      '@aalis/api-authority':
+        specifier: workspace:>=0.5.0 <1.0.0
+        version: link:../api-authority
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-session-manager:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-storage:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-tool-session:
+    dependencies:
+      '@aalis/api-tools':
+        specifier: workspace:>=0.5.1 <1.0.0
+        version: link:../api-tools
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-tools:
+    dependencies:
+      '@aalis/api-authority':
+        specifier: workspace:>=0.5.0 <1.0.0
+        version: link:../api-authority
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-vectorstore:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-webui:
+    dependencies:
+      '@aalis/api-authority':
+        specifier: workspace:>=0.5.0 <1.0.0
+        version: link:../api-authority
+      '@aalis/schema-config':
+        specifier: workspace:>=0.9.0 <1.0.0
+        version: link:../schema-config
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-workflow:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/core:
     devDependencies:
       '@types/node':
@@ -118,9 +490,6 @@ importers:
         specifier: ^8.18.0
         version: 8.20.0
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
@@ -142,6 +511,9 @@ importers:
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -176,9 +548,6 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../util-text-normalize
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-gateway':
         specifier: workspace:*
         version: link:../api-gateway
@@ -197,41 +566,6 @@ importers:
       '@aalis/api-tools':
         specifier: workspace:*
         version: link:../api-tools
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-agent:
-    dependencies:
-      '@aalis/api-llm':
-        specifier: workspace:>=0.9.0 <1.0.0
-        version: link:../api-llm
-      '@aalis/api-tools':
-        specifier: workspace:>=0.5.1 <1.0.0
-        version: link:../api-tools
-      '@aalis/schema-message':
-        specifier: workspace:>=0.5.1 <1.0.0
-        version: link:../schema-message
-    devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-asr:
-    dependencies:
-      '@aalis/schema-message':
-        specifier: workspace:>=0.5.1 <1.0.0
-        version: link:../schema-message
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -257,15 +591,15 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../util-network-guard
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-asr':
         specifier: workspace:*
         version: link:../api-asr
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -288,12 +622,12 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../util-network-guard
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-asr':
         specifier: workspace:*
         version: link:../api-asr
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -322,21 +656,9 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../util-network-guard
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-tools':
         specifier: workspace:*
         version: link:../api-tools
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-authority:
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -359,15 +681,15 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -396,34 +718,18 @@ importers:
         specifier: ^8.2.0
         version: 8.2.0
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-authority':
         specifier: workspace:*
         version: link:../api-authority
       '@aalis/api-persona':
         specifier: workspace:*
         version: link:../api-persona
-      '@aalis/schema-message':
-        specifier: workspace:*
-        version: link:../schema-message
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-code-sandbox:
-    dependencies:
-      '@aalis/api-process':
-        specifier: workspace:>=0.5.0 <1.0.0
-        version: link:../api-process
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/schema-message':
+        specifier: workspace:*
+        version: link:../schema-message
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -468,28 +774,12 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-memory':
         specifier: workspace:*
         version: link:../api-memory
       '@aalis/api-tools':
         specifier: workspace:*
         version: link:../api-tools
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-commands:
-    dependencies:
-      '@aalis/api-authority':
-        specifier: workspace:>=0.5.0 <1.0.0
-        version: link:../api-authority
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -506,25 +796,9 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../util-cron
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-cron-engine':
         specifier: workspace:*
         version: link:../api-cron-engine
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-cron-engine:
-    dependencies:
-      '@aalis/util-cron':
-        specifier: workspace:>=0.1.0 <1.0.0
-        version: link:../util-cron
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -557,45 +831,21 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/api-doctor:
-    devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-embedding:
-    devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
   packages/plugin-embedding-ollama:
     dependencies:
       '@aalis/schema-config':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-embedding':
         specifier: workspace:*
         version: link:../api-embedding
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -609,15 +859,15 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-embedding':
         specifier: workspace:*
         version: link:../api-embedding
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -646,9 +896,6 @@ importers:
         specifier: ^0.12.1
         version: 0.12.2
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-media':
         specifier: workspace:*
         version: link:../api-media
@@ -658,6 +905,9 @@ importers:
       '@aalis/api-session-manager':
         specifier: workspace:*
         version: link:../api-session-manager
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@aalis/schema-message':
         specifier: workspace:*
         version: link:../schema-message
@@ -683,30 +933,18 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-message-archive':
         specifier: workspace:*
         version: link:../api-message-archive
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
-      '@aalis/schema-message':
-        specifier: workspace:*
-        version: link:../schema-message
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-flow-control:
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/schema-message':
+        specifier: workspace:*
+        version: link:../schema-message
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -720,34 +958,15 @@ importers:
         specifier: workspace:>=0.5.0 <1.0.0
         version: link:../api-gateway
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
-      '@aalis/schema-message':
-        specifier: workspace:*
-        version: link:../schema-message
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-gateway:
-    dependencies:
-      '@aalis/api-agent':
-        specifier: workspace:>=0.6.0 <1.0.0
-        version: link:../api-agent
-      '@aalis/schema-message':
-        specifier: workspace:>=0.5.1 <1.0.0
-        version: link:../schema-message
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/schema-message':
+        specifier: workspace:*
+        version: link:../schema-message
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -767,9 +986,6 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../schema-message
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-media':
         specifier: workspace:*
         version: link:../api-media
@@ -779,28 +995,9 @@ importers:
       '@aalis/api-message-archive':
         specifier: workspace:*
         version: link:../api-message-archive
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-llm:
-    dependencies:
-      '@aalis/api-tools':
-        specifier: workspace:>=0.5.1 <1.0.0
-        version: link:../api-tools
-      '@aalis/schema-message':
-        specifier: workspace:>=0.5.1 <1.0.0
-        version: link:../schema-message
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
-      '@aalis/schema-config':
-        specifier: workspace:*
-        version: link:../schema-config
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -823,15 +1020,15 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../util-text-normalize
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-tools':
         specifier: workspace:*
         version: link:../api-tools
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -857,12 +1054,12 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../util-network-guard
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-tools':
         specifier: workspace:*
         version: link:../api-tools
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -882,15 +1079,15 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../schema-message
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-tools':
         specifier: workspace:*
         version: link:../api-tools
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -910,15 +1107,15 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-memory':
         specifier: workspace:*
         version: link:../api-memory
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1006,47 +1203,12 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../util-network-guard
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-asr':
         specifier: workspace:*
         version: link:../api-asr
       '@aalis/api-memory':
         specifier: workspace:*
         version: link:../api-memory
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-media:
-    dependencies:
-      '@aalis/api-llm':
-        specifier: workspace:>=0.9.0 <1.0.0
-        version: link:../api-llm
-      '@aalis/schema-message':
-        specifier: workspace:>=0.5.1 <1.0.0
-        version: link:../schema-message
-    devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-memory:
-    dependencies:
-      '@aalis/schema-message':
-        specifier: workspace:>=0.5.1 <1.0.0
-        version: link:../schema-message
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -1066,15 +1228,15 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
       '@aalis/api-memory':
         specifier: workspace:*
         version: link:../api-memory
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1088,12 +1250,12 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-memory':
         specifier: workspace:*
         version: link:../api-memory
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@aalis/schema-message':
         specifier: workspace:*
         version: link:../schema-message
@@ -1113,12 +1275,12 @@ importers:
         specifier: ^6.12.0
         version: 6.21.0(socks@2.8.7)
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-memory':
         specifier: workspace:*
         version: link:../api-memory
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@aalis/schema-message':
         specifier: workspace:*
         version: link:../schema-message
@@ -1141,12 +1303,12 @@ importers:
         specifier: ^11.8.0
         version: 11.10.0
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-memory':
         specifier: workspace:*
         version: link:../api-memory
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@aalis/schema-message':
         specifier: workspace:*
         version: link:../schema-message
@@ -1175,9 +1337,6 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../util-text-normalize
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
@@ -1187,6 +1346,9 @@ importers:
       '@aalis/api-message-archive':
         specifier: workspace:*
         version: link:../api-message-archive
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1206,9 +1368,6 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../schema-message
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
@@ -1221,6 +1380,9 @@ importers:
       '@aalis/api-vectorstore':
         specifier: workspace:*
         version: link:../api-vectorstore
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1240,31 +1402,18 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../schema-message
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-media':
         specifier: workspace:*
         version: link:../api-media
       '@aalis/api-memory':
         specifier: workspace:*
         version: link:../api-memory
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-message-archive:
-    dependencies:
-      '@aalis/schema-message':
-        specifier: workspace:>=0.5.1 <1.0.0
-        version: link:../schema-message
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -1321,12 +1470,12 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1374,9 +1523,6 @@ importers:
         specifier: ^2.7.0
         version: 2.8.3
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
@@ -1386,37 +1532,6 @@ importers:
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-persona:
-    devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-platform:
-    devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-process:
-    dependencies:
-      '@aalis/api-storage':
-        specifier: workspace:>=0.5.5 <1.0.0
-        version: link:../api-storage
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -1455,12 +1570,12 @@ importers:
         specifier: workspace:>=0.5.0 <1.0.0
         version: link:../util-bounded-map
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1508,28 +1623,12 @@ importers:
         specifier: workspace:>=0.5.0 <1.0.0
         version: link:../api-gateway
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-authority':
         specifier: workspace:*
         version: link:../api-authority
       '@aalis/api-session-confirm':
         specifier: workspace:*
         version: link:../api-session-confirm
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-session-confirm:
-    dependencies:
-      '@aalis/api-authority':
-        specifier: workspace:>=0.5.0 <1.0.0
-        version: link:../api-authority
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -1555,9 +1654,6 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
@@ -1570,21 +1666,12 @@ importers:
       '@aalis/api-tools':
         specifier: workspace:*
         version: link:../api-tools
-      '@aalis/schema-message':
-        specifier: workspace:*
-        version: link:../schema-message
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-session-manager:
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/schema-message':
+        specifier: workspace:*
+        version: link:../schema-message
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1610,24 +1697,12 @@ importers:
         specifier: ^2.7.0
         version: 2.8.3
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
       '@aalis/api-persona':
         specifier: workspace:*
         version: link:../api-persona
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-storage:
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -1647,12 +1722,12 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-storage':
         specifier: workspace:*
         version: link:../api-storage
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1669,9 +1744,6 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
@@ -1681,6 +1753,9 @@ importers:
       '@aalis/api-session-manager':
         specifier: workspace:*
         version: link:../api-session-manager
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@aalis/schema-message':
         specifier: workspace:*
         version: link:../schema-message
@@ -1700,9 +1775,6 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-memory':
         specifier: workspace:*
         version: link:../api-memory
@@ -1712,6 +1784,9 @@ importers:
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1815,15 +1890,15 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-media':
         specifier: workspace:*
         version: link:../api-media
       '@aalis/api-tool-session':
         specifier: workspace:*
         version: link:../api-tool-session
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1840,9 +1915,6 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
@@ -1852,6 +1924,9 @@ importers:
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1871,9 +1946,6 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
@@ -1883,25 +1955,12 @@ importers:
       '@aalis/api-tool-session':
         specifier: workspace:*
         version: link:../api-tool-session
-      '@aalis/schema-message':
-        specifier: workspace:*
-        version: link:../schema-message
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-tool-session:
-    dependencies:
-      '@aalis/api-tools':
-        specifier: workspace:>=0.5.1 <1.0.0
-        version: link:../api-tools
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/schema-message':
+        specifier: workspace:*
+        version: link:../schema-message
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1930,12 +1989,12 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../util-network-guard
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1962,22 +2021,6 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/api-tools:
-    dependencies:
-      '@aalis/api-authority':
-        specifier: workspace:>=0.5.0 <1.0.0
-        version: link:../api-authority
-    devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
   packages/plugin-trigger-policy:
     dependencies:
       '@aalis/api-gateway':
@@ -1990,9 +2033,6 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../schema-message
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-flow-control':
         specifier: workspace:*
         version: link:../api-flow-control
@@ -2005,6 +2045,9 @@ importers:
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -2033,15 +2076,15 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../util-json-repair
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
       '@aalis/api-memory':
         specifier: workspace:*
         version: link:../api-memory
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -2079,24 +2122,12 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../util-json-repair
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
       '@aalis/api-embedding':
         specifier: workspace:*
         version: link:../api-embedding
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-vectorstore:
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -2144,12 +2175,12 @@ importers:
         specifier: ^18.0.0
         version: 18.1.0
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-vectorstore':
         specifier: workspace:*
         version: link:../api-vectorstore
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -2169,34 +2200,15 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-webui':
         specifier: workspace:*
         version: link:../api-webui
-      '@aalis/schema-message':
-        specifier: workspace:*
-        version: link:../schema-message
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-webui:
-    dependencies:
-      '@aalis/api-authority':
-        specifier: workspace:>=0.5.0 <1.0.0
-        version: link:../api-authority
-      '@aalis/schema-config':
-        specifier: workspace:>=0.9.0 <1.0.0
-        version: link:../schema-config
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/schema-message':
+        specifier: workspace:*
+        version: link:../schema-message
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -2239,6 +2251,9 @@ importers:
       rehype-katex:
         specifier: ^7.0.1
         version: 7.0.1
+      remark-breaks:
+        specifier: ^4.0.0
+        version: 4.0.0
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
@@ -2306,9 +2321,6 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
@@ -2321,9 +2333,6 @@ importers:
       '@aalis/api-memory':
         specifier: workspace:*
         version: link:../api-memory
-      '@aalis/plugin-package-manager':
-        specifier: workspace:*
-        version: link:../plugin-package-manager
       '@aalis/api-persona':
         specifier: workspace:*
         version: link:../api-persona
@@ -2333,12 +2342,18 @@ importers:
       '@aalis/api-session-manager':
         specifier: workspace:*
         version: link:../api-session-manager
-      '@aalis/plugin-todo-list':
-        specifier: workspace:*
-        version: link:../plugin-todo-list
       '@aalis/api-tools':
         specifier: workspace:*
         version: link:../api-tools
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@aalis/plugin-package-manager':
+        specifier: workspace:*
+        version: link:../plugin-package-manager
+      '@aalis/plugin-todo-list':
+        specifier: workspace:*
+        version: link:../plugin-todo-list
       '@aalis/schema-message':
         specifier: workspace:*
         version: link:../schema-message
@@ -2379,27 +2394,15 @@ importers:
         specifier: ^2.7.0
         version: 2.8.3
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-agent':
         specifier: workspace:*
         version: link:../api-agent
-      '@aalis/schema-message':
-        specifier: workspace:*
-        version: link:../schema-message
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/api-workflow:
-    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      '@aalis/schema-message':
+        specifier: workspace:*
+        version: link:../schema-message
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -2416,12 +2419,12 @@ importers:
         specifier: ^2.7.0
         version: 2.8.3
     devDependencies:
-      '@aalis/core':
-        specifier: workspace:*
-        version: link:../core
       '@aalis/api-commands':
         specifier: workspace:*
         version: link:../api-commands
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -5301,6 +5304,9 @@ packages:
   mdast-util-mdxjs-esm@2.0.1:
     resolution: {integrity: sha512-EcmOpxsZ96CvlP03NghtH1EsLtr0n9Tm4lPUJUBccV9RwUOneqSycg19n5HGzCf+10LozMRSObtVr3ee1WoHtg==}
 
+  mdast-util-newline-to-break@2.0.0:
+    resolution: {integrity: sha512-MbgeFca0hLYIEx/2zGsszCSEJJ1JSCdiY5xQxRcLDDGa8EPvlLPupJ4DSajbMPAnC0je8jfb9TiUATnxxrHUog==}
+
   mdast-util-phrasing@4.1.0:
     resolution: {integrity: sha512-TqICwyvJJpBwvGAMZjj4J2n0X8QWp21b9l0o7eXyVJ25YNWYbJDVIyD1bZXE6WtV6RmKJVYmQAKWa0zWOABz2w==}
 
@@ -5811,6 +5817,9 @@ packages:
 
   rehype-katex@7.0.1:
     resolution: {integrity: sha512-OiM2wrZ/wuhKkigASodFoo8wimG3H12LWQaH8qSPVJn9apWKFSH3YOCtbKpBorTVw/eI7cuT21XBbvwEswbIOA==}
+
+  remark-breaks@4.0.0:
+    resolution: {integrity: sha512-IjEjJOkH4FuJvHZVIW0QCDWxcG96kCq7An/KVH2NfJe6rKZU2AsHeB3OEjPNRxi4QC34Xdx7I2KGYn6IpT7gxQ==}
 
   remark-gfm@4.0.1:
     resolution: {integrity: sha512-1quofZ2RQ9EWdeN34S79+KExV1764+wCUGop5CPL1WGdD0ocPpu91lzPGbwWMECpEpd42kJGQwzRfyov9j4yNg==}
@@ -9425,6 +9434,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  mdast-util-newline-to-break@2.0.0:
+    dependencies:
+      '@types/mdast': 4.0.4
+      mdast-util-find-and-replace: 3.0.2
+
   mdast-util-phrasing@4.1.0:
     dependencies:
       '@types/mdast': 4.0.4
@@ -10143,6 +10157,12 @@ snapshots:
       katex: 0.16.44
       unist-util-visit-parents: 6.0.2
       vfile: 6.0.3
+
+  remark-breaks@4.0.0:
+    dependencies:
+      '@types/mdast': 4.0.4
+      mdast-util-newline-to-break: 2.0.0
+      unified: 11.0.5
 
   remark-gfm@4.0.1:
     dependencies:

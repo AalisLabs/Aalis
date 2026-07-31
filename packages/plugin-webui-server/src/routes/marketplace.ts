@@ -437,6 +437,14 @@ export function registerMarketplaceRoutes(
   registryBase: string = DEFAULT_REGISTRY,
   /** 本地包扫描：`name → 依赖名[]`（含 monorepo 工作区包）。keys 补 require.resolve 在 pnpm 工作区的盲区；values 供依赖图。 */
   getLocalPackages: () => Map<string, LocalScanEntry> = () => new Map(),
+  /**
+   * 装完一个包后重跑前端发现（幂等）。
+   *
+   * 必需而非锦上添花：`aalis-interface` 包**不是插件**，装完不会触发 rescanPlugins 那条
+   * 通路，于是它不会出现在服务页的下拉里、必须重启才看得见——而重启恰恰是市场承诺不需要
+   * 用户手动做的事。缺省为 no-op，便于单测。
+   */
+  rediscoverClients: () => number = () => 0,
 ): void {
   // 市场列表：npm registry keyword 检索 + 标注已装。网络失败降级为空列表 + warning，
   // 不阻塞 WebUI（管理读档，与 /api/plugins 同级）。
@@ -634,7 +642,10 @@ export function registerMarketplaceRoutes(
       return;
     }
     try {
-      res.json(await pkgMgr.install(npmPkg));
+      const result = await pkgMgr.install(npmPkg);
+      // 装成功就重跑前端发现：新装的 aalis-interface 包要立刻可选，不能等重启。
+      if (result.ok) rediscoverClients();
+      res.json(result);
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
     }

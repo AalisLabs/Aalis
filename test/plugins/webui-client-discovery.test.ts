@@ -3,6 +3,7 @@ import {
   collectLocalPackageDeps,
   type DiscoveryEnv,
   discoverClients,
+  pickFreshClients,
 } from '../../packages/plugin-webui-server/src/client-discovery.js';
 
 // ════════════════════════════════════════════════════════════
@@ -148,5 +149,30 @@ describe('collectLocalPackageDeps（扫盘 → name→{version,deps}；keys 补�
       pkgs: { '/p/a/package.json': { name: '@x/a' } },
     });
     expect([...collectLocalPackageDeps(['/p', '/missing'], env).keys()]).toEqual(['@x/a']);
+  });
+});
+
+describe('pickFreshClients（重复发现的幂等闸）', () => {
+  const c = (id: string) => ({ id, label: id, dir: `/x/${id}` });
+
+  it('只回未登记的候选——重复 provide 会在服务容器里堆同名重复项', () => {
+    const discovered = [c('@aalis/plugin-webui-client'), c('@acme/my-ui')];
+    expect(pickFreshClients(['@aalis/plugin-webui-client'], discovered).map(x => x.id)).toEqual(['@acme/my-ui']);
+  });
+
+  it('第二次跑同一份结果回空（幂等）', () => {
+    const discovered = [c('a'), c('b')];
+    const first = pickFreshClients([], discovered);
+    expect(first).toHaveLength(2);
+    expect(
+      pickFreshClients(
+        first.map(x => x.id),
+        discovered,
+      ),
+    ).toEqual([]);
+  });
+
+  it('已登记集为空 → 全部是新的（首次启动）', () => {
+    expect(pickFreshClients([], [c('a')])).toHaveLength(1);
   });
 });
