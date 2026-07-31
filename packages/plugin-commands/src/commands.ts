@@ -31,8 +31,19 @@ import { renderDetail } from './help.js';
 
 const NAME_SEGMENT_RE = /^[a-z][a-z0-9-]*$/;
 
-/** 内部：构造 Command 时的可变 patches（builder 写入这里，最终 finalize 时合成有效值） */
-interface CommandPatches {
+/**
+ * 一条指令声明。**节点持有的是一个声明栈**，不是单个格子。
+ *
+ * 旧实现每个名字只有一层：同名再注册就把这层就地清空并改写 `pluginName`。两个后果都实测过：
+ * 1. **提权** —— 后注册者不带 meta 时 `baseVisibility` 被写成 undefined，materialize 兜底成
+ *    `public`，于是任何插件重注册一个 restricted 指令名就能把权限闸降掉。
+ * 2. **破坏** —— 所有权被改写后，覆盖者卸载时按 `pluginName` 匹配到整个节点并删除，
+ *    先注册者的指令一并消失且不会回来。
+ *
+ * 改成栈之后：栈顶生效（**保持「后来者胜」的既有语义**），卸载只摘自己那一层、下面的自动
+ * 复位，而安全轴取全栈最严（见 `strictestPolicy`）——后来者只能收紧、不能放宽。
+ */
+interface Decl {
   description?: string;
   /** 节点自身声明的可见性（未声明则继承祖先；缺省 public） */
   baseVisibility?: CapabilityVisibility;
@@ -46,23 +57,41 @@ interface CommandPatches {
   usage?: string;
   examples: string[];
   handler?: CommandHandler;
-  pluginName?: string;
-  /** 是否由用户显式 .command() 声明过；自动分组保持 false */
-  declared: boolean;
+  /** 声明者。卸载按它精确摘层。 */
+  pluginName: string;
 }
 
-function emptyPatches(): CommandPatches {
-  return {
-    aliases: [],
-    positionalArgs: [],
-    options: [],
-    examples: [],
-    declared: false,
-  };
+/**
+ * 安全轴取全栈**最严**，而不是取栈顶。
+ *
+ * 栈顶决定「跑谁的 handler」，但不该决定「谁能跑」——否则后注册者只要不声明 meta 就能把
+ * 已有的 restricted 指令降成 public（实测存在的提权路径）。取最严则后来者只能收紧。
+ * 纯函数，便于单测。
+ */
+function strictestPolicy(decls: readonly Decl[]): {
+  visibility?: CapabilityVisibility;
+  confirm?: CapabilityConfirm;
+  risk?: CapabilityRisk;
+} {
+  const CONFIRM_ORDER: CapabilityConfirm[] = ['session', 'always'];
+  const RISK_ORDER: CapabilityRisk[] = ['safe', 'sensitive', 'dangerous'];
+  let visibility: CapabilityVisibility | undefined;
+  let confirm: CapabilityConfirm | undefined;
+  let risk: CapabilityRisk | undefined;
+  for (const d of decls) {
+    if (d.baseVisibility === 'restricted') visibility = 'restricted';
+    else if (d.baseVisibility === 'public' && visibility === undefined) visibility = 'public';
+    if (d.baseConfirm && (!confirm || CONFIRM_ORDER.indexOf(d.baseConfirm) > CONFIRM_ORDER.indexOf(confirm))) {
+      confirm = d.baseConfirm;
+    }
+    if (d.baseRisk && (!risk || RISK_ORDER.indexOf(d.baseRisk) > RISK_ORDER.indexOf(risk))) risk = d.baseRisk;
+  }
+  return { visibility, confirm, risk };
 }
 
 export class CommandRegistry implements CommandService {
-  private readonly nodes = new Map<string, CommandPatches>();
+  /** 名字 → 声明栈。空栈 = 自动创建的分组节点。 */
+  private readonly nodes = new Map<string, Decl[]>();
   /** 别名映射：aliasName → realName */
   private readonly aliases = new Map<string, string>();
   private readonly logger: Logger;
@@ -90,37 +119,40 @@ export class CommandRegistry implements CommandService {
     // 确保所有祖先分组节点存在
     this.ensureGroups(name);
 
-    let node = this.nodes.get(name);
-    if (!node) {
-      node = emptyPatches();
-      this.nodes.set(name, node);
-    } else if (node.declared) {
-      this.logger.warn(`指令 ${this.prefix}${name} 已存在，将被覆盖（来自 ${meta?.pluginName ?? 'unknown'}）`);
-      // 复用旧节点但清空可变字段
-      node.aliases = [];
-      node.positionalArgs = [];
-      node.options = [];
-      node.examples = [];
-      node.handler = undefined;
+    let stack = this.nodes.get(name);
+    if (!stack) {
+      stack = [];
+      this.nodes.set(name, stack);
+    } else if (stack.length > 0) {
+      this.logger.warn(
+        `指令 ${this.prefix}${name} 已由 ${stack[stack.length - 1].pluginName} 注册，` +
+          `${meta?.pluginName ?? 'unknown'} 的声明将覆盖其行为（卸载后自动复位；权限只会更严不会更松）`,
+      );
     }
 
-    node.declared = true;
-    node.description = description ?? '';
-    // 展开 risk 但保留「未声明=继承」语义（不套 public 兜底，由 materialize 末尾兜底）
-    node.baseVisibility = meta?.visibility ?? riskDefaults(meta?.risk).visibility;
-    node.baseConfirm = meta?.confirm ?? riskDefaults(meta?.risk).confirm;
-    node.baseRisk = meta?.risk;
-    node.positionalArgs = positionalArgs;
-    node.usage = meta?.usage;
-    if (meta?.examples) node.examples.push(...meta.examples);
-    node.pluginName = meta?.pluginName ?? 'unknown';
+    // 压栈而非就地改写：旧声明原样留着，覆盖者卸载后它自动重新生效。
+    const decl: Decl = {
+      description: description ?? '',
+      // 展开 risk 但保留「未声明=继承」语义（不套 public 兜底，由 materialize 末尾兜底）
+      baseVisibility: meta?.visibility ?? riskDefaults(meta?.risk).visibility,
+      baseConfirm: meta?.confirm ?? riskDefaults(meta?.risk).confirm,
+      baseRisk: meta?.risk,
+      aliases: [],
+      positionalArgs,
+      options: [],
+      usage: meta?.usage,
+      examples: meta?.examples ? [...meta.examples] : [],
+      pluginName: meta?.pluginName ?? 'unknown',
+    };
+    stack.push(decl);
 
-    this.logger.debug(`注册指令: ${this.prefix}${name} (来自 ${node.pluginName})`);
+    this.logger.debug(`注册指令: ${this.prefix}${name} (来自 ${decl.pluginName})`);
 
-    return this.makeBuilder(name);
+    return this.makeBuilder(name, decl);
   }
 
-  private makeBuilder(name: string): CommandBuilder {
+  /** builder 写入**自己那一层声明**（闭包持有，无需每次查表）。 */
+  private makeBuilder(name: string, decl: Decl): CommandBuilder {
     const self: CommandBuilder = {
       alias: (aliasName: string) => {
         const segs = aliasName.split('.');
@@ -130,29 +162,23 @@ export class CommandRegistry implements CommandService {
           this.logger.warn(`别名 ${this.prefix}${aliasName} 已指向 ${existing}，将改指 ${name}`);
         }
         this.aliases.set(aliasName, name);
-        const node = this.nodes.get(name);
-        if (node && !node.aliases.includes(aliasName)) node.aliases.push(aliasName);
+        if (!decl.aliases.includes(aliasName)) decl.aliases.push(aliasName);
         return self;
       },
       option: (optName: string, syntax: string, opts?: OptionRegisterOptions) => {
-        const spec = parseOptionSyntax(optName, syntax, opts);
-        const node = this.nodes.get(name);
-        if (node) node.options.push(spec);
+        decl.options.push(parseOptionSyntax(optName, syntax, opts));
         return self;
       },
       action: (handler: CommandHandler) => {
-        const node = this.nodes.get(name);
-        if (node) node.handler = handler;
+        decl.handler = handler;
         return self;
       },
       usage: (text: string) => {
-        const node = this.nodes.get(name);
-        if (node) node.usage = text;
+        decl.usage = text;
         return self;
       },
       example: (line: string) => {
-        const node = this.nodes.get(name);
-        if (node) node.examples.push(line);
+        decl.examples.push(line);
         return self;
       },
     };
@@ -164,28 +190,31 @@ export class CommandRegistry implements CommandService {
     const parts = name.split('.');
     for (let i = 1; i < parts.length; i++) {
       const groupName = parts.slice(0, i).join('.');
-      if (!this.nodes.has(groupName)) {
-        const patches = emptyPatches();
-        patches.description = `${groupName} 命令组`;
-        this.nodes.set(groupName, patches);
-      }
+      if (!this.nodes.has(groupName)) this.nodes.set(groupName, []);
     }
   }
 
   // ---- 注销 ----
 
-  unregister(name: string): void {
-    const node = this.nodes.get(name);
-    if (!node) return;
-    this.nodes.delete(name);
-    for (const a of node.aliases) this.aliases.delete(a);
-    this.logger.debug(`注销指令: ${this.prefix}${name}`);
+  /**
+   * 注销。
+   *
+   * @param pluginName 只摘该插件的那一层声明——下面被它覆盖的声明会自动重新生效。
+   *   缺省则摘掉全部层（管理面用；插件自己的 dispose 必须传名字，否则会连别人的一起删）。
+   */
+  unregister(name: string, pluginName?: string): void {
+    const stack = this.nodes.get(name);
+    if (!stack) return;
+    const dropped = pluginName === undefined ? stack.splice(0) : removeWhere(stack, d => d.pluginName === pluginName);
+    if (dropped.length === 0) return;
+    for (const d of dropped) for (const a of d.aliases) this.aliases.delete(a);
+    // 栈空但仍有子节点 → 退回自动分组节点（`/parent` 仍可列出子指令），不删。
+    if (stack.length === 0 && this.directChildren(name).length === 0) this.nodes.delete(name);
+    this.logger.debug(`注销指令: ${this.prefix}${name} (来自 ${pluginName ?? '全部'})`);
   }
 
   unregisterByPlugin(pluginName: string): void {
-    for (const [name, node] of [...this.nodes]) {
-      if (node.pluginName === pluginName) this.unregister(name);
-    }
+    for (const name of [...this.nodes.keys()]) this.unregister(name, pluginName);
   }
 
   // ---- 解析输入 ----
@@ -330,8 +359,11 @@ export class CommandRegistry implements CommandService {
   // ---- 内部：把 patches 合成有效 Command（含父级可见性 + 权限继承） ----
 
   private materialize(name: string): Command {
-    const node = this.nodes.get(name);
-    if (!node) throw new Error(`internal: node ${name} missing`);
+    const stack = this.nodes.get(name);
+    if (!stack) throw new Error(`internal: node ${name} missing`);
+    // 栈顶决定「跑谁的实现」；安全轴取全栈最严（后来者只能收紧，见 strictestPolicy）。
+    const top = stack[stack.length - 1];
+    const policy = strictestPolicy(stack);
 
     // 父继承：沿 dot path 向上合并。可见性取「最近声明的祖先」，子节点可覆盖。
     let effVisibility: CapabilityVisibility = 'public';
@@ -340,30 +372,31 @@ export class CommandRegistry implements CommandService {
     const parts = name.split('.');
     for (let i = 1; i < parts.length; i++) {
       const parent = parts.slice(0, i).join('.');
-      const p = this.nodes.get(parent);
-      if (p?.baseVisibility !== undefined) effVisibility = p.baseVisibility;
-      if (p?.baseConfirm !== undefined) effConfirm = p.baseConfirm;
-      if (p?.baseRisk !== undefined) effRisk = p.baseRisk;
+      const pp = strictestPolicy(this.nodes.get(parent) ?? []);
+      if (pp.visibility !== undefined) effVisibility = pp.visibility;
+      if (pp.confirm !== undefined) effConfirm = pp.confirm;
+      if (pp.risk !== undefined) effRisk = pp.risk;
     }
 
-    const visibility = node.baseVisibility ?? effVisibility;
-    const confirm = node.baseConfirm ?? effConfirm;
-    const risk = node.baseRisk ?? effRisk;
+    const visibility = policy.visibility ?? effVisibility;
+    const confirm = policy.confirm ?? effConfirm;
+    const risk = policy.risk ?? effRisk;
 
     return {
       name,
-      pluginName: node.pluginName ?? 'unknown',
-      description: node.description ?? '',
+      pluginName: top?.pluginName ?? 'unknown',
+      // 空栈 = 自动创建的分组节点，描述在此派生而非落字段（少存一份、不会陈旧）。
+      description: top?.description ?? `${name} 命令组`,
       visibility,
       confirm,
       risk,
-      aliases: [...node.aliases],
-      positionalArgs: [...node.positionalArgs],
-      options: [...node.options],
-      usage: node.usage,
-      examples: [...node.examples],
-      handler: node.handler,
-      isGroup: !node.declared,
+      aliases: [...(top?.aliases ?? [])],
+      positionalArgs: [...(top?.positionalArgs ?? [])],
+      options: [...(top?.options ?? [])],
+      usage: top?.usage,
+      examples: [...(top?.examples ?? [])],
+      handler: top?.handler,
+      isGroup: stack.length === 0,
     };
   }
 
@@ -674,4 +707,13 @@ function parsePositionalValue(def: PositionalArgSpec, values: string[]): unknown
   }
   if (def.type === 'boolean') return parseBoolean(raw);
   return raw;
+}
+
+/** 原地移除满足谓词的元素，返回被移除的那些。 */
+function removeWhere<T>(arr: T[], pred: (item: T) => boolean): T[] {
+  const removed: T[] = [];
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (pred(arr[i])) removed.unshift(...arr.splice(i, 1));
+  }
+  return removed;
 }

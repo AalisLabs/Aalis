@@ -150,3 +150,115 @@ describe('commands v2 — 链式 builder', () => {
     expect(r.parseCommand('  ')).toBeNull();
   });
 });
+
+// ════════════════════════════════════════════════════════════
+// 同名指令：节点是**声明栈**，不是单值格子
+//
+// 旧实现每个名字只有一层，同名再注册就地清空并改写 pluginName。两条后果都实测过：
+//   A 注册 shutdown(restricted) → restricted
+//   B 同名重注册（不带 meta）    → public        ← 任何插件都能把权限闸降掉
+//   B 卸载                       → 整个节点消失   ← A 的指令一并没了且不会回来
+// ════════════════════════════════════════════════════════════
+
+describe('同名指令（声明栈）', () => {
+  const reg = () => new CommandRegistry(makeLogger());
+  const find = (r: CommandRegistry, n: string) => r.getAll().find(c => c.name === n);
+
+  it('后来者胜：栈顶决定跑谁的实现（与旧行为一致）', async () => {
+    const r = reg();
+    r.command('ping', 'A 的', { pluginName: 'A' }).action(async () => 'from-A');
+    r.command('ping', 'B 的', { pluginName: 'B' }).action(async () => 'from-B');
+    expect(await r.execute('ping', input([]))).toBe('from-B');
+    expect(find(r, 'ping')?.description).toBe('B 的');
+  });
+
+  it('覆盖者卸载后，被覆盖的声明**自动复位**', async () => {
+    const r = reg();
+    r.command('ping', 'A 的', { pluginName: 'A' }).action(async () => 'from-A');
+    r.command('ping', 'B 的', { pluginName: 'B' }).action(async () => 'from-B');
+    r.unregisterByPlugin('B');
+    expect(find(r, 'ping'), '节点不该整个消失').toBeDefined();
+    expect(await r.execute('ping', input([]))).toBe('from-A');
+    expect(find(r, 'ping')?.pluginName).toBe('A');
+  });
+
+  it('先注册者卸载：只摘自己那层，覆盖者照常工作', async () => {
+    const r = reg();
+    r.command('ping', 'A 的', { pluginName: 'A' }).action(async () => 'from-A');
+    r.command('ping', 'B 的', { pluginName: 'B' }).action(async () => 'from-B');
+    r.unregisterByPlugin('A');
+    expect(await r.execute('ping', input([]))).toBe('from-B');
+  });
+
+  it('全部卸载后节点才消失', () => {
+    const r = reg();
+    r.command('ping', 'A', { pluginName: 'A' }).action(async () => 'a');
+    r.command('ping', 'B', { pluginName: 'B' }).action(async () => 'b');
+    r.unregisterByPlugin('A');
+    r.unregisterByPlugin('B');
+    expect(find(r, 'ping')).toBeUndefined();
+  });
+
+  it('**提权闸**：后注册者放宽不了已有的 restricted', () => {
+    const r = reg();
+    r.command('shutdown', '关机', { visibility: 'restricted', pluginName: 'A' }).action(async () => 'a');
+    expect(find(r, 'shutdown')?.visibility).toBe('restricted');
+    // 不带 meta 的重注册：旧实现会把它降成 public
+    r.command('shutdown', '我的关机', { pluginName: 'B' }).action(async () => 'b');
+    expect(find(r, 'shutdown')?.visibility, '安全轴取全栈最严').toBe('restricted');
+    // 显式写 public 也放宽不了
+    r.command('shutdown', '再来', { visibility: 'public', pluginName: 'C' }).action(async () => 'c');
+    expect(find(r, 'shutdown')?.visibility).toBe('restricted');
+  });
+
+  it('后来者可以**收紧**（只单向）', () => {
+    const r = reg();
+    r.command('foo', 'A', { pluginName: 'A' }).action(async () => 'a');
+    expect(find(r, 'foo')?.visibility).toBe('public');
+    r.command('foo', 'B', { visibility: 'restricted', risk: 'dangerous', pluginName: 'B' }).action(async () => 'b');
+    expect(find(r, 'foo')?.visibility).toBe('restricted');
+    expect(find(r, 'foo')?.risk).toBe('dangerous');
+  });
+
+  it('收紧方卸载后，安全轴退回剩余声明的最严值', () => {
+    const r = reg();
+    r.command('foo', 'A', { pluginName: 'A' }).action(async () => 'a');
+    r.command('foo', 'B', { visibility: 'restricted', pluginName: 'B' }).action(async () => 'b');
+    r.unregisterByPlugin('B');
+    expect(find(r, 'foo')?.visibility).toBe('public');
+  });
+
+  it('unregister 带插件名只摘一层；不带则摘全部（管理面）', async () => {
+    const r = reg();
+    r.command('ping', 'A', { pluginName: 'A' }).action(async () => 'a');
+    r.command('ping', 'B', { pluginName: 'B' }).action(async () => 'b');
+    r.unregister('ping', 'B');
+    expect(await r.execute('ping', input([]))).toBe('a');
+    r.unregister('ping');
+    expect(find(r, 'ping')).toBeUndefined();
+  });
+
+  it('别名随其所属声明一起回收，不误删他人的', async () => {
+    const r = reg();
+    r.command('ping', 'A', { pluginName: 'A' })
+      .alias('pa')
+      .action(async () => 'a');
+    r.command('other', 'B', { pluginName: 'B' })
+      .alias('pb')
+      .action(async () => 'b');
+    r.unregisterByPlugin('A');
+    expect(await r.execute('pb', input([])), '别人的别名不该被误删').toBe('b');
+    expect(r.hasMatch('pa', []), '自己的别名随声明一起回收').toBe(false);
+  });
+
+  it('分组节点：子指令还在时父节点退回分组而非消失', () => {
+    const r = reg();
+    r.command('grp', '分组本体', { pluginName: 'A' }).action(async () => 'a');
+    r.command('grp.child', '子', { pluginName: 'A' }).action(async () => 'c');
+    r.unregister('grp', 'A');
+    const grp = find(r, 'grp');
+    expect(grp, '子指令还在，父节点该退回自动分组').toBeDefined();
+    expect(grp?.isGroup).toBe(true);
+    expect(grp?.description).toBe('grp 命令组');
+  });
+});
