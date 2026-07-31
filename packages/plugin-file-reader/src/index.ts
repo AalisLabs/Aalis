@@ -145,7 +145,7 @@ const EXT_MIME_MAP: Record<string, string> = {
 const ROOT_URI = 'pluginData:/file-reader';
 
 /** 元信息 sidecar（与文件同目录、同名 + .meta.json） */
-interface FileMeta {
+export interface FileMeta {
   id: string;
   name: string;
   mimeType: string;
@@ -154,6 +154,29 @@ interface FileMeta {
   uploadedAt: number;
   /** 已提取文本（小文件提取后顺手缓存，避免每次都重复 parse） */
   textCache?: string;
+}
+
+/**
+ * 文件读取服务：查已上传文件的清单/元信息，取本地路径，删文件。
+ *
+ * 无独立 `-api` 包——它只有这一个实现，契约就住在实现包里（同 `web-search` /
+ * `scheduler` 等）。第三方消费方 `import type { FileReaderService } from
+ * '@aalis/plugin-file-reader'` 即可拿到完整类型。
+ */
+export interface FileReaderService {
+  /** 恒为 true——供消费方在拿到服务实例时快速确认它已就绪 */
+  available: boolean;
+  /** 列出已上传文件（不含内部 URI）；传 sessionId 则只列该会话的。按上传时间倒序。 */
+  listFiles(sessionId?: string): FileMeta[];
+  /**
+   * 文件在本地文件系统上的绝对路径（WebUI 下载端用）。
+   * 文件不存在、或当前 storage 实现不支持本地路径（如对象存储）时返回 null。
+   */
+  resolveLocalPath(fileId: string): Promise<string | null>;
+  /** 单个文件的元信息；不存在返回 null。 */
+  getMeta(fileId: string): FileMeta | null;
+  /** 删除文件及其 sidecar；文件不存在返回 false。 */
+  deleteFile(fileId: string): Promise<boolean>;
 }
 
 interface FileEntry extends FileMeta {
@@ -882,4 +905,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   ctx.logger.info(
     `文件读取插件已加载 (最大 ${(maxFileSize / 1024 / 1024).toFixed(0)}MB, autoInline=${autoInlineLimit} 字符, 保留 ${retentionDays} 天, LRU=${(lruMaxTotalBytes / 1024 / 1024).toFixed(0)}MB, 已恢复 ${index.size} 个文件)`,
   );
+}
+
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    'file-reader': FileReaderService;
+  }
 }

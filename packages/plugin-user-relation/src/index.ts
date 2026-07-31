@@ -689,3 +689,13 @@ export const actions: PluginModule['actions'] = baseActions;
 export { RelationService } from './service.js';
 export { RelationStore } from './store.js';
 export * from './types.js';
+
+// ----- 服务类型注册（declaration merging）-----
+// 无独立 `-api` 包：只有这一个实现，契约住在实现包里（同 web-search / scheduler 等）。
+// 补上这段之前，消费方只能写 `ctx.getService<RelationService>('user-relation')` 显式传泛型
+// ——那是「手抄一份类型」，与实现漂移了也不会报错。
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    'user-relation': import('./service.js').RelationService;
+  }
+}

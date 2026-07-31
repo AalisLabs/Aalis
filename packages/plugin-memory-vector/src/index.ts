@@ -852,3 +852,16 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     },
   });
 }
+
+// ----- 服务类型注册（declaration merging）-----
+// `semantic-memory` 是**能力标记**而非查询 API：它只声明「本实例具备语义检索能力」，
+// 供 inject.optional 与拓扑排序识别，以及消费方做能力探测。语义检索本身经工具与
+// memory 契约走，不从这里取。如实声明它的真实形状，不臆造一个没人实现的查询接口。
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    'semantic-memory': {
+      /** 实现标识（当前唯一实现为 `vector-memory`）。 */
+      name: string;
+    };
+  }
+}
