@@ -20,7 +20,7 @@ interface AalisConfig {
   servicePreferences?: Record<string, string>;
   commandPrefix?: string;          // 指令前缀（默认 '/'）
 
-  // ↓ authority 域业务字段，由 plugin-authority-api 经 declaration merging 注入
+  // ↓ authority 域业务字段，由 api-authority 经 declaration merging 注入
   owners?: UserIdentity[];                          // Owner 列表（owner = `*`，拥有一切）
   deniedCapabilities?: string[];                    // 全局硬禁用 glob：命中即拒，连 owner 都压过
   visibilityOverrides?: Record<string, 'public' | 'restricted'>; // 单操作可见性覆盖（操作名 → 可见性）
@@ -32,7 +32,7 @@ interface AalisConfig {
 ```
 
 > 模型说明见 [权限系统](authority.md)。`owners` 等 authority 字段在 core 的
-> `AalisConfig` 里不显式声明（core 不知晓权限语义），由 `plugin-authority-api`
+> `AalisConfig` 里不显式声明（core 不知晓权限语义），由 `api-authority`
 > 经 declaration merging 注入；不装 authority 插件时这些字段无意义。
 
 ## 关键方法

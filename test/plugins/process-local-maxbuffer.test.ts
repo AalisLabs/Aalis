@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { StorageService } from '../../packages/api-storage/src/index.js';
 import { LocalProcessService } from '../../packages/plugin-process-local/src/index.js';
-import type { StorageService } from '../../packages/plugin-storage-api/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // wait() 累计缓冲上限：失控输出边读边截断防 OOM；超限停止累积但不杀进程

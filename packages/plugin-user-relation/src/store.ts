@@ -16,7 +16,7 @@
  * 不维护倒排索引：关系图体量预期 < 数千节点，全量加载完全可接受；
  * 真要扩到 10k+ 再加索引（届时换 namespace 划分即可）。
  */
-import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { MemoryService } from '@aalis/api-memory';
 import type { EntityNode, EventNode, PersonNode, RelationEdge, RelationGraphSnapshot } from './types.js';
 
 export const RELATION_NAMESPACE = 'user-relation';

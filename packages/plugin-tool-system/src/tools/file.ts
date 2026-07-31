@@ -13,9 +13,9 @@
 
 import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
-import type { StorageService } from '@aalis/plugin-storage-api';
-import { parseUriRoot, resolveAgainstCwd } from '@aalis/plugin-storage-api';
-import type { ScopedToolService } from '@aalis/plugin-tools-api';
+import type { StorageService } from '@aalis/api-storage';
+import { parseUriRoot, resolveAgainstCwd } from '@aalis/api-storage';
+import type { ScopedToolService } from '@aalis/api-tools';
 import type { CwdState } from './cwd-state.js';
 
 interface FileConfig {

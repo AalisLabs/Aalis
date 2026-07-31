@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 import { RelationService } from '../../packages/plugin-user-relation/src/service.js';
 import { RelationStore } from '../../packages/plugin-user-relation/src/store.js';

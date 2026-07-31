@@ -13,31 +13,31 @@
 依赖规则：
 - **实现包** `import` 自己的 `-api` 包以获得类型与 capability 声明
 - **消费方插件**只依赖 `-api`，不依赖实现包，运行时通过 `ctx.getService('<name>')` 取实例
-- `-api` 包之间允许相互依赖（如 `plugin-tools-api` 依赖 `plugin-authority-api`）
+- `-api` 包之间允许相互依赖（如 `api-tools` 依赖 `api-authority`）
 
 ## 包列表
 
 | API 包 | 提供的核心契约 | 已知实现 |
 |---|---|---|
-| [plugin-agent-api](./plugin-agent-api.md) | `AgentService` —— 对话编排服务 | plugin-agent |
-| [plugin-authority-api](./plugin-authority-api.md) | `AuthorityService` + `ExecutionGuard` —— 权限校验与执行守卫 | plugin-authority |
-| [plugin-commands-api](./plugin-commands-api.md) | `CommandService` + `useCommandService(ctx)` —— 命令系统 | plugin-commands |
-| [plugin-embedding-api](./plugin-embedding-api.md) | `EmbeddingService` —— 文本向量化 | plugin-embedding-openai / plugin-embedding-ollama |
-| [plugin-gateway-api](./plugin-gateway-api.md) | `GatewayService` —— 消息入站编排 | plugin-gateway |
-| [plugin-media-api](../services/media.md) | `MediaService` —— 多模态预处理（vision/audio/video） | plugin-media |
-| [plugin-llm-api](./plugin-llm-api.md) | `LLMService` + capability 框架 | plugin-llm-openai / plugin-llm-ollama / plugin-llm-deepseek 等 |
-| [plugin-memory-api](./plugin-memory-api.md) | `MemoryService` —— 历史与元数据存储 | plugin-memory-inmemory / sqlite / mongodb / vector |
+| [api-agent](./api-agent.md) | `AgentService` —— 对话编排服务 | plugin-agent |
+| [api-authority](./api-authority.md) | `AuthorityService` + `ExecutionGuard` —— 权限校验与执行守卫 | plugin-authority |
+| [api-commands](./api-commands.md) | `CommandService` + `useCommandService(ctx)` —— 命令系统 | plugin-commands |
+| [api-embedding](./api-embedding.md) | `EmbeddingService` —— 文本向量化 | plugin-embedding-openai / plugin-embedding-ollama |
+| [api-gateway](./api-gateway.md) | `GatewayService` —— 消息入站编排 | plugin-gateway |
+| [api-media](../services/media.md) | `MediaService` —— 多模态预处理（vision/audio/video） | plugin-media |
+| [api-llm](./api-llm.md) | `LLMService` + capability 框架 | plugin-llm-openai / plugin-llm-ollama / plugin-llm-deepseek 等 |
+| [api-memory](./api-memory.md) | `MemoryService` —— 历史与元数据存储 | plugin-memory-inmemory / sqlite / mongodb / vector |
 | [schema-message](./schema-message.md) | 消息数据契约（无 service） | 由各 adapter 直接 emit |
-| [plugin-session-manager-api](./plugin-session-manager-api.md) | `SessionManagerService` —— 会话配置 | plugin-session-manager |
-| [plugin-storage-api](./plugin-storage-api.md) | `StorageService` —— 受控文件/对象存储 + `createStorageGateway` / `getStorageRootConflicts` helper | plugin-storage-local |
-| [plugin-tools-api](./plugin-tools-api.md) | `ToolService` + 共享 SSRF/路径工具 | plugin-tools |
-| [plugin-vectorstore-api](./plugin-vectorstore-api.md) | `VectorStoreService` —— 向量数据库 | plugin-vectorstore-flat / plugin-vectorstore-lancedb |
-| [plugin-webui-api](./plugin-webui-api.md) | `WebUIService` + 声明式页面组件 | plugin-webui-server |
+| [api-session-manager](./api-session-manager.md) | `SessionManagerService` —— 会话配置 | plugin-session-manager |
+| [api-storage](./api-storage.md) | `StorageService` —— 受控文件/对象存储 + `createStorageGateway` / `getStorageRootConflicts` helper | plugin-storage-local |
+| [api-tools](./api-tools.md) | `ToolService` + 共享 SSRF/路径工具 | plugin-tools |
+| [api-vectorstore](./api-vectorstore.md) | `VectorStoreService` —— 向量数据库 | plugin-vectorstore-flat / plugin-vectorstore-lancedb |
+| [api-webui](./api-webui.md) | `WebUIService` + 声明式页面组件 | plugin-webui-server |
 
 ## 阅读顺序
 
 如果你在写**新插件**：
-1. 先看 [plugin-storage-api](./plugin-storage-api.md) 与 [plugin-tools-api](./plugin-tools-api.md) —— 95% 插件都会用到
+1. 先看 [api-storage](./api-storage.md) 与 [api-tools](./api-tools.md) —— 95% 插件都会用到
 2. 看你要扩展的服务的 api 文档
 3. 看对应 `docs/plugins/*.md` 里现有实现作为参考
 
@@ -47,7 +47,7 @@
 
 ## 约定
 
-1. **服务名 = 包名去掉 `@aalis/plugin-` 前缀和 `-api` 后缀**。例：`@aalis/plugin-tools-api` 提供 `ctx.getService('tools')` 取到的 `ToolService`。
+1. **服务名 = 包名去掉 `@aalis/plugin-` 前缀和 `-api` 后缀**。例：`@aalis/api-tools` 提供 `ctx.getService('tools')` 取到的 `ToolService`。
 2. **服务一律按名字消费**：`ctx.getService('storage')` / `ctx.getAllServices('storage')` 只接收服务名，`inject.required: ['storage']` 也只列服务名（同名多实现时按「偏好 > 优先级 > 注册顺序」选胜者，可经 `ctx.preferService` 或 WebUI Services 页调整）。领域能力（如 storage 的 `local-path`、LLM 的 vision / tool-calling）挂在**服务实例 / model-handle 的元数据**上，由各领域 `*-api` helper 过滤（如 `resolveLLMModel(ctx, ref, ['vision'])`、storage gateway 的 `resolveLocalPath`），**不**经 core DI、也**不**用 `getService(name, { capabilities })`。
 3. **事件通过 `declare module '@aalis/core' { interface AalisEvents }`** 注入；订阅者用 `ctx.on('event-name', ...)`，类型自动补全。
 4. **领域 helper**：各契约包导出领域 helper（如 `useToolService(ctx)` / `useCommandService(ctx)`），内部封装 `ctx.getService` + `whenService` 延迟语义；调用方在 apply 阶段直接使用。Core 不再持有任何业务 Mixin。

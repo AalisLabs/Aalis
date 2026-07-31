@@ -9,12 +9,12 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
+import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/api-asr';
+import type { ProcessService } from '@aalis/api-process';
+import { createProcessGateway } from '@aalis/api-process';
+import type { StorageService } from '@aalis/api-storage';
+import { createStorageGateway, isStorageUri } from '@aalis/api-storage';
 import type { Context } from '@aalis/core';
-import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/plugin-asr-api';
-import type { ProcessService } from '@aalis/plugin-process-api';
-import { createProcessGateway } from '@aalis/plugin-process-api';
-import type { StorageService } from '@aalis/plugin-storage-api';
-import { createStorageGateway, isStorageUri } from '@aalis/plugin-storage-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { safeFetch } from '@aalis/util-network-guard';
 

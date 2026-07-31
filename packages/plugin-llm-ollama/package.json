@@ -29,14 +29,14 @@
   },
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/plugin-llm-api": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/api-llm": "workspace:>=0.9.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.5.1 <1.0.0",
-    "@aalis/plugin-process-api": "workspace:>=0.5.0 <1.0.0",
+    "@aalis/api-process": "workspace:>=0.5.0 <1.0.0",
     "@aalis/util-network-guard": "workspace:>=0.5.1 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-tools-api": "workspace:*",
+    "@aalis/api-tools": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },

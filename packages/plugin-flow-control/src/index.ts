@@ -1,8 +1,8 @@
+import { INBOUND_PHASE } from '@aalis/api-gateway';
+import type { MessageArchiveService } from '@aalis/api-message-archive';
+import { createStorageGateway } from '@aalis/api-storage';
+import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { Context } from '@aalis/core';
-import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
-import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
-import { createStorageGateway } from '@aalis/plugin-storage-api';
-import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { OutgoingMessage } from '@aalis/schema-message';
 import type { FlowControlService, FlowSessionStateSnapshot } from './types.js';

@@ -5,16 +5,16 @@
 声明式的「触发器 + DAG」编排引擎：把多步骤任务（工具调用 / 发消息 / 等待 / 派发给 agent）按依赖图拓扑分层并行执行，支持 cron / interval / once / event / manual 多种触发方式。
 
 - 服务注册名：`'workflow'`（`ctx.getService<WorkflowService>('workflow')`）。
-- 契约包：`@aalis/plugin-workflow-api`。
+- 契约包：`@aalis/api-workflow`。
 - 该契约**有运行时服务**：`-api` 包只导出 interface + DSL 类型 + 事件契约，实现由 `@aalis/plugin-workflow` 提供。
-- 设计取向（`packages/plugin-workflow-api/src/index.ts`）：工作流「定义」是用户/AI 资产，存 `workspace`；「运行实例」是运行时记录，存 `data`。
+- 设计取向（`packages/api-workflow/src/index.ts`）：工作流「定义」是用户/AI 资产，存 `workspace`；「运行实例」是运行时记录，存 `data`。
 
 ## 2. 契约
 
 ### 服务接口
 
 ```ts
-// packages/plugin-workflow-api/src/index.ts
+// packages/api-workflow/src/index.ts
 export interface WorkflowService {
   /** 列出全部工作流定义 */
   listWorkflows(): WorkflowDef[];
@@ -41,12 +41,12 @@ export interface WorkflowService {
 }
 ```
 
-并通过 declaration merging 把服务名登记进核心 `ServiceTypeMap`（`packages/plugin-workflow-api/src/index.ts`），使 `getService('workflow')` 得到强类型。
+并通过 declaration merging 把服务名登记进核心 `ServiceTypeMap`（`packages/api-workflow/src/index.ts`），使 `getService('workflow')` 得到强类型。
 
 ### 工作流定义（DSL）
 
 ```ts
-// packages/plugin-workflow-api/src/index.ts
+// packages/api-workflow/src/index.ts
 export interface WorkflowDef {
   id: string;            // 唯一 id（文件名/外部引用键）
   name?: string;
@@ -58,7 +58,7 @@ export interface WorkflowDef {
 }
 ```
 
-触发器（`packages/plugin-workflow-api/src/index.ts`）：
+触发器（`packages/api-workflow/src/index.ts`）：
 
 ```ts
 export type TriggerSpec =
@@ -69,7 +69,7 @@ export type TriggerSpec =
   | { type: 'manual' };
 ```
 
-节点（`packages/plugin-workflow-api/src/index.ts`）。基础字段 `id` / `type` / `deps?`（上游依赖，空=根节点）/ `out?`（把结果存入 `outputs[out]` 供下游 `{{outputs.<out>}}` 插值）。四种类型：
+节点（`packages/api-workflow/src/index.ts`）。基础字段 `id` / `type` / `deps?`（上游依赖，空=根节点）/ `out?`（把结果存入 `outputs[out]` 供下游 `{{outputs.<out>}}` 插值）。四种类型：
 
 - `tool`：`{ tool: string; args?: Record<string, unknown> }`——调用已注册工具；`args` 内字符串值会被插值（`:41-47`）。
 - `send-message`：`{ sessionId: string; platform?: string; content: string }`——fire-and-forget 发一条消息（`:49-55`）。
@@ -79,7 +79,7 @@ export type TriggerSpec =
 ### 运行实例
 
 ```ts
-// packages/plugin-workflow-api/src/index.ts
+// packages/api-workflow/src/index.ts
 export type RunStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
 export type NodeStatus = 'pending' | 'running' | 'success' | 'failed' | 'skipped';
 
@@ -98,13 +98,13 @@ export interface WorkflowRun {
 
 ### 事件契约
 
-`-api` 通过 declaration merging 往 `AalisEvents` 注入以下事件（`packages/plugin-workflow-api/src/index.ts`）：
+`-api` 通过 declaration merging 往 `AalisEvents` 注入以下事件（`packages/api-workflow/src/index.ts`）：
 
 - `'trigger:fired'`：**入站**——由 scheduler / 其它触发源 emit，workflow 订阅。payload 形如 `{ source, type, workflowId?, payload? }`，其中 `payload` 会被透传进运行实例 `vars`。
 - `'workflow:run:start'` / `'workflow:run:done'` / `'workflow:run:error'`：以 `WorkflowRun` 为参数，**出站**——workflow 在运行各阶段 emit。
 - `'workflow:node:done'`：`{ runId, node: NodeRunInfo }`，每个节点完成时 emit。
 
-`@aalis/plugin-workflow-api/package.json` 标记 `aalis.types: true` 且 keywords 含 `aalis-api`——是纯契约包，非可加载插件。
+`@aalis/api-workflow/package.json` 标记 `aalis.types: true` 且 keywords 含 `aalis-api`——是纯契约包，非可加载插件。
 
 ## 3. 谁提供 / 谁消费
 
@@ -176,7 +176,7 @@ export const inject = { required: ['cron-engine'], optional: ['tools', 'storage'
 
 ```ts
 import type { Context } from '@aalis/core';
-import type { WorkflowDef, WorkflowRun, WorkflowService } from '@aalis/plugin-workflow-api';
+import type { WorkflowDef, WorkflowRun, WorkflowService } from '@aalis/api-workflow';
 
 export const name = '@yourscope/plugin-workflow-foo';
 export const subsystem = 'workflow';
@@ -253,7 +253,7 @@ const run = await svc.runWorkflow(id, vars, 'manual:foo', { platform, userId });
 ### 编程式触发
 
 ```ts
-import type { WorkflowService } from '@aalis/plugin-workflow-api';
+import type { WorkflowService } from '@aalis/api-workflow';
 
 const wf = ctx.getService<WorkflowService>('workflow');   // 可能 undefined
 if (!wf) return;                             // optional 依赖：判空降级

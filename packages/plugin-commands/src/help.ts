@@ -12,7 +12,7 @@
 // 纯文本载体（QQ / CLI）看到的是 markdown 源码，可读性不受损。
 // ============================================================
 
-import type { Command } from '@aalis/plugin-commands-api';
+import type { Command } from '@aalis/api-commands';
 
 /** 描述里的句读——概览截断到首个句读之前 */
 const CLAUSE_BREAK = /[。；;，,、（(：:\n]/;

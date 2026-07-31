@@ -1,13 +1,13 @@
 // ============================================================
 // persistence.ts — 运行实例持久化（追加 + 滚动）
 //
-// 通过 @aalis/plugin-storage-api 写入 storage URI（默认 data:/workflow-runs.json）。
+// 通过 @aalis/api-storage 写入 storage URI（默认 data:/workflow-runs.json）。
 // 仍维持 write-on-end 整体重写策略；写入串行化避免覆盖。
 // ============================================================
 
+import type { StorageService } from '@aalis/api-storage';
+import type { WorkflowRun } from '@aalis/api-workflow';
 import type { Logger } from '@aalis/core';
-import type { StorageService } from '@aalis/plugin-storage-api';
-import type { WorkflowRun } from '@aalis/plugin-workflow-api';
 
 export class RunStore {
   private storage: StorageService;

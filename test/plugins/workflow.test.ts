@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { WorkflowDef } from '../../packages/api-workflow/src/index.js';
 import type { Context, Logger } from '../../packages/core/src/index.js';
 import { runDag, validateGraph } from '../../packages/plugin-workflow/src/engine.js';
-import type { WorkflowDef } from '../../packages/plugin-workflow-api/src/index.js';
 
 const noopLogger = (): Logger =>
   ({

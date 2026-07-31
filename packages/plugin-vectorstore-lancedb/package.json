@@ -29,13 +29,13 @@
   },
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/plugin-storage-api": "workspace:>=0.5.5 <1.0.0",
+    "@aalis/api-storage": "workspace:>=0.5.5 <1.0.0",
     "@lancedb/lancedb": "^0.27.1",
     "apache-arrow": "^18.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-vectorstore-api": "workspace:*",
+    "@aalis/api-vectorstore": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },

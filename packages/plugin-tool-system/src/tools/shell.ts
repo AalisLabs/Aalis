@@ -9,11 +9,11 @@
  * - process_kill: 终止后台进程
  */
 
+import type { ProcessService, SpawnHandle } from '@aalis/api-process';
+import type { StorageService } from '@aalis/api-storage';
+import { resolveAgainstCwd } from '@aalis/api-storage';
+import type { ScopedToolService } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
-import type { ProcessService, SpawnHandle } from '@aalis/plugin-process-api';
-import type { StorageService } from '@aalis/plugin-storage-api';
-import { resolveAgainstCwd } from '@aalis/plugin-storage-api';
-import type { ScopedToolService } from '@aalis/plugin-tools-api';
 
 interface ShellConfig {
   ctx: Context;

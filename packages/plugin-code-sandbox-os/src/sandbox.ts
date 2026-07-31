@@ -8,7 +8,7 @@
 // 后端探测（功能性 probe）在 index.ts 经 process 网关做；本文件只做纯生成。
 // ============================================================
 
-import type { SandboxPolicy } from '@aalis/plugin-code-sandbox-api';
+import type { SandboxPolicy } from '@aalis/api-code-sandbox';
 
 export type SandboxBackend = 'seatbelt' | 'bwrap' | 'none';
 

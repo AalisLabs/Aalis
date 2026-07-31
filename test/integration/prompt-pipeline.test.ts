@@ -1,15 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import type { AgentService, PromptContributionView } from '../../packages/api-agent/src/index.js';
+import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMModel } from '../../packages/api-llm/src/index.js';
+import { LLMCapabilities } from '../../packages/api-llm/src/index.js';
+import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import { App, type Context } from '../../packages/core/src/index.js';
 import * as agentModule from '../../packages/plugin-agent/src/index.js';
-import type { AgentService, PromptContributionView } from '../../packages/plugin-agent-api/src/index.js';
-import type {
-  ChatModelRequest,
-  ChatResponse,
-  ChatStreamChunk,
-  LLMModel,
-} from '../../packages/plugin-llm-api/src/index.js';
-import { LLMCapabilities } from '../../packages/plugin-llm-api/src/index.js';
-import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryHistoryModule from '../../packages/plugin-memory-history/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 import * as memorySummaryModule from '../../packages/plugin-memory-summary/src/index.js';

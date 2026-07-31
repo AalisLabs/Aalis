@@ -201,7 +201,7 @@ describe('toManifest（packument → 装前能力清单）', () => {
         '1.2.0': {
           description: '新',
           aalis: { service: { required: ['llm'], optional: ['memory'], provides: ['x'] } },
-          dependencies: { '@aalis/plugin-llm-api': 'workspace:^', zod: '^3.0.0' },
+          dependencies: { '@aalis/api-llm': 'workspace:^', zod: '^3.0.0' },
           peerDependencies: { '@aalis/core': '>=0.2.0 <1.0.0' },
         },
       },
@@ -211,7 +211,7 @@ describe('toManifest（packument → 装前能力清单）', () => {
       version: '1.2.0',
       description: '新',
       service: { required: ['llm'], optional: ['memory'], provides: ['x'] },
-      dependencies: ['@aalis/plugin-llm-api', 'zod', '@aalis/core'], // deps+peer 并集去重、剔版本
+      dependencies: ['@aalis/api-llm', 'zod', '@aalis/core'], // deps+peer 并集去重、剔版本
     });
   });
 
@@ -243,22 +243,17 @@ describe('classifyPackage（按类型关键词分类）', () => {
   it('augmentInstalled：已装的 api/前端经 resolve 补判为已安装（getStatus 漏掉它们）', () => {
     // base = getStatus 仅含已加载运行时插件；api/client 带 marker 不在其中
     const base = new Set(['@aalis/plugin-llm-openai']);
-    const names = [
-      '@aalis/plugin-llm-openai',
-      '@aalis/plugin-llm-api',
-      '@aalis/plugin-webui-client',
-      '@aalis/plugin-x',
-    ];
+    const names = ['@aalis/plugin-llm-openai', '@aalis/api-llm', '@aalis/plugin-webui-client', '@aalis/plugin-x'];
     // 模拟 node_modules：llm-api 与 webui-client 已装（可 resolve），plugin-x 未装
-    const canResolve = (n: string) => n === '@aalis/plugin-llm-api' || n === '@aalis/plugin-webui-client';
+    const canResolve = (n: string) => n === '@aalis/api-llm' || n === '@aalis/plugin-webui-client';
     const out = augmentInstalled(names, base, canResolve);
     expect(out.has('@aalis/plugin-llm-openai')).toBe(true); // base 保留
-    expect(out.has('@aalis/plugin-llm-api')).toBe(true); // 补判已装（修复"永远未安装"bug）
+    expect(out.has('@aalis/api-llm')).toBe(true); // 补判已装（修复"永远未安装"bug）
     expect(out.has('@aalis/plugin-webui-client')).toBe(true);
     expect(out.has('@aalis/plugin-x')).toBe(false); // 未装
     // 用于 toMarketplacePackages 时，api/client installed=true
     const pkgs = toMarketplacePackages({ objects: names.map(n => ({ package: { name: n, version: '1.0.0' } })) }, out);
-    expect(pkgs.find(p => p.name === '@aalis/plugin-llm-api')?.installed).toBe(true);
+    expect(pkgs.find(p => p.name === '@aalis/api-llm')?.installed).toBe(true);
     expect(pkgs.find(p => p.name === '@aalis/plugin-x')?.installed).toBe(false);
   });
 
@@ -267,7 +262,7 @@ describe('classifyPackage（按类型关键词分类）', () => {
       {
         objects: [
           { package: { name: '@aalis/plugin-llm-openai', version: '1.0.0', keywords: ['aalis-plugin'] } },
-          { package: { name: '@aalis/plugin-tools-api', version: '1.0.0', keywords: ['aalis-api'] } },
+          { package: { name: '@aalis/api-tools', version: '1.0.0', keywords: ['aalis-api'] } },
           { package: { name: '@aalis/plugin-webui-client', version: '1.0.0', keywords: ['aalis-interface'] } },
         ],
       },
@@ -284,7 +279,7 @@ describe('classifyPackage（按类型关键词分类）', () => {
 // 直装包与传递依赖躺在同一个 node_modules 里、路径完全相同，但后者的版本由父包的
 // 范围决定——市场独立升它只会和父包打架。实测（脚手架部署）：
 //   @aalis/core             根声明 ^0.9.1              → node_modules/@aalis/core
-//   @aalis/plugin-memory-api 不在根 dependencies（传递） → node_modules/@aalis/plugin-memory-api
+//   @aalis/api-memory 不在根 dependencies（传递） → node_modules/@aalis/api-memory
 // 两者路径同形，唯有根声明能把它们分开。
 // ════════════════════════════════════════════════════════════
 
@@ -297,7 +292,7 @@ describe('resolveLocalInfo（三路信号汇总；两种部署形态各有陷阱
   });
 
   it('脚手架形态：装在 node_modules 但不在根 dependencies → transitive（父包拉进来的）', () => {
-    // 实测：@aalis/plugin-memory-api 由 plugin-memory-inmemory 引入，与直装包路径同形，
+    // 实测：@aalis/api-memory 由 plugin-memory-inmemory 引入，与直装包路径同形，
     // 只有「不在根 dependencies」这一条能把它们分开。
     expect(resolveLocalInfo(undefined, { version: '0.9.0' }, undefined)?.origin).toBe('transitive');
   });
@@ -326,15 +321,11 @@ describe('toLocalPackages（npm 检索不可达时的降级卡片）', () => {
     ['@aalis/plugin-b', { version: '0.9.0', request: '^0.9.0', origin: 'registry', keywords: ['aalis-plugin'] }],
     ['@aalis/plugin-a', { version: '0.9.1', request: 'workspace:*', origin: 'workspace', keywords: ['aalis-plugin'] }],
     ['express', { version: '4.0.0', request: '^4', origin: 'registry', keywords: ['http'] }],
-    ['@aalis/plugin-c-api', { version: '0.9.0', origin: 'transitive', keywords: ['aalis-api'] }],
+    ['@aalis/api-c', { version: '0.9.0', origin: 'transitive', keywords: ['aalis-api'] }],
   ]);
 
   it('只收带 Aalis 类型关键词的包，按名排序', () => {
-    expect(toLocalPackages(local).map(p => p.name)).toEqual([
-      '@aalis/plugin-a',
-      '@aalis/plugin-b',
-      '@aalis/plugin-c-api',
-    ]);
+    expect(toLocalPackages(local).map(p => p.name)).toEqual(['@aalis/api-c', '@aalis/plugin-a', '@aalis/plugin-b']);
   });
 
   it('剔掉无关第三方库（express 不该出现在插件市场里）', () => {
@@ -350,8 +341,8 @@ describe('toLocalPackages（npm 检索不可达时的降级卡片）', () => {
     const byName = new Map(toLocalPackages(local).map(p => [p.name, p]));
     expect(byName.get('@aalis/plugin-a')?.origin).toBe('workspace');
     expect(byName.get('@aalis/plugin-b')?.origin).toBe('registry');
-    expect(byName.get('@aalis/plugin-c-api')?.origin).toBe('transitive');
-    expect(byName.get('@aalis/plugin-c-api')?.request).toBeUndefined();
+    expect(byName.get('@aalis/api-c')?.origin).toBe('transitive');
+    expect(byName.get('@aalis/api-c')?.request).toBeUndefined();
   });
 
   it('全部标 installed（本地扫出来的必然已装）+ 按 scope 标官方', () => {
@@ -427,13 +418,13 @@ describe('sortSystemComponents', () => {
       { name: '@aalis/util-cron', kind: 'util' },
       { name: '@aalis/schema-message', kind: 'schema' },
       { name: '@aalis/runtime', kind: 'runtime' },
-      { name: '@aalis/plugin-tools-api', kind: 'api' },
+      { name: '@aalis/api-tools', kind: 'api' },
       { name: '@aalis/core', kind: 'core' },
     ];
     expect(sortSystemComponents(list).map(c => c.name)).toEqual([
       '@aalis/core',
       '@aalis/runtime',
-      '@aalis/plugin-tools-api',
+      '@aalis/api-tools',
       '@aalis/schema-message',
       '@aalis/util-cron',
     ]);
@@ -441,11 +432,11 @@ describe('sortSystemComponents', () => {
 
   it('同类按包名字典序，且不改写入参', () => {
     const list: SystemComponent[] = [
-      { name: '@aalis/plugin-z-api', kind: 'api' },
-      { name: '@aalis/plugin-a-api', kind: 'api' },
+      { name: '@aalis/api-z', kind: 'api' },
+      { name: '@aalis/api-a', kind: 'api' },
     ];
     const sorted = sortSystemComponents(list);
-    expect(sorted.map(c => c.name)).toEqual(['@aalis/plugin-a-api', '@aalis/plugin-z-api']);
-    expect(list[0].name).toBe('@aalis/plugin-z-api'); // 原数组未被排序
+    expect(sorted.map(c => c.name)).toEqual(['@aalis/api-a', '@aalis/api-z']);
+    expect(list[0].name).toBe('@aalis/api-z'); // 原数组未被排序
   });
 });

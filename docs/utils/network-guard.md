@@ -91,7 +91,7 @@ export interface NetworkPolicyConfig {
 默认策略是 `{ blockPrivate: true, denyCidrs: [], allowedPorts: null }`——也就是说，即使未注入，也默认拦截私网。`blockPrivate` 只有在显式传 `false` 时才关闭（判定条件是 `cfg.blockPrivate !== false`），`allowedPorts` 为空数组等同于不限，无效的 CIDR 会被静默过滤掉。
 
 ::: warning 由谁调用
-owner 在 core 配置 `network`，由 `plugin-authority` 在启动时注入一次。普通插件作者不要调用它——它是进程级单例，会覆盖全局策略。配置字段语义见 `plugin-authority-api`。
+owner 在 core 配置 `network`，由 `plugin-authority` 在启动时注入一次。普通插件作者不要调用它——它是进程级单例，会覆盖全局策略。配置字段语义见 `api-authority`。
 :::
 
 ---

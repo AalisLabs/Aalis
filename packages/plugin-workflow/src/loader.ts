@@ -1,12 +1,12 @@
 // ============================================================
 // loader.ts — workspace/workflows/*.yaml 加载与持久化
 //
-// 通过 @aalis/plugin-storage-api 访问目录与文件（默认 workspace:/workflows）。
+// 通过 @aalis/api-storage 访问目录与文件（默认 workspace:/workflows）。
 // ============================================================
 
+import type { StorageService } from '@aalis/api-storage';
+import type { WorkflowDef } from '@aalis/api-workflow';
 import type { Logger } from '@aalis/core';
-import type { StorageService } from '@aalis/plugin-storage-api';
-import type { WorkflowDef } from '@aalis/plugin-workflow-api';
 import { parse, stringify } from 'yaml';
 
 import { validateGraph } from './engine.js';

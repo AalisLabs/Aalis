@@ -16,10 +16,11 @@
  * LLM 集成：用 `resolveLLMModel(ctx, cfg.extractionModel)` 拿模型 entry；
  * cfg.extractionModel 为空时退化到默认 'llm' service。
  */
+
+import { LLMCapabilities, type LLMModel, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
+import type { MemoryService, RecentMessageRecord } from '@aalis/api-memory';
+import { getPlatformNames } from '@aalis/api-platform';
 import type { Context } from '@aalis/core';
-import { LLMCapabilities, type LLMModel, type ModelRef, resolveLLMModel } from '@aalis/plugin-llm-api';
-import type { MemoryService, RecentMessageRecord } from '@aalis/plugin-memory-api';
-import { getPlatformNames } from '@aalis/plugin-platform-api';
 import type { Message } from '@aalis/schema-message';
 import { WellKnownKinds } from '@aalis/schema-message';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';

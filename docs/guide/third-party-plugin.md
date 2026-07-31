@@ -47,7 +47,7 @@ export default {
 
 ```ts
 import type { Context, PluginModule } from '@aalis/core';
-import type { LLMService } from '@aalis/plugin-llm-api';
+import type { LLMService } from '@aalis/api-llm';
 
 export default {
   name: '@your-scope/plugin-x',
@@ -67,7 +67,7 @@ export default {
 
 ```ts
 import type { Context, PluginModule } from '@aalis/core';
-import type { LLMService } from '@aalis/plugin-llm-api';
+import type { LLMService } from '@aalis/api-llm';
 
 class MyLLM implements LLMService { /* ... */ }
 
@@ -90,12 +90,12 @@ export default {
 #### 能力（capability）现在挂在 handle 元数据上
 
 以 LLM 为例：模型的能力（chat / tool_calling / vision …）不再传给 `ctx.provide`，
-而是作为 **model handle 自身的 `capabilities` 元数据**暴露，由 `@aalis/plugin-llm-api`
+而是作为 **model handle 自身的 `capabilities` 元数据**暴露，由 `@aalis/api-llm`
 的纯函数 helper 按需过滤：
 
 ```ts
-import { LLMCapabilities } from '@aalis/plugin-llm-api';
-import type { LLMCapability } from '@aalis/plugin-llm-api';
+import { LLMCapabilities } from '@aalis/api-llm';
+import type { LLMCapability } from '@aalis/api-llm';
 
 // provide 时不传 capabilities；能力写在 handle 实例上：
 class MyModelHandle {
@@ -105,7 +105,7 @@ class MyModelHandle {
 ctx.provide('llm', new MyModelHandle(), { entryId: `${ctx.id}/my-model`, label: 'my-model' });
 
 // 消费方按能力解析（在 *-api 层过滤，不经 core）：
-import { resolveLLMModel } from '@aalis/plugin-llm-api';
+import { resolveLLMModel } from '@aalis/api-llm';
 const model = resolveLLMModel(ctx, ref, [LLMCapabilities.Vision])?.instance;
 ```
 
@@ -145,7 +145,7 @@ for (const root of roots) {
 ```ts
 import type { Context, PluginModule } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret 等）
+import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret 等）
 
 // ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArray>；
 // 每个 SchemaField 必须有 type 与 label。
@@ -166,8 +166,8 @@ export default {
 
 > `secret`（以及 `dynamicOptions` / `allowCustom` 等表单属性）不是 `SchemaField` 的自带字段——
 > `@aalis/schema-config` 只声明各宿主共需的中立字段（`type` / `label` / `description` /
-> `default` / `required` / `options`），渲染相关属性由 `@aalis/plugin-webui-api` 经
-> declaration merging 注入。用到这些属性时**必须** `import type {} from '@aalis/plugin-webui-api'`
+> `default` / `required` / `options`），渲染相关属性由 `@aalis/api-webui` 经
+> declaration merging 注入。用到这些属性时**必须** `import type {} from '@aalis/api-webui'`
 > 才能通过类型检查。同理，自定义字段类型（如 `'llm-ref'`）要 merging 到
 > `@aalis/schema-config` 的 `SchemaFieldTypes`，merging 到 `@aalis/core` **不会报错但静默失效**。
 
@@ -188,10 +188,10 @@ apply(ctx) {
 
 | 想做的事 | 用什么 |
 |----------|--------|
-| 注册 AI 可调用的工具 | `useToolService(ctx).register(...)`（来自 `@aalis/plugin-tools-api`） |
-| 注册斜杠命令 | `useCommandService(ctx).command(...)`（来自 `@aalis/plugin-commands-api`） |
-| 自定义 WebUI 页面 | `useWebuiService(ctx).registerPage(...)`（来自 `@aalis/plugin-webui-api`） |
-| 注册 agent 输入预处理器 | `useAgent(ctx).registerPreprocessor(...)`（来自 `@aalis/plugin-agent-api`） |
+| 注册 AI 可调用的工具 | `useToolService(ctx).register(...)`（来自 `@aalis/api-tools`） |
+| 注册斜杠命令 | `useCommandService(ctx).command(...)`（来自 `@aalis/api-commands`） |
+| 自定义 WebUI 页面 | `useWebuiService(ctx).registerPage(...)`（来自 `@aalis/api-webui`） |
+| 注册 agent 输入预处理器 | `useAgent(ctx).registerPreprocessor(...)`（来自 `@aalis/api-agent`） |
 | 监听核心事件 | `ctx.on('service:registered', …)` 等 |
 
 helper 内部已封装 `whenService` 延迟语义：即使在 `apply()` 阶段调用 `register` /
@@ -210,17 +210,17 @@ helper 内部已封装 `whenService` 延迟语义：即使在 `apply()` 阶段�
 | `Context` / `PluginModule` | `@aalis/core` | peerDep |
 | `ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` | `@aalis/schema-config` | 是 |
 | `Message` / `ContentSegment` / `IncomingMessage` / `OutgoingMessage` | `@aalis/schema-message` | 是 |
-| `ToolCall` / `ToolDefinition` / `ToolFunction` / `ToolCallContext` / `RegisteredTool` | `@aalis/plugin-tools-api` | 是 |
-| `ChatRequest` / `ChatResponse` / `LLMService` | `@aalis/plugin-llm-api` | 是 |
-| `MemoryService` | `@aalis/plugin-memory-api` | 是 |
-| `AgentService` / `PreprocessorFn` | `@aalis/plugin-agent-api` | 是 |
-| `StorageService` | `@aalis/plugin-storage-api` | 是 |
-| `EmbeddingService` | `@aalis/plugin-embedding-api` | 是 |
-| `VectorStoreService` | `@aalis/plugin-vectorstore-api` | 是 |
+| `ToolCall` / `ToolDefinition` / `ToolFunction` / `ToolCallContext` / `RegisteredTool` | `@aalis/api-tools` | 是 |
+| `ChatRequest` / `ChatResponse` / `LLMService` | `@aalis/api-llm` | 是 |
+| `MemoryService` | `@aalis/api-memory` | 是 |
+| `AgentService` / `PreprocessorFn` | `@aalis/api-agent` | 是 |
+| `StorageService` | `@aalis/api-storage` | 是 |
+| `EmbeddingService` | `@aalis/api-embedding` | 是 |
+| `VectorStoreService` | `@aalis/api-vectorstore` | 是 |
 | `IncomingMessage`/`OutgoingMessage` 事件 / `tool:execute` 事件 | 同对应 *-api（包须出现在 `dependencies` 里 TS 才能看到 `declare module` 注入） | 是 |
 
 > **常见错误**：以为工具/命令注册 API 来自 core。它们由
-> `@aalis/plugin-tools-api` / `@aalis/plugin-commands-api` 导出
+> `@aalis/api-tools` / `@aalis/api-commands` 导出
 > （`useToolService` / `useCommandService`），**必须**把这些契约包放进自己的
 > `dependencies`（或 `peerDependencies`），TS 才能正确解析类型。
 
@@ -254,7 +254,7 @@ plugins:
 |------|--------|
 | 单一服务提供者 | `plugin-llm-openai`, `plugin-llm-deepseek` |
 | 多 entry 注册 | `plugin-storage-local`（每 root）、`plugin-llm-ollama`（每 model） |
-| 跨 entry helper | `plugin-storage-api` (`createStorageGateway`)、`plugin-platform-api` (`resolvePlatformBySession`) |
+| 跨 entry helper | `api-storage` (`createStorageGateway`)、`api-platform` (`resolvePlatformBySession`) |
 | 工具注入 | `plugin-tool-search`, `plugin-tool-browser` |
 | 命令注入 | `plugin-commands` |
 | WebUI 扩展 | `plugin-webui-server`, `plugin-todo-list` |

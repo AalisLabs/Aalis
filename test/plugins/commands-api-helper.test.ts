@@ -1,5 +1,5 @@
 /**
- * plugin-commands-api — useCommandService helper 回归测试
+ * api-commands — useCommandService helper 回归测试
  *
  * 重点验证统一收敛到 whenService 之后的两条关键路径：
  *  1. **hot-forward**：commands 已就绪时链式调用同步落到真 builder 上
@@ -24,7 +24,7 @@ import {
   type InternalCommandMeta,
   type OptionRegisterOptions,
   useCommandService,
-} from '../../packages/plugin-commands-api/src/index.js';
+} from '../../packages/api-commands/src/index.js';
 
 // ===== mock CommandService =====
 

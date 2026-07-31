@@ -1,5 +1,5 @@
+import type { StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
-import type { StorageService } from '@aalis/plugin-storage-api';
 
 // ════════════════════════════════════════════════════════════
 // UserStore —— users.json v5 数据层（数字等级单轴存储）

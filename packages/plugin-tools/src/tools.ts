@@ -1,11 +1,5 @@
-import type { Logger } from '@aalis/core';
-import type {
-  CapabilityConfirm,
-  CapabilityRisk,
-  CapabilityVisibility,
-  ExecutionGuard,
-} from '@aalis/plugin-authority-api';
-import { resolveCapabilityPolicy } from '@aalis/plugin-authority-api';
+import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
+import { resolveCapabilityPolicy } from '@aalis/api-authority';
 import type {
   RegisteredTool,
   ToolCallContext,
@@ -13,7 +7,8 @@ import type {
   ToolGroupInfo,
   ToolService,
   ToolSummary,
-} from '@aalis/plugin-tools-api';
+} from '@aalis/api-tools';
+import type { Logger } from '@aalis/core';
 /**
  * 工具注册表 —— 管理 AI 可调用工具的注册、查询、执行
  *

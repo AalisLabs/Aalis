@@ -1,11 +1,11 @@
+import type { FlowControlService } from '@aalis/api-flow-control';
+import type { MediaService } from '@aalis/api-media';
+import type { MessageArchiveService } from '@aalis/api-message-archive';
+import type { PlatformAdapter, PlatformConnection } from '@aalis/api-platform';
+import { createProcessGateway } from '@aalis/api-process';
+import { createStorageGateway } from '@aalis/api-storage';
+import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { Context } from '@aalis/core';
-import type { FlowControlService } from '@aalis/plugin-flow-control-api';
-import type { MediaService } from '@aalis/plugin-media-api';
-import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
-import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform-api';
-import { createProcessGateway } from '@aalis/plugin-process-api';
-import { createStorageGateway } from '@aalis/plugin-storage-api';
-import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { ConfigSchema } from '@aalis/schema-config';
 import { AttachmentRefKind, formatAttachmentRef, getSenderLabel, type Message } from '@aalis/schema-message';
 import WebSocket from 'ws';
@@ -24,7 +24,7 @@ import type {
   OneBotProtocol,
   OneBotRawEvent,
 } from './types.js';
-import '@aalis/plugin-agent-api'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { createForwardExpander, DEFAULT_FORWARD_SUMMARY_PROMPT, type ForwardConfig } from './forward-expand.js';
 import { segmentsToText } from './types.js';
 import { OneBotV11 } from './v11.js';
@@ -356,8 +356,8 @@ const KIND_PLACEHOLDER: Record<'image' | 'audio' | 'video' | 'file', { placehold
  * - 其他 kind：原样落盘，扩展名按 magic header 推断。
  */
 async function cacheOneAttachment(
-  storage: import('@aalis/plugin-storage-api').StorageService,
-  proc: import('@aalis/plugin-process-api').ProcessService,
+  storage: import('@aalis/api-storage').StorageService,
+  proc: import('@aalis/api-process').ProcessService,
   kind: 'image' | 'audio' | 'video' | 'file',
   source: string,
   sessionId: string,

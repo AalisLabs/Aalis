@@ -20,7 +20,7 @@ interface RegisteredTool {
 ## 注册工具
 
 ```typescript
-import { useToolService } from '@aalis/plugin-tools-api';
+import { useToolService } from '@aalis/api-tools';
 
 const tools = useToolService(ctx);
 const dispose = tools.register({

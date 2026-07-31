@@ -29,16 +29,16 @@
   },
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/plugin-cron-engine-api": "workspace:>=0.5.1 <1.0.0",
-    "@aalis/plugin-storage-api": "workspace:>=0.5.5 <1.0.0",
-    "@aalis/plugin-tools-api": "workspace:>=0.5.1 <1.0.0",
-    "@aalis/plugin-webui-api": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/plugin-workflow-api": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/api-cron-engine": "workspace:>=0.5.1 <1.0.0",
+    "@aalis/api-storage": "workspace:>=0.5.5 <1.0.0",
+    "@aalis/api-tools": "workspace:>=0.5.1 <1.0.0",
+    "@aalis/api-webui": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/api-workflow": "workspace:>=0.9.0 <1.0.0",
     "yaml": "^2.7.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-agent-api": "workspace:*",
+    "@aalis/api-agent": "workspace:*",
     "@aalis/schema-message": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"

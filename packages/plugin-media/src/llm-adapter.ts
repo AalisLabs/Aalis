@@ -3,9 +3,8 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
-import type { Context } from '@aalis/core';
-import type { LLMModel, LLMModelEntry } from '@aalis/plugin-llm-api';
-import { LLMCapabilities } from '@aalis/plugin-llm-api';
+import type { LLMModel, LLMModelEntry } from '@aalis/api-llm';
+import { LLMCapabilities } from '@aalis/api-llm';
 import type {
   DescribeInput,
   DescribeResult,
@@ -13,7 +12,8 @@ import type {
   MediaProcessor,
   TranscribeInput,
   TranscribeResult,
-} from '@aalis/plugin-media-api';
+} from '@aalis/api-media';
+import type { Context } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
 import { materializeAttachment, transcodeAudioToWav } from './ffmpeg.js';
 

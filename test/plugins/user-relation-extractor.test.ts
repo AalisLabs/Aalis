@@ -1,7 +1,7 @@
 import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import type { ChatModelRequest, ChatResponse, LLMModel } from '../../packages/plugin-llm-api/src/index.js';
-import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
+import type { ChatModelRequest, ChatResponse, LLMModel } from '../../packages/api-llm/src/index.js';
+import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 import type { ExtractorConfig } from '../../packages/plugin-user-relation/src/extractor.js';
 import { EXTRACTOR_CONFIG_DEFAULTS, RelationExtractor } from '../../packages/plugin-user-relation/src/extractor.js';

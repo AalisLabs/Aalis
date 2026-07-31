@@ -10,8 +10,9 @@
  * - 深度 / 宽度由配置控制；带 visited 防环
  * - 失败优雅降级：任何异常仅 debug log，绝不阻断 agent 流程
  */
+
+import type { PromptContributionView } from '@aalis/api-agent';
 import type { Context } from '@aalis/core';
-import type { PromptContributionView } from '@aalis/plugin-agent-api';
 import type { RelationService } from './service.js';
 import type {
   EntityNode,

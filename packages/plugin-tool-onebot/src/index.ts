@@ -1,10 +1,10 @@
+import type { MediaService } from '@aalis/api-media';
+import { getPlatformAdapters, getPlatformNames, type PlatformAdapter } from '@aalis/api-platform';
+import { createStorageGateway, type StorageService } from '@aalis/api-storage';
+import type { AccessChecker, SessionHistoryService } from '@aalis/api-tool-session';
+import type { ScopedToolService, ToolCallContext } from '@aalis/api-tools';
+import { toolsWithGroups, useToolService } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
-import type { MediaService } from '@aalis/plugin-media-api';
-import { getPlatformAdapters, getPlatformNames, type PlatformAdapter } from '@aalis/plugin-platform-api';
-import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
-import type { AccessChecker, SessionHistoryService } from '@aalis/plugin-tool-session-api';
-import type { ScopedToolService, ToolCallContext } from '@aalis/plugin-tools-api';
-import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 
 // ===== 插件元数据 =====

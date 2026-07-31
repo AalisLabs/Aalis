@@ -3,9 +3,9 @@
 // 这是一个可扩展的「字符串键 → 上下文类型」映射。core 自身不预声明任何
 // 业务钩子键；具体钩子由各 api 包通过 declaration merging 注入：
 //
-//   - @aalis/plugin-agent-api       → agent:*（含 llm/tool/reply/input/turn）
-//   - @aalis/plugin-gateway-api     → inbound:* / outbound:dispatch（含 InboundPhaseData）
-//   - @aalis/plugin-memory-api      → memory:clear
+//   - @aalis/api-agent       → agent:*（含 llm/tool/reply/input/turn）
+//   - @aalis/api-gateway     → inbound:* / outbound:dispatch（含 InboundPhaseData）
+//   - @aalis/api-memory      → memory:clear
 //   - @aalis/plugin-session-manager → session:*
 //
 // 第三方插件可继续 augment 自定义钩子：

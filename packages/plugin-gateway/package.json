@@ -28,11 +28,11 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/plugin-gateway-api": "workspace:>=0.5.0 <1.0.0"
+    "@aalis/api-gateway": "workspace:>=0.5.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-agent-api": "workspace:*",
+    "@aalis/api-agent": "workspace:*",
     "@aalis/schema-message": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"

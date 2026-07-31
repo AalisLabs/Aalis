@@ -285,7 +285,7 @@ if (!pkg || pkg.aalis?.client !== true || typeof pkg.name !== 'string' || seen.h
 
 ## `extends_` 键名错配（当前为 no-op）
 
-`@aalis/plugin-webui-api` 通过 declaration merging 给 `PluginModule` 注入了一个纯展示字段 `extends`，让插件声明「我给 core 加了哪些事件 / 钩子 / mixin」，供前端「扩展 Core」标签渲染。这个字段的类型是 `ExtendDeclaration`。webui-server 直接从 `module.extends` 读取它并转发前端：
+`@aalis/api-webui` 通过 declaration merging 给 `PluginModule` 注入了一个纯展示字段 `extends`，让插件声明「我给 core 加了哪些事件 / 钩子 / mixin」，供前端「扩展 Core」标签渲染。这个字段的类型是 `ExtendDeclaration`。webui-server 直接从 `module.extends` 读取它并转发前端：
 
 ```ts
 extends: pm.getPlugin(p.instanceId)?.module?.extends,

@@ -1,5 +1,5 @@
 /**
- * plugin-doctor-api — useDoctorService helper 单元测试
+ * api-doctor — useDoctorService helper 单元测试
  *
  * 验证两条关键路径：
  *  1. **eager**：doctor 服务已就绪时直接 registerCheck，dispose 立即解注册
@@ -12,8 +12,8 @@
  */
 import type { Context } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import type { CheckResult, CheckSpec, DoctorService } from '../../packages/plugin-doctor-api/src/index.js';
-import { useDoctorService } from '../../packages/plugin-doctor-api/src/index.js';
+import type { CheckResult, CheckSpec, DoctorService } from '../../packages/api-doctor/src/index.js';
+import { useDoctorService } from '../../packages/api-doctor/src/index.js';
 
 // ===== Mock DoctorService =====
 

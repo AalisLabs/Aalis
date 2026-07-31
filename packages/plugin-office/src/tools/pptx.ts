@@ -1,5 +1,5 @@
-import type { StorageService } from '@aalis/plugin-storage-api';
-import type { ScopedToolService } from '@aalis/plugin-tools-api';
+import type { StorageService } from '@aalis/api-storage';
+import type { ScopedToolService } from '@aalis/api-tools';
 import PptxGenJS from 'pptxgenjs';
 import type { DocSessionManager } from '../session.js';
 import { loadImage } from '../utils.js';

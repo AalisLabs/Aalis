@@ -34,7 +34,7 @@ plugins:
 ## 依赖
 
 - `@modelcontextprotocol/sdk` ^1.0.4
-- inject.required: `tools`（plugin-tools-api / plugin-tools）
+- inject.required: `tools`（api-tools / plugin-tools）
 
 ## 注意
 

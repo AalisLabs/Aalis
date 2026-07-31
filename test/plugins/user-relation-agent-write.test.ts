@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 import { type EvidenceRef, RelationService, RelationStore } from '../../packages/plugin-user-relation/src/index.js';
 

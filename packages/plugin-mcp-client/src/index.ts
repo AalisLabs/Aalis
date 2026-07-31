@@ -12,12 +12,12 @@
  * - 安全级别由 config 中按 server 配置（默认 safe）；高危 server 应显式设为 dangerous
  */
 
+import type { CapabilityVisibility } from '@aalis/api-authority';
+import type { ToolDefinition } from '@aalis/api-tools';
+import { useToolService } from '@aalis/api-tools';
 import type { AppService, Context, PluginManagerService } from '@aalis/core';
-import type { CapabilityVisibility } from '@aalis/plugin-authority-api';
-import type { ToolDefinition } from '@aalis/plugin-tools-api';
-import { useToolService } from '@aalis/plugin-tools-api';
 import type { ConfigSchema } from '@aalis/schema-config';
-// 引入 plugin-tools-api 触发 declaration merging，使 ctx.registerTool 类型生效
+// 引入 api-tools 触发 declaration merging，使 ctx.registerTool 类型生效
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 

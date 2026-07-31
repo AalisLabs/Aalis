@@ -16,13 +16,13 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 - `AalisConfig` 仅声明基础字段（`name` / `logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`）加 `[key: string]: unknown` 兜底；业务字段（owners / deniedCapabilities / authorityOverrides / confirmOverrides 等）由对应 plugin-*-api 通过 declaration merging 注入，core 不知晓其语义
 - `ConfigManager` 是纯内存配置中枢：自身不读写文件，`save()` 把整份配置快照原样委托给宿主注入的 `ConfigProvider.save()`（无 provider 时静默忽略），对所有顶层字段一视同仁、不含任何业务特例（合并默认值时 `mergeDefaultsConfig()` 也是先填 core 已知字段、再透传其余）
 
-身份/平台/模型相关的工具与类型一律不在 core 中：`UserIdentity` 在 `@aalis/plugin-authority-api`，`ModelRef` / `resolveLLMModel` 在 `@aalis/plugin-llm-api`，`getSenderLabel` / `prefixSender` / `getMessageName` 在 `@aalis/schema-message`。
+身份/平台/模型相关的工具与类型一律不在 core 中：`UserIdentity` 在 `@aalis/api-authority`，`ModelRef` / `resolveLLMModel` 在 `@aalis/api-llm`，`getSenderLabel` / `prefixSender` / `getMessageName` 在 `@aalis/schema-message`。
 
 ## 宿主层 vs 核心层（Bootstrap 边界）
 
 `@aalis/core` 在物理上是**环境无关**的内存运行时：`package.json` 零运行时依赖，源码不 import 任何 `node:fs` / `node:path` / `node:os` / `node:child_process`，不调用 `process.cwd()` / `process.argv` / `console.*`，也不读 `process.env`（`devMode` 由宿主显式注入）。这意味着同一份 core 理论上可跑在浏览器、Worker、Deno 等任何 JS 运行时。
 
-> 业务插件同样受约束：直接 import `node:fs` / `node:child_process` / `node:os` / `node:http(s)` 被 biome 拦截，必须改走 `@aalis/plugin-storage-api` / `@aalis/plugin-process-api`。完整白名单与豁免理由见 [node-usage-policy](architecture/node-usage-policy.md)。
+> 业务插件同样受约束：直接 import `node:fs` / `node:child_process` / `node:os` / `node:http(s)` 被 biome 拦截，必须改走 `@aalis/api-storage` / `@aalis/api-process`。完整白名单与豁免理由见 [node-usage-policy](architecture/node-usage-policy.md)。
 
 环境耦合全部在仓库根 `src/` 这一层（即"宿主"），通过 `new App({ ... })` 注入到 core：
 

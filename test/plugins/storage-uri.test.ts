@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  isStorageUri,
-  parseUriRoot,
-  resolveAgainstCwd,
-  toStorageUri,
-} from '../../packages/plugin-storage-api/src/index.js';
+import { isStorageUri, parseUriRoot, resolveAgainstCwd, toStorageUri } from '../../packages/api-storage/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // storage URI 权威文法（isStorageUri / parseUriRoot）—— 收口 onebot/media/asr 6 处重抄。

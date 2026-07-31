@@ -3,7 +3,7 @@
 把「单条音频附件 → 文本」抽象成核心可替换服务。消费方用 `getService('asr')` 拿到当前胜出的后端（whisper.cpp / 云 ASR / 兼容 OpenAI 的网关），无需感知具体实现。
 
 - 服务注册名：`'asr'`（`ctx.getService('asr')`）
-- 契约包：`@aalis/plugin-asr-api`（`packages/plugin-asr-api/src/index.ts`）
+- 契约包：`@aalis/api-asr`（`packages/api-asr/src/index.ts`）
 - 参考实现：`@aalis/plugin-asr-openai`、`@aalis/plugin-asr-whisper-cpp`
 - 典型消费方：`@aalis/plugin-media`（把每个 asr provider 包成 `cap='audio'` 的 MediaProcessor）
 
@@ -11,9 +11,9 @@
 
 ## 1. 契约
 
-`@aalis/plugin-asr-api` 只导出**类型 + 一个接口 + 一个取服务助手**，自身不注册任何运行时服务。
+`@aalis/api-asr` 只导出**类型 + 一个接口 + 一个取服务助手**，自身不注册任何运行时服务。
 
-服务接口（`packages/plugin-asr-api/src/index.ts`）：
+服务接口（`packages/api-asr/src/index.ts`）：
 
 ```ts
 export interface ASRService {
@@ -98,7 +98,7 @@ private asrProcessors(): MediaProcessor[] {
 ```ts
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/plugin-asr-api';
+import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/api-asr';
 import { safeFetch } from '@aalis/util-network-guard';
 
 export const name = '@aalis/plugin-asr-mybackend';
@@ -160,7 +160,7 @@ manifest 是双源的（`docs/concepts/manifest-metadata.md`）：
 ### lazy 取服务，不要缓存实例
 
 ```ts
-import type { ASRService } from '@aalis/plugin-asr-api';
+import type { ASRService } from '@aalis/api-asr';
 
 async function transcribeOne(ctx: Context, att: MessageAttachment) {
   const asr = ctx.getService<ASRService>('asr');   // 即取即用，别存进字段
@@ -189,9 +189,9 @@ async function transcribeOne(ctx: Context, att: MessageAttachment) {
 1. **base64 data URL**：`/^data:([^;]+);base64,(.+)$/`，解码即得字节。**注意必须带 `;base64,`**——否则会和 storage URI `data:/...`（根名恰好叫 `data`）混淆。
 2. **`file://` 或裸绝对路径 `/...`**：openai 走 `proc.readExternalFile(data)`（治外文件能力，避免直接 `import node:fs`，`asr-openai:59`）；whisper-cpp 直接取 `file://` 后的本地路径喂 ffmpeg。
 3. **`http(s)://`**：**必须用 `safeFetch`（`@aalis/util-network-guard`）下载**，不要用裸 `fetch`（见 §6）。
-4. **storage URI / 历史裸相对路径**：`isStorageUri(data)` 判定（`packages/plugin-storage-api/src/index.ts`）；历史格式 `data/...` 补成 `data:/...`。openai 用 `storage.readFile(uri)` 读字节；whisper-cpp 用 `storage.resolveLocalPath?.(uri, 'read')` 拿本地路径喂 ffmpeg。
+4. **storage URI / 历史裸相对路径**：`isStorageUri(data)` 判定（`packages/api-storage/src/index.ts`）；历史格式 `data/...` 补成 `data:/...`。openai 用 `storage.readFile(uri)` 读字节；whisper-cpp 用 `storage.resolveLocalPath?.(uri, 'read')` 拿本地路径喂 ffmpeg。
 
-process/storage 经 gateway 注入：`createProcessGateway(ctx)` / `createStorageGateway(ctx)`（`plugin-process-api/src/index.ts`、`plugin-storage-api/src/index.ts`），临时文件用 `proc.makeTempDir(prefix)`（返回 `{ path, uri, cleanup }`，`plugin-process-api/src/index.ts`），用完务必 `cleanup()`（whisper-cpp 在 `finally` 里清理，`asr-whisper-cpp:144-147`）。
+process/storage 经 gateway 注入：`createProcessGateway(ctx)` / `createStorageGateway(ctx)`（`api-process/src/index.ts`、`api-storage/src/index.ts`），临时文件用 `proc.makeTempDir(prefix)`（返回 `{ path, uri, cleanup }`，`api-process/src/index.ts`），用完务必 `cleanup()`（whisper-cpp 在 `finally` 里清理，`asr-whisper-cpp:144-147`）。
 
 ### SSRF / 网络出口
 
@@ -201,7 +201,7 @@ process/storage 经 gateway 注入：`createProcessGateway(ctx)` / `createStorag
 
 ### storage 不是沙箱
 
-`resolveLocalPath` 把绝对路径交给 ffmpeg / whisper-cli 等子进程后，storage URI 的访问控制就**不再约束**这些子进程（`packages/plugin-storage-api/src/index.ts`）。provider 应只把自己物化出来的临时文件路径交给子进程，别把用户可控路径直接拼进命令行。storage URI 文法见 `docs/concepts/storage-uri-grammar.md`、`docs/services/storage.md`。
+`resolveLocalPath` 把绝对路径交给 ffmpeg / whisper-cli 等子进程后，storage URI 的访问控制就**不再约束**这些子进程（`packages/api-storage/src/index.ts`）。provider 应只把自己物化出来的临时文件路径交给子进程，别把用户可控路径直接拼进命令行。storage URI 文法见 `docs/concepts/storage-uri-grammar.md`、`docs/services/storage.md`。
 
 ### 风险等级 / 鉴权
 

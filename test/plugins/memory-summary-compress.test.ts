@@ -1,8 +1,8 @@
 import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import type { LLMModel } from '../../packages/plugin-llm-api/src/index.js';
-import { LLMCapabilities } from '../../packages/plugin-llm-api/src/index.js';
-import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
+import type { LLMModel } from '../../packages/api-llm/src/index.js';
+import { LLMCapabilities } from '../../packages/api-llm/src/index.js';
+import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 import * as memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 
