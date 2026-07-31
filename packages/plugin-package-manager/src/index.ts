@@ -1,6 +1,6 @@
 import { createProcessGateway, type ExecResult, type ProcessService } from '@aalis/api-process';
 import type { AppService, Context } from '@aalis/core';
-import { isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
+import { classifyDepSpec, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 
 // ===== 插件元数据 =====
 
@@ -119,26 +119,6 @@ async function execProcBoth(
 }
 
 /**
- * 部署形态。两者的安装语义完全不同，装错地方 = 装了不加载。
- *
- * - `workspace`：本仓库式自托管。包落 `packages/<dir>`，由 `createFsPluginLoader` 扫描；
- *   根依赖用 `workspace:` 协议。
- * - `standalone`：`create-aalis` 产出的脚手架（**第一等公民**）。包落 `node_modules/`，
- *   由 `createNodeModulesPluginLoader` **只读根 `dependencies`** 发现；不写
- *   `pnpm-workspace.yaml`、不建 `packages/`。
- */
-export type ProjectLayout = 'workspace' | 'standalone';
-
-/**
- * 判别形态：`pnpm-workspace.yaml` 是工作区的权威标志——脚手架产出物只有
- * package.json / index.mjs / aalis.config.yaml / .env.example / .gitignore / README.md
- * 六个文件，不含它。
- */
-export function layoutFromWorkspaceFile(hasWorkspaceFile: boolean): ProjectLayout {
-  return hasWorkspaceFile ? 'workspace' : 'standalone';
-}
-
-/**
  * 根依赖里是否含 `workspace:` 协议。
  *
  * 这是 standalone 分支跑 `npm install` 前的**硬护栏**：npm 遇到该协议会
@@ -168,6 +148,31 @@ export function hasWorkspaceProtocol(pkgJson: Record<string, unknown> | undefine
 export function declaresPlugin(pkgJson: Record<string, unknown> | undefined): boolean {
   const kw = pkgJson?.keywords;
   return Array.isArray(kw) && kw.includes('aalis-plugin');
+}
+
+/**
+ * 合法 npm 包 spec：包名（可选 scope）+ 可选 `@version` 后缀。
+ *
+ * 名段与版本段的首字符**都**必须是字母数字。该值最终作为一个 argv 传给 npm，而 npm 会：
+ *   - 把以 `-` 开头的 token 当命令行标志（`--force`、`--ignore-scripts` 都是 npm 上真实存在的可发布包名）；
+ *   - 把 `.` / `..` / `./x` 当本地目录 spec —— **`foo@.` 与 `@a/b@..` 同样是目录 spec**，
+ *     只锚名段挡不住；实测这条能让 npm 转去打包宿主工作目录并执行其 prepack/prepare 生命周期脚本。
+ * 两段各自锚住首字符，即封死目录 spec 与标志注入两条面。
+ */
+const PKG_SPEC_RE = /^(@[a-z0-9][a-z0-9\-_.]*\/)?[a-z0-9][a-z0-9\-_.]*(@[a-z0-9][a-z0-9.-]*)?$/i;
+
+/**
+ * 校验单个包 spec，合法返回 `undefined`、非法返回可读理由。
+ *
+ * 放在**服务层**：本服务经 `ctx.provide` 公开，任何插件都能绕过 HTTP 路由直接调用。
+ * 这与 `buildUpdateSpecs` 是同一条纪律——路由只做「是不是字符串」的形状检查，安全校验
+ * 收在所有调用方的必经之路上，且**只有这一份实现**（两份正则漂移是本仓栽过的坑）。
+ * 纯函数，便于单测。
+ */
+export function validatePackageSpec(spec: unknown): string | undefined {
+  if (typeof spec !== 'string' || spec.length === 0) return '包名必须是非空字符串';
+  if (!PKG_SPEC_RE.test(spec)) return `非法包名: ${JSON.stringify(spec)}`;
+  return undefined;
 }
 
 function createService(ctx: Context, config: Record<string, unknown>): PackageManagerService {
@@ -493,10 +498,6 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     }
   }
 
-  async function detectLayout(): Promise<ProjectLayout> {
-    return layoutFromWorkspaceFile(await pathExists(`${deps.projectRoot()}/pnpm-workspace.yaml`, 'f'));
-  }
-
   /**
    * 装完的统一判定：rescan 出新插件即成功；没出新插件时按目标是否**声明自己是插件**分流。
    * 「声明了插件却没被发现」正是那条静默假成功——必须报失败，否则用户看到 ok 却什么也没装上。
@@ -517,8 +518,18 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     return { ok: true, message: `已安装 ${target}（非插件包，不进入插件列表）` };
   }
 
-  /** standalone：写根 `dependencies`——这是 node_modules 加载器**唯一**的发现来源。 */
-  async function installStandalone(npmPkg: string): Promise<{ ok: boolean; message: string }> {
+  /**
+   * 安装：写根 `dependencies` —— 加载器**唯一**的发现来源。
+   *
+   * 不再按「项目形态」分叉。旧实现在检测到 `pnpm-workspace.yaml` 时会把 npm 包解包成
+   * `packages/<dir>` 源码，而那个文件与真正生效的加载器**没有因果关系**——加载器是入口
+   * 文件传给 `startAalis` 的（默认读根依赖，本仓显式传 fs 加载器扫 packages/）。于是一个
+   * 用 pnpm 工作区但走默认 `startAalis()` 的用户，包会被装进加载器永远不看的地方，静默失败。
+   *
+   * 现在只有一条路径。真正的 monorepo 由下面的 `hasWorkspaceProtocol` 守卫拦住并说清
+   * 该用什么工具——那才是开发者场景，不该用市场往自己仓里塞源码。
+   */
+  async function installTo(npmPkg: string): Promise<{ ok: boolean; message: string }> {
     const root = deps.projectRoot();
     const rootPkg = await readJson(`${root}/package.json`);
     if (hasWorkspaceProtocol(rootPkg)) {
@@ -531,48 +542,6 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     await execProc(proc, 'npm', ['install', npmPkg, '--no-audit', '--no-fund'], root, INSTALL_TIMEOUT_MS);
     const bare = stripVersion(npmPkg);
     return settleInstall(npmPkg, `${root}/node_modules/${bare}/package.json`, 'node_modules');
-  }
-
-  /** workspace：解包到 `packages/<dir>` 再 `pnpm install --filter` 链接（本仓库自托管形态）。 */
-  async function installWorkspace(npmPkg: string): Promise<{ ok: boolean; message: string }> {
-    const packagesDir = deps.packagesDir();
-    // 分离包名与可选版本：@scope/foo@1.2.3 → dirName=foo（去 scope、去版本）
-    const dirName = npmPkg.replace(/^@[^/]+\//, '').replace(/@[^@]+$/, '');
-    const targetDir = `${packagesDir}/${dirName}`;
-
-    if (await pathExists(targetDir, 'd')) return { ok: false, message: `目录 ${dirName} 已存在` };
-    log.info(`正在安装插件: ${npmPkg} → packages/${dirName}`);
-
-    let tgzPath: string | undefined;
-    try {
-      await execProc(proc, 'mkdir', ['-p', packagesDir], process.cwd()); // 确保 packages/ 存在
-      // npm pack --json 精确返回产物 {filename, name}，避免 includes 误匹配
-      // （装 foo 时命中 foo-bar-*.tgz）；name 是精确包名，供 pnpm --filter 用。
-      const packOut = await execProc(
-        proc,
-        'npm',
-        ['pack', npmPkg, '--pack-destination', packagesDir, '--json'],
-        process.cwd(),
-      );
-      const packInfo = parsePackInfo(packOut);
-      if (!packInfo) return { ok: false, message: '下载包失败: 未能解析 npm pack 产物' };
-      tgzPath = `${packagesDir}/${packInfo.filename}`;
-      await execProc(proc, 'mkdir', ['-p', targetDir], process.cwd());
-      await execProc(proc, 'tar', ['xzf', tgzPath, '-C', targetDir, '--strip-components=1'], process.cwd());
-      await execProc(proc, 'rm', ['-f', tgzPath], process.cwd()); // 清理 tgz
-      tgzPath = undefined; // 已删，回滚时不再尝试
-      // --filter 用精确包名（npm pack 回报的 name，无版本后缀）链接新 workspace 包
-      await execProc(proc, 'pnpm', ['install', '--filter', packInfo.name], process.cwd(), INSTALL_TIMEOUT_MS);
-
-      return await settleInstall(npmPkg, `${targetDir}/package.json`, `packages/${dirName}`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      log.error(`安装插件 "${npmPkg}" 失败: ${message}`);
-      // 回滚：清理半成品 targetDir 与残留 tgz，避免占位导致下次"目录已存在"
-      await execProc(proc, 'rm', ['-rf', targetDir], process.cwd()).catch(() => {});
-      if (tgzPath) await execProc(proc, 'rm', ['-f', tgzPath], process.cwd()).catch(() => {});
-      return { ok: false, message };
-    }
   }
 
   /**
@@ -634,10 +603,9 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     if (!deps.restartApp) return { ok: false, message: '当前宿主未提供重启能力，无法完成更新' };
 
     const root = deps.projectRoot();
-    if ((await detectLayout()) === 'workspace') {
-      // 工作区形态的包是 workspace: 协议的本地包，不从 npm 取版本——升级走 git。
-      return { ok: false, message: '工作区（monorepo）形态不支持市场更新：包来自本地 packages/，请用 git 升级' };
-    }
+    // 没有「项目形态」这一层判断了：能不能更新是**每个包自己的来源**说了算（下面的
+    // isRegistryDep 闸），不是整个项目的属性。旧写法拿 `pnpm-workspace.yaml` 是否存在
+    // 当整体开关，既挡掉了工作区项目里合法的 npm 依赖，也与真正生效的加载器无因果关系。
     const rootPkgPath = `${root}/package.json`;
     const rootPkgText = await deps.readText(rootPkgPath);
     if (rootPkgText === undefined) return { ok: false, message: `读不到根 package.json: ${rootPkgPath}` };
@@ -780,10 +748,10 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
 
     install: npmPkg =>
       exclusive(`安装 ${npmPkg}`, async () => {
-        const layout = await detectLayout();
-        if (layout === 'workspace') return installWorkspace(npmPkg);
+        const bad = validatePackageSpec(npmPkg);
+        if (bad) return { ok: false, message: bad };
         try {
-          return await installStandalone(npmPkg);
+          return await installTo(npmPkg);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           log.error(`安装 "${npmPkg}" 失败: ${message}`);
@@ -794,42 +762,79 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     uninstall: pluginName => exclusive(`卸载 ${pluginName}`, () => uninstallOne(pluginName)),
   };
 
+  /**
+   * 卸载：两道服务层闸 + npm uninstall。
+   *
+   * 闸放服务层而非 HTTP 路由——本服务经 `ctx.provide` 公开，任何插件都能绕过路由直接调
+   * （与 `buildUpdateSpecs`、`isRegistryDep` 同一理由）。前端早就有正确策略
+   * （只给 plugin/interface 卡片渲染卸载按钮），但那只是客户端校验，服务端不设防。
+   */
   async function uninstallOne(pluginName: string): Promise<{ ok: boolean; message: string }> {
-    {
-      const dirName = pluginName.replace(/^@[^/]+\//, '');
-      // 安全闸：dirName 必须是合法 npm 包段名——杜绝路径穿越（如 `../../x`）导致
-      // `rm -rf packages/../../x` 删到 packages 外的任意目录。
-      if (!/^[a-z0-9][a-z0-9._-]*$/i.test(dirName)) {
-        return { ok: false, message: `非法插件名（疑似路径穿越）: ${pluginName}` };
-      }
-      const layout = await detectLayout();
-      try {
-        let detail: string;
-        if (layout === 'workspace') {
-          const targetDir = `${deps.packagesDir()}/${dirName}`;
-          const existed = await pathExists(targetDir, 'd');
-          if (existed) await execProc(proc, 'rm', ['-rf', targetDir], process.cwd()); // 删目录，不再回来
-          detail = existed ? `已删除 packages/${dirName}` : '目录原不存在，已从运行时移除';
-        } else {
-          // standalone：必须从根 dependencies 摘掉。只 dispose 运行时实例是不够的——
-          // 依赖声明还在，下次启动加载器照样把它发现并装载回来。
-          await execProc(
-            proc,
-            'npm',
-            ['uninstall', pluginName, '--no-audit', '--no-fund'],
-            deps.projectRoot(),
-            INSTALL_TIMEOUT_MS,
-          );
-          detail = '已从根依赖与 node_modules 移除';
-        }
-        await deps.unloadPlugin(pluginName); // 从运行时注册表彻底移除（dispose + delete），幂等
-        deps.cleanupConfig?.(pluginName); // 清残留配置
-        log.info(`${pluginName}: ${detail}`);
-        return { ok: true, message: `插件 ${pluginName} 已卸载（${detail}）` };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return { ok: false, message };
-      }
+    const bad = validatePackageSpec(pluginName);
+    if (bad) return { ok: false, message: bad };
+
+    const root = deps.projectRoot();
+    const meta = await readJson(`${root}/node_modules/${pluginName}/package.json`);
+    if (!meta) {
+      return { ok: false, message: `读不到 ${pluginName} 的 package.json，无法确认它是什么，已拒绝卸载` };
+    }
+
+    // ── 闸一：类型 ──
+    // 市场管的是**插件**。core / runtime / api / schema / util 不是插件，不在本工具职权内。
+    // 这不是「权限不够」——owner 权限很高，走 `npm uninstall` 随时能删。这道闸拦的是
+    // 「**这个操作会把你用来撤销它的那条通道一起销毁**」：卸掉插件，实例照常跑、市场里点
+    // 一下就能装回来（带内可恢复）；卸掉内核或宿主，实例起不来、市场随之消失，只能开
+    // shell 修（带外）。更新不在此列——它保留实例且失败会自动回滚。
+    const kw = Array.isArray(meta.keywords) ? (meta.keywords as unknown[]) : [];
+    const isPlugin = kw.includes('aalis-plugin');
+    const isInterface = kw.includes('aalis-interface');
+    if (!isPlugin && !isInterface) {
+      const kind = kw.includes('aalis-core')
+        ? '内核'
+        : kw.includes('aalis-runtime')
+          ? '宿主'
+          : kw.includes('aalis-api')
+            ? '服务契约'
+            : kw.includes('aalis-schema')
+              ? '数据规范'
+              : kw.includes('aalis-util')
+                ? '工具库'
+                : '非插件包';
+      return {
+        ok: false,
+        message:
+          `${pluginName} 是${kind}，不是可装卸的插件，市场不负责它的卸载。` +
+          (kw.includes('aalis-core') || kw.includes('aalis-runtime')
+            ? '删掉它实例将无法启动、市场也随之消失，只能在终端里恢复；确需如此请手动执行 npm uninstall。'
+            : '它随依赖它的插件被 npm 自动剪枝；确需单独删除请手动执行 npm uninstall。'),
+      };
+    }
+
+    // ── 闸二：来源 ──
+    // 只有根依赖里以 semver 范围声明的才归市场管。workspace: 是用户自己的源码（删了不可逆，
+    // 且多半在 git 里）；file:/link: 指向本地目录；git/URL 是外部源；不在根依赖里的是传递依赖。
+    const rootPkg = await readJson(`${root}/package.json`);
+    const request = ((rootPkg?.dependencies ?? {}) as Record<string, string>)[pluginName];
+    if (!isRegistryDep(request)) {
+      const origin = classifyDepSpec(request);
+      const why: Record<string, string> = {
+        workspace: '它是工作区里的本地源码包，删除请走 git',
+        link: '它由 file:/link: 指向本地目录，删除请改那份源码与依赖声明',
+        git: '它由 git/URL/user-repo 简写安装，删除请改依赖声明',
+        alias: '它由 npm: 别名指向另一个包，删除请改依赖声明',
+        transitive: '它不在根依赖里（由其它插件带入），会随带入它的插件被 npm 自动剪枝',
+      };
+      return { ok: false, message: `${pluginName} 不是经市场安装的：${why[origin] ?? '来源不明'}。` };
+    }
+
+    try {
+      await execProc(proc, 'npm', ['uninstall', pluginName, '--no-audit', '--no-fund'], root, INSTALL_TIMEOUT_MS);
+      await deps.unloadPlugin(pluginName); // 从运行时注册表彻底移除（dispose + delete），幂等
+      deps.cleanupConfig?.(pluginName); // 清残留配置
+      log.info(`${pluginName}: 已从根依赖与 node_modules 移除`);
+      return { ok: true, message: `插件 ${pluginName} 已卸载（已从根依赖与 node_modules 移除）` };
+    } catch (err) {
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
     }
   }
 }
