@@ -4,7 +4,9 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Context, PluginManagerService, PluginStatusEntry } from '@aalis/core';
 import type { PackageManagerService } from '@aalis/plugin-package-manager';
+import { classifyDepSpec, type DepOrigin, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 import type express from 'express';
+import type { LocalScanEntry } from '../client-discovery.js';
 import type { RouteGate } from '../gate.js';
 
 // 纯 npm 路线：npm registry 的 keyword 检索即天然索引，无自建服务器、无静态索引。
@@ -35,12 +37,20 @@ interface MarketplacePackage {
   author?: string;
   /** 该插件名是否已在本地激活/注册 */
   installed: boolean;
-  /** 本地已装版本。与 version 不等即「可更新」；未装 / 版本读不到则缺省。 */
+  /** 本地已装版本。未装 / 版本读不到则缺省。**判「可更新」看 updatable，不要自己比版本。** */
   resolved?: string;
   /** 根 package.json 里的原始声明（`^0.9.1` / `workspace:*` / `file:../x`）。未装或非直接依赖为 undefined。 */
   request?: string;
-  /** 本地这份从哪来。只有 registry 谈得上经市场更新。未装则缺省。 */
+  /** 本地这份从哪来（展示用的来源徽章）。未装则缺省。 */
   origin?: PkgOrigin;
+  /**
+   * 此刻能否经市场更新 = 来源是 registry + version 严格新于 resolved。
+   *
+   * **服务端算，前端直接用。** 前端曾自己拿 `resolved !== version` 再叠一个 origin 判断，
+   * 三份判据（这里 / package-manager 的闸 / 前端）互不一致，实测出过两类错：字符串不等把
+   * 「latest 低于本地」渲染成可更新并真的降级；GitHub 简写依赖出了勾选框却被服务端闸整批否决。
+   */
+  updatable: boolean;
   /** @aalis/ scope = 官方插件；其余为社区（npm 自带信号，零额外维护） */
   official: boolean;
   /** 组件类别（按包名分类，供前端分页/筛选）：功能插件 / api 契约 / 前端 */
@@ -204,28 +214,10 @@ export function buildDependencyChain(
  * 说明不了它归谁管。典型反例：传递依赖（父包拉进来的）和直装包一样躺在 node_modules 里，
  * 路径完全相同，但前者的版本由父包的范围决定，市场独立升它只会和父包打架。
  *
- * 只有 registry 一档谈得上「经市场更新」；其余各有自己的更新途径，市场应如实说明而非给一个做不到的按钮。
+ * 分档实现住在 `@aalis/util-dep-spec`：更新闸（package-manager）与这里的展示必须用同一份，
+ * 否则会出现「前端给了勾选框、提交后被闸整批否决」。曾实测发生过，见该模块顶部注释。
  */
-export type PkgOrigin =
-  /** 根 dependencies 声明了 semver 范围 —— npm 装的，可经市场更新 */
-  | 'registry'
-  /** `workspace:` —— pnpm 工作区包，源码在仓库里 */
-  | 'workspace'
-  /** `file:` / `link:` —— 本地链接 */
-  | 'link'
-  /** git / URL / tarball —— 外部源 */
-  | 'git'
-  /** 不在根 dependencies，但本地存在 —— 传递依赖，或 monorepo 工作区源码 */
-  | 'transitive';
-
-/** 依赖声明字符串 → 来源分档。纯函数，便于单测。 */
-export function classifyOrigin(spec: string | undefined): PkgOrigin {
-  if (spec === undefined) return 'transitive';
-  if (spec.startsWith('workspace:')) return 'workspace';
-  if (spec.startsWith('file:') || spec.startsWith('link:') || spec.startsWith('portal:')) return 'link';
-  if (/^(git|github:|gitlab:|bitbucket:|https?:)/.test(spec)) return 'git';
-  return 'registry'; // semver 范围 / dist-tag（latest 等）/ npm: 别名
-}
+export type PkgOrigin = DepOrigin;
 
 /** 本地已装包的实况。未装则 undefined。 */
 export interface LocalPkgInfo {
@@ -246,21 +238,26 @@ export interface LocalPkgInfo {
 export function resolveLocalInfo(
   request: string | undefined,
   meta: { version?: string; keywords?: string[]; description?: string } | undefined,
-  inScan: boolean,
+  scanned: { version?: string } | undefined,
 ): LocalPkgInfo | undefined {
   if (meta) {
     return {
       version: meta.version,
       request,
-      origin: classifyOrigin(request),
+      origin: classifyDepSpec(request),
       keywords: meta.keywords,
       description: meta.description,
     };
   }
   // resolve 不到（不在 node_modules）却被扫描扫出来 → 只能来自 monorepo 的 packages/ 源码目录。
-  // 此处不可沿用 classifyOrigin(undefined)=transitive：那是「在 node_modules 里但非直接依赖」的语义，
-  // 而这里的包压根不在 node_modules。实测本仓库 @aalis/plugin-commands 等全部走这条分支。
-  if (inScan) return { request, origin: 'workspace' };
+  // 此处不可沿用 classifyDepSpec(undefined)=transitive：那是「在 node_modules 里但非直接依赖」
+  // 的语义，而这里的包压根不在 node_modules。实测本仓库 @aalis/plugin-commands 等全走这条分支。
+  //
+  // version 取自扫描时读到的那份 package.json：pnpm 工作区下根 node_modules 只链根依赖
+  // （本仓库根 dependencies 仅 core 与 runtime），packages/ 下的包一律 resolve 不到，故这条
+  // 分支是工作区形态的**常态**而非边角。此前不带 version，前端的 `resolved ?? version`
+  // 兜底就把 npm latest 当成已装版本显示——实测 93 张卡片里 91 张显示的是远端版本号。
+  if (scanned) return { version: scanned.version, request, origin: 'workspace' };
   return undefined;
 }
 
@@ -344,6 +341,8 @@ export function toMarketplacePackages(
       resolved: local?.version,
       request: local?.request,
       origin: local?.origin,
+      // 与 package-manager 的更新闸同一份实现（@aalis/util-dep-spec），定义上不可能分岔。
+      updatable: isRegistryDep(local?.request) && isUpgrade(local?.version, o.package.version),
       description: o.package.description ?? '',
       author: o.package.publisher?.username,
       installed: installed.has(o.package.name),
@@ -370,11 +369,13 @@ export function toLocalPackages(local: ReadonlyMap<string, LocalPkgInfo>): Marke
     .filter(([, info]) => (info.keywords ?? []).some(k => AALIS_KEYWORDS.includes(k)))
     .map(([name, info]) => ({
       name,
-      // 离线拿不到 npm latest，用本地版本占位，前端因 resolved === version 而不显示「可更新」。
+      // 离线拿不到 npm latest，用本地版本占位。
       version: info.version ?? '',
       resolved: info.version,
       request: info.request,
       origin: info.origin,
+      // 离线路径下没有「远端更新版」这个信息，一律不可更新——不是判据放宽，是事实缺失。
+      updatable: false,
       description: info.description ?? '',
       installed: true,
       official: name.startsWith('@aalis/'),
@@ -423,7 +424,7 @@ export function registerMarketplaceRoutes(
   gate: RouteGate,
   registryBase: string = DEFAULT_REGISTRY,
   /** 本地包扫描：`name → 依赖名[]`（含 monorepo 工作区包）。keys 补 require.resolve 在 pnpm 工作区的盲区；values 供依赖图。 */
-  getLocalPackages: () => Map<string, string[]> = () => new Map(),
+  getLocalPackages: () => Map<string, LocalScanEntry> = () => new Map(),
 ): void {
   // 市场列表：npm registry keyword 检索 + 标注已装。网络失败降级为空列表 + warning，
   // 不阻塞 WebUI（管理读档，与 /api/plugins 同级）。
@@ -449,7 +450,7 @@ export function registerMarketplaceRoutes(
       }
     };
     const readLocal = (name: string): LocalPkgInfo | undefined =>
-      resolveLocalInfo(rootDeps[name], readPkgJson(name), localPkgs.has(name));
+      resolveLocalInfo(rootDeps[name], readPkgJson(name), localPkgs.get(name));
     /** 每个包名只读一次盘，已装判定与版本展示共用。 */
     const localCache = new Map<string, LocalPkgInfo>();
     const localOf = (name: string): LocalPkgInfo | undefined => {
@@ -518,8 +519,8 @@ export function registerMarketplaceRoutes(
         request: rootDeps[name],
         description: meta?.description,
         kind,
-        // 与市场页同一道闸：只有根依赖里以 semver 范围声明的才可经 npm 更新。
-        updatable: classifyOrigin(rootDeps[name]) === 'registry',
+        // 与市场页、与 package-manager 的闸同一份实现。latest 尚未查到，故版本序在下面补判。
+        updatable: isRegistryDep(rootDeps[name]),
       });
     }
 
@@ -536,6 +537,11 @@ export function registerMarketplaceRoutes(
           c.latest = p['dist-tags']?.latest;
         } catch {
           /* 离线/镜像不支持：该行不显示可更新，不报错 */
+        } finally {
+          // 版本序补判：来源合格还不够，latest 必须**严格新于**本地。dist-tags.latest 可以
+          // 低于本地已装版本（发布事故后回滚 tag，或用户装过预发布版），漏了这一判就会把
+          // 降级渲染成更新。查不到 latest 同样落 false。
+          c.updatable = c.updatable && isUpgrade(c.version, c.latest);
         }
       }),
     );
@@ -551,7 +557,8 @@ export function registerMarketplaceRoutes(
       res.status(400).json({ error: 'name 必须是合法 npm 包名' });
       return;
     }
-    const depMap = getLocalPackages();
+    // 图算法只认 name→依赖名[]，不该知道版本；在此把扫描结果投影成它要的形状。
+    const depMap = new Map([...getLocalPackages()].map(([n, e]) => [n, e.deps] as const));
     const status = getPluginMgr()?.getStatus() ?? [];
     const svcOf = new Map(
       status.map(p => [p.name, { provides: p.provides ?? [], requires: p.requiredServices ?? [] }]),

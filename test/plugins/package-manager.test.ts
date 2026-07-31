@@ -6,7 +6,6 @@ import {
   extractPeerConflicts,
   findUnmetPeers,
   hasWorkspaceProtocol,
-  isRegistryDep,
   layoutFromWorkspaceFile,
   type PackageManagerDeps,
   parsePackInfo,
@@ -206,25 +205,6 @@ describe('纯函数判据', () => {
     expect(declaresPlugin(undefined)).toBe(false);
   });
 
-  it('isRegistryDep：只认 registry 来源的 semver 范围', () => {
-    expect(isRegistryDep('^0.9.0')).toBe(true);
-    expect(isRegistryDep('0.9.0')).toBe(true);
-    expect(isRegistryDep('>=0.9.0 <1.0.0')).toBe(true);
-    expect(isRegistryDep('latest')).toBe(true);
-    // 传递依赖（不在根依赖里）——npm 会提升进根依赖并留下嵌套第二份
-    expect(isRegistryDep(undefined)).toBe(false);
-    expect(isRegistryDep('')).toBe(false);
-    // 非 registry 来源
-    expect(isRegistryDep('workspace:*')).toBe(false);
-    expect(isRegistryDep('file:../local')).toBe(false);
-    expect(isRegistryDep('link:../x')).toBe(false);
-    expect(isRegistryDep('portal:../y')).toBe(false);
-    expect(isRegistryDep('git+ssh://git@github.com/u/r.git')).toBe(false);
-    expect(isRegistryDep('https://example.com/a.tgz')).toBe(false);
-    expect(isRegistryDep('github:user/repo')).toBe(false);
-    expect(isRegistryDep('user/repo')).toBe(false);
-  });
-
   it('stripVersion：剥版本保 scope', () => {
     expect(stripVersion('@scope/foo@1.2.3')).toBe('@scope/foo');
     expect(stripVersion('@scope/foo')).toBe('@scope/foo'); // scope 的 @ 在下标 0，不当版本分隔
@@ -422,15 +402,27 @@ describe('update — 参数校验（纯函数）', () => {
 describe('update — 流程', () => {
   const rootPkgPath = `${ROOT}/package.json`;
   const lockPath = `${ROOT}/package-lock.json`;
+  /** 已装版本从 `node_modules/<name>/package.json` 读——降级守卫与回滚钉版本都吃这一路。 */
+  const installedAt = (name: string, version: string) => ({
+    [`${ROOT}/node_modules/${name}/package.json`]: JSON.stringify({ name, version }),
+  });
   const okHarness = (extra: Record<string, unknown> = {}) =>
     makeHarness({
       layout: 'standalone',
-      text: { [rootPkgPath]: '{"dependencies":{"@aalis/core":"^0.9.0"}}', [lockPath]: '{"lockfileVersion":3}' },
+      text: {
+        [rootPkgPath]: '{"dependencies":{"@aalis/core":"^0.9.0"}}',
+        [lockPath]: '{"lockfileVersion":3}',
+        ...installedAt('@aalis/core', '0.9.0'),
+      },
       ...extra,
     });
 
   it('预检在副本目录里跑，真装在项目根——live tree 不被 --dry-run 触碰', async () => {
-    const restarts: Array<{ reason: string; restore: Array<{ path: string; content: string }> }> = [];
+    const restarts: Array<{
+      reason: string;
+      restore: Array<{ path: string; content: string }>;
+      postRestore?: { cmd: string; args: string[] };
+    }> = [];
     const h = okHarness({ restarts });
     const r = await createPackageManager(h.deps).update([{ name: '@aalis/core', version: '0.9.2' }]);
     expect(r.ok).toBe(true);
@@ -447,16 +439,46 @@ describe('update — 流程', () => {
     expect(restarts).toHaveLength(1);
     expect(restarts[0].restore.map(f => f.path)).toEqual([rootPkgPath, lockPath]);
     expect(restarts[0].restore[0].content).toContain('@aalis/core');
+    // postRestore 必须钉**精确旧版**。裸 `npm install` 只能按还原后的 package.json 重解析，
+    // 而 `^0.9.0` 覆盖刚崩掉的 0.9.2 —— npm 会把它原样装回来，回滚成为一句谎话。
+    expect(restarts[0].postRestore?.args).toContain('@aalis/core@0.9.0');
+    expect(restarts[0].postRestore?.args).toContain('--no-save'); // 别让 npm 把声明改写成 ^0.9.0
+  });
+
+  it('拒绝降级：目标版本不高于本地已装版本（registry 的 latest 可能被回滚 tag 到旧版）', async () => {
+    const h = okHarness();
+    const r = await createPackageManager(h.deps).update([{ name: '@aalis/core', version: '0.8.0' }]);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('降级');
+    expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false); // 一次 npm 都不发
+  });
+
+  it('拒绝同版本重装：字符串不等判据会放行，版本序判据不会', async () => {
+    const h = okHarness();
+    const r = await createPackageManager(h.deps).update([{ name: '@aalis/core', version: '0.9.0' }]);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('降级');
+  });
+
+  it('读不到本地已装版本 → 拒绝（无从判断方向就不动）', async () => {
+    const h = makeHarness({
+      layout: 'standalone',
+      text: { [rootPkgPath]: '{"dependencies":{"@aalis/core":"^0.9.0"}}' }, // 无 node_modules 记录
+    });
+    const r = await createPackageManager(h.deps).update([{ name: '@aalis/core', version: '0.9.2' }]);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('未知');
+    expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
   });
 
   it('无 lockfile 时把 lockfile 标记为「更新前不存在」（回滚要删而非写空）', async () => {
     const restarts: Array<{ reason: string; restore: Array<{ path: string; deleteIfEmpty?: boolean }> }> = [];
     const h = makeHarness({
       layout: 'standalone',
-      text: { [rootPkgPath]: '{"dependencies":{"foo":"^1.0.0"}}' },
+      text: { [rootPkgPath]: '{"dependencies":{"foo":"^1.0.0"}}', ...installedAt('foo', '1.0.0') },
       restarts,
     });
-    const r = await createPackageManager(h.deps).update([{ name: 'foo', version: '1.0.0' }]);
+    const r = await createPackageManager(h.deps).update([{ name: 'foo', version: '1.1.0' }]);
     expect(r.ok).toBe(true);
     const lock = restarts[0].restore.find(f => f.path === lockPath);
     // 留着这个 npm 新建的 lockfile 会让 postRestore 判定 up-to-date，把回滚变成谎话
@@ -611,7 +633,10 @@ describe('串行闸（一次只允许一个包管理操作）', () => {
   it('update 成功后**不释放**：重启是延迟发生的，此窗口内的新操作会被 process.exit 腰斩', async () => {
     const h = makeHarness({
       layout: 'standalone',
-      text: { [rootPkgPath]: '{"dependencies":{"foo":"^1.0.0"}}' },
+      text: {
+        [rootPkgPath]: '{"dependencies":{"foo":"^1.0.0"}}',
+        [`${ROOT}/node_modules/foo/package.json`]: '{"name":"foo","version":"1.0.0"}',
+      },
     });
     const pm = createPackageManager(h.deps);
     const r = await pm.update([{ name: 'foo', version: '1.0.1' }]);

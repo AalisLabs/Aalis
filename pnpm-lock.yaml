@@ -1339,6 +1339,9 @@ importers:
       '@aalis/plugin-process-api':
         specifier: workspace:>=0.5.0 <1.0.0
         version: link:../plugin-process-api
+      '@aalis/util-dep-spec':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-dep-spec
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -2287,6 +2290,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
+      '@aalis/util-dep-spec':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../util-dep-spec
       '@aalis/util-network-guard':
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../util-network-guard
@@ -2452,6 +2458,12 @@ importers:
         version: 5.9.3
 
   packages/util-cron:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/util-dep-spec:
     devDependencies:
       typescript:
         specifier: ^5.7.0

@@ -1,5 +1,6 @@
 import type { AppService, Context } from '@aalis/core';
 import { createProcessGateway, type ExecResult, type ProcessService } from '@aalis/plugin-process-api';
+import { isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 
 // ===== 插件元数据 =====
 
@@ -326,25 +327,6 @@ export function buildUpdateSpecs(targets: readonly UpdateTarget[]): { specs?: st
 }
 
 /**
- * 该依赖声明是否「由 npm 从 registry 装的 semver 范围」——只有这种才能经市场更新。
- *
- * 排除的四类各有理由：`undefined` = 不在根依赖里（**传递依赖**，被某个插件带进来的
- * `-api` / `schema` / `util`）；`workspace:` = 工作区源码；`file:`/`link:`/`portal:` =
- * 本地链接；git / URL / tarball = 外部源。它们都不该被 `npm install <name>@<ver>` 动。
- *
- * 传递依赖尤其危险：npm 对它的语义是「加进根 dependencies」，而父包声明的范围若不含新版
- * 就会**嵌套装第二份**——同一个契约包出现两份，两份 `declare module` 撞成 TS2717 且被
- * `skipLibCheck` 静默吞掉，而插件运行时加载的仍是自己那份旧版，更新对它零效果。
- * 纯函数，便于单测。
- */
-export function isRegistryDep(spec: string | undefined): boolean {
-  if (typeof spec !== 'string' || spec.length === 0) return false;
-  if (/^(workspace|file|link|portal|git|git\+ssh|git\+https|https?):/.test(spec)) return false;
-  if (spec.includes('/')) return false; // github:user/repo、user/repo 简写
-  return true;
-}
-
-/**
  * 从 npm 的失败输出里摘出冲突要点，供前端直接展示。纯函数，便于单测。
  */
 export function extractPeerConflicts(output: string): string[] {
@@ -616,6 +598,38 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       };
     }
 
+    // ── 读取每个目标的当前实装版本 ──
+    // 两处都要用：(a) 降级守卫；(b) 回滚凭据钉精确旧版。两者都不能靠根 package.json 的
+    // 声明——那是**范围**，回滚时按范围重解析只会又解到刚崩掉的新版。
+    const installedVersions = new Map<string, string>();
+    for (const t of targets) {
+      const text = await deps.readText(`${root}/node_modules/${t.name}/package.json`);
+      if (text === undefined) continue;
+      try {
+        const v = (JSON.parse(text) as { version?: unknown }).version;
+        if (typeof v === 'string') installedVersions.set(t.name, v);
+      } catch {
+        /* 坏 JSON：当作读不到，由下面的守卫拒掉 */
+      }
+    }
+
+    // ── 降级守卫 ──
+    // 闸放在服务层而非 HTTP 路由：本服务经 ctx.provide 公开，任何插件都能绕过路由直接调用。
+    // 拒绝而非放行的理由：registry 的 dist-tags.latest 可以**低于**本地已装版本（发布事故后
+    // `npm dist-tag add pkg@旧版 latest` 回滚，或用户曾装过预发布版），此时「更新」会静默降级；
+    // 读不到已装版本同样拒——无从判断方向就不动，用户可显式卸载重装。
+    const notUpgrade = targets.filter(t => !isUpgrade(installedVersions.get(t.name), t.version));
+    if (notUpgrade.length > 0) {
+      return {
+        ok: false,
+        message:
+          '以下目标版本不高于本地已装版本（或本地版本号读不到），更新会变成降级，已拒绝：' +
+          notUpgrade
+            .map(t => `${t.name}（本地 ${installedVersions.get(t.name) ?? '未知'} → 目标 ${t.version}）`)
+            .join('、'),
+      };
+    }
+
     // ── 预检：整组一次，不逐个 ──
     // 逐个预检发现不了「A@new 要 core>=0.10、B@new 要 core<0.10」这类只在合并时冲突的组合。
     log.info(`更新预检: ${specs.join(' ')}`);
@@ -638,9 +652,9 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       restore.push({ path: lockPath, content: lockText });
     } else {
       // 原本没有 lockfile（pnpm/yarn 装的工程），而 npm install 会**新建**一个锁到新版。
-      // 回滚只能写回文件、不能删除新增文件，留着它会让 postRestore 的 `npm install`
-      // 判定新版仍满足还原后的范围 → `up to date` → node_modules 纹丝不动，回滚变成
-      // 一句谎话。用空内容占位不行（会得到坏 JSON），故记为「回滚时删掉它」。
+      // 回滚只能写回文件、不能删除新增文件，留着它会让 postRestore 判定新版仍满足还原后的
+      // 范围 → `up to date` → node_modules 纹丝不动。用空内容占位不行（会得到坏 JSON），
+      // 故记为「回滚时删掉它」，把工程还原成它原本无锁的样子。
       restore.push({ path: lockPath, content: '', deleteIfEmpty: true });
     }
 
@@ -660,10 +674,23 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     log.info(`更新完成，正在重启接管: ${specs.join(' ')}`);
     // 置位后锁不再释放：重启是延迟发生的，这段窗口放新操作进来会被 process.exit 腰斩。
     terminal = true;
+    // postRestore 钉**精确旧版**，不用裸 `npm install`。
+    // 裸 install 只能按还原后的 package.json 重解析，而声明通常是 caret 范围（`^1.0.0`），
+    // 刚崩掉的新版（1.1.0）本身就满足它——于是 npm 又把它装回来，node_modules 分毫未变，
+    // 而重启策略照样打印「已回滚并重新启动旧版本」。实测：有锁时正常，无锁时静默失效。
+    // `--no-save` 保证 package.json 维持 restore 写回的原样，不被 npm 改写成 `^旧版`。
+    // 降级守卫已保证每个 target 都有已装版本（读不到的在那里就被拒了），此处的 undefined
+    // 过滤只是让类型收窄，不承担逻辑。
+    const pinned = targets
+      .map(t => {
+        const v = installedVersions.get(t.name);
+        return v === undefined ? undefined : `${t.name}@${v}`;
+      })
+      .filter((s): s is string => s !== undefined);
     deps.restartApp({
       reason: `marketplace-update:${specs.join(',')}`,
       restore,
-      postRestore: { cmd: 'npm', args: ['install', '--no-audit', '--no-fund'], cwd: root },
+      postRestore: { cmd: 'npm', args: ['install', ...pinned, '--no-save', '--no-audit', '--no-fund'], cwd: root },
     });
     return { ok: true, restarting: true, message: `已更新 ${specs.join('、')}，正在重启…` };
   }
