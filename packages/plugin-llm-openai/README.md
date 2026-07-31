@@ -1,4 +1,4 @@
-# @aalis/plugin-openai
+# @aalis/plugin-llm-openai
 
 OpenAI / 兼容接口 LLM 提供者（对话、工具、流式）
 ## 角色
@@ -8,12 +8,12 @@ OpenAI / 兼容接口 LLM 提供者（对话、工具、流式）
 ## 安装
 
 ```bash
-pnpm add @aalis/plugin-openai
+pnpm add @aalis/plugin-llm-openai
 ```
 
 ## 文档
 
-详见 [docs/plugins/plugin-openai.md](../../docs/plugins/plugin-openai.md)。
+详见 [docs/plugins/plugin-llm-openai.md](../../docs/plugins/plugin-llm-openai.md)。
 
 ## 许可
 

@@ -1,7 +1,7 @@
-# plugin-openai — OpenAI LLM 服务
+# plugin-llm-openai — OpenAI LLM 服务
 
-**包名**: `@aalis/plugin-openai`  
-**源码**: `packages/plugin-openai/src/index.ts`
+**包名**: `@aalis/plugin-llm-openai`  
+**源码**: `packages/plugin-llm-openai/src/index.ts`
 
 ## 概述
 
@@ -10,7 +10,7 @@ OpenAI 兼容 API 的 `LLMService` 适配器，支持流式输出和工具调用
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-openai'
+meta.name = '@aalis/plugin-llm-openai'
 meta.provides = ['llm']
 meta.inject = {} // 无依赖
 ```

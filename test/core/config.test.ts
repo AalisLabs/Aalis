@@ -30,8 +30,8 @@ describe('ConfigManager (内存快照模式)', () => {
 
   it('servicePreferences 增删', () => {
     const cfg = new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} });
-    cfg.setServicePreference('llm', 'plugin-openai');
-    expect(cfg.getServicePreferences().llm).toBe('plugin-openai');
+    cfg.setServicePreference('llm', 'plugin-llm-openai');
+    expect(cfg.getServicePreferences().llm).toBe('plugin-llm-openai');
     cfg.removeServicePreference('llm');
     expect(cfg.getServicePreferences().llm).toBeUndefined();
   });

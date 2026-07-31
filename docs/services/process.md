@@ -109,7 +109,7 @@ interface TempDirHandle {
 | `plugin-office` | PDF 工具（可选依赖，见第 5 节） | `src/index.ts` |
 | `plugin-adapter-onebot` | `readExternalFile` 读 daemon 推来的附件路径 | `src/attachment-cache.ts` |
 | `plugin-asr-whisper-cpp` / `plugin-asr-openai` | 调本地 whisper / 转码 | `src/index.ts` / `:96` |
-| `plugin-ollama` / `plugin-package-manager` / `plugin-tool-browser` / `plugin-webui-server` | 拉起本地进程 / 装包 / 起浏览器 | 各 `src/index.ts` |
+| `plugin-llm-ollama` / `plugin-package-manager` / `plugin-tool-browser` / `plugin-webui-server` | 拉起本地进程 / 装包 / 起浏览器 | 各 `src/index.ts` |
 
 ---
 

@@ -84,7 +84,7 @@
 
 不是"消费 message 服务"，而是 import 上面这些符号。代表性站点：
 
-- **LLM provider 出口必调 `prepareLLMMessages`**：`plugin-deepseek/src/index.ts`、`plugin-ollama/src/index.ts`、`plugin-openai`（同模式，概念文档 §3.1）。
+- **LLM provider 出口必调 `prepareLLMMessages`**：`plugin-llm-deepseek/src/index.ts`、`plugin-llm-ollama/src/index.ts`、`plugin-llm-openai`（同模式，概念文档 §3.1）。
 - **`CONTROL_KINDS` 过滤**（消费方职责）：`plugin-agent/src/index.ts`。
 - **附件占位符**：产出于 `plugin-adapter-onebot/src/index.ts`、`plugin-image-sender/src/index.ts`；重写/解析于 `plugin-media/src/tools.ts`。
 - **发送者标识**：`plugin-agent/src/index.ts`、`plugin-message-archive/src/index.ts`、`plugin-memory-vector/src/index.ts`、`plugin-adapter-onebot/src/index.ts`。

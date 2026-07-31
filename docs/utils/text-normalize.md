@@ -124,9 +124,9 @@ const md = fixGfmTables(rawMarkdown);
 
 > 注意 `index.ts` 是**拆开调**的范例：因为既要 `hadLeak` 做遥测，又要全套净化。`normalizeAssistantContent` 内部会再调一次 `stripLeakedSpecialTokens`（幂等、无泄漏时是 no-op），所以这里调两次只是为了取 `hadLeak`，结果正确但有一次冗余扫描——属可接受取舍。
 
-### `plugin-deepseek`：泄漏检测 + 本地恢复 tool_calls
+### `plugin-llm-deepseek`：泄漏检测 + 本地恢复 tool_calls
 
-`packages/plugin-deepseek/src/index.ts` 导入。非流式分支（`index.ts`）用 `stripLeakedSpecialTokens` 检测+剥离 DSML 文本（覆盖单/双竖线变体）；若 `hadLeak` 且服务端 `tool_calls` 为空，则调 provider 自己的 `parseDsmlToolCalls(cleanContent)` 本地恢复工具调用（`index.ts`），避免非流式路径下 tool_call 无声丢失。
+`packages/plugin-llm-deepseek/src/index.ts` 导入。非流式分支（`index.ts`）用 `stripLeakedSpecialTokens` 检测+剥离 DSML 文本（覆盖单/双竖线变体）；若 `hadLeak` 且服务端 `tool_calls` 为空，则调 provider 自己的 `parseDsmlToolCalls(cleanContent)` 本地恢复工具调用（`index.ts`），避免非流式路径下 tool_call 无声丢失。
 
 > 这正是 §2.2「本函数不反解 tool_call」边界的体现：**剥离归库、恢复归调用方**。`stripLeakedSpecialTokens` 只负责告诉你「漏了」并清掉文本，要不要救 tool_call 由 provider 自己定。
 

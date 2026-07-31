@@ -71,9 +71,9 @@ interface ChatModelRequest {
 ## 3. 谁提供 / 谁消费
 
 **参考实现（provider）**：
-- `@aalis/plugin-openai`（`packages/plugin-openai/src/index.ts`）——OpenAI 兼容 `/v1/chat/completions`，远端动态发现 + 实现 `refresh`。
-- `@aalis/plugin-deepseek`（`packages/plugin-deepseek/src/index.ts`）——DeepSeek，含 thinking / reasoning_effort / DSML 泄漏恢复。
-- `@aalis/plugin-ollama`（`packages/plugin-ollama/src/index.ts`）——本地 Ollama，`/api/show` 真实能力探测 + 音频改路 OpenAI 兼容端点。
+- `@aalis/plugin-llm-openai`（`packages/plugin-llm-openai/src/index.ts`）——OpenAI 兼容 `/v1/chat/completions`，远端动态发现 + 实现 `refresh`。
+- `@aalis/plugin-llm-deepseek`（`packages/plugin-llm-deepseek/src/index.ts`）——DeepSeek，含 thinking / reasoning_effort / DSML 泄漏恢复。
+- `@aalis/plugin-llm-ollama`（`packages/plugin-llm-ollama/src/index.ts`）——本地 Ollama，`/api/show` 真实能力探测 + 音频改路 OpenAI 兼容端点。
 
 **典型消费方**：
 - `@aalis/plugin-agent`（`packages/plugin-agent/src/index.ts` 解析、`:226` 消费 `chatStream`、`:43-45 / :437` 用 `maxOutputTokens` 算 token 预算）——核心对话循环。
@@ -97,22 +97,22 @@ interface ChatModelRequest {
 
 provider 既要在源码导出 `provides`，又要在 `package.json` 写 `aalis.service.provides`（见 [manifest 元数据](../concepts/manifest-metadata.md)）：
 
-源码（`packages/plugin-deepseek/src/index.ts`）：
+源码（`packages/plugin-llm-deepseek/src/index.ts`）：
 ```ts
 export const subsystem = 'llm';
 export const provides = ['llm'];
 export const reusable = true; // LLM provider 通常允许多实例（不同 baseUrl/账号）
 ```
 
-`package.json`（`packages/plugin-deepseek/package.json`）：
+`package.json`（`packages/plugin-llm-deepseek/package.json`）：
 ```json
 { "aalis": { "service": { "provides": ["llm"] } } }
 ```
-若依赖可选服务（如 Ollama 用 `process` 读本地文件），两处都要写 `inject.optional` / `aalis.service.optional`（`packages/plugin-ollama/src/index.ts`、`package.json`）。
+若依赖可选服务（如 Ollama 用 `process` 读本地文件），两处都要写 `inject.optional` / `aalis.service.optional`（`packages/plugin-llm-ollama/src/index.ts`、`package.json`）。
 
 ### 注册：每个 model 一个 entry
 
-参考 `packages/plugin-deepseek/src/index.ts`：
+参考 `packages/plugin-llm-deepseek/src/index.ts`：
 
 ```ts
 class MyModelHandle implements LLMModel {
@@ -159,7 +159,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 - **`entryId` 必须是 `${ctx.id}/${modelId}`**——`resolveLLMModel` 用 `contextId === \`${provider}/${model}\`` 精确命中（`packages/plugin-llm-api/src/index.ts`）；不按此约定会导致 `llm-ref` 选择失效。
 - 不要传 `priority`，默认 `ServicePriority.Backend(0)` 即可；用户通过 preference / persona 选默认 model（见 §5）。同名多 provider 并存由容器按 preference>priority>注册顺序裁决（[服务模型](../concepts/service-model.md)）。
 - `capabilities` 要**诚实**反映该 model 实际能力——它驱动 media 的多模态处理器注册与前端过滤（§6）。
-- `ctx.provide` 返回 dispose 函数；实现 `refresh()` 时缓存它以便增删 entry（`packages/plugin-ollama/src/index.ts`）。
+- `ctx.provide` 返回 dispose 函数；实现 `refresh()` 时缓存它以便增删 entry（`packages/plugin-llm-ollama/src/index.ts`）。
 
 ## 5. 标准消费姿势
 
@@ -202,11 +202,11 @@ provider 在**序列化前**（流式与非流式两条路径都要）必须先�
 
 ### 任何 message-URL 抓取必须走 `safeFetch`
 
-若 provider 需要从消息里的 URL 拉取图片/音频字节（如 Ollama 把 image URL 下载转 base64），必须用 `safeFetch`（`@aalis/util-network-guard`）而非裸 `fetch`，以防 SSRF（实证：`packages/plugin-ollama/src/index.ts`）。调 provider 自家 API 端点的 `fetch` 不受此限（那是配置可信的 baseUrl）。详见 [安全模型](../concepts/security-model.md)。
+若 provider 需要从消息里的 URL 拉取图片/音频字节（如 Ollama 把 image URL 下载转 base64），必须用 `safeFetch`（`@aalis/util-network-guard`）而非裸 `fetch`，以防 SSRF（实证：`packages/plugin-llm-ollama/src/index.ts`）。调 provider 自家 API 端点的 `fetch` 不受此限（那是配置可信的 baseUrl）。详见 [安全模型](../concepts/security-model.md)。
 
 ### capabilities 是领域元数据，驱动下游发现
 
-`capabilities` 决定 media 是否把该 model 当 vision/audio/video 处理器（`packages/plugin-media/src/llm-adapter.ts`）。乱标会让不支持的 model 被喂多模态输入而报错；漏标则该能力不可用。Ollama 的正确做法是优先用 `/api/show` 的真实 `capabilities`，再回退家族表（`packages/plugin-ollama/src/index.ts`）。
+`capabilities` 决定 media 是否把该 model 当 vision/audio/video 处理器（`packages/plugin-media/src/llm-adapter.ts`）。乱标会让不支持的 model 被喂多模态输入而报错；漏标则该能力不可用。Ollama 的正确做法是优先用 `/api/show` 的真实 `capabilities`，再回退家族表（`packages/plugin-llm-ollama/src/index.ts`）。
 
 ### 该服务**不涉及** authority/确认/沙盒
 
@@ -214,19 +214,19 @@ provider 在**序列化前**（流式与非流式两条路径都要）必须先�
 
 ## 7. 边界与坑（审计标注）
 
-1. **尊重调用方 `maxTokens`**：provider 必须用 `request.maxTokens ?? 配置默认`，不能硬编码字面量。OpenAI 早期把上限硬编码为 `4096`，现已修正为 `request.maxTokens ?? this.maxTokens`（`packages/plugin-openai/src/index.ts`），DeepSeek（`:245`）、Ollama（`num_predict`，`:268`）同。新 provider 照此实现。
+1. **尊重调用方 `maxTokens`**：provider 必须用 `request.maxTokens ?? 配置默认`，不能硬编码字面量。OpenAI 早期把上限硬编码为 `4096`，现已修正为 `request.maxTokens ?? this.maxTokens`（`packages/plugin-llm-openai/src/index.ts`），DeepSeek（`:245`）、Ollama（`num_predict`，`:268`）同。新 provider 照此实现。
 
-2. **OpenAI o 系列推理模型**：o1/o3/o4 等**不接受** `max_tokens`（需 `max_completion_tokens`）、**不接受**非默认 `temperature`。provider 必须按模型名分支：`isReasoningModel` 命中时用 `max_completion_tokens` 且**省略** `temperature`（`packages/plugin-openai/src/index.ts`）。
+2. **OpenAI o 系列推理模型**：o1/o3/o4 等**不接受** `max_tokens`（需 `max_completion_tokens`）、**不接受**非默认 `temperature`。provider 必须按模型名分支：`isReasoningModel` 命中时用 `max_completion_tokens` 且**省略** `temperature`（`packages/plugin-llm-openai/src/index.ts`）。
 
-3. **DeepSeek `forceJsonOutput` 会破坏 tool_calls**：`response_format: {type:'json_object'}` 与 `tool_calls` 互斥，同时下发会破坏工具调用循环。provider 必须**仅在无 tools 时**加 `response_format`（`packages/plugin-deepseek/src/index.ts`）。DeepSeek 还会把原生工具调用标记（DSML）泄漏进 `content`，需本地解析恢复（`:299-328`）；流式分支同（`:484-498`）。
+3. **DeepSeek `forceJsonOutput` 会破坏 tool_calls**：`response_format: {type:'json_object'}` 与 `tool_calls` 互斥，同时下发会破坏工具调用循环。provider 必须**仅在无 tools 时**加 `response_format`（`packages/plugin-llm-deepseek/src/index.ts`）。DeepSeek 还会把原生工具调用标记（DSML）泄漏进 `content`，需本地解析恢复（`:299-328`）；流式分支同（`:484-498`）。
 
-4. **Ollama 非流式路径也必须 `prepareLLMMessages`**：曾有 bug 仅在流式分支调用，导致非流式丢 `[系统通知]`/`[跨会话委派]` 前缀。现已对齐（`packages/plugin-ollama/src/index.ts`）。音频请求会自动改路到 OpenAI 兼容 `/v1/chat/completions`（`/api/chat` 不支持 audios），该路径也先 `prepareLLMMessages`（`:704-735`）。
+4. **Ollama 非流式路径也必须 `prepareLLMMessages`**：曾有 bug 仅在流式分支调用，导致非流式丢 `[系统通知]`/`[跨会话委派]` 前缀。现已对齐（`packages/plugin-llm-ollama/src/index.ts`）。音频请求会自动改路到 OpenAI 兼容 `/v1/chat/completions`（`/api/chat` 不支持 audios），该路径也先 `prepareLLMMessages`（`:704-735`）。
 
 5. **`chatStream` 是可选的，但 agent 直接 `chatStream!()`**：agent 用非空断言调用（`packages/plugin-agent/src/index.ts`），意味着被选为对话 model 的 entry 实际需要实现 `chatStream`。只实现 `chat` 的 model 不应被 preference 选为对话默认（可只用于 media 处理器等只调 `chat` 的场景）。
 
-6. **`think` 默认语义**：`request.think === undefined` 表示「随模型默认」，`false` 表示显式关闭。Ollama 原生 thinking 模型必须显式传 `think:false` 才能关闭，仅省略字段会被默认启用导致 content 为空（`packages/plugin-ollama/src/index.ts`）。
+6. **`think` 默认语义**：`request.think === undefined` 表示「随模型默认」，`false` 表示显式关闭。Ollama 原生 thinking 模型必须显式传 `think:false` 才能关闭，仅省略字段会被默认启用导致 content 为空（`packages/plugin-llm-ollama/src/index.ts`）。
 
-7. **per-model entry 注册顺序 = 优先级稳定性**：Ollama 并行探测能力时保留顺序以保证注册顺序稳定（`packages/plugin-ollama/src/index.ts`），因为相同 priority 下注册顺序是 DI 胜者的最后一道裁决（[服务模型](../concepts/service-model.md)）。
+7. **per-model entry 注册顺序 = 优先级稳定性**：Ollama 并行探测能力时保留顺序以保证注册顺序稳定（`packages/plugin-llm-ollama/src/index.ts`），因为相同 priority 下注册顺序是 DI 胜者的最后一道裁决（[服务模型](../concepts/service-model.md)）。
 
 ## 8. 交叉链接
 
