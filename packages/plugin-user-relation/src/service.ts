@@ -10,11 +10,12 @@
  * - LLM 提取本身 → M2 的 extractor.ts
  * - WebUI 端点 → M4 的 actions
  */
-import type { Context } from '@aalis/core';
+
 // type-only import：触发 declare module '@aalis/core' 合并，使 ctx.getService<'embedding'> 可用。
-// 运行时通过 ctx.getService 注入，无需把 @aalis/plugin-embedding-api 列入 dependencies。
-import type { EmbeddingService } from '@aalis/plugin-embedding-api';
-import type { LLMModel, ModelRef } from '@aalis/plugin-llm-api';
+// 运行时通过 ctx.getService 注入，无需把 @aalis/api-embedding 列入 dependencies。
+import type { EmbeddingService } from '@aalis/api-embedding';
+import type { LLMModel, ModelRef } from '@aalis/api-llm';
+import type { Context } from '@aalis/core';
 
 import {
   inferEntityHierarchy,

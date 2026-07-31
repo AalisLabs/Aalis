@@ -1,6 +1,6 @@
 import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import type { AuthorityService } from '../../packages/plugin-authority-api/src/index.js';
+import type { AuthorityService } from '../../packages/api-authority/src/index.js';
 import * as commandsModule from '../../packages/plugin-commands/src/index.js';
 import * as memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 

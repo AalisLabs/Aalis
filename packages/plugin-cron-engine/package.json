@@ -32,7 +32,7 @@
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-cron-engine-api": "workspace:*",
+    "@aalis/api-cron-engine": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },

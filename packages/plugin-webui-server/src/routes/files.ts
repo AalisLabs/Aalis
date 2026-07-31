@@ -7,8 +7,8 @@
 // ============================================================
 
 import { basename } from 'node:path';
+import type { StorageService } from '@aalis/api-storage';
 import type { Context } from '@aalis/core';
-import type { StorageService } from '@aalis/plugin-storage-api';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 

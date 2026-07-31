@@ -1,15 +1,15 @@
+import type { AgentService, PluginGroupInfo, PreprocessorFn, PreprocessorInfo } from '@aalis/api-agent';
+import { useCommandService } from '@aalis/api-commands';
+import type { GatewayService } from '@aalis/api-gateway';
+import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@aalis/api-llm';
+import { listLLMModels, resolveLLMModel } from '@aalis/api-llm';
+import type { MemoryService } from '@aalis/api-memory';
+import type { MessageArchiveService } from '@aalis/api-message-archive';
+import type { PersonaService, PersonaSessionOptions } from '@aalis/api-persona';
+import { getPlatformSelfIdentity } from '@aalis/api-platform';
+import type { SessionConfig, SessionManagerService } from '@aalis/api-session-manager';
+import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/api-tools';
 import type { Context, Logger, PluginManagerService } from '@aalis/core';
-import type { AgentService, PluginGroupInfo, PreprocessorFn, PreprocessorInfo } from '@aalis/plugin-agent-api';
-import { useCommandService } from '@aalis/plugin-commands-api';
-import type { GatewayService } from '@aalis/plugin-gateway-api';
-import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@aalis/plugin-llm-api';
-import { listLLMModels, resolveLLMModel } from '@aalis/plugin-llm-api';
-import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
-import type { PersonaService, PersonaSessionOptions } from '@aalis/plugin-persona-api';
-import { getPlatformSelfIdentity } from '@aalis/plugin-platform-api';
-import type { SessionConfig, SessionManagerService } from '@aalis/plugin-session-manager-api';
-import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/plugin-tools-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/schema-message';
 import { CONTROL_KINDS, getMessageName, getSenderLabel, WellKnownKinds } from '@aalis/schema-message';
@@ -181,7 +181,7 @@ class DefaultAgent implements AgentService {
    * 获取 Agent 子系统的插件分组
    *
    * 仅纳入 Agent 直接依赖的能力提供者；不包含 `platform`
-   * （平台属于独立子系统，由 plugin-platform-api 的 helper 负责）。
+   * （平台属于独立子系统，由 api-platform 的 helper 负责）。
    */
   getPluginGroups(): PluginGroupInfo[] {
     const pm = this.ctx.getService<PluginManagerService>('plugins');

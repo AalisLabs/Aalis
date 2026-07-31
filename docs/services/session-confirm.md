@@ -7,19 +7,19 @@
 它刻意**不**自己投递提示、也**不**自己拦截回复——这两件事因平台而异（OneBot/CLI 走 gateway 总线，WebUI 走 WS）。本服务把协调器做成一个工厂 `createChannel(deliver)`：调用方注入「怎么把文案发给用户」的 `deliver`，拿回一条 `{ handler, feed, dispose }` 通道；把 `handler` 注册到 `authority.setConfirmHandler(platform, ...)`，在自己的拦截点调 `feed`。各平台经 DI 复用同一份协调器实现，零重复、零 plugin→plugin 依赖。
 
 - 服务注册名：`session-confirm` —— 即 `ctx.getService<SessionConfirmService>('session-confirm')` 里的字符串。
-- 契约包：`@aalis/plugin-session-confirm-api`（`packages/plugin-session-confirm-api/src/index.ts`）。
+- 契约包：`@aalis/api-session-confirm`（`packages/api-session-confirm/src/index.ts`）。
 - 默认实现包：`@aalis/plugin-session-confirm`（`packages/plugin-session-confirm/src/index.ts`，`provides = ['session-confirm']`，`packages/plugin-session-confirm/src/index.ts`）。
 
 > 这是「轴 B」的传输/协调层。**裁决**仍在 authority：哪条能力需要确认、确认成功后授不授临时委托，都是 authority 的事（见 §6 与 docs/concepts/security-model.md）。本服务只负责把 authority 抛来的 `AccessRequest` 变成一次会话内的一问一答。
 
 ## 2. 契约
 
-来自 `packages/plugin-session-confirm-api/src/index.ts`。该 -api 既有**运行时服务**（`SessionConfirmService`），也复用 authority-api 的几个类型，无独立运行时实现（协调器实现在功能插件里）。
+来自 `packages/api-session-confirm/src/index.ts`。该 -api 既有**运行时服务**（`SessionConfirmService`），也复用 authority-api 的几个类型，无独立运行时实现（协调器实现在功能插件里）。
 
 ### 2.1 服务接口
 
 ```ts
-// packages/plugin-session-confirm-api/src/index.ts
+// packages/api-session-confirm/src/index.ts
 export interface SessionConfirmService {
   /**
    * 创建一条确认通道：用 deliver 投递提示文案到 request 所在会话；返回 { handler, feed }。
@@ -32,7 +32,7 @@ export interface SessionConfirmService {
 ### 2.2 ConfirmChannel —— 一条确认通道
 
 ```ts
-// packages/plugin-session-confirm-api/src/index.ts
+// packages/api-session-confirm/src/index.ts
 export interface ConfirmChannel {
   /** authority 确认回调（注册到 setConfirmHandler(platform, ...)）。 */
   handler: AccessConfirmHandler;
@@ -47,14 +47,14 @@ export interface ConfirmChannel {
 }
 ```
 
-服务类型经 declaration merging 注册到 core：`ServiceTypeMap['session-confirm'] = SessionConfirmService`（`packages/plugin-session-confirm-api/src/index.ts`）。
+服务类型经 declaration merging 注册到 core：`ServiceTypeMap['session-confirm'] = SessionConfirmService`（`packages/api-session-confirm/src/index.ts`）。
 
 ### 2.3 复用 authority-api 的类型
 
-`deliver`、`handler`、决策的形状都来自 `@aalis/plugin-authority-api`，写 provider/consumer 时需要懂这几个：
+`deliver`、`handler`、决策的形状都来自 `@aalis/api-authority`，写 provider/consumer 时需要懂这几个：
 
 ```ts
-// packages/plugin-authority-api/src/index.ts
+// packages/api-authority/src/index.ts
 export interface AccessRequest {
   name: string;                       // 操作名（命令名 / 工具名）
   type: 'command' | 'tool';
@@ -66,16 +66,16 @@ export interface AccessRequest {
   confirm?: CapabilityConfirm;        // 'session' | 'always'；'always' 不接受会话记忆
 }
 
-// packages/plugin-authority-api/src/index.ts
+// packages/api-authority/src/index.ts
 export interface AccessDecision {
   allowed: boolean;
   grant?: TemporaryGrantSpec;         // 批准后附带的临时委托范围（once / session）
 }
 
-// packages/plugin-authority-api/src/index.ts
+// packages/api-authority/src/index.ts
 export type AccessConfirmHandler = (request: AccessRequest) => Promise<boolean | AccessDecision>;
 
-// packages/plugin-authority-api/src/index.ts
+// packages/api-authority/src/index.ts
 export type CapabilityConfirm = 'session' | 'always';
 ```
 
@@ -118,8 +118,8 @@ import type {
   AccessConfirmHandler,
   AccessDecision,
   AccessRequest,
-} from '@aalis/plugin-authority-api';
-import type { ConfirmChannel, SessionConfirmService } from '@aalis/plugin-session-confirm-api';
+} from '@aalis/api-authority';
+import type { ConfirmChannel, SessionConfirmService } from '@aalis/api-session-confirm';
 
 export const name = '@aalis/plugin-my-session-confirm';
 export const provides = ['session-confirm'];           // ← 双源之一：导出 provides
@@ -200,8 +200,8 @@ DI 按名选胜者，顺序为 偏好 > 优先级（ServicePriority Backend 0 / 
 最常见的使用方式是**作为一个新平台**复用协调器，正如 webui-server 所做：
 
 ```ts
-import type { AuthorityService } from '@aalis/plugin-authority-api';
-import type { ConfirmChannel, SessionConfirmService } from '@aalis/plugin-session-confirm-api';
+import type { AuthorityService } from '@aalis/api-authority';
+import type { ConfirmChannel, SessionConfirmService } from '@aalis/api-session-confirm';
 
 let confirmChannel: ConfirmChannel | undefined;
 
@@ -230,16 +230,16 @@ ctx.onDispose(() => confirmChannel?.dispose());
 
 - **lazy / whenService**：`session-confirm` 与 `authority` 都可能晚上线或热重载反弹，故用 `whenService` 注册时机、`getService` 每用现取——切勿把服务实例缓存进闭包（见 docs/concepts/lazy-service-access.md）。
 - **服务缺失即降级**：`session-confirm` 缺席时 `whenService` 不回调，没人注册 handler；authority 的 `requestAccess` 取不到 handler 时**返回 `false`（拒绝）**（`packages/plugin-authority/src/authority-manager.ts`）——「无人在场即安全失败」。authority 缺席时 `setConfirmHandler` 那行的 `?.` 直接短路，不报错。
-- **吞掉命中的回复**：`feed` 返回 `true` 时务必中止后续处理（默认 bus 通道把 `feed` 放在 `inbound:confirm` 相位最前，命中即不调 `next()`，避免回复触达 agent 触发对在途生成的 abort —— `packages/plugin-session-confirm/src/index.ts`、`packages/plugin-gateway-api/src/index.ts`）。
+- **吞掉命中的回复**：`feed` 返回 `true` 时务必中止后续处理（默认 bus 通道把 `feed` 放在 `inbound:confirm` 相位最前，命中即不调 `next()`，避免回复触达 agent 触发对在途生成的 abort —— `packages/plugin-session-confirm/src/index.ts`、`packages/api-gateway/src/index.ts`）。
 - **错误边界**：handler 抛异常时 authority 侧 catch 并按拒绝处理（`packages/plugin-authority/src/authority-manager.ts`），但你自己的 `deliver` 失败不应让 Promise 永挂——超时兜底是最后防线。
 
 ## 6. 能力 / 风险 → 影响
 
 本服务直接卡在 authority 的 confirm 轴上，provider/consumer 必须遵守以下安全约束：
 
-- **触发者绑定（防群里第三方抢答）**：`feed` 仅在 `head.userId === replyUserId` 时消费（`packages/plugin-session-confirm/src/index.ts`、契约注释 `packages/plugin-session-confirm-api/src/index.ts`）。群聊里 `sessionId` 是群，若不绑发起者 `userId`，任意群成员都能替授权方按下「Y」——等于帮别人静默提权。私聊/WebUI 触发者与应答者天然同人；两者皆 `undefined`（系统注入等无 userId 场景）也视为同人。**新平台的 `feed` 调用必须传入真实应答者 `userId`**（webui 传 `wsIdentity.userId`，bus 通道传 `data.message.userId`）。
+- **触发者绑定（防群里第三方抢答）**：`feed` 仅在 `head.userId === replyUserId` 时消费（`packages/plugin-session-confirm/src/index.ts`、契约注释 `packages/api-session-confirm/src/index.ts`）。群聊里 `sessionId` 是群，若不绑发起者 `userId`，任意群成员都能替授权方按下「Y」——等于帮别人静默提权。私聊/WebUI 触发者与应答者天然同人；两者皆 `undefined`（系统注入等无 userId 场景）也视为同人。**新平台的 `feed` 调用必须传入真实应答者 `userId`**（webui 传 `wsIdentity.userId`，bus 通道传 `data.message.userId`）。
 - **`confirm: 'always'` 不接受会话记忆**：最高危能力每次都问，authority `requestAccess` 在 `always` 时跳过临时委托记忆（`packages/plugin-authority/src/authority-manager.ts`），协调器文案也相应改为「每次都需确认」（`packages/plugin-session-confirm/src/index.ts`）。provider 不得擅自为 `always` 引入「记住本会话」。
-- **confirm 与 visibility 正交**：visibility 管「能不能」（授权），confirm 管「是不是你本人此刻要」（意图确认 / 防注入减速带）。即便 owner（`*`），命中 confirm 的能力仍须确认——抵御 owner 会话内提示注入借权静默调高危（`packages/plugin-authority-api/src/index.ts`）。本服务是这条「减速带」的落地，**不要**为图省事让 owner 跳过确认。
+- **confirm 与 visibility 正交**：visibility 管「能不能」（授权），confirm 管「是不是你本人此刻要」（意图确认 / 防注入减速带）。即便 owner（`*`），命中 confirm 的能力仍须确认——抵御 owner 会话内提示注入借权静默调高危（`packages/api-authority/src/index.ts`）。本服务是这条「减速带」的落地，**不要**为图省事让 owner 跳过确认。
 - **超时默认拒**：无人应答 60s 后 resolve `false`（安全失败），不要默认放行。
 - **session 授予是临时委托**：确认返回 `{ allowed: true, grant: { scope: 'session', durationSeconds } }` 会让 authority 建立一条限时临时委托（YS 默认 600s，`packages/plugin-session-confirm/src/index.ts`；委托建立见 `packages/plugin-authority/src/authority-manager.ts,193+`）。这条委托按 `(capability, sessionId, userId)` 三元组匹配消费（`packages/plugin-authority/src/authority-manager.ts`），不跨会话、不跨用户泄漏。
 

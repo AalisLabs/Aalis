@@ -1,6 +1,6 @@
+import { createStorageGateway, type StorageService, toStorageUri } from '@aalis/api-storage';
+import type { VectorSearchResult, VectorStoreService } from '@aalis/api-vectorstore';
 import type { Context } from '@aalis/core';
-import { createStorageGateway, type StorageService, toStorageUri } from '@aalis/plugin-storage-api';
-import type { VectorSearchResult, VectorStoreService } from '@aalis/plugin-vectorstore-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 
 // ===== 插件元数据 =====

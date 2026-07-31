@@ -218,7 +218,7 @@ export interface WebuiPageDef {
 
 // ===== 会话 =====
 
-/** 会话级配置覆盖。字段与 `@aalis/plugin-session-manager-api` 的 SessionConfig 同义。 */
+/** 会话级配置覆盖。字段与 `@aalis/api-session-manager` 的 SessionConfig 同义。 */
 export interface SessionConfigData {
   /** 会话级 LLM 覆盖：`{ provider, model }` 二元组。编辑器只读写此字段。 */
   llm?: { provider: string; model: string };

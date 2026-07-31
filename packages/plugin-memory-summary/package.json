@@ -29,15 +29,15 @@
   },
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/plugin-llm-api": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/api-llm": "workspace:>=0.9.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.5.1 <1.0.0",
     "@aalis/util-text-normalize": "workspace:>=0.5.1 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-agent-api": "workspace:*",
-    "@aalis/plugin-memory-api": "workspace:*",
-    "@aalis/plugin-message-archive-api": "workspace:*",
+    "@aalis/api-agent": "workspace:*",
+    "@aalis/api-memory": "workspace:*",
+    "@aalis/api-message-archive": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },

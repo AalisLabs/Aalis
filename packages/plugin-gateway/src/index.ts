@@ -1,7 +1,7 @@
+import type { AgentService } from '@aalis/api-agent';
+import type { GatewayService, InboundPhaseData } from '@aalis/api-gateway';
+import { INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/api-gateway';
 import type { Context } from '@aalis/core';
-import type { AgentService } from '@aalis/plugin-agent-api';
-import type { GatewayService, InboundPhaseData } from '@aalis/plugin-gateway-api';
-import { INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/plugin-gateway-api';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
 
 // ----- 元数据 -----

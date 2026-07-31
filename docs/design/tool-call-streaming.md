@@ -8,7 +8,7 @@ OpenAI、DeepSeek 等遵循 OpenAI Chat Completions 协议的 LLM 在生成 `too
 
 ## 协议契约
 
-### `ChatStreamChunk.toolCallProgress`（`@aalis/plugin-llm-api`）
+### `ChatStreamChunk.toolCallProgress`（`@aalis/api-llm`）
 
 ```ts
 export interface ToolCallProgress {

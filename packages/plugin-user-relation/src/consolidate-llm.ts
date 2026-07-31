@@ -6,8 +6,8 @@
  * 这两步都是「可选」：仅当 consolidationModel 已配置时启用，否则保持原算法行为。
  */
 
+import { LLMCapabilities, type LLMModel, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
 import type { Context } from '@aalis/core';
-import { LLMCapabilities, type LLMModel, type ModelRef, resolveLLMModel } from '@aalis/plugin-llm-api';
 
 import type { EntityNode, EventNode, PersonNode } from './types.js';
 

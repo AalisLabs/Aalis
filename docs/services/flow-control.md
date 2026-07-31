@@ -5,7 +5,7 @@
 `flow-control` 管理**每会话的「流控状态」**——决定缓冲中的入站消息何时（以及是否）有资格点燃一次 agent 回合：计数器/活跃指数（间隔触发依据）、回复后冷却、限速窗口（防 DDoS/刷屏）、自禁言时段、闲置主动触发调度。它**不做触发判定本身**（那是 `trigger-policy` 的活），只维护被判定方读写的状态 + 在入站管线里把禁言/冷却/限速的消息直接「吞掉」。
 
 - 服务注册名：`getService('flow-control')`（字符串键）
-- 契约包：`@aalis/plugin-flow-control-api`
+- 契约包：`@aalis/api-flow-control`
 - 参考实现：`@aalis/plugin-flow-control`
 - 紧密协作的兄弟服务：`@aalis/plugin-trigger-policy`（`trigger-policy`），二者占据入站管线相邻两个相位。
 
@@ -13,7 +13,7 @@
 
 ## 2. 契约
 
-完整接口（`packages/plugin-flow-control-api/src/index.ts`）：
+完整接口（`packages/api-flow-control/src/index.ts`）：
 
 ```ts
 export interface FlowControlService {
@@ -45,7 +45,7 @@ export interface FlowControlService {
 }
 ```
 
-只读快照类型（`packages/plugin-flow-control-api/src/index.ts`）——这是 `trigger-policy` 唯一拿来算「是否到点」的视图：
+只读快照类型（`packages/api-flow-control/src/index.ts`）——这是 `trigger-policy` 唯一拿来算「是否到点」的视图：
 
 ```ts
 export interface FlowSessionStateSnapshot {
@@ -63,7 +63,7 @@ export interface FlowSessionStateSnapshot {
 }
 ```
 
-类型绑定经 declaration merging 随 -api 包提供（`packages/plugin-flow-control-api/src/index.ts`），下游只 `import '@aalis/plugin-flow-control-api'` 即可让 `ctx.getService('flow-control')` 拿到类型，**不必硬依赖实现包**。
+类型绑定经 declaration merging 随 -api 包提供（`packages/api-flow-control/src/index.ts`），下游只 `import '@aalis/api-flow-control'` 即可让 `ctx.getService('flow-control')` 拿到类型，**不必硬依赖实现包**。
 
 要点：
 - `getStateSnapshot` / `getThreshold` 是**纯读**；其余方法是状态变更副作用。
@@ -109,8 +109,8 @@ export const inject = { required: ['gateway'], optional: ['message-archive'] };
 
 ```ts
 import type { Context } from '@aalis/core';
-import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
-import type { FlowControlService } from '@aalis/plugin-flow-control-api';
+import { INBOUND_PHASE } from '@aalis/api-gateway';
+import type { FlowControlService } from '@aalis/api-flow-control';
 
 export const name = '@aalis/plugin-my-flow-control';
 export const provides = ['flow-control'];
@@ -158,7 +158,7 @@ export function apply(ctx: Context): void {
 按 [concepts/lazy-service-access](../concepts/lazy-service-access.md) 的铁律：**每次用都 `getService()` 现取，不缓存引用**（provider 反弹会让旧引用失效）。flow-control 是 `optional` 依赖的典范——缺失即降级放行：
 
 ```ts
-import type { FlowControlService } from '@aalis/plugin-flow-control-api';
+import type { FlowControlService } from '@aalis/api-flow-control';
 
 // trigger-policy 读快照算是否到点（packages/plugin-trigger-policy/src/index.ts）
 const flow = ctx.getService<FlowControlService>('flow-control');
@@ -213,7 +213,7 @@ flow-control 不直接接触 authority/SSRF/沙盒，但它是**对外可见行�
 
 ## 8. 交叉链接
 
-- [concepts/message-llm-pipeline](../concepts/message-llm-pipeline.md) — 入站相位 `CONFIRM → COMMAND → FLOW → TRIGGER → DISPATCH` 全貌（相位常量见 `packages/plugin-gateway-api/src/index.ts`）。
+- [concepts/message-llm-pipeline](../concepts/message-llm-pipeline.md) — 入站相位 `CONFIRM → COMMAND → FLOW → TRIGGER → DISPATCH` 全貌（相位常量见 `packages/api-gateway/src/index.ts`）。
 - [concepts/service-model](../concepts/service-model.md)、[concepts/lazy-service-access](../concepts/lazy-service-access.md) — DI 选名规则、现取不缓存。
 - [concepts/manifest-metadata](../concepts/manifest-metadata.md) — `provides/inject` 双源同步。
 - [concepts/storage-uri-grammar](../concepts/storage-uri-grammar.md) — `mutedUntil` 持久化用的 `data:` root 文法。

@@ -10,16 +10,16 @@
  * `prompt_budget_info` 工具供 AI 查询。零业务逻辑，纯只读 introspection。
  */
 
+import type { TokenUsageEvent } from '@aalis/api-agent';
+import { useToolService } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
-import type { TokenUsageEvent } from '@aalis/plugin-agent-api';
-import { useToolService } from '@aalis/plugin-tools-api';
 import { createBoundedMap } from '@aalis/util-bounded-map';
 
 export const name = '@aalis/plugin-prompt-budget';
 export const displayName = 'Prompt 预算自检';
 export const subsystem = 'agent';
 
-/** 事件契约形状来自 @aalis/plugin-agent-api 的 TokenUsageEvent，本插件只追加入库时刻 */
+/** 事件契约形状来自 @aalis/api-agent 的 TokenUsageEvent，本插件只追加入库时刻 */
 interface TokenUsage extends TokenUsageEvent {
   /** 本插件追加：记录入库时刻，方便 AI 判断数据新鲜度 */
   observedAt: number;

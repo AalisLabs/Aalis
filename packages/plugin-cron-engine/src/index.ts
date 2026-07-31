@@ -9,8 +9,8 @@
 // 由 scheduler / workflow 等上层插件 inject.required 后调用 subscribe()。
 // ============================================================
 
+import type { CronEngine, CronSubscribeOptions, ValidateResult } from '@aalis/api-cron-engine';
 import type { Context } from '@aalis/core';
-import type { CronEngine, CronSubscribeOptions, ValidateResult } from '@aalis/plugin-cron-engine-api';
 import { matchesCron, normalizeCronExpr, validateCronExpr } from '@aalis/util-cron';
 
 export const name = '@aalis/plugin-cron-engine';

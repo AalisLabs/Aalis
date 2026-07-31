@@ -8,7 +8,7 @@
 //
 // 所有业务/领域类型均由各 @aalis/plugin-*-api 包导出：
 //   - Message / ContentSegment           → @aalis/schema-message
-//   - ToolCall / ToolDefinition / ToolFunction → @aalis/plugin-tools-api
+//   - ToolCall / ToolDefinition / ToolFunction → @aalis/api-tools
 //   - LLM / Memory / Storage / Embedding / VectorStore / Tools / Commands / Gateway /
 //     WebUI / Authority / Agent / Platform 等服务接口及关联业务类型同样在各自的 plugin-*-api。
 // ============================================================

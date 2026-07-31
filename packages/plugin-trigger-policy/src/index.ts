@@ -1,14 +1,14 @@
+import type { FlowControlService } from '@aalis/api-flow-control';
+import type { MessageArchiveService } from '@aalis/api-message-archive';
+import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { Context } from '@aalis/core';
-import type { FlowControlService } from '@aalis/plugin-flow-control-api';
-import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
-import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage } from '@aalis/schema-message';
 import type { TriggerDecision, TriggerPolicyService } from './types.js';
 
 export type { TriggerDecision, TriggerKind, TriggerPolicyService } from './types.js';
 
-import { INBOUND_PHASE } from '@aalis/plugin-gateway-api';
+import { INBOUND_PHASE } from '@aalis/api-gateway';
 import {
   defaultTriggerPolicyConfig,
   isScopeEnabled,

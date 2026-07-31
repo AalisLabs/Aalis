@@ -3,7 +3,7 @@
 // POSIX 5 字段 cron + `@hourly`/`@daily`/... 别名 + `@every Ns` 间隔语法。
 // 与 Aalis 的任何概念无关——不 import core、不碰 node:，可在任何 JS 运行时调用。
 //
-// 订阅协议（CronEngine 服务契约）在 @aalis/plugin-cron-engine-api，
+// 订阅协议（CronEngine 服务契约）在 @aalis/api-cron-engine，
 // 实现在 @aalis/plugin-cron-engine。
 
 /**

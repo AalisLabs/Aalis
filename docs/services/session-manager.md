@@ -5,16 +5,16 @@
 
 ## 1. 定位
 
-一句话：**维护对话会话的生命周期（创建/查询/状态/树形父子关系）并把分层会话配置合并成「最终生效配置」交给 Agent 消费。** 取用名 `getService<SessionManagerService>('session-manager')`，契约包 `@aalis/plugin-session-manager-api`，参考实现 `@aalis/plugin-session-manager`。
+一句话：**维护对话会话的生命周期（创建/查询/状态/树形父子关系）并把分层会话配置合并成「最终生效配置」交给 Agent 消费。** 取用名 `getService<SessionManagerService>('session-manager')`，契约包 `@aalis/api-session-manager`，参考实现 `@aalis/plugin-session-manager`。
 
 核心职责两件：
 
-- **配置解析**：会话自身 config → 父会话 `sessionDefaults` → 平台 profile → 全局 defaults，按优先级合并出一份 `resolveConfig(sessionId, platform)`（`plugin-session-manager-api/src/index.ts`、实现 `plugin-session-manager/src/index.ts`）。Agent 每条消息都查它来决定用哪个 LLM / persona / 工具分组。
+- **配置解析**：会话自身 config → 父会话 `sessionDefaults` → 平台 profile → 全局 defaults，按优先级合并出一份 `resolveConfig(sessionId, platform)`（`api-session-manager/src/index.ts`、实现 `plugin-session-manager/src/index.ts`）。Agent 每条消息都查它来决定用哪个 LLM / persona / 工具分组。
 - **生命周期与会话树**：CRUD + 父子树 + `active/waiting/completed/error/archived` 状态机；会话状态由本插件**自治维护**（监听 `inbound:message` / `outbound:message` / `agent:turn:after`），并通过 `session:*` 事件广播（`plugin-session-manager/src/index.ts`）。
 
 它**不是**消息存储——历史消息存在 `memory` 服务里；本服务只把会话元数据持久化到 `memory` 的 metadata 命名空间 `sessions`（`plugin-session-manager/src/index.ts`）。
 
-## 2. 契约（`@aalis/plugin-session-manager-api/src/index.ts`）
+## 2. 契约（`@aalis/api-session-manager/src/index.ts`）
 
 ### 2.1 服务接口 `SessionManagerService`（`index.ts`）
 
@@ -99,7 +99,7 @@ interface SessionInfo {
 'session:deleted':   [sessionId: string];
 ```
 
-**只想监听这些事件**（而不调用服务）的插件也应当依赖本 `-api` 包——它锚定了 `import type {} from '@aalis/core'` 让 augmentation 生效（`index.ts`）。`plugin-file-reader` 就是仅为 `session:deleted` 事件而 `import type {} from '@aalis/plugin-session-manager-api'`（`plugin-file-reader/src/index.ts`）。
+**只想监听这些事件**（而不调用服务）的插件也应当依赖本 `-api` 包——它锚定了 `import type {} from '@aalis/core'` 让 augmentation 生效（`index.ts`）。`plugin-file-reader` 就是仅为 `session:deleted` 事件而 `import type {} from '@aalis/api-session-manager'`（`plugin-file-reader/src/index.ts`）。
 
 ## 3. 谁提供 / 谁消费
 
@@ -128,7 +128,7 @@ import type { Context, PluginModule } from '@aalis/core';
 import { ServicePriority } from '@aalis/core';
 import type {
   PlatformProfile, SessionConfig, SessionInfo, SessionManagerService, SessionTreeNode,
-} from '@aalis/plugin-session-manager-api';
+} from '@aalis/api-session-manager';
 
 export const name = '@me/plugin-session-manager';
 export const inject = { required: ['memory'] as const, optional: ['llm', 'persona'] as const };

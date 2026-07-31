@@ -13,8 +13,8 @@
  * - config.bind 默认 127.0.0.1（仅本机访问）
  */
 import { createServer, type Server } from 'node:http';
+import type { RegisteredTool, ToolCallContext, ToolService, ToolSummary } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
-import type { RegisteredTool, ToolCallContext, ToolService, ToolSummary } from '@aalis/plugin-tools-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';

@@ -100,7 +100,7 @@ plugin-agent                             plugin-webui-server
 
 - 总代码 < 140 行
 - 0 业务逻辑、0 计算，仅缓存最近一次事件
-- 无运行时依赖（仅 `@aalis/core` + `@aalis/plugin-tools-api` 的 Context 扩展声明）
+- 无运行时依赖（仅 `@aalis/core` + `@aalis/api-tools` 的 Context 扩展声明）
 
 ## 何时启用
 
