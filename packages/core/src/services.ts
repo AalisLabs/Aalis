@@ -13,7 +13,7 @@ import type { DependencyDeclaration } from './types/services.js';
  * 解析序恒为「偏好 > 优先级 > 注册顺序」。
  *
  * 推荐用法：
- * - `Backend = 0`：普通后端实现（如 plugin-openai / plugin-deepseek）。
+ * - `Backend = 0`：普通后端实现（如 plugin-llm-openai / plugin-llm-deepseek）。
  * - `Override = 50`：用户级覆盖；同名服务希望默认胜过普通后端时使用。
  * - `System = 200`：保留给核心系统级覆盖。
  *
@@ -120,7 +120,7 @@ export class ServiceContainer {
    * 检查指定 contextId 是否注册了某个服务。
    *
    * "拥有" 语义：同时匹配 `contextId === ownerId` 和 per-entry 拆粒度的
-   * `contextId` 以 `ownerId + '/'` 为前缀的子 entry（如 `@aalis/plugin-ollama:main/llama3`）。
+   * `contextId` 以 `ownerId + '/'` 为前缀的子 entry（如 `@aalis/plugin-llm-ollama:main/llama3`）。
    */
   hasByContext(name: string, contextId: string): boolean {
     const list = this.entries.get(name);

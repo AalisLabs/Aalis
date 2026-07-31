@@ -16,7 +16,7 @@
 
 ```mermaid
 flowchart TB
-  impl["<b>实现包</b>（runtime + business logic）<br/>plugin-deepseek / plugin-openai / plugin-ollama<br/>plugin-memory-sqlite / plugin-memory-mongodb / …<br/>plugin-tools / plugin-commands / plugin-gateway / …"]
+  impl["<b>实现包</b>（runtime + business logic）<br/>plugin-llm-deepseek / plugin-llm-openai / plugin-llm-ollama<br/>plugin-memory-sqlite / plugin-memory-mongodb / …<br/>plugin-tools / plugin-commands / plugin-gateway / …"]
   api["<b>api 包</b>（types + service/hook augmentation + 领域 helper）<br/>plugin-llm-api / plugin-memory-api / plugin-storage-api<br/>plugin-embedding-api / plugin-vectorstore-api<br/>plugin-tools-api / plugin-commands-api / plugin-gateway-api<br/>plugin-webui-api / plugin-authority-api / plugin-agent-api"]
   core["<b>@aalis/core</b>（runtime infra + extension points only）<br/>App · Context · EventBus · ServiceContainer · HookRegistry<br/>PluginManager · ConfigManager · Logger · ……<br/> <br/><b>4 个扩展点</b>（空接口，由 api 包 declaration merging 注入）<br/>· ServiceTypeMap（服务名 → 服务实例接口）<br/>· AalisEvents（事件名 → 参数元组）<br/>· HookContextMap（钩子名 → 中间件上下文）<br/>· ContributionPointMap（贡献点名 → spec 类型）"]
   impl -->|imports types| api

@@ -1,7 +1,7 @@
-# plugin-ollama — Ollama 本地模型 LLM
+# plugin-llm-ollama — Ollama 本地模型 LLM
 
-**包名**: `@aalis/plugin-ollama`  
-**源码**: `packages/plugin-ollama/src/index.ts`
+**包名**: `@aalis/plugin-llm-ollama`  
+**源码**: `packages/plugin-llm-ollama/src/index.ts`
 
 ## 概述
 
@@ -10,7 +10,7 @@ Ollama 本地模型 LLM 服务提供者，通过 Ollama REST API 连接本地运
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-ollama'
+meta.name = '@aalis/plugin-llm-ollama'
 meta.provides = ['llm']
 meta.inject = {}
 ```

@@ -25,7 +25,7 @@
 | [plugin-embedding-api](./plugin-embedding-api.md) | `EmbeddingService` —— 文本向量化 | plugin-embedding-openai / plugin-embedding-ollama |
 | [plugin-gateway-api](./plugin-gateway-api.md) | `GatewayService` —— 消息入站编排 | plugin-gateway |
 | [plugin-media-api](../services/media.md) | `MediaService` —— 多模态预处理（vision/audio/video） | plugin-media |
-| [plugin-llm-api](./plugin-llm-api.md) | `LLMService` + capability 框架 | plugin-openai / plugin-ollama / plugin-deepseek 等 |
+| [plugin-llm-api](./plugin-llm-api.md) | `LLMService` + capability 框架 | plugin-llm-openai / plugin-llm-ollama / plugin-llm-deepseek 等 |
 | [plugin-memory-api](./plugin-memory-api.md) | `MemoryService` —— 历史与元数据存储 | plugin-memory-inmemory / sqlite / mongodb / vector |
 | [schema-message](./schema-message.md) | 消息数据契约（无 service） | 由各 adapter 直接 emit |
 | [plugin-session-manager-api](./plugin-session-manager-api.md) | `SessionManagerService` —— 会话配置 | plugin-session-manager |

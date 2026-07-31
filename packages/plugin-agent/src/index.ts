@@ -1875,7 +1875,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     .command('session.set', '设定当前对话的模型 / 人设 / 显示名（会话级覆盖，持久化，重启不丢）', {
       risk: 'sensitive',
       examples: [
-        '/session.set -m @aalis/plugin-openai:main/gpt-4o -p catgirl',
+        '/session.set -m @aalis/plugin-llm-openai:main/gpt-4o -p catgirl',
         '/session.set -p strict-reviewer',
         '/session.set -n 深夜助手',
       ],
@@ -1897,7 +1897,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (modelRef) {
         const lastSlash = modelRef.lastIndexOf('/');
         if (lastSlash <= 0 || lastSlash === modelRef.length - 1) {
-          return '模型格式错误。请用 `provider/model`，例如 `@aalis/plugin-openai:main/gpt-4o`';
+          return '模型格式错误。请用 `provider/model`，例如 `@aalis/plugin-llm-openai:main/gpt-4o`';
         }
         const chatModels = listLLMModels(ctx, { caps: ['chat'] });
         if (!chatModels.some(e => e.contextId === modelRef)) {

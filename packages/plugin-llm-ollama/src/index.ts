@@ -10,7 +10,7 @@ import { safeFetch } from '@aalis/util-network-guard';
 
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-ollama';
+export const name = '@aalis/plugin-llm-ollama';
 export const displayName = 'Ollama';
 export const subsystem = 'llm';
 export const provides = ['llm'];

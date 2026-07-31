@@ -64,7 +64,7 @@ config.reload()                            // 重新从磁盘加载
 
 ```yaml
 plugins:
-  "@aalis/plugin-deepseek":
+  "@aalis/plugin-llm-deepseek":
     apiKey: "${DEEPSEEK_API_KEY}"  # 加载时展开，保存时恢复
 ```
 

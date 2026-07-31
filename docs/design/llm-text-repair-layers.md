@@ -20,7 +20,7 @@ LLM API 响应存在两类常见的"脏输出"问题，需要在不同的系统�
 └────────────────────┬─────────────────────────────┘
                      │ ChatResponse { content, toolCalls }
 ┌────────────────────▼─────────────────────────────┐
-│  plugin-deepseek / plugin-openai / ...           │
+│  plugin-llm-deepseek / plugin-llm-openai / ...           │
 │  （LLM 适配器）                                   │  ← 协议层修复（厂商特定）
 └────────────────────┬─────────────────────────────┘
                      │ SSE / HTTP
@@ -34,7 +34,7 @@ LLM API 响应存在两类常见的"脏输出"问题，需要在不同的系统�
 └──────────────────────────────────────────────────┘
 ```
 
-### 层 1：LLM 适配器（`plugin-deepseek` 等）
+### 层 1：LLM 适配器（`plugin-llm-deepseek` 等）
 
 **职责**：处理本厂商专有协议的"协议层泄漏"。
 
@@ -158,7 +158,7 @@ normalizeAssistantContent(content) → stripLeakedSpecialTokens = no-op，fixGfm
 plugin-agent
   └── @aalis/util-text-normalize  (normalizeAssistantContent, stripLeakedSpecialTokens)
 
-plugin-deepseek
+plugin-llm-deepseek
   ├── @aalis/util-text-normalize  (stripLeakedSpecialTokens)
   └── ./dsml-parser               (parseDsmlToolCalls → ToolCall[])
 

@@ -88,7 +88,7 @@ export interface ChatModelRequest {
 /**
  * 单个 LLM model 的 service entry。
  *
- * 一个 LLM provider 插件实例（如 plugin-openai）会按其 listModels() 结果
+ * 一个 LLM provider 插件实例（如 plugin-llm-openai）会按其 listModels() 结果
  * 在 apply() 期间为**每个 model 单独**调用 `ctx.provide('llm', modelHandle, {...})`，
  * model handle 上的 capabilities 字段诚实地反映该 model 的能力。
  *
@@ -195,7 +195,7 @@ export interface LLMModelEntry {
  * 由 ConfigSchema type='llm-ref' 字段统一编辑，YAML 中以嵌套对象形式存储。
  */
 export interface ModelRef {
-  /** provider 的 contextId（plugin instanceId，如 `@aalis/plugin-openai:main`）。 */
+  /** provider 的 contextId（plugin instanceId，如 `@aalis/plugin-llm-openai:main`）。 */
   provider?: string;
   /** model id（provider 内唯一，如 `gpt-4o`）。 */
   model?: string;

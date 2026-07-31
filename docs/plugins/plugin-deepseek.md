@@ -1,7 +1,7 @@
-# plugin-deepseek — DeepSeek LLM 服务
+# plugin-llm-deepseek — DeepSeek LLM 服务
 
-**包名**: `@aalis/plugin-deepseek`  
-**源码**: `packages/plugin-deepseek/src/index.ts`
+**包名**: `@aalis/plugin-llm-deepseek`  
+**源码**: `packages/plugin-llm-deepseek/src/index.ts`
 
 ## 概述
 
@@ -10,7 +10,7 @@ DeepSeek API 的 `LLMService` 适配器，支持流式输出、工具调用和�
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-deepseek'
+meta.name = '@aalis/plugin-llm-deepseek'
 meta.provides = ['llm']
 meta.inject = {} // 无依赖
 ```

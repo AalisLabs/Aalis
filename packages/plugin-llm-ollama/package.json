@@ -1,11 +1,11 @@
 {
-  "name": "@aalis/plugin-ollama",
+  "name": "@aalis/plugin-llm-ollama",
   "version": "0.9.0",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/AalisLabs/Aalis.git",
-    "directory": "packages/plugin-ollama"
+    "directory": "packages/plugin-llm-ollama"
   },
   "author": "Ace Nyan <ace@acenyan.com>",
   "bugs": {

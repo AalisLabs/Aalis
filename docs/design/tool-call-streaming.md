@@ -36,9 +36,9 @@ export interface ChatStreamChunk {
 
 | Provider | 实现状态 | 备注 |
 | --- | --- | --- |
-| `@aalis/plugin-openai` | ✅ | 每个 delta yield 一次 |
-| `@aalis/plugin-deepseek` | ✅ | 同 OpenAI |
-| `@aalis/plugin-ollama` | ✅（受限）| Ollama 一次性返回完整 tool_calls，故每个 tool 仅 emit 一次 progress |
+| `@aalis/plugin-llm-openai` | ✅ | 每个 delta yield 一次 |
+| `@aalis/plugin-llm-deepseek` | ✅ | 同 OpenAI |
+| `@aalis/plugin-llm-ollama` | ✅（受限）| Ollama 一次性返回完整 tool_calls，故每个 tool 仅 emit 一次 progress |
 
 ### `StreamChunkMessage.toolCallProgress`（`@aalis/schema-message`）
 

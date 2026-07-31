@@ -27,7 +27,7 @@ function parseApiError(provider: string, status: number, body: string): string {
   return `${provider} API 错误 (${status}): ${body}`;
 }
 
-export const name = '@aalis/plugin-openai';
+export const name = '@aalis/plugin-llm-openai';
 export const displayName = 'OpenAI';
 export const subsystem = 'llm';
 export const provides = ['llm'];

@@ -54,7 +54,7 @@ updateSessionTitle(sessionId: string, title: string): Promise<void>;
 
 ```ts
 interface SessionConfig {
-  llm?: { provider: string; model: string };  // provider = LLM 插件实例 contextId（如 @aalis/plugin-openai:main）
+  llm?: { provider: string; model: string };  // provider = LLM 插件实例 contextId（如 @aalis/plugin-llm-openai:main）
   enabledToolGroups?: string[];
   persona?: string;                            // 人格文件名（不含后缀）
   systemPromptExtra?: string;
