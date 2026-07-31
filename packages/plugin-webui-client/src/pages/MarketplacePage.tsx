@@ -19,8 +19,8 @@ interface MarketPkg {
   author?: string;
   installed: boolean;
   official?: boolean;
-  /** 组件类别（后端按类型关键词分类）：功能插件 / api 契约 / 数据规范 / 前端界面 / 工具库 */
-  category?: 'plugin' | 'api' | 'schema' | 'interface' | 'util';
+  /** 组件类别（后端按类型关键词分类）：功能插件 / api 契约 / 数据规范 / 前端界面 / 工具库 / 内核 / 宿主 */
+  category?: Exclude<Category, 'all'>;
   keywords?: string[];
   downloads?: number;
   updated?: string;
@@ -33,6 +33,17 @@ interface MarketPkg {
 /** 镜像后端 PkgOrigin。判据是根 package.json 的依赖声明，非文件路径。 */
 type PkgOrigin = 'registry' | 'workspace' | 'link' | 'git' | 'transitive';
 
+/** 镜像 /api/system-components 的条目（core / runtime / api / schema / util）。 */
+interface SystemComponent {
+  name: string;
+  version?: string;
+  latest?: string;
+  request?: string;
+  description?: string;
+  kind: 'core' | 'runtime' | 'api' | 'schema' | 'util';
+  updatable?: boolean;
+}
+
 /** 非 registry 来源的角标与解释——市场更新对它们无效，说明原因好过给一个按不动的按钮。 */
 const ORIGIN_BADGE: Record<Exclude<PkgOrigin, 'registry'>, { label: string; hint: string }> = {
   workspace: { label: '工作区', hint: '源码在本仓库内，改代码即生效，不经市场更新' },
@@ -44,7 +55,10 @@ const ORIGIN_BADGE: Record<Exclude<PkgOrigin, 'registry'>, { label: string; hint
 type SortKey = 'relevance' | 'downloads' | 'updated' | 'score';
 type Source = 'all' | 'official' | 'community';
 type Status = 'all' | 'installed' | 'available';
-type Category = 'all' | 'plugin' | 'api' | 'schema' | 'interface' | 'util';
+// core / runtime 不经 npm 关键词检索（关键词是开放命名空间，任何人都能发一个带
+// aalis-core 关键词的包冒充内核），它们由 /api/system-components 从**本地已装 + 根依赖**
+// 取得，在这里与检索结果合并——市场是更新的统一入口，用户不该为了升级内核换一个页面。
+type Category = 'all' | 'plugin' | 'api' | 'schema' | 'interface' | 'util' | 'core' | 'runtime';
 
 const SORT_LABELS: Record<SortKey, string> = {
   relevance: '默认排序',
@@ -57,11 +71,33 @@ const STATUS_LABELS: Record<Status, string> = { all: '全部状态', installed: 
 const CATEGORY_LABELS: Record<Category, string> = {
   all: '全部类型',
   plugin: '功能插件',
+  interface: '前端界面',
+  core: '内核',
+  runtime: '宿主',
   api: 'API 契约',
   schema: '数据规范',
-  interface: '前端界面',
   util: '工具库',
 };
+
+/**
+ * 只有功能插件与前端界面是**用户主动装**的。
+ *
+ * 其余五类要么随脚手架就位（core / runtime），要么作为插件依赖被 npm 自动带入、
+ * 卸载时自动剪枝（api / schema / util）——单独装一个 `-api` 包零效果（不带
+ * `aalis-plugin` 关键词，加载器不收）。展示它们是为了让用户看见实例里有什么、
+ * 版本多少、能否更新，不是让人去装。
+ */
+const INSTALLABLE_CATEGORIES: ReadonlySet<string> = new Set(['plugin', 'interface']);
+
+interface UpdateResult {
+  ok: boolean;
+  message: string;
+  conflicts?: string[];
+  restarting?: boolean;
+}
+
+/** 只有根依赖里以 semver 范围声明的才能经市场更新（与服务端 isRegistryDep 同一判据）。 */
+const isUpdatable = (p: { origin?: PkgOrigin }): boolean => (p.origin ?? 'transitive') === 'registry';
 
 /** 1234 → 1.2k；1200000 → 1.2M */
 function fmtDownloads(n: number): string {
@@ -92,9 +128,12 @@ function timeAgo(iso?: string): string {
 export function MarketplacePage({
   plugins,
   onRefresh,
+  onRestart,
 }: {
   plugins: PluginInfo[];
   onRefresh: () => void;
+  /** 更新提交后进程会重启，交由外层进入「等待重连」态。 */
+  onRestart?: (msg: string) => void;
 }) {
   const { confirm, dialog } = useConfirm();
   const [installing, setInstalling] = useState<string | null>(null);
@@ -107,8 +146,13 @@ export function MarketplacePage({
   const [sort, setSort] = useState<SortKey>('relevance');
   const [source, setSource] = useState<Source>('all');
   const [status, setStatus] = useState<Status>('all');
-  // 默认只看功能插件（减少心智负担）；api 契约 / 前端 一键可切
+  // 默认只看功能插件（减少心智负担）；其余类别一键可切
   const [category, setCategory] = useState<Category>('plugin');
+  // 批量更新：市场是更新的**统一入口**——插件与内核可能必须一起更新（插件新版要求更高的
+  // core 时，peer 预检会整批拒绝），分在两个页面用户就勾不到一起。
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [updating, setUpdating] = useState(false);
+  const [updateResult, setUpdateResult] = useState<UpdateResult | null>(null);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -122,8 +166,29 @@ export function MarketplacePage({
     setLoading(true);
     setWarning(null);
     try {
-      const res = await api<{ packages: MarketPkg[]; warning?: string }>('/api/marketplace?q=');
-      setRegistry(res.packages ?? []);
+      // 两个数据源合并：npm 关键词检索（可装组件）+ 本地已装的系统组件（core/runtime 等，
+      // 它们**不进检索轴**——关键词是开放命名空间，谁都能发个带 aalis-core 的包冒充内核）。
+      // 合并在前端做，后端两条路各自的信任来源不混。
+      const [res, sys] = await Promise.all([
+        api<{ packages: MarketPkg[]; warning?: string }>('/api/marketplace?q='),
+        api<{ components: SystemComponent[] }>('/api/system-components').catch(() => ({ components: [] })),
+      ]);
+      const fromNpm = res.packages ?? [];
+      const seen = new Set(fromNpm.map(p => p.name));
+      const extra: MarketPkg[] = (sys.components ?? [])
+        .filter(c => !seen.has(c.name)) // 检索已覆盖的不重复加
+        .map(c => ({
+          name: c.name,
+          description: c.description ?? '',
+          version: c.latest ?? c.version ?? '',
+          resolved: c.version,
+          request: c.request,
+          origin: c.updatable ? 'registry' : 'transitive',
+          installed: true,
+          official: c.name.startsWith('@aalis/'),
+          category: c.kind,
+        }));
+      setRegistry([...fromNpm, ...extra]);
       if (res.warning) setWarning(res.warning);
     } catch {
       showToast('无法加载插件市场');
@@ -137,6 +202,49 @@ export function MarketplacePage({
   }, [loadRegistry]);
 
   const installedNames = useMemo(() => new Set(plugins.map(p => p.name)), [plugins]);
+
+  /** 可更新 = 已装 + 有更高版本 + 来源是 registry（传递依赖/工作区包单独升只会装出第二份）。 */
+  const updatable = useMemo(
+    () => registry.filter(p => p.installed && p.resolved && p.version && p.resolved !== p.version && isUpdatable(p)),
+    [registry],
+  );
+  // 勾选集随可更新列表收敛：刷新后不再可更新的项不该继续留在待更新集里。
+  useEffect(() => {
+    setSelected(prev => {
+      const names = new Set(updatable.map(p => p.name));
+      const next = new Set([...prev].filter(n => names.has(n)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [updatable]);
+
+  const selectedTargets = updatable.filter(p => selected.has(p.name));
+  const willFullRestart = selectedTargets.some(p => p.category === 'core' || p.category === 'runtime');
+
+  const toggleSelected = (name: string) =>
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+
+  const applyUpdates = async () => {
+    if (selectedTargets.length === 0 || updating) return;
+    setUpdating(true);
+    setUpdateResult(null);
+    try {
+      const r = await api<UpdateResult>('/api/marketplace/update', {
+        method: 'POST',
+        body: JSON.stringify({ targets: selectedTargets.map(p => ({ name: p.name, version: p.version })) }),
+      });
+      setUpdateResult(r);
+      // 服务端已提交安装并触发重启——本页不再自行刷新，交给外层进入等待重连态。
+      if (r.ok && r.restarting) onRestart?.(`正在应用 ${selectedTargets.length} 项更新并重启…`);
+    } catch (err) {
+      setUpdateResult({ ok: false, message: err instanceof Error ? err.message : String(err) });
+    }
+    setUpdating(false);
+  };
 
   // 合并实时安装状态 + 本地筛选（来源/状态/搜索词）+ 排序。
   const filtered = useMemo(() => {
@@ -262,6 +370,56 @@ export function MarketplacePage({
         )}
       </div>
 
+      {updatable.length > 0 && (
+        <div className="update-panel">
+          <div className="update-panel-head">
+            <span>
+              可更新 {updatable.length} 项，已选 {selectedTargets.length}
+            </span>
+            <div className="update-panel-actions">
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setSelected(new Set(updatable.map(p => p.name)))}
+                disabled={updating}
+              >
+                全选
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={applyUpdates}
+                disabled={updating || selectedTargets.length === 0}
+              >
+                {updating ? '正在更新…' : `更新所选（${selectedTargets.length}）`}
+              </button>
+            </div>
+          </div>
+          {willFullRestart && (
+            <div className="update-panel-warn">
+              <AlertTriangle size={14} /> 所选包含内核或宿主，更新后将重启整个应用；新版本起不来会自动回滚。
+            </div>
+          )}
+          <div className="update-panel-note">
+            所选项**一次性提交**：先整组做依赖预检，通过后一次安装、一次重启。任一项的 peer
+            版本不兼容则整批不执行且不改动任何文件——此时把它要求的包（如内核）一并勾选再试。
+          </div>
+        </div>
+      )}
+
+      {updateResult && (
+        <div className={updateResult.ok ? 'update-result ok' : 'update-result err'}>
+          <div>{updateResult.message}</div>
+          {updateResult.conflicts && updateResult.conflicts.length > 0 && (
+            <ul className="update-conflicts">
+              {updateResult.conflicts.map(c => (
+                <li key={c}>{c}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       <div className="market-filter-row">
         <input
           className="config-edit-input"
@@ -366,13 +524,21 @@ export function MarketplacePage({
                 </span>
               )}
               {pkg.installed && pkg.origin === 'registry' && pkg.resolved && pkg.version && pkg.resolved !== pkg.version && (
-                <span
+                // 徽章即勾选框——此前它只是个悬空提示，点不动
+                <label
                   className="badge"
-                  style={{ background: 'var(--warning)', color: '#1a1a1a' }}
-                  title={`本地 v${pkg.resolved}（声明 ${pkg.request ?? '?'}），npm 最新 v${pkg.version}`}
+                  style={{ background: 'var(--warning)', color: '#1a1a1a', cursor: 'pointer' }}
+                  title={`本地 v${pkg.resolved}（声明 ${pkg.request ?? '?'}），npm 最新 v${pkg.version}。勾选后用顶部「更新所选」批量提交`}
                 >
+                  <input
+                    type="checkbox"
+                    checked={selected.has(pkg.name)}
+                    onChange={() => toggleSelected(pkg.name)}
+                    disabled={updating}
+                    style={{ marginRight: 4 }}
+                  />
                   可更新 v{pkg.version}
-                </span>
+                </label>
               )}
             </div>
 
@@ -407,9 +573,16 @@ export function MarketplacePage({
             </div>
 
             <div style={{ marginTop: 8 }}>
-              {/* 任一操作进行中就全禁：服务层是串行闸（一次一个），只锁当前卡片的话
+              {/* 只有功能插件与前端界面给装卸按钮——其余五类随脚手架就位或随插件自动装/剪枝，
+                  单独装一个 -api 包零效果（不带 aalis-plugin 关键词，加载器不收）。
+                  任一操作进行中就全禁：服务层是串行闸（一次一个），只锁当前卡片的话
                   用户点得动别的卡片，却只会撞上后端的「有操作正在进行中」。 */}
-              {!pkg.installed && (
+              {!INSTALLABLE_CATEGORIES.has(pkg.category ?? 'plugin') && (
+                <span className="market-meta-item" title="随脚手架就位或作为插件依赖自动安装/卸载，无需也无法单独装卸">
+                  随依赖管理
+                </span>
+              )}
+              {INSTALLABLE_CATEGORIES.has(pkg.category ?? 'plugin') && !pkg.installed && (
                 <button
                   className="btn btn-primary btn-sm"
                   onClick={() => handleInstall(pkg.name, pkg.official)}
@@ -419,7 +592,7 @@ export function MarketplacePage({
                   {installing === pkg.name ? '安装中...' : '安装'}
                 </button>
               )}
-              {pkg.installed && (
+              {INSTALLABLE_CATEGORIES.has(pkg.category ?? 'plugin') && pkg.installed && (
                 <button
                   className="btn btn-sm"
                   style={{ color: 'var(--danger)' }}
