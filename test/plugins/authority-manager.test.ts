@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import type { AccessRequest } from '../../packages/api-authority/src/index.js';
+import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { ConfigManager, Logger } from '../../packages/core/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
-import type { AccessRequest } from '../../packages/plugin-authority-api/src/index.js';
-import type { StorageService } from '../../packages/plugin-storage-api/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // AuthorityManager —— 数字等级单轴（authorize: deny>owner>level>=minLevel；owner 管理 setUserLevel）

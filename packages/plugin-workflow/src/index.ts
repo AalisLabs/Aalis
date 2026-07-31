@@ -6,14 +6,14 @@
 // 定义存 workspace/workflows/*.yaml。
 // ============================================================
 
+import { createStorageGateway } from '@aalis/api-storage';
+import type { ToolService } from '@aalis/api-tools';
+import { useToolService } from '@aalis/api-tools';
+// 引入 api-webui 的副作用以激活 PluginModule.extends/subsystem 类型增广
+import type { WebuiPage } from '@aalis/api-webui';
+import { useWebuiService } from '@aalis/api-webui';
+import type { NodeRunInfo, WorkflowRun, WorkflowService } from '@aalis/api-workflow';
 import type { Context, PluginModule } from '@aalis/core';
-import { createStorageGateway } from '@aalis/plugin-storage-api';
-import type { ToolService } from '@aalis/plugin-tools-api';
-import { useToolService } from '@aalis/plugin-tools-api';
-// 引入 plugin-webui-api 的副作用以激活 PluginModule.extends/subsystem 类型增广
-import type { WebuiPage } from '@aalis/plugin-webui-api';
-import { useWebuiService } from '@aalis/plugin-webui-api';
-import type { NodeRunInfo, WorkflowRun, WorkflowService } from '@aalis/plugin-workflow-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { parse, stringify } from 'yaml';
 
@@ -700,4 +700,4 @@ export type {
   WorkflowDef,
   WorkflowRun,
   WorkflowService,
-} from '@aalis/plugin-workflow-api';
+} from '@aalis/api-workflow';

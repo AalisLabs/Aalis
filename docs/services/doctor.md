@@ -2,7 +2,7 @@
 
 > 面向：要给 Aalis 贡献一条健康检查项（最常见，consumer 角度），或要替换 / 自建诊断聚合后端（provider 角度）的第三方作者。
 
-`doctor` 是一个开放注册中心：各业务插件把「自己领域是否健康」的探测逻辑注册进来，doctor 负责聚合、跑全套、出报告。它在 DI 容器里的注册名是字符串 `'doctor'`（`ctx.getService('doctor')`），契约包是 `@aalis/plugin-doctor-api`。
+`doctor` 是一个开放注册中心：各业务插件把「自己领域是否健康」的探测逻辑注册进来，doctor 负责聚合、跑全套、出报告。它在 DI 容器里的注册名是字符串 `'doctor'`（`ctx.getService('doctor')`），契约包是 `@aalis/api-doctor`。
 
 为什么单独抽出 `-api` 包。如果 storage、commands 等下游插件必须直接 runtime depend 实现包 `plugin-doctor` 才能注册检查项，就会形成「实现包 ↔ 业务插件」的双向耦合。doctor 仿照 storage-api、commands-api 的做法，把类型和一个 `useDoctorService` helper 抽到 `-api`，业务插件只依赖契约，doctor 自身不反向硬依赖任何业务插件。
 
@@ -12,7 +12,7 @@
 
 ## 1. 契约：类型与服务接口
 
-契约类型全部定义在 `@aalis/plugin-doctor-api`。
+契约类型全部定义在 `@aalis/api-doctor`。
 
 ### 检查结果与报告
 
@@ -68,7 +68,7 @@ export interface DoctorService {
 'doctor:updated': [info: { generatedAt: string; summary: { ok: number; warn: number; error: number } }];
 ```
 
-这条事件在每次 `runChecks()` 完成后发射，供 WebUI 等订阅者即时刷新。如果某个包只想拿到这条事件类型、并不调用服务，只需 `import type {} from '@aalis/plugin-doctor-api'` 触发声明合并即可。
+这条事件在每次 `runChecks()` 完成后发射，供 WebUI 等订阅者即时刷新。如果某个包只想拿到这条事件类型、并不调用服务，只需 `import type {} from '@aalis/api-doctor'` 触发声明合并即可。
 
 ### Helper `useDoctorService`
 
@@ -105,7 +105,7 @@ export function useDoctorService(ctx: Context): ScopedDoctorService;
 
 ```ts
 import type { Context } from '@aalis/core';
-import { useDoctorService } from '@aalis/plugin-doctor-api';
+import { useDoctorService } from '@aalis/api-doctor';
 
 export const name = '@aalis/plugin-my-feature';
 // doctor 是可选依赖：列进 inject.optional，doctor 重启时才会带动本插件重挂 check
@@ -145,7 +145,7 @@ doctor 作为可选依赖，要让 PluginManager 在 doctor 上下线时正确�
 ```jsonc
 // package.json
 {
-  "dependencies": { "@aalis/plugin-doctor-api": "^0.5.0" },
+  "dependencies": { "@aalis/api-doctor": "^0.5.0" },
   "aalis": { "service": { "optional": ["doctor"] } }
 }
 ```
@@ -168,7 +168,7 @@ provider 必须实现完整的 `DoctorService` 四个方法。最小骨架：
 
 ```ts
 import type { Context } from '@aalis/core';
-import type { CheckResult, CheckSpec, DoctorReport, DoctorService } from '@aalis/plugin-doctor-api';
+import type { CheckResult, CheckSpec, DoctorReport, DoctorService } from '@aalis/api-doctor';
 
 export const name = '@aalis/plugin-doctor-custom';
 export const provides = ['doctor'];
@@ -234,7 +234,7 @@ const checks = ctx.getService<DoctorService>('doctor')?.getLastReport()?.checks 
 官方 doctor 页面的 `actions` 就是这个模式：`?.` 链式吞掉服务缺失，`?? []` 兜底空数组。订阅式 consumer 监听事件即可：
 
 ```ts
-import type {} from '@aalis/plugin-doctor-api';   // 仅引入事件类型增强
+import type {} from '@aalis/api-doctor';   // 仅引入事件类型增强
 ctx.on('doctor:updated', () => refresh());
 ```
 

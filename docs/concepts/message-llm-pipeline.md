@@ -2,7 +2,7 @@
 
 本文面向两类作者：写 LLM provider 插件的人，以及写「会发消息 / 会读历史」插件的人。它讲清一条聊天消息如何从平台流到 LLM，包括四个必须掌握的概念：`role × kind` 正交模型、每个 provider 出口必须调用的 `prepareLLMMessages`、附件占位符 `[图片 | ref:…]` 格式，以及 `<at id="X">` @提及 token 文法。
 
-所有消息类型契约由 `@aalis/schema-message` 持有，LLM 调用契约由 `@aalis/plugin-llm-api` 持有。
+所有消息类型契约由 `@aalis/schema-message` 持有，LLM 调用契约由 `@aalis/api-llm` 持有。
 
 ---
 
@@ -249,7 +249,7 @@ message-api 提供三个跨插件统一的发送者标识函数：
 
 ## 7. LLM 调用契约：`ChatModelRequest` / `LLMModel`
 
-契约在 `@aalis/plugin-llm-api`，完整说明见 `docs/services/llm.md`。
+契约在 `@aalis/api-llm`，完整说明见 `docs/services/llm.md`。
 
 `ChatModelRequest` 不含 model / provider 字段。原因是每个 model 都是 `ServiceContainer` `'llm'` 服务名下的独立 entry，entry 已经绑定了具体的 `(provider, model)`：
 

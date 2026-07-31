@@ -16,8 +16,8 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
+import { isStorageUri, type StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
-import { isStorageUri, type StorageService } from '@aalis/plugin-storage-api';
 import type { MessageAttachment } from '@aalis/schema-message';
 import { safeFetch } from '@aalis/util-network-guard';
 import { readBodyCapped } from './attachment-cache.js';

@@ -2,7 +2,7 @@
 
 管理调用者身份、操作裁决、与受限操作的临时放行/意图确认。
 
-**源码**: `packages/plugin-authority/src/index.ts`（实现 + 守卫 + 指令 + WebUI actions）/ `packages/plugin-authority-api/src/index.ts`（契约）
+**源码**: `packages/plugin-authority/src/index.ts`（实现 + 守卫 + 指令 + WebUI actions）/ `packages/api-authority/src/index.ts`（契约）
 纯判定逻辑见 `packages/plugin-authority/src/authority-model.ts`，策略层见 `authority-manager.ts`，数据层见 `user-store.ts`。
 
 > 2026 模型重写：**取消能力委托图与角色链**，改为单 owner 个人 bot 的「好管」数字等级。

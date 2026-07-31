@@ -83,5 +83,5 @@ getMessageName(userId?: string): string | undefined;
 
 ## 相关
 
-- 入站编排见 [plugin-gateway-api](./plugin-gateway-api.md)
-- Agent 预处理见 [plugin-agent-api](./plugin-agent-api.md)
+- 入站编排见 [api-gateway](./api-gateway.md)
+- Agent 预处理见 [api-agent](./api-agent.md)

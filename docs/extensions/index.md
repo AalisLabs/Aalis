@@ -30,14 +30,14 @@
 
 | api 包 | 注册的服务 |
 |---|---|
-| [@aalis/plugin-llm-api](packages/plugin-llm-api/src/index.ts) | `llm` |
-| [@aalis/plugin-memory-api](packages/plugin-memory-api/src/index.ts) | `memory` |
-| [@aalis/plugin-storage-api](packages/plugin-storage-api/src/index.ts) | `storage` |
-| [@aalis/plugin-media-api](packages/plugin-media-api/src/index.ts) | `media` |
-| [@aalis/plugin-session-manager-api](packages/plugin-session-manager-api/src/index.ts) | `session-manager` |
-| [@aalis/plugin-platform-api](packages/plugin-platform-api/src/index.ts) | `platform`（helper: `resolvePlatformBySession` / `aggregatePlatformDetails`） |
+| [@aalis/api-llm](packages/api-llm/src/index.ts) | `llm` |
+| [@aalis/api-memory](packages/api-memory/src/index.ts) | `memory` |
+| [@aalis/api-storage](packages/api-storage/src/index.ts) | `storage` |
+| [@aalis/api-media](packages/api-media/src/index.ts) | `media` |
+| [@aalis/api-session-manager](packages/api-session-manager/src/index.ts) | `session-manager` |
+| [@aalis/api-platform](packages/api-platform/src/index.ts) | `platform`（helper: `resolvePlatformBySession` / `aggregatePlatformDetails`） |
 | [@aalis/plugin-package-manager](packages/plugin-package-manager/src/index.ts) | `package-manager` |
-| [@aalis/plugin-message-archive-api](packages/plugin-message-archive-api/src/index.ts) | `message-archive` |
+| [@aalis/api-message-archive](packages/api-message-archive/src/index.ts) | `message-archive` |
 | [@aalis/plugin-websearch-serper](packages/plugin-websearch-serper/src/types.ts) | `websearch` |
 
 ---
@@ -53,9 +53,9 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 | api 包 | 注入的事件键 |
 |---|---|
 | [@aalis/schema-message](packages/schema-message/src/index.ts) | `inbound:message` / `inbound:message:archived` / `outbound:message` / `outbound:stream` |
-| [@aalis/plugin-gateway-api](packages/plugin-gateway-api/src/index.ts) | `gateway:phase:done` |
-| [@aalis/plugin-tools-api](packages/plugin-tools-api/src/index.ts) | `tool:execute` |
-| [@aalis/plugin-session-manager-api](packages/plugin-session-manager-api/src/index.ts) | `session:*` |
+| [@aalis/api-gateway](packages/api-gateway/src/index.ts) | `gateway:phase:done` |
+| [@aalis/api-tools](packages/api-tools/src/index.ts) | `tool:execute` |
+| [@aalis/api-session-manager](packages/api-session-manager/src/index.ts) | `session:*` |
 | [@aalis/plugin-todo-list](packages/plugin-todo-list/src/index.ts) | `todo:*` |
 
 ---
@@ -70,9 +70,9 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 
 | api 包 | 注入的钩子键 |
 |---|---|
-| [@aalis/plugin-agent-api](packages/plugin-agent-api/src/index.ts) | `agent:llm:before` / `agent:llm:after` / `agent:tool:*` / `agent:reply:*` / `agent:input:*` / `agent:turn:*` |
-| [@aalis/plugin-gateway-api](packages/plugin-gateway-api/src/index.ts) | `inbound:*` / `outbound:dispatch` |
-| [@aalis/plugin-memory-api](packages/plugin-memory-api/src/index.ts) | `memory:clear` |
+| [@aalis/api-agent](packages/api-agent/src/index.ts) | `agent:llm:before` / `agent:llm:after` / `agent:tool:*` / `agent:reply:*` / `agent:input:*` / `agent:turn:*` |
+| [@aalis/api-gateway](packages/api-gateway/src/index.ts) | `inbound:*` / `outbound:dispatch` |
+| [@aalis/api-memory](packages/api-memory/src/index.ts) | `memory:clear` |
 
 ---
 
@@ -89,7 +89,7 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 
 | api 包 | 注入的贡献点键 |
 |---|---|
-| [@aalis/plugin-agent-api](packages/plugin-agent-api/src/index.ts) | `agent:prompt`（提示词块，锚位 identity / knowledge / context / turn-hint） |
+| [@aalis/api-agent](packages/api-agent/src/index.ts) | `agent:prompt`（提示词块，锚位 identity / knowledge / context / turn-hint） |
 
 ---
 
@@ -104,7 +104,7 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 
 | api 包 | 注入的字段 |
 |---|---|
-| [@aalis/plugin-authority-api](packages/plugin-authority-api/src/index.ts) | `owners` / `deniedCapabilities` / `visibilityOverrides` / `restrictedPolicy` |
+| [@aalis/api-authority](packages/api-authority/src/index.ts) | `owners` / `deniedCapabilities` / `visibilityOverrides` / `restrictedPolicy` |
 
 ---
 
@@ -116,18 +116,18 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 
 | api 包 | 领域 helper |
 |---|---|
-| [@aalis/plugin-tools-api](packages/plugin-tools-api/src/index.ts) | `useToolService(ctx)` / `toolsWithGroups(tools, groups)` |
-| [@aalis/plugin-commands-api](packages/plugin-commands-api/src/index.ts) | `useCommandService(ctx)` |
-| [@aalis/plugin-webui-api](packages/plugin-webui-api/src/index.ts) | `useWebuiService(ctx)` |
-| [@aalis/plugin-agent-api](packages/plugin-agent-api/src/index.ts) | `useAgent(ctx)` |
+| [@aalis/api-tools](packages/api-tools/src/index.ts) | `useToolService(ctx)` / `toolsWithGroups(tools, groups)` |
+| [@aalis/api-commands](packages/api-commands/src/index.ts) | `useCommandService(ctx)` |
+| [@aalis/api-webui](packages/api-webui/src/index.ts) | `useWebuiService(ctx)` |
+| [@aalis/api-agent](packages/api-agent/src/index.ts) | `useAgent(ctx)` |
 
 示例：
 
 ```ts
-import { useToolService, toolsWithGroups } from '@aalis/plugin-tools-api';
-import { useCommandService } from '@aalis/plugin-commands-api';
-import { useWebuiService } from '@aalis/plugin-webui-api';
-import { useAgent } from '@aalis/plugin-agent-api';
+import { useToolService, toolsWithGroups } from '@aalis/api-tools';
+import { useCommandService } from '@aalis/api-commands';
+import { useWebuiService } from '@aalis/api-webui';
+import { useAgent } from '@aalis/api-agent';
 
 export default class MyPlugin {
   apply(ctx: Context) {
@@ -158,7 +158,7 @@ export default class MyPlugin {
 
 | api 包 | 注入的字段 |
 |---|---|
-| [@aalis/plugin-webui-api](packages/plugin-webui-api/src/index.ts) | webui 元数据（`webui?: {...}`） |
+| [@aalis/api-webui](packages/api-webui/src/index.ts) | webui 元数据（`webui?: {...}`） |
 
 ---
 
@@ -169,12 +169,12 @@ export default class MyPlugin {
 
 **示例**：
 
-- [`LLMCapabilityRegistry`](packages/plugin-llm-api/src/index.ts) — LLM 能力
+- [`LLMCapabilityRegistry`](packages/api-llm/src/index.ts) — LLM 能力
 
 第三方扩展示例：
 
 ```ts
-declare module '@aalis/plugin-llm-api' {
+declare module '@aalis/api-llm' {
   interface LLMCapabilityRegistry {
     AudioInput: 'audio_input';
   }

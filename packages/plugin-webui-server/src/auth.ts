@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'node:http';
+import type { UserIdentity } from '@aalis/api-authority';
+import type { ProcessService } from '@aalis/api-process';
 import type { Logger } from '@aalis/core';
-import type { UserIdentity } from '@aalis/plugin-authority-api';
-import type { ProcessService } from '@aalis/plugin-process-api';
 import type { RequestHandler } from 'express';
 
 const TOKEN_COOKIE = 'aalis_webui_token';

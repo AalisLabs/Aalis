@@ -1,5 +1,5 @@
+import { createProcessGateway, type ExecResult, type ProcessService } from '@aalis/api-process';
 import type { AppService, Context } from '@aalis/core';
-import { createProcessGateway, type ExecResult, type ProcessService } from '@aalis/plugin-process-api';
 import { isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 
 // ===== 插件元数据 =====
@@ -20,7 +20,7 @@ export const inject = {
  * 通过 `ctx.getService<PackageManagerService>('package-manager')` 消费。
  *
  * 这些操作涉及子进程（npm/tar/pnpm/rm），不属于 core 内核职责，
- * 因此从 App 抽出到独立插件；底层子进程统一走 plugin-process-api。
+ * 因此从 App 抽出到独立插件；底层子进程统一走 api-process。
  */
 export interface PackageManagerService {
   /** 从 npm 安装插件到 packages/ 并触发 rescanPlugins */
@@ -345,7 +345,7 @@ async function readInstalledTree(
  * 2.6.23 起改为跟 `RLIMIT_STACK/4` 挂钩，默认 8MB 栈 → 约 2MiB，故 1MiB 是跨平台的下界。
  *
  * **按字节而不是按包数**：包名长度差着数量级（`ms@2.0.0` 8 字节 vs
- * `@aalis/plugin-session-manager-api@0.9.1` 38 字节），拿个数近似字节等于用一个与约束无关的
+ * `@aalis/api-session-manager@0.9.1` 38 字节），拿个数近似字节等于用一个与约束无关的
  * 量设闸——曾经这里是「最多 50 个包」，比真实约束低了约 600 倍，把本仓 99 个包的协调发版
  * 场景直接挡死。
  *
@@ -375,7 +375,7 @@ export function buildUpdateSpecs(targets: readonly UpdateTarget[]): { specs?: st
     seen.add(name);
     const spec = `${name}@${version}`;
     // 按**字节**计而非按个数：这些 spec 逐条成为 argv，而 execve 的约束是参数块的总字节数，
-    // 与包数无关（`ms@2.0.0` 8 字节，`@aalis/plugin-session-manager-api@0.9.1` 38 字节）。
+    // 与包数无关（`ms@2.0.0` 8 字节，`@aalis/api-session-manager@0.9.1` 38 字节）。
     // 超限即整批停下，与本函数其余校验同一策略：不猜、不截断。
     bytes += Buffer.byteLength(spec) + 1; // +1 = argv 之间的 NUL 分隔
     if (bytes > SPEC_ARGV_BUDGET) {

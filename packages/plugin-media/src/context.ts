@@ -12,8 +12,8 @@
 // - 任何读取失败/服务缺失都**静默跳过**，绝不阻断 vision 主流程。
 // ============================================================
 
+import type { MemoryService } from '@aalis/api-memory';
 import type { Context } from '@aalis/core';
-import type { MemoryService } from '@aalis/plugin-memory-api';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 const HISTORY_LIMIT_DEFAULT = 4;

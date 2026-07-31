@@ -29,12 +29,12 @@
   },
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/plugin-storage-api": "workspace:>=0.5.5 <1.0.0",
+    "@aalis/api-storage": "workspace:>=0.5.5 <1.0.0",
     "better-sqlite3": "^11.8.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-memory-api": "workspace:*",
+    "@aalis/api-memory": "workspace:*",
     "@aalis/schema-message": "workspace:*",
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",

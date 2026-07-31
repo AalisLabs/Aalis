@@ -55,15 +55,15 @@
 与临时授予。理由是后两者一个是 `async` 且会真弹确认框、一个随会话漂移：
 
 - `authorize(identity, request)` 是**同步**的、纯等级裁决，返回 `string | null`
-  （`packages/plugin-authority-api/src/index.ts:237`，实现见
+  （`packages/api-authority/src/index.ts:237`，实现见
   `packages/plugin-authority/src/authority-manager.ts:61-77`）—— 逐条跑无副作用、可用于列表渲染。
-- `requestAccess` 是 `Promise<boolean>`（`plugin-authority-api/src/index.ts:255`），会调用
+- `requestAccess` 是 `Promise<boolean>`（`api-authority/src/index.ts:255`），会调用
   confirmHandler 弹确认；`isPreApproved`（`:253`）虽同步但读的是会话级临时授予，
   同一条指令在列表里的可见性会随会话状态前后不一致。
 
 接线点已经现成，**无需新增依赖**：
 
-- `plugin-commands` 已在 `package.json:31` 依赖 `@aalis/plugin-authority-api`，
+- `plugin-commands` 已在 `package.json:31` 依赖 `@aalis/api-authority`，
   且 `index.ts:380` 已有 `ctx.getService<AuthorityService>('authority')` 的先例（`/clear` 的共享会话设防）。
   `/help` 走这条路即可。
 - `formatUsage` 在 `CommandRegistry` 内部、拿不到 `ctx`，且 `parseArgs(cmd, rawArgs)`

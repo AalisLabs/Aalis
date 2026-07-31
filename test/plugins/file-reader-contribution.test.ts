@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { App } from '../../packages/core/src/index.js';
-import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
-import type { AgentService, PreprocessorFn } from '../../packages/plugin-agent-api/src/index.js';
-import * as fileReaderModule from '../../packages/plugin-file-reader/src/index.js';
-import { computeFileId } from '../../packages/plugin-file-reader/src/index.js';
+import type { AgentService, PreprocessorFn } from '../../packages/api-agent/src/index.js';
 import type {
   StorageEntry,
   StorageListResult,
   StorageRootInfo,
   StorageService,
   StorageStat,
-} from '../../packages/plugin-storage-api/src/index.js';
+} from '../../packages/api-storage/src/index.js';
+import { App } from '../../packages/core/src/index.js';
+import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
+import * as fileReaderModule from '../../packages/plugin-file-reader/src/index.js';
+import { computeFileId } from '../../packages/plugin-file-reader/src/index.js';
 import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════

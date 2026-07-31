@@ -28,19 +28,19 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/plugin-agent-api": "workspace:>=0.6.0 <1.0.0",
+    "@aalis/api-agent": "workspace:>=0.6.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/plugin-storage-api": "workspace:>=0.5.5 <1.0.0",
-    "@aalis/plugin-tools-api": "workspace:>=0.5.1 <1.0.0",
+    "@aalis/api-storage": "workspace:>=0.5.5 <1.0.0",
+    "@aalis/api-tools": "workspace:>=0.5.1 <1.0.0",
     "mammoth": "^1.8.0",
     "unpdf": "^0.12.1"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-media-api": "workspace:*",
-    "@aalis/plugin-memory-api": "workspace:*",
+    "@aalis/api-media": "workspace:*",
+    "@aalis/api-memory": "workspace:*",
     "@aalis/schema-message": "workspace:*",
-    "@aalis/plugin-session-manager-api": "workspace:*",
+    "@aalis/api-session-manager": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },

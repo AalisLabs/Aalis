@@ -5,21 +5,21 @@
 访问控制服务：在任何敏感操作的边界回答「这个身份此刻能不能执行这个能力」。它把**数字等级单轴授权**（轴 A）与**人确认 / HITL**（轴 B）两套正交机制，统一收口到一个 `authorize()` 闸 + 一套临时委托 / 确认回调里。
 
 - 服务注册名：`'authority'`（`getService<AuthorityService>('authority')`）。
-- 契约包：`@aalis/plugin-authority-api`（接口 + 类型 + `riskDefaults` / `resolveCapabilityPolicy` 纯函数 + `AalisConfig` 的 declaration merging）。
+- 契约包：`@aalis/api-authority`（接口 + 类型 + `riskDefaults` / `resolveCapabilityPolicy` 纯函数 + `AalisConfig` 的 declaration merging）。
 - 参考实现包：`@aalis/plugin-authority`（`provides = ['authority']`，见 `packages/plugin-authority/src/index.ts`）。
 
-> 注意：契约文件顶部的 `packages/plugin-authority-api/src/index.ts` 注释仍残留旧「纯能力委托模型」措辞，但**接口本体与参考实现已是数字等级单轴模型**（`level` / `setUserLevel` / `authorityOverrides` / `minLevel`）。以接口签名与 `authority-model.ts` 的裁决逻辑为准，详见第 7 节。
+> 注意：契约文件顶部的 `packages/api-authority/src/index.ts` 注释仍残留旧「纯能力委托模型」措辞，但**接口本体与参考实现已是数字等级单轴模型**（`level` / `setUserLevel` / `authorityOverrides` / `minLevel`）。以接口签名与 `authority-model.ts` 的裁决逻辑为准，详见第 7 节。
 
-## 2. 契约（@aalis/plugin-authority-api）
+## 2. 契约（@aalis/api-authority）
 
 ### 2.1 两轴模型的类型
 
 ```ts
-// packages/plugin-authority-api/src/index.ts
+// packages/api-authority/src/index.ts
 export type CapabilityVisibility = 'public' | 'restricted';
-// packages/plugin-authority-api/src/index.ts
+// packages/api-authority/src/index.ts
 export type CapabilityConfirm = 'session' | 'always';
-// packages/plugin-authority-api/src/index.ts
+// packages/api-authority/src/index.ts
 export type CapabilityRisk = 'safe' | 'sensitive' | 'dangerous';
 ```
 
@@ -29,15 +29,15 @@ export type CapabilityRisk = 'safe' | 'sensitive' | 'dangerous';
 风险声明糖 `risk` 展开为 `(visibility, confirm)` 默认，再被显式 `visibility`/`confirm` 覆盖：
 
 ```ts
-// packages/plugin-authority-api/src/index.ts
+// packages/api-authority/src/index.ts
 const RISK_DEFAULTS = {
   safe:      { visibility: 'public' },
   sensitive: { visibility: 'restricted' },
   dangerous: { visibility: 'restricted', confirm: 'session' },
 };
-// packages/plugin-authority-api/src/index.ts  —— 仅取 risk 推导值，不带兜底（供「未声明=继承」语义的注册方用）
+// packages/api-authority/src/index.ts  —— 仅取 risk 推导值，不带兜底（供「未声明=继承」语义的注册方用）
 export function riskDefaults(risk?: CapabilityRisk): { visibility?; confirm? }
-// packages/plugin-authority-api/src/index.ts  —— 展开为生效 (visibility, confirm)，含兜底默认
+// packages/api-authority/src/index.ts  —— 展开为生效 (visibility, confirm)，含兜底默认
 export function resolveCapabilityPolicy(decl: CapabilityPolicyDecl, defaultVisibility = 'public'): { visibility; confirm? }
 ```
 
@@ -45,7 +45,7 @@ export function resolveCapabilityPolicy(decl: CapabilityPolicyDecl, defaultVisib
 
 ### 2.2 服务接口 `AuthorityService`
 
-`packages/plugin-authority-api/src/index.ts`：
+`packages/api-authority/src/index.ts`：
 
 ```ts
 export interface AuthorityService {
@@ -78,7 +78,7 @@ export interface AuthorityService {
 关键入参类型：
 
 ```ts
-// packages/plugin-authority-api/src/index.ts
+// packages/api-authority/src/index.ts
 interface AuthorizeRequest { capability: CapabilityId; visibility: CapabilityVisibility; risk?: CapabilityRisk; }
 // :149  —— requestAccess / isPreApproved 的入参；confirm='confirm' 性质见 :160
 interface AccessRequest { name; type: 'command'|'tool'; capability: CapabilityId; args?; sessionId; platform; userId?; confirm?: CapabilityConfirm; }
@@ -99,7 +99,7 @@ interface AuthorityUserEntry { platform; userId; isOwner: boolean; level: number
 `commands` / `tools` 服务不直接依赖 authority；它们暴露 `setExecutionGuard()`，由 authority 注入一个守卫函数：
 
 ```ts
-// packages/plugin-authority-api/src/index.ts   守卫上下文（执行前最小信息）
+// packages/api-authority/src/index.ts   守卫上下文（执行前最小信息）
 interface ExecutionGuardContext {
   name; type: 'command'|'tool';
   visibility: CapabilityVisibility;  // 注册时已由 resolveCapabilityPolicy 展开
@@ -114,7 +114,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 
 ### 2.4 配置字段（declaration merging 注入 `AalisConfig`）
 
-`packages/plugin-authority-api/src/index.ts` 把 authority 域业务字段注入 core 的 `AalisConfig`（core 本身不知道任何权限语义）：
+`packages/api-authority/src/index.ts` 把 authority 域业务字段注入 core 的 `AalisConfig`（core 本身不知道任何权限语义）：
 
 | 字段 | 含义 |
 |---|---|
@@ -189,7 +189,7 @@ import type { Context, PluginModule } from '@aalis/core';
 import type {
   AuthorityService, AuthorizeRequest, AccessRequest, AccessConfirmHandler,
   TemporaryGrant, AuthorityUserEntry, UserIdentity,
-} from '@aalis/plugin-authority-api';
+} from '@aalis/api-authority';
 
 export const name = '@aalis/plugin-my-authority';
 export const provides = ['authority'];
@@ -243,7 +243,7 @@ export async function apply(ctx: Context) {
 工具/指令的权限**只靠声明**——在注册时标 `risk` / `visibility` / `confirm`，守卫自动生效，**无需手写 `getService('authority')`**：
 
 ```ts
-// 工具：ToolDefinition 字段 packages/plugin-tools-api/src/index.ts
+// 工具：ToolDefinition 字段 packages/api-tools/src/index.ts
 tools.register({
   name: 'exec', /* ... */,
   visibility: 'restricted',   // 默认拒，须 owner 或被授等级
@@ -251,7 +251,7 @@ tools.register({
   // 或直接用糖：risk: 'dangerous'（= restricted + confirm:'session'）
 });
 // 真实例：packages/plugin-tool-system/src/tools/shell.ts（exec 工具）
-// 指令：CommandDefinition 同名字段 packages/plugin-commands-api/src/index.ts
+// 指令：CommandDefinition 同名字段 packages/api-commands/src/index.ts
 cmds.command('level <target> <n:number>', '设等级', { visibility: 'restricted' }); // src/index.ts```
 
 声明展开与守卫调用：执行点 `resolveCapabilityPolicy(tool)` → `guard({ name, type, visibility, confirm, risk, ... })`，返回 string 即拦截（`packages/plugin-tools/src/tools.ts`）。
@@ -307,7 +307,7 @@ authority 在 `apply` 时把 `config.network` 注入进程级 `safeFetch` 策略
 
 ## 7. 边界与坑
 
-- **契约注释与实现脱节（文档级，非运行时 bug）**：`packages/plugin-authority-api/src/index.ts`、`:13-66` 的注释仍以「纯能力委托 / public∪restricted / 委托加减」措辞描述模型，但接口（`authorize` 用 `level/minLevel`、`setUserLevel`、`authorityOverrides`）与参考实现已是**数字等级单轴**。写 provider/consumer 一律以 `AuthorityService` 签名 + `authority-model.ts` 裁决为准。
+- **契约注释与实现脱节（文档级，非运行时 bug）**：`packages/api-authority/src/index.ts`、`:13-66` 的注释仍以「纯能力委托 / public∪restricted / 委托加减」措辞描述模型，但接口（`authorize` 用 `level/minLevel`、`setUserLevel`、`authorityOverrides`）与参考实现已是**数字等级单轴**。写 provider/consumer 一律以 `AuthorityService` 签名 + `authority-model.ts` 裁决为准。
 - **`risk` 在两轴里走不同路径**：守卫把 `risk` 既透传给 `authorize`（派生 minLevel）又用 `resolveCapabilityPolicy` 展开出 `confirm`（`tools.ts`）。即 `risk:'dangerous'` 同时抬高最低等级到 2 **且**要求 session 确认；只想要其一时显式写 `visibility`/`confirm` 覆盖。
 - **守卫是反向注入，时序敏感**：authority 经 `whenService('commands'|'tools')` 注入守卫（`src/index.ts`/`:113`），confirm 通道经 `whenService('authority')` 反注（`session-confirm/src/index.ts`）。任何一方未上线时另一方退化：没 authority → tools/commands 无守卫（全放行）；没 confirm 通道 → `requestAccess` 返回 false（confirm 能力全拒）。重写时保持 `whenService`（provider 重启会重新触发），不要用一次性 getService。
 - **`autoConfirmUntil` / `restrictedPolicy.enabledAt` 是双状态**：`autoConfirmUntil` 持久化到 config；`policyEnabledAt` 是运行时态不持久化。重启后 `restrictedPolicy` 的 duration 计时归零（需再次触发 `markPolicyEnabled`，见 action `setRestrictedPolicy`，`src/index.ts`）。

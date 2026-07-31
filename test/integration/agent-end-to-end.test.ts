@@ -8,9 +8,9 @@ import * as messageArchiveModule from '../../packages/plugin-message-archive/src
 // 集成测试不加载 plugin-commands；useCommandService 在 commands 服务不可用时
 // 会通过 whenService 延迟注册，不会立即抛错，集成测试无需额外桩。
 
-import type { AgentService } from '../../packages/plugin-agent-api/src/index.js';
-import type { ChatRequest, ChatResponse } from '../../packages/plugin-llm-api/src/index.js';
-import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
+import type { AgentService } from '../../packages/api-agent/src/index.js';
+import type { ChatRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
+import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import type { IncomingMessage, OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 

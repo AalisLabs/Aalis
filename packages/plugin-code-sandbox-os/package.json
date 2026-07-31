@@ -28,8 +28,8 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/plugin-code-sandbox-api": "workspace:>=0.5.0 <1.0.0",
-    "@aalis/plugin-process-api": "workspace:>=0.5.0 <1.0.0"
+    "@aalis/api-code-sandbox": "workspace:>=0.5.0 <1.0.0",
+    "@aalis/api-process": "workspace:>=0.5.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

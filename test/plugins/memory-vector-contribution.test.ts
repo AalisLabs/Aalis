@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import type { EmbeddingService } from '../../packages/api-embedding/src/index.js';
+import type { MemoryService } from '../../packages/api-memory/src/index.js';
+import type { VectorSearchResult, VectorStoreService } from '../../packages/api-vectorstore/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
-import type { EmbeddingService } from '../../packages/plugin-embedding-api/src/index.js';
-import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 import * as memoryVectorModule from '../../packages/plugin-memory-vector/src/index.js';
-import type { VectorSearchResult, VectorStoreService } from '../../packages/plugin-vectorstore-api/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 
 // 直接从 core 源码路径导入，agent-api 对 '@aalis/core' 的 declaration merging 不在

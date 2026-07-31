@@ -1,6 +1,6 @@
+import type { MemoryService, RecentMessageRecord, RecentMessagesAcrossSessionsQuery } from '@aalis/api-memory';
+import { createStorageGateway, toStorageUri } from '@aalis/api-storage';
 import type { Context } from '@aalis/core';
-import type { MemoryService, RecentMessageRecord, RecentMessagesAcrossSessionsQuery } from '@aalis/plugin-memory-api';
-import { createStorageGateway, toStorageUri } from '@aalis/plugin-storage-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { ContentSegment, Message } from '@aalis/schema-message';
 import Database from 'better-sqlite3';

@@ -11,8 +11,8 @@
 // 激活新技能）在下一轮被增量物化。
 // ============================================================
 
+import type { PromptAnchor, PromptContribution, PromptContributionView } from '@aalis/api-agent';
 import type { Context } from '@aalis/core';
-import type { PromptAnchor, PromptContribution, PromptContributionView } from '@aalis/plugin-agent-api';
 import type { Message } from '@aalis/schema-message';
 
 /** 锚位排布次序（同一轮组装内生效；语义见 agent-api 的 PromptAnchor 文档） */

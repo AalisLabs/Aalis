@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { Command } from '../../packages/api-commands/src/index.js';
 import { brief, renderDetail, renderOverview } from '../../packages/plugin-commands/src/help.js';
-import type { Command } from '../../packages/plugin-commands-api/src/index.js';
 
 function mk(name: string, description: string, extra: Partial<Command> = {}): Command {
   return {

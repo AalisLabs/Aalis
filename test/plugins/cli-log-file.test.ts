@@ -1,5 +1,5 @@
+import type { StorageService } from '@aalis/api-storage';
 import { formatLogLine, type LogEntry } from '@aalis/core';
-import type { StorageService } from '@aalis/plugin-storage-api';
 import { describe, expect, it } from 'vitest';
 import { readLogFileTail } from '../../packages/plugin-cli/src/log-file.js';
 

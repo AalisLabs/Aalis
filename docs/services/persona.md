@@ -5,13 +5,13 @@
 persona 服务负责把「角色卡」渲染成 system prompt，并在回复链路里解析结构化输出（JSON），把结果回填到回复字段与角色状态。角色卡是一份 YAML 定义的人设，包含名字、描述、性格、prompt、结构化输出格式与 skill 白名单。
 
 - 服务注册名：`'persona'`，通过 `ctx.getService<PersonaService>('persona')` 获取。
-- 契约包：`@aalis/plugin-persona-api`。
+- 契约包：`@aalis/api-persona`。
 - 这个契约带有运行时服务，不是纯类型契约。`-api` 包只导出 interface、类型与 declaration merging，不含实现；参考实现是 `@aalis/plugin-persona`，也是目前唯一的实现。
 - 角色卡按名分文件存放在 `personasDir`（一个 storage 路径，见 §6）。进程启动时全量预扫进缓存，并支持通过 `watch` 热重载。
 
 ## 2. 契约
 
-本节列出 `@aalis/plugin-persona-api` 的全部导出。
+本节列出 `@aalis/api-persona` 的全部导出。
 
 ### 2.1 服务接口
 
@@ -126,7 +126,7 @@ manifest 的两个来源必须同步：除了运行时的 `export const provides
 ```ts
 // src/index.ts
 import type { Context } from '@aalis/core';
-import type { PersonaService, OutputFormat, PersonaSessionOptions } from '@aalis/plugin-persona-api';
+import type { PersonaService, OutputFormat, PersonaSessionOptions } from '@aalis/api-persona';
 
 export const name = '@aalis/plugin-my-persona';
 export const provides = ['persona'];          // 运行时源

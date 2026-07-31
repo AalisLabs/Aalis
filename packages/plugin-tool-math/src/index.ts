@@ -1,5 +1,5 @@
+import { toolsWithGroups, useToolService } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
-import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { registerBaseConvertTools } from './tools/base-convert.js';
 import { registerCalculusTools } from './tools/calculus.js';

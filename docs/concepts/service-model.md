@@ -168,7 +168,7 @@ provider 的上下线会驱动插件库重算（`RecomputeReason`）：`service-
 - 容器选择只走「偏好 > 优先级 > 注册顺序」，没有能力维度。
 - 能力是实例 / handle 上的元数据，由各领域 `*-api` 的 helper 函数自行过滤，不进内核 DI。
 
-以 plugin-llm-api 为例，「按能力过滤 LLM」不再询问容器，而是先用 `ctx.getAllServices('llm')` 取全集，再按 `instance.capabilities` 过滤：
+以 api-llm 为例，「按能力过滤 LLM」不再询问容器，而是先用 `ctx.getAllServices('llm')` 取全集，再按 `instance.capabilities` 过滤：
 
 ```ts
 function listLLMEntries(ctx, caps) {

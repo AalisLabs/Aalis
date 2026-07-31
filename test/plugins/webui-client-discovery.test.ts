@@ -106,13 +106,13 @@ describe('collectLocalPackageDeps（扫盘 → name→{version,deps}；keys 补�
   it('收集各 scanDir 下子目录 name + 自身版本 + 依赖名（dependencies/peer/optional 并集，剔版本）', () => {
     const env = makeEnv({
       dirs: {
-        '/pkgs': ['plugin-foo', 'plugin-webui-api', 'no-pkgjson'],
+        '/pkgs': ['plugin-foo', 'api-webui', 'no-pkgjson'],
         '/nm/@aalis': ['core'],
       },
       exists: [
         '/pkgs',
         '/pkgs/plugin-foo/package.json',
-        '/pkgs/plugin-webui-api/package.json',
+        '/pkgs/api-webui/package.json',
         '/nm/@aalis',
         '/nm/@aalis/core/package.json',
       ],
@@ -121,24 +121,24 @@ describe('collectLocalPackageDeps（扫盘 → name→{version,deps}；keys 补�
         '/pkgs/plugin-foo/package.json': {
           name: '@aalis/plugin-foo',
           version: '0.9.0',
-          dependencies: { '@aalis/plugin-webui-api': 'workspace:^', express: '^4.0.0' },
+          dependencies: { '@aalis/api-webui': 'workspace:^', express: '^4.0.0' },
           peerDependencies: { '@aalis/core': '>=0.2.0 <1.0.0' },
           optionalDependencies: { express: '^4.0.0' },
         },
-        '/pkgs/plugin-webui-api/package.json': { name: '@aalis/plugin-webui-api', aalis: { types: true } },
+        '/pkgs/api-webui/package.json': { name: '@aalis/api-webui', aalis: { types: true } },
         '/nm/@aalis/core/package.json': { name: '@aalis/core' },
       },
     });
     const map = collectLocalPackageDeps(['/pkgs', '/nm/@aalis'], env);
     // keys = 已装包名（含工作区 api，require.resolve 从根漏掉的）
-    expect([...map.keys()].sort()).toEqual(['@aalis/core', '@aalis/plugin-foo', '@aalis/plugin-webui-api']);
+    expect([...map.keys()].sort()).toEqual(['@aalis/api-webui', '@aalis/core', '@aalis/plugin-foo']);
     // deps = 依赖名并集去重，版本协议被忽略
-    expect(map.get('@aalis/plugin-foo')?.deps.sort()).toEqual(['@aalis/core', '@aalis/plugin-webui-api', 'express']);
-    expect(map.get('@aalis/plugin-webui-api')?.deps).toEqual([]); // 无依赖 → 空数组
+    expect(map.get('@aalis/plugin-foo')?.deps.sort()).toEqual(['@aalis/api-webui', '@aalis/core', 'express']);
+    expect(map.get('@aalis/api-webui')?.deps).toEqual([]); // 无依赖 → 空数组
     // version = 该包自身的版本。市场卡片靠它显示工作区包的**本地**版本：这条路径
     // require.resolve 走不通，不带上就只能退回显示 npm latest（把远端版本当成已装版本）。
     expect(map.get('@aalis/plugin-foo')?.version).toBe('0.9.0');
-    expect(map.get('@aalis/plugin-webui-api')?.version, '无 version 字段则 undefined').toBeUndefined();
+    expect(map.get('@aalis/api-webui')?.version, '无 version 字段则 undefined').toBeUndefined();
   });
 
   it('跳过无 package.json / 无 name 的子目录；不存在的 scanDir 安全略过', () => {

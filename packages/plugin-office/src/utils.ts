@@ -1,4 +1,4 @@
-import type { StorageService } from '@aalis/plugin-storage-api';
+import type { StorageService } from '@aalis/api-storage';
 import { safeFetch } from '@aalis/util-network-guard';
 
 /**

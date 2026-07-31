@@ -6,18 +6,18 @@ WebUI 是 Aalis 的 **Web 管理后台**：启动一个 HTTP 服务器，提供 
 
 注意服务注册名（DI key）有**两个**，不是 brief 里的裸 `'webui'`：
 
-- `'webui-server'` —— 后端服务，契约 `WebUIService`。`ctx.getService<WebUIService>('webui-server')`，或经 helper `useWebuiService(ctx)`（见 `packages/plugin-webui-api/src/index.ts`）。
-- `'webui-client'` —— 前端「忒修斯之船」provider，契约 `WebuiClientProvider`。一个目录 + 一个 `getClientDir()`，由 webui-server 自动发现并挂载（见 `packages/plugin-webui-api/src/index.ts`、`packages/plugin-webui-server/src/index.ts`）。
+- `'webui-server'` —— 后端服务，契约 `WebUIService`。`ctx.getService<WebUIService>('webui-server')`，或经 helper `useWebuiService(ctx)`（见 `packages/api-webui/src/index.ts`）。
+- `'webui-client'` —— 前端「忒修斯之船」provider，契约 `WebuiClientProvider`。一个目录 + 一个 `getClientDir()`，由 webui-server 自动发现并挂载（见 `packages/api-webui/src/index.ts`、`packages/plugin-webui-server/src/index.ts`）。
 
-契约包：`@aalis/plugin-webui-api`（`packages/plugin-webui-api/src/index.ts`），**MIT**。它既导出 runtime 服务契约（两个 interface），也导出大量**纯类型**（声明式页面组件 `WebuiComponent`、页面骨架 `WebuiPage`）和**通过 declaration merging 向 core 注入的字段**（`PluginModule.actions/subsystem/extends`、`SchemaField.secret/dynamicOptions/allowCustom`）。
+契约包：`@aalis/api-webui`（`packages/api-webui/src/index.ts`），**MIT**。它既导出 runtime 服务契约（两个 interface），也导出大量**纯类型**（声明式页面组件 `WebuiComponent`、页面骨架 `WebuiPage`）和**通过 declaration merging 向 core 注入的字段**（`PluginModule.actions/subsystem/extends`、`SchemaField.secret/dynamicOptions/allowCustom`）。
 
 参考实现 `@aalis/plugin-webui-server` 与前端 `@aalis/plugin-webui-client` 均为 **AGPL-3.0-only**（与契约包许可不同，见第 6 节 AGPL 说明）。
 
-> 关键认知：`webui-api` 大半是**契约 + 类型 + 一个 helper**。真正要 `ctx.provide(...)` 的只有 `webui-server` / `webui-client` 两个服务；`WebuiPage` 不是静态 module 字段，而是运行时经 `useWebuiService(ctx).registerPage()` 注册（`packages/plugin-webui-api/src/index.ts`）。
+> 关键认知：`webui-api` 大半是**契约 + 类型 + 一个 helper**。真正要 `ctx.provide(...)` 的只有 `webui-server` / `webui-client` 两个服务；`WebuiPage` 不是静态 module 字段，而是运行时经 `useWebuiService(ctx).registerPage()` 注册（`packages/api-webui/src/index.ts`）。
 
 ## 2. 契约
 
-### 后端服务 `WebUIService`（`packages/plugin-webui-api/src/index.ts`）
+### 后端服务 `WebUIService`（`packages/api-webui/src/index.ts`）
 
 ```ts
 export interface WebUIService {
@@ -30,7 +30,7 @@ export interface WebUIService {
 }
 ```
 
-### 前端 provider `WebuiClientProvider`（`packages/plugin-webui-api/src/index.ts`）
+### 前端 provider `WebuiClientProvider`（`packages/api-webui/src/index.ts`）
 
 ```ts
 export interface WebuiClientProvider {
@@ -39,7 +39,7 @@ export interface WebuiClientProvider {
 }
 ```
 
-### 页面骨架 `WebuiPage`（`packages/plugin-webui-api/src/index.ts`）
+### 页面骨架 `WebuiPage`（`packages/api-webui/src/index.ts`）
 
 ```ts
 export interface WebuiPage {
@@ -52,7 +52,7 @@ export interface WebuiPage {
 }
 ```
 
-### 声明式组件 `WebuiComponent`（`packages/plugin-webui-api/src/index.ts`）
+### 声明式组件 `WebuiComponent`（`packages/api-webui/src/index.ts`）
 
 8 种联合：`stat` / `table` / `form` / `actions` / `info` / `markdown` / `tabs` / `graph`。每种组件的 `source` 字段都是一个**字符串方法名**，前端按它调 `POST /api/page-action/:plugin/:method`（见第 5 节）取数据。
 
@@ -60,7 +60,7 @@ export interface WebuiPage {
 - `WebuiTableComponent`（`:48-66`）支持 `columns/actions/refresh/searchable`。
 - `WebuiGraphComponent`（`:121-142`）基于 Cytoscape，非关系图场景**必须**声明 `nodeKinds/edgeKinds`，否则冒用人物关系图内置三类图例。
 
-### declaration merging 注入 core（`packages/plugin-webui-api/src/index.ts`）
+### declaration merging 注入 core（`packages/api-webui/src/index.ts`）
 
 ```ts
 declare module '@aalis/core' {
@@ -81,7 +81,7 @@ declare module '@aalis/core' {
 
 > `actions` 是 WebUI 体系的真正业务入口：core 完全不感知此字段，由 host（webui-server）路由层 `POST /api/page-action/:plugin/:method` 在权限闸放行后，以**插件自身的 `entry.context`** 调用 handler，并把解析出的 `caller` 身份作为第三参传入（`packages/plugin-webui-server/src/routes/plugins.ts`）。
 
-### helper `useWebuiService` 与 `ScopedWebuiService`（`packages/plugin-webui-api/src/index.ts`）
+### helper `useWebuiService` 与 `ScopedWebuiService`（`packages/api-webui/src/index.ts`）
 
 ```ts
 export function useWebuiService(ctx: Context): ScopedWebuiService {
@@ -136,7 +136,7 @@ export function useWebuiService(ctx: Context): ScopedWebuiService {
 
 ```ts
 import type { Context } from '@aalis/core';
-import { useWebuiService, type WebuiPage } from '@aalis/plugin-webui-api';
+import { useWebuiService, type WebuiPage } from '@aalis/api-webui';
 
 // 子系统归属（可选，仅分组展示）；任意字符串都行，命中 DEFAULT_SUBSYSTEM_METADATA 用其中文 label
 export const subsystem = 'tools';
@@ -169,18 +169,18 @@ export function apply(ctx: Context): void {
 }
 ```
 
-**manifest 双源**：`actions/subsystem` 经 declaration merging 注入，无需在 `package.json aalis.service` 里声明。但既然你 `import` 了 `@aalis/plugin-webui-api` 的 helper，运行时其实只依赖 `webui-server` 服务的存在——`useWebuiService` 内部用 `whenService`，**webui-server 缺失时静默不挂、就绪后自动补挂**，所以你**不必**把 `webui-server` 写进 `inject`。若你确实想声明可选依赖，保持 `export const inject` 与 `package.json aalis.service` 两处一致（见 `docs/concepts/manifest-metadata.md`）。
+**manifest 双源**：`actions/subsystem` 经 declaration merging 注入，无需在 `package.json aalis.service` 里声明。但既然你 `import` 了 `@aalis/api-webui` 的 helper，运行时其实只依赖 `webui-server` 服务的存在——`useWebuiService` 内部用 `whenService`，**webui-server 缺失时静默不挂、就绪后自动补挂**，所以你**不必**把 `webui-server` 写进 `inject`。若你确实想声明可选依赖，保持 `export const inject` 与 `package.json aalis.service` 两处一致（见 `docs/concepts/manifest-metadata.md`）。
 
 ### 4b. 替换前端（`webui-client`）
 
-两条接入（`packages/plugin-webui-api/src/index.ts`）：
+两条接入（`packages/api-webui/src/index.ts`）：
 
 - **纯静态包**：`package.json` 标 `aalis.client: true` + 提供 `dist/index.html`，被 webui-server 自动发现挂载，**无需 `apply`**（runtime 不把它当插件加载）。多前端共存时各成一个 `webui-client` provider，活跃者由「服务偏好」`servicePreferences['webui-client']` 在 WebUI「服务」页切换；卡住可访问 `/__clients` 逃生页切回（`packages/plugin-webui-server/src/index.ts`）。
 - **主动覆盖**：插件 `apply` 里 `ctx.provide('webui-client', { getClientDir: () => myDir, label: '我的前端' })`。注册更早 → 默认胜出，仍可被偏好切换。
 
 ### 4c. 替换整个后端（`webui-server`）
 
-罕见。核心要求此服务必须运行（`packages/plugin-webui-api/src/index.ts`）。实现全部 `WebUIService` 必须方法（`registerPage` 必须真正维护页面表，否则所有插件页面丢失），用 `ServicePriority`（Override50 / System200）或服务偏好压过默认实现。注册：`ctx.provide('webui-server', impl)`，并在 `package.json aalis.service.provides` 与 `export const provides` 双源写 `'webui-server'`（参考 `packages/plugin-webui-server/package.json` 的 `aalis.service` 块）。同名服务胜出规则见 `docs/concepts/service-model.md`：偏好 > priority > 注册顺序。
+罕见。核心要求此服务必须运行（`packages/api-webui/src/index.ts`）。实现全部 `WebUIService` 必须方法（`registerPage` 必须真正维护页面表，否则所有插件页面丢失），用 `ServicePriority`（Override50 / System200）或服务偏好压过默认实现。注册：`ctx.provide('webui-server', impl)`，并在 `package.json aalis.service.provides` 与 `export const provides` 双源写 `'webui-server'`（参考 `packages/plugin-webui-server/package.json` 的 `aalis.service` 块）。同名服务胜出规则见 `docs/concepts/service-model.md`：偏好 > priority > 注册顺序。
 
 ## 5. 标准消费姿势
 

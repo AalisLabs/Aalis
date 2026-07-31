@@ -20,9 +20,9 @@
 
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import '@aalis/plugin-agent-api'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
-import type { MemoryService, RecentMessageRecord } from '@aalis/plugin-memory-api';
-import { useToolService } from '@aalis/plugin-tools-api';
+import '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import type { MemoryService, RecentMessageRecord } from '@aalis/api-memory';
+import { useToolService } from '@aalis/api-tools';
 
 // ===== 插件元数据 =====
 

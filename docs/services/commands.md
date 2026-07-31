@@ -3,7 +3,7 @@
 斜杠指令（`/command`）的注册与分发。第三方插件用它把斜杠命令挂进所有平台共享的入站管道。
 
 - **服务注册名**：`getService<CommandService>('commands')`；接口类型经声明合并注入服务类型表。
-- **契约包**：`@aalis/plugin-commands-api`（纯类型 + `useCommandService` helper，无运行时实现）。
+- **契约包**：`@aalis/api-commands`（纯类型 + `useCommandService` helper，无运行时实现）。
 - **参考实现**：`@aalis/plugin-commands`，核心类是 `CommandRegistry`。
 - **内核视角文档**：`docs/core/commands.md`。
 
@@ -61,7 +61,7 @@ Builder 链式追加 `alias / option / action / usage / example`，全部返回 
 - 注册服务：`ctx.provide('commands', commands)`，其中 `commands = new CommandRegistry(ctx.logger)`。
 - 声明 `provides = ['commands']`、`inject.required = ['gateway']`；同一份声明也写在 `package.json` 的 `aalis.service` 里（`provides: ['commands'] / required: ['gateway']`），两处双源同步。
 - 入站分发发生在 `INBOUND_PHASE.COMMAND`（相位名 `'inbound:command'`，排在 flow / trigger / dispatch 之前）的中间件里，顺序是 `parseCommand` → `hasMatch` → `execute`。命中后不调用 `next()`，整个入站管道立即停止。
-- 参考实现运行时依赖 `@aalis/plugin-authority-api`：`CommandRegistry` 从中 `import { riskDefaults }`，把 `risk` 声明展开为 `(visibility, confirm)` 默认值。这是真实的运行时依赖，写在 `plugin-commands` 的 `dependencies` 里，不是 devDependency。
+- 参考实现运行时依赖 `@aalis/api-authority`：`CommandRegistry` 从中 `import { riskDefaults }`，把 `risk` 声明展开为 `(visibility, confirm)` 默认值。这是真实的运行时依赖，写在 `plugin-commands` 的 `dependencies` 里，不是 devDependency。
 
 **典型消费点**（都通过 `useCommandService(ctx)` 注册命令）：
 
@@ -89,7 +89,7 @@ Builder 链式追加 `alias / option / action / usage / example`，全部返回 
 
 ```ts
 import type { Context } from '@aalis/core';
-import type { CommandService } from '@aalis/plugin-commands-api';
+import type { CommandService } from '@aalis/api-commands';
 
 export const name = '@aalis/plugin-my-commands';
 export const provides = ['commands'];
@@ -119,7 +119,7 @@ DI 按名取胜：同名 provider 的胜者 = preference > priority（`ServicePr
 用 `useCommandService(ctx)`。它会自动带上 `pluginName = ctx.id`，并在 `commands` provider 尚未上线时缓存调用、上线后重放。这就是懒注册，你不需要手动等待服务就绪。
 
 ```ts
-import { useCommandService } from '@aalis/plugin-commands-api';
+import { useCommandService } from '@aalis/api-commands';
 
 export const name = '@aalis/plugin-weather';
 // commands 通常作为 optional 依赖（无指令系统时插件其它能力仍可用）
@@ -199,4 +199,4 @@ option syntax 速查：
 - 概念：`docs/concepts/service-model.md`（DI 按名取胜、优先级）、`docs/concepts/lazy-service-access.md`（每次现取、provider bounce）、`docs/concepts/manifest-metadata.md`（provides/inject 双源）、`docs/concepts/security-model.md`（两轴闸、safeFetch、确认）、`docs/concepts/message-llm-pipeline.md`（入站相位顺序）、`docs/concepts/storage-uri-grammar.md`。
 - 内核文档：`docs/core/commands.md`（CommandRegistry 细节）、`docs/core/authority.md`、`docs/core/tools.md`（同源 `ExecutionGuard`）、`docs/core/service.md`、`docs/core/context.md`。
 - 设计：见内核文档 `docs/core/commands.md`。
-- 同源契约：`@aalis/plugin-authority-api`（`ExecutionGuard`、`CapabilityRisk/Visibility/Confirm`、`riskDefaults`）。
+- 同源契约：`@aalis/api-authority`（`ExecutionGuard`、`CapabilityRisk/Visibility/Confirm`、`riskDefaults`）。

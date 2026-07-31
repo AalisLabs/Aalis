@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createStorageGateway, type StorageService } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import { createStorageGateway, type StorageService } from '../../packages/plugin-storage-api/src/index.js';
 import * as storageLocal from '../../packages/plugin-storage-local/src/index.js';
 
 // ════════════════════════════════════════════════════════════

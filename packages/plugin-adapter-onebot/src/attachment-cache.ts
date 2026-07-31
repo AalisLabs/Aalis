@@ -18,8 +18,8 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
-import type { ProcessService } from '@aalis/plugin-process-api';
-import { isStorageUri, type StorageService } from '@aalis/plugin-storage-api';
+import type { ProcessService } from '@aalis/api-process';
+import { isStorageUri, type StorageService } from '@aalis/api-storage';
 import { safeFetch } from '@aalis/util-network-guard';
 
 type AttachmentKind = 'image' | 'audio' | 'video' | 'file';

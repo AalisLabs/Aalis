@@ -182,9 +182,9 @@ function renderPackageJson(a: Answers): string {
   // 次版本升级而重发。注意 1.0 之前 core 的公开面可能在次版本被删（0.7.0 / 0.9.0 都删过）——
   // 用了某版本才有的 API，就把下限抬到那个版本。稳定性承诺自 1.0 起生效。
   const deps: Record<string, string> = {};
-  if (a.features.tool) deps['@aalis/plugin-tools-api'] = 'latest';
-  if (a.features.command) deps['@aalis/plugin-commands-api'] = 'latest';
-  if (a.features.webui) deps['@aalis/plugin-webui-api'] = 'latest';
+  if (a.features.tool) deps['@aalis/api-tools'] = 'latest';
+  if (a.features.command) deps['@aalis/api-commands'] = 'latest';
+  if (a.features.webui) deps['@aalis/api-webui'] = 'latest';
 
   // aalis.service：声明运行时服务依赖/提供，供市场装前披露。示例插件无服务依赖，
   // 留空提示作者按需填（用了 ctx.inject.required / provides 时同步到这里）。
@@ -244,11 +244,11 @@ function renderTsconfig(): string {
 
 function renderIndexTs(a: Answers): string {
   const imports: string[] = [`import type { Context } from '@aalis/core';`];
-  if (a.features.tool) imports.push(`import { useToolService } from '@aalis/plugin-tools-api';`);
-  if (a.features.command) imports.push(`import { useCommandService } from '@aalis/plugin-commands-api';`);
+  if (a.features.tool) imports.push(`import { useToolService } from '@aalis/api-tools';`);
+  if (a.features.command) imports.push(`import { useCommandService } from '@aalis/api-commands';`);
   if (a.features.webui) {
-    imports.push(`import type { WebuiPage } from '@aalis/plugin-webui-api';`);
-    imports.push(`import { useWebuiService } from '@aalis/plugin-webui-api';`);
+    imports.push(`import type { WebuiPage } from '@aalis/api-webui';`);
+    imports.push(`import { useWebuiService } from '@aalis/api-webui';`);
   }
 
   const body: string[] = [];

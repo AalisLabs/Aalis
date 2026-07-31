@@ -70,8 +70,8 @@ runtime 与所用插件**——兼容单位是整组。
 不是内核状态，改由 `getPlugin(instanceId)` 从 `entry.config` / `entry.module` 读取。
 
 **契约包删除的 helper**（均为 `ctx.getService` 的一行包装，无附加语义）：
-`@aalis/plugin-asr-api` 的 `useASRService`、`@aalis/plugin-media-api` 的 `useMediaService`、
-`@aalis/plugin-workflow-api` 的 `useWorkflowService`。直接用 `ctx.getService('asr' | 'media' | 'workflow')`。
+`@aalis/api-asr` 的 `useASRService`、`@aalis/api-media` 的 `useMediaService`、
+`@aalis/api-workflow` 的 `useWorkflowService`。直接用 `ctx.getService('asr' | 'media' | 'workflow')`。
 
 **`declare module` 目标变更**：向 `SchemaField` / `SchemaFieldTypes` 做 declaration merging 的
 包，目标从 `'@aalis/core'` 改为 `'@aalis/plugin-config-api'`。**merging 到旧目标不会报错，

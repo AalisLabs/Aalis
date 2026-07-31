@@ -1,5 +1,5 @@
+import type { CommandService } from '@aalis/api-commands';
 import type { App } from '@aalis/core';
-import type { CommandService } from '@aalis/plugin-commands-api';
 
 /**
  * 尝试把 argv 当作命令调用：`aalis <name> [args...]` ↔ chat 中的 `/<name> args`。

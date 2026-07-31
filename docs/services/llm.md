@@ -5,14 +5,14 @@
 `llm` 是 Aalis 的 **LLM 对话服务**：把一次「消息列表 + 工具定义 → 文本/思考/工具调用」的推理调用抽象成统一契约，屏蔽 OpenAI / DeepSeek / Ollama 等后端差异。
 
 - 服务注册名：`getService<LLMModel>('llm')`（DI 容器里的字符串键）。
-- 契约包：`@aalis/plugin-llm-api`（`packages/plugin-llm-api/src/index.ts`，`aalis.types: true` 的纯类型契约包）。
-- 关键设计：**每个 model 是一个独立 entry**。一个 provider 插件（如 OpenAI）会按 `listModels()` 结果为**每个模型**单独 `ctx.provide('llm', handle, …)`，entry 已绑定具体 `(provider, model)`，`ChatModelRequest` 不再携带 `model` 字段（`packages/plugin-llm-api/src/index.ts`）。
+- 契约包：`@aalis/api-llm`（`packages/api-llm/src/index.ts`，`aalis.types: true` 的纯类型契约包）。
+- 关键设计：**每个 model 是一个独立 entry**。一个 provider 插件（如 OpenAI）会按 `listModels()` 结果为**每个模型**单独 `ctx.provide('llm', handle, …)`，entry 已绑定具体 `(provider, model)`，`ChatModelRequest` 不再携带 `model` 字段（`packages/api-llm/src/index.ts`）。
 
 ## 2. 契约
 
 ### 核心服务接口 `LLMModel`
 
-每个 entry 的实例满足 `LLMModel`（`packages/plugin-llm-api/src/index.ts`）：
+每个 entry 的实例满足 `LLMModel`（`packages/api-llm/src/index.ts`）：
 
 ```ts
 interface LLMModel {
@@ -34,12 +34,12 @@ interface LLMModel {
 
 ### 请求 / 响应类型
 
-`ChatModelRequest`（`packages/plugin-llm-api/src/index.ts`）——**不含 model/provider**，entry 已绑定：
+`ChatModelRequest`（`packages/api-llm/src/index.ts`）——**不含 model/provider**，entry 已绑定：
 
 ```ts
 interface ChatModelRequest {
   messages: Message[];          // 来自 @aalis/schema-message
-  tools?: ToolDefinition[];     // 来自 @aalis/plugin-tools-api
+  tools?: ToolDefinition[];     // 来自 @aalis/api-tools
   temperature?: number;
   maxTokens?: number;           // 调用方期望的输出上限——provider 必须尊重（见 §6/§7）
   signal?: AbortSignal;         // 取消
@@ -57,7 +57,7 @@ interface ChatModelRequest {
 
 ### 能力枚举 `LLMCapability`
 
-字面量值（`packages/plugin-llm-api/src/index.ts`）：`chat` / `tool_calling` / `streaming` / `vision` / `thinking` / `audio`（原生音频理解）/ `audio_transcription`（语音转文本，独立于 audio）/ `video`（原生视频，OpenAI 逐帧 Vision 不算）。运行时常量从 `LLMCapabilities` 导入。
+字面量值（`packages/api-llm/src/index.ts`）：`chat` / `tool_calling` / `streaming` / `vision` / `thinking` / `audio`（原生音频理解）/ `audio_transcription`（语音转文本，独立于 audio）/ `video`（原生视频，OpenAI 逐帧 Vision 不算）。运行时常量从 `LLMCapabilities` 导入。
 
 ### 解析助手（消费方用）
 
@@ -156,7 +156,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 ```
 
 要点：
-- **`entryId` 必须是 `${ctx.id}/${modelId}`**——`resolveLLMModel` 用 `contextId === \`${provider}/${model}\`` 精确命中（`packages/plugin-llm-api/src/index.ts`）；不按此约定会导致 `llm-ref` 选择失效。
+- **`entryId` 必须是 `${ctx.id}/${modelId}`**——`resolveLLMModel` 用 `contextId === \`${provider}/${model}\`` 精确命中（`packages/api-llm/src/index.ts`）；不按此约定会导致 `llm-ref` 选择失效。
 - 不要传 `priority`，默认 `ServicePriority.Backend(0)` 即可；用户通过 preference / persona 选默认 model（见 §5）。同名多 provider 并存由容器按 preference>priority>注册顺序裁决（[服务模型](../concepts/service-model.md)）。
 - `capabilities` 要**诚实**反映该 model 实际能力——它驱动 media 的多模态处理器注册与前端过滤（§6）。
 - `ctx.provide` 返回 dispose 函数；实现 `refresh()` 时缓存它以便增删 entry（`packages/plugin-llm-ollama/src/index.ts`）。
@@ -168,7 +168,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 不要缓存 entry/handle：provider bounce（重载）会让旧 instance 失效，必须每次用时重取（见 [惰性服务访问](../concepts/lazy-service-access.md)）。推荐用 `resolveLLMModel` 而非直接 `getService`，因为它顺带做 ref 解析与能力过滤：
 
 ```ts
-import { resolveLLMModel } from '@aalis/plugin-llm-api';
+import { resolveLLMModel } from '@aalis/api-llm';
 
 const entry = resolveLLMModel(ctx, cfg.compressionLLM /* ModelRef */, ['chat']);
 if (!entry) return rawResults;                 // 服务缺失/无满足能力者 → 优雅降级
@@ -192,7 +192,7 @@ agent 直接调 `llm.chatStream!(request)`（`packages/plugin-agent/src/index.ts
 
 ### 选默认 model
 
-未传 ref 时，`resolveLLMModel` 取容器胜者。要锁定全局默认 model，用 `ctx.preferService('llm', contextId)`（contextId = `${provider}/${model}`）或 persona.yaml 的 `defaultServices`（`packages/plugin-llm-api/src/index.ts`）；会话级覆盖走 `session-manager.resolveConfig`（`packages/plugin-agent/src/index.ts`）。token 预算估算用 `maxOutputTokens`：`tokenBudget ≈ contextLength - maxOutputTokens - safetyMargin`（`:43-45 / :437-442`）。
+未传 ref 时，`resolveLLMModel` 取容器胜者。要锁定全局默认 model，用 `ctx.preferService('llm', contextId)`（contextId = `${provider}/${model}`）或 persona.yaml 的 `defaultServices`（`packages/api-llm/src/index.ts`）；会话级覆盖走 `session-manager.resolveConfig`（`packages/plugin-agent/src/index.ts`）。token 预算估算用 `maxOutputTokens`：`tokenBudget ≈ contextLength - maxOutputTokens - safetyMargin`（`:43-45 / :437-442`）。
 
 ## 6. 能力 / 风险 → 影响
 

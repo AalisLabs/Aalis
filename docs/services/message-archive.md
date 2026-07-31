@@ -5,14 +5,14 @@
 把**原始入站消息流 + 我方出站富文本 + 平台 notice 事件**持久化成 `Message` 历史条目，写入底层 `memory` 服务，供后续上下文渲染、向量检索、引用回复反查、用户档案事实提取等场景消费。它是「消息文本最终成形（发送者前缀 / 引用回复 / 图片描述 / 附件名）」的**唯一烘焙入口**——预处理器只写元信息，content 的拼接全在归档阶段一锤定音。
 
 - 服务注册名：`getService('message-archive')`（字符串键）
-- 契约包：`@aalis/plugin-message-archive-api`
+- 契约包：`@aalis/api-message-archive`
 - 参考实现：`@aalis/plugin-message-archive`
 
 `message-archive` 本身不持久化，它委派给 `memory`（必需依赖）。它是 `memory` 之上的「会话语义层」——把会话身份、附件描述、触发来源等烘焙进 `Message.content` 与 `metadata`，让 `memory` 这个纯 KV/向量层不必理解平台语义。
 
 ## 2. 契约
 
-契约接口（`packages/plugin-message-archive-api/src/index.ts`）：
+契约接口（`packages/api-message-archive/src/index.ts`）：
 
 ```ts
 export interface MessageArchiveService {
@@ -79,9 +79,9 @@ manifest 双源必须同步写（`package.json` `aalis.service` 与源码 `expor
 
 ```ts
 import type { Context } from '@aalis/core';
-import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { MemoryService } from '@aalis/api-memory';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
-import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
+import type { MessageArchiveService } from '@aalis/api-message-archive';
 
 export const name = '@aalis/plugin-my-archive';
 export const inject = { required: ['memory'] };          // 与 package.json 双源同步
@@ -178,4 +178,4 @@ private async archiveIncomingMessageInOrder(lane: string, incoming: IncomingMess
 
 - 概念：[服务模型](../concepts/service-model.md)、[懒服务访问](../concepts/lazy-service-access.md)、[manifest 元数据](../concepts/manifest-metadata.md)、[消息-LLM 管线](../concepts/message-llm-pipeline.md)、[安全模型](../concepts/security-model.md)、[storage URI 文法](../concepts/storage-uri-grammar.md)
 - 核心：[service](../core/service.md)、[context](../core/context.md)、[events](../core/events.md)、[types](../core/types.md)
-- 相关服务/契约：`@aalis/plugin-memory-api`（落库后端）、`@aalis/plugin-media-api`（附件识别）、`@aalis/schema-message`（`Message` / `IncomingMessage` / `WellKnownKinds` / `inbound:message:archived` 事件）
+- 相关服务/契约：`@aalis/api-memory`（落库后端）、`@aalis/api-media`（附件识别）、`@aalis/schema-message`（`Message` / `IncomingMessage` / `WellKnownKinds` / `inbound:message:archived` 事件）

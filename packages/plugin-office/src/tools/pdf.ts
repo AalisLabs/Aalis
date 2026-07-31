@@ -1,6 +1,6 @@
-import type { ProcessService } from '@aalis/plugin-process-api';
-import type { StorageService } from '@aalis/plugin-storage-api';
-import type { ScopedToolService } from '@aalis/plugin-tools-api';
+import type { ProcessService } from '@aalis/api-process';
+import type { StorageService } from '@aalis/api-storage';
+import type { ScopedToolService } from '@aalis/api-tools';
 import { PageSizes, PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import type { DocSessionManager } from '../session.js';
 

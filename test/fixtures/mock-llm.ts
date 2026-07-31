@@ -1,11 +1,6 @@
+import type { ChatRequest, ChatResponse, ChatStreamChunk, LLMService } from '../../packages/api-llm/src/index.js';
+import { LLMCapabilities } from '../../packages/api-llm/src/index.js';
 import type { ConfigSchema, Context } from '../../packages/core/src/index.js';
-import type {
-  ChatRequest,
-  ChatResponse,
-  ChatStreamChunk,
-  LLMService,
-} from '../../packages/plugin-llm-api/src/index.js';
-import { LLMCapabilities } from '../../packages/plugin-llm-api/src/index.js';
 
 /**
  * Mock LLM 插件（fixture）

@@ -29,17 +29,17 @@
   },
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/plugin-llm-api": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/plugin-session-manager-api": "workspace:>=0.6.0 <1.0.0",
-    "@aalis/plugin-webui-api": "workspace:>=0.9.0 <1.0.0"
+    "@aalis/api-llm": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/api-session-manager": "workspace:>=0.6.0 <1.0.0",
+    "@aalis/api-webui": "workspace:>=0.9.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-agent-api": "workspace:*",
-    "@aalis/plugin-memory-api": "workspace:*",
+    "@aalis/api-agent": "workspace:*",
+    "@aalis/api-memory": "workspace:*",
     "@aalis/schema-message": "workspace:*",
-    "@aalis/plugin-persona-api": "workspace:*",
-    "@aalis/plugin-tools-api": "workspace:*",
+    "@aalis/api-persona": "workspace:*",
+    "@aalis/api-tools": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },

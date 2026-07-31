@@ -29,13 +29,13 @@
   },
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/plugin-llm-api": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/api-llm": "workspace:>=0.9.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.5.1 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-tools-api": "workspace:*",
-    "@aalis/plugin-webui-api": "workspace:*",
+    "@aalis/api-tools": "workspace:*",
+    "@aalis/api-webui": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },

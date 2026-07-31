@@ -1,12 +1,12 @@
+import type { EmbeddingService } from '@aalis/api-embedding';
+import type { MemoryService } from '@aalis/api-memory';
+import { useToolService } from '@aalis/api-tools';
+import type { VectorStoreService } from '@aalis/api-vectorstore';
 import type { Context } from '@aalis/core';
-import type { EmbeddingService } from '@aalis/plugin-embedding-api';
-import type { MemoryService } from '@aalis/plugin-memory-api';
-import { useToolService } from '@aalis/plugin-tools-api';
-import type { VectorStoreService } from '@aalis/plugin-vectorstore-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { prefixSender, WellKnownKinds } from '@aalis/schema-message';
-import '@aalis/plugin-agent-api'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 
 // ===== 插件元数据 =====
 

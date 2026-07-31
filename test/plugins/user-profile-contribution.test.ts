@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
-import type { MemoryService } from '../../packages/plugin-memory-api/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 import * as userProfileModule from '../../packages/plugin-user-profile/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';

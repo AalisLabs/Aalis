@@ -1,4 +1,3 @@
-import type { ConfigManager, Logger } from '@aalis/core';
 import type {
   AccessConfirmHandler,
   AccessDecision,
@@ -8,8 +7,9 @@ import type {
   AuthorizeRequest,
   TemporaryGrant,
   UserIdentity,
-} from '@aalis/plugin-authority-api';
-import type { StorageService } from '@aalis/plugin-storage-api';
+} from '@aalis/api-authority';
+import type { StorageService } from '@aalis/api-storage';
+import type { ConfigManager, Logger } from '@aalis/core';
 import { DEFAULT_AUTHORITY, matchAnyCap, OWNER_RANK, resolveAccess, resolveMinLevel } from './authority-model.js';
 import { UserStore } from './user-store.js';
 

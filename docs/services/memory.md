@@ -7,14 +7,14 @@ memory 是会话记忆与持久化层。它把对话消息（`Message`）按 `se
 agent 构建 LLM 上下文、checkpoint 回滚、summary 压缩等所有依赖「记住对话」的功能，都建立在它之上。
 
 - 服务注册名：`getService('memory')`（对应 `ServiceTypeMap.memory = MemoryService`）
-- 契约包：`@aalis/plugin-memory-api`
+- 契约包：`@aalis/api-memory`
 - 参考实现：`@aalis/plugin-memory-sqlite`（默认推荐）、`@aalis/plugin-memory-inmemory`（fallback）、`@aalis/plugin-memory-mongodb`
 
 > 该服务只负责「存与取」，不负责「写进去」的内容编排。真正决定一条消息长什么样的是 `message-archive`（见下文「谁消费」）。
 
 ## 2. 契约
 
-接口与类型来自 `@aalis/plugin-memory-api`。消息类型 `Message` 来自 `@aalis/schema-message`，包含 `role / content / kind / timestamp / segments / metadata / reasoningContent / toolCalls`。
+接口与类型来自 `@aalis/api-memory`。消息类型 `Message` 来自 `@aalis/schema-message`，包含 `role / content / kind / timestamp / segments / metadata / reasoningContent / toolCalls`。
 
 ### 2.1 核心接口（必须实现）
 
@@ -69,7 +69,7 @@ deleteMessagesByTimestamps?(sessionId, timestamps): Promise<number>; // 按时�
 
 ### 2.4 配套的钩子与事件契约（同包声明）
 
-`plugin-memory-api` 还通过 declaration merging 向 `@aalis/core` 注入以下钩子与事件：
+`api-memory` 还通过 declaration merging 向 `@aalis/core` 注入以下钩子与事件：
 
 - Hook `'memory:clear'`：统一编排各子系统的记忆清除，`scope: 'session'|'all'`，中间件把各子系统结果填进 `results[]`。persona 等插件靠监听此钩子参与清除，**不是**直接调 memory 服务。
 - Event `'memory:messages-deleted'`：消息被按时间戳删除后广播，下游存储（如向量库）据此同步清理。
@@ -129,7 +129,7 @@ export const inject = { required: ['storage'] };
 ```ts
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { MemoryService } from '@aalis/api-memory';
 import type { Message } from '@aalis/schema-message';
 
 export const name = '@aalis/plugin-memory-myimpl';
@@ -167,7 +167,7 @@ export function apply(ctx: Context): void {
 **永远惰性查询，不要缓存实例。** memory provider 可能被 bounce 或热重载，缓存下来的裸引用会失效：`ServiceRegistry.get` 返回的是裸引用，若在 `apply` 时把它缓存下来，memory provider 重载后这个引用就会失效。详见 `docs/concepts/lazy-service-access.md`。
 
 ```ts
-import type { MemoryService } from '@aalis/plugin-memory-api';
+import type { MemoryService } from '@aalis/api-memory';
 
 const memory = ctx.getService<MemoryService>('memory');
 if (!memory) return; // memory 是可选依赖时：缺失就降级，别抛

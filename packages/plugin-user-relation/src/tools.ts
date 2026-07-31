@@ -21,8 +21,9 @@
  *
  * 所有 depth/breadth/limit 参数会被 hardMax 截断，防止 Agent 一次拉满爆 token。
  */
+
+import { useToolService } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
-import { useToolService } from '@aalis/plugin-tools-api';
 import type { RelationService } from './service.js';
 import type {
   EntityEntityEdge,

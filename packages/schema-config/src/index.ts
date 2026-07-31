@@ -17,7 +17,7 @@
  * Schema 字段类型注册表 —— declaration merging 扩展点。
  *
  * 本包只内置基础类型；带业务语义的类型由对应 api 包合并声明
- * （如 `'llm-ref'` 由 @aalis/plugin-llm-api 注入）。key 即类型名，value 恒为 true。
+ * （如 `'llm-ref'` 由 @aalis/api-llm 注入）。key 即类型名，value 恒为 true。
  *
  * ```ts
  * declare module '@aalis/schema-config' {
@@ -43,7 +43,7 @@ export type SchemaFieldType = keyof SchemaFieldTypes & string;
  *
  * 只声明所有渲染宿主共需的字段；单一宿主的交互属性
  * （如 `secret` / `dynamicOptions` / `allowCustom`）由消费它们的宿主 api 包
- * （@aalis/plugin-webui-api）通过 declaration merging 注入。
+ * （@aalis/api-webui）通过 declaration merging 注入。
  */
 export interface SchemaField {
   type: SchemaFieldType;

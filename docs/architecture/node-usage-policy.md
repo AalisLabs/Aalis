@@ -1,7 +1,7 @@
 # Node 内置模块使用建议
 
 > 适用版本：当前 `dev` 分支
-> 配套接口：`@aalis/plugin-storage-api` / `@aalis/plugin-process-api`
+> 配套接口：`@aalis/api-storage` / `@aalis/api-process`
 > 配套 lint：`biome.json` 中 `style/noRestrictedImports` 规则 + 显式 overrides 例外清单
 
 ## 0. 这份文档的定位
@@ -27,8 +27,8 @@
 基于这条红线，对插件层我们给出以下默认建议：
 
 - **业务插件**（agent、memory、tools、persona、scheduler、websearch、image-recognition、…）建议**优先**通过以下网关访问宿主能力，而不是直接 import `node:*`：
-  - 文件系统 → `@aalis/plugin-storage-api`（`createStorageGateway(ctx)`，沙箱根 workspace/data/tmp/pluginData/logs/aalis）
-  - 子进程 / 外部文件 / 临时目录 → `@aalis/plugin-process-api`（`createProcessGateway(ctx)`，能力含 `spawn`/`execFile`/`makeTempDir`/`readExternalFile`/`external-fs`）
+  - 文件系统 → `@aalis/api-storage`（`createStorageGateway(ctx)`，沙箱根 workspace/data/tmp/pluginData/logs/aalis）
+  - 子进程 / 外部文件 / 临时目录 → `@aalis/api-process`（`createProcessGateway(ctx)`，能力含 `spawn`/`execFile`/`makeTempDir`/`readExternalFile`/`external-fs`）
   - 出站网络 → `useNetwork()` / fetch
   - 入站网络 → 服务端类插件（webui-server / mcp-server）
   - 系统信息（CPU/内存/用户名）→ `plugin-tool-system` 的 `system_info` 工具
@@ -60,12 +60,12 @@
 
 | node 模块 | 业务插件建议做法 | 当前直接持有者 | 持有原因 |
 |---|---|---|---|
-| `node:fs` / `node:fs/promises` | 走 `@aalis/plugin-storage-api` | `plugin-storage-local` | StorageService 的当前实现 |
+| `node:fs` / `node:fs/promises` | 走 `@aalis/api-storage` | `plugin-storage-local` | StorageService 的当前实现 |
 |  |  | `plugin-process-local` | `readExternalFile()`：用于 OneBot 直推的 `/tmp/...` 等不在任何 storage 根内的绝对路径 |
 |  |  | `plugin-webui-server` | `existsSync` 探测前端 dist 目录（位于工作区外、由 webui-client 提供） |
 |  |  | `create-aalis-plugin` | 脚手架 CLI，物理生成新插件目录 |
 |  |  | `plugin-tool-browser` | 探测 puppeteer 包内 `cli.js` 与 Chrome 是否已下载（包资产管理） |
-| `node:child_process` | 走 `@aalis/plugin-process-api`（`spawn`/`execFile`） | `plugin-process-local` | ProcessService 的当前实现 |
+| `node:child_process` | 走 `@aalis/api-process`（`spawn`/`execFile`） | `plugin-process-local` | ProcessService 的当前实现 |
 | `node:http` / `node:https` | 出站建议用 fetch | `plugin-webui-server` | HTTP **入站**服务 + WebSocket 升级 |
 |  |  | `plugin-mcp-server` | HTTP/SSE **入站**端点 |
 | `node:os` | 走 `system_info` 工具聚合返回 | `plugin-tool-system/src/tools/system.ts` | 该工具的本意就是暴露系统信息 |
@@ -124,6 +124,6 @@
 ## 5. 与其它文档的关系
 
 - 架构总览：`docs/architecture.md` § "环境无关 core"。
-- StorageService 接口与沙箱说明：`packages/plugin-storage-api/src/index.ts` 顶部 JSDoc。
-- ProcessService 接口与 capability：`packages/plugin-process-api/src/index.ts`。
+- StorageService 接口与沙箱说明：`packages/api-storage/src/index.ts` 顶部 JSDoc。
+- ProcessService 接口与 capability：`packages/api-process/src/index.ts`。
 - 插件作者指南：`docs/plugin-author-guide.md` —— 新作者首先建议看的就是本文件。

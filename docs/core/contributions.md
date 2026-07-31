@@ -56,7 +56,7 @@ for (const { key, spec } of ctx.collect('agent:prompt')) {
 
 | 贡献点 | owner | spec | 说明 |
 |---|---|---|---|
-| `agent:prompt` | `@aalis/plugin-agent` | `PromptContribution`（`@aalis/plugin-agent-api`） | LLM 提示词块；锚位 `identity` / `knowledge` / `context` / `turn-hint`，`build(view)` 返回 `string | string[] | null` |
+| `agent:prompt` | `@aalis/plugin-agent` | `PromptContribution`（`@aalis/api-agent`） | LLM 提示词块；锚位 `identity` / `knowledge` / `context` / `turn-hint`，`build(view)` 返回 `string | string[] | null` |
 
 ## 定义自己的贡献点
 

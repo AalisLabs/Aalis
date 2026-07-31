@@ -2,9 +2,8 @@
 // service.ts — MediaService 实现
 // ============================================================
 
-import type { Context, Logger } from '@aalis/core';
-import type { ASRService } from '@aalis/plugin-asr-api';
-import type { LLMModel, ModelRef } from '@aalis/plugin-llm-api';
+import type { ASRService } from '@aalis/api-asr';
+import type { LLMModel, ModelRef } from '@aalis/api-llm';
 import type {
   BuildContextOptions,
   DescribeImageOptions,
@@ -15,8 +14,9 @@ import type {
   MediaProcessReport,
   MediaService,
   TranscribeOptions,
-} from '@aalis/plugin-media-api';
-import { isStorageUri, parseUriRoot } from '@aalis/plugin-storage-api';
+} from '@aalis/api-media';
+import { isStorageUri, parseUriRoot } from '@aalis/api-storage';
+import type { Context, Logger } from '@aalis/core';
 import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
 import { AttachmentRefKind, formatAttachmentRef } from '@aalis/schema-message';
 import { lookupCachedDescription, rememberDescription } from './cache.js';

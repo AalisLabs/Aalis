@@ -1,9 +1,9 @@
+import { useCronEngine } from '@aalis/api-cron-engine';
+import { createStorageGateway, toStorageUri } from '@aalis/api-storage';
+import { useToolService } from '@aalis/api-tools';
+import type { WebuiPage } from '@aalis/api-webui';
+import { useWebuiService } from '@aalis/api-webui';
 import type { Context, PluginModule } from '@aalis/core';
-import { useCronEngine } from '@aalis/plugin-cron-engine-api';
-import { createStorageGateway, toStorageUri } from '@aalis/plugin-storage-api';
-import { useToolService } from '@aalis/plugin-tools-api';
-import type { WebuiPage } from '@aalis/plugin-webui-api';
-import { useWebuiService } from '@aalis/plugin-webui-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { parseEverySeconds } from '@aalis/util-cron';
@@ -61,7 +61,7 @@ interface SchedulerConfig {
 }
 
 // ──────────── Cron 解析 ────────────
-// 已迁移到 @aalis/plugin-cron-engine-api（normalizeCronExpr / parseEverySeconds / matchesCron）；
+// 已迁移到 @aalis/api-cron-engine（normalizeCronExpr / parseEverySeconds / matchesCron）；
 // scheduler 改为 inject 'cron-engine' 后调用 subscribe()/nextFireTime()。
 
 // ──────────── 运行时状态 ────────────
@@ -482,7 +482,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       // 通用触发事件：供 workflow 等订阅者使用
       // （即使本任务用的是旧版 inbound:message，也同时广播 trigger:fired，
       //  便于平滑迁移到 plugin-workflow）
-      // biome-ignore lint/suspicious/noExplicitAny: 事件类型由 plugin-workflow-api 增广，scheduler 不直接依赖
+      // biome-ignore lint/suspicious/noExplicitAny: 事件类型由 api-workflow 增广，scheduler 不直接依赖
       await ctx.emit('trigger:fired' as any, {
         source: `scheduler:${jobName}`,
         type: rt.config.cron ? 'cron' : 'interval',
