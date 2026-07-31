@@ -101,9 +101,14 @@ async function execProcBoth(
   args: string[],
   cwd: string,
   timeout: number = QUICK_TIMEOUT_MS,
+  extraEnv?: Record<string, string>,
 ): Promise<{ stdout: string; stderr: string }> {
   try {
-    const result: ExecResult = await proc.execFile(cmd, args, { cwd, timeout });
+    const result: ExecResult = await proc.execFile(cmd, args, {
+      cwd,
+      timeout,
+      ...(extraEnv ? { env: { ...process.env, ...extraEnv } } : {}),
+    });
     return { stdout: result.stdout, stderr: result.stderr ?? '' };
   } catch (err) {
     const withResult = err as { result?: ExecResult } & Error;
@@ -529,6 +534,55 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
   }
 
   /**
+   * 在**项目副本**里预检整组目标版本；返回冲突要点，`undefined` = 通过。
+   *
+   * 为什么必须隔离到副本，而不是在 live tree 上跑 `--dry-run`（实测 npm 10.9.2）：
+   * 1. `--dry-run` **有副作用**——它不碰 `package.json` 与 `package-lock.json`，却会把
+   *    `node_modules/.package-lock.json`（npm 的隐藏 lockfile）重写成「目标版本已装」。
+   *    紧接着的真装读到它就判定树已就绪，直接 `up to date` 什么都不做：于是声明成了新版、
+   *    node_modules 里仍是旧代码，而旧代码起得来 → 重启成功 → 回滚永不触发 → 整次更新
+   *    空转却报成功。副本里跑则 live tree 分毫未动，无需事后补救。
+   * 2. 用户 `.npmrc` 里的 `legacy-peer-deps=true`（React 生态常见 workaround）会让 npm
+   *    **完全不报** peer 告警，唯一的护栏静默失效。副本在项目树之外，天然不继承项目级
+   *    配置；再用 `npm_config_legacy_peer_deps=false` 压掉用户级与全局配置（已实测：
+   *    即便副本里放了 `legacy-peer-deps=true` 的 `.npmrc`，该环境变量也能翻回来）。
+   *
+   * 判据只能是解析告警文本：`--dry-run --json` 实测只给 `{added, removed, changed,
+   * audited, funding}`，无任何冲突信息；退出码在本场景恒为 0（npm 把命令行显式 spec
+   * 视为用户意图，只 warn 就放行），`--strict-peer-deps` 在副本里同样不改变这一点，
+   * 故不再传它——留着只会让人误以为有额外保障。
+   */
+  async function preflightInSandbox(specs: string[], root: string): Promise<string[] | undefined> {
+    const tmp = await proc.makeTempDir('preflight');
+    try {
+      // 直接 cp 现有文件，不重新写内容——与本插件其余文件操作同一路子（走 proc 网关的
+      // POSIX 命令），也省掉一个只为此处存在的写原语。
+      await execProc(proc, 'cp', [`${root}/package.json`, `${tmp.path}/package.json`], tmp.path);
+      const lock = `${root}/package-lock.json`;
+      if (await pathExists(lock, 'f')) {
+        await execProc(proc, 'cp', [lock, `${tmp.path}/package-lock.json`], tmp.path);
+      }
+      const { stdout, stderr } = await execProcBoth(
+        proc,
+        'npm',
+        ['install', ...specs, '--dry-run', '--no-audit', '--no-fund'],
+        tmp.path,
+        INSTALL_TIMEOUT_MS,
+        { npm_config_legacy_peer_deps: 'false' },
+      );
+      const unmet = findUnmetPeers(`${stderr}\n${stdout}`, specs.map(stripVersion));
+      return unmet.length > 0 ? unmet : undefined;
+    } catch (err) {
+      // 非零退出 = npm 自己判定无解（ERESOLVE 等）。原样上报，不猜。
+      const raw = err instanceof Error ? err.message : String(err);
+      const conflicts = extractPeerConflicts(raw);
+      return conflicts.length > 0 ? conflicts : [raw.slice(0, 2000)];
+    } finally {
+      await tmp.cleanup().catch(() => {});
+    }
+  }
+
+  /**
    * 批量更新。形状是「一次算全量 → 整组预检 → 一次 install → 一次重启」，
    * 重启次数恒为 1，与改了多少个包无关（语义见 {@link PackageManagerService.update}）。
    */
@@ -570,27 +624,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       message: '依赖预检未通过，未改动任何文件。若是 peer 版本要求，请把被依赖方一并勾选后重试。',
       conflicts,
     });
-    let preflight: { stdout: string; stderr: string };
-    try {
-      preflight = await execProcBoth(
-        proc,
-        'npm',
-        ['install', ...specs, '--strict-peer-deps', '--dry-run', '--no-audit', '--no-fund'],
-        root,
-        INSTALL_TIMEOUT_MS,
-      );
-    } catch (err) {
-      const raw = err instanceof Error ? err.message : String(err);
-      const conflicts = extractPeerConflicts(raw);
-      return reject(conflicts.length > 0 ? conflicts : [raw.slice(0, 2000)]);
-    }
-    // 退出码 0 **不代表没冲突**：npm 对命令行显式指定的 spec 只 warn 就放行（实测见
-    // findUnmetPeers 的注释），而更新 core 恰好就是这个形状。必须再查输出。
-    const unmet = findUnmetPeers(
-      `${preflight.stderr}\n${preflight.stdout}`,
-      targets.map(t => t.name),
-    );
-    if (unmet.length > 0) return reject(unmet);
+    const verdict = await preflightInSandbox(specs, root);
+    if (verdict) return reject(verdict);
 
     // ── 快照：预检过了才有必要 ──
     // lockfile 与 package.json 必须一起回退，否则还原后的树是「声明旧版、锁定新版」。
@@ -610,21 +645,9 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     }
 
     // ── 提交 ──
-    // **必须先清掉 hidden lockfile。** 实测（npm 10.9.2）：上面的 `--dry-run` 不碰
-    // package.json 与 package-lock.json，却会把 `node_modules/.package-lock.json`
-    // 重写成「目标版本已装」。紧接着的真装读到它便判定树已就绪，直接 `up to date`
-    // 什么都不做——于是 package.json 与 lockfile 都成了新版，node_modules 里仍是旧代码。
-    // 旧代码起得来，重启永远成功、回滚永不触发，整次更新空转却报成功；而 lockfile
-    // 从此在撒谎，日后 `npm ci` 会在没有任何看守的时刻突然跳版。
-    await execProc(proc, 'rm', ['-f', `${root}/node_modules/.package-lock.json`], root).catch(() => {});
+    // 预检在副本里做，live tree 此刻**未被任何 dry-run 触碰**，可以直接装。
     try {
-      await execProc(
-        proc,
-        'npm',
-        ['install', ...specs, '--strict-peer-deps', '--no-audit', '--no-fund'],
-        root,
-        INSTALL_TIMEOUT_MS,
-      );
+      await execProc(proc, 'npm', ['install', ...specs, '--no-audit', '--no-fund'], root, INSTALL_TIMEOUT_MS);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.error(`更新安装失败: ${message}`);

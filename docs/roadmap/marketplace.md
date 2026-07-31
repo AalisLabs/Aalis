@@ -75,8 +75,8 @@ required 依赖缺失的新插件停在 pending，等提供者装上后自动补
 回归测试见 `test/integration/install-chain.test.ts`（真跑 npm）。
 
 一处旧论断需注意：本文曾写「`--strict-peer-deps` 可把 warn-override 变成硬失败」，**这是错的**
-（实测 npm 10.9.2：改「已被别人 peer 依赖的包」的版本时只 warn 且 exit 0）。现行判据是
-解析 dry-run 输出，见 `findUnmetPeers` 的注释。
+（实测 npm 10.9.2：改「已被别人 peer 依赖的包」的版本时只 warn 且 exit 0，该标志不生效，故已删除）。
+现行做法是**在项目副本里预检**——理由与实测见 `preflightInSandbox` 的注释。
 
 **热升级（`import(url + '?t=…')`）已决定不做**：只重新求值入口模块，多文件 dist 会混版；
 而重启路径本就必须做对（core / runtime 只能重启），做对后插件升级复用它零边际成本。

@@ -46,6 +46,11 @@ const realProc = {
   async readExternalFile(p: string) {
     return new Uint8Array(readFileSync(p));
   },
+  /** 预检要在项目副本里跑（不碰 live tree），这里给真实临时目录。 */
+  async makeTempDir(prefix: string) {
+    const dir = mkdtempSync(join(tmpdir(), `aalis-${prefix}-`));
+    return { path: dir, cleanup: async () => rmSync(dir, { recursive: true, force: true }) };
+  },
 } as unknown as PackageManagerDeps['proc'];
 
 function makePm(projectRoot: string, restarts: unknown[] = []) {
@@ -158,6 +163,36 @@ describe('安装链（真实 npm）', () => {
         expect(restarts).toHaveLength(0);
         expect(readFileSync(join(p, 'package.json'), 'utf-8')).toBe(before);
         expect(JSON.parse(readFileSync(join(p, 'node_modules/react/package.json'), 'utf-8')).version).toBe('18.3.1');
+      } finally {
+        rmSync(p, { recursive: true, force: true });
+      }
+    },
+    480_000,
+  );
+
+  it.runIf(npmUsable)(
+    '用户 .npmrc 有 legacy-peer-deps=true 时仍拦得住（预检在副本里跑 + 环境变量压制）',
+    async () => {
+      // 这是「预检必须隔离到副本」的核心理由之一：legacy-peer-deps=true 是 React 生态
+      // 常见 workaround，它会让 npm **完全不报** peer 告警——若预检在项目根跑，唯一的
+      // 护栏就此静默失效，冲突被放行。
+      const p = mkdtempSync(join(tmpdir(), 'aalis-legacy-'));
+      try {
+        writeFileSync(
+          join(p, 'package.json'),
+          JSON.stringify(
+            { name: 'lg', version: '1.0.0', private: true, dependencies: { react: '18.3.1', 'react-dom': '18.3.1' } },
+            null,
+            2,
+          ),
+        );
+        writeFileSync(join(p, '.npmrc'), 'legacy-peer-deps=true\n');
+        await pexec('npm', ['install', '--no-audit', '--no-fund'], { cwd: p, timeout: 240_000 });
+        const before = readFileSync(join(p, 'package.json'), 'utf-8');
+        const r = await makePm(p, []).update([{ name: 'react', version: '17.0.2' }]);
+        expect(r.ok).toBe(false);
+        expect(r.conflicts?.some(c => c.includes('react-dom'))).toBe(true);
+        expect(readFileSync(join(p, 'package.json'), 'utf-8')).toBe(before);
       } finally {
         rmSync(p, { recursive: true, force: true });
       }
