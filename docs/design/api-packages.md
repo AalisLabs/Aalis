@@ -115,6 +115,38 @@ const target = resolveStorageByPath(ctx, 'data:/foo', ['local-path']);
 
 只有一个实现且无类型外溢的“叶子插件”（如 plugin-todo-list、plugin-image-sender 内部）不需要 api 包。
 
+## 包该多厚：三类判据
+
+契约包放什么、不放什么，按三条可机检的判据分：
+
+| 后缀 | 放什么 | 判据 |
+|---|---|---|
+| `util-*` | 与 Aalis 领域**无关**的标准算法 | 换个项目也能原样用（cron 表达式解析、JSON 修复、文本规整） |
+| `*-api` | 服务契约 | 必然 declare 一个 `ServiceTypeMap` 成员 |
+| `schema-*` | 数据格式规范 | Aalis 领域词汇但**不声明服务**、不可能有第二实现（`Message` / `ConfigSchema`） |
+
+`plugin-cron-engine-api` 是第一条判据的实例：cron 表达式的解析与匹配是 POSIX 标准算法，
+曾长在契约包里占产物 95%，抽成 `@aalis/util-cron` 后契约包从 7919B 降到 411B。
+
+## 导出策略：宁可多导出，不要等人来要
+
+**契约包的公开导出不以「仓内有没有消费者」为条件。** 一个能力只要设计上是给第三方用的，
+就直接导出，哪怕仓内暂时没人调。
+
+理由是成本方向不对称：
+
+- 「等有人提 issue 再开放」把成本转嫁给第三方（提 issue → 等排期 → 等发版），还给维护者
+  添一轮往返；
+- 而**导出是非破坏性的、删除才是破坏性的**。先导出、真长期没人用再议，比反过来安全。
+
+推论：**不要拿「零消费者」当清理理由**去删契约包的导出。`plugin-storage-api` 的
+`getStorageRootConflicts`、`plugin-platform-api` 的 `aggregatePlatformConnections`、
+`schema-message` 的 `parseAttachmentRefs` 都属此类——仓内零调用，但都是有意提供的能力，
+且各有 `docs/api/` 文档在教第三方使用。它们的维护成本近零（纯函数、无状态、类型守着）。
+
+（这与「删死代码」不冲突：**插件与运行时**里的零消费者代码该删，那是实现；契约包的
+导出是**接口**，接口的消费者在仓外。）
+
 ## 消费约定
 
 ### 单纯使用服务（按名解析，无能力参数）
