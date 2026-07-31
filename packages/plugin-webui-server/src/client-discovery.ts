@@ -63,24 +63,34 @@ export function discoverClients(scanDirs: string[], depIds: string[], env: Disco
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
+/** 本地扫到的一个包：它自身的版本 + 它依赖了谁。 */
+export interface LocalScanEntry {
+  /** 该包 package.json 的 version。缺字段则 undefined。 */
+  version?: string;
+  /** `dependencies/peer/optional` 的并集**包名**（不含版本区间）。 */
+  deps: string[];
+}
+
 /**
- * 扫描本地物理存在的包 → `name → 依赖名[]`（与 discoverClients 共用 scanDirs/env）。
- * 两用，一次扫盘：① keys 即「本地已装包名」，补市场已装判定（require.resolve 在 pnpm 工作区
- * 从仓库根解析不到未提升的工作区包）；② values 即各包 `dependencies/peer/optional` 的并集名单，
- * 供依赖图（谁依赖谁）。**只取依赖名、不看版本区间**（`workspace:^`/`^1.0.0` 一律按名），故无需 semver。
+ * 扫描本地物理存在的包 → `name → {version, deps}`（与 discoverClients 共用 scanDirs/env）。
+ * 三用，一次扫盘：① keys 即「本地已装包名」，补市场已装判定（require.resolve 在 pnpm 工作区
+ * 从仓库根解析不到未提升的工作区包）；② `deps` 供依赖图（谁依赖谁）——**只取依赖名、不看版本
+ * 区间**（`workspace:^`/`^1.0.0` 一律按名），故无需 semver；③ `version` 供市场卡片显示工作区包
+ * 的真实本地版本（这条路径 require.resolve 走不通，不带上就只能退回显示 npm latest）。
  * scope 无关（不挑 @aalis）。纯函数便于单测。
  */
 export function collectLocalPackageDeps(
   scanDirs: string[],
   env: Pick<DiscoveryEnv, 'existsSync' | 'readdirSync' | 'readJson' | 'join'>,
-): Map<string, string[]> {
-  const out = new Map<string, string[]>();
+): Map<string, LocalScanEntry> {
+  const out = new Map<string, LocalScanEntry>();
   for (const base of scanDirs) {
     if (!env.existsSync(base)) continue;
     for (const entry of env.readdirSync(base)) {
       const pkg = env.readJson(env.join(base, entry, 'package.json')) as
         | {
             name?: unknown;
+            version?: unknown;
             dependencies?: Record<string, unknown>;
             peerDependencies?: Record<string, unknown>;
             optionalDependencies?: Record<string, unknown>;
@@ -92,7 +102,7 @@ export function collectLocalPackageDeps(
         ...Object.keys(pkg.peerDependencies ?? {}),
         ...Object.keys(pkg.optionalDependencies ?? {}),
       ]);
-      out.set(pkg.name, [...deps]);
+      out.set(pkg.name, { version: typeof pkg.version === 'string' ? pkg.version : undefined, deps: [...deps] });
     }
   }
   return out;
