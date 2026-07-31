@@ -205,6 +205,21 @@ describe('纯函数判据', () => {
     expect(declaresPlugin(undefined)).toBe(false);
   });
 
+  it('buildUpdateSpecs 按 argv **字节数**设闸，不按包个数', () => {
+    // 真实约束是 execve 的 ARG_MAX（参数块总字节），与包数无关。按个数设闸曾把
+    // 「最多 50 个包」定成产品限制，比真实约束低约 600 倍，挡死了协调发版这个主场景。
+    const many = Array.from({ length: 2000 }, (_, i) => ({ name: `pkg-${i}`, version: '1.0.0' }));
+    expect(buildUpdateSpecs(many).error, '两千个短名仍在预算内').toBeUndefined();
+    expect(buildUpdateSpecs(many).specs).toHaveLength(2000);
+
+    // 同样的包数、长得多的名字 → 超预算被拒。这正是按个数设闸看不见的那一维。
+    const longName = `@scope/${'a'.repeat(180)}`;
+    const heavy = Array.from({ length: 2000 }, (_, i) => ({ name: `${longName}${i}`, version: '1.0.0' }));
+    const r = buildUpdateSpecs(heavy);
+    expect(r.specs).toBeUndefined();
+    expect(r.error).toContain('参数总长');
+  });
+
   it('stripVersion：剥版本保 scope', () => {
     expect(stripVersion('@scope/foo@1.2.3')).toBe('@scope/foo');
     expect(stripVersion('@scope/foo')).toBe('@scope/foo'); // scope 的 @ 在下标 0，不当版本分隔
