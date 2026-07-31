@@ -84,9 +84,9 @@ const GROUPS: AdapterGroup[] = [
     mode: 'multi',
     tiers: ['minimal', 'standard'],
     members: [
-      { name: '@aalis/plugin-deepseek', label: 'DeepSeek', default: true },
-      { name: '@aalis/plugin-openai', label: 'OpenAI' },
-      { name: '@aalis/plugin-ollama', label: 'Ollama（本地）' },
+      { name: '@aalis/plugin-llm-deepseek', label: 'DeepSeek', default: true },
+      { name: '@aalis/plugin-llm-openai', label: 'OpenAI' },
+      { name: '@aalis/plugin-llm-ollama', label: 'Ollama（本地）' },
     ],
   },
   {
@@ -136,8 +136,8 @@ const GROUPS: AdapterGroup[] = [
 // 已知插件的配置桩 + 引用的环境变量（写进 aalis.config.yaml 与 .env.example）。
 // 仅覆盖需密钥/地址的常见适配器；其余插件用默认配置启动。
 const KNOWN_CONFIG: Record<string, { config: Record<string, string>; env?: string[] }> = {
-  '@aalis/plugin-deepseek': { config: { apiKey: '${DEEPSEEK_API_KEY}' }, env: ['DEEPSEEK_API_KEY'] },
-  '@aalis/plugin-openai': { config: { apiKey: '${OPENAI_API_KEY}' }, env: ['OPENAI_API_KEY'] },
+  '@aalis/plugin-llm-deepseek': { config: { apiKey: '${DEEPSEEK_API_KEY}' }, env: ['DEEPSEEK_API_KEY'] },
+  '@aalis/plugin-llm-openai': { config: { apiKey: '${OPENAI_API_KEY}' }, env: ['OPENAI_API_KEY'] },
   '@aalis/plugin-embedding-openai': { config: { apiKey: '${OPENAI_API_KEY}' }, env: ['OPENAI_API_KEY'] },
   '@aalis/plugin-websearch-serper': { config: { apiKey: '${SERPER_API_KEY}' }, env: ['SERPER_API_KEY'] },
 };

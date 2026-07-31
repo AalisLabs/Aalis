@@ -108,7 +108,7 @@
 - **`plugin-tool-browser/src/index.ts`** — `node:fs`（`existsSync`）+ `node:path` + `node:url`（`fileURLToPath`）
   动态 `import('puppeteer')` 后需要对 puppeteer 包做包内文件探测（找到内置 `cli.js`、检测 Chrome 是否已下载），属于 puppeteer 包的本地资产管理需求，storage 网关覆盖不到。**Chrome 安装本身**（原先的 `execFileSync`）已迁移到 `ProcessService.execFile`。
 
-> 历史遗留迁移已完成：`plugin-file-reader` 的 sha256 hashId 改 Web Crypto；`plugin-asr-openai` / `plugin-ollama` 的 `file://` 读取改走 `ProcessService.readExternalFile`；`plugin-tool-browser` 的 Chrome 安装改走 `ProcessService.execFile`。新代码建议不要再加入直接动态 import `node:fs|crypto|child_process`——如果有需要，欢迎按 § 4 流程申报新的例外。
+> 历史遗留迁移已完成：`plugin-file-reader` 的 sha256 hashId 改 Web Crypto；`plugin-asr-openai` / `plugin-llm-ollama` 的 `file://` 读取改走 `ProcessService.readExternalFile`；`plugin-tool-browser` 的 Chrome 安装改走 `ProcessService.execFile`。新代码建议不要再加入直接动态 import `node:fs|crypto|child_process`——如果有需要，欢迎按 § 4 流程申报新的例外。
 
 ## 4. 增加新例外的流程（仅当你想合入社区 / 让 lint 通过）
 

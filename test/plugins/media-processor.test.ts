@@ -27,37 +27,39 @@ function proc(name: string, priority: number): MediaProcessor {
 function svc(): MediaServiceImpl {
   const s = new MediaServiceImpl(ctx, logger, cfg);
   // processor.name 模拟 llm-adapter 生成的 `llm:<provider>/<model>#<capShort>` 格式
-  s.registerProcessor(proc('llm:@aalis/plugin-openai:main/gpt-4o#vis', 10));
-  s.registerProcessor(proc('llm:@aalis/plugin-deepseek:main/deepseek-vl#vis', 20));
+  s.registerProcessor(proc('llm:@aalis/plugin-llm-openai:main/gpt-4o#vis', 10));
+  s.registerProcessor(proc('llm:@aalis/plugin-llm-deepseek:main/deepseek-vl#vis', 20));
   return s;
 }
 
 describe('MediaService.pickProcessor（模型选择 / issue 3）', () => {
   it('ModelRef {provider,model} → 精确命中对应模型（钉死具体模型）', () => {
-    const ref: ModelRef = { provider: '@aalis/plugin-openai:main', model: 'gpt-4o' };
-    expect(svc().pickProcessor('vision', ref)?.name).toBe('llm:@aalis/plugin-openai:main/gpt-4o#vis');
+    const ref: ModelRef = { provider: '@aalis/plugin-llm-openai:main', model: 'gpt-4o' };
+    expect(svc().pickProcessor('vision', ref)?.name).toBe('llm:@aalis/plugin-llm-openai:main/gpt-4o#vis');
   });
 
   it('ModelRef 仅 provider → 命中该 provider', () => {
-    expect(svc().pickProcessor('vision', { provider: '@aalis/plugin-deepseek:main' })?.name).toBe(
-      'llm:@aalis/plugin-deepseek:main/deepseek-vl#vis',
+    expect(svc().pickProcessor('vision', { provider: '@aalis/plugin-llm-deepseek:main' })?.name).toBe(
+      'llm:@aalis/plugin-llm-deepseek:main/deepseek-vl#vis',
     );
   });
 
   it('ModelRef 仅 model → 按 model 命中', () => {
-    expect(svc().pickProcessor('vision', { model: 'gpt-4o' })?.name).toBe('llm:@aalis/plugin-openai:main/gpt-4o#vis');
+    expect(svc().pickProcessor('vision', { model: 'gpt-4o' })?.name).toBe(
+      'llm:@aalis/plugin-llm-openai:main/gpt-4o#vis',
+    );
   });
 
   it('字符串 prefer → 按 processor name 精确命中（历史格式仍兼容）', () => {
-    expect(svc().pickProcessor('vision', 'llm:@aalis/plugin-openai:main/gpt-4o#vis')?.name).toBe(
-      'llm:@aalis/plugin-openai:main/gpt-4o#vis',
+    expect(svc().pickProcessor('vision', 'llm:@aalis/plugin-llm-openai:main/gpt-4o#vis')?.name).toBe(
+      'llm:@aalis/plugin-llm-openai:main/gpt-4o#vis',
     );
   });
 
   it('无 prefer / 匹配不到 → 按 priority 确定性回落（不静默乱选）', () => {
-    expect(svc().pickProcessor('vision', null)?.name).toBe('llm:@aalis/plugin-deepseek:main/deepseek-vl#vis'); // 20>10
+    expect(svc().pickProcessor('vision', null)?.name).toBe('llm:@aalis/plugin-llm-deepseek:main/deepseek-vl#vis'); // 20>10
     expect(svc().pickProcessor('vision', { provider: 'nonexist' })?.name).toBe(
-      'llm:@aalis/plugin-deepseek:main/deepseek-vl#vis',
+      'llm:@aalis/plugin-llm-deepseek:main/deepseek-vl#vis',
     );
   });
 
@@ -92,12 +94,12 @@ describe('MediaService 音频统一池（asr 桥 + 音频 LLM 一个池）', () 
     } as unknown as MediaConfigResolved);
     // 一个「音频 LLM」外部 processor（模拟 llm-adapter 对 audio cap 的包装，pri 1）
     s.registerProcessor({
-      name: 'llm:@aalis/plugin-ollama:main/gemma#aud',
+      name: 'llm:@aalis/plugin-llm-ollama:main/gemma#aud',
       capabilities: ['audio'],
       priority: 1,
       transcribe: async i => ({
         text: `[llm] ${i.attachment.data}`,
-        meta: { processor: 'llm:@aalis/plugin-ollama:main/gemma#aud' },
+        meta: { processor: 'llm:@aalis/plugin-llm-ollama:main/gemma#aud' },
       }),
     });
     return s;
@@ -108,7 +110,7 @@ describe('MediaService 音频统一池（asr 桥 + 音频 LLM 一个池）', () 
       .listProcessors('audio')
       .map(p => p.name);
     expect(names).toContain('asr:@aalis/plugin-asr-whisper-cpp');
-    expect(names).toContain('llm:@aalis/plugin-ollama:main/gemma#aud');
+    expect(names).toContain('llm:@aalis/plugin-llm-ollama:main/gemma#aud');
   });
 
   it('asr 桥 transcribe 转调 asr 服务，并盖上桥接器 processor 名（meta.processor）', async () => {
@@ -125,7 +127,7 @@ describe('MediaService 音频统一池（asr 桥 + 音频 LLM 一个池）', () 
   });
 
   it('prefer 钉死 音频 LLM → transcribe() 真用 LLM（曾经的死代码现在通了）', async () => {
-    expect(await audioSvc('llm:@aalis/plugin-ollama:main/gemma#aud').transcribe(audioAtt('Z'))).toBe('[llm] Z');
+    expect(await audioSvc('llm:@aalis/plugin-llm-ollama:main/gemma#aud').transcribe(audioAtt('Z'))).toBe('[llm] Z');
   });
 
   it('无 prefer → 按 priority 确定性回落（whisper pri5 > llm pri1）', async () => {
@@ -138,7 +140,7 @@ describe('MediaService 音频统一池（asr 桥 + 音频 LLM 一个池）', () 
     const llmCtx = {
       getAllServices: (n: string) =>
         n === 'llm'
-          ? [{ instance: audioLLM, contextId: '@aalis/plugin-ollama:main/gemma', priority: 0, label: 'ollama' }]
+          ? [{ instance: audioLLM, contextId: '@aalis/plugin-llm-ollama:main/gemma', priority: 0, label: 'ollama' }]
           : [],
     } as unknown as Context;
     const s = new MediaServiceImpl(llmCtx, logger, {

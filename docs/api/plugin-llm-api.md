@@ -2,7 +2,7 @@
 
 **包名**: `@aalis/plugin-llm-api`  
 **源码**: `packages/plugin-llm-api/src/index.ts`  
-**实现**: `@aalis/plugin-openai`, `@aalis/plugin-ollama`, `@aalis/plugin-deepseek`
+**实现**: `@aalis/plugin-llm-openai`, `@aalis/plugin-llm-ollama`, `@aalis/plugin-llm-deepseek`
 
 ## 概述
 
@@ -85,9 +85,9 @@ export function resolveLLMModel(
 
 ## 实现者
 
-- [@aalis/plugin-openai](../plugins/plugin-openai.md) — 通用 OpenAI 兼容
-- [@aalis/plugin-deepseek](../plugins/plugin-deepseek.md) — DeepSeek（含 thinking）
-- [@aalis/plugin-ollama](../plugins/plugin-ollama.md) — 本地 Ollama
+- [@aalis/plugin-llm-openai](../plugins/plugin-llm-openai.md) — 通用 OpenAI 兼容
+- [@aalis/plugin-llm-deepseek](../plugins/plugin-llm-deepseek.md) — DeepSeek（含 thinking）
+- [@aalis/plugin-llm-ollama](../plugins/plugin-llm-ollama.md) — 本地 Ollama
 
 ## 相关
 
