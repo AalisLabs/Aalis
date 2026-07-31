@@ -82,11 +82,23 @@
 **改动面大于收益**，暂不动。但需与上一条**一并决策**：要么两条都做（含文案），要么两条都不做，
 只做 `/help` 过滤是自欺。
 
-## 遗留：WebUI 的 markdown 渲染管线缺两个插件
+## 遗留：`/help` 详情仍靠代码块围栏规避 autolink
 
 `/help` 两段式与统一渲染器已落地（`db487bad`，见 `plugin-commands/src/help.ts`），
-其中详情正文整体包进代码块是**绕开**而非解决：
+`remark-breaks` 也已补上（裸换行不再被合并成一段）。剩下的只有一条：详情正文整体包进代码块
+（`help.ts:152`）是**规避**而非解决。
 
-`markdownConfig.tsx` 只挂了 `remarkGfm` + `remarkMath` + `rehypeHighlight` + `rehypeKatex`，
-**无 `remark-breaks`**（裸换行被合并成一段）、**无 `rehype-raw`**（`<type>` / `<subcommand>`
-是合法 HTML 标签名，会被当 HTML 节点整段丢弃）。任何新的指令输出若不走代码块，同样中招。
+规避的对象**不是**「缺 `rehype-raw`」——那条记载已被实测证伪，两个理由各自都足够：
+
+1. **它修不了症状，反而更糟。** 实测 `--type <type>` 现状渲染为 `&lt;type&gt;`（正确显示）；
+   加上 `rehype-raw` 后变成空的自定义元素 `<type></type>`，肉眼不可见。
+2. **它是确凿的 XSS 面。** 该渲染器用于 ChatPanel / SessionsPage，喂进来的是 LLM 输出与
+   用户消息。实测 `<img src=x onerror="alert(1)">` 现状被安全转义，加上 `rehype-raw` 后成为
+   真实 `<img>` 并触发预加载。真要开放 raw HTML 必须同时上 `rehype-sanitize`，那是一个
+   独立议题，不是「补个插件」。
+
+真正的症状是 **autolink**：`<name:string>` 被 CommonMark 解析成链接，渲染出
+`<a href="">name:string</a>`。要拆掉围栏，得在**产出侧**处理（转义尖括号，或把占位符写进
+行内代码），而不是在渲染侧加插件。
+
+复现方式：`renderToStaticMarkup(<ReactMarkdown remarkPlugins={[remarkGfm]}>{'用法: /persona set <name:string> --type <type>'}</ReactMarkdown>)`。

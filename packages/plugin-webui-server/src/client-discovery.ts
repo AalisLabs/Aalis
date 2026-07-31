@@ -120,3 +120,15 @@ export function collectLocalPackageDeps(
   }
   return out;
 }
+
+/**
+ * 从本轮发现结果里挑出**尚未登记**的候选。
+ *
+ * 前端发现要能重复跑（装完一个 `aalis-interface` 包后立刻重跑，否则它不出现在服务页的
+ * 下拉里、必须重启才看得见）。而重复 `fork().provide('webui-client', …)` 会在服务容器里
+ * 堆同名重复项 —— 所以幂等是硬要求，不是优化。纯函数，便于单测。
+ */
+export function pickFreshClients<T extends { id: string }>(known: Iterable<string>, discovered: readonly T[]): T[] {
+  const seen = new Set(known);
+  return discovered.filter(c => !seen.has(c.id));
+}
