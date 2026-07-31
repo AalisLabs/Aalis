@@ -1,4 +1,4 @@
-import type { ScopedToolService } from '@aalis/plugin-tools-api';
+import type { ScopedToolService } from '@aalis/api-tools';
 import { listFunctions, safeEval } from '../lib/expression.js';
 
 export function registerEvaluateTools(tools: ScopedToolService): void {

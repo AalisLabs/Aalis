@@ -9,7 +9,7 @@
 > （子任务依赖图 / 串行·管道 / 结果聚合 / 超时重试 / 并发）已通过给 `plugin-workflow` 增加
 > **`agent` 节点类型**落地——一个 agent 节点 = 把一段指令派发给 agent 并等回复，回复经 `out` 入
 > `outputs` 供下游 `{{outputs.X}}` 插值，配合 `deps` 即可表达「分解 → 依赖 → 串/并行 → 管道 → 聚合」。
-> 见 [plugin-workflow](../plugins/plugin-workflow.md) 与 `@aalis/plugin-workflow-api` 的 `AgentNodeSpec`。
+> 见 [plugin-workflow](../plugins/plugin-workflow.md) 与 `@aalis/api-workflow` 的 `AgentNodeSpec`。
 >
 > **现状能力映射**（本提案约 70% 已由现有插件组合覆盖）：
 > - 子任务 = 子会话、创建/等待/自动汇报：`plugin-subtask`

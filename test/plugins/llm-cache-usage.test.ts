@@ -1,6 +1,6 @@
 import { App } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { LLMModel } from '../../packages/plugin-llm-api/src/index.js';
+import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import * as deepseekModule from '../../packages/plugin-llm-deepseek/src/index.js';
 import * as openaiModule from '../../packages/plugin-llm-openai/src/index.js';
 

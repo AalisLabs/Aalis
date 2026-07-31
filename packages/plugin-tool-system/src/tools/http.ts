@@ -6,9 +6,9 @@
  * - http_download: 下载文件到 storage 受控路径
  */
 
-import type { StorageService } from '@aalis/plugin-storage-api';
-import { parseUriRoot, resolveAgainstCwd } from '@aalis/plugin-storage-api';
-import type { ScopedToolService } from '@aalis/plugin-tools-api';
+import type { StorageService } from '@aalis/api-storage';
+import { parseUriRoot, resolveAgainstCwd } from '@aalis/api-storage';
+import type { ScopedToolService } from '@aalis/api-tools';
 import { safeFetch } from '@aalis/util-network-guard';
 
 interface HttpConfig {

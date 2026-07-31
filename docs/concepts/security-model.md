@@ -171,7 +171,7 @@ const res = await safeFetch(url, { signal: AbortSignal.timeout(15_000) });
 - **env 清零仅留白名单**：`sandbox-exec ... env -i <白名单>` 或 bwrap 的 `--clearenv --setenv`，
   防止宿主 secrets 泄漏给不可信代码。
 
-它**不防**以下情形（`@aalis/plugin-code-sandbox-api` 契约写明的 v1 语义）：
+它**不防**以下情形（`@aalis/api-code-sandbox` 契约写明的 v1 语义）：
 
 - **读取本机其它文件**——v1 对读放开（解释器需要系统库）。要防读需要更强的 WASM / microVM 实现。
 - 内核漏洞 / 提权 / sandbox 逃逸——这是 OS 级边界，不是 gVisor / 虚拟机级别的强隔离。

@@ -1,4 +1,4 @@
-import type { UserIdentity } from '@aalis/plugin-authority-api';
+import type { UserIdentity } from '@aalis/api-authority';
 
 /** 从请求解析调用者身份（auth.ts 的 AuthSystem.identify） */
 type IdentifyFn = (req: { headers: { cookie?: string } }) => UserIdentity | undefined;

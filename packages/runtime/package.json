@@ -36,7 +36,7 @@
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/plugin-commands-api": "workspace:*",
+    "@aalis/api-commands": "workspace:*",
     "typescript": "^5.7.0",
     "@types/node": "^22.0.0"
   },

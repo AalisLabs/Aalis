@@ -7,14 +7,14 @@
 `agent` 是**对话回合编排引擎**——接收一条入站消息，组装系统提示 + 历史，调用 `llm`，跑工具调用循环，最终把回复派发出去，并在每个阶段广播 `agent:*` 钩子。
 
 - 服务注册名：`getService<AgentService>('agent')`
-- 契约包：`@aalis/plugin-agent-api`（`packages/plugin-agent-api/src/index.ts`）
+- 契约包：`@aalis/api-agent`（`packages/api-agent/src/index.ts`）
 - 默认实现：`@aalis/plugin-agent`（`packages/plugin-agent/src/index.ts`，类 `DefaultAgent`）
 
 `agent` 是「编排者」而非「能力」：它本身不持有 LLM/记忆/工具，而是按名 `getService` 组合 `llm` / `memory` / `persona` / `tools` / `message-archive` / `session-manager` / `gateway`，全部 optional（缺哪个就降级，见 §6/§7）。
 
 ## 2. 契约
 
-`AgentService` 接口（`packages/plugin-agent-api/src/index.ts`）。注意只有 `handleMessage` 是必须的，其余全为可选方法：
+`AgentService` 接口（`packages/api-agent/src/index.ts`）。注意只有 `handleMessage` 是必须的，其余全为可选方法：
 
 ```ts
 export interface AgentService {
@@ -49,7 +49,7 @@ export interface AgentService {
 | `agent:reply:before` | 定稿前，回复校验/修复 | `{ content, sessionId, ...; retryRequested?, retryFeedback?, attempt?, maxRetries? }`（`:94-122`）。重试协议见 §6 |
 | `agent:turn:after` | 回合终态（四条路径都发） | `{ message, reply, outcome, sessionId, metadata }`（`:85-91`）。`outcome ∈ 'replied'｜'silent'｜'aborted'｜'error'` |
 
-钩子用 `ctx.middleware(hook, fn)` 注册（`packages/core/src/context.ts`）；要让 TS 看到这些键的类型，需把 `@aalis/plugin-agent-api` 加进依赖或 side-effect import 一次（`packages/plugin-agent-api/src/index.ts`）。
+钩子用 `ctx.middleware(hook, fn)` 注册（`packages/core/src/context.ts`）；要让 TS 看到这些键的类型，需把 `@aalis/api-agent` 加进依赖或 side-effect import 一次（`packages/api-agent/src/index.ts`）。
 
 ## 3. 谁提供 / 谁消费
 
@@ -91,7 +91,7 @@ export interface AgentService {
 ```ts
 import type { Context } from '@aalis/core';
 import { ServicePriority } from '@aalis/core';
-import type { AgentService } from '@aalis/plugin-agent-api';
+import type { AgentService } from '@aalis/api-agent';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 export const name = '@acme/plugin-my-agent';
@@ -131,7 +131,7 @@ if (agent?.abort) agent.abort(sessionId);  // 可选方法先判存在
 **注册预处理器**——用 `useAgent`，它自带延迟订阅 + bounce 重挂，并把 dispose 挂到 `ctx.onDispose`（**必须**，否则插件 reload 时旧中间件残留在 agent.ctx 上重复执行，`packages/plugin-media/src/index.ts`）：
 
 ```ts
-import { useAgent } from '@aalis/plugin-agent-api';
+import { useAgent } from '@aalis/api-agent';
 const dispose = useAgent(ctx).registerPreprocessor('my-pre', async (msg, next) => {
   // 改 msg.content / 解析附件……不调 next() = 拦截整条消息
   await next();
@@ -147,9 +147,9 @@ ctx.onDispose(dispose);
 
 **ToolCallContext 的 actor 优先**：agent 构造工具上下文时优先用 `incoming.actor?.{userId,platform}`，fallback 才到 `incoming.userId/platform`（`packages/plugin-agent/src/index.ts`）。这让 scheduler/idle/proactive 触发的 AI 走**创建者的 authority**（而非匿名 `defaultAuthority`）。自定义 provider 必须保留此语义，否则系统触发的工具会以错误身份执权。工具侧的风险等级 → minLevel 鉴权由 `tools` 服务在 `execute` 内做，见 [core/tools](../core/tools.md) 与 [core/authority](../core/authority.md)。
 
-**reply:before 重试协议**（`agent:reply:before`，`packages/plugin-agent-api/src/index.ts`，消费方 `plugin-persona` `packages/plugin-persona/src/index.ts`）：钩子可置 `retryRequested=true` + `retryFeedback` + `maxRetries` 让 agent 重新请求 LLM；agent 按 `maxRetries` 循环（`packages/plugin-agent/src/index.ts`），用尽后若仍 `retryRequested` 强制把 `content` 置空避免坏内容外发（`:831-837`）。自定义 provider 若不实现重试循环，persona 的 outputFormat 校验将失效。
+**reply:before 重试协议**（`agent:reply:before`，`packages/api-agent/src/index.ts`，消费方 `plugin-persona` `packages/plugin-persona/src/index.ts`）：钩子可置 `retryRequested=true` + `retryFeedback` + `maxRetries` 让 agent 重新请求 LLM；agent 按 `maxRetries` 循环（`packages/plugin-agent/src/index.ts`），用尽后若仍 `retryRequested` 强制把 `content` 置空避免坏内容外发（`:831-837`）。自定义 provider 若不实现重试循环，persona 的 outputFormat 校验将失效。
 
-**token 预算契约**（`token:usage` / `token:request` 事件，`packages/plugin-agent-api/src/index.ts`）：agent 每次 LLM 调用后 emit `token:usage`（12 桶 breakdown，`packages/plugin-agent/src/index.ts`）；并监听 `token:request` 在客户端重连时重算快照（`:1819-1869`）。消费方：`plugin-webui-server`（面板）、`plugin-memory-summary`（预压缩触发）。
+**token 预算契约**（`token:usage` / `token:request` 事件，`packages/api-agent/src/index.ts`）：agent 每次 LLM 调用后 emit `token:usage`（12 桶 breakdown，`packages/plugin-agent/src/index.ts`）；并监听 `token:request` 在客户端重连时重算快照（`:1819-1869`）。消费方：`plugin-webui-server`（面板）、`plugin-memory-summary`（预压缩触发）。
 
 **出站走 gateway**：回复经 `dispatchOutbound` → `gateway.dispatchOutbound`，由 gateway 中间件链做审计/脱敏/限速/authority（[security-model](../concepts/security-model.md)）。provider 务必经 gateway，不要直接 emit。
 

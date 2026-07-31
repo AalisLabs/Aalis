@@ -6,8 +6,8 @@
 // 用一个 setRuntime() 在 apply() 时注入，避免改动所有调用点。
 // ============================================================
 
-import type { ProcessService } from '@aalis/plugin-process-api';
-import type { StorageService } from '@aalis/plugin-storage-api';
+import type { ProcessService } from '@aalis/api-process';
+import type { StorageService } from '@aalis/api-storage';
 
 interface MediaRuntime {
   proc: ProcessService;

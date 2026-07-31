@@ -1,11 +1,5 @@
-import type { Logger } from '@aalis/core';
-import type {
-  CapabilityConfirm,
-  CapabilityRisk,
-  CapabilityVisibility,
-  ExecutionGuard,
-} from '@aalis/plugin-authority-api';
-import { riskDefaults } from '@aalis/plugin-authority-api';
+import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
+import { riskDefaults } from '@aalis/api-authority';
 import type {
   Command,
   CommandArgv,
@@ -19,13 +13,14 @@ import type {
   OptionValueType,
   PositionalArgSpec,
   PositionalArgType,
-} from '@aalis/plugin-commands-api';
+} from '@aalis/api-commands';
+import type { Logger } from '@aalis/core';
 import { renderDetail } from './help.js';
 
 // ============================================================================
 // 命令注册表（v2 — 链式 builder）
 //
-// 契约见 @aalis/plugin-commands-api
+// 契约见 @aalis/api-commands
 //
 // - Map<fullDotName, Command>，name 即注册键
 // - 注册 'memory.clear.all' 时自动创建 'memory' / 'memory.clear' 分组节点（无 handler）

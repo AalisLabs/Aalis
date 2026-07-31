@@ -5,7 +5,7 @@
 `platform` 是 Aalis 的**平台抽象服务**：每个聊天/终端平台（OneBot、CLI、WebUI、Telegram、Discord……）实现一个 `PlatformAdapter` 并以服务名 `platform` 注册。它统一了「查询连接状态 / 按 sessionId 发消息 / 调平台原生 API / 自报机器人身份」这几件事，使核心与其它插件无须知道具体平台细节。
 
 - 服务注册名（DI key）：`'platform'` —— `ctx.getService<PlatformAdapter>('platform')` 取胜者，`ctx.getAllServices('platform')` 取全部（**多 adapter 并存是常态**）。
-- 契约包：`@aalis/plugin-platform-api`（`packages/plugin-platform-api/src/index.ts`）。
+- 契约包：`@aalis/api-platform`（`packages/api-platform/src/index.ts`）。
 - 该契约包**既是 runtime 服务契约也带聚合/路由 helper 纯函数**：`PlatformAdapter` 接口是要 `ctx.provide('platform', …)` 注册的真实服务；而 `getPlatform*` / `resolvePlatformBySession` / `sendPlatformMessage` / `callPlatformAction` 等是消费方应优先使用的纯函数 helper（传 `ctx` 即可，没有 entry、无自递归隐患，取代了历史上的 `PlatformRouter` facade，见 `src/index.ts`）。
 
 > 关键认知：**`platform` 是天然的多实例服务**。同时跑 CLI + OneBot 时，`'platform'` 名下有两个 entry。消费方几乎从不用 `getService('platform')` 取「那个胜者」，而是用 helper 按 `platform` 名或按 `sessionId` 路由到正确的 adapter。
@@ -101,7 +101,7 @@ export interface PlatformAdapter {
 // }
 
 import type { Context } from '@aalis/core';
-import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform-api';
+import type { PlatformAdapter, PlatformConnection } from '@aalis/api-platform';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 // 运行时 DI 源（A 源）—— 与 package.json aalis.service 双源同步

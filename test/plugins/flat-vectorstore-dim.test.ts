@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { StorageService } from '../../packages/plugin-storage-api/src/index.js';
+import type { StorageService } from '../../packages/api-storage/src/index.js';
 import { FlatVectorStore } from '../../packages/plugin-vectorstore-flat/src/index.js';
 
 // ════════════════════════════════════════════════════════════

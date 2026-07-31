@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { RegisteredTool, ScopedToolService } from '../../packages/api-tools/src/index.js';
 import { registerFileTools } from '../../packages/plugin-tool-system/src/tools/file.js';
-import type { RegisteredTool, ScopedToolService } from '../../packages/plugin-tools-api/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // file 读类能力闸回归：

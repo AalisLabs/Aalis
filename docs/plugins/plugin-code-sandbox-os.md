@@ -1,7 +1,7 @@
 # plugin-code-sandbox-os — 代码沙箱（OS 原生）
 
 **包名**: `@aalis/plugin-code-sandbox-os`  
-**契约**: `@aalis/plugin-code-sandbox-api`  
+**契约**: `@aalis/api-code-sandbox`  
 **源码**: `packages/plugin-code-sandbox-os/src/index.ts`（纯逻辑 `sandbox.ts`）
 
 ## 概述

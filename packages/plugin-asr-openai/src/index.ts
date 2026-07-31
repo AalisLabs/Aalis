@@ -6,11 +6,11 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
+import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/api-asr';
+import { createProcessGateway, type ProcessService } from '@aalis/api-process';
+import { createStorageGateway, isStorageUri, type StorageService } from '@aalis/api-storage';
+import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { Context } from '@aalis/core';
-import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/plugin-asr-api';
-import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
-import { createStorageGateway, isStorageUri, type StorageService } from '@aalis/plugin-storage-api';
-import type {} from '@aalis/plugin-webui-api'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { ConfigSchema } from '@aalis/schema-config';
 import { safeFetch } from '@aalis/util-network-guard';
 

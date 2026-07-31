@@ -8,7 +8,7 @@
 
 ### 一、`memory` 的 metadata KV
 
-契约在 `packages/plugin-memory-api/src/index.ts:75-81`，四个方法：
+契约在 `packages/api-memory/src/index.ts:75-81`，四个方法：
 
 ```ts
 saveMetadata?(namespace: string, key: string, data: Record<string, unknown>): Promise<void>;
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS metadata (
 
 路径按 `resolve(process.cwd(), rootPath)` 解析（`:669`），即相对进程 cwd（项目根），不存在则 `mkdir -p`。每个根注册成独立服务 entry，`entryId = ${ctx.id}/${root.name}`（`:748-752`）。
 
-接口是纯文件语义（`plugin-storage-api/src/index.ts:87-131`）：`list` / `stat` / `readFile` / `writeFile` / `rename` / `move?` / `mkdir?` / `delete` / `resolveLocalPath?` / `watch?`。没有任何查询原语。
+接口是纯文件语义（`api-storage/src/index.ts:87-131`）：`list` / `stat` / `readFile` / `writeFile` / `rename` / `move?` / `mkdir?` / `delete` / `resolveLocalPath?` / `watch?`。没有任何查询原语。
 
 **真正把 `pluginData:` 当自己数据目录用的只有 1 个插件**：`plugin-file-reader`（`src/index.ts:146` 定义 `pluginData:/file-reader`，`:226` 存文件本体、`:229` 存 `{id}.meta.json` 边车）。另外三处引用不是「用它存数据」：`plugin-webui-server/src/routes/uploaded-files.ts:21` 与 `plugin-webui-client/src/components/UploadedFilesDrawer.tsx:45` 是**读 file-reader 的目录树**（硬编码同一前缀）；`plugin-tool-system/src/index.ts:61` 只是把它列进「允许访问的存储根」多选项，`src/tools/http.ts:216` 提到它是为了**禁止**下载落到该根。
 
@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS metadata (
 
 **根因**：`plugin-session-manager/src/index.ts:448-465`。`markDirty()`（`:437-445`）用 1 秒 debounce 触发 `persist()`；`persist()` 里 `:453-455` 对 `this.sessions` 每个条目单独 `await saveMetadata`，`:458-465` 再 `listMetadata` 拉全表、对内存中不存在的 key 逐个 `deleteMetadata`。
 
-`MemoryService` 里**没有任何事务/批量原语**（`grep -in "transaction\|batch\|txn" plugin-memory-api/src/index.ts` 零命中）。sqlite 后端自己内部用过 `db.transaction`（`:379`，`deleteMessagesByTimestamps` 专用），但没有把这个能力经契约暴露出去。后果：`persist()` 的写循环在任何一条上抛错，磁盘就停在半新半旧状态，且下一次 `persist()` 因为 `:450` 已经 `this.dirty = false` 而不会重试。
+`MemoryService` 里**没有任何事务/批量原语**（`grep -in "transaction\|batch\|txn" api-memory/src/index.ts` 零命中）。sqlite 后端自己内部用过 `db.transaction`（`:379`，`deleteMessagesByTimestamps` 专用），但没有把这个能力经契约暴露出去。后果：`persist()` 的写循环在任何一条上抛错，磁盘就停在半新半旧状态，且下一次 `persist()` 因为 `:450` 已经 `this.dirty = false` 而不会重试。
 
 **修法方向**：契约缺的是「一次调用提交一批变更」的原语。这是三个后端都能实现的（sqlite 事务、mongodb `bulkWrite`、inmemory 天然原子），不需要引入新依赖。
 
@@ -192,7 +192,7 @@ Koishi 生态的结构化存储是 `ctx.model.extend` + `ctx.database.get/set/cr
 
 `user-relation` 这类真有查询需求的插件自己 `resolveLocalPath('pluginData:/user-relation')` 开一个 sqlite。
 
-- **代价**：每个插件自带一份 db 依赖与 schema 迁移代码；数据散在 N 个文件里，备份 / 清空 / 导出全部失去统一入口（今天 `/clear` 之类的编排至少还有 `memory:clear` 钩子这个汇流点）；`resolveLocalPath` 自己的文档就写明**它不是沙箱边界**（`plugin-storage-api/src/index.ts:83`、`:116-119`）。
+- **代价**：每个插件自带一份 db 依赖与 schema 迁移代码；数据散在 N 个文件里，备份 / 清空 / 导出全部失去统一入口（今天 `/clear` 之类的编排至少还有 `memory:clear` 钩子这个汇流点）；`resolveLocalPath` 自己的文档就写明**它不是沙箱边界**（`api-storage/src/index.ts:83`、`:116-119`）。
 - **对极简内核的影响**：内核与契约零改动，最「克制」。
 - **但**：这实际上是**把结构化存储的缺位下放给每个插件作者**，等于宣布 Aalis 不提供这层能力。对单插件是可行的（`user-relation` 完全可以这么干且立刻见效），作为**全局答案则是弃权**。
 

@@ -1,18 +1,11 @@
 import { version as nodeVersion, platform } from 'node:process';
+import { useCommandService } from '@aalis/api-commands';
+import type { CheckCategory, CheckLevel, CheckResult, CheckSpec, DoctorReport, DoctorService } from '@aalis/api-doctor';
+import type { WebuiPage } from '@aalis/api-webui';
+import { useWebuiService } from '@aalis/api-webui';
 import type { Context, PluginManagerService, PluginModule } from '@aalis/core';
-import { useCommandService } from '@aalis/plugin-commands-api';
-import type {
-  CheckCategory,
-  CheckLevel,
-  CheckResult,
-  CheckSpec,
-  DoctorReport,
-  DoctorService,
-} from '@aalis/plugin-doctor-api';
-import type { WebuiPage } from '@aalis/plugin-webui-api';
-import { useWebuiService } from '@aalis/plugin-webui-api';
 
-// 公共类型由 plugin-doctor-api 维护并增强 @aalis/core；本包从那里 re-export，
+// 公共类型由 api-doctor 维护并增强 @aalis/core；本包从那里 re-export，
 // 让旧消费者 `import { CheckResult } from '@aalis/plugin-doctor'` 继续可用。
 export type { CheckCategory, CheckLevel, CheckResult, CheckSpec, DoctorReport, DoctorService };
 

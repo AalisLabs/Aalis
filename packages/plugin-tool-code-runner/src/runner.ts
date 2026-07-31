@@ -6,9 +6,9 @@
  */
 
 import { Buffer } from 'node:buffer';
-import type { CodeSandboxService } from '@aalis/plugin-code-sandbox-api';
-import type { ProcessService } from '@aalis/plugin-process-api';
-import type { StorageService } from '@aalis/plugin-storage-api';
+import type { CodeSandboxService } from '@aalis/api-code-sandbox';
+import type { ProcessService } from '@aalis/api-process';
+import type { StorageService } from '@aalis/api-storage';
 
 export interface RunnerConfig {
   defaultTimeout: number;

@@ -3,7 +3,7 @@
 本文档解释 Aalis 插件作者**容易踩到但 API 文档不会显式提醒的几条约定**。
 如果你刚写完一个插件、跑起来"看上去能用"，强烈建议过一遍本指南，确认没漏掉任何一条。
 
-> **重要前置阅读**：[node-usage-policy](architecture/node-usage-policy.md) —— 业务插件**不能**直接 import `node:fs` / `node:child_process` / `node:os` / `node:http(s)`，必须通过 `@aalis/plugin-storage-api` / `@aalis/plugin-process-api` 等网关访问。biome 会拦截违例。
+> **重要前置阅读**：[node-usage-policy](architecture/node-usage-policy.md) —— 业务插件**不能**直接 import `node:fs` / `node:child_process` / `node:os` / `node:http(s)`，必须通过 `@aalis/api-storage` / `@aalis/api-process` 等网关访问。biome 会拦截违例。
 
 > **完整参考文档**（给第三方作者与维护者的全景）：
 > - [概念层 concepts/](concepts/README.md) —— 服务模型、惰性访问、双源 manifest、存储文法、安全模型、消息管线（**写插件前先通读这 6 篇**）。
@@ -346,7 +346,7 @@ it('should activate when its dependencies are present', async () => {
 
 - `await` 永久阻塞（apply 必须返回，否则 PluginManager 卡住）
 - 直接修改全局 process 状态（`process.env`、信号 handler）
-- 跨插件 import 实现细节（应只 import `@aalis/plugin-xxx-api`）
+- 跨插件 import 实现细节（应只 import `@aalis/api-xxx`）
 - `ctx.serviceContainer.register(...)` 等绕过自动清理的低层 API（仅供桥接/诊断用）
 - 在 apply 内 throw —— 用 `ctx.logger.error` + 优雅降级；throw 会让你的 entry 进 `error` 态直到下次配置变更
 
@@ -365,7 +365,7 @@ DI 概念**，而是落在**服务实例 / model-handle 的元数据**上，由�
 也不能往 core 的某个 map 里 `declare module`：
 
 ```typescript
-// packages/plugin-storage-api/src/index.ts
+// packages/api-storage/src/index.ts
 export interface StorageCapabilityRegistry {
   List: 'list';
   Read: 'read';
@@ -461,11 +461,11 @@ core 已经处理好"已就绪立刻同步触发 / 反复上下线重接 / dispo
 ## 12. -api 包：怎么让 `ctx.getService('xxx')` 拿到强类型
 
 `ServiceTypeMap` 是 core 仅有的"服务名→实例接口"declaration-merging 扩展点。`-api`
-包在自己的入口文件里把服务接口 declare 进去，业务插件只要 `import '@aalis/plugin-xxx-api'`
+包在自己的入口文件里把服务接口 declare 进去，业务插件只要 `import '@aalis/api-xxx'`
 （哪怕只是副作用导入）就能让 TS 在调用 `ctx.getService('xxx')` 时自动推断出对应接口类型：
 
 ```typescript
-// packages/plugin-llm-api/src/index.ts
+// packages/api-llm/src/index.ts
 export interface LLMService {
   chat(req: ChatRequest): Promise<ChatResponse>;
   // ...
@@ -484,7 +484,7 @@ declare module '@aalis/core' {
 业务插件：
 
 ```typescript
-import '@aalis/plugin-llm-api';  // 仅副作用：把类型注册进 ServiceTypeMap
+import '@aalis/api-llm';  // 仅副作用：把类型注册进 ServiceTypeMap
 
 export async function apply(ctx) {
   const llm = ctx.getService('llm');

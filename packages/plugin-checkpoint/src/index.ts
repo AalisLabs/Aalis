@@ -1,10 +1,10 @@
+import type { MemoryService } from '@aalis/api-memory';
+import type { StorageService } from '@aalis/api-storage';
+import { createStorageGateway } from '@aalis/api-storage';
 import type { Context, PluginModule } from '@aalis/core';
-import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { StorageService } from '@aalis/plugin-storage-api';
-import { createStorageGateway } from '@aalis/plugin-storage-api';
 import type { ConfigSchema } from '@aalis/schema-config';
-import '@aalis/plugin-agent-api'; // 加载 agent:* 钩子的 HookContextMap augmentation
-import type {} from '@aalis/plugin-webui-api'; // PluginModule.actions 槽位的 merging 可见性
+import '@aalis/api-agent'; // 加载 agent:* 钩子的 HookContextMap augmentation
+import type {} from '@aalis/api-webui'; // PluginModule.actions 槽位的 merging 可见性
 import { type CheckpointService, CheckpointServiceImpl, resolveConfig } from './service.js';
 
 // ════════════════════════════════════════════════════════════

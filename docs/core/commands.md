@@ -2,7 +2,7 @@
 
 管理指令的注册、解析、权限检查和执行。
 
-**契约源码**: `packages/plugin-commands-api/src/index.ts`  
+**契约源码**: `packages/api-commands/src/index.ts`  
 **默认实现**: `packages/plugin-commands/src/commands.ts`
 
 ## 指令定义
@@ -10,7 +10,7 @@
 指令经 builder 注册：名字是**完整点路径**（点分段自动建立分组节点），位置参数用 inline DSL（`<必填>` / `[可选]`）声明在名字里，选项与 action 链式追加。
 
 ```typescript
-import { useCommandService } from '@aalis/plugin-commands-api';
+import { useCommandService } from '@aalis/api-commands';
 
 useCommandService(ctx)
   .command('memory.set <key:string> [value:text]', '写入一条记忆', {
@@ -141,7 +141,7 @@ deniedCapabilities:
 子指令不是嵌套数组，而是用**点路径名**直接注册：点分段会自动建立缺失的祖先分组节点，从而形成任意层级：
 
 ```typescript
-import { useCommandService } from '@aalis/plugin-commands-api';
+import { useCommandService } from '@aalis/api-commands';
 
 const commands = useCommandService(ctx);
 

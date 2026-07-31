@@ -3,7 +3,7 @@
 `media` 把「媒体 → 文本」的多模态识别（图片描述、音频转写描述、视频抽帧加音轨）抽象成一个统一调度器。上层——agent preprocessor、工具、适配器——只需要向 `media` 提问，由它在一个 processor 池里仲裁并执行。这个池由「vision/audio LLM」与「独立的 ASR/Whisper backend」共同组成。
 
 - **服务注册名**：`getService('media')`（字符串键 `media`，`ServiceTypeMap.media`）。
-- **契约包**：`@aalis/plugin-media-api`。契约除了服务本身，还导出底层的 `MediaProcessor` 抽象。你写「非 LLM 的媒体 backend」时实现 `MediaProcessor` 再 `registerProcessor`；写「服务消费」时只用 `MediaService`。
+- **契约包**：`@aalis/api-media`。契约除了服务本身，还导出底层的 `MediaProcessor` 抽象。你写「非 LLM 的媒体 backend」时实现 `MediaProcessor` 再 `registerProcessor`；写「服务消费」时只用 `MediaService`。
 - **参考实现**：`@aalis/plugin-media`，声明 `provides=['media']`，通过 `ctx.provide('media', svc)` 提供，实现类是 `MediaServiceImpl`。
 - **它不是沙箱**：媒体的下载与落盘走 `safeFetch`（SSRF 守卫）加 `storage`，但 storage 本身不是隔离边界，详见 [§6](#6-能力风险--影响)。
 
@@ -121,7 +121,7 @@ export interface MediaProcessor {
 | 你的 backend 是… | 怎么接入 |
 | --- | --- |
 | **vision / audio 的 LLM** | 什么都不用做。只要你的 LLM provider 在 `capabilities` 里声明了 vision/audio，`plugin-media` 的内置 adapter 会懒扫描并自动把它包成 `MediaProcessor`。 |
-| **音频转写 backend**（whisper / 云 ASR） | 写成 `asr` provider，实现 `ASRService`（`@aalis/plugin-asr-api`，单方法 `transcribe`）。media 会自动把它桥接进 audio 池。可参考 `plugin-asr-whisper-cpp`。这是首选做法——它能同时被「直接消费 `asr`」与「经 media 调度」两条路用到。 |
+| **音频转写 backend**（whisper / 云 ASR） | 写成 `asr` provider，实现 `ASRService`（`@aalis/api-asr`，单方法 `transcribe`）。media 会自动把它桥接进 audio 池。可参考 `plugin-asr-whisper-cpp`。这是首选做法——它能同时被「直接消费 `asr`」与「经 media 调度」两条路用到。 |
 | **非 LLM 的图/视频 backend**（如自建 OCR、专用识别服务） | 实现 `MediaProcessor`，再 `media.registerProcessor(p)`。 |
 
 ### 4a. 不要重新 provide `media` 服务
@@ -132,7 +132,7 @@ export interface MediaProcessor {
 
 ```ts
 import type { Context } from '@aalis/core';
-import type { DescribeInput, DescribeResult, MediaService } from '@aalis/plugin-media-api';
+import type { DescribeInput, DescribeResult, MediaService } from '@aalis/api-media';
 
 export const name = '@aalis/plugin-my-ocr';
 export const inject = { required: ['media'] }; // media 是硬依赖时写 required
@@ -161,7 +161,7 @@ export function apply(ctx: Context): void {
 
 ```ts
 import type { Context } from '@aalis/core';
-import type { ASRService } from '@aalis/plugin-asr-api';
+import type { ASRService } from '@aalis/api-asr';
 
 export const name = '@aalis/plugin-asr-xxx';
 export const subsystem = 'media';           // 与 whisper-cpp/openai 一致归到 media 子系统
@@ -188,7 +188,7 @@ export function apply(ctx: Context): void {
 }
 ```
 
-契约包本身（`plugin-media-api`）的 `package.json` 则是 `"aalis": { "types": true }` 加 `keywords:["aalis","aalis-api"]`——纯类型包不打 `aalis-plugin` 词。
+契约包本身（`api-media`）的 `package.json` 则是 `"aalis": { "types": true }` 加 `keywords:["aalis","aalis-api"]`——纯类型包不打 `aalis-plugin` 词。
 
 ---
 
@@ -285,4 +285,4 @@ media 经 `storage` 写临时/缓存文件，但 storage 只是命名根加权�
 
 - 概念：[service-model](../concepts/service-model.md)（DI 按名仲裁、无 capability 选择）｜[lazy-service-access](../concepts/lazy-service-access.md)（每次 getService、别缓存）｜[manifest-metadata](../concepts/manifest-metadata.md)（provides/inject 双源）｜[storage-uri-grammar](../concepts/storage-uri-grammar.md)（`data:/` 与 data-URI 区分，直接引本服务为例）｜[security-model](../concepts/security-model.md)（SSRF / safeFetch）｜[message-llm-pipeline](../concepts/message-llm-pipeline.md)（preprocessor 在消息链路的位置）。
 - 服务：[storage](./storage.md)（落盘后端，非沙箱）｜[process](./process.md)（ffmpeg 子进程）｜[llm](./llm.md)（vision/audio LLM 自动成 processor）｜[message](./message.md)（`MessageAttachment` / `IncomingMessage` 类型源）｜[agent](./agent.md)（preprocessor 注册宿主）。
-- 相关契约包：`@aalis/plugin-asr-api`（音频 backend 首选契约）。
+- 相关契约包：`@aalis/api-asr`（音频 backend 首选契约）。

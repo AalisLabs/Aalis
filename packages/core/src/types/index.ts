@@ -11,7 +11,7 @@
 //
 // 业务/领域类型一律由 plugin-*-api 包导出：
 //   - Message / ContentSegment           → @aalis/schema-message
-//   - ToolCall / ToolDefinition / ToolFunction → @aalis/plugin-tools-api
+//   - ToolCall / ToolDefinition / ToolFunction → @aalis/api-tools
 //   - LLM / Memory / Storage / Embedding / VectorStore / Tools / Commands / Gateway /
 //     WebUI / Authority / Agent / Platform 等服务接口同样在各自的 plugin-*-api。
 // ============================================================

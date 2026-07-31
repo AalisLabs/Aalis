@@ -7,32 +7,32 @@ import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { AppService, Context, LogEntry, PluginManagerService } from '@aalis/core';
-import { LogHub, parseLogLine } from '@aalis/core';
-import type { AgentService } from '@aalis/plugin-agent-api';
-import type { AuthorityService } from '@aalis/plugin-authority-api';
-import type { CommandService } from '@aalis/plugin-commands-api';
-import type {} from '@aalis/plugin-doctor-api'; // declaration merging：doctor:updated 事件
-import type { LLMModel, ModelInfo } from '@aalis/plugin-llm-api';
-import { listLLMModels } from '@aalis/plugin-llm-api';
-import type {} from '@aalis/plugin-memory-api'; // declaration merging：history:changed 事件
-import type { PersonaService } from '@aalis/plugin-persona-api';
+import type { AgentService } from '@aalis/api-agent';
+import type { AuthorityService } from '@aalis/api-authority';
+import type { CommandService } from '@aalis/api-commands';
+import type {} from '@aalis/api-doctor'; // declaration merging：doctor:updated 事件
+import type { LLMModel, ModelInfo } from '@aalis/api-llm';
+import { listLLMModels } from '@aalis/api-llm';
+import type {} from '@aalis/api-memory'; // declaration merging：history:changed 事件
+import type { PersonaService } from '@aalis/api-persona';
 import {
   aggregatePlatformDetails,
   getPlatformAdapters,
   getPlatformNames,
   type PlatformAdapter,
   type PlatformConnection,
-} from '@aalis/plugin-platform-api';
-import { createProcessGateway } from '@aalis/plugin-process-api';
-import type { ConfirmChannel, SessionConfirmService } from '@aalis/plugin-session-confirm-api';
-import type {} from '@aalis/plugin-session-manager-api';
-import type { StorageService } from '@aalis/plugin-storage-api';
-import { createStorageGateway, readTailLines } from '@aalis/plugin-storage-api';
+} from '@aalis/api-platform';
+import { createProcessGateway } from '@aalis/api-process';
+import type { ConfirmChannel, SessionConfirmService } from '@aalis/api-session-confirm';
+import type {} from '@aalis/api-session-manager';
+import type { StorageService } from '@aalis/api-storage';
+import { createStorageGateway, readTailLines } from '@aalis/api-storage';
+import type { ToolExecuteMessage, ToolService } from '@aalis/api-tools';
+import type { WebUIService, WebuiPage } from '@aalis/api-webui'; // declaration merging WebuiPage.content
+import { DEFAULT_SUBSYSTEM_METADATA } from '@aalis/api-webui';
+import type { AppService, Context, LogEntry, PluginManagerService } from '@aalis/core';
+import { LogHub, parseLogLine } from '@aalis/core';
 import type {} from '@aalis/plugin-todo-list'; // declaration merging：todo:updated 事件
-import type { ToolExecuteMessage, ToolService } from '@aalis/plugin-tools-api';
-import type { WebUIService, WebuiPage } from '@aalis/plugin-webui-api'; // declaration merging WebuiPage.content
-import { DEFAULT_SUBSYSTEM_METADATA } from '@aalis/plugin-webui-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { OutgoingMessage, StreamChunkMessage } from '@aalis/schema-message';
 import express from 'express';
@@ -709,7 +709,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const pluginMgr = getPluginMgr();
     const pluginStatus = pluginMgr ? pluginMgr.getStatus() : [];
     // 按插件 subsystem 归组（未声明 → 'external'）。subsystem 是 WebUI 展示概念、
-    // 由 @aalis/plugin-webui-api 声明合并到 PluginModule，core 状态契约不含——从 module 直接读。
+    // 由 @aalis/api-webui 声明合并到 PluginModule，core 状态契约不含——从 module 直接读。
     const groupsMap = new Map<string, Array<{ name: string; provides: string[] }>>();
     for (const p of pluginStatus) {
       const sub = pluginMgr?.getPlugin(p.instanceId)?.module?.subsystem ?? 'external';

@@ -191,27 +191,31 @@ interface CatalogEntry {
 }
 
 /**
- * npm search 响应 → 插件目录条目。脚手架只列**可装功能插件**：自 2026-06 起
- * `aalis-plugin` 关键词也涵盖 api 契约 / 前端（市场分类用），故按包名剔除 `*-api`
- * 与 `webui-client*`（契约是依赖、前端随 webui-server 自动带，均非"选功能"对象）。
+ * npm search 响应 → 插件目录条目。脚手架只列**可装功能插件**。
+ *
+ * 类型区分完全靠关键词，**不看包名**：检索用的是 `keywords:aalis-plugin`，而契约包带
+ * `aalis-api`、前端带 `aalis-interface`、工具库带 `aalis-util`——它们根本不会出现在结果里。
+ * 此处曾按包名剔除 `*-api` 与 `webui-client*`，那是关键词收敛（包按类型打词）之前的写法，
+ * 收敛之后即成死代码，且按名判定会被改名打穿：`plugin-*-api` → `api-*` 之后 `/-api$/` 全部失配。
+ *
+ * 剩下的 `code-sandbox` 是**真功能插件**（带 aalis-plugin），排除理由与类型无关：它是被
+ * code_runner 按需拉起的沙箱基建，不是用户「选功能」时该看到的条目。
  * 纯函数，便于单测。
  */
 export function toPluginCatalog(data: {
   objects?: Array<{ package: { name: string; description?: string; version?: string } }>;
 }): CatalogEntry[] {
-  return (data.objects ?? [])
-    .filter(o => {
-      const short = o.package.name.replace(/^@[^/]+\//, '');
-      // 剔除 *-api 契约、webui-client 前端、code-sandbox 沙箱基建（均非「选功能」对象，按需自动带入）。
-      // 注意短名仍带 `plugin-` 前缀（如 plugin-code-sandbox-os），故用非锚定匹配，勿用 /^code-sandbox/。
-      return !/-api$/.test(short) && !/webui-client/.test(short) && !/code-sandbox/.test(short);
-    })
-    .map(o => ({
-      name: o.package.name,
-      description: o.package.description ?? '',
-      official: o.package.name.startsWith('@aalis/'),
-      version: o.package.version,
-    }));
+  return (
+    (data.objects ?? [])
+      // 短名仍带 `plugin-` 前缀（如 plugin-code-sandbox-os），故用非锚定匹配，勿用 /^code-sandbox/。
+      .filter(o => !/code-sandbox/.test(o.package.name.replace(/^@[^/]+\//, '')))
+      .map(o => ({
+        name: o.package.name,
+        description: o.package.description ?? '',
+        official: o.package.name.startsWith('@aalis/'),
+        version: o.package.version,
+      }))
+  );
 }
 
 // ── 输入校验（纯函数，便于单测；交互层在出错时重问而非静默吞）──────────

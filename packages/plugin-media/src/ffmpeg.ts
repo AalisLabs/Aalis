@@ -1,13 +1,13 @@
 // ============================================================
 // ffmpeg.ts — 视频/动图帧提取工具
 //
-// 通过 plugin-process-api + plugin-storage-api 委托子进程与临时目录。
+// 通过 api-process + api-storage 委托子进程与临时目录。
 // 业务调用方仍以纯函数形式使用，运行时通过 setMediaRuntime() 注入实现。
 // ============================================================
 
 import { Buffer } from 'node:buffer';
 import { extname } from 'node:path';
-import { isStorageUri } from '@aalis/plugin-storage-api';
+import { isStorageUri } from '@aalis/api-storage';
 import { getMediaRuntime } from './runtime.js';
 import { safeDownloadToTemp } from './safe-fetch.js';
 

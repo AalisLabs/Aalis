@@ -1,7 +1,7 @@
 # 存储 URI 文法（storage URI grammar）
 
 **适用对象**：写/维护 Aalis 插件的第三方作者。
-**相关源码**：`packages/plugin-storage-api/src/index.ts`（契约 + 权威 helper）、`packages/plugin-storage-local/src/index.ts`（参考实现）。
+**相关源码**：`packages/api-storage/src/index.ts`（契约 + 权威 helper）、`packages/plugin-storage-local/src/index.ts`（参考实现）。
 
 ## 概述：为什么插件作者要关心它
 
@@ -22,7 +22,7 @@ Aalis 里所有「文件」都不用宿主机绝对路径表示，而是用一�
 2. **判别字符串**：你收到一个可能是 URI、可能是 http URL、可能是 base64 data-URI 的字符串，要分流 → 用 `isStorageUri`。
 3. **归一配置**：用户在你的 configSchema 里填了个路径/裸名，你要把它变成合法 URI → 用 `toStorageUri`。
 
-**核心纪律：文法和判别一律复用 `@aalis/plugin-storage-api` 导出的 helper，不要各自重抄正则。**
+**核心纪律：文法和判别一律复用 `@aalis/api-storage` 导出的 helper，不要各自重抄正则。**
 这几个函数是「权威文法」（authoritative grammar），全体内置消费者（onebot / media / asr / persona /
 checkpoint …）都复用它们；你重抄一份正则迟早和它们漂移，踩到下面「陷阱」一节里那些坑。
 
@@ -80,7 +80,7 @@ const RESERVED_URI_SCHEMES = new Set(['http', 'https', 'file']);
 
 ## 权威 helper（用这些，别重抄）
 
-全部从 `@aalis/plugin-storage-api` 导出。
+全部从 `@aalis/api-storage` 导出。
 
 ### `isStorageUri(s: string): boolean` — 判别
 
@@ -88,7 +88,7 @@ const RESERVED_URI_SCHEMES = new Set(['http', 'https', 'file']);
 storage / safeFetch / readExternalFile / data-URI 解码不同分支。
 
 ```ts
-import { isStorageUri } from '@aalis/plugin-storage-api';
+import { isStorageUri } from '@aalis/api-storage';
 
 if (isStorageUri(data)) {
   const buf = await storage.readFile(data);      // storage 路径
@@ -105,7 +105,7 @@ if (isStorageUri(data)) {
 （按 `:/` 的位置判定，`idx <= 0` 即非法）。
 
 ```ts
-import { parseUriRoot } from '@aalis/plugin-storage-api';
+import { parseUriRoot } from '@aalis/api-storage';
 parseUriRoot('workspace:/a/b.txt'); // 'workspace'
 parseUriRoot('not-a-uri');          // throws: 存储 URI 不合法
 ```
@@ -125,7 +125,7 @@ memory / vectorstore / checkpoint / scheduler / persona 等全体后端消费者
 | `name`（单段裸名，无 `/`） | `data:/name` | **裸名归到 fallbackRoot 的相对路径，不当成根名** |
 
 ```ts
-import { toStorageUri } from '@aalis/plugin-storage-api';
+import { toStorageUri } from '@aalis/api-storage';
 toStorageUri('data:/checkpoints');  // 'data:/checkpoints'（原样）
 toStorageUri('checkpoints/x');      // 'checkpoints:/x'（首段当根）
 toStorageUri('checkpoints');        // 'data:/checkpoints'（单段 → data 根相对路径）
@@ -146,7 +146,7 @@ toStorageUri('persona', 'data');    // 'data:/persona'
 这类「想要单一 storage 句柄、又想透明跨多个根调度」的场景。
 
 ```ts
-import { createStorageGateway } from '@aalis/plugin-storage-api';
+import { createStorageGateway } from '@aalis/api-storage';
 
 const storage = createStorageGateway(ctx);
 await storage.writeFile('data:/notes/x.md', 'hi'); // 路由到提供 data 根的后端

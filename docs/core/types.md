@@ -195,7 +195,7 @@ interface ToolService {
 
 ### LLM 服务（per-model entry）
 
-大语言模型服务。`@aalis/plugin-llm-api`。
+大语言模型服务。`@aalis/api-llm`。
 
 > service-granularity 重构后：不再有单一 `LLMService` facade / `chat({ model, provider })` 路由。
 > 每个 model 是 ServiceContainer `'llm'` 服务名下独立的 entry（`LLMModel`），其 `capabilities`
@@ -361,7 +361,7 @@ interface MemoryService {
 
 ### StorageService
 
-文件存储抽象层。`@aalis/plugin-storage-api`。
+文件存储抽象层。`@aalis/api-storage`。
 
 > service-granularity 之后每个 storage 后端按 root 拆出独立 entry
 > （`contextId = ${plugin-instance-id}/${root.name}`），无 router facade。
@@ -544,7 +544,7 @@ Aalis 的配置 Schema 体系用于声明插件配置项，同时驱动 WebUI �
 
 ```typescript
 // core 内置的字段类型注册表（declaration merging 扩展点）：
-// 带业务/宿主语义的类型由 api 包注入，如 'llm-ref' 来自 @aalis/plugin-llm-api
+// 带业务/宿主语义的类型由 api 包注入，如 'llm-ref' 来自 @aalis/api-llm
 interface SchemaFieldTypes {
   string: true; number: true; boolean: true;
   select: true; multiselect: true; textarea: true;
@@ -561,11 +561,11 @@ interface SchemaField {
   options?: Array<{ label: string; value: string | number }>;
 }
 
-// WebUI 表单交互属性由 @aalis/plugin-webui-api 通过 declaration merging 注入：
+// WebUI 表单交互属性由 @aalis/api-webui 通过 declaration merging 注入：
 //   secret?: boolean;        // 敏感字段，前端自动遮蔽
 //   dynamicOptions?: string; // 动态选项来源服务名（运行时调 service.listModels()）
 //   allowCustom?: boolean;   // multiselect 允许手动输入自定义值
-// 插件使用这些属性需依赖并导入 @aalis/plugin-webui-api（type-only 即可）。
+// 插件使用这些属性需依赖并导入 @aalis/api-webui（type-only 即可）。
 ```
 
 ### SchemaGroup / SchemaArray / ConfigSchema
@@ -617,8 +617,8 @@ interface AalisEvents {
 
 // 由 api 包注入的业务事件示例（declaration merging）：
 //   @aalis/schema-message  → 'inbound:message' / 'inbound:message:archived' / 'outbound:message' / 'outbound:stream'
-//   @aalis/plugin-tools-api    → 'tool:execute'
-//   @aalis/plugin-gateway-api  → 'gateway:phase:done'
+//   @aalis/api-tools    → 'tool:execute'
+//   @aalis/api-gateway  → 'gateway:phase:done'
 //   @aalis/plugin-session-manager → 'session:created' / 'session:updated' / 'session:completed' / ...
 ```
 
@@ -751,7 +751,7 @@ interface ExtendDeclaration {
 
 ## 指令系统（v2 — 链式 builder）
 
-`@aalis/plugin-commands-api`。
+`@aalis/api-commands`。
 
 > v2 设计：单一 `Command` 类型，层级用 name 的点路径表达（`'memory.clear.all'`）；
 > builder API `useCommandService(ctx).command(name).option().action()`；
@@ -904,7 +904,7 @@ interface CommandService {
 
 ### 能力词汇（CapabilityVisibility 等）
 
-来自 `@aalis/plugin-authority-api`，被 tools / commands / 守卫共享。
+来自 `@aalis/api-authority`，被 tools / commands / 守卫共享。
 
 ```typescript
 type CapabilityId = string;

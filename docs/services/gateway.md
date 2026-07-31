@@ -5,7 +5,7 @@
 `gateway` 是 Aalis 的**消息流编排中枢**：把平台适配器（OneBot / WebUI / CLI 等）和 agent 之间的入站 / 出站消息路由统一收口到一条带相位的管道里。
 
 - 服务注册名：`gateway` —— 即 `ctx.getService<GatewayService>('gateway')` 里的字符串。
-- 契约包：`@aalis/plugin-gateway-api`（`packages/plugin-gateway-api/src/index.ts`）。
+- 契约包：`@aalis/api-gateway`（`packages/api-gateway/src/index.ts`）。
 - 默认实现包：`@aalis/plugin-gateway`（`packages/plugin-gateway/src/index.ts`，`provides = ['gateway']`）。
 
 它做两件事：
@@ -17,12 +17,12 @@
 
 ## 2. 契约
 
-来自 `packages/plugin-gateway-api/src/index.ts`。
+来自 `packages/api-gateway/src/index.ts`。
 
 ### 2.1 服务接口
 
 ```ts
-// packages/plugin-gateway-api/src/index.ts
+// packages/api-gateway/src/index.ts
 export interface GatewayService {
   /** 主动注入一条入站消息（idle-trigger / webui 直发 / 内部自检等）。等价于 emit('inbound:message')，都走入站相位链。 */
   ingressMessage(message: IncomingMessage): Promise<void>;
@@ -32,12 +32,12 @@ export interface GatewayService {
 }
 ```
 
-服务类型经 declaration merging 注册到 core：`ServiceTypeMap.gateway = GatewayService`（`packages/plugin-gateway-api/src/index.ts`）。
+服务类型经 declaration merging 注册到 core：`ServiceTypeMap.gateway = GatewayService`（`packages/api-gateway/src/index.ts`）。
 
 ### 2.2 入站相位常量与相位数据
 
 ```ts
-// packages/plugin-gateway-api/src/index.ts
+// packages/api-gateway/src/index.ts
 export const INBOUND_PHASE = {
   CONFIRM:  'inbound:confirm',  // 会话内待确认回复拦截（plugin-session-confirm）
   COMMAND:  'inbound:command',  // 指令解析与执行（plugin-commands）
@@ -56,7 +56,7 @@ export type InboundPhase = (typeof INBOUND_PHASE_ORDER)[number];
 每个相位对应一个命名 hook 键，相位间数据由同一对象引用传递：
 
 ```ts
-// packages/plugin-gateway-api/src/index.ts
+// packages/api-gateway/src/index.ts
 export interface InboundPhaseData {
   message: IncomingMessage;
   metadata: Record<string, unknown>;
@@ -65,12 +65,12 @@ export interface InboundPhaseData {
 }
 ```
 
-相位 hook 与出站 hook 经 declaration merging 注入 `HookContextMap`（`packages/plugin-gateway-api/src/index.ts`）：五个 `inbound:*` 相位载荷均为 `InboundPhaseData`；`outbound:dispatch` 载荷为 `{ message: OutgoingMessage; metadata: Record<string, unknown> }`。
+相位 hook 与出站 hook 经 declaration merging 注入 `HookContextMap`（`packages/api-gateway/src/index.ts`）：五个 `inbound:*` 相位载荷均为 `InboundPhaseData`；`outbound:dispatch` 载荷为 `{ message: OutgoingMessage; metadata: Record<string, unknown> }`。
 
 ### 2.3 遥测事件
 
 ```ts
-// packages/plugin-gateway-api/src/index.ts —— 注入 AalisEvents
+// packages/api-gateway/src/index.ts —— 注入 AalisEvents
 'gateway:phase:done': [data: {
   phase: string;
   reachedEnd: boolean;   // true=链走到底（未被 swallow）；false=某 handler 未调用 next() 终止了链
@@ -129,9 +129,9 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
 
 ```ts
 import type { Context } from '@aalis/core';
-import type { AgentService } from '@aalis/plugin-agent-api';
-import type { GatewayService, InboundPhaseData } from '@aalis/plugin-gateway-api';
-import { INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/plugin-gateway-api';
+import type { AgentService } from '@aalis/api-agent';
+import type { GatewayService, InboundPhaseData } from '@aalis/api-gateway';
+import { INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/api-gateway';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
 
 export const name = '@aalis/plugin-gateway';
@@ -218,16 +218,16 @@ export function apply(ctx: Context): void {
 
 ## 7. 能力 / 风险 → 影响
 
-- **出站统一收口**：业务层**不应**再直接 `ctx.emit('outbound:message', msg)`，而应 `dispatchOutbound()`，以便所有出站消息都经过 `outbound:dispatch` 钩子链做脱敏 / 限速 / 审计（`packages/plugin-gateway-api/src/index.ts`）。直接 emit 会绕过这些守卫。适配器**监听** `outbound:message` 仍是合法的（它是链尾的最终发送指令）。
-- **CONFIRM 相位与在途生成的 abort**：`inbound:confirm` 刻意排在最前。会话内待确认回复（Y/YS/否）命中即被吞掉、不进入后续相位，从而**不触发** `agent.handleMessage` 对在途生成的 abort —— 确认回送得以成立（`packages/plugin-gateway-api/src/index.ts`、`packages/plugin-session-confirm/src/index.ts`）。若你新增相位插在 CONFIRM 之前并 swallow 消息，会破坏这一语义。人在回路确认机制本身见 `concepts/security-model.md` 与 `core/authority.md`。
+- **出站统一收口**：业务层**不应**再直接 `ctx.emit('outbound:message', msg)`，而应 `dispatchOutbound()`，以便所有出站消息都经过 `outbound:dispatch` 钩子链做脱敏 / 限速 / 审计（`packages/api-gateway/src/index.ts`）。直接 emit 会绕过这些守卫。适配器**监听** `outbound:message` 仍是合法的（它是链尾的最终发送指令）。
+- **CONFIRM 相位与在途生成的 abort**：`inbound:confirm` 刻意排在最前。会话内待确认回复（Y/YS/否）命中即被吞掉、不进入后续相位，从而**不触发** `agent.handleMessage` 对在途生成的 abort —— 确认回送得以成立（`packages/api-gateway/src/index.ts`、`packages/plugin-session-confirm/src/index.ts`）。若你新增相位插在 CONFIRM 之前并 swallow 消息，会破坏这一语义。人在回路确认机制本身见 `concepts/security-model.md` 与 `core/authority.md`。
 - **授权身份用 `actor` 而非 `userId`**：系统侧触发器（scheduler / idle / proactive 委派）投递的 `IncomingMessage` 应填 `actor: { platform, userId }`，表示「AI 代谁执行」；agent 构造工具调用上下文时优先用 `actor` 查权限等级，避免提权（`packages/schema-message/src/index.ts`）。`actor` 不能由 LLM 在工具入参里自由指定。
 - **跨会话 / 并发隔离**：`IncomingMessage.source` 用于并发隔离 —— 同一 `sessionId` 不同 `source` 互不打断（`packages/schema-message/src/index.ts`）。适配器 / 触发器填对 `source` 才能让 agent 正确做打断决策。
 - gateway 自身不碰 storage / 网络出口；附件落盘、SSRF 守卫（`safeFetch`）等是适配器与 media 层的事，见 `concepts/storage-uri-grammar.md` / `concepts/security-model.md`。
 
 ## 8. 边界与坑
 
-- **没有 core 兜底路由**：`gateway-api` 头部注释提到「最小应用可不加载 gateway，由 core fallback 入站路由直接派发给 agent」（`packages/plugin-gateway-api/src/index.ts`），但**当前 core 已无此 fallback** —— `packages/core/src/app.ts` 仅留注释「路由由 plugin-gateway 承担」，`start()` 不再注册任何 `inbound:message` 监听。结论：不加载 gateway，`inbound:message` 无人消费、消息静默丢弃。该注释是历史遗留，按「gateway 是必需件」对待。
-- **`outbound:message` 直发仍被容忍但属旧路径**：契约注释说 emit 出站「将逐步迁移」（`packages/plugin-gateway-api/src/index.ts`）。现状是两条路并存，新代码一律走 `dispatchOutbound()`。
+- **没有 core 兜底路由**：`gateway-api` 头部注释提到「最小应用可不加载 gateway，由 core fallback 入站路由直接派发给 agent」（`packages/api-gateway/src/index.ts`），但**当前 core 已无此 fallback** —— `packages/core/src/app.ts` 仅留注释「路由由 plugin-gateway 承担」，`start()` 不再注册任何 `inbound:message` 监听。结论：不加载 gateway，`inbound:message` 无人消费、消息静默丢弃。该注释是历史遗留，按「gateway 是必需件」对待。
+- **`outbound:message` 直发仍被容忍但属旧路径**：契约注释说 emit 出站「将逐步迁移」（`packages/api-gateway/src/index.ts`）。现状是两条路并存，新代码一律走 `dispatchOutbound()`。
 - **相位顺序是单一真相，只在 gateway-api 改**：默认实现用 `INBOUND_PHASE_ORDER.filter(p => p !== DISPATCH)` 推导前置相位（`packages/plugin-gateway/src/index.ts`）。新增相位**只**改 `gateway-api` 的常量数组，调度方零改动；不要在自己插件里硬编码相位顺序。
 - **`ingressMessage` 走内部路径而非再 emit**：默认实现里 `ingressMessage` 直接调 `processInbound`，刻意避免「emit → 自己监听 → 再处理」的事件总线递归歧义（`packages/plugin-gateway/src/index.ts`）。你若重写 gateway 应保持这一点。
 

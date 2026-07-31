@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { AccessConfirmHandler, AccessRequest } from '../../packages/api-authority/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import type { AccessConfirmHandler, AccessRequest } from '../../packages/plugin-authority-api/src/index.js';
 import * as gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import * as sessionConfirmPlugin from '../../packages/plugin-session-confirm/src/index.js';
 

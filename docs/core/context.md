@@ -161,8 +161,8 @@ ctx.middleware('agent:reply:before', async (data, next) => {
 工具、命令、调度等"业务能力"都由插件以服务形式提供，不在 core 上挂方法。开发者通过对应 api 包的 helper 消费：
 
 ```typescript
-import { useToolService } from '@aalis/plugin-tools-api';
-import { useCommandService } from '@aalis/plugin-commands-api';
+import { useToolService } from '@aalis/api-tools';
+import { useCommandService } from '@aalis/api-commands';
 
 // 注册一个 LLM 可调用的工具
 useToolService(ctx)?.register({

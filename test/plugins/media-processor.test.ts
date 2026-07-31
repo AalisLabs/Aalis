@@ -1,9 +1,9 @@
 import type { Context, Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import type { ModelRef } from '../../packages/plugin-llm-api/src/index.js';
+import type { ModelRef } from '../../packages/api-llm/src/index.js';
+import type { MediaProcessor } from '../../packages/api-media/src/index.js';
 import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
-import type { MediaProcessor } from '../../packages/plugin-media-api/src/index.js';
 import type { MessageAttachment } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════

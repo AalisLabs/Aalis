@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SandboxPolicy } from '../../packages/plugin-code-sandbox-api/src/index.js';
+import type { SandboxPolicy } from '../../packages/api-code-sandbox/src/index.js';
 import {
   buildBwrapArgs,
   buildSeatbeltArgs,

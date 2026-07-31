@@ -4,11 +4,11 @@
 
 import { spawn as nodeSpawn } from 'node:child_process';
 import { readFile as fsReadFile } from 'node:fs/promises';
+import type { ExecResult, ProcessService, SpawnHandle, SpawnOptions, TempDirHandle } from '@aalis/api-process';
+import { makeTempDirViaStorage } from '@aalis/api-process';
+import type { StorageService } from '@aalis/api-storage';
+import { createStorageGateway } from '@aalis/api-storage';
 import type { Context, PluginModule } from '@aalis/core';
-import type { ExecResult, ProcessService, SpawnHandle, SpawnOptions, TempDirHandle } from '@aalis/plugin-process-api';
-import { makeTempDirViaStorage } from '@aalis/plugin-process-api';
-import type { StorageService } from '@aalis/plugin-storage-api';
-import { createStorageGateway } from '@aalis/plugin-storage-api';
 
 export const name = '@aalis/plugin-process-local';
 export const provides = ['process'];

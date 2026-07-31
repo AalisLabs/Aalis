@@ -1,10 +1,10 @@
 import { stdin as input, stdout as output } from 'node:process';
 import * as readline from 'node:readline';
+import type { AuthorityService } from '@aalis/api-authority';
+import type { PersonaService } from '@aalis/api-persona';
+import type { PlatformAdapter, PlatformConnection } from '@aalis/api-platform';
+import { getPlatformAdapters } from '@aalis/api-platform';
 import type { AppService, Context, LogEntry } from '@aalis/core';
-import type { AuthorityService } from '@aalis/plugin-authority-api';
-import type { PersonaService } from '@aalis/plugin-persona-api';
-import type { PlatformAdapter, PlatformConnection } from '@aalis/plugin-platform-api';
-import { getPlatformAdapters } from '@aalis/plugin-platform-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { StreamChunkMessage } from '@aalis/schema-message';
 import chalk from 'chalk';
@@ -14,8 +14,8 @@ import type { CLIService } from './types.js';
 
 export type { CLIService } from './types.js';
 
+import { createStorageGateway } from '@aalis/api-storage';
 import { LogHub } from '@aalis/core';
-import { createStorageGateway } from '@aalis/plugin-storage-api';
 import { readLogFileTail } from './log-file.js';
 
 // terminal:claimed / terminal:released 是 CLI（独占终端 UI）与宿主

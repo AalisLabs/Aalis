@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { RegisteredTool, ScopedToolService } from '../../packages/api-tools/src/index.js';
 import { registerHttpTools } from '../../packages/plugin-tool-system/src/tools/http.js';
-import type { RegisteredTool, ScopedToolService } from '../../packages/plugin-tools-api/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // http_download 写工具必须挂闸（restricted + confirm），

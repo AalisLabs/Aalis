@@ -78,7 +78,7 @@ aalis/
 ├── packages/
 │   ├── core/                              # 核心框架（零外部依赖）
 │   └── plugin-*/                          # 插件（60+ 个，按名称前缀分类）
-│       ├── plugin-agent / plugin-agent-api    # 对话编排
+│       ├── plugin-agent / api-agent    # 对话编排
 │       ├── plugin-llm-* / plugin-embedding-*  # LLM / Embedding provider
 │       ├── plugin-memory-* / plugin-vectorstore-*  # 记忆 / 向量存储
 │       ├── plugin-tool-* / plugin-tools       # 工具集与注册表
@@ -190,7 +190,7 @@ pnpm build && pnpm start
 
 ```typescript
 import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/plugin-config-api';
+import type { ConfigSchema } from '@aalis/schema-config';
 
 export const name = 'my-plugin';
 
@@ -397,12 +397,12 @@ Aalis 采用 **分层授权**：核心与绝大多数插件宽松开源，仅"�
 
 | 层 | 许可证 | 包 |
 |---|---|---|
-| 核心 / API / 工具 / 功能插件 | **MIT** | `@aalis/core`、所有 `*-api`、`util-*`、各功能插件、`@aalis/plugin-webui-api`（WebUI 契约）、`@aalis/plugin-package-manager`、`create-aalis(-plugin)` |
+| 核心 / API / 工具 / 功能插件 | **MIT** | `@aalis/core`、所有 `*-api`、`util-*`、各功能插件、`@aalis/api-webui`（WebUI 契约）、`@aalis/plugin-package-manager`、`create-aalis(-plugin)` |
 | 市场 / WebUI 控制台实现层 | **AGPL-3.0-only** | `@aalis/plugin-webui-server`、`@aalis/plugin-webui-client` |
 
 含义：
 
-- **写插件、扩展功能、二次开发** —— 基于 MIT 层（含通过 `@aalis/plugin-webui-api` 注册 WebUI 页面）完全自由，只需保留版权声明。
+- **写插件、扩展功能、二次开发** —— 基于 MIT 层（含通过 `@aalis/api-webui` 注册 WebUI 页面）完全自由，只需保留版权声明。
 - **修改 / 分发 WebUI 控制台或插件市场本体** —— 受 AGPL-3.0 约束（含作为网络服务提供时须公开对应源码）。
 
 版权 © 2026 Ace Nyan。各包根目录附 `LICENSE`；贡献授权见 [CONTRIBUTING.md](CONTRIBUTING.md#0-贡献授权-cla)。

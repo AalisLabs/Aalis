@@ -9,7 +9,7 @@
 
 | 关注点 | 服务注册名 | 契约包 / 实现 | 性质 |
 | --- | --- | --- | --- |
-| 跨会话历史读取 + 平台访问规则 | `session-history` | 契约 `@aalis/plugin-tool-session-api`；实现 `@aalis/plugin-tool-session` | 有 `-api` 契约 + 运行时服务 |
+| 跨会话历史读取 + 平台访问规则 | `session-history` | 契约 `@aalis/api-tool-session`；实现 `@aalis/plugin-tool-session` | 有 `-api` 契约 + 运行时服务 |
 | 上传文件登记（per-session 文件态） | `file-reader` | 实现 `@aalis/plugin-file-reader`（**无 `-api` 包**，接口内联在 provide 处） | 仅运行时服务，无独立契约 |
 
 下面分两节讲。两者都遵循「`sessionId` 是会话隔离边界」这一共同约束，见 [§6 会话隔离](#6-会话隔离--访问控制provider--consumer-必守)。
@@ -20,11 +20,11 @@
 
 ## A.1 定位
 
-一句话：**按 Aalis `sessionId` 读取某会话的消息历史，并提供平台插件注入「跨会话读取访问规则」的钩子。** 取用名 `getService<SessionHistoryService>('session-history')`，契约包 `@aalis/plugin-tool-session-api`。
+一句话：**按 Aalis `sessionId` 读取某会话的消息历史，并提供平台插件注入「跨会话读取访问规则」的钩子。** 取用名 `getService<SessionHistoryService>('session-history')`，契约包 `@aalis/api-tool-session`。
 
-它不是存储后端——历史数据来自 `memory` 服务；本服务是「读取入口 + 访问控制链 + 给 LLM 的工具壳（`session_get_history`）」。设计上保证**通用工具与平台专属工具都走同一条 access-checker 链，不存在绕过路径**（`packages/plugin-tool-session-api/src/index.ts`）。
+它不是存储后端——历史数据来自 `memory` 服务；本服务是「读取入口 + 访问控制链 + 给 LLM 的工具壳（`session_get_history`）」。设计上保证**通用工具与平台专属工具都走同一条 access-checker 链，不存在绕过路径**（`packages/api-tool-session/src/index.ts`）。
 
-## A.2 契约（`@aalis/plugin-tool-session-api/src/index.ts`）
+## A.2 契约（`@aalis/api-tool-session/src/index.ts`）
 
 核心接口（`index.ts`）：
 
@@ -55,7 +55,7 @@ export interface SessionHistoryService {
 
 判定语义：**any-deny 短路** —— 同一 platform 多个 checker，任一返回 `deny` 即拒绝（`index.ts`，实现见 `plugin-tool-session/src/index.ts`）。
 
-契约里还通过 declaration merging 把名字登记进 `ServiceTypeMap`（`index.ts`），所以 `ctx.getService('session-history')` 无需手写泛型即有类型。消费方源码顶部要 `import '@aalis/plugin-tool-session-api'` 触发该 merge。
+契约里还通过 declaration merging 把名字登记进 `ServiceTypeMap`（`index.ts`），所以 `ctx.getService('session-history')` 无需手写泛型即有类型。消费方源码顶部要 `import '@aalis/api-tool-session'` 触发该 merge。
 
 ## A.3 谁提供 / 谁消费
 
@@ -80,14 +80,14 @@ ctx.provide('session-history', historyService, { label: '会话历史读取' });
 
 ```ts
 import type { Context } from '@aalis/core';
-import type { SessionHistoryService } from '@aalis/plugin-tool-session-api';
-import '@aalis/plugin-tool-session-api'; // 触发 ServiceTypeMap declaration merge
+import type { SessionHistoryService } from '@aalis/api-tool-session';
+import '@aalis/api-tool-session'; // 触发 ServiceTypeMap declaration merge
 
 export const name = '@you/plugin-my-history';
 export const provides = ['session-history'];
 
 export function apply(ctx: Context): void {
-  const checkers: import('@aalis/plugin-tool-session-api').AccessChecker[] = [];
+  const checkers: import('@aalis/api-tool-session').AccessChecker[] = [];
   const svc: SessionHistoryService = {
     registerAccessChecker(checker) {
       checkers.push(checker);
@@ -171,7 +171,7 @@ const result = await history.getHistory({ sessionId, limit }, callCtx);
 
 一句话：**登记并按会话隔离地访问「用户上传的文件」的元信息与本地路径。** 取用名 `getService('file-reader')`，实现包 `@aalis/plugin-file-reader`。
 
-**没有 `@aalis/plugin-file-reader-api`**——服务接口是内联在 `ctx.provide` 处的匿名对象（`packages/plugin-file-reader/src/index.ts`），消费方按 duck-typing 取用。这是它与 `session-history` 的关键差异：没有可 import 的 `interface`，作者只能照下面的形状自己声明泛型。
+**没有 `@aalis/api-file-reader`**——服务接口是内联在 `ctx.provide` 处的匿名对象（`packages/plugin-file-reader/src/index.ts`），消费方按 duck-typing 取用。这是它与 `session-history` 的关键差异：没有可 import 的 `interface`，作者只能照下面的形状自己声明泛型。
 
 ## B.2 「契约」（内联 provide 形状）
 

@@ -1,9 +1,8 @@
 import { createReadStream, type FSWatcher, watch as fsWatch } from 'node:fs';
 import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
-import type { Context, Logger } from '@aalis/core';
-import type { CheckResult } from '@aalis/plugin-doctor-api';
-import { useDoctorService } from '@aalis/plugin-doctor-api';
+import type { CheckResult } from '@aalis/api-doctor';
+import { useDoctorService } from '@aalis/api-doctor';
 import type {
   StorageEntry,
   StorageListResult,
@@ -14,7 +13,8 @@ import type {
   StorageUnwatch,
   StorageWatchEvent,
   StorageWatchListener,
-} from '@aalis/plugin-storage-api';
+} from '@aalis/api-storage';
+import type { Context, Logger } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 
 export const name = '@aalis/plugin-storage-local';

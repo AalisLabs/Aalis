@@ -5,12 +5,12 @@
 向量数据库服务：存放 embedding 向量 + 元数据，提供近邻检索（topK）。它是语义记忆等子系统的「底层向量存储后端」，本身不做 embedding、不懂消息语义——只认 `number[]` 与 `Record<string, unknown>`。
 
 - 服务注册名：`getService('vectorstore')`
-- 契约包：`@aalis/plugin-vectorstore-api`（`packages/plugin-vectorstore-api`）
+- 契约包：`@aalis/api-vectorstore`（`packages/api-vectorstore`）
 - 内置参考实现：`@aalis/plugin-vectorstore-flat`（零依赖，JSON 文件）、`@aalis/plugin-vectorstore-lancedb`（LanceDB 高性能）
 
 ## 2. 契约
 
-`packages/plugin-vectorstore-api/src/index.ts`：
+`packages/api-vectorstore/src/index.ts`：
 
 ```ts
 // VectorSearchResult（index.ts）
@@ -32,7 +32,7 @@ export interface VectorStoreService {
 }
 ```
 
-类型通过 declaration merging 注入内核映射（`index.ts`），因此 `getService('vectorstore')` 自动得到 `VectorStoreService` 类型——只要消费者 `import '@aalis/plugin-vectorstore-api'`（哪怕只是触发模块）即可。
+类型通过 declaration merging 注入内核映射（`index.ts`），因此 `getService('vectorstore')` 自动得到 `VectorStoreService` 类型——只要消费者 `import '@aalis/api-vectorstore'`（哪怕只是触发模块）即可。
 
 方法语义（以契约注释 + 参考实现为准）：
 
@@ -79,7 +79,7 @@ export interface VectorStoreService {
 
 ```ts
 import type { Context } from '@aalis/core';
-import type { VectorSearchResult, VectorStoreService } from '@aalis/plugin-vectorstore-api';
+import type { VectorSearchResult, VectorStoreService } from '@aalis/api-vectorstore';
 
 export const name = '@aalis/plugin-vectorstore-mine';
 export const provides = ['vectorstore'];
@@ -133,7 +133,7 @@ export async function apply(ctx: Context): Promise<void> {
 
 ```ts
 export const inject = { required: ['vectorstore'] }; // 或放 optional 软依赖
-import '@aalis/plugin-vectorstore-api';              // 触发类型增强
+import '@aalis/api-vectorstore';              // 触发类型增强
 
 export async function apply(ctx: Context) {
   // 不要缓存句柄：provider 可能因热替换 bounce 失效——每次用都重取（见 docs/concepts/lazy-service-access.md）
@@ -179,4 +179,4 @@ export async function apply(ctx: Context) {
 
 - 概念：[service-model](../concepts/service-model.md)（DI 按名、priority/preference 胜出）、[lazy-service-access](../concepts/lazy-service-access.md)（每次重取、不缓存句柄）、[manifest-metadata](../concepts/manifest-metadata.md)（provides 双源）、[storage-uri-grammar](../concepts/storage-uri-grammar.md)、[security-model](../concepts/security-model.md)（storage 非沙箱）。
 - 内核：[core/service](../core/service.md)、[core/context](../core/context.md)、[core/plugin.md](../core/plugin.md)。
-- 相关契约/服务：`@aalis/plugin-storage-api`（落盘后端，[api/plugin-storage-api](../api/plugin-storage-api.md)）、`@aalis/plugin-embedding-api`（产生 `queryVector`，[api/plugin-embedding-api](../api/plugin-embedding-api.md)）、消费方 `@aalis/plugin-memory-vector`（semantic-memory）。
+- 相关契约/服务：`@aalis/api-storage`（落盘后端，[api/api-storage](../api/api-storage.md)）、`@aalis/api-embedding`（产生 `queryVector`，[api/api-embedding](../api/api-embedding.md)）、消费方 `@aalis/plugin-memory-vector`（semantic-memory）。

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { resolveCapabilityPolicy, riskDefaults } from '../../packages/api-authority/src/index.js';
+import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { ConfigManager, Logger } from '../../packages/core/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
-import { resolveCapabilityPolicy, riskDefaults } from '../../packages/plugin-authority-api/src/index.js';
-import type { StorageService } from '../../packages/plugin-storage-api/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 能力两轴正交模型：轴 A 授权(visibility) × 轴 B 确认(confirm) + risk 糖 + 自动判危

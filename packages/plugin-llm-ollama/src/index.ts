@@ -1,8 +1,8 @@
+import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/api-llm';
+import { LLMCapabilities } from '@aalis/api-llm';
+import { createProcessGateway, type ProcessService } from '@aalis/api-process';
+import type { ToolDefinition } from '@aalis/api-tools';
 import type { Context, Logger } from '@aalis/core';
-import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/plugin-llm-api';
-import { LLMCapabilities } from '@aalis/plugin-llm-api';
-import { createProcessGateway, type ProcessService } from '@aalis/plugin-process-api';
-import type { ToolDefinition } from '@aalis/plugin-tools-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';

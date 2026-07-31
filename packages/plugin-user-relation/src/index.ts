@@ -15,9 +15,10 @@
  * - digTool.*：Agent 工具调用用，允许更深；hardMax 防 Agent 一次拉满。
  * - view.*：WebUI / actions 查询用，给人看，可中等深度。
  */
+
+import type { MemoryService } from '@aalis/api-memory';
+import { useWebuiService, type WebuiPage } from '@aalis/api-webui';
 import type { Context, PluginModule } from '@aalis/core';
-import type { MemoryService } from '@aalis/plugin-memory-api';
-import { useWebuiService, type WebuiPage } from '@aalis/plugin-webui-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { actions as baseActions } from './actions.js';
 import { registerRelationCommands } from './commands.js';

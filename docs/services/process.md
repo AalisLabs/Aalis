@@ -5,7 +5,7 @@
 把所有 `node:child_process` / `node:os` / `node:fs` 直读用法收口到一个能力插件后面，让业务插件无需直接 import 这些 Node 内置模块，即可**执行子进程、创建临时目录、读取 OS 外部文件**。
 
 - 服务注册名：`'process'`（`ctx.getService<ProcessService>('process')`）。
-- 契约包：`@aalis/plugin-process-api`（`packages/plugin-process-api/src/index.ts`）。
+- 契约包：`@aalis/api-process`（`packages/api-process/src/index.ts`）。
 - 默认实现：`@aalis/plugin-process-local`（`packages/plugin-process-local/src/index.ts`）。
 
 > 注意：**process 不是沙箱**。`spawn` 出来的子进程拥有宿主进程的完整 OS 权限（默认连承宿主全量 `process.env`），`readExternalFile` 可读任意 OS 路径。需要隔离的不可信代码执行请看 [code-sandbox 服务](./code-sandbox.md) 与第 6 节。
@@ -14,9 +14,9 @@
 
 ## 2. 契约
 
-接口与类型全部由 `@aalis/plugin-process-api` 导出。真实签名（贴 file:line）：
+接口与类型全部由 `@aalis/api-process` 导出。真实签名（贴 file:line）：
 
-### 2.1 `ProcessService`（`plugin-process-api/src/index.ts`）
+### 2.1 `ProcessService`（`api-process/src/index.ts`）
 
 ```ts
 interface ProcessService {
@@ -131,9 +131,9 @@ interface TempDirHandle {
 ```ts
 import type { Context, PluginModule } from '@aalis/core';
 import { ServicePriority } from '@aalis/core';
-import type { ProcessService, ExecResult, SpawnHandle, SpawnOptions, TempDirHandle } from '@aalis/plugin-process-api';
-import { makeTempDirViaStorage } from '@aalis/plugin-process-api';
-import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
+import type { ProcessService, ExecResult, SpawnHandle, SpawnOptions, TempDirHandle } from '@aalis/api-process';
+import { makeTempDirViaStorage } from '@aalis/api-process';
+import { createStorageGateway, type StorageService } from '@aalis/api-storage';
 
 export const name = '@aalis/plugin-process-remote';
 export const provides = ['process'];          // 双源之一：导出常量
@@ -178,7 +178,7 @@ export default plugin;
 }
 ```
 
-> 契约包 `plugin-process-api` 自身**不提供任何运行时服务**，它的 `package.json` 用的是 `"aalis": { "types": true }` + `keywords: ["aalis-api"]`，标记为「纯类型/契约包」。别把 `aalis.service` 写到契约包上。
+> 契约包 `api-process` 自身**不提供任何运行时服务**，它的 `package.json` 用的是 `"aalis": { "types": true }` + `keywords: ["aalis-api"]`，标记为「纯类型/契约包」。别把 `aalis.service` 写到契约包上。
 
 ---
 
@@ -186,10 +186,10 @@ export default plugin;
 
 ### 懒取（必须）
 
-永远用 `createProcessGateway(ctx)`，**不要缓存它转发到的实例**——网关内部每次方法调用都重新 `ctx.getService('process')`（`plugin-process-api/src/index.ts`），这样 provider 被换人/下线（provider bounce）后下一次调用自动命中新胜者。详见 [懒服务访问](../concepts/lazy-service-access.md)。
+永远用 `createProcessGateway(ctx)`，**不要缓存它转发到的实例**——网关内部每次方法调用都重新 `ctx.getService('process')`（`api-process/src/index.ts`），这样 provider 被换人/下线（provider bounce）后下一次调用自动命中新胜者。详见 [懒服务访问](../concepts/lazy-service-access.md)。
 
 ```ts
-import { createProcessGateway } from '@aalis/plugin-process-api';
+import { createProcessGateway } from '@aalis/api-process';
 
 export async function apply(ctx: Context): Promise<void> {
   const proc = createProcessGateway(ctx);   // 持有网关 OK；别把 proc.spawn 解构出来长期持有
@@ -215,7 +215,7 @@ try {
 
 ### 服务缺失 / 可选依赖
 
-- **硬依赖**：声明 `inject = ['process']`，框架在 process 就绪前不会 `apply` 你的插件；网关在缺失时也会抛 `未找到 process 服务...`（`plugin-process-api/src/index.ts`）。
+- **硬依赖**：声明 `inject = ['process']`，框架在 process 就绪前不会 `apply` 你的插件；网关在缺失时也会抛 `未找到 process 服务...`（`api-process/src/index.ts`）。
 - **可选依赖**：先 `ctx.getService('process') !== undefined` 探测再决定。参考 `plugin-office/src/index.ts`：`const proc = ctx.getService('process') !== undefined ? createProcessGateway(ctx) : undefined;`——没有 process 时 PDF 工具优雅降级。
 
 ### 错误边界
@@ -243,7 +243,7 @@ process 本身**没有内核级鉴权门**——风险控制落在**调用它的
 
 ### 不是沙箱
 
-`readExternalFile` 显式**绕过 storage root 沙箱**读任意 OS 路径——契约注释（`plugin-process-api/src/index.ts`）限定它只用于「外部推来的本地路径」场景（如 OneBot daemon/NapCat 容器挂载的 `/tmp` 附件，`adapter-onebot/src/attachment-cache.ts`、`:116-118`）。它**不是** storage 的替代品：受沙箱约束的「在声明 root 内读写」请走 [storage 服务](./storage.md)。
+`readExternalFile` 显式**绕过 storage root 沙箱**读任意 OS 路径——契约注释（`api-process/src/index.ts`）限定它只用于「外部推来的本地路径」场景（如 OneBot daemon/NapCat 容器挂载的 `/tmp` 附件，`adapter-onebot/src/attachment-cache.ts`、`:116-118`）。它**不是** storage 的替代品：受沙箱约束的「在声明 root 内读写」请走 [storage 服务](./storage.md)。
 
 需要在隔离环境跑不可信代码：用 [code-sandbox 服务](./code-sandbox.md)。`plugin-code-sandbox-os` 正是把 process.spawn 再裹一层 bwrap/seatbelt 启动器（`src/index.ts`），且后端不可用时 fail-closed。
 

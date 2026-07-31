@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { App } from '../../packages/core/src/index.js';
-import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
-import type { SkillsService } from '../../packages/plugin-skills/src/index.js';
-import * as skillsModule from '../../packages/plugin-skills/src/index.js';
 import type {
   StorageEntry,
   StorageRootInfo,
   StorageService,
   StorageStat,
-} from '../../packages/plugin-storage-api/src/index.js';
+} from '../../packages/api-storage/src/index.js';
+import { App } from '../../packages/core/src/index.js';
+import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
+import type { SkillsService } from '../../packages/plugin-skills/src/index.js';
+import * as skillsModule from '../../packages/plugin-skills/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════

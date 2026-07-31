@@ -7,9 +7,9 @@
 // 不再在本文件里直接 new setInterval。
 // ============================================================
 
+import { useCronEngine } from '@aalis/api-cron-engine';
+import type { WorkflowDef } from '@aalis/api-workflow';
 import type { Context, Logger } from '@aalis/core';
-import { useCronEngine } from '@aalis/plugin-cron-engine-api';
-import type { WorkflowDef } from '@aalis/plugin-workflow-api';
 
 // event 触发器禁止订阅的内部事件：这些承载会话原文/出站内容，若被 workflow 的 send-message
 // 节点转发到任意 sessionId，会构成跨会话内容窃听/外泄通道。只允许订阅编排/信号类事件。

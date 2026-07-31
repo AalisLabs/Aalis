@@ -6,7 +6,7 @@
  * - Test B：mcp-client 侧 bridgeClientToTools 把外部 MCP server 暴露的工具桥接到
  *   一个 mock ToolService。验证工具名前缀、callTool 链路、错误回传。
  */
-import type { Context, Logger } from '@aalis/core';
+
 import type {
   RegisteredTool,
   ToolCallContext,
@@ -14,7 +14,8 @@ import type {
   ToolGroupInfo,
   ToolService,
   ToolSummary,
-} from '@aalis/plugin-tools-api';
+} from '@aalis/api-tools';
+import type { Context, Logger } from '@aalis/core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Server as McpSdkServer } from '@modelcontextprotocol/sdk/server/index.js';

@@ -12,12 +12,12 @@
 // 由各 platform adapter（OneBot / WebUI）按自身能力处理结构化附件。
 // ============================================================
 
+import type { MediaService } from '@aalis/api-media';
+import type { MemoryService } from '@aalis/api-memory';
+import type { MessageArchiveService } from '@aalis/api-message-archive';
+import { createStorageGateway, type StorageService } from '@aalis/api-storage';
+import { useToolService } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
-import type { MediaService } from '@aalis/plugin-media-api';
-import type { MemoryService } from '@aalis/plugin-memory-api';
-import type { MessageArchiveService } from '@aalis/plugin-message-archive-api';
-import { createStorageGateway, type StorageService } from '@aalis/plugin-storage-api';
-import { useToolService } from '@aalis/plugin-tools-api';
 import {
   AttachmentRefKind,
   formatAttachmentRef,

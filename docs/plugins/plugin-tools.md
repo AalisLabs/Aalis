@@ -46,4 +46,4 @@ export const provides = ['tools'];
   [plugin-tool-onebot](plugin-tool-onebot.md)、
   [plugin-tool-session](plugin-tool-session.md) 等
 - 消费方：[plugin-agent](plugin-agent.md)、[plugin-commands](plugin-commands.md)
-- API 契约：[`@aalis/plugin-tools-api`](../api/plugin-tools-api.md)
+- API 契约：[`@aalis/api-tools`](../api/api-tools.md)

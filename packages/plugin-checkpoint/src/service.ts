@@ -1,6 +1,6 @@
+import type { MemoryService } from '@aalis/api-memory';
+import { type StorageService, toStorageUri } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
-import type { MemoryService } from '@aalis/plugin-memory-api';
-import { type StorageService, toStorageUri } from '@aalis/plugin-storage-api';
 
 /**
  * Checkpoint 服务

@@ -1,14 +1,14 @@
 import path from 'node:path';
+import type { AgentService } from '@aalis/api-agent';
+import { useAgent } from '@aalis/api-agent';
+import type { MediaService } from '@aalis/api-media';
+import type { MemoryService } from '@aalis/api-memory';
+import type {} from '@aalis/api-session-manager'; // declaration merging：session:deleted 事件
+import type { StorageService } from '@aalis/api-storage';
+import { createStorageGateway } from '@aalis/api-storage';
+import type { ToolCallContext } from '@aalis/api-tools';
+import { toolsWithGroups, useToolService } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
-import type { AgentService } from '@aalis/plugin-agent-api';
-import { useAgent } from '@aalis/plugin-agent-api';
-import type { MediaService } from '@aalis/plugin-media-api';
-import type { MemoryService } from '@aalis/plugin-memory-api';
-import type {} from '@aalis/plugin-session-manager-api'; // declaration merging：session:deleted 事件
-import type { StorageService } from '@aalis/plugin-storage-api';
-import { createStorageGateway } from '@aalis/plugin-storage-api';
-import type { ToolCallContext } from '@aalis/plugin-tools-api';
-import { toolsWithGroups, useToolService } from '@aalis/plugin-tools-api';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { formatImageSection, recognizeImages } from './doc-images.js';
