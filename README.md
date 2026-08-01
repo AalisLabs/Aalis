@@ -331,7 +331,6 @@ outputFormat:
 
 | 主题 | 一句话 | 状态 |
 |---|---|---|
-| [存储层](docs/roadmap/storage.md) | 缺结构化存储原语，`saveMetadata` 被当结构化存储用（无查询/索引/事务） | 待拍板方向 |
 | [Koishi 兼容层](docs/roadmap/koishi-compat.md) | 嵌入真实 Koishi 内核让其插件直接运行 | 已验证可行，待实施 |
 | [指令系统](docs/roadmap/commands.md) | `/help` 与 `formatUsage` 无权限过滤（待决策做不做） | 小 |
 

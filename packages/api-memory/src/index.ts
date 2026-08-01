@@ -89,11 +89,42 @@ export interface MemoryService {
    */
   getRecentMessagesAcrossSessions?(query: RecentMessagesAcrossSessionsQuery): Promise<RecentMessageRecord[]>;
 
-  // ----- 结构化元数据存储 -----
+  // ═══════════════════════════════════════════════════════════════════════
+  // 结构化元数据存储
   //
   // 四个方法**必填**。曾经全部可选（`?`），而三家后端从来都是全实现——可选性只产生成本：
-  // 八个消费方各写各的守卫，写法四种（静默 return / 直接 throw / 自定义错误类型 / 有就存没有就丢），
-  // 且都是死分支。第三方 memory 后端本来也必须实现，否则一半插件在它上面跑不起来。
+  // 八个消费方各写各的守卫，写法四种（静默 return / 直接 throw / 自定义错误类型 / 有就存没有
+  // 就丢），且都是死分支。第三方 memory 后端本来也必须实现，否则一半插件在它上面跑不起来。
+  //
+  // ── 这一面**刻意停在 KV**，以下四条是经实测的决定，不是尚未做的待办 ──
+  //
+  // 1. **不加查询原语（where / orderBy / join / 聚合）。**
+  //    实测八个消费方里七个只需要 KV；唯一被撑爆的是 `user-relation` 的关系图，而它已用
+  //    进程内快照缓存解决。查询一旦进契约，第三方后端的门槛就从「实现几个 KV 方法」变成
+  //    「实现一个查询引擎」——那会废掉 memory 多实现（inmemory/sqlite/mongodb）这件事本身。
+  //
+  // 2. **不加 key 前缀扫描。** 曾以为它是主要需求，实测推翻：11 个 `listMetadata` 调用点里
+  //    只有一个低频清理路径要子集，其余都要全量（`loadAll` 本来就要全部四类，加了前缀反而
+  //    要发四次查询）。
+  //
+  // 3. **不加载荷字段索引。** 技术上可行且快——sqlite 的 `json_extract` 表达式索引实测把
+  //    2 万行的点查从 15ms 降到 0.019ms（818×），mongodb 更简单（`data` 是真子文档）。
+  //    但那只有一个消费方需要，且是低频路径。真出现第二个需要按字段查的插件再说。
+  //
+  // 4. **namespace 不做 `ctx.id` stamping。** 现状是无主的全局字符串空间，与 events /
+  //    services / hooks 三原语「注册经闭包 ctx.id 的门面」的纪律确实背离。但它拦不住恶意
+  //    ——插件与内核同进程同权限，绕过门面直接 `getService('memory')` 就能读任意 namespace
+  //    ——只拦得住手滑。而唯一的实例（`plugin-media` 读 `plugin-user-profile` 的档案）是
+  //    **有意的跨插件读**，正解是 DI（user-profile 导出服务）而非 stamping，且该并入
+  //    「避免污染共享契约」那次统一处置，不单修一处留下不一致。
+  //    代价则是一次带迁移的破坏性变更（既有数据的 namespace 全变，而存量数据没有任何标记
+  //    能告诉我们哪个 namespace 归谁）。
+  //
+  // 若将来真要上结构化存储：**不自建 ORM**。`minato`（MIT、仅依赖 cosmokit、四个 driver
+  // 覆盖 sqlite/mongo/mysql/postgres）是现成的，且它不依赖 koishi；drizzle / kysely 都不支持
+  // mongo，与本项目已有的 mongodb 后端对不上。届时它应作为**实现细节**藏在某个存储插件里，
+  // 而不是把 minato 的 API 抬成 Aalis 的公开契约。
+  // ═══════════════════════════════════════════════════════════════════════
 
   /** 保存结构化元数据（namespace 隔离，key 唯一） */
   saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void>;
