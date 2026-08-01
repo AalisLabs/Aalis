@@ -2142,8 +2142,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return;
       }
       try {
+        // 批量原子删：逐条 delete 中途失败会留下「删了一半」的档案，用户看到的是
+        // 部分清空却报了成功。commitMetadata 要么全成要么全不成。
         const items = await memory.listMetadata(PROFILE_NS);
-        for (const it of items) await memory.deleteMetadata(PROFILE_NS, it.key);
+        await memory.commitMetadata(items.map(it => ({ op: 'del' as const, namespace: PROFILE_NS, key: it.key })));
         data.results.push({ source: 'user-profile', success: true, message: `用户档案已清空 (${items.length} 条)` });
       } catch (err) {
         const m = err instanceof Error ? err.message : String(err);
@@ -2154,7 +2156,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (cfg.enableInstructions) {
         try {
           const insItems = await memory.listMetadata(INSTRUCTIONS_NS);
-          for (const it of insItems) await memory.deleteMetadata(INSTRUCTIONS_NS, it.key);
+          await memory.commitMetadata(
+            insItems.map(it => ({ op: 'del' as const, namespace: INSTRUCTIONS_NS, key: it.key })),
+          );
           data.results.push({
             source: 'user-profile-instructions',
             success: true,
@@ -2351,7 +2355,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
       try {
         const items = await memory.listMetadata(PROFILE_NS);
-        for (const it of items) await memory.deleteMetadata(PROFILE_NS, it.key);
+        await memory.commitMetadata(items.map(it => ({ op: 'del' as const, namespace: PROFILE_NS, key: it.key })));
         return `✅ 已清空全部用户档案（${items.length} 条）`;
       } catch (err) {
         const m = err instanceof Error ? err.message : String(err);

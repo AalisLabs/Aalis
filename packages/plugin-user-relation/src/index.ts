@@ -26,7 +26,7 @@ import { RelationExtractor } from './extractor.js';
 import { registerRelationContribution } from './middleware.js';
 import { startRenameWatcher } from './rename-watcher.js';
 import { RelationService } from './service.js';
-import { RELATION_NAMESPACE, RelationStore } from './store.js';
+import { RelationStore } from './store.js';
 import { registerRelationTools } from './tools.js';
 
 export const name = '@aalis/plugin-user-relation';
@@ -661,13 +661,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return;
       }
       try {
-        const items = await memory.listMetadata(RELATION_NAMESPACE);
-        for (const it of items) await memory.deleteMetadata(RELATION_NAMESPACE, it.key);
-        ctx.logger.info(`[user-relation] 关系图已清空 (${items.length} 条)`);
+        // 经 store 而非直接拿 memory 删：store 持有全图快照缓存，绕过它会让清空后仍读到旧图。
+        const cleared = await store.clearAll();
+        ctx.logger.info(`[user-relation] 关系图已清空 (${cleared} 条)`);
         data.results.push({
           source: 'user-relation',
           success: true,
-          message: `关系图已清空 (${items.length} 条)`,
+          message: `关系图已清空 (${cleared} 条)`,
         });
       } catch (err) {
         const m = err instanceof Error ? err.message : String(err);
