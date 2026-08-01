@@ -78,7 +78,26 @@ interface MergeRejectRecord {
 }
 
 export class RelationStore {
+  /**
+   * 全图快照缓存。
+   *
+   * 关系图是**读远多于写**的负载：每条触发消息读一次（prompt 注入），只在提取到新关系时写。
+   * 而 `loadAll()` 是 O(全图) 的——实测生产库 3090 条 / 41 MB / ≈540 ms，且同一次 build 里
+   * 被调两次（子图遍历一次、全局热点一次）。缓存命中后这两次都变成零 I/O。
+   *
+   * **正确性依赖一个不变量：本 store 是 RELATION_NAMESPACE 的唯一写入方。**
+   * 它成立是因为：插件里只 `new RelationStore` 一次（index.ts），且所有写都走本类的方法。
+   * 曾经有一处例外——`memory:clear` 处理器直接拿 memory 删——已改为经 `clearAll()`。
+   * 将来若再出现绕过本类的写入，这个缓存就会变成脏读，务必同时调 `invalidate()`。
+   */
+  private snapshot?: RelationGraphSnapshot;
+
   constructor(private readonly memory: MemoryService) {}
+
+  /** 丢弃快照。所有写方法结束时调用。 */
+  private invalidate(): void {
+    this.snapshot = undefined;
+  }
 
   // ----- Person -----
 
@@ -93,10 +112,12 @@ export class RelationStore {
       personKey(node.platform, node.userId),
       node as unknown as Record<string, unknown>,
     );
+    this.invalidate();
   }
 
   async deletePerson(platform: string, userId: string): Promise<void> {
     await this.memory.deleteMetadata(RELATION_NAMESPACE, personKey(platform, userId));
+    this.invalidate();
   }
 
   // ----- Event -----
@@ -108,10 +129,12 @@ export class RelationStore {
 
   async upsertEvent(node: EventNode): Promise<void> {
     await this.memory.saveMetadata(RELATION_NAMESPACE, eventKey(node.id), node as unknown as Record<string, unknown>);
+    this.invalidate();
   }
 
   async deleteEvent(eventId: string): Promise<void> {
     await this.memory.deleteMetadata(RELATION_NAMESPACE, eventKey(eventId));
+    this.invalidate();
   }
 
   // ----- Entity -----
@@ -123,10 +146,12 @@ export class RelationStore {
 
   async upsertEntity(node: EntityNode): Promise<void> {
     await this.memory.saveMetadata(RELATION_NAMESPACE, entityKey(node.id), node as unknown as Record<string, unknown>);
+    this.invalidate();
   }
 
   async deleteEntity(entityId: string): Promise<void> {
     await this.memory.deleteMetadata(RELATION_NAMESPACE, entityKey(entityId));
+    this.invalidate();
   }
 
   // ----- Edge -----
@@ -138,10 +163,12 @@ export class RelationStore {
 
   async upsertEdge(edge: RelationEdge): Promise<void> {
     await this.memory.saveMetadata(RELATION_NAMESPACE, edgeKey(edge.id), edge as unknown as Record<string, unknown>);
+    this.invalidate();
   }
 
   async deleteEdge(edgeId: string): Promise<void> {
     await this.memory.deleteMetadata(RELATION_NAMESPACE, edgeKey(edgeId));
+    this.invalidate();
   }
 
   // ----- MergeReject 缓存（consolidate LLM 否决合并的持久化去重） -----
@@ -157,10 +184,12 @@ export class RelationStore {
       mergeRejectKey(record.aId, record.bId),
       record as unknown as Record<string, unknown>,
     );
+    this.invalidate();
   }
 
   async deleteMergeReject(aId: string, bId: string): Promise<void> {
     await this.memory.deleteMetadata(RELATION_NAMESPACE, mergeRejectKey(aId, bId));
+    this.invalidate();
   }
 
   /** 当某个节点被合并/删除时，清理所有涉及它的 MergeReject 缓存（旧 id 不再有效）。 */
@@ -172,6 +201,7 @@ export class RelationStore {
       const r = data as unknown as MergeRejectRecord;
       if (r.aId === nodeId || r.bId === nodeId) {
         await this.memory.deleteMetadata(RELATION_NAMESPACE, key);
+        this.invalidate();
         deleted++;
       }
     }
@@ -181,6 +211,7 @@ export class RelationStore {
   // ----- 全量加载（webui / 注入用） -----
 
   async loadAll(): Promise<RelationGraphSnapshot> {
+    if (this.snapshot) return this.snapshot;
     const entries = await this.memory.listMetadata(RELATION_NAMESPACE);
     const persons: PersonNode[] = [];
     const events: EventNode[] = [];
@@ -195,7 +226,23 @@ export class RelationStore {
       // 其他 key 静默忽略，便于未来加扩展类型而不破坏老版
     }
 
-    return { persons, events, entities, edges };
+    this.snapshot = { persons, events, entities, edges };
+    return this.snapshot;
+  }
+
+  /**
+   * 清空整个关系图（`memory:clear` 用）。
+   *
+   * 放在本类里而不是让调用方直接拿 memory 删 —— 那样会绕过快照失效，清空后仍读到旧图。
+   * 批量原子提交：逐条删中途失败会留下删了一半的图，而调用方已经报了成功。
+   */
+  async clearAll(): Promise<number> {
+    const entries = await this.memory.listMetadata(RELATION_NAMESPACE);
+    await this.memory.commitMetadata(
+      entries.map(e => ({ op: 'del' as const, namespace: RELATION_NAMESPACE, key: e.key })),
+    );
+    this.invalidate();
+    return entries.length;
   }
 
   /** 级联删除人物：移除该人物所有相关边，然后删除人物本身 */

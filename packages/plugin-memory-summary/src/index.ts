@@ -183,9 +183,9 @@ class SummaryStore {
 
   async clearAll(): Promise<void> {
     const items = await this.memory.listMetadata(SUMMARY_NAMESPACE);
-    for (const item of items) {
-      await this.memory.deleteMetadata(SUMMARY_NAMESPACE, item.key);
-    }
+    await this.memory.commitMetadata(
+      items.map(it => ({ op: 'del' as const, namespace: SUMMARY_NAMESPACE, key: it.key })),
+    );
   }
 }
 
