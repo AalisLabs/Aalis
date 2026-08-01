@@ -160,8 +160,9 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
    * 回收过期的持久化条目。**惰性触发**：跟在写入之后跑，不另起定时器
    * ——没有消息进来就没有增长，也就不需要清理。
    *
-   * 单次 `commitMetadata` 批量删除，与逐条 delete 的区别是原子性：中途失败不会
-   * 删一半（那会留下「内存缓存已淘汰、持久化删了一半」的错位状态）。
+   * 单次 `commitMetadata` 批量删除而非逐条 delete。原子性**按后端分档**（见 api-memory
+   * 契约）：sqlite/inmemory 真原子，mongodb 只保证按序执行遇错即停。对本场景够用——
+   * 回收是幂等的，这次没删干净下次写入还会再扫一遍。
    */
   async function sweepPersisted(): Promise<void> {
     const memory = ctx.getService<MemoryService>('memory');
