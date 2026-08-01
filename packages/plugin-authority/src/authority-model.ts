@@ -14,16 +14,17 @@
 
 /** owner 等级（∞）：不入等级轴，靠 owners 列表归属；任何有限门槛都压不过它（防自锁）。 */
 export const OWNER_RANK = Number.POSITIVE_INFINITY;
-/** 未登记外部身份的默认等级。 */
-export const DEFAULT_AUTHORITY = 0;
-/** 无 risk 声明、仅标 visibility:'restricted' 的操作的兜底最低等级（≈老版「受信」门槛）。 */
-export const RESTRICTED_LEVEL = 2;
+
+// 等级常量与 (risk,visibility)→门槛 的映射住在契约包 `@aalis/api-authority`：
+// 判断「两份能力声明谁更严」的地方不止这里（plugin-commands 合并同名指令的多份声明时也要），
+// 两份实现必然漂移 —— 曾因此漏掉「risk 遮蔽 visibility」这条性质，酿成一条提权面。
+import { capabilityMinLevel, DEFAULT_AUTHORITY, RESTRICTED_LEVEL } from '@aalis/api-authority';
+
+export { DEFAULT_AUTHORITY, RESTRICTED_LEVEL };
 
 /** 风险 → 操作最低等级：safe→0 · sensitive→1 · dangerous→2（owner 可逐条覆盖成任意整数）。 */
 export function riskToLevel(risk?: 'safe' | 'sensitive' | 'dangerous'): number {
-  if (risk === 'dangerous') return 2;
-  if (risk === 'sensitive') return 1;
-  return DEFAULT_AUTHORITY; // safe / 未声明
+  return capabilityMinLevel({ risk: risk ?? 'safe' });
 }
 
 // ── glob（`*` 通配任意字符段）──────────────
@@ -55,8 +56,7 @@ export function resolveMinLevel(
 ): number {
   const ov = opts.authorityOverrides?.[capability];
   if (ov !== undefined) return ov;
-  if (opts.risk) return riskToLevel(opts.risk);
-  return opts.visibility === 'restricted' ? RESTRICTED_LEVEL : DEFAULT_AUTHORITY;
+  return capabilityMinLevel(opts);
 }
 
 /** 一次访问裁决的输入（纯数字单轴）。 */
