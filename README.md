@@ -331,7 +331,6 @@ outputFormat:
 
 | 主题 | 一句话 | 状态 |
 |---|---|---|
-| [存储层](docs/roadmap/storage.md) | 缺结构化存储原语，`saveMetadata` 被当结构化存储用（无查询/索引/事务） | 方向未定 |
 | [指令系统](docs/roadmap/commands.md) | `/help` 与 `formatUsage` 无权限过滤（待决策做不做） | 小 |
 
 ## 开发进度
