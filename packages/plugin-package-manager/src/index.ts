@@ -539,6 +539,12 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       };
     }
     log.info(`正在安装: ${npmPkg} → 根依赖 + node_modules`);
+    // **刻意不加 `--ignore-scripts`**：依赖树的 preinstall/install/postinstall 会照常执行。
+    // 三条理由：脚手架自身就是裸 `npm install`（其生成的 README 也教用户裸装），加了会让
+    // 「同一个包、同一个用户、两条途径」行为分叉；会打穿 plugin-memory-sqlite
+    // （better-sqlite3，脚手架默认勾选）与 plugin-tool-browser（puppeteer）；而真正的增量
+    // 风险只有传递依赖的 install 脚本这一片——入口是 owner 级、包名由用户自己点选、包本体
+    // 反正会被动态 import 执行（插件与内核同进程同权限，见 docs/concepts/security-model.md §1）。
     await execProc(proc, 'npm', ['install', npmPkg, '--no-audit', '--no-fund'], root, INSTALL_TIMEOUT_MS);
     const bare = stripVersion(npmPkg);
     return settleInstall(npmPkg, `${root}/node_modules/${bare}/package.json`, 'node_modules');
