@@ -207,10 +207,32 @@ export class CommandRegistry implements CommandService {
     if (!stack) return;
     const dropped = pluginName === undefined ? stack.splice(0) : removeWhere(stack, d => d.pluginName === pluginName);
     if (dropped.length === 0) return;
-    for (const d of dropped) for (const a of d.aliases) this.aliases.delete(a);
     // 栈空但仍有子节点 → 退回自动分组节点（`/parent` 仍可列出子指令），不删。
     if (stack.length === 0 && this.directChildren(name).length === 0) this.nodes.delete(name);
+    // 别名按**剩余声明**重建，不是把摘掉那层的别名逐个 delete。
+    // 后者会连坐：`alias()` 允许后注册者抢占已有别名（只 warn），于是 A 起了 `p`、B 也起
+    // `p`、B 卸载时把 `p` 整条删掉，A 的别名再也回不来——与「覆盖者卸载把整个节点连根删掉」
+    // 是同一个病，只是从指令节点挪到了别名表。而且删完 A 的 `Decl.aliases` 里仍留着 `p`，
+    // `/help` 会展示一个解析不到的别名，注册表自相矛盾。
+    for (const a of new Set(dropped.flatMap(d => d.aliases))) this.rebindAlias(a);
     this.logger.debug(`注销指令: ${this.prefix}${name} (来自 ${pluginName ?? '全部'})`);
+  }
+
+  /**
+   * 把一个别名重新绑到**仍然声明着它**的指令上；没有人再声明就删除。
+   *
+   * 遍历全表看似浪费，但别名总数是「指令数」量级（当前全仓 0 个），而 unregister 只在
+   * 插件装卸时发生——拿这点代价换「不必维护别名的引用计数」是划算的：引用计数是又一个
+   * 要靠人肉维持的不变量，而本文件已经因为这类不变量栽过两次。
+   */
+  private rebindAlias(alias: string): void {
+    for (const [cmdName, stack] of this.nodes) {
+      if (stack.some(d => d.aliases.includes(alias))) {
+        this.aliases.set(alias, cmdName);
+        return;
+      }
+    }
+    this.aliases.delete(alias);
   }
 
   unregisterByPlugin(pluginName: string): void {
