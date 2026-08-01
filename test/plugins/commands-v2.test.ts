@@ -1,5 +1,6 @@
 import type { Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
+import { capabilityMinLevel } from '../../packages/api-authority/src/index.js';
 import { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
 
 // 简易 logger（仅 child + 几个等级，足以驱动 CommandRegistry）
@@ -199,33 +200,66 @@ describe('同名指令（声明栈）', () => {
     expect(find(r, 'ping')).toBeUndefined();
   });
 
-  it('**提权闸**：后注册者放宽不了已有的 restricted', () => {
+  // ⚠️ 断言必须落在**门槛等级**上，不能只看 visibility 那一栏。
+  // 曾经这组用例只断言 `visibility === 'restricted'`，而攻击载荷 `{risk:'safe'}` 能让它继续
+  // 通过、同时把 minLevel 从 2 打到 0 —— 测试钉的是实现细节，不是要守的性质。
+  const minLevelOf = (r: CommandRegistry, name: string) => {
+    const c = r.getAll().find(x => x.name === name);
+    return capabilityMinLevel({ risk: c?.risk, visibility: c?.visibility });
+  };
+
+  it('**提权闸**：后注册者压 risk 也放宽不了门槛（risk 会遮蔽 visibility）', () => {
     const r = reg();
     r.command('shutdown', '关机', { visibility: 'restricted', pluginName: 'A' }).action(async () => 'a');
-    expect(find(r, 'shutdown')?.visibility).toBe('restricted');
-    // 不带 meta 的重注册：旧实现会把它降成 public
-    r.command('shutdown', '我的关机', { pluginName: 'B' }).action(async () => 'b');
-    expect(find(r, 'shutdown')?.visibility, '安全轴取全栈最严').toBe('restricted');
-    // 显式写 public 也放宽不了
-    r.command('shutdown', '再来', { visibility: 'public', pluginName: 'C' }).action(async () => 'c');
-    expect(find(r, 'shutdown')?.visibility).toBe('restricted');
+    expect(minLevelOf(r, 'shutdown'), '基线门槛').toBe(2);
+    // 真实攻击载荷：只声明 risk:'safe'。裁决函数里 risk 完全遮蔽 visibility，
+    // 逐轴合并会把它当成「risk 轴上唯一的声明」而采纳，门槛掉到 0。
+    r.command('shutdown', '我的关机', { risk: 'safe', pluginName: 'EVIL' }).action(async () => 'PWNED');
+    expect(minLevelOf(r, 'shutdown'), '压 risk:safe 之后门槛不能降').toBe(2);
   });
 
-  it('后来者可以**收紧**（只单向）', () => {
+  it('**提权闸**：显式 public 也放宽不了继承来的 restricted', () => {
+    const r = reg();
+    r.command('admin', '管理', { visibility: 'restricted', pluginName: 'A' }).action(async () => 'a');
+    r.command('admin.kill', '杀', { pluginName: 'A' }).action(async () => 'k');
+    expect(minLevelOf(r, 'admin.kill'), '从父分组继承 restricted').toBe(2);
+    r.command('admin.kill', '我的杀', { visibility: 'public', pluginName: 'EVIL' }).action(async () => 'PWNED');
+    expect(minLevelOf(r, 'admin.kill'), '子节点显式 public 不能打穿父继承').toBe(2);
+  });
+
+  it('**提权闸**：继承来的 dangerous 不能被后来者的 safe 盖掉', () => {
+    const r = reg();
+    r.command('sys', '系统', { risk: 'dangerous', pluginName: 'A' }).action(async () => 'a');
+    r.command('sys.exec', '执行', { pluginName: 'A' }).action(async () => 'e');
+    expect(minLevelOf(r, 'sys.exec')).toBe(2);
+    r.command('sys.exec', '我的执行', { risk: 'safe', pluginName: 'EVIL' }).action(async () => 'PWNED');
+    expect(minLevelOf(r, 'sys.exec'), '继承来的 dangerous 不能被 safe 盖掉').toBe(2);
+  });
+
+  it('**提权闸**：不带 meta 与显式 public 两种重注册都放宽不了', () => {
+    const r = reg();
+    r.command('shutdown', '关机', { visibility: 'restricted', pluginName: 'A' }).action(async () => 'a');
+    r.command('shutdown', '我的关机', { pluginName: 'B' }).action(async () => 'b');
+    expect(minLevelOf(r, 'shutdown')).toBe(2);
+    r.command('shutdown', '再来', { visibility: 'public', pluginName: 'C' }).action(async () => 'c');
+    expect(minLevelOf(r, 'shutdown')).toBe(2);
+  });
+
+  it('后来者仍可**收紧**（单向）', () => {
     const r = reg();
     r.command('foo', 'A', { pluginName: 'A' }).action(async () => 'a');
-    expect(find(r, 'foo')?.visibility).toBe('public');
+    expect(minLevelOf(r, 'foo')).toBe(0);
     r.command('foo', 'B', { visibility: 'restricted', risk: 'dangerous', pluginName: 'B' }).action(async () => 'b');
-    expect(find(r, 'foo')?.visibility).toBe('restricted');
-    expect(find(r, 'foo')?.risk).toBe('dangerous');
+    expect(minLevelOf(r, 'foo')).toBe(2);
   });
 
-  it('收紧方卸载后，安全轴退回剩余声明的最严值', () => {
+  it('收紧方卸载后，门槛退回剩余声明的最严值', () => {
     const r = reg();
     r.command('foo', 'A', { pluginName: 'A' }).action(async () => 'a');
     r.command('foo', 'B', { visibility: 'restricted', pluginName: 'B' }).action(async () => 'b');
+    expect(minLevelOf(r, 'foo')).toBe(2);
     r.unregisterByPlugin('B');
-    expect(find(r, 'foo')?.visibility).toBe('public');
+    expect(minLevelOf(r, 'foo')).toBe(0);
   });
 
   it('unregister 带插件名只摘一层；不带则摘全部（管理面）', async () => {
