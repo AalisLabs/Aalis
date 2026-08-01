@@ -272,6 +272,43 @@ describe('同名指令（声明栈）', () => {
     expect(find(r, 'ping')).toBeUndefined();
   });
 
+  it('别名撞名：抢占者卸载后，先注册者的别名要复位而不是被连坐删除', async () => {
+    // 与「覆盖者卸载把整个节点连根删掉」同一个病，只是从指令节点挪到了别名表。
+    const r = reg();
+    r.command('ping', 'A', { pluginName: 'A' })
+      .alias('p')
+      .action(async () => 'a');
+    r.command('other', 'B', { pluginName: 'B' })
+      .alias('p')
+      .action(async () => 'b');
+    expect(await r.execute('p', input([])), '抢占期间指向 B').toBe('b');
+    r.unregisterByPlugin('B');
+    expect(r.hasMatch('p', []), '别名不该被连坐删除').toBe(true);
+    expect(await r.execute('p', input([])), '应复位到仍声明它的 A').toBe('a');
+  });
+
+  it('同名指令栈内的别名：栈顶卸载后退回下层声明的别名', async () => {
+    const r = reg();
+    r.command('ping', 'A', { pluginName: 'A' })
+      .alias('pa')
+      .action(async () => 'a');
+    r.command('ping', 'B', { pluginName: 'B' })
+      .alias('pb')
+      .action(async () => 'b');
+    r.unregisterByPlugin('B');
+    expect(r.hasMatch('pb', []), 'B 自己的别名该消失').toBe(false);
+    expect(await r.execute('pa', input([])), 'A 的别名仍可用且指向 A').toBe('a');
+  });
+
+  it('无人再声明的别名要真的删掉（不能只重绑）', async () => {
+    const r = reg();
+    r.command('ping', 'A', { pluginName: 'A' })
+      .alias('solo')
+      .action(async () => 'a');
+    r.unregisterByPlugin('A');
+    expect(r.hasMatch('solo', [])).toBe(false);
+  });
+
   it('别名随其所属声明一起回收，不误删他人的', async () => {
     const r = reg();
     r.command('ping', 'A', { pluginName: 'A' })
