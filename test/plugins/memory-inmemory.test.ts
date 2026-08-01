@@ -192,3 +192,68 @@ describe('plugin-memory-inmemory: metadata 契约', () => {
     expect(await mem.getMetadata('n2', 'k')).toEqual({ b: 2 });
   });
 });
+
+describe('plugin-memory-inmemory: 与另两家后端的语义对齐', () => {
+  let env: ReturnType<typeof makeApp>;
+  let mem: MemoryService;
+  beforeEach(async () => {
+    env = makeApp();
+    // biome-ignore lint/suspicious/noExplicitAny: src 与 dist 的 PluginModule 类型路径不同，运行时结构等价
+    await env.app.ctx.useModule(memoryInMemoryModule as any);
+    const m = env.app.ctx.getService<MemoryService>('memory');
+    if (!m) throw new Error('memory service missing');
+    mem = m;
+  });
+  afterEach(() => env.cleanup());
+
+  it('存的是深拷贝：事后改原对象不污染存储', async () => {
+    const src: Record<string, unknown> = { v: 'original' };
+    await mem.saveMetadata('ns', 'k', src);
+    src.v = 'mutated';
+    (src as { injected?: boolean }).injected = true;
+    expect(await mem.getMetadata('ns', 'k')).toEqual({ v: 'original' });
+  });
+
+  it('读回来的也是拷贝：改它不污染存储', async () => {
+    await mem.saveMetadata('ns', 'k', { v: 'original' });
+    const got = (await mem.getMetadata('ns', 'k')) as Record<string, unknown>;
+    got.v = 'mutated';
+    expect(await mem.getMetadata('ns', 'k')).toEqual({ v: 'original' });
+  });
+
+  it('commitMetadata 不撕裂：并发读看不到批的中间态', async () => {
+    const ops = Array.from({ length: 5 }, (_, i) => ({
+      op: 'put' as const,
+      namespace: 'tear',
+      key: `k${i}`,
+      data: { i },
+    }));
+    const inflight = mem.commitMetadata(ops); // 故意不 await
+    const during = await mem.listMetadata('tear');
+    await inflight;
+    // 判据是「不撕裂」：0（还没开始）或 5（已整批落完）都对，1~4 才是中间态。
+    // 现在批体内无 await，整批在 promise 让出之前就落完，所以实际观察到 5。
+    expect([0, 5], `并发读采到 ${during.length} 条 —— 撕裂了`).toContain(during.length);
+    expect((await mem.listMetadata('tear')).length).toBe(5);
+  });
+
+  it('不可序列化的载荷整批不生效（与 sqlite/mongodb 一致）', async () => {
+    await mem.saveMetadata('ns', 'pre', { keep: true });
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    await expect(
+      mem.commitMetadata([
+        { op: 'put', namespace: 'ns', key: 'a', data: { ok: 1 } },
+        { op: 'put', namespace: 'ns', key: 'b', data: circular },
+        { op: 'del', namespace: 'ns', key: 'pre' },
+      ]),
+    ).rejects.toThrow();
+    // 一条都不该生效：pre 还在、a 没进去
+    expect((await mem.listMetadata('ns')).map(e => e.key)).toEqual(['pre']);
+  });
+
+  it('listMetadata 按 key 升序（与另两家的索引扫顺序一致）', async () => {
+    for (const k of ['c', 'a', 'b']) await mem.saveMetadata('ord', k, { k });
+    expect((await mem.listMetadata('ord')).map(e => e.key)).toEqual(['a', 'b', 'c']);
+  });
+});

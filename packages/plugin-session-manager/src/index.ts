@@ -457,15 +457,17 @@ class SessionManager implements SessionManagerService {
       key: id,
       data: info as unknown as Record<string, unknown>,
     }));
-    // 清理孤儿：元数据里有、内存里没有的记录，与上面的写入同批提交。
-    for (const { key } of await this.memory.listMetadata(METADATA_NAMESPACE)) {
-      if (!this.sessions.has(key)) ops.push({ op: 'del', namespace: METADATA_NAMESPACE, key });
-    }
-
     try {
+      // 清理孤儿：元数据里有、内存里没有的记录，与上面的写入同批提交。
+      // **这一句必须在 try 内**：它同样会抛（provider bounce 窗口里 `this.memory` getter 就会），
+      // 而 dirty 已在上面置 false —— 落在外面就等于「这批变更丢了且永不重试」，正是本方法
+      // 要消灭的那个病。
+      for (const { key } of await this.memory.listMetadata(METADATA_NAMESPACE)) {
+        if (!this.sessions.has(key)) ops.push({ op: 'del', namespace: METADATA_NAMESPACE, key });
+      }
       await this.memory.commitMetadata(ops);
     } catch (err) {
-      this.dirty = true; // 提交失败要能重试，否则这批变更永远落不了盘
+      this.dirty = true; // 失败要能重试，否则这批变更永远落不了盘
       throw err;
     }
   }
