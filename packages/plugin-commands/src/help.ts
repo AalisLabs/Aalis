@@ -4,11 +4,16 @@
 // 两段式：概览只回答"有哪些能力"，详情回答"这条怎么用"。
 //
 // 载体约束（已核实 packages/plugin-webui-client/src/components/markdownConfig.tsx）：
-// WebUI 的 ReactMarkdown 只挂 remarkGfm + remarkMath + rehypeHighlight/Katex——
-// 既**无 remark-breaks**（裸换行会被合并成一段），也**无 rehype-raw**（`<type>`
-// 这类占位符是合法 HTML 标签名，会被当 HTML 节点整段丢弃）。故：
-// - 概览用 markdown 列表（`- ` 前缀），换行由列表语义保证；
-// - 详情的结构化正文整体包进代码块，占位符原样呈现且等宽对齐。
+// - 概览用 markdown 列表（`- ` 前缀），换行由列表语义保证。
+// - 详情的结构化正文整体包进代码块 —— 规避的是 **autolink**：`<name:string>` 这类占位符
+//   会被 CommonMark 解析成链接，渲染出 `<a href="">name:string</a>`。
+//
+// 两条曾写在这里的理由**已被实测推翻**，不要据此施工：
+// - 「无 remark-breaks」：已于 e2e75155 补上，裸换行不再被合并成一段。
+// - 「无 rehype-raw 导致 `<type>` 被整段丢弃」：反了。不加 rehype-raw 时 `<type>` 渲染为
+//   `&lt;type&gt;`（**正确显示**）；加上反而变成空的自定义元素 `<type></type>`，肉眼不可见。
+//   而且该渲染器喂的是 LLM 输出与用户消息，开放 raw HTML 是 XSS 面（详见 markdownConfig.tsx）。
+//
 // 纯文本载体（QQ / CLI）看到的是 markdown 源码，可读性不受损。
 // ============================================================
 
@@ -96,7 +101,7 @@ export function renderOverview(all: Command[], prefix: string, childCount: (name
 /**
  * 详情：标题行（markdown）+ 结构化正文（代码块）。
  *
- * 正文进代码块的理由见文件头：保住 `<type>` 这类占位符不被 WebUI 吞掉，
+ * 正文进代码块的理由见文件头：规避 `<name:string>` 被解析成 autolink，
  * 同时让选项/子指令在等宽字体下对齐。描述、选项说明、示例**不截断**——
  * 用户正是为细节才敲的第二段（如 plugin-maimai 把用法编码在描述里）。
  */
