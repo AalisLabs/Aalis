@@ -91,7 +91,7 @@ class SQLiteMemoryService implements MemoryService {
         timestamp INTEGER NOT NULL,
         archived INTEGER NOT NULL DEFAULT 0,
         metadata TEXT,
-        createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+        createdAt TEXT NOT NULL DEFAULT (datetime('now','subsec'))
       );
       CREATE INDEX IF NOT EXISTS idx_messages_session
         ON messages(sessionId, timestamp);
@@ -102,7 +102,7 @@ class SQLiteMemoryService implements MemoryService {
         namespace TEXT NOT NULL,
         key TEXT NOT NULL,
         data TEXT NOT NULL,
-        updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+        updatedAt TEXT NOT NULL DEFAULT (datetime('now','subsec')),
         PRIMARY KEY (namespace, key)
       );
     `);
@@ -329,8 +329,8 @@ class SQLiteMemoryService implements MemoryService {
 
   async saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void> {
     const stmt = this.db.prepare(`
-      INSERT INTO metadata (namespace, key, data, updatedAt) VALUES (?, ?, ?, datetime('now'))
-      ON CONFLICT(namespace, key) DO UPDATE SET data = excluded.data, updatedAt = datetime('now')
+      INSERT INTO metadata (namespace, key, data, updatedAt) VALUES (?, ?, ?, datetime('now','subsec'))
+      ON CONFLICT(namespace, key) DO UPDATE SET data = excluded.data, updatedAt = datetime('now','subsec')
     `);
     stmt.run(namespace, key, JSON.stringify(data));
   }
@@ -342,7 +342,7 @@ class SQLiteMemoryService implements MemoryService {
   }
 
   async listMetadata(namespace: string): Promise<MetadataEntry[]> {
-    // updatedAt 存的是 `datetime('now')` 的 UTC 文本（如 `2026-08-01 03:04:05`），无时区后缀。
+    // updatedAt 存的是 `datetime('now','subsec')` 的 UTC 文本（如 `2026-08-01 03:04:05`），无时区后缀。
     // 直接 Date.parse 会被当本地时间解析而偏移，故补 `Z` 明确按 UTC 读。
     const stmt = this.db.prepare('SELECT key, data, updatedAt FROM metadata WHERE namespace = ?');
     const rows = stmt.all(namespace) as Array<{ key: string; data: string; updatedAt: string }>;
@@ -355,8 +355,8 @@ class SQLiteMemoryService implements MemoryService {
 
   async commitMetadata(ops: readonly MetadataOp[]): Promise<void> {
     const put = this.db.prepare(`
-      INSERT INTO metadata (namespace, key, data, updatedAt) VALUES (?, ?, ?, datetime('now'))
-      ON CONFLICT(namespace, key) DO UPDATE SET data = excluded.data, updatedAt = datetime('now')
+      INSERT INTO metadata (namespace, key, data, updatedAt) VALUES (?, ?, ?, datetime('now','subsec'))
+      ON CONFLICT(namespace, key) DO UPDATE SET data = excluded.data, updatedAt = datetime('now','subsec')
     `);
     const del = this.db.prepare('DELETE FROM metadata WHERE namespace = ? AND key = ?');
     this.db.transaction(() => {

@@ -135,13 +135,24 @@ export interface MemoryService {
   /** 删除元数据条目 */
   deleteMetadata(namespace: string, key: string): Promise<void>;
   /**
-   * 原子提交一批元数据变更。
+   * 批量提交一组元数据变更。
    *
-   * **要的是原子性，不是速度**（实测 500 条批量写只快 1.1×）。没有它的时候，
+   * **要的是「一次调用交付整批」，不是速度**（实测 500 条批量写只快 1.1×）。没有它的时候，
    * `plugin-session-manager` 的刷盘是「逐条 saveMetadata + 全表扫删孤儿」，任何一条抛错
    * 就停在半新半旧，而它已经把 dirty 置 false、下一次 debounce 不会重试。
    *
-   * 三家后端各自天然可实现：sqlite 事务、mongodb bulkWrite、inmemory 单线程本就原子。
+   * ⚠️ **原子性按后端分档，不是统一承诺** —— 不要按「要么全成要么全不成」来依赖它：
+   * - **sqlite**：真事务，全成或全不成，并发读不撕裂。
+   * - **inmemory**：先整批序列化再同步落，等价于事务。
+   * - **mongodb**：`bulkWrite({ordered:true})`，**不是事务**（多文档事务要求副本集，而本项目
+   *   对单机部署也要能用）。语义是「按序执行、遇错即停」：失败点之前的写已生效、之后的未执行，
+   *   不会乱序，但会停在半新半旧；大批量还会被驱动分批，并发读能采到中间态。
+   *
+   * 因此调用方要么容忍半新半旧、要么自己具备重试能力（如 session-manager 每次写全量快照，
+   * 失败后 dirty 复位、下次自愈）。
+   *
+   * `data` 必须是 **JSON 可序列化**的值。三家后端都会因此抛错（sqlite/inmemory 在
+   * `JSON.stringify`、mongodb 在 BSON 序列化），且都是整批不生效。
    */
   commitMetadata(ops: readonly MetadataOp[]): Promise<void>;
 
