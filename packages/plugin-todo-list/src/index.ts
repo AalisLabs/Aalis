@@ -35,7 +35,7 @@ const MAX_TODO_TITLE_LENGTH = 120;
 /** 将 todo 持久化到 MemoryService */
 async function persistTodos(ctx: Context, sessionId: string, items: TodoItem[]): Promise<void> {
   const memory = ctx.getService<MemoryService>('memory');
-  if (memory?.saveMetadata) {
+  if (memory) {
     await memory.saveMetadata(TODO_NAMESPACE, sessionId, { items });
   }
 }
@@ -45,7 +45,7 @@ async function loadTodos(ctx: Context, sessionId: string): Promise<TodoItem[]> {
   const cached = store.get(sessionId);
   if (cached) return cached;
   const memory = ctx.getService<MemoryService>('memory');
-  if (memory?.getMetadata) {
+  if (memory) {
     const data = await memory.getMetadata(TODO_NAMESPACE, sessionId);
     if (data?.items && Array.isArray(data.items)) {
       const items = data.items as TodoItem[];
@@ -78,7 +78,7 @@ export const actions: PluginModule['actions'] = {
     if (!sessionId) throw new Error('缺少 sessionId');
     store.delete(sessionId);
     const memory = ctx.getService<MemoryService>('memory');
-    if (memory?.deleteMetadata) {
+    if (memory) {
       await memory.deleteMetadata(TODO_NAMESPACE, sessionId);
     }
     await ctx.emit('todo:updated', sessionId, []);
@@ -202,7 +202,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.on('session:deleted', (sessionId: string) => {
     store.delete(sessionId);
     const memory = ctx.getService<MemoryService>('memory');
-    if (memory?.deleteMetadata) {
+    if (memory) {
       memory.deleteMetadata(TODO_NAMESPACE, sessionId).catch(() => {});
     }
   });

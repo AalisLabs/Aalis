@@ -49,7 +49,7 @@ async function loadSenderProfileSummary(
   if (maxChars <= 0 || !userId) return '';
   try {
     const memory = ctx.getService<MemoryService>('memory');
-    if (!memory?.getMetadata) return '';
+    if (!memory) return '';
     const key = `${platform ?? ''}:${userId}`;
     const doc = await memory.getMetadata(USER_PROFILE_NAMESPACE, key);
     if (!doc) return '';
