@@ -2142,8 +2142,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return;
       }
       try {
-        // 批量原子删：逐条 delete 中途失败会留下「删了一半」的档案，用户看到的是
-        // 部分清空却报了成功。commitMetadata 要么全成要么全不成。
+        // 批量提交：逐条 delete 中途失败会留下「删了一半」的档案，而用户看到的是报了成功。
+        // 注意 commitMetadata 的原子性**按后端分档**（见 api-memory 契约）——sqlite/inmemory
+        // 是真原子，mongodb 只保证按序执行遇错即停，仍可能停在半新半旧。批量的确定收益是
+        // 一次往返 + 遇错即停，不是无条件的「要么全成」。
         const items = await memory.listMetadata(PROFILE_NS);
         await memory.commitMetadata(items.map(it => ({ op: 'del' as const, namespace: PROFILE_NS, key: it.key })));
         data.results.push({ source: 'user-profile', success: true, message: `用户档案已清空 (${items.length} 条)` });

@@ -57,7 +57,6 @@ function makePm(projectRoot: string, restarts: unknown[] = []) {
   return createPackageManager({
     proc: realProc,
     log: { info: () => {}, error: () => {} },
-    packagesDir: () => join(projectRoot, 'packages'),
     projectRoot: () => projectRoot,
     readText: async p => {
       try {
