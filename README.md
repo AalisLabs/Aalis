@@ -95,7 +95,7 @@ aalis/
 
 | 服务名 | 描述 | 实现插件 |
 |---|---|---|
-| `llm` | AI 模型调用（对话、工具调用、流式输出） | plugin-deepseek, plugin-openai, plugin-ollama |
+| `llm` | AI 模型调用（对话、工具调用、流式输出） | plugin-llm-deepseek, plugin-llm-openai, plugin-llm-ollama |
 | `agent` | 对话编排（消息构建、工具循环、上下文管理） | plugin-agent |
 | `memory` | 消息历史存储与检索 | plugin-memory-sqlite, plugin-memory-mongodb, plugin-memory-inmemory |
 | `embedding` | 文本向量化 | plugin-embedding-ollama, plugin-embedding-openai |
@@ -138,7 +138,7 @@ name: Aalis
 logLevel: info
 
 plugins:
-  "@aalis/plugin-deepseek":
+  "@aalis/plugin-llm-deepseek":
     apiKey: "${DEEPSEEK_API_KEY}"   # 支持环境变量插值
     baseUrl: "https://api.deepseek.com"
     model: "deepseek-chat"
@@ -163,7 +163,7 @@ plugins:
 # 禁用不需要的插件
 disabledPlugins:
   - "@aalis/plugin-memory-mongodb"
-  - "@aalis/plugin-openai"
+  - "@aalis/plugin-llm-openai"
 
 commandPrefix: "/"
 
@@ -312,7 +312,7 @@ outputFormat:
 | 子系统 | 代表插件 |
 |---|---|
 | **编排 / 会话** | [plugin-agent](docs/plugins/plugin-agent.md)、[plugin-session-manager](docs/plugins/plugin-session-manager.md)、[plugin-commands](docs/plugins/plugin-commands.md) |
-| **LLM / Embedding** | [plugin-openai](docs/plugins/plugin-openai.md)、[plugin-deepseek](docs/plugins/plugin-deepseek.md)、[plugin-ollama](docs/plugins/plugin-ollama.md)、[plugin-embedding-*](docs/plugins/) |
+| **LLM / Embedding** | [plugin-llm-openai](docs/plugins/plugin-llm-openai.md)、[plugin-llm-deepseek](docs/plugins/plugin-llm-deepseek.md)、[plugin-llm-ollama](docs/plugins/plugin-llm-ollama.md)、[plugin-embedding-*](docs/plugins/) |
 | **记忆 / 向量** | [plugin-memory-sqlite](docs/plugins/plugin-memory-sqlite.md)、[plugin-memory-mongodb](docs/plugins/plugin-memory-mongodb.md)、[plugin-memory-vector](docs/plugins/plugin-memory-vector.md)、[plugin-vectorstore-lancedb](docs/plugins/plugin-vectorstore-lancedb.md) |
 | **工具集** | [plugin-tools](docs/plugins/plugin-tools.md)、[plugin-tool-system](docs/plugins/plugin-tool-system.md)、[plugin-tool-browser](docs/plugins/plugin-tool-browser.md)、[plugin-tool-code-runner](docs/plugins/plugin-tool-code-runner.md)、[plugin-tool-math](docs/plugins/plugin-tool-math.md)、[plugin-tool-search](docs/plugins/plugin-tool-search.md) |
 | **平台适配** | [plugin-adapter-onebot](docs/plugins/plugin-adapter-onebot.md)、[plugin-cli](docs/plugins/plugin-cli.md)、[plugin-webui-server](docs/plugins/plugin-webui-server.md)、[plugin-webui-client](docs/plugins/plugin-webui-client.md) |
