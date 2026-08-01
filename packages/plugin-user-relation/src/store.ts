@@ -77,42 +77,18 @@ interface MergeRejectRecord {
   kind: 'entity' | 'event' | 'person';
 }
 
-/** Memory 后端不支持 metadata 时使用的 NoOp 实现 —— 抛错而非静默吞掉，避免数据丢失被忽略 */
-class UnsupportedMemoryError extends Error {
-  constructor() {
-    super(
-      'RelationStore 要求当前 memory 服务支持 "metadata" 能力 (saveMetadata/getMetadata/listMetadata/deleteMetadata)。' +
-        '请启用 plugin-memory-sqlite / plugin-memory-mongodb 或其他实现 metadata 能力的 memory 插件。',
-    );
-    this.name = 'UnsupportedMemoryError';
-  }
-}
-
-function assertMetadataSupport(memory: MemoryService): asserts memory is MemoryService & {
-  saveMetadata: NonNullable<MemoryService['saveMetadata']>;
-  getMetadata: NonNullable<MemoryService['getMetadata']>;
-  listMetadata: NonNullable<MemoryService['listMetadata']>;
-  deleteMetadata: NonNullable<MemoryService['deleteMetadata']>;
-} {
-  if (!memory.saveMetadata || !memory.getMetadata || !memory.listMetadata || !memory.deleteMetadata) {
-    throw new UnsupportedMemoryError();
-  }
-}
-
 export class RelationStore {
-  constructor(private readonly memory: MemoryService) {
-    assertMetadataSupport(memory);
-  }
+  constructor(private readonly memory: MemoryService) {}
 
   // ----- Person -----
 
   async getPerson(platform: string, userId: string): Promise<PersonNode | undefined> {
-    const data = await this.memory.getMetadata!(RELATION_NAMESPACE, personKey(platform, userId));
+    const data = await this.memory.getMetadata(RELATION_NAMESPACE, personKey(platform, userId));
     return data as PersonNode | undefined;
   }
 
   async upsertPerson(node: PersonNode): Promise<void> {
-    await this.memory.saveMetadata!(
+    await this.memory.saveMetadata(
       RELATION_NAMESPACE,
       personKey(node.platform, node.userId),
       node as unknown as Record<string, unknown>,
@@ -120,63 +96,63 @@ export class RelationStore {
   }
 
   async deletePerson(platform: string, userId: string): Promise<void> {
-    await this.memory.deleteMetadata!(RELATION_NAMESPACE, personKey(platform, userId));
+    await this.memory.deleteMetadata(RELATION_NAMESPACE, personKey(platform, userId));
   }
 
   // ----- Event -----
 
   async getEvent(eventId: string): Promise<EventNode | undefined> {
-    const data = await this.memory.getMetadata!(RELATION_NAMESPACE, eventKey(eventId));
+    const data = await this.memory.getMetadata(RELATION_NAMESPACE, eventKey(eventId));
     return data as EventNode | undefined;
   }
 
   async upsertEvent(node: EventNode): Promise<void> {
-    await this.memory.saveMetadata!(RELATION_NAMESPACE, eventKey(node.id), node as unknown as Record<string, unknown>);
+    await this.memory.saveMetadata(RELATION_NAMESPACE, eventKey(node.id), node as unknown as Record<string, unknown>);
   }
 
   async deleteEvent(eventId: string): Promise<void> {
-    await this.memory.deleteMetadata!(RELATION_NAMESPACE, eventKey(eventId));
+    await this.memory.deleteMetadata(RELATION_NAMESPACE, eventKey(eventId));
   }
 
   // ----- Entity -----
 
   async getEntity(entityId: string): Promise<EntityNode | undefined> {
-    const data = await this.memory.getMetadata!(RELATION_NAMESPACE, entityKey(entityId));
+    const data = await this.memory.getMetadata(RELATION_NAMESPACE, entityKey(entityId));
     return data as EntityNode | undefined;
   }
 
   async upsertEntity(node: EntityNode): Promise<void> {
-    await this.memory.saveMetadata!(RELATION_NAMESPACE, entityKey(node.id), node as unknown as Record<string, unknown>);
+    await this.memory.saveMetadata(RELATION_NAMESPACE, entityKey(node.id), node as unknown as Record<string, unknown>);
   }
 
   async deleteEntity(entityId: string): Promise<void> {
-    await this.memory.deleteMetadata!(RELATION_NAMESPACE, entityKey(entityId));
+    await this.memory.deleteMetadata(RELATION_NAMESPACE, entityKey(entityId));
   }
 
   // ----- Edge -----
 
   async getEdge(edgeId: string): Promise<RelationEdge | undefined> {
-    const data = await this.memory.getMetadata!(RELATION_NAMESPACE, edgeKey(edgeId));
+    const data = await this.memory.getMetadata(RELATION_NAMESPACE, edgeKey(edgeId));
     return data as RelationEdge | undefined;
   }
 
   async upsertEdge(edge: RelationEdge): Promise<void> {
-    await this.memory.saveMetadata!(RELATION_NAMESPACE, edgeKey(edge.id), edge as unknown as Record<string, unknown>);
+    await this.memory.saveMetadata(RELATION_NAMESPACE, edgeKey(edge.id), edge as unknown as Record<string, unknown>);
   }
 
   async deleteEdge(edgeId: string): Promise<void> {
-    await this.memory.deleteMetadata!(RELATION_NAMESPACE, edgeKey(edgeId));
+    await this.memory.deleteMetadata(RELATION_NAMESPACE, edgeKey(edgeId));
   }
 
   // ----- MergeReject 缓存（consolidate LLM 否决合并的持久化去重） -----
 
   async getMergeReject(aId: string, bId: string): Promise<MergeRejectRecord | undefined> {
-    const data = await this.memory.getMetadata!(RELATION_NAMESPACE, mergeRejectKey(aId, bId));
+    const data = await this.memory.getMetadata(RELATION_NAMESPACE, mergeRejectKey(aId, bId));
     return data as MergeRejectRecord | undefined;
   }
 
   async saveMergeReject(record: MergeRejectRecord): Promise<void> {
-    await this.memory.saveMetadata!(
+    await this.memory.saveMetadata(
       RELATION_NAMESPACE,
       mergeRejectKey(record.aId, record.bId),
       record as unknown as Record<string, unknown>,
@@ -184,18 +160,18 @@ export class RelationStore {
   }
 
   async deleteMergeReject(aId: string, bId: string): Promise<void> {
-    await this.memory.deleteMetadata!(RELATION_NAMESPACE, mergeRejectKey(aId, bId));
+    await this.memory.deleteMetadata(RELATION_NAMESPACE, mergeRejectKey(aId, bId));
   }
 
   /** 当某个节点被合并/删除时，清理所有涉及它的 MergeReject 缓存（旧 id 不再有效）。 */
   async deleteMergeRejectsByNode(nodeId: string): Promise<number> {
-    const entries = await this.memory.listMetadata!(RELATION_NAMESPACE);
+    const entries = await this.memory.listMetadata(RELATION_NAMESPACE);
     let deleted = 0;
     for (const { key, data } of entries) {
       if (!key.startsWith(MERGE_REJECT_PREFIX)) continue;
       const r = data as unknown as MergeRejectRecord;
       if (r.aId === nodeId || r.bId === nodeId) {
-        await this.memory.deleteMetadata!(RELATION_NAMESPACE, key);
+        await this.memory.deleteMetadata(RELATION_NAMESPACE, key);
         deleted++;
       }
     }
@@ -205,7 +181,7 @@ export class RelationStore {
   // ----- 全量加载（webui / 注入用） -----
 
   async loadAll(): Promise<RelationGraphSnapshot> {
-    const entries = await this.memory.listMetadata!(RELATION_NAMESPACE);
+    const entries = await this.memory.listMetadata(RELATION_NAMESPACE);
     const persons: PersonNode[] = [];
     const events: EventNode[] = [];
     const entities: EntityNode[] = [];

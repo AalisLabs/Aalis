@@ -129,3 +129,66 @@ describe('plugin-memory-inmemory', () => {
     expect(await mem.getHistory('b')).toEqual([]);
   });
 });
+
+// ════════════════════════════════════════════════════════════
+// metadata 面的两条契约变更
+//   ① listMetadata 返回 updatedAt —— 三家后端本来都存着这一列却从不返回，于是
+//      「按时间清理」在契约上不可能做到（onebot 合并转发原文因此只增不减）。
+//   ② commitMetadata 原子提交 —— 要的是原子性不是速度（实测 500 条只快 1.1×）。
+//      没有它时 session-manager 的刷盘中途抛错就停在半新半旧，且 dirty 已置 false 不重试。
+// ════════════════════════════════════════════════════════════
+
+describe('plugin-memory-inmemory: metadata 契约', () => {
+  let env: ReturnType<typeof makeApp>;
+  let mem: MemoryService;
+  beforeEach(async () => {
+    env = makeApp();
+    // biome-ignore lint/suspicious/noExplicitAny: src 与 dist 的 PluginModule 类型路径不同，运行时结构等价
+    await env.app.ctx.useModule(memoryInMemoryModule as any);
+    const m = env.app.ctx.getService<MemoryService>('memory');
+    if (!m) throw new Error('memory service missing');
+    mem = m;
+  });
+  afterEach(() => env.cleanup());
+
+  it('listMetadata 带出 updatedAt，且写入后会推进', async () => {
+    const before = Date.now();
+    await mem.saveMetadata('ns', 'k1', { v: 1 });
+    const [e1] = await mem.listMetadata('ns');
+    expect(e1.key).toBe('k1');
+    expect(e1.data).toEqual({ v: 1 });
+    expect(e1.updatedAt).toBeGreaterThanOrEqual(before);
+
+    await new Promise(r => setTimeout(r, 2));
+    await mem.saveMetadata('ns', 'k1', { v: 2 });
+    const [e2] = await mem.listMetadata('ns');
+    expect(e2.updatedAt, '覆盖写要刷新时间戳').toBeGreaterThan(e1.updatedAt);
+  });
+
+  it('commitMetadata：put 与 del 一批提交', async () => {
+    await mem.saveMetadata('ns', 'old', { keep: false });
+    await mem.commitMetadata([
+      { op: 'put', namespace: 'ns', key: 'a', data: { n: 1 } },
+      { op: 'put', namespace: 'ns', key: 'b', data: { n: 2 } },
+      { op: 'del', namespace: 'ns', key: 'old' },
+    ]);
+    const keys = (await mem.listMetadata('ns')).map(e => e.key).sort();
+    expect(keys).toEqual(['a', 'b']);
+    expect(await mem.getMetadata('ns', 'a')).toEqual({ n: 1 });
+  });
+
+  it('commitMetadata：空数组是 no-op，删不存在的 key 不报错', async () => {
+    await mem.commitMetadata([]);
+    await mem.commitMetadata([{ op: 'del', namespace: 'ns', key: '不存在' }]);
+    expect(await mem.listMetadata('ns')).toEqual([]);
+  });
+
+  it('commitMetadata 可跨 namespace', async () => {
+    await mem.commitMetadata([
+      { op: 'put', namespace: 'n1', key: 'k', data: { a: 1 } },
+      { op: 'put', namespace: 'n2', key: 'k', data: { b: 2 } },
+    ]);
+    expect(await mem.getMetadata('n1', 'k')).toEqual({ a: 1 });
+    expect(await mem.getMetadata('n2', 'k')).toEqual({ b: 2 });
+  });
+});

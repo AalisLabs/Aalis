@@ -1,4 +1,10 @@
-import type { MemoryService, RecentMessageRecord, RecentMessagesAcrossSessionsQuery } from '@aalis/api-memory';
+import type {
+  MemoryService,
+  MetadataEntry,
+  MetadataOp,
+  RecentMessageRecord,
+  RecentMessagesAcrossSessionsQuery,
+} from '@aalis/api-memory';
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
@@ -8,7 +14,8 @@ import type { Message } from '@aalis/schema-message';
 class InMemoryFallbackService implements MemoryService {
   private sessions = new Map<string, Message[]>();
   private archivedSessions = new Map<string, Message[]>();
-  private metadata = new Map<string, Map<string, Record<string, unknown>>>();
+  /** namespace → key → { data, updatedAt }。带上写入时间，与另两家后端的返回结构对齐。 */
+  private metadata = new Map<string, Map<string, { data: Record<string, unknown>; updatedAt: number }>>();
   private readonly rangeQueryLimit: number;
   private readonly crossSessionMaxLimit: number;
 
@@ -132,17 +139,25 @@ class InMemoryFallbackService implements MemoryService {
       ns = new Map();
       this.metadata.set(namespace, ns);
     }
-    ns.set(key, data);
+    ns.set(key, { data, updatedAt: Date.now() });
   }
 
   async getMetadata(namespace: string, key: string): Promise<Record<string, unknown> | undefined> {
-    return this.metadata.get(namespace)?.get(key);
+    return this.metadata.get(namespace)?.get(key)?.data;
   }
 
-  async listMetadata(namespace: string): Promise<Array<{ key: string; data: Record<string, unknown> }>> {
+  async listMetadata(namespace: string): Promise<MetadataEntry[]> {
     const ns = this.metadata.get(namespace);
     if (!ns) return [];
-    return [...ns.entries()].map(([key, data]) => ({ key, data }));
+    return [...ns.entries()].map(([key, e]) => ({ key, data: e.data, updatedAt: e.updatedAt }));
+  }
+
+  async commitMetadata(ops: readonly MetadataOp[]): Promise<void> {
+    // 单线程 + 无 await，本就原子：这段跑完之前没有别的代码能观察到中间态。
+    for (const o of ops) {
+      if (o.op === 'put') await this.saveMetadata(o.namespace, o.key, o.data);
+      else await this.deleteMetadata(o.namespace, o.key);
+    }
   }
 
   async deleteMetadata(namespace: string, key: string): Promise<void> {
