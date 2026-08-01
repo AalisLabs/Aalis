@@ -606,8 +606,34 @@ describe('uninstall', () => {
     expect(h.deps.cleanupConfig).toHaveBeenCalledWith('@scope/foo');
   });
 
-  it('前端界面包同样可卸（与插件并列为「用户主动装」的两类）', async () => {
+  it('前端界面包可卸——只要它不是当前活跃的那个', async () => {
     const h = harness(['aalis', 'aalis-interface']);
+    h.deps.activeClientProvider = () => '@scope/other-ui'; // 活跃的是别人
+    expect((await createPackageManager(h.deps).uninstall('@scope/foo')).ok).toBe(true);
+  });
+
+  it('**自锁闸**：正在用的前端不能自己卸自己', async () => {
+    // 内核/宿主删了实例起不来；当前活跃的 webui-client 删了前端静态目录随之消失
+    // （挂载点是启动时绑定的，卸载不会重挂）——市场页本身没了，恢复只能走终端。
+    // 而全仓带 aalis-interface 的包只有一个、脚手架默认装它，是唯一真会自锁的目标。
+    const h = harness(['aalis', 'aalis-interface']);
+    h.deps.activeClientProvider = () => '@scope/foo';
+    const r = await createPackageManager(h.deps).uninstall('@scope/foo');
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('当前正在使用的前端');
+    expect(r.message, '要给出可操作的出路，而不是只说不行').toContain('切换');
+    expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
+  });
+
+  it('查不到活跃前端时不误挡（webui 未启用）', async () => {
+    const h = harness(['aalis', 'aalis-interface']);
+    h.deps.activeClientProvider = () => undefined;
+    expect((await createPackageManager(h.deps).uninstall('@scope/foo')).ok).toBe(true);
+  });
+
+  it('这道闸只管前端包，不影响普通插件', async () => {
+    const h = harness(['aalis', 'aalis-plugin']);
+    h.deps.activeClientProvider = () => '@scope/foo'; // 即便同名也不该被这道闸拦
     expect((await createPackageManager(h.deps).uninstall('@scope/foo')).ok).toBe(true);
   });
 

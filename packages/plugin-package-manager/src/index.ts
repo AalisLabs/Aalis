@@ -234,6 +234,10 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
     restartApp: rollback => getApp().restart({ rollback }),
     // 彻底卸载：dispose 上下文并从注册表移除（plugins 服务缺席则 no-op）。
     // 区别于 disablePlugin（仅置禁用态，仍滞留在插件列表里）。
+    // 首个条目即当前生效的 provider（偏好 > 优先级 > 注册顺序）；webui-server 用包名做
+    // fork id 注册候选，故 contextId 就是包名。webui 未启用时为空数组 → undefined。
+    activeClientProvider: () => ctx.getAllServices('webui-client')[0]?.contextId,
+
     unloadPlugin: async name => {
       const pm = ctx.getService<{ unload(n: string): Promise<void> }>('plugins');
       if (pm) await pm.unload(name);
@@ -269,6 +273,11 @@ export interface PackageManagerDeps {
   isPluginRegistered(name: string): boolean;
   /** 彻底卸载插件（dispose + 从注册表移除）。plugins 服务缺席则 no-op。 */
   unloadPlugin(name: string): Promise<void>;
+  /**
+   * 当前活跃的 `webui-client` provider 的包名；无前端或查不到则 undefined。
+   * 只用于「不许卸掉正在用的前端」这一道闸——见 uninstallOne。
+   */
+  activeClientProvider?(): string | undefined;
   /** 卸载后清理残留配置（删配置块 + 解除禁用标记 + 持久化）。可选：缺省则不清理。 */
   cleanupConfig?(name: string): void;
   /** 重启进程并交付回滚凭据（新实例起不来时由重启策略消费）。缺省则 update 不可用。 */
@@ -803,6 +812,27 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
             ? '删掉它实例将无法启动、市场也随之消失，只能在终端里恢复；确需如此请手动执行 npm uninstall。'
             : '它随依赖它的插件被 npm 自动剪枝；确需单独删除请手动执行 npm uninstall。'),
       };
+    }
+
+    // ── 闸一之二：正在用的前端不能自己卸自己 ──
+    // 同一条判据的另一半。内核/宿主删了实例起不来，而**当前活跃的 webui-client** 删了
+    // 前端静态目录随之消失（挂载点是启动时绑定的，卸载不会重挂）——市场页本身没了，
+    // 恢复同样只能走终端。而全仓带 `aalis-interface` 的包只有一个，脚手架默认就装它，
+    // 前端还照常渲染「卸载」按钮：这是唯一一个真会自锁的目标，却恰好从上面那道闸漏过去。
+    //
+    // 判据不硬编码包名：`getAllServices` 的首个条目即当前生效的 provider（偏好 > 优先级 >
+    // 注册顺序），而 webui-server 是用**包名**做 fork id 注册候选的。想换前端的正常路径是
+    // 「装新的 → 在服务页切过去 → 再卸旧的」，那时它已不活跃，本闸自然放行。
+    if (isInterface) {
+      const active = deps.activeClientProvider?.();
+      if (active === pluginName) {
+        return {
+          ok: false,
+          message:
+            `${pluginName} 是当前正在使用的前端界面，卸掉它 WebUI 会立刻不可用（含本页面），` +
+            '只能在终端里恢复。请先安装另一个前端并在「服务」页切换过去，再回来卸载它。',
+        };
+      }
     }
 
     // ── 闸二：来源 ──
