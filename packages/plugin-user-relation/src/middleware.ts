@@ -83,10 +83,14 @@ async function buildBlock(
   }
 
   const personId = `${data.platform}:${data.userId}`;
+  // 全图只加载一次，喂给下面两处消费者（子图遍历 + 全局热点）。`loadAll()` 是 O(全图)
+  // （实测 3090 条 / 41 MB / ≈540 ms），读两遍是本插件最大的一笔固定开销。
+  const graph = await service.loadAll();
   const subgraph = await service.traverseSubgraph({
     startNodeIds: [personId],
     maxDepth: cfg.maxDepth,
     maxBreadth: cfg.maxBreadth,
+    _snapshot: graph,
   });
 
   const self = subgraph.persons.find(p => p.id === personId);
@@ -249,7 +253,7 @@ async function buildBlock(
 
   // ---- 全局热点（与当前用户子图无关，按 lastMentionedAt 全局排序） ----
   if (cfg.maxGlobalHotEvents > 0 || cfg.maxGlobalHotEntities > 0) {
-    const snap = await service.loadAll();
+    const snap = graph;
     const hotEvents =
       cfg.maxGlobalHotEvents > 0
         ? [...snap.events]
