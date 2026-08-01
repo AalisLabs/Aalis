@@ -1,5 +1,5 @@
 import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
-import { riskDefaults } from '@aalis/api-authority';
+import { capabilityMinLevel, riskDefaults } from '@aalis/api-authority';
 import type {
   Command,
   CommandArgv,
@@ -62,31 +62,31 @@ interface Decl {
 }
 
 /**
- * 安全轴取全栈**最严**，而不是取栈顶。
+ * 从栈里挑出**最严的那一份声明**，整份取用；不跨声明混轴。
  *
- * 栈顶决定「跑谁的 handler」，但不该决定「谁能跑」——否则后注册者只要不声明 meta 就能把
- * 已有的 restricted 指令降成 public（实测存在的提权路径）。取最严则后来者只能收紧。
- * 纯函数，便于单测。
+ * 栈顶决定「跑谁的实现」，但不该决定「谁能跑」——否则后注册者只要压一层就能放宽权限。
+ *
+ * ⚠️ **必须整份取，不能逐轴取严**。曾经的写法是 visibility / confirm / risk 三轴各自独立
+ * 取最严，实测不单调：真正的裁决函数里 **risk 一旦存在就完全遮蔽 visibility**
+ * （见 `capabilityMinLevel`），于是「未声明 risk」在合并时被当成最弱、在裁决时却代表更强的
+ * visibility 兜底。给 `{visibility:'restricted'}` 的 /shutdown 压一层 `{risk:'safe'}`，
+ * 门槛从 2 掉到 0，而 visibility 那一栏仍显示 restricted —— 提权成功，且比不修更糟：
+ * 旧实现提权时 visibility 会明着翻成 public（可被审计发现），逐轴合并反而把症状藏了起来。
+ *
+ * 定级用契约包的 `capabilityMinLevel`（与 authority 实际裁决同一份实现），不自己复制一份口径。
+ * 同级时取先注册者，保证结果与栈序无关（幂等）。
  */
-function strictestPolicy(decls: readonly Decl[]): {
-  visibility?: CapabilityVisibility;
-  confirm?: CapabilityConfirm;
-  risk?: CapabilityRisk;
-} {
-  const CONFIRM_ORDER: CapabilityConfirm[] = ['session', 'always'];
-  const RISK_ORDER: CapabilityRisk[] = ['safe', 'sensitive', 'dangerous'];
-  let visibility: CapabilityVisibility | undefined;
-  let confirm: CapabilityConfirm | undefined;
-  let risk: CapabilityRisk | undefined;
+function strictestDecl(decls: readonly Decl[]): Decl | undefined {
+  let best: Decl | undefined;
+  let bestLevel = -1;
   for (const d of decls) {
-    if (d.baseVisibility === 'restricted') visibility = 'restricted';
-    else if (d.baseVisibility === 'public' && visibility === undefined) visibility = 'public';
-    if (d.baseConfirm && (!confirm || CONFIRM_ORDER.indexOf(d.baseConfirm) > CONFIRM_ORDER.indexOf(confirm))) {
-      confirm = d.baseConfirm;
+    const lvl = capabilityMinLevel({ risk: d.baseRisk, visibility: d.baseVisibility });
+    if (lvl > bestLevel) {
+      bestLevel = lvl;
+      best = d;
     }
-    if (d.baseRisk && (!risk || RISK_ORDER.indexOf(d.baseRisk) > RISK_ORDER.indexOf(risk))) risk = d.baseRisk;
   }
-  return { visibility, confirm, risk };
+  return best;
 }
 
 export class CommandRegistry implements CommandService {
@@ -361,9 +361,9 @@ export class CommandRegistry implements CommandService {
   private materialize(name: string): Command {
     const stack = this.nodes.get(name);
     if (!stack) throw new Error(`internal: node ${name} missing`);
-    // 栈顶决定「跑谁的实现」；安全轴取全栈最严（后来者只能收紧，见 strictestPolicy）。
+    // 栈顶决定「跑谁的实现」；安全轴整份取最严的那条声明（见 strictestDecl）。
     const top = stack[stack.length - 1];
-    const policy = strictestPolicy(stack);
+    const policy = strictestDecl(stack);
 
     // 父继承：沿 dot path 向上合并。可见性取「最近声明的祖先」，子节点可覆盖。
     let effVisibility: CapabilityVisibility = 'public';
@@ -372,15 +372,20 @@ export class CommandRegistry implements CommandService {
     const parts = name.split('.');
     for (let i = 1; i < parts.length; i++) {
       const parent = parts.slice(0, i).join('.');
-      const pp = strictestPolicy(this.nodes.get(parent) ?? []);
-      if (pp.visibility !== undefined) effVisibility = pp.visibility;
-      if (pp.confirm !== undefined) effConfirm = pp.confirm;
-      if (pp.risk !== undefined) effRisk = pp.risk;
+      const pp = strictestDecl(this.nodes.get(parent) ?? []);
+      if (pp?.baseVisibility !== undefined) effVisibility = pp.baseVisibility;
+      if (pp?.baseConfirm !== undefined) effConfirm = pp.baseConfirm;
+      if (pp?.baseRisk !== undefined) effRisk = pp.baseRisk;
     }
 
-    const visibility = policy.visibility ?? effVisibility;
-    const confirm = policy.confirm ?? effConfirm;
-    const risk = policy.risk ?? effRisk;
+    // 本节点的声明与祖先继承值之间，同样取更严的一侧——否则子节点显式写一个 public
+    // 就能打穿从父分组继承来的 restricted（实测三条放宽路径之一）。
+    const ownLevel = capabilityMinLevel({ risk: policy?.baseRisk, visibility: policy?.baseVisibility });
+    const inheritedLevel = capabilityMinLevel({ risk: effRisk, visibility: effVisibility });
+    const useOwn = policy !== undefined && ownLevel >= inheritedLevel;
+    const visibility = (useOwn ? policy.baseVisibility : effVisibility) ?? effVisibility;
+    const confirm = (useOwn ? policy.baseConfirm : effConfirm) ?? effConfirm;
+    const risk = (useOwn ? policy.baseRisk : effRisk) ?? effRisk;
 
     return {
       name,

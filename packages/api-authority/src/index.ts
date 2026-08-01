@@ -58,6 +58,31 @@ const RISK_DEFAULTS: Record<CapabilityRisk, { visibility: CapabilityVisibility; 
  * risk → 默认 (visibility, confirm)；无 risk 返回空对象。
  * 供需要保留「未声明=继承」语义的注册方（如 commands 沿 dot-path 继承）用 —— 不带兜底默认。
  */
+/** 未登记外部身份的默认等级。 */
+export const DEFAULT_AUTHORITY = 0;
+/** 无 risk 声明、仅标 `visibility:'restricted'` 的操作的兜底最低等级。 */
+export const RESTRICTED_LEVEL = 2;
+
+/**
+ * `(risk, visibility)` → 操作最低等级。**这是契约语义，不是某个实现的细节** —— 任何需要
+ * 判断「两个能力声明谁更严」的地方都必须用它，否则会得到与实际裁决不一致的答案。
+ *
+ * 关键性质：**risk 一旦存在就完全遮蔽 visibility**。于是「未声明 risk」在合并两份声明时
+ * 不能当成最弱 —— 对一个 `visibility:'restricted'` 的能力来说，不声明 risk 反而意味着更严
+ * （兜底到 RESTRICTED_LEVEL），而补上一个 `risk:'safe'` 会把门槛降到 0。
+ *
+ * 曾按「visibility / confirm / risk 三轴各自独立取最严」来合并同名指令的多份声明，实测
+ * 不单调：给 `{visibility:'restricted'}` 的 /shutdown 压一层 `{risk:'safe'}`，门槛从 2 掉到 0，
+ * 而 visibility 那一栏仍显示 restricted —— 提权成功且症状被藏起来。正解是拿本函数给每份
+ * 声明各自定级、取最严的**那一份**，不跨声明混轴。
+ */
+export function capabilityMinLevel(opts: { risk?: CapabilityRisk; visibility?: CapabilityVisibility }): number {
+  if (opts.risk === 'dangerous') return 2;
+  if (opts.risk === 'sensitive') return 1;
+  if (opts.risk === 'safe') return DEFAULT_AUTHORITY;
+  return opts.visibility === 'restricted' ? RESTRICTED_LEVEL : DEFAULT_AUTHORITY;
+}
+
 export function riskDefaults(risk?: CapabilityRisk): {
   visibility?: CapabilityVisibility;
   confirm?: CapabilityConfirm;
