@@ -32,6 +32,26 @@ export interface RecentMessageRecord {
   message: Message;
 }
 
+/** `listMetadata` 的一条结果。 */
+export interface MetadataEntry {
+  key: string;
+  data: Record<string, unknown>;
+  /**
+   * 最后写入时间（毫秒时间戳）。
+   *
+   * 三家后端本来就存着这一列（sqlite 的 `metadata.updatedAt`、mongodb 的 `updatedAt: Date`），
+   * 只是从不返回 —— 于是应用层**拿不到任何时间信息**，「按时间清理」这件事在契约上不可能做到。
+   * 实测后果：`plugin-adapter-onebot` 每收一条合并转发就持久化完整原文，内存缓存那侧有 1 小时
+   * TTL，持久化那侧一条清理路径都没有，磁盘只增不减。
+   */
+  updatedAt: number;
+}
+
+/** `commitMetadata` 的一条操作。`put` 覆盖写，`del` 删除（不存在则忽略）。 */
+export type MetadataOp =
+  | { op: 'put'; namespace: string; key: string; data: Record<string, unknown> }
+  | { op: 'del'; namespace: string; key: string };
+
 export interface MemoryService {
   saveMessage(sessionId: string, message: Message): Promise<void>;
   getHistory(sessionId: string, limit?: number): Promise<Message[]>;
@@ -69,16 +89,30 @@ export interface MemoryService {
    */
   getRecentMessagesAcrossSessions?(query: RecentMessagesAcrossSessionsQuery): Promise<RecentMessageRecord[]>;
 
-  // ----- 结构化元数据存储（供会话管理等场景使用） -----
+  // ----- 结构化元数据存储 -----
+  //
+  // 四个方法**必填**。曾经全部可选（`?`），而三家后端从来都是全实现——可选性只产生成本：
+  // 八个消费方各写各的守卫，写法四种（静默 return / 直接 throw / 自定义错误类型 / 有就存没有就丢），
+  // 且都是死分支。第三方 memory 后端本来也必须实现，否则一半插件在它上面跑不起来。
 
   /** 保存结构化元数据（namespace 隔离，key 唯一） */
-  saveMetadata?(namespace: string, key: string, data: Record<string, unknown>): Promise<void>;
+  saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void>;
   /** 读取元数据 */
-  getMetadata?(namespace: string, key: string): Promise<Record<string, unknown> | undefined>;
+  getMetadata(namespace: string, key: string): Promise<Record<string, unknown> | undefined>;
   /** 列出指定 namespace 下所有元数据条目 */
-  listMetadata?(namespace: string): Promise<Array<{ key: string; data: Record<string, unknown> }>>;
+  listMetadata(namespace: string): Promise<MetadataEntry[]>;
   /** 删除元数据条目 */
-  deleteMetadata?(namespace: string, key: string): Promise<void>;
+  deleteMetadata(namespace: string, key: string): Promise<void>;
+  /**
+   * 原子提交一批元数据变更。
+   *
+   * **要的是原子性，不是速度**（实测 500 条批量写只快 1.1×）。没有它的时候，
+   * `plugin-session-manager` 的刷盘是「逐条 saveMetadata + 全表扫删孤儿」，任何一条抛错
+   * 就停在半新半旧，而它已经把 dirty 置 false、下一次 debounce 不会重试。
+   *
+   * 三家后端各自天然可实现：sqlite 事务、mongodb bulkWrite、inmemory 单线程本就原子。
+   */
+  commitMetadata(ops: readonly MetadataOp[]): Promise<void>;
 
   /** 在指定会话的最近 N 条消息中，将 content 里的 oldText 替换为 newText，返回受影响的条数 */
   updateMessageContent?(sessionId: string, oldText: string, newText: string, recentLimit?: number): Promise<number>;

@@ -149,12 +149,7 @@ interface SummaryRecord {
 }
 
 class SummaryStore {
-  constructor(private readonly ctx: Context) {
-    const memory = ctx.getService<MemoryService>('memory');
-    if (!memory?.saveMetadata || !memory?.getMetadata) {
-      throw new Error('[memory-summary] 当前 memory 实现缺少 metadata 能力（saveMetadata/getMetadata），无法存储摘要');
-    }
-  }
+  constructor(private readonly ctx: Context) {}
 
   /** 每次惰性查询 memory provider，避免 apply 时缓存裸引用在 provider 重载后失效。 */
   private get memory(): MemoryService {
@@ -164,7 +159,7 @@ class SummaryStore {
   }
 
   async getSummary(sessionId: string): Promise<SummaryRecord | null> {
-    const data = await this.memory.getMetadata!(SUMMARY_NAMESPACE, sessionId);
+    const data = await this.memory.getMetadata(SUMMARY_NAMESPACE, sessionId);
     if (!data) return null;
     return {
       summary: String(data.summary ?? ''),
@@ -174,7 +169,7 @@ class SummaryStore {
   }
 
   async upsertSummary(sessionId: string, summary: string, coveredUpTo: number, messageCount: number): Promise<void> {
-    await this.memory.saveMetadata!(SUMMARY_NAMESPACE, sessionId, {
+    await this.memory.saveMetadata(SUMMARY_NAMESPACE, sessionId, {
       summary,
       coveredUpTo,
       messageCount,
@@ -183,13 +178,10 @@ class SummaryStore {
   }
 
   async clearSession(sessionId: string): Promise<void> {
-    if (this.memory.deleteMetadata) {
-      await this.memory.deleteMetadata(SUMMARY_NAMESPACE, sessionId);
-    }
+    await this.memory.deleteMetadata(SUMMARY_NAMESPACE, sessionId);
   }
 
   async clearAll(): Promise<void> {
-    if (!this.memory.listMetadata || !this.memory.deleteMetadata) return;
     const items = await this.memory.listMetadata(SUMMARY_NAMESPACE);
     for (const item of items) {
       await this.memory.deleteMetadata(SUMMARY_NAMESPACE, item.key);
