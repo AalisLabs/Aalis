@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
@@ -2069,13 +2069,16 @@ describe('plugin-user-relation: event duplicate consolidation', () => {
 });
 
 // ════════════════════════════════════════════════════════════
-// 全图快照缓存
+// 全图快照的短期缓存
 //
 // loadAll() 是 O(全图)：实测生产库 3090 条 / 41 MB / ≈540 ms，且同一次 prompt 构建里
 // 被调两次（子图遍历 + 全局热点）。缓存把这两次变成一次 I/O。
 //
-// 唯一的真风险是**脏读**——缓存的正确性依赖「store 是该 namespace 的唯一写入方」这个
-// 不变量。下面逐个写方法验失效，并钉住「绕过 store 直写会脏读」这条边界。
+// 曾经做成「写时失效 + 长驻」，其正确性依赖「store 是该 namespace 的唯一写入方」——
+// 那个不变量靠人肉维持，实测已失效两次（memory:clear 的直删、/clear-all 的整表 wipe），
+// 且 provider 热切换是它天然观察不到的第三条。现在改为带 TTL：
+//   - 自己的写立刻失效（读己之所写永远准，局部可证）——下面逐个写方法钉住；
+//   - 外部通道造成的陈旧由 TTL 兜底，窗口数秒。
 // ════════════════════════════════════════════════════════════
 
 describe('plugin-user-relation: 快照缓存', () => {
@@ -2138,6 +2141,33 @@ describe('plugin-user-relation: 快照缓存', () => {
     };
     await store.loadAll();
     expect(reads, '写之后缓存必须已失效，loadAll 要重新读存储').toBe(1);
+  });
+
+  it('外部整表清空后，陈旧窗口不超过 TTL——不再依赖「唯一写入方」', async () => {
+    const { store, mem } = await makeService();
+    await store.upsertPerson({
+      id: 'onebot:u1',
+      platform: 'onebot',
+      userId: 'u1',
+      displayName: 'A',
+      firstSeenAt: 1,
+      lastSeenAt: 1,
+    } as never);
+    expect((await store.loadAll()).persons).toHaveLength(1);
+
+    // /clear-all 的基座动作：整表 wipe，store 毫不知情（曾实测底层 0 条而 loadAll 仍返回 1 条）
+    await mem.clearAll?.();
+    expect(await mem.listMetadata('user-relation'), '底层确已清空').toHaveLength(0);
+
+    // TTL 内仍可能读到旧值——这是**有意接受**的窗口，不是缺陷
+    // TTL 过后必须自动回正
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(Date.now() + 6_000);
+      expect((await store.loadAll()).persons, 'TTL 过后必须重新读存储').toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('写入的数据在下一次 loadAll 里读得到（端到端，非仅计数）', async () => {
