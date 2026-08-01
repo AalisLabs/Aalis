@@ -133,39 +133,69 @@ class InMemoryFallbackService implements MemoryService {
 
   // ----- 结构化元数据存储 -----
 
-  async saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void> {
+  /**
+   * 同步写入的内部实现。`commitMetadata` 直接调它 —— 中间不能有 `await`，否则每条 op 后面
+   * 都是一个微任务让出点，并发的 listMetadata 就能读到批的中间态（实测过：5 条 put 的批，
+   * 并发读采到 1 条），而另两家后端在同样的用例下不撕裂。
+   */
+  private putSync(namespace: string, key: string, data: Record<string, unknown>): void {
     let ns = this.metadata.get(namespace);
     if (!ns) {
       ns = new Map();
       this.metadata.set(namespace, ns);
     }
-    ns.set(key, { data, updatedAt: Date.now() });
+    // 存**深拷贝**而非引用。sqlite/mongodb 都经序列化，天然是拷贝；inmemory 若直接存引用，
+    // 调用方事后改原对象就会静默改到「已落盘」的内容 —— 那会让刷盘类缺陷在本后端上原理性
+    // 地测不出来（session-manager 传的正是 this.sessions 里的活对象）。
+    // 顺带把「data 必须可 JSON 序列化」这条约束也逼平：不可序列化的值在这里就抛，与另两家一致。
+    ns.set(key, { data: JSON.parse(JSON.stringify(data)) as Record<string, unknown>, updatedAt: Date.now() });
+  }
+
+  private deleteSync(namespace: string, key: string): void {
+    const ns = this.metadata.get(namespace);
+    if (!ns) return;
+    ns.delete(key);
+    if (ns.size === 0) this.metadata.delete(namespace);
+  }
+
+  async saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void> {
+    this.putSync(namespace, key, data);
   }
 
   async getMetadata(namespace: string, key: string): Promise<Record<string, unknown> | undefined> {
-    return this.metadata.get(namespace)?.get(key)?.data;
+    const d = this.metadata.get(namespace)?.get(key)?.data;
+    // 同样返回拷贝：调用方改读回来的对象不该污染存储（另两家经序列化，本就如此）。
+    return d === undefined ? undefined : (JSON.parse(JSON.stringify(d)) as Record<string, unknown>);
   }
 
   async listMetadata(namespace: string): Promise<MetadataEntry[]> {
     const ns = this.metadata.get(namespace);
     if (!ns) return [];
-    return [...ns.entries()].map(([key, e]) => ({ key, data: e.data, updatedAt: e.updatedAt }));
+    // 按 key 升序：另两家都走 (namespace,key) 索引扫、天然有序，本家的 Map 是插入序。
+    // 契约不承诺顺序，但三家不一致会让「在 inmemory 上写的测试到 sqlite 上换个顺序」这类
+    // 问题只在生产暴露。
+    return [...ns.entries()]
+      .map(([key, e]) => ({
+        key,
+        data: JSON.parse(JSON.stringify(e.data)) as Record<string, unknown>,
+        updatedAt: e.updatedAt,
+      }))
+      .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   }
 
   async commitMetadata(ops: readonly MetadataOp[]): Promise<void> {
-    // 单线程 + 无 await，本就原子：这段跑完之前没有别的代码能观察到中间态。
-    for (const o of ops) {
-      if (o.op === 'put') await this.saveMetadata(o.namespace, o.key, o.data);
-      else await this.deleteMetadata(o.namespace, o.key);
-    }
+    // 先把全部 op 序列化一遍再落，任一条不可序列化就整批不生效 —— 与 sqlite（事务内
+    // JSON.stringify 抛错则回滚）、mongodb（BSON 序列化抛错则一条不执行）语义一致。
+    const puts = ops.map(o => (o.op === 'put' ? JSON.parse(JSON.stringify(o.data)) : undefined));
+    // 循环体内无 await：这一段跑完之前没有别的代码能观察到中间态，故整批原子。
+    ops.forEach((o, i) => {
+      if (o.op === 'put') this.putSync(o.namespace, o.key, puts[i] as Record<string, unknown>);
+      else this.deleteSync(o.namespace, o.key);
+    });
   }
 
   async deleteMetadata(namespace: string, key: string): Promise<void> {
-    const ns = this.metadata.get(namespace);
-    if (ns) {
-      ns.delete(key);
-      if (ns.size === 0) this.metadata.delete(namespace);
-    }
+    this.deleteSync(namespace, key);
   }
 
   async updateMessageContent(sessionId: string, oldText: string, newText: string, recentLimit = 100): Promise<number> {
