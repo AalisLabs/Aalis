@@ -656,7 +656,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         await next();
         return;
       }
-      if (!memory.listMetadata || !memory.deleteMetadata) {
+      if (!memory) {
         await next();
         return;
       }
