@@ -100,7 +100,7 @@ export class RelationStore {
    * 所以不再赌那个不变量。TTL 把「外部通道造成的陈旧」限定在数秒内，而自己的写仍然立刻失效
    * （见各写方法末尾的 `invalidate()`）——读己之所写永远是准的，这一半是局部可证的。
    */
-  private snapshot?: RelationGraphSnapshot;
+  private snapshot?: Readonly<RelationGraphSnapshot>;
   private snapshotAt = 0;
 
   constructor(private readonly memory: MemoryService) {}
@@ -221,7 +221,7 @@ export class RelationStore {
 
   // ----- 全量加载（webui / 注入用） -----
 
-  async loadAll(): Promise<RelationGraphSnapshot> {
+  async loadAll(): Promise<Readonly<RelationGraphSnapshot>> {
     if (this.snapshot && Date.now() - this.snapshotAt < SNAPSHOT_TTL_MS) return this.snapshot;
     const entries = await this.memory.listMetadata(RELATION_NAMESPACE);
     const persons: PersonNode[] = [];
@@ -237,7 +237,12 @@ export class RelationStore {
       // 其他 key 静默忽略，便于未来加扩展类型而不破坏老版
     }
 
-    this.snapshot = { persons, events, entities, edges };
+    // 冻结后再入缓存。缓存意味着同一个对象被发给全部调用点（约 70 处），任何一处就地改
+    // 都会污染后续所有读者 —— 加缓存之前每次 loadAll 都重新解析，各调用点拿到的是各自的
+    // 副本，这条风险是缓存**引入**的。冻结把「不许改」从口头约定变成运行时强制（ESM 恒为
+    // strict mode，赋值直接抛）。实测全仓无任何调用点在改它，故零行为变更。
+    for (const arr of [persons, events, entities, edges]) for (const n of arr) Object.freeze(n);
+    this.snapshot = Object.freeze({ persons, events, entities, edges });
     this.snapshotAt = Date.now();
     return this.snapshot;
   }
