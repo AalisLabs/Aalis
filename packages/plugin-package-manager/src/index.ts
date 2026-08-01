@@ -15,17 +15,21 @@ export const inject = {
 // ===== 服务接口 =====
 
 /**
- * 包管理服务：从 npm 安装/卸载插件到 packages/ 目录
+ * 包管理服务：在项目根 `dependencies` 里装卸插件。
  *
  * 通过 `ctx.getService<PackageManagerService>('package-manager')` 消费。
  *
- * 这些操作涉及子进程（npm/tar/pnpm/rm），不属于 core 内核职责，
- * 因此从 App 抽出到独立插件；底层子进程统一走 api-process。
+ * 根 `dependencies` 是加载器**唯一**的发现来源，所以装卸都落在那里——不再有「解包到
+ * packages/ 目录」那条路径（它按 `pnpm-workspace.yaml` 猜部署形态，而那个文件与真正
+ * 生效的加载器无因果关系，猜错时会把包装进加载器永不查看的地方并静默失败）。
+ *
+ * 这些操作涉及子进程（npm），不属于 core 内核职责，因此从 App 抽出到独立插件；
+ * 底层子进程统一走 api-process。
  */
 export interface PackageManagerService {
-  /** 从 npm 安装插件到 packages/ 并触发 rescanPlugins */
+  /** 装进根 `dependencies` + node_modules，随后 rescan 让加载器发现它 */
   install(npmPkg: string): Promise<{ ok: boolean; message: string }>;
-  /** 停用并删除 packages/ 下对应目录 */
+  /** 从根 `dependencies` 摘掉并 npm uninstall；只接受插件与前端界面包（见 uninstallOne 的两道闸） */
   uninstall(pluginName: string): Promise<{ ok: boolean; message: string }>;
   /**
    * 批量更新到指定版本，随后重启进程接管。
@@ -186,24 +190,12 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
   }
 
   /** 把配置里的相对/绝对路径归一成绝对路径；未配置则用 fallback。 */
-  function resolveConfigured(key: 'packagesDir' | 'projectRoot', fallback: string): string {
+  function resolveConfigured(key: 'projectRoot', fallback: string): string {
     const override = (config as Record<string, unknown>)[key];
     if (typeof override === 'string' && override.length > 0) {
       return override.startsWith('/') ? override : `${process.cwd()}/${override.replace(/^\.?\/+/, '')}`;
     }
     return fallback;
-  }
-
-  /**
-   * 真实插件目录的绝对路径（仅 workspace 形态用到）。
-   *
-   * 必须与 core 的 createFsPluginLoader 一致——后者扫描 `<cwd>/packages`。
-   * 关键：**不能**走 storage 的 `workspace:` 根（那是 agent 沙盒 `<cwd>/workspace`，
-   * 与插件目录 `<cwd>/packages` 不是同一处），否则装到/找错地方（历史 bug：
-   * 卸载报"目录不存在"）。可用插件配置 `packagesDir` 覆盖（相对 cwd 或绝对路径）。
-   */
-  function packagesDir(): string {
-    return resolveConfigured('packagesDir', `${process.cwd()}/packages`);
   }
 
   function projectRoot(): string {
@@ -213,10 +205,9 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
   return createPackageManager({
     proc,
     log,
-    packagesDir,
     // 项目根：默认 cwd，与 createNodeModulesPluginLoader(projectDir = process.cwd()) 的
-    // 默认值及 packagesDir() 的基准同源——三者必须指同一处，否则「我们写的 package.json」
-    // 与「加载器读的 package.json」是两份，装了永远不加载。
+    // 默认值同源——两者必须指同一处，否则「我们写的 package.json」与「加载器读的
+    // package.json」是两份，装了永远不加载。
     // 宿主若给 startAalis 传了非 cwd 的 projectDir（公开选项），必须用本配置项对齐。
     projectRoot,
     // 经 process 网关的 readExternalFile 读，而非 node:fs：目标（项目根 package.json、
@@ -261,8 +252,6 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
 export interface PackageManagerDeps {
   proc: ProcessService;
   log: { info(msg: string): void; error(msg: string): void };
-  /** 真实插件目录绝对路径（= `<cwd>/packages`，与 FS 加载器一致）。仅 workspace 形态用到。 */
-  packagesDir(): string;
   /** 项目根绝对路径（= `<cwd>`）：形态探测、根 package.json 读取、npm 的 cwd。 */
   projectRoot(): string;
   /** 读文本文件；不存在或读失败返回 undefined。注入以便单测。 */
