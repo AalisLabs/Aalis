@@ -1666,6 +1666,15 @@ export class RelationService {
     startNodeIds: string[];
     maxDepth: number;
     maxBreadth: number;
+    /**
+     * 复用调用方已加载的全图，省掉一次 `loadAll()`。
+     *
+     * `loadAll()` 是 O(全图)（实测生产库 3090 条 / 41 MB / ≈540 ms），而一次 prompt 构建里
+     * 本就要读两次（本函数一次、全局热点一次）。由调用方加载一次喂给两边即可，**不需要在
+     * store 里做缓存**——那会引入失效、TTL、冻结、并发覆盖一整串要维护的东西（实测过，四条
+     * 缺陷）。同 `scoreBetween` 已有的 `_snapshot`。
+     */
+    _snapshot?: RelationGraphSnapshot;
   }): Promise<{ persons: PersonNode[]; events: EventNode[]; entities: EntityNode[]; edges: RelationEdge[] }> {
     const empty = { persons: [], events: [], entities: [], edges: [] };
     const starts = opts.startNodeIds ?? [];
@@ -1674,7 +1683,7 @@ export class RelationService {
     const effectiveDepth = opts.maxDepth === 0 ? Number.MAX_SAFE_INTEGER : opts.maxDepth;
     const effectiveBreadth = opts.maxBreadth === 0 ? Number.MAX_SAFE_INTEGER : opts.maxBreadth;
 
-    const snapshot = await this.store.loadAll();
+    const snapshot = opts._snapshot ?? (await this.store.loadAll());
     const {
       peByPerson,
       ppByPerson,

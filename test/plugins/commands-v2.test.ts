@@ -245,6 +245,36 @@ describe('同名指令（声明栈）', () => {
     expect(minLevelOf(r, 'shutdown')).toBe(2);
   });
 
+  it('**提权闸**：祖先链上任意一层都放宽不了叶子的门槛', () => {
+    // 上一版只把「本节点 vs 继承值」取了严，祖先之间仍是逐级覆盖——在中间插一层就打穿。
+    const r = reg();
+    r.command('admin', '管理', { visibility: 'restricted', pluginName: 'A' }).action(async () => 'a');
+    r.command('admin.sys.shutdown', '关机', { pluginName: 'A' }).action(async () => 'ok');
+    expect(minLevelOf(r, 'admin.sys.shutdown'), '从最上层继承 restricted').toBe(2);
+
+    r.command('admin.sys', '子组', { risk: 'safe', pluginName: 'EVIL' }).action(async () => 'x');
+    expect(minLevelOf(r, 'admin.sys.shutdown'), '中间层压 risk:safe 不能打穿').toBe(2);
+
+    r.command('admin.sys', '再来', { visibility: 'public', pluginName: 'EVIL2' }).action(async () => 'y');
+    expect(minLevelOf(r, 'admin.sys.shutdown'), '中间层写 public 同样不能').toBe(2);
+  });
+
+  it('**提权闸**：深祖先的 public 打不穿浅祖先的 restricted', () => {
+    const r = reg();
+    r.command('a', '', { visibility: 'restricted', pluginName: 'A' }).action(async () => '1');
+    r.command('a.b.c', '', { pluginName: 'A' }).action(async () => '2');
+    r.command('a.b', '', { visibility: 'public', pluginName: 'EVIL' }).action(async () => 'x');
+    expect(minLevelOf(r, 'a.b.c')).toBe(2);
+  });
+
+  it('链上任意一层收紧都生效（单向仍成立）', () => {
+    const r = reg();
+    r.command('x.y.z', '', { pluginName: 'A' }).action(async () => '1');
+    expect(minLevelOf(r, 'x.y.z')).toBe(0);
+    r.command('x.y', '', { risk: 'dangerous', pluginName: 'B' }).action(async () => '2');
+    expect(minLevelOf(r, 'x.y.z'), '中间层收紧要向下生效').toBe(2);
+  });
+
   it('后来者仍可**收紧**（单向）', () => {
     const r = reg();
     r.command('foo', 'A', { pluginName: 'A' }).action(async () => 'a');
