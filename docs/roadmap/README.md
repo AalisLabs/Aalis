@@ -12,17 +12,21 @@
 
 | 文档 | 主题 | 状态 |
 |---|---|---|
-| [存储层](./storage.md) | 缺结构化存储原语，`saveMetadata` 被当结构化存储用 | **待拍板方向** |
 | [Koishi 兼容层](./koishi-compat.md) | 嵌入真实 Koishi 内核让其插件直接运行 | 已验证可行，待实施 |
 | [指令系统](./commands.md) | `/help` 权限过滤（待决策做不做）、`/help` 详情的 autolink 规避 | 小 |
 
 ## 阅读顺序建议
 
-若关心**架构级决策**：看 [存储层](./storage.md)——它列出的三个方向牵涉"契约包该多厚"与"忒修斯之船的可替换单元切在哪"，是需要先拍板方向才能动手的一类，也是当前唯一卡在决策上的议题。
-
 若关心**下一步能做什么**：[Koishi 兼容层](./koishi-compat.md) 自包含——从生态调研数据、被否决的两个方案及理由，到 PoC 逐项实证结果与实施方案，不需要预先了解上下文。它的前置项「同名指令冲突」已完成。
 
 [指令系统](./commands.md) 现在主要是**已实现说明 + 未决项**，动手前先读它的「已实现」一节，避免按已作废的描述施工。
+
+**存储层已无待办**，本目录不再收录：三条实测缺口（关系图每轮全量加载两次、合并转发原文
+永久堆积、清空路径删一半）已修，机制见 `plugin-user-relation/src/store.ts`、
+`plugin-adapter-onebot/src/forward-expand.ts` 与 `api-memory/src/index.ts` 的注释。
+「要不要上结构化存储/ORM/索引/namespace stamping」四条决定连同实测依据写在
+[`api-memory` 契约](../../packages/api-memory/src/index.ts)的「结构化元数据存储」一节
+——那里是动手前必看的地方，比 roadmap 更贴近代码、不会陈旧。
 
 **插件市场已无待办**，本目录不再收录：装/卸/更新/预检/回滚/串行闸/卸载护栏/装完即用全部落地，
 机制与实测数据在 `plugin-package-manager/src/index.ts`、`plugin-webui-server/src/routes/marketplace.ts`
