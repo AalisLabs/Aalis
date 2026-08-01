@@ -237,6 +237,34 @@ export class CommandRegistry implements CommandService {
 
   unregisterByPlugin(pluginName: string): void {
     for (const name of [...this.nodes.keys()]) this.unregister(name, pluginName);
+    this.pruneEmptyGroups();
+  }
+
+  /**
+   * 回收无主的空分组节点。
+   *
+   * 分组节点由 `ensureGroups` 自动创建（空栈、无 pluginName），因此**任何按插件名的摘除都
+   * 匹配不到它们**——旧实现（`node.pluginName === pluginName`）与声明栈实现（空栈上
+   * `dropped.length === 0` 直接返回）都漏，这不是重构引入的。
+   *
+   * 后果是用户可见的：卸载 `plugin-user-relation` 后 `relation` / `relation.cleanup` 留着，
+   * `hasMatch('relation')` 仍为真，于是指令相位**吞掉** `/relation` 不放行给普通消息管道，
+   * 回一段指向空节点的用法；`/help` 概览还会长出「`/relation` — 0 个子指令」。
+   * 而 `relation` 正是全仓唯一的占位分组，卸载该插件必然踩到。
+   *
+   * 反复扫直到不动点：删掉 `relation.cleanup` 会让 `relation` 也变成无子节点的空壳。
+   */
+  private pruneEmptyGroups(): void {
+    let removed = true;
+    while (removed) {
+      removed = false;
+      for (const [name, stack] of [...this.nodes]) {
+        if (stack.length === 0 && this.directChildren(name).length === 0) {
+          this.nodes.delete(name);
+          removed = true;
+        }
+      }
+    }
   }
 
   // ---- 解析输入 ----

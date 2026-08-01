@@ -7,7 +7,6 @@ import {
   findUnmetPeers,
   hasWorkspaceProtocol,
   type PackageManagerDeps,
-  parsePackInfo,
   stripVersion,
 } from '../../packages/plugin-package-manager/src/index.js';
 
@@ -23,10 +22,6 @@ type ExecResult = Awaited<ReturnType<ProcessService['execFile']>>;
 // 沙盒根是 workspace，够不到 packages，历史 bug 即源于此）。
 // 覆盖成功 / 已存在 / 失败回滚 / pack 解析失败 / 卸载（含目录不存在仍移除）。
 // ════════════════════════════════════════════════════════════
-
-/** npm pack --json 的典型输出（含部分 npm 版本会前置的 notice） */
-const PACK_JSON = (name: string, filename: string, notice = false): string =>
-  `${notice ? 'npm notice \n' : ''}[{"id":"${name}@1.0.0","name":"${name}","version":"1.0.0","filename":"${filename}"}]`;
 
 const ROOT = '/abs';
 
@@ -80,7 +75,7 @@ function makeHarness(
         err.result = { stdout: '', stderr: `${cmd} 模拟失败`, code: 1 } as ExecResult;
         throw err;
       }
-      const stdout = cmd === 'npm' ? (opts.packOut ?? PACK_JSON('@scope/foo', 'scope-foo-1.0.0.tgz')) : '';
+      const stdout = cmd === 'npm' ? (opts.packOut ?? '') : '';
       return { stdout, stderr: '', code: 0 } as ExecResult;
     }),
   } as unknown as ProcessService;
@@ -105,23 +100,6 @@ function makeHarness(
   };
   return { deps, execCalls, deleted };
 }
-
-describe('parsePackInfo（npm pack --json 解析）', () => {
-  it('解析 filename + name', () => {
-    expect(parsePackInfo(PACK_JSON('@scope/foo', 'scope-foo-1.0.0.tgz'))).toEqual({
-      filename: 'scope-foo-1.0.0.tgz',
-      name: '@scope/foo',
-    });
-  });
-  it('容忍 JSON 前的 npm notice', () => {
-    expect(parsePackInfo(PACK_JSON('foo', 'foo-1.0.0.tgz', true))?.filename).toBe('foo-1.0.0.tgz');
-  });
-  it('缺字段/非法输出返回 undefined', () => {
-    expect(parsePackInfo('not json')).toBeUndefined();
-    expect(parsePackInfo('[{"name":"foo"}]')).toBeUndefined(); // 缺 filename
-    expect(parsePackInfo('[]')).toBeUndefined();
-  });
-});
 
 describe('纯函数判据', () => {
   it('hasWorkspaceProtocol：任一依赖块出现 workspace: 即为真', () => {
