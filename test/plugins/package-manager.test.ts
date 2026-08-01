@@ -28,7 +28,6 @@ type ExecResult = Awaited<ReturnType<ProcessService['execFile']>>;
 const PACK_JSON = (name: string, filename: string, notice = false): string =>
   `${notice ? 'npm notice \n' : ''}[{"id":"${name}@1.0.0","name":"${name}","version":"1.0.0","filename":"${filename}"}]`;
 
-const PKG_DIR = '/abs/packages';
 const ROOT = '/abs';
 
 interface Harness {
@@ -89,7 +88,6 @@ function makeHarness(
   const deps: PackageManagerDeps = {
     proc,
     log: { info: () => {}, error: () => {} },
-    packagesDir: () => PKG_DIR,
     projectRoot: () => ROOT,
     readText: async abs => {
       if (opts.text && abs in opts.text) return opts.text[abs];

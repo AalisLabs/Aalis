@@ -21,9 +21,12 @@
 
 [指令系统](./commands.md) 现在主要是**已实现说明 + 未决项**，动手前先读它的「已实现」一节，避免按已作废的描述施工。
 
-**存储层已无待办**，本目录不再收录：三条实测缺口（关系图每轮全量加载两次、合并转发原文
-永久堆积、清空路径删一半）已修，机制见 `plugin-user-relation/src/store.ts`、
-`plugin-adapter-onebot/src/forward-expand.ts` 与 `api-memory/src/index.ts` 的注释。
+**存储层已无待办**，本目录不再收录：关系图每轮全量加载两次（快照缓存）、合并转发原文永久
+堆积（7 天惰性回收）两条已修；清空路径的「删一半」改为批量提交后，**在 sqlite / inmemory 上
+是真原子，在 mongodb 上仍只保证按序执行遇错即停**——原子性按后端分档，见 `api-memory` 契约里
+`commitMetadata` 的说明。机制见 `plugin-user-relation/src/store.ts`、
+`plugin-adapter-onebot/src/forward-expand.ts`、`plugin-user-profile` 与 `plugin-memory-summary`
+的清空路径，以及 `api-memory/src/index.ts` 的契约注释。
 「要不要上结构化存储/ORM/索引/namespace stamping」四条决定连同实测依据写在
 [`api-memory` 契约](../../packages/api-memory/src/index.ts)的「结构化元数据存储」一节
 ——那里是动手前必看的地方，比 roadmap 更贴近代码、不会陈旧。
