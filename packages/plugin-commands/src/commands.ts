@@ -411,31 +411,29 @@ export class CommandRegistry implements CommandService {
   private materialize(name: string): Command {
     const stack = this.nodes.get(name);
     if (!stack) throw new Error(`internal: node ${name} missing`);
-    // 栈顶决定「跑谁的实现」；安全轴整份取最严的那条声明（见 strictestDecl）。
+    // 栈顶决定「跑谁的实现」；安全轴另算（见下）。
     const top = stack[stack.length - 1];
-    const policy = strictestDecl(stack);
 
-    // 父继承：沿 dot path 向上合并。可见性取「最近声明的祖先」，子节点可覆盖。
-    let effVisibility: CapabilityVisibility = 'public';
-    let effConfirm: CapabilityConfirm | undefined;
-    let effRisk: CapabilityRisk | undefined;
+    // 安全轴 = **整条 dot path（含本节点）上最严的那份声明**。
+    //
+    // 曾经是「沿 path 向上逐级覆盖，最近声明的祖先胜，本节点可再覆盖」。那等于给每一级都
+    // 开了一个放宽口：实测在 `admin`(restricted) 与 `admin.sys.shutdown` 之间插一层
+    // `admin.sys` 声明 `risk:'safe'`，叶子的门槛就从 2 掉到 0；换成中间层声明
+    // `visibility:'public'` 同样得 0。上一版只把「本节点 vs 继承值」取了严，祖先之间仍是
+    // 逐级覆盖 —— 修了一处、漏了整条链。
+    //
+    // 现在没有「继承」这个中间概念了：把 path 上每个节点各自的最严声明收集起来，再整体取最
+    // 严的那一份。少一层概念，也少一个能被插进去的缝。
+    const chain: Decl[] = [];
     const parts = name.split('.');
-    for (let i = 1; i < parts.length; i++) {
-      const parent = parts.slice(0, i).join('.');
-      const pp = strictestDecl(this.nodes.get(parent) ?? []);
-      if (pp?.baseVisibility !== undefined) effVisibility = pp.baseVisibility;
-      if (pp?.baseConfirm !== undefined) effConfirm = pp.baseConfirm;
-      if (pp?.baseRisk !== undefined) effRisk = pp.baseRisk;
+    for (let i = 1; i <= parts.length; i++) {
+      const d = strictestDecl(this.nodes.get(parts.slice(0, i).join('.')) ?? []);
+      if (d) chain.push(d);
     }
-
-    // 本节点的声明与祖先继承值之间，同样取更严的一侧——否则子节点显式写一个 public
-    // 就能打穿从父分组继承来的 restricted（实测三条放宽路径之一）。
-    const ownLevel = capabilityMinLevel({ risk: policy?.baseRisk, visibility: policy?.baseVisibility });
-    const inheritedLevel = capabilityMinLevel({ risk: effRisk, visibility: effVisibility });
-    const useOwn = policy !== undefined && ownLevel >= inheritedLevel;
-    const visibility = (useOwn ? policy.baseVisibility : effVisibility) ?? effVisibility;
-    const confirm = (useOwn ? policy.baseConfirm : effConfirm) ?? effConfirm;
-    const risk = (useOwn ? policy.baseRisk : effRisk) ?? effRisk;
+    const effective = strictestDecl(chain);
+    const visibility = effective?.baseVisibility ?? 'public';
+    const confirm = effective?.baseConfirm;
+    const risk = effective?.baseRisk;
 
     return {
       name,

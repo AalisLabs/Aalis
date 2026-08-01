@@ -21,12 +21,6 @@ import type { EntityNode, EventNode, PersonNode, RelationEdge, RelationGraphSnap
 
 export const RELATION_NAMESPACE = 'user-relation';
 
-/**
- * 全图快照的存活时长。目标只是合并「同一次 prompt 构建里的两次 loadAll」，取几秒即可 ——
- * 取长了会让外部清空（`/clear-all`）后的陈旧窗口变得用户可感知。
- */
-const SNAPSHOT_TTL_MS = 5_000;
-
 const PERSON_PREFIX = 'person:';
 const EVENT_PREFIX = 'event:';
 const ENTITY_PREFIX = 'entity:';
@@ -84,31 +78,7 @@ interface MergeRejectRecord {
 }
 
 export class RelationStore {
-  /**
-   * 全图快照的**短期**缓存。
-   *
-   * 要解决的是实测出来的这件事：`loadAll()` 是 O(全图)（生产库 3090 条 / 41 MB / ≈540 ms），
-   * 而同一次 prompt 构建里被调**两次**（子图遍历一次、全局热点一次）。合并这两次即可。
-   *
-   * ⚠️ **刻意做成带 TTL 而不是「写时失效 + 长驻」**。长驻版要求「本 store 是该 namespace 的
-   * 唯一写入方」，而这个不变量靠人肉维持，实测已失效两次：
-   *   1. `memory:clear` 的处理器曾直接拿 memory 枚举删除（已收敛为 `clearAll()`）；
-   *   2. `/clear-all` 的基座动作调 `MemoryService.clearAll()`，三家后端都是整表 wipe，
-   *      user-relation 的数据一并没了而 store 毫不知情 —— 实测底层 0 条、`loadAll()` 仍返回 1 条。
-   * 还有一条它天然观察不到：memory provider 热切换后，缓存里装的是旧后端的数据。
-   *
-   * 所以不再赌那个不变量。TTL 把「外部通道造成的陈旧」限定在数秒内，而自己的写仍然立刻失效
-   * （见各写方法末尾的 `invalidate()`）——读己之所写永远是准的，这一半是局部可证的。
-   */
-  private snapshot?: Readonly<RelationGraphSnapshot>;
-  private snapshotAt = 0;
-
   constructor(private readonly memory: MemoryService) {}
-
-  /** 丢弃快照。所有写方法结束时调用——保证读己之所写。 */
-  private invalidate(): void {
-    this.snapshot = undefined;
-  }
 
   // ----- Person -----
 
@@ -123,12 +93,10 @@ export class RelationStore {
       personKey(node.platform, node.userId),
       node as unknown as Record<string, unknown>,
     );
-    this.invalidate();
   }
 
   async deletePerson(platform: string, userId: string): Promise<void> {
     await this.memory.deleteMetadata(RELATION_NAMESPACE, personKey(platform, userId));
-    this.invalidate();
   }
 
   // ----- Event -----
@@ -140,12 +108,10 @@ export class RelationStore {
 
   async upsertEvent(node: EventNode): Promise<void> {
     await this.memory.saveMetadata(RELATION_NAMESPACE, eventKey(node.id), node as unknown as Record<string, unknown>);
-    this.invalidate();
   }
 
   async deleteEvent(eventId: string): Promise<void> {
     await this.memory.deleteMetadata(RELATION_NAMESPACE, eventKey(eventId));
-    this.invalidate();
   }
 
   // ----- Entity -----
@@ -157,12 +123,10 @@ export class RelationStore {
 
   async upsertEntity(node: EntityNode): Promise<void> {
     await this.memory.saveMetadata(RELATION_NAMESPACE, entityKey(node.id), node as unknown as Record<string, unknown>);
-    this.invalidate();
   }
 
   async deleteEntity(entityId: string): Promise<void> {
     await this.memory.deleteMetadata(RELATION_NAMESPACE, entityKey(entityId));
-    this.invalidate();
   }
 
   // ----- Edge -----
@@ -174,12 +138,10 @@ export class RelationStore {
 
   async upsertEdge(edge: RelationEdge): Promise<void> {
     await this.memory.saveMetadata(RELATION_NAMESPACE, edgeKey(edge.id), edge as unknown as Record<string, unknown>);
-    this.invalidate();
   }
 
   async deleteEdge(edgeId: string): Promise<void> {
     await this.memory.deleteMetadata(RELATION_NAMESPACE, edgeKey(edgeId));
-    this.invalidate();
   }
 
   // ----- MergeReject 缓存（consolidate LLM 否决合并的持久化去重） -----
@@ -195,12 +157,10 @@ export class RelationStore {
       mergeRejectKey(record.aId, record.bId),
       record as unknown as Record<string, unknown>,
     );
-    this.invalidate();
   }
 
   async deleteMergeReject(aId: string, bId: string): Promise<void> {
     await this.memory.deleteMetadata(RELATION_NAMESPACE, mergeRejectKey(aId, bId));
-    this.invalidate();
   }
 
   /** 当某个节点被合并/删除时，清理所有涉及它的 MergeReject 缓存（旧 id 不再有效）。 */
@@ -212,7 +172,6 @@ export class RelationStore {
       const r = data as unknown as MergeRejectRecord;
       if (r.aId === nodeId || r.bId === nodeId) {
         await this.memory.deleteMetadata(RELATION_NAMESPACE, key);
-        this.invalidate();
         deleted++;
       }
     }
@@ -221,8 +180,7 @@ export class RelationStore {
 
   // ----- 全量加载（webui / 注入用） -----
 
-  async loadAll(): Promise<Readonly<RelationGraphSnapshot>> {
-    if (this.snapshot && Date.now() - this.snapshotAt < SNAPSHOT_TTL_MS) return this.snapshot;
+  async loadAll(): Promise<RelationGraphSnapshot> {
     const entries = await this.memory.listMetadata(RELATION_NAMESPACE);
     const persons: PersonNode[] = [];
     const events: EventNode[] = [];
@@ -237,14 +195,7 @@ export class RelationStore {
       // 其他 key 静默忽略，便于未来加扩展类型而不破坏老版
     }
 
-    // 冻结后再入缓存。缓存意味着同一个对象被发给全部调用点（约 70 处），任何一处就地改
-    // 都会污染后续所有读者 —— 加缓存之前每次 loadAll 都重新解析，各调用点拿到的是各自的
-    // 副本，这条风险是缓存**引入**的。冻结把「不许改」从口头约定变成运行时强制（ESM 恒为
-    // strict mode，赋值直接抛）。实测全仓无任何调用点在改它，故零行为变更。
-    for (const arr of [persons, events, entities, edges]) for (const n of arr) Object.freeze(n);
-    this.snapshot = Object.freeze({ persons, events, entities, edges });
-    this.snapshotAt = Date.now();
-    return this.snapshot;
+    return { persons, events, entities, edges };
   }
 
   /**
@@ -260,7 +211,6 @@ export class RelationStore {
     await this.memory.commitMetadata(
       entries.map(e => ({ op: 'del' as const, namespace: RELATION_NAMESPACE, key: e.key })),
     );
-    this.invalidate();
     return entries.length;
   }
 
