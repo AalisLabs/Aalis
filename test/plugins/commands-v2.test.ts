@@ -333,3 +333,42 @@ describe('同名指令（声明栈）', () => {
     expect(grp?.description).toBe('grp 命令组');
   });
 });
+
+describe('分组节点回收', () => {
+  const reg = () => new CommandRegistry(makeLogger());
+
+  it('插件卸载后不留幽灵分组——`/relation` 不该继续被指令相位吞掉', async () => {
+    // 分组节点由 ensureGroups 自动创建（空栈、无 pluginName），任何按插件名的摘除都匹配
+    // 不到它们。旧实现与声明栈实现都漏，是既有缺陷而非重构引入。
+    const r = reg();
+    r.command('relation.show', '看', { pluginName: 'P' }).action(async () => 's');
+    r.command('relation.cleanup.all', '清', { pluginName: 'P' }).action(async () => 'c');
+    r.unregisterByPlugin('P');
+    expect(
+      r.getAll().map(c => c.name),
+      '两级分组都该被回收',
+    ).toEqual([]);
+    expect(r.hasMatch('relation', []), '不再吞掉 /relation').toBe(false);
+  });
+
+  it('还有子指令时分组节点保留', async () => {
+    const r = reg();
+    r.command('grp.a', 'A', { pluginName: 'P' }).action(async () => 'a');
+    r.command('grp.b', 'B', { pluginName: 'Q' }).action(async () => 'b');
+    r.unregisterByPlugin('P');
+    expect(
+      r
+        .getAll()
+        .map(c => c.name)
+        .sort(),
+    ).toEqual(['grp', 'grp.b']);
+  });
+
+  it('被显式声明过的分组节点，卸载后同样回收（不留空壳）', async () => {
+    const r = reg();
+    r.command('grp', '分组本体', { pluginName: 'P' }).action(async () => 'g');
+    r.command('grp.sub', '子', { pluginName: 'P' }).action(async () => 's');
+    r.unregisterByPlugin('P');
+    expect(r.getAll().map(c => c.name)).toEqual([]);
+  });
+});
