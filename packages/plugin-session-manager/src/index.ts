@@ -441,11 +441,15 @@ class SessionManager implements SessionManagerService {
   }
 
   /**
-   * 持久化到 memory metadata —— **一次原子提交**。
+   * 持久化到 memory metadata —— **一次批量提交**。
    *
    * 旧写法是「逐条 saveMetadata + 全表扫逐个 deleteMetadata」，而 `dirty` 在开头就被置 false：
-   * 任何一条抛错就停在半新半旧，且下一次 debounce 不会重试。改成整批提交后，要么全成、
-   * 要么全不成；失败时把 dirty 复位，下次 markDirty 能重试。
+   * 任何一条抛错就停在半新半旧，且下一次 debounce 不会重试。
+   *
+   * 改成整批提交后，**原子性按后端分档**（见 api-memory 契约）：sqlite/inmemory 真事务，
+   * mongodb 只保证按序执行遇错即停，仍可能停在半新半旧。本场景对此免疫，靠的不是原子性
+   * 而是**幂等 + 可重试**：每次写的是全量快照（不是增量），失败时 dirty 复位，下一次
+   * markDirty 会把完整状态重写一遍并重扫孤儿，前一次的半成品被整体覆盖。
    */
   async persist(): Promise<void> {
     if (!this.dirty) return;

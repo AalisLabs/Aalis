@@ -21,6 +21,12 @@ import type { EntityNode, EventNode, PersonNode, RelationEdge, RelationGraphSnap
 
 export const RELATION_NAMESPACE = 'user-relation';
 
+/**
+ * 全图快照的存活时长。目标只是合并「同一次 prompt 构建里的两次 loadAll」，取几秒即可 ——
+ * 取长了会让外部清空（`/clear-all`）后的陈旧窗口变得用户可感知。
+ */
+const SNAPSHOT_TTL_MS = 5_000;
+
 const PERSON_PREFIX = 'person:';
 const EVENT_PREFIX = 'event:';
 const ENTITY_PREFIX = 'entity:';
@@ -79,22 +85,27 @@ interface MergeRejectRecord {
 
 export class RelationStore {
   /**
-   * 全图快照缓存。
+   * 全图快照的**短期**缓存。
    *
-   * 关系图是**读远多于写**的负载：每条触发消息读一次（prompt 注入），只在提取到新关系时写。
-   * 而 `loadAll()` 是 O(全图) 的——实测生产库 3090 条 / 41 MB / ≈540 ms，且同一次 build 里
-   * 被调两次（子图遍历一次、全局热点一次）。缓存命中后这两次都变成零 I/O。
+   * 要解决的是实测出来的这件事：`loadAll()` 是 O(全图)（生产库 3090 条 / 41 MB / ≈540 ms），
+   * 而同一次 prompt 构建里被调**两次**（子图遍历一次、全局热点一次）。合并这两次即可。
    *
-   * **正确性依赖一个不变量：本 store 是 RELATION_NAMESPACE 的唯一写入方。**
-   * 它成立是因为：插件里只 `new RelationStore` 一次（index.ts），且所有写都走本类的方法。
-   * 曾经有一处例外——`memory:clear` 处理器直接拿 memory 删——已改为经 `clearAll()`。
-   * 将来若再出现绕过本类的写入，这个缓存就会变成脏读，务必同时调 `invalidate()`。
+   * ⚠️ **刻意做成带 TTL 而不是「写时失效 + 长驻」**。长驻版要求「本 store 是该 namespace 的
+   * 唯一写入方」，而这个不变量靠人肉维持，实测已失效两次：
+   *   1. `memory:clear` 的处理器曾直接拿 memory 枚举删除（已收敛为 `clearAll()`）；
+   *   2. `/clear-all` 的基座动作调 `MemoryService.clearAll()`，三家后端都是整表 wipe，
+   *      user-relation 的数据一并没了而 store 毫不知情 —— 实测底层 0 条、`loadAll()` 仍返回 1 条。
+   * 还有一条它天然观察不到：memory provider 热切换后，缓存里装的是旧后端的数据。
+   *
+   * 所以不再赌那个不变量。TTL 把「外部通道造成的陈旧」限定在数秒内，而自己的写仍然立刻失效
+   * （见各写方法末尾的 `invalidate()`）——读己之所写永远是准的，这一半是局部可证的。
    */
   private snapshot?: RelationGraphSnapshot;
+  private snapshotAt = 0;
 
   constructor(private readonly memory: MemoryService) {}
 
-  /** 丢弃快照。所有写方法结束时调用。 */
+  /** 丢弃快照。所有写方法结束时调用——保证读己之所写。 */
   private invalidate(): void {
     this.snapshot = undefined;
   }
@@ -211,7 +222,7 @@ export class RelationStore {
   // ----- 全量加载（webui / 注入用） -----
 
   async loadAll(): Promise<RelationGraphSnapshot> {
-    if (this.snapshot) return this.snapshot;
+    if (this.snapshot && Date.now() - this.snapshotAt < SNAPSHOT_TTL_MS) return this.snapshot;
     const entries = await this.memory.listMetadata(RELATION_NAMESPACE);
     const persons: PersonNode[] = [];
     const events: EventNode[] = [];
@@ -227,6 +238,7 @@ export class RelationStore {
     }
 
     this.snapshot = { persons, events, entities, edges };
+    this.snapshotAt = Date.now();
     return this.snapshot;
   }
 
@@ -234,7 +246,9 @@ export class RelationStore {
    * 清空整个关系图（`memory:clear` 用）。
    *
    * 放在本类里而不是让调用方直接拿 memory 删 —— 那样会绕过快照失效，清空后仍读到旧图。
-   * 批量原子提交：逐条删中途失败会留下删了一半的图，而调用方已经报了成功。
+   *
+   * 批量提交而非逐条删。**原子性按后端分档**（见 api-memory 契约）：sqlite/inmemory 真事务，
+   * mongodb 只保证按序执行遇错即停。不够原子时的兜底是幂等——再清一次即可，图本来就是要清空的。
    */
   async clearAll(): Promise<number> {
     const entries = await this.memory.listMetadata(RELATION_NAMESPACE);
