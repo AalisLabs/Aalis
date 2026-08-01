@@ -2067,3 +2067,93 @@ describe('plugin-user-relation: event duplicate consolidation', () => {
     expect(r.merged).toBe(1);
   });
 });
+
+// ════════════════════════════════════════════════════════════
+// 全图快照缓存
+//
+// loadAll() 是 O(全图)：实测生产库 3090 条 / 41 MB / ≈540 ms，且同一次 prompt 构建里
+// 被调两次（子图遍历 + 全局热点）。缓存把这两次变成一次 I/O。
+//
+// 唯一的真风险是**脏读**——缓存的正确性依赖「store 是该 namespace 的唯一写入方」这个
+// 不变量。下面逐个写方法验失效，并钉住「绕过 store 直写会脏读」这条边界。
+// ════════════════════════════════════════════════════════════
+
+describe('plugin-user-relation: 快照缓存', () => {
+  it('命中缓存：第二次 loadAll 不再打存储', async () => {
+    const { store, mem } = await makeService();
+    await store.upsertPerson({
+      id: 'onebot:u1',
+      platform: 'onebot',
+      userId: 'u1',
+      displayName: 'A',
+      firstSeenAt: 1,
+      lastSeenAt: 1,
+    } as never);
+    let reads = 0;
+    const orig = mem.listMetadata.bind(mem);
+    mem.listMetadata = async (ns: string) => {
+      reads++;
+      return orig(ns);
+    };
+    await store.loadAll();
+    await store.loadAll();
+    await store.loadAll();
+    expect(reads, '三次 loadAll 只该打一次存储').toBe(1);
+  });
+
+  it.each([
+    [
+      'upsertPerson',
+      (s: RelationStore) =>
+        s.upsertPerson({
+          id: 'onebot:u2',
+          platform: 'onebot',
+          userId: 'u2',
+          displayName: 'B',
+          firstSeenAt: 1,
+          lastSeenAt: 1,
+        } as never),
+    ],
+    ['deletePerson', (s: RelationStore) => s.deletePerson('onebot', 'u1')],
+    ['upsertEvent', (s: RelationStore) => s.upsertEvent({ id: 'e1', summary: 's', createdAt: 1 } as never)],
+    ['deleteEvent', (s: RelationStore) => s.deleteEvent('e1')],
+    ['upsertEntity', (s: RelationStore) => s.upsertEntity({ id: 'n1', name: 'x' } as never)],
+    ['deleteEntity', (s: RelationStore) => s.deleteEntity('n1')],
+    ['upsertEdge', (s: RelationStore) => s.upsertEdge({ id: 'g1', fromId: 'a', toId: 'b', kind: 'about' } as never)],
+    ['deleteEdge', (s: RelationStore) => s.deleteEdge('g1')],
+    ['saveMergeReject', (s: RelationStore) => s.saveMergeReject({ aId: 'a', bId: 'b', rejectedAt: 1 } as never)],
+    ['deleteMergeReject', (s: RelationStore) => s.deleteMergeReject('a', 'b')],
+    ['clearAll', (s: RelationStore) => s.clearAll()],
+  ])('%s 之后缓存失效——漏挂任何一个都是脏读', async (_name, write) => {
+    const { store, mem } = await makeService();
+    await store.loadAll(); // 建立缓存
+    await write(store);
+    // 计数窗口只罩住最后这次 loadAll —— 有些写方法（如 clearAll）内部本就要枚举一次，
+    // 把它们算进来会得到与失效无关的数字。
+    let reads = 0;
+    const orig = mem.listMetadata.bind(mem);
+    mem.listMetadata = async (ns: string) => {
+      reads++;
+      return orig(ns);
+    };
+    await store.loadAll();
+    expect(reads, '写之后缓存必须已失效，loadAll 要重新读存储').toBe(1);
+  });
+
+  it('写入的数据在下一次 loadAll 里读得到（端到端，非仅计数）', async () => {
+    const { store } = await makeService();
+    expect((await store.loadAll()).persons).toHaveLength(0);
+    await store.upsertPerson({
+      id: 'onebot:u9',
+      platform: 'onebot',
+      userId: 'u9',
+      displayName: 'New',
+      firstSeenAt: 1,
+      lastSeenAt: 1,
+    } as never);
+    const after = await store.loadAll();
+    expect(after.persons.map(p => p.id)).toEqual(['onebot:u9']);
+    await store.clearAll();
+    expect((await store.loadAll()).persons).toHaveLength(0);
+  });
+});

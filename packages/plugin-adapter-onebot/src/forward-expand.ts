@@ -68,6 +68,14 @@ export interface ForwardExpander<TState> {
 }
 
 const FORWARD_CACHE_TTL_MS = 60 * 60 * 1000;
+/**
+ * 持久化层的保留期。比内存缓存长得多——持久化的意义就是「内存里没了还能查回来」。
+ *
+ * 在此之前持久化那侧**一条清理路径都没有**：每条合并转发都把完整原文永久写进
+ * metadata，只增不减。当时也做不到——`listMetadata` 从不返回时间戳，应用层拿不到
+ * 任何能判断「旧」的依据。契约补上 `updatedAt` 之后这条才成立。
+ */
+const FORWARD_PERSIST_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FORWARD_METADATA_NS = 'onebot:forward';
 
 /**
@@ -143,7 +151,29 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     if (memory) {
       memory
         .saveMetadata(FORWARD_METADATA_NS, id, entry as unknown as Record<string, unknown>)
+        .then(() => sweepPersisted())
         .catch((err: unknown) => ctx.logger.debug(`forward metadata 持久化失败 id=${id}: ${err}`));
+    }
+  }
+
+  /**
+   * 回收过期的持久化条目。**惰性触发**：跟在写入之后跑，不另起定时器
+   * ——没有消息进来就没有增长，也就不需要清理。
+   *
+   * 单次 `commitMetadata` 批量删除，与逐条 delete 的区别是原子性：中途失败不会
+   * 删一半（那会留下「内存缓存已淘汰、持久化删了一半」的错位状态）。
+   */
+  async function sweepPersisted(): Promise<void> {
+    const memory = ctx.getService<MemoryService>('memory');
+    if (!memory) return;
+    try {
+      const cutoff = Date.now() - FORWARD_PERSIST_TTL_MS;
+      const stale = (await memory.listMetadata(FORWARD_METADATA_NS)).filter(e => e.updatedAt < cutoff);
+      if (stale.length === 0) return;
+      await memory.commitMetadata(stale.map(e => ({ op: 'del', namespace: FORWARD_METADATA_NS, key: e.key })));
+      ctx.logger.debug(`forward metadata 已回收 ${stale.length} 条过期原文`);
+    } catch (err) {
+      ctx.logger.debug(`forward metadata 回收失败: ${err}`);
     }
   }
 
