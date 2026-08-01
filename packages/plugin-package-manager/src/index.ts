@@ -62,24 +62,6 @@ export interface UpdateResult {
 
 // ===== 实现 =====
 
-/**
- * 解析 `npm pack --json` 的输出 → 产物 {filename, name}。
- * npm pack --json 输出形如 `[{"filename":"scope-foo-1.2.3.tgz","name":"@scope/foo",...}]`。
- * 部分 npm 版本会在 JSON 前混入 notice，故定位首个 `[` 起截取。纯函数，便于单测。
- */
-export function parsePackInfo(jsonOut: string): { filename: string; name: string } | undefined {
-  try {
-    const start = jsonOut.indexOf('[');
-    if (start < 0) return undefined;
-    const arr = JSON.parse(jsonOut.slice(start)) as Array<{ filename?: string; name?: string }>;
-    const first = arr?.[0];
-    if (!first?.filename || !first?.name) return undefined;
-    return { filename: first.filename, name: first.name };
-  } catch {
-    return undefined;
-  }
-}
-
 /** 短命令（mkdir/tar/rm/test/npm pack）的超时。 */
 const QUICK_TIMEOUT_MS = 120_000;
 /**
