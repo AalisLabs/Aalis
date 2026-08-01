@@ -76,6 +76,11 @@ const FORWARD_CACHE_TTL_MS = 60 * 60 * 1000;
  * 任何能判断「旧」的依据。契约补上 `updatedAt` 之后这条才成立。
  */
 const FORWARD_PERSIST_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * 两次回收之间的最小间隔。保留期是 7 天，每小时扫一次已经比需要的密 168 倍；
+ * 而每次扫的代价是把整表连完整原文读回来（见 sweepPersisted）。
+ */
+const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 const FORWARD_METADATA_NS = 'onebot:forward';
 
 /**
@@ -130,6 +135,8 @@ function createConcurrencyLimited<TArg, TRet>(
 export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>): ForwardExpander<TState> {
   const { ctx, sendAction, forwardCfg } = deps;
   const forwardCache = new Map<string, { entry: ForwardEntry; expiresAt: number }>();
+  /** 上次回收过期持久化条目的时刻。0 = 本次启动还没扫过，首条消息即扫一次。 */
+  let lastSweepAt = 0;
 
   function getCachedForward(id: string): ForwardEntry | undefined {
     const c = forwardCache.get(id);
@@ -157,14 +164,23 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
   }
 
   /**
-   * 回收过期的持久化条目。**惰性触发**：跟在写入之后跑，不另起定时器
-   * ——没有消息进来就没有增长，也就不需要清理。
+   * 回收过期的持久化条目。**惰性触发 + 限频**。
+   *
+   * 惰性：跟在写入之后跑，不另起定时器——没有消息进来就没有增长，也就不需要清理。
+   *
+   * 限频是必须的，不是优化。`listMetadata` 没有投影，一次调用会把整表连**完整原文**
+   * 一起读回来并逐条 JSON.parse；实测库内 2000 条时每次约 5.69 MB / 41 ms。跟在每条
+   * 合并转发之后跑，就是拿一个 O(全表) 的读换删 0 条——保留期是 7 天，绝大多数调用什么
+   * 也删不掉。按 `SWEEP_INTERVAL_MS` 限频后，同样的清理效果只需 1/N 的代价。
    *
    * 单次 `commitMetadata` 批量删除而非逐条 delete。原子性**按后端分档**（见 api-memory
    * 契约）：sqlite/inmemory 真原子，mongodb 只保证按序执行遇错即停。对本场景够用——
-   * 回收是幂等的，这次没删干净下次写入还会再扫一遍。
+   * 回收是幂等的，这次没删干净下次还会再扫。
    */
   async function sweepPersisted(): Promise<void> {
+    const now = Date.now();
+    if (now - lastSweepAt < SWEEP_INTERVAL_MS) return;
+    lastSweepAt = now;
     const memory = ctx.getService<MemoryService>('memory');
     if (!memory) return;
     try {
