@@ -633,7 +633,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   async function loadInstructions(): Promise<InstructionDoc> {
     const memory = ctx.getService<MemoryService>('memory');
     const empty: InstructionDoc = { instructions: [], updatedAt: 0 };
-    if (!memory?.getMetadata) return empty;
+    if (!memory) return empty;
     try {
       const doc = await memory.getMetadata(INSTRUCTIONS_NS, getInstructionsKey());
       if (!doc) return empty;
@@ -647,7 +647,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   async function saveInstructions(doc: InstructionDoc): Promise<void> {
     const memory = ctx.getService<MemoryService>('memory');
-    if (!memory?.saveMetadata) return;
+    if (!memory) return;
     await memory.saveMetadata(INSTRUCTIONS_NS, getInstructionsKey(), {
       instructions: doc.instructions,
       updatedAt: doc.updatedAt,
@@ -789,7 +789,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   /** 读取一个用户的现有档案（不存在返回 undefined）。兼容旧格式 string[]，自动迁移 */
   async function loadProfile(userKey: string): Promise<UserProfile | undefined> {
     const memory = ctx.getService<MemoryService>('memory');
-    if (!memory?.getMetadata) return undefined;
+    if (!memory) return undefined;
     try {
       const doc = await memory.getMetadata(PROFILE_NS, userKey);
       if (!doc) return undefined;
@@ -811,7 +811,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   /** 保存档案（覆盖式） */
   async function saveProfile(userKey: string, profile: UserProfile): Promise<void> {
     const memory = ctx.getService<MemoryService>('memory');
-    if (!memory?.saveMetadata) return;
+    if (!memory) return;
     const payload: Record<string, unknown> = {
       facts: profile.facts,
       relationScore: profile.relationScore ?? 0,
@@ -2046,7 +2046,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
         if (cfg.allowGlobalBackfill && others.size < candidateLimit) {
           const memory = ctx.getService<MemoryService>('memory');
-          if (memory?.listMetadata) {
+          if (memory) {
             try {
               const globalRecent = await memory.listMetadata(PROFILE_NS);
               globalRecent.sort((a, b) => {
@@ -2137,7 +2137,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return;
       }
       const memory = ctx.getService<MemoryService>('memory');
-      if (!memory?.listMetadata || !memory?.deleteMetadata) {
+      if (!memory) {
         await next();
         return;
       }
@@ -2304,7 +2304,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (!userId) return '当前会话未识别用户身份，无法清除档案。';
       const userKey = userKeyOf(argv.session.platform, userId);
       const memory = ctx.getService<MemoryService>('memory');
-      if (!memory?.deleteMetadata || !memory.getMetadata) return '记忆服务不支持档案删除。';
+      if (!memory) return '记忆服务不支持档案删除。';
       try {
         const existed = await memory.getMetadata(PROFILE_NS, userKey);
         if (!existed) return `📭 你当前没有档案数据 (${userKey})`;
@@ -2332,7 +2332,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     .command('profile.self.clear', '【慎用】清空 Aalis 自档案', { risk: 'dangerous' })
     .action(async () => {
       const memory = ctx.getService<MemoryService>('memory');
-      if (!memory?.deleteMetadata) return '记忆服务不支持档案删除。';
+      if (!memory) return '记忆服务不支持档案删除。';
       const selfKey = getSelfKey();
       try {
         await memory.deleteMetadata(PROFILE_NS, selfKey);
@@ -2346,7 +2346,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     .command('profile.clear.nuke', '【危险】清空所有用户档案', { risk: 'dangerous' })
     .action(async () => {
       const memory = ctx.getService<MemoryService>('memory');
-      if (!memory?.listMetadata || !memory?.deleteMetadata) {
+      if (!memory) {
         return '记忆服务不支持档案批量删除。';
       }
       try {
@@ -2434,7 +2434,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     .action(async () => {
       if (!cfg.enableInstructions) return '🚫 第三方行为指令功能未启用。';
       const memory = ctx.getService<MemoryService>('memory');
-      if (!memory?.deleteMetadata) return '记忆服务不支持指令删除。';
+      if (!memory) return '记忆服务不支持指令删除。';
       try {
         const before = (await loadInstructions()).instructions.length;
         await memory.deleteMetadata(INSTRUCTIONS_NS, getInstructionsKey());

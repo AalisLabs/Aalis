@@ -1,4 +1,10 @@
-import type { MemoryService, RecentMessageRecord, RecentMessagesAcrossSessionsQuery } from '@aalis/api-memory';
+import type {
+  MemoryService,
+  MetadataEntry,
+  MetadataOp,
+  RecentMessageRecord,
+  RecentMessagesAcrossSessionsQuery,
+} from '@aalis/api-memory';
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
@@ -236,9 +242,30 @@ class MongoMemoryService implements MemoryService {
     return doc?.data;
   }
 
-  async listMetadata(namespace: string): Promise<Array<{ key: string; data: Record<string, unknown> }>> {
+  async listMetadata(namespace: string): Promise<MetadataEntry[]> {
     const docs = await this.meta.find({ namespace }).toArray();
-    return docs.map(d => ({ key: d.key, data: d.data }));
+    return docs.map(d => ({ key: d.key, data: d.data, updatedAt: d.updatedAt.getTime() }));
+  }
+
+  async commitMetadata(ops: readonly MetadataOp[]): Promise<void> {
+    if (ops.length === 0) return;
+    // bulkWrite 是单次往返；**但它不是事务**——MongoDB 的多文档事务要求副本集，
+    // 而本插件对单机部署也要能用。ordered:true 保证按序执行、遇错即停，
+    // 于是失败点之前的写已生效、之后的未执行，不会出现乱序的半新半旧。
+    await this.meta.bulkWrite(
+      ops.map(o =>
+        o.op === 'put'
+          ? {
+              updateOne: {
+                filter: { namespace: o.namespace, key: o.key },
+                update: { $set: { data: o.data, updatedAt: new Date() } },
+                upsert: true,
+              },
+            }
+          : { deleteOne: { filter: { namespace: o.namespace, key: o.key } } },
+      ),
+      { ordered: true },
+    );
   }
 
   async deleteMetadata(namespace: string, key: string): Promise<void> {

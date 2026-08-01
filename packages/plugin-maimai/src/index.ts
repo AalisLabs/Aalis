@@ -134,7 +134,7 @@ async function getBoundFriendCode(
   const key = bindKey(platform, userId);
   if (!key) return null;
   const memory = ctx.getService<MemoryService>('memory');
-  if (!memory?.getMetadata) return null;
+  if (!memory) return null;
   const data = await memory.getMetadata(BIND_NAMESPACE, key);
   const code = data?.friend_code;
   return typeof code === 'number' ? code : null;
@@ -149,7 +149,7 @@ async function setBoundFriendCode(
   const key = bindKey(platform, userId);
   if (!key) return false;
   const memory = ctx.getService<MemoryService>('memory');
-  if (!memory?.saveMetadata) return false;
+  if (!memory) return false; // 服务缺席（与「方法缺席」不同——后者已随契约必填而消失）
   await memory.saveMetadata(BIND_NAMESPACE, key, { friend_code: friendCode, updated_at: Date.now() });
   return true;
 }
@@ -162,7 +162,7 @@ async function clearBoundFriendCode(
   const key = bindKey(platform, userId);
   if (!key) return false;
   const memory = ctx.getService<MemoryService>('memory');
-  if (!memory?.deleteMetadata) return false;
+  if (!memory) return false;
   await memory.deleteMetadata(BIND_NAMESPACE, key);
   return true;
 }

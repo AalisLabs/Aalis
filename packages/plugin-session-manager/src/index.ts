@@ -4,7 +4,7 @@ import type { ConfigSchema } from '@aalis/schema-config';
 // 使 ctx.middleware('agent:turn:after', ...) 的类型可见。
 import '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { listLLMModels, resolveLLMModel } from '@aalis/api-llm';
-import type { MemoryService } from '@aalis/api-memory';
+import type { MemoryService, MetadataOp } from '@aalis/api-memory';
 import type { PersonaService } from '@aalis/api-persona';
 import type {
   PlatformProfile,
@@ -415,10 +415,6 @@ class SessionManager implements SessionManagerService {
 
   /** 从 memory 元数据加载持久化会话列表 */
   async load(): Promise<void> {
-    if (!this.memory.listMetadata) {
-      this.ctx.logger.debug('memory 服务不支持 metadata，会话列表仅保存在内存中');
-      return;
-    }
     try {
       const entries = await this.memory.listMetadata(METADATA_NAMESPACE);
       for (const { key, data } of entries) {
@@ -444,24 +440,33 @@ class SessionManager implements SessionManagerService {
     }
   }
 
-  /** 持久化到 memory metadata */
+  /**
+   * 持久化到 memory metadata —— **一次原子提交**。
+   *
+   * 旧写法是「逐条 saveMetadata + 全表扫逐个 deleteMetadata」，而 `dirty` 在开头就被置 false：
+   * 任何一条抛错就停在半新半旧，且下一次 debounce 不会重试。改成整批提交后，要么全成、
+   * 要么全不成；失败时把 dirty 复位，下次 markDirty 能重试。
+   */
   async persist(): Promise<void> {
-    if (!this.dirty || !this.memory.saveMetadata) return;
+    if (!this.dirty) return;
     this.dirty = false;
 
-    // 保存每个会话
-    for (const [id, info] of this.sessions) {
-      await this.memory.saveMetadata(METADATA_NAMESPACE, id, info as unknown as Record<string, unknown>);
+    const ops: MetadataOp[] = [...this.sessions].map(([id, info]) => ({
+      op: 'put',
+      namespace: METADATA_NAMESPACE,
+      key: id,
+      data: info as unknown as Record<string, unknown>,
+    }));
+    // 清理孤儿：元数据里有、内存里没有的记录，与上面的写入同批提交。
+    for (const { key } of await this.memory.listMetadata(METADATA_NAMESPACE)) {
+      if (!this.sessions.has(key)) ops.push({ op: 'del', namespace: METADATA_NAMESPACE, key });
     }
 
-    // 清理已删除的会话（元数据中存在但内存中不存在的孤儿记录）
-    if (this.memory.listMetadata) {
-      const existing = await this.memory.listMetadata(METADATA_NAMESPACE);
-      for (const { key } of existing) {
-        if (!this.sessions.has(key) && this.memory.deleteMetadata) {
-          await this.memory.deleteMetadata(METADATA_NAMESPACE, key);
-        }
-      }
+    try {
+      await this.memory.commitMetadata(ops);
+    } catch (err) {
+      this.dirty = true; // 提交失败要能重试，否则这批变更永远落不了盘
+      throw err;
     }
   }
 

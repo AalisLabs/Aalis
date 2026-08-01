@@ -1,4 +1,10 @@
-import type { MemoryService, RecentMessageRecord, RecentMessagesAcrossSessionsQuery } from '@aalis/api-memory';
+import type {
+  MemoryService,
+  MetadataEntry,
+  MetadataOp,
+  RecentMessageRecord,
+  RecentMessagesAcrossSessionsQuery,
+} from '@aalis/api-memory';
 import { createStorageGateway, toStorageUri } from '@aalis/api-storage';
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
@@ -335,10 +341,30 @@ class SQLiteMemoryService implements MemoryService {
     return row ? JSON.parse(row.data) : undefined;
   }
 
-  async listMetadata(namespace: string): Promise<Array<{ key: string; data: Record<string, unknown> }>> {
-    const stmt = this.db.prepare('SELECT key, data FROM metadata WHERE namespace = ?');
-    const rows = stmt.all(namespace) as Array<{ key: string; data: string }>;
-    return rows.map(row => ({ key: row.key, data: JSON.parse(row.data) }));
+  async listMetadata(namespace: string): Promise<MetadataEntry[]> {
+    // updatedAt 存的是 `datetime('now')` 的 UTC 文本（如 `2026-08-01 03:04:05`），无时区后缀。
+    // 直接 Date.parse 会被当本地时间解析而偏移，故补 `Z` 明确按 UTC 读。
+    const stmt = this.db.prepare('SELECT key, data, updatedAt FROM metadata WHERE namespace = ?');
+    const rows = stmt.all(namespace) as Array<{ key: string; data: string; updatedAt: string }>;
+    return rows.map(row => ({
+      key: row.key,
+      data: JSON.parse(row.data),
+      updatedAt: Date.parse(`${row.updatedAt.replace(' ', 'T')}Z`),
+    }));
+  }
+
+  async commitMetadata(ops: readonly MetadataOp[]): Promise<void> {
+    const put = this.db.prepare(`
+      INSERT INTO metadata (namespace, key, data, updatedAt) VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(namespace, key) DO UPDATE SET data = excluded.data, updatedAt = datetime('now')
+    `);
+    const del = this.db.prepare('DELETE FROM metadata WHERE namespace = ? AND key = ?');
+    this.db.transaction(() => {
+      for (const o of ops) {
+        if (o.op === 'put') put.run(o.namespace, o.key, JSON.stringify(o.data));
+        else del.run(o.namespace, o.key);
+      }
+    })();
   }
 
   async deleteMetadata(namespace: string, key: string): Promise<void> {

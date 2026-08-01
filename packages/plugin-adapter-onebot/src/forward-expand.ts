@@ -140,7 +140,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     const now = Date.now();
     for (const [k, v] of forwardCache) if (v.expiresAt < now) forwardCache.delete(k);
     const memory = ctx.getService<MemoryService>('memory');
-    if (memory?.saveMetadata) {
+    if (memory) {
       memory
         .saveMetadata(FORWARD_METADATA_NS, id, entry as unknown as Record<string, unknown>)
         .catch((err: unknown) => ctx.logger.debug(`forward metadata 持久化失败 id=${id}: ${err}`));
@@ -150,7 +150,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
   /** 从持久化层加载（缓存未命中时尝试） */
   async function loadPersistedForward(id: string): Promise<ForwardEntry | undefined> {
     const memory = ctx.getService<MemoryService>('memory');
-    if (!memory?.getMetadata) return undefined;
+    if (!memory) return undefined;
     try {
       const data = await memory.getMetadata(FORWARD_METADATA_NS, id);
       if (data && typeof data === 'object' && typeof (data as { fullText?: unknown }).fullText === 'string') {

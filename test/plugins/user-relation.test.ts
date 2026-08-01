@@ -58,16 +58,6 @@ describe('plugin-user-relation: key encoding', () => {
   });
 });
 
-describe('plugin-user-relation: store error when metadata missing', () => {
-  it('throws when memory service lacks metadata capability', () => {
-    const fakeMemory = {
-      saveMessage: async () => {},
-      getHistory: async () => [],
-    } as unknown as MemoryService;
-    expect(() => new RelationStore(fakeMemory)).toThrowError(/metadata/);
-  });
-});
-
 describe('plugin-user-relation: person CRUD', () => {
   it('observePerson creates then updates lastSeenAt', async () => {
     const { service } = await makeService();
