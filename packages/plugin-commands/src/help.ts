@@ -5,8 +5,12 @@
 //
 // 载体约束（已核实 packages/plugin-webui-client/src/components/markdownConfig.tsx）：
 // - 概览用 markdown 列表（`- ` 前缀），换行由列表语义保证。
-// - 详情的结构化正文整体包进代码块 —— 规避的是 **autolink**：`<name:string>` 这类占位符
-//   会被 CommonMark 解析成链接，渲染出 `<a href="">name:string</a>`。
+// - 详情的结构化正文整体包进代码块。**这不是权宜之计，代码块就是这段内容该在的载体**：
+//   `twoColumn` 用空格按 CJK 显示宽度补齐来对列，只有等宽字体下才对得齐——正文本来就是
+//   定宽的列对齐文本。顺带免疫 **autolink**（`<name:string>` 这类占位符会被 CommonMark
+//   解析成链接，渲染出 `<a href="">name:string</a>`）。
+//   曾有个待办说「要在产出侧转义尖括号、把围栏拆掉」——那能修 autolink 但会把列排歪，
+//   两个需求里只满足一个。别照做。
 //
 // 两条曾写在这里的理由**已被实测推翻**，不要据此施工：
 // - 「无 remark-breaks」：已于 e2e75155 补上，裸换行不再被合并成一段。
