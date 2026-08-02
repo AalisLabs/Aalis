@@ -134,3 +134,31 @@ export function isSameMessage(a: Message, b: Message): boolean {
     (a.content ?? '') === (b.content ?? '')
   );
 }
+
+/**
+ * LLM 解析失败时的可诊断说明（纯函数）。
+ *
+ * `resolveLLMModel` 拿到显式 ref 却匹配不上任何 entry 时静默返回 undefined，调用方只知道
+ * 「没拿到」。而 ref 是**包名 + 模型名**——包一改名（`plugin-deepseek` → `plugin-llm-deepseek`）、
+ * 模型一下线、提供者一禁用，存量 ref 就全指向不存在的 entry，而配置本身看上去毫无问题。
+ * 实际发生过：整机 LLM 全哑，日志只有一句「LLM 服务不可用，请检查配置」，而服务其实
+ * 好好地注册着，坏的只是那条 ref。
+ *
+ * 故按「一个 entry 都没有」与「有 entry 但 ref 对不上」分开报，后者把要找的和现有的都列出来。
+ *
+ * @param available 当前满足所需能力的 entry contextId 列表（`<包名>/<模型名>`）
+ * @param wanted    配置解析出的 ref；未配置则为空
+ */
+export function describeLLMFailure(
+  available: readonly string[],
+  wanted?: { provider?: string; model?: string },
+): string {
+  if (available.length === 0) {
+    return '未找到任何具备 chat 能力的 LLM —— 请确认已安装并启用至少一个 LLM 提供者插件（如 @aalis/plugin-llm-deepseek）。';
+  }
+  if (wanted?.provider && wanted?.model) {
+    return `配置指向的模型不存在：${wanted.provider}/${wanted.model}。当前可用：${available.join('、')}。`;
+  }
+  // ref 为空却仍解析不到：resolveLLMModel 此时取 all[0]，理论上必命中
+  return `没有满足 chat 能力的 LLM entry（已注册 ${available.length} 个但均不可用）。`;
+}
