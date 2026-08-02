@@ -292,6 +292,49 @@ describe('同名指令（声明栈）', () => {
     expect(minLevelOf(r, 'foo')).toBe(0);
   });
 
+  // ⚠️ 上面整组只钉了**门槛等级**这一轴。confirm 是 authority 的独立轴 B，曾经一条断言都没有，
+  // 于是「安全轴整份取最严」上线后把 confirm 随定级败者一起丢掉，1174 个用例无一报警。
+  const confirmOf = (r: CommandRegistry, name: string) => r.getAll().find(x => x.name === name)?.confirm;
+
+  it('**确认闸**：祖先与叶子定级平局时，叶子的 confirm 不能被丢掉', () => {
+    // 真实形态：plugin-user-profile 的 `profile.clear`(restricted) 与
+    // `profile.clear.nuke`(dangerous) 同为等级 2，平局取先入者=祖先，叶子的
+    // confirm='session'（由 risk:'dangerous' 推导）随之消失 → 清空所有用户档案不再二次确认。
+    const r = reg();
+    r.command('profile.clear', '清自己的', { visibility: 'restricted', pluginName: 'A' }).action(async () => 'a');
+    r.command('profile.clear.nuke', '【危险】清所有', { risk: 'dangerous', pluginName: 'A' }).action(async () => 'n');
+    expect(minLevelOf(r, 'profile.clear.nuke'), '门槛仍是 2').toBe(2);
+    expect(confirmOf(r, 'profile.clear.nuke'), 'dangerous 推导出的确认闸必须保留').toBe('session');
+  });
+
+  it('**确认闸**：后注册者放宽不了 —— 压一层高等级声明抹不掉既有 confirm', () => {
+    // {visibility:'restricted'} 等级 2 会压过 {confirm:'always'} 的等级 0；
+    // 若 confirm 跟着定级赢家走，等于任何插件重注册一次就能摘掉别人的确认闸。
+    const r = reg();
+    r.command('wipe', 'A', { confirm: 'always', pluginName: 'A' }).action(async () => 'a');
+    r.command('wipe', 'EVIL', { visibility: 'restricted', pluginName: 'EVIL' }).action(async () => 'x');
+    expect(confirmOf(r, 'wipe'), '既有的 always 不能被抹掉').toBe('always');
+  });
+
+  it('**确认闸**：后注册者仍可收紧（单向），且卸载后退回剩余声明的最严值', () => {
+    const r = reg();
+    r.command('foo', 'A', { pluginName: 'A' }).action(async () => 'a');
+    expect(confirmOf(r, 'foo')).toBeUndefined();
+    r.command('foo', 'B', { confirm: 'session', pluginName: 'B' }).action(async () => 'b');
+    expect(confirmOf(r, 'foo'), '收紧要生效').toBe('session');
+    r.command('foo', 'C', { confirm: 'always', pluginName: 'C' }).action(async () => 'c');
+    expect(confirmOf(r, 'foo'), 'always 比 session 更严').toBe('always');
+    r.unregisterByPlugin('C');
+    expect(confirmOf(r, 'foo'), '最严者卸载后退回次严').toBe('session');
+  });
+
+  it('**确认闸**：祖先声明的 confirm 沿 dot path 向下生效', () => {
+    const r = reg();
+    r.command('sys', '', { confirm: 'always', pluginName: 'A' }).action(async () => 'a');
+    r.command('sys.exec', '', { pluginName: 'A' }).action(async () => 'e');
+    expect(confirmOf(r, 'sys.exec')).toBe('always');
+  });
+
   it('unregister 带插件名只摘一层；不带则摘全部（管理面）', async () => {
     const r = reg();
     r.command('ping', 'A', { pluginName: 'A' }).action(async () => 'a');

@@ -161,7 +161,6 @@ async function loadStack(replies: ProbeReply[]): Promise<Stack> {
   await app.ctx.useModule(memoryInMemoryModule);
   const memory = app.ctx.getService<MemoryService>('memory');
   if (!memory) throw new Error('memory 服务未就绪');
-  if (!memory.saveMetadata) throw new Error('memory 实现缺少 metadata 能力');
 
   // 种子一：另一会话的消息 → memory-history 的 context 贡献料
   await memory.saveMessage(CROSS_SESSION, {

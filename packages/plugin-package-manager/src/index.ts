@@ -152,7 +152,9 @@ const PKG_SPEC_RE = /^(@[a-z0-9][a-z0-9\-_.]*\/)?[a-z0-9][a-z0-9\-_.]*(@[a-z0-9]
  *
  * 放在**服务层**：本服务经 `ctx.provide` 公开，任何插件都能绕过 HTTP 路由直接调用。
  * 这与 `buildUpdateSpecs` 是同一条纪律——路由只做「是不是字符串」的形状检查，安全校验
- * 收在所有调用方的必经之路上，且**只有这一份实现**（两份正则漂移是本仓栽过的坑）。
+ * 收在所有调用方的必经之路上。**argv 面只有这一份实现**（两份正则漂移是本仓栽过的坑）；
+ * URL 路径段另有一份不含版本段的（webui-server 的 depgraph 端点，见那里的注释）——
+ * 两者挡的东西不同，不是同一份的拷贝，别再把它们合并成一条。
  * 纯函数，便于单测。
  */
 export function validatePackageSpec(spec: unknown): string | undefined {
@@ -220,11 +222,16 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
     // 取每个服务当前生效的 provider（`getAllServices` 首个即是），contextId 就是包名
     // （插件以包名做 ctx.id，webui-server 也用包名做前端候选的 fork id）。
     // 服务缺席时该项自然不在列表里——不启用 WebUI 的部署不受影响。
+    // contextId 直接就是包名，**不要**再切分：包名带 scope（`@aalis/plugin-webui-client`）时
+    // `split('/')[0]` 会把它截成 `@aalis`，与下游 `lifeline.includes(pluginName)` 永不相等，
+    // 整道闸对全部 scoped 包恒不触发（实测三个目标全放行）。这三个服务都以 `ctx.fork(包名)`
+    // 或插件自身 ctx 注册，contextId 不含 entryId 后缀；真出现多实例后缀要靠 module 声明
+    // `reusable`，而这三个都没有，故也不需要为此加解析。
     recoveryChannelProviders: () => [
       ...new Set(
         ['webui-client', 'webui-server', 'package-manager'].flatMap(n => {
           const id = ctx.getAllServices(n)[0]?.contextId;
-          return id ? [id.split('/')[0]] : [];
+          return id ? [id] : [];
         }),
       ),
     ],

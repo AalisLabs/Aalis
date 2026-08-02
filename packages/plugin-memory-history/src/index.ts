@@ -18,11 +18,11 @@
  *   - 两者可能内容重叠，header 文本中已说明"仅供参考"。
  */
 
-import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
-import '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import type { MemoryService, RecentMessageRecord } from '@aalis/api-memory';
 import { useToolService } from '@aalis/api-tools';
+import type { Context } from '@aalis/core';
+import type { ConfigSchema } from '@aalis/schema-config';
 
 // ===== 插件元数据 =====
 

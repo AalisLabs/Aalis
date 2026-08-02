@@ -14,15 +14,19 @@ import type { RouteGate } from '../gate.js';
 // 注：npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），故 registry
 // 基址可配置（marketplaceRegistry），默认官方源；国内用户可配代理/支持 search 的镜像。
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
-// 市场收录四类：功能插件 aalis-plugin / 工具库 aalis-util / 契约 aalis-api / 前端 aalis-interface。
+// 市场收录五类：功能插件 aalis-plugin / 工具库 aalis-util / 契约 aalis-api / 数据规范 aalis-schema / 前端 aalis-interface。
 // npm search 的 keywords: 逗号分隔 = 任一命中（核心/工具链不带任何类型词，自然不进市场）。
 const AALIS_KEYWORDS = ['aalis-plugin', 'aalis-util', 'aalis-api', 'aalis-schema', 'aalis-interface'];
 const SEARCH_TIMEOUT_MS = 8000;
 // 依赖图端点专用：这里的 name 被拼进 **registry URL 的路径段**（`${base}/${name}`），
 // 需要挡的是 `..` / 查询串注入，不是 npm 的 argv 面。
 // 装/卸/更新三条路径的包名校验都在 package-manager 服务层（validatePackageSpec /
-// buildUpdateSpecs）——那里是所有调用方的必经之路，路由不再自带第二份。
-const PKG_NAME_RE = /^(@[a-z0-9][a-z0-9\-_.]*\/)?[a-z0-9][a-z0-9\-_.]*(@[a-z0-9][a-z0-9.-]*)?$/i;
+// buildUpdateSpecs）——那里是所有调用方的必经之路，路由不再自带第二份 argv 面校验。
+//
+// 这一份**不含版本段**，与服务层那份（`PKG_SPEC_RE`，允许 `name@version` 因为它要过 npm argv）
+// 刻意不同：packument URL 是 `${base}/${name}`，带上 `@1.2.3` 必然 404，而 404 只会让
+// `if (r.ok)` 静默跳过、前端拿到一张空图而不是 400。收成纯包名后这类输入直接被拒。
+const PKG_NAME_RE = /^(@[a-z0-9][a-z0-9\-_.]*\/)?[a-z0-9][a-z0-9\-_.]*$/i;
 
 interface MarketplacePackage {
   name: string;
