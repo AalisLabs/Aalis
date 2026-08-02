@@ -7,7 +7,7 @@
 //   npm create aalis my-bot -- --tier minimal --no-install
 //
 // 产出一个独立项目目录：package.json（依赖 @aalis/core + @aalis/runtime + 所选插件）、
-// index.mjs（一行 startAalis 启动）、aalis.config.yaml、README、.gitignore、.env.example，
+// index.mjs（一行 startAalis 启动）、aalis.config.yaml、README、.gitignore，
 // 随后自动 npm install。启动：cd my-bot && npm start。
 //
 // 选插件心智：模板（bare/minimal/standard/full）+ 同类适配器组（LLM/平台/记忆/
@@ -133,13 +133,15 @@ const GROUPS: AdapterGroup[] = [
   },
 ];
 
-// 已知插件的配置桩 + 引用的环境变量（写进 aalis.config.yaml 与 .env.example）。
+// 已知插件的配置桩。密钥留空由用户填 —— 直接写进 aalis.config.yaml，该文件不入库
+// （见 renderGitignore）。曾经走 `.env` + `${VAR}` 插值，但它承载的东西与 config 完全重合，
+// 唯一区别只是「哪个文件进 git」；把配置文件本身 ignore 掉之后那一层就纯属多余。
 // 仅覆盖需密钥/地址的常见适配器；其余插件用默认配置启动。
-const KNOWN_CONFIG: Record<string, { config: Record<string, string>; env?: string[] }> = {
-  '@aalis/plugin-llm-deepseek': { config: { apiKey: '${DEEPSEEK_API_KEY}' }, env: ['DEEPSEEK_API_KEY'] },
-  '@aalis/plugin-llm-openai': { config: { apiKey: '${OPENAI_API_KEY}' }, env: ['OPENAI_API_KEY'] },
-  '@aalis/plugin-embedding-openai': { config: { apiKey: '${OPENAI_API_KEY}' }, env: ['OPENAI_API_KEY'] },
-  '@aalis/plugin-websearch-serper': { config: { apiKey: '${SERPER_API_KEY}' }, env: ['SERPER_API_KEY'] },
+const KNOWN_CONFIG: Record<string, { config: Record<string, string> }> = {
+  '@aalis/plugin-llm-deepseek': { config: { apiKey: '' } },
+  '@aalis/plugin-llm-openai': { config: { apiKey: '' } },
+  '@aalis/plugin-embedding-openai': { config: { apiKey: '' } },
+  '@aalis/plugin-websearch-serper': { config: { apiKey: '' } },
 };
 
 /** full 档 = 全目录（base ∪ extra ∪ 所有组成员）。 */
@@ -341,10 +343,9 @@ function renderPackageJson(projectName: string, enabled: string[], versions: Map
       type: 'module',
       description: `${projectName} —— 基于 Aalis 的 AI 助手`,
       // 默认 dev 模式（startAalis 据 NODE_ENV!=='production' 判定）；
-      // --env-file-if-exists=.env：启动时加载 .env 到 process.env，供 aalis.config.yaml 的 ${VAR} 插值（Node>=20.12）。
-      // 生产部署用 `NODE_ENV=production node --env-file-if-exists=.env index.mjs`（Windows 用 set/$env:）。
+      // 生产部署用 `NODE_ENV=production node index.mjs`（Windows 用 set/$env:）。
       scripts: {
-        start: 'node --env-file-if-exists=.env index.mjs',
+        start: 'node index.mjs',
       },
       dependencies: deps,
     },
@@ -384,19 +385,9 @@ function renderConfig(enabled: Set<string>): string {
   return `${lines.join('\n')}\n`;
 }
 
-function renderEnvExample(enabled: Set<string>): string {
-  const vars = new Set<string>();
-  for (const n of enabled) for (const e of KNOWN_CONFIG[n]?.env ?? []) vars.add(e);
-  if (vars.size === 0)
-    return '# 本项目所选插件未引用环境变量。需要时在此添加，并在 aalis.config.yaml 用 ${VAR} 引用。\n';
-  return `# 复制为 .env 并填值（或直接在 aalis.config.yaml 写死）。aalis.config.yaml 用 \${VAR} 引用。\n${[...vars]
-    .sort()
-    .map(v => `${v}=`)
-    .join('\n')}\n`;
-}
-
 function renderGitignore(): string {
-  return `${['node_modules/', 'data/', '*.log', '.env', 'dist/'].join('\n')}\n`;
+  // `aalis.config.yaml` 必须在列：密钥直接写在里面（不再有 `.env` 那一层），入库即泄露。
+  return `${['node_modules/', 'data/', '*.log', 'aalis.config.yaml', 'dist/'].join('\n')}\n`;
 }
 
 function renderReadme(projectName: string, enabled: Set<string>): string {
@@ -415,8 +406,8 @@ npm start
 ## 配置
 
 - 编辑 \`aalis.config.yaml\` 调整插件与参数。
-- 密钥/令牌：填入 \`.env\`（参考 \`.env.example\`），在 \`aalis.config.yaml\` 用 \`\${VAR}\` 引用；${
-    hasWebui ? '或启动后在 WebUI 配置页填写。' : '或直接写入 aalis.config.yaml。'
+- 密钥/令牌：直接填进 \`aalis.config.yaml\`（该文件已在 \`.gitignore\` 里，不会入库）${
+    hasWebui ? '，或启动后在 WebUI 配置页填写。' : '。'
   }
 ${hasWebui ? '- WebUI 管理界面默认 http://127.0.0.1:8080 。\n' : ''}
 ## 装更多插件
@@ -589,7 +580,6 @@ async function main(): Promise<void> {
     writeFileSync(resolve(targetDir, 'package.json'), renderPackageJson(projectName, enabledList, versions), 'utf-8');
     writeFileSync(resolve(targetDir, 'index.mjs'), renderEntry(), 'utf-8');
     writeFileSync(resolve(targetDir, 'aalis.config.yaml'), renderConfig(enabled), 'utf-8');
-    writeFileSync(resolve(targetDir, '.env.example'), renderEnvExample(enabled), 'utf-8');
     writeFileSync(resolve(targetDir, '.gitignore'), renderGitignore(), 'utf-8');
     writeFileSync(resolve(targetDir, 'README.md'), renderReadme(projectName, enabled), 'utf-8');
 
@@ -613,8 +603,8 @@ async function main(): Promise<void> {
     console.log('\n下一步：');
     if (noInstall) console.log(`  cd ${projectName} && npm install`);
     else console.log(`  cd ${projectName}`);
-    const needsEnv = enabledList.some(n => KNOWN_CONFIG[n]?.env?.length);
-    if (needsEnv) console.log('  cp .env.example .env   # 填入 API key');
+    const needsKey = enabledList.some(n => KNOWN_CONFIG[n]);
+    if (needsKey) console.log('  # 在 aalis.config.yaml 里填入 API key（该文件不入库）');
     console.log('  npm start');
     if (tier !== 'full') {
       const hasWebui = enabled.has('@aalis/plugin-webui-server');
