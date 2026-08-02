@@ -11,7 +11,7 @@ async function makeService() {
   const mem = app.ctx.getService<MemoryService>('memory');
   if (!mem) throw new Error('memory service missing');
   const store = new RelationStore(mem);
-  return { app, store, service: new RelationService(store) };
+  return { app, store, mem, service: new RelationService(store) };
 }
 
 const ev = (overrides: Partial<EvidenceRef> = {}): EvidenceRef => ({
@@ -550,5 +550,51 @@ describe('user-relation: findNodeById（节点存在性统一查找，给工具�
   it('空串返回 null', async () => {
     const { service } = await makeService();
     expect(await service.findNodeById('')).toBeNull();
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 读次数：这个维度没人看，回滚优化不会有任何用例转红——而它正是这批性能问题长出来的原因
+// ════════════════════════════════════════════════════════════
+describe('user-relation: 全图读次数', () => {
+  it('addPersonPersonEdge 一次读走完（防孤儿 + 查重复用同一份快照）', async () => {
+    const { app, service, mem } = await makeService();
+    try {
+      await service.observePerson('onebot', 'a', 'A');
+      await service.observePerson('onebot', 'b', 'B');
+      let reads = 0;
+      const orig = mem.listMetadata.bind(mem);
+      mem.listMetadata = async (ns: string) => {
+        if (ns === 'user-relation') reads++;
+        return orig(ns);
+      };
+      await service.addPersonPersonEdge({ fromPersonId: 'onebot:a', toPersonId: 'onebot:b', relationType: 'friend' });
+      // 精确值：防孤儿一次、查重复用同一份。写入本身走单点 upsert，不读全图。
+      // 曾经是 2（findPersonPersonEdge 自己又读一次），纯冗余。
+      expect(reads, `addPersonPersonEdge 的全图读次数=${reads}`).toBe(1);
+    } finally {
+      await app.stop();
+    }
+  });
+
+  it('mergeNodes 不重复级联：mergeAlias 已删成时不再删一次', async () => {
+    const { app, service, mem } = await makeService();
+    try {
+      const e1 = await service.createEntity({ name: '甲', entityKind: 'work' });
+      const e2 = await service.createEntity({ name: '乙', entityKind: 'work' });
+      let reads = 0;
+      const orig = mem.listMetadata.bind(mem);
+      mem.listMetadata = async (ns: string) => {
+        if (ns === 'user-relation') reads++;
+        return orig(ns);
+      };
+      await service.mergeNodes({ kind: 'entity', canonicalId: e1.id, aliasIds: [e2.id], reason: 't' });
+      // mergeAlias 的「真合并」已级联删掉 alias 并如实回报 aliasDeleted；再无条件删一次是
+      // 对已不存在节点的幂等空操作，每个 alias 白付 2 次全图读。
+      expect(reads, `mergeNodes 单 alias 的全图读次数=${reads}；无条件重复级联时为 7`).toBeLessThanOrEqual(5);
+      expect(await service.findNodeById(e2.id), 'alias 必须真的被删掉').toBeNull();
+    } finally {
+      await app.stop();
+    }
   });
 });
