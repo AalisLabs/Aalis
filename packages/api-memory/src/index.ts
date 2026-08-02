@@ -56,6 +56,18 @@ export interface MemoryService {
   saveMessage(sessionId: string, message: Message): Promise<void>;
   getHistory(sessionId: string, limit?: number): Promise<Message[]>;
   clearSession(sessionId: string): Promise<void>;
+  // ── 为什么这些是可选、而 metadata 五方法是必填 ──
+  //
+  // 判据不是「三家后端有没有全实现」（它们对两组都全实现了），而是**消费方缺了它能不能
+  // 降级**：下面这七个的守卫都是有真实降级动作的活分支——`trimHistory` 缺失记 warn 后跳过
+  // 归档、`deleteMessagesByTimestamps` 缺失把 checkpoint 回滚记成一条 error 返回、
+  // `getFullHistory` 缺失回落 `getHistory`、`getRecentMessagesAcrossSessions` 缺失就不注入
+  // 跨会话历史。而 metadata 面没有可用降级：无处存 = 功能坏，守卫只能抛，于是那些守卫全是
+  // 死分支，留着只会教人照抄一套永远进不去的判断。
+  //
+  // 所以「另七个也补齐必填」不是欠债而是**倒退**：那会删掉上述九处真实降级路径，
+  // 并把第三方后端的实现门槛一次抬满。要改这条判据，先说明这九处降级各自该怎么办。
+
   /** 清空所有会话的所有消息和归档 */
   clearAll?(): Promise<void>;
   /** 归档旧消息，仅保留最近 keepRecent 条为活跃状态，返回被归档的条数 */
