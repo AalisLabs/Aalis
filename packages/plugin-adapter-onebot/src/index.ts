@@ -1,3 +1,4 @@
+import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import type { FlowControlService } from '@aalis/api-flow-control';
 import type { MediaService } from '@aalis/api-media';
 import type { MessageArchiveService } from '@aalis/api-message-archive';
@@ -16,6 +17,7 @@ import {
   transcodeAudioBufferToWav,
 } from './attachment-cache.js';
 import { renderAttachmentsAsContentMarkers } from './attachments.js';
+import { createForwardExpander, DEFAULT_FORWARD_SUMMARY_PROMPT, type ForwardConfig } from './forward-expand.js';
 import { extractSentMessageId, SentMessageTracker } from './sent-messages.js';
 import type {
   NormalizedRequestEvent,
@@ -24,8 +26,6 @@ import type {
   OneBotProtocol,
   OneBotRawEvent,
 } from './types.js';
-import '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
-import { createForwardExpander, DEFAULT_FORWARD_SUMMARY_PROMPT, type ForwardConfig } from './forward-expand.js';
 import { segmentsToText } from './types.js';
 import { OneBotV11 } from './v11.js';
 

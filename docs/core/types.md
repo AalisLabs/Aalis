@@ -349,10 +349,12 @@ interface MemoryService {
   getMessagesBySessionRange?(sessionId: string, fromTs: number, toTs: number, roles?: Array<Message['role']>): Promise<Message[]>;
 
   // 结构化元数据
-  saveMetadata?(namespace: string, key: string, data: Record<string, unknown>): Promise<void>;
-  getMetadata?(namespace: string, key: string): Promise<Record<string, unknown> | undefined>;
-  listMetadata?(namespace: string): Promise<Array<{ key: string; data: Record<string, unknown> }>>;
-  deleteMetadata?(namespace: string, key: string): Promise<void>;
+  saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void>;
+  getMetadata(namespace: string, key: string): Promise<Record<string, unknown> | undefined>;
+  listMetadata(namespace: string): Promise<MetadataEntry[]>;
+  deleteMetadata(namespace: string, key: string): Promise<void>;
+  /** 批量提交（put/del 混排）。原子性按后端分档，见契约注释。 */
+  commitMetadata(ops: readonly MetadataOp[]): Promise<void>;
 
   // 消息内容更新
   updateMessageContent?(sessionId: string, oldText: string, newText: string, recentLimit?: number): Promise<number>;

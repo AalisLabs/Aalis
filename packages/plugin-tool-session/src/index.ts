@@ -1,3 +1,4 @@
+import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import type { MemoryService } from '@aalis/api-memory';
 import { resolvePlatformBySession } from '@aalis/api-platform';
 import type { AccessChecker, AccessCheckerDisposer, SessionHistoryService } from '@aalis/api-tool-session';
@@ -6,7 +7,6 @@ import { useToolService } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
-import '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 
 // ===== 跨会话委派：proactive depth 防雪崩 =====
 // 防止 A→B→C→... 无限链；任一会话被 delegate 进入 proactive 链路后，链上下一跳禁止再次 delegate。

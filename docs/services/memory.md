@@ -47,10 +47,11 @@ getRecentMessagesAcrossSessions?(
 ): Promise<RecentMessageRecord[]>;
 
 // 结构化元数据（namespace 隔离，(namespace,key) 唯一）—— 摘要等场景的旁路存储
-saveMetadata?(namespace, key, data): Promise<void>;
-getMetadata?(namespace, key): Promise<Record<string,unknown>|undefined>;
-listMetadata?(namespace): Promise<Array<{key; data}>>;
-deleteMetadata?(namespace, key): Promise<void>;
+saveMetadata(namespace, key, data): Promise<void>;
+getMetadata(namespace, key): Promise<Record<string,unknown>|undefined>;
+listMetadata(namespace): Promise<MetadataEntry[]>;   // MetadataEntry = { key; data; updatedAt }
+deleteMetadata(namespace, key): Promise<void>;
+commitMetadata(ops): Promise<void>;                  // 批量提交，原子性按后端分档
 
 updateMessageContent?(sessionId, oldText, newText, recentLimit?): Promise<number>; // 最近 N 条内文本替换
 deleteMessagesByTimestamps?(sessionId, timestamps): Promise<number>; // 按时间戳批删（回滚整轮）
@@ -105,10 +106,9 @@ DI 按名选出 winner：preference > priority > 注册顺序（见 `docs/concep
 
 - 不实现 `getRecentMessagesAcrossSessions` → 跨会话历史注入功能直接 no-op。
 - 不实现 `trimHistory` / `clearAll` → summary 压缩、全局清除会被跳过。
-- 不实现 `saveMetadata` 系列 → 摘要持久化无处存放。
 - 不实现 `deleteMessagesByTimestamps` → checkpoint 回滚失效。
 
-参考实现（sqlite、inmemory）都完整实现了可选面。如果你想做一个能替换默认 memory 的完整后端，建议对齐它们。消费方调用可选方法时一律带存在性守卫（`if (memory.trimHistory)` / `memory.saveMetadata!`），所以方法缺失不会导致运行时崩溃，只会触发相应功能降级。
+参考实现（sqlite、inmemory）都完整实现了可选面。如果你想做一个能替换默认 memory 的完整后端，建议对齐它们。**metadata 五方法是必填的**（`saveMetadata` / `getMetadata` / `listMetadata` / `deleteMetadata` / `commitMetadata`）——不实现就编译不过，它们没有可用的降级（无处存 = 功能坏），消费方直接调用、不带守卫。其余七个方法可选，消费方一律带存在性守卫（如 `if (memory.trimHistory) … else 记一条 warn`），缺失只触发功能降级、不会崩溃。
 
 ### 双源元数据必须同步
 

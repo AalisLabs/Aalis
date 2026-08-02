@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import type { PersonaService } from '@aalis/api-persona';
 import { createStorageGateway, type StorageService } from '@aalis/api-storage';
 import { useToolService } from '@aalis/api-tools';
@@ -7,7 +8,6 @@ import { useWebuiService } from '@aalis/api-webui';
 import type { Context, PluginModule } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 
 // ════════════════════════════════════════════════════════════
 // plugin-skills — Agent Skills（兼容 Anthropic Agent Skills 标准）
