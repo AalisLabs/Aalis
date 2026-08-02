@@ -1,4 +1,5 @@
 import type { AuthorityService, CapabilityConfirm, ExecutionGuardContext, UserIdentity } from '@aalis/api-authority';
+import { capabilityMinLevel } from '@aalis/api-authority';
 import type { CommandService } from '@aalis/api-commands';
 import { useCommandService } from '@aalis/api-commands';
 import { getPlatformNames } from '@aalis/api-platform';
@@ -243,6 +244,11 @@ export const actions: PluginModule['actions'] = {
       temporaryGrants: auth?.listTemporaryGrants() ?? [],
       commandPrefix,
       // 操作清单：指令 + 工具统一带 pluginName/type/confirm，供前端「操作」视图按插件分组、显示两轴默认。
+      //
+      // `minLevel` 是**派生默认值**（不含 authorityOverrides）——定级这件事收在权限服务这一侧，
+      // 前端只渲染，不得再自算：它曾自带一份 `derivedMinLevel`，在 risk 为非联合成员的真值串时
+      // 与后端分歧（后端落 visibility 兜底=2、前端只要 risk 为真就吐 0），方向是 fail-open 的显示。
+      // overrides 不能由后端算进去：它是前端正在编辑中的状态，同一份 payload 里已整体下发。
       commands: cmdNodes.map(n => ({
         key: n.name,
         name: n.name,
@@ -252,6 +258,7 @@ export const actions: PluginModule['actions'] = {
         visibility: n.visibility ?? 'public',
         confirm: n.confirm,
         risk: n.risk,
+        minLevel: capabilityMinLevel({ risk: n.risk, visibility: n.visibility }),
       })),
       tools: tools.map(t => ({
         key: t.name,
@@ -262,6 +269,7 @@ export const actions: PluginModule['actions'] = {
         visibility: t.visibility ?? 'public',
         confirm: t.confirm,
         risk: t.risk,
+        minLevel: capabilityMinLevel({ risk: t.risk, visibility: t.visibility }),
       })),
     };
   },

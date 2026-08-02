@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   capKey,
-  derivedMinLevel,
   effectiveConfirm,
   effectiveMinLevel,
   groupByPlugin,
@@ -10,7 +9,8 @@ import {
 } from '../../packages/plugin-webui-client/src/pages/authority-page-util.js';
 
 // ════════════════════════════════════════════════════════════
-// 权限页纯逻辑（数字等级）：分组 / 派生默认 / 生效最低等级 / 生效确认（override > risk > visibility 兜底）
+// 权限页纯逻辑（数字等级）：分组 / 生效最低等级 / 生效确认。
+// 定级本身**不在这里**——它收在权限服务侧，前端只做 override 覆盖与渲染。
 // ════════════════════════════════════════════════════════════
 
 const op = (over: Partial<Operation>): Operation => ({
@@ -22,6 +22,7 @@ const op = (over: Partial<Operation>): Operation => ({
   visibility: over.visibility ?? 'public',
   risk: over.risk,
   confirm: over.confirm,
+  minLevel: over.minLevel ?? 0,
 });
 
 describe('capKey / groupByPlugin', () => {
@@ -40,19 +41,21 @@ describe('capKey / groupByPlugin', () => {
   });
 });
 
-describe('derivedMinLevel / effectiveMinLevel（override > risk > visibility 兜底）', () => {
-  it('派生默认：risk safe0/sensitive1/dangerous2', () => {
-    expect(derivedMinLevel(op({ risk: 'safe' }))).toBe(0);
-    expect(derivedMinLevel(op({ risk: 'sensitive' }))).toBe(1);
-    expect(derivedMinLevel(op({ risk: 'dangerous' }))).toBe(2);
+describe('effectiveMinLevel（override > 后端下发的派生默认）', () => {
+  // 定级已收进权限服务：前端不再自算，只做 override 覆盖。
+  // 曾经这里有一份 derivedMinLevel，在 risk 为非联合成员的真值串时与后端分歧
+  // （后端落 visibility 兜底=2、前端只要 risk 为真就吐 0），方向是 fail-open 的显示。
+  it('无 override 时原样用后端下发的 minLevel', () => {
+    expect(effectiveMinLevel(op({ minLevel: 0 }), {})).toBe(0);
+    expect(effectiveMinLevel(op({ minLevel: 2 }), {})).toBe(2);
+    // 后端将来加一档 risk（比如 3），前端不需要跟着改
+    expect(effectiveMinLevel(op({ minLevel: 3 }), {})).toBe(3);
   });
-  it('派生默认：无 risk → visibility 兜底（public0/restricted2）', () => {
-    expect(derivedMinLevel(op({ visibility: 'restricted' }))).toBe(2);
-    expect(derivedMinLevel(op({ visibility: 'public' }))).toBe(0);
-  });
-  it('authorityOverrides 压过派生（任意整数）', () => {
-    expect(effectiveMinLevel(op({ name: 'w', risk: 'safe' }), { 'tool:w': 7 })).toBe(7);
-    expect(effectiveMinLevel(op({ name: 'w', risk: 'safe' }), {})).toBe(0);
+
+  it('override 命中则压过下发值', () => {
+    const o = op({ minLevel: 2 });
+    expect(effectiveMinLevel(o, { [capKey(o)]: 7 })).toBe(7);
+    expect(effectiveMinLevel(o, { 'command:other': 7 }), '不是同一个键就不该命中').toBe(2);
   });
 });
 
