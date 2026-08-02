@@ -45,6 +45,11 @@ export class AuthorityManager implements AuthorityService {
   // ── owner ─────────────────────────────────────────────────
   isOwner(platform: string, userId?: string): boolean {
     if (!userId) return false;
+    // 本机控制台恒为 owner（CLI 的 TUI、WebUI 的已认证会话）。**这是设计不是后门**：
+    // `platform` 由适配器自己填（onebot 适配器填 'onebot'），远端用户无从选择它，所以
+    // 「伪造成 cli:console」这条路对外不存在。能填 'cli' 的只有本进程内的代码，而那已经
+    // 拥有完全能力（服务容器里想调什么调什么），冒充 owner 对它毫无增益。
+    // 反过来说：**任何新增的平台适配器都不得把自己的 platform 起名为 'cli' 或 'webui'**。
     if ((platform === 'webui' || platform === 'cli') && userId === 'console') return true;
     const owners = this.config.get('owners') ?? [];
     return owners.some((o: UserIdentity) => o.platform === platform && o.userId === userId);
@@ -110,12 +115,22 @@ export class AuthorityManager implements AuthorityService {
    * 再看：restrictedPolicy 全局白名单（自动化免确认）或 会话临时授予。
    * 临时授予按 **userId + sessionId + capability** 匹配 —— 群内 sessionId 全群共享时，不跨用户泄漏。
    */
-  private isTemporarilyAllowed(request: AccessRequest): boolean {
+  private isTemporarilyAllowed(request: AccessRequest, ownerOnly: boolean): boolean {
     const denied = (this.config.get('deniedCapabilities') ?? []) as string[];
     // 硬禁绝对：主能力命中 deniedCapabilities 时，任何放行路径都不得绕过
     if (matchAnyCap(denied, request.capability)) return false;
-    // owner 全局白名单（自动化免确认）
-    const policy = this.config.get('restrictedPolicy');
+    // restrictedPolicy 全局白名单。
+    //
+    // `ownerOnly` 由调用方决定，两条路径的语义**不同**，别再合并成一条：
+    // - `requestAccess`（确认轴）传 false：白名单在这里的意思是「免确认」——请求**已经过了
+    //   授权**，只是还要不要弹确认。对已授权用户放宽确认，正是它被设计出来的用途。
+    // - `isPreApproved`（守卫的未授权分支）传 true：那里是**救援闸**，一条不带身份判据的
+    //   白名单等于把「免确认」偷偷变成「免授权」。实测 owner 配 `allow: ['tool:*']`
+    //   （本意只是让自己的自动化不必每次确认）之后，**任何用户都能过**，包括被显式封禁到
+    //   -5 的那个。同一函数下半截的会话授予本就带 `userId` 匹配（注释写着「防群内跨用户
+    //   白嫖」），这里缺的正是同一道判据。
+    const policy =
+      ownerOnly && !this.isOwner(request.platform, request.userId) ? undefined : this.config.get('restrictedPolicy');
     if (policy?.allow && policy.allow.length > 0) {
       if (
         !policy.duration ||
@@ -141,13 +156,15 @@ export class AuthorityManager implements AuthorityService {
    * 守卫拒绝后改调本方法（而非 requestAccess），requestAccess 仅用于「已授权但需意图确认」。
    */
   isPreApproved(request: AccessRequest): boolean {
-    return this.isTemporarilyAllowed(request);
+    // ownerOnly=true：这条是**未授权救援闸**，白名单只认 owner 自己（见上方注释）。
+    return this.isTemporarilyAllowed(request, true);
   }
 
   async requestAccess(request: AccessRequest): Promise<boolean> {
     // confirm='always'：每次都问，不接受白名单/会话记忆（最高危）
     const always = request.confirm === 'always';
-    if (!always && this.isTemporarilyAllowed(request)) {
+    // ownerOnly=false：这条是**确认轴**，请求已过授权，白名单在此的语义就是「免确认」。
+    if (!always && this.isTemporarilyAllowed(request, false)) {
       this.consumeTempGrant(request);
       return true;
     }
