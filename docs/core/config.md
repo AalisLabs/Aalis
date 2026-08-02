@@ -1,6 +1,6 @@
 # ConfigManager — 配置管理
 
-管理 YAML 配置文件的读写、环境变量插值和 Schema 验证。
+管理 YAML 配置文件的读写与 Schema 验证。
 
 **源码**: `packages/core/src/config.ts`
 
@@ -58,15 +58,19 @@ config.save()                              // 持久化到磁盘
 config.reload()                            // 重新从磁盘加载
 ```
 
-## 环境变量插值
+## 密钥怎么放
 
-配置文件中的 `${VAR_NAME}` 会在加载时自动展开为对应环境变量值。保存时自动恢复占位符，避免泄露实际值。
+**直接写进 `aalis.config.yaml`**——脚手架生成的 `.gitignore` 里有这个文件，不会入库。
 
 ```yaml
 plugins:
   "@aalis/plugin-llm-deepseek":
-    apiKey: "${DEEPSEEK_API_KEY}"  # 加载时展开，保存时恢复
+    apiKey: "sk-..."
 ```
+
+> 曾经支持 `${VAR_NAME}` 环境变量插值（配 `.env` 使用），**已删除**。它承载的东西与配置文件
+> 完全重合，唯一区别只是「哪个文件进 git」；把配置文件本身 ignore 掉之后那一层就纯属多余。
+> **现在写 `${VAR}` 会被原样当作字面量字符串**，鉴权会失败。
 
 ## 核心配置字段
 
