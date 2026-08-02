@@ -92,3 +92,43 @@ describe('core 内部分层（基底层 ⇸ 编排层）', () => {
     });
   }
 });
+
+/**
+ * 三个扩展点（ServiceTypeMap / HookContextMap / AalisEvents）的**声明形状**。
+ *
+ * 这条守的是一次实测事故：core 曾在 `types/app.ts` 用**相对** `declare module './services.js'`
+ * 给 ServiceTypeMap 补 `app`/`plugins`。当 `-api` 包的 `declare module '@aalis/core'` 先绑定时
+ * （biome 的 import 排序让 `@aalis/api-*` 恒排在 `@aalis/core` 之前，所以真实代码 100% 命中），
+ * TS 把两者绑成**两个不同的接口**——全部 36 个由 api 包 declare 的服务在 core 的签名视角里
+ * 直接不存在，`ctx.getService('storage')` 悄悄退回 `unknown`。
+ *
+ * 它躲过了 build / test / biome / knip **四道门**：类型退化不产生任何错误，只是不再报错。
+ * 仓内没有类型级测试设施（根 tsconfig 只含 `src`，vitest 未开 typecheck），所以只能在这里
+ * 用源码文本钉住形状——挡住最可能的复发路径：有人再写一个相对 declare。
+ */
+describe('core 扩展点：不得用相对 declare module 自增广', () => {
+  const TYPES_DIR = join(SRC_DIR, 'types');
+
+  it('types/ 下没有任何相对路径的 declare module', () => {
+    const offenders: string[] = [];
+    for (const file of readdirSync(TYPES_DIR).filter(f => f.endsWith('.ts'))) {
+      const source = readFileSync(join(TYPES_DIR, file), 'utf-8');
+      // 只允许 declare module '<裸包名>'；相对路径（'./x' / '../x'）一律禁止
+      for (const m of source.matchAll(/declare\s+module\s+['"](\.[^'"]*)['"]/g)) {
+        offenders.push(`${file} → ${m[1]}`);
+      }
+    }
+    expect(
+      offenders,
+      '相对 declare module 会把扩展点接口绑成第二个 symbol，导致 -api 包的 declaration merging 全部失效（且四道门全绿）',
+    ).toEqual([]);
+  });
+
+  it('ServiceTypeMap 在 core 内保持空接口（领域服务一律由 -api 包注入）', () => {
+    const source = readFileSync(join(TYPES_DIR, 'services.ts'), 'utf-8');
+    expect(
+      /export interface ServiceTypeMap\s*\{\s*\}/.test(source),
+      'core 不得为任何服务名登记条目——见该接口上方注释；app/plugins 也不例外（曾因此打碎整张表）',
+    ).toBe(true);
+  });
+});
