@@ -6,7 +6,6 @@ import {
   RESTRICTED_LEVEL,
   resolveAccess,
   resolveMinLevel,
-  riskToLevel,
   shouldSkipConfirm,
 } from '../../packages/plugin-authority/src/authority-model.js';
 
@@ -15,13 +14,10 @@ import {
 // 安全相关——deny>owner 不变量、封禁(负数)压过 public 必须钉死。
 // ════════════════════════════════════════════════════════════
 
-describe('riskToLevel / resolveMinLevel', () => {
-  it('risk → 门槛等级：safe0 sensitive1 dangerous2', () => {
-    expect(riskToLevel('safe')).toBe(0);
-    expect(riskToLevel('sensitive')).toBe(1);
-    expect(riskToLevel('dangerous')).toBe(2);
-    expect(riskToLevel(undefined)).toBe(DEFAULT_AUTHORITY);
-  });
+describe('resolveMinLevel', () => {
+  // risk → 等级的映射本身在 @aalis/api-authority 的 capabilityMinLevel，由那边的用例覆盖；
+  // 这里只测 authority 自己那一层（overrides 优先级）。曾经这里有个 riskToLevel 转发壳，
+  // 零生产调用点、只靠本用例续命，已删。
   it('minLevel 优先级：override(任意整数) > risk > visibility 兜底', () => {
     expect(resolveMinLevel('tool:x', { risk: 'sensitive' })).toBe(1);
     // override 压过 risk，且可为任意整数（不限 0/1/2）
