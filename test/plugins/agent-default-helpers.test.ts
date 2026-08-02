@@ -160,14 +160,26 @@ describe('describeLLMFailure — 让 LLM 解析失败可诊断', () => {
       provider: '@aalis/plugin-deepseek',
       model: 'deepseek-v4-flash',
     });
-    expect(s, '要说清找的是哪个').toContain('@aalis/plugin-deepseek/deepseek-v4-flash');
-    expect(s, '也要说清现有哪些').toContain('@aalis/plugin-llm-deepseek/deepseek-v4-flash');
+    // 钉**角色位**而不是「两个串都出现过」：把 wanted 与 available 互换后语义完全颠倒
+    // （会把人指向反方向排查），而两条 toContain 对这种互换完全免疫。
+    expect(s, '要找的与现有的必须各就各位').toMatch(
+      /不存在：@aalis\/plugin-deepseek\/deepseek-v4-flash。当前可用：[^。]*@aalis\/plugin-llm-deepseek\/deepseek-v4-flash/,
+    );
   });
 
-  it('未配置 ref 时不谎称「配置指向」', () => {
+  it('未配置 ref 时不谎称「配置指向」，也不谎称「都不可用」', () => {
     const s = describeLLMFailure(['@aalis/plugin-llm-ollama/gemma4:26b-mlx'], undefined);
     expect(s).not.toContain('配置指向');
-    expect(s).toContain('已注册 1 个');
+    // 这条分支在生产其实不可达（ref 不全时 resolveLLMModel 取 all[0]，有 entry 必命中），
+    // 所以它不该说「均不可用」——那与「有 1 个可用 entry」自相矛盾。
+    expect(s).toContain('1 个可用 entry');
+  });
+
+  it('可用列表过长时截断——这条文案会发进聊天，ollama 能有几十个 entry', () => {
+    const many = Array.from({ length: 40 }, (_, i) => `@aalis/plugin-llm-ollama/model-${i}`);
+    const s = describeLLMFailure(many, { provider: 'p', model: 'm' });
+    expect(s.length, `实测未截断时 40 个模型拼出 1874 字符，当前 ${s.length}`).toBeLessThan(300);
+    expect(s).toContain('等 40 个');
   });
 
   it('ref 只有一半（缺 model）时按未配置处理', () => {
