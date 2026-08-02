@@ -59,28 +59,27 @@ describe('FsYamlConfigProvider (集成)', () => {
   let cfg: TempConfigHandle;
   afterEach(() => cfg?.cleanup());
 
-  it('从 YAML 加载并支持环境变量插值', () => {
-    process.env.TEST_KEY_X = 'value-from-env';
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: YAML 变量占位符，重点验证 ConfigManager 插值能力
-    cfg = tempConfig('name: MyApp\nlogLevel: debug\nplugins:\n  myplug:\n    apikey: ${TEST_KEY_X}\n');
+  // 环境变量插值（`${VAR}`）与 save() 的占位符保护已随 `.env` 机制一并删除：
+  // 那一层承载的东西与 aalis.config.yaml 完全重合，唯一区别是「哪个文件进 git」，
+  // 而脚手架现在把 config 本身 gitignore 掉了（密钥直接写在里面），于是它纯属多余。
+  // 顺带记一笔：被删的第二条用例（save() 保留 ${VAR} 占位符）在插值实现删掉之后**仍然
+  // 通过**——因为没有插值，写回的本来就是原字符串。它一直是条假绿。
+
+  it('从 YAML 加载配置树', () => {
+    cfg = tempConfig('name: MyApp\nlogLevel: debug\nplugins:\n  myplug:\n    apikey: literal-secret\n');
     const mgr = new ConfigManager(cfg.config, { provider: cfg.provider, dataDir: cfg.dataDir });
     expect(mgr.get('name')).toBe('MyApp');
-    expect(mgr.getPluginConfig('myplug').apikey).toBe('value-from-env');
-    delete process.env.TEST_KEY_X;
+    expect(mgr.getPluginConfig('myplug').apikey, '值原样加载，不做任何替换').toBe('literal-secret');
   });
 
-  it('save() 写入 YAML 并恢复环境变量占位符', () => {
-    process.env.TEST_KEY_Y = 'secret';
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: YAML 变量占位符，重点验证保存时占位符被保留
-    cfg = tempConfig('name: X\nlogLevel: info\nplugins:\n  myplug:\n    token: ${TEST_KEY_Y}\n');
+  it('save() 原样写回字符串值（密钥直接住在 config 里，不得被改写）', () => {
+    cfg = tempConfig('name: X\nlogLevel: info\nplugins:\n  myplug:\n    token: sk-literal\n');
     const mgr = new ConfigManager(cfg.config, { provider: cfg.provider, dataDir: cfg.dataDir });
     mgr.set('name', 'Y');
     mgr.save();
     const written = readFileSync(cfg.path, 'utf-8');
     expect(written).toMatch(/name: Y/);
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: YAML 变量占位符原型字符串
-    expect(written).toContain('${TEST_KEY_Y}');
-    delete process.env.TEST_KEY_Y;
+    expect(written).toContain('sk-literal');
   });
 });
 
