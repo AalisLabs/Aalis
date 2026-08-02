@@ -127,13 +127,20 @@ describe('硬化：未授权不可自我提权 / deny 绝对 / 群内不跨用�
   });
 
   it('#2 deny 绝对：deniedCapabilities 压过 restrictedPolicy.allow:["*"]', () => {
+    // ⚠️ 本用例原先用的是**非 owner** 身份（userId '1'，mkConfig 未配 owners）却断言白名单
+    // 放行 —— 那正是「白名单不带身份判据」这个漏洞被写成了预期行为。现在白名单限 owner，
+    // 故这里显式给 owner 身份，才测得到「硬禁压过白名单」这个本意。
     const m = new AuthorityManager(
-      mkConfig({ deniedCapabilities: ['tool:shell'], restrictedPolicy: { allow: ['*'] } }),
+      mkConfig({
+        owners: [{ platform: 'onebot', userId: '1' }],
+        deniedCapabilities: ['tool:shell'],
+        restrictedPolicy: { allow: ['*'] },
+      }),
       mkLogger(),
       storage,
     );
     expect(m.isPreApproved(req({ capability: 'tool:shell' }))).toBe(false); // 硬禁压过白名单
-    expect(m.isPreApproved(req({ capability: 'tool:weather' }))).toBe(true); // 未禁 + 白名单 → 放行
+    expect(m.isPreApproved(req({ capability: 'tool:weather' }))).toBe(true); // 未禁 + owner 白名单 → 放行
   });
 
   it('#3 群内临时授予绑 userId：A 批准不让同会话 B 白嫖', async () => {
@@ -184,5 +191,61 @@ describe('持久化（v5 save/load 往返；非 v5 净化丢弃）', () => {
     const m = new AuthorityManager(mkConfig(), mkLogger(), legacy);
     await m.init();
     expect(m.listUsers()).toEqual([]);
+  });
+});
+
+describe('restrictedPolicy 白名单：只救 owner 自己', () => {
+  // 本方法被守卫的「未授权」分支当作救援闸（plugin-authority 的 guard 里
+  // `return authority.isPreApproved(accessBase) ? null : denied`），所以一条不带身份判据的
+  // 白名单等于把「免确认」偷偷变成「免授权」。实测 owner 配 allow:['tool:*'] 之后，
+  // 任何用户（含被封禁到 -5 的）都能过。同一函数下半截的会话授予本就带 userId 匹配。
+  const mk = (extra: Record<string, unknown> = {}) => {
+    const data: Record<string, unknown> = {
+      owners: [{ platform: 'onebot', userId: 'boss' }],
+      restrictedPolicy: { allow: ['tool:*'] },
+      ...extra,
+    };
+    const config = {
+      get: (k: string) => data[k],
+      set: (k: string, v: unknown) => {
+        data[k] = v;
+      },
+    } as unknown as ConfigManager;
+    return new AuthorityManager(config, mkLogger(), {
+      writeFile: async () => undefined,
+    } as unknown as StorageService);
+  };
+  const req = (platform: string, userId: string) => ({
+    name: 'shell.exec',
+    type: 'tool' as const,
+    capability: 'tool:shell.exec',
+    sessionId: 's',
+    platform,
+    userId,
+  });
+
+  it('owner 本人仍被白名单放行（自动化免确认不受影响）', () => {
+    expect(mk().isPreApproved(req('onebot', 'boss'))).toBe(true);
+  });
+
+  it('普通用户不被白名单放行', () => {
+    expect(mk().isPreApproved(req('onebot', 'someone'))).toBe(false);
+  });
+
+  it('**被封禁的用户**尤其不得被白名单救回', () => {
+    const m = mk();
+    m.setUserLevel({ platform: 'onebot', userId: 'banned' }, -5);
+    expect(
+      m.authorize(
+        { platform: 'onebot', userId: 'banned' },
+        { capability: 'tool:shell.exec', visibility: 'restricted' },
+      ),
+    ).not.toBeNull();
+    expect(m.isPreApproved(req('onebot', 'banned')), '白名单不带身份判据时这里会是 true').toBe(false);
+  });
+
+  it('硬禁压过白名单（含 owner）', () => {
+    const m = mk({ deniedCapabilities: ['tool:shell.*'] });
+    expect(m.isPreApproved(req('onebot', 'boss'))).toBe(false);
   });
 });
