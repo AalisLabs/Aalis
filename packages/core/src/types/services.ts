@@ -39,10 +39,23 @@
 /**
  * 全局服务类型注册表
  *
- * **不要在 core 内部为任何服务名登记条目**——所有内置服务都由其 api 包就近
- * 通过 declaration merging 注入。这样保持 core 与具体服务实现解耦。
+ * **不要在 core 内部登记领域服务**——storage / memory / llm 之类一律由其 api 包就近通过
+ * `declare module '@aalis/core'` 注入，这样 core 与具体服务实现解耦。core 自己 provide 的
+ * `app` / `plugins` 是例外，它们就是内核原语（见 `app.ts` 的 `ctx.provide('app', …)`），
+ * 写在这里而不是别处。
+ *
+ * ⚠️ **增广只能用裸包名说明符 `'@aalis/core'`，绝不能用相对路径。** 曾经 `types/app.ts` 里
+ * 有一段 `declare module './services.js'` 给这两个键做增广，实测把接口绑成了**第二个
+ * symbol**：当 `-api` 包的 `declare module '@aalis/core'` 先绑定时（biome 的 import 排序让
+ * `@aalis/api-*` 恒排在 `@aalis/core` 之前，真实代码 100% 命中），36 个 api 服务在 core 的
+ * 签名视角里直接不存在，`getService('storage')` 悄悄落到 `<T = unknown>` 兜底重载。
+ * 而这一条 build / test / biome / knip 四道门全都看不见——类型退化不产生错误、只是不再报错。
+ * 所以键写在接口体里没问题，**用相对说明符增广才是病**；两者别混为一谈。
  */
-export interface ServiceTypeMap {}
+export interface ServiceTypeMap {
+  app: import('./app.js').AppService;
+  plugins: import('./app.js').PluginManagerService;
+}
 
 /**
  * 根据服务名解析其实例类型。
