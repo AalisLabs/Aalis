@@ -1065,6 +1065,16 @@ export class RelationService {
   }
 
   /**
+   * 清空整个关系图，返回删除的记录条数（节点 + 边 + 合并否决缓存）。
+   *
+   * 走 store 的批量原子提交，全程只读一次全图。逐节点级联删是等价的但代价差三个量级：
+   * 每次级联付 2 次全图读，实测生产图 1066 个节点即 2132 次 × 中位 177ms ≈ 6 分钟。
+   */
+  clearAll(): Promise<number> {
+    return this.store.clearAll();
+  }
+
+  /**
    * 廉价预判：图中任一类节点 / 边的当前数量是否已达到 `evictByQuota` 的滞回触发阈值
    * （`count >= ceil(cap · (1 + hysteresisPct))`），即下一次 `evictByQuota` **真的会删东西**。
    *
@@ -4411,12 +4421,16 @@ export class RelationService {
       totalEdgesMerged += r.edgesMerged;
       totalEdgesDeleted += r.edgesDeleted;
 
-      // 物理删除 alias 节点（级联清掉残留的 alias 标记边自身）
-      if (opts.kind === 'event') {
-        const { deletedEdges } = await this.store.deleteEventCascade(aliasId);
-        totalEdgesDeleted += deletedEdges;
-      } else {
-        const { deletedEdges } = await this.store.deleteEntityCascade(aliasId);
+      // 物理删除 alias 节点 —— **仅在 mergeAlias 没删成时兜底**。
+      // mergeAlias 的「真合并」步骤本身就会级联删掉 alias 节点（它整段包在 try/catch 里，
+      // 成功与否由 aliasDeleted 如实回报）。无条件再删一次是常态下的纯浪费：每个 alias 多付
+      // 2 次全图读（实测单次 listMetadata 中位 177ms，合并 5 个 alias 白烧约 1.8s），
+      // 而对一个已不存在的节点，cascade 是幂等空操作、连边都清不到。
+      if (!r.aliasDeleted) {
+        const { deletedEdges } =
+          opts.kind === 'event'
+            ? await this.store.deleteEventCascade(aliasId)
+            : await this.store.deleteEntityCascade(aliasId);
         totalEdgesDeleted += deletedEdges;
       }
       mergedAliasIds.push(aliasId);
