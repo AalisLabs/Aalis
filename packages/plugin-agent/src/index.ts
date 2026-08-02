@@ -16,6 +16,7 @@ import { CONTROL_KINDS, getMessageName, getSenderLabel, WellKnownKinds } from '@
 import { normalizeAssistantContent, stripLeakedSpecialTokens, truncateChars } from '@aalis/util-text-normalize';
 import {
   buildFocusGuidance,
+  describeLLMFailure,
   estimateMsgTokens,
   estimateTextTokens,
   estimateTokens,
@@ -117,6 +118,14 @@ class DefaultAgent implements AgentService {
 
     // 解析为具体 LLMModel entry（要求至少 chat 能力；ref 为空时走 ServicePreference / 优先级）
     return resolveLLMModel(this.ctx, ref, ['chat']);
+  }
+
+  /** 解析失败时说清**为什么**（取数在此，措辞在 helpers 的 describeLLMFailure，纯函数便于单测）。 */
+  private explainLLMFailure(platform?: string, sessionId?: string): string {
+    const available = listLLMModels(this.ctx, { caps: ['chat'] }).map(e => e.contextId);
+    const sm = this.ctx.getService<SessionManagerService>('session-manager');
+    const wanted = sm && sessionId ? sm.resolveConfig(sessionId, platform).llm : undefined;
+    return describeLLMFailure(available, wanted);
   }
 
   /** 生成 lane key：同 session + 同 source 共用一个 lane */ private laneKey(
@@ -429,9 +438,10 @@ class DefaultAgent implements AgentService {
 
       const resolved = await this.resolveLLM(incoming.platform, incoming.sessionId);
       if (!resolved) {
-        this.logger.warn('LLM 服务不可用，无法处理消息');
+        const why = this.explainLLMFailure(incoming.platform, incoming.sessionId);
+        this.logger.warn(`LLM 解析失败，无法处理消息：${why}`);
         await this.dispatchOutbound({
-          content: '[系统] LLM 服务不可用，请检查配置。',
+          content: `[系统] ${why}`,
           sessionId: incoming.sessionId,
           platform: incoming.platform,
           source: 'system',
