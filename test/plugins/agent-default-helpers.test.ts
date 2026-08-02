@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Message } from '../../packages/core/src/index.js';
 import {
   buildFocusGuidance,
+  describeLLMFailure,
   estimateMsgTokens,
   estimateTextTokens,
   estimateTokens,
@@ -141,5 +142,36 @@ describe('buildFocusGuidance', () => {
 
   it('sessionType 缺失 → 返回 null', () => {
     expect(buildFocusGuidance({ ...base, triggerType: 'immediate' })).toBeNull();
+  });
+});
+
+describe('describeLLMFailure — 让 LLM 解析失败可诊断', () => {
+  // 这条曾经是一次真实事故：包改名（plugin-deepseek → plugin-llm-deepseek）后，配置里的
+  // llm-ref 全部指向不存在的 entry，整机 LLM 静默全哑，而日志只说「LLM 服务不可用，请检查配置」
+  // ——服务其实注册得好好的，坏的只是那条 ref。
+  it('一个 entry 都没有 → 提示去装/启用提供者插件', () => {
+    const s = describeLLMFailure([]);
+    expect(s).toContain('未找到任何具备 chat 能力的 LLM');
+    expect(s).not.toContain('配置指向');
+  });
+
+  it('有 entry 但配置 ref 对不上 → 同时报出要找的与现有的', () => {
+    const s = describeLLMFailure(['@aalis/plugin-llm-deepseek/deepseek-v4-flash'], {
+      provider: '@aalis/plugin-deepseek',
+      model: 'deepseek-v4-flash',
+    });
+    expect(s, '要说清找的是哪个').toContain('@aalis/plugin-deepseek/deepseek-v4-flash');
+    expect(s, '也要说清现有哪些').toContain('@aalis/plugin-llm-deepseek/deepseek-v4-flash');
+  });
+
+  it('未配置 ref 时不谎称「配置指向」', () => {
+    const s = describeLLMFailure(['@aalis/plugin-llm-ollama/gemma4:26b-mlx'], undefined);
+    expect(s).not.toContain('配置指向');
+    expect(s).toContain('已注册 1 个');
+  });
+
+  it('ref 只有一半（缺 model）时按未配置处理', () => {
+    const s = describeLLMFailure(['x/y'], { provider: '@aalis/plugin-llm-deepseek' });
+    expect(s).not.toContain('配置指向');
   });
 });
