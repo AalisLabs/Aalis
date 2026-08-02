@@ -72,10 +72,3 @@ export interface PluginManagerService {
    */
   idle(): Promise<void>;
 }
-
-declare module './services.js' {
-  interface ServiceTypeMap {
-    app: AppService;
-    plugins: PluginManagerService;
-  }
-}
