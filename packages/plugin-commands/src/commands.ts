@@ -478,7 +478,9 @@ export class CommandRegistry implements CommandService {
       visibility,
       confirm,
       risk,
-      aliases: [...(top?.aliases ?? [])],
+      // 别名取**全栈**而非栈顶：rebindAlias 是按「剩余全部声明」重绑的（见 unregister），
+      // 底层声明的别名照样解析得到；只取栈顶会让它能用却不出现在 /help 里，注册表自相矛盾。
+      aliases: [...new Set(stack.flatMap(d => d.aliases))],
       positionalArgs: [...(top?.positionalArgs ?? [])],
       options: [...(top?.options ?? [])],
       usage: top?.usage,
