@@ -960,7 +960,14 @@ export class RelationService {
       throw new Error(`addPersonPersonEdge: toPersonId ${input.toPersonId} 不存在为 PersonNode（防止孤儿边）`);
     }
 
-    const existing = await this.findPersonPersonEdge(input.fromPersonId, input.toPersonId, normalizedType, directed);
+    // 复用上面「防孤儿」那次读：两者之间只有纯比较，零写操作。
+    const existing = await this.findPersonPersonEdge(
+      input.fromPersonId,
+      input.toPersonId,
+      normalizedType,
+      directed,
+      snapshot,
+    );
     const now = Date.now();
     // ── familiar 占位自动废除 ──
     // 'familiar' 是行为观察兜底标签（"两人常一起说话但不知道具体关系"）；
@@ -1033,13 +1040,19 @@ export class RelationService {
    * 查找等价的人-人边。对于对称关系 (directed=false)，(A→B, friend) 与 (B→A, friend)
    * 视为同一条边；只看其中一种方向即可命中。
    */
+  /**
+   * @param snap 调用方已有的全图快照。给了就复用，不再自己读一次——`addPersonPersonEdge`
+   *   为「防孤儿」本就刚读过一遍，同一方法里再读一次是纯浪费（生产图上单次 listMetadata
+   *   中位 177ms）。**只在调用方能保证两次读之间无写操作时传**。
+   */
   async findPersonPersonEdge(
     fromPersonId: string,
     toPersonId: string,
     relationType: string,
     directed: boolean,
+    snap?: RelationGraphSnapshot,
   ): Promise<PersonPersonEdge | undefined> {
-    const snapshot = await this.store.loadAll();
+    const snapshot = snap ?? (await this.store.loadAll());
     return snapshot.edges.find((e): e is PersonPersonEdge => {
       if (e.kind !== 'person-person') return false;
       if (e.relationType !== relationType) return false;
