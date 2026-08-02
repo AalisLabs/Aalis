@@ -6,7 +6,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import type { AgentService } from '@aalis/api-agent';
 import type { AuthorityService } from '@aalis/api-authority';
 import type { CommandService } from '@aalis/api-commands';
@@ -296,6 +296,22 @@ async function readLogFileBefore(storage: StorageService, beforeSeq: number, lim
 
 // ===== 插件入口 =====
 
+/**
+ * 本地包扫描目录：项目根的 `packages/` 与 `node_modules/@aalis`。
+ *
+ * 两者都以 **cwd（项目根）** 为基准——与 `projectRoot()`、node_modules 加载器的默认值同源。
+ *
+ * 曾经第一条写成 `resolve(dirname(import.meta.url), '../../')`，即按**本文件自己在哪**推算。
+ * 那是个位置假设：只有当 webui-server 恰好躺在 `<根>/packages/<包>/dist` 时才对。装进用户
+ * 项目后它解析成 `<proj>/node_modules/@aalis`，与第二条完全重合——扫描退化成同一目录扫两遍，
+ * 而**用户自己的 `packages/` 从来不在范围内**。后果是「私有插件放 packages/、第三方插件从
+ * npm 装」这种混合形态下本地插件在市场里不可见（pnpm 把工作区包软链进 node_modules，
+ * 所以只有恰好带 @aalis scope 的还能被扫到）。
+ *
+ * 本仓的解析结果与改前相同（cwd 即仓库根），另两种形态被修正。
+ */
+const LOCAL_SCAN_DIRS = [resolve(process.cwd(), 'packages'), resolve(process.cwd(), 'node_modules/@aalis')];
+
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const uiConfig: WebUIConfig = {
     port: (config.port as number) ?? 3000,
@@ -540,13 +556,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     join: (...parts: string[]) => resolve(...parts),
   };
   registerPluginRoutes(expressApp, ctx, getApp, getPluginMgr, auth.identify, gate);
-  // 市场「已装」判定 + 依赖图都吃这一份本地扫描（pnpm 工作区下 require.resolve 从仓库根解析不到工作区包）：
-  // 与 discoverClients 同套 scanDirs（monorepo packages/ 同级 + node_modules/@aalis），每请求懒扫（量小）。
-  // 返回 name→依赖名[]：keys=已装包名，values=依赖图边。
-  const localScanDirs = [
-    resolve(dirname(fileURLToPath(import.meta.url)), '../../'),
-    resolve(process.cwd(), 'node_modules/@aalis'),
-  ];
+  // 市场「已装」判定、依赖图、前端候选发现共用这一份扫描目录（pnpm 工作区下 require.resolve
+  // 从仓库根解析不到工作区包，只能扫盘）。每请求懒扫，量小。
+  const localScanDirs = LOCAL_SCAN_DIRS;
   registerMarketplaceRoutes(
     expressApp,
     ctx,
@@ -1476,7 +1488,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
    * @returns 本次新发现的候选数
    */
   function discoverAndProvideClients(): number {
-    const here = dirname(fileURLToPath(import.meta.url));
     const projectRequire = createRequire(pathToFileURL(resolve(process.cwd(), 'package.json')));
     const env: DiscoveryEnv = {
       ...fsScanEnv,
@@ -1489,8 +1500,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         }
       },
     };
-    // here = <pkg>/dist；其上两级即 monorepo 的 packages 目录。再加项目 node_modules/@aalis 作用域。
-    const scanDirs = [resolve(here, '../../'), resolve(process.cwd(), 'node_modules/@aalis')];
+    const scanDirs = LOCAL_SCAN_DIRS;
     let depIds: string[] = [];
     try {
       // 每次重读：装完新包后根 dependencies 已变，缓存会让新前端发现不到。
