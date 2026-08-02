@@ -157,8 +157,16 @@ export function describeLLMFailure(
     return '未找到任何具备 chat 能力的 LLM —— 请确认已安装并启用至少一个 LLM 提供者插件（如 @aalis/plugin-llm-deepseek）。';
   }
   if (wanted?.provider && wanted?.model) {
-    return `配置指向的模型不存在：${wanted.provider}/${wanted.model}。当前可用：${available.join('、')}。`;
+    // 只列前 LIST_MAX 个：这条文案会**发进聊天**，而 ollama 是自动发现本机全部模型逐个注册
+    // entry 的——实测 40 个模型拼出 1874 字符，且每条消息都发一次。截断后给出总数，
+    // 想看全的去 `/model`。
+    const LIST_MAX = 5;
+    const shown = available.slice(0, LIST_MAX).join('、');
+    const more = available.length > LIST_MAX ? `…等 ${available.length} 个（用 /model 查看全部）` : '';
+    return `配置指向的模型不存在：${wanted.provider}/${wanted.model}。当前可用：${shown}${more}。`;
   }
-  // ref 为空却仍解析不到：resolveLLMModel 此时取 all[0]，理论上必命中
-  return `没有满足 chat 能力的 LLM entry（已注册 ${available.length} 个但均不可用）。`;
+  // ref 不全时 resolveLLM 传的是 undefined，resolveLLMModel 此时取 all[0]——只要有 entry
+  // 就必命中。所以走到这里意味着取数与解析看到的不是同一份快照（例如两次调用之间服务被
+  // 注销），**不是**「没有可用 entry」。文案要说这个，别谎称都不可用。
+  return `LLM 解析失败：能力过滤后有 ${available.length} 个可用 entry，但解析时一个都没取到（服务可能正在装卸中，稍后重试）。`;
 }

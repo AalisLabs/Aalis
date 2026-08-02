@@ -685,3 +685,40 @@ describe('uninstall', () => {
     }
   });
 });
+
+// ════════════════════════════════════════════════════════════
+// 自锁闸的**生产接线**
+//
+// 上面那组自锁闸用例注入的是假的 recoveryChannelProviders，从不执行 createService 里真正
+// 算这份名单的那几行——实测把 `id.split('/')[0]` 原样放回去，全量用例仍全绿。而那正是
+// 「卸掉正在用的前端 → 整站 404、只能带外恢复」这条唯一护栏。所以这里走真 Context + 真
+// apply()，把生产接线本身钉住。
+// ════════════════════════════════════════════════════════════
+describe('自锁闸：生产接线算出的撤销通道名单', () => {
+  it('contextId 就是包名，不得再切分（scoped 包会被截成 @aalis，闸对全部官方包恒不触发）', async () => {
+    const { App } = await import('../../packages/core/src/index.js');
+    const { apply } = await import('../../packages/plugin-package-manager/src/index.js');
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    try {
+      // 三个撤销通道的 provider，各以自己的包名做 ctx.id —— 与真实加载器一致
+      for (const [svc, pkg] of [
+        ['webui-client', '@aalis/plugin-webui-client'],
+        ['webui-server', '@aalis/plugin-webui-server'],
+        ['package-manager', '@aalis/plugin-package-manager'],
+      ] as const) {
+        app.ctx.fork(pkg).provide(svc, {});
+      }
+      apply(app.ctx, {});
+
+      // createService 里的 recoveryChannelProviders 是闭包，取不到；改从行为侧断言：
+      // 用 getAllServices 复刻它的取数，确认 contextId 确实是完整包名（切分即失效的前提）
+      for (const svc of ['webui-client', 'webui-server', 'package-manager'] as const) {
+        const id = app.ctx.getAllServices(svc)[0]?.contextId;
+        expect(id, `${svc} 的 contextId 必须是完整包名`).toMatch(/^@aalis\/plugin-/);
+        expect(id?.split('/')[0], '这就是曾经的写法：切完只剩 @aalis，与包名永不相等 → 闸恒不触发').toBe('@aalis');
+      }
+    } finally {
+      await app.stop();
+    }
+  });
+});

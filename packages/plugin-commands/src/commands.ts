@@ -478,9 +478,13 @@ export class CommandRegistry implements CommandService {
       visibility,
       confirm,
       risk,
-      // 别名取**全栈**而非栈顶：rebindAlias 是按「剩余全部声明」重绑的（见 unregister），
-      // 底层声明的别名照样解析得到；只取栈顶会让它能用却不出现在 /help 里，注册表自相矛盾。
-      aliases: [...new Set(stack.flatMap(d => d.aliases))],
+      // 别名 = 全栈声明过的 ∩ **当前真的解析回本指令的**。
+      //
+      // 两个方向都要：只取栈顶会漏掉底层声明但仍然可用的别名（rebindAlias 是按「剩余全部
+      // 声明」重绑的，见 unregister）；而只取全栈又会印出已被别的指令抢走的那些——
+      // `alias()` 允许后注册者抢占已有别名（只 warn），被抢者的 `Decl.aliases` 里仍留着它，
+      // 于是 /help 会展示一个敲下去跑到别处的别名。按别名表回查即两头都真。
+      aliases: [...new Set(stack.flatMap(d => d.aliases))].filter(a => this.aliases.get(a) === name),
       positionalArgs: [...(top?.positionalArgs ?? [])],
       options: [...(top?.options ?? [])],
       usage: top?.usage,
