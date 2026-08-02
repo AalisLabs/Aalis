@@ -157,6 +157,47 @@ describe('plugin-user-relation: extractor', () => {
     expect(ppEdges[0].kind === 'person-person' && ppEdges[0].relationType).toBe('friend');
   });
 
+  // ⚠️ 这条守的是「读次数」这个没人看的维度。热路径上每次 listMetadata 读回整个
+  // user-relation 命名空间并全量反序列化——生产图实测中位 177ms（3352 文档 / 38.7MB），
+  // 而 triggerEveryNMessages=1 时它每条消息都跑。此前 pickCandidates 与 pickSenderNeighbors
+  // 各自 loadAll 一次，两次之间只有纯函数调用、零写操作，纯属重复。
+  //
+  // 138 条既有 user-relation 用例没有一条关心读次数：把这次合并整个回滚，测试照样全绿。
+  // 这正是它当初能长出来的原因，所以断言必须落在**次数**上。
+  it('提取一轮内只读一次全图（候选与邻居共享同一份快照）', async () => {
+    const { app, mem, service } = await setup(JSON.stringify({ persons: [], events: [], entities: [] }));
+    try {
+      await service.observePerson('onebot', 'a', 'A');
+      for (const m of [mkUserMsg('m1', 'a', '随便说点什么'), mkUserMsg('m2', 'a', '再说一句')]) {
+        await mem.saveMessage('sess-count', m);
+      }
+      let reads = 0;
+      const orig = mem.listMetadata.bind(mem);
+      mem.listMetadata = async (ns: string) => {
+        if (ns === 'user-relation') reads++;
+        return orig(ns);
+      };
+      const extractor = new RelationExtractor(app.ctx, service, {
+        ...EXTRACTOR_DEFAULTS,
+        triggerEveryNMessages: 1,
+        readWindowSize: 10,
+        mode: 'incremental',
+        senderNeighborhoodEdgeLimit: 100, // 打开邻居采集，否则它自己就跳过了
+        disableThinking: true,
+        debug: false,
+      });
+      extractor.start();
+      reads = 0;
+      await extractor.triggerNow('sess-count');
+      // 精确值而非上界：这条断言的全部意义就在次数上，松一格就测不出回归
+      //（实测合并=1、拆开=2，写 <=2 两种情形都会过——第一版就踩了这个假绿）。
+      // 日后若确有必要多读一次，请连同理由一起改这个数字，别放宽成不等式。
+      expect(reads, `提取一轮的全图读次数=${reads}，两个消费者必须共享同一份快照`).toBe(1);
+    } finally {
+      await app.stop();
+    }
+  });
+
   it('evidence 验证：messageId 不在窗口 → evidence 为空（事件仍创建）', async () => {
     const llmJson = JSON.stringify({
       events: [
