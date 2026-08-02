@@ -166,7 +166,7 @@ option syntax 速查：
 - **轴 B · 确认**：`confirm: 'session'`（可本会话记住）或 `'always'`（每次必确认，owner 也不例外）。它与可见性正交。
 - **risk 声明糖**（类型 `CapabilityRisk`）展开为默认值：`safe → (public, 无确认)`、`sensitive → (restricted, 无确认)`、`dangerous → (restricted, 'session')`。显式的 `visibility` / `confirm` 覆盖 risk 推导出的值。
 - **沿点路径继承**：子命令未声明时，取最近声明的祖先分组的 `visibility / confirm / risk`，子节点可覆盖。所以把高危子命令归到一个 `restricted` 分组下，即可整组设防。例如内置 `/clear all` 显式声明 `visibility: 'restricted'`。
-- **risk 透传供 minLevel 派生**：`execute` 把 `cmd.risk` 原样传给守卫，authority 据此派生最低等级（`riskToLevel`：safe → 0 / sensitive → 1 / dangerous → 2）；无 risk 时回退到 `visibility`（restricted → 2 / public → 0），对应 `ExecutionGuardContext`。
+- **risk 透传供 minLevel 派生**：`execute` 把 `cmd.risk` 原样传给守卫，authority 据此派生最低等级（`capabilityMinLevel`：safe → 0 / sensitive → 1 / dangerous → 2）；无 risk 时回退到 `visibility`（restricted → 2 / public → 0），对应 `ExecutionGuardContext`。
 
 **consumer 责任**：诚实声明 `visibility / confirm / risk`。写删、改系统、shell 类命令应至少 `risk: 'dangerous'`，或显式 `visibility: 'restricted', confirm: 'session'`。`confirm: 'always'` 即便 owner 在会话内被提示注入，也能挡住静默提权。
 

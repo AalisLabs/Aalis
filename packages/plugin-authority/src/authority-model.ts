@@ -22,11 +22,6 @@ import { capabilityMinLevel, DEFAULT_AUTHORITY, RESTRICTED_LEVEL } from '@aalis/
 
 export { DEFAULT_AUTHORITY, RESTRICTED_LEVEL };
 
-/** 风险 → 操作最低等级：safe→0 · sensitive→1 · dangerous→2（owner 可逐条覆盖成任意整数）。 */
-export function riskToLevel(risk?: 'safe' | 'sensitive' | 'dangerous'): number {
-  return capabilityMinLevel({ risk: risk ?? 'safe' });
-}
-
 // ── glob（`*` 通配任意字符段）──────────────
 function capMatches(pattern: string, value: string): boolean {
   if (pattern === '*' || pattern === value) return true;

@@ -50,7 +50,7 @@
 authorityOverrides[capability]（owner 设任意整数） > risk 派生 > visibility 兜底
 ```
 
-- **risk 派生**（`riskToLevel`）：`safe → 0` · `sensitive → 1` · `dangerous → 2`。
+- **risk 派生**（`capabilityMinLevel`，在 `@aalis/api-authority`）：`safe → 0` · `sensitive → 1` · `dangerous → 2`。
 - **visibility 兜底**（仅无 risk 时）：`public → 0` · `restricted → 2`。
 - **authorityOverrides** 覆盖一切：owner 可把任意操作的门槛设成任意整数，无需改插件声明。
 

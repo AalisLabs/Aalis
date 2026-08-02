@@ -130,7 +130,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 
 **提供方（参考实现）**：`@aalis/plugin-authority`
 - 注册：`ctx.provide('authority', authority)`，`packages/plugin-authority/src/index.ts`（`new AuthorityManager(...)`）。
-- 裁决纯函数：`packages/plugin-authority/src/authority-model.ts`（`resolveAccess` :76、`resolveMinLevel` :48、`riskToLevel` :23、`matchAnyCap` :39、`shouldSkipConfirm` :95、`autoConfirmActive` :86）。
+- 裁决纯函数：`packages/plugin-authority/src/authority-model.ts`（`resolveAccess` / `resolveMinLevel` / `matchAnyCap` / `shouldSkipConfirm` / `autoConfirmActive`）；risk→等级的映射本身在 `@aalis/api-authority` 的 `capabilityMinLevel`。
 - 策略层 / 状态：`packages/plugin-authority/src/authority-manager.ts`（`AuthorityManager implements AuthorityService`，:25）。
 - 数据层：`packages/plugin-authority/src/user-store.ts`（`users.json` 等级存储，经 storage 网关）。
 
@@ -286,7 +286,7 @@ auth.save();
 2. `isOwner` → **放行**（owner = ∞）。
 3. `level >= minLevel` → 放行；否则拒（封禁 = 负数，自然连 `minLevel=0` 都不过）。
 
-`minLevel` 解析（`authority-model.ts` `resolveMinLevel`）：`authorityOverrides[cap] > risk 派生 > visibility 兜底`。`riskToLevel`（:23）：`dangerous→2 / sensitive→1 / safe|未声明→0`（`DEFAULT_AUTHORITY=0`）；`visibility` 兜底仅在无 risk 时用：`restricted→RESTRICTED_LEVEL(2) / public→0`。owner 等级 `OWNER_RANK = +Infinity`（:16）。
+`minLevel` 解析（`authority-model.ts` `resolveMinLevel`）：`authorityOverrides[cap] > risk 派生 > visibility 兜底`。`capabilityMinLevel`（在 `@aalis/api-authority`）：`dangerous→2 / sensitive→1 / safe|未声明→0`（`DEFAULT_AUTHORITY=0`）；`visibility` 兜底仅在无 risk 时用：`restricted→RESTRICTED_LEVEL(2) / public→0`。owner 等级 `OWNER_RANK = +Infinity`（:16）。
 
 ### 6.2 确认轴（轴 B，owner 也吃）
 
