@@ -464,6 +464,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 已发现的前端候选（ready 时填充，逐个注册为 webui-client 服务 provider）。
   const clientCandidates: Array<{ id: string; label: string; dir: string }> = [];
+  /**
+   * 候选 id → 它那条 webui-client provider 的注销句柄。
+   *
+   * 单独一张表而不是往 ClientCandidate 上加字段：那个类型是 client-discovery 的产出契约，
+   * 「怎么注销」是本文件的注册细节，不该反向污染它。对账时只从数组里删掉候选是不够的——
+   * 服务池里那条 provider 还在，仍可能被解析到一个已删除的目录。
+   */
+  const clientProviderDisposers = new Map<string, () => void>();
   /** 当前活跃前端目录 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 注册顺序）。 */
   function currentClientDir(): string | undefined {
     return ctx.getService<{ getClientDir(): string }>('webui-client')?.getClientDir?.();
@@ -1513,15 +1521,34 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       /* 无项目根 package.json（如 monorepo 直跑），跳过 deps 扫描 */
     }
 
+    const scanned = discoverClients(scanDirs, depIds, env);
+
+    // 对账：本轮扫不到的候选要摘掉，不能只增不删。卸载现在会真删 node_modules，
+    // 留着的候选指向一个已不存在的目录——它仍在服务池里，被解析到就是整站 404。
+    const scannedIds = new Set(scanned.map(c => c.id));
+    for (let i = clientCandidates.length - 1; i >= 0; i--) {
+      const stale = clientCandidates[i];
+      if (scannedIds.has(stale.id)) continue;
+      clientProviderDisposers.get(stale.id)?.();
+      clientProviderDisposers.delete(stale.id);
+      clientCandidates.splice(i, 1);
+      ctx.logger.info(`前端已消失，摘除候选: ${stale.label} (${stale.dir})`);
+    }
+
     const fresh = pickFreshClients(
       clientCandidates.map(c => c.id),
-      discoverClients(scanDirs, depIds, env),
+      scanned,
     );
     clientCandidates.push(...fresh);
     // 把每个新发现的前端注册为 webui-client 服务的一个 provider（带 label，供「服务」页下拉切换）。
     // 外部插件在 apply 里主动 provide('webui-client') 的也已在服务池中（注册更早 → 默认胜出，仍可被偏好切换）。
     for (const candidate of fresh) {
-      ctx.fork(candidate.id).provide('webui-client', { getClientDir: () => candidate.dir }, { label: candidate.label });
+      clientProviderDisposers.set(
+        candidate.id,
+        ctx
+          .fork(candidate.id)
+          .provide('webui-client', { getClientDir: () => candidate.dir }, { label: candidate.label }),
+      );
       ctx.logger.info(`发现前端: ${candidate.label} (${candidate.dir})`);
     }
     return fresh.length;

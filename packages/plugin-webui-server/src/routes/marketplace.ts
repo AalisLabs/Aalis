@@ -679,7 +679,11 @@ export function registerMarketplaceRoutes(
       return;
     }
     try {
-      res.json(await pkgMgr.uninstall(name));
+      const result = await pkgMgr.uninstall(name);
+      // 卸成功也要重跑发现——与 install 那侧对称。卸载会真删 node_modules，不对账就会留下
+      // 指向已删目录的前端候选与它那条 webui-client provider，被解析到即整站 404。
+      if (result.ok) rediscoverClients();
+      res.json(result);
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
     }
