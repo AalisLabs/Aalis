@@ -560,6 +560,12 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    *    配置；再用 `npm_config_legacy_peer_deps=false` 压掉用户级与全局配置（已实测：
    *    即便副本里放了 `legacy-peer-deps=true` 的 `.npmrc`，该环境变量也能翻回来）。
    *
+   * **不要把项目 `.npmrc` cp 进副本**（试过，已回退）。动机是对的——不带它，私有源用户的
+   * 预检会跑去公共源解析（包只在私有源上就 404/401 → 更新被永久挡住且报错文不对题）。但
+   * 实做后被 `test/integration/install-chain.test.ts` 的真实 npm 用例推翻：带上 `.npmrc` 后
+   * 上面第 2 条护栏失效，而隔离复现里 env 明明压得过项目级 `.npmrc`，**机制未查清**。
+   * 要重做的话先解释清楚这个矛盾，别直接再 cp 一次。
+   *
    * 判据只能是解析告警文本：`--dry-run --json` 实测只给 `{added, removed, changed,
    * audited, funding}`，无任何冲突信息；退出码在本场景恒为 0（npm 把命令行显式 spec
    * 视为用户意图，只 warn 就放行），`--strict-peer-deps` 在副本里同样不改变这一点，

@@ -158,6 +158,26 @@ export class CommandRegistry implements CommandService {
     }
 
     // 压栈而非就地改写：旧声明原样留着，覆盖者卸载后它自动重新生效。
+    //
+    // 为什么不改成「同名直接拒绝」（曾评估过，结论是保留）：**本仓没有「内置指令」这个概念**
+    // ——`/status` `/shutdown` `/restart` 是 plugin-commands 自己注册的，而它恰好也提供注册表，
+    // 但注册表里没有 builtin 位、没有白名单、没有保护名单。所以同名注册是**平等插件之间的
+    // 正常情况**，压栈让「谁的实现生效」有确定语义（后来者胜）且可逆（卸载复位）；改成拒绝
+    // 等于「先加载的永久赢」，赢家由加载顺序决定，反倒随意，也就没有「插件可以替换另一个
+    // 插件的指令」这个能力了。
+    //
+    // 安全性由「安全轴取全栈最严」保证——后来者只能收紧不能放宽（见 strictestDecl /
+    // strictestConfirm）。回退还要改 149 行测试（含 commands-v2 里 7 处撞名别名用例）。
+    //
+    // **为什么安全轴不跟着「当前生效的实现」（栈顶）走**——这是个合理的疑问，答案在于两个
+    // 方向的失败代价不对等：
+    //   跟栈顶走 → 「注册一个同名指令」本身就成了提权原语。任何插件注册一个不带 meta 的
+    //     `shutdown`，闸从 restricted 掉到 public，而这在加载那一刻**静默发生**、无人察觉。
+    //   取全栈最严 → 最多是过度限制（B 用无害实现覆盖了 A 的高危指令，却仍卡在高门槛），
+    //     而这条**有现成出口**：owner 在权限页把该能力的 `authorityOverrides` 设成任意整数
+    //     即可（守卫里 authorityOverrides > risk > visibility，见 authority-manager 的 authorize）。
+    // 一边是静默提权、另一边是可一键恢复的过严，所以保守。根本原因是注册表**无从判断**
+    // B 的实现是否与 A 同样危险——它只看得见声明，看不见代码。
     const decl: Decl = {
       description: description ?? '',
       // 展开 risk 但保留「未声明=继承」语义（不套 public 兜底，由 materialize 末尾兜底）
