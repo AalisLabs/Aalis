@@ -5,7 +5,6 @@ import {
   type ConfirmOverride,
   type Operation,
   capKey,
-  derivedMinLevel,
   effectiveConfirm,
   effectiveMinLevel,
   groupByPlugin,
@@ -504,7 +503,7 @@ export function AuthorityPage() {
                         const k = capKey(op);
                         const conf = effectiveConfirm(op, data.confirmOverrides);
                         const overridden = k in data.authorityOverrides;
-                        const derived = derivedMinLevel(op);
+                        const derived = op.minLevel;
                         const eff = effectiveMinLevel(op, data.authorityOverrides);
                         const confOv = data.confirmOverrides[k];
                         const isCmd = op.type === 'command';

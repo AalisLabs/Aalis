@@ -193,7 +193,7 @@ const result = await ctx.getService<ToolService>('tools')
 工具是受 authority 管的「能力」，`tool:<name>` 即其 capability id。两条正交轴（`packages/api-authority/src/index.ts`）：
 - **轴 A 可见性** `visibility: 'public' | 'restricted'`。`restricted` 须 owner 或被委托授予才可执行；`public` 默认放行。
 - **轴 B 确认** `confirm: 'session' | 'always'`。即便有权限（含 owner），命中 confirm 会触发交互确认（HITL）；`always` 不接受会话记忆，每次都问。
-- `risk` 是糖：`safe→公开`、`sensitive→受限`、`dangerous→受限+每次确认`。`getAll()` **原样透传 `risk`**（`tools.ts`）让 authority 派生操作最低等级 minLevel（`riskToLevel`：safe→0 / sensitive→1 / dangerous→2，`packages/plugin-authority/src/authority-model.ts`）。
+- `risk` 是糖：`safe→公开`、`sensitive→受限`、`dangerous→受限+每次确认`。`getAll()` **原样透传 `risk`**（`tools.ts`）让 authority 派生操作最低等级 minLevel（`capabilityMinLevel`：safe→0 / sensitive→1 / dangerous→2，`packages/api-authority/src/index.ts`）。
 
 **提供者必须遵守**：
 - 任何**写/删/越权读/外发**类工具都要声明 `risk` 或显式 `visibility/confirm`。例：`http_download` 是写操作，声明 `visibility:'restricted' + confirm:'session'`（`packages/plugin-tool-system/src/tools/http.ts`），防被注入的 LLM 静默写穿 storage。**不声明 = public 不确认**，等于把能力裸露给任何会话。

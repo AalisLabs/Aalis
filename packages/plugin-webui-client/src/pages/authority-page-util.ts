@@ -8,9 +8,18 @@ export interface Operation {
   displayName: string;
   pluginName: string;
   visibility: 'public' | 'restricted';
-  /** 原始风险（risk 透传上线后有值）；用于派生默认最低等级 */
+  /** 原始风险（仅供展示；定级不在前端做） */
   risk?: 'safe' | 'sensitive' | 'dangerous';
   confirm?: 'session' | 'always';
+  /**
+   * 后端算好的**派生默认**最低等级（不含 authorityOverrides）。
+   *
+   * 定级收在权限服务一侧，前端只渲染。曾经这里自带一份 `derivedMinLevel`，在 risk 为非联合
+   * 成员的真值串时与后端分歧——后端三个 `===` 都不中才落 visibility 兜底（restricted→2），
+   * 前端却是 `if (op.risk) return riskToLevel(op.risk)`，只要 risk 为真就再也不看 visibility，
+   * 吐 0。方向是 fail-open 的显示：第三方插件把 risk 拼错，权限页会显示「所有人可用」。
+   */
+  minLevel: number;
 }
 
 export type Confirm = 'session' | 'always';
@@ -30,24 +39,11 @@ export function groupByPlugin(ops: Operation[]): Array<{ plugin: string; ops: Op
   return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([plugin, list]) => ({ plugin, ops: list }));
 }
 
-/** risk → 默认最低等级：safe0 sensitive1 dangerous2。 */
-function riskToLevel(risk?: Operation['risk']): number {
-  if (risk === 'dangerous') return 2;
-  if (risk === 'sensitive') return 1;
-  return 0;
-}
-
-/** 操作的派生默认最低等级（不含 override）：risk 派生 > visibility 兜底(public0/restricted2)。 */
-export function derivedMinLevel(op: Operation): number {
-  if (op.risk) return riskToLevel(op.risk);
-  return op.visibility === 'restricted' ? 2 : 0;
-}
-
-/** 操作生效最低等级：authorityOverrides[cap] > 派生默认。 */
+/** 操作生效最低等级：authorityOverrides[cap] > 后端下发的派生默认。 */
 export function effectiveMinLevel(op: Operation, authorityOverrides: Record<string, number>): number {
   const ov = authorityOverrides[capKey(op)];
   if (ov !== undefined) return ov;
-  return derivedMinLevel(op);
+  return op.minLevel;
 }
 
 /** 生效确认：override 优先（'off'→无），回退插件默认。 */

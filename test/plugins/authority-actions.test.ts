@@ -77,6 +77,36 @@ describe('getOverview — 总览快照', () => {
     expect(Array.isArray(ov.commands)).toBe(true);
     expect(Array.isArray(ov.tools)).toBe(true);
   });
+
+  // 定级收在权限服务这一侧：前端不再自算，只渲染 + 叠 override。所以 payload 里必须真的
+  // 带上算好的 minLevel——漏了前端只会显示 `默认undefined`，而 payload 形状没有任何类型
+  // 或测试守着（actions 返回的是 Record<string, unknown>）。
+  it('每条 operation 都带后端算好的 minLevel（前端据此渲染，不得自算）', async () => {
+    const { ctx } = makeCtx();
+    const cmds = [
+      { name: 'pub', pluginName: 'p', visibility: undefined, risk: undefined, expect: 0 },
+      { name: 'res', pluginName: 'p', visibility: 'restricted' as const, risk: undefined, expect: 2 },
+      { name: 'sen', pluginName: 'p', visibility: undefined, risk: 'sensitive' as const, expect: 1 },
+      // 关键格：risk 是非联合成员的真值串。后端三个 === 都不中 → 落 visibility 兜底 = 2；
+      // 前端那份旧实现只要 risk 为真就吐 0（fail-open 的显示），正是这条要防的分歧。
+      { name: 'odd', pluginName: 'p', visibility: 'restricted' as const, risk: 'CRITICAL' as never, expect: 2 },
+    ];
+    const withCmds = {
+      ...ctx,
+      getService: (n: string) =>
+        n === 'commands'
+          ? {
+              getAll: () =>
+                cmds.map(c => ({ name: c.name, pluginName: c.pluginName, visibility: c.visibility, risk: c.risk })),
+            }
+          : (ctx as unknown as { getService(n: string): unknown }).getService(n),
+    } as unknown as Context;
+    const ov = (await actions.getOverview(withCmds, {})) as { commands: Array<{ name: string; minLevel?: number }> };
+    for (const c of cmds) {
+      const got = ov.commands.find(x => x.name === c.name);
+      expect(got?.minLevel, `${c.name} 的 minLevel`).toBe(c.expect);
+    }
+  });
 });
 
 describe('deleteUser — 删除记录', () => {
