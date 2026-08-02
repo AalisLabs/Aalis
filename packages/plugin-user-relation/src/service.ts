@@ -1039,8 +1039,7 @@ export class RelationService {
   /**
    * 查找等价的人-人边。对于对称关系 (directed=false)，(A→B, friend) 与 (B→A, friend)
    * 视为同一条边；只看其中一种方向即可命中。
-   */
-  /**
+   *
    * @param snap 调用方已有的全图快照。给了就复用，不再自己读一次——`addPersonPersonEdge`
    *   为「防孤儿」本就刚读过一遍，同一方法里再读一次是纯浪费（生产图上单次 listMetadata
    *   中位 177ms）。**只在调用方能保证两次读之间无写操作时传**。

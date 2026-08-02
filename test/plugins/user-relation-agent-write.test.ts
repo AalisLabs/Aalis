@@ -593,6 +593,24 @@ describe('user-relation: 全图读次数', () => {
       // 对已不存在节点的幂等空操作，每个 alias 白付 2 次全图读。
       expect(reads, `mergeNodes 单 alias 的全图读次数=${reads}；无条件重复级联时为 7`).toBeLessThanOrEqual(5);
       expect(await service.findNodeById(e2.id), 'alias 必须真的被删掉').toBeNull();
+      // 兜底分支（mergeAlias 没删成时补一刀）也要覆盖，否则那张安全网删掉都没人知道。
+      // 关键：必须让 mergeAlias **真的不删**——第一版只是让它谎报 aliasDeleted:false 而节点
+      // 已被它自己删掉，于是兜底的 cascade 作用在不存在的节点上，断言分辨不出来（假绿，
+      // 变异后仍全绿）。这里整个替掉它，正是该分支存在的前提。
+      const orig2 = service.mergeAlias.bind(service);
+      service.mergeAlias = async (o: Parameters<typeof orig2>[0]) => ({
+        effectiveCanonicalId: o.canonicalId,
+        effectiveAliasId: o.aliasId,
+        edgesRewritten: 0,
+        edgesMerged: 0,
+        edgesDeleted: 0,
+        swapped: false,
+        aliasDeleted: false, // 没删成 —— mergeNodes 必须自己补这一刀
+      });
+      const e3 = await service.createEntity({ name: '丙', entityKind: 'work' });
+      await service.mergeNodes({ kind: 'entity', canonicalId: e1.id, aliasIds: [e3.id], reason: 't2' });
+      expect(await service.findNodeById(e3.id), 'mergeAlias 未删成时 mergeNodes 必须兜底删掉').toBeNull();
+      service.mergeAlias = orig2;
     } finally {
       await app.stop();
     }
