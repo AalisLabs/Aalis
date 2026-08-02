@@ -91,20 +91,28 @@ describe('getOverview — 总览快照', () => {
       // 前端那份旧实现只要 risk 为真就吐 0（fail-open 的显示），正是这条要防的分歧。
       { name: 'odd', pluginName: 'p', visibility: 'restricted' as const, risk: 'CRITICAL' as never, expect: 2 },
     ];
-    const withCmds = {
+    // commands 与 tools 两半都要验：payload 是两个独立的 map，只补一半的话同一个病换到
+    // tools 上照样上线（前端对 tools 同样会显示「默认undefined」）。
+    const shape = (c: (typeof cmds)[number]) => ({
+      name: c.name,
+      pluginName: c.pluginName,
+      visibility: c.visibility,
+      risk: c.risk,
+    });
+    const withBoth = {
       ...ctx,
       getService: (n: string) =>
-        n === 'commands'
-          ? {
-              getAll: () =>
-                cmds.map(c => ({ name: c.name, pluginName: c.pluginName, visibility: c.visibility, risk: c.risk })),
-            }
+        n === 'commands' || n === 'tools'
+          ? { getAll: () => cmds.map(shape) }
           : (ctx as unknown as { getService(n: string): unknown }).getService(n),
     } as unknown as Context;
-    const ov = (await actions.getOverview(withCmds, {})) as { commands: Array<{ name: string; minLevel?: number }> };
+    const ov = (await actions.getOverview(withBoth, {})) as {
+      commands: Array<{ name: string; minLevel?: number }>;
+      tools: Array<{ name: string; minLevel?: number }>;
+    };
     for (const c of cmds) {
-      const got = ov.commands.find(x => x.name === c.name);
-      expect(got?.minLevel, `${c.name} 的 minLevel`).toBe(c.expect);
+      expect(ov.commands.find(x => x.name === c.name)?.minLevel, `command ${c.name}`).toBe(c.expect);
+      expect(ov.tools.find(x => x.name === c.name)?.minLevel, `tool ${c.name}`).toBe(c.expect);
     }
   });
 });
