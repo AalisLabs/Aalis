@@ -462,4 +462,23 @@ describe('别名：底层声明的别名要能被展示', () => {
     // 两个别名都能解析到 ping —— 那就都该展示，否则 /help 与实际行为不一致
     expect(cmd?.aliases.sort()).toEqual(['pa', 'pb']);
   });
+
+  it('被别的指令抢走的别名不再展示——展示的必须敲下去真能跑到本指令', async () => {
+    // 反方向：只按「声明过」列会印出一个跑到别处的别名。`alias()` 允许抢占（只 warn），
+    // 被抢者的 Decl.aliases 里仍留着它，所以必须按别名表回查。
+    const r = reg();
+    r.command('ping', 'A', { pluginName: 'A' })
+      .alias('pa')
+      .action(async () => 'a');
+    r.command('ping', 'B', { pluginName: 'B' })
+      .alias('pb')
+      .action(async () => 'b');
+    r.command('other', 'C', { pluginName: 'C' })
+      .alias('pa')
+      .action(async () => 'c');
+
+    expect(await r.execute('pa', input([])), 'pa 已被 other 抢走').toBe('c');
+    expect(find(r, 'ping')?.aliases, 'ping 不得再声称拥有 pa').toEqual(['pb']);
+    expect(find(r, 'other')?.aliases).toEqual(['pa']);
+  });
 });
