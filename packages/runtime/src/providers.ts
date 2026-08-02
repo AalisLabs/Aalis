@@ -13,6 +13,7 @@ import type {
 } from '@aalis/core';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { isLoadablePlugin } from './node-modules-loader.js';
+import { disarmTerminalStateRestorer } from './terminal.js';
 
 // ============================================================
 // FsYamlConfigProvider —— 从 YAML 文件加载+持久化配置
@@ -482,6 +483,9 @@ export function createProcessRespawnStrategy(opts: RespawnOptions = {}): Restart
       });
 
       if (outcome !== 'died') {
+        // 终端已归子进程所有（它的 ready 发生在 TUI 进备用屏之后），父进程退出时不得再写它，
+        // 否则复原序列会把新实例的 TUI 踢出备用屏。见 disarmTerminalStateRestorer 的注释。
+        disarmTerminalStateRestorer();
         try {
           child.disconnect();
         } catch {
