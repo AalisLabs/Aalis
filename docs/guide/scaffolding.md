@@ -46,7 +46,7 @@ npm create aalis my-bot -- --tier minimal --no-install
 
 ```bash
 cd my-bot
-cp .env.example .env   # 若所选插件需要 API key（脚手架会在「下一步」提示是否需要）
+# 若所选插件需要 API key：直接填进 aalis.config.yaml（该文件已在生成的 .gitignore 里）
 npm start
 ```
 
@@ -90,9 +90,8 @@ npm start
 my-bot/
 ├── package.json        # @aalis/core + @aalis/runtime + 所选插件（版本见下）
 ├── index.mjs           # 一行 startAalis() 启动
-├── aalis.config.yaml   # 主配置：name / logLevel / plugins / disabledPlugins
-├── .env.example        # 所选插件引用的环境变量占位（如 DEEPSEEK_API_KEY=）
-├── .gitignore          # node_modules/ data/ *.log .env dist/
+├── aalis.config.yaml   # 主配置：name / logLevel / plugins / disabledPlugins（含密钥，**不入库**）
+├── .gitignore          # node_modules/ data/ *.log aalis.config.yaml dist/
 └── README.md           # 启动/配置/装更多插件指引
 ```
 
@@ -121,7 +120,9 @@ startAalis().catch(err => {
 
 ### 配置约定
 
-`aalis.config.yaml`（`renderConfig`，`cli.ts`）：需要密钥/地址的已知插件会预填配置桩，用 `${ENV}` 引用环境变量；其余用空 `plugins: {}` 默认配置启动。`.env.example` 收集这些环境变量供你 `cp .env.example .env` 填值（`cli.ts`）。
+`aalis.config.yaml`（`renderConfig`，`cli.ts`）：需要密钥/地址的已知插件会预填一个空的配置桩（如 `apiKey: ""`），填进去即可；其余用空 `plugins: {}` 默认配置启动。
+
+**密钥直接写在 `aalis.config.yaml` 里，该文件在生成的 `.gitignore` 内、不入库。** 曾经走 `.env` + `${VAR}` 插值，但它承载的东西与配置文件完全重合，唯一区别只是「哪个文件进 git」；把配置文件本身 ignore 掉之后那一层就纯属多余，已随 `${VAR}` 插值一并删除。**现在写 `${VAR}` 会被原样当作字面量字符串**（不再替换），别再那么写。
 
 > 生态约定的「更多插件不在终端铺列」：长尾插件发现交给 WebUI 的「插件市场」页（对齐 Koishi 做法，`cli.ts`）。装新插件只需 `npm install @aalis/plugin-<name>`，装上即被自动发现加载。
 

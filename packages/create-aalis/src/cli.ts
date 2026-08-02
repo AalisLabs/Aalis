@@ -378,7 +378,9 @@ function renderConfig(enabled: Set<string>): string {
       }
     }
   } else {
-    lines.push('# 启用的插件用默认配置启动；需要密钥/地址的在下方 plugins 段填写或用 ${ENV} 引用环境变量。');
+    lines.push(
+      '# 启用的插件用默认配置启动；需要密钥/地址的在下方 plugins 段直接填写（本文件已在 .gitignore 里，不入库）。',
+    );
     lines.push('plugins: {}');
   }
   lines.push('disabledPlugins: []');
