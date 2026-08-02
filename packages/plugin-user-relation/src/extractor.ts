@@ -35,6 +35,7 @@ import type {
   PersonEventRole,
   PersonNode,
   RelationEdge,
+  RelationGraphSnapshot,
   Sentiment,
 } from './types.js';
 import {
@@ -456,8 +457,11 @@ export class RelationExtractor {
       }
 
       const platform = inferPlatform(userMsgs);
-      const { candidateEvents, candidateEntities } = await this.pickCandidates(userMsgs);
-      const senderNeighbors = await this.pickSenderNeighbors(userMsgs);
+      // 一次全图读喂两个消费者。它俩之间只有纯函数调用、零写操作，共享同一份快照行为等价；
+      // 而单次 listMetadata 在生产图上中位 177ms（3352 文档 / 38.7MB），省一次就是省这么多。
+      const snapshot = await this.service.loadAll();
+      const { candidateEvents, candidateEntities } = this.pickCandidates(snapshot, userMsgs);
+      const senderNeighbors = this.pickSenderNeighbors(snapshot, userMsgs);
       const promptMessages = buildExtractionPrompt(
         history,
         userMsgs,
@@ -524,10 +528,10 @@ export class RelationExtractor {
    * 两路按 id 去重后总长度截断到 `candidateEventLimit * 4`，避免 token 爆掉。
    * 注：名字命中路径**带 id 一起塞**，保证 LLM 能直接填 `existingEntityId` 复用。
    */
-  private async pickCandidates(
+  private pickCandidates(
+    snap: RelationGraphSnapshot,
     userMsgs: Message[] = [],
-  ): Promise<{ candidateEvents: EventNode[]; candidateEntities: EntityNode[] }> {
-    const snap = await this.service.loadAll();
+  ): { candidateEvents: EventNode[]; candidateEntities: EntityNode[] } {
     const cutoff = Date.now() - this.cfg.candidateEventDays * 86_400_000;
     const candidateEvents = snap.events
       .filter(e => e.lastReinforcedAt >= cutoff)
@@ -569,7 +573,7 @@ export class RelationExtractor {
    * 目的：让 LLM 在「加强已有 vs 新建」判断时手里有真证据，避免反复创建同一人 / 同一兴趣的重复节点。
    * 若 senderNeighborhoodEdgeLimit=0 或某 sender 在图中尚未存在，则跳过该 sender。
    */
-  private async pickSenderNeighbors(userMsgs: Message[]): Promise<SenderNeighborhood[]> {
+  private pickSenderNeighbors(snapshot: RelationGraphSnapshot, userMsgs: Message[]): SenderNeighborhood[] {
     const limit = this.cfg.senderNeighborhoodEdgeLimit;
     if (!limit || limit <= 0) return [];
     const senders = new Map<string, { platform: string; userId: string; nickname?: string }>();
@@ -582,7 +586,6 @@ export class RelationExtractor {
       }
     }
     if (senders.size === 0) return [];
-    const snapshot = await this.service.loadAll();
     const personById = new Map(snapshot.persons.map(p => [p.id, p]));
     const eventById = new Map(snapshot.events.map(e => [e.id, e]));
     const entityById = new Map(snapshot.entities.map(e => [e.id, e]));
