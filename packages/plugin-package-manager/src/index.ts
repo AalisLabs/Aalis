@@ -788,7 +788,9 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // 一下就能装回来（带内可恢复）；卸掉内核或宿主，实例起不来、市场随之消失，只能开
     // shell 修（带外）。更新不在此列——它保留实例且失败会自动回滚。
     const kw = Array.isArray(meta.keywords) ? (meta.keywords as unknown[]) : [];
-    const isPlugin = kw.includes('aalis-plugin');
+    // 走 declaresPlugin 而非再内联一次 `kw.includes('aalis-plugin')`：同一文件里维护两份
+    // 同义判据，正是本仓已出事四次的形态（依赖来源判据、定级数学、包名正则、关键词分类）。
+    const isPlugin = declaresPlugin(meta);
     const isInterface = kw.includes('aalis-interface');
     if (!isPlugin && !isInterface) {
       const kind = kw.includes('aalis-core')
