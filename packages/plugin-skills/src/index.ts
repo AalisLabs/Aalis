@@ -1205,7 +1205,8 @@ declare module '@aalis/core' {
 // 断言失败即构建失败，不需要新开类型测试设施。三行，纯类型，编译后不产出任何东西。
 type __AssertTrue<T extends true> = T;
 type __Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
-export type __ServiceTypeMapIntact = [
+// 不 export：断言只需被本文件的编译覆盖，导出会让它进入本包的公开 d.ts。
+type __ServiceTypeMapIntact = [
   __AssertTrue<__Exact<ServiceOf<'storage'>, StorageService>>,
   __AssertTrue<__Exact<ServiceOf<'skills'>, SkillsService>>,
 ];
