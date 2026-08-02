@@ -229,21 +229,10 @@ export function registerRelationCommands(
       if (argv.options.yes !== true) {
         return '⚠ 该操作将删除所有人物 / 事件 / 实体 / 边。如确实需要，请追加 --yes。';
       }
-      const snap = await service.loadAll();
-      let n = 0;
-      for (const p of snap.persons) {
-        await service.deletePerson(p.platform, p.userId);
-        n++;
-      }
-      for (const e of snap.events) {
-        await service.deleteEvent(e.id);
-        n++;
-      }
-      for (const e of snap.entities) {
-        await service.deleteEntity(e.id);
-        n++;
-      }
-      return `✓ 已清空关系图（删除 ${n} 个节点）`;
+      // 一次批量原子提交，不逐节点级联：后者每删一个节点付 2 次全图读，
+      // 生产图规模下要跑数分钟且中途失败会留下半张图（见 service.clearAll 的注释）。
+      const cleared = await service.clearAll();
+      return `✓ 已清空关系图（删除 ${cleared} 条记录：人物 / 事件 / 实体 / 边 / 合并否决缓存）`;
     });
 
   /**
