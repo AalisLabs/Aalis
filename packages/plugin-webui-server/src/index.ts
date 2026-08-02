@@ -74,8 +74,6 @@ export const inject = {
 const webuiPages: WebuiPage[] = [
   { key: 'dashboard', label: '仪表盘', icon: 'dashboard', order: 10, renderer: 'dashboard' },
   { key: 'marketplace', label: '插件市场', icon: 'marketplace', order: 20, renderer: 'marketplace' },
-  // 独立于市场：数据源是本地已装 + 根依赖表（不可伪造），且只提供更新——
-  // 内核/宿主/契约/规范/工具库要么随脚手架就位，要么作为插件依赖被自动带入，没有"安装"语义。
   { key: 'plugin-config', label: '插件配置', icon: 'plugin-config', order: 30, renderer: 'plugin-config' },
   { key: 'platforms', label: '平台接入', icon: 'platforms', order: 40, renderer: 'platforms' },
   { key: 'files', label: '文件管理', icon: 'files', order: 50, renderer: 'files' },
