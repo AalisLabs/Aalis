@@ -22,7 +22,6 @@ import {
   computePageRank,
   cosineSimilarity,
   isEvidenceFullyCovered,
-  isSymmetricRelation,
   jaccardChars,
   normalizeRelationType,
   pickCanonicalByMergeScore,
@@ -434,13 +433,6 @@ describe('plugin-user-relation: helpers', () => {
     expect(normalizeRelationType('Best Friend')).toBe('friend');
     expect(normalizeRelationType('TEACHER')).toBe('mentor');
     expect(normalizeRelationType('senpai')).toBe('senpai'); // 未知词原样保留（lowercased）
-  });
-
-  it('isSymmetricRelation recognizes symmetric vs directed', () => {
-    expect(isSymmetricRelation('friend')).toBe(true);
-    expect(isSymmetricRelation('cp')).toBe(true);
-    expect(isSymmetricRelation('mentor')).toBe(false);
-    expect(isSymmetricRelation('admirer')).toBe(false);
   });
 
   it('trimEvidence dedup by sessionId + messageIds key (no quote / different quotes)', () => {

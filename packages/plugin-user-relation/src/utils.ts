@@ -496,13 +496,6 @@ export function normalizeRelationType(input: string): string {
   return RELATION_SYNONYMS[trimmed] ?? trimmed;
 }
 
-/** 对称关系：双向无方向区别 */
-const SYMMETRIC_RELATIONS = new Set<string>(['friend', 'cp', 'rival', 'colleague', 'familiar', 'antagonist']);
-
-export function isSymmetricRelation(relationType: string): boolean {
-  return SYMMETRIC_RELATIONS.has(relationType);
-}
-
 /** event-event 边的方向性默认：有向的常见关系 */
 const DIRECTED_EVENT_EVENT_RELATIONS = new Set<string>(['caused-by', 'follows', 'part-of']);
 export function isDirectedEventEventRelation(relationType: string): boolean {
