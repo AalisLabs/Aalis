@@ -1,12 +1,12 @@
-import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
-import type { Message } from '@aalis/schema-message';
-import { WellKnownKinds } from '@aalis/schema-message';
-import '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import type { LLMModel } from '@aalis/api-llm';
 import { resolveLLMModel } from '@aalis/api-llm';
 import type { MemoryService } from '@aalis/api-memory';
 import type { MessageArchiveService } from '@aalis/api-message-archive';
+import type { Context } from '@aalis/core';
+import type { ConfigSchema } from '@aalis/schema-config';
+import type { Message } from '@aalis/schema-message';
+import { WellKnownKinds } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 
 /**

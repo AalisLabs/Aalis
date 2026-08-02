@@ -1,4 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import type {} from '@aalis/api-memory'; // 本包唯一的 declaration merging 激活点（memory:clear 钩子）——删掉会丢键类型，不可删
 import type { OutputFormat, OutputFormatField, PersonaService, PersonaSessionOptions } from '@aalis/api-persona';
 import { getPlatformSelfIdentity } from '@aalis/api-platform';
 import { createStorageGateway, type StorageService, toStorageUri } from '@aalis/api-storage';
@@ -7,8 +9,6 @@ import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { parse as parseYaml } from 'yaml';
 import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
-import '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
-import '@aalis/api-memory'; // 本包唯一的 declaration merging 激活点（memory:clear 钩子）——删掉会丢键类型，不可删
 
 /** 当前处理消息的会话身份（经 AsyncLocalStorage 按异步上下文隔离，杜绝并发会话间串档）。 */
 interface PersonaIdentity {

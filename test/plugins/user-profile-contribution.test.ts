@@ -33,7 +33,7 @@ async function setup(config: Record<string, unknown> = {}) {
   app.ctx.provide('llm', { chat: async () => ({ content: '' }) });
   await app.ctx.useModule(memoryInMemoryModule);
   const memory = app.ctx.getService<MemoryService>('memory');
-  if (!memory?.getMetadata || !memory.listMetadata) throw new Error('memory 服务未就绪');
+  if (!memory) throw new Error('memory 服务未就绪');
   // 读取计数代理：透传原实现，只记 getMetadata/listMetadata 调用次数。
   // 插件每次经 getService 取到的都是同一实例，实例属性覆盖原型方法即全程生效。
   const reads = { count: 0 };
@@ -72,7 +72,7 @@ function injectedBlocks(messages: Message[]): Message[] {
 }
 
 async function seedPrimaryProfile(memory: MemoryService, extra: Record<string, unknown> = {}) {
-  await memory.saveMetadata!(PROFILE_NS, 'onebot:u1', {
+  await memory.saveMetadata(PROFILE_NS, 'onebot:u1', {
     facts: [makeFact('f001', '喜欢养猫', '兴趣爱好'), makeFact('f002', '是后端工程师', '职业身份')],
     relationScore: 12.5,
     interactionCount: 7,
@@ -145,7 +145,7 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
       maxOtherParticipants: 3,
     });
 
-    await memory.saveMetadata!(INSTRUCTIONS_NS, 'Aalis', {
+    await memory.saveMetadata(INSTRUCTIONS_NS, 'Aalis', {
       instructions: [
         {
           id: 'i001',
@@ -159,14 +159,14 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
       ],
       updatedAt: TS,
     });
-    await memory.saveMetadata!(PROFILE_NS, SELF_KEY, {
+    await memory.saveMetadata(PROFILE_NS, SELF_KEY, {
       facts: [makeFact('s001', '最近对长对话有点疲惫', '性格特征')],
       updatedAt: TS,
     });
     await seedPrimaryProfile(memory, {
       aalisFeelings: [makeFact('g001', '觉得他讲话很直接')],
     });
-    await memory.saveMetadata!(PROFILE_NS, 'onebot:u2', {
+    await memory.saveMetadata(PROFILE_NS, 'onebot:u2', {
       facts: [makeFact('f201', '常在深夜发言', '其他')],
       relationScore: 3,
       interactionCount: 2,
@@ -270,7 +270,7 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
   it('主发言者档案只剩过期 temporary 事实：不注入', async () => {
     const { app, memory } = await setup({ temporaryFactMaxAgeDays: 90, maxOtherParticipants: 0 });
     const stale = Date.now() - 200 * 86_400_000;
-    await memory.saveMetadata!(PROFILE_NS, 'onebot:u1', {
+    await memory.saveMetadata(PROFILE_NS, 'onebot:u1', {
       facts: [
         {
           id: 'f900',
@@ -299,7 +299,7 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
 
   it('enableSelfProfile=false：已有自档案也不注入', async () => {
     const { app, memory } = await setup({ enableSelfProfile: false, maxOtherParticipants: 0 });
-    await memory.saveMetadata!(PROFILE_NS, SELF_KEY, {
+    await memory.saveMetadata(PROFILE_NS, SELF_KEY, {
       facts: [makeFact('s001', '自我观察占位')],
       updatedAt: TS,
     });
@@ -326,11 +326,11 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
       maxOtherParticipants: 3,
       enableSelfProfile: false,
     });
-    await memory.saveMetadata!(PROFILE_NS, SELF_KEY, {
+    await memory.saveMetadata(PROFILE_NS, SELF_KEY, {
       facts: [makeFact('s001', '自档案私密内容')],
       updatedAt: TS,
     });
-    await memory.saveMetadata!(PROFILE_NS, 'onebot:u2', {
+    await memory.saveMetadata(PROFILE_NS, 'onebot:u2', {
       facts: [makeFact('f201', '常在深夜发言', '其他')],
       relationScore: 3,
       interactionCount: 2,

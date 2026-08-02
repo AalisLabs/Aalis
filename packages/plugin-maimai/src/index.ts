@@ -720,7 +720,7 @@ async function handleBind(
   const fc = parseIntStrict(args.friend_code);
   if (!fc) return '请提供有效的好友码（数字）';
   const ok = await setBoundFriendCode(ctx, callCtx.platform, callCtx.userId, fc);
-  if (!ok) return '绑定失败：记忆服务未提供 saveMetadata，或未识别到 platform:userId';
+  if (!ok) return '绑定失败：记忆服务不可用，或未识别到 platform:userId';
   return `已将 ${callCtx.platform}:${callCtx.userId} 绑定到好友码 ${fc}`;
 }
 

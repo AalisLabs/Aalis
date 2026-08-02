@@ -1,3 +1,4 @@
+import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { useCommandService } from '@aalis/api-commands';
 import { resolveLLMModel } from '@aalis/api-llm';
 import type { MemoryService } from '@aalis/api-memory';
@@ -7,7 +8,6 @@ import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import { WellKnownKinds } from '@aalis/schema-message';
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
-import '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 
 // ════════════════════════════════════════════════════════════
 // plugin-user-profile — 用户事实档案

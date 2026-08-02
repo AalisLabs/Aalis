@@ -89,6 +89,33 @@ function strictestDecl(decls: readonly Decl[]): Decl | undefined {
   return best;
 }
 
+/**
+ * confirm 轴单独取最严（always > session > 无），**不跟着 {@link strictestDecl} 的赢家走**。
+ *
+ * 上面那条「整份取最严」的纪律只适用于 visibility 与 risk：它俩一起进
+ * `capabilityMinLevel`，而 risk 在里面会完全遮蔽 visibility，逐轴合并因此不单调。
+ * confirm 不同 —— 它根本不参与定级（`capabilityMinLevel` 只读 risk 与 visibility），
+ * 是 authority 的独立轴 B。让它跟着定级赢家走会出两种病，实测都能复现：
+ * - 平局时先入者胜，于是 `profile.clear`（restricted，等级 2、无 confirm）压过
+ *   `profile.clear.nuke`（dangerous，等级同为 2、confirm=session）——「清空所有用户档案」
+ *   的二次确认整条消失；
+ * - 后注册者声明 `{visibility:'restricted'}`（等级 2）即可盖过既有的 `{confirm:'always'}`
+ *   （等级 0），**抹掉别人的确认闸**；反过来单独声明 confirm 想收紧又因等级不变而无效。
+ *   对 owner（等级无上限）来说前者的净效果就是「确认闸没了」。
+ *
+ * 逐轴取严在这一轴上是安全的：它只会多要一次确认、不会少要，也不改变任何门槛等级。
+ * 取值范围是**整条 dot path 上的全部声明**而非每节点的最严者——同一节点栈内平级时，
+ * 只看每节点赢家同样会丢掉带 confirm 的那一份。
+ */
+function strictestConfirm(decls: readonly Decl[]): CapabilityConfirm | undefined {
+  let best: CapabilityConfirm | undefined;
+  for (const d of decls) {
+    if (d.baseConfirm === 'always') return 'always';
+    if (d.baseConfirm === 'session') best = 'session';
+  }
+  return best;
+}
+
 export class CommandRegistry implements CommandService {
   /** 名字 → 声明栈。空栈 = 自动创建的分组节点。 */
   private readonly nodes = new Map<string, Decl[]>();
@@ -425,15 +452,19 @@ export class CommandRegistry implements CommandService {
     // 现在没有「继承」这个中间概念了：把 path 上每个节点各自的最严声明收集起来，再整体取最
     // 严的那一份。少一层概念，也少一个能被插进去的缝。
     const chain: Decl[] = [];
+    const everyDecl: Decl[] = [];
     const parts = name.split('.');
     for (let i = 1; i <= parts.length; i++) {
-      const d = strictestDecl(this.nodes.get(parts.slice(0, i).join('.')) ?? []);
+      const stack = this.nodes.get(parts.slice(0, i).join('.')) ?? [];
+      everyDecl.push(...stack);
+      const d = strictestDecl(stack);
       if (d) chain.push(d);
     }
     const effective = strictestDecl(chain);
     const visibility = effective?.baseVisibility ?? 'public';
-    const confirm = effective?.baseConfirm;
     const risk = effective?.baseRisk;
+    // confirm 走独立的一条，理由见 strictestConfirm 的注释（跟着定级赢家走会丢确认闸）。
+    const confirm = strictestConfirm(everyDecl);
 
     return {
       name,

@@ -2,9 +2,8 @@
 // engine.ts — DAG 执行引擎
 // ============================================================
 
-import type { Context, Logger } from '@aalis/core';
 // 副作用引入：激活 api-agent 对 core HookContextMap 的 'agent:turn:after' 增广
-import '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import type { ToolCallContext, ToolService } from '@aalis/api-tools';
 import type {
   AgentNodeSpec,
@@ -15,6 +14,7 @@ import type {
   WaitNodeSpec,
   WorkflowDef,
 } from '@aalis/api-workflow';
+import type { Context, Logger } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 const MAX_OUTPUT_PREVIEW = 1000;
