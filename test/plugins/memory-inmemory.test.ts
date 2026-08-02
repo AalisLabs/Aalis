@@ -88,9 +88,6 @@ describe('plugin-memory-inmemory', () => {
   });
 
   it('metadata 存取', async () => {
-    if (!mem.saveMetadata || !mem.getMetadata || !mem.listMetadata || !mem.deleteMetadata) {
-      throw new Error('metadata API missing');
-    }
     await mem.saveMetadata('ns', 'k1', { foo: 1 });
     await mem.saveMetadata('ns', 'k2', { bar: 2 });
     expect(await mem.getMetadata('ns', 'k1')).toEqual({ foo: 1 });

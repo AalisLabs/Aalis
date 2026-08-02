@@ -47,7 +47,6 @@ async function setup(opts: { contextLength?: number; config?: Record<string, unk
 }
 
 async function seedSummary(memory: MemoryService, sessionId: string, summary: string): Promise<void> {
-  if (!memory.saveMetadata) throw new Error('memory 实现缺少 saveMetadata');
   await memory.saveMetadata(SUMMARY_NAMESPACE, sessionId, {
     summary,
     coveredUpTo: 10,

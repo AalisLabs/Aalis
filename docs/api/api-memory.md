@@ -27,10 +27,12 @@ interface MemoryService {
   ): Promise<Message[]>;
 
   // 结构化元数据（namespace 隔离，key 唯一）
-  saveMetadata?(namespace: string, key: string, data: Record<string, unknown>): Promise<void>;
-  getMetadata?(namespace: string, key: string): Promise<Record<string, unknown> | undefined>;
-  listMetadata?(namespace: string): Promise<Array<{ key; data }>>;
-  deleteMetadata?(namespace: string, key: string): Promise<void>;
+  saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void>;
+  getMetadata(namespace: string, key: string): Promise<Record<string, unknown> | undefined>;
+  listMetadata(namespace: string): Promise<MetadataEntry[]>;
+  deleteMetadata(namespace: string, key: string): Promise<void>;
+  /** 批量提交（put/del 混排）。原子性按后端分档，见契约注释。 */
+  commitMetadata(ops: readonly MetadataOp[]): Promise<void>;
 
   // 编辑
   updateMessageContent?(sessionId: string, oldText: string, newText: string, recentLimit?: number): Promise<number>;
