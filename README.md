@@ -72,7 +72,7 @@ ctx.provide('llm', service); // 可选 { priority, label }
 
 ```
 aalis/
-├── aalis.config.yaml         # 全局配置（YAML + 环境变量插值）
+├── aalis.config.yaml         # 全局配置（YAML；含密钥，不入库）
 ├── data/                     # 运行时数据（角色卡 / SQLite / LanceDB / 权限 / 插件配置覆盖）
 ├── docs/                     # 技术文档（architecture / core / plugins / api）
 ├── packages/
@@ -139,7 +139,7 @@ logLevel: info
 
 plugins:
   "@aalis/plugin-llm-deepseek":
-    apiKey: "${DEEPSEEK_API_KEY}"   # 支持环境变量插值
+    apiKey: "sk-..."                # 直接填；该文件在 .gitignore 里，不入库
     baseUrl: "https://api.deepseek.com"
     model: "deepseek-chat"
   "@aalis/plugin-memory-sqlite":
@@ -339,7 +339,7 @@ outputFormat:
 ### ✅ 已完成
 
 - [x] 核心框架（服务 IoC + 多提供者选择 + 事件总线 + 响应式插件生命周期）
-- [x] 配置管理（YAML + 环境变量插值 + 启动时自动同步插件默认值）
+- [x] 配置管理（YAML + 启动时自动同步插件默认值）
 - [x] 工具注册表（OpenAI function calling 格式 + 权限系统 + 安全等级）
 - [x] 默认 Agent（消息编排 + 工具循环 + 五阶段上下文裁剪 + 压缩后延续提示）
 - [x] DeepSeek LLM 插件（深度思考 + 工具调用 + 流式输出）
