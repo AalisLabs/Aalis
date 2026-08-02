@@ -56,7 +56,7 @@ Aalis 是**单 owner 的本地优先（local-first）个人 bot 框架**。整�
     owner = `OWNER_RANK = +∞`（靠 `owners` 列表归属，不进入等级表）。
   - 操作映射到最低等级 `minLevel`，由 `resolveMinLevel` 按
     `authorityOverrides[cap] > risk 派生 > visibility 兜底` 的顺序解析：
-    `risk` 的 `safe→0 / sensitive→1 / dangerous→2`（`riskToLevel`），
+    `risk` 的 `safe→0 / sensitive→1 / dangerous→2`（`capabilityMinLevel`），
     `visibility` 的 `public→0 / restricted→RESTRICTED_LEVEL(2)`。
   - `deniedCapabilities` 是**配置总闸、glob 硬禁，连 owner 都压过**。
     它不是 per-user 黑名单，而是「这台机器上谁都不许做」的系统级断路器，应谨慎使用。
