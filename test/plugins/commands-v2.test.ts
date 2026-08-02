@@ -445,3 +445,21 @@ describe('分组节点回收', () => {
     expect(r.getAll().map(c => c.name)).toEqual([]);
   });
 });
+
+describe('别名：底层声明的别名要能被展示', () => {
+  const reg = () => new CommandRegistry(makeLogger());
+  const find = (r: CommandRegistry, n: string) => r.getAll().find(c => c.name === n);
+
+  it('被覆盖者的别名仍列在 materialize 结果里（它本就解析得到）', () => {
+    const r = reg();
+    r.command('ping', 'A', { pluginName: 'A' })
+      .alias('pa')
+      .action(async () => 'a');
+    r.command('ping', 'B', { pluginName: 'B' })
+      .alias('pb')
+      .action(async () => 'b');
+    const cmd = find(r, 'ping');
+    // 两个别名都能解析到 ping —— 那就都该展示，否则 /help 与实际行为不一致
+    expect(cmd?.aliases.sort()).toEqual(['pa', 'pb']);
+  });
+});
