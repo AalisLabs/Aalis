@@ -690,33 +690,69 @@ describe('uninstall', () => {
 // 自锁闸的**生产接线**
 //
 // 上面那组自锁闸用例注入的是假的 recoveryChannelProviders，从不执行 createService 里真正
-// 算这份名单的那几行——实测把 `id.split('/')[0]` 原样放回去，全量用例仍全绿。而那正是
-// 「卸掉正在用的前端 → 整站 404、只能带外恢复」这条唯一护栏。所以这里走真 Context + 真
-// apply()，把生产接线本身钉住。
+// 算这份名单的那几行——实测把 `id.split('/')[0]` 原样放回去，全量用例仍全绿。
+//
+// ⚠️ 第一版这条用例也是假绿：它断言的是 core 的 getAllServices 与 JS 的 String.split，
+// 一行 package-manager 的代码都没验。现在改为**真走 uninstallOne 的闸**——走真 Context、
+// 真 apply()、真 uninstall()，把 bug 放回去即转红。
 // ════════════════════════════════════════════════════════════
 describe('自锁闸：生产接线算出的撤销通道名单', () => {
-  it('contextId 就是包名，不得再切分（scoped 包会被截成 @aalis，闸对全部官方包恒不触发）', async () => {
+  async function bootWithChannels() {
     const { App } = await import('../../packages/core/src/index.js');
     const { apply } = await import('../../packages/plugin-package-manager/src/index.js');
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    try {
-      // 三个撤销通道的 provider，各以自己的包名做 ctx.id —— 与真实加载器一致
-      for (const [svc, pkg] of [
-        ['webui-client', '@aalis/plugin-webui-client'],
-        ['webui-server', '@aalis/plugin-webui-server'],
-        ['package-manager', '@aalis/plugin-package-manager'],
-      ] as const) {
-        app.ctx.fork(pkg).provide(svc, {});
-      }
-      apply(app.ctx, {});
+    // 另两个撤销通道注册桩，各以自己的包名做 ctx.id —— 与真实加载器一致（scoped 包名带 /）
+    for (const [svc, pkg] of [
+      ['webui-client', '@aalis/plugin-webui-client'],
+      ['webui-server', '@aalis/plugin-webui-server'],
+    ] as const) {
+      app.ctx.fork(pkg).provide(svc, {});
+    }
+    // package-manager 自己：apply 跑在正确 id 的 fork 上，它 provide 出来的 contextId 就是包名，
+    // 与真实加载器一致。**不能**另注册一个同名桩——那会按注册顺序占住解析结果，拿不到真服务。
+    // 闸的顺序是「先读 package.json 判类型、再查撤销通道」，所以得让这几个包可解析——
+    // 注入一个只回 package.json 的假 process 服务（它们在真实部署里本就装着）。
+    const CHANNEL_PKGS: Record<string, string> = {
+      '@aalis/plugin-webui-client': JSON.stringify({ keywords: ['aalis', 'aalis-interface'] }),
+      '@aalis/plugin-webui-server': JSON.stringify({ keywords: ['aalis', 'aalis-plugin'] }),
+      '@aalis/plugin-package-manager': JSON.stringify({ keywords: ['aalis', 'aalis-plugin'] }),
+    };
+    app.ctx.fork('fake-process').provide('process', {
+      readExternalFile: async (abs: string) => {
+        const hit = Object.keys(CHANNEL_PKGS).find(n => abs.includes(n));
+        if (!hit) throw new Error('ENOENT');
+        return new TextEncoder().encode(CHANNEL_PKGS[hit]);
+      },
+      execFile: async () => ({ stdout: '', stderr: '', code: 0 }),
+      makeTempDir: async () => ({ path: '/tmp/fake', cleanup: async () => undefined }),
+    });
+    apply(app.ctx.fork('@aalis/plugin-package-manager'), {});
+    const svc = app.ctx.getService<{ uninstall(n: string): Promise<{ ok: boolean; message: string }> }>(
+      'package-manager',
+    );
+    if (!svc) throw new Error('package-manager 服务未就绪');
+    return { app, svc };
+  }
 
-      // createService 里的 recoveryChannelProviders 是闭包，取不到；改从行为侧断言：
-      // 用 getAllServices 复刻它的取数，确认 contextId 确实是完整包名（切分即失效的前提）
-      for (const svc of ['webui-client', 'webui-server', 'package-manager'] as const) {
-        const id = app.ctx.getAllServices(svc)[0]?.contextId;
-        expect(id, `${svc} 的 contextId 必须是完整包名`).toMatch(/^@aalis\/plugin-/);
-        expect(id?.split('/')[0], '这就是曾经的写法：切完只剩 @aalis，与包名永不相等 → 闸恒不触发').toBe('@aalis');
+  it('卸载三个撤销通道之一 → 被闸拦下（scoped 包名不得被切分）', async () => {
+    const { app, svc } = await bootWithChannels();
+    try {
+      for (const pkg of ['@aalis/plugin-webui-client', '@aalis/plugin-webui-server', '@aalis/plugin-package-manager']) {
+        const r = await svc.uninstall(pkg);
+        expect(r.ok, `${pkg} 必须被自锁闸拦下`).toBe(false);
+        expect(r.message, `${pkg} 的拒绝理由应指向撤销通道`).toContain('正在承载市场/管理界面本身');
       }
+    } finally {
+      await app.stop();
+    }
+  });
+
+  it('普通插件不被误拦（闸只拦当前生效的撤销通道）', async () => {
+    const { app, svc } = await bootWithChannels();
+    try {
+      const r = await svc.uninstall('@aalis/plugin-nonexistent-probe');
+      // 会因别的原因失败（读不到 package.json / 不是插件），但**不能**是自锁闸那条理由
+      expect(r.message).not.toContain('正在承载市场/管理界面本身');
     } finally {
       await app.stop();
     }

@@ -252,8 +252,6 @@ export interface RespawnOptions {
   readyTimeoutMs?: number;
 }
 
-/** 极简 dotenv 解析：`KEY=VALUE`，容忍 `export ` 前缀、行内注释外的引号包裹。纯函数。 */
-
 /** 组装重生用的 exec + argv。分离出来是为了单测覆盖 execArgv 保留。 */
 export function buildRespawnCommand(
   argv: readonly string[] = process.argv,
@@ -266,9 +264,9 @@ export function buildRespawnCommand(
     const tsxBin = resolve(cwd, 'node_modules', '.bin', 'tsx');
     return { exec: existsSync(tsxBin) ? tsxBin : 'tsx', args: [...argv.slice(1)] };
   }
-  // execArgv 不在 argv 里：`node --env-file-if-exists=.env dist/start.js` 的
-  // `--env-file-if-exists` 只出现在 execArgv。不透传的话，脚手架启动脚本的 .env 加载与
-  // 用户自加的 --max-old-space-size 会在重启后静默失效。
+  // execArgv 不在 argv 里：`node --max-old-space-size=4096 dist/start.js` 的
+  // `--max-old-space-size` 只出现在 execArgv。不透传的话，用户自加的 node flag
+  // 会在重启后静默失效。
   const [exec, ...rest] = argv;
   return { exec: exec ?? process.execPath, args: [...execArgv, ...rest] };
 }
