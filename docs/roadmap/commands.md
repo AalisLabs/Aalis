@@ -5,6 +5,8 @@
 
 以下每条均经实测确认，记录根因与修法方向，避免后续重新调查。
 
+**位置写符号名不写行号**：指令系统被重写过四次，实测上一版的 17 处行号引用里 10 处已指向别的代码。
+
 ## 已实现（勿按旧描述施工）
 
 **同名指令冲突**：指令节点是**声明栈**（`Map<string, Decl[]>`），同名注册压栈而非就地改写。
@@ -21,14 +23,14 @@ restricted 指令名（哪怕不带 meta）就能把 authority 的闸降成 publ
 
 ### `/help` 与用法详情列出无权使用的指令
 
-`CommandRegistry.getAll()`（`commands.ts:238-240`）无条件返回全部节点，`/help` 直接消费它
-（`packages/plugin-commands/src/index.ts:254`）。`visibility: 'restricted'` 的 `shutdown` /
-`restart`（`index.ts:297` / `index.ts:309`）因此对任何等级的用户可见。
+`CommandRegistry.getAll()`（`commands.ts`）无条件返回全部节点，`/help` 直接消费它
+（`packages/plugin-commands/src/index.ts`）。`visibility: 'restricted'` 的 `shutdown` /
+`restart`（`index.ts` / `index.ts`）因此对任何等级的用户可见。
 
 更直接的一条是**裸敲分组指令**（如 `/relation`）：`execute()` 在权限守卫之前就返回完整子指令清单 ——
-`commands.ts:292-294` 的 `if (!cmd.handler) return this.formatUsage(cmd)` 位于守卫调用
-（`commands.ts:300-312`）之前。未知选项报错路径同理：`parseArgs` 在 `commands.ts:297` 被调用，其内部
-`commands.ts:424` 与 `commands.ts:445` 的 `未知选项: --x\n\n${this.formatUsage(cmd)}` 同样先于守卫返回。
+`commands.ts` 的 `if (!cmd.handler) return this.formatUsage(cmd)` 位于守卫调用
+（`commands.ts`）之前。未知选项报错路径同理：`parseArgs` 在 `commands.ts` 被调用，其内部
+`commands.ts` 与 `commands.ts` 的 `未知选项: --x\n\n${this.formatUsage(cmd)}` 同样先于守卫返回。
 
 `/relation` 是最直观的样本：`relation` 本身从未被显式注册（`packages/plugin-user-relation/src/commands.ts`
 只注册 `relation.*`），是 `ensureGroups` 自动建的无 handler 分组节点，于是裸敲它会把
@@ -41,30 +43,30 @@ restricted 指令名（哪怕不带 meta）就能把 authority 的闸降成 publ
 与临时授予。理由是后两者一个是 `async` 且会真弹确认框、一个随会话漂移：
 
 - `authorize(identity, request)` 是**同步**的、纯等级裁决，返回 `string | null`
-  （`packages/api-authority/src/index.ts:237`，实现见
-  `packages/plugin-authority/src/authority-manager.ts:61-77`）—— 逐条跑无副作用、可用于列表渲染。
-- `requestAccess` 是 `Promise<boolean>`（`api-authority/src/index.ts:255`），会调用
-  confirmHandler 弹确认；`isPreApproved`（`:253`）虽同步但读的是会话级临时授予，
+  （`packages/api-authority/src/index.ts`，实现见
+  `packages/plugin-authority/src/authority-manager.ts`）—— 逐条跑无副作用、可用于列表渲染。
+- `requestAccess` 是 `Promise<boolean>`（`api-authority/src/index.ts`），会调用
+  confirmHandler 弹确认；`isPreApproved`虽同步但读的是会话级临时授予，
   同一条指令在列表里的可见性会随会话状态前后不一致。
 
 接线点已经现成，**无需新增依赖**：
 
-- `plugin-commands` 已在 `package.json:31` 依赖 `@aalis/api-authority`，
-  且 `index.ts:380` 已有 `ctx.getService<AuthorityService>('authority')` 的先例（`/clear` 的共享会话设防）。
+- `plugin-commands` 已在 `package.json` 依赖 `@aalis/api-authority`，
+  且 `index.ts` 已有 `ctx.getService<AuthorityService>('authority')` 的先例（`/clear` 的共享会话设防）。
   `/help` 走这条路即可。
 - `formatUsage` 在 `CommandRegistry` 内部、拿不到 `ctx`，且 `parseArgs(cmd, rawArgs)`
-  （`commands.ts:404-407`）签名里根本没有调用者身份。要过滤这两条路径，需把身份从 `execute()` 的
-  `input` 往下透传，或在 `setExecutionGuard`（`commands.ts:84-86`，由
-  `packages/plugin-authority/src/index.ts:116-124` 注入）旁边加一个同源的同步可见性钩子。
+  （`commands.ts`）签名里根本没有调用者身份。要过滤这两条路径，需把身份从 `execute()` 的
+  `input` 往下透传，或在 `setExecutionGuard`（`commands.ts`，由
+  `packages/plugin-authority/src/index.ts` 注入）旁边加一个同源的同步可见性钩子。
 
 ### 直敲受限指令的拒绝文案暴露其存在
 
 上一条的另一半。低权限用户直敲受限指令，守卫会返回
-`权限不足: "command:xxx" 需等级 N（当前 M）`（`packages/plugin-authority/src/authority-manager.ts:75`），
+`权限不足: "command:xxx" 需等级 N（当前 M）`（`packages/plugin-authority/src/authority-manager.ts`），
 **存在性照样暴露**。只堵 `/help` 而不动这条，等于只堵一半。
 
 这条触及 authority 的通用拒绝文案 —— 它同时服务 tools 与 commands 两个注入点
-（`plugin-authority/src/index.ts:116-124`），改成「未知指令」式的模糊回应会牵动所有能力的拒绝语义，
+（`plugin-authority/src/index.ts`），改成「未知指令」式的模糊回应会牵动所有能力的拒绝语义，
 **改动面大于收益**，暂不动。但需与上一条**一并决策**：要么两条都做（含文案），要么两条都不做，
 只做 `/help` 过滤是自欺。
 
@@ -72,7 +74,7 @@ restricted 指令名（哪怕不带 meta）就能把 authority 的闸降成 publ
 
 `/help` 两段式与统一渲染器已落地（`db487bad`，见 `plugin-commands/src/help.ts`），
 `remark-breaks` 也已补上（裸换行不再被合并成一段）。剩下的只有一条：详情正文整体包进代码块
-（`help.ts:152`）是**规避**而非解决。
+（`help.ts`）是**规避**而非解决。
 
 规避的对象**不是**「缺 `rehype-raw`」——那条记载已被实测证伪，两个理由各自都足够：
 

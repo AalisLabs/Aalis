@@ -1526,14 +1526,21 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     // 对账：本轮扫不到的候选要摘掉，不能只增不删。卸载现在会真删 node_modules，
     // 留着的候选指向一个已不存在的目录——它仍在服务池里，被解析到就是整站 404。
     const scannedIds = new Set(scanned.map(c => c.id));
+    let removed = 0;
     for (let i = clientCandidates.length - 1; i >= 0; i--) {
       const stale = clientCandidates[i];
       if (scannedIds.has(stale.id)) continue;
       clientProviderDisposers.get(stale.id)?.();
       clientProviderDisposers.delete(stale.id);
       clientCandidates.splice(i, 1);
+      removed++;
       ctx.logger.info(`前端已消失，摘除候选: ${stale.label} (${stale.dir})`);
     }
+    // 摘掉 provider 只改了「服务解析结果」，**真正服务 HTTP 的是 clientDist / staticMiddleware**，
+    // 它们在 ready 时绑定、之后只由 remountActiveClient 更新。不重挂的话，被摘掉的正好是当前
+    // 活跃前端时，express.static 仍指向已删目录 —— 请求落到 SPA 兜底、`index.html` 不存在
+    // → 整站 404，而服务池里明明还有别的可用前端。切换偏好那条路径早就这么做了，这里对齐。
+    if (removed > 0) remountActiveClient();
 
     const fresh = pickFreshClients(
       clientCandidates.map(c => c.id),
