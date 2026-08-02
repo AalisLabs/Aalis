@@ -68,8 +68,8 @@ interface FsYamlConfigProviderResult {
 /**
  * 创建一个基于 YAML 文件的 ConfigProvider。
  *
- * - 同步读取 + 解析 + 环境变量插值
- * - `save()` 同步写回，并保护 `${ENV}` 占位符
+ * - 同步读取 + 解析（值原样加载，不做任何替换——`${VAR}` 插值已随 `.env` 机制删除）
+ * - `save()` 同步写回
  * - `watch()` 用 `fs.watch` + 300ms debounce，并通过 lastWrittenYaml 去重避免自激
  *
  * 调用时一次性返回 config 快照、provider 和 dataDir 三件套，方便 src/index.ts 组装。
