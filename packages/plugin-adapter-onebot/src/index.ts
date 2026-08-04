@@ -527,14 +527,7 @@ export function splitMessageByPunctuation(content: string, patterns: string[]): 
   const result: string[] = [];
   for (const piece of pieces) {
     const cleaned = stripTrailing(piece).trim();
-    if (!cleaned) continue;
-    // 纯文本过短则合并到上一条
-    const textOnly = cleaned.replace(/<[^>]+>/g, '').trim();
-    if (textOnly.length < 4 && result.length > 0) {
-      result[result.length - 1] += cleaned;
-    } else {
-      result.push(cleaned);
-    }
+    if (cleaned) result.push(cleaned);
   }
 
   return result.length > 0 ? result : [content];
