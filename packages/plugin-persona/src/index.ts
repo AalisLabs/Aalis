@@ -364,7 +364,11 @@ class PersonaServiceImpl implements PersonaService {
       const state = id?.sessionId ? this.sessionStates.get(id.sessionId) : undefined;
       if (state && Object.keys(state).length > 0) {
         prompt += '\n\n# 你上一轮的状态\n';
-        prompt += '以下是你上一轮回复中的角色状态，请基于此状态继续，并根据本轮对话更新：\n';
+        // 措辞刻意不写「基于此继续」：那会让状态自我强化——被连续戳/at 时，模型顺着
+        // 上一轮的叙事往上加码（「又被戳了」→「戳了我半天」→「戳了我十几下」），
+        // 回复随之越来越长、越来越爱串前文的梗。状态是参考，不是必须延续的剧情线。
+        prompt += '这是你上一轮的状态，仅供参考。若本轮话题已变或与上轮无关，直接重置，不必延续；\n';
+        prompt += '尤其不要把「被重复打扰的次数」当成需要递进的叙事——重复的骚扰用一句话打发即可。\n';
         for (const [k, v] of Object.entries(state)) {
           prompt += `${k}: ${v}\n`;
         }
