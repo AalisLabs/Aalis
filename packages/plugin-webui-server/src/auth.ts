@@ -180,7 +180,16 @@ export function createAuthSystem(token: string, _logger: Logger): AuthSystem {
 export function openBrowser(url: string, proc: ProcessService): void {
   try {
     const spawnDetached = (cmd: string, args: string[]) => {
-      proc.spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
+      const handle = proc.spawn(cmd, args, { detached: true, stdio: 'ignore' });
+      // **必须 await wait()**：`child.on('error')` 只在 wait() 内注册，而 `stdio:'ignore'`
+      // 让 stdin 为 null、那条 handler 也挂不上——于是 handle 上零 error 监听。
+      // spawn 失败（headless Linux/Docker 无 xdg-open 是常态）是**异步 emit**，
+      // 外层 try/catch 接不住，直达 uncaughtException → runtime 的 process.exit(1)，
+      // 把整个 bot 打死。而这只是个「顺手开浏览器」的便利功能。
+      void handle.wait().catch(() => {
+        /* 打不开浏览器不影响服务；这里只是给 handle 挂上 error 监听 */
+      });
+      handle.unref();
     };
     if (process.platform === 'darwin') {
       spawnDetached('open', [url]);

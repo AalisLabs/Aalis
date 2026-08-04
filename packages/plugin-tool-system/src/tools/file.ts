@@ -177,48 +177,65 @@ const DEFAULT_EXCLUDE_PATTERNS: readonly string[] = [
 ];
 
 /**
- * 把简单 glob 模式（支持 `**` / `*` / `?`）编译为路径级正则。
+ * 路径级 glob，编译成按 `/` 切好的段数组。
  *
- * - `**\/` → 任意层级前缀（含零层），所以 `**\/node_modules/**` 同时匹配
- *   `node_modules/x` 和 `a/b/node_modules/x`
- * - `/**` → 任意层级后缀（含零层）
- * - `**`  → 任意多段（含 `/`）
- * - `*`   → 单段内任意字符（不含 `/`）
- * - `?`   → 单段内一个字符（不含 `/`）
+ * - `**` 匹配任意多段（含零段），故 `**` + `/node_modules/**` 同时匹配
+ *   `node_modules/x` 与 `a/b/node_modules/x`
+ * - `*` 单段内任意字符（不跨 `/`）
+ * - `?` 单段内一个字符（不跨 `/`）
  *
- * 匹配的是相对扫描根的"路径"。
+ * 匹配的是相对扫描根的路径。
  */
-function compileGlob(pattern: string): RegExp {
-  // 使用控制字符做占位，避免与后续 *, ?, 正则元字符转义冲突
-  const STAR2_SLASH = '\u0001';
-  const SLASH_STAR2 = '\u0002';
-  const STAR2 = '\u0003';
-  let p = pattern;
-  p = p.replace(/\*\*\//g, STAR2_SLASH);
-  p = p.replace(/\/\*\*/g, SLASH_STAR2);
-  p = p.replace(/\*\*/g, STAR2);
-  p = p.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-  p = p.replace(/\*/g, '[^/]*');
-  p = p.replace(/\?/g, '[^/]');
-  p = p.split(STAR2_SLASH).join('(?:.*/)?');
-  p = p.split(SLASH_STAR2).join('(?:/.*)?');
-  p = p.split(STAR2).join('.*');
-  return new RegExp(`^${p}$`);
+type CompiledGlob = readonly string[];
+
+export function compileGlob(pattern: string): CompiledGlob {
+  return pattern.split('/');
 }
 
-function matchAnyGlob(relPath: string, patterns: readonly RegExp[]): boolean {
-  for (const re of patterns) if (re.test(relPath)) return true;
+/**
+ * 段级双指针：`**` 记回溯点吃任意多段，其余段交给 `matchGlob`（段内同样无回溯）。
+ *
+ * **不编译成正则**：`*` 译成 `[^/]*` 后，在无斜杠的单段路径上退化为 `.*`，与 `matchGlob`
+ * 同源的灾难性回溯——`*?*?…` 这类 pattern 数十字符即可耗时数秒，而 V8 正则同步执行、
+ * 超时打不断。exclude / include 由调用方给定且对每个 entry 各调一次，不能留这个面。
+ */
+export function matchGlobPath(relPath: string, segs: CompiledGlob): boolean {
+  const parts = relPath.split('/');
+  let si = 0;
+  let pi = 0;
+  let starPi = -1;
+  let starSi = 0;
+  while (si < parts.length) {
+    if (pi < segs.length && segs[pi] === '**') {
+      starPi = pi++;
+      starSi = si;
+    } else if (pi < segs.length && matchGlob(parts[si], segs[pi])) {
+      si++;
+      pi++;
+    } else if (starPi >= 0) {
+      pi = starPi + 1;
+      si = ++starSi;
+    } else {
+      return false;
+    }
+  }
+  while (pi < segs.length && segs[pi] === '**') pi++;
+  return pi === segs.length;
+}
+
+function matchAnyGlob(relPath: string, patterns: readonly CompiledGlob[]): boolean {
+  for (const g of patterns) if (matchGlobPath(relPath, g)) return true;
   return false;
 }
 
-function resolveExcludePatterns(arg: unknown): RegExp[] {
+function resolveExcludePatterns(arg: unknown): CompiledGlob[] {
   if (arg === undefined || arg === null) return DEFAULT_EXCLUDE_PATTERNS.map(compileGlob);
   if (!Array.isArray(arg)) return DEFAULT_EXCLUDE_PATTERNS.map(compileGlob);
   // 显式传空数组 → 关闭全部默认；其它情况只用用户值
   return (arg as unknown[]).filter((x): x is string => typeof x === 'string').map(compileGlob);
 }
 
-function resolveIncludePatterns(arg: unknown): RegExp[] | undefined {
+function resolveIncludePatterns(arg: unknown): CompiledGlob[] | undefined {
   if (!Array.isArray(arg)) return undefined;
   const list = (arg as unknown[]).filter((x): x is string => typeof x === 'string');
   return list.length ? list.map(compileGlob) : undefined;
@@ -245,8 +262,8 @@ function relPathFromRoot(rootUri: string, childUri: string): string {
 async function collectFiles(
   storage: StorageService,
   rootUri: string,
-  exclude: readonly RegExp[],
-  include: readonly RegExp[] | undefined,
+  exclude: readonly CompiledGlob[],
+  include: readonly CompiledGlob[] | undefined,
 ): Promise<string[]> {
   const out: string[] = [];
   async function walk(uri: string): Promise<void> {
@@ -966,7 +983,40 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
   });
 }
 
-function matchGlob(name: string, pattern: string): boolean {
-  const regexStr = escapeRegExp(pattern).replace(/\*/g, '.*').replace(/\?/g, '.');
-  return new RegExp(`^${regexStr}$`, 'i').test(name);
+/**
+ * 单段文件名的 glob 匹配（`*` 任意串、`?` 单字符），大小写不敏感。
+ *
+ * **不走正则。** 把 glob 翻译成 `.*` / `.` 会引入灾难性回溯：`*?*?*?…*zz` 这类 pattern
+ * 与文件名内容无关（`?` 匹配任意字符），几十字符即可让匹配耗时数十秒；而 V8 正则同步执行，
+ * 事件循环被整段阻塞、任何超时都打不断，且 `file_tree` 对每个 entry 各调一次。
+ *
+ * 双指针通配匹配：遇 `*` 记回溯点继续，失配则退回上一个 `*` 让它多吃一个字符。
+ * 最坏 O(name × pattern)，无回溯爆炸，也不需要拍脑袋的长度阈值。
+ */
+export function matchGlob(name: string, pattern: string): boolean {
+  const s = name.toLowerCase();
+  const p = pattern.toLowerCase();
+  let si = 0;
+  let pi = 0;
+  let starPi = -1;
+  let starSi = 0;
+  while (si < s.length) {
+    // **`*` 必须最先判**：文件名里也可能含 `*`，此时 `p[pi] === s[si]` 会成立，
+    // 通配符被当字面量消耗掉、回溯点不记，后续失配就无处可退。
+    if (pi < p.length && p[pi] === '*') {
+      starPi = pi++;
+      starSi = si;
+    } else if (pi < p.length && (p[pi] === '?' || p[pi] === s[si])) {
+      si++;
+      pi++;
+    } else if (starPi >= 0) {
+      // 失配：退回最近的 `*`，让它多吃一个字符
+      pi = starPi + 1;
+      si = ++starSi;
+    } else {
+      return false;
+    }
+  }
+  while (pi < p.length && p[pi] === '*') pi++;
+  return pi === p.length;
 }

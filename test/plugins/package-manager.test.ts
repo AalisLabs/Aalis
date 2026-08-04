@@ -398,7 +398,10 @@ describe('update — 流程', () => {
   });
 
   it('无 lockfile 时把 lockfile 标记为「更新前不存在」（回滚要删而非写空）', async () => {
-    const restarts: Array<{ reason: string; restore: Array<{ path: string; deleteIfEmpty?: boolean }> }> = [];
+    const restarts: Array<{
+      reason: string;
+      restore: Array<{ path: string; content: string; deleteIfEmpty?: boolean }>;
+    }> = [];
     const h = makeHarness({
       text: { [rootPkgPath]: '{"dependencies":{"foo":"^1.0.0"}}', ...installedAt('foo', '1.0.0') },
       restarts,

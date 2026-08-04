@@ -29,7 +29,9 @@ describe('Context.useModule 沙盒插件加载', () => {
       name: 'mini',
       apply(ctx) {
         events.push('apply');
-        ctx.onDispose(() => events.push('disposed'));
+        ctx.onDispose(() => {
+          events.push('disposed');
+        });
       },
     };
     const off = await env.app.ctx.useModule(mini);
@@ -47,7 +49,9 @@ describe('Context.useModule 沙盒插件加载', () => {
     await scope.useModule({
       name: 'inner',
       apply(c) {
-        c.onDispose(() => disposed.push(c.id));
+        c.onDispose(() => {
+          disposed.push(c.id);
+        });
       },
     });
     scope.dispose();
@@ -60,7 +64,9 @@ describe('Context.useModule 沙盒插件加载', () => {
     const bad: PluginModule = {
       name: 'bad',
       apply(ctx) {
-        ctx.onDispose(() => disposed.push('cleanup'));
+        ctx.onDispose(() => {
+          disposed.push('cleanup');
+        });
         throw new Error('boom');
       },
     };

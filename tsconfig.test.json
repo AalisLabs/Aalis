@@ -1,0 +1,27 @@
+{
+  // ════════════════════════════════════════════════════════════
+  // test/ 的类型检查
+  //
+  // 存在的理由：根 tsconfig 的 `include` 只有 `["src"]`，98 个包的 tsconfig 同样只 include
+  // 自己的 src，而 vitest 走 esbuild —— 只擦类型、不检查。于是 `test/` 目录**从来没有
+  // 任何一道门检查过类型**，实测后果不是「不够严谨」而是真实的零覆盖：
+  //   - test/fixtures/mock-llm.ts 曾 `implements LLMService`（该接口已不存在），等于零约束，
+  //     mock 缺 contextLength，唯一的 agent 端到端测试整条跑在 NaN 预算上
+  //   - user-relation 级联删除用例传错字段名（personId vs fromPersonId），两个端点实际都是
+  //     undefined，断言又查不存在的字段，把级联逻辑整个删掉测试仍全绿
+  //
+  // 路径映射与 vitest.config.ts 的 alias 保持同一指向（packages/*/src/index.ts），
+  // 否则 tsc 看到的和 vitest 跑的不是同一份代码。
+  // ════════════════════════════════════════════════════════════
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    // DOM/jsx：test/plugins/*.test.tsx 测的是 webui-client 的 React 组件
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": { "@aalis/*": ["packages/*/src/index.ts"] }
+  },
+  "include": ["test"]
+}

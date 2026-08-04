@@ -91,17 +91,42 @@ export class AuthorityManager implements AuthorityService {
   setUserLevel(target: UserIdentity, level: number): void {
     const key = `${target.platform}:${target.userId}`;
     const existing = this.store.get(key);
+    const prev = existing?.level ?? DEFAULT_AUTHORITY;
     // 默认等级(0)且无备注 → 直接清记录（保持 users.json 精简）
     if (level === DEFAULT_AUTHORITY && !existing?.note) {
       this.store.delete(key);
     } else {
       this.store.set(key, { ...existing, level });
     }
+    // 降权即撤销该用户尚未过期的会话授予。
+    // 不这么做的话，`isPreApproved`（守卫「未授权」分支的救援口）会靠旧授予继续放行——
+    // authorize 明确返回「权限不足」而守卫仍放过，即「封了但没封住」，窗口最长 1 小时。
+    // 撤销放在这里而不是放在救援口上复查：救援口恰恰是在 authorize 拒绝之后才被调用的，
+    // 在那里复查等于把整条会话授予路径变成死代码。撤销本就是管理动作的一部分。
+    if (level < prev) this.revokeGrantsOf(target.platform, target.userId);
     this.logger.debug(`设置等级: ${key} → ${level}`);
   }
 
   removeUser(platform: string, userId: string): void {
-    if (this.store.delete(`${platform}:${userId}`)) this.logger.debug(`删除用户记录: ${platform}:${userId}`);
+    const key = `${platform}:${userId}`;
+    // 删记录 = 等级回落 DEFAULT_AUTHORITY，所以**只在这构成降权时**撤销授予，判据与
+    // setUserLevel 同源。原等级为负（被封禁）时删记录其实是升权，撤销纯属多余；
+    // 记录本就不存在时更是什么都没变，无条件撤销会让人白白重新确认一次。
+    const prev = this.store.get(key)?.level ?? DEFAULT_AUTHORITY;
+    if (this.store.delete(key)) this.logger.debug(`删除用户记录: ${key}`);
+    if (DEFAULT_AUTHORITY < prev) this.revokeGrantsOf(platform, userId);
+  }
+
+  /** 撤销某身份名下所有未过期的会话授予（降权 / 删除用户记录时调用）。 */
+  private revokeGrantsOf(platform: string, userId: string): void {
+    let n = 0;
+    for (const [id, g] of this.tempGrants) {
+      if (g.platform === platform && g.userId === userId) {
+        this.tempGrants.delete(id);
+        n++;
+      }
+    }
+    if (n > 0) this.logger.info(`已撤销 ${platform}:${userId} 的 ${n} 条会话授予（等级下调）`);
   }
 
   // ── 临时能力委托（restricted 能力的时限/限次放行）──────────────
@@ -113,7 +138,8 @@ export class AuthorityManager implements AuthorityService {
    * 该请求是否被 owner **预先**放行（白名单 / 该用户在本会话已有的临时授予）——**绝不**含"问发起者本人"。
    * 先过绝对闸（任何放行都不得绕过）：硬禁 deniedCapabilities。
    * 再看：restrictedPolicy 全局白名单（自动化免确认）或 会话临时授予。
-   * 临时授予按 **userId + sessionId + capability** 匹配 —— 群内 sessionId 全群共享时，不跨用户泄漏。
+   * 临时授予按 **platform + userId + sessionId + capability** 匹配 —— 群内 sessionId 全群共享时
+   * 不跨用户泄漏，同名 id 跨平台时不跨平台泄漏。消费端 consumeTempGrant 用同一组判据。
    */
   private isTemporarilyAllowed(request: AccessRequest, ownerOnly: boolean): boolean {
     const denied = (this.config.get('deniedCapabilities') ?? []) as string[];
@@ -125,7 +151,7 @@ export class AuthorityManager implements AuthorityService {
     // - `requestAccess`（确认轴）传 false：白名单在这里的意思是「免确认」——请求**已经过了
     //   授权**，只是还要不要弹确认。对已授权用户放宽确认，正是它被设计出来的用途。
     // - `isPreApproved`（守卫的未授权分支）传 true：那里是**救援闸**，一条不带身份判据的
-    //   白名单等于把「免确认」偷偷变成「免授权」。实测 owner 配 `allow: ['tool:*']`
+    //   白名单等于把「免确认」偷偷变成「免授权」：owner 配 `allow: ['tool:*']`
     //   （本意只是让自己的自动化不必每次确认）之后，**任何用户都能过**，包括被显式封禁到
     //   -5 的那个。同一函数下半截的会话授予本就带 `userId` 匹配（注释写着「防群内跨用户
     //   白嫖」），这里缺的正是同一道判据。
@@ -140,9 +166,17 @@ export class AuthorityManager implements AuthorityService {
         if (matchAnyCap(policy.allow, request.capability)) return true;
       }
     }
-    // 会话临时授予：同一用户 + 同会话 + 同能力（userId 必须匹配，防群内跨用户白嫖）
+    // 会话临时授予：同一平台 + 同一用户 + 同会话 + 同能力。
+    //
+    // platform 必须一起匹配 —— grant 记录里本就存着它，漏掉则 onebot 的 '123' 会命中
+    // telegram 的 '123' 的授予（userId 在跨平台间不唯一）。
+    //
+    // 这里**不**复查「当前是否仍被授权」：`isPreApproved` 恰恰是在 authorize 已经拒绝
+    // 之后才被调用的救援口，加这道复查会把整条会话授予路径变成死代码。
+    // 「封禁后旧授予仍生效」那条改在 setUserLevel 侧解决——撤销是管理动作的一部分。
     this.pruneTempGrants();
     for (const g of this.tempGrants.values()) {
+      if (g.platform !== request.platform) continue;
       if (g.sessionId !== request.sessionId) continue;
       if (g.userId !== request.userId) continue;
       if (g.capability === request.capability || matchAnyCap([g.capability], request.capability)) return true;
@@ -204,6 +238,9 @@ export class AuthorityManager implements AuthorityService {
   private consumeTempGrant(request: AccessRequest): void {
     for (const g of this.tempGrants.values()) {
       if (g.capability !== request.capability) continue;
+      // platform 与 isTemporarilyAllowed 的匹配判据保持一致 —— 两个谓词必须成对：
+      // 只在匹配端加而消费端不加，会出现「命中的是 A 平台的授予、扣次数的是 B 平台的」。
+      if (g.platform !== request.platform) continue;
       if (g.sessionId !== request.sessionId) continue;
       if (g.userId !== request.userId) continue;
       g.used++;

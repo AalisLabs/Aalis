@@ -415,11 +415,11 @@ describe('classifySystemComponent（本地已装包 → 系统组件分类）', 
 describe('sortSystemComponents', () => {
   it('内核与宿主置顶（更新它们必须全量重启），其余按类型再按名', () => {
     const list: SystemComponent[] = [
-      { name: '@aalis/util-cron', kind: 'util' },
-      { name: '@aalis/schema-message', kind: 'schema' },
-      { name: '@aalis/runtime', kind: 'runtime' },
-      { name: '@aalis/api-tools', kind: 'api' },
-      { name: '@aalis/core', kind: 'core' },
+      { name: '@aalis/util-cron', kind: 'util', origin: 'registry', updatable: false },
+      { name: '@aalis/schema-message', kind: 'schema', origin: 'registry', updatable: false },
+      { name: '@aalis/runtime', kind: 'runtime', origin: 'registry', updatable: false },
+      { name: '@aalis/api-tools', kind: 'api', origin: 'registry', updatable: false },
+      { name: '@aalis/core', kind: 'core', origin: 'registry', updatable: false },
     ];
     expect(sortSystemComponents(list).map(c => c.name)).toEqual([
       '@aalis/core',
@@ -432,8 +432,8 @@ describe('sortSystemComponents', () => {
 
   it('同类按包名字典序，且不改写入参', () => {
     const list: SystemComponent[] = [
-      { name: '@aalis/api-z', kind: 'api' },
-      { name: '@aalis/api-a', kind: 'api' },
+      { name: '@aalis/api-z', kind: 'api', origin: 'registry', updatable: false },
+      { name: '@aalis/api-a', kind: 'api', origin: 'registry', updatable: false },
     ];
     const sorted = sortSystemComponents(list);
     expect(sorted.map(c => c.name)).toEqual(['@aalis/api-a', '@aalis/api-z']);

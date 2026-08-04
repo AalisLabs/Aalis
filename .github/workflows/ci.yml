@@ -56,8 +56,11 @@ jobs:
       - name: Build (produce dist for runtime imports)
         run: pnpm -r build
 
+      # 排除式而非枚举式：枚举会静默漏掉新目录——实测曾漏掉 test/architecture 与
+      # test/utils 共 78 个用例（含守「包间版本范围」不变量的那条），CI 从未跑过它们。
+      # integration 单独一个 job 跑（要真实 npm、耗时长），故这里排除它。
       - name: Run unit tests
-        run: pnpm exec vitest run test/core test/plugins test/runtime
+        run: pnpm exec vitest run --exclude 'test/integration/**'
 
   integration-tests:
     name: integration tests (end-to-end + lifecycle + recovery)

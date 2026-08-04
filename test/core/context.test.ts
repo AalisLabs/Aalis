@@ -1,4 +1,15 @@
 import { describe, expect, it } from 'vitest';
+
+// 本测试用一个合成钩子名验证 middleware 的分叉/隔离语义。名字不能凭空写——
+// `HookContextMap` 是 core 的空接口扩展点，未登记的名字在类型上就不该被接受
+// （那正是它的价值）。这里走**真实的 declaration merging** 把它登记进去，
+// 顺带把「第三方能不能自己扩钩子」这条契约一并测到；用 as any 绕过则两者皆失。
+declare module '@aalis/core' {
+  interface HookContextMap {
+    '__t:hook': { probe?: string };
+  }
+}
+
 import {
   ConfigManager,
   Context,
@@ -427,7 +438,9 @@ describe('Context.disposeAsync / dispose 同步不变量', () => {
   it('dispose() 在同一同步栈内完成（以同步副作用断言，不用微任务）', () => {
     const ctx = makeContext().fork('plugin-a');
     const order: string[] = [];
-    ctx.onDispose(() => order.push('cleanup'));
+    ctx.onDispose(() => {
+      order.push('cleanup');
+    });
     ctx.dispose();
     order.push('after-return');
     // 同步清理在 dispose() 返回前已执行完毕——wait=false 分支零 await 命中
