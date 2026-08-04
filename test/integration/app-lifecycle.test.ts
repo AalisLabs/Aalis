@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import type { PluginManagerService } from '../../packages/core/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import { tempConfig } from '../fixtures/app.js';
 
@@ -72,7 +73,9 @@ describe('App 生命周期', () => {
   it('内置 app / plugins 服务在 ctx 中可见', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const appSvc = app.ctx.getService<App>('app');
-    const pluginsSvc = app.ctx.getService('plugins');
+    // `ServiceTypeMap` 在 core 内保持字面为空，故内核原语也要显式给类型参数
+    // （走 `getService<T = unknown>` 兜底重载）——与其余 20 处消费点写法一致。
+    const pluginsSvc = app.ctx.getService<PluginManagerService>('plugins');
     expect(appSvc).toBeDefined();
     expect(pluginsSvc).toBeDefined();
     expect(pluginsSvc).toEqual(app.plugins);

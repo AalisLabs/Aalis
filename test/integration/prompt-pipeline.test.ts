@@ -83,9 +83,8 @@ function createProbeLLMPlugin(opts: { replies: ProbeReply[]; recorder: Message[]
   return {
     name: '@aalis/test-fixture-probe-llm',
     apply(ctx: Context) {
-      ctx.provide('llm', model, {
-        capabilities: [LLMCapabilities.Chat, LLMCapabilities.ToolCalling, LLMCapabilities.Streaming],
-      });
+      // 能力挂在 handle 自身的 capabilities 字段（model 上已声明），不是 provide 的选项。
+      ctx.provide('llm', model, { entryId: `${model.providerId}/${model.id}` });
     },
   };
 }

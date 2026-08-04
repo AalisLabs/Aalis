@@ -25,15 +25,11 @@ describe('tryDispatchSubcommand', () => {
   it('命令名未注册时返回 null', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     try {
-      app.ctx.provide(
-        'commands',
-        {
-          has: (_: string) => false,
-          // biome-ignore lint/suspicious/noExplicitAny: test mock
-          execute: async (..._args: any[]) => undefined,
-        },
-        { capabilities: ['test'] },
-      );
+      app.ctx.provide('commands', {
+        has: (_: string) => false,
+        // biome-ignore lint/suspicious/noExplicitAny: test mock
+        execute: async (..._args: any[]) => undefined,
+      });
       const result = await tryDispatchSubcommand(app, ['nonexistent', 'arg1']);
       expect(result).toBeNull();
     } finally {
@@ -46,17 +42,13 @@ describe('tryDispatchSubcommand', () => {
     const captured: string[] = [];
     let executedWith: { name: string; args: string[]; raw: string } | undefined;
     try {
-      app.ctx.provide(
-        'commands',
-        {
-          has: (name: string) => name === 'demo',
-          execute: async (name: string, ctx: { args: string[]; raw: string }) => {
-            executedWith = { name, args: ctx.args, raw: ctx.raw };
-            return `demo executed with ${ctx.args.length} args`;
-          },
+      app.ctx.provide('commands', {
+        has: (name: string) => name === 'demo',
+        execute: async (name: string, ctx: { args: string[]; raw: string }) => {
+          executedWith = { name, args: ctx.args, raw: ctx.raw };
+          return `demo executed with ${ctx.args.length} args`;
         },
-        { capabilities: ['test'] },
-      );
+      });
       const result = await tryDispatchSubcommand(app, ['demo', 'foo', 'bar'], msg => captured.push(msg));
       expect(result).toBe(0);
       expect(executedWith).toEqual({ name: 'demo', args: ['foo', 'bar'], raw: '/demo foo bar' });
@@ -70,15 +62,11 @@ describe('tryDispatchSubcommand', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const captured: string[] = [];
     try {
-      app.ctx.provide(
-        'commands',
-        {
-          has: (name: string) => name === 'silent',
-          // biome-ignore lint/suspicious/noExplicitAny: test mock
-          execute: async (..._args: any[]) => undefined,
-        },
-        { capabilities: ['test'] },
-      );
+      app.ctx.provide('commands', {
+        has: (name: string) => name === 'silent',
+        // biome-ignore lint/suspicious/noExplicitAny: test mock
+        execute: async (..._args: any[]) => undefined,
+      });
       const result = await tryDispatchSubcommand(app, ['silent'], msg => captured.push(msg));
       expect(result).toBe(0);
       expect(captured).toEqual([]);

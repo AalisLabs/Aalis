@@ -37,25 +37,19 @@
 //   类型契约相同，落到同一条目即可，运行时按 priority + preference 选择。
 
 /**
- * 全局服务类型注册表
+ * 全局服务类型注册表 —— **core 内部保持字面为空**。
  *
- * **不要在 core 内部登记领域服务**——storage / memory / llm 之类一律由其 api 包就近通过
- * `declare module '@aalis/core'` 注入，这样 core 与具体服务实现解耦。core 自己 provide 的
- * `app` / `plugins` 是例外，它们就是内核原语（见 `app.ts` 的 `ctx.provide('app', …)`），
- * 写在这里而不是别处。
+ * 所有条目一律由 `-api` 包就近通过 `declare module '@aalis/core'` 注入，core 与具体服务
+ * 实现因此解耦。core 自己 provide 的 `app` / `plugins` 也不例外：全部消费点都显式
+ * 传了类型参数（`getService<AppService>('app')`），写进这里买不到任何东西。
  *
- * ⚠️ **增广只能用裸包名说明符 `'@aalis/core'`，绝不能用相对路径。** 曾经 `types/app.ts` 里
- * 有一段 `declare module './services.js'` 给这两个键做增广，实测把接口绑成了**第二个
- * symbol**：当 `-api` 包的 `declare module '@aalis/core'` 先绑定时（biome 的 import 排序让
- * `@aalis/api-*` 恒排在 `@aalis/core` 之前，真实代码 100% 命中），36 个 api 服务在 core 的
- * 签名视角里直接不存在，`getService('storage')` 悄悄落到 `<T = unknown>` 兜底重载。
- * 而这一条 build / test / biome / knip 四道门全都看不见——类型退化不产生错误、只是不再报错。
- * 所以键写在接口体里没问题，**用相对说明符增广才是病**；两者别混为一谈。
+ * ⚠️ **增广只能用裸包名说明符 `'@aalis/core'`，绝不能用相对路径。**
+ * 相对说明符会把接口绑成**第二个 symbol**：当 `-api` 包的
+ * 增广先绑定时（biome 的 import 排序让 `@aalis/api-*` 恒排在 `@aalis/core` 之前），
+ * 36 个 api 服务在 core 的签名视角里直接不存在，`getService('storage')` 静默落到
+ * `<T = unknown>` 兜底重载。这类退化不产生任何诊断，只是不再报错。
  */
-export interface ServiceTypeMap {
-  app: import('./app.js').AppService;
-  plugins: import('./app.js').PluginManagerService;
-}
+export interface ServiceTypeMap {}
 
 /**
  * 根据服务名解析其实例类型。

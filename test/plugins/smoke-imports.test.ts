@@ -1,4 +1,9 @@
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+
+const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages');
 
 /**
  * 全插件 smoke import 测试
@@ -11,69 +16,54 @@ import { describe, expect, it } from 'vitest';
  * 目的不是验证业务行为，而是防止破坏性重构悄无声息地把插件搞坏：
  * 编译过 ≠ 模块能被 ESM 加载 ≠ 入口契约还在。
  *
- * 跳过名单：
- * - plugin-vectorstore-lancedb：原生 lance 绑定，CI 镜像不一定可用
- * - plugin-webui-client：纯前端 React 包，不在 node 环境里跑
- * - plugin-sdk：模板库，不是可加载插件
- * - 所有 *-api：纯类型/契约包，不导出 apply
+ * **名单是扫出来的，不是手写的。** 此前是一份硬编码数组，实测漏了 8 个插件
+ * （code-sandbox-os / cron-engine / doctor / memory-history / process-local /
+ * session-confirm / user-relation / workflow）—— 每个都 `private:false`、带
+ * `aalis-plugin` 关键词、导出 name/apply，纯粹是新增时忘了往数组里加。
+ * 手写名单的失效方式是**静默漏测**，没有任何信号；改为扫描后新插件自动进来。
  */
 
-const PLUGIN_DIRS = [
-  'plugin-adapter-onebot',
-  'plugin-agent',
-  'plugin-tools',
-  'plugin-authority',
-  'plugin-checkpoint',
-  'plugin-cli',
-  'plugin-commands',
-  'plugin-llm-deepseek',
-  'plugin-embedding-ollama',
-  'plugin-embedding-openai',
-  'plugin-file-reader',
-  'plugin-flow-control',
-  'plugin-gateway',
-  'plugin-maimai',
-  'plugin-mcp-client',
-  'plugin-mcp-server',
-  'plugin-memory-inmemory',
-  'plugin-memory-mongodb',
-  'plugin-memory-sqlite',
-  'plugin-memory-summary',
-  'plugin-memory-vector',
-  'plugin-message-archive',
-  'plugin-office',
-  'plugin-okx-trading',
-  'plugin-llm-ollama',
-  'plugin-tool-onebot',
-  'plugin-llm-openai',
-  'plugin-package-manager',
-  'plugin-persona',
-  'plugin-prompt-budget',
-  'plugin-scheduler',
-  'plugin-session-manager',
-  'plugin-subtask',
-  'plugin-tool-session',
-  'plugin-skills',
-  'plugin-storage-local',
-  'plugin-todo-list',
-  'plugin-tool-browser',
-  'plugin-tool-code-runner',
-  'plugin-tool-math',
-  'plugin-tool-search',
-  'plugin-tool-system',
-  'plugin-trigger-policy',
-  'plugin-user-profile',
-  'plugin-vectorstore-flat',
-  'plugin-websearch-serper',
-  'plugin-webui-server',
-  'plugin-media',
-  'plugin-image-sender',
-  'plugin-asr-openai',
-  'plugin-asr-whisper-cpp',
-] as const;
+/** 判定与两个加载器同源：纯 `aalis-plugin` 关键词正向门（见 runtime 的 isLoadablePlugin）。 */
+function loadablePluginDirs(): string[] {
+  return readdirSync(PACKAGES)
+    .filter(dir => {
+      const manifest = join(PACKAGES, dir, 'package.json');
+      if (!existsSync(manifest)) return false;
+      const pkg = JSON.parse(readFileSync(manifest, 'utf-8')) as { private?: boolean; keywords?: string[] };
+      return pkg.private !== true && Array.isArray(pkg.keywords) && pkg.keywords.includes('aalis-plugin');
+    })
+    .sort();
+}
+
+/**
+ * 跳过名单：只放**在 node 测试环境里跑不起来**的，不放「忘了加」的。
+ * 每条都要写清为什么——否则它会变成第二个静默漏测的通道。
+ */
+const SKIP: Record<string, string> = {
+  'plugin-vectorstore-lancedb': '原生 lance 绑定，CI 镜像不一定可用',
+  // 曾有一条 'plugin-webui-client': '纯前端 React 包' —— 那是**死条目**：它的 keywords 是
+  // `aalis-interface`，压根不进 loadablePluginDirs()，"跳过"从未发生。下面的守卫只查目录
+  // 存在性，抓不出这类失效，故此记一笔：加 SKIP 前先确认该目录真的会被扫到。
+};
 
 describe('全插件 smoke import 契约', () => {
-  for (const dir of PLUGIN_DIRS) {
+  const dirs = loadablePluginDirs();
+
+  it('扫到足够多的插件——判据没有因为扫描口径变化而失效', () => {
+    expect(dirs.length).toBeGreaterThan(50);
+  });
+
+  it('跳过名单里的每一项都仍然存在（删包后要一并清理，否则名单会掩盖真实缺失）', () => {
+    const stale = Object.keys(SKIP).filter(d => !existsSync(join(PACKAGES, d, 'package.json')));
+    expect(stale, `跳过名单里的包已不存在: ${stale.join('、')}`).toEqual([]);
+  });
+
+  for (const dir of dirs) {
+    const reason = SKIP[dir];
+    if (reason) {
+      it.skip(`${dir} 导出 name + apply（跳过：${reason}）`, () => {});
+      continue;
+    }
     it(`${dir} 导出 name + apply`, async () => {
       const mod = await import(`../../packages/${dir}/src/index.ts`);
       expect(typeof mod.name).toBe('string');

@@ -1,7 +1,13 @@
-import type { ConfigManager, Context, Logger, StorageService } from '@aalis/core';
+import type { StorageService } from '@aalis/api-storage';
+import type { ConfigManager, Context, Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
-import { actions } from '../../packages/plugin-authority/src/index.js';
+import { actions as declaredActions } from '../../packages/plugin-authority/src/index.js';
+
+// `actions` 是 `PluginModule['actions']` 的可选成员。一次性断言存在而非逐处 `?.`——
+// 它整个缺失本身就是本文件要发现的回归（管理面动作没挂上去），用可选链会把这条静默吞掉。
+if (!declaredActions) throw new Error('plugin-authority 未导出 actions —— 管理面动作全部缺失');
+const actions = declaredActions;
 
 // ════════════════════════════════════════════════════════════
 // authority actions — WebUI surface（数字等级单轴）
