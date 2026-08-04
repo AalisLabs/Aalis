@@ -110,6 +110,19 @@ ctx.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { risk: 
 漏标 risk 的代价是：一个被提示注入的 LLM 会**没有任何拦截**地调用你的危险工具。这是插件作者
 最常见、后果最重的安全 bug。
 
+### 官方插件里刻意未声明的那些（2026-08 拍板，勿当缺陷再报）
+
+`plugin-tool-onebot`（34 个工具，含 `onebot_delete_friend` / `onebot_delete_msg` /
+`onebot_approve_join_request`）、`plugin-office`、`plugin-maimai` 三个包**全部工具未声明
+risk 与 visibility**，因而解析为 `public` / 等级 0。
+
+这是**明确的取舍，不是遗漏**：这些工具的动作面都限于机器人自己的社交账号（加删好友、撤自己
+发的消息、审群申请），而部署形态是单 owner；给它们逐个上 `confirm` 会让每一次群操作都弹一次
+确认，代价压过收益。**改变部署形态（多用户、开放群、把 bot 交给他人代管）时必须重新评估这一条。**
+
+与之相对，`plugin-scheduler` 的建/删/暂停任务是**上了 `dangerous + confirm` 的**——因为建一条
+cron 等于让 LLM 获得持久执行面，那已经越过"只影响自己账号"的边界。
+
 ---
 
 ## 3. safeFetch：默认的 SSRF 安全出口
