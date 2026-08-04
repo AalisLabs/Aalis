@@ -16,6 +16,7 @@ import {
   ServiceContainer,
 } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
+import type { ExecutionInput } from '../../packages/api-commands/src/index.js';
 import {
   type CommandBuilder,
   type CommandHandler,
@@ -203,6 +204,15 @@ describe('useCommandService — 卸载只摘自己那一层（走真 CommandRegi
   });
 });
 
-function execInput() {
-  return { args: [] as string[], sessionId: 's', platform: 'test', userId: 'u', sessionType: 'private' as const };
+function execInput(): ExecutionInput {
+  // 显式标注返回类型：此前是推断，于是漏了必填的 `raw` 也没人发现——
+  // execute() 内部按 raw 解析原始输入，缺它等于测试跑在与生产不同的输入形状上。
+  return {
+    args: [] as string[],
+    raw: '/ping',
+    sessionId: 's',
+    platform: 'test',
+    userId: 'u',
+    sessionType: 'private' as const,
+  };
 }

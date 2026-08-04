@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { Message } from '../../packages/core/src/index.js';
 import {
   buildFocusGuidance,
   describeLLMFailure,
@@ -10,7 +9,7 @@ import {
   INPUT_CONVENTIONS,
   isSameMessage,
 } from '../../packages/plugin-agent/src/helpers.js';
-import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
 
 describe('formatTimeLabel', () => {
   it('同一天显示「今天 HH:mm」', () => {

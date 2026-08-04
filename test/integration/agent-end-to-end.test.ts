@@ -9,7 +9,7 @@ import * as messageArchiveModule from '../../packages/plugin-message-archive/src
 // 会通过 whenService 延迟注册，不会立即抛错，集成测试无需额外桩。
 
 import type { AgentService } from '../../packages/api-agent/src/index.js';
-import type { ChatRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
+import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import type { IncomingMessage, OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
@@ -26,7 +26,7 @@ function setupApp() {
   return { app, cleanup: () => {} };
 }
 
-async function loadStack(opts: { responses: ChatResponse[]; recorder?: ChatRequest[] }) {
+async function loadStack(opts: { responses: ChatResponse[]; recorder?: ChatModelRequest[] }) {
   const env = setupApp();
   const llmPlugin = createMockLLMPlugin({ responses: opts.responses, recorder: opts.recorder });
   const offLLM = await env.app.ctx.useModule(llmPlugin);
@@ -72,7 +72,7 @@ const incoming = (content: string, sessionId = 's1'): IncomingMessage => ({
 
 describe('Agent end-to-end (mock LLM + in-memory)', () => {
   it('单轮：发消息 → outbound 一条响应 + 记忆里有 user+assistant', async () => {
-    const recorder: ChatRequest[] = [];
+    const recorder: ChatModelRequest[] = [];
     const stack = await loadStack({
       responses: [{ content: 'hello back' }],
       recorder,
@@ -96,7 +96,7 @@ describe('Agent end-to-end (mock LLM + in-memory)', () => {
   });
 
   it('多轮：第二轮 LLM 收到的 messages 包含上轮历史', async () => {
-    const recorder: ChatRequest[] = [];
+    const recorder: ChatModelRequest[] = [];
     const stack = await loadStack({
       responses: [{ content: 'r1' }, { content: 'r2' }],
       recorder,

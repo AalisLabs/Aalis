@@ -185,9 +185,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // plugin-gateway 的 INBOUND_PHASE_ORDER 把本相位放在 flow / trigger 之前。
   //
   // 受信任系统源：scheduler 等内部触发器写入 message.source。
-  // 这些来源的权限身份来自创建时固化的 message.actor（如 scheduler 在 setJob 时
-  // snapshot 创建者身份），守卫按 actor 的真实等级评估——与普通用户走同一闸门，
-  // 不再有任何绕过路径（历史上的 bypassGuard 全绕过已废除）。
+  // 这些来源的权限身份来自创建时固化的 message.actor（scheduler 在 setJob / addJob /
+  // 静态配置载入这三条建任务路径上各自 snapshot 创建者身份），守卫按 actor 的真实等级
+  // 评估——与普通用户走同一闸门，历史上的 bypassGuard 全绕过已废除。
+  // **actor 缺省即匿名**：创建者匿名时不得回填 owner，否则受信来源就成了提权通道
+  // （scheduler 曾在触发路径把空 actor 补成 `webui:console`，那正是 owner 快速通道）。
   // skipConfirm 仍然需要：cron 上下文无人可点受限二次确认弹窗（authorize 仍生效）。
   // 同时这些 source 通常指向 internal 虚拟 session（无适配器接收），
   // 因此结果不走 outbound 而是写日志，避免发到虚空。

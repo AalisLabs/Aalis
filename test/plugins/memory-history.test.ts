@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import { App, type Message } from '../../packages/core/src/index.js';
+import { App } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import * as memoryHistory from '../../packages/plugin-memory-history/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
+import type { Message } from '../../packages/schema-message/src/index.js';
 
 function makeApp() {
   return new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });

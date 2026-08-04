@@ -299,14 +299,11 @@ async function readLogFileBefore(storage: StorageService, beforeSeq: number, lim
  *
  * 两者都以 **cwd（项目根）** 为基准——与 `projectRoot()`、node_modules 加载器的默认值同源。
  *
- * 曾经第一条写成 `resolve(dirname(import.meta.url), '../../')`，即按**本文件自己在哪**推算。
- * 那是个位置假设：只有当 webui-server 恰好躺在 `<根>/packages/<包>/dist` 时才对。装进用户
- * 项目后它解析成 `<proj>/node_modules/@aalis`，与第二条完全重合——扫描退化成同一目录扫两遍，
- * 而**用户自己的 `packages/` 从来不在范围内**。后果是「私有插件放 packages/、第三方插件从
- * npm 装」这种混合形态下本地插件在市场里不可见（pnpm 把工作区包软链进 node_modules，
- * 所以只有恰好带 @aalis scope 的还能被扫到）。
- *
- * 本仓的解析结果与改前相同（cwd 即仓库根），另两种形态被修正。
+ * **不可按本文件位置推算**（如 `resolve(dirname(import.meta.url), '../../')`）：那是个位置
+ * 假设，只在 webui-server 恰好躺在 `<根>/packages/<包>/dist` 时成立。装进用户项目后它解析成
+ * `<proj>/node_modules/@aalis`，与第二条重合、退化成同一目录扫两遍，而**用户自己的
+ * `packages/` 从来不在范围内** —— 「私有插件放 packages/、第三方插件从 npm 装」这种混合
+ * 形态下，本地插件在市场里将不可见。
  */
 const LOCAL_SCAN_DIRS = [resolve(process.cwd(), 'packages'), resolve(process.cwd(), 'node_modules/@aalis')];
 
@@ -1572,6 +1569,20 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       ctx.logger.warn('未发现任何前端（webui-client provider）；前端路由将 404，请安装一个 aalis.client 包');
     }
 
+    // 监听失败（典型 EADDRINUSE：3000 被别的 dev server 占了）是 bind 之后**异步 emit** 的，
+    // 不在任何调用栈内，外层 try/catch 接不住 —— 无人处理即 uncaughtException →
+    // runtime 的 process.exit(1)，把聊天适配器、定时任务连同整个 bot 一起打死。
+    // 契约本该是「WebUI 起不来、其余照跑」（plugin-activation 的插件失败隔离）。
+    //
+    // **必须挂在 wss 上，挂 server 上是死代码。** `new WebSocketServer({ server })` 构造时
+    // 已给 http server 挂了一条 'error' 监听（内容是 `this.emit.bind(this, 'error')`，转发给
+    // wss）并排在最前；EventEmitter 按注册顺序调用，它 emit 到无监听器的 wss 上会同步抛出、
+    // 中断 emit 循环，后注册在 server 上的 handler 因此永远轮不到。
+    wss.on('error', (err: Error) => {
+      ctx.logger.error(
+        `WebUI 监听 ${uiConfig.host}:${uiConfig.port} 失败: ${err.message}；WebUI 不可用，其余功能照常运行`,
+      );
+    });
     server.listen(uiConfig.port, uiConfig.host, () => {
       const url = `http://${uiConfig.host}:${uiConfig.port}/`;
       const accessUrl = `${url}?token=${authToken}`;

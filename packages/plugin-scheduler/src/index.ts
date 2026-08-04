@@ -33,12 +33,14 @@ interface SchedulerJobConfig {
   /**
    * 代理身份的 platform（authority 查表用），与 `platform` 解耦。
    * 由创建路径 snapshot 真实调用者身份；触发时回填到 IncomingMessage.actor.platform。
-   * - WebUI/CLI/AI 调用工具创建：来自调用者 callCtx
-   * - 静态 yaml jobs 缺省：webui（视作 owner 级，因为编辑配置文件本身就是 owner 行为）
-   * - 老 dynamic jobs 缺省：webui（带启动 warning，便于审计）
+   * - WebUI/CLI/AI 调用工具创建：来自调用者 callCtx，**调用者匿名则留空**
+   * - 静态 yaml jobs 缺省：webui:console（owner 级，因为编辑配置文件本身就是 owner 行为）
+   * - 老 dynamic jobs 缺省：**留空 = 匿名**（带启动 warning，便于审计）
+   *
+   * 留空即匿名（defaultAuthority）。触发路径不会为空值发明身份——owner 只能来自显式来源。
    */
   actorPlatform?: string;
-  /** 代理身份的 userId（authority 查表用）。规则同 actorPlatform，缺省 'console'。 */
+  /** 代理身份的 userId（authority 查表用）。规则同 actorPlatform，留空即匿名。 */
   actorUserId?: string;
   /** 发送给 Agent 的消息内容 */
   content: string;
@@ -419,10 +421,12 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
           typeof j.actorUserId === 'string' &&
           j.actorUserId.trim().length > 0;
         if (!hasActor) {
-          // 兼容老的持久化 jobs（升级前没有 actor 字段）：默认 webui:console（owner 级）。
-          // 与 WebUI 新建任务默认值一致，因为这些 dynamic jobs 历史上都是从 WebUI 创建的。
+          // 缺 actor 一律降为**匿名**（defaultAuthority），绝不补 owner。
+          // `saveDynamicJobs` 的 JSON.stringify 会丢掉 undefined 键，匿名创建的任务落盘后
+          // 与无 actor 字段的老任务同形；此处补 owner 即等于给它开一条提权通道。
+          // 「创建者未知」不等于「创建者是 owner」。
           logger.warn(
-            `持久化任务 "${j.name}" 缺少 actor 身份，已补全为 webui:console；如需限制权限请在 WebUI 中显式修改`,
+            `持久化任务 "${j.name}" 缺少 actor 身份，已按匿名（最低权限）运行；如需更高权限请在 WebUI 中显式设置创建者身份`,
           );
         }
         return {
@@ -432,8 +436,8 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
           runAt: j.runAt as string | undefined,
           sessionId: String(j.sessionId ?? 'internal'),
           platform: String(j.platform ?? 'internal'),
-          actorPlatform: hasActor ? String(j.actorPlatform).trim() : 'webui',
-          actorUserId: hasActor ? String(j.actorUserId).trim() : 'console',
+          actorPlatform: hasActor ? String(j.actorPlatform).trim() : undefined,
+          actorUserId: hasActor ? String(j.actorUserId).trim() : undefined,
           content: String(j.content ?? ''),
           enabled: j.enabled !== false,
           paused: j.paused === true,
@@ -501,16 +505,16 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         source: 'scheduler',
       };
       // 注入代理身份：authority 守卫优先读 actor 而非 platform/userId，
-      // 从而让 scheduler 触发的 AI 走创建者的权限等级（而非匿名 defaultAuthority）。
-      // 动态任务的 actor 在 setJob/loadDynamicJobs 已固化；静态 YAML 任务省略 actor 时在此回填
-      // webui:console（owner 级）——编辑配置文件即 owner 行为，与 loadDynamicJobs 缺省及
-      // SchedulerJobConfig 文档一致；YAML 显式设置 actor 则用其值（可降权）。AI 无法绕过。
+      // 从而让 scheduler 触发的 AI 走**创建者**的权限等级。
+      //
+      // **只透传，不发明身份**：缺省留空 = 匿名（defaultAuthority）。
+      // 这里回填 `webui:console` 就是 owner 快速通道（authority-manager 的 isOwner），
+      // 而 AI 建任务时 actor 取自可选的 `callCtx.userId` —— 匿名入站下必然为空。
       const actorPlatform = rt.config.actorPlatform?.trim();
       const actorUserId = rt.config.actorUserId?.trim();
-      message.actor =
-        actorPlatform && actorUserId
-          ? { platform: actorPlatform, userId: actorUserId }
-          : { platform: 'webui', userId: 'console' };
+      if (actorPlatform && actorUserId) {
+        message.actor = { platform: actorPlatform, userId: actorUserId };
+      }
 
       await ctx.emit('inbound:message', message);
 
@@ -652,8 +656,21 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     logger.info(`一次性任务已执行完毕并停用（静态）: ${jobName}`);
   }
 
+  // 静态 YAML 任务的「创建者」是编辑配置文件的人——那本身就是 owner 行为，故缺省补 owner。
+  // **这是全插件唯一允许推断 owner 的地方**：来源是配置文件（只有能写盘的人才改得动），
+  // 不是运行时输入。补在此处而非触发时，是为了让「谁是 actor」在任务入表那一刻就定死，
+  // 触发路径只透传、不再有第二次机会发明身份。YAML 显式写 actor 则用其值（可降权）。
   for (const job of config.jobs) {
-    initJob(job);
+    const p = job.actorPlatform?.trim();
+    const u = job.actorUserId?.trim();
+    if ((p && !u) || (!p && u)) {
+      // 半指定：只写了一半就当没写，会被整体替换成 owner —— 那与作者意图相反
+      // （写 actor 通常是为了**降权**）。不静默升权，也不因此拒绝启动。
+      logger.warn(
+        `任务 "${job.name}" 只写了 actorPlatform/actorUserId 其中一个，两者必须成对；已按未指定处理（owner）`,
+      );
+    }
+    initJob(p && u ? job : { ...job, actorPlatform: 'webui', actorUserId: 'console' });
   }
 
   // 加载持久化的动态任务
@@ -810,6 +827,10 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         },
       },
     },
+    // 建任务 = 让 AI 在未来自主行动，且 actor 身份在此固化（见 resolveActor）。
+    // 写类：restricted + 每次确认——被注入的 LLM 建一条 cron 就等于拿到持久执行面。
+    risk: 'dangerous',
+    confirm: 'always',
     handler: async (args, callCtx) => {
       // 互斥校验：cron / interval / delaySeconds / runAt 必须恰好提供一个
       const hasCron = typeof args.cron === 'string' && args.cron.trim().length > 0;
@@ -883,6 +904,8 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         },
       },
     },
+    // 读类：任务清单含 sessionId / prompt，属信息暴露向量；不弹确认。
+    risk: 'sensitive',
     handler: async args => {
       const all = service.getJobs().map(j => ({
         name: j.name,
@@ -938,6 +961,9 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         },
       },
     },
+    // 删类：删掉定时任务不可逆（无回收站）。
+    risk: 'dangerous',
+    confirm: 'always',
     handler: async args => {
       const ok = service.removeJob(args.name as string);
       return JSON.stringify({ ok, message: ok ? '已删除' : '任务不存在' });
@@ -960,6 +986,9 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         },
       },
     },
+    // 改状态类：暂停等于静默停掉一条自主行动，用户不会收到任何提示。
+    risk: 'dangerous',
+    confirm: 'always',
     handler: async args => {
       const ok = service.pauseJob(args.name as string);
       return JSON.stringify({ ok, message: ok ? '已暂停' : '任务不存在' });
@@ -982,6 +1011,9 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         },
       },
     },
+    // 改状态类：恢复会让一条被停掉的自主行动重新开始跑。
+    risk: 'dangerous',
+    confirm: 'always',
     handler: async args => {
       const ok = service.resumeJob(args.name as string);
       return JSON.stringify({ ok, message: ok ? '已恢复' : '任务不存在' });
@@ -1005,24 +1037,30 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
 
 export function resolveConfig(raw: Record<string, unknown>): SchedulerConfig {
   const rawJobs = Array.isArray(raw.jobs) ? raw.jobs : [];
+  /**
+   * 可选字符串字段的归一化：**不能只写 `as string | undefined`**。
+   * 这些值来自 YAML 反序列化，不受 TS 约束，而 `as` 不产生任何运行时转换 ——
+   * QQ 号天然写成不带引号的 `actorUserId: 10001`、时区写成 `timeZone: 8`，
+   * 拿到的都是 number，下游 `.trim()` 直接抛 "is not a function"，
+   * 而那些 .trim() 在 apply() 顶层无 try，一抛整个 scheduler 服务就不注册。
+   */
+  const str = (v: unknown): string | undefined => (v === undefined || v === null ? undefined : String(v));
   return {
     // biome-ignore lint/suspicious/noExplicitAny: 从 YAML 反序列化的原始字段，手动校验转型
     jobs: rawJobs.map((j: any) => ({
       name: String(j.name ?? 'unnamed'),
-      cron: j.cron as string | undefined,
-      interval: j.interval as number | undefined,
-      // schema 声明的这些字段此前在映射时被丢弃 → runAt 一次性任务不调度、timeZone 失效、
-      // 静态任务无法降权（被强制按默认 owner 身份跑）。透传回来，默认值在触发时回填。
-      runAt: j.runAt as string | undefined,
+      cron: str(j.cron),
+      interval: j.interval === undefined || j.interval === null ? undefined : Number(j.interval),
+      runAt: str(j.runAt),
       sessionId: String(j.sessionId ?? `scheduler::${j.name ?? 'default'}`),
       platform: String(j.platform ?? 'internal'),
-      actorPlatform: j.actorPlatform as string | undefined,
-      actorUserId: j.actorUserId as string | undefined,
-      timeZone: j.timeZone as string | undefined,
+      actorPlatform: str(j.actorPlatform),
+      actorUserId: str(j.actorUserId),
+      timeZone: str(j.timeZone),
       content: String(j.content ?? ''),
       enabled: j.enabled !== false,
     })),
-    persistPath: (raw.persistPath as string) ?? 'data:/scheduler-jobs.json',
+    persistPath: String(raw.persistPath ?? 'data:/scheduler-jobs.json'),
   };
 }
 
