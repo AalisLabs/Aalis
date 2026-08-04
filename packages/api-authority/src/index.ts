@@ -54,10 +54,6 @@ const RISK_DEFAULTS: Record<CapabilityRisk, { visibility: CapabilityVisibility; 
   dangerous: { visibility: 'restricted', confirm: 'session' },
 };
 
-/**
- * risk → 默认 (visibility, confirm)；无 risk 返回空对象。
- * 供需要保留「未声明=继承」语义的注册方（如 commands 沿 dot-path 继承）用 —— 不带兜底默认。
- */
 /** 未登记外部身份的默认等级。 */
 export const DEFAULT_AUTHORITY = 0;
 /** 无 risk 声明、仅标 `visibility:'restricted'` 的操作的兜底最低等级。 */
@@ -83,6 +79,10 @@ export function capabilityMinLevel(opts: { risk?: CapabilityRisk; visibility?: C
   return opts.visibility === 'restricted' ? RESTRICTED_LEVEL : DEFAULT_AUTHORITY;
 }
 
+/**
+ * risk → 默认 (visibility, confirm)；无 risk 返回空对象。
+ * 供需要保留「未声明=继承」语义的注册方（如 commands 沿 dot-path 继承）用 —— 不带兜底默认。
+ */
 export function riskDefaults(risk?: CapabilityRisk): {
   visibility?: CapabilityVisibility;
   confirm?: CapabilityConfirm;

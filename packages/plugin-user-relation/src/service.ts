@@ -1492,7 +1492,12 @@ export class RelationService {
       if (remainingPersons.length >= triggerCount(maxPersons)) {
         const toDelete = remainingPersons.length - targetCount(maxPersons);
         if (toDelete > 0) {
-          const sorted = [...remainingPersons].sort((a, b) => personAgeScore(b) - personAgeScore(a));
+          // 并列按 id 兜底：分数是 PageRank + 时间衰减的浮点值，量级接近时 Array.sort 的
+          // 结果依赖引擎实现与输入次序——同一次清理跑两遍会删掉**不同的节点**。实测
+          // user-relation 那条配额用例因此在全量并行跑里偶发变红（61 次里 2 次）。
+          const sorted = [...remainingPersons].sort(
+            (a, b) => personAgeScore(b) - personAgeScore(a) || a.id.localeCompare(b.id),
+          );
           for (const p of sorted.slice(0, toDelete)) {
             await this.store.deletePersonCascade(p.platform, p.userId);
             deletedPersons++;
@@ -1505,7 +1510,9 @@ export class RelationService {
       if (remainingEvents.length >= triggerCount(quota.maxEvents)) {
         const toDelete = remainingEvents.length - targetCount(quota.maxEvents);
         if (toDelete > 0) {
-          const sorted = [...remainingEvents].sort((a, b) => eventEvictScore(b) - eventEvictScore(a));
+          const sorted = [...remainingEvents].sort(
+            (a, b) => eventEvictScore(b) - eventEvictScore(a) || a.id.localeCompare(b.id),
+          );
           for (const ev of sorted.slice(0, toDelete)) {
             await this.store.deleteEventCascade(ev.id);
             deletedEvents++;
@@ -1518,7 +1525,7 @@ export class RelationService {
       if (remainingEntities.length >= triggerCount(quota.maxEntities)) {
         const toDelete = remainingEntities.length - targetCount(quota.maxEntities);
         if (toDelete > 0) {
-          const sorted = [...remainingEntities].sort((a, b) => ageScore(b) - ageScore(a));
+          const sorted = [...remainingEntities].sort((a, b) => ageScore(b) - ageScore(a) || a.id.localeCompare(b.id));
           for (const en of sorted.slice(0, toDelete)) {
             await this.store.deleteEntityCascade(en.id);
             deletedEntities++;
