@@ -417,7 +417,7 @@ export class CommandRegistry implements CommandService {
     const cmd = this.materialize(resolved.name);
     // ⚠️ 这两步（分组用法、parseArgs 的报错）**先于守卫**返回，所以会把无权使用的指令列出来。
     // 最直观的样本是 `/relation cleanup`：`relation.cleanup` 是 ensureGroups 自动建的无
-    // handler 分组节点，敲它会把 `relation.cleanup.*` 那 5 条 restricted 子指令一并列出。
+    // handler 分组节点，敲它会把 `relation.cleanup.*` 那 6 条 restricted 子指令一并列出。
     // （裸敲 `/relation` 只列出下一层的分组名，实测要再敲一层才到那 5 条。）
     //
     // **已评估并决定不做过滤**（2026-08）。这是降噪而非防泄漏——开源项目里指令存在性本就
