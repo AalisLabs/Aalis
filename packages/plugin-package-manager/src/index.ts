@@ -215,6 +215,10 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
         .some(p => p.name === name) ?? false,
     // 重启并交付回滚凭据。core 只透传 rollback（不解释形状），由 runtime 的重启策略
     // 在「新实例 ready 前夭折」时消费——触发者与执行者同为父进程，全程内存不落盘。
+    //
+    // `restart(opts)` 收参数是 core **0.10.0** 才有的；0.9.x 的 `restart()` 不收参数，
+    // 多传的对象被静默丢弃 —— 不报错、不告警，只是更新失败后重启起来的是坏版本，
+    // 回滚安全网整个不存在。故 peerDependencies 下界必须是 `>=0.10.0`，不能沿用 0.2.0。
     restartApp: rollback => getApp().restart({ rollback }),
     // 彻底卸载：dispose 上下文并从注册表移除（plugins 服务缺席则 no-op）。
     // 区别于 disablePlugin（仅置禁用态，仍滞留在插件列表里）。

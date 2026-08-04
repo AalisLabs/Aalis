@@ -8,6 +8,61 @@
 
 ---
 
+## 0.10.0
+
+契约包大改名 + 四个包的破坏性变更。这批**必须显式升级**，装到一半会同时装进新旧两份
+同一契约（各带一份 `declare module`，类型一旦分叉就撞 TS2717，且被 `skipLibCheck` 静默吞掉）。
+
+### 契约包改名（30 个旧名已 `npm deprecate`）
+
+命名从「按插件命名契约」改成「按类型分层」：契约是 `api-*`，纯数据 schema 是 `schema-*`，
+提供者实现是 `plugin-<类别>-<厂商>`。
+
+| 旧名 | 新名 |
+| --- | --- |
+| `@aalis/plugin-<X>-api`（25 个） | `@aalis/api-<X>` |
+| `@aalis/plugin-config-api` | `@aalis/schema-config` |
+| `@aalis/plugin-message-api` | `@aalis/schema-message` |
+| `@aalis/plugin-{deepseek,openai,ollama}` | `@aalis/plugin-llm-{deepseek,openai,ollama}` |
+
+**迁移**：包名整体替换即可，导出符号未变。两个例外——
+
+- `plugin-cron-engine-api` 是**拆包不是纯改名**：`CronEngine` / `useCronEngine` /
+  `CronSubscribeOptions` 去了 `api-cron-engine`，但 6 个纯函数 + 2 个类型
+  （`validateCronExpr` / `normalizeCronExpr` / `matchesCron` / `parseCronField` /
+  `parseEverySeconds` / `dateFieldsInTimeZone` / `CronExprKind` / `ValidateResult`）
+  去了新包 `@aalis/util-cron`。用到这些的要装两个包。
+- **配置里的 LLM 模型引用要一起改**。`ref.provider` 存的是插件包名，`resolveLLMModel`
+  拿它拼 `${provider}/${model}` 精确匹配，改名后旧 ref 一律落空。已持久化的会话级模型
+  设置（WebUI 会话、`/session set -m`）也存着这个值，配置文件改完不代表会话跟着改。
+  症状是「配置指向的模型不存在：<provider>/<model>」，服务其实注册得好好的。
+
+### 破坏性变更
+
+- **`@aalis/core` 0.10.0** —— `ServiceTypeMap` 现在字面为空，扩展点全部靠 `-api` 包的
+  declaration merging 填。影响两处：① `ctx.getService('app')` 这类裸调用退化到
+  `<T = unknown>` 兜底重载，要显式写类型参数；② 第三方插件的 `getService` 返回类型
+  第一次真正受检——此前 core 内部一个相对说明符的 `declare module './services.js'`
+  把接口绑到了第二个符号上，所有 `-api` 包的 augmentation 静默失效。修复后原本
+  「能编过」的错误用法会开始报错。**只有裸说明符 `declare module '@aalis/core'` 是安全的。**
+- **`@aalis/runtime` 0.10.0** —— 删除配置文件里的 `${VAR}` 环境变量插值与 `.env` 机制。
+  密钥直接写进配置（配置文件本就不入库）。**这条是本批走 minor 而非 patch 的关键**：
+  按 patch 发的话存量 `^0.9.0` 会自动吃到，配置里的 `${OPENAI_API_KEY}` 会变成
+  字面量字符串直接发给上游。
+- **`@aalis/plugin-authority` 0.10.0** —— ① `restrictedPolicy` 白名单不再救非 owner：
+  它此前在「未授权救援」路径上跨身份生效，被封禁的负等级用户也能被捞回来；
+  ② 降权即撤销该用户已有的会话级授予，不再等其自然过期。
+- **`@aalis/plugin-webui-client` 0.10.0** —— `Operation` 要求 `minLevel`，必须与
+  `plugin-authority` 同批升级。
+
+### 其它
+
+- `@aalis/plugin-package-manager` 的 core peer 下界抬到 `>=0.10.0`：它调用
+  `restart({ rollback })`，而 0.9.x 的 `restart()` 不收参数、静默丢弃——市场更新失败后
+  不会回滚，起来的是坏版本。
+
+---
+
 ## 0.9.1
 
 安全收紧与遗留清理。11 个包，其中 7 个有用户可见的行为变化——**权限收紧修的是非预期
