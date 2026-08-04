@@ -278,7 +278,7 @@ export function buildRespawnCommand(
  * 1. 等 500ms 让正在飞行的 HTTP/WS 响应有机会先返回客户端
  * 2. 调 `stop()` 优雅停掉当前 App；**抛错也继续**——否则进程会停在「插件已半拆、
  *    HTTP 已关、但还活着」的僵尸态，而脚手架不生成 supervisor，无人可救
- * 3. spawn 新进程（保留 execArgv、剔除 env 文件所有的键，带 IPC 通道）
+ * 3. spawn 新进程（保留 execArgv，带 IPC 通道）
  * 4. 等 ready / 夭折 / 超时三者之一：
  *    - ready 或超时 → 放手、`exit(0)`
  *    - **ready 前夭折** → 有回滚凭据则还原工程并重生旧版；否则记 fatal 后 `exit(1)`

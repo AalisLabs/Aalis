@@ -332,7 +332,6 @@ outputFormat:
 | 主题 | 一句话 | 状态 |
 |---|---|---|
 | [Koishi 兼容层](docs/roadmap/koishi-compat.md) | 嵌入真实 Koishi 内核让其插件直接运行 | 已验证可行，待实施 |
-| [指令系统](docs/roadmap/commands.md) | `/help` 与 `formatUsage` 无权限过滤（待决策做不做） | 小 |
 
 ## 开发进度
 
