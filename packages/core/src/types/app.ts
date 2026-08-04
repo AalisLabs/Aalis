@@ -5,8 +5,10 @@ import type { PluginEntry, PluginState } from './plugin.js';
 /**
  * App 生命周期 + 配置 + 市场 接口
  *
- * 插件通过 `ctx.getService('app')` 获取，
- * 用于触发应用级操作，无需直接导入 App 类。
+ * 插件通过 `ctx.getService<AppService>('app')` 获取，用于触发应用级操作，无需直接导入 App 类。
+ *
+ * **必须显式写类型参数**：`ServiceTypeMap` 在 core 内保持字面为空（条目一律由 `-api` 包
+ * 就近注入），所以 `getService('app')` 不带参数会落到 `<T = unknown>` 兜底重载。
  */
 export interface AppService {
   /** 停止应用 */
@@ -47,8 +49,8 @@ export interface PluginStatusEntry {
 /**
  * 插件管理服务接口
  *
- * 通过 `ctx.getService('plugins')` 获取。
- * 内部由 core 的 PluginManager 提供。消费方不应直接 import App 类。
+ * 通过 `ctx.getService<PluginManagerService>('plugins')` 获取（**必须显式写类型参数**，
+ * 理由同 {@link AppService}）。内部由 core 的 PluginManager 提供，消费方不应直接 import App 类。
  */
 export interface PluginManagerService {
   /** 获取所有已注册插件的状态 */
