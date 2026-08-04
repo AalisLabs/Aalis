@@ -327,11 +327,9 @@ outputFormat:
 - [ ] 更多平台适配器（Discord、Telegram 等）
 
 已知缺陷与未来规划均记录在 **[docs/roadmap/](docs/roadmap/README.md)**——每条经实测
-确认、附 `file:line` 根因与修法方向：
+确认、附 `file:line` 根因与修法方向。
 
-| 主题 | 一句话 | 状态 |
-|---|---|---|
-| [指令系统](docs/roadmap/commands.md) | `/help` 与 `formatUsage` 无权限过滤（待决策做不做） | 小 |
+目前没有收录的条目。
 
 ## 开发进度
 
