@@ -59,11 +59,10 @@ async function setup(llmContent: string) {
     getConnections: () => [],
     sendMessage: () => Promise.resolve(),
   });
-  app.ctx.provide('platform', mkMockAdapter('onebot'), { capabilities: ['text'], entryId: 'mock/onebot' });
-  app.ctx.provide('platform', mkMockAdapter('test'), { capabilities: ['text'], entryId: 'mock/test' });
+  app.ctx.provide('platform', mkMockAdapter('onebot'), { entryId: 'mock/onebot' });
+  app.ctx.provide('platform', mkMockAdapter('test'), { entryId: 'mock/test' });
   const { model, calls } = makeFakeLLM(llmContent);
   app.ctx.provide('llm', model, {
-    capabilities: ['chat'],
     label: 'fake-llm',
     entryId: 'fake/extractor',
   });

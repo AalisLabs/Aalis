@@ -161,7 +161,7 @@ describe('REST 路由 owner 闸（单 owner 终态）', () => {
   function pass(middleware: ReturnType<RouteGate>): { status: number; nexted: boolean } {
     const res = makeRes();
     let nexted = false;
-    middleware({ headers: {} }, res, () => {
+    middleware({ headers: {} }, res as unknown as Parameters<typeof middleware>[1], () => {
       nexted = true;
     });
     return { status: res.statusCode, nexted };

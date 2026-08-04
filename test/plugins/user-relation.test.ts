@@ -1112,7 +1112,7 @@ describe('plugin-user-relation: consolidate event-entity 去重', () => {
       fromEntityId: child.id,
       toEntityId: parent.id,
       relationType: 'part-of',
-      evidence: [{ messageIds: ['m-hier-1'], quotes: ['绝密航天 是 三角洲行动 的玩法'] }],
+      evidence: [ev({ messageIds: ['m-hier-1'], quote: '绝密航天 是 三角洲行动 的玩法' })],
     });
 
     await service.consolidate({ autoLink: true });

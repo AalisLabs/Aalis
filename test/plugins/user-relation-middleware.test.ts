@@ -38,6 +38,9 @@ async function runMiddleware(
     maxRelations: 5,
     maxParticipantsPerEvent: 5,
     maxCooccurrencePartners: 5,
+    // 曾漏传这两个必填项 —— 于是全局热点的两条限流在本测试里从未生效
+    maxGlobalHotEvents: 5,
+    maxGlobalHotEntities: 5,
     groupOnly: opts.groupOnly ?? false,
     debug: false,
   });
@@ -147,7 +150,9 @@ describe('plugin-user-relation: middleware', () => {
     await service.addPersonEntityEdge({
       fromPersonId: 'onebot:u1',
       toEntityId: ent.id,
-      relationType: 'interested-in',
+      // 曾写作 `relationType: 'interested-in'` —— 该字段不存在（真名 role），
+      // 且 'interested-in' 不在 PersonEntityRole 取值里；于是必填的 role 实际是 undefined。
+      role: 'enthusiast',
     });
     const messages = await runMiddleware(app, service, {
       userId: 'u1',

@@ -12,7 +12,7 @@ import { ATTACHMENT_KINDS, CLEAR_TYPES } from '../../packages/plugin-commands/sr
 
 describe('/clear 附件类型 ↔ onebot 落盘目录对齐', () => {
   it('四类附件(image/video/audio/file)都注册进 CLEAR_TYPES', () => {
-    const ids = new Set(CLEAR_TYPES.map(t => t.id));
+    const ids = new Set<string>(CLEAR_TYPES.map(t => t.id));
     for (const kind of ['image', 'video', 'audio', 'file']) {
       expect(ids.has(kind), `CLEAR_TYPES 缺 ${kind} → /clear -t ${kind} 会报未知类型`).toBe(true);
     }
