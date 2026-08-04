@@ -186,21 +186,23 @@ describe('user-relation: deleteNode 守门', () => {
     const p = await service.observePerson('pf', 'u1');
     const e = await service.createEvent({ title: '可清理事件', evidence: [ev()] });
     await service.addPersonEventEdge({
-      personId: p.id,
-      eventId: e.id,
+      fromPersonId: p.id,
+      toEventId: e.id,
       role: 'participant',
       evidence: [ev()],
     });
-    await service.deleteNode({ kind: 'event', id: e.id, reason: 'test', by: 'agent' });
+    // 先钉住「边真的建起来了」——本用例曾传错字段名（personId/eventId），两个端点都成了
+    // undefined，下面的级联断言又去查不存在的 `to`/`toId`，于是**两端同时空转**：
+    // 把 deleteNode 改成完全不级联，全量测试照样全绿。tsconfig.test.json 现在会拦住这类错。
+    const before = await store.loadAll();
+    expect(before.edges.filter(x => x.kind === 'person-event')).toHaveLength(1);
+
+    const res = await service.deleteNode({ kind: 'event', id: e.id, reason: 'test', by: 'agent' });
     expect(await store.getEvent(e.id)).toBeUndefined();
-    // 级联：相关边被清
+    // 级联：指向该事件的边被清
     const snap = await store.loadAll();
-    expect(
-      snap.edges.find(x => {
-        const e2 = x as { to?: string; toId?: string };
-        return (e2.to ?? e2.toId) === e.id;
-      }),
-    ).toBeUndefined();
+    expect(snap.edges.find(x => x.kind === 'person-event' && x.toEventId === e.id)).toBeUndefined();
+    expect(res.deletedEdges).toBe(1);
   });
 });
 
@@ -580,8 +582,8 @@ describe('user-relation: 全图读次数', () => {
   it('mergeNodes 不重复级联：mergeAlias 已删成时不再删一次', async () => {
     const { app, service, mem } = await makeService();
     try {
-      const e1 = await service.createEntity({ name: '甲', entityKind: 'work' });
-      const e2 = await service.createEntity({ name: '乙', entityKind: 'work' });
+      const e1 = await service.createEntity({ name: '甲', entityKind: 'work', evidence: [ev()] });
+      const e2 = await service.createEntity({ name: '乙', entityKind: 'work', evidence: [ev()] });
       let reads = 0;
       const orig = mem.listMetadata.bind(mem);
       mem.listMetadata = async (ns: string) => {
@@ -607,7 +609,7 @@ describe('user-relation: 全图读次数', () => {
         swapped: false,
         aliasDeleted: false, // 没删成 —— mergeNodes 必须自己补这一刀
       });
-      const e3 = await service.createEntity({ name: '丙', entityKind: 'work' });
+      const e3 = await service.createEntity({ name: '丙', entityKind: 'work', evidence: [ev()] });
       await service.mergeNodes({ kind: 'entity', canonicalId: e1.id, aliasIds: [e3.id], reason: 't2' });
       expect(await service.findNodeById(e3.id), 'mergeAlias 未删成时 mergeNodes 必须兜底删掉').toBeNull();
       service.mergeAlias = orig2;

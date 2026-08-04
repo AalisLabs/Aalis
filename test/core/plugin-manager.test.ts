@@ -21,7 +21,9 @@ function makePlugin(name: string, state: ScratchState, overrides: Partial<Plugin
     name,
     apply(ctx) {
       state.applied.push(name);
-      ctx.onDispose(() => state.disposed.push(name));
+      ctx.onDispose(() => {
+        state.disposed.push(name);
+      });
     },
     ...overrides,
   };
@@ -50,7 +52,9 @@ describe('App plugin lifecycle', () => {
       inject: { required: ['mysvc'] },
       apply(ctx) {
         env.state.applied.push('consumer');
-        ctx.onDispose(() => env.state.disposed.push('consumer'));
+        ctx.onDispose(() => {
+          env.state.disposed.push('consumer');
+        });
       },
     };
     const provider: PluginModule = {
@@ -109,7 +113,9 @@ describe('App plugin lifecycle', () => {
       reusable: true,
       apply(ctx) {
         env.state.applied.push(ctx.id);
-        ctx.onDispose(() => env.state.disposed.push(ctx.id));
+        ctx.onDispose(() => {
+          env.state.disposed.push(ctx.id);
+        });
       },
     };
     await env.app.plugin(reusable);
@@ -165,7 +171,9 @@ describe('App plugin lifecycle', () => {
       apply(ctx) {
         consumerCtx = ctx;
         events.push('consumer:apply');
-        ctx.onDispose(() => events.push('consumer:dispose'));
+        ctx.onDispose(() => {
+          events.push('consumer:dispose');
+        });
       },
     };
 
@@ -202,7 +210,9 @@ describe('App plugin lifecycle', () => {
       apply(ctx) {
         const svc = ctx.getService<{ tag: string }>('mysvc');
         events.push(`consumer:apply:${svc?.tag ?? 'none'}`);
-        ctx.onDispose(() => events.push('consumer:dispose'));
+        ctx.onDispose(() => {
+          events.push('consumer:dispose');
+        });
       },
     };
 
@@ -224,7 +234,9 @@ describe('App plugin lifecycle', () => {
       name: 'rcfg',
       apply(ctx, cfg) {
         log.push({ ...cfg });
-        ctx.onDispose(() => log.push({ disposed: true }));
+        ctx.onDispose(() => {
+          log.push({ disposed: true });
+        });
       },
     };
     await env.app.plugin(mod, { v: 1 });
@@ -244,14 +256,18 @@ describe('App plugin lifecycle', () => {
       provides: ['serviceA'],
       apply(ctx) {
         ctx.provide('serviceA', { ping: () => 'pong' });
-        ctx.onDispose(() => order.push('svc-A.dispose'));
+        ctx.onDispose(() => {
+          order.push('svc-A.dispose');
+        });
       },
     };
     const consumer: PluginModule = {
       name: 'cons-B',
       inject: { required: ['serviceA'] },
       apply(ctx) {
-        ctx.onDispose(() => order.push('cons-B.dispose'));
+        ctx.onDispose(() => {
+          order.push('cons-B.dispose');
+        });
       },
     };
 
@@ -273,7 +289,9 @@ describe('App plugin lifecycle', () => {
       provides: ['s'],
       apply(ctx) {
         ctx.provide('s', {});
-        ctx.onDispose(() => events.push('p-svc.dispose'));
+        ctx.onDispose(() => {
+          events.push('p-svc.dispose');
+        });
       },
     };
     const consumer: PluginModule = {
@@ -281,7 +299,9 @@ describe('App plugin lifecycle', () => {
       inject: { optional: ['s'] },
       apply(ctx) {
         events.push('c-svc.apply');
-        ctx.onDispose(() => events.push('c-svc.dispose'));
+        ctx.onDispose(() => {
+          events.push('c-svc.dispose');
+        });
       },
     };
     await env.app.plugin(provider);
@@ -331,7 +351,9 @@ describe('激活归因与级联（#8.1 / #8.6 回归）', () => {
       apply(ctx) {
         ctx.provide('mysvc', { ok: true });
         env.state.applied.push('provider');
-        ctx.onDispose(() => env.state.disposed.push('provider'));
+        ctx.onDispose(() => {
+          env.state.disposed.push('provider');
+        });
       },
     };
     const consumer: PluginModule = {
@@ -339,7 +361,9 @@ describe('激活归因与级联（#8.1 / #8.6 回归）', () => {
       inject: { required: ['mysvc'] },
       apply(ctx) {
         env.state.applied.push('consumer');
-        ctx.onDispose(() => env.state.disposed.push('consumer'));
+        ctx.onDispose(() => {
+          env.state.disposed.push('consumer');
+        });
       },
     };
     await env.app.plugin(provider);
