@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  assertAddressesSafe,
   assertSafeUrl,
   isPrivateAddress,
   isPrivateHost,
@@ -126,13 +127,32 @@ describe('safeFetch 逐跳重定向校验', () => {
     await expect(safeFetch('http://1.1.1.1/')).rejects.toThrow(/私网|回环|拒绝/);
   });
 
-  it('强制 redirect:manual 传给底层 fetch，并透传 init', async () => {
+  it('强制 redirect:manual 与 pin dispatcher 传给底层 fetch，并透传 init', async () => {
     const f = vi.fn().mockResolvedValue(mkRes(200));
     vi.stubGlobal('fetch', f);
     await safeFetch('http://1.1.1.1/', { headers: { 'x-test': '1' } });
     expect(f).toHaveBeenCalledWith(
       'http://1.1.1.1/',
-      expect.objectContaining({ redirect: 'manual', headers: { 'x-test': '1' } }),
+      expect.objectContaining({ redirect: 'manual', headers: { 'x-test': '1' }, dispatcher: expect.anything() }),
     );
+  });
+});
+
+describe('assertAddressesSafe（pin dispatcher 与 assertSafeHost 共用的地址校验，堵 rebinding）', () => {
+  it('全公网地址 → 不抛', () => {
+    expect(() => assertAddressesSafe('x.com', ['1.1.1.1', '8.8.8.8'])).not.toThrow();
+  });
+  it('含私网/回环/元数据 → 抛（rebinding 到内网会在连接前被此判定拦下）', () => {
+    expect(() => assertAddressesSafe('x.com', ['127.0.0.1'])).toThrow(/私网/);
+    expect(() => assertAddressesSafe('x.com', ['1.1.1.1', '169.254.169.254'])).toThrow(/私网/);
+    expect(() => assertAddressesSafe('x.com', ['10.0.0.1'])).toThrow();
+  });
+  it('denyCidrs 命中 → 抛；blockPrivate:false 时私网放行、denyCidrs 仍拦', () => {
+    setNetworkPolicy({ denyCidrs: ['1.1.1.0/24'] });
+    expect(() => assertAddressesSafe('x.com', ['1.1.1.1'])).toThrow(/受限网段/);
+    setNetworkPolicy({ blockPrivate: false });
+    expect(() => assertAddressesSafe('x.com', ['127.0.0.1'])).not.toThrow();
+    setNetworkPolicy({ blockPrivate: false, denyCidrs: ['127.0.0.0/8'] });
+    expect(() => assertAddressesSafe('x.com', ['127.0.0.1'])).toThrow(/受限网段/);
   });
 });
