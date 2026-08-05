@@ -2,7 +2,7 @@
 
 > 受众：想替换/扩展对话编排引擎，或想在 LLM 回合的各阶段挂钩子（预处理、改提示、改回复、收尾）的第三方插件作者。
 
-## 1. 一句话定位
+## 1. 定位
 
 `agent` 是**对话回合编排引擎**——接收一条入站消息，组装系统提示 + 历史，调用 `llm`，跑工具调用循环，最终把回复派发出去，并在每个阶段广播 `agent:*` 钩子。
 
@@ -34,7 +34,7 @@ export interface AgentService {
 关键类型：
 
 - `PreprocessorFn`（`:34`）：洋葱模型中间件函数 `(message, next) => Promise<void>`；**不调 `next()` 即中断整条管线**（LLM 不会被调用）。
-- `useAgent(ctx): ScopedAgentService`（`:155-166`）：领域 helper。`registerPreprocessor` 通过 `ctx.whenService('agent', ...)` 自动延迟到服务就绪；`raw` getter 每次重新 `getService`。**这是注册预处理器的推荐姿势**。
+- `useAgent(ctx): ScopedAgentService`（`:155-166`）：领域 helper。`registerPreprocessor` 通过 `ctx.whenService('agent', ...)` 自动延迟到服务就绪；`raw` getter 每次重新 `getService`。**这是注册预处理器的推荐方式**。
 - `TokenUsageEvent` / `TokenUsageBreakdown`（`:178-208`）：每次 LLM 调用后通过 `token:usage` 事件 emit 的 12 桶 prompt 预算快照（见 §6 token 契约）。
 
 `agent:*` 钩子（通过 declaration merging 注入 core 的 `HookContextMap`，`:79-133`）——这是 agent 服务最重要的扩展面，远比直接换 service 常用：
@@ -119,7 +119,7 @@ export function apply(ctx: Context): void {
 
 **契约义务**：自定义 `handleMessage` 必须在四条终态路径（replied / silent / aborted / error）都发 `agent:turn:after`——否则 `session-manager` 永远把会话停在 `active`（"进行中"）、`checkpoint` 回合永不关闭（泄漏）。默认实现在 `:903`（正常）、`:940`（aborted）、`:963`（error）兑现此契约。
 
-## 5. 标准消费姿势
+## 5. 标准消费方式
 
 **惰性获取，绝不缓存**（provider bounce 会让旧引用失效，见 [lazy-service-access](../concepts/lazy-service-access.md)）：
 
@@ -141,7 +141,7 @@ ctx.onDispose(dispose);
 
 **实现不支持 `registerPreprocessor` 时的降级**——`file-reader` 的范式（`packages/plugin-file-reader/src/index.ts`）：探测 `agent.registerPreprocessor` 是否存在，缺失则直接 `ctx.middleware('agent:input:before', ...)`。
 
-**服务缺失**：`agent` 全 optional 依赖，自身可激活但运行期降级——`llm` 缺失会直接回 `[系统] LLM 服务不可用`（`packages/plugin-agent/src/index.ts`）；`memory` 缺失则无历史；`gateway` 缺失则 fallback 到 `ctx.emit('outbound:message')`（**跳过审计/脱敏/限速/authority 中间件链，仅限测试/嵌入式**，`:1618-1626`）。
+**服务缺失**：`agent` 全 optional 依赖，自身可激活但运行期降级——`llm` 缺失（或会话指定的模型无法解析）会直接回一条 `[系统]` 前缀的诊断消息、不再继续调用 LLM，文案由 `describeLLMFailure` 生成（如「未找到任何具备 chat 能力的 LLM」，提示启用 LLM 提供者插件；`packages/plugin-agent/src/index.ts`）；`memory` 缺失则无历史；`gateway` 缺失则 fallback 到 `ctx.emit('outbound:message')`（**跳过审计/脱敏/限速/authority 中间件链，仅限测试/嵌入式**，`:1618-1626`）。
 
 ## 6. 能力 / 风险 → 影响
 
@@ -155,7 +155,7 @@ ctx.onDispose(dispose);
 
 > agent 不碰 storage URI / safeFetch——那是 storage / 工具插件的边界（见 [storage-uri-grammar](../concepts/storage-uri-grammar.md)）。
 
-## 7. 边界与坑（审计标注）
+## 7. 边界情形与注意事项（审计标注）
 
 **`abort(sessionId)` 用 `startsWith` 误匹配兄弟 session 的 lane**：`abort` 遍历 `activeControllers`，对 key 做 `startsWith(`${sessionId}::`)` 匹配（`packages/plugin-agent/src/index.ts`）。lane key = `${sessionId}::${source}`（`:118-123`），同一 session 不同来源（user / scheduler / proactive）是独立 lane，互不打断——`abort('S')` 会一次性中止 `S` 的**所有** lane，这是设计如此。但若存在 sessionId 互为前缀的子会话/分身命名（如 `S` 与 `S::sub`、或某些前缀重叠的 ID 方案），`startsWith` 可能误伤——前端「停止生成」的语义被限定为「按整个 sessionId 前缀停」，provider/调用方需保证 sessionId 不互为前缀，否则会中止到不该中止的 lane。
 

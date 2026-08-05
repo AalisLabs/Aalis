@@ -14,7 +14,7 @@
 
 ## 2. 契约
 
-来自 `packages/api-session-confirm/src/index.ts`。该 -api 既有**运行时服务**（`SessionConfirmService`），也复用 authority-api 的几个类型，无独立运行时实现（协调器实现在功能插件里）。
+来自 `packages/api-session-confirm/src/index.ts`。该 -api 既有**运行时服务**（`SessionConfirmService`），也复用 api-authority 的几个类型，无独立运行时实现（协调器实现在功能插件里）。
 
 ### 2.1 服务接口
 
@@ -49,7 +49,7 @@ export interface ConfirmChannel {
 
 服务类型经 declaration merging 注册到 core：`ServiceTypeMap['session-confirm'] = SessionConfirmService`（`packages/api-session-confirm/src/index.ts`）。
 
-### 2.3 复用 authority-api 的类型
+### 2.3 复用 api-authority 的类型
 
 `deliver`、`handler`、决策的形状都来自 `@aalis/api-authority`，写 provider/consumer 时需要懂这几个：
 
@@ -99,7 +99,7 @@ export type CapabilityConfirm = 'session' | 'always';
 
 ## 4. 写一个 provider
 
-绝大多数第三方**不需要**重写本服务——默认实现已是平台无关的成熟协调器。你更可能是要**为一个新平台接一条确认通道**（见 §5 的「按消费方姿势」），即复用现成 `createChannel`。
+绝大多数第三方**不需要**重写本服务——默认实现已是平台无关的成熟协调器。你更可能是要**为一个新平台接一条确认通道**（见 §5 的「按消费方用法」），即复用现成 `createChannel`。
 
 但如果你确实要替换/另写一个 `session-confirm` 实现（例如改文案、改超时、接入外部审批系统），契约只有一个方法：
 
@@ -195,7 +195,7 @@ export async function apply(ctx: Context): Promise<void> {
 
 DI 按名选胜者，顺序为 偏好 > 优先级（ServicePriority Backend 0 / Override 50 / System 200）> 注册顺序（见 docs/concepts/service-model.md、docs/core/service.md）。默认实现以 `ctx.provide('session-confirm', service)` 注册（未显式抬高优先级），第三方若要**覆盖**它，用更高优先级 provide 或让用户偏好选择即可。`createChannel` 无 `entryId`、非 per-entry，全局一个服务实例。
 
-## 5. 标准消费姿势（接一个新平台的确认通道）
+## 5. 标准消费用法（接一个新平台的确认通道）
 
 最常见的使用方式是**作为一个新平台**复用协调器，正如 webui-server 所做：
 
@@ -241,12 +241,12 @@ ctx.onDispose(() => confirmChannel?.dispose());
 - **`confirm: 'always'` 不接受会话记忆**：最高危能力每次都问，authority `requestAccess` 在 `always` 时跳过临时委托记忆（`packages/plugin-authority/src/authority-manager.ts`），协调器文案也相应改为「每次都需确认」（`packages/plugin-session-confirm/src/index.ts`）。provider 不得擅自为 `always` 引入「记住本会话」。
 - **confirm 与 visibility 正交**：visibility 管「能不能」（授权），confirm 管「是不是你本人此刻要」（意图确认 / 防注入减速带）。即便 owner（`*`），命中 confirm 的能力仍须确认——抵御 owner 会话内提示注入借权静默调高危（`packages/api-authority/src/index.ts`）。本服务是这条「减速带」的落地，**不要**为图省事让 owner 跳过确认。
 - **超时默认拒**：无人应答 60s 后 resolve `false`（安全失败），不要默认放行。
-- **session 授予是临时委托**：确认返回 `{ allowed: true, grant: { scope: 'session', durationSeconds } }` 会让 authority 建立一条限时临时委托（YS 默认 600s，`packages/plugin-session-confirm/src/index.ts`；委托建立见 `packages/plugin-authority/src/authority-manager.ts,193+`）。这条委托按 `(capability, sessionId, userId)` 三元组匹配消费（`packages/plugin-authority/src/authority-manager.ts`），不跨会话、不跨用户泄漏。
+- **session 授予是临时委托**：确认返回 `{ allowed: true, grant: { scope: 'session', durationSeconds } }` 会让 authority 建立一条限时临时委托（YS 默认 600s，`packages/plugin-session-confirm/src/index.ts`；委托建立见 `packages/plugin-authority/src/authority-manager.ts`）。这条委托按 `(platform, capability, sessionId, userId)` 匹配消费（`packages/plugin-authority/src/authority-manager.ts`），不跨会话、不跨用户、不跨平台泄漏。
 
-## 7. 边界与坑
+## 7. 边界与注意事项
 
-- **审计旧账已结清**：旧版审计曾标注「`feed` 仅按 `sessionId` 匹配、不绑 `userId`，群里第三方可抢答」。当前代码**已修复**——`feed` 签名加了 `replyUserId?`，且消费前强制 `head.userId !== replyUserId → return false`（`packages/plugin-session-confirm/src/index.ts`；webui 侧 `packages/plugin-webui-server/src/index.ts`）。**第三方自写 provider 时必须照此实现这道校验**，否则会把这个洞重新引回来。
-- **依赖的是 gateway，不是 authority**：本插件 `required: ['gateway']`（投递与 `inbound:confirm` 拦截）、`optional: ['authority']`。这意味着不加载 gateway 它根本起不来；而 authority 缺席时它仍 provide 服务、仅没人来调 handler。别误以为它「依赖权限系统」。
+- **旧审计发现已修复**：旧版审计曾标注「`feed` 仅按 `sessionId` 匹配、不绑 `userId`，群里第三方可抢答」。当前代码**已修复**——`feed` 签名加了 `replyUserId?`，且消费前强制 `head.userId !== replyUserId → return false`（`packages/plugin-session-confirm/src/index.ts`；webui 侧 `packages/plugin-webui-server/src/index.ts`）。**第三方自写 provider 时必须照此实现这道校验**，否则会把这个洞重新引回来。
+- **依赖的是 gateway，不是 authority**：本插件 `required: ['gateway']`（投递与 `inbound:confirm` 拦截）、`optional: ['authority']`。这意味着不加载 gateway 它无法启动；而 authority 缺席时它仍 provide 服务、仅没人来调 handler。别误以为它「依赖权限系统」。
 - **handler 注册是「后注册覆盖」语义**：`setConfirmHandler(platform, handler)` 往 `Map` 里 `set`，同 `platform` 后注册者覆盖前者（`packages/plugin-authority/src/authority-manager.ts`）。多个插件抢同一 `platform` 的 confirm 通道会互相覆盖——按平台分键（`'webui'` / `'*'` / 你的平台名），不要重复占用别人的键。`'*'` 是 fallback，精确平台优先（`packages/plugin-authority/src/authority-manager.ts`）。
 - **per-session 单队列、无跨实例共享**：协调器状态全在 `createChannel` 闭包的 `Map` 里，进程内、不持久化。进程重启/热重载会丢掉所有未决确认（`dispose` 把它们安全拒掉）——这是有意的「无人在场即取消」，不是 bug。
 - **`deliver` 必须可重入且不抛**：协调器在 `present`（发提示）和超时分支都会调 `deliver`，且超时分支在 `setTimeout` 回调里——`deliver` 抛异常无人接，请自行 try/catch（默认 bus 通道用 `void gateway?.dispatchOutbound(...)` 吞掉了 Promise 拒绝，`packages/plugin-session-confirm/src/index.ts`）。

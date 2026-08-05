@@ -96,24 +96,24 @@ unregisterByPlugin(pluginName: string): void;
 
 ## 3. 谁提供 / 谁消费
 
-**提供者（唯一）**：`@aalis/plugin-tools` —— `ctx.provide('tools', new ToolRegistry(ctx.logger))`（`packages/plugin-tools/src/index.ts`，`provides = ['tools']` 在 `:8`）。本服务是**单实例中心 Registry**，不是 router facade（没有「多 provider 枚举」概念，`tools.ts` 注释明确）。
+**提供者（唯一）**：`@aalis/plugin-tools` —— `ctx.provide('tools', new ToolRegistry(ctx.logger))`（`packages/plugin-tools/src/index.ts`，`provides = ['tools']`）。本服务是**单实例中心 Registry**，不是 router facade（没有「多 provider 枚举」概念，`tools.ts` 注释明确）。
 
-**工具提供者（注册工具的插件，非服务 provider）**：大量插件通过 `useToolService(ctx).register(...)` 往里塞工具，例如：
+**工具提供者（注册工具的插件，非服务 provider）**：大量插件通过 `useToolService(ctx).register(...)` 往里注册工具，例如：
 - `plugin-tool-system`（shell/file/system/http 工具，`packages/plugin-tool-system/src/index.ts`）
 - `plugin-tool-math`（纯净参考，`packages/plugin-tool-math/src/index.ts`）
 - `plugin-tool-browser` `plugin-tool-search` `plugin-tool-onebot` `plugin-tool-code-runner` `plugin-skills` `plugin-todo-list` `plugin-memory-*` 等。
 
 **核心消费者**：
-- `plugin-agent` —— LLM 主循环：`getService<ToolService>('tools')?.getDefinitions(...)` 取工具喂模型（`packages/plugin-agent/src/index.ts`），收到 tool_call 后 `?.execute(name, args, toolCtx)`（`:630-631`）。
+- `plugin-agent` —— LLM 主循环：`getService<ToolService>('tools')?.getDefinitions(...)` 取工具喂模型（`packages/plugin-agent/src/index.ts`），收到 tool_call 后 `?.execute(name, args, toolCtx)`。
 - `plugin-authority` —— 通过 `whenService('tools', svc => svc.setExecutionGuard(guard))` 注入权限守卫（`packages/plugin-authority/src/index.ts`）。
 - `plugin-mcp-server` —— 把工具暴露成 MCP（`inject.required = ['tools']`，`packages/plugin-mcp-server/src/index.ts`）。
 - WebUI 经 `getAll()` 列工具+可见性。
 
 ## 4. 写一个工具提供者
 
-提供者通常**不**重新实现 `ToolService`（它是单例，几乎没人需要自建），而是消费 `tools` 服务往里注册工具。
+提供者通常**不**重新实现 `ToolService`（它是单例，几乎无需自建），而是消费 `tools` 服务往里注册工具。
 
-### 4.1 最小骨架（推荐姿势）
+### 4.1 最小骨架（推荐写法）
 
 ```ts
 import type { Context } from '@aalis/core';
@@ -154,7 +154,7 @@ export function apply(ctx: Context): void {
 
 ### 4.2 manifest 双源
 
-`useToolService` 的 `register/registerGroup` 内部走 `ctx.whenService('tools', ...)`（`index.ts`），服务未就绪会延迟，因此**不显式声明 inject 也能注册**（`plugin-tool-math` 的 `package.json` 就是空 `aalis: {}`）。但若你**还要读** `getDefinitions/getAll/execute`（走 `need()`，服务缺失即抛错，`index.ts`），或希望加载顺序/诊断清晰，应在 `package.json` 声明并与 export 同步：
+`useToolService` 的 `register/registerGroup` 内部走 `ctx.whenService('tools', ...)`（`index.ts`），服务未就绪会延迟，因此**不显式声明 inject 也能注册**（`plugin-tool-math` 的 `package.json` 没有 `aalis` 元数据）。但若你**还要读** `getDefinitions/getAll/execute`（走 `need()`，服务缺失即抛错，`index.ts`），或希望加载顺序/诊断清晰，应在 `package.json` 声明并与 export 同步：
 
 ```jsonc
 // package.json
@@ -167,11 +167,11 @@ export const inject = { required: ['tools'] };  // 双源必须一致，见 docs
 
 参考 `plugin-mcp-server`（两处都写 `required: ['tools']`）。
 
-### 4.3 真要自建 `ToolService` provider
+### 4.3 自建 `ToolService` provider
 
 仅当你要替换整个注册表实现时才需要。实现 §2.3 全部方法，用 `ctx.provide('tools', impl, { priority })` 注册；同名竞争走 `preference > priority > 注册序`（ServicePriority Backend0/Override50/System200），见 [`docs/concepts/service-model.md`](../concepts/service-model.md)。**务必实现 `setExecutionGuard`**，否则 authority 无法挂权限闸（守卫缺失=放行，见 §6/§7）。
 
-## 5. 标准消费姿势
+## 5. 标准消费写法
 
 每次用都 `getService`，**不要缓存服务引用**——provider 重启/反弹会让旧引用失效（见 [`docs/concepts/lazy-service-access.md`](../concepts/lazy-service-access.md)）。
 
@@ -197,17 +197,17 @@ const result = await ctx.getService<ToolService>('tools')
 
 **提供者必须遵守**：
 - 任何**写/删/越权读/外发**类工具都要声明 `risk` 或显式 `visibility/confirm`。例：`http_download` 是写操作，声明 `visibility:'restricted' + confirm:'session'`（`packages/plugin-tool-system/src/tools/http.ts`），防被注入的 LLM 静默写穿 storage。**不声明 = public 不确认**，等于把能力裸露给任何会话。
-- **外发网络**走 SSRF 守卫：用 `safeFetch`（`@aalis/util-network-guard`），别裸 `fetch`。见 [`docs/concepts/security-model.md`](../concepts/security-model.md)。
-- **碰文件系统**只走 storage `<root>:/path` 语法，storage 不是沙箱（仅做根权限位 + 路径规范），见 [`docs/concepts/storage-uri-grammar.md`](../concepts/storage-uri-grammar.md)。能读到什么取决于工具自己限定的可读根，而非 storage 本身。
+- **外发网络**走 SSRF 守卫：用 `safeFetch`（`@aalis/util-network-guard`），不要裸 `fetch`。见 [`docs/concepts/security-model.md`](../concepts/security-model.md)。
+- **访问文件系统**只走 storage `<root>:/path` 语法，storage 不是沙箱（仅做根权限位 + 路径规范），见 [`docs/concepts/storage-uri-grammar.md`](../concepts/storage-uri-grammar.md)。能读到什么取决于工具自己限定的可读根，而非 storage 本身。
 
 **执行守卫链路**：`execute` 先展开 `(visibility, confirm)`，若已注入 `_guard` 则调它（`tools.ts`）；守卫返回非空字符串=拦截（转 `{ error }`）。守卫由 `plugin-authority` 注入，内部按 `resolveMinLevel`（risk 派生 minLevel，无 risk 时 visibility 兜底 restricted→2 / public→0，`authority-model.ts`）裁决调用者等级是否达标、对 `confirm` 走 `requestAccess`（`packages/plugin-authority/src/index.ts`）。`skipConfirm`（如 scheduler）只跳交互确认、**不**绕过 authorize（防提权）。owner 视为等级 ∞。
 
-## 7. 边界与坑
+## 7. 注意事项
 
 - **守卫缺失 = fail-open（放行）**：`execute` 是 `if (this._guard) { ... }`（`tools.ts`）。若 `plugin-authority` 未加载/未注入守卫，所有 `restricted`/`confirm` 工具**直接执行不拦截**。这是「权限是叠加层，不是工具自带护栏」的体现——提供者不能假设守卫一定在，敏感工具应在 handler 内对真正危险的副作用再做一层自检。
 - **`http_download` 历史问题**：审计曾指出它是 public 无确认；现已修为 `restricted + confirm:'session'`（http.ts）。新写下载/上传类工具照此挂闸。
 - **`file_read` 的 `allowedRoots`**：现默认 `['workspace', 'tmp']`（`packages/plugin-tool-system/src/index.ts`），不含 `data` 等系统根，避免裸读 `data:/users.json`。但配置允许设为 `["*"]` 放开全部可读根（`src/tools/file.ts`）——一旦用户改成 `*`，`file_read` 就能读凭证类文件。提供「按根放行」的工具时，默认应收紧、把放开权交给 owner 显式配置。
-- **重名即覆盖**：`name` 全局唯一，重复 `register` 同名工具会 warn 并覆盖（`tools.ts`）。挑独特、带前缀的工具名（如 `math_eval`），别用 `read`/`run` 这种通用词。
+- **重名即覆盖**：`name` 全局唯一，重复 `register` 同名工具会 warn 并覆盖（`tools.ts`）。应选用独特、带前缀的工具名（如 `math_eval`），避免 `read`/`run` 这类通用词。
 - **参数校验是「轻量」级**：`execute` 只查 `required` 缺失 + （仅当 `additionalProperties:false` 时）未知键（`tools.ts`），**不**做类型/嵌套校验。想要严格未知键拦截就显式写 `additionalProperties: false`；handler 内仍要对 `args` 做类型断言与防御。
 - **契约污染（已解决）**：曾经 `packages/api-tools/src/utils.ts` 把 `toStorageUri` + 一组 SSRF/私网判定塞进 tools 契约包并 re-export，属契约污染。现已修复：`utils.ts` 删除、helper 迁出——SSRF/私网判定 → `@aalis/util-network-guard`（`isPrivateAddress`/`isPrivateHost`、`safeFetch`），路径规范化/解析 → `@aalis/api-storage`（`toStorageUri`/`resolveAgainstCwd`/`parseStorageUri`，`src/index.ts`）。本包现为纯契约/类型，不再 re-export 任何 runtime 函数（迁出说明见 `index.ts`）。
 

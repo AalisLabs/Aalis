@@ -1,13 +1,13 @@
 # bounded-map（有界 Map）
 
 > 受众：编写 / 维护 Aalis 第三方插件的开发者。
-> 这是一个 **util 包**——纯函数、零服务、不碰 `ctx`、不进 DI 容器。你在 `package.json` 里**依赖**它，然后直接 `import` 函数用。不要去 `ctx.getService('bounded-map')`（它根本不在容器里）。util 包的统一约定见 [清单元数据 → util 关键词](../concepts/manifest-metadata.md)。
+> 这是一个 **util 包**——纯函数、零服务、不涉及 `ctx`、不进 DI 容器。你在 `package.json` 里**依赖**它，然后直接 `import` 使用。不要去 `ctx.getService('bounded-map')`（它不在容器里）。util 包的统一约定见 [清单元数据 → util 关键词](../concepts/manifest-metadata.md)。
 
-## 1. 一句话定位
+## 1. 概述
 
-`@aalis/util-bounded-map` 给你一个**带上限护栏的 Map**：必填 `max` 限制条目数（超限逐出最久未访问的，即 LRU），可选 `ttlMs` 做**滑动过期**，可选 `onEvict` 在条目离场时回调释放资源。它治理的是「裸 `Map` 当进程内缓存、只增不清 → 长跑泄漏」这一类问题（`packages/util-bounded-map/src/index.ts`）。
+`@aalis/util-bounded-map` 提供一个**带上限护栏的 Map**：必填 `max` 限制条目数（超限逐出最久未访问的，即 LRU），可选 `ttlMs` 做**滑动过期**，可选 `onEvict` 在条目离场时回调释放资源。它治理的是「裸 `Map` 当进程内缓存、只增不清 → 长跑泄漏」这一类问题（`packages/util-bounded-map/src/index.ts`）。
 
-包名 `@aalis/util-bounded-map`，MIT，无运行时依赖（`packages/util-bounded-map/package.json:1-9`）。
+包名 `@aalis/util-bounded-map`，MIT，无运行时依赖（`packages/util-bounded-map/package.json`）。
 
 ---
 
@@ -27,8 +27,8 @@ interface BoundedMapOptions<K, V> {
 ```
 
 - `max`：**必填正数**。非正数或非有限值会在 `createBoundedMap` 直接抛错（`index.ts`）。
-- `ttlMs`：**不传则永不过期**（内部 `expireAt` 记为 `+Infinity`，`index.ts`）。传了就是**滑动 TTL**——`get`/`set` 命中都会把过期时刻刷新到 `Date.now() + ttlMs`（`index.ts`、`index.ts`），不是固定寿命。
-- `onEvict(value, key)`：**任何**离场路径都会触发——超限逐出、TTL 过期、`delete`、`clear`，统一经内部 `evict`/`clear` 调用（`index.ts`、`index.ts`）。
+- `ttlMs`：**不传则永不过期**（内部 `expireAt` 记为 `+Infinity`，`index.ts`）。传入则为**滑动 TTL**——`get`/`set` 命中都会把过期时刻刷新到 `Date.now() + ttlMs`（`index.ts`），不是固定寿命。
+- `onEvict(value, key)`：**任何**离场路径都会触发——超限逐出、TTL 过期、`delete`、`clear`，统一经内部 `evict`/`clear` 调用（`index.ts`）。
 
 ### `BoundedMap<K, V>`（`index.ts`）
 
@@ -51,7 +51,7 @@ interface BoundedMap<K, V> {
 | `delete(key)` | 删除单条 | 命中触发 `onEvict`，返回 `true`；不存在返回 `false`（`index.ts`） |
 | `clear()` | 清空 | 逐条触发 `onEvict` 后清空（`index.ts`） |
 | `values()` | 当前未过期值数组 | 遍历时**惰性逐出**过期项，只返回存活值（`index.ts`） |
-| `size` | 当前条目数（getter） | 直接读底层 `Map.size`，**不剔除已过期项**——见第 5 节坑点（`index.ts`） |
+| `size` | 当前条目数（getter） | 直接读底层 `Map.size`，**不剔除已过期项**——见第 5 节注意事项（`index.ts`） |
 
 ### `createBoundedMap<K, V>(opts): BoundedMap<K, V>`（`index.ts`）
 
@@ -93,26 +93,26 @@ const handles = createBoundedMap<string, FileHandle>({
 ## 4. 谁在用（codebase 内真实消费点）
 
 - **图片描述缓存** `packages/plugin-media/src/cache.ts`
-  `createBoundedMap<string, string>({ max: 1000, ttlMs: 24h })`，key 是 url / data uri / 本地路径，value 是 vision 识别结果。同一张图在聊天 + `analyze_image` + 引用消息里复用，避免重复识别（`cache.ts`）。注意它在 `set` 前先过滤空串与 `[图片: ...]` 占位符——**不可缓存的值在入口处挡掉，而不是依赖 Map**（`cache.ts`）。
+  `createBoundedMap<string, string>({ max: 1000, ttlMs: 24h })`，key 是 url / data uri / 本地路径，value 是 vision 识别结果。同一张图在聊天 + `analyze_image` + 引用消息里复用，避免重复识别（`cache.ts`）。注意它在 `set` 前先过滤空串与 `[图片: …]` / `[动图: …]` 占位符——不可缓存的值在入口处过滤，而不是依赖 Map（`cache.ts`）。
 
 - **文档会话管理** `packages/plugin-office/src/session.ts`
   `createBoundedMap<string, DocSession>({ max: 50, ttlMs: 30min })`。value 持有 docx/ExcelJS/pptx 等底层文档对象。活跃文档（持续 `add → get`）因滑动 TTL 不会被逐出；只清理「创建后 30min 未操作」的废弃会话（`session.ts`）。`require()` 取不到时抛「已过期请重新 create」的提示（`session.ts`），插件卸载时 `clear()` 释放全部（`session.ts`）。
 
 - **Prompt 预算快照** `packages/plugin-prompt-budget/src/index.ts`
-  `createBoundedMap<string, TokenUsage>({ max: 500, ttlMs: 6h })`，按 `sessionId` 缓存最近一次 `token:usage` 事件。注释点明了用它的理由——「派生只读，逐出后 AI 重查即重算；有界防长跑泄漏」（`index.ts`、`index.ts`）。
+  `createBoundedMap<string, TokenUsage>({ max: 500, ttlMs: 6h })`，按 `sessionId` 缓存最近一次 `token:usage` 事件。注释点明了用它的理由——「派生只读，逐出后 AI 重查即重算；有界防长跑泄漏」（`index.ts`）。
 
 三处都没有用 `onEvict`（值都是可丢的派生数据）；plugin-office 持有重对象但靠 GC 回收，未显式释放。
 
 ---
 
-## 5. 边界与坑
+## 5. 边界与注意事项
 
-- **只配派生 / 可重算 / 可丢的缓存**。源码开篇即划线：权威状态（丢了会改变行为的）不要塞进来——它随时可能被逐出（`index.ts`）。三个消费点全是「丢了重算/重查」的场景，这是正确用法的范本。
-- **没有后台 sweeper**，过期是**惰性**的：只在 `get` / `values` 触碰时才逐出过期项（`index.ts`、`index.ts`、`index.ts`）。作者刻意不开定时清理（「sweeper 自身会成泄漏源」）。后果——
-  - `size` 读的是底层 `Map.size`，**会把尚未被触碰的过期条目算进去**（`index.ts`）。别拿 `size` 当「有效条目数」断言。要精确数活的就用 `values().length`（它会先惰性清理）。
-  - 一个写满即不再读取的 key 会一直占位，直到下次 `set` 触发超限逐出或有人 `get`/`values`。所以 `max` 仍是真正的内存护栏，TTL 只是「热度衰减」。
-- **TTL 是滑动的，不是固定寿命**：频繁访问的条目永不过期。若你要的是「绝对过期」（写入 N 毫秒后无条件失效），这个包给不了——它每次 `get`/`set` 都续命。
-- **LRU 基于插入序模拟**：底层 `Map` 保持插入序，`get`/`set` 命中即「删了重插」把条目顶到队尾，故队首恒为最冷条目，超限逐出队首即真 LRU（`index.ts`、`index.ts`、`index.ts`）。这是 O(1) 操作，无需额外链表。
+- **只配派生 / 可重算 / 可丢的缓存**。源码开篇即指出：权威状态（丢了会改变行为的）不要塞进来——它随时可能被逐出（`index.ts`）。三个消费点全是「丢了重算/重查」的场景，这是正确用法的范本。
+- **没有后台 sweeper**，过期是**惰性**的：只在 `get` / `values` 触碰时才逐出过期项（`index.ts`）。作者刻意不开定时清理（「sweeper 自身会成泄漏源」）。后果——
+  - `size` 读的是底层 `Map.size`，**会把尚未被触碰的过期条目算进去**（`index.ts`）。不要把 `size` 当作「有效条目数」断言。要精确数活的就用 `values().length`（它会先惰性清理）。
+  - 一个写满即不再读取的 key 会一直占位，直到下次 `set` 触发超限逐出，或被 `get`/`values` 触碰。所以 `max` 仍是真正的内存护栏，TTL 只是「热度衰减」。
+- **TTL 是滑动的，不是固定寿命**：频繁访问的条目永不过期。若你需要「绝对过期」（写入 N 毫秒后无条件失效），本包不提供——它每次 `get`/`set` 都会续期。
+- **LRU 基于插入序模拟**：底层 `Map` 保持插入序，`get`/`set` 命中即「删了重插」把条目顶到队尾，故队首恒为最冷条目，超限逐出队首即真 LRU（`index.ts`）。这是 O(1) 操作，无需额外链表。
 - **`onEvict` 覆盖所有离场路径**，包括你主动的 `delete` 和 `clear`。如果回调里做「释放句柄」，注意 `clear()` 会对每条都调一次（`index.ts`）——这是预期行为，但回调必须幂等/可重入安全。
 - **进程内、非持久**：纯内存结构，进程重启即空。需要跨重启留存请走存储服务，见交叉链接。
 - **审计相关**：缓存 value 可能含敏感派生数据（如 plugin-media 缓存的图片描述文本）。util 本身不做脱敏——出站到 LLM / 外部的内容审计由调用方与管线负责，见 [安全模型](../concepts/security-model.md) 与 [消息 / LLM 管线](../concepts/message-llm-pipeline.md)。
@@ -126,7 +126,7 @@ const handles = createBoundedMap<string, FileHandle>({
 | 缓存项是派生 / 可重算 / 可丢的 | 权威状态，丢失会改变行为 |
 | 需要逐出时释放底层资源（`onEvict`） | 值无需清理 |
 
-一句话决策：**「这个 Map 会不会随运行无限增长？」** 答是 → 给它 `max`；答否 → 裸 `Map` 即可，别引依赖。
+判断依据：这个 Map 是否会随运行无限增长？会 → 用 `max` 约束；不会 → 裸 `Map` 即可，无需引入依赖。
 
 ---
 

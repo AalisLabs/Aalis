@@ -103,33 +103,33 @@ parseCommand(input)
   ▼
 execute(name, input)
   │
-  ├─ 查找指令（含继承/覆盖后的有效可见性 / confirm / risk）
+  ├─ 查找指令（含解析 / 覆盖后的有效可见性 / confirm / risk）
   ├─ 轴 A · 授权 authority.authorize() —— 数字等级裁决：
   │     deniedCapabilities 硬禁 > owner(∞) > 触发者等级 >= 操作 minLevel
   │     （minLevel = authorityOverrides[cap] > risk 派生 > visibility 兜底）
-  ├─ 轴 B · 确认（与授权正交，owner 也吃，防注入借权）：
+  ├─ 轴 B · 确认（与授权正交，对 owner 同样生效，防注入借权）：
   │     操作声明了 confirm 且非 skipConfirm / 非 auto 放行 →
   │     authority.requestAccess() → session-confirm 协调器发起 HITL 意图确认
   └─ 调用 action(argv, ...positionals) → 返回结果
 ```
 
-- 轴 A 决定**谁能跑**：每个外部身份一个整数等级（默认 0，封禁=负数），owner=∞（靠 owners 列表归属，永不被门槛锁出）；操作最低等级由 `risk`（safe→0 / sensitive→1 / dangerous→2）派生，owner 可经 `authorityOverrides` 逐条覆盖成任意整数，`visibility` 仅在无 risk 时兜底（public→0 / restricted→2）。
+- 轴 A 决定**谁可执行**：每个外部身份一个整数等级（默认 0，封禁=负数），owner=∞（靠 owners 列表归属，永不被门槛锁出）；操作最低等级由 `risk`（safe→0 / sensitive→1 / dangerous→2）派生，owner 可经 `authorityOverrides` 逐条覆盖成任意整数，`visibility` 仅在无 risk 时兜底（public→0 / restricted→2）。
 - 轴 B 决定**是否需当面确认意图**：由独立的 plugin-session-confirm 执行（经 `setConfirmHandler` 注册）。回复 `Y`=仅本次放行，`YS`=本会话限时放行，其它任意输入=取消；`confirm: 'always'` 每次都必须确认（不接受会话记忆）。owner 可用 `/auto` 临时免 dangerous 二次确认。
 - `risk: 'dangerous'` 是声明糖，同时把默认设成 restricted + `confirm: 'session'`。
 
 ## 门槛与确认覆盖
 
-owner 可通过 authority 配置逐条覆盖单条操作的两轴默认，无需改插件声明（键 = 点拼接的能力路径）：
+owner 可通过 authority 配置逐条覆盖单条操作的两轴默认，无需改插件声明。键为完整能力键 `type:name`，指令即 `command:<点路径>`：
 
 ```yaml
 # 操作最低等级覆盖（轴 A，整数；压过 risk/visibility 派生值）
 authorityOverrides:
-  shutdown: 0       # 把关闭指令放开为所有人可用（等级 0 即默认人人可达）
-  clear.all: 3      # 把子指令收紧到需等级 ≥ 3（子指令用点路径作为键）
+  'command:shutdown': 0     # 把关闭指令放开为所有人可用（等级 0 即默认所有人可达）
+  'command:clear.all': 3    # 把子指令收紧到需等级 ≥ 3（子指令用完整能力键，含 command: 前缀）
 
 # 确认覆盖（轴 B；'session' / 'always' / 'off' 关闭确认）
 confirmOverrides:
-  clear.all: always
+  'command:clear.all': always
 
 # 全局硬禁用 glob：压过一切（含 owner），是配置总闸而非 per-user
 deniedCapabilities:
@@ -164,8 +164,8 @@ commands
 - 节点未提供 action（仅为自动建立的分组节点）时会返回自动生成的 usage
 
 可见性 / 确认继承：
-- 每个节点未声明 `visibility` / `confirm` / `risk` 时沿点路径继承最近声明的祖先值（restricted 父分组 → restricted 子节点，除非子节点重新声明）；缺省 public、不确认
-- 每个节点的两轴默认都可被单独覆盖，键 = 点拼接的路径（如 `clear.all`、`db.migrate.up`），在 authority 的 `authorityOverrides` / `confirmOverrides` 配置
+- 节点的生效安全轴取整条点路径（含本节点）上**最严的声明**：visibility 与 risk 一同定级、取门槛最高的那份；confirm 单独取路径上出现过的最严要求（always > session > 无）。**后注册者与子节点只能收紧、不能放宽**；均未声明时缺省 public、不确认
+- 每个节点的两轴默认都可被单独覆盖，键为完整能力键 `type:name`（指令如 `command:clear.all`、`command:db.migrate.up`），在 authority 的 `authorityOverrides` / `confirmOverrides` 配置
 - WebUI「权限」页以可折叠的缩进行展示完整指令树，每一节点可独立编辑
 
 ## 基础指令参考
@@ -177,11 +177,11 @@ commands
 | `/clear` | `[--type/-t <type>]` | 清空当前会话指定类型；默认全部类型 | public |
 | `/clear list` | — | 列出可清理类型 | public |
 | `/clear all` | `[--type/-t <type>]` | 【受限】清空全部会话指定类型；默认全部类型 | restricted |
-| `/model` | `[model_name]` | 查看或切换会话模型 | public |
+| `/model` | `[keyword]` | 列出 / 搜索可用对话模型（分页，`-p` 翻页） | public |
 | `/tools` | — | 列出所有 AI 工具 | public |
 | `/shutdown` | — | 关闭应用 | restricted |
 | `/restart` | — | 重启应用 | restricted |
-| `/authority` | `[target]` | 查看自己或指定用户的权限等级（owner 显示等级 ∞） | public |
+| `/authority` | `[target]` | 查看自己或指定用户的权限等级（owner 显示等级 ∞） | restricted（sensitive，等级 1） |
 | `/level` | `<platform:userId> <int>` | 【仅 owner】设置用户权限等级（越大越高，0=默认，负数=封禁） | restricted |
 | `/auto` | `[<分钟>\|on\|off]` | 【仅 owner 本人】自动确认模式：临时免 dangerous 二次确认 | restricted |
 
