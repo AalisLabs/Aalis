@@ -389,7 +389,9 @@ export function prepareLLMMessages<T extends Pick<Message, 'role' | 'content' | 
     // 产生的内容在此唯一出口自动生效，第三方插件无需感知"孤代理"、无需调用任何东西。
     const content = typeof m.content === 'string' ? toWellFormedText(m.content) : m.content;
     const contentChanged = content !== m.content;
-    const needsPrefix = !!prefix && typeof content === 'string' && content.length > 0;
+    // 幂等守卫：content 已带该前缀就不再叠加。role 前缀靠改写 role 自消费，kind 前缀不消费 kind，
+    // 二次调用会把 `[跨会话委派]` 叠成两遍——用 startsWith 兜住，两条路径都真幂等。
+    const needsPrefix = !!prefix && typeof content === 'string' && content.length > 0 && !content.startsWith(prefix);
     if (!needsRoleRewrite && !needsPrefix && !contentChanged) return m;
     const newContent = needsPrefix ? `${prefix} ${content}` : (content ?? null);
     return { ...m, role: llmRole, content: newContent } as T;

@@ -35,41 +35,41 @@ const repairSteps: RepairStep[] = [
     name: "补全缺失的 '}' 与 ']'",
     apply: s => {
       const trimmed = s.trimEnd();
-      const missingObj = countOutsideStrings(trimmed, '{') - countOutsideStrings(trimmed, '}');
-      const missingArr = countOutsideStrings(trimmed, '[') - countOutsideStrings(trimmed, ']');
-      if (missingObj <= 0 && missingArr <= 0) return s;
+      // 按开括号栈逆序补全：仅靠计数会把 ] 补在内层对象 } 之前（`{"a":[{...` 补成 `]}}` 而非 `}]}`），
+      // 对「数组套对象」这类主流截断产出非法 JSON。用栈记未闭合开括号，末尾逆序（内层先闭）补齐。
+      const stack: string[] = [];
+      let inString = false;
+      let escaped = false;
+      for (let i = 0; i < trimmed.length; i++) {
+        const c = trimmed[i];
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (c === '\\') {
+          escaped = true;
+          continue;
+        }
+        if (c === '"') {
+          inString = !inString;
+          continue;
+        }
+        if (inString) continue;
+        if (c === '{' || c === '[') stack.push(c);
+        else if (c === '}' || c === ']') {
+          const top = stack[stack.length - 1];
+          if ((c === '}' && top === '{') || (c === ']' && top === '[')) stack.pop();
+        }
+      }
+      if (stack.length === 0) return s;
       let completed = trimmed;
-      // 数组先闭合，再闭合对象，符合常见嵌套
-      if (missingArr > 0) completed += ']'.repeat(missingArr);
-      if (missingObj > 0) completed += '}'.repeat(missingObj);
+      for (let i = stack.length - 1; i >= 0; i--) {
+        completed += stack[i] === '{' ? '}' : ']';
+      }
       return completed;
     },
   },
 ];
-
-/** 在字符串字面量之外计算字符出现次数，避免把 message 里的 '{' 算进去。 */
-function countOutsideStrings(s: string, ch: string): number {
-  let count = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (c === '\\') {
-      escaped = true;
-      continue;
-    }
-    if (c === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (!inString && c === ch) count++;
-  }
-  return count;
-}
 
 function nextNonWhitespace(s: string, start: number): string {
   for (let i = start; i < s.length; i++) {

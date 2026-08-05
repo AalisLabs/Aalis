@@ -824,7 +824,9 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
       const dispose = ctx.middleware('agent:turn:after', async (data, next) => {
         await next();
         if (captured) return;
-        if (data.sessionId !== targetSessionId) return;
+        // 只认本次委派那条 incoming：同一目标会话上并发的真实用户消息 source 不同，不会被误当委派结果。
+        // 残留边角——同一源会话对同一目标并发多次委派会共享 source，此处不细分（需关联 id，超出当前范围）。
+        if (data.sessionId !== targetSessionId || data.message?.source !== incoming.source) return;
         captured = { reply: data.reply ?? '', outcome: data.outcome };
         resolveWait?.();
       });

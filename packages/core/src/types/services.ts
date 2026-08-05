@@ -27,8 +27,7 @@
 // `Context.getService` 提供两个重载：
 //   1. `<TName extends keyof ServiceTypeMap>(name: TName, ...)` —— 字面量自动强类型
 //   2. `<T = unknown>(name: string, ...)` —— 字符串变量退回 `unknown`，
-//      用于 router 类插件（plugin-llm-router / plugin-storage-router）按运行时
-//      变量寻址 service 的场景。
+//      用于按运行时变量（而非字面量）寻址 service 的场景。
 //
 // ## 边界
 //

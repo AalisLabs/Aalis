@@ -203,7 +203,3 @@ export function validateCronExpr(input: string): ValidateResult {
   }
   return { ok: true, kind: 'cron', normalized };
 }
-
-// ─── 服务接口 ───
-
-/** 订阅 / nextFireTime 的可选参数。 */

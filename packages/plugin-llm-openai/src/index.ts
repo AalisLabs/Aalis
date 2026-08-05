@@ -281,6 +281,8 @@ class OpenAIClient {
       [reasoning ? 'max_completion_tokens' : 'max_tokens']: request.maxTokens ?? this.maxTokens,
       ...(reasoning ? {} : { temperature: request.temperature ?? this.temperature }),
       stream: true,
+      // 流式必须显式声明才会在收尾帧返回 usage（真 OpenAI 端点无此开关则整条流不含 usage）。
+      stream_options: { include_usage: true },
     };
 
     if (tools && tools.length > 0) {
