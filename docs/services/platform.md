@@ -87,7 +87,7 @@ export interface PlatformAdapter {
 **强烈建议**：当本平台的 `sessionId` **不形如 `<platform>:<...>`** 时（如 CLI 自定义 id），**必须**实现 `canHandle()`，否则 `resolvePlatformBySession` 的前缀兜底会漏掉你，路由发消息/委派都找不到你的 adapter。
 **按能力实现**：`getSelfIdentity`（要让 agent/persona 认知自身身份就实现）、`callAction`（暴露平台原生 API）、`checkAndRecordProactiveSend`（接入主动发送限速）、`isReady`、`sessionTypes`（让 UI 能列出你的真实会话类型）。
 
-### 入站消息：发服务之外还要 emit
+### 入站消息：出站接口之外还需 emit
 
 `PlatformAdapter` 只覆盖**出站**与查询。**入站**不在接口里——adapter 收到平台消息后须 `ctx.emit('inbound:message', msg)`（msg 为 `IncomingMessage`，`packages/schema-message/src/index.ts`），由 `plugin-gateway`（`src/index.ts` 监听）接管路由到 agent。OneBot 见 `src/index.ts` 一带的 `ctx.emit('inbound:message', …)`；CLI 见 `src/index.ts`。出站文本回显则可订阅 `ctx.on('outbound:message', …)`（CLI `src/index.ts`）。详见 [message-llm-pipeline](../concepts/message-llm-pipeline.md)。
 
@@ -145,12 +145,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 - **label**：展示用，会进 `getAllServices` 的 `label` 字段。
 - **双源同步**：`export const provides = ['platform']` 与 `package.json` 的 `aalis.service.provides` 必须一致；激活后 core 会校验「声明了 `provides` 却没真 `ctx.provide`」直接打成 error，dev-mode 还会反向 warn「provide 了但没声明」。见 [manifest-metadata](../concepts/manifest-metadata.md)。
 
-## 5. 标准消费姿势
+## 5. 标准消费方式
 
 - **优先用 helper，而非裸 `getService('platform')`**：要发消息用 `sendPlatformMessage(ctx, sessionId, text)`；要按名取身份用 `getPlatformSelfIdentity(ctx, platform, sessionId)`；要列平台用 `getPlatformNames(ctx)`；要调原生 API 用 `callPlatformAction(ctx, sessionId, action, params)`。这些 helper 内部都走 `getAllServices` 聚合，天然处理多 adapter。
 - **lazy 访问、勿缓存**：每次用时现取（helper 每次传 `ctx` 即满足）。adapter 是会随 provider bounce 失效的服务，缓存住 instance 会指向僵尸。见 [lazy-service-access](../concepts/lazy-service-access.md)。
 - **platform 是可选依赖**：上面所有消费者都把它放在 `inject.optional`。没有任何 adapter 时，`getPlatformNames` 返回 `[]`、`getPlatformSelfIdentity` 返回 `undefined`、`sendPlatformMessage`/`callPlatformAction` 抛错（无 adapter 接管 / 不支持 callAction）。消费方必须容忍这些：persona/agent 在 `identity?.selfId` 处用可选链优雅降级（`plugin-agent/src/index.ts`），session-manager 用 try/catch 包住（`src/index.ts`）。
-- **错误边界**：`resolvePlatformBySession` 内部对每个 adapter 的 `canHandle` 抛错只 `logger.warn` 不中断（`src/index.ts`）——你的 `canHandle` 抛错不会拖垮全局路由，但也意味着会被静默跳过，实现要稳。
+- **错误边界**：`resolvePlatformBySession` 内部对每个 adapter 的 `canHandle` 抛错只 `logger.warn` 不中断（`src/index.ts`）——你的 `canHandle` 抛错不会拖垮全局路由，但也意味着会被静默跳过，实现应保证稳健。
 
 ## 6. 能力 / 风险 → 影响
 
@@ -159,11 +159,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 - **`callAction` 是平台原生权能的逃逸口**：它能调任意平台 Action（封禁、踢人等）。本服务**不在 adapter 层做 authority 校验**——风险/等级控制由调用工具侧（如 `plugin-tool-onebot` 的工具定义 + 其 `risk` 标注）经 authority 把关。provider 实现 `callAction` 时应假设调用方已鉴权，但要对 `sessionId` 解析失败/连接不可用做硬校验（OneBot 在不可用时 throw，`:1203-1205`）。authority 模型见 [security-model](../concepts/security-model.md) 与 `docs/core/authority.md`。
 - **`platform` 不是沙盒**：它只是出口抽象；`sendMessage`/`callAction` 直达真实平台，没有任何隔离层。SSRF 安全出口请走 `safeFetch`（`util-network-guard`），不要在 adapter 里裸 `fetch` 外部 URL。
 
-## 7. 边界与坑
+## 7. 边界与注意事项
 
-- **路由全靠 `canHandle` / 前缀约定**：`resolvePlatformBySession` 对未实现 `canHandle` 的 adapter 用 `sessionId.startsWith(platform + ':')` 兜底（`src/index.ts`）。若你的 sessionId 既不带前缀又不实现 `canHandle`，它将永远无法被路由——`sendPlatformMessage` 抛「没有 platform adapter 能处理」。CLI 正是反例教科书（`plugin-cli/src/index.ts`）。
+- **路由依赖 `canHandle` / 前缀约定**：`resolvePlatformBySession` 对未实现 `canHandle` 的 adapter 用 `sessionId.startsWith(platform + ':')` 兜底（`src/index.ts`）。若你的 sessionId 既不带前缀又不实现 `canHandle`，它将永远无法被路由——`sendPlatformMessage` 抛「没有 platform adapter 能处理」。CLI 即是典型反例（`plugin-cli/src/index.ts`）。
 - **`getPlatformNames` 用 `adapter.platform` 字段去重，不是用服务名**：同一 `platform` 字符串值的多个 adapter 会被并成一个名。确保 `platform` 字段在你的生态里唯一且稳定（它会进 authority 作用域、user-relation 白名单、归档 metadata）。
-- **非标准扩展方法不在契约里**：OneBot 的 `getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等是 `PlatformAdapter & {…}` 交叉类型私货（`adapter-onebot/src/index.ts`），只对知情消费者（`plugin-tool-onebot`，用 `typeof a.callAction === 'function'` + 平台名探测）可见。第三方 adapter **不要**依赖这些；要扩展平台专属能力，沿用「`callAction(sessionId, action, params)` 走平台原生 API」这条标准通道，或自己另起一个独立服务名而非污染 `platform` 契约。
+- **非标准扩展方法不在契约里**：OneBot 的 `getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等是 `PlatformAdapter & {…}` 交叉类型上附加的扩展（`adapter-onebot/src/index.ts`），只对知情消费者（`plugin-tool-onebot`，用 `typeof a.callAction === 'function'` + 平台名探测）可见。第三方 adapter **不要**依赖这些；要扩展平台专属能力，沿用「`callAction(sessionId, action, params)` 走平台原生 API」这条标准通道，或自己另起一个独立服务名而非污染 `platform` 契约。
 - **多 entry 的 `getService('platform')` 胜者基本无意义**：因为 platform 是按名/按 sessionId 路由的多实例服务。误用 `getService('platform')` 当「主平台」会在多 adapter 时拿到不确定的那一个（按 priority>注册顺序）。一律用 helper。
 
 ## 8. 交叉链接

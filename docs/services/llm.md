@@ -47,11 +47,11 @@ interface ChatModelRequest {
 }
 ```
 
-`ChatResponse`（`:10-19`）：`{ content: string | null; toolCalls?: ToolCall[]; reasoningContent?: string | null; usage?: { promptTokens, completionTokens, totalTokens } }`。
+`ChatResponse`：`{ content: string | null; toolCalls?: ToolCall[]; reasoningContent?: string | null; usage?: { promptTokens, completionTokens, totalTokens, cachedPromptTokens? } }`。`cachedPromptTokens` 是 `promptTokens` 中命中 provider 前缀缓存的部分（≤ `promptTokens`），provider 不支持或本次无命中时省略；`undefined`（不可知）与 `0`（明确无命中）语义不同，消费方不要用 `?? 0` 抹平。
 
-`ChatStreamChunk`（`:35-47`）：流式增量。字段互斥语义要点——
+`ChatStreamChunk`：流式增量。字段互斥语义要点——
 - `contentDelta` / `reasoningDelta`：正文 / 思考增量。
-- `toolCallProgress`（`:26-33`，`{ index, name, charsAccumulated }`）：工具调用**生成进度**，仅供 UI 渲染「正在生成工具调用」，与最终的 `toolCalls` 互斥。
+- `toolCallProgress`（`{ index, name, charsAccumulated }`）：工具调用**生成进度**，仅供 UI 渲染「正在生成工具调用」，与最终的 `toolCalls` 互斥。
 - `toolCalls`：**最终**组装好的工具调用，应随 `done: true` 一起 yield。
 - `usage`：可在末帧给出。
 
@@ -61,12 +61,12 @@ interface ChatModelRequest {
 
 ### 解析助手（消费方用）
 
-- `resolveLLMModel(ctx, ref?, requiredCaps?): LLMModelEntry | undefined`（`:219-229`）——把 `{ provider?, model? }` 解析为最匹配 entry。解析顺序：① provider+model 都有 → 拼 entryId `${provider}/${model}` 精确查；② 仅 provider → 该 provider 下首个；③ 仅 model → 全局按 `instance.id` 匹配；④ 都空 → 取首个满足能力者（即按 preference/priority/注册顺序的容器胜者）。
-- `listLLMModels(ctx, { caps? }): LLMModelEntry[]`（`:204-206`）——列举（可按能力过滤），供 `/model` 列表与前端下拉。
-- `LLMModelEntry`（`:173-177`）：`{ instance: LLMModel; contextId: string; label? }`。
-- `ModelRef`（`:183-188`）：`{ provider?, model? }`，由 ConfigSchema `type: 'llm-ref'` 字段编辑（`:158-168`），YAML 存为嵌套对象。
+- `resolveLLMModel(ctx, ref?, requiredCaps?): LLMModelEntry | undefined`——把 `{ provider?, model? }` 解析为最匹配 entry。解析顺序：① provider+model 都有 → 拼 entryId `${provider}/${model}` 精确查；② 仅 provider → 该 provider 下首个；③ 仅 model → 全局按 `instance.id` 匹配；④ 都空 → 取首个满足能力者（即按 preference/priority/注册顺序的容器胜者）。
+- `listLLMModels(ctx, { caps? }): LLMModelEntry[]`——列举（可按能力过滤），供 `/model` 列表与前端下拉。
+- `LLMModelEntry`：`{ instance: LLMModel; contextId: string; label? }`。
+- `ModelRef`：`{ provider?, model? }`，由 ConfigSchema `type: 'llm-ref'` 字段编辑，YAML 存为嵌套对象。
 
-> 关键：`resolveLLMModel` / `listLLMModels` 的 `requiredCaps` 过滤源是 **handle 自带的 `instance.capabilities` 元数据**，不依赖 core 的能力选择（core 0.5.0 起已移除能力维度的 DI 选择，见 `:194-198`）。
+> 关键：`resolveLLMModel` / `listLLMModels` 的 `requiredCaps` 过滤源是 **handle 自带的 `instance.capabilities` 元数据**，不依赖 core 的能力选择（core 0.5.0 起已移除能力维度的 DI 选择）。
 
 ## 3. 谁提供 / 谁消费
 
@@ -76,8 +76,8 @@ interface ChatModelRequest {
 - `@aalis/plugin-llm-ollama`（`packages/plugin-llm-ollama/src/index.ts`）——本地 Ollama，`/api/show` 真实能力探测 + 音频改路 OpenAI 兼容端点。
 
 **典型消费方**：
-- `@aalis/plugin-agent`（`packages/plugin-agent/src/index.ts` 解析、`:226` 消费 `chatStream`、`:43-45 / :437` 用 `maxOutputTokens` 算 token 预算）——核心对话循环。
-- `@aalis/plugin-media`（`packages/plugin-media/src/llm-adapter.ts`）——扫描所有 `llm` entry，按 `capabilities` 把 vision/audio/video 模型包成 MediaProcessor（`chat({ messages, maxTokens, think })`，`:318/:365`）。
+- `@aalis/plugin-agent`（`packages/plugin-agent/src/index.ts`，解析并消费 `chatStream`、用 `maxOutputTokens` 算 token 预算）——核心对话循环。
+- `@aalis/plugin-media`（`packages/plugin-media/src/llm-adapter.ts`）——扫描所有 `llm` entry，按 `capabilities` 把 vision/audio/video 模型包成 MediaProcessor（`chat({ messages, maxTokens, think })`）。
 - `@aalis/plugin-websearch-serper`（`packages/plugin-websearch-serper/src/index.ts`）——可选依赖 `llm` 压缩搜索结果。
 - 其它：`plugin-memory-summary` / `plugin-user-profile` / `plugin-user-relation` / `plugin-session-manager`。
 
@@ -158,10 +158,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 要点：
 - **`entryId` 必须是 `${ctx.id}/${modelId}`**——`resolveLLMModel` 用 `contextId === \`${provider}/${model}\`` 精确命中（`packages/api-llm/src/index.ts`）；不按此约定会导致 `llm-ref` 选择失效。
 - 不要传 `priority`，默认 `ServicePriority.Backend(0)` 即可；用户通过 preference / persona 选默认 model（见 §5）。同名多 provider 并存由容器按 preference>priority>注册顺序裁决（[服务模型](../concepts/service-model.md)）。
-- `capabilities` 要**诚实**反映该 model 实际能力——它驱动 media 的多模态处理器注册与前端过滤（§6）。
+- `capabilities` 要**如实**反映该 model 实际能力——它驱动 media 的多模态处理器注册与前端过滤（§6）。
 - `ctx.provide` 返回 dispose 函数；实现 `refresh()` 时缓存它以便增删 entry（`packages/plugin-llm-ollama/src/index.ts`）。
 
-## 5. 标准消费姿势
+## 5. 消费方标准用法
 
 ### lazy getService + 每次重取
 
@@ -180,7 +180,7 @@ try {
   return rawResults;                            // 错误边界：provider 抛错要兜住
 }
 ```
-（实证：`packages/plugin-websearch-serper/src/index.ts`，并配 `inject.optional: ['llm']`，`:22-23`。）
+（实证：`packages/plugin-websearch-serper/src/index.ts`，并配 `inject.optional: ['llm']`。）
 
 ### 可选依赖处理
 
@@ -188,17 +188,17 @@ try {
 
 ### 流式消费
 
-agent 直接调 `llm.chatStream!(request)`（`packages/plugin-agent/src/index.ts`）——因此它通过 `resolveLLMModel(ctx, ref, ['chat'])` 拿到的 model 默认假定能 chat；若要流式，应确保选中的 model 声明了 `streaming`，或对 `chatStream` 存在性做判定后回退 `chat`。流中要尊重 `signal.aborted`（`:228-229`）。
+agent 直接调 `llm.chatStream!(request)`（`packages/plugin-agent/src/index.ts`）——因此它通过 `resolveLLMModel(ctx, ref, ['chat'])` 拿到的 model 默认假定能 chat；若要流式，应确保选中的 model 声明了 `streaming`，或对 `chatStream` 存在性做判定后回退 `chat`。流中要尊重 `signal.aborted`。
 
 ### 选默认 model
 
-未传 ref 时，`resolveLLMModel` 取容器胜者。要锁定全局默认 model，用 `ctx.preferService('llm', contextId)`（contextId = `${provider}/${model}`）或 persona.yaml 的 `defaultServices`（`packages/api-llm/src/index.ts`）；会话级覆盖走 `session-manager.resolveConfig`（`packages/plugin-agent/src/index.ts`）。token 预算估算用 `maxOutputTokens`：`tokenBudget ≈ contextLength - maxOutputTokens - safetyMargin`（`:43-45 / :437-442`）。
+未传 ref 时，`resolveLLMModel` 取容器胜者。要锁定全局默认 model，用 `ctx.preferService('llm', contextId)`（contextId = `${provider}/${model}`）或 persona.yaml 的 `defaultServices`（`packages/api-llm/src/index.ts`）；会话级覆盖走 `session-manager.resolveConfig`（`packages/plugin-agent/src/index.ts`）。token 预算估算用 `maxOutputTokens`：`tokenBudget ≈ contextLength - maxOutputTokens - safetyMargin`。
 
 ## 6. 能力 / 风险 → 影响
 
 ### 出口必须调 `prepareLLMMessages`（强约束）
 
-provider 在**序列化前**（流式与非流式两条路径都要）必须先调 `prepareLLMMessages(request.messages)`（`@aalis/schema-message`，`packages/schema-message/src/index.ts`）。它把自定义 role 转成 `WellKnownRole`（`system/user/assistant/tool`，`:69`）并给 content 加前缀（如 `notice`→system 加 `[系统通知]`、kind `cross-session-delegation` 加 `[跨会话委派]`，`:344-360`）。逐条再用 `toLLMRole`（`:366-371`）做幂等防御。**跳过它会导致**：① provider 收到非法 role 报错；② `[系统通知]`/`[跨会话委派]` 等语义前缀丢失。详见 [消息→LLM 管线](../concepts/message-llm-pipeline.md)。
+provider 在**序列化前**（流式与非流式两条路径都要）必须先调 `prepareLLMMessages(request.messages)`（`@aalis/schema-message`，`packages/schema-message/src/index.ts`）。它把自定义 role 转成 `WellKnownRole`（`system/user/assistant/tool`）并给 content 加前缀（如 `notice`→system 加 `[系统通知]`、kind `cross-session-delegation` 加 `[跨会话委派]`）。逐条再用 `toLLMRole` 做幂等防御。**跳过它会导致**：① provider 收到非法 role 报错；② `[系统通知]`/`[跨会话委派]` 等语义前缀丢失。详见 [消息→LLM 管线](../concepts/message-llm-pipeline.md)。
 
 ### 任何 message-URL 抓取必须走 `safeFetch`
 
@@ -212,15 +212,15 @@ provider 在**序列化前**（流式与非流式两条路径都要）必须先�
 
 `llm` 是出口推理服务，本身不做 authority 风险分级或 HITL 确认——这些发生在工具层（`tools` 服务 + `session-confirm`）。provider 不要在 chat 路径里塞鉴权逻辑。
 
-## 7. 边界与坑（审计标注）
+## 7. 注意事项与边界情形（审计标注）
 
-1. **尊重调用方 `maxTokens`**：provider 必须用 `request.maxTokens ?? 配置默认`，不能硬编码字面量。OpenAI 早期把上限硬编码为 `4096`，现已修正为 `request.maxTokens ?? this.maxTokens`（`packages/plugin-llm-openai/src/index.ts`），DeepSeek（`:245`）、Ollama（`num_predict`，`:268`）同。新 provider 照此实现。
+1. **尊重调用方 `maxTokens`**：provider 必须用 `request.maxTokens ?? 配置默认`，不能硬编码字面量。OpenAI 早期把上限硬编码为 `4096`，现已修正为 `request.maxTokens ?? this.maxTokens`（`packages/plugin-llm-openai/src/index.ts`），DeepSeek、Ollama（`num_predict`）同。新 provider 照此实现。
 
 2. **OpenAI o 系列推理模型**：o1/o3/o4 等**不接受** `max_tokens`（需 `max_completion_tokens`）、**不接受**非默认 `temperature`。provider 必须按模型名分支：`isReasoningModel` 命中时用 `max_completion_tokens` 且**省略** `temperature`（`packages/plugin-llm-openai/src/index.ts`）。
 
-3. **DeepSeek `forceJsonOutput` 会破坏 tool_calls**：`response_format: {type:'json_object'}` 与 `tool_calls` 互斥，同时下发会破坏工具调用循环。provider 必须**仅在无 tools 时**加 `response_format`（`packages/plugin-llm-deepseek/src/index.ts`）。DeepSeek 还会把原生工具调用标记（DSML）泄漏进 `content`，需本地解析恢复（`:299-328`）；流式分支同（`:484-498`）。
+3. **DeepSeek `forceJsonOutput` 会破坏 tool_calls**：`response_format: {type:'json_object'}` 与 `tool_calls` 互斥，同时下发会破坏工具调用循环。provider 必须**仅在无 tools 时**加 `response_format`（`packages/plugin-llm-deepseek/src/index.ts`）。DeepSeek 还会把原生工具调用标记（DSML）泄漏进 `content`，需本地解析恢复；流式分支同理。
 
-4. **Ollama 非流式路径也必须 `prepareLLMMessages`**：曾有 bug 仅在流式分支调用，导致非流式丢 `[系统通知]`/`[跨会话委派]` 前缀。现已对齐（`packages/plugin-llm-ollama/src/index.ts`）。音频请求会自动改路到 OpenAI 兼容 `/v1/chat/completions`（`/api/chat` 不支持 audios），该路径也先 `prepareLLMMessages`（`:704-735`）。
+4. **Ollama 非流式路径也必须 `prepareLLMMessages`**：曾有 bug 仅在流式分支调用，导致非流式丢 `[系统通知]`/`[跨会话委派]` 前缀。现已对齐（`packages/plugin-llm-ollama/src/index.ts`）。音频请求会自动改路到 OpenAI 兼容 `/v1/chat/completions`（`/api/chat` 不支持 audios），该路径也先 `prepareLLMMessages`。
 
 5. **`chatStream` 是可选的，但 agent 直接 `chatStream!()`**：agent 用非空断言调用（`packages/plugin-agent/src/index.ts`），意味着被选为对话 model 的 entry 实际需要实现 `chatStream`。只实现 `chat` 的 model 不应被 preference 选为对话默认（可只用于 media 处理器等只调 `chat` 的场景）。
 

@@ -36,11 +36,11 @@ export interface VectorStoreService {
 
 方法语义（以契约注释 + 参考实现为准）：
 
-- `add(vector, metadata)`：追加一条向量。注意契约**未规定唯一性/去重**——同向量重复 `add` 会得到多条记录。元数据是后续 `search` 结果与 `deleteByFilter` 的唯一寻址依据。
+- `add(vector, metadata)`：追加一条向量。契约**未规定唯一性/去重**——同向量重复 `add` 会得到多条记录。元数据是后续 `search` 结果与 `deleteByFilter` 的唯一寻址依据。
 - `search(queryVector, topK)`：返回**最多** topK 条，按 `score` 降序。`score` 约定为**余弦相似度**（见 §6 跨后端可比性）。
 - `size()`：当前向量总数。
 - `clear()`：清空全部数据。
-- `deleteByFilter?(filter)`：删除「metadata 中 filter 的每个键都精确相等」的条目，返回删除条数。是**可选方法**——消费者调用前必须判存在性（`!!store.deleteByFilter`）。语义是「全部键匹配才删」，flat 与 lancedb 实现一致（flat `index.ts`、lancedb `index.ts`）。
+- `deleteByFilter?(filter)`：删除「metadata 中 filter 的每个键都精确相等」的条目，返回删除条数。是**可选方法**——消费者调用前必须判存在性（`!!store.deleteByFilter`）。语义是「全部键匹配才删」，flat 与 lancedb 实现一致（flat `index.ts`、lancedb `index.ts`）；**空 filter 返回 0、不删任何东西**（防误清全库，两实现均如此）。
 - `save()`：持久化。契约把持久化时机交给调用方：消费者在写入后应显式 `save()`（参考实现里 LanceDB 是 no-op，flat 才真正落盘）。
 
 ## 3. 谁提供 / 谁消费
@@ -102,6 +102,7 @@ class MyVectorStore implements VectorStoreService {
   async clear(): Promise<void> { this.rows = []; }
   // 可选：实现「全部键匹配才删」语义并返回删除数
   async deleteByFilter(filter: Record<string, unknown>): Promise<number> {
+    if (Object.keys(filter).length === 0) return 0; // 空过滤器不清全库（内置实现同此保护）
     const before = this.rows.length;
     this.rows = this.rows.filter(r => Object.entries(filter).some(([k, v]) => r.metadata[k] !== v));
     return before - this.rows.length;
@@ -119,7 +120,7 @@ function cosine(a: number[], b: number[]): number {
 
 export async function apply(ctx: Context): Promise<void> {
   const store = new MyVectorStore();
-  ctx.provide('vectorstore', store);          // 默认 priority=Backend(0)；想抢占已有后端用 { priority: 10 } 之类
+  ctx.provide('vectorstore', store);          // 默认 priority=Backend(0)；想优先于已有后端用 { priority: 10 } 之类
   ctx.onDispose(() => void store.save());      // dispose 兜底落盘
 }
 ```
@@ -129,7 +130,7 @@ export async function apply(ctx: Context): Promise<void> {
 - `ctx.provide('vectorstore', store, opts?)`。`opts.priority` 建议用 `ServicePriority` 枚举（`Backend=0/Override=50/System=200`，定义见 `packages/core/src/services.ts`）；lancedb 用了裸数字 `10` 表「优先于 flat 默认」。同名竞争胜者顺序：**preference > priority > 注册顺序**（DI 仅按名，无能力匹配，见 docs/concepts/service-model.md）。
 - 存储路径用 storage URI（如 `data:/vectorstore`），经 `toStorageUri()` 归一；需要本地真实路径（LanceDB 这类原生库）用 `createStorageGateway(ctx).resolveLocalPath(uri, 'write')`，且要先判该方法存在（lancedb `index.ts`）。注意：vectorstore 自身不是单 owner 上下文里的「按会话隔离」资源，隔离靠消费者写进 metadata 的字段（见 §6）。
 
-## 5. 标准消费姿势
+## 5. 消费者标准写法
 
 ```ts
 export const inject = { required: ['vectorstore'] }; // 或放 optional 软依赖
@@ -164,7 +165,7 @@ export async function apply(ctx: Context) {
 - **跨会话/隔离不在本服务**。Aalis 是单 owner，但向量库会混装所有会话的数据；隔离由消费者写入 metadata（如 `{ sessionId }`）并用 `deleteByFilter`/检索过滤实现。provider 不得擅自基于 metadata 做可见性裁剪——它不懂业务语义。
 - 本服务不涉及 authority risk/visibility 标注、确认（session-confirm）、SSRF（safeFetch）——它不直接对外发请求，也不暴露危险动作。涉及落盘的安全边界归 storage（storage **不是沙箱**，见 docs/concepts/security-model.md / storage-uri-grammar.md）。LanceDB 的 `resolveLocalPath` 把绝对路径交给原生库，仍受 storage root 授权约束，但绕过了 storage 的 URI 边界——provider 应只用它指向自有数据目录。
 
-## 7. 边界与坑
+## 7. 边界情形与注意事项
 
 - **跨后端 score 不严格等价（审计项）**。lancedb 取 `1 - _distance`（cosine 距离 → 相似度），与 flat 的归一化点积理论一致；但两后端浮点路径、归一化时机不同，**绝对分值在边界处可能有微小差异**，迁移后端后命中集合可能轻微漂移。早期 lancedb 曾用默认 L2（`1 - L2` 既非相似度也与 flat 不可比），现已改为显式 cosine（见 `:97-100` 注释）——若你看到旧库/旧版本表现异常，先确认 `distanceType('cosine')` 生效。
 - **维度不匹配**（换了 embedding 模型却复用旧库）：
@@ -173,7 +174,7 @@ export async function apply(ctx: Context) {
 - **flat 并发写竞态（已加固）**：索引默认 `concurrency=10` 会并发 `save()`，裸 `writeFile` 同路径并发写可能交错损坏 JSON、致下次 `init` 解析失败而整库清空。flat 用 `saveChain` 串行化所有写（`:65-66`/`:141-146`/`:148-159`），失败重标脏下次重试。自研「文件型」provider 必须同样串行化持久化。
 - **flat 全量内存 + 全量重写**：所有向量常驻内存、每次 save 整库 `JSON.stringify` 落盘——大规模数据用 lancedb。
 - **lancedb 建表 single-flight**：并发首批 `add` 复用同一建表 promise，避免「table already exists」吞掉向量（`:47-48`/`:76-89`）；`clear()` 必须同步重置 `tableInit`（`:118`），否则下次 `add` 会 await 到指向已删表的旧 promise 而崩。
-- **lancedb `deleteByFilter` 是全表重建**：扫全表→过滤→drop→重建表（`:130-153`），删除成本随库大小线性增长，频繁按会话删会昂贵。
+- **lancedb `deleteByFilter` 走原生 SQL 删除**：把 filter 各键拼成 `metadata_json` 上的 LIKE 谓词（`metaJsonFieldPredicate`：字符串值自带引号定界、数字值靠尾随 `,`/`}` 定界，杜绝「1751 误配 17510」这类数字前缀误删），交 LanceDB `table.delete()` 原地删除，**不把整表读进 JS**（旧实现 `query().toArray()` 全表载入 + 复制重建，在大库上会 OOM 硬崩，现已改）。删除经结构性串行锁与后台压实、`clear()` 互斥；空过滤器直接返回 0、不删（防误清全库）。谓词无索引，按 LIKE 全表扫并生成新版本待压实回收，频繁按会话删仍有成本。
 
 ## 8. 交叉链接
 

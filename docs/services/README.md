@@ -1,8 +1,8 @@
 # 服务契约层（services）
 
-每个 `@aalis/plugin-*-api` 契约包对应一篇文档，面向**写 provider** 或**消费服务**的第三方作者。
+每个 `@aalis/api-*` 契约包对应一篇文档，面向**写 provider** 或**消费服务**的第三方作者。
 每篇统一结构：一句话定位 + 服务注册名 → 契约接口签名 → 谁提供/谁消费 → 写一个 provider（最小必须 vs 可选、
-`ctx.provide` 注册、双源对齐）→ 标准消费姿势（lazy `getService`）→ 能力/风险→影响 → 边界与坑 → 交叉链接。
+`ctx.provide` 注册、双源对齐）→ 标准消费方式（lazy `getService`）→ 能力/风险→影响 → 边界与注意事项 → 交叉链接。
 
 先读[概念层](../concepts/README.md)（服务模型、惰性访问、双源 manifest），再按需查下表。
 
@@ -11,7 +11,7 @@
 |---|---|
 | [storage](storage.md) | 存储后端：声明根（读/写/删权限位）、`<root>:/path` 读写删；`resolveLocalPath` 可选且**非沙箱**。参考实现 storage-local。 |
 | [memory](memory.md) | 会话消息持久化 + 最近消息/区间查询。参考实现 memory-sqlite。 |
-| [vectorstore](vectorstore.md) | 向量库 add/search/deleteByFilter；维度不匹配处理；flat（真余弦）vs lancedb（1−L2）跨后端分数不可比。 |
+| [vectorstore](vectorstore.md) | 向量库 add/search/deleteByFilter；维度不匹配处理；flat 与 lancedb 的 score 均为余弦相似度、跨后端量纲对齐（边界处微小浮点漂移）。 |
 | [embedding](embedding.md) | 文本 → 向量 provider。 |
 | [process](process.md) | 子进程执行 + `readExternalFile`；输出缓冲须有界；**非沙箱**。参考实现 process-local。 |
 | [code-sandbox](code-sandbox.md) | OS 级沙箱（bwrap/seatbelt）、fail-closed；v1 非强隔离、不挡读。参考实现 code-sandbox-os。 |
@@ -29,7 +29,7 @@
 | 服务 | 定位 |
 |---|---|
 | [agent](agent.md) | agent 回合编排（LLM loop）；`agent:input:before`/`agent:turn:after` hook；abort 语义。 |
-| [llm](llm.md) | LLM 对话 provider：出口必调 `prepareLLMMessages`、流式 + 工具调用、model 句柄带能力元数据。参考实现 openai/deepseek/ollama。 |
+| [llm](llm.md) | LLM 对话 provider：出口必调 `prepareLLMMessages`、流式 + 工具调用、model 句柄带能力元数据。参考实现 llm-openai/llm-deepseek/llm-ollama。 |
 | [persona](persona.md) | 人设角色卡 + `outputFormat` + 状态持久化 + skills 白名单。 |
 | [commands](commands.md) | `/command` 注册与分发；authority risk 门控。 |
 | [session-manager](session-manager.md) | 会话配置解析（persona/输出格式）+ 生命周期 + subtask `inputContext`。 |
