@@ -7,7 +7,7 @@
 
 ---
 
-## 1. 一句话定位
+## 1. 定位
 
 `@aalis/util-text-normalize` 是一个**纯函数、零服务**的文本净化库：把 LLM 输出的 assistant `content` 在**展示/发送前**统一过一遍，修复下游 Markdown 渲染器（remark-gfm / KaTeX 等）会卡住的明确错误，并剥离漏到正文里的内部协议 token（如 DeepSeek 的 DSML 标记）。
 
@@ -25,7 +25,7 @@
 
 ## 2. 导出 API
 
-库导出三个函数（其余 `countGfmCols` / `normalizeSepRow` / `isSeparatorRow` 为内部 helper，**未导出**）。
+模块共导出五个函数。本文覆盖其中三个面向**展示/发送前净化**的函数——`fixGfmTables` / `stripLeakedSpecialTokens` / `normalizeAssistantContent`。另两个 `truncateChars` / `toWellFormedText` 处理的是「LLM 请求边界的孤代理（lone surrogate）安全」，属另一议题，本文不展开——参见各自 JSDoc 与 [message-llm-pipeline](../concepts/message-llm-pipeline.md)。`countGfmCols` / `normalizeSepRow` / `isSeparatorRow` 为内部 helper，**未导出**。
 
 ### 2.1 `fixGfmTables(content: string): string`
 
@@ -93,7 +93,7 @@ import {
   fixGfmTables,
 } from '@aalis/util-text-normalize';
 
-// A. 最常见：assistant 完整响应净化，一把过
+// A. 最常见：一次净化 assistant 完整响应
 const display = normalizeAssistantContent(llmResponse.content);
 
 // B. 需要告警/遥测时：拆开调，拿到 hadLeak
@@ -136,7 +136,7 @@ const md = fixGfmTables(rawMarkdown);
 
 ---
 
-## 5. 边界与坑
+## 5. 边界与注意事项
 
 - **它不是 sanitizer / 不防 XSS**：只修 Markdown 格式 + 剥协议 token，不转义 HTML、不做安全过滤。输出仍是不可信文本，渲染端该做的转义/隔离照做。
 - **`fixGfmTables` 只管「表头 vs 分隔行列数」这一种错**：表头列数不会被改，数据行列数也不碰；表格因别的原因（缺空行、嵌套等）渲染失败它管不了。

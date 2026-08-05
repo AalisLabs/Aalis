@@ -9,7 +9,7 @@
 - 表达式算法：`@aalis/util-cron`（无状态纯函数，零依赖，与 Aalis 无关，可单独用）。
 - 参考实现：`@aalis/plugin-cron-engine`（`packages/plugin-cron-engine/src/index.ts`）。
 
-注意它**只负责定时与触发**，不负责任务定义、持久化、权限或执行——那些属于上层（scheduler / workflow）。失败的 handler 仅记日志，不影响其他订阅者（`packages/plugin-cron-engine/src/index.ts`）。
+它**只负责定时与触发**，不负责任务定义、持久化、权限或执行——那些属于上层（scheduler / workflow）。失败的 handler 仅记日志，不影响其他订阅者（`packages/plugin-cron-engine/src/index.ts`）。
 
 ## 2. 契约
 
@@ -24,10 +24,10 @@ export interface CronEngine {
     expr: string,
     handler: () => void | Promise<void>,
     options?: CronSubscribeOptions,
-  ): () => void;                                    // :216
+  ): () => void;
 
   // 表达式校验
-  validate(expr: string): ValidateResult;            // :219
+  validate(expr: string): ValidateResult;
 
   // 从 from 起向前找下一次触发时间戳（ms）；cron 在 lookaheadMinutes（默认 366*24*60）内未命中返回 null
   nextFireTime(
@@ -35,15 +35,15 @@ export interface CronEngine {
     from?: Date,
     lookaheadMinutes?: number,
     options?: CronSubscribeOptions,
-  ): number | null;                                  // :227
+  ): number | null;
 }
 ```
 
-`CronSubscribeOptions`（`...:198-205`）只有一个可选字段 `timeZone?: string`——IANA 时区名（如 `Asia/Shanghai`）。空串/未传 = 进程本地时区；**只对 5 字段 cron 生效，`@every` interval 与时区无关**。
+`CronSubscribeOptions` 只有一个可选字段 `timeZone?: string`——IANA 时区名（如 `Asia/Shanghai`）。空串或未传时使用进程本地时区；**只对 5 字段 cron 生效，`@every` interval 与时区无关**。
 
 ### 2.2 表达式类型与校验结果
 
-`...:158-162`：
+`CronExprKind` 与 `ValidateResult` 定义在 `@aalis/util-cron`，由 `@aalis/api-cron-engine` 转出（消费者读懂返回值不必再依赖 util 包）：
 
 ```ts
 export type CronExprKind = 'cron' | 'interval';
@@ -53,36 +53,34 @@ export type ValidateResult =
   | { ok: false; reason: string };
 ```
 
-`validate`（即 `util-cron` 的 `validateCronExpr`，`:179-205`）是创建期的护栏：逐字段校验，任一字段解析为空集（如 `abc`、`5-`、超界单值）即拒绝，避免静默生成永不触发的死任务。
+`validate`（即 `util-cron` 的 `validateCronExpr`）是创建期的护栏：逐字段校验，任一字段解析为空集（如 `abc`、`5-`、超界单值）即拒绝，避免静默生成永不触发的死任务。
 
 ### 2.3 无状态纯函数（`@aalis/util-cron`，可独立 import，不必经服务）
 
-表达式的解析与匹配是 POSIX cron 标准算法，与 Aalis 无关，故落在 util 层而非契约包——
-契约包只管订阅协议。scheduler / cron-engine 在编译期直接 import 它们做预处理。
-下表行号指 `packages/util-cron/src/index.ts`：
+表达式的解析与匹配是 POSIX cron 标准算法，与 Aalis 无关，故落在 util 层而非契约包——契约包只管订阅协议。scheduler / cron-engine 在编译期直接 import 它们做预处理。下表函数均定义在 `packages/util-cron/src/index.ts`（`useCronEngine` 例外，见表内说明）：
 
-| 函数 | 签名 | 用途 | 行 |
-| --- | --- | --- | --- |
-| `normalizeCronExpr` | `(input: string) => string \| null` | 别名（`@daily` 等）展开为 5 字段；`@every` 原样；不识别返回 null | `:16` |
-| `parseCronField` | `(field, min, max) => Set<number>` | 解析单字段命中集合，支持 `*` `*/5` `1-5` `1,3,5` `1-30/5` `0/15` | `:39` |
-| `dateFieldsInTimeZone` | `(date, timeZone?) => {minute,hour,day,month,weekday}` | 按时区拆 Date 为 cron 字段数字 | `:89` |
-| `matchesCron` | `(expr, date, timeZone?) => boolean` | 判断某时刻是否命中（不处理 `@every`） | `:136` |
-| `parseEverySeconds` | `(input: string) => number` | 把 `@every 30s/5m/2h` 解析为秒；不识别返回 0 | `:155` |
-| `validateCronExpr` | `(input) => ValidateResult` | 见 §2.2 | `:179` |
-| `useCronEngine` | `(ctx: Context) => CronEngine` | 取服务的便捷封装，缺失即抛（**在契约包**，非 util） | `:57` |
+| 函数 | 签名 | 用途 |
+| --- | --- | --- |
+| `normalizeCronExpr` | `(input: string) => string \| null` | 别名（`@daily` 等）展开为 5 字段；`@every` 原样；不识别返回 null |
+| `parseCronField` | `(field, min, max) => Set<number>` | 解析单字段命中集合，支持 `*` `*/5` `1-5` `1,3,5` `1-30/5` `0/15` |
+| `dateFieldsInTimeZone` | `(date, timeZone?) => {minute,hour,day,month,weekday}` | 按时区拆 Date 为 cron 字段数字 |
+| `matchesCron` | `(expr, date, timeZone?) => boolean` | 判断某时刻是否命中（不处理 `@every`） |
+| `parseEverySeconds` | `(input: string) => number` | 把 `@every 30s/5m/2h` 解析为秒；不识别返回 0 |
+| `validateCronExpr` | `(input) => ValidateResult` | 见 §2.2 |
+| `useCronEngine` | `(ctx: Context) => CronEngine` | 取服务的便捷封装，缺失即抛（定义在契约包 `@aalis/api-cron-engine`，非 util） |
 
-支持的表达式：5 字段标准 cron、别名 `@hourly` `@daily` `@midnight` `@weekly` `@monthly` `@yearly` `@annually`（`:19-27`）、以及间隔 `@every Ns`/`Nm`/`Nh`（`:155-166`）。
+支持的表达式：5 字段标准 cron、别名 `@hourly` `@daily` `@midnight` `@weekly` `@monthly` `@yearly` `@annually`、以及间隔 `@every Ns`/`Nm`/`Nh`。
 
 ## 3. 谁提供 / 谁消费
 
 **提供方（唯一参考实现）**：`@aalis/plugin-cron-engine`
 - `provides = ['cron-engine']`（`packages/plugin-cron-engine/src/index.ts`）
 - `package.json` 双源对应 `aalis.service.provides: ['cron-engine']`（`packages/plugin-cron-engine/package.json`）
-- 注册点 `ctx.provide('cron-engine', service)`（`...src/index.ts`）
+- 注册点 `ctx.provide('cron-engine', service)`（`packages/plugin-cron-engine/src/index.ts`）
 
 **消费方**：
 
-- `@aalis/plugin-scheduler`：`inject.required = ['tools', 'cron-engine']`（`packages/plugin-scheduler/src/index.ts`）。`const cronEngine = useCronEngine(ctx)`（`:371`），cron 任务 `cronEngine.subscribe(jobCfg.cron, ..., tz ? { timeZone: tz } : undefined)`（`:570-578`），并用 `cronEngine.nextFireTime(job.cron, new Date(), undefined, tz ? {timeZone} : undefined)` 估算下次运行（`:523`）。注意它在 `initJob` 里先用 `parseEverySeconds` 把 `@every Ns` 折进自己的 interval 通道（`:534-540`）。
+- `@aalis/plugin-scheduler`：`inject.required = ['tools', 'cron-engine']`（`packages/plugin-scheduler/src/index.ts`）。取服务用 `const cronEngine = useCronEngine(ctx)`，cron 任务 `cronEngine.subscribe(jobCfg.cron, ..., tz ? { timeZone: tz } : undefined)`，并用 `cronEngine.nextFireTime(job.cron, new Date(), undefined, tz ? { timeZone: tz } : undefined)` 估算下次运行。它在 `initJob` 里先用 `parseEverySeconds` 把 `@every Ns` 折进自己的 interval 通道。
 - `@aalis/plugin-workflow`：`inject.required = ['cron-engine']`（`packages/plugin-workflow/src/index.ts`）。`cron` 触发器 `useCronEngine(ctx).subscribe(t.expr, ...)`（`packages/plugin-workflow/src/triggers.ts`）；`interval` 触发器统一转成 `@every ${sec}s` 再 subscribe，避免与 scheduler 维护两份 setInterval（`triggers.ts`）。
 
 ## 4. 写一个 provider
@@ -136,7 +134,7 @@ export function apply(ctx: Context): void {
   };
 
   ctx.provide('cron-engine', service);
-  ctx.onDispose(() => { /* 清掉所有 timer 与订阅，见参考实现 :145-151 */ });
+  ctx.onDispose(() => { /* 清掉所有 timer 与订阅，见参考实现的 onDispose */ });
 }
 ```
 
@@ -148,21 +146,21 @@ export function apply(ctx: Context): void {
 
 与代码里的 `export const provides = ['cron-engine']` 一致（参考实现 `package.json` + `index.ts`）。详见 [manifest-metadata](../concepts/manifest-metadata.md)。
 
-实现要点（照搬参考实现）：
-- 多订阅者**共享一条对齐到整分钟的 tick**（`ensureCronLoop` 用 `setTimeout` 对齐到下一整分钟再 `setInterval(_, 60_000)`，`...src/index.ts`），`cronTick` 把当前分钟的秒/毫秒清零后逐个 `matchesCron`（`:60-75`）。
-- handler 必须包 try/catch，且对 Promise 返回值 `.catch` 记日志——**一个订阅者抛错不能影响其余**（`:64-74`、`:85-92`）。
-- `subscribe` 里若给了 `timeZone`，应提前 `new Intl.DateTimeFormat({ timeZone })` 探测合法性并抛「非法时区」，不要拖到分钟 tick 才静默失败（`:106-113`）。
-- `onDispose` 清空所有 timer 与订阅表（`:145-151`）。
+实现要点（参照参考实现）：
+- 多订阅者**共享一条对齐到整分钟的 tick**（`ensureCronLoop` 用 `setTimeout` 对齐到下一整分钟再 `setInterval(_, 60_000)`，`packages/plugin-cron-engine/src/index.ts`），`cronTick` 把当前分钟的秒/毫秒清零后逐个 `matchesCron`。
+- handler 必须包 try/catch，且对 Promise 返回值 `.catch` 记日志——**一个订阅者抛错不能影响其余**（参考实现的 `cronTick` 与 interval 分支各有同步/异步两条 catch）。
+- `subscribe` 里若给了 `timeZone`，应提前 `new Intl.DateTimeFormat({ timeZone })` 探测合法性并抛「非法时区」，不要拖到分钟 tick 才静默失败。
+- `onDispose` 清空所有 timer 与订阅表。
 
-## 5. 标准消费姿势
+## 5. 标准消费方式
 
-1. 在 `inject.required` 声明 `'cron-engine'`，让运行时保证服务就绪后才 `apply`（scheduler `:123-126`、workflow `:34`）。
-2. 用 `useCronEngine(ctx)` 取服务——它内部就是 `getService<CronEngine>('cron-engine')`，缺失即抛带提示的 Error（`...api/src/index.ts`）。**不要缓存返回值**：provider 反弹会失效，每次用时重新取（见 [lazy-service-access](../concepts/lazy-service-access.md)）。
-3. 创建前先 `validate` 或捕获 `subscribe` 的抛错——参考实现两个消费方都用 `try/catch` 包住 subscribe 并 `logger.warn`，避免一条坏表达式中断整批注册（scheduler `:579-581`、workflow `triggers.ts`）。
+1. 在 `inject.required` 声明 `'cron-engine'`，让运行时保证服务就绪后才 `apply`（scheduler / workflow 的 `inject.required`）。
+2. 用 `useCronEngine(ctx)` 取服务——它内部就是 `getService<CronEngine>('cron-engine')`，缺失即抛带提示的 Error（`@aalis/api-cron-engine`）。**不要缓存返回值**：provider 反弹会失效，每次用时重新取（见 [lazy-service-access](../concepts/lazy-service-access.md)）。
+3. 创建前先 `validate` 或捕获 `subscribe` 的抛错——参考实现两个消费方都用 `try/catch` 包住 subscribe 并 `logger.warn`，避免一条坏表达式中断整批注册（scheduler `initJob`、workflow `triggers.ts`）。
 4. 保存好 `subscribe` 返回的 dispose，在任务删除/禁用/插件卸载时调用（scheduler 存 `rt.cronDispose`、workflow 存 `cronDisposers` Map）。
 5. 可选依赖：若你的插件在没有 cron-engine 时仍能降级运行，则不要放进 `required`，改为运行时 `const eng = ctx.getService<CronEngine>('cron-engine')` 判空处理。
 
-`@every Ns` 与 5 字段 cron 都可直接交给 `subscribe`——无需自己预 normalize（scheduler `:540` 注释）。`interval` 语义统一委托 `@every Ns` 表达式，别再自己起 `setInterval`（workflow `triggers.ts` 注释）。
+`@every Ns` 与 5 字段 cron 都可直接交给 `subscribe`——无需自己预 normalize（scheduler `initJob` 注释）。`interval` 语义统一委托 `@every Ns` 表达式，不必再自行 `setInterval`（workflow `triggers.ts` 注释）。
 
 ## 6. 能力 / 风险 → 影响
 
@@ -172,15 +170,15 @@ export function apply(ctx: Context): void {
 - **handler 隔离**：provider 保证单个 handler 抛错不波及其他订阅者，但 handler 自身**不得阻塞**——它跑在共享 tick 上，长任务应 `void`/fire-and-forget（scheduler 与 workflow 都是异步 fire，不阻塞 tick）。
 - **风险标注的副作用**属于上层工具调用，不在本服务范畴；定时只是触发器。
 
-## 7. 边界与坑
+## 7. 边界情形与注意事项
 
-- **最小粒度是分钟**：cron tick 对齐整分钟、`cronTick` 把秒清零（`...src/index.ts`），秒级 cron 不支持；要更细只能用 `@every Ns`（走独立 `setInterval`）。
-- **`@every` 不参与 cron 匹配也不认时区**：`matchesCron`/`normalizeCronExpr` 对 `@every` 直接放过/原样返回（`api/src/index.ts`），间隔从注册时刻起算、`timeZone` 对它无意义。
+- **最小粒度是分钟**：cron tick 对齐整分钟、`cronTick` 把秒清零（`packages/plugin-cron-engine/src/index.ts`），秒级 cron 不支持；要更细只能用 `@every Ns`（走独立 `setInterval`）。
+- **`@every` 不参与 cron 匹配也不认时区**：`matchesCron`/`normalizeCronExpr` 对 `@every` 直接放过/原样返回（`packages/util-cron/src/index.ts`），间隔从注册时刻起算、`timeZone` 对它无意义。
 - **`nextFireTime` 有上限**：cron 在 `lookaheadMinutes`（默认 366×24×60 ≈ 一年零一天）内没命中就返回 `null`，极稀疏的表达式（如 `2/30` 月）可能落空。
 - **进程内、非持久化**：所有订阅都是内存 timer，进程重启即丢；持久化任务定义、重启恢复属上层（scheduler/workflow 各自落盘后重新 `subscribe`）。**进程停机期间错过的触发不会补跑**。
-- **`day` 与 `weekday` 取交集而非并集**：`matchesCron` 用 `&&` 串联五个字段（`api/src/index.ts`），与 Vixie cron「日/周谁限定取并集」的传统行为**不同**——同时写日和周会变成「既是某日又是某周几」才触发。
-- **字段越界被静默夹取**：`parseCronField` 把范围夹到 `[min,max]`（`:64-65`），如分钟字段 `1-100` 不会塞入 60-99；但**整字段解析为空集**会在 `validate` 阶段被拒（`:187-191`），不会生成死任务。
-- **`午夜 hour=24` 的修正**：用 IANA 时区且 `hour12=false` 时 Intl 午夜可能返回 `"24"`，已换回 `0` 以匹配 cron 0-23（`:105-107`）——自实现 provider 别漏这点。
+- **`day` 与 `weekday` 取交集而非并集**：`matchesCron` 用 `&&` 串联五个字段（`packages/util-cron/src/index.ts`），与 Vixie cron「日/周谁限定取并集」的传统行为**不同**——同时写日和周会变成「既是某日又是某周几」才触发。
+- **字段越界被静默夹取**：`parseCronField` 把范围夹到 `[min,max]`（`packages/util-cron/src/index.ts`），如分钟字段 `1-100` 不会塞入 60-99；但**整字段解析为空集**会在 `validate` 阶段被拒，不会生成死任务。
+- **`午夜 hour=24` 的修正**：用 IANA 时区且 `hour12=false` 时 Intl 午夜可能返回 `"24"`，已换回 `0` 以匹配 cron 0-23（`dateFieldsInTimeZone`，`packages/util-cron/src/index.ts`）；自实现 provider 需一并处理此归一。
 
 ## 8. 交叉链接
 

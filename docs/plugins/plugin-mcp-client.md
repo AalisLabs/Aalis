@@ -5,7 +5,7 @@
 
 ## 概述
 
-作为 [MCP (Model Context Protocol)](https://modelcontextprotocol.io) **client** 通过 stdio 连接外部 MCP server（如 `@modelcontextprotocol/server-github`、`server-filesystem`、`server-playwright` 等），把这些 server 暴露的 tools 自动注册到 Aalis 的 `ToolService`，让 agent 直接调用外部生态工具。
+作为 [MCP (Model Context Protocol)](https://modelcontextprotocol.io) **client**，通过 stdio 连接外部 MCP server（如 `@modelcontextprotocol/server-github`、`server-filesystem`、`server-playwright` 等），把这些 server 暴露的 tools 注册进 Aalis 的 `ToolService`，供 agent 直接调用外部工具。
 
 总体架构与定位见 [docs/plugins/mcp.md](mcp.md)。
 
@@ -42,7 +42,7 @@ plugins:
 | `servers[].id` | string | 必填 | server 标识，会作为工具名前缀与分组名 |
 | `servers[].command` | string | 必填 | 启动 server 的可执行命令 |
 | `servers[].args` | string[] | `[]` | 命令参数 |
-| `servers[].env` | Record<string,string> | `{}` | 环境变量（继承当前进程 env） |
+| `servers[].env` | Record<string,string> | `{}` | 传给 server 子进程的环境变量；密钥直接写在此处。SDK 另会自动继承 `PATH` / `HOME` 等安全变量以保证命令可启动，但不会继承宿主进程的其余 env |
 | `servers[].enabled` | boolean | `true` | 是否启动此 server |
 | `servers[].visibility` | `'public' \| 'restricted'` | `'public'` | 该 server 所有工具的默认可见性（restricted 须授予后才能调用） |
 
@@ -54,7 +54,7 @@ plugins:
 - `inputSchema` 顶层非 `type: 'object'` 时自动包装为 `{ input: schema }`。
 - 插件 `apply()` 内通过 `ctx.onDispose` 注册关闭回调，`ctx.dispose()` 时自动断开所有 server。
 
-## 安全注意
+## 安全注意事项
 
 - 外部 server 是**不受信任的第三方进程**，工具的 `visibility` 必须显式配置——
   默认 `public` 仅适合纯查询类 server（如 GitHub READ）；对接 filesystem / shell / browser 类务必显式设为 `restricted`。

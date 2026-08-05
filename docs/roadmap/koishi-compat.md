@@ -1,16 +1,11 @@
 # Koishi 插件兼容层 — 调研结论、可行性实证与实施方案
 
-> ⚠️ **本文的 Aalis 侧事实已失准，实施前须整篇重核。** 实测 23 处引用对不上当前代码：
-> `packagesDir()` 已删除、25 个契约包已从 `plugin-X-api` 改名为 `api-X`、市场关键词已增至
-> 五类、指令系统被重写过四次（本文 18 处行号引用因此大多失效）。生态调研与方案本身仍有效，
-> 但**每一条关于 Aalis 现状的断言都要现场核过再用**。
-
 **技术前提已全部实测跑通，桥插件本身尚未动工。** 九个 PoC 脚本全绿：模块加载、最小 Context、
 FakeBot 收发、真实插件装载、数据库、生命周期装卸、边界情形、日志接管、跨目录隔离。剩下的工作
 是把这些接到 Aalis 的四个桥接点上。
 
-以下每条数据均来自 2026-07 的实际运行与源码核对，并标注了包名与版本；调研统计另标样本量与口径。
-记录根因与实现路径，避免后续重新调查。
+以下数据来自 2026-07 的实际运行与源码核对，并标注了包名与版本；调研统计另标样本量与口径。
+Aalis 侧的包名与行号引用已按当前代码核对，但指令、市场等子系统仍在演进，施工前请就地复核。
 
 PoC 产物是一个独立的 npm project（`step2-minimal` / `step3-fakebot` / `step4-real-plugins` /
 `step5-database` / `step5b-persist` / `step6-lifecycle` / `step7-edge` / `step8-logging` /
@@ -34,15 +29,15 @@ cordis 的 npm `latest` 已经是 `4.0.0-rc`，而 Koishi 4.18 仍锁 3.x。**�
 
 ## 生态调研
 
-### 约四分之三的插件根本不碰数据库
+### 约四分之三的插件不涉及数据库
 
 npm 市场 4426 个 Koishi 包里，声明依赖 `database` 的是 522 个（11.8%）。在下载量靠前的 114 个
 热门插件样本里，`ctx.model.extend` 命中 25%、`ctx.database.get` 命中 26%。
 
 这条决定了铺开顺序：**不需要 database 的插件是第一批目标，不需要为它们准备任何存储适配。**
-需要 database 的那部分也不难 —— 直接给 minato 的 sqlite driver 即可（见下），同样不需要 Aalis 侧适配。
+需要 database 的那部分也不复杂 —— 直接给 minato 的 sqlite driver 即可（见下），同样不需要 Aalis 侧适配。
 
-### API 使用高度集中在十来个入口
+### API 使用高度集中在十余个入口
 
 同一 114 个插件样本，按「用到该 API 的插件数」计：
 
@@ -61,7 +56,7 @@ npm 市场 4426 个 Koishi 包里，声明依赖 `database` 的是 522 个（11.
 
 `ctx.scope` / `ctx.effect` / `ctx.root` 这一组是 cordis 的作用域原语 —— 它们的语义（fork、
 disposable 传播、reusable）**没有等价的 Aalis 概念可映射**，是「重新实现 API 表面」这条路上
-第一块硬骨头。
+第一处难点。
 
 ### Schema 是硬需求，`apply` 与 `Config` 是事实标准
 
@@ -80,7 +75,7 @@ disposable 传播、reusable）**没有等价的 Aalis 概念可映射**，是�
 | `export const reusable` | 4% | |
 | `export const using` | 2% | 已弃用但运行时仍支持：`plugin['using'] \|\| plugin['inject']` |
 
-89% 这个数字是「重新实现 API 表面」方案的判决书：**不实现 schemastery 就等于不兼容。** 而
+89% 这个比例基本否决了「重新实现 API 表面」方案：**不实现 schemastery 就等于不兼容。** 而
 schemastery 不是一个可以近似的东西 —— `koishi-plugin-novelai` 单包就有 169 处 Schema 调用。
 
 ### Session 字段的实际使用面
@@ -97,7 +92,7 @@ schemastery 不是一个可以近似的东西 —— `koishi-plugin-novelai` 单
 这十六个字段就是 FakeBot 必须喂对的全部入站面。`send` / `prompt` / `execute` 三个是出站与
 交互面，PoC 已全部验证可用。
 
-### 生态里最有价值的两类插件根本不是 Koishi 插件
+### 生态里最有价值的两类插件并不是 Koishi 插件
 
 这是整个调研最关键的一条结构性发现。
 
@@ -114,7 +109,7 @@ schemastery 不是一个可以近似的东西 —— `koishi-plugin-novelai` 单
 与四个 memory 后端（`plugin-memory-sqlite` / `-mongodb` / `-inmemory` / `-vector`）——
 **这两类明确排除在兼容目标之外**，不是能力不足，是重复建设。
 
-### 包装式兼容层会被猴补和私有字段当场击穿
+### 包装式兼容层会被猴补与私有字段击穿
 
 `koishi-plugin-dialogue` 直接改原型：`Context.prototype.getSessionState = ...`。
 `koishi-plugin-booru` 直接读私有字段：`ctx.i18n._data`。
@@ -127,11 +122,11 @@ schemastery 不是一个可以近似的东西 —— `koishi-plugin-novelai` 单
 ### 被否决：重新实现 Koishi API 表面
 
 要自己写出 schemastery（89% 的插件必需）、`h` 元素系统、cordis 的 scope / effect / fork /
-reusable 语义、i18n 全套，还要应付上面那些猴补与私有字段访问。
+reusable 语义、i18n 全套，还要应对上面那些猴补与私有字段访问。
 
 否决理由不是工作量，是**每一处都是「像但不是」**。Schema 的默认值补全时机、fork 的 disposable
 传播顺序、`h` 的转义规则 —— 任何一处语义漂移都会以「这个插件在 Koishi 里能跑，在 Aalis 里行为
-不对」的形式暴露，而排查成本落在 Aalis 这边。这是一条无底洞。
+不对」的形式暴露，而排查成本落在 Aalis 这边。这是一条无法收敛的路径。
 
 ### 被否决：移植辅助（转换工具）
 
@@ -145,7 +140,7 @@ reusable 语义、i18n 全套，还要应付上面那些猴补与私有字段访
 不做任何模拟 —— 直接在同一进程里给插件一个**真的 Koishi 环境**：真的 `Context`、真的
 schemastery、真的 `h`、真的 cordis、真的 minato。
 
-这条路把上面三个问题一次性解掉：猴补与私有字段天然工作（因为那就是真对象）；语义零漂移（因为
+这条路一并解决上面三个问题：猴补与私有字段天然工作（因为那就是真对象）；语义零漂移（因为
 就是上游代码在跑）；上游更新只需 `pnpm add` bump 沙盒里的依赖，Aalis 这边零改动。
 
 代价是引入一份 Koishi 依赖树。实测这份代价可控（见下），且**完全隔离在沙盒目录里，Aalis 主仓
@@ -157,8 +152,8 @@ schemastery、真的 `h`、真的 cordis、真的 minato。
 
 只装 `koishi`：23M / 163 个包。只装 `@koishijs/core`：6.1M / 63 个包。
 
-23M 的大头是 `@koishijs/plugin-server`（zod 5M + koa 全家桶），但**它不会被自动加载** —— 装在
-磁盘上不等于跑在进程里。
+23M 的主要体积来自 `@koishijs/plugin-server`（zod 5M + koa 及其依赖），但**它不会被自动加载** ——
+装在磁盘上不等于跑在进程里。
 
 冷启动到首条消息往返：**平均 6.8ms**。这个数字后面还会再用到一次（见「`ctx.stop()` 是终态」）。
 
@@ -167,9 +162,9 @@ schemastery、真的 `h`、真的 cordis、真的 minato。
 `new Context({})` —— 空配置即可，schemastery 会自动补齐全部默认值。`start()` 零报错，
 `stop()` 后进程能自然退出。
 
-**开箱不带的东西比想象中多**：`ctx.http` / `ctx.database` / `ctx.server` 全是 `undefined`；
+**默认不包含的部分比预期多**：`ctx.http` / `ctx.database` / `ctx.server` 全是 `undefined`；
 `help` 是独立插件 `@koishijs/plugin-help`，**不在 core 里**。需要哪个就 `ctx.plugin()` 装哪个，
-这反而是好事 —— 嵌入面可以按需收窄。
+这反而有利 —— 嵌入面可以按需收窄。
 
 ### 四个真实插件跑通
 
@@ -183,7 +178,7 @@ schemastery、真的 `h`、真的 cordis、真的 minato。
 装载必须过一层 `unwrapExports`（`m?.default || m`）：`plugin-http` 用 `default` 导出，
 `echo` / `help` 用 `apply` 具名导出，**两种形态在官方插件里都存在**。
 
-### FakeBot 最少只需三件事
+### FakeBot 的最小实现只需三项
 
 1. `super(ctx, config, platformName)` —— 第三个参数同时成为 `bot.platform`；
 2. 给 `this.user.id` 赋值 —— `@satorijs/core@4.6.0` 在 `lib/index.cjs:573` 把
@@ -249,9 +244,9 @@ hook 总数**精确回到基线，零泄漏**。
 `MODULE_NOT_FOUND`），koishi 本体与全部插件住在一个独立目录（该目录本身是个 npm project），
 宿主用 `createRequire(resolve(SANDBOX, 'noop.js'))` 加载 —— 跨目录跑 echo / help 全部正常。
 
-## 两个必须知道的坑
+## 两处必须注意的边界
 
-### 坑一：koishi 的 ESM 入口是坏的
+### 边界一：koishi 的 ESM 入口不可用
 
 `import { Context } from 'koishi'` 在 Node ESM 下直接崩：
 
@@ -263,7 +258,7 @@ TypeError: Class extends value #<Object> is not a constructor or null
 根因：`@koishijs/loader@4.6.11` 的 ESM 产物在 `lib/index.mjs:15` 写
 `import Loader from "./shared.js"`，而 `shared.js` 是 CJS —— Node 的 default interop 把整个
 `module.exports` 对象给回来，而不是 `.default`。于是 `:23` 的 `var NodeLoader = class extends Loader`
-在一个普通对象上做 `extends`，当场炸。
+在一个普通对象上做 `extends`，直接抛错。
 
 **绕法：`createRequire(import.meta.url)('koishi')`。CJS 入口完全正常。**
 
@@ -271,15 +266,15 @@ TypeError: Class extends value #<Object> is not a constructor or null
 （实测 `satoriEsm.Bot !== require('koishi').Bot`）。**宿主必须全程走 CJS 图**，一处混用 ESM
 就会出现「instanceof 不成立、原型上的猴补看不见」这类极难排查的症状。
 
-### 坑二：`ctx.stop()` 是终态
+### 边界二：`ctx.stop()` 是终态
 
 停了**不能再 `start()`** —— `stop` 会 reset root scope，`ctx.satori` 永久消失，此后再
 `ctx.plugin()` 一个 Bot 直接 `TypeError: ... reading '_loginSeq'`。
 
-**热重载只能丢弃整个 Context 重建。** 好在重建只要 7ms（见上），所以这不是问题，只是必须知道
+**热重载只能丢弃整个 Context 重建。** 重建只需 7ms（见上），因此这不是问题，只是必须知道
 的形状 —— 任何「先 stop 再 start」的写法都是错的。
 
-另一个次生坑：**必须先 dispose bot / adapter 的 fork，再 `ctx.stop()`**。顺序反了的话 root
+另一处次生问题：**必须先 dispose bot / adapter 的 fork，再 `ctx.stop()`**。顺序反了的话 root
 scope 先拆掉 satori 服务，`Bot.dispose()` 里 `this.ctx.bots` 已是 `undefined`，报
 `TypeError: Cannot read properties of undefined (reading 'findIndex')`。该错误非致命（被 cordis
 吞成 `internal/error`），但每次停机都会打一段栈。
@@ -319,11 +314,12 @@ scope 先拆掉 satori 服务，`Bot.dispose()` 里 `this.ctx.bots` 已是 `unde
 
 Koishi 指令全部注册成 `koishi.<name>`。
 
-理由：Aalis 的指令注册是**后者覆盖前者** —— `packages/plugin-commands/src/commands.ts:101-110`
-在重名时只打一条 `logger.warn`，随后清空旧节点的 aliases / options / handler 并让新的接管，
-注册照样成功。而 `help` / `status` / `echo` 这类常见名两边都有（Koishi 的 `@koishijs/plugin-help`
-和 `plugin-echo` 就是最先跑通的两个），混注会导致 `/help` 被静默顶掉，且排查极难 —— 那条 warn
-埋在启动日志里，症状却是「运行几周后某天发现帮助不对了」。同目录 `commands.md` 记了这条的全貌。
+理由：Aalis 的指令注册在重名时**由后来者接管**。`packages/plugin-commands/src/commands.ts:141-158`
+检测到同名已注册时打一条 `logger.warn`，随后把新声明压入该指令的声明栈，由栈顶（后来者）提供
+行为；注册照样成功，旧声明保留、待覆盖者卸载后自动复位。而 `help` / `status` / `echo` 这类常见
+名两边都有（Koishi 的 `@koishijs/plugin-help` 和 `plugin-echo` 就是最先跑通的两个），混注会导致
+`/help` 被后加载的一方静默覆盖，且排查极难 —— 那条 warn 埋在启动日志里，用户看到的却是运行数周
+后帮助指令行为异常。`docs/services/commands.md`（「同名命令静默覆盖」一节）记了这条的全貌。
 
 代价明确：**与 Koishi 插件自己的文档不一致**（文档写 `echo hello`，在 Aalis 里要打
 `/koishi echo hello`）。这是有意付出的代价，前缀做成配置项供用户自己权衡。
@@ -337,31 +333,32 @@ Koishi 指令作为**一个**顶层条目出现在 Aalis `/help` 概览里：
 ```
 
 这样概览长度不随 Koishi 插件数量膨胀，符合 `renderOverview` 现有的「只列顶层节点、深度 ≥1 一律
-不进概览」设计（`packages/plugin-commands/src/help.ts:73-92`）。
+不进概览」设计（`packages/plugin-commands/src/help.ts:87-103`）。
 
 实现上有一个必须做对的细节：**`koishi` 这个顶层节点要显式声明**（`service.command('koishi', 'Koishi 兼容插件指令')`）。
-若只注册子指令，`ensureGroups` 会造一个 `declared: false` 的占位节点
-（`packages/plugin-commands/src/commands.ts:168-178`），而 `isGroup` 取 `!node.declared`
-（`:371`）、`isPlaceholderGroup` 取 `isGroup && !handler`（`help.ts:39-41`）—— 结果概览里只会
-渲染成「`/koishi` — 12 个子指令」，描述被整条丢掉。
+若只注册子指令，`ensureGroups` 会为它建一个空声明栈的占位节点
+（`packages/plugin-commands/src/commands.ts:236-242`），而 `isGroup` 取 `stack.length === 0`
+（`materialize`，`commands.ts:524`）、`isPlaceholderGroup` 取 `isGroup && !handler`
+（`help.ts:48-50`）—— 结果概览里只会渲染成「`/koishi` — 12 个子指令」，描述被整条丢掉。
 
 ### 市场加一路 Koishi 检索
 
-Aalis 市场是**纯 npm 路线**：直接打 registry 的 `/-/v1/search` API，按类型关键词分类
-（`packages/plugin-webui-server/src/routes/marketplace.ts:17` 的 `AALIS_KEYWORDS` 四类，
-`:337` 的 `buildSearchUrl`，`:402` 用 `Promise.allSettled` 并发打四路）。
+Aalis 市场是**纯 npm 路线**：直接调用 registry 的 `/-/v1/search` API，按类型关键词分类
+（`packages/plugin-webui-server/src/routes/marketplace.ts:19` 的 `AALIS_KEYWORDS` 五类，
+`:429` 的 `buildSearchUrl`，`:492` 用 `Promise.allSettled` 并发打五路）。
 
 **加 Koishi 来源只需多打一路搜 `keywords:koishi-plugin`，结果标记来源。** 三处天然隔离：
 
-- **分类**：`classifyPackage`（`:96`）按类型关键词判定，Koishi 包命中不了任何 `aalis-*` 关键词；
-- **安装位置**：装进沙盒 project，而非 `package-manager` 的 `packagesDir()`
-  （`packages/plugin-package-manager/src/index.ts:80`）；
+- **分类**：`classifyPackage`（`:114`）按类型关键词判定，Koishi 包命中不了任何 `aalis-*` 关键词；
+- **安装位置**：装进沙盒 project，而非 `package-manager` 装插件的位置 —— 后者装进项目根的
+  `dependencies` + `node_modules`（`packages/plugin-package-manager/src/index.ts` 的 `installTo`）；
 - **加载**：Aalis 加载器是纯 `aalis-plugin` 关键词正向门
-  （`packages/runtime/src/node-modules-loader.ts:35-37`，`providers.ts:251` 复用同一判定），
-  Koishi 包不带该关键词，**不可能被误加载**。
+  （`packages/runtime/src/node-modules-loader.ts:35-37` 的 `isLoadablePlugin`，`providers.ts:178`
+  复用同一判定），Koishi 包不带该关键词，**不可能被误加载**。
 
-需要注意的是 `classifyPackage` 目前假定「结果只含四类之一」，加入第五类来源后这个前置条件不再
-成立 —— 来源标记必须在进入分类之前打上，不能靠 `classifyPackage` 的 `return 'plugin'` 兜底。
+需要注意的是 `classifyPackage` 假定「结果只含 `aalis-plugin/util/api/schema/interface` 五类之一」，
+加入 Koishi 这一路来源后该前置条件不再成立 —— 来源标记必须在进入分类之前打上，不能靠
+`classifyPackage` 的 `return 'plugin'` 兜底。
 
 ### 覆盖预期分层
 

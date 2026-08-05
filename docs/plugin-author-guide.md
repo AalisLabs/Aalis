@@ -1,29 +1,29 @@
 # 插件作者隐式契约指南
 
-本文档解释 Aalis 插件作者**容易踩到但 API 文档不会显式提醒的几条约定**。
-如果你刚写完一个插件、跑起来"看上去能用"，强烈建议过一遍本指南，确认没漏掉任何一条。
+本文档整理 Aalis 插件作者需要遵守、但 API 文档不会显式提醒的几条约定。
+写完一个插件、确认它能运行之后，建议通读本指南，核对是否遗漏了其中任何一条。
 
 > **重要前置阅读**：[node-usage-policy](architecture/node-usage-policy.md) —— 业务插件**不能**直接 import `node:fs` / `node:child_process` / `node:os` / `node:http(s)`，必须通过 `@aalis/api-storage` / `@aalis/api-process` 等网关访问。biome 会拦截违例。
 
 > **完整参考文档**（给第三方作者与维护者的全景）：
 > - [概念层 concepts/](concepts/README.md) —— 服务模型、惰性访问、双源 manifest、存储文法、安全模型、消息管线（**写插件前先通读这 6 篇**）。
-> - [服务契约层 services/](services/README.md) —— 26 个 `*-api` 契约逐篇：怎么写 provider、怎么消费、边界与坑。
+> - [服务契约层 services/](services/README.md) —— 26 个 `*-api` 契约逐篇讲解：如何编写 provider、如何消费、边界与常见错误。
 > - [工具库 utils/](utils/README.md) —— 4 个 `util-*` 纯函数库（bounded-map / json-repair / network-guard / text-normalize）。
 > - [脚手架上手 guide/scaffolding.md](guide/scaffolding.md) —— `npm create aalis`（建项目）与 `create-aalis-plugin`（建插件）从零到能跑。
 >
-> 本指南（下文）专讲那些 **API 文档不会显式提醒、但容易踩坑**的隐式约定。
+> 本指南（下文）专讲那些 **API 文档不会显式提醒、但容易出错**的隐式约定。
 
 ---
 
 ## 1. 服务实例替换：你需要主动通知下游吗？
 
-### 简单结论
+### 结论
 
 | 场景 | 你要不要做什么 |
 |---|---|
 | 插件 dispose 时不主动 dispose 自己 provided 的服务实例 | **什么都不用做**，PluginManager 会处理 |
 | 插件 active 期间临时换一个服务实例（同名 provide 二次） | **必须**手动 evict 下游消费者，否则它们仍持有旧引用 |
-| 插件配置变更触发热重载 | **走 `updatePluginConfig()`**（现为 `bouncePlugin(name, { config })` 别名）；PluginManager 包办 dispose+reapply。下游是否级联看 `requiresBounceOnDepChange`（默认否） |
+| 插件配置变更触发热重载 | **调用 `updatePluginConfig()`**（现为 `bouncePlugin(name, { config })` 别名）；PluginManager 负责 dispose 与 reapply。下游是否级联取决于 `requiresBounceOnDepChange`（默认否） |
 
 ### 为什么
 
@@ -46,11 +46,11 @@ await ctx.getService('plugins')!.bouncePlugin(myInstanceId);
 ```
 
 或者直接通过 `updatePluginConfig` 让 PluginManager 把整套 dispose+evict+reapply
-都打包做完。
+统一完成。
 
-### 我什么时候真的需要在 apply 内部"换实例"？
+### 什么时候真的需要在 apply 内部替换实例？
 
-**几乎从不需要**。如果你以为需要，多半是把"配置驱动"和"运行时驱动"混了。
+**几乎从不需要**。若你认为需要，通常是混淆了「配置驱动」与「运行时驱动」：
 配置变了 → `updatePluginConfig`；运行时事件让服务能力变了 → 改服务内部状态而非
 重新 provide。
 
@@ -66,8 +66,8 @@ await ctx.getService('plugins')!.bouncePlugin(myInstanceId);
 
 注意 optional 依赖**也会被 bounce**：当依赖的服务被 unregister 后又重新 provide
 （典型场景：另一个插件配置变更触发自己 reload），你会被重新 apply 一次以拿到新
-实例引用。这是为了避免"前一秒注册到旧 commands 实例的 `/help` 子命令在新实例
-中消失"这类隐性 bug。
+实例引用。这是为了避免「先前注册到旧 commands 实例的 `/help` 子命令在新实例
+中消失」这类隐性 bug。
 
 ### inject 只认服务名，不认能力
 
@@ -84,7 +84,7 @@ inject: {
 `preferService` 与 WebUI Services 页），跟"能力"无关。
 
 > 你**真的**依赖某个领域能力（如 LLM 的 tool-calling、storage 的 local-path）时，
-> 不要试图让 core DI 帮你选——那是各域 `*-api` helper 的活：用 `resolveLLMModel(ctx, …)` /
+> 不要试图让 core DI 帮你选——那是各域 `*-api` helper 的职责：用 `resolveLLMModel(ctx, …)` /
 > `resolveStorageEntryForRoot(ctx, root, caps)` 按**实例 / 句柄元数据**过滤（见第 10 节）。
 
 ---
@@ -178,7 +178,7 @@ export const reusable = true;
   让 WebUI 能区分
 
 如果你的插件**没有这种多实例需求**，**不要**声明 reusable —— 这会让重复注册
-直接抛错变成静默允许，掩盖配置 bug。
+从直接抛错变成静默允许，掩盖配置 bug。
 
 ### 反模式：单实例 apply 内多次 `ctx.provide(同一服务名)`
 
@@ -197,7 +197,7 @@ ServiceContainer **允许**同一 contextId 下多次注册（容器层无校验
 
 正确做法二选一：
 
-**方案 A：`reusable: true` + 配置后缀**——适合「多套獨立配置」（如多套 API key），
+**方案 A：`reusable: true` + 配置后缀**——适合「多套独立配置」（如多套 API key），
 每份配置一个独立实例：
 
 ```yaml
@@ -229,7 +229,7 @@ export async function apply(ctx, cfg) {
 
 ## 5. dispose hook：什么放进去、什么不放
 
-### ✅ 放进去
+### 应该放入
 
 ```typescript
 ctx.onDispose(() => {
@@ -243,9 +243,9 @@ ctx.onDispose(() => {
 外部资源（OS handle、网络连接、子进程、定时器）**必须**手动清理。回调**可以是
 异步的**：unload / bounce / 停机路径走 `disposeAsync`，会逐项等待你的 promise
 完成（单项默认 5s 上限，超时放弃并 warn 点名）——`await client.close()` 这类
-写法从此真正生效。
+写法确实生效。
 
-### ❌ 不要放
+### 不要放入
 
 ```typescript
 ctx.onDispose(() => {
@@ -257,7 +257,7 @@ ctx.onDispose(() => {
 通过 `ctx.on / ctx.middleware / ctx.provide / ctx.fork` 注册
 的所有东西都会被 DisposableChain 按 LIFO 顺序自动注销。手动再做一遍可能 double-free。
 
-### ⚠️ 在 dispose hook 内访问其它服务
+### 边界情形：在 dispose hook 内访问其它服务
 
 PluginManager 保证消费者**先于**提供者 dispose（拓扑反向）。所以你的 dispose
 hook **可以**安全访问 `ctx.getService('xxx')`——前提是你在 `inject` 中声明了
@@ -277,7 +277,7 @@ hook **可以**安全访问 `ctx.getService('xxx')`——前提是你在 `inject
 ### 配置变更如何触发 reload
 
 用户在 WebUI 点保存 → `updatePluginConfig(name, newConfig)`（现为
-`bouncePlugin(name, { config })` 的薄壳别名）：
+`bouncePlugin(name, { config })` 的别名）：
 
 1. `entry.config = newConfig` + 写回 ConfigManager
 2. 如果当前 active：
@@ -293,7 +293,7 @@ hook **可以**安全访问 `ctx.getService('xxx')`——前提是你在 `inject
 
 ---
 
-## 7. 测试插件的最小套路
+## 7. 测试插件的最小写法
 
 ```typescript
 import { createApp } from '@aalis/core';
@@ -332,7 +332,7 @@ it('should activate when its dependencies are present', async () => {
 
 ## 9. 速查：apply 函数的"做什么 / 别做什么"
 
-### ✅ 应该在 apply 里做
+### 应该在 apply 里做
 
 - `ctx.provide(...)` 注册服务
 - `ctx.on(event, ...)` 监听事件
@@ -342,7 +342,7 @@ it('should activate when its dependencies are present', async () => {
 - `ctx.onDispose(...)` 清理外部资源
 - 启动后台 worker / 连接外部服务
 
-### ❌ 不应该在 apply 里做
+### 不应该在 apply 里做
 
 - `await` 永久阻塞（apply 必须返回，否则 PluginManager 卡住）
 - 直接修改全局 process 状态（`process.env`、信号 handler）
@@ -354,7 +354,7 @@ it('should activate when its dependencies are present', async () => {
 
 ## 10. 领域能力（domain capabilities）—— 写在实例 / 句柄上，不进 core 的 map
 
-> ⚠️ 0.5.0 起 **core 不再有 `ServiceCapabilityMap`**。core 的 declaration-merging
+> **注意**：0.5.0 起 **core 不再有 `ServiceCapabilityMap`**。core 的 declaration-merging
 > 扩展点共四个：`ServiceTypeMap`（服务名→实例接口）、`HookContextMap`、`AalisEvents`、`ContributionPointMap`（贡献点名→spec 类型）
 > （外加配置层的 `SchemaFieldTypes`）。`getService(name)` / `inject` 只认**服务名**，
 > 不再有 `{ capabilities: [...] }` 这一维。
@@ -409,7 +409,7 @@ declare module '@aalis/core' {
 两条纪律：
 
 - **前缀必须是自己插件的命名空间**。模板签名会吸收该前缀下的一切事件名，
-  撞了别人的前缀就互相吞类型。
+  与他人前缀重叠时会互相吞并类型。
 - **不要把模板签名当万能逃逸口**（如 `` [k: `x:${string}`] ``宽到没有信息量）。
   能枚举的事件就逐条声明——封闭性的价值正在于契约可枚举。
 
@@ -493,10 +493,10 @@ export async function apply(ctx) {
 }
 ```
 
-> ⚠️ 没 import `-api` 包时，`ctx.getService('llm')` 会 fallback 到 `unknown`，
+> **注意**：没 import `-api` 包时，`ctx.getService('llm')` 会 fallback 到 `unknown`，
 > 你只能 `ctx.getService<LLMService>('llm')` 手动断言。所以**消费方至少要把 -api
 > 包作为 devDep / dep 引入并 import 一次**。helper 形式（`useToolService(ctx)`）
-> 已经把这个副作用包好了，是最省心的写法。
+> 已经把这个副作用包好了，是负担最小的写法。
 
 实现包的 `provides` 服务也建议在 -api 包写类型，自己 import 使用 —— 保持
 "接口契约 → -api 包 / 实现 → 实现包"的单向依赖。
@@ -504,14 +504,14 @@ export async function apply(ctx) {
 ---
 
 ## 13. 用户偏好放哪里？—— per-user 不进 ServiceContainer
-ServiceContainer 有个 `preferences: Map<serviceName, contextId>` 用来"钉死某个
+ServiceContainer 有个 `preferences: Map<serviceName, contextId>` 用来"锁定某个
 服务的胜者"。**这个机制只用于管理员级 / App 级 default**，不要拿来存 per-user 偏好。
 
 ### 为什么
 
-- ServiceContainer 是进程级单例。`A 用户钉了 OpenAI、B 用户钉了 DeepSeek` 在
+- ServiceContainer 是进程级单例。`A 用户锁定 OpenAI、B 用户锁定 DeepSeek` 在
   WebUI 多用户场景下会互相覆盖
-- preferences 没有 user 维度，加进去就要把 tenancy 渗入 IoC，是噩梦
+- preferences 没有 user 维度，加进去就要把 tenancy 渗入 IoC，代价高昂
 - per-user 偏好语义本质上是**请求维度的 hint**，不是**容器维度的 default**
 
 ### 推荐方案
@@ -569,7 +569,7 @@ keyword 检索，分发靠 npm 包本身。要让你的插件出现在市场里�
      `ConfigSchema` 全家）——用了新 API 就把下限抬到对应版本（如 `>=0.9.0 <1.0.0`）。稳定性承诺
      自 1.0 起生效，以 `docs/design/core-contract.md` 为准。**不要用 caret**（`^0.2.0` 只
      匹配 `0.2.x`，会把插件锁死在某个 core 次版本，core 一升就显示不兼容）。
-     > ⚠️ **这条 0.x 兼容承诺只针对 `@aalis/core` 本身。** 你依赖的 `@aalis/plugin-*-api`
+     > **注意**：这条 0.x 兼容承诺只针对 `@aalis/core` 本身。你依赖的 `@aalis/api-*`
      > 契约包（服务接口 / 类型 / 工具定义形状）**不在该承诺内**——0.x 期间仍可能改签名、增删
      > 字段、重命名导出。消费它们的插件要**关注 `CHANGELOG.md`、预期适配**，别把当前 `-api`
      > 契约当成冻结的稳定面。
@@ -589,7 +589,7 @@ keyword 检索，分发靠 npm 包本身。要让你的插件出现在市场里�
    保持与代码 `inject.required/optional` + `provides` 一致。装后市场仍会按实际 `inject` +
    工具/指令的 restricted 可见性聚合细化（双重披露）。
 4. **breaking change 记 changelog**：**1.0 之前 core 的公开面可能在次版本被删**（已发生过：
-   0.7.0 / 0.9.0）。宽 peerDep 区间是为了让不用新 API 的插件少受打扰，不是兼容性承诺。
+   0.7.0 / 0.9.0）。宽 peerDep 区间是为了让不用新 API 的插件不必随次版本频繁重发，不是兼容性承诺。
    稳定性承诺自 **1.0** 起生效，条款见 `docs/design/core-contract.md`。core/契约包的不兼容变更
    必须在 `CHANGELOG.md` 记录迁移说明。
 5. **发布**：`pnpm publish:all`（仓库根，递归拓扑序发 core→api→util→插件、跳 private、

@@ -1,7 +1,7 @@
 # 脚手架上手指南（Scaffolding）
 
-> 受众：第一次接触 Aalis、想**起一个能跑的机器人**，或**起一个能装的插件**的第三方开发者。
-> 这是入门 on-ramp——从「两个脚手架各干什么」到「敲哪条命令」「生成了什么」「约定有哪些」「下一步往哪走」。
+> 受众：第一次接触 Aalis，想**搭建一个可运行的机器人实例**，或**编写一个可安装的插件**的第三方开发者。
+> 本文是入门指引——涵盖两个脚手架各自的用途、运行哪条命令、生成了什么、有哪些约定、下一步往哪走。
 >
 > 相关源码：`packages/create-aalis/src/cli.ts`（建项目）、`packages/create-aalis-plugin/src/cli.ts`（建插件）。
 > 两者都是**零运行时依赖、纯 npm/node 的独立脚手架**，不属于本 monorepo 的 workspace。
@@ -10,7 +10,7 @@
 
 ## 两个脚手架，两件事
 
-Aalis 提供两个互不相干的脚手架，先分清你要哪个：
+Aalis 提供两个互不相干的脚手架，先确认你需要哪个：
 
 | 命令 | 产出 | 何时用 | 入口源码 |
 |---|---|---|---|
@@ -18,14 +18,14 @@ Aalis 提供两个互不相干的脚手架，先分清你要哪个：
 | `create-aalis-plugin` | 一个**插件骨架包**（npm 包） | 你要给 Aalis 写并发布一个扩展插件 | `create-aalis-plugin/src/cli.ts` |
 
 心智模型：
-- **项目** = 一份 `aalis.config.yaml` + 一行 `startAalis()` + 一堆装进 `node_modules` 的 `@aalis/plugin-*`。运行时从项目 `package.json` 的依赖里发现并加载这些插件（`node-modules-loader.ts`）。
+- **项目** = 一份 `aalis.config.yaml` + 一行 `startAalis()` + 若干装进 `node_modules` 的 `@aalis/plugin-*`。运行时从项目 `package.json` 的依赖里发现并加载这些插件（`node-modules-loader.ts`）。
 - **插件** = 一个导出 `name` + `apply(ctx, config)` 的 npm 包（`create-aalis-plugin` 生成 `src/index.ts`），被某个项目装进去后由 core 加载。
 
-两者都做了同一件「外部友好」的事：**生成的依赖版本写 `"latest"`（或解析到的 `^<最新版>`），绝不写 `workspace:`**——脚手架产物不在本 monorepo 内，`workspace:` 协议在外部装不上（`create-aalis/cli.ts`、`create-aalis-plugin/cli.ts`）。
+两个脚手架遵循同一条外部兼容约定：**生成的依赖版本写 `"latest"`（或解析到的 `^<最新版>`），绝不写 `workspace:`**——脚手架产物不在本 monorepo 内，`workspace:` 协议在外部装不上（`create-aalis/cli.ts`、`create-aalis-plugin/cli.ts`）。
 
 ---
 
-## 一、`npm create aalis` —— 起一个机器人项目
+## 一、`npm create aalis` —— 创建一个机器人项目
 
 ### Quickstart
 
@@ -33,16 +33,16 @@ Aalis 提供两个互不相干的脚手架，先分清你要哪个：
 # 交互式：选模板档 + 同类适配器，建好后自动 npm install
 npm create aalis my-bot
 
-# 非交互：standard 档 + 各组默认适配器（CI / 管道 / 想要快）
+# 非交互：standard 档 + 各组默认适配器（适合 CI / 管道 / 快速起步）
 npm create aalis my-bot -- --yes
 
 # 指定模板档、跳过安装
 npm create aalis my-bot -- --tier minimal --no-install
 ```
 
-> 注意 `--` 分隔符：`npm create` 后给脚手架的 flag 必须放在 `--` 之后，否则被 npm 自己吞掉。
+> 注意 `--` 分隔符：`npm create` 后给脚手架的 flag 必须放在 `--` 之后，否则会被 npm 自身解析、传不到脚手架。
 
-跑完后：
+运行后：
 
 ```bash
 cd my-bot
@@ -54,7 +54,7 @@ npm start
 
 无 `--yes` / `--tier` 且终端是 TTY 时进交互（非 TTY 环境会提前拦截并提示改用非交互模式，`cli.ts`）。依次问：
 
-1. **项目目录名** —— 默认 `my-aalis-bot`，必须是合法 npm 包名（全小写、无空格、不以 `.`/`_` 开头等，`validateNpmName`，`cli.ts`），坏输入会重问。
+1. **项目目录名** —— 默认 `my-aalis-bot`，必须是合法 npm 包名（全小写、无空格、不以 `.`/`_` 开头等，`validateNpmName`，`cli.ts`），非法输入会重问。
 2. **模板档**（默认 `standard`，`cli.ts`）：
 
    | 档 | 装什么 |
@@ -64,13 +64,13 @@ npm start
    | `standard` | minimal + 常用全家桶：WebUI / 人设 / 向量记忆 / 工具 / 调度 / 技能 / MCP …（`STANDARD_EXTRA`，`cli.ts`） |
    | `full` | 实时查 npm 全装所有官方插件（可能需手动取舍，`cli.ts`） |
 
-3. **同类适配器组**（仅 `minimal` / `standard`，`cli.ts`）——避免同类全塞冲突，按组选：
+3. **同类适配器组**（仅 `minimal` / `standard`，`cli.ts`）——避免同类插件同时装入产生冲突，按组选择：
    - LLM 提供者（多选，默认 DeepSeek）
    - 接入平台（多选，默认 CLI 终端）
    - 记忆后端（单选，默认 SQLite）
    - Embedding 提供者 / 向量库（仅 `standard`，向量记忆所需）
 
-   序号输入兼容逗号或空格（`"1,2"` = `"1 2"`），回车=默认集，坏输入重问（`parseIndexSelection`，`cli.ts`）。
+   序号输入兼容逗号或空格（`"1,2"` = `"1 2"`），回车=默认集，非法输入重问（`parseIndexSelection`，`cli.ts`）。
 
 ### `--yes` 与命令行 flag 的默认值
 
@@ -113,7 +113,7 @@ startAalis().catch(err => {
 
 ### 自动补齐的「伴生」依赖
 
-某些选择会自动带上必需的配套包，省得你漏装：
+某些选择会自动带上必需的配套包，避免遗漏：
 
 - 选了 **WebUI**（`@aalis/plugin-webui-server`）→ 自动加 `@aalis/plugin-webui-client`（前端静态资源，缺它 404）+ `@aalis/plugin-package-manager`（市场「安装」否则 503），`cli.ts`。
 - 选了 **code_runner**（`@aalis/plugin-tool-code-runner`）→ 自动加 `@aalis/plugin-code-sandbox-os`（OS 沙箱后端，缺它 fail-closed 拒绝执行），`cli.ts`。
@@ -122,13 +122,13 @@ startAalis().catch(err => {
 
 `aalis.config.yaml`（`renderConfig`，`cli.ts`）：需要密钥/地址的已知插件会预填一个空的配置桩（如 `apiKey: ""`），填进去即可；其余用空 `plugins: {}` 默认配置启动。
 
-**密钥直接写在 `aalis.config.yaml` 里，该文件在生成的 `.gitignore` 内、不入库。** 曾经走 `.env` + `${VAR}` 插值，但它承载的东西与配置文件完全重合，唯一区别只是「哪个文件进 git」；把配置文件本身 ignore 掉之后那一层就纯属多余，已随 `${VAR}` 插值一并删除。**现在写 `${VAR}` 会被原样当作字面量字符串**（不再替换），别再那么写。
+**密钥直接写在 `aalis.config.yaml` 里，该文件在生成的 `.gitignore` 内、不入库。** 曾经走 `.env` + `${VAR}` 插值，但它承载的东西与配置文件完全重合，唯一区别只是「哪个文件进 git」；把配置文件本身 ignore 掉之后，那一层就成了多余，已随 `${VAR}` 插值一并删除。**现在写 `${VAR}` 会被原样当作字面量字符串**（不再替换），不应再这样写。
 
 > 生态约定的「更多插件不在终端铺列」：长尾插件发现交给 WebUI 的「插件市场」页（对齐 Koishi 做法，`cli.ts`）。装新插件只需 `npm install @aalis/plugin-<name>`，装上即被自动发现加载。
 
 ---
 
-## 二、`create-aalis-plugin` —— 起一个插件骨架
+## 二、`create-aalis-plugin` —— 创建一个插件骨架
 
 ### Quickstart
 
@@ -170,7 +170,7 @@ pnpm build
 ```
 my-plugin/
 ├── package.json        # name / keywords:["aalis-plugin"] / peerDep core / 按选项的 *-api 依赖
-├── tsconfig.json       # extends ../../tsconfig.base.json（约定放进 monorepo packages/）
+├── tsconfig.json       # 自包含 compilerOptions（不 extends monorepo base，独立目录也能 tsc）
 ├── src/index.ts        # PluginModule：name / displayName / inject={} / apply()
 └── README.md           # 启用方式 + 已选扩展点清单
 ```
@@ -238,7 +238,7 @@ useToolService(ctx).register({
 });
 ```
 
-两个易踩点，都已在模板里钉死：
+两处常见错误，模板已按正确形状固定：
 - 工具声明用 OpenAI 函数调用协议的嵌套形状 `{ type: 'function', function: { name, description, parameters } }`（`ToolDefinition`，`api-tools/src/index.ts`），不是平铺的 `{ name, description }`。
 - `handler` 的返回类型是 `Promise<string>`（`RegisteredTool.handler`，`api-tools/src/index.ts`）——返回**工具结果文本**，不要返回对象。
 
@@ -248,7 +248,7 @@ useToolService(ctx).register({
 
 ## 从脚手架到能用的插件
 
-`create-aalis-plugin` 生成的骨架只是「能加载、打个日志」的空壳。让它真正干活的两步：
+`create-aalis-plugin` 生成的骨架只是一个能加载、仅打印日志的空壳。让它真正发挥作用需要两步：
 
 ### 1. 提供一个服务
 
@@ -291,7 +291,7 @@ export function apply(ctx: Context, config: Record<string, unknown>) {
 
 ### 3. 本地验证 → 发布
 
-- **本地跑**：把插件目录放进一个 Aalis 项目的依赖（开发期可 `pnpm link` 或放进 monorepo `packages/`），在 `aalis.config.yaml` 的 `plugins` 段加上 `"my-plugin": {}` 启用。
+- **本地运行**：把插件目录放进一个 Aalis 项目的依赖（开发期可 `pnpm link` 或放进 monorepo `packages/`），在 `aalis.config.yaml` 的 `plugins` 段加上 `"my-plugin": {}` 启用。
 - **发布**：`npm publish --access public`。用户 `npm install my-plugin` 后，因 `keywords` 含 `aalis-plugin` 即被自动发现加载（`node-modules-loader.ts`）。
 
 完整的「从零到发布」最短路径（消费/提供服务、生命周期 disposable、类型从哪个包 import、参考实现清单）见 [第三方插件开发者指南](./third-party-plugin.md)。
