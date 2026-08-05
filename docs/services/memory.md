@@ -10,7 +10,7 @@ agent 构建 LLM 上下文、checkpoint 回滚、summary 压缩等所有依赖�
 - 契约包：`@aalis/api-memory`
 - 参考实现：`@aalis/plugin-memory-sqlite`（默认推荐）、`@aalis/plugin-memory-inmemory`（fallback）、`@aalis/plugin-memory-mongodb`
 
-> 该服务只负责「存与取」，不负责「写进去」的内容编排。真正决定一条消息长什么样的是 `message-archive`（见下文「谁消费」）。
+> 该服务只负责「存与取」，不负责「写进去」的内容编排。真正决定一条消息内容构成的是 `message-archive`（见下文「谁消费」）。
 
 ## 2. 契约
 
@@ -85,9 +85,9 @@ deleteMessagesByTimestamps?(sessionId, timestamps): Promise<number>; // 按时�
 |---|---|---|
 | `plugin-memory-sqlite` | `10` | 默认持久化，`inject.required=['storage']`，全量实现所有可选方法 |
 | `plugin-memory-inmemory` | `-100` | 进程内 fallback，不持久化，同样全量实现可选方法 |
-| `plugin-memory-mongodb` | 默认 | MongoDB 后端 |
+| `plugin-memory-mongodb` | `5` | MongoDB 后端 |
 
-DI 按名选出 winner：preference > priority > 注册顺序（见 `docs/concepts/service-model.md`）。sqlite（10）默认压过 inmemory（-100），两者同时装时 sqlite 胜出。
+DI 按名选出 winner：preference > priority > 注册顺序（见 `docs/concepts/service-model.md`）。sqlite（10）默认高于 inmemory（-100），两者同时装载时 sqlite 胜出。
 
 ### 消费方（典型读写点）
 
@@ -108,7 +108,7 @@ DI 按名选出 winner：preference > priority > 注册顺序（见 `docs/concep
 - 不实现 `trimHistory` / `clearAll` → summary 压缩、全局清除会被跳过。
 - 不实现 `deleteMessagesByTimestamps` → checkpoint 回滚失效。
 
-参考实现（sqlite、inmemory）都完整实现了可选面。如果你想做一个能替换默认 memory 的完整后端，建议对齐它们。**metadata 五方法是必填的**（`saveMetadata` / `getMetadata` / `listMetadata` / `deleteMetadata` / `commitMetadata`）——不实现就编译不过，它们没有可用的降级（无处存 = 功能坏），消费方直接调用、不带守卫。其余七个方法可选，消费方一律带存在性守卫（如 `if (memory.trimHistory) … else 记一条 warn`），缺失只触发功能降级、不会崩溃。
+参考实现（sqlite、inmemory）都完整实现了可选面。如果要实现一个能替换默认 memory 的完整后端，建议对齐它们。**metadata 五方法是必填的**（`saveMetadata` / `getMetadata` / `listMetadata` / `deleteMetadata` / `commitMetadata`）——不实现则无法通过编译；它们没有可用的降级路径（缺少存储后端即功能不可用），消费方直接调用、不带存在性守卫。其余七个方法可选，消费方一律带存在性守卫（如 `if (memory.trimHistory) … else 记一条 warn`），缺失只触发功能降级、不会崩溃。
 
 ### 双源元数据必须同步
 
@@ -160,7 +160,7 @@ export function apply(ctx: Context): void {
 }
 ```
 
-> 若 provider 是单实例（不按子上下文分裂），不需要 per-entry `entryId`；memory 后端历来都是整进程一个，直接 `ctx.provide('memory', svc, { priority })` 即可。
+> 若 provider 是单实例（不按子上下文分裂），不需要 per-entry `entryId`；memory 后端一贯是每进程单实例，直接 `ctx.provide('memory', svc, { priority })` 即可。
 
 ## 5. 标准消费方式
 
@@ -170,12 +170,12 @@ export function apply(ctx: Context): void {
 import type { MemoryService } from '@aalis/api-memory';
 
 const memory = ctx.getService<MemoryService>('memory');
-if (!memory) return; // memory 是可选依赖时：缺失就降级，别抛
+if (!memory) return; // memory 是可选依赖时：缺失则降级，不抛异常
 try {
   const history = await memory.getHistory(sessionId, 50);
   // ...
 } catch (err) {
-  ctx.logger.warn('获取历史消息失败:', err); // agent 的做法：吞掉、空历史继续
+  ctx.logger.warn('获取历史消息失败:', err); // agent 的处理方式：捕获后以空历史继续
 }
 ```
 

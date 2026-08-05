@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-访问控制服务：在任何敏感操作的边界回答「这个身份此刻能不能执行这个能力」。它把**数字等级单轴授权**（轴 A）与**人确认 / HITL**（轴 B）两套正交机制，统一收口到一个 `authorize()` 闸 + 一套临时委托 / 确认回调里。
+访问控制服务：在任何敏感操作的边界回答「这个身份此刻能不能执行这个能力」。它把**数字等级单轴授权**（轴 A）与**人确认 / HITL**（轴 B）两套正交机制，统一收敛到一个 `authorize()` 闸 + 一套临时委托 / 确认回调里。
 
 - 服务注册名：`'authority'`（`getService<AuthorityService>('authority')`）。
 - 契约包：`@aalis/api-authority`（接口 + 类型 + `riskDefaults` / `resolveCapabilityPolicy` 纯函数 + `AalisConfig` 的 declaration merging）。
@@ -153,20 +153,20 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 
 `AuthorityService` 全部方法都被消费方调用，没有「可选」方法，但行为侧最小可用集是：
 
-- **必须**：`isOwner`、`authorize`（轴 A）、`requestAccess` + `setConfirmHandler`（轴 B，否则 confirm 能力永远拒）、`isPreApproved`（守卫拒绝后唯一救回路径）、`save`、`listUsers`。
+- **必须**：`isOwner`、`authorize`（轴 A）、`requestAccess` + `setConfirmHandler`（轴 B，否则 confirm 能力永远拒）、`isPreApproved`（守卫拒绝后唯一补救路径）、`save`、`listUsers`。
 - **管理面用**：`setUserLevel`、`removeUser`、`listTemporaryGrants`、`revokeTemporaryGrant`（被 WebUI/CLI actions 调）。
 - **裁决不变量（必须保留）**：`deniedCapabilities` 硬禁 **压过 owner**；`isPreApproved` / `requestAccess` 的「未授权」分支**绝不询问发起者本人**（杜绝自我提权）；`confirm:'always'` 永不被任何 skip 跳过。
 
 ### 4.2 注册（ctx.provide）
 
-DI 按名解析：同名 `'authority'` 的胜者 = `preference > priority > 注册顺序`（见 docs/concepts/service-model.md）。要让你的实现盖过参考实现，注册时给更高优先级：
+DI 按名解析：同名 `'authority'` 的胜者 = `preference > priority > 注册顺序`（见 docs/concepts/service-model.md）。要让你的实现覆盖参考实现，注册时给更高优先级：
 
 ```ts
 import { ServicePriority } from '@aalis/core'; // Backend=0 / Override=50 / System=200
 ctx.provide('authority', new MyAuthority(...), { priority: ServicePriority.Override }); // 50 > 默认 Backend(0)
 ```
 
-`provide` 第三参支持 `priority` / `label` 等元数据；按整体框架惯例 per-entry 注册用 `entryId: '${ctx.id}/<sub>'`（authority 是单实例服务，无需子条目）。**不要**仅靠移除参考实现来「让位」——显式优先级更稳。
+`provide` 第三参支持 `priority` / `label` 等元数据；按整体框架惯例 per-entry 注册用 `entryId: '${ctx.id}/<sub>'`（authority 是单实例服务，无需子条目）。**不要**仅靠移除参考实现来「让位」——显式优先级更明确可靠。
 
 ### 4.3 双源元数据必须同步
 
@@ -236,7 +236,7 @@ export async function apply(ctx: Context) {
 }
 ```
 
-## 5. 标准消费姿势
+## 5. 标准消费方式
 
 ### 5.1 绝大多数插件作者：不直接调 authority
 
@@ -258,7 +258,7 @@ cmds.command('level <target> <n:number>', '设等级', { visibility: 'restricted
 
 ### 5.2 直接消费 authority 服务（管理面 / 自定义 surface）
 
-按框架惯例**每次现取，别缓存**（provider 反弹会失效，见 docs/concepts/lazy-service-access.md）：
+按框架惯例**每次现取、不缓存**（provider 反弹会失效，见 docs/concepts/lazy-service-access.md）：
 
 ```ts
 const auth = ctx.getService<AuthorityService>('authority');
@@ -288,7 +288,7 @@ auth.save();
 
 `minLevel` 解析（`authority-model.ts` `resolveMinLevel`）：`authorityOverrides[cap] > risk 派生 > visibility 兜底`。`capabilityMinLevel`（在 `@aalis/api-authority`）：`dangerous→2 / sensitive→1 / safe|未声明→0`（`DEFAULT_AUTHORITY=0`）；`visibility` 兜底仅在无 risk 时用：`restricted→RESTRICTED_LEVEL(2) / public→0`。owner 等级 `OWNER_RANK = +Infinity`（:16）。
 
-### 6.2 确认轴（轴 B，owner 也吃）
+### 6.2 确认轴（轴 B，对 owner 同样生效）
 
 confirm 与等级**正交**，**只对已授权操作做意图确认**（不是提权入口）。守卫顺序：先 `authorize`（轴 A），过了再看 `confirm`（轴 B），见 `packages/plugin-authority/src/index.ts`。
 
@@ -299,20 +299,20 @@ confirm 与等级**正交**，**只对已授权操作做意图确认**（不是�
 
 ### 6.3 临时委托的隔离不变量
 
-会话临时授予按 **userId + sessionId + capability** 三元匹配（`authority-manager.ts`、`:182-191`），**群内 sessionId 全群共享时不会跨用户泄漏**——provider 重写时必须保留这个 userId 匹配，否则群里低权用户会白嫖他人的授予。`restrictedPolicy` 白名单的 `duration` 用运行时态 `policyEnabledAt`（不持久化，重启失效，`authority-manager.ts`/`:174`）。
+会话临时授予按 **platform + userId + sessionId + capability** 四元匹配（`authority-manager.ts` `isTemporarilyAllowed`），**群内 sessionId 全群共享时不会跨用户泄漏，跨平台同名 id 也不会互相命中**——provider 重写时必须保留 userId 与 platform 匹配，否则群里低权用户会盗用他人的授予。`restrictedPolicy` 白名单的 `duration` 用运行时态 `policyEnabledAt`（不持久化，重启失效，`authority-manager.ts`）。
 
 ### 6.4 网络出口（SSRF）
 
 authority 在 `apply` 时把 `config.network` 注入进程级 `safeFetch` 策略：`setNetworkPolicy(ctx.config.get('network') ?? {})`（`packages/plugin-authority/src/index.ts`）。SSRF 防护归属在权限域，但实际守卫在 `@aalis/util-network-guard` 的 `safeFetch`——**由 LLM/用户 URL 触发的出口必须走 `safeFetch`**，本地固定服务（ollama/onebot daemon）走裸 fetch 不受影响。详见 docs/concepts/security-model.md。
 
-## 7. 边界与坑
+## 7. 边界与注意事项
 
 - **契约注释与实现脱节（文档级，非运行时 bug）**：`packages/api-authority/src/index.ts`、`:13-66` 的注释仍以「纯能力委托 / public∪restricted / 委托加减」措辞描述模型，但接口（`authorize` 用 `level/minLevel`、`setUserLevel`、`authorityOverrides`）与参考实现已是**数字等级单轴**。写 provider/consumer 一律以 `AuthorityService` 签名 + `authority-model.ts` 裁决为准。
 - **`risk` 在两轴里走不同路径**：守卫把 `risk` 既透传给 `authorize`（派生 minLevel）又用 `resolveCapabilityPolicy` 展开出 `confirm`（`tools.ts`）。即 `risk:'dangerous'` 同时抬高最低等级到 2 **且**要求 session 确认；只想要其一时显式写 `visibility`/`confirm` 覆盖。
 - **守卫是反向注入，时序敏感**：authority 经 `whenService('commands'|'tools')` 注入守卫（`src/index.ts`/`:113`），confirm 通道经 `whenService('authority')` 反注（`session-confirm/src/index.ts`）。任何一方未上线时另一方退化：没 authority → tools/commands 无守卫（全放行）；没 confirm 通道 → `requestAccess` 返回 false（confirm 能力全拒）。重写时保持 `whenService`（provider 重启会重新触发），不要用一次性 getService。
 - **`autoConfirmUntil` / `restrictedPolicy.enabledAt` 是双状态**：`autoConfirmUntil` 持久化到 config；`policyEnabledAt` 是运行时态不持久化。重启后 `restrictedPolicy` 的 duration 计时归零（需再次触发 `markPolicyEnabled`，见 action `setRestrictedPolicy`，`src/index.ts`）。
-- **owner 判定有内置后门身份**：`platform ∈ {webui, cli}` 且 `userId === 'console'` 恒为 owner（`authority-manager.ts`）——本地控制台天然是机主。暴露新的本地 surface 时注意别误用 `console` 这个 userId。
-- **`isPreApproved` ≠ `requestAccess`**：守卫「未授权」分支只能调 `isPreApproved`（不问人），**绝不能**调 `requestAccess`（那会向发起者弹确认 = 自我提权）。这是参考实现修过的 bug，重写时务必区分（`src/index.ts` 注释）。
+- **owner 判定含内置本地控制台身份**：`platform ∈ {webui, cli}` 且 `userId === 'console'` 恒为 owner（`authority-manager.ts`）。这是设计而非后门——`platform` 由适配器填写，远端用户无法伪造成 `cli`/`webui`，能填这两个平台名的只有本进程内代码（已具完全能力）。因此新增平台适配器**不得**把自身 platform 命名为 `cli` 或 `webui`；暴露新的本地 surface 时也注意别误用 `console` 这个 userId。
+- **`isPreApproved` ≠ `requestAccess`**：守卫「未授权」分支只能调 `isPreApproved`（不询问发起者），**绝不能**调 `requestAccess`（那会向发起者弹确认 = 自我提权）。这是参考实现修过的 bug，重写时务必区分（`src/index.ts` 注释）。
 
 ## 8. 交叉链接
 

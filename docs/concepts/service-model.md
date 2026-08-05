@@ -2,9 +2,9 @@
 
 > 受众：编写 / 维护 Aalis 第三方插件的开发者。
 
-服务模型是 Aalis 最基础的概念。几乎所有其它能力（LLM、存储、命令、鉴权……）都以「服务」的形态注入容器，再由消费方按名取用。读懂本文，后续 `docs/services/*` 里的各篇服务详解才有落点。
+服务模型是 Aalis 最基础的概念。几乎所有其它能力（LLM、存储、命令、鉴权……）都以「服务」的形态注入容器，再由消费方按名取用。读懂本文后，后续 `docs/services/*` 里的各篇服务详解才有依托。
 
-Aalis 的依赖注入（DI / IoC）建立在一个按名字寻址、支持同名多实现的服务容器之上。插件通过 `ctx.provide(name, instance)` 把一个实例登记进容器；消费方通过 `ctx.getService(name)` 取回当前胜者。容器只认名字，没有「能力维度」的选择——这一点很重要，详见 [能力选择已下沉](#能力选择已下沉至-api-层0510-移除)。
+Aalis 的依赖注入（DI / IoC）建立在一个按名字寻址、支持同名多实现的服务容器之上。插件通过 `ctx.provide(name, instance)` 把一个实例登记进容器；消费方通过 `ctx.getService(name)` 取回当前胜者。容器只认名字，没有「能力维度」的选择——这一点很关键，详见 [能力选择已下沉](#能力选择已下沉至-api-层0510-移除)。
 
 ---
 
@@ -47,7 +47,7 @@ export const ServicePriority = {
 
 > 历史注记：曾经存在一个 `Router = 100` 槽位（router / facade 层），在 `feat/service-granularity` 之后已废弃。现在 LLM / storage / platform 全部改为按 model / root / sessionId 直接注册多条 entry，跨 entry 的聚合由各自 `*-api` 的 helper 承担，不再有同名的 facade entry。
 
-裸数字 `priority`（例如介于 `Backend` 与 `Override` 之间的 `10`）是允许的；dev 模式只会打一条 debug 日志，提醒你自行记载它的含义。
+裸数字 `priority`（例如介于 `Backend` 与 `Override` 之间的 `10`）是允许的；dev 模式仅记录一条 debug 日志，提示你自行记载它的含义。
 
 ---
 
@@ -75,7 +75,7 @@ const dispose = ctx.provide('memory', myMemoryService, {
 
 ### 2.2 一个插件实例只 provide 一次同名服务（默认）
 
-默认情况下，同一个 Context 对同一个服务名只能 `provide` 一次。重复 provide（不带显式 `entryId`）会被 dev 校验拦下并 warn：下游若按 `contextId` 路由，只能命中第一条，后续注册会静默失效。
+默认情况下，同一个 Context 对同一个服务名只能 `provide` 一次。重复 provide（不带显式 `entryId`）会被 dev 校验拦截并 warn：下游若按 `contextId` 路由，只能命中第一条，后续注册会静默失效。
 
 要在同一个插件里跑多套配置（例如多个 API key），推荐的做法是在 module 上声明 `reusable = true`，再用 `name:suffix` 形式注册多个插件实例，每个实例有独立的 Context 与 contextId。
 
@@ -109,7 +109,7 @@ const dispose = ctx.provide('llm', handle, {
 
 ## 4. 消费方（Consumer）
 
-### 4.1 `ctx.getService(name)` —— 即取即用，别缓存裸引用
+### 4.1 `ctx.getService(name)` —— 即取即用，勿缓存裸引用
 
 `ctx.getService(name)` 返回当前时点的胜者裸实例，或者 `undefined`。
 
@@ -152,15 +152,15 @@ provider 的上下线会驱动插件库重算（`RecomputeReason`）：`service-
 
 默认契约是：core 不主动级联 bounce 下游。绝大多数插件应当让 `getService` 在每次调用时惰性查询，从而天然跟随 provider 切换，无需 bounce。
 
-`requiresBounceOnDepChange?: boolean` 是逃生舱。只有当插件无法响应式处理状态时才设为 `true`——例如必须在启动期把 provider 引用一次性缓存进第三方 SDK 内部，或 apply 时要跑昂贵的同步初始化。设为 `true` 后，core 会在依赖的 provider 变化时主动级联 dispose 加 reapply。凡是能用 `getService` 惰性查询、或用 `whenService` 重挂的场景，都不要打开它。
+`requiresBounceOnDepChange?: boolean` 是逃生开关（escape hatch）。只有当插件无法响应式处理状态时才设为 `true`——例如必须在启动期把 provider 引用一次性缓存进第三方 SDK 内部，或 apply 时要执行昂贵的同步初始化。设为 `true` 后，core 会在依赖的 provider 变化时主动级联 dispose 加 reapply。凡是能用 `getService` 惰性查询、或用 `whenService` 重挂的场景，都不应启用它。
 
-插件 dispose 时，容器还会跑一套「服务自清理协议」：任何实例只要实现了 `unregisterByPlugin(contextId)`，都会被统一通知，清理与本上下文相关的注册项（如 ToolService / CommandService）。core 不硬编码任何具体服务名。
+插件 dispose 时，容器还会执行一套「服务自清理协议」：任何实例只要实现了 `unregisterByPlugin(contextId)`，都会被统一通知，清理与本上下文相关的注册项（如 ToolService / CommandService）。core 不硬编码任何具体服务名。
 
 ---
 
 ## 6. 能力选择已下沉至 *-api 层（0.5.0 移除）
 
-这是相对旧版的一个关键变化，需要建立正确的心智模型。
+这是相对旧版的一个关键变化，需要正确理解。
 
 0.5.0 之前，内核 DI 里有一个「服务能力选择层」（`ServiceCapabilityMap` / `getServiceCapabilities`，`getService` / `provide` 可以带能力维度）。该层已整体删除。现在：
 
@@ -180,7 +180,7 @@ function listLLMEntries(ctx, caps) {
 
 `resolveLLMModel` 进一步演示了另一种寻址：把 `{ provider, model }` ref 拼成 `entryId = '${provider}/${model}'`，直接命中那条 per-entry。这正是 §3 中 entryId 约定的下游消费面——领域路由器靠 entryId 字符串寻址具体的子粒度，而不靠内核的能力匹配。
 
-对插件作者而言，结论是：如果你希望自己的 provider 被「按能力选中」，就把能力诚实地写进实例的元数据字段（如 LLM handle 的 `capabilities`），消费方会经对应的 `*-api` helper 过滤。不要指望内核 DI 帮你按能力选，它只认名字、优先级和偏好。
+对插件作者而言，结论是：如果你希望自己的 provider 被「按能力选中」，就把能力如实写进实例的元数据字段（如 LLM handle 的 `capabilities`），消费方会经对应的 `*-api` helper 过滤。内核 DI 不做能力选择，它只认名字、优先级和偏好。
 
 ---
 
@@ -218,7 +218,7 @@ function listLLMEntries(ctx, caps) {
 2. **重复 provide 同名服务**：同一 Context 不带 entryId 二次 provide 会静默失效。多套配置用 `reusable` + `name:suffix`；有意拆子粒度用 `entryId`（§2.2 / §3）。
 3. **entryId 不带 `ctx.id/` 前缀**：卸载会漏清理僵尸 entry。永远用 `'${ctx.id}/${sub}'`（§3）。
 4. **直接调容器层 `prefer` / `register`**：绕过事件发射，`whenService` 不会重挂。走 `ctx.preferService` / `ctx.provide`（§4.4）。
-5. **滥用 `requiresBounceOnDepChange`**：默认就应惰性查询。打开它会让 core 在依赖变化时级联重启你的插件，成本高（§5）。
+5. **滥用 `requiresBounceOnDepChange`**：默认就应惰性查询。启用它会让 core 在依赖变化时级联重启你的插件，成本高（§5）。
 6. **期待内核按能力选服务**：0.5.0 起已无此能力。把能力写进实例元数据，靠 `*-api` helper 过滤（§6）。
 7. **manifest 与运行时声明不一致**：两条独立链路都要写、要对齐（§8）。
 

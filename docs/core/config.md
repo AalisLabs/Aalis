@@ -23,7 +23,7 @@ interface AalisConfig {
   // ↓ authority 域业务字段，由 api-authority 经 declaration merging 注入
   owners?: UserIdentity[];                          // Owner 列表（owner = `*`，拥有一切）
   deniedCapabilities?: string[];                    // 全局硬禁用 glob：命中即拒，连 owner 都压过
-  visibilityOverrides?: Record<string, 'public' | 'restricted'>; // 单操作可见性覆盖（操作名 → 可见性）
+  authorityOverrides?: Record<string, number>;      // 单操作最低等级覆盖（能力键 type:name → 整数等级）
   restrictedPolicy?: {                              // 受限能力临时放行策略
     allow?: string[];                               // 自动放行的 restricted 能力/操作名 glob（['*'] 全放）
     duration?: number;                              // 放行时长（秒，0=永久）
@@ -55,12 +55,12 @@ config.setPluginConfig('name', {...})      // 修改插件配置
 config.setPluginEnabled('name', true)      // 启用/禁用插件
 config.setServicePreference('llm', ctxId)  // 设置服务偏好
 config.save()                              // 持久化到磁盘
-config.reload()                            // 重新从磁盘加载
+config.reloadFrom(next)                    // 用外部快照覆盖内部状态（provider watch 回调用）
 ```
 
-## 密钥怎么放
+## 密钥配置
 
-**直接写进 `aalis.config.yaml`**——脚手架生成的 `.gitignore` 里有这个文件，不会入库。
+密钥**直接写进 `aalis.config.yaml`**——脚手架生成的 `.gitignore` 已包含此文件，不会入库。
 
 ```yaml
 plugins:
@@ -68,13 +68,13 @@ plugins:
     apiKey: "sk-..."
 ```
 
-> 曾经支持 `${VAR_NAME}` 环境变量插值（配 `.env` 使用），**已删除**。它承载的东西与配置文件
-> 完全重合，唯一区别只是「哪个文件进 git」；把配置文件本身 ignore 掉之后那一层就纯属多余。
-> **现在写 `${VAR}` 会被原样当作字面量字符串**，鉴权会失败。
+> 早期版本支持 `${VAR_NAME}` 环境变量插值（配合 `.env` 使用），现已删除。该机制承载的能力
+> 与配置文件完全重合，唯一区别在于哪个文件纳入 git；将配置文件本身 ignore 后，这一层不再有意义。
+> **现在写 `${VAR}` 会被原样当作字面量字符串处理**，据此配置的鉴权将失败。
 
 ## 核心配置字段
 
-> 表单描述（`CORE_CONFIG_SCHEMA`）随全部表单词汇住在 `@aalis/schema-config`；core 不持有 schema。
+> 表单描述（`CORE_CONFIG_SCHEMA`）与全部表单词汇一同存放于 `@aalis/schema-config`；core 不持有 schema。
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|

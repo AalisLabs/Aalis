@@ -1,6 +1,6 @@
 # workflow 服务
 
-## 1. 一句话定位
+## 1. 定位
 
 声明式的「触发器 + DAG」编排引擎：把多步骤任务（工具调用 / 发消息 / 等待 / 派发给 agent）按依赖图拓扑分层并行执行，支持 cron / interval / once / event / manual 多种触发方式。
 
@@ -141,7 +141,7 @@ await ctx.emit('trigger:fired' as any, {
 
 ### 必须 vs 可选
 
-`WorkflowService` 的 9 个方法都应实现（接口无可选成员）。最小语义：
+`WorkflowService` 的 8 个方法都应实现（接口无可选成员）。最小语义：
 - `listWorkflows` / `getWorkflow`：返回内存中的定义。
 - `defineWorkflow`：校验图（无环、deps 引用合法、节点必填字段齐全）后注册触发器；`persist !== false` 时落盘。
 - `runWorkflow`：拓扑执行，返回完整 `WorkflowRun`。**务必透传 `caller` 身份到内部工具调用**（见 §6）。
@@ -238,7 +238,7 @@ export async function apply(ctx: Context): Promise<void> {
 
 详见 [service-model](../concepts/service-model.md) 与 [core/service](../core/service.md)。
 
-## 5. 标准消费姿势
+## 5. 标准消费方式
 
 ### lazy getService（不要缓存实例）
 
@@ -307,9 +307,9 @@ await ctx.emit('trigger:fired', {
 
 定义存 `defsDir`（默认 `workspace:/workflows`）、运行历史存 `runsFile`（默认 `data:/workflow-runs.json`），都走 storage URI（`index.ts`、`createStorageGateway`）。storage 按 root 做权限位但**不是沙盒**，见 [storage-uri-grammar](../concepts/storage-uri-grammar.md)。`send-message` / `tool` 节点能触达任意会话与已注册工具，等价于 owner 资产的执行面——把 `workflow_define` 暴露给低权限用户即等于给了编排执行能力，注意 authority 配置。
 
-## 7. 边界与坑
+## 7. 边界与注意事项
 
-- **event 触发的 payload 形态（近期修复）**：`event` 触发时 `TriggerManager` 把监听到的事件参数**包成 `{ args }`** 传给 fire（`triggers.ts`：`this.fire(def.id, ..., { args })`），fire 再把它整体作为 `extraVars` 注入运行实例 `vars`（`index.ts`）。因此事件触发的工作流里要用 **`{{vars.args}}`**（或 `{{vars.args[0].xxx}}` 走路径访问）读取事件负载，而**不是** `{{vars.xxx}}` 直接读事件字段。对比之下 `trigger:fired`（含 webhook/scheduler 桥）的 `info.payload` 是**直接展开**进 vars 的（`index.ts`），其字段名直接用 `{{vars.字段}}`。两条入口的 vars 形态不同，写定义时别混。
+- **event 触发的 payload 形态**：`event` 触发时 `TriggerManager` 把监听到的事件参数**包成 `{ args }`** 传给 fire（`triggers.ts`：`this.fire(def.id, ..., { args })`），fire 再把它整体作为 `extraVars` 注入运行实例 `vars`（`index.ts`）。因此事件触发的工作流里要用 **`{{vars.args}}`**（或 `{{vars.args[0].xxx}}` 走路径访问）读取事件负载，而**不是** `{{vars.xxx}}` 直接读事件字段。对比之下 `trigger:fired`（含 webhook/scheduler 桥）的 `info.payload` 是**直接展开**进 vars 的（`index.ts`），其字段名直接用 `{{vars.字段}}`。两条入口的 vars 形态不同，写定义时需区分。
 - **event filter 只做顶层等值匹配**：`filter` 的每个 key 必须在事件第一个参数（顶层）等值命中；payload 不是对象时只有空 filter 通过（`triggers.ts`）。无嵌套/范围匹配。
 - **DAG 失败即停**：任一节点失败，引擎不再调度新批次，未跑的节点标 `skipped`，整 run = `failed`（`engine.ts`）。没有节点级重试 / 部分继续。
 - **取消不打断进行中的节点**：`cancelRun` 置 cancelToken，引擎只在**下一批调度前**检查；已 `running` 的节点（尤其 `wait` / `agent` 的阻塞等待）不会被中断（`engine.ts`）。

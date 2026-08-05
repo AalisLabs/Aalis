@@ -9,8 +9,8 @@ Aalis 把「内核」和「宿主」分开：
 - **`@aalis/runtime`** = **Node 宿主层**。用 Node API 实现 core 需要的几样宿主契约
   （插件加载器 / 配置 provider / 重启策略），并提供「一行启动」`startAalis`。
 
-打个比方：core 是大脑，runtime 是「Node 这具身体」。要在 Deno / 浏览器 / 嵌入环境里跑，
-就**另写一个宿主包**实现同样契约，core 与各插件契约一字不改（忒修斯之船）。
+core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Deno / 浏览器 / 嵌入环境中运行，
+**另写一个宿主包**实现同样契约即可，core 与各插件契约保持不变（忒修斯之船）。
 
 ## Node 专属性 ≠ 包管理器
 
@@ -20,7 +20,7 @@ Aalis 把「内核」和「宿主」分开：
   `createRequire`（以**项目根** `package.json` 为基准）解析插件，因此 **npm 扁平 / pnpm 隔离 /
   monorepo 软链** 三种 `node_modules` 拓扑都自洽。
 - 区分轴：runtime 名字里的「node」指 **JS 运行时**（Node vs Deno vs 浏览器），不是包管理器
-  （npm/pnpm 都属 Node 生态）。将来真出别的环境宿主，可加后缀（如 `@aalis/runtime-deno`）；
+  （npm/pnpm 都属 Node 生态）。将来若出现别的环境宿主，可加后缀（如 `@aalis/runtime-deno`）；
   当前 `@aalis/runtime` = 默认/参考 Node 宿主。
 
 ## 设施（exports）
@@ -41,8 +41,10 @@ Aalis 把「内核」和「宿主」分开：
 - **独立（纯 npm/pnpm）**：`npm create aalis <dir>` 生成项目——`package.json` 含所选 @aalis 插件、
   `index.mjs` 仅 `import { startAalis } from '@aalis/runtime'; startAalis()`、`aalis.config.yaml`。
   运行时 `createNodeModulesPluginLoader` 从 `node_modules` 发现插件。
-- **monorepo 自托管**：本仓库自身，`createFsPluginLoader` 扫 `packages/`。
-  （`src/runtime/providers.ts` 从 `@aalis/runtime` 再导出 FS 系列——单一事实来源、零重复。）
+- **monorepo 自托管**：本仓库自身，入口 `src/index.ts` 直接从 `@aalis/runtime` 引入
+  `createFsPluginLoader` 扫 `packages/`。FS 系列（`createFsPluginLoader` /
+  `createFsYamlConfigProvider` / `createProcessRespawnStrategy`）只在 `@aalis/runtime` 定义一处，
+  monorepo 与独立部署共用，无重复实现。
 
 ## 怎么为别的环境写宿主
 

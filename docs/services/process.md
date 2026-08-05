@@ -8,7 +8,7 @@
 - 契约包：`@aalis/api-process`（`packages/api-process/src/index.ts`）。
 - 默认实现：`@aalis/plugin-process-local`（`packages/plugin-process-local/src/index.ts`）。
 
-> 注意：**process 不是沙箱**。`spawn` 出来的子进程拥有宿主进程的完整 OS 权限（默认连承宿主全量 `process.env`），`readExternalFile` 可读任意 OS 路径。需要隔离的不可信代码执行请看 [code-sandbox 服务](./code-sandbox.md) 与第 6 节。
+> 注意：**process 不是沙箱**。`spawn` 产生的子进程拥有宿主进程的完整 OS 权限（默认继承宿主全量 `process.env`），`readExternalFile` 可读任意 OS 路径。需要隔离的不可信代码执行请看 [code-sandbox 服务](./code-sandbox.md) 与第 6 节。
 
 ---
 
@@ -88,7 +88,7 @@ interface TempDirHandle {
 ### 2.6 导出的工具函数
 
 - `createProcessGateway(ctx): ProcessService`（`:112-126`）——**消费方标准入口**。返回一个网关：无实例时抛错、有实例时每次方法调用都重新 `ctx.getService('process')` 后转发（懒取，见第 5 节）。
-- `makeTempDirViaStorage(storage, prefix): Promise<TempDirHandle>`（`:129-148`）——**给 provider 用的辅助**。基于一个支持 `resolveLocalPath` 的 `StorageService` 实现 `makeTempDir` 的默认骨架；prefix 会被脱敏（`[^A-Za-z0-9_-]` → `_`，截 32 字符），目录落在 `tmp:/<prefix>-<ts>-<rand>`。storage 不支持 `resolveLocalPath` 时抛错。
+- `makeTempDirViaStorage(storage, prefix): Promise<TempDirHandle>`（`:129-148`）——**供 provider 使用的辅助**。基于一个支持 `resolveLocalPath` 的 `StorageService` 实现 `makeTempDir` 的默认骨架；prefix 会被脱敏（`[^A-Za-z0-9_-]` → `_`，截 32 字符），目录落在 `tmp:/<prefix>-<ts>-<rand>`。storage 不支持 `resolveLocalPath` 时抛错。
 
 ---
 
@@ -119,7 +119,7 @@ interface TempDirHandle {
 
 接口四个方法**都必须实现**，没有可选方法。但常见做法是复用本地实现的骨架：
 
-- `makeTempDir` 可直接转发 `makeTempDirViaStorage(storage, prefix)`（`process-local` 即如此，`index.ts`）——你只需注入一个支持 `resolveLocalPath` 的 storage。
+- `makeTempDir` 可直接转发 `makeTempDirViaStorage(storage, prefix)`（`process-local` 即如此，`index.ts`）——只需注入一个支持 `resolveLocalPath` 的 storage。
 - `execFile` 通常用 `spawn(...).wait()` 包一层（本地实现 `index.ts`：非零退出 reject 并把 `ExecResult` 挂在 `err.result`）。
 
 替换默认实现（如远程执行 / 容器内执行）时用 `priority` 抬高；不替换、只想并存请用 `entryId`。
@@ -152,7 +152,7 @@ class RemoteProcessService implements ProcessService {
 export async function apply(ctx: Context): Promise<void> {
   const storage = createStorageGateway(ctx);
   ctx.provide('process', new RemoteProcessService(storage), {
-    priority: ServicePriority.Override,        // 想盖过 process-local（Backend=0）时抬高；同存则省略
+    priority: ServicePriority.Override,        // 想覆盖 process-local（Backend=0）时抬高；并存则省略
     label: 'Process / remote',                 // WebUI/CLI Services 视图展示
     // entryId: `${ctx.id}/remote`,            // 只在「一个插件拆多条 entry」时用，前缀必须是 ctx.id
   });
@@ -178,21 +178,21 @@ export default plugin;
 }
 ```
 
-> 契约包 `api-process` 自身**不提供任何运行时服务**，它的 `package.json` 用的是 `"aalis": { "types": true }` + `keywords: ["aalis-api"]`，标记为「纯类型/契约包」。别把 `aalis.service` 写到契约包上。
+> 契约包 `api-process` 自身**不提供任何运行时服务**，它的 `package.json` 用的是 `"aalis": { "types": true }` + `keywords: ["aalis-api"]`，标记为「纯类型/契约包」。不要把 `aalis.service` 写到契约包上。
 
 ---
 
-## 5. 标准消费姿势
+## 5. 标准消费方式
 
 ### 懒取（必须）
 
-永远用 `createProcessGateway(ctx)`，**不要缓存它转发到的实例**——网关内部每次方法调用都重新 `ctx.getService('process')`（`api-process/src/index.ts`），这样 provider 被换人/下线（provider bounce）后下一次调用自动命中新胜者。详见 [懒服务访问](../concepts/lazy-service-access.md)。
+始终使用 `createProcessGateway(ctx)`，**不要缓存它转发到的实例**——网关内部每次方法调用都重新 `ctx.getService('process')`（`api-process/src/index.ts`），这样 provider 被替换/下线（provider bounce）后下一次调用自动命中新的胜出实例。详见 [懒服务访问](../concepts/lazy-service-access.md)。
 
 ```ts
 import { createProcessGateway } from '@aalis/api-process';
 
 export async function apply(ctx: Context): Promise<void> {
-  const proc = createProcessGateway(ctx);   // 持有网关 OK；别把 proc.spawn 解构出来长期持有
+  const proc = createProcessGateway(ctx);   // 持有网关可以；不要将 proc.spawn 解构出来长期持有
 
   const result = await proc.execFile('git', ['rev-parse', 'HEAD'], { timeout: 5000 });
   ctx.logger.info(result.stdout.trim());
@@ -231,7 +231,7 @@ process 是框架里**权限最高的能力**之一（任意子进程 = 完整�
 
 ### Provider 侧
 
-- **maxBuffer 边读边计数**：本地实现在 `wait()` 里边读边累计、超限即停止累积并标 `truncated`，**不杀进程**（后台 dev server/`--watch` 本应长跑，杀掉会误伤）——见 `plugin-process-local/src/index.ts`。自写 provider 也应有上限，**禁止**无限 `stdout += chunk` 再在 `Buffer.concat` 前累积（OOM 向量，见第 7 节）。
+- **maxBuffer 边读边计数**：本地实现在 `wait()` 里边读边累计、超限即停止累积并标 `truncated`，**不杀进程**（后台 dev server/`--watch` 本应长跑，强行终止会误终止这类进程）——见 `plugin-process-local/src/index.ts`。自写 provider 也应有上限，**禁止**无限 `stdout += chunk` 再在 `Buffer.concat` 前累积（OOM 向量，见第 7 节）。
 - **stdin error 必须挂监听**：`child.stdin.on('error', () => {})`——否则 EPIPE 这类异步错误无监听器会 `uncaughtException` 崩整个宿主进程（`index.ts`）。
 
 ### Consumer 侧（鉴权 / 确认）
@@ -249,13 +249,13 @@ process 本身**没有内核级鉴权门**——风险控制落在**调用它的
 
 ### detached fire-and-forget
 
-启动「打开浏览器」这类不需要等待的进程：`detached: true` + `stdio: 'ignore'` + `.unref()` 三件套缺一不可（`webui-server/src/auth.ts`），否则父进程会被吊住或无法独立退出。
+启动「打开浏览器」这类不需要等待的进程：`detached: true` + `stdio: 'ignore'` + `.unref()` 三者缺一不可（`webui-server/src/auth.ts`），否则父进程会被阻塞或无法独立退出。
 
 ---
 
-## 7. 边界与坑（审计标注）
+## 7. 边界与注意事项（审计标注）
 
-1. **`maxOutputSize` 是事后截断，不是流式限额（消费侧坑）。** 工具层常见的 `maxOutputSize` 只在拿到完整字符串后 `truncateOutput`（`plugin-tool-system/src/tools/shell.ts`），**真正的内存上限是 provider 的 `maxBuffer`**（本地默认 10MB，`plugin-process-local/src/index.ts`）。历史上 `exec` 自起无上限 `stdout += chunk` 累加器，在「超限只停累积不杀进程」改动之后会无界增长 → OOM；现已改为直接用 `wait()` 内部带 `maxBuffer` 上限的 `result.stdout/stderr`（`shell.ts`）。**自写工具切勿在 process 之上再叠一个无上限累加器**；`exec_background` 这类需要持续读流的，要像 `shell.ts` 那样自己滚动裁剪缓冲区。
+1. **`maxOutputSize` 是事后截断，不是流式限额（消费侧注意事项）。** 工具层常见的 `maxOutputSize` 只在拿到完整字符串后 `truncateOutput`（`plugin-tool-system/src/tools/shell.ts`），**真正的内存上限是 provider 的 `maxBuffer`**（本地默认 10MB，`plugin-process-local/src/index.ts`）。历史上 `exec` 自起无上限 `stdout += chunk` 累加器，在「超限只停累积不杀进程」改动之后会无界增长 → OOM；现已改为直接用 `wait()` 内部带 `maxBuffer` 上限的 `result.stdout/stderr`（`shell.ts`）。**自写工具切勿在 process 之上再叠一个无上限累加器**；`exec_background` 这类需要持续读流的，要像 `shell.ts` 那样自己滚动裁剪缓冲区。
 
 2. **`readExternalFile` = confused-deputy + 无大小上限。** 它 `fs.readFile` 任意路径（`plugin-process-local/src/index.ts`），daemon 给什么路径就读什么、一次性全量进内存、且**不校验路径来源**。这是「daemon-trusted」的信任面——只在「确实是外部可信组件推来的路径」时用，不要把用户/LLM 可控字符串直接喂进去（路径遍历读取宿主任意文件）。下载的体积上限要由调用方自己加（参考 onebot 的 `readBodyCapped`，但那只覆盖 http，`readExternalFile` 路径无此保护）。
 

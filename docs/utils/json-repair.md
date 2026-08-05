@@ -1,19 +1,19 @@
 # json-repair
 
-> 受众：写「让 LLM 按 JSON 格式回话、再把回话解析成结构化对象」的第三方插件作者（人设输出格式、信息抽取、状态持久化等）。
-> 本文讲清如何从一坨脏乱的模型输出里把**一个 JSON 对象**捞出来、并尽力修复常见格式错误。
+> 受众：写「让 LLM 按 JSON 格式响应、再把响应解析成结构化对象」的第三方插件作者（人设输出格式、信息抽取、状态持久化等）。
+> 本文说明如何从杂乱的模型输出中提取出**一个 JSON 对象**、并尽力修复常见格式错误。
 >
-> 全部断言以代码为准并标注 `file:line`。包名 `@aalis/util-json-repair`，源码全在 `packages/util-json-repair/src/index.ts`。
+> 全部断言以代码为准并标注源码位置。包名 `@aalis/util-json-repair`，源码全在 `packages/util-json-repair/src/index.ts`。
 
 ---
 
 ## 1. 定位
 
-LLM 被要求输出 JSON 时，实际产出经常带毛病：包了 ` ```json ` 代码块、前后夹了一段自然语言解释、字符串里写了没转义的英文引号、被 `max_tokens` 截断少了结尾的 `}`、尾部多了逗号。直接 `JSON.parse` 必炸。
+LLM 被要求输出 JSON 时，实际输出常有格式问题：包了 ` ```json ` 代码块、前后夹了一段自然语言解释、字符串里写了没转义的英文引号、被 `max_tokens` 截断少了结尾的 `}`、尾部多了逗号。直接 `JSON.parse` 会抛出异常。
 
 `@aalis/util-json-repair` 把这些修复策略集中到一处，按「由轻到重」依次尝试，直到 `JSON.parse` 成功或全部用尽（`index.ts`）。它是一个**纯函数工具库**（`aalis-util` keyword，无 `ctx`、无 DI，见 `package.json` 的 `"aalis": { "util": true }`）——插件在 `package.json` 里依赖它、直接 `import` 函数即可。
 
-> **最重要的边界（先记住）**：本库只解析**顶层 JSON 对象** `{...}`。顶层是 JSON **数组** `[...]` 的输出会被判为失败（返回 `null`）。详见 §5。
+> **最重要的边界**：本库只解析**顶层 JSON 对象** `{...}`。顶层是 JSON **数组** `[...]` 的输出会被判为失败（返回 `null`）。详见 §5。
 
 ---
 
@@ -63,7 +63,7 @@ export interface RepairResult {
 
 ### 2.4 `parseLLMJsonObject(raw: string): RepairResult`
 
-`index.ts`。一站式入口，等价于 `tryParseJsonObject(extractJsonCandidate(raw))`。**绝大多数插件直接用这个**：传入模型原始 `content`，拿回 `RepairResult`。
+`index.ts`。一站式入口，等价于 `tryParseJsonObject(extractJsonCandidate(raw))`。**多数插件直接使用此函数**：传入模型原始 `content`，拿回 `RepairResult`。
 
 ---
 
@@ -102,7 +102,7 @@ const reply = typeof parsed.response === 'string' ? parsed.response : '';
 
 ---
 
-## 5. 边界与坑
+## 5. 边界与注意事项
 
 ### 5.1 顶层只认对象，不认数组（最重要）
 
@@ -117,7 +117,7 @@ const reply = typeof parsed.response === 'string' ? parsed.response : '';
 ### 5.2 修复是「尽力而为」，不是保证正确
 
 - 修复策略基于启发式（裸引号闭合判断靠「下一个非空白字符像不像 JSON 分隔符」，见 `index.ts`）。极端嵌套或对抗性输入下，补出来的对象可能在语法上合法、语义上却错位。**拿到 `parsed` 后务必按你的 schema 校验字段类型**（参考 persona 的 `persistStateFromParsed` 按 `fieldType` 强转，`index.ts`）。
-- `repairsApplied` 非空意味着模型这次输出不规范。建议像消费者那样落 debug/warn 日志，长期可作为「该调 prompt 了」的信号。
+- `repairsApplied` 非空意味着模型这次输出不规范。建议像消费者那样落 debug/warn 日志，长期可作为「需要调整 prompt」的信号。
 
 ### 5.3 与 `@aalis/util-text-normalize` 的分工
 
@@ -125,7 +125,7 @@ const reply = typeof parsed.response === 'string' ? parsed.response : '';
 
 ### 5.4 解析失败时不要静默丢数据
 
-`parsed === null` 是常态而非异常（模型偶发跑偏）。好的处理：带反馈重试一次（user-profile `index.ts` 范本），仍失败再降级/放弃，并 warn 出原文前若干字便于排查——不要直接吞掉。
+`parsed === null` 是常态而非异常（模型偶发偏离要求）。好的处理：带反馈重试一次（user-profile `index.ts` 范本），仍失败再降级/放弃，并 warn 出原文前若干字便于排查——不要直接吞掉。
 
 ---
 
