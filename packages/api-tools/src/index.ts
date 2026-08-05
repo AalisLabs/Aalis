@@ -181,7 +181,7 @@ export function useToolService(ctx: Context): ScopedToolService {
     const s = ctx.getService<ToolService>('tools');
     if (!s) {
       throw new Error(
-        `useToolService: 'tools' 服务不可用。请在插件 manifest 的 inject 中声明 'tools'，或确认 plugin-agent-tools 已激活。`,
+        `useToolService: 'tools' 服务不可用。请在插件 manifest 的 inject 中声明 'tools'，或确认 @aalis/plugin-tools 已激活。`,
       );
     }
     return s;

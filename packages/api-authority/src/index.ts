@@ -1,9 +1,11 @@
-// ----- 权限服务接口 + 执行守卫契约（纯能力委托模型）-----
+// ----- 权限服务接口 + 执行守卫契约（数字等级模型）-----
 //
-// 模型：能力（capability）+ 默认可见性 public/restricted + owner 授予加减。
-//   - owner = `*`，可执行任意能力、可管理所有人的权限。
-//   - 用户有效能力 = owner ? 全部 : (所有 public ∪ 被授予的 restricted) − 被禁用的；deny 优先。
-//   - 单 owner 终态：权限只由 owner 管理（无委托树/子委托），故无子集约束。
+// 模型：操作能力（capability）+ 用户数字等级（level，整数，越大越高）+ 操作最低等级（minLevel）。
+//   - owner = ∞，可执行任意能力、可管理所有人的权限（不入等级表）。
+//   - 裁决：deniedCapabilities（全局硬禁）> owner(∞) > 用户 level >= 操作 minLevel；
+//     minLevel 由操作的 risk / visibility / config.authorityOverrides 派生。
+//   - restricted：门槛较高的能力；未授权时可经「临时能力委托」（owner 白名单 / 会话短时授予）放行。
+//   - 单 owner 终态：等级只由 owner 管理（无委托树 / 子委托）。
 //
 // 任何需要「执行前权限校验」的服务（plugin-tools / plugin-commands 等）从本包导入
 // ExecutionGuard / ExecutionGuardContext；消费权限服务的插件导入 AuthorityService。
@@ -148,7 +150,7 @@ export interface ExecutionGuardContext {
 export type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 
 // ============================================================
-// 能力统一闸（委托图为唯一裁决：deny > owner(*) > public > granted）
+// 能力统一闸（裁决序：deniedCapabilities 硬禁 > owner(∞) > 用户 level >= 操作 minLevel）
 // ============================================================
 
 /**

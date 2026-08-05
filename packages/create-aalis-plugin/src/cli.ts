@@ -340,7 +340,7 @@ plugins:
 
 ## 扩展点
 
-${a.features.tool ? '- ✓ 注册 AI 工具（\\`useToolService\\`）\n' : ''}${a.features.command ? '- ✓ 注册斜杠命令（\\`useCommandService\\`）\n' : ''}${a.features.webui ? '- ✓ WebUI 页面（\\`useWebuiService\\`）\n' : ''}
+${a.features.tool ? '- ✓ 注册 AI 工具（`useToolService`）\n' : ''}${a.features.command ? '- ✓ 注册斜杠命令（`useCommandService`）\n' : ''}${a.features.webui ? '- ✓ WebUI 页面（`useWebuiService`）\n' : ''}
 请打开 \`src/index.ts\` 按需修改。
 `;
 }
