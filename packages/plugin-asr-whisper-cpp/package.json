@@ -44,6 +44,9 @@
   },
   "aalis": {
     "service": {
+      "provides": [
+        "asr"
+      ],
       "required": [
         "process",
         "storage"

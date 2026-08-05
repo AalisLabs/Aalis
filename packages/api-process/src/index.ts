@@ -29,8 +29,9 @@ export interface SpawnOptions {
    */
   stdio?: 'pipe' | 'ignore' | 'inherit';
   /**
-   * wait() 累计缓冲（stdout+stderr 合计）字节上限；超出即截断并杀子进程，
-   * 防失控/恶意输出在 Buffer.concat 前无上限累积撑爆宿主内存。缺省由实现给安全默认（如 10MB）。
+   * wait() 累计缓冲（stdout+stderr 合计）字节上限；超出即停止累积（丢弃后续输出并标 `truncated`），
+   * **不杀子进程**——终止交给 timeout / 调用方，后台长跑进程（dev server / `--watch`）不应被误杀。
+   * 防失控/恶意输出无上限累积撑爆宿主内存。缺省由实现给安全默认（如 10MB）。
    */
   maxBuffer?: number;
 }
@@ -44,7 +45,7 @@ export interface ExecResult {
   stdout: string;
   /** 标准错误 */
   stderr: string;
-  /** 输出超过 maxBuffer 被截断并提前杀进程（区别于 timeout 的 SIGKILL） */
+  /** 输出超过 maxBuffer 被截断（丢弃后续；进程继续运行、不被杀，区别于 timeout 的 SIGKILL） */
   truncated?: boolean;
 }
 

@@ -109,11 +109,24 @@ export class ServiceContainer {
   }
 
   /**
-   * 获取一个满足能力要求的服务实例
+   * 获取一个满足能力要求的服务实例。
+   *
+   * 不走 `resolveEntries`：那里在设了偏好时要 `find` + `filter` + spread 出一条全新的重排
+   * 数组，而这里只取首个、其余全丢。`getService` 是全仓最频繁的读（三百余处调用点），
+   * 且「锁定默认 LLM」这类偏好在真实部署里是常态，那条被算出来又被丢掉的尾巴不划算。
+   *
+   * 语义与 `resolveEntries` 保持一致：偏好项存在则取它，否则取 `list[0]` ——
+   * `list` 在 `register` 里就按 priority 降序排好（稳定排序，同优先级保持注册顺序）。
    */
   get<T>(name: string): T | undefined {
-    const list = this.resolveEntries(name);
-    return list.length > 0 ? (list[0].instance as T) : undefined;
+    const list = this.entries.get(name);
+    if (!list || list.length === 0) return undefined;
+    const preferredCtxId = this.preferences.get(name);
+    if (preferredCtxId) {
+      const preferred = list.find(e => e.contextId === preferredCtxId);
+      if (preferred) return preferred.instance as T;
+    }
+    return list[0].instance as T;
   }
 
   /**

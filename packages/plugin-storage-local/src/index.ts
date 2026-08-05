@@ -716,7 +716,12 @@ async function buildRoots(rawRoots: unknown, logger: Logger): Promise<RootDefini
         writable: item.writable === true,
         deletable: item.deletable === true,
       });
-      const isHostScope = root.realPath === '/' || root.realPath.length <= 3;
+      // 按路径**深度**判定，不按字符串长度：`/x` 只是个普通目录却因为长度 2 被误报，
+      // 而 `/etc`（长度 4）这种真该提醒的反而漏报。深度 ≤ 1 才是「根或根下一层」。
+      // 这只影响日志级别与提示文案，不参与任何 grant/deny —— 能访问什么由 realPath
+      // 加根的 read/write/delete 位决定，与本判断无关。
+      const depth = root.realPath.split('/').filter(Boolean).length;
+      const isHostScope = depth <= 1;
       const log = isHostScope ? logger.warn.bind(logger) : logger.info.bind(logger);
       log(
         `root ${name}:/ -> ${root.realPath}` +
