@@ -8,6 +8,7 @@
 
 import { promises as dns } from 'node:dns';
 import { isIP } from 'node:net';
+import { Agent } from 'undici';
 
 /**
  * 判断 IP 是否落在私网 / 回环 / 链路本地 / 元数据 / 多播保留段。
@@ -122,6 +123,19 @@ function inDenyCidrs(addr: string): boolean {
 }
 
 /**
+ * 校验一组已解析地址：任一命中私网[可配] / denyCidrs 即抛错。host 仅用于错误信息。
+ * assertSafeHost（预校验）与 safeFetch 的 pin dispatcher（连接时）共用此判定，避免重复。
+ */
+export function assertAddressesSafe(host: string, addresses: readonly string[]): void {
+  for (const addr of addresses) {
+    if (policy.blockPrivate && isPrivateAddress(addr)) {
+      throw new Error(`拒绝访问：${host} 解析得到私网地址 ${addr}`);
+    }
+    if (inDenyCidrs(addr)) throw new Error(`拒绝访问：${host} 命中受限网段 ${addr}`);
+  }
+}
+
+/**
  * 校验 hostname 是否安全可下载。
  *  - 字面 IP：判私网[可配] + denyCidrs。
  *  - 'localhost' / '*.localhost' / '*.local'：拦（受 blockPrivate 控）。
@@ -142,12 +156,10 @@ export async function assertSafeHost(hostname: string): Promise<void> {
     throw new Error(`拒绝访问本地主机名: ${host}`);
   }
   const records = await dns.lookup(host, { all: true });
-  for (const r of records) {
-    if (policy.blockPrivate && isPrivateAddress(r.address)) {
-      throw new Error(`拒绝访问：${host} 解析得到私网地址 ${r.address}`);
-    }
-    if (inDenyCidrs(r.address)) throw new Error(`拒绝访问：${host} 命中受限网段 ${r.address}`);
-  }
+  assertAddressesSafe(
+    host,
+    records.map(r => r.address),
+  );
 }
 
 /** 校验 URL：仅 http/https，且 host 非私网/回环/元数据。通过则返回解析后的 URL。 */
@@ -172,15 +184,41 @@ export async function assertSafeUrl(rawUrl: string): Promise<URL> {
 /** 重定向跳数上限。 */
 const MAX_REDIRECTS = 5;
 
+// pin 已校验 IP 的 dispatcher：在同一次 DNS 解析里校验并直连该地址，使「校验」与「连接」
+// 用同一结果，杜绝 DNS-rebinding（低 TTL 域名先返公网 IP 过校验、连接时再解析到内网/元数据）。
+// 校验判定复用 assertAddressesSafe；命中即抛，连接失败。
+const pinnedSafeDispatcher = new Agent({
+  connect: {
+    lookup: (hostname, options, callback) => {
+      dns
+        .lookup(hostname, { ...options, all: true })
+        .then(records => {
+          assertAddressesSafe(
+            hostname,
+            records.map(r => r.address),
+          );
+          // 交回已校验的首个地址，undici 直连此 IP、不再另行解析。
+          callback(null, records[0].address, records[0].family);
+        })
+        .catch((err: Error) => callback(err, '', 0));
+    },
+  },
+});
+
 /**
- * SSRF 安全的 fetch：逐跳 `redirect:'manual'` + 每跳重新校验协议与 host，
- * 杜绝「初始 host 受信但 30x 跳到内网」的重定向绕过。其余行为同原生 fetch。
+ * SSRF 安全的 fetch：逐跳 `redirect:'manual'` + 每跳重新校验协议与 host（堵重定向绕过），
+ * 并用 pin dispatcher 让校验与连接用同一次 DNS 解析（堵 rebinding）。其余行为同原生 fetch。
  * 任何由 LLM / 用户 / 入站消息触发的远程下载都应改走此函数。
  */
 export async function safeFetch(url: string, init: RequestInit = {}, maxRedirects = MAX_REDIRECTS): Promise<Response> {
   let current = await assertSafeUrl(url);
   for (let i = 0; i <= maxRedirects; i++) {
-    const res = await fetch(current.href, { ...init, redirect: 'manual' });
+    const fetchInit: RequestInit & { dispatcher?: Agent } = {
+      ...init,
+      redirect: 'manual',
+      dispatcher: pinnedSafeDispatcher,
+    };
+    const res = await fetch(current.href, fetchInit as RequestInit);
     if (![301, 302, 303, 307, 308].includes(res.status)) return res;
     const location = res.headers.get('location');
     if (!location) return res;
