@@ -106,6 +106,8 @@ export class FlatVectorStore implements VectorStoreService {
   }
 
   async deleteByFilter(filter: Record<string, unknown>): Promise<number> {
+    // 空过滤器不删任何东西（防误清全库；与 lancedb 后端保护行为一致）。
+    if (Object.keys(filter).length === 0) return 0;
     const before = this.entries.length;
     this.entries = this.entries.filter(e => {
       for (const [key, value] of Object.entries(filter)) {
