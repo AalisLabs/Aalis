@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractJsonCandidate } from '../../packages/util-json-repair/src/index.js';
+import { extractJsonCandidate, tryParseJsonObject } from '../../packages/util-json-repair/src/index.js';
 
 describe('extractJsonCandidate', () => {
   it('直接 JSON 对象，无前缀文本', () => {
@@ -81,5 +81,40 @@ describe('extractJsonCandidate', () => {
   it('先一个配平对象再一个截断对象 — 返回配平的那个', () => {
     const raw = '{"done":1} 追加 {"more":"trunc';
     expect(extractJsonCandidate(raw)).toBe('{"done":1}');
+  });
+});
+
+describe('tryParseJsonObject —— 括号补全按栈逆序', () => {
+  it('数组套对象截断（主流形态）— 补成合法 JSON、不丢数据', () => {
+    // 开括号栈 { [ {，正确闭合是 }]}（内层对象先闭），而非计数式的 ]}}
+    const raw = '{"persons":[{"platform":"x","userId":"y"';
+    const { parsed } = tryParseJsonObject(raw);
+    expect(parsed).not.toBeNull();
+    const persons = (parsed as { persons: Array<Record<string, unknown>> }).persons;
+    expect(persons[0]).toEqual({ platform: 'x', userId: 'y' });
+  });
+
+  it('数组在对象内截断 — 按 ]} 顺序补齐', () => {
+    const { parsed } = tryParseJsonObject('{"nums":[1,2,3');
+    expect((parsed as { nums: number[] }).nums).toEqual([1, 2, 3]);
+  });
+
+  it('多层嵌套截断 — 逆序补齐', () => {
+    const { parsed } = tryParseJsonObject('{"a":{"b":[{"c":1');
+    expect((parsed as { a: { b: Array<{ c: number }> } }).a.b[0].c).toBe(1);
+  });
+
+  it('字符串内的括号不参与栈计数', () => {
+    const { parsed } = tryParseJsonObject('{"msg":"用了 [ 和 { 符号","n":1');
+    expect(parsed).not.toBeNull();
+    const obj = parsed as { msg: string; n: number };
+    expect(obj.msg).toContain('[');
+    expect(obj.n).toBe(1);
+  });
+
+  it('已完整 JSON 不被改动', () => {
+    const { parsed, repairsApplied } = tryParseJsonObject('{"ok":true,"list":[1,2]}');
+    expect(parsed).toEqual({ ok: true, list: [1, 2] });
+    expect(repairsApplied).toEqual([]);
   });
 });
