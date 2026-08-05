@@ -1,6 +1,6 @@
 # embedding 服务
 
-## 1. 一句话定位
+## 1. 定位
 
 把一段文本编码成稠密向量（`text → number[]`）的提供者，是语义检索 / 向量记忆的底层能力。
 
@@ -35,9 +35,9 @@ declare module '@aalis/core' {
 
 要点：
 
-- `embed(text)` 是**唯一必须实现**的方法，返回单条文本的向量。契约**未约定向量维度**——维度由具体模型决定，跨提供者/跨模型不可混用（见 §6）。
-- `listModels()` 可选，**仅服务于 WebUI 配置表单的动态下拉**（`configSchema` 里 `dynamicOptions: 'embedding'`，见 §4）。不参与 embed 主链路。
-- 契约**没有批量接口**（如 `embedBatch`）。消费者要批量时只能自己并发调 `embed()`（参考实现的连接细节见 §3）。
+- `embed(text)` 是**唯一必须实现**的方法，返回单条文本的向量。契约**未约定向量维度**——维度由具体模型决定，跨提供者 / 跨模型不可混用（见 §6）。
+- `listModels()` 可选，**仅服务于 WebUI 配置表单的动态下拉**（`configSchema` 里 `dynamicOptions: 'embedding'`，见 §4），不参与 embed 主链路。
+- 契约**没有批量接口**（如 `embedBatch`）。消费者要批量时需自行并发调 `embed()`（参考实现的连接细节见 §3）。
 
 `@aalis/api-embedding/package.json` 标记 `aalis.types: true` 且 `keywords` 含 `aalis-api`——是纯契约包，不是可加载插件。
 
@@ -53,27 +53,27 @@ declare module '@aalis/core' {
 | `@aalis/plugin-embedding-ollama` | `POST {baseUrl}/api/embed`（新）或 `/api/embeddings`（旧） | 本地 Ollama，默认 `nomic-embed-text` |
 
 OpenAI 实现（`packages/plugin-embedding-openai/src/index.ts`）：
-- `embed`：取响应 `data.data[0].embedding`（`:43-57`）。失败抛 `Error`，不静默。
-- `listModels`：拉 `/v1/models`，失败返回 `[]`（`:59-70`）。
-- 注册：`ctx.provide('embedding', service, { label: \`OpenAI / ${model}\` })`（`:95`）。
+- `embed`：取响应 `data.data[0].embedding`；失败抛 `Error`，不静默。
+- `listModels`：拉 `/v1/models`，失败返回 `[]`。
+- 注册：`ctx.provide('embedding', service, { label: \`OpenAI / ${model}\` })`。
 
 Ollama 实现（`packages/plugin-embedding-ollama/src/index.ts`）：
-- 自动探测新旧 API：首次 `embed` 先试 `/api/embed`，失败缓存为旧版走 `/api/embeddings`（`:84-117`）。
-- 自带超时（`AbortController`）+ 5xx 重试（`postJson`，`:60-82`）；`embed` 失败时同样抛 `Error`。
-- 注册：`ctx.provide('embedding', service, { label: \`Ollama / ${model}\` })`（`:152`）。
+- 自动探测新旧 API：首次 `embed` 先试 `/api/embed`，失败则缓存为旧版走 `/api/embeddings`。
+- 自带超时（`AbortController`）+ 5xx 重试（`postJson`）；`embed` 失败时同样抛 `Error`。
+- 注册：`ctx.provide('embedding', service, { label: \`Ollama / ${model}\` })`。
 
-两者 `apply` 都做了「启动连通性自检」：调一次 `embed('ping')`，**失败只 warn 不阻塞注册**（openai `:87-93` / ollama `:144-150`）——即服务可能注册成功但实际不可用，消费者别假设 `embed` 一定成功。
+两者 `apply` 都做了启动连通性自检：调一次 `embed('ping')`，**失败只 warn 不阻塞注册**——即服务可能注册成功但实际不可用，消费者不应假设 `embed` 一定成功。
 
 ### 典型消费点
 
 **参考消费者 `@aalis/plugin-memory-vector`**（向量记忆，硬依赖）：
 - 声明依赖：`export const inject = { required: ['vectorstore', 'embedding'], optional: ['memory'] }`（`packages/plugin-memory-vector/src/index.ts`），并同步写在 `package.json` 的 `aalis.service.required`。
-- 取用：`function getEmbedder() { return ctx.getService<EmbeddingService>('embedding')!; }`（`:254-256`）——封装成函数，**每次用都重新 getService**（lazy）。
-- 调用点：索引时 `await getEmbedder().embed(embedText)`（`:355`），查询时 `await getEmbedder().embed(query)`（`:492`、`:751`），得到向量后交给 `vectorstore` 检索。
+- 取用：`function getEmbedder() { return ctx.getService<EmbeddingService>('embedding')!; }`——封装成函数，**每次用都重新 getService**（lazy）。
+- 调用点：索引时 `await getEmbedder().embed(embedText)`，查询时 `await getEmbedder().embed(query)`，得到向量后交给 `vectorstore` 检索。
 
-**可选消费者 `@aalis/plugin-user-relation`**（实体/事件去重的语义召回，软依赖）：
-- 取用：`const embedding = this.ctx?.getService<EmbeddingService>('embedding')`（`packages/plugin-user-relation/src/service.ts`、`:3418`、`:3882`）。
-- 缺失即降级：`if (!embedding) return null;`（`:2637` 附近的 `ensureEntityEmbedding`），不报错、走非语义路径。
+**可选消费者 `@aalis/plugin-user-relation`**（实体 / 事件去重的语义召回，软依赖）：
+- 取用：`const embedding = this.ctx?.getService<EmbeddingService>('embedding')`（`packages/plugin-user-relation/src/service.ts`）。
+- 缺失即降级：`if (!embedding) return null;`（`ensureEntityEmbedding`），不报错、走非语义路径。
 
 **WebUI（`@aalis/plugin-webui-server`）** 通过 `listModels` 聚合下拉：对配置里 `dynamicOptions: 'embedding'` 的字段，调 `ctx.getAllServices('embedding')` 遍历所有提供者，逐个 `await provider.instance.listModels()` 汇总（`packages/plugin-webui-server/src/index.ts`）。单个提供者失败不影响整体。
 
@@ -85,7 +85,7 @@ Ollama 实现（`packages/plugin-embedding-ollama/src/index.ts`）：
 - 可选：`listModels()`（仅为 WebUI 下拉服务，不实现也能正常 embed）。
 - 强烈建议：启动连通性自检失败时 **warn 而非 throw**（与两个参考实现一致），让插件能装上、错误暴露在第一次真实调用。
 
-### provides/inject 双源必须同步
+### provides / inject 双源必须同步
 
 DI 靠包清单 + 代码导出**双源**声明（见 [manifest-metadata](../concepts/manifest-metadata.md)）。provider 两处都要写 `provides: ['embedding']`：
 
@@ -168,7 +168,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
 详见 [service-model](../concepts/service-model.md) 与 [core/service](../core/service.md)。
 
-## 5. 标准消费姿势
+## 5. 标准消费方式
 
 ### lazy getService（不要缓存实例）
 
@@ -197,22 +197,22 @@ const vec = await embedding.embed(text);
 
 ### 错误边界
 
-`embed()` 会抛（网络错误 / 非 2xx）。消费者批量索引时要自己兜异常，别让单条失败炸掉整批——memory-vector 是逐条入队 + 后台并发索引（`indexing.concurrency`，`index.ts`、默认 10），并提示「过高可能压垮本地 embedding 服务」（`:85`）。`listModels()` 按约定**永不抛**（失败返回 `[]`），消费方仍应防御性兜底。
+`embed()` 会抛（网络错误 / 非 2xx）。消费者批量索引时要自己兜异常，不要让单条失败中断整批——memory-vector 是逐条入队 + 后台并发索引（`indexing.concurrency`，`index.ts`、默认 10），并提示「过高可能压垮本地 embedding 服务」。`listModels()` 按约定**永不抛**（失败返回 `[]`），消费方仍应防御性兜底。
 
 ## 6. 能力 / 风险 → 影响
 
 - **不是 authority 风险面**：`embedding` 不直接挂 authority 风险等级或确认（`embed` 只读、无副作用）。但**触发 embed 的上层动作**可能要走授权（如 user-relation 的去重写回）——那是上层契约的事，见 [authority](../core/authority.md) / [security-model](../concepts/security-model.md)。
-- **SSRF**：参考实现直接用裸 `fetch` 打配置里的 `baseUrl`（openai `:44`、ollama `:66`）。第三方 provider 若让**用户配置任意 URL** 且可被不可信输入间接驱动，应改用 `safeFetch`（`@aalis/util-network-guard`）做 SSRF 收口。本地 Ollama（`localhost:11434`）/ 受信 OpenAI 端点属常规场景，风险低。
+- **SSRF**：参考实现直接用裸 `fetch` 打配置里的 `baseUrl`。第三方 provider 若让**用户配置任意 URL** 且可被不可信输入间接驱动，应改用 `safeFetch`（`@aalis/util-network-guard`）做 SSRF 收口。本地 Ollama（`localhost:11434`）/ 受信 OpenAI 端点属常规场景，风险低。
 - **维度一致性（最重要的隐性契约）**：向量库里所有向量必须同维度。**切换 embedding 提供者或模型会改变维度**，与既有 `vectorstore` 数据不兼容——消费者（如 memory-vector）需要重建索引，provider 作者切模型时要让用户知道这点。契约本身不暴露维度，无法在 DI 层校验。
 - **跨会话隔离**：embedding 服务无状态、不持有会话数据，本身不涉隔离；隔离责任在持有向量的 `vectorstore` / memory 消费者。
 
-## 7. 边界与坑
+## 7. 注意事项与边界情形
 
 - **「注册成功 ≠ 可用」**：连通性自检失败只 warn（§3），服务照样注册。消费者第一次 `embed` 才会真正暴露端点不可达 / key 错误，要做好首调错误处理。
 - **无批量 API**：契约只有单条 `embed`。大批量索引靠消费者并发，注意限流（memory-vector 的 `indexing.concurrency` / `maxQueueSize`）以免压垮本地服务。
 - **`listModels` 语义弱**：Ollama 实现把 `/api/tags` 的**所有**模型都返回（未真正过滤 embedding 类，见 `ollama/src/index.ts` 的注释「没有特征可辨别就全返回」），下拉里会混入非 embedding 模型，用户可能选错。
 - **OpenAI 端点形态固定**：openai provider 硬编码 `/v1/embeddings` 路径，仅适配 OpenAI 兼容协议；非兼容服务要单独写 provider。
-- **维度漂移**（承 §6）：换模型后老向量与新查询向量不可比，余弦相似度结果无意义；这是运维层最常见的坑，文档/配置项应显式提醒重建。
+- **维度漂移**（承 §6）：换模型后老向量与新查询向量不可比，余弦相似度结果无意义；这是运维层最常见的问题，文档 / 配置项应显式提醒重建。
 
 ## 8. 交叉链接
 

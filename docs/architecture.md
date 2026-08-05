@@ -6,17 +6,16 @@
 
 Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设施（事件、服务容器、中间件管道、插件生命周期），所有功能——LLM 调用、消息存储、对话编排、平台接入——由可插拔插件提供。核心的任何行为均可被插件拦截、修改或完全替换。
 
-**类型与接口层面**：所有业务服务接口（LLM / Memory / Storage / Tools / Commands / Gateway / WebUI / Authority / Agent 等）由对应的 `@aalis/plugin-*-api` 包提供，core 不持有任何业务接口。详见 [api 包架构](design/api-packages.md)。
+**类型与接口层面**：所有业务服务接口（LLM / Memory / Storage / Tools / Commands / Gateway / WebUI / Authority / Agent 等）由对应的 `@aalis/api-*` 包提供，core 不持有任何业务接口。详见 [api 包架构](design/api-packages.md)。
 
 `@aalis/core` 对外暴露：
 
 - 运行时基础设施：`App` / `Context` / `EventBus` / `ServiceContainer` / `HookRegistry` / `ConfigManager` / `Logger` / `PluginManager`
-- 四个扩展点：`ServiceTypeMap` / `AalisEvents` / `HookContextMap` / `ContributionPointMap`（均通过 declaration merging 由 `@aalis/plugin-*-api` 注入业务键）
-- 核心数据契约：`Message` / `ContentSegment` / `ToolCall` / `ToolDefinition` / `ToolFunction`（OpenAI 协议形状，跨载体复用）
-- `AalisConfig` 仅声明基础字段（`name` / `logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`）加 `[key: string]: unknown` 兜底；业务字段（owners / deniedCapabilities / authorityOverrides / confirmOverrides 等）由对应 plugin-*-api 通过 declaration merging 注入，core 不知晓其语义
+- 四个扩展点：`ServiceTypeMap` / `AalisEvents` / `HookContextMap` / `ContributionPointMap`（均通过 declaration merging 由 `@aalis/api-*` 注入业务键）
+- `AalisConfig` 仅声明基础字段（`name` / `logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`）加 `[key: string]: unknown` 兜底；业务字段（owners / deniedCapabilities / authorityOverrides / confirmOverrides 等）由对应 api-* 通过 declaration merging 注入，core 不知晓其语义
 - `ConfigManager` 是纯内存配置中枢：自身不读写文件，`save()` 把整份配置快照原样委托给宿主注入的 `ConfigProvider.save()`（无 provider 时静默忽略），对所有顶层字段一视同仁、不含任何业务特例（合并默认值时 `mergeDefaultsConfig()` 也是先填 core 已知字段、再透传其余）
 
-身份/平台/模型相关的工具与类型一律不在 core 中：`UserIdentity` 在 `@aalis/api-authority`，`ModelRef` / `resolveLLMModel` 在 `@aalis/api-llm`，`getSenderLabel` / `prefixSender` / `getMessageName` 在 `@aalis/schema-message`。
+业务数据契约与领域类型一律不在 core：`Message` / `ContentSegment` / `ToolCall`（OpenAI 协议形状，跨载体复用）与 `getSenderLabel` / `prefixSender` / `getMessageName` 在 `@aalis/schema-message`，`ToolDefinition` / `ToolFunction` 在 `@aalis/api-tools`，`UserIdentity` 在 `@aalis/api-authority`，`ModelRef` / `resolveLLMModel` 在 `@aalis/api-llm`。
 
 ## 宿主层 vs 核心层（Bootstrap 边界）
 
@@ -24,9 +23,9 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 
 > 业务插件同样受约束：直接 import `node:fs` / `node:child_process` / `node:os` / `node:http(s)` 被 biome 拦截，必须改走 `@aalis/api-storage` / `@aalis/api-process`。完整白名单与豁免理由见 [node-usage-policy](architecture/node-usage-policy.md)。
 
-环境耦合全部在仓库根 `src/` 这一层（即"宿主"），通过 `new App({ ... })` 注入到 core：
+环境耦合全部收敛在宿主层 `@aalis/runtime`（monorepo 由仓库根 `src/index.ts` 一行 `startAalis()` 拉起），通过 `new App({ ... })` 注入到 core：
 
-| AppOption | 抽象（在 core） | 默认实现（在 `src/runtime/`） | 职责 |
+| AppOption | 抽象（在 core） | 默认实现（在 `@aalis/runtime`） | 职责 |
 |---|---|---|---|
 | `config` / `configProvider` | `AalisConfig` / `ConfigProvider` | `createFsYamlConfigProvider()` | 配置读 / 写 / `fs.watch` 热重载 |
 | `pluginLoader` | `PluginLoader` | `createFsPluginLoader()` | 扫描 `packages/` + dynamic import |
@@ -34,7 +33,7 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 | `dataDir` | `string` | 由 yaml provider 决定 | 数据目录绝对路径 |
 | `devMode` | `boolean` | `process.env.NODE_ENV !== 'production'` | dev 校验开关 |
 
-另外 `src/index.ts` 还负责 stdout/stderr console-sink、文件日志、终端状态恢复、子命令分发、SIGINT 优雅退出 —— 这些都是**纯宿主关切**，core 完全不知情。
+另外 `@aalis/runtime` 的 `startAalis` 还负责 stdout/stderr console-sink、文件日志、终端状态恢复、子命令分发、SIGINT 优雅退出 —— 这些都是**纯宿主关切**，core 完全不知情。
 
 ## 系统分层
 
@@ -57,14 +56,14 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 │                    服务层 (Service Layer)                      │
 │   LLM · Memory · Embedding · VectorStore · Persona · Tools   │
 │   Skills · ImageRecognition · WebSearch · Office              │
-│        接口由 plugin-*-api 提供，实现可多提供者并存           │
+│        接口由 api-* 提供，实现可多提供者并存                  │
 ├──────────────────────────────────────────────────────────────┤
 │                    核心框架层 (Core Layer)                     │
 │   App · Context · ServiceContainer · PluginManager            │
 │   EventBus · HookRegistry · ConfigManager · Logger             │
 │   4 个扩展点：ServiceTypeMap / AalisEvents / HookContextMap        │
 │                / ContributionPointMap                          │
-│   （业务接口均在 plugin-*-api，core 不持有）                  │
+│   （业务接口均在 api-*，core 不持有）                         │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -156,7 +155,7 @@ ctx.on('outbound:message', async (msg) => { /* 记录日志、统计等 */ });
 
 ### 4. 贡献点 (Contribution Points)
 
-往共享产物里"交一块料"，排布权归收集方。与 hooks 的分工：**改写或截停既有流程 → hooks；往共享产物添自己的一块 → 贡献点**。贡献者拿只读视图、不掌握控制流（无短路、无排序影响力、看不到他人产出），因此重复注入、排布漂移、错误连坐在 API 上无法表达。
+向共享产物提交一块内容，排布权归收集方。与 hooks 的分工：**改写或截停既有流程 → hooks；向共享产物添加自己的一块 → 贡献点**。贡献者拿只读视图、不掌握控制流（无短路、无排序影响力、看不到他人产出），因此重复注入、排布漂移、错误连坐在 API 上无法表达。
 
 ```typescript
 // 往 LLM 提示词交一块（agent:prompt 是 plugin-agent 定义的贡献点）
@@ -263,7 +262,7 @@ PluginManager 只有一个外部可见的状态变更入口：`recompute(reason)
 1. **Phase A 反向遍历 dispose**：消费者先于提供者 dispose，保证 dispose hook 访问依赖服务安全。
 2. **Phase B 正向遍历 activate**（非 shutdown）：提供者先于消费者 active。
 
-如本轮有变动则进入下一轮，直到稳定（fixed-point）或达到 `maxRounds=20`。`service-up` /
+如本轮有变动则进入下一轮，直到稳定（fixed-point）或达到轮次上限（`maxRounds = 2×插件数 + 8`）。`service-up` /
 `service-down` 在第二轮起退化为 `plugin-state-changed`，避免无限 optional bounce。
 
 ### 隔离粒度
@@ -471,21 +470,25 @@ WebUI authority 页（仅 owner）+ 指令 `/level`（设某用户等级）与 `
 
 ### 索引流程
 
+仅对已落库的入站用户消息建索引（`inbound:message:archived`），助手/出站消息不入向量库。
+
 ```
-inbound:message → embedding.embed(text) → vectorstore.add(vector, metadata)
-outbound:message     → embedding.embed(text) → vectorstore.add(vector, metadata)
+inbound:message:archived → embedding.embed(prefixSender(text)) → vectorstore.add(vector, metadata)
 ```
 
 ### 检索与注入
 
+检索通过 `agent:prompt` 贡献（context 槽）完成，非独立 hook、无优先级数字；token 干跑（dryRun）跳过真实检索。
+
 ```
-agent:llm:before hook (优先级 50):
+agent:prompt 贡献 (context 槽):
   1. 提取最后一条用户消息
   2. embedding.embed(query)
-  3. vectorstore.search(queryVector, topK*3)  ← 粗召回
-  4. 时间加权重排:
+  3. vectorstore.search(queryVector, topK*4)  ← 粗召回
+  4. 阈值过滤 + 跨会话模式过滤
+  5. 时间加权重排:
      finalScore = (1-timeWeight) * semanticScore + timeWeight * recencyScore
      recencyScore = exp(-0.1 * daysSince)
-  5. 取前 topK，过滤重复
-  6. 插入 system 消息（带日期和来源标注）
+  6. 取前 topK，扩展上下文窗口并去重
+  7. 物化为 system 块（带日期和来源标注）
 ```
