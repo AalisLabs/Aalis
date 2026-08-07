@@ -1,5 +1,5 @@
 import { resolveLLMModel } from '@aalis/api-llm';
-import { useToolService } from '@aalis/api-tools';
+import { useToolService, wrapUntrustedContent } from '@aalis/api-tools';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
@@ -196,7 +196,8 @@ function formatSearchResults(data: SerperResponse): string {
     }
   }
 
-  return parts.length > 0 ? parts.join('\n\n') : '未找到搜索结果。';
+  if (parts.length === 0) return '未找到搜索结果。';
+  return wrapUntrustedContent(parts.join('\n\n'), '网络搜索结果');
 }
 
 /** 将 Serper 原始响应转换为标准 WebSearchResult 数组 */
@@ -410,7 +411,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           width: it.imageWidth as number,
           height: it.imageHeight as number,
         }));
-        return JSON.stringify({ query, count: images.length, images });
+        // title/source 源自各网页，同 web_search 一样标注为不可信（imageUrl 供 send_attachment 用，无碍）
+        return JSON.stringify({
+          query,
+          count: images.length,
+          images: wrapUntrustedContent(JSON.stringify(images), '图片搜索结果'),
+        });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
       } finally {

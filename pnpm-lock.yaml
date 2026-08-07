@@ -1135,7 +1135,7 @@ importers:
         specifier: workspace:>=0.5.0 <1.0.0
         version: link:../api-authority
       '@aalis/api-tools':
-        specifier: workspace:>=0.5.1 <1.0.0
+        specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-tools
       '@aalis/schema-config':
         specifier: workspace:>=0.9.0 <1.0.0
@@ -1806,7 +1806,7 @@ importers:
         specifier: workspace:>=0.5.0 <1.0.0
         version: link:../api-process
       '@aalis/api-tools':
-        specifier: workspace:>=0.5.1 <1.0.0
+        specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-tools
       '@aalis/api-webui':
         specifier: workspace:>=0.9.0 <1.0.0
@@ -1986,7 +1986,7 @@ importers:
         specifier: workspace:>=0.5.5 <1.0.0
         version: link:../api-storage
       '@aalis/api-tools':
-        specifier: workspace:>=0.5.1 <1.0.0
+        specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-tools
       '@aalis/schema-config':
         specifier: workspace:>=0.9.0 <1.0.0
@@ -2200,7 +2200,7 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-llm
       '@aalis/api-tools':
-        specifier: workspace:>=0.5.1 <1.0.0
+        specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-tools
       '@aalis/schema-config':
         specifier: workspace:>=0.9.0 <1.0.0
