@@ -7,7 +7,7 @@
 // ============================================================
 
 import { promises as dns } from 'node:dns';
-import { isIP } from 'node:net';
+import { isIP, type LookupFunction } from 'node:net';
 import { Agent } from 'undici';
 
 /**
@@ -184,25 +184,38 @@ export async function assertSafeUrl(rawUrl: string): Promise<URL> {
 /** 重定向跳数上限。 */
 const MAX_REDIRECTS = 5;
 
-// pin 已校验 IP 的 dispatcher：在同一次 DNS 解析里校验并直连该地址，使「校验」与「连接」
-// 用同一结果，杜绝 DNS-rebinding（低 TTL 域名先返公网 IP 过校验、连接时再解析到内网/元数据）。
-// 校验判定复用 assertAddressesSafe；命中即抛，连接失败。
+/**
+ * pin 已校验 IP 的 DNS 查询：在同一次解析里校验并交回该结果，使「校验」与「连接」
+ * 用同一份地址，杜绝 DNS-rebinding（低 TTL 域名先返公网 IP 过校验、连接时再解析到
+ * 内网/元数据）。校验判定复用 assertAddressesSafe；命中即抛，连接失败。
+ *
+ * 回调形状必须跟着 `options.all` 走，两种都要给：Node 的 net 在 happy-eyeballs
+ * （autoSelectFamily，Node 20+ 默认开）下带 `all: true` 并期望 `{address,family}[]`，
+ * 关掉时（Node 18 默认、`--no-network-family-autoselection`、
+ * `net.setDefaultAutoSelectFamily(false)`）不带 all、仍期望旧的三参形式。
+ * 押注单一形状会让另一档位下的 safeFetch 对**任何** URL 抛
+ * ERR_INVALID_IP_ADDRESS，且上层只看到笼统的 `TypeError: fetch failed`。
+ *
+ * 全部地址都过同一道校验，故 all 模式整份交回既安全又保住多 IP 容错。
+ *
+ * @internal 导出仅为让契约可被直接断言，非公开面。
+ */
+export const pinnedLookup: LookupFunction = (hostname, options, callback) => {
+  dns
+    .lookup(hostname, { ...options, all: true })
+    .then(records => {
+      assertAddressesSafe(
+        hostname,
+        records.map(r => r.address),
+      );
+      if (options.all) callback(null, records);
+      else callback(null, records[0].address, records[0].family);
+    })
+    .catch((err: NodeJS.ErrnoException) => callback(err, '', 0));
+};
+
 const pinnedSafeDispatcher = new Agent({
-  connect: {
-    lookup: (hostname, options, callback) => {
-      dns
-        .lookup(hostname, { ...options, all: true })
-        .then(records => {
-          assertAddressesSafe(
-            hostname,
-            records.map(r => r.address),
-          );
-          // 交回已校验的首个地址，undici 直连此 IP、不再另行解析。
-          callback(null, records[0].address, records[0].family);
-        })
-        .catch((err: Error) => callback(err, '', 0));
-    },
-  },
+  connect: { lookup: pinnedLookup },
 });
 
 /**
