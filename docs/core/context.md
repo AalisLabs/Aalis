@@ -50,11 +50,12 @@
 
 > ⚠． **`id` 必须全局唯一**。`ctx.id` 是服务 entry、钩子、贡献三类注册的归属锚：两个同 id 的 Context 共用同一命名空间——贡献按 `${ctx.id}/${局部id}` 成键，后注册者替换先注册者；任一方 dispose 会按 contextId 连带清掉对方的注册。运行时侧已保证唯一（插件用 instanceId、`useModule` 自动唯一化 childId），手工 fork 时自行保证。
 
-### `ctx.onDispose(fn): () => void`
+### `ctx.onDispose(fn, label?): () => void`
 
 注册一个在本 Context dispose 时执行的清理回调。**这是插件清理副作用的唯一正确 API**：
 
 - 直接挂在 `_disposables` 链上，逆序执行
+- `label` 可选，仅进诊断日志——清理超时或抛错时点名是哪一项；不传则退到链内序号
 - 在 `ctx.dispose()` 的任何路径上都会触发（app 停机 / bounce / unload / updatePluginConfig / softReload 级联）
 - fork 子上下文同样适用
 - **可以返回 Promise**：编排层（PluginManager / App）在 unload / bounce / 停机

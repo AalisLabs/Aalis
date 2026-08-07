@@ -355,7 +355,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     ctx.onDispose(async () => {
       await client.close();
       ctx.logger.info('MongoDB 连接已关闭');
-    });
+    }, 'mongodb:client.close');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await client.close().catch(() => {});
