@@ -72,7 +72,10 @@ export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): 
   entry.context = ctx;
 
   try {
-    await entry.module.apply(ctx, entry.config);
+    // 登记后再 await，让拆卸路径能先等 apply 落定（见 Context.trackActivation）
+    const applying = Promise.resolve(entry.module.apply(ctx, entry.config));
+    ctx.trackActivation(applying);
+    await applying;
 
     if (entry.module.provides) {
       const missing = entry.module.provides.filter(
