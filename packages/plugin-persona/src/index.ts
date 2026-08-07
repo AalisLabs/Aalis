@@ -268,6 +268,69 @@ class PersonaServiceImpl implements PersonaService {
     const effectiveCard = this.getEffectiveCard(options);
     let prompt = '';
 
+    if (effectiveCard.name) {
+      prompt += `你的名字是 ${effectiveCard.name}。`;
+    }
+    if (effectiveCard.description) {
+      prompt += `${effectiveCard.description}\n\n`;
+    }
+    if (effectiveCard.traits && effectiveCard.traits.length > 0) {
+      prompt += `性格特点: ${effectiveCard.traits.join('、')}\n\n`;
+    }
+    prompt += effectiveCard.prompt;
+
+    // 追加结构化输出指令 — 尊重调用方传入的 disableOutputFormat
+    const effectiveFormat = options?.disableOutputFormat ? undefined : this.getCardOutputFormat(effectiveCard);
+    if (effectiveFormat) {
+      // 角色卡若提供 outputFormatPrompt，则用其替换默认 header/footer；
+      // schema 块仍由插件根据 fields 自动生成，避免与字段定义脱节。
+      const customPrompt = effectiveCard.outputFormatPrompt?.trim();
+      prompt += '\n\n';
+      if (customPrompt) {
+        prompt += `${customPrompt}\n`;
+      } else {
+        prompt += '# 输出格式（必须严格遵守）\n';
+        prompt +=
+          '你的每一条文字回复都必须且只能是一个合法 JSON 对象。不得在 JSON 前后输出任何其他内容，不得使用 markdown 代码块包裹。\n\n';
+      }
+      prompt += '{\n';
+      const entries = Object.entries(effectiveFormat.fields);
+      entries.forEach(([key, field], i) => {
+        const comma = i < entries.length - 1 ? ',' : '';
+        let placeholder: string;
+        if (field.type === 'number') placeholder = '0';
+        else if (field.type === 'boolean') placeholder = 'true';
+        else placeholder = '"..."';
+        prompt += `  "${key}": ${placeholder}${comma}\n`;
+      });
+      prompt += '}\n';
+      if (!customPrompt) {
+        // 单独输出字段说明，避免行内注释干扰 JSON 解析
+        prompt += '\n字段说明：\n';
+        entries.forEach(([key, field]) => {
+          prompt += `- ${key}：${field.description}${field.reply ? '（发送给用户的回复，不想说话则填空字符串）' : ''}\n`;
+        });
+        prompt += '\n调用工具时无需遵守此格式，正常使用工具即可。\n';
+        prompt += '工具全部调用完毕后，必须按上述 JSON 格式输出最终回复，不得输出纯文本。';
+      }
+    }
+
+    return prompt;
+  }
+
+  /**
+   * 易变上下文：当前时间 / 会话环境 / 上一轮状态，逐轮变化。
+   *
+   * 与 {@link getSystemPrompt} 分开，是为了让静态人设与历史进得了 provider 的前缀缓存
+   * ——前缀从第一个 token 起逐位比对，开头有一处变化后面就整条作废。这三块原本混在
+   * 人设卡开头，导致每个新回合命中率恒为 0（实测 271/271）。调用方须把本方法的结果放在
+   * 历史消息之后、当前用户消息之前。
+   */
+  getVolatilePrompt(options?: PersonaSessionOptions): string {
+    void options;
+    let prompt = '';
+    const id = this.identityStore.getStore();
+
     // 时间注入
     if (this.timeInjection) {
       const now = new Date();
@@ -300,19 +363,7 @@ class PersonaServiceImpl implements PersonaService {
       prompt += `当前时间：${timeStr}（${tz}${offsetParts ? ` ${offsetParts}` : ''}）\n\n`;
     }
 
-    if (effectiveCard.name) {
-      prompt += `你的名字是 ${effectiveCard.name}。`;
-    }
-    if (effectiveCard.description) {
-      prompt += `${effectiveCard.description}\n\n`;
-    }
-    if (effectiveCard.traits && effectiveCard.traits.length > 0) {
-      prompt += `性格特点: ${effectiveCard.traits.join('、')}\n\n`;
-    }
-    prompt += effectiveCard.prompt;
-
     // 会话上下文注入（身份取自异步上下文隔离的 identityStore，杜绝并发会话串档）
-    const id = this.identityStore.getStore();
     if (id?.sessionId) {
       prompt += '\n\n# 当前会话环境\n';
       if (id.platform) {
@@ -375,43 +426,7 @@ class PersonaServiceImpl implements PersonaService {
       }
     }
 
-    // 追加结构化输出指令 — 尊重调用方传入的 disableOutputFormat
-    const effectiveFormat = options?.disableOutputFormat ? undefined : this.getCardOutputFormat(effectiveCard);
-    if (effectiveFormat) {
-      // 角色卡若提供 outputFormatPrompt，则用其替换默认 header/footer；
-      // schema 块仍由插件根据 fields 自动生成，避免与字段定义脱节。
-      const customPrompt = effectiveCard.outputFormatPrompt?.trim();
-      prompt += '\n\n';
-      if (customPrompt) {
-        prompt += `${customPrompt}\n`;
-      } else {
-        prompt += '# 输出格式（必须严格遵守）\n';
-        prompt +=
-          '你的每一条文字回复都必须且只能是一个合法 JSON 对象。不得在 JSON 前后输出任何其他内容，不得使用 markdown 代码块包裹。\n\n';
-      }
-      prompt += '{\n';
-      const entries = Object.entries(effectiveFormat.fields);
-      entries.forEach(([key, field], i) => {
-        const comma = i < entries.length - 1 ? ',' : '';
-        let placeholder: string;
-        if (field.type === 'number') placeholder = '0';
-        else if (field.type === 'boolean') placeholder = 'true';
-        else placeholder = '"..."';
-        prompt += `  "${key}": ${placeholder}${comma}\n`;
-      });
-      prompt += '}\n';
-      if (!customPrompt) {
-        // 单独输出字段说明，避免行内注释干扰 JSON 解析
-        prompt += '\n字段说明：\n';
-        entries.forEach(([key, field]) => {
-          prompt += `- ${key}：${field.description}${field.reply ? '（发送给用户的回复，不想说话则填空字符串）' : ''}\n`;
-        });
-        prompt += '\n调用工具时无需遵守此格式，正常使用工具即可。\n';
-        prompt += '工具全部调用完毕后，必须按上述 JSON 格式输出最终回复，不得输出纯文本。';
-      }
-    }
-
-    return prompt;
+    return prompt.replace(/^\n+/, '');
   }
 
   getPersonaName(): string {
