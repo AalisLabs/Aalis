@@ -86,8 +86,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = defaultTriggerPolicyConfig;
-
 // ----- 入口 -----
 
 export function apply(ctx: Context, raw: Record<string, unknown>): void {

@@ -83,5 +83,5 @@ describe('FsYamlConfigProvider (集成)', () => {
   });
 });
 
-// 注：配置同步政策（defaultConfig 回填 / schema 裁剪）的测试在
+// 注：配置同步政策（schema 派生默认值回填 / schema 裁剪）的测试在
 // test/runtime/config-sync.test.ts——政策属宿主层,core 只持有配置快照机制。

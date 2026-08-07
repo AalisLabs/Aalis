@@ -10,7 +10,7 @@
 // - 渲染宿主（webui-server/client 等）：读取并渲染表单
 // - 宿主政策（@aalis/runtime 的 config-sync）：按 schema 裁剪未知字段
 //
-// 本包零依赖、纯类型 + 纯数据，不 import @aalis/core。
+// 本包零运行时依赖：对 @aalis/core 仅有 type-only 锚点 import（编译后擦除）。
 // ============================================================
 
 /**
@@ -95,3 +95,45 @@ export const CORE_CONFIG_SCHEMA: ConfigSchema = {
     ],
   },
 };
+
+/**
+ * 从 ConfigSchema 派生默认配置。
+ *
+ * ConfigSchema 是插件配置的**唯一声明来源**：每个字段的 `default` 就是运行时默认值，
+ * 不存在第二份手抄的默认值对象。宿主在注册插件前用本函数派生出默认配置
+ * （经 `AppOptions.pluginDefaults` 注入 core），配置回填、恢复默认、WebUI 展示
+ * 也都从这里取——一份实现，处处一致。
+ *
+ * 派生规则：
+ * - SchemaField / SchemaArray：取 `default`（没写 default 的字段不产出键，
+ *   等同于「该字段无默认值」——读取方自行处理 undefined）
+ * - SchemaGroup：递归 `fields`，总是产出嵌套对象（即使子字段全无默认值）
+ */
+export function defaultsFrom(schema: ConfigSchema | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(schema ?? {})) {
+    if (!entry || typeof entry !== 'object') continue;
+    if ('fields' in entry) {
+      out[key] = defaultsFrom(entry.fields);
+      continue;
+    }
+    if ('default' in entry) out[key] = entry.default;
+  }
+  return out;
+}
+
+// PluginModule.configSchema 由本包经 declaration merging 挂上。
+// type-only import 仅作模块增强的解析锚点，编译后擦除——本包仍是零运行时依赖。
+import type {} from '@aalis/core';
+
+// ============================================================
+// PluginModule.configSchema 由本包经 declaration merging 挂上——
+// core 对表单词汇零感知（词汇出核），插件拿到的却是强类型（写错
+// type / 漏 label 在编译期即报），而非以前 core 声明的 opaque Record。
+// ============================================================
+declare module '@aalis/core' {
+  interface PluginModule {
+    /** 配置表单 Schema：插件配置的唯一声明来源（默认值经 defaultsFrom 派生）。 */
+    configSchema?: ConfigSchema;
+  }
+}

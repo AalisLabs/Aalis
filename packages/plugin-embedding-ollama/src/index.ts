@@ -29,13 +29,6 @@ export const configSchema: ConfigSchema = {
   retries: { type: 'number', label: '失败重试次数', default: 1, description: 'fetch 失败或 5xx 时的重试次数' },
 };
 
-export const defaultConfig = {
-  baseUrl: 'http://localhost:11434',
-  model: 'nomic-embed-text',
-  timeoutMs: 30000,
-  retries: 1,
-};
-
 function formatError(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);

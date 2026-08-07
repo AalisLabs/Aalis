@@ -4,7 +4,7 @@ import type { ToolService } from '@aalis/api-tools';
 import type { WebUIService, WebuiPage } from '@aalis/api-webui';
 import type { AppService, Context, PluginManagerService } from '@aalis/core';
 import { parseInstanceId } from '@aalis/core';
-import { CORE_CONFIG_SCHEMA } from '@aalis/schema-config';
+import { CORE_CONFIG_SCHEMA, defaultsFrom } from '@aalis/schema-config';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 
@@ -70,7 +70,7 @@ export function registerPluginRoutes(
       extends: pm.getPlugin(p.instanceId)?.module?.extends,
       config: pm.getPlugin(p.instanceId)?.config ?? {},
       configSchema: pm.getPlugin(p.instanceId)?.module?.configSchema,
-      defaultConfig: pm.getPlugin(p.instanceId)?.module?.defaultConfig,
+      defaultConfig: defaultsFrom(pm.getPlugin(p.instanceId)?.module?.configSchema),
       error: p.error,
     }));
     res.json({ plugins });
@@ -219,7 +219,12 @@ export function registerPluginRoutes(
       return;
     }
 
-    const success = await pm.updatePluginConfig(pluginName, newConfig as Record<string, unknown>);
+    // 补默认值再交给 updatePluginConfig：后者是**整体替换**语义（core/plugin.ts 里
+    // entry.config = newConfig 直接顶掉）。不补的话，PUT 一个部分对象就会把未列出的
+    // 字段从内存态和 yaml 里一起抹掉。默认值从 configSchema 派生（唯一声明来源）。
+    const defaults = defaultsFrom(pm.getPlugin(pluginName)?.module?.configSchema);
+    const merged = { ...defaults, ...(newConfig as Record<string, unknown>) };
+    const success = await pm.updatePluginConfig(pluginName, merged);
     if (success) {
       app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 配置已更新` });
@@ -319,7 +324,7 @@ export function registerPluginRoutes(
       res.status(400).json({ error: `无法创建实例："${instanceId}" 已存在` });
       return;
     }
-    const mergedConfig = { ...(sourceModule.defaultConfig ?? {}), ...(config as Record<string, unknown>) };
+    const mergedConfig = { ...defaultsFrom(sourceModule.configSchema), ...(config as Record<string, unknown>) };
     ctx.config.setPluginConfig(instanceId, mergedConfig);
     await pm.register(sourceModule, mergedConfig, instanceId);
     app.saveConfig();

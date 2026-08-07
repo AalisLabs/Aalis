@@ -53,7 +53,7 @@ interface SessionTreeNode {
 1. 会话自身 `config`（手工 / `/model` 指令设置）
 2. 父会话 `sessionDefaults`（递归继承）
 3. 平台默认 `platformProfiles[platform]`
-4. 全局 `defaultConfig`（各插件 schema）
+4. 全局默认值（各插件 configSchema 派生）
 
 ## 服务接口（节选）
 

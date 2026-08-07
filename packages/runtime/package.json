@@ -29,7 +29,8 @@
   },
   "dependencies": {
     "chalk": "^5.4.0",
-    "yaml": "^2.7.0"
+    "yaml": "^2.7.0",
+    "@aalis/schema-config": "workspace:>=0.10.0 <1.0.0"
   },
   "peerDependencies": {
     "@aalis/core": ">=0.9.0 <1.0.0"
