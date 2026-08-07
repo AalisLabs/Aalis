@@ -91,7 +91,11 @@ class LanceDBVectorStore implements VectorStoreService {
    * 导致向量删除不生效（旧向量残留被继续召回）甚至表损坏。三者一律排到本链上串行执行。
    */
   private structuralOps: Promise<unknown> = Promise.resolve();
-  private logger?: { info: (msg: string, ...a: unknown[]) => void; warn: (msg: string, ...a: unknown[]) => void };
+  private logger?: {
+    info: (msg: string, ...a: unknown[]) => void;
+    warn: (msg: string, ...a: unknown[]) => void;
+    debug: (msg: string, ...a: unknown[]) => void;
+  };
 
   constructor(
     dbPath: string,
@@ -125,6 +129,7 @@ class LanceDBVectorStore implements VectorStoreService {
     const tableNames = await this.db.tableNames();
     if (tableNames.includes(this.tableName)) {
       this.table = await this.db.openTable(this.tableName);
+      this.runOptimize();
     }
   }
 
@@ -160,6 +165,18 @@ class LanceDBVectorStore implements VectorStoreService {
     if (this.optimizeEvery <= 0 || this.optimizing) return;
     if (++this.addsSinceOptimize < this.optimizeEvery) return;
     this.addsSinceOptimize = 0;
+    this.runOptimize();
+  }
+
+  /**
+   * 后台压实一轮（single-flight、经 serialize 与 delete/clear 互斥、吞错）。
+   *
+   * 除计数触发外，启动重开旧表时也调一次：写入计数是内存态、**重启即归零**，
+   * 上一会话攒下的碎片否则要等本会话重新写满一个阈值才有机会合并——实测曾
+   * 累积 1385 个数据文件 / 362 MB 无人回收。启动压实对已紧实的表近乎免费。
+   */
+  private runOptimize(): void {
+    if (this.optimizeEvery <= 0 || this.optimizing) return;
     if (!this.table) return;
     // 经串行锁执行：与 deleteByFilter/clear 互斥。锁内读 this.table（而非捕获旧引用），
     // 确保压实的是当前表——若排队期间 /clear 重建了表，则压实新表；若表已被清空则跳过。
@@ -180,6 +197,9 @@ class LanceDBVectorStore implements VectorStoreService {
           this.logger?.info(
             `LanceDB 压实完成：合并 ${removed} 碎片、清理 ${stats.prune.oldVersionsRemoved} 旧版本、回收 ${freedMB} MB`,
           );
+        } else {
+          // 零回收也要留痕：否则「跑了没东西可收」与「压根没触发」在日志里不可分辨
+          this.logger?.debug('LanceDB 压实完成：无可回收（碎片已并、无过期版本）');
         }
       })
       .catch(err => {
