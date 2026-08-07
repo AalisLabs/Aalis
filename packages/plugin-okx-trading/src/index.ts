@@ -25,14 +25,16 @@ export const configSchema: ConfigSchema = {
     required: true,
     secret: true,
     description: '在 OKX 设置中创建的 API Key',
+    default: '',
   },
-  secretKey: { type: 'string', label: 'Secret Key', required: true, secret: true },
+  secretKey: { type: 'string', label: 'Secret Key', required: true, secret: true, default: '' },
   passphrase: {
     type: 'string',
     label: 'Passphrase',
     required: true,
     secret: true,
     description: '创建 API 时设定的口令',
+    default: '',
   },
   baseUrl: {
     type: 'string',
@@ -74,19 +76,6 @@ export const configSchema: ConfigSchema = {
     default: 100,
     description: 'LLM 传入的 limit 会被 cap 到该值。OKX API 本身单页一般最多 100（个别接口 300）。',
   },
-};
-
-export const defaultConfig = {
-  apiKey: '',
-  secretKey: '',
-  passphrase: '',
-  baseUrl: 'https://www.okx.com',
-  demo: true,
-  confirmRealMoney: false,
-  timeoutMs: 15000,
-  enableTrading: true,
-  enableAlgo: false,
-  enableTransfer: false,
 };
 
 interface PluginConfig {

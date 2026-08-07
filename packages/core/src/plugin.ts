@@ -251,7 +251,7 @@ export class PluginManager {
    * 编译期保证两边不漂移。
    */
   getStatus(): PluginStatusEntry[] {
-    // 状态摘要只含内核事实。配置详情（config / configSchema / defaultConfig）与
+    // 状态摘要只含内核事实。配置详情（config / configSchema）与
     // WebUI 展示概念（subsystem/extends）由消费者经 getPlugin(instanceId) 从
     // entry.config / entry.module 读取——core 状态契约不携带。
     return [...this.plugins.entries()].map(([, entry]) => {

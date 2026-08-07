@@ -154,13 +154,10 @@ export const configSchema: ConfigSchema = {
   baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.example.com' },
 };
 
-export const defaultConfig = { baseUrl: 'https://api.example.com' };
-
 export default {
   name: '@your-scope/plugin-x',
   configSchema,
-  defaultConfig,
-  apply(ctx: Context, config: Record<string, unknown>) { /* config 已按 schema 校验+合并默认 */ },
+  apply(ctx: Context, config: Record<string, unknown>) { /* config 已含 schema 派生默认值（顶层合并） */ },
 } satisfies PluginModule;
 ```
 

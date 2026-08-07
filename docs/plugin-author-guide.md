@@ -271,7 +271,7 @@ hook **可以**安全访问 `ctx.getService('xxx')`——前提是你在 `inject
 
 - `secret: true` 字段会在 WebUI 中被遮罩 + 写回时跳过空值（防止误清空）
 - `required: true` 仅作前端校验，**core 不强制**——你 apply 内还是要自己判空
-- `default` 必须和 `defaultConfig[key]` 一致，否则 WebUI 显示和实际生效值不符
+- `default` 就是运行时默认值——configSchema 是配置的唯一声明来源，宿主用 `defaultsFrom(configSchema)` 派生默认配置（不存在第二份手抄的默认值对象）
 - 嵌套对象用 `SchemaGroup`，数组用 `SchemaArray`，不要用裸 JSON 字符串字段
 
 ### 配置变更如何触发 reload

@@ -37,13 +37,6 @@ export const subsystem = 'tools';
 
 export const inject = { required: ['tools'] };
 
-export const defaultConfig: Config = {
-  port: 7861,
-  bind: '127.0.0.1',
-  toolGroups: [],
-  allowRestricted: false,
-};
-
 export const configSchema: ConfigSchema = {
   port: {
     type: 'number',

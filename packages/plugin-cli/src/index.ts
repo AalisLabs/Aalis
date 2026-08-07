@@ -39,6 +39,18 @@ export const inject = {
 export const provides = ['cli', 'platform'];
 
 export const configSchema: ConfigSchema = {
+  sessionId: {
+    type: 'string',
+    label: '默认会话 ID',
+    default: 'cli-default',
+    description: 'CLI 聊天所在的会话标识。',
+  },
+  lastView: {
+    type: 'string',
+    label: '上次视图',
+    default: 'chat',
+    description: '运行时自动写回；startupView=last 时启动恢复到这里记录的视图。',
+  },
   prompt: { type: 'string', label: '提示符', default: 'You', description: '命令行输入提示符前缀' },
   maxLogEntries: {
     type: 'number',
@@ -60,7 +72,7 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
+const defaultConfig = {
   prompt: 'You',
   sessionId: 'cli-default',
   startupView: 'last',

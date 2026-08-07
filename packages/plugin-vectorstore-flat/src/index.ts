@@ -19,10 +19,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  path: 'data:/vectorstore',
-};
-
 // ===== 配置 =====
 
 interface VectorStoreConfig {

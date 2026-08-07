@@ -95,22 +95,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  groupManagement: { enabled: true },
-  groupInfo: { enabled: true },
-  account: { enabled: true },
-  interaction: { enabled: true },
-  sessionHistory: {
-    enabled: true,
-    maxLimit: 100,
-    defaultLimit: 20,
-    allowGroupReadPrivate: false,
-    allowCrossSelf: false,
-    allowCrossGroup: true,
-    allowCrossPrivate: false,
-  },
-};
-
 // ===== 辅助函数 =====
 
 /** 从 sessionId 解析 OneBot 连接信息 */

@@ -40,7 +40,7 @@ if (!mod || typeof mod.apply !== 'function' || !mod.name) {
 }
 ```
 
-也就是说，只要「有 `apply` 函数 + 有 `name`」就视为插件。其余字段（`provides` / `inject` / `displayName` / `reusable` / `core` / `configSchema` / `defaultConfig` / `requiresBounceOnDepChange`）都是可选的运行时元数据，定义见 `PluginModule` 接口。
+也就是说，只要「有 `apply` 函数 + 有 `name`」就视为插件。其余字段（`provides` / `inject` / `displayName` / `reusable` / `core` / `configSchema` / `requiresBounceOnDepChange`）都是可选的运行时元数据；`configSchema` 由 `@aalis/schema-config` 经 declaration merging 挂到 `PluginModule` 上，是配置的唯一声明来源。
 
 典型入口头部（以 `@aalis/plugin-storage-local` 为例）：
 

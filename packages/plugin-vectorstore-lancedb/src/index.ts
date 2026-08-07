@@ -42,13 +42,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  path: 'data:/lancedb',
-  tableName: 'vectors',
-  optimizeEvery: 500,
-  cleanupRetentionMinutes: 60,
-};
-
 // ===== 配置 =====
 
 interface LanceDBConfig {

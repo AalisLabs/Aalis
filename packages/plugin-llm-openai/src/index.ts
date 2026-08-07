@@ -73,17 +73,6 @@ export const configSchema: ConfigSchema = {
   contextLength: { type: 'number', label: '上下文长度', default: 128000, description: '模型上下文窗口大小' },
 };
 
-export const defaultConfig = {
-  baseUrl: 'https://api.openai.com',
-  customModels: '',
-  modelCapabilities: '',
-  providerCapabilities: '',
-  timeout: 120,
-  temperature: 0.7,
-  maxTokens: 4096,
-  contextLength: 128000,
-};
-
 // ===== 配置 =====
 
 interface OpenAIConfig {

@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 import { App, type PluginLoader } from '@aalis/core';
+import { defaultsFrom } from '@aalis/schema-config';
 import { installBootstrapBuffer } from './bootstrap-buffer.js';
 import { type ConfigSyncOptions, installConfigHotReload, syncPluginDefaults } from './config-sync.js';
 import { type ConsoleSinkHandle, installConsoleSink } from './console-sink.js';
@@ -108,6 +109,8 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     configProvider: provider,
     dataDir,
     pluginLoader: opts.pluginLoader ?? createNodeModulesPluginLoader(opts.projectDir),
+    // 默认值从 configSchema 派生（唯一声明来源）；core 不认识配置词汇，只调这个函数。
+    pluginDefaults: m => defaultsFrom(m.configSchema),
     restartStrategy: createProcessRespawnStrategy(),
     // 宿主层决定 dev/prod；core 不读 process.env
     devMode: opts.devMode ?? process.env.NODE_ENV !== 'production',

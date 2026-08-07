@@ -1705,6 +1705,7 @@ export const configSchema: ConfigSchema = {
     type: 'textarea',
     label: '行为准则提示词',
     description: '定义 Agent 的行为准则。当人设插件存在时，身份描述由人设提供，此处仅作为行为指令追加。',
+    default: '',
   },
   memoryTokenBudget: {
     type: 'number',
@@ -1744,15 +1745,6 @@ export const configSchema: ConfigSchema = {
     description:
       '估算输入 token 占上下文长度的比例上限 (0~1)。本次调用超过该比例才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示占满物理上限才裁剪；如需提前护航可调低。压缩触发请在“@aalis/plugin-memory-summary”中配置。',
   },
-};
-
-export const defaultConfig = {
-  systemPrompt: '',
-  memoryTokenBudget: 4096,
-  historyLimit: 50,
-  maxToolIterations: 30,
-  toolResultMaxRatio: 0.15,
-  trimThresholdRatio: 1.0,
 };
 
 // 暴露给 apply() 内部用 / 指令处理用的 DefaultAgent 内部方法窄化接口

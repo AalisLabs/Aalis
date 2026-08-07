@@ -95,7 +95,7 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
+const defaultConfig = {
   injectEnabled: true,
   scope: 'same-platform',
   limit: 30,

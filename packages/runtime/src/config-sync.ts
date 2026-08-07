@@ -1,7 +1,7 @@
 // ============================================================
 // config-sync —— 插件配置同步政策 + 配置热重载编排（宿主政策层）
 //
-//   - syncPluginDefaults：defaultConfig 回填 + 按 configSchema 裁剪未知字段
+//   - syncPluginDefaults：schema 派生默认值回填 + 按 configSchema 裁剪未知字段
 //   - handleConfigChanged / installConfigHotReload：配置外部变更的 diff + bounce 编排
 //
 // 这些是**政策**（要不要裁剪、怎么合并、何时 bounce），core 只持有机制
@@ -10,6 +10,7 @@
 // ============================================================
 
 import type { App } from '@aalis/core';
+import { defaultsFrom } from '@aalis/schema-config';
 
 export interface ConfigSyncOptions {
   /**
@@ -21,11 +22,11 @@ export interface ConfigSyncOptions {
 }
 
 /**
- * 将各插件 defaultConfig 中缺失的字段合并到配置；同时按 configSchema
+ * 将各插件 schema 派生默认值中缺失的字段合并到配置；同时按 configSchema
  * 移除多余字段。返回发生变更的插件 instanceId 列表。
  *
  * 副作用：对每个变化条目 setPluginConfig；若有变化最终调用 save()。
- * 插件的 defaultConfig / configSchema 经 `getPlugin(instanceId).module` 读取
+ * 插件的 configSchema 经 `getPlugin(instanceId).module` 读取
  * （core 的状态摘要不携带配置详情）。
  */
 export function syncPluginDefaults(app: App, opts?: ConfigSyncOptions): string[] {
@@ -35,13 +36,13 @@ export function syncPluginDefaults(app: App, opts?: ConfigSyncOptions): string[]
   for (const status of app.plugins.getStatus()) {
     const entry = app.plugins.getPlugin(status.instanceId);
     if (!entry) continue;
-    const defaults = entry.module.defaultConfig ?? {};
     const schema = entry.module.configSchema;
+    const defaults = defaultsFrom(schema);
     const fileConfig = config.getPluginConfig(status.instanceId);
 
     let merged = deepMergeDefaults(defaults, fileConfig);
     if (trim && schema && Object.keys(schema).length > 0) {
-      merged = removeExtraFields(merged, schema, defaults);
+      merged = removeExtraFields(merged, schema);
     }
 
     if (JSON.stringify(merged) !== JSON.stringify(fileConfig)) {
@@ -60,7 +61,7 @@ export function syncPluginDefaults(app: App, opts?: ConfigSyncOptions): string[]
 export async function handleConfigChanged(app: App, opts?: ConfigSyncOptions): Promise<void> {
   app.logger.info('检测到配置变更，正在热重载...');
   try {
-    // 与启动路径同一政策先同步一遍（补 defaultConfig 缺失字段 + 裁剪 schema 外字段）
+    // 与启动路径同一政策先同步一遍（补 schema 派生默认值缺失字段 + 裁剪 schema 外字段）
     // ——否则热重载读入的原始快照会绕过政策，内存态与启动态在字段清理上不一致。
     const synced = syncPluginDefaults(app, opts);
     for (const id of synced) app.logger.debug(`热重载配置同步: ${id}`);
@@ -69,7 +70,7 @@ export async function handleConfigChanged(app: App, opts?: ConfigSyncOptions): P
     for (const status of app.plugins.getStatus()) {
       const entry = app.plugins.getPlugin(status.instanceId);
       if (!entry) continue;
-      const defaults = entry.module.defaultConfig ?? {};
+      const defaults = defaultsFrom(entry.module.configSchema);
       const fileConfig = app.ctx.config.getPluginConfig(status.instanceId);
       const newConfig = { ...defaults, ...fileConfig };
       if (JSON.stringify(newConfig) !== JSON.stringify(entry.config)) {
@@ -124,30 +125,14 @@ function deepMergeDefaults(
 }
 
 /**
- * 移除多余字段（schema 按 opaque 数据处理，只认 `type: 'array'` 与嵌套 `fields`
- * 两种结构约定，不 import 表单词汇类型）。
- *
- * 合法字段 = `configSchema` 的键 ∪ `defaultConfig` 的键。两者职责不同——schema 描述
- * 「怎么渲染表单」，defaultConfig 声明「有哪些配置项及其默认值」——而 schema 的类型
- * 词汇表达不了自由标量数组（`array` 的 `items` 必填、`multiselect` 需静态 `options`），
- * 这类字段只能落在 defaultConfig 里。只认 schema 会把它们连同用户设的值一起裁掉：
- * plugin-tool-browser 的 SSRF 白名单 allowedHosts / allowedProtocols 就是这么被抹掉的，
- * 而源码注释还写着「请直接在 aalis.config.yaml 中编辑」；plugin-cli 的 lastView 同理被裁，
- * 导致 startupView='last' 永远记不住上次。
- *
- * 本函数的本意是清掉用户手写的错别字与废弃字段，不是清掉插件自己声明过的字段。
+ * 移除多余字段。configSchema 是插件配置的**唯一声明来源**（默认值也从它派生），
+ * 所以它的键集就是完整的白名单：不在 schema 里的字段，要么是用户手写的错别字，
+ * 要么是已废弃的旧字段，裁掉即归位。无 schema 的插件不裁（见调用方守卫）。
  */
-function removeExtraFields(
-  config: Record<string, unknown>,
-  schema: Record<string, unknown>,
-  defaults: Record<string, unknown> = {},
-): Record<string, unknown> {
+function removeExtraFields(config: Record<string, unknown>, schema: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(config)) {
-    if (!(key in schema)) {
-      if (key in defaults) result[key] = value;
-      continue;
-    }
+    if (!(key in schema)) continue;
     const schemaDef = schema[key] as Record<string, unknown>;
     if (schemaDef.type === 'array') {
       result[key] = value;
@@ -158,14 +143,7 @@ function removeExtraFields(
       typeof value === 'object' &&
       !Array.isArray(value)
     ) {
-      const nestedDefaults = defaults[key];
-      result[key] = removeExtraFields(
-        value as Record<string, unknown>,
-        schemaDef.fields as Record<string, unknown>,
-        nestedDefaults !== null && typeof nestedDefaults === 'object' && !Array.isArray(nestedDefaults)
-          ? (nestedDefaults as Record<string, unknown>)
-          : {},
-      );
+      result[key] = removeExtraFields(value as Record<string, unknown>, schemaDef.fields as Record<string, unknown>);
     } else {
       result[key] = value;
     }

@@ -46,10 +46,6 @@ export const subsystem = 'tools';
 
 export const inject = { required: ['tools'] };
 
-export const defaultConfig: Config = {
-  servers: [],
-};
-
 export const configSchema: ConfigSchema = {
   servers: {
     type: 'array',

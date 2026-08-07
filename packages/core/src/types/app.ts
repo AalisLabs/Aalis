@@ -42,7 +42,7 @@ export interface PluginStatusEntry {
   /** 可选依赖的服务名（来自 inject.optional） */
   optionalServices?: string[];
   error?: string;
-  // 配置详情（config / configSchema / defaultConfig）不属状态摘要——
+  // 配置详情（config / configSchema）不属状态摘要——
   // 消费者经 getPlugin(instanceId) 从 entry.config / entry.module 读取。
 }
 
