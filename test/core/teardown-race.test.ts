@@ -108,7 +108,7 @@ describe('App.stop 撞上在飞 recompute', () => {
       },
     };
     // 被 bounce 的第三个插件，制造在飞 recompute
-    const noisy: PluginModule = { name: 'noisy', apply() {}, defaultConfig: { n: 1 } };
+    const noisy: PluginModule = { name: 'noisy', apply() {} };
 
     await app.plugin(provider);
     await app.plugin(consumer);

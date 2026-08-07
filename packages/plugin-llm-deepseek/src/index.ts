@@ -112,17 +112,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  baseUrl: 'https://api.deepseek.com',
-  customModels: '',
-  modelCapabilities: '',
-  providerCapabilities: '',
-  timeout: 120,
-  temperature: 0.7,
-  maxTokens: 8192,
-  contextLength: 131072,
-};
-
 // ===== 配置 =====
 
 interface DeepSeekConfig {

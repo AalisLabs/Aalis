@@ -159,7 +159,7 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
+const defaultConfig = {
   skillsUri: 'data:/skills',
   maxSkillBytes: 200_000,
   maxSkills: 200,

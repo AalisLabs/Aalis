@@ -146,8 +146,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = defaultFlowControlConfig;
-
 // ----- 入口 -----
 
 export async function apply(ctx: Context, raw: Record<string, unknown>): Promise<void> {

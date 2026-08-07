@@ -36,14 +36,9 @@ export interface PluginModule {
    * 适合多实例的插件：LLM adapters、embedding adapters、platform adapters、memory backends。
    */
   reusable?: boolean;
-  /**
-   * 配置 Schema——core 视为 **opaque 数据**原样透传，不解释任何字段。
-   * 表单形状类型由 @aalis/schema-config 定义，渲染宿主与配置同步
-   * 政策（@aalis/runtime）自行消费。
-   */
-  configSchema?: Record<string, unknown>;
-  /** 插件默认配置，当主配置文件中无此插件配置时使用 */
-  defaultConfig?: Record<string, unknown>;
+  // 注：配置声明（configSchema）不在此列——那是表单/配置词汇，由 @aalis/schema-config
+  // 经 declaration merging 挂上，core 对其零感知；默认值由宿主派生后经
+  // `AppOptions.pluginDefaults` 注入（core 不认识任何配置词汇，也没有第二份默认值）。
   /**
    * 逃生舱：声明本插件在依赖的 provider 发生变化（被 dispose / 替换）时
    * 必须由 core 主动级联 dispose + reapply 才能恢复正确状态。

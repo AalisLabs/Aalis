@@ -30,10 +30,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  commandPrefix: '/',
-};
-
 // ===== 插件入口 =====
 
 /**

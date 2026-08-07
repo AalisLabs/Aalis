@@ -58,15 +58,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  enabled: true,
-  showToolNames: true,
-  maxDirectTools: 5,
-  maxSearchResults: 5,
-  alwaysDirectTools: [],
-  maxDiscoveredKeep: 20,
-};
-
 // ===== 常量 =====
 
 /** search_tools 自身的工具名 */

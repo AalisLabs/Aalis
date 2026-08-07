@@ -98,16 +98,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  python: { enabled: true, interpreter: 'python3' },
-  javascript: { enabled: true, interpreter: 'node' },
-  defaultTimeout: 60000,
-  maxTimeout: 300000,
-  maxOutputSize: 131072,
-  workingDirectory: 'workspace:/',
-  sandbox: { mode: 'auto', network: 'deny' },
-};
-
 // ===== 配置解析 =====
 
 interface CodeRunnerConfig {

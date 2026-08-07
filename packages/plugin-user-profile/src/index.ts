@@ -246,36 +246,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  extractEveryNMessages: 5,
-  historyForExtraction: 8,
-  maxFactsPerUser: 30,
-  maxFactCharsPerItem: 80,
-  maxOtherParticipants: 3,
-  maxFactsForOthers: 5,
-  injectFeelingsForOthers: false,
-  maxFeelingsForOthers: 3,
-  temporaryFactMaxAgeDays: 90,
-  relationScoreDecayPerDay: 0.5,
-  relationIncrementDirect: 1,
-  relationIncrementImmediate: 1.5,
-  relationIncrementInterval: 0.5,
-  relationIncrementWitness: 0.1,
-  allowGlobalBackfill: false,
-  enableAalisFeelings: false,
-  maxFeelingsPerUser: 15,
-  enableSelfProfile: false,
-  selfReflectEveryNMessages: 25,
-  selfReflectHistory: 16,
-  maxSelfFacts: 20,
-  enableInstructions: true,
-  instructionMinAuthority: 2,
-  instructionExtractEveryNMessages: 40,
-  instructionHistoryForExtraction: 20,
-  maxInstructions: 12,
-  maxInstructionCharsPerItem: 120,
-};
-
 /** 事实分类，用于 LLM 在同类下做覆写决策 */
 type FactCategory =
   | '兴趣爱好'

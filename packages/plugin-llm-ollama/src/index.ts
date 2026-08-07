@@ -73,19 +73,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  baseUrl: 'http://localhost:11434',
-  customModels: '',
-  modelCapabilities: '',
-  providerCapabilities: '',
-  timeout: 120,
-  temperature: 0.7,
-  maxTokens: 4096,
-  contextLength: 8192,
-  keepAlive: '5m',
-  thinking: true,
-};
-
 // ===== 配置 =====
 
 interface OllamaConfig {

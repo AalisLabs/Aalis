@@ -81,20 +81,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  workingDirectory: 'workspace:/',
-  shell: { enabled: true, defaultTimeout: 30000, maxTimeout: 300000, maxOutputSize: 65536 },
-  file: {
-    enabled: true,
-    maxReadSize: 1048576,
-    maxSearchBytes: 1048576,
-    maxWriteSize: 10485760,
-    allowedRoots: ['workspace', 'tmp'],
-  },
-  system: { enabled: true },
-  http: { enabled: true, defaultTimeout: 30000, maxResponseSize: 1048576 },
-};
-
 // ===== 配置类型 =====
 
 export interface ToolsBasicConfig {

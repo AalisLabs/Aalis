@@ -55,6 +55,7 @@ export const configSchema: ConfigSchema = {
   platformProfiles: {
     type: 'array',
     label: '平台默认配置',
+    default: [],
     description: '为每个平台设置默认的会话配置模板。新会话创建时自动应用对应平台的模板。',
     items: {
       platform: {
@@ -96,11 +97,6 @@ export const configSchema: ConfigSchema = {
       },
     },
   },
-};
-
-export const defaultConfig = {
-  defaults: {},
-  platformProfiles: [],
 };
 
 // ===== 常量 =====

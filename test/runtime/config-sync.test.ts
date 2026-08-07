@@ -1,6 +1,7 @@
 import { App, type PluginModule } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { installConfigHotReload, syncPluginDefaults } from '../../packages/runtime/src/config-sync.js';
+import { defaultsFrom } from '../../packages/schema-config/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 配置同步政策 + 热重载编排（宿主层）
@@ -14,8 +15,7 @@ function makeApp(pluginsConfig: Record<string, Record<string, unknown>>) {
 
 const p1Module: PluginModule = {
   name: 'p1',
-  defaultConfig: { known: 0 },
-  configSchema: { known: { type: 'number', label: 'K' } },
+  configSchema: { known: { type: 'number', label: 'K', default: 0 } },
   apply() {},
 };
 
@@ -36,30 +36,53 @@ describe('syncPluginDefaults 政策', () => {
     await app.stop();
   });
 
-  // 合法字段 = schema 的键 ∪ defaultConfig 的键。schema 的类型词汇表达不了自由标量
-  // 数组（array 的 items 必填、multiselect 需静态 options），这类字段只能落在
-  // defaultConfig 里；只认 schema 会把插件自己声明过的字段连同用户设的值一起裁掉。
-  it('保留只在 defaultConfig 声明的字段（schema 表达不了的类型）', async () => {
+  // configSchema 是唯一声明来源：默认值从 field.default 派生（defaultsFrom），
+  // 白名单就是 schema 的键集。以下覆盖用户点名的三条底线行为。
+  it('schema 派生默认值回填缺失字段（深合并，已有值不覆盖）', async () => {
+    const app = makeApp({ p2: { b: 2 } });
     const mod: PluginModule = {
-      name: 'p3',
-      // allowedHosts 是自由字符串数组，schema 无从表达，故只在 defaultConfig
-      defaultConfig: { blockPrivate: true, allowedHosts: [] as string[] },
-      configSchema: { blockPrivate: { type: 'boolean', label: '封锁内网' } },
+      name: 'p2',
+      configSchema: {
+        a: { type: 'number', label: 'A', default: 1 },
+        b: { type: 'number', label: 'B', default: 0 },
+      },
       apply() {},
     };
-    const app = makeApp({ p3: { blockPrivate: true, allowedHosts: ['example.com'], typo: 1 } });
     await app.plugin(mod);
     syncPluginDefaults(app);
-    // 用户设的白名单必须留下；schema 与 defaultConfig 都没声明的 typo 才该裁
-    expect(app.ctx.config.getPluginConfig('p3')).toEqual({ blockPrivate: true, allowedHosts: ['example.com'] });
+    expect(app.ctx.config.getPluginConfig('p2')).toEqual({ a: 1, b: 2 });
     await app.stop();
   });
 
-  it('插件自己写回配置的运行时字段不被裁掉（startupView=last 靠它记住上次）', async () => {
+  it('嵌套 SchemaGroup：缺失子键回填、schema 外子键裁掉', async () => {
+    const mod: PluginModule = {
+      name: 'p5',
+      configSchema: {
+        nested: {
+          label: 'N',
+          fields: {
+            shown: { type: 'number', label: 'S', default: 1 },
+            missing: { type: 'number', label: 'M', default: 7 },
+          },
+        },
+      },
+      apply() {},
+    };
+    const app = makeApp({ p5: { nested: { shown: 9, typo: 8 } } });
+    await app.plugin(mod);
+    syncPluginDefaults(app);
+    // missing 从 schema 默认值深回填；typo 不在 schema 里被裁掉
+    expect(app.ctx.config.getPluginConfig('p5')).toEqual({ nested: { shown: 9, missing: 7 } });
+    await app.stop();
+  });
+
+  it('运行时写回的字段只要在 schema 里声明过就不会被裁（lastView 型）', async () => {
     const mod: PluginModule = {
       name: 'p4',
-      defaultConfig: { startupView: 'last', lastView: 'chat' },
-      configSchema: { startupView: { type: 'string', label: '启动视图' } },
+      configSchema: {
+        startupView: { type: 'string', label: '启动视图', default: 'last' },
+        lastView: { type: 'string', label: '上次视图', default: 'chat' },
+      },
       apply() {},
     };
     const app = makeApp({ p4: { startupView: 'last', lastView: 'logs' } });
@@ -69,26 +92,21 @@ describe('syncPluginDefaults 政策', () => {
     await app.stop();
   });
 
-  it('嵌套 fields 同样按并集裁剪', async () => {
+  it('注册期注入：App 带 pluginDefaults 时 apply 直接收到派生默认值（首启即正确，不等落盘）', async () => {
+    let seen: Record<string, unknown> | undefined;
     const mod: PluginModule = {
-      name: 'p5',
-      defaultConfig: { nested: { shown: 1, hidden: 2 } },
-      configSchema: { nested: { label: 'N', fields: { shown: { type: 'number', label: 'S' } } } },
-      apply() {},
+      name: 'p6',
+      configSchema: { flag: { type: 'boolean', label: 'F', default: true } },
+      apply(_ctx, config) {
+        seen = config;
+      },
     };
-    const app = makeApp({ p5: { nested: { shown: 9, hidden: 8, typo: 7 } } });
+    const app = new App({
+      config: { name: 'T', logLevel: 'error', plugins: {} },
+      pluginDefaults: m => defaultsFrom(m.configSchema),
+    });
     await app.plugin(mod);
-    syncPluginDefaults(app);
-    expect(app.ctx.config.getPluginConfig('p5')).toEqual({ nested: { shown: 9, hidden: 8 } });
-    await app.stop();
-  });
-
-  it('defaultConfig 回填缺失字段（深合并,已有值不覆盖）', async () => {
-    const app = makeApp({ p2: { b: 2 } });
-    const mod: PluginModule = { name: 'p2', defaultConfig: { a: 1, b: 0 }, apply() {} };
-    await app.plugin(mod);
-    syncPluginDefaults(app);
-    expect(app.ctx.config.getPluginConfig('p2')).toEqual({ a: 1, b: 2 });
+    expect(seen).toEqual({ flag: true });
     await app.stop();
   });
 });

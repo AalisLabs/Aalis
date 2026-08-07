@@ -37,6 +37,14 @@ export interface AppOptions {
   dataDir?: string;
   /** 插件加载器；缺省=不自动加载任何插件（必须通过 `app.plugin(mod)` 手动注册） */
   pluginLoader?: PluginLoader;
+  /**
+   * 插件默认配置的派生器；缺省=无默认值（注册时只用文件配置与传入配置）。
+   *
+   * 配置声明是宿主词汇（configSchema，见 @aalis/schema-config），core 不解释——
+   * 宿主注入「从声明里派生默认值」的函数，core 只在注册合并时调用。
+   * runtime 注入的是 `m => defaultsFrom(m.configSchema)`。
+   */
+  pluginDefaults?: (module: PluginModule) => Record<string, unknown>;
   /** 重启策略；缺省=`restart()` 抛错 */
   restartStrategy?: RestartStrategy;
   /** 注入自定义事件总线 */
@@ -119,6 +127,7 @@ export class App {
   readonly contributions: ContributionRegistry;
 
   private readonly pluginLoader?: PluginLoader;
+  private pluginDefaults?: (module: PluginModule) => Record<string, unknown>;
   private readonly restartStrategy?: RestartStrategy;
   private readonly disposeTimeoutMs: number;
   /** 已发现插件的描述符索引（按模块名）。用于热重载时拿到 source/metadata。 */
@@ -157,6 +166,7 @@ export class App {
     this.hooks.onStall ??= (hook, contextId, skipped) =>
       this.logger.warn(`钩子 ${hook}: handler(来自 ${contextId}) 未调用 next()，其后 ${skipped} 个 handler 被跳过`);
     this.pluginLoader = options.pluginLoader;
+    this.pluginDefaults = options.pluginDefaults;
     this.restartStrategy = options.restartStrategy;
     this.disposeTimeoutMs = options.disposeTimeoutMs ?? 5000;
 
@@ -207,8 +217,9 @@ export class App {
    */
   async plugin(module: PluginModule, config?: Record<string, unknown>, instanceId?: string): Promise<void> {
     const id = instanceId ?? module.name;
-    // 合并优先级: 插件默认配置 ← 配置文件 ← 代码传入
-    const defaults = module.defaultConfig ?? {};
+    // 合并优先级: 宿主派生的默认配置 ← 配置文件 ← 代码传入。
+    // 这里只做顶层浅合并——嵌套块的深回填属宿主的配置文件政策，不在注册机制内。
+    const defaults = this.pluginDefaults?.(module) ?? {};
     const fileConfig = this.ctx.config.getPluginConfig(id);
     const mergedConfig = { ...defaults, ...fileConfig, ...config };
     await this.plugins.register(module, mergedConfig, id);
@@ -274,7 +285,7 @@ export class App {
       }
     }
 
-    // 配置同步政策（defaultConfig 回填 / schema 裁剪）属宿主层，由宿主在本方法之后自行执行。
+    // 配置同步政策（默认值回填 / schema 裁剪）属宿主层，由宿主在本方法之后自行执行。
   }
 
   /**

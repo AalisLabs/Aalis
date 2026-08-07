@@ -266,11 +266,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  rangeQueryLimit: 500,
-  crossSessionMaxLimit: 1000,
-};
-
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
