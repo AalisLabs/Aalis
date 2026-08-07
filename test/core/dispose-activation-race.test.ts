@@ -253,3 +253,43 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
     await activating;
   });
 });
+
+// ════════════════════════════════════════════════════════════
+// 清理项的诊断标注。
+//
+// disposeAsync 超时告警本来只说「有东西超时了」，不说是哪一项——而它的文档
+// 写着「warn 点名」。卡住时既不知道是哪个插件的哪个资源，也无从下手。
+// ════════════════════════════════════════════════════════════
+describe('清理超时/抛错时点名', () => {
+  /** 造一个日志可截获的 ctx —— 诊断输出走 logger，不走返回值 */
+  function ctxWithLogSink(): { ctx: Context; lines: string[] } {
+    const lines: string[] = [];
+    const sink = (m: unknown, e?: unknown) => lines.push(`${String(m)} ${e instanceof Error ? e.message : ''}`);
+    const ctx = new Context({
+      id: 'p',
+      events: new EventBus(),
+      services: new ServiceContainer(),
+      hooks: new HookRegistry(),
+      contributions: new ContributionRegistry(),
+      logger: { warn: sink, debug: sink, info: sink, error: sink } as never,
+      config: new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} }),
+    });
+    return { ctx, lines };
+  }
+
+  it('有 label 时点 label', async () => {
+    const { ctx, lines } = ctxWithLogSink();
+    ctx.onDispose(() => new Promise(() => {}), 'lancedb-table');
+    await ctx.disposeAsync(20);
+    expect(lines.join('\n')).toMatch(/\[lancedb-table\]/);
+  });
+
+  it('清理抛错时也点名，不是一句无主的「已忽略」', () => {
+    const { ctx, lines } = ctxWithLogSink();
+    ctx.onDispose(() => {
+      throw new Error('boom');
+    }, 'mongo-client');
+    ctx.dispose();
+    expect(lines.join('\n')).toMatch(/\[mongo-client\].*boom|boom.*\[mongo-client\]/);
+  });
+});

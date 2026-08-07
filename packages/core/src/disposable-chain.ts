@@ -1,10 +1,22 @@
 import type { Logger } from './logger.js';
 
+interface Entry {
+  fn: () => unknown;
+  /** 可选来源标注，仅用于诊断日志（超时/抛错时点名是哪一项）。 */
+  label?: string;
+}
+
+/** 诊断用的条目标识：有 label 用 label，否则退到链内序号；两者都没有则不加缀。 */
+function describe(label?: string, index?: number): string {
+  if (label) return ` [${label}]`;
+  return index === undefined ? '' : ` [#${index}]`;
+}
+
 /**
  * 一次性清理器链
  *
  * 用途：Context 及其他需要累积「注册 → 卸载」副作用的场景，提供：
- * - `push(fn)` 追加清理函数
+ * - `push(fn, label?)` 追加清理函数（label 仅进诊断日志）
  * - `remove(fn)` 精确移除单个清理函数（不执行）
  * - `dispose()` 同步逆序调用所有清理函数并清空；期间任一抛错不影响其他
  * - `disposeAsync(timeoutMs?)` 逆序**串行等待**每个清理函数（含异步返回值）
@@ -13,13 +25,13 @@ import type { Logger } from './logger.js';
  * 「忘记 push / 忘记清空 / 错误处理不一致」等低级 bug。
  */
 export class DisposableChain {
-  private _items: (() => unknown)[] = [];
+  private _items: Entry[] = [];
   private _disposed = false;
 
   constructor(private readonly logger?: Logger) {}
 
   /** 追加一个清理函数。dispose 后追加会立刻执行（异步返回值不等待）。 */
-  push(fn: () => unknown): void {
+  push(fn: () => unknown, label?: string): void {
     if (this._disposed) {
       try {
         fn();
@@ -28,12 +40,12 @@ export class DisposableChain {
       }
       return;
     }
-    this._items.push(fn);
+    this._items.push({ fn, label });
   }
 
   /** 精确移除单个 disposable（不执行）。用于缓冲项"取消"场景。 */
   remove(fn: () => unknown): boolean {
-    const idx = this._items.indexOf(fn);
+    const idx = this._items.findIndex(e => e.fn === fn);
     if (idx < 0) return false;
     this._items.splice(idx, 1);
     return true;
@@ -57,7 +69,7 @@ export class DisposableChain {
    * 则这些 remove 作用于空数组、安全 no-op（返回 false，符合各自移除点注释
    * 的预期），快照索引也始终稳定。
    */
-  private take(): (() => unknown)[] {
+  private take(): Entry[] {
     this._disposed = true;
     const items = this._items;
     this._items = [];
@@ -74,9 +86,9 @@ export class DisposableChain {
     const items = this.take();
     for (let i = items.length - 1; i >= 0; i--) {
       try {
-        items[i]();
+        items[i].fn();
       } catch (err) {
-        this.logger?.debug('DisposableChain: dispose 抛出，已忽略:', err);
+        this.logger?.debug(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
       }
     }
   }
@@ -96,12 +108,12 @@ export class DisposableChain {
     const items = this.take();
     for (let i = items.length - 1; i >= 0; i--) {
       try {
-        const ret = items[i]();
+        const ret = items[i].fn();
         if (ret && typeof (ret as PromiseLike<unknown>).then === 'function') {
-          await this.awaitWithTimeout(Promise.resolve(ret), timeoutMs);
+          await this.awaitWithTimeout(Promise.resolve(ret), timeoutMs, describe(items[i].label, i));
         }
       } catch (err) {
-        this.logger?.debug('DisposableChain: dispose 抛出，已忽略:', err);
+        this.logger?.debug(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
       }
     }
   }
@@ -113,9 +125,9 @@ export class DisposableChain {
    * 是所有 JS 运行时（浏览器/Node/Deno/Worker）的共有全局，非 `node:` 专属，
    * 不引入环境假设。
    */
-  private async awaitWithTimeout(p: Promise<unknown>, timeoutMs?: number): Promise<void> {
+  private async awaitWithTimeout(p: Promise<unknown>, timeoutMs?: number, who = ''): Promise<void> {
     await awaitWithTimeout(p, timeoutMs, () =>
-      this.logger?.warn(`DisposableChain: 异步清理超过 ${timeoutMs}ms，放弃等待，继续后续清理`),
+      this.logger?.warn(`DisposableChain: 异步清理${who} 超过 ${timeoutMs}ms，放弃等待，继续后续清理`),
     );
   }
 }

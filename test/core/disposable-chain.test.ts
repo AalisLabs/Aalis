@@ -135,7 +135,9 @@ describe('DisposableChain.disposeAsync', () => {
     chain.push(() => order.push('late'));
     await chain.disposeAsync(30);
     expect(order).toEqual(['late', 'stuck:start', 'early']); // 卡住项之后（逆序意义上）的 early 仍执行
+    // 同时钉住序号兜底：全仓 78 处 onDispose 不传 label，[#i] 是它们唯一能拿到的标识
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('超过 30ms'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[#'));
   });
 
   it('同步 dispose() 不等待异步返回值（既有语义不变）', async () => {
