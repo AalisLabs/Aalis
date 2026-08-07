@@ -98,6 +98,7 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
       'provide',
       'runHook',
       'serviceContainer', // @internal host 巡视
+      'trackActivation', // @internal 激活路径注入 apply 在飞 promise，供 disposeAsync 先等初始化落定
       'trackDisposable', // 私有实现（JS 层可见,不属承诺面）
       'unpreferService',
       'useModule',
