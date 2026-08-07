@@ -65,6 +65,29 @@ export class Context {
    * join 而非早退。
    */
   private _inflightTeardown?: Promise<void>;
+  /**
+   * 本 ctx 的初始化在飞标记（插件 apply 的 promise，已抹平成永不 reject）。
+   *
+   * 存在的理由是一个真实竞态：插件在 apply 里**先 await 拿资源、再挂
+   * `onDispose`**（`await client.connect()` → `ctx.onDispose(() => client.close())`
+   * 是全仓最常见的写法）。若拆卸恰好落在这个窗口里，disposer 到达时清理链
+   * 已排空，`DisposableChain.push` 走 post-dispose 分支就地执行它——资源最终
+   * 会关，**但异步返回值不被等待**，于是 `disposeAsync` 的「返回时异步清理
+   * 已完成」承诺落空。
+   *
+   * 可达面要说清：`PluginManager` 那几条路径当前够不到这个窗口——apply 在飞时
+   * entry 处于 `'activating'`，而 unload / disablePlugin / bouncePlugin / recompute /
+   * `evictDownstreamConsumers` 全部只对 `'active'` 动手，`App.stop` 另有 `idle()`
+   * 挡在前面。本机制守的是 `disposeAsync` 这个公开契约本身（宿主直调）与
+   * `useModule` 的沙盒子 ctx 级联，不依赖那几道闸。
+   *
+   * 记住 apply 的 promise 后，`disposeAsync` 可以先等它落定再排空链——迟到的
+   * disposer 就走**正常注册路径**进链，被正常 await。插件侧零改动。
+   *
+   * 抹平成永不 reject：apply 失败时这里只关心「跑完了没」，失败本身由
+   * activatePlugin 的 catch 处理，不该在拆卸路径上二次抛出。
+   */
+  private _activation?: Promise<void>;
 
   constructor(options: {
     id: string;
@@ -561,7 +584,10 @@ export class Context {
 
     const child = this.fork(childId);
     try {
-      await module.apply(child, config);
+      // 登记后再 await，让父 ctx 级联拆卸时能先等子 ctx 初始化落定（见 {@link trackActivation}）
+      const applying = Promise.resolve(module.apply(child, config));
+      child.trackActivation(applying);
+      await applying;
     } catch (err) {
       this._moduleIds.delete(childId);
       child.dispose();
@@ -615,6 +641,33 @@ export class Context {
   /** @internal 当前 disposable 链长度（诊断 / 测试用：检测 provide/whenService 的闭包是否如期自移除）。 */
   get disposableCount(): number {
     return this._disposables.size;
+  }
+
+  /**
+   * @internal 登记本 ctx 的初始化在飞 promise（见 {@link _activation}）。
+   *
+   * 仅由激活路径（`activatePlugin`）与 `Context.useModule` 调用，传入 `module.apply(...)`
+   * 的返回值；插件侧不得调用（非契约面）。
+   * 调用方仍要自行 await 该 promise 并处理其失败——本方法只负责让拆卸路径
+   * 知道「初始化还没跑完」，不改变激活语义。
+   *
+   * ⚠． 被登记的 apply **不得** await 任何最终落到本 ctx 或其祖先拆卸上的调用
+   *    （`disposeAsync` / `plugins.unload|bouncePlugin|disablePlugin` / `app.stop`
+   *    / `plugins.idle`）——拆卸正等着它返回，await 它即自等自。与 `onDispose`
+   *    回调的约束同源。`disposeAsync(timeoutMs)` 的超时是这条的兜底而非豁免。
+   */
+  trackActivation(applying: Promise<unknown>): void {
+    const settled = applying.then(
+      () => {},
+      () => {},
+    );
+    this._activation = settled;
+    // 落定即摘：不摘则每个插件 ctx 长期持有一个已 resolve 的 promise，且
+    // 拆卸路径要多绕一个微任务。恒等卫防止摘掉后来者（同 ctx 理论上不会
+    // 二次激活，但 recompute 路径演进后不保证）。
+    settled.then(() => {
+      if (this._activation === settled) this._activation = undefined;
+    });
   }
 
   /**
@@ -681,6 +734,27 @@ export class Context {
   private async _teardown(wait: boolean, timeoutMs?: number): Promise<void> {
     if (this._disposed) return;
     this._disposed = true;
+
+    // 等初始化落定，再动任何拆卸动作（见 _activation）。
+    //
+    // 位置必须在这里——排在 unregisterByContext **之前**：`provide` 没有 disposed
+    // 守卫，apply 的续段仍可能注册服务，先等它才走正常注册路径、在本次清理里被
+    // 正常注销（先注销再等则落到 post-dispose 分支就地执行，多出一对空转的
+    // service:registered / unregistered 事件）。同理排在子上下文销毁之前：`fork`
+    // 也没有 disposed 守卫，续段 fork 出的 child 必须能被下面那份快照收进去
+    // （`useModule` 另有硬守卫，续段调它是抛错而非建 ctx）。
+    //
+    // 仅异步路径等待。同步 `dispose()` 承诺「首个 await 前同步执行完」，可观察
+    // 时序与纯同步实现一致——在这里插 await 会打破它，且同步路径本就不等待任何
+    // 异步清理，等 apply 无意义。
+    if (wait && this._activation) {
+      await awaitWithTimeout(this._activation, timeoutMs, () =>
+        this.logger.warn(
+          `Context "${this.id}": 等待初始化落定超过 ${timeoutMs}ms，放弃等待并继续拆卸` +
+            `（该插件 apply 中在飞的资源获取，其 onDispose 可能赶不上本次清理链）`,
+        ),
+      );
+    }
 
     // 先销毁子上下文（复制避免迭代中修改 Set）
     const children = [...this._children];
