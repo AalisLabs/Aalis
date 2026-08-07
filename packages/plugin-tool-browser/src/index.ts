@@ -1,5 +1,5 @@
 import { createProcessGateway } from '@aalis/api-process';
-import { useToolService } from '@aalis/api-tools';
+import { useToolService, wrapUntrustedContent } from '@aalis/api-tools';
 import type { WebuiPage } from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（allowCustom）
 import { useWebuiService } from '@aalis/api-webui';
 import type { Context, PluginModule } from '@aalis/core';
@@ -304,13 +304,13 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           await slot.page.waitForSelector(args.waitFor as string, { timeout: config.defaultTimeout });
         }
         slot.url = slot.page.url();
-        slot.title = await slot.page.title();
+        slot.title = (await slot.page.title()).slice(0, 300); // 截断防超长 <title> 夹带注入
         const text = await slot.page.evaluate(() => document.body?.innerText ?? '');
         return JSON.stringify({
           pageId: id,
           title: slot.title,
           url: slot.url,
-          text: truncate(text),
+          text: wrapUntrustedContent(truncate(text), `网页 ${slot.url}`),
         });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
@@ -350,7 +350,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           text = await slot.page.evaluate(() => document.body?.innerText ?? '');
         }
         slot.lastAccess = Date.now();
-        return JSON.stringify({ text: truncate(text) });
+        return JSON.stringify({ text: wrapUntrustedContent(truncate(text), `网页 ${slot.url}`) });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
       }
@@ -384,7 +384,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         await slot.page.click(args.selector as string);
         await slot.page.waitForNetworkIdle({ timeout: 5000 }).catch(() => {});
         slot.url = slot.page.url();
-        slot.title = await slot.page.title();
+        slot.title = (await slot.page.title()).slice(0, 300); // 截断防超长 <title> 夹带注入
         slot.lastAccess = Date.now();
         return JSON.stringify({ ok: true, url: slot.url, title: slot.title });
       } catch (err) {
@@ -514,7 +514,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           }));
         }, limit);
         slot.lastAccess = Date.now();
-        return JSON.stringify({ links });
+        return JSON.stringify({ links: wrapUntrustedContent(JSON.stringify(links), `网页 ${slot.url}`) });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
       }
