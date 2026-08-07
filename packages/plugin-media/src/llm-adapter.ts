@@ -308,11 +308,13 @@ function wrapLLMAsProcessor(
       // 视频帧已被预处理拆为图片再调用本方法。
       if (cap === 'vision' || cap === 'document.image' || cap === 'video.passthrough') {
         const images = await Promise.all(input.attachments.map(a => imageToBase64DataUrl(a.data, a.mimeType)));
-        const sizesKB = images.map(s => Math.round((s.length * 3) / 4 / 1024));
+        // data URL 才按 base64 估字节；http(s) 是透传给 provider 自行下载的，
+        // 拿它的字符串长度套 base64 公式会算出 0KB，与「图片确实是空的」无从区分。
+        const sizes = images.map(s => (s.startsWith('data:') ? `${Math.round((s.length * 3) / 4 / 1024)}KB` : 'URL'));
         const messages: Message[] = [{ role: 'user', content: prompt, images }];
         const t0 = Date.now();
         _ctx.logger.info(
-          `[${cap}.describe] 调用 ${llm.id}，${images.length} 张图 (${sizesKB.join('/')}KB), ` +
+          `[${cap}.describe] 调用 ${llm.id}，${images.length} 张图 (${sizes.join('/')}), ` +
             `prompt=${prompt.length}字, maxTokens=${maxTokens}, think=${think}`,
         );
         const resp = await llm.chat({ messages, maxTokens, think });
@@ -322,7 +324,7 @@ function wrapLLMAsProcessor(
         if (rawLen === 0) {
           const usedPct = usedTokens && maxTokens > 0 ? Math.round((usedTokens / maxTokens) * 100) : -1;
           _ctx.logger.warn(
-            `[${cap}.describe] ${llm.id} 空响应：${Date.now() - t0}ms, sizesKB=[${sizesKB.join('/')}], ` +
+            `[${cap}.describe] ${llm.id} 空响应：${Date.now() - t0}ms, 图源=[${sizes.join('/')}], ` +
               `prompt=${prompt.length}字, tokens=${usedTokens ?? '?'}/${maxTokens}` +
               (usedPct >= 80
                 ? `（占用 ${usedPct}%，可能是 maxTokens 不足导致 completion 被截空）`
