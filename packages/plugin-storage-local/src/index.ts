@@ -142,7 +142,7 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
+const defaultConfig = {
   roots: [
     {
       name: 'workspace',

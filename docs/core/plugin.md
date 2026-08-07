@@ -23,7 +23,6 @@ interface PluginModule {
   requiresBounceOnDepChange?: boolean;
   /** core 视为 opaque 数据原样透传；形状类型 ConfigSchema 在 @aalis/schema-config */
   configSchema?: Record<string, unknown>;
-  defaultConfig?: Record<string, unknown>;
   apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
 }
 ```

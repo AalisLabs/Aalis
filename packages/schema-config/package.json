@@ -1,6 +1,6 @@
 {
   "name": "@aalis/schema-config",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -23,7 +23,8 @@
     "dev": "tsc --watch"
   },
   "devDependencies": {
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "@aalis/core": "workspace:*"
   },
   "aalis": {
     "types": true
@@ -31,5 +32,8 @@
   "keywords": [
     "aalis",
     "aalis-schema"
-  ]
+  ],
+  "peerDependencies": {
+    "@aalis/core": ">=0.11.0 <1.0.0"
+  }
 }

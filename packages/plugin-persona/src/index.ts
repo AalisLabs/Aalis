@@ -89,14 +89,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  persona: 'default',
-  personasDir: 'data/personas',
-  statePersistence: false,
-  timeInjection: true,
-  timeZone: '',
-};
-
 // ===== 角色卡格式 =====
 
 interface PersonaCard {

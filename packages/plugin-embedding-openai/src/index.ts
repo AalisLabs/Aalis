@@ -23,11 +23,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  baseUrl: 'https://api.openai.com',
-  model: 'text-embedding-3-small',
-};
-
 // ===== 服务实现 =====
 
 class OpenAIEmbeddingService implements EmbeddingService {

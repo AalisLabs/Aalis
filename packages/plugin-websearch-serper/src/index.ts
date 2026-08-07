@@ -48,15 +48,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  maxPerMinute: 10,
-  maxPerDay: 100,
-  maxConcurrent: 3,
-  defaultNumResults: 5,
-  enableCompression: false,
-  compressionPrompt: '',
-};
-
 // ===== 配置 =====
 
 interface WebSearchConfig {

@@ -65,6 +65,7 @@ export const configSchema: ConfigSchema = {
     type: 'string',
     label: '摘要生成提示词',
     description: '用于指导 LLM 生成摘要的系统提示词',
+    default: '',
   },
   summaryModelMode: {
     type: 'select',
@@ -82,15 +83,6 @@ export const configSchema: ConfigSchema = {
     label: '摘要模型',
     description: '仅当 summaryModelMode=custom 时生效；provider 为 LLM 插件实例 contextId，model 为实例内某个模型名。',
   },
-};
-
-export const defaultConfig = {
-  threshold: 30,
-  keepRecent: 20,
-  summaryTokenRatio: 0.05,
-  autoCompressThreshold: 0.7,
-  summaryPrompt: '',
-  summaryModelMode: 'global',
 };
 
 // ===== 配置 =====

@@ -238,26 +238,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  vision: { mode: 'describe', maxTokens: 300, think: false, prompt: '', batchPrompt: '' },
-  audio: { mode: 'enabled', language: '', maxTokens: 1024, think: true, prompt: '' },
-  video: {
-    mode: 'frames+asr',
-    maxFrames: 5,
-    maxTokens: 512,
-    think: false,
-    prompt: '',
-    framesHint: '',
-    animatedPrompt: '',
-    framePrefix: '[画面] ',
-    audioTrackPrefix: '[音轨] ',
-  },
-  document: { extractImages: false },
-  animatedImage: { maxFrames: 5 },
-  contextHistory: { enabled: true, maxMessages: 4 },
-  senderContext: { enabled: true, profileMaxChars: 200 },
-};
-
 function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
   const vision = (raw.vision ?? {}) as Record<string, unknown>;
   const audio = (raw.audio ?? {}) as Record<string, unknown>;

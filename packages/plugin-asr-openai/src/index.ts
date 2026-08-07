@@ -35,7 +35,7 @@ export const configSchema: ConfigSchema = {
   priority: { type: 'number', label: '优先级 (越大越优先)', default: 50 },
 };
 
-export const defaultConfig: Cfg = {
+const defaultConfig: Cfg = {
   apiKey: '',
   baseUrl: 'https://api.openai.com/v1',
   model: 'whisper-1',

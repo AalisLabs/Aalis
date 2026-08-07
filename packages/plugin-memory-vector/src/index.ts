@@ -106,25 +106,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  search: {
-    topK: 5,
-    timeWeight: 0.3,
-    userPriorityBoost: 2.0,
-    perItemMaxChars: 0,
-    minScore: 0,
-  },
-  contextExpand: {
-    window: 2,
-    crossSession: true,
-  },
-  indexing: {
-    concurrency: 10,
-    maxQueueSize: 500,
-  },
-  crossSessionMode: 'all',
-};
-
 // ===== 配置 =====
 
 type CrossSessionMode = 'isolated' | 'user' | 'platform' | 'all';
