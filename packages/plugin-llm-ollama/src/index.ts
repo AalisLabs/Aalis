@@ -257,7 +257,9 @@ class OllamaClient {
     }
     // 与 chatStream 一致先走 prepareLLMMessages（归一 role + 拼 kind/自定义 role 内容前缀），否则非流式丢
     // [系统通知]/[跨会话委派] 等前缀。
-    const messages = await Promise.all(prepareLLMMessages(request.messages).map(m => this.toOllamaMessage(m)));
+    const messages = await Promise.all(
+      prepareLLMMessages(request.messages).map(m => this.toOllamaMessage(m, request.requireImages === true)),
+    );
     const tools = request.tools?.map(t => this.toOllamaTool(t));
 
     const body: Record<string, unknown> = {
@@ -355,7 +357,9 @@ class OllamaClient {
       };
       return;
     }
-    const messages = await Promise.all(prepareLLMMessages(request.messages).map(m => this.toOllamaMessage(m)));
+    const messages = await Promise.all(
+      prepareLLMMessages(request.messages).map(m => this.toOllamaMessage(m, request.requireImages === true)),
+    );
     const tools = request.tools?.map(t => this.toOllamaTool(t));
 
     const body: Record<string, unknown> = {
@@ -643,11 +647,30 @@ class OllamaClient {
   }
 
   /**
+   * 解析一条消息里的全部图片，返回成功的那些。
+   *
+   * `requireImages` 为真时一张都拿不到就抛：视觉识别这类调用里图片就是全部内容，
+   * 省掉它降级成纯文本，模型只看得到 prompt 里的占位文字，会照着编出一段描述，
+   * 而调用方拿到非空内容便记成识别成功——失败被伪装成幻觉，比报错难查得多。
+   * 为假时（顺手带图）保持宽松，warn 后按剩余的继续，不打断这一轮。
+   */
+  private async resolveImages(images: string[], requireImages: boolean): Promise<string[]> {
+    const resolved = await Promise.all(images.map(img => this.resolveImage(img)));
+    const valid = resolved.filter((r): r is string => r !== null);
+    if (valid.length === images.length) return valid;
+    if (valid.length === 0 && requireImages) {
+      throw new Error(`图片全部获取失败（共 ${images.length} 张），拒绝降级为纯文本请求`);
+    }
+    this.logger.warn(`图片获取失败 ${images.length - valid.length}/${images.length} 张，按剩余的继续`);
+    return valid;
+  }
+
+  /**
    * 转换为 Ollama API 消息格式
    * Ollama 的图片通过 images 字段传递 base64 数据（或 URL）
    * 工具调用结果通过 role: tool 传递
    */
-  private async toOllamaMessage(msg: Message): Promise<OllamaMessage> {
+  private async toOllamaMessage(msg: Message, requireImages = false): Promise<OllamaMessage> {
     // 调用方已经 prepareLLMMessages 处理过：role 已是 WellKnownRole，自定义 role / kind
     // 对应的前缀已拼接进 content。这里只需透传。
     const ollamaMsg: OllamaMessage = {
@@ -662,8 +685,7 @@ class OllamaClient {
 
     // 多模态：Ollama 支持 images 字段（base64 或文件路径）
     if (msg.images && msg.images.length > 0 && msg.role === 'user') {
-      const resolved = await Promise.all(msg.images.map(img => this.resolveImage(img)));
-      const valid = resolved.filter((r): r is string => r !== null);
+      const valid = await this.resolveImages(msg.images, requireImages);
       if (valid.length > 0) ollamaMsg.images = valid;
     }
 
@@ -711,13 +733,11 @@ class OllamaClient {
         // Modality order：Ollama 官方 best practice 要求 image/audio content
         // 必须在 text 之前。参见 /memories/repo/aalis-ollama-gemma4-audio.md
         if (m.images && m.images.length > 0 && m.role === 'user') {
-          for (const img of m.images) {
-            const url = await this.resolveImage(img);
-            if (url)
-              blocks.push({
-                type: 'image_url',
-                image_url: { url: url.startsWith('http') ? url : `data:image/png;base64,${url}` },
-              });
+          for (const url of await this.resolveImages(m.images, request.requireImages === true)) {
+            blocks.push({
+              type: 'image_url',
+              image_url: { url: url.startsWith('http') ? url : `data:image/png;base64,${url}` },
+            });
           }
         }
         if (m.audios && m.audios.length > 0 && m.role === 'user') {

@@ -19,6 +19,15 @@ import { isStorageUri, parseUriRoot } from '@aalis/api-storage';
 import type { Context, Logger } from '@aalis/core';
 import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
 import { AttachmentRefKind, formatAttachmentRef } from '@aalis/schema-message';
+
+/** 附件 kind → 中文显示名。复用 schema-message 的单一来源，避免 `[audio：…]` 这种中英混排。 */
+const ATTACHMENT_KIND_LABEL: Record<string, string> = {
+  image: AttachmentRefKind.Image,
+  audio: AttachmentRefKind.Audio,
+  video: AttachmentRefKind.Video,
+  file: AttachmentRefKind.File,
+};
+
 import { lookupCachedDescription, rememberDescription } from './cache.js';
 import { buildIncomingImageContext } from './context.js';
 import {
@@ -411,6 +420,10 @@ export class MediaServiceImpl implements MediaService {
       } catch (err) {
         item.error = err instanceof Error ? err.message : String(err);
         this.logger.warn(`附件处理失败 [${att.kind}]: ${item.error}`);
+        // 把失败如实写进描述位：留空的话渲染出来只是个裸占位，LLM 无从区分
+        // 「这里有张图但没识别出来」和「这条消息本来就没图」。写一句实话，
+        // 它才能据此追问或跳过，而不是被一段幻觉描述当成事实喂进上下文。
+        descriptions[i] = `[${ATTACHMENT_KIND_LABEL[att.kind]}：获取或识别失败，内容未知]`;
       }
       report.items.push(item);
     }

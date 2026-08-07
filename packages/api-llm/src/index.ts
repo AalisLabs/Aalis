@@ -83,6 +83,18 @@ export interface ChatModelRequest {
   maxTokens?: number;
   signal?: AbortSignal;
   think?: boolean;
+  /**
+   * 消息里的图片是否为必需载荷。缺省 false。
+   *
+   * false（顺手带图，如把群消息附件一并递给主模型）：图片取不到时 provider 应
+   * warn 并按纯文本继续，不打断这一轮。
+   * true（图片就是全部内容，如视觉识别）：一张都取不到就该抛——否则视觉模型只
+   * 看得到 prompt 里的占位文字，会照着编出一段描述，而调用方拿到非空内容便记成
+   * 成功，失败被伪装成幻觉。
+   *
+   * 这个判断只有调用方做得了，provider 无从区分两种语义。
+   */
+  requireImages?: boolean;
 }
 
 /**
