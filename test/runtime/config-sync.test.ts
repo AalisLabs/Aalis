@@ -36,6 +36,53 @@ describe('syncPluginDefaults 政策', () => {
     await app.stop();
   });
 
+  // 合法字段 = schema 的键 ∪ defaultConfig 的键。schema 的类型词汇表达不了自由标量
+  // 数组（array 的 items 必填、multiselect 需静态 options），这类字段只能落在
+  // defaultConfig 里；只认 schema 会把插件自己声明过的字段连同用户设的值一起裁掉。
+  it('保留只在 defaultConfig 声明的字段（schema 表达不了的类型）', async () => {
+    const mod: PluginModule = {
+      name: 'p3',
+      // allowedHosts 是自由字符串数组，schema 无从表达，故只在 defaultConfig
+      defaultConfig: { blockPrivate: true, allowedHosts: [] as string[] },
+      configSchema: { blockPrivate: { type: 'boolean', label: '封锁内网' } },
+      apply() {},
+    };
+    const app = makeApp({ p3: { blockPrivate: true, allowedHosts: ['example.com'], typo: 1 } });
+    await app.plugin(mod);
+    syncPluginDefaults(app);
+    // 用户设的白名单必须留下；schema 与 defaultConfig 都没声明的 typo 才该裁
+    expect(app.ctx.config.getPluginConfig('p3')).toEqual({ blockPrivate: true, allowedHosts: ['example.com'] });
+    await app.stop();
+  });
+
+  it('插件自己写回配置的运行时字段不被裁掉（startupView=last 靠它记住上次）', async () => {
+    const mod: PluginModule = {
+      name: 'p4',
+      defaultConfig: { startupView: 'last', lastView: 'chat' },
+      configSchema: { startupView: { type: 'string', label: '启动视图' } },
+      apply() {},
+    };
+    const app = makeApp({ p4: { startupView: 'last', lastView: 'logs' } });
+    await app.plugin(mod);
+    syncPluginDefaults(app);
+    expect(app.ctx.config.getPluginConfig('p4').lastView).toBe('logs');
+    await app.stop();
+  });
+
+  it('嵌套 fields 同样按并集裁剪', async () => {
+    const mod: PluginModule = {
+      name: 'p5',
+      defaultConfig: { nested: { shown: 1, hidden: 2 } },
+      configSchema: { nested: { label: 'N', fields: { shown: { type: 'number', label: 'S' } } } },
+      apply() {},
+    };
+    const app = makeApp({ p5: { nested: { shown: 9, hidden: 8, typo: 7 } } });
+    await app.plugin(mod);
+    syncPluginDefaults(app);
+    expect(app.ctx.config.getPluginConfig('p5')).toEqual({ nested: { shown: 9, hidden: 8 } });
+    await app.stop();
+  });
+
   it('defaultConfig 回填缺失字段（深合并,已有值不覆盖）', async () => {
     const app = makeApp({ p2: { b: 2 } });
     const mod: PluginModule = { name: 'p2', defaultConfig: { a: 1, b: 0 }, apply() {} };
