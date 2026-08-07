@@ -41,7 +41,23 @@ export interface PersonaSessionOptions {
 }
 
 export interface PersonaService {
+  /**
+   * 静态人设：人设卡、行为准则、输出格式。**同一张卡下逐轮不变**。
+   *
+   * 与 {@link getVolatilePrompt} 的切分是为前缀缓存服务：LLM provider 的前缀缓存
+   * 从第一个 token 起逐位比对，只要开头有一处变化，后面整条前缀全部作废。把每轮
+   * 都变的内容（时间、会话环境、上轮状态）留在这里，会让人设卡 + 历史这几万 token
+   * 一次都命中不了——实测 91% 的首轮调用命中率为 0。
+   */
   getSystemPrompt(options?: PersonaSessionOptions): string;
+  /**
+   * 易变上下文：当前时间、会话环境、上一轮状态。**逐轮变化**。
+   *
+   * 调用方应把它放在历史消息**之后**、当前用户消息之前——这样前面的静态部分才进得了
+   * 缓存。语义上也更顺：这些本就是「此刻的事实」，紧挨当前消息说比夹在人设卡里自然。
+   * 无内容时返回空串，调用方据此跳过。
+   */
+  getVolatilePrompt?(options?: PersonaSessionOptions): string;
   getPersonaName(): string;
   /** 获取角色卡定义的结构化输出格式，无定义时返回 undefined */
   getOutputFormat?(options?: PersonaSessionOptions): OutputFormat | undefined;

@@ -1119,6 +1119,17 @@ class DefaultAgent implements AgentService {
       userMessage.images = imageAtts.map(a => a.data);
     }
 
+    // 易变上下文（当前时间 / 会话环境 / 上一轮状态）落在历史**之后**：
+    // provider 的前缀缓存从第一个 token 起逐位比对，这几块原本混在人设卡开头，
+    // 秒级时间戳一变，人设 + 记忆 + 历史近 7 万 token 的前缀全部作废——实测每个
+    // 新回合命中率恒为 0，只有同回合内的工具迭代（prompt 不重建）才命中。
+    // 放到这里语义也更顺：它们本就是「此刻的事实」，紧挨当前消息说更自然。
+    const persona = this.ctx.getService<PersonaService>('persona');
+    const volatileCtx = persona?.getVolatilePrompt?.(personaOpts);
+    if (volatileCtx) {
+      messages.push({ role: 'system', content: volatileCtx, metadata: { injector: 'persona-volatile' } });
+    }
+
     // 群聊焦点指引：仅 sessionType=group + triggerType ∈ {direct, immediate} 时注入，
     // 紧贴在当前 user 消息前，告诉 LLM "下一条就是焦点"。详细动机见 helpers.ts。
     const focusGuidance = buildFocusGuidance(incoming);
