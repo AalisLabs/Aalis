@@ -42,7 +42,11 @@ export function syncPluginDefaults(app: App, opts?: ConfigSyncOptions): string[]
 
     let merged = deepMergeDefaults(defaults, fileConfig);
     if (trim && schema && Object.keys(schema).length > 0) {
-      merged = removeExtraFields(merged, schema);
+      const removed: string[] = [];
+      merged = removeExtraFields(merged, schema, removed);
+      if (removed.length > 0) {
+        app.logger.warn(`配置同步：${status.instanceId} 裁掉 schema 外字段 [${removed.join(', ')}]`);
+      }
     }
 
     if (JSON.stringify(merged) !== JSON.stringify(fileConfig)) {
@@ -129,10 +133,20 @@ function deepMergeDefaults(
  * 所以它的键集就是完整的白名单：不在 schema 里的字段，要么是用户手写的错别字，
  * 要么是已废弃的旧字段，裁掉即归位。无 schema 的插件不裁（见调用方守卫）。
  */
-function removeExtraFields(config: Record<string, unknown>, schema: Record<string, unknown>): Record<string, unknown> {
+function removeExtraFields(
+  config: Record<string, unknown>,
+  schema: Record<string, unknown>,
+  removed?: string[],
+  prefix = '',
+): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(config)) {
-    if (!(key in schema)) continue;
+    if (!(key in schema)) {
+      // 被裁的键必须留痕——静默裁剪会让「字段被吃掉」与「用户没配」不可分辨，
+      // tool-browser 的 allowedHosts 正是这样潜伏多年（用户照注释配了、启动即被抹、无人知晓）。
+      removed?.push(prefix + key);
+      continue;
+    }
     const schemaDef = schema[key] as Record<string, unknown>;
     if (schemaDef.type === 'array') {
       result[key] = value;
@@ -143,7 +157,12 @@ function removeExtraFields(config: Record<string, unknown>, schema: Record<strin
       typeof value === 'object' &&
       !Array.isArray(value)
     ) {
-      result[key] = removeExtraFields(value as Record<string, unknown>, schemaDef.fields as Record<string, unknown>);
+      result[key] = removeExtraFields(
+        value as Record<string, unknown>,
+        schemaDef.fields as Record<string, unknown>,
+        removed,
+        `${prefix + key}.`,
+      );
     } else {
       result[key] = value;
     }
