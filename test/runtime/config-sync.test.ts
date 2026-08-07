@@ -76,6 +76,31 @@ describe('syncPluginDefaults 政策', () => {
     await app.stop();
   });
 
+  it('裁掉字段时 warn 点名（含嵌套前缀），不静默', async () => {
+    const mod: PluginModule = {
+      name: 'p7',
+      configSchema: {
+        keep: { type: 'number', label: 'K', default: 1 },
+        g: { label: 'G', fields: { in: { type: 'number', label: 'I', default: 2 } } },
+      },
+      apply() {},
+    };
+    const app = makeApp({ p7: { keep: 1, junk: 'x', g: { in: 2, deepJunk: 'y' } } });
+    const warned: string[] = [];
+    const origWarn = app.logger.warn.bind(app.logger);
+    app.logger.warn = (msg: string, ...rest: unknown[]) => {
+      warned.push(String(msg));
+      origWarn(msg, ...rest);
+    };
+    await app.plugin(mod);
+    syncPluginDefaults(app);
+    const hit = warned.find(w => w.includes('裁掉 schema 外字段'));
+    // 静默裁剪会让「字段被吃掉」与「用户没配」不可分辨——必须点名
+    expect(hit).toContain('junk');
+    expect(hit).toContain('g.deepJunk');
+    await app.stop();
+  });
+
   it('运行时写回的字段只要在 schema 里声明过就不会被裁（lastView 型）', async () => {
     const mod: PluginModule = {
       name: 'p4',
