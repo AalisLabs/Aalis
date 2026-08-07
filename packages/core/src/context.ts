@@ -616,9 +616,11 @@ export class Context {
    * const conn = await connectExternal();
    * ctx.onDispose(() => conn.close());
    *
+   * @param label 可选来源标注，仅用于诊断日志——清理超时/抛错时点名是哪一项。
    * @returns 取消该清理回调的函数（在 dispose 前调用可阻止执行）
    */
-  onDispose(fn: () => void | Promise<void>): () => void {
+  onDispose(fn: () => void | Promise<void>, label?: string): () => void {
+    const who = label ? ` [${label}]` : '';
     const wrapped = () => {
       try {
         const ret = fn();
@@ -627,14 +629,14 @@ export class Context {
           // 这是 onDispose 异步契约真正兑现的通道。错误就地消化，单个清理
           // 失败不拖垮链上其他清理；同步 dispose() 忽略返回值（不等待）。
           return (ret as Promise<void>).catch(err => {
-            this.logger.debug('onDispose 异步清理抛错（已忽略）:', err);
+            this.logger.debug(`onDispose 异步清理抛错（已忽略）${who}:`, err);
           });
         }
       } catch (err) {
-        this.logger.debug('onDispose 清理抛错（已忽略）:', err);
+        this.logger.debug(`onDispose 清理抛错（已忽略）${who}:`, err);
       }
     };
-    this._disposables.push(wrapped);
+    this._disposables.push(wrapped, label);
     return () => this._disposables.remove(wrapped);
   }
 
