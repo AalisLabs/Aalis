@@ -52,13 +52,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  rootDir: 'data:/checkpoints',
-  maxFileSize: 10 * 1024 * 1024,
-  keepSessions: 20,
-  scopes: ['webui:*'],
-};
-
 // ──────────── Plugin actions (供 WebUI 调用) ────────────
 
 export const actions: PluginModule['actions'] = {

@@ -24,6 +24,7 @@ export const configSchema: ConfigSchema = {
     type: 'string',
     label: '输出目录',
     description: '文档保存目录（storage URI，如 workspace:/ 或 data:/docs），也兼容裸名「workspace」/「data」。',
+    default: 'workspace:/',
   },
   docx: {
     label: 'Word 文档',
@@ -49,14 +50,6 @@ export const configSchema: ConfigSchema = {
       enabled: { type: 'boolean', label: '启用 PDF 工具', default: true },
     },
   },
-};
-
-export const defaultConfig = {
-  outputDir: 'workspace:/',
-  docx: { enabled: true },
-  xlsx: { enabled: true },
-  pptx: { enabled: true },
-  pdf: { enabled: true },
 };
 
 // ===== 配置类型 =====

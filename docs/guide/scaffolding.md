@@ -283,7 +283,7 @@ export const configSchema: ConfigSchema = {
 };
 
 export function apply(ctx: Context, config: Record<string, unknown>) {
-  // config 已按 schema 校验 + 合并 defaultConfig
+  // config 已含 schema 派生默认值（顶层合并）
 }
 ```
 

@@ -30,10 +30,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  debugLogs: true,
-};
-
 interface PluginConfig {
   debugLogs: boolean;
 }

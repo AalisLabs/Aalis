@@ -1,6 +1,6 @@
 import { createProcessGateway } from '@aalis/api-process';
 import { useToolService } from '@aalis/api-tools';
-import type { WebuiPage } from '@aalis/api-webui';
+import type { WebuiPage } from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（allowCustom）
 import { useWebuiService } from '@aalis/api-webui';
 import type { Context, PluginModule } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
@@ -69,6 +69,7 @@ export const configSchema: ConfigSchema = {
     type: 'string',
     label: 'Chrome 路径',
     description: '自定义 Chrome/Chromium 可执行文件路径。留空则使用 Puppeteer 内置 Chromium。',
+    default: '',
   },
   maxContentLength: {
     type: 'number',
@@ -82,20 +83,23 @@ export const configSchema: ConfigSchema = {
     default: true,
     description: '拒绝 localhost / 127.x / ::1 / 10.x / 172.16-31.x / 192.168.x / 169.254.x / 0.0.0.0，防止 SSRF。',
   },
-  // allowedProtocols（默认 [http,https]）与 allowedHosts（默认 []）请直接在 aalis.config.yaml 中编辑。
-};
-
-export const defaultConfig = {
-  headless: true,
-  defaultTimeout: 30000,
-  viewportWidth: 1280,
-  viewportHeight: 720,
-  maxPages: 5,
-  executablePath: '',
-  maxContentLength: 50000,
-  allowedProtocols: ['http', 'https'],
-  blockPrivate: true,
-  allowedHosts: [] as string[],
+  allowedProtocols: {
+    type: 'multiselect',
+    label: '允许的协议',
+    default: ['http', 'https'],
+    options: [
+      { label: 'http', value: 'http' },
+      { label: 'https', value: 'https' },
+    ],
+    description: '浏览器只允许访问这些协议的 URL。',
+  },
+  allowedHosts: {
+    type: 'multiselect',
+    label: '主机白名单',
+    default: [],
+    allowCustom: true,
+    description: '允许访问的主机（含内网时需在此显式列出）。留空 = 仅按 blockPrivate 判定。',
+  },
 };
 
 // ──────────── WebUI 页面 ────────────

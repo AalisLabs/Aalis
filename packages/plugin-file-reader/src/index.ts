@@ -79,17 +79,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  maxFileSizeMB: 20,
-  autoInlineLimit: 100000,
-  toolDefaultMaxLength: 50000,
-  retentionDays: 30,
-  lruMaxTotalMB: 500,
-  historyHintEnabled: true,
-  recognizeDocImages: true,
-  maxDocImages: 8,
-};
-
 // ===== 支持的文件类型 =====
 
 const TEXT_MIME_TYPES = new Set([

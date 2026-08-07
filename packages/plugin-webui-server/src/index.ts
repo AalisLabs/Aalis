@@ -131,17 +131,6 @@ export const configSchema: ConfigSchema = {
   // （servicePreferences['webui-client']）决定——在 WebUI「服务」页的下拉框切换。
 };
 
-export const defaultConfig = {
-  port: 3000,
-  host: '127.0.0.1',
-  fileRoot: 'workspace',
-  autoOpen: true,
-  tokenMode: 'persist',
-  fixedToken: '',
-  relationGraphDefaultSpacing: 120,
-  marketplaceRegistry: 'https://registry.npmjs.org',
-};
-
 // ===== 配置 =====
 
 interface WebUIConfig {

@@ -71,7 +71,7 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 
 ### `app.plugin(module, config?, instanceId?)`
 
-注册单个插件。`instanceId` 缺省用 `module.name`。配置合并优先级：`代码传入 > 配置文件 > defaultConfig`。
+注册单个插件。`instanceId` 缺省用 `module.name`。配置合并优先级：`代码传入 > 配置文件 > 宿主派生默认值`（默认值经 `AppOptions.pluginDefaults` 注入，core 不认识任何配置词汇；缺省注入 = 无默认值）。
 
 ### `app.autoLoadPlugins()`
 
@@ -113,7 +113,7 @@ App 本身不注册指令。基础指令由插件提供，例如 `@aalis/plugin-
 
 ## 配置同步（宿主政策，不在 core）
 
-defaultConfig 回填、按 configSchema 裁剪未知字段、配置外部变更的热重载编排均属**宿主政策**，
+默认值回填、按 configSchema 裁剪未知字段、配置外部变更的热重载编排均属**宿主政策**，
 由 `@aalis/runtime` 的 config-sync 模块提供（`syncPluginDefaults` / `installConfigHotReload`，
 `startAalis` 默认接线；`configSync.trimUnknownFields=false` 可保留未知字段）。
 core 只持有机制：配置快照 get/set、`config.watch` 透传、`updatePluginConfig`。

@@ -48,14 +48,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  uri: 'mongodb://localhost:27017',
-  database: 'aalis',
-  collection: 'messages',
-  rangeQueryLimit: 500,
-  crossSessionMaxLimit: 1000,
-};
-
 // ===== 配置 =====
 
 interface MongoMemoryConfig {

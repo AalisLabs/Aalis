@@ -48,14 +48,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  developerToken: '',
-  baseUrl: 'https://maimai.lxns.net',
-  enableTools: true,
-  enableCommands: true,
-  defaultBindOnPrivateChat: true,
-};
-
 interface MaimaiConfig {
   developerToken: string;
   baseUrl: string;

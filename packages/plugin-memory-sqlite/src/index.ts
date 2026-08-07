@@ -48,12 +48,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  path: 'data/aalis.db',
-  rangeQueryLimit: 500,
-  crossSessionMaxLimit: 1000,
-};
-
 // ===== 配置 =====
 
 interface SQLiteMemoryConfig {

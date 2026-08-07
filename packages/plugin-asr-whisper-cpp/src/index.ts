@@ -41,7 +41,7 @@ export const configSchema: ConfigSchema = {
   priority: { type: 'number', label: '优先级 (越大越优先)', default: 80 },
 };
 
-export const defaultConfig: Cfg = {
+const defaultConfig: Cfg = {
   binaryPath: 'whisper-cli',
   modelPath: '',
   language: 'auto',

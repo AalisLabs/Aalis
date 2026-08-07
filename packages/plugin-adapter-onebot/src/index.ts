@@ -230,32 +230,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  connections: [] as OneBotConnectionConfig[],
-  splitMessage: {
-    enabled: false,
-    delayPerChar: 50,
-    maxDelay: 3000,
-    patterns: ['。', '！', '？', '.', '!', '?', '\\n'] as string[],
-  },
-  forward: {
-    enabled: true,
-    maxDepth: 3,
-    maxNodesPerLevel: 30,
-    imageRecognition: true,
-    imageRecognitionConcurrency: 8,
-    summarize: true,
-    summaryMaxChars: 600,
-    summaryPrompt: '',
-  },
-  reply: {
-    maxDepth: 5,
-  },
-  attachmentCache: {
-    maxBytes: 10 * 1024 * 1024,
-  },
-};
-
 // ===== 内部类型 =====
 
 /** 单个 WebSocket 连接状态 */

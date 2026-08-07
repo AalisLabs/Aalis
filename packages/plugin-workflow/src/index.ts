@@ -76,13 +76,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  defsDir: 'workspace:/workflows',
-  runsFile: 'data:/workflow-runs.json',
-  maxRuns: 200,
-  enableTools: true,
-};
-
 // ─── WebUI ───
 
 const webuiPages: WebuiPage[] = [

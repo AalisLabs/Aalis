@@ -202,11 +202,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-export const defaultConfig = {
-  jobs: [] as Record<string, unknown>[],
-  persistPath: 'data:/scheduler-jobs.json',
-};
-
 // ──────────── WebUI 页面 ────────────
 
 const webuiPages: WebuiPage[] = [
