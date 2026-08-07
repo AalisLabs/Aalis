@@ -8,7 +8,7 @@
 
 import type { StorageService } from '@aalis/api-storage';
 import { parseUriRoot, resolveAgainstCwd } from '@aalis/api-storage';
-import type { ScopedToolService } from '@aalis/api-tools';
+import { type ScopedToolService, wrapUntrustedContent } from '@aalis/api-tools';
 import { safeFetch } from '@aalis/util-network-guard';
 
 interface HttpConfig {
@@ -139,7 +139,7 @@ export function registerHttpTools(tools: ScopedToolService, config: HttpConfig):
           status: response.status,
           statusText: response.statusText,
           headers: Object.fromEntries(response.headers.entries()),
-          body: responseBody,
+          body: wrapUntrustedContent(responseBody, `HTTP 响应 ${url}`),
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

@@ -14,7 +14,7 @@
 
 import type { CapabilityVisibility } from '@aalis/api-authority';
 import type { ToolDefinition } from '@aalis/api-tools';
-import { useToolService } from '@aalis/api-tools';
+import { useToolService, wrapUntrustedContent } from '@aalis/api-tools';
 import type { AppService, Context, PluginManagerService } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 // 引入 api-tools 触发 declaration merging，使 ctx.registerTool 类型生效
@@ -338,7 +338,7 @@ export async function bridgeClientToTools(ctx: Context, client: Client, spec: Se
             name: t.name,
             arguments: args as Record<string, unknown>,
           });
-          return formatToolResult(result);
+          return formatToolResult(result, `${spec.id}/${t.name}`);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           return `MCP 调用 ${spec.id}/${t.name} 失败: ${msg}`;
@@ -390,12 +390,14 @@ interface McpCallToolResult {
   isError?: boolean;
 }
 
-function formatToolResult(result: unknown): string {
+function formatToolResult(result: unknown, source: string): string {
   const r = result as McpCallToolResult;
   const parts = (r.content ?? []).map(c => {
     if (c.type === 'text') return c.text ?? '';
     return `[${c.type}]`;
   });
   const body = parts.join('\n');
-  return r.isError ? `MCP 工具返回错误:\n${body}` : body;
+  // MCP server 可信不等于它回传的内容可信——抓取型 server（fetch/search）的返回体
+  // 就是外部内容，同 http_request 一样套不可信边界。错误信息不是抓取内容，不套。
+  return r.isError ? `MCP 工具返回错误:\n${body}` : wrapUntrustedContent(body, `MCP ${source}`);
 }

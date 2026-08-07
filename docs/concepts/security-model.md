@@ -112,13 +112,30 @@ ctx.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { risk: 
 
 ### 官方插件里刻意未声明的那些（2026-08 拍板，勿当缺陷再报）
 
-`plugin-tool-onebot`（34 个工具，含 `onebot_delete_friend` / `onebot_delete_msg` /
-`onebot_approve_join_request`）、`plugin-office`、`plugin-maimai` 三个包**全部工具未声明
-risk 与 visibility**，因而解析为 `public` / 等级 0。
+`plugin-tool-onebot`（31 个工具，含 `onebot_group_ban` / `onebot_group_kick` /
+`onebot_set_group_admin` / `onebot_delete_msg` / `onebot_approve_join_request`）、
+`plugin-office`、`plugin-maimai` 三个包**全部工具未声明 risk 与 visibility**，
+因而解析为 `public` / 等级 0（任意群成员，含 authority=0，都能经自然语言驱动）。
 
-这是**明确的取舍，不是遗漏**：这些工具的动作面都限于机器人自己的社交账号（加删好友、撤自己
-发的消息、审群申请），而部署形态是单 owner；给它们逐个上 `confirm` 会让每一次群操作都弹一次
-确认，代价压过收益。**改变部署形态（多用户、开放群、把 bot 交给他人代管）时必须重新评估这一条。**
+这是**明确的取舍，不是遗漏**。对 onebot 而言尤其是设计核心而非疏忽：
+
+- Aalis 的实际部署形态里，用它的人**不一定是群 owner，也不一定是 owner 派发的管理员**——
+  很多是 owner 并不直接管理的群。因此**刻意**开放「任何人都能向 Aalis 举报违规、让它自行处置」
+  的能力：见到刷屏/辱骂/违法内容自动禁言、踢人，这本就是群管该有的判断，不该锁在 owner 一人手里。
+- 群管类工具（`group_ban` / `kick` / `set_group_admin` 等）**作用于其他群成员是本意**，
+  不是「只影响自己账号」——那正是 Aalis 作为群管的价值。滥用防线不在能力声明层，而在
+  `checkAdminPermission`（bot 需具备对应群角色、目标不高于 bot）+ Aalis 自身的判断
+  （见人设卡：不随便听人指令撤/禁/踢，自行评判是否属实、必要时反坐提议者）。
+- 给每次群操作上 `confirm` 会让「见到不好的事自动处置」这条核心能力失效——处置的即时性正是它的意义。
+
+**重新评估的触发条件**：把 bot 交给完全不受信的开放群、或发现提示注入能稳定绕过 Aalis 的
+自主判断驱动破坏性群操作时——那时应给破坏性群管工具上 `confirm`，或引入「举报→Aalis 判断」
+与「直接命令执行」的分流。
+
+> 注：`http_request`（`plugin-tool-system` 的 `system` 组）也未声明 risk，解析为 public。
+> 它**不在** onebot 的 enabledGroups 里（onebot 只开 search / onebot-* / browser / math /
+> session-* / scheduler / user-relation），故当前 bot 部署下不可达。但它与同文件、能力严格更弱的
+> `http_download`（已 `restricted + confirm:'session'`）不对称——见下方待评估项。
 
 与之相对，`plugin-scheduler` 的建/删/暂停任务是**上了 `dangerous + confirm` 的**——因为建一条
 cron 等于让 LLM 获得持久执行面，那已经越过"只影响自己账号"的边界。
