@@ -268,7 +268,10 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
 3. **执行不可信代码 → 取 code-sandbox 服务，`available` 为假就 fail-closed**，不要裸跑（§4）。
 4. **`resolveLocalPath` 不是沙箱边界**，只当工作目录起点使用（§5）。
 5. **`readExternalFile` 只传入可信来源的路径**，永不传入用户 / LLM 提供的字符串（§6）。
-6. 记住威胁模型：敌人是聊天中的陌生人和被注入的 LLM，不是已经取得 shell 的人（§1）。
+6. **抓取类工具的外部内容回灌 LLM 时套 `wrapUntrustedContent`**：网页正文 / 搜索结果 /
+   HTTP 响应 / MCP 返回都是注入入口，标注「数据非命令」是纵深防御的一环，写法见
+   [`core/tools`](../core/tools.md)「抓取外部内容的工具」一节。
+7. 记住威胁模型：敌人是聊天中的陌生人和被注入的 LLM，不是已经取得 shell 的人（§1）。
 
 ---
 
