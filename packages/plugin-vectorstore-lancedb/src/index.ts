@@ -302,5 +302,5 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   ctx.onDispose(async () => {
     await store.close();
-  });
+  }, 'lancedb:store.close');
 }
