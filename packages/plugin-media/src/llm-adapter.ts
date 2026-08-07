@@ -317,7 +317,8 @@ function wrapLLMAsProcessor(
           `[${cap}.describe] 调用 ${llm.id}，${images.length} 张图 (${sizes.join('/')}), ` +
             `prompt=${prompt.length}字, maxTokens=${maxTokens}, think=${think}`,
         );
-        const resp = await llm.chat({ messages, maxTokens, think });
+        // 视觉识别里图片就是全部内容，取不到就该抛，不能让模型对着占位文字编
+        const resp = await llm.chat({ messages, maxTokens, think, requireImages: true });
         const rawLen = resp.content?.length ?? 0;
         const text = resp.content?.trim() ?? '';
         const usedTokens = resp.usage?.totalTokens;
