@@ -1,9 +1,13 @@
+import type { LookupAddress } from 'node:dns';
+import { createServer } from 'node:http';
+import { type AddressInfo, getDefaultAutoSelectFamily, setDefaultAutoSelectFamily } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   assertAddressesSafe,
   assertSafeUrl,
   isPrivateAddress,
   isPrivateHost,
+  pinnedLookup,
   safeFetch,
   setNetworkPolicy,
 } from '../../packages/util-network-guard/src/index.js';
@@ -20,8 +24,11 @@ const mkRes = (status: number, location?: string): Response =>
   }) as unknown as Response;
 
 // 策略是进程级单例：每例后复位到默认（拦私网、无 CIDR、不限端口），防跨用例污染。
+// stubGlobal 装的 fetch 只有 unstubAllGlobals 收得掉，restoreAllMocks 收不掉——
+// 漏收会让后面真连接的用例拿到上一例的假 fetch。
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   setNetworkPolicy({});
 });
 
@@ -154,5 +161,102 @@ describe('assertAddressesSafe（pin dispatcher 与 assertSafeHost 共用的地�
     expect(() => assertAddressesSafe('x.com', ['127.0.0.1'])).not.toThrow();
     setNetworkPolicy({ blockPrivate: false, denyCidrs: ['127.0.0.0/8'] });
     expect(() => assertAddressesSafe('x.com', ['127.0.0.1'])).toThrow(/受限网段/);
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// pinnedLookup 的回调契约 + 真实 dispatcher 端到端
+//
+// 回调形状由 Node 的 net 按 `options.all` 决定，不是固定的：happy-eyeballs
+// （autoSelectFamily，Node 20+ 默认开）下带 all、要 `{address,family}[]`；关掉时
+// 不带 all、要旧的三参形式。押注单一形状 → safeFetch 对**任何** URL 抛
+// ERR_INVALID_IP_ADDRESS，而上层只看到笼统的 `TypeError: fetch failed`。
+// 两个档位各有一条端到端用例守着。
+//
+// 本文件其余用例都 stub 掉 global fetch，dispatcher 从来没被走过，
+// 这正是上面那个缺陷得以逃逸的口子。下面这条起本地服务真连一次堵住它。
+// ════════════════════════════════════════════════════════════
+describe('pinnedLookup 与真实连接', () => {
+  const UNDICI_OPTIONS = { hints: 1024, all: true } as const;
+
+  it('options.all 时交回 { address, family } 数组，而非裸地址串', async () => {
+    setNetworkPolicy({ blockPrivate: false }); // localhost 走 /etc/hosts，不出网；afterEach 复位
+    const got = await new Promise<string | LookupAddress[]>((resolve, reject) => {
+      pinnedLookup('localhost', UNDICI_OPTIONS, (err, list) => {
+        if (err) reject(err);
+        else resolve(list);
+      });
+      setTimeout(() => reject(new Error('lookup 回调未触发')), 5000);
+    });
+    expect(Array.isArray(got)).toBe(true);
+    const addresses = got as LookupAddress[];
+    expect(addresses.length).toBeGreaterThan(0);
+    for (const a of addresses) {
+      expect(typeof a.address).toBe('string');
+      expect(a.address.length).toBeGreaterThan(0);
+      expect([4, 6]).toContain(a.family);
+    }
+  });
+
+  it('safeFetch 真的连得上（走 undici dispatcher，不 stub fetch）', async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('pong');
+    });
+    // 不绑定 host：localhost 首个解析是 ::1，只听 127.0.0.1 会让关掉 happy-eyeballs 的那档连不上
+    await new Promise<void>(resolve => server.listen(0, resolve));
+    const { port } = server.address() as AddressInfo;
+    // 用 localhost 而非字面 IP：字面 IP 不触发 DNS，就绕开了 pinnedLookup
+    setNetworkPolicy({ blockPrivate: false });
+    try {
+      const res = await safeFetch(`http://localhost:${port}/`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('pong');
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  it('关掉 happy-eyeballs 时也连得上（另一种回调形状）', async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('pong');
+    });
+    // 不绑定 host：localhost 首个解析是 ::1，只听 127.0.0.1 会让关掉 happy-eyeballs 的那档连不上
+    await new Promise<void>(resolve => server.listen(0, resolve));
+    const { port } = server.address() as AddressInfo;
+    const prev = getDefaultAutoSelectFamily();
+    setDefaultAutoSelectFamily(false);
+    setNetworkPolicy({ blockPrivate: false });
+    try {
+      const res = await safeFetch(`http://localhost:${port}/`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('pong');
+    } finally {
+      setDefaultAutoSelectFamily(prev);
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  it('无 options.all 时交回裸地址串 + family（Node 的旧三参形式）', async () => {
+    setNetworkPolicy({ blockPrivate: false });
+    const { address, family } = await new Promise<{ address: unknown; family: unknown }>((resolve, reject) => {
+      pinnedLookup('localhost', { hints: 1024 }, (err, addr, fam) => {
+        if (err) reject(err);
+        else resolve({ address: addr, family: fam });
+      });
+      setTimeout(() => reject(new Error('lookup 回调未触发')), 5000);
+    });
+    expect(typeof address).toBe('string');
+    expect([4, 6]).toContain(family);
+  });
+
+  it('出口闸拒绝时以 Error 回调，不静默交回地址', async () => {
+    const err = await new Promise<Error | null>((resolve, reject) => {
+      pinnedLookup('localhost', UNDICI_OPTIONS, e => resolve(e));
+      setTimeout(() => reject(new Error('lookup 回调未触发')), 5000);
+    });
+    expect(err).toBeInstanceOf(Error);
+    expect(err?.message).toMatch(/私网|回环|拒绝/);
   });
 });
