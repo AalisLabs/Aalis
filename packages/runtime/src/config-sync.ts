@@ -41,7 +41,7 @@ export function syncPluginDefaults(app: App, opts?: ConfigSyncOptions): string[]
 
     let merged = deepMergeDefaults(defaults, fileConfig);
     if (trim && schema && Object.keys(schema).length > 0) {
-      merged = removeExtraFields(merged, schema);
+      merged = removeExtraFields(merged, schema, defaults);
     }
 
     if (JSON.stringify(merged) !== JSON.stringify(fileConfig)) {
@@ -124,13 +124,30 @@ function deepMergeDefaults(
 }
 
 /**
- * 根据 configSchema 移除多余字段（schema 按 opaque 数据处理，只认
- * `type: 'array'` 与嵌套 `fields` 两种结构约定，不 import 表单词汇类型）。
+ * 移除多余字段（schema 按 opaque 数据处理，只认 `type: 'array'` 与嵌套 `fields`
+ * 两种结构约定，不 import 表单词汇类型）。
+ *
+ * 合法字段 = `configSchema` 的键 ∪ `defaultConfig` 的键。两者职责不同——schema 描述
+ * 「怎么渲染表单」，defaultConfig 声明「有哪些配置项及其默认值」——而 schema 的类型
+ * 词汇表达不了自由标量数组（`array` 的 `items` 必填、`multiselect` 需静态 `options`），
+ * 这类字段只能落在 defaultConfig 里。只认 schema 会把它们连同用户设的值一起裁掉：
+ * plugin-tool-browser 的 SSRF 白名单 allowedHosts / allowedProtocols 就是这么被抹掉的，
+ * 而源码注释还写着「请直接在 aalis.config.yaml 中编辑」；plugin-cli 的 lastView 同理被裁，
+ * 导致 startupView='last' 永远记不住上次。
+ *
+ * 本函数的本意是清掉用户手写的错别字与废弃字段，不是清掉插件自己声明过的字段。
  */
-function removeExtraFields(config: Record<string, unknown>, schema: Record<string, unknown>): Record<string, unknown> {
+function removeExtraFields(
+  config: Record<string, unknown>,
+  schema: Record<string, unknown>,
+  defaults: Record<string, unknown> = {},
+): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(config)) {
-    if (!(key in schema)) continue;
+    if (!(key in schema)) {
+      if (key in defaults) result[key] = value;
+      continue;
+    }
     const schemaDef = schema[key] as Record<string, unknown>;
     if (schemaDef.type === 'array') {
       result[key] = value;
@@ -141,7 +158,14 @@ function removeExtraFields(config: Record<string, unknown>, schema: Record<strin
       typeof value === 'object' &&
       !Array.isArray(value)
     ) {
-      result[key] = removeExtraFields(value as Record<string, unknown>, schemaDef.fields as Record<string, unknown>);
+      const nestedDefaults = defaults[key];
+      result[key] = removeExtraFields(
+        value as Record<string, unknown>,
+        schemaDef.fields as Record<string, unknown>,
+        nestedDefaults !== null && typeof nestedDefaults === 'object' && !Array.isArray(nestedDefaults)
+          ? (nestedDefaults as Record<string, unknown>)
+          : {},
+      );
     } else {
       result[key] = value;
     }
