@@ -492,6 +492,9 @@ importers:
       '@aalis/util-network-guard':
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../util-network-guard
+      '@aalis/util-text-normalize':
+        specifier: workspace:>=0.5.1 <1.0.0
+        version: link:../util-text-normalize
       ws:
         specifier: ^8.18.0
         version: 8.20.0
