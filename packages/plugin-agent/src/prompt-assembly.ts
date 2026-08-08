@@ -13,10 +13,16 @@
 
 import type { PromptAnchor, PromptContribution, PromptContributionView } from '@aalis/api-agent';
 import type { Context } from '@aalis/core';
-import type { Message } from '@aalis/schema-message';
+import { type Message, WellKnownKinds } from '@aalis/schema-message';
 
 /** 锚位排布次序（同一轮组装内生效；语义见 agent-api 的 PromptAnchor 文档） */
-const ANCHOR_ORDER: readonly PromptAnchor[] = ['identity', 'knowledge', 'context', 'turn-hint'];
+const ANCHOR_ORDER: readonly PromptAnchor[] = ['identity', 'knowledge', 'context', 'turn-context', 'turn-hint'];
+
+/**
+ * 易变块（时间/会话环境/上一轮状态）的 injector 标识——buildMessages 注入、
+ * 本组装器给 turn-context 定位用。两处同包，此常量是唯一事实来源。
+ */
+export const VOLATILE_INJECTOR = 'persona-volatile';
 
 /**
  * 执行单个 build，可选超时。超时返回 null（本轮缺席）并 warn 点名；
@@ -63,6 +69,30 @@ function anchorInsertAt(anchor: PromptAnchor, messages: readonly Message[]): num
       // context 再取"第一条非 system"时自然排在其后。
       const idx = messages.findIndex(m => m.role !== 'system');
       return idx === -1 ? messages.length : idx;
+    }
+    case 'turn-context': {
+      // 每轮取材的背景材料：落在历史结束处（缓存断点之后）、当前轮诸块之前。
+      // 三级定位，取首个命中：
+      // 1. 跨会话委派块之前——proactive 轮没有当前 user 消息，历史里却有
+      //    旧 user 消息；若按「最后一条 user」定位会把材料 splice 进历史
+      //    **内部**，既割裂转录又在 append-only 区制造新的缓存断点。
+      // 2. 易变块（persona-volatile）之前——普通轮的历史/当前轮分界线。
+      //    材料在此刻事实（时间/状态）之前、focus 与 turn-hint 之前：焦点
+      //    指引与平台提示（「以上是群聊的历史消息记录」）保持与改动前相同
+      //    的先行语邻接，不被整批材料隔断。
+      // 3. 兜底：最后一条 user 之前；全列表无 user（空历史特殊形状）落尾。
+      //
+      // 注意 ANCHOR_ORDER 的「turn-context 先于 turn-hint」只在**同一次组装
+      // 内**成立：工具循环第二轮才物化的迟到材料按当轮规则重新定位，与首轮
+      // 已物化块的相对次序不保证。
+      const delegation = messages.findIndex(m => m.metadata?.injector === WellKnownKinds.CrossSessionDelegation);
+      if (delegation >= 0) return delegation;
+      const volatileIdx = messages.findIndex(m => m.metadata?.injector === VOLATILE_INJECTOR);
+      if (volatileIdx >= 0) return volatileIdx;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') return i;
+      }
+      return messages.length;
     }
     case 'turn-hint': {
       for (let i = messages.length - 1; i >= 0; i--) {
