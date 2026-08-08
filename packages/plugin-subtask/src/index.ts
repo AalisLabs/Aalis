@@ -534,6 +534,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 当 agent 处理子任务消息时，在系统提示中注入子任务上下文
   const SUBTASK_CONTEXT_MARKER = '--- 子任务上下文 ---';
   const PARENT_CONTEXT_MARKER = '--- 活跃子任务提醒 ---';
+  /** 提醒消息的 injector 标识：每轮重注时按它摘旧、token 统计按它归桶 */
+  const PARENT_STATUS_INJECTOR = 'subtask/parent-status';
 
   ctx.middleware('agent:llm:before', async (data, next) => {
     const sm = ctx.getService<SessionManagerService>('session-manager');
@@ -597,11 +599,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     // ---- 父会话侧：注入活跃子任务提醒 ----
+    //
+    // 子任务状态/结果每轮都在变。曾经 `+=` 进 messages[0]（persona 系统提示）
+    // 尾部——provider 前缀缓存从第 0 条消息内部就断，人设 + 头部材料 + 整段
+    // 历史全部作废；「父会话 + 有子任务」的会话享受不到任何历史缓存。现改为
+    // **独立 system 消息插在列表尾部**：尾部插入不碰前缀字节，且保留旧行为
+    // 「每轮重注最新状态」——工具循环中 wait_subtasks 返回后，下一轮 LLM 看到
+    // 的是刷新过的状态而非首轮快照（这也是它不走 agent:prompt 贡献点的原因：
+    // 贡献按全局键幂等，物化一次后同回合不再刷新）。
     if (!session?.parentId && session) {
-      // 检查是否有子任务
       const children = session.children;
       if (children && children.length > 0) {
-        // 收集活跃/已完成/出错的子任务信息
         const activeChildren: string[] = [];
         const completedChildren: string[] = [];
         const errorChildren: string[] = [];
@@ -620,20 +628,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           }
         }
 
-        // 只有存在需要关注的子任务时才注入
-        if (activeChildren.length > 0 || completedChildren.length > 0 || errorChildren.length > 0) {
-          // 幂等：移除旧的提醒（每轮重新注入最新状态）
-          const content = sysMsg.content as string;
-          const markerStart = content.indexOf(`\n\n${PARENT_CONTEXT_MARKER}`);
-          if (markerStart !== -1) {
-            const markerEnd = content.indexOf('--- 活跃子任务提醒结束 ---', markerStart);
-            if (markerEnd !== -1) {
-              (sysMsg as { content: string }).content =
-                content.slice(0, markerStart) + content.slice(markerEnd + '--- 活跃子任务提醒结束 ---'.length);
-            }
-          }
+        // 每轮重注：先摘上一轮的提醒消息（按 injector 识别，替代旧的字符串手术）
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].metadata?.injector === PARENT_STATUS_INJECTOR) messages.splice(i, 1);
+        }
 
-          const lines: string[] = [`\n\n${PARENT_CONTEXT_MARKER}`];
+        if (activeChildren.length > 0 || completedChildren.length > 0 || errorChildren.length > 0) {
+          const lines: string[] = [PARENT_CONTEXT_MARKER];
 
           if (activeChildren.length > 0) {
             lines.push(`⚠️ 你有 ${activeChildren.length} 个子任务正在执行：`);
@@ -657,16 +658,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           }
 
           lines.push('--- 活跃子任务提醒结束 ---');
-          const parentContext = lines.join('\n');
-          (sysMsg as { content: string }).content += parentContext;
-          const prevContributions = (sysMsg.metadata?._tokenContributions as Record<string, number>) ?? {};
-          (sysMsg as { metadata?: Record<string, unknown> }).metadata = {
-            ...sysMsg.metadata,
-            _tokenContributions: {
-              ...prevContributions,
-              subtask: (prevContributions.subtask ?? 0) + parentContext.length,
-            },
-          };
+          // 首轮（最后一条是当前 user 消息）插它前面；工具轮/委派轮（尾部是
+          // tool/assistant/system）追加到末尾 = 决策点前，状态最新鲜的位置
+          const insertAt = messages[messages.length - 1]?.role === 'user' ? messages.length - 1 : messages.length;
+          messages.splice(insertAt, 0, {
+            role: 'system',
+            content: lines.join('\n'),
+            metadata: { injector: PARENT_STATUS_INJECTOR },
+          });
         }
       }
     }

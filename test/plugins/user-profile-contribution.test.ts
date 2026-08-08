@@ -131,10 +131,12 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     expect(content).toContain('## 职业身份');
     expect(content).toContain('关系强度：12.5/100');
     expect(content).toContain('累计互动：7 次');
-    // identity 锚位：块应精确落在 persona 与 guard 两条 system 之间
+    // turn-context 锚位：块落在头部 system 区之后、最后一条 user 之前
+    //（档案按当前发言者取材、换人即变，放历史前会掐断前缀缓存）
     expect(messages[0].content).toBe('persona');
-    expect(messages[1]).toBe(blocks[0]);
-    expect(messages[2].content).toBe('guard');
+    expect(messages[1].content).toBe('guard');
+    expect(messages[2]).toBe(blocks[0]);
+    expect(messages[3]).toMatchObject({ role: 'user', content: '在吗' });
   });
 
   it('多块返回：准则 → 自档案 → 主发言者档案 → 主观感受 → 其他参与者，块序稳定且共用同一 injector 键', async () => {
@@ -207,11 +209,13 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     expect(keys.size).toBe(1);
     expect([...keys][0]).toMatch(/\/user-profile$/);
 
-    // 五块连续落在 persona 与 guard 之间（identity 锚位），中间不夹别的消息
+    // 五块连续落在头部 system 区之后、最后一条 user 之前（turn-context 锚位），
+    // 中间不夹别的消息。档案/感受按当前发言者取材、换人即变——放历史前会掐断
+    // 前缀缓存，故必须在历史后（见 api-agent 的 PromptAnchor 契约注释）。
     const first = messages.indexOf(blocks[0]);
-    expect(first).toBe(1);
+    expect(first).toBe(3);
     expect(messages.slice(first, first + 5)).toEqual(blocks);
-    expect(messages[first + 5].content).toBe('guard');
+    expect(messages[first + 5], '五块之后紧跟当前 user 消息').toMatchObject({ role: 'user', content: '在吗' });
   });
 
   it('triggerType=interval：不注入主发言者完整档案，改为「在场参与者」compact 摘要', async () => {
