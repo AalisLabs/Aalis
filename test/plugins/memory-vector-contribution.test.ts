@@ -161,7 +161,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     expect(store.calls.search).toBe(0);
   });
 
-  it('检索命中 → context 锚位注入渲染后的记忆条目（按时间升序）', async () => {
+  it('检索命中 → turn-context 锚位注入渲染后的记忆条目（按时间升序）', async () => {
     const { app, embedder, store } = await setup({
       hits: [
         hit(0.88, {
@@ -200,18 +200,19 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     await assemblePromptContributions(app.ctx, { messages, sessionId: 'onebot:g1', platform: 'onebot' });
 
     expect(messages).toHaveLength(6);
-    // context 锚位落在头部 system 区末尾（原 system 之后、首条非 system 之前），
-    // 且在 knowledge 槽之后、历史之前——四种锚位错标均可判伪
+    // turn-context 锚位落在历史**之后**、最后一条 user 之前——这是缓存命中的
+    // 前提：检索片段按当前消息取材、每轮必变，放历史前会让 append-only 的
+    // 历史永远命不中前缀缓存（实测 12.7%）。knowledge 探针留在头部区可判伪
+    // 「错标回 context/knowledge」的回归。
     expect(messages[0].content).toBe('人设');
-    expect(messages[1].content, 'knowledge 槽须先于 context 槽').toBe('KN');
-    expect(messages[2].role).toBe('system');
-    expect(String(messages[2].metadata?.injector ?? '').endsWith('/memory-vector')).toBe(true);
-    expect(messages[3], 'context 槽须在历史之前（turn-hint 会落到最后一条 user 前）').toMatchObject({
-      role: 'user',
-      content: '旧问',
-    });
+    expect(messages[1].content, 'knowledge 槽仍在头部区').toBe('KN');
+    expect(messages[2], 'turn-context 槽必须在历史之后').toMatchObject({ role: 'user', content: '旧问' });
+    expect(messages[3].content).toBe('旧答');
+    expect(messages[4].role).toBe('system');
+    expect(String(messages[4].metadata?.injector ?? '').endsWith('/memory-vector')).toBe(true);
+    expect(messages[5], '检索块须在最后一条 user 之前').toMatchObject({ role: 'user' });
 
-    const block = String(messages[2].content);
+    const block = String(messages[4].content);
     expect(block).toContain('以下是从长期记忆中检索到的相关聊天记录片段');
     expect(block).toContain('我最喜欢吃火锅');
     expect(block).toContain('周末去爬山了');

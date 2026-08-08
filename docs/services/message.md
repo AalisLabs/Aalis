@@ -45,7 +45,7 @@
 | `toLLMRole(role)` | function | `index.ts` | 自定义 role → `WellKnownRole`；未知一律回落 `'system'`；`notice → system` |
 | `prepareLLMMessages(messages)` | function | `index.ts` | **LLM provider 出口必调**：归一 role + 加前缀；不改原对象，返回浅拷贝；幂等 |
 
-> `prepareLLMMessages` 签名：`<T extends Pick<Message, 'role' \| 'content' \| 'kind'>>(messages: T[]): T[]`（`index.ts`）。语义、为何必调、为何不剔 event-marker——见概念文档 §3 + §9。
+> `prepareLLMMessages` 签名：`<T extends Pick<Message, 'role' \| 'content' \| 'kind'>>(messages: T[]): T[]`（`index.ts`）。语义、为何必调、为何不剔 event-marker——见概念文档 §3 + §10。
 
 ### 附件占位符文法 — `src/attachment-ref.ts`（经 `index.ts` 转出）
 

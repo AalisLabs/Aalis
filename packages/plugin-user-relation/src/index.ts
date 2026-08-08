@@ -262,7 +262,7 @@ export const configSchema: ConfigSchema = {
   agentInjection: {
     type: 'boolean',
     label: '向 agent 注入关系上下文',
-    description: '把当前用户的子图速览作为 agent:prompt 贡献注入 system prompt（identity 槽）',
+    description: '把当前用户的子图速览作为 agent:prompt 贡献注入（turn-context 槽，历史之后、当前消息之前）',
     default: true,
   },
   injectionMaxDepth: {

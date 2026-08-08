@@ -1871,14 +1871,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return `关系强度：${score.toFixed(relationScorePrecision)}/100；累计互动：${count} 次。`;
   }
 
-  // ─── LLM 调用前注入（agent:prompt 贡献 / identity 槽）：根据 triggerType 区分主发言者语义 ───
+  // ─── LLM 调用前注入（agent:prompt 贡献 / turn-context 槽——档案按当前发言者取材、换人即变，落历史后护前缀缓存）：根据 triggerType 区分主发言者语义 ───
   //   direct/immediate/undefined → view.userId 是主发言者，注入完整档案 + 其他参与者摘要
   //   interval                   → 无主发言者（只是恰好撞上频率），所有参与者一律 compact 摘要
   //   idle                       → 无 userId，只注入历史 messages 中出现的参与者 compact 摘要
   // 多块返回保序共键：准则 → 自档案 → 主发言者档案 → 主观感受 → 其他参与者。
   ctx.contribute('agent:prompt', {
     id: 'user-profile',
-    anchor: 'identity',
+    anchor: 'turn-context',
     async build(data) {
       // 干跑(token 快照)跳过档案/主观感受加载——该路径 userId 为空串,加载既昂贵又无意义
       if (data.dryRun) return null;

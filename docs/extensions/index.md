@@ -89,7 +89,7 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 
 | api 包 | 注入的贡献点键 |
 |---|---|
-| [@aalis/api-agent](packages/api-agent/src/index.ts) | `agent:prompt`（提示词块，锚位 identity / knowledge / context / turn-hint） |
+| [@aalis/api-agent](packages/api-agent/src/index.ts) | `agent:prompt`（提示词块，锚位 identity / knowledge / context / turn-context / turn-hint） |
 
 ---
 

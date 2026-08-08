@@ -24,7 +24,7 @@ import {
   INPUT_CONVENTIONS,
   isSameMessage,
 } from './helpers.js';
-import { assemblePromptContributions } from './prompt-assembly.js';
+import { assemblePromptContributions, VOLATILE_INJECTOR } from './prompt-assembly.js';
 
 /**
  * 默认 Agent 实现 —— 对话编排器
@@ -1127,7 +1127,7 @@ class DefaultAgent implements AgentService {
     const persona = this.ctx.getService<PersonaService>('persona');
     const volatileCtx = persona?.getVolatilePrompt?.(personaOpts);
     if (volatileCtx) {
-      messages.push({ role: 'system', content: volatileCtx, metadata: { injector: 'persona-volatile' } });
+      messages.push({ role: 'system', content: volatileCtx, metadata: { injector: VOLATILE_INJECTOR } });
     }
 
     // 群聊焦点指引：仅 sessionType=group + triggerType ∈ {direct, immediate} 时注入，
@@ -1494,8 +1494,12 @@ class DefaultAgent implements AgentService {
     }
 
     // === Phase 5: 极端情况 — 删除 hook 注入的 system 消息 ===
-    // 从最靠前的块开始删:靠头的是档案/长期记忆类(下轮会重注,可再生),
-    // 靠尾的是"解释本轮触发原因"的当轮提示(如平台事件说明),牺牲价值最高,最后动。
+    // 从最靠前的块开始删。turn-context 迁移后头部只剩技能正文/会话摘要、
+    // 档案/记忆类材料都在尾部——正序扫描意味着极端裁剪时**先牺牲头部稳定块**、
+    // 可再生的尾部材料反而最后动，与理想优先级相反。维持正序是刻意取舍：
+    // 本相位是罕见的最后手段，且反转方向会先删掉紧邻当前消息的当轮提示
+    // （focus/平台事件说明），代价更直观；按 injector 分级则是为极端路径
+    // 引入一张需要长期维护的优先级表。真在生产观察到本相位高频触发时再议。
     {
       const sysIdx = findSystemIndices();
       let removed = 0;
