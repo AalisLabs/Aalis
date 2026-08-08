@@ -443,11 +443,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     },
   );
 
-  // === 检索并注入上下文（agent:prompt 贡献 / context 槽）===
+  // === 检索并注入上下文（agent:prompt 贡献 / turn-context 槽：按当前消息检索、每轮必变，落历史后护前缀缓存）===
 
   ctx.contribute('agent:prompt', {
     id: 'memory-vector',
-    anchor: 'context',
+    anchor: 'turn-context',
     async build(data) {
       // 干跑(token 快照)不做真实的 embedding+检索——那是纯统计路径的昂贵副作用
       if (data.dryRun) return null;
@@ -605,9 +605,12 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
         const lines = sortedAll.map(({ msg }) => renderMemoryEntry(msg, cfg.search.perItemMaxChars));
 
+        // 收口句与 memory-history 同构：本块落在历史转录之后（turn-context 槽），
+        // 双向夹住可降低模型把检索片段当续写素材、串上别的会话腔调的风险。
         return (
           '以下是从长期记忆中检索到的相关聊天记录片段（可能跨会话/跨群），按时间顺序呈现，仅供参考：\n' +
-          lines.join('\n')
+          lines.join('\n') +
+          '\n（以上为检索片段结束；它们早于当前对话，不是正在进行的聊天。）'
         );
       } catch (err) {
         ctx.logger.warn(`向量记忆检索失败: ${formatError(err)}`);

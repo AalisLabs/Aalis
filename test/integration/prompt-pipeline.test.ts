@@ -15,7 +15,7 @@ import type { IncomingMessage, Message, OutgoingMessage, ToolCall } from '../../
  * 提示词管线端到端集成测试
  *
  * 走真实主管线：agent.handleMessage → buildMessages（persona）→
- * assemblePromptContributions（四锚位物化）→ agent:llm:before → trimMessages →
+ * assemblePromptContributions（五锚位物化）→ agent:llm:before → trimMessages →
  * LLM.chatStream。两路观测：**假 LLM 实际收到的 messages**（管线终点），以及
  * **agent:llm:before 进链时的布局**（探针中间件录制，断言"组装先于链"的时序）。
  *
@@ -255,7 +255,7 @@ function injectedBy(messages: readonly Message[], localId: string): Message[] {
 const CONTRIBUTION_IDS = ['identity-probe', 'knowledge-probe', 'memory-history', 'memory-summary', 'turn-hint-probe'];
 
 describe('提示词管线端到端（真实 agent.handleMessage + 探针 LLM）', () => {
-  it('单轮：persona 首位，四锚位贡献块各就各位，injector 全局键末段正确', async () => {
+  it('单轮：persona 首位，五锚位贡献块各就各位，injector 全局键末段正确', async () => {
     const stack = await loadStack([{ content: 'REPLY-1' }]);
     try {
       await stack.agent.handleMessage(incoming('你好'));
@@ -271,13 +271,14 @@ describe('提示词管线端到端（真实 agent.handleMessage + 探针 LLM）'
       expect(sent[0].metadata?.injector).toBe('persona');
       expect(String(sent[0].content)).toContain('PERSONA-BASE-PROMPT');
 
-      // 逐位布局：persona → identity → knowledge → context（键码元序）→ turn-hint → user
+      // 逐位布局：persona → identity → knowledge → context（会话摘要）→
+      // turn-context（跨会话片段，准每轮变，落历史后）→ turn-hint → user
       expect(layoutOf(sent)).toEqual([
         'persona',
         'identity-probe',
         'knowledge-probe',
-        'memory-history',
         'memory-summary',
+        'memory-history',
         'turn-hint-probe',
         'user',
       ]);
@@ -355,8 +356,8 @@ describe('提示词管线端到端（真实 agent.handleMessage + 探针 LLM）'
         'persona',
         'identity-probe',
         'knowledge-probe',
-        'memory-history',
         'memory-summary',
+        'memory-history',
         'turn-hint-probe',
         'midturn-probe',
         'user',
@@ -376,7 +377,7 @@ describe('提示词管线端到端（真实 agent.handleMessage + 探针 LLM）'
     }
   });
 
-  it('第二轮对话：贡献块重新物化于新 messages，落在 persona 之后、历史之前', async () => {
+  it('第二轮对话：贡献块重新物化于新 messages，稳定块在历史前、每轮块在历史后', async () => {
     const stack = await loadStack([{ content: 'REPLY-1' }, { content: 'REPLY-2' }]);
     try {
       await stack.agent.handleMessage(incoming('第一句'));
@@ -386,15 +387,18 @@ describe('提示词管线端到端（真实 agent.handleMessage + 探针 LLM）'
       const sent = stack.recorder[1];
 
       // 第二轮是全新 messages（buildMessages 重建），贡献块须重新物化：
-      // persona → identity → knowledge → context ×2 → 上轮历史 → turn-hint → 本轮 user
+      // persona → identity → knowledge → context（摘要）→ 上轮历史 →
+      // turn-context（跨会话片段）→ turn-hint → 本轮 user。
+      // memory-history 在历史**之后**是缓存命中的前提：它随其它会话滚动、
+      // 准每轮变，放历史前会让 append-only 的历史永远命不中前缀缓存。
       expect(layoutOf(sent)).toEqual([
         'persona',
         'identity-probe',
         'knowledge-probe',
-        'memory-history',
         'memory-summary',
         'user',
         'assistant',
+        'memory-history',
         'turn-hint-probe',
         'user',
       ]);
@@ -403,9 +407,9 @@ describe('提示词管线端到端（真实 agent.handleMessage + 探针 LLM）'
       }
       // 头部 system 区在第一条非 system 之前闭合
       const firstNonSystem = sent.findIndex(m => m.role !== 'system');
-      expect(firstNonSystem).toBe(5);
-      expect(String(sent[5].content)).toContain('第一句');
-      expect(String(sent[6].content)).toContain('REPLY-1');
+      expect(firstNonSystem).toBe(4);
+      expect(String(sent[4].content)).toContain('第一句');
+      expect(String(sent[5].content)).toContain('REPLY-1');
       expect(String(sent[8].content)).toContain('第二句');
       // 每轮组装一次 → identity 探针共两次
       expect(stack.views).toHaveLength(2);

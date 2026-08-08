@@ -183,7 +183,7 @@ function contentOf(msg?: Message): string {
 }
 
 describe('plugin-file-reader: agent:prompt 贡献', () => {
-  it('上传后本轮无新上传 → 注入历史文件清单（含文件名与 ID），落在 context 锚位', async () => {
+  it('上传后本轮无新上传 → 注入历史文件清单（含文件名与 ID），落在 turn-context 锚位', async () => {
     const fx = await setup();
     try {
       const a = await fx.upload('s-1', 'notes.txt', '第一个文件正文');
@@ -224,19 +224,20 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       expect(text).toContain('read_uploaded_file');
       expect(text).toContain('list_uploaded_files');
 
-      // context 锚位可判伪：IDN（identity）紧跟 persona；KN（knowledge）在 file-reader
-      // 块**之前**——若 anchor 错标成 knowledge，两块同槽按键序排，zz- 探针会落到
-      // file-reader 之后，下面这条比较即翻转。
+      // turn-context 锚位可判伪：IDN/KN 两个探针钉住头部区（identity/knowledge
+      // 仍在历史前），file-reader 块必须落在历史**之后**、最后一条 user 之前——
+      // 文件清单的 build 读最后一条 user 消息判断"本轮是否新上传"，内容随当前轮
+      // 变，放历史前会掐断前缀缓存（见 api-agent 的 PromptAnchor 契约注释）。
       const idnIdx = messages.findIndex(m => String(m.content) === 'IDN');
       const knIdx = messages.findIndex(m => String(m.content) === 'KN');
       const frIdx = messages.indexOf(injected as Message);
+      const firstHistIdx = messages.findIndex(m => m.role !== 'system');
       expect(idnIdx).toBe(1);
-      expect(frIdx).toBeGreaterThan(idnIdx);
-      expect(knIdx, 'knowledge 槽须先于 context 槽').toBeLessThan(frIdx);
-      // 落在首条非 system（历史第一条）之前——turn-hint 会落到最后一条 user 前，故可判伪
-      expect(frIdx).toBeLessThan(messages.findIndex(m => m.role !== 'system'));
+      expect(knIdx, 'knowledge 探针留在头部区').toBeLessThan(firstHistIdx);
+      expect(frIdx, '文件清单须在历史之后').toBeGreaterThan(firstHistIdx);
       expect(messages[frIdx].role).toBe('system');
       expect(messages[messages.length - 1].role).toBe('user');
+      expect(frIdx, '文件清单须在最后一条 user 之前').toBeLessThan(messages.length - 1);
     } finally {
       fx.dispose();
     }

@@ -8,7 +8,7 @@
  *   - 与 vector / summary 同样走 DB，行为一致、可审计。
  *
  * 注入策略：
- *   - 向 `agent:prompt` 贡献点交一块（context 锚位），按 scope 决定是否过滤 platform。
+ *   - 向 `agent:prompt` 贡献点交一块（turn-context 锚位：随其它会话滚动、准每轮变，落历史后护前缀缓存），按 scope 决定是否过滤 platform。
  *   - 排重由组装器统一按全局键做，贡献方无需自查。
  *   - 同步注册 `recent_messages` 工具供 agent 主动查询。
  *
@@ -241,12 +241,12 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     return picked;
   }
 
-  // ---- 注入贡献（agent:prompt / context 槽；幂等与落点由组装器统一保障）----
+  // ---- 注入贡献（agent:prompt / turn-context 槽；幂等与落点由组装器统一保障）----
 
   if (cfg.injectEnabled) {
     ctx.contribute('agent:prompt', {
       id: 'memory-history',
-      anchor: 'context',
+      anchor: 'turn-context',
       async build(view) {
         let records: RecentMessageRecord[];
         try {

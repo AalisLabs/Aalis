@@ -49,14 +49,14 @@ for (const { key, spec } of ctx.collect('agent:prompt')) {
   枚举结果逐字节相同。顺序是键的纯函数，重复注册无法影响排位。
 - **无执行**：内核只做注册与枚举，永不调用 spec 上的任何函数。如何执行（并行 / 隔离 /
   超时 / 排布）是收集方的策略——如 `agent:prompt` 的组装器（`plugin-agent` 的
-  `prompt-assembly.ts`）选择并行 build + 单块错误隔离 + 四锚位排布。
+  `prompt-assembly.ts`）选择并行 build + 单块错误隔离 + 五锚位排布。
 - **清理**：dispose 链与 `unregisterByContext` 双路径，插件卸载/热重载（bounce）自动清扫。
 
 ## 现有贡献点
 
 | 贡献点 | owner | spec | 说明 |
 |---|---|---|---|
-| `agent:prompt` | `@aalis/plugin-agent` | `PromptContribution`（`@aalis/api-agent`） | LLM 提示词块；锚位 `identity` / `knowledge` / `context` / `turn-hint`，`build(view)` 返回 `string | string[] | null` |
+| `agent:prompt` | `@aalis/plugin-agent` | `PromptContribution`（`@aalis/api-agent`） | LLM 提示词块；锚位 `identity` / `knowledge` / `context` / `turn-context` / `turn-hint`（前三者在历史前、供会话级稳定材料，`turn-context` 在历史后、供每轮取材的材料——分界依据见概念文档《消息与 LLM 管线》），`build(view)` 返回 `string | string[] | null` |
 
 ## 定义自己的贡献点
 

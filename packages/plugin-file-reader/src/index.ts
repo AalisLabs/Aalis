@@ -804,7 +804,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   if (historyHintEnabled) {
     ctx.contribute('agent:prompt', {
       id: HISTORY_HINT_SOURCE,
-      anchor: 'context',
+      anchor: 'turn-context',
       build(view) {
         if (!view.sessionId) return null;
         const files = [...index.values()]
