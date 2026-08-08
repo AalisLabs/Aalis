@@ -326,12 +326,19 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         messages: summaryMessages,
         temperature: 0.3,
         maxTokens: summaryBudget,
+        think: false, // 取舍见下方非流式分支的注释
       });
       if (!stream) {
+        // think: false 写死不设配置——摘要是机械压缩任务，思维链只贡献耗时方差：
+        // thinkingMode=auto 下 v4 全系默认带思考，300 条群聊的摘要曾多次撞
+        // provider 的 120s 超时；压缩卡住 → 活跃数冲破取数窗 → 滑窗复活，
+        // 质量和前缀缓存一起塌。「不思考的摘要」对「超时导致根本没有摘要」
+        // 不是权衡。将来真出现需要思考版摘要的模型再补配置键。
         const resp = await summaryModel.chat({
           messages: summaryMessages,
           temperature: 0.3,
           maxTokens: summaryBudget,
+          think: false,
         });
         summaryText = resp.content ?? '';
       } else {
@@ -532,12 +539,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           messages: summaryMessages,
           temperature: 0.3,
           maxTokens: summaryBudget,
+          think: false, // 同上：摘要不思考，取舍见自动压缩路径的注释
         });
         if (!stream2) {
           const resp = await summaryModel.chat({
             messages: summaryMessages,
             temperature: 0.3,
             maxTokens: summaryBudget,
+            think: false,
           });
           summaryText = resp.content ?? '';
         } else {
