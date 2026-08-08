@@ -61,7 +61,7 @@ interface SQLiteMemoryConfig {
 
 // ===== SQLite MemoryService 实现 =====
 
-class SQLiteMemoryService implements MemoryService {
+export class SQLiteMemoryService implements MemoryService {
   private db: Database.Database;
   private readonly rangeQueryLimit: number;
   private readonly crossSessionMaxLimit: number;
@@ -191,15 +191,18 @@ class SQLiteMemoryService implements MemoryService {
   }
 
   async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
+    // ORDER BY 必须带 id 次键：同毫秒写入的消息（如同一轮的 assistant+tool 合成对）
+    // 在纯 timestamp 排序下平票顺序不稳定，读回时 tool 可能排到 assistant 前面，
+    // 被 sanitizeToolCallHistory 当作孤儿整组丢弃。id 自增即插入序。
     const stmt = this.db.prepare(`
       SELECT role, kind, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments
       FROM (
-        SELECT role, kind, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments
+        SELECT id, role, kind, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments
         FROM messages
         WHERE sessionId = ? AND archived = 0
-        ORDER BY timestamp DESC
+        ORDER BY timestamp DESC, id DESC
         LIMIT ?
-      ) sub ORDER BY timestamp ASC
+      ) sub ORDER BY timestamp ASC, id ASC
     `);
     const rows = stmt.all(sessionId, limit) as Array<Parameters<typeof SQLiteMemoryService.rowToMessage>[0]>;
     return rows.map(SQLiteMemoryService.rowToMessage);
@@ -300,15 +303,16 @@ class SQLiteMemoryService implements MemoryService {
   }
 
   async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {
+    // 同 getHistory：id 次键保证同毫秒消息按插入序稳定返回
     const stmt = this.db.prepare(`
       SELECT role, kind, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments
       FROM (
-        SELECT role, kind, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments
+        SELECT id, role, kind, content, toolCalls, toolCallId, name, timestamp, reasoningContent, metadata, segments
         FROM messages
         WHERE sessionId = ?
-        ORDER BY timestamp DESC
+        ORDER BY timestamp DESC, id DESC
         LIMIT ?
-      ) sub ORDER BY timestamp ASC
+      ) sub ORDER BY timestamp ASC, id ASC
     `);
     const rows = stmt.all(sessionId, limit) as Array<Parameters<typeof SQLiteMemoryService.rowToMessage>[0]>;
     return rows.map(SQLiteMemoryService.rowToMessage);
