@@ -9,6 +9,7 @@ import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { AttachmentRefKind, formatAttachmentRef, getSenderLabel, type Message } from '@aalis/schema-message';
+import { truncateChars } from '@aalis/util-text-normalize';
 import WebSocket from 'ws';
 import {
   cacheAttachmentBuffer,
@@ -264,6 +265,54 @@ interface ConnectionState {
 // 其他路径全部走 inbound:command/flow/trigger/dispatch 生命周期相位。
 
 // ===== 工具函数 =====
+
+/** 撤回原文的时间标注：同日 HH:mm，跨日 M/D HH:mm（供撤回通知内嵌，纯函数）。 */
+function formatRecallClock(ts: number, now: number): string {
+  const d = new Date(ts);
+  const n = new Date(now);
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const sameDay = d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+  return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+}
+
+/**
+ * 撤回通知文案（纯函数，供单测）。
+ *
+ * 能反查到归档原文时，附「发送时间 + 内容摘录」——LLM 由此知道被撤回的**是哪句话**，
+ * 而不是只看到一个对它毫无意义的平台 msg id（历史消息呈现给 LLM 时不带 messageId，
+ * 只给 id 它对应不上）。查不到原文时退回旧文案（msg id 便于人工排查）。
+ *
+ * 摘录规则：去掉与通知重复的发送者前缀（归档正文已烘焙 `[昵称(ID)]:`）、压平空白、
+ * truncateChars 截断（不切碎代理对——见 llm-lone-surrogate 教训）。
+ */
+export function buildRecallNoticeContent(opts: {
+  isGroup: boolean;
+  userLabel: string;
+  opLabel?: string;
+  messageId?: string;
+  original?: { content: string; timestamp?: number };
+  now?: number;
+}): string {
+  const { isGroup, userLabel, opLabel, messageId, original } = opts;
+  let detail = messageId ? `（msg=${messageId}）` : '';
+  if (original?.content) {
+    const bare = original.content
+      .replace(/^\[[^\]\n]{1,40}\]:\s*/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (bare) {
+      const excerpt = truncateChars(bare, 60, '…');
+      const clock = original.timestamp ? formatRecallClock(original.timestamp, opts.now ?? Date.now()) : '';
+      detail = `（${clock ? `${clock} 发送` : '原文'}：「${excerpt}」）`;
+    }
+  }
+  const head = isGroup
+    ? opLabel && opLabel !== userLabel
+      ? `${opLabel} 撤回了 ${userLabel} 的消息`
+      : `${userLabel} 撤回了一条消息`
+    : `${userLabel} 撤回了一条私聊消息`;
+  return `[notice/${isGroup ? 'group_recall' : 'friend_recall'}] ${head}${detail}`;
+}
 
 /** 生成 sessionId: onebot:{selfId}:{detailType}:{targetId} */
 function makeSessionId(
@@ -1972,9 +2021,23 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         const opNick = isGroup ? await resolveNickname(state, operatorId, notice.groupId) : undefined;
         const userLabel = userNick ? `${userNick}(${notice.userId})` : (notice.userId ?? '某人');
         const opLabel = opNick ? `${opNick}(${operatorId})` : operatorId;
-        const content = isGroup
-          ? `[notice/group_recall] ${opLabel && opLabel !== userLabel ? `${opLabel} 撤回了 ${userLabel} 的消息` : `${userLabel} 撤回了一条消息`}${messageId ? `（msg=${messageId}）` : ''}`
-          : `[notice/friend_recall] ${userLabel} 撤回了一条私聊消息${messageId ? `（msg=${messageId}）` : ''}`;
+        // 反查被撤回的归档原文：入站消息归档时带 metadata.messageId（archive:meta.messageId），
+        // 撤回多发生在发送后几分钟内，findByMessageId 默认 100 条扫描窗足够。
+        // 查不到（未归档/超窗）或反查抛错都退回旧文案，不阻塞通知入档。
+        let original: { content: string; timestamp?: number } | undefined;
+        if (messageId) {
+          try {
+            const found = await ctx
+              .getService<MessageArchiveService>('message-archive')
+              ?.findByMessageId?.(sessionId, messageId);
+            if (found && typeof found.content === 'string' && found.content) {
+              original = { content: found.content, timestamp: found.timestamp };
+            }
+          } catch {
+            /* 反查失败不阻塞 */
+          }
+        }
+        const content = buildRecallNoticeContent({ isGroup, userLabel, opLabel, messageId, original });
         await archivePlatformNotice({
           sessionId,
           noticeType: notice.noticeType,
