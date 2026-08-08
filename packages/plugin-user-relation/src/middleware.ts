@@ -1,5 +1,5 @@
 /**
- * 关系图注入 —— agent:prompt 贡献点（identity 槽），向 system 提示注入：
+ * 关系图注入 —— agent:prompt 贡献点（turn-context 槽：按当前发言者取材、换人即变，落历史后护前缀缓存），注入：
  * - 当前主发言者的子图速览（按 BFS 深度/宽度展开）
  * - 每个事件的"其他参与者"（揭示群体动态）
  * - 高频共现伙伴（基于事件桥的隐式二跳）
@@ -51,7 +51,7 @@ export function registerRelationContribution(ctx: Context, service: RelationServ
   if (!cfg.enabled) return;
   ctx.contribute('agent:prompt', {
     id: 'user-relation',
-    anchor: 'identity',
+    anchor: 'turn-context',
     async build(view) {
       // 干跑(token 快照)跳过关系图查询；幂等/落点/查重由组装器按全局键统一保障
       if (view.dryRun) return null;

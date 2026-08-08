@@ -46,6 +46,10 @@ describe('plugin-memory-history', () => {
 
     const messages: Message[] = [
       { role: 'system', content: 'sys' },
+      // 带一轮历史：没有它时「第一条非 system」与「最后一条 user」重合，
+      // turn-context 与旧 context 锚位落点相同，位置断言失去判别力。
+      { role: 'user', content: 'old-q' },
+      { role: 'assistant', content: 'old-a' },
       { role: 'user', content: 'now' },
     ];
     await assemblePromptContributions(app.ctx, {
@@ -54,15 +58,18 @@ describe('plugin-memory-history', () => {
       platform: 'onebot',
     });
 
-    expect(messages.length).toBe(3);
+    expect(messages.length).toBe(5);
     expect(messages[0].role).toBe('system');
-    expect(messages[1].role).toBe('system');
-    expect(String(messages[1].metadata?.injector)).toMatch(/\/memory-history$/);
-    expect(messages[1].content).toContain('[TEST-HEADER]');
-    expect(messages[1].content).toContain('A1');
-    expect(messages[1].content).toContain('B1');
-    expect(messages[1].content).toContain('A2');
-    expect(messages[2].role).toBe('user');
+    // 跨会话片段随其它会话的消息滚动、准每轮变（实测 46h 内注入 540 次），
+    // 必须落在历史之后才不掐断前缀缓存（turn-context 锚位）
+    expect(messages[1].content).toBe('old-q');
+    expect(messages[2].content).toBe('old-a');
+    expect(String(messages[3].metadata?.injector)).toMatch(/\/memory-history$/);
+    expect(messages[3].content).toContain('[TEST-HEADER]');
+    expect(messages[3].content).toContain('A1');
+    expect(messages[3].content).toContain('B1');
+    expect(messages[3].content).toContain('A2');
+    expect(messages[4].role).toBe('user');
   });
 
   it('same-platform: 仅注入当前 platform 的消息', async () => {

@@ -184,19 +184,34 @@ declare module '@aalis/core' {
  * 提示词锚位——组装器的槽位词汇表（封闭联合，新增锚位是纯增量的类型变更）：
  *
  * - `identity`：紧贴首条 system（persona）之后。你是谁 / 对话者是谁
- *   （档案、关系、行为准则）。
+ *   （行为准则等低频变动的身份材料）。
  * - `knowledge`：头部 system 区末尾，先于 context。可用能力与操作知识
  *   （技能清单、已激活技能正文）。
- * - `context`：头部 system 区末尾，居 knowledge 之后。检索到的对话上下文
- *   （向量记忆、摘要、跨会话历史、文件清单）。
- * - `turn-hint`：最后一条 user 消息之前。仅与当前这一轮相关的即时提示
- *   （群聊时间线提醒、特殊事件说明）。messages 中无 user 消息时该槽弃置。
+ * - `context`：头部 system 区末尾，居 knowledge 之后。**会话级稳定**的对话
+ *   上下文（会话摘要）。
+ * - `turn-context`：历史结束处——**按当前轮取材**的背景材料（向量检索记忆、
+ *   跨会话片段、发言者档案/关系、文件清单）。落点三级取首个命中：跨会话
+ *   委派块之前（proactive 轮，历史里有旧 user 消息，不能按 user 定位）>
+ *   易变块（persona-volatile）之前 > 最后一条 user 之前；全列表无 user 时
+ *   落尾（材料不依附于用户消息——这点与 turn-hint 的弃置不同）。
+ * - `turn-hint`：最后一条 user 消息之前（居 turn-context 之后，贴用户消息
+ *   最近）。仅与当前这一轮相关的即时提示（群聊时间线提醒、特殊事件说明）。
+ *   messages 中无 user 消息时该槽弃置。
+ *
+ * ## context 与 turn-context 的分界：内容每轮变不变
+ *
+ * 这不是语义洁癖，是 provider 前缀缓存的算术：缓存从第 0 个 token 逐位比对，
+ * 断在第一个不同处，之后全部按未命中计费。历史（append-only + 定期压缩）是
+ * 请求里最大的稳定块；把「按当前消息检索」的材料放在历史**之前**，等于每轮
+ * 亲手掐断缓存——实测 342 次调用命中率 12.7%，恰为历史前静态头部的占比。
+ * 故约定：**每轮必变/换发言人即变的材料放 turn-context（历史后），
+ * 会话级稳定、偶发才变的放 identity/knowledge/context（历史前）**。
  *
  * 同槽内多块按全局键码元序排布——**顺序确定但无语义**，契约要求同槽贡献
  * 互不依赖先后；若两块内容有顺序依赖，它们应属于同一个贡献（build 返回
  * 数组，块间保序）。
  */
-export type PromptAnchor = 'identity' | 'knowledge' | 'context' | 'turn-hint';
+export type PromptAnchor = 'identity' | 'knowledge' | 'context' | 'turn-context' | 'turn-hint';
 
 /**
  * build 的只读视图——贡献者能看到的全部信息。
