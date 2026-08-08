@@ -137,9 +137,12 @@ class MongoMemoryService implements MemoryService {
   }
 
   async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
+    // sort 必须带 _id 次键：同毫秒写入的消息（如同一轮的 assistant+tool 合成对）
+    // 在纯 timestamp 排序下平票顺序不稳定，读回时 tool 可能排到 assistant 前面，
+    // 被 sanitizeToolCallHistory 当作孤儿整组丢弃。_id 单调递增即插入序。
     const docs = await this.collection
       .find({ sessionId, archived: { $ne: true } })
-      .sort({ timestamp: -1 })
+      .sort({ timestamp: -1, _id: -1 })
       .limit(limit)
       .toArray();
     docs.reverse();
@@ -147,7 +150,12 @@ class MongoMemoryService implements MemoryService {
   }
 
   async getFullHistory(sessionId: string, limit = 200): Promise<Message[]> {
-    const docs = await this.collection.find({ sessionId }).sort({ timestamp: -1 }).limit(limit).toArray();
+    // 同 getHistory：_id 次键保证同毫秒消息按插入序稳定返回
+    const docs = await this.collection
+      .find({ sessionId })
+      .sort({ timestamp: -1, _id: -1 })
+      .limit(limit)
+      .toArray();
     docs.reverse();
     return docs.map(doc => this.docToMessage(doc));
   }
