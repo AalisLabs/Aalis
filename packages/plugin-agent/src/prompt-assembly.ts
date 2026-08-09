@@ -78,7 +78,7 @@ function anchorInsertAt(anchor: PromptAnchor, messages: readonly Message[]): num
       //    **内部**，既割裂转录又在 append-only 区制造新的缓存断点。
       // 2. 易变块（persona-volatile）之前——普通轮的历史/当前轮分界线。
       //    材料在此刻事实（时间/状态）之前、focus 与 turn-hint 之前：焦点
-      //    指引与平台提示（「以上是群聊的历史消息记录」）保持与改动前相同
+      //    指引与平台提示（「本轮上下文中的群聊历史记录」）保持与改动前相同
       //    的先行语邻接，不被整批材料隔断。
       // 3. 兜底：最后一条 user 之前；全列表无 user（空历史特殊形状）落尾。
       //

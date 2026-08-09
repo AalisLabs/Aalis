@@ -2219,8 +2219,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const blocks: string[] = [];
 
       if (view.sessionId?.includes(':group:')) {
+        // 措辞不用「以上」——本块落点在检索材料/状态块之后，位置指代会把
+        // 非历史的注入材料错误圈进去；按内容指称写成位置无关的表述。
         blocks.push(
-          '注意：以上是群聊的历史消息记录，包含多位群友的发言。' +
+          '注意：本轮上下文中的群聊历史记录包含多位群友的发言。' +
             '请留意消息的时间先后顺序，优先关注近期的对话内容和上下文。',
         );
       }
