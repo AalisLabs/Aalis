@@ -5,7 +5,7 @@ import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message, ToolCall } from '@aalis/schema-message';
-import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
+import { prepareLLMMessages, toLLMRole, WellKnownKinds } from '@aalis/schema-message';
 import { stripLeakedSpecialTokens } from '@aalis/util-text-normalize';
 import { parseDsmlToolCalls } from './dsml-parser.js';
 
@@ -186,6 +186,39 @@ interface APIChatResponse {
   };
 }
 
+// ===== 消息角色归一化（前缀缓存关键） =====
+
+/**
+ * 把「首个非 system 消息之后」出现的所有 system 消息转为 user 角色；
+ * 内容不以 `[` 开头的补一个 `[系统提示] ` 标记（已带 [系统通知]/[跨会话委派] 等
+ * 方括号标记的不重复加）。头部连续 system 区（人设/技能/摘要）原样保留。
+ *
+ * 原因（2026-08-09 受控 API 实验实证）：DeepSeek 渲染时把 messages 里**所有**
+ * system 消息提升合并到上下文最前部，与数组位置无关。于是刻意排在历史之后的
+ * 每轮易变块（当前状态/焦点/检索材料等），渲染后实际落在 append-only 历史
+ * **之前**——内容每轮一变，历史整段前缀缓存作废，跨回合命中恒等于头部大小
+ * （实测 ~30%）；历史中段的通知（notice→system）同理，每来一条打断一次。
+ * 转为 user 后按数组位置顺序渲染：头部稳定区+历史可跨回合命中，每轮材料
+ * 真正落在决策点旁（实验对照：同历史换尾块，system 形态命中 10112/62330，
+ * user 形态命中 61184/61623）。
+ */
+export function normalizeSystemPlacement(messages: Message[]): Message[] {
+  let leadingEnd = 0;
+  while (leadingEnd < messages.length && messages[leadingEnd].role === 'system') leadingEnd++;
+  return messages.map((m, i) => {
+    if (i < leadingEnd || m.role !== 'system') return m;
+    // 跨会话委派指令豁免：它必须以 system 呈现，转 user 会复发「把委派当真实用户
+    // 在指挥」的历史 BUG（plugin-agent buildMessages 注释记录在案）。委派轮低频，
+    // 牺牲该轮缓存可接受。injector 只存在于请求期构造的消息上，不会命中历史记录。
+    if (m.metadata?.injector === WellKnownKinds.CrossSessionDelegation) return m;
+    const content = m.content ?? '';
+    // 空内容块保持原样，不产出「[系统提示] 」空壳 user 消息
+    if (!content.trim()) return m;
+    // 标记用换行拼接：块首若是 markdown 标题（# 开头），空格拼接会让 # 脱离行首失去语义
+    return { ...m, role: 'user', content: content.startsWith('[') ? content : `[系统提示]\n${content}` };
+  });
+}
+
 // ===== DeepSeek 客户端（共享底层 fetch 封装，多个 ModelHandle 复用） =====
 
 class DeepSeekClient {
@@ -233,7 +266,7 @@ class DeepSeekClient {
   }
 
   async chat(model: string, request: ChatModelRequest, enableThinking: boolean): Promise<ChatResponse> {
-    const messages = prepareLLMMessages(request.messages).map(m => this.toAPIMessage(m));
+    const messages = normalizeSystemPlacement(prepareLLMMessages(request.messages)).map(m => this.toAPIMessage(m));
     const tools = request.tools?.map(t => this.toAPITool(t));
 
     const body: Record<string, unknown> = {
@@ -355,7 +388,7 @@ class DeepSeekClient {
   }
 
   async *chatStream(model: string, request: ChatModelRequest, enableThinking: boolean): AsyncIterable<ChatStreamChunk> {
-    const messages = prepareLLMMessages(request.messages).map(m => this.toAPIMessage(m));
+    const messages = normalizeSystemPlacement(prepareLLMMessages(request.messages)).map(m => this.toAPIMessage(m));
     const tools = request.tools?.map(t => this.toAPITool(t));
 
     const body: Record<string, unknown> = {
