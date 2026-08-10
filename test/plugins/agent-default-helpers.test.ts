@@ -12,10 +12,10 @@ import {
 import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
 
 describe('formatTimeLabel', () => {
-  it('同一天显示「今天 HH:mm」', () => {
+  it('同一天也用绝对日期（相对表述会在零点全体翻转，打穿前缀缓存）', () => {
     const now = new Date('2025-01-15T14:30:00').getTime();
     const ts = new Date('2025-01-15T09:05:00').getTime();
-    expect(formatTimeLabel(ts, now)).toBe('今天 09:05');
+    expect(formatTimeLabel(ts, now)).toBe('1/15 09:05');
   });
 
   it('跨天同年显示 月/日 HH:mm', () => {
