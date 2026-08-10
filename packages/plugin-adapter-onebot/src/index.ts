@@ -2228,7 +2228,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
 
       // 特殊事件触发上下文：最后一条消息是非文本事件（戳一戳/文件上传）时说明缘由。
-      // 剥离顺序须与 agent 的消息装配一致：时间标签 `(今天 HH:MM) ` 在最外层，
+      // 剥离顺序须与 agent 的消息装配一致：时间标签 `(M/D HH:MM) ` 在最外层，
       // 其内才是发送者前缀 `[昵称(id)]: `——只剥后者会让事件正则永不命中。
       const lastMsg = view.messages[view.messages.length - 1];
       if (lastMsg?.role === 'user' && typeof lastMsg.content === 'string') {

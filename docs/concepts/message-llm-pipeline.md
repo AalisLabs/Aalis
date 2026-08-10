@@ -309,6 +309,8 @@ default model 通过 `ServiceContainer.setPreference('llm', preferredContextId)`
 
 给贡献者作者的判定方法：问自己「相邻两轮，这个 build 的返回值逐字节相同吗」。答案是否定的就用 `turn-context`。完整锚位语义见 `@aalis/api-agent` 的 `PromptAnchor` 契约注释；同槽内多块按全局键码元序排布，顺序确定但无语义，互相不得有先后依赖。
 
+注意布局图描述的是**数组位置**，不保证等于 provider 的渲染位置。DeepSeek 会把 messages 里所有 system 消息提升合并到上下文最前部——数组位置在历史后的 system 块，渲染后仍落在历史前。因此 `@aalis/plugin-llm-deepseek` 在出口做角色归一化：首个非 system 消息之后的 system 一律转为 `user`（补 `[系统提示]` 标记；跨会话委派指令豁免）。编写新的 provider 插件时，需按目标 API 的渲染语义自行判断是否需要同类归一化，锚位布局的缓存收益才能真正落地。
+
 ## 10. 边界与注意事项
 
 1. **漏调 `prepareLLMMessages` 会导致 provider 崩溃。** 某天上游塞进 `notice` 或跨会话委派消息，未归一的非标准 role 会让你的 API 直接返回 400。务必在 `chat` / `chatStream` 第一步调用（§3.1）。
