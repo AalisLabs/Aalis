@@ -8,7 +8,11 @@
  */
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 /**
- * 将时间戳格式化为可读的时间标签。距当前时间较近时使用 HH:mm，跨天时加上日期。
+ * 将时间戳格式化为可读的时间标签：同年 `M/D HH:mm`，跨年 `YYYY/M/D HH:mm`。
+ *
+ * 刻意不用「今天」相对表述：历史消息的标签是构建期逐条现贴的，相对表述会在
+ * 每个零点让全部当日消息的字节翻转一次，等于每个会话每天必吃一次前缀缓存
+ * 全量 miss。当前时刻由易变块注入，模型据此自行判断远近，不需要标签替它算。
  */
 export function formatTimeLabel(ts: number, now: number): string {
   const d = new Date(ts);
@@ -17,9 +21,6 @@ export function formatTimeLabel(ts: number, now: number): string {
   const mins = String(d.getMinutes()).padStart(2, '0');
   const hhmm = `${hours}:${mins}`;
 
-  if (d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate()) {
-    return `今天 ${hhmm}`;
-  }
   if (d.getFullYear() !== today.getFullYear()) {
     return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${hhmm}`;
   }
