@@ -92,7 +92,9 @@ describe('buildRecallNoticeContent', () => {
       now: NOW,
     });
     expect(out).toContain('…」）');
-    expect(out.isWellFormed()).toBe(true);
+    // 孤代理检查：高代理后必须跟低代理，低代理前必须有高代理
+    // （String.prototype.isWellFormed 是 ES2024，test 类型门的 lib 停在 ES2023，用正则等价断言）
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(out)).toBe(false);
     expect(out).not.toContain('�');
     // 摘录部分不超过 60 码元 + 省略号
     const excerpt = out.slice(out.indexOf('「') + 1, out.indexOf('」'));

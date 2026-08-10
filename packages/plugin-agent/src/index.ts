@@ -1206,6 +1206,10 @@ class DefaultAgent implements AgentService {
           skillsTokens += t;
         } else if (source === 'system-other') {
           systemOtherTokens += t;
+        } else if (source === 'parent-status') {
+          // subtask 父会话状态提醒（injector 'subtask/parent-status'）——归 subtask 桶，
+          // 与子会话侧 _tokenContributions.subtask 同桶，WebUI 才能看到父+子全貌
+          subtaskTokens += t;
         } else if (source === 'persona' || !source) {
           // persona 消息可能被 skills/subtask/toolPriority 追加了内容
           if (contributions) {

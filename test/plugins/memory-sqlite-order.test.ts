@@ -21,9 +21,7 @@ async function seedSameMsToolPair(svc: SQLiteMemoryService): Promise<void> {
   await svc.saveMessage(SESSION, {
     role: 'assistant',
     content: null,
-    toolCalls: [
-      { id: 'call-1', type: 'function', function: { name: 'weather', arguments: '{}' } },
-    ],
+    toolCalls: [{ id: 'call-1', type: 'function', function: { name: 'weather', arguments: '{}' } }],
     timestamp: 2000,
   });
   await svc.saveMessage(SESSION, { role: 'tool', content: '晴', toolCallId: 'call-1', timestamp: 2000 });
