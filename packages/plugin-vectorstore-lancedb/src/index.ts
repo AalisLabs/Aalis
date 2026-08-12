@@ -70,7 +70,7 @@ export function metaJsonFieldPredicate(key: string, value: unknown): string {
 
 // ===== LanceDB 向量存储实现 =====
 
-class LanceDBVectorStore implements VectorStoreService {
+export class LanceDBVectorStore implements VectorStoreService {
   private db!: Connection;
   private table: LanceTable | null = null;
   /** 首次建表的 single-flight promise：并发 add 复用它，避免「table already exists」丢向量 */
@@ -141,18 +141,46 @@ class LanceDBVectorStore implements VectorStoreService {
 
     if (!this.table) {
       // single-flight 建表：并发 add（索引 concurrency=10 + embed I/O 让出事件循环）会同时进此分支；
-      // 旧实现各自 createTable → 第二个抛「table already exists」被吞、向量永久丢失。复用同一 promise，
-      // 首条随建表写入，其余等建表完成后 add 自己。
+      // 各自建表会互撞「already exists」丢向量，故复用同一 promise。
+      // 失败必须重置 tableInit：rejected promise 若留在原位，后续每次 add 都会 await 到它
+      // 原样重抛——建表竞态从单条瞬态失败升级为整库永久僵死（2026-08-11 /clear all 事故：
+      // 清空与在途建表交错失败一次，此后 1.5 天 1.5 万次索引全部重放同一错误、检索恒 0）。
       if (!this.tableInit) {
-        this.tableInit = this.db.createTable(this.tableName, [record]);
-        this.table = await this.tableInit;
-        this.logger?.info(`LanceDB 表 "${this.tableName}" 已创建`);
-        return; // 首条已随 createTable 落库
+        this.tableInit = this.initTable(record).then(
+          t => {
+            this.table = t;
+            return t;
+          },
+          err => {
+            this.tableInit = null;
+            throw err;
+          },
+        );
+        await this.tableInit;
+        return; // 首条已随建表落库
       }
       await this.tableInit; // 并发后续条目：等建表完成再 add 自己
     }
     await this.table!.add([record]);
     this.maybeOptimize();
+  }
+
+  /**
+   * 表句柄初始化（single-flight 的内核）。open-first：「create 撞 already exists」类
+   * 竞态（与 clear 的 drop 交错、外部进程写入、半途状态）的共同根源是把「表不存在」
+   * 当作建表前提——先查先开，存在就 open 并补写首条，确实不存在才 create。
+   * 任何一步失败都由调用方的 reset 兜底：下一条消息重试，不留僵尸状态。
+   */
+  private async initTable(firstRecord: Record<string, unknown>): Promise<LanceTable> {
+    const names = await this.db.tableNames();
+    if (names.includes(this.tableName)) {
+      const t = await this.db.openTable(this.tableName);
+      await t.add([firstRecord]);
+      return t;
+    }
+    const t = await this.db.createTable(this.tableName, [firstRecord]);
+    this.logger?.info(`LanceDB 表 "${this.tableName}" 已创建`);
+    return t;
   }
 
   /**
@@ -236,6 +264,15 @@ class LanceDBVectorStore implements VectorStoreService {
 
   /** 内部清空（不加串行锁）：供已持锁的 deleteByFilter 复用，避免自锁死。 */
   private async clearInternal(): Promise<void> {
+    // 先让在途建表落定再拆句柄：add 不走串行锁，清空瞬间可能有 createTable 在飞——
+    // 半途拆掉 table/tableInit 会让 drop 与建表交错（本清空路径的既往竞态源头）。
+    if (this.tableInit) {
+      try {
+        await this.tableInit;
+      } catch {
+        /* 在途建表失败也继续清空——失败路径已自行重置 tableInit */
+      }
+    }
     if (this.table) {
       this.table.close();
       this.table = null;
