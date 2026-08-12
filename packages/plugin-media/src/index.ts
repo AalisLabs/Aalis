@@ -41,7 +41,11 @@ export const configSchema: ConfigSchema = {
         label: '处理模式',
         options: [
           { label: '由副模型转文本（推荐，文本主模型也能用）', value: 'describe' },
-          { label: '直通：原始图片交给主模型自行识别（需主模型有 vision 能力）', value: 'passthrough' },
+          { label: '直通：静图原样交给主模型，动图抽帧为多张静图（需主模型 vision 能力）', value: 'passthrough' },
+          {
+            label: '原样直通：动图不抽帧原样交给主模型（仅当主模型能原生理解动图，或用于实验）',
+            value: 'passthrough-raw',
+          },
           { label: '禁用：丢弃图片', value: 'disabled' },
         ],
         default: 'describe',
@@ -296,6 +300,33 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   const svc = new MediaServiceImpl(ctx, logger, cfg);
 
   ctx.provide('media', svc);
+
+  // 直通模式的出口形态变换：agent 组装完成后、发出之前，把末条 user 消息 images[]
+  // 里的动图抽帧替换为多张静图（passthrough 语义；其余模式该方法原样返回，等价 no-op）。
+  // 放中间件而非改 api-media 契约或 plugin-agent——形态知识整体留在本插件内
+  // （契约修改的复杂度与谨慎门槛高于插件内实现）。变换只作用于末条 user 消息（尾部），
+  // 不触碰前缀缓存；dryRun 估算轮跳过（抽帧昂贵且该轮不真正发请求）。
+  //
+  // WeakSet 标记「已处理过的消息」：本钩子在工具循环的每轮迭代都会重跑（上限 30 轮），
+  // 而变换失败会把原动图放回 images——没有标记的话，一张拉不动的远端动图会在每轮
+  // 重试物化（15s 超时 × 30 轮）。每条消息只处理一次，成败皆不重来；消息对象随
+  // 回合结束被回收，无生命周期管理。
+  const transformed = new WeakSet<object>();
+  ctx.middleware('agent:llm:before', async (data, next) => {
+    if (!data.dryRun && cfg.vision.mode === 'passthrough') {
+      for (let i = data.messages.length - 1; i >= 0; i--) {
+        const m = data.messages[i];
+        if (m.role === 'user' && m.images && m.images.length > 0) {
+          if (!transformed.has(m)) {
+            transformed.add(m);
+            m.images = await svc.transformModelImages(m.images);
+          }
+          break;
+        }
+      }
+    }
+    return next();
+  });
 
   // 动态填充 audio.prefer 下拉：把统一池（Whisper/ASR + 音频 LLM）的可选项写进 configSchema。
   // getStatus 读的是 module.configSchema 的 live 对象，故 mutate 即可被前端配置页读到；
