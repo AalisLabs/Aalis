@@ -52,7 +52,7 @@ import { getMediaRuntime } from './runtime.js';
 
 export interface MediaConfigResolved {
   vision: {
-    mode: 'describe' | 'passthrough' | 'disabled';
+    mode: 'describe' | 'passthrough' | 'passthrough-raw' | 'disabled';
     prefer?: string | ModelRef;
     maxTokens: number;
     think: boolean;
@@ -325,9 +325,13 @@ export class MediaServiceImpl implements MediaService {
         if (att.kind === 'image') {
           if (this.cfg.vision.mode === 'disabled') {
             item.description = undefined;
-          } else if (this.cfg.vision.mode === 'passthrough') {
-            // passthrough：不调用 processor，attachment 原样保留以便 agent 直接喂给主模型
+          } else if (this.cfg.vision.mode === 'passthrough' || this.cfg.vision.mode === 'passthrough-raw') {
+            // 直通类模式：不调用 processor，attachment 原样保留以便 agent 直接喂给主模型。
+            // passthrough 的动图抽帧发生在出口（agent:llm:before 中间件，见 index.ts）——
+            // 此处只登记动图线索：出口拿到的 images[] 只剩 data 串，而 QQ 图 URL 常无
+            // 扩展名，mimeType 只有归档期（现在）看得到。
             item.description = undefined;
+            if (!isAnimatedFormat(att.data) && att.mimeType === 'image/gif') this.rememberAnimated(att.data);
           } else {
             // 动图（gif/webm/...）走视频帧流程获得综合描述
             const animated = isAnimatedFormat(att.data) || att.mimeType === 'image/gif';
@@ -434,10 +438,79 @@ export class MediaServiceImpl implements MediaService {
     return report;
   }
 
-  /** 视频：抽帧 + 抽音轨转写 → 拼综合描述
-   *
-   * sourceKind: 'video'（默认）用 cfg.video.maxFrames；'animated' 用 cfg.animatedImage.maxFrames。
-   * 动图比纯视频信息量低，默认给更小预算（5 vs 8），节省 vision 调用。
+  /**
+   * 直通模式的动图线索：data 串 → 已知为动图。归档期看得到 mimeType，出口期只剩 data 串。
+   * 只登记出口自身判不出的那类（data 无动图特征、仅 mimeType 表明）——WebUI 的完整 base64
+   * data URI 自带 `data:image/gif` 前缀无需登记，登记它们会让 200 条上限的集合囤积 GB 级串。
+   */
+  private readonly animatedHints = new Set<string>();
+
+  private rememberAnimated(data: string): void {
+    this.animatedHints.add(data);
+    if (this.animatedHints.size > 200) {
+      const oldest = this.animatedHints.values().next().value;
+      if (oldest !== undefined) this.animatedHints.delete(oldest);
+    }
+  }
+
+  /** 抽帧内核：本地动图/视频文件 → 均匀采样的关键帧 data URI（describe/describeImage/直通三处共用）。抽不出返回 []。 */
+  private async framesFromLocal(path: string, maxFrames: number): Promise<string[]> {
+    const totalFrames = await getFrameCount(path);
+    if (totalFrames <= 0) {
+      this.logger.debug(`[frames] ffprobe 未数出帧（探测失败或非视频容器）: ${path}`);
+      return [];
+    }
+    const frames = await extractFrames(path, selectFrameIndices(totalFrames, maxFrames));
+    this.logger.debug(`[frames] total=${totalFrames} → 采样 ${frames.length}/${maxFrames}`);
+    return frames;
+  }
+
+  /**
+   * 出口形态变换（agent:llm:before 中间件内核）：仅 vision.mode==='passthrough' 时，
+   * images 里的动图抽帧替换为多张静图 data URI；静图与其余模式一律原样返回。
+   * 三个模式共用同一张真值表：describe/disabled/passthrough-raw → 原样，
+   * passthrough → 动图变帧。任何一步失败原样退回该图（宁可主模型只见首帧，不丢图）。
+   */
+  async transformModelImages(images: string[]): Promise<string[]> {
+    if (this.cfg.vision.mode !== 'passthrough') return images;
+    const out: string[] = [];
+    for (const data of images) {
+      const animated = isAnimatedFormat(data) || this.animatedHints.has(data);
+      if (!animated) {
+        out.push(data);
+        continue;
+      }
+      try {
+        const local = await materializeAttachment(data);
+        if (!local) {
+          // 每消息只处理一次（WeakSet 不重试），这里不留痕的话用户只会看到"主模型没看懂动图"
+          this.logger.debug('[passthrough] 动图无法物化为本地文件，原样直通（主模型可能只见首帧）');
+          out.push(data);
+          continue;
+        }
+        try {
+          const frames = await this.framesFromLocal(local.path, this.cfg.animatedImage.maxFrames);
+          if (frames.length > 0) {
+            this.logger.info(`[passthrough] 动图抽帧 ${frames.length} 帧直通主模型`);
+            out.push(...frames);
+          } else {
+            out.push(data);
+          }
+        } finally {
+          await local.cleanup();
+        }
+      } catch (err) {
+        this.logger.warn(`[passthrough] 动图抽帧失败，原样直通: ${(err as Error).message}`);
+        out.push(data);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 视频：抽帧 + 抽音轨转写 → 拼综合描述。
+   * sourceKind: 'video'（默认）用 cfg.video.maxFrames；'animated' 用 cfg.animatedImage.maxFrames
+   * （两者独立配置，动图信息量低通常给更小预算）。
    */
   private async processVideo(
     att: MessageAttachment,
@@ -457,40 +530,36 @@ export class MediaServiceImpl implements MediaService {
     this.logger.info(`[video] 开始处理 sourceKind=${sourceKind} mode=${this.cfg.video.mode} path=${local.path}`);
     try {
       const frameTexts: string[] = [];
-      const totalFrames = await getFrameCount(local.path);
-      if (totalFrames > 0) {
-        const maxFrames = sourceKind === 'animated' ? this.cfg.animatedImage.maxFrames : this.cfg.video.maxFrames;
-        const indices = selectFrameIndices(totalFrames, maxFrames);
-        const frames = await extractFrames(local.path, indices);
-        this.logger.info(`[video] 抽帧 total=${totalFrames} → 采样 ${frames.length}/${maxFrames} 帧（实际抽出/期望）`);
-        if (frames.length > 0) {
-          const proc = this.pickProcessor('vision', this.cfg.vision.prefer);
-          if (proc?.describe) {
-            const frameAtts: MessageAttachment[] = frames.map(d => ({ kind: 'image', data: d, mimeType: 'image/png' }));
-            const r = await proc.describe(
-              {
-                attachments: frameAtts,
-                mode: 'combined',
-                maxTokens: this.cfg.vision.maxTokens,
-                hint: this.cfg.video.framesHint ?? '以下为同一视频的关键帧，按时间顺序排列。',
-                context: contextText,
-              },
-              this.ctx,
-            );
-            const text = r.descriptions[0];
-            if (text) {
-              frameTexts.push(`${this.cfg.video.framePrefix}${text}`);
-            } else {
-              this.logger.warn(
-                `[video] vision 综合描述返回空：${frames.length} 帧未产出文本（详见上方 vision.describe 日志）`,
-              );
-            }
+      const maxFrames = sourceKind === 'animated' ? this.cfg.animatedImage.maxFrames : this.cfg.video.maxFrames;
+      const frames = await this.framesFromLocal(local.path, maxFrames);
+      this.logger.info(`[video] 抽帧采样 ${frames.length}/${maxFrames} 帧（实际抽出/期望上限）`);
+      if (frames.length > 0) {
+        const proc = this.pickProcessor('vision', this.cfg.vision.prefer);
+        if (proc?.describe) {
+          const frameAtts: MessageAttachment[] = frames.map(d => ({ kind: 'image', data: d, mimeType: 'image/png' }));
+          const r = await proc.describe(
+            {
+              attachments: frameAtts,
+              mode: 'combined',
+              maxTokens: this.cfg.vision.maxTokens,
+              hint: this.cfg.video.framesHint ?? '以下为同一视频的关键帧，按时间顺序排列。',
+              context: contextText,
+            },
+            this.ctx,
+          );
+          const text = r.descriptions[0];
+          if (text) {
+            frameTexts.push(`${this.cfg.video.framePrefix}${text}`);
           } else {
-            this.logger.warn('[video] 无可用 vision processor，跳过帧描述');
+            this.logger.warn(
+              `[video] vision 综合描述返回空：${frames.length} 帧未产出文本（详见上方 vision.describe 日志）`,
+            );
           }
+        } else {
+          this.logger.warn('[video] 无可用 vision processor，跳过帧描述');
         }
       } else {
-        this.logger.warn(`[video] getFrameCount=0，可能 ffprobe 失败或非视频容器；path=${local.path}`);
+        this.logger.warn(`[video] 未抽出关键帧（ffprobe 失败/非视频容器/解码失败）；path=${local.path}`);
       }
 
       if (this.cfg.video.mode === 'frames+asr' && this.cfg.audio.mode === 'enabled') {
@@ -599,28 +668,24 @@ export class MediaServiceImpl implements MediaService {
       }
       if (local) {
         try {
-          const total = await getFrameCount(local.path);
-          if (total > 0) {
-            const indices = selectFrameIndices(total, this.cfg.animatedImage.maxFrames);
-            const frames = await extractFrames(local.path, indices);
-            if (frames.length > 0) {
-              const frameAtts: MessageAttachment[] = frames.map(d => ({
-                kind: 'image' as const,
-                data: d,
-                mimeType: 'image/png',
-              }));
-              const r = await proc.describe(
-                {
-                  attachments: frameAtts,
-                  mode: 'combined',
-                  maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
-                  basePrompt: this.cfg.video.animatedPrompt || DEFAULT_VISION_BATCH_PROMPT,
-                  hint: opts.hint,
-                },
-                this.ctx,
-              );
-              result = r.descriptions[0] ?? '';
-            }
+          const frames = await this.framesFromLocal(local.path, this.cfg.animatedImage.maxFrames);
+          if (frames.length > 0) {
+            const frameAtts: MessageAttachment[] = frames.map(d => ({
+              kind: 'image' as const,
+              data: d,
+              mimeType: 'image/png',
+            }));
+            const r = await proc.describe(
+              {
+                attachments: frameAtts,
+                mode: 'combined',
+                maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
+                basePrompt: this.cfg.video.animatedPrompt || DEFAULT_VISION_BATCH_PROMPT,
+                hint: opts.hint,
+              },
+              this.ctx,
+            );
+            result = r.descriptions[0] ?? '';
           }
         } finally {
           // 清理本地化产物：local 即 downloaded 或 materializeAttachment 的结果（opts.localPath 那个是 noop），

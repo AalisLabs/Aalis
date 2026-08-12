@@ -275,7 +275,8 @@ media 经 `storage` 写临时/缓存文件，但 storage 只是命名根加权�
 - **runtime 单例依赖**：media 内部的 ffmpeg 与远程下载逻辑经模块级 `setMediaRuntime({proc,storage})` 注入依赖，在 `apply()` 时设置。若 `process`/`storage` 未启用，`getMediaRuntime()` 会抛错——因此 `inject.required:['process','storage']`。第三方 backend 若要自己拿依赖，请走 `ctx`，不要依赖 media 的内部 runtime。
 - **audio.prefer 下拉是 live mutate 的**：`media` 监听 `service:registered`/`service:unregistered`（asr/llm），动态刷新 `configSchema.audio.fields.prefer.options`。新装 asr 或 audio-LLM 后，选项会自动出现。这意味着 `configSchema` 对象在运行时被改写，前端配置页读的是这个 live 对象。
 - **空音频描述不等于「非语音」**：模型的空响应可能是 maxTokens 不足、上下文超限或超时，这些都被统一标为 `[音频] 识别失败（…详见日志）`。不要据此判断「这段音频没人声」。
-- **passthrough 模式不调 processor**：`vision.mode='passthrough'` 或 `audio.mode='passthrough'` 时，`processMessage` 不做识别，保留原始 attachment 让主模型直接吃。这要求主模型自身具备 vision/audio 能力，否则附件等于被丢弃。
+- **直通类模式不调 processor**：`vision.mode='passthrough'`/`'passthrough-raw'` 或 `audio.mode='passthrough'` 时，`processMessage` 不做识别，保留原始 attachment 让主模型直接吃。这要求主模型自身具备 vision/audio 能力，否则附件等于被丢弃。
+- **`passthrough` 与 `passthrough-raw` 的分界在动图**：`passthrough` 会在出口（`agent:llm:before` 中间件）把动图抽帧为多张静图（帧数上限 `animatedImage.maxFrames`），再交给主模型——主流视觉 API 对原始 GIF 只读首帧或拒收，抽帧是让"动"被看见的唯一通用形态；静图始终原样。`passthrough-raw` 则一切原样直通、动图不抽帧，仅当主模型能原生理解动图（或做 API 行为实验）时使用。变换只作用于末条 user 消息、每条消息只处理一次（成败皆不重来），dryRun 估算轮跳过。
 - **video.passthrough cap 与帧抽取是两条路**：`video.maxTokens`/`think`/`prompt` 只对原生视频 LLM（`video.passthrough`）生效；默认的「抽帧 → vision」路径用的是 `vision.maxTokens`。
 - **缺 ffmpeg/ffprobe 时视频降级为占位**：抽帧或抽音轨失败时返回 `[视频] …` 占位串而非空串，让主 LLM 知道有视频到达但读不了，避免幻觉。
 
