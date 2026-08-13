@@ -48,6 +48,11 @@ body {
 .app-layout {
   display: flex;
   height: 100%;
+  /* viewport-fit=cover 后的兜底：刘海机横屏落回桌面布局时让出刘海与 home 条。
+     普通桌面浏览器 env() 恒为 0，零影响；移动端媒体查询内按组件精补并将 bottom 归零 */
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 /* ===== 左侧导航栏 ===== */
@@ -5532,4 +5537,274 @@ td.col-actions { text-align: right; }
   color: var(--text-secondary);
   line-height: 1.5;
   margin-top: 4px;
+}
+
+/* ===== 移动端适配（≤768px）=====
+ * 断点与 App.tsx 的 MOBILE_QUERY 保持一致。
+ * 布局策略：单列。聊天为主视图（chat-panel-header 兼任顶栏，含汉堡按钮）；
+ * 管理页面经抽屉导航进入，页面视图有独立顶栏（.mobile-topbar）。
+ * 桌面样式一律不动——所有覆盖仅在本媒体查询内生效。 */
+@media (max-width: 768px) {
+  /* 动态视口高度：软键盘弹出/地址栏收起时跟随，避免输入框被顶出屏幕 */
+  body {
+    height: 100dvh;
+  }
+
+  .app-layout.mobile {
+    flex-direction: column;
+    height: 100dvh;
+    /* 竖屏 left/right inset 为 0；bottom 由输入区/抽屉底部按组件精补，基础层归零防双重让位 */
+    padding-bottom: 0;
+  }
+
+  /* ---- 视图切换：聊天视图隐藏内容区，页面视图隐藏聊天列 ---- */
+  .app-layout.mobile-view-chat .content-area {
+    display: none;
+  }
+  .app-layout.mobile-view-page .chat-column {
+    display: none;
+  }
+
+  /* ---- 页面视图顶栏 ---- */
+  .mobile-topbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 52px;
+    padding: 0 6px;
+    padding-top: env(safe-area-inset-top);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+  }
+
+  .mobile-topbar-btn {
+    min-width: 44px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .mobile-topbar-btn:active {
+    background: var(--surface-hover);
+  }
+
+  .mobile-topbar-title {
+    flex: 1;
+    text-align: center;
+    font-size: 0.95rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ---- 抽屉导航（覆盖桌面的窄轨 + hover 展开） ---- */
+  .app-layout.mobile .nav-rail {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(78vw, 300px);
+    min-width: 0;
+    transform: translateX(-100%);
+    transition: transform var(--transition);
+    z-index: 120;
+    padding-top: env(safe-area-inset-top);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
+  }
+
+  .app-layout.mobile .nav-rail:hover {
+    width: min(78vw, 300px);
+    min-width: 0;
+  }
+
+  .app-layout.mobile .nav-rail.drawer-open {
+    transform: translateX(0);
+  }
+
+  .nav-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 110;
+  }
+
+  /* 抽屉内导航项：触控尺寸 + 标签常显 */
+  .app-layout.mobile .nav-item {
+    height: 48px;
+    padding: 0 14px;
+    gap: 14px;
+  }
+
+  .app-layout.mobile .nav-item-label {
+    opacity: 1;
+    align-items: flex-start;
+    font-size: 0.88rem;
+  }
+
+  .app-layout.mobile .nav-rail-top {
+    padding: 10px;
+    overflow-y: auto;
+  }
+
+  /* 抽屉底部：身份 + 退出 + 连接状态 */
+  .app-layout.mobile .nav-rail-bottom {
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--border);
+  }
+
+  .drawer-user {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .drawer-user-id {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .drawer-user .btn-sm {
+    min-height: 36px;
+  }
+
+  /* ---- 聊天视图 ---- */
+  .app-layout.mobile .chat-column {
+    width: 100%;
+    min-width: 0;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* chat-panel-header 兼任顶栏：让出刘海区 */
+  .app-layout.mobile .chat-panel-header {
+    height: auto;
+    min-height: var(--header-height);
+    padding-top: calc(6px + env(safe-area-inset-top));
+    padding-bottom: 6px;
+    gap: 4px;
+  }
+
+  .chat-panel-nav-btn {
+    min-width: 42px;
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    border-radius: 8px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .chat-panel-nav-btn:active {
+    background: var(--surface-hover);
+  }
+
+  .app-layout.mobile .chat-panel-title {
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* token 面板改点按开合后，防超宽 */
+  .app-layout.mobile .token-usage-panel {
+    width: min(280px, calc(100vw - 24px));
+  }
+
+  /* 消息气泡在窄屏上放宽占比 */
+  .app-layout.mobile .message-group {
+    max-width: 94%;
+  }
+
+  /* 输入区：坐底 + 让出 home 条 */
+  .app-layout.mobile .input-area {
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+
+  /* ---- 内容区（页面视图；flex:1 基线已有，此处只解除桌面下限） ---- */
+  .app-layout.mobile .content-area {
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* 桌面内容头（标题+身份）隐藏：标题在 mobile-topbar，身份在抽屉底部 */
+  .app-layout.mobile .content-header {
+    display: none;
+  }
+
+  /* ---- 触控与表单 ---- */
+  /* iOS Safari 对 <16px 的输入框聚焦时自动放大页面；统一抬到 16px 阻断 */
+  .app-layout.mobile textarea,
+  .app-layout.mobile input[type='text'],
+  .app-layout.mobile input[type='password'],
+  .app-layout.mobile input[type='number'],
+  .app-layout.mobile select {
+    font-size: 16px;
+  }
+
+  .app-layout.mobile .send-btn,
+  .app-layout.mobile .upload-btn {
+    min-width: 42px;
+    min-height: 42px;
+  }
+
+  .app-layout.mobile .chat-panel-new-btn {
+    min-width: 38px;
+    min-height: 38px;
+  }
+
+  /* ---- 宽表格降级为容器内横滚（列数固定的 grid 表格无法折行） ---- */
+  .app-layout.mobile .authority-cmd-list {
+    overflow-x: auto;
+  }
+  .app-layout.mobile .authority-cmd-header,
+  .app-layout.mobile .authority-cmd-row {
+    min-width: 560px;
+  }
+
+  /* ---- 会话管理：桌面双栏（树 + 固定 400px 详情）窄屏改上下堆叠 ---- */
+  /* 固定宽的详情栏不缩，390px 屏上会把树面板挤到 0（实测整页只剩详情占位） */
+  .app-layout.mobile .session-tree-page {
+    flex-direction: column;
+  }
+  .app-layout.mobile .tree-detail-panel {
+    width: 100%;
+    max-height: 50%;
+    border-top: 1px solid var(--border);
+  }
+  /* 未选中会话时只有占位提示，整栏藏掉让树占满（只藏 idle 态，加载中/失败提示仍显示） */
+  .app-layout.mobile .tree-detail-panel:has(.tree-detail-placeholder-idle) {
+    display: none;
+  }
+
+  /* ---- 弹窗不超出视口 ---- */
+  .app-layout.mobile .confirm-dialog,
+  .app-layout.mobile .restart-dialog,
+  .app-layout.mobile .delete-confirm-dialog,
+  .app-layout.mobile .files-modal,
+  .app-layout.mobile .files-detail-modal {
+    max-width: calc(100vw - 32px);
+  }
+  /* 这俩带硬 min-width（340/380px），会压过 max-width，须一并中和 */
+  .app-layout.mobile .files-modal,
+  .app-layout.mobile .files-detail-modal {
+    min-width: 0;
+  }
 }

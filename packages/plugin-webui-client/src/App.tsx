@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
+import { Menu, MessageSquare } from 'lucide-react';
 import 'highlight.js/styles/github-dark-dimmed.css';
 
 import { api, getSessionId, pageAction } from './api';
@@ -23,12 +24,35 @@ const DynamicPage = lazy(() => import('./components/DynamicPage').then(m => ({ d
 /** 客户端日志 ring buffer 上限：实时流无界增长会撑大长跑内存；更早日志经 loadOlderLogs 从服务端拉。 */
 const MAX_LOGS = 2000;
 
+/** 与 App.css 的移动端断点保持一致（单列布局 + 抽屉导航的启用阈值） */
+const MOBILE_QUERY = '(max-width: 768px)';
+
+function useIsMobile(): boolean {
+  const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia(MOBILE_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_QUERY);
+    const onChange = (e: MediaQueryListEvent) => setMobile(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return mobile;
+}
+
 export function App() {
   // input, pendingImages, pendingFiles, attachmentOrderRef 已下沉到 ChatPanel，不再在 App 层持有
   const [activeTab, setActiveTab] = useState<PageTab>(() => {
     const hash = location.hash.replace('#', '');
     return hash || 'dashboard';
   });
+
+  // ---- 移动端（≤768px）：单列布局，聊天为主视图，页面经抽屉导航进入 ----
+  const isMobile = useIsMobile();
+  const [mobileView, setMobileView] = useState<'chat' | 'page'>('chat');
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  // 离开移动端时收抽屉：横屏(桌面布局)下抽屉不可见也关不掉,旋回竖屏会凭空弹出
+  useEffect(() => {
+    if (!isMobile) setDrawerOpen(false);
+  }, [isMobile]);
 
   // 可用页面列表（由服务端 /api/pages 返回，null 表示尚未加载）
   const [availablePages, setAvailablePages] = useState<Set<string> | null>(null);
@@ -95,6 +119,8 @@ export function App() {
     const MIN_CONTENT = 360;
     const MIN_CHAT = 240;
     const reclamp = () => {
+      // 移动端单列无聊天列宽概念,且量到的是 fixed 抽屉宽——夹取会把持久化宽度错压到地板值
+      if (window.matchMedia(MOBILE_QUERY).matches) return;
       const appW = layout.clientWidth;
       const navW = document.querySelector<HTMLElement>('.nav-rail')?.getBoundingClientRect().width ?? 56;
       const max = Math.max(MIN_CHAT, appW - navW - MIN_CONTENT);
@@ -758,17 +784,58 @@ export function App() {
   const activePageDef = pageDefs.find(p => p.key === activeTab);
   const activeDynamicPage = activePageDef?.content ? activePageDef : undefined;
 
+  const handleLogout = useCallback(async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    window.location.reload();
+  }, []);
+
+  /** 移动端：抽屉里选中页面 → 切到页面视图并收起抽屉 */
+  const handleNavSelect = (key: string) => {
+    setActiveTab(key);
+    if (isMobile) {
+      setMobileView('page');
+      setDrawerOpen(false);
+    }
+  };
+  /** 导航项高亮：移动端聊天视图下页面项全部不高亮（当前视图是「对话」） */
+  const navActive = (key: string) => (isMobile ? mobileView === 'page' && activeTab === key : activeTab === key);
+
   return (
-    <div className="app-layout">
-      {/* 左侧导航 */}
-      <nav className="nav-rail">
+    <div className={`app-layout${isMobile ? ` mobile mobile-view-${mobileView}` : ''}`}>
+      {/* 移动端顶栏（仅页面视图；聊天视图的顶栏由 chat-panel-header 承担） */}
+      {isMobile && mobileView === 'page' && (
+        <header className="mobile-topbar">
+          <button className="mobile-topbar-btn" onClick={() => setDrawerOpen(true)} aria-label="打开菜单">
+            <Menu size={20} />
+          </button>
+          <span className="mobile-topbar-title">{tabs.find(t => t.key === activeTab)?.label}</span>
+          <button className="mobile-topbar-btn" onClick={() => setMobileView('chat')} aria-label="返回对话">
+            <MessageSquare size={19} />
+          </button>
+        </header>
+      )}
+
+      {/* 移动端抽屉遮罩 */}
+      {isMobile && drawerOpen && <div className="nav-backdrop" onClick={() => setDrawerOpen(false)} />}
+
+      {/* 左侧导航（移动端为抽屉） */}
+      <nav className={`nav-rail${drawerOpen ? ' drawer-open' : ''}`}>
         <div className="nav-rail-top">
           <div className="nav-logo">A</div>
+          {isMobile && (
+            <button
+              className={`nav-item ${mobileView === 'chat' ? 'active' : ''}`}
+              onClick={() => { setMobileView('chat'); setDrawerOpen(false); }}
+            >
+              <span className="nav-item-icon"><MessageSquare size={20} /></span>
+              <span className="nav-item-label">对话</span>
+            </button>
+          )}
           {tabs.map(tab => (
             <button
               key={tab.key}
-              className={`nav-item ${activeTab === tab.key ? 'active' : ''}`}
-              onClick={() => setActiveTab(tab.key)}
+              className={`nav-item ${navActive(tab.key) ? 'active' : ''}`}
+              onClick={() => handleNavSelect(tab.key)}
             >
               <span className="nav-item-icon">{tab.icon}</span>
               <span className="nav-item-label">{tab.label}</span>
@@ -776,6 +843,13 @@ export function App() {
           ))}
         </div>
         <div className="nav-rail-bottom">
+          {isMobile && me && (
+            <span className="drawer-user" title={`${me.identity.platform}:${me.identity.userId}`}>
+              <span className="drawer-user-id">{me.identity.platform}:{me.identity.userId}</span>
+              {me.isOwner && <span className="content-user-level">owner</span>}
+              <button className="btn-sm" onClick={handleLogout}>退出</button>
+            </span>
+          )}
           <div className={`nav-status ${connected ? 'online' : 'offline'}`} title={connected ? '已连接' : '离线'} />
         </div>
       </nav>
@@ -792,13 +866,7 @@ export function App() {
                 {me.identity.platform}:{me.identity.userId}
               </span>
               {me.isOwner && <span className="content-user-level">owner</span>}
-              <button
-                className="btn-sm"
-                onClick={async () => {
-                  await fetch('/api/auth/logout', { method: 'POST' });
-                  window.location.reload();
-                }}
-              >退出</button>
+              <button className="btn-sm" onClick={handleLogout}>退出</button>
             </span>
           )}
         </div>
@@ -814,8 +882,8 @@ export function App() {
         </div>
       </main>
 
-      {/* 拖拽分隔条 */}
-      <div
+      {/* 拖拽分隔条（移动端单列，无从拖起） */}
+      {!isMobile && <div
         className="resize-handle"
         onMouseDown={e => {
           e.preventDefault();
@@ -846,10 +914,10 @@ export function App() {
           document.addEventListener('mousemove', onMove);
           document.addEventListener('mouseup', onUp);
         }}
-      />
+      />}
 
-      {/* 右侧固定聊天面板 */}
-      <div className="chat-column" style={{ width: chatWidth }}>
+      {/* 右侧固定聊天面板（移动端全宽，宽度交给 CSS） */}
+      <div className="chat-column" style={isMobile ? undefined : { width: chatWidth }}>
         <ChatPanel
           messages={messages}
           loading={loading}
@@ -857,7 +925,8 @@ export function App() {
           status={status}
           onSend={handleSend}
           onAbort={handleAbort}
-          width={chatWidth}
+          width={isMobile ? undefined : chatWidth}
+          onOpenNav={isMobile ? () => setDrawerOpen(true) : undefined}
           sessionTitle={session.isNewChat ? '新对话' : session.activeSessionTitle}
           onNewSession={session.pluginName ? () => session.startNewChat() : undefined}
           todoItems={todoItems}

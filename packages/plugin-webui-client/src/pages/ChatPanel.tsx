@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useState, useMemo, memo } from 'react';
-import { MessageSquare, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, X, ListTodo, Circle, Loader, CheckCircle2, Zap, Archive, AlertTriangle, History, FolderOpen } from 'lucide-react';
+import { MessageSquare, Menu, FileText, BrainCircuit, Wrench, Paperclip, ChevronDown, ChevronRight, X, ListTodo, Circle, Loader, CheckCircle2, Zap, Archive, AlertTriangle, History, FolderOpen } from 'lucide-react';
 import { pageAction, getSessionId, proxiedMediaUrl } from '../api';
 import ReactMarkdown from 'react-markdown';
 import 'katex/dist/katex.min.css';
@@ -683,6 +683,7 @@ export function ChatPanel({
   tokenUsage,
   compressingStatus,
   onCompress,
+  onOpenNav,
 }: {
   messages: ChatMessage[];
   loading: boolean;
@@ -696,7 +697,8 @@ export function ChatPanel({
     order: Array<'image' | 'file'>,
   ) => Promise<void> | void;
   onAbort: () => void;
-  width: number;
+  /** 桌面端由 App 传入的固定列宽；移动端不传（全宽由 CSS 接管） */
+  width?: number;
   /** 当前会话的显示标题 */
   sessionTitle?: string;
   /** 新建会话的回调 */
@@ -718,6 +720,8 @@ export function ChatPanel({
   compressingStatus?: 'start' | 'done' | 'error' | null;
   /** 手动压缩回调 */
   onCompress?: () => void;
+  /** 移动端打开抽屉导航；仅移动端传入，同时作为「处于移动端」的判据（token 面板由 hover 改点按） */
+  onOpenNav?: () => void;
 }) {
   // ──────── 输入区抽取到 ChatInput 子组件 ────────
   // input / pendingImages / pendingFiles / textareaRef 等局部 state 全部下沉到
@@ -965,14 +969,22 @@ export function ChatPanel({
         </div>
       )}
       <div className="chat-panel-header">
+        {onOpenNav && (
+          <button className="chat-panel-nav-btn" onClick={onOpenNav} aria-label="打开菜单">
+            <Menu size={19} />
+          </button>
+        )}
         <span className="chat-panel-title">
           <MessageSquare size={16} /> {sessionTitle || status?.name || 'Aalis'}
         </span>
         <div className="chat-panel-header-actions">
           <div
             className="token-usage-badge"
-            onMouseEnter={() => setShowTokenPanel(true)}
-            onMouseLeave={() => setShowTokenPanel(false)}
+            // hover 与点按互斥：触屏 tap 的兼容鼠标序列会先派发 mouseenter 再 click,
+            // 两者同挂时首次点按 = enter 置 true + click 取反回 false,面板永远打不开(真机实测)
+            onMouseEnter={onOpenNav ? undefined : () => setShowTokenPanel(true)}
+            onMouseLeave={onOpenNav ? undefined : () => setShowTokenPanel(false)}
+            onClick={onOpenNav ? () => setShowTokenPanel(v => !v) : undefined}
           >
             <Zap size={12} />
             <span className={`token-usage-number${tokenUsage && tokenUsage.usageRatio > 0.85 ? ' warn' : tokenUsage && tokenUsage.usageRatio > 0.7 ? ' caution' : ''}`}>
