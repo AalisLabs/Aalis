@@ -79,6 +79,13 @@ export function LogPage({ logs, onLoadOlder }: LogPageProps) {
     });
   };
 
+  // 一键展开当前可见（过滤后）的全部行 / 全部收起。落进同一个 expanded 集合而非独立
+  // 布尔态：单行点击折叠的语义保持不变，新到达的行照常折叠进入。
+  const anyExpanded = expanded.size > 0;
+  const toggleExpandAll = () => {
+    setExpanded(anyExpanded ? new Set() : new Set(filteredLogs.map(l => l.seq)));
+  };
+
   const levels = ['debug', 'info', 'warn', 'error'];
 
   return (
@@ -93,6 +100,9 @@ export function LogPage({ logs, onLoadOlder }: LogPageProps) {
             {l.toUpperCase()}
           </button>
         ))}
+        <button className="log-filter" onClick={toggleExpandAll}>
+          {anyExpanded ? '全部收起' : '全部展开'}
+        </button>
         <span className="log-hint">点击单行展开/折叠完整内容</span>
       </div>
       <div className="log-list" ref={listRef} onScroll={handleScroll}>
