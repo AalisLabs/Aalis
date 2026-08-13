@@ -492,7 +492,8 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
       {/* 右侧：会话详情 */}
       <div className="tree-detail-panel">
         {!selectedId ? (
-          <div className="tree-detail-placeholder">点击左侧会话节点查看详情</div>
+          // idle 单独挂类：移动端只藏"未选中"态（:has 选择器），加载中/失败提示仍要展示
+          <div className="tree-detail-placeholder tree-detail-placeholder-idle">点击会话节点查看详情</div>
         ) : detailLoading ? (
           <div className="tree-detail-placeholder">加载中…</div>
         ) : detail ? (
