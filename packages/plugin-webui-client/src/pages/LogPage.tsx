@@ -28,11 +28,13 @@ export function LogPage({ logs, onLoadOlder }: LogPageProps) {
   const autoScrollRef = useRef(true);
   // 防并发加载更早历史
   const loadingOlderRef = useRef(false);
+  // 历史已耗尽闩：onLoadOlder 返回 0 后不再发注定为空的请求。
+  // fetch 失败也返回 0 会一并闩住——可接受的取舍：刷新页面即复位。
+  const exhaustedRef = useRef(false);
   // 加载更早历史后保留视口位置的锚点
   const preserveScrollRef = useRef<{ prevScrollHeight: number; prevScrollTop: number } | null>(null);
-  // 跟踪 logs 长度变化方向，区分"追加新条目"与"前置历史"
+  // 首条 seq：判定"真的发生了前置"（锚点只能被对应的前置消费，不能被任意列表变化误消费）
   const prevFirstSeqRef = useRef<number | null>(null);
-  const prevLengthRef = useRef(0);
 
   const filteredLogs = useMemo(() => {
     let out = filter ? logs.filter(l => l.level === filter) : logs;
@@ -57,10 +59,17 @@ export function LogPage({ logs, onLoadOlder }: LogPageProps) {
     const el = listRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-    requestAnimationFrame(() => {
-      const el2 = listRef.current;
-      if (el2 && autoScrollRef.current) el2.scrollTop = el2.scrollHeight;
-    });
+    // contentVisibility 的占位/真实行高在钉底后的几帧内才收敛（尤其首挂载：视口外行
+    // 从未渲染过，估算落定会推移 scrollHeight），单帧补拍不够（实测漂在中段且无人再纠正）。
+    // 连续补拍直到贴底稳定；用户一旦上滚（autoScrollRef 变 false）立即停手。
+    let frames = 0;
+    const settle = () => {
+      const e = listRef.current;
+      if (!e || !autoScrollRef.current) return;
+      if (e.scrollHeight - e.scrollTop - e.clientHeight > 1) e.scrollTop = e.scrollHeight;
+      if (++frames < 8) requestAnimationFrame(settle);
+    };
+    requestAnimationFrame(settle);
   }, []);
 
   // 可见列表变化后的滚动处理：先恢复"加载更早"留下的视口，再做"跟随底部"判定。
@@ -70,23 +79,30 @@ export function LogPage({ logs, onLoadOlder }: LogPageProps) {
     const el = listRef.current;
     if (!el) return;
 
-    // 1. 前置加载发生：保持用户视口在原内容上（避免视觉跳动）
+    const firstSeq = filteredLogs[0]?.seq ?? null;
+
+    // 1. 前置加载真的落地了（首条 seq 变小）才消费锚点，保持用户视口在原内容上。
+    //    不能只看锚点在不在：fetch 在途时新日志追加、或用户敲过滤词，都会先一步
+    //    触发本效应——被它们误消费会把视口拽到错误位置，且真正前置到达时已无补偿。
     if (preserveScrollRef.current) {
-      const { prevScrollHeight, prevScrollTop } = preserveScrollRef.current;
-      const delta = el.scrollHeight - prevScrollHeight;
-      el.scrollTop = prevScrollTop + delta;
-      preserveScrollRef.current = null;
-      prevFirstSeqRef.current = filteredLogs[0]?.seq ?? null;
-      prevLengthRef.current = filteredLogs.length;
-      return;
+      const prepended = firstSeq !== null && prevFirstSeqRef.current !== null && firstSeq < prevFirstSeqRef.current;
+      if (prepended) {
+        const { prevScrollHeight, prevScrollTop } = preserveScrollRef.current;
+        const delta = el.scrollHeight - prevScrollHeight;
+        el.scrollTop = prevScrollTop + delta;
+        preserveScrollRef.current = null;
+        prevFirstSeqRef.current = firstSeq;
+        return;
+      }
+      // 非前置变化：锚点保留，等对应的前置到达（或被 onLoadOlder 返回 0 时清除）
     }
 
-    // 2. 可见条目数变化（新到达/过滤增减）且用户在底部附近：跟随到底
-    if (autoScrollRef.current && filteredLogs.length !== prevLengthRef.current) {
+    // 2. 跟随底部：只要处于跟随态就钉底。刻意不比较条目数——ring buffer 打满后
+    //    每次到达都是"+1 -1"等长换血，行高不等时距底仍会漂移；多钉一次无害。
+    if (autoScrollRef.current) {
       anchorToBottom();
     }
-    prevFirstSeqRef.current = filteredLogs[0]?.seq ?? null;
-    prevLengthRef.current = filteredLogs.length;
+    prevFirstSeqRef.current = firstSeq;
   }, [filteredLogs, anchorToBottom]);
 
   const handleScroll = useCallback(() => {
@@ -95,13 +111,27 @@ export function LogPage({ logs, onLoadOlder }: LogPageProps) {
     const { scrollTop, scrollHeight, clientHeight } = el;
     autoScrollRef.current = scrollHeight - scrollTop - clientHeight < NEAR_BOTTOM_PX;
 
-    // 向上滚到顶部时拉取更早历史
-    if (scrollTop < NEAR_TOP_PX && onLoadOlder && !loadingOlderRef.current && logs.length > 0) {
+    // 向上滚到顶部时拉取更早历史。附加两道门：
+    // - 列表确实可滚：过滤后内容不满视口时 scrollTop 被钳到 0，会伪装成"滚到顶"
+    //   （Chrome 实测钳制也派发 scroll 事件），不加这道门会无端拉历史打乱过滤结果；
+    // - 未耗尽：返回过 0 之后不再重复发空请求。
+    const scrollable = scrollHeight > clientHeight + NEAR_TOP_PX;
+    if (scrollTop < NEAR_TOP_PX && scrollable && !exhaustedRef.current && onLoadOlder && !loadingOlderRef.current && logs.length > 0) {
       loadingOlderRef.current = true;
-      // 记录锚点用于 useEffect 恢复
+      // 记录锚点用于 useLayoutEffect 恢复（仅被真实前置消费）
       preserveScrollRef.current = { prevScrollHeight: scrollHeight, prevScrollTop: scrollTop };
       onLoadOlder()
-        .catch(() => {})
+        .then(n => {
+          if (n === 0) {
+            // 没有更早数据（或拉取失败）：闩住并撤销未被消费的锚点，
+            // 否则它会滞留到下一次任意列表变化被误消费
+            exhaustedRef.current = true;
+            preserveScrollRef.current = null;
+          }
+        })
+        .catch(() => {
+          preserveScrollRef.current = null;
+        })
         .finally(() => {
           loadingOlderRef.current = false;
         });
