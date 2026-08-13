@@ -34,6 +34,12 @@ export const configSchema: ConfigSchema = {
     description: '存储消息历史的数据库',
   },
   collection: { type: 'string', label: '集合名', default: 'messages', description: '消息集合名称' },
+  connectTimeoutMs: {
+    type: 'number',
+    label: '连接超时（毫秒）',
+    default: 5000,
+    description: '建立连接与服务器选择（serverSelection）的超时时间，两者共用此值',
+  },
   rangeQueryLimit: {
     type: 'number',
     label: '范围查询返回上限',
