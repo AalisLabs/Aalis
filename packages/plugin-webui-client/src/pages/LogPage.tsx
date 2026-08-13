@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useDeferredValue } from 'react';
+import { useState, useRef, useLayoutEffect, useCallback, useMemo, useDeferredValue } from 'react';
 import type { LogEntry } from '../types';
 
 interface LogPageProps {
