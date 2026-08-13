@@ -2418,6 +2418,9 @@ a.marketplace-card-name:hover {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* 跟随底部由组件自己钉（含 rAF 补拍）；浏览器滚动锚定会在行高变化时
+     反向调整 scrollTop 与之打架（展开态实测停在中段），关掉，单一写者 */
+  overflow-anchor: none;
 }
 
 .log-list::-webkit-scrollbar {
@@ -2486,6 +2489,30 @@ a.marketplace-card-name:hover {
   overflow: visible;
   text-overflow: clip;
   flex: 1 1 100%;
+}
+
+.log-search {
+  flex: 1;
+  min-width: 140px;
+  max-width: 320px;
+  padding: 5px 10px;
+  font-size: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  outline: none;
+}
+
+.log-search:focus {
+  border-color: var(--primary);
+}
+
+.log-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .log-hint {
