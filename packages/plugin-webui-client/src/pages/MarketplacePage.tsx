@@ -173,7 +173,7 @@ export function MarketplacePage({
   };
 
   // 一次性拉全 aalis-plugin 目录（npm keyword 检索，size=100）。搜索/筛选/排序全在
-  // 前端做（同 koishi：拉一次索引、本地即时过滤），不再每次按键打 npm，既能真正筛选
+  // 前端做（拉一次索引、本地即时过滤），不再每次按键打 npm，既能真正筛选
   // 又更跟手。安装状态在渲染期按当前 plugins 实时合并，故本函数不依赖 plugins。
   const loadRegistry = useCallback(async () => {
     // 请求序号护栏：装/卸后会立刻重拉，而 /api/marketplace 每次并行打 5 条 npm search，

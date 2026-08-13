@@ -504,7 +504,7 @@ async function main(): Promise<void> {
     console.log('  minimal   最简对话实例（网关+Agent+权限+会话+1 LLM+1 平台+记忆）');
     console.log('  standard  常用全家桶（minimal + WebUI/人设/向量记忆/工具/调度/技能…）');
     console.log('  full      全部官方插件（实时查 npm 全装，可能需手动取舍）\n');
-    console.log('（更多插件不在终端铺列——建好后在 WebUI 插件市场搜索安装，对齐 Koishi 做法）\n');
+    console.log('（更多插件不在终端铺列——建好后在 WebUI 插件市场搜索安装）\n');
 
     const validTier = (v: string): ValidationResult =>
       ['bare', 'minimal', 'standard', 'full'].includes(v.toLowerCase())

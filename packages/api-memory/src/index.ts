@@ -134,8 +134,8 @@ export interface MemoryService {
   //    代价则是一次带迁移的破坏性变更（既有数据的 namespace 全变，而存量数据没有任何标记
   //    能告诉我们哪个 namespace 归谁）。
   //
-  // 若将来真要上结构化存储：**不自建 ORM**。`minato`（MIT、仅依赖 cosmokit、四个 driver
-  // 覆盖 sqlite/mongo/mysql/postgres）是现成的，且它不依赖 koishi；drizzle / kysely 都不支持
+  // 若将来真要上结构化存储：**不自建 ORM**。`minato`（MIT、依赖极轻、四个 driver
+  // 覆盖 sqlite/mongo/mysql/postgres）是现成且无框架绑定的；drizzle / kysely 都不支持
   // mongo，与本项目已有的 mongodb 后端对不上。届时它应作为**实现细节**藏在某个存储插件里，
   // 而不是把 minato 的 API 抬成 Aalis 的公开契约。
   // ═══════════════════════════════════════════════════════════════════════
