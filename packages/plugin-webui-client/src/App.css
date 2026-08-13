@@ -5779,6 +5779,12 @@ td.col-actions { text-align: right; }
     min-width: 560px;
   }
 
+  /* ---- 日志页控件：级别过滤 + 全部展开 + 提示文字一行摆不下，允许换行 ---- */
+  .app-layout.mobile .log-controls {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
   /* ---- 会话管理：桌面双栏（树 + 固定 400px 详情）窄屏改上下堆叠 ---- */
   /* 固定宽的详情栏不缩，390px 屏上会把树面板挤到 0（实测整页只剩详情占位） */
   .app-layout.mobile .session-tree-page {
