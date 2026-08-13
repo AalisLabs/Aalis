@@ -13,8 +13,11 @@ const NEAR_TOP_PX = 40;
 
 export function LogPage({ logs, onLoadOlder }: LogPageProps) {
   const [filter, setFilter] = useState<string | null>(null);
-  // 展开态以 seq 为 key（不是数组下标）——前置加载/裁剪不会错位
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  // 展开态 = 模式开关 + 例外集合（以 seq 为 key，前置加载/裁剪不会错位）：
+  // expandAll 关 → overrides 是"单行展开"集合；开 → overrides 是"单行收起"的例外。
+  // 做成模式而非快照式全选：日志持续流入，快照会被新到达的折叠行立刻稀释。
+  const [expandAll, setExpandAll] = useState(false);
+  const [overrides, setOverrides] = useState<Set<number>>(new Set());
   const listRef = useRef<HTMLDivElement>(null);
   // 自动跟随底部：每次 scroll 事件根据真实位置重算，不持有过期 state
   const autoScrollRef = useRef(true);
@@ -72,18 +75,17 @@ export function LogPage({ logs, onLoadOlder }: LogPageProps) {
   }, [onLoadOlder, logs.length]);
 
   const toggleExpand = (seq: number) => {
-    setExpanded(prev => {
+    setOverrides(prev => {
       const next = new Set(prev);
       if (next.has(seq)) next.delete(seq); else next.add(seq);
       return next;
     });
   };
 
-  // 一键展开当前可见（过滤后）的全部行 / 全部收起。落进同一个 expanded 集合而非独立
-  // 布尔态：单行点击折叠的语义保持不变，新到达的行照常折叠进入。
-  const anyExpanded = expanded.size > 0;
+  // 模式切换时清空例外，语义回到干净的"全开/全收"基线；新到达的行跟随当前模式
   const toggleExpandAll = () => {
-    setExpanded(anyExpanded ? new Set() : new Set(filteredLogs.map(l => l.seq)));
+    setExpandAll(v => !v);
+    setOverrides(new Set());
   };
 
   const levels = ['debug', 'info', 'warn', 'error'];
@@ -100,14 +102,14 @@ export function LogPage({ logs, onLoadOlder }: LogPageProps) {
             {l.toUpperCase()}
           </button>
         ))}
-        <button className="log-filter" onClick={toggleExpandAll}>
-          {anyExpanded ? '全部收起' : '全部展开'}
+        <button className={`log-filter ${expandAll ? 'active' : ''}`} onClick={toggleExpandAll}>
+          {expandAll ? '全部收起' : '全部展开'}
         </button>
         <span className="log-hint">点击单行展开/折叠完整内容</span>
       </div>
       <div className="log-list" ref={listRef} onScroll={handleScroll}>
         {filteredLogs.map(entry => {
-          const isExpanded = expanded.has(entry.seq);
+          const isExpanded = expandAll ? !overrides.has(entry.seq) : overrides.has(entry.seq);
           return (
             <div
               className={`log-entry ${isExpanded ? 'expanded' : ''}`}
