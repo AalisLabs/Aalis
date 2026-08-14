@@ -90,7 +90,7 @@ App 路由 → Agent.handleMessage(incoming) 作为中间件默认行为
   ├─ 3. 组装 agent:prompt 贡献 → 物化为带归属标识的 system 块
   │     ├─ plugin-memory-vector / memory-summary: 语义记忆、摘要（context 槽）
   │     ├─ plugin-user-profile / user-relation: 档案、关系（identity 槽）
-  │     └─ plugin-skills: 技能清单与已激活正文（knowledge 槽）
+  │     └─ plugin-skills: 技能库路标与已激活正文（knowledge 槽）
   │
   ├─ 4. ctx.runHook('agent:llm:before') ← 拦截者审已成型的 messages
   │     └─ plugin-tool-search: 替换工具列表为搜索层
