@@ -320,68 +320,86 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         `正在为 session=${sessionId} 生成摘要 (${messagesToSummarize.length} 条旧消息 → 摘要，保留最近 ${cfg.keepRecent} 条)`,
       );
 
-      // 调用 LLM 生成摘要
+      // 调用 LLM 生成摘要。生成失败不再滞留于"涨破阈值→超时→原样重试"的循环
+      // （慢模型场景实测每隔几分钟白烧一次 120s）：降级为纯裁切——该段历史无摘要
+      // 但仍在归档层可检索，活跃上下文回到 keepRecent 以内，循环即断。
       let summaryText = '';
-      const stream = summaryModel.chatStream?.({
-        messages: summaryMessages,
-        temperature: 0.3,
-        maxTokens: summaryBudget,
-        think: false, // 取舍见下方非流式分支的注释
-      });
-      if (!stream) {
-        // think: false 写死不设配置——摘要是机械压缩任务，思维链只贡献耗时方差：
-        // thinkingMode=auto 下 v4 全系默认带思考，300 条群聊的摘要曾多次撞
-        // provider 的 120s 超时；压缩卡住 → 活跃数冲破取数窗 → 滑窗复活，
-        // 质量和前缀缓存一起塌。「不思考的摘要」对「超时导致根本没有摘要」
-        // 不是权衡。将来真出现需要思考版摘要的模型再补配置键。
-        const resp = await summaryModel.chat({
+      try {
+        const stream = summaryModel.chatStream?.({
           messages: summaryMessages,
           temperature: 0.3,
           maxTokens: summaryBudget,
-          think: false,
+          think: false, // 取舍见下方非流式分支的注释
         });
-        summaryText = resp.content ?? '';
-      } else {
-        for await (const chunk of stream) {
-          if (chunk.contentDelta) {
-            summaryText += chunk.contentDelta;
-          }
-        }
-      }
-
-      if (summaryText.trim()) {
-        const finalSummary = summaryText.trim();
-        const summaryTs = Date.now();
-        await store.upsertSummary(sessionId, finalSummary, messagesToSummarize.length, totalCount);
-
-        // 真正的压缩：将旧消息标记为 archived，只保留最近 keepRecent 条作为热上下文
-        // 安全调整：避免裁剪点落在 tool call 组中间（assistant(toolCalls) 被删但 tool 响应被保留）
-        let safeKeepRecent = cfg.keepRecent;
-        while (safeKeepRecent < allHistory.length) {
-          const firstKeptMsg = allHistory[allHistory.length - safeKeepRecent];
-          if (firstKeptMsg.role === 'tool') {
-            safeKeepRecent++;
-          } else {
-            break;
-          }
-        }
-        if (memory.trimHistory) {
-          const deleted = await memory.trimHistory(sessionId, safeKeepRecent);
-          ctx.logger.info(`会话已压缩: session=${sessionId}, 归档 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`);
-        } else {
-          ctx.logger.warn('记忆服务不支持 trimHistory，旧消息未归档');
-        }
-
-        // 保存系统事件消息，供前端持久化显示压缩分隔线
-        const archive = ctx.getService<MessageArchiveService>('message-archive');
-        if (archive)
-          await archive.saveMessage(sessionId, {
-            role: 'system',
-            kind: WellKnownKinds.EventMarker,
-            content: '对话已压缩',
-            timestamp: summaryTs,
+        if (!stream) {
+          // think: false 写死不设配置——摘要是机械压缩任务，思维链只贡献耗时方差：
+          // thinkingMode=auto 下 v4 全系默认带思考，300 条群聊的摘要曾多次撞
+          // provider 的 120s 超时；压缩卡住 → 活跃数冲破取数窗 → 滑窗复活，
+          // 质量和前缀缓存一起塌。「不思考的摘要」对「超时导致根本没有摘要」
+          // 不是权衡。将来真出现需要思考版摘要的模型再补配置键。
+          const resp = await summaryModel.chat({
+            messages: summaryMessages,
+            temperature: 0.3,
+            maxTokens: summaryBudget,
+            think: false,
           });
+          summaryText = resp.content ?? '';
+        } else {
+          for await (const chunk of stream) {
+            if (chunk.contentDelta) {
+              summaryText += chunk.contentDelta;
+            }
+          }
+        }
+      } catch (err) {
+        // 半截流式输出必须丢弃：provider 超时常在吐出部分内容后中断流，把截断文本
+        // 入库会让它成为后续所有增量摘要的权威基底，链条被永久污染（对抗审计实测）
+        summaryText = '';
+        ctx.logger.warn('生成会话摘要失败，降级为纯裁切（该段历史无摘要，归档层仍可检索）:', err);
       }
+
+      const finalSummary = summaryText.trim();
+      const summaryTs = Date.now();
+      if (finalSummary) {
+        await store.upsertSummary(sessionId, finalSummary, messagesToSummarize.length, totalCount);
+      }
+
+      // 真正的压缩：将旧消息标记为 archived，只保留最近 keepRecent 条作为热上下文。
+      // 摘要成功与失败共用这段——失败路径就是上述降级方案。
+      // 安全调整：避免裁剪点落在 tool call 组中间（assistant(toolCalls) 被删但 tool 响应被保留）
+      let safeKeepRecent = cfg.keepRecent;
+      while (safeKeepRecent < allHistory.length) {
+        const firstKeptMsg = allHistory[allHistory.length - safeKeepRecent];
+        if (firstKeptMsg.role === 'tool') {
+          safeKeepRecent++;
+        } else {
+          break;
+        }
+      }
+      let trimmed = false;
+      if (memory.trimHistory) {
+        const deleted = await memory.trimHistory(sessionId, safeKeepRecent);
+        trimmed = true;
+        ctx.logger.info(
+          finalSummary
+            ? `会话已压缩: session=${sessionId}, 归档 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`
+            : `会话已裁切（无摘要）: session=${sessionId}, 归档 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`,
+        );
+      } else {
+        ctx.logger.warn('记忆服务不支持 trimHistory，旧消息未归档');
+      }
+
+      // 保存系统事件消息，供前端持久化显示压缩分隔线。
+      // 失败降级的"已裁切" marker 以真的裁切了为前提——provider 不支持 trimHistory 时
+      // 什么都没发生，写 marker 是说谎且每轮重复追加一条
+      const archive = ctx.getService<MessageArchiveService>('message-archive');
+      if (archive && (finalSummary || trimmed))
+        await archive.saveMessage(sessionId, {
+          role: 'system',
+          kind: WellKnownKinds.EventMarker,
+          content: finalSummary ? '对话已压缩' : '对话已裁切（摘要生成失败，该段无摘要）',
+          timestamp: summaryTs,
+        });
     } catch (err) {
       ctx.logger.warn('生成会话摘要失败:', err);
     } finally {
@@ -465,7 +483,12 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         const memory = ctx.getService<MemoryService>('memory');
         const summaryModel = resolveSummaryModel();
         if (!memory || !summaryModel) {
-          ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'done' }).catch(() => {});
+          // 报 error 而非 done：报 done 会让前端插入"对话已压缩"的假成功分隔线。
+          // 常见触发：summaryModelMode=custom 指向的 provider 被卸载/重载中。
+          ctx.logger.warn(
+            `压缩跳过: ${!memory ? 'memory 服务不可用' : '摘要模型解析失败（检查 summaryModelMode/summaryLLM 配置）'}`,
+          );
+          ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'error' }).catch(() => {});
           return;
         }
 
@@ -535,61 +558,82 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         ctx.logger.debug(`正在压缩 session=${data.sessionId} (${messagesToSummarize.length} 条旧消息)`);
 
         let summaryText = '';
-        const stream2 = summaryModel.chatStream?.({
-          messages: summaryMessages,
-          temperature: 0.3,
-          maxTokens: summaryBudget,
-          think: false, // 同上：摘要不思考，取舍见自动压缩路径的注释
-        });
-        if (!stream2) {
-          const resp = await summaryModel.chat({
+        try {
+          const stream2 = summaryModel.chatStream?.({
             messages: summaryMessages,
             temperature: 0.3,
             maxTokens: summaryBudget,
-            think: false,
+            think: false, // 同上：摘要不思考，取舍见自动压缩路径的注释
           });
-          summaryText = resp.content ?? '';
-        } else {
-          for await (const chunk of stream2) {
-            if (chunk.contentDelta) {
-              summaryText += chunk.contentDelta;
-            }
-          }
-        }
-
-        if (summaryText.trim()) {
-          const finalSummary = summaryText.trim();
-          const summaryTs = Date.now();
-          await store.upsertSummary(data.sessionId, finalSummary, messagesToSummarize.length, allHistory.length);
-
-          // 安全调整：避免裁剪点落在 tool call 组中间
-          let safeKeepRecent = cfg.keepRecent;
-          while (safeKeepRecent < allHistory.length) {
-            const firstKeptMsg = allHistory[allHistory.length - safeKeepRecent];
-            if (firstKeptMsg.role === 'tool') {
-              safeKeepRecent++;
-            } else {
-              break;
-            }
-          }
-          if (memory.trimHistory) {
-            const deleted = await memory.trimHistory(data.sessionId, safeKeepRecent);
-            ctx.logger.info(`压缩完成: session=${data.sessionId}, 归档 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`);
-          }
-
-          // 保存系统事件消息，供前端持久化显示压缩分隔线
-          const archive = ctx.getService<MessageArchiveService>('message-archive');
-          if (archive)
-            await archive.saveMessage(data.sessionId, {
-              role: 'system',
-              kind: WellKnownKinds.EventMarker,
-              content: '对话已压缩',
-              timestamp: summaryTs,
+          if (!stream2) {
+            const resp = await summaryModel.chat({
+              messages: summaryMessages,
+              temperature: 0.3,
+              maxTokens: summaryBudget,
+              think: false,
             });
-
-          // 通知前端：压缩完成
-          ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'done' }).catch(() => {});
+            summaryText = resp.content ?? '';
+          } else {
+            for await (const chunk of stream2) {
+              if (chunk.contentDelta) {
+                summaryText += chunk.contentDelta;
+              }
+            }
+          }
+        } catch (err) {
+          // 与 generateSummary 同则：半截流式输出丢弃，降级为纯裁切。
+          // auto 触发（usageRatio 阈值）的失败若不裁切，会滞留在"每次 LLM 调用
+          // 都再触发一次压缩→再烧一次超时"的循环里，条数触发路径救不了它。
+          summaryText = '';
+          ctx.logger.warn('压缩摘要生成失败，降级为纯裁切（该段历史无摘要）:', err);
         }
+
+        const finalSummary = summaryText.trim();
+        const summaryTs = Date.now();
+        if (finalSummary) {
+          await store.upsertSummary(data.sessionId, finalSummary, messagesToSummarize.length, allHistory.length);
+        }
+
+        // 裁切：成功与失败共用（失败路径 = owner 拍板的降级方案）
+        // 安全调整：避免裁剪点落在 tool call 组中间
+        let safeKeepRecent = cfg.keepRecent;
+        while (safeKeepRecent < allHistory.length) {
+          const firstKeptMsg = allHistory[allHistory.length - safeKeepRecent];
+          if (firstKeptMsg.role === 'tool') {
+            safeKeepRecent++;
+          } else {
+            break;
+          }
+        }
+        let trimmed = false;
+        if (memory.trimHistory) {
+          const deleted = await memory.trimHistory(data.sessionId, safeKeepRecent);
+          trimmed = true;
+          ctx.logger.info(
+            finalSummary
+              ? `压缩完成: session=${data.sessionId}, 归档 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`
+              : `已裁切（无摘要）: session=${data.sessionId}, 归档 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`,
+          );
+        } else {
+          ctx.logger.warn('记忆服务不支持 trimHistory，旧消息未归档');
+        }
+
+        // 保存系统事件消息，供前端持久化显示压缩分隔线（同 generateSummary：
+        // 失败降级的"已裁切" marker 以真的裁切了为前提）
+        const archive = ctx.getService<MessageArchiveService>('message-archive');
+        if (archive && (finalSummary || trimmed))
+          await archive.saveMessage(data.sessionId, {
+            role: 'system',
+            kind: WellKnownKinds.EventMarker,
+            content: finalSummary ? '对话已压缩' : '对话已裁切（摘要生成失败，该段无摘要）',
+            timestamp: summaryTs,
+          });
+
+        // 通知前端：成功报 done；降级报 error（摘要确实失败了，裁切结果经历史刷新可见）。
+        // 空响应此前既不裁也不发事件，前端会永远停在 'start'——现在归入降级路径一并解决。
+        ctx
+          .emit('session:compressing', { sessionId: data.sessionId, status: finalSummary ? 'done' : 'error' })
+          .catch(() => {});
       } catch (err) {
         ctx.logger.warn('压缩会话失败:', err);
         // 通知前端：压缩失败
