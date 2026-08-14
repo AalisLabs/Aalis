@@ -28,19 +28,29 @@ const EXTRACTOR_DEFAULTS = {
   consolidateLowScoreThreshold: 0,
 } satisfies ExtractorConfig;
 
-/** 构造可注入的 fake LLM model。chat() 返回 cannedResponse；记录最后一次请求供断言 */
-function makeFakeLLM(cannedResponse: string): { model: LLMModel; calls: ChatModelRequest[] } {
+/** 构造可注入的 fake LLM model。chat() 返回 cannedResponse；记录每次请求供断言。
+ *  fail.remaining > 0 时调用 reject（模拟超时/网络故障，供退避用例；Infinity=持续故障）。 */
+function makeFakeLLM(cannedResponse: string): {
+  model: LLMModel;
+  calls: ChatModelRequest[];
+  fail: { remaining: number };
+} {
   const calls: ChatModelRequest[] = [];
+  const fail = { remaining: 0 };
   const model: LLMModel = {
     id: 'fake-extractor',
     contextLength: 8000,
     capabilities: ['chat'],
     chat(req: ChatModelRequest): Promise<ChatResponse> {
       calls.push(req);
+      if (fail.remaining > 0) {
+        fail.remaining -= 1;
+        return Promise.reject(new Error('fake LLM timeout'));
+      }
       return Promise.resolve({ content: cannedResponse });
     },
   } as unknown as LLMModel;
-  return { model, calls };
+  return { model, calls, fail };
 }
 
 async function setup(llmContent: string) {
@@ -61,7 +71,7 @@ async function setup(llmContent: string) {
   });
   app.ctx.provide('platform', mkMockAdapter('onebot'), { entryId: 'mock/onebot' });
   app.ctx.provide('platform', mkMockAdapter('test'), { entryId: 'mock/test' });
-  const { model, calls } = makeFakeLLM(llmContent);
+  const { model, calls, fail } = makeFakeLLM(llmContent);
   app.ctx.provide('llm', model, {
     label: 'fake-llm',
     entryId: 'fake/extractor',
@@ -81,7 +91,7 @@ async function setup(llmContent: string) {
   });
   extractor.start();
   service.setTriggerExtractionHandler(sid => extractor.triggerNow(sid));
-  return { app, mem, service, extractor, calls };
+  return { app, mem, service, extractor, calls, fail };
 }
 
 const mkUserMsg = (messageId: string, userId: string, content: string, nickname?: string): Message => ({
@@ -308,6 +318,86 @@ describe('plugin-user-relation: extractor', () => {
     expect(calls.length).toBeGreaterThanOrEqual(1);
     const snap = await service.loadAll();
     expect(snap.persons.some(p => p.userId === 'c')).toBe(true);
+  });
+
+  // LLM 表示"无可提取"的合法空输出：每次尝试恰好一次 chat 调用，便于退避用例数调用次数
+  const EMPTY_EXTRACTION = JSON.stringify({
+    persons: [],
+    events: [],
+    entities: [],
+    personEventEdges: [],
+    personEntityEdges: [],
+    personPersonEdges: [],
+    eventEventEdges: [],
+    eventEntityEdges: [],
+    entityEntityEdges: [],
+  });
+
+  it('连续失败退避：跳过触发点几何加深、封顶，LLM 恢复后一次成功即归位', async () => {
+    const { app, mem, calls, fail } = await setup(EMPTY_EXTRACTION);
+    await mem.saveMessage('sb', mkUserMsg('m1', 'a', 'hi'));
+    // 逐个触发点推进（阈值 3 → 每点 3 条消息），点间等提取落定，保证时序确定
+    const advance = async (points: number) => {
+      for (let p = 0; p < points; p++) {
+        for (let i = 0; i < 3; i++) app.ctx.emit('inbound:message:archived', { sessionId: 'sb' } as never);
+        await new Promise(r => setTimeout(r, 15));
+      }
+    };
+
+    fail.remaining = Number.POSITIVE_INFINITY;
+    await advance(1); // 尝试 1 失败 → penalty=2，跳过 1 个触发点
+    expect(calls).toHaveLength(1);
+    await advance(1); // 被跳过
+    expect(calls).toHaveLength(1);
+    await advance(1); // 尝试 2 失败 → penalty=4，跳过 3 个触发点
+    expect(calls).toHaveLength(2);
+    await advance(3); // 全部被跳过
+    expect(calls).toHaveLength(2);
+    await advance(1); // 尝试 3 失败 → penalty=8（封顶），跳过 7 个触发点
+    expect(calls).toHaveLength(3);
+    await advance(7);
+    expect(calls).toHaveLength(3);
+    await advance(1); // 尝试 4 失败 → penalty 仍为 8（封顶不再翻倍）
+    expect(calls).toHaveLength(4);
+
+    fail.remaining = 0; // LLM 恢复
+    await advance(7); // 上次失败留下的 7 个跳过点仍生效
+    expect(calls).toHaveLength(4);
+    await advance(1); // 尝试 5 成功 → 退避整体清除
+    expect(calls).toHaveLength(5);
+    await advance(1); // 恢复正常节奏：下一个触发点即尝试
+    expect(calls).toHaveLength(6);
+
+    // 钉住"整体清除"的 penalty 半边：归位后再次失败须从 penalty=2 重新起步
+    //（若成功只清了 skip、残留 penalty=8，这里会跳 7 个触发点而非 1 个）
+    fail.remaining = 1;
+    await advance(1); // 尝试 7 失败 → penalty=2，跳过 1 个触发点
+    expect(calls).toHaveLength(7);
+    await advance(1); // 被跳过
+    expect(calls).toHaveLength(7);
+    await advance(1); // 即恢复尝试
+    expect(calls).toHaveLength(8);
+  });
+
+  it('手动 triggerNow 不受退避门限制，成功即清除退避', async () => {
+    const { app, mem, extractor, calls, fail } = await setup(EMPTY_EXTRACTION);
+    await mem.saveMessage('sb2', mkUserMsg('m1', 'a', 'hi'));
+    const advance = async () => {
+      for (let i = 0; i < 3; i++) app.ctx.emit('inbound:message:archived', { sessionId: 'sb2' } as never);
+      await new Promise(r => setTimeout(r, 15));
+    };
+
+    fail.remaining = Number.POSITIVE_INFINITY;
+    await advance(); // 自动触发失败 → penalty=2，下一触发点本应被跳过
+    expect(calls).toHaveLength(1);
+
+    fail.remaining = 0;
+    const res = await extractor.triggerNow('sb2'); // 手动触发绕过退避门
+    expect(res.status).toBe('ok');
+    expect(calls).toHaveLength(2);
+    // 手动成功已清除退避：下一个自动触发点正常执行（若未清除会被 skip 吞掉）
+    await advance();
+    expect(calls).toHaveLength(3);
   });
 
   it('senderNeighborhoodEdgeLimit>0：把已知发言人的 1 跳邻居子图注入到 LLM prompt', async () => {

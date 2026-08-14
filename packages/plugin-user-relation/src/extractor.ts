@@ -329,9 +329,19 @@ export function isPlaceholderSelfPersonId(
   return false;
 }
 
+/** 连续失败退避的步长乘数封顶：故障期最大重试间隔 = triggerEveryNMessages × 8 条消息 */
+const MAX_BACKOFF_PENALTY = 8;
+
 export class RelationExtractor {
   private readonly counts = new Map<string, number>();
   private readonly inFlight = new Set<string>();
+  /**
+   * per-session 连续失败退避，时钟是消息流本身（组件全程无定时器，不引入挂钟）：
+   * 提取抛出后跳过接下来 (penalty-1) 个触发点（即 N×penalty 条消息才重试一次），
+   * penalty 逐次翻倍、封顶 MAX_BACKOFF_PENALTY；一次 LLM 往返成功即整体清除。
+   * 手动 triggerNow 不受此门限制（运维探针），但其成功同样清除退避。
+   */
+  private readonly backoff = new Map<string, { penalty: number; skip: number }>();
   private disposeListener?: () => void;
 
   constructor(
@@ -348,9 +358,19 @@ export class RelationExtractor {
       this.counts.set(data.sessionId, n);
       if (this.cfg.triggerEveryNMessages <= 0) return;
       if (n % this.cfg.triggerEveryNMessages !== 0) return;
-      void this.extractSession(data.sessionId).catch(err =>
-        this.ctx.logger.debug(`[user-relation] 提取异常 session=${data.sessionId}: ${stringifyErr(err)}`),
-      );
+      const backoff = this.backoff.get(data.sessionId);
+      if (backoff && backoff.skip > 0) {
+        backoff.skip -= 1;
+        return;
+      }
+      void this.extractSession(data.sessionId).catch(err => {
+        const penalty = Math.min((this.backoff.get(data.sessionId)?.penalty ?? 1) * 2, MAX_BACKOFF_PENALTY);
+        this.backoff.set(data.sessionId, { penalty, skip: penalty - 1 });
+        // warn 频率随重试几何变疏，自带节流不会刷屏
+        this.ctx.logger.warn(
+          `[user-relation] 提取失败 session=${data.sessionId}，退避约 ${penalty * this.cfg.triggerEveryNMessages} 条消息后重试: ${stringifyErr(err)}`,
+        );
+      });
     };
     this.ctx.on('inbound:message:archived', handler);
     this.disposeListener = () => {
@@ -362,6 +382,7 @@ export class RelationExtractor {
     this.disposeListener?.();
     this.counts.clear();
     this.inFlight.clear();
+    this.backoff.clear();
   }
 
   /** 手动触发某 session 的提取（用于 page-action 的"立即提取"按钮） */
@@ -472,6 +493,8 @@ export class RelationExtractor {
       );
 
       const raw = await callLLM(modelEntry.instance, promptMessages, this.cfg.disableThinking);
+      // LLM 往返成功即视为下游恢复，清除退避——解析失败走下面的带内重试，不计入惩罚
+      this.backoff.delete(sessionId);
       let result = parseExtraction(raw);
       if (result.kind === 'parse-error') {
         // util-json-repair 已尝试剥 fence + 修裸引号 + 补括号；仍失败 → 多半是
