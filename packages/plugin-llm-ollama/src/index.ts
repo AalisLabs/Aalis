@@ -620,8 +620,8 @@ class OllamaClient {
     // 其他情况：可能是本地文件路径（file:// 或绝对路径），或者已经是裸 base64。
     // 走 ProcessService.readExternalFile 探测是否为文件，避免把路径当作 base64 送给 Ollama
     // 触发 `illegal base64 data` 错误。读盘失败则按裸 base64 透传。
-    // 注意：不再治「相对 cwd 路径」场景（原先的 resolve(process.cwd(), data)）——
-    // 该场景脆弱且需要插件层读 process.cwd，请上游只传绝对路径或 file://。
+    // 注意：不治「相对 cwd 路径」场景——该场景脆弱且需要插件层读 process.cwd，
+    // 请上游只传绝对路径或 file://。
     if (this.proc && (trimmed.startsWith('file://') || trimmed.startsWith('/'))) {
       try {
         const bytes = await this.proc.readExternalFile(trimmed);

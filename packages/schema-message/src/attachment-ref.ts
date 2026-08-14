@@ -2,7 +2,7 @@
 // attachment-ref.ts — 跨插件统一的「附件引用」字符串契约
 //
 // Aalis 在多个地方需要把附件（图片 / 音频 / 视频 / 文件）以可读、可解析的
-// 形式塞回 LLM 上下文里。历史上有四个调用点各自硬编码 `[图片: desc | ref:xxx]`
+// 形式塞回 LLM 上下文里。共有四个调用点依赖 `[图片: desc | ref:xxx]`
 // 这种格式：
 //   - plugin-adapter-onebot 入站构造图片占位
 //   - plugin-image-sender 出站归档自己刚发的图
