@@ -20,7 +20,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 //   - assets/（可选）：模板/资源
 //
 // 渐进披露三阶段：
-//   1. Discovery: 启动注入 `[name] description` 列表到 system prompt
+//   1. Discovery: system prompt 只注入一行静态路标，具体技能靠 list_skills 检索
 //   2. Activation: 调用 load_skill(name) 或 triggers regex 命中自动激活
 //   3. Execution: SKILL.md body 注入下一轮，agent 按指令使用 scripts/references
 //
@@ -149,7 +149,8 @@ export const configSchema: ConfigSchema = {
     type: 'boolean',
     label: '启用 Discovery 注入',
     default: true,
-    description: '启动时把所有 skill 的 name+description 列表注入 system prompt，方便 agent 按需 load_skill。',
+    description:
+      '往 system prompt 注入一行技能库路标，提示 agent 用 list_skills 检索、load_skill 加载技能；关闭时激活正文注入也一并停用。',
   },
   triggersEnabled: {
     type: 'boolean',
@@ -494,18 +495,19 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   const DISCOVERY_SOURCE = 'skills-discovery';
   const ACTIVATION_SOURCE_PREFIX = 'skills-activation:';
 
-  // ── Discovery: agent:prompt 贡献（knowledge 槽）注入可用 skill 列表 ──
+  // ── Discovery: agent:prompt 贡献（knowledge 槽）注入一行静态路标 ──
+  // 不注入技能清单本身：清单随技能增删变化会打前缀缓存，且体积随技能数线性膨胀。
+  // 路标是常量文本，具体技能靠 list_skills 检索（keyword 匹配 / offset 翻页）。
   if (config.discoveryEnabled) {
     ctx.contribute('agent:prompt', {
       id: DISCOVERY_SOURCE,
       anchor: 'knowledge',
       build() {
-        const visible = getAllowedSkills();
-        if (visible.length === 0) return null;
-        const lines = visible.map(s => `- ${s.name}: ${s.description}`);
+        if (getAllowedSkills().length === 0) return null;
         return (
-          `📚 可用技能（共 ${visible.length}，按需调用 load_skill(name="...") 加载完整指令）：\n${lines.join('\n')}\n\n` +
-          '当你识别到当前任务匹配某个技能时，先调用 load_skill 获取详细操作步骤，再继续执行。'
+          '存在可复用技能库。当任务可能有现成技能（专项工作流、操作指引等）时，' +
+          '先调用 list_skills 检索（可传 keyword，翻页用 offset），' +
+          '再调用 load_skill(name) 加载所需技能的完整指令。'
         );
       },
     });
@@ -785,7 +787,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       function: {
         name: 'load_skill',
         description:
-          '加载指定 skill 的完整 SKILL.md 内容到当前会话上下文。加载后下一次模型调用会自动看到该 skill 的详细指令与附属资源清单（scripts/references/assets）。当 system prompt 中的"可用技能列表"里某条 description 匹配当前任务时调用本工具。',
+          '加载指定 skill 的完整 SKILL.md 内容到当前会话上下文。加载后下一次模型调用会自动看到该 skill 的详细指令与附属资源清单（scripts/references/assets）。技能可先用 list_skills 检索；当某个技能的 description 匹配当前任务时调用本工具。',
         parameters: {
           type: 'object',
           properties: {
@@ -882,7 +884,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 3. skill_create
   tools.register({
-    // 变更类：写入的技能会被 discovery 注入所有会话 system prompt（持久注入面），标 sensitive
+    // 变更类：写入的技能构成持久注入面（triggers 命中自动激活 + load_skill 正文注入），标 sensitive
     // 挡住不受信任访客经 LLM 驱动；无逐次 confirm（避免给 owner 加摩擦）。
     risk: 'sensitive',
     groups: ['skills'],
