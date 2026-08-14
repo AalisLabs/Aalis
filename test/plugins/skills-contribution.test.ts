@@ -13,7 +13,7 @@ import type { Message } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-skills 的 agent:prompt 贡献（discovery / activation 两类块）：
-//   - discovery（knowledge 槽）：列出全部可见技能的 name + description
+//   - discovery（knowledge 槽）：一行静态路标（不列技能名，具体技能靠 list_skills 检索）
 //   - activation（knowledge 槽）：每个被激活过的技能一份，按 view.sessionId
 //     判断本会话是否已 load_skill —— 未 load 的会话不应看到正文
 // 驱动面全部走公开面：ctx.provide 假 storage + skills 服务 + 组装器直驱 +
@@ -144,7 +144,7 @@ const activationOf = (skillName: string) => (m: Message) =>
   String(m.metadata?.injector ?? '').endsWith(`/skills-activation:${skillName}`);
 
 describe('plugin-skills: agent:prompt 贡献', () => {
-  it('discoveryEnabled=true 且有技能：discovery 块列出技能名与描述', async () => {
+  it('discoveryEnabled=true 且有技能：discovery 块是静态路标，不列技能名', async () => {
     const { app, skills } = await setup();
     await skills.createSkill({ name: 'alpha', description: '处理甲类任务', body: 'ALPHA-BODY' });
     await skills.createSkill({ name: 'beta', description: '处理乙类任务', body: 'BETA-BODY' });
@@ -168,12 +168,14 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     expect(block).toBeDefined();
     expect(block?.role).toBe('system');
     const content = String(block?.content ?? '');
-    expect(content).toContain('可用技能');
-    expect(content).toContain('共 2');
-    expect(content).toContain('- alpha: 处理甲类任务');
-    expect(content).toContain('- beta: 处理乙类任务');
+    expect(content).toContain('技能库');
+    expect(content).toContain('list_skills');
     expect(content).toContain('load_skill');
-    // 渐进披露：discovery 只列名与描述，不含 SKILL.md 正文
+    // 路标是常量文本：不随技能增删变化（前缀缓存友好），具体技能靠 list_skills 检索
+    expect(content).not.toContain('alpha');
+    expect(content).not.toContain('beta');
+    expect(content).not.toContain('共 2');
+    // 渐进披露：更不含 SKILL.md 正文
     expect(content).not.toContain('ALPHA-BODY');
     expect(content).not.toContain('BETA-BODY');
     // discovery 是 knowledge 槽：persona → IDN(identity) → 第二条 system →
@@ -201,7 +203,7 @@ describe('plugin-skills: agent:prompt 贡献', () => {
     expect(messages).toHaveLength(2);
   });
 
-  it('rescan 发现外部放入的技能后，discovery 才列出它', async () => {
+  it('rescan 发现外部放入的技能后，discovery 路标才出现', async () => {
     const { app, storage, skills } = await setup();
     const messages = baseMessages();
     await assemblePromptContributions(app.ctx, { messages, sessionId: 's-1' });
@@ -213,7 +215,8 @@ describe('plugin-skills: agent:prompt 贡献', () => {
 
     await assemblePromptContributions(app.ctx, { messages, sessionId: 's-1' });
     const content = String(messages.find(isDiscovery)?.content ?? '');
-    expect(content).toContain('- gamma: 外部放入的技能');
+    expect(content).toContain('list_skills');
+    expect(content).not.toContain('gamma');
   });
 
   it('loadSkillForSession 后组装：激活块含 SKILL 正文，且只在该 sessionId 出现', async () => {
