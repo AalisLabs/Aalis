@@ -523,13 +523,9 @@ export function App() {
     if (sessionId === getSessionId()) {
       setCompressingStatus(status as 'start' | 'done' | 'error');
       if (status === 'done') {
-        // 插入永久的系统消息，与从数据库加载的 event-marker 一致
-        setMessages(prev => [...prev, {
-          role: 'system' as const,
-          content: '对话已压缩',
-          timestamp: Date.now(),
-        }]);
-        // 短暂延迟后清除临时计时器状态
+        // 不在此合成「对话已压缩」分隔线：done 只代表流程结束，不保证真的压缩了
+        // （无需压缩的早退同样报 done）。持久化的 event-marker 是唯一事实来源，
+        // 下次加载历史时自然出现；即时反馈由状态角标承担。
         setTimeout(() => setCompressingStatus(null), 1500);
       } else if (status === 'error') {
         setTimeout(() => setCompressingStatus(null), 3000);
