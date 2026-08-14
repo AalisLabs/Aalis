@@ -351,7 +351,7 @@ async function readInstalledTree(
  *
  * **按字节而不是按包数**：包名长度差着数量级（`ms@2.0.0` 8 字节 vs
  * `@aalis/api-session-manager@0.9.1` 38 字节），拿个数近似字节等于用一个与约束无关的
- * 量设闸——曾经这里是「最多 50 个包」，比真实约束低了约 600 倍，把本仓 99 个包的协调发版
+ * 量设闸——如「最多 50 个包」比真实约束低约 600 倍，会把本仓 99 个包的协调发版
  * 场景直接挡死。
  *
  * 128 KiB 只占 ARG_MAX 的 1/8，余下留给 envp（它与 argv 共享同一预算）与 npm 的固定参数；
@@ -460,7 +460,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    * 串行闸：占用中直接**拒绝**而非排队。
    *
    * 拒绝而非排队的决定性理由：update 成功后进程立即重启，排在它后面的操作必然被腰斩。
-   * 排队在这里是错的语义——「一次一个」才是这三个操作的真实约束，只是此前没人强制它。
+   * 排队在这里是错的语义——「一次一个」才是这三个操作的真实约束。
    */
   async function exclusive<T extends { ok: boolean; message: string }>(
     what: string,
@@ -521,12 +521,12 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
   /**
    * 安装：写根 `dependencies` —— 加载器**唯一**的发现来源。
    *
-   * 不再按「项目形态」分叉。旧实现在检测到 `pnpm-workspace.yaml` 时会把 npm 包解包成
-   * `packages/<dir>` 源码，而那个文件与真正生效的加载器**没有因果关系**——加载器是入口
+   * 不按「项目形态」分叉：检测到 `pnpm-workspace.yaml` 就把 npm 包解包成
+   * `packages/<dir>` 源码是错的——那个文件与真正生效的加载器**没有因果关系**，加载器是入口
    * 文件传给 `startAalis` 的（默认读根依赖，本仓显式传 fs 加载器扫 packages/）。于是一个
    * 用 pnpm 工作区但走默认 `startAalis()` 的用户，包会被装进加载器永远不看的地方，静默失败。
    *
-   * 现在只有一条路径。真正的 monorepo 由下面的 `hasWorkspaceProtocol` 守卫拦住并说清
+   * 只有一条路径。真正的 monorepo 由下面的 `hasWorkspaceProtocol` 守卫拦住并说清
    * 该用什么工具——那才是开发者场景，不该用市场往自己仓里塞源码。
    */
   async function installTo(npmPkg: string): Promise<{ ok: boolean; message: string }> {
@@ -564,11 +564,11 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    *    配置；再用 `npm_config_legacy_peer_deps=false` 压掉用户级与全局配置（已实测：
    *    即便副本里放了 `legacy-peer-deps=true` 的 `.npmrc`，该环境变量也能翻回来）。
    *
-   * **不要把项目 `.npmrc` cp 进副本**（试过，已回退）。动机是对的——不带它，私有源用户的
+   * **不要把项目 `.npmrc` cp 进副本**。动机是对的——不带它，私有源用户的
    * 预检会跑去公共源解析（包只在私有源上就 404/401 → 更新被永久挡住且报错文不对题）。但
-   * 实做后被 `test/integration/install-chain.test.ts` 的真实 npm 用例推翻：带上 `.npmrc` 后
+   * `test/integration/install-chain.test.ts` 的真实 npm 用例证伪了这条路：带上 `.npmrc` 后
    * 上面第 2 条护栏失效，而隔离复现里 env 明明压得过项目级 `.npmrc`，**机制未查清**。
-   * 要重做的话先解释清楚这个矛盾，别直接再 cp 一次。
+   * 要做的话先解释清楚这个矛盾，别直接 cp。
    *
    * 判据只能是解析告警文本：`--dry-run --json` 实测只给 `{added, removed, changed,
    * audited, funding}`，无任何冲突信息；退出码在本场景恒为 0（npm 把命令行显式 spec

@@ -150,7 +150,7 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
       });
 
       // 不自起无上限累加器：直接用 process-local wait() 内部有 maxBuffer 上限的 result.stdout/stderr。
-      // 旧实现自己 `stdout += chunk` 无上限——在「超限只停累积不杀进程」(f943b1a4) 之后会无界增长 → OOM。
+      // 自起 `stdout += chunk` 无上限——「超限只停累积不杀进程」语义下会无界增长 → OOM。
       // 超时是 wait() 正常返回(带 SIGKILL 信号)、非抛错，故 result 在超时路径仍可用、带(已截断的)部分输出。
       try {
         const result = await child.wait();

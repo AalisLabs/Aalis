@@ -63,8 +63,8 @@ interface SchedulerConfig {
 }
 
 // ──────────── Cron 解析 ────────────
-// 已迁移到 @aalis/api-cron-engine（normalizeCronExpr / parseEverySeconds / matchesCron）；
-// scheduler 改为 inject 'cron-engine' 后调用 subscribe()/nextFireTime()。
+// 解析在 @aalis/api-cron-engine（normalizeCronExpr / parseEverySeconds / matchesCron）；
+// scheduler inject 'cron-engine' 后调用 subscribe()/nextFireTime()。
 
 // ──────────── 运行时状态 ────────────
 
@@ -479,7 +479,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       await ctx.emit('scheduler:job:start', jobName);
 
       // 通用触发事件：供 workflow 等订阅者使用
-      // （即使本任务用的是旧版 inbound:message，也同时广播 trigger:fired，
+      // （任务本身仍走 inbound:message 投递，这里同时广播 trigger:fired，
       //  便于平滑迁移到 plugin-workflow）
       // biome-ignore lint/suspicious/noExplicitAny: 事件类型由 api-workflow 增广，scheduler 不直接依赖
       await ctx.emit('trigger:fired' as any, {
