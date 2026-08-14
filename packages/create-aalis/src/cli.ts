@@ -134,8 +134,8 @@ const GROUPS: AdapterGroup[] = [
 ];
 
 // 已知插件的配置桩。密钥留空由用户填 —— 直接写进 aalis.config.yaml，该文件不入库
-// （见 renderGitignore）。曾经走 `.env` + `${VAR}` 插值，但它承载的东西与 config 完全重合，
-// 唯一区别只是「哪个文件进 git」；把配置文件本身 ignore 掉之后那一层就纯属多余。
+// （见 renderGitignore）。不走 `.env` + `${VAR}` 插值：它承载的东西与 config 完全重合，
+// 唯一区别只是「哪个文件进 git」，而配置文件本身已被 ignore，那一层纯属多余。
 // 仅覆盖需密钥/地址的常见适配器；其余插件用默认配置启动。
 const KNOWN_CONFIG: Record<string, { config: Record<string, string> }> = {
   '@aalis/plugin-llm-deepseek': { config: { apiKey: '' } },
@@ -197,8 +197,8 @@ interface CatalogEntry {
  *
  * 类型区分完全靠关键词，**不看包名**：检索用的是 `keywords:aalis-plugin`，而契约包带
  * `aalis-api`、前端带 `aalis-interface`、工具库带 `aalis-util`——它们根本不会出现在结果里。
- * 此处曾按包名剔除 `*-api` 与 `webui-client*`，那是关键词收敛（包按类型打词）之前的写法，
- * 收敛之后即成死代码，且按名判定会被改名打穿：`plugin-*-api` → `api-*` 之后 `/-api$/` 全部失配。
+ * 故此处不按包名剔除 `*-api` 与 `webui-client*`：关键词收敛（包按类型打词）之后那就是死代码，
+ * 且按名判定会被改名打穿：`plugin-*-api` → `api-*` 之后 `/-api$/` 全部失配。
  *
  * 剩下的 `code-sandbox` 是**真功能插件**（带 aalis-plugin），排除理由与类型无关：它是被
  * code_runner 按需拉起的沙箱基建，不是用户「选功能」时该看到的条目。
@@ -227,7 +227,7 @@ export type IndexParse = { ok: true; indices: number[] } | { ok: false; error: s
 /**
  * 解析「序号选择」输入：兼容逗号或空格分隔（"1,2" / "1, 2" / "1 2" 等价）。
  * 严格校验——任何非纯数字 token、越界、重复、或 exclusive 多选都返回 ok:false + 可读错误，
- * 由调用方重问；不再像旧实现那样 parseInt 宽容 + filter 静默丢弃坏输入。
+ * 由调用方重问；不做 parseInt 宽容 + filter 静默丢弃坏输入。
  * 空串视为 ok:[]（「空=默认/不选」的语义由调用方决定）。
  */
 export function parseIndexSelection(raw: string, count: number, mode: 'multi' | 'exclusive'): IndexParse {
@@ -253,7 +253,7 @@ export type ValidationResult = { ok: true } | { ok: false; error: string };
 /**
  * 校验是否为合法 npm 包名（生成项目/插件的 package.json `name`）。覆盖 npm 核心规则的常见子集：
  * 全小写、≤214 字符、无空格、不以 . 或 _ 开头、仅 url-safe 字符、可选 @scope/ 前缀。
- * 旧实现仅用宽松正则（放行 MyBot / 全点名等）或只查非空，会生成无法 install/publish 的名字。
+ * 只用宽松正则（放行 MyBot / 全点名等）或只查非空不够，会生成无法 install/publish 的名字。
  */
 export function validateNpmName(name: string): ValidationResult {
   if (!name) return { ok: false, error: '名称不能为空。' };
@@ -544,7 +544,7 @@ async function main(): Promise<void> {
     }
 
     // 插件目录：full 档用它枚举全部官方插件；非 bare 档也复用其版本号，省去逐包查询。
-    // 注意：旧版「其他插件」live 全列表多选已撤——长尾插件发现交给 WebUI 市场（见上提示）。
+    // 注意：此处不做「其他插件」live 全列表多选——长尾插件发现交给 WebUI 市场（见上提示）。
     let catalog: CatalogEntry[] | null = null;
     if (tier !== 'bare') {
       catalog = await fetchCatalog(registry);

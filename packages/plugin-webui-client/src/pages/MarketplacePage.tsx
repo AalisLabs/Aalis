@@ -99,7 +99,7 @@ const INSTALLABLE_CATEGORIES: ReadonlySet<string> = new Set(['plugin', 'interfac
  *
  * `error` 与 `message` 是**两条不同来源**：路由自身的 400/503/500 分支只给 `error`
  * （无 ok/无 message），服务层的结构化失败走 HTTP 200 + `{ok:false, message}`。
- * 只读其一就会得到一个没有任何文字的红框——曾实测发生：服务未启用、超过 50 个上限、
+ * 只读其一就会得到一个没有任何文字的红框——实测：服务未启用、超过 50 个上限、
  * npm 报错三条全部渲染成空白。
  */
 interface UpdateResult {
@@ -229,8 +229,8 @@ export function MarketplacePage({
   /**
    * 可更新完全由服务端判定（来源是 registry + 版本严格新于本地）。
    *
-   * 前端**不再自算**：曾经这里写 `p.resolved !== p.version` 再叠一个 origin 判断，与服务端的
-   * 更新闸是两份实现，实测出过两类错——字符串不等把「registry 的 latest 低于本地」渲染成
+   * 前端**不得自算**：这里写 `p.resolved !== p.version` 再叠一个 origin 判断，就是与服务端的
+   * 更新闸各一份实现，实测两类错——字符串不等把「registry 的 latest 低于本地」渲染成
    * 可更新并真的降级重启；GitHub 简写依赖出了勾选框却在提交后被闸整批否决。
    */
   const updatable = useMemo(() => registry.filter(p => p.updatable), [registry]);
@@ -565,9 +565,9 @@ export function MarketplacePage({
                 </span>
               )}
               {pkg.updatable && (
-                // 徽章即勾选框——此前它只是个悬空提示，点不动。
-                // 判据必须与顶部面板、与服务端更新闸**同一个** `updatable`：曾经这里自算
-                // `origin === 'registry' && resolved !== version`，于是「latest 低于本地」时
+                // 徽章即勾选框，不是悬空提示。
+                // 判据必须与顶部面板、与服务端更新闸**同一个** `updatable`：这里若自算
+                // `origin === 'registry' && resolved !== version`，「latest 低于本地」时
                 // 服务端下发 updatable:false，卡片却照样渲染黄徽章「可更新 v<更旧的版本>」
                 // 并给出一个勾得上、却因为不在 updatable 列表里而永远提交不出去的死勾选框。
                 <label

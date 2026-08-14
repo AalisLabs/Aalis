@@ -359,9 +359,8 @@ function nextEcho(): string {
 
 // ===== 附件统一缓存 =====
 //
-// 历史上只有 image 落盘到 data/images/，audio/video/file 直接传 URL；
-// 现统一到 data/{kind}s/{session}/{hash}.{ext}，便于人工归档、跨轮工具复用、
-// 多模态历史回放。详见 ./attachment-cache.ts。
+// image/audio/video/file 一律落盘到 data/{kind}s/{session}/{hash}.{ext}，便于人工归档、
+// 跨轮工具复用、多模态历史回放。详见 ./attachment-cache.ts。
 
 /** 占位符 → AttachmentRefKind 映射（与 v11/v12 segmentsToText 的输出对齐） */
 const KIND_PLACEHOLDER: Record<'image' | 'audio' | 'video' | 'file', { placeholder: string; ref: AttachmentRefKind }> =

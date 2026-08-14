@@ -1,11 +1,11 @@
 // ════════════════════════════════════════════════════════════
 // npm 依赖声明的来源分档 + semver 版本序比较
 //
-// 抽到 util 是因为**同一语义曾有三份实现**，且三份互不一致：
-//   - plugin-package-manager 的 isRegistryDep —— 更新闸，判 `user/repo` 不可更新
-//   - plugin-webui-server 的 classifyOrigin —— 卡片来源，判 `user/repo` 是 registry
-//   - plugin-webui-client 的 isUpdatable —— 勾选框，跟着 classifyOrigin 走
-// 实测后果：fork 后钉分支的依赖（`"@aalis/plugin-foo": "acme/aalis-plugin-foo"`）在前端
+// 抽到 util 是因为**同一语义有三个消费方**，各写各的必然互不一致：
+//   - plugin-package-manager —— 更新闸，判 `user/repo` 不可更新
+//   - plugin-webui-server —— 卡片来源，判 `user/repo` 是 registry
+//   - plugin-webui-client —— 勾选框，跟着服务端的来源分档走
+// 分岔的实测后果：fork 后钉分支的依赖（`"@aalis/plugin-foo": "acme/aalis-plugin-foo"`）在前端
 // 出「可更新」勾选框，提交后被服务端闸整批否决，且理由「不在根依赖中」是错的——它就在根依赖里。
 //
 // 本模块是这条语义的**唯一实现**：展示分档与更新闸都由 classifyDepSpec 派生，

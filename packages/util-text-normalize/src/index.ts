@@ -154,12 +154,12 @@ export function stripLeakedSpecialTokens(content: string): {
 } {
   if (!content) return { sanitized: content, hadLeak: false };
   // 廉价早出：三条规则都要求出现字面量 "DSML"——没有它不可能泄漏。这同时把「无 DSML 的
-  // 病理输入(如海量竖线)」挡在正则外，杜绝灾难性回溯(ReDoS：旧实现 5000 竖线即冻进程)。
+  // 病理输入(如海量竖线)」挡在正则外，杜绝灾难性回溯(ReDoS：没有早出时 5000 竖线即冻进程)。
   if (!content.includes('DSML')) return { sanitized: content, hadLeak: false };
   let sanitized = content;
   let hadLeak = false;
-  // 线性正则：每个标签内仅**一个** `[^<>]*`，DSML 用零宽 lookahead 断言——消除旧版
-  // `[^<>]*?[｜|]+[^<>]*`（同类字符多量词重叠）的回溯爆炸，行为对现有样本完全等价。
+  // 线性正则：每个标签内仅**一个** `[^<>]*`，DSML 用零宽 lookahead 断言——**严禁**
+  // `[^<>]*?[｜|]+[^<>]*` 这类同类字符多量词重叠，那会回溯爆炸。
   // 1) 整段成对 block：<...DSML...>...</...DSML...>（lazy 到最近闭合）
   const blockRe = /<(?=[^<>]*DSML)[｜|][^<>]*>[\s\S]*?<\/(?=[^<>]*DSML)[｜|][^<>]*>/g;
   if (blockRe.test(sanitized)) {
