@@ -1573,7 +1573,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       );
     });
     server.listen(uiConfig.port, uiConfig.host, () => {
-      const url = `http://${uiConfig.host}:${uiConfig.port}/`;
+      // 通配绑定地址（0.0.0.0 / ::）是"听在哪"，不是"从哪访问"——直接拼进 URL 会让
+      // autoOpen 打开空白页、access.txt 给出不可点的链接（host 改 0.0.0.0 后实测）。
+      // 展示/打开一律用回环；局域网访问地址由用户按本机 IP 自行替换。
+      const displayHost = uiConfig.host === '0.0.0.0' || uiConfig.host === '::' ? '127.0.0.1' : uiConfig.host;
+      const url = `http://${displayHost}:${uiConfig.port}/`;
       const accessUrl = `${url}?token=${authToken}`;
       void writeAccessFile(url, authToken);
       ctx.logger.info(`WebUI 已启动: ${url}`);
