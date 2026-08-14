@@ -41,8 +41,8 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
   const authority = new AuthorityManager(ctx.config, ctx.logger, storage);
   ctx.provide('authority', authority);
   // 用户等级存于 data:/users.json，读取依赖 storage 服务。storage provider 可能晚于本插件
-  // 上线（曾因此在 init 阶段 readFile 失败被静默吞 → 重启后等级不回载）；改为 storage 就绪时再
-  // load，规避初始化时序竞态。whenService 对「已在线」的服务也会立即触发，故任意加载序都成立。
+  // 上线（在 init 阶段直接 readFile 会失败且被静默吞 → 重启后等级不回载），故等 storage 就绪
+  // 再 load，规避初始化时序竞态。whenService 对「已在线」的服务也会立即触发，故任意加载序都成立。
   ctx.whenService<StorageService>('storage', () => {
     void authority.init().then(
       () => ctx.logger.debug('授权用户等级已加载'),
@@ -87,10 +87,10 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
     }
 
     // ── 轴 B · 确认：授权已过（含 owner / public / 已授予），但操作声明了 confirm 仍需「意图确认」 ──
-    // 仅对**已授权**操作做意图确认（owner 也吃，防注入借权）；不再是提权入口。
+    // 仅对**已授权**操作做意图确认（owner 也吃，防注入借权）；不是提权入口。
     // 跳过判定见 shouldSkipConfirm：always 永不跳（cron 无人确认即拒）；非 always 可被
-    // skipConfirm(系统/受信源) 或 owner 本人 auto 模式 跳过。修 #6：旧实现用 `!g.skipConfirm`
-    // 门控整块 → skipConfirm 会连 always 一起绕过。
+    // skipConfirm(系统/受信源) 或 owner 本人 auto 模式 跳过。**不能**用 `!g.skipConfirm`
+    // 门控整块 → 那会让 skipConfirm 连 always 一起绕过。
     if (confirm) {
       const skip = shouldSkipConfirm({
         confirm,
@@ -246,8 +246,8 @@ export const actions: PluginModule['actions'] = {
       // 操作清单：指令 + 工具统一带 pluginName/type/confirm，供前端「操作」视图按插件分组、显示两轴默认。
       //
       // `minLevel` 是**派生默认值**（不含 authorityOverrides）——定级这件事收在权限服务这一侧，
-      // 前端只渲染，不得再自算：它曾自带一份 `derivedMinLevel`，在 risk 为非联合成员的真值串时
-      // 与后端分歧（后端落 visibility 兜底=2、前端只要 risk 为真就吐 0），方向是 fail-open 的显示。
+      // 前端只渲染，不得自算：前端一旦自带一份 `derivedMinLevel`，risk 为非联合成员的真值串时
+      // 就与后端分歧（后端落 visibility 兜底=2、前端只要 risk 为真就吐 0），方向是 fail-open 的显示。
       // overrides 不能由后端算进去：它是前端正在编辑中的状态，同一份 payload 里已整体下发。
       commands: cmdNodes.map(n => ({
         key: n.name,

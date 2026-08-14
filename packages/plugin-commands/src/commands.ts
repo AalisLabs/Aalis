@@ -34,14 +34,14 @@ const NAME_SEGMENT_RE = /^[a-z][a-z0-9-]*$/;
 /**
  * 一条指令声明。**节点持有的是一个声明栈**，不是单个格子。
  *
- * 旧实现每个名字只有一层：同名再注册就把这层就地清空并改写 `pluginName`。两个后果都实测过：
+ * 每个名字只留一层（同名再注册就把这层就地清空并改写 `pluginName`）有两个实测后果：
  * 1. **提权** —— 后注册者不带 meta 时 `baseVisibility` 被写成 undefined，materialize 兜底成
  *    `public`，于是任何插件重注册一个 restricted 指令名就能把权限闸降掉。
  * 2. **破坏** —— 所有权被改写后，覆盖者卸载时按 `pluginName` 匹配到整个节点并删除，
  *    先注册者的指令一并消失且不会回来。
  *
- * 改成栈之后：栈顶生效（**保持「后来者胜」的既有语义**），卸载只摘自己那一层、下面的自动
- * 复位，而安全轴取全栈最严（见 `strictestPolicy`）——后来者只能收紧、不能放宽。
+ * 栈的语义：栈顶生效（**「后来者胜」**），卸载只摘自己那一层、下面的自动复位，
+ * 而安全轴取全栈最严（见 `strictestPolicy`）——后来者只能收紧、不能放宽。
  */
 interface Decl {
   description?: string;
@@ -66,12 +66,11 @@ interface Decl {
  *
  * 栈顶决定「跑谁的实现」，但不该决定「谁能跑」——否则后注册者只要压一层就能放宽权限。
  *
- * ⚠️ **必须整份取，不能逐轴取严**。曾经的写法是 visibility / confirm / risk 三轴各自独立
- * 取最严，实测不单调：真正的裁决函数里 **risk 一旦存在就完全遮蔽 visibility**
+ * ⚠️ **必须整份取，不能逐轴取严**。visibility / confirm / risk 三轴各自独立取最严实测不单调：
+ * 真正的裁决函数里 **risk 一旦存在就完全遮蔽 visibility**
  * （见 `capabilityMinLevel`），于是「未声明 risk」在合并时被当成最弱、在裁决时却代表更强的
  * visibility 兜底。给 `{visibility:'restricted'}` 的 /shutdown 压一层 `{risk:'safe'}`，
- * 门槛从 2 掉到 0，而 visibility 那一栏仍显示 restricted —— 提权成功，且比不修更糟：
- * 旧实现提权时 visibility 会明着翻成 public（可被审计发现），逐轴合并反而把症状藏了起来。
+ * 门槛从 2 掉到 0，而 visibility 那一栏仍显示 restricted —— 提权成功且不露痕迹。
  *
  * 定级用契约包的 `capabilityMinLevel`（与 authority 实际裁决同一份实现），不自己复制一份口径。
  * 同级时取先注册者，保证结果与栈序无关（幂等）。
@@ -159,7 +158,7 @@ export class CommandRegistry implements CommandService {
 
     // 压栈而非就地改写：旧声明原样留着，覆盖者卸载后它自动重新生效。
     //
-    // 为什么不改成「同名直接拒绝」（曾评估过，结论是保留）：**本仓没有「内置指令」这个概念**
+    // 为什么不做「同名直接拒绝」：**本仓没有「内置指令」这个概念**
     // ——`/status` `/shutdown` `/restart` 是 plugin-commands 自己注册的，而它恰好也提供注册表，
     // 但注册表里没有 builtin 位、没有白名单、没有保护名单。所以同名注册是**平等插件之间的
     // 正常情况**，压栈让「谁的实现生效」有确定语义（后来者胜）且可逆（卸载复位）；改成拒绝
@@ -262,7 +261,7 @@ export class CommandRegistry implements CommandService {
     // 是同一个病，只是从指令节点挪到了别名表。而且删完 A 的 `Decl.aliases` 里仍留着 `p`，
     // `/help` 会展示一个解析不到的别名，注册表自相矛盾。
     for (const a of new Set(dropped.flatMap(d => d.aliases))) this.rebindAlias(a);
-    // 回收随之变空的祖先分组。曾经只挂在 unregisterByPlugin 上，于是同一件事经管理面
+    // 回收随之变空的祖先分组。必须挂在这里而非只挂 unregisterByPlugin：否则同一件事经管理面
     // （直接 unregister）做就留幽灵、经插件卸载做就干净——契约面不对称。放在早退之后，
     // 只有真摘到东西才扫。
     this.pruneEmptyGroups();
@@ -274,7 +273,7 @@ export class CommandRegistry implements CommandService {
    *
    * 遍历全表看似浪费，但别名总数是「指令数」量级（当前全仓 0 个），而 unregister 只在
    * 插件装卸时发生——拿这点代价换「不必维护别名的引用计数」是划算的：引用计数是又一个
-   * 要靠人肉维持的不变量，而本文件已经因为这类不变量栽过两次。
+   * 要靠人肉维持的不变量。
    */
   private rebindAlias(alias: string): void {
     for (const [cmdName, stack] of this.nodes) {
@@ -295,8 +294,7 @@ export class CommandRegistry implements CommandService {
    * 回收无主的空分组节点。
    *
    * 分组节点由 `ensureGroups` 自动创建（空栈、无 pluginName），因此**任何按插件名的摘除都
-   * 匹配不到它们**——旧实现（`node.pluginName === pluginName`）与声明栈实现（空栈上
-   * `dropped.length === 0` 直接返回）都漏，这不是重构引入的。
+   * 匹配不到它们**——空栈上 `dropped.length === 0` 直接返回。
    *
    * 后果是用户可见的：卸载 `plugin-user-relation` 后 `relation` / `relation.cleanup` 留着，
    * `hasMatch('relation')` 仍为真，于是指令相位**吞掉** `/relation` 不放行给普通消息管道，
@@ -420,7 +418,7 @@ export class CommandRegistry implements CommandService {
     // handler 分组节点，敲它会把 `relation.cleanup.*` 那 6 条 restricted 子指令一并列出。
     // （裸敲 `/relation` 只列出下一层的分组名，实测要再敲一层才到那 5 条。）
     //
-    // **已评估并决定不做过滤**（2026-08）。这是降噪而非防泄漏——开源项目里指令存在性本就
+    // **决定不做过滤**。这是降噪而非防泄漏——开源项目里指令存在性本就
     // 公开（源码、文档、npm 包都写着）。而且只堵这里等于只堵一半：低权限用户直敲受限指令时，
     // authority 的拒绝文案照样暴露存在性，要真做得连那条通用文案一起改，而它同时服务 tools
     // 与 commands 两个注入点，牵动所有能力的拒绝语义，改动面大于收益。
@@ -478,13 +476,13 @@ export class CommandRegistry implements CommandService {
 
     // 安全轴 = **整条 dot path（含本节点）上最严的那份声明**。
     //
-    // 曾经是「沿 path 向上逐级覆盖，最近声明的祖先胜，本节点可再覆盖」。那等于给每一级都
+    // 不能「沿 path 向上逐级覆盖，最近声明的祖先胜，本节点可再覆盖」。那等于给每一级都
     // 开了一个放宽口：实测在 `admin`(restricted) 与 `admin.sys.shutdown` 之间插一层
     // `admin.sys` 声明 `risk:'safe'`，叶子的门槛就从 2 掉到 0；换成中间层声明
-    // `visibility:'public'` 同样得 0。上一版只把「本节点 vs 继承值」取了严，祖先之间仍是
-    // 逐级覆盖 —— 修了一处、漏了整条链。
+    // `visibility:'public'` 同样得 0。只把「本节点 vs 继承值」取严也不够，祖先之间仍是
+    // 逐级覆盖 —— 堵一处、漏整条链。
     //
-    // 现在没有「继承」这个中间概念了：把 path 上每个节点各自的最严声明收集起来，再整体取最
+    // 故不设「继承」这个中间概念：把 path 上每个节点各自的最严声明收集起来，再整体取最
     // 严的那一份。少一层概念，也少一个能被插进去的缝。
     const chain: Decl[] = [];
     const everyDecl: Decl[] = [];

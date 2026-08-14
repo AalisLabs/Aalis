@@ -232,7 +232,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     const page = await b.newPage();
     page.setDefaultTimeout(config.defaultTimeout);
     // SSRF 收口：请求级拦截，统一覆盖 navigate/click/submit/重定向/子资源——
-    // 补全 validateUrl 此前仅在 browser_navigate 生效、被 click/表单提交/30x 绕过的缺口。
+    // validateUrl 只在 browser_navigate 生效，click/表单提交/30x 都能绕过它，缺口由此补齐。
     // 仅 blockPrivate 时挂拦截（关掉即零开销、本地全通，便于 owner 测本地）；
     // 复用同一套 blockPrivate + allowedHosts 规则，host 白名单照样放行。
     if (config.blockPrivate) {
@@ -690,7 +690,7 @@ async function isBlockedRequestUrl(rawUrl: string, config: BrowserConfig): Promi
   const host = parsed.hostname.toLowerCase();
   if (config.allowedHosts.includes(host)) return false;
   // DNS 级判定：assertSafeHost 对 IP 字面量同步判私网，对域名解析全部 A/AAAA 后逐一判 —— 堵住
-  // 「域名解析到内网/元数据 IP」的 SSRF（旧实现仅 isPrivateHost 字符串级，此类域名可绕过）。
+  // 「域名解析到内网/元数据 IP」的 SSRF（字符串级 isPrivateHost 判定挡不住这类域名）。
   try {
     await assertSafeHost(parsed.hostname);
     return false;

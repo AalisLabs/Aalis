@@ -2367,7 +2367,7 @@ export class RelationService {
   // 2) PersonEventEdge 去重：按现行 addPersonEventEdge 吸收规则重排（修旧账）
   // 3) 报告：返回结构化结果，调用方按需展示
   //
-  // 注：曾有「自动 part-of」步骤（实体名是事件标题子串时自动建边），已移除。
+  // 注：不做「自动 part-of」步骤（实体名是事件标题子串时自动建边）。
   //   原因：consolidate 在初始 snapshot 上运行，无法感知本轮 event 合并后的 rewire 结果，
   //   导致别名事件的 about 边 rewire 到 canonical 后与 consolidate 新建的 part-of 并存，
   //   形成同一 (event,entity) 对同时存在两种边类型的脏数据。
@@ -2514,9 +2514,9 @@ export class RelationService {
             let shouldMerge = true;
             // hierarchy 守门：若 a/b 之间已存在**有证据**的 part-of/contains 边
             // → 视为已知层级，禁止 alias 合并。
-            // 注意：旧版无视 evidence 数，但 LLM 抽取阶段会产出大量 evidence=0 的幻觉层级边，
-            // 把这道安全网污染了（如 APEX ↔ 《Apex英雄》被锁住无法合并）。
-            // 改为只信任 evidence≥1 的层级边：幻觉边不再阻塞合并，真实层级仍守门。
+            // 注意：必须卡 evidence≥1——LLM 抽取阶段会产出大量 evidence=0 的幻觉层级边，
+            // 无视 evidence 数会让这道安全网被污染（如 APEX ↔ 《Apex英雄》被锁住无法合并）。
+            // 只信任 evidence≥1 的层级边：幻觉边不阻塞合并，真实层级仍守门。
             const knownHierarchyEdge = snapshot.edges.some(
               e =>
                 e.kind === 'entity-entity' &&
@@ -2620,7 +2620,7 @@ export class RelationService {
               });
               aliasEdgesCreated++;
             }
-            // 无条件触发真合并：即便 alias 边已存在（如老版本"路由+壳子"残留的
+            // 无条件触发真合并：即便 alias 边已存在（"路由+壳子"式的
             // 半合并状态），也要把 alias 节点真正合并掉，确保收敛。mergeAlias 幂等：
             // alias 节点已不存在 → 直接 no-op；还在 → 正常合并。
             const mergeResult = await this.mergeAlias({ aliasId: a.id, canonicalId: b.id, kind: 'entity' });
@@ -2642,7 +2642,7 @@ export class RelationService {
     //     (a) name 子串包含（短名 ⊂ 长名，且短名长度 ≥ 2）
     //     (b) 一方的某个 alias 与另一方的 name 归一相等
     //
-    //   ── 决策范式 (2026-05 P1)：批量决策 → 并查集分簇 → 一次合并 ──
+    //   ── 决策范式：批量决策 → 并查集分簇 → 一次合并 ──
     //     1) 召回所有 pair 候选
     //     2) 对每个候选跑 verifyAliasPair（只记结果，不立即合并）
     //     3) 把所有 LLM 判 yes 的候选丢进并查集 (union-find)，
@@ -2651,7 +2651,7 @@ export class RelationService {
     //        (mergeScore = 0.5·weightSum + 0.3·edgeCount + 0.2·evidenceCount，
     //         不含 recency；与 compositeScore 解耦，专为"挑代表"语义)，
     //        把其它成员逐个 mergeAlias 到 canonical
-    //   动机：旧逻辑是"判一对合一对"，snapshot 不刷新会出现悬空合并 / 漏传递闭包。
+    //   动机："判一对合一对"时 snapshot 不刷新会出现悬空合并 / 漏传递闭包。
     //         本范式让决策与应用分离，所有 LLM 判定基于同一份 snapshot，行为可预测。
     //   未启用 LLM 时跳过本段（保持原算法的零误合并保证）。
     if (opts.autoLink && llmModel && opts.llm) {
@@ -3107,7 +3107,7 @@ export class RelationService {
     }
 
     // ─── (3b) PersonEntityEdge 旧账整理：同一 (person,entity) 多条不同 role 行 → 留最强 role
-    //    旧版插入逻辑可能未做 (from,to) 级别去重；此处按当前 addPersonEntityEdge 规则修旧账。
+    //    存量里可能有未做 (from,to) 级别去重的边；此处按当前 addPersonEntityEdge 规则修旧账。
     const peEntityPairs = new Map<string, PersonEntityEdge[]>();
     for (const e of snapshot.edges) {
       if (e.kind !== 'person-entity') continue;
@@ -3710,16 +3710,15 @@ export class RelationService {
           }
           let fusedScore: number | null = null;
           if (cosineScore !== null) {
-            // 2026-05 修：把 cos 与 struct 权重对换为 0.7·cos + 0.3·struct。
-            // 原 0.3·cos + 0.7·struct 让"标题/语义高度相似但孤立（无共邻边）"的事件对永远
+            // 若用 0.3·cos + 0.7·struct，"标题/语义高度相似但孤立（无共邻边）"的事件对会永远
             // fused≈0 → 默认阈值 0.7 永远不达 → 永远不进 LLM（如「缸中之脑技术的讨论」与
             // 「缸中之脑的讨论」）。文本语义本身就是 event 相似度更稳定的信号，结构相似只在
             // 已经连接到共同实体/人物的场景下才能加成；这里以文本为主、结构为辅。
             fusedScore = 0.7 * cosineScore + 0.3 * structuralScore;
           }
           // 候选判定：fused 或 jaccard 或 struct 任一达阈即可（OR 兜底）。
-          // 此前 embedding 可用时完全忽略 jaccard，导致高 cos 高 jaccard 但 struct=0 的孤立
-          // 事件对被丢弃；现把 jaccard/struct 兜底显式纳入候选判定，让 LLM 仍有机会评审。
+          // embedding 可用时若完全忽略 jaccard，高 cos 高 jaccard 但 struct=0 的孤立
+          // 事件对会被丢弃；把 jaccard/struct 兜底显式纳入候选判定，让 LLM 仍有机会评审。
           const hasEmbed = cosineScore !== null;
           const isCandidate =
             (hasEmbed && (fusedScore as number) >= fusedThreshold) ||
@@ -5248,7 +5247,7 @@ export class RelationService {
     //   weight = ∑(edge_weight × 邻居在该外社群的隶属度)
     //   - louvain/leiden 下邻居隶属永远 1，退化为"邻居的边权 × 1"，等价于老语义但带权重
     //   - SLPA 下能反映邻居的多重身份对该 person 跨群强度的真实贡献
-    // 邻接：person-person 直接 + person-event-person 二跳 + person-entity-person 二跳（与原实现一致，仅升级权重）
+    // 邻接：person-person 直接 + person-event-person 二跳 + person-entity-person 二跳
     type PersonNbrs = Map<string, number>; // otherPersonId → 累计边权（无向）
     const personNbrs = new Map<string, PersonNbrs>();
     const ensureNbrs = (id: string): PersonNbrs => {

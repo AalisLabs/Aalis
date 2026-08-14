@@ -143,8 +143,8 @@ export class LanceDBVectorStore implements VectorStoreService {
       // single-flight 建表：并发 add（索引 concurrency=10 + embed I/O 让出事件循环）会同时进此分支；
       // 各自建表会互撞「already exists」丢向量，故复用同一 promise。
       // 失败必须重置 tableInit：rejected promise 若留在原位，后续每次 add 都会 await 到它
-      // 原样重抛——建表竞态从单条瞬态失败升级为整库永久僵死（2026-08-11 /clear all 事故：
-      // 清空与在途建表交错失败一次，此后 1.5 天 1.5 万次索引全部重放同一错误、检索恒 0）。
+      // 原样重抛——建表竞态就从单条瞬态失败升级为整库永久僵死（如清空与在途建表交错失败一次，
+      // 此后每次索引都重放同一错误、检索恒 0，实测可累计上万次）。
       if (!this.tableInit) {
         this.tableInit = this.initTable(record).then(
           t => {
@@ -200,7 +200,7 @@ export class LanceDBVectorStore implements VectorStoreService {
    * 后台压实一轮（single-flight、经 serialize 与 delete/clear 互斥、吞错）。
    *
    * 除计数触发外，启动重开旧表时也调一次：写入计数是内存态、**重启即归零**，
-   * 上一会话攒下的碎片否则要等本会话重新写满一个阈值才有机会合并——实测曾
+   * 上一会话攒下的碎片否则要等本会话重新写满一个阈值才有机会合并——实测可
    * 累积 1385 个数据文件 / 362 MB 无人回收。启动压实对已紧实的表近乎免费。
    */
   private runOptimize(): void {
@@ -291,8 +291,8 @@ export class LanceDBVectorStore implements VectorStoreService {
 
   async deleteByFilter(filter: Record<string, unknown>): Promise<number> {
     // 走串行锁：与后台压实/clear 互斥。用 LanceDB 原生 delete(SQL 谓词) 原地删除 ——
-    // 绝不把整表读进 JS。旧实现 query().toArray() 全表载入 + 复制重建，在大库（十万+条向量）上
-    // 直接 OOM 硬崩（进程被杀、不留日志、终端未复原），且逐轮回滚会 N 次触发。改原生删除后无此风险。
+    // 绝不把整表读进 JS：query().toArray() 全表载入 + 复制重建，在大库（十万+条向量）上
+    // 直接 OOM 硬崩（进程被杀、不留日志、终端未复原），且逐轮回滚会 N 次触发。
     return this.serialize(async () => {
       if (!this.table) return 0;
       const clauses = Object.entries(filter).map(([key, value]) => metaJsonFieldPredicate(key, value));

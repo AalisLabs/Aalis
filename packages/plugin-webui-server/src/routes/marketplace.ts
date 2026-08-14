@@ -45,8 +45,8 @@ interface MarketplacePackage {
   /**
    * 此刻能否经市场更新 = 来源是 registry + version 严格新于 resolved。
    *
-   * **服务端算，前端直接用。** 前端曾自己拿 `resolved !== version` 再叠一个 origin 判断，
-   * 三份判据（这里 / package-manager 的闸 / 前端）互不一致，实测出过两类错：字符串不等把
+   * **服务端算，前端直接用。** 前端另算一份（`resolved !== version` 再叠一个 origin 判断），
+   * 三份判据（这里 / package-manager 的闸 / 前端）就会互不一致，实测两类错：字符串不等把
    * 「latest 低于本地」渲染成可更新并真的降级；GitHub 简写依赖出了勾选框却被服务端闸整批否决。
    */
   updatable: boolean;
@@ -214,7 +214,7 @@ export function buildDependencyChain(
  * 路径完全相同，但前者的版本由父包的范围决定，市场独立升它只会和父包打架。
  *
  * 分档实现住在 `@aalis/util-dep-spec`：更新闸（package-manager）与这里的展示必须用同一份，
- * 否则会出现「前端给了勾选框、提交后被闸整批否决」。曾实测发生过，见该模块顶部注释。
+ * 否则会出现「前端给了勾选框、提交后被闸整批否决」（实测会发生，见该模块顶部注释）。
  */
 export type PkgOrigin = DepOrigin;
 

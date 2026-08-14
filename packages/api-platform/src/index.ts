@@ -94,8 +94,8 @@ export interface PlatformAdapter {
 
 // ----- 聚合 / 路由 helper -----
 //
-// 取代历史上的 PlatformRouter（同名 facade）：所有按 sessionId 分发、按平台名汇总
-// 的逻辑都用纯函数表达，调用方传 ctx 即可，没有 entry，没有自递归隐患。
+// 所有按 sessionId 分发、按平台名汇总的逻辑都用纯函数表达，调用方传 ctx 即可，
+// 没有 router facade entry，没有自递归隐患。
 
 import type { Context } from '@aalis/core';
 
