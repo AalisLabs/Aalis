@@ -600,13 +600,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     // ---- 父会话侧：注入活跃子任务提醒 ----
     //
-    // 子任务状态/结果每轮都在变。曾经 `+=` 进 messages[0]（persona 系统提示）
-    // 尾部——provider 前缀缓存从第 0 条消息内部就断，人设 + 头部材料 + 整段
-    // 历史全部作废；「父会话 + 有子任务」的会话享受不到任何历史缓存。现改为
-    // **独立 system 消息插在列表尾部**：尾部插入不碰前缀字节，且保留旧行为
-    // 「每轮重注最新状态」——工具循环中 wait_subtasks 返回后，下一轮 LLM 看到
-    // 的是刷新过的状态而非首轮快照（这也是它不走 agent:prompt 贡献点的原因：
-    // 贡献按全局键幂等，物化一次后同回合不再刷新）。
+    // 子任务状态/结果每轮都在变，故用**独立 system 消息插在列表尾部**：绝不 `+=` 进
+    // messages[0]（persona 系统提示）尾部——碰第 0 条消息会让 provider 前缀缓存从它
+    // 内部就断，人设 + 头部材料 + 整段历史全部作废，「父会话 + 有子任务」的会话享受
+    // 不到任何历史缓存；尾部插入则不碰前缀字节。同时保证「每轮重注最新状态」——
+    // 工具循环中 wait_subtasks 返回后，下一轮 LLM 看到的是刷新过的状态而非首轮快照
+    // （这也是它不走 agent:prompt 贡献点的原因：贡献按全局键幂等，物化一次后同回合
+    // 不再刷新）。
     if (!session?.parentId && session) {
       const children = session.children;
       if (children && children.length > 0) {

@@ -129,7 +129,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 附件按 data:/{images|videos|audios|files}/{safeSessionId} 落盘（与 onebot
   // attachment-cache 的 KIND_DIR 对齐）。独立 middleware 使 /clear 与 deleteSession
   // 走同一清理路径——deleteSession 触发的 memory:clear 也清附件，杜绝文件泄漏
-  // （历史上只清图片，视频/语音/文件是缺口，故补齐四类）。
+  // （四类必须齐清，漏掉任一类即留下残留文件）。
   //
   // types 语义：未指定=清全部附件；指定则只清命中的种类（如 /clear -t video）。
   ctx.middleware(
@@ -176,16 +176,16 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ===== inbound:command 相位：命令命中则执行并中断后续相位 =====
   //
-  // 历史上 OneBot 适配器内联拦截命令；现已迁移到 inbound:command 命名相位，
+  // 命令拦截只在 inbound:command 命名相位做，适配器不内联拦截，
   // 所有平台共享同一套命令解析路径。
   // plugin-gateway 的 INBOUND_PHASE_ORDER 把本相位放在 flow / trigger 之前。
   //
   // 受信任系统源：scheduler 等内部触发器写入 message.source。
   // 这些来源的权限身份来自创建时固化的 message.actor（scheduler 在 setJob / addJob /
   // 静态配置载入这三条建任务路径上各自 snapshot 创建者身份），守卫按 actor 的真实等级
-  // 评估——与普通用户走同一闸门，历史上的 bypassGuard 全绕过已废除。
+  // 评估——与普通用户走同一闸门，不存在 bypassGuard 式的全绕过。
   // **actor 缺省即匿名**：创建者匿名时不得回填 owner，否则受信来源就成了提权通道
-  // （scheduler 曾在触发路径把空 actor 补成 `webui:console`，那正是 owner 快速通道）。
+  // （在触发路径把空 actor 补成 `webui:console` 之类，等于开了一条 owner 快速通道）。
   // skipConfirm 仍然需要：cron 上下文无人可点受限二次确认弹窗（authorize 仍生效）。
   // 同时这些 source 通常指向 internal 虚拟 session（无适配器接收），
   // 因此结果不走 outbound 而是写日志，避免发到虚空。

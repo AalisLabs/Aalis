@@ -1,8 +1,7 @@
 // ============================================================
 // routes/files.ts — WebUI 文件管理 REST 路由（storage URI 版）
 //
-// 历史上同时支持 storage 与 node:fs 两种实现；现已要求 storage 必填，
-// node:fs 兜底分支整体移除，所有操作走 StorageService。
+// storage 必填，所有操作走 StorageService，没有 node:fs 兜底分支。
 // 前端仅需传递相对于 fileRoot 的路径字符串（如 "data/images/xxx.png"）。
 // ============================================================
 

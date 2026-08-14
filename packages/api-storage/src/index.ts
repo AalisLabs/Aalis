@@ -156,11 +156,11 @@ import type { Context } from '@aalis/core';
 
 // ----- 聚合 / 路由 helper -----
 //
-// service-granularity 之后，每个 storage 后端按 root 拆出独立 entry：
+// 每个 storage 后端按 root 拆出独立 entry：
 //   contextId = `${plugin-instance-id}/${root.name}`
 //   capabilities = 反映该 root 的真实权限（read/write/delete/local-path）
 //
-// 不再有 "router facade entry"。所有按 URI / root 名查询的逻辑都是纯函数。
+// 没有 "router facade entry"。所有按 URI / root 名查询的逻辑都是纯函数。
 
 export interface AggregatedStorageRoot extends StorageRootInfo {
   /** 提供该根的 entry contextId（便于排查同名冲突） */
@@ -234,7 +234,7 @@ export function getStorageRootConflicts(ctx: Context): StorageRootConflict[] {
 
 /**
  * 判断某 root 是否满足所需能力：按 root 真实权限位（readable/writable/deletable）
- * + resolveLocalPath/watch 方法存在性判定，不再依赖 DI 能力声明。
+ * + resolveLocalPath/watch 方法存在性判定，不依赖 DI 能力声明。
  */
 function rootSatisfies(
   root: StorageRootInfo,
@@ -549,7 +549,7 @@ export async function readTailLines(
     // pos>0 时 pending 头部是半行，解码会得到残缺内容——丢弃；pos===0 时已并入
     return out.slice(-maxLines);
   } catch {
-    // 提供者不支持范围读 → 整文件回退（行为与旧实现一致）
+    // 提供者不支持范围读 → 整文件回退
     try {
       const raw = (await storage.readFile(uri, 'utf8')) as string;
       let lines = raw.split('\n').filter(l => l.length > 0);

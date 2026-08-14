@@ -200,9 +200,9 @@ export const actions: PluginModule['actions'] = {
       }
     } else {
       // 全图模式：直接全量返回，由前端 / 焦点功能进行筛选。
-      // 历史上这里做过「按 lastSeenAt 截断 + 过滤未触达事件/实体」的优化，
-      // 但会导致「person A 在图里但其关系对端 B 被截断 → A 看似孤儿」的视觉错觉
-      // （真正的孤儿在压缩阶段已由 pruneOrphans 删除）。压缩流程已收紧，全图直出更诚实。
+      // 不做「按 lastSeenAt 截断 + 过滤未触达事件/实体」的优化：
+      // 那会导致「person A 在图里但其关系对端 B 被截断 → A 看似孤儿」的视觉错觉
+      // （真正的孤儿在压缩阶段已由 pruneOrphans 删除）。全图直出更诚实。
       persons = fullSnap.persons;
       events = fullSnap.events;
       entities = fullSnap.entities;
@@ -290,7 +290,7 @@ export const actions: PluginModule['actions'] = {
 
     // 防御：过滤掉引用了缺失节点的“幽灵边”——避免前端 cytoscape 抛
     // “Can not create edge with nonexistent source/target”导致整个图黑屏。
-    // 历史上某些级联删除/合并路径可能漏清边；这里只做防御性兜底，不修复存储。
+    // 某些级联删除/合并路径可能漏清边；这里只做防御性兜底，不修复存储。
     {
       const validNodeIds = new Set<string>();
       for (const p of persons) validNodeIds.add(p.id);

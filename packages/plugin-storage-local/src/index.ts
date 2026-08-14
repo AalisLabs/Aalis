@@ -251,8 +251,7 @@ interface CheckpointLike {
  * readable/writable/deletable 位携带；storage-api 网关按位路由，按 URI 调度交给
  * `createStorageGateway(ctx)` helper。
  *
- * 历史上 LocalStorageService 是单实例 + 内部 root 表，依赖 plugin-storage-router 做
- * URI→root 分发。删除 router 后改为这种自包含设计，单文件即可理解整条数据流。
+ * 自包含设计：URI→root 分发不依赖外部 router 插件，单文件即可理解整条数据流。
  */
 class ScopedStorageService implements StorageService {
   constructor(
@@ -265,7 +264,7 @@ class ScopedStorageService implements StorageService {
    * 读路径 debug 日志去重：同一 key 在 LOG_DEDUP_MS 内只打一次。
    *
    * 背景：checkpoint manifest / file-reader meta / skills 目录在单次回合里会被反复读 list/read/stat，
-   * 之前 debug 层级每次都打一行，单次启动加载就能产生数百行噪声。
+   * debug 层级若每次都打一行，单次启动加载就能产生数百行噪声。
    * 这里用 LRU + 时间窗口去重，保留首次/边界事件，过滤密集重复。
    * write/delete/download 保持原样（频次低 + 有审计价值）。
    */
@@ -758,9 +757,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   // 诊断检查项：探测每个 writable root 是否真的可写。
-  // 历史上 plugin-doctor 内置了硬编码的 fs.data 检查，但 data/ 仅是默认 root 之一，
-  // 不应由 doctor 单独「祝福」。现统一由 storage 插件按当前 roots 配置上报，能反映
-  // 用户自定义根（如 host:/、project_x）的真实状态。
+  // 由 storage 插件按当前 roots 配置上报，而非 doctor 硬编码 fs.data：data/ 仅是默认 root 之一，
+  // 不应由 doctor 单独「祝福」；按 roots 上报才能反映用户自定义根（如 host:/、project_x）的真实状态。
   useDoctorService(ctx).registerCheck({
     id: 'storage.roots',
     category: 'filesystem',

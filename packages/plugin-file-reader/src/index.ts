@@ -641,7 +641,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       },
     },
     handler: async (_args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string> => {
-      // 仅列本会话文件：移除 '*' 跨会话枚举（曾可拿到他人会话 fileId 再越权读/删）
+      // 仅列本会话文件：绝不支持 '*' 跨会话枚举（否则能拿到他人会话 fileId 再越权读/删）
       const files = [...index.values()].filter(f => f.sessionId === callCtx.sessionId);
       if (files.length === 0) return '当前没有已上传的文件。';
       const lines = files
