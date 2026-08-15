@@ -127,7 +127,7 @@ export async function apply(ctx: Context): Promise<void> {
 
 注册细节：
 
-- `ctx.provide('vectorstore', store, opts?)`。`opts.priority` 建议用 `ServicePriority` 枚举（`Backend=0/Override=50/System=200`，定义见 `packages/core/src/services.ts`）；lancedb 用了裸数字 `10` 表「优先于 flat 默认」。同名竞争胜者顺序：**preference > priority > 注册顺序**（DI 仅按名，无能力匹配，见 docs/concepts/service-model.md）。
+- `ctx.provide('vectorstore', store, opts?)`。`opts.priority` 是普通数字（越大越优先，含义自行记载）；lancedb 用 `10` 表「优先于 flat 默认」。同名竞争胜者顺序：**preference > priority > 注册顺序**（DI 仅按名，无能力匹配，见 docs/concepts/service-model.md）。
 - 存储路径用 storage URI（如 `data:/vectorstore`），经 `toStorageUri()` 归一；需要本地真实路径（LanceDB 这类原生库）用 `createStorageGateway(ctx).resolveLocalPath(uri, 'write')`，且要先判该方法存在（lancedb `index.ts`）。注意：vectorstore 自身不是单 owner 上下文里的「按会话隔离」资源，隔离靠消费者写进 metadata 的字段（见 §6）。
 
 ## 5. 消费者标准写法

@@ -193,7 +193,7 @@ export async function apply(ctx: Context): Promise<void> {
 
 ### 同名竞争 / 覆盖
 
-DI 按名选胜者，顺序为 偏好 > 优先级（ServicePriority Backend 0 / Override 50 / System 200）> 注册顺序（见 docs/concepts/service-model.md、docs/core/service.md）。默认实现以 `ctx.provide('session-confirm', service)` 注册（未显式抬高优先级），第三方若要**覆盖**它，用更高优先级 provide 或让用户偏好选择即可。`createChannel` 无 `entryId`、非 per-entry，全局一个服务实例。
+DI 按名选胜者，顺序为 偏好 > 优先级（数字越大越优先）> 注册顺序（见 docs/concepts/service-model.md、docs/core/service.md）。默认实现以 `ctx.provide('session-confirm', service)` 注册（未显式抬高优先级），第三方若要**覆盖**它，用更高优先级 provide 或让用户偏好选择即可。`createChannel` 无 `entryId`、非 per-entry，全局一个服务实例。
 
 ## 5. 标准消费用法（接一个新平台的确认通道）
 
@@ -254,7 +254,7 @@ ctx.onDispose(() => confirmChannel?.dispose());
 ## 8. 交叉链接
 
 - docs/concepts/security-model.md —— 两轴鉴权（level + confirm）、risk → (visibility, confirm) 推导、owner 仍吃 confirm。
-- docs/concepts/service-model.md、docs/core/service.md —— DI 按名选胜者、ServicePriority、provide/inject 双源。
+- docs/concepts/service-model.md、docs/core/service.md —— DI 按名选胜者、priority、provide/inject 双源。
 - docs/concepts/lazy-service-access.md —— whenService 注册时机、getService 每用现取、provider 反弹失效。
 - docs/concepts/manifest-metadata.md —— `package.json aalis.service` 与导出 `provides`/`inject` 双源一致。
 - docs/concepts/message-llm-pipeline.md —— `inbound:confirm` 相位在入站管道里的位置（最前、命中即吞）。
