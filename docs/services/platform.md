@@ -130,7 +130,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   };
 
   ctx.provide('platform', adapter);
-  // 缺省 priority=0（ServicePriority.Backend），多 adapter 并存——不要为「抢胜者」抬 priority，
+  // 缺省 priority=0，多 adapter 并存——不要为「抢胜者」抬 priority，
   // 因为 platform 是按名/按 sessionId 路由的多实例服务，胜者语义在这里基本无意义。
 
   // 入站：收到平台消息 → 归一为 IncomingMessage → emit
@@ -140,7 +140,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
 注册选项（`ctx.provide(name, instance, { priority?, label?, entryId? })`，`packages/core/src/context.ts`）：
 
-- **priority**：`ServicePriority`（`packages/core/src/services.ts`）`Backend=0` / `Override=50` / `System=200`。platform 通常用默认 `0`。
+- **priority**：普通数字，越大越优先。platform 通常用默认 `0`。
 - **entryId**：单插件多连接想拆成多 entry 时用 `'${ctx.id}/${sub}'`（per-entry provide，见 [service-model](../concepts/service-model.md)）；单 adapter 内自管多连接（如 OneBot 的 `states[]`）则不需要。
 - **label**：展示用，会进 `getAllServices` 的 `label` 字段。
 - **双源同步**：`export const provides = ['platform']` 与 `package.json` 的 `aalis.service.provides` 必须一致；激活后 core 会校验「声明了 `provides` 却没真 `ctx.provide`」直接打成 error，dev-mode 还会反向 warn「provide 了但没声明」。见 [manifest-metadata](../concepts/manifest-metadata.md)。

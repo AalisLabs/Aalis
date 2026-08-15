@@ -35,19 +35,9 @@ interface ServiceEntry {
 
 `get<T>()` 直接返回排序后列表的第 0 个。
 
-`priority` 的推荐取值是 `ServicePriority` 枚举：
-
-```ts
-export const ServicePriority = {
-  Backend: 0,    // 普通后端实现（plugin-llm-openai / plugin-llm-deepseek 等）
-  Override: 50,  // 用户级覆盖：希望默认胜过普通后端
-  System: 200,   // 保留给核心系统级覆盖
-} as const;
-```
-
-> 历史注记：曾经存在一个 `Router = 100` 槽位（router / facade 层），在 `feat/service-granularity` 之后已废弃。现在 LLM / storage / platform 全部改为按 model / root / sessionId 直接注册多条 entry，跨 entry 的聚合由各自 `*-api` 的 helper 承担，不再有同名的 facade entry。
-
-裸数字 `priority`（例如介于 `Backend` 与 `Override` 之间的 `10`）是允许的；dev 模式仅记录一条 debug 日志，提示你自行记载它的含义。
+`priority` 是普通数字：数字越大越优先，同值先注册者胜（稳定降序）。没有预设档位，
+数值含义由 provider 自行记载；部署可调的场景习惯把它开进自己的 configSchema（如 asr 后端）。
+默认 `0`；要默认盖过参考实现，取一个更高的值（如 `50`）。
 
 ---
 
@@ -59,7 +49,7 @@ export const ServicePriority = {
 
 ```ts
 const dispose = ctx.provide('memory', myMemoryService, {
-  priority: ServicePriority.Backend, // 默认 0
+  priority: 0, // 缺省即 0，可省略
   label: 'SQLite memory',
 });
 // 之后若想主动下线：dispose();

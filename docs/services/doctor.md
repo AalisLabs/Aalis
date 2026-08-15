@@ -212,7 +212,7 @@ export function apply(ctx: Context): void {
 
 关于注册，有几点需要注意：
 
-- `ctx.provide('doctor', instance, options?)` 的 `options.priority` 默认为 0（`ServicePriority.Backend`）。要抢占官方 doctor，使用 `ServicePriority.Override`（50）或 `System`（200），并从 `@aalis/core` 导入这些枚举；传裸数字会触发 devMode 校验告警。
+- `ctx.provide('doctor', instance, options?)` 的 `options.priority` 默认为 0。要抢占官方 doctor，设更高的 priority（数字越大越优先）。
 - 同名解析顺序是 preference > priority > 注册顺序，不再有能力匹配（0.5.0 已移除）。详见 [service-model](../concepts/service-model.md) 与 [docs/core/service.md](../core/service.md)。
 - `provides` / `inject` 与 `package.json` 的 `aalis.service.provides` 双源都要写上 `'doctor'`。
 - 实现里务必对每条 check 做 try/catch（官方 doctor 就是这么做的），并在每次 `runChecks` 之后发出 `'doctor:updated'`，否则 WebUI 不会刷新。
