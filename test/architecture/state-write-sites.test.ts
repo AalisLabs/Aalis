@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -41,4 +41,15 @@ describe('插件状态机写入点定格', () => {
       ).toEqual(expected);
     });
   }
+
+  it('FROZEN 名单外的 core 源文件零写入点（防拆卸逻辑挪进新模块逃出定格）', () => {
+    const offenders: string[] = [];
+    for (const name of readdirSync(SRC, { recursive: true }) as string[]) {
+      if (!/\.ts$/.test(name) || name.endsWith('.d.ts') || name.replace(/\\/g, '/') in FROZEN) continue;
+      const content = readFileSync(join(SRC, name), 'utf-8');
+      if (WRITE_RE.test(content)) offenders.push(name);
+      WRITE_RE.lastIndex = 0;
+    }
+    expect(offenders, '新文件里出现 entry.state/entry.context 写入点——纳入 FROZEN 并过刀单').toEqual([]);
+  });
 });
