@@ -8,7 +8,13 @@ import { createStorageGateway } from '@aalis/api-storage';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import { AttachmentRefKind, formatAttachmentRef, getSenderLabel, type Message } from '@aalis/schema-message';
+import {
+  AttachmentRefKind,
+  formatAttachmentRef,
+  getSenderLabel,
+  type Message,
+  WellKnownNoticeTypes,
+} from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import WebSocket from 'ws';
 import {
@@ -1894,7 +1900,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     );
 
     // 戳一戳 → 仅在目标是 bot 时触发 agent 回复
-    if (notice.noticeType === 'poke') {
+    if (notice.noticeType === WellKnownNoticeTypes.Poke) {
       const selfId = notice.selfId;
       const targetIsBot = notice.targetId === selfId;
 
@@ -1917,7 +1923,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             nickname: nick,
             sessionType: 'group',
             groupId: notice.groupId,
-            noticeType: 'poke',
+            noticeType: WellKnownNoticeTypes.Poke,
           });
         })().catch(err => ctx.logger.warn(`poke 处理异常: ${err}`));
       } else if (notice.userId) {
@@ -1934,7 +1940,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             userId: notice.userId,
             nickname: nick,
             sessionType: 'private',
-            noticeType: 'poke',
+            noticeType: WellKnownNoticeTypes.Poke,
           });
         })().catch(err => ctx.logger.warn(`poke 处理异常: ${err}`));
       }
