@@ -3,9 +3,10 @@
 //
 // 从 plugin.ts 拆出的纯依赖图算法：
 //   - topoSortByDeps：按"提供者→消费者"方向的 Kahn 拓扑排序
-//   - evictDownstreamConsumers：把所有依赖某 provider provided 服务的下游
-//     active 插件降级为 pending（用于 updatePluginConfig / bouncePlugin
-//     瞬态：provider 即将被 dispose+重启，下游持有的服务引用即失效）
+//   - evictDownstreamConsumers：把依赖某 provider provided 服务、且声明了
+//     requiresBounceOnDepChange 的下游 active 插件降级为 pending（默认不级联，
+//     期望下游惰性 getService；用于 updatePluginConfig / bouncePlugin 瞬态：
+//     provider 即将被 dispose+重启，下游持有的服务引用即失效）
 //
 // 这些是无状态/弱状态的操作，分出去让 PluginManager 主体只关心生命周期编排。
 // ============================================================
