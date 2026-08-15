@@ -68,7 +68,7 @@ export const inject = {
   // （若 required，存储服务暂时消失会让 webui-server 进入 pending，导致 registeredPages
   // 被清空，其他插件的 sidebar 页面在 webui-server 重新激活后无法恢复）。
   // storage gateway 的各操作已有 try-catch，暂时不可用时仅个别文件操作失败，不影响主功能。
-  optional: ['storage', 'authority', 'commands', 'platform', 'process'],
+  optional: ['storage', 'authority', 'commands', 'platform', 'process', 'session-confirm'],
 };
 
 const webuiPages: WebuiPage[] = [
