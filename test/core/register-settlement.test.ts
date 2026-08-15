@@ -63,6 +63,36 @@ describe('register 的 resolve 语义（故意钉死的排队早退）', () => {
   });
 });
 
+describe('rescanPlugins 刻意不等静置（HTTP 热路径契约锚）', () => {
+  it('在飞 run 占着单飞时 rescan 仍立即 resolve（新插件此刻 pending，事后自愈）', async () => {
+    const trace: string[] = [];
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const g = gatedModule('occupier', trace);
+    const occupying = app.plugin(g.module);
+    await g.entered;
+
+    (app as unknown as { pluginLoader: unknown }).pluginLoader = {
+      async discover(): Promise<PluginDescriptor[]> {
+        return [{ name: 'scanned', source: 'stub', metadata: {} }];
+      },
+      async load(): Promise<PluginModule | null> {
+        return { name: 'scanned', apply() {} };
+      },
+    };
+    // 兜底释放：若变异让 rescan 内部等静置，它会等到这里才 resolve→下方断言转红而非挂死
+    const timer = setTimeout(() => g.release(), 200);
+    const loaded = await app.rescanPlugins();
+    expect(loaded).toEqual(['scanned']);
+    expect(app.plugins.getPlugin('scanned')?.state).toBe('pending'); // 未等静置的证据
+
+    clearTimeout(timer);
+    g.release();
+    await occupying;
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('scanned')?.state).toBe('active');
+  });
+});
+
 describe('autoLoadPlugins 的引导期收敛保证（结构化而非碰运气）', () => {
   it('返回时全部发现的插件已收敛，即使 register 曾撞上在飞 run 排队', async () => {
     const trace: string[] = [];

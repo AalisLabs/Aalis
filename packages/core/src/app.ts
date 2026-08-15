@@ -211,9 +211,10 @@ export class App {
   /**
    * 注册插件
    *
-   * **resolve 语义 = 注册落账 + 尽力即时激活**：无在飞 recompute 时激活在返回前
-   * 同步收敛；有在飞时（反应式级联/另一插件正在激活）本次请求排队并入其收尾，
-   * resolve 时激活可能尚未发生（自愈，不丢失——单飞排队见 recompute）。需要
+   * **resolve 语义 = 注册落账 + 尽力即时激活**：完全静置时激活在返回前同步收敛；
+   * 有在飞 recompute（反应式级联/另一插件正在激活）**或手动 dispose 段在途**
+   * （unload/disable/bounce 的挂起窗口）时，本次请求排队并入其收尾，
+   * resolve 时激活可能尚未发生（排队不丢失——单飞排队见 recompute）。需要
    * 「激活已落定」的确定时机，调用后 `await app.plugins.idle()`（不得在插件
    * apply/onDispose 内这样做——自等死锁，见 idle）。
    *
