@@ -11,7 +11,10 @@ type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<vo
  */
 export class EventBus {
   // biome-ignore lint/suspicious/noExplicitAny: 泛型擦除场景，handlers 容器持有不同事件类型，运行时按事件名分发
-  private handlers = new Map<string, Set<EventHandler<any>>>();
+  // 事件名 → (handler → 归属 ctx.id)。归属让 Context 拆卸的注销段能与
+  // hooks/contributions 同点整体切断（unregisterByContext）；直接使用总线
+  // 的无主 handler（owner=undefined）不受切断影响。
+  private handlers = new Map<string, Map<EventHandler<any>, string | undefined>>();
 
   /**
    * handler 抛错时的上报回调（含 sticky 补发路径的同步/异步抛错）。
@@ -70,13 +73,17 @@ export class EventBus {
    * 立即用缓存的参数调用 handler 一次（保证语义同步：调用方注册完返回后
    * 再触发，避免 handler 内部的 await 影响调用方流程）。
    */
-  on<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<AalisEvents[E]>): () => void {
+  on<E extends string & keyof AalisEvents>(
+    event: E,
+    handler: EventHandler<AalisEvents[E]>,
+    owner?: string,
+  ): () => void {
     let set = this.handlers.get(event);
     if (!set) {
-      set = new Set();
+      set = new Map();
       this.handlers.set(event, set);
     }
-    set.add(handler);
+    set.set(handler, owner);
 
     if (this.stickyEvents.has(event) && this.stickyArgs.has(event)) {
       const args = this.stickyArgs.get(event) as AalisEvents[E];
@@ -98,8 +105,26 @@ export class EventBus {
 
     return () => {
       set!.delete(handler);
-      if (set!.size === 0) this.handlers.delete(event);
+      // 身份卫：本闭包捕获的是注册时刻的那张表。若事件键已被整体清掉又被
+      // 他人重建（unregisterByContext 扫空 → 新注册进新表），按键盲删会误杀
+      // 新注册者的整张表——只有当前挂的仍是自己那张时才清空键。
+      if (set!.size === 0 && this.handlers.get(event) === set) this.handlers.delete(event);
     };
+  }
+
+  /**
+   * @internal 整体移除某 ctx 归属的全部监听——Context 拆卸的注销段调用，
+   * 与 hooks/contributions 同点切断（半拆状态不外露：异步排空窗口内本插件
+   * 的 handler 不得再响应事件）。链上残留的退订闭包迟到执行时靠 off 的
+   * 身份卫保持无害。
+   */
+  unregisterByContext(owner: string): void {
+    for (const [event, set] of this.handlers) {
+      for (const [handler, o] of set) {
+        if (o === owner) set.delete(handler);
+      }
+      if (set.size === 0) this.handlers.delete(event);
+    }
   }
 
   /**
@@ -117,8 +142,8 @@ export class EventBus {
     }
     const set = this.handlers.get(event);
     if (!set) return;
-    // 直接迭代活 Set：handler 中 dispose 尚未访问的条目会被正确跳过（Set 迭代语义）
-    for (const handler of set) {
+    // 直接迭代活表：handler 中 dispose 尚未访问的条目会被正确跳过（Map 迭代语义）
+    for (const handler of set.keys()) {
       try {
         await handler(...args);
       } catch (err) {

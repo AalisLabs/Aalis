@@ -173,7 +173,7 @@ export class Context {
       this.logger.warn(`Context "${this.id}" 已 dispose，忽略 on("${event}")`);
       return () => {};
     }
-    const off = this._events.on(event, handler);
+    const off = this._events.on(event, handler, this.id);
     return this.trackDisposable(off, `on:${event}`);
   }
 
@@ -850,12 +850,13 @@ export class Context {
     // 记录此上下文注册的服务名，以便清理后发射事件
     const removedServices = this._services.unregisterByContext(this.id);
 
-    // 钩子与贡献在清理链**之前**注销：异步等待清理的整个窗口内，本插件的
-    // 中间件不得再响应消息、贡献不得再被组装器收集——半拆状态不外露。
-    // 同步路径同一 tick 内完成，先后不可观察；清理链里两类注册的 disposer
-    // 靠各自的存在性检查/恒等卫自然 no-op，不会双删。
+    // 钩子、贡献与事件监听在清理链**之前**注销：异步等待清理的整个窗口内，
+    // 本插件的中间件不得再响应消息、贡献不得再被组装器收集、事件 handler
+    // 不得再响应事件——半拆状态不外露。同步路径同一 tick 内完成，先后不可
+    // 观察；清理链里各注册的 disposer 靠存在性检查/身份卫自然 no-op，不会双删。
     this._hooks.unregisterByContext(this.id);
     this._contributions.unregisterByContext(this.id);
+    this._events.unregisterByContext(this.id);
 
     // 逆序执行清理（unregisterByContext 已整体移除服务，provide 的 dispose 会安全跳过）
     if (wait) await this._disposables.disposeAsync(timeoutMs);
