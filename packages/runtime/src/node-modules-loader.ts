@@ -3,7 +3,8 @@ import { stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { PluginDescriptor, PluginLoader, PluginModule } from '@aalis/core';
+import type { Logger, PluginDescriptor, PluginLoader, PluginModule } from '@aalis/core';
+import { DefaultLogger } from '@aalis/core';
 
 // ============================================================
 // NodeModulesPluginLoader —— 从 node_modules 解析并加载插件
@@ -38,6 +39,26 @@ export function isLoadablePlugin(meta: Record<string, unknown>): boolean {
 }
 
 /**
+ * ESM 命名空间可能把插件挂在 default 上（`export default {...}`）——此前该形态
+ * 会被加载判据静默拒收（作者最自然的写法=永不加载的死门）。解包后统一交判据。
+ */
+export function unwrapPluginModule(ns: unknown): PluginModule {
+  const mod = ns as PluginModule & { default?: PluginModule };
+  return typeof mod?.apply !== 'function' && typeof mod?.default?.apply === 'function' ? mod.default : mod;
+}
+
+/** 加载后形状告警：违例此前完全静默（仅 core 一行 debug），是「装了没反应」死门族。 */
+function warnShape(logger: Logger, pkgName: string, mod: PluginModule): void {
+  if (!mod?.name || typeof mod?.apply !== 'function') {
+    logger.warn(`插件 "${pkgName}" 缺少具名导出 name/apply，将被跳过——入口须具名导出这两者（default 已自动解包）`);
+  } else if (mod.name !== pkgName) {
+    logger.warn(
+      `插件包 "${pkgName}" 的 module.name 为 "${mod.name}"——配置键/热扫描/卸载均以 module.name 为准，二者应一致`,
+    );
+  }
+}
+
+/**
  * 创建一个从项目 node_modules 解析插件的 PluginLoader。
  *
  * @param projectDir 项目根目录（含 package.json 与 node_modules），默认 process.cwd()
@@ -51,6 +72,7 @@ export function createNodeModulesPluginLoader(projectDir: string = process.cwd()
   const root = resolve(projectDir);
   // 以项目 package.json 为基准创建 require，确保从项目 node_modules 解析
   const req = createRequire(pathToFileURL(resolve(root, 'package.json')));
+  const logger = new DefaultLogger('aalis:loader');
 
   return {
     async discover(): Promise<PluginDescriptor[]> {
@@ -70,12 +92,23 @@ export function createNodeModulesPluginLoader(projectDir: string = process.cwd()
           continue; // 未安装或无法解析，跳过
         }
         const meta = readJson(metaPath);
-        if (!meta || !isLoadablePlugin(meta)) continue;
+        if (!meta) continue;
+        if (!isLoadablePlugin(meta)) {
+          // 疑似插件缺关键词是「装了没反应」死门族之首：peer 依赖 core 却不带任何
+          // aalis-* 类型词（契约/前端/工具库各有其词，带了即非误漏）。
+          const peers = { ...(meta.peerDependencies as object), ...(meta.dependencies as object) };
+          const keywords = Array.isArray(meta.keywords) ? (meta.keywords as string[]) : [];
+          if ('@aalis/core' in peers && !keywords.some(k => k.startsWith('aalis-'))) {
+            logger.warn(`依赖 "${dep}" 疑似 Aalis 插件但 keywords 缺 "aalis-plugin"，不会被加载——若确为插件请补关键词`);
+          }
+          continue;
+        }
         let entry: string;
         try {
           entry = req.resolve(dep);
         } catch {
-          continue; // 解析不到入口（如缺 main/exports），跳过
+          logger.warn(`插件 "${dep}" 入口无法解析（缺 main/exports 或产物未打进 files），跳过`);
+          continue;
         }
         discovered.push({
           name: (meta.name as string) ?? dep,
@@ -87,7 +120,9 @@ export function createNodeModulesPluginLoader(projectDir: string = process.cwd()
     },
 
     async load(desc): Promise<PluginModule | null> {
-      return (await import(pathToFileURL(desc.source).href)) as PluginModule;
+      const mod = unwrapPluginModule(await import(pathToFileURL(desc.source).href));
+      warnShape(logger, desc.name, mod);
+      return mod;
     },
 
     async reload(desc): Promise<PluginModule | null> {
@@ -97,7 +132,9 @@ export function createNodeModulesPluginLoader(projectDir: string = process.cwd()
       } catch {
         /* stat 失败时用空 key，让 import 自己报错 */
       }
-      return (await import(pathToFileURL(desc.source).href + cacheKey)) as PluginModule;
+      const mod = unwrapPluginModule(await import(pathToFileURL(desc.source).href + cacheKey));
+      warnShape(logger, desc.name, mod);
+      return mod;
     },
   };
 }
