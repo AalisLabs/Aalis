@@ -237,6 +237,47 @@ describe('unload 拆卸未完成时同 id 重装', () => {
   });
 });
 
+describe('并发双 unload', () => {
+  it('第二个 unload join 首个的拆卸：单次 unloaded 事件，且不盲删重装的新 entry', async () => {
+    const { app, trace } = makeWorld();
+    let releaseDispose!: () => void;
+    let disposeEntered!: () => void;
+    const disposeGate = new Promise<void>(r => {
+      releaseDispose = r;
+    });
+    const disposeEnteredP = new Promise<void>(r => {
+      disposeEntered = r;
+    });
+    const make = (): PluginModule => ({
+      name: 'gated',
+      apply(ctx: Context) {
+        trace.push('apply');
+        ctx.provide('gated-svc', { alive: true });
+        ctx.onDispose(async () => {
+          disposeEntered();
+          await disposeGate;
+        }, 'gated:res');
+      },
+    });
+    await app.plugin(make());
+
+    const u1 = app.plugins.unload('gated');
+    await disposeEnteredP;
+    const u2 = app.plugins.unload('gated'); // 撞在拆卸窗口内
+    releaseDispose();
+    await Promise.all([u1, u2]);
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(trace.filter(t => t === 'unloaded:gated')).toHaveLength(1);
+    expect(app.plugins.getPlugin('gated')).toBeUndefined();
+
+    // 双 unload 落定后重装必须干净成活（此前第二个 delete 会按名盲删新 entry）
+    await app.plugin(make());
+    expect(app.plugins.getPlugin('gated')?.state).toBe('active');
+    expect(app.ctx.getService('gated-svc')).toEqual({ alive: true });
+  });
+});
+
 describe('updatePluginConfig 撞上 activating 窗口', () => {
   it('旧实例先排空、新实例再以新配置激活（严格串行，不同期）', async () => {
     const { app, trace } = makeWorld();
