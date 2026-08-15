@@ -170,6 +170,17 @@ export class PluginManager {
     const entry = this.plugins.get(name);
     if (!entry) return;
 
+    // 'disposed' 单向化的 unload 侧：已有卸载在途（或停机遗留终态）时不再二次
+    // retire/emit——join 其拆卸（disposeAsync 幂等）后只确保注册表摘除。删除必须
+    // 带恒等卫：并发首个 unload 完成后同 id 可能已重新注册，按名盲删会把无辜的
+    // 新 entry 扫出注册表，留下注册表外的活实例。
+    if (entry.state === 'disposed') {
+      const inflight = entry.context;
+      if (inflight) await inflight.disposeAsync(this.disposeTimeoutMs);
+      if (this.plugins.get(name) === entry) this.plugins.delete(name);
+      return;
+    }
+
     // dispose 段守卫（与 disablePlugin 对齐）：dispose 触发的反应式 recompute
     // 排队到收尾的 softReload，避免在 entry 半卸载态下重算。
     this.suspendDepth++;
@@ -179,7 +190,7 @@ export class PluginManager {
       // 新实例与旧 ctx 同 contextId，旧链的 unregisterByContext 会把新实例
       // 的注册连根扫掉。
       await this.retire(entry, 'disposed');
-      this.plugins.delete(name);
+      if (this.plugins.get(name) === entry) this.plugins.delete(name);
       this.logger.info(`插件已卸载: ${name}`);
     } finally {
       this.suspendDepth--;
