@@ -150,7 +150,7 @@ export function apply(ctx: Context): void {
 
 注册选项说明（`ctx.provide(name, instance, { priority, label, entryId })`，`packages/core/src/context.ts`）：
 
-- **priority**：`flow-control` 是单实例后端服务，无 per-entry 分裂场景，留默认（`ServicePriority.Backend=0`）即可。同名胜出规则为 `偏好 > priority > 注册顺序`（详见 [concepts/service-model](../concepts/service-model.md)），框架已**移除 0.5.0 的能力匹配选择**——不能按 capability 选 provider。
+- **priority**：`flow-control` 是单实例后端服务，无 per-entry 分裂场景，留默认 `0` 即可。同名胜出规则为 `偏好 > priority > 注册顺序`（详见 [concepts/service-model](../concepts/service-model.md)），框架已**移除 0.5.0 的能力匹配选择**——不能按 capability 选 provider。
 - **entryId**：只在「按子作用域分裂多个 entry」时用 `'${ctx.id}/${sub}'`；flow-control 用全局单例 `Map<sessionId, state>` 管多会话，**不**需要 entryId。
 
 ## 5. 标准消费方式
