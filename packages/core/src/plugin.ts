@@ -449,6 +449,9 @@ export class PluginManager {
     // 立即返回而不能把在飞 promise 交还调用方——若调用方恰在某插件 apply()
     // 内同步调用（在飞 run 正 await 它），等待在飞 promise 会自我死锁。
     if (this.reloading || this.suspended) {
+      // 已知语义损失（如实记账）：合并把 service-down 降级为 plugin-state-changed，
+      // 被合并的请求拿不到「首轮特殊语义」——requiresBounceOnDepChange 级联在
+      // 该路径恒不触发（当前零第一方声明方；根修需按 reason 集合排队，刀单在案）。
       this.queuedReason = reason.type === 'shutdown' ? reason : (this.queuedReason ?? { type: 'plugin-state-changed' });
       return;
     }
