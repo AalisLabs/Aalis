@@ -87,7 +87,7 @@ export class ServiceContainer {
   }
 
   /**
-   * 获取一个满足能力要求的服务实例。
+   * 获取当前胜者实例（偏好 > 优先级 > 注册顺序）。
    *
    * 不走 `resolveEntries`：那里在设了偏好时要 `find` + `filter` + spread 出一条全新的重排
    * 数组，而这里只取首个、其余全丢。`getService` 是全仓最频繁的读（三百余处调用点），
@@ -194,7 +194,7 @@ export class ServiceContainer {
    * 设置某服务的偏好 provider（按 contextId）
    *
    * 语义：偏好 > 优先级 > 注册顺序。即偏好 entry 总会被 `get()` 第一个返回，
-   * 哪怕它的 priority 数值低于 router 等其他 entry。
+   * 哪怕它的 priority 数值低于其它 entry。
    *
    * @returns true 表示偏好已记录（即使目标 entry 当下尚未注册也会接受——一旦注册即生效）
    * @internal 公开 API 走 `ctx.preferService()`（额外 emit service:preference-changed

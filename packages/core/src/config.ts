@@ -56,9 +56,10 @@ export interface ConfigManagerOptions {
  * 职责：
  * - 持有当前配置快照（`AalisConfig`）
  * - 提供 get/set/getPluginConfig 等访问器
- * - 处理插件默认配置合并、schema 裁剪、服务偏好
+ * - 持有服务偏好表（serviceName → preferred contextId）
  *
  * **不**做的事：
+ * - 不做插件默认配置合并与 schema 裁剪——归宿主的 config-sync 政策
  * - 不读写文件，不解析 yaml/json，不 watch 文件系统
  *   ——这些由 `ConfigProvider`（宿主注入）负责
  *
