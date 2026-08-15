@@ -90,7 +90,6 @@ export interface AgentService {
 
 ```ts
 import type { Context } from '@aalis/core';
-import { ServicePriority } from '@aalis/core';
 import type { AgentService } from '@aalis/api-agent';
 import type { IncomingMessage } from '@aalis/schema-message';
 
@@ -110,8 +109,8 @@ class MyAgent implements AgentService {
 }
 
 export function apply(ctx: Context): void {
-  // 想盖过默认 agent 用 Override(50)；同名按 preference > priority > 注册序定胜者
-  ctx.provide('agent', new MyAgent(ctx), { priority: ServicePriority.Override });
+  // 想盖过默认 agent 设更高 priority（默认 0）；同名按 preference > priority > 注册序定胜者
+  ctx.provide('agent', new MyAgent(ctx), { priority: 50 });
 }
 ```
 

@@ -117,7 +117,7 @@ export function apply(ctx: Context): void {
 
 注册要点（参考 `docs/concepts/service-model.md`）：
 
-- `priority`：默认 `ServicePriority.Backend=0`。要覆盖内置归档实现时用 `Override=50`（裸数字是允许的——`service-helpers.ts` 仅 `logger.debug` 记一笔、不告警，注释明确把裸数字当作细粒度预留滩位的合理设计，不强制用枚举；自定义数值须自行记载其含义以便下游推断胜者）。同名竞争胜者 = 偏好 > priority(Backend0/Override50/System200) > 注册顺序。
+- `priority`：默认 `0`。要覆盖内置归档实现取更高值（数字越大越优先，含义自行记载）。同名竞争胜者 = 偏好 > priority > 注册顺序。
 - `entryId`：单实例服务无须分桶；若一个插件按子来源拆多个归档实例，用 `entryId: '${ctx.id}/${sub}'`（见 `docs/concepts/manifest-metadata.md`）。
 - `label`：可选展示名，便于 WebUI 服务面板辨识。
 

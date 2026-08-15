@@ -126,7 +126,7 @@ for (const root of roots) {
 
 - **`entryId: ${ctx.id}/${root.name}`**：service-granularity 约定（per-entry provide）。同一插件可注册多个 storage entry，每个对应一个 root；`getAllServices('storage')` 会把它们全部枚举出来，gateway 据此按 URI 路由。
 - **`label`**：会进入 `AggregatedStorageRoot.provider`（`:169`），用于冲突诊断展示。
-- **`priority`**：本服务靠「URI → root 名」精确路由，不靠 DI 同名优胜，所以**通常不设 priority**。若你确实要覆盖内置某个同名 root（如自己实现 `data` 根），用 `ServicePriority`（Backend=0/Override=50/System=200，见 [docs/core/service.md](../core/service.md)）。同名 root 不会两个都生效——`createStorageGateway.listRoots` 按枚举顺序去重首个胜出（`:428-436`），冲突可由 `getStorageRootConflicts` 暴露。
+- **`priority`**：本服务靠「URI → root 名」精确路由，不靠 DI 同名优胜，所以**通常不设 priority**。若你确实要覆盖内置某个同名 root（如自己实现 `data` 根），设更高的 `priority`（数字越大越优先）。同名 root 不会两个都生效——`createStorageGateway.listRoots` 按枚举顺序去重首个胜出（`:428-436`），冲突可由 `getStorageRootConflicts` 暴露。
 
 ### 4.3 双源 manifest 同步
 
@@ -265,4 +265,4 @@ root 的 `readable/writable/deletable`（`StorageRootInfo`）就是该根的访�
 ## 8. 交叉链接
 
 - 概念：[storage-uri-grammar](../concepts/storage-uri-grammar.md)（URI 文法，先读）、[service-model](../concepts/service-model.md)、[lazy-service-access](../concepts/lazy-service-access.md)、[manifest-metadata](../concepts/manifest-metadata.md)、[security-model](../concepts/security-model.md)。
-- 内核：[core/service.md](../core/service.md)（DI / ServicePriority / per-entry provide）、[core/authority.md](../core/authority.md)（与权限位的区别）、[core/tools.md](../core/tools.md)（工具层 risk/minLevel 才是按调用者收紧的地方）、[core/context.md](../core/context.md)（`provide` / `getAllServices`）。
+- 内核：[core/service.md](../core/service.md)（DI / priority / per-entry provide）、[core/authority.md](../core/authority.md)（与权限位的区别）、[core/tools.md](../core/tools.md)（工具层 risk/minLevel 才是按调用者收紧的地方）、[core/context.md](../core/context.md)（`provide` / `getAllServices`）。

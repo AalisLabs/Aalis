@@ -98,7 +98,7 @@ export const inject = { required: ['gateway'] };
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const svc: CommandService = new MyCommandRegistry(ctx.logger);
   svc.prefix = (config.commandPrefix as string) ?? '/';
-  // 默认 ServicePriority.Backend(0)。要顶替内置 plugin-commands，用更高优先级或 preference。
+  // 默认 priority 0。要顶替内置 plugin-commands，用更高优先级或 preference。
   ctx.provide('commands', svc);
   // 自行在 INBOUND_PHASE.COMMAND 中间件里跑 parseCommand→hasMatch→execute
 }
@@ -110,7 +110,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 { "aalis": { "service": { "provides": ["commands"], "required": ["gateway"] } } }
 ```
 
-DI 按名取胜：同名 provider 的胜者 = preference > priority（`ServicePriority` 的 Backend 0 / Override 50 / System 200）> 注册顺序；不存在能力匹配选择（0.5.0 已移除）。详见 `docs/concepts/service-model.md`。
+DI 按名取胜：同名 provider 的胜者 = preference > priority（数字越大越优先）> 注册顺序；不存在能力匹配选择（0.5.0 已移除）。详见 `docs/concepts/service-model.md`。
 
 ---
 
