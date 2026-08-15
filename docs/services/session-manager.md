@@ -128,7 +128,6 @@ interface SessionInfo {
 ```ts
 // my-session-manager/src/index.ts —— 可编译最小骨架
 import type { Context, PluginModule } from '@aalis/core';
-import { ServicePriority } from '@aalis/core';
 import type {
   PlatformProfile, SessionConfig, SessionInfo, SessionManagerService, SessionTreeNode,
 } from '@aalis/api-session-manager';
@@ -179,7 +178,7 @@ export const apply: PluginModule['apply'] = async ctx => {
   ctx.provide('session-manager', mgr, {
     label: '会话管理',
     // 若要压过参考实现：priority 高于 Backend(0)，或让 owner 用 preferService 选你
-    priority: ServicePriority.Override,
+    priority: 50,
   });
 };
 ```
@@ -197,7 +196,7 @@ export const apply: PluginModule['apply'] = async ctx => {
 }
 ```
 
-双源校验细节见 [清单元数据](../concepts/manifest-metadata.md)。同名竞争的胜出规则（preference > priority > 注册顺序，`ServicePriority` = Backend 0 / Override 50 / System 200）见 [服务模型](../concepts/service-model.md)。
+双源校验细节见 [清单元数据](../concepts/manifest-metadata.md)。同名竞争的胜出规则（preference > priority > 注册顺序）见 [服务模型](../concepts/service-model.md)。
 
 ## 5. 标准消费方式
 
@@ -286,7 +285,7 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 
 ## 8. 交叉链接
 
-- [服务模型](../concepts/service-model.md) —— DI 按名解析、同名竞争（preference > priority > 注册顺序）、`ServicePriority`。
+- [服务模型](../concepts/service-model.md) —— DI 按名解析、同名竞争（preference > priority > 注册顺序）。
 - [惰性服务访问](../concepts/lazy-service-access.md) —— 为何每次 `getService()`、不要缓存。
 - [清单元数据](../concepts/manifest-metadata.md) —— `provides`/`inject` 与 `package.json aalis.service` 双源同步与校验。
 - [消息-LLM 流水线](../concepts/message-llm-pipeline.md) —— `resolveConfig` 的产物如何进入 `agent:input:before` / `agent:llm:before` / `agent:turn:after`。
