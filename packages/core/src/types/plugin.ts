@@ -68,8 +68,9 @@ export type PluginState = 'pending' | 'activating' | 'active' | 'disabled' | 'di
  * 都收拢到这个判别联合上，让 PluginManager 只有一条状态转移路径。
  *
  * - service-up：某服务刚被 provide —— 可能让 pending 插件能激活
- * - service-down：某服务刚被 unregister —— required 依赖其的要停用，
- *   optional 依赖其的要 bounce（重新 apply 以对接可能的新实例）
+ * - service-down：某服务刚被 unregister —— required 依赖其的要停用；
+ *   optional 依赖其且声明了 requiresBounceOnDepChange 的才 bounce
+ *   （默认不级联，期望下游每次访问时惰性 getService）
  * - plugin-state-changed：插件被显式禁用/启用/重载/改配置后调用
  * - shutdown：App.stop() 调用，按拓扑逆序 dispose 所有插件
  */

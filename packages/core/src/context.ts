@@ -29,7 +29,8 @@ export class Context {
   /**
    * 开发模式开关——由 App 注入，子 Context 通过 fork 继承。
    *
-   * - `true`（默认）：`provide` 时按声明的能力跑探测器，暴露"声明与实现不符"
+   * - `true`（默认）：`provide` 时跑注册校验（entryId 前缀 / 重复 provide，见
+   *   validateProvide），激活后做 provides 反向一致性 warn
    * - `false`（生产）：跳过探测，节省热路径开销
    *
    * core 不读 `process.env`——是否 dev 由宿主决定。
@@ -299,7 +300,7 @@ export class Context {
    * 设置某服务的偏好 provider（按 contextId）
    *
    * 语义：「偏好 > 优先级 > 注册顺序」。偏好者总是 `getService(name)` 的第一返回值，
-   * 即使其 priority 数值低于 router 等其他 entry。
+   * 即使其 priority 数值低于其它 entry。
    *
    * 注：偏好可以提前于 entry 注册前设置——一旦目标 contextId 注册即刻生效。
    * @returns 始终返回 true（偏好已记录）
