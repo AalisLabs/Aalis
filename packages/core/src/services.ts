@@ -2,35 +2,13 @@ import type { DependencyDeclaration } from './types/services.js';
 
 // ----- 服务系统数据契约（与容器实现同文件，同 contributions.ts 的 Spec/Handle 惯例） -----
 
-/**
- * 服务优先级约定（数字越大越优先）
- *
- * 用于 `ctx.provide(name, instance, { priority })`。
- * 同优先级时，先注册的胜出（稳定降序排序）。
- *
- * 设计目的：把『谁是默认胜者』变成静态、可预测的契约。
- * 与 preferService 正交、非替代关系：优先级是静态默认序，偏好是用户显式覆盖，
- * 解析序恒为「偏好 > 优先级 > 注册顺序」。
- *
- * 推荐用法：
- * - `Backend = 0`：普通后端实现（如 plugin-llm-openai / plugin-llm-deepseek）。
- * - `Override = 50`：用户级覆盖；同名服务希望默认胜过普通后端时使用。
- * - `System = 200`：保留给核心系统级覆盖。
- *
- * 注：feat/service-granularity 之后已不再有 router/facade 层级——LLM / storage / platform
- * 均改为按 model / root / sessionId 直接注册多 entry，跨 entry 的聚合与路由由各自
- * `*-api` 的 helper 函数承担（`createStorageGateway` / `resolvePlatformBySession` / ...），
- * 没有同名 facade entry，因此曾经的 `Router = 100` 槽位整体废弃。
- */
-export const ServicePriority = {
-  Backend: 0,
-  Override: 50,
-  System: 200,
-} as const;
-export type ServicePriorityValue = (typeof ServicePriority)[keyof typeof ServicePriority];
-
 export interface ServiceEntry {
   instance: unknown;
+  /**
+   * 数字越大越优先；同值先注册者胜（稳定降序）。解析序恒为
+   * 「偏好 > 优先级 > 注册顺序」——优先级是静态默认序，偏好是用户显式覆盖。
+   * 数值含义由 provider 自行记载（部署可调，如 asr 插件把它开进 config）。
+   */
   priority: number;
   contextId: string;
   /** 可选的展示标签（如 "OpenAI / gpt-4o"） */

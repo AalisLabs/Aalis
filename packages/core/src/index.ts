@@ -31,8 +31,8 @@ export { DefaultLogger, formatLogLine, type Logger, LogHub, parseLogLine } from 
 export type { PluginEntry, PluginModule, PluginState } from './plugin.js';
 export { PluginManager, parseInstanceId } from './plugin.js';
 export type { ConfigProvider, PluginDescriptor, PluginLoader, RestartStrategy } from './providers.js';
-export type { NormalizedDependency, ServiceEntry, ServicePriorityValue } from './services.js';
-export { ServiceContainer, ServicePriority } from './services.js';
+export type { NormalizedDependency, ServiceEntry } from './services.js';
+export { ServiceContainer } from './services.js';
 // ----- 通用 IoC 数据契约 + 扩展点 -----
 export type {
   AalisEvents,
