@@ -91,8 +91,9 @@ export class Context {
    * 可达面要说清：`PluginManager` 的 unload / disablePlugin / bouncePlugin 会**主动**
    * 走进这个窗口——三者对在飞 ctx 直接 disposeAsync（先把 entry.state 改离
    * 'activating' 让激活收尾让位，见 plugin-activation.ts 的接管检查），依赖的正是
-   * 本机制「先等 apply 落定再排空链」的承诺；recompute / `evictDownstreamConsumers`
-   * 仍只对 `'active'` 动手，`App.stop` 另有 `idle()` 挡在前面。宿主直调
+   * 本机制「先等 apply 落定再排空链」的承诺；`evictDownstreamConsumers` 同以
+   * entry.context 为判据走进窗口；recompute 仍只对 `'active'` 动手，
+   * `App.stop` 另有 `idle()` 挡在前面。宿主直调
    * `disposeAsync` 与 `useModule` 的沙盒子 ctx 级联同样由本机制兜住。
    *
    * 记住 apply 的 promise 后，`disposeAsync` 可以先等它落定再排空链——迟到的
