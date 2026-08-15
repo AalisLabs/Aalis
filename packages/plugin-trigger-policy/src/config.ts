@@ -17,6 +17,8 @@ export interface TriggerPolicyConfig {
   intervalMode: 'fixed' | 'dynamic' | 'both';
   /** 是否检测 @ 提及作为即时触发 */
   triggerOnAt: boolean;
+  /** 戳一戳等注意力动作（noticeType=poke）是否视同 @ 即时触发；关闭后落回正常意愿评估 */
+  triggerOnPoke: boolean;
   /** 额外的触发名（除 persona 名字外的别名） */
   triggerNames: string[];
   /** mute 关键词（命中时设置自禁言） */
@@ -29,6 +31,7 @@ export interface TriggerScopeOverride {
   scope: string;
   intervalMode?: 'fixed' | 'dynamic' | 'both';
   triggerOnAt?: boolean;
+  triggerOnPoke?: boolean;
   triggerNames?: string[];
   muteKeywords?: string[];
   muteTimeSeconds?: number;
@@ -39,6 +42,7 @@ export const defaultTriggerPolicyConfig: TriggerPolicyConfig = {
   overrides: [],
   intervalMode: 'both',
   triggerOnAt: true,
+  triggerOnPoke: true,
   triggerNames: [],
   muteKeywords: [],
   muteTimeSeconds: 60,
@@ -65,6 +69,7 @@ export function resolveTriggerPolicyConfig(raw: Record<string, unknown>): Trigge
       return v === 'fixed' || v === 'dynamic' || v === 'both' ? v : d.intervalMode;
     })(),
     triggerOnAt: (raw.triggerOnAt as boolean) ?? d.triggerOnAt,
+    triggerOnPoke: (raw.triggerOnPoke as boolean) ?? d.triggerOnPoke,
     triggerNames: parseStringList(raw.triggerNames),
     muteKeywords: parseStringList(raw.muteKeywords),
     muteTimeSeconds:
@@ -118,6 +123,7 @@ export function resolveEffectiveConfig(
   const merged: TriggerPolicyConfig = { ...cfg };
   if (best.intervalMode !== undefined) merged.intervalMode = best.intervalMode;
   if (best.triggerOnAt !== undefined) merged.triggerOnAt = best.triggerOnAt;
+  if (best.triggerOnPoke !== undefined) merged.triggerOnPoke = best.triggerOnPoke;
   if (best.triggerNames !== undefined) merged.triggerNames = best.triggerNames;
   if (best.muteKeywords !== undefined) merged.muteKeywords = best.muteKeywords;
   if (best.muteTimeSeconds !== undefined) merged.muteTimeSeconds = best.muteTimeSeconds;
@@ -170,6 +176,7 @@ function parseOverrides(raw: unknown): TriggerScopeOverride[] {
     const mode = obj.intervalMode;
     if (mode === 'fixed' || mode === 'dynamic' || mode === 'both') o.intervalMode = mode;
     if (typeof obj.triggerOnAt === 'boolean') o.triggerOnAt = obj.triggerOnAt;
+    if (typeof obj.triggerOnPoke === 'boolean') o.triggerOnPoke = obj.triggerOnPoke;
     // 字符串字段：仅在非空时视为覆盖；空串/未填 → 穿透到顶层默认
     if (typeof obj.triggerNames === 'string' && obj.triggerNames.trim() !== '') {
       o.triggerNames = parseStringList(obj.triggerNames);

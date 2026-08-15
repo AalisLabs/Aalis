@@ -3,7 +3,7 @@ import type { MessageArchiveService } from '@aalis/api-message-archive';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import type { IncomingMessage } from '@aalis/schema-message';
+import { type IncomingMessage, WellKnownNoticeTypes } from '@aalis/schema-message';
 import type { TriggerDecision, TriggerPolicyService } from './types.js';
 
 export type { TriggerDecision, TriggerKind, TriggerPolicyService } from './types.js';
@@ -49,6 +49,12 @@ export const configSchema: ConfigSchema = {
     ],
   },
   triggerOnAt: { type: 'boolean', label: '检测 @ 提及', default: defaultTriggerPolicyConfig.triggerOnAt },
+  triggerOnPoke: {
+    type: 'boolean',
+    label: '戳一戳直触发',
+    default: defaultTriggerPolicyConfig.triggerOnPoke,
+    description: '戳一戳等注意力动作视同 @ 即时触发；关闭后此类动作落回正常意愿评估，不强制回复。',
+  },
   triggerNames: { type: 'string', label: '触发名别名（逗号分隔）', default: '' },
   muteKeywords: { type: 'string', label: '禁言关键词（逗号分隔）', default: '' },
   muteTimeSeconds: {
@@ -79,6 +85,7 @@ export const configSchema: ConfigSchema = {
         ],
       },
       triggerOnAt: { type: 'boolean', label: '检测 @ 提及' },
+      triggerOnPoke: { type: 'boolean', label: '戳一戳直触发' },
       triggerNames: { type: 'string', label: '触发名别名（逗号分隔）' },
       muteKeywords: { type: 'string', label: '禁言关键词（逗号分隔）' },
       muteTimeSeconds: { type: 'number', label: '禁言关键词时长（秒）' },
@@ -119,12 +126,16 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
         };
       }
       const eff = resolveEffectiveConfig(cfg, message.platform, message.sessionType, tid);
-      // 特殊通知事件（poke 等）视同 @ 直触发：能进到这里说明 adapter 已经判断过
-      // 目标是 bot（私聊 poke 全部回复 / 群聊 poke 仅在 target=self 时才转成 inbound）。
-      if (message.noticeType === 'poke') {
-        return { kind: 'immediate', reason: 'poke notice' };
-      }
-      if (checkImmediateTrigger(ctx, eff, message.content)) {
+      // 注意力动作（well-known noticeType=poke）默认视同 @ 直触发：能进到这里说明
+      // adapter 已经判断过目标是 bot（私聊戳全转 inbound / 群聊戳仅 target=self 才转）。
+      // triggerOnPoke 关闭时落回下方意愿评估，且**跳过 @/名字检测**：poke 的 content
+      // 是合成文案（内嵌戳者昵称），昵称含 bot 名会被名字检测误判成提及——
+      // 用户改个名就能让开关对自己失效（对抗审计实测），元数据不当发言评估。
+      if (message.noticeType === WellKnownNoticeTypes.Poke) {
+        if (eff.triggerOnPoke) {
+          return { kind: 'immediate', reason: 'poke notice' };
+        }
+      } else if (checkImmediateTrigger(ctx, eff, message.content)) {
         return { kind: 'immediate', reason: '@/name match' };
       }
       const flow = ctx.getService<FlowControlService>('flow-control');
