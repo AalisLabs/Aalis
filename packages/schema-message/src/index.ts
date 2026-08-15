@@ -337,6 +337,24 @@ export const WellKnownKinds = {
 export type WellKnownKind = (typeof WellKnownKinds)[keyof typeof WellKnownKinds];
 
 /**
+ * 平台无关的 well-known `noticeType` 值。
+ *
+ * `noticeType` 字段是开放字符串（各平台 adapter 自由填写），但列在这里的是**共享语义词**：
+ * 语义与平台解耦，各平台 adapter 负责把自家等价事件映射到同一个词，下游的通用插件
+ * （如 trigger-policy 的直触发判定）只认这份词汇表，不认平台私有事件名。
+ */
+export const WellKnownNoticeTypes = {
+  /**
+   * 用户对 bot 的"戳/逗弄"类注意力动作（QQ 戳一戳等）。
+   * adapter 映射约定：群聊场景仅当动作指向 bot 时才转为 inbound（旁观他人互戳不转）；
+   * 私聊场景全部转入（不校验目标）。
+   */
+  Poke: 'poke',
+} as const;
+
+export type WellKnownNoticeType = (typeof WellKnownNoticeTypes)[keyof typeof WellKnownNoticeTypes];
+
+/**
  * 控制类 kind 集合：这些消息不携带可供模型理解或抽取的语义内容，
  * 仅用于 UI / 内部状态。LLM 出口、信息抽取等流程默认应排除。
  */

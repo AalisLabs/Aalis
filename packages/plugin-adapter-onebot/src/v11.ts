@@ -1,3 +1,4 @@
+import { WellKnownNoticeTypes } from '@aalis/schema-message';
 import type {
   NormalizedMessageEvent,
   NormalizedMetaEvent,
@@ -183,7 +184,7 @@ export class OneBotV11 implements OneBotProtocol {
     if (noticeType === 'notify' && subType === 'poke') {
       return {
         selfId,
-        noticeType: 'poke',
+        noticeType: WellKnownNoticeTypes.Poke,
         userId: raw.user_id != null ? String(raw.user_id) : undefined,
         targetId: raw.target_id != null ? String(raw.target_id) : undefined,
         groupId: raw.group_id != null ? String(raw.group_id) : undefined,
