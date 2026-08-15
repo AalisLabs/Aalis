@@ -211,6 +211,12 @@ export class App {
   /**
    * 注册插件
    *
+   * **resolve 语义 = 注册落账 + 尽力即时激活**：无在飞 recompute 时激活在返回前
+   * 同步收敛；有在飞时（反应式级联/另一插件正在激活）本次请求排队并入其收尾，
+   * resolve 时激活可能尚未发生（自愈，不丢失——单飞排队见 recompute）。需要
+   * 「激活已落定」的确定时机，调用后 `await app.plugins.idle()`（不得在插件
+   * apply/onDispose 内这样做——自等死锁，见 idle）。
+   *
    * @param module     插件模块
    * @param config     插件配置（覆盖文件配置）
    * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 module.name）
@@ -286,6 +292,12 @@ export class App {
     }
 
     // 配置同步政策（默认值回填 / schema 裁剪）属宿主层，由宿主在本方法之后自行执行。
+
+    // 引导期收敛保证的结构化落点：register 的 recompute 在有在飞 run 时排队早退
+    // （见 plugin() JSDoc），此前「本方法返回即全部收敛」靠调用点 await 交错偶然
+    // 成立——ready / app:started 的发出时机依赖这条保证，必须等静置而非碰运气。
+    // 引导路径不在任何 apply 内，无 idle 自等死锁面。
+    await this.plugins.idle();
   }
 
   /**
@@ -294,6 +306,10 @@ export class App {
    *
    * 优先调用 `pluginLoader.reload(desc)` 实现热重载（loader 可做缓存失效）；
    * 未实现 reload 时退化到普通 `load(desc)`。
+   *
+   * resolve 语义同 `plugin()`（注册落账+尽力即时激活）。**刻意不等静置**：本方法
+   * 挂在 HTTP 热路径上，等静置会把请求延迟耦合到无关插件的慢 apply；市场的
+   * 就位判据本就只看注册表在场（见 package-manager 的 isPluginRegistered）。
    */
   async rescanPlugins(): Promise<string[]> {
     if (!this.pluginLoader) return [];
