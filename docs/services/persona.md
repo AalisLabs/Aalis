@@ -105,11 +105,10 @@ declare module '@aalis/core' {
 
 ### 4.2 注册（priority / entryId / label）与双源同步
 
-`provide` 的第三、四个参数可以携带优先级与标签。persona 是单例服务，参考实现用最简形式 `ctx.provide('persona', service)`，默认优先级为 `0`。同名竞争的胜者按「偏好（preference）> priority > 注册顺序」决定（见 `docs/concepts/service-model.md`）。如果你想覆盖默认 persona，可以用更高优先级，或让用户经 ServicePreference 选中：
+`provide` 的 options 参数可以携带优先级与标签。persona 是单例服务，参考实现用最简形式 `ctx.provide('persona', service)`，默认优先级为 `0`。同名竞争的胜者按「偏好（preference）> priority > 注册顺序」决定（见 `docs/concepts/service-model.md`）。如果你想覆盖默认 persona，可以用更高优先级，或让用户经 ServicePreference 选中：
 
 ```ts
 ctx.provide('persona', myService, { priority: 50, label: '我的人设引擎' });
-//                                ^priority                 ^entryId  ^label
 ```
 
 manifest 的两个来源必须同步：除了运行时的 `export const provides = ['persona']`，还要在 `package.json` 里写静态清单 `aalis.service.provides`（供加载器与市场扫描）：
