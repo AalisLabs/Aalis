@@ -138,3 +138,93 @@ describe('checkMuteKeyword', () => {
     expect(checkMuteKeyword(fakeCtx(), cfg, 'hello world')).toBe(false);
   });
 });
+
+// ════════════════════════════════════════════════════════════
+// decide()：poke 直触发与 triggerOnPoke 开关（走真实插件装配）
+// ════════════════════════════════════════════════════════════
+
+import { App } from '@aalis/core';
+import * as triggerPolicyModule from '../../packages/plugin-trigger-policy/src/index.js';
+import type { TriggerPolicyService } from '../../packages/plugin-trigger-policy/src/types.js';
+import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+
+async function setupPolicy(config: Record<string, unknown> = {}) {
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  app.ctx.provide('gateway', {}); // 满足 required 依赖；decide 本身不经过 gateway
+  await app.ctx.useModule(triggerPolicyModule, config);
+  await app.plugins.idle();
+  const svc = app.ctx.getService<TriggerPolicyService>('trigger-policy');
+  if (!svc) throw new Error('trigger-policy 服务未注册');
+  return { app, svc };
+}
+
+const pokeMsg = (platform = 'onebot'): IncomingMessage =>
+  ({
+    platform,
+    sessionType: 'group',
+    sessionId: `${platform}:bot:group:g1`,
+    groupId: 'g1',
+    userId: 'u1',
+    role: 'notice',
+    content: '',
+    noticeType: 'poke',
+  }) as unknown as IncomingMessage;
+
+describe('trigger-policy decide (poke)', () => {
+  it('默认：poke 直触发（immediate）', async () => {
+    const { app, svc } = await setupPolicy();
+    const d = svc.decide(pokeMsg());
+    expect(d.kind).toBe('immediate');
+    expect(d.reason).toBe('poke notice');
+    await app.stop();
+  });
+
+  it('triggerOnPoke=false：不直触发，落回正常意愿评估', async () => {
+    const { app, svc } = await setupPolicy({ triggerOnPoke: false });
+    const d = svc.decide(pokeMsg());
+    // 无 flow-control 服务时正常评估的缺省放行路径——证明确实走到了 poke 分支之后
+    expect(d.kind).toBe('interval');
+    expect(d.reason).toBe('no flow state, default-pass');
+    await app.stop();
+  });
+
+  it('分作用域覆盖：仅指定 scope 关闭 poke 直触发，其余平台不受影响', async () => {
+    const { app, svc } = await setupPolicy({
+      overrides: [{ scope: 'onebot:group', triggerOnPoke: false }],
+    });
+    expect(svc.decide(pokeMsg('onebot')).kind).toBe('interval');
+    expect(svc.decide(pokeMsg('telegram')).kind).toBe('immediate');
+    await app.stop();
+  });
+
+  it('非 poke 的 noticeType 不享受直触发（谓词只认词汇表里的 poke）', async () => {
+    const { app, svc } = await setupPolicy();
+    const msg = { ...pokeMsg(), noticeType: 'group_increase' } as IncomingMessage;
+    const d = svc.decide(msg);
+    expect(d.kind).toBe('interval');
+    expect(d.reason).toBe('no flow state, default-pass');
+    await app.stop();
+  });
+
+  it('关闭后戳者昵称含 bot 名也不得经名字检测绕回直触发（合成文案是元数据非发言）', async () => {
+    const { app, svc } = await setupPolicy({ triggerOnPoke: false, triggerNames: 'Aalis' });
+    // adapter 真实合成格式：昵称内嵌在 content 里，用户可控
+    const msg = { ...pokeMsg(), content: '[戳一戳: Aalis的小跟班(12345) 戳了你]' } as IncomingMessage;
+    const d = svc.decide(msg);
+    expect(d.kind, '昵称含 bot 名的用户不得让开关对自己失效').toBe('interval');
+    expect(d.reason).toBe('no flow state, default-pass');
+    // 对照：同样内容的普通消息（非 poke）该命中名字检测
+    const normal = { ...msg, noticeType: undefined } as IncomingMessage;
+    expect(svc.decide(normal).kind).toBe('immediate');
+    await app.stop();
+  });
+});
+
+describe('trigger-policy config (triggerOnPoke)', () => {
+  it('默认 true；显式 false 可关；override 解析布尔', () => {
+    expect(resolveTriggerPolicyConfig({}).triggerOnPoke).toBe(true);
+    expect(resolveTriggerPolicyConfig({ triggerOnPoke: false }).triggerOnPoke).toBe(false);
+    const c = resolveTriggerPolicyConfig({ overrides: [{ scope: '*:group', triggerOnPoke: false }] });
+    expect(c.overrides[0]?.triggerOnPoke).toBe(false);
+  });
+});
