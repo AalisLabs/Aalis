@@ -118,6 +118,11 @@ export interface SchemaField {
   options?: Array<{ label: string; value: string | number }>;
   dynamicOptions?: string;
   allowCustom?: boolean;
+  min?: number;
+  max?: number;
+  integer?: boolean;
+  step?: number;
+  pattern?: string;
 }
 
 export interface SchemaGroup {
