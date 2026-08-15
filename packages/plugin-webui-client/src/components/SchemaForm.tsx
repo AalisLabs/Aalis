@@ -4,7 +4,9 @@ import type { ConfigSchema, SchemaField, SchemaGroup, SchemaArray } from '../typ
 // ===== 数字输入框（解决小数输入被截断问题） =====
 // 受控 number input 在输入 0.0x 时会被 Number() 取整覆盖，
 // 用本地字符串状态隔离，只在值合法且"完整"时才向外 onChange。
-function NumberInput({ value, onChange, className }: { value: unknown; onChange: (v: number | '') => void; className?: string }) {
+// 清空发 undefined（不是 ''）：undefined 键被 JSON.stringify 丢弃，服务端按
+// schema 默认值合并回落——"留空 = 走默认"。'' 会被服务端校验判为 invalid 拒存。
+function NumberInput({ value, onChange, className }: { value: unknown; onChange: (v: number | undefined) => void; className?: string }) {
   const externalStr = value === undefined || value === null || value === '' ? '' : String(value);
   const [inputStr, setInputStr] = useState(externalStr);
   const externalRef = useRef(externalStr);
@@ -34,7 +36,7 @@ function NumberInput({ value, onChange, className }: { value: unknown; onChange:
         const v = e.target.value;
         setInputStr(v);
         if (v === '' || v === '-') {
-          onChange('');
+          onChange(undefined);
         } else if (!v.endsWith('.') && !v.endsWith('0') && !isNaN(Number(v))) {
           // 完整数字：立即通知
           onChange(Number(v));
@@ -46,7 +48,7 @@ function NumberInput({ value, onChange, className }: { value: unknown; onChange:
       onBlur={e => {
         const v = e.target.value;
         if (v === '' || v === '-') {
-          onChange('');
+          onChange(undefined);
           setInputStr('');
         } else {
           const n = Number(v);

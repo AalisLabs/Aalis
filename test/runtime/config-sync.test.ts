@@ -163,3 +163,76 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
     await app.stop();
   });
 });
+
+function captureWarnsOf(app: App): string[] {
+  const warned: string[] = [];
+  const origWarn = app.logger.warn.bind(app.logger);
+  app.logger.warn = (msg: string, ...rest: unknown[]) => {
+    warned.push(String(msg));
+    origWarn(msg, ...rest);
+  };
+  return warned;
+}
+
+describe('配置结构校验（validateConfig 接线：只告警不拒载）', () => {
+  const badMod: PluginModule = {
+    name: 'pv',
+    configSchema: {
+      port: { type: 'number', label: 'P', default: 8080 },
+      mode: { type: 'select', label: 'M', default: 'a', options: [{ label: 'A', value: 'a' }] },
+    },
+    apply() {},
+  };
+
+  it('坏值 warn 点名（path + 期望），配置原样保留、插件不受影响', async () => {
+    const app = makeApp({ pv: { port: 'abc' } });
+    const warned = captureWarnsOf(app);
+    await app.plugin(badMod);
+    syncPluginDefaults(app);
+    const hit = warned.find(w => w.includes('配置校验'));
+    expect(hit).toContain('pv');
+    expect(hit).toContain('port: 期望有限数值，得到 string');
+    // 只告警不改值：坏值原样保留（校验器绝不参与取值链路）
+    expect(app.ctx.config.getPluginConfig('pv').port).toBe('abc');
+    expect(app.plugins.getStatus().find(s => s.instanceId === 'pv')?.state).toBe('active');
+    await app.stop();
+  });
+
+  it('合法配置零告警（默认值合并后校验，缺省字段不误报）', async () => {
+    const app = makeApp({ pv: {} });
+    const warned = captureWarnsOf(app);
+    await app.plugin(badMod);
+    syncPluginDefaults(app);
+    expect(warned.find(w => w.includes('配置校验'))).toBeUndefined();
+    await app.stop();
+  });
+
+  it('禁用插件跳过校验（休眠配置的必填缺失不是噪音源）', async () => {
+    const mod: PluginModule = {
+      name: 'pd',
+      configSchema: { apiKey: { type: 'string', label: 'K', required: true } },
+      apply() {},
+    };
+    const app = new App({
+      config: { name: 'T', logLevel: 'error', plugins: { pd: {} }, disabledPlugins: ['pd'] },
+    });
+    const warned = captureWarnsOf(app);
+    await app.plugin(mod);
+    syncPluginDefaults(app);
+    expect(warned.find(w => w.includes('配置校验'))).toBeUndefined();
+    await app.stop();
+  });
+  it('required 无 default 的缺失也告警（missing 与 invalid 都出声）', async () => {
+    const mod: PluginModule = {
+      name: 'pm',
+      configSchema: { apiKey: { type: 'string', label: 'K', required: true } },
+      apply() {},
+    };
+    const app = makeApp({ pm: {} });
+    const warned = captureWarnsOf(app);
+    await app.plugin(mod);
+    syncPluginDefaults(app);
+    expect(warned.find(w => w.includes('配置校验'))).toContain('apiKey: 必填字段缺失');
+    await app.stop();
+  });
+});
