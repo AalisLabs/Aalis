@@ -13,7 +13,6 @@ import type { PluginEntry, PluginState } from './plugin.js';
 export interface AppService {
   /** 停止应用 */
   stop(): Promise<void>;
-  /** 重启应用（延迟 spawn 新进程后退出当前进程） */
   /**
    * 重启应用（延迟 spawn 新实例后退出当前实例；具体机制由宿主注入的 RestartStrategy 决定）。
    *
