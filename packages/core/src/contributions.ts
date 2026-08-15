@@ -6,9 +6,9 @@
  * **spec.id 侧**的抢注/顶替由此杜绝，无需归属权校验（与 provide 的
  * entryId 前缀约定同源，但由构造保证而非 warn）。
  *
- * 边界如实声明：该保证以 ctx.id 为信任锚。`ctx.useModule(module)` 的
- * childId（`${父id}#${模块名}`）已在 fork 层做 `~n` 后缀唯一化；`ctx.fork(id)`
- * 仍不保证唯一——重复 ctx.id 会使两方共用同一命名空间、后注册者替换先注册者。
+ * 边界如实声明：该保证以 ctx.id 为信任锚。`ctx.useModule(module)` 在 fork 前
+ * 已对 childId（`${父id}#${模块名}`）做 `~n` 后缀唯一化；直接 `ctx.fork(id)`
+ * 则不保证唯一——重复 ctx.id 会使两方共用同一命名空间、后注册者替换先注册者。
  * 这是 Context 模型的信任边界（provide / middleware 的 contextId 归属同理
  * 暴露），如需硬化应在 fork 层统一处理，而非各原语自设门禁。
  */
