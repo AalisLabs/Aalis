@@ -87,6 +87,15 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
   // 进不了 data/latest.log，console 版的告警等于没加。
   const logger = new DefaultLogger('aalis:config');
 
+  /**
+   * 解析错误只取首行：yaml 的完整消息会内嵌出错位置附近的源码摘录，而配置
+   * 文件里有真实密钥——摘录随日志进 data/latest.log 即泄漏（WebUI 日志面板、
+   * 崩溃落盘、外贴排查都是暴露面）。诊断种类与行列号都在首行；
+   * **位置进日志，内容不进**（与配置校验消息不带值同一条纪律）。
+   */
+  const parseErrorFirstLine = (err: unknown): string =>
+    (err instanceof Error ? err.message : String(err)).split('\n')[0];
+
   /** 值必须是纯映射才算配置：裸标量/数组会被下游按 Object.entries 摊开写回垃圾。 */
   const describeNonMapping = (v: unknown): string | null => {
     if (v === null) return 'empty';
@@ -98,7 +107,13 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
   function loadFromDisk(): AalisConfig {
     if (existsSync(absPath)) {
       rawYaml = readFileSync(absPath, 'utf-8');
-      const parsed = parseYaml(rawYaml) ?? {};
+      let parsed: unknown;
+      try {
+        parsed = parseYaml(rawYaml) ?? {};
+      } catch (err) {
+        // 启动语法错误照样响亮拒启，但剥离源码摘录再上抛——崩溃日志同为暴露面。
+        throw new Error(`配置文件解析失败：${parseErrorFirstLine(err)}（${absPath}）`);
+      }
       // 启动坏就该响亮：语法错误本就上抛，「解析成功但不是配置对象」同样上抛，
       // 不能放进 core 摊成 "0": f 再写回磁盘。空文件视同缺省（?? {} 已兜）。
       const kind = describeNonMapping(parsed);
@@ -156,9 +171,7 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
             } catch (err) {
               // rawYaml 只在解析成功后推进（不变量=当前生效的那份内容）：
               // 同一份坏内容每次保存都重新告警，直到改对为止。
-              logger.warn(
-                `配置文件解析失败，本次变更已忽略，仍在使用上一份配置：${err instanceof Error ? err.message : String(err)}`,
-              );
+              logger.warn(`配置文件解析失败，本次变更已忽略，仍在使用上一份配置：${parseErrorFirstLine(err)}`);
               return;
             }
             // 空文件 / 裸标量 / 数组：都是「解析不出一个配置对象」的同一问题，
