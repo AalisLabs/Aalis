@@ -130,7 +130,6 @@ interface TempDirHandle {
 
 ```ts
 import type { Context, PluginModule } from '@aalis/core';
-import { ServicePriority } from '@aalis/core';
 import type { ProcessService, ExecResult, SpawnHandle, SpawnOptions, TempDirHandle } from '@aalis/api-process';
 import { makeTempDirViaStorage } from '@aalis/api-process';
 import { createStorageGateway, type StorageService } from '@aalis/api-storage';
@@ -152,7 +151,7 @@ class RemoteProcessService implements ProcessService {
 export async function apply(ctx: Context): Promise<void> {
   const storage = createStorageGateway(ctx);
   ctx.provide('process', new RemoteProcessService(storage), {
-    priority: ServicePriority.Override,        // 想覆盖 process-local（Backend=0）时抬高；并存则省略
+    priority: 50,                              // 想覆盖 process-local（默认 0）时抬高；并存则省略
     label: 'Process / remote',                 // WebUI/CLI Services 视图展示
     // entryId: `${ctx.id}/remote`,            // 只在「一个插件拆多条 entry」时用，前缀必须是 ctx.id
   });

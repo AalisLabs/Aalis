@@ -162,8 +162,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 DI 按名解析：同名 `'authority'` 的胜者 = `preference > priority > 注册顺序`（见 docs/concepts/service-model.md）。要让你的实现覆盖参考实现，注册时给更高优先级：
 
 ```ts
-import { ServicePriority } from '@aalis/core'; // Backend=0 / Override=50 / System=200
-ctx.provide('authority', new MyAuthority(...), { priority: ServicePriority.Override }); // 50 > 默认 Backend(0)
+ctx.provide('authority', new MyAuthority(...), { priority: 50 }); // 高于默认 0 即覆盖
 ```
 
 `provide` 第三参支持 `priority` / `label` 等元数据；按整体框架惯例 per-entry 注册用 `entryId: '${ctx.id}/<sub>'`（authority 是单实例服务，无需子条目）。**不要**仅靠移除参考实现来「让位」——显式优先级更明确可靠。
@@ -319,7 +318,7 @@ authority 在 `apply` 时把 `config.network` 注入进程级 `safeFetch` 策略
 - docs/core/authority.md — 权限系统总览（数字等级单轴的设计与配置面）。
 - docs/concepts/security-model.md — 威胁模型、SSRF / `safeFetch`、插件作者责任边界。
 - docs/services/session-confirm.md — confirm 通道（`AccessConfirmHandler` 的实际实现：bus / WS / 终端）。
-- docs/concepts/service-model.md — DI 按名解析、`ServicePriority`、覆盖同名服务。
+- docs/concepts/service-model.md — DI 按名解析、priority、覆盖同名服务。
 - docs/concepts/lazy-service-access.md — 为什么消费 authority 要每次现取、不缓存。
 - docs/concepts/manifest-metadata.md — `provides`/`inject` 双源元数据同步。
 - docs/concepts/storage-uri-grammar.md — `users.json` 等级存储经 storage 网关；storage 不是沙盒。

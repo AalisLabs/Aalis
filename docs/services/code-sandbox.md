@@ -106,7 +106,7 @@ export async function apply(ctx: Context): Promise<void> {
   const proc = createProcessGateway(ctx);          // 经 process 网关，别直接碰 child_process
   const backend = await probeBackend(proc, logger);
   ctx.provide('code-sandbox', new MyCodeSandboxService(proc, backend));
-  // 默认 priority = ServicePriority.Backend(0)。想默认压过别的后端用 Override(50)。
+  // 默认 priority 0。想默认压过别的后端取更高值（如 50）。
 }
 ```
 
