@@ -31,7 +31,7 @@ export class Context {
    *
    * - `true`（默认）：`provide` 时跑注册校验（entryId 前缀 / 重复 provide，见
    *   validateProvide），激活后做 provides 反向一致性 warn
-   * - `false`（生产）：跳过探测，节省热路径开销
+   * - `false`（生产）：跳过上述校验
    *
    * core 不读 `process.env`——是否 dev 由宿主决定。
    */

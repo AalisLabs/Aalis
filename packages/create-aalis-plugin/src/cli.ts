@@ -194,7 +194,7 @@ function renderPackageJson(a: Answers): string {
     type: 'module',
     // description / author 供插件市场展示（市场直接读 package.json，不入 PluginModule）
     description: `${a.displayName} —— Aalis 插件`,
-    // keyword 'aalis-plugin' 是市场发现约定：npm registry 按此 keyword 检索可装插件
+    // keyword 'aalis-plugin' 是加载硬门（加载器只认它，漏写即永不加载），市场检索也按它
     keywords: ['aalis-plugin'],
     main: 'dist/index.js',
     types: 'dist/index.d.ts',
@@ -321,8 +321,9 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
 ${body.join('\n\n')}
 }
 
-// 形状自检：多余属性检查兜字段名 typo（reusable/configSchema 等拼错即编译红）。
-const _shape: PluginModule = { name, displayName, inject, apply };
+// 形状自检：钉住模板既有字段的名字与形状（如把 displayName 改错名即编译红）。
+// 注意它只覆盖列出的字段——模块级新增导出（如手写 configSchema）请同样收进来。
+const _shape: PluginModule = { name, displayName, inject, apply${a.features.webui ? ', webuiPages, actions' : ''} };
 void _shape;
 `;
 }
@@ -342,8 +343,9 @@ npm install ${a.packageName}
 
 发现机制依赖 package.json 的 \`"keywords": ["aalis-plugin"]\`（脚手架已带，勿删）。
 插件默认启用；停用是把包名加入 \`aalis.config.yaml\` 顶层的 \`disabledPlugins\` 数组。
-插件配置写在 \`plugins."${a.packageName}"\` 段，键与字段来自 configSchema——没有
-\`enabled\` 开关，schema 外的字段启动时会被裁剪。
+插件配置写在 \`plugins."${a.packageName}"\` 段；没有 \`enabled\` 开关。若你为插件声明了
+\`configSchema\`，键与字段以其为准（schema 外字段启动时会被裁剪）；本模板未声明
+configSchema，配置原样透传给 apply。
 
 ## 扩展点
 

@@ -208,18 +208,14 @@ helper 内部已封装 `whenService` 延迟语义：即使在 `apply()` 阶段�
 扩展点 / 能力扩展点 / Dispose / Middleware / Logger 等）。所有 **LLM/agent 领域类型**都在
 `@aalis/plugin-*-api` 里。
 
-判定规则只有一条：**运行时值导入进 `dependencies`，纯类型导入进 `devDependencies`**。
+判定规则：**`@aalis/core` 恒为 peerDependency（区间 `>=x <1.0.0`，禁 caret）；其余用到的
+`@aalis` 契约包一律进 `dependencies`**，版本同样写 `>=当前版本 <1.0.0` 区间——区间声明可被
+包管理器去重到与宿主同一份安装，避免同名契约装出两份（两份 `declare module` 相撞成
+TS2717，会被 skipLibCheck 静默吞掉、类型悄悄退化）。这也是本仓全部一方插件的实际做法。
+`devDependencies` 只放构建工具（typescript 等）。
 
-- 值导入（`useToolService` / `useCommandService` / `createStorageGateway` 等 helper 函数）：
-  运行时真的要加载这些包，放 `dependencies`，版本范围写 `>=当前版本 <1.0.0`（禁 caret，理由同 core）。
-- 纯类型导入（`import type { ... }`）与 `declare module` 注入（事件表 / 服务表扩展）：
-  编译期就地擦除，放 `devDependencies`。放进 `dependencies` 反而有害——用户安装时可能解析出
-  与宿主不同副本的同名契约包，两份 `declare module` 相撞（TS2717，被 skipLibCheck 静默吞掉，
-  类型悄悄退化为 unknown）。
-
-速查：`@aalis/core` 恒为 peerDependency；调用了 helper 函数的 `api-tools` / `api-commands` /
-`api-storage` 等进 `dependencies`；只拿类型的 `schema-config` / `schema-message` 与其余
-`api-*` 进 `devDependencies`。
+> 脚手架生成的依赖用 `latest`（硬编码版本会过时，workspace: 协议在外部装不上）——那只是
+> 首次安装的引导值，发布前请按上述规则收紧为区间。
 
 全部扩展点（事件 / 钩子 / 能力 / 配置字段 / Context Mixin）的归属表见
 [docs/extensions/index.md](../extensions/index.md)。

@@ -120,7 +120,7 @@ function cosine(a: number[], b: number[]): number {
 
 export async function apply(ctx: Context): Promise<void> {
   const store = new MyVectorStore();
-  ctx.provide('vectorstore', store);          // 默认 priority=Backend(0)；想优先于已有后端用 { priority: 10 } 之类
+  ctx.provide('vectorstore', store);          // 默认 priority=0；想优先于已有后端用 { priority: 10 } 之类
   ctx.onDispose(() => void store.save());      // dispose 兜底落盘
 }
 ```
