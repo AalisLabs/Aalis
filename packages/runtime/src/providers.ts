@@ -11,6 +11,7 @@ import type {
   PluginModule,
   RestartStrategy,
 } from '@aalis/core';
+import { DefaultLogger } from '@aalis/core';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { isLoadablePlugin } from './node-modules-loader.js';
 import { disarmTerminalStateRestorer } from './terminal.js';
@@ -82,12 +83,31 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
   let rawYaml: string | null = null;
   let watcher: FSWatcher | null = null;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  // 走 LogHub 而非 console：file logger 只订阅 LogHub，脱终端部署下 stderr
+  // 进不了 data/latest.log，console 版的告警等于没加。
+  const logger = new DefaultLogger('aalis:config');
+
+  /** 值必须是纯映射才算配置：裸标量/数组会被下游按 Object.entries 摊开写回垃圾。 */
+  const describeNonMapping = (v: unknown): string | null => {
+    if (v === null) return 'empty';
+    if (Array.isArray(v)) return 'array';
+    if (typeof v !== 'object') return typeof v;
+    return null;
+  };
 
   function loadFromDisk(): AalisConfig {
     if (existsSync(absPath)) {
       rawYaml = readFileSync(absPath, 'utf-8');
-      return (parseYaml(rawYaml) ?? {}) as AalisConfig;
+      const parsed = parseYaml(rawYaml) ?? {};
+      // 启动坏就该响亮：语法错误本就上抛，「解析成功但不是配置对象」同样上抛，
+      // 不能放进 core 摊成 "0": f 再写回磁盘。空文件视同缺省（?? {} 已兜）。
+      const kind = describeNonMapping(parsed);
+      if (kind) {
+        throw new Error(`配置文件不是一个配置对象（得到 ${kind}）：${absPath}`);
+      }
+      return parsed as AalisConfig;
     }
+    logger.warn(`配置文件不存在（${absPath}），使用内存默认配置启动`);
     rawYaml = null;
     return { name: 'Aalis', logLevel: 'info', plugins: {} };
   }
@@ -118,16 +138,42 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
           if (debounceTimer) clearTimeout(debounceTimer);
           debounceTimer = setTimeout(() => {
             debounceTimer = null;
+            // 读盘失败与解析失败必须拆开：编辑器先删后建式保存的瞬时 ENOENT
+            // 若与语法错误共用一个 catch，会被误报成「你的 YAML 写错了」——
+            // 比不报还糟。读不到安静返回（下一个事件会来），解析失败才出声。
+            let current: string;
             try {
-              const current = readFileSync(absPath, 'utf-8');
-              // rawYaml 在装载 / save / 本回调三处维护，比对它一并挡掉自写回、目录里
-              // 无关文件的杂音、touch，以及改完又改回来的空变更。
-              if (current === rawYaml) return;
-              rawYaml = current;
-              const parsed = (parseYaml(current) ?? {}) as Record<string, unknown>;
-              onChange(parsed as AalisConfig);
+              current = readFileSync(absPath, 'utf-8');
             } catch {
-              /* 文件可能被部分写入或尚不存在，忽略 */
+              return;
+            }
+            // rawYaml 在装载 / save / 本回调三处维护，比对它一并挡掉自写回、目录里
+            // 无关文件的杂音、touch，以及改完又改回来的空变更。
+            if (current === rawYaml) return;
+            let parsed: unknown;
+            try {
+              parsed = parseYaml(current);
+            } catch (err) {
+              // rawYaml 只在解析成功后推进（不变量=当前生效的那份内容）：
+              // 同一份坏内容每次保存都重新告警，直到改对为止。
+              logger.warn(
+                `配置文件解析失败，本次变更已忽略，仍在使用上一份配置：${err instanceof Error ? err.message : String(err)}`,
+              );
+              return;
+            }
+            // 空文件 / 裸标量 / 数组：都是「解析不出一个配置对象」的同一问题，
+            // 一道闸拒收——放行会让全部插件按默认值 bounce 或往配置文件写回垃圾。
+            const kind = describeNonMapping(parsed);
+            if (kind) {
+              logger.warn(`配置文件不是一个配置对象（得到 ${kind}），本次变更已忽略`);
+              return;
+            }
+            rawYaml = current;
+            try {
+              onChange(parsed as AalisConfig);
+            } catch (err) {
+              // 变更处理器抛错此前被整段 catch 静默吞掉——保留兜底但必须出声。
+              logger.warn(`配置变更处理器抛错：${err instanceof Error ? err.message : String(err)}`);
             }
           }, 300);
         });
