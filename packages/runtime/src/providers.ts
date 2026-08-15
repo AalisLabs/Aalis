@@ -13,7 +13,12 @@ import type {
 } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { isLoadablePlugin, unwrapPluginModule } from './node-modules-loader.js';
+import {
+  isLoadablePlugin,
+  unwrapPluginModule,
+  warnLikelyPluginMissingKeyword,
+  warnShape,
+} from './node-modules-loader.js';
 import { disarmTerminalStateRestorer } from './terminal.js';
 
 // ============================================================
@@ -221,6 +226,9 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
  */
 export function createFsPluginLoader(packagesDir?: string): PluginLoader {
   const rootDir = packagesDir ?? resolve(process.cwd(), 'packages');
+  // 死门信号与 node_modules 加载器同一套（本仓自托管入口走的正是本加载器，
+  // 只在一边出声等于对自己的部署失聪）。
+  const loaderLogger = new DefaultLogger('aalis:loader');
 
   return {
     async discover(): Promise<PluginDescriptor[]> {
@@ -243,7 +251,10 @@ export function createFsPluginLoader(packagesDir?: string): PluginLoader {
         }
         // 与 node_modules 加载器同一标准：纯 aalis-plugin 关键词正向门（单一真相，防两处漂移）。
         // 非插件（核心/契约/前端/工具链/工具库）各带自己的类型关键词、不带 aalis-plugin，自然不被收录。
-        if (!isLoadablePlugin(pkgJson)) continue;
+        if (!isLoadablePlugin(pkgJson)) {
+          warnLikelyPluginMissingKeyword(loaderLogger, entry, pkgJson);
+          continue;
+        }
         const main = (pkgJson.main as string) || 'dist/index.js';
         discovered.push({
           name: pkgJson.name as string,
@@ -256,6 +267,7 @@ export function createFsPluginLoader(packagesDir?: string): PluginLoader {
 
     async load(desc): Promise<PluginModule | null> {
       const mod = unwrapPluginModule(await import(pathToFileURL(desc.source).href));
+      warnShape(loaderLogger, desc.name, mod);
       return mod;
     },
 
