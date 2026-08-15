@@ -21,7 +21,7 @@ export { parseInstanceId };
  *
  * 负责:
  * - 注册/加载/卸载插件
- * - 依赖追踪 (required + optional, 支持 capability 匹配)
+ * - 依赖追踪 (required + optional，判据=服务是否在容器中)
  * - 当所需服务就绪时自动激活插件
  * - 当所需服务移除时自动停用插件
  * - 插件启用/禁用控制
@@ -319,11 +319,12 @@ export class PluginManager {
       this.logger.warn(`bouncePlugin: 插件 "${name}" 处于 disabled 态，跳过`);
       return false;
     }
-    // 'disposed' 对管理路径单向：unload 写入终态与从注册表摘除之间隔着
-    // retire 的微任务（即使无 ctx 可拆，await 也让出）——此窗口内把它覆写回
-    // 'pending' 会重新武装 entry，激活出一个注册表外的永生孤儿实例。
+    // 'disposed' 对管理路径单向（含卸载在途与停机后的遗留终态两种情形）：
+    // unload 写入终态与从注册表摘除之间隔着 retire 的微任务（即使无 ctx 可拆，
+    // await 也让出）——此窗口内把它覆写回 'pending' 会重新武装 entry，激活出
+    // 一个注册表外的永生孤儿实例；停机后覆写则会把插件误写进持久化禁用清单。
     if (entry.state === 'disposed') {
-      this.logger.debug(`bouncePlugin: 插件 "${name}" 正在卸载（disposed），跳过`);
+      this.logger.debug(`bouncePlugin: 插件 "${name}" 已进入 disposed 终态（卸载在途或已停机），跳过`);
       return false;
     }
 
@@ -427,8 +428,8 @@ export class PluginManager {
    * 5. 若本轮有变动则继续下一轮，直到稳定或达到 maxRounds。
    * 6. 非 shutdown 时发出 plugins:changed。
    *
-   * Aalis 直接用"服务在不在 + capabilities 命中"
-   * 做判断 —— 表达力等价、复杂度更低。
+   * Aalis 直接用"服务在不在容器里"做判断（capability 匹配层已于 0.5.0
+   * 删除）—— 表达力等价、复杂度更低。
    */
   async recompute(reason: RecomputeReason): Promise<void> {
     if (this.shuttingDown && reason.type !== 'shutdown') {
