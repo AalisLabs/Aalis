@@ -34,8 +34,10 @@ const RULES: Rule[] = [
     release: /\bclearInterval\b|\bonDispose\b/,
   },
   {
-    name: 'fs.watch/watchFile 需配对 close/unwatchFile 或 onDispose',
-    acquire: /\bfs\.watch(File)?\s*\(|\bwatchFile\s*\(/,
+    // 本仓惯例是 `import { watch as fsWatch }` 别名调用——正则必须双收，
+    // 否则规则对真实 watcher 全盲（曾实测 0 命中的假绿灯）。
+    name: 'fs.watch/watchFile/fsWatch 需配对 close/unwatchFile 或 onDispose',
+    acquire: /\bfs\.watch(File)?\s*\(|\bwatchFile\s*\(|\bfsWatch\s*\(/,
     release: /\.close\(\)|\bunwatchFile\b|\bonDispose\b/,
   },
 ];
