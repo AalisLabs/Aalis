@@ -82,12 +82,36 @@ describe('加载链信号', () => {
     expect(warns.some(w => w.includes('plugin-mismatch') && w.includes('module.name'))).toBe(true);
   });
 
-  it('unwrapPluginModule：具名形态原样返回，default 形态解包，两者兼备取具名', () => {
+  it('unwrapPluginModule：具名形态原样返回，default 对象形态解包，两者兼备取具名', () => {
     const named = { name: 'a', apply() {} };
     expect(unwrapPluginModule(named)).toBe(named);
     const wrapped = { default: { name: 'b', apply() {} } };
     expect(unwrapPluginModule(wrapped)).toBe(wrapped.default);
     const both = { name: 'c', apply() {}, default: { name: 'd', apply() {} } };
     expect(unwrapPluginModule(both)).toBe(both);
+  });
+
+  it('unwrapPluginModule：default 为函数/类不解包（Function.prototype.apply 不是插件契约）', async () => {
+    // 误解包会让 core 调到 Function.prototype.apply——插件体以 ctx=undefined 空跑却报「已激活」
+    function fnPlugin() {}
+    const fnNs = { default: fnPlugin };
+    expect(unwrapPluginModule(fnNs)).toBe(fnNs);
+    class ClsPlugin {}
+    const clsNs = { default: ClsPlugin };
+    expect(unwrapPluginModule(clsNs)).toBe(clsNs);
+
+    // 端到端：export default function 的包必须发「缺少具名导出」告警（而非失配/假激活）
+    writePkg(
+      join(proj, 'node_modules'),
+      'plugin-fn',
+      { main: 'index.mjs', keywords: ['aalis-plugin'] },
+      'export default function pluginFn() {}\n',
+    );
+    writeFileSync(join(proj, 'package.json'), JSON.stringify({ name: 'proj', dependencies: { 'plugin-fn': '1.0.0' } }));
+    const loader = createNodeModulesPluginLoader(proj);
+    const desc = (await loader.discover()).find(d => d.name === 'plugin-fn');
+    const mod = await loader.load?.(desc as never);
+    expect(typeof mod?.apply).not.toBe('function'); // 命名空间原样返回，core 会跳过
+    expect(warns.some(w => w.includes('plugin-fn') && w.includes('缺少具名导出'))).toBe(true);
   });
 });
