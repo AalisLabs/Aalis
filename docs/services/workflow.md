@@ -232,7 +232,7 @@ export async function apply(ctx: Context): Promise<void> {
 ### priority / entryId / label
 
 `ctx.provide(name, instance, { priority?, label?, entryId? })`：
-- `priority`：默认 `ServicePriority.Backend = 0`。同名服务竞争时 winner = **preference > priority > 注册顺序**（无能力匹配，0.5.0 已移除——能力挂在实例上而非 DI 层）。普通第三方实现保持 `0`，让用户在 WebUI 用 preference 选；要默认压过参考实现才用 `Override = 50`（`ServicePriority` 定义见 `packages/core/src/services.ts`）。
+- `priority`：默认 `0`。同名服务竞争时 winner = **preference > priority > 注册顺序**（无能力匹配，0.5.0 已移除——能力挂在实例上而非 DI 层）。普通第三方实现保持 `0`，让用户在 WebUI 用 preference 选；要默认压过参考实现才取更高值（如 `50`）。
 - `entryId`：默认 `ctx.id`，**必须以 `ctx.id` 为前缀**，否则卸载时无法连带注销。
 - `label`：WebUI 选择器展示名。
 

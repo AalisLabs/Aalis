@@ -20,6 +20,8 @@ export default {
 } satisfies PluginModule;
 ```
 
+> 具名导出与 `export default` 两种形态都能被加载（default 会被加载器自动解包）。
+
 最小 `package.json`：
 
 ```json
@@ -29,12 +31,18 @@ export default {
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "keywords": ["aalis-plugin"],
   "peerDependencies": {
     "@aalis/core": ">=0.2.0 <1.0.0"
   }
 }
 ```
 
+> `keywords` 里的 `"aalis-plugin"` 是**加载硬门**而非检索装饰：加载器只认它，漏写则插件
+> 装上后永远不会被发现（启动日志会有"疑似插件缺关键词"提示，但不会加载）；`files` 须含
+> 构建产物，否则入口解析失败同样不加载。
+>
 > `@aalis/core` 用 **peerDependency** 引用，避免多版本冲突。范围用 **`>=0.2.0 <1.0.0`**：
 > 这区间接受任何 0.x 宿主 core，插件不必随 core 次版本升级而重发。**但 1.0 之前 core 的公开面
 > 可能在次版本被删**（0.7.0 / 0.9.0 都删过），用了新 API 就把下限抬到对应版本
@@ -200,26 +208,18 @@ helper 内部已封装 `whenService` 延迟语义：即使在 `apply()` 阶段�
 扩展点 / 能力扩展点 / Dispose / Middleware / Logger 等）。所有 **LLM/agent 领域类型**都在
 `@aalis/plugin-*-api` 里。
 
-最常用的对照：
+判定规则只有一条：**运行时值导入进 `dependencies`，纯类型导入进 `devDependencies`**。
 
-| 你想 import 的类型 | 真正归属包 | 是否需要进 `dependencies` |
-|---|---|---|
-| `Context` / `PluginModule` | `@aalis/core` | peerDep |
-| `ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` | `@aalis/schema-config` | 是 |
-| `Message` / `ContentSegment` / `IncomingMessage` / `OutgoingMessage` | `@aalis/schema-message` | 是 |
-| `ToolCall` / `ToolDefinition` / `ToolFunction` / `ToolCallContext` / `RegisteredTool` | `@aalis/api-tools` | 是 |
-| `ChatRequest` / `ChatResponse` / `LLMService` | `@aalis/api-llm` | 是 |
-| `MemoryService` | `@aalis/api-memory` | 是 |
-| `AgentService` / `PreprocessorFn` | `@aalis/api-agent` | 是 |
-| `StorageService` | `@aalis/api-storage` | 是 |
-| `EmbeddingService` | `@aalis/api-embedding` | 是 |
-| `VectorStoreService` | `@aalis/api-vectorstore` | 是 |
-| `IncomingMessage`/`OutgoingMessage` 事件 / `tool:execute` 事件 | 同对应 *-api（包须出现在 `dependencies` 里 TS 才能看到 `declare module` 注入） | 是 |
+- 值导入（`useToolService` / `useCommandService` / `createStorageGateway` 等 helper 函数）：
+  运行时真的要加载这些包，放 `dependencies`，版本范围写 `>=当前版本 <1.0.0`（禁 caret，理由同 core）。
+- 纯类型导入（`import type { ... }`）与 `declare module` 注入（事件表 / 服务表扩展）：
+  编译期就地擦除，放 `devDependencies`。放进 `dependencies` 反而有害——用户安装时可能解析出
+  与宿主不同副本的同名契约包，两份 `declare module` 相撞（TS2717，被 skipLibCheck 静默吞掉，
+  类型悄悄退化为 unknown）。
 
-> **常见错误**：以为工具/命令注册 API 来自 core。它们由
-> `@aalis/api-tools` / `@aalis/api-commands` 导出
-> （`useToolService` / `useCommandService`），**必须**把这些契约包放进自己的
-> `dependencies`（或 `peerDependencies`），TS 才能正确解析类型。
+速查：`@aalis/core` 恒为 peerDependency；调用了 helper 函数的 `api-tools` / `api-commands` /
+`api-storage` 等进 `dependencies`；只拿类型的 `schema-config` / `schema-message` 与其余
+`api-*` 进 `devDependencies`。
 
 全部扩展点（事件 / 钩子 / 能力 / 配置字段 / Context Mixin）的归属表见
 [docs/extensions/index.md](../extensions/index.md)。

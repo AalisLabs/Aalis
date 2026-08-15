@@ -281,7 +281,7 @@ PluginManager 只有一个外部可见的状态变更入口：`recompute(reason)
 | 注册中间件 | `ctx.middleware(hook, fn)` — dispose 时自动注销 |
 | 注册服务 | `ctx.provide(name, impl, { priority })` — dispose 时自动注销 |
 | 清理外部资源（连接、定时器、子进程） | `ctx.onDispose(() => cleanup())` |
-| ⚠️ 绕过自动清理（需手动管理） | `ctx.serviceContainer.register(...)` — 仅供桥接/诊断 |
+| ⚠️ 绕过自动清理 | 无公开通道——`ctx.serviceContainer` 属 @internal、无版本承诺，插件不应使用 |
 
 ## 中间件钩子管道
 
