@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync, type FSWatcher, watch as fsWatch, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type {
   AalisConfig,
@@ -70,7 +70,8 @@ interface FsYamlConfigProviderResult {
  *
  * - 同步读取 + 解析（值原样加载，不做任何替换——`${VAR}` 插值已随 `.env` 机制删除）
  * - `save()` 同步写回
- * - `watch()` 用 `fs.watch` + 300ms debounce，并通过 lastWrittenYaml 去重避免自激
+ * - `watch()` 监听**配置文件所在目录**（按文件名过滤）+ 300ms debounce，
+ *   并通过与 `rawYaml` 的内容比对去重，避免自激
  *
  * 调用时一次性返回 config 快照、provider 和 dataDir 三件套，方便 src/index.ts 组装。
  */
@@ -79,7 +80,6 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
   const dataDir = dirname(absPath);
 
   let rawYaml: string | null = null;
-  let lastWrittenYaml: string | null = null;
   let watcher: FSWatcher | null = null;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -97,28 +97,37 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
   const provider: ConfigProvider = {
     save(config) {
       const yaml = buildSaveYaml(config);
-      lastWrittenYaml = yaml;
       writeFileSync(absPath, yaml, 'utf-8');
       rawYaml = yaml;
     },
 
     watch(onChange) {
       if (watcher) return () => {};
-      if (!existsSync(absPath)) return () => {};
+      // 守目录而非文件：文件可能尚未落盘（首启前），建出来时也要能接上。
+      if (!existsSync(dataDir)) return () => {};
+      const fileName = basename(absPath);
       try {
-        watcher = fsWatch(absPath, () => {
+        // **必须监听目录，不能监听文件本身。** fs.watch 绑的是那一刻的 inode，而编辑器
+        // 保存普遍是「写临时文件 → rename 覆盖」——rename 之后同名文件已是新 inode，
+        // 绑在旧 inode 上的 watcher 从此永不触发，且无异常、无日志、无返回值。
+        // 而 save() 用的是原地 writeFileSync（inode 不变），所以这条死路**只有人改配置
+        // 会踩到**——恰恰是 watch 唯一存在的理由，于是自测与自动化里它永远看起来是好的。
+        watcher = fsWatch(dataDir, (_event, filename) => {
+          // filename 平台不保证非空；为空时不敢过滤，交给下面的内容比对兜底。
+          if (filename && basename(filename.toString()) !== fileName) return;
           if (debounceTimer) clearTimeout(debounceTimer);
           debounceTimer = setTimeout(() => {
             debounceTimer = null;
             try {
               const current = readFileSync(absPath, 'utf-8');
-              if (lastWrittenYaml !== null && current === lastWrittenYaml) return;
-              lastWrittenYaml = null;
+              // rawYaml 在装载 / save / 本回调三处维护，比对它一并挡掉自写回、目录里
+              // 无关文件的杂音、touch，以及改完又改回来的空变更。
+              if (current === rawYaml) return;
               rawYaml = current;
               const parsed = (parseYaml(current) ?? {}) as Record<string, unknown>;
               onChange(parsed as AalisConfig);
             } catch {
-              /* 文件可能被部分写入，忽略 */
+              /* 文件可能被部分写入或尚不存在，忽略 */
             }
           }, 300);
         });
