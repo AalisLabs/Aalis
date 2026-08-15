@@ -114,10 +114,12 @@ export function buildDraftFromSchema(schema: ConfigSchema, config: Record<string
       const existing = config[key];
       draft[key] = Array.isArray(existing) ? existing : (entry.default ?? []);
     } else if (isSchemaField(entry)) {
+      // number 无 default 不预填（undefined=留空走服务端默认）：预填 0 会撞 min 约束，
+      // 预填 min 则把「用户没填」静默写成 min、压过插件运行时兜底——与「未填≠预填」政策一致。
       draft[key] =
         config[key] ??
         entry.default ??
-        (entry.type === 'number' ? (entry.min ?? 0) : entry.type === 'boolean' ? false : entry.type === 'multiselect' ? [] : '');
+        (entry.type === 'number' ? undefined : entry.type === 'boolean' ? false : entry.type === 'multiselect' ? [] : '');
     } else {
       const group: Record<string, unknown> = {};
       const src = (config[key] ?? {}) as Record<string, unknown>;
@@ -125,7 +127,7 @@ export function buildDraftFromSchema(schema: ConfigSchema, config: Record<string
         group[fk] =
           src[fk] ??
           field.default ??
-          (field.type === 'number' ? (field.min ?? 0) : field.type === 'boolean' ? false : field.type === 'multiselect' ? [] : '');
+          (field.type === 'number' ? undefined : field.type === 'boolean' ? false : field.type === 'multiselect' ? [] : '');
       }
       draft[key] = group;
     }

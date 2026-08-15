@@ -54,7 +54,7 @@ export interface SchemaField {
   required?: boolean;
   /** select / multiselect 类型的静态选项 */
   options?: Array<{ label: string; value: string | number }>;
-  /** number：数值下限（含），validateConfig 强制。带 min 的字段建议同时声明 default——SchemaForm 对无 default 的 number 预填 0，min>0 时会撞约束 */
+  /** number：数值下限（含），validateConfig 强制。无 default 的 number 表单不预填（留空=走服务端默认），带 min 仍建议声明 default 以免长期处于缺失告警 */
   min?: number;
   /** number：数值上限（含），validateConfig 强制 */
   max?: number;
