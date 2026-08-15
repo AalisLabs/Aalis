@@ -135,7 +135,7 @@ export default class MyPlugin {
     tools.register({ definition, handler });
 
     const commands = useCommandService(ctx);
-    commands.command({ name: 'hello', description: 'hi', action: async () => 'hi' });
+    commands.command('hello', 'hi').action(async () => 'hi');
 
     // 注册 WebUI 页面（webui-server 未就绪时自动延迟绑定）
     const webui = useWebuiService(ctx);

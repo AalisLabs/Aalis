@@ -334,13 +334,16 @@ ${a.displayName} —— 由 \`create-aalis-plugin\` 生成的 Aalis 插件骨架
 
 ## 启用
 
-把本目录复制到 Aalis 仓库的 \`packages/\` 下，然后在 \`aalis.config.yaml\` 的 \`plugins\` 段加上：
+构建并发布（或 \`npm pack\`）后，在 Aalis 部署目录安装即被自动发现并加载：
 
-\`\`\`yaml
-plugins:
-  "${a.packageName}":
-    enabled: true
+\`\`\`bash
+npm install ${a.packageName}
 \`\`\`
+
+发现机制依赖 package.json 的 \`"keywords": ["aalis-plugin"]\`（脚手架已带，勿删）。
+插件默认启用；停用是把包名加入 \`aalis.config.yaml\` 顶层的 \`disabledPlugins\` 数组。
+插件配置写在 \`plugins."${a.packageName}"\` 段，键与字段来自 configSchema——没有
+\`enabled\` 开关，schema 外的字段启动时会被裁剪。
 
 ## 扩展点
 

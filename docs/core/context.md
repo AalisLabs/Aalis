@@ -82,8 +82,8 @@
 // 监听（返回 dispose；Context 销毁自动清理）
 const off = ctx.on('inbound:message', async msg => { ... });
 
-// 一次性监听
-ctx.on('app:ready', () => { ... });
+// sticky 事件：注册晚于发出也能收到微任务补发（'ready' / 'app:started'）
+ctx.on('app:started', () => { ... });
 
 // 发出事件
 await ctx.emit('outbound:message', outMsg);
