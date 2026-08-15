@@ -13,7 +13,7 @@ import type {
 } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { isLoadablePlugin } from './node-modules-loader.js';
+import { isLoadablePlugin, unwrapPluginModule } from './node-modules-loader.js';
 import { disarmTerminalStateRestorer } from './terminal.js';
 
 // ============================================================
@@ -242,7 +242,7 @@ export function createFsPluginLoader(packagesDir?: string): PluginLoader {
     },
 
     async load(desc): Promise<PluginModule | null> {
-      const mod = (await import(pathToFileURL(desc.source).href)) as PluginModule;
+      const mod = unwrapPluginModule(await import(pathToFileURL(desc.source).href));
       return mod;
     },
 
@@ -253,7 +253,7 @@ export function createFsPluginLoader(packagesDir?: string): PluginLoader {
       } catch {
         /* stat 失败时用空 key，让 import 自己报错 */
       }
-      const mod = (await import(pathToFileURL(desc.source).href + cacheKey)) as PluginModule;
+      const mod = unwrapPluginModule(await import(pathToFileURL(desc.source).href + cacheKey));
       return mod;
     },
   };
