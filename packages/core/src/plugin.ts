@@ -219,6 +219,9 @@ export class PluginManager {
 
     if (entry.state === 'disposed') return false; // 正在卸载，'disposed' 对管理路径单向（见 bouncePlugin 内注释）
     if (entry.state !== 'disabled' && entry.state !== 'error') return true; // 已经启用
+    // 依赖不变量：disabled/error 态的 entry 必然 context 已清（disable 与激活失败
+    // 都经 retireEntry 清引用；锚在 admin-during-activation 测试）——否则此处转
+    // pending 后会被激活侧的「旧 ctx 未清」闸永久跳过。
     entry.state = 'pending';
     entry.error = undefined;
     this.rootCtx.config.setPluginEnabled(name, true);

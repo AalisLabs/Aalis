@@ -123,6 +123,77 @@ describe('disablePlugin 撞上 activating 窗口', () => {
     expect(app.plugins.getPlugin('gated')?.state).toBe('disabled');
     expect(app.ctx.getService('gated-svc')).toBeUndefined();
     expect(trace).toContain('disposed');
+    // enablePlugin 依赖的不变量：disabled 态 context 必已清（否则重激活被闸永跳）
+    expect(app.plugins.getPlugin('gated')?.context).toBeUndefined();
+  });
+});
+
+describe('evict 疏散 activating 下游（判据=entry.context）', () => {
+  it('provider 重载时在飞下游同样被疏散并以新 provider 重激活', async () => {
+    const { app, trace } = makeWorld();
+    const provider: PluginModule = {
+      name: 'prov',
+      provides: ['p-svc'],
+      apply(ctx: Context, config: Record<string, unknown>) {
+        ctx.provide('p-svc', { v: config.v ?? 1 });
+      },
+    };
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>(r => {
+      release = r;
+    });
+    const enteredP = new Promise<void>(r => {
+      entered = r;
+    });
+    let seq = 0;
+    const consumer: PluginModule = {
+      name: 'cons',
+      inject: { optional: ['p-svc'] },
+      requiresBounceOnDepChange: true,
+      async apply() {
+        const n = ++seq;
+        trace.push(`cons:apply#${n}`);
+        if (n === 1) {
+          entered();
+          await gate; // 首次激活卡在飞——bounce provider 时它正处 activating
+        }
+      },
+    };
+    await app.plugin(provider, { v: 1 });
+    const registering = app.plugin(consumer);
+    await enteredP;
+
+    const bouncing = app.plugins.updatePluginConfig('prov', { v: 2 });
+    release();
+    await Promise.all([registering, bouncing]);
+    await new Promise(r => setTimeout(r, 20));
+
+    // 修前：activating 的下游漏疏散，抱着旧 provider 引用完成激活且不重载
+    expect(trace.filter(t => t.startsWith('cons:apply'))).toEqual(['cons:apply#1', 'cons:apply#2']);
+    expect(app.plugins.getPlugin('cons')?.state).toBe('active');
+    expect((app.ctx.getService('p-svc') as { v: number }).v).toBe(2);
+  });
+});
+
+describe('error 终态的不变量：context 已清', () => {
+  it('apply 抛错进 error 后 context 为空（enablePlugin 复活路径依赖此不变量）', async () => {
+    const { app } = makeWorld();
+    await app.plugin({
+      name: 'boom',
+      apply() {
+        throw new Error('立即爆炸');
+      },
+    });
+    // 等静置：ctor 里 provide('app'/'plugins') 触发的反应式 recompute 可能在飞，
+    // 首个 app.plugin() 会走单飞排队分支提前返回（resolve≠激活完成——已立刀候选）
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('boom')?.state).toBe('error');
+    expect(app.plugins.getPlugin('boom')?.context).toBeUndefined();
+    // 复活路径畅通：enable 后可重新激活（若 context 未清会被闸永久跳过）
+    // 注：apply 仍会抛错回到 error，但激活确实发生了（error 消息刷新）
+    const ok = await app.plugins.enablePlugin('boom');
+    expect(ok).toBe(true);
   });
 });
 
