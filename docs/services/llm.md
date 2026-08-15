@@ -157,7 +157,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
 要点：
 - **`entryId` 必须是 `${ctx.id}/${modelId}`**——`resolveLLMModel` 用 `contextId === \`${provider}/${model}\`` 精确命中（`packages/api-llm/src/index.ts`）；不按此约定会导致 `llm-ref` 选择失效。
-- 不要传 `priority`，默认 `ServicePriority.Backend(0)` 即可；用户通过 preference / persona 选默认 model（见 §5）。同名多 provider 并存由容器按 preference>priority>注册顺序裁决（[服务模型](../concepts/service-model.md)）。
+- 不要传 `priority`，默认 `0` 即可；用户通过 preference / persona 选默认 model（见 §5）。同名多 provider 并存由容器按 preference>priority>注册顺序裁决（[服务模型](../concepts/service-model.md)）。
 - `capabilities` 要**如实**反映该 model 实际能力——它驱动 media 的多模态处理器注册与前端过滤（§6）。
 - `ctx.provide` 返回 dispose 函数；实现 `refresh()` 时缓存它以便增删 entry（`packages/plugin-llm-ollama/src/index.ts`）。
 

@@ -138,7 +138,7 @@ export function apply(ctx: Context): void {
 }
 ```
 
-注册时 `ctx.provide('cron-engine', service)` 不需要 `entryId`（单 entry、无需 per-entry 拆分），`priority` 默认 `ServicePriority.Backend(0)` 即可，要盖过官方实现可用 `Override(50)`。**双源同步**：`package.json` 里也要写
+注册时 `ctx.provide('cron-engine', service)` 不需要 `entryId`（单 entry、无需 per-entry 拆分），`priority` 留默认 `0` 即可，要盖过官方实现取更高值（如 `50`）。**双源同步**：`package.json` 里也要写
 
 ```jsonc
 "aalis": { "service": { "provides": ["cron-engine"] } }

@@ -169,7 +169,7 @@ export const inject = { required: ['tools'] };  // 双源必须一致，见 docs
 
 ### 4.3 自建 `ToolService` provider
 
-仅当你要替换整个注册表实现时才需要。实现 §2.3 全部方法，用 `ctx.provide('tools', impl, { priority })` 注册；同名竞争走 `preference > priority > 注册序`（ServicePriority Backend0/Override50/System200），见 [`docs/concepts/service-model.md`](../concepts/service-model.md)。**务必实现 `setExecutionGuard`**，否则 authority 无法挂权限闸（守卫缺失=放行，见 §6/§7）。
+仅当你要替换整个注册表实现时才需要。实现 §2.3 全部方法，用 `ctx.provide('tools', impl, { priority })` 注册；同名竞争走 `preference > priority > 注册序`（数字越大越优先），见 [`docs/concepts/service-model.md`](../concepts/service-model.md)。**务必实现 `setExecutionGuard`**，否则 authority 无法挂权限闸（守卫缺失=放行，见 §6/§7）。
 
 ## 5. 标准消费写法
 
