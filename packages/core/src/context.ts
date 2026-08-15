@@ -405,7 +405,17 @@ export class Context {
       runCleanup();
       attached = winner;
       if (winner === undefined) return;
-      const ret = cb(winner);
+      // 统一错误政策：cb 抛错=warn+订阅保持。此前首挂（同步路径）抛错会逃逸
+      // 出 whenService 注册调用——复合 disposer 未入链未返回，留下半注册态；
+      // 重挂（事件路径）抛错则被 EventBus 吞成另一种沉默。两条路径同一条
+      // warn；attached 已记录本次胜者，不自动重试，等下次服务变更再对齐。
+      let ret: undefined | (() => void);
+      try {
+        ret = cb(winner) as undefined | (() => void);
+      } catch (err) {
+        this.logger.warn(`whenService('${name}') 回调抛错（订阅保持，等下次服务变更）:`, err);
+        return;
+      }
       // cb 执行期间可能同步触发了本 whenService 的 dispose（如 cb 内部链式
       // 卸载）。此时不能把新 cleanup 挂上去——dispose 已跑过 runCleanup 且
       // disposed=true，挂上的 cleanup 将永不执行（泄漏）。直接立即执行掉。
