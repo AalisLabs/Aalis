@@ -144,6 +144,9 @@ export class ConfigManager {
   /**
    * 持久化当前配置。委托给 provider，无 provider 时静默忽略（内存模式）。
    * 同步语义：若 provider 异步保存，调用方不会等待完成——这与原 fs sync 行为一致。
+   *
+   * @internal 机制口。公开入口是 `app.saveConfig()`（AppService 契约），全部插件
+   * 消费者都应走它；本方法仅供 App 门面与宿主使用，避免同一件事两条公开路。
    */
   save(): void {
     if (!this.provider?.save) return;

@@ -11,13 +11,11 @@
 import type { EventBus } from './events.js';
 import type { Logger } from './logger.js';
 import type { ServiceContainer } from './services.js';
-import { ServicePriority } from './services.js';
 
 /**
  * provide() 的 dev-mode 校验集合：
  *   1. entryId 必须以 ctxId 为前缀（否则 plugin 卸载时清理不到）
  *   2. 同一上下文重复 provide 同一服务名静默失效（容器路由按 contextId）
- *   3. priority 应使用 ServicePriority enum 而非裸数字
  *
  * 参数 explicitEntryId 区分"调用方有意覆盖 entryId"vs"使用 ctxId 默认值"——
  * 前者才触发 entryId 前缀检查与抑制重复 provide warn（有意拆粒度的语义）。
@@ -29,11 +27,10 @@ export function validateProvide(args: {
   name: string;
   entryId: string;
   explicitEntryId: boolean;
-  priority?: number;
   services: ServiceContainer;
   logger: Logger;
 }): void {
-  const { ctxId, name, entryId, explicitEntryId, priority, services, logger } = args;
+  const { ctxId, name, entryId, explicitEntryId, services, logger } = args;
 
   if (explicitEntryId && entryId !== ctxId && !entryId.startsWith(`${ctxId}/`)) {
     logger.warn(
@@ -53,17 +50,6 @@ export function validateProvide(args: {
     );
   }
 
-  if (priority !== undefined) {
-    const standard = Object.values(ServicePriority) as number[];
-    if (!standard.includes(priority)) {
-      // 裸数字作为细粒度预留滩位是合理设计（如 priority=10 在 Backend 与 Override 之间插入），
-      // 不强制使用 enum。但保留 debug 日志，方便排查「谁是默认胜者」问题。
-      logger.debug(
-        `服务 "${name}" 使用裸数字 priority=${priority}（非 ServicePriority enum：Backend=0/Override=50/System=200）。` +
-          `这是允许的，但插件作者须自行记载该数值含义以便下游推断胜者。`,
-      );
-    }
-  }
 }
 
 /**
