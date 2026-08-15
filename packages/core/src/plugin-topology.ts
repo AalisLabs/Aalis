@@ -4,7 +4,8 @@
 // 从 plugin.ts 拆出的纯依赖图算法：
 //   - topoSortByDeps：按"提供者→消费者"方向的 Kahn 拓扑排序
 //   - evictDownstreamConsumers：把依赖某 provider provided 服务、且声明了
-//     requiresBounceOnDepChange 的下游 active 插件降级为 pending（默认不级联，
+//     requiresBounceOnDepChange 的下游持活 ctx 插件（active/activating）降级为
+//     pending（默认不级联，
 //     期望下游惰性 getService；用于 updatePluginConfig / bouncePlugin 瞬态：
 //     provider 即将被 dispose+重启，下游持有的服务引用即失效）
 //
@@ -109,7 +110,10 @@ export async function evictDownstreamConsumers(args: {
   if (provided.length === 0) return;
   const providedSet = new Set(provided);
   for (const other of plugins.values()) {
-    if (other === provider || other.state !== 'active') continue;
+    // 判据与管理入口同源（entry.context 而非 state==='active'）：'activating' 的
+    // 在飞下游同样持着即将失效的 provider 引用，漏疏散会让它抱着死引用完成激活。
+    // retireEntry 先写 'pending'，在飞激活由 activatePlugin 的接管检查让位。
+    if (other === provider || !other.context) continue;
     if (!other.module.requiresBounceOnDepChange) continue;
     const allDeps = [...other.requiredDeps, ...other.optionalDeps];
     if (!allDeps.some(d => providedSet.has(d.service))) continue;
