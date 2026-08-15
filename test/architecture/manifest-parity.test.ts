@@ -52,7 +52,7 @@ describe('manifest 双源对账', () => {
         }
       }
     }
-    expect(audited).toBeGreaterThan(30); // 防自僵：扫描面塌了要出声
+    expect(audited).toBeGreaterThan(50); // 防自僵：现扫描面 60 包，塌方要出声
     expect(
       drifts,
       `双源漂移：aalis.service（市场/预检读它）与代码 provides/inject（运行时真相）必须一致。\n` +

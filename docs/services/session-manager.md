@@ -177,7 +177,7 @@ export const apply: PluginModule['apply'] = async ctx => {
   const mgr = new MySessionManager(ctx);
   ctx.provide('session-manager', mgr, {
     label: '会话管理',
-    // 若要压过参考实现：priority 高于 Backend(0)，或让 owner 用 preferService 选你
+    // 若要压过参考实现：priority 高于默认 0，或让 owner 用 preferService 选你
     priority: 50,
   });
 };
