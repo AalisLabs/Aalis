@@ -104,6 +104,32 @@ describe('FsYamlConfigProvider 解析守卫', () => {
     expect(received).toHaveLength(0);
   });
 
+  it('解析告警不携带相邻行源文（密钥不入日志），但保留行列号', async () => {
+    writeFileSync(file, 'name: Aalis\napiKey: sk-LEAK-abc123\nplugins: {}\n', 'utf-8');
+    const { provider } = createFsYamlConfigProvider(file);
+    unwatch = provider.watch?.(() => {}) ?? null;
+    await settle();
+
+    // 语法错误制造在密钥行的相邻行——yaml 完整报错会把邻近源码摘录进消息
+    atomicWrite(file, 'name: Aalis\napiKey: sk-LEAK-abc123\n\tbad: 1\n');
+    expect(await waitFor(() => warns.some(w => w.includes('解析失败')))).toBe(true);
+    const msg = warns.find(w => w.includes('解析失败'));
+    expect(msg).not.toContain('sk-LEAK');
+    expect(msg).toMatch(/line \d+/);
+  });
+
+  it('启动语法错误响亮拒启，且抛错消息同样不携带相邻行源文', () => {
+    writeFileSync(file, 'apiKey: sk-LEAK-abc123\n\tbad: 1\n', 'utf-8');
+    let thrown: Error | undefined;
+    try {
+      createFsYamlConfigProvider(file);
+    } catch (e) {
+      thrown = e as Error;
+    }
+    expect(thrown?.message).toContain('解析失败');
+    expect(thrown?.message).not.toContain('sk-LEAK');
+  });
+
   it('启动时裸标量：响亮拒启，不进 core 摊字符', () => {
     writeFileSync(file, 'foo\n', 'utf-8');
     expect(() => createFsYamlConfigProvider(file)).toThrowError(/不是一个配置对象（得到 string）/);
