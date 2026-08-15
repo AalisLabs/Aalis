@@ -243,7 +243,7 @@ function renderTsconfig(): string {
 }
 
 function renderIndexTs(a: Answers): string {
-  const imports: string[] = [`import type { Context } from '@aalis/core';`];
+  const imports: string[] = [`import type { Context, PluginModule } from '@aalis/core';`];
   if (a.features.tool) imports.push(`import { useToolService } from '@aalis/api-tools';`);
   if (a.features.command) imports.push(`import { useCommandService } from '@aalis/api-commands';`);
   if (a.features.webui) {
@@ -312,7 +312,7 @@ export const actions = {
 
 export const name = '${a.packageName}';
 export const displayName = '${a.displayName}';
-export const inject = {};
+export const inject: PluginModule['inject'] = {};
 ${webuiPagesBlock}
 export function apply(ctx: Context, _config: Record<string, unknown>): void {
   const logger = ctx.logger.child('${shortName(a.packageName).replace(/^plugin-/, '')}');
@@ -320,6 +320,10 @@ export function apply(ctx: Context, _config: Record<string, unknown>): void {
 
 ${body.join('\n\n')}
 }
+
+// 形状自检：多余属性检查兜字段名 typo（reusable/configSchema 等拼错即编译红）。
+const _shape: PluginModule = { name, displayName, inject, apply };
+void _shape;
 `;
 }
 
