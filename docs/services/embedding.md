@@ -162,7 +162,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
 `ctx.provide(name, instance, { priority?, label?, entryId? })`（`packages/core/src/context.ts`）：
 
-- `priority`：默认 `0`（`ServicePriority.Backend`）。同名服务竞争时，winner = **preference > priority > 注册顺序**；要让自己默认压过普通后端用 `ServicePriority.Override = 50`，系统级覆盖才用 `200`（`packages/core/src/services.ts`）。普通第三方提供者保持 `0` 即可，让用户在 WebUI 里用 preference 选。
+- `priority`：默认 `0`。同名服务竞争时，winner = **preference > priority > 注册顺序**；要默认压过普通后端取更高值（如 `50`）。普通第三方提供者保持 `0` 即可，让用户在 WebUI 里用 preference 选。
 - `entryId`：默认 `this.id`，**必须以 `this.id` 为前缀（`/` 分隔）**，否则卸载时无法连带注销（`context.ts`）。一个插件想登记多个 embedding 实例（如多端点）时用 `${ctx.id}/${sub}`。
 - `label`：人类可读名，WebUI 选择器和 `getAllServices` 里展示（两个参考实现都用 `\`OpenAI / ${model}\`` 这种形态）。
 

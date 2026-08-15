@@ -173,7 +173,7 @@ export function apply(ctx: Context): void {
 }
 ```
 
-> `ctx.provide` 无需传 priority —— gateway 一般是单提供方。同名竞争时的胜者规则是 `preference > priority(ServicePriority) > 注册顺序`（无能力匹配，0.5.0 已移除）；细节见 `concepts/service-model.md`。
+> `ctx.provide` 无需传 priority —— gateway 一般是单提供方。同名竞争时的胜者规则是 `preference > priority > 注册顺序`（无能力匹配，0.5.0 已移除）；细节见 `concepts/service-model.md`。
 
 ## 5. 写一个平台适配器（最常见）
 

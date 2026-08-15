@@ -183,7 +183,7 @@ export function apply(ctx: Context): void {
 
 ### 4c. 替换整个后端（`webui-server`）
 
-罕见。核心要求此服务必须运行（`packages/api-webui/src/index.ts`）。实现全部 `WebUIService` 必须方法（`registerPage` 必须真正维护页面表，否则所有插件页面丢失），用 `ServicePriority`（Override50 / System200）或服务偏好压过默认实现。注册：`ctx.provide('webui-server', impl)`，并在 `package.json aalis.service.provides` 与 `export const provides` 双源写 `'webui-server'`（参考 `packages/plugin-webui-server/package.json` 的 `aalis.service` 块）。同名服务胜出规则见 `docs/concepts/service-model.md`：偏好 > priority > 注册顺序。
+罕见。核心要求此服务必须运行（`packages/api-webui/src/index.ts`）。实现全部 `WebUIService` 必须方法（`registerPage` 必须真正维护页面表，否则所有插件页面丢失），用更高的 priority（数字越大越优先）或服务偏好压过默认实现。注册：`ctx.provide('webui-server', impl)`，并在 `package.json aalis.service.provides` 与 `export const provides` 双源写 `'webui-server'`（参考 `packages/plugin-webui-server/package.json` 的 `aalis.service` 块）。同名服务胜出规则见 `docs/concepts/service-model.md`：偏好 > priority > 注册顺序。
 
 ## 5. 标准消费方式
 

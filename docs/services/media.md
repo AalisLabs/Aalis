@@ -108,7 +108,7 @@ export interface MediaProcessor {
 
 有三条前提对使用 `media` 是必要的：
 
-- DI 按**名字**解析，`media` 在全局只有一个赢家：偏好 > priority（`ServicePriority`）> 注册顺序。0.5.0 起**没有** capability-based 的服务选择——capability 概念活在 `MediaProcessor.capabilities`（实例内部池）里，不是 DI 的选择维度。见 [docs/concepts/service-model.md](../concepts/service-model.md)。
+- DI 按**名字**解析，`media` 在全局只有一个赢家：偏好 > priority > 注册顺序。0.5.0 起**没有** capability-based 的服务选择——capability 概念活在 `MediaProcessor.capabilities`（实例内部池）里，不是 DI 的选择维度。见 [docs/concepts/service-model.md](../concepts/service-model.md)。
 - 消费方**每次用都重新 `getService('media')`**，不要缓存实例——provider bounce 或 reload 会让旧引用失效。见 [docs/concepts/lazy-service-access.md](../concepts/lazy-service-access.md)。
 - manifest 的双源（`package.json` 里的 `aalis.service` 与模块导出的 `provides`/`inject`）需要保持一致。见 [docs/concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。
 
