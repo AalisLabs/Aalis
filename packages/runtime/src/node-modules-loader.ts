@@ -44,17 +44,39 @@ export function isLoadablePlugin(meta: Record<string, unknown>): boolean {
  */
 export function unwrapPluginModule(ns: unknown): PluginModule {
   const mod = ns as PluginModule & { default?: PluginModule };
-  return typeof mod?.apply !== 'function' && typeof mod?.default?.apply === 'function' ? mod.default : mod;
+  // default 必须是**对象**才解包：函数/类天然继承 Function.prototype.apply，
+  // 只查 .apply 会把 `export default function/class` 误当插件解包——core 随后
+  // 调用的是 Function.prototype.apply，插件体以 ctx=undefined 空跑并被标记
+  // 已激活（比修前的静默不装更坏）。对象判据下这两种形态落回命名空间，
+  // 由 warnShape 发正确的「缺少具名导出」告警。
+  return typeof mod?.apply !== 'function' &&
+    typeof mod?.default === 'object' &&
+    mod.default !== null &&
+    typeof mod.default.apply === 'function'
+    ? mod.default
+    : mod;
 }
 
-/** 加载后形状告警：违例此前完全静默（仅 core 一行 debug），是「装了没反应」死门族。 */
-function warnShape(logger: Logger, pkgName: string, mod: PluginModule): void {
+/** 加载后形状告警：违例此前完全静默（仅 core 一行 debug），是「装了没反应」死门族。两加载器共用。 */
+export function warnShape(logger: Logger, pkgName: string, mod: PluginModule): void {
   if (!mod?.name || typeof mod?.apply !== 'function') {
     logger.warn(`插件 "${pkgName}" 缺少具名导出 name/apply，将被跳过——入口须具名导出这两者（default 已自动解包）`);
   } else if (mod.name !== pkgName) {
     logger.warn(
       `插件包 "${pkgName}" 的 module.name 为 "${mod.name}"——配置键/热扫描/卸载均以 module.name 为准，二者应一致`,
     );
+  }
+}
+
+/**
+ * 疑似插件缺关键词是「装了没反应」死门族之首：peer 依赖 core 却不带任何
+ * aalis-* 类型词（契约/前端/工具库各有其词，带了即非误漏）。两加载器共用。
+ */
+export function warnLikelyPluginMissingKeyword(logger: Logger, name: string, meta: Record<string, unknown>): void {
+  const peers = { ...(meta.peerDependencies as object), ...(meta.dependencies as object) };
+  const keywords = Array.isArray(meta.keywords) ? (meta.keywords as string[]) : [];
+  if ('@aalis/core' in peers && !keywords.some(k => k.startsWith('aalis-'))) {
+    logger.warn(`依赖 "${name}" 疑似 Aalis 插件但 keywords 缺 "aalis-plugin"，不会被加载——若确为插件请补关键词`);
   }
 }
 
@@ -88,19 +110,18 @@ export function createNodeModulesPluginLoader(projectDir: string = process.cwd()
         let metaPath: string;
         try {
           metaPath = req.resolve(`${dep}/package.json`);
-        } catch {
-          continue; // 未安装或无法解析，跳过
+        } catch (err) {
+          // 未安装保持安静；但 exports 映射屏蔽 package.json 的包（装了却读不到
+          // 元数据）是链上最早的静默死点——无法判定是否插件，必须出声。
+          if ((err as NodeJS.ErrnoException).code === 'ERR_PACKAGE_PATH_NOT_EXPORTED') {
+            logger.warn(`依赖 "${dep}" 的 exports 映射未导出 "./package.json"，无法读取元数据判定是否插件，跳过`);
+          }
+          continue;
         }
         const meta = readJson(metaPath);
         if (!meta) continue;
         if (!isLoadablePlugin(meta)) {
-          // 疑似插件缺关键词是「装了没反应」死门族之首：peer 依赖 core 却不带任何
-          // aalis-* 类型词（契约/前端/工具库各有其词，带了即非误漏）。
-          const peers = { ...(meta.peerDependencies as object), ...(meta.dependencies as object) };
-          const keywords = Array.isArray(meta.keywords) ? (meta.keywords as string[]) : [];
-          if ('@aalis/core' in peers && !keywords.some(k => k.startsWith('aalis-'))) {
-            logger.warn(`依赖 "${dep}" 疑似 Aalis 插件但 keywords 缺 "aalis-plugin"，不会被加载——若确为插件请补关键词`);
-          }
+          warnLikelyPluginMissingKeyword(logger, dep, meta);
           continue;
         }
         let entry: string;
