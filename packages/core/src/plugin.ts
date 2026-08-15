@@ -1,6 +1,6 @@
 import type { Context } from './context.js';
 import type { Logger } from './logger.js';
-import { activatePlugin, computeTargetState } from './plugin-activation.js';
+import { activatePlugin, computeTargetState, retireEntry } from './plugin-activation.js';
 import { evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
 import { normalizeDependency } from './services.js';
 import type { PluginStatusEntry } from './types/index.js';
@@ -174,14 +174,11 @@ export class PluginManager {
     // 排队到收尾的 softReload，避免在 entry 半卸载态下重算。
     this.suspendDepth++;
     try {
-      if (entry.state === 'active' && entry.context) {
-        await entry.context.disposeAsync(this.disposeTimeoutMs);
-        entry.context = undefined;
-        this.rootCtx.emit('plugin:unloaded', name).catch(err => {
-          this.logger.warn(`emit plugin:unloaded 失败 (${name}): ${err}`);
-        });
-      }
-      entry.state = 'disposed';
+      // delete 必须留在拆卸**之后**：注册表是 register/rescan 的查重闸
+      // （plugins.has(id)），提前摘除会让同 id 在旧 ctx 排空期间重新注册，
+      // 新实例与旧 ctx 同 contextId，旧链的 unregisterByContext 会把新实例
+      // 的注册连根扫掉。
+      await this.retire(entry, 'disposed');
       this.plugins.delete(name);
       this.logger.info(`插件已卸载: ${name}`);
     } finally {
@@ -192,6 +189,16 @@ export class PluginManager {
     await this.softReload();
   }
 
+  /** retireEntry 的 deps 便签（字段皆 private，无法把 this 当结构化 deps 传）。 */
+  private retire(entry: PluginEntry, target: PluginState, opts?: { emitUnloaded?: boolean }): Promise<void> {
+    return retireEntry(
+      entry,
+      target,
+      { rootCtx: this.rootCtx, logger: this.logger, disposeTimeoutMs: this.disposeTimeoutMs },
+      opts,
+    );
+  }
+
   /**
    * 启用一个已禁用的插件
    */
@@ -199,6 +206,7 @@ export class PluginManager {
     const entry = this.plugins.get(name);
     if (!entry) return false;
 
+    if (entry.state === 'disposed') return false; // 正在卸载，'disposed' 对管理路径单向（见 bouncePlugin 内注释）
     if (entry.state !== 'disabled' && entry.state !== 'error') return true; // 已经启用
     entry.state = 'pending';
     entry.error = undefined;
@@ -220,21 +228,14 @@ export class PluginManager {
       return false;
     }
 
+    if (entry.state === 'disposed') return false; // 正在卸载，'disposed' 对管理路径单向（见 bouncePlugin 内注释）
     if (entry.state === 'disabled') return true; // 已经禁用
 
     // dispose 段守卫：期间反应式 recompute 排队到收尾的 softReload
     this.suspendDepth++;
     try {
-      if (entry.state === 'active' && entry.context) {
-        await entry.context.disposeAsync(this.disposeTimeoutMs);
-        entry.context = undefined;
-        this.rootCtx.emit('plugin:unloaded', name).catch(err => {
-          this.logger.warn(`emit plugin:unloaded 失败 (${name}): ${err}`);
-        });
-      }
-
-      entry.state = 'disabled';
       this.rootCtx.config.setPluginEnabled(name, false);
+      await this.retire(entry, 'disabled');
       this.logger.info(`插件已禁用: ${name}`);
     } finally {
       this.suspendDepth--;
@@ -307,6 +308,13 @@ export class PluginManager {
       this.logger.warn(`bouncePlugin: 插件 "${name}" 处于 disabled 态，跳过`);
       return false;
     }
+    // 'disposed' 对管理路径单向：unload 写入终态与从注册表摘除之间隔着
+    // retire 的微任务（即使无 ctx 可拆，await 也让出）——此窗口内把它覆写回
+    // 'pending' 会重新武装 entry，激活出一个注册表外的永生孤儿实例。
+    if (entry.state === 'disposed') {
+      this.logger.debug(`bouncePlugin: 插件 "${name}" 正在卸载（disposed），跳过`);
+      return false;
+    }
 
     const newConfig = opts?.config;
     const newModule = opts?.module;
@@ -321,7 +329,16 @@ export class PluginManager {
     // recompute 不能在 entry 尚未转 pending 时跑——会把半 bounce 态误判。
     this.suspendDepth++;
     try {
-      if (entry.state === 'active' && entry.context) {
+      // 唯一不走 retireEntry 的拆卸点（见其 JSDoc）：写终态与拆卸之间要插入
+      // evictDownstreamConsumers，且该 await 窗口要求状态已先落——塞进 helper
+      // 需要回调钩子，不值得。本块内联复刻 helper 的四步顺序，勿改动次序。
+      entry.state = 'pending';
+      entry.error = undefined;
+      // ctx 先捕获：evict 的 await 期间并发管理操作可能已拆掉并清空
+      // entry.context，重读会 TypeError 并越过收尾的 softReload（queuedReason
+      // 悬挂 → idle() 永不落定）。disposeAsync 幂等，重复调用只会等在飞拆卸。
+      const ctx = entry.context;
+      if (ctx) {
         await evictDownstreamConsumers({
           provider: entry,
           plugins: this.plugins,
@@ -329,14 +346,16 @@ export class PluginManager {
           logger: this.logger,
           disposeTimeoutMs: this.disposeTimeoutMs,
         });
-        await entry.context.disposeAsync(this.disposeTimeoutMs);
-        entry.context = undefined;
+        try {
+          await ctx.disposeAsync(this.disposeTimeoutMs);
+        } catch (err) {
+          this.logger.error(`插件 "${name}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        if (entry.context === ctx) entry.context = undefined;
         this.rootCtx.emit('plugin:unloaded', name).catch(err => {
           this.logger.warn(`emit plugin:unloaded 失败 (${name}): ${err}`);
         });
       }
-      entry.state = 'pending';
-      entry.error = undefined;
     } finally {
       this.suspendDepth--;
     }
@@ -481,22 +500,10 @@ export class PluginManager {
           }
         }
 
-        if (entry.context) {
-          try {
-            await entry.context.disposeAsync(this.disposeTimeoutMs);
-          } catch (err) {
-            this.logger.error(
-              `插件 "${entry.instanceId}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }
-          entry.context = undefined;
-        }
-        entry.state = currentReason.type === 'shutdown' ? 'disposed' : 'pending';
-        if (currentReason.type !== 'shutdown') {
-          this.rootCtx.emit('plugin:unloaded', entry.instanceId).catch(err => {
-            this.logger.warn(`emit plugin:unloaded 失败 (${entry.instanceId}): ${err}`);
-          });
-        }
+        // 关机降级不发 unloaded：stopAll 的编排自有事件语义，逐插件不重复广播。
+        await this.retire(entry, currentReason.type === 'shutdown' ? 'disposed' : 'pending', {
+          emitUnloaded: currentReason.type !== 'shutdown',
+        });
         changed = true;
         lastRoundFlips.push(entry.instanceId);
       }

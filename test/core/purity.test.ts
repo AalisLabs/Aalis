@@ -66,7 +66,6 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
       'LogHub',
       'PluginManager',
       'ServiceContainer',
-      'ServicePriority',
       'createApp',
       'formatLogLine',
       'parseInstanceId',
@@ -91,6 +90,8 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
       'getPreferredService',
       'getService',
       'getServiceNames',
+      'listContributions', // @internal 诊断（登记表点名，同 contributionDisposerCount 一本账）
+      'listDisposables', // @internal 诊断（链序标签名单，同 disposableCount 一本账）
       'middleware',
       'on',
       'onDispose',

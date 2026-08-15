@@ -20,10 +20,10 @@ import type { PluginEntry } from '../../packages/core/src/types/plugin.js';
 // disposer 到达时清理链已排空，DisposableChain.push 走 post-dispose 分支就地
 // 执行它——资源最终会关，但**异步返回值不被等待**，承诺落空。
 //
-// 可达面：PluginManager 的 unload / disablePlugin / bouncePlugin / recompute /
-// evictDownstreamConsumers 都只对 `'active'` 动手，而 apply 在飞时 entry 是
-// `'activating'`，故那几条路进不到本窗口。承诺守的是 disposeAsync 这个公开
-// 契约本身（宿主直调）与 useModule 的沙盒子 ctx 级联。
+// 可达面：PluginManager 的 unload / disablePlugin / bouncePlugin 会主动走进
+// 本窗口（先改 entry.state 让激活收尾让位，再对在飞 ctx disposeAsync——那三条
+// 路径的行为锚在 test/core/admin-during-activation.test.ts）；本文件守的是
+// disposeAsync 这个公开契约本身（宿主直调）与 useModule 的沙盒子 ctx 级联。
 //
 // 时序不靠 sleep 赌：闸门不开 apply 就不落定，「拆卸发起时 apply 必定
 // 在飞」是结构保证，不受 CI 负载影响。唯一按时间断言的是超时兜底那条。
@@ -209,8 +209,9 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
   // 钉住 plugin-activation.ts 里那行登记——否则删掉它整个 test/core 仍然全绿，
   // 它随时会被当成死代码清掉。
   //
-  // 直接拿 entry.context 拆卸而不经 PluginManager：那几个编排入口都有
-  // `state === 'active'` 门，apply 在飞时（'activating'）根本不会调 disposeAsync。
+  // 直接拿 entry.context 拆卸而不经 PluginManager：管理入口如今会主动走进
+  // 这个窗口（先改 state 让位、再 disposeAsync，锚在 admin-during-activation），
+  // 本条钉的是更底层的「宿主直调」路径——不借任何编排、裸拆在飞 ctx。
   it('经 activatePlugin 激活的 ctx，其 apply 在飞时被拆卸也等得到 disposer', async () => {
     const root = makeContext();
     const acquire = deferred();
@@ -284,6 +285,26 @@ describe('清理超时/抛错时点名', () => {
     expect(lines.join('\n')).toMatch(/\[lancedb-table\]/);
   });
 
+  it('清理抛错记 warn 级——默认日志级别下必须可见（泄漏头号成因不许静音）', () => {
+    const lines: string[] = [];
+    const tag = (lv: string) => (m: unknown, e?: unknown) =>
+      lines.push(`${lv}|${String(m)} ${e instanceof Error ? e.message : ''}`);
+    const ctx = new Context({
+      id: 'p',
+      events: new EventBus(),
+      services: new ServiceContainer(),
+      hooks: new HookRegistry(),
+      contributions: new ContributionRegistry(),
+      logger: { warn: tag('warn'), debug: tag('debug'), info: tag('info'), error: tag('error') } as never,
+      config: new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} }),
+    });
+    ctx.onDispose(() => {
+      throw new Error('boom');
+    }, 'mongo-client');
+    ctx.dispose();
+    expect(lines.find(l => l.includes('boom'))).toMatch(/^warn\|/);
+  });
+
   it('清理抛错时也点名，不是一句无主的「已忽略」', () => {
     const { ctx, lines } = ctxWithLogSink();
     ctx.onDispose(() => {
@@ -291,5 +312,46 @@ describe('清理超时/抛错时点名', () => {
     }, 'mongo-client');
     ctx.dispose();
     expect(lines.join('\n')).toMatch(/\[mongo-client\].*boom|boom.*\[mongo-client\]/);
+  });
+});
+
+describe('拆卸窗口内的 provides 校验归因', () => {
+  // provide 的 post-dispose 守卫会吞掉拆卸窗口里的注册——那是框架层竞态，
+  // 不是作者的声明错误。此测锚死如实归因（曾报「声明 provides 但未实际注册」的假罪名）。
+  it('apply 在飞时被拆卸且声明了 provides：error 如实归因为「激活期间 Context 已被拆卸」', async () => {
+    const root = makeContext();
+    const acquire = deferred();
+
+    const entry: PluginEntry = {
+      module: {
+        name: 'prov-mod',
+        provides: ['db'],
+        async apply(ctx) {
+          await acquire.promise;
+          ctx.provide('db', {});
+        },
+      },
+      instanceId: 'prov-mod',
+      config: {},
+      state: 'pending',
+      requiredDeps: [],
+      optionalDeps: [],
+    };
+
+    const activating = activatePlugin(entry, {
+      plugins: new Map([['prov-mod', entry]]),
+      rootCtx: root,
+      logger: new DefaultLogger('test'),
+    });
+
+    const ctx = entry.context;
+    const disposing = (ctx as Context).disposeAsync(1000);
+    acquire.open();
+    await disposing;
+    await activating;
+
+    expect(entry.state).toBe('error');
+    expect(entry.error).toContain('激活期间 Context 已被拆卸');
+    expect(entry.error).not.toContain('未实际注册');
   });
 });

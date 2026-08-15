@@ -17,7 +17,7 @@ describe('DisposableChain', () => {
   it('单个清理函数异常不中断其他（被 swallow）', () => {
     const order: number[] = [];
     const logger = new DefaultLogger('test');
-    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     const chain = new DisposableChain(logger);
     chain.push(() => order.push(1));
     chain.push(() => {
@@ -26,7 +26,8 @@ describe('DisposableChain', () => {
     chain.push(() => order.push(3));
     chain.dispose();
     expect(order).toEqual([3, 1]);
-    expect(debugSpy).toHaveBeenCalled();
+    // 清理抛错记 warn 级：泄漏头号成因不许静音（默认 logLevel=info 下 debug 不可见）
+    expect(warnSpy).toHaveBeenCalled();
   });
 
   it('dispose 后再 push 立即执行', () => {

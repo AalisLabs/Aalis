@@ -12,6 +12,7 @@
 
 import type { Context } from './context.js';
 import type { Logger } from './logger.js';
+import { retireEntry } from './plugin-activation.js';
 import type { PluginEntry } from './types/plugin.js';
 
 /**
@@ -111,22 +112,9 @@ export async function evictDownstreamConsumers(args: {
     if (!other.module.requiresBounceOnDepChange) continue;
     const allDeps = [...other.requiredDeps, ...other.optionalDeps];
     if (!allDeps.some(d => providedSet.has(d.service))) continue;
-    if (other.context) {
-      try {
-        await other.context.disposeAsync(disposeTimeoutMs);
-      } catch (err) {
-        logger.error(
-          `下游消费者 "${other.instanceId}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-      other.context = undefined;
-    }
-    other.state = 'pending';
+    await retireEntry(other, 'pending', { rootCtx, logger, disposeTimeoutMs });
     logger.info(
       `级联 bounce 下游消费者 "${other.instanceId}"（requiresBounceOnDepChange=true，依赖 provider "${provider.instanceId}"）`,
     );
-    rootCtx.emit('plugin:unloaded', other.instanceId).catch(err => {
-      logger.warn(`emit plugin:unloaded 失败 (${other.instanceId}): ${err}`);
-    });
   }
 }
