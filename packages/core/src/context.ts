@@ -52,11 +52,23 @@ export class Context {
    * 条目数有界于**当前存活**的贡献数：退订时由 off 的自移除逻辑摘掉本条。
    */
   private readonly _contributionDisposers = new Map<string, () => void>();
+  /** 贡献登记表 mapKey 分隔符：NUL 是唯一保证不出现在 point 名与贡献 id 里的字符（id 只禁 '/'，空格等均合法）。 */
+  private static readonly CONTRIB_KEY_SEP = '\u0000';
   /** 活跃沙盒子上下文 id（useModule）——用于同名重复挂载时唯一化 childId。 */
   private readonly _moduleIds = new Set<string>();
   private _disposables: DisposableChain;
   private _children: Set<Context> = new Set();
   private _parent?: Context;
+  /**
+   * post-dispose 注册政策（两档，各入口守卫引用此处）：
+   * - 订阅类（on/middleware/contribute/provide/whenService）：warn + no-op——调用方常是
+   *   插件的异步续段，清理路径上不抛错；也杜绝幽灵注册（provide 曾会向活总线闪发
+   *   service:registered/unregistered，whenService 曾会真跑回调）。
+   * - 构造类（fork/useModule）：抛错——在死 ctx 上造生命周期单元是编程错误，不是清理路径。
+   * - onDispose 特例：拆卸进行中（链未排空）仍进链、被本次清理正常等待（debug）；
+   *   链已排空才就地执行且异步返回值不被等待（warn）。两种都不 no-op、不抛错——
+   *   它握着待释放的资源，丢弃即泄漏。
+   */
   private _disposed = false;
   /**
    * 在飞的拆卸 promise。`_disposed` 在清理**开始前**置位，仅凭它早退会让后来者
@@ -75,11 +87,12 @@ export class Context {
    * 会关，**但异步返回值不被等待**，于是 `disposeAsync` 的「返回时异步清理
    * 已完成」承诺落空。
    *
-   * 可达面要说清：`PluginManager` 那几条路径当前够不到这个窗口——apply 在飞时
-   * entry 处于 `'activating'`，而 unload / disablePlugin / bouncePlugin / recompute /
-   * `evictDownstreamConsumers` 全部只对 `'active'` 动手，`App.stop` 另有 `idle()`
-   * 挡在前面。本机制守的是 `disposeAsync` 这个公开契约本身（宿主直调）与
-   * `useModule` 的沙盒子 ctx 级联，不依赖那几道闸。
+   * 可达面要说清：`PluginManager` 的 unload / disablePlugin / bouncePlugin 会**主动**
+   * 走进这个窗口——三者对在飞 ctx 直接 disposeAsync（先把 entry.state 改离
+   * 'activating' 让激活收尾让位，见 plugin-activation.ts 的接管检查），依赖的正是
+   * 本机制「先等 apply 落定再排空链」的承诺；recompute / `evictDownstreamConsumers`
+   * 仍只对 `'active'` 动手，`App.stop` 另有 `idle()` 挡在前面。宿主直调
+   * `disposeAsync` 与 `useModule` 的沙盒子 ctx 级联同样由本机制兜住。
    *
    * 记住 apply 的 promise 后，`disposeAsync` 可以先等它落定再排空链——迟到的
    * disposer 就走**正常注册路径**进链，被正常 await。插件侧零改动。
@@ -134,6 +147,9 @@ export class Context {
    * 创建子上下文（通常为每个插件创建一个）
    */
   fork(id: string): Context {
+    if (this._disposed) {
+      throw new Error(`Context "${this.id}" 已 dispose，无法 fork("${id}")`);
+    }
     const child = new Context({
       id,
       events: this._events,
@@ -152,21 +168,27 @@ export class Context {
   // ---- 事件 ----
 
   on<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<AalisEvents[E]>): () => void {
+    if (this._disposed) {
+      this.logger.warn(`Context "${this.id}" 已 dispose，忽略 on("${event}")`);
+      return () => {};
+    }
     const off = this._events.on(event, handler);
-    return this.trackDisposable(off);
+    return this.trackDisposable(off, `on:${event}`);
   }
 
   /**
    * 把一个底层退订原语登记到 disposable 链，并返回**自移除**的退订函数：
    * 调用方手动退订时，闭包不再滞留 _disposables（否则它持有 handler 引用直到
    * ctx.dispose 才释放——故所有注册 API 的退订都统一走此路径，杜绝该类泄漏）。
+   *
+   * label 进入链条目：泄漏排查与超时/抛错告警按它点名（`前缀:名字` 约定）。
    */
-  private trackDisposable(off: () => void): () => void {
+  private trackDisposable(off: () => void, label?: string): () => void {
     const dispose = (): void => {
       this._disposables.remove(dispose);
       off();
     };
-    this._disposables.push(dispose);
+    this._disposables.push(dispose, label);
     return dispose;
   }
 
@@ -190,6 +212,10 @@ export class Context {
     instance: unknown,
     options?: { priority?: number; label?: string; entryId?: string },
   ): () => void {
+    if (this._disposed) {
+      this.logger.warn(`Context "${this.id}" 已 dispose，忽略 provide("${name}")`);
+      return () => {};
+    }
     const entryId = options?.entryId ?? this.id;
 
     if (this.devMode) {
@@ -198,7 +224,6 @@ export class Context {
         name,
         entryId,
         explicitEntryId: options?.entryId !== undefined,
-        priority: options?.priority,
         services: this._services,
         logger: this.logger,
       });
@@ -218,7 +243,8 @@ export class Context {
         });
       }
     };
-    this._disposables.push(dispose);
+    // 显式 entryId（一 plugin 多 entry，如 LLM 多模型）时用它点名，否则服务名已够定位
+    this._disposables.push(dispose, `provide:${options?.entryId ?? name}`);
 
     emitServiceRegistered(this._events, this.logger, name);
     this.logger.debug(`服务已注册: ${name}`);
@@ -345,6 +371,10 @@ export class Context {
   whenService<T = unknown>(name: string, cb: (svc: T) => void | (() => void)): () => void;
   // biome-ignore lint/suspicious/noConfusingVoidType: cb 可隐式返回 void 或显式返回 cleanup
   whenService<T>(name: string, cb: (svc: T) => void | (() => void)): () => void {
+    if (this._disposed) {
+      this.logger.warn(`Context "${this.id}" 已 dispose，忽略 whenService("${name}")`);
+      return () => {};
+    }
     let cleanup: (() => void) | undefined;
     let disposed = false;
     /** 当前已挂载的胜者实例；undefined = 未挂载 */
@@ -416,7 +446,7 @@ export class Context {
       attached = undefined;
     };
 
-    this._disposables.push(dispose);
+    this._disposables.push(dispose, `whenService:${name}`);
     return dispose;
   }
 
@@ -443,7 +473,11 @@ export class Context {
    * });
    */
   middleware<K extends string & keyof HookContextMap>(hook: K, fn: MiddlewareFn<HookContextMap[K]>): () => void {
-    return this.trackDisposable(this._hooks.register(hook, fn, this.id));
+    if (this._disposed) {
+      this.logger.warn(`Context "${this.id}" 已 dispose，忽略 middleware("${hook}")`);
+      return () => {};
+    }
+    return this.trackDisposable(this._hooks.register(hook, fn, this.id), `middleware:${hook}`);
   }
 
   /**
@@ -494,11 +528,14 @@ export class Context {
       this.logger.warn(`Context "${this.id}" 已 dispose，忽略 contribute("${point}")`);
       return () => {};
     }
-    const mapKey = `${point}\u0000${(spec as ContributionSpec).id}`;
+    const mapKey = `${point}${Context.CONTRIB_KEY_SEP}${(spec as ContributionSpec).id}`;
     // 同键重注册 = 替换：先撤旧登记（自移除出 dispose 链 + 撤注册表旧条目），
     // 再写新的——先删后写，避免旧闭包滞留（见 _contributionDisposers）。
     this._contributionDisposers.get(mapKey)?.();
-    const rawOff = this.trackDisposable(this._contributions.register(point, spec, this.id));
+    const rawOff = this.trackDisposable(
+      this._contributions.register(point, spec, this.id),
+      `contribute:${point}:${(spec as ContributionSpec).id}`,
+    );
     // 包一层做自移除：不删登记表条目的话，`Map → dispose 闭包 → off 闭包 →
     // entry → spec（及其 build 捕获的数据）` 这条持有链会让退订过的贡献一直
     // 活到 ctx.dispose（动态 id 场景下无界增长）。恒等卫防误删同键新注册。
@@ -620,6 +657,18 @@ export class Context {
    * @returns 取消该清理回调的函数（在 dispose 前调用可阻止执行）
    */
   onDispose(fn: () => void | Promise<void>, label?: string): () => void {
+    if (this._disposed) {
+      // 判据必须用链的 disposed，不是本 ctx 的 _disposed——后者在清理**开始前**就置位，
+      // 中间隔着等 activation / 级联子 ctx 两段窗口；落在窗口里的迟到 disposer 仍进链、
+      // 被本次清理正常等待（设计内正确路径，见 _activation），只有链已排空才真是就地执行。
+      if (this._disposables.disposed) {
+        this.logger.warn(
+          `Context "${this.id}" 已 dispose，onDispose${label ? `("${label}")` : ''} 将就地执行（异步返回值不被等待）`,
+        );
+      } else {
+        this.logger.debug(`Context "${this.id}" 拆卸进行中，onDispose${label ? `("${label}")` : ''} 纳入本次清理链`);
+      }
+    }
     const who = label ? ` [${label}]` : '';
     const wrapped = () => {
       try {
@@ -629,11 +678,11 @@ export class Context {
           // 这是 onDispose 异步契约真正兑现的通道。错误就地消化，单个清理
           // 失败不拖垮链上其他清理；同步 dispose() 忽略返回值（不等待）。
           return (ret as Promise<void>).catch(err => {
-            this.logger.debug(`onDispose 异步清理抛错（已忽略）${who}:`, err);
+            this.logger.warn(`onDispose 异步清理抛错（已忽略）${who}:`, err);
           });
         }
       } catch (err) {
-        this.logger.debug(`onDispose 清理抛错（已忽略）${who}:`, err);
+        this.logger.warn(`onDispose 清理抛错（已忽略）${who}:`, err);
       }
     };
     this._disposables.push(wrapped, label);
@@ -643,6 +692,28 @@ export class Context {
   /** @internal 当前 disposable 链长度（诊断 / 测试用：检测 provide/whenService 的闭包是否如期自移除）。 */
   get disposableCount(): number {
     return this._disposables.size;
+  }
+
+  /**
+   * @internal 链序标签名单（诊断 / 测试用）：把「卸载后还剩几个」升级为「剩的是谁」。
+   * 内核门面注册按 `前缀:名字` 约定自动点名（on:/middleware:/contribute:/provide:/whenService:），
+   * onDispose 用作者传的 label；未命名项以 undefined 占位——占位本身是信息
+   * （说明有未传 label 的 onDispose，排查时按链序号对照 `[#i]` 告警）。
+   */
+  listDisposables(): ReadonlyArray<string | undefined> {
+    return this._disposables.labels();
+  }
+
+  /**
+   * @internal 贡献登记表条目名单（诊断 / 测试用）。与 {@link listDisposables} 是
+   * 两本独立的账（同 {@link contributionDisposerCount} 的注释）——登记表泄漏
+   * 只有这里看得见。key 天然携带贡献点与贡献 id，直接拆给调用方。
+   */
+  listContributions(): ReadonlyArray<{ point: string; id: string }> {
+    return [...this._contributionDisposers.keys()].map(k => {
+      const sep = k.indexOf(Context.CONTRIB_KEY_SEP);
+      return { point: k.slice(0, sep), id: k.slice(sep + 1) };
+    });
   }
 
   /**
@@ -739,12 +810,11 @@ export class Context {
 
     // 等初始化落定，再动任何拆卸动作（见 _activation）。
     //
-    // 位置必须在这里——排在 unregisterByContext **之前**：`provide` 没有 disposed
-    // 守卫，apply 的续段仍可能注册服务，先等它才走正常注册路径、在本次清理里被
-    // 正常注销（先注销再等则落到 post-dispose 分支就地执行，多出一对空转的
-    // service:registered / unregistered 事件）。同理排在子上下文销毁之前：`fork`
-    // 也没有 disposed 守卫，续段 fork 出的 child 必须能被下面那份快照收进去
-    // （`useModule` 另有硬守卫，续段调它是抛错而非建 ctx）。
+    // 位置必须在这里——排在本方法末段的链排空**之前**：apply 续段迟到的 `onDispose`
+    // 要赶上本次清理链，这是 disposeAsync「返回即异步清理完成」承诺的落点。
+    // 也必须排在子上下文销毁之前：续段可能对先前 fork 出的子 ctx 挂 onDispose，
+    // 下移会让该 disposer 落到已排空的子链上就地执行、返回值不被等待。
+    // （provide/fork 已各自有 post-dispose 守卫，不再构成本 await 的位置理由。）
     //
     // 仅异步路径等待。同步 `dispose()` 承诺「首个 await 前同步执行完」，可观察
     // 时序与纯同步实现一致——在这里插 await 会打破它，且同步路径本就不等待任何
