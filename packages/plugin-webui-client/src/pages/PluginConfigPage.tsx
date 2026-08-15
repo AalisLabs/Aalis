@@ -118,10 +118,15 @@ export function PluginConfigPage({
   const savePluginConfig = async (instanceId: string, hasSchema: boolean) => {
     const parsed = hasSchema ? schemaDraft : unflattenConfig(editBuffer);
     markBusy(instanceId);
-    await api(`/api/plugins/${encodeURIComponent(instanceId)}/config`, {
+    const res = await api<{ ok?: boolean; error?: string }>(`/api/plugins/${encodeURIComponent(instanceId)}/config`, {
       method: 'PUT',
       body: JSON.stringify({ config: parsed }),
     });
+    if (res.error) {
+      showToast(res.error);
+      setBusySet(prev => { const next = new Set(prev); next.delete(instanceId); return next; });
+      return;
+    }
     showToast(`${instanceId} 配置已更新，正在重载…`);
     setEditingPlugin(null);
     onRefresh();

@@ -43,6 +43,9 @@ export const configSchema: ConfigSchema = {
     label: '监听端口',
     description: '必须 1-65535；非法值会报错不启动。要暂停服务请在「插件列表」里禁用本插件。',
     default: 7861,
+    min: 1,
+    max: 65535,
+    integer: true,
   } as ConfigSchema[string],
   bind: { type: 'string', label: '监听地址', default: '127.0.0.1' } as ConfigSchema[string],
   toolGroups: {
