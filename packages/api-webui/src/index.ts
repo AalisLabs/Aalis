@@ -254,11 +254,15 @@ export function useWebuiService(ctx: Context): ScopedWebuiService {
  *
  * 仅是元数据描述，core 不会读取也不会校验，仅透传给 WebUI 展示。
  *
+ * 字段名是 `extends`（PluginModule 契约与消费端一致）；它是保留字，具名导出
+ * 须用别名形式：
+ *
  * @example
- * export const extends_: ExtendDeclaration = {
+ * const ext: ExtendDeclaration = {
  *   events: ['scheduler:tick', 'scheduler:error'],
  *   hooks: ['schedule:before'],
  * };
+ * export { ext as extends };
  */
 export interface ExtendDeclaration {
   /** 该插件新增的自定义事件名 */
