@@ -10,7 +10,7 @@
 // ============================================================
 
 import type { App } from '@aalis/core';
-import { defaultsFrom } from '@aalis/schema-config';
+import { defaultsFrom, validateConfig } from '@aalis/schema-config';
 
 export interface ConfigSyncOptions {
   /**
@@ -46,6 +46,19 @@ export function syncPluginDefaults(app: App, opts?: ConfigSyncOptions): string[]
       merged = removeExtraFields(merged, schema, removed);
       if (removed.length > 0) {
         app.logger.warn(`配置同步：${status.instanceId} 裁掉 schema 外字段 [${removed.join(', ')}]`);
+      }
+    }
+
+    // 结构校验只告警不拒载：存量脏值不该打死在跑的实例，但必须出声——
+    // 静默的坏配置曾让压缩机制无声死亡一天半（summaryLLM 旧格式 ref）。
+    // 禁用插件跳过：其配置是休眠数据，"必填缺失"等问题在启用后自然浮现。
+    if (status.state !== 'disabled') {
+      const problems = validateConfig(schema, merged);
+      if (problems.length > 0) {
+        app.logger.warn(
+          `配置校验：${status.instanceId} 有 ${problems.length} 处问题（仅告警，不影响加载）：` +
+            problems.map(p => `${p.path}: ${p.message}`).join('；'),
+        );
       }
     }
 

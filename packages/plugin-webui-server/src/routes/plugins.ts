@@ -4,7 +4,7 @@ import type { ToolService } from '@aalis/api-tools';
 import type { WebUIService, WebuiPage } from '@aalis/api-webui';
 import type { AppService, Context, PluginManagerService } from '@aalis/core';
 import { parseInstanceId } from '@aalis/core';
-import { CORE_CONFIG_SCHEMA, defaultsFrom } from '@aalis/schema-config';
+import { CORE_CONFIG_SCHEMA, defaultsFrom, validateConfig } from '@aalis/schema-config';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 
@@ -222,8 +222,29 @@ export function registerPluginRoutes(
     // 补默认值再交给 updatePluginConfig：后者是**整体替换**语义（core/plugin.ts 里
     // entry.config = newConfig 直接顶掉）。不补的话，PUT 一个部分对象就会把未列出的
     // 字段从内存态和 yaml 里一起抹掉。默认值从 configSchema 派生（唯一声明来源）。
-    const defaults = defaultsFrom(pm.getPlugin(pluginName)?.module?.configSchema);
+    const schema = pm.getPlugin(pluginName)?.module?.configSchema;
+    const defaults = defaultsFrom(schema);
     const merged = { ...defaults, ...(newConfig as Record<string, unknown>) };
+
+    // 保存前校验，拦新不追旧：只拒绝本次编辑**新引入**的 invalid（配错了）。
+    // 存量问题放行——否则带着历史脏值（或 schema 表达不了的多态字段，如 mcp-client
+    // 的 args 数组形态）的插件会在 WebUI 永久存不了任何字段；启动侧 config-sync
+    // 对它们已有告警。missing（没配全）也放行：半成品配置是启用插件配到一半的
+    // 正常中间态（禁用插件的 PUT 目前在 updatePluginConfig 处按不存在拒绝，是
+    // 另一处存量问题，不在本路径解决）。
+    const stored = { ...defaults, ...ctx.config.getPluginConfig(pluginName) };
+    const preExisting = new Set(validateConfig(schema, stored).map(i => `${i.path}|${i.message}`));
+    const issues = validateConfig(schema, merged).filter(
+      i => i.kind === 'invalid' && !preExisting.has(`${i.path}|${i.message}`),
+    );
+    if (issues.length > 0) {
+      res.status(400).json({
+        error: `配置校验未通过：${issues.map(i => `${i.path}: ${i.message}`).join('；')}`,
+        issues,
+      });
+      return;
+    }
+
     const success = await pm.updatePluginConfig(pluginName, merged);
     if (success) {
       app.saveConfig();
