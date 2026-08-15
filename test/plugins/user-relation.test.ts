@@ -848,7 +848,11 @@ describe('plugin-user-relation: evictByQuota', () => {
         role: 'participant',
         evidence: [ev()],
       });
-      await new Promise(r => setTimeout(r, 1));
+      // 等到毫秒钟真的走动：setTimeout(1) 在时钟粒度合并下可能同毫秒返回，
+      // 两事件时间戳相等 → 淘汰分打平 → id 兜底随机选中「较新」的那个（偶发红）。
+      // 「最老的先删」这个断言前提要求时间戳严格递增。
+      const t = Date.now();
+      while (Date.now() === t) await new Promise(r => setTimeout(r, 0));
     }
     const result = await service.evictByQuota({
       maxEvents: 3,
