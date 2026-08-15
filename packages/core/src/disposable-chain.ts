@@ -43,6 +43,11 @@ export class DisposableChain {
     this._items.push({ fn, label });
   }
 
+  /** 链序标签名单（未命名项为 undefined 占位）。诊断读口，纯读不执行。 */
+  labels(): ReadonlyArray<string | undefined> {
+    return this._items.map(e => e.label);
+  }
+
   /** 精确移除单个 disposable（不执行）。用于缓冲项"取消"场景。 */
   remove(fn: () => unknown): boolean {
     const idx = this._items.findIndex(e => e.fn === fn);
@@ -78,7 +83,7 @@ export class DisposableChain {
 
   /**
    * 同步逆序执行所有清理函数并清空。重复调用无效果。
-   * 单个函数抛错被 swallow（可选择通过 logger 记录 debug）；
+   * 单个函数抛错被 swallow（经 logger 记 warn——清理失败是泄漏的头号成因，必须默认可见）；
    * 异步返回值**不等待**——需要等待落盘类清理时用 {@link disposeAsync}。
    */
   dispose(): void {
@@ -88,7 +93,7 @@ export class DisposableChain {
       try {
         items[i].fn();
       } catch (err) {
-        this.logger?.debug(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
+        this.logger?.warn(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
       }
     }
   }
@@ -113,7 +118,7 @@ export class DisposableChain {
           await this.awaitWithTimeout(Promise.resolve(ret), timeoutMs, describe(items[i].label, i));
         }
       } catch (err) {
-        this.logger?.debug(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
+        this.logger?.warn(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
       }
     }
   }
