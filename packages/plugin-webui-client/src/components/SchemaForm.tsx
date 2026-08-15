@@ -114,12 +114,18 @@ export function buildDraftFromSchema(schema: ConfigSchema, config: Record<string
       const existing = config[key];
       draft[key] = Array.isArray(existing) ? existing : (entry.default ?? []);
     } else if (isSchemaField(entry)) {
-      draft[key] = config[key] ?? entry.default ?? (entry.type === 'number' ? 0 : entry.type === 'boolean' ? false : entry.type === 'multiselect' ? [] : '');
+      draft[key] =
+        config[key] ??
+        entry.default ??
+        (entry.type === 'number' ? (entry.min ?? 0) : entry.type === 'boolean' ? false : entry.type === 'multiselect' ? [] : '');
     } else {
       const group: Record<string, unknown> = {};
       const src = (config[key] ?? {}) as Record<string, unknown>;
       for (const [fk, field] of Object.entries(entry.fields)) {
-        group[fk] = src[fk] ?? field.default ?? (field.type === 'number' ? 0 : field.type === 'boolean' ? false : field.type === 'multiselect' ? [] : '');
+        group[fk] =
+          src[fk] ??
+          field.default ??
+          (field.type === 'number' ? (field.min ?? 0) : field.type === 'boolean' ? false : field.type === 'multiselect' ? [] : '');
       }
       draft[key] = group;
     }
