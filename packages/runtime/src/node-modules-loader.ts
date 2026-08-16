@@ -60,7 +60,10 @@ export function unwrapPluginModule(ns: unknown): PluginModule {
 /** 加载后形状告警：违例此前完全静默（仅 core 一行 debug），是「装了没反应」死门族。两加载器共用。 */
 export function warnShape(logger: Logger, pkgName: string, mod: PluginModule): void {
   if (!mod?.name || typeof mod?.apply !== 'function') {
-    logger.warn(`插件 "${pkgName}" 缺少具名导出 name/apply，将被跳过——入口须具名导出这两者（default 已自动解包）`);
+    logger.warn(
+      `插件 "${pkgName}" 缺少具名导出 name/apply，将被跳过——入口须具名导出这两者，` +
+        `或 default 导出一个 { name, apply } 对象（default 为函数/类不属插件契约，不会被解包）`,
+    );
   } else if (mod.name !== pkgName) {
     logger.warn(
       `插件包 "${pkgName}" 的 module.name 为 "${mod.name}"——配置键/热扫描/卸载均以 module.name 为准，二者应一致`,
