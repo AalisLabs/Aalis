@@ -1,7 +1,11 @@
 import { resolveLLMModel } from '@aalis/api-llm';
 import type { MediaService } from '@aalis/api-media';
 import type { MemoryService } from '@aalis/api-memory';
+import type { ProcessService } from '@aalis/api-process';
+import type { StorageService } from '@aalis/api-storage';
 import type { Context } from '@aalis/core';
+import { cacheOneAttachment } from './attachment-cache.js';
+import type { ForwardMediaTask } from './forward.js';
 import { buildEnvelope, expandForward } from './forward.js';
 import type { OneBotMessageSegment } from './types.js';
 import { collectForwardSegments } from './types.js';
@@ -39,8 +43,10 @@ export interface ForwardConfig {
   maxDepth: number;
   maxNodesPerLevel: number;
   imageRecognition: boolean;
-  /** 同一条合并转发内图片识别并发上限。默认 8。 */
+  /** 同一条消息的转发展开内媒体识别（图片/语音/视频）并发上限。默认 8。 */
   imageRecognitionConcurrency: number;
+  /** 单条合并转发内媒体识别数量上限（图片/语音/视频合计，超出的以占位符保留）。0=不限。默认 32。 */
+  recognitionMaxItems: number;
   summarize: boolean;
   summaryLLM?: { provider: string; model: string };
   summaryMaxChars: number;
@@ -55,6 +61,8 @@ export interface ForwardConfig {
 export interface ForwardExpanderDeps<TState> {
   ctx: Context;
   forwardCfg: ForwardConfig;
+  /** 单附件落盘字节上限（与入站附件缓存同源） */
+  attachmentMaxBytes: number;
   /** 调用 OneBot action 的回调（已绑定到具体的连接状态） */
   sendAction: (state: TState, action: string, params: Record<string, unknown>) => Promise<unknown>;
 }
@@ -64,7 +72,12 @@ export interface ForwardExpander<TState> {
   setCachedForward(id: string, entry: ForwardEntry): void;
   loadPersistedForward(id: string): Promise<ForwardEntry | undefined>;
   fetchForwardOnce(state: TState, id: string): Promise<unknown | null>;
-  expandForwardsInText(state: TState, text: string, rawSegments: OneBotMessageSegment[] | undefined): Promise<string>;
+  expandForwardsInText(
+    state: TState,
+    text: string,
+    rawSegments: OneBotMessageSegment[] | undefined,
+    sessionId: string,
+  ): Promise<string>;
 }
 
 const FORWARD_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -133,7 +146,7 @@ function createConcurrencyLimited<TArg, TRet>(
  * 内存缓存 1h TTL；持久化由 memory metadata 兜底（如果实现支持）。
  */
 export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>): ForwardExpander<TState> {
-  const { ctx, sendAction, forwardCfg } = deps;
+  const { ctx, sendAction, forwardCfg, attachmentMaxBytes } = deps;
   const forwardCache = new Map<string, { entry: ForwardEntry; expiresAt: number }>();
   /** 上次回收过期持久化条目的时刻。0 = 本次启动还没扫过，首条消息即扫一次。 */
   let lastSweepAt = 0;
@@ -285,10 +298,83 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
    * 优先使用消息段里随帧带来的 inline content（部分 NapCat 版本会内嵌），
    * 这种情况下顶层无需走网络。
    */
+  /** 转发媒体落盘的下载并发（纯网络 IO，与模型识别并发解耦） */
+  const MEDIA_DOWNLOAD_CONCURRENCY = 4;
+
+  /**
+   * 转发媒体两阶段解析器工厂（每条消息一个，识别信号量在同消息的多条转发间共享）。
+   *
+   * 阶段一：全部任务并发落盘（下载信号量），趁展开瞬间 URL 尚新鲜——QQ 媒体 URL 的
+   * rkey 短时效，识别队列可能排几分钟到几小时，旧结构「排到才取 URL」实测成批 400。
+   * 落盘失败回退原始 src（旧行为，识别侧自行再试）。
+   * 阶段二：模型识别（识别信号量 = imageRecognitionConcurrency，本机视觉产能有限，
+   * 转发批量识别是后台工作，靠低并发给实时入站识别让行）。
+   * 单条转发识别数量受 recognitionMaxItems 截断，超出项保持占位符。
+   */
+  function createMediaResolver(
+    sessionId: string,
+    mediaSvc: MediaService,
+    concurrency: number,
+  ): (tasks: ForwardMediaTask[]) => Promise<Map<string, string | undefined>> {
+    // 全身 try：任何单点异常（含服务解析）都只降级本项为原始 src，绝不让整批 Promise.all 崩掉
+    const download = createConcurrencyLimited(async (task: ForwardMediaTask): Promise<string> => {
+      try {
+        const storage = ctx.getService<StorageService>('storage');
+        const proc = ctx.getService<ProcessService>('process');
+        if (!storage || !proc) return task.src;
+        const local = await cacheOneAttachment(
+          storage,
+          proc,
+          task.kind,
+          task.src,
+          sessionId,
+          attachmentMaxBytes,
+          ctx.logger,
+        );
+        return local ?? task.src;
+      } catch {
+        return task.src;
+      }
+    }, MEDIA_DOWNLOAD_CONCURRENCY);
+
+    const recognize = createConcurrencyLimited(
+      async (input: { kind: ForwardMediaTask['kind']; src: string }): Promise<string | undefined> => {
+        if (input.kind === 'image') return mediaSvc.describeImage ? await mediaSvc.describeImage(input.src) : undefined;
+        if (input.kind === 'audio')
+          return mediaSvc.transcribe ? await mediaSvc.transcribe({ kind: 'audio', data: input.src }) : undefined;
+        return mediaSvc.describeVideo ? (await mediaSvc.describeVideo(input.src)) || undefined : undefined;
+      },
+      concurrency,
+    );
+
+    return async (tasks: ForwardMediaTask[]): Promise<Map<string, string | undefined>> => {
+      const results = new Map<string, string | undefined>();
+      const cap = forwardCfg.recognitionMaxItems;
+      const active = cap > 0 ? tasks.slice(0, cap) : tasks;
+      if (active.length < tasks.length) {
+        ctx.logger.info(
+          `合并转发媒体识别超出上限（${tasks.length} 项 > ${cap}），后 ${tasks.length - active.length} 项按占位符保留`,
+        );
+      }
+      await Promise.all(
+        active.map(async task => {
+          const src = await download(task);
+          try {
+            results.set(task.token, await recognize({ kind: task.kind, src }));
+          } catch {
+            results.set(task.token, undefined);
+          }
+        }),
+      );
+      return results;
+    };
+  }
+
   async function expandForwardsInText(
     state: TState,
     text: string,
     rawSegments: OneBotMessageSegment[] | undefined,
+    sessionId: string,
   ): Promise<string> {
     if (!forwardCfg.enabled) return text;
     if (!text.includes('<forward id=')) return text;
@@ -310,95 +396,91 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     if (ids.size === 0) return text;
 
     const mediaSvc = ctx.getService<MediaService>('media');
-    const rawRecognize =
-      forwardCfg.imageRecognition && mediaSvc?.describeImage ? (src: string) => mediaSvc.describeImage(src) : undefined;
     const concurrency = Math.max(1, forwardCfg.imageRecognitionConcurrency);
-    // 用一个简单 semaphore 限制单次展开内的图片/音频/视频识别并发，避免 OOM/触发上游限流
-    const recognizeImage = rawRecognize ? createConcurrencyLimited(rawRecognize, concurrency) : undefined;
-    const recognizeAudio = mediaSvc?.transcribe
-      ? createConcurrencyLimited((src: string) => mediaSvc.transcribe({ kind: 'audio', data: src }), concurrency)
-      : undefined;
-    const recognizeVideo = mediaSvc?.describeVideo
-      ? createConcurrencyLimited(async (src: string) => (await mediaSvc.describeVideo(src)) || undefined, concurrency)
-      : undefined;
+    const resolveMedia = mediaSvc ? createMediaResolver(sessionId, mediaSvc, concurrency) : undefined;
 
     const envelopeMap = new Map<string, string>();
-    for (const id of ids) {
-      let entry = getCachedForward(id);
-      if (!entry) {
-        const persisted = await loadPersistedForward(id);
-        if (persisted) {
-          setCachedForward(id, persisted);
-          entry = persisted;
+    // 多 forward id 并行展开：串行 for 会让第二条转发的「取源+落盘」排在第一条的
+    // 识别队列之后——正是两阶段化要消灭的事故形状（审计探针实证）。id 互相独立
+    // （envelopeMap 各写各键、缓存按 id、信号量在 resolver 闭包里共享），并行安全。
+    await Promise.all(
+      [...ids].map(async id => {
+        let entry = getCachedForward(id);
+        if (!entry) {
+          const persisted = await loadPersistedForward(id);
+          if (persisted) {
+            setCachedForward(id, persisted);
+            entry = persisted;
+          }
         }
-      }
-      if (entry) {
-        envelopeMap.set(
-          id,
-          buildEnvelope(
-            {
-              id,
-              count: entry.count,
-              participants: entry.participants,
-              fullText: entry.fullText,
-              truncatedDepth: false,
-              truncatedNodes: false,
-            },
-            entry.summary,
-          ),
-        );
-        continue;
-      }
-
-      try {
-        const expanded = await expandForward(id, inlineMap.get(id) ?? null, {
-          fetchForward: (childId: string) => fetchForwardOnce(state, childId),
-          recognizeImage,
-          recognizeAudio,
-          recognizeVideo,
-          maxDepth: forwardCfg.maxDepth,
-          maxNodesPerLevel: forwardCfg.maxNodesPerLevel,
-          imageRecognitionEnabled: forwardCfg.imageRecognition,
-        });
-
-        if (!expanded.fullText.trim()) {
+        if (entry) {
           envelopeMap.set(
             id,
-            `<forward id="${id}">[合并转发消息：协议端无法读取（可能已过期/不在当前会话作用域）]</forward>`,
+            buildEnvelope(
+              {
+                id,
+                count: entry.count,
+                participants: entry.participants,
+                fullText: entry.fullText,
+                truncatedDepth: false,
+                truncatedNodes: false,
+              },
+              entry.summary,
+            ),
           );
-          continue;
+          return;
         }
 
-        const summary = await summarizeForward(expanded.fullText, {
-          count: expanded.count,
-          participants: expanded.participants,
-        });
+        try {
+          const expanded = await expandForward(id, inlineMap.get(id) ?? null, {
+            fetchForward: (childId: string) => fetchForwardOnce(state, childId),
+            resolveMedia,
+            maxDepth: forwardCfg.maxDepth,
+            maxNodesPerLevel: forwardCfg.maxNodesPerLevel,
+            imageRecognitionEnabled: forwardCfg.imageRecognition && !!mediaSvc?.describeImage,
+            audioRecognitionEnabled: !!mediaSvc?.transcribe,
+            videoRecognitionEnabled: !!mediaSvc?.describeVideo,
+          });
 
-        const stored: ForwardEntry = {
-          fullText: expanded.fullText,
-          summary,
-          count: expanded.count,
-          participants: expanded.participants,
-          expandedAt: Date.now(),
-        };
-        setCachedForward(id, stored);
+          if (!expanded.fullText.trim()) {
+            envelopeMap.set(
+              id,
+              `<forward id="${id}">[合并转发消息：协议端无法读取（可能已过期/不在当前会话作用域）]</forward>`,
+            );
+            return;
+          }
 
-        const truncFlag = expanded.truncatedDepth || expanded.truncatedNodes ? ' [truncated]' : '';
-        // 日志里输出完整摘要（或在无摘要时输出完整原文），便于排查 forward 实际入库内容；
-        // 不再做 80 字 preview 截断，避免「日志看不到全貌」。原文/摘要都已入库到
-        // forwardCache + memory metadata，后续 onebot_get_forward_msg 可直接取回。
-        const fullPreview = (summary ?? expanded.fullText).replace(/\n/g, ' ');
-        ctx.logger.debug(
-          `forward 展开完成 id=${id} count=${expanded.count} participants=[${expanded.participants.join(',')}]` +
-            ` summary=${summary ? `${summary.length}字` : 'null'}${truncFlag} content="${fullPreview}"`,
-        );
+          const summary = await summarizeForward(expanded.fullText, {
+            count: expanded.count,
+            participants: expanded.participants,
+          });
 
-        envelopeMap.set(id, buildEnvelope(expanded, summary));
-      } catch (err) {
-        ctx.logger.warn(`forward 展开失败 id=${id}: ${err}`);
-        envelopeMap.set(id, `<forward id="${id}">[合并转发消息：展开过程出错]</forward>`);
-      }
-    }
+          const stored: ForwardEntry = {
+            fullText: expanded.fullText,
+            summary,
+            count: expanded.count,
+            participants: expanded.participants,
+            expandedAt: Date.now(),
+          };
+          setCachedForward(id, stored);
+
+          const truncFlag = expanded.truncatedDepth || expanded.truncatedNodes ? ' [truncated]' : '';
+          // 日志里输出完整摘要（或在无摘要时输出完整原文），便于排查 forward 实际入库内容；
+          // 不再做 80 字 preview 截断，避免「日志看不到全貌」。原文/摘要都已入库到
+          // forwardCache + memory metadata，后续 onebot_get_forward_msg 可直接取回。
+          const fullPreview = (summary ?? expanded.fullText).replace(/\n/g, ' ');
+          ctx.logger.debug(
+            `forward 展开完成 id=${id} count=${expanded.count} participants=[${expanded.participants.join(',')}]` +
+              ` summary=${summary ? `${summary.length}字` : 'null'}${truncFlag} content="${fullPreview}"`,
+          );
+
+          envelopeMap.set(id, buildEnvelope(expanded, summary));
+        } catch (err) {
+          ctx.logger.warn(`forward 展开失败 id=${id}: ${err}`);
+          envelopeMap.set(id, `<forward id="${id}">[合并转发消息：展开过程出错]</forward>`);
+        }
+      }),
+    );
 
     return text.replace(idRe, (raw, id: string) => envelopeMap.get(id) ?? raw);
   }

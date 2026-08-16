@@ -17,12 +17,7 @@ import {
 } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 import WebSocket from 'ws';
-import {
-  cacheAttachmentBuffer,
-  detectExtensionFromBuffer,
-  loadAttachmentBuffer,
-  transcodeAudioBufferToWav,
-} from './attachment-cache.js';
+import { cacheOneAttachment } from './attachment-cache.js';
 import { renderAttachmentsAsContentMarkers } from './attachments.js';
 import { createForwardExpander, DEFAULT_FORWARD_SUMMARY_PROMPT, type ForwardConfig } from './forward-expand.js';
 import { extractSentMessageId, SentMessageTracker } from './sent-messages.js';
@@ -51,6 +46,8 @@ function parseForwardConfig(config: Record<string, unknown>): ForwardConfig {
       typeof fwdRaw.imageRecognitionConcurrency === 'number'
         ? Math.max(1, Math.floor(fwdRaw.imageRecognitionConcurrency))
         : 8,
+    recognitionMaxItems:
+      typeof fwdRaw.recognitionMaxItems === 'number' ? Math.max(0, Math.floor(fwdRaw.recognitionMaxItems)) : 32,
     summarize: fwdRaw.summarize !== false,
     summaryLLM:
       fwdRaw.summaryLLM &&
@@ -174,9 +171,19 @@ export const configSchema: ConfigSchema = {
       },
       imageRecognitionConcurrency: {
         type: 'number',
-        label: '图片识别并发上限',
+        label: '媒体识别并发上限',
         default: 8,
-        description: '同一条合并转发内允许同时进行的图片识别任务数。过高可能压垮上游模型；过低会拖慢长转发展开。',
+        description:
+          '单条消息的转发展开内允许同时进行的媒体识别（图片/语音/视频）任务数。' +
+          '本地模型部署建议设 1-2：转发批量识别是后台工作，低并发能减少对实时入站识别的挤占' +
+          '（注意这是统计性缓解，不是优先级调度——多条消息各有各的并发额度，模型侧也无插队机制）。',
+      },
+      recognitionMaxItems: {
+        type: 'number',
+        label: '单条转发媒体识别上限',
+        default: 32,
+        description:
+          '单条合并转发内最多识别多少个媒体（图片/语音/视频合计）；超出的以 [图片] 等占位符保留，不再消耗模型算力。设为 0 表示不限。',
       },
       summarize: {
         type: 'boolean',
@@ -376,36 +383,6 @@ const KIND_PLACEHOLDER: Record<'image' | 'audio' | 'video' | 'file', { placehold
     video: { placeholder: '[视频]', ref: AttachmentRefKind.Video },
     file: { placeholder: '[文件]', ref: AttachmentRefKind.File },
   };
-
-/**
- * 把单个附件下载（必要时转码）后落盘，返回相对路径。失败返回 null。
- * - audio：先 ffmpeg → 16kHz mono WAV，再以 .wav 入库（用户期望转码后存储，
- *   方便后续 LLM 反复分析；同时避免下游每次重转码）。
- * - 其他 kind：原样落盘，扩展名按 magic header 推断。
- */
-async function cacheOneAttachment(
-  storage: import('@aalis/api-storage').StorageService,
-  proc: import('@aalis/api-process').ProcessService,
-  kind: 'image' | 'audio' | 'video' | 'file',
-  source: string,
-  sessionId: string,
-  maxBytes: number,
-  logger: Context['logger'],
-): Promise<string | null> {
-  const buf = await loadAttachmentBuffer(storage, proc, source, maxBytes);
-  if (!buf) return null;
-  if (kind === 'audio') {
-    const inExt = detectExtensionFromBuffer(buf, 'bin');
-    const wav = await transcodeAudioBufferToWav(proc, storage, buf, inExt);
-    if (!wav) {
-      logger.warn(`OneBot 音频转 WAV 失败 (in=${inExt}, size=${buf.byteLength}B)，保留原 URL`);
-      return null;
-    }
-    return await cacheAttachmentBuffer(storage, wav, 'audio', sessionId, 'wav', maxBytes);
-  }
-  const ext = detectExtensionFromBuffer(buf, kind === 'image' ? 'jpg' : kind === 'video' ? 'mp4' : 'bin');
-  return await cacheAttachmentBuffer(storage, buf, kind, sessionId, ext, maxBytes);
-}
 
 /**
  * 把 text 中所有 [图片]/[语音]/[视频]/[文件] 占位按 attachments 顺序替换为
@@ -991,7 +968,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       // 2. 嵌套合并转发：展开为信封 + 摘要（命中现有 forward 缓存即零开销）
       if (content.includes('<forward id=')) {
         try {
-          content = await expandForwardsInText(state, content, segments);
+          content = await expandForwardsInText(state, content, segments, sessionId ?? 'onebot:unknown');
         } catch (err) {
           ctx.logger.debug(`引用消息中的合并转发展开失败: ${err}`);
         }
@@ -1035,6 +1012,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const forwardExpander = createForwardExpander({
     ctx,
     forwardCfg,
+    attachmentMaxBytes,
     sendAction,
   });
   const { getCachedForward, setCachedForward, loadPersistedForward, fetchForwardOnce, expandForwardsInText } =
@@ -1715,7 +1693,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       // 这样 LLM 不必再调用工具，且展开后的内容会随 inbound:message 进入历史归档。
       if (event.text.includes('<forward id=')) {
         try {
-          event.text = await expandForwardsInText(state, event.text, event.message);
+          event.text = await expandForwardsInText(state, event.text, event.message, sessionId);
         } catch (err) {
           ctx.logger.debug(`合并转发自动展开失败: ${err}`);
         }
