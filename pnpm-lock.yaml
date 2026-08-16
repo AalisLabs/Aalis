@@ -493,7 +493,7 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
       '@aalis/schema-message':
-        specifier: workspace:>=0.5.1 <1.0.0
+        specifier: workspace:>=0.6.0 <1.0.0
         version: link:../schema-message
       '@aalis/util-network-guard':
         specifier: workspace:>=0.5.1 <1.0.0
@@ -1169,7 +1169,7 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../api-tools
       '@aalis/schema-config':
-        specifier: workspace:>=0.9.0 <1.0.0
+        specifier: workspace:>=0.11.0 <1.0.0
         version: link:../schema-config
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.4
@@ -2045,7 +2045,7 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../schema-config
       '@aalis/schema-message':
-        specifier: workspace:>=0.5.1 <1.0.0
+        specifier: workspace:>=0.6.0 <1.0.0
         version: link:../schema-message
     devDependencies:
       '@aalis/api-flow-control':
@@ -2318,7 +2318,7 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-webui
       '@aalis/schema-config':
-        specifier: workspace:>=0.10.0 <1.0.0
+        specifier: workspace:>=0.11.0 <1.0.0
         version: link:../schema-config
       '@aalis/util-dep-spec':
         specifier: workspace:>=0.1.0 <1.0.0
@@ -2428,7 +2428,7 @@ importers:
   packages/runtime:
     dependencies:
       '@aalis/schema-config':
-        specifier: workspace:>=0.10.0 <1.0.0
+        specifier: workspace:>=0.11.0 <1.0.0
         version: link:../schema-config
       chalk:
         specifier: ^5.4.0
