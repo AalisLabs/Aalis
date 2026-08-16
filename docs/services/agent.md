@@ -53,7 +53,7 @@ export interface AgentService {
 
 ## 3. 谁提供 / 谁消费
 
-**提供方**：`@aalis/plugin-agent`（唯一默认实现）。注册见 `packages/plugin-agent/src/index.ts`：`ctx.provide('agent', agentImpl)`，未声明 priority（= `Backend` 0）。
+**提供方**：`@aalis/plugin-agent`（唯一默认实现）。注册见 `packages/plugin-agent/src/index.ts`：`ctx.provide('agent', agentImpl)`，未声明 priority（= 默认 0）。
 
 **消费方（典型且真实）**：
 
