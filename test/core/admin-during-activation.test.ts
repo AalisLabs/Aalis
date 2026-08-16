@@ -128,6 +128,55 @@ describe('disablePlugin 撞上 activating 窗口', () => {
   });
 });
 
+describe('evict 不得进入终态拆卸窗口（disabled 的慢 onDispose 撞并发 bounce）', () => {
+  it('disable 在飞时 provider 被 bounce：消费者终态锁 disabled，不被 evict 复活', async () => {
+    const { app, trace } = makeWorld();
+    const provider: PluginModule = {
+      name: 'prov',
+      provides: ['p-svc'],
+      apply(ctx: Context, config: Record<string, unknown>) {
+        ctx.provide('p-svc', { v: config.v ?? 1 });
+      },
+    };
+    let releaseDispose!: () => void;
+    let disposeEntered!: () => void;
+    const disposeGate = new Promise<void>(r => {
+      releaseDispose = r;
+    });
+    const disposeEnteredP = new Promise<void>(r => {
+      disposeEntered = r;
+    });
+    const consumer: PluginModule = {
+      name: 'cons',
+      inject: { optional: ['p-svc'] },
+      requiresBounceOnDepChange: true,
+      apply(ctx: Context) {
+        trace.push('cons:apply');
+        ctx.onDispose(async () => {
+          disposeEntered();
+          await disposeGate;
+        }, 'cons:gated');
+      },
+    };
+    await app.plugin(provider, { v: 1 });
+    await app.plugin(consumer);
+    await app.plugins.idle();
+
+    // disable 写下 'disabled' 终态、卡在慢 onDispose 上（ctx 未清的终态窗口）
+    const disabling = app.plugins.disablePlugin('cons');
+    await disposeEnteredP;
+    // 并发 bounce provider——修前 evict 凭 ctx 在场扫进窗口，把 disabled 覆写回 pending 复活
+    const bouncing = app.plugins.updatePluginConfig('prov', { v: 2 });
+    releaseDispose();
+    await Promise.all([disabling, bouncing]);
+    await app.plugins.idle();
+
+    expect(app.plugins.getPlugin('cons')?.state).toBe('disabled');
+    expect(trace.filter(t => t === 'cons:apply')).toHaveLength(1);
+    expect(app.ctx.getService('cons-svc')).toBeUndefined();
+  });
+});
+
 describe('evict 疏散 activating 下游（判据=entry.context）', () => {
   it('provider 重载时在飞下游同样被疏散并以新 provider 重激活', async () => {
     const { app, trace } = makeWorld();
@@ -179,9 +228,11 @@ describe('evict 疏散 activating 下游（判据=entry.context）', () => {
 describe('error 终态的不变量：context 已清', () => {
   it('apply 抛错进 error 后 context 为空（enablePlugin 复活路径依赖此不变量）', async () => {
     const { app } = makeWorld();
+    let attempts = 0;
     await app.plugin({
       name: 'boom',
       apply() {
+        attempts++;
         throw new Error('立即爆炸');
       },
     });
@@ -190,10 +241,13 @@ describe('error 终态的不变量：context 已清', () => {
     await app.plugins.idle();
     expect(app.plugins.getPlugin('boom')?.state).toBe('error');
     expect(app.plugins.getPlugin('boom')?.context).toBeUndefined();
-    // 复活路径畅通：enable 后可重新激活（若 context 未清会被闸永久跳过）
-    // 注：apply 仍会抛错回到 error，但激活确实发生了（error 消息刷新）
+    // 复活路径畅通的鉴别性断言：enable 后第二次激活**确实发生**（apply 计数 +1）。
+    // 若 context 未清，激活会被「旧 ctx 未清」闸永久跳过，attempts 停在 1。
     const ok = await app.plugins.enablePlugin('boom');
     expect(ok).toBe(true);
+    await app.plugins.idle();
+    expect(attempts).toBe(2);
+    expect(app.plugins.getPlugin('boom')?.state).toBe('error');
   });
 });
 
