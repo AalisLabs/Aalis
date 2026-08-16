@@ -37,7 +37,7 @@ export const DEFAULT_VISION_PROMPT =
  * Vision 详细描述 prompt：用于一般信息密度较高的图片（文档/PPT/代码/表格/截图/网络梗等）。
  * 不限字数，聚焦"图像整体详情识别"，**不与某一学科绑定**。
  * 学科题目（数学/物理/化学等需要严格 LaTeX 与几何坐标识别）请使用 `professional` 档位。
- * 选用条件：用户/agent 显式 detail_level='detailed'，或两阶段分类判定为 document/mixed。
+ * 选用条件：用户/agent 显式 detail_level='detailed'（auto 档由自路由 prompt 在单次推理内自判）。
  */
 export const DEFAULT_VISION_DETAILED_PROMPT =
   '请用中文详细描述这张图片中的全部可识别内容，不限字数，确保信息完整：' +
@@ -60,7 +60,7 @@ export const DEFAULT_VISION_DETAILED_PROMPT =
  * - 强制使用标准 LaTeX 命令（如 `\complement_U A` 而非 `C_U A`）
  * - 几何图必须先验证边长再下形状结论（防止"正方形 FEDC"幻觉）
  * - 自适应：不是题目时不套题号/ABCD 格式，正确点明类型（函数图/笔记/代码 等）
- * 选用条件：用户/agent 显式 detail_level='professional'，或两阶段分类判定为 professional 类。
+ * 选用条件：用户/agent 显式 detail_level='professional'（auto 档由自路由 prompt 在单次推理内自判）。
  */
 export const DEFAULT_VISION_PROFESSIONAL_PROMPT =
   '请完整识别这张图片中实际存在的全部内容，用自然中文连续叙述，不要使用编号小标题（如「文字部分：」「公式：」）' +
@@ -86,16 +86,33 @@ export const DEFAULT_VISION_PROFESSIONAL_PROMPT =
   '最后用一句话总结图片核心信息与发送者可能的意图。宁可漏说细节，也不要瞎编。';
 
 /**
- * 两阶段轻量分类 prompt：要求模型从 4 个标签里选一个，让客户端据此挑专业/详细/简洁 prompt。
- * 设计目标：极短输出、易解析、覆盖率高。fallback 一律按 detailed 处理。
+ * 自路由 auto prompt：单次推理内让模型先判断图片类型、再按类型给相应详略的描述。
+ * 取代旧的两阶段「分类→选模板」——分类那次推理的大头是图像编码，输出只有一个标签，
+ * 却让每张图的视觉算力翻倍；自路由把判断折进描述请求本身，判断质量不降、推理减半。
+ * 显式 detail_level（casual/detailed/professional）仍走各自模板，仅 auto 用本 prompt。
  */
-export const VISION_CLASSIFY_PROMPT =
-  '只用一个英文标签回答这张图片属于哪类，**只输出标签本身**，不要任何解释或标点：\n' +
-  '- `professional`：数学题、物理题、化学题、生物题、考试卷、含 LaTeX 公式/几何图/受力图/电路图/化学反应式的学科题目\n' +
-  '- `document`：非学科类的文档、PPT、书页、代码截图、表格、长截图、网页/文章截图、含密集文字的图\n' +
-  '- `casual`：聊天截图、表情包/梗图、游戏截图、生活照、宠物/人物自拍、风景\n' +
-  '- `mixed`：含少量文字但主要是图像内容（如带文案的截图、海报、漫画格）\n' +
-  '默认 unknown 时也只输出 `document`（保守原则，宁详勿略）。';
+export const DEFAULT_VISION_AUTO_PROMPT =
+  '先判断这张图属于哪类，再按对应方式用自然中文描述。不要回显本提示词，' +
+  '不要在开头输出类别名或解释判断过程，直接给出描述本身：\n' +
+  '- 表情包/梗图/聊天日常/生活照/游戏截图/风景 → 简洁描述（200 字以内，1–2 段连贯文字，不列点）：' +
+  '先抓 1–2 个最值得注意的视觉重点（优先反常之处：醒目文字或表情包文案、反常的数量/颜色、不该出现却出现的东西），' +
+  '再补主体、场景、人物动作与表情、整体氛围。\n' +
+  '- 文档/PPT/书页/代码/表格/长截图/网页等文字密集图，以及海报/漫画格/带文案的截图等图文混合内容 → ' +
+  '完整识别，不限字数：抄录所有可辨认文字（含字母大小写与标点）；代码逐行抄录并用代码块标语言；' +
+  '表格用 Markdown 表格语法；文档按视觉层级列出标题与要点；手写笔迹/批注/箭头单独说明位置和内容。\n' +
+  '- 数学/物理/化学/生物等学科题目、考试卷 → 逐题完整识别：保留题号、小问与选项编号；' +
+  '公式用标准 LaTeX 包在 $...$ 里（补集 $\\complement_U A$、分式 $\\frac{}{}$、根号 $\\sqrt{}$、' +
+  '向量 $\\vec{a}$，化学反应式带配平系数，物理量保留单位）；' +
+  '几何图/函数图/电路图列出所有标注的点（能读坐标则写坐标、逐个看准不要错配）、线段、角度与读数；' +
+  '从顶点判断形状前先验证每条边长度，任一边为 0 或两点重合即放弃该形状判断。\n' +
+  '拿不准属于哪类时，按文字密集图完整识别（宁详勿略）。\n\n' +
+  '通用要求：只描述图中实际可见的内容——无手写就不提手写、无图形就不列顶点、无选项就不写 ABCD；' +
+  '画面中的数字（连胜天数、分数、价格、日期等）逐位看准、以图为准，不受对话上下文旧数字影响；' +
+  '文字因字体缺失显示为方块（□□□）时写「该区域为乱码方块」即可，不要硬猜内容；' +
+  '有把握的游戏/动画/角色/网络梗可以点名，没把握就如实描述外观、UI、配色与文字，' +
+  '不要硬猜名字、更不要往热门作品上套（认错比模糊更糟）；' +
+  '不要推测发送者的情绪、动机或心理状态，除非图中文字或表情包模板自身明确表达；' +
+  '最后用一句话点明图片类型与可能意图。宁可说看不出，也不要编造。';
 
 export const DEFAULT_VISION_BATCH_PROMPT =
   '以下是一组按顺序排列的图片，请综合所有图片做一段连贯的中文描述。先抓住整组图最值得注意的点：' +
@@ -280,7 +297,7 @@ function wrapLLMAsProcessor(
     priority: 0,
     async describe(input: DescribeInput, _ctx: Context): Promise<DescribeResult> {
       // base 优先级：调用方显式 basePrompt > wrap 时注入的 opts.prompt > 内置默认
-      // 调用方需要切换 prompt（如分类/详细/专业模式）时必须传 input.basePrompt，
+      // 调用方需要切换 prompt（如详细/专业模板或自路由）时必须传 input.basePrompt，
       // 不要塞进 hint —— 否则会和默认 base 同时存在产生指令冲突。
       const explicitBase = input.basePrompt;
       const base =
