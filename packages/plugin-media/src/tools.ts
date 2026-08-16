@@ -74,9 +74,10 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaService): vo
           '支持自定义提示词，例如：「提取图中所有文字」「描述 UI 布局」「找到按钮位置」等。\n' +
           '\n' +
           '**关于 detail_level（详略级别）**：\n' +
-          '- `auto`（默认）：自动判断图片类型选择详略，未知类一律按详细处理\n' +
+          '- `auto`（默认）：模型看图自判类型并按类型给相应详略（单次推理自路由）\n' +
           '- `casual`：简洁日常描述（200 字以内、识别梗/游戏标志），适合聊天截图、表情包、生活照\n' +
-          '- `detailed`：详细 OCR 描述（不限字数、逐项列出、含 LaTeX 公式），**强烈建议数学题/物理题/代码截图/表格/试卷/PPT/含密集文字的图片显式传 detailed**\n' +
+          '- `detailed`：详细 OCR 描述（不限字数、逐项列出、含 LaTeX 公式），**强烈建议代码截图/表格/PPT/含密集文字的图片显式传 detailed**\n' +
+          '- `professional`：学科题目严格识别（逐题列题号、强 LaTeX、几何坐标验证），适合数学/物理/化学试卷与习题\n' +
           '\n' +
           '**关于 prompt（自定义提示词）**：\n' +
           '对数学/代码/文档/表格类图片，建议你的 prompt 明确写「请逐题列出每道题与所有选项」「请用 LaTeX 抄录所有公式」' +
@@ -96,9 +97,10 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaService): vo
             context: { type: 'string', description: '补充上下文（可选）。' },
             detail_level: {
               type: 'string',
-              enum: ['auto', 'casual', 'detailed'],
+              enum: ['auto', 'casual', 'detailed', 'professional'],
               description:
-                '详略级别。默认 auto（自动判断）；对试卷/数学题/代码/表格/PPT/含密集文字的图片，显式传 detailed 以确保信息完整。',
+                '详略级别。默认 auto（模型自判）；代码/表格/PPT/含密集文字的图显式传 detailed，' +
+                '数学/物理/化学题目显式传 professional 以获得严格 LaTeX 与几何识别。',
             },
           },
           required: ['image'],
@@ -113,8 +115,11 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaService): vo
         const task = (args.task as string) || undefined;
         const extraContext = (args.context as string) || undefined;
         const detailLevelRaw = (args.detail_level as string) || undefined;
-        const detailLevel: 'auto' | 'casual' | 'detailed' | undefined =
-          detailLevelRaw === 'casual' || detailLevelRaw === 'detailed' || detailLevelRaw === 'auto'
+        const detailLevel: 'auto' | 'casual' | 'detailed' | 'professional' | undefined =
+          detailLevelRaw === 'casual' ||
+          detailLevelRaw === 'detailed' ||
+          detailLevelRaw === 'professional' ||
+          detailLevelRaw === 'auto'
             ? detailLevelRaw
             : undefined;
         const hint = [
