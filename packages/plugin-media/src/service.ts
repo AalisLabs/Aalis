@@ -40,12 +40,12 @@ import {
   selectFrameIndices,
 } from './ffmpeg.js';
 import {
+  DEFAULT_VISION_AUTO_PROMPT,
   DEFAULT_VISION_BATCH_PROMPT,
   DEFAULT_VISION_DETAILED_PROMPT,
   DEFAULT_VISION_PROFESSIONAL_PROMPT,
   DEFAULT_VISION_PROMPT,
   scanLLMProcessors,
-  VISION_CLASSIFY_PROMPT,
 } from './llm-adapter.js';
 import { normalizeAttachments } from './normalize.js';
 import { getMediaRuntime } from './runtime.js';
@@ -335,12 +335,20 @@ export class MediaServiceImpl implements MediaService {
           } else {
             // 动图（gif/webm/...）走视频帧流程获得综合描述
             const animated = isAnimatedFormat(att.data) || att.mimeType === 'image/gif';
-            // 缓存查询（hint/上下文为空时）
+            // 缓存查询（hint/上下文为空时）。缓存里是裸描述，按本路径的形态重新包装：
+            // 静态图带 ref 标记（与新鲜识别同构），动图沿用裸文本（与动图新鲜路径同构）。
             const cached = lookupCachedDescription(att.data);
             if (cached) {
-              item.description = cached;
               item.cap = 'vision';
-              descriptions[i] = cached;
+              if (animated) {
+                item.description = cached;
+              } else {
+                const ref = await this.cacheImageRef(att, msg.sessionId);
+                item.description = ref
+                  ? formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: cached, ref })
+                  : `[图片描述] ${cached}`;
+              }
+              descriptions[i] = item.description;
             } else if (animated) {
               const text = await this.processVideo(att, ctxText, 'animated');
               if (text) {
@@ -354,23 +362,13 @@ export class MediaServiceImpl implements MediaService {
               item.cap = 'vision';
               item.processor = proc?.name;
               if (proc?.describe) {
-                // 自动归档路径也走双重识别：用户未显式覆盖 cfg.vision.prompt 时，
-                // 先调一次轻量分类挑专业/详细/简洁 prompt，避免所有图都吃 casual prompt。
-                // 显式覆盖的 vision.prompt 视为用户强意图，直接尊重不再分类。
+                // 自动归档路径：单次自路由推理（模型看图自判类型、按类型给相应详略），
+                // 不再前置一次分类推理。显式覆盖的 cfg.vision.prompt 视为用户强意图，直接尊重。
                 // basePrompt（完整 prompt 覆盖）vs hint（额外追加约束）语义分离，
                 // 避免两段 prompt 同时存在产生指令冲突。
-                let basePrompt: string;
-                let tier: 'override' | 'casual' | 'detailed' | 'professional';
-                if (this.cfg.vision.prompt) {
-                  basePrompt = this.cfg.vision.prompt;
-                  tier = 'override';
-                } else {
-                  const picked = await this.classifyAndPickPrompt(proc, att.data);
-                  basePrompt = picked.prompt;
-                  tier = picked.tier;
-                }
+                const basePrompt = this.cfg.vision.prompt || DEFAULT_VISION_AUTO_PROMPT;
                 this.logger.info(
-                  `[vision.describe] source=auto tier=${tier} promptChars=${basePrompt.length} (session=${msg.sessionId})`,
+                  `[vision.describe] source=auto promptChars=${basePrompt.length} (session=${msg.sessionId})`,
                 );
                 const [r, ref] = await Promise.all([
                   proc.describe(
@@ -391,7 +389,10 @@ export class MediaServiceImpl implements MediaService {
                     ? formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: raw, ref })
                     : `[图片描述] ${raw}`;
                   descriptions[i] = item.description;
-                  rememberDescription(att.data, item.description);
+                  // 缓存只存裸描述：键空间与 describeImage（转发/工具路径）共用——同一张图
+                  // 落盘后是同一内容寻址路径。存格式化文本会让另一侧拿到嵌套包装，
+                  // 存裸描述则各消费点按自己的形态包装（命中分支同规）。
+                  rememberDescription(att.data, raw);
                 }
               }
             }
@@ -693,25 +694,20 @@ export class MediaServiceImpl implements MediaService {
         }
       }
     } else {
-      // detailLevel 决策：auto 走两阶段（分类→选 prompt）；casual/detailed 直接选定
+      // detailLevel 决策：casual/detailed/professional 直接选定模板；
+      // auto 用自路由 prompt 单次推理（模型看图自判类型、按类型给相应详略）。
       const detailLevel = opts.detailLevel ?? 'auto';
       let basePrompt: string;
-      let chosenTier: 'casual' | 'detailed' | 'professional';
       if (detailLevel === 'casual') {
         basePrompt = this.cfg.vision.prompt || DEFAULT_VISION_PROMPT;
-        chosenTier = 'casual';
       } else if (detailLevel === 'detailed') {
         basePrompt = DEFAULT_VISION_DETAILED_PROMPT;
-        chosenTier = 'detailed';
+      } else if (detailLevel === 'professional') {
+        basePrompt = DEFAULT_VISION_PROFESSIONAL_PROMPT;
       } else {
-        // auto：调一次轻量分类（耗时 ~1-2s）
-        const picked = await this.classifyAndPickPrompt(proc, imageUrl);
-        basePrompt = picked.prompt;
-        chosenTier = picked.tier;
+        basePrompt = this.cfg.vision.prompt || DEFAULT_VISION_AUTO_PROMPT;
       }
-      this.logger.info(
-        `[vision.describe] source=tool tier=${chosenTier} (detailLevel=${detailLevel}) promptChars=${basePrompt.length}`,
-      );
+      this.logger.info(`[vision.describe] source=tool detailLevel=${detailLevel} promptChars=${basePrompt.length}`);
       const r = await proc.describe(
         {
           attachments: [{ kind: 'image', data: imageUrl }],
@@ -745,56 +741,6 @@ export class MediaServiceImpl implements MediaService {
     } catch (err) {
       this.logger.warn(`describeVideo 失败 url=${videoUrl}: ${err instanceof Error ? err.message : err}`);
       return '';
-    }
-  }
-  /**
-   * 两阶段第一步：用极简 prompt 让 vision 模型分类图片，返回对应的二阶 base prompt。
-   *
-   * 设计：
-   * - 分类输出只有 3 个有效标签（document/casual/mixed），其他任何输出都按 detailed 处理
-   * - mixed 类也用 detailed prompt（"宁详勿略"原则）
-   * - 任何异常（超时/网络/模型拒绝）→ fallback 到 detailed prompt，保证不漏信息
-   * - 不计入描述缓存（hint 不同，缓存键也不会重复）
-   */
-  private async classifyAndPickPrompt(
-    proc: MediaProcessor,
-    imageUrl: string,
-  ): Promise<{ prompt: string; tier: 'casual' | 'detailed' | 'professional' }> {
-    if (!proc.describe) return { prompt: DEFAULT_VISION_DETAILED_PROMPT, tier: 'detailed' };
-    const t0 = Date.now();
-    try {
-      const r = await proc.describe(
-        {
-          attachments: [{ kind: 'image', data: imageUrl }],
-          mode: 'single',
-          // 分类输出极短，给 32 token 即可（容纳标签 + 可能的多余空白）
-          maxTokens: 32,
-          // 用 basePrompt 完全替换默认 base，避免 casual 描述 prompt 与分类指令冲突
-          basePrompt: VISION_CLASSIFY_PROMPT,
-        },
-        this.ctx,
-      );
-      const label = (r.descriptions[0] ?? '').toLowerCase().trim();
-      // 4 标签匹配：professional → 专业题目；casual → 简洁；其余（document/mixed/unknown）→ detailed
-      let tier: 'casual' | 'detailed' | 'professional';
-      let prompt: string;
-      if (label === 'professional' || label.startsWith('professional')) {
-        tier = 'professional';
-        prompt = DEFAULT_VISION_PROFESSIONAL_PROMPT;
-      } else if (label === 'casual' || label.startsWith('casual')) {
-        tier = 'casual';
-        prompt = this.cfg.vision.prompt || DEFAULT_VISION_PROMPT;
-      } else {
-        tier = 'detailed';
-        prompt = DEFAULT_VISION_DETAILED_PROMPT;
-      }
-      this.logger.info(
-        `[vision.classify] ${Date.now() - t0}ms label="${label}" → tier=${tier} (prompt ${prompt.length}字)`,
-      );
-      return { prompt, tier };
-    } catch (err) {
-      this.logger.warn(`[vision.classify] 失败，fallback 到 detailed: ${err instanceof Error ? err.message : err}`);
-      return { prompt: DEFAULT_VISION_DETAILED_PROMPT, tier: 'detailed' };
     }
   }
 }
