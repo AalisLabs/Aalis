@@ -110,10 +110,14 @@ export async function evictDownstreamConsumers(args: {
   if (provided.length === 0) return;
   const providedSet = new Set(provided);
   for (const other of plugins.values()) {
-    // 判据与管理入口同源（entry.context 而非 state==='active'）：'activating' 的
-    // 在飞下游同样持着即将失效的 provider 引用，漏疏散会让它抱着死引用完成激活。
-    // retireEntry 先写 'pending'，在飞激活由 activatePlugin 的接管检查让位。
-    if (other === provider || !other.context) continue;
+    // 目标集按状态正面枚举 active/activating（'activating' 的在飞下游同样持着
+    // 即将失效的 provider 引用，漏疏散会让它抱着死引用完成激活；retireEntry 先写
+    // 'pending'，在飞激活由接管检查让位）。不能仅凭 ctx 在场判目标：disabled/
+    // error/disposed 的拆卸窗口内 ctx 未清，凭 ctx 会把刚写下的终态覆写回
+    // 'pending'——实测复活刚禁用的插件。ctx 判「有没有东西要拆」，状态判
+    // 「是不是合法疏散目标」，两个问题两个判据。
+    if (other === provider) continue;
+    if (other.state !== 'active' && other.state !== 'activating') continue;
     if (!other.module.requiresBounceOnDepChange) continue;
     const allDeps = [...other.requiredDeps, ...other.optionalDeps];
     if (!allDeps.some(d => providedSet.has(d.service))) continue;

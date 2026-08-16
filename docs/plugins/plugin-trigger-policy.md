@@ -35,17 +35,18 @@ inbound:trigger   （由 plugin-gateway 在 inbound:flow 之后、inbound:dispat
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `enabled` | `true` | |
-| `platforms` | `[]` | 空=所有平台 |
+| `scopes` | `['*:group']` | 生效作用域，`platform:sessionType` 支持通配；写一条 override 即自动启用该 scope |
+| `overrides` | `[]` | 按 scope 覆盖下列任一字段（数组元素含 `scope` + 覆盖项） |
 | `intervalMode` | `both` | `fixed`(按计数) / `dynamic`(按评分阈值) / `both`(任一满足) |
 | `triggerOnAt` | `true` | 检测 `<at>` / `[CQ:at]` / `@xxx` |
-| `triggerNames` | `[]` | 触发名别名；自动追加 persona name + nickNames |
-| `muteKeywords` | `[]` | 关键词；自动追加 persona.getMuteKeywords() |
+| `triggerOnPoke` | `true` | 戳一戳等注意力动作（noticeType=poke）视同 @ 即时触发；关闭后落回正常意愿评估 |
+| `triggerNames` | `''` | 触发名别名（逗号分隔）；自动追加 persona name + nickNames |
+| `muteKeywords` | `''` | 禁言关键词（逗号分隔）；仅取本配置，不合并 persona |
 | `muteTimeSeconds` | `60` | 关键词命中时通知 flow-control 的禁言时长 |
 
 ## 与 persona 的协作
 
-- `getBotNames()` 自动合并 `persona.getPersonaName()` + `persona.getNickNames()`
-- `detectMuteKeyword()` 自动合并 `persona.getMuteKeywords()`
-
-允许角色卡里直接声明触发名 / 静音关键词，无需在两处重复配置。
+- `getBotNames()` 自动合并 `persona.getPersonaName()` + `persona.getNickNames()`——角色卡里
+  声明的名字/昵称无需在触发名里重复配置。
+- mute 关键词**不**合并 persona：统一由本插件配置下发（单一来源，避免角色卡措辞
+  意外成为禁言开关）。
