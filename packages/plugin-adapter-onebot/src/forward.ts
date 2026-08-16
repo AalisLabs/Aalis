@@ -12,7 +12,7 @@
  *   onebot_get_forward_msg 工具 / 缓存命中拿回。
  *
  * 本模块仅做"纯逻辑"，不直接依赖 Context；适配器通过依赖注入提供
- * fetchForward / recognizeImage / summarize 三个能力函数。
+ * fetchForward / resolveMedia / summarize 三个能力函数。
  */
 
 import type { OneBotMessageSegment } from './types.js';
@@ -44,123 +44,94 @@ export interface ExpandedForward {
   truncatedNodes: boolean;
 }
 
+/** 转发内待识别的媒体项。walk 阶段只登记任务并在行文本里放 token，不做任何模型等待。 */
+export interface ForwardMediaTask {
+  /** 行文本中的占位 token（NUL 包裹，聊天文本不可能撞上），解析完成后被替换 */
+  token: string;
+  kind: 'image' | 'audio' | 'video';
+  /** 原始来源（URL / file / base64） */
+  src: string;
+}
+
 export interface ForwardExpandOptions {
   /** 抓取一个 forward id 的原始数据（成功则返回 OneBot 返回的 data） */
   fetchForward: (id: string) => Promise<unknown | null>;
-  /** 把图片源转为文字描述（不可用则可返回 undefined） */
-  recognizeImage?: (source: string) => Promise<string | undefined>;
-  /** 把音频源（record 段）转为文字（转写或描述） */
-  recognizeAudio?: (source: string) => Promise<string | undefined>;
-  /** 把视频源转为文字描述（抽帧+音轨综合） */
-  recognizeVideo?: (source: string) => Promise<string | undefined>;
+  /**
+   * 两阶段媒体解析：结构遍历（含嵌套抓取）完成后，把收集到的全部任务一次性交给
+   * resolveMedia，由注入方决定下载与识别的并发、上限与降级。返回 token→描述；
+   * 缺席或 undefined 的 token 渲染为占位符。缺省时全部媒体按占位符渲染。
+   *
+   * 之所以不做「遍历中内联识别」：节点串行渲染会把「取媒体源」排到前面所有识别
+   * 之后——QQ 媒体 URL 的 rkey 短时效，排到即已过期（实测 61 图连环 400 的风暴）。
+   * 遍历与识别解耦后，注入方能在展开瞬间趁 URL 新鲜先落盘。
+   */
+  resolveMedia?: (tasks: ForwardMediaTask[]) => Promise<Map<string, string | undefined>>;
   /** 嵌套展开深度上限（顶层为 1） */
   maxDepth: number;
   /** 单层节点数上限 */
   maxNodesPerLevel: number;
   /** 是否启用图片识别 */
   imageRecognitionEnabled: boolean;
-  /** 是否启用音频识别（默认随 recognizeAudio 是否提供） */
+  /** 是否启用音频识别（默认启用，随 resolveMedia 缺省而失效） */
   audioRecognitionEnabled?: boolean;
-  /** 是否启用视频识别（默认随 recognizeVideo 是否提供） */
+  /** 是否启用视频识别（默认启用，随 resolveMedia 缺省而失效） */
   videoRecognitionEnabled?: boolean;
 }
 
-/**
- * 把 CQ 字符串里 [CQ:<kind>,...] 段替换为识别结果（或 fallback 占位）。
- */
-async function replaceCqWithRecognizer(
-  text: string,
-  kind: string,
-  fallback: string,
-  successPrefix: string,
-  successSuffix: string,
-  recognizer: ((src: string) => Promise<string | undefined>) | undefined,
-): Promise<string> {
-  const re = new RegExp(`\\[CQ:${kind}(,[^\\]]+)?\\]`, 'g');
-  if (!recognizer) return text.replace(re, fallback);
-  const matches = [...text.matchAll(re)];
-  if (matches.length === 0) return text;
-  const replacements = await Promise.all(
-    matches.map(async m => {
-      const params: Record<string, string> = {};
-      const body = m[1] ?? '';
-      for (const part of body.replace(/^,/, '').split(',')) {
-        const eq = part.indexOf('=');
-        if (eq <= 0) continue;
-        params[part.slice(0, eq)] = part
-          .slice(eq + 1)
-          .replace(/&amp;/g, '&')
-          .replace(/&#91;/g, '[')
-          .replace(/&#93;/g, ']')
-          .replace(/&#44;/g, ',');
-      }
-      const src = params.url || params.file;
-      if (!src) return { raw: m[0], rendered: fallback };
-      try {
-        const desc = await recognizer(src);
-        return { raw: m[0], rendered: desc ? `${successPrefix}${desc}${successSuffix}` : fallback };
-      } catch {
-        return { raw: m[0], rendered: fallback };
-      }
-    }),
-  );
-  let out = text;
-  for (const r of replacements) out = out.replace(r.raw, r.rendered);
-  return out;
+/** 各媒体类的占位符与识别成功时的包装 */
+const MEDIA_LABEL: Record<ForwardMediaTask['kind'], { placeholder: string; prefix: string; suffix: string }> = {
+  image: { placeholder: '[图片]', prefix: '[图片: ', suffix: ']' },
+  audio: { placeholder: '[语音]', prefix: '[语音: ', suffix: ']' },
+  video: { placeholder: '[视频]', prefix: '[视频: ', suffix: ']' },
+};
+
+/** 解析 CQ 段参数体（`,k=v,k=v`），含 CQ 转义还原。 */
+function parseCqParams(body: string): Record<string, string> {
+  const params: Record<string, string> = {};
+  for (const part of body.replace(/^,/, '').split(',')) {
+    const eq = part.indexOf('=');
+    if (eq <= 0) continue;
+    params[part.slice(0, eq)] = part
+      .slice(eq + 1)
+      .replace(/&amp;/g, '&')
+      .replace(/&#91;/g, '[')
+      .replace(/&#93;/g, ']')
+      .replace(/&#44;/g, ',');
+  }
+  return params;
 }
 
-/** 渲染一个节点 content（消息段数组或 CQ 字符串）为纯文本，并把图片换成识别后描述。 */
-async function renderNodeContent(content: unknown, opts: ForwardExpandOptions): Promise<string> {
+/**
+ * 剥除 NUL：媒体 token 用 NUL 做哨兵，所有进入行文本的外部字符串（CQ 串、text 段、
+ * at/face/share/未知段、昵称）都必须过这道——剥掉后消息内容无法伪造/搬运 token
+ * （NUL 经 JSON \u0000 转义可达，非理论面）。
+ */
+function stripNul(s: string): string {
+  return s.includes('\u0000') ? s.split('\u0000').join('') : s;
+}
+
+/** 媒体任务收集器：登记任务返回 token；该类未启用或无源时直接返回占位符。 */
+type MediaCollector = (kind: ForwardMediaTask['kind'], src: string | undefined) => string;
+
+/** 把 CQ 字符串里 [CQ:<cqType>,...] 段交给收集器（登记任务或落占位符）。 */
+function replaceCqMedia(text: string, cqType: string, kind: ForwardMediaTask['kind'], collect: MediaCollector): string {
+  return text.replace(new RegExp(`\\[CQ:${cqType}(,[^\\]]+)?\\]`, 'g'), (_m, body: string | undefined) => {
+    const params = parseCqParams(body ?? '');
+    return collect(kind, params.url || params.file);
+  });
+}
+
+/**
+ * 渲染一个节点 content（消息段数组或 CQ 字符串）为纯文本。
+ * 媒体段（图片/语音/视频）经收集器登记为待识别任务并放 token——本函数是纯结构渲染，
+ * 不发生任何网络/模型等待，保证 walk 快速完成、媒体源被尽早收集。
+ */
+function renderNodeContent(content: unknown, collect: MediaCollector): string {
   if (typeof content === 'string') {
-    // CQ 码字符串：用正则替换 image / face / at / reply
-    let out = content;
-    if (opts.imageRecognitionEnabled && opts.recognizeImage) {
-      // [CQ:image,file=...,url=...]
-      const matches = [...out.matchAll(/\[CQ:image,([^\]]+)\]/g)];
-      const replacements = await Promise.all(
-        matches.map(async m => {
-          const params: Record<string, string> = {};
-          for (const part of m[1].split(',')) {
-            const eq = part.indexOf('=');
-            if (eq <= 0) continue;
-            params[part.slice(0, eq)] = part
-              .slice(eq + 1)
-              .replace(/&amp;/g, '&')
-              .replace(/&#91;/g, '[')
-              .replace(/&#93;/g, ']')
-              .replace(/&#44;/g, ',');
-          }
-          const src = params.url || params.file;
-          if (!src) return { raw: m[0], rendered: '[图片]' };
-          try {
-            const desc = await opts.recognizeImage!(src);
-            return { raw: m[0], rendered: desc ? `[图片: ${desc}]` : '[图片]' };
-          } catch {
-            return { raw: m[0], rendered: '[图片]' };
-          }
-        }),
-      );
-      for (const r of replacements) out = out.replace(r.raw, r.rendered);
-    } else {
-      out = out.replace(/\[CQ:image[^\]]*\]/g, '[图片]');
-    }
-    // record / video CQ 段：参数里取 url/file，调对应识别回调
-    out = await replaceCqWithRecognizer(
-      out,
-      'record',
-      '[语音]',
-      '[语音: ',
-      ']',
-      opts.audioRecognitionEnabled !== false ? opts.recognizeAudio : undefined,
-    );
-    out = await replaceCqWithRecognizer(
-      out,
-      'video',
-      '[视频]',
-      '[视频: ',
-      ']',
-      opts.videoRecognitionEnabled !== false ? opts.recognizeVideo : undefined,
-    );
+    // CQ 码字符串：用正则替换 image / record / video / face / at / reply
+    let out = replaceCqMedia(stripNul(content), 'image', 'image', collect);
+    out = replaceCqMedia(out, 'record', 'audio', collect);
+    out = replaceCqMedia(out, 'video', 'video', collect);
     return out
       .replace(/\[CQ:face,[^\]]*id=(\d+)[^\]]*\]/g, '[表情:$1]')
       .replace(/\[CQ:at,[^\]]*qq=([^,\]]+)[^\]]*\]/g, '<at id="$1">$1</at>')
@@ -177,66 +148,33 @@ async function renderNodeContent(content: unknown, opts: ForwardExpandOptions): 
     const data = s.data ?? {};
     switch (s.type) {
       case 'text':
-        parts.push(String(data.text ?? ''));
+        parts.push(stripNul(String(data.text ?? '')));
         break;
-      case 'at':
-        parts.push(
-          data.qq === 'all' ? '<at>all</at>' : `<at id="${String(data.qq ?? '')}">${String(data.qq ?? '')}</at>`,
-        );
-        break;
-      case 'face':
-        parts.push(`[表情:${String(data.id ?? '')}]`);
-        break;
-      case 'image': {
-        const src = (data.url ?? data.file) as string | undefined;
-        if (opts.imageRecognitionEnabled && opts.recognizeImage && src) {
-          try {
-            const desc = await opts.recognizeImage(src);
-            parts.push(desc ? `[图片: ${desc}]` : '[图片]');
-          } catch {
-            parts.push('[图片]');
-          }
-        } else {
-          parts.push('[图片]');
-        }
+      case 'at': {
+        const qq = stripNul(String(data.qq ?? ''));
+        parts.push(data.qq === 'all' ? '<at>all</at>' : `<at id="${qq}">${qq}</at>`);
         break;
       }
+      case 'face':
+        parts.push(`[表情:${stripNul(String(data.id ?? ''))}]`);
+        break;
+      case 'image':
+        parts.push(collect('image', (data.url ?? data.file) as string | undefined));
+        break;
       case 'reply':
         break;
       case 'forward':
         // 嵌套占位符，递归展开会在外层处理；这里先放标记，外层 expand 用 inline content 优先
         parts.push(data.id ? `<<<NESTED_FORWARD:${String(data.id)}>>>` : '[合并转发]');
         break;
-      case 'record': {
-        const src = (data.url ?? data.file) as string | undefined;
-        if (opts.audioRecognitionEnabled !== false && opts.recognizeAudio && src) {
-          try {
-            const text = await opts.recognizeAudio(src);
-            parts.push(text ? `[语音: ${text}]` : '[语音]');
-          } catch {
-            parts.push('[语音]');
-          }
-        } else {
-          parts.push('[语音]');
-        }
+      case 'record':
+        parts.push(collect('audio', (data.url ?? data.file) as string | undefined));
         break;
-      }
-      case 'video': {
-        const src = (data.url ?? data.file) as string | undefined;
-        if (opts.videoRecognitionEnabled !== false && opts.recognizeVideo && src) {
-          try {
-            const text = await opts.recognizeVideo(src);
-            parts.push(text ? `[视频: ${text}]` : '[视频]');
-          } catch {
-            parts.push('[视频]');
-          }
-        } else {
-          parts.push('[视频]');
-        }
+      case 'video':
+        parts.push(collect('video', (data.url ?? data.file) as string | undefined));
         break;
-      }
       case 'share':
-        parts.push(`[分享:${String(data.title ?? '')}]`);
+        parts.push(`[分享:${stripNul(String(data.title ?? ''))}]`);
         break;
       case 'json':
         parts.push('[JSON卡片]');
@@ -245,7 +183,7 @@ async function renderNodeContent(content: unknown, opts: ForwardExpandOptions): 
         parts.push('[XML卡片]');
         break;
       default:
-        if (s.type) parts.push(`[${s.type}]`);
+        if (s.type) parts.push(`[${stripNul(s.type)}]`);
     }
   }
   return parts.join('');
@@ -276,7 +214,9 @@ function extractNodeMeta(item: unknown): NodeMeta {
     | Record<string, unknown>
     | undefined;
 
-  const nickname = String(data.nickname ?? sender?.nickname ?? data.name ?? data.user_id ?? sender?.user_id ?? '匿名');
+  const nickname = stripNul(
+    String(data.nickname ?? sender?.nickname ?? data.name ?? data.user_id ?? sender?.user_id ?? '匿名'),
+  );
   const userIdRaw = data.user_id ?? data.uin ?? sender?.user_id;
   const userId = userIdRaw != null ? String(userIdRaw) : undefined;
   const content = data.content ?? node.content ?? data.message ?? node.message;
@@ -316,6 +256,20 @@ export async function expandForward(
   let truncatedNodes = false;
   let topCount = 0;
 
+  // 媒体两阶段：walk 只登记任务放 token，遍历完成后统一交 resolveMedia 再回填。
+  const tasks: ForwardMediaTask[] = [];
+  const kindEnabled: Record<ForwardMediaTask['kind'], boolean> = {
+    image: opts.imageRecognitionEnabled && !!opts.resolveMedia,
+    audio: opts.audioRecognitionEnabled !== false && !!opts.resolveMedia,
+    video: opts.videoRecognitionEnabled !== false && !!opts.resolveMedia,
+  };
+  const collect: MediaCollector = (kind, src) => {
+    if (!src || !kindEnabled[kind]) return MEDIA_LABEL[kind].placeholder;
+    const token = `\u0000M${tasks.length}\u0000`;
+    tasks.push({ token, kind, src });
+    return token;
+  };
+
   async function walk(id: string, nodesInput: unknown[] | null, depth: number): Promise<void> {
     if (depth > opts.maxDepth) {
       truncatedDepth = true;
@@ -350,7 +304,7 @@ export async function expandForward(
         participants.set(meta.nickname, meta.nickname);
       }
 
-      const rendered = await renderNodeContent(meta.content, opts);
+      const rendered = renderNodeContent(meta.content, collect);
       lines.push({
         depth,
         index: i + 1,
@@ -376,6 +330,34 @@ export async function expandForward(
   }
 
   await walk(topId, topNodes, 1);
+
+  // 媒体解析回填：遍历已完成、全部任务在手，一次性交给注入方（下载先行、识别受限并发）。
+  // resolveMedia 整体失败按「全部未识别」处理，占位符兜底，不让展开本身失败。
+  if (tasks.length > 0) {
+    let resolved = new Map<string, string | undefined>();
+    if (opts.resolveMedia) {
+      try {
+        // 返回值形态失约（非 Map）与抛错同罪同罚：占位符兜底，不让展开失败
+        const r = await opts.resolveMedia(tasks);
+        if (r instanceof Map) resolved = r;
+      } catch {
+        resolved = new Map();
+      }
+    }
+    const byToken = new Map(tasks.map(t => [t.token, t] as const));
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: NUL 是刻意选的 token 哨兵；输入文本已在渲染时剥 NUL，仅我方 token 含之
+    const tokenRe = /\u0000M\d+\u0000/g;
+    for (const ln of lines) {
+      if (!ln.text.includes('\u0000')) continue;
+      ln.text = ln.text.replace(tokenRe, tok => {
+        const task = byToken.get(tok);
+        if (!task) return '';
+        const desc = resolved.get(tok)?.trim();
+        const label = MEDIA_LABEL[task.kind];
+        return desc ? `${label.prefix}${desc}${label.suffix}` : label.placeholder;
+      });
+    }
+  }
 
   // 拼接 fullText
   const indent = (d: number) => '  '.repeat(Math.max(0, d - 1));
