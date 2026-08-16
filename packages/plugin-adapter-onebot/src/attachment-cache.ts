@@ -42,7 +42,7 @@ function safeSessionDir(sessionId: string): string {
  * 返回值是 `data/{kind}s/{session}/{filename}` 这一历史相对路径，
  * 用于写入 attachment ref；storage 落盘走 `data:/...` URI。
  */
-export async function cacheAttachmentBuffer(
+async function cacheAttachmentBuffer(
   storage: StorageService,
   buf: Buffer,
   kind: AttachmentKind,
@@ -91,7 +91,7 @@ export async function readBodyCapped(res: Response, maxBytes: number): Promise<B
 /**
  * 从 URL / data: URI / file:// / storage URI 取到 Buffer。失败返回 null。
  */
-export async function loadAttachmentBuffer(
+async function loadAttachmentBuffer(
   storage: StorageService,
   proc: ProcessService,
   source: string,
@@ -121,8 +121,38 @@ export async function loadAttachmentBuffer(
   }
 }
 
+/**
+ * 把单个附件下载（必要时转码）后落盘，返回相对路径。失败返回 null。
+ * - audio：先 ffmpeg → 16kHz mono WAV，再以 .wav 入库（用户期望转码后存储，
+ *   方便后续 LLM 反复分析；同时避免下游每次重转码）。
+ * - 其他 kind：原样落盘，扩展名按 magic header 推断。
+ */
+export async function cacheOneAttachment(
+  storage: StorageService,
+  proc: ProcessService,
+  kind: 'image' | 'audio' | 'video' | 'file',
+  source: string,
+  sessionId: string,
+  maxBytes: number,
+  logger: { warn: (msg: string) => void },
+): Promise<string | null> {
+  const buf = await loadAttachmentBuffer(storage, proc, source, maxBytes);
+  if (!buf) return null;
+  if (kind === 'audio') {
+    const inExt = detectExtensionFromBuffer(buf, 'bin');
+    const wav = await transcodeAudioBufferToWav(proc, storage, buf, inExt);
+    if (!wav) {
+      logger.warn(`OneBot 音频转 WAV 失败 (in=${inExt}, size=${buf.byteLength}B)，保留原 URL`);
+      return null;
+    }
+    return await cacheAttachmentBuffer(storage, wav, 'audio', sessionId, 'wav', maxBytes);
+  }
+  const ext = detectExtensionFromBuffer(buf, kind === 'image' ? 'jpg' : kind === 'video' ? 'mp4' : 'bin');
+  return await cacheAttachmentBuffer(storage, buf, kind, sessionId, ext, maxBytes);
+}
+
 /** 简易 magic-header 探测，仅用于落盘扩展名选择与日志。 */
-export function detectExtensionFromBuffer(buf: Buffer, fallback = 'bin'): string {
+function detectExtensionFromBuffer(buf: Buffer, fallback = 'bin'): string {
   if (buf.length < 12) return fallback;
   // image
   if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'png';
@@ -149,7 +179,7 @@ export function detectExtensionFromBuffer(buf: Buffer, fallback = 'bin'): string
  * 用 ffmpeg 把任意可解码音频 Buffer 转为 16kHz mono PCM WAV。
  * 失败（典型：SILK，ffmpeg 不含 silk 解码器）返回 null。
  */
-export async function transcodeAudioBufferToWav(
+async function transcodeAudioBufferToWav(
   proc: ProcessService,
   storage: StorageService,
   input: Buffer,
