@@ -66,7 +66,11 @@ export const configSchema: ConfigSchema = {
         type: 'textarea',
         label: '单图描述 prompt',
         default: '',
-        description: `留空使用内置默认值。\n默认：${DEFAULT_VISION_PROMPT}`,
+        description:
+          '填写后完全覆盖 auto 档（自路由）与 casual 档的描述 prompt；' +
+          'detailed/professional 档仍用各自内置模板。留空时 auto 档用内置自路由 prompt' +
+          '（模型看图自判类型给相应详略），casual 档用内置简洁模板。\n' +
+          `内置简洁模板供参考：${DEFAULT_VISION_PROMPT}`,
       },
       batchPrompt: {
         type: 'textarea',

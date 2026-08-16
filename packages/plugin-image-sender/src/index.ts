@@ -107,7 +107,7 @@ export function apply(ctx: Context): void {
 
       // 顺序识别（非并发）：本地视觉模型通常单实例串行处理，并发只会让多个请求
       // 互相排队、共同超时；逐张识别配合宽松超时，命中率远高于并发。
-      // detailLevel='casual'：preview 只为"挑图"，跳过 auto 的分类阶段、用短 prompt，更快。
+      // detailLevel='casual'：preview 只为"挑图"，短 prompt 短输出即可，不需要 auto 档的详尽路由。
       const results: Array<Record<string, unknown>> = [];
       for (let index = 0; index < urls.length; index++) {
         const trimmed = urls[index].trim();
