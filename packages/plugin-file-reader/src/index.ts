@@ -409,7 +409,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     if (uris.length === 0) return '';
 
     // 关键：不传 hint —— 传 hint 会绕过 media 的 24h 描述缓存（同图重复读会重复识别）；
-    // 显式 detailLevel:'detailed' 跳过 auto 档的额外「分类」视觉调用，每张从 2 次降到 1 次。
+    // 显式 detailLevel:'detailed'：文档内嵌图要的是 OCR 完整性，不适合让模型自判详略。
     // 并发 3 + 整体 30s 预算：避免多图 DOCX 在上传预处理阶段长时间阻塞首个回复。
     const descriptions = await recognizeImages(uris, uri => media.describeImage(uri, { detailLevel: 'detailed' }), {
       maxImages: maxDocImages,

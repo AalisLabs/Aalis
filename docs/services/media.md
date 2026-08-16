@@ -226,13 +226,13 @@ async function handle(ctx: Context, url: string) {
 | `'casual'` | 简洁日常（≤200 字、识梗、不列点）——聊天截图/表情包 | 直接用 `cfg.vision.prompt \|\| DEFAULT_VISION_PROMPT` |
 | `'detailed'` | 详细识别（不限字数、信息密度高的图） | `DEFAULT_VISION_DETAILED_PROMPT` |
 | `'professional'` | 专业题目（严格 LaTeX、几何坐标、反幻觉）——数理化题 | `DEFAULT_VISION_PROFESSIONAL_PROMPT` |
-| `'auto'`（默认） | 先做一次轻量 4 标签分类（professional/document/casual/mixed，`maxTokens:32`）再选档；分类失败时 fallback 到 detailed | `classifyAndPickPrompt` |
+| `'auto'`（默认） | 单次推理自路由：模型看图自判类型并按类型给相应详略（拿不准按文字密集图完整识别） | `cfg.vision.prompt \|\| DEFAULT_VISION_AUTO_PROMPT` |
 
-`auto` 会多花一次 vision 调用做分类（约 1–2s）。如果你只想要短描述（例如挑图预览），传 `'casual'` 就能跳过分类，`plugin-image-sender` 即如此。
+四档都是一次 vision 调用。只想要短描述（例如挑图预览）传 `'casual'` 用简洁模板，`plugin-image-sender` 即如此；`cfg.vision.prompt` 填写后覆盖 auto 与 casual 两档，detailed/professional 不受影响。
 
 ### 描述缓存
 
-缓存基于 `@aalis/util-bounded-map`（有界，加滑动 TTL，加 LRU），配置为 `max=1000` 条、`ttlMs=24h`。key 是 url / data-URI / 本地路径。
+缓存基于 `@aalis/util-bounded-map`（有界，加滑动 TTL，加 LRU），配置为 `max=1000` 条、`ttlMs=24h`。key 是 url / data-URI / 本地路径；值只存裸描述，ref 标记等包装由各消费点重建。
 
 `describeImage` 只在「无 hint 且未 `noCache`」时读写缓存——**带 hint 不进缓存**，因为不同意图的结果不同。空串以及 `[图片:` / `[动图:` 这类占位都不会写入。`lookupDescription`/`rememberDescription` 则暴露给适配器做手动复用。
 
