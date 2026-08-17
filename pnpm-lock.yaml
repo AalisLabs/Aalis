@@ -849,10 +849,10 @@ importers:
   packages/plugin-draw:
     dependencies:
       '@aalis/api-process':
-        specifier: workspace:>=0.5.0 <1.0.0
+        specifier: workspace:>=0.5.1 <1.0.0
         version: link:../api-process
       '@aalis/api-storage':
-        specifier: workspace:>=0.6.0 <1.0.0
+        specifier: workspace:>=0.5.5 <1.0.0
         version: link:../api-storage
       '@aalis/api-tools':
         specifier: workspace:>=0.6.0 <1.0.0
@@ -1240,7 +1240,7 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../schema-message
       '@aalis/util-bounded-map':
-        specifier: workspace:>=0.5.0 <1.0.0
+        specifier: workspace:>=0.6.0 <1.0.0
         version: link:../util-bounded-map
       '@aalis/util-network-guard':
         specifier: workspace:>=0.5.1 <1.0.0
