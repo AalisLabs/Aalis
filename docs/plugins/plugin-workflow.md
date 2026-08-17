@@ -28,8 +28,7 @@
 `agent` 节点是 `send-message` 的「等回复」版：派发前注册 `agent:turn:after` 监听，按目标
 `sessionId` join 本轮回复（复用 `delegate_to_session` 的成熟机制），把回复经 `out` 存入
 `outputs`。配合 `deps` + 插值，单个 DAG 即可表达「分解 → 依赖 → 串/并行 → 管道 → 聚合」——
-这正是 [任务树系统设计](../design/task-tree-system.md) 中「确定性编排」缺口的落地形态
-（无需另造 `plugin-task-orchestrator`）。
+这正是「确定性编排」缺口的落地形态（无需另造独立的任务编排插件）。
 
 - 省略 `sessionId` 时为该节点生成一次性隔离子会话 `workflow:agent:<runId>:<nodeId>`，
   并行 agent 节点互不串扰——天然契合「子任务」语义。
@@ -79,6 +78,5 @@ nodes:
 
 ## 相关
 
-- 设计与缺口分析：[任务树系统设计](../design/task-tree-system.md)
 - 触发源：[plugin-scheduler](./plugin-scheduler.md)
 - 子会话分发（agent 自主编排版）：[plugin-subtask](./plugin-subtask.md)
