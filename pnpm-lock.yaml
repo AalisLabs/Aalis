@@ -846,6 +846,34 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/plugin-draw:
+    dependencies:
+      '@aalis/api-process':
+        specifier: workspace:>=0.5.0 <1.0.0
+        version: link:../api-process
+      '@aalis/api-storage':
+        specifier: workspace:>=0.6.0 <1.0.0
+        version: link:../api-storage
+      '@aalis/api-tools':
+        specifier: workspace:>=0.6.0 <1.0.0
+        version: link:../api-tools
+      '@aalis/schema-config':
+        specifier: workspace:>=0.11.0 <1.0.0
+        version: link:../schema-config
+      puppeteer:
+        specifier: ^24.0.0
+        version: 24.40.0(typescript@5.9.3)
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/plugin-embedding-ollama:
     dependencies:
       '@aalis/schema-config':
