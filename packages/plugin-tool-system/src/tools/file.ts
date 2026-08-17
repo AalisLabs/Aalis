@@ -431,6 +431,10 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         if (!storage.move) return jsonError(new Error('当前存储不支持移动操作（storage.move 未实现）'));
         const fromUri = toStorageUri(args.from as string, config, callCtx.sessionId);
         const toUri = toStorageUri(args.to as string, config, callCtx.sessionId);
+        // 与其余 file_* 工具同门槛：两端都必须落在 allowedRoots 内（审计抓的漏配——
+        // 少这道闸时 data:/users.json 可被 move 挪走，对 authority 等价于删除）
+        ensureRootAllowed(fromUri, config);
+        ensureRootAllowed(toUri, config);
         const result = await storage.move(fromUri, toUri);
         return JSON.stringify({ from: fromUri, to: result, message: '移动成功' });
       } catch (err) {
@@ -466,6 +470,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         const storage = requireStorage(config);
         if (!storage.mkdir) return jsonError(new Error('当前存储不支持创建目录（storage.mkdir 未实现）'));
         const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
+        ensureRootAllowed(uri, config);
         const result = await storage.mkdir(uri);
         return JSON.stringify({ uri: result, message: '目录已创建' });
       } catch (err) {

@@ -76,8 +76,9 @@ export const configSchema: ConfigSchema = {
         browsable: false,
         readable: true,
         writable: true,
-        // 可删：/clear 的附件清理（data/images 等）依赖它，关掉会让开箱用户连手动清理都失败；
-        // agent 侧删除仍被 file_delete 工具的 restricted+confirm 拦住，deletable 不是那道闸。
+        // 可删：/clear 的附件清理（data/images 等）依赖它，关掉会让开箱用户连手动清理都失败。
+        // deletable 是能力位不是权限闸——agent 侧删除面由各工具自身档位把关
+        // （file_delete=restricted+confirm+allowedRoots、skill_delete=sensitive 等，档位各异）。
         deletable: true,
       },
       {
@@ -486,6 +487,9 @@ class ScopedStorageService implements StorageService {
     this.requirePermission('deletable');
     if (!relPath) throw new Error('不能删除根目录');
     const abs = await this.resolveExisting(relPath);
+    // `sub/..` 这类解析回根本身的路径同样是删根——上面的字面空路径守卫挡不住
+    // （isInside 对 rel==='' 判内、normalizeRelPath 不中和 `..`；审计发现的旁路）。
+    if (abs === (await realpath(this.root.realPath))) throw new Error('不能删除根目录');
     await this.snapshot(toUri(this.root.name, relPath), 'delete', abs);
     await rm(abs, { recursive: true, force: false });
     this.logger.warn(`storage.delete ${toUri(this.root.name, relPath)}`);
