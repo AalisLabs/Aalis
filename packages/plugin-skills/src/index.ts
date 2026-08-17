@@ -1006,7 +1006,11 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 5. skill_delete
   tools.register({
-    risk: 'sensitive',
+    // 破坏性（递归删除整个 skill 目录）：restricted+confirm 按「写删」约定；
+    // 不带 risk——capabilityMinLevel 里 risk 遮蔽 visibility，同标会把门槛从 2 降到 1。
+    // owner 开 auto 确认模式时 session 确认自动跳过，零摩擦。
+    visibility: 'restricted',
+    confirm: 'session',
     groups: ['skills'],
     definition: {
       type: 'function',
@@ -1065,7 +1069,9 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // 7. skill_remove_file
   tools.register({
-    risk: 'sensitive',
+    // 破坏性（删 skill 内文件）：同 skill_delete，restricted+confirm，不带 risk（防降档）
+    visibility: 'restricted',
+    confirm: 'session',
     groups: ['skills'],
     definition: {
       type: 'function',
