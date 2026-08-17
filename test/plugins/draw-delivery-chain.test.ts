@@ -75,7 +75,7 @@ describe('绘图产物 → OneBot 出站编码全链', () => {
     };
     app.ctx.provide('tools', fakeTools as never);
     drawPlugin.apply(app.ctx, { idleShutdownSec: 0 });
-    imageSender.apply(app.ctx, {});
+    imageSender.apply(app.ctx);
   });
 
   afterEach(async () => {

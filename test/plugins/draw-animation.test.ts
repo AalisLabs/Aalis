@@ -92,7 +92,12 @@ describe('DrawEngine 动画（真浏览器 + 真 ffmpeg）', () => {
   });
 
   it('SMIL+CSS 双机制被步进：首帧≠中帧；两次渲染字节级一致；GIF 合法', async () => {
-    const engine = new DrawEngine(logger, { headless: true, idleShutdownMs: 0, stepTimeoutMs: 15_000 });
+    const engine = new DrawEngine(logger, {
+      headless: true,
+      idleShutdownMs: 0,
+      stepTimeoutMs: 15_000,
+      maxConcurrency: 4,
+    });
     try {
       const plan = resolveCanvas(ANIMATED_SVG, 200, caps);
       const opts = {
@@ -200,4 +205,54 @@ describe('draw_animation 工具全流（真 ctx：lint 告警 + 检查帧落盘�
       rmSync(base2, { recursive: true, force: true });
     }
   }, 60_000);
+
+  it('source 超字节上限：handler 拒绝、不触发渲染（删掉检查→此锚红）', async () => {
+    const base3 = mkdtempSync(join(tmpdir(), 'aalis-draw-cap-'));
+    for (const d of ['data', 'tmp']) mkdirSync(join(base3, d), { recursive: true });
+    const app3 = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    try {
+      await app3.ctx.useModule(storageLocal as unknown as Parameters<typeof app3.ctx.useModule>[0], {
+        roots: [
+          {
+            name: 'data',
+            path: join(base3, 'data'),
+            label: 'data',
+            kind: 'data',
+            browsable: false,
+            readable: true,
+            writable: true,
+            deletable: true,
+          },
+          {
+            name: 'tmp',
+            path: join(base3, 'tmp'),
+            label: 'tmp',
+            kind: 'tmp',
+            browsable: false,
+            readable: true,
+            writable: true,
+            deletable: true,
+          },
+        ],
+      });
+      await app3.ctx.useModule(processLocal as unknown as Parameters<typeof app3.ctx.useModule>[0], {});
+      const { apply } = await import('../../packages/plugin-draw/src/index.js');
+      const captured: Record<string, (a: Record<string, unknown>, c: { sessionId: string }) => Promise<string>> = {};
+      app3.ctx.provide('tools', {
+        register: (t: { definition: { function: { name: string } }; handler: (typeof captured)[string] }) => {
+          captured[t.definition.function.name] = t.handler;
+          return () => {};
+        },
+        registerGroup: () => {},
+      } as never);
+      apply(app3.ctx, { maxSourceKB: 1, idleShutdownSec: 0 }); // 1KB 上限
+      const big = `<svg viewBox="0 0 10 10">${'<rect/>'.repeat(500)}</svg>`; // 远超 1KB
+      const out = JSON.parse(await captured.draw_image({ source: big }, { sessionId: 'onebot:t:group:1' }));
+      expect(out.error).toMatch(/超过大小上限/);
+      expect(out.uri).toBeUndefined();
+    } finally {
+      await app3.stop();
+      rmSync(base3, { recursive: true, force: true });
+    }
+  });
 });

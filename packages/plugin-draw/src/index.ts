@@ -42,9 +42,11 @@ export const configSchema: ConfigSchema = {
   },
   maxPixels: {
     type: 'number',
-    label: '画布总像素上限',
+    label: '画布 CSS 像素上限',
     default: 4000000,
-    description: 'width×height 上限（默认 4MP），超出等比缩小或截断，防巨图拖垮渲染与投递',
+    description:
+      'width×height（CSS 像素）上限，默认 4MP。注意实际光栅内存 = 本值 × scale²（scale 默认 2 即 4 倍）；' +
+      '静态图按 scale 截图，故设备像素天花板是本值的 scale² 倍——调高前算好内存',
   },
   maxSourceKB: {
     type: 'number',
@@ -76,6 +78,12 @@ export const configSchema: ConfigSchema = {
     default: 300,
     description: '渲染引擎空闲该时长后关停 Chromium 释放内存；0 = 常驻',
   },
+  maxConcurrency: {
+    type: 'number',
+    label: '渲染并发上限',
+    default: 2,
+    description: '同时进行的渲染任务数上限；群内多人并发画图时超出的排队，防无界 page + ffmpeg 拖垮机器',
+  },
   animMaxDurationSec: {
     type: 'number',
     label: '动图时长上限 (秒)',
@@ -106,6 +114,7 @@ interface DrawConfig extends DrawCaps {
   headless: boolean;
   executablePath: string;
   idleShutdownSec: number;
+  maxConcurrency: number;
   animMaxDurationSec: number;
   animDefaultFps: number;
   animMaxFrames: number;
@@ -126,6 +135,7 @@ function resolveConfig(config: Record<string, unknown>): DrawConfig {
     headless: (config.headless as boolean) ?? true,
     executablePath: (config.executablePath as string) ?? '',
     idleShutdownSec: num(config.idleShutdownSec, 300, 0, 86400),
+    maxConcurrency: num(config.maxConcurrency, 2, 1, 8),
     animMaxDurationSec: num(config.animMaxDurationSec, 8, 1, 30),
     animDefaultFps: num(config.animDefaultFps, 15, 1, 25),
     animMaxFrames: num(config.animMaxFrames, 160, 2, 600),
@@ -133,9 +143,14 @@ function resolveConfig(config: Record<string, unknown>): DrawConfig {
   };
 }
 
-/** sessionId → 文件系统安全目录名（与 adapter 附件缓存同规） */
+/** sessionId → 文件系统安全目录名（与 adapter 附件缓存同规，另中和 .. 与前导点做纵深防御）。 */
 function safeSessionDir(sessionId: string): string {
-  return sessionId.replace(/[:/\\]/g, '_');
+  return (
+    sessionId
+      .replace(/[:/\\]/g, '_')
+      .replace(/\.\./g, '_')
+      .replace(/^\.+/, '_') || 'nosession'
+  );
 }
 
 export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
@@ -149,6 +164,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     executablePath: cfg.executablePath || undefined,
     idleShutdownMs: cfg.idleShutdownSec * 1000,
     stepTimeoutMs: 15_000,
+    maxConcurrency: cfg.maxConcurrency,
   });
   ctx.onDispose(() => engine.dispose());
 
@@ -160,6 +176,9 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   tools.register({
+    // 刻意 public：绘图是人人可要求的能力（用户产品决定）——群里谁都能让 bot 画图。
+    // 抗滥用不靠权限档而靠资源治理：单次成本被 maxPixels/maxFrames/体积封顶，
+    // 跨会话并发由引擎信号量排队（不拒绝、只削峰），机器不会被刷图打垮。
     groups: ['draw'],
     definition: {
       type: 'function',
@@ -190,8 +209,11 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         if (Buffer.byteLength(source) > cfg.maxSourceBytes) {
           return JSON.stringify({ error: `source 超过大小上限 ${Math.floor(cfg.maxSourceBytes / 1024)}KB` });
         }
-        const plan = resolveCanvas(source, args.width as number | undefined, cfg);
-        const { png, width, height } = await engine.renderPng(plan, cfg.scale, cfg.maxPixels);
+        // 按 scale² 折算：resolveCanvas 收的是 CSS 像素，但真实光栅 = CSS 像素 × scale²，
+        // 用折算后的 CSS 像素预算让设备像素峰值不超过 maxPixels 的既定内存含义
+        const cssPixelBudget = Math.floor(cfg.maxPixels / (cfg.scale * cfg.scale));
+        const plan = resolveCanvas(source, args.width as number | undefined, { ...cfg, maxPixels: cssPixelBudget });
+        const { png, width, height } = await engine.renderPng(plan, cfg.scale, cssPixelBudget);
 
         const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(png));
         const hash = Buffer.from(digest).toString('hex').slice(0, 16);
@@ -215,6 +237,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   tools.register({
+    // public 同 draw_image：人人可画，抗滥用靠资源治理不靠权限档。
     groups: ['draw'],
     definition: {
       type: 'function',
