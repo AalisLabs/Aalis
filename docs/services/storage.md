@@ -246,9 +246,9 @@ root 的 `readable/writable/deletable`（`StorageRootInfo`）就是该根的访�
 
 `isStorageUri`（`:298-302`）刻意把 `http/https/file`（`RESERVED_URI_SCHEMES`，`:289`）排除在 storage URI 之外——这些 scheme 走专门读取路径（外网抓取用 `safeFetch` / util-network-guard）。消费者拿到一条 URI 时应先 `isStorageUri` 分流：storage URI 走 gateway，外网 URL 走 `safeFetch`，不应把外部 URL 传入 storage，也不应让 storage 访问网络。详见 [docs/concepts/security-model.md](../concepts/security-model.md)。
 
-### data 根：默认不可删 + 持久化原子写
+### data 根：可删 + 持久化原子写
 
-内置 `data` 根默认 `deletable: false`（`plugin-storage-local/src/index.ts`）——它存放 users.json / scheduler-jobs / skills / persona 等关键持久化数据，参考实现对写操作做「临时文件 + rename」原子覆盖（`:409-417`）防半写损坏。若你实现自己的后端用于承载这些数据，应保证写的原子性与默认不可删的保守策略。
+内置 `data` 根默认 `deletable: true`（`plugin-storage-local/src/index.ts`）——`/clear` 的附件清理（`data/images` 等目录）依赖它，关闭会让开箱部署连手动清理都失败；agent 侧的删除仍由 `file_delete` 等工具的 `restricted`+`confirm` 权限档拦截，`deletable` 不承担那道闸。该根存放 users.json / scheduler-jobs / skills / persona 等关键持久化数据，参考实现对写操作做「临时文件 + rename」原子覆盖（`:409-417`）防半写损坏。若你实现自己的后端用于承载这些数据，应保证写的原子性。
 
 ---
 
