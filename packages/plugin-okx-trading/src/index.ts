@@ -166,8 +166,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   registerMarketTools(reg, client);
   registerRubikTools(reg, client);
-  registerAccountTools(reg, client, { defaultLimit: cfg.defaultPageLimit, maxLimit: cfg.maxPageLimit });
-  registerOrderQueryTools(reg, client, { defaultLimit: cfg.defaultPageLimit, maxLimit: cfg.maxPageLimit });
+  // 账户/订单查询读的是 owner 的真实资金全貌（余额/持仓/账单/挂单），不是公开行情——
+  // 标 sensitive 挡等级 0（陌生群成员经 LLM 读账户）；owner 与已授权用户不受影响。
+  // 行情类（market/rubik）本就是公开数据，维持 public。
+  const regSensitive: typeof reg = tool => reg({ risk: 'sensitive', ...tool });
+  registerAccountTools(regSensitive, client, { defaultLimit: cfg.defaultPageLimit, maxLimit: cfg.maxPageLimit });
+  registerOrderQueryTools(regSensitive, client, { defaultLimit: cfg.defaultPageLimit, maxLimit: cfg.maxPageLimit });
   // 实盘安全闸：真实资金交易须显式确认（demo:false 时还要 confirmRealMoney:true），否则只暴露查询工具。
   // 不加逐单人工确认（保留实时/算法交易能力）——以「一次性显式确认 + 启动告警」替代。
   const tradingArmed = cfg.demo || cfg.confirmRealMoney;
