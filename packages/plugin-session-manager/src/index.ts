@@ -932,7 +932,7 @@ class SessionManager implements SessionManagerService {
 /**
  * 移除值为 undefined / null 的键。
  *
- * null 必须一起剥：清除会话覆盖（`/model 复位`、WebUI 清空）写入的是 undefined，
+ * null 必须一起剥：清除会话覆盖（`/model 复位`）写入的是 undefined，
  * 而它经 BSON 持久化后读回来是 **null**。不剥的话这个 null 会在 Object.assign 里
  * 把平台 profile 的同名字段盖成空——agent 侧判 `llm?.provider && llm?.model` 不成立、
  * 退回 `resolveLLMModel(undefined)`，静默落到首个注册的 entry。表现就是

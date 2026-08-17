@@ -1,6 +1,7 @@
 import type { Context, Logger } from '@aalis/core';
 import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
+import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 
@@ -50,13 +51,28 @@ describe('transformModelImages：裸路径 ref 不得流向 provider', () => {
   it('passthrough 模式：物化不了的裸路径被丢弃，而不是原样外泄', async () => {
     // 无 media 运行时（storage 未注入）→ 规范化必然失败，此时正确行为是丢图，
     // 而不是把裸路径塞给 provider 让整轮请求 400。
-    const out = await svcWith('passthrough').transformModelImages([REF]);
-    expect(out.every(s => !s.startsWith('data/'))).toBe(true);
+    expect(await svcWith('passthrough').transformModelImages([REF])).toEqual([]);
   });
 
   it('passthrough-raw 模式：不抽帧，但同样不外泄裸路径', async () => {
+    expect(await svcWith('passthrough-raw').transformModelImages([REF])).toEqual([]);
+  });
+
+  it('passthrough-raw + 可用 storage：裸路径被真的物化成 data URL（修复的正向路径）', async () => {
+    // 上面几条只证明「没外泄」，空数组也算通过；这条才守住「确实变成了合法形态」。
+    const gif = Buffer.from('GIF89a-fake-bytes');
+    setMediaRuntime({
+      proc: {} as never,
+      storage: {
+        readFile: async () => gif,
+        writeFile: async () => {},
+        resolveLocalPath: async () => `/tmp/${REF}`,
+      } as never,
+    });
     const out = await svcWith('passthrough-raw').transformModelImages([REF]);
-    expect(out.every(s => !s.startsWith('data/'))).toBe(true);
+    expect(out).toHaveLength(1);
+    expect(out[0].startsWith('data:image/gif;base64,')).toBe(true);
+    expect(out[0]).toContain(gif.toString('base64'));
   });
 
   it('多张混合：data URI 保留、裸路径不外泄', async () => {
