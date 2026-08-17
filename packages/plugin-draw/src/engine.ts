@@ -145,6 +145,97 @@ export class DrawEngine {
     });
   }
 
+  /**
+   * 动画渲染：同一页内完成「暂停时钟 → 时长探测 → 逐帧定格截图」。
+   * 双机制必须并用（调研实测 getAnimations() 不暴露 SMIL）：
+   *   SMIL → svg.pauseAnimations() + svg.setCurrentTime(t)
+   *   CSS/WAAPI → document.getAnimations() 逐个 pause() + currentTime=t*1000
+   * 步进与截图之间无真实时间依赖，帧序列字节级确定（调研实测）。
+   * 时长：显式参数 > 文档声明探测（CSS computedTiming / SMIL getSimpleDuration，
+   * 无穷循环按单轮计）> 默认值；帧数受 maxFrames 收口（超出按帧数反推有效时长）。
+   */
+  async renderAnimation(
+    plan: CanvasPlan,
+    opts: {
+      fps: number;
+      requestedDurationMs?: number;
+      defaultDurationMs: number;
+      maxDurationMs: number;
+      maxFrames: number;
+      scale: number;
+      maxPixels: number;
+    },
+  ): Promise<{ frames: Buffer[]; width: number; height: number; animationCount: number; durationMs: number }> {
+    const guessHeight = plan.height === 'auto' ? 600 : plan.height;
+    return this.withPage(plan, guessHeight, async page => {
+      let height = plan.height;
+      if (height === 'auto') {
+        const measured = await page.evaluate<number>(
+          'Math.ceil(document.getElementById("aalis-draw").getBoundingClientRect().height)',
+        );
+        height = Math.max(16, Math.min(measured || 16, Math.floor(opts.maxPixels / plan.width)));
+      }
+      await page.setViewport({ width: plan.width, height, deviceScaleFactor: opts.scale });
+
+      // 暂停两套动画时钟；顺带数动画数与声明时长（0 动画 = 调用方该提示"这是静态图"）
+      const probe = await page.evaluate<{ count: number; durationMs: number }>(
+        `(() => {
+          let count = 0;
+          let max = 0;
+          for (const svg of document.querySelectorAll('svg')) {
+            try { svg.pauseAnimations(); } catch {}
+            for (const el of svg.querySelectorAll('animate,animateTransform,animateMotion,set')) {
+              count += 1;
+              try {
+                const d = el.getSimpleDuration();
+                if (Number.isFinite(d)) max = Math.max(max, d * 1000);
+              } catch {}
+            }
+          }
+          for (const a of document.getAnimations()) {
+            try {
+              a.pause();
+              count += 1;
+              const t = a.effect.getComputedTiming();
+              const iters = Number.isFinite(t.iterations) ? t.iterations : 1;
+              max = Math.max(max, (t.delay || 0) + (Number(t.duration) || 0) * iters);
+            } catch {}
+          }
+          return { count, durationMs: Math.round(max) };
+        })()`,
+      );
+
+      let durationMs = opts.requestedDurationMs ?? (probe.durationMs > 0 ? probe.durationMs : opts.defaultDurationMs);
+      durationMs = Math.min(durationMs, opts.maxDurationMs);
+      let frameCount = Math.max(2, Math.round((durationMs / 1000) * opts.fps));
+      if (frameCount > opts.maxFrames) {
+        frameCount = opts.maxFrames;
+        durationMs = Math.round((frameCount / opts.fps) * 1000);
+      }
+
+      const frames: Buffer[] = [];
+      for (let i = 0; i < frameCount; i++) {
+        const t = (i / opts.fps).toFixed(6);
+        await page.evaluate(
+          `((t) => {
+            for (const svg of document.querySelectorAll('svg')) {
+              try { svg.setCurrentTime(t); } catch {}
+            }
+            for (const a of document.getAnimations()) {
+              try { a.pause(); a.currentTime = t * 1000; } catch {}
+            }
+          })(${t})`,
+        );
+        const shot = await page.screenshot({
+          type: 'png',
+          clip: { x: 0, y: 0, width: plan.width, height },
+        });
+        frames.push(Buffer.from(shot));
+      }
+      return { frames, width: plan.width, height, animationCount: probe.count, durationMs };
+    });
+  }
+
   async dispose(): Promise<void> {
     this.disposed = true;
     if (this.idleTimer) clearTimeout(this.idleTimer);
