@@ -81,3 +81,38 @@ describe('allowRequest（default-deny）', () => {
     }
   });
 });
+
+describe('lintAnimationSource（作者级错误类静态检出）', () => {
+  it('R1：同一叶子元素叠 animateMotion 与位移 transform → 报漂移（首秀演示实犯的错）', async () => {
+    const { lintAnimationSource } = await import('../../packages/plugin-draw/src/plan.js');
+    const bad =
+      '<svg viewBox="0 0 100 100"><circle r="7"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="2s"/>' +
+      '<animateMotion dur="2s" path="M 34 0 A 34 34 0 1 1 33.99 0"/></circle></svg>';
+    expect(lintAnimationSource(bad).some(w => w.includes('漂移'))).toBe(true);
+  });
+
+  it('R1 反例：仅 animateMotion 干净；g 下两个子元素各挂一种不误报', async () => {
+    const { lintAnimationSource } = await import('../../packages/plugin-draw/src/plan.js');
+    const clean = '<svg><circle r="7"><animateMotion dur="2s" path="M 0 0 L 1 1"/></circle></svg>';
+    expect(lintAnimationSource(clean)).toEqual([]);
+    const siblings =
+      '<svg><g><circle r="7"><animateMotion dur="2s" path="M 0 0"/></circle>' +
+      '<rect width="4" height="4"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="2s"/></rect></g></svg>';
+    expect(lintAnimationSource(siblings)).toEqual([]);
+  });
+
+  it('R2：无限循环 keyframes 首尾不一致 → 报跳变；一致/非循环不报', async () => {
+    const { lintAnimationSource } = await import('../../packages/plugin-draw/src/plan.js');
+    const jump =
+      '<svg><style>@keyframes slide{0%{transform:translateX(0)}100%{transform:translateX(50px)}}' +
+      '.a{animation:slide 2s linear infinite}</style><rect class="a"/></svg>';
+    expect(lintAnimationSource(jump).some(w => w.includes('跳变'))).toBe(true);
+    const seamless =
+      '<svg><style>@keyframes pulse{0%{opacity:1}50%{opacity:0.3}100%{opacity:1}}' +
+      '.a{animation:pulse 2s linear infinite}</style><rect class="a"/></svg>';
+    expect(lintAnimationSource(seamless)).toEqual([]);
+    const once =
+      '<svg><style>@keyframes intro{0%{opacity:0}100%{opacity:1}}.a{animation:intro 1s}</style><rect class="a"/></svg>';
+    expect(lintAnimationSource(once)).toEqual([]);
+  });
+});

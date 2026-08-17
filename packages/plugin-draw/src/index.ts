@@ -18,7 +18,7 @@ import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { DrawEngine } from './engine.js';
 import { framesToGif } from './gif.js';
-import { type DrawCaps, resolveCanvas } from './plan.js';
+import { type DrawCaps, lintAnimationSource, resolveCanvas } from './plan.js';
 
 // ===== 插件元数据 =====
 
@@ -225,6 +225,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           '**动画只能用声明式**：SVG 用 SMIL（<animate>/<animateTransform>/<animateMotion>）或 CSS ' +
           '@keyframes；脚本驱动的动画不会生效（渲染页禁用 JS）。建议动画时长 2-5 秒并做无缝循环' +
           '（首尾状态一致），GIF 默认无限循环播放。\n' +
+          '**避坑**：同一元素不要同时挂 animateMotion 与位移类 animateTransform（位移复合会漂移）；' +
+          '结果附带首帧/中帧检查图，发送前建议用 analyze_image 查看确认动画形态符合意图。\n' +
           '选型与硬约束同 draw_image：图形动画写 SVG（必须带 viewBox）；外链资源一律被拦，只能内联。',
         parameters: {
           type: 'object',
@@ -275,10 +277,28 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         const dir = safeSessionDir(callCtx.sessionId || 'nosession');
         const uri = `data:/images/${dir}/draw-${hash}.gif`;
         await storage.writeFile(uri, gif);
+        // 检查帧：首帧+中帧落盘，供 agent 用 analyze_image 自检后再投递（视觉自检环的物证面）
+        const midIdx = Math.floor(r.frames.length / 2);
+        const checkFrames: string[] = [];
+        for (const [tag, idx] of [
+          ['f0', 0],
+          ['fmid', midIdx],
+        ] as const) {
+          const fUri = `data:/images/${dir}/draw-${hash}-${tag}.png`;
+          await storage.writeFile(fUri, r.frames[idx]);
+          checkFrames.push(fUri);
+        }
+        const lintWarnings = lintAnimationSource(source);
         logger.info(
           `draw_animation 渲染完成 mode=${plan.mode} ${r.width}x${r.height} ${r.frames.length}帧@${fps}fps ` +
             `${(gif.byteLength / 1024).toFixed(0)}KB anims=${r.animationCount} → ${uri}`,
         );
+        const warnings = [
+          ...(r.animationCount === 0
+            ? ['未检测到任何声明式动画——产物是静态画面的重复帧。动画请用 SMIL 或 CSS @keyframes。']
+            : []),
+          ...lintWarnings,
+        ];
         return JSON.stringify({
           uri,
           width: r.width,
@@ -287,10 +307,11 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           fps,
           duration_seconds: r.durationMs / 1000,
           size_kb: Math.round(gif.byteLength / 1024),
-          ...(r.animationCount === 0
-            ? { warning: '未检测到任何声明式动画——产物是静态画面的重复帧。动画请用 SMIL 或 CSS @keyframes。' }
-            : {}),
-          message: '已渲染并落盘。用 send_attachment({ kind: "image", storage_uri: uri }) 发送到聊天。',
+          check_frames: checkFrames,
+          ...(warnings.length > 0 ? { warnings } : {}),
+          message:
+            '已渲染并落盘。发送前建议先用 analyze_image 查看 check_frames 确认动画形态；' +
+            '确认后用 send_attachment({ kind: "image", storage_uri: uri }) 发送到聊天。',
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

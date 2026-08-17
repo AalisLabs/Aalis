@@ -126,3 +126,78 @@ describe('DrawEngine 动画（真浏览器 + 真 ffmpeg）', () => {
     }
   }, 60_000);
 });
+
+describe('draw_animation 工具全流（真 ctx：lint 告警 + 检查帧落盘）', () => {
+  it('复合位移动画：结果带漂移 warning、check_frames 两张已落盘、GIF 可 stat', async () => {
+    const base2 = mkdtempSync(join(tmpdir(), 'aalis-draw-tool-'));
+    mkdirSync(join(base2, 'ws'), { recursive: true });
+    mkdirSync(join(base2, 'tmp'), { recursive: true });
+    mkdirSync(join(base2, 'data'), { recursive: true });
+    const app2 = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    try {
+      await app2.ctx.useModule(storageLocal as unknown as Parameters<typeof app2.ctx.useModule>[0], {
+        roots: [
+          {
+            name: 'data',
+            path: join(base2, 'data'),
+            label: 'data',
+            kind: 'data',
+            browsable: false,
+            readable: true,
+            writable: true,
+            deletable: true,
+          },
+          {
+            name: 'tmp',
+            path: join(base2, 'tmp'),
+            label: 'tmp',
+            kind: 'tmp',
+            browsable: false,
+            readable: true,
+            writable: true,
+            deletable: true,
+          },
+        ],
+      });
+      await app2.ctx.useModule(processLocal as unknown as Parameters<typeof app2.ctx.useModule>[0], {});
+      const storage2 = createStorageGateway(app2.ctx);
+
+      const { apply } = await import('../../packages/plugin-draw/src/index.js');
+      const captured: Record<string, (a: Record<string, unknown>, c: { sessionId: string }) => Promise<string>> = {};
+      const fakeTools = {
+        register: (t: { definition: { function: { name: string } }; handler: (typeof captured)[string] }) => {
+          captured[t.definition.function.name] = t.handler;
+          return () => {};
+        },
+        registerGroup: () => {},
+      };
+      app2.ctx.provide('tools', fakeTools as never);
+      apply(app2.ctx, { idleShutdownSec: 0 });
+
+      // 首秀实犯的复合位移错误形态
+      const buggy =
+        '<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg"><rect width="120" height="120" fill="#111"/>' +
+        '<g transform="translate(60,60)"><circle r="8" fill="#f59e0b">' +
+        '<animateTransform attributeName="transform" type="rotate" from="0 0 0" to="360 0 0" dur="2s" repeatCount="indefinite"/>' +
+        '<animateMotion dur="2s" repeatCount="indefinite" path="M 30 0 A 30 30 0 1 1 29.99 0"/></circle></g></svg>';
+      const out = JSON.parse(
+        await captured.draw_animation(
+          { source: buggy, fps: 8, duration_seconds: 1 },
+          { sessionId: 'onebot:t:group:9' },
+        ),
+      );
+      expect(out.error).toBeUndefined();
+      expect(out.uri).toMatch(/^data:\/images\/onebot_t_group_9\/draw-[0-9a-f]{16}\.gif$/);
+      expect(out.check_frames).toHaveLength(2);
+      expect((out.warnings ?? []).some((w: string) => w.includes('漂移'))).toBe(true);
+      // 产物真的在（storage.stat 走真文件系统）
+      await expect(storage2.stat(out.uri)).resolves.toMatchObject({ size: expect.any(Number) });
+      for (const f of out.check_frames) {
+        await expect(storage2.stat(f)).resolves.toMatchObject({ size: expect.any(Number) });
+      }
+    } finally {
+      await app2.stop();
+      rmSync(base2, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
