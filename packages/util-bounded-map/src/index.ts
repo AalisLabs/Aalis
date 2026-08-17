@@ -24,6 +24,8 @@ export interface BoundedMap<K, V> {
   clear(): void;
   /** 当前未过期条目的值（顺带惰性清理过期项）。 */
   values(): V[];
+  /** 当前未过期条目的 [键, 值] 对，按 LRU 顺序（队首最久未访问）；顺带惰性清理过期项。 */
+  entries(): Array<[K, V]>;
   readonly size: number;
 }
 
@@ -89,6 +91,15 @@ export function createBoundedMap<K, V>(opts: BoundedMapOptions<K, V>): BoundedMa
       for (const [k, e] of [...store]) {
         if (isExpired(e)) evict(k, e);
         else out.push(e.value);
+      }
+      return out;
+    },
+
+    entries(): Array<[K, V]> {
+      const out: Array<[K, V]> = [];
+      for (const [k, e] of [...store]) {
+        if (isExpired(e)) evict(k, e);
+        else out.push([k, e.value]);
       }
       return out;
     },
