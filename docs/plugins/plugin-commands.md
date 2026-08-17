@@ -42,8 +42,13 @@ meta.inject = {}
 | `summary` | 会话摘要 |
 | `vector` | 向量记忆 |
 | `image` | 图片缓存 |
+| `video` | 视频缓存 |
+| `audio` | 语音缓存 |
+| `file` | 文件缓存 |
 | `persona` | 会话角色状态 |
+| `checkpoint` | 检查点（对话回滚存档） |
 | `user-profile` | 用户档案，仅全局清理 |
+| `user-relation` | 用户关系图谱，仅全局清理 |
 
 示例：
 
