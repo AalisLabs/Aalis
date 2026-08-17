@@ -45,6 +45,7 @@ import {
   DEFAULT_VISION_DETAILED_PROMPT,
   DEFAULT_VISION_PROFESSIONAL_PROMPT,
   DEFAULT_VISION_PROMPT,
+  imageToBase64DataUrl,
   scanLLMProcessors,
 } from './llm-adapter.js';
 import { normalizeAttachments } from './normalize.js';
@@ -467,42 +468,62 @@ export class MediaServiceImpl implements MediaService {
   }
 
   /**
-   * 出口形态变换（agent:llm:before 中间件内核）：仅 vision.mode==='passthrough' 时，
-   * images 里的动图抽帧替换为多张静图 data URI；静图与其余模式一律原样返回。
-   * 三个模式共用同一张真值表：describe/disabled/passthrough-raw → 原样，
-   * passthrough → 动图变帧。任何一步失败原样退回该图（宁可主模型只见首帧，不丢图）。
+   * 出口形态变换（agent:llm:before 中间件内核）。按 vision.mode 决定主模型收到什么：
+   *
+   * - describe：识别由专门的视觉模型负责，结果已作为文字拼进消息正文，主模型不再看图。
+   *   实测一张 57KB 的图挂上去要多花 1,090 token、4.7 秒预填充——同一张图识别两遍。
+   *   需要看细节时主模型可以主动调 analyze_image 工具，不必每张图都预付这笔钱。
+   * - disabled：配置项写明「丢弃图片」，同样不交。
+   * - passthrough：主模型亲自看图 → 动图抽帧为多张静图，静图规范化后交出。
+   * - passthrough-raw：主模型看原图 → 不抽帧，仍需规范化。
+   *
+   * 直通两档必须过**形态规范化**：适配器给 attachment.data 的是历史相对路径 ref
+   * （`data/images/…`），而 provider 只认 data URI / http / file:// / 绝对路径，裸路径
+   * 会被当成 base64 送出去，触发 `illegal base64 data at input byte N`（实测 400、整轮
+   * 回复失败）。已经是 data URI / http 的逐字节原样返回；交不出合法形态的那一张丢弃并
+   * warn——留着它等于让整轮请求被 provider 拒收。
    */
   async transformModelImages(images: string[]): Promise<string[]> {
-    if (this.cfg.vision.mode !== 'passthrough') return images;
+    if (this.cfg.vision.mode === 'describe' || this.cfg.vision.mode === 'disabled') return [];
+    const framesEnabled = this.cfg.vision.mode === 'passthrough';
     const out: string[] = [];
+    /** 交给 provider 前的最后一道：非 data URI / http 的一律物化成 data URL，失败就丢这一张。 */
+    const normalized = async (src: string): Promise<void> => {
+      try {
+        out.push(await imageToBase64DataUrl(src));
+      } catch (err) {
+        this.logger.warn(`[passthrough] 图片无法规范化，本轮丢弃该图: ${(err as Error).message}`);
+      }
+    };
+
     for (const data of images) {
       const animated = isAnimatedFormat(data) || this.animatedHints.has(data);
-      if (!animated) {
-        out.push(data);
+      if (!framesEnabled || !animated) {
+        await normalized(data);
         continue;
       }
       try {
         const local = await materializeAttachment(data);
         if (!local) {
           // 每消息只处理一次（WeakSet 不重试），这里不留痕的话用户只会看到"主模型没看懂动图"
-          this.logger.debug('[passthrough] 动图无法物化为本地文件，原样直通（主模型可能只见首帧）');
-          out.push(data);
+          this.logger.debug('[passthrough] 动图无法物化为本地文件，退回整图（主模型可能只见首帧）');
+          await normalized(data);
           continue;
         }
         try {
           const frames = await this.framesFromLocal(local.path, this.cfg.animatedImage.maxFrames);
           if (frames.length > 0) {
             this.logger.info(`[passthrough] 动图抽帧 ${frames.length} 帧直通主模型`);
-            out.push(...frames);
+            out.push(...frames); // 抽帧产物已是 data URI
           } else {
-            out.push(data);
+            await normalized(data);
           }
         } finally {
           await local.cleanup();
         }
       } catch (err) {
-        this.logger.warn(`[passthrough] 动图抽帧失败，原样直通: ${(err as Error).message}`);
-        out.push(data);
+        this.logger.warn(`[passthrough] 动图抽帧失败，退回整图: ${(err as Error).message}`);
+        await normalized(data);
       }
     }
     return out;
