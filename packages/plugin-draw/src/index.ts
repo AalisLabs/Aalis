@@ -11,11 +11,13 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
+import { createProcessGateway } from '@aalis/api-process';
 import { createStorageGateway } from '@aalis/api-storage';
 import { useToolService } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { DrawEngine } from './engine.js';
+import { framesToGif } from './gif.js';
 import { type DrawCaps, resolveCanvas } from './plan.js';
 
 // ===== 插件元数据 =====
@@ -74,12 +76,40 @@ export const configSchema: ConfigSchema = {
     default: 300,
     description: '渲染引擎空闲该时长后关停 Chromium 释放内存；0 = 常驻',
   },
+  animMaxDurationSec: {
+    type: 'number',
+    label: '动图时长上限 (秒)',
+    default: 8,
+    description: 'draw_animation 的动画时长硬上限',
+  },
+  animDefaultFps: {
+    type: 'number',
+    label: '动图默认帧率',
+    default: 15,
+    description: '未显式指定 fps 时使用；上限 25',
+  },
+  animMaxFrames: {
+    type: 'number',
+    label: '动图帧数上限',
+    default: 160,
+    description: '时长×帧率超出时按帧数反推有效时长',
+  },
+  animMaxOutputMB: {
+    type: 'number',
+    label: 'GIF 体积上限 (MB)',
+    default: 9,
+    description: '超出即报错（OneBot 内联投递上限 10MB，留余量）',
+  },
 };
 
 interface DrawConfig extends DrawCaps {
   headless: boolean;
   executablePath: string;
   idleShutdownSec: number;
+  animMaxDurationSec: number;
+  animDefaultFps: number;
+  animMaxFrames: number;
+  animMaxOutputMB: number;
 }
 
 function resolveConfig(config: Record<string, unknown>): DrawConfig {
@@ -96,6 +126,10 @@ function resolveConfig(config: Record<string, unknown>): DrawConfig {
     headless: (config.headless as boolean) ?? true,
     executablePath: (config.executablePath as string) ?? '',
     idleShutdownSec: num(config.idleShutdownSec, 300, 0, 86400),
+    animMaxDurationSec: num(config.animMaxDurationSec, 8, 1, 30),
+    animDefaultFps: num(config.animDefaultFps, 15, 1, 25),
+    animMaxFrames: num(config.animMaxFrames, 160, 2, 600),
+    animMaxOutputMB: num(config.animMaxOutputMB, 9, 1, 9),
   };
 }
 
@@ -108,6 +142,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   const cfg = resolveConfig(rawConfig);
   const logger = ctx.logger.child('draw');
   const storage = createStorageGateway(ctx);
+  const proc = createProcessGateway(ctx);
 
   const engine = new DrawEngine(logger, {
     headless: cfg.headless,
@@ -174,6 +209,92 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.warn(`draw_image 失败: ${message}`);
+        return JSON.stringify({ error: message });
+      }
+    },
+  });
+
+  tools.register({
+    groups: ['draw'],
+    definition: {
+      type: 'function',
+      function: {
+        name: 'draw_animation',
+        description:
+          '把你编写的带动画的 SVG/HTML 标记渲染成 GIF 动图，落盘后返回 storage_uri（用 send_attachment 发送）。\n' +
+          '**动画只能用声明式**：SVG 用 SMIL（<animate>/<animateTransform>/<animateMotion>）或 CSS ' +
+          '@keyframes；脚本驱动的动画不会生效（渲染页禁用 JS）。建议动画时长 2-5 秒并做无缝循环' +
+          '（首尾状态一致），GIF 默认无限循环播放。\n' +
+          '选型与硬约束同 draw_image：图形动画写 SVG（必须带 viewBox）；外链资源一律被拦，只能内联。',
+        parameters: {
+          type: 'object',
+          properties: {
+            source: { type: 'string', description: '带 SMIL/CSS 动画的 SVG 文档或 HTML 片段' },
+            width: { type: 'number', description: '画布宽 px（可选，动图建议 ≤600 控制体积）' },
+            duration_seconds: { type: 'number', description: '动画时长秒（可选；缺省自动探测声明时长）' },
+            fps: { type: 'number', description: '帧率（可选，默认 15，上限 25）' },
+          },
+          required: ['source'],
+          additionalProperties: false,
+        },
+      },
+    },
+    handler: async (args, callCtx) => {
+      try {
+        const source = String(args.source ?? '');
+        if (!source.trim()) return JSON.stringify({ error: 'source 为空' });
+        if (Buffer.byteLength(source) > cfg.maxSourceBytes) {
+          return JSON.stringify({ error: `source 超过大小上限 ${Math.floor(cfg.maxSourceBytes / 1024)}KB` });
+        }
+        const plan = resolveCanvas(source, args.width as number | undefined, cfg);
+        const reqDur = Number(args.duration_seconds);
+        const reqFps = Number(args.fps);
+        const fps = Number.isFinite(reqFps) && reqFps > 0 ? Math.min(Math.floor(reqFps), 25) : cfg.animDefaultFps;
+
+        const r = await engine.renderAnimation(plan, {
+          fps,
+          requestedDurationMs: Number.isFinite(reqDur) && reqDur > 0 ? Math.round(reqDur * 1000) : undefined,
+          defaultDurationMs: 3000,
+          maxDurationMs: cfg.animMaxDurationSec * 1000,
+          maxFrames: cfg.animMaxFrames,
+          scale: 1, // 动图按 1x：帧数×像素才是体积主宰，清晰度靠画布宽
+          maxPixels: cfg.maxPixels,
+        });
+
+        const gif = await framesToGif(proc, storage, r.frames, fps);
+        if (gif.byteLength > cfg.animMaxOutputMB * 1024 * 1024) {
+          return JSON.stringify({
+            error:
+              `GIF ${(gif.byteLength / 1048576).toFixed(1)}MB 超过上限 ${cfg.animMaxOutputMB}MB——` +
+              '请缩小画布宽、降低 fps 或缩短时长后重试',
+          });
+        }
+
+        const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(gif));
+        const hash = Buffer.from(digest).toString('hex').slice(0, 16);
+        const dir = safeSessionDir(callCtx.sessionId || 'nosession');
+        const uri = `data:/images/${dir}/draw-${hash}.gif`;
+        await storage.writeFile(uri, gif);
+        logger.info(
+          `draw_animation 渲染完成 mode=${plan.mode} ${r.width}x${r.height} ${r.frames.length}帧@${fps}fps ` +
+            `${(gif.byteLength / 1024).toFixed(0)}KB anims=${r.animationCount} → ${uri}`,
+        );
+        return JSON.stringify({
+          uri,
+          width: r.width,
+          height: r.height,
+          frames: r.frames.length,
+          fps,
+          duration_seconds: r.durationMs / 1000,
+          size_kb: Math.round(gif.byteLength / 1024),
+          ...(r.animationCount === 0
+            ? { warning: '未检测到任何声明式动画——产物是静态画面的重复帧。动画请用 SMIL 或 CSS @keyframes。' }
+            : {}),
+          message: '已渲染并落盘。用 send_attachment({ kind: "image", storage_uri: uri }) 发送到聊天。',
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn(`draw_animation 失败: ${message}`);
         return JSON.stringify({ error: message });
       }
     },
