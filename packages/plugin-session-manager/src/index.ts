@@ -929,12 +929,21 @@ class SessionManager implements SessionManagerService {
 
 // ===== 工具函数 =====
 
-/** 移除值为 undefined 的键 */
+/**
+ * 移除值为 undefined / null 的键。
+ *
+ * null 必须一起剥：清除会话覆盖（`/model 复位`、WebUI 清空）写入的是 undefined，
+ * 而它经 BSON 持久化后读回来是 **null**。不剥的话这个 null 会在 Object.assign 里
+ * 把平台 profile 的同名字段盖成空——agent 侧判 `llm?.provider && llm?.model` 不成立、
+ * 退回 `resolveLLMModel(undefined)`，静默落到首个注册的 entry。表现就是
+ * 「配置里写着 A，实际跑的是 B」，且没有任何告警。persona 同理。
+ * 本模型里「没有值」一律等于「继承上层」，null 与 undefined 同义。
+ */
 function stripUndefined(obj: object | undefined): Record<string, unknown> {
   if (!obj) return {};
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
-    if (value !== undefined) result[key] = value;
+    if (value !== undefined && value !== null) result[key] = value;
   }
   return result;
 }
