@@ -140,6 +140,13 @@ export async function cacheOneAttachment(
   if (!buf) return null;
   if (kind === 'audio') {
     const inExt = detectExtensionFromBuffer(buf, 'bin');
+    // SILK（QQ 语音原生格式）ffmpeg 无解码器，转码必败——就地短路，省一次注定失败的
+    // 子进程+临时目录。入站路径正常经 get_record 先转 mp3 不会走到这；走到这的是
+    // get_record 失败或转发内语音（后者的 get_record 前置尚未实现）。
+    if (inExt === 'silk') {
+      logger.warn(`OneBot 音频为 SILK 格式（ffmpeg 不支持），跳过转码保留原 URL (size=${buf.byteLength}B)`);
+      return null;
+    }
     const wav = await transcodeAudioBufferToWav(proc, storage, buf, inExt);
     if (!wav) {
       logger.warn(`OneBot 音频转 WAV 失败 (in=${inExt}, size=${buf.byteLength}B)，保留原 URL`);

@@ -10,6 +10,37 @@ import { safeFetch } from '@aalis/util-network-guard';
 
 // ===== 插件元数据 =====
 
+/** 远程图片/音频下载体积上限：与附件缓存的落盘上限同量级，防超大/恶意资源撑爆内存。 */
+const MAX_REMOTE_BINARY_BYTES = 20 * 1024 * 1024;
+
+/**
+ * 流式读取响应体并限额：Content-Length 头超限即拒；流式累计超限即断，返回 null。
+ * 不能用 res.arrayBuffer()——无 Content-Length 的响应会全量缓冲后才可见大小。
+ */
+export async function readBodyCapped(res: Response, maxBytes: number): Promise<Buffer | null> {
+  const len = Number(res.headers.get('content-length'));
+  if (Number.isFinite(len) && len > maxBytes) return null;
+  if (!res.body) {
+    const buf = Buffer.from(await res.arrayBuffer());
+    return buf.byteLength > maxBytes ? null : buf;
+  }
+  const reader = res.body.getReader();
+  const chunks: Buffer[] = [];
+  let received = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    received += value.byteLength;
+    if (received > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
+}
+
 export const name = '@aalis/plugin-llm-ollama';
 export const displayName = 'Ollama';
 export const subsystem = 'llm';
@@ -601,7 +632,8 @@ class OllamaClient {
     const dataMatch = trimmed.match(/^data:[^,]*;base64,(.+)$/);
     if (dataMatch) return sanitize(dataMatch[1]);
 
-    // HTTP(S) URL → 下载并转 base64
+    // HTTP(S) URL → 下载并转 base64（流式限额：超限即断，防超大/恶意资源撑爆内存——
+    // 附件缓存侧有 maxBytes 上限，但缓存失败回退原 URL 时会走到这里，此前这一侧不限量）
     if (/^https?:\/\//i.test(trimmed)) {
       try {
         const res = await safeFetch(trimmed, { signal: AbortSignal.timeout(30000) });
@@ -609,7 +641,13 @@ class OllamaClient {
           this.logger.warn(`下载${label === 'image' ? '图片' : '音频'}失败 (${res.status}): ${trimmed}`);
           return null;
         }
-        const buf = Buffer.from(await res.arrayBuffer());
+        const buf = await readBodyCapped(res, MAX_REMOTE_BINARY_BYTES);
+        if (!buf) {
+          this.logger.warn(
+            `下载${label === 'image' ? '图片' : '音频'}超过体积上限 (${MAX_REMOTE_BINARY_BYTES}B)，已放弃: ${trimmed}`,
+          );
+          return null;
+        }
         return buf.toString('base64');
       } catch (err) {
         this.logger.warn(`下载${label === 'image' ? '图片' : '音频'}异常: ${trimmed}`, err);
