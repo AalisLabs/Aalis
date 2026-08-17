@@ -248,8 +248,10 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           '**动画只能用声明式**：SVG 用 SMIL（<animate>/<animateTransform>/<animateMotion>）或 CSS ' +
           '@keyframes；脚本驱动的动画不会生效（渲染页禁用 JS）。建议动画时长 2-5 秒并做无缝循环' +
           '（首尾状态一致），GIF 默认无限循环播放。\n' +
-          '**避坑**：同一元素不要同时挂 animateMotion 与位移类 animateTransform（位移复合会漂移）；' +
-          '结果附带首帧/中帧检查图，发送前建议用 analyze_image 查看确认动画形态符合意图。\n' +
+          '**避坑**：同一元素不要同时挂 animateMotion 与位移类 animateTransform（位移复合会漂移）。\n' +
+          '渲染成功即可**直接 send_attachment 发送**，不需要额外核对。结果里的 check_frames（首帧/中帧）' +
+          '仅在你对形态没把握时可选地用 analyze_image 看一眼——但视觉识别较慢，通常无必要，别默认调用；' +
+          '即便核对，核对失败或超时也**不影响发送，直接发 GIF**，不要因核对不成而放弃发送。\n' +
           '选型与硬约束同 draw_image：图形动画写 SVG（必须带 viewBox）；外链资源一律被拦，只能内联。',
         parameters: {
           type: 'object',
@@ -300,7 +302,9 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         const dir = safeSessionDir(callCtx.sessionId || 'nosession');
         const uri = `data:/images/${dir}/draw-${hash}.gif`;
         await storage.writeFile(uri, gif);
-        // 检查帧：首帧+中帧落盘，供 agent 用 analyze_image 自检后再投递（视觉自检环的物证面）
+        // 检查帧：首帧+中帧落盘，供 agent 在没把握时**可选**用 analyze_image 核对——
+        // 不是默认路径。本地视觉推理慢（33b 单张可达数分钟），默认自检会把 2 秒的动图
+        // 拖成几分钟、还挤占入站识别的产能（实测已踩），故降级为提示、由模型按需取用。
         const midIdx = Math.floor(r.frames.length / 2);
         const checkFrames: string[] = [];
         for (const [tag, idx] of [
@@ -333,8 +337,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           check_frames: checkFrames,
           ...(warnings.length > 0 ? { warnings } : {}),
           message:
-            '已渲染并落盘。发送前建议先用 analyze_image 查看 check_frames 确认动画形态；' +
-            '确认后用 send_attachment({ kind: "image", storage_uri: uri }) 发送到聊天。',
+            '已渲染并落盘，可直接用 send_attachment({ kind: "image", storage_uri: uri }) 发送到聊天。' +
+            'check_frames 仅供没把握时可选核对（analyze_image 较慢，通常无需调用）。',
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
