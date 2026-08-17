@@ -51,3 +51,54 @@ describe('file 读类能力闸（sensitive 级 1）', () => {
     }
   });
 });
+
+describe('file_move / file_mkdir 的 allowedRoots 闸（审计补配）', () => {
+  // 此前九个 file_* 工具都有 ensureRootAllowed，唯独 move/mkdir 漏掉——
+  // 等级 2 用户一次会话确认即可 file_move data:/users.json（对 authority 等价删除）。
+  function capture(allowed: string[]): Record<string, Omit<RegisteredTool, 'pluginName'>> {
+    const tools: Record<string, Omit<RegisteredTool, 'pluginName'>> = {};
+    const svc = {
+      register: (t: Omit<RegisteredTool, 'pluginName'>) => {
+        tools[t.definition.function.name] = t;
+        return () => undefined;
+      },
+      registerGroup: () => () => undefined,
+    } as unknown as ScopedToolService;
+    const storage = {
+      listRoots: () => [
+        { name: 'workspace', readable: true },
+        { name: 'data', readable: true },
+      ],
+      move: async () => {
+        throw new Error('不应触达 storage.move（闸应先拒）');
+      },
+      mkdir: async () => {
+        throw new Error('不应触达 storage.mkdir（闸应先拒）');
+      },
+    };
+    registerFileTools(svc, {
+      maxReadSize: 1048576,
+      maxSearchBytes: 1048576,
+      maxWriteSize: 10485760,
+      allowedRoots: allowed,
+      storage: storage as never,
+      cwdState: { get: () => 'workspace:/' } as never,
+    } as never);
+    return tools;
+  }
+
+  it('file_move：allowedRoots 外的根（data）两端都被拒，storage.move 零触达', async () => {
+    const tools = capture(['workspace']);
+    const out = await tools.file_move.handler(
+      { from: 'data:/users.json', to: 'data:/x' },
+      { sessionId: 's', enabledGroups: undefined },
+    );
+    expect(String(out)).toContain('不允许访问 data:/');
+  });
+
+  it('file_mkdir：allowedRoots 外的根被拒，storage.mkdir 零触达', async () => {
+    const tools = capture(['workspace']);
+    const out = await tools.file_mkdir.handler({ path: 'data:/evil' }, { sessionId: 's', enabledGroups: undefined });
+    expect(String(out)).toContain('不允许访问 data:/');
+  });
+});

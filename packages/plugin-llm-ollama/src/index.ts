@@ -10,7 +10,7 @@ import { safeFetch } from '@aalis/util-network-guard';
 
 // ===== 插件元数据 =====
 
-/** 远程图片/音频下载体积上限：与附件缓存的落盘上限同量级，防超大/恶意资源撑爆内存。 */
+/** 远程图片/音频下载硬上限（附件缓存默认 10MiB 且可配；此处是缓存失败回退直下时的兜底硬顶）。 */
 const MAX_REMOTE_BINARY_BYTES = 20 * 1024 * 1024;
 
 /**
