@@ -66,19 +66,28 @@ describe('parseSvgCanvas / resolveCanvas', () => {
   });
 });
 
-describe('allowRequest（default-deny）', () => {
+describe('allowRequest（default-deny 判定函数）', () => {
   it('只放 about:blank 与 data:', () => {
     expect(allowRequest('about:blank')).toBe(true);
     expect(allowRequest('data:image/png;base64,AAAA')).toBe(true);
     for (const bad of [
       'http://169.254.169.254/latest/meta-data/',
       'https://example.com/a.png',
-      'file:///etc/passwd',
       'blob:null/x',
       'chrome://settings',
     ]) {
       expect(allowRequest(bad), bad).toBe(false);
     }
+  });
+
+  // file:// 单列并注明真相（对抗审计 T-2）：本函数对 file:// 返回 false，但真实引擎里
+  // file:// 子资源/导航**根本不触发 request 事件**（puppeteer 拦截器对 file:// 是瞎的）——
+  // file:// 被挡死的真正原因是引擎只用 setContent(about:blank 源)、从不 goto('file://')、
+  // 也不设 --allow-file-access-from-files，Chrome 的 local-resource 同源策略拦死。
+  // 这条断言只表达"判定函数不放 file://"，**不代表** allowRequest 是 file:// 的防线。
+  // 若日后有人给引擎加 file:// 导航面，这道判定抓不到——真防线在 engine.ts 的导航入口纪律。
+  it('file:// 判定为拒（但真实防线是 Chrome 源策略，见注释）', () => {
+    expect(allowRequest('file:///etc/passwd')).toBe(false);
   });
 });
 
