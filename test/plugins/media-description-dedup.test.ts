@@ -17,8 +17,9 @@ import type { IncomingMessage } from '../../packages/schema-message/src/index.js
 // 图片描述去重：内容寻址键 + 落盘续命
 //
 // 附件落盘路径带会话名（`images/{session}/{sha256前16}.{ext}`），同一张表情包
-// 在两个群会落成两条路径 → 改前各识别一次。改后取路径里的内容哈希做键，
-// 跨会话共用一条；再加快照落盘，进程重启也不必重认。
+// 在两个群会落成两条路径 → 改前各识别一次。改后**无上下文**的描述取路径里的内容
+// 哈希做键，跨会话共用一条；**带会话上下文**的描述仍用原路径做键，只在本会话内
+// 复用（否则 A 群的语境会随描述串到 B 群）。再加快照落盘，进程重启也不必重认。
 // 识别一次静态图十几秒、动图近一分钟，这是纯赚的算力。
 // ════════════════════════════════════════════════════════════
 
@@ -39,7 +40,7 @@ const fakeStorage = {
 };
 const SNAPSHOT_URI = 'data:/media/descriptions.json';
 
-function makeSvc(): { svc: MediaServiceImpl; describeCount: () => number } {
+function makeSvc(over: Record<string, unknown> = {}): { svc: MediaServiceImpl; describeCount: () => number } {
   let n = 0;
   const cfg = {
     vision: { mode: 'describe', maxTokens: 300, think: false, prompt: '' },
@@ -47,6 +48,8 @@ function makeSvc(): { svc: MediaServiceImpl; describeCount: () => number } {
     video: { mode: 'disabled' },
     animatedImage: { maxFrames: 4 },
     contextHistory: { enabled: false, maxMessages: 0 },
+    senderContext: { enabled: false, profileMaxChars: 0 },
+    ...over,
   } as unknown as MediaConfigResolved;
   const svc = new MediaServiceImpl(ctx, logger, cfg);
   svc.registerProcessor({
@@ -98,6 +101,21 @@ describe('descriptionKey：只认落盘布局，不做宽泛猜测', () => {
   it('哈希长度不符（非 16 位十六进制）不当内容寻址——旧键行为保持', () => {
     const p = 'data/images/onebot_g_1/cachetest1.jpg';
     expect(descriptionKey(p)).toBe(p);
+  });
+});
+
+describe('带会话上下文的描述不跨会话共享（防语境串台）', () => {
+  it('contextHistory 开启时：同一张图在另一个群重新识别，不复用前一个群的描述', async () => {
+    // 描述里可能掺进 A 群的近期对话与发送者画像（vision prompt 带 context），
+    // 复用到 B 群等于把 A 群语境搬过去。这类描述退回会话内私有键。
+    const { svc, describeCount } = makeSvc({ contextHistory: { enabled: true, maxMessages: 4 } });
+    const p = (session: string) => `data/images/${session}/aaaa1111bbbb2222.jpg`;
+    await svc.processMessage(msgIn('onebot:t:group:A', p('onebot_t_group_A')));
+    await svc.processMessage(msgIn('onebot:t:group:B', p('onebot_t_group_B')));
+    expect(describeCount(), '带上下文的描述不该跨群复用').toBe(2);
+    // 同一个群里仍然复用，去重收益不丢
+    await svc.processMessage(msgIn('onebot:t:group:A', p('onebot_t_group_A')));
+    expect(describeCount()).toBe(2);
   });
 });
 

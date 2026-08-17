@@ -317,6 +317,10 @@ export class MediaServiceImpl implements MediaService {
           )
         : undefined;
 
+    // 描述是否可跨会话复用：带了本会话对话上下文的描述属于「此群此刻的解读」，
+    // 只在本会话内复用（键退回含会话目录的落盘路径），否则会把 A 群语境搬进 B 群。
+    const shareable = !ctxText;
+
     const descriptions: Array<string | undefined> = new Array(attachments.length).fill(undefined);
 
     for (let i = 0; i < attachments.length; i++) {
@@ -338,7 +342,7 @@ export class MediaServiceImpl implements MediaService {
             const animated = isAnimatedFormat(att.data) || att.mimeType === 'image/gif';
             // 缓存查询（hint/上下文为空时）。缓存里是裸描述，按本路径的形态重新包装：
             // 静态图带 ref 标记（与新鲜识别同构），动图沿用裸文本（与动图新鲜路径同构）。
-            const cached = lookupCachedDescription(att.data);
+            const cached = lookupCachedDescription(att.data, shareable);
             if (cached) {
               item.cap = 'vision';
               if (animated) {
@@ -356,7 +360,7 @@ export class MediaServiceImpl implements MediaService {
                 item.description = text;
                 item.cap = 'vision';
                 descriptions[i] = text;
-                rememberDescription(att.data, text);
+                rememberDescription(att.data, text, shareable);
               }
             } else {
               const proc = this.pickProcessor('vision', this.cfg.vision.prefer);
@@ -390,10 +394,10 @@ export class MediaServiceImpl implements MediaService {
                     ? formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: raw, ref })
                     : `[图片描述] ${raw}`;
                   descriptions[i] = item.description;
-                  // 缓存只存裸描述：键空间与 describeImage（转发/工具路径）共用——同一张图
-                  // 落盘后是同一内容寻址路径。存格式化文本会让另一侧拿到嵌套包装，
-                  // 存裸描述则各消费点按自己的形态包装（命中分支同规）。
-                  rememberDescription(att.data, raw);
+                  // 缓存只存裸描述：无上下文时键空间与 describeImage（转发/工具路径）
+                  // 共用同一内容哈希；带上下文时退回会话内私有键（见 rememberDescription）。
+                  // 存格式化文本会让另一侧拿到嵌套包装，存裸描述则各消费点按自己的形态包装。
+                  rememberDescription(att.data, raw, shareable);
                 }
               }
             }
@@ -492,7 +496,7 @@ export class MediaServiceImpl implements MediaService {
       try {
         out.push(await imageToBase64DataUrl(src));
       } catch (err) {
-        this.logger.warn(`[passthrough] 图片无法规范化，本轮丢弃该图: ${(err as Error).message}`);
+        this.logger.warn(`[${this.cfg.vision.mode}] 图片无法规范化，本轮丢弃该图: ${(err as Error).message}`);
       }
     };
 
@@ -505,8 +509,12 @@ export class MediaServiceImpl implements MediaService {
       try {
         const local = await materializeAttachment(data);
         if (!local) {
-          // 每消息只处理一次（WeakSet 不重试），这里不留痕的话用户只会看到"主模型没看懂动图"
-          this.logger.debug('[passthrough] 动图无法物化为本地文件，退回整图（主模型可能只见首帧）');
+          // 退回整图规范化——**不能**因为这里物化失败就短路丢图：data URI / http 在
+          // imageToBase64DataUrl 里是直接短路返回的，压根不走物化，短路会把这些合法
+          // 形态一起丢掉（回归用例 media-passthrough-frames「物化失败 / 抽不出帧」守着）。
+          // 只有裸 ref 才会在那边二次失败并被丢弃。
+          // 每消息只处理一次（WeakSet 不重试），这里不留痕的话用户只会看到"主模型没看懂动图"。
+          this.logger.debug(`[${this.cfg.vision.mode}] 动图无法物化为本地文件，退回整图规范化`);
           await normalized(data);
           continue;
         }
@@ -522,7 +530,7 @@ export class MediaServiceImpl implements MediaService {
           await local.cleanup();
         }
       } catch (err) {
-        this.logger.warn(`[passthrough] 动图抽帧失败，退回整图: ${(err as Error).message}`);
+        this.logger.warn(`[passthrough] 动图抽帧失败，退回整图规范化: ${(err as Error).message}`);
         await normalized(data);
       }
     }
