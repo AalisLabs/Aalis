@@ -17,6 +17,7 @@ import { createProcessGateway } from '@aalis/api-process';
 import { createStorageGateway } from '@aalis/api-storage';
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
+import { flushDescriptionCache, loadDescriptionCache } from './cache.js';
 import { DEFAULT_AUDIO_PROMPT, DEFAULT_VISION_BATCH_PROMPT, DEFAULT_VISION_PROMPT } from './llm-adapter.js';
 import { buildPreprocessor } from './preprocessor.js';
 import { setMediaRuntime } from './runtime.js';
@@ -304,6 +305,13 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   const svc = new MediaServiceImpl(ctx, logger, cfg);
 
   ctx.provide('media', svc);
+
+  // 描述缓存续命：识别一次动辄十几秒（动图近一分钟），纯内存缓存重启即全丢。
+  // 启动灌回快照、dispose 落盘；读写失败都只降级为「本次不复用」，不影响识别。
+  void loadDescriptionCache(logger).then(n => {
+    if (n > 0) logger.info(`图片描述缓存已恢复 ${n} 条（跨重启复用，免去重复识别）`);
+  });
+  ctx.onDispose(() => flushDescriptionCache());
 
   // 直通模式的出口形态变换：agent 组装完成后、发出之前，把末条 user 消息 images[]
   // 里的动图抽帧替换为多张静图（passthrough 语义；其余模式该方法原样返回，等价 no-op）。
