@@ -3,9 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// 图像三模式的出口形态变换（transformModelImages + agent:llm:before 中间件）：
-//   describe / disabled / passthrough-raw → images 原样（与既有行为逐字节一致）
-//   passthrough                           → 静图原样，动图抽帧为多张静图 data URI
+// 图像四模式的出口形态变换（transformModelImages + agent:llm:before 中间件）：
+//   describe / disabled → 一张不交给主模型（识别是视觉模型的职责，结果已在正文文字里；
+//                          disabled 的配置语义本就是「丢弃图片」）
+//   passthrough-raw     → 不抽帧，形态规范化后交出
+//   passthrough         → 静图规范化交出，动图抽帧为多张静图 data URI
 // 动图判定双通道：data 串自身特征（data:image/gif、.gif 扩展名）∪ 归档期登记的
 // mimeType 线索（QQ 图 URL 常无扩展名，mimeType 只在 processMessage 时可见）。
 // ════════════════════════════════════════════════════════════
@@ -54,11 +56,17 @@ beforeEach(() => {
 });
 
 describe('transformModelImages 三模式真值表', () => {
-  it('describe：一律原样（含动图），不触发抽帧', async () => {
+  it('describe：一张不交给主模型（识别由视觉模型负责，结果已是正文里的文字）', async () => {
     const svc = makeSvc('describe');
-    const images = [PLAIN_URL, GIF_DATA];
-    expect(await svc.transformModelImages(images)).toEqual(images);
+    // 改前这里断言「原样」——那是主模型无 vision 能力时代的无害空转。主模型一旦有
+    // vision，同一张图就被识别两遍：实测 57KB 的图多花 1,090 token / 4.7 秒预填充。
+    expect(await svc.transformModelImages([PLAIN_URL, GIF_DATA])).toEqual([]);
     expect(mocks.materializeAttachment).not.toHaveBeenCalled();
+  });
+
+  it('disabled：同样一张不交（配置项语义就是「丢弃图片」）', async () => {
+    const svc = makeSvc('disabled');
+    expect(await svc.transformModelImages([PLAIN_URL, GIF_DATA])).toEqual([]);
   });
 
   it('passthrough-raw：一律原样（动图不抽帧）', async () => {
@@ -153,9 +161,10 @@ describe('agent:llm:before 中间件接线', () => {
     expect(data.messages[2].images).toEqual([GIF_DATA, PLAIN_URL]);
   });
 
-  it('describe 模式：中间件为 no-op', async () => {
+  it('describe 模式：末条 user 的 images 被清空（主模型不重复识别）', async () => {
     const data = await runHookWith('describe', false);
-    expect(data.messages[2].images).toEqual([GIF_DATA, PLAIN_URL]);
+    expect(data.messages[2].images).toEqual([]);
+    expect(data.messages[1].images).toEqual([GIF_DATA]); // 仅末条，历史 user 消息不动
   });
 
   it('工具循环重跑钩子：每条消息只处理一次（成功不重做，失败不重试）', async () => {

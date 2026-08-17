@@ -200,7 +200,7 @@ import { getMediaRuntime } from './runtime.js';
  * 这种 bare 相对路径会被原样当作 base64 送给 Ollama，触发 `illegal base64 data at input byte N`。
  * 在 media 层统一规范化为 data URL 后，所有 vision provider 都能正确解码。
  */
-async function imageToBase64DataUrl(data: string, mimeType?: string): Promise<string> {
+export async function imageToBase64DataUrl(data: string, mimeType?: string): Promise<string> {
   if (/^data:image\/[^;]+;base64,/.test(data)) return data;
   if (/^https?:\/\//i.test(data)) return data;
   const mat = await materializeAttachment(data);

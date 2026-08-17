@@ -313,19 +313,23 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   });
   ctx.onDispose(() => flushDescriptionCache());
 
-  // 直通模式的出口形态变换：agent 组装完成后、发出之前，把末条 user 消息 images[]
-  // 里的动图抽帧替换为多张静图（passthrough 语义；其余模式该方法原样返回，等价 no-op）。
-  // 放中间件而非改 api-media 契约或 plugin-agent——形态知识整体留在本插件内
-  // （契约修改的复杂度与谨慎门槛高于插件内实现）。变换只作用于末条 user 消息（尾部），
-  // 不触碰前缀缓存；dryRun 估算轮跳过（抽帧昂贵且该轮不真正发请求）。
+  // 出口形态变换：agent 组装完成后、发出之前，按 vision.mode 决定末条 user 消息的
+  // images[] 交给主模型什么——describe/disabled 清空（识别归视觉模型，结果已在正文
+  // 文字里），passthrough 抽帧，raw 原样，直通两档一律规范化形态（真值表见
+  // service.transformModelImages）。放中间件而非改 api-media 契约或 plugin-agent——
+  // 形态知识整体留在本插件内（契约修改的复杂度与谨慎门槛高于插件内实现）。变换只作用于
+  // 末条 user 消息（尾部），不触碰前缀缓存；dryRun 估算轮跳过（抽帧昂贵且该轮不真正发请求）。
   //
   // WeakSet 标记「已处理过的消息」：本钩子在工具循环的每轮迭代都会重跑（上限 30 轮），
-  // 而变换失败会把原动图放回 images——没有标记的话，一张拉不动的远端动图会在每轮
-  // 重试物化（15s 超时 × 30 轮）。每条消息只处理一次，成败皆不重来；消息对象随
-  // 回合结束被回收，无生命周期管理。
+  // 而抽帧/物化都要拉远端资源——没有标记的话，一张拉不动的远端动图会在每轮重试
+  // （15s 超时 × 30 轮）。每条消息只处理一次，成败皆不重来；消息对象随回合结束被回收，
+  // 无生命周期管理。
   const transformed = new WeakSet<object>();
   ctx.middleware('agent:llm:before', async (data, next) => {
-    if (!data.dryRun && cfg.vision.mode === 'passthrough') {
+    // 所有模式都要进来，不只是 passthrough——这道闸此前被模式挡住，于是 describe 模式下
+    // agent 塞进 message.images 的历史相对路径 ref（`data/images/…`）一路畅通到 provider，
+    // 被当成 base64 送出去，整轮请求被拒（400 illegal base64 data）。
+    if (!data.dryRun) {
       for (let i = data.messages.length - 1; i >= 0; i--) {
         const m = data.messages[i];
         if (m.role === 'user' && m.images && m.images.length > 0) {
