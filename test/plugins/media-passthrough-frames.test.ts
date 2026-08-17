@@ -55,7 +55,7 @@ beforeEach(() => {
   mocks.extractFrames.mockImplementation(async (_p, indices) => indices.map((_, i) => `frame-${i}`));
 });
 
-describe('transformModelImages 三模式真值表', () => {
+describe('transformModelImages 四模式真值表', () => {
   it('describe：一张不交给主模型（识别由视觉模型负责，结果已是正文里的文字）', async () => {
     const svc = makeSvc('describe');
     // 改前这里断言「原样」——那是主模型无 vision 能力时代的无害空转。主模型一旦有
@@ -69,7 +69,7 @@ describe('transformModelImages 三模式真值表', () => {
     expect(await svc.transformModelImages([PLAIN_URL, GIF_DATA])).toEqual([]);
   });
 
-  it('passthrough-raw：一律原样（动图不抽帧）', async () => {
+  it('passthrough-raw：不抽帧，合法形态逐字节原样交出', async () => {
     const svc = makeSvc('passthrough-raw');
     const images = [GIF_DATA];
     expect(await svc.transformModelImages(images)).toEqual(images);
@@ -97,7 +97,7 @@ describe('transformModelImages 三模式真值表', () => {
     expect(indices).toHaveLength(5);
   });
 
-  it('物化失败 / 抽不出帧：原样退回，不丢图', async () => {
+  it('物化失败 / 抽不出帧：已是合法形态的整图原样退回（裸 ref 则丢弃，见 media-model-images）', async () => {
     const svc = makeSvc('passthrough');
     mocks.materializeAttachment.mockResolvedValueOnce(null);
     expect(await svc.transformModelImages([GIF_DATA])).toEqual([GIF_DATA]);
