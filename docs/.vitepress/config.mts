@@ -16,20 +16,72 @@ function title(abs: string): string {
   }
 }
 
-function items(subdir: string) {
-  const dir = join(ROOT, subdir)
-  let files: string[] = []
+/** 目录下所有 md 文件名（不含 .md 后缀）。 */
+function mdNames(subdir: string): string[] {
   try {
-    files = readdirSync(dir).filter(f => f.endsWith('.md'))
+    return readdirSync(join(ROOT, subdir)).filter(f => f.endsWith('.md')).map(f => f.replace(/\.md$/, ''))
   } catch {
     return []
   }
-  return files.sort().map(f => ({ text: title(join(dir, f)), link: `/${subdir}/${f.replace(/\.md$/, '')}` }))
 }
 
-function group(subdir: string, text: string, collapsed = true) {
-  const its = items(subdir)
-  return its.length ? { text, collapsed, items: its } : null
+/** 文件名 → 侧栏链接项（标题取自 H1）。 */
+function fileItem(subdir: string, name: string) {
+  return { text: title(join(ROOT, subdir, `${name}.md`)), link: `/${subdir}/${name}` }
+}
+
+function items(subdir: string) {
+  return mdNames(subdir).sort().map(name => fileItem(subdir, name))
+}
+
+// 巨桶显式二级子组：把 services/plugins 按「功能」拆组，取代字母序平铺。
+// services 的分桶沿用 services/README 已有的 7 桶策展；plugins 按功能归类。
+// 键=目录，值=[{ text:子组名, files:[文件名(不含 .md)] }]。README 置顶为链接；未列入的文件回落「其它」子组（不丢）。
+const SUBGROUPS: Record<string, { text: string; files: string[] }[]> = {
+  services: [
+    { text: '基础设施', files: ['storage', 'memory', 'vectorstore', 'embedding', 'process', 'code-sandbox'] },
+    { text: '消息与平台', files: ['gateway', 'platform', 'message', 'message-archive', 'flow-control'] },
+    { text: '智能体核心', files: ['agent', 'llm', 'persona', 'commands', 'session-manager'] },
+    { text: '安全与确认', files: ['authority', 'session-confirm'] },
+    { text: '工具与媒体', files: ['tools', 'tool-session', 'media', 'asr'] },
+    { text: '调度与运维', files: ['workflow', 'cron-engine', 'doctor'] },
+    { text: '前端', files: ['webui'] },
+  ],
+  plugins: [
+    { text: '平台适配器', files: ['plugin-adapter-onebot'] },
+    { text: '模型与嵌入', files: ['plugin-llm-openai', 'plugin-llm-deepseek', 'plugin-llm-ollama', 'plugin-embedding-openai', 'plugin-embedding-ollama'] },
+    { text: '记忆与向量存储', files: ['plugin-memory-sqlite', 'plugin-memory-mongodb', 'plugin-memory-inmemory', 'plugin-memory-vector', 'plugin-memory-summary', 'plugin-vectorstore-lancedb', 'plugin-vectorstore-flat'] },
+    { text: '智能体与人设', files: ['plugin-agent', 'plugin-persona', 'plugin-session-manager', 'plugin-subtask', 'plugin-skills', 'plugin-todo-list', 'plugin-prompt-budget', 'plugin-trigger-policy', 'user-relation', 'user-relation-graph'] },
+    { text: '工具与 MCP', files: ['plugin-tools', 'plugin-tool-system', 'plugin-tool-browser', 'plugin-tool-search', 'plugin-websearch-serper', 'plugin-tool-code-runner', 'plugin-code-sandbox-os', 'plugin-tool-math', 'plugin-tool-onebot', 'plugin-tool-session', 'plugin-file-reader', 'plugin-office', 'plugin-okx-trading', 'mcp', 'plugin-mcp-client', 'plugin-mcp-server'] },
+    { text: '调度、网关与运维', files: ['plugin-scheduler', 'plugin-workflow', 'plugin-gateway', 'plugin-flow-control', 'plugin-commands', 'plugin-cli', 'plugin-authority'] },
+    { text: '前端 WebUI', files: ['plugin-webui-server', 'plugin-webui-client'] },
+  ],
+}
+
+// biome-ignore lint: VitePress 侧栏项为混合联合类型（链接项 | 分组项），此处用宽松类型
+type SidebarItem = { text: string; link?: string; collapsed?: boolean; items?: SidebarItem[] }
+
+function group(subdir: string, text: string, collapsed = true): SidebarItem | null {
+  const names = mdNames(subdir)
+  if (!names.length) return null
+
+  const sub = SUBGROUPS[subdir]
+  if (!sub) {
+    // 无策展：回落字母序平铺
+    return { text, collapsed, items: names.sort().map(n => fileItem(subdir, n)) }
+  }
+
+  // 有策展：README 置顶 → 各语义子组 → 未归类回落「其它」（保证不丢文件）
+  const claimed = new Set(sub.flatMap(g => g.files))
+  const its: SidebarItem[] = []
+  if (names.includes('README')) its.push(fileItem(subdir, 'README'))
+  for (const g of sub) {
+    const present = g.files.filter(n => names.includes(n))
+    if (present.length) its.push({ text: g.text, collapsed: true, items: present.map(n => fileItem(subdir, n)) })
+  }
+  const leftover = names.filter(n => n !== 'README' && !claimed.has(n)).sort()
+  if (leftover.length) its.push({ text: '其它', collapsed: true, items: leftover.map(n => fileItem(subdir, n)) })
+  return { text, collapsed, items: its }
 }
 
 /** 根级 md（architecture.md / plugin-author-guide.md）作为「概览」组，index.md 除外 */
@@ -79,7 +131,12 @@ const sidebar = [
   ...orderedDirs.map(d => group(d, GROUP_LABELS[d] ?? d, COLLAPSED.has(d))),
 ].filter(Boolean)
 
-const firstLink = (subdir: string) => items(subdir)[0]?.link ?? '/architecture'
+/** nav 落点：优先该区 README（策展索引落地页），否则第一篇。 */
+const firstLink = (subdir: string) => {
+  const names = mdNames(subdir)
+  if (names.includes('README')) return `/${subdir}/README`
+  return items(subdir)[0]?.link ?? '/architecture'
+}
 
 export default withMermaid(defineConfig({
   title: 'Aalis',
@@ -97,7 +154,8 @@ export default withMermaid(defineConfig({
   themeConfig: {
     siteTitle: false,
     nav: [
-      { text: '入门', link: '/architecture' },
+      // 「入门」指向真教程（脚手架上手），不再指 494 行的 architecture 参考页
+      { text: '入门', link: firstLink('guide') },
       { text: '核心', link: firstLink('core') },
       { text: '服务', link: firstLink('services') },
       { text: '插件', link: firstLink('plugins') },
