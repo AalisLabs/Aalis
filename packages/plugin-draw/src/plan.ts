@@ -144,6 +144,49 @@ export function buildShell(source: string, mode: SourceMode, width: number, heig
 }
 
 /**
+ * 动画标记 lint：静态检出已知的"作者级"错误类，作为 warning 返回给模型自纠。
+ * 渲染层只能忠实执行写错的动画——已知错误类在这里拦，未知错误类靠检查帧+视觉自检。
+ * 规则刻意窄（宁漏勿噪）：
+ *   R1 同一叶子元素同时挂 animateMotion 与位移类 animateTransform（rotate/translate）
+ *      —— 位移复合，轨迹漂移（本插件首个演示就犯过的错，实证类）。
+ *   R2 @keyframes 无限循环但 0% 与 100% 声明不一致 —— 循环处跳变。
+ */
+export function lintAnimationSource(source: string): string[] {
+  const warnings: string[] = [];
+
+  // R1：叶子图形元素（不含嵌套容器，避免"g 下两个子元素各挂一种"的误报）
+  const leafRe = /<(circle|rect|ellipse|path|polygon|polyline|line|text|image|use)\b[^>]*>([\s\S]*?)<\/\1>/gi;
+  for (const m of source.matchAll(leafRe)) {
+    const inner = m[2];
+    const hasMotion = /<animateMotion\b/i.test(inner);
+    const hasShift = /<animateTransform\b[^>]*type\s*=\s*["'](?:rotate|translate)["']/i.test(inner);
+    if (hasMotion && hasShift) {
+      warnings.push(
+        `<${m[1]}> 同时挂了 animateMotion 与位移类 animateTransform——两者位移会复合导致轨迹漂移，` +
+          '沿路径运动只保留 animateMotion 即可',
+      );
+      break; // 同类只报一次
+    }
+  }
+
+  // R2：无限循环 keyframes 首尾不一致
+  const kfRe = /@keyframes\s+([\w-]+)\s*\{([\s\S]*?)\}\s*(?=@|\.|<|$)/g;
+  const norm = (v: string): string => v.replace(/\s+/g, '').replace(/;$/, '');
+  for (const m of source.matchAll(kfRe)) {
+    const nameUsedInfinite = new RegExp(`animation[^;]*\\b${m[1]}\\b[^;]*infinite`, 'i').test(source);
+    if (!nameUsedInfinite) continue;
+    const first = m[2].match(/(?:^|\})\s*(?:0%|from)\s*\{([^}]*)\}/);
+    const last = m[2].match(/(?:^|\})\s*(?:100%|to)\s*\{([^}]*)\}/);
+    if (first && last && norm(first[1]) !== norm(last[1])) {
+      warnings.push(`@keyframes ${m[1]} 是无限循环但 0% 与 100% 状态不一致——循环处会跳变，无缝循环需首尾一致`);
+      break;
+    }
+  }
+
+  return warnings;
+}
+
+/**
  * 请求放行判定（default-deny）：渲染页只允许内联资源。
  * LLM 生成的标记是不可信输入——实测 <script> 会执行、外链会真发请求（SSRF/外泄口），
  * 引擎层禁 JS + 本判定拦一切网络面：只放 about:blank（setContent 的初始导航）与 data:。
