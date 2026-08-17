@@ -236,11 +236,11 @@ export async function apply(ctx: Context) {
 
 ### 高危直通根
 
-参考实现允许 `{ name:'host', path:'/' }` 这种直通根（`plugin-storage-local/src/index.ts`、`:719-725`）——agent 即可 `host:/绝对路径` 访问宿主机任意位置。注册时会打 WARN。provider 作者若开放此类根，须明确这是高危配置。
+参考实现允许 `{ name:'host', path:'/' }` 这种直通根（`plugin-storage-local/src/index.ts`、`:721-731`）——agent 即可 `host:/绝对路径` 访问宿主机任意位置。注册时会打 WARN。provider 作者若开放此类根，须明确这是高危配置。
 
 ### 权限位即授权语义
 
-root 的 `readable/writable/deletable`（`StorageRootInfo`）就是该根的访问策略：参考实现每次操作前 `requirePermission`（`:595-599`），gateway 路由时按位过滤（`rootSatisfies`，`:239-262`）。这与框架的 [authority 等级体系](../core/authority.md)是**两套**机制——storage 不读 session 等级，权限只看 root 位。若你的工具要按调用者 authority 收紧文件访问，须在工具层（api-tools 的 risk/minLevel）实现，storage 不承担此职责。
+root 的 `readable/writable/deletable`（`StorageRootInfo`）就是该根的访问策略：参考实现每次操作前 `requirePermission`（`:597-601`），gateway 路由时按位过滤（`rootSatisfies`，`:239-262`）。这与框架的 [authority 等级体系](../core/authority.md)是**两套**机制——storage 不读 session 等级，权限只看 root 位。若你的工具要按调用者 authority 收紧文件访问，须在工具层（api-tools 的 risk/minLevel）实现，storage 不承担此职责。
 
 ### SSRF 与 storage 无关，但勿混淆
 
@@ -248,14 +248,14 @@ root 的 `readable/writable/deletable`（`StorageRootInfo`）就是该根的访�
 
 ### data 根：可删 + 持久化原子写
 
-内置 `data` 根默认 `deletable: true`（`plugin-storage-local/src/index.ts`）——`/clear` 的附件清理（`data/images` 等目录）依赖它，关闭会让开箱部署连手动清理都失败；agent 侧的删除仍由 `file_delete` 等工具的 `restricted`+`confirm` 权限档拦截，`deletable` 不承担那道闸。该根存放 users.json / scheduler-jobs / skills / persona 等关键持久化数据，参考实现对写操作做「临时文件 + rename」原子覆盖（`:409-417`）防半写损坏。若你实现自己的后端用于承载这些数据，应保证写的原子性。
+内置 `data` 根默认 `deletable: true`（`plugin-storage-local/src/index.ts`）——`/clear` 的附件清理（`data/images` 等目录）依赖它，关闭会让开箱部署连手动清理都失败。`deletable` 是后端能力位而非权限闸：agent 侧的删除面由各工具自身的权限档把关（如 `file_delete` 为 `restricted`+`confirm` 且受 `allowedRoots` 约束、`skill_delete` 为 `sensitive`），档位随工具语义各异。该根存放 users.json / scheduler-jobs / skills / persona 等关键持久化数据，参考实现对写操作做「临时文件 + rename」原子覆盖（`:411-419`）防半写损坏。若你实现自己的后端用于承载这些数据，应保证写的原子性。
 
 ---
 
 ## 7. 边界与注意事项
 
-1. **`browsable` 当前是部分生效的 hint**：参考实现注释已说明（`plugin-storage-local/src/index.ts`、configSchema `:132-137`）——`plugin-webui-server` 的文件页**只显示其 `fileRoot` 配置指向的那一个根**（默认 workspace），其它根即便 `browsable:true` 也不会出现在文件页里，仅供 agent/工具按 URI 寻址。设置某根 `browsable` 并不能使其在 WebUI 文件页中浏览。
-2. **rename 仅同目录改名**：`rename(uri, newName)` 的 `newName` 不能含 `/`、`\`、`.`、`..`（`:422-424`），不是「移动」。同根跨目录移动改用可选的 `move(fromUri, toUri)`（`:448-467`，底层 `fs.rename`，原子、零拷贝、须同根、不覆盖已存在目标）；跨存储根仍需 read+write+delete 组合。
+1. **`browsable` 当前是部分生效的 hint**：参考实现注释已说明（`plugin-storage-local/src/index.ts`、configSchema `:135-140`）——`plugin-webui-server` 的文件页**只显示其 `fileRoot` 配置指向的那一个根**（默认 workspace），其它根即便 `browsable:true` 也不会出现在文件页里，仅供 agent/工具按 URI 寻址。设置某根 `browsable` 并不能使其在 WebUI 文件页中浏览。
+2. **rename 仅同目录改名**：`rename(uri, newName)` 的 `newName` 不能含 `/`、`\`、`.`、`..`（`:424-426`），不是「移动」。同根跨目录移动改用可选的 `move(fromUri, toUri)`（`:450-469`，底层 `fs.rename`，原子、零拷贝、须同根、不覆盖已存在目标）；跨存储根仍需 read+write+delete 组合。
 3. **同名 root 静默遮蔽**：多个 provider 各注册一个 `data` 根时，gateway 按枚举顺序取首个，其余被遮蔽且不报错。用 `getStorageRootConflicts(ctx)`（`:214`）在 doctor/启动日志里暴露。
 4. **watch 去抖 + 平台降级**：参考实现 `watch` 基于 `fs.watch` + 50ms 去抖，且事件统一为 `change`（`plugin-storage-local/src/index.ts`）；不支持 recursive 的平台降级为只监听顶层并打 WARN。消费者不应假定「一次写 = 一次事件」，也不应依赖事件类型细分。
 5. **checkpoint 写前快照耦合**：参考实现在 write/delete/rename 前调用 `checkpoint` 服务做快照（`:291-304`、`:407`）。若你写自定义 storage 后端但希望兼容 checkpoint 回滚，需复刻这一 `beforeMutate` 钩子；否则该后端的写操作不可回滚。
