@@ -267,6 +267,25 @@ interface ConnectionState {
   >;
 }
 
+/**
+ * 结清全部在飞 action：清定时器、reject 唤醒等待方、清账。返回结清条数。
+ * ws 断开与插件拆卸两条清理路共用——只清定时器不 reject 会让等待方的 promise
+ * 永久悬空（bounce 瞬间在飞的 get_forward_msg/get_msg 静默丢失、闭包泄漏）。
+ * @internal 导出仅为让对称性可被直接断言。
+ */
+export function settlePendingActions(
+  pendingActions: Map<string, { reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> }>,
+  reason: string,
+): number {
+  const n = pendingActions.size;
+  for (const [, pending] of pendingActions) {
+    clearTimeout(pending.timer);
+    pending.reject(new Error(reason));
+  }
+  pendingActions.clear();
+  return n;
+}
+
 // ===== 聊天流控类型（已迁移）=====
 //
 // 旧的 ChatFlowConfig / FlowSessionState / 流控函数已抽出到独立插件：
@@ -1484,11 +1503,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       state.status = 'offline';
       state.ws = undefined;
       stopHeartbeat(state);
-      for (const [, pending] of state.pendingActions) {
-        clearTimeout(pending.timer);
-        pending.reject(new Error('连接已关闭'));
-      }
-      state.pendingActions.clear();
+      settlePendingActions(state.pendingActions, '连接已关闭');
 
       ctx.logger.warn(`OneBot 连接断开: ${state.config.url}，${RECONNECT_INTERVAL / 1000}s 后重连`);
       scheduleReconnect(state);
@@ -2330,9 +2345,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           state.ws.close();
         }
       }
-      for (const [, pending] of state.pendingActions) {
-        clearTimeout(pending.timer);
-      }
+      const settled = settlePendingActions(state.pendingActions, '适配器已停止');
+      if (settled > 0) ctx.logger.debug(`适配器停止：拒绝 ${settled} 个在飞 action`);
     }
     states.length = 0;
   });
