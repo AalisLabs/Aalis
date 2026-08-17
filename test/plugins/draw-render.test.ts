@@ -20,7 +20,7 @@ function pngSize(buf: Buffer): { width: number; height: number } {
 }
 
 function makeEngine(): DrawEngine {
-  return new DrawEngine(logger, { headless: true, idleShutdownMs: 0, stepTimeoutMs: 15_000 });
+  return new DrawEngine(logger, { headless: true, idleShutdownMs: 0, stepTimeoutMs: 15_000, maxConcurrency: 4 });
 }
 
 describe('DrawEngine（真浏览器）', () => {
@@ -79,6 +79,66 @@ describe('DrawEngine（真浏览器）', () => {
       });
       // 外联被 abort 而非等超时：整个流程应在数秒内完成
       expect(Date.now() - started).toBeLessThan(10_000);
+    } finally {
+      await engine.dispose();
+    }
+  }, 30_000);
+
+  // 真引擎级 SSRF 锚：证明「引擎确实把 http(s) 子资源请求路由过 allowRequest 并 abort」，
+  // 而非只测 allowRequest 纯函数（那不证明引擎接了这道闸）。把引擎的请求拦截删掉→此锚变红。
+  // 覆盖多种子资源向量：<img>、SVG <image href>、CSS url()。
+  it('引擎级：多种外链子资源全部被拦（http 请求不出网）', async () => {
+    const engine = makeEngine();
+    try {
+      const plan = resolveCanvas(
+        '<style>#b{background:url(http://10.0.0.1/bg.png)}</style>' +
+          '<div id="b">x</div>' +
+          '<img src="http://169.254.169.254/latest/meta-data/">' +
+          '<svg viewBox="0 0 10 10"><image href="https://evil.example.com/pixel.png" width="10" height="10"/></svg>',
+        300,
+        caps,
+      );
+      const requested: string[] = [];
+      const continued: string[] = [];
+      await engine.withPage(plan, 200, async page => {
+        // withPage 内部已装 default-deny 拦截器；这里再挂一个观察者记录实际路由的请求
+        (page as unknown as { on(e: string, h: (r: { url(): string }) => void): void }).on('requestfailed', r =>
+          requested.push(r.url()),
+        );
+        (page as unknown as { on(e: string, h: (r: { url(): string }) => void): void }).on('requestfinished', r =>
+          continued.push(r.url()),
+        );
+        await page.evaluate('document.title'); // 等一拍让子资源请求发生
+      });
+      // 没有任何 http(s) 子资源被放行完成（只 about:blank/data: 会 finished）
+      expect(continued.some(u => u.startsWith('http'))).toBe(false);
+    } finally {
+      await engine.dispose();
+    }
+  }, 30_000);
+
+  // 并发信号量（对抗审计 MED-1）：maxConcurrency=1 时第二个渲染必须等第一个释放槽，
+  // 不能并行开 page。把 acquireSlot/releaseSlot 删掉→两者并行完成、峰值观测=2→红。
+  it('并发闸：maxConcurrency=1 时渲染排队而非并行', async () => {
+    const engine = new DrawEngine(logger, {
+      headless: true,
+      idleShutdownMs: 0,
+      stepTimeoutMs: 15_000,
+      maxConcurrency: 1,
+    });
+    try {
+      let inFlight = 0;
+      let peak = 0;
+      const plan = resolveCanvas('<svg viewBox="0 0 40 40"><rect width="40" height="40" fill="#333"/></svg>', 40, caps);
+      const one = () =>
+        engine.withPage(plan, 40, async () => {
+          inFlight++;
+          peak = Math.max(peak, inFlight);
+          await new Promise(r => setTimeout(r, 60));
+          inFlight--;
+        });
+      await Promise.all([one(), one(), one()]);
+      expect(peak).toBe(1); // 信号量把并发压到 1
     } finally {
       await engine.dispose();
     }
