@@ -206,6 +206,67 @@ describe('draw_animation 工具全流（真 ctx：lint 告警 + 检查帧落盘�
     }
   }, 60_000);
 
+  it('降级引导：结果 message 引导直接发送，不把自检设为默认路径（延迟根因治理）', async () => {
+    const base4 = mkdtempSync(join(tmpdir(), 'aalis-draw-msg-'));
+    for (const d of ['data', 'tmp']) mkdirSync(join(base4, d), { recursive: true });
+    const app4 = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    try {
+      await app4.ctx.useModule(storageLocal as unknown as Parameters<typeof app4.ctx.useModule>[0], {
+        roots: [
+          {
+            name: 'data',
+            path: join(base4, 'data'),
+            label: 'data',
+            kind: 'data',
+            browsable: false,
+            readable: true,
+            writable: true,
+            deletable: true,
+          },
+          {
+            name: 'tmp',
+            path: join(base4, 'tmp'),
+            label: 'tmp',
+            kind: 'tmp',
+            browsable: false,
+            readable: true,
+            writable: true,
+            deletable: true,
+          },
+        ],
+      });
+      await app4.ctx.useModule(processLocal as unknown as Parameters<typeof app4.ctx.useModule>[0], {});
+      const { apply } = await import('../../packages/plugin-draw/src/index.js');
+      const captured: Record<string, (a: Record<string, unknown>, c: { sessionId: string }) => Promise<string>> = {};
+      app4.ctx.provide('tools', {
+        register: (t: { definition: { function: { name: string } }; handler: (typeof captured)[string] }) => {
+          captured[t.definition.function.name] = t.handler;
+          return () => {};
+        },
+        registerGroup: () => {},
+      } as never);
+      apply(app4.ctx, { idleShutdownSec: 0 });
+      const out = JSON.parse(
+        await captured.draw_animation(
+          {
+            source:
+              '<svg viewBox="0 0 60 60"><rect width="60" height="60" fill="#111"/><circle r="5" fill="#0af">' +
+              '<animateMotion dur="1s" path="M 20 0 A 20 20 0 1 1 19.99 0"/></circle></svg>',
+            fps: 6,
+            duration_seconds: 1,
+          },
+          { sessionId: 'onebot:t:group:1' },
+        ),
+      );
+      // 引导必须是"直接发送"，且明确 analyze_image 非默认——防有人改回"发送前必先自检"（延迟根因）
+      expect(out.message).toMatch(/直接.*send_attachment|可直接.*发送/);
+      expect(out.message).not.toMatch(/发送前.*先.*analyze_image|建议先.*analyze_image/);
+    } finally {
+      await app4.stop();
+      rmSync(base4, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it('source 超字节上限：handler 拒绝、不触发渲染（删掉检查→此锚红）', async () => {
     const base3 = mkdtempSync(join(tmpdir(), 'aalis-draw-cap-'));
     for (const d of ['data', 'tmp']) mkdirSync(join(base3, d), { recursive: true });
