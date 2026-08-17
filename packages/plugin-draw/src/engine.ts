@@ -38,13 +38,15 @@ type InterceptedRequest = {
   abort(reason?: string): Promise<void>;
 };
 
-export interface EngineConfig {
+interface EngineConfig {
   headless: boolean;
   executablePath?: string;
   /** 空闲多少毫秒后关停 Chromium（0=不关停） */
   idleShutdownMs: number;
   /** 单次 setContent/渲染步骤超时 */
   stepTimeoutMs: number;
+  /** 同时在渲染的 page 数上限（防群内并发画图起无界 page + ffmpeg） */
+  maxConcurrency: number;
 }
 
 export class DrawEngine {
@@ -52,6 +54,8 @@ export class DrawEngine {
   private launching: Promise<Browser> | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
+  private active = 0;
+  private waiters: Array<() => void> = [];
 
   constructor(
     private logger: Logger,
@@ -84,6 +88,31 @@ export class DrawEngine {
     return this.launching;
   }
 
+  /** 给 post-load 步骤（evaluate/screenshot——不吃 puppeteer timeout）套墙钟硬上限，防极端 CSS 慢渲染吊死渲染槽。 */
+  private withTimeout<T>(p: Promise<T>, label: string): Promise<T> {
+    return Promise.race([
+      p,
+      new Promise<T>((_r, reject) =>
+        setTimeout(() => reject(new Error(`渲染步骤超时（${label}）`)), this.cfg.stepTimeoutMs).unref?.(),
+      ),
+    ]);
+  }
+
+  private async acquireSlot(): Promise<void> {
+    if (this.active < this.cfg.maxConcurrency) {
+      this.active++;
+      return;
+    }
+    await new Promise<void>(resolve => this.waiters.push(resolve));
+    this.active++;
+  }
+
+  private releaseSlot(): void {
+    this.active--;
+    const next = this.waiters.shift();
+    if (next) next();
+  }
+
   private touchIdle(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     if (this.cfg.idleShutdownMs <= 0) return;
@@ -101,9 +130,11 @@ export class DrawEngine {
 
   /** 开一张硬化后的独立 page，执行 fn 后必关。 */
   async withPage<T>(plan: CanvasPlan, viewportHeight: number, fn: (page: Page) => Promise<T>): Promise<T> {
-    const browser = await this.ensureBrowser();
-    const page = await browser.newPage();
+    await this.acquireSlot();
+    let page: Page | null = null;
     try {
+      const browser = await this.ensureBrowser();
+      page = await browser.newPage();
       await page.setJavaScriptEnabled(false);
       await page.setRequestInterception(true);
       page.on('request', req => {
@@ -113,10 +144,11 @@ export class DrawEngine {
       await page.setViewport({ width: plan.width, height: viewportHeight, deviceScaleFactor: 1 });
       await page.setContent(plan.html, { waitUntil: 'load', timeout: this.cfg.stepTimeoutMs });
       // 等字体就绪（外链字体被拦时会快速 resolve 并回退系统字体，不会挂死——实测行为）
-      await page.evaluate('document.fonts ? document.fonts.ready.then(() => true) : true');
+      await this.withTimeout(page.evaluate('document.fonts ? document.fonts.ready.then(() => true) : true'), 'fonts');
       return await fn(page);
     } finally {
-      await page.close().catch(() => {});
+      if (page) await page.close().catch(() => {});
+      this.releaseSlot();
       this.touchIdle();
     }
   }
@@ -131,16 +163,17 @@ export class DrawEngine {
     return this.withPage(plan, guessHeight, async page => {
       let height = plan.height;
       if (height === 'auto') {
-        const measured = await page.evaluate<number>(
-          'Math.ceil(document.getElementById("aalis-draw").getBoundingClientRect().height)',
+        const measured = await this.withTimeout(
+          page.evaluate<number>('Math.ceil(document.getElementById("aalis-draw").getBoundingClientRect().height)'),
+          'measure',
         );
         height = Math.max(16, Math.min(measured || 16, Math.floor(maxPixels / plan.width)));
       }
       await page.setViewport({ width: plan.width, height, deviceScaleFactor: scale });
-      const shot = await page.screenshot({
-        type: 'png',
-        clip: { x: 0, y: 0, width: plan.width, height },
-      });
+      const shot = await this.withTimeout(
+        page.screenshot({ type: 'png', clip: { x: 0, y: 0, width: plan.width, height } }),
+        'screenshot',
+      );
       return { png: Buffer.from(shot), width: plan.width, height };
     });
   }
@@ -170,8 +203,9 @@ export class DrawEngine {
     return this.withPage(plan, guessHeight, async page => {
       let height = plan.height;
       if (height === 'auto') {
-        const measured = await page.evaluate<number>(
-          'Math.ceil(document.getElementById("aalis-draw").getBoundingClientRect().height)',
+        const measured = await this.withTimeout(
+          page.evaluate<number>('Math.ceil(document.getElementById("aalis-draw").getBoundingClientRect().height)'),
+          'measure',
         );
         height = Math.max(16, Math.min(measured || 16, Math.floor(opts.maxPixels / plan.width)));
       }
@@ -226,10 +260,10 @@ export class DrawEngine {
             }
           })(${t})`,
         );
-        const shot = await page.screenshot({
-          type: 'png',
-          clip: { x: 0, y: 0, width: plan.width, height },
-        });
+        const shot = await this.withTimeout(
+          page.screenshot({ type: 'png', clip: { x: 0, y: 0, width: plan.width, height } }),
+          `frame ${i}`,
+        );
         frames.push(Buffer.from(shot));
       }
       return { frames, width: plan.width, height, animationCount: probe.count, durationMs };
