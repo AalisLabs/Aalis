@@ -76,7 +76,9 @@ export const configSchema: ConfigSchema = {
         browsable: false,
         readable: true,
         writable: true,
-        deletable: false,
+        // 可删：/clear 的附件清理（data/images 等）依赖它，关掉会让开箱用户连手动清理都失败；
+        // agent 侧删除仍被 file_delete 工具的 restricted+confirm 拦住，deletable 不是那道闸。
+        deletable: true,
       },
       {
         name: 'tmp',
@@ -162,7 +164,7 @@ const defaultConfig = {
       browsable: false,
       readable: true,
       writable: true,
-      deletable: false,
+      deletable: true,
     },
     {
       name: 'tmp',
