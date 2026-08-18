@@ -19,7 +19,7 @@ export interface HeartbeatSocket {
   on(event: 'pong', cb: () => void): void;
 }
 
-export interface WsHeartbeat<T extends HeartbeatSocket> {
+interface WsHeartbeat<T extends HeartbeatSocket> {
   /** 连接建立时登记：挂 pong 监听并纳入巡检。 */
   track(ws: T): void;
   /** 连接关闭时移除（terminate 踢掉的经 'close' 清理链也会走到这里，幂等）。 */
