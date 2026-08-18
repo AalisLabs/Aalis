@@ -87,6 +87,29 @@ describe('createWsHeartbeat', () => {
     hb.dispose();
   });
 
+  it('冻结宽恕：事件循环长阻塞后的首轮不判死，健康连接不被误杀', async () => {
+    // 今晚实景：拍堆快照冻结进程 2 分钟。若恰好卡在「ping 已发、pong 未被 poll 读入」
+    // 的窗口，解冻后 timers 先于 poll 跑 → 全员 alive===false → 全部误杀。
+    const stale: FakeWs[] = [];
+    const hb = createWsHeartbeat<FakeWs>({ intervalMs: INTERVAL, onStale: ws => stale.push(ws) });
+    const ws = makeWs(false); // 模拟 pong 卡在内核缓冲：本轮拿不到
+    hb.track(ws);
+    await vi.advanceTimersByTimeAsync(INTERVAL); // 正常轮：标记 + ping
+    expect(ws.terminated).toBe(false);
+
+    // 真冻结的形态是「墙钟跳变 + 合并补发一次 tick」，而不是 N 次逐个触发：
+    // 先跳系统时间（进程被挂起），再放行一次巡检。
+    vi.setSystemTime(Date.now() + INTERVAL * 4);
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+    expect(ws.terminated, '经历冻结的首轮必须宽恕，不得判死').toBe(false);
+    expect(stale).toEqual([]);
+
+    // 宽恕只给一轮：紧接着的正常轮仍会收掉真死连接
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+    expect(ws.terminated, '宽恕不是免死金牌，下一轮照常回收').toBe(true);
+    hb.dispose();
+  });
+
   it('untrack 后不再被 ping（close 清理链幂等）', async () => {
     const hb = createWsHeartbeat<FakeWs>({ intervalMs: INTERVAL });
     const ws = makeWs(true);
