@@ -141,12 +141,6 @@ export interface EventNode {
   communityIdAt?: number;
   /** 完整的社群隶属度列表（支持重叠）；louvain/leiden 永远单元素，slpa 可多元素。 */
   communityMemberships?: CommunityMembership[];
-  /**
-   * @deprecated 向量已迁至独立命名空间（store.getVector/upsertVector），此内嵌字段仅为
-   * 读取未迁移的历史文档保留；loadAll 会剥离，新写入一律不带。向量由 consolidate
-   * 相似度召回按需读取，命中 `embeddingHash` 一致即复用，缺失时自动重算补全。
-   */
-  embeddingVector?: number[];
   /** sha1(title + '\n' + summary) 截前 16 字节 hex；title/summary 变更后值变 → 触发重 embed。 */
   embeddingHash?: string;
 }
@@ -199,12 +193,6 @@ export interface EntityNode {
   mentionCount?: number;
   /** rename 审计：每次改名追加一条 */
   nameHistory?: NodeNameAudit[];
-  /**
-   * @deprecated 向量已迁至独立命名空间（store.getVector/upsertVector），此内嵌字段仅为
-   * 读取未迁移的历史文档保留；loadAll 会剥离，新写入一律不带。向量由 consolidate
-   * 相似度召回按需读取，命中 `embeddingHash` 一致即复用，缺失时自动重算补全。
-   */
-  embeddingVector?: number[];
   /** sha1(entityKind + '\n' + name + '\n' + (summary ?? '')) 截前 16 字节 hex；任一变更后值变 → 触发重 embed。 */
   embeddingHash?: string;
 }
