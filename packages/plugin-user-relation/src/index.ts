@@ -501,6 +501,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   const store = new RelationStore(memory);
   const service = new RelationService(store, ctx);
+
+  // 存量内嵌向量一次性搬家（幂等，无存量时零写入）。后台跑不阻塞启动——
+  // embedding-ollama 的 120 秒启动阻塞是前车之鉴。窗口期语义见 store.migrateInlineVectors。
+  void store
+    .migrateInlineVectors()
+    .then(n => {
+      if (n > 0) ctx.logger.info(`[user-relation] 已迁移 ${n} 个节点的内嵌向量到独立命名空间`);
+    })
+    .catch(err => ctx.logger.warn(`[user-relation] 内嵌向量迁移失败（下次启动重试）: ${err}`));
   ctx.provide('user-relation', service);
 
   // 平台 displayName 同步：与 extractionEnabled 解耦，即便关掉写入提取，

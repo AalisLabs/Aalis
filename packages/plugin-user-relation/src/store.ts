@@ -20,6 +20,15 @@ import type { MemoryService } from '@aalis/api-memory';
 import type { EntityNode, EventNode, PersonNode, RelationEdge, RelationGraphSnapshot } from './types.js';
 
 export const RELATION_NAMESPACE = 'user-relation';
+/**
+ * embedding 向量的独立命名空间（2026-08 OOM 事故后拆出）。
+ *
+ * 向量只有 consolidate 的相似度召回用，却曾内嵌在节点文档里——每次 loadAll 都把
+ * 全部 4096 维向量拉成 JS 装箱数组（每条 ~96KB），快照被并发持有 20+ 份时堆里
+ * 全是向量（实测 1.8GB，进程 OOM）。拆到独立命名空间后 loadAll 永不触碰向量，
+ * 只有按需的 getVector 逐条取。节点上保留 embeddingHash（短字符串）做失效判断。
+ */
+export const RELATION_VECTOR_NAMESPACE = 'user-relation-vec';
 
 const PERSON_PREFIX = 'person:';
 const EVENT_PREFIX = 'event:';
@@ -39,6 +48,10 @@ function entityKey(entityId: string): string {
 }
 export function edgeKey(edgeId: string): string {
   return `${EDGE_PREFIX}${edgeId}`;
+}
+/** 向量命名空间内的 key：`{kind}:{nodeId}`，与节点 key 同形便于人工对照。 */
+function vectorKey(kind: 'entity' | 'event', nodeId: string): string {
+  return `${kind}:${nodeId}`;
 }
 /**
  * mergeReject 持久化缓存的 key：把两端 id 排序，得到对称稳定键。
@@ -103,7 +116,7 @@ export class RelationStore {
 
   async getEvent(eventId: string): Promise<EventNode | undefined> {
     const data = await this.memory.getMetadata(RELATION_NAMESPACE, eventKey(eventId));
-    return data as EventNode | undefined;
+    return data ? (stripInlineVector(data) as unknown as EventNode) : undefined;
   }
 
   async upsertEvent(node: EventNode): Promise<void> {
@@ -112,13 +125,14 @@ export class RelationStore {
 
   async deleteEvent(eventId: string): Promise<void> {
     await this.memory.deleteMetadata(RELATION_NAMESPACE, eventKey(eventId));
+    await this.memory.deleteMetadata(RELATION_VECTOR_NAMESPACE, vectorKey('event', eventId));
   }
 
   // ----- Entity -----
 
   async getEntity(entityId: string): Promise<EntityNode | undefined> {
     const data = await this.memory.getMetadata(RELATION_NAMESPACE, entityKey(entityId));
-    return data as EntityNode | undefined;
+    return data ? (stripInlineVector(data) as unknown as EntityNode) : undefined;
   }
 
   async upsertEntity(node: EntityNode): Promise<void> {
@@ -127,6 +141,7 @@ export class RelationStore {
 
   async deleteEntity(entityId: string): Promise<void> {
     await this.memory.deleteMetadata(RELATION_NAMESPACE, entityKey(entityId));
+    await this.memory.deleteMetadata(RELATION_VECTOR_NAMESPACE, vectorKey('entity', entityId));
   }
 
   // ----- Edge -----
@@ -189,8 +204,8 @@ export class RelationStore {
 
     for (const { key, data } of entries) {
       if (key.startsWith(PERSON_PREFIX)) persons.push(data as unknown as PersonNode);
-      else if (key.startsWith(EVENT_PREFIX)) events.push(data as unknown as EventNode);
-      else if (key.startsWith(ENTITY_PREFIX)) entities.push(data as unknown as EntityNode);
+      else if (key.startsWith(EVENT_PREFIX)) events.push(stripInlineVector(data) as unknown as EventNode);
+      else if (key.startsWith(ENTITY_PREFIX)) entities.push(stripInlineVector(data) as unknown as EntityNode);
       else if (key.startsWith(EDGE_PREFIX)) edges.push(data as unknown as RelationEdge);
       // 其他 key 静默忽略，便于未来加扩展类型而不破坏老版
     }
@@ -208,9 +223,11 @@ export class RelationStore {
    */
   async clearAll(): Promise<number> {
     const entries = await this.memory.listMetadata(RELATION_NAMESPACE);
-    await this.memory.commitMetadata(
-      entries.map(e => ({ op: 'del' as const, namespace: RELATION_NAMESPACE, key: e.key })),
-    );
+    const vecEntries = await this.memory.listMetadata(RELATION_VECTOR_NAMESPACE);
+    await this.memory.commitMetadata([
+      ...entries.map(e => ({ op: 'del' as const, namespace: RELATION_NAMESPACE, key: e.key })),
+      ...vecEntries.map(e => ({ op: 'del' as const, namespace: RELATION_VECTOR_NAMESPACE, key: e.key })),
+    ]);
     return entries.length;
   }
 
@@ -272,4 +289,72 @@ export class RelationStore {
     await this.deleteMergeRejectsByNode(entityId);
     return { deletedEdges };
   }
+
+  // ----- embedding 向量（独立命名空间，仅 consolidate 相似度召回按需读取）-----
+
+  /**
+   * 读向量。`expectedHash` 给定时校验向量文档里随写的 hash：不符即视为缺失（调用方自愈重算）。
+   * hash 随向量同写在一个文档里，是「节点 hash 与向量分属两份文档、两次非原子写」的对账带——
+   * 并发 consolidate 跨轮交错时可能留下「节点 hash 自洽但向量对应旧文本」的错配，
+   * 靠这道校验把错配收敛成一次重算，而不是引入 consolidate 全局锁（过度工程）。
+   */
+  async getVector(kind: 'entity' | 'event', nodeId: string, expectedHash?: string): Promise<number[] | undefined> {
+    const data = await this.memory.getMetadata(RELATION_VECTOR_NAMESPACE, vectorKey(kind, nodeId));
+    const doc = data as { v?: unknown; h?: unknown } | undefined;
+    if (!doc || !Array.isArray(doc.v) || doc.v.length === 0) return undefined;
+    if (expectedHash !== undefined && doc.h !== expectedHash) return undefined;
+    return doc.v as number[];
+  }
+
+  async upsertVector(kind: 'entity' | 'event', nodeId: string, vector: number[], hash?: string): Promise<void> {
+    await this.memory.saveMetadata(RELATION_VECTOR_NAMESPACE, vectorKey(kind, nodeId), { v: vector, h: hash });
+  }
+
+  /**
+   * 一次性迁移：把存量节点里的内嵌向量搬到向量命名空间并剥离节点。幂等，
+   * 无内嵌向量时零写入。启动时后台调用（见 index.ts）。
+   *
+   * 并发窗口说明（可达但后果良性）：读节点与批量写回之间，提取的 reinforce 直写、
+   * 手动 /relation consolidate 都可能碰同一节点——本方法的陈旧写回会覆盖那次更新
+   * （丢 evidence/权重增量，非破坏）；窗口内被级联删除的节点还可能被写回复活成
+   * 无边孤儿——提取后的 pruneOrphans 会再收走。全部自愈，故不引入 CAS
+   * （api-memory 没有该原语，为此加是过度设计）。
+   */
+  async migrateInlineVectors(): Promise<number> {
+    const entries = await this.memory.listMetadata(RELATION_NAMESPACE);
+    const ops: Array<
+      | { op: 'put'; namespace: string; key: string; data: Record<string, unknown> }
+      | { op: 'del'; namespace: string; key: string }
+    > = [];
+    let migrated = 0;
+    for (const { key, data } of entries) {
+      const kind = key.startsWith(EVENT_PREFIX) ? 'event' : key.startsWith(ENTITY_PREFIX) ? 'entity' : null;
+      if (!kind) continue;
+      const node = data as Record<string, unknown>;
+      const vec = node.embeddingVector;
+      if (!Array.isArray(vec) || vec.length === 0) continue;
+      const nodeId = key.slice(kind === 'event' ? EVENT_PREFIX.length : ENTITY_PREFIX.length);
+      const { embeddingVector: _drop, ...rest } = node;
+      ops.push({
+        op: 'put',
+        namespace: RELATION_VECTOR_NAMESPACE,
+        key: vectorKey(kind, nodeId),
+        data: { v: vec, h: typeof node.embeddingHash === 'string' ? node.embeddingHash : undefined },
+      });
+      ops.push({ op: 'put', namespace: RELATION_NAMESPACE, key, data: rest });
+      migrated++;
+    }
+    if (ops.length > 0) await this.memory.commitMetadata(ops);
+    return migrated;
+  }
+}
+
+/**
+ * 剥掉从存储读回的节点上的内嵌向量（历史数据），返回同一对象。
+ * 迁移完成前的旧文档也不许把 96KB/条 的装箱数组带进快照——快照会被并发持有
+ * 跨越长 LLM 调用，这正是 OOM 的形成机制。剥的是内存副本，不动库。
+ */
+function stripInlineVector(data: Record<string, unknown>): Record<string, unknown> {
+  if ('embeddingVector' in data) delete data.embeddingVector;
+  return data;
 }
