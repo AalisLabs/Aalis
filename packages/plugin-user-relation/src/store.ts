@@ -27,6 +27,8 @@ export const RELATION_NAMESPACE = 'user-relation';
  * 全部 4096 维向量拉成 JS 装箱数组（每条 ~96KB），快照被并发持有 20+ 份时堆里
  * 全是向量（实测 1.8GB，进程 OOM）。拆到独立命名空间后 loadAll 永不触碰向量，
  * 只有按需的 getVector 逐条取。节点上保留 embeddingHash（短字符串）做失效判断。
+ * 历史内嵌文档无需迁移：读出口一律剥离（stripInlineVector），召回真用到某节点的
+ * 向量时经「hash 命中但库中无」的自愈路径重算入库，未被用到的节点永远不需要向量。
  */
 export const RELATION_VECTOR_NAMESPACE = 'user-relation-vec';
 
@@ -309,50 +311,12 @@ export class RelationStore {
   async upsertVector(kind: 'entity' | 'event', nodeId: string, vector: number[], hash?: string): Promise<void> {
     await this.memory.saveMetadata(RELATION_VECTOR_NAMESPACE, vectorKey(kind, nodeId), { v: vector, h: hash });
   }
-
-  /**
-   * 一次性迁移：把存量节点里的内嵌向量搬到向量命名空间并剥离节点。幂等，
-   * 无内嵌向量时零写入。启动时后台调用（见 index.ts）。
-   *
-   * 并发窗口说明（可达但后果良性）：读节点与批量写回之间，提取的 reinforce 直写、
-   * 手动 /relation consolidate 都可能碰同一节点——本方法的陈旧写回会覆盖那次更新
-   * （丢 evidence/权重增量，非破坏）；窗口内被级联删除的节点还可能被写回复活成
-   * 无边孤儿——提取后的 pruneOrphans 会再收走。全部自愈，故不引入 CAS
-   * （api-memory 没有该原语，为此加是过度设计）。
-   */
-  async migrateInlineVectors(): Promise<number> {
-    const entries = await this.memory.listMetadata(RELATION_NAMESPACE);
-    const ops: Array<
-      | { op: 'put'; namespace: string; key: string; data: Record<string, unknown> }
-      | { op: 'del'; namespace: string; key: string }
-    > = [];
-    let migrated = 0;
-    for (const { key, data } of entries) {
-      const kind = key.startsWith(EVENT_PREFIX) ? 'event' : key.startsWith(ENTITY_PREFIX) ? 'entity' : null;
-      if (!kind) continue;
-      const node = data as Record<string, unknown>;
-      const vec = node.embeddingVector;
-      if (!Array.isArray(vec) || vec.length === 0) continue;
-      const nodeId = key.slice(kind === 'event' ? EVENT_PREFIX.length : ENTITY_PREFIX.length);
-      const { embeddingVector: _drop, ...rest } = node;
-      ops.push({
-        op: 'put',
-        namespace: RELATION_VECTOR_NAMESPACE,
-        key: vectorKey(kind, nodeId),
-        data: { v: vec, h: typeof node.embeddingHash === 'string' ? node.embeddingHash : undefined },
-      });
-      ops.push({ op: 'put', namespace: RELATION_NAMESPACE, key, data: rest });
-      migrated++;
-    }
-    if (ops.length > 0) await this.memory.commitMetadata(ops);
-    return migrated;
-  }
 }
 
 /**
- * 剥掉从存储读回的节点上的内嵌向量（历史数据），返回同一对象。
- * 迁移完成前的旧文档也不许把 96KB/条 的装箱数组带进快照——快照会被并发持有
- * 跨越长 LLM 调用，这正是 OOM 的形成机制。剥的是内存副本，不动库。
+ * 剥掉从存储读回的节点上的内嵌向量（历史/外部写入的旧格式文档），返回同一对象。
+ * 「向量不出存储层」是硬边界：内嵌向量带进快照，快照又被并发持有跨越长 LLM
+ * 调用，正是 2026-08 OOM 的形成机制。剥的是内存副本，不动库。
  */
 function stripInlineVector(data: Record<string, unknown>): Record<string, unknown> {
   if ('embeddingVector' in data) delete data.embeddingVector;
