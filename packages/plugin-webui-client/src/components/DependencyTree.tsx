@@ -1,6 +1,12 @@
 // 依赖关系展示：递归渲染市场 /api/marketplace/depgraph 的依赖链路树 + 服务标注。
 // 两类边：import（链路树，可传递）+ service（每节点直接标注 需/供，不深挖服务的服务）。
 // present=false：install 语境=「将引入」（npm 自动拉取）；view 语境=「缺失」。
+//
+// 折叠规则：install 语境里「整条子树都已装」的节点默认收起（core 会出现在几乎每条
+// api/util 链下，全展开时装前弹窗噪音极大），含「将引入」的链路默认展开——那才是
+// 用户需要审视的部分；view（卸载警告）语境一律默认展开，警告不许折叠着送达。
+
+import { useState } from 'react';
 
 export interface DepChainNode {
   name: string;
@@ -22,6 +28,16 @@ export interface DepGraph {
   serviceDependents: string[];
 }
 
+/** 子树里是否存在缺失包（含自身）——决定 install 语境的默认展开。 */
+function subtreeHasMissing(n: DepChainNode): boolean {
+  return !n.present || n.children.some(subtreeHasMissing);
+}
+
+/** 子树节点总数（不含自身），折叠时的计数徽标用。 */
+function countDescendants(n: DepChainNode): number {
+  return n.children.reduce((acc, c) => acc + 1 + countDescendants(c), 0);
+}
+
 /** 递归渲染单个依赖节点 + 其子树。depth 控制缩进；根节点由调用方决定是否渲染（通常渲染其 children）。 */
 function DependencyTree({
   node,
@@ -34,19 +50,29 @@ function DependencyTree({
 }) {
   const req = node.services?.requires ?? [];
   const prov = node.services?.provides ?? [];
+  const hasKids = node.children.length > 0;
+  // view（卸载警告）一律展开；install 里全已装的子树默认收起
+  const [open, setOpen] = useState(() => mode === 'view' || subtreeHasMissing(node));
   return (
     <div className="dep-tree-node" style={depth > 0 ? { marginLeft: 14 } : undefined}>
-      <div className="dep-tree-row">
+      <div
+        className={`dep-tree-row${hasKids ? ' dep-tree-toggle' : ''}`}
+        onClick={hasKids ? () => setOpen(o => !o) : undefined}
+      >
+        {/* 叶子也渲染等宽占位，否则末层缺一格缩进、名字左漂 */}
+        <span className="dep-tree-caret">{hasKids ? (open ? '▾' : '▸') : ''}</span>
         <span className="dep-tree-name">{node.name}</span>
         {!node.present && (
           <span className="dep-tree-tag dep-tag-missing">{mode === 'install' ? '将引入' : '未装'}</span>
         )}
         {req.length > 0 && <span className="dep-tree-tag dep-tag-req">需 {req.join('、')}</span>}
         {prov.length > 0 && <span className="dep-tree-tag dep-tag-prov">供 {prov.join('、')}</span>}
+        {hasKids && !open && <span className="dep-tree-tag dep-tag-count">{countDescendants(node)} 项已装</span>}
       </div>
-      {node.children.map(c => (
-        <DependencyTree key={c.name} node={c} mode={mode} depth={depth + 1} />
-      ))}
+      {open &&
+        node.children.map(c => (
+          <DependencyTree key={c.name} node={c} mode={mode} depth={depth + 1} />
+        ))}
     </div>
   );
 }
