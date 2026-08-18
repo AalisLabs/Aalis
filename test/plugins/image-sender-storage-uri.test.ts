@@ -61,7 +61,9 @@ describe('send_attachment storage_uri 归一化', () => {
 
   it('历史相对路径（data/images/...，无冒号）→ 成功发送（删归一化即红）', async () => {
     const outbound: unknown[] = [];
-    app.ctx.on('outbound:message', m => outbound.push(m));
+    app.ctx.on('outbound:message', m => {
+      outbound.push(m); // 花括号吞掉 push 的返回值：监听器签名要求 void | Promise<void>
+    });
     const out = JSON.parse(
       await handlers.send_attachment(
         { kind: 'image', storage_uri: 'data/images/onebot_x_group_1/abcd1234.jpg' },
