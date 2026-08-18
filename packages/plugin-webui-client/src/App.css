@@ -5503,6 +5503,20 @@ td.col-actions { text-align: right; }
 .dep-tree-node {
   font-size: 0.8rem;
 }
+.dep-tree-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+.dep-tree-caret {
+  display: inline-block;
+  width: 14px;
+  color: var(--text-secondary, #888);
+  font-size: 11px;
+}
+.dep-tag-count {
+  color: var(--text-secondary, #888);
+  opacity: 0.8;
+}
 .dep-tree-row {
   display: flex;
   align-items: center;
