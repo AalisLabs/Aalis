@@ -2673,9 +2673,14 @@ export class RelationService {
         if (!embedding) return null;
         if (embedCache.has(en.id)) return embedCache.get(en.id) ?? null;
         const expectedHash = computeEntityEmbeddingHash(en.name, en.summary, en.entityKind);
-        if (en.embeddingHash === expectedHash && Array.isArray(en.embeddingVector) && en.embeddingVector.length > 0) {
-          embedCache.set(en.id, en.embeddingVector);
-          return en.embeddingVector;
+        // 向量存独立命名空间（loadAll 不携带、快照不驻留——OOM 事故的修复面）。
+        // hash 一致才去取；取不到（历史剥离/异常）走重算自愈，多花一次 embed 而已。
+        if (en.embeddingHash === expectedHash) {
+          const stored = await this.store.getVector('entity', en.id, expectedHash);
+          if (stored) {
+            embedCache.set(en.id, stored);
+            return stored;
+          }
         }
         const text = `${(en.name || '').trim()}\n${(en.summary || '').trim()}`.trim();
         if (!text) {
@@ -2688,8 +2693,10 @@ export class RelationService {
             embedCache.set(en.id, null);
             return null;
           }
-          await this.store.upsertEntity({ ...en, embeddingVector: vec, embeddingHash: expectedHash });
-          en.embeddingVector = vec;
+          await this.store.upsertVector('entity', en.id, vec, expectedHash);
+          // 解构剔除而非置 undefined：mongodb 后端会把 undefined 落成 null 字段残留
+          const { embeddingVector: _dropEn, ...enRest } = en;
+          await this.store.upsertEntity({ ...enRest, embeddingHash: expectedHash });
           en.embeddingHash = expectedHash;
           embedCache.set(en.id, vec);
           return vec;
@@ -3616,28 +3623,48 @@ export class RelationService {
     }
 
     // Lazy embed：把所有需要 embed 的 event 一次性扫出，按需算
+    // 每轮 pass 的向量缓存：O(N²) 配对循环逐对要向量，不能逐对打存储。
+    // 向量本体在独立命名空间（loadAll 不携带），预热阶段拉一次进这张表，
+    // pass 结束随作用域整体释放——不留跨轮驻留，这正是 OOM 修复的边界。
+    const eventVecCache = new Map<string, number[] | null>();
+    let embeddedCount = 0; // 本轮真正重算的条数（区别于缓存/存储命中），预热日志用
     const ensureEmbedding = async (ev: EventNode): Promise<number[] | null> => {
       if (!opts.embedding) return null;
+      if (eventVecCache.has(ev.id)) return eventVecCache.get(ev.id) ?? null;
       const expectedHash = computeEventEmbeddingHash(ev.title, ev.summary);
-      if (ev.embeddingHash === expectedHash && Array.isArray(ev.embeddingVector) && ev.embeddingVector.length > 0) {
-        return ev.embeddingVector;
+      if (ev.embeddingHash === expectedHash) {
+        const stored = await this.store.getVector('event', ev.id, expectedHash);
+        if (stored) {
+          eventVecCache.set(ev.id, stored);
+          return stored;
+        }
       }
       // 需要 embed
       const text = `${(ev.title || '').trim()}\n${(ev.summary || '').trim()}`.trim();
-      if (!text) return null;
+      if (!text) {
+        eventVecCache.set(ev.id, null);
+        return null;
+      }
       try {
         const vec = await opts.embedding.embed(text);
-        if (!Array.isArray(vec) || vec.length === 0) return null;
-        // 写回持久化
-        await this.store.upsertEvent({ ...ev, embeddingVector: vec, embeddingHash: expectedHash });
-        // 同步缓存到本地副本（snapshot 不会再 reload）
-        ev.embeddingVector = vec;
+        if (!Array.isArray(vec) || vec.length === 0) {
+          eventVecCache.set(ev.id, null);
+          return null;
+        }
+        // 写回持久化：向量入独立命名空间，节点只更新 hash。
+        // 解构剔除而非置 undefined：mongodb 后端会把 undefined 落成 null 字段残留
+        await this.store.upsertVector('event', ev.id, vec, expectedHash);
+        const { embeddingVector: _dropEv, ...evRest } = ev;
+        await this.store.upsertEvent({ ...evRest, embeddingHash: expectedHash });
         ev.embeddingHash = expectedHash;
+        embeddedCount++;
+        eventVecCache.set(ev.id, vec);
         return vec;
       } catch (err) {
         logger?.warn(
           `[user-relation] consolidate event embed 失败 ${ev.id} (${ev.title.slice(0, 20)}): ${err instanceof Error ? err.message : String(err)}`,
         );
+        eventVecCache.set(ev.id, null);
         return null;
       }
     };
@@ -3648,22 +3675,15 @@ export class RelationService {
     // 会对已被 mergeAlias 删除的 alias event 调 upsertEvent，把死节点"复活"。
     if (opts.embedding) {
       const EMBED_CONCURRENCY = 8;
-      const needEmbed = workingEvents.filter(ev => {
-        const expectedHash = computeEventEmbeddingHash(ev.title, ev.summary);
-        return !(
-          ev.embeddingHash === expectedHash &&
-          Array.isArray(ev.embeddingVector) &&
-          ev.embeddingVector.length > 0
-        );
-      });
-      if (needEmbed.length > 0) {
-        logger?.info(
-          `[user-relation] consolidate event 预热 embedding：${needEmbed.length} / ${workingEvents.length} 个事件需要重算`,
-        );
-        for (let start = 0; start < needEmbed.length; start += EMBED_CONCURRENCY) {
-          await Promise.all(needEmbed.slice(start, start + EMBED_CONCURRENCY).map(ev => ensureEmbedding(ev)));
-        }
+      // 预热覆盖**全部** workingEvents：向量不再内嵌，hash 一致的也要把向量从
+      // 独立命名空间拉进本轮缓存，否则 O(N²) 配对循环会逐对同步打存储。
+      // ensureEmbedding 自带"hash 一致读存储 / 不一致重算"的分流与缓存。
+      for (let start = 0; start < workingEvents.length; start += EMBED_CONCURRENCY) {
+        await Promise.all(workingEvents.slice(start, start + EMBED_CONCURRENCY).map(ev => ensureEmbedding(ev)));
       }
+      logger?.info(
+        `[user-relation] consolidate event 预热 embedding：${workingEvents.length} 个事件（重算 ${embeddedCount}，其余读库/缓存命中）`,
+      );
     }
 
     type Candidate = {
