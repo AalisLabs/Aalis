@@ -46,6 +46,7 @@ import { registerMarketplaceRoutes } from './routes/marketplace.js';
 import { registerPluginRoutes } from './routes/plugins.js';
 import { registerProxyRoutes } from './routes/proxy.js';
 import { registerUploadedFilesRoutes } from './routes/uploaded-files.js';
+import { createWsHeartbeat } from './ws-heartbeat.js';
 
 /**
  * 工具 / 指令 / 工具组 description 约定：首行 = 人类可读摘要，其余 = 给 agent 的长使用指南。
@@ -388,6 +389,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const sessions = new Map<string, Set<WebSocket>>();
   const logSubscribers = new Set<WebSocket>();
   const allClients = new Set<WebSocket>();
+  // 半开连接回收：清理只挂 'close' 时，睡眠/断网的客户端永远等不到事件，
+  // 日志广播持续往死连接的发送缓冲堆数据。详见 ws-heartbeat.ts。
+  const heartbeat = createWsHeartbeat<WebSocket>({
+    onStale: ws => ctx.logger.debug(`WebUI 客户端心跳超时，回收半开连接 (bufferedAmount=${ws.bufferedAmount})`),
+  });
 
   // 流式生成缓冲区：记录每个 session 正在生成中的累积内容，用于刷新后恢复。
   // segments 是按到达顺序追加的统一时间线：text / reasoning_text / tool_call 三种段都按真实时序混排。
@@ -991,6 +997,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const wsIdentity = auth.identify(req) ?? { platform: 'webui', userId: 'console' };
     ctx.logger.debug(`WebUI 客户端已连接: ${wsIdentity.platform}:${wsIdentity.userId}`);
     allClients.add(ws);
+    heartbeat.track(ws);
 
     ws.on('message', async data => {
       try {
@@ -1115,6 +1122,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     });
 
     ws.on('close', () => {
+      heartbeat.untrack(ws);
       allClients.delete(ws);
       logSubscribers.delete(ws);
       for (const [sid, sockets] of sessions) {
@@ -1611,6 +1619,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   ctx.onDispose(() => {
     confirmChannel?.dispose(); // 清 WebUI 确认通道里挂起的待确认（安全拒），避免 Promise 永挂
+    heartbeat.dispose();
     removeLogListener();
     wss.close();
     server.close();
