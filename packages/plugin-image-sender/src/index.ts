@@ -15,7 +15,7 @@
 import type { MediaService } from '@aalis/api-media';
 import type { MemoryService } from '@aalis/api-memory';
 import type { MessageArchiveService } from '@aalis/api-message-archive';
-import { createStorageGateway, type StorageService } from '@aalis/api-storage';
+import { createStorageGateway, type StorageService, toStorageUri } from '@aalis/api-storage';
 import { useToolService } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
 import {
@@ -55,13 +55,17 @@ export function apply(ctx: Context): void {
   async function resolveStorageUri(
     input: string,
   ): Promise<{ ok: true; data: string; ref: string } | { ok: false; error: string }> {
+    // 归一化：归档给 agent 的 ref 是历史相对路径 `data/images/...`（无冒号），
+    // 而 storage 消费需要 storage URI `data:/images/...`。漏这步就是「图明明在却报找不到」。
+    const uri = toStorageUri(input);
     try {
-      await storage.stat(input);
+      await storage.stat(uri);
     } catch {
       return { ok: false, error: `存储资源不存在: ${input}` };
     }
-    const local = await tryResolveLocal(storage, input);
-    return { ok: true, data: local ? `file://${local}` : input, ref: input };
+    const local = await tryResolveLocal(storage, uri);
+    // ref 保持 input 原样，维持与既有归档（相对路径形态）的一致，供 history_ref 回查匹配。
+    return { ok: true, data: local ? `file://${local}` : uri, ref: input };
   }
 
   // ── preview_image ─────────────────────────────────────────────────────────
@@ -370,15 +374,16 @@ async function resolveHistoryRef(
   }
   // file:// ref：原样返回
   if (normalized.startsWith('file://')) return normalized;
-  // storage URI 格式：stat 不在则忽略，在则尝试本地路径
-  if (normalized.includes(':/')) {
-    try {
-      await storage.stat(normalized);
-      const local = await tryResolveLocal(storage, normalized);
-      return local ? `file://${local}` : normalized;
-    } catch {
-      // fallthrough 到历史子串匹配
-    }
+  // storage URI / 历史相对路径：归一化后 stat；命中即用，未命中 fallthrough 到子串匹配。
+  // 完整相对路径 `data/images/x.jpg` → `data:/images/x.jpg` 能直接命中；
+  // 单段 hash（如 `abc123.jpg`）归一化成 `data:/abc123.jpg` stat 失败，正确回落子串匹配。
+  const asUri = normalized.includes(':/') ? normalized : toStorageUri(normalized);
+  try {
+    await storage.stat(asUri);
+    const local = await tryResolveLocal(storage, asUri);
+    return local ? `file://${local}` : asUri;
+  } catch {
+    // fallthrough 到历史子串匹配
   }
   // 回退：搜历史里 images / attachments 数组里包含 normalized 子串的项
   for (const msg of history) {
