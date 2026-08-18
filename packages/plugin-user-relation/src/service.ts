@@ -2694,9 +2694,7 @@ export class RelationService {
             return null;
           }
           await this.store.upsertVector('entity', en.id, vec, expectedHash);
-          // 解构剔除而非置 undefined：mongodb 后端会把 undefined 落成 null 字段残留
-          const { embeddingVector: _dropEn, ...enRest } = en;
-          await this.store.upsertEntity({ ...enRest, embeddingHash: expectedHash });
+          await this.store.upsertEntity({ ...en, embeddingHash: expectedHash });
           en.embeddingHash = expectedHash;
           embedCache.set(en.id, vec);
           return vec;
@@ -3651,11 +3649,9 @@ export class RelationService {
           eventVecCache.set(ev.id, null);
           return null;
         }
-        // 写回持久化：向量入独立命名空间，节点只更新 hash。
-        // 解构剔除而非置 undefined：mongodb 后端会把 undefined 落成 null 字段残留
+        // 写回持久化：向量入独立命名空间，节点只更新 hash
         await this.store.upsertVector('event', ev.id, vec, expectedHash);
-        const { embeddingVector: _dropEv, ...evRest } = ev;
-        await this.store.upsertEvent({ ...evRest, embeddingHash: expectedHash });
+        await this.store.upsertEvent({ ...ev, embeddingHash: expectedHash });
         ev.embeddingHash = expectedHash;
         embeddedCount++;
         eventVecCache.set(ev.id, vec);

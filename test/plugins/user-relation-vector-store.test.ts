@@ -25,8 +25,7 @@ import {
 // 本文件守住的契约：
 //  1. loadAll 永不携带向量（含未迁移的历史内嵌文档——防御性剥离）；
 //  2. 向量读写走独立命名空间，节点删除/级联删除/清空连带删向量；
-//  3. 一次性迁移幂等：搬家 + 剥离 + hash 保留；
-//  4. 行为等价：hash 命中时召回用的向量与迁移前一致（相似度结果不变）、
+//  3. 行为等价：hash 命中时召回用的向量与迁移前一致（相似度结果不变）、
 //     不多调 embed；向量丢失时自愈重算，且重算结果不再内嵌回节点。
 // ════════════════════════════════════════════════════════════
 
@@ -112,40 +111,14 @@ describe('loadAll 永不携带向量', () => {
       rawEvent('ev1', { embeddingVector: VEC, embeddingHash: 'h' }),
     );
     const snap = await store.loadAll();
-    const en = snap.entities.find(e => e.id === 'e1') as EntityNode;
-    const ev = snap.events.find(e => e.id === 'ev1') as EventNode;
+    // 类型上 embeddingVector 已彻底移除，按原始 Record 断言剥离效果
+    const en = snap.entities.find(e => e.id === 'e1') as EntityNode & Record<string, unknown>;
+    const ev = snap.events.find(e => e.id === 'ev1') as EventNode & Record<string, unknown>;
     expect(en.embeddingVector, '快照携带向量=每份快照 96KB/节点 × 并发 20 份').toBeUndefined();
     expect(ev.embeddingVector).toBeUndefined();
     // 剥的只是向量；hash 与其余字段原样
     expect(en.embeddingHash).toBe('h');
     expect(en.name).toBe('实体e1');
-  });
-});
-
-describe('存量迁移：搬家 + 剥离 + 幂等', () => {
-  it('内嵌向量搬入向量命名空间，节点文档剥离且 hash 保留；重跑零写入', async () => {
-    const { store, mem } = await makeStore();
-    await mem.saveMetadata(
-      RELATION_NAMESPACE,
-      'entity:e1',
-      rawEntity('e1', { embeddingVector: VEC, embeddingHash: 'ha' }),
-    );
-    await mem.saveMetadata(
-      RELATION_NAMESPACE,
-      eventKey('ev1'),
-      rawEvent('ev1', { embeddingVector: VEC, embeddingHash: 'hb' }),
-    );
-    await mem.saveMetadata(RELATION_NAMESPACE, 'entity:e2', rawEntity('e2')); // 无向量，不该被动
-    expect(await store.migrateInlineVectors()).toBe(2);
-
-    expect(await store.getVector('entity', 'e1')).toEqual(VEC);
-    expect(await store.getVector('event', 'ev1')).toEqual(VEC);
-    // 持久化文档已剥离（直接读原始 metadata，绕过 loadAll 的内存剥离）
-    const raw = (await mem.getMetadata(RELATION_NAMESPACE, 'entity:e1')) as Record<string, unknown>;
-    expect(raw.embeddingVector).toBeUndefined();
-    expect(raw.embeddingHash).toBe('ha');
-
-    expect(await store.migrateInlineVectors(), '幂等：第二遍无事可做').toBe(0);
   });
 });
 
