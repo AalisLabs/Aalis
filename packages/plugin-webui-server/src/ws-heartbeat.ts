@@ -43,9 +43,17 @@ export function createWsHeartbeat<T extends HeartbeatSocket>(
   const tracked = new Set<T>();
   const alive = new WeakMap<T, boolean>();
 
+  let lastTickAt = Date.now();
   const timer = setInterval(() => {
+    // 冻结宽恕：事件循环若被长时间阻塞（拍堆快照、同步大计算、机器休眠），解冻后
+    // timers 阶段先于 poll 阶段跑——内核缓冲里躺着的 pong 还没被读进来，本轮会把
+    // 全部健康连接判死。跨过 1.5 个周期即认定经历过冻结：本轮只重新标记并 ping，
+    // 不判死，把裁决让给下一轮（届时 pong 已被处理）。
+    const now = Date.now();
+    const froze = now - lastTickAt > intervalMs * 1.5;
+    lastTickAt = now;
     for (const ws of tracked) {
-      if (alive.get(ws) === false) {
+      if (!froze && alive.get(ws) === false) {
         // 整整一个周期没回 pong：半开死连接，踢掉（'close' 事件走既有清理）
         tracked.delete(ws);
         opts.onStale?.(ws);
