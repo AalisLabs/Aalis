@@ -417,8 +417,23 @@ export function toManifest(packument: {
   const latest = packument['dist-tags']?.latest;
   if (!latest) return null;
   const v = packument.versions?.[latest];
-  const dependencies = [...new Set([...Object.keys(v?.dependencies ?? {}), ...Object.keys(v?.peerDependencies ?? {})])];
-  return { name: '', version: latest, description: v?.description, service: v?.aalis?.service, dependencies };
+  // 远端 packument 是**不可信输入**：依赖键与 aalis.service 都由包作者任意填写，
+  // 而它们会直接进装前弹窗渲染。依赖键过包名正则并限量——否则 `@aalis/core 官方推荐先装`
+  // 这类含空格话术的伪名能混进依赖树冒充生态包（scope 归属拦得住真包、拦不住字符串），
+  // 海量伪键还能把真正该审视的依赖淹没。service 收敛为字符串数组——对象混进去会让
+  // React 渲染抛错、整个装前披露不可用。
+  const MAX_DEPS = 200;
+  const dependencies = [...new Set([...Object.keys(v?.dependencies ?? {}), ...Object.keys(v?.peerDependencies ?? {})])]
+    .filter(n => PKG_NAME_RE.test(n))
+    .slice(0, MAX_DEPS);
+  // 只校形状不丢字段：optional 等其余键原样透传（未来扩展不被这层吃掉）
+  const strList = (x: unknown): string[] | undefined =>
+    x === undefined ? undefined : Array.isArray(x) ? x.filter((s): s is string => typeof s === 'string') : [];
+  const rawSvc = v?.aalis?.service;
+  const service = rawSvc
+    ? { ...rawSvc, provides: strList(rawSvc.provides), required: strList(rawSvc.required) }
+    : undefined;
+  return { name: '', version: latest, description: v?.description, service, dependencies };
 }
 
 /**

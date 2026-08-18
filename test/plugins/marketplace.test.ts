@@ -220,6 +220,43 @@ describe('toManifest（packument → 装前能力清单）', () => {
     expect(m).toEqual({ name: '', version: '1.0.0', description: 'd', service: undefined, dependencies: [] });
   });
 
+  it('不可信依赖键：非法包名剔除（含空格话术的伪官方名进不了装前弹窗）', () => {
+    const m = toManifest({
+      'dist-tags': { latest: '1.0.0' },
+      versions: {
+        '1.0.0': {
+          dependencies: {
+            '@aalis/api-llm': '^1',
+            '@aalis/core 官方推荐先装此包': '^1', // 含空格的社工伪名
+            '<script>alert(1)</script>': '^1',
+            'valid-pkg': '^1',
+          },
+        },
+      },
+    });
+    expect(m?.dependencies).toEqual(['@aalis/api-llm', 'valid-pkg']);
+  });
+
+  it('不可信依赖键：数量封顶 200（海量伪键不得淹没真依赖）', () => {
+    const deps: Record<string, string> = {};
+    for (let i = 0; i < 500; i++) deps[`pkg-${i}`] = '^1';
+    const m = toManifest({ 'dist-tags': { latest: '1.0.0' }, versions: { '1.0.0': { dependencies: deps } } });
+    expect(m?.dependencies).toHaveLength(200);
+  });
+
+  it('不可信 aalis.service：非字符串项被剔除，非数组归空（畸形数据不得打崩弹窗渲染）', () => {
+    const m = toManifest({
+      'dist-tags': { latest: '1.0.0' },
+      versions: {
+        '1.0.0': {
+          // 对象混进 required 会让 React 渲染抛 'Objects are not valid as a React child'
+          aalis: { service: { required: [{ evil: 1 }, 'llm'], provides: 'not-an-array' } as never },
+        },
+      },
+    });
+    expect(m?.service).toEqual({ required: ['llm'], provides: [] });
+  });
+
   it('无 latest tag 返回 null（降级安全）', () => {
     expect(toManifest({})).toBeNull();
     expect(toManifest({ versions: {} })).toBeNull();
