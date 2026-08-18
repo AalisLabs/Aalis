@@ -40,3 +40,4 @@ models/
 *.local
 **/settings.local.json
 sts2-dev/
+*.heapsnapshot
