@@ -629,7 +629,11 @@ class DeepSeekClient {
       }
     } finally {
       clearTimeout(streamStallTimer);
-      reader.releaseLock();
+      // cancel 而非仅 releaseLock：中止/提前退出时要主动关闭响应体。releaseLock 只是放锁，
+      // 底层流仍开着——被打断的生成会让 undici 挂着半读的响应与套接字，直到请求超时兜底
+      // 才释放（本地慢生成 + lane 中止高频后，这类残留一挂就是整个超时窗）。
+      // cancel 自带放锁；流已正常结束时 cancel 是 no-op，不影响完整读完的路径。
+      await reader.cancel().catch(() => {});
     }
 
     // 流意外结束（未见 [DONE]）也要 flush 尾缓冲
