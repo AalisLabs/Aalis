@@ -240,7 +240,7 @@ export async function apply(ctx: Context) {
 
 ### 权限位即授权语义
 
-root 的 `readable/writable/deletable`（`StorageRootInfo`）就是该根的访问策略：参考实现每次操作前 `requirePermission`（`:597-601`），gateway 路由时按位过滤（`rootSatisfies`，`:239-262`）。这与框架的 [authority 等级体系](../core/authority.md)是**两套**机制——storage 不读 session 等级，权限只看 root 位。若你的工具要按调用者 authority 收紧文件访问，须在工具层（api-tools 的 risk/minLevel）实现，storage 不承担此职责。
+root 的 `readable/writable/deletable`（`StorageRootInfo`）就是该根的访问策略：参考实现每次操作前 `requirePermission`（`:597-601`），gateway 路由时按位过滤（`rootSatisfies`，`:239-262`）。这与框架的 [authority 等级体系](../plugins/plugin-authority.md)是**两套**机制——storage 不读 session 等级，权限只看 root 位。若你的工具要按调用者 authority 收紧文件访问，须在工具层（api-tools 的 risk/minLevel）实现，storage 不承担此职责。
 
 ### SSRF 与 storage 无关，但勿混淆
 
@@ -265,4 +265,4 @@ root 的 `readable/writable/deletable`（`StorageRootInfo`）就是该根的访�
 ## 8. 交叉链接
 
 - 概念：[storage-uri-grammar](../concepts/storage-uri-grammar.md)（URI 文法，先读）、[service-model](../concepts/service-model.md)、[lazy-service-access](../concepts/lazy-service-access.md)、[manifest-metadata](../concepts/manifest-metadata.md)、[security-model](../concepts/security-model.md)。
-- 内核：[core/service.md](../core/service.md)（DI / priority / per-entry provide）、[core/authority.md](../core/authority.md)（与权限位的区别）、[core/tools.md](../core/tools.md)（工具层 risk/minLevel 才是按调用者收紧的地方）、[core/context.md](../core/context.md)（`provide` / `getAllServices`）。
+- 内核：[core/service.md](../core/service.md)（DI / priority / per-entry provide）、[plugins/plugin-authority.md](../plugins/plugin-authority.md)（与权限位的区别）、[plugins/plugin-tools.md](../plugins/plugin-tools.md)（工具层 risk/minLevel 才是按调用者收紧的地方）、[core/context.md](../core/context.md)（`provide` / `getAllServices`）。

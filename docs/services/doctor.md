@@ -268,5 +268,5 @@ ctx.on('doctor:updated', () => refresh());
 ## 8. 交叉链接
 
 - 概念：[service-model](../concepts/service-model.md)（DI 按名解析 / 优先级）、[lazy-service-access](../concepts/lazy-service-access.md)（每用现取、`whenService`）、[manifest-metadata](../concepts/manifest-metadata.md)（`provides`/`inject` 双源）、[security-model](../concepts/security-model.md)（safeFetch / 脱敏）。
-- 核心：[docs/core/service.md](../core/service.md)、[docs/core/context.md](../core/context.md)（`provide` / `whenService` / `on` / `emit`）、[docs/core/commands.md](../core/commands.md)（`/doctor` 入口）。
+- 核心：[docs/core/service.md](../core/service.md)、[docs/core/context.md](../core/context.md)（`provide` / `whenService` / `on` / `emit`）、[docs/plugins/plugin-commands.md](../plugins/plugin-commands.md)（`/doctor` 入口）。
 - 同类服务文档（注册中心模式）：[services/tools.md](./tools.md)、[services/commands.md](./commands.md)、[services/storage.md](./storage.md)（`storage.roots` 检查的提供方）。

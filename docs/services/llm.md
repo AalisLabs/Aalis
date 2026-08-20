@@ -235,4 +235,4 @@ provider 在**序列化前**（流式与非流式两条路径都要）必须先�
 - [manifest 元数据](../concepts/manifest-metadata.md)——`provides`/`inject` 双源同步。
 - [消息→LLM 管线](../concepts/message-llm-pipeline.md)——`prepareLLMMessages` / role 转译 / kind 前缀。
 - [安全模型](../concepts/security-model.md)——`safeFetch` SSRF 防护。
-- [core/service](../core/service.md)、[core/tools](../core/tools.md)、[core/context](../core/context.md)、[core/authority](../core/authority.md)。
+- [core/service](../core/service.md)、[plugins/plugin-tools](../plugins/plugin-tools.md)、[core/context](../core/context.md)、[plugins/plugin-authority](../plugins/plugin-authority.md)。
