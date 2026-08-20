@@ -315,11 +315,11 @@ authority 在 `apply` 时把 `config.network` 注入进程级 `safeFetch` 策略
 
 ## 8. 交叉链接
 
-- docs/core/authority.md — 权限系统总览（数字等级单轴的设计与配置面）。
+- docs/plugins/plugin-authority.md — 权限系统总览（数字等级单轴的设计与配置面）。
 - docs/concepts/security-model.md — 威胁模型、SSRF / `safeFetch`、插件作者责任边界。
 - docs/services/session-confirm.md — confirm 通道（`AccessConfirmHandler` 的实际实现：bus / WS / 终端）。
 - docs/concepts/service-model.md — DI 按名解析、priority、覆盖同名服务。
 - docs/concepts/lazy-service-access.md — 为什么消费 authority 要每次现取、不缓存。
 - docs/concepts/manifest-metadata.md — `provides`/`inject` 双源元数据同步。
 - docs/concepts/storage-uri-grammar.md — `users.json` 等级存储经 storage 网关；storage 不是沙盒。
-- docs/core/tools.md / docs/core/commands.md — 工具/指令如何声明 `risk`/`visibility`/`confirm`。
+- docs/plugins/plugin-tools.md / docs/plugins/plugin-commands.md — 工具/指令如何声明 `risk`/`visibility`/`confirm`。

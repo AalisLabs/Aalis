@@ -228,7 +228,7 @@ const result = policy
 
 ## 5. 能力 / 风险 → 影响
 
-`code-sandbox` 是 Aalis 安全模型里对抗不可信代码的一道 OS 级隔离，写 provider 和 consumer 都要了解它的边界。威胁模型是：LLM 生成的脚本属于不可信代码，应把 LLM 视为可能被提示注入策反的内部角色（[安全模型 §1](../concepts/security-model.md)）。`code_runner` 的两个工具 `run_python` / `run_javascript` 都标了 `visibility: 'restricted'`，受 [权限两轴](../core/authority.md) 闸门约束。
+`code-sandbox` 是 Aalis 安全模型里对抗不可信代码的一道 OS 级隔离，写 provider 和 consumer 都要了解它的边界。威胁模型是：LLM 生成的脚本属于不可信代码，应把 LLM 视为可能被提示注入策反的内部角色（[安全模型 §1](../concepts/security-model.md)）。`code_runner` 的两个工具 `run_python` / `run_javascript` 都标了 `visibility: 'restricted'`，受 [权限两轴](../plugins/plugin-authority.md) 闸门约束。
 
 参考实现 `code-sandbox-os` 强制以下三条：
 
@@ -255,5 +255,5 @@ provider 实现必须落实这三条强制语义；consumer 也必须传一个�
 ## 7. 交叉链接
 
 - 概念：[服务模型](../concepts/service-model.md)（按名 DI / 同名多实现 / 优先级选择）· [惰性服务访问](../concepts/lazy-service-access.md)（每次用都重取）· [清单元数据](../concepts/manifest-metadata.md)（`provides`/`inject` 双源）· [安全模型](../concepts/security-model.md)（§4 OS 沙箱边界、§5 存储不是沙箱）· [存储 URI 文法](../concepts/storage-uri-grammar.md)。
-- 核心：[权限两轴（authority）](../core/authority.md)（`restricted` 工具受闸）。
+- 核心：[权限两轴（authority）](../plugins/plugin-authority.md)（`restricted` 工具受闸）。
 - 相关服务/插件：`process` 契约（`ExecResult` / spawn 网关）· 消费方插件 [`plugin-tool-code-runner`](../plugins/plugin-tool-code-runner.md) · 参考实现 [`plugin-code-sandbox-os`](../plugins/plugin-code-sandbox-os.md)。

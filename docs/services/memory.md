@@ -186,7 +186,7 @@ try {
 
 ## 6. 能力 / 风险 → 影响
 
-- **本服务不做 authority 鉴权**。memory 是内部基础设施服务，调用方拿到引用即可读写任意 `sessionId` 的全部消息；没有 visibility/risk 分级，也没有逐调用确认。跨会话隔离完全依赖调用方传入正确的 `sessionId`，以及 `getRecentMessagesAcrossSessions` 的 `excludeSessionIds` / `platform` 过滤。**provider 不得自行添加额外鉴权门**，否则会破坏 agent 流水线。authority 模型见 `docs/core/authority.md` 与 `docs/concepts/security-model.md`。
+- **本服务不做 authority 鉴权**。memory 是内部基础设施服务，调用方拿到引用即可读写任意 `sessionId` 的全部消息；没有 visibility/risk 分级，也没有逐调用确认。跨会话隔离完全依赖调用方传入正确的 `sessionId`，以及 `getRecentMessagesAcrossSessions` 的 `excludeSessionIds` / `platform` 过滤。**provider 不得自行添加额外鉴权门**，否则会破坏 agent 流水线。authority 模型见 `docs/plugins/plugin-authority.md` 与 `docs/concepts/security-model.md`。
 - **持久化要走 storage 契约**。sqlite 后端不直接拼接文件系统路径，而是用 `createStorageGateway(ctx)` + `storage.resolveLocalPath(uri, 'write')` 解析 `'<root>:/path'`（默认 `data:/aalis.db`）。storage 不是沙箱（见 `docs/concepts/storage-uri-grammar.md`），但通过它可以拿到框架统一的根隔离与路径解析；自写 provider 落盘时应沿用这种方式，而不是裸用 `fs`。
 - **删除要广播**。实现 `deleteMessagesByTimestamps` 的 provider，删除后下游（向量库、前端）靠 `memory:messages-deleted` / `history:changed` 事件同步；但 emit 事件是**消费方**（checkpoint）的责任，不是 memory 服务自身。
 - **PII 注意**。消息原文（含用户昵称、平台 ID 等）会原样落库。示例代码一律用占位符，不要在 configSchema、默认值或日志里硬编码真实账号信息。
@@ -202,4 +202,4 @@ try {
 ## 8. 交叉链接
 
 - 概念：[`docs/concepts/service-model.md`](../concepts/service-model.md)（DI 选 winner 规则）、[`docs/concepts/lazy-service-access.md`](../concepts/lazy-service-access.md)（必须惰性查询的原因）、[`docs/concepts/manifest-metadata.md`](../concepts/manifest-metadata.md)（provides/inject 双源）、[`docs/concepts/message-llm-pipeline.md`](../concepts/message-llm-pipeline.md)（消息如何被 archive→memory→agent 流转）、[`docs/concepts/storage-uri-grammar.md`](../concepts/storage-uri-grammar.md)（持久化路径）、[`docs/concepts/security-model.md`](../concepts/security-model.md)。
-- 核心：[`docs/core/service.md`](../core/service.md)、[`docs/core/authority.md`](../core/authority.md)、[`docs/core/events.md`](../core/events.md)、[`docs/core/context.md`](../core/context.md)。
+- 核心：[`docs/core/service.md`](../core/service.md)、[`docs/plugins/plugin-authority.md`](../plugins/plugin-authority.md)、[`docs/core/events.md`](../core/events.md)、[`docs/core/context.md`](../core/context.md)。

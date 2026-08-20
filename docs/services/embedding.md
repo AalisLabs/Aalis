@@ -201,7 +201,7 @@ const vec = await embedding.embed(text);
 
 ## 6. 能力 / 风险 → 影响
 
-- **不是 authority 风险面**：`embedding` 不直接挂 authority 风险等级或确认（`embed` 只读、无副作用）。但**触发 embed 的上层动作**可能要走授权（如 user-relation 的去重写回）——那是上层契约的事，见 [authority](../core/authority.md) / [security-model](../concepts/security-model.md)。
+- **不是 authority 风险面**：`embedding` 不直接挂 authority 风险等级或确认（`embed` 只读、无副作用）。但**触发 embed 的上层动作**可能要走授权（如 user-relation 的去重写回）——那是上层契约的事，见 [authority](../plugins/plugin-authority.md) / [security-model](../concepts/security-model.md)。
 - **SSRF**：参考实现直接用裸 `fetch` 打配置里的 `baseUrl`。第三方 provider 若让**用户配置任意 URL** 且可被不可信输入间接驱动，应改用 `safeFetch`（`@aalis/util-network-guard`）做 SSRF 收口。本地 Ollama（`localhost:11434`）/ 受信 OpenAI 端点属常规场景，风险低。
 - **维度一致性（最重要的隐性契约）**：向量库里所有向量必须同维度。**切换 embedding 提供者或模型会改变维度**，与既有 `vectorstore` 数据不兼容——消费者（如 memory-vector）需要重建索引，provider 作者切模型时要让用户知道这点。契约本身不暴露维度，无法在 DI 层校验。
 - **跨会话隔离**：embedding 服务无状态、不持有会话数据，本身不涉隔离；隔离责任在持有向量的 `vectorstore` / memory 消费者。
@@ -217,5 +217,5 @@ const vec = await embedding.embed(text);
 ## 8. 交叉链接
 
 - 概念：[service-model](../concepts/service-model.md)（DI 按名解析 / 同名竞争）、[lazy-service-access](../concepts/lazy-service-access.md)（每次 getService）、[manifest-metadata](../concepts/manifest-metadata.md)（provides/inject 双源）、[security-model](../concepts/security-model.md)（SSRF / safeFetch）。
-- 核心：[core/service](../core/service.md)、[core/context](../core/context.md)、[core/plugin](../core/plugin.md)、[core/authority](../core/authority.md)。
+- 核心：[core/service](../core/service.md)、[core/context](../core/context.md)、[core/plugin](../core/plugin.md)、[plugins/plugin-authority](../plugins/plugin-authority.md)。
 - 相关服务：`vectorstore`（向量存储与检索，embedding 的直接下游）、`memory`（消息历史，memory-vector 的 optional 依赖）。

@@ -5,7 +5,7 @@
 - **服务注册名**：`getService<CommandService>('commands')`；接口类型经声明合并注入服务类型表。
 - **契约包**：`@aalis/api-commands`（纯类型 + `useCommandService` helper，无运行时实现）。
 - **参考实现**：`@aalis/plugin-commands`，核心类是 `CommandRegistry`。
-- **内核视角文档**：`docs/core/commands.md`。
+- **内核视角文档**：`docs/plugins/plugin-commands.md`。
 
 > 绝大多数插件作者只需要写 provider 的消费者，也就是注册命令，不会自己实现 `CommandService`。注册一律走 `useCommandService(ctx)`，详见第 4 节。第 3 节的"写 provider"只为想替换整个指令引擎的高级作者准备。
 
@@ -160,7 +160,7 @@ option syntax 速查：
 
 ## 5. 能力 / 风险 → 影响（provider 与 consumer 必须遵守）
 
-指令权限走两轴正交闸，与工具共用同一套 `ExecutionGuard`，详见 `docs/core/authority.md` 与 `docs/concepts/security-model.md`。
+指令权限走两轴正交闸，与工具共用同一套 `ExecutionGuard`，详见 `docs/plugins/plugin-authority.md` 与 `docs/concepts/security-model.md`。
 
 - **轴 A · 可见性 / 授权**：`visibility: 'public'`（默认）任何人可见可调；`'restricted'` 须 owner，或被委托授予。
 - **轴 B · 确认**：`confirm: 'session'`（可本会话记住）或 `'always'`（每次必确认，owner 也不例外）。它与可见性正交。
@@ -197,6 +197,6 @@ option syntax 速查：
 ## 7. 交叉链接
 
 - 概念：`docs/concepts/service-model.md`（DI 按名取胜、优先级）、`docs/concepts/lazy-service-access.md`（每次现取、provider bounce）、`docs/concepts/manifest-metadata.md`（provides/inject 双源）、`docs/concepts/security-model.md`（两轴闸、safeFetch、确认）、`docs/concepts/message-llm-pipeline.md`（入站相位顺序）、`docs/concepts/storage-uri-grammar.md`。
-- 内核文档：`docs/core/commands.md`（CommandRegistry 细节）、`docs/core/authority.md`、`docs/core/tools.md`（同源 `ExecutionGuard`）、`docs/core/service.md`、`docs/core/context.md`。
-- 设计：见内核文档 `docs/core/commands.md`。
+- 内核文档：`docs/plugins/plugin-commands.md`（CommandRegistry 细节）、`docs/plugins/plugin-authority.md`、`docs/plugins/plugin-tools.md`（同源 `ExecutionGuard`）、`docs/core/service.md`、`docs/core/context.md`。
+- 设计：见内核文档 `docs/plugins/plugin-commands.md`。
 - 同源契约：`@aalis/api-authority`（`ExecutionGuard`、`CapabilityRisk/Visibility/Confirm`、`riskDefaults`）。

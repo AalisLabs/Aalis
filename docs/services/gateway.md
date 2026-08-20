@@ -219,7 +219,7 @@ export function apply(ctx: Context): void {
 ## 7. 能力 / 风险 → 影响
 
 - **出站统一收口**：业务层**不应**再直接 `ctx.emit('outbound:message', msg)`，而应 `dispatchOutbound()`，以便所有出站消息都经过 `outbound:dispatch` 钩子链做脱敏 / 限速 / 审计（`packages/api-gateway/src/index.ts`）。直接 emit 会绕过这些守卫。适配器**监听** `outbound:message` 仍是合法的（它是链尾的最终发送指令）。
-- **CONFIRM 相位与在途生成的 abort**：`inbound:confirm` 刻意排在最前。会话内待确认回复（Y/YS/否）命中即被吞掉、不进入后续相位，从而**不触发** `agent.handleMessage` 对在途生成的 abort —— 确认回送得以成立（`packages/api-gateway/src/index.ts`、`packages/plugin-session-confirm/src/index.ts`）。若你新增相位插在 CONFIRM 之前并 swallow 消息，会破坏这一语义。人在回路确认机制本身见 `concepts/security-model.md` 与 `core/authority.md`。
+- **CONFIRM 相位与在途生成的 abort**：`inbound:confirm` 刻意排在最前。会话内待确认回复（Y/YS/否）命中即被吞掉、不进入后续相位，从而**不触发** `agent.handleMessage` 对在途生成的 abort —— 确认回送得以成立（`packages/api-gateway/src/index.ts`、`packages/plugin-session-confirm/src/index.ts`）。若你新增相位插在 CONFIRM 之前并 swallow 消息，会破坏这一语义。人在回路确认机制本身见 `concepts/security-model.md` 与 `plugins/plugin-authority.md`。
 - **授权身份用 `actor` 而非 `userId`**：系统侧触发器（scheduler / idle / proactive 委派）投递的 `IncomingMessage` 应填 `actor: { platform, userId }`，表示「AI 代谁执行」；agent 构造工具调用上下文时优先用 `actor` 查权限等级，避免提权（`packages/schema-message/src/index.ts`）。`actor` 不能由 LLM 在工具入参里自由指定。
 - **跨会话 / 并发隔离**：`IncomingMessage.source` 用于并发隔离 —— 同一 `sessionId` 不同 `source` 互不打断（`packages/schema-message/src/index.ts`）。适配器 / 触发器填对 `source` 才能让 agent 正确做打断决策。
 - gateway 自身不碰 storage / 网络出口；附件落盘、SSRF 守卫（`safeFetch`）等是适配器与 media 层的事，见 `concepts/storage-uri-grammar.md` / `concepts/security-model.md`。
@@ -237,6 +237,6 @@ export function apply(ctx: Context): void {
 - 懒取服务、provider bounce：`concepts/lazy-service-access.md`
 - 双源 manifest（`package.json aalis.service` vs `provides`/`inject`）：`concepts/manifest-metadata.md`
 - 消息载体类型与端到端流水线：`concepts/message-llm-pipeline.md`（`IncomingMessage` / `OutgoingMessage` 在 `@aalis/schema-message`）
-- 确认 / 人在回路 / 授权：`concepts/security-model.md`、`core/authority.md`
+- 确认 / 人在回路 / 授权：`concepts/security-model.md`、`plugins/plugin-authority.md`
 - 相位 hook / 洋葱中间件机制：`core/events.md`、`packages/core/src/hooks.ts`、`packages/core/src/context.ts`
 - 存储 URI 文法（适配器附件落盘相关）：`concepts/storage-uri-grammar.md`

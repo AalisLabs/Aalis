@@ -11,7 +11,7 @@
 1. **`AuthorityService.authorize`** —— capability 统一闸。任何 surface（tool /
    command / WebUI action / REST / scheduler）的敏感操作在边界过同一裁决：
    数字等级裁决 `deniedCapabilities(全局硬禁) > owner(∞) > 用户 level >= 操作 minLevel`。
-   模型详见 [docs/core/authority.md](../core/authority.md)。
+   模型详见 [docs/plugins/plugin-authority.md](../plugins/plugin-authority.md)。
 2. **`ExecutionGuard`** —— tools/commands surface 的适配器。`plugin-commands` 与 `plugin-tools` 在执行前调用；裁决委托 authorize，受限被拒后的临时委托/确认留在适配层。
 3. **身份与确认** —— `UserIdentity`（全 surface 统一身份类型）、受限能力的临时委托、平台 confirm 回调注册。
 
