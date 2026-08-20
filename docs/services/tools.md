@@ -8,7 +8,7 @@
 - 契约包：`@aalis/api-tools`（`packages/api-tools/src/index.ts`）。
 - 参考实现：`@aalis/plugin-tools`（`packages/plugin-tools/src/tools.ts` 的 `ToolRegistry`）。
 
-工具是「能力（capability）」在 LLM 侧的一种 surface（另一种是指令 command，见 [`docs/core/commands.md`](../core/commands.md)）。两者共用同一套 authority 执行守卫，详见 [`docs/concepts/security-model.md`](../concepts/security-model.md)、[`docs/core/authority.md`](../core/authority.md)。
+工具是「能力（capability）」在 LLM 侧的一种 surface（另一种是指令 command，见 [`docs/plugins/plugin-commands.md`](../plugins/plugin-commands.md)）。两者共用同一套 authority 执行守卫，详见 [`docs/concepts/security-model.md`](../concepts/security-model.md)、[`docs/plugins/plugin-authority.md`](../plugins/plugin-authority.md)。
 
 ## 2. 契约（`@aalis/api-tools`）
 
@@ -214,4 +214,4 @@ const result = await ctx.getService<ToolService>('tools')
 ## 8. 交叉链接
 
 - 概念：[`service-model`](../concepts/service-model.md) · [`lazy-service-access`](../concepts/lazy-service-access.md) · [`manifest-metadata`](../concepts/manifest-metadata.md) · [`security-model`](../concepts/security-model.md) · [`storage-uri-grammar`](../concepts/storage-uri-grammar.md) · [`message-llm-pipeline`](../concepts/message-llm-pipeline.md)
-- 核心：[`core/tools`](../core/tools.md) · [`core/authority`](../core/authority.md) · [`core/commands`](../core/commands.md) · [`core/service`](../core/service.md) · [`core/context`](../core/context.md)
+- 核心：[`plugins/plugin-tools`](../plugins/plugin-tools.md) · [`plugins/plugin-authority`](../plugins/plugin-authority.md) · [`plugins/plugin-commands`](../plugins/plugin-commands.md) · [`core/service`](../core/service.md) · [`core/context`](../core/context.md)

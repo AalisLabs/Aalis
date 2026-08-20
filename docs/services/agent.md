@@ -144,7 +144,7 @@ ctx.onDispose(dispose);
 
 ## 6. 能力 / 风险 → 影响
 
-**ToolCallContext 的 actor 优先**：agent 构造工具上下文时优先用 `incoming.actor?.{userId,platform}`，fallback 才到 `incoming.userId/platform`（`packages/plugin-agent/src/index.ts`）。这让 scheduler/idle/proactive 触发的 AI 走**创建者的 authority**（而非匿名 `defaultAuthority`）。自定义 provider 必须保留此语义，否则系统触发的工具会以错误身份执权。工具侧的风险等级 → minLevel 鉴权由 `tools` 服务在 `execute` 内做，见 [core/tools](../core/tools.md) 与 [core/authority](../core/authority.md)。
+**ToolCallContext 的 actor 优先**：agent 构造工具上下文时优先用 `incoming.actor?.{userId,platform}`，fallback 才到 `incoming.userId/platform`（`packages/plugin-agent/src/index.ts`）。这让 scheduler/idle/proactive 触发的 AI 走**创建者的 authority**（而非匿名 `defaultAuthority`）。自定义 provider 必须保留此语义，否则系统触发的工具会以错误身份执权。工具侧的风险等级 → minLevel 鉴权由 `tools` 服务在 `execute` 内做，见 [plugins/plugin-tools](../plugins/plugin-tools.md) 与 [plugins/plugin-authority](../plugins/plugin-authority.md)。
 
 **reply:before 重试协议**（`agent:reply:before`，`packages/api-agent/src/index.ts`，消费方 `plugin-persona` `packages/plugin-persona/src/index.ts`）：钩子可置 `retryRequested=true` + `retryFeedback` + `maxRetries` 让 agent 重新请求 LLM；agent 按 `maxRetries` 循环（`packages/plugin-agent/src/index.ts`），用尽后若仍 `retryRequested` 强制把 `content` 置空避免坏内容外发（`:831-837`）。自定义 provider 若不实现重试循环，persona 的 outputFormat 校验将失效。
 
@@ -171,6 +171,6 @@ ctx.onDispose(dispose);
 - [concepts/lazy-service-access](../concepts/lazy-service-access.md) — 为什么每次用都要重新 getService
 - [concepts/manifest-metadata](../concepts/manifest-metadata.md) — `aalis.service` 与 `provides`/`inject` 双源
 - [concepts/security-model](../concepts/security-model.md) — 出站审计/脱敏边界、actor 授权身份
-- [core/authority](../core/authority.md) / [core/tools](../core/tools.md) — 工具风险 → minLevel 鉴权（agent 通过 ToolCallContext 传 actor 身份）
+- [plugins/plugin-authority](../plugins/plugin-authority.md) / [plugins/plugin-tools](../plugins/plugin-tools.md) — 工具风险 → minLevel 鉴权（agent 通过 ToolCallContext 传 actor 身份）
 - [core/events](../core/events.md) — `ctx.middleware` / 钩子链语义
 - [services/llm](./llm.md)、[services/memory](./memory.md)、[services/message-archive](./message-archive.md)、[services/gateway](./gateway.md) — agent 的下游被编排服务（`tools`/`persona`/`session-manager` 见各自契约包 `-api`）

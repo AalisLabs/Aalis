@@ -156,7 +156,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
 - **主动发送限速（反 prompt-injection 骚扰）**：跨会话委派（`delegate_to_session`）在向外部平台 sessionId 派发合成消息前调 `checkAndRecordProactiveSend`，返回 `{ allowed:false, reason }` 即拒发（`plugin-tool-session/src/index.ts`）。**面向外部用户的平台 adapter 应实现此闸门**（OneBot 委托 `flow-control` 的 `isRateLimited`/`recordReply`，`adapter-onebot/src/index.ts`），否则该平台不做主动发送限速、任由委派外发。
 - **跨会话身份隔离**：`getSelfIdentity(sessionId?)` 必须按 `sessionId` 定位到**正确的连接**再返回身份（OneBot 用 `parseSessionId` → `findStateBySelfId`，`:1128-1132`）。多账号/多连接平台若忽略 `sessionId` 永远返回同一身份，会把 A 会话的机器人身份泄漏进 B 会话的 LLM prompt（persona 把它装进 `AsyncLocalStorage` 正是为防跨会话泄漏，`plugin-persona/src/index.ts`）。
-- **`callAction` 是平台原生权能的逃逸口**：它能调任意平台 Action（封禁、踢人等）。本服务**不在 adapter 层做 authority 校验**——风险/等级控制由调用工具侧（如 `plugin-tool-onebot` 的工具定义 + 其 `risk` 标注）经 authority 把关。provider 实现 `callAction` 时应假设调用方已鉴权，但要对 `sessionId` 解析失败/连接不可用做硬校验（OneBot 在不可用时 throw，`:1203-1205`）。authority 模型见 [security-model](../concepts/security-model.md) 与 `docs/core/authority.md`。
+- **`callAction` 是平台原生权能的逃逸口**：它能调任意平台 Action（封禁、踢人等）。本服务**不在 adapter 层做 authority 校验**——风险/等级控制由调用工具侧（如 `plugin-tool-onebot` 的工具定义 + 其 `risk` 标注）经 authority 把关。provider 实现 `callAction` 时应假设调用方已鉴权，但要对 `sessionId` 解析失败/连接不可用做硬校验（OneBot 在不可用时 throw，`:1203-1205`）。authority 模型见 [security-model](../concepts/security-model.md) 与 `docs/plugins/plugin-authority.md`。
 - **`platform` 不是沙盒**：它只是出口抽象；`sendMessage`/`callAction` 直达真实平台，没有任何隔离层。SSRF 安全出口请走 `safeFetch`（`util-network-guard`），不要在 adapter 里裸 `fetch` 外部 URL。
 
 ## 7. 边界与注意事项
@@ -169,5 +169,5 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 ## 8. 交叉链接
 
 - 概念：[service-model](../concepts/service-model.md)（DI 按名、多 entry、per-entry provide）、[lazy-service-access](../concepts/lazy-service-access.md)（勿缓存、bounce 失效）、[manifest-metadata](../concepts/manifest-metadata.md)（`provides`/`inject` 双源 + `subsystem`）、[message-llm-pipeline](../concepts/message-llm-pipeline.md)（`inbound:message`/`outbound:message` 与 agent 路由）、[security-model](../concepts/security-model.md)、[storage-uri-grammar](../concepts/storage-uri-grammar.md)。
-- 核心：`docs/core/service.md`、`docs/core/authority.md`、`docs/core/context.md`、`docs/core/events.md`。
+- 核心：`docs/core/service.md`、`docs/plugins/plugin-authority.md`、`docs/core/context.md`、`docs/core/events.md`。
 - 相关契约包：`@aalis/schema-message`（`IncomingMessage`/`OutgoingMessage`）、`plugin-gateway`（入站路由）、`plugin-flow-control`（限速闸门后端）。

@@ -235,7 +235,7 @@ process 是框架里**权限最高的能力**之一（任意子进程 = 完整�
 
 ### Consumer 侧（鉴权 / 确认）
 
-process 本身**没有内核级鉴权门**——风险控制落在**调用它的工具**上。把 process 暴露给 LLM 的工具，要在工具层按 [鉴权模型](../concepts/security-model.md) / [authority](../core/authority.md) 设门：
+process 本身**没有内核级鉴权门**——风险控制落在**调用它的工具**上。把 process 暴露给 LLM 的工具，要在工具层按 [鉴权模型](../concepts/security-model.md) / [authority](../plugins/plugin-authority.md) 设门：
 
 - 任意 shell 命令是最强的 confused-deputy 向量。`plugin-tool-system` 的 `exec` / `exec_background` / `process_kill` 都设 `visibility: 'restricted'` + `confirm: 'session'`——**连 owner 也要本会话确认一次**（`shell.ts`、`:376-377`）。你的工具若直通 `spawn`，应比照此设级别 + 确认。
 - shell 工具用 `safeEnv()` 只透传白名单环境变量（PATH/LANG/TERM 等），不暴露宿主全量 env（`shell.ts`）。注意这是工具自己做的——**`SpawnOptions.env` 不传时本地实现默认 `{ ...process.env, ...opts.env }` 继承全量宿主 env**（`plugin-process-local/src/index.ts`），敏感场景请显式传白名单 env。
@@ -270,7 +270,7 @@ process 本身**没有内核级鉴权门**——风险控制落在**调用它的
 - [懒服务访问](../concepts/lazy-service-access.md) —— 为什么 `createProcessGateway` 每次重取、provider bounce。
 - [清单元数据](../concepts/manifest-metadata.md) —— `provides`/`inject` 与 `package.json aalis.service` 双源。
 - [存储 URI 文法](../concepts/storage-uri-grammar.md) —— `tmp:/` 根、`resolveLocalPath`（makeTempDir 的底座）。
-- [安全模型](../concepts/security-model.md) / [authority](../core/authority.md) —— 给暴露 process 的工具设级别 + 确认。
+- [安全模型](../concepts/security-model.md) / [authority](../plugins/plugin-authority.md) —— 给暴露 process 的工具设级别 + 确认。
 - [storage 服务](./storage.md) —— 受沙箱约束的「在 root 内读写」（对照 `readExternalFile` 的直通）。
 - [code-sandbox 服务](./code-sandbox.md) —— 隔离执行不可信代码（process 不是沙箱）。
-- [tools](../core/tools.md) / [context](../core/context.md) —— 工具注册的 visibility/confirm、`ctx.provide`/`getService`。
+- [tools](../plugins/plugin-tools.md) / [context](../core/context.md) —— 工具注册的 visibility/confirm、`ctx.provide`/`getService`。
