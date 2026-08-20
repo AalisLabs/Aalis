@@ -199,7 +199,7 @@ process/storage 经 gateway 注入：`createProcessGateway(ctx)` / `createStorag
 
 ### 风险等级 / 鉴权
 
-`asr` 接口本身不接触 authority——它是被 media/agent 间接调用的纯转换服务，鉴权发生在更上游（谁能触发媒体处理 / 工具）。provider 无需自行做等级校验；若你的后端要暴露成可被 LLM 直接调用的工具，那条工具才按 `risk → minLevel` 标注（见 `docs/core/authority.md`、`docs/services/tools.md`）。
+`asr` 接口本身不接触 authority——它是被 media/agent 间接调用的纯转换服务，鉴权发生在更上游（谁能触发媒体处理 / 工具）。provider 无需自行做等级校验；若你的后端要暴露成可被 LLM 直接调用的工具，那条工具才按 `risk → minLevel` 标注（见 `docs/plugins/plugin-authority.md`、`docs/services/tools.md`）。
 
 ---
 

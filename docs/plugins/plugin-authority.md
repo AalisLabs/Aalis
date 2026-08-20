@@ -39,6 +39,8 @@ meta.inject = { optional: ['commands', 'tools'] }
 
 纯判定逻辑见 `packages/plugin-authority/src/authority-model.ts`（`resolveMinLevel` / `resolveAccess`，纯函数、无副作用）。能力串形如 `command:<name>` / `tool:<name>` / `storage:...`。
 
+拒绝时 `authorize` 返回可直接展示的原因：硬禁命中返回 `已被系统禁用: <cap>`；等级不足返回 `权限不足: "<cap>" 需等级 N（当前 M）`。
+
 > 没有命名档位（受信 / 管理员 等），没有能力委托树，没有 per-user 的能力授予 / 禁用清单。只有「整数等级」一根轴。
 
 ## 确认（轴 B）
@@ -62,6 +64,8 @@ meta.inject = { optional: ['commands', 'tools'] }
 相关类型：请求 `AccessRequest`、决策 `AccessDecision { allowed, grant? }`、范围 `TemporaryGrantSpec { scope: 'once' | 'session', durationSeconds?, maxUses? }`。
 管理：`listTemporaryGrants()` / `revokeTemporaryGrant(id)`。
 
+> 会话内临时授予随进程态存活（重启即失效）、**不持久化**；时长缺省 600s、上限 3600s。
+
 ## 配置项
 
 - `config.owners`（`UserIdentity[]`）：owner 身份列表（owner = ∞，不在等级表内）。
@@ -82,6 +86,10 @@ meta.inject = { optional: ['commands', 'tools'] }
 - `/auto [分钟|on|off]` — owner 临时免 `dangerous` 二次确认（批处理便利，仅 owner 本人）：`on` = 一直、`off`/`0` = 关、正整数 = 分钟；无参 = 查状态。`visibility: 'restricted'`。例：`/auto 30`、`/auto off`。
 
 > 不存在 `/grant`、`/deny`、`/bind` 指令（能力委托 / 跨平台绑定模型已移除）。
+
+## 单 token WebUI 鉴权
+
+WebUI 鉴权为**单 token**（向后兼容的服务器持有式）：访问 token → 身份 `webui:console`（owner 语义——token 存于服务器磁盘 / 启动日志，持有 token ≈ 控制服务器 ≈ owner）。**无账户密码**（无 `setPassword` / `verifyPassword`）。
 
 ## WebUI 权限管理页
 

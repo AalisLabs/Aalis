@@ -7,7 +7,7 @@
 > LLM 拿着用户给的 URL 把内网元数据接口打穿。安全在 Aalis 不是某一个插件的功能，而是一组贯穿
 > 全栈的不变量——你的插件要么帮助维持这些不变量，要么就会成为破坏它们的那一环。
 
-相关概念：[权限两轴（authority）](../core/authority.md) · [存储不是沙箱](#存储不是沙箱storage-不confine-子进程) ·
+相关概念：[权限两轴（authority）](../plugins/plugin-authority.md) · [存储不是沙箱](#存储不是沙箱storage-不confine-子进程) ·
 forward-ref [services/authority](../services/authority.md)（裁决服务全量 API）。
 
 ---
@@ -72,7 +72,7 @@ Aalis 是**单 owner 的本地优先（local-first）个人 bot 框架**。整�
 这套默认值由 `RISK_DEFAULTS` 定义。
 
 > 两轴的完整机制（临时放行 `requestAccess`、会话授予、auto 模式、WebUI 权限页、users.json 持久化、
-> session-confirm 协调）见 [权限系统文档](../core/authority.md) 与 forward-ref
+> session-confirm 协调）见 [权限系统文档](../plugins/plugin-authority.md) 与 forward-ref
 > [`docs/services/authority.md`](../services/authority.md)。这里只给出安全视角的要点。
 
 ### 插件作者怎么标操作风险（provider 侧）
@@ -270,14 +270,14 @@ ASR / ollama 探测本地文件等。现有消费者包括 onebot 适配器、as
 5. **`readExternalFile` 只传入可信来源的路径**，永不传入用户 / LLM 提供的字符串（§6）。
 6. **抓取类工具的外部内容回灌 LLM 时套 `wrapUntrustedContent`**：网页正文 / 搜索结果 /
    HTTP 响应 / MCP 返回都是注入入口，标注「数据非命令」是纵深防御的一环，写法见
-   [`core/tools`](../core/tools.md)「抓取外部内容的工具」一节。
+   [`plugins/plugin-tools`](../plugins/plugin-tools.md)「抓取外部内容的工具」一节。
 7. 记住威胁模型：敌人是聊天中的陌生人和被注入的 LLM，不是已经取得 shell 的人（§1）。
 
 ---
 
 ## 交叉链接
 
-- 兄弟概念：[权限两轴 / authority](../core/authority.md) · forward-ref [storage URI 文法](./storage-uri-grammar.md) ·
+- 兄弟概念：[权限两轴 / authority](../plugins/plugin-authority.md) · forward-ref [storage URI 文法](./storage-uri-grammar.md) ·
   forward-ref [DI 服务模型](./service-model.md)
 - forward-ref 服务文档：[`services/authority`](../services/authority.md)（裁决服务全量 API）·
   [`services/storage`](../services/storage.md) · [`services/process`](../services/process.md)
