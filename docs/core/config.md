@@ -31,7 +31,7 @@ interface AalisConfig {
 }
 ```
 
-> 模型说明见 [权限系统](authority.md)。`owners` 等 authority 字段在 core 的
+> 模型说明见 [权限系统](../plugins/plugin-authority)。`owners` 等 authority 字段在 core 的
 > `AalisConfig` 里不显式声明（core 不知晓权限语义），由 `api-authority`
 > 经 declaration merging 注入；不装 authority 插件时这些字段无意义。
 

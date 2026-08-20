@@ -154,7 +154,7 @@ const result = await history.getHistory({ sessionId, limit }, callCtx);
 ## A.6 能力 / 风险
 
 - **访问控制是跨会话读取的唯一闸门**，分两段（实现 `plugin-tool-session/src/index.ts`）：①service 自带的 `scope` 配置粗筛（`current` / `platform` / `all`，默认 `platform`，`index.ts`）；②匹配 `targetPlatform` 的 checker 链 any-deny 精筛。`scope=all` 时只剩 checker 链兜底——平台插件若未注册 checker，`all` 模式下跨会话读取便失去精筛防线。
-- 这与 [鉴权系统](../core/authority.md) 的 level/risk 是两套机制：`session_get_history` 工具本身的 minLevel 由工具的 risk 决定（见 [工具](../core/tools.md)），而**跨会话边界**则由本服务的 scope+checker 决定。二者叠加，缺一不可。
+- 这与 [鉴权系统](../plugins/plugin-authority.md) 的 level/risk 是两套机制：`session_get_history` 工具本身的 minLevel 由工具的 risk 决定（见 [工具](../plugins/plugin-tools.md)），而**跨会话边界**则由本服务的 scope+checker 决定。二者叠加，缺一不可。
 - 本服务**不做** SSRF / 沙箱：它只读已落库的会话消息，无外部 egress。
 
 ## A.7 注意事项与边界情形
@@ -252,4 +252,4 @@ if (reader?.deleteFile) await reader.deleteFile(fileId);
 ## 7. 交叉链接
 
 - 概念：[服务模型](../concepts/service-model.md)、[惰性服务访问](../concepts/lazy-service-access.md)、[清单元数据](../concepts/manifest-metadata.md)、[storage URI 文法](../concepts/storage-uri-grammar.md)、[安全模型](../concepts/security-model.md)、[消息→LLM 管线](../concepts/message-llm-pipeline.md)
-- 核心：[服务](../core/service.md)、[鉴权](../core/authority.md)、[工具](../core/tools.md)、[上下文](../core/context.md)
+- 核心：[服务](../core/service.md)、[鉴权](../plugins/plugin-authority.md)、[工具](../plugins/plugin-tools.md)、[上下文](../core/context.md)

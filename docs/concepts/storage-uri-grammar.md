@@ -243,7 +243,7 @@ const cwd = await storage.resolveLocalPath('workspace:/proj', 'read');
 - DI 服务模型（同名多 provider 选优、per-entry 粒度、`getService`/`getAllServices`/`provide` 仅取 name）：
   `docs/core/service.md`。
 - 鉴权（数字等级 + HITL 确认；deniedCapabilities 硬禁；与存储根权限位正交）：
-  `docs/core/authority.md`、`docs/plugins/plugin-authority.md`。
+  `docs/plugins/plugin-authority.md`、`docs/plugins/plugin-authority.md`。
 - SSRF 守卫出网通道 `safeFetch`（`http(s)://` 分支去向）：`@aalis/util-network-guard`（forward-ref `docs/services/network-guard.md`）。
 - OS 级沙箱（与「存储不是沙箱」对照）：`docs/plugins/plugin-code-sandbox-os.md`、`docs/plugins/plugin-tool-code-runner.md`。
 - 消费侧示例：`docs/plugins/plugin-adapter-onebot.md`、`docs/plugins/plugin-file-reader.md`、`docs/plugins/plugin-persona.md`。

@@ -258,5 +258,5 @@ ctx.onDispose(() => confirmChannel?.dispose());
 - docs/concepts/lazy-service-access.md —— whenService 注册时机、getService 每用现取、provider 反弹失效。
 - docs/concepts/manifest-metadata.md —— `package.json aalis.service` 与导出 `provides`/`inject` 双源一致。
 - docs/concepts/message-llm-pipeline.md —— `inbound:confirm` 相位在入站管道里的位置（最前、命中即吞）。
-- docs/core/authority.md —— authority 服务、临时能力委托、`requestAccess` / `setConfirmHandler`。
+- docs/plugins/plugin-authority.md —— authority 服务、临时能力委托、`requestAccess` / `setConfirmHandler`。
 - docs/services/gateway.md —— bus 投递（`dispatchOutbound`）与 `INBOUND_PHASE` 相位常量来源。

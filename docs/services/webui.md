@@ -199,7 +199,7 @@ export function apply(ctx: Context): void {
 单 owner 终态下「持 token ⟺ `webui:console` ⟺ owner」。`createRouteGate`（`packages/plugin-webui-server/src/gate.ts`）只做身份解析：解析得到放行，否则 403。多账户 / 能力委托已剥离，**没有 per-route 档位裁决**。
 
 - 你的 `actions` handler 拿到的 `caller` 即 owner 身份（`packages/plugin-webui-server/src/routes/plugins.ts`）。涉及敏感操作（如改他人档位）时应在 handler 内自检 `caller`，不要假设路由层替你做了细粒度授权。
-- 受限操作的**交互式确认**走 `session-confirm` 协调器：webui-server 只注入自己的 WS 投递（`type:'confirm'`），按 `request.sessionId` 定向推送（`packages/plugin-webui-server/src/index.ts`）。鉴权双轴（level + confirm）见 `docs/core/authority.md`、`docs/concepts/security-model.md`。
+- 受限操作的**交互式确认**走 `session-confirm` 协调器：webui-server 只注入自己的 WS 投递（`type:'confirm'`），按 `request.sessionId` 定向推送（`packages/plugin-webui-server/src/index.ts`）。鉴权双轴（level + confirm）见 `docs/plugins/plugin-authority.md`、`docs/concepts/security-model.md`。
 
 ### SSRF：图片代理走 safeFetch
 
@@ -228,5 +228,5 @@ WS 推送按 `sessionId` 分桶（`sessions: Map<sessionId, Set<ws>>`），`subs
 ## 8. 交叉链接
 
 - 概念：[`docs/concepts/service-model.md`](../concepts/service-model.md)（DI 按名、priority/偏好胜出）、[`docs/concepts/lazy-service-access.md`](../concepts/lazy-service-access.md)（`whenService`/不缓存）、[`docs/concepts/manifest-metadata.md`](../concepts/manifest-metadata.md)（provides/inject 双源）、[`docs/concepts/security-model.md`](../concepts/security-model.md)、[`docs/concepts/storage-uri-grammar.md`](../concepts/storage-uri-grammar.md)、[`docs/concepts/message-llm-pipeline.md`](../concepts/message-llm-pipeline.md)。
-- 核心：[`docs/core/authority.md`](../core/authority.md)（level + confirm 双轴、owner=∞）、[`docs/core/service.md`](../core/service.md)、[`docs/core/context.md`](../core/context.md)、[`docs/core/config.md`](../core/config.md)（`ConfigSchema` / `SchemaField`）、[`docs/core/plugin.md`](../core/plugin.md)（`PluginModule`）。
+- 核心：[`docs/plugins/plugin-authority.md`](../plugins/plugin-authority.md)（level + confirm 双轴、owner=∞）、[`docs/core/service.md`](../core/service.md)、[`docs/core/context.md`](../core/context.md)、[`docs/core/config.md`](../core/config.md)（`ConfigSchema` / `SchemaField`）、[`docs/core/plugin.md`](../core/plugin.md)（`PluginModule`）。
 - 相关服务：[`docs/services/platform.md`](./platform.md)（webui-server 同时是 platform adapter）、[`docs/services/gateway.md`](./gateway.md)（safeFetch / SSRF）、[`docs/services/storage.md`](./storage.md)（文件管理根）、[`docs/services/llm.md`](./llm.md) 与 [`docs/services/embedding.md`](./embedding.md)（dynamicOptions 的 listModels 来源）。

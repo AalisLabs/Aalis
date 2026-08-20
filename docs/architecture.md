@@ -383,7 +383,7 @@ minLevel 解析（首个命中赢）:
 没有命名档位（受信/管理员等表面名仅是等级整数的别称）、没有能力委托图、
 没有 per-user 的逐条能力授予/禁用列表。owner **只管理权限**（不能自授）：
 WebUI authority 页（仅 owner）+ 指令 `/level`（设某用户等级）与 `/auto`（自动确认模式）。
-模型详见 [docs/core/authority.md](core/authority.md)。
+模型详见 [docs/plugins/plugin-authority.md](plugins/plugin-authority.md)。
 
 ### 轴 B · 确认（HITL 意图核对）
 
