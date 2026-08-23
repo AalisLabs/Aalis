@@ -12,7 +12,6 @@
  * - 安全级别由 config 中按 server 配置（默认 safe）；高危 server 应显式设为 dangerous
  */
 
-import type { CapabilityVisibility } from '@aalis/api-authority';
 import type { ToolDefinition } from '@aalis/api-tools';
 import { useToolService, wrapUntrustedContent } from '@aalis/api-tools';
 import type { AppService, Context, PluginManagerService } from '@aalis/core';
@@ -20,6 +19,9 @@ import type { ConfigSchema } from '@aalis/schema-config';
 // 引入 api-tools 触发 declaration merging，使 ctx.registerTool 类型生效
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+
+/** server 级档位：auto 按工具注解分档；其余三档显式覆盖全部工具。 */
+type McpServerTier = 'auto' | 'public' | 'sensitive' | 'restricted';
 
 interface ServerSpec {
   /** 唯一 id，用于工具命名空间 */
@@ -32,8 +34,8 @@ interface ServerSpec {
   env?: Record<string, string>;
   /** 是否启用，默认 true */
   enabled?: boolean;
-  /** 该 server 提供的工具的默认可见性，默认 'public'；建议对文件/shell 类设为 'restricted' */
-  visibility?: CapabilityVisibility;
+  /** 该 server 工具的档位，默认 'auto'（按注解分档，见 deriveMcpToolPolicy）。 */
+  visibility?: McpServerTier;
 }
 
 interface Config {
@@ -84,12 +86,16 @@ export const configSchema: ConfigSchema = {
       },
       visibility: {
         type: 'select',
-        label: '默认可见性',
-        description: '控制该 server 暴露的所有工具的默认可见性；restricted 须被 owner/委托授予才能调用。',
-        default: 'public',
+        label: '工具档位',
+        description:
+          '该 server 全部工具的档位。auto=按工具注解分档：自称只读→sensitive（等级 1），' +
+          '有破坏提示或未声明→restricted（等级 2）。public 恢复等级 0 全开（0.x 旧默认）。',
+        default: 'auto',
         options: [
-          { label: 'public（默认可用）', value: 'public' },
-          { label: 'restricted（受限，须授予）', value: 'restricted' },
+          { label: 'auto（按注解分档）', value: 'auto' },
+          { label: 'public（等级 0 全开）', value: 'public' },
+          { label: 'sensitive（等级 1）', value: 'sensitive' },
+          { label: 'restricted（等级 2）', value: 'restricted' },
         ],
       },
     },
@@ -101,6 +107,34 @@ interface ToolMeta {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
+  /** MCP 2025-03 起的工具行为注解（server 自报 hint，不可全信）。 */
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
+}
+
+/**
+ * 从 MCP 工具注解推导默认档位（用户裁定 2026-08-23：按"是否可能破坏"分档）：
+ * - 自称只读且无破坏提示 → `risk:'sensitive'`（等级 1，挡 level-0）；
+ * - 有破坏提示或未声明 → `visibility:'restricted'`（等级 2）——未知按可破坏算，失败关闭。
+ *
+ * 两轴必须互斥：capabilityMinLevel 里 risk 会遮蔽 visibility
+ * （restricted 若同时带 risk，门槛从 2 反降到 1），故 sensitive 只设 risk、restricted 只设 visibility。
+ * 注解是 server 自报的（不可信面），但这里只决定"降到 1 还是 2"，最低也是 1，
+ * 严格于旧默认 public（0）。server 配置 visibility 显式指定时优先于注解。
+ */
+export function deriveMcpToolPolicy(
+  annotations: ToolMeta['annotations'],
+  serverTier?: McpServerTier,
+): { visibility?: 'restricted'; risk?: 'sensitive' } {
+  if (serverTier === 'public') return {};
+  if (serverTier === 'sensitive') return { risk: 'sensitive' };
+  if (serverTier === 'restricted') return { visibility: 'restricted' };
+  if (annotations?.readOnlyHint === true && annotations?.destructiveHint !== true) return { risk: 'sensitive' };
+  return { visibility: 'restricted' };
 }
 
 export async function apply(ctx: Context, rawConfig: Record<string, unknown>): Promise<void> {
@@ -275,8 +309,13 @@ function normalizeServerSpec(raw: unknown, index: number, ctx: Context): ServerS
     }
   }
 
-  const visibility: CapabilityVisibility | undefined =
-    r.visibility === 'restricted' ? 'restricted' : r.visibility === 'public' ? 'public' : undefined;
+  const visibility: McpServerTier | undefined =
+    r.visibility === 'restricted' ||
+    r.visibility === 'public' ||
+    r.visibility === 'sensitive' ||
+    r.visibility === 'auto'
+      ? r.visibility
+      : undefined;
   const enabled = r.enabled !== false;
 
   return { id, command, args, env, enabled, visibility };
@@ -331,7 +370,7 @@ export async function bridgeClientToTools(ctx: Context, client: Client, spec: Se
     useToolService(ctx).register({
       definition,
       groups: [`mcp:${spec.id}`],
-      visibility: spec.visibility ?? 'public',
+      ...deriveMcpToolPolicy(t.annotations, spec.visibility),
       handler: async args => {
         try {
           const result = await client.callTool({
