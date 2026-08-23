@@ -21,6 +21,9 @@ importers:
       '@aalis/api-tools':
         specifier: workspace:*
         version: link:packages/api-tools
+      '@aalis/schema-message':
+        specifier: workspace:*
+        version: link:packages/schema-message
       '@biomejs/biome':
         specifier: 2.4.15
         version: 2.4.15
@@ -1168,9 +1171,6 @@ importers:
 
   packages/plugin-mcp-client:
     dependencies:
-      '@aalis/api-authority':
-        specifier: workspace:>=0.5.0 <1.0.0
-        version: link:../api-authority
       '@aalis/api-tools':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-tools
