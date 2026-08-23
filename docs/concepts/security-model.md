@@ -134,8 +134,17 @@ ctx.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { risk: 
 
 > 注：`http_request`（`plugin-tool-system` 的 `system` 组）也未声明 risk，解析为 public。
 > 它**不在** onebot 的 enabledGroups 里（onebot 只开 search / onebot-* / browser / math /
-> session-* / scheduler / user-relation），故当前 bot 部署下不可达。但它与同文件、能力严格更弱的
-> `http_download`（已 `restricted + confirm:'session'`）不对称——见下方待评估项。
+> session-* / scheduler / user-relation），故当前 bot 部署下不可达。与同文件 `http_download`
+>（`restricted + confirm`）的不对称是有意的：后者上闸因为**写 storage**，与出网无关。
+
+2026-08-23 复核补充（逐条对码核验后维持不声明，勿再报）：
+
+- `http_request` / `recent_messages` / `list_known_sessions`：曾统一抬档，经用户裁定全部回退——
+  读类档位牺牲的是爬网页与跨群感知这类核心体验，且 http_request 有分组闸兜底（见上）。
+- `delegate_to_session`：维持 public，但按 schema-message 的 actor 契约回填授权身份——
+  权限跟发起者走（owner 委派出去才有 owner 能力，匿名委派只有等级 0），比抬档位精确。
+- 定档纪律：引用其他工具档位作判据前先读其注释的真实理由（`browser_navigate` 的 sensitive
+  源于共享页面池带登录态、`file_read` 源于本机隐私，均与「出网」无关）。
 
 与之相对，`plugin-scheduler` 的建/删/暂停任务是**上了 `dangerous + confirm` 的**——因为建一条
 cron 等于让 LLM 获得持久执行面，那已经越过"只影响自己账号"的边界。
