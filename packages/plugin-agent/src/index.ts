@@ -482,6 +482,10 @@ class DefaultAgent implements AgentService {
             }
           : undefined;
 
+        // 会话级 thinking 覆盖（/session.set -t on|off）：未设置则不带 think 字段，
+        // 由各 provider 按自己的全局配置决定（ollama thinking / deepseek thinkingMode）。
+        const thinkOverride = resolved?.think;
+
         const messages = await this.buildMessages(incoming, personaOpts, archivedIncoming);
         // 通过 resolved config 获取工具分组
         let enabledGroups: string[] | undefined;
@@ -570,6 +574,7 @@ class DefaultAgent implements AgentService {
             tools: llmBeforeData.tools.length > 0 ? llmBeforeData.tools : undefined,
             maxTokens,
             signal,
+            ...(thinkOverride !== undefined ? { think: thinkOverride } : {}),
           },
           incoming.sessionId,
           incoming.platform,
@@ -760,6 +765,7 @@ class DefaultAgent implements AgentService {
               tools: nextLlmData.tools.length > 0 ? nextLlmData.tools : undefined,
               maxTokens,
               signal,
+              ...(thinkOverride !== undefined ? { think: thinkOverride } : {}),
             },
             incoming.sessionId,
             incoming.platform,
@@ -839,6 +845,7 @@ class DefaultAgent implements AgentService {
               tools: undefined,
               maxTokens,
               signal,
+              ...(thinkOverride !== undefined ? { think: thinkOverride } : {}),
             },
             incoming.sessionId,
             incoming.platform,
@@ -1797,7 +1804,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
    * 组装某会话某字段的「解析」视图行：当前值 + 来源 + 解析链（会话 / 父 sessionDefaults / 平台 profile）。
    * pick 从各层配置提取并格式化该字段——模型与人设复用同一逻辑，展示对称、直观。
    */
-  type CfgView = { llm?: { provider: string; model: string }; persona?: string } | undefined;
+  type CfgView = { llm?: { provider: string; model: string }; persona?: string; think?: boolean | null } | undefined;
   function resolutionLines(
     sessionId: string,
     platform: string,
@@ -1831,6 +1838,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
   const fmtModel = (c: CfgView): string | undefined => (c?.llm ? `${c.llm.provider}/${c.llm.model}` : undefined);
   const fmtPersona = (c: CfgView): string | undefined => c?.persona;
+  // null 与 undefined 同义（BSON 持久化读回 null，契约见 session-manager stripUndefined）
+  const fmtThink = (c: CfgView): string | undefined => (c?.think == null ? undefined : c.think ? 'on' : 'off');
 
   // 分页渲染 helper：限制每页 PAGE_SIZE 条 + 关键词过滤 + 翻页提示（/model 与 /persona 共用）。
   const PAGE_SIZE = 20;
@@ -1874,9 +1883,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return renderPaged(names, String(keyword ?? ''), page, '可用人设', '/persona');
     });
 
-  // ---- 会话级「模型 + 人设 + 名称」配置（onebot 等平台对话直接改当前对话生效） ----
+  // ---- 会话级「模型 + 人设 + thinking + 名称」配置（onebot 等平台对话直接改当前对话生效） ----
   useCommandService(ctx)
-    .command('session', '查看当前对话生效的模型 / 人设 / 名称及来源与解析链', { risk: 'sensitive' })
+    .command('session', '查看当前对话生效的模型 / 人设 / thinking / 名称及来源与解析链', { risk: 'sensitive' })
     .action(async argv => {
       const smSvc = ctx.getService<SessionManagerService>('session-manager');
       if (!smSvc) return 'session-manager 服务不可用';
@@ -1886,37 +1895,47 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         `会话: ${session?.name ?? sid}`,
         ...resolutionLines(sid, argv.session.platform, '模型', fmtModel),
         ...resolutionLines(sid, argv.session.platform, '人设', fmtPersona),
+        ...resolutionLines(sid, argv.session.platform, 'thinking', fmtThink),
         session ? '' : '（本对话尚无独立配置记录，全部继承默认）',
         '────',
-        '改配置: /session.set -m <模型> -p <人设> [-n <名>]   （/model 看可用模型/人设名错时也会列出）',
-        '复位:   /session.reset          （-m 仅模型 / -p 仅人设）',
+        '改配置: /session.set -m <模型> -p <人设> -t <on|off> [-n <名>]   （/model 看可用模型/人设名错时也会列出）',
+        '复位:   /session.reset          （-m 仅模型 / -p 仅人设 / -t 仅 thinking）',
       ]
         .filter(Boolean)
         .join('\n');
     });
 
   useCommandService(ctx)
-    .command('session.set', '设定当前对话的模型 / 人设 / 显示名（会话级覆盖，持久化，重启不丢）', {
+    .command('session.set', '设定当前对话的模型 / 人设 / thinking / 显示名（会话级覆盖，持久化，重启不丢）', {
       risk: 'sensitive',
       examples: [
         '/session.set -m @aalis/plugin-llm-openai:main/gpt-4o -p catgirl',
         '/session.set -p strict-reviewer',
+        '/session.set -t off',
         '/session.set -n 深夜助手',
       ],
     })
     .option('model', '-m <ref:string>', { description: '模型 provider/model（LLM entry 的 contextId；/model 可列出）' })
     .option('persona', '-p <name:string>', { description: '人设卡名（不含后缀）' })
+    .option('think', '-t <mode:string>', {
+      description: 'thinking 开关：on|off（会话级覆盖；/session.reset 后回落全局配置）',
+    })
     .option('name', '-n <label:string>', { description: '会话显示名（可选）' })
     .action(async argv => {
       const smSvc = ctx.getService<SessionManagerService>('session-manager');
       if (!smSvc) return 'session-manager 服务不可用';
       const modelRef = typeof argv.options.model === 'string' ? argv.options.model.trim() : '';
       const personaName = typeof argv.options.persona === 'string' ? argv.options.persona.trim() : '';
+      const thinkRaw = typeof argv.options.think === 'string' ? argv.options.think.trim().toLowerCase() : '';
       const displayName = typeof argv.options.name === 'string' ? argv.options.name.trim() : '';
-      if (!modelRef && !personaName && !displayName) {
-        return '用法: /session.set -m <provider/model> -p <人设名> [-n <显示名>]（-m / -p 至少给一个）';
+      if (!modelRef && !personaName && !thinkRaw && !displayName) {
+        return '用法: /session.set -m <provider/model> -p <人设名> -t <on|off> [-n <显示名>]（至少给一项）';
+      }
+      if (thinkRaw && thinkRaw !== 'on' && thinkRaw !== 'off') {
+        return `thinking 取值只能是 on 或 off（收到 "${thinkRaw}"）。例：/session.set -t off`;
       }
       const config: SessionConfig = {};
+      if (thinkRaw) config.think = thinkRaw === 'on';
       // 模型：校验存在再落，避免错名静默回退默认
       if (modelRef) {
         const lastSlash = modelRef.lastIndexOf('/');
@@ -1948,38 +1967,48 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const lines = ['本对话已切换 →'];
       if (config.llm) lines.push(`· 模型: ${config.llm.provider}/${config.llm.model}`);
       if (config.persona) lines.push(`· 人设: ${config.persona}`);
+      if (config.think !== undefined) lines.push(`· thinking: ${config.think ? 'on' : 'off'}`);
       if (displayName) lines.push(`· 名称: ${displayName}`);
       lines.push('后续消息持续生效（已持久化，重启不丢）。/session.reset 可复位。');
       return lines.join('\n');
     });
 
   useCommandService(ctx)
-    .command('session.reset', '复位当前对话的会话级覆盖（默认清模型+人设；-m 仅模型，-p 仅人设）', {
+    .command('session.reset', '复位当前对话的会话级覆盖（默认清模型+人设+thinking；-m/-p/-t 单独清对应项）', {
       risk: 'sensitive',
-      examples: ['/session.reset', '/session.reset -m', '/session.reset -p'],
+      examples: ['/session.reset', '/session.reset -m', '/session.reset -p', '/session.reset -t'],
     })
     .option('model', '-m', { description: '仅复位模型覆盖' })
     .option('persona', '-p', { description: '仅复位人设覆盖' })
+    .option('think', '-t', { description: '仅复位 thinking 覆盖' })
     .action(async argv => {
       const smSvc = ctx.getService<SessionManagerService>('session-manager');
       if (!smSvc) return 'session-manager 服务不可用';
       const mFlag = argv.options.model === true;
       const pFlag = argv.options.persona === true;
-      // 都不给 = 清两者；只给 -m 清模型；只给 -p 清人设
-      const clearModel = mFlag || !pFlag;
-      const clearPersona = pFlag || !mFlag;
+      const tFlag = argv.options.think === true;
+      // 都不给 = 全清；给了任意 flag = 只清点名的那些
+      const noFlags = !mFlag && !pFlag && !tFlag;
+      const clearModel = mFlag || noFlags;
+      const clearPersona = pFlag || noFlags;
+      const clearThink = tFlag || noFlags;
       const sid = argv.session.sessionId;
       const session = smSvc.getSession(sid);
-      const willClear = (clearModel && session?.config?.llm) || (clearPersona && session?.config?.persona);
+      const willClear =
+        (clearModel && session?.config?.llm) ||
+        (clearPersona && session?.config?.persona) ||
+        (clearThink && session?.config?.think != null);
       if (session?.config && willClear) {
         // 写 undefined → resolveConfig 的 stripUndefined 使其回落默认级联
         const patch: SessionConfig = { ...session.config };
         if (clearModel) patch.llm = undefined;
         if (clearPersona) patch.persona = undefined;
+        if (clearThink) patch.think = undefined;
         await smSvc.ensureSession(sid, { config: patch });
       }
       const eff = smSvc.resolveConfig(sid, argv.session.platform);
-      return `已复位 → 模型: ${eff.llm ? `${eff.llm.provider}/${eff.llm.model}` : '(默认)'}，人设: ${eff.persona ?? '(默认)'}`;
+      const thinkStr = eff.think == null ? '(默认)' : eff.think ? 'on' : 'off';
+      return `已复位 → 模型: ${eff.llm ? `${eff.llm.provider}/${eff.llm.model}` : '(默认)'}，人设: ${eff.persona ?? '(默认)'}，thinking: ${thinkStr}`;
     });
 
   // 监听 token:request 事件 — 客户端刷新/重连时主动请求 token 用量

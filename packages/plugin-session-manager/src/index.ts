@@ -95,6 +95,16 @@ export const configSchema: ConfigSchema = {
         default: false,
         description: '保留完整 JSON 给前端渲染，不提取回复字段',
       },
+      think: {
+        type: 'select',
+        label: 'thinking 默认',
+        options: [
+          { label: '继承 provider 全局配置', value: '' },
+          { label: '强制开启', value: 'on' },
+          { label: '强制关闭', value: 'off' },
+        ],
+        description: '该平台会话的深度思考默认档。留空=各 LLM provider 自行决定；会话可用 /session.set -t 进一步覆盖。',
+      },
     },
   },
 };
@@ -907,6 +917,10 @@ class SessionManager implements SessionManagerService {
       if (entry.disableOutputFormat !== undefined) profile.disableOutputFormat = !!entry.disableOutputFormat;
       if (entry.clientSideJsonRendering !== undefined)
         profile.clientSideJsonRendering = !!entry.clientSideJsonRendering;
+      // think 三态：布尔（yaml 手写）与 'on'/'off'（WebUI select 存字符串）都认；
+      // null / 空串 = 未设置（继承 provider 全局配置），维持 null≡undefined 契约。
+      if (entry.think === true || entry.think === 'on') profile.think = true;
+      else if (entry.think === false || entry.think === 'off') profile.think = false;
       this.platformProfiles.set(entry.platform, profile);
     }
     if (this.platformProfiles.size > 0) {
