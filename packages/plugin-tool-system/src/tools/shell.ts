@@ -78,15 +78,6 @@ async function resolveCwd(config: ShellConfig, cwdArg: unknown): Promise<{ uri: 
   return { uri, localPath: await config.storage.resolveLocalPath(uri, 'read') };
 }
 
-function safeEnv(): Record<string, string | undefined> {
-  const keep = ['PATH', 'LANG', 'LC_ALL', 'TERM', 'SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT'];
-  const env: Record<string, string | undefined> = {};
-  for (const key of keep) {
-    if (process.env[key]) env[key] = process.env[key];
-  }
-  return env;
-}
-
 export function registerShellTools(tools: ScopedToolService, config: ShellConfig): void {
   const ctx = config.ctx;
   const proc = config.proc;
@@ -143,9 +134,10 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
 
       ctx.logger.debug(`exec: ${command} (cwd: ${cwd.uri}, timeout: ${timeout}ms)`);
 
+      // exec 继承宿主完整环境（含代理与密钥类变量）——owner 工具的既定取舍（2026-08-23 拍板，
+      // 曾有的 env 白名单从未生效、已删）。需要环境隔离的执行走 code-sandbox-os（env -i 真清）。
       const child = proc.spawn(shellCmd, [shellFlag, command], {
         cwd: cwd.localPath,
-        env: safeEnv(),
         timeout,
       });
 
@@ -208,7 +200,6 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
 
       const child = proc.spawn(shellCmd, [shellFlag, command], {
         cwd: cwd.localPath,
-        env: safeEnv(),
       });
 
       const managed: ManagedProcess = {
