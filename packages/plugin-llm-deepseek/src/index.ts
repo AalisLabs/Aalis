@@ -41,7 +41,7 @@ export const configSchema: ConfigSchema = {
     type: 'string',
     label: 'API 地址',
     default: 'https://api.deepseek.com',
-    description: 'API 端点地址，可替换为兼容的第三方服务',
+    description: 'API 端点完整前缀（官方无版本段）；插件只在其后拼 /chat/completions 与 /models',
   },
   customModels: {
     type: 'textarea',
@@ -304,7 +304,7 @@ class DeepSeekClient {
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
 
-    const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+    const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -428,12 +428,12 @@ class DeepSeekClient {
     const reqStart = Date.now();
     // 守护：超过 15 秒还没拿到响应头，提示可能是网络/上游慢
     const slowConnectTimer = setTimeout(() => {
-      this.logger.warn(`DeepSeek 连接慢：已等待 15s 仍未收到响应头 (url=${this.baseUrl}/v1/chat/completions)`);
+      this.logger.warn(`DeepSeek 连接慢：已等待 15s 仍未收到响应头 (url=${this.baseUrl}/chat/completions)`);
     }, 15_000);
 
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
