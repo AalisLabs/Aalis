@@ -29,7 +29,7 @@ plugins:
         env:
           GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_xxx"
         enabled: true            # 可省略，默认 true
-        visibility: public       # public | restricted（默认 public）
+        visibility: auto         # auto | public | sensitive | restricted（默认 auto，按工具注解分档）
 
       - id: fs
         command: npx
@@ -44,7 +44,7 @@ plugins:
 | `servers[].args` | string[] | `[]` | 命令参数 |
 | `servers[].env` | Record<string,string> | `{}` | 传给 server 子进程的环境变量；密钥直接写在此处。SDK 另会自动继承 `PATH` / `HOME` 等安全变量以保证命令可启动，但不会继承宿主进程的其余 env |
 | `servers[].enabled` | boolean | `true` | 是否启动此 server |
-| `servers[].visibility` | `'public' \| 'restricted'` | `'public'` | 该 server 所有工具的默认可见性（restricted 须授予后才能调用） |
+| `servers[].visibility` | `'auto' \| 'public' \| 'sensitive' \| 'restricted'` | `'auto'` | 该 server 全部工具的档位；auto 按工具注解分档：自称只读→sensitive（等级 1），有破坏提示或未声明→restricted（等级 2） |
 
 ## 行为
 
@@ -56,8 +56,8 @@ plugins:
 
 ## 安全注意事项
 
-- 外部 server 是**不受信任的第三方进程**，工具的 `visibility` 必须显式配置——
-  默认 `public` 仅适合纯查询类 server（如 GitHub READ）；对接 filesystem / shell / browser 类务必显式设为 `restricted`。
+- 外部 server 是**不受信任的第三方进程**。默认 `auto` 按注解分档、未知即 restricted（失败关闭）；
+  只有确认纯查询类 server（如 GitHub READ）才应显式放宽为 `public`。
 - Aalis 自身的能力统一闸仍生效：`restricted` 工具被调用时须 owner 或被委托授予才放行。
 
 ## 依赖
