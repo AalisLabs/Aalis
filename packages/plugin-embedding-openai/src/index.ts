@@ -13,7 +13,12 @@ export const reusable = true;
 
 export const configSchema: ConfigSchema = {
   apiKey: { type: 'string', label: 'API Key', required: true, secret: true, description: 'OpenAI API 密钥' },
-  baseUrl: { type: 'string', label: 'API 地址', default: 'https://api.openai.com', description: 'API 端点地址' },
+  baseUrl: {
+    type: 'string',
+    label: 'API 地址',
+    default: 'https://api.openai.com/v1',
+    description: 'API 端点完整前缀（含版本段）；插件只在其后拼 /embeddings 与 /models',
+  },
   model: {
     type: 'select',
     label: 'Embedding 模型',
@@ -37,7 +42,7 @@ class OpenAIEmbeddingService implements EmbeddingService {
   }
 
   async embed(text: string): Promise<number[]> {
-    const res = await fetch(`${this.baseUrl}/v1/embeddings`, {
+    const res = await fetch(`${this.baseUrl}/embeddings`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -54,7 +59,7 @@ class OpenAIEmbeddingService implements EmbeddingService {
 
   async listModels(): Promise<string[]> {
     try {
-      const res = await fetch(`${this.baseUrl}/v1/models`, {
+      const res = await fetch(`${this.baseUrl}/models`, {
         headers: { Authorization: `Bearer ${this.apiKey}` },
       });
       if (!res.ok) return [];
@@ -74,7 +79,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     throw new Error('OpenAI Embedding 插件需要配置 apiKey');
   }
 
-  const baseUrl = (config.baseUrl as string) ?? 'https://api.openai.com';
+  const baseUrl = (config.baseUrl as string) ?? 'https://api.openai.com/v1';
   const model = (config.model as string) ?? 'text-embedding-3-small';
 
   const service = new OpenAIEmbeddingService(baseUrl, model, apiKey);

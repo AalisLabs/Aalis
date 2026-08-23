@@ -8,6 +8,20 @@
 
 ---
 
+## 未发布
+
+### llm-openai / embedding-openai / llm-deepseek：baseUrl 语义改为「完整前缀」
+
+插件不再向 baseUrl 硬拼 `/v1`，只拼端点名（`/chat/completions`、`/models`、`/embeddings`）。
+与 plugin-asr-openai 的既有约定对齐；Gemini 等无 `/v1` 段的兼容端点
+（`https://generativelanguage.googleapis.com/v1beta/openai`）从此可直接配置。
+
+**迁移**：
+- llm-openai / embedding-openai：显式配置过 `baseUrl` 的在末尾补 `/v1`
+  （`https://api.openai.com` → `https://api.openai.com/v1`）；未配置的自动跟随新默认值。
+- llm-deepseek：官方端点 `https://api.deepseek.com` 无需改动（无版本段形态本就是官方文档写法，
+  `/models` 此前也不带 `/v1`）；指向第三方 `/v1` 网关的需在 `baseUrl` 补 `/v1`。
+
 ## 0.10.0
 
 契约包大改名 + 四个包的破坏性变更。这批**必须显式升级**，装到一半会同时装进新旧两份

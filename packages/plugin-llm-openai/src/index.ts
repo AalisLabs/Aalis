@@ -38,8 +38,10 @@ export const configSchema: ConfigSchema = {
   baseUrl: {
     type: 'string',
     label: 'API 地址',
-    default: 'https://api.openai.com',
-    description: 'API 端点地址，可替换为兼容的第三方服务',
+    default: 'https://api.openai.com/v1',
+    description:
+      'API 端点完整前缀（含版本段，如 https://api.openai.com/v1）；插件只在其后拼 /chat/completions 与 /models。' +
+      '可替换为任何兼容服务（如 Gemini 的 https://generativelanguage.googleapis.com/v1beta/openai）。',
   },
   customModels: {
     type: 'textarea',
@@ -178,7 +180,7 @@ class OpenAIClient {
   /** 发现远端模型列表（仅含 id） */
   async fetchRemoteModelIds(): Promise<string[]> {
     try {
-      const res = await fetch(`${this.baseUrl}/v1/models`, {
+      const res = await fetch(`${this.baseUrl}/models`, {
         headers: this.headers,
       });
       if (!res.ok) return [];
@@ -212,7 +214,7 @@ class OpenAIClient {
     const signals: AbortSignal[] = [AbortSignal.timeout(this.timeout)];
     if (request.signal) signals.push(request.signal);
 
-    const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+    const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify(body),
@@ -285,12 +287,12 @@ class OpenAIClient {
 
     const reqStart = Date.now();
     const slowConnectTimer = setTimeout(() => {
-      this.logger.warn(`LLM 连接慢：已等待 15s 仍未收到响应头 (url=${this.baseUrl}/v1/chat/completions)`);
+      this.logger.warn(`LLM 连接慢：已等待 15s 仍未收到响应头 (url=${this.baseUrl}/chat/completions)`);
     }, 15_000);
 
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: this.headers,
         body: JSON.stringify(body),
@@ -598,7 +600,7 @@ class OpenAIModelHandle implements LLMModel {
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const openaiConfig: OpenAIConfig = {
     apiKey: (config.apiKey as string) ?? '',
-    baseUrl: (config.baseUrl as string) ?? 'https://api.openai.com',
+    baseUrl: (config.baseUrl as string) ?? 'https://api.openai.com/v1',
     customModels: parseCustomModels(config.customModels),
     modelCapabilities: parseModelCapabilities(config.modelCapabilities),
     providerCapabilities: parseProviderCapabilities(config.providerCapabilities),
@@ -608,7 +610,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     contextLength: (config.contextLength as number) ?? 128000,
   };
 
-  if (!openaiConfig.apiKey && openaiConfig.baseUrl === 'https://api.openai.com') {
+  if (!openaiConfig.apiKey && openaiConfig.baseUrl.startsWith('https://api.openai.com')) {
     throw new Error('使用 OpenAI 官方 API 需要配置 apiKey');
   }
 
