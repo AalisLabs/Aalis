@@ -22,6 +22,15 @@
 - llm-deepseek：官方端点 `https://api.deepseek.com` 无需改动（无版本段形态本就是官方文档写法，
   `/models` 此前也不带 `/v1`）；指向第三方 `/v1` 网关的需在 `baseUrl` 补 `/v1`。
 
+### mcp-client：桥接工具默认档位不再是 public
+
+外部 MCP 工具此前默认 `public`（等级 0 可达）。现默认改为按工具注解分档：
+自称只读（`readOnlyHint`）→ `sensitive`（等级 1）；有破坏提示或未声明 → `restricted`（等级 2）。
+server 配置的 `visibility` 字段新增 `auto`（新默认）与 `sensitive` 两值。
+
+**迁移**：需要恢复旧行为（群成员直接可用）的部署，在对应 server 配置里显式设
+`visibility: public`；已显式配置 `public`/`restricted` 的不受影响。
+
 ## 0.10.0
 
 契约包大改名 + 四个包的破坏性变更。这批**必须显式升级**，装到一半会同时装进新旧两份
