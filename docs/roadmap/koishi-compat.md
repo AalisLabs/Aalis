@@ -64,10 +64,10 @@ cordis 的 npm latest 已是 4.0.0-rc 而 Koishi 4.18 锁 3.x：**沙盒必须�
 
 **覆盖分层**：不碰 database 的插件（约 3/4）已实证；database 类已实证（minato sqlite，Aalis 侧零适配）；`ctx.console` / server 生态（27/114 命中）**未验证**，是最大未知块。
 
-## 未决项（逐条拍板，不代决）
+## 已拍板（2026-08-23）
 
-1. 沙盒目录默认位置：`data/koishi/` 还是 `data/plugins/koishi-compat/`（pluginData 根规范位置）。
-2. `/koishi` 前缀是否可配、默认值——可配意味着用户可清空前缀、重新引入重名覆盖风险。
-3. Koishi 插件配置面板是否接进 WebUI：需 schemastery → ConfigSchema 的有损降级转换；不做则只能改沙盒配置文件。
-4. Koishi 侧 database 与 Aalis memory 是否互通：影响 Koishi 的用户/频道表要不要与 user-profile 对齐。
-5. console 生态是否纳入：需先验证嵌入形态下 `@koishijs/plugin-console` 可用性，及其自带 HTTP 服务与 webui-server 如何共处。
+1. 沙盒目录默认 `data/koishi/`（可配）。
+2. 指令前缀可配，默认 `koishi`；清空前缀会重新引入同名静默覆盖风险，配置描述里写明、用户自担。
+3. 一期范围：桥四接点 + 市场 Koishi 检索 + **console 嵌入可行性验证**（先把最大未知块验掉，验完再定是否纳入二期）。
+4. WebUI 配置面板一期不做（schemastery → ConfigSchema 转换必然有损）；Koishi 插件配置改沙盒配置文件。
+5. Koishi 侧 database 与 Aalis memory 不互通：两套独立存储，Koishi 插件写自己的 sqlite。
