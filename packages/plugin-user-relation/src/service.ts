@@ -120,6 +120,31 @@ export class RelationService {
     else console.warn(msg);
   }
 
+  // ─── 派生回写统一写口（落笔核实况）─────────────────────────────
+  // consolidate 的批量范式（决策与应用共用 pass 开头快照）与「真合并物理删节点」
+  // 组合出过一类事故：真合并删除节点后，同 pass 后续阶段拿快照旧拷贝做补丁式回写
+  // （embedding hash / summary / PageRank），把死节点整个写回（复活）。僵尸节点使
+  // consolidate 每轮重判同一批对、反复铸 part-of 边（2026-08「表情包星形」事故）。
+  // 凡「以快照旧拷贝为基底 spread + 补丁」的节点回写一律走这两个写口：
+  //   1. 落笔前单点核实节点在库中仍存活，死了就跳过——「删了就是删了」由此机器保证；
+  //   2. 以**库中活文档**为基底套补丁（而非旧拷贝）——否则回写还会用陈旧字段
+  //      压掉并发合并刚并入的 aliases 等新状态。
+  // 豁免路径：facade 新建/强化、renameNode 等「先单点读活文档再改写」的读改写路径；
+  // evictByQuota 内 decay 回写（其快照在本函数自身删除动作之前 fresh 加载，无复活窗）。
+  private async writeBackEntityIfLive(node: EntityNode, patch: Partial<EntityNode>): Promise<boolean> {
+    const live = await this.store.getEntity(node.id);
+    if (!live) return false;
+    await this.store.upsertEntity({ ...live, ...patch });
+    return true;
+  }
+
+  private async writeBackEventIfLive(node: EventNode, patch: Partial<EventNode>): Promise<boolean> {
+    const live = await this.store.getEvent(node.id);
+    if (!live) return false;
+    await this.store.upsertEvent({ ...live, ...patch });
+    return true;
+  }
+
   /** 查询最近一次 consolidation 运行时间、触发源与结果摘要 */
   getLastConsolidateInfo(): {
     lastRunAt?: number;
@@ -1622,8 +1647,8 @@ export class RelationService {
         const list = memberships.get(ev.id);
         const cid = list && list.length > 0 ? list[0].id : undefined;
         if (score === undefined && cid === undefined) continue;
-        await this.store.upsertEvent({
-          ...ev,
+        // 派生回写走活性写口（after 虽为 fresh 加载，统一收口以防未来插入删除动作后复活）
+        await this.writeBackEventIfLive(ev, {
           ...(score !== undefined ? { lastPageRank: score, lastPageRankAt: now } : {}),
           ...(cid !== undefined ? { communityId: cid, communityIdAt: now, communityMemberships: list } : {}),
         });
@@ -1633,8 +1658,7 @@ export class RelationService {
         const list = memberships.get(en.id);
         const cid = list && list.length > 0 ? list[0].id : undefined;
         if (score === undefined && cid === undefined) continue;
-        await this.store.upsertEntity({
-          ...en,
+        await this.writeBackEntityIfLive(en, {
           ...(score !== undefined ? { lastPageRank: score, lastPageRankAt: now } : {}),
           ...(cid !== undefined ? { communityId: cid, communityIdAt: now, communityMemberships: list } : {}),
         });
@@ -2566,16 +2590,20 @@ export class RelationService {
                   shouldMerge = false;
                   if (v.hierarchy) {
                     const { parentId, childId } = v.hierarchy;
-                    const partOfBuilt = await this._upsertPartOfEdgeIfAbsent(
-                      snapshot.edges,
+                    const partOfOutcome = await this._ensureHierarchyEdge(
                       childId,
                       parentId,
                       `consolidate LLM 判定 hierarchy：${v.reason}`,
                     );
                     if (opts.llm.ctx.logger) {
+                      const outcomeText =
+                        partOfOutcome === 'built'
+                          ? '（已新建 part-of 边）'
+                          : partOfOutcome === 'exists'
+                            ? '（part-of 边已存在）'
+                            : '（端点已被合并，跳过落边）';
                       opts.llm.ctx.logger.info(
-                        `[user-relation] consolidate LLM 判定 hierarchy ${childId} part-of ${parentId}: ${v.reason}` +
-                          `${partOfBuilt ? '（已新建 part-of 边）' : '（part-of 边已存在）'}`,
+                        `[user-relation] consolidate LLM 判定 hierarchy ${childId} part-of ${parentId}: ${v.reason}${outcomeText}`,
                       );
                     }
                   } else if (opts.llm.ctx.logger) {
@@ -2693,8 +2721,15 @@ export class RelationService {
             embedCache.set(en.id, null);
             return null;
           }
+          // 落笔核实况：en 是 pass 快照旧拷贝，节点可能已被本 pass 真合并删除——
+          // 死节点不写回（防复活）、不参与相似度召回，也**不写向量**：向量命名空间
+          // 只有按节点 key 的级联删除，死 uuid 的向量一旦写入永不可回收（~96KB/条）。
+          // hash 先于向量落盘的窗口由自愈路径兜底（hash 命中但取不到向量 → 重算）。
+          if (!(await this.writeBackEntityIfLive(en, { embeddingHash: expectedHash }))) {
+            embedCache.set(en.id, null);
+            return null;
+          }
           await this.store.upsertVector('entity', en.id, vec, expectedHash);
-          await this.store.upsertEntity({ ...en, embeddingHash: expectedHash });
           en.embeddingHash = expectedHash;
           embedCache.set(en.id, vec);
           return vec;
@@ -2962,16 +2997,20 @@ export class RelationService {
           // 避免母概念（如「三角洲行动」）被并入子概念（如「三角洲行动·绝密航天」）。
           if (v.hierarchy) {
             const { parentId, childId } = v.hierarchy;
-            const partOfBuilt = await this._upsertPartOfEdgeIfAbsent(
-              snapshot.edges,
+            const partOfOutcome = await this._ensureHierarchyEdge(
               childId,
               parentId,
               `consolidate LLM 判定 hierarchy：${v.reason}`,
             );
             if (opts.llm.ctx.logger) {
+              const outcomeText =
+                partOfOutcome === 'built'
+                  ? '（已新建 part-of 边）'
+                  : partOfOutcome === 'exists'
+                    ? '（part-of 边已存在）'
+                    : '（端点已被合并，跳过落边）';
               opts.llm.ctx.logger.info(
-                `[user-relation] consolidate LLM 判定 hierarchy（宽召回）${childId} part-of ${parentId}: ${v.reason}` +
-                  `${partOfBuilt ? '（已新建 part-of 边）' : '（part-of 边已存在）'}`,
+                `[user-relation] consolidate LLM 判定 hierarchy（宽召回）${childId} part-of ${parentId}: ${v.reason}${outcomeText}`,
               );
             }
           } else if (opts.llm.ctx.logger) {
@@ -3082,9 +3121,16 @@ export class RelationService {
       }
     }
 
+    // ─── 旧账整理共用快照刷新：(3)/(3b)/(3c) 一律基于**合并后的实况**重载 ───
+    // 旧形态吃 pass 开头快照，而 (1)/(1.5) 真合并已「保 id 改端点」重写/删除了边——
+    // 按旧端点重建 dedup key 会「删活边 + 把死端点写回」（对抗审计端到端复现：
+    // 事件对已删实体 X 的 part-of/about 两条边被折叠成指向死 X 的悬空边，
+    // 活的 事件→canonical 挂载净丢失，随后被 pruneOrphans 当幽灵边清掉）。
+    const normSnapshot = await this.store.loadAll();
+
     // ─── (3) PersonEventEdge 旧账整理：对每对 (person,event) 跑一次吸收规则
     const pairs = new Map<string, PersonEventEdge[]>();
-    for (const e of snapshot.edges) {
+    for (const e of normSnapshot.edges) {
       if (e.kind !== 'person-event') continue;
       const k = `${e.fromPersonId}|${e.toEventId}`;
       if (!pairs.has(k)) pairs.set(k, []);
@@ -3114,7 +3160,7 @@ export class RelationService {
     // ─── (3b) PersonEntityEdge 旧账整理：同一 (person,entity) 多条不同 role 行 → 留最强 role
     //    存量里可能有未做 (from,to) 级别去重的边；此处按当前 addPersonEntityEdge 规则修旧账。
     const peEntityPairs = new Map<string, PersonEntityEdge[]>();
-    for (const e of snapshot.edges) {
+    for (const e of normSnapshot.edges) {
       if (e.kind !== 'person-entity') continue;
       const k = `${e.fromPersonId}|${e.toEntityId}`;
       if (!peEntityPairs.has(k)) peEntityPairs.set(k, []);
@@ -3163,7 +3209,7 @@ export class RelationService {
     //     · 若同强度有多条 → 取 weight 最大者
     //     · weight 取所有被合并边的最大值（保留强化记录）
     const eePairs = new Map<string, EventEntityEdge[]>();
-    for (const e of snapshot.edges) {
+    for (const e of normSnapshot.edges) {
       if (e.kind !== 'event-entity') continue;
       const k = `${e.fromEventId}|${e.toEntityId}`;
       if (!eePairs.has(k)) eePairs.set(k, []);
@@ -3262,8 +3308,10 @@ export class RelationService {
           llmDisableThinking,
         );
         if (newSummary && newSummary !== ent.summary) {
-          await this.store.upsertEntity({ ...ent, summary: newSummary, lastReinforcedAt: Date.now() });
-          summariesRewritten++;
+          // 落笔核实况：ent 来自阶段快照，可能已被真合并删除（死节点不复活）
+          if (await this.writeBackEntityIfLive(ent, { summary: newSummary, lastReinforcedAt: Date.now() })) {
+            summariesRewritten++;
+          }
         }
       }
     }
@@ -3651,7 +3699,11 @@ export class RelationService {
         }
         // 写回持久化：向量入独立命名空间，节点只更新 hash
         await this.store.upsertVector('event', ev.id, vec, expectedHash);
-        await this.store.upsertEvent({ ...ev, embeddingHash: expectedHash });
+        // 落笔核实况：ev 是 pass 快照旧拷贝，死节点不写回（防复活）、不参与召回
+        if (!(await this.writeBackEventIfLive(ev, { embeddingHash: expectedHash }))) {
+          eventVecCache.set(ev.id, null);
+          return null;
+        }
         ev.embeddingHash = expectedHash;
         embeddedCount++;
         eventVecCache.set(ev.id, vec);
@@ -4252,11 +4304,11 @@ export class RelationService {
         }
       }
     } catch (err) {
-      // 真合并失败不应阻塞调用链（边已经 rewire 成功，最差情况退化为旧的"路由+壳子"行为）
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[user-relation] mergeAlias: 删除 alias 壳子失败 alias=${aliasId} canonical=${canonicalId} kind=${opts.kind}`,
-        err,
+      // 真合并失败不应阻塞调用链（边已经 rewire 成功，最差情况退化为旧的"路由+壳子"行为）。
+      // 必须走 _audit 进日志文件：这条曾是 console.warn，排障期间完全隐形（僵尸节点
+      // 复活事故的诊断成本直接来源之一），静默失败不可接受。
+      this._audit(
+        `[user-relation] mergeAlias: 删除 alias 壳子失败 alias=${aliasId} canonical=${canonicalId} kind=${opts.kind}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
 
@@ -4328,40 +4380,37 @@ export class RelationService {
   }
 
   /**
-   * consolidate hierarchy 守门用：若 child→parent 的 entity-entity[part-of] 边缺失则新建；
-   * 已存在（任一方向：part-of 或反向 contains）则跳过，返回 false。
-   * 不强化既有边、不做证据合并——hierarchy 守门只负责"不被错误地 alias-merge 掉"，
-   * 后续走正规 inferEntityHierarchy / extractor 写边路径补全/强化。
+   * hierarchy 判定落边的唯一入口。曾经的形态（查 pass 快照 + store 直写）出过双重事故：
+   * 旧快照查重看不见本 pass 刚建的边 → 同一对同 pass 重复铸边（实测同边 ×9）；
+   * 直写绕过 addEntityEntityEdge 门面 → 写入层实时查重完全失效。
+   * 现约束：一切以**库中实时状态**为准——先核两端节点仍存活（stale 工单里的已合并
+   * 节点不再落边），再实时查 part-of/contains 双向已存在，写入走门面复用其
+   * 实时查重 + 强化语义。
    */
-  private async _upsertPartOfEdgeIfAbsent(
-    edgesSnapshot: readonly RelationEdge[],
+  private async _ensureHierarchyEdge(
     childId: string,
     parentId: string,
     description: string,
-  ): Promise<boolean> {
-    const existing = edgesSnapshot.some(
+  ): Promise<'built' | 'exists' | 'skipped-dead'> {
+    const [child, parent] = await Promise.all([this.store.getEntity(childId), this.store.getEntity(parentId)]);
+    if (!child || !parent) return 'skipped-dead';
+    const snapshot = await this.store.loadAll();
+    const existing = snapshot.edges.some(
       e =>
         e.kind === 'entity-entity' &&
         (e.relationType === 'part-of' || e.relationType === 'contains') &&
         ((e.fromEntityId === childId && e.toEntityId === parentId) ||
           (e.fromEntityId === parentId && e.toEntityId === childId)),
     );
-    if (existing) return false;
-    const now = Date.now();
-    await this.store.upsertEdge({
-      id: globalThis.crypto.randomUUID(),
-      kind: 'entity-entity',
+    if (existing) return 'exists';
+    await this.addEntityEntityEdge({
       fromEntityId: childId,
       toEntityId: parentId,
       relationType: 'part-of',
-      directed: true,
       weight: 0.6,
       description: description.slice(0, 80),
-      firstSeenAt: now,
-      lastReinforcedAt: now,
-      evidence: [],
     });
-    return true;
+    return 'built';
   }
 
   /**

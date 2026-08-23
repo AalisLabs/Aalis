@@ -170,6 +170,7 @@ export async function verifyAliasPair(
         '  · 例：「Honkai: Star Rail·罗浮章节」(B) part-of「Honkai: Star Rail」(A)',
         '- 当判 hierarchy 时，必须在 "parent" 字段明确指出哪一方是父（"A" 或 "B"）。父=更宽泛的、被包含的；子=更具体的、包含父名的；',
         '- 当人们在聊天中把子模式名缩略为父名（如"今晚打三角洲" 实际在玩绝密航天），不要把此当成"别名"——这是缩略指代，子和父仍是不同对象；',
+        '- **类别隶属（is-a）不是 hierarchy**：一方只是另一方类目下的「一个实例 / 一种」——如「滑稽表情包」之于「表情包」、「某长篇小说」之于「书籍」——这是 is-a 不是 part-of（部分-整体），应判 different。part-of 仅限「构成部分」：子模式/子地图/章节/资料片/组件。曾因把 is-a 判成 hierarchy，给泛型类目节点铸出几十条无意义 part-of 星形边；',
         '- 若两者只是松散相关（如同一游戏厂商的不同作品、同一公司的不同产品），既不是 same 也不是 hierarchy，判 different。',
       ]
         .filter(Boolean)
@@ -363,6 +364,7 @@ export async function inferEntityHierarchy(
       role: 'system' as const,
       content:
         '你是一个实体层级推断助手。对每对实体，判断"子实体候选"是否确实属于"父实体"（part-of 关系：子是父的具体版本、模式、章节、关卡、地点分支等），而非仅仅名字字符串上包含父的名称。' +
+        '注意区分类别隶属（is-a）：子只是父类目下的一个实例/一种（如「滑稽表情包」之于「表情包」、「某长篇小说」之于「书籍」）不算 part-of，应判 false——part-of 仅限构成部分（部分-整体）。' +
         '只输出 JSON 数组，不要带 markdown 代码块。格式：[{"index":0,"isPartOf":true,"reason":"简短说明"},…]',
     },
     {

@@ -326,6 +326,9 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
   const cyRef = useRef<Core | null>(null);
   // 上一次 layout effect 使用的 payload 引用：用于判断本次重跑是「数据变化」还是「仅 spacing 变化」
   const lastLayoutPayloadRef = useRef<GraphPayload | null>(null);
+  // 是否已完成过一次布局：首次才允许 randomize，其后数据刷新走增量布局
+  // （保留旧坐标为初值收敛——既省一个量级的布局耗时，又消掉定时刷新时的全图大跳变）
+  const hasLaidOutRef = useRef(false);
 
   const [payload, setPayload] = useState<GraphPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -661,15 +664,39 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
     // payload 变化时不开动画，避免抖动。
     const isSpacingOnly = lastLayoutPayloadRef.current === payload;
     lastLayoutPayloadRef.current = payload;
+    const isFirstLayout = !hasLaidOutRef.current;
+    // 旧坐标命中率：数据刷新时回填成功的节点占比。命中率低（焦点切换/清空重来/
+    // 出错后空图重试）意味着节点集换血——增量初值会全堆在原点 (0,0)，必须按「首次」重排。
+    let restoredRatio = 1;
     if (!isSpacingOnly) {
+      // 增量布局：全量 remove+add 会丢掉现有坐标，故先按节点 id 快照旧位置，
+      // add 后回填——fcose randomize:false 时以现有坐标为初值收敛，
+      // 老节点只微调、新节点从原点被推开落位。
+      const prevPositions = new Map<string, { x: number; y: number }>();
+      cy.nodes().forEach(n => {
+        prevPositions.set(n.id(), { ...n.position() });
+      });
       cy.elements().remove();
       cy.add(elements);
+      let restored = 0;
+      cy.nodes().forEach(n => {
+        const p = prevPositions.get(n.id());
+        if (p) {
+          n.position(p);
+          restored++;
+        }
+      });
+      const total = cy.nodes().length;
+      restoredRatio = total > 0 ? restored / total : 0;
     }
+    const fullRelayout = (isFirstLayout || restoredRatio < 0.5) && !isSpacingOnly;
     cy.layout({
       name: 'fcose',
       animate: isSpacingOnly,
       animationDuration: 400,
-      randomize: !isSpacingOnly && payload.nodes.length > 20,
+      // 首图、或节点集换血（旧坐标命中率 <50%，如焦点切换/清除焦点回全图）→ 全量重排；
+      // 其余数据刷新走增量（randomize:false 以旧坐标为初值收敛，避免全图跳变与重复重排开销）
+      randomize: fullRelayout && payload.nodes.length > 20,
       // 节点稀疏度由 spacing 线性驱动：
       //   idealEdgeLength = spacing
       //   nodeRepulsion   ≈ spacing * 117（120 -> 14000，对齐原默认）
@@ -695,10 +722,17 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
       gravity: 0.1,
       gravityRange: 3.0,
       padding: 40,
-      // 'proof' 比默认 'default' 收敛更彻底（耗时稍长，节点数 < ~200 时不明显）
-      quality: 'proof',
+      // 布局质量按规模自适应：'proof' 收敛最彻底但代价陡增（节点数 < ~200 时才无感，
+      // 862 节点全图实测为首屏卡顿主因），>300 降 'default'。
+      // **禁用 'draft'**：fcose 明文要求 randomize:false 时 quality 必须为 default/proof，
+      // draft+randomize:false 在未装 layout-utilities 时直接抛 TypeError（对抗审计
+      // headless 实测），而增量刷新路径恒为 randomize:false，二者互斥。
+      quality: payload.nodes.length > 300 ? 'default' : 'proof',
       uniformNodeDimensions: false,
     } as cytoscape.LayoutOptions).run();
+    // 空 payload（出错兜底/空库）不算「已布局」——否则重试成功的首个真实图会被
+    // 错误地当成增量刷新，全部新节点堆死在原点。
+    if (payload.nodes.length > 0) hasLaidOutRef.current = true;
   }, [payload, focusId, spacing]);
 
   // 搜索高亮 / dim。规则（见 README/相关讨论）：
