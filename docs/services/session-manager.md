@@ -60,6 +60,7 @@ interface SessionConfig {
   llm?: { provider: string; model: string };  // provider = LLM 插件实例 contextId（如 @aalis/plugin-llm-openai:main）
   enabledToolGroups?: string[];
   persona?: string;                            // 人格文件名（不含后缀）
+  think?: boolean;                             // 会话级 thinking 覆盖（/session.set -t on|off；未设置=继承 provider 全局）
   systemPromptExtra?: string;
   maxToolIterations?: number;
   disableOutputFormat?: boolean;               // 该会话回复纯文本，不走结构化输出
