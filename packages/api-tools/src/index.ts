@@ -41,8 +41,19 @@ export interface ToolDefinition {
 
 export interface ToolCallContext {
   sessionId: string;
+  /** 消息物理来源的发言者标识（会话语义；授权身份见 actor） */
   userId?: string;
+  /** 会话所属平台（路由/分流/confirm 通道选路语义；授权身份见 actor） */
   platform?: string;
+  /**
+   * 授权身份（与 platform/userId 解耦，语义同 schema-message 的 IncomingMessage.actor）：
+   * scheduler/delegate/subtask 等触发器代人执行时，authority 按 actor 的
+   * (platform, userId) 实时查等级；platform/userId 保持**会话**语义不被覆盖——
+   * 否则跨平台委派会把定时任务归属、平台档继承、记忆平台域、confirm 通道选路
+   * 全部路由到发起者平台（2026-08-24 审计确认的四处错配）。
+   * 缺省 = 授权身份就是 (platform, userId) 本身。
+   */
+  actor?: { platform: string; userId: string };
   /** 当前平台启用的工具分组（供 search_tools 等工具过滤用） */
   enabledGroups?: string[];
 }

@@ -24,9 +24,11 @@ function setup(): { handlers: Map<string, Handler>; emitted: Array<{ event: stri
     registerGroup: () => {},
   };
   const fakeSessionManager = {
-    getSession: () => undefined,
+    // parent-1 无 parentId（非嵌套）；child-session-1 供 send_to_subtask 的归属校验
+    getSession: (id: string) => (id === 'child-session-1' ? { id, parentId: 'parent-1', status: 'active' } : undefined),
     resolveConfig: () => ({}),
     createChildSession: async () => ({ id: 'child-session-1' }),
+    updateSession: async () => {},
   };
   const logger = {
     info: () => {},
@@ -84,5 +86,30 @@ describe('create_subtask actor 透传', () => {
     await handler({ task: '做一件事' }, { sessionId: 'parent-1' });
     expect(emitted).toHaveLength(1);
     expect(emitted[0].payload.actor).toBeUndefined();
+  });
+
+  it('链式：callCtx.actor 优先于物理身份', async () => {
+    const { handlers, emitted } = setup();
+    const handler = handlers.get('create_subtask')!;
+
+    await handler(
+      { task: '做一件事' },
+      { sessionId: 'parent-1', platform: 'onebot', userId: 'phys', actor: { platform: 'webui', userId: 'console' } },
+    );
+    expect(emitted[0].payload.actor).toEqual({ platform: 'webui', userId: 'console' });
+  });
+
+  it('send_to_subtask 同约束：追问轮不掉权（与创建轮同源透传）', async () => {
+    const { handlers, emitted } = setup();
+    const handler = handlers.get('send_to_subtask');
+    expect(handler, 'send_to_subtask 未注册').toBeDefined();
+
+    await handler!(
+      { subtask_id: 'child-session-1', message: '继续' },
+      { sessionId: 'parent-1', platform: 'onebot', userId: 'user-a' },
+    );
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].payload.actor).toEqual({ platform: 'onebot', userId: 'user-a' });
+    expect(emitted[0].payload.userId).toBe('parent:parent-1');
   });
 });

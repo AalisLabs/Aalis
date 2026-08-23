@@ -18,10 +18,15 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** 每次 stubFetch 重置：记录实际请求 URL（锚定 baseUrl「完整前缀」语义的最终拼接形状） */
+const fetchedUrls: string[] = [];
+
 /** 桩 fetch：模型列表接口返回一个模型，chat 接口返回给定 usage */
 function stubFetch(modelId: string, usage: Record<string, unknown>): void {
+  fetchedUrls.length = 0;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
+    fetchedUrls.push(url);
     const json = url.includes('/models')
       ? { data: [{ id: modelId }] }
       : {
@@ -47,6 +52,28 @@ async function chatWith(
   await app.stop();
   return res;
 }
+
+describe('baseUrl 完整前缀语义：最终请求 URL 形状', () => {
+  // 锚定「插件只拼端点名、不再自拼 /v1」：旧桩用 includes('/models') 对新旧语义都绿，
+  // 本批的核心破坏性变更此前处于零回归覆盖状态（2026-08-24 审计）。
+  it('DeepSeek 默认端点（官方无版本段）→ /chat/completions 且无 /v1', async () => {
+    await chatWith(deepseekModule, 'deepseek-chat', { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 });
+    expect(fetchedUrls).toContain('https://api.deepseek.com/chat/completions');
+    expect(
+      fetchedUrls.some(u => u.includes('/v1')),
+      '不得再自拼 /v1',
+    ).toBe(false);
+  });
+
+  it('OpenAI 默认端点（含 /v1 版本段）→ /v1/chat/completions 且无双 /v1', async () => {
+    await chatWith(openaiModule, 'gpt-4o', { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 });
+    expect(fetchedUrls).toContain('https://api.openai.com/v1/chat/completions');
+    expect(
+      fetchedUrls.some(u => u.includes('/v1/v1')),
+      '不得出现双 /v1',
+    ).toBe(false);
+  });
+});
 
 describe('前缀缓存命中量上报', () => {
   it('DeepSeek: prompt_cache_hit_tokens 被带进 usage.cachedPromptTokens', async () => {

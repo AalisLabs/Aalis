@@ -36,7 +36,7 @@ class OpenAIEmbeddingService implements EmbeddingService {
   private apiKey: string;
 
   constructor(baseUrl: string, model: string, apiKey: string) {
-    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.model = model;
     this.apiKey = apiKey;
   }
@@ -79,7 +79,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     throw new Error('OpenAI Embedding 插件需要配置 apiKey');
   }
 
-  const baseUrl = (config.baseUrl as string) ?? 'https://api.openai.com/v1';
+  let baseUrl = (config.baseUrl as string) ?? 'https://api.openai.com/v1';
+  // 一次性迁移（baseUrl 改「完整前缀」语义）：config-sync 会把旧默认值物化进配置文件，
+  // 精确命中旧默认时就地升级；自定义端点见 CHANGELOG 迁移说明。
+  if (baseUrl === 'https://api.openai.com') {
+    ctx.logger.warn('baseUrl 语义已改为完整前缀（插件不再自动拼 /v1）：旧默认值已自动升级为 https://api.openai.com/v1');
+    baseUrl = 'https://api.openai.com/v1';
+  }
   const model = (config.model as string) ?? 'text-embedding-3-small';
 
   const service = new OpenAIEmbeddingService(baseUrl, model, apiKey);

@@ -234,7 +234,7 @@ const result = policy
 
 - 写限定：只放行 `policy.fsWrite`，其余只读（Seatbelt 用 `(deny default)` + `(allow file-write* (subpath …))` 仅白名单；bwrap 用 `--ro-bind / /` + `--bind` 写白名单）。
 - 网络粗粒度开关：`policy.network === 'deny'` 时默认断网（Seatbelt `(deny network*)`、bwrap `--unshare-all` 含 net 命名空间隔离）；只有 `'allow'` 才放开，且无法按域名过滤。注意：这与 owner 自己的网络出口 [safeFetch](../concepts/security-model.md)（SSRF 防护）是两套机制；沙箱内 `'allow'` 的子进程网络不经 safeFetch 的内网防护，能联网就能打内网。
-- env 清零、仅留白名单：`sandbox-exec … env -i <白名单>` / bwrap `--clearenv --setenv`，防止宿主 secrets 泄漏给不可信代码。consumer 传 `env` 时要明确只放安全键（`code_runner` 的 `safeEnv()` 只保留 `PATH`、`LANG` 等）。
+- env 清零、仅留白名单：`sandbox-exec … env -i <白名单>` / bwrap `--clearenv --setenv`，防止宿主 secrets 泄漏给不可信代码。consumer 传 `env` 时要明确只放安全键（`code_runner` 的 `safeEnv()` 只保留 `PATH`、`LANG` 等）。注意该白名单**仅在沙箱路径真正生效**：`sandbox.mode=none` 时执行走 process 服务，`env` 被叠加在宿主全量环境之上（叠加语义，非替换），不构成隔离。
 
 provider 实现必须落实这三条强制语义；consumer 也必须传一个收紧的 `policy`（`fsWrite` 最小化、默认 `network: 'deny'`、`env` 白名单），这些语义才有意义。
 
