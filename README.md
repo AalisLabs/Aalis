@@ -32,7 +32,7 @@ Aalis 处于 **0.x 阶段**——核心机制已可用、作者长期自用，�
 
 - **`@aalis/core`** 稳定性承诺**自 1.0 起生效**（条款见 [core 语义契约](docs/design/core-contract.md)）；1.0 之前次版本可含破坏性变更，迁移路径记在 [CHANGELOG](CHANGELOG.md)。插件把 core 设为 `peerDependencies: ">=0.9.0 <1.0.0"`（用了哪版的 API 就把下限写到哪版），**不要用 caret 锁死**。
 - **但这条承诺只覆盖 `@aalis/core` 本身。** `@aalis/plugin-*-api` 等**契约包不在其内**——服务接口、类型、工具定义形状在 0.x 期间**可能改签名、增删字段、重命名导出**。**第三方开发者请勿把当前契约当成冻结的稳定面**：跟随 `CHANGELOG.md`、预期需要适配，对所依赖的 `*-api` 用宽松区间。
-- 仍有少量已知功能项（见 [开发进度](#开发进度) 与 issues），欢迎 issue / PR。
+- 仍有少量已知功能项（见 [docs/roadmap/](docs/roadmap/README.md) 与 issues），欢迎 issue / PR。
 
 > 想要冻结的稳定承诺？等 1.0。当前阶段更适合“愿意跟着迭代”的早期采用者。
 
@@ -319,74 +319,6 @@ outputFormat:
 | **其他** | persona / authority / websearch-serper / office / file-reader / image-recognition / okx-trading / scheduler / todo-list / skills / mcp … 见目录 |
 
 > API 契约（跨插件服务接口）见 [`docs/api/`](docs/api/)。
-
-## TODO
-
-- [ ] 数据库定时清理/压缩策略（按 TTL 或条数上限淘汰旧消息）
-- [ ] 反向 WebSocket 支持（OneBot 适配器）
-- [ ] 更多平台适配器（Discord、Telegram 等）
-
-已知缺陷与未来规划均记录在 **[docs/roadmap/](docs/roadmap/README.md)**——每条经实测
-确认、附 `file:line` 根因与修法方向：
-
-| 主题 | 一句话 | 状态 |
-|---|---|---|
-| [Koishi 兼容层](docs/roadmap/koishi-compat.md) | 嵌入真实 Koishi 内核让其插件直接运行 | 已验证可行，待实施 |
-
-## 开发进度
-
-### ✅ 已完成
-
-- [x] 核心框架（服务 IoC + 多提供者选择 + 事件总线 + 响应式插件生命周期）
-- [x] 配置管理（YAML + 启动时自动同步插件默认值）
-- [x] 工具注册表（OpenAI function calling 格式 + 权限系统 + 安全等级）
-- [x] 默认 Agent（消息编排 + 工具循环 + 五阶段上下文裁剪 + 压缩后延续提示）
-- [x] DeepSeek LLM 插件（深度思考 + 工具调用 + 流式输出）
-- [x] OpenAI-compatible LLM 插件
-- [x] Ollama 本地模型 LLM 插件
-- [x] 角色卡插件（结构化 JSON 输出 + 强制格式校验）
-- [x] SQLite / MongoDB / 内存消息记忆插件
-- [x] LLM 对话摘要压缩插件（30 条触发，保留 20 条最新）
-- [x] 向量语义记忆插件（自动注入语义相关历史到 system prompt）
-- [x] Ollama / OpenAI Embedding 插件
-- [x] LanceDB / 平面文件向量存储插件
-- [x] 会话管理器（会话树、平台配置继承、会话生命周期事件）
-- [x] 子任务系统（create_subtask / wait_subtasks 并行执行）
-- [x] 定时调度（Cron / 固定间隔，绕过速率控制主动执行）
-- [x] 待办事项管理（会话级任务跟踪）
-- [x] AI 技能系统（YAML 自学习技能库 + 模板参数化）
-- [x] 系统工具集（Shell / 文件 / 系统 / HTTP，含 SSRF 防护）
-- [x] Puppeteer 浏览器自动化（导航 / 截图 / 点击 / 输入）
-- [x] 代码执行工具（Python + JavaScript，超时与输出限制）
-- [x] 数学计算工具集（10 类：表达式 / 统计 / 矩阵 / 数论 / 几何 / 金融等）
-- [x] Office 文档操作（Word / Excel / PPT / PDF，支持子任务协同）
-- [x] 多格式文件上传读取（MIME 检测，20MB 限制）
-- [x] 图像视觉识别（自动模型选择，多模态消息）
-- [x] Serper 联网搜索插件
-- [x] OKX 交易所接口（行情 / 账户 / 下单，模拟/实盘模式）
-- [x] OneBot v11/v12 协议适配器（WebSocket 多连接 + 自动重连）
-- [x] OneBot 群管工具（禁言 / 踢人 / 昵称 / 戳一戳）
-- [x] CLI 终端对话插件
-- [x] Web 管理界面（实时对话 + 流式输出 + 流恢复 + 插件配置 + 文件管理 + 日志流）
-- [x] 交互式 tool call 显示（对话与思考中内联展示工具调用过程）
-- [x] 插件自动发现（扫描 packages/ 目录，无需手动声明依赖）
-- [x] 优雅降级（Memory / Agent 缺失时自动 fallback）
-- [x] 权限系统（多级权限 + 时限白名单 + 平台级确认 + 高危操作拦截）
-
-### 🔲 计划中
-
-- [ ] 热重载支持（部分已实现）
-- [ ] 更多 LLM 接口（Gemini 等）
-- [ ] npm 包发布与第三方插件生态
-- [ ] **Koishi 插件兼容层**：嵌入真实 koishi 内核而非重新实现其 API（PoC 已验证
-      可行：装载 `@koishijs/plugin-echo` / `plugin-repeater` / `koishi-plugin-novelai`
-      端到端跑通，冷启动到首条消息往返 6.8ms）。形态为一个桥插件 + `data/` 下的
-      独立 koishi 沙盒（自身是 npm project，主仓零 koishi 依赖）；指令挂 `/koishi`
-      命名空间；市场加 Koishi 来源（按 `koishi-plugin` 关键词检索，与 `aalis-*`
-      分类天然隔离）。两个已知坑：koishi 的 ESM 入口有 CJS interop 缺陷必须走
-      `createRequire`；`ctx.stop()` 是终态，热重载只能重建 Context。
-- [ ] **`/help` 权限过滤**：概览与详情按调用者能力裁剪（见「指令系统」已知缺陷）。
-- [ ] **结构化存储层**：替代当前拿 KV 硬顶结构化数据的现状（见「存储层」）。
 
 ## 许可证
 
