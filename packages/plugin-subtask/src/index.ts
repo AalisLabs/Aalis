@@ -180,17 +180,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         });
 
         // 异步派发任务消息，触发 agent 处理（不等待完成）
-        ctx
-          .emit('inbound:message', {
-            content: task,
-            sessionId: child.id,
-            platform: callCtx.platform || 'internal',
-            userId: `parent:${parentId}`,
-            nickname: undefined,
-          } satisfies IncomingMessage)
-          .catch(err => {
-            ctx.logger.warn(`子任务消息派发失败 (${child.id}):`, err);
-          });
+        const incoming: IncomingMessage = {
+          content: task,
+          sessionId: child.id,
+          platform: callCtx.platform || 'internal',
+          userId: `parent:${parentId}`,
+          nickname: undefined,
+        };
+        // 授权身份透传（schema-message 的 actor 契约）：userId 是归档用的物理来源标记
+        //（authority 查不到 `parent:*`，等价匿名），授权身份走 actor——子任务工具以创建者的
+        // 权限等级执行。只透传不发明：callCtx 匿名则子任务同样匿名（defaultAuthority）。
+        if (callCtx.platform && callCtx.userId) {
+          incoming.actor = { platform: callCtx.platform, userId: callCtx.userId };
+        }
+        ctx.emit('inbound:message', incoming).catch(err => {
+          ctx.logger.warn(`子任务消息派发失败 (${child.id}):`, err);
+        });
 
         return JSON.stringify({
           subtaskId: child.id,
