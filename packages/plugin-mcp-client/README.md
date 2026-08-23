@@ -8,8 +8,9 @@
 - 工具名会加前缀 `mcp_<server-id>_<tool-name>` 避免与本地工具命名冲突
 - 每个 server 注册一个工具分组 `mcp:<server-id>`，可在 platform 配置中按需启用
 - `ctx.onDispose` 注册了 client 关闭回调，插件卸载时自动断开
-- 工具的 `safety` / `authority` 由 config 中按 server 配置，**默认 `safe`**——
-  对接 filesystem / shell 等高危 server 时务必显式设为 `dangerous`
+- 工具档位默认 `auto`——按 MCP 工具注解分档：自称只读（`readOnlyHint`）→ `sensitive`
+  （等级 1），有破坏提示或未声明 → `restricted`（等级 2，未知按可破坏算）。
+  server 级 `visibility` 可显式覆盖为 `public` / `sensitive` / `restricted`
 
 ## 配置示例
 
@@ -27,13 +28,12 @@ plugins:
       - id: fs
         command: npx
         args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
-        safety: dangerous   # 文件系统访问视为高危
-        authority: 3
+        visibility: restricted   # 显式收紧：文件系统访问全部按等级 2
 ```
 
 ## 依赖
 
-- `@modelcontextprotocol/sdk` ^1.0.4
+- `@modelcontextprotocol/sdk`
 - inject.required: `tools`（api-tools / plugin-tools）
 
 ## 注意

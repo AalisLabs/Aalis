@@ -49,12 +49,12 @@ declare module '@aalis/core' {
 
 | 包 | 端点 | 说明 |
 |---|---|---|
-| `@aalis/plugin-embedding-openai` | `POST {baseUrl}/v1/embeddings` | OpenAI 兼容接口，默认 `text-embedding-3-small` |
+| `@aalis/plugin-embedding-openai` | `POST {baseUrl}/embeddings（baseUrl 为完整前缀，含版本段）` | OpenAI 兼容接口，默认 `text-embedding-3-small` |
 | `@aalis/plugin-embedding-ollama` | `POST {baseUrl}/api/embed`（新）或 `/api/embeddings`（旧） | 本地 Ollama，默认 `nomic-embed-text` |
 
 OpenAI 实现（`packages/plugin-embedding-openai/src/index.ts`）：
 - `embed`：取响应 `data.data[0].embedding`；失败抛 `Error`，不静默。
-- `listModels`：拉 `/v1/models`，失败返回 `[]`。
+- `listModels`：拉 `{baseUrl}/models`，失败返回 `[]`。
 - 注册：`ctx.provide('embedding', service, { label: \`OpenAI / ${model}\` })`。
 
 Ollama 实现（`packages/plugin-embedding-ollama/src/index.ts`）：
@@ -211,7 +211,7 @@ const vec = await embedding.embed(text);
 - **「注册成功 ≠ 可用」**：连通性自检失败只 warn（§3），服务照样注册。消费者第一次 `embed` 才会真正暴露端点不可达 / key 错误，要做好首调错误处理。
 - **无批量 API**：契约只有单条 `embed`。大批量索引靠消费者并发，注意限流（memory-vector 的 `indexing.concurrency` / `maxQueueSize`）以免压垮本地服务。
 - **`listModels` 语义弱**：Ollama 实现把 `/api/tags` 的**所有**模型都返回（未真正过滤 embedding 类，见 `ollama/src/index.ts` 的注释「没有特征可辨别就全返回」），下拉里会混入非 embedding 模型，用户可能选错。
-- **OpenAI 端点形态固定**：openai provider 硬编码 `/v1/embeddings` 路径，仅适配 OpenAI 兼容协议；非兼容服务要单独写 provider。
+- **OpenAI 端点路径固定**：openai provider 在 `baseUrl`（完整前缀）后拼 `/embeddings`，仅适配 OpenAI 兼容协议；非兼容服务要单独写 provider。
 - **维度漂移**（承 §6）：换模型后老向量与新查询向量不可比，余弦相似度结果无意义；这是运维层最常见的问题，文档 / 配置项应显式提醒重建。
 
 ## 8. 交叉链接

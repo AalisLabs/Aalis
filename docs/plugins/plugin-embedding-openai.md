@@ -29,4 +29,4 @@ meta.inject = {} // 无依赖
 - `listModels()` 从 `/models` 获取可用模型
 - apiKey 缺失时抛错
 - 启动时连通性检查（失败仅警告，不阻塞启动）
-- 修改 `baseUrl` 可对接兼容 OpenAI 格式的其他 Embedding 服务
+- 修改 `baseUrl` 可对接兼容 OpenAI 格式的其他 Embedding 服务（须写到完整前缀，如 `http://host/v1`）
