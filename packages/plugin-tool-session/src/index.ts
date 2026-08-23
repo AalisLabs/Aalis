@@ -794,13 +794,14 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
         source: `proactive:from:${callCtx.sessionId}`,
         triggerType: 'proactive',
       };
-      // 授权身份透传（schema-message 的 actor 契约）：目标 agent 构造 ToolCallContext 时优先读 actor，
-      // authority 按发起者 (platform, userId) 实时查等级——权限跟人走。
-      // 只透传不发明：强制从 callCtx snapshot、绝不从 args 读（防 LLM 指定身份提权，同 scheduler 范式）；
-      // callCtx 匿名则目标同样匿名（defaultAuthority）。
-      if (callCtx.platform && callCtx.userId) {
-        incoming.actor = { platform: callCtx.platform, userId: callCtx.userId };
-      }
+      // 授权身份透传（schema-message 的 actor 契约）：authority 按发起者 (platform, userId)
+      // 实时查等级——权限跟人走。优先 callCtx.actor（本回合已在代人执行时链式传递），
+      // 否则用物理身份。只透传不发明：强制从 callCtx snapshot、绝不从 args 读
+      // （防 LLM 指定身份提权，同 scheduler 范式）；callCtx 匿名则目标同样匿名。
+      const delegateActor =
+        callCtx.actor ??
+        (callCtx.platform && callCtx.userId ? { platform: callCtx.platform, userId: callCtx.userId } : undefined);
+      if (delegateActor) incoming.actor = delegateActor;
 
       const taskPreview =
         task.length > 80 ? `${task.slice(0, 80)}... (+${task.length - 80}字，全文已完整传递给目标会话)` : task;

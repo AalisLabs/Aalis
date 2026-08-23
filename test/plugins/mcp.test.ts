@@ -70,7 +70,10 @@ class FakeToolService implements ToolService {
       name: t.definition.function.name,
       description: t.definition.function.description,
       pluginName: t.pluginName,
-      visibility: t.visibility ?? 'public',
+      // 镜像真实 ToolService 的 resolveCapabilityPolicy：risk 声明会展开为 restricted
+      // 可见性（sensitive/dangerous → restricted）。此前替身忽略 risk、恒回落 public，
+      // 与生产相反——mcp 桥接工具改为按注解分档（risk-only 注册成为主线）后该分歧吃重。
+      visibility: t.visibility ?? (t.risk === 'sensitive' || t.risk === 'dangerous' ? 'restricted' : 'public'),
       groups: t.groups,
     }));
   }
@@ -268,6 +271,14 @@ describe('plugin-mcp-client — bridgeClientToTools 把远端 MCP 工具注册�
           description: '问好',
           inputSchema: { type: 'object', properties: { who: { type: 'string' } }, required: ['who'] },
         },
+        {
+          name: 'lookup',
+          description: '只读查询',
+          inputSchema: { type: 'object', properties: {} },
+          // 钉住 annotations 经真实 SDK 原样到达并被分档消费（sensitive 分支是活代码）：
+          // 若未来 spec/SDK 剥掉注解，此处会静默全落 restricted，该断言即红。
+          annotations: { readOnlyHint: true },
+        },
       ],
     }));
     server.setRequestHandler(CallToolRequestSchema, async req => {
@@ -292,18 +303,25 @@ describe('plugin-mcp-client — bridgeClientToTools 把远端 MCP 工具注册�
     await bridgeClientToTools(makeFakeCtx(tools), client, { id: 'remote', command: '<irrelevant>' });
 
     const registered = tools.list();
-    expect(registered).toHaveLength(1);
-    const t = registered[0];
-    expect(t.definition.function.name).toBe('mcp_remote_greet');
-    expect(t.definition.function.parameters).toMatchObject({
+    expect(registered).toHaveLength(2);
+    const t = registered.find(r => r.definition.function.name === 'mcp_remote_greet');
+    expect(t).toBeDefined();
+    expect(t?.definition.function.parameters).toMatchObject({
       type: 'object',
       properties: { who: { type: 'string' } },
       required: ['who'],
     });
-    expect(t.groups).toEqual(['mcp:remote']);
+    expect(t?.groups).toEqual(['mcp:remote']);
     // 3481c6bd 起桥接工具不再默认 public：未带 annotations 的远端工具按「未知即可破坏」
     // 失败关闭到 restricted（分档规则见 plugin-mcp-client 的 tier 推导注释）。
-    expect(t.visibility).toBe('restricted');
+    expect(t?.visibility).toBe('restricted');
+    expect(t?.risk, '两轴互斥：restricted 不得带 risk（防遮蔽降档）').toBeUndefined();
+    // 自称只读的工具经真实 SDK 送达注解 → sensitive（等级 1）。此断言同时钉住
+    // 「annotations 会被 listTools 原样透传」——SDK/spec 变动剥掉注解时会在此转红。
+    const ro = registered.find(r => r.definition.function.name === 'mcp_remote_lookup');
+    expect(ro).toBeDefined();
+    expect(ro?.risk).toBe('sensitive');
+    expect(ro?.visibility).toBeUndefined();
 
     await client.close();
     await server.close();

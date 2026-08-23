@@ -238,7 +238,7 @@ process 是框架里**权限最高的能力**之一（任意子进程 = 完整�
 process 本身**没有内核级鉴权门**——风险控制落在**调用它的工具**上。把 process 暴露给 LLM 的工具，要在工具层按 [鉴权模型](../concepts/security-model.md) / [authority](../plugins/plugin-authority.md) 设门：
 
 - 任意 shell 命令是最强的 confused-deputy 向量。`plugin-tool-system` 的 `exec` / `exec_background` / `process_kill` 都设 `visibility: 'restricted'` + `confirm: 'session'`——**连 owner 也要本会话确认一次**（`shell.ts`、`:376-377`）。你的工具若直通 `spawn`，应比照此设级别 + 确认。
-- shell 工具用 `safeEnv()` 只透传白名单环境变量（PATH/LANG/TERM 等），不暴露宿主全量 env（`shell.ts`）。注意这是工具自己做的——**`SpawnOptions.env` 不传时本地实现默认 `{ ...process.env, ...opts.env }` 继承全量宿主 env**（`plugin-process-local/src/index.ts`），敏感场景请显式传白名单 env。
+- shell 工具（exec/exec_background）**继承宿主完整环境**（含代理与密钥类变量）——owner 工具的既定取舍（2026-08 拍板；曾有的 env 白名单因本地实现无条件合并从未生效，已删除）。本地实现对 `SpawnOptions.env` 的语义是**叠加**（`{ ...process.env, ...opts.env }`）而非替换——传白名单不构成隔离。需要环境隔离的执行走 code-sandbox-os（`env -i` 真清）。
 
 ### 不是沙箱
 

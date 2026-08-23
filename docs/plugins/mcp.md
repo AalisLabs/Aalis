@@ -15,14 +15,14 @@ Aalis 内部的 `ToolService` 抽象与 MCP 协议是同构的：
 | ------------------------------------------------- | -------------------- |
 | `ToolDefinition` (OpenAI shape, parameters=JSON Schema) | `tool` (inputSchema) |
 | `ToolService.execute(name, args, ctx)`            | `tools/call`         |
-| `RegisteredTool.visibility`                       | client 侧手工管控     |
+| `RegisteredTool.visibility`/`risk`                | client 侧按注解自动分档（server 配置可覆盖） |
 | `Context.capability` / service                    | MCP capabilities     |
 
 因此两侧只是适配层薄壁封装（client ~200 行；server ~230 行）。
 
 ## 安全边界
 
-- **plugin-mcp-client**：外部 server 是不受信任的第三方进程，工具的 `visibility` 由 config 中按 server 配置，**默认 `public`**——对接 filesystem / shell 类务必显式设为 `restricted`
+- **plugin-mcp-client**：外部 server 是不受信任的第三方进程，工具档位默认 `auto`——按工具注解分档：自称只读（readOnlyHint）→ sensitive（等级 1），有破坏提示或未声明→ restricted（等级 2）。确认纯查询类 server 才显式放宽为 `public`
 - **plugin-mcp-server**：默认 `bind: 127.0.0.1` + `allowRestricted: false`，`ListTools` 与 `CallTool` 两端都过滤 restricted；工具执行仍走 Aalis 完整能力统一闸
 
 ## 工具命名
@@ -35,7 +35,7 @@ Client 端工具名采用 `mcp_<server-id>_<tool-name>` 前缀避免冲突；非
 
 1. **LLM tool-calling 阶段**：agent（如 plugin-agent）调用 `useToolService(ctx).getDefinitions({ groups })` 拼装 `tools` 参数发给模型；MCP 工具与 `file_read` / `bash` 等本地工具混在同一个数组里返给 LLM
 2. **执行阶段**：LLM 返回 `tool_call { name: 'mcp_<id>_<tool>', arguments }` → `ToolService.execute()` 找到注册的 handler → handler 内部走 MCP `client.callTool({...})` → 远端 server 返回 content → 文本化后回到 agent
-3. **权限/安全**：工具 `visibility` 由 server config 中按条目设置（默认 `public`），执行前会走 Aalis 标准的 ExecutionGuard
+3. **权限/安全**：工具档位由 server config 按条目设置（默认 `auto`，按注解分档），执行前会走 Aalis 标准的 ExecutionGuard
 
 也就是说：**agent 既不知道也不需要知道**这条工具是不是来自 MCP。配置上线后无需修改任何 agent 代码。
 

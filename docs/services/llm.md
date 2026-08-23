@@ -71,7 +71,7 @@ interface ChatModelRequest {
 ## 3. 谁提供 / 谁消费
 
 **参考实现（provider）**：
-- `@aalis/plugin-llm-openai`（`packages/plugin-llm-openai/src/index.ts`）——OpenAI 兼容 `/v1/chat/completions`，远端动态发现 + 实现 `refresh`。
+- `@aalis/plugin-llm-openai`（`packages/plugin-llm-openai/src/index.ts`）——OpenAI 兼容 `chat/completions`（`baseUrl` 为完整前缀，含版本段），远端动态发现 + 实现 `refresh`。
 - `@aalis/plugin-llm-deepseek`（`packages/plugin-llm-deepseek/src/index.ts`）——DeepSeek，含 thinking / reasoning_effort / DSML 泄漏恢复。
 - `@aalis/plugin-llm-ollama`（`packages/plugin-llm-ollama/src/index.ts`）——本地 Ollama，`/api/show` 真实能力探测 + 音频改路 OpenAI 兼容端点。
 

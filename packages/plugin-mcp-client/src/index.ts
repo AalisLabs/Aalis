@@ -208,6 +208,8 @@ function registerSelfServiceTools(ctx: Context): void {
           id: typeof r.id === 'string' ? r.id : `(\u7f3a\u5931 id)`,
           command: typeof r.command === 'string' ? r.command : '',
           enabled: r.enabled !== false,
+          // \u6863\u4f4d\u662f\u6838\u5fc3\u5b89\u5168\u65cb\u94ae\uff0c\u5217\u8868\u987b\u53ef\u89c1\uff08\u53ea\u8bfb\u56de\u663e\uff0c\u4e0d\u542b env/args \u7b49\u654f\u611f\u9879\uff09
+          visibility: typeof r.visibility === 'string' ? r.visibility : 'auto',
         };
       });
       return JSON.stringify(list, null, 2);

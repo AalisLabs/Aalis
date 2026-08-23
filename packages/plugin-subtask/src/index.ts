@@ -189,10 +189,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         };
         // 授权身份透传（schema-message 的 actor 契约）：userId 是归档用的物理来源标记
         //（authority 查不到 `parent:*`，等价匿名），授权身份走 actor——子任务工具以创建者的
-        // 权限等级执行。只透传不发明：callCtx 匿名则子任务同样匿名（defaultAuthority）。
-        if (callCtx.platform && callCtx.userId) {
-          incoming.actor = { platform: callCtx.platform, userId: callCtx.userId };
-        }
+        // 权限等级执行。优先 callCtx.actor（链式），否则物理身份；匿名则子任务同样匿名。
+        const createActor =
+          callCtx.actor ??
+          (callCtx.platform && callCtx.userId ? { platform: callCtx.platform, userId: callCtx.userId } : undefined);
+        if (createActor) incoming.actor = createActor;
         ctx.emit('inbound:message', incoming).catch(err => {
           ctx.logger.warn(`子任务消息派发失败 (${child.id}):`, err);
         });
@@ -333,17 +334,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
 
       // 派发消息
-      ctx
-        .emit('inbound:message', {
-          content: message,
-          sessionId: subtaskId,
-          platform: callCtx.platform || 'internal',
-          userId: `parent:${callCtx.sessionId}`,
-          nickname: undefined,
-        } satisfies IncomingMessage)
-        .catch(err => {
-          ctx.logger.warn(`向子任务发送消息失败 (${subtaskId}):`, err);
-        });
+      const followUp: IncomingMessage = {
+        content: message,
+        sessionId: subtaskId,
+        platform: callCtx.platform || 'internal',
+        userId: `parent:${callCtx.sessionId}`,
+        nickname: undefined,
+      };
+      // 授权身份透传：与 create_subtask 同源。缺了这一处会造成同一子任务会话的权限
+      // 在轮次间跳变——创建轮有创建者等级、追问轮掉回匿名（2026-08-24 审计）。
+      const followUpActor =
+        callCtx.actor ??
+        (callCtx.platform && callCtx.userId ? { platform: callCtx.platform, userId: callCtx.userId } : undefined);
+      if (followUpActor) followUp.actor = followUpActor;
+      ctx.emit('inbound:message', followUp).catch(err => {
+        ctx.logger.warn(`向子任务发送消息失败 (${subtaskId}):`, err);
+      });
 
       return JSON.stringify({
         subtaskId,
