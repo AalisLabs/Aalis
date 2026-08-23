@@ -8,7 +8,15 @@
 
 ---
 
-## 未发布
+## 2026-08-24（无 core 变更；各包独立版号）
+
+本批 19 包：api-tools 0.7.0 / api-authority 0.6.0 / plugin-tools 0.6.0 /
+plugin-authority 0.11.0 / plugin-agent 0.11.0 / plugin-scheduler 0.10.0 /
+plugin-workflow 0.10.0 / plugin-tool-session 0.10.0 / plugin-subtask 0.11.0 /
+plugin-llm-openai 0.10.0 / plugin-llm-deepseek 0.11.0 / plugin-embedding-openai 0.10.0 /
+plugin-mcp-client 0.10.0 / plugin-user-relation 0.12.0 /
+plugin-tool-system 0.9.5 / plugin-webui-client 0.12.1 / api-process 0.5.2 /
+api-llm 0.10.1 / plugin-tool-code-runner 0.9.3。
 
 ### llm-openai / embedding-openai / llm-deepseek：baseUrl 语义改为「完整前缀」
 
