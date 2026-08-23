@@ -174,6 +174,7 @@ export class ToolRegistry implements ToolService {
         sessionId: callCtx.sessionId,
         platform: callCtx.platform ?? 'unknown',
         userId: callCtx.userId,
+        actor: callCtx.actor,
         args,
       });
       if (denied) {

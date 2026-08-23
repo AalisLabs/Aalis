@@ -101,8 +101,9 @@ export class MockLLMService implements LLMModel {
       if (this.opts.latencyMs > 0) await new Promise(r => setTimeout(r, this.opts.latencyMs));
       yield { contentDelta: text.slice(i, i + 4) };
     }
-    if (resp.toolCalls) yield { toolCalls: resp.toolCalls };
-    yield { done: true, usage: resp.usage };
+    // 与真实 provider 的流契约对齐（ollama/openai 均把最终 toolCalls 挂在 done chunk 上，
+    // agent 的 consumeStream 也只从 done chunk 读取）；单独 yield {toolCalls} 会被丢弃。
+    yield { done: true, usage: resp.usage, ...(resp.toolCalls ? { toolCalls: resp.toolCalls } : {}) };
   }
 }
 

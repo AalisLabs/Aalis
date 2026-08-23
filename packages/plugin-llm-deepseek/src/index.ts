@@ -234,7 +234,7 @@ class DeepSeekClient {
 
   constructor(config: DeepSeekConfig, logger: Context['logger']) {
     this.apiKey = config.apiKey;
-    this.baseUrl = config.baseUrl.replace(/\/$/, '');
+    this.baseUrl = config.baseUrl.replace(/\/+$/, '');
     // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
     this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
     this.temperature = config.temperature;

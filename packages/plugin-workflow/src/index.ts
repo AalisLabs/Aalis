@@ -412,13 +412,15 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         runId,
         triggerSource,
         vars,
-        // 运行时身份：经 workflow_run 工具触发时透传【调用者】身份，使工作流内部工具
-        // 按【调用者】的权限等级过 authority 闸（而非匿名 level-0）；owner 定义、谁调按谁裁决，
-        // 杜绝借他人 workflow 提权。cron/event/webui 触发无调用者 → 保持匿名（仅能跑 public 工具）。
+        // 运行时身份：经 workflow_run 工具触发时以 actor 透传【调用者】授权身份，使工作流
+        // 内部工具与 agent/send_message 节点按【调用者】的权限等级过 authority 闸（而非匿名
+        // level-0）；owner 定义、谁调按谁裁决，杜绝借他人 workflow 提权。platform 保持
+        // 'workflow' 会话语义（不再借调用者平台——那会污染定时任务归属/confirm 选路等分流）。
+        // cron/event/webui 触发无调用者 → 保持匿名（仅能跑 public 工具）。
         toolCallContext: {
           sessionId: `workflow::${workflowId}`,
-          platform: caller?.platform ?? 'workflow',
-          userId: caller?.userId,
+          platform: 'workflow',
+          actor: caller?.platform && caller?.userId ? { platform: caller.platform, userId: caller.userId } : undefined,
         },
         cancelToken,
         onNodeDone: (info: NodeRunInfo) => {
@@ -606,11 +608,12 @@ function registerTools(ctx: Context, service: WorkflowService): void {
     handler: async (args, callCtx) => {
       try {
         // 透传调用者身份：工作流内部工具按调用者权限跑（owner 定义、谁调用按谁的档位裁决）。
+        // 优先 callCtx.actor（本回合已在代人执行时链式传递），否则物理身份。
         const run = await service.runWorkflow(
           String(args.id),
           (args.vars as Record<string, unknown>) ?? {},
           'manual:tool',
-          { platform: callCtx.platform, userId: callCtx.userId },
+          callCtx.actor ?? { platform: callCtx.platform, userId: callCtx.userId },
         );
         return JSON.stringify({
           ok: true,

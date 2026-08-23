@@ -130,10 +130,16 @@ export interface ExecutionGuardContext {
   confirm?: CapabilityConfirm;
   /** 会话 ID */
   sessionId: string;
-  /** 来源平台 */
+  /** 来源平台（会话语义：confirm 通道按它选路；等级判定见 actor） */
   platform: string;
-  /** 用户 ID */
+  /** 用户 ID（物理发言者；等级判定见 actor） */
   userId?: string;
+  /**
+   * 授权身份（缺省 = platform/userId 本身）：等级裁决（authorize）与 owner 的
+   * 自动确认跳过按它评估；confirm 通道选路与临时授予查找仍按会话身份——
+   * 委派回合里发起者的临时授予因此不可用（fail-safe，宁缺勿错）。
+   */
+  actor?: { platform: string; userId: string };
   /** 操作参数 */
   args?: Record<string, unknown>;
   /**

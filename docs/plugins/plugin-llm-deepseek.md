@@ -20,7 +20,7 @@ meta.inject = {} // 无依赖
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `apiKey` | string | — | API 密钥（必填，secret） |
-| `baseUrl` | string | `https://api.deepseek.com` | API 基地址 |
+| `baseUrl` | string | `https://api.deepseek.com` | API 端点完整前缀（官方无版本段；指向第三方 `/v1` 网关需自带 `/v1`） |
 | `model` | select | `deepseek-chat` | 模型名（动态选项来源: llm） |
 | `temperature` | number | 0.7 | 采样温度 |
 | `maxTokens` | number | 8192 | 最大生成 token 数 |

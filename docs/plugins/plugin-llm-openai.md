@@ -32,4 +32,4 @@ meta.inject = {} // 无依赖
 
 - **SSE 流式**: `chatStream()` 解析 SSE 事件流，累积 tool_calls delta
 - **动态模型列表**: `listModels()` 从 `/models` 获取可用模型
-- **兼容性**: 修改 `baseUrl` 可对接 Ollama、vLLM、LocalAI 等兼容服务
+- **兼容性**: 修改 `baseUrl` 可对接 Ollama、vLLM、LocalAI 等兼容服务——须写到完整前缀（如 `http://localhost:11434/v1`）。注意 plugin-llm-ollama 自身的 `baseUrl` 语义不同（服务器根地址，插件走原生 /api/chat）

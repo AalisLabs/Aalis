@@ -157,6 +157,9 @@ async function execSendMessage(node: SendMessageNodeSpec, ec: ExecCtx): Promise<
     platform,
     source: `workflow:${ec.workflowId}`,
   };
+  // 授权身份透传：与 tool 节点同源（run 级调用者），目标会话按调用者等级执行；
+  // 无调用者（cron/event 触发）保持匿名。
+  if (ec.toolCallContext.actor) message.actor = ec.toolCallContext.actor;
   await ec.ctx.emit('inbound:message', message);
   return `sent to ${sessionId}@${platform} (${content.length} chars)`;
 }
@@ -215,6 +218,9 @@ async function execAgent(node: AgentNodeSpec, ec: ExecCtx): Promise<string> {
     platform,
     triggerType: 'proactive',
   };
+  // 授权身份透传：同一次 run 里 tool 节点带调用者身份而 agent 节点匿名是自相矛盾
+  // （2026-08-24 审计），与 execSendMessage 同源补齐；无调用者保持匿名。
+  if (ec.toolCallContext.actor) incoming.actor = ec.toolCallContext.actor;
 
   const timeoutHandle = setTimeout(() => resolveWait?.(), timeoutMs);
   try {

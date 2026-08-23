@@ -16,7 +16,8 @@ export interface RunnerConfig {
   maxOutputSize: number;
   /** 子进程 cwd（已通过 storage.resolveLocalPath 解析的本地路径） */
   cwd: string;
-  /** 透传给子进程的环境变量；不提供时由 ProcessService 默认合入 process.env */
+  /** 透传给子进程的环境变量。仅沙箱路径（env -i 真清）构成白名单隔离；
+   *  非沙箱路径走 process-local，env 被**叠加**在宿主全量环境之上（提供与否都合并），无隔离作用 */
   env?: Record<string, string | undefined>;
   /**
    * 沙箱：给定即要求 OS 隔离（写白名单 = [cwd, 本次临时目录]、网络按 network、env 仅白名单）；
