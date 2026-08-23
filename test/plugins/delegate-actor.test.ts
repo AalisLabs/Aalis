@@ -86,6 +86,32 @@ describe('delegate_to_session actor 透传', () => {
     expect(emitted[0].payload.actor).toBeUndefined();
   });
 
+  it('链式委派：callCtx.actor 优先于物理身份（A 替 X 运行时再委派，X 一路传递）', async () => {
+    const { handlers, emitted } = setup();
+    const handler = handlers.get('delegate_to_session')!;
+
+    await handler(
+      { target_session_id: 'onebot:1:group:9', task: '去做某事', wait_for_result: false },
+      { sessionId: 'src', platform: 'onebot', userId: 'phys-sender', actor: { platform: 'webui', userId: 'console' } },
+    );
+    expect(emitted[0].payload.actor).toEqual({ platform: 'webui', userId: 'console' });
+  });
+
+  it('wait_for_result=true 分支：同一 incoming 对象，actor 同样在场（超时路径回归）', async () => {
+    const { handlers, emitted } = setup();
+    const handler = handlers.get('delegate_to_session')!;
+
+    const res = JSON.parse(
+      await handler(
+        { target_session_id: 'onebot:1:group:10', task: '去做某事', wait_for_result: true, timeout_seconds: 1 },
+        { sessionId: 'src', platform: 'onebot', userId: 'user-a' },
+      ),
+    );
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].payload.actor).toEqual({ platform: 'onebot', userId: 'user-a' });
+    expect(res.outcome ?? res.error ?? '').toBeDefined();
+  }, 8000);
+
   it('actor 只认 callCtx snapshot，LLM 工具入参无法指定身份（防提权）', async () => {
     const { handlers, emitted } = setup();
     const handler = handlers.get('delegate_to_session')!;

@@ -138,7 +138,7 @@ export interface LLMModel {
   /**
    * 让管理面板（webui）触发该 provider 重新探测远端模型列表并 diff 当前已注册 entries。
    *
-   * - **远端动态发现型** provider（Ollama / OpenAI）应实现：重新拉取 `/v1/models` 等
+   * - **远端动态发现型** provider（Ollama / OpenAI）应实现：重新拉取模型列表端点（如 `{baseUrl}/models`）等
    *   并合并 `customModels`、按 model id 增删 `'llm'` entries。
    * - **静态契约型** provider（如 DeepSeek 单 model）可不实现：webui 端检测到无 refresh
    *   就不显示"刷新"按钮。

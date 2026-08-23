@@ -853,10 +853,10 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         platform: (args.platform as string) || callCtx.platform || 'internal',
         // 安全关键：actor 强制从 callCtx snapshot，不从 args 读取。
         // 这样即使 LLM 在 prompt 中尝试伪造身份，也会被忽略——它只能以当前调用者的身份创建任务。
-        // callCtx.userId 可能为 undefined（如父任务也是匿名触发），此时子任务也匿名（defaultAuthority），
-        // 实现权限的自然传递与不可提升。
-        actorPlatform: callCtx.platform,
-        actorUserId: callCtx.userId,
+        // 优先 callCtx.actor（本回合本就在代人执行，如委派/子任务链），否则用物理身份；
+        // 两者皆空则子任务匿名（defaultAuthority），实现权限的自然传递与不可提升。
+        actorPlatform: callCtx.actor?.platform ?? callCtx.platform,
+        actorUserId: callCtx.actor?.userId ?? callCtx.userId,
         content: args.content as string,
         enabled: true,
       };

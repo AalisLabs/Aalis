@@ -61,7 +61,10 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
     const confOv = (ctx.config.get('confirmOverrides') ?? {}) as Record<string, CapabilityConfirm | 'off'>;
     const cOv = confOv[capability];
     const confirm = cOv === 'off' ? undefined : (cOv ?? g.confirm);
-    const identity = { platform: g.platform, userId: g.userId };
+    // 等级裁决按授权身份（actor 缺省即会话身份）；accessBase 保持会话身份——
+    // confirm 通道按 platform 选路必须落在会话所在平台，否则跨平台委派时
+    // 确认提示会发进无人订阅的发起者平台通道、超时自动拒。
+    const identity = g.actor ?? { platform: g.platform, userId: g.userId };
     const accessBase = {
       name: g.name,
       type: g.type,
@@ -95,7 +98,7 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
       const skip = shouldSkipConfirm({
         confirm,
         skipConfirm: !!g.skipConfirm,
-        isOwner: authority.isOwner(g.platform, g.userId),
+        isOwner: authority.isOwner(identity.platform, identity.userId),
         autoConfirmUntil: (ctx.config.get('autoConfirmUntil') as number) ?? 0,
         now: Date.now(),
       });

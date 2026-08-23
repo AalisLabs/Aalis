@@ -16,9 +16,11 @@
 与 plugin-asr-openai 的既有约定对齐；Gemini 等无 `/v1` 段的兼容端点
 （`https://generativelanguage.googleapis.com/v1beta/openai`）从此可直接配置。
 
-**迁移**：
-- llm-openai / embedding-openai：显式配置过 `baseUrl` 的在末尾补 `/v1`
-  （`https://api.openai.com` → `https://api.openai.com/v1`）；未配置的自动跟随新默认值。
+**迁移**（注意：config-sync 会在启动时把默认值物化进配置文件，所以不存在"未配置 baseUrl"的
+存量部署——所有跑过旧版的配置文件里都已写着旧默认值）：
+- llm-openai / embedding-openai：配置值恰为旧默认 `https://api.openai.com` 的，插件启动时
+  **自动就地升级**为 `https://api.openai.com/v1` 并打 warn，无需手动迁移；
+  自定义端点（聚合网关等）需自行在末尾补 `/v1`（如 `https://gateway.example` → `.../v1`）。
 - llm-deepseek：官方端点 `https://api.deepseek.com` 无需改动（无版本段形态本就是官方文档写法，
   `/models` 此前也不带 `/v1`）；指向第三方 `/v1` 网关的需在 `baseUrl` 补 `/v1`。
 
@@ -30,6 +32,24 @@ server 配置的 `visibility` 字段新增 `auto`（新默认）与 `sensitive` 
 
 **迁移**：需要恢复旧行为（群成员直接可用）的部署，在对应 server 配置里显式设
 `visibility: public`；已显式配置 `public`/`restricted` 的不受影响。
+
+### 授权身份（actor）贯穿工具调用链：委派/子任务/工作流不再匿名执行
+
+`ToolCallContext` 与 `ExecutionGuardContext` 新增可选 `actor` 字段（语义同
+`IncomingMessage.actor`）：等级裁决与 owner 自动确认跳过按 actor 评估；`platform`/`userId`
+恢复**会话/物理**语义（定时任务归属、平台档继承、记忆平台域、confirm 通道选路不再被
+发起者平台覆盖）。`delegate_to_session` / `create_subtask` / `send_to_subtask` /
+workflow 的 agent 与 send_message 节点现在都会透传发起者授权身份。
+
+**行为变化**：此前这些路径的目标回合以匿名（等级 0）执行；现在以**发起者等级**执行——
+依赖"子任务/委派天然低权"的部署需注意。actor 只从执行上下文 snapshot，LLM 无法经
+工具入参指定（防提权）；匿名发起者的目标回合仍为匿名。
+
+### user-relation：consolidate「落笔核实况」不变量
+
+真合并删除的节点不再被同 pass 的派生回写（embedding hash / summary / PageRank）复活；
+层级判定落边收进唯一入口（端点活性 + 实时查重 + 走门面）。无迁移动作——存量僵尸节点与
+重复边会在后续 consolidate 轮次中被正常清理/去重。
 
 ## 0.10.0
 

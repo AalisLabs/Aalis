@@ -13,6 +13,13 @@ import type { Context } from '@aalis/core';
 
 export interface SpawnOptions {
   cwd?: string;
+  /**
+   * 环境变量补丁——**叠加**在宿主 `process.env` 之上（同名覆盖），不是替换：
+   * 本地实现为 `{ ...process.env, ...env }`，传白名单**不构成隔离**（曾有消费方
+   * 误以为是替换语义、白名单从未生效，2026-08 已删）。第三方 provider 若实现为
+   * 严格替换，exec 类消费方的环境暴露面会随之变化——实现方须遵守叠加语义。
+   * 需要真隔离的执行走 code-sandbox 服务（env -i 清零后仅注入白名单）。
+   */
   env?: Record<string, string | undefined>;
   /** 超时（毫秒）；到时杀子进程 */
   timeout?: number;
