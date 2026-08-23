@@ -301,7 +301,9 @@ describe('plugin-mcp-client — bridgeClientToTools 把远端 MCP 工具注册�
       required: ['who'],
     });
     expect(t.groups).toEqual(['mcp:remote']);
-    expect(t.visibility ?? 'public').toBe('public');
+    // 3481c6bd 起桥接工具不再默认 public：未带 annotations 的远端工具按「未知即可破坏」
+    // 失败关闭到 restricted（分档规则见 plugin-mcp-client 的 tier 推导注释）。
+    expect(t.visibility).toBe('restricted');
 
     await client.close();
     await server.close();
