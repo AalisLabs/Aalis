@@ -34,7 +34,12 @@ async function setup() {
   app.ctx.provide('memory', fakeMemory() as never);
   await app.ctx.useModule(sessionManagerModule, {
     platformProfiles: [
-      { platform: 'onebot', persona: 'aalis', llm: { provider: '@aalis/plugin-llm-ollama', model: 'qwen3.6:35b-mlx' } },
+      {
+        platform: 'onebot',
+        persona: 'aalis',
+        llm: { provider: '@aalis/plugin-llm-ollama', model: 'qwen3.6:35b-mlx' },
+        think: true,
+      },
     ],
   });
   await app.plugins.idle();
@@ -77,6 +82,34 @@ describe('resolveConfig：null 与 undefined 同义（都表示继承上层）',
     const { app, sm } = await setup();
     const resolved = sm.resolveConfig('onebot:bot:group:never-seen', 'onebot');
     expect(resolved.llm).toEqual({ provider: '@aalis/plugin-llm-ollama', model: 'qwen3.6:35b-mlx' });
+    await app.stop();
+  });
+});
+
+describe('resolveConfig：think 会话覆盖（/session.set -t 的存储层契约）', () => {
+  it('think:false 是合法覆盖值，不被 strip——压过 profile 的 think:true', async () => {
+    const { app, sm } = await setup();
+    const id = 'onebot:bot:private:t1';
+    await sm.ensureSession(id, { config: { think: false } });
+    // 关键回归：false 是 falsy，stripUndefined 若误剥 falsy 值，这里会错误回落 profile 的 true
+    expect(sm.resolveConfig(id, 'onebot').think).toBe(false);
+    await app.stop();
+  });
+
+  it('清除覆盖（undefined 与 BSON 读回的 null）→ 回落 profile 的 think:true', async () => {
+    const { app, sm } = await setup();
+    const id = 'onebot:bot:private:t2';
+    await sm.ensureSession(id, { config: { think: false } });
+    await sm.ensureSession(id, { config: { think: undefined } });
+    expect(sm.resolveConfig(id, 'onebot').think, 'undefined 应回落 profile').toBe(true);
+    await sm.ensureSession(id, { config: { think: null } as never });
+    expect(sm.resolveConfig(id, 'onebot').think, 'null 与 undefined 同义').toBe(true);
+    await app.stop();
+  });
+
+  it('无 profile 的平台上未设置 think → resolved 不含 think（agent 不带 think 字段发请求）', async () => {
+    const { app, sm } = await setup();
+    expect(sm.resolveConfig('webui:someone', 'webui').think).toBeUndefined();
     await app.stop();
   });
 });

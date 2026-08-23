@@ -32,6 +32,14 @@ export interface SessionConfig {
   enabledToolGroups?: string[];
   /** 人格文件名（不含后缀，如 'aalis', 'aalis-webui', 'default'） */
   persona?: string;
+  /**
+   * 会话级 thinking 覆盖：true=强制开启深度思考，false=强制关闭；未设置=继承上层
+   * （平台 profile / 全局默认），最终落到各 provider 自己的全局配置。
+   * agent 将解析结果写入 ChatModelRequest.think；ollama 与 deepseek 原生支持请求级
+   * 覆盖，openai 兼容中转无对应参数、静默忽略。经 /session.set -t on|off 设置，
+   * /session.reset 复位。
+   */
+  think?: boolean;
   /** 额外系统提示（追加到人格提示之后） */
   systemPromptExtra?: string;
   /** 最大工具迭代次数覆盖 */
