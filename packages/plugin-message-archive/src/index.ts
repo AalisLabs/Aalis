@@ -93,6 +93,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const service: MessageArchiveService = {
     async saveMessage(sessionId: string, message: Message, options?: { debugLabel?: string }): Promise<void> {
       await getMemory().saveMessage(sessionId, message);
+      // assistant 回复落库后通知监听者（memory-vector 据此索引 AI 自身发言）。
+      // 只发「对外可见的回复」：带 toolCalls 的行是工具调用回合的内部前言
+      //（「我来查一下」），从未发给任何人，不该进语义记忆；tool/摘要等其他
+      // saveMessage 用途同理不发。core 的 emit 恒 resolve（per-handler try/catch），无需 catch。
+      if (message.role === 'assistant' && message.content?.trim() && !message.toolCalls?.length) {
+        void ctx.emit('assistant:message:archived', { sessionId, message });
+      }
       if (cfg.debugLogs && options?.debugLabel) {
         ctx.logger.debug(options.debugLabel);
       }

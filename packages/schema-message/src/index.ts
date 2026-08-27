@@ -16,6 +16,7 @@
 // 同时通过 declaration merging 将下列事件注入 `AalisEvents`：
 //   - 'inbound:message'
 //   - 'inbound:message:archived'
+//   - 'assistant:message:archived'
 //   - 'outbound:message'
 //   - 'outbound:stream'
 //
@@ -297,6 +298,11 @@ export interface StreamChunkMessage {
 declare module '@aalis/core' {
   interface AalisEvents {
     'inbound:message': [message: IncomingMessage];
+    /**
+     * assistant 回复已落库（来自 message-archive.saveMessage，仅 role='assistant' 且内容非空时发出）。
+     * 与 'inbound:message:archived' 对称，供派生索引（如向量记忆索引 AI 自身发言）订阅。
+     */
+    'assistant:message:archived': [data: { sessionId: string; message: Message }];
     /**
      * 入站消息已落库（来自 message-archive.archiveIncoming）。无论是否触发 agent 回复都会发出。
      *
