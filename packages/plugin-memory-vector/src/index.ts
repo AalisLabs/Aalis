@@ -92,6 +92,20 @@ export const configSchema: ConfigSchema = {
       },
     },
   },
+  recallRoles: {
+    type: 'select',
+    label: '召回角色范围',
+    default: 'all',
+    description:
+      'AI 自己的历史回复（role=assistant）是否作为语义命中参与召回。others-only 档过滤的是' +
+      '**命中点**（候选池自动放大一倍补偿）；命中点的上下文扩窗邻居不过滤、仍可能以' +
+      '「Assistant·你自己」标注出现（保留情景完整性）。无论何档，assistant 条目渲染必带' +
+      '角色标注（防自我强化地基，不随开关关闭）。存量未打 role 的旧向量按 user（对方）对待',
+    options: [
+      { label: '对方与 AI 自己都召回', value: 'all' },
+      { label: '只召回对方（过滤 AI 自己的回复）', value: 'others-only' },
+    ],
+  },
   crossSessionMode: {
     type: 'select',
     label: '跨会话检索模式',
@@ -127,6 +141,7 @@ interface VectorMemoryConfig {
     maxQueueSize: number;
   };
   crossSessionMode: CrossSessionMode;
+  recallRoles: 'all' | 'others-only';
 }
 
 // ===== 工具 =====
@@ -230,7 +245,7 @@ function renderMessage(m: Message, max: number): string {
   return `${tag} ${truncate(cleanContent, max)}`;
 }
 
-/** 渲染向量命中（均为 user 消息）。 */
+/** 渲染向量命中（user 或 assistant，按 metadata.role 还原；存量旧向量无 role 按 user）。 */
 function renderMemoryEntry(m: Message, messageMax: number): string {
   return renderMessage(m, messageMax);
 }
@@ -297,6 +312,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       maxQueueSize: Math.floor((indexingRaw.maxQueueSize as number) ?? 500),
     },
     crossSessionMode: (config.crossSessionMode as CrossSessionMode) ?? 'all',
+    recallRoles: (config.recallRoles as 'all' | 'others-only') ?? 'all',
   };
 
   ctx.logger.info(
@@ -313,13 +329,24 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   ctx.provide('semantic-memory', { name: 'vector-memory' });
 
-  // === 索引：仅对 user 消息建索引，触发即写（不依赖 assistant 是否回复） ===
+  /** 候选准入（两条检索管线共用）：剔存量委派 META 噪音；others-only 档过滤 AI 自身发言。
+   * 存量旧向量无 role 字段 → 不等于 'assistant' → 按对方对待。 */
+  function candidateAdmissible(meta: Record<string, unknown>): boolean {
+    if (isLegacyDelegateMeta(meta)) return false;
+    if (cfg.recallRoles === 'others-only' && meta.role === 'assistant') return false;
+    return true;
+  }
 
-  /** 待索引项：保留消息及其在 memory 中的时间戳，使向量与消息时间戳对齐，便于精确删除 */
-  const pendingIndexMessages: Array<{ msg: IncomingMessage; timestamp: number }> = [];
+  // === 索引：入站 user 消息 + assistant 落库回复，触发即写 ===
+
+  /** 待索引项：user 保留 memory 写入时间戳使向量与消息对齐（便于精确删除）；assistant 自带 */
+  type PendingIndexItem =
+    | { kind: 'user'; msg: IncomingMessage; timestamp: number }
+    | { kind: 'assistant'; sessionId: string; message: Message };
+  const pendingIndexMessages: PendingIndexItem[] = [];
   let activeIndexers = 0;
 
-  function enqueueIndexMessage(item: { msg: IncomingMessage; timestamp: number }): void {
+  function enqueueIndexMessage(item: PendingIndexItem): void {
     pendingIndexMessages.push(item);
     if (cfg.indexing.maxQueueSize > 0 && pendingIndexMessages.length > cfg.indexing.maxQueueSize) {
       const dropped = pendingIndexMessages.splice(0, pendingIndexMessages.length - cfg.indexing.maxQueueSize).length;
@@ -337,7 +364,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       activeIndexers++;
       void (async () => {
         try {
-          await indexUserMessage(next.msg, next.timestamp);
+          if (next.kind === 'user') await indexUserMessage(next.msg, next.timestamp);
+          else await indexAssistantMessage(next.sessionId, next.message);
         } finally {
           activeIndexers--;
           void drainIndexQueue();
@@ -364,6 +392,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const mentions = extractMentions(rawText);
       const metadata: Record<string, unknown> = {
         sessionId: msg.sessionId,
+        // 前向打角色（2026-08-27 起）：存量旧向量无此字段，检索侧按 user（对方）对待
+        role: 'user',
         userId: msg.userId ?? '',
         nickname: msg.nickname ?? '',
         platform: msg.platform ?? parsePlatform(msg.sessionId),
@@ -389,8 +419,53 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     // 使用 archive 写入时的真实时间戳作为向量 metadata.timestamp，
     // 保证后续按时间戳精确删除（如「回滚本轮对话」）能命中向量条目。
     const ts = data.archivedMessage.timestamp ?? Date.now();
-    enqueueIndexMessage({ msg: data.incoming, timestamp: ts });
+    enqueueIndexMessage({ kind: 'user', msg: data.incoming, timestamp: ts });
   });
+
+  // assistant 自身发言入库（2026-08-27，recallRoles 双模式的存储侧）：
+  // 经 archive.saveMessage 落库的 assistant 回复（含 image-sender 的出站附件档案）。
+  // metadata 带 role='assistant'，检索側据此过滤与标注；渲染必带「Assistant·你自己」。
+  ctx.on('assistant:message:archived', data => {
+    enqueueIndexMessage({ kind: 'assistant', sessionId: data.sessionId, message: data.message });
+  });
+
+  async function indexAssistantMessage(sessionId: string, message: Message): Promise<void> {
+    const rawText = message.content?.trim();
+    if (!rawText) return;
+    // 防御性冗余：EventMarker 现产者全是 role:system、被发射门先挡；此处兜第三方发射者
+    if (message.kind === WellKnownKinds.EventMarker) return;
+    const meta = (message.metadata ?? {}) as Record<string, unknown>;
+    try {
+      const nickname = (meta.nickname as string | undefined) ?? '';
+      // 生产者是 plugin-agent 的 buildAssistantMetadata：自身标识写在 metadata.userId
+      //（值=identity.selfId），并带 groupName/groupId/sessionType——全部透传，
+      // 使 assistant 条目的渲染位置段（群「X」/私聊/）与 user 侧对齐。
+      // 注意没有 metadata.selfId 这个键（2026-08-27 审计抓过一次读错字段名）。
+      const selfUserId = (meta.userId as string | undefined) ?? '';
+      // 与 user 侧对称：embed 带发送者前缀，身份信号入向量空间
+      const embedText = prefixSender(rawText, nickname || undefined, selfUserId || undefined);
+      const vec = await getEmbedder().embed(embedText);
+      const metadata: Record<string, unknown> = {
+        sessionId,
+        role: 'assistant',
+        // userId=自身标识：crossSessionMode='user' 的同用户加权按调用者 userId 匹配，
+        // 不会误中 bot 自身；空串与 user 侧缺省语义一致
+        userId: selfUserId,
+        nickname,
+        platform: parsePlatform(sessionId),
+        groupName: (meta.groupName as string | undefined) ?? '',
+        groupId: (meta.groupId as string | undefined) ?? '',
+        sessionType: (meta.sessionType as string | undefined) ?? '',
+        timestamp: message.timestamp ?? Date.now(),
+        content: rawText,
+        mentions: extractMentions(rawText),
+      };
+      await getStore().add(vec, metadata);
+      await getStore().save();
+    } catch (err) {
+      ctx.logger.warn(`assistant 向量索引失败: ${formatError(err)}`);
+    }
+  }
 
   // === 按时间戳删除向量（供 plugin-checkpoint 回滚整轮对话使用） ===
   ctx.on('memory:messages-deleted', async (...args: unknown[]) => {
@@ -489,12 +564,15 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         const curPlatform = data.platform ?? (curSessionId ? parsePlatform(curSessionId) : '');
         const curUserId = data.userId ?? '';
 
-        const candidateCount = Math.min(cfg.search.topK * 4, await getStore().size());
+        // others-only 档过滤发生在检索后：候选池放大一倍补偿，否则 assistant 语料
+        // 占比升高后对方消息会被挤出候选（2026-08-27 审计探针实测同语料 2→0 条）
+        const oversample = cfg.recallRoles === 'others-only' ? 8 : 4;
+        const candidateCount = Math.min(cfg.search.topK * oversample, await getStore().size());
         if (candidateCount === 0) return null;
 
         const queryVec = await getEmbedder().embed(stripTimeLabel(lastUserMsg.content));
-        const candidates = (await getStore().search(queryVec, candidateCount)).filter(
-          r => !isLegacyDelegateMeta(r.metadata),
+        const candidates = (await getStore().search(queryVec, candidateCount)).filter(r =>
+          candidateAdmissible(r.metadata),
         );
 
         // 1. 阈值过滤
@@ -584,7 +662,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
                   const cand = topResults.find(r => r.metadata.sessionId === sid && r.metadata.timestamp === pivotTs);
                   if (cand) {
                     const fakeMsg: Message = {
-                      role: 'user',
+                      role: ((cand.metadata.role as Message['role']) ?? 'user') as Message['role'],
                       content: (cand.metadata.content as string) ?? '',
                       timestamp: pivotTs,
                       name: cand.metadata.userId as string | undefined,
@@ -623,10 +701,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           const sid = r.metadata.sessionId as string | undefined;
           const ts = r.metadata.timestamp as number | undefined;
           if (!sid || ts === undefined) continue;
-          // 注：indexUserMessage 仅索引 user IncomingMessage，不会写入 event-marker / 压缩标记。
-          // 这里无需额外过滤「对话已压缩」这类控制消息。
+          // 注：索引侧只写 user 入站与 assistant 落库回复（event-marker/压缩标记是
+          // role:system，进不了任一写口），这里无需额外过滤控制消息。
           const fakeMsg: Message = {
-            role: 'user',
+            role: ((r.metadata.role as Message['role']) ?? 'user') as Message['role'],
             content: (r.metadata.content as string) ?? '',
             timestamp: ts,
             name: r.metadata.userId as string | undefined,
@@ -765,9 +843,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         }
 
         const queryVec = await getEmbedder().embed(query);
-        const candidates = (await getStore().search(queryVec, Math.min(requestedTopK * 4, storeSize))).filter(
-          r => !isLegacyDelegateMeta(r.metadata),
-        );
+        const toolOversample = cfg.recallRoles === 'others-only' ? 8 : 4;
+        const candidates = (
+          await getStore().search(queryVec, Math.min(requestedTopK * toolOversample, storeSize))
+        ).filter(r => candidateAdmissible(r.metadata));
 
         const passThreshold = candidates.filter(c => c.score >= cfg.search.minScore);
 
@@ -850,7 +929,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
         const results = top.map(r => {
           const m: Message = {
-            role: 'user',
+            role: ((r.metadata.role as Message['role']) ?? 'user') as Message['role'],
             content: (r.metadata.content as string) ?? '',
             timestamp: (r.metadata.timestamp as number) ?? 0,
             name: r.metadata.userId as string | undefined,
