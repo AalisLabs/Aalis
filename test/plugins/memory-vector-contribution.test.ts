@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { EmbeddingService } from '../../packages/api-embedding/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
+import type { MessageArchiveService } from '../../packages/api-message-archive/src/index.js';
 import type { VectorSearchResult, VectorStoreService } from '../../packages/api-vectorstore/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
 import * as memoryVectorModule from '../../packages/plugin-memory-vector/src/index.js';
+import * as messageArchiveModule from '../../packages/plugin-message-archive/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 
 // 直接从 core 源码路径导入，agent-api 对 '@aalis/core' 的 declaration merging 不在
@@ -79,6 +81,7 @@ function hit(
     userId?: string;
     nickname?: string;
     platform?: string;
+    role?: string;
   },
 ): VectorSearchResult {
   return { score, metadata: { ...meta } };
@@ -92,18 +95,31 @@ interface SetupOptions {
   /** 覆盖 contextExpand 段配置（默认 window=0，即不做情景扩展） */
   contextExpand?: Record<string, unknown>;
   crossSessionMode?: string;
+  recallRoles?: string;
   /** 是否先挂 memory-inmemory（提供 getMessagesBySessionRange） */
   withMemory?: boolean;
+  /** 是否挂真 message-archive（钉 assistant:message:archived 发射端） */
+  withArchive?: boolean;
 }
 
 async function setup(opts: SetupOptions = {}) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
   if (opts.withMemory) await app.ctx.useModule(memoryInMemoryModule);
+  if (opts.withArchive) await app.ctx.useModule(messageArchiveModule, { debugLogs: false });
 
   const embedder = makeEmbedder();
   const store = makeStore(opts.hits ?? [], { searchThrows: opts.searchThrows });
   app.ctx.provide('embedding', embedder.service);
   app.ctx.provide('vectorstore', store.service);
+  // 假 tools 服务：捕获 memory_recall 注册（该管线与被动注入零共享，需独立钉住）
+  const toolHandlers = new Map<string, (args: Record<string, unknown>, ctx: unknown) => Promise<string>>();
+  app.ctx.provide('tools', {
+    register: (tool: { definition: { function: { name: string } }; handler: never }) => {
+      toolHandlers.set(tool.definition.function.name, tool.handler);
+      return () => {};
+    },
+    registerGroup: () => () => {},
+  } as never);
 
   await app.ctx.useModule(memoryVectorModule, {
     // timeWeight=0：排名只看语义分，杜绝「当前时间」渗进断言
@@ -111,9 +127,10 @@ async function setup(opts: SetupOptions = {}) {
     contextExpand: { window: 0, crossSession: true, ...opts.contextExpand },
     indexing: { concurrency: 1, maxQueueSize: 10 },
     crossSessionMode: opts.crossSessionMode ?? 'all',
+    recallRoles: opts.recallRoles ?? 'all',
   });
 
-  return { app, embedder, store };
+  return { app, embedder, store, toolHandlers };
 }
 
 function baseMessages(userText = '还记得我上次说的吗'): Message[] {
@@ -490,5 +507,149 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
 
     expect(messages.filter(m => String(m.metadata?.injector ?? '').endsWith('/memory-vector'))).toHaveLength(1);
     expect(embedder.calls).toHaveLength(1);
+  });
+});
+
+describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
+  it('索引侧：assistant 落库事件入库带 role=assistant，user 入库带 role=user', async () => {
+    const { app, store } = await setup({});
+    const emitLoose = app.ctx.emit.bind(app.ctx) as (event: string, data: unknown) => Promise<void>;
+    await emitLoose('inbound:message:archived', {
+      sessionId: 's1',
+      incoming: { content: '对方的话', sessionId: 's1', platform: 'onebot', userId: 'u1' },
+      archivedMessage: { role: 'user', content: '对方的话', timestamp: BASE_TS },
+    });
+    await emitLoose('assistant:message:archived', {
+      sessionId: 'onebot:1:group:2',
+      message: {
+        role: 'assistant',
+        content: '我自己的回复',
+        timestamp: BASE_TS + 1,
+        // 生产形态（buildAssistantMetadata）：自身标识在 userId，无 selfId 键
+        metadata: { userId: 'bot1', nickname: 'Aalis', groupName: '测试群', groupId: '2', sessionType: 'group' },
+      },
+    });
+    for (let i = 0; i < 50 && store.added.length < 2; i++) await new Promise(r => setTimeout(r, 20));
+    expect(store.added.map(m => [m.role, m.content])).toEqual([
+      ['user', '对方的话'],
+      ['assistant', '我自己的回复'],
+    ]);
+    // 身份与位置透传（audit：曾读错成 meta.selfId——全仓无人写该键，恒空串）
+    expect(store.added[1].userId).toBe('bot1');
+    expect(store.added[1].groupName).toBe('测试群');
+    expect(store.added[1].sessionType).toBe('group');
+  });
+
+  it('发射端全链：archive.saveMessage(assistant) 真的触发向量入库；tool 角色不发事件', async () => {
+    const { app, store } = await setup({ withMemory: true, withArchive: true });
+    const archive = app.ctx.getService<MessageArchiveService>('message-archive');
+    if (!archive) throw new Error('no archive');
+    // 顺序关键：不该发事件的先存（若发射门失守，它们会先于合法条目入库，全等断言即红）
+    await archive.saveMessage('s1', { role: 'tool', content: '{"x":1}', timestamp: BASE_TS });
+    // 工具调用回合的内部前言（带 toolCalls）从未对外发出，不进语义记忆
+    await archive.saveMessage('s1', {
+      role: 'assistant',
+      content: '我来查一下天气',
+      toolCalls: [{ id: 'c1', type: 'function', function: { name: 'x', arguments: '{}' } }],
+      timestamp: BASE_TS + 1,
+    });
+    await archive.saveMessage('s1', {
+      role: 'assistant',
+      content: '承诺明天提醒你',
+      timestamp: BASE_TS + 2,
+      metadata: { userId: 'bot1', nickname: 'Aalis' },
+    });
+    for (let i = 0; i < 50 && store.added.length === 0; i++) await new Promise(r => setTimeout(r, 20));
+    expect(store.added.map(m => [m.role, m.content])).toEqual([['assistant', '承诺明天提醒你']]);
+  });
+
+  it('others-only：assistant 命中被过滤；无 role 的存量旧向量按对方保留', async () => {
+    const { app } = await setup({
+      recallRoles: 'others-only',
+      hits: [
+        hit(0.95, { sessionId: 's-old', timestamp: BASE_TS, content: '我自己说过的话', role: 'assistant' }),
+        hit(0.8, { sessionId: 's-old', timestamp: BASE_TS + 1, content: '旧数据无角色', userId: 'u1' }),
+      ],
+    });
+    const messages = baseMessages();
+    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    const block = String(injectedBlock(messages)?.content ?? '');
+    expect(block).toContain('旧数据无角色');
+    expect(block).not.toContain('我自己说过的话');
+  });
+
+  it('memory_recall 工具：others-only 过滤命中且 role 还原生效（该管线与被动注入零共享）', async () => {
+    const { toolHandlers } = await setup({
+      recallRoles: 'others-only',
+      hits: [
+        hit(0.95, { sessionId: 's-old', timestamp: BASE_TS, content: '我自己说过的话', role: 'assistant' }),
+        hit(0.8, { sessionId: 's-old', timestamp: BASE_TS + 1, content: '对方的记忆', userId: 'u1' }),
+      ],
+    });
+    const recall = toolHandlers.get('memory_recall');
+    expect(recall, 'memory_recall 未注册').toBeDefined();
+    const out = JSON.parse(await recall!({ query: '记忆' }, { sessionId: 's-cur', platform: 'onebot' }));
+    const texts = (out.results ?? []).map((r: { text: string }) => r.text).join('\n');
+    expect(texts).toContain('对方的记忆');
+    expect(texts).not.toContain('我自己说过的话');
+  });
+
+  it('memory_recall 工具：默认 all 下 assistant 命中带 Assistant·你自己 标注（role 还原）', async () => {
+    const { toolHandlers } = await setup({
+      hits: [
+        hit(0.95, {
+          sessionId: 's-old',
+          timestamp: BASE_TS,
+          content: '我承诺过的事',
+          role: 'assistant',
+          nickname: 'Aalis',
+        }),
+      ],
+    });
+    const recall = toolHandlers.get('memory_recall')!;
+    const out = JSON.parse(await recall({ query: '承诺' }, { sessionId: 's-cur', platform: 'onebot' }));
+    expect(out.results?.[0]?.text).toContain('[Assistant·你自己(Aalis) @');
+  });
+
+  it('扩窗未命中兜底（消息表已老化）：assistant 命中仍按 metadata.role 标注，不落匿名人形', async () => {
+    // memory 在场但为空 → pivot 定位失败 → 走「向量 metadata 兜底插入」分支（M3b 路径）
+    const { app } = await setup({
+      withMemory: true,
+      contextExpand: { window: 2 },
+      hits: [
+        hit(0.9, {
+          sessionId: 's-aged',
+          timestamp: BASE_TS,
+          content: '老化后的自我发言',
+          role: 'assistant',
+          nickname: 'Aalis',
+        }),
+      ],
+    });
+    const messages = baseMessages();
+    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    const block = String(injectedBlock(messages)?.content ?? '');
+    expect(block).toContain('老化后的自我发言');
+    expect(block).toContain('[Assistant·你自己(Aalis) @');
+  });
+
+  it('默认 all：assistant 命中注入且带 Assistant·你自己 标注与标题自指说明', async () => {
+    const { app } = await setup({
+      hits: [
+        hit(0.95, {
+          sessionId: 's-old',
+          timestamp: BASE_TS,
+          content: '我承诺过明天提醒',
+          role: 'assistant',
+          nickname: 'Aalis',
+        }),
+      ],
+    });
+    const messages = baseMessages();
+    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    const block = String(injectedBlock(messages)?.content ?? '');
+    expect(block).toContain('我承诺过明天提醒');
+    expect(block).toContain('[Assistant·你自己(Aalis) @');
+    expect(block).toContain('标注 Assistant·你自己 的条目是你自己当时的回复');
   });
 });
