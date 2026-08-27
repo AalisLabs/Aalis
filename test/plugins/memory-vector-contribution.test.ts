@@ -33,9 +33,11 @@ function makeStore(hits: VectorSearchResult[], opts: { searchThrows?: boolean } 
   const calls = { search: 0, size: 0 };
   /** 记录最近一次 search 的真实入参，供断言「embed 产物确实送进了检索」与候选池放大逻辑 */
   const last: { query?: number[]; topK?: number } = {};
+  /** 索引侧写入记录（供「proactive 伪 incoming 不入库」等断言） */
+  const added: Array<Record<string, unknown>> = [];
   const service: VectorStoreService = {
-    async add(): Promise<void> {
-      // 本测试只走检索路径，索引侧不参与
+    async add(_vector: number[], metadata: Record<string, unknown>): Promise<void> {
+      added.push(metadata);
     },
     async search(queryVector: number[], topK: number): Promise<VectorSearchResult[]> {
       calls.search++;
@@ -58,6 +60,7 @@ function makeStore(hits: VectorSearchResult[], opts: { searchThrows?: boolean } 
   return {
     calls,
     service,
+    added,
     get lastQuery() {
       return last.query;
     },
@@ -367,6 +370,114 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     expect((block.match(/PIVOT-Q/g) ?? []).length).toBe(1);
     // 渲染层剥掉归档 sender 前缀（来源标签已表达身份，不双重前缀）
     expect(block).not.toContain('[Alice(u1)]:');
+    // 角色标注（2026-08-27）：assistant 邻居必须标成「你自己的回复」，不得渲染成
+    // 与真人发言同构的形态——那是「戳戳月卡」自我强化事故的入口。同时补角色说明句。
+    expect((block.match(/Assistant·你自己/g) ?? []).length).toBe(3); // PREV-A、NEXT-A 各一 + 角色说明句一
+    expect(block).toContain('标注 Assistant·你自己 的条目是你自己当时的回复');
+    // user 命中本身不受影响（只标注不过滤：邻居集合与命中集合都不变）
+    expect(block).toContain('PIVOT-Q');
+  });
+
+  it('角色标注只在片段含非 user 角色时出现；纯 user 片段渲染不变', async () => {
+    const { app } = await setup({
+      hits: [
+        hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: '纯用户记忆', userId: 'u1', nickname: 'Alice' }),
+      ],
+    });
+    const messages = baseMessages();
+    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    const block = String(injectedBlock(messages)?.content ?? '');
+    expect(block).toContain('纯用户记忆');
+    expect(block).toContain('Alice(u1)');
+    expect(block).not.toContain('Assistant·你自己');
+    expect(block).not.toContain('标注 Assistant·你自己');
+  });
+
+  it('contextExpand: tool/notice 邻居分别标注为 Tool/Notice，不冒充人形发言', async () => {
+    const { app } = await setup({
+      withMemory: true,
+      contextExpand: { window: 2 },
+      hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: 'PIVOT-Q', userId: 'u1' })],
+    });
+    const memory = app.ctx.getService<MemoryService>('memory');
+    if (!memory) throw new Error('no memory');
+    await memory.saveMessage('s-old', {
+      role: 'tool',
+      content: '{"ok":true,"data":"工具输出"}',
+      timestamp: BASE_TS - 60_000,
+    });
+    await memory.saveMessage('s-old', { role: 'user', content: 'PIVOT-Q', timestamp: BASE_TS });
+    await memory.saveMessage('s-old', { role: 'notice', content: '[系统通知] 某某事件', timestamp: BASE_TS + 60_000 });
+
+    const messages = baseMessages();
+    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    const block = String(injectedBlock(messages)?.content ?? '');
+    // 锚定完整标签形态（含 @ 前缀）：裸词 'Notice'/'Tool' 会被标题行说明句满足，
+    // 对 renderMessage 是否真有该分支零敏感（2026-08-27 审计变异实测）。
+    expect(block).toContain('[Tool·工具结果 @');
+    expect(block).toContain('[Notice @');
+    expect(block).toContain('标注 Assistant·你自己');
+  });
+
+  it('索引侧：triggerType=proactive 的伪 incoming（委派/工作流派发的 AI 文本）不入向量库', async () => {
+    const { app, store } = await setup({});
+    // 事件键经 declaration merging 声明，测试从源码路径导入拿不到增广——
+    // 以宽签名断言 emit（同文件 POINT 常量的 never 技法对双参 emit 会把实参也打成 never）
+    const emitLoose = app.ctx.emit.bind(app.ctx) as (event: string, data: unknown) => Promise<void>;
+    const emitArchived = (incoming: Record<string, unknown>) =>
+      emitLoose('inbound:message:archived', {
+        sessionId: incoming.sessionId,
+        incoming,
+        archivedMessage: { role: 'user', content: incoming.content, timestamp: BASE_TS },
+      });
+
+    // 顺序关键：proactive 先入队。索引队列 concurrency=1 FIFO——若守卫失效，
+    // META 会先于真人发言落库，下方全等断言即红。此前「先真人后 META + 轮询
+    // length===0 即退出」的写法对守卫零敏感（2026-08-27 审计变异实测存活）。
+    await emitArchived({
+      content: '[跨会话委派 META]\nAI 撰写的任务文本',
+      sessionId: 's2',
+      platform: 'onebot',
+      source: 'proactive:from:s0',
+      triggerType: 'proactive',
+    });
+    await emitArchived({ content: '真人发言', sessionId: 's1', platform: 'onebot', userId: 'u1' });
+    // 索引走异步队列，轮询等待首条落库（FIFO 保证此时 proactive 已被处理过）
+    for (let i = 0; i < 50 && store.added.length === 0; i++) await new Promise(r => setTimeout(r, 20));
+    expect(store.added.map(m => m.content)).toEqual(['真人发言']);
+  });
+
+  it('存量委派 META 命中在检索期整体剔除（不注入、不占位）', async () => {
+    const { app } = await setup({
+      hits: [
+        hit(0.95, { sessionId: 's-old', timestamp: BASE_TS, content: '[跨会话委派 META]\n· 来源会话：xx\n任务文本' }),
+        hit(0.8, { sessionId: 's-old', timestamp: BASE_TS + 1, content: '真实记忆', userId: 'u1' }),
+      ],
+    });
+    const messages = baseMessages();
+    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    const block = String(injectedBlock(messages)?.content ?? '');
+    expect(block).toContain('真实记忆');
+    expect(block).not.toContain('跨会话委派 META');
+  });
+
+  it('兜底路径不给已按真实角色收录的 (sid,ts) 造 user 拷贝——同一逻辑消息只注入一份', async () => {
+    // 事故形态（2026-08-27 审计 blocker）：向量命中的 pivot 在 SQLite 里是 notice 角色，
+    // 扩窗以 [Notice] 收录后，兜底路径曾因 messageKey 含 role 而再造一份匿名 user 行。
+    const { app } = await setup({
+      withMemory: true,
+      contextExpand: { window: 1 },
+      hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: 'X事件文本' })],
+    });
+    const memory = app.ctx.getService<MemoryService>('memory');
+    if (!memory) throw new Error('no memory');
+    await memory.saveMessage('s-old', { role: 'notice', content: 'X事件文本', timestamp: BASE_TS });
+
+    const messages = baseMessages();
+    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    const block = String(injectedBlock(messages)?.content ?? '');
+    expect((block.match(/X事件文本/g) ?? []).length).toBe(1);
+    expect(block).toContain('[Notice @');
   });
 
   it('重复组装不重复注入（全局键幂等）', async () => {
