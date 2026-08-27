@@ -8,6 +8,22 @@
 
 ---
 
+## 未发布
+
+### memory-vector：AI 自身回复进入语义召回（recallRoles 双模式）
+
+`schema-message` 新增 `assistant:message:archived` 事件（message-archive 在 assistant
+回复落库后发出）；memory-vector 据此索引 AI 自身发言（metadata 带 `role`），新配置
+`recallRoles`（默认 `all`）控制其是否参与召回。所有召回到的 assistant 条目强制带
+「Assistant·你自己」角色标注（同批的防自我强化地基，不随开关关闭）。
+
+**行为变化**：升级后 AI 的新回复（对外可见回复；工具回合内部前言不入）开始进入向量库
+并默认可被召回。`recallRoles: others-only` 过滤的是**语义命中点**（候选池自动放大一倍补偿，
+assistant 语料占比很高时命中数仍可能少于从前）；命中点的扩窗邻居不过滤、以角色标注呈现。
+存量历史不自动回填。
+
+---
+
 ## 2026-08-24（无 core 变更；各包独立版号）
 
 本批 19 包：api-tools 0.7.0 / api-authority 0.6.0 / plugin-tools 0.6.0 /
