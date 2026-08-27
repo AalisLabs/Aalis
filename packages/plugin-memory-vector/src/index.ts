@@ -180,7 +180,14 @@ function stripTimeLabel(content: string): string {
   return content.replace(/^\([^)]{1,16}\)\s+/, '');
 }
 
-/** 渲染一条消息为可读文本（含来源标签） */
+/** 渲染一条消息为可读文本（含来源标签）。
+ *
+ * 角色标注（只标注、不过滤——检索与扩窗集合不变，召回率不受影响）：
+ * 邻居扩窗从 memory 拉的是**全角色**消息，assistant/tool/notice 此前一律渲染成与
+ * 真人发言同构的形态（连昵称/ID 标签都带）——AI 自己的台词以「群成员发言实录」
+ * 口吻按语义相关度回流，正是「戳戳月卡」自我强化事故的机制。角色词根取
+ * memory-history 的 Assistant/Notice，assistant 额外缀「你自己」强化自指
+ * （tool 在彼处不渲染，此处自定）。 */
 function renderMessage(m: Message, max: number): string {
   const meta = (m.metadata ?? {}) as Record<string, unknown>;
   const ts = m.timestamp ?? 0;
@@ -204,12 +211,21 @@ function renderMessage(m: Message, max: number): string {
   // 平台前缀
   const platformPrefix = platform ? `${platform}/` : '';
 
-  const who = nickname ? `${nickname}${userId ? `(${userId})` : ''}` : userId;
+  let who: string;
+  let cleanContent = m.content ?? '';
+  if (m.role === 'assistant') {
+    who = `Assistant·你自己${nickname ? `(${nickname})` : ''}`;
+  } else if (m.role === 'notice') {
+    who = 'Notice';
+  } else if (m.role === 'tool') {
+    who = 'Tool·工具结果';
+  } else {
+    who = nickname ? `${nickname}${userId ? `(${userId})` : ''}` : userId;
+    // 剥掉 archive 给入站 user 消息加的 [昵称(ID)]: 前缀（tag 已表达身份，避免双重前缀）。
+    // 只对 user 剥：assistant/tool 内容若以 [xxx]: 开头那是正文自身的一部分，剥了会吞标记。
+    cleanContent = cleanContent.replace(/^\[[^\]]{1,80}\]:\s+/, '');
+  }
   const tag = `[${platformPrefix}${where}${who}${who ? ' ' : ''}@ ${date}]`;
-
-  // 渲染时剥掉历史消息内已有的 sender 前缀（archive 入库时加的 [Alice(123)]: ...）
-  // 来源标签 tag 已表达完整身份，避免双重前缀
-  const cleanContent = (m.content ?? '').replace(/^\[[^\]]{1,80}\]:\s+/, '');
 
   return `${tag} ${truncate(cleanContent, max)}`;
 }
@@ -217,6 +233,12 @@ function renderMessage(m: Message, max: number): string {
 /** 渲染向量命中（均为 user 消息）。 */
 function renderMemoryEntry(m: Message, messageMax: number): string {
   return renderMessage(m, messageMax);
+}
+
+/** 存量委派 META 噪音判据（精确形态）：曾有 proactive 委派文本入库（新增已在索引侧
+ * 挡住），它们是 AI 撰写、无 userId，被语义命中会以匿名人形行回流——检索期整体剔除。 */
+function isLegacyDelegateMeta(meta: Record<string, unknown>): boolean {
+  return String(meta.content ?? '').startsWith('[跨会话委派 META]');
 }
 
 /** 给消息生成稳定 key 用于跨命中去重（sessionId + timestamp + role + content hash） */
@@ -325,8 +347,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   async function indexUserMessage(msg: IncomingMessage, messageTimestamp: number): Promise<void> {
-    // 跳过非真实用户输入：闲聊主动触发等系统级伪 incoming，不应进入向量库
+    // 跳过非真实用户输入：闲聊主动触发（source 判据）与 proactive 伪 incoming
+    //（triggerType 判据；全仓生产者=跨会话委派 + workflow agent 节点，内容是 AI 撰写的
+    // 任务与 META 文本），不应进入向量库——AI 生成文本被语义命中后会以「历史用户发言」
+    // 形态回流。存量 META 由检索侧 isLegacyDelegateMeta 剔除；subtask/scheduler/
+    // workflow send_message 三条同类路径不带 triggerType、暂未覆盖（判缓记账）。
     if (msg.source === 'idle-trigger') return;
+    if (msg.triggerType === 'proactive') return;
     const rawText = msg.content?.trim();
     if (!rawText) return;
     try {
@@ -466,7 +493,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         if (candidateCount === 0) return null;
 
         const queryVec = await getEmbedder().embed(stripTimeLabel(lastUserMsg.content));
-        const candidates = await getStore().search(queryVec, candidateCount);
+        const candidates = (await getStore().search(queryVec, candidateCount)).filter(
+          r => !isLegacyDelegateMeta(r.metadata),
+        );
 
         // 1. 阈值过滤
         const passThreshold = candidates.filter(c => c.score >= cfg.search.minScore);
@@ -510,6 +539,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         // 4. 命中点 + 上下文窗口扩展（合并区间，去重）
         const W = cfg.contextExpand.window;
         const collected = new Map<string, { sessionId: string; msg: Message }>();
+        // sid|ts 占位集：messageKey 含 role，扩窗路径（真实 role，如委派落的 notice）与
+        // 兜底路径（强制 user）会对同一逻辑消息各持一 key、双份注入——兜底以此集判断
+        // 该 (sid,ts) 是否已被任一角色覆盖（2026-08-27 审计 blocker）。
+        const collectedSidTs = new Set<string>();
+        const markSidTs = (sid: string, ts: number | undefined) => collectedSidTs.add(`${sid}|${ts ?? 0}`);
 
         // 当前对话已有的内容用于去重（只比较纯文本）
         const currentContents = new Set(data.messages.map(m => (m.content ?? '').trim()).filter(Boolean));
@@ -557,7 +591,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
                       metadata: cand.metadata,
                     };
                     const key = messageKey(sid, fakeMsg);
-                    if (!collected.has(key)) collected.set(key, { sessionId: sid, msg: fakeMsg });
+                    if (!collected.has(key)) {
+                      collected.set(key, { sessionId: sid, msg: fakeMsg });
+                      markSidTs(sid, pivotTs);
+                    }
                   }
                   continue;
                 }
@@ -569,7 +606,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
                   if (m.kind === WellKnownKinds.EventMarker) continue;
                   if (currentContents.has((m.content ?? '').trim())) continue;
                   const key = messageKey(sid, m);
-                  if (!collected.has(key)) collected.set(key, { sessionId: sid, msg: m });
+                  if (!collected.has(key)) {
+                    collected.set(key, { sessionId: sid, msg: m });
+                    markSidTs(sid, m.timestamp);
+                  }
                 }
               }
             } catch (err) {
@@ -594,6 +634,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           };
           if (!fakeMsg.content) continue;
           if (currentContents.has(fakeMsg.content.trim())) continue;
+          // 该 (sid,ts) 已被扩窗以真实角色收录（可能非 user，如委派 notice）→ 不再造 user 拷贝
+          if (collectedSidTs.has(`${sid}|${ts}`)) continue;
           const key = messageKey(sid, fakeMsg);
           if (!collected.has(key)) collected.set(key, { sessionId: sid, msg: fakeMsg });
         }
@@ -605,10 +647,17 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
         const lines = sortedAll.map(({ msg }) => renderMemoryEntry(msg, cfg.search.perItemMaxChars));
 
+        // 片段含非 user 角色（扩窗带出的 Assistant/Notice/Tool）时在标题行内附加自指说明，
+        // 防模型把自己的历史回复当他人发言引用（自我强化事故的入口形态）。
+        // 刻意并入标题行而非另起一行：本块会被 memoryTokenBudget 按字符比例掐尾截断，
+        // 多一行说明会在预算贴线时挤掉一条真实记忆（2026-08-27 审计实测 8→7 条）。
+        const hasNonUser = sortedAll.some(({ msg }) => msg.role !== 'user');
+        const selfNote = hasNonUser ? '；标注 Assistant·你自己 的条目是你自己当时的回复' : '';
+
         // 收口句与 memory-history 同构：本块落在历史转录之后（turn-context 槽），
         // 双向夹住可降低模型把检索片段当续写素材、串上别的会话腔调的风险。
         return (
-          '以下是从长期记忆中检索到的相关聊天记录片段（可能跨会话/跨群），按时间顺序呈现，仅供参考：\n' +
+          `以下是从长期记忆中检索到的相关聊天记录片段（可能跨会话/跨群），按时间顺序呈现${selfNote}，仅供参考：\n` +
           lines.join('\n') +
           '\n（以上为检索片段结束；它们早于当前对话，不是正在进行的聊天。）'
         );
@@ -716,7 +765,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         }
 
         const queryVec = await getEmbedder().embed(query);
-        const candidates = await getStore().search(queryVec, Math.min(requestedTopK * 4, storeSize));
+        const candidates = (await getStore().search(queryVec, Math.min(requestedTopK * 4, storeSize))).filter(
+          r => !isLegacyDelegateMeta(r.metadata),
+        );
 
         const passThreshold = candidates.filter(c => c.score >= cfg.search.minScore);
 
