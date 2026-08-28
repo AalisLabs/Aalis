@@ -70,7 +70,7 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaService): vo
         name: 'analyze_image',
         description:
           '分析一张图片或动图/视频的内容，返回文字描述。\n' +
-          '可以分析截图文件（如 screen_capture 返回的路径）、本地图片文件或网络图片 URL。\n' +
+          '可以分析本地图片文件（storage URI / 历史 ref）或网络图片 URL。\n' +
           '支持自定义提示词，例如：「提取图中所有文字」「描述 UI 布局」「找到按钮位置」等。\n' +
           '\n' +
           '**关于 detail_level（详略级别）**：\n' +

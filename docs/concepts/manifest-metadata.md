@@ -231,11 +231,12 @@ export function isLoadablePlugin(meta: Record<string, unknown>): boolean {
 |---|---|---|---|
 | 功能插件 | `aalis-plugin` | ✅ | `plugin` |
 | 契约/SDK（`*-api`） | `aalis-api` | ❌ | `api` |
+| 纯数据 schema（`schema-*`） | `aalis-schema` | ❌ | `schema` |
 | 前端界面 | `aalis-interface` | ❌ | `interface` |
 | 工具库（`util-*`） | `aalis-util` | ❌ | `util` |
-| 核心 / 工具链 | `aalis-core` / `aalis-runtime` | ❌ | （不进市场检索四类） |
+| 核心 / 工具链 | `aalis-core` / `aalis-runtime` | ❌ | （不进市场检索五类） |
 
-市场按类型词分类（`classifyPackage`），四类各发一条 npm 检索再合并（`AALIS_KEYWORDS = ['aalis-plugin','aalis-util','aalis-api','aalis-interface']`；逗号在 npm 检索里是 AND，无法合并成一条）。
+市场按类型词分类（`classifyPackage`），五类各发一条 npm 检索再合并（`AALIS_KEYWORDS = ['aalis-plugin','aalis-util','aalis-api','aalis-schema','aalis-interface']`；逗号在 npm 检索里是 AND，无法合并成一条）。
 
 因此，你的功能插件 `package.json` 必须有 `keywords: ["aalis-plugin"]`，否则两个加载器都不会发现它——这是比 `aalis.service` 更硬的门。脚手架默认就带上了它。
 
