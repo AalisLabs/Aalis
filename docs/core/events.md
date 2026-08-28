@@ -42,7 +42,7 @@ await ctx.emit('outbound:message', outMsg);
 | `session:switched` | `sessionId` | 会话切换 |
 | `session:deleted` | `sessionId` | 会话删除 |
 | `session:completed` | `sessionId` | 子任务会话完成 |
-| `todo:updated` | `{ sessionId, items }` | 待办事项变化 |
+| `todo:updated` | `sessionId, items`（两个位置参数） | 待办事项变化 |
 | `scheduler:job:start` | `jobId` | 定时任务开始 |
 | `scheduler:job:done` | `jobId` | 定时任务完成 |
 | `scheduler:job:error` | `jobId, error` | 定时任务出错 |

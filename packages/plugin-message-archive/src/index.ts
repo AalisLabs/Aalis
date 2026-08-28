@@ -224,6 +224,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     async findByMessageId(sessionId: string, messageId: string, scanLimit?: number): Promise<Message | null> {
       if (!messageId) return null;
+      // 缺省 100；撤回反查按需显式传大窗（见 onebot 撤回处）。不把缺省抬到 500：
+      // 引用回填热路径也调本方法并按 maxDepth 递归，抬缺省会让它每层多扫 400 条。
       const limit = Math.max(1, Math.min(500, Math.floor(scanLimit ?? 100)));
       const history = await getMemory().getHistory(sessionId, limit);
       // 从最新往旧找：引用通常指向最近发的消息
