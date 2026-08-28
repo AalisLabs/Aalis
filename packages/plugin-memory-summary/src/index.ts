@@ -217,9 +217,22 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
    * - global：按默认优先级/preference 选首个 chat-capable entry
    * - custom：按 cfg.summaryLLM 精确匹配
    */
+  let warnedUnresolvedSummaryLLM = false;
   function resolveSummaryModel(): LLMModel | undefined {
     const ref = cfg.summaryModelMode === 'custom' ? cfg.summaryLLM : undefined;
-    return resolveLLMModel(ctx, ref, ['chat'])?.instance;
+    const resolved = resolveLLMModel(ctx, ref, ['chat'])?.instance;
+    // custom 指定了模型却解析落空 → 自动压缩会静默不跑、上下文持续膨胀
+    //（2026-08「压缩静默死亡」事故的根因形态；手动路径已有报错，这里补自动路径）。
+    // 只警一次防刷屏，恢复后复位以便下次失效再警。
+    if (ref && !resolved) {
+      if (!warnedUnresolvedSummaryLLM) {
+        warnedUnresolvedSummaryLLM = true;
+        ctx.logger.warn(`摘要模型解析失败（${ref.provider}/${ref.model} 不存在或未激活），自动压缩将不运行`);
+      }
+    } else if (resolved) {
+      warnedUnresolvedSummaryLLM = false;
+    }
+    return resolved;
   }
 
   /**

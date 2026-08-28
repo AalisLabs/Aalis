@@ -40,9 +40,10 @@ export interface MetadataEntry {
    * 最后写入时间（毫秒时间戳）。
    *
    * 三家后端本来就存着这一列（sqlite 的 `metadata.updatedAt`、mongodb 的 `updatedAt: Date`），
-   * 只是从不返回 —— 于是应用层**拿不到任何时间信息**，「按时间清理」这件事在契约上不可能做到。
-   * 实测后果：`plugin-adapter-onebot` 每收一条合并转发就持久化完整原文，内存缓存那侧有 1 小时
-   * TTL，持久化那侧一条清理路径都没有，磁盘只增不减。
+   * 历史上从不返回——应用层拿不到时间信息，「按时间清理」在契约上做不到。此列入契约后
+   * 已有消费者：`plugin-adapter-onebot` 的合并转发持久化用它做 7 天惰性回收
+   *（forward-expand 的 sweepPersisted），历史上「持久化侧零清理路径、磁盘只增不减」的
+   * 状况即由此了结——本注释曾以现状口吻描述该旧况，2026-08-28 如实化。
    */
   updatedAt: number;
 }

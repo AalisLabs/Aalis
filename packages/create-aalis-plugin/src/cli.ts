@@ -255,6 +255,9 @@ function renderIndexTs(a: Answers): string {
   if (a.features.tool) {
     body.push(`  // 注册 AI 可调用的工具
   useToolService(ctx).register({
+    // 能力档位：不声明 = public（任意等级 0 用户可经自然语言驱动）。
+    // 只读但涉隐私 → risk: 'sensitive'；写/删/执行 → visibility: 'restricted' + confirm: 'session'。
+    // 参见 Aalis 安全模型文档 concepts/security-model.md「插件作者怎么标操作风险」。
     definition: {
       type: 'function',
       function: {
