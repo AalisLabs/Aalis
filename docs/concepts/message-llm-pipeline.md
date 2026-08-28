@@ -277,7 +277,7 @@ const handle = resolveLLMModel(ctx, ref, ['vision'])?.instance;
 await handle?.chat({ messages });   // entry 已知道是哪个 model
 ```
 
-default model 通过 `ServiceContainer.setPreference('llm', preferredContextId)`，或 persona.yaml 的 `defaultServices` 选定。详见 `docs/services/llm.md`、`docs/services/service-container.md`。
+default model 通过 `ServiceContainer.setPreference('llm', preferredContextId)`，或 persona.yaml 的 `defaultServices` 选定。详见 `docs/services/llm.md`、`docs/core/service.md`。
 
 ---
 
@@ -319,20 +319,20 @@ default model 通过 `ServiceContainer.setPreference('llm', preferredContextId)`
 4. **附件占位符必须走 `formatAttachmentRef` / `parseAttachmentRefs`**，且写入方保证 `desc` 不含 `]` 或 `|`（§4.3）。手写字符串会让四处解析悄悄断链。
 5. **`<at>` 是约定不是 API**，没有编译期兜底。新平台适配器产出的入站文本必须严格遵循 `<at id="X">名</at>` / `<at self …>` / `<at>all</at>`，否则归档、向量、触发判定会全部静默失效（§5.2）。`<at self>` 是 trigger-policy 判定「机器人被 @」的唯一信号。
 6. **`Message.metadata` 不发给 LLM。** 要让模型看到的信息必须进 `content` / `segments` / `images` / `audios`，不要塞进 metadata。
-7. **`actor` 是授权身份，不可被 LLM 自由指定。** 系统侧触发器（scheduler / idle / proactive）创建任务时会 snapshot 调用者身份并回填，agent 构造 `ToolCallContext` 时优先用 `actor` 查权限，以防提权。详见 `docs/concepts/authority.md`。
+7. **`actor` 是授权身份，不可被 LLM 自由指定。** 系统侧触发器（scheduler / idle / proactive）创建任务时会 snapshot 调用者身份并回填，agent 构造 `ToolCallContext` 时优先用 `actor` 查权限，以防提权。详见 `docs/services/authority.md`。
 8. **`images` / `audios` 的解析格式由 provider 负责。** 可能是 base64 data URL、`file://`、本地路径或 `http(s)`。OpenAI 把 `images[]` 仅在 `user` role 上展开为 `image_url` content parts；其它 role 携带图片不会被它消费。
 
 ---
 
 ## 相关文档
 
-兄弟概念（forward-ref，可能尚未落地）：
+兄弟概念（`docs/concepts/`）：
 
 - `docs/concepts/service-model.md` — `ServiceContainer` 按名注册、同名多 provider 胜出规则（preference > priority > 注册序）、per-entry 粒度。
-- `docs/concepts/authority.md` — 数字等级鉴权、`actor` 授权身份、HITL 确认。
 - `docs/concepts/storage-uri-grammar.md` — `<root>:/path` 文法（`ref` 字段可承载 storage URI）。
 
-服务文档（forward-ref）：
+服务与核心文档：
 
 - `docs/services/llm.md` — `LLMModel` / `ChatModelRequest` / `resolveLLMModel` / per-model entry 注册全貌。
-- `docs/services/service-container.md` — `provide` / `getService` / `getAllServices` / `setPreference` / `whenService`。
+- `docs/services/authority.md` — 数字等级鉴权、`actor` 授权身份、HITL 确认。
+- `docs/core/service.md` — `provide` / `getService` / `getAllServices` / `setPreference` / `whenService`。
