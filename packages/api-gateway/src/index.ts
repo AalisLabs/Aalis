@@ -9,8 +9,8 @@
 //           默认动作是向 `outbound:message` 事件总线广播，平台插件接收并发送。
 //
 // core 不再绑定具体的路由实现，gateway 服务由 plugin-gateway 提供。
-// 需要 gateway 的插件经 `inject.required: ['gateway']` 声明依赖；最小应用可不加载 gateway，
-// 由 core fallback 入站路由直接派发给 agent。
+// 需要 gateway 的插件经 `inject.required: ['gateway']` 声明依赖。core 无入站路由兜底：
+// 不加载 gateway 则 `inbound:message` 无人消费、消息静默丢弃，按必需件对待。
 
 import type { AgentService } from '@aalis/api-agent';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
