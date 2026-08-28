@@ -219,7 +219,7 @@ function listLLMEntries(ctx, caps) {
 兄弟概念（`docs/concepts/`）：
 
 - 存储 URI 文法与 `entryId`（per-root）的下游消费面 → `docs/concepts/storage-uri-grammar.md`
-- 鉴权数字等级与服务消费的安全边界 → `docs/concepts/authority.md`
+- 鉴权数字等级与服务消费的安全边界 → `docs/services/authority.md`
 - 消息 / LLM 管线（`prepareLLMMessages` 等 egress 约定）→ `docs/concepts/message-llm-pipeline.md`
 
 服务详解（forward-ref，`docs/services/`）：

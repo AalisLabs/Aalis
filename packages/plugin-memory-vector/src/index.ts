@@ -378,8 +378,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     // 跳过非真实用户输入：闲聊主动触发（source 判据）与 proactive 伪 incoming
     //（triggerType 判据；全仓生产者=跨会话委派 + workflow agent 节点，内容是 AI 撰写的
     // 任务与 META 文本），不应进入向量库——AI 生成文本被语义命中后会以「历史用户发言」
-    // 形态回流。存量 META 由检索侧 isLegacyDelegateMeta 剔除；subtask/scheduler/
-    // workflow send_message 三条同类路径不带 triggerType、暂未覆盖（判缓记账）。
+    // 形态回流。存量 META 由检索侧 isLegacyDelegateMeta 剔除。
     if (msg.source === 'idle-trigger') return;
     if (msg.triggerType === 'proactive') return;
     // 2026-08-28 用户裁定「三条全堵」：以下伪 incoming 同为 AI/系统撰写文本，不带
