@@ -411,7 +411,7 @@ npm start
 - 密钥/令牌：直接填进 \`aalis.config.yaml\`（该文件已在 \`.gitignore\` 里，不会入库）${
     hasWebui ? '，或启动后在 WebUI 配置页填写。' : '。'
   }
-${hasWebui ? '- WebUI 管理界面默认 http://127.0.0.1:8080 。\n' : ''}
+${hasWebui ? '- WebUI 管理界面默认 http://127.0.0.1:3000 。\n' : ''}
 ## 装更多插件
 
 \`\`\`bash
