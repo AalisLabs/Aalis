@@ -189,7 +189,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // skipConfirm 仍然需要：cron 上下文无人可点受限二次确认弹窗（authorize 仍生效）。
   // 同时这些 source 通常指向 internal 虚拟 session（无适配器接收），
   // 因此结果不走 outbound 而是写日志，避免发到虚空。
-  const TRUSTED_SYSTEM_SOURCES = new Set(['scheduler', 'workflow', 'system']);
+  // 受信系统源 = 免交互确认（skipConfirm）+ 结果写日志而非回发。仅 scheduler：
+  // 它建任务的入口是 dangerous + confirm:'always'（L2 且每次真人确认），拿到受信特权
+  // 的成本与特权本身相称。
+  // 刻意排除的两项（2026-08-28 对抗审计定，勿再"修死项"重开）：
+  //   'system' —— 只出现在出站消息，无入站生产者，纯死值，删。
+  //   'workflow:*' —— 曾想按前缀纳入，但 workflow_define/workflow_run 只是 sensitive(L1)、
+  //     零确认，一旦受信，L1 就能定义 send-message 节点向任意会话静默投递 /clear 这类
+  //     0 级 + confirm:'session' 命令、且无回显——confirm 闸（防注入误清）被绕过。
+  //     故 workflow 派发**不受信**：它经 COMMAND 相位的命令照常走 confirm，虚拟会话无人
+  //     应答即超时拒（fail-closed）。要让 workflow 自动化免确认，须先把 define/run 抬到
+  //     与 scheduler 相称的档位，那是单独的决定。
+  const TRUSTED_SOURCE_EXACT = new Set(['scheduler']);
+  const isTrustedSystemSource = (source: string | undefined): boolean => !!source && TRUSTED_SOURCE_EXACT.has(source);
 
   ctx.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
     const { message } = data;
@@ -203,7 +215,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // （归档、trigger、agent 等下游相位继续工作），避免对错字/打字噪音回显"未知指令"。
     if (!commands.hasMatch(parsed.name, parsed.args)) return next();
 
-    const isSystemTrigger = !!message.source && TRUSTED_SYSTEM_SOURCES.has(message.source);
+    const isSystemTrigger = isTrustedSystemSource(message.source);
 
     try {
       // 优先用 actor（系统触发器注入的代理身份），fallback 到消息原始身份。

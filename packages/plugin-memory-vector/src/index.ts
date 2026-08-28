@@ -382,6 +382,12 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     // workflow send_message 三条同类路径不带 triggerType、暂未覆盖（判缓记账）。
     if (msg.source === 'idle-trigger') return;
     if (msg.triggerType === 'proactive') return;
+    // 2026-08-28 用户裁定「三条全堵」：以下伪 incoming 同为 AI/系统撰写文本，不带
+    // triggerType（改它们的 triggerType 会连带 message-archive 的 role 判定，故在本侧按
+    // source/userId 判据堵）——scheduler 定时内容、workflow send_message 节点、subtask 派发。
+    if (msg.source === 'scheduler') return;
+    if (msg.source?.startsWith('workflow:')) return;
+    if (msg.userId?.startsWith('parent:')) return;
     const rawText = msg.content?.trim();
     if (!rawText) return;
     try {

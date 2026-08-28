@@ -458,8 +458,14 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       source: 'proactive:from:s0',
       triggerType: 'proactive',
     });
+    // 三漏路径（2026-08-28 用户裁定全堵）：scheduler / workflow send_message / subtask 派发
+    // 同为 AI/系统撰写文本，不带 triggerType，按 source/userId 判据堵。全部先于真人入队，
+    // FIFO 下任何一条漏堵都会先于真人落库、被下方全等断言抓红。
+    await emitArchived({ content: '定时任务内容', sessionId: 's3', platform: 'onebot', source: 'scheduler' });
+    await emitArchived({ content: 'workflow 派发文本', sessionId: 's4', platform: 'onebot', source: 'workflow:wf1' });
+    await emitArchived({ content: '子任务追问', sessionId: 's5', platform: 'internal', userId: 'parent:p1' });
     await emitArchived({ content: '真人发言', sessionId: 's1', platform: 'onebot', userId: 'u1' });
-    // 索引走异步队列，轮询等待首条落库（FIFO 保证此时 proactive 已被处理过）
+    // 索引走异步队列，轮询等待首条落库（FIFO 保证此时前面全部伪 incoming 已被处理过）
     for (let i = 0; i < 50 && store.added.length === 0; i++) await new Promise(r => setTimeout(r, 20));
     expect(store.added.map(m => m.content)).toEqual(['真人发言']);
   });
