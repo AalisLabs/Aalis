@@ -230,8 +230,8 @@ export function registerPluginRoutes(
     // 存量问题放行——否则带着历史脏值（或 schema 表达不了的多态字段，如 mcp-client
     // 的 args 数组形态）的插件会在 WebUI 永久存不了任何字段；启动侧 config-sync
     // 对它们已有告警。missing（没配全）也放行：半成品配置是启用插件配到一半的
-    // 正常中间态（禁用插件的 PUT 目前在 updatePluginConfig 处按不存在拒绝，是
-    // 另一处存量问题，不在本路径解决）。
+    // 正常中间态。禁用插件的 PUT 走下方 updatePluginConfig 失败分支，在那里区分
+    // 「已禁用」（409，提示先启用）与「真不存在」（404）。
     const stored = { ...defaults, ...ctx.config.getPluginConfig(pluginName) };
     const preExisting = new Set(validateConfig(schema, stored).map(i => `${i.path}|${i.message}`));
     const issues = validateConfig(schema, merged).filter(
@@ -250,7 +250,14 @@ export function registerPluginRoutes(
       app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 配置已更新` });
     } else {
-      res.status(404).json({ error: `插件 ${pluginName} 不存在` });
+      // 死路文案修复：插件被禁用时这里也会走到，但「不存在」会把用户引向错误方向
+      //（cordis-gap 遗留）——区分「禁用」与「真不存在」并给出下一步。
+      const disabled = ctx.config.isPluginDisabled(pluginName);
+      if (disabled) {
+        res.status(409).json({ error: `插件 ${pluginName} 已禁用，配置未写入——先启用插件再修改配置` });
+      } else {
+        res.status(404).json({ error: `插件 ${pluginName} 不存在` });
+      }
     }
   });
 

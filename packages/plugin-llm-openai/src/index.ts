@@ -500,6 +500,14 @@ const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
   o3: [Chat, ToolCalling, Streaming, Thinking],
   'o3-mini': [Chat, ToolCalling, Streaming, Thinking],
   'o4-mini': [Chat, ToolCalling, Streaming, Thinking],
+  // Gemini chat 族（OpenAI 兼容端点/聚合网关）：全系多模态。用具体版本前缀而非裸
+  // 'gemini-'，避免把 gemini-embedding-* 等非对话模型也误挂 Vision（media 视觉路由
+  // vision.prefer 留空时会误选）。resolveCapabilities 做前缀匹配，故各写一条。
+  'gemini-1.5': [Chat, ToolCalling, Streaming, Vision],
+  'gemini-2': [Chat, ToolCalling, Streaming, Vision],
+  'gemini-pro': [Chat, ToolCalling, Streaming, Vision],
+  'gemini-flash': [Chat, ToolCalling, Streaming, Vision],
+  'gemini-exp': [Chat, ToolCalling, Streaming, Vision],
 };
 
 const DEFAULT_CAPABILITIES: LLMCapability[] = [Chat];

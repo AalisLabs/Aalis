@@ -2019,15 +2019,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         const opNick = isGroup ? await resolveNickname(state, operatorId, notice.groupId) : undefined;
         const userLabel = userNick ? `${userNick}(${notice.userId})` : (notice.userId ?? '某人');
         const opLabel = opNick ? `${opNick}(${operatorId})` : operatorId;
-        // 反查被撤回的归档原文：入站消息归档时带 metadata.messageId（archive:meta.messageId），
-        // 撤回多发生在发送后几分钟内，findByMessageId 默认 100 条扫描窗足够。
+        // 反查被撤回的归档原文：入站消息归档时带 metadata.messageId（archive:meta.messageId）。
+        // 显式传 500 条扫描窗（活跃群百条几分钟即滚过，撤回常发生在更久之后）。
         // 查不到（未归档/超窗）或反查抛错都退回旧文案，不阻塞通知入档。
         let original: { content: string; timestamp?: number } | undefined;
         if (messageId) {
           try {
             const found = await ctx
               .getService<MessageArchiveService>('message-archive')
-              ?.findByMessageId?.(sessionId, messageId);
+              ?.findByMessageId?.(sessionId, messageId, 500);
             if (found && typeof found.content === 'string' && found.content) {
               original = { content: found.content, timestamp: found.timestamp };
             }
