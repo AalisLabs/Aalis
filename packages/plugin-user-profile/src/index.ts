@@ -2292,6 +2292,36 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
     });
 
+  // 定点除毒入口（2026-08 群主档案投毒事件的运维刚需）：此前删单条事实只能
+  // mongosh 手术或 nuke 全清。dangerous → 等级 2 + confirm，与同族 self.clear/nuke 对齐
+  //（它改的是**他人**档案，且 target 含冒号时直传 key、可触及 __self__ 自档案，
+  // 必须与 self.clear 同样上确认闸）。id 未命中时列出前若干条供定位。
+  useCommandService(ctx)
+    .command('profile.forget <target:string> <factId:string>', '定点删除某用户档案中的一条事实（运维除毒）', {
+      risk: 'dangerous',
+    })
+    .action(async (argv, targetArg, factIdArg) => {
+      const target = String(targetArg ?? '');
+      const factId = String(factIdArg ?? '');
+      const userKey = target.includes(':') ? target : userKeyOf(argv.session.platform, target);
+      const profile = await loadProfile(userKey);
+      if (!profile || profile.facts.length === 0) return `📭 无档案数据 (${userKey})`;
+      const hit = profile.facts.find(f => f.id === factId);
+      if (!hit) {
+        const listing = profile.facts
+          .slice(0, 20)
+          .map(f => `  [${f.id}] ${f.text.slice(0, 50)}`)
+          .join('\n');
+        return `未找到事实 [${factId}]。${userKey} 现有 ${profile.facts.length} 条：\n${listing}`;
+      }
+      await saveProfile(userKey, {
+        ...profile,
+        facts: profile.facts.filter(f => f.id !== factId),
+        updatedAt: Date.now(),
+      });
+      return `✅ 已删除 ${userKey} 的事实 [${factId}]：${hit.text.slice(0, 60)}`;
+    });
+
   useCommandService(ctx)
     .command('profile.self', '查看 Aalis 的自档案（跨会话的内心状态）')
     .action(async () => {

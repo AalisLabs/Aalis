@@ -424,6 +424,8 @@ export class CommandRegistry implements CommandService {
     // 与 commands 两个注入点，牵动所有能力的拒绝语义，改动面大于收益。
     // 真要做的话两条一起：注入与执行侧同源的 authorize 判定，只取等级轴，明确排除 confirm
     // 与临时授予（前者是 async 且会真弹确认框、后者随会话漂移，都不适合用于列表渲染）。
+    // /help 的概览与详情（plugin-commands 的 renderOverview/renderDetail）是同族第三条
+    // 列举路径，同属本裁定——2026-08 审计曾把它当漏项翻出，特此留痕勿再重开。
     if (!cmd.handler) {
       return this.formatUsage(cmd);
     }
