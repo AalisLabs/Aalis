@@ -18,7 +18,7 @@ interface PluginModule {
    * 是否需要在本插件 bounce 时被级联重新 apply。
    * 默认 false。绝大多数 provider 不需要设为 true，
    * 下游应使用 lazy `ctx.getService()` 透明获取新实例。
-   * 详见 [plugin-author-guide §3.5](../plugin-author-guide.md#35-级联契约opt-in)。
+   * 详见 [plugin-author-guide §3.5](../plugin-author-guide.md#_3-5-级联契约-opt-in-requiresbounceondepchange)。
    */
   requiresBounceOnDepChange?: boolean;
   /** core 视为 opaque 数据原样透传；形状类型 ConfigSchema 在 @aalis/schema-config */
@@ -116,7 +116,7 @@ service-up / service-down 在第二轮起退化为 plugin-state-changed，避免
 - 可选 `opts.module`：热替换 module 引用（热重载代码场景）
 - dispose 旧 ctx → 粗状态转 pending → `recompute({type:'plugin-state-changed'})`
 - 下游是否被级联 evict：仅当下游声明 `requiresBounceOnDepChange: true` 时才级联，
-  默认不动。详见 [plugin-author-guide §3.5](../plugin-author-guide.md#35-级联契约opt-in)。
+  默认不动。详见 [plugin-author-guide §3.5](../plugin-author-guide.md#_3-5-级联契约-opt-in-requiresbounceondepchange)。
 
 ## 反应式监听
 

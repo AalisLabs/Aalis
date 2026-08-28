@@ -7,7 +7,7 @@
 > `declare module '@aalis/core' { ... }`（见 [plugin-author-guide](../plugin-author-guide.md)），
 > 编译期即生效——**无需在本表登记**，也不会（无法）出现在本表里。扩展点的**权威定义**在各
 > `-api` 包的 `declare module` 声明；本表只收录本仓库的一方包，作发现与查阅之用，并非全集。
-查找一个事件/能力/钩子的真实定义，从本表的"扩展者"列直接跳（一方实现）。
+查找一个事件/能力/钩子的真实定义，按本表"扩展者"列的包名去 `packages/<包目录>/src/index.ts` 查（一方实现；例外路径在行内标注）。
 
 > **核心原则**：core 自身只声明**空接口**，所有键值由 plugin-*-api 通过 declaration merging 注入。
 > 这是「忒修斯之船」原则——业务概念可以全部换掉，core 永远不感知它们。
@@ -24,21 +24,21 @@
 > 它们挂在服务**实例 / model-handle 元数据**上，由各领域 `*-api` 的 helper（如 `resolveLLMModel`）按需筛选，
 > 而非走 core 的 DI。core 的服务注册只认名字与实例类型。
 
-**位置**：[packages/core/src/types/services.ts](packages/core/src/types/services.ts)
+**位置**：`packages/core/src/types/services.ts`
 
 **扩展者**：
 
 | api 包 | 注册的服务 |
 |---|---|
-| [@aalis/api-llm](packages/api-llm/src/index.ts) | `llm` |
-| [@aalis/api-memory](packages/api-memory/src/index.ts) | `memory` |
-| [@aalis/api-storage](packages/api-storage/src/index.ts) | `storage` |
-| [@aalis/api-media](packages/api-media/src/index.ts) | `media` |
-| [@aalis/api-session-manager](packages/api-session-manager/src/index.ts) | `session-manager` |
-| [@aalis/api-platform](packages/api-platform/src/index.ts) | `platform`（helper: `resolvePlatformBySession` / `aggregatePlatformDetails`） |
-| [@aalis/plugin-package-manager](packages/plugin-package-manager/src/index.ts) | `package-manager` |
-| [@aalis/api-message-archive](packages/api-message-archive/src/index.ts) | `message-archive` |
-| [@aalis/plugin-websearch-serper](packages/plugin-websearch-serper/src/types.ts) | `websearch` |
+| `@aalis/api-llm` | `llm` |
+| `@aalis/api-memory` | `memory` |
+| `@aalis/api-storage` | `storage` |
+| `@aalis/api-media` | `media` |
+| `@aalis/api-session-manager` | `session-manager` |
+| `@aalis/api-platform` | `platform`（helper: `resolvePlatformBySession` / `aggregatePlatformDetails`） |
+| `@aalis/plugin-package-manager` | `package-manager` |
+| `@aalis/api-message-archive` | `message-archive` |
+| `@aalis/plugin-websearch-serper`（`src/types.ts`） | `websearch` |
 
 ---
 
@@ -46,17 +46,17 @@
 
 EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件名 + payload 约束。
 
-**位置**：[packages/core/src/types/events.ts](packages/core/src/types/events.ts)（core 内置十项：`service:registered` / `service:unregistered` / `service:preference-changed` / `plugin:loaded` / `plugin:unloaded` / `plugins:changed` / `ready` / `app:starting` / `app:started` / `app:stopping` / `restarting`；**没有 `dispose` 事件**——清理副作用用 `ctx.onDispose(fn)`，见 [context](../core/context.md)）
+**位置**：`packages/core/src/types/events.ts`（core 内置十项：`service:registered` / `service:unregistered` / `service:preference-changed` / `plugin:loaded` / `plugin:unloaded` / `plugins:changed` / `ready` / `app:starting` / `app:started` / `app:stopping` / `restarting`；**没有 `dispose` 事件**——清理副作用用 `ctx.onDispose(fn)`，见 [context](../core/context.md)）
 
 **扩展者**：
 
 | api 包 | 注入的事件键 |
 |---|---|
-| [@aalis/schema-message](packages/schema-message/src/index.ts) | `inbound:message` / `inbound:message:archived` / `outbound:message` / `outbound:stream` |
-| [@aalis/api-gateway](packages/api-gateway/src/index.ts) | `gateway:phase:done` |
-| [@aalis/api-tools](packages/api-tools/src/index.ts) | `tool:execute` |
-| [@aalis/api-session-manager](packages/api-session-manager/src/index.ts) | `session:*` |
-| [@aalis/plugin-todo-list](packages/plugin-todo-list/src/index.ts) | `todo:*` |
+| `@aalis/schema-message` | `inbound:message` / `inbound:message:archived` / `outbound:message` / `outbound:stream` |
+| `@aalis/api-gateway` | `gateway:phase:done` |
+| `@aalis/api-tools` | `tool:execute` |
+| `@aalis/api-session-manager` | `session:*` |
+| `@aalis/plugin-todo-list` | `todo:*` |
 
 ---
 
@@ -64,15 +64,15 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 
 中间件钩子上下文表。`ctx.middleware(name, fn)` 在编译期靠它推 data 类型。
 
-**位置**：[packages/core/src/types/hooks.ts](packages/core/src/types/hooks.ts)（空 interface）
+**位置**：`packages/core/src/types/hooks.ts`（空 interface）
 
 **扩展者**：
 
 | api 包 | 注入的钩子键 |
 |---|---|
-| [@aalis/api-agent](packages/api-agent/src/index.ts) | `agent:llm:before` / `agent:llm:after` / `agent:tool:*` / `agent:reply:*` / `agent:input:*` / `agent:turn:*` |
-| [@aalis/api-gateway](packages/api-gateway/src/index.ts) | `inbound:*` / `outbound:dispatch` |
-| [@aalis/api-memory](packages/api-memory/src/index.ts) | `memory:clear` |
+| `@aalis/api-agent` | `agent:llm:before` / `agent:llm:after` / `agent:tool:*` / `agent:reply:*` / `agent:input:*` / `agent:turn:*` |
+| `@aalis/api-gateway` | `inbound:*` / `outbound:dispatch` |
+| `@aalis/api-memory` | `memory:clear` |
 
 ---
 
@@ -83,13 +83,13 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 与 `HookContextMap` 的分工：**改写或截停既有流程 → hooks；往共享产物添自己的一块 → 贡献点**。
 贡献者拿只读视图、无短路、无排序影响力；排布与执行策略归收集方（贡献点 owner）。
 
-**位置**：[packages/core/src/types/contributions.ts](packages/core/src/types/contributions.ts)（空 interface）
+**位置**：`packages/core/src/types/contributions.ts`（空 interface）
 
 **扩展者**：
 
 | api 包 | 注入的贡献点键 |
 |---|---|
-| [@aalis/api-agent](packages/api-agent/src/index.ts) | `agent:prompt`（提示词块，锚位 identity / knowledge / context / turn-context / turn-hint） |
+| `@aalis/api-agent` | `agent:prompt`（提示词块，锚位 identity / knowledge / context / turn-context / turn-hint） |
 
 ---
 
@@ -98,13 +98,13 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 应用根配置的字段表。core 只声明**自身管理的字段**（`logLevel` / `logBufferSize` / `dataDir`...），
 业务字段由 plugin-*-api 通过 declaration merging 注入。
 
-**位置**：[packages/schema-config/src/index.ts](packages/schema-config/src/index.ts)（`CORE_CONFIG_SCHEMA`）
+**位置**：`packages/schema-config/src/index.ts`（`CORE_CONFIG_SCHEMA`）
 
 **扩展者**：
 
 | api 包 | 注入的字段 |
 |---|---|
-| [@aalis/api-authority](packages/api-authority/src/index.ts) | `owners` / `deniedCapabilities` / `visibilityOverrides` / `restrictedPolicy` |
+| `@aalis/api-authority` | `owners` / `deniedCapabilities` / `visibilityOverrides` / `restrictedPolicy` |
 
 ---
 
@@ -116,10 +116,10 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 
 | api 包 | 领域 helper |
 |---|---|
-| [@aalis/api-tools](packages/api-tools/src/index.ts) | `useToolService(ctx)` / `toolsWithGroups(tools, groups)` |
-| [@aalis/api-commands](packages/api-commands/src/index.ts) | `useCommandService(ctx)` |
-| [@aalis/api-webui](packages/api-webui/src/index.ts) | `useWebuiService(ctx)` |
-| [@aalis/api-agent](packages/api-agent/src/index.ts) | `useAgent(ctx)` |
+| `@aalis/api-tools` | `useToolService(ctx)` / `toolsWithGroups(tools, groups)` |
+| `@aalis/api-commands` | `useCommandService(ctx)` |
+| `@aalis/api-webui` | `useWebuiService(ctx)` |
+| `@aalis/api-agent` | `useAgent(ctx)` |
 
 示例：
 
@@ -158,7 +158,7 @@ export default class MyPlugin {
 
 | api 包 | 注入的字段 |
 |---|---|
-| [@aalis/api-webui](packages/api-webui/src/index.ts) | webui 元数据（`webui?: {...}`） |
+| `@aalis/api-webui` | webui 元数据（`webui?: {...}`） |
 
 ---
 
@@ -169,7 +169,7 @@ export default class MyPlugin {
 
 **示例**：
 
-- [`LLMCapabilityRegistry`](packages/api-llm/src/index.ts) — LLM 能力
+- `LLMCapabilityRegistry`（`packages/api-llm/src/index.ts`）— LLM 能力
 
 第三方扩展示例：
 
