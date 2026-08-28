@@ -18,7 +18,7 @@ meta.inject = {}
 
 - 文本/代码文件（自动编码检测）
 - Microsoft Word (.docx) — 使用 mammoth（**内嵌图片可经 media 服务识别**，见下）
-- PDF (.pdf) — 使用 unpdf（仅文本；内嵌图片识别为待办，见 docs/issues.md）
+- PDF (.pdf) — 使用 unpdf（仅文本；内嵌图片识别尚未实现）
 - 其他文件类型的 MIME 检测
 
 ## 文档内嵌图片识别
