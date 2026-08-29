@@ -8,7 +8,14 @@
 
 ---
 
-## 未发布
+## 2026-08-29（无 core 变更；各包独立版号）
+
+本批 17 包：schema-message 0.7.0 / plugin-memory-vector 0.11.0 /
+plugin-message-archive 0.10.0 / api-session-manager 0.7.0 / plugin-session-manager 0.10.0 /
+plugin-agent 0.12.0 / plugin-user-profile 0.11.0 / plugin-commands 0.10.0 /
+plugin-llm-openai 0.10.1 / plugin-adapter-onebot 0.11.1 / plugin-media 0.12.1 /
+plugin-memory-summary 0.10.1 / plugin-webui-server 0.11.2 / api-memory 0.5.1 /
+api-gateway 0.5.1 / create-aalis 0.5.3 / create-aalis-plugin 0.9.4
 
 ### memory-vector：AI 自身回复进入语义召回（recallRoles 双模式）
 
@@ -21,6 +28,32 @@
 并默认可被召回。`recallRoles: others-only` 过滤的是**语义命中点**（候选池自动放大一倍补偿，
 assistant 语料占比很高时命中数仍可能少于从前）；命中点的扩窗邻居不过滤、以角色标注呈现。
 存量历史不自动回填。
+
+### user-profile 0.11.0：aalisFeelings 特性整体移除
+
+移除「Aalis 对用户的主观感受」层：配置键 `enableAalisFeelings` / `maxFeelingsPerUser` /
+`injectFeelingsForOthers` / `maxFeelingsForOthers`、工具参数 `user_profile_lookup.include_feelings`、
+档案字段 `aalisFeelings` 及其抽取/注入路径全部删除。该特性默认关闭且 schema 自述
+「不建议开启」（无 sourceQuote 护栏的自我蒸馏回路）。
+
+**迁移**：配置里遗留的四个键会被 config-sync 按 schema 白名单裁剪并告警，不影响启动。
+**数据不可逆**：若曾开启过该开关，存量 `aalisFeelings` 字段会在升级后的首次档案写入时
+被整体覆写丢弃（saveMetadata 为整条替换语义），无导出/迁移路径；需要保留请在升级前自行导出。
+
+### commands 0.10.0：受信系统源收窄为 scheduler-only
+
+`TRUSTED_SYSTEM_SOURCES` 删除 `workflow` 与 `system` 死项：workflow 派发进虚拟会话的
+命令不再免确认，照常走 confirm 闸（虚拟会话无人应答即超时拒绝，fail-closed）。原因：
+workflow_define/workflow_run 仅需 level-1，受信等于让 L1 用户绕过确认闸向任意会话投递
+高危命令（提权面）。依赖 workflow 静默执行确认类命令的自动化会从「静默执行」变为
+「超时拒绝」；如需恢复须自行抬高 workflow 工具档位（另行决策）。
+
+### 会话级 thinking 开关（api-session-manager 0.7.0 / agent 0.12.0 / session-manager 0.10.0）
+
+`SessionConfig` 新增 `think?: boolean`（`/session.set -t on|off` 设置、`/session.reset` 复位，
+未设置继承 provider 全局配置）。**同批升级**：plugin-agent 0.12.0 与
+plugin-session-manager 0.10.0 需一起升——平台级默认 think 由 session-manager 白名单式
+逐字段解析，旧版会静默丢弃该配置字段。
 
 ---
 

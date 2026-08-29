@@ -1688,7 +1688,7 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-llm
       '@aalis/api-session-manager':
-        specifier: workspace:>=0.6.0 <1.0.0
+        specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-session-manager
       '@aalis/api-webui':
         specifier: workspace:>=0.9.0 <1.0.0
