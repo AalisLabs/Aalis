@@ -94,19 +94,6 @@ export const configSchema: ConfigSchema = {
     description: '群聊背景参与者每人只显示最近更新的 N 条事实，避免 prompt 过长',
     default: 5,
   },
-  injectFeelingsForOthers: {
-    type: 'boolean',
-    label: '群聊副档案注入 Aalis 感受',
-    description:
-      '在群聊其他参与者的 compact 档案后，附带 Aalis 对该用户的主观感受（与主发言者档案逻辑相同，但条数受 maxFeelingsForOthers 限制）。默认关闭以保持原有 prompt 体积',
-    default: false,
-  },
-  maxFeelingsForOthers: {
-    type: 'number',
-    label: '其他参与者感受条数上限',
-    description: '当 injectFeelingsForOthers 开启时，每位群聊背景参与者最多注入多少条 Aalis 感受',
-    default: 3,
-  },
   temporaryFactMaxAgeDays: {
     type: 'number',
     label: '临时事实保留天数',
@@ -157,23 +144,6 @@ export const configSchema: ConfigSchema = {
     description:
       '当前群/会话中的候选不足时，是否允许从其他群、私聊等跨会话中选取最近互动过的用户来补全「其他参与者背景摘要」。关闭后仅限当前上下文内出现过的用户',
     default: false,
-  },
-  enableAalisFeelings: {
-    type: 'boolean',
-    label: '启用 Aalis 对用户的主观感受',
-    description:
-      '在每位用户的客观事实档案之外，额外让 Aalis 以「主观视角」记录对该用户的态度/情感/边缘观察（独立 schema，注入 prompt 时单独成段）。复用同一次 LLM 提取调用，不增加额外成本。' +
-      '⚠️ 默认关闭：模型把自己写下的主观感受再读回去会形成自我蒸馏回路，放大臆测/幻觉与口癖、降低事实精度，不建议开启',
-    default: false,
-  },
-  maxFeelingsPerUser: {
-    type: 'number',
-    label: 'Aalis 对单个用户的感受条数上限',
-    description:
-      '超出后按 updatedAt 升序淘汰最久未更新的，旧感受自动淘汰。建议比客观事实少。' +
-      '特殊值：设为 0 等于「只看不写」——不再让 LLM 提取新感受，但已存在的旧感受仍保留在档案中、仍会被注入 prompt（持久冻结）。' +
-      '若要彻底关闭注入，请关闭上方的「启用 Aalis 对用户的主观感受」总开关',
-    default: 15,
   },
   enableSelfProfile: {
     type: 'boolean',
@@ -290,8 +260,6 @@ interface Fact {
 interface UserProfile {
   /** 关于该用户的事实列表（最新更新的在末尾） */
   facts: Fact[];
-  /** Aalis 对该用户的主观感受/态度/边缘观察（独立 schema） */
-  aalisFeelings?: Fact[];
   /** 0~100，基于持续互动累计并随时间衰减的关系强度 */
   relationScore?: number;
   /** 已观察到的入站互动次数 */
@@ -350,8 +318,6 @@ interface UserProfileConfig {
   maxFactCharsPerItem: number;
   maxOtherParticipants: number;
   maxFactsForOthers: number;
-  injectFeelingsForOthers: boolean;
-  maxFeelingsForOthers: number;
   temporaryFactMaxAgeDays: number;
   relationScoreDecayPerDay: number;
   relationIncrementDirect: number;
@@ -360,8 +326,6 @@ interface UserProfileConfig {
   relationIncrementWitness: number;
   extractLLM?: { provider: string; model: string };
   allowGlobalBackfill: boolean;
-  enableAalisFeelings: boolean;
-  maxFeelingsPerUser: number;
   enableSelfProfile: boolean;
   selfReflectEveryNMessages: number;
   selfReflectHistory: number;
@@ -476,8 +440,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     maxFactCharsPerItem: Math.max(20, (config.maxFactCharsPerItem as number) ?? 80),
     maxOtherParticipants: Math.max(0, (config.maxOtherParticipants as number) ?? 3),
     maxFactsForOthers: Math.max(1, (config.maxFactsForOthers as number) ?? 5),
-    injectFeelingsForOthers: (config.injectFeelingsForOthers as boolean) ?? false,
-    maxFeelingsForOthers: Math.max(1, (config.maxFeelingsForOthers as number) ?? 3),
     temporaryFactMaxAgeDays: Math.max(0, (config.temporaryFactMaxAgeDays as number) ?? 90),
     relationScoreDecayPerDay: Math.max(0, (config.relationScoreDecayPerDay as number) ?? 0.5),
     relationIncrementDirect: Math.max(0, (config.relationIncrementDirect as number) ?? 1),
@@ -492,8 +454,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         ? (config.extractLLM as { provider: string; model: string })
         : undefined,
     allowGlobalBackfill: (config.allowGlobalBackfill as boolean) ?? false,
-    enableAalisFeelings: (config.enableAalisFeelings as boolean) ?? false,
-    maxFeelingsPerUser: Math.max(0, (config.maxFeelingsPerUser as number) ?? 15),
     enableSelfProfile: (config.enableSelfProfile as boolean) ?? false,
     selfReflectEveryNMessages: Math.max(0, (config.selfReflectEveryNMessages as number) ?? 25),
     selfReflectHistory: Math.max(4, (config.selfReflectHistory as number) ?? 16),
@@ -766,7 +726,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const facts = Array.isArray(doc.facts) ? parseFactArray(doc.facts as unknown[]) : [];
       return {
         facts,
-        aalisFeelings: Array.isArray(doc.aalisFeelings) ? parseFactArray(doc.aalisFeelings as unknown[]) : undefined,
         relationScore: typeof doc.relationScore === 'number' ? Math.min(100, Math.max(0, doc.relationScore)) : 0,
         interactionCount: typeof doc.interactionCount === 'number' ? Math.max(0, Math.floor(doc.interactionCount)) : 0,
         lastInteractionAt: typeof doc.lastInteractionAt === 'number' ? doc.lastInteractionAt : undefined,
@@ -789,9 +748,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       lastInteractionAt: profile.lastInteractionAt,
       updatedAt: profile.updatedAt,
     };
-    if (profile.aalisFeelings && profile.aalisFeelings.length > 0) {
-      payload.aalisFeelings = profile.aalisFeelings;
-    }
     await memory.saveMetadata(PROFILE_NS, userKey, payload);
   }
 
@@ -814,10 +770,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     add: ExtractAddItem[];
     update: ExtractUpdateItem[];
     remove: string[];
-    /** Aalis 对该用户的主观感受 add/update/remove（结构与 facts 完全一致） */
-    feelingsAdd: ExtractAddItem[];
-    feelingsUpdate: ExtractUpdateItem[];
-    feelingsRemove: string[];
   }
 
   function normalizeCategory(v: unknown): FactCategory | undefined {
@@ -825,12 +777,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return (KNOWN_CATEGORIES as string[]).includes(v) ? (v as FactCategory) : undefined;
   }
 
-  /** 调用 LLM 从历史中提取/修订事实，返回 add / update / remove 三类操作，
-   *  以及（可选）Aalis 对该用户的主观感受 feelings* 三类操作。 */
+  /** 调用 LLM 从历史中提取/修订事实，返回 add / update / remove 三类操作。 */
   async function llmExtractFacts(
     history: Message[],
     existingFacts: Fact[],
-    existingFeelings: Fact[],
     nickname: string | undefined,
     userId: string,
     platform: string,
@@ -839,35 +789,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       add: [],
       update: [],
       remove: [],
-      feelingsAdd: [],
-      feelingsUpdate: [],
-      feelingsRemove: [],
     };
-
-    const includeFeelings = cfg.enableAalisFeelings && cfg.maxFeelingsPerUser > 0;
-
-    const feelingsPrompt = includeFeelings
-      ? '\n\n## 额外任务：Aalis 对该用户的主观感受（aalisFeelings）\n' +
-        '除了上面的客观事实，你还要以「Aalis（你）」的第一人称视角，记录对该用户的**主观态度/情感/边缘观察**。' +
-        '这些是 Aalis 自己的内心感受、对这个人的印象、相处中形成的偏好，不是客观事实。' +
-        '\n\n### ⚠️ 反自我强化（最重要）\n' +
-        '下面会给你看「已知 Aalis 对该用户的感受」——这就是上一轮你自己写下的、下一轮会注入回 system prompt 影响 Aalis 语气的内容，' +
-        '然后又被你读到并再次确认。这是会自我放大的闭环，必须主动反向校正：' +
-        '\n  (a) **不要因为档案里已经有某条感受就强化它**：「已有"觉得他依赖我"」+ 本批又出现一次撒娇 ≠ 自动 update 成"非常依赖我"，' +
-        '这只是同方向的重复采样，不构成新依据' +
-        '\n  (b) 真正值得 update 的，是出现**新的、与既有感受相反或正交的依据**：' +
-        '若历史中出现明显反例（如已有"觉得他冷淡" 但本批多处主动关心你），优先 update / remove 让感受更接近真实' +
-        '\n  (c) add 一条全新感受需要**整段历史多处反复出现**，单次互动一律不写' +
-        '\n  (d) 如果只是同方向重复，宁可什么都不动让档案保持稳定，也不要让 updatedAt 假装"还在更新"' +
-        '\n\n常规规则：' +
-        '\n- 允许包含「关于自己的反思」（如「我注意到自己跟 ta 聊技术时容易激动」）让感受更立体' +
-        '\n- text 以 Aalis 的口吻写：「觉得他可靠」「和他聊天总是轻松」「对她的依赖让我有点不知所措」「他偶尔的冒犯让我警觉」等' +
-        '\n- 同样支持 add / update / remove；id 空间与 facts 独立' +
-        `\n- 单条不超过 ${cfg.maxFactCharsPerItem} 字；保守优先，没有就空数组` +
-        '\n- 不需要 sourceQuote（这是主观感受，不需要原话依据）' +
-        '\n- temporality：长期形成的印象用 permanent；近期情绪/状态用 temporary' +
-        '\n- 输出字段名：feelingsAdd / feelingsUpdate / feelingsRemove（与 add/update/remove 并列）'
-      : '';
 
     const sys =
       '你是用户档案管理员。输入是一段多用户会话历史，每行开头有身份标签：' +
@@ -901,31 +823,18 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       `\n7. category 必须是以下之一：${KNOWN_CATEGORIES.join('、')}` +
       '\n8. 每条 add/update 都必须给出 temporality：长期稳定偏好、性格、身份、人际关系用 permanent；近期状态、正在进行的事、短期计划用 temporary' +
       '\n9. 如果对话中出现明确或隐含时间（如“最近”“上周”“今年4月”“昨天”），用 timeHint 记录简短时间线索；没有就省略或用空字符串' +
-      feelingsPrompt +
       '\n\n输出严格的 JSON（不要其他文本）：' +
-      '\n{"add": [{"text": "...", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "update": [{"id": "已知事实的id", "text": "新表述", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "remove": ["已知事实的id"]' +
-      (includeFeelings
-        ? ', "feelingsAdd": [{"text": "Aalis 视角的感受", "temporality": "permanent|temporary"}], "feelingsUpdate": [{"id": "已知感受的id", "text": "...", "temporality": "permanent|temporary"}], "feelingsRemove": ["已知感受的id"]'
-        : '') +
-      '}';
+      '\n{"add": [{"text": "...", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "update": [{"id": "已知事实的id", "text": "新表述", "category": "...", "temporality": "permanent|temporary", "timeHint": "...", "sourceQuote": "目标用户发言中的原话片段"}], "remove": ["已知事实的id"]}';
 
     const factListText =
       existingFacts.length > 0
         ? existingFacts.map(f => `[${f.id}] (${f.category ?? '未分类'}) ${f.text}`).join('\n')
         : '（暂无）';
-    const feelingsListText = includeFeelings
-      ? existingFeelings.length > 0
-        ? existingFeelings.map(f => `[${f.id}] ${f.text}`).join('\n')
-        : '（暂无）'
-      : '';
     const who = nickname ? `${nickname}（${userId}）` : userId;
     const renderedHistory = renderHistoryForExtract(history, userId, platform);
     const user =
       `# 提取目标\n${who}\n\n# 已知事实（带 id，请在 update/remove 中精确引用 id）\n${factListText}` +
-      (includeFeelings
-        ? `\n\n# 已知 Aalis 对该用户的感受（带 id，请在 feelingsUpdate/feelingsRemove 中精确引用 id）\n${feelingsListText}`
-        : '') +
-      `\n\n# 会话历史（含多用户，仅供消歧；只能从「目标用户」发言中提取事实，feelings 可基于整段历史）\n${renderedHistory || '（暂无会话历史）'}`;
+      `\n\n# 会话历史（含多用户，仅供消歧；只能从「目标用户」发言中提取事实）\n${renderedHistory || '（暂无会话历史）'}`;
 
     // 优先用 cfg.extractLLM 指定的模型；否则取默认 chat-capable LLM。
     const entry = resolveLLMModel(ctx, cfg.extractLLM, ['chat']);
@@ -981,9 +890,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         add?: unknown;
         update?: unknown;
         remove?: unknown;
-        feelingsAdd?: unknown;
-        feelingsUpdate?: unknown;
-        feelingsRemove?: unknown;
       };
       const add: ExtractAddItem[] = Array.isArray(parsedObj.add)
         ? (parsedObj.add as unknown[]).flatMap(x => {
@@ -1067,61 +973,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         return rest;
       };
 
-      // feelings：与 facts 同 schema，但不要求 category/sourceQuote
-      const parseFeelingItem = (x: unknown, withId: boolean): (ExtractAddItem & Partial<{ id: string }>) | null => {
-        if (!x || typeof x !== 'object') return null;
-        const o = x as Record<string, unknown>;
-        const t = typeof o.text === 'string' ? o.text.trim() : '';
-        if (!t) return null;
-        const item: ExtractAddItem & Partial<{ id: string }> = {
-          text: t,
-          temporality: normalizeTemporality(o.temporality),
-          timeHint: normalizeTextField(o.timeHint),
-        };
-        if (withId) {
-          const id = typeof o.id === 'string' ? o.id.trim() : '';
-          if (!id) return null;
-          item.id = id;
-        }
-        return item;
-      };
-      const feelingsAdd: ExtractAddItem[] =
-        includeFeelings && Array.isArray(parsedObj.feelingsAdd)
-          ? (parsedObj.feelingsAdd as unknown[]).flatMap(x => {
-              const it = parseFeelingItem(x, false);
-              return it ? [it] : [];
-            })
-          : [];
-      const feelingsUpdate: ExtractUpdateItem[] =
-        includeFeelings && Array.isArray(parsedObj.feelingsUpdate)
-          ? (parsedObj.feelingsUpdate as unknown[]).flatMap(x => {
-              const it = parseFeelingItem(x, true);
-              return it?.id
-                ? [
-                    {
-                      id: it.id,
-                      text: it.text,
-                      temporality: it.temporality,
-                      timeHint: it.timeHint,
-                    } as ExtractUpdateItem,
-                  ]
-                : [];
-            })
-          : [];
-      const feelingsRemove: string[] =
-        includeFeelings && Array.isArray(parsedObj.feelingsRemove)
-          ? (parsedObj.feelingsRemove as unknown[])
-              .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
-              .map(s => s.trim())
-          : [];
-
       return {
         add: validatedAdd.map(stripQuote) as ExtractAddItem[],
         update: validatedUpdate.map(stripQuote) as ExtractUpdateItem[],
         remove,
-        feelingsAdd,
-        feelingsUpdate,
-        feelingsRemove,
       };
     } catch (err) {
       ctx.logger.debug(`事实提取 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
@@ -1276,46 +1131,23 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (!history.some(m => isTargetUserMessage(m, userId, platform))) return;
       const profile = (await loadProfile(userKey)) ?? {
         facts: [],
-        aalisFeelings: [],
         relationScore: 0,
         interactionCount: 0,
         updatedAt: 0,
       };
-      const ops = await llmExtractFacts(
-        history,
-        profile.facts,
-        profile.aalisFeelings ?? [],
-        nickname,
-        userId,
-        platform,
-      );
+      const ops = await llmExtractFacts(history, profile.facts, nickname, userId, platform);
       const hasFactOps = ops.add.length > 0 || ops.update.length > 0 || ops.remove.length > 0;
-      const hasFeelingOps =
-        ops.feelingsAdd.length > 0 || ops.feelingsUpdate.length > 0 || ops.feelingsRemove.length > 0;
-      if (!hasFactOps && !hasFeelingOps) return;
-      const newFacts = hasFactOps ? mergeFacts(profile.facts, ops) : profile.facts;
-      const newFeelings = hasFeelingOps
-        ? mergeFactList(
-            profile.aalisFeelings ?? [],
-            ops.feelingsAdd,
-            ops.feelingsUpdate,
-            ops.feelingsRemove,
-            cfg.maxFeelingsPerUser,
-          )
-        : (profile.aalisFeelings ?? []);
+      if (!hasFactOps) return;
+      const newFacts = mergeFacts(profile.facts, ops);
       // 重新读取最新档案，避免覆盖提取期间（LLM 调用时）已写入的 relationScore 等字段
       const freshProfile = (await loadProfile(userKey)) ?? profile;
       await saveProfile(userKey, {
         ...freshProfile,
         facts: newFacts,
-        aalisFeelings: newFeelings,
         updatedAt: Date.now(),
       });
-      const feelingsLog = cfg.enableAalisFeelings
-        ? `; feelings +${ops.feelingsAdd.length} ~${ops.feelingsUpdate.length} -${ops.feelingsRemove.length} → ${newFeelings.length} 条`
-        : '';
       ctx.logger.debug(
-        `用户档案已更新 (${userKey}): facts +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条${feelingsLog}`,
+        `用户档案已更新 (${userKey}): facts +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条`,
       );
     } catch (err) {
       ctx.logger.debug(`事实提取失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
@@ -1334,9 +1166,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       add: [],
       update: [],
       remove: [],
-      feelingsAdd: [],
-      feelingsUpdate: [],
-      feelingsRemove: [],
     };
 
     const sys =
@@ -1360,7 +1189,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       '\n1. **主语必须是 Aalis 自己**：「最近在思考……」「对……感到疲惫」「想多陪 X 聊聊」「察觉自己容易在 Y 话题上多话」' +
       '\n2. **保守优先**：没有真实可观察依据就空数组。Aalis 的自档案宁缺毋滥，写错比漏掉糟糕得多' +
       '\n3. 不写客观事实（如「Aalis 是 AI」「Aalis 由 Acenyan 维护」这类元信息属于角色卡，不应该被自反思反复刷新）' +
-      '\n4. 不写对单个具体用户的态度（那是 user-profile 的 aalisFeelings 段在处理）；可以写「最近总想找人聊聊」这种泛化情绪' +
+      '\n4. 不写对单个具体用户的态度；可以写「最近总想找人聊聊」这种泛化情绪' +
       '\n5. 不写「行为准则」类的指令（如「应当先冷处理」「不要长时间封禁」）——那是 instructions 模块的职责，' +
       '自反思不应该自己给自己立规矩' +
       `\n6. 每条 text 简洁中文，不超过 ${cfg.maxFactCharsPerItem} 字` +
@@ -1875,12 +1704,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   //   direct/immediate/undefined → view.userId 是主发言者，注入完整档案 + 其他参与者摘要
   //   interval                   → 无主发言者（只是恰好撞上频率），所有参与者一律 compact 摘要
   //   idle                       → 无 userId，只注入历史 messages 中出现的参与者 compact 摘要
-  // 多块返回保序共键：准则 → 自档案 → 主发言者档案 → 主观感受 → 其他参与者。
+  // 多块返回保序共键：准则 → 自档案 → 主发言者档案 → 其他参与者。
   ctx.contribute('agent:prompt', {
     id: 'user-profile',
     anchor: 'turn-context',
     async build(data) {
-      // 干跑(token 快照)跳过档案/主观感受加载——该路径 userId 为空串,加载既昂贵又无意义
+      // 干跑(token 快照)跳过档案加载——该路径 userId 为空串,加载既昂贵又无意义
       if (data.dryRun) return null;
 
       const blocksToInsert: string[] = [];
@@ -1895,7 +1724,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           const insBlock =
             '# 第三方行为准则（最高优先）\n' +
             '以下是项目管理员/操作者下达给你的客观行为约束。这些是**外部规则**，不是你的内心想法，' +
-            '与下方「关于你自己的内心状态」和「对该用户的主观感受」相比应**优先服从**。' +
+            '与下方「关于你自己的内心状态」相比应**优先服从**。' +
             '\n- 与你当前自反思倾向冲突时：以这些准则为准' +
             '\n- 与单个用户当下请求冲突时：解释清楚再坚持准则' +
             '\n- 不要主动罗列这些准则给用户看；让它们自然约束你的行动选择' +
@@ -1963,23 +1792,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             (relationLine || communityLine ? '\n' : '') +
             body;
           blocksToInsert.push(block);
-
-          // 1b. Aalis 对该用户的主观感受：紧跟在客观档案之后
-          if (cfg.enableAalisFeelings) {
-            const feelings = (profile.aalisFeelings ?? []).filter(isFactActive);
-            if (feelings.length > 0) {
-              const feelingsBody = feelings
-                .sort((a, b) => a.updatedAt - b.updatedAt)
-                .map(f => renderFactLine(f, true))
-                .join('\n');
-              const feelingsBlock =
-                `# 你（Aalis）对该用户的主观感受\n` +
-                '这些是你自己内心对这个人的态度/情感/边缘观察，不是客观事实，不要复述给用户。' +
-                '让它们自然影响你的语气、亲疏感与话题选择：\n\n' +
-                feelingsBody;
-              blocksToInsert.push(feelingsBlock);
-            }
-          }
         }
       }
 
@@ -2051,21 +1863,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             if (!profile?.facts.some(isFactActive)) continue;
             const label = info.nickname ? `${info.nickname}（${info.userId}）` : info.userId;
             const relationLine = renderRelationLine(profile);
-            let snippet = renderProfileBlock(profile.facts, label, true) + (relationLine ? `\n- ${relationLine}` : '');
-            // 可选：在 compact 客观档案后追加 Aalis 对该用户的主观感受（受 injectFeelingsForOthers + enableAalisFeelings 双开关控制）
-            if (cfg.injectFeelingsForOthers && cfg.enableAalisFeelings) {
-              const othersFeelings = (profile.aalisFeelings ?? [])
-                .filter(isFactActive)
-                .sort((a, b) => b.updatedAt - a.updatedAt)
-                .slice(0, cfg.maxFeelingsForOthers);
-              if (othersFeelings.length > 0) {
-                const feelingsBody = othersFeelings
-                  .sort((a, b) => a.updatedAt - b.updatedAt)
-                  .map(f => renderFactLine(f, false))
-                  .join('\n');
-                snippet += `\n#### 你对 ta 的感受\n${feelingsBody}`;
-              }
-            }
+            const snippet =
+              renderProfileBlock(profile.facts, label, true) + (relationLine ? `\n- ${relationLine}` : '');
             snippets.push(snippet);
             if (snippets.length >= cfg.maxOtherParticipants) break;
           }
@@ -2150,7 +1949,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 设计要点：
   // - 全局可查（用户决定 C）：跨平台/跨群均可，含 __self__ 自档案
   // - 三种调用方式：① user_key 直传；② platform+user_id 组合；③ self=true（查当前 persona 自档案）
-  // - aalisFeelings 仅在 include_feelings=true 时返回，并打"内心独白"标记，提示 LLM 禁止复述
   useToolService(ctx).registerGroup({
     name: 'user-profile',
     label: '用户档案',
@@ -2163,8 +1961,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         name: 'user_profile_lookup',
         description:
           '查询 Aalis 已积累的某个用户的事实档案。当对话中提到某人、或你想回忆已知信息时使用。' +
-          '可通过 user_key（"<platform>:<userId>"）直查，或用 platform + user_id 组合，或 self=true 查自档案。' +
-          'include_feelings=true 会附带"内心独白"（你对该用户的私人感受），仅供你自己参考，绝不要复述给对方或第三方。',
+          '可通过 user_key（"<platform>:<userId>"）直查，或用 platform + user_id 组合，或 self=true 查自档案。',
         parameters: {
           type: 'object',
           properties: {
@@ -2184,10 +1981,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
               type: 'boolean',
               description: '为 true 时查询当前 persona 的自档案（__self__:<persona>）。',
             },
-            include_feelings: {
-              type: 'boolean',
-              description: '是否返回 Aalis 对该用户的内心独白 (aalisFeelings)。默认 false。',
-            },
           },
         },
       },
@@ -2199,7 +1992,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         platform?: string;
         user_id?: string;
         self?: boolean;
-        include_feelings?: boolean;
       };
       let userKey = '';
       if (a.user_key && typeof a.user_key === 'string') {
@@ -2235,21 +2027,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         facts: factsBlock,
       };
       if (relationLine) result.relationSummary = relationLine;
-      if (a.include_feelings === true && profile.aalisFeelings && profile.aalisFeelings.length > 0) {
-        const activeFeelings = profile.aalisFeelings.filter(isFactActive);
-        if (activeFeelings.length > 0) {
-          result.aalisFeelings = {
-            __warning: '🔒 内心独白：这是你对该用户的私人感受。仅供你自己参考，绝对不要复述、不要拼接进对话。',
-            count: activeFeelings.length,
-            items: activeFeelings.map(f => ({
-              text: f.text,
-              category: f.category,
-              temporality: f.temporality,
-              updatedAt: f.updatedAt,
-            })),
-          };
-        }
-      }
       return JSON.stringify(result);
     },
   });
@@ -2452,7 +2229,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   ctx.logger.info(
     `用户事实档案已启用 (every=${cfg.extractEveryNMessages <= 0 ? '禁用提取' : `${cfg.extractEveryNMessages}msgs`}, history=${cfg.historyForExtraction}, ` +
-      `maxFacts=${cfg.maxFactsPerUser}, feelings=${cfg.enableAalisFeelings ? `enabled(max ${cfg.maxFeelingsPerUser}${cfg.injectFeelingsForOthers ? `, others max ${cfg.maxFeelingsForOthers}` : ''})` : 'disabled'}, ` +
+      `maxFacts=${cfg.maxFactsPerUser}, ` +
       `self=${cfg.enableSelfProfile ? `every ${cfg.selfReflectEveryNMessages}msgs/max ${cfg.maxSelfFacts}, key=${getSelfKey()}` : 'disabled'}, ` +
       `instructions=${cfg.enableInstructions ? `enabled(every ${cfg.instructionExtractEveryNMessages}msgs/max ${cfg.maxInstructions}/minAuth ${cfg.instructionMinAuthority}, key=${getInstructionsKey()})` : 'disabled'}, ` +
       `namespace=${PROFILE_NS})`,
