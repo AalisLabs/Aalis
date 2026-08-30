@@ -8,6 +8,23 @@
 
 ---
 
+## 未发布
+
+### agent：media 缺席时的图片基础体验（盖楼修复）
+
+此前「出口 images 只交出 provider 可解码形态」这条不变量的唯一守卫住在 plugin-media
+的 `agent:llm:before` 中间件里——media 缺席时，OneBot 图片附件的落盘相对路径会原样
+进入请求，openai/ollama 系模型整轮被拒（400 illegal base64 data），表现为发图即不回话。
+
+现在 agent 在 media 缺席时把这种（且仅这种）已知必炸形态经 storage 物化为 data URI，
+保住「视觉主模型直通」的基础体验；物化失败则丢弃该图；其余一切形态（data:/http(s)/
+file:// 等）原样透传，由各 provider 自行解析。media 在场时行为逐字节不变（原样透传，
+出口规范化仍归 media）。
+
+**注意**：media 缺席时图片一律直通主模型——无模式开关、无体积闸（单图上限即适配器
+落盘上限）、动图不抽帧；主模型无视觉能力时图片是否被忽略取决于服务端。需要
+describe/passthrough/disabled 分档、抽帧与体积控制，请安装 plugin-media。
+
 ## 2026-08-29（无 core 变更；各包独立版号）
 
 本批 17 包：schema-message 0.7.0 / plugin-memory-vector 0.11.0 /

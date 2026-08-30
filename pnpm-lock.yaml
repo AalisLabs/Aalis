@@ -581,6 +581,9 @@ importers:
       '@aalis/api-session-manager':
         specifier: workspace:*
         version: link:../api-session-manager
+      '@aalis/api-storage':
+        specifier: workspace:*
+        version: link:../api-storage
       '@aalis/api-tools':
         specifier: workspace:*
         version: link:../api-tools
