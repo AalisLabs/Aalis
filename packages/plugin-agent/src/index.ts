@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import type { AgentService, PluginGroupInfo, PreprocessorFn, PreprocessorInfo } from '@aalis/api-agent';
 import { useCommandService } from '@aalis/api-commands';
 import type { GatewayService } from '@aalis/api-gateway';
@@ -8,6 +9,7 @@ import type { MessageArchiveService } from '@aalis/api-message-archive';
 import type { PersonaService, PersonaSessionOptions } from '@aalis/api-persona';
 import { getPlatformSelfIdentity } from '@aalis/api-platform';
 import type { SessionConfig, SessionManagerService } from '@aalis/api-session-manager';
+import type { StorageService } from '@aalis/api-storage';
 import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/api-tools';
 import type { Context, Logger, PluginManagerService } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
@@ -1126,7 +1128,26 @@ class DefaultAgent implements AgentService {
     // 多模态：把 attachments 中的 image 项传递给 LLM（视觉模型多模态字段）
     const imageAtts = incoming.attachments?.filter(a => a.kind === 'image') ?? [];
     if (imageAtts.length > 0) {
-      userMessage.images = imageAtts.map(a => a.data);
+      if (this.ctx.getService('media') !== undefined) {
+        // media 在场：原样透传。出口形态由 media 的 agent:llm:before 中间件规范化
+        //（describe 剥离 / passthrough 物化），此处不做任何转换——它的描述缓存键与
+        // 动图提示都按 attachment.data 原串命中，改形态会打散。
+        userMessage.images = imageAtts.map(a => a.data);
+      } else {
+        // media 缺席兜底：只翻译**已知会炸**的一种形态——适配器落盘产生的裸相对路径
+        //（provider 会把它当 base64 校验，整轮请求被拒，见
+        // test/plugins/media-model-images.test.ts 抬头的 400 事故）——经 storage 读出
+        // 转 data URI，保住「视觉主模型直通」的基础体验；翻译不了（storage 缺席/读失败）
+        // 就丢弃该图。其余一切形态（data:/http(s)/file:// 等）原样透传，与 media 出现
+        // 之前的行为一致，各 provider 按自己的解析器处置。
+        const images: string[] = [];
+        for (const a of imageAtts) {
+          const img = await this.materializeImageWithoutMedia(a.data, a.mimeType);
+          if (img) images.push(img);
+          else this.logger.debug(`media 缺席且本地图片附件读取失败，跳过: ${a.data.slice(0, 80)}`);
+        }
+        if (images.length > 0) userMessage.images = images;
+      }
     }
 
     // 易变上下文（当前时间 / 会话环境 / 上一轮状态）落在历史**之后**：
@@ -1306,6 +1327,36 @@ class DefaultAgent implements AgentService {
     }
     st.lastRatioBucket = bucket;
     this.tokenLogState.set(sessionId, st);
+  }
+
+  /**
+   * media 缺席时的图片物化兜底（仅 buildMessages 的 images 拷贝点使用）。
+   * 只翻译一种形态：适配器落盘产生的裸相对路径 `data/{kind}s/...`——它是已确证的
+   * 炸弹（provider 当 base64 校验 → 400 整轮被拒），经 storage 读出转 data URI；
+   * storage 缺席/读失败返回 null 由调用方丢弃该图。**其余一切形态原样透传**
+   *（data:/http(s)/file:// 等，各 provider 自行解析）——刻意不做更宽的判别：
+   * 透传即维持 media 出现之前的既有行为，改写范围只覆盖已知必炸的那一种。
+   */
+  private async materializeImageWithoutMedia(data: string, mimeType?: string): Promise<string | null> {
+    const t = data.trim();
+    const rel = t.match(/^data\/((?:images|videos|audios|files)\/.+)$/);
+    if (!rel) return t;
+    const storage = this.ctx.getService<StorageService>('storage');
+    if (!storage) return null;
+    try {
+      const raw = (await storage.readFile(`data:/${rel[1]}`)) as Uint8Array;
+      // mime 优先取附件自带的 mimeType；缺省按 basename 扩展名推断（适配器落盘只产
+      // png/jpg/gif/webp 四种，见 attachment-cache 的 detectExtensionFromBuffer）
+      const base = t.slice(t.lastIndexOf('/') + 1);
+      const dot = base.lastIndexOf('.');
+      const ext = dot >= 0 ? base.slice(dot + 1).toLowerCase() : '';
+      const mime =
+        mimeType ??
+        (ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : ext === 'gif' ? 'image/gif' : 'image/jpeg');
+      return `data:${mime};base64,${Buffer.from(raw).toString('base64')}`;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -1709,7 +1760,7 @@ export const subsystem = 'agent';
 export const provides = ['agent'];
 
 export const inject = {
-  optional: ['llm', 'memory', 'persona', 'message-archive', 'platform'],
+  optional: ['llm', 'memory', 'persona', 'message-archive', 'platform', 'media', 'storage'],
 };
 
 export const configSchema: ConfigSchema = {
