@@ -37,13 +37,14 @@
     "@aalis/util-text-normalize": "workspace:>=0.5.1 <1.0.0"
   },
   "devDependencies": {
-    "@aalis/core": "workspace:*",
     "@aalis/api-gateway": "workspace:*",
     "@aalis/api-memory": "workspace:*",
     "@aalis/api-message-archive": "workspace:*",
     "@aalis/api-persona": "workspace:*",
     "@aalis/api-session-manager": "workspace:*",
+    "@aalis/api-storage": "workspace:*",
     "@aalis/api-tools": "workspace:*",
+    "@aalis/core": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },
@@ -54,10 +55,12 @@
     "service": {
       "optional": [
         "llm",
+        "media",
         "memory",
-        "persona",
         "message-archive",
-        "platform"
+        "persona",
+        "platform",
+        "storage"
       ],
       "provides": [
         "agent"
