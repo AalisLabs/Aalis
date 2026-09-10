@@ -256,10 +256,10 @@ function isLegacyDelegateMeta(meta: Record<string, unknown>): boolean {
   return String(meta.content ?? '').startsWith('[跨会话委派 META]');
 }
 
-/** 给消息生成稳定 key 用于跨命中去重（sessionId + timestamp + role + content hash） */
+/** 给消息生成稳定 key 用于跨命中去重（sessionId + timestamp + role） */
 function messageKey(sessionId: string, m: Message): string {
-  // 不含 content：同一逻辑消息（同 sid+ts+role）无论带不带 [昵称(ID)] 前缀都同 key，避免扩展路径（真消息含
-  // 前缀）与兜底（fakeMsg 取 metadata 纯文本、无前缀）对同一 pivot 各注入一次造成可见重复。
+  // 不含 content：同一逻辑消息（同 sid+ts+role）不因文本形态差异（存量向量的 metadata.content
+  // 无发送者前缀，真消息有）分裂成两个 key，避免扩展路径与兜底对同一 pivot 各注入一次造成可见重复。
   return `${sessionId}|${m.timestamp ?? 0}|${m.role}`;
 }
 
@@ -339,9 +339,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // === 索引：入站 user 消息 + assistant 落库回复，触发即写 ===
 
-  /** 待索引项：user 保留 memory 写入时间戳使向量与消息对齐（便于精确删除）；assistant 自带 */
+  /** 待索引项：user 带归档消息（文本与时间戳都以落库形态为准）；assistant 自带 */
   type PendingIndexItem =
-    | { kind: 'user'; msg: IncomingMessage; timestamp: number }
+    | { kind: 'user'; msg: IncomingMessage; archived: Message }
     | { kind: 'assistant'; sessionId: string; message: Message };
   const pendingIndexMessages: PendingIndexItem[] = [];
   let activeIndexers = 0;
@@ -364,7 +364,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       activeIndexers++;
       void (async () => {
         try {
-          if (next.kind === 'user') await indexUserMessage(next.msg, next.timestamp);
+          if (next.kind === 'user') await indexUserMessage(next.msg, next.archived);
           else await indexAssistantMessage(next.sessionId, next.message);
         } finally {
           activeIndexers--;
@@ -374,7 +374,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   }
 
-  async function indexUserMessage(msg: IncomingMessage, messageTimestamp: number): Promise<void> {
+  async function indexUserMessage(msg: IncomingMessage, archived: Message): Promise<void> {
     // 跳过非真实用户输入：闲聊主动触发（source 判据）与 proactive 伪 incoming
     //（triggerType 判据；全仓生产者=跨会话委派 + workflow agent 节点，内容是 AI 撰写的
     // 任务与 META 文本），不应进入向量库——AI 生成文本被语义命中后会以「历史用户发言」
@@ -387,13 +387,15 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     if (msg.source === 'scheduler') return;
     if (msg.source?.startsWith('workflow:')) return;
     if (msg.userId?.startsWith('parent:')) return;
-    const rawText = msg.content?.trim();
+    // 向量文本 = 归档文本（单一来源）：archive 已按平台规则加发送者前缀、烘入引用与
+    // 附件描述。此前 embed 的是 incoming.content——图片消息只剩 [图片 | ref:…] 占位符，
+    // 识别出的描述从未进向量空间，图片记忆不可召回。
+    const rawText = archived.content?.trim();
     if (!rawText) return;
+    // 归档写入时间戳：保证后续按时间戳精确删除（如「回滚本轮对话」）能命中向量条目
+    const messageTimestamp = archived.timestamp ?? Date.now();
     try {
-      // 方案 C：与 archive 入库格式一致、与检索侧对称。
-      // embed 带发送者前缀的文本，使身份信号进入向量空间；不加临时时间标签。
-      const embedText = prefixSender(rawText, msg.nickname, msg.userId);
-      const vec = await getEmbedder().embed(embedText);
+      const vec = await getEmbedder().embed(rawText);
       const mentions = extractMentions(rawText);
       const metadata: Record<string, unknown> = {
         sessionId: msg.sessionId,
@@ -406,7 +408,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         groupId: msg.groupId ?? '',
         sessionType: msg.sessionType ?? '',
         timestamp: messageTimestamp,
-        // 兜底内容：存原始纯净文本（供渲染兜底使用，不含发送者前缀）
+        // 兜底内容：归档文本（消息表老化后供渲染兜底；user 角色的发送者前缀由渲染侧剥除）
         content: rawText,
         // @提及到的用户 ID 列表，用于检索时同用户加权
         mentions,
@@ -421,10 +423,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 与 plugin-user-profile 等「派生持久数据」插件统一锚点：仅对已成功落库的入站消息建索引，
   // 避免归档失败的消息进入向量库，也消除归档前/后两套订阅时机的不一致。
   ctx.on('inbound:message:archived', data => {
-    // 使用 archive 写入时的真实时间戳作为向量 metadata.timestamp，
-    // 保证后续按时间戳精确删除（如「回滚本轮对话」）能命中向量条目。
-    const ts = data.archivedMessage.timestamp ?? Date.now();
-    enqueueIndexMessage({ kind: 'user', msg: data.incoming, timestamp: ts });
+    enqueueIndexMessage({ kind: 'user', msg: data.incoming, archived: data.archivedMessage });
   });
 
   // assistant 自身发言入库（2026-08-27，recallRoles 双模式的存储侧）：
