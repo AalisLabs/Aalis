@@ -23,8 +23,9 @@ import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
 // 那条链在 commands 侧已被钉住，这里钉 tools 侧的入参形状。
 // ════════════════════════════════════════════════════════════
 
-async function makeApp() {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+async function makeApp(appConfig: Record<string, unknown> = {}) {
+  // authority 读的是顶层 ctx.config（restrictedPolicy / owners / confirmOverrides 等），不是模块入参
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {}, ...appConfig } as never });
   await app.ctx.useModule(toolsModule as never, {});
   await app.ctx.useModule(authorityModule as never, {});
   await app.plugins.idle();
@@ -35,12 +36,14 @@ async function makeApp() {
 async function runTool(
   risk: 'safe' | 'sensitive' | 'dangerous' | undefined,
   caller: { platform: string; userId?: string; actor?: { platform: string; userId: string } },
+  opts: { appConfig?: Record<string, unknown>; confirm?: 'always' } = {},
 ): Promise<{ ran: boolean; out: string }> {
-  const app = await makeApp();
+  const app = await makeApp(opts.appConfig);
   let ran = false;
   useToolService(app.ctx).register({
     groups: ['probe'],
     ...(risk ? { risk } : {}),
+    ...(opts.confirm ? { confirm: opts.confirm } : {}),
     definition: {
       type: 'function',
       function: { name: 'probe_tool', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -106,5 +109,28 @@ describe('authority 执行守卫真的挂在 tools 上', () => {
     });
     expect(ran, '无主体 actor 被当成 owner 放行了 —— 空 userId 命中了 owner/等级查表').toBe(false);
     expect(out).toContain('error');
+  });
+
+  it('救援闸不替被覆盖的身份解围：owner 配了 restrictedPolicy 白名单、又恰好是物理发言者，无主体 actor 仍拒且不跳过 confirm', async () => {
+    // 对抗审计复现（2026-09）：authorize 按无主体 actor 拒 → 守卫落进 isPreApproved(accessBase)，
+    // 而 accessBase.userId 是物理发言者（owner）→ 白名单命中 → return null，连 always 档 confirm 也一并跳过。
+    const appConfig = { restrictedPolicy: { allow: ['tool:*'] } };
+    const selfInitiated = await runTool(
+      'dangerous',
+      { platform: 'webui', userId: 'console', actor: selfInitiatedActor('webui') },
+      { appConfig, confirm: 'always' },
+    );
+    expect(selfInitiated.ran, '白名单借物理发言者（owner）身份替无主体回合解围').toBe(false);
+    // 对照：同一配置下 owner 本人（无 actor 覆盖）走授权轴放行 → always 档无确认通道 → 拒，行为不变
+    const ownerSelf = await runTool(
+      'dangerous',
+      { platform: 'webui', userId: 'console' },
+      { appConfig, confirm: 'always' },
+    );
+    expect(ownerSelf.ran).toBe(false);
+    expect(ownerSelf.out).toContain('需确认');
+    // 对照：白名单对 owner 本人的 sensitive（无 confirm）照常放行——救援闸本身没被封死
+    const ownerSensitive = await runTool('sensitive', { platform: 'webui', userId: 'console' }, { appConfig });
+    expect(ownerSensitive.ran).toBe(true);
   });
 });

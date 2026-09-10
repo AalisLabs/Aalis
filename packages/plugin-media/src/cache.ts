@@ -48,9 +48,28 @@ export function descriptionKey(source: string): string {
 }
 
 /**
- * 写入缓存（空串与失败占位不缓存：`[图片: …]` / `[动图: …]` 形态占位，以及 processVideo
- * 在无法物化/抽不出帧时返回的 `[视频] …` 失败文案——后者曾被当成描述写进 30 天缓存，
- * 同一动图此后每次命中都直接返回失败文案、永不重试）。
+ * processVideo 在无法物化 / 抽不出帧时返回给 LLM 的失败文案。集中在此定义，让「是不是
+ * 失败文案」成为对常量的精确匹配，而不是对前缀的猜测——`[画面] ` 这类前缀是用户可配的
+ * （video.framePrefix），按前缀判会把用户恰好配成同名前缀的真描述一并拒缓存。
+ */
+export const VIDEO_FAILURE_TEXTS = {
+  unreadable: '[视频] 无法下载或读取视频文件内容（URL 不可访问或解码失败）',
+  noUrl: '[视频] OneBot 服务端未提供视频文件 URL，无法获取内容',
+  noFrames: '[视频] 已收到视频文件但未能抽取关键帧或音轨（可能缺少 ffmpeg/ffprobe，或视频解码失败）',
+} as const;
+const VIDEO_FAILURE_SET: ReadonlySet<string> = new Set(Object.values(VIDEO_FAILURE_TEXTS));
+
+/**
+ * 失败占位判定：`[图片: …]` / `[动图: …]` 形态占位（formatAttachmentRef 契约前缀，非用户可配）
+ * 与 processVideo 的失败文案。写入与灌回共用：失败文案曾被当成描述写进 30 天缓存，
+ * 同一动图此后每次命中都直接返回失败文案、永不重试；灌回不过滤则升级后旧毒条目原样复活。
+ */
+export function isFailurePlaceholder(raw: string): boolean {
+  return raw.startsWith('[图片:') || raw.startsWith('[动图:') || VIDEO_FAILURE_SET.has(raw);
+}
+
+/**
+ * 写入缓存（空串与失败占位不缓存，见 isFailurePlaceholder）。
  *
  * `shareable=false` 时不跨会话共享——描述若掺进了**当前会话的对话上下文**
  * （contextHistory / senderContext 开启时 vision prompt 里带着近期聊天与发送者画像），
@@ -58,8 +77,7 @@ export function descriptionKey(source: string): string {
  * 这类描述退回按落盘路径（含会话目录）做键，只在本会话内复用。
  */
 export function rememberDescription(key: string, raw: string, shareable = true): void {
-  if (!raw) return;
-  if (raw.startsWith('[图片:') || raw.startsWith('[动图:') || raw.startsWith('[视频]')) return;
+  if (!raw || isFailurePlaceholder(raw)) return;
   cache.set(shareable ? descriptionKey(key) : key, raw);
   schedulePersist();
 }
@@ -82,6 +100,7 @@ export async function loadDescriptionCache(logger: CacheLogger): Promise<number>
     let n = 0;
     for (const pair of parsed) {
       if (!Array.isArray(pair) || typeof pair[0] !== 'string' || typeof pair[1] !== 'string') continue;
+      if (isFailurePlaceholder(pair[1])) continue; // 清洗守卫加固前落盘的失败条目
       cache.set(pair[0], pair[1]);
       n++;
     }
