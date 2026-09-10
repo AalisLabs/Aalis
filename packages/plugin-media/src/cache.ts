@@ -48,7 +48,9 @@ export function descriptionKey(source: string): string {
 }
 
 /**
- * 写入缓存（空串、占位符 `[图片: ...]` 不缓存）。
+ * 写入缓存（空串与失败占位不缓存：`[图片: …]` / `[动图: …]` 形态占位，以及 processVideo
+ * 在无法物化/抽不出帧时返回的 `[视频] …` 失败文案——后者曾被当成描述写进 30 天缓存，
+ * 同一动图此后每次命中都直接返回失败文案、永不重试）。
  *
  * `shareable=false` 时不跨会话共享——描述若掺进了**当前会话的对话上下文**
  * （contextHistory / senderContext 开启时 vision prompt 里带着近期聊天与发送者画像），
@@ -57,7 +59,7 @@ export function descriptionKey(source: string): string {
  */
 export function rememberDescription(key: string, raw: string, shareable = true): void {
   if (!raw) return;
-  if (raw.startsWith('[图片:') || raw.startsWith('[动图:')) return;
+  if (raw.startsWith('[图片:') || raw.startsWith('[动图:') || raw.startsWith('[视频]')) return;
   cache.set(shareable ? descriptionKey(key) : key, raw);
   schedulePersist();
 }
