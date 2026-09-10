@@ -516,6 +516,34 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   });
 });
 
+describe('索引文本 = 归档文本', () => {
+  it('图片消息：embed 与兜底 content 取归档文本（含识别描述），不取 incoming 占位符', async () => {
+    // 断链形态（2026-09 核实）：lancedb 中 15995 条裸 [图片] 占位符 vs 20 条带描述——
+    // 索引侧 embed 的是 incoming.content，plugin-media 识别出的描述只进了归档，从未进向量空间。
+    const { app, store, embedder } = await setup({});
+    const emitLoose = app.ctx.emit.bind(app.ctx) as (event: string, data: unknown) => Promise<void>;
+    const archivedText = '[小明(u1)]: 看这个\n[图片 | ref:abc123]\n[图片描述] 一只橘猫趴在键盘上';
+    await emitLoose('inbound:message:archived', {
+      sessionId: 's1',
+      incoming: {
+        content: '看这个\n[图片 | ref:abc123]',
+        sessionId: 's1',
+        platform: 'onebot',
+        userId: 'u1',
+        nickname: '小明',
+      },
+      archivedMessage: { role: 'user', content: archivedText, timestamp: BASE_TS + 7 },
+    });
+    for (let i = 0; i < 50 && store.added.length === 0; i++) await new Promise(r => setTimeout(r, 20));
+    // embed 文本就是归档文本：不二次加前缀（archive 已加），描述必须在向量空间里
+    expect(embedder.calls).toEqual([archivedText]);
+    expect(store.added).toHaveLength(1);
+    expect(store.added[0].content).toBe(archivedText);
+    // 时间戳以归档为准（按时间戳精确删除的对齐前提）
+    expect(store.added[0].timestamp).toBe(BASE_TS + 7);
+  });
+});
+
 describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
   it('索引侧：assistant 落库事件入库带 role=assistant，user 入库带 role=user', async () => {
     const { app, store } = await setup({});
