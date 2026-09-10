@@ -7,6 +7,7 @@ import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { prefixSender, WellKnownKinds } from '@aalis/schema-message';
+import { truncateChars } from '@aalis/util-text-normalize';
 
 // ===== 插件元数据 =====
 
@@ -149,6 +150,19 @@ interface VectorMemoryConfig {
 function recencyScore(timestampMs: number, nowMs: number): number {
   const daysSince = (nowMs - timestampMs) / (1000 * 60 * 60 * 24);
   return Math.exp(-0.1 * daysSince);
+}
+
+/**
+ * 送入 embedder 的文本上限（字符）。归档文本可以很长——文件附件的正文由 file-reader 整段
+ * 烘进归档（`--- 文件内容 ---` 块），一条消息几万字并不罕见；embedder 输入超限时整条
+ * 索引静默失败（只留一条 warn），消息从此不可召回。单条向量表达不了整篇文档，取开头
+ * 足以让「有人发过这个文件」被召回；文件正文本就该由 file_read 类工具按需读。
+ * 同一上限也作用于兜底 metadata.content，避免向量库存整篇文件正文。
+ */
+const MAX_EMBED_CHARS = 4000;
+/** 代理对安全截断：裸 slice 会切出孤代理，经 JSON 送到 embedder 端点同样会被严格解析器拒收。 */
+function clipForEmbed(text: string): string {
+  return truncateChars(text, MAX_EMBED_CHARS);
 }
 
 function truncate(text: string | undefined | null, max: number): string {
@@ -390,7 +404,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     // 向量文本 = 归档文本（单一来源）：archive 已按平台规则加发送者前缀、烘入引用与
     // 附件描述。此前 embed 的是 incoming.content——图片消息只剩 [图片 | ref:…] 占位符，
     // 识别出的描述从未进向量空间，图片记忆不可召回。
-    const rawText = archived.content?.trim();
+    const rawText = clipForEmbed(archived.content?.trim() ?? '');
     if (!rawText) return;
     // 归档写入时间戳：保证后续按时间戳精确删除（如「回滚本轮对话」）能命中向量条目
     const messageTimestamp = archived.timestamp ?? Date.now();
@@ -434,7 +448,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   async function indexAssistantMessage(sessionId: string, message: Message): Promise<void> {
-    const rawText = message.content?.trim();
+    const rawText = clipForEmbed(message.content?.trim() ?? '');
     if (!rawText) return;
     // 防御性冗余：EventMarker 现产者全是 role:system、被发射门先挡；此处兜第三方发射者
     if (message.kind === WellKnownKinds.EventMarker) return;

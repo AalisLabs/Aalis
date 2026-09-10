@@ -1413,6 +1413,9 @@ importers:
       '@aalis/schema-message':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../schema-message
+      '@aalis/util-text-normalize':
+        specifier: workspace:>=0.5.1 <1.0.0
+        version: link:../util-text-normalize
     devDependencies:
       '@aalis/api-agent':
         specifier: workspace:*

@@ -231,8 +231,11 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       message.triggerType = decision.kind;
       // interval 回合无主发言者：授权身份回填为无主体，不让「恰好撞阈值的那个人」
       //（陌生人或 owner）的等级决定 AI 自发行为能调什么工具。immediate 是被点名，
-      // 点名者就是主体，维持缺省（actor 回退到会话身份）。
-      if (decision.kind === 'interval' && !message.actor) message.actor = selfInitiatedActor(message.platform);
+      // 点名者就是主体，维持缺省（actor 回退到会话身份）。只对多人会话：scope 可配成
+      // 把私聊纳入，私聊里的 interval 只是频率闸，发言者就是唯一主体，不存在歧义。
+      if (decision.kind === 'interval' && message.sessionType !== 'private' && !message.actor) {
+        message.actor = selfInitiatedActor(message.platform);
+      }
       await next();
       return;
     }

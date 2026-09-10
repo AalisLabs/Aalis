@@ -7,6 +7,7 @@ import {
   loadDescriptionCache,
   lookupCachedDescription,
   rememberDescription,
+  VIDEO_FAILURE_TEXTS,
 } from '../../packages/plugin-media/src/cache.js';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
@@ -163,6 +164,22 @@ describe('落盘续命', () => {
     const dumped = JSON.parse(files.get(SNAPSHOT_URI) as string) as Array<[string, string]>;
     expect(dumped.some(([k]) => k === '9999888877776666')).toBe(false);
     expect(dumped.some(([k]) => k === '6666777788889999')).toBe(false);
+  });
+
+  it('灌回清洗：守卫加固前落盘的视频失败文案不复活（否则同一动图 30 天内永不重试）', async () => {
+    files.set(
+      SNAPSHOT_URI,
+      JSON.stringify([
+        ['aaaa1111aaaa1111', VIDEO_FAILURE_TEXTS.noFrames],
+        ['bbbb2222bbbb2222', VIDEO_FAILURE_TEXTS.unreadable],
+        ['cccc3333cccc3333', '[画面] 猫在跳'],
+      ]),
+    );
+    const n = await loadDescriptionCache(logger as never);
+    expect(n).toBe(1);
+    expect(lookupCachedDescription('data/images/s/aaaa1111aaaa1111.gif')).toBeNull();
+    expect(lookupCachedDescription('data/images/s/bbbb2222bbbb2222.gif')).toBeNull();
+    expect(lookupCachedDescription('data/images/s/cccc3333cccc3333.gif')).toBe('[画面] 猫在跳');
   });
 
   it('快照损坏/缺失只降级为不复用，不抛错', async () => {
