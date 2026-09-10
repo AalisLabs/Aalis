@@ -228,3 +228,69 @@ describe('trigger-policy config (triggerOnPoke)', () => {
     expect(c.overrides[0]?.triggerOnPoke).toBe(false);
   });
 });
+
+// ════════════════════════════════════════════════════════════
+// inbound:trigger 中间件写进 message 的身份：interval 回合无主体
+// ════════════════════════════════════════════════════════════
+
+/** 直接驱动相位钩子链（不装 gateway/flow-control）：无 flow 状态时非 @ 群消息即 interval（default-pass） */
+async function runTriggerPhase(
+  app: App,
+  message: IncomingMessage,
+): Promise<{ reached: boolean; message: IncomingMessage }> {
+  let reached = false;
+  const runHookLoose = app.ctx.runHook.bind(app.ctx) as (
+    event: string,
+    data: unknown,
+    next: () => Promise<void>,
+  ) => Promise<unknown>;
+  await runHookLoose('inbound:trigger', { message, metadata: {}, agent: undefined }, async () => {
+    reached = true;
+  });
+  return { reached, message };
+}
+
+const groupMsg = (content: string, userId = 'owner-1'): IncomingMessage =>
+  ({
+    platform: 'onebot',
+    sessionType: 'group',
+    sessionId: 'onebot:bot:group:g1',
+    groupId: 'g1',
+    userId,
+    nickname: '群主',
+    content,
+  }) as unknown as IncomingMessage;
+
+describe('trigger-policy inbound:trigger 授权身份', () => {
+  it('interval 触发：回填无主体 actor（空 userId），不继承撞阈值那条消息的发言者身份', async () => {
+    // 事故形态（2026-09 日志实测 1415 次 interval 触发）：authority 经 actor ?? {platform,userId}
+    // 回退到最后发言者——99.4% 回合按陌生人 0 级判权，owner 恰好最后发言时整轮按 owner 执行。
+    const { app } = await setupPolicy();
+    const { reached, message } = await runTriggerPhase(app, groupMsg('随便聊聊'));
+    await app.stop();
+    expect(reached).toBe(true);
+    expect(message.triggerType).toBe('interval');
+    expect(message.actor).toEqual({ platform: 'onebot', userId: '' });
+    // 物理发言者保持会话语义（归档/档案/记忆平台域都靠它）
+    expect(message.userId).toBe('owner-1');
+  });
+
+  it('immediate（被 @）：点名者就是主体，actor 维持缺省', async () => {
+    const { app } = await setupPolicy();
+    const { reached, message } = await runTriggerPhase(app, groupMsg('<at self id="bot">Aalis</at> 在吗'));
+    await app.stop();
+    expect(reached).toBe(true);
+    expect(message.triggerType).toBe('immediate');
+    expect(message.actor).toBeUndefined();
+  });
+
+  it('interval 但消息已带 actor（委派等系统投递）：不覆盖既有授权身份', async () => {
+    const { app } = await setupPolicy();
+    const msg = groupMsg('派发任务');
+    msg.actor = { platform: 'webui', userId: 'console' };
+    const { message } = await runTriggerPhase(app, msg);
+    await app.stop();
+    expect(message.triggerType).toBe('interval');
+    expect(message.actor).toEqual({ platform: 'webui', userId: 'console' });
+  });
+});

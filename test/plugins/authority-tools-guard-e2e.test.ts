@@ -4,6 +4,7 @@ import type { ToolService } from '../../packages/api-tools/src/index.js';
 import { useToolService } from '../../packages/api-tools/src/index.js';
 import * as authorityModule from '../../packages/plugin-authority/src/index.js';
 import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // authority 执行守卫 —— tools 侧端到端
@@ -33,7 +34,7 @@ async function makeApp() {
 /** 注册一个探针工具并执行，返回是否真跑到了 handler、以及返回串。 */
 async function runTool(
   risk: 'safe' | 'sensitive' | 'dangerous' | undefined,
-  caller: { platform: string; userId?: string },
+  caller: { platform: string; userId?: string; actor?: { platform: string; userId: string } },
 ): Promise<{ ran: boolean; out: string }> {
   const app = await makeApp();
   let ran = false;
@@ -93,5 +94,17 @@ describe('authority 执行守卫真的挂在 tools 上', () => {
     const anon = await runTool('sensitive', { platform: 'onebot', userId: 'anon' });
     const owner = await runTool('sensitive', { platform: 'webui', userId: 'console' });
     expect([anon.ran, owner.ran], '两种身份得到同一结论 —— 守卫没在读 callCtx').toEqual([false, true]);
+  });
+
+  it('无主体 actor（AI 自发回合）：物理发言者是 owner 也不放行 sensitive——等级按默认、owner 判定不命中空串', async () => {
+    // interval 触发复用的是恰好撞阈值的那条真人消息；trigger-policy 回填 selfInitiatedActor，
+    // 授权轴据此不再让「最后发言者」（陌生人或 owner）决定 AI 自发行为的工具能力。
+    const { ran, out } = await runTool('sensitive', {
+      platform: 'webui',
+      userId: 'console',
+      actor: selfInitiatedActor('webui'),
+    });
+    expect(ran, '无主体 actor 被当成 owner 放行了 —— 空 userId 命中了 owner/等级查表').toBe(false);
+    expect(out).toContain('error');
   });
 });
