@@ -86,7 +86,13 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
       // 仅 owner 预先配置的放行（restrictedPolicy 白名单 / 该用户在本会话已有的授予）可救；否则硬拒。
       // 注意：这里**不**调 requestAccess（那会询问发起者）——只查 isPreApproved（不问人）。
       if (g.skipConfirm) return denied;
-      return authority.isPreApproved(accessBase) ? null : denied;
+      // 救援闸按会话身份查「某个人预先放行了自己」，只在被裁决的就是这个人时才成立。
+      // actor 覆盖了会话身份（委派 / 定时 / 自发回合）时，物理发言者的白名单与授予不能替
+      // 另一个身份解围——否则 interval 回合回填无主体 actor 后，owner 恰好最后发言时仍能
+      // 借 owner 的 restrictedPolicy 白名单或会话授予免授权执行，且救援命中直接 return null
+      // 连 confirm 轴（含 always 档）一并跳过。
+      const sameIdentity = identity.platform === g.platform && identity.userId === g.userId;
+      return sameIdentity && authority.isPreApproved(accessBase) ? null : denied;
     }
 
     // ── 轴 B · 确认：授权已过（含 owner / public / 已授予），但操作声明了 confirm 仍需「意图确认」 ──

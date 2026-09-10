@@ -544,6 +544,36 @@ describe('索引文本 = 归档文本', () => {
   });
 });
 
+describe('索引文本长度上限', () => {
+  it('文件正文整段烘进归档的超长消息：按上限截断后仍入库（而非整条静默索引失败），且不切坏 emoji', async () => {
+    // 对抗审计（2026-09）：改取归档文本后，file-reader 烘进的 `--- 文件内容 ---` 块可达数万字，
+    // embedder 超限抛错 → 只留一条 warn，消息从此不可召回。
+    const { app, store, embedder } = await setup({});
+    const emitLoose = app.ctx.emit.bind(app.ctx) as (event: string, data: unknown) => Promise<void>;
+    const body = `[u1]: 看下这个配置\n--- 文件内容 ---\n${'配置行；'.repeat(3000)}`;
+    // 让上限边界恰好落在一个代理对中间：前 3999 个 UTF-16 单元后接一个 emoji
+    const boundaryBody = `${'x'.repeat(3999)}😀${'y'.repeat(50)}`;
+    await emitLoose('inbound:message:archived', {
+      sessionId: 's1',
+      incoming: { content: '看下这个配置', sessionId: 's1', platform: 'onebot', userId: 'u1' },
+      archivedMessage: { role: 'user', content: body, timestamp: BASE_TS },
+    });
+    await emitLoose('inbound:message:archived', {
+      sessionId: 's1',
+      incoming: { content: 'x', sessionId: 's1', platform: 'onebot', userId: 'u1' },
+      archivedMessage: { role: 'user', content: boundaryBody, timestamp: BASE_TS + 1 },
+    });
+    for (let i = 0; i < 50 && store.added.length < 2; i++) await new Promise(r => setTimeout(r, 20));
+    expect(store.added).toHaveLength(2);
+    expect(embedder.calls[0].length).toBe(4000);
+    expect(embedder.calls[0].startsWith('[u1]: 看下这个配置')).toBe(true);
+    expect(store.added[0].content).toBe(embedder.calls[0]);
+    // 代理对安全：截断点回退一位，末尾不留孤代理
+    expect(embedder.calls[1].length).toBe(3999);
+    expect(embedder.calls[1]).toBe('x'.repeat(3999));
+  });
+});
+
 describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
   it('索引侧：assistant 落库事件入库带 role=assistant，user 入库带 role=user', async () => {
     const { app, store } = await setup({});

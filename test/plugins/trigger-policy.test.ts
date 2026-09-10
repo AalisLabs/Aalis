@@ -284,6 +284,24 @@ describe('trigger-policy inbound:trigger 授权身份', () => {
     expect(message.actor).toBeUndefined();
   });
 
+  it('私聊纳入 scope 时的 interval：发言者就是唯一主体，不回填无主体 actor', async () => {
+    // scope 可配成 `*` / `onebot:*` / `*:private`（WebUI 下拉一等公民值），私聊里没人 @ 就是 interval；
+    // 若也回填无主体，owner 在私聊里调任何 sensitive 工具都会变成「权限不足」。
+    const { app } = await setupPolicy({ scopes: ['onebot:*'] });
+    const msg = {
+      platform: 'onebot',
+      sessionType: 'private',
+      sessionId: 'onebot:bot:private:owner-1',
+      userId: 'owner-1',
+      content: '帮我看下日志',
+    } as unknown as IncomingMessage;
+    const { reached, message } = await runTriggerPhase(app, msg);
+    await app.stop();
+    expect(reached).toBe(true);
+    expect(message.triggerType).toBe('interval');
+    expect(message.actor).toBeUndefined();
+  });
+
   it('interval 但消息已带 actor（委派等系统投递）：不覆盖既有授权身份', async () => {
     const { app } = await setupPolicy();
     const msg = groupMsg('派发任务');

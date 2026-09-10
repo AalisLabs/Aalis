@@ -28,7 +28,7 @@ const ATTACHMENT_KIND_LABEL: Record<string, string> = {
   file: AttachmentRefKind.File,
 };
 
-import { lookupCachedDescription, rememberDescription } from './cache.js';
+import { lookupCachedDescription, rememberDescription, VIDEO_FAILURE_TEXTS } from './cache.js';
 import { buildIncomingImageContext } from './context.js';
 import {
   downloadToTemp,
@@ -552,9 +552,7 @@ export class MediaServiceImpl implements MediaService {
       this.logger.debug('视频无法物化为本地文件，跳过');
       // 显式占位，避免 LLM 看不到"视频曾到达但无法读取内容"这一事实
       const hasRef = typeof att.data === 'string' && att.data.length > 0;
-      return hasRef
-        ? '[视频] 无法下载或读取视频文件内容（URL 不可访问或解码失败）'
-        : '[视频] OneBot 服务端未提供视频文件 URL，无法获取内容';
+      return hasRef ? VIDEO_FAILURE_TEXTS.unreadable : VIDEO_FAILURE_TEXTS.noUrl;
     }
     const t0 = Date.now();
     this.logger.info(`[video] 开始处理 sourceKind=${sourceKind} mode=${this.cfg.video.mode} path=${local.path}`);
@@ -610,8 +608,7 @@ export class MediaServiceImpl implements MediaService {
       }
 
       this.logger.info(`[video] 完成 ${Date.now() - t0}ms：产出 ${frameTexts.length} 段（帧综合 + 音轨转写）`);
-      if (frameTexts.length === 0)
-        return '[视频] 已收到视频文件但未能抽取关键帧或音轨（可能缺少 ffmpeg/ffprobe，或视频解码失败）';
+      if (frameTexts.length === 0) return VIDEO_FAILURE_TEXTS.noFrames;
       return frameTexts.join('\n');
     } finally {
       await local.cleanup();
