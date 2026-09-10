@@ -25,6 +25,7 @@ meta.inject = {} // 无依赖
 | `temperature` | number | 0.7 | 采样温度 |
 | `maxTokens` | number | 4096 | 最大生成 token 数 |
 | `contextLength` | number | 128000 | 模型上下文窗口大小 |
+| `thinkingParam` | boolean | false | 把请求的 think 开关编码为 DeepSeek 风格 `thinking: {type: enabled\|disabled}` 发给端点；仅 DeepSeek 或原样透传该字段的中转可开（OpenAI 官方端点会拒收）。未指定 think 时不发字段 |
 | `maxToolIterations` | number | 10 | 工具调用最大迭代次数 |
 | `capabilities` | multiselect | — | 声明能力: chat / tool_calling / streaming / thinking |
 

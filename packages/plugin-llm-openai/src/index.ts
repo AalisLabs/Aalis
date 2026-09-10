@@ -73,6 +73,16 @@ export const configSchema: ConfigSchema = {
   temperature: { type: 'number', label: '温度', default: 0.7, description: '0-2，越高越随机' },
   maxTokens: { type: 'number', label: '最大 Token', default: 4096, description: '单次回复最大生成 token 数' },
   contextLength: { type: 'number', label: '上下文长度', default: 128000, description: '模型上下文窗口大小' },
+  thinkingParam: {
+    type: 'boolean',
+    label: '透传 thinking 开关（DeepSeek 风格）',
+    default: false,
+    description:
+      '开启后把请求的 think 开关编码为 DeepSeek 风格的 `thinking: {type: enabled|disabled}` 字段发给端点，' +
+      '使会话级 /session.set -t 与平台档 think 对本 provider 生效。' +
+      '仅在端点是 DeepSeek 或会原样透传该字段的中转时开启——OpenAI 官方端点不认此字段会拒收请求。' +
+      '请求未指定 think 时不发送该字段（沿用端点默认）。',
+  },
 };
 
 // ===== 配置 =====
@@ -87,6 +97,7 @@ interface OpenAIConfig {
   temperature: number;
   maxTokens: number;
   contextLength: number;
+  thinkingParam: boolean;
 }
 
 // ===== OpenAI-compatible 消息格式 =====
@@ -158,6 +169,7 @@ class OpenAIClient {
   private timeout: number;
   readonly temperature: number;
   readonly maxTokens: number;
+  private thinkingParam: boolean;
   private logger;
 
   constructor(config: OpenAIConfig, logger: Context['logger']) {
@@ -167,7 +179,19 @@ class OpenAIClient {
     this.timeout = config.timeout && config.timeout > 0 ? config.timeout * 1000 : 2_147_483_647;
     this.temperature = config.temperature;
     this.maxTokens = config.maxTokens;
+    this.thinkingParam = config.thinkingParam;
     this.logger = logger;
+  }
+
+  /**
+   * 请求的 think 开关 → 线上字段。本插件原本只按真 OpenAI 写（无思考开关，o 系列隐式推理），
+   * request.think 一直被无视——走 OpenAI 兼容中转的 DeepSeek 因此收不到会话级开关。
+   * DeepSeek 风格 `thinking: {type}` 由配置显式开启（真 OpenAI 端点不认此字段会 400）；
+   * think 未指定时不发字段，端点默认行为不被触碰。
+   */
+  private applyThinking(body: Record<string, unknown>, request: ChatModelRequest): void {
+    if (!this.thinkingParam || request.think === undefined) return;
+    body.thinking = { type: request.think ? 'enabled' : 'disabled' };
   }
 
   /** 构造请求头（无 apiKey 时不发 Authorization） */
@@ -204,6 +228,7 @@ class OpenAIClient {
       [reasoning ? 'max_completion_tokens' : 'max_tokens']: request.maxTokens ?? this.maxTokens,
       ...(reasoning ? {} : { temperature: request.temperature ?? this.temperature }),
     };
+    this.applyThinking(body, request);
 
     if (tools && tools.length > 0) {
       body.tools = tools;
@@ -275,6 +300,7 @@ class OpenAIClient {
       // 流式必须显式声明才会在收尾帧返回 usage（真 OpenAI 端点无此开关则整条流不含 usage）。
       stream_options: { include_usage: true },
     };
+    this.applyThinking(body, request);
 
     if (tools && tools.length > 0) {
       body.tools = tools;
@@ -616,6 +642,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     temperature: (config.temperature as number) ?? 0.7,
     maxTokens: (config.maxTokens as number) ?? 4096,
     contextLength: (config.contextLength as number) ?? 128000,
+    thinkingParam: config.thinkingParam === true,
   };
 
   // 一次性迁移（baseUrl 改「完整前缀」语义）：config-sync 在每次启动把 schema 默认值
