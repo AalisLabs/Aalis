@@ -26,7 +26,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:flow 之后、inbound:dispat
 2. 非群会话 → `next()` 直接放行
 3. `decide(message)`：
    - `immediate`（@ 自己 / 名字命中）→ `flow.recordTriggered` → 设 `triggerType='immediate'` → `next()`
-   - `interval`（达到 `intervalMode` 判定）→ `flow.recordTriggered` → 设 `triggerType='interval'` → `next()`
+   - `interval`（达到 `intervalMode` 判定）→ `flow.recordTriggered` → 设 `triggerType='interval'`，并回填无主体授权身份 `actor = selfInitiatedActor(platform)`（消息未带 actor 时）→ `next()`。interval 回合没有主发言者，撞上阈值的那条消息的发言者不应决定 AI 自发行为的工具权限：authority 按默认等级裁决、不视为 owner
    - `swallow`（未达阈值）→ `shadowArchive` → 不 `next()`
 
 > 内部消息 (`source === 'idle-trigger'`) 一律 `next()` 跳过策略。
