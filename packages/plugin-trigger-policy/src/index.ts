@@ -3,7 +3,7 @@ import type { MessageArchiveService } from '@aalis/api-message-archive';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import { type IncomingMessage, WellKnownNoticeTypes } from '@aalis/schema-message';
+import { type IncomingMessage, selfInitiatedActor, WellKnownNoticeTypes } from '@aalis/schema-message';
 import type { TriggerDecision, TriggerPolicyService } from './types.js';
 
 export type { TriggerDecision, TriggerKind, TriggerPolicyService } from './types.js';
@@ -229,6 +229,10 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       );
       flow?.recordTriggered(message.sessionId);
       message.triggerType = decision.kind;
+      // interval 回合无主发言者：授权身份回填为无主体，不让「恰好撞阈值的那个人」
+      //（陌生人或 owner）的等级决定 AI 自发行为能调什么工具。immediate 是被点名，
+      // 点名者就是主体，维持缺省（actor 回退到会话身份）。
+      if (decision.kind === 'interval' && !message.actor) message.actor = selfInitiatedActor(message.platform);
       await next();
       return;
     }

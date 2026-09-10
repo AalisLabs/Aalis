@@ -319,7 +319,7 @@ default model 通过 `ServiceContainer.setPreference('llm', preferredContextId)`
 4. **附件占位符必须走 `formatAttachmentRef` / `parseAttachmentRefs`**，且写入方保证 `desc` 不含 `]` 或 `|`（§4.3）。手写字符串会让四处解析悄悄断链。
 5. **`<at>` 是约定不是 API**，没有编译期兜底。新平台适配器产出的入站文本必须严格遵循 `<at id="X">名</at>` / `<at self …>` / `<at>all</at>`，否则归档、向量、触发判定会全部静默失效（§5.2）。`<at self>` 是 trigger-policy 判定「机器人被 @」的唯一信号。
 6. **`Message.metadata` 不发给 LLM。** 要让模型看到的信息必须进 `content` / `segments` / `images` / `audios`，不要塞进 metadata。
-7. **`actor` 是授权身份，不可被 LLM 自由指定。** 系统侧触发器（scheduler / idle / proactive）创建任务时会 snapshot 调用者身份并回填，agent 构造 `ToolCallContext` 时优先用 `actor` 查权限，以防提权。详见 `docs/services/authority.md`。
+7. **`actor` 是授权身份，不可被 LLM 自由指定。** 系统侧触发器（scheduler / proactive）创建任务时会 snapshot 调用者身份并回填，agent 构造 `ToolCallContext` 时优先用 `actor` 查权限，以防提权。AI 自发回合没有可代之人：群聊 `interval` 触发由 trigger-policy 回填 `selfInitiatedActor(platform)`（空 userId = 无主体，按默认等级裁决、不视为 owner），`idle` 合成消息本就不带 userId。详见 `docs/services/authority.md`。
 8. **`images` / `audios` 的解析格式由 provider 负责。** 可能是 base64 data URL、`file://`、本地路径或 `http(s)`。OpenAI 把 `images[]` 仅在 `user` role 上展开为 `image_url` content parts；其它 role 携带图片不会被它消费。
 
 ---

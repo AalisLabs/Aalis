@@ -235,11 +235,31 @@ export interface IncomingMessage {
    *
    * 触发器（如 scheduler）应在创建任务时 snapshot 调用者身份，触发时回填此字段；
    * 不能由 LLM/AI 在工具入参中自由指定，避免提权。
+   *
+   * AI 自发回合（无主发言者，如群聊 'interval' 触发）没有可代之人：触发器应回填
+   * {@link selfInitiatedActor}（userId 为空串 = 无主体），authority 按默认等级裁决、
+   * 永不视为 owner。'idle' 合成消息本就不带 userId，天然无主体，无需回填。
    */
   actor?: {
     platform: string;
     userId: string;
   };
+}
+
+/**
+ * AI 自发回合的授权身份：无主体。
+ *
+ * 'interval' 触发复用的是恰好撞上频率阈值的那条真人消息，若不回填 actor，授权轴会经
+ * `actor ?? {platform, userId}` 回退到「最后发言者」——绝大多数回合按陌生人 0 级判权
+ * （自发回合工具全挂），而 owner 恰好最后发言时整轮（含群内任何提示注入）以 owner 等级
+ * 执行。契约（triggerType 注释）与 prompt 侧特判都把 interval 当无主发言者，授权轴应一致。
+ *
+ * userId 取空串而非缺省：`actor?.userId ?? userId` 回退链遇空串不回退（?? 只认 null/undefined），
+ * 由此派生的定时任务/委派/子任务保持匿名，不会漂回物理发言者；authority 的等级查表以空
+ * userId 为无键 → 默认等级，owner 判定永不命中空串。
+ */
+export function selfInitiatedActor(platform: string): { platform: string; userId: string } {
+  return { platform, userId: '' };
 }
 
 // ----- 出站消息 -----
