@@ -136,8 +136,10 @@ export interface ExecutionGuardContext {
   userId?: string;
   /**
    * 授权身份（缺省 = platform/userId 本身）：等级裁决（authorize）与 owner 的
-   * 自动确认跳过按它评估；confirm 通道选路与临时授予查找仍按会话身份——
-   * 委派回合里发起者的临时授予因此不可用（fail-safe，宁缺勿错）。
+   * 自动确认跳过按它评估；confirm 通道选路仍按会话身份。未授权后的救援闸
+   * （restrictedPolicy 白名单 / 会话临时授予，均按会话身份登记）只在授权身份就是
+   * 会话身份时适用——actor 覆盖了会话身份（委派 / 定时 / 自发回合的无主体）时整体
+   * 不适用：物理发言者的放行不能替另一个身份解围（fail-safe，宁缺勿错）。
    */
   actor?: { platform: string; userId: string };
   /** 操作参数 */
