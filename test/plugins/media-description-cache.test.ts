@@ -1,7 +1,7 @@
 import type { Context, Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { MediaProcessor } from '../../packages/api-media/src/index.js';
-import { lookupCachedDescription } from '../../packages/plugin-media/src/cache.js';
+import { lookupCachedDescription, rememberDescription } from '../../packages/plugin-media/src/cache.js';
 import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
@@ -80,5 +80,16 @@ describe('描述缓存键空间一致性（裸描述入库、消费点包装）'
     expect(describeCount()).toBe(1); // 共用缓存，模型零新调用
     expect(viaTool).toBe('猫在沙发上');
     expect(viaTool).not.toContain('ref:');
+  });
+
+  it('失败占位不入缓存：processVideo 的 `[视频] …` 失败文案与图片占位一样被挡（否则同一动图 30 天内永不重试）', () => {
+    const key = 'data:/images/onebot_t_group_1/broken.gif';
+    rememberDescription(key, '[视频] 已收到视频文件但未能抽取关键帧或音轨（可能缺少 ffmpeg/ffprobe，或视频解码失败）');
+    rememberDescription(`${key}#2`, '[视频] 无法下载或读取视频文件内容（URL 不可访问或解码失败）');
+    expect(lookupCachedDescription(key)).toBeNull();
+    expect(lookupCachedDescription(`${key}#2`)).toBeNull();
+    // 真描述（[画面] 前缀的帧综合）照常缓存
+    rememberDescription(`${key}#3`, '[画面] 一只猫在跳');
+    expect(lookupCachedDescription(`${key}#3`)).toBe('[画面] 一只猫在跳');
   });
 });
