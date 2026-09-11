@@ -56,6 +56,12 @@ export interface ToolCallContext {
   actor?: { platform: string; userId: string };
   /** 当前平台启用的工具分组（供 search_tools 等工具过滤用） */
   enabledGroups?: string[];
+  /**
+   * 调用方能把 {@link ToolExecutionResult.images} 交给主模型亲眼看（agent 工具循环置 true）。
+   * 缺省 false：mcp-server / workflow 等只读 content 的调用方拿不到图，能出图的工具应据此
+   * 退回文字结果，而不是交出一份只剩说明文字的空壳。
+   */
+  acceptsImages?: boolean;
 }
 
 /** 工具调用状态通知（WebUI 等前端订阅展示用） */
@@ -73,11 +79,25 @@ export interface ToolExecuteMessage {
 }
 
 /**
+ * 工具执行结果。
+ *
+ * `images`：工具交给主模型亲眼看的图片（data URI / http(s)）。有视觉能力的主模型才有意义；
+ * 出口由 schema-message 的 prepareLLMMessages 统一编码（OpenAI 系协议的 tool 消息不能带图，
+ * 会拆成 tool 文本 + 一条注明来源的 user 图片消息），provider 无需感知。持久化侧不落 images
+ * （二进制体积），历史里只保留 content。
+ */
+export interface ToolExecutionResult {
+  content: string;
+  images?: string[];
+}
+
+/**
  * 已注册的工具：函数声明 + 处理器 + 能力可见性/分组元信息。
+ * handler 返回字符串即纯文本结果；需要交图给主模型时返回 {@link ToolExecutionResult}。
  */
 export interface RegisteredTool {
   definition: ToolDefinition;
-  handler: (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
+  handler: (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string | ToolExecutionResult>;
   pluginName: string;
   /** 主能力默认可见性（轴 A；缺省 public）；restricted 须被 owner/委托授予 */
   visibility?: CapabilityVisibility;
@@ -139,7 +159,7 @@ export interface ToolService {
     groups?: string[];
   }>;
 
-  execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string>;
+  execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<ToolExecutionResult>;
 
   /** 注入执行守卫，用于能力裁决与 restricted 二次确认 */
   setExecutionGuard(guard: ExecutionGuard): void;
