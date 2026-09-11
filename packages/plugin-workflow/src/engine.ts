@@ -144,7 +144,8 @@ async function execTool(node: ToolNodeSpec, ec: ExecCtx): Promise<string> {
   const tools = ec.ctx.getService<ToolService>('tools');
   if (!tools) throw new Error("'tools' 服务不可用");
   const args = (interpolateValue(node.args ?? {}, ec.vars, ec.outputs) ?? {}) as Record<string, unknown>;
-  return await tools.execute(node.tool, args, ec.toolCallContext);
+  // 工作流节点产出是文本：工具交给主模型看的图（images）没有消费者，只取 content
+  return (await tools.execute(node.tool, args, ec.toolCallContext)).content;
 }
 
 async function execSendMessage(node: SendMessageNodeSpec, ec: ExecCtx): Promise<string> {
