@@ -585,7 +585,7 @@ importers:
         specifier: workspace:*
         version: link:../api-storage
       '@aalis/api-tools':
-        specifier: workspace:*
+        specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-tools
       '@aalis/core':
         specifier: workspace:*
@@ -1197,7 +1197,7 @@ importers:
   packages/plugin-mcp-server:
     dependencies:
       '@aalis/api-tools':
-        specifier: workspace:>=0.5.1 <1.0.0
+        specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-tools
       '@aalis/schema-config':
         specifier: workspace:>=0.11.0 <1.0.0
@@ -1230,11 +1230,14 @@ importers:
       '@aalis/api-process':
         specifier: workspace:>=0.5.0 <1.0.0
         version: link:../api-process
+      '@aalis/api-session-manager':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-session-manager
       '@aalis/api-storage':
         specifier: workspace:>=0.5.5 <1.0.0
         version: link:../api-storage
       '@aalis/api-tools':
-        specifier: workspace:>=0.5.1 <1.0.0
+        specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-tools
       '@aalis/schema-config':
         specifier: workspace:>=0.9.0 <1.0.0
@@ -2057,7 +2060,7 @@ importers:
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-authority
       '@aalis/api-tools':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-tools
     devDependencies:
       '@aalis/core':
@@ -2428,7 +2431,7 @@ importers:
         specifier: workspace:>=0.5.5 <1.0.0
         version: link:../api-storage
       '@aalis/api-tools':
-        specifier: workspace:>=0.7.0 <1.0.0
+        specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-tools
       '@aalis/api-webui':
         specifier: workspace:>=0.9.0 <1.0.0

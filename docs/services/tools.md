@@ -44,7 +44,7 @@ export interface ToolDefinition {
 ```ts
 export interface RegisteredTool {
   definition: ToolDefinition;
-  handler: (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
+  handler: (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string | ToolExecutionResult>;
   pluginName: string;
   visibility?: CapabilityVisibility;  // 轴 A，缺省 public；restricted 须被 owner/委托授予
   confirm?: CapabilityConfirm;         // 轴 B，'session' | 'always'；缺省=不确认
@@ -53,7 +53,7 @@ export interface RegisteredTool {
 }
 ```
 
-注意 `handler` **必须返回 `Promise<string>`**（不是对象）。约定俗成的返回是 JSON 字符串（`ToolRegistry` 自身的错误也以 `JSON.stringify({ error })` 返回，见 `packages/plugin-tools/src/tools.ts`），但契约只要求 string。
+`handler` 返回字符串即纯文本结果；约定俗成的返回是 JSON 字符串（`ToolRegistry` 自身的错误也以 `JSON.stringify({ error })` 返回，见 `packages/plugin-tools/src/tools.ts`）。需要把图片交给主模型亲眼看时返回 `ToolExecutionResult`（`{ content, images? }`，images 为 data URI / http(s)）：images 随本回合的 tool 消息送进下一次请求，出口由 schema-message 的 `prepareLLMMessages` 统一编码（OpenAI 系协议的 tool 消息不能带图，会拆成 tool 文本 + 一条注明来源的 user 图片消息），`agent:tool:after` 钩子、`tool:execute` 事件与落库的历史只保留 content。无视觉能力的主模型会忽略这些图。
 
 `ToolCallContext`（`index.ts`）—— handler 第二参，携平台/会话语义：
 
@@ -62,7 +62,9 @@ export interface ToolCallContext {
   sessionId: string;
   userId?: string;
   platform?: string;
+  actor?: { platform: string; userId: string };  // 授权身份（委派/定时/自发回合），缺省=会话身份
   enabledGroups?: string[];  // 当前平台启用的分组，供 search_tools 等过滤
+  acceptsImages?: boolean;   // 调用方能把 ToolExecutionResult.images 交给主模型（agent 循环置 true；mcp-server/workflow 不置，能出图的工具应退回文字）
 }
 ```
 
@@ -77,7 +79,7 @@ register(tool: Omit<RegisteredTool, 'pluginName'>, pluginName: string): () => vo
 getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];   // 喂给 LLM 的工具列表
 getSummaries(filter?: { groups?: string[] }): ToolSummary[];        // 不含 handler，供搜索展示
 getAll(): Array<{ name; description; pluginName; visibility; confirm?; risk?; groups? }>;  // 给 authority/WebUI
-execute(toolName, args, callCtx: ToolCallContext): Promise<string>; // 过守卫 + 校验 + 调 handler
+execute(toolName, args, callCtx: ToolCallContext): Promise<ToolExecutionResult>; // 过守卫 + 校验 + 调 handler；字符串结果归一为 { content }
 setExecutionGuard(guard: ExecutionGuard): void;                     // 由 plugin-authority 注入
 registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, pluginName: string): () => void;
 getGroups(): ToolGroupInfo[];

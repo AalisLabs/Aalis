@@ -3,7 +3,7 @@
 // ============================================================
 
 import type { ASRService } from '@aalis/api-asr';
-import type { LLMModel, ModelRef } from '@aalis/api-llm';
+import { LLMCapabilities, type LLMModel, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
 import type {
   BuildContextOptions,
   DescribeImageOptions,
@@ -15,6 +15,7 @@ import type {
   MediaService,
   TranscribeOptions,
 } from '@aalis/api-media';
+import type { SessionManagerService } from '@aalis/api-session-manager';
 import { isStorageUri, parseUriRoot } from '@aalis/api-storage';
 import type { Context, Logger } from '@aalis/core';
 import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
@@ -53,7 +54,16 @@ import { getMediaRuntime } from './runtime.js';
 
 export interface MediaConfigResolved {
   vision: {
-    mode: 'describe' | 'passthrough' | 'passthrough-raw' | 'disabled';
+    /**
+     * 接触到图片立即识别落描述：描述进档案与向量库（可召回），被吞掉的消息也有记忆。
+     * 关 = 档案只留指针 `[图片 | ref:…]`，主模型需要时经 analyze_image 按需看。
+     */
+    recognizeOnArrival: boolean;
+    /**
+     * 主模型需要看图（当轮附件、analyze_image）时怎么给：直通原图（需主模型 vision 能力，
+     * 动图抽帧）/ 由识别模型转文字；auto 按本会话生效主模型的 vision 能力自动选。
+     */
+    delivery: 'auto' | 'passthrough' | 'describe';
     prefer?: string | ModelRef;
     maxTokens: number;
     think: boolean;
@@ -81,12 +91,6 @@ export interface MediaConfigResolved {
   video: {
     mode: 'frames+asr' | 'frames-only' | 'disabled';
     maxFrames: number;
-    /** 仅对 video.passthrough 生效（原生视频 LLM）。帧抽取描述走 vision.maxTokens */
-    maxTokens: number;
-    /** 仅对 video.passthrough 生效 */
-    think: boolean;
-    /** 仅对 video.passthrough 生效 */
-    prompt?: string;
     /** 抽帧后给 vision 模型的 hint，留空为内置默认 */
     framesHint?: string;
     /** describeImage 动图分支的 fallback hint，留空为内置默认 */
@@ -96,7 +100,6 @@ export interface MediaConfigResolved {
     /** 综合描述中音轨部分的前缀 */
     audioTrackPrefix: string;
   };
-  document: { extractImages: boolean };
   /** 动图/GIF 的关键帧抽取上限（与视频拆分，便于给动图更小的预算） */
   animatedImage: { maxFrames: number };
   /** 是否在调用多模态 processor 时注入聊天上下文 */
@@ -328,15 +331,15 @@ export class MediaServiceImpl implements MediaService {
       const item: MediaProcessReport['items'][number] = { kind: att.kind };
       try {
         if (att.kind === 'image') {
-          if (this.cfg.vision.mode === 'disabled') {
-            item.description = undefined;
-          } else if (this.cfg.vision.mode === 'passthrough' || this.cfg.vision.mode === 'passthrough-raw') {
-            // 直通类模式：不调用 processor，attachment 原样保留以便 agent 直接喂给主模型。
-            // passthrough 的动图抽帧发生在出口（agent:llm:before 中间件，见 index.ts）——
-            // 此处只登记动图线索：出口拿到的 images[] 只剩 data 串，而 QQ 图 URL 常无
-            // 扩展名，mimeType 只有归档期（现在）看得到。
-            item.description = undefined;
-            if (!isAnimatedFormat(att.data) && att.mimeType === 'image/gif') this.rememberAnimated(att.data);
+          // 动图线索先登记：直通出口的抽帧（agent:llm:before 中间件，见 index.ts）拿到的
+          // images[] 只剩 data 串，而 QQ 图 URL 常无扩展名，mimeType 只有归档期（现在）看得到。
+          if (!isAnimatedFormat(att.data) && att.mimeType === 'image/gif') this.rememberAnimated(att.data);
+          if (!this.cfg.vision.recognizeOnArrival) {
+            // 只留指针：不调 processor。OneBot 适配器已把 ref 写进正文；WebUI 等平台的
+            // base64 上传没有落盘 ref，这里落一份并写指针，否则档案里图片零痕迹、按需看无从下手。
+            const ref = await this.cacheImageRef(att, msg.sessionId);
+            item.description = ref ? formatAttachmentRef({ kind: AttachmentRefKind.Image, ref }) : undefined;
+            descriptions[i] = item.description;
           } else {
             // 动图（gif/webm/...）走视频帧流程获得综合描述
             const animated = isAnimatedFormat(att.data) || att.mimeType === 'image/gif';
@@ -472,37 +475,47 @@ export class MediaServiceImpl implements MediaService {
   }
 
   /**
-   * 出口形态变换（agent:llm:before 中间件内核）。按 vision.mode 决定主模型收到什么：
+   * 主模型需要看图时的交付形态。auto：按本会话生效主模型的 vision 能力——有则直通原图，
+   * 无则由识别模型转文字。解析链与 agent 同源（session-manager：会话 > 父默认 > 平台档），
+   * 拿不到 session-manager 或会话未指定模型时退回 LLM 默认 entry。
+   */
+  resolveDelivery(sessionId?: string, platform?: string): 'passthrough' | 'describe' {
+    if (this.cfg.vision.delivery !== 'auto') return this.cfg.vision.delivery;
+    const sm = this.ctx.getService<SessionManagerService>('session-manager');
+    const ref = sm && sessionId ? sm.resolveConfig(sessionId, platform).llm : undefined;
+    const entry = resolveLLMModel(this.ctx, ref?.provider && ref?.model ? ref : undefined, ['chat']);
+    return entry?.instance.capabilities.includes(LLMCapabilities.Vision) ? 'passthrough' : 'describe';
+  }
+
+  /**
+   * 出口形态变换（agent:llm:before 中间件内核 / analyze_image 直通分支）。按交付形态决定
+   * 主模型收到什么：
    *
-   * - describe：识别由专门的视觉模型负责，结果已作为文字拼进消息正文，主模型不再看图。
-   *   实测一张 57KB 的图挂上去要多花 1,090 token、4.7 秒预填充——同一张图识别两遍。
-   *   需要看细节时主模型可以主动调 analyze_image 工具，不必每张图都预付这笔钱。
-   * - disabled：配置项写明「丢弃图片」，同样不交。
+   * - describe：识别由识别模型负责，结果已作为文字拼进消息正文（或由 analyze_image 返回），
+   *   主模型不看图。实测一张 57KB 的图挂上去要多花 1,090 token、4.7 秒预填充——同一张图识别两遍。
    * - passthrough：主模型亲自看图 → 动图抽帧为多张静图，静图规范化后交出。
-   * - passthrough-raw：主模型看原图 → 不抽帧，仍需规范化。
    *
-   * 直通两档必须过**形态规范化**：适配器给 attachment.data 的是历史相对路径 ref
+   * 直通必须过**形态规范化**：适配器给 attachment.data 的是历史相对路径 ref
    * （`data/images/…`），而 provider 只认 data URI / http / file:// / 绝对路径，裸路径
    * 会被当成 base64 送出去，触发 `illegal base64 data at input byte N`（实测 400、整轮
    * 回复失败）。已经是 data URI / http 的逐字节原样返回；交不出合法形态的那一张丢弃并
    * warn——留着它等于让整轮请求被 provider 拒收。
    */
-  async transformModelImages(images: string[]): Promise<string[]> {
-    if (this.cfg.vision.mode === 'describe' || this.cfg.vision.mode === 'disabled') return [];
-    const framesEnabled = this.cfg.vision.mode === 'passthrough';
+  async transformModelImages(images: string[], delivery: 'passthrough' | 'describe'): Promise<string[]> {
+    if (delivery === 'describe') return [];
     const out: string[] = [];
     /** 交给 provider 前的最后一道：非 data URI / http 的一律物化成 data URL，失败就丢这一张。 */
     const normalized = async (src: string): Promise<void> => {
       try {
         out.push(await imageToBase64DataUrl(src));
       } catch (err) {
-        this.logger.warn(`[${this.cfg.vision.mode}] 图片无法规范化，本轮丢弃该图: ${(err as Error).message}`);
+        this.logger.warn(`[passthrough] 图片无法规范化，本轮丢弃该图: ${(err as Error).message}`);
       }
     };
 
     for (const data of images) {
       const animated = isAnimatedFormat(data) || this.animatedHints.has(data);
-      if (!framesEnabled || !animated) {
+      if (!animated) {
         await normalized(data);
         continue;
       }
@@ -514,7 +527,7 @@ export class MediaServiceImpl implements MediaService {
           // 形态一起丢掉（回归用例 media-passthrough-frames「物化失败 / 抽不出帧」守着）。
           // 只有裸 ref 才会在那边二次失败并被丢弃。
           // 每消息只处理一次（WeakSet 不重试），这里不留痕的话用户只会看到"主模型没看懂动图"。
-          this.logger.debug(`[${this.cfg.vision.mode}] 动图无法物化为本地文件，退回整图规范化`);
+          this.logger.debug('[passthrough] 动图无法物化为本地文件，退回整图规范化');
           await normalized(data);
           continue;
         }
@@ -636,11 +649,6 @@ export class MediaServiceImpl implements MediaService {
         prompt: this.cfg.audio.prompt,
         maxTokens: this.cfg.audio.maxTokens,
         think: this.cfg.audio.think,
-      },
-      video: {
-        prompt: this.cfg.video.prompt,
-        maxTokens: this.cfg.video.maxTokens,
-        think: this.cfg.video.think,
       },
     });
     this.llmCache = { processors, signature: sig };

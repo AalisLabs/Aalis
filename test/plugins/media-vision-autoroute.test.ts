@@ -27,7 +27,13 @@ const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as
 function makeSvc(visionPromptOverride = ''): { svc: MediaServiceImpl; calls: DescribeInput[] } {
   const calls: DescribeInput[] = [];
   const cfg = {
-    vision: { maxTokens: 300, think: false, prompt: visionPromptOverride },
+    vision: {
+      recognizeOnArrival: true,
+      delivery: 'describe',
+      maxTokens: 300,
+      think: false,
+      prompt: visionPromptOverride,
+    },
     audio: { maxTokens: 1024, think: true },
     video: { maxTokens: 300, think: false },
     animatedImage: { maxFrames: 4 },

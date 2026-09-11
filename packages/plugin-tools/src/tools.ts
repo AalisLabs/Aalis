@@ -4,6 +4,7 @@ import type {
   RegisteredTool,
   ToolCallContext,
   ToolDefinition,
+  ToolExecutionResult,
   ToolGroupInfo,
   ToolService,
   ToolSummary,
@@ -146,21 +147,25 @@ export class ToolRegistry implements ToolService {
       .map(s => s.name);
   }
 
-  async execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string> {
+  async execute(
+    toolName: string,
+    args: Record<string, unknown>,
+    callCtx: ToolCallContext,
+  ): Promise<ToolExecutionResult> {
     const tool = this.tools.get(toolName);
     if (!tool) {
       // LLM 常臆造工具名（如把 send_attachment 叫成 send_image）。给出近似名建议，
       // 让模型本轮直接纠正调用，而不是再花一轮 search_tools 找正确名字。
       const suggestions = this.suggestToolNames(toolName);
       const hint = suggestions.length > 0 ? `，你是否想用：${suggestions.join(' / ')}` : '';
-      return JSON.stringify({ error: `工具 "${toolName}" 未找到${hint}` });
+      return { content: JSON.stringify({ error: `工具 "${toolName}" 未找到${hint}` }) };
     }
 
     // 参数 schema 校验：检测缺失必填项 / 多余未知键（LLM 写错参数名时给出明确提示）
     const schemaError = validateToolArgs(toolName, tool.definition, args);
     if (schemaError) {
       this.logger.warn(`工具 ${toolName} 参数校验失败: ${schemaError}`);
-      return JSON.stringify({ error: schemaError });
+      return { content: JSON.stringify({ error: schemaError }) };
     }
 
     const { visibility, confirm } = resolveCapabilityPolicy(tool);
@@ -179,7 +184,7 @@ export class ToolRegistry implements ToolService {
       });
       if (denied) {
         this.logger.warn(`工具 ${toolName} 被执行守卫拦截: ${denied}`);
-        return JSON.stringify({ error: denied });
+        return { content: JSON.stringify({ error: denied }) };
       }
     }
 
@@ -191,11 +196,13 @@ export class ToolRegistry implements ToolService {
       }
       const result = await tool.handler(args, callCtx);
       this.logger.debug(`工具 ${toolName} 执行成功`);
-      return result;
+      // 字符串结果归一为统一形态；带图结果只保留非空 images（空数组等于没图）
+      if (typeof result === 'string') return { content: result };
+      return result.images && result.images.length > 0 ? result : { content: result.content };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`工具 ${toolName} 执行失败: ${message}`);
-      return JSON.stringify({ error: message });
+      return { content: JSON.stringify({ error: message }) };
     }
   }
 

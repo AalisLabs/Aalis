@@ -44,7 +44,7 @@ const SNAPSHOT_URI = 'data:/media/descriptions.json';
 function makeSvc(over: Record<string, unknown> = {}): { svc: MediaServiceImpl; describeCount: () => number } {
   let n = 0;
   const cfg = {
-    vision: { mode: 'describe', maxTokens: 300, think: false, prompt: '' },
+    vision: { recognizeOnArrival: true, delivery: 'describe', maxTokens: 300, think: false, prompt: '' },
     audio: { mode: 'disabled' },
     video: { mode: 'disabled' },
     animatedImage: { maxFrames: 4 },

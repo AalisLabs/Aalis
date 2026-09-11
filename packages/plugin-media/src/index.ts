@@ -37,24 +37,43 @@ export const configSchema: ConfigSchema = {
   vision: {
     label: '图像识别',
     fields: {
-      mode: {
-        type: 'select',
-        label: '处理模式',
-        options: [
-          { label: '由副模型转文本（推荐，文本主模型也能用）', value: 'describe' },
-          { label: '直通：静图原样交给主模型，动图抽帧为多张静图（需主模型 vision 能力）', value: 'passthrough' },
-          {
-            label: '原样直通：动图不抽帧原样交给主模型（仅当主模型能原生理解动图，或用于实验）',
-            value: 'passthrough-raw',
-          },
-          { label: '禁用：丢弃图片', value: 'disabled' },
-        ],
-        default: 'describe',
-      },
       prefer: {
         type: 'llm-ref',
-        label: '优先模型',
-        description: '留空则自动选择优先级最高的 vision LLM；选定后强制使用该模型进行图像描述。',
+        label: '识别模型',
+        description: '把图片转成文字描述的模型。留空则自动选择优先级最高的 vision LLM。',
+      },
+      recognizeOnArrival: {
+        type: 'boolean',
+        label: '接触到图片立即识别',
+        default: true,
+        description:
+          '开启：图片到达即识别，描述进档案与向量库（可被召回），未触发回复的消息也留下记忆。' +
+          '关闭：档案只留图片指针，主模型需要时再经 analyze_image 按需查看；此时图片内容不可被检索召回。',
+      },
+      mode: {
+        type: 'select',
+        label: '处理模式（已弃用）',
+        options: [
+          { label: '由副模型转文本', value: 'describe' },
+          { label: '直通', value: 'passthrough' },
+          { label: '原样直通', value: 'passthrough-raw' },
+          { label: '禁用', value: 'disabled' },
+        ],
+        description:
+          '旧四档已由下方「接触到图片立即识别」与「主模型看图方式」取代。此键仍有值时按旧语义映射并覆盖新键' +
+          '（describe→识别+转文字；passthrough/passthrough-raw→不识别+直通；disabled→不识别+转文字），启动日志会提示；' +
+          '请清空此键并改用新键。',
+      },
+      delivery: {
+        type: 'select',
+        label: '主模型看图方式',
+        options: [
+          { label: '自动：主模型有 vision 能力则直通原图，否则交给识别模型转文字', value: 'auto' },
+          { label: '直通：原图交给主模型（动图抽帧为多张静图；需主模型 vision 能力）', value: 'passthrough' },
+          { label: '转文字：始终由识别模型描述，主模型只读文字', value: 'describe' },
+        ],
+        default: 'auto',
+        description: '决定当轮附件与 analyze_image 的交付形态。',
       },
       maxTokens: { type: 'number', label: '描述最大 token', default: 300 },
       think: {
@@ -143,24 +162,6 @@ export const configSchema: ConfigSchema = {
         default: 'frames+asr',
       },
       maxFrames: { type: 'number', label: '最大关键帧数', default: 5 },
-      maxTokens: {
-        type: 'number',
-        label: '最大输出 token',
-        default: 512,
-        description: '仅对 video.passthrough（原生视频 LLM）生效；帧抽取描述由 vision.maxTokens 控制。',
-      },
-      think: {
-        type: 'boolean',
-        label: '启用思考链 (thinking)',
-        default: false,
-        description: '仅对 video.passthrough 生效。关闭且后端为 Ollama 时会传 reasoning_effort=none。',
-      },
-      prompt: {
-        type: 'textarea',
-        label: '自定义 prompt',
-        default: '',
-        description: '仅对 video.passthrough 生效；留空使用默认描述 prompt。',
-      },
       framesHint: {
         type: 'textarea',
         label: '抽帧描述 hint',
@@ -185,16 +186,6 @@ export const configSchema: ConfigSchema = {
         label: '音轨转写前缀',
         default: '[音轨] ',
         description: '拼到视频音轨转写前的标记，例如 “[音轨] …”。',
-      },
-    },
-  },
-  document: {
-    label: '文档',
-    fields: {
-      extractImages: {
-        type: 'boolean',
-        label: '抽取并识别文档内嵌图片（实验）',
-        default: false,
       },
     },
   },
@@ -247,14 +238,37 @@ export const configSchema: ConfigSchema = {
   },
 };
 
+/**
+ * 已弃用的 vision.mode 四档 → 新键。返回 null 表示没有旧值。config-sync 会把 schema 派生
+ * 默认值填进新键，所以旧键一旦存在就无法分辨新键是用户设的还是默认填的——按旧键为准，
+ * 用户清掉旧键后新键才生效。
+ */
+export function legacyVisionMode(
+  mode: unknown,
+): { recognizeOnArrival: boolean; delivery: 'passthrough' | 'describe' } | null {
+  switch (mode) {
+    case 'describe':
+      return { recognizeOnArrival: true, delivery: 'describe' };
+    case 'passthrough':
+    case 'passthrough-raw':
+      return { recognizeOnArrival: false, delivery: 'passthrough' };
+    case 'disabled':
+      return { recognizeOnArrival: false, delivery: 'describe' };
+    default:
+      return null;
+  }
+}
+
 function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
   const vision = (raw.vision ?? {}) as Record<string, unknown>;
   const audio = (raw.audio ?? {}) as Record<string, unknown>;
   const video = (raw.video ?? {}) as Record<string, unknown>;
-  const document = (raw.document ?? {}) as Record<string, unknown>;
+  const delivery = vision.delivery;
+  const legacy = legacyVisionMode(vision.mode);
   return {
     vision: {
-      mode: ((vision.mode as string) ?? 'describe') as MediaConfigResolved['vision']['mode'],
+      recognizeOnArrival: legacy ? legacy.recognizeOnArrival : vision.recognizeOnArrival !== false,
+      delivery: legacy ? legacy.delivery : delivery === 'passthrough' || delivery === 'describe' ? delivery : 'auto',
       prefer: (vision.prefer as MediaConfigResolved['vision']['prefer']) || undefined,
       maxTokens: (vision.maxTokens as number) ?? 300,
       think: vision.think === true,
@@ -272,15 +286,11 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
     video: {
       mode: ((video.mode as string) ?? 'frames+asr') as MediaConfigResolved['video']['mode'],
       maxFrames: Math.max(1, (video.maxFrames as number) ?? 5),
-      maxTokens: (video.maxTokens as number) ?? 512,
-      think: video.think === true,
-      prompt: (video.prompt as string) || undefined,
       framesHint: (video.framesHint as string) || undefined,
       animatedPrompt: (video.animatedPrompt as string) || undefined,
       framePrefix: (video.framePrefix as string) ?? '[画面] ',
       audioTrackPrefix: (video.audioTrackPrefix as string) ?? '[音轨] ',
     },
-    document: { extractImages: !!document.extractImages },
     animatedImage: {
       maxFrames: Math.max(1, (((raw.animatedImage ?? {}) as Record<string, unknown>).maxFrames as number) ?? 5),
     },
@@ -301,6 +311,13 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
 export function apply(ctx: Context, raw: Record<string, unknown>): void {
   const cfg = resolveCfg(raw);
   const logger = ctx.logger.child('media');
+  const legacyMode = ((raw.vision ?? {}) as Record<string, unknown>).mode;
+  if (legacyVisionMode(legacyMode)) {
+    logger.warn(
+      `vision.mode="${String(legacyMode)}" 已弃用，本次按旧语义映射为 recognizeOnArrival=${cfg.vision.recognizeOnArrival}、` +
+        `delivery=${cfg.vision.delivery} 并覆盖新键；请清空 vision.mode 并改用「接触到图片立即识别」「主模型看图方式」两项。`,
+    );
+  }
   setMediaRuntime({ proc: createProcessGateway(ctx), storage: createStorageGateway(ctx) });
   const svc = new MediaServiceImpl(ctx, logger, cfg);
 
@@ -313,10 +330,10 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   });
   ctx.onDispose(() => flushDescriptionCache());
 
-  // 出口形态变换：agent 组装完成后、发出之前，按 vision.mode 决定末条 user 消息的
-  // images[] 交给主模型什么——describe/disabled 清空（识别归视觉模型，结果已在正文
-  // 文字里），passthrough 抽帧，raw 原样，直通两档一律规范化形态（真值表见
-  // service.transformModelImages）。放中间件而非改 api-media 契约或 plugin-agent——
+  // 出口形态变换：agent 组装完成后、发出之前，按交付形态决定末条 user 消息的 images[]
+  // 交给主模型什么——describe 清空（识别归识别模型，结果已在正文文字里），passthrough
+  // 规范化形态并把动图抽帧（真值表见 service.transformModelImages）。auto 按本会话生效
+  // 主模型的 vision 能力现场解析。放中间件而非改 api-media 契约或 plugin-agent——
   // 形态知识整体留在本插件内（契约修改的复杂度与谨慎门槛高于插件内实现）。变换只作用于
   // 末条 user 消息（尾部），不触碰前缀缓存；dryRun 估算轮跳过（抽帧昂贵且该轮不真正发请求）。
   //
@@ -326,7 +343,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   // 无生命周期管理。
   const transformed = new WeakSet<object>();
   ctx.middleware('agent:llm:before', async (data, next) => {
-    // 所有模式都要进来，不只是 passthrough——这道闸此前被模式挡住，于是 describe 模式下
+    // 所有交付形态都要进来——这道闸此前被模式挡住，于是 describe 模式下
     // agent 塞进 message.images 的历史相对路径 ref（`data/images/…`）一路畅通到 provider，
     // 被当成 base64 送出去，整轮请求被拒（400 illegal base64 data）。
     if (!data.dryRun) {
@@ -335,7 +352,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
         if (m.role === 'user' && m.images && m.images.length > 0) {
           if (!transformed.has(m)) {
             transformed.add(m);
-            m.images = await svc.transformModelImages(m.images);
+            m.images = await svc.transformModelImages(m.images, svc.resolveDelivery(data.sessionId, data.platform));
           }
           break;
         }
@@ -380,7 +397,9 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       buildPreprocessor(ctx, () => svc),
     );
     ctx.onDispose(disposePreproc);
-    logger.info(`媒体识别预处理器已注册 (vision=${cfg.vision.mode}, audio=${cfg.audio.mode}, video=${cfg.video.mode})`);
+    logger.info(
+      `媒体识别预处理器已注册 (vision=${cfg.vision.recognizeOnArrival ? 'recognize-on-arrival' : 'pointer-only'}/${cfg.vision.delivery}, audio=${cfg.audio.mode}, video=${cfg.video.mode})`,
+    );
   } catch (err) {
     logger.debug(`预处理器注册跳过: ${err instanceof Error ? err.message : err}`);
   }

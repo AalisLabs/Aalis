@@ -64,7 +64,7 @@ const VIDEO_FAILURE_SET: ReadonlySet<string> = new Set(Object.values(VIDEO_FAILU
  * 与 processVideo 的失败文案。写入与灌回共用：失败文案曾被当成描述写进 30 天缓存，
  * 同一动图此后每次命中都直接返回失败文案、永不重试；灌回不过滤则升级后旧毒条目原样复活。
  */
-export function isFailurePlaceholder(raw: string): boolean {
+function isFailurePlaceholder(raw: string): boolean {
   return raw.startsWith('[图片:') || raw.startsWith('[动图:') || VIDEO_FAILURE_SET.has(raw);
 }
 
