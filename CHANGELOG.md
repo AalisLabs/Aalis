@@ -8,6 +8,34 @@
 
 ---
 
+## 2026-09-11（无 core 变更；api-tools 0.8.0 / schema-message 0.8.0 / plugin-media 等）
+
+### 图片处理重定位：识别模型 + 两个正交开关（plugin-media）
+
+`vision.mode` 四档（describe / passthrough / passthrough-raw / disabled）删除，由两个正交键取代：
+
+| 旧值 | 等价的新配置 |
+|---|---|
+| `describe`（默认） | `recognizeOnArrival: true` + `delivery: 'describe'`（文本主模型下 `auto` 等价） |
+| `passthrough` | `recognizeOnArrival: false` + `delivery: 'passthrough'` |
+| `passthrough-raw` | 同上；动图不抽帧的实验档已删除，直通一律抽帧 |
+| `disabled` | `recognizeOnArrival: false` + `delivery: 'describe'`（档案只留指针，模型可按需 `analyze_image`） |
+
+`delivery` 默认 `auto`：按本会话生效主模型的 vision 能力选直通或转文字。**迁移**：旧键 `vision.mode`
+在 schema 里保留一版（标为已弃用）——它仍有值时按上表映射并覆盖新键，启动日志告警；请清空它并改用
+新键。注意主模型带 vision 的部署：新默认（识别 + 直通）会让当轮图片既被识别模型描述又直通主模型，
+想保持旧 `describe` 的成本请显式设 `delivery: 'describe'`。同批删掉从未生效的配置：`video.maxTokens` /
+`video.think` / `video.prompt`（只喂给从不被选中的 `video.passthrough` processor）与
+`document.extractImages`（无消费者）；`document.image` processor 同理不再注册。
+
+### 工具结果携图（api-tools 0.8.0）
+
+`RegisteredTool.handler` 可返回 `string | ToolExecutionResult`（`{ content, images? }`），
+`ToolService.execute` 一律返回 `ToolExecutionResult`。**实现或直接调用 `ToolService.execute`
+的代码要改读 `.content`**（仓内调用方：plugin-agent / plugin-mcp-server / plugin-workflow 已随批改）。
+只注册工具、handler 返回字符串的插件零改动。出口编码在 schema-message 0.8.0 的
+`prepareLLMMessages`：tool 消息带 `images` 时拆成 tool 文本 + 一条注明来源的 user 图片消息。
+
 ## 2026-08-30（无 core 变更；单包 plugin-agent 0.12.1）
 
 ### agent：media 缺席时的图片基础体验（盖楼修复）

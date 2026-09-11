@@ -10,7 +10,7 @@ import type { PersonaService, PersonaSessionOptions } from '@aalis/api-persona';
 import { getPlatformSelfIdentity } from '@aalis/api-platform';
 import type { SessionConfig, SessionManagerService } from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
-import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/api-tools';
+import type { ToolCallContext, ToolDefinition, ToolExecutionResult, ToolService } from '@aalis/api-tools';
 import type { Context, Logger, PluginManagerService } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/schema-message';
@@ -511,6 +511,8 @@ class DefaultAgent implements AgentService {
           platform: incoming.platform,
           actor: incoming.actor,
           enabledGroups,
+          // 本循环会把 ToolExecutionResult.images 挂到 tool 消息交给主模型（出口由 prepareLLMMessages 编码）
+          acceptsImages: true,
         };
 
         // 保存原始完整工具列表，后续迭代均以此为基础（避免被 hooks 修改后丢失）
@@ -660,10 +662,14 @@ class DefaultAgent implements AgentService {
 
               this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${JSON.stringify(toolBeforeData.args)}`);
               const toolT0 = Date.now();
-              let result = await (this.ctx
+              const executed: ToolExecutionResult = await (this.ctx
                 .getService<ToolService>('tools')
                 ?.execute(toolBeforeData.name, toolBeforeData.args, toolCtx) ??
-                Promise.resolve(JSON.stringify({ error: 'tools 服务不可用' })));
+                Promise.resolve({ content: JSON.stringify({ error: 'tools 服务不可用' }) }));
+              let result = executed.content;
+              // 工具交给主模型看的图：只随本回合的 tool 消息走（出口由 prepareLLMMessages 编码），
+              // 不进钩子/事件/时间线（那些面都是文本），也不落库（见 saveToolCallGroup）。
+              const resultImages = executed.images;
 
               // Hook: agent:tool:after — 插件可以处理工具执行结果
               const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: toolCtx };
@@ -698,6 +704,7 @@ class DefaultAgent implements AgentService {
               return {
                 toolCall,
                 result,
+                resultImages,
                 toolName: toolBeforeData.name,
                 toolArgs: toolBeforeData.args,
                 startTime: toolT0,
@@ -706,8 +713,18 @@ class DefaultAgent implements AgentService {
             }),
           );
 
+          // 工具交出的图只服务紧接着的这一次请求：上一轮工具结果里的图在这里剥掉，否则多轮
+          // 工具迭代会让图片在上下文里累积（每张数百 token，且不受文本裁剪约束）。
+          for (let i = 0; i < llmBeforeData.messages.length; i++) {
+            const m = llmBeforeData.messages[i];
+            if (m.role === 'tool' && m.images) {
+              const { images: _spent, ...rest } = m;
+              llmBeforeData.messages[i] = rest;
+            }
+          }
+
           // 按原始 toolCalls 顺序将结果推入消息列表 + 时间线
-          for (const { toolCall, result, toolName, toolArgs, startTime, endTime } of parallelResults) {
+          for (const { toolCall, result, resultImages, toolName, toolArgs, startTime, endTime } of parallelResults) {
             const resultPreview = result.length > 200 ? `${result.slice(0, 200)}...` : result;
             toolCallSummaries.push(`[${toolCall.function.name}] ${resultPreview}`);
 
@@ -715,6 +732,7 @@ class DefaultAgent implements AgentService {
               role: 'tool',
               content: result,
               toolCallId: toolCall.id,
+              ...(resultImages && resultImages.length > 0 ? { images: resultImages } : {}),
             };
             llmBeforeData.messages.push(toolMessage);
             toolMessages.push(toolMessage);
@@ -1641,7 +1659,9 @@ class DefaultAgent implements AgentService {
     persistedTimestamps?.push(timestamp);
     for (let i = 0; i < toolMessages.length; i++) {
       const ts = timestamp + i + 1;
-      await this.saveToMemory(sessionId, { ...toolMessages[i], timestamp: ts });
+      // 工具交出的图只服务本回合的主模型（data URI 体积大、历史回看也不再需要它），不落库
+      const { images: _transient, ...persisted } = toolMessages[i];
+      await this.saveToMemory(sessionId, { ...persisted, timestamp: ts });
       persistedTimestamps?.push(ts);
     }
   }

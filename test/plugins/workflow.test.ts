@@ -15,8 +15,9 @@ const noopLogger = (): Logger =>
 const fakeCtx = (toolFn?: (name: string, args: unknown) => Promise<string> | string): Context => {
   const tools = toolFn
     ? {
+        // 与真实 ToolService.execute 同形：结果归一为 { content }
         async execute(name: string, args: unknown) {
-          return await toolFn(name, args);
+          return { content: await toolFn(name, args) };
         },
       }
     : undefined;

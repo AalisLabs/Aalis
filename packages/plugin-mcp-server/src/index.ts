@@ -224,7 +224,8 @@ export function buildMcpServer(_ctx: Context, tools: ToolService, config: Config
 
     try {
       const result = await tools.execute(toolName, args, callCtx);
-      return { content: [{ type: 'text', text: result }] };
+      // MCP 侧只透传文本：工具交给主模型看的图（images）是 agent 回合内的载荷，不在此暴露
+      return { content: [{ type: 'text', text: result.content }] };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { content: [{ type: 'text', text: `执行失败: ${msg}` }], isError: true };

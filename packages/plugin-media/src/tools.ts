@@ -5,13 +5,13 @@
 // （本地路径 / URL / data URI），以及把识别结果写回历史消息。
 // ============================================================
 
-import type { MediaService } from '@aalis/api-media';
 import type { MemoryService } from '@aalis/api-memory';
 import { useToolService } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
 import { AttachmentRefKind, buildAttachmentRefMatcher, formatAttachmentRef, type Message } from '@aalis/schema-message';
 import { fileToDataUri } from './ffmpeg.js';
 import { getMediaRuntime } from './runtime.js';
+import type { MediaServiceImpl } from './service.js';
 
 /**
  * 把 agent 传入的图片路径规整为 storage URI。
@@ -60,7 +60,7 @@ function findImageDescriptionTokens(messages: Message[], imageRef: string): stri
   return [...tokens];
 }
 
-export function registerMediaTools(ctx: Context, getSvc: () => MediaService): void {
+export function registerMediaTools(ctx: Context, getSvc: () => MediaServiceImpl): void {
   const tools = useToolService(ctx);
 
   tools.register({
@@ -69,8 +69,9 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaService): vo
       function: {
         name: 'analyze_image',
         description:
-          '分析一张图片或动图/视频的内容，返回文字描述。\n' +
-          '可以分析本地图片文件（storage URI / 历史 ref）或网络图片 URL。\n' +
+          '查看一张图片或动图的内容：历史消息里的 `[图片 | ref:…]` 指针、本地文件（storage URI）或网络 URL 都可以。\n' +
+          '按当前配置交付：或把图片直接随结果交给你查看（此时 prompt/detail_level 不生效；若你看不到图片，请如实说明），' +
+          '或返回图像识别模型的文字描述。\n' +
           '支持自定义提示词，例如：「提取图中所有文字」「描述 UI 布局」「找到按钮位置」等。\n' +
           '\n' +
           '**关于 detail_level（详略级别）**：\n' +
@@ -107,7 +108,7 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaService): vo
         },
       },
     },
-    handler: async args => {
+    handler: async (args, callCtx) => {
       try {
         const svc = getSvc();
         const imageInput = String(args.image);
@@ -137,6 +138,23 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaService): vo
         } else {
           const uri = resolveImageStorageUri(imageInput);
           imageUrl = await fileToDataUri(uri);
+        }
+
+        // 主模型自己能看且调用方接得住图（agent 工具循环）：图片随工具结果交出（规范化 +
+        // 动图抽帧与当轮附件同一出口），不经识别模型。mcp-server / workflow 只读 content，
+        // 对它们照常走识别模型出文字。
+        if (callCtx.acceptsImages && svc.resolveDelivery(callCtx.sessionId, callCtx.platform) === 'passthrough') {
+          const images = await svc.transformModelImages([imageUrl], 'passthrough');
+          if (images.length === 0) return JSON.stringify({ error: '图片无法读取或转换为可发送形态' });
+          // content 会落库、也会在后续回合被回看：措辞对未来也成立，并带上来源便于重新查看
+          return {
+            content: JSON.stringify({
+              ok: true,
+              image: imageInput,
+              note: '图片已在本回合直接呈现给你；历史中不保留图片本身，需要时按 image 引用重新查看',
+            }),
+            images,
+          };
         }
 
         const desc = await svc.describeImage(imageUrl, { hint, localPath, detailLevel });
