@@ -438,34 +438,29 @@ function defaultPromptFor(cap: MediaCapability, count: number): string {
 
 /**
  * 扫描当前 ctx 中所有 LLM entry，按其声明的能力返回应注册的 MediaProcessor 数组。
- */
-/**
- * 扫描当前 ctx 中所有 LLM entry，按其声明的能力返回应注册的 MediaProcessor 数组。
- * @param opts 默认应用于所有 cap 的参数，以及 per-cap 覆盖（vision/audio/video 可独立配 prompt/maxTokens/think）
+ * @param opts 默认应用于所有 cap 的参数，以及 per-cap 覆盖（vision/audio 可独立配 prompt/maxTokens/think）
+ *
+ * 不注册 `video.passthrough`（原生视频 LLM）与 `document.image`：service 从不按这两个 cap 选
+ * processor（视频一律走「抽帧 → vision」，文件交给 file-reader），注册只会让配置面多出永不生效的键。
  */
 export function scanLLMProcessors(
   ctx: Context,
   opts: LlmProcessorOptions & {
     vision?: LlmProcessorOptions;
     audio?: LlmProcessorOptions;
-    video?: LlmProcessorOptions;
   } = {},
 ): MediaProcessor[] {
-  const { vision: visionOverride, audio: audioOverride, video: videoOverride, ...defaults } = opts;
+  const { vision: visionOverride, audio: audioOverride, ...defaults } = opts;
   const processors: MediaProcessor[] = [];
   const all = ctx.getAllServices<LLMModel>('llm');
   for (const entry of all) {
     const caps = entry.instance.capabilities;
     if (caps.includes(LLMCapabilities.Vision)) {
       processors.push(wrapLLMAsProcessor(entry, 'vision', { ...defaults, ...visionOverride }));
-      processors.push(wrapLLMAsProcessor(entry, 'document.image', { ...defaults, ...visionOverride }));
     }
     if (caps.includes(LLMCapabilities.Audio)) {
       // Gemma 3n / Gemini / GPT-4o-audio 等原生音频 LLM 单一 cap 覆盖转写 + 描述，由全能 prompt 驱动
       processors.push(wrapLLMAsProcessor(entry, 'audio', { ...defaults, ...audioOverride }));
-    }
-    if (caps.includes(LLMCapabilities.Video)) {
-      processors.push(wrapLLMAsProcessor(entry, 'video.passthrough', { ...defaults, ...videoOverride }));
     }
   }
   return processors;

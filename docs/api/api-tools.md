@@ -24,7 +24,7 @@ interface ToolService {
   getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];
   getSummaries(filter?: { groups?: string[] }): ToolSummary[];
   getAll(): Array<{ name; description; pluginName; visibility; groups? }>;
-  execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string>;
+  execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<ToolExecutionResult>;
   setExecutionGuard(guard: ExecutionGuard): void;
   unregisterByPlugin(pluginName: string): void;
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, pluginName: string): () => void;
@@ -37,7 +37,7 @@ interface ToolService {
 ```ts
 interface RegisteredTool {
   definition: ToolDefinition;             // OpenAI 风格函数声明
-  handler: (args, callCtx: ToolCallContext) => Promise<string>;
+  handler: (args, callCtx: ToolCallContext) => Promise<string | ToolExecutionResult>; // { content, images? }：images 交主模型亲眼看
   pluginName: string;
   visibility?: CapabilityVisibility;      // 'public' | 'restricted'（默认 public）
   // 注：CapabilityVisibility 从 @aalis/api-authority 导入

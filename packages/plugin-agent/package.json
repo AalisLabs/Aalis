@@ -43,7 +43,7 @@
     "@aalis/api-persona": "workspace:*",
     "@aalis/api-session-manager": "workspace:*",
     "@aalis/api-storage": "workspace:*",
-    "@aalis/api-tools": "workspace:*",
+    "@aalis/api-tools": "workspace:>=0.8.0 <1.0.0",
     "@aalis/core": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"

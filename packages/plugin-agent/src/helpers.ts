@@ -114,11 +114,16 @@ export function estimateTextTokens(text: string): number {
 }
 
 /** 估算单条消息的 token 数（含 toolCalls + reasoningContent） */
+/** 单张图片的保守 token 估算（实测 800×600 静图经 ViT 编码为 500–800 visual token）。 */
+const IMAGE_TOKENS_ESTIMATE = 800;
+
 export function estimateMsgTokens(msg: Message): number {
   let t = 4;
   if (msg.content) t += estimateTextTokens(msg.content);
   if (msg.toolCalls) t += estimateTextTokens(JSON.stringify(msg.toolCalls));
   if (msg.reasoningContent) t += estimateTextTokens(msg.reasoningContent);
+  // 图片不是按 base64 长度计费的：估一个保守常量，让预算/统计/裁剪看得见它们
+  if (msg.images) t += msg.images.length * IMAGE_TOKENS_ESTIMATE;
   return t;
 }
 

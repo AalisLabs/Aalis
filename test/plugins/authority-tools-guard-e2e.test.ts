@@ -58,7 +58,7 @@ async function runTool(
   if (!svc) throw new Error('tools 服务未注册');
   const out = await svc.execute('probe_tool', {}, { sessionId: 's1', ...caller });
   await app.stop();
-  return { ran, out: String(out) };
+  return { ran, out: out.content };
 }
 
 describe('authority 执行守卫真的挂在 tools 上', () => {

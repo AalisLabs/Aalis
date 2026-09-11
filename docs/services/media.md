@@ -275,12 +275,12 @@ media 经 `storage` 写临时/缓存文件，但 storage 只是命名根加权�
 - **runtime 单例依赖**：media 内部的 ffmpeg 与远程下载逻辑经模块级 `setMediaRuntime({proc,storage})` 注入依赖，在 `apply()` 时设置。若 `process`/`storage` 未启用，`getMediaRuntime()` 会抛错——因此 `inject.required:['process','storage']`。第三方 backend 若要自己拿依赖，请走 `ctx`，不要依赖 media 的内部 runtime。
 - **audio.prefer 下拉是 live mutate 的**：`media` 监听 `service:registered`/`service:unregistered`（asr/llm），动态刷新 `configSchema.audio.fields.prefer.options`。新装 asr 或 audio-LLM 后，选项会自动出现。这意味着 `configSchema` 对象在运行时被改写，前端配置页读的是这个 live 对象。
 - **空音频描述不等于「非语音」**：模型的空响应可能是 maxTokens 不足、上下文超限或超时，这些都被统一标为 `[音频] 识别失败（…详见日志）`。不要据此判断「这段音频没人声」。
-- **直通类模式不调 processor**：`vision.mode='passthrough'`/`'passthrough-raw'` 或 `audio.mode='passthrough'` 时，`processMessage` 不做识别，保留原始 attachment 让主模型直接吃。这要求主模型自身具备 vision/audio 能力，否则附件等于被丢弃。
-- **`describe`/`disabled` 不向主模型交图**：识别是视觉模型的职责，结果已作为文字拼进消息正文，出口会把末条 user 消息的 `images` 清空。再把原图递一份给主模型等于同一张图识别两遍——实测一张 57KB 的图额外多花约 1,090 token、4.7 秒预填充。需要主模型亲自看图请改用直通模式，或让它按需调 `analyze_image`。
-- **`passthrough` 与 `passthrough-raw` 的分界在动图**：`passthrough` 会在出口（`agent:llm:before` 中间件）把动图抽帧为多张静图（帧数上限 `animatedImage.maxFrames`），再交给主模型——主流视觉 API 对原始 GIF 只读首帧或拒收，抽帧是让"动"被看见的唯一通用形态；静图始终原样。`passthrough-raw` 不抽帧、动图整图交出，仅当主模型能原生理解动图（或做 API 行为实验）时使用。变换只作用于末条 user 消息、每条消息只处理一次（成败皆不重来），dryRun 估算轮跳过。
-- **直通两档必须过形态规范化**：适配器给 `attachment.data` 的是内容寻址的相对路径 ref（`data/images/…`），而 provider 只认 data URI / http / `file://` / 绝对路径。裸路径会被当作 base64 送出去，触发 `illegal base64 data at input byte N`（整轮请求 400）。出口统一物化成 data URL，已是合法形态的逐字节原样；交不出合法形态的那一张丢弃并告警。
+- **图片是「识别模型 + 两个正交开关」**：`vision.prefer` 是识别模型；`vision.recognizeOnArrival`（默认开）决定图片到达是否立即识别落描述——描述进档案与向量库、可被召回，被吞掉的消息也留记忆；关掉则档案只留指针 `[图片 | ref:…]`，主模型需要时经 `analyze_image` 按需看，代价是图片内容不可被检索召回。`vision.delivery` 决定主模型需要看图（当轮附件、`analyze_image`）时怎么给：`auto`（默认）按本会话生效主模型的 vision 能力——有则直通原图，无则由识别模型转文字；也可显式钉死 `passthrough`/`describe`。`audio.mode='passthrough'` 仍是音频直通：不转写，保留原始 attachment 让主模型直接吃（需主模型 audio 能力）。
+- **describe 交付不向主模型交图**：识别是识别模型的职责，结果已作为文字拼进消息正文，出口会把末条 user 消息的 `images` 清空。再把原图递一份给主模型等于同一张图识别两遍——实测一张 57KB 的图额外多花约 1,090 token、4.7 秒预填充。`analyze_image` 在这条交付下返回文字描述。
+- **passthrough 交付的动图一律抽帧**：出口（`agent:llm:before` 中间件）把动图抽帧为多张静图（帧数上限 `animatedImage.maxFrames`）再交给主模型——主流视觉 API 对原始 GIF 只读首帧或拒收，抽帧是让"动"被看见的唯一通用形态；静图始终原样。变换只作用于末条 user 消息、每条消息只处理一次（成败皆不重来），dryRun 估算轮跳过。`analyze_image` 在这条交付下把图随工具结果交出（`ToolExecutionResult.images`，同一出口规范化与抽帧），不经识别模型。
+- **直通必须过形态规范化**：适配器给 `attachment.data` 的是内容寻址的相对路径 ref（`data/images/…`），而 provider 只认 data URI / http / `file://` / 绝对路径。裸路径会被当作 base64 送出去，触发 `illegal base64 data at input byte N`（整轮请求 400）。出口统一物化成 data URL，已是合法形态的逐字节原样；交不出合法形态的那一张丢弃并告警。
 - **描述缓存跨会话共享是有条件的**：缓存键取落盘路径里的内容哈希，同一张表情包跨群只识别一次；但当 `contextHistory`/`senderContext` 开启、描述里掺进了本会话的对话语境时，键退回含会话目录的原路径，只在本会话内复用——否则 A 群的语境会随描述串到 B 群。缓存有快照落盘（`data:/media/descriptions.json`），进程重启不必重认。
-- **video.passthrough cap 与帧抽取是两条路**：`video.maxTokens`/`think`/`prompt` 只对原生视频 LLM（`video.passthrough`）生效；默认的「抽帧 → vision」路径用的是 `vision.maxTokens`。
+- **视频只有「抽帧 → vision」一条路**：media 不再为声明 Video 能力的 LLM 注册 `video.passthrough` processor（service 从不按该 cap 选 processor），抽帧描述用的是 `vision.maxTokens`。`MediaCapability` 里保留该 cap 只为第三方 processor 契约兼容。
 - **缺 ffmpeg/ffprobe 时视频降级为占位**：抽帧或抽音轨失败时返回 `[视频] …` 占位串而非空串，让主 LLM 知道有视频到达但读不了，避免幻觉。
 
 ---

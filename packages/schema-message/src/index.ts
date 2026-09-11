@@ -420,26 +420,66 @@ export function toLLMRole(role: MessageRole): WellKnownRole {
  * 同时给 content 加上可读前缀（kind 优先，其次 role）。
  * provider 适配器应在序列化前调用该函数，确保协议合法。
  *
- * 不修改原对象；返回浅拷贝数组与必要时的消息浅拷贝。
+ * 工具结果携图（tool 消息带 images）：OpenAI 系协议的 tool 消息只能是文本，图片块只认 user
+ * 角色。这里把 images 从 tool 消息上摘下，在**该段连续 tool 应答全部结束之后**追加一条注明
+ * 来源的 user 图片消息（并行工具调用时 assistant(tool_calls) 后的 tool 应答必须连续，载体
+ * 插在中间会被端点拒收）。各 provider 沿用自己 user 角色的图片展开即可，无需感知工具携图。
+ * 幂等：摘过 images 的 tool 消息再次调用不会重复生成载体。
+ *
+ * 不修改原对象；返回新数组与必要时的消息浅拷贝。
  */
-export function prepareLLMMessages<T extends Pick<Message, 'role' | 'content' | 'kind'>>(messages: T[]): T[] {
-  return messages.map(m => {
-    const llmRole = toLLMRole(m.role);
-    const prefix = (m.kind && KIND_PREFIX[m.kind]) ?? CUSTOM_ROLE_PREFIX[m.role as string];
-    const needsRoleRewrite = llmRole !== m.role;
-    // 边界硬保证：所有发往 LLM 的 string content 先规整成良构 UTF-16（孤代理→�）。杜绝孤代理经
-    // JSON.stringify 编成 `\ud83d`（半个代理对）被严格 JSON 解析器（如 DeepSeek 服务端）拒收、
-    // 致整条请求 400。对良构内容为 no-op（原样返回、不新建字符串），故不改变现有行为；对任何插件
-    // 产生的内容在此唯一出口自动生效，第三方插件无需感知"孤代理"、无需调用任何东西。
-    const content = typeof m.content === 'string' ? toWellFormedText(m.content) : m.content;
-    const contentChanged = content !== m.content;
-    // 幂等守卫：content 已带该前缀就不再叠加。role 前缀靠改写 role 自消费，kind 前缀不消费 kind，
-    // 二次调用会把 `[跨会话委派]` 叠成两遍——用 startsWith 兜住，两条路径都真幂等。
-    const needsPrefix = !!prefix && typeof content === 'string' && content.length > 0 && !content.startsWith(prefix);
-    if (!needsRoleRewrite && !needsPrefix && !contentChanged) return m;
-    const newContent = needsPrefix ? `${prefix} ${content}` : (content ?? null);
-    return { ...m, role: llmRole, content: newContent } as T;
-  });
+export function prepareLLMMessages<
+  T extends Pick<Message, 'role' | 'content' | 'kind'> & Pick<Message, 'images' | 'toolCallId'>,
+>(messages: T[]): T[] {
+  const out: T[] = [];
+  let pendingImages: string[] = [];
+  let pendingCallIds: string[] = [];
+  const flushCarrier = (): void => {
+    if (pendingImages.length === 0) return;
+    out.push({
+      role: 'user',
+      content: `[以下图片是工具调用 ${pendingCallIds.join('、')} 的返回内容]`,
+      images: pendingImages,
+    } as T);
+    pendingImages = [];
+    pendingCallIds = [];
+  };
+  for (const m of messages) {
+    if (m.role === 'tool') {
+      if (m.images && m.images.length > 0) {
+        const { images, ...textOnly } = m;
+        pendingImages.push(...images);
+        pendingCallIds.push(m.toolCallId ?? '?');
+        out.push(normalizeForLLM(textOnly as T));
+      } else {
+        out.push(normalizeForLLM(m));
+      }
+      continue;
+    }
+    flushCarrier();
+    out.push(normalizeForLLM(m));
+  }
+  flushCarrier();
+  return out;
+}
+
+/** 单条消息的协议归一：自定义 role 转译 + 可读前缀 + 良构 UTF-16。 */
+function normalizeForLLM<T extends Pick<Message, 'role' | 'content' | 'kind'>>(m: T): T {
+  const llmRole = toLLMRole(m.role);
+  const prefix = (m.kind && KIND_PREFIX[m.kind]) ?? CUSTOM_ROLE_PREFIX[m.role as string];
+  const needsRoleRewrite = llmRole !== m.role;
+  // 边界硬保证：所有发往 LLM 的 string content 先规整成良构 UTF-16（孤代理→�）。杜绝孤代理经
+  // JSON.stringify 编成 `\ud83d`（半个代理对）被严格 JSON 解析器（如 DeepSeek 服务端）拒收、
+  // 致整条请求 400。对良构内容为 no-op（原样返回、不新建字符串），故不改变现有行为；对任何插件
+  // 产生的内容在此唯一出口自动生效，第三方插件无需感知"孤代理"、无需调用任何东西。
+  const content = typeof m.content === 'string' ? toWellFormedText(m.content) : m.content;
+  const contentChanged = content !== m.content;
+  // 幂等守卫：content 已带该前缀就不再叠加。role 前缀靠改写 role 自消费，kind 前缀不消费 kind，
+  // 二次调用会把 `[跨会话委派]` 叠成两遍——用 startsWith 兜住，两条路径都真幂等。
+  const needsPrefix = !!prefix && typeof content === 'string' && content.length > 0 && !content.startsWith(prefix);
+  if (!needsRoleRewrite && !needsPrefix && !contentChanged) return m;
+  const newContent = needsPrefix ? `${prefix} ${content}` : (content ?? null);
+  return { ...m, role: llmRole, content: newContent } as T;
 }
 
 export {

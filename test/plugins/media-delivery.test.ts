@@ -1,0 +1,236 @@
+import type { Context, Logger } from '@aalis/core';
+import { App } from '@aalis/core';
+import { describe, expect, it } from 'vitest';
+import type { DescribeInput, MediaProcessor, MediaService } from '../../packages/api-media/src/index.js';
+import type { ToolService } from '../../packages/api-tools/src/index.js';
+import * as mediaModule from '../../packages/plugin-media/src/index.js';
+import { legacyVisionMode } from '../../packages/plugin-media/src/index.js';
+import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
+import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
+import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
+import { registerMediaTools } from '../../packages/plugin-media/src/tools.js';
+import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+
+// ════════════════════════════════════════════════════════════
+// 图片处理重定位（2026-09）：识别模型 + 两个正交开关
+//   recognizeOnArrival：接触到图立即识别落描述（关 = 档案只留指针）
+//   delivery：主模型需要看图时怎么给——auto 按本会话生效主模型的 vision 能力；
+//             当轮附件（agent:llm:before 出口）与 analyze_image 走同一判定
+// ════════════════════════════════════════════════════════════
+
+const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
+const DATA_URI = 'data:image/png;base64,iVBORw0KGgo=';
+/** 每个工具用例一张不同的图：描述缓存是模块级的，同一 data URI 会命中缓存而不再调识别模型 */
+const toolUri = (n: number) => `data:image/png;base64,iVBORw0KGgoAAAANSUhEUg${'A'.repeat(n)}==`;
+
+function cfgWith(vision: Partial<MediaConfigResolved['vision']>): MediaConfigResolved {
+  return {
+    vision: { recognizeOnArrival: true, delivery: 'auto', maxTokens: 300, think: false, ...vision },
+    audio: { mode: 'disabled' },
+    video: { mode: 'disabled' },
+    animatedImage: { maxFrames: 4 },
+    contextHistory: { enabled: false, maxMessages: 0 },
+    senderContext: { enabled: false, profileMaxChars: 0 },
+  } as unknown as MediaConfigResolved;
+}
+
+/** 假 ctx：可挂若干 LLM entry（带 capabilities）与一个 session-manager */
+function fakeCtx(
+  entries: Array<{ contextId: string; caps: string[] }>,
+  sessionLLM?: { provider: string; model: string },
+): Context {
+  return {
+    getAllServices: () =>
+      entries.map(e => ({ contextId: e.contextId, instance: { id: e.contextId.split('/')[1], capabilities: e.caps } })),
+    getService: (name: string) =>
+      name === 'session-manager' && sessionLLM ? { resolveConfig: () => ({ llm: sessionLLM }) } : undefined,
+  } as unknown as Context;
+}
+
+describe('resolveDelivery：auto 按本会话生效主模型的 vision 能力', () => {
+  it('默认 entry 有 vision → passthrough；无 vision → describe', () => {
+    expect(
+      new MediaServiceImpl(
+        fakeCtx([{ contextId: 'p/m', caps: ['chat', 'vision'] }]),
+        logger,
+        cfgWith({}),
+      ).resolveDelivery('s'),
+    ).toBe('passthrough');
+    expect(
+      new MediaServiceImpl(fakeCtx([{ contextId: 'p/m', caps: ['chat'] }]), logger, cfgWith({})).resolveDelivery('s'),
+    ).toBe('describe');
+    expect(new MediaServiceImpl(fakeCtx([]), logger, cfgWith({})).resolveDelivery('s')).toBe('describe');
+  });
+
+  it('会话指定了模型时按该模型判（与 agent 的解析链同源），而不是按列表首个', () => {
+    const entries = [
+      { contextId: 'p/vision-model', caps: ['chat', 'vision'] },
+      { contextId: 'p/text-model', caps: ['chat'] },
+    ];
+    const svc = new MediaServiceImpl(fakeCtx(entries, { provider: 'p', model: 'text-model' }), logger, cfgWith({}));
+    expect(svc.resolveDelivery('s', 'onebot')).toBe('describe');
+    const svc2 = new MediaServiceImpl(fakeCtx(entries, { provider: 'p', model: 'vision-model' }), logger, cfgWith({}));
+    expect(svc2.resolveDelivery('s', 'onebot')).toBe('passthrough');
+  });
+
+  it('显式 passthrough / describe 不看模型能力', () => {
+    const noLLM = fakeCtx([]);
+    expect(new MediaServiceImpl(noLLM, logger, cfgWith({ delivery: 'passthrough' })).resolveDelivery('s')).toBe(
+      'passthrough',
+    );
+    const vision = fakeCtx([{ contextId: 'p/m', caps: ['chat', 'vision'] }]);
+    expect(new MediaServiceImpl(vision, logger, cfgWith({ delivery: 'describe' })).resolveDelivery('s')).toBe(
+      'describe',
+    );
+  });
+});
+
+function withFakeVision(svc: MediaServiceImpl): DescribeInput[] {
+  const calls: DescribeInput[] = [];
+  const proc: MediaProcessor = {
+    name: 'fake-vision',
+    capabilities: ['vision'],
+    priority: 10,
+    describe: async req => {
+      calls.push(req);
+      return { descriptions: ['一只猫'] };
+    },
+  };
+  svc.registerProcessor(proc);
+  return calls;
+}
+
+describe('recognizeOnArrival：到达即识别 vs 只留指针', () => {
+  const msg = (): IncomingMessage =>
+    ({
+      sessionId: 's',
+      platform: 'test',
+      content: '[图片 | ref:x]',
+      attachments: [{ kind: 'image', data: DATA_URI, mimeType: 'image/png' }],
+    }) as unknown as IncomingMessage;
+
+  it('开：识别模型被调，描述写进 _attachmentDescriptions', async () => {
+    const svc = new MediaServiceImpl(fakeCtx([]), logger, cfgWith({ recognizeOnArrival: true }));
+    const calls = withFakeVision(svc);
+    const m = msg();
+    const report = await svc.processMessage(m);
+    expect(calls).toHaveLength(1);
+    expect(report.successCount).toBe(1);
+    expect(m._attachmentDescriptions?.[0]).toContain('一只猫');
+  });
+
+  it('关：不调识别模型；无落盘运行时（OneBot 场景正文已有 ref）描述位留空', async () => {
+    const svc = new MediaServiceImpl(fakeCtx([]), logger, cfgWith({ recognizeOnArrival: false }));
+    const calls = withFakeVision(svc);
+    const m = msg();
+    const report = await svc.processMessage(m);
+    expect(calls).toHaveLength(0);
+    expect(report.successCount).toBe(0);
+    expect(m._attachmentDescriptions).toEqual([undefined]);
+  });
+
+  it('关 + WebUI 上传（base64、正文无 ref）：自己落盘并写指针，档案不留零痕迹', async () => {
+    const written: string[] = [];
+    setMediaRuntime({
+      proc: {} as never,
+      storage: { writeFile: async (uri: string) => void written.push(uri) } as never,
+    });
+    const svc = new MediaServiceImpl(fakeCtx([]), logger, cfgWith({ recognizeOnArrival: false }));
+    withFakeVision(svc);
+    const m = { ...msg(), content: '' } as IncomingMessage;
+    await svc.processMessage(m);
+    expect(written).toHaveLength(1);
+    expect(m._attachmentDescriptions?.[0]).toMatch(/^\[图片 \| ref:data\/images\/s\/[0-9a-f]{16}\.png\]$/);
+  });
+});
+
+describe('legacy vision.mode 映射（config-sync 在 apply 前裁 schema 外键，故旧键保留一版）', () => {
+  it('四档 → 新键；非法/缺省 → null', () => {
+    expect(legacyVisionMode('describe')).toEqual({ recognizeOnArrival: true, delivery: 'describe' });
+    expect(legacyVisionMode('passthrough')).toEqual({ recognizeOnArrival: false, delivery: 'passthrough' });
+    expect(legacyVisionMode('passthrough-raw')).toEqual({ recognizeOnArrival: false, delivery: 'passthrough' });
+    expect(legacyVisionMode('disabled')).toEqual({ recognizeOnArrival: false, delivery: 'describe' });
+    expect(legacyVisionMode(undefined)).toBeNull();
+    expect(legacyVisionMode('')).toBeNull();
+  });
+
+  /** 真实装配 media 插件，注册假 vision processor，喂一张独一无二的图（描述缓存是模块级的） */
+  async function callsUnder(vision: Record<string, unknown>, uri: string): Promise<number> {
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    app.ctx.provide('process', {} as never);
+    app.ctx.provide('storage', {} as never);
+    await app.ctx.useModule(mediaModule as never, { vision });
+    await app.plugins.idle();
+    const media = app.ctx.getService<MediaService>('media');
+    if (!media) throw new Error('media 未注册');
+    const calls: unknown[] = [];
+    media.registerProcessor({
+      name: 'fake-vision',
+      capabilities: ['vision'],
+      priority: 10,
+      describe: async req => {
+        calls.push(req);
+        return { descriptions: ['一张图'] };
+      },
+    });
+    const m = {
+      sessionId: 's',
+      platform: 'test',
+      content: '',
+      attachments: [{ kind: 'image', data: uri, mimeType: 'image/png' }],
+    } as unknown as IncomingMessage;
+    await media.processMessage(m);
+    await app.stop();
+    return calls.length;
+  }
+
+  it('旧值 disabled 覆盖新键：升级后图片不会开始被识别（隐私回归守卫）；对照 describe 旧值照常识别', async () => {
+    // config-sync 会把新键默认值（recognizeOnArrival:true）填进来，旧键必须压过它
+    expect(await callsUnder({ mode: 'disabled', recognizeOnArrival: true, delivery: 'auto' }, toolUri(10))).toBe(0);
+    expect(await callsUnder({ mode: 'describe', recognizeOnArrival: false, delivery: 'auto' }, toolUri(11))).toBe(1);
+  });
+});
+
+describe('analyze_image：按交付形态返回图片或文字', () => {
+  async function withTool(vision: Partial<MediaConfigResolved['vision']>, acceptsImages: boolean, uri: string) {
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    await app.ctx.useModule(toolsModule as never, {});
+    await app.plugins.idle();
+    const svc = new MediaServiceImpl(fakeCtx([]), logger, cfgWith(vision));
+    const calls = withFakeVision(svc);
+    registerMediaTools(app.ctx, () => svc);
+    const tools = app.ctx.getService<ToolService>('tools');
+    if (!tools) throw new Error('tools 服务未注册');
+    const result = await tools.execute(
+      'analyze_image',
+      { image: uri },
+      { sessionId: 's', platform: 'test', ...(acceptsImages ? { acceptsImages: true } : {}) },
+    );
+    await app.stop();
+    return { result, calls };
+  }
+
+  it('passthrough + 调用方接图（agent 循环）：图片随结果交给主模型，识别模型一次不调；content 对后续回合也成立', async () => {
+    const { result, calls } = await withTool({ delivery: 'passthrough' }, true, toolUri(1));
+    expect(calls).toHaveLength(0);
+    expect(result.images).toEqual([toolUri(1)]);
+    const body = JSON.parse(result.content);
+    expect(body.ok).toBe(true);
+    expect(body.image).toBe(toolUri(1)); // 落库后可按此引用重新查看
+  });
+
+  it('passthrough 但调用方不接图（mcp-server / workflow 只读 content）：退回识别模型出文字，不给空壳', async () => {
+    const { result, calls } = await withTool({ delivery: 'passthrough' }, false, toolUri(2));
+    expect(calls).toHaveLength(1);
+    expect(result.images).toBeUndefined();
+    expect(JSON.parse(result.content).description).toBe('一只猫');
+  });
+
+  it('describe：识别模型出文字，不带 images', async () => {
+    const { result, calls } = await withTool({ delivery: 'describe' }, true, toolUri(3));
+    expect(calls).toHaveLength(1);
+    expect(result.images).toBeUndefined();
+    expect(JSON.parse(result.content).description).toBe('一只猫');
+  });
+});
