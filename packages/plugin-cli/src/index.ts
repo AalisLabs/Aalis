@@ -16,6 +16,7 @@ export type { CLIService } from './types.js';
 
 import { createStorageGateway } from '@aalis/api-storage';
 import { LogHub } from '@aalis/core';
+import { ChatBuffer } from './chat-buffer.js';
 import { ConfirmQueue } from './confirm-queue.js';
 import { readLogFileTail } from './log-file.js';
 
@@ -131,7 +132,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   ctx.on('outbound:message', msg => {
     if (msg.sessionId !== sessionId) return;
-    if (tui?.consumeStreamedSend()) return; // 同一轮已流式输出，跳过重复
+    // 同一轮已流式输出时，agent 的整条回复是重复；系统/指令消息不是流式正文，照常显示
+    if (msg.source === 'agent' && tui?.consumeStreamedSend()) return;
     adapter.sendMessage(msg.sessionId, msg.content);
   });
 
@@ -204,15 +206,14 @@ class CliTui {
   private cursor = 0;
   private history: string[] = [];
   private historyIndex: number | null = null;
-  private chatLines: string[] = [];
+  private readonly chat = new ChatBuffer();
   private logLines: LogEntry[];
   private logScroll = 0;
   private logWrap = false;
   private statusScroll = 0;
   private helpScroll = 0;
   private removeLogListener: (() => void) | null = null;
-  // 流式状态：记录本 session 当前正在生成的 assistant 回复首行在 chatLines 中的下标
-  private streamingStartIndex: number | null = null;
+  // 流式状态：正在生成的 assistant 回复，其行由 ChatBuffer 维护为末尾一段
   private streamingContent = '';
   private streamedRecently = false;
   private readonly confirms = new ConfirmQueue();
@@ -270,9 +271,9 @@ class CliTui {
 
     const persona = this.ctx.getService<PersonaService>('persona');
     const assistantName = persona?.getPersonaName() ?? 'Aalis';
-    this.chatLines.push(
+    this.chat.append([
       chalk.gray(this.formatCont()) + chalk.gray(`欢迎使用 ${assistantName}。按 ${chalk.cyan('Ctrl+G')} 查看快捷键。`),
-    );
+    ]);
 
     // 跟着 authority 的胜者走（bounce 后重挂）；stop() 时摘掉，dispose 时由 whenService 自身清理
     this.offConfirm = this.ctx.whenService<AuthorityService>('authority', authority =>
@@ -308,8 +309,7 @@ class CliTui {
 
   pushAssistant(content: string): void {
     if (!content.trim()) return;
-    this.appendAssistantLines(content);
-    this.trimChat();
+    this.chat.append(this.formatAssistantBlock(content));
     if (this.view === 'chat') this.queueRender();
   }
 
@@ -327,33 +327,24 @@ class CliTui {
   applyStreamChunk(chunk: StreamChunkMessage): void {
     if (chunk.done) {
       // 完结本轮流式
-      if (this.streamingStartIndex !== null) {
+      if (this.chat.streaming) {
         this.streamedRecently = true;
-        this.streamingStartIndex = null;
+        this.chat.endStreaming();
         this.streamingContent = '';
         if (this.view === 'chat') this.queueRender();
       }
       return;
     }
     if (!chunk.contentDelta) return;
-    // 首个块：创建一个新的 assistant 条目
-    if (this.streamingStartIndex === null) {
+    // 首个块：开一个新的 assistant 条目；上一轮遗留的「已流式」标记一并作废
+    if (!this.chat.streaming) {
       this.streamingContent = '';
-      this.streamingStartIndex = this.chatLines.length;
-      // 占位行，formatAssistantBlock 会立即替换
-      this.chatLines.push('');
+      this.streamedRecently = false;
     }
     this.streamingContent += chunk.contentDelta;
     // 根据累积内容重建该消息占据的行
-    const rebuilt = this.formatAssistantBlock(this.streamingContent);
-    this.chatLines.splice(this.streamingStartIndex, this.chatLines.length - this.streamingStartIndex, ...rebuilt);
-    this.trimChat();
+    this.chat.replaceStreamingBlock(this.formatAssistantBlock(this.streamingContent));
     if (this.view === 'chat') this.queueRender();
-  }
-
-  private appendAssistantLines(content: string): void {
-    const lines = this.formatAssistantBlock(content);
-    for (const l of lines) this.chatLines.push(l);
   }
 
   /** 所有标签对齐到同一列宽，确保 │ 竖线垂直对齐 */
@@ -543,10 +534,7 @@ class CliTui {
     if (this.history.length > 100) this.history.shift();
     const firstHead = this.formatHead(chalk.cyan(`❯ ${this.config.prompt}`));
     const contHead = this.formatCont();
-    for (const [i, line] of text.split('\n').entries()) {
-      this.chatLines.push((i === 0 ? firstHead : contHead) + line);
-    }
-    this.trimChat();
+    this.chat.append(text.split('\n').map((line, i) => (i === 0 ? firstHead : contHead) + line));
 
     // 指令解析已统一到全局 inbound:command 相位（plugin-commands）。
     // 适配器不再内联解析：未注册命令被放行为普通消息进入 agent，命中命令
@@ -604,10 +592,6 @@ class CliTui {
     const pluginConfig = this.ctx.config.getPluginConfig(name);
     this.ctx.config.setPluginConfig(name, { ...pluginConfig, lastView: view });
     this.ctx.getService<AppService>('app')?.saveConfig();
-  }
-
-  private trimChat(): void {
-    if (this.chatLines.length > 300) this.chatLines.splice(0, this.chatLines.length - 300);
   }
 
   private queueRender = (): void => {
@@ -700,7 +684,7 @@ class CliTui {
   private getChatViewLines(width: number): string[] {
     const lines: string[] = [];
     const inner = width - 2; // 缩进 2 列
-    for (const raw of this.chatLines) {
+    for (const raw of this.chat.lines) {
       // 宽度感知截断为单行；超长内容直接尾部省略。
       lines.push(`  ${clipAnsi(raw, inner)}`);
     }

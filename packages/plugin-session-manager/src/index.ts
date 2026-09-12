@@ -674,8 +674,9 @@ class SessionManager implements SessionManagerService {
     parentId: string,
     opts?: Partial<Omit<SessionInfo, 'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt'>>,
   ): Promise<SessionInfo> {
-    const parent = this.sessions.get(parentId);
-    if (!parent) throw new Error(`父会话不存在: ${parentId}`);
+    // 平台派生会话（cli-default、OneBot 会话 id）从不经 createSession 预建，父档缺失是常态；
+    // 先兜底建档再挂子会话，否则 create_subtask 在这些平台必败。
+    if (!this.sessions.has(parentId)) await this.ensureSession(parentId);
 
     return this.createSession({
       ...opts,

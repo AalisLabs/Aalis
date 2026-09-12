@@ -1,5 +1,19 @@
+import { randomBytes } from 'node:crypto';
 import { createReadStream, type FSWatcher, watch as fsWatch } from 'node:fs';
-import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { CheckResult } from '@aalis/api-doctor';
 import { useDoctorService } from '@aalis/api-doctor';
@@ -409,9 +423,18 @@ class ScopedStorageService implements StorageService {
     await this.snapshot(toUri(this.root.name, relPath), 'write', abs);
     await mkdir(dirname(abs), { recursive: true });
     // 原子写：先写临时文件再 rename（同分区原子覆盖），防崩溃/并发半写损坏关键持久化（users.json/scheduler-jobs 等）。
-    const tmp = `${abs}.tmp.${process.pid}.${Date.now()}`;
+    // 随机段避免同进程同毫秒并发写同一路径撞出同名 tmp（一方 rename 后另一方 ENOENT，或串写对方内容）。
+    const tmp = `${abs}.tmp.${process.pid}.${Date.now()}.${randomBytes(4).toString('hex')}`;
+    // 覆盖已有文件时沿用它的权限位：tmp 按默认 mode 创建，rename 后目标继承之，
+    // 可执行脚本写一次就从 755 掉到 644。chmod 打在 tmp 上而非 rename 后的目标，
+    // 避开两步之间的窗口；目标不存在则保持默认，stat/chmod 失败不拖累写入本身。
+    const prevMode = await stat(abs).then(
+      s => s.mode & 0o777,
+      () => undefined,
+    );
     try {
       await writeFile(tmp, data);
+      if (prevMode !== undefined) await chmod(tmp, prevMode).catch(() => {});
       await rename(tmp, abs);
     } catch (err) {
       await rm(tmp, { force: true }).catch(() => {});
