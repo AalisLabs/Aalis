@@ -81,6 +81,13 @@ function collectIds(nodes: TreeNode[]): string[] {
 
 // ===== 配置编辑组件 =====
 
+/** JSON 带不了 undefined：草稿里被清掉、而会话原本有值的键，用 null 告诉服务端删除（恢复继承） */
+function withRemovalsAsNull(draft: SessionConfigData, original: SessionConfigData): SessionConfigData {
+  const out: Record<string, unknown> = { ...draft };
+  for (const key of Object.keys(original)) if (out[key] === undefined) out[key] = null;
+  return out as SessionConfigData;
+}
+
 function SessionConfigEditor({ config, resolvedConfig, inheritedConfig, options, onSave, onCancel }: {
   config: SessionConfigData;
   resolvedConfig?: SessionConfigData | null;
@@ -100,10 +107,13 @@ function SessionConfigEditor({ config, resolvedConfig, inheritedConfig, options,
     setDraft(prev => ({ ...prev, [key]: value }));
   };
 
-  /** 工具分组有三态：会话显式启用 / 继承启用 / 未启用 */
+  /** 工具分组有三态：会话显式启用 / 继承启用 / 未启用。'*' 表示全部分组 */
+  const hasGroup = (list: string[] | undefined, name: string) => !!list && (list.includes('*') || list.includes(name));
+  /** '*' 展开成具体组名，才能从中关掉单个组 */
+  const expandGroups = (list: string[]) => (list.includes('*') ? (options?.toolGroups ?? []).map(g => g.name) : list);
   const isToolGroupActive = (name: string) => {
-    if (draft.enabledToolGroups?.includes(name)) return 'explicit';
-    if (inherited.enabledToolGroups?.includes(name) && !draft.enabledToolGroups) return 'inherited';
+    if (hasGroup(draft.enabledToolGroups, name)) return 'explicit';
+    if (hasGroup(inherited.enabledToolGroups, name) && !draft.enabledToolGroups) return 'inherited';
     return 'off';
   };
 
@@ -111,15 +121,16 @@ function SessionConfigEditor({ config, resolvedConfig, inheritedConfig, options,
     const state = isToolGroupActive(name);
     if (state === 'inherited') {
       // 继承状态 → 点击后改为显式设置（复制 inherited 列表，移除该项）
-      const base = [...(inherited.enabledToolGroups || [])];
+      const base = expandGroups(inherited.enabledToolGroups || []);
       update('enabledToolGroups', base.filter(g => g !== name));
     } else {
       // explicit 或 off → 正常 toggle
-      const current = draft.enabledToolGroups || inherited.enabledToolGroups || [];
+      const current = expandGroups(draft.enabledToolGroups || inherited.enabledToolGroups || []);
       const next = current.includes(name)
         ? current.filter(g => g !== name)
         : [...current, name];
-      update('enabledToolGroups', next.length > 0 ? next : undefined);
+      // 关到一个不剩 = 显式 []（只给无分组的通用工具）；想恢复继承用「重置」——否则 UI 表达不了 [] 这一档
+      update('enabledToolGroups', next);
     }
   };
 
@@ -241,7 +252,7 @@ function SessionConfigEditor({ config, resolvedConfig, inheritedConfig, options,
         </label>
       </div>
       <div className="session-config-actions">
-        <button className="session-config-btn save" onClick={() => onSave(draft)}>保存</button>
+        <button className="session-config-btn save" onClick={() => onSave(withRemovalsAsNull(draft, config))}>保存</button>
         <button className="session-config-btn cancel" onClick={onCancel}>取消</button>
       </div>
     </div>

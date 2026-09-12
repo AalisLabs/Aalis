@@ -11,6 +11,7 @@ import type { Context } from '@aalis/core';
 import { AttachmentRefKind, buildAttachmentRefMatcher, formatAttachmentRef, type Message } from '@aalis/schema-message';
 import { fileToDataUri } from './ffmpeg.js';
 import { getMediaRuntime } from './runtime.js';
+import { safeDownloadToTemp } from './safe-fetch.js';
 import type { MediaServiceImpl } from './service.js';
 
 /**
@@ -144,7 +145,24 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaServiceImpl)
         // 动图抽帧与当轮附件同一出口），不经识别模型。mcp-server / workflow 只读 content，
         // 对它们照常走识别模型出文字。
         if (callCtx.acceptsImages && svc.resolveDelivery(callCtx.sessionId, callCtx.platform) === 'passthrough') {
-          const images = await svc.transformModelImages([imageUrl], 'passthrough');
+          // 远端 URL 先在工具层下载并校验是图片：原样交给主请求的话，链接失效 / 不是图片会变成整轮 400，
+          // 模型没有机会纠正；下载失败留在工具层返回错误，模型可换路。
+          let source = imageUrl;
+          let cleanup: (() => Promise<void>) | undefined;
+          if (/^https?:\/\//i.test(source)) {
+            const dl = await safeDownloadToTemp(source, { imageOnly: true });
+            if (!dl) return JSON.stringify({ error: '图片无法下载，或目标不是图片' });
+            source = `file://${dl.path}`; // 物化链认 file:// / data: / storage URI，不认裸绝对路径
+            cleanup = dl.cleanup;
+          } else if (source.startsWith('data:') && !/^data:image\//i.test(source)) {
+            return JSON.stringify({ error: '目标不是图片（data URI 不是 image/*）' });
+          }
+          let images: string[];
+          try {
+            images = await svc.transformModelImages([source], 'passthrough');
+          } finally {
+            await cleanup?.();
+          }
           if (images.length === 0) return JSON.stringify({ error: '图片无法读取或转换为可发送形态' });
           // content 会落库、也会在后续回合被回看：措辞对未来也成立，并带上来源便于重新查看
           return {

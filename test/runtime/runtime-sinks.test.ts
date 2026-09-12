@@ -41,6 +41,23 @@ describe('runtime console-sink', () => {
     }
   });
 
+  it("target: 'stderr' 时走 console.error，不碰 console.log（子命令模式把 stdout 留给命令结果）", () => {
+    const errCaptured: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      errCaptured.push(args.map(String).join(' '));
+    };
+    const handle = installConsoleSink({ target: 'stderr' });
+    try {
+      new DefaultLogger('runtime-test').info('to-stderr');
+      expect(errCaptured.some(line => line.includes('to-stderr'))).toBe(true);
+      expect(captured.some(line => line.includes('to-stderr'))).toBe(false);
+    } finally {
+      handle.dispose();
+      console.error = originalError;
+    }
+  });
+
   it('dispose 后不再转发新日志', () => {
     const handle = installConsoleSink();
     handle.dispose();

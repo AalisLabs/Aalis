@@ -19,7 +19,14 @@ import { installTerminalStateRestorer } from './terminal.js';
 //   startAalis();   // 从 node_modules 加载插件 + 默认开控制台/文件日志
 //
 // monorepo 自托管（src/index.ts）传 monorepo 风味配置：
-//   startAalis({ pluginLoader: createFsPluginLoader(), subcommands: true });
+//   startAalis({ pluginLoader: createFsPluginLoader() });
+//
+// 子命令是默认行为：argv 非空即子命令模式——`node index.mjs <name> [args]` ≡ 聊天里的 `/<name> args`，
+// 命中即执行并退出，未命中报错退出（exit 2），**两种情况都不进守护进程**。宿主自己解析 argv 时传
+// `subcommands: []` 或显式数组。
+//
+// 子命令进程是与守护进程零通信的一次性实例，因此不装文件日志（会截断守护进程正在写的 latest.log）、
+// 不注入重启策略（`restart` 会 spawn 出 argv 仍带 restart 的 detached 子进程，无限连环——实测）。
 //
 // 宿主的「I/O 那一层」（日志 sink / 终端复原 / 子命令分发）全在本包，core 只产生 LogEntry。
 
@@ -32,12 +39,18 @@ export interface StartAalisOptions {
   pluginLoader?: PluginLoader;
   /** 彩色 stdout 日志，默认 true（独立部署即有日志）；webui-only/嵌入式可传 false */
   consoleSink?: boolean;
-  /** 文件日志：true→data/latest.log，string→自定义路径，false→关。默认 true（webui/cli 尾读此文件）。 */
+  /**
+   * 文件日志：true→data/latest.log，string→自定义路径，false→关。默认 true（webui/cli 尾读此文件）。
+   * 子命令模式（argv 非空）一律不写文件日志。
+   */
   fileLog?: boolean | string;
   /** 退出时复原终端 raw-mode/alt-screen，默认 true */
   terminalRestore?: boolean;
-  /** `aalis <name> [args]` 子命令分发：命中即执行并干净退出、不进守护。默认 false（monorepo 传 true）。 */
-  subcommands?: boolean | string[];
+  /**
+   * 要分发的子命令 argv，默认 `process.argv.slice(2)`；宿主自管 argv 时传显式数组（`[]` 即不分发）。
+   * 非空即子命令模式：命中执行后退出，未命中报错退出（exit 2），不进守护进程。
+   */
+  subcommands?: string[];
   /** 覆盖 dev/prod 判定，默认按 NODE_ENV !== 'production' */
   devMode?: boolean;
   /**
@@ -68,16 +81,24 @@ function readCoreVersion(): string | undefined {
 }
 
 export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
-  const { consoleSink = true, fileLog = true, terminalRestore = true, subcommands = false } = opts;
+  const { consoleSink = true, fileLog = true, terminalRestore = true } = opts;
+  // 非数组（缺省，或 JS 宿主仍传旧版 `true`）一律按 process.argv 分发
+  const subcommands = Array.isArray(opts.subcommands) ? opts.subcommands : process.argv.slice(2);
 
   // ── 最早期：任何日志之前先装 bootstrap buffer，再装 terminal / console sink ──
   const bootstrap = installBootstrapBuffer();
   if (terminalRestore) installTerminalStateRestorer();
-  // console sink 在 App 之前装：此时无 ctx，sink 处于「无条件写 stdout」状态以打印早期启动日志，
-  // 待 App 起来再 bindEvents 接管 terminal:claimed/released。
-  const consoleHandle: ConsoleSinkHandle | undefined = consoleSink ? installConsoleSink() : undefined;
+  const subcommandMode = subcommands.length > 0;
+  // console sink 在 App 之前装：此时无 ctx，sink 处于「无条件写」状态以打印早期启动日志，
+  // 待 App 起来再 bindEvents 接管 terminal:claimed/released。子命令模式日志走 stderr，stdout 只留命令结果。
+  const consoleHandle: ConsoleSinkHandle | undefined = consoleSink
+    ? installConsoleSink(subcommandMode ? { target: 'stderr' } : {})
+    : undefined;
 
-  const fileLogTarget = fileLog === false ? undefined : typeof fileLog === 'string' ? fileLog : DEFAULT_LOG_FILE;
+  // 子命令进程不写文件日志：setupFileLogger 会截断 latest.log，而守护进程可能正在写它（webui 历史日志
+  // 以该文件为单一数据源）。
+  const fileLogTarget =
+    fileLog === false || subcommandMode ? undefined : typeof fileLog === 'string' ? fileLog : DEFAULT_LOG_FILE;
 
   // ── fatal handler（覆盖整个 async 启动过程）──
   let fileLogger: FileLoggerHandle | undefined;
@@ -111,7 +132,10 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     pluginLoader: opts.pluginLoader ?? createNodeModulesPluginLoader(opts.projectDir),
     // 默认值从 configSchema 派生（唯一声明来源）；core 不认识配置词汇，只调这个函数。
     pluginDefaults: m => defaultsFrom(m.configSchema),
-    restartStrategy: createProcessRespawnStrategy(),
+    // 子命令进程没有重启能力，不注入策略：`app.restart()` 按 core 语义抛「不可用」，指令层折成失败文案。
+    // 注入的话，`restart` 子命令在 app.stop 超过策略 500ms 等待时会 spawn 一个 argv 仍带 restart 的
+    // detached 子进程，新进程再命中 restart……无限连环（实测 5 代，Ctrl+C 打不到）。
+    restartStrategy: subcommandMode ? undefined : createProcessRespawnStrategy(),
     // 宿主层决定 dev/prod；core 不读 process.env
     devMode: opts.devMode ?? process.env.NODE_ENV !== 'production',
     // 宿主注入时钟：日志时间戳的权威时间来源在此层，core 逻辑不主动取墙上时间。
@@ -131,19 +155,14 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   if (synced.length > 0) app.logger.info('已将插件配置同步到配置文件');
 
   // ── 不变量②：子命令短路在 app.start 之前 ──
-  // `aalis <name> [args...]` 等价于聊天里 `/<name> args...`：命中则执行返回串并干净退出，
-  // 不命中则按正常守护进程模式继续启动。与具体命令解耦——各插件自行注册命令。
-  if (subcommands) {
-    const argv = Array.isArray(subcommands) ? subcommands : process.argv.slice(2);
-    if (argv.length > 0) {
-      const exitCode = await tryDispatchSubcommand(app, argv);
-      if (exitCode !== null) {
-        await app.stop();
-        await new Promise<void>(r => setImmediate(r));
-        await fileLogger?.flush();
-        process.exit(exitCode);
-      }
-    }
+  // `aalis <name> [args...]` 等价于聊天里 `/<name> args...`：命中则执行返回串，未命中则报错，
+  // 两种情况都干净退出、**绝不进守护进程**——打错的命令名若照常起守护，就是与运行中实例并存的
+  // 第二个实例（同时连 onebot、每条消息回两遍）。与具体命令解耦——各插件自行注册命令。
+  if (subcommandMode) {
+    const exitCode = await tryDispatchSubcommand(app, subcommands);
+    await app.stop();
+    await new Promise<void>(r => setImmediate(r));
+    process.exit(exitCode);
   }
 
   // ── 启动 + 优雅退出（防止重复调用）──

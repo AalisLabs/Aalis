@@ -122,6 +122,17 @@ type MemoryClearData = {
 
 // ===== WebuiPages（声明式 UI） =====
 
+/**
+ * WebUI 传来的会话配置补丁：JSON 带不了 undefined，前端用 null 表示「删除该键、恢复继承」。
+ * updateSession 是合并语义，键置为 undefined 即从生效配置里消失（resolveConfig 会 strip）。
+ */
+export function normalizeSessionConfigPatch(patch: unknown): Partial<SessionConfig> {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('缺少配置');
+  return Object.fromEntries(
+    Object.entries(patch as Record<string, unknown>).map(([k, v]) => [k, v === null ? undefined : v]),
+  ) as Partial<SessionConfig>;
+}
+
 const webuiPages: WebuiPage[] = [
   {
     key: 'sessions',
@@ -191,9 +202,7 @@ export const actions: PluginModule['actions'] = {
     if (!sm) throw new Error('session-manager 服务不可用');
     const id = args.id as string;
     if (!id) throw new Error('缺少会话 ID');
-    const config = args.config as Partial<SessionConfig>;
-    if (!config) throw new Error('缺少配置');
-    const session = await sm.updateSession(id, { config: config as SessionConfig });
+    const session = await sm.updateSession(id, { config: normalizeSessionConfigPatch(args.config) });
     return session;
   },
 
@@ -387,7 +396,8 @@ export const actions: PluginModule['actions'] = {
 function formatConfigSummary(config: SessionConfig): string {
   const parts: string[] = [];
   if (config.llm?.model) parts.push(`${config.llm.provider}/${config.llm.model}`);
-  if (config.enabledToolGroups?.length) parts.push(`tools:${config.enabledToolGroups.length}组`);
+  if (config.enabledToolGroups?.length)
+    parts.push(config.enabledToolGroups.includes('*') ? 'tools:全部' : `tools:${config.enabledToolGroups.length}组`);
   if (config.persona) parts.push(`persona:${config.persona}`);
   return parts.join(', ') || '(默认)';
 }

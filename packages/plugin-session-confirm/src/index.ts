@@ -144,10 +144,10 @@ export async function apply(ctx: Context): Promise<void> {
 
   // authority 可能晚于本插件上线 → whenService 在其上线/重启时注册 '*' fallback（精确平台 handler 优先）。
   ctx.whenService<AuthorityService>('authority', authority => {
-    if (authority.setConfirmHandler) {
-      authority.setConfirmHandler('*', busChannel.handler);
-      ctx.logger.debug('会话确认 fallback handler 已注册 (*)');
-    }
+    if (!authority.setConfirmHandler) return;
+    const off = authority.setConfirmHandler('*', busChannel.handler);
+    ctx.logger.debug('会话确认 fallback handler 已注册 (*)');
+    return off; // whenService cleanup：authority 换胜者或本插件 dispose 时注销
   });
 
   // inbound:confirm 相位（最前）：命中未决确认即喂入解析并吞掉，避免触达 agent（防 abort 在途生成）。
