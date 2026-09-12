@@ -13,7 +13,7 @@
 ```ts
 interface SessionConfig {
   llm?: { provider: string; model: string };  // LLM 模型引用（ConfigSchema 中以 type:'llm-ref' 字段编辑）
-  enabledToolGroups?: string[];
+  enabledToolGroups?: string[]; // 启用的工具分组；'*' = 全部分组。会话未设置时继承平台档，最终为空则只给无分组的通用工具
   persona?: string;            // 人格文件名（不含 .yaml）
   think?: boolean;             // 会话级 thinking 覆盖（/session.set -t；未设置=继承 provider 全局）
   systemPromptExtra?: string;

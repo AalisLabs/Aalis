@@ -4,7 +4,7 @@
 
 `session-confirm` 是 Aalis 的**人在环（human-in-the-loop）确认协调器**：当 authority 判定某个能力命中 confirm 轴（轴 B「意图确认」），需要在用户所在会话里发出一条「回复 Y 确认 / 其他取消」的提示并等待应答时，由本服务统一承担「待确认登记 / 串行排队 / 超时 / 解析 Y-YS / 文案组合」这套**平台无关**的协调逻辑。
 
-它刻意**不**自己投递提示、也**不**自己拦截回复——这两件事因平台而异（OneBot/CLI 走 gateway 总线，WebUI 走 WS）。本服务把协调器做成一个工厂 `createChannel(deliver)`：调用方注入「怎么把文案发给用户」的 `deliver`，拿回一条 `{ handler, feed, dispose }` 通道；把 `handler` 注册到 `authority.setConfirmHandler(platform, ...)`，在自己的拦截点调 `feed`。各平台经 DI 复用同一份协调器实现，零重复、零 plugin→plugin 依赖。
+它刻意**不**自己投递提示、也**不**自己拦截回复——这两件事因平台而异（OneBot/CLI 走 gateway 总线，WebUI 走 WS）。本服务把协调器做成一个工厂 `createChannel(deliver)`：调用方注入「怎么把文案发给用户」的 `deliver`，拿回一条 `{ handler, feed, dispose }` 通道；把 `handler` 注册到 `authority.setConfirmHandler(platform, ...)`（返回注销函数，dispose 时调用），在自己的拦截点调 `feed`。各平台经 DI 复用同一份协调器实现，零重复、零 plugin→plugin 依赖。
 
 - 服务注册名：`session-confirm` —— 即 `ctx.getService<SessionConfirmService>('session-confirm')` 里的字符串。
 - 契约包：`@aalis/api-session-confirm`（`packages/api-session-confirm/src/index.ts`）。
@@ -212,8 +212,9 @@ ctx.whenService<SessionConfirmService>('session-confirm', confirmSvc => {
     sendToMyPlatform(request.sessionId, text);
   });
   // 把 handler 挂到 authority，键用本平台名（authorize 时按 request.platform 取）
-  // getService 每次现取，别缓存（provider 反弹会失效，见 lazy-service-access）
-  ctx.getService<AuthorityService>('authority')?.setConfirmHandler('myplatform', confirmChannel.handler);
+  // getService 每次现取，别缓存（provider 反弹会失效，见 lazy-service-access）；
+  // 返回注销函数作 whenService 的 cleanup，本插件 dispose 时注销，authority 不再投给已死通道
+  return ctx.getService<AuthorityService>('authority')?.setConfirmHandler('myplatform', confirmChannel.handler);
 });
 
 // 在本平台的入站拦截点喂回复；命中即吞掉，别让它当普通消息进 agent

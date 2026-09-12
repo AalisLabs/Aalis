@@ -45,7 +45,7 @@ meta.inject = { optional: ['commands', 'tools'] }
 
 ## 确认（轴 B）
 
-授权已过（含 owner / 等级够 / 被预先放行）但操作声明了 `confirm` 时，仍需走一次「意图确认」。确认由独立的 `plugin-session-confirm`（HITL 协调器）执行，经 `setConfirmHandler(platform, handler)` 注册进 authority；各平台（CLI / WebUI / OneBot）可注册独立确认回调，否则落到 `'*'` 通配 fallback。
+授权已过（含 owner / 等级够 / 被预先放行）但操作声明了 `confirm` 时，仍需走一次「意图确认」。确认由独立的 `plugin-session-confirm`（HITL 协调器）执行，经 `setConfirmHandler(platform, handler)` 注册进 authority（返回注销函数，注册方 dispose 时调用）；各平台（CLI / WebUI / OneBot）可注册独立确认回调，否则落到 `'*'` 通配 fallback。没有任何通道时 `requestAccess` 直接返回 false，守卫给出的拒绝原因会指出「没有确认通道」。
 
 - 回复 `Y` = 本次放行；`YS` = 本会话放行（带时限）；其它 = 取消。
 - `confirm: 'always'` = **每次都必须确认**，永不被会话记忆 / 白名单跳过（最高危；cron 等无人确认即拒）。

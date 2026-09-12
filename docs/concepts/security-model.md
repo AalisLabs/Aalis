@@ -136,6 +136,12 @@ ctx.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { risk: 
 > 它**不在** onebot 的 enabledGroups 里（onebot 只开 search / onebot-* / browser / math /
 > session-* / scheduler / user-relation），故当前 bot 部署下不可达。与同文件 `http_download`
 >（`restricted + confirm`）的不对称是有意的：后者上闸因为**写 storage**，与出网无关。
+>
+> 这条判据的前提是分组闸：带分组的工具只在平台档 / 会话配置列出该组（或 `'*'`）时才暴露；
+> `npm create aalis` 只给已选装的 `cli` / `webui` 写 `['*']`，多人平台一律不代开。
+> 分组闸有一个旁路：多人平台开了 `session-delegate` 组时，群成员可以用 `delegate_to_session` 把任务派进
+> owner 平台（webui / cli）的会话，目标会话按**它自己的**工具集推理，授权身份仍是发起者（actor）。
+> 此时 owner 平台开放的 public 带组工具（包括 `http_request`）对发起者可达。
 
 2026-08-23 复核补充（逐条对码核验后维持不声明，勿再报）：
 

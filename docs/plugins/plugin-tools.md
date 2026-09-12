@@ -29,7 +29,10 @@ export const provides = ['tools'];
 - **注册 / 注销**：`register(tool, pluginName)` → disposer；插件 dispose
   时按 `pluginName` 自动注销，避免遗留。
 - **分组过滤**：`getDefinitions({ groups })` / `getSummaries({ groups })`
-  按分组返回工具；未指定 `groups` 时**只**返回无分组的通用工具。
+  按分组返回工具：无分组的通用工具恒可见；带分组的只在命中 `groups` 时返回，`'*'` 表示全部分组；
+  未指定 `groups`（或为空）时只返回通用工具。多人平台上 public 工具的可达性靠这道分组闸
+  （见 [security-model](../concepts/security-model.md)）；平台启用哪些分组由 session-manager 的平台档 /
+  会话配置 `enabledToolGroups` 决定。
 - **可见性覆盖**：工具默认可见性（`visibility: 'public' | 'restricted'`）由作者声明，
   owner 可经 authority 配置 `visibilityOverrides`（操作名 → public/restricted）临时覆盖，
   无需改插件。
