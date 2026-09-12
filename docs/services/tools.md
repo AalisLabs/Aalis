@@ -86,7 +86,7 @@ getGroups(): ToolGroupInfo[];
 unregisterByPlugin(pluginName: string): void;
 ```
 
-`getDefinitions`/`getSummaries` 的过滤语义（`tools.ts`）：**不传 `groups` 时只返回「无分组」的通用工具**；带分组的工具必须显式列在 `filter.groups` 里才出现。这是 plugin-agent 按平台启用分组的依据。
+`getDefinitions`/`getSummaries` 的过滤语义（`tools.ts`）：**不传 `groups` 时只返回「无分组」的通用工具**；带分组的工具必须显式列在 `filter.groups` 里才出现，`'*'` 表示全部分组。这是 plugin-agent 按平台启用分组的依据。
 
 ### 2.4 导出的便捷封装与类型
 

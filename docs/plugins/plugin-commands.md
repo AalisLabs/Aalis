@@ -12,48 +12,30 @@
 ```typescript
 meta.name = '@aalis/plugin-commands'
 meta.provides = ['commands']
-meta.inject = {}
+meta.inject = { required: ['gateway'] }
 ```
+
+## 配置
+
+| 字段 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `commandPrefix` | string | `'/'` | 指令前缀：指令触发前缀，设为空字符串可使用纯关键词触发 |
 
 ## 内置指令
 
-> 权限管理指令仅 owner 可达（防自授）；除下列指令外，WebUI「权限」页（owner-only）也可统一编辑用户等级、操作门槛/确认与 owner 列表，并以可折叠缩进行展示完整指令树、逐节点独立编辑。
-
 | 指令 | 参数 | 说明 | 可见性 |
 |---|---|---|---|
-| `/help` | — | 显示帮助信息 | public |
+| `/help` | `[name]` | 无参时列出顶层指令（子指令只显示个数）；带指令名时显示用法详情，空格和点两种写法都可以，如 `/help clear all` | public |
 | `/status` | — | 系统状态 | public |
-| `/clear` | `[--type/-t <type>]` | 清空当前会话指定类型；默认全部类型 | public |
+| `/clear` | `[--type/-t <type>]` | 清空当前会话指定类型；默认全部类型 | public（需确认 confirm: session；群聊等共享会话要求等级 ≥ 2 或 owner，私聊不限） |
 | `/clear list` | — | 列出可清理类型 | public |
-| `/clear all` | `[--type/-t <type>]` | 【受限】清空全部会话指定类型；默认全部类型 | restricted |
-| `/model` | `[keyword]` | 列出 / 搜索可用对话模型（分页，`-p` 翻页） | public |
-| `/tools` | — | 列出所有 AI 工具 | public |
+| `/clear all` | `[--type/-t <type>]` | 【危险】清空全部会话中指定类型的内容；不指定类型时清空全部类型 | restricted（risk: dangerous，等级 2，需确认 confirm: session） |
 | `/shutdown` | — | 关闭应用 | restricted |
 | `/restart` | — | 重启应用 | restricted |
-| `/authority` | `[target]` | 查看自己或指定用户的权限等级（owner 显示等级 ∞） | restricted（sensitive，等级 1） |
-| `/level` | `<platform:userId> <int>` | 【仅 owner】设置用户权限等级（越大越高，0=默认，负数=封禁） | restricted |
-| `/auto` | `[<分钟>\|on\|off]` | 【仅 owner 本人】自动确认模式：临时免 dangerous 二次确认 | restricted |
 
-## 门槛与确认覆盖（authority 配置）
+`/model` 由 plugin-agent 注册，`/tools` 由 plugin-tool-system 注册，`/authority`、`/level`、`/auto` 由 plugin-authority 注册，详见各自页面。
 
-owner 可通过 authority 配置逐条覆盖单条指令的两轴默认，无需改插件声明。键为完整能力键 `type:name`，指令即 `command:<点路径>`：
-
-```yaml
-# 操作最低等级覆盖（轴 A，整数；压过 risk/visibility 派生值）
-authorityOverrides:
-  'command:shutdown': 0     # 放开为所有人可用（等级 0 即默认所有人可达）
-  'command:clear.all': 3    # 子指令收紧到需等级 ≥ 3（子指令用完整能力键，含 command: 前缀）
-
-# 确认覆盖（轴 B；'session' / 'always' / 'off' 关闭确认）
-confirmOverrides:
-  'command:clear.all': always
-
-# 全局硬禁用 glob：压过一切（含 owner），是配置总闸而非 per-user
-deniedCapabilities:
-  - 'tool:shell*'
-```
-
-轴 B 的确认回复机制：`Y`=仅本次放行，`YS`=本会话限时放行，其它任意输入=取消；`confirm: 'always'` 每次都必须确认（不接受会话记忆）；owner 可用 `/auto` 临时免 dangerous 二次确认。
+单条指令的等级与确认可在 plugin-authority 配置中按能力键 `command:<点路径>`（如 `command:clear.all`）覆盖，见 plugin-authority 文档。
 
 ## 选项解析形式
 
@@ -62,14 +44,14 @@ deniedCapabilities:
 - `--name value`
 - `--name=value`
 - `--flag` / `--no-flag`（boolean 显式开/关）
-- `-t value`（当 option 声明 `alias: 't'`）
+- `-t value`（短名在 option 的 syntax 字符串中声明，如 `.option('type', '-t <type:string[]>')`）
 - `string[]` 支持重复传入或逗号分隔，如 `-t vector -t image`、`--type context,summary`
 
-参数支持引号包裹，如 `/echo "hello world"`。
+参数支持单引号或双引号包裹，也可以用反斜杠转义，如 `"hello world"` 会作为一个参数；`--` 之后的内容全部按位置参数处理。
 
 ## `/clear` 类型
 
-`/clear` 通过 `memory:clear` hook 让各插件参与清理，命令插件只负责编排和基础缓存清理。可用类型：
+`/clear` 通过 `memory:clear` hook 让各插件参与清理。本插件自身负责 `context`（经 memory 服务清空消息历史）和 `image` / `video` / `audio` / `file` 四类附件缓存（`data:/images` 等目录，按会话划分子目录），其余类型由对应插件的中间件处理。可用类型：
 
 | 类型 | 内容 |
 |---|---|
