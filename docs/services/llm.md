@@ -216,7 +216,7 @@ provider 在**序列化前**（流式与非流式两条路径都要）必须先�
 
 1. **尊重调用方 `maxTokens`**：provider 必须用 `request.maxTokens ?? 配置默认`，不能硬编码字面量。OpenAI 早期把上限硬编码为 `4096`，现已修正为 `request.maxTokens ?? this.maxTokens`（`packages/plugin-llm-openai/src/index.ts`），DeepSeek、Ollama（`num_predict`）同。新 provider 照此实现。
 
-2. **OpenAI o 系列推理模型**：o1/o3/o4 等**不接受** `max_tokens`（需 `max_completion_tokens`）、**不接受**非默认 `temperature`。provider 必须按模型名分支：`isReasoningModel` 命中时用 `max_completion_tokens` 且**省略** `temperature`（`packages/plugin-llm-openai/src/index.ts`）。
+2. **OpenAI 推理模型**：o 系列（o1/o3/o4 等）与 gpt-5 系列（`gpt-5`、`gpt-5-mini`、`gpt-5-nano`、`gpt-5-chat` 等）**不接受** `max_tokens`（需 `max_completion_tokens`）、**不接受**非默认 `temperature`。provider 必须按模型名分支：`isReasoningModel` 命中时用 `max_completion_tokens` 且**省略** `temperature`（`packages/plugin-llm-openai/src/index.ts`）。
 
 3. **DeepSeek `forceJsonOutput` 会破坏 tool_calls**：`response_format: {type:'json_object'}` 与 `tool_calls` 互斥，同时下发会破坏工具调用循环。provider 必须**仅在无 tools 时**加 `response_format`（`packages/plugin-llm-deepseek/src/index.ts`）。DeepSeek 还会把原生工具调用标记（DSML）泄漏进 `content`，需本地解析恢复；流式分支同理。
 

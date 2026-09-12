@@ -111,8 +111,7 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
             },
             cwd: {
               type: 'string',
-              description:
-                '命令执行目录（可选）。使用 storage URI，如 workspace:/ 或 tmp:/build；相对路径会解释为 workspace:/ 下路径。',
+              description: `命令执行目录（可选）。使用 storage URI，如 workspace:/ 或 tmp:/build；相对路径基于本工具配置的工作目录 ${config.cwdUri} 解析（不受 cd 影响）。`,
             },
             timeout: {
               type: 'number',
@@ -181,8 +180,7 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
             },
             cwd: {
               type: 'string',
-              description:
-                '命令执行目录（可选）。使用 storage URI，如 workspace:/ 或 tmp:/build；相对路径会解释为 workspace:/ 下路径。',
+              description: `命令执行目录（可选）。使用 storage URI，如 workspace:/ 或 tmp:/build；相对路径基于本工具配置的工作目录 ${config.cwdUri} 解析（不受 cd 影响）。`,
             },
           },
           required: ['command'],

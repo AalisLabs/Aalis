@@ -39,9 +39,10 @@ interface ProcessService {
 interface SpawnOptions {
   cwd?: string;                                  // 工作目录（本地绝对路径）
   env?: Record<string, string | undefined>;      // 注入/覆盖环境变量
-  timeout?: number;                              // 毫秒；到时 SIGKILL 子进程（:17）
+  timeout?: number;                              // 毫秒；到时 SIGKILL（本地实现打整个进程组，第 7 节）（:17）
   input?: string | Uint8Array;                   // 写入 stdin 的内容（:19）
   detached?: boolean;                            // 与父进程解耦；须配 stdio:'ignore' 且手动 unref()（:25）
+                                                 // 本地实现在 POSIX 下一律 detached（见「detached fire-and-forget」）
   stdio?: 'pipe' | 'ignore' | 'inherit';         // 默认 'pipe'（:30）
   maxBuffer?: number;                            // wait() 累计缓冲（stdout+stderr 合计）字节上限（:35）
 }
@@ -70,7 +71,7 @@ interface SpawnHandle {
   stdout: Readable | null;
   stderr: Readable | null;
   wait(): Promise<ExecResult>;             // 等子进程结束（:57）
-  kill(signal?: NodeJS.Signals): boolean;  // 杀子进程（:59）
+  kill(signal?: NodeJS.Signals): boolean;  // 杀子进程；本地实现在 POSIX 下打整个进程组（:59）
   unref(): void;                           // 仅 detached 模式有效，否则 no-op（:63）
 }
 ```
@@ -250,6 +251,8 @@ process 本身**没有内核级鉴权门**——风险控制落在**调用它的
 
 启动「打开浏览器」这类不需要等待的进程：`detached: true` + `stdio: 'ignore'` + `.unref()` 三者缺一不可（`webui-server/src/auth.ts`），否则父进程会被阻塞或无法独立退出。
 
+本地实现在 POSIX 下**对所有子进程都设 `detached`**（`plugin-process-local/src/index.ts`），目的是让子进程自成进程组组长，超时与 `kill()` 才能打到 `sh -c` fork 出的孙进程。代价是子进程脱离宿主的进程组，终端 Ctrl+C 不再直达它们——插件因此按进程组登记（`cmd &` 留下的孙进程在直接子进程退出后仍占着该组），并在 `app:stopping` 时对仍有成员的组补 `SIGKILL`，维持「Aalis 退出，工具子进程一起退出」；调用方显式传 `detached: true` 的进程不登记，它本就该独立于宿主生存。`detached` 选项本身仍只表示调用方要 fire-and-forget（配 `stdio: 'ignore'` + `unref()`）。
+
 ---
 
 ## 7. 边界与注意事项（审计标注）
@@ -258,9 +261,11 @@ process 本身**没有内核级鉴权门**——风险控制落在**调用它的
 
 2. **`readExternalFile` = confused-deputy + 无大小上限。** 它 `fs.readFile` 任意路径（`plugin-process-local/src/index.ts`），daemon 给什么路径就读什么、一次性全量进内存、且**不校验路径来源**。这是「daemon-trusted」的信任面——只在「确实是外部可信组件推来的路径」时用，不要把用户/LLM 可控字符串直接喂进去（路径遍历读取宿主任意文件）。下载的体积上限要由调用方自己加（参考 onebot 的 `readBodyCapped`，但那只覆盖 http，`readExternalFile` 路径无此保护）。
 
-3. **`timeout` 走 SIGKILL，无优雅期。** 超时直接 `child.kill('SIGKILL')`（`index.ts`），子进程没有清理机会。需要 graceful 关停的长进程，自己拿 `handle.kill('SIGTERM')` 管理（`shell.ts` 的 `process_kill` 即如此）。
+3. **`timeout` 走 SIGKILL，无优雅期，打的是整个进程组。** 超时时本地实现在 POSIX 下 `process.kill(-pid, 'SIGKILL')`、Windows 下 `taskkill /PID <pid> /T /F`（`index.ts`），连 `sh -c 'cmd &'` fork 出的孙进程一并杀掉；子进程没有清理机会。`handle.kill(signal)` 同样按进程组发信号。需要 graceful 关停的长进程，自己拿 `handle.kill('SIGTERM')` 管理（`shell.ts` 的 `process_kill` 即如此）。
 
-4. **`spawn` 不接 shell 字符串。** 只接 `(cmd, args[])`，要 shell 特性须显式 `spawn('/bin/sh', ['-c', cmd])`（`shell.ts`、`:149`）——这是有意为之，避免隐式 shell 注入面，但也意味着 provider/consumer 都要自己负责 shell 语义。
+4. **`wait()` 在 `'exit'` 后只等一个短宽限（200ms）就返回。** 孙进程继承同一对 pipe，只要它还活着 `'close'` 就不会来——`sh -c 'sleep 20 & echo hi'` 曾要等满 20 秒，`npm run dev &` 则永不返回。本地实现改为 `'exit'` 后给 `'close'` 200ms 宽限，到点即用已收集的输出 resolve（`index.ts`）；管道保持打开、之后的输出丢弃（不销毁读端，后台进程不会因 EPIPE 被误杀），该进程组留待停机收尸。因此**子进程退出后孙进程的输出会被丢弃**；需要持续读后台进程输出的，应让直接子进程自己长跑（`exec_background` 即如此），不要靠孙进程。
+
+5. **`spawn` 不接 shell 字符串。** 只接 `(cmd, args[])`，要 shell 特性须显式 `spawn('/bin/sh', ['-c', cmd])`（`shell.ts`、`:149`）——这是有意为之，避免隐式 shell 注入面，但也意味着 provider/consumer 都要自己负责 shell 语义。
 
 ---
 

@@ -30,6 +30,7 @@ ensureSession(id: string, patch?: Partial<Pick<SessionInfo, 'name'|'config'|'sta
 deleteSession(id: string): Promise<void>;            // 同时清理其消息历史
 
 // 树形
+  // 父会话未建档时（平台派生 id 从不经 createSession 预建）先按原样 id 兜底建档，再挂子会话
 createChildSession(parentId: string, opts?: Partial<Omit<SessionInfo, 'id'|'parentId'|'children'|'createdAt'|'updatedAt'>>): Promise<SessionInfo>;
 getChildren(parentId: string): SessionInfo[];
 getTree(rootId?: string): SessionTreeNode[];

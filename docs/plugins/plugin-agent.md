@@ -26,7 +26,7 @@ meta.inject = { optional: ['llm', 'memory', 'persona', 'message-archive', 'platf
 | `maxToolIterations` | number | `30` | 最大工具迭代：工具调用循环的最大迭代次数 |
 | `promptBuildTimeoutMs` | number | `10000` | 提示词贡献构建超时 (ms)：单个 agent:prompt 贡献 build 的等待上限。挂死的构建（如网络检索卡住）超时后本轮缺席、其余照常，避免拖住每次 LLM 调用。0 表示不设限。 |
 | `toolResultMaxRatio` | number | `0.15` | 工具结果最大比例：单条工具结果占上下文窗口的最大比例 (0~1)，超出则截断。例如 0.15 表示 15% |
-| `trimThresholdRatio` | number | `1` | 裁剪触发比例：估算输入 token 占上下文长度的比例上限 (0~1)。本次调用超过该比例才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示占满物理上限才裁剪；如需提前护航可调低。压缩触发请在“@aalis/plugin-memory-summary”中配置。 |
+| `trimThresholdRatio` | number | `1` | 裁剪触发比例：裁剪预算 = 上下文长度 × 该比例 − 最大输出 token − 512 安全余量（下限 1024）。本次调用估算输入 token 超过该预算才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示用满扣除输出预留后的可用窗口；调低可提前裁剪。压缩触发请在“@aalis/plugin-memory-summary”中配置。 |
 
 ## 核心流程
 

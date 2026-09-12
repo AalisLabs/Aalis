@@ -192,6 +192,10 @@ export class CheckpointServiceImpl implements CheckpointService {
     op: 'write' | 'delete' | 'rename',
     loadOriginal: () => Promise<{ data: Buffer; size: number } | null>,
   ): Promise<void> {
+    // 自身根下的写入（blob / manifest）不快照：storage 的写前钩子会把它们递归送回这里，
+    // 而 blob 此刻在磁盘上尚不存在 → 会给自己记一条 write-new 假账，且排在真实条目之前，
+    // 回滚时先删备份再读同一 blob → ENOENT，覆盖/删除类恢复必败。
+    if (this.isOwnUri(uri)) return;
     // 跨会话并发：把快照记进所有「本回合尚未对该 uri 快照过」的活跃回合。单回合=常态、零变化；
     // 并发多回合无法精确判断是哪个 run 改的 → 保守地都备份（宁可冗余、不丢保护）。
     const targets = [...this.turns.values()].filter(t => !t.snapshotted.has(uri));
@@ -250,14 +254,16 @@ export class CheckpointServiceImpl implements CheckpointService {
     for (const turnId of entries) {
       const manifest = await this.getManifest(sessionId, turnId);
       if (!manifest) continue;
+      // 存量 manifest 可能带自指条目（历史递归快照），既不是用户改动也不该暴露内部路径
+      const files = manifest.files.filter(f => !this.isOwnUri(f.uri));
       summaries.push({
         turnId: manifest.turnId,
         sessionId: manifest.sessionId,
         startedAt: manifest.startedAt,
         endedAt: manifest.endedAt,
-        fileCount: manifest.files.length,
+        fileCount: files.length,
         execUsed: (manifest as TurnManifest & { execUsed?: boolean }).execUsed,
-        filesPreview: manifest.files.slice(0, 3).map(f => f.uri),
+        filesPreview: files.slice(0, 3).map(f => f.uri),
       });
     }
     summaries.sort((a, b) => b.startedAt - a.startedAt);
@@ -290,6 +296,8 @@ export class CheckpointServiceImpl implements CheckpointService {
     const turnDir = this.turnDir(sessionId, turnId);
 
     for (const file of manifest.files) {
+      // 存量 manifest 里的自指条目（历史递归快照）：删它等于毁本回合的备份，直接跳过
+      if (this.isOwnUri(file.uri)) continue;
       try {
         if (file.action === 'write-new') {
           // 新创建的文件 → 删除
@@ -428,6 +436,12 @@ export class CheckpointServiceImpl implements CheckpointService {
 
   private turnDir(sessionId: string, turnId: string): string {
     return joinUri(this.cfg.rootUri, `${encodeSegment(sessionId)}/${encodeSegment(turnId)}`);
+  }
+
+  /** uri 是否落在本插件自己的 checkpoint 根下（blob / manifest） */
+  private isOwnUri(uri: string): boolean {
+    const root = this.cfg.rootUri;
+    return uri === root || uri.startsWith(root.endsWith('/') ? root : `${root}/`);
   }
 
   // ──────────── 会话级清理 ────────────
