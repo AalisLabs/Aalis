@@ -175,12 +175,15 @@ export class ToolRegistry implements ToolService {
         userId: callCtx.userId,
         actor: callCtx.actor,
         args,
+        signal: callCtx.signal,
       });
       if (denied) {
         this.logger.warn(`工具 ${toolName} 被执行守卫拦截: ${denied}`);
         return { content: JSON.stringify({ error: denied }) };
       }
     }
+    // 守卫可能等过一轮人工确认：期间回合若已中止（latest-wins / 手动 abort），不替死回合执行
+    if (callCtx.signal?.aborted) return { content: JSON.stringify({ error: '回合已中止，未执行' }) };
 
     try {
       if (visibility === 'restricted') {

@@ -88,19 +88,17 @@ function withRemovalsAsNull(draft: SessionConfigData, original: SessionConfigDat
   return out as SessionConfigData;
 }
 
-function SessionConfigEditor({ config, resolvedConfig, inheritedConfig, options, onSave, onCancel }: {
+function SessionConfigEditor({ config, inheritedConfig, options, onSave, onCancel }: {
   config: SessionConfigData;
-  resolvedConfig?: SessionConfigData | null;
   inheritedConfig?: SessionConfigData | null;
   options: ConfigOptions | null;
   onSave: (config: SessionConfigData) => void;
   onCancel: () => void;
 }) {
-  // draft 始终基于会话自身 config（非 resolved），保证保存时只写覆盖值。
+  // draft 始终基于会话自身 config（非生效值），保证保存时只写覆盖值。
   const [draft, setDraft] = useState<SessionConfigData>({ ...config });
-  // resolved 用于 checkbox 默认勾选（当前生效值，含 session 自身覆盖）
-  const resolved = resolvedConfig || {};
-  // inherited = platform profile + 父 sessionDefaults（不含 session 自身），用于「继承 (xxx)」提示
+  // inherited = platform profile + 父 sessionDefaults（不含 session 自身）：既用于「继承 (xxx)」
+  // 提示，也是各控件的回落值——draft 已是会话自身覆盖，两者合起来就是当前生效值。
   const inherited = inheritedConfig || {};
 
   const update = <K extends keyof SessionConfigData>(key: K, value: SessionConfigData[K]) => {
@@ -235,18 +233,22 @@ function SessionConfigEditor({ config, resolvedConfig, inheritedConfig, options,
           placeholder={inherited.maxToolIterations ? `继承 (${inherited.maxToolIterations})` : '默认'}
         />
       </label>
+      {/* 两个开关是三态：未设置（继承）/ 显式 true / 显式 false。取消勾选写显式 false
+          而非 undefined——否则关不掉继承为 true 的默认值；「(继承)」标记只看
+          draft.x === undefined，保存时 withRemovalsAsNull 才把真正被清掉的键转 null。
+          点过即落显式值，UI 不提供回到未设置的入口（要恢复继承得另行清掉该键）。 */}
       <div className="session-config-toggles">
         <label>
           <input type="checkbox"
-            checked={draft.disableOutputFormat ?? resolved.disableOutputFormat ?? false}
-            onChange={e => update('disableOutputFormat', e.target.checked || undefined)}
+            checked={draft.disableOutputFormat ?? inherited.disableOutputFormat ?? false}
+            onChange={e => update('disableOutputFormat', e.target.checked)}
           />
           <span>禁用结构化输出{draft.disableOutputFormat === undefined && inherited.disableOutputFormat ? ' (继承)' : ''}</span>
         </label>
         <label>
           <input type="checkbox"
-            checked={draft.clientSideJsonRendering ?? resolved.clientSideJsonRendering ?? false}
-            onChange={e => update('clientSideJsonRendering', e.target.checked || undefined)}
+            checked={draft.clientSideJsonRendering ?? inherited.clientSideJsonRendering ?? false}
+            onChange={e => update('clientSideJsonRendering', e.target.checked)}
           />
           <span>客户端 JSON 渲染{draft.clientSideJsonRendering === undefined && inherited.clientSideJsonRendering ? ' (继承)' : ''}</span>
         </label>
@@ -279,7 +281,6 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [configEditingId, setConfigEditingId] = useState<string | null>(null);
   const [configOptions, setConfigOptions] = useState<ConfigOptions | null>(null);
-  const [resolvedConfig, setResolvedConfig] = useState<SessionConfigData | null>(null);
   // 「继承默认」包 - 不含 session 自身 config，仅 platform profile + 父 sessionDefaults。
   // 用于 UI 「继承 (xxx)」提示，避免显示用户自己的覆盖值。
   const [inheritedConfig, setInheritedConfig] = useState<SessionConfigData | null>(null);
@@ -296,17 +297,14 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
     return () => clearInterval(iv);
   }, [fetchTree]);
 
-  // WS sessions_changed 推送时刷新 tree + 当前打开的 resolvedConfig
+  // WS sessions_changed 推送时刷新 tree + 当前打开的继承默认值
   useEffect(() => {
     if (!refreshSignal) return; // 跳过初始值 0
     fetchTree();
-    // 如果配置编辑器打开中，重新拉取 resolved + inherited
+    // 如果配置编辑器打开中，重新拉取继承默认值
     if (configEditingId) {
-      Promise.all([
-        pageAction<SessionConfigData>(pluginName, 'getResolvedConfig', { sessionId: configEditingId, platform: 'webui' }),
-        pageAction<SessionConfigData>(pluginName, 'getInheritedDefaults', { sessionId: configEditingId, platform: 'webui' }),
-      ])
-        .then(([r, inh]) => { if (r) setResolvedConfig(r); if (inh) setInheritedConfig(inh); })
+      pageAction<SessionConfigData>(pluginName, 'getInheritedDefaults', { sessionId: configEditingId, platform: 'webui' })
+        .then(inh => { if (inh) setInheritedConfig(inh); })
         .catch(() => {});
     }
   }, [refreshSignal]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -349,7 +347,10 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
     try {
       await pageAction(pluginName, 'archiveSession', { id });
       fetchTree();
-    } catch { /* ignore */ }
+    } catch (err) {
+      // 不再静默：归档失败时会话仍是 active（树也不变），用户必须知道点了没用
+      alert(`归档会话失败：${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -365,18 +366,15 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
   };
 
   const handleOpenConfig = async (id: string) => {
-    if (configEditingId === id) { setConfigEditingId(null); setResolvedConfig(null); setInheritedConfig(null); return; }
+    if (configEditingId === id) { setConfigEditingId(null); setInheritedConfig(null); return; }
     setConfigEditingId(id);
-    setResolvedConfig(null);
     setInheritedConfig(null);
     try {
-      const [opts, resolved, inherited] = await Promise.all([
+      const [opts, inherited] = await Promise.all([
         configOptions ? Promise.resolve(configOptions) : pageAction<ConfigOptions>(pluginName, 'getConfigOptions'),
-        pageAction<SessionConfigData>(pluginName, 'getResolvedConfig', { sessionId: id, platform: 'webui' }),
         pageAction<SessionConfigData>(pluginName, 'getInheritedDefaults', { sessionId: id, platform: 'webui' }),
       ]);
       if (opts && !configOptions) setConfigOptions(opts);
-      if (resolved) setResolvedConfig(resolved);
       if (inherited) setInheritedConfig(inherited);
     } catch { /* ignore */ }
   };
@@ -490,7 +488,6 @@ export function SessionsPage({ pluginName, activeSessionId, onSwitchSession, onS
                 onCancelEdit={() => setEditingId(null)}
                 configEditingId={configEditingId}
                 configOptions={configOptions}
-                resolvedConfig={resolvedConfig}
                 inheritedConfig={inheritedConfig}
                 onSaveConfig={handleSaveConfig}
                 onCancelConfig={() => setConfigEditingId(null)}
@@ -553,7 +550,6 @@ function TreeNodeView({
   onCancelEdit,
   configEditingId,
   configOptions,
-  resolvedConfig,
   inheritedConfig,
   onSaveConfig,
   onCancelConfig,
@@ -578,7 +574,6 @@ function TreeNodeView({
   onCancelEdit: () => void;
   configEditingId: string | null;
   configOptions: ConfigOptions | null;
-  resolvedConfig: SessionConfigData | null;
   inheritedConfig: SessionConfigData | null;
   onSaveConfig: (id: string, config: SessionConfigData) => void;
   onCancelConfig: () => void;
@@ -667,7 +662,6 @@ function TreeNodeView({
         <div style={{ marginLeft: depth * 24 + 24 }}>
           <SessionConfigEditor
             config={s.config || {}}
-            resolvedConfig={resolvedConfig}
             inheritedConfig={inheritedConfig}
             options={configOptions}
             onSave={(config) => onSaveConfig(s.id, config)}
@@ -708,7 +702,6 @@ function TreeNodeView({
                 onCancelEdit={onCancelEdit}
                 configEditingId={configEditingId}
                 configOptions={configOptions}
-                resolvedConfig={resolvedConfig}
                 inheritedConfig={inheritedConfig}
                 onSaveConfig={onSaveConfig}
                 onCancelConfig={onCancelConfig}

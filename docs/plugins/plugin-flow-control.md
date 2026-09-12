@@ -32,7 +32,7 @@ inbound:flow   （由 plugin-gateway 在 inbound:command 之后、inbound:trigge
 
 - `off`：完全关闭
 - `session`：每会话独立 `setTimeout`，到点 `gateway.ingressMessage` 注入一条 `source='idle-trigger'` 消息
-- `platform`：跨会话共用一个定时器。`idleTriggerStrategy` 决定触发时机：`all-quiet` 在所有会话都静默满 `idleTriggerMinutes` 后触发，`fixed` 每隔 `idleTriggerMinutes` 触发一次。到点后，在不处于禁言、冷却或限速已满状态的会话中，选最久没有活动的一个注入闲置触发消息
+- `platform`：跨会话共用一个定时器。`idleTriggerStrategy` 决定触发时机：`all-quiet` 在所有会话都静默满 `idleTriggerMinutes` 后触发，`fixed` 每隔 `idleTriggerMinutes` 触发一次。到点后，在不处于禁言、冷却或限速已满状态的会话中，选最久没有活动的一个注入闲置触发消息。候选还要过 per-scope 覆盖：该会话有效配置的 `idleTriggerScope` 不是 `platform`（被单独关成 `off` 或改成 `session`）就跳过，提示词也按候选会话的有效 `idleTriggerPrompt` 取。但节奏本身只看顶层配置——`idleTriggerMinutes` 与 `idleTriggerStrategy` 在 `platform` 档下不吃 per-scope 覆盖（定时器是跨会话共用的一个，选中会话在挑之后才确定）。每轮之间至少隔一个阈值量级（`idleTriggerMinutes`，下限 60 秒）：发出去了、还是一轮下来全被挤出没有候选，都一样退避，不会每秒重试。进程内一个活动记录都还没有时（重启后即如此），以启动时刻为静默起点——首轮至少等一个 `idleTriggerMinutes`
 
 注入的消息携带 `triggerType: 'idle'`、`source: 'idle-trigger'`，flow-control / trigger-policy 中间件均会跳过策略判定，直接交给 agent。
 

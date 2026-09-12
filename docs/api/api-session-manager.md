@@ -23,7 +23,7 @@ interface SessionConfig {
   sessionDefaults?: Omit<SessionConfig, 'sessionDefaults'>; // 子会话默认
 }
 
-type PlatformProfile = SessionConfig;   // 平台默认模板（在 webui 配置）
+type PlatformProfile = SessionConfig;   // 平台默认模板（写在插件配置 platformProfiles，无运行时写接口）
 
 interface SessionInfo {
   id: string;

@@ -44,6 +44,9 @@
     "service": {
       "provides": [
         "vectorstore"
+      ],
+      "required": [
+        "storage"
       ]
     }
   }

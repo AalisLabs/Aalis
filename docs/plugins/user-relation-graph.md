@@ -103,7 +103,8 @@
 `/relation compress` 与 `/relation maintain` 都走以下流程：
 
 1. **孤儿清理（与配额无关，无条件）**：所有"没有任何边端点引用"
-   的节点都删 —— `person / event / entity` 一视同仁。
+   的节点都删 —— `person / event / entity` 一视同仁。同一趟先清掉的悬空边
+   （端点指向不存在节点）不计作引用，故只被悬空边牵住的节点一趟即删。
    被删的 `person` 下次发言时会由 `observePerson` 重建，所以安全。
 2. **配额淘汰（仅在 `count > quota · (1+hysteresisPct)` 触发）**：
    按 `(now - lastReinforcedAt) / (max(weight, 0.05) · max(PR, ε))`

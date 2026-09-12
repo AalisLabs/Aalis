@@ -297,6 +297,23 @@ async function readLogFileBefore(storage: StorageService, beforeSeq: number, lim
  */
 const LOCAL_SCAN_DIRS = [resolve(process.cwd(), 'packages'), resolve(process.cwd(), 'node_modules/@aalis')];
 
+/**
+ * 会话归属的平台名：取 sessionId 首个 `:` 前的前缀，命中**已注册平台名**才采信，否则 `'webui'`。
+ *
+ * WebUI 是管理面，订阅的会话可以属于任何平台（`onebot:123`）。它发 `token:request` 时若
+ * 一律报 `'webui'`，消费方（plugin-agent）就按 webui 档解析模型与会话配置，把别人的预算
+ * 快照算进错的上下文窗口。前缀不认识时才落回 `'webui'`——CLI 的 `cli-default` 这类不带
+ * 前缀的会话，以及 webui 自己的会话，都归在这一档。
+ *
+ * 纯函数：平台名集合由调用方从 `getPlatformNames(ctx)` 取（adapter 可热插拔，每次现取）。
+ */
+export function resolveSessionPlatform(sessionId: string, known: ReadonlySet<string>): string {
+  const idx = sessionId.indexOf(':');
+  if (idx <= 0) return 'webui';
+  const prefix = sessionId.slice(0, idx);
+  return known.has(prefix) ? prefix : 'webui';
+}
+
 export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
   const uiConfig: WebUIConfig = {
     port: (config.port as number) ?? 3000,
@@ -393,6 +410,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 日志广播持续往死连接的发送缓冲堆数据。详见 ws-heartbeat.ts。
   const heartbeat = createWsHeartbeat<WebSocket>({
     onStale: ws => ctx.logger.debug(`WebUI 客户端心跳超时，回收半开连接 (bufferedAmount=${ws.bufferedAmount})`),
+    onError: (_ws, err) => ctx.logger.warn(`WebUI 客户端连接错误: ${err.message}`),
   });
 
   // 流式生成缓冲区：记录每个 session 正在生成中的累积内容，用于刷新后恢复。
@@ -437,8 +455,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const getApp = (): AppService | undefined => ctx.getService<AppService>('app');
   const getPluginMgr = (): PluginManagerService | undefined => ctx.getService<PluginManagerService>('plugins');
 
-  // 前端静态文件托管（由 webui-client 插件通过 setClientDir 挂载）
-  // server 注册服务名 'webui-server'，client 通过 capabilities 匹配版本
+  // 前端静态文件托管：前端包不是插件（无 apply，纯静态资源），托管权在本插件——
+  // ready 时由 client-discovery 按 `aalis.client` 标记发现候选，本插件把每个候选注册成
+  // 一条 webui-client 服务 provider，再由服务解析（偏好 > 优先级 > 注册顺序）定出活跃前端。
   let clientDist = '';
   let staticMiddleware: express.RequestHandler | null = null;
 
@@ -1070,7 +1089,12 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
             ws.send(JSON.stringify(cachedUsage));
           } else {
             // 无缓存（服务重启后），请求 agent 重新计算
-            ctx.emit('token:request', { sessionId: sid }).catch(() => {});
+            ctx
+              .emit('token:request', {
+                sessionId: sid,
+                platform: resolveSessionPlatform(sid, new Set(getPlatformNames(ctx))),
+              })
+              .catch(() => {});
           }
           return;
         }
@@ -1096,7 +1120,12 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
             .emit('session:compress', { sessionId, reason: 'manual' })
             .then(() => {
               // 压缩完成后重新计算 token 用量并推送给客户端
-              ctx.emit('token:request', { sessionId }).catch(() => {});
+              ctx
+                .emit('token:request', {
+                  sessionId,
+                  platform: resolveSessionPlatform(sessionId, new Set(getPlatformNames(ctx))),
+                })
+                .catch(() => {});
             })
             .catch(() => {});
           return;
@@ -1489,7 +1518,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     if (existsSync(indexPath)) {
       res.sendFile(indexPath);
     } else {
-      res.status(404).json({ error: '前端未就绪，请安装 webui-client 插件 (如 @aalis/plugin-webui-client)' });
+      res
+        .status(404)
+        .json({ error: '前端未就绪：请安装一个带 aalis.client 标记的前端包（如 @aalis/plugin-webui-client）' });
     }
   });
 

@@ -147,4 +147,49 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
 
     expect(executed, '空串 arguments 是无参工具的合法产物，必须执行').toBe(1);
   });
+
+  it('工具调用上下文带回合中止信号：agent.abort 后工具看到 signal.aborted', async () => {
+    const app = new App({ config: { name: 'E2E', logLevel: 'error', plugins: {} } });
+    const call: ChatResponse = {
+      content: null,
+      toolCalls: [{ id: 'call-sig', type: 'function', function: { name: 'probe', arguments: '{}' } }],
+    };
+    await app.ctx.useModule(createMockLLMPlugin({ responses: [call, { content: '已收到' }] }));
+    await app.ctx.useModule(toolsModule as never, {});
+    await app.ctx.useModule(memoryInMemoryModule as never);
+    await app.ctx.useModule(messageArchiveModule as never, { debugLogs: false });
+    await app.ctx.useModule(agentModule as never, AGENT_CONFIG);
+
+    let seen: AbortSignal | undefined;
+    let abortedInsideTool = false;
+    useToolService(app.ctx).register({
+      definition: {
+        type: 'function',
+        function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
+      },
+      handler: async (_args, callCtx) => {
+        seen = callCtx.signal;
+        await new Promise(r => setTimeout(r, 60));
+        abortedInsideTool = callCtx.signal?.aborted === true;
+        return { content: '{"ok":true}' };
+      },
+    });
+
+    const sessionId = 'test:tool-signal';
+    const agent = app.ctx.getService<AgentService>('agent')!;
+    const turn = agent.handleMessage({
+      content: '调工具',
+      sessionId,
+      platform: 'test',
+      userId: 'u1',
+      sessionType: 'private',
+    });
+    await new Promise(r => setTimeout(r, 20));
+    agent.abort?.(sessionId);
+    await turn;
+    await app.stop();
+
+    expect(seen).toBeInstanceOf(AbortSignal);
+    expect(abortedInsideTool, '回合中止后工具持有的信号应已中止').toBe(true);
+  });
 });

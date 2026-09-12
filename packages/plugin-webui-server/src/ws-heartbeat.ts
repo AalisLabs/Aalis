@@ -9,6 +9,9 @@
 // 清理链）。浏览器对 ping 是协议层自动回 pong，后台标签页也会回，不误杀；
 // 只有真死的连接才会在 1~2 个周期内被踢。
 //
+// 登记（track）同时挂 'error' 兜底监听：无监听者的 'error' 会抛成
+// uncaughtException 打死整进程，而每条连接都要过 track，挂在这里最不易漏。
+//
 // 独立小模块 + 依赖注入的最小 socket 面，同 auth/gate 的可单测形态。
 // ============================================================
 
@@ -17,10 +20,11 @@ export interface HeartbeatSocket {
   ping(): void;
   terminate(): void;
   on(event: 'pong', cb: () => void): void;
+  on(event: 'error', cb: (err: Error) => void): void;
 }
 
 interface WsHeartbeat<T extends HeartbeatSocket> {
-  /** 连接建立时登记：挂 pong 监听并纳入巡检。 */
+  /** 连接建立时登记：挂 pong / error 监听并纳入巡检。 */
   track(ws: T): void;
   /** 连接关闭时移除（terminate 踢掉的经 'close' 清理链也会走到这里，幂等）。 */
   untrack(ws: T): void;
@@ -37,6 +41,8 @@ export function createWsHeartbeat<T extends HeartbeatSocket>(
     intervalMs?: number;
     /** 踢掉死连接时回调（记日志用）；terminate 本身已触发 'close' 清理链。 */
     onStale?: (ws: T) => void;
+    /** 连接自身报错时回调（记日志用）；监听本身才是要紧的，见 track 注释。 */
+    onError?: (ws: T, err: Error) => void;
   } = {},
 ): WsHeartbeat<T> {
   const intervalMs = opts.intervalMs ?? 30_000;
@@ -80,6 +86,11 @@ export function createWsHeartbeat<T extends HeartbeatSocket>(
       alive.set(ws, true);
       tracked.add(ws);
       ws.on('pong', () => alive.set(ws, true));
+      // 'error' 兜底监听：EventEmitter 对无监听者的 'error' 是**抛异常**——ws 帧校验
+      // 失败（畸形帧/坏 UTF-8）走的正是这条路，抛出后成 uncaughtException，runtime
+      // 直接 process.exit(1)：一条畸形帧打死整进程。登记时一并挂上，凡 track 过的
+      // 连接天然免疫。
+      ws.on('error', err => opts.onError?.(ws, err));
     },
     untrack(ws: T): void {
       tracked.delete(ws);

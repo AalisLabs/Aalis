@@ -71,7 +71,7 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 
 ### `app.plugin(module, config?, instanceId?)`
 
-注册单个插件。`instanceId` 缺省用 `module.name`。配置合并优先级：`代码传入 > 配置文件 > 宿主派生默认值`（默认值经 `AppOptions.pluginDefaults` 注入，core 不认识任何配置词汇；缺省注入 = 无默认值）。
+注册单个插件。`instanceId` 缺省用 `module.name`。配置合并优先级：`代码传入 > 配置文件 > 宿主派生默认值`（默认值经 `AppOptions.pluginDefaults` 注入，core 不认识任何配置词汇；缺省注入 = 无默认值）。三层是**逐层深合并**：同一路径上双方都是纯对象则递归合并，否则后者整体覆盖；数组与非纯对象（`Date` / `Map` / 类实例）是原子值，只覆盖不逐元素合并。所以配置文件里只写了嵌套组中的一个键（只写 `server.port`），同组其余默认值（`server.host`）在插件首次 `apply` 时依然在位。
 
 ### `app.autoLoadPlugins()`
 

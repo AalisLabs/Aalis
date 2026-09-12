@@ -144,7 +144,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 | plugin-tools 执行点 | `packages/plugin-tools/src/tools.ts` | 执行前 `resolveCapabilityPolicy(tool)` → 调 `this._guard({...})`，非 null 即拦截 |
 | plugin-session-confirm | `packages/plugin-session-confirm/src/index.ts` | `whenService('authority')` → `setConfirmHandler('*', busChannel.handler)` 注册兜底确认通道 |
 | plugin-webui-server | `packages/plugin-webui-server/src/index.ts` | `setConfirmHandler('webui', ...)` 注册 WS 确认通道 |
-| plugin-cli | `packages/plugin-cli/src/index.ts` | `setConfirmHandler('cli', ...)` 注册终端确认 |
+| plugin-cli | — | 无自有通道，落 session-confirm 的 `'*'` 兜底 |
 | WebUI actions | `packages/plugin-authority/src/index.ts` | `getOverview` / `setUserLevel` / `setOwners` 等管理面，均 `getService<AuthorityService>('authority')` |
 
 ## 4. 写一个 provider（替换默认 authority 实现）

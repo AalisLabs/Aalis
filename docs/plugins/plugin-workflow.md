@@ -10,7 +10,7 @@
 拓扑分层执行，同层并行；任一节点失败整个 run 标记 `failed`。节点可声明 `out` 把字符串结果
 存入 `outputs` 命名空间，供下游节点用 `{{outputs.<out>}}` 插值。
 
-定义存 `workspace:/workflows/*.yaml`（用户/AI 资产），运行实例存 `data:/workflow-runs.json`。
+定义存 `workspace:/workflows/*.yaml`（用户/AI 资产），运行实例存 `data:/workflow-runs.json`（同一文件里还记 `once` 触发器的 `firedAt`，形状 `{ runs, onceFired }`；旧版的顶层数组仍能读入）。
 
 ## 插件声明
 
@@ -37,7 +37,7 @@ meta.inject = { required: ['cron-engine'], optional: ['tools', 'storage', 'webui
 |---|---|---|
 | `cron` | `expr` | 按 cron 表达式周期触发，经 `cron-engine` 服务订阅 |
 | `interval` | `seconds` | 每隔 `seconds` 秒触发（向下取整，最小 1），经 `cron-engine` 以 `@every <N>s` 订阅 |
-| `once` | `runAt` | 在指定时间触发一次；`runAt` 须能被 `Date.parse` 解析，时间已过则注册时立即触发 |
+| `once` | `runAt` | 在指定时间触发一次，**一生只触发一次**：触发即把 `firedAt` 记入运行历史文件（`runsFile`），此后重启进程、重新注册、重复 `workflow_define` 都不再触发；**定义不存在时记账随之清除**——`workflow_remove` 清账，手动删掉 `defsDir` 里的 yaml 也会在下次启动扫描定义后补清，同 id 重建都算新工作流。`runAt` 须能被 `Date.parse` 解析；时间已过且从未触发过，则注册时立即补触发一次 |
 | `event` | `event`, `filter?` | 订阅指定事件；`filter` 的每个键须与事件第一个参数的同名顶层字段严格相等；事件参数数组以运行变量 `args` 注入 |
 | `manual` | — | 不注册触发器，仅手动运行 |
 

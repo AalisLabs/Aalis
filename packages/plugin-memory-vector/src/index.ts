@@ -286,9 +286,15 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   function getEmbedder(): EmbeddingService {
     return ctx.getService<EmbeddingService>('embedding')!;
   }
-  const memory = ctx.getService<MemoryService>('memory');
-
-  const hasRangeQuery = !!memory?.getMessagesBySessionRange;
+  // memory 是 optional 依赖，不级联 bounce 本插件：apply 时缓存裸引用会在 provider
+  // 重载后落在已 close 的 client 上，扩窗永久退化成一条 warn；能力探测同理必须在
+  // 调用点现算，否则 provider 晚于本插件注册时 hasRangeQuery 永久为假。
+  function getMemory(): MemoryService | undefined {
+    return ctx.getService<MemoryService>('memory');
+  }
+  function hasRangeQuery(): boolean {
+    return !!getMemory()?.getMessagesBySessionRange;
+  }
 
   const searchRaw = (config.search ?? {}) as Record<string, unknown>;
   const expandRaw = (config.contextExpand ?? {}) as Record<string, unknown>;
@@ -329,15 +335,16 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     recallRoles: (config.recallRoles as 'all' | 'others-only') ?? 'all',
   };
 
+  // 启动日志与下方 warn 都是启动时刻的快照（此后按调用点现算，不再据此判定）
   ctx.logger.info(
-    `向量记忆已启动: ${await getStore().size()} 条向量, 范围查询=${hasRangeQuery ? '可用' : '不可用'}, ` +
+    `向量记忆已启动: ${await getStore().size()} 条向量, 范围查询=${hasRangeQuery() ? '可用' : '不可用'}, ` +
       `userBoost=${cfg.search.userPriorityBoost}, expandWindow=${cfg.contextExpand.window}, ` +
       `单条截断=${cfg.search.perItemMaxChars > 0 ? `${cfg.search.perItemMaxChars}字` : '不截断'}, minScore=${cfg.search.minScore}, ` +
       `indexConcurrency=${cfg.indexing.concurrency <= 0 ? 'unlimited' : cfg.indexing.concurrency}, ` +
       `indexQueue=${cfg.indexing.maxQueueSize <= 0 ? 'unlimited' : cfg.indexing.maxQueueSize}`,
   );
 
-  if (!hasRangeQuery && cfg.contextExpand.window > 0) {
+  if (!hasRangeQuery() && cfg.contextExpand.window > 0) {
     ctx.logger.warn('当前 memory 后端不支持范围查询，contextExpand 将退化为仅命中本身');
   }
 
@@ -660,7 +667,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         }
 
         // 拉取每个会话的扩展消息
-        if (W > 0 && hasRangeQuery) {
+        const mem = getMemory();
+        if (W > 0 && mem?.getMessagesBySessionRange) {
           for (const [sid, pivots] of sessionPivots) {
             // 用宽时间窗一次拉，再按 pivot 切片合并（避免多次小查询）
             const minTs = Math.min(...pivots);
@@ -668,7 +676,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
             // 4 小时缓冲，足以覆盖 N=数十条邻居的常见场景
             const bufferMs = 4 * 60 * 60 * 1000;
             try {
-              const all = await memory!.getMessagesBySessionRange!(sid, minTs - bufferMs, maxTs + bufferMs);
+              const all = await mem.getMessagesBySessionRange(sid, minTs - bufferMs, maxTs + bufferMs);
               const sorted = all.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
 
               // 对每个 pivot 在 sorted 中定位并取 ±W 条
@@ -837,19 +845,17 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const effectiveCrossSession =
         cfg.contextExpand.crossSession && (args.crossSession === undefined ? true : Boolean(args.crossSession));
 
-      // scope 收紧规则：插件配置 isolated 时强制 session；否则取插件配置和请求的较严者
-      const modeRank: Record<CrossSessionMode | 'session', number> = {
-        isolated: 0,
-        session: 0,
-        user: 1,
-        platform: 2,
-        all: 3,
-      };
-      const cfgRank = modeRank[cfg.crossSessionMode];
-      const reqRank = requestedScope ? modeRank[requestedScope] : cfgRank;
-      const effectiveRank = Math.min(cfgRank, reqRank);
+      // scope 收紧规则：先把 crossSessionMode 映成**可见范围**，再与请求取较窄者。
+      // 两者不能共用一张 rank 表：user 档是「全库可见 + 同用户加权」，作为加权策略它
+      // 排在 platform 之前，于是「显式请求 platform」会被静默放宽回 all——与工具描述
+      // 承诺的「scope 只能更窄」相反。
+      const visibilityRank: Record<'session' | 'platform' | 'all', number> = { session: 0, platform: 1, all: 2 };
+      const cfgVisibility: 'session' | 'platform' | 'all' =
+        cfg.crossSessionMode === 'isolated' ? 'session' : cfg.crossSessionMode === 'platform' ? 'platform' : 'all';
       const effectiveScope: 'session' | 'platform' | 'all' =
-        effectiveRank <= 0 ? 'session' : effectiveRank === 2 ? 'platform' : 'all';
+        requestedScope && visibilityRank[requestedScope] < visibilityRank[cfgVisibility]
+          ? requestedScope
+          : cfgVisibility;
 
       const curSessionId = callCtx.sessionId;
       const curPlatform = callCtx.platform ?? (curSessionId ? parsePlatform(curSessionId) : '');
@@ -897,7 +903,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         // 仅当 effectiveWindow > 0 且 memory 服务支持范围查询时启用
         type CtxEntry = { ts: number; role: string; text: string };
         const contextBySessionPivot = new Map<string, CtxEntry[]>(); // key = `${sid}|${ts}`
-        if (effectiveWindow > 0 && hasRangeQuery && memory?.getMessagesBySessionRange) {
+        const mem = getMemory();
+        if (effectiveWindow > 0 && mem?.getMessagesBySessionRange) {
           // 按 sessionId 聚合 pivots
           const sessionPivots = new Map<string, number[]>();
           for (const r of top) {
@@ -915,7 +922,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
             const maxTs = Math.max(...pivots);
             const bufferMs = 4 * 60 * 60 * 1000; // 4h 缓冲，足以覆盖 W=10 邻居
             try {
-              const all = await memory.getMessagesBySessionRange(sid, minTs - bufferMs, maxTs + bufferMs);
+              const all = await mem.getMessagesBySessionRange(sid, minTs - bufferMs, maxTs + bufferMs);
               const sorted = all.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
               for (const pivotTs of pivots) {
                 const pivotIdx = sorted.findIndex(m => (m.timestamp ?? 0) === pivotTs && m.role === 'user');

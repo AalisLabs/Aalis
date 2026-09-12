@@ -1166,6 +1166,9 @@ export class RelationService {
     const eventIdSet = new Set(snap.events.map(e => e.id));
     const entityIdSet = new Set(snap.entities.map(e => e.id));
     // 清理悬空边：端点指向不存在节点的边（节点被绕过 cascade 删除时可能残留）
+    // 删掉的边 id 要记下：下一段统计"被引用"必须只看存活边，否则只被悬空边引用的
+    // 节点本轮逃过孤儿判定，返回计数偏小、得再跑一次才收敛。
+    const deletedEdgeIds = new Set<string>();
     let deletedDanglingEdges = 0;
     for (const e of snap.edges) {
       let dangling = false;
@@ -1191,6 +1194,7 @@ export class RelationService {
       }
       if (dangling) {
         await this.store.deleteEdge(e.id);
+        deletedEdgeIds.add(e.id);
         deletedDanglingEdges++;
       }
     }
@@ -1198,6 +1202,7 @@ export class RelationService {
     const referencedEventIds = new Set<string>();
     const referencedEntityIds = new Set<string>();
     for (const e of snap.edges) {
+      if (deletedEdgeIds.has(e.id)) continue;
       switch (e.kind) {
         case 'person-event':
           referencedPersonIds.add(e.fromPersonId);

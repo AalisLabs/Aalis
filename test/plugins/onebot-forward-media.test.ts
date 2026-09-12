@@ -177,6 +177,8 @@ interface Harness {
   expander: ReturnType<typeof createForwardExpander<object>>;
   writes: string[];
   describeCalls: string[];
+  /** media.rememberDescriptionAlias 收到的 (来源, 落盘 ref) */
+  aliasCalls: Array<[string, string]>;
   describeDone: number;
   releaseDescribe: () => void;
   infoLogs: string[];
@@ -185,6 +187,7 @@ interface Harness {
 function makeHarness(overrides: Partial<ForwardConfig> = {}, opts: { brokenDownload?: boolean } = {}): Harness {
   const writes: string[] = [];
   const describeCalls: string[] = [];
+  const aliasCalls: Array<[string, string]> = [];
   const infoLogs: string[] = [];
   let release!: () => void;
   const gate = new Promise<void>(r => {
@@ -195,12 +198,16 @@ function makeHarness(overrides: Partial<ForwardConfig> = {}, opts: { brokenDownl
     expander: undefined as unknown as Harness['expander'],
     writes,
     describeCalls,
+    aliasCalls,
     describeDone: 0,
     releaseDescribe: release,
     infoLogs,
   };
 
   const media: Partial<MediaService> = {
+    rememberDescriptionAlias: (source: string, landedRef: string) => {
+      aliasCalls.push([source, landedRef]);
+    },
     describeImage: async (src: string) => {
       describeCalls.push(src);
       await gate;
@@ -297,6 +304,9 @@ describe('forward-expand 两阶段解析器（下载先行、识别受限并发�
     for (const src of h.describeCalls) {
       expect(src).toMatch(/^data\/images\/onebot_test_group_1\//);
     }
+    // 本夹具的图是 data URI：适配器只给 http(s) 来源登记「原始 URL → 落盘 ref」别名
+    // （data URI 由 plugin-media 落盘处自登记，适配器再登记只会把整段 base64 钉进别名表）
+    expect(h.aliasCalls).toEqual([]);
   });
 
   it('recognitionMaxItems 截断：超出项不识别、占位符保留、日志点名', async () => {

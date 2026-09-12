@@ -22,9 +22,12 @@ interface SchedulerJobConfig {
   name: string;
   /** cron 表达式 (5 段: 分 时 日 月 周)，支持快捷符 @hourly/@daily/@weekly/@monthly */
   cron?: string;
-  /** 固定间隔秒数（与 cron 二选一），也可用 cron 的 "@every 30s" 形式表达 */
+  /** 固定间隔秒数（与 cron / runAt 互斥），也可用 cron 的 "@every 30s" 形式表达 */
   interval?: number;
-  /** 一次性任务：在该 ISO 时间执行一次，执行后自动 enabled=false。与 cron/interval 三选一。 */
+  /**
+   * 一次性任务：在该 ISO 时间执行一次，执行后自动 enabled=false。
+   * 与 cron / interval 互斥（入口还接受 delaySeconds，会换算成本字段）。
+   */
   runAt?: string;
   /** 目标 sessionId（消息发往哪个会话） */
   sessionId: string;
@@ -248,7 +251,8 @@ const webuiPages: WebuiPage[] = [
           cron: {
             type: 'string',
             label: 'Cron 表达式',
-            description: '5 字段或别名：@hourly / @daily / @weekly / @every 30s；与 interval、runAt 三选一',
+            description:
+              '5 字段或别名：@hourly / @daily / @weekly / @every 30s；与 interval / runAt / delaySeconds 四选一',
           },
           interval: { type: 'number', label: '固定间隔（秒）', description: '与 cron / runAt / delaySeconds 四选一' },
           runAt: {
@@ -269,7 +273,7 @@ const webuiPages: WebuiPage[] = [
             type: 'boolean',
             label: '创建后立即暂停',
             default: false,
-            description: '勾选后任务创建但不会自动运行，需手动「恢复」',
+            description: '勾选后任务创建但不会自动运行，需手动「恢复」；仅周期任务（cron / interval）可用',
           },
         },
       },
@@ -298,17 +302,23 @@ export const actions: PluginModule['actions'] = {
     const svc = ctx.getService<SchedulerService>('scheduler');
     return svc?.triggerJob(args.name as string);
   },
+  // 三个开关类 action 返回 { ok, error }：裸 boolean 会被前端按成功处理（一次性任务不能暂停就是这样被静默掉的）
   async pauseJob(ctx, args) {
     const svc = ctx.getService<SchedulerService>('scheduler');
-    return svc?.pauseJob(args.name as string);
+    if (!svc) return { ok: false, error: 'scheduler 服务未就绪' };
+    return svc.pauseJob(args.name as string)
+      ? { ok: true }
+      : { ok: false, error: '任务不存在，或是一次性任务（不能暂停，只能删除重建）' };
   },
   async resumeJob(ctx, args) {
     const svc = ctx.getService<SchedulerService>('scheduler');
-    return svc?.resumeJob(args.name as string);
+    if (!svc) return { ok: false, error: 'scheduler 服务未就绪' };
+    return svc.resumeJob(args.name as string) ? { ok: true } : { ok: false, error: '任务不存在' };
   },
   async removeJob(ctx, args) {
     const svc = ctx.getService<SchedulerService>('scheduler');
-    return svc?.removeJob(args.name as string);
+    if (!svc) return { ok: false, error: 'scheduler 服务未就绪' };
+    return svc.removeJob(args.name as string) ? { ok: true } : { ok: false, error: '任务不存在' };
   },
   async newJobDraft() {
     return {
@@ -331,9 +341,23 @@ export const actions: PluginModule['actions'] = {
     if (!name) return { ok: false, error: '任务名称不能为空' };
     const cron = String(args.cron ?? '').trim() || undefined;
     const interval = Number(args.interval) > 0 ? Number(args.interval) : undefined;
-    const runAt = String(args.runAt ?? '').trim() || undefined;
-    if (!cron && !interval && !runAt) {
-      return { ok: false, error: 'cron / interval / runAt 必须填写其中之一' };
+    const delaySeconds = Number(args.delaySeconds) > 0 ? Math.floor(Number(args.delaySeconds)) : undefined;
+    const rawRunAt = String(args.runAt ?? '').trim() || undefined;
+    // 调度方式恰好一个：四者同时也是四种互不相容的定时语义（周期 cron / 周期间隔 / 一次性），
+    // 多填时取哪个都是猜，一律报错要求填一个——与 scheduler_create_job 工具路径同一条判据。
+    const provided = [cron, interval, delaySeconds, rawRunAt].filter(v => v !== undefined).length;
+    if (provided === 0) {
+      return { ok: false, error: 'cron / interval / runAt / delaySeconds 必须填写其中之一' };
+    }
+    if (provided > 1) {
+      return { ok: false, error: 'cron / interval / runAt / delaySeconds 互斥，只能填一个' };
+    }
+    // delaySeconds → runAt：与 scheduler_create_job 工具路径同一份转换（到点执行一次后自动停止）
+    const runAt = delaySeconds !== undefined ? new Date(Date.now() + delaySeconds * 1000).toISOString() : rawRunAt;
+    // 「创建后立即暂停」只对周期任务有意义：一次性任务被暂停时到点的 setTimeout 直接跳过，
+    // 之后既不会重排也不会自删（disableOneShot 只在真执行后走），任务就永久卡死在那里。
+    if (args.paused === true && runAt) {
+      return { ok: false, error: '创建后立即暂停对一次性任务（runAt / delaySeconds）没有可用语义' };
     }
     // 防资源耗尽（scheduler 工具对聊天访客公开）：interval 下限，挡住 interval:0.5 这类高频任务。
     if (interval !== undefined && interval < 5) {
@@ -367,6 +391,7 @@ export const actions: PluginModule['actions'] = {
         actorUserId: actor.userId,
         content,
         enabled: args.enabled !== false,
+        paused: args.paused === true,
       });
       return { ok: true };
     } catch (err) {
@@ -559,6 +584,14 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       // 5 字段 cron 与别名（如 @daily）都直接交给 cron-engine.subscribe 处理，不必预先 normalize
     }
 
+    // 一次性任务带 paused：暂停对它没有可用语义（到点定时器直接跳过且不重排 = 永久卡住），
+    // 创建口与 pauseJob 都已拒绝这种组合，但存量持久化文件里可能还留着；启动时告警并按未暂停处理
+    // （要停掉它请改 enabled 或直接删除）。
+    if (jobCfg.runAt && !jobCfg.cron && !jobCfg.interval && jobCfg.paused) {
+      logger.warn(`任务 "${jobCfg.name}" 是一次性任务却带 paused，暂停对其无可用语义；已按未暂停处理`);
+      jobCfg.paused = false;
+    }
+
     const rt: JobRuntime = {
       config: jobCfg,
       timer: null,
@@ -606,9 +639,11 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       if (Number.isFinite(targetMs)) {
         const delay = targetMs - Date.now();
         if (delay <= 0) {
-          // 已过期：立即执行一次，然后 disable
+          // 已过期：立即执行一次，然后 disable（与下面未到点分支同一判据，暂停态不执行）
           setImmediate(() => {
-            executeJob(rt).finally(() => disableOneShot(rt));
+            if (!rt.paused) {
+              executeJob(rt).finally(() => disableOneShot(rt));
+            }
           });
         } else {
           rt.timer = setTimeout(() => {
@@ -704,6 +739,11 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     pauseJob(jobName) {
       const rt = runtimes.get(jobName);
       if (!rt) return false;
+      // 一次性任务被暂停会永久卡住（到点的定时器直接跳过且不重排），与创建口同一判据：直接拒绝
+      if (rt.config.runAt && !rt.config.cron && !rt.config.interval) {
+        logger.warn(`一次性任务不能暂停: ${jobName}（只能删除重建）`);
+        return false;
+      }
       rt.paused = true;
       rt.config.paused = true;
       if (dynamicJobs.has(jobName)) {
@@ -971,7 +1011,8 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       type: 'function',
       function: {
         name: 'scheduler_pause_job',
-        description: '暂停一个正在运行的计划任务。暂停后任务不会被触发，但保留配置，可随时恢复。',
+        description:
+          '暂停一个正在运行的计划任务。暂停后任务不会被触发，但保留配置，可随时恢复。一次性任务（runAt / delaySeconds）不能暂停，只能删除重建。',
         parameters: {
           type: 'object',
           properties: {
@@ -986,7 +1027,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     confirm: 'always',
     handler: async args => {
       const ok = service.pauseJob(args.name as string);
-      return JSON.stringify({ ok, message: ok ? '已暂停' : '任务不存在' });
+      return JSON.stringify({ ok, message: ok ? '已暂停' : '任务不存在，或是一次性任务（不能暂停，只能删除重建）' });
     },
   });
 

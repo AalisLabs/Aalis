@@ -330,18 +330,6 @@ export const actions: PluginModule['actions'] = {
     return sm.resolveInheritedDefaults(sessionId, platform);
   },
 
-  /** 更新平台 profile */
-  async updatePlatformProfile(ctx, args) {
-    const sm = ctx.getService<SessionManagerService>('session-manager');
-    if (!sm) throw new Error('session-manager 服务不可用');
-    const platform = args.platform as string;
-    if (!platform) throw new Error('缺少 platform');
-    const profile = args.profile as PlatformProfile;
-    if (!profile) throw new Error('缺少 profile');
-    sm.setPlatformProfile(platform, profile);
-    return { success: true };
-  },
-
   /** 获取会话详情（含完整消息历史，包括已归档消息） */
   async getSessionDetail(ctx, args) {
     const sm = ctx.getService<SessionManagerService>('session-manager');
@@ -376,22 +364,31 @@ export const actions: PluginModule['actions'] = {
     if (!sm) throw new Error('session-manager 服务不可用');
     const id = args.id as string;
     if (!id) throw new Error('缺少会话 ID');
-    // 递归归档：先归档所有子会话
-    const session = sm.getSession(id);
-    if (session) {
-      for (const childId of session.children) {
-        const child = sm.getSession(childId);
-        if (child && child.status !== 'archived') {
-          await this.archiveSession(ctx, { id: childId });
-        }
-      }
-    }
-    await sm.updateSession(id, { status: 'archived' });
+    await archiveRecursively(sm, id);
     return { success: true };
   },
 };
 
 // ===== 辅助函数 =====
+
+/**
+ * 递归归档：先归档所有子会话再归档自己。
+ *
+ * 不能写成 action 里的 `this.archiveSession(...)` —— webui-server 是把函数从 actions 对象里
+ * 取出来单独调用的（this === undefined），一旦有子会话就抛 TypeError 且父会话也没归档。
+ */
+async function archiveRecursively(sm: SessionManagerService, id: string): Promise<void> {
+  const session = sm.getSession(id);
+  if (session) {
+    for (const childId of session.children) {
+      const child = sm.getSession(childId);
+      if (child && child.status !== 'archived') {
+        await archiveRecursively(sm, childId);
+      }
+    }
+  }
+  await sm.updateSession(id, { status: 'archived' });
+}
 
 function formatConfigSummary(config: SessionConfig): string {
   const parts: string[] = [];
@@ -908,13 +905,7 @@ class SessionManager implements SessionManagerService {
     return result;
   }
 
-  setPlatformProfile(platform: string, profile: PlatformProfile): void {
-    this.platformProfiles.set(platform, profile);
-    this.markDirty();
-    this.ctx.logger.info(`平台 profile 已更新: ${platform}`);
-  }
-
-  /** 从配置加载平台 profiles */
+  /** 从配置加载平台 profiles（唯一入口：平台档属插件配置，无运行时写接口——写了也不落盘） */
   loadPlatformProfiles(raw: unknown): void {
     if (!Array.isArray(raw)) return;
     for (const entry of raw) {
@@ -1050,19 +1041,18 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
     if (titleGenerating.has(sessionId)) return;
     // 仅对指定平台生成标题；非 webui/cli 平台（如 onebot）静默跳过，避免日志污染。
-    if (platform && !TITLE_PLATFORMS.has(platform)) return;
+    // platform 缺省同样跳过：白名单是正向门，来路不明的消息不该顺带建档 + 烧一次 LLM 生成标题。
+    if (!platform || !TITLE_PLATFORMS.has(platform)) return;
     const session = manager.getSession(sessionId);
-    if (!session) {
-      ctx.logger.warn(`标题生成跳过: 会话不存在 ${sessionId}`);
-      return;
-    }
     // 已有标题或子任务会话跳过（静默）
-    if (session.title || session.parentId) return;
+    if (session && (session.title || session.parentId)) return;
     titleGenerating.add(sessionId);
-    ctx.logger.info(`开始生成会话标题: ${sessionId} (platform=${platform ?? 'unknown'})`);
+    ctx.logger.info(`开始生成会话标题: ${sessionId} (platform=${platform})`);
+    // 平台派生会话（cli-default 等）从不经 createSession 预建，缺档是常态：先兜底建档再生成
+    // 标题（与 createChildSession 同路），否则这些平台永远没有标题、且每条消息告警一次。
     // 异步生成，不阻塞消息处理；直接传入用户消息避免依赖历史
-    manager
-      .generateTitle(sessionId, msg.content)
+    (session ? Promise.resolve() : manager.ensureSession(sessionId).then(() => undefined))
+      .then(() => manager.generateTitle(sessionId, msg.content))
       .catch(err => ctx.logger.warn('标题生成失败:', err))
       .finally(() => titleGenerating.delete(sessionId));
   });

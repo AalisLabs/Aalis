@@ -9,6 +9,12 @@ export const name = '@aalis/plugin-vectorstore-flat';
 export const displayName = 'Flat 向量库';
 export const subsystem = 'embedding';
 export const provides = ['vectorstore'];
+// storage 是必需依赖而非可选：向量全部存在 storage 上的 vectors.json 里，没有 storage
+// 连冷启动读取都做不到，更不可能落盘。声明 required 同时挣到停机拓扑保证——
+// 消费者先关、提供者后关，flat 的 onDispose 落盘时 storage 一定还在。
+export const inject = {
+  required: ['storage'],
+};
 
 export const configSchema: ConfigSchema = {
   path: {
@@ -75,7 +81,15 @@ export class FlatVectorStore implements VectorStoreService {
   async init(): Promise<void> {
     try {
       const raw = (await this.storage.readFile(this.dataUri, 'utf-8')) as string;
-      this.entries = JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      // 合法 JSON 但不是数组（被别的东西写过 / 手工改坏）→ 按空库处理并告警：
+      // 否则 entries 变成对象，size() 返回 undefined、search() 在 entries[0] 上抛。
+      if (!Array.isArray(parsed)) {
+        this.logger?.warn(`向量数据文件不是数组（${typeof parsed}），将从空数据开始: ${this.dataUri}`);
+        this.entries = [];
+        return;
+      }
+      this.entries = parsed;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       // 文件不存在 = 冷启动，不警告；其他错误才警
@@ -178,7 +192,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   ctx.provide('vectorstore', store);
 
-  ctx.onDispose(() => {
-    void store.save();
-  });
+  // 必须 await：onDispose 支持异步（同组 lancedb 就是 await close），
+  // void 化会让停机时最后一批向量来不及落盘就退出。
+  ctx.onDispose(async () => {
+    await store.save();
+  }, 'flat:store.save');
 }

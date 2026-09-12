@@ -50,12 +50,24 @@ export function redirectToLoginOn401(status: number): boolean {
   return true;
 }
 
+/** api()/pageAction() 抛出的错误 → 可展示文案（无 message 时退回调用方给的兜底）。 */
+export function errText(err: unknown, fallback = '请求失败'): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
+
 export async function api<T = unknown>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
     ...opts,
   });
   if (redirectToLoginOn401(res.status)) throw new Error('会话已失效，正在跳转登录');
+  // 非 2xx 一律抛（与下方 pageAction 同一约定）：只 return res.json() 的旧写法会把 4xx/5xx
+  // 的 {error} 当数据 resolve——调用方照常弹「已删除/重命名成功」，列目录 404 时还会把
+  // undefined 塞进渲染路径。调用方要展示服务端理由就 catch 这个 message。
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
   return res.json() as Promise<T>;
 }
 

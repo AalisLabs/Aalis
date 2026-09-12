@@ -118,3 +118,20 @@ describe('tryParseJsonObject —— 括号补全按栈逆序', () => {
     expect(repairsApplied).toEqual([]);
   });
 });
+
+describe('tryParseJsonObject —— 尾逗号只在字符串外删除', () => {
+  it('对象/数组的真尾逗号照常删除', () => {
+    expect(tryParseJsonObject('{"list":[1,2,],\n}').parsed).toEqual({ list: [1, 2] });
+  });
+
+  it('字符串正文里的 ",]" / ",}" 原样保留（无状态全局 replace 会静默改写模型输出）', () => {
+    const { parsed, repairsApplied } = tryParseJsonObject('{"msg":"列表是 [a,] 对象是 {b,}","n":1,}');
+    expect(repairsApplied).toContain('移除尾部多余逗号');
+    expect(parsed).toEqual({ msg: '列表是 [a,] 对象是 {b,}', n: 1 });
+  });
+
+  it('字符串里的转义引号不会让状态机错判（后半段的尾逗号仍被删）', () => {
+    const { parsed } = tryParseJsonObject('{"msg":"他说 \\"好,]\\" 就走了","n":[1,]}');
+    expect(parsed).toEqual({ msg: '他说 "好,]" 就走了', n: [1] });
+  });
+});

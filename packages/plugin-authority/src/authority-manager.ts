@@ -215,8 +215,12 @@ export class AuthorityManager implements AuthorityService {
     // （plugin-session-confirm 注册，经 gateway 总线覆盖 onebot/cli/任何会话型平台）。
     const handler = this.confirmHandlers.get(request.platform) ?? this.confirmHandlers.get('*');
     if (!handler) return false;
+    // 回合已中止（latest-wins / 手动 abort）：不问、也不等在途应答——用户稍后按下的 y 不该替死回合放行
+    if (request.signal?.aborted) return false;
     try {
-      const decision = this.normalizeDecision(await handler(request));
+      const answered = await this.untilAborted(handler(request), request.signal);
+      if (answered === undefined) return false;
+      const decision = this.normalizeDecision(answered);
       if (!always && decision.allowed && decision.grant?.scope === 'session') this.createTempGrant(request, decision);
       return decision.allowed;
     } catch (err) {
@@ -238,6 +242,25 @@ export class AuthorityManager implements AuthorityService {
 
   markPolicyEnabled(): void {
     this.policyEnabledAt = Date.now();
+  }
+
+  /** 等 handler 应答；signal 先中止则返回 undefined（通道自己按中止撤回未决提示并结算）。 */
+  private untilAborted<T>(p: Promise<T>, signal?: AbortSignal): Promise<T | undefined> {
+    if (!signal) return p;
+    return new Promise<T | undefined>((resolve, reject) => {
+      const onAbort = (): void => resolve(undefined);
+      signal.addEventListener('abort', onAbort, { once: true });
+      p.then(
+        v => {
+          signal.removeEventListener('abort', onAbort);
+          resolve(v);
+        },
+        err => {
+          signal.removeEventListener('abort', onAbort);
+          reject(err);
+        },
+      );
+    });
   }
 
   private normalizeDecision(result: boolean | AccessDecision): AccessDecision {

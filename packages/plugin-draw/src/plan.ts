@@ -69,8 +69,10 @@ export function classifySource(source: string): SourceMode {
 export function parseSvgCanvas(svg: string): { width?: number; height?: number; aspect?: number } {
   const root = svg.match(/<svg[^>]*>/i)?.[0] ?? '';
   const num = (attr: string): number | undefined => {
-    // 只认纯数字与 px（em/%/pt 等相对单位对画布定界无意义，忽略走 viewBox）
-    const m = root.match(new RegExp(`\\b${attr}\\s*=\\s*["']\\s*([0-9.]+)\\s*(?:px)?\\s*["']`, 'i'));
+    // 只认纯数字与 px（em/%/pt 等相对单位对画布定界无意义，忽略走 viewBox）。
+    // 属性名锚到属性边界：\b 会让 stroke-width="4" 命中 width（连字符是非单词字符），
+    // 实测被当画布宽渲出 16×4800 竖条。
+    const m = root.match(new RegExp(`(?:^|[\\s"'])${attr}\\s*=\\s*["']\\s*([0-9.]+)\\s*(?:px)?\\s*["']`, 'i'));
     const v = m ? Number(m[1]) : Number.NaN;
     return Number.isFinite(v) && v > 0 ? v : undefined;
   };

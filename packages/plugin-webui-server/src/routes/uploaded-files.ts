@@ -21,7 +21,10 @@ interface FileMeta {
 const ROOT_PREFIX = 'pluginData:/file-reader';
 
 interface UploadedFilesRoutesOptions {
-  storage: StorageService | undefined;
+  /** storage 服务（必填）——传入的是 createStorageGateway 的返回值，恒为对象；
+   *  storage 服务缺席时 gateway 各方法内部 dispatch 抛错，而列表路由的内层 catch 会把它
+   *  吞成空列表（前端看到「没有文件」而非「存储不可用」），download/delete 则落 404 */
+  storage: StorageService;
 }
 
 export function registerUploadedFilesRoutes(
@@ -32,19 +35,6 @@ export function registerUploadedFilesRoutes(
 ): void {
   const { storage } = opts;
 
-  if (!storage) {
-    expressApp.get('/api/uploaded-files', (_req, res) => {
-      res.status(503).json({ error: 'storage 服务不可用' });
-    });
-    expressApp.get('/api/uploaded-files/download', (_req, res) => {
-      res.status(503).json({ error: 'storage 服务不可用' });
-    });
-    expressApp.post('/api/uploaded-files/delete', (_req, res) => {
-      res.status(503).json({ error: 'storage 服务不可用' });
-    });
-    return;
-  }
-
   function isSafeSessionId(s: string): boolean {
     return /^[A-Za-z0-9._:-]{1,128}$/.test(s);
   }
@@ -54,7 +44,7 @@ export function registerUploadedFilesRoutes(
 
   async function readMeta(sessionId: string, fileId: string): Promise<FileMeta | null> {
     try {
-      const raw = await storage!.readFile(`${ROOT_PREFIX}/${sessionId}/${fileId}.meta.json`);
+      const raw = await storage.readFile(`${ROOT_PREFIX}/${sessionId}/${fileId}.meta.json`);
       const text = typeof raw === 'string' ? raw : raw.toString('utf-8');
       return JSON.parse(text) as FileMeta;
     } catch {

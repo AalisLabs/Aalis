@@ -72,10 +72,12 @@ type WebuiComponent =
 
 每种组件都有：
 
-- `source` —— 从后端拉数据的 REST 端点（GET）
-- `save / method` —— 提交动作的 REST 端点（POST）
+- `source` —— 拉数据的 action 方法名（不是 HTTP 路径；前端调 `POST /api/page-action/:plugin/:method`）
+- `save / method` —— 提交动作的 action 方法名，同上
 - `confirm` —— 行内/按钮确认提示
 - `danger` —— 红色样式标记
+
+**失败约定**：action 的业务失败**返回** `{ ok: false, error: '原因' }`，HTTP 仍是 200——路由只把 handler 的抛错转成 5xx；前端 form / actions / table 三种组件都据此显示原因，返回其它任何值（含 `undefined`）视为成功；table 的非 danger / confirm 操作若返回不带 `ok` 的普通对象，会被当作详情弹窗内容展示，只想刷新表格就返回 `undefined` 或 `{ ok: true }`。
 
 ### 示例：表格 + 操作
 
@@ -83,16 +85,17 @@ type WebuiComponent =
 {
   type: 'table',
   label: '后台进程',
-  source: '/plugins/shell/processes',
+  source: 'listProcesses',
   columns: [
     { key: 'pid', label: 'PID' },
     { key: 'cmd', label: '命令' },
     { key: 'startedAt', label: '启动时间', render: 'date' },
   ],
   actions: [
-    { label: '终止', method: 'POST:/plugins/shell/processes/:id/kill', confirm: '确定？', danger: true },
+    // 点击时把整行作为 args 传给 killProcess；失败让它返回 { ok: false, error: '进程已退出' }
+    { label: '终止', method: 'killProcess', confirm: '确定？', danger: true },
   ],
-  refresh: 5000,   // 5 秒自动刷新
+  refresh: 5,      // 每 5 秒自动刷新（单位：秒）
 }
 ```
 
@@ -102,8 +105,8 @@ type WebuiComponent =
 {
   type: 'form',
   label: '基础配置',
-  source: '/plugins/my-plugin/config',
-  save: '/plugins/my-plugin/config',
+  source: 'getConfig',   // 返回表单初值对象
+  save: 'saveConfig',    // 失败返回 { ok: false, error: '...' }，前端显示原因
   schema: ctx.configSchema,
 }
 ```

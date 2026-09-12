@@ -40,13 +40,33 @@ function parseConfirmReply(replyText: string, always: boolean, sessionGrantSecon
   return false;
 }
 
+/**
+ * 提示里可展示的参数键：只挑这些、单行、限长——群会话里提示会发进群，不能整包 args 打出去。
+ * name / processId 是 skill_delete、scheduler_*_job、process_kill 的唯一参数，缺了确认者就只看得到工具名。
+ */
+const SUMMARY_KEYS = ['command', 'name', 'processId', 'path', 'from', 'to', 'uri', 'url'] as const;
+const SUMMARY_MAX = 120;
+
+/** 参数摘要（纯函数）：让确认者看得到要执行什么，而不只是工具名。 */
+function summarizeArgs(args?: Record<string, unknown>): string {
+  if (!args) return '';
+  const parts: string[] = [];
+  for (const key of SUMMARY_KEYS) {
+    const v = args[key];
+    if (typeof v !== 'string' || v === '') continue;
+    const line = v.split(/\r?\n/)[0];
+    parts.push(`${key}=${line.length > SUMMARY_MAX ? `${line.slice(0, SUMMARY_MAX)}…` : line}`);
+  }
+  return parts.length > 0 ? `（${parts.join('，')}）` : '';
+}
+
 /** 组合确认提示文案（纯函数，所有平台一致）。 */
 function composeConfirmPrompt(request: AccessRequest, always: boolean, sessionGrantSeconds: number): string {
   const label = request.type === 'command' ? '指令' : '工具';
-  const nameStr = request.type === 'command' ? `/${request.name}` : request.name;
+  const nameStr = `${request.type === 'command' ? `/${request.name}` : request.name}${summarizeArgs(request.args)}`;
   return always
-    ? `⚠️ ${label} ${nameStr} 是高危操作，每次都需确认。回复 Y 确认执行本次；其他任意输入取消。`
-    : `⚠️ ${label} ${nameStr} 是高危操作。回复 Y 仅允许本次；回复 YS 本会话 ${Math.round(sessionGrantSeconds / 60)} 分钟内放行；其他任意输入取消。`;
+    ? `${label} ${nameStr} 是高危操作，每次都需确认。回复 Y 确认执行本次；其他任意输入取消。`
+    : `${label} ${nameStr} 是高危操作。回复 Y 仅允许本次；回复 YS 本会话 ${Math.round(sessionGrantSeconds / 60)} 分钟内放行；其他任意输入取消。`;
 }
 
 /** 协调器工厂（平台无关）：注入投递，拿回 { handler, feed }。 */
@@ -58,6 +78,8 @@ function createChannel(deliver: (request: AccessRequest, text: string) => void):
     always: boolean;
     /** 发起确认的触发者 userId；仅本人能应答（防群里第三方抢答）。 */
     userId?: string;
+    /** 摘掉回合中止监听（结算时调用，避免中止事件再动一个已结算的等待者）。 */
+    offAbort?: () => void;
   }
   // 每个 session 一条 FIFO 队列：确认是会话内一问一答，但同一回合并行工具可触发多个确认请求，
   // 必须串行排队（队首发提示、应答/超时后出队投递下一个），不能抢占式互相 resolve(false)。
@@ -72,7 +94,8 @@ function createChannel(deliver: (request: AccessRequest, text: string) => void):
       const q = queues.get(sessionId);
       if (q?.[0]) q.shift();
       if (q && q.length === 0) queues.delete(sessionId);
-      deliver(head.request, '⏰ 操作确认已超时，已自动取消。');
+      deliver(head.request, '操作确认已超时，已自动取消。');
+      head.offAbort?.();
       head.resolve(false);
       present(sessionId);
     }, CONFIRM_TIMEOUT_MS);
@@ -89,12 +112,35 @@ function createChannel(deliver: (request: AccessRequest, text: string) => void):
         always: request.confirm === 'always',
         userId: request.userId,
       };
+      const signal = request.signal;
+      if (signal?.aborted) {
+        resolve(false); // 发起回合已中止：不入队、不发提示
+        return;
+      }
       const q = queues.get(request.sessionId);
       if (q) {
         q.push(waiter); // 已有未决：排队，等队首结算后再发
       } else {
         queues.set(request.sessionId, [waiter]);
         present(request.sessionId); // 队首：立即发提示
+      }
+      if (signal) {
+        // 等待应答期间回合被中止：撤回这条未决确认（队首则告知并推进下一个），按取消结算
+        const onAbort = (): void => {
+          const cur = queues.get(request.sessionId);
+          const idx = cur ? cur.indexOf(waiter) : -1;
+          if (!cur || idx === -1) return;
+          cur.splice(idx, 1);
+          if (cur.length === 0) queues.delete(request.sessionId);
+          clearTimeout(waiter.timer);
+          waiter.resolve(false);
+          if (idx === 0) {
+            deliver(request, '操作确认已取消：发起它的回合已中止。');
+            present(request.sessionId);
+          }
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        waiter.offAbort = () => signal.removeEventListener('abort', onAbort);
       }
     });
 
@@ -106,6 +152,7 @@ function createChannel(deliver: (request: AccessRequest, text: string) => void):
     // 私聊/webui 触发者与应答者天然同人；二者皆 undefined 也视为同人（系统注入等无 userId 场景）。
     if (head.userId !== replyUserId) return false;
     clearTimeout(head.timer);
+    head.offAbort?.();
     q.shift();
     if (q.length === 0) queues.delete(sessionId);
     head.resolve(parseConfirmReply(replyText, head.always, SESSION_GRANT_SECONDS));
@@ -118,6 +165,7 @@ function createChannel(deliver: (request: AccessRequest, text: string) => void):
     for (const q of queues.values()) {
       for (const w of q) {
         clearTimeout(w.timer);
+        w.offAbort?.();
         w.resolve(false);
       }
     }

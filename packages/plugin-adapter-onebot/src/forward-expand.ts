@@ -331,6 +331,9 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
           attachmentMaxBytes,
           ctx.logger,
         );
+        // 落盘成功即登记「原始 URL → 落盘 ref」描述缓存别名：识别阶段按落盘 ref 写入的
+        // 描述，此后经原始 URL（引用消息手里只有它）也查得到。
+        if (local && /^https?:\/\//.test(task.src)) mediaSvc.rememberDescriptionAlias?.(task.src, local);
         return local ?? task.src;
       } catch {
         return task.src;

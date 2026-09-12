@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { AlertTriangle, Radio, Workflow, Link2, Loader2 } from 'lucide-react';
-import { api } from '../api';
+import { api, errText } from '../api';
 import { SchemaForm, buildDraftFromSchema, flattenConfig, unflattenConfig, type LLMProviderEntry } from '../components/SchemaForm';
 import { ConfigValue } from '../components/ConfigValue';
 import { useConfirm } from '../components/ConfirmDialog';
@@ -55,15 +55,12 @@ export function PluginConfigPage({
     if (plugin.core) return;
     markBusy(plugin.instanceId);
     const action = plugin.state === 'disabled' ? 'enable' : 'disable';
-    const res = await api<{ ok?: boolean; error?: string }>(
-      `/api/plugins/${encodeURIComponent(plugin.instanceId)}/${action}`,
-      { method: 'POST' },
-    );
-    if (res.ok) {
+    try {
+      await api(`/api/plugins/${encodeURIComponent(plugin.instanceId)}/${action}`, { method: 'POST' });
       showToast(`${plugin.instanceId} 已${action === 'enable' ? '启用' : '禁用'}`);
       onRefresh();
-    } else {
-      showToast(res.error ?? '未知错误');
+    } catch (err) {
+      showToast(errText(err, '未知错误'));
       setBusySet(prev => { const next = new Set(prev); next.delete(plugin.instanceId); return next; });
     }
   };
@@ -118,12 +115,13 @@ export function PluginConfigPage({
   const savePluginConfig = async (instanceId: string, hasSchema: boolean) => {
     const parsed = hasSchema ? schemaDraft : unflattenConfig(editBuffer);
     markBusy(instanceId);
-    const res = await api<{ ok?: boolean; error?: string }>(`/api/plugins/${encodeURIComponent(instanceId)}/config`, {
-      method: 'PUT',
-      body: JSON.stringify({ config: parsed }),
-    });
-    if (res.error) {
-      showToast(res.error);
+    try {
+      await api(`/api/plugins/${encodeURIComponent(instanceId)}/config`, {
+        method: 'PUT',
+        body: JSON.stringify({ config: parsed }),
+      });
+    } catch (err) {
+      showToast(errText(err, '未知错误'));
       setBusySet(prev => { const next = new Set(prev); next.delete(instanceId); return next; });
       return;
     }
@@ -136,17 +134,17 @@ export function PluginConfigPage({
     const suffix = newInstanceSuffix.trim();
     if (!suffix) return;
     markBusy(moduleName);
-    const res = await api<{ ok?: boolean; instanceId?: string; error?: string }>(
-      `/api/plugins/${encodeURIComponent(moduleName)}/instances`,
-      { method: 'POST', body: JSON.stringify({ suffix }) },
-    );
-    if (res.ok) {
+    try {
+      const res = await api<{ instanceId?: string }>(`/api/plugins/${encodeURIComponent(moduleName)}/instances`, {
+        method: 'POST',
+        body: JSON.stringify({ suffix }),
+      });
       showToast(`已创建实例 ${res.instanceId}`);
       setNewInstanceTarget(null);
       setNewInstanceSuffix('');
       onRefresh();
-    } else {
-      showToast(res.error ?? '创建失败');
+    } catch (err) {
+      showToast(errText(err, '创建失败'));
       setBusySet(prev => { const next = new Set(prev); next.delete(moduleName); return next; });
     }
   };
@@ -160,15 +158,12 @@ export function PluginConfigPage({
     });
     if (!ok) return;
     markBusy(instanceId);
-    const res = await api<{ ok?: boolean; error?: string }>(
-      `/api/plugins/${encodeURIComponent(instanceId)}/instance`,
-      { method: 'DELETE' },
-    );
-    if (res.ok) {
+    try {
+      await api(`/api/plugins/${encodeURIComponent(instanceId)}/instance`, { method: 'DELETE' });
       showToast(`已删除实例 ${instanceId}`);
       onRefresh();
-    } else {
-      showToast(res.error ?? '删除失败');
+    } catch (err) {
+      showToast(errText(err, '删除失败'));
       setBusySet(prev => { const next = new Set(prev); next.delete(instanceId); return next; });
     }
   };
@@ -183,15 +178,17 @@ export function PluginConfigPage({
     });
     if (!ok) return;
     markBusy(p.instanceId);
-    const res = await api<{ ok?: boolean; error?: string; message?: string }>('/api/marketplace/uninstall', {
-      method: 'POST',
-      body: JSON.stringify({ name: p.name }),
-    });
-    if (res.ok) {
+    try {
+      const res = await api<{ ok?: boolean; error?: string; message?: string }>('/api/marketplace/uninstall', {
+        method: 'POST',
+        body: JSON.stringify({ name: p.name }),
+      });
+      // 服务层的结构化失败走 HTTP 200 + {ok:false,message}，只有路由自身的 4xx/5xx 才抛
+      if (!res.ok) throw new Error(res.error ?? res.message ?? '卸载失败');
       showToast(res.message ?? `${p.name} 已卸载`);
       onRefresh();
-    } else {
-      showToast(res.error ?? '卸载失败');
+    } catch (err) {
+      showToast(errText(err, '卸载失败'));
       setBusySet(prev => { const next = new Set(prev); next.delete(p.instanceId); return next; });
     }
   };
@@ -240,12 +237,11 @@ export function PluginConfigPage({
     // 只回传 schema 里的键：globalDraft 为兼容旧表单保留了 config 的其余键（plugins 等），
     // 那些是可能过期的快照，服务端不应用也不该被它们干扰。
     const body = Object.fromEntries(Object.keys(coreSchema ?? {}).map(k => [k, globalDraft[k]]));
-    const res = await api<{ ok?: boolean; error?: string; restart?: boolean; message?: string }>('/api/config', {
-      method: 'PUT',
-      body: JSON.stringify(body),
-    });
-    setSaving(false);
-    if (res.ok) {
+    try {
+      const res = await api<{ restart?: boolean; message?: string }>('/api/config', {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      });
       setEditingGlobal(false);
       onConfigSaved();
       if (res.restart) {
@@ -253,9 +249,10 @@ export function PluginConfigPage({
       } else {
         showToast(res.message ?? '全局配置已保存');
       }
-    } else {
-      showToast(res.error ?? '未知错误');
+    } catch (err) {
+      showToast(errText(err, '未知错误'));
     }
+    setSaving(false);
   };
 
   return (

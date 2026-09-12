@@ -258,6 +258,8 @@ interface CheckpointLike {
     uri: string,
     op: 'write' | 'delete' | 'rename',
     loadOriginal: () => Promise<{ data: Buffer; size: number } | null>,
+    /** rename 的目标 URI：checkpoint 据它把文件原路移回，不在目标端留重复 */
+    toUri?: string,
   ): Promise<void>;
 }
 
@@ -305,18 +307,28 @@ class ScopedStorageService implements StorageService {
   }
 
   /** 懒解析 checkpoint 服务；仅当回合活跃时调用 beforeMutate */
-  private async snapshot(uri: string, op: 'write' | 'delete' | 'rename', abs: string): Promise<void> {
+  private async snapshot(
+    uri: string,
+    op: 'write' | 'delete' | 'rename',
+    abs: string,
+    targetUri?: string,
+  ): Promise<void> {
     const cp = this.ctx.getService<CheckpointLike>('checkpoint');
     if (!cp?.isActive()) return;
-    await cp.beforeMutate(uri, op, async () => {
-      try {
-        const s = await stat(abs);
-        if (s.isDirectory()) return null;
-        return { data: await readFile(abs), size: s.size };
-      } catch {
-        return null;
-      }
-    });
+    await cp.beforeMutate(
+      uri,
+      op,
+      async () => {
+        try {
+          const s = await stat(abs);
+          if (s.isDirectory()) return null;
+          return { data: await readFile(abs), size: s.size };
+        } catch {
+          return null;
+        }
+      },
+      targetUri,
+    );
   }
 
   listRoots(): StorageRootInfo[] {
@@ -420,6 +432,11 @@ class ScopedStorageService implements StorageService {
     this.requirePermission('writable');
     if (!relPath) throw new Error('不能覆盖根目录');
     const abs = await this.resolveForWrite(relPath);
+    // 目标是目录 → 在快照之前就拒。写目录反正必失败（rename 覆盖不了非空目录），
+    // 但放它走到 snapshot 会让 checkpoint 记一条幽灵 write-new（loadOriginal 对目录返回 null），
+    // 回滚时按 write-new 把整棵目录删掉。
+    const existing = await stat(abs).catch(() => undefined);
+    if (existing?.isDirectory()) throw new Error('不能覆盖目录');
     await this.snapshot(toUri(this.root.name, relPath), 'write', abs);
     await mkdir(dirname(abs), { recursive: true });
     // 原子写：先写临时文件再 rename（同分区原子覆盖），防崩溃/并发半写损坏关键持久化（users.json/scheduler-jobs 等）。
@@ -428,10 +445,7 @@ class ScopedStorageService implements StorageService {
     // 覆盖已有文件时沿用它的权限位：tmp 按默认 mode 创建，rename 后目标继承之，
     // 可执行脚本写一次就从 755 掉到 644。chmod 打在 tmp 上而非 rename 后的目标，
     // 避开两步之间的窗口；目标不存在则保持默认，stat/chmod 失败不拖累写入本身。
-    const prevMode = await stat(abs).then(
-      s => s.mode & 0o777,
-      () => undefined,
-    );
+    const prevMode = existing ? existing.mode & 0o777 : undefined;
     try {
       await writeFile(tmp, data);
       if (prevMode !== undefined) await chmod(tmp, prevMode).catch(() => {});
@@ -459,7 +473,7 @@ class ScopedStorageService implements StorageService {
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
-    await this.snapshot(toUri(this.root.name, relPath), 'rename', abs);
+    await this.snapshot(toUri(this.root.name, relPath), 'rename', abs, toUri(this.root.name, newRel));
     await rename(abs, target);
     this.logger.info(`storage.rename ${toUri(this.root.name, relPath)} -> ${toUri(this.root.name, newRel)}`);
     return toUri(this.root.name, newRel);
@@ -485,7 +499,7 @@ class ScopedStorageService implements StorageService {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
     await mkdir(dirname(absTo), { recursive: true }); // 自动建目标父目录（同 writeFile 语义）
-    await this.snapshot(toUri(this.root.name, fromRel), 'rename', absFrom);
+    await this.snapshot(toUri(this.root.name, fromRel), 'rename', absFrom, toUri(this.root.name, toRel));
     await rename(absFrom, absTo); // fs.rename：原子、跨目录、零拷贝
     this.logger.info(`storage.move ${toUri(this.root.name, fromRel)} -> ${toUri(this.root.name, toRel)}`);
     return toUri(this.root.name, toRel);

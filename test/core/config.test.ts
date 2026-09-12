@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ConfigManager } from '../../packages/core/src/index.js';
+import { App, ConfigManager, type PluginModule } from '../../packages/core/src/index.js';
 import { type TempConfigHandle, tempConfig } from '../fixtures/app.js';
 
 describe('ConfigManager (内存快照模式)', () => {
@@ -85,3 +85,86 @@ describe('FsYamlConfigProvider (集成)', () => {
 
 // 注：配置同步政策（schema 派生默认值回填 / schema 裁剪）的测试在
 // test/runtime/config-sync.test.ts——政策属宿主层,core 只持有配置快照机制。
+
+describe('注册期配置合并（app.plugin：defaults ← 配置文件 ← 代码传入，逐层深合并）', () => {
+  const nestedModule = (seen: { config?: Record<string, unknown> }): PluginModule => ({
+    name: 'np',
+    apply(_ctx, config) {
+      seen.config = config;
+    },
+  });
+
+  const defaults = () => ({
+    server: { host: '127.0.0.1', port: 8080 },
+    hosts: ['a'],
+    flag: true,
+    stamp: new Date('2020-01-01'),
+  });
+
+  it('配置文件只写嵌套组里的一个键时，同组其它默认值仍在首次 apply 就到位', async () => {
+    const seen: { config?: Record<string, unknown> } = {};
+    const app = new App({
+      config: { name: 'T', logLevel: 'error', plugins: { np: { server: { port: 9000 } } } },
+      pluginDefaults: () => defaults(),
+    });
+    await app.plugin(nestedModule(seen));
+    expect(seen.config?.server).toEqual({ host: '127.0.0.1', port: 9000 });
+    await app.stop();
+  });
+
+  it('代码传入的嵌套值压过配置文件，未提及的键不丢', async () => {
+    const seen: { config?: Record<string, unknown> } = {};
+    const app = new App({
+      config: { name: 'T', logLevel: 'error', plugins: { np: { server: { port: 9000, host: 'file' } } } },
+      pluginDefaults: () => defaults(),
+    });
+    await app.plugin(nestedModule(seen), { server: { host: 'code' } });
+    expect(seen.config?.server).toEqual({ host: 'code', port: 9000 });
+    await app.stop();
+  });
+
+  it('数组与非纯对象是原子值：整体覆盖，不逐元素合并', async () => {
+    const seen: { config?: Record<string, unknown> } = {};
+    const app = new App({
+      config: {
+        name: 'T',
+        logLevel: 'error',
+        plugins: { np: { hosts: ['b', 'c'], stamp: new Date('2021-01-01') } },
+      },
+      pluginDefaults: () => defaults(),
+    });
+    await app.plugin(nestedModule(seen));
+    expect(seen.config?.hosts).toEqual(['b', 'c']);
+    // Date 不是纯对象：整体覆盖且原型保持，不被递归成 {} 形状的普通对象
+    expect(seen.config?.stamp).toBeInstanceOf(Date);
+    expect((seen.config?.stamp as Date).toISOString()).toBe(new Date('2021-01-01').toISOString());
+    await app.stop();
+  });
+
+  it('__proto__ 键不进原型链（配置层不承载原型语义）', async () => {
+    const seen: { config?: Record<string, unknown> } = {};
+    const app = new App({
+      config: { name: 'T', logLevel: 'error', plugins: {} },
+      pluginDefaults: () => defaults(),
+    });
+    // 对象字面量里的 __proto__ 是原型语法糖，只有 JSON.parse（配置文件）这类路径产出自有键
+    await app.plugin(nestedModule(seen), JSON.parse('{"__proto__":{"polluted":"yes"}}'));
+    expect(Object.getPrototypeOf(seen.config as object)).toBe(Object.prototype);
+    expect((seen.config as Record<string, unknown>).polluted).toBeUndefined();
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    await app.stop();
+  });
+
+  it('合并不改写入参：配置文件里的活对象与宿主的默认值常量都不被写脏', async () => {
+    const seen: { config?: Record<string, unknown> } = {};
+    const sharedDefaults = defaults();
+    const app = new App({
+      config: { name: 'T', logLevel: 'error', plugins: { np: { server: { port: 9000 } } } },
+      pluginDefaults: () => sharedDefaults,
+    });
+    await app.plugin(nestedModule(seen), { server: { host: 'code' } });
+    expect(sharedDefaults.server).toEqual({ host: '127.0.0.1', port: 8080 });
+    expect(app.ctx.config.getPluginConfig('np')).toEqual({ server: { port: 9000 } });
+    await app.stop();
+  });
+});

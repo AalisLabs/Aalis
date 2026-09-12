@@ -29,9 +29,8 @@ export interface PlatformAdapter {
 
   canHandle?(sessionId: string): boolean | Promise<boolean>;        // 路由用，见下  (:67)
   getSelfIdentity?(sessionId?: string): PlatformSelfIdentity | undefined;  // 自报机器人身份  (:69)
-  isReady?(): boolean;                       // 缺省：getConnections() 里有 online 即视为 ready  (:74)
-  callAction?(sessionId: string, action: string, params: Record<string, unknown>): Promise<unknown>; // 平台原生 API  (:83)
-  checkAndRecordProactiveSend?(sessionId: string): { allowed: boolean; reason?: string }; // 主动发送限速闸门  (:92)
+  callAction?(sessionId: string, action: string, params: Record<string, unknown>): Promise<unknown>; // 平台原生 API
+  checkAndRecordProactiveSend?(sessionId: string): { allowed: boolean; reason?: string }; // 主动发送限速闸门
 }
 ```
 
@@ -63,7 +62,7 @@ export interface PlatformAdapter {
 
 ### 参考实现（provider）
 
-- **OneBot 适配器** `packages/plugin-adapter-onebot/src/index.ts` —— 协议类平台的完整范例：实现了全部可选方法（`getSelfIdentity` `:1127`、`isReady` `:1140`、`callAction` `:1198`、`checkAndRecordProactiveSend` `:1246`），`sessionTypes: ['group','private']`（`:1110`），注册于 `:1335`。还附带若干**非标准扩展方法**（`getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等，`:1263-1326`），通过交叉类型暴露给特定消费者（`plugin-tool-onebot`），见 §6。
+- **OneBot 适配器** `packages/plugin-adapter-onebot/src/index.ts` —— 协议类平台的完整范例：实现了全部可选方法（`getSelfIdentity`、`callAction`、`checkAndRecordProactiveSend`），`sessionTypes: ['group','private']`，在插件 `apply` 里注册。还附带若干**非标准扩展方法**（`getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等），通过交叉类型暴露给特定消费者（`plugin-tool-onebot`），见 §6。
 - **CLI 适配器** `packages/plugin-cli/src/index.ts` —— 最小实现的范例：只实现 `adapterName` / `platform` / `getConnections` / `sendMessage` + **显式 `canHandle`**（因为它的 sessionId 是配置直给的 `cli-default`，不带 `cli:` 前缀，必须自报接管，`:91-93`）；`sessionTypes: []` 表示单会话不区分类型。
 
 > 其它带 `provides: [..., 'platform']` 的插件：`plugin-webui-server`（`src/index.ts`）。注意它和 CLI 都同时 provide 别的服务名（`cli` / `webui-server`），一个插件提供多服务是允许的。
@@ -85,7 +84,7 @@ export interface PlatformAdapter {
 
 **必须实现**：`adapterName`、`platform`、`getConnections()`、`sendMessage()`。
 **强烈建议**：当本平台的 `sessionId` **不形如 `<platform>:<...>`** 时（如 CLI 自定义 id），**必须**实现 `canHandle()`，否则 `resolvePlatformBySession` 的前缀兜底会漏掉你，路由发消息/委派都找不到你的 adapter。
-**按能力实现**：`getSelfIdentity`（要让 agent/persona 认知自身身份就实现）、`callAction`（暴露平台原生 API）、`checkAndRecordProactiveSend`（接入主动发送限速）、`isReady`、`sessionTypes`（让 UI 能列出你的真实会话类型）。
+**按能力实现**：`getSelfIdentity`（要让 agent/persona 认知自身身份就实现）、`callAction`（暴露平台原生 API）、`checkAndRecordProactiveSend`（接入主动发送限速）、`sessionTypes`（让 UI 能列出你的真实会话类型）。
 
 ### 入站消息：出站接口之外还需 emit
 

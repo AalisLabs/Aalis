@@ -8,7 +8,7 @@ import type { ExecResult, ProcessService, SpawnHandle, SpawnOptions, TempDirHand
 import { makeTempDirViaStorage } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
 import { createStorageGateway } from '@aalis/api-storage';
-import type { Context, PluginModule } from '@aalis/core';
+import type { Context } from '@aalis/core';
 
 export const name = '@aalis/plugin-process-local';
 export const provides = ['process'];
@@ -244,6 +244,3 @@ export async function apply(ctx: Context): Promise<void> {
   ctx.on('app:stopping', () => service.killAll());
   logger.info('process-local 就绪');
 }
-
-const plugin: PluginModule = { name, apply };
-export default plugin;

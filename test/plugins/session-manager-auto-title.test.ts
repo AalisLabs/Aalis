@@ -1,0 +1,94 @@
+import { App } from '@aalis/core';
+import { describe, expect, it } from 'vitest';
+import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
+import * as sessionManagerModule from '../../packages/plugin-session-manager/src/index.js';
+
+// 背景（C11）：自动标题监听在「会话不存在」时只打一条 warn 就返回，而平台派生会话
+// （cli-default、OneBot 会话 id）从不经 createSession 预建 —— 于是 CLI 会话永远没有标题，
+// 且每条消息告警一次。契约：缺档时先 ensureSession 兜底建档再生成标题（与 createChildSession 同路）。
+
+/** 只实现 SessionManager 用到的方法的假 memory。 */
+function fakeMemory() {
+  const meta = new Map<string, Record<string, unknown>>();
+  return {
+    listMetadata: async () => [...meta].map(([key, data]) => ({ key, data })),
+    commitMetadata: async (ops: Array<{ op: string; key: string; data?: Record<string, unknown> }>) => {
+      for (const o of ops) {
+        if (o.op === 'put' && o.data) meta.set(o.key, o.data);
+        else if (o.op === 'del') meta.delete(o.key);
+      }
+    },
+    getHistory: async () => [],
+    clearSession: async () => {},
+  };
+}
+
+async function setup() {
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  app.ctx.provide('memory', fakeMemory() as never);
+  const llmCalls = { chats: 0 };
+  app.ctx.provide('llm', {
+    id: 'mock',
+    capabilities: ['chat'],
+    chat: async () => {
+      llmCalls.chats++;
+      return { content: '装修预算' };
+    },
+  } as never);
+  await app.ctx.useModule(sessionManagerModule, {});
+  await app.plugins.idle();
+  const sm = app.ctx.getService<SessionManagerService>('session-manager');
+  if (!sm) throw new Error('session-manager 服务未注册');
+  return { app, sm, llmCalls };
+}
+
+/** 标题生成是脱离事件链的异步任务，轮询等它落地（失败路径下会等满超时） */
+async function waitTitle(sm: SessionManagerService, id: string): Promise<string | undefined> {
+  for (let i = 0; i < 100; i++) {
+    const t = sm.getSession(id)?.title;
+    if (t) return t;
+    await new Promise(r => setTimeout(r, 5));
+  }
+  return sm.getSession(id)?.title;
+}
+
+describe('自动标题：平台派生会话缺档时先兜底建档', () => {
+  it('cli-default 首条消息后有标题（会话也被建出来）', async () => {
+    const { app, sm } = await setup();
+
+    await app.ctx.emit('inbound:message', { content: '帮我算下装修预算', sessionId: 'cli-default', platform: 'cli' });
+    const title = await waitTitle(sm, 'cli-default');
+    const session = sm.getSession('cli-default');
+    await app.stop();
+
+    expect(session, 'cli-default 应被兜底建档').toBeDefined();
+    expect(title, '平台派生会话的首条消息也该拿到标题').toBe('装修预算');
+  });
+
+  it('缺 platform 的消息不建档也不生成标题：白名单是正向门，不兜底来路不明的会话', async () => {
+    const { app, sm, llmCalls } = await setup();
+
+    await app.ctx.emit('inbound:message', { content: '帮我算下装修预算', sessionId: 'no-platform' } as never);
+    await new Promise(r => setTimeout(r, 30));
+    const session = sm.getSession('no-platform');
+    await app.stop();
+
+    expect(session, '缺 platform 不该被兜底建档').toBeUndefined();
+    expect(llmCalls.chats, '缺 platform 不该烧一次 LLM 生成标题').toBe(0);
+  });
+
+  it('已建档且已有标题的会话不重复生成', async () => {
+    const { app, sm, llmCalls } = await setup();
+    await sm.ensureSession('cli-default', { name: 'CLI' });
+    await sm.updateSessionTitle('cli-default', '旧标题');
+
+    await app.ctx.emit('inbound:message', { content: '换个话题', sessionId: 'cli-default', platform: 'cli' });
+    await new Promise(r => setTimeout(r, 30));
+    const title = sm.getSession('cli-default')?.title;
+    await app.stop();
+
+    expect(title).toBe('旧标题');
+    // 标题没变还可能是「生成了但写不回」；真正的契约是**压根没调 LLM**（有成本），破闸即红
+    expect(llmCalls.chats, '已有标题不该再发一次 LLM chat').toBe(0);
+  });
+});

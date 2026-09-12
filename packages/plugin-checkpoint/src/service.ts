@@ -12,20 +12,25 @@ import type { Logger } from '@aalis/core';
  * - plugin-storage-local 在执行 writeFile/delete/rename 之前，通过
  *   `ctx.getService<CheckpointService>('checkpoint')?.beforeMutate(...)` 探测本服务。
  * - 本服务通过 hooks `agent:input:before` / `agent:turn:after` 维护「当前回合」状态。
- * - exec 工具直接调用系统命令，不在本服务保护范围内（前端 UI 标注「未保护」）。
+ * - exec / exec_background / run_* 等命令类工具直接调用系统命令，不在本服务保护范围内
+ *   （前端 UI 标注「未保护」）。
  */
 export interface CheckpointService {
   /** 探测：是否在某个回合内（storage-local 提早判断以避免无谓 stat） */
   isActive(): boolean;
   /**
    * 在 storage 即将修改 uri 时调用。本调用是 op="write"|"delete"|"rename" 之前的一次性快照机会。
-   * 如果同一 uri 在当前回合内已被快照过，则跳过（保留最早的原始内容）。
+   * 如果同一 uri 在当前回合内已被快照过，则不再备份内容（保留最早的原始内容）；
+   * 但 op='rename' 仍会补记一条不带 blob 的条目，否则「先改写再移走」的移动会整条丢失。
    * loadOriginal 是按需读取原始内容的闭包；首次需要快照时才调用。
+   * toUri 仅 op='rename' 有意义：改动后的目标 URI，回滚时据它把文件原路移回
+   * （缺省则退化为「只把原内容写回源路径」，目标端会留一份重复）。
    */
   beforeMutate(
     uri: string,
     op: 'write' | 'delete' | 'rename',
     loadOriginal: () => Promise<{ data: Buffer; size: number } | null>,
+    toUri?: string,
   ): Promise<void>;
   /** 列出某个 session 的所有回合 checkpoint */
   listTurns(sessionId: string): Promise<TurnSummary[]>;
@@ -45,6 +50,8 @@ export interface CheckpointFileRecord {
   uri: string;
   /** write=覆盖已有, write-new=新创建, delete=删除, rename=重命名 */
   action: 'write' | 'write-new' | 'delete' | 'rename';
+  /** rename 的目标 URI（回滚时原路移回；老 manifest 无此字段） */
+  toUri?: string;
   /** 原始大小（如果有快照） */
   originalSize?: number;
   /** 备份 blob 文件名（相对于 turn 目录） */
@@ -69,7 +76,7 @@ export interface TurnSummary {
   startedAt: number;
   endedAt?: number;
   fileCount: number;
-  /** 是否在 turn 内调用过 exec 工具（前端用于显示「部分未保护」） */
+  /** 是否在 turn 内调用过 exec / exec_background / run_* 等命令类工具（前端用于显示「部分未保护」） */
   execUsed?: boolean;
   /** 摘要预览（前 3 个文件 URI） */
   filesPreview: string[];
@@ -175,7 +182,7 @@ export class CheckpointServiceImpl implements CheckpointService {
     this.gc().catch(err => this.logger.warn(`checkpoint GC 失败: ${(err as Error).message}`));
   }
 
-  /** 标记某会话当前回合调用过 exec，UI 端会提示「部分未保护」 */
+  /** 标记某会话当前回合调用过 exec / exec_background / run_* 等命令类工具，UI 端会提示「部分未保护」 */
   markExecUsed(sessionId: string): void {
     const turn = this.turns.get(sessionId);
     if (turn) (turn.manifest as TurnManifest & { execUsed?: boolean }).execUsed = true;
@@ -191,15 +198,25 @@ export class CheckpointServiceImpl implements CheckpointService {
     uri: string,
     op: 'write' | 'delete' | 'rename',
     loadOriginal: () => Promise<{ data: Buffer; size: number } | null>,
+    toUri?: string,
   ): Promise<void> {
     // 自身根下的写入（blob / manifest）不快照：storage 的写前钩子会把它们递归送回这里，
     // 而 blob 此刻在磁盘上尚不存在 → 会给自己记一条 write-new 假账，且排在真实条目之前，
     // 回滚时先删备份再读同一 blob → ENOENT，覆盖/删除类恢复必败。
     if (this.isOwnUri(uri)) return;
+    // 易失根（kind='tmp'）下的改动不快照：code-runner 等的临时目录在回合结束前就被 cleanup 删掉，
+    // 记进 manifest 只会让回滚必报 ENOENT（整体 ok:false），还把内部 tmp 路径暴露进 filesPreview。
+    if (this.isVolatileUri(uri)) return;
+    // 去重按 uri，但 rename 不能因此被吞掉：同一回合里「先 write/改写 f，再把 f 移走」时，
+    // f 已快照过 → 移动整条不入账 → 回滚照 write 条目去写/删源端（ENOENT），文件还留在目标端。
+    // 对这些回合补记一条不带 blob 的 rename（内容已由更早的条目备份，不重复备份）：
+    // LIFO 回滚先由它把目标移回源端，再由更早的 write/write-new 条目恢复原文或删除。
+    const renameOnly = op === 'rename' && toUri ? [...this.turns.values()].filter(t => t.snapshotted.has(uri)) : [];
+    for (const t of renameOnly) t.manifest.files.push({ uri, action: 'rename', toUri });
     // 跨会话并发：把快照记进所有「本回合尚未对该 uri 快照过」的活跃回合。单回合=常态、零变化；
     // 并发多回合无法精确判断是哪个 run 改的 → 保守地都备份（宁可冗余、不丢保护）。
     const targets = [...this.turns.values()].filter(t => !t.snapshotted.has(uri));
-    if (targets.length === 0) return; // 回合外，或都已快照过
+    if (targets.length === 0) return; // 回合外，或都已补记/快照过
     for (const t of targets) t.snapshotted.add(uri);
 
     let original: { data: Buffer; size: number } | null = null;
@@ -211,9 +228,12 @@ export class CheckpointServiceImpl implements CheckpointService {
 
     for (const t of targets) {
       // 情况 1：write 且原文件不存在 → 标记为新创建（回滚时需要删除）；
-      // 情况 2：原文件不存在但是 delete/rename → 不可能，跳过
+      // 情况 2：delete/rename 拿不到内容（目录，或读取失败）→ 仍要记一条：
+      //   否则目录递归删除零记录，UI 却照样渲染「回滚本轮对话（含文件）」并报回滚完成。
+      //   rename 有 toUri 时回滚仍能原路移回；delete 则如实标为不可回滚。
       if (!original) {
         if (op === 'write') t.manifest.files.push({ uri, action: 'write-new' });
+        else t.manifest.files.push({ uri, action: op, toUri, skipped: '未快照（目录或读取失败）' });
         continue;
       }
       // 情况 3：过大 → 跳过快照但记录为「skipped」
@@ -221,6 +241,7 @@ export class CheckpointServiceImpl implements CheckpointService {
         t.manifest.files.push({
           uri,
           action: op === 'rename' ? 'rename' : op,
+          toUri,
           originalSize: original.size,
           skipped: `文件过大 (${original.size} > ${this.cfg.maxFileSize})`,
         });
@@ -233,6 +254,7 @@ export class CheckpointServiceImpl implements CheckpointService {
       t.manifest.files.push({
         uri,
         action: op === 'rename' ? 'rename' : op,
+        toUri,
         originalSize: original.size,
         blob: blobName,
       });
@@ -254,16 +276,14 @@ export class CheckpointServiceImpl implements CheckpointService {
     for (const turnId of entries) {
       const manifest = await this.getManifest(sessionId, turnId);
       if (!manifest) continue;
-      // 存量 manifest 可能带自指条目（历史递归快照），既不是用户改动也不该暴露内部路径
-      const files = manifest.files.filter(f => !this.isOwnUri(f.uri));
       summaries.push({
         turnId: manifest.turnId,
         sessionId: manifest.sessionId,
         startedAt: manifest.startedAt,
         endedAt: manifest.endedAt,
-        fileCount: files.length,
+        fileCount: manifest.files.length,
         execUsed: (manifest as TurnManifest & { execUsed?: boolean }).execUsed,
-        filesPreview: files.slice(0, 3).map(f => f.uri),
+        filesPreview: manifest.files.slice(0, 3).map(f => f.uri),
       });
     }
     summaries.sort((a, b) => b.startedAt - a.startedAt);
@@ -274,7 +294,11 @@ export class CheckpointServiceImpl implements CheckpointService {
     const uri = joinUri(this.turnDir(sessionId, turnId), 'manifest.json');
     try {
       const raw = await this.storage.readFile(uri, 'utf-8');
-      return JSON.parse(String(raw)) as TurnManifest;
+      const manifest = JSON.parse(String(raw)) as TurnManifest;
+      // 存量 manifest 可能带自指条目（历史递归快照）：既不是用户改动、也不该暴露内部路径，
+      // 更不能让回滚去删自己的备份 —— 在唯一的读入口就滤掉，下游（listTurns / rollback）不必各自设防。
+      manifest.files = (manifest.files ?? []).filter(f => !this.isOwnUri(f.uri));
+      return manifest;
     } catch {
       return null;
     }
@@ -295,14 +319,46 @@ export class CheckpointServiceImpl implements CheckpointService {
     }
     const turnDir = this.turnDir(sessionId, turnId);
 
-    for (const file of manifest.files) {
-      // 存量 manifest 里的自指条目（历史递归快照）：删它等于毁本回合的备份，直接跳过
-      if (this.isOwnUri(file.uri)) continue;
+    // 逆序撤销（LIFO）：同回合内后发生的改动先回退，否则先前条目的复原会被后来条目再次覆盖。
+    // 例：`move a.txt -> b.txt` 后又改写 b.txt，正序回滚先把 b 移回 a，再把 b 的快照写回，
+    // b.txt 又冒出来；逆序则先把 b 还原成改写前内容，再整体移回 a，磁盘回到回合开始的样子。
+    for (const file of [...manifest.files].reverse()) {
       try {
         if (file.action === 'write-new') {
-          // 新创建的文件 → 删除
-          await this._backendDelete(file.uri);
-          result.deleted.push(file.uri);
+          // 新创建的文件 → 删除。已不存在即期望状态已达成（本回合新建后又删掉：delete 条目被按 URI
+          // 去重吞掉，只剩这条 write-new），不算失败。
+          try {
+            await this._backendDelete(file.uri);
+            result.deleted.push(file.uri);
+          } catch (delErr) {
+            if (!isNotFoundError(delErr)) throw delErr;
+          }
+        } else if (file.action === 'rename' && file.toUri) {
+          // 改名/移动 → 优先原路移回：目录与超限大文件也能复原，且不会在目标端留一份重复。
+          // 移不动（目标已被占、后端不支持 move）才回落到「写回源端 + 删目标」。
+          try {
+            if (!this._backendMove) throw new Error('回滚 move 后端未注入');
+            await this._backendMove(file.toUri, file.uri);
+            result.restored.push(file.uri);
+          } catch (moveErr) {
+            if (!file.blob) throw moveErr;
+            const data = await this.storage.readFile(joinUri(turnDir, `blobs/${file.blob}`));
+            await this._backendWrite(file.uri, Buffer.from(data as Uint8Array));
+            result.restored.push(file.uri);
+            // 源端复原即算成功；删目标是善后动作，单独 try：目标已不在（ENOENT——重复回滚、
+            // 别处已清）就是期望状态，才忽略；其它失败（权限被拒等）如实入 errors，也不谎报 deleted。
+            try {
+              await this._backendDelete(file.toUri);
+              result.deleted.push(file.toUri);
+            } catch (delErr) {
+              const reason = (delErr as Error).message ?? String(delErr);
+              if (isNotFoundError(delErr)) {
+                this.logger.debug(`回滚善后：目标 ${file.toUri} 已不在，跳过删除: ${reason}`);
+              } else {
+                result.errors.push({ uri: file.toUri, reason });
+              }
+            }
+          }
         } else if (file.skipped) {
           // 跳过快照的，无法恢复
           result.errors.push({ uri: file.uri, reason: file.skipped });
@@ -322,13 +378,19 @@ export class CheckpointServiceImpl implements CheckpointService {
   // ──────────── 回滚后端注入 ────────────
   private _backendWrite?: (uri: string, data: Buffer) => Promise<void>;
   private _backendDelete?: (uri: string) => Promise<void>;
+  private _backendMove?: (fromUri: string, toUri: string) => Promise<void>;
   private _memory?: MemoryService;
   private _emitMessagesDeleted?: (sessionId: string, timestamps: number[]) => void;
   private _emitHistoryChanged?: (sessionId: string) => void;
 
-  setBackend(write: (uri: string, data: Buffer) => Promise<void>, del: (uri: string) => Promise<void>): void {
+  setBackend(
+    write: (uri: string, data: Buffer) => Promise<void>,
+    del: (uri: string) => Promise<void>,
+    move?: (fromUri: string, toUri: string) => Promise<void>,
+  ): void {
     this._backendWrite = write;
     this._backendDelete = del;
+    this._backendMove = move;
   }
 
   /** 注入聊天回滚所需的依赖：memory 服务 + 事件发出器 */
@@ -444,6 +506,21 @@ export class CheckpointServiceImpl implements CheckpointService {
     return uri === root || uri.startsWith(root.endsWith('/') ? root : `${root}/`);
   }
 
+  /**
+   * uri 是否落在易失根（kind='tmp'）下。每次现算而不缓存：调用频率是「每次文件改动一次」，
+   * 而 storage 重载可能改变根集合，缓存只会拿到陈旧的根名。
+   */
+  private isVolatileUri(uri: string): boolean {
+    const idx = uri.indexOf(':/');
+    if (idx <= 0) return false;
+    const rootName = uri.slice(0, idx);
+    try {
+      return this.storage.listRoots().some(r => r.name === rootName && r.kind === 'tmp');
+    } catch {
+      return false;
+    }
+  }
+
   // ──────────── 会话级清理 ────────────
   // 与 plugin-commands / plugin-session-manager 的 memory:clear 调度对齐，
   // 避免 /clear 与 deleteSession 后 checkpoint 目录泄露。
@@ -480,6 +557,12 @@ export class CheckpointServiceImpl implements CheckpointService {
       return 0;
     }
   }
+}
+
+/** 「文件/目录已不存在」判据：优先看 errno code，再退回错误文案（storage 后端不保证带 code）。 */
+function isNotFoundError(err: unknown): boolean {
+  const e = err as { code?: string; message?: string };
+  return e?.code === 'ENOENT' || /ENOENT|不存在|not found/i.test(e?.message ?? String(err));
 }
 
 function joinUri(base: string, rel: string): string {

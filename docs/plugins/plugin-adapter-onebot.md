@@ -50,7 +50,7 @@ meta.inject = {
 | 文件 | 说明 |
 |---|---|
 | `index.ts` | 主入口，连接管理、事件分发、PlatformAdapter 实现 |
-| `types.ts` | 类型定义、`segmentsToText()` 富文本渲染、forward 段解析工具 |
+| `types.ts` | 类型定义、`segmentsToText()` 富文本渲染、CQ 字符串→消息段规范化、forward 段解析工具 |
 | `v11.ts` | OneBot v11 协议处理器 |
 | `v12.ts` | OneBot v12 协议处理器 |
 | `attachment-cache.ts` | 入站/出站附件统一落盘缓存（`data/{kind}s/{session}/`，含单文件大小上限） |
@@ -83,6 +83,8 @@ onebot:{selfId}:{detailType}:{targetId}
 - 客户端心跳：每 30 秒发送一次 WebSocket ping，检查时若距上次收到 pong 或任何消息已超过 40 秒，则主动断开并重连（OneBot 的 heartbeat 元事件不单独处理，只作为普通流量计入）
 
 ## 消息入站
+
+两种上报消息格式都支持：实现端的 `message` 既可以是消息段数组，也可以是含 `[CQ:…]` 码的字符串（`message_format=string`）。字符串格式在 v11 入站时先被规范化成消息段数组，之后附件提取、引用回复提取与 `segmentsToText()` 富文本渲染与数组格式共用同一条路径——`<at self>` 标记与 selfId 判定只有一处，CQ 码不会流进下游文本（`trigger-policy` 的 @ 判定因此只认 `<at self>`）。段类型名与 data 键沿用 v11 段语义（`at.qq`、`image.url`/`file`、`reply.id` 等），参数原样透传。
 
 适配器不做流控或触发判定：消息事件解析后直接以 `inbound:message` 发出，由 `@aalis/plugin-flow-control` 与 `@aalis/plugin-trigger-policy` 在 `inbound:flow` / `inbound:trigger` 相位决定是否响应。机器人自身的群禁言与解禁事件，以及启动或重连后按 `shut_up_timestamp` 恢复的禁言状态，通过 `flow-control` 服务的 `setMuted` 同步。
 

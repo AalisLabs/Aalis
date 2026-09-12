@@ -514,6 +514,8 @@ class DefaultAgent implements AgentService {
           enabledGroups,
           // 本循环会把 ToolExecutionResult.images 挂到 tool 消息交给主模型（出口由 prepareLLMMessages 编码）
           acceptsImages: true,
+          // 回合中止信号：等确认期间被 latest-wins / 手动 abort 掐掉的工具不再执行
+          signal,
         };
 
         // 保存原始完整工具列表，后续迭代均以此为基础（避免被 hooks 修改后丢失）
@@ -919,9 +921,11 @@ class DefaultAgent implements AgentService {
         replyContent = responseData.content;
         const archiveContent = responseData.archiveContent ?? rawLlmContent;
 
-        // 重复检测：如果回复与最近一条 assistant 消息完全相同，视为模型"卡壳"，静默跳过
+        // 重复检测：如果回复与最近一条 assistant 消息完全相同，视为模型"卡壳"，静默跳过。
+        // 比的是 archiveContent（与落库同源口径）——启用 outputFormat 时历史里存的是整串 JSON，
+        // 拿解码后的纯文本去比永远不成立。
         const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
-        if (replyContent && lastAssistant?.content && replyContent === lastAssistant.content) {
+        if (archiveContent && lastAssistant?.content && archiveContent === lastAssistant.content) {
           this.logger.warn(`检测到重复回复，跳过发送 (session=${incoming.sessionId})`);
           replyContent = '';
         }
@@ -2114,9 +2118,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   ctx.on('token:request', async (...args: unknown[]) => {
     const data = args[0] as { sessionId: string; platform?: string };
     if (!data?.sessionId) return;
+    // 唯一发射方是 WebUI；平台缺省按 'webui' 兜底，否则模型/会话配置解析会绕过平台 profile 层
+    const platform = data.platform ?? 'webui';
 
     try {
-      const resolved = await agent.resolveLLM(data.platform, data.sessionId);
+      const resolved = await agent.resolveLLM(platform, data.sessionId);
       if (!resolved) return;
       const llm = resolved.instance;
 
@@ -2141,7 +2147,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       // 与真实回合同序：先组装 agent:prompt 贡献（摘要/向量记忆/档案等物化为 system 块），
       // 再跑 agent:llm:before（工具搜索层过滤等拦截职责），使快照贴近实际送入 LLM 的形态
       const sm = ctx.getService<SessionManagerService>('session-manager');
-      const sessionResolved = sm ? sm.resolveConfig(data.sessionId, data.platform) : undefined;
+      const sessionResolved = sm ? sm.resolveConfig(data.sessionId, platform) : undefined;
       const enabledGroups = sessionResolved?.enabledToolGroups?.length ? sessionResolved.enabledToolGroups : undefined;
       const tools =
         ctx.getService<ToolService>('tools')?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ??
@@ -2152,7 +2158,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         tools,
         sessionId: data.sessionId,
         userId: '',
-        platform: data.platform ?? '',
+        platform,
         dryRun: true, // 纯统计路径:昂贵注入者(向量检索/档案加载)据此跳过副作用
       };
       await assemblePromptContributions(ctx, llmBeforeData, { buildTimeoutMs: agent.promptBuildTimeoutMs });
@@ -2160,7 +2166,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       agent.emitTokenUsage(
         data.sessionId,
-        data.platform ?? '',
+        platform,
         llmBeforeData.messages,
         llmBeforeData.tools,
         contextLength,

@@ -64,7 +64,7 @@ export interface VectorStoreService {
 
 双源元数据必须同步声明（manifest 与导出都要写，见 docs/concepts/manifest-metadata.md）：
 
-- `package.json` 的 `aalis.service.provides`（参考 `packages/plugin-vectorstore-flat/package.json`）：
+- `package.json` 的 `aalis.service.provides`：
 
 ```jsonc
 {
@@ -74,6 +74,8 @@ export interface VectorStoreService {
 ```
 
 - 入口导出 `export const provides = ['vectorstore'];`
+
+两处必须一致（`test/architecture/manifest-parity.test.ts` 守着）。若 provider 还依赖别的服务，`inject.required` 也要双源同步——内置的 flat 与 lancedb 都落盘经 storage，两者都另有 `required: ['storage']`。
 
 可编译最小骨架：
 

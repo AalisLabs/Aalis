@@ -26,7 +26,8 @@ interface IncomingMessage {
   groupId?: string;
   replyTo?: { messageId; content?; userId?; nickname? };
   noticeType?: string;                 // 非消息事件，如 poke / group_upload
-  triggerType?: 'direct' | 'immediate' | 'interval' | 'idle';
+  triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
+  proactiveDepth?: number;             // 跨会话委派跳数，首跳为 1；真人消息不带，缺省视为 0
   // 内部字段（preprocessor 写入）
   _imageDescriptions?: string[];
   _imageRecognitionInfo?: { imageCount; successCount; descriptions; transformedContent };
@@ -42,6 +43,7 @@ interface IncomingMessage {
 | `immediate` | 群聊被 @/名字主动触发 |
 | `interval` | 群聊因频率/活跃度被动触发，userId 仅是"最后一条" |
 | `idle` | 空闲自动触发，无 userId |
+| `proactive` | 另一会话的 agent 经跨会话委派发起，content 是任务描述而非用户消息 |
 
 ## OutgoingMessage
 

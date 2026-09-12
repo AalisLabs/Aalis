@@ -161,8 +161,8 @@ parseAttachmentRefs(text): AttachmentRef[]
 这套格式有三条必须遵守的约束：
 
 - 输出必须 byte-for-byte 兼容历史格式，数据库里已有的字符串不会被重写。
-- parser 不消耗 `desc` 中的转义，因此写入方必须保证 `desc` 不含 `]` 或 `|`，否则解析会错位。
-- `ref` 内不允许出现 `]`。
+- parser 不消耗 `desc` 中的转义，因此写入的 `desc` 不得含 `]`、`|` 或换行。这由 `formatAttachmentRef` 在写入时净化保证（换行折成空格、`|` → `丨`、`]` → `］`），调用方无需自己处理；视觉模型输出带表格或多行时，不净化会让整条占位符在 `parseAttachmentRefs` 侧再也匹配不到。两个读侧刻意不一致：`buildAttachmentRefMatcher` 的 `desc` 字符类更宽，只排除 `]` 与换行、允许裸 `|`——后缀 ` | ref:<ref>]` 已足够锚定整条占位符，收严则会让存量 `desc` 带裸 `|` 的占位符再也被 `update_image_description` 改不动。
+- `ref` 内不允许出现 `]` 或换行——这一条由**调用方**保证：`formatAttachmentRef` 只净化 `desc`，`ref` 原样写出。带 `]` 的 ref 会让 `parseAttachmentRefs` 在第一个 `]` 处截断（拿到半截 ref，随后据此构造的 matcher 只替换前半段、留下残渣）；带换行的 ref 会让 `parseAttachmentRefs` 整条匹配不到。`buildAttachmentRefMatcher` 本身把 ref 转义成字面量，不受影响。
 
 ::: warning 不要手写这套字符串
 不要用 `String.replace` 硬编码 `[图片: … | ref:…]`。请一律使用 `formatAttachmentRef` / `parseAttachmentRefs`，否则就会重新引入本节开头描述的「四处格式漂移」问题。
@@ -193,7 +193,7 @@ case 'at': {
 }
 ```
 
-CQ 码也归一到同一文法：
+字符串消息格式（`message` 为含 `[CQ:…]` 码的字符串）在 OneBot v11 入站时先被 `parseCqMessageToSegments()` 规范化成消息段，再走上面这条同一路径——CQ 码不会流进下游文本。合并转发内的节点 content 若为 CQ 串，同样归一到这套文法：
 
 ```ts
 .replace(/\[CQ:at,[^\]]*qq=([^,\]]+)[^\]]*\]/g, '<at id="$1">$1</at>')
@@ -219,13 +219,11 @@ CQ 码也归一到同一文法：
 const re = /<at(?:\s+self)?\s+id="([^"]+)">/g;
 ```
 
-trigger-policy 用 `self` 属性判定「机器人是否被 @」，据此决定是否立即触发：
+trigger-policy 用 `self` 属性判定「机器人是否被 @」，据此决定是否立即触发。判定只认 `<at self>` 这一种文法——CQ 码已由 adapter 入站规范化掉：
 
 ```ts
 export function checkImmediateMention(content: string): boolean {
-  if (/<at self[\s>][\s\S]*?<\/at>/.test(content)) return true;
-  if (/\[CQ:at,qq=\d+\]/.test(content)) return true;              // 兼容裸 CQ 码
-  return false;
+  return /<at self[\s>][\s\S]*?<\/at>/.test(content);
 }
 ```
 
@@ -316,7 +314,7 @@ default model 通过 `ServiceContainer.setPreference('llm', preferredContextId)`
 1. **漏调 `prepareLLMMessages` 会导致 provider 崩溃。** 某天上游塞进 `notice` 或跨会话委派消息，未归一的非标准 role 会让你的 API 直接返回 400。务必在 `chat` / `chatStream` 第一步调用（§3.1）。
 2. **`prepareLLMMessages` 不剔除 event-marker。** 它只做 role 转译加前缀。`CONTROL_KINDS` 过滤是消费方的职责。你自己拼历史喂模型时要先 `filter(m => !CONTROL_KINDS.includes(m.kind ?? ''))`。
 3. **自定义 kind 不要撞已占用语义。** 可以定义新 kind，但要避开 `WellKnownKinds`。前端有一份字面量副本，改动 `event-marker` 等值时要同步前后端。
-4. **附件占位符必须走 `formatAttachmentRef` / `parseAttachmentRefs`**，且写入方保证 `desc` 不含 `]` 或 `|`（§4.3）。手写字符串会让四处解析悄悄断链。
+4. **附件占位符必须走 `formatAttachmentRef` / `parseAttachmentRefs`**（§4.3）——`desc` 的分隔符净化在 format 里，手写字符串既绕过净化又会让四处解析悄悄断链。
 5. **`<at>` 是约定不是 API**，没有编译期兜底。新平台适配器产出的入站文本必须严格遵循 `<at id="X">名</at>` / `<at self …>` / `<at>all</at>`，否则归档、向量、触发判定会全部静默失效（§5.2）。`<at self>` 是 trigger-policy 判定「机器人被 @」的唯一信号。
 6. **`Message.metadata` 不发给 LLM。** 要让模型看到的信息必须进 `content` / `segments` / `images` / `audios`，不要塞进 metadata。
 7. **`actor` 是授权身份，不可被 LLM 自由指定。** 系统侧触发器（scheduler / proactive）创建任务时会 snapshot 调用者身份并回填，agent 构造 `ToolCallContext` 时优先用 `actor` 查权限，以防提权。AI 自发回合没有可代之人：群聊 `interval` 触发由 trigger-policy 回填 `selfInitiatedActor(platform)`（空 userId = 无主体，按默认等级裁决、不视为 owner），`idle` 合成消息本就不带 userId。详见 `docs/services/authority.md`。
