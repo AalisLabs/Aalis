@@ -156,9 +156,12 @@ interface APIChatResponse {
   };
 }
 
-/** OpenAI 推理模型(o 系列：o1/o3/o4…)：拒 max_tokens(需 max_completion_tokens)、拒非默认 temperature。 */
+/**
+ * OpenAI 推理模型(o 系列 o1/o3/o4… 与 gpt-5 系列 gpt-5/-mini/-nano/-chat…)：
+ * 拒 max_tokens(需 max_completion_tokens)、拒非默认 temperature。
+ */
 function isReasoningModel(model: string): boolean {
-  return /^o\d/i.test(model);
+  return /^(o\d|gpt-5)/i.test(model);
 }
 
 // ===== OpenAI 客户端（不是 service、仅是底层 fetch 封装，多个 ModelHandle 共享） =====
@@ -223,7 +226,7 @@ class OpenAIClient {
     const body: Record<string, unknown> = {
       model,
       messages,
-      // 推理模型(o 系列)拒 max_tokens(需 max_completion_tokens)且只接受默认 temperature → 分支处理；
+      // 推理模型(o 系列 / gpt-5 系列)拒 max_tokens(需 max_completion_tokens)且只接受默认 temperature → 分支处理；
       // 缺省回退到配置的 this.maxTokens，而非字面量 4096（遵守 llm-api 契约）。
       [reasoning ? 'max_completion_tokens' : 'max_tokens']: request.maxTokens ?? this.maxTokens,
       ...(reasoning ? {} : { temperature: request.temperature ?? this.temperature }),

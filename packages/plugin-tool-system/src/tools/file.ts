@@ -153,6 +153,99 @@ async function searchTextStream(
   };
 }
 
+/** 把 startLine/endLine 参数解析成行区间；两者都没给（或都不是正数）返回 undefined。 */
+function resolveLineRange(startArg: unknown, endArg: unknown): { start: number; end: number } | undefined {
+  const startNum = Math.floor(Number(startArg));
+  const endNum = Math.floor(Number(endArg));
+  const hasStart = Number.isFinite(startNum) && startNum > 0;
+  const hasEnd = Number.isFinite(endNum) && endNum > 0;
+  if (!hasStart && !hasEnd) return undefined;
+  const start = hasStart ? startNum : 1;
+  return { start, end: hasEnd ? Math.max(start, endNum) : Number.MAX_SAFE_INTEGER };
+}
+
+/**
+ * 按行范围流式读取（与 searchTextStream 同一套 createReadStream + readline 模式）。
+ *
+ * - 只把 [start, end] 区间的行收进内存，maxBytes 是**返回内容**的上限（不是扫描上限，
+ *   否则深处的行范围永远读不到）
+ * - 区间读完后只在扫描预算内继续数总行数：小文件能给出准确 totalLines，
+ *   大文件则省掉整篇扫描、不返回 totalLines
+ */
+async function readLineRange(
+  storage: StorageService,
+  uri: string,
+  start: number,
+  end: number,
+  maxBytes: number,
+): Promise<{ lines: string[]; totalLines?: number; truncated: boolean; firstLineCut: boolean }> {
+  const { stream } = await storage.createReadStream(uri);
+  const reader = createInterface({ input: stream, crlfDelay: Infinity });
+  const lines: string[] = [];
+  let lineNumber = 0;
+  let scannedBytes = 0;
+  let collectedBytes = 0;
+  let truncated = false;
+  let firstLineCut = false;
+  let stopped = false;
+
+  try {
+    for await (const line of reader) {
+      lineNumber++;
+      const size = Buffer.byteLength(line, 'utf-8') + 1;
+      scannedBytes += size;
+      if (lineNumber >= start && lineNumber <= end) {
+        collectedBytes += size;
+        if (collectedBytes > maxBytes) {
+          // 区间首行自身就超预算（单行压缩 js / 超长日志行）：按字节截断放进去，
+          // 否则返回空内容再建议「缩小行范围」，模型无路可走
+          if (lines.length === 0) {
+            lines.push(Buffer.from(line, 'utf-8').subarray(0, maxBytes).toString('utf-8'));
+            firstLineCut = true;
+          }
+          truncated = true;
+          stopped = true;
+          break;
+        }
+        lines.push(line);
+      } else if (lineNumber > end && scannedBytes > maxBytes) {
+        stopped = true;
+        break;
+      }
+    }
+  } finally {
+    reader.close();
+    stream.destroy();
+  }
+
+  // 循环自然跑完 = 读到了文件末尾，此时行号即总行数
+  return { lines, truncated, firstLineCut, ...(stopped ? {} : { totalLines: lineNumber }) };
+}
+
+/**
+ * 在原文里定位 oldText，行尾感知：先按原样找，再试 CRLF 写法、LF 写法（去重后逐个尝试）。
+ * 返回命中次数、首个命中的位置与长度，以及该处该按哪种行尾写入 newText：
+ * 多行匹配看命中文本自己的行尾；单行匹配看命中处所在行的行尾。
+ */
+function locateEdit(raw: string, oldText: string): { count: number; index: number; length: number; crlf: boolean } {
+  const lf = oldText.replace(/\r\n/g, '\n');
+  for (const text of new Set([oldText, lf.replace(/\n/g, '\r\n'), lf])) {
+    const index = raw.indexOf(text);
+    if (index === -1) continue;
+    const count = raw.split(text).length - 1;
+    let crlf: boolean;
+    if (text.includes('\n')) {
+      crlf = text.includes('\r\n');
+    } else {
+      const after = raw.indexOf('\n', index + text.length);
+      const probe = after !== -1 ? after : raw.lastIndexOf('\n', index);
+      crlf = probe > 0 && raw[probe - 1] === '\r';
+    }
+    return { count, index, length: text.length, crlf };
+  }
+  return { count: 0, index: -1, length: 0, crlf: false };
+}
+
 /**
  * 默认排除目录：扫描树时几乎从不需要进入的"噪声目录"。
  *
@@ -300,7 +393,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         name: 'file_read',
         description:
           '读取受控存储中的文件。路径使用完整 storage URI（如 aalis:/packages/core/index.ts），或相对当前 cwd 的路径。' +
-          '不允许读取宿主绝对路径。支持指定行范围读取大文件的部分内容。',
+          '不允许读取宿主绝对路径。给定 startLine/endLine 时按行流式读取，超过大小限制的文件也可按行范围读取部分内容。',
         parameters: {
           type: 'object',
           properties: {
@@ -323,38 +416,55 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         ensureRootAllowed(uri, config);
         const info = await storage.stat(uri);
         if (info.isDirectory) return JSON.stringify({ error: '路径是一个目录，请使用 file_list' });
+        const encoding = args.encoding as string | undefined;
+        const range = resolveLineRange(args.startLine, args.endLine);
+
+        // 给了行范围就按行流式读：真正进内存的只有该区间，故不受整篇 maxReadSize 闸限制。
+        // （闸若前置且不看行范围，模型照提示补上 startLine/endLine 后仍撞同一个错，无路可走。）
+        if (range && encoding !== 'base64') {
+          const result = await readLineRange(storage, uri, range.start, range.end, config.maxReadSize);
+          return JSON.stringify({
+            uri,
+            ...(result.totalLines !== undefined ? { totalLines: result.totalLines } : {}),
+            startLine: range.start,
+            endLine: range.start + result.lines.length - 1,
+            content: result.lines.map((line, i) => `${range.start + i}\t${line}`).join('\n'),
+            ...(result.truncated
+              ? {
+                  truncated: true,
+                  advice: result.firstLineCut
+                    ? `第 ${range.start} 行本身超过 ${config.maxReadSize} 字节上限，已按字节截断；该行其余内容请用 file_search 或 exec 处理。`
+                    : `本次返回已达 ${config.maxReadSize} 字节上限，请缩小行范围继续读取。`,
+                }
+              : {}),
+          });
+        }
+
         if (info.size > config.maxReadSize) {
           return JSON.stringify({
-            error: `文件过大 (${info.size} 字节)，超过限制 ${config.maxReadSize} 字节。请使用 startLine/endLine 参数读取部分内容。`,
+            error: `文件过大 (${info.size} 字节)，超过限制 ${config.maxReadSize} 字节。${
+              encoding === 'base64'
+                ? 'base64 读取不支持行范围，请改用其它方式获取该文件。'
+                : '请使用 startLine/endLine 参数读取部分内容。'
+            }`,
             size: info.size,
             uri,
           });
         }
 
-        if ((args.encoding as string | undefined) === 'base64') {
+        if (encoding === 'base64') {
           const buffer = await storage.readFile(uri);
           const content = Buffer.isBuffer(buffer) ? buffer.toString('base64') : Buffer.from(buffer).toString('base64');
           return JSON.stringify({ uri, encoding: 'base64', size: info.size, content });
         }
 
-        const content = await readText(storage, uri);
-        const lines = content.split('\n');
-        const totalLines = lines.length;
-        const startLine = (args.startLine as number) || 1;
-        const endLine = (args.endLine as number) || totalLines;
-        const start = Math.max(1, startLine) - 1;
-        const end = Math.min(totalLines, endLine);
-        const selectedLines = lines
-          .slice(start, end)
-          .map((line, i) => `${start + i + 1}\t${line}`)
-          .join('\n');
-
+        const lines = (await readText(storage, uri)).split('\n');
         return JSON.stringify({
           uri,
-          totalLines,
-          startLine: start + 1,
-          endLine: end,
-          content: selectedLines,
+          totalLines: lines.length,
+          startLine: 1,
+          endLine: lines.length,
+          content: lines.map((line, i) => `${i + 1}\t${line}`).join('\n'),
         });
       } catch (err) {
         return jsonError(err);
@@ -485,7 +595,9 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
       type: 'function',
       function: {
         name: 'file_edit',
-        description: '通过唯一精确字符串替换编辑受控存储中的文件。危险操作：会修改文件内容。',
+        description:
+          '通过唯一精确字符串替换编辑受控存储中的文件。危险操作：会修改文件内容。' +
+          '匹配时容忍 CRLF/LF 差异，并按命中处的行尾写入 newText；只改动命中的那一段，其它内容原样保留。',
         parameters: {
           type: 'object',
           properties: {
@@ -510,33 +622,31 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         if (!oldText) return JSON.stringify({ error: 'oldText 不能为空' });
 
         const raw = await readText(storage, uri);
-        const content = raw.replace(/\r\n/g, '\n');
-        const normalizedOld = oldText.replace(/\r\n/g, '\n');
-        const firstIndex = content.indexOf(normalizedOld);
-        if (firstIndex === -1) {
+        // 行尾感知定位：只替换命中的那一段，编辑处之外的字节（含混合行尾、孤 \r）原样保留
+        const hit = locateEdit(raw, oldText);
+        if (hit.count === 0) {
           return JSON.stringify({ error: '在文件中未找到 oldText。请确保文本精确匹配（包括空格和缩进）。' });
         }
-        const secondIndex = content.indexOf(normalizedOld, firstIndex + normalizedOld.length);
-        if (secondIndex !== -1) {
+        if (hit.count > 1) {
           return JSON.stringify({
             error: 'oldText 在文件中有多处匹配。请提供更多上下文以确保唯一匹配。',
-            matchCount: content.split(normalizedOld).length - 1,
+            matchCount: hit.count,
           });
         }
-
-        const newContent = content.replace(normalizedOld, newText);
+        const insert = hit.crlf ? newText.replace(/\r?\n/g, '\r\n') : newText.replace(/\r\n/g, '\n');
+        // 用 slice 拼接而非 String.replace：后者把 newText 当替换模式，
+        // 其中的 $$ / $& / $` / $' 会被展开成别的内容，改坏文件。
+        const newContent = raw.slice(0, hit.index) + insert + raw.slice(hit.index + hit.length);
         if (Buffer.byteLength(newContent, 'utf-8') > config.maxWriteSize) {
           return JSON.stringify({ error: `编辑后内容过大，超过限制 ${config.maxWriteSize} 字节` });
         }
         await storage.writeFile(uri, newContent);
 
-        const newIndex = newContent.indexOf(newText);
-        const before = newContent.slice(0, newIndex).split('\n');
-        const editLines = newText.split('\n');
+        // 行号按命中位置直接算：indexOf(newText) 在 newText 于前文出现过时会偏小
         return JSON.stringify({
           uri,
           message: '编辑成功',
-          editedLines: { start: before.length, count: editLines.length },
+          editedLines: { start: raw.slice(0, hit.index).split(/\r?\n/).length, count: insert.split(/\r?\n/).length },
         });
       } catch (err) {
         return jsonError(err);
