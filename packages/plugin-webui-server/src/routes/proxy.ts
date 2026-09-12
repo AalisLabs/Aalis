@@ -8,6 +8,39 @@ const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 /** 上游连接 + 完整下载总超时。 */
 const FETCH_TIMEOUT_MS = 15_000;
 
+/** 背压等待所需的最小响应面（express 的 Response / 任意 Writable 天然满足）。 */
+interface DrainTarget {
+  destroyed: boolean;
+  once(event: 'drain' | 'close' | 'error', cb: () => void): void;
+  off(event: 'drain' | 'close' | 'error', cb: () => void): void;
+}
+
+/**
+ * 等到响应重新可写：返回 true 可继续写；等待期间连接断开（'close'/'error'，或进入等待
+ * 时就已 destroyed）返回 false，调用方应中止转发并收掉上游。
+ */
+export function waitWritable(res: DrainTarget): Promise<boolean> {
+  if (res.destroyed) return Promise.resolve(false);
+  return new Promise<boolean>(resolve => {
+    function cleanup(): void {
+      res.off('drain', onDrain);
+      res.off('close', onStop);
+      res.off('error', onStop);
+    }
+    const onDrain = (): void => {
+      cleanup();
+      resolve(true);
+    };
+    const onStop = (): void => {
+      cleanup();
+      resolve(false);
+    };
+    res.once('drain', onDrain);
+    res.once('close', onStop);
+    res.once('error', onStop);
+  });
+}
+
 /**
  * 图片代理：浏览器直连第三方图片常因 hotlink 防护 / referer / CORS / mixed content 失败；
  * 由服务端代为 fetch 后回吐字节流，前端始终从 `/api/proxy/image?url=...` 读取。
@@ -82,8 +115,14 @@ export function registerProxyRoutes(expressApp: express.Express, ctx: Context, g
             return;
           }
           if (!res.write(Buffer.from(value))) {
-            // 背压：等 drain
-            await new Promise<void>(resolve => res.once('drain', () => resolve()));
+            // 背压：等 drain。客户端中途断开时 'drain' 永不到达（socket 已毁），只等它会
+            // 让这条请求的 async 帧、上游 body reader 与 socket 引用永久悬挂（连 finally 的
+            // clearTimeout 都到不了），故与 close/error 竞速：连接没了就收上游、退出。
+            if (!(await waitWritable(res))) {
+              ac.abort();
+              await reader.cancel().catch(() => {});
+              return;
+            }
           }
         }
       }

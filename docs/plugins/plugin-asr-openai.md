@@ -7,6 +7,8 @@
 
 语音识别（ASR）的 OpenAI Whisper API 提供者。插件向核心注册 `asr` 服务，实现只有一个 `transcribe` 方法：把音频附件封装为 multipart 表单，POST 到 `baseUrl` 下的 `/audio/transcriptions`，返回文本与可选的时间戳分段。凡实现 OpenAI 风格 `/audio/transcriptions` 协议的服务端（如 Groq、本地 ollama-asr 网关）均可经 `baseUrl` 接入。音频附件支持以下来源：base64 data URL、`file://` 或绝对路径（经 process 服务读取）、http(s) URL（经 `safeFetch` 下载）、storage URI（经 storage 服务读取；历史遗留的裸相对路径 `data/...` 按 `data:/...` 处理）。其它格式直接抛错。
 
+上传的文件名后缀按 Whisper API 实际接受的集合（`flac` / `m4a` / `mp3` / `mp4` / `mpeg` / `mpga` / `oga` / `ogg` / `wav` / `webm`）判定：来源路径的后缀在集内就沿用，否则（无后缀、或 `opus`、`amr` 这类 API 判 400 的后缀）按 Content-Type 映射到集内后缀，都取不到落 `wav`。后缀只决定上传文件名，插件不做转码。
+
 ## 插件声明
 
 ```typescript

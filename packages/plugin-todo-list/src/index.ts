@@ -32,7 +32,12 @@ const TODO_NAMESPACE = 'todo-list';
 const MAX_TODO_ITEMS = 50;
 const MAX_TODO_TITLE_LENGTH = 120;
 
-/** 将 todo 持久化到 MemoryService */
+/**
+ * 将 todo 持久化到 MemoryService。
+ *
+ * 持久化依赖 memory 服务，而本插件不 require 它（没有 memory 也能当纯回合内清单用）：
+ * 无 memory 时这里静默 no-op，todo 只存活于本次装载的模块级缓存里，卸载/重装即丢。
+ */
 async function persistTodos(ctx: Context, sessionId: string, items: TodoItem[]): Promise<void> {
   const memory = ctx.getService<MemoryService>('memory');
   if (memory) {
@@ -89,6 +94,14 @@ export const actions: PluginModule['actions'] = {
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
+  // store 是模块级缓存（actions 与工具 handler 共用，不能挪进 apply 闭包），
+  // 于是它默认跨 bounce 存活：装载时清一次 + dispose 时清空，避免插件重载或换
+  // memory 后端后命中陈旧条目而不回读新 provider，也给这张无上限的 Map 一个回收点。
+  // 代价是 clear 的作用域为整个进程：同进程再起一个 App 装本插件，会清掉前一个 App 的缓存
+  // （模块级缓存的固有代价：有 memory 时下次读会回源，没 memory 时 todo 就真丢了）。
+  store.clear();
+  ctx.onDispose(() => store.clear(), 'todo-list:store.clear');
+
   if (config.enabled === false) return;
 
   // 注册工具分组

@@ -135,7 +135,8 @@ export interface MediaService {
   /**
    * 主动描述单张图片（含动图自动多帧）。失败返回空串。
    * 与 describe([att]) 不同：本方法专为 `analyze_image` 等单图工具优化，
-   * 内部走描述缓存（同 url 24h 内复用）；可传 hint 注入用户意图。
+   * 内部走描述缓存（30 天滑动 TTL；键取落盘路径里的内容哈希，非内容寻址的来源经
+   * 落盘时登记的别名收敛到同一条）；可传 hint 注入用户意图（带 hint 不读写缓存）。
    */
   describeImage(imageUrl: string, opts?: DescribeImageOptions): Promise<string>;
 
@@ -150,6 +151,16 @@ export interface MediaService {
 
   /** 写入描述缓存（一般由 describeImage 自动调用，外部很少用）。 */
   rememberDescription(imageUrl: string, description: string): void;
+
+  /**
+   * 登记「来源 URL / data URI → 落盘 ref」别名：由**落盘方**在落盘成功后调一次
+   * （适配器把远端 URL 落成 `data/images/…` 时、WebUI base64 落盘时）。
+   * 此后 lookupDescription / rememberDescription 传**原始来源**即可命中落盘 ref
+   * 那条内容哈希键——OneBot 引用消息只拿得到原始 URL 时也不必重认。别名按完整来源串相等命中，
+   * QQ 直链 rkey 轮换后是另一条串，退化为不命中。
+   * 可选方法：老实现缺席时调用方跳过即可（`media.rememberDescriptionAlias?.(…)`）。
+   */
+  rememberDescriptionAlias?(source: string, landedRef: string): void;
 
   /**
    * 为含图消息构造视觉识别上下文（当前消息 + 引用消息 + 最近历史）。

@@ -156,4 +156,62 @@ describe('plugin-session-confirm 端到端确认环路', () => {
       await app.stop().catch(() => {});
     }
   });
+
+  it('提示带参数摘要：只展示白名单键的首行并限长', async () => {
+    const { app, getHandler } = await setup();
+    try {
+      const outbound: string[] = [];
+      app.ctx.on('outbound:message', ((m: { content: string }) => outbound.push(m.content)) as never);
+      const decisionP = getHandler()!({
+        ...req('sess-args'),
+        args: { command: 'rm -rf build\n && echo done', secret: 'do-not-show', path: 'workspace:/a.txt' },
+      });
+      await tick();
+      expect(outbound[0]).toContain('command=rm -rf build');
+      expect(outbound[0]).toContain('path=workspace:/a.txt');
+      expect(outbound[0]).not.toContain('echo done'); // 只取首行
+      expect(outbound[0]).not.toContain('do-not-show'); // 非白名单键不展示
+      app.ctx.emit('inbound:message', { content: 'n', sessionId: 'sess-args', platform: 'onebot' } as never);
+      expect(await decisionP).toBe(false);
+    } finally {
+      await app.stop().catch(() => {});
+    }
+  });
+
+  it('提示带 name 参数摘要：skill_delete 等以 name 为唯一参数的工具不只显示工具名', async () => {
+    const { app, getHandler } = await setup();
+    try {
+      const outbound: string[] = [];
+      app.ctx.on('outbound:message', ((m: { content: string }) => outbound.push(m.content)) as never);
+      const decisionP = getHandler()!({ ...req('sess-name'), name: 'skill_delete', args: { name: 'my-skill' } });
+      await tick();
+      expect(outbound[0]).toContain('name=my-skill');
+      app.ctx.emit('inbound:message', { content: 'n', sessionId: 'sess-name', platform: 'onebot' } as never);
+      expect(await decisionP).toBe(false);
+    } finally {
+      await app.stop().catch(() => {});
+    }
+  });
+
+  it('发起回合中止：撤回未决确认并按取消结算，队列推进到下一个', async () => {
+    const { app, getHandler } = await setup();
+    try {
+      const outbound: string[] = [];
+      app.ctx.on('outbound:message', ((m: { content: string }) => outbound.push(m.content)) as never);
+      const ac = new AbortController();
+      const first = getHandler()!({ ...req('sess-abort'), signal: ac.signal });
+      const second = getHandler()!({ ...req('sess-abort'), name: 'file_write', args: { path: 'workspace:/b.txt' } });
+      await tick();
+      expect(outbound).toHaveLength(1); // 只有队首在问
+      ac.abort();
+      expect(await first).toBe(false);
+      await tick();
+      expect(outbound[1]).toContain('回合已中止'); // 撤回告知
+      expect(outbound[2]).toContain('file_write'); // 推进到下一个未决确认
+      app.ctx.emit('inbound:message', { content: 'y', sessionId: 'sess-abort', platform: 'onebot' } as never);
+      expect(await second).toEqual({ allowed: true, grant: { scope: 'once' } });
+    } finally {
+      await app.stop().catch(() => {});
+    }
+  });
 });

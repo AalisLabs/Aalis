@@ -399,6 +399,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           method: 'POST',
           headers: { 'X-API-KEY': cfg.apiKey, 'Content-Type': 'application/json' },
           body: JSON.stringify({ q: query, num: numResults }),
+          // 与 serperSearch 对齐：挂起期间限流槽不释放，几次就把图片+网页搜索一起锁死
+          signal: AbortSignal.timeout(15_000),
         });
         if (!res.ok) return JSON.stringify({ error: `Serper images API 错误 ${res.status}` });
         const data = (await res.json()) as { images?: Array<Record<string, unknown>> };

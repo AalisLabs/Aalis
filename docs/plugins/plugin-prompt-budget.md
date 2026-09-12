@@ -8,7 +8,7 @@
 
 `plugin-agent` 已 emit `token:usage` 事件（含 12 桶 breakdown），WebUI 通过 `plugin-webui-server` 订阅渲染面板。但 **AI 自己在工具循环里跑时看不到 WebUI**，怀疑"是不是 prompt 太大了"的时候没有内省路径。
 
-本插件提供一个**主动 query** 工具：让模型在 tool loop 中直接查到自己最近一次 LLM 调用的预算消耗，决定是否调用 `memory.compress` / 减少 tool 输出 / 调整策略。
+本插件提供一个**主动 query** 工具：让模型在 tool loop 中直接查到自己最近一次 LLM 调用的预算消耗，决定是否减少 tool 输出 / 调整策略（历史压缩不由模型发起，见下）。
 
 ## 插件声明
 
@@ -74,12 +74,14 @@ meta.subsystem = 'agent'
 
 | usageRatio | tag | advice |
 |---|---|---|
-| `>= 0.85` | CRITICAL | 上下文几乎用尽。建议：调用 memory.compress / 清理 toolResults / 缩减 system prompt。 |
-| `>= 0.70` | WARN | 上下文压力较高。可考虑主动压缩历史或减少后续工具调用的输出体量。 |
+| `>= 0.85` | CRITICAL | 上下文几乎用尽。建议：清理 toolResults / 缩减 system prompt。历史压缩不由模型发起，由记忆压缩插件按阈值自动触发、WebUI 亦可手动；你能做的是减少后续工具输出体量。 |
+| `>= 0.70` | WARN | 上下文压力较高。历史压缩不由模型发起，由记忆压缩插件按阈值自动触发、WebUI 亦可手动；你能做的是减少后续工具输出体量。 |
 | `>= 0.50` | INFO | （健康范围） |
 | `< 0.50` | OK | 预算健康，无需干预。 |
 
 阈值与 `plugin-agent` 内的节流 logger 一致，便于 WebUI 日志、AI 自检、人类观察对齐口径。
+
+advice 文案不写压缩阈值数字、也不承诺"压缩一定会发生"：自动压缩的阈值是 [plugin-memory-summary](./plugin-memory-summary.md) 自己的配置项，没装该插件时就没有自动压缩。对模型只讲它自己能做的事——减少后续工具输出体量。
 
 ## 与其他模块的关系
 

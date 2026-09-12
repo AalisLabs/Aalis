@@ -185,7 +185,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
 **角色卡加载是 cache-only + 启动预扫 + watch。** `loadCard` 只查缓存，缓存由 `ready` 事件里的 `scanAll` 预填，并由 storage 的 `watch` 做热更新。新增的卡文件在扫描或 watch 触发前不可见；当 `storage.watch` 不可用时（`watch?.` 为空），只有重启才会刷新。
 
-**YAML 解析失败会被静默吞掉。** `tryLoadCardFromUri` 整体用 `try/catch`，失败时返回 `undefined`。坏卡不会报错，只会表现为「没有加载到」。排障时可以看 `ctx.logger.info('已加载角色卡…')` 是否出现。
+**YAML 解析失败会点名告警，但不会阻止启动。** `tryLoadCardFromUri` 把「读不到文件」与「读到了但解析不出对象」分开：前者是候选路径探测的正常结果（静默），后者 warn 出 uri 与原因后跳过该卡。顶层不是对象（标量/数组）的卡按解析失败处理，不再被当成全空卡加载。主角色卡解析失败时回退内置 default，日志说的是「存在但解析失败」而非「未找到」。
 
 **找不到主角色卡时回退到内置 default。** 此时 name 为 `Aalis`，不会报错。另外，`getPersonaName()` 在 `name` 为空时返回 `"<fileName>，未设置名字"`。
 

@@ -183,13 +183,6 @@ function tokenize(expr: string): Token[] {
       continue;
     }
 
-    // ** 幂运算
-    if (ch === '*' && i + 1 < len && expr[i + 1] === '*') {
-      tokens.push({ type: 'op', value: '**' });
-      i += 2;
-      continue;
-    }
-
     if (ch === '(') {
       tokens.push({ type: 'lparen', value: '(' });
       i++;

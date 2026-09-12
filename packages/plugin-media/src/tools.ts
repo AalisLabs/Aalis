@@ -126,14 +126,13 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaServiceImpl)
             : undefined;
         const hint = [
           task ? `用户需求: ${task}` : '',
-          !task && customPrompt ? `分析提示词: ${customPrompt}` : '',
+          customPrompt ? `分析提示词: ${customPrompt}` : '',
           extraContext ? `补充上下文: ${extraContext}` : '',
         ]
           .filter(Boolean)
           .join('\n');
 
         let imageUrl: string;
-        const localPath: string | undefined = undefined;
         if (imageInput.startsWith('http://') || imageInput.startsWith('https://') || imageInput.startsWith('data:')) {
           imageUrl = imageInput;
         } else {
@@ -175,7 +174,7 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaServiceImpl)
           };
         }
 
-        const desc = await svc.describeImage(imageUrl, { hint, localPath, detailLevel });
+        const desc = await svc.describeImage(imageUrl, { hint, detailLevel });
         return JSON.stringify(desc ? { description: desc } : { error: '没有可用的视觉模型或识别失败' });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });

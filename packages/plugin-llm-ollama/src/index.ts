@@ -239,7 +239,9 @@ class OllamaClient {
   /** 发现远端模型 id 列表 */
   async fetchRemoteModelIds(): Promise<string[]> {
     try {
-      const res = await fetch(`${this.baseUrl}/api/tags`);
+      // 无超时会让 apply() 里的 await 在「接连接不回包」的端点上停摆到 undici 兜底,
+      // 插件按拓扑序串行卡住;失败语义不变(catch 成不注册 entry)
+      const res = await fetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(10_000) });
       if (!res.ok) return [];
       const data = (await res.json()) as { models: { name: string }[] };
       return data.models.map(m => m.name);
@@ -987,7 +989,10 @@ function resolveCapabilities(
   // 2. /api/show 真实能力(权威)
   if (detected && detected.length > 0) {
     const mapped = mapOllamaCapabilities(detected);
-    if (mapped.length > 0) return mapped;
+    // 探测成功但映射不出对话能力(embedding/insert 专用模型):不回退家族表/兜底,
+    // 返回空能力让调用方跳过注册——否则 ['embedding'] 会被兜底成 [Chat],
+    // 污染 /model 与 WebUI 模型列表,甚至被无 ref 解析选中
+    return mapped.includes(Chat) ? mapped : [];
   }
   // 去掉 tag 部分（如 llama3.1:8b → llama3.1）
   const baseName = model.split(':')[0].toLowerCase();
@@ -1036,14 +1041,20 @@ function parseCustomModels(raw: unknown): string[] {
     .filter(Boolean);
 }
 
-/** 解析能力覆盖 textarea：每行 `<modelId>: cap1,cap2,...` */
+/**
+ * 解析能力覆盖 textarea：每行 `<modelId>: cap1,cap2,...`
+ *
+ * 按**最后一个**冒号切分：Ollama 模型 id 自带 tag（`qwen3:8b`、`bge-m3:latest`），
+ * 按首个冒号切会把 id 截成 `qwen3`、能力段变成 `8b: chat`，整行报废。
+ * 能力名本身不含冒号，故末位冒号即分隔符。
+ */
 function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
   const out = new Map<string, LLMCapability[]>();
   if (!raw || typeof raw !== 'string') return out;
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
-    const colonIdx = trimmed.indexOf(':');
+    const colonIdx = trimmed.lastIndexOf(':');
     if (colonIdx < 0) continue;
     const modelId = trimmed.slice(0, colonIdx).trim();
     const caps = trimmed
@@ -1118,6 +1129,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       ollamaConfig.providerCapabilities,
       detected,
     );
+    if (capabilities.length === 0) {
+      ctx.logger.debug(`跳过 model entry "${modelId}": /api/show 未报告对话能力(embedding 等非对话模型)`);
+      return;
+    }
     const handle = new OllamaModelHandle(
       client,
       modelId,
@@ -1165,7 +1180,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     // 并行查每个模型的真实能力(顺序保留→注册顺序稳定→优先级稳定);失败者回退家族表。
     const detectedCaps = await Promise.all(initialIds.map(id => client.fetchModelCapabilities(id)));
     for (let i = 0; i < initialIds.length; i++) registerOne(initialIds[i], detectedCaps[i]);
-    ctx.logger.info(`Ollama 已连接: ${ollamaConfig.baseUrl}，注册 ${initialIds.length} 个 model entry`);
+    ctx.logger.info(`Ollama 已连接: ${ollamaConfig.baseUrl}，注册 ${registered.size} 个 model entry`);
   }
 
   // 装配 refresh 真实实现：webui 触发时无需重启插件，按 diff 增删 entries。
@@ -1178,7 +1193,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     for (const id of next) {
       if (!registered.has(id)) {
         registerOne(id, await client.fetchModelCapabilities(id));
-        added.push(id);
+        if (registered.has(id)) added.push(id); // 非对话模型被跳过,不算新增
       }
     }
     for (const id of [...registered.keys()]) {

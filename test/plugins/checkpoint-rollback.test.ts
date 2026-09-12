@@ -187,6 +187,10 @@ describe('checkpoint 回滚', () => {
     };
     disk.set(`${turnDir}/manifest.json`, JSON.stringify(manifest));
 
+    // getManifest 是唯一读入口：自指条目在这里就被滤掉（WebUI 的 getManifest action 同样拿不到）
+    const loaded = await svc.getManifest('sessA', turnId);
+    expect(loaded?.files.map(f => f.uri)).toEqual(['data:/a.txt']);
+
     const result = await svc.rollback('sessA', turnId);
     expect(result.ok).toBe(true);
     expect(result.errors).toEqual([]);

@@ -29,7 +29,12 @@ const ATTACHMENT_KIND_LABEL: Record<string, string> = {
   file: AttachmentRefKind.File,
 };
 
-import { lookupCachedDescription, rememberDescription, VIDEO_FAILURE_TEXTS } from './cache.js';
+import {
+  lookupCachedDescription,
+  rememberDescription,
+  rememberDescriptionAlias,
+  VIDEO_FAILURE_TEXTS,
+} from './cache.js';
 import { buildIncomingImageContext } from './context.js';
 import {
   downloadToTemp,
@@ -266,7 +271,8 @@ export class MediaServiceImpl implements MediaService {
    * 对入站附件图片进行落盘，返回可写入 AttachmentRef 的相对路径。
    *
    * - `data:` URI（WebUI base64）→ 解码后写入 `data:/images/{session}/{hash}.{ext}`，
-   *   返回 `data/images/{session}/{hash}.{ext}`（历史相对路径格式）。
+   *   返回 `data/images/{session}/{hash}.{ext}`（历史相对路径格式），并登记
+   *   「来源 → 落盘 ref」描述缓存别名（见 cache.rememberDescriptionAlias）。
    * - `http(s)://` URL → 直接返回原 URL（analyze_image 可直接处理）。
    * - 已是 storage URI（如 `data:/images/...`，OneBot 已落盘）→ 转换为相对路径。
    * - 其它无法处理的格式 → 返回 null（描述仍写入，不含 ref）。
@@ -296,7 +302,11 @@ export class MediaServiceImpl implements MediaService {
       const filename = `${hash}.${ext}`;
       const { storage } = getMediaRuntime();
       await storage.writeFile(`data:/${dirRel}/${filename}`, buf);
-      return `data/${dirRel}/${filename}`;
+      const ref = `data/${dirRel}/${filename}`;
+      // 落盘时登记一次别名：原始来源串（这条整段 base64 data URI）此后经别名落到
+      // ref 的内容哈希键上——同一张图从别的来源再进来只识别一次，描述也进得了快照。
+      rememberDescriptionAlias(data, ref);
+      return ref;
     } catch (err) {
       this.logger.debug(`图片落盘失败，将不含 ref: ${err instanceof Error ? err.message : err}`);
       return null;
@@ -663,6 +673,10 @@ export class MediaServiceImpl implements MediaService {
 
   rememberDescription(imageUrl: string, description: string): void {
     rememberDescription(imageUrl, description);
+  }
+
+  rememberDescriptionAlias(source: string, landedRef: string): void {
+    rememberDescriptionAlias(source, landedRef);
   }
 
   async buildContext(msg: IncomingMessage, opts?: BuildContextOptions): Promise<string> {

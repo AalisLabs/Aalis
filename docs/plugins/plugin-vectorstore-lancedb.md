@@ -14,9 +14,10 @@ meta.name = '@aalis/plugin-vectorstore-lancedb'
 meta.displayName = 'LanceDB 向量库'
 meta.subsystem = 'embedding'
 meta.provides = ['vectorstore']
+meta.inject = { required: ['storage'] }
 ```
 
-未声明 `inject`。运行时经存储网关把 `path` 解析为本地目录，要求该 URI 所在的存储根具备 write 与 local-path 能力。
+运行时经存储网关把 `path` 解析为本地目录，没有 storage 连库都开不了，故 storage 是必需依赖；还要求该 URI 所在的存储根具备 write 与 local-path 能力。声明 `required` 也换来停机拓扑保证：消费者先关、提供者后关。
 
 注册优先级: **10**（高于 plugin-vectorstore-flat）
 

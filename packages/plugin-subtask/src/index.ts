@@ -34,7 +34,6 @@ export const inject = {
 
 export const configSchema: ConfigSchema = {
   enabled: { type: 'boolean', label: '启用子任务工具', default: true },
-  pollIntervalMs: { type: 'number', label: '等待轮询间隔 (ms)', default: 3000 },
   maxWaitMs: { type: 'number', label: '单次等待最大时长 (ms)', default: 300000 },
   defaultProvider: {
     type: 'string',
@@ -52,7 +51,6 @@ export const configSchema: ConfigSchema = {
 
 interface PluginConfig {
   enabled: boolean;
-  pollIntervalMs: number;
   maxWaitMs: number;
   defaultProvider: string;
   defaultModel: string;
@@ -61,7 +59,6 @@ interface PluginConfig {
 function resolveConfig(raw: Record<string, unknown>): PluginConfig {
   return {
     enabled: raw.enabled !== false,
-    pollIntervalMs: Number(raw.pollIntervalMs) || 3000,
     maxWaitMs: Number(raw.maxWaitMs) || 300000,
     defaultProvider: String(raw.defaultProvider ?? '').trim(),
     defaultModel: String(raw.defaultModel ?? '').trim(),
@@ -445,7 +442,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             },
             timeout_seconds: {
               type: 'number',
-              description: '超时时间（秒），默认 120',
+              description: `超时时间（秒）。缺省取插件配置 maxWaitMs（当前 ${Math.round(cfg.maxWaitMs / 1000)} 秒）；传入时最终取二者较小者。`,
             },
           },
           required: ['subtask_ids'],

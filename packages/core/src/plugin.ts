@@ -535,7 +535,6 @@ export class PluginManager {
         const target = computeTargetState(entry, currentReason, this.rootCtx);
         if (target !== 'active') continue;
         await activatePlugin(entry, {
-          plugins: this.plugins,
           rootCtx: this.rootCtx,
           logger: this.logger,
           disposeTimeoutMs: this.disposeTimeoutMs,

@@ -301,7 +301,7 @@ await ctx.emit('trigger:fired', {
 
 ### 触发器全部委托 cron-engine
 
-`cron` / `interval` 触发器都转成 cron-engine 的 `subscribe`（`interval` → `@every Ns`），与 scheduler 共享整分钟 tick，不再各自 `setInterval`（`triggers.ts`）。所以 `cron-engine` 是**硬依赖**（`required`）。`once` 用 `setTimeout`、`event` 用 `ctx.on` 订阅（`triggers.ts`）。
+`cron` / `interval` 触发器都转成 cron-engine 的 `subscribe`（`interval` → `@every Ns`），与 scheduler 共享整分钟 tick，不再各自 `setInterval`（`triggers.ts`）。所以 `cron-engine` 是**硬依赖**（`required`）。`once` 用 `setTimeout`，触发即把 `firedAt` 记入 `runsFile`，一生只触发一次；**定义不存在时记账随之清除**——`removeWorkflow` 当场清，手删 yaml 则由启动时的 `pruneOnceFired`（扫完定义、注册触发器之前）按现存定义集补清；`event` 用 `ctx.on` 订阅（`triggers.ts`）。
 
 ### storage 不是沙盒
 
@@ -313,7 +313,7 @@ await ctx.emit('trigger:fired', {
 - **event filter 只做顶层等值匹配**：`filter` 的每个 key 必须在事件第一个参数（顶层）等值命中；payload 不是对象时只有空 filter 通过（`triggers.ts`）。无嵌套/范围匹配。
 - **DAG 失败即停**：任一节点失败，引擎不再调度新批次，未跑的节点标 `skipped`，整 run = `failed`（`engine.ts`）。没有节点级重试 / 部分继续。
 - **取消不打断进行中的节点**：`cancelRun` 置 cancelToken，引擎只在**下一批调度前**检查；已 `running` 的节点（尤其 `wait` / `agent` 的阻塞等待）不会被中断（`engine.ts`）。
-- **运行历史是滚动 + 整体重写**：`RunStore` 超过 `maxRuns`（默认 200、最小 10）裁剪最旧，每次变更整体重写文件、写入串行化（`persistence.ts`）。历史不是无限审计日志。
+- **运行历史是滚动 + 整体重写**：`RunStore` 超过 `maxRuns`（默认 200、最小 10）裁剪最旧，每次变更整体重写文件、写入串行化（`persistence.ts`）。历史不是无限审计日志。同文件还存 once 的 `firedAt`（`{ runs, onceFired }`）。
 - **节点 `output` 截断**：存入 `outputs` 的是完整结果，但 `NodeRunInfo.output` 展示字段截断到 1000 字符（`engine.ts`）。下游插值用的是完整值，UI 看到的是预览。
 - **同名服务无能力选择**：0.5.0 起 DI 不做能力匹配；多个 workflow provider 并存时靠 preference/priority 选，能力信息在实例上自管（见 [service-model](../concepts/service-model.md)）。
 

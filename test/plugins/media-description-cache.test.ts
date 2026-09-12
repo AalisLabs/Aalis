@@ -1,11 +1,14 @@
+import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import type { Context, Logger } from '@aalis/core';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import type { MediaProcessor } from '../../packages/api-media/src/index.js';
 import {
   lookupCachedDescription,
   rememberDescription,
   VIDEO_FAILURE_TEXTS,
 } from '../../packages/plugin-media/src/cache.js';
+import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
@@ -99,5 +102,59 @@ describe('描述缓存键空间一致性（裸描述入库、消费点包装）'
     expect(lookupCachedDescription(`${key}#4`)).toBe('[视频] 一只猫在跳');
     rememberDescription(`${key}#5`, '[画面] 一只猫在跳');
     expect(lookupCachedDescription(`${key}#5`)).toBe('[画面] 一只猫在跳');
+  });
+});
+
+// 「来源 → 落盘 ref」别名：非内容寻址的来源串（WebUI 上传的整段 base64 data URI）
+// 本身不含内容哈希，落盘后才有内容寻址路径。落盘时登记一次别名，此后按原始来源串
+// 读写描述都落到落盘 ref 的内容哈希键上——引用消息只拿到原始来源串时照样命中，
+// 同一张图换来源进来也不重认。
+describe('来源 → 落盘 ref 别名', () => {
+  /** 只记 uri 的内存 storage：cacheImageRef 只用 writeFile */
+  const files = new Map<string, string>();
+  beforeAll(() => {
+    setMediaRuntime({
+      proc: {} as never,
+      storage: {
+        writeFile: async (uri: string) => void files.set(uri, ''),
+      } as never,
+    });
+  });
+
+  it('引用消息带原始图片 URL 时命中已有描述', async () => {
+    const { svc, describeCount } = makeSvc();
+    const bytes = Buffer.from('alias-case-fake-png-bytes');
+    const sourceUrl = `data:image/png;base64,${bytes.toString('base64')}`;
+    const hash = createHash('sha256').update(bytes).digest('hex').slice(0, 16);
+
+    // 到达路径：识别一次 + 落盘（落盘处登记别名）
+    await svc.processMessage(msgWith(sourceUrl));
+    expect(describeCount()).toBe(1);
+    expect(files.has(`data:/images/onebot_t_group_1/${hash}.png`), '落盘路径按内容哈希').toBe(true);
+
+    // 同一张图换来源（适配器已落盘的相对路径）、换会话再进来：模型零新调用
+    const second = await svc.processMessage({
+      content: '[图片]',
+      sessionId: 'onebot:t:group:2',
+      platform: 'onebot',
+      attachments: [{ kind: 'image', data: `data/images/onebot_t_group_2/${hash}.png` }],
+    } as IncomingMessage);
+    expect(describeCount(), '跨来源命中同一条内容哈希键，不该再识别').toBe(1);
+    expect(second.items[0].description).toContain('猫在沙发上');
+  });
+
+  it('落盘方登记后按原始远端 URL 查即命中（OneBot 引用消息那条路径的闭环）', async () => {
+    const { svc, describeCount } = makeSvc();
+    // 适配器先把 QQ 直链落成内容寻址路径，媒体侧按落盘 ref 识别入缓存
+    const landed = 'data/images/onebot_t_group_9/0f1e2d3c4b5a6978.jpg';
+    await svc.processMessage(msgWith(landed));
+    expect(describeCount()).toBe(1);
+
+    const remote = 'https://gchat.qpic.cn/download?fileid=abc&rkey=xyz';
+    expect(svc.lookupDescription(remote), '未登记别名时原始 URL 查不到').toBeNull();
+
+    // 适配器落盘成功处调的就是这个（MediaService.rememberDescriptionAlias）
+    svc.rememberDescriptionAlias(remote, landed);
+    expect(svc.lookupDescription(remote), '登记后原始 URL 落到落盘 ref 的内容哈希键').toBe('猫在沙发上');
   });
 });

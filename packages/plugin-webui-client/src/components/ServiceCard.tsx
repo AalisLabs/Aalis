@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api } from '../api';
+import { api, errText } from '../api';
 import type { ServiceInfo } from '../types';
 
 /**
@@ -37,6 +37,8 @@ export function ServiceCard({
         body: JSON.stringify({ contextId }),
       });
       onPreferChanged?.();
+    } catch (err) {
+      window.alert(errText(err, '切换服务偏好失败'));
     } finally {
       setBusy(false);
     }
@@ -48,6 +50,8 @@ export function ServiceCard({
     try {
       await api(`/api/services/${encodeURIComponent(name)}/prefer`, { method: 'DELETE' });
       onPreferChanged?.();
+    } catch (err) {
+      window.alert(errText(err, '恢复默认服务偏好失败'));
     } finally {
       setBusy(false);
     }

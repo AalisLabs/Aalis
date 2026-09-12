@@ -112,7 +112,7 @@ function guessExtFromMime(mime: string | null): string | undefined {
 export async function safeDownloadToTemp(
   url: string,
   opts: SafeFetchOptions = {},
-): Promise<{ path: string; cleanup: () => Promise<void> } | null> {
+): Promise<{ path: string; uri: string; cleanup: () => Promise<void> } | null> {
   if (!url.startsWith('http://') && !url.startsWith('https://')) return null;
   const { proc, storage } = getMediaRuntime();
   const tmp = await proc.makeTempDir('media-dl');
@@ -121,8 +121,11 @@ export async function safeDownloadToTemp(
     const clean = url.split('?')[0].split('#')[0];
     const ext = extname(clean).toLowerCase() || guessExtFromMime(contentType) || '.bin';
     const fileName = `download${ext}`;
-    await storage.writeFile(`${tmp.uri}/${fileName}`, buffer);
-    return { path: `${tmp.path}/${fileName}`, cleanup: tmp.cleanup };
+    const uri = `${tmp.uri}/${fileName}`;
+    await storage.writeFile(uri, buffer);
+    // uri 必须一并返回：下游（materializeAttachment → audioToBase64）按 uri 判「是否落入
+    // storage 根」，丢掉它会让所有 http 音频附件必抛。
+    return { path: `${tmp.path}/${fileName}`, uri, cleanup: tmp.cleanup };
   } catch {
     await tmp.cleanup();
     return null;

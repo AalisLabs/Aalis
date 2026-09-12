@@ -236,7 +236,6 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
     };
 
     const activating = activatePlugin(entry, {
-      plugins: new Map([['race-mod', entry]]),
       rootCtx: root,
       logger: new DefaultLogger('test'),
     });
@@ -339,7 +338,6 @@ describe('拆卸窗口内的 provides 校验归因', () => {
     };
 
     const activating = activatePlugin(entry, {
-      plugins: new Map([['prov-mod', entry]]),
       rootCtx: root,
       logger: new DefaultLogger('test'),
     });

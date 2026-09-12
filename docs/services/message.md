@@ -53,7 +53,7 @@
 | --- | --- | --- | --- |
 | `AttachmentRefKind` | const 对象 + type | `attachment-ref.ts` | 中文显示名：`图片`/`音频`/`视频`/`文件` |
 | `AttachmentRef` | interface | `attachment-ref.ts` | `{ kind, desc?, ref }` |
-| `formatAttachmentRef(r)` | function | `attachment-ref.ts` | `→ '[图片: desc \| ref:xxx]'`（desc 空则省冒号段） |
+| `formatAttachmentRef(r)` | function | `attachment-ref.ts` | `→ '[图片: desc \| ref:xxx]'`（desc 空则省冒号段；desc 自动单行化，`\|` → `丨`、`]` → `］`） |
 | `parseAttachmentRefs(text)` | function | `attachment-ref.ts` | 扫描全部 `[<kind>(: <desc>)? \| ref:<ref>]` 占位符 |
 | `buildAttachmentRefMatcher(kind, ref)` | function | `attachment-ref.ts` | 构造匹配「指定 kind + 指定 ref」全部占位符的正则 |
 
