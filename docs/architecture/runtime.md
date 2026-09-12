@@ -34,11 +34,28 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 | `createProcessRespawnStrategy()` | 进程级重启策略（`app.restart()` → 子进程重生）。 |
 
 `startAalis` 的 `opts`：`configPath`（默认 `cwd/aalis.config.yaml`）、`projectDir`（默认
-`process.cwd()`）。
+`process.cwd()`）、`pluginLoader`、`consoleSink` / `fileLog` / `terminalRestore`（默认开）、`subcommands`。
+
+子命令分发是默认行为：argv 非空即子命令模式——`node index.mjs <name> [args]` 等价于聊天里的
+`/<name> args`，在 `app.start()` 之前短路执行并退出；首项不是已注册命令时报错退出（exit 2）。两种情况
+都不会启动守护进程（打错的命令名若照常起守护，就是与运行中实例并存的第二个实例）。argv 为空才进守护进程。
+`subcommands` 只用于宿主自己解析 argv 的场合，传要分发的数组（`[]` 即不分发），默认 `process.argv.slice(2)`。
+
+子命令进程是完整加载全部插件、但与正在运行的守护进程零通信的一次性实例，由此有三条边界：
+
+- 不写 `data/latest.log`（否则会截断守护进程正在写的日志）；日志走 stderr，stdout 只有命令结果，便于脚本消费；
+- 没有重启能力：不注入重启策略，`restart` 子命令返回「不可用」而非重启守护进程；
+- `status` / `shutdown` 只作用于这个临时实例。写数据的指令按数据落在哪分两类：落在 `aalis.config.yaml`
+  的（如 `auto`）经保存触发守护进程的配置热重载，会生效；落在各插件自己内存态并各自落盘的
+  （如 `level` 的等级表、`session.*` 的会话覆盖）在守护进程运行期间不会对其生效，且可能被守护进程下次落盘
+  覆盖。管理运行中的实例请用聊天指令 / TUI / WebUI。
+
+它仍会完整跑一遍插件 `apply`，因此守护进程运行期间执行子命令会有两处可见副作用：端口型插件（webui-server /
+mcp-server）绑定失败并打一条 error 后降级；config-sync 可能按 schema 回填 / 裁剪配置文件，守护进程会因此触发一次热重载。
 
 ## 两种部署模型（同一套契约，两个加载器）
 
-- **独立（纯 npm/pnpm）**：`npm create aalis <dir>` 生成项目——`package.json` 含所选 @aalis 插件、
+- **独立（纯 npm/pnpm）**：`npm create aalis@latest <dir>` 生成项目——`package.json` 含所选 @aalis 插件、
   `index.mjs` 仅 `import { startAalis } from '@aalis/runtime'; startAalis()`、`aalis.config.yaml`。
   运行时 `createNodeModulesPluginLoader` 从 `node_modules` 发现插件。
 - **monorepo 自托管**：本仓库自身，入口 `src/index.ts` 直接从 `@aalis/runtime` 引入

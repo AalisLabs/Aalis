@@ -58,7 +58,7 @@ updateSessionTitle(sessionId: string, title: string): Promise<void>;
 ```ts
 interface SessionConfig {
   llm?: { provider: string; model: string };  // provider = LLM 插件实例 contextId（如 @aalis/plugin-llm-openai:main）
-  enabledToolGroups?: string[];
+  enabledToolGroups?: string[];                // 启用的工具分组；'*' = 全部分组。会话未设置时继承平台档，最终为空则只给无分组的通用工具
   persona?: string;                            // 人格文件名（不含后缀）
   think?: boolean;                             // 会话级 thinking 覆盖（/session.set -t on|off；未设置=继承 provider 全局）
   systemPromptExtra?: string;

@@ -19,14 +19,14 @@ meta.inject = {} // 无依赖
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `apiKey` | string | — | API 密钥（必填，secret） |
-| `baseUrl` | string | `https://api.openai.com/v1` | API 端点完整前缀（含版本段） |
-| `model` | select | `text-embedding-3-small` | 嵌入模型名（动态选项来源: embedding） |
+| `apiKey` | string | 必填 | API Key：OpenAI API 密钥（secret） |
+| `baseUrl` | string | `'https://api.openai.com/v1'` | API 地址：API 端点完整前缀（含版本段）；插件只在其后拼 /embeddings 与 /models |
+| `model` | select | `'text-embedding-3-small'` | Embedding 模型：用于生成文本向量的模型 |
 
 ## 特性
 
 - 调用 `/embeddings` 端点
 - `listModels()` 从 `/models` 获取可用模型
 - apiKey 缺失时抛错
-- 启动时连通性检查（失败仅警告，不阻塞启动）
+- 启动时用 `embed('ping')` 做一次连通性检查。apply 会等检查结束，但请求本身不设超时；检查失败只记警告，服务照常注册
 - 修改 `baseUrl` 可对接兼容 OpenAI 格式的其他 Embedding 服务（须写到完整前缀，如 `http://host/v1`）

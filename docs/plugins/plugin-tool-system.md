@@ -18,23 +18,24 @@ meta.inject = { required: ['tools'] }
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `workingDirectory` | string | `workspace:/` | 进程启动时的初始 cwd（unix 心智模型）。agent 可用 `cd` 工具在会话内切换，不会写回配置 |
-| **shell** (分组) | | | |
-| `shell.enabled` | boolean | true | 启用 Shell 工具 |
-| `shell.defaultTimeout` | number | 30000 | 默认超时 (ms) |
-| `shell.maxTimeout` | number | 300000 | 最大超时 (ms) |
-| `shell.maxOutputSize` | number | 65536 | 最大输出大小 (bytes) |
-| **file** (分组) | | | |
-| `file.enabled` | boolean | true | 启用文件工具 |
-| `file.maxReadSize` | number | 1048576 | 最大读取大小 (1MB) |
-| `file.maxWriteSize` | number | 10485760 | 最大写入大小 (10MB) |
-| `file.allowedRoots` | string[] | [`workspace`, `tmp`] | 文件工具可访问的 storage 根；默认仅 agent 工作区，不含 `data` 等系统根（防裸读 `data:/users.json` 等）。设为 `*` 放开全部 readable 根；写入/删除仍受根自身权限限制 |
-| **system** (分组) | | | |
-| `system.enabled` | boolean | true | 启用系统信息工具（含 `cwd` / `cd`） |
-| **http** (分组) | | | |
-| `http.enabled` | boolean | true | 启用 HTTP 工具 |
-| `http.defaultTimeout` | number | 30000 | 默认超时 (ms) |
-| `http.maxResponseSize` | number | 1048576 | 最大响应大小 (1MB) |
+| `workingDirectory` | string | `'workspace:/'` | 初始工作目录：进程启动时的初始 cwd（unix 心智模型）。agent 可用 cd 工具在会话内切换，不会写回本配置。shell/code-runner 仍使用各自独立的 workingDirectory 配置，不受 cd 影响。 |
+| `shell` | object | — | Shell 工具 |
+| `shell.enabled` | boolean | `true` | 启用 Shell 工具 |
+| `shell.defaultTimeout` | number | `30000` | 默认超时 (ms) |
+| `shell.maxTimeout` | number | `300000` | 最大超时 (ms) |
+| `shell.maxOutputSize` | number | `65536` | 最大输出字节 |
+| `file` | object | — | 文件工具 |
+| `file.enabled` | boolean | `true` | 启用文件工具 |
+| `file.maxReadSize` | number | `1048576` | 最大读取字节 |
+| `file.maxSearchBytes` | number | `1048576` | 单次搜索最大扫描字节 |
+| `file.maxWriteSize` | number | `10485760` | 最大写入字节 |
+| `file.allowedRoots` | multiselect | `["workspace","tmp"]` | 允许访问的存储根：默认仅 agent 工作区（workspace/tmp），不含 data 等系统根（防裸读 data:/users.json 等）。设为 * 放开全部 readable 根；也可显式列出根名。写入/删除仍受各根自身权限限制。 |
+| `system` | object | — | 系统工具 |
+| `system.enabled` | boolean | `true` | 启用系统工具 |
+| `http` | object | — | HTTP 工具 |
+| `http.enabled` | boolean | `true` | 启用 HTTP 工具 |
+| `http.defaultTimeout` | number | `30000` | 默认超时 (ms) |
+| `http.maxResponseSize` | number | `1048576` | 最大响应字节 |
 
 ## 路径与 cwd 心智模型
 

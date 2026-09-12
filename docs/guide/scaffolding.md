@@ -31,16 +31,19 @@ Aalis 提供两个互不相干的脚手架，先确认你需要哪个：
 
 ```bash
 # 交互式：选模板档 + 同类适配器，建好后自动 npm install
-npm create aalis my-bot
+npm create aalis@latest my-bot
 
 # 非交互：standard 档 + 各组默认适配器（适合 CI / 管道 / 快速起步）
-npm create aalis my-bot -- --yes
+npm create aalis@latest my-bot -- --yes
 
 # 指定模板档、跳过安装
-npm create aalis my-bot -- --tier minimal --no-install
+npm create aalis@latest my-bot -- --tier minimal --no-install
 ```
 
 > 注意 `--` 分隔符：`npm create` 后给脚手架的 flag 必须放在 `--` 之后，否则会被 npm 自身解析、传不到脚手架。
+>
+> 显式写 `@latest`：不带版本时 `npm create` 会直接复用 `~/.npm/_npx/` 里已缓存的旧版 `create-aalis` 而不检查更新；
+> 0.4 之前的版本经 `.bin` 软链调用时会静默退出（exit 0、无输出、不生成任何文件）。
 
 运行后：
 
@@ -48,6 +51,12 @@ npm create aalis my-bot -- --tier minimal --no-install
 cd my-bot
 # 若所选插件需要 API key：直接填进 aalis.config.yaml（该文件已在生成的 .gitignore 里）
 npm start
+
+# 一次性子命令：等价于聊天里的 /status，执行完即退出（`@aalis/runtime` 默认行为）；
+# 可用命令取决于装了哪些插件，argv 非空但不是已注册命令时报错退出（exit 2），不会启动守护进程。
+# 子命令在独立的一次性进程里执行：status/shutdown/restart 只作用于该临时实例；改配置文件的指令（如 auto）
+# 经热重载对守护进程生效，改插件内存态的（如 level、session.*）不生效。管理运行中的实例请用聊天指令 / WebUI
+npm start -- status
 ```
 
 ### 交互式 prompts
@@ -60,7 +69,7 @@ npm start
    | 档 | 装什么 |
    |---|---|
    | `bare` | 只装 `@aalis/core` + `@aalis/runtime`（完全自定义起点） |
-   | `minimal` | 最简对话闭包：网关 + 指令 + agent + 权限 + 会话 + 跨会话历史 + 本地存储/进程（`MINIMAL_BASE`，`cli.ts`） |
+   | `minimal` | 最简对话闭包：网关 + 指令 + agent + 权限 + 确认通道 + 会话 + 跨会话历史 + 本地存储/进程（`MINIMAL_BASE`，`cli.ts`） |
    | `standard` | minimal + 常用全家桶：WebUI / 人设 / 向量记忆 / 工具 / 调度 / 技能 / MCP …（`STANDARD_EXTRA`，`cli.ts`） |
    | `full` | 实时查 npm 全装所有官方插件（可能需手动取舍，`cli.ts`） |
 
@@ -121,6 +130,22 @@ startAalis().catch(err => {
 ### 配置约定
 
 `aalis.config.yaml`（`renderConfig`，`cli.ts`）：需要密钥/地址的已知插件会预填一个空的配置桩（如 `apiKey: ""`），填进去即可；其余用空 `plugins: {}` 默认配置启动。
+
+装了 `plugin-session-manager` 时，还会给已选装的 owner 专用平台（`cli`、`webui`）各写一条平台档，开放全部工具分组：
+
+```yaml
+plugins:
+  "@aalis/plugin-session-manager":
+    platformProfiles:
+      - platform: cli
+        enabledToolGroups: ["*"]
+      - platform: webui
+        enabledToolGroups: ["*"]
+```
+
+带分组的工具（shell / 文件 / 技能 / 调度 / 子任务等）默认不暴露，平台档列出该组或写 `"*"` 才对模型可见。之后接入 OneBot 等多人平台时不会自动开组，需要在平台档里按需列出——群成员能驱动哪些 public 工具靠这道闸控制（见 [security-model](../concepts/security-model.md)）。
+
+首次启动时 runtime 会把每个已装插件 `configSchema` 的默认值同步写回该文件（`config-sync`），几行的初始配置会展开成全量键值——这是预期行为，之后可直接在文件里改任意项；WebUI 配置页与文件双向同步。
 
 **密钥直接写在 `aalis.config.yaml` 里，该文件在生成的 `.gitignore` 内、不入库。** 曾经走 `.env` + `${VAR}` 插值，但它承载的东西与配置文件完全重合，唯一区别只是「哪个文件进 git」；把配置文件本身 ignore 掉之后，那一层就成了多余，已随 `${VAR}` 插值一并删除。**现在写 `${VAR}` 会被原样当作字面量字符串**（不再替换），不应再这样写。
 

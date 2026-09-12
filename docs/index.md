@@ -30,7 +30,7 @@ features:
 一行命令，起一个能跑的机器人项目：
 
 ```bash
-npm create aalis my-bot
+npm create aalis@latest my-bot
 ```
 
 进入目录，在 `aalis.config.yaml` 里填好大模型 API 与平台账号，启动即可。
