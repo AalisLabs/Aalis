@@ -2,10 +2,11 @@ import type { CommandService } from '@aalis/api-commands';
 import type { App } from '@aalis/core';
 
 /**
- * 尝试把 argv 当作命令调用：`aalis <name> [args...]` ↔ chat 中的 `/<name> args`。
+ * 把 argv 当作命令调用：`aalis <name> [args...]` ↔ chat 中的 `/<name> args`。
  *
- * - 返回 number 时表示命中并需要按该 exit code 结束进程；
- * - 返回 null 表示未命中（commands 服务不存在或命令名未注册），调用方应继续守护进程模式。
+ * 返回进程 exit code：命中则执行并返回 0；commands 服务不存在或命令名未注册则经 `err`
+ * 报错并返回 2。**不存在「未命中就放行」的分支**——argv 非空即子命令模式，调用方据此退出、
+ * 不进守护进程：打错的命令名若照常起守护，就是与运行中实例并存的第二个实例。
  *
  * 不直接绑定任何具体命令；所有命令由插件向 commands 服务注册。
  *
@@ -15,11 +16,18 @@ export async function tryDispatchSubcommand(
   app: App,
   argv: string[],
   out: (msg: string) => void = msg => console.log(msg),
-): Promise<number | null> {
+  err: (msg: string) => void = msg => console.error(msg),
+): Promise<number> {
+  const [cmdName = '', ...rest] = argv;
   const commands = app.ctx.getService<CommandService>('commands');
-  if (!commands) return null;
-  const [cmdName, ...rest] = argv;
-  if (!cmdName || !commands.has(cmdName)) return null;
+  if (!commands) {
+    err(`无法执行子命令「${cmdName}」：commands 服务不可用（未安装 @aalis/plugin-commands？）`);
+    return 2;
+  }
+  if (!cmdName || !commands.has(cmdName)) {
+    err(`未知子命令「${cmdName}」。子命令等价于聊天里的 /${cmdName}；不带参数启动才进守护进程。`);
+    return 2;
+  }
   const result = await commands.execute(cmdName, {
     sessionId: 'cli',
     platform: 'cli',

@@ -571,6 +571,17 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     } catch (err) {
       ctx.logger.warn(`persona 启动扫描失败：${err}`);
     }
+    // 首启主目录尚不存在时 watch 会 ENOENT：先补建（只建本插件的主目录，configDir 等外部根不代建）。
+    // 与监听分开：只读根 / 符号链接目录上 mkdir 会抛，不能连带放弃对已存在目录的监听。
+    try {
+      await storage.stat(searchUris[0]);
+    } catch {
+      try {
+        await storage.mkdir?.(searchUris[0]);
+      } catch {
+        /* 建不了就照旧：下面的监听会给出失败原因 */
+      }
+    }
     for (const dir of searchUris) {
       try {
         const unwatch = storage.watch?.(dir, async () => {

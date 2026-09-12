@@ -109,8 +109,13 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
         now: Date.now(),
       });
       if (!skip) {
+        const hasChannel = authority.hasConfirmHandler(g.platform); // await 前取：等待期间通道可能被注销
         const ok = await authority.requestAccess({ ...accessBase, confirm });
-        if (!ok) return `操作已取消：${capability} 需确认后执行`;
+        if (!ok) {
+          return hasChannel
+            ? `操作已取消：${capability} 需确认后执行`
+            : `操作已取消：${capability} 需确认后执行，但平台 ${g.platform} 没有确认通道（未安装 @aalis/plugin-session-confirm）`;
+        }
       }
     }
     return null;

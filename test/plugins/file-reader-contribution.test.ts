@@ -105,8 +105,13 @@ function createMemoryStorage(): StorageService {
 
 interface Fixture {
   app: App;
-  /** 经插件注册的 preprocessor 上传一个文本文件，返回文件 ID 与附件描述 */
-  upload(sessionId: string, name: string, content: string): Promise<{ id: string; desc: string }>;
+  /** 经插件注册的 preprocessor 上传一个文件（默认按文本），返回文件 ID 与附件描述 */
+  upload(
+    sessionId: string,
+    name: string,
+    content: string | Buffer,
+    mimeType?: string,
+  ): Promise<{ id: string; desc: string }>;
   dispose(): void;
 }
 
@@ -134,9 +139,9 @@ async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
 
   return {
     app,
-    async upload(sessionId: string, name: string, content: string) {
+    async upload(sessionId: string, name: string, content: string | Buffer, mimeType = 'text/plain') {
       if (!preprocessor) throw new Error('插件未注册 preprocessor');
-      const buffer = Buffer.from(content, 'utf-8');
+      const buffer = typeof content === 'string' ? Buffer.from(content, 'utf-8') : content;
       const msg: IncomingMessage = {
         content: '看看这个',
         sessionId,
@@ -145,8 +150,8 @@ async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
           {
             kind: 'file',
             name,
-            mimeType: 'text/plain',
-            data: `data:text/plain;base64,${buffer.toString('base64')}`,
+            mimeType,
+            data: `data:${mimeType};base64,${buffer.toString('base64')}`,
           },
         ],
       };
@@ -424,6 +429,52 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       const text = contentOf(injected);
       expect(text).toContain('(1 个');
       expect((text.match(/dup\.txt/g) ?? []).length).toBe(1);
+    } finally {
+      fx.dispose();
+    }
+  });
+});
+
+/** 最小合法 PDF（未压缩、纯 ASCII，xref 偏移按实际字节算）：一页 Helvetica 写一行文字 */
+function minimalPdf(text: string): Buffer {
+  const stream = `BT /F1 24 Tf 72 700 Td (${text}) Tj ET`;
+  const objs = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let body = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  objs.forEach((o, i) => {
+    offsets.push(Buffer.byteLength(body));
+    body += `${i + 1} 0 obj\n${o}\nendobj\n`;
+  });
+  const xref = Buffer.byteLength(body);
+  body += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  body += offsets.map(o => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
+  body += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(body, 'latin1');
+}
+
+describe('plugin-file-reader: PDF 抽文本（unpdf）', () => {
+  it('上传小 PDF → 正文抽出并 inline 到附件描述', async () => {
+    const fx = await setup();
+    try {
+      const { desc } = await fx.upload('s-pdf', 'hello.pdf', minimalPdf('Hello unpdf'), 'application/pdf');
+      expect(desc).toContain('--- 文件内容 ---');
+      expect(desc).toContain('Hello unpdf');
+    } finally {
+      fx.dispose();
+    }
+  });
+
+  it('字节不是 PDF → 解析失败占位，不抛出', async () => {
+    const fx = await setup();
+    try {
+      const { desc } = await fx.upload('s-pdf', 'bad.pdf', Buffer.from('not a pdf'), 'application/pdf');
+      expect(desc).toContain('[PDF 解析失败]');
     } finally {
       fx.dispose();
     }

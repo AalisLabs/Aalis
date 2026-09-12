@@ -56,15 +56,23 @@ class FakeToolService implements ToolService {
     return () => this.groups.delete(info.name);
   }
 
-  getDefinitions(): ToolDefinition[] {
-    return [...this.tools.values()].map(t => t.definition);
+  // 镜像真实注册表的分组语义（plugin-tools/src/tools.ts）：无分组恒可见；带分组只在命中时返回，'*' = 全部；
+  // 不传即只给无分组工具。此前替身无视过滤返回全部，掩盖了 ListTools 取不到带分组工具定义的缺陷。
+  getDefinitions(filter?: { groups?: string[] }): ToolDefinition[] {
+    const enabled = new Set(filter?.groups);
+    return [...this.tools.values()]
+      .filter(t => enabled.has('*') || !t.groups?.length || t.groups.some(g => enabled.has(g)))
+      .map(t => t.definition);
   }
-  getSummaries(): ToolSummary[] {
-    return [...this.tools.values()].map(t => ({
-      name: t.definition.function.name,
-      description: t.definition.function.description,
-      groups: t.groups,
-    }));
+  getSummaries(filter?: { groups?: string[] }): ToolSummary[] {
+    const enabled = new Set(filter?.groups);
+    return [...this.tools.values()]
+      .filter(t => enabled.has('*') || !t.groups?.length || t.groups.some(g => enabled.has(g)))
+      .map(t => ({
+        name: t.definition.function.name,
+        description: t.definition.function.description,
+        groups: t.groups,
+      }));
   }
   getAll(): ReturnType<ToolService['getAll']> {
     return [...this.tools.values()].map(t => ({
@@ -219,6 +227,18 @@ describe('plugin-mcp-server — toolGroups 白名单 ListTools/CallTool 一致�
     tools.register({
       definition: {
         type: 'function',
+        function: {
+          name: 'pub_a_args',
+          description: 'A 组带参数',
+          parameters: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] },
+        },
+      },
+      groups: ['a'],
+      handler: async () => 'a-args-ok',
+    });
+    tools.register({
+      definition: {
+        type: 'function',
         function: { name: 'pub_b', description: 'B 组（未暴露）', parameters: { type: 'object', properties: {} } },
       },
       groups: ['b'],
@@ -241,6 +261,38 @@ describe('plugin-mcp-server — toolGroups 白名单 ListTools/CallTool 一致�
     const names = (await client.listTools()).tools.map(t => t.name);
     expect(names).toContain('pub_a');
     expect(names).not.toContain('pub_b');
+    await client.close();
+    await server.close();
+  });
+
+  it('带分组工具下发真实 inputSchema（不是空对象）', async () => {
+    const { client, server } = await setupGroups();
+    const tool = (await client.listTools()).tools.find(t => t.name === 'pub_a_args');
+    expect(tool?.inputSchema).toMatchObject({ properties: { q: { type: 'string' } }, required: ['q'] });
+    await client.close();
+    await server.close();
+  });
+
+  it("白名单写 '*' 等同全部分组（不是字面组名）", async () => {
+    const tools = new FakeToolService();
+    tools.register({
+      definition: {
+        type: 'function',
+        function: { name: 'g_x', description: 'x', parameters: { type: 'object', properties: {} } },
+      },
+      groups: ['x'],
+      handler: async () => 'x',
+    });
+    const server = buildMcpServer(makeFakeCtx(tools), tools, {
+      port: 0,
+      bind: '127.0.0.1',
+      toolGroups: ['*'],
+      allowRestricted: true,
+    });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test-client', version: '0.0.1' }, { capabilities: {} });
+    await Promise.all([server.connect(st), client.connect(ct)]);
+    expect((await client.listTools()).tools.map(t => t.name)).toContain('g_x');
     await client.close();
     await server.close();
   });
