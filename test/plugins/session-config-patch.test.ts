@@ -1,0 +1,63 @@
+import { App } from '@aalis/core';
+import { describe, expect, it } from 'vitest';
+import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
+import * as sessionManagerModule from '../../packages/plugin-session-manager/src/index.js';
+import { normalizeSessionConfigPatch } from '../../packages/plugin-session-manager/src/index.js';
+
+// WebUI 会话配置「重置为继承」：JSON 带不了 undefined，前端用 null 表示删除该键；
+// updateSession 是合并语义，键置为 undefined 后 resolveConfig 里就不再有它。
+// 旧行为：前端直接删掉键 → 请求体里没有 → 服务端保留旧值，「重置」永远不生效。
+
+function fakeMemory() {
+  const meta = new Map<string, Record<string, unknown>>();
+  return {
+    listMetadata: async () => [...meta].map(([key, data]) => ({ key, data })),
+    commitMetadata: async (ops: Array<{ op: string; key: string; data?: Record<string, unknown> }>) => {
+      for (const o of ops) {
+        if (o.op === 'put' && o.data) meta.set(o.key, o.data);
+        else if (o.op === 'del') meta.delete(o.key);
+      }
+    },
+    getHistory: async () => [],
+    clearSession: async () => {},
+  };
+}
+
+describe('normalizeSessionConfigPatch', () => {
+  it('null → undefined（键保留、值为 undefined，合并时才能盖掉旧值），其余原样', () => {
+    const out = normalizeSessionConfigPatch({ persona: null, enabledToolGroups: ['*'], think: false });
+    // toEqual 会忽略值为 undefined 的属性——那样的断言分不清「键被删」和「键置 undefined」，这里显式查键
+    expect('persona' in out).toBe(true);
+    expect(out.persona).toBeUndefined();
+    expect(out.enabledToolGroups).toEqual(['*']);
+    expect(out.think).toBe(false);
+  });
+
+  it('非对象拒绝', () => {
+    expect(() => normalizeSessionConfigPatch(null)).toThrow();
+    expect(() => normalizeSessionConfigPatch([])).toThrow();
+  });
+});
+
+describe('会话配置重置为继承', () => {
+  it('置 null 的键从生效配置里消失，回落到平台档', async () => {
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    app.ctx.provide('memory', fakeMemory() as never);
+    await app.ctx.useModule(sessionManagerModule, {
+      platformProfiles: [{ platform: 'webui', persona: 'from-profile', enabledToolGroups: ['*'] }],
+    });
+    await app.plugins.idle();
+    const sm = app.ctx.getService<SessionManagerService>('session-manager');
+    if (!sm) throw new Error('session-manager 未注册');
+    try {
+      const s = await sm.createSession({ config: { persona: 'own', enabledToolGroups: ['system'] } });
+      expect(sm.resolveConfig(s.id, 'webui')).toMatchObject({ persona: 'own', enabledToolGroups: ['system'] });
+      await sm.updateSession(s.id, {
+        config: normalizeSessionConfigPatch({ persona: null, enabledToolGroups: null }),
+      });
+      expect(sm.resolveConfig(s.id, 'webui')).toMatchObject({ persona: 'from-profile', enabledToolGroups: ['*'] });
+    } finally {
+      await app.stop().catch(() => {});
+    }
+  });
+});

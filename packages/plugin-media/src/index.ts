@@ -15,7 +15,7 @@
 import { useAgent } from '@aalis/api-agent';
 import { createProcessGateway } from '@aalis/api-process';
 import { createStorageGateway } from '@aalis/api-storage';
-import type { Context } from '@aalis/core';
+import type { AppService, Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { flushDescriptionCache, loadDescriptionCache } from './cache.js';
 import { DEFAULT_AUDIO_PROMPT, DEFAULT_VISION_BATCH_PROMPT, DEFAULT_VISION_PROMPT } from './llm-adapter.js';
@@ -54,15 +54,16 @@ export const configSchema: ConfigSchema = {
         type: 'select',
         label: '处理模式（已弃用）',
         options: [
+          { label: '（未设置，使用下方新键）', value: '' },
           { label: '由副模型转文本', value: 'describe' },
           { label: '直通', value: 'passthrough' },
           { label: '原样直通', value: 'passthrough-raw' },
           { label: '禁用', value: 'disabled' },
         ],
         description:
-          '旧四档已由下方「接触到图片立即识别」与「主模型看图方式」取代。此键仍有值时按旧语义映射并覆盖新键' +
-          '（describe→识别+转文字；passthrough/passthrough-raw→不识别+直通；disabled→不识别+转文字），启动日志会提示；' +
-          '请清空此键并改用新键。',
+          '旧四档已由下方「接触到图片立即识别」与「主模型看图方式」取代。启动时若本键仍有值，按旧语义' +
+          '（describe→识别+转文字；passthrough/passthrough-raw→不识别+直通；disabled→不识别+转文字）一次性迁移到' +
+          '新键并移除本键，日志提示一次；留空即可。',
       },
       delivery: {
         type: 'select',
@@ -239,9 +240,8 @@ export const configSchema: ConfigSchema = {
 };
 
 /**
- * 已弃用的 vision.mode 四档 → 新键。返回 null 表示没有旧值。config-sync 会把 schema 派生
- * 默认值填进新键，所以旧键一旦存在就无法分辨新键是用户设的还是默认填的——按旧键为准，
- * 用户清掉旧键后新键才生效。
+ * 已弃用的 vision.mode 四档 → 新键。返回 null 表示没有旧值。apply 时若旧键仍有值，按此映射
+ * 一次性写入新键并把旧键从配置里删掉（写回文件），之后只看新键。
  */
 export function legacyVisionMode(
   mode: unknown,
@@ -311,11 +311,22 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
 export function apply(ctx: Context, raw: Record<string, unknown>): void {
   const cfg = resolveCfg(raw);
   const logger = ctx.logger.child('media');
-  const legacyMode = ((raw.vision ?? {}) as Record<string, unknown>).mode;
+  const { mode: legacyMode, ...visionWithoutMode } = (raw.vision ?? {}) as Record<string, unknown>;
   if (legacyVisionMode(legacyMode)) {
+    // 一次性迁移：按旧语义把结果写进新键并删掉旧键，落盘（config-sync 每次启动都物化默认值，
+    // 存量部署里这个键一定有值；不迁移的话新键永远是死键，WebUI 也清不掉旧键）。
+    ctx.config.setPluginConfig(name, {
+      ...raw,
+      vision: {
+        ...visionWithoutMode,
+        recognizeOnArrival: cfg.vision.recognizeOnArrival,
+        delivery: cfg.vision.delivery,
+      },
+    });
+    ctx.getService<AppService>('app')?.saveConfig();
     logger.warn(
-      `vision.mode="${String(legacyMode)}" 已弃用，本次按旧语义映射为 recognizeOnArrival=${cfg.vision.recognizeOnArrival}、` +
-        `delivery=${cfg.vision.delivery} 并覆盖新键；请清空 vision.mode 并改用「接触到图片立即识别」「主模型看图方式」两项。`,
+      `vision.mode="${String(legacyMode)}" 已弃用：已按旧语义迁移为 recognizeOnArrival=${cfg.vision.recognizeOnArrival}、` +
+        `delivery=${cfg.vision.delivery} 并写回配置文件，旧键已移除。`,
     );
   }
   setMediaRuntime({ proc: createProcessGateway(ctx), storage: createStorageGateway(ctx) });

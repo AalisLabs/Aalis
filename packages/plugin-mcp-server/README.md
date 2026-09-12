@@ -14,9 +14,9 @@ HTTP + SSE。Aalis 是常驻进程，stdio 已被日志占用，因此不走 Ant
 ## 安全约束
 
 - 默认 `bind: 127.0.0.1`（仅本机访问）—— **不要随便暴露到公网**
-- 默认 `allowDangerous: false`，`safetyLevel='dangerous'` 工具一律拒绝
+- 默认 `allowRestricted: false`，可见性为 `restricted` 的工具一律拒绝
   - `ListTools` 与 `CallTool` 两端都过滤，防止 client 越界
-- `toolGroups` 白名单：仅暴露指定分组（空数组 = 全部允许，但仍受 dangerous 开关约束）
+- `toolGroups` 白名单：仅暴露指定分组（空数组或 `'*'` = 全部允许，但仍受 `allowRestricted` 约束）
 - 工具执行仍走 Aalis 的 `ToolService.execute`，因此 authority guard / permissions resolver 全部生效
 
 ## 配置示例

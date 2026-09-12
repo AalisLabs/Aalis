@@ -9,7 +9,7 @@ export function restoreTerminalState(): void {
     /* ignore */
   }
   try {
-    process.stdout.write(TERMINAL_RESTORE_SEQUENCE);
+    if (process.stdout.isTTY) process.stdout.write(TERMINAL_RESTORE_SEQUENCE);
   } catch {
     /* ignore */
   }

@@ -2,9 +2,9 @@
 // ============================================================
 // create-aalis — 在新目录脚手架一个可运行的独立 Aalis 项目（纯 npm）
 //
-//   npm create aalis my-bot           → 交互：选模板档 + 同类适配器
-//   npm create aalis my-bot -- --yes  → 非交互：standard 档 + 默认适配器
-//   npm create aalis my-bot -- --tier minimal --no-install
+//   npm create aalis@latest my-bot           → 交互：选模板档 + 同类适配器
+//   npm create aalis@latest my-bot -- --yes  → 非交互：standard 档 + 默认适配器
+//   npm create aalis@latest my-bot -- --tier minimal --no-install
 //
 // 产出一个独立项目目录：package.json（依赖 @aalis/core + @aalis/runtime + 所选插件）、
 // index.mjs（一行 startAalis 启动）、aalis.config.yaml、README、.gitignore，
@@ -26,7 +26,9 @@ import { fileURLToPath } from 'node:url';
 type Tier = 'bare' | 'minimal' | 'standard' | 'full';
 
 // 基础设施 + agent 套件：minimal 起步的自洽依赖闭包（网关路由 → 指令/agent →
-// 会话 → 权限 → 跨会话历史）。同类适配器不在此列，由 GROUPS 交互选择补入。
+// 会话 → 权限 + 确认通道 → 跨会话历史）。缺 session-confirm 时，除自带终端确认的 CLI 外，
+// WebUI / OneBot 等平台上任何声明 confirm 的工具都只能"需确认后执行"而执行不了，故它是 authority 的配套。
+// 同类适配器不在此列，由 GROUPS 交互选择补入。
 const MINIMAL_BASE = [
   '@aalis/plugin-storage-local',
   '@aalis/plugin-process-local',
@@ -37,6 +39,7 @@ const MINIMAL_BASE = [
   '@aalis/plugin-tools',
   '@aalis/plugin-prompt-budget',
   '@aalis/plugin-authority',
+  '@aalis/plugin-session-confirm',
   '@aalis/plugin-session-manager',
   '@aalis/plugin-memory-history',
 ];
@@ -366,15 +369,32 @@ startAalis().catch(err => {
 `;
 }
 
-function renderConfig(enabled: Set<string>): string {
+// 只有 owner 能进的平台（本地终端 / 单 token WebUI）开箱给全部工具分组。多人平台（OneBot 等）不代开：
+// 带分组的工具默认不暴露，public 工具在群里的可达性靠这道分组闸（docs/concepts/security-model.md），
+// 由 owner 在平台档里按需列组。
+const OWNER_ONLY_PLATFORMS: ReadonlyArray<readonly [plugin: string, platform: string]> = [
+  ['@aalis/plugin-cli', 'cli'],
+  ['@aalis/plugin-webui-server', 'webui'],
+];
+
+export function renderConfig(enabled: Set<string>): string {
   const lines = ['name: Aalis', 'logLevel: info'];
   const configured = [...enabled].filter(n => KNOWN_CONFIG[n]).sort();
-  if (configured.length > 0) {
+  const fullToolPlatforms = enabled.has('@aalis/plugin-session-manager')
+    ? OWNER_ONLY_PLATFORMS.filter(([plugin]) => enabled.has(plugin)).map(([, platform]) => platform)
+    : [];
+  if (configured.length > 0 || fullToolPlatforms.length > 0) {
     lines.push('plugins:');
     for (const n of configured) {
       lines.push(`  "${n}":`);
       for (const [k, v] of Object.entries(KNOWN_CONFIG[n].config)) {
         lines.push(`    ${k}: "${v}"`);
+      }
+    }
+    if (fullToolPlatforms.length > 0) {
+      lines.push('  "@aalis/plugin-session-manager":', '    platformProfiles:');
+      for (const platform of fullToolPlatforms) {
+        lines.push(`      - platform: ${platform}`, '        enabledToolGroups: ["*"]');
       }
     }
   } else {
@@ -443,8 +463,8 @@ async function main(): Promise<void> {
   if (!skip && !stdin.isTTY) {
     console.error(
       '\n检测到非交互式环境（stdin 不是 TTY），无法进入选择界面。请改用非交互模式，例如：\n' +
-        '  npm create aalis <名> -- --yes              # standard 档 + 默认适配器\n' +
-        '  npm create aalis <名> -- --tier minimal     # 指定模板档 bare/minimal/standard/full\n',
+        '  npm create aalis@latest <名> -- --yes              # standard 档 + 默认适配器\n' +
+        '  npm create aalis@latest <名> -- --tier minimal     # 指定模板档 bare/minimal/standard/full\n',
     );
     exit(1);
   }

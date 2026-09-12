@@ -1,8 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
-import { disarmTerminalStateRestorer, installTerminalStateRestorer } from '../../packages/runtime/src/terminal.js';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  disarmTerminalStateRestorer,
+  installTerminalStateRestorer,
+  restoreTerminalState,
+} from '../../packages/runtime/src/terminal.js';
 
 /**
  * respawn 的成功分支：父进程等子进程回报 ready 才退出，而子进程的 ready 发生在
@@ -69,5 +73,24 @@ describe('respawn 成功分支必须摘掉终端复原钩子', () => {
       body.includes('disarmTerminalStateRestorer()'),
       '子进程已接管终端，父进程退出前必须摘钩子——否则复原序列把新实例的 TUI 踢出备用屏',
     ).toBe(true);
+  });
+});
+
+describe('restoreTerminalState 非 TTY', () => {
+  it('stdout 不是终端时不写复原序列（否则会落进重定向的日志尾部）', () => {
+    const tty = process.stdout.isTTY;
+    Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+    const writes: string[] = [];
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation(chunk => {
+      writes.push(String(chunk));
+      return true;
+    });
+    try {
+      restoreTerminalState();
+      expect(writes.join('')).not.toContain('\x1b[?1049l');
+    } finally {
+      spy.mockRestore();
+      Object.defineProperty(process.stdout, 'isTTY', { value: tty, configurable: true });
+    }
   });
 });

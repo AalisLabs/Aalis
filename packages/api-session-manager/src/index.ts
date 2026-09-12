@@ -28,7 +28,7 @@ export interface SessionConfig {
    * 由 ConfigSchema type='llm-ref' 字段统一编辑。
    */
   llm?: { provider: string; model: string };
-  /** 启用的工具分组列表（为空时使用全局默认） */
+  /** 启用的工具分组；`'*'` = 全部分组。会话未设置时继承平台档，最终为空则只给无分组的通用工具 */
   enabledToolGroups?: string[];
   /** 人格文件名（不含后缀，如 'aalis', 'aalis-webui', 'default'） */
   persona?: string;

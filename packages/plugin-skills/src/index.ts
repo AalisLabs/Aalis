@@ -1177,6 +1177,16 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       logger.warn(`首次扫描 skills 失败：${err}`);
     }
     // 监听变化 → 标脏 → 按需重扫（去抖靠 storage 层）
+    // 首启目录尚不存在时 watch 会 ENOENT：先补建；与监听分开，mkdir 失败（只读根 / 符号链接）不连带放弃监听
+    try {
+      await storage.stat(skillsUri);
+    } catch {
+      try {
+        await storage.mkdir?.(skillsUri);
+      } catch {
+        /* 建不了就照旧：下面的监听会给出失败原因 */
+      }
+    }
     try {
       const unwatch = storage.watch?.(skillsUri, async () => {
         try {
