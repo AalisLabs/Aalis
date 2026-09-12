@@ -251,6 +251,9 @@ class DeepSeekClient {
     try {
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${this.apiKey}` },
+        // 无超时会让 apply() 里的 await 在「接连接不回包」的端点上停摆到 undici 兜底,
+        // 插件按拓扑序串行卡住；失败语义不变（catch 成 warn + 空列表）
+        signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
         const body = await res.text().catch(() => '');

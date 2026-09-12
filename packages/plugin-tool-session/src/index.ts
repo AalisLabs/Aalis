@@ -8,24 +8,40 @@ import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 
-// ===== 跨会话委派：proactive depth 防雪崩 =====
-// 防止 A→B→C→... 无限链；任一会话被 delegate 进入 proactive 链路后，链上下一跳禁止再次 delegate。
+// ===== 跨会话委派：回合深度防雪崩 =====
+// 防止 A→B→C→... 无限链。深度随消息走（IncomingMessage.proactiveDepth），不按会话计时：
+// 由委派消息驱动的那一个回合内禁止再委派，回合结束（agent:turn:after）即解除；
+// 该会话之后由下一条不带 proactiveDepth 的入站消息（真人消息、idle/interval 自动触发都算）
+// 驱动的回合不受影响。
 const PROACTIVE_DEPTH_MAX = 1;
-const PROACTIVE_DEPTH_TTL_MS = 10 * 60 * 1000;
-const proactiveDepth = new Map<string, { depth: number; expiresAt: number }>();
+/** sessionId → 该会话当前回合的入站消息所带 proactiveDepth（非委派回合不在表内）。 */
+const turnProactiveDepth = new Map<string, number>();
 
-function getProactiveDepth(sessionId: string): number {
-  const entry = proactiveDepth.get(sessionId);
-  if (!entry) return 0;
-  if (entry.expiresAt <= Date.now()) {
-    proactiveDepth.delete(sessionId);
-    return 0;
-  }
-  return entry.depth;
-}
-
-function setProactiveDepth(sessionId: string, depth: number): void {
-  proactiveDepth.set(sessionId, { depth, expiresAt: Date.now() + PROACTIVE_DEPTH_TTL_MS });
+/**
+ * 登记「当前回合由深度 N 的委派消息驱动」。
+ *
+ * 登记点在 `agent:input:before`——回合真正开始的那一刻，且是所有投递方式的汇合处：
+ * 经 `inbound:message` 事件进来的和直接调 `gateway.ingressMessage()` 的都要过这道钩子，
+ * 登记因而必然早于本回合的任何工具调用。
+ *
+ * 入站即写、回合结束（`agent:turn:after`）即清；下一条不带 proactiveDepth 的入站消息
+ * （真人消息、idle/interval 自动触发都算）会覆盖清除该会话的登记，所以即使某轮没等到
+ * turn:after（被中间件吞、进程重启前残留），这样的下一条消息也能立刻解锁——无需任何超时兜底。
+ *
+ * 锁按 sessionId 记，是「会话近似回合」：同会话不同 source 的并行回合共用同一把锁，
+ * 后开始的那个会覆盖前一个的登记、先结束的那个会替所有人解锁。
+ */
+function trackProactiveTurnDepth(ctx: Context): void {
+  ctx.middleware('agent:input:before', async (data, next) => {
+    const depth = typeof data.message.proactiveDepth === 'number' ? data.message.proactiveDepth : 0;
+    if (depth > 0) turnProactiveDepth.set(data.message.sessionId, depth);
+    else turnProactiveDepth.delete(data.message.sessionId);
+    await next();
+  });
+  ctx.middleware('agent:turn:after', async (data, next) => {
+    await next();
+    turnProactiveDepth.delete(data.sessionId);
+  });
 }
 
 // ===== 跨会话委派：近期派发记录（提醒型，不硬挡） =====
@@ -668,7 +684,9 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
           '- 其他平台：参考各平台 adapter 的 sessionId 约定。',
           '',
           '【安全限制】',
-          '- 防雪崩：被 delegate 进来的会话最多再链一层（A→B 允许，B 在 proactive 链中不能再 delegate）。',
+          '- 防雪崩：委派消息驱动的那一个回合内禁止再委派（A→B 允许，B 处理这条委派时不能再 delegate）；',
+          '  回合结束即解除，该会话之后由下一条不带 proactiveDepth 的入站消息',
+          '  （真人消息、idle/interval 自动触发都算）驱动的回合不受影响。',
           '- 平台限速：平台 adapter 可声明 checkAndRecordProactiveSend 做主动发送频率限制，超额会被拒绝。',
           '- 自委派被禁止：target_session_id 不能等于当前 sessionId。',
           '',
@@ -735,14 +753,12 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
         return JSON.stringify({ error: 'target_session_id 不能等于当前会话；如需自我追问请直接生成下一轮回复。' });
       }
 
-      // 防雪崩：源 depth + 1 即将传给目标
-      const sourceDepth = getProactiveDepth(callCtx.sessionId);
-      const targetDepth = sourceDepth + 1;
-      if (targetDepth > PROACTIVE_DEPTH_MAX) {
-        return JSON.stringify({
-          error: `委派链已达最大深度 ${PROACTIVE_DEPTH_MAX}（当前会话本身正以 proactive 链路被驱动，禁止再次 delegate 以防雪崩）`,
-        });
+      // 防雪崩：只看「本回合是不是委派消息驱动的」。深度随消息走，回合结束即解除。
+      const currentDepth = turnProactiveDepth.get(callCtx.sessionId) ?? 0;
+      if (currentDepth >= PROACTIVE_DEPTH_MAX) {
+        return JSON.stringify({ error: '本回合由委派消息驱动，不能再委派' });
       }
+      const targetDepth = currentDepth + 1;
 
       // 解析目标平台，应用可选限速闸门
       let platformName: string | undefined;
@@ -761,9 +777,6 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
       } catch (err) {
         ctx.logger.warn(`[delegate] 解析目标平台失败 (${targetSessionId}): ${err}`);
       }
-
-      // 标记目标进入 proactive 链路
-      setProactiveDepth(targetSessionId, targetDepth);
 
       // ===== 注入 META 提示（提醒型，不挡派发） =====
       const now = Date.now();
@@ -793,6 +806,8 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
         platform: platformName ?? callCtx.platform ?? 'internal',
         source: `proactive:from:${callCtx.sessionId}`,
         triggerType: 'proactive',
+        // 深度随消息走：目标会话处理这条消息的那一个回合内不能再委派
+        proactiveDepth: targetDepth,
       };
       // 授权身份透传（schema-message 的 actor 契约）：authority 按发起者 (platform, userId)
       // 实时查等级——权限跟人走。优先 callCtx.actor（本回合已在代人执行时链式传递），
@@ -928,6 +943,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   registerSessionHistoryTools(ctx, historyService, cfg);
 
   if (cfg.crossSessionEnabled) {
+    trackProactiveTurnDepth(ctx);
     registerCrossSessionTools(ctx, cfg);
   }
 }

@@ -53,6 +53,19 @@ describe('parseSvgCanvas / resolveCanvas', () => {
     expect(plan.width).toBeLessThanOrEqual(caps.maxWidth);
   });
 
+  it('根 svg 上的 stroke-width 不当画布宽（\\b 会命中连字符后的 width，实测渲出 16×4800 竖条）', () => {
+    const svg = '<svg stroke-width="16" height="600" viewBox="0 0 800 600"><path d="M0 0"/></svg>';
+    expect(parseSvgCanvas(svg).width).toBeUndefined();
+    const plan = resolveCanvas(svg, undefined, caps);
+    // 只有 height + viewBox → 走纵横比路径，按默认宽出 800×600，而不是 16 宽的竖条
+    expect([plan.width, plan.height]).toEqual([800, 600]);
+    // 真 width 仍取得到（同时带 stroke-width 时不被前者顶掉）
+    expect(parseSvgCanvas('<svg stroke-width="16" width="400" height="300"></svg>')).toMatchObject({
+      width: 400,
+      height: 300,
+    });
+  });
+
   it('HTML：宽取参数或默认，高待实测（auto）', () => {
     const plan = resolveCanvas('<div>x</div>', 500, caps);
     expect(plan).toMatchObject({ mode: 'html', width: 500, height: 'auto' });

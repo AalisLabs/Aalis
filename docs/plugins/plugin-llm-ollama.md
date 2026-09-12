@@ -17,6 +17,10 @@ meta.inject = { optional: ['process'] }
 
 每个发现的模型单独注册为一条 `llm` 服务条目，能力按模型解析，优先级从高到低：`modelCapabilities` 覆盖、Ollama `/api/show` 探测结果、内置模型家族表、`providerCapabilities` 兜底。
 
+`/api/show` 探测到能力但其中没有对话能力的模型（如只报 `embedding` 的嵌入模型）不注册条目，不会出现在 `/model` 与 WebUI 的模型列表里；确需注册可用 `modelCapabilities` 显式声明能力。
+
+`modelCapabilities` 每行按**最后一个**冒号切分模型 id 与能力段——Ollama 模型 id 自带 tag（`qwen3:8b`、`bge-m3:latest`），带 tag 的 id 照原样写即可（`bge-m3:latest: chat,streaming`）。
+
 ## 配置
 
 | 字段 | 类型 | 默认值 | 说明 |

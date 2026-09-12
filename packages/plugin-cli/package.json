@@ -37,7 +37,6 @@
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/api-authority": "workspace:*",
     "@aalis/schema-message": "workspace:*",
     "@aalis/api-persona": "workspace:*",
     "@types/node": "^22.0.0",
@@ -50,7 +49,6 @@
     "service": {
       "optional": [
         "llm",
-        "authority",
         "commands"
       ],
       "provides": [

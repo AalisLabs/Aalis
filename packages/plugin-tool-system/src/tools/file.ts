@@ -99,8 +99,182 @@ function jsonError(err: unknown): string {
   return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
 }
 
+/**
+ * 是否「文件不存在」错误。
+ *
+ * 只有这一类才允许被当成「新建」；权限、瞬时 IO 等其余错误必须原样上报——
+ * 把它们也当成「不存在」会让读—改—写把原文静默截断成只剩新增部分。
+ * storage 后端不保证透传 errno，故 code 与消息两条都认。
+ */
+function isNotFoundError(err: unknown): boolean {
+  if (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'ENOENT') return true;
+  return /ENOENT|不存在|not found/i.test(err instanceof Error ? err.message : String(err));
+}
+
 function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * 按 storage URI 的串行闸。
+ *
+ * agent 同一轮把所有 tool call 丢进 Promise.all 并行跑，而 file_edit / file_append 是
+ * 「读—改—写」：两次改同一文件会各读到同一份原文、后写者盖掉前写者，两边都回「成功」。
+ * 所有改动类工具（edit/append/write/move/delete）都经此闸，同一 URI 排队执行。
+ * 多键（move 的两端）按字典序依次获取，避免两个交叉 move 互等。
+ */
+const fileLocks = new Map<string, Promise<void>>();
+
+function withFileLock<T>(uris: readonly string[], fn: () => Promise<T>): Promise<T> {
+  const keys = [...new Set(uris)].sort();
+  const acquire = (i: number): Promise<T> => {
+    if (i >= keys.length) return fn();
+    const key = keys[i];
+    const prev = fileLocks.get(key) ?? Promise.resolve();
+    const run = prev.then(() => acquire(i + 1));
+    // tail 吞掉失败：前一个出错也要放行后来者；只有队尾自己跑完才清键，避免 Map 无界增长
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    fileLocks.set(key, tail);
+    void tail.then(() => {
+      if (fileLocks.get(key) === tail) fileLocks.delete(key);
+    });
+    return run;
+  };
+  return acquire(0);
+}
+
+/** 正则体检上限：正常搜索模式远够用，又挡住靠长度/量词堆叠爆开的写法 */
+const MAX_SEARCH_PATTERN_LENGTH = 500;
+const MAX_SEARCH_QUANTIFIERS = 20;
+/** 无界量词（`+` `*` `{n,}`）单独限得更紧：`a+a+a+a+a+a+b` 这类堆叠不必嵌套就能指数级回溯 */
+const MAX_SEARCH_UNBOUNDED_QUANTIFIERS = 5;
+
+/**
+ * 读 i 处的量词（含惰性后缀）。两个维度刻意分开：
+ * - repeating：会把作用对象重复多次（`*` `+` `{n,}` `{n}` `{n,m}`），外层量词的嵌套判据看它，
+ *   有上限的 `{n}` 一并按重复看待（`(a+){50}` 同样爆）；`?` 不重复。
+ * - unbounded：重复次数没有上限（`*` `+` `{n,}`），堆叠计数与分组内部的危险标记都看它。
+ */
+function readQuantifier(
+  pattern: string,
+  i: number,
+): { length: number; repeating: boolean; unbounded: boolean } | undefined {
+  const ch = pattern[i];
+  let length: number;
+  let repeating: boolean;
+  let unbounded: boolean;
+  if (ch === '*' || ch === '+') {
+    length = 1;
+    repeating = true;
+    unbounded = true;
+  } else if (ch === '?') {
+    length = 1;
+    repeating = false;
+    unbounded = false;
+  } else if (ch === '{') {
+    const m = /^\{\d+(,\d*)?\}/.exec(pattern.slice(i));
+    if (!m) return undefined; // 字面量 `{`
+    length = m[0].length;
+    repeating = true;
+    unbounded = m[1] === ','; // `{n,}` 无上限；`{n}` / `{n,m}` 有上限
+  } else {
+    return undefined;
+  }
+  if (pattern[i + length] === '?') length++; // 惰性量词照样会回溯
+  return { length, repeating, unbounded };
+}
+
+/** `(` 之后需跳过的分组前缀长度：`?:` / `?=` / `?!` / `?<=` / `?<!` / `?<name>` */
+function groupPrefixLength(pattern: string, i: number): number {
+  if (pattern[i + 1] !== '?') return 0;
+  const n = pattern[i + 2];
+  if (n === ':' || n === '=' || n === '!') return 2;
+  if (n === '<') {
+    if (pattern[i + 3] === '=' || pattern[i + 3] === '!') return 3;
+    const close = pattern.indexOf('>', i + 3);
+    return close < 0 ? 1 : close - i;
+  }
+  return 1;
+}
+
+/**
+ * 正则模式体检：拦下已知的几类灾难性写法，**不是完备保证**。
+ *
+ * V8 正则同步执行、超时与 abort 都打不断，LLM 给的 `(a+)+$` 这类嵌套量词每多两个字符
+ * 耗时翻数倍，n=30 已能把整进程冻死。故编译前拒掉这几类：
+ * - 嵌套量词：重复量词（含 `{n}` / `{n,m}`）作用在「内部含无界量词或分支」的分组上（`(a+)+`、`((a+)a)+`）；
+ *   内部全有界的嵌套（`(?:[0-9]{1,3}\.){3}`、`(\d{2}:){3}`）重复次数封顶为常数，照常放行
+ * - 含量词的分支重复（`(a+|b)*`）
+ * - 无界量词堆叠（多于 {@link MAX_SEARCH_UNBOUNDED_QUANTIFIERS} 个 `+` `*` `{n,}`）
+ * - 模式过长、量词总数过多（`a?a?a?…x` 这类堆叠同样能爆）
+ *
+ * 判据是语法形状而非真实回溯代价，故两头都不精确：放行的模式里仍可能有慢写法，
+ * 被拒的模式里也有无害的。取舍是被拒只需模型换个模式重试，冻死进程则不可恢复。
+ * 字面量、字符类、单层量词、锚点、未加量词的分组/分支等常见写法照常放行；
+ * 无内层量词的分支重复（如 `(?:foo|bar)+`）一并拒掉——分支是否重叠无法便宜判定。
+ * 需要纯文本语义时传 `isRegex:false`，模式整体按字面量处理，不过体检。
+ */
+function assertSafeSearchPattern(pattern: string): void {
+  if (pattern.length > MAX_SEARCH_PATTERN_LENGTH) {
+    throw new Error(
+      `正则模式过长（${pattern.length} > ${MAX_SEARCH_PATTERN_LENGTH} 字符）。请缩短模式，或用 isRegex:false 做纯文本搜索。`,
+    );
+  }
+  // 每层分组记「内部是否含无界量词或分支」——只有这种内部配上外层重复量词才会指数级回溯；
+  // 闭合后紧跟重复量词即拒，内部全有界的嵌套（`(?:[0-9]{1,3}\.){3}`）重复次数封顶为常数，放行
+  const groups: boolean[] = [];
+  let quantifiers = 0;
+  let unbounded = 0;
+  let inClass = false;
+  let closedGroupInner = false;
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    let justClosed = false;
+    if (ch === '\\') {
+      i++;
+    } else if (inClass) {
+      if (ch === ']') inClass = false;
+    } else if (ch === '[') {
+      inClass = true;
+    } else if (ch === '(') {
+      groups.push(false);
+      i += groupPrefixLength(pattern, i);
+    } else if (ch === ')') {
+      justClosed = groups.pop() ?? false;
+      // 子分组带标记时并给父层：否则 `((a+)a)+` 这类隔了一层的嵌套量词会漏检
+      if (justClosed && groups.length) groups[groups.length - 1] = true;
+    } else if (ch === '|') {
+      if (groups.length) groups[groups.length - 1] = true;
+    } else {
+      const q = readQuantifier(pattern, i);
+      if (q) {
+        if (++quantifiers > MAX_SEARCH_QUANTIFIERS) {
+          throw new Error(
+            `正则模式量词过多（> ${MAX_SEARCH_QUANTIFIERS} 个），堆叠量词会触发指数级回溯。请简化模式，或用 isRegex:false 做纯文本搜索。`,
+          );
+        }
+        if (q.unbounded && ++unbounded > MAX_SEARCH_UNBOUNDED_QUANTIFIERS) {
+          throw new Error(
+            `正则模式的无界量词过多（> ${MAX_SEARCH_UNBOUNDED_QUANTIFIERS} 个 \`+\` \`*\` \`{n,}\`），` +
+              '堆叠无界量词会触发指数级回溯。请简化模式，或用 isRegex:false 做纯文本搜索。',
+          );
+        }
+        if (closedGroupInner && q.repeating) {
+          throw new Error(
+            '正则模式含嵌套量词或分支重复（如 `(a+)+`、`(?:a|b)*`），会触发灾难性回溯把整个进程同步冻死，已拒绝编译。' +
+              '请改用不含嵌套量词的模式，或用 isRegex:false 做纯文本搜索。',
+          );
+        }
+        // 只有无界量词才把所在分组标危险：有界量词（`{n}` / `{n,m}`）撑不出指数级回溯
+        if (q.unbounded && groups.length) groups[groups.length - 1] = true;
+        i += q.length - 1;
+      }
+    }
+    closedGroupInner = justClosed;
+  }
 }
 
 async function searchTextStream(
@@ -502,9 +676,11 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         if (Buffer.byteLength(content, 'utf-8') > config.maxWriteSize) {
           return JSON.stringify({ error: `内容过大，超过限制 ${config.maxWriteSize} 字节` });
         }
-        await storage.writeFile(uri, content);
-        const info = await storage.stat(uri);
-        return JSON.stringify({ uri, size: info.size, message: '文件写入成功' });
+        return await withFileLock([uri], async () => {
+          await storage.writeFile(uri, content);
+          const info = await storage.stat(uri);
+          return JSON.stringify({ uri, size: info.size, message: '文件写入成功' });
+        });
       } catch (err) {
         return jsonError(err);
       }
@@ -538,15 +714,18 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
-        if (!storage.move) return jsonError(new Error('当前存储不支持移动操作（storage.move 未实现）'));
+        const move = storage.move?.bind(storage);
+        if (!move) return jsonError(new Error('当前存储不支持移动操作（storage.move 未实现）'));
         const fromUri = toStorageUri(args.from as string, config, callCtx.sessionId);
         const toUri = toStorageUri(args.to as string, config, callCtx.sessionId);
         // 与其余 file_* 工具同门槛：两端都必须落在 allowedRoots 内（审计抓的漏配——
         // 少这道闸时 data:/users.json 可被 move 挪走，对 authority 等价于删除）
         ensureRootAllowed(fromUri, config);
         ensureRootAllowed(toUri, config);
-        const result = await storage.move(fromUri, toUri);
-        return JSON.stringify({ from: fromUri, to: result, message: '移动成功' });
+        return await withFileLock([fromUri, toUri], async () => {
+          const result = await move(fromUri, toUri);
+          return JSON.stringify({ from: fromUri, to: result, message: '移动成功' });
+        });
       } catch (err) {
         return jsonError(err);
       }
@@ -621,32 +800,38 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         const newText = args.newText as string;
         if (!oldText) return JSON.stringify({ error: 'oldText 不能为空' });
 
-        const raw = await readText(storage, uri);
-        // 行尾感知定位：只替换命中的那一段，编辑处之外的字节（含混合行尾、孤 \r）原样保留
-        const hit = locateEdit(raw, oldText);
-        if (hit.count === 0) {
-          return JSON.stringify({ error: '在文件中未找到 oldText。请确保文本精确匹配（包括空格和缩进）。' });
-        }
-        if (hit.count > 1) {
-          return JSON.stringify({
-            error: 'oldText 在文件中有多处匹配。请提供更多上下文以确保唯一匹配。',
-            matchCount: hit.count,
-          });
-        }
-        const insert = hit.crlf ? newText.replace(/\r?\n/g, '\r\n') : newText.replace(/\r\n/g, '\n');
-        // 用 slice 拼接而非 String.replace：后者把 newText 当替换模式，
-        // 其中的 $$ / $& / $` / $' 会被展开成别的内容，改坏文件。
-        const newContent = raw.slice(0, hit.index) + insert + raw.slice(hit.index + hit.length);
-        if (Buffer.byteLength(newContent, 'utf-8') > config.maxWriteSize) {
-          return JSON.stringify({ error: `编辑后内容过大，超过限制 ${config.maxWriteSize} 字节` });
-        }
-        await storage.writeFile(uri, newContent);
+        // 读—改—写全程持 URI 串行闸：并行的同文件编辑不再各读同一份原文、互相盖掉
+        return await withFileLock([uri], async () => {
+          const raw = await readText(storage, uri);
+          // 行尾感知定位：只替换命中的那一段，编辑处之外的字节（含混合行尾、孤 \r）原样保留
+          const hit = locateEdit(raw, oldText);
+          if (hit.count === 0) {
+            return JSON.stringify({ error: '在文件中未找到 oldText。请确保文本精确匹配（包括空格和缩进）。' });
+          }
+          if (hit.count > 1) {
+            return JSON.stringify({
+              error: 'oldText 在文件中有多处匹配。请提供更多上下文以确保唯一匹配。',
+              matchCount: hit.count,
+            });
+          }
+          const insert = hit.crlf ? newText.replace(/\r?\n/g, '\r\n') : newText.replace(/\r\n/g, '\n');
+          // 用 slice 拼接而非 String.replace：后者把 newText 当替换模式，
+          // 其中的 $$ / $& / $` / $' 会被展开成别的内容，改坏文件。
+          const newContent = raw.slice(0, hit.index) + insert + raw.slice(hit.index + hit.length);
+          if (Buffer.byteLength(newContent, 'utf-8') > config.maxWriteSize) {
+            return JSON.stringify({ error: `编辑后内容过大，超过限制 ${config.maxWriteSize} 字节` });
+          }
+          await storage.writeFile(uri, newContent);
 
-        // 行号按命中位置直接算：indexOf(newText) 在 newText 于前文出现过时会偏小
-        return JSON.stringify({
-          uri,
-          message: '编辑成功',
-          editedLines: { start: raw.slice(0, hit.index).split(/\r?\n/).length, count: insert.split(/\r?\n/).length },
+          // 行号按命中位置直接算：indexOf(newText) 在 newText 于前文出现过时会偏小
+          return JSON.stringify({
+            uri,
+            message: '编辑成功',
+            editedLines: {
+              start: raw.slice(0, hit.index).split(/\r?\n/).length,
+              count: insert.split(/\r?\n/).length,
+            },
+          });
         });
       } catch (err) {
         return jsonError(err);
@@ -680,19 +865,26 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const appendContent = args.content as string;
-        let existing = '';
-        try {
-          existing = await readText(storage, uri);
-        } catch {
-          existing = '';
-        }
-        const content = existing + appendContent;
-        if (Buffer.byteLength(content, 'utf-8') > config.maxWriteSize) {
-          return JSON.stringify({ error: `追加后内容过大，超过限制 ${config.maxWriteSize} 字节` });
-        }
-        await storage.writeFile(uri, content);
-        const info = await storage.stat(uri);
-        return JSON.stringify({ uri, size: info.size, message: '内容追加成功' });
+        // 读—改—写全程持 URI 串行闸，理由同 file_edit
+        return await withFileLock([uri], async () => {
+          // 读原文失败不能吞成空串——整篇写回等于把原文静默截断成只剩新增部分。
+          // 只有 not-found 才走「创建」；读原文的其余错误（权限/瞬时 IO）一律原样上报，
+          // 宁可这次追加失败，也不拿空串当原文。
+          let existing: string;
+          try {
+            existing = await readText(storage, uri);
+          } catch (err) {
+            if (!isNotFoundError(err)) return jsonError(err);
+            existing = '';
+          }
+          const content = existing + appendContent;
+          if (Buffer.byteLength(content, 'utf-8') > config.maxWriteSize) {
+            return JSON.stringify({ error: `追加后内容过大，超过限制 ${config.maxWriteSize} 字节` });
+          }
+          await storage.writeFile(uri, content);
+          const info = await storage.stat(uri);
+          return JSON.stringify({ uri, size: info.size, message: '内容追加成功' });
+        });
       } catch (err) {
         return jsonError(err);
       }
@@ -724,8 +916,10 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         const storage = requireStorage(config);
         const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
-        await storage.delete(uri);
-        return JSON.stringify({ uri, message: '删除成功' });
+        return await withFileLock([uri], async () => {
+          await storage.delete(uri);
+          return JSON.stringify({ uri, message: '删除成功' });
+        });
       } catch (err) {
         return jsonError(err);
       }
@@ -858,15 +1052,29 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
         description:
           '在受控存储中按行搜索匹配文本（内容搜索，非文件名搜索）。path 可为文件，也可为目录（目录将递归搜索所有文件并跨文件累计预算）。支持正则表达式和大小写控制。' +
           '目录搜索默认排除 node_modules / dist / build / .git / coverage / __pycache__ 等噪声目录；传 `exclude` 覆盖默认，或传 `exclude: []` 关闭全部默认。' +
+          '结果被预算截断时（truncated: true）会给出 nextStartFile / nextStartLine：传同一个 path 加这两个值即从断点续搜。' +
           '如需按文件名/目录名查找，请使用 file_tree 的 pattern 参数。',
         parameters: {
           type: 'object',
           properties: {
             path: { type: 'string', description: '要搜索的文件或目录的 storage URI 或相对当前 cwd 的路径' },
             pattern: { type: 'string', description: '搜索模式（纯文本或正则表达式）' },
-            isRegex: { type: 'boolean', description: '模式是否为正则表达式（默认 false）' },
+            isRegex: {
+              type: 'boolean',
+              description:
+                '模式是否为正则表达式（默认 false）。编译前过体检，拦下已知的几类灾难性写法（嵌套量词、含量词的分支重复、无界量词堆叠），不是完备保证；isRegex:false 走字面量。',
+            },
             ignoreCase: { type: 'boolean', description: '是否忽略大小写（默认 true）' },
-            startLine: { type: 'number', description: '从第几行开始搜索（默认 1，用于继续上次截断搜索）' },
+            startLine: {
+              type: 'number',
+              description:
+                '从第几行开始搜索（默认 1，用于继续上次截断的搜索）。文件模式=文件内起始行；目录模式须与 startFile 同传，表示在 startFile 内的起始行。',
+            },
+            startFile: {
+              type: 'string',
+              description:
+                '目录模式续搜：从这个文件开始扫（相对 path 的文件路径，取上次返回的 nextStartFile），排序在它之前的文件整体跳过。仅目录搜索生效。',
+            },
             maxResults: { type: 'number', description: '最大返回结果数（默认 50，最多 200）' },
             maxSearchBytes: { type: 'number', description: `单次最多扫描字节数（默认/上限 ${config.maxSearchBytes}）` },
             exclude: {
@@ -903,54 +1111,81 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
           Math.max(1024, Math.floor(Number(args.maxSearchBytes) || config.maxSearchBytes)),
           config.maxSearchBytes,
         );
-        const regex =
-          ((args.isRegex as boolean) ?? false)
-            ? new RegExp(pattern, ignoreCase ? 'i' : '')
-            : new RegExp(escapeRegExp(pattern), ignoreCase ? 'i' : '');
+        let regex: RegExp;
+        if ((args.isRegex as boolean) ?? false) {
+          // 模型给的正则先过体检：嵌套量词的回溯是同步的，超时与 abort 都打不断
+          assertSafeSearchPattern(pattern);
+          regex = new RegExp(pattern, ignoreCase ? 'i' : '');
+        } else {
+          regex = new RegExp(escapeRegExp(pattern), ignoreCase ? 'i' : '');
+        }
         const excludeProvided = args.exclude !== undefined;
         const excludePatterns = resolveExcludePatterns(args.exclude);
         const includePatterns = resolveIncludePatterns(args.include);
 
         // 目录：递归收集所有文件并逐个搜索，预算（maxResults / maxSearchBytes）跨文件累加。
+        //
+        // 续搜协议（定死）：截断时返回 nextStartFile（相对本目录的文件路径）+ nextStartLine，
+        // 下一次调用传同一个 path 加这两个值，就从断点原地接着扫——零重复、零遗漏。
+        // 断点必落在停下的那个文件里（预算一旦耗尽，searchTextStream 即报 truncated 并带回
+        // nextStartLine，循环当场停）：maxResults 耗尽=同文件最后一条命中行 +1；
+        // maxSearchBytes 耗尽=同文件最后扫描行 +1。
         if (info.isDirectory) {
           const files = await collectFiles(storage, uri, excludePatterns, includePatterns);
+          const startFile = typeof args.startFile === 'string' ? (args.startFile as string).trim() : '';
+          // 遍历顺序由 collectFiles 定（深度优先、字典序、稳定），故「跳过 startFile 之前的文件」可复现
+          const startIndex = startFile ? files.findIndex(f => relPathFromRoot(uri, f) === startFile) : 0;
+          if (startIndex < 0) {
+            return JSON.stringify({
+              error:
+                `startFile 在该目录下未找到：${startFile}。它须是相对 path 的文件路径（取上次返回的 nextStartFile）；` +
+                '续搜须把 exclude / include 原样重传——文件集一变，断点文件可能已被排除在外。',
+            });
+          }
+          const pending = files.slice(startIndex);
           const allMatches: Array<{ uri: string; line: number; content: string }> = [];
           let totalScannedBytes = 0;
           let totalScannedLines = 0;
           let scannedFiles = 0;
-          let truncated = false;
-          let nextStartFile: string | undefined;
+          let next: { file: string; line: number } | undefined;
 
-          for (const fileUri of files) {
-            scannedFiles++;
+          for (let idx = 0; idx < pending.length; idx++) {
+            const fileUri = pending[idx];
+            // 只有续搜的首个文件从 startLine 起；其余文件整篇扫
+            const fileStartLine = idx === 0 && startFile ? startLine : 1;
+            // 走到下一个文件必然是上个文件没耗尽预算（耗尽即 truncated 并 break），故跨文件时两者恒 > 0；
+            // 首个文件的余量就是入参本身（maxResults 未钳下界，非法负数会让首文件扫一行即截断，与文件模式一致）
             const remainingResults = maxResults - allMatches.length;
             const remainingBytes = maxSearchBytes - totalScannedBytes;
-            if (remainingResults <= 0 || remainingBytes <= 0) {
-              truncated = true;
-              nextStartFile = fileUri;
-              break;
-            }
-            const r = await searchTextStream(storage, fileUri, regex, 1, remainingResults, remainingBytes).catch(
-              () => null,
-            );
+            scannedFiles++;
+            const r = await searchTextStream(
+              storage,
+              fileUri,
+              regex,
+              fileStartLine,
+              remainingResults,
+              remainingBytes,
+            ).catch(() => null);
             if (!r) continue;
             for (const m of r.matches) allMatches.push({ uri: fileUri, ...m });
             totalScannedBytes += r.scannedBytes;
             totalScannedLines += r.scannedLines;
-            if (r.truncated && allMatches.length >= maxResults) {
-              truncated = true;
-              nextStartFile = fileUri;
-              break;
-            }
+            if (!r.truncated) continue;
+            // 文件中途停下：断点落在同一文件。预算恰好在该文件最后一行用完时 nextStartLine
+            // 会越过文件末尾，下次从这里续搜只多开一次空文件，不会重复也不会遗漏。
+            next = { file: relPathFromRoot(uri, fileUri), line: r.nextStartLine ?? fileStartLine };
+            break;
           }
 
-          const advice = truncated
+          const advice = next
             ? '搜索因预算（maxResults 或 maxSearchBytes）耗尽而中断。请采取以下任一行动再查：' +
-              '(1) 用更精确的 path 缩小扫描范围；' +
-              '(2) 加 exclude（默认已含 node_modules/dist/.git/build/coverage 等）；' +
-              '(3) 用 include 限定文件类型（如 ["**/*.ts","**/*.md"]）；' +
-              '(4) 提高 maxResults / maxSearchBytes；' +
-              '(5) 用返回的 nextStartFile 作为下次 path 继续。' +
+              `(1) 继续请传 path=${uri}, startFile=${next.file}, startLine=${next.line}，` +
+              '并把本次的 pattern / isRegex / ignoreCase / exclude / include 原样重传' +
+              '（任一不同则断点失效：文件集或匹配规则一变，断点指向的位置就不再是同一个）；' +
+              '(2) 用更精确的 path 缩小扫描范围；' +
+              '(3) 传 exclude 缩小文件集（传了就替换默认集，默认集含 node_modules/dist/.git/build/coverage 等，要留着须一并列上）；' +
+              '(4) 用 include 限定文件类型（如 ["**/*.ts","**/*.md"]）；' +
+              '(5) 提高 maxResults / maxSearchBytes。' +
               '**不要根据本次结果断言"找不到"——它可能只是被预算截断了。**'
             : undefined;
 
@@ -960,13 +1195,14 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
             isDirectory: true,
             totalFiles: files.length,
             scannedFiles,
+            ...(startFile ? { startFile, startLine } : {}),
             matches: allMatches,
             matchCount: allMatches.length,
             scannedBytes: totalScannedBytes,
             scannedLines: totalScannedLines,
-            truncated,
+            truncated: next !== undefined,
             excludeApplied: excludeProvided ? '(user)' : '(default)',
-            ...(nextStartFile ? { nextStartFile } : {}),
+            ...(next ? { nextStartFile: next.file, nextStartLine: next.line } : {}),
             ...(advice ? { advice } : {}),
           });
         }

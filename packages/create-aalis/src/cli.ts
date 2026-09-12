@@ -26,8 +26,8 @@ import { fileURLToPath } from 'node:url';
 type Tier = 'bare' | 'minimal' | 'standard' | 'full';
 
 // 基础设施 + agent 套件：minimal 起步的自洽依赖闭包（网关路由 → 指令/agent →
-// 会话 → 权限 + 确认通道 → 跨会话历史）。缺 session-confirm 时，除自带终端确认的 CLI 外，
-// WebUI / OneBot 等平台上任何声明 confirm 的工具都只能"需确认后执行"而执行不了，故它是 authority 的配套。
+// 会话 → 权限 + 确认通道 → 跨会话历史）。缺 session-confirm 时，CLI / WebUI / OneBot
+// 等平台上任何声明 confirm 的工具都只能"需确认后执行"而执行不了，故它是 authority 的配套。
 // 同类适配器不在此列，由 GROUPS 交互选择补入。
 const MINIMAL_BASE = [
   '@aalis/plugin-storage-local',
@@ -449,13 +449,35 @@ function argValue(flag: string): string | undefined {
   return i >= 0 ? argv[i + 1] : undefined;
 }
 
+/** 带取值的 flag：紧随其后的一个 token 是它的值，不得再当位置参数。 */
+const VALUE_FLAGS = new Set(['--tier', '--registry']);
+
+/**
+ * 取位置参数：跳过所有 flag，以及取值 flag 后面那个值。
+ * `--tier full my-bot` 的位置参数只有 `my-bot`——否则 `full` 会被当项目名
+ * （生成名为 full 的目录、静默丢弃用户传的名字），而 `--registry <url> my-bot`
+ * 会拿 url 去校验包名并报「非法项目名」。
+ */
+export function positionalArgs(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith('-')) {
+      if (VALUE_FLAGS.has(a)) i++;
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
 async function main(): Promise<void> {
   const tierFlag = argValue('--tier') as Tier | undefined;
   const skip = argv.includes('--yes') || argv.includes('-y') || tierFlag !== undefined;
   const noInstall = argv.includes('--no-install');
   const force = argv.includes('--force');
   const registry = argValue('--registry') ?? DEFAULT_REGISTRY;
-  const positional = argv.slice(2).filter(a => !a.startsWith('-'));
+  const positional = positionalArgs(argv.slice(2));
   const cliName = positional[0];
 
   // 非交互终端（管道 / 某些 IDE 终端 / CI）下进交互模式会在 readline 遇 EOF 时静默空退

@@ -5,7 +5,7 @@
 
 ## 概述
 
-AI 可主动创建的定时任务系统，支持三种调度方式：cron 表达式（周期）、固定间隔秒数（周期），以及 `runAt` 指定时刻执行一次（一次性）。AI 工具还接受 `delaySeconds`，会换算为 `runAt`。
+AI 可主动创建的定时任务系统，支持三种调度方式：cron 表达式（周期）、固定间隔秒数（周期），以及 `runAt` 指定时刻执行一次（一次性）。AI 工具与 WebUI 表单还接受 `delaySeconds`，会换算为 `runAt`。
 
 触发的消息带 `source='scheduler'`：plugin-agent 按来源分开管理生成，不会打断同会话的用户对话；plugin-commands 把它当作受信系统源（命令免交互确认，结果写入日志）。流控不对该来源单独豁免，是否受流控取决于 flow-control 的 `scopes` 能否匹配到该消息（默认 `*:group` 匹配不到）。
 
@@ -49,4 +49,6 @@ meta.inject = { required: ['tools', 'cron-engine'], optional: ['agent'] }
 
 1. 任务有三个来源：配置项 `jobs`（静态任务）、WebUI「计划任务」页，以及 AI 调用的 `scheduler_create_job` 工具。后两者创建的是动态任务，会持久化到 `persistPath`。
 2. cron 任务订阅 cron-engine 服务的共享 tick（可按 `timeZone` 求值）；interval 任务用固定间隔定时器；runAt 任务到点执行一次，之后动态任务被删除，静态任务被停用。
-3. 触发时先广播 `trigger:fired`，再向目标会话发送 `inbound:message` 事件，`source` 设为 `scheduler`。消息的 `actor` 取创建任务时固化的创建者身份，触发的 AI 按该身份的权限执行，缺失则按匿名处理（配置文件中的静态任务缺省为 `webui:console`）。
+3. `cron` / `interval` / `runAt` / `delaySeconds` 是四种互不相容的定时语义，**恰好填一个**：一个都不填报「必须填写其中之一」，填了两个以上报「互斥，只能填一个」，不会静默取其中之一。WebUI 表单与 `scheduler_create_job` 工具两条路径同一条判据。
+4. 「暂停」只对周期任务（`cron` / `interval`）有效：一次性任务一旦被暂停，到点的定时器直接跳过且不会重排，任务会永久卡住。因此**一次性任务不能暂停，只能删除重建**：运行时入口一律拒绝——创建时 `paused` 与 `runAt` / `delaySeconds` 同填直接报错，事后调 `pauseJob`（AI 工具 / WebUI 按钮）返回失败。存量持久化文件里带 `paused` 的一次性任务，启动时告警并按未暂停处理（要停掉它请改 `enabled` 或删除任务）。
+5. 触发时先广播 `trigger:fired`，再向目标会话发送 `inbound:message` 事件，`source` 设为 `scheduler`。消息的 `actor` 取创建任务时固化的创建者身份，触发的 AI 按该身份的权限执行，缺失则按匿名处理（配置文件中的静态任务缺省为 `webui:console`）。

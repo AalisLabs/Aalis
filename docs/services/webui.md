@@ -21,12 +21,12 @@ WebUI 是 Aalis 的 **Web 管理后台**：启动一个 HTTP 服务器，提供 
 
 ```ts
 export interface WebUIService {
-  getPort(): number;                                                  // :21
-  getHost(): string;                                                  // :23
-  setClientDir?(dir: string): void;                                   // :28 可选——运行时替换前端目录
-  registerPage(page: WebuiPage, pluginName: string): () => void;      // :30 返回 dispose
-  getPages(): Array<WebuiPage & { pluginName: string }>;              // :32 含插件归属
-  unregisterByPlugin(pluginName: string): void;                       // :34 插件卸载时批量清
+  getPort(): number;
+  getHost(): string;
+  setClientDir?(dir: string): void;                                   // 可选——运行时替换前端目录
+  registerPage(page: WebuiPage, pluginName: string): () => void;      // 返回 dispose
+  getPages(): Array<WebuiPage & { pluginName: string }>;              // 含插件归属
+  unregisterByPlugin(pluginName: string): void;                       // 插件卸载时批量清
 }
 ```
 
@@ -34,8 +34,8 @@ export interface WebUIService {
 
 ```ts
 export interface WebuiClientProvider {
-  getClientDir(): string;   // :330 返回含 index.html 的静态目录绝对路径
-  label?: string;           // :332 多前端切换时的展示名
+  getClientDir(): string;   // 返回含 index.html 的静态目录绝对路径
+  label?: string;           // 多前端切换时的展示名
 }
 ```
 
@@ -43,12 +43,12 @@ export interface WebuiClientProvider {
 
 ```ts
 export interface WebuiPage {
-  key: string;                 // :162 唯一标识，对应前端路由/tab key
-  label: string;               // :164 显示名
-  icon?: string;               // :166 命名标识 或 内联 SVG（见第 6 节 XSS 风险）
-  order?: number;              // :168 排序权重，默认 99
-  renderer?: string;           // :170 自定义渲染器标识（非声明式 content 场景）
-  content?: WebuiComponent[];  // :172 声明式页面内容；不提供则用客户端内置页面
+  key: string;                 // 唯一标识，对应前端路由/tab key
+  label: string;               // 显示名
+  icon?: string;               // 命名标识 或 内联 SVG（见第 6 节 XSS 风险）
+  order?: number;              // 排序权重，默认 99
+  renderer?: string;           // 自定义渲染器标识（非声明式 content 场景）
+  content?: WebuiComponent[];  // 声明式页面内容；不提供则用客户端内置页面
 }
 ```
 
@@ -56,33 +56,35 @@ export interface WebuiPage {
 
 8 种联合：`stat` / `table` / `form` / `actions` / `info` / `markdown` / `tabs` / `graph`。每种组件的 `source` 字段都是一个**字符串方法名**，前端按它调 `POST /api/page-action/:plugin/:method`（见第 5 节）取数据。
 
-- `WebuiFormComponent`（`:69-75`）复用 `@aalis/schema-config` 的 `ConfigSchema`，`save` 是回写方法名。
-- `WebuiTableComponent`（`:48-66`）支持 `columns/actions/refresh/searchable`。
-- `WebuiGraphComponent`（`:121-142`）基于 Cytoscape，非关系图场景**必须**声明 `nodeKinds/edgeKinds`，否则冒用人物关系图内置三类图例。
+- `WebuiFormComponent` 复用 `@aalis/schema-config` 的 `ConfigSchema`，`save` 是回写方法名。
+- `WebuiTableComponent` 支持 `columns/actions/refresh/searchable`。
+- `WebuiGraphComponent` 基于 Cytoscape，非关系图场景**必须**声明 `nodeKinds/edgeKinds`，否则冒用人物关系图内置三类图例。
 
 ### declaration merging 注入 core 与 schema-config（`packages/api-webui/src/index.ts`）
 
 ```ts
 declare module '@aalis/core' {
   interface PluginModule {
-    subsystem?: string;                                              // :190 仅 WebUI 分组展示，core 不读
-    extends?: ExtendDeclaration;                                     // :191 声明扩展事件/钩子，仅展示
+    subsystem?: string;                                              // 仅 WebUI 分组展示，core 不读
+    extends?: ExtendDeclaration;                                     // 声明扩展事件/钩子，仅展示
     actions?: Record<string,
       (ctx: Context, args: Record<string, unknown>,
-       caller?: UserIdentity) => Promise<unknown>>;                  // :201 RPC 动作表，host 路由调用
+       caller?: UserIdentity) => Promise<unknown>>;                  // RPC 动作表，host 路由调用
   }
 }
 
 declare module '@aalis/schema-config' {
   interface SchemaField {
-    secret?: boolean;          // :210 敏感字段，前端遮蔽显示
-    dynamicOptions?: string;   // :212 select/multiselect 动态选项来源服务名（前端调该服务 listModels()）
-    allowCustom?: boolean;     // :214 multiselect 允许手动输入自定义值
+    secret?: boolean;          // 敏感字段，前端遮蔽显示
+    dynamicOptions?: string;   // select/multiselect 动态选项来源服务名（前端调该服务 listModels()）
+    allowCustom?: boolean;     // multiselect 允许手动输入自定义值
   }
 }
 ```
 
 > `actions` 是 WebUI 体系的真正业务入口：core 完全不感知此字段，由 host（webui-server）路由层 `POST /api/page-action/:plugin/:method` 在权限闸放行后，以**插件自身的 `entry.context`** 调用 handler，并把解析出的 `caller` 身份作为第三参传入（`packages/plugin-webui-server/src/routes/plugins.ts`）。
+>
+> action 的业务失败**返回** `{ ok: false, error: '原因' }`，HTTP 仍是 200——路由只把 handler 的抛错转成 5xx；前端 form / actions / table 三种组件都据此显示原因，返回其它任何值（含 `undefined`）视为成功；table 的非 danger / confirm 操作若返回不带 `ok` 的普通对象，会被当作详情弹窗内容展示，只想刷新表格就返回 `undefined` 或 `{ ok: true }`。
 
 ### helper `useWebuiService` 与 `ScopedWebuiService`（`packages/api-webui/src/index.ts`）
 
@@ -102,8 +104,8 @@ export function useWebuiService(ctx: Context): ScopedWebuiService {
 
 ### 其它导出（纯类型 / 数据）
 
-- `ExtendDeclaration`（`:260-267`）：`events/hooks/mixins` 元数据。
-- `SubsystemMetadata` + `DEFAULT_SUBSYSTEM_METADATA`（`:286-319`）：子系统展示目录（中文 label / 排序），唯一消费者是 webui-server 的 `/api/service-groups`；未命中表时前端回退「id 原样展示，order=9999」。
+- `ExtendDeclaration`：`events/hooks/mixins` 元数据。
+- `SubsystemMetadata` + `DEFAULT_SUBSYSTEM_METADATA`：子系统展示目录（中文 label / 排序），唯一消费者是 webui-server 的 `/api/service-groups`；未命中表时前端回退「id 原样展示，order=9999」。
 
 ## 3. 谁提供 / 谁消费
 

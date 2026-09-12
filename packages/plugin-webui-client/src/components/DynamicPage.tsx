@@ -3,7 +3,7 @@ import { Puzzle, Clock, Globe, Brain, Wrench, Sparkles, BarChart2 } from 'lucide
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { api, pageAction } from '../api';
+import { api, errText, pageAction } from '../api';
 import { SchemaForm, type LLMProviderEntry } from './SchemaForm';
 import { RelationGraph } from './RelationGraph';
 import type {
@@ -123,10 +123,25 @@ function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent
 
   const handleAction = async (action: NonNullable<WebuiTableComponent['actions']>[number], row: Record<string, unknown>) => {
     if (action.confirm && !confirm(action.confirm)) return;
-    const result = await pageAction<Record<string, unknown>>(pluginName, action.method, row);
-    if (action.danger || action.confirm) {
+    let result: Record<string, unknown> | undefined;
+    try {
+      result = await pageAction<Record<string, unknown>>(pluginName, action.method, row);
+    } catch (err) {
+      window.alert(errText(err, '操作失败'));
+      return;
+    }
+    // 业务失败走返回值 {ok:false,error} 而非 HTTP 状态：不出声就等于把失败显示成成功
+    if (result && result.ok === false) {
+      window.alert(typeof result.error === 'string' ? result.error : '操作失败');
       fetchData();
-    } else if (result && typeof result === 'object' && !Array.isArray(result)) {
+      return;
+    }
+    // 详情弹窗只给「查看类」action：返回的普通对象**不带 ok 字段**才算详情。
+    // 带 ok 的（如 {ok:true}）是操作回执而非详情，弹出来只显示一行 ok 且表格不刷新。
+    const isDetail =
+      !action.danger && !action.confirm && !!result && typeof result === 'object' && !Array.isArray(result)
+      && result.ok === undefined;
+    if (isDetail) {
       setDetail(result);
     } else {
       fetchData();
@@ -291,9 +306,12 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
     setSaving(true);
     setMsg('');
     try {
-      await pageAction(pluginName, comp.save, draft);
-      setMsg('已保存');
-    } catch { setMsg('保存失败'); }
+      // action 的业务失败走返回值 {ok:false,error}（HTTP 仍是 200），只看状态码会把
+      // scheduler/workflow 的校验失败全显示成「已保存」。
+      const r = await pageAction<{ ok?: boolean; error?: string } | undefined>(pluginName, comp.save, draft);
+      if (r && r.ok === false) setMsg(r.error ?? '保存失败');
+      else setMsg('已保存');
+    } catch (err) { setMsg(errText(err, '保存失败')); }
     setSaving(false);
   };
 
@@ -349,12 +367,17 @@ function DynActions({ comp, pluginName, onRefresh }: { comp: WebuiActionsCompone
     if (item.confirm && !confirm(item.confirm)) return;
     setActionMsg(prev => ({ ...prev, [item.method]: '执行中...' }));
     try {
-      await pageAction(pluginName, item.method);
+      // 业务失败走返回值 {ok:false,error}（HTTP 仍是 200）：只看抛错会把失败显示成「完成」
+      const r = await pageAction<{ ok?: boolean; error?: string } | undefined>(pluginName, item.method);
+      if (r && r.ok === false) {
+        setActionMsg(prev => ({ ...prev, [item.method]: r.error ?? '失败' }));
+        return;
+      }
       setActionMsg(prev => ({ ...prev, [item.method]: '完成' }));
       // 立即触发同页面其它组件刷新；不等待用户手动刷新
       onRefresh();
-    } catch {
-      setActionMsg(prev => ({ ...prev, [item.method]: '失败' }));
+    } catch (err) {
+      setActionMsg(prev => ({ ...prev, [item.method]: errText(err, '失败') }));
     }
   };
 

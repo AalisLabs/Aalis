@@ -134,30 +134,38 @@ describe('runtime file-logger', () => {
 
   it('setupFileLogger 记录后续日志到文件', async () => {
     const handle = await setupFileLogger(logFile);
-    new DefaultLogger('flog').warn('later-msg');
-    new DefaultLogger('flog').info('another');
-    await handle.flush();
-    // 追加是异步队列，再给一个 microtask 并 flush
-    await new Promise(r => setImmediate(r));
-    await handle.flush();
-    const content = readFileSync(logFile, 'utf-8');
-    expect(content).toContain('later-msg');
-    expect(content).toContain('another');
-    expect(content).toContain('|warn|');
-    expect(content).toContain('|info|');
+    try {
+      new DefaultLogger('flog').warn('later-msg');
+      new DefaultLogger('flog').info('another');
+      await handle.flush();
+      // 追加是异步队列，再给一个 microtask 并 flush
+      await new Promise(r => setImmediate(r));
+      await handle.flush();
+      const content = readFileSync(logFile, 'utf-8');
+      expect(content).toContain('later-msg');
+      expect(content).toContain('another');
+      expect(content).toContain('|warn|');
+      expect(content).toContain('|info|');
+    } finally {
+      await handle.dispose();
+    }
   });
 
   it('换行被转义为字面 \\n', async () => {
     const handle = await setupFileLogger(logFile);
-    new DefaultLogger('flog').error('line1\nline2');
-    await handle.flush();
-    await new Promise(r => setImmediate(r));
-    await handle.flush();
-    const content = readFileSync(logFile, 'utf-8');
-    expect(content).toContain('line1\\nline2');
-    // 同一条日志只占一行
-    const errLines = content.split('\n').filter(l => l.includes('line1'));
-    expect(errLines.length).toBe(1);
+    try {
+      new DefaultLogger('flog').error('line1\nline2');
+      await handle.flush();
+      await new Promise(r => setImmediate(r));
+      await handle.flush();
+      const content = readFileSync(logFile, 'utf-8');
+      expect(content).toContain('line1\\nline2');
+      // 同一条日志只占一行
+      const errLines = content.split('\n').filter(l => l.includes('line1'));
+      expect(errLines.length).toBe(1);
+    } finally {
+      await handle.dispose();
+    }
   });
 
   it('appendCrashLog 写入 Error 堆栈', async () => {
@@ -180,22 +188,44 @@ describe('runtime file-logger', () => {
 
   it('文件行格式包含递增 seq 前缀，可被 parseLogLine 反解', async () => {
     const handle = await setupFileLogger(logFile);
-    new DefaultLogger('flog').info('alpha');
-    new DefaultLogger('flog').warn('beta');
-    await handle.flush();
-    await new Promise(r => setImmediate(r));
-    await handle.flush();
-    const lines = readFileSync(logFile, 'utf-8').split('\n').filter(Boolean);
-    const entries = lines
-      .map(parseLogLine)
-      .filter((e): e is NonNullable<ReturnType<typeof parseLogLine>> => e !== null);
-    expect(entries.length).toBeGreaterThanOrEqual(2);
-    const a = entries.find(e => e.message === 'alpha');
-    const b = entries.find(e => e.message === 'beta');
-    expect(a).toBeDefined();
-    expect(b).toBeDefined();
-    expect(b!.seq).toBeGreaterThan(a!.seq);
-    expect(a!.level).toBe('info');
-    expect(b!.level).toBe('warn');
+    try {
+      new DefaultLogger('flog').info('alpha');
+      new DefaultLogger('flog').warn('beta');
+      await handle.flush();
+      await new Promise(r => setImmediate(r));
+      await handle.flush();
+      const lines = readFileSync(logFile, 'utf-8').split('\n').filter(Boolean);
+      const entries = lines
+        .map(parseLogLine)
+        .filter((e): e is NonNullable<ReturnType<typeof parseLogLine>> => e !== null);
+      expect(entries.length).toBeGreaterThanOrEqual(2);
+      const a = entries.find(e => e.message === 'alpha');
+      const b = entries.find(e => e.message === 'beta');
+      expect(a).toBeDefined();
+      expect(b).toBeDefined();
+      expect(b!.seq).toBeGreaterThan(a!.seq);
+      expect(a!.level).toBe('info');
+      expect(b!.level).toBe('warn');
+    } finally {
+      await handle.dispose();
+    }
+  });
+
+  it('dispose 后退订：二次 setupFileLogger 不会让同一条日志写两遍', async () => {
+    const first = await setupFileLogger(logFile);
+    await first.dispose();
+    const second = await setupFileLogger(logFile);
+    try {
+      new DefaultLogger('flog').info('only-once');
+      await second.flush();
+      await new Promise(r => setImmediate(r));
+      await second.flush();
+      const hits = readFileSync(logFile, 'utf-8')
+        .split('\n')
+        .filter(l => l.includes('only-once'));
+      expect(hits.length).toBe(1);
+    } finally {
+      await second.dispose();
+    }
   });
 });

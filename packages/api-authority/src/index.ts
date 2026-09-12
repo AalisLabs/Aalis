@@ -149,6 +149,8 @@ export interface ExecutionGuardContext {
    * 仅跳过受限被拒后的交互确认弹窗（requestAccess）。**不**绕过 authorize（防提权）。
    */
   skipConfirm?: boolean;
+  /** 调用方回合的中止信号：守卫把它透传给 requestAccess，中止后不再等确认（见 AccessRequest.signal）。 */
+  signal?: AbortSignal;
 }
 
 /**
@@ -199,6 +201,11 @@ export interface AccessRequest {
    * confirm='always' 时不接受会话记忆（每次都问）。
    */
   confirm?: CapabilityConfirm;
+  /**
+   * 发起回合的中止信号（可选）。已中止即不问直接拒；等待应答期间中止则立即拒，
+   * 确认通道应据此撤回未决提示。第三方 authority / 通道实现可忽略该字段（退化为等应答）。
+   */
+  signal?: AbortSignal;
 }
 
 /** 批准后授予的临时委托范围：once 不持久；session 为当前会话短时授予 */

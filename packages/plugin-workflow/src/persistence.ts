@@ -1,8 +1,11 @@
 // ============================================================
-// persistence.ts — 运行实例持久化（追加 + 滚动）
+// persistence.ts — 运行实例持久化（追加 + 滚动）+ once 触发记账
 //
 // 通过 @aalis/api-storage 写入 storage URI（默认 data:/workflow-runs.json）。
 // 仍维持 write-on-end 整体重写策略；写入串行化避免覆盖。
+// 文件形状：{ runs: [...], onceFired: { <workflowId>: <firedAt> } }；
+// 旧版的顶层数组仍能读（按 runs 处理），写回时统一升级为对象。
+// 反向不成立：降级到旧构建会丢运行历史与 once 记账（0.x 不保证降级）。
 // ============================================================
 
 import type { StorageService } from '@aalis/api-storage';
@@ -15,6 +18,8 @@ export class RunStore {
   private maxRuns: number;
   private logger: Logger;
   private runs: WorkflowRun[] = [];
+  /** once 触发记账：workflowId → 首次触发时刻（ms）。与运行历史同文件，重启后读回即不再触发 */
+  private onceFired: Record<string, number> = {};
   private writeChain: Promise<void> = Promise.resolve();
 
   constructor(storage: StorageService, fileUri: string, maxRuns: number, logger: Logger) {
@@ -29,7 +34,17 @@ export class RunStore {
     try {
       const raw = await this.storage.readFile(this.fileUri, 'utf-8');
       const data = JSON.parse(String(raw));
-      if (Array.isArray(data)) this.runs = data as WorkflowRun[];
+      if (Array.isArray(data)) {
+        this.runs = data as WorkflowRun[]; // 旧格式：顶层就是 runs 数组
+      } else if (data && typeof data === 'object') {
+        const d = data as { runs?: unknown; onceFired?: unknown };
+        if (Array.isArray(d.runs)) this.runs = d.runs as WorkflowRun[];
+        if (d.onceFired && typeof d.onceFired === 'object') {
+          for (const [id, at] of Object.entries(d.onceFired as Record<string, unknown>)) {
+            if (typeof at === 'number') this.onceFired[id] = at;
+          }
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!/ENOENT|not found|不存在/i.test(msg)) {
@@ -39,7 +54,7 @@ export class RunStore {
   }
 
   private flush(): void {
-    const payload = JSON.stringify(this.runs, null, 2);
+    const payload = JSON.stringify({ runs: this.runs, onceFired: this.onceFired }, null, 2);
     this.writeChain = this.writeChain
       .then(() => this.storage.writeFile(this.fileUri, payload))
       .then(
@@ -65,6 +80,41 @@ export class RunStore {
     if (i >= 0) this.runs[i] = run;
     else this.runs.push(run);
     this.flush();
+  }
+
+  /** once 触发器的首次触发时刻；undefined = 从未触发过 */
+  onceFiredAt(workflowId: string): number | undefined {
+    return this.onceFired[workflowId];
+  }
+
+  /** 记下 once 已触发（幂等：已有记账不覆盖、不重复落盘） */
+  markOnceFired(workflowId: string): void {
+    if (this.onceFired[workflowId] !== undefined) return;
+    this.onceFired[workflowId] = Date.now();
+    this.flush();
+  }
+
+  /** 删除 workflow 时一并清账：同 id 重建视为新工作流，可再触发一次 */
+  clearOnceFired(workflowId: string): void {
+    if (this.onceFired[workflowId] === undefined) return;
+    delete this.onceFired[workflowId];
+    this.flush();
+  }
+
+  /**
+   * 按现存定义集清账：不在 ids 里的 workflowId 记账一并删除。
+   * removeWorkflow 之外还有一条路能让定义消失——直接删 defsDir 里的 yaml 文件，
+   * 那条路不经服务、清不了账，同 id 重建就会被旧记账永久压住。
+   * 启动扫描完定义后调一次，语义收敛为「定义不存在时记账随之清除」。
+   */
+  pruneOnceFired(ids: Set<string>): void {
+    let changed = false;
+    for (const id of Object.keys(this.onceFired)) {
+      if (ids.has(id)) continue;
+      delete this.onceFired[id];
+      changed = true;
+    }
+    if (changed) this.flush();
   }
 
   get(runId: string): WorkflowRun | undefined {

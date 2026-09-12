@@ -10,6 +10,11 @@ const RUNTIME_SCOPE = 'aalis:runtime';
 
 export interface FileLoggerHandle {
   flush(): Promise<void>;
+  /**
+   * 冲洗后退订 LogHub —— 与 ConsoleSinkHandle.dispose 对称。
+   * 不退订则同进程二次 setupFileLogger 会叠加订阅，每条日志写多遍。
+   */
+  dispose(): Promise<void>;
 }
 
 function formatUnknownError(err: unknown): string {
@@ -40,13 +45,19 @@ export async function setupFileLogger(logFile = DEFAULT_LOG_FILE): Promise<FileL
   const initial = getBootstrapBuffer().snapshot().map(formatLogLine).join('');
   await writeFile(logFile, initial);
 
-  hub.onEntry(entry => {
+  const off = hub.onEntry(entry => {
     queue = queue.then(() => appendFile(logFile, formatLogLine(entry))).catch(() => {});
   });
 
+  const flush = async (): Promise<void> => {
+    await queue.catch(() => {});
+  };
+
   return {
-    async flush() {
-      await queue.catch(() => {});
+    flush,
+    async dispose() {
+      await flush();
+      off();
     },
   };
 }

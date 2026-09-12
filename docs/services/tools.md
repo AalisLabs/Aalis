@@ -65,6 +65,7 @@ export interface ToolCallContext {
   actor?: { platform: string; userId: string };  // 授权身份（委派/定时/自发回合），缺省=会话身份
   enabledGroups?: string[];  // 当前平台启用的分组，供 search_tools 等过滤
   acceptsImages?: boolean;   // 调用方能把 ToolExecutionResult.images 交给主模型（agent 循环置 true；mcp-server/workflow 不置，能出图的工具应退回文字）
+  signal?: AbortSignal;      // 调用方回合的中止信号（agent 循环传入）：守卫等确认期间回合被中止则不再执行，用户迟到的 y 不替死回合放行
 }
 ```
 

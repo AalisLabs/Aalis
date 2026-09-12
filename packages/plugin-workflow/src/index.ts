@@ -357,14 +357,21 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   const cancelTokens = new Map<string, { cancelled: boolean }>();
 
   // ── 触发管理器：内部 cron/interval/event 监听 ──
-  const triggers = new TriggerManager(ctx, logger, (workflowId, source, payload) => {
-    // 异步触发，不阻塞触发源；event 触发的 payload（{args}）作为 vars 注入，{{vars.X}} 才读得到
-    runById(workflowId, payload ?? {}, source).catch(err => {
-      logger.error(
-        `触发执行 workflow=${workflowId} source=${source} 失败: ${err instanceof Error ? err.message : err}`,
-      );
-    });
-  });
+  const triggers = new TriggerManager(
+    ctx,
+    logger,
+    (workflowId, source, payload) => {
+      // 异步触发，不阻塞触发源；event 触发的 payload（{args}）作为 vars 注入，{{vars.X}} 才读得到
+      runById(workflowId, payload ?? {}, source).catch(err => {
+        logger.error(
+          `触发执行 workflow=${workflowId} source=${source} 失败: ${err instanceof Error ? err.message : err}`,
+        );
+      });
+    },
+    runStore, // once 的 firedAt 与运行历史同一份持久化
+  );
+  // 定义已从磁盘删除的，once 记账不留孤儿（手删 yaml 不经 removeWorkflow）；注册前清
+  runStore.pruneOnceFired(new Set(loader.list().map(d => d.id)));
   for (const def of loader.list()) triggers.register(def);
 
   // ── 订阅外部 trigger:fired（来自 scheduler / 其他触发源）──
@@ -476,6 +483,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     },
     async removeWorkflow(id) {
       triggers.unregister(id);
+      runStore.clearOnceFired(id); // 定义没了，once 记账不留孤儿：同 id 重建算新工作流
       return await loader.removeDef(id);
     },
     async runWorkflow(id, vars, source, caller) {
@@ -509,6 +517,9 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   // ── 清理 ──
   ctx.onDispose(() => {
     triggers.dispose();
+    // 先置 cancelled 再清表：只 clear 的话在飞 run 仍持有自己的 token 引用，会继续用已 dispose 的
+    // ctx 跑完剩余节点、emit 事件，并把结果写回旧 RunStore 的历史快照
+    for (const t of cancelTokens.values()) t.cancelled = true;
     cancelTokens.clear();
   });
 
@@ -534,7 +545,8 @@ function registerTools(ctx: Context, service: WorkflowService): void {
           '定义或覆盖一个工作流。yaml 字段为完整的 WorkflowDef YAML 字符串，包含 id/trigger/nodes 等。' +
           ' 节点支持类型 tool / send-message / wait / agent；deps 形成 DAG；字符串值支持 {{vars.X}} 与 {{outputs.Y}} 插值。' +
           ' agent 节点（instruction 必填，可选 sessionId/platform/timeoutSeconds）会把指令派发给 agent 并等待其回复，' +
-          '回复经 out 存入 outputs 供下游插值——用 deps + agent 节点即可表达"分解→依赖→串/并行→管道→聚合"的确定性多智能体编排。',
+          '回复经 out 存入 outputs 供下游插值——用 deps + agent 节点即可表达"分解→依赖→串/并行→管道→聚合"的确定性多智能体编排。' +
+          ' once 触发器一生只触发一次：同 id 覆盖不会重新触发，要再跑一次请先 workflow_remove 再定义，或直接 workflow_run。',
         parameters: {
           type: 'object',
           properties: {

@@ -7,8 +7,8 @@ import { createStorageGateway, type StorageService, toStorageUri } from '@aalis/
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
+import { extractJsonCandidate, tryParseJsonObject } from '@aalis/util-json-repair';
 import { parse as parseYaml } from 'yaml';
-import { extractJsonCandidate, tryParseJsonObject } from './json-repair.js';
 
 /** 当前处理消息的会话身份（经 AsyncLocalStorage 按异步上下文隔离，杜绝并发会话间串档）。 */
 interface PersonaIdentity {
@@ -102,7 +102,7 @@ interface PersonaCard {
    *  字段 schema 仍由插件根据 outputFormat.fields 自动渲染并附在文本之后。
    *  仅在 outputFormat 存在时生效。 */
   outputFormatPrompt?: string;
-  /** outputFormat 校验失败时允许重试的最大次数（不含首次）。缺省 1。 */
+  /** outputFormat 校验失败时允许重试的最大次数（不含首次）。缺省 1，`0` = 不重试（首次不合格即丢弃）。 */
   outputFormatRetries?: number;
   nick_name?: string[];
   /** JSON 内容由客户端渲染，服务端不提取回复字段 */
@@ -200,7 +200,8 @@ class PersonaServiceImpl implements PersonaService {
       if (def.reply) replyField = key;
     }
     if (!replyField) return undefined;
-    const normalizedRetries = Number.isFinite(retries) && (retries as number) >= 0 ? Math.floor(retries as number) : 1;
+    // 取值已由 asCard 校验为非负整数，这里只补默认值
+    const normalizedRetries = retries ?? 1;
     return { fields, replyField, retries: normalizedRetries };
   }
 
@@ -474,25 +475,49 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const knownRoots = new Set(storage.listRoots().map(r => r.name));
   if (knownRoots.has('configDir')) searchUris.push('configDir:/personas');
 
-  async function tryLoadCardFromUri(uri: string): Promise<PersonaCard | undefined> {
+  /** 读到了但解析不出卡的标记——与"文件不存在"区分开，避免坏卡被当成没有卡 */
+  const INVALID = 'invalid' as const;
+
+  async function tryLoadCardFromUri(uri: string): Promise<PersonaCard | typeof INVALID | undefined> {
+    let raw: string;
     try {
-      const raw = (await storage.readFile(uri, 'utf-8')) as string;
-      const parsed = parseYaml(raw) as Record<string, unknown>;
-      return {
-        name: (parsed.name as string) ?? '',
-        description: (parsed.description as string) ?? '',
-        prompt: (parsed.prompt as string) ?? '',
-        traits: parsed.traits as string[] | undefined,
-        greeting: parsed.greeting as string | undefined,
-        outputFormat: parsed.outputFormat as PersonaCard['outputFormat'] | undefined,
-        outputFormatPrompt: parsed.outputFormatPrompt as string | undefined,
-        nick_name: parsed.nick_name as string[] | undefined,
-        clientSideJsonRendering: parsed.clientSideJsonRendering as boolean | undefined,
-        skills: parsed.skills as string[] | undefined,
-      };
+      raw = (await storage.readFile(uri, 'utf-8')) as string;
     } catch {
-      return undefined;
+      return undefined; // 文件不存在/不可读：候选路径探测的正常结果，不告警
     }
+    try {
+      const parsed = parseYaml(raw) as unknown;
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        throw new Error('YAML 顶层不是对象');
+      }
+      return asCard(parsed as Record<string, unknown>);
+    } catch (err) {
+      ctx.logger.warn(`角色卡解析失败，已跳过：${uri} —— ${err instanceof Error ? err.message : err}`);
+      return INVALID;
+    }
+  }
+
+  /** YAML 对象 → PersonaCard（字段口径与角色卡文档一致） */
+  function asCard(parsed: Record<string, unknown>): PersonaCard {
+    return {
+      name: (parsed.name as string) ?? '',
+      description: (parsed.description as string) ?? '',
+      prompt: (parsed.prompt as string) ?? '',
+      traits: parsed.traits as string[] | undefined,
+      greeting: parsed.greeting as string | undefined,
+      outputFormat: parsed.outputFormat as PersonaCard['outputFormat'] | undefined,
+      outputFormatPrompt: parsed.outputFormatPrompt as string | undefined,
+      // 仅接受非负整数（0 = 不重试）；负数/小数/非数字按未设处理，交由解析处取缺省 1
+      outputFormatRetries:
+        typeof parsed.outputFormatRetries === 'number' &&
+        Number.isInteger(parsed.outputFormatRetries) &&
+        parsed.outputFormatRetries >= 0
+          ? parsed.outputFormatRetries
+          : undefined,
+      nick_name: parsed.nick_name as string[] | undefined,
+      clientSideJsonRendering: parsed.clientSideJsonRendering as boolean | undefined,
+      skills: parsed.skills as string[] | undefined,
+    };
   }
 
   function joinUri(base: string, sub: string): string {
@@ -500,15 +525,20 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     return base.endsWith('/') ? base + s : `${base}/${s}`;
   }
 
-  async function findCard(name: string): Promise<{ card: PersonaCard; uri: string } | undefined> {
+  async function findCard(name: string): Promise<{ card: PersonaCard; uri: string } | typeof INVALID | undefined> {
+    let sawInvalid = false;
     for (const dir of searchUris) {
       for (const ext of ['.yaml', '.yml']) {
         const uri = joinUri(dir, `${name}${ext}`);
         const card = await tryLoadCardFromUri(uri);
+        if (card === INVALID) {
+          sawInvalid = true;
+          continue;
+        }
         if (card) return { card, uri };
       }
     }
-    return undefined;
+    return sawInvalid ? INVALID : undefined;
   }
 
   /** 扫描所有 personas 目录，预填 cache。 */
@@ -528,7 +558,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         const cardName = m[1];
         if (seenNames.has(cardName)) continue;
         const card = await tryLoadCardFromUri(entry.uri);
-        if (card) {
+        if (card && card !== INVALID) {
           svc.setCardCacheEntry(cardName, card);
           seenNames.add(cardName);
         }
@@ -539,7 +569,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   let card: PersonaCard;
   const found = await findCard(personaName);
-  if (found) {
+  if (found && found !== INVALID) {
     card = found.card;
     ctx.logger.info(`已加载角色卡: ${card.name} (${found.uri})`);
   } else {
@@ -548,7 +578,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       description: '一个友好的 AI 助手',
       prompt: '请友好、专业地与用户交流。',
     };
-    ctx.logger.info(`未找到角色卡 "${personaName}"，使用默认角色`);
+    if (found === INVALID) {
+      ctx.logger.warn(`角色卡 "${personaName}" 存在但解析失败（原因见上条告警），暂用内置默认角色`);
+    } else {
+      ctx.logger.info(`未找到角色卡 "${personaName}"，使用默认角色`);
+    }
   }
 
   const service = new PersonaServiceImpl(card, searchUris, personaName as string, {

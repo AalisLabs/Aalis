@@ -255,11 +255,10 @@ async function audioToBase64(data: string): Promise<string> {
   const mat = await materializeAttachment(data);
   if (!mat) throw new Error(`无法物化音频附件: ${data.slice(0, 80)}`);
   try {
-    if (!mat.uri) {
-      throw new Error('音频附件未落入 storage 根（请让 adapter 先走 attachment-cache）');
-    }
-    const { storage } = getMediaRuntime();
-    const raw = (await storage.readFile(mat.uri)) as Uint8Array;
+    // 落在 storage 根内 → 经 storage 读；file:// / 治外绝对路径 → 经 proc.readExternalFile
+    // 回落（同 imageToBase64DataUrl），不把「没落进 storage」当死路
+    const { storage, proc } = getMediaRuntime();
+    const raw = mat.uri ? ((await storage.readFile(mat.uri)) as Uint8Array) : await proc.readExternalFile(mat.path);
     const buf = Buffer.from(raw);
     const fmt = detectAudioFormat(buf);
 

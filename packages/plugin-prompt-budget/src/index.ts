@@ -75,14 +75,21 @@ export function apply(ctx: Context): void {
       const ageMs = Date.now() - u.observedAt;
       const tag =
         u.usageRatio >= 0.85 ? 'CRITICAL' : u.usageRatio >= 0.7 ? 'WARN' : u.usageRatio >= 0.5 ? 'INFO' : 'OK';
-      // top3 提示哪几个桶最大
-      const buckets = Object.entries(u.breakdown).sort((a, b) => b[1] - a[1]);
+      // top3 提示哪几个桶最大。breakdown 里的 injectors 是 Record 不是 token 数，
+      // 混进来会让比较器返回 NaN——排序结果按规范即未定义，故先滤掉非数值项。
+      const buckets = Object.entries(u.breakdown)
+        .filter((e): e is [string, number] => typeof e[1] === 'number')
+        .sort((a, b) => b[1] - a[1]);
       const top3 = buckets.slice(0, 3).map(([k, v]) => ({ name: k, tokens: v }));
+      // advice 不写死压缩阈值、也不断言压缩插件在场：阈值是记忆压缩插件自己的配置项，
+      // 该插件未装时根本没有自动压缩。对模型只讲它自己能做的事。
+      const compressionNote =
+        '历史压缩不由模型发起，由记忆压缩插件按阈值自动触发、WebUI 亦可手动；你能做的是减少后续工具输出体量。';
       const advice =
         u.usageRatio >= 0.85
-          ? '上下文几乎用尽。建议：调用 memory.compress / 清理 toolResults / 缩减 system prompt。'
+          ? `上下文几乎用尽。建议：清理 toolResults / 缩减 system prompt。${compressionNote}`
           : u.usageRatio >= 0.7
-            ? '上下文压力较高。可考虑主动压缩历史或减少后续工具调用的输出体量。'
+            ? `上下文压力较高。${compressionNote}`
             : '预算健康，无需干预。';
       return JSON.stringify({
         sessionId,

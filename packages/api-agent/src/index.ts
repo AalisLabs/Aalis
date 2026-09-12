@@ -58,7 +58,7 @@ export interface AgentService {
    * 注册消息预处理器
    *
    * 预处理器在 `agent:input:before` 阶段运行，可以修改 IncomingMessage（如将图片转文字、解析文件）。
-   * 底层通过中间件系统实现，priority 越大越先执行。
+   * 底层通过中间件系统实现，按注册顺序洋葱式执行。
    */
   registerPreprocessor?(name: string, handler: PreprocessorFn): () => void;
 
@@ -302,7 +302,9 @@ declare module '@aalis/core' {
     /**
      * 请求 agent 重发某会话的最新 token:usage 快照。
      * 发射方：plugin-webui-server（客户端刷新/重连时）；消费方：plugin-agent。
+     * platform 缺省时消费方按 'webui' 兜底——只对 webui 自己的会话正确；它参与模型与会话
+     * 配置解析，发射方应带上会话真实所属的平台（WebUI 也订阅 `onebot:` 等他方会话）。
      */
-    'token:request': [req: { sessionId: string }];
+    'token:request': [req: { sessionId: string; platform?: string }];
   }
 }

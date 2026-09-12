@@ -258,7 +258,7 @@ root 的 `readable/writable/deletable`（`StorageRootInfo`）就是该根的访�
 2. **rename 仅同目录改名**：`rename(uri, newName)` 的 `newName` 不能含 `/`、`\`、`.`、`..`（参考实现 `rename`），不是「移动」。同根跨目录移动改用可选的 `move(fromUri, toUri)`（参考实现 `move`，底层 `fs.rename`，原子、零拷贝、须同根、不覆盖已存在目标）；跨存储根仍需 read+write+delete 组合。
 3. **同名 root 静默遮蔽**：多个 provider 各注册一个 `data` 根时，gateway 按枚举顺序取首个，其余被遮蔽且不报错。用 `getStorageRootConflicts(ctx)`（`:214`）在 doctor/启动日志里暴露。
 4. **watch 去抖 + 平台降级**：参考实现 `watch` 基于 `fs.watch` + 50ms 去抖，且事件统一为 `change`（`plugin-storage-local/src/index.ts`）；不支持 recursive 的平台降级为只监听顶层并打 WARN。消费者不应假定「一次写 = 一次事件」，也不应依赖事件类型细分。
-5. **checkpoint 写前快照耦合**：参考实现在 write/delete/rename 前调用 `checkpoint` 服务做快照（`:291-304`、`:407`）。若你写自定义 storage 后端但希望兼容 checkpoint 回滚，需复刻这一 `beforeMutate` 钩子；否则该后端的写操作不可回滚。
+5. **checkpoint 写前快照耦合**：参考实现的 `snapshot` 辅助方法在 `writeFile` / `delete` / `rename` / `move` 动手之前调用 `checkpoint` 服务做快照。若你写自定义 storage 后端但希望兼容 checkpoint 回滚，需复刻这一 `beforeMutate` 钩子；否则该后端的写操作不可回滚。rename/move 还应把改动后的目标 URI 作为 `beforeMutate` 的第四个可选参数传入——缺省时回滚只把原内容写回源路径，目标端会留下一份重复文件。
 
 ---
 

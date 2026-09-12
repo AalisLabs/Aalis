@@ -739,9 +739,6 @@ importers:
         specifier: ^8.2.0
         version: 8.2.0
     devDependencies:
-      '@aalis/api-authority':
-        specifier: workspace:*
-        version: link:../api-authority
       '@aalis/api-persona':
         specifier: workspace:*
         version: link:../api-persona
@@ -1851,6 +1848,9 @@ importers:
       '@aalis/api-process':
         specifier: workspace:>=0.5.0 <1.0.0
         version: link:../api-process
+      '@aalis/api-storage':
+        specifier: workspace:>=0.5.5 <1.0.0
+        version: link:../api-storage
       '@aalis/api-tools':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-tools

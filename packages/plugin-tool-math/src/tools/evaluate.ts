@@ -15,7 +15,7 @@ export function registerEvaluateTools(tools: ScopedToolService): void {
       type: 'function',
       function: {
         name: 'math_eval',
-        description: `安全地计算数学表达式。支持四则运算、幂运算(^)、括号、比较。\n可用资源:\n${funcList}\n示例: "sqrt(2) * sin(pi/4)", "log_base(1024, 2)", "comb(10, 3)", "factorial(10)"`,
+        description: `安全地计算数学表达式。支持四则运算、幂运算(^)、括号。\n可用资源:\n${funcList}\n示例: "sqrt(2) * sin(pi/4)", "log_base(1024, 2)", "comb(10, 3)", "factorial(10)"`,
         parameters: {
           type: 'object',
           properties: {

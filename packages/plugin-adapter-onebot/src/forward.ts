@@ -16,7 +16,7 @@
  */
 
 import type { OneBotMessageSegment } from './types.js';
-import { getForwardNodes } from './types.js';
+import { getForwardNodes, parseCqParams } from './types.js';
 
 /** 单个转发节点的扁平表示 */
 export interface ForwardLine {
@@ -84,22 +84,6 @@ const MEDIA_LABEL: Record<ForwardMediaTask['kind'], { placeholder: string; prefi
   audio: { placeholder: '[语音]', prefix: '[语音: ', suffix: ']' },
   video: { placeholder: '[视频]', prefix: '[视频: ', suffix: ']' },
 };
-
-/** 解析 CQ 段参数体（`,k=v,k=v`），含 CQ 转义还原。 */
-function parseCqParams(body: string): Record<string, string> {
-  const params: Record<string, string> = {};
-  for (const part of body.replace(/^,/, '').split(',')) {
-    const eq = part.indexOf('=');
-    if (eq <= 0) continue;
-    params[part.slice(0, eq)] = part
-      .slice(eq + 1)
-      .replace(/&amp;/g, '&')
-      .replace(/&#91;/g, '[')
-      .replace(/&#93;/g, ']')
-      .replace(/&#44;/g, ',');
-  }
-  return params;
-}
 
 /**
  * 剥除 NUL：媒体 token 用 NUL 做哨兵，所有进入行文本的外部字符串（CQ 串、text 段、

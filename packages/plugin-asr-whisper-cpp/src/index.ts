@@ -9,6 +9,7 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
+import { extname } from 'node:path';
 import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/api-asr';
 import type { ProcessService } from '@aalis/api-process';
 import { createProcessGateway } from '@aalis/api-process';
@@ -50,6 +51,34 @@ const defaultConfig: Cfg = {
 };
 
 /**
+ * 猜音频文件扩展名（只用来拼临时文件名，ffmpeg 按内容探测格式）。
+ * `url.split('.').pop()` 在无扩展名的来源上会把整条路径当扩展名（实测
+ * `audio.com/download` → 带斜杠的写路径，在 storage 下造嵌套垃圾目录），
+ * 故一律走 extname + 白名单，取不到时按 Content-Type 兜底，最后落 'bin'。
+ */
+function guessAudioExt(source: string, contentType?: string | null): string {
+  const fromPath = extname(source.split('?')[0].split('#')[0]).replace(/^\./, '').toLowerCase();
+  if (/^[a-z0-9]{1,5}$/.test(fromPath)) return fromPath;
+  const sub = (contentType ?? '').split(';')[0].trim().toLowerCase().split('/')[1] ?? '';
+  const byMime: Record<string, string> = {
+    mpeg: 'mp3',
+    mp3: 'mp3',
+    wav: 'wav',
+    'x-wav': 'wav',
+    wave: 'wav',
+    ogg: 'ogg',
+    opus: 'ogg',
+    oga: 'ogg',
+    mp4: 'm4a',
+    'x-m4a': 'm4a',
+    m4a: 'm4a',
+    webm: 'webm',
+    flac: 'flac',
+  };
+  return byMime[sub] ?? 'bin';
+}
+
+/**
  * 把附件 data 解析为本地可读路径；返回路径 + 清理函数（仅对下载/解码出的临时文件有意义）。
  * 与 plugin-media 的规范实现 ffmpeg.ts:materializeAttachment 对齐：base64 data URL、file://、
  * http(s)、storage URI（scheme:/）、以及历史裸相对路径 `data/...`（补成 `data:/...`）都支持。
@@ -74,7 +103,7 @@ async function materializeAudio(
     const resp = await safeFetch(data);
     if (!resp.ok) throw new Error(`下载失败 ${resp.status}`);
     const tmp = await proc.makeTempDir('whisper-in');
-    const ext = data.split('.').pop()?.split('?')[0] ?? 'bin';
+    const ext = guessAudioExt(data, resp.headers.get('content-type'));
     await storage.writeFile(`${tmp.uri}/audio.${ext}`, Buffer.from(await resp.arrayBuffer()));
     return { path: `${tmp.path}/audio.${ext}`, cleanup: tmp.cleanup };
   }

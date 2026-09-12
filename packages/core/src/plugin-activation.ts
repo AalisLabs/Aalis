@@ -5,7 +5,7 @@
 //   - computeTargetState：给定 reason，单个 entry 的目标态是什么
 //   - activatePlugin：fork ctx → apply → 校验 provides → 标记 active/error
 //
-// 这些都需要 PluginManager 的状态（plugins map / rootCtx），
+// 这些都需要 PluginManager 的状态（rootCtx / logger），
 // 但被有意提成 free function：传入 deps 对象，方便单测 mock + 让 PluginManager
 // 自身只负责"事件路由 + recompute 编排"。
 // ============================================================
@@ -15,7 +15,6 @@ import type { Logger } from './logger.js';
 import type { PluginEntry, PluginState, RecomputeReason } from './types/plugin.js';
 
 interface ActivationDeps {
-  plugins: Map<string, PluginEntry>;
   rootCtx: Context;
   logger: Logger;
   /** 激活失败回滚 disposeAsync 时单个异步清理项的等待上限（毫秒；缺省不设限） */
@@ -45,7 +44,7 @@ interface ActivationDeps {
 export async function retireEntry(
   entry: PluginEntry,
   targetState: PluginState,
-  deps: Pick<ActivationDeps, 'rootCtx' | 'logger' | 'disposeTimeoutMs'>,
+  deps: ActivationDeps,
   opts?: { emitUnloaded?: boolean },
 ): Promise<void> {
   entry.state = targetState;

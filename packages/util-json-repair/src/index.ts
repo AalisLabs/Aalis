@@ -28,7 +28,7 @@ const repairSteps: RepairStep[] = [
   },
   {
     name: '移除尾部多余逗号',
-    apply: s => s.replace(/,\s*([\]}])/g, '$1'),
+    apply: stripTrailingCommasOutsideStrings,
   },
   {
     // 模型截断（max_tokens 触发、推理块被中途切断等）常常少一个或多个 '}'。
@@ -91,6 +91,49 @@ function isLikelyClosingQuote(s: string, quoteIndex: number): boolean {
   if (commaIndex < 0) return false;
   const afterComma = nextNonWhitespace(s, commaIndex + 1);
   return isJsonValueStart(afterComma) || afterComma === '}' || afterComma === ']';
+}
+
+/**
+ * 移除对象/数组尾部多余逗号（`,]` / `,}`），只在字符串外生效。
+ * 无状态的全局 replace 会把字符串**内容**里的 `,]` / `,}` 一并吃掉，
+ * 静默改写模型写的正文（落库后无人复核），故与其它两步同款走 inString 状态机。
+ */
+function stripTrailingCommasOutsideStrings(s: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+  let changed = false;
+
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+
+    if (escaped) {
+      out += c;
+      escaped = false;
+      continue;
+    }
+    if (c === '\\') {
+      out += c;
+      if (inString) escaped = true;
+      continue;
+    }
+    if (c === '"') {
+      inString = !inString;
+      out += c;
+      continue;
+    }
+    if (!inString && c === ',') {
+      const next = nextNonWhitespace(s, i + 1);
+      if (next === ']' || next === '}') {
+        changed = true;
+        continue; // 丢掉这个逗号，其后空白原样保留
+      }
+    }
+
+    out += c;
+  }
+
+  return changed ? out : s;
 }
 
 function escapeBareQuotesInStrings(s: string): string {

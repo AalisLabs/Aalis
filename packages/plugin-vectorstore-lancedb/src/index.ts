@@ -15,6 +15,11 @@ export const name = '@aalis/plugin-vectorstore-lancedb';
 export const displayName = 'LanceDB 向量库';
 export const subsystem = 'embedding';
 export const provides = ['vectorstore'];
+// 数据目录经存储网关解析（resolveLocalPath），没有 storage 连库都开不了；
+// 声明 required 还换来停机拓扑保证：消费者先关、提供者后关。
+export const inject = {
+  required: ['storage'],
+};
 
 export const configSchema: ConfigSchema = {
   path: {

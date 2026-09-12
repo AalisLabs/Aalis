@@ -59,4 +59,4 @@ meta.inject = { required: ['vectorstore', 'embedding'], optional: ['memory'] }
 
 - **vectorstore**: 向量存储服务（如 plugin-vectorstore-flat 或 plugin-vectorstore-lancedb）
 - **embedding**: 文本嵌入服务（如 plugin-embedding-ollama 或 plugin-embedding-openai）
-- **memory**（可选）: 消息存储服务；提供 `getMessagesBySessionRange` 时用于命中点的上下文情景扩展，缺失或不支持时退化为仅取命中本身
+- **memory**（可选）: 消息存储服务；提供 `getMessagesBySessionRange` 时用于命中点的上下文情景扩展，缺失或不支持时退化为仅取命中本身。该服务在每次扩窗时惰性查询、能力也在调用点判定，故 memory provider 晚于本插件注册或重载后无需重启即生效

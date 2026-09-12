@@ -40,12 +40,9 @@ meta.inject = { optional: ['session-manager', 'message-archive'] }
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `enabled` | boolean | `true` | 启用子任务工具 |
-| `pollIntervalMs` | number | `3000` | 等待轮询间隔 (ms) |
 | `maxWaitMs` | number | `300000` | 单次等待最大时长 (ms) |
 | `defaultProvider` | string | `''` | 子任务默认 LLM provider：不填则继承父会话。建议填轻量本地模型（如 ollama）让子任务跑在更便宜的模型上，节省 token |
 | `defaultModel` | string | `''` | 子任务默认模型名：与 defaultProvider 配套。例如 qwen3:8b、deepseek-chat。两个都不填则继承父会话模型。 |
-
-`pollIntervalMs` 当前未被源码读取（`wait_subtasks` 为事件驱动），配置后不生效。
 
 ## 相关插件
 

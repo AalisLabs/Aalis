@@ -130,6 +130,51 @@ describe('deleteUser — 删除记录', () => {
     await actions.deleteUser(ctx, { platform: 'onebot', userId: 'x' });
     expect(manager.listUsers().find(u => u.userId === 'x')).toBeUndefined();
   });
+
+  it('非 owner 调用被拒（删封禁记录等于自我解封）', async () => {
+    const { ctx, manager } = makeCtx();
+    manager.setUserLevel({ platform: 'onebot', userId: 'bob' }, -5);
+    await expect(
+      actions.deleteUser(ctx, { platform: 'onebot', userId: 'bob' }, { platform: 'onebot', userId: 'bob' }),
+    ).rejects.toThrow(/只有 owner/);
+    expect(manager.listUsers().find(u => u.userId === 'bob')?.level, '封禁记录不该被非 owner 删掉').toBe(-5);
+  });
+});
+
+// 三个「改全局闸」的动作与兄弟处理器同一形状：caller 在场且非 owner 即拒。
+describe('setRestrictedPolicy / revokeTemporaryGrant / setConfig — 仅 owner 可达', () => {
+  it('setRestrictedPolicy：非 owner 调用被拒，策略未落配置', async () => {
+    const { ctx } = makeCtx();
+    await expect(
+      actions.setRestrictedPolicy(ctx, { policy: { allow: ['*'] } }, { platform: 'onebot', userId: 'bob' }),
+    ).rejects.toThrow(/只有 owner/);
+    expect(ctx.config.get('restrictedPolicy'), '非 owner 不该开出受限能力白名单').toBeUndefined();
+  });
+
+  it('revokeTemporaryGrant：非 owner 调用被拒', async () => {
+    const { ctx } = makeCtx();
+    await expect(
+      actions.revokeTemporaryGrant(ctx, { id: 'g1' }, { platform: 'onebot', userId: 'bob' }),
+    ).rejects.toThrow(/只有 owner/);
+  });
+
+  it('setConfig：非 owner 调用被拒，硬禁清单未被改写', async () => {
+    const { ctx } = makeCtx({ deniedCapabilities: ['tool:shell.exec'] });
+    await expect(
+      actions.setConfig(ctx, { deniedCapabilities: [] }, { platform: 'onebot', userId: 'bob' }),
+    ).rejects.toThrow(/只有 owner/);
+    expect(ctx.config.get('deniedCapabilities'), '非 owner 不该拆掉硬禁总闸').toEqual(['tool:shell.exec']);
+  });
+
+  it('owner 调用照常放行（闸不误伤 owner）', async () => {
+    const { ctx } = makeCtx();
+    const owner = { platform: 'webui', userId: 'console' };
+    await actions.setRestrictedPolicy(ctx, { policy: { allow: ['tool:x'] } }, owner);
+    expect((ctx.config.get('restrictedPolicy') as { allow: string[] }).allow).toEqual(['tool:x']);
+    await actions.setConfig(ctx, { deniedCapabilities: ['tool:y'] }, owner);
+    expect(ctx.config.get('deniedCapabilities')).toEqual(['tool:y']);
+    await expect(actions.revokeTemporaryGrant(ctx, { id: 'nope' }, owner)).resolves.toMatchObject({ ok: false });
+  });
 });
 
 describe('setAuthorityOverride — owner 调整单操作最低等级', () => {

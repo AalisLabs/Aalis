@@ -608,7 +608,7 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
               <button
                 className="checkpoint-rollback-btn"
                 onClick={() => onRollback?.(checkpoint)}
-                title={`仅回滚本回合的 ${checkpoint.fileCount} 个文件改动（保留对话）${checkpoint.execUsed ? '\n注意：本回合调用过 exec/shell，命令副作用无法回滚' : ''}`}
+                title={`仅回滚本回合的 ${checkpoint.fileCount} 个文件改动（保留对话）${checkpoint.execUsed ? '\n注意：本回合调用过 exec / exec_background / run_* 等命令类工具，命令副作用无法回滚' : ''}`}
               >
                 <History size={12} /> 回滚文件改动
                 {checkpoint.execUsed && <span className="checkpoint-warn"><AlertTriangle size={11} /> exec</span>}
@@ -617,7 +617,7 @@ const MessageItem = memo(function MessageItem({ msg, senderName, isLast, isGener
             <button
               className="checkpoint-rollback-btn"
               onClick={() => onRollbackWithChat?.(checkpoint)}
-              title={`回滚本轮对话（含 ${checkpoint.fileCount} 处文件改动）：删除本轮的用户提问、回复和工具调用记录，并恢复文件${checkpoint.execUsed ? '\n注意：本回合调用过 exec/shell，命令副作用无法回滚' : ''}`}
+              title={`回滚本轮对话（含 ${checkpoint.fileCount} 处文件改动）：删除本轮的用户提问、回复和工具调用记录，并恢复文件${checkpoint.execUsed ? '\n注意：本回合调用过 exec / exec_background / run_* 等命令类工具，命令副作用无法回滚' : ''}`}
             >
               <History size={12} /> 回滚本轮对话（含文件）
               {checkpoint.execUsed && <span className="checkpoint-warn"><AlertTriangle size={11} /> exec</span>}
@@ -780,7 +780,7 @@ export function ChatPanel({
   const handleRollback = useCallback(async (turn: CheckpointTurnSummary) => {
     const preview = turn.filesPreview.slice(0, 3).join('\n');
     const more = turn.fileCount > turn.filesPreview.length ? `\n... 共 ${turn.fileCount} 个文件` : '';
-    const execWarn = turn.execUsed ? '\n\n⚠ 本回合调用过 exec/shell，命令的副作用无法回滚！' : '';
+    const execWarn = turn.execUsed ? '\n\n注意：本回合调用过 exec / exec_background / run_* 等命令类工具，命令的副作用无法回滚！' : '';
     const ok = window.confirm(
       `将回滚此回合的文件改动：\n\n${preview}${more}${execWarn}\n\n确定继续？`,
     );
@@ -807,7 +807,7 @@ export function ChatPanel({
   const handleRollbackWithChat = useCallback(async (turn: CheckpointTurnSummary) => {
     const preview = turn.filesPreview.slice(0, 3).join('\n');
     const more = turn.fileCount > turn.filesPreview.length ? `\n... 共 ${turn.fileCount} 个文件` : '';
-    const execWarn = turn.execUsed ? '\n\n⚠ 本回合调用过 exec/shell，命令的副作用无法回滚！' : '';
+    const execWarn = turn.execUsed ? '\n\n注意：本回合调用过 exec / exec_background / run_* 等命令类工具，命令的副作用无法回滚！' : '';
     const fileText = turn.fileCount > 0 ? `\n\n同时恢复以下文件：\n${preview}${more}` : '';
     const ok = window.confirm(
       `将回滚本轮对话：\n\n· 删除本轮的用户提问、AI 回复和工具调用记录\n· 清除对应的向量记忆条目${fileText}${execWarn}\n\n此操作不可撤销。确定继续？`,

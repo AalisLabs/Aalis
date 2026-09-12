@@ -5,7 +5,7 @@ import { EventBus } from './events.js';
 import { HookRegistry } from './hooks.js';
 import { DefaultLogger, type Logger, LogHub, type LogLevel } from './logger.js';
 import { PluginManager, type PluginModule, parseInstanceId } from './plugin.js';
-import type { ConfigProvider, PluginDescriptor, PluginLoader, RestartStrategy } from './providers.js';
+import type { ConfigProvider, PluginLoader, RestartStrategy } from './providers.js';
 import { ServiceContainer } from './services.js';
 
 // ----- 应用配置选项 -----
@@ -130,8 +130,6 @@ export class App {
   private pluginDefaults?: (module: PluginModule) => Record<string, unknown>;
   private readonly restartStrategy?: RestartStrategy;
   private readonly disposeTimeoutMs: number;
-  /** 已发现插件的描述符索引（按模块名）。用于热重载时拿到 source/metadata。 */
-  private readonly discoveredCache: Map<string, PluginDescriptor> = new Map();
 
   constructor(options: AppOptions) {
     // 1. 配置：接受快照或已构造的 ConfigManager
@@ -224,11 +222,14 @@ export class App {
    */
   async plugin(module: PluginModule, config?: Record<string, unknown>, instanceId?: string): Promise<void> {
     const id = instanceId ?? module.name;
-    // 合并优先级: 宿主派生的默认配置 ← 配置文件 ← 代码传入。
-    // 这里只做顶层浅合并——嵌套块的深回填属宿主的配置文件政策，不在注册机制内。
+    // 合并优先级: 宿主派生的默认配置 ← 配置文件 ← 代码传入，**逐层深合并**：
+    // 同一路径上双方都是纯对象则递归，否则后者整体覆盖（数组与非纯对象是原子值）。
+    // 与宿主层（runtime/config-sync.ts）落盘回填默认值时的合并语义一致——顶层浅合并会让
+    // 配置文件里只写了半块的嵌套组（只写 server.port）把派生默认值整块顶掉，
+    // 插件首次 apply 就拿到缺 server.host 的配置。
     const defaults = this.pluginDefaults?.(module) ?? {};
     const fileConfig = this.ctx.config.getPluginConfig(id);
-    const mergedConfig = { ...defaults, ...fileConfig, ...config };
+    const mergedConfig = mergeConfigLayers(mergeConfigLayers(defaults, fileConfig), config ?? {});
     await this.plugins.register(module, mergedConfig, id);
   }
 
@@ -250,7 +251,6 @@ export class App {
 
     // 加载所有模块（M2 后无 Context.extend 顶层副作用，单次遍历即可：加载并立即注册激活）
     for (const desc of discovered) {
-      this.discoveredCache.set(desc.name, desc);
       try {
         const mod = await this.pluginLoader.load(desc);
         if (!mod || typeof mod.apply !== 'function' || !mod.name) {
@@ -318,7 +318,6 @@ export class App {
     const loaded: string[] = [];
 
     for (const desc of discovered) {
-      this.discoveredCache.set(desc.name, desc);
       // 跳过已注册的
       if (this.plugins.getPlugin(desc.name)) continue;
 
@@ -415,4 +414,31 @@ export class App {
     await this.ctx.disposeAsync(this.disposeTimeoutMs);
     this.logger.info('已停止');
   }
+}
+
+/**
+ * 配置层的逐层深合并：同一键上 base 与 override 都是纯对象时递归合并，
+ * 否则 override 的值整体覆盖。数组与非纯对象（Date / Map / 类实例）当作
+ * 原子值，只覆盖不逐元素合并。
+ *
+ * 全程返回新对象、不改写入参：`defaults` 可能是宿主复用的常量，`fileConfig`
+ * 是 ConfigManager 持有的活对象，合并写回去就是隔空篡改配置。
+ */
+function mergeConfigLayers(base: Record<string, unknown>, override: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(override)) {
+    // `__proto__` 跳过：逐键赋值会触发原型 setter，把整个配置对象的原型换成外来对象
+    // （对象字面量里它是原型语法糖，但 JSON.parse 出来的配置文件带的是自有键，会走到这里）。
+    // 配置层不承载原型语义，这个键在配置里没有合法含义。
+    if (key === '__proto__') continue;
+    const prev = result[key];
+    result[key] = isPlainObject(prev) && isPlainObject(value) ? mergeConfigLayers(prev, value) : value;
+  }
+  return result;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }

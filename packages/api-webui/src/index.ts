@@ -58,7 +58,13 @@ export interface WebuiTableComponent {
     minWidth?: number;
     maxWidth?: number;
   }>;
+  /**
+   * 行内操作按钮；method 对应的 action 同 form.save 的失败约定（返回 {ok:false,error} 即失败）。
+   * 非 danger/confirm 的 action 返回**不带 ok 字段**的对象会被当详情弹窗展示；
+   * 只想刷新表格就返回 undefined 或 {ok:true}。
+   */
   actions?: Array<{ label: string; method: string; confirm?: string; danger?: boolean }>;
+  /** 自动刷新间隔（**秒**，与 graph.refresh 的毫秒相反）；0 / undefined = 关闭 */
   refresh?: number;
   /** 启用前端本地文本搜索（空格分隔多关键词，AND 语义，对所有列值做不区分大小写子串匹配） */
   searchable?: boolean;
@@ -70,7 +76,15 @@ export interface WebuiTableComponent {
 export interface WebuiFormComponent {
   type: 'form';
   label?: string;
+  /** 读取当前值的 action 名；返回表单初值对象 */
   source: string;
+  /**
+   * 保存用的 action 名。
+   *
+   * 失败约定：业务失败**返回** `{ ok: false, error: '原因' }`（HTTP 仍是 200——路由只把
+   * action 的抛错转成 5xx），前端据此显示原因；抛错同样被前端捕获展示。返回其它任何值
+   * （含 undefined）都视为成功。
+   */
   save: string;
   schema: ConfigSchema;
 }
@@ -79,6 +93,7 @@ export interface WebuiFormComponent {
 export interface WebuiActionsComponent {
   type: 'actions';
   label?: string;
+  /** method 对应的 action 同 form.save 的失败约定（返回 {ok:false,error} 即失败，原因显示在按钮旁） */
   items: Array<{ label: string; method: string; confirm?: string; danger?: boolean; variant?: string }>;
 }
 
@@ -129,7 +144,7 @@ export interface WebuiGraphComponent {
   defaultMaxBreadth?: number;
   /** 自动刷新（毫秒），0 / undefined = 关闭 */
   refresh?: number;
-  /** 顶部右上角额外按钮 */
+  /** 顶部右上角额外按钮；本处**不解读** {ok:false} 约定（返回值被丢弃），失败请抛错 */
   actions?: Array<{ label: string; method: string; confirm?: string; danger?: boolean; variant?: string }>;
   /**
    * 自定义节点类别：节点 data.kind → 形状/颜色/图例文本。

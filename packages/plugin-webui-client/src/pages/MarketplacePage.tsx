@@ -1,6 +1,6 @@
 import { AlertTriangle, Clock, Download, Scale } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '../api';
+import { api, errText } from '../api';
 import { useConfirm } from '../components/ConfirmDialog';
 import { type DepGraph, InstallDepDisclosure, UninstallDepWarning } from '../components/DependencyTree';
 import type { PluginInfo } from '../types';
@@ -343,8 +343,8 @@ export function MarketplacePage({
         // 诊断整条吞掉，用户只看到「安装失败」四个字。
         showToast(res.error ?? res.message ?? '安装失败');
       }
-    } catch {
-      showToast('安装失败');
+    } catch (err) {
+      showToast(errText(err, '安装失败'));
     }
     setInstalling(null);
   };
@@ -384,8 +384,8 @@ export function MarketplacePage({
       } else {
         showToast(res.error ?? res.message ?? '卸载失败'); // 同 install：服务层失败走 message
       }
-    } catch {
-      showToast('卸载失败');
+    } catch (err) {
+      showToast(errText(err, '卸载失败'));
     }
     setInstalling(null);
   };

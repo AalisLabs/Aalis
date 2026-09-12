@@ -229,6 +229,9 @@ function makeBuilder(
 ): CommandBuilder {
   const calls: DeferredCall[] = [];
   let realBuilder: CommandBuilder | undefined;
+  // 注册表按点路径建键（inline 位置参数 DSL 在注册时被 parseCommandName 切掉），
+  // 注销必须用同一份键：直接传 'memory.clear <key:string>' 这类原始名会键不匹配、整条注销静默 no-op。
+  const registryKey = name.trim().split(/\s+/)[0];
 
   ctx.whenService<CommandService>('commands', svc => {
     realBuilder = svc.command(name, description, meta);
@@ -242,7 +245,7 @@ function makeBuilder(
     return () => {
       // 必须带上 pluginName：只摘自己那一层声明。不带的话会把同名指令的**全部**声明
       // 一起删掉——包括别的插件先注册的那份，且它不会重新出现。
-      svc.unregister(name, meta.pluginName);
+      svc.unregister(registryKey, meta.pluginName);
       realBuilder = undefined;
     };
   });
