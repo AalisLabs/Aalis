@@ -16,6 +16,7 @@ export type { CLIService } from './types.js';
 
 import { createStorageGateway } from '@aalis/api-storage';
 import { LogHub } from '@aalis/core';
+import { ConfirmQueue } from './confirm-queue.js';
 import { readLogFileTail } from './log-file.js';
 
 // terminal:claimed / terminal:released 是 CLI（独占终端 UI）与宿主
@@ -115,7 +116,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return sid === sessionId;
     },
     async sendMessage(_sessionId: string, content: string): Promise<void> {
-      tui?.pushAssistant(content);
+      if (tui) tui.pushAssistant(content);
+      else ctx.logger.info(`[cli] ${content}`);
     },
   };
 
@@ -148,6 +150,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   ctx.on('app:started', async () => {
+    // 非交互终端（日志重定向 / 容器 / systemd）：不接管终端、不画界面，控制台日志照常走 stdout；
+    // 服务仍在线（平台枚举、子命令分发不受影响），出站消息退化为日志（见 sendMessage）。
+    if (!output.isTTY || !input.isTTY) {
+      liveBufferActive = false;
+      stopLiveBuffer();
+      ctx.logger.info('stdin/stdout 非 TTY，CLI 界面未启动');
+      return;
+    }
     let initial: LogEntry[] = [];
     try {
       initial = await readLogFileTail(createStorageGateway(ctx), 2000);
@@ -205,8 +215,8 @@ class CliTui {
   private streamingStartIndex: number | null = null;
   private streamingContent = '';
   private streamedRecently = false;
-  private confirmResolver: ((value: boolean) => void) | null = null;
-  private confirmText = '';
+  private readonly confirms = new ConfirmQueue();
+  private offConfirm: (() => void) | undefined;
   private renderQueued = false;
   private closing = false;
   private readonly restoreOnExit = () => restoreTerminalState();
@@ -264,9 +274,12 @@ class CliTui {
       chalk.gray(this.formatCont()) + chalk.gray(`欢迎使用 ${assistantName}。按 ${chalk.cyan('Ctrl+G')} 查看快捷键。`),
     );
 
-    this.ctx.getService<AuthorityService>('authority')?.setConfirmHandler('cli', async request => {
-      return this.askConfirm(`/${request.name} 是受限指令，按 y 确认，其他键取消`);
-    });
+    // 跟着 authority 的胜者走（bounce 后重挂）；stop() 时摘掉，dispose 时由 whenService 自身清理
+    this.offConfirm = this.ctx.whenService<AuthorityService>('authority', authority =>
+      authority.setConfirmHandler('cli', async request =>
+        this.askConfirm(`/${request.name} 是受限指令，按 y 确认，其他键取消`),
+      ),
+    );
 
     input.on('keypress', this.handleKeypress);
     output.on('resize', this.queueRender);
@@ -281,6 +294,10 @@ class CliTui {
     this.running = false;
     this.removeLogListener?.();
     this.removeLogListener = null;
+    // 在飞的确认按取消结算：否则 authority.requestAccess 会一直等这些 Promise
+    this.confirms.settleAll(false);
+    this.offConfirm?.();
+    this.offConfirm = undefined;
     input.off('keypress', this.handleKeypress);
     output.off('resize', this.queueRender);
     process.off('exit', this.restoreOnExit);
@@ -372,21 +389,19 @@ class CliTui {
   private handleKeypress = async (chunk: string, key: readline.Key): Promise<void> => {
     if (!this.running) return;
 
-    if (this.confirmResolver) {
-      const ok = key.name === 'y' || chunk.toLowerCase() === 'y';
-      const resolve = this.confirmResolver;
-      this.confirmResolver = null;
-      this.confirmText = '';
-      resolve(ok);
-      this.queueRender();
-      return;
-    }
-
     if (key.ctrl && key.name === 'c') {
       this.stop();
       process.kill(process.pid, 'SIGINT');
       return;
     }
+
+    if (this.confirms.size > 0) {
+      const ok = key.name === 'y' || chunk?.toLowerCase() === 'y';
+      this.confirms.answer(ok);
+      this.queueRender();
+      return;
+    }
+
     if (key.ctrl && key.name === 'l') {
       this.switchView('logs');
       return;
@@ -569,11 +584,10 @@ class CliTui {
   }
 
   private askConfirm(text: string): Promise<boolean> {
-    this.confirmText = text;
+    if (!this.running || this.closing) return Promise.resolve(false);
+    const answer = this.confirms.ask(text);
     this.queueRender();
-    return new Promise(resolve => {
-      this.confirmResolver = resolve;
-    });
+    return answer;
   }
 
   private switchView(view: CLIView): void {
@@ -624,7 +638,7 @@ class CliTui {
 
     output.write('\x1b[?25l\x1b[H');
     output.write(out.map(line => clearLine(line, width)).join('\n'));
-    if (this.view === 'chat' && !this.confirmText) {
+    if (this.view === 'chat' && !this.confirms.current) {
       // 计算光标在多行输入中的 (row, col)
       const { row: cRow, col: cCol } = this.cursorPosInInput(width);
       // 行号布局（1-based）：1=header, 2=sep, 3..2+bodyHeight=body, 之后是 inputBox(顶/中.../底), 最后是 footer
@@ -645,7 +659,7 @@ class CliTui {
         return v === this.view ? chalk.bold.cyan(`[${label}]`) : chalk.gray(` ${label} `);
       })
       .join(' ');
-    const status = this.confirmResolver ? chalk.yellow('● confirm') : chalk.green('● online');
+    const status = this.confirms.size > 0 ? chalk.yellow('● confirm') : chalk.green('● online');
     const right = ` ${tabs}  ${status} `;
     const pad = Math.max(1, width - visibleLen(left) - visibleLen(right));
     return left + ' '.repeat(pad) + right;
@@ -834,7 +848,8 @@ class CliTui {
   /** 计算输入框的多行内容（不含边框、不含 padding） */
   private computeInputDisplayLines(width: number): string[] {
     const inner = width - 2;
-    if (this.confirmText) return [`${chalk.yellow('?')} ${this.confirmText}`];
+    const asking = this.confirms.current;
+    if (asking) return [`${chalk.yellow('?')} ${asking}`];
     if (this.view !== 'chat') {
       const total =
         this.view === 'logs'
@@ -864,7 +879,7 @@ class CliTui {
 
   /** 根据 cursor 索引计算其在多行输入中的 (row, col)，col 为终端可见列宽 */
   private cursorPosInInput(_width: number): { row: number; col: number } {
-    if (this.view !== 'chat' || this.confirmText) return { row: 0, col: 0 };
+    if (this.view !== 'chat' || this.confirms.current) return { row: 0, col: 0 };
     const before = this.inputLine.slice(0, this.cursor);
     const lines = before.split('\n');
     return { row: lines.length - 1, col: stringWidth(lines[lines.length - 1]) };

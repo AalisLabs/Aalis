@@ -10,7 +10,8 @@ import type { PersonaService, PersonaSessionOptions } from '@aalis/api-persona';
 import { getPlatformSelfIdentity } from '@aalis/api-platform';
 import type { SessionConfig, SessionManagerService } from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
-import type { ToolCallContext, ToolDefinition, ToolExecutionResult, ToolService } from '@aalis/api-tools';
+import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/api-tools';
+import { asToolExecutionResult } from '@aalis/api-tools';
 import type { Context, Logger, PluginManagerService } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/schema-message';
@@ -662,10 +663,12 @@ class DefaultAgent implements AgentService {
 
               this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${JSON.stringify(toolBeforeData.args)}`);
               const toolT0 = Date.now();
-              const executed: ToolExecutionResult = await (this.ctx
-                .getService<ToolService>('tools')
-                ?.execute(toolBeforeData.name, toolBeforeData.args, toolCtx) ??
-                Promise.resolve({ content: JSON.stringify({ error: 'tools 服务不可用' }) }));
+              const executed = asToolExecutionResult(
+                await (this.ctx
+                  .getService<ToolService>('tools')
+                  ?.execute(toolBeforeData.name, toolBeforeData.args, toolCtx) ??
+                  Promise.resolve({ content: JSON.stringify({ error: 'tools 服务不可用' }) })),
+              );
               let result = executed.content;
               // 工具交给主模型看的图：只随本回合的 tool 消息走（出口由 prepareLLMMessages 编码），
               // 不进钩子/事件/时间线（那些面都是文本），也不落库（见 saveToolCallGroup）。

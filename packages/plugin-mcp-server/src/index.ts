@@ -13,7 +13,8 @@
  * - config.bind 默认 127.0.0.1（仅本机访问）
  */
 import { createServer, type Server } from 'node:http';
-import type { RegisteredTool, ToolCallContext, ToolService, ToolSummary } from '@aalis/api-tools';
+import type { ToolCallContext, ToolService } from '@aalis/api-tools';
+import { asToolExecutionResult } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js';
@@ -51,7 +52,7 @@ export const configSchema: ConfigSchema = {
   toolGroups: {
     type: 'array',
     label: '允许的工具分组（空=全部，受受限开关约束）',
-    description: '空列表 = 暴露所有分组的工具（仍受 allowRestricted 约束）。',
+    description: "空列表或单个 '*' = 暴露所有分组的工具（仍受 allowRestricted 约束）。",
     items: {
       name: {
         type: 'string',
@@ -174,18 +175,18 @@ export function buildMcpServer(_ctx: Context, tools: ToolService, config: Config
   const groupFilter = new Set(config.toolGroups);
   const isExposed = (t: { visibility?: string; groups?: readonly string[] }): boolean => {
     if (!config.allowRestricted && t.visibility === 'restricted') return false;
-    if (groupFilter.size > 0 && !(t.groups ?? []).some(g => groupFilter.has(g))) return false;
+    if (groupFilter.size > 0 && !groupFilter.has('*') && !(t.groups ?? []).some(g => groupFilter.has(g))) return false;
     return true;
   };
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const filtered = tools.getAll().filter(isExposed);
 
-    // 需要拿 definition 才能给出 parameters；这里再走一次 getDefinitions 取
-    const defsByName = new Map<string, ToolSummary>();
-    for (const s of tools.getSummaries()) defsByName.set(s.name, s);
-    const definitions = tools.getDefinitions();
-    const defMap = new Map(definitions.map(d => [d.function.name, d]));
+    // 需要拿 definition 才能给出 parameters。分组过滤默认只回无分组工具，所以要把本次暴露集合自身的
+    // 组名传回去——不写 '*' 是为了不依赖注册表版本：旧版把 '*' 当字面组名，带分组工具的 inputSchema
+    // 会静默塌成空对象。暴露与否已由 isExposed 裁决，这里只为查 parameters。
+    const groups = [...new Set(filtered.flatMap(t => t.groups ?? []))];
+    const defMap = new Map(tools.getDefinitions({ groups }).map(d => [d.function.name, d]));
 
     return {
       tools: filtered.map(t => {
@@ -223,7 +224,7 @@ export function buildMcpServer(_ctx: Context, tools: ToolService, config: Config
     };
 
     try {
-      const result = await tools.execute(toolName, args, callCtx);
+      const result = asToolExecutionResult(await tools.execute(toolName, args, callCtx));
       // MCP 侧只透传文本：工具交给主模型看的图（images）是 agent 回合内的载荷，不在此暴露
       return { content: [{ type: 'text', text: result.content }] };
     } catch (err) {
@@ -234,6 +235,3 @@ export function buildMcpServer(_ctx: Context, tools: ToolService, config: Config
 
   return server;
 }
-
-// 抑制 unused 警告：RegisteredTool 仅用于文档/类型参考
-export type _ReferencedTypes = RegisteredTool;

@@ -1,6 +1,9 @@
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Context, Logger } from '@aalis/core';
 import { App } from '@aalis/core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { DescribeInput, MediaProcessor, MediaService } from '../../packages/api-media/src/index.js';
 import type { ToolService } from '../../packages/api-tools/src/index.js';
 import * as mediaModule from '../../packages/plugin-media/src/index.js';
@@ -11,6 +14,19 @@ import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import { registerMediaTools } from '../../packages/plugin-media/src/tools.js';
 import * as toolsModule from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+
+/** analyze_image 直通分支的远端下载桩：只替换 safeDownloadToTemp，其余走原实现 */
+const download = vi.hoisted(() => ({
+  next: null as { path: string; cleanup: () => Promise<void> } | null,
+  seen: [] as Array<{ url: string; imageOnly: boolean | undefined }>,
+}));
+vi.mock(import('../../packages/plugin-media/src/safe-fetch.js'), async importOriginal => ({
+  ...(await importOriginal()),
+  safeDownloadToTemp: async (url: string, opts?: { imageOnly?: boolean }) => {
+    download.seen.push({ url, imageOnly: opts?.imageOnly });
+    return download.next;
+  },
+}));
 
 // ════════════════════════════════════════════════════════════
 // 图片处理重定位（2026-09）：识别模型 + 两个正交开关
@@ -210,6 +226,52 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     await app.stop();
     return { result, calls };
   }
+
+  it('passthrough + 非图片的 data URI：在工具层返回错误，不交给主请求（否则整轮 400）', async () => {
+    const { result, calls } = await withTool(
+      { delivery: 'passthrough' },
+      true,
+      `data:text/plain;base64,${Buffer.from('not an image').toString('base64')}`,
+    );
+    expect(JSON.parse(result.content).error).toMatch(/不是图片/);
+    expect(result.images).toBeUndefined();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('passthrough + 远端 http 图片：工具层先下载并校验是图片，再以 file:// 交给物化链，图片随结果交出', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'aalis-analyze-'));
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ', 'base64');
+    const path = join(dir, 'download.png');
+    await writeFile(path, png);
+    let cleaned = false;
+    download.next = {
+      path,
+      cleanup: async () => {
+        cleaned = true;
+      },
+    };
+    // 物化链对 file:// 走 proc.readExternalFile 读盘
+    setMediaRuntime({ proc: { readExternalFile: (p: string) => readFile(p) } as never, storage: {} as never });
+    try {
+      const url = 'https://example.invalid/pic';
+      const { result, calls } = await withTool({ delivery: 'passthrough' }, true, url);
+      expect(download.seen.at(-1)).toEqual({ url, imageOnly: true });
+      expect(calls).toHaveLength(0);
+      expect(result.images).toEqual([`data:image/png;base64,${png.toString('base64')}`]);
+      expect(JSON.parse(result.content)).toMatchObject({ ok: true, image: url });
+      expect(cleaned, '临时下载文件在交付后清理').toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('passthrough + 远端下载失败或不是图片：工具层返回错误，不交给主请求', async () => {
+    download.next = null;
+    const { result, calls } = await withTool({ delivery: 'passthrough' }, true, 'https://example.invalid/404');
+    expect(JSON.parse(result.content).error).toMatch(/无法下载/);
+    expect(result.images).toBeUndefined();
+    expect(calls).toHaveLength(0);
+  });
 
   it('passthrough + 调用方接图（agent 循环）：图片随结果交给主模型，识别模型一次不调；content 对后续回合也成立', async () => {
     const { result, calls } = await withTool({ delivery: 'passthrough' }, true, toolUri(1));

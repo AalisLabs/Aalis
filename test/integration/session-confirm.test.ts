@@ -19,6 +19,9 @@ async function setup() {
   const stubAuthority = {
     setConfirmHandler: (platform: string, h: AccessConfirmHandler) => {
       if (platform === '*') starHandler = h;
+      return () => {
+        if (platform === '*' && starHandler === h) starHandler = undefined;
+      };
     },
   };
   await app.plugins.register(gatewayPlugin as never);
@@ -42,6 +45,17 @@ describe('plugin-session-confirm 端到端确认环路', () => {
     const { app, getHandler } = await setup();
     try {
       expect(getHandler()).toBeTypeOf('function');
+    } finally {
+      await app.stop().catch(() => {});
+    }
+  });
+
+  it('卸载插件即注销 "*" handler：authority 不再把确认投给已死通道等到超时', async () => {
+    const { app, getHandler } = await setup();
+    try {
+      expect(getHandler()).toBeTypeOf('function');
+      await app.plugins.unload('@aalis/plugin-session-confirm');
+      expect(getHandler()).toBeUndefined();
     } finally {
       await app.stop().catch(() => {});
     }

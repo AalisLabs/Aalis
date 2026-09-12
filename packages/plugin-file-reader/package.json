@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-file-reader",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -33,7 +33,7 @@
     "@aalis/api-storage": "workspace:>=0.5.5 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.5.1 <1.0.0",
     "mammoth": "^1.8.0",
-    "unpdf": "^0.12.1"
+    "unpdf": "^1.8.1"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
