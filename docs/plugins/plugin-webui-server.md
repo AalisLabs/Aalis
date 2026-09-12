@@ -5,31 +5,34 @@
 
 ## 概述
 
-Express + WebSocket 实现的 Web 管理后台和聊天平台，提供完整的 REST API 和实时 WebSocket 通信。
+Express + WebSocket 实现的 Web 管理后台和聊天平台，提供 REST API 与 WebSocket 实时通信，并作为 `webui` 平台适配器接入聊天。
 
 ## 插件声明
 
 ```typescript
 meta.name = '@aalis/plugin-webui-server'
 meta.provides = ['webui-server', 'platform']
-meta.inject = {} // 无依赖
+meta.inject = {
+  optional: ['storage', 'authority', 'commands', 'platform', 'process', 'session-confirm'],
+}
 ```
-
-注册能力: `webui-server` 带 `api-v1`, `platform` 带 `web`
 
 ## 配置
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `port` | number | 3000 | HTTP 监听端口 |
-| `host` | string | `127.0.0.1` | HTTP 监听地址 |
-| `tokenMode` | `ephemeral` \| `persist` \| `fixed` | `persist` | 访问 token 策略，详见下方"认证" |
-| `fixedToken` | string | `''` | tokenMode=fixed 时使用；为空时降级为 persist |
-| `autoOpen` | boolean | true | 启动时自动打开浏览器到访问 URL |
+| `port` | number | `3000` | 端口：Web 管理界面的 HTTP 端口 |
+| `host` | string | `'127.0.0.1'` | 监听地址：绑定的 IP 地址，0.0.0.0 可对外访问 |
+| `fileRoot` | string | `'workspace'` | 文件浏览根：文件管理页面使用的 storage 根 ID，默认 workspace |
+| `autoOpen` | boolean | `true` | 启动时自动打开浏览器：启动时以含 token 的 URL 自动开启默认浏览器；SSH/headless 环境建议关闭 |
+| `tokenMode` | select | `'persist'` | Token 策略：ephemeral=每次启动随机；persist=token 写入 data:/webui/token，读取复用；fixed=使用 fixedToken 字段。所有模式都会写出便利文件 data:/webui/access.txt 含访问 URL。 |
+| `fixedToken` | string | `''` | 固定 Token（仅 tokenMode=fixed 生效）：请使用足够长的随机字符串；配置文件不支持环境变量插值，写 ${VAR} 会被当作字面量。 |
+| `relationGraphDefaultSpacing` | number | `120` | 关系图默认密度：关系图（RelationGraph）布局密度的服务器默认值（约等于理想边长 px，建议 60–250；越大越稀疏）。前端每个用户可在图工具栏现场覆盖并保存到本地浏览器；改完此项后，刷新关系图页面或新会话生效。 |
+| `marketplaceRegistry` | string | `'https://registry.npmjs.org'` | 插件市场 npm 源：插件市场检索用的 npm registry 基址。注意 npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），默认官方源；国内可填支持 search 的镜像或代理。安装走 package-manager（遵循本机 npm 配置）。 |
 
 ## 认证 / 访问 token
 
-WebUI 通过短 token + HttpOnly cookie 完成认证；所有 HTTP/WebSocket 都走相同闭包内的常量校验，没有"一次性"语义——**同一进程内任意多个用户/浏览器都可以反复用同一个 token 登录**。
+WebUI 使用单个访问 token + HttpOnly cookie 认证。HTTP 请求与 WebSocket 升级请求的登录判定相同：将 cookie 中的 token 与本进程的 token 做相等比较，没有"一次性"语义——**同一进程内任意多个用户/浏览器都可以反复用同一个 token 登录**。
 
 ### tokenMode 三种模式
 
@@ -42,10 +45,10 @@ WebUI 通过短 token + HttpOnly cookie 完成认证；所有 HTTP/WebSocket 都
 ### 访问凭据文件
 
 - **URI**: `data:/webui/access.txt`
-- **物理路径**: `<storage root>/webui/access.txt`，启动日志 `访问凭据已写入: ... （绝对路径: ...）` 直接给出
+- **物理路径**: `data` 存储根对应目录下的 `webui/access.txt`，启动日志 `访问凭据已写入: ... （绝对路径: ...）` 直接给出
 - **内容**: 注释 + `URL:` + `Token:` + `一键登录:`（带 `?token=` 的完整 URL）
 
-> ⚠️ 不要再读历史路径 `data/webui-access.txt`，已被 `data/webui/access.txt` 取代。
+> 不要再读历史路径 `data/webui-access.txt`，已被 `data/webui/access.txt` 取代。
 
 ### 登录方式
 
@@ -61,22 +64,35 @@ WebUI 通过短 token + HttpOnly cookie 完成认证；所有 HTTP/WebSocket 都
 
 ### 自动打开浏览器
 
-`autoOpen=true` 时通过 `ProcessService.spawn('open'|'cmd /c start'|'xdg-open', [accessUrl], { detached:true, stdio:'ignore' })` 后 `unref()` 启动系统默认浏览器，跨平台失败静默。
+`autoOpen=true` 时在监听成功后经 process 服务以 detached、`stdio:'ignore'` 方式启动系统默认浏览器（macOS `open`、Windows `cmd /c start ""`、其它平台 `xdg-open`），参数为带 token 的访问 URL，随后 `unref()`；process 服务缺失或启动失败时静默忽略。
 
 ## REST API
 
+除 `/api/auth/login`、`/api/auth/status`、`/api/auth/logout` 外，所有 `/api/*` 都需登录（cookie），未登录返回 401；未命中的 `/api/*` 路径返回 404 JSON（不落到 SPA 兜底）。
+
 | 端点 | 方法 | 说明 |
 |---|---|---|
+| `/api/auth/login` · `/api/auth/logout` · `/api/auth/status` | POST · POST · GET | 登录换 cookie / 登出 / 登录状态 |
 | `/api/status` | GET | 系统状态、服务可用性、上传能力检测 |
 | `/api/plugins` | GET | 插件列表（含状态、配置、Schema、错误信息） |
+| `/api/plugins/:name/config` | GET / PUT | 单插件配置读写；PUT 体为 `{ config }`，热重载该插件 |
+| `/api/plugins/:name/enable` · `/api/plugins/:name/disable` | POST | 热启用 / 热禁用，写回 `disabledPlugins` |
+| `/api/plugins/scan` | POST | 重新扫描插件源（由宿主插件加载器决定范围），加载新发现且尚未注册的插件 |
+| `/api/plugins/:name/instances` · `/api/plugins/:instanceId/instance` | POST · DELETE | 多实例插件的创建 / 移除 |
 | `/api/pages` | GET | 所有激活插件注册的 WebUI 页面（按 order 排序） |
 | `/api/page-action/:plugin/:method` | POST | 动态调用插件页面处理器（统一 RPC 入口） |
-| `/api/config` | GET/PUT | 全局配置读写（安全字段 + 重启检测） |
-| `/api/authority` | — | 权限管理（用户列表、owner 设置） |
-| `/api/services` | GET | 服务列表与能力查询 |
+| `/api/config` · `/api/config/save` | GET / PUT · POST | 全局配置：GET 读取；PUT 可改 `name`、`logLevel`（`CORE_CONFIG_SCHEMA` 的键）；请求体里其余顶层键一律不应用，其中与当前值不同的会在响应 `ignored` 里点名（前端会把整份配置连同可能过期的快照回传，故不按键报错）；可改键的值有变化时保存并自动重启应用；POST `/api/config/save` 把当前配置写回磁盘 |
+| `/api/services` · `/api/services/:name/prefer` | GET · POST / DELETE | 服务列表 / 设置或清除服务偏好提供者（持久化到 `servicePreferences`） |
+| `/api/service-groups` · `/api/tool-groups` · `/api/system-components` | GET | 服务分组 / 工具分组 / 系统组件 |
 | `/api/platforms` | GET | 平台连接状态 |
-| `/api/models` | GET | 模型列表（LLM / Embedding / Persona） |
-| `/api/logs` | GET | 历史日志查询 |
+| `/api/models/:service` · `/api/llm-models` · `/api/llm-providers` | GET | 按服务取模型列表 / LLM 模型与提供者 |
+| `/api/llm-providers/:contextId/refresh` | POST | 触发该 provider 重新探测模型列表（仅对支持运行时刷新的 provider 有效） |
+| `/api/marketplace` · `/api/marketplace/depgraph` | GET | 市场搜索（`?q=`）/ 依赖图 |
+| `/api/marketplace/install` · `/api/marketplace/uninstall` | POST | 体为 `{ name }`；需 `package-manager` 服务（缺失时 503）。安装后热加载，卸载后热卸载；若有其它插件依赖该包提供的服务且无其他提供者，卸载返回 409 |
+| `/api/marketplace/update` | POST | 体为 `{ targets: [{ name, version }] }`，整批更新，成功后重启进程 |
+| `/api/files*` · `/api/uploaded-files*` | GET / POST | 工作区文件管理 / 上传文件管理 |
+| `/api/logs` · `/api/logs/tail` · `/api/logs/range` | GET | 日志：最近 200 条（不接受分页参数）/ 尾部 N 条（`?limit=`，上限 5000）/ 向前翻页（`?before=<seq>&limit=`，返回 seq 小于 before 的记录） |
+| `/api/proxy/image` | GET | 图片代理 |
 
 ## WebSocket
 
@@ -89,6 +105,7 @@ WebUI 通过短 token + HttpOnly cookie 完成认证；所有 HTTP/WebSocket 都
 | `subscribe_session` | 订阅指定会话更新 |
 | `unsubscribe_session` | 取消会话订阅 |
 | `abort` | 中断当前生成 |
+| `compress` | 手动触发会话上下文压缩 |
 
 ### 出站消息类型 (Server → Client)
 
@@ -97,19 +114,22 @@ WebUI 通过短 token + HttpOnly cookie 完成认证；所有 HTTP/WebSocket 都
 | `message` | 完整消息推送 |
 | `stream` | 流式增量推送（contentDelta / reasoningDelta） |
 | `stream_resume` | 页面刷新后恢复中断的流（累积缓冲内容） |
-| `status` | 系统状态更新 |
 | `tool_call` | 工具调用开始/结束事件 |
 | `state_changed` | 插件/服务状态变化 |
 | `sessions_changed` | 会话列表更新 |
+| `history_changed` | 会话历史变更（如回滚），前端应重新拉取历史 |
 | `todo_updated` | 待办事项变化 |
+| `token_usage` | 本会话 token 用量与分项明细 |
+| `compressing` | 会话压缩状态 |
 | `restarting` | 应用即将重启通知 |
 | `reload` | 前端应重新加载 |
-| `confirm` | 高危操作确认请求 |
+| `page_refresh` | 通知前端刷新某插件的动态页面数据（`pluginName` 缺省表示全部） |
+| `confirm` | 受限操作的交互式确认请求（由 session-confirm 服务驱动；用户在聊天框回复即作答） |
 | `log` | 实时日志推送 |
 
 ## 流式缓冲管理
 
-服务端为每个会话维护流式缓冲 `streamBuffers`，存储累积的 `content`、`reasoningContent` 和 `generating` 状态。当客户端断线重连（页面刷新）后，通过 `stream_resume` 消息恢复已产生但未收到的内容，实现无缝续流。
+服务端为每个会话维护流式缓冲 `streamBuffers`，记录累积的 `content`、`reasoningContent`、按时序排列的 `segments`（文本、推理、工具调用）、进行中的工具调用进度和 `generating` 状态。客户端重连（如页面刷新）后发送 `subscribe_session`，若缓冲非空，服务端以 `stream_resume` 下发全部累积内容；回合结束后缓冲保留 10 秒再清理。
 
 ## 前端挂载与切换
 
@@ -119,8 +139,8 @@ WebUI 通过短 token + HttpOnly cookie 完成认证；所有 HTTP/WebSocket 都
 
 ### 切换逃生页 `/__clients`
 
-前端切换的下拉框住在「前端」里；一旦切到不含该 UI 的极简前端，就没有切回去的入口。为此 server 在 `GET /__clients` 直出一个独立恢复页（源码 `client-switch-page.ts`），无论当前前端多裸都可达——「永不卡死」的兜底入口。
+前端切换的下拉框位于前端界面内；一旦切到不含该 UI 的极简前端，就没有切回去的入口。为此 server 在 `GET /__clients` 直出一个独立恢复页（源码 `client-switch-page.ts`），它不依赖当前前端，切到任何前端后都可访问。
 
 - 受全局 auth 中间件保护（须先登录，同源 cookie 自动鉴权）；列表走 `GET /api/services`、切换走 `POST /api/services/webui-client/prefer`（owner 闸），**零新增后端逻辑**。
 - **用法**：浏览器开 `http://<host>:<port>/__clients` → 选目标前端 → 点「切换并刷新」→ 成功后自动跳回 `/`。检测到多个前端时，启动日志也会打印此 URL。
-- **终极兜底**：直接改 `aalis.config.yaml` 的 `servicePreferences.webui-client`（或删该项回退默认）后重启。
+- **手动恢复**：直接改 `aalis.config.yaml` 的 `servicePreferences.webui-client`（或删该项回退默认）后重启。

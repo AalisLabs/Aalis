@@ -13,8 +13,7 @@
 
 ```ts
 name = '@aalis/plugin-mcp-client'
-provides = []                 // 不提供服务，只往 tools 上挂工具
-inject.required = ['tools']
+inject = { required: ['tools'] }
 ```
 
 ## 配置
@@ -37,28 +36,25 @@ plugins:
         visibility: restricted   # 文件系统访问视为受限，须被 owner/委托授予
 ```
 
-| 字段 | 类型 | 默认 | 说明 |
+| 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `servers[].id` | string | 必填 | server 标识，会作为工具名前缀与分组名 |
-| `servers[].command` | string | 必填 | 启动 server 的可执行命令 |
-| `servers[].args` | string[] | `[]` | 命令参数 |
-| `servers[].env` | Record<string,string> | `{}` | 传给 server 子进程的环境变量；密钥直接写在此处。SDK 另会自动继承 `PATH` / `HOME` 等安全变量以保证命令可启动，但不会继承宿主进程的其余 env |
-| `servers[].enabled` | boolean | `true` | 是否启动此 server |
-| `servers[].visibility` | `'auto' \| 'public' \| 'sensitive' \| 'restricted'` | `'auto'` | 该 server 全部工具的档位；auto 按工具注解分档：自称只读→sensitive（等级 1），有破坏提示或未声明→restricted（等级 2） |
+| `servers` | array | `[]` | MCP 服务器列表：通过 stdio 连接的 MCP 服务器。每条目至少需要 id 与 command；安全级别按需调整。 |
 
 ## 行为
 
 - 每个 server 是一个独立子进程，stdio 传输。
-- 工具名映射：`mcp_<server-id>_<tool-name>`，非法字符替换为 `_`，超长截断到 64（OpenAI 限制）。
+- 工具名映射为 `mcp_<server-id>_<tool-name>`：`[a-zA-Z0-9_-]` 以外的字符替换为 `_`，连续下划线合并为一个，超过 64 字符截断（OpenAI 工具名限制）。
 - 工具分组：`mcp:<server-id>` —— 可在 platform 配置中按需启用/禁用。
 - `inputSchema` 顶层非 `type: 'object'` 时自动包装为 `{ input: schema }`。
-- 插件 `apply()` 内通过 `ctx.onDispose` 注册关闭回调，`ctx.dispose()` 时自动断开所有 server。
+- 每个 server 连接成功后，经 `ctx.onDispose` 注册 `client.close()`；插件 dispose 时关闭所有已连接的 server，关闭时抛出的错误被忽略，仅记 debug 日志。
+- 远端工具的返回文本经 `wrapUntrustedContent` 套上不可信内容边界；返回 `isError` 时不套边界，加 `MCP 工具返回错误:` 前缀返回。
+- 插件另外注册 `mcp:_meta` 分组下的两个自服务工具：`mcp_list_servers`（public，只读列出已配置 server 的 id / command / enabled / visibility）和 `mcp_set_server_enabled`（restricted，切换已有条目的 `enabled` 并持久化，插件经 bounce 后生效）。不提供新增 server 的工具；未配置任何有效 server 时只注册这两个。
 
 ## 安全注意事项
 
 - 外部 server 是**不受信任的第三方进程**。默认 `auto` 按注解分档、未知即 restricted（失败关闭）；
-  只有确认纯查询类 server（如 GitHub READ）才应显式放宽为 `public`。
-- Aalis 自身的能力统一闸仍生效：`restricted` 工具被调用时须 owner 或被委托授予才放行。
+  只有确认全部工具都只读的 server，才应显式放宽为 `public`（最低等级 0）。
+- Aalis 自身的能力闸仍然生效：`restricted` 工具默认要求触发者等级 >= 2，`sensitive` 工具默认要求等级 >= 1，owner 不受等级限制；等级不足时，须有临时能力委托才能放行。
 
 ## 依赖
 
@@ -68,4 +64,4 @@ plugins:
 ## 已知限制
 
 - 仅支持 stdio transport，SSE / HTTP client 暂未实现。
-- server 启动失败不会阻止 Aalis 启动，仅在 logger 中报错；可通过 `aalis status` / WebUI 查看插件状态。
+- 单个 server 连接失败不会阻止插件或 Aalis 启动，也不影响其它 server：错误只写进日志（`连接 MCP server "<id>" 失败: …`），该 server 的工具不会注册。

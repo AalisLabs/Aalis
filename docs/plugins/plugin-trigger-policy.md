@@ -33,16 +33,16 @@ inbound:trigger   （由 plugin-gateway 在 inbound:flow 之后、inbound:dispat
 
 ## 配置
 
-| 字段 | 默认 | 说明 |
-|---|---|---|
-| `scopes` | `['*:group']` | 生效作用域，`platform:sessionType` 支持通配；写一条 override 即自动启用该 scope |
-| `overrides` | `[]` | 按 scope 覆盖下列任一字段（数组元素含 `scope` + 覆盖项） |
-| `intervalMode` | `both` | `fixed`(按计数) / `dynamic`(按评分阈值) / `both`(任一满足) |
-| `triggerOnAt` | `true` | 检测 `<at>` / `[CQ:at]` / `@xxx` |
-| `triggerOnPoke` | `true` | 戳一戳等注意力动作（noticeType=poke）视同 @ 即时触发；关闭后落回正常意愿评估 |
-| `triggerNames` | `''` | 触发名别名（逗号分隔）；自动追加 persona name + nickNames |
-| `muteKeywords` | `''` | 禁言关键词（逗号分隔）；仅取本配置，不合并 persona |
-| `muteTimeSeconds` | `60` | 关键词命中时通知 flow-control 的禁言时长 |
+| 字段 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `scopes` | multiselect | `["*:group"]` | 生效作用域：格式 platform:sessionType，支持通配 *；onebot:group / *:group / onebot:* / *。默认 *:group。 |
+| `intervalMode` | select | `'both'` | 间隔模式 |
+| `triggerOnAt` | boolean | `true` | 检测 @ 提及 |
+| `triggerOnPoke` | boolean | `true` | 戳一戳直触发：戳一戳等注意力动作视同 @ 即时触发；关闭后此类动作落回正常意愿评估，不强制回复。 |
+| `triggerNames` | string | `''` | 触发名别名（逗号分隔） |
+| `muteKeywords` | string | `''` | 禁言关键词（逗号分隔） |
+| `muteTimeSeconds` | number | `60` | 禁言关键词命中时长（秒） |
+| `overrides` | array | `[]` | 分作用域覆盖：每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。写一条 override 自动启用该 scope。 |
 
 ## 与 persona 的协作
 
