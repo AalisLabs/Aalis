@@ -8,7 +8,7 @@ import type {
   OneBotRawEvent,
   SendMessageParams,
 } from './types.js';
-import { parseContentToSegments, segmentsToText, toV11Segments } from './types.js';
+import { normalizeOneBotMessage, parseContentToSegments, segmentsToText, toV11Segments } from './types.js';
 
 /**
  * OneBot v11 协议处理器
@@ -87,10 +87,11 @@ export class OneBotV11 implements OneBotProtocol {
   ): NormalizedMessageEvent | null {
     const selfId = raw.self_id != null ? String(raw.self_id) : fallbackSelfId;
     const detailType = (raw.message_type ?? 'private') as string;
-    const message = Array.isArray(raw.message) ? raw.message : [];
-    // 优先使用消息段生成富文本（含 <at> 等标记），回退到 raw_message
-    const text =
-      message.length > 0 ? segmentsToText(message, selfId, nicknameMap) : ((raw.raw_message as string) ?? '');
+    // 段数组 / CQ 字符串 / 仅 raw_message 原文三种载荷在此归一（见 normalizeOneBotMessage）：
+    // 之后附件/回复/富文本只有段数组一条路径——CQ 码不流进文本，<at self> 标记与 selfId
+    // 判定只有一处，raw_message 回退路径上同样成立。
+    const message = normalizeOneBotMessage(raw.message, raw.raw_message);
+    const text = segmentsToText(message, selfId, nicknameMap);
 
     if (!text.trim()) return null;
 

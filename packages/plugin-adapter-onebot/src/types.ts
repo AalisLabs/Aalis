@@ -224,6 +224,87 @@ export function segmentsToText(
     .join('');
 }
 
+/**
+ * CQ 转义还原（纯文本三项；参数值另含 `&#44;`，见 {@link parseCqParams}）。
+ *
+ * 顺序固定为 `&#91;` → `&#93;` → `&amp;`：`&amp;` 必须最后还原。否则原文里的字面量
+ * `&amp;#91;`（发送方想表达的就是六个字符 `&#91;`）会先被还原成 `&#91;`，再被当成方括号
+ * 转义还原成 `[`，凭空变出一个段边界字符。
+ */
+function unescapeCqText(s: string): string {
+  return s.replace(/&#91;/g, '[').replace(/&#93;/g, ']').replace(/&amp;/g, '&');
+}
+
+/**
+ * 解析 CQ 段参数体（`,k=v,k=v`），含 CQ 转义还原。
+ *
+ * 参数值沿用历史还原顺序（`&amp;` 先于方括号与 `&#44;`），不跟随 {@link unescapeCqText} 调整：
+ * 参数体是先按字面 `,` 切分、后还原的，逗号转义本就只能近似处理，改顺序解决不了这一层，
+ * 只会动到既有实现端上游已验过的参数解析结果。
+ */
+export function parseCqParams(body: string): Record<string, string> {
+  const params: Record<string, string> = {};
+  for (const part of body.replace(/^,/, '').split(',')) {
+    const eq = part.indexOf('=');
+    if (eq <= 0) continue;
+    params[part.slice(0, eq)] = part
+      .slice(eq + 1)
+      .replace(/&amp;/g, '&')
+      .replace(/&#91;/g, '[')
+      .replace(/&#93;/g, ']')
+      .replace(/&#44;/g, ',');
+  }
+  return params;
+}
+
+/**
+ * 把字符串消息格式（`message` 为含 `[CQ:…]` 码的字符串）规范化为消息段数组。
+ *
+ * OneBot 实现端可把上报配成 `message_format=string`。入站在此统一成段数组，之后
+ * 附件提取、回复提取、`segmentsToText()`（`<at self>` 标记与 selfId 判定）都只有
+ * 数组这一条路径——CQ 码不会流到下游文本里。
+ *
+ * 段类型名与 data 键沿用 v11 段语义（`at.qq` / `image.url|file` / `face.id` /
+ * `reply.id` 等），参数原样透传不重命名；未知 CQ 类型也照原样成段，由
+ * `segmentsToText()` 的兜底分支渲染。
+ */
+export function parseCqMessageToSegments(raw: string): OneBotMessageSegment[] {
+  const segments: OneBotMessageSegment[] = [];
+  const pushText = (text: string): void => {
+    if (text) segments.push({ type: 'text', data: { text: unescapeCqText(text) } });
+  };
+  const regex = /\[CQ:([A-Za-z_][A-Za-z0-9_-]*)((?:,[^\]]*)?)\]/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null = regex.exec(raw);
+  while (match !== null) {
+    pushText(raw.slice(lastIndex, match.index));
+    segments.push({ type: match[1], data: parseCqParams(match[2] ?? '') });
+    lastIndex = match.index + match[0].length;
+    match = regex.exec(raw);
+  }
+  pushText(raw.slice(lastIndex));
+  return segments;
+}
+
+/**
+ * 把一份 OneBot 消息载荷规范化成消息段数组：`message` 可以是段数组、也可以是含 `[CQ:…]` 码的
+ * 字符串（实现端 `message_format=string`）；两者都拿不到内容时回退到 `raw_message` 原文——
+ * 它同样是 CQ 字符串，因此一并规范化。
+ *
+ * 入站事件（v11 `parseMessageEvent`）与 `get_msg` 回包（引用消息反查）共用这一条路径：
+ * 附件提取、回复提取、`segmentsToText()`（`<at self>` 标记与 selfId 判定）之后都只面对段数组，
+ * CQ 码不会流到下游文本里。
+ */
+export function normalizeOneBotMessage(message: unknown, rawMessage?: unknown): OneBotMessageSegment[] {
+  const segments = Array.isArray(message)
+    ? (message as OneBotMessageSegment[])
+    : typeof message === 'string'
+      ? parseCqMessageToSegments(message)
+      : [];
+  if (segments.length > 0) return segments;
+  return typeof rawMessage === 'string' ? parseCqMessageToSegments(rawMessage) : [];
+}
+
 /** 抽象消息段（协议无关） */
 export interface ParsedSegment {
   type: 'text' | 'at' | 'face' | 'image' | 'audio' | 'reply' | 'video';

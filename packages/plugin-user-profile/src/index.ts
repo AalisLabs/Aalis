@@ -129,7 +129,7 @@ export const configSchema: ConfigSchema = {
     type: 'number',
     label: '旁观（不回复）关系增量',
     description:
-      '每条入站消息无论 agent 是否回复都加上的最低档增量。若 agent 触发回复，会再叠加 direct/immediate/interval 之一。0 表示禁用旁观计分',
+      '每条入站消息无论 agent 是否回复都加上的最低档增量。若 agent 触发回复，会再叠加 direct/immediate/interval 之一。0 表示旁观不加分；互动次数与最近互动时戳仍照记（衰减基准与最近互动排序的唯一来源）',
     default: 0.1,
   },
   extractLLM: {
@@ -1608,12 +1608,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     // 旁观档位：每条入站消息都加 witness 增量（默认 0.1），与 agent 是否回复无关。
     // agent:input:before 中间件在触发回复时会再叠加 direct/immediate/interval 增量。
-    if (cfg.relationIncrementWitness > 0) {
-      const userKey = userKeyOf(platform, userId);
-      void updateRelationForUser(userKey, 'witness').catch((err: unknown) =>
-        ctx.logger.debug(`witness 关系更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`),
-      );
-    }
+    // 刻意不按 relationIncrementWitness > 0 设门：本路径同时是 interactionCount 与
+    // lastInteractionAt 的唯一写点，设门会连带关掉计数与时戳（衰减基准、最近互动
+    // 排序全失效）。增量为 0 时 relationIncrementFor 自然返回 0，不加分即可。
+    const userKey = userKeyOf(platform, userId);
+    void updateRelationForUser(userKey, 'witness').catch((err: unknown) =>
+      ctx.logger.debug(`witness 关系更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`),
+    );
 
     const countKey = extractionCountKeyOf(sessionId, platform, userId);
     const count = (userMessageCount.get(countKey) ?? 0) + 1;

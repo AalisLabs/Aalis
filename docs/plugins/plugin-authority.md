@@ -57,7 +57,7 @@ meta.inject = { optional: ['commands', 'tools'] }
 
 当请求未直接授权 / 需确认时，依次尝试（`isTemporarilyAllowed`，先过硬禁绝对闸 `deniedCapabilities`）：
 
-1. `restrictedPolicy` 时限白名单（`{ allow?, duration? }`）：命中即放行（自动化免确认；`markPolicyEnabled` 记开启时间，`duration` 秒内有效）。
+1. `restrictedPolicy` 时限白名单（`{ allow?, duration? }`）：命中即放行（自动化免确认）。`duration > 0` 时放行窗口是**运行时态**——只有 WebUI 保存策略（action `setRestrictedPolicy`）才调 `markPolicyEnabled` 开始计时，重启或直接改 `aalis.config.yaml` 都不会自动武装，此时白名单恒不生效；`duration` 缺省 / `<= 0` 则不限时。该白名单在未直接授权的救援路径（`isPreApproved`）**只对 owner 生效**；非 owner 只在已授权、仅差确认的路径上吃它（即免确认），白名单不是免授权。
 2. 会话内临时授予复用：按 **userId + sessionId + capability** 匹配，**不跨用户 / 不跨会话泄漏**（群内 sessionId 全群共享时不被白嫖）。
 3. 确认回调（`AccessConfirmHandler`）：可返回会话级临时授予（`scope:'session'`，带 `durationSeconds`（1–3600，缺省 600）/ `maxUses`）。`always` 不接受任何记忆。
 
@@ -73,7 +73,7 @@ meta.inject = { optional: ['commands', 'tools'] }
 - `config.authorityOverrides`（能力键 `type:name` → 整数）：owner 逐条覆盖单条操作的最低等级，无需改插件声明；传非整数则清除该条（回退默认派生）。
 - `config.confirmOverrides`（能力键 `type:name` → `'session' | 'always' | 'off'`）：owner 逐条覆盖确认要求；`'off'` 强制关确认。
 - `config.autoConfirmUntil`（number）：auto 模式截止时间戳。`-1` = 一直；`>now` = 截止前激活；`0` / 过期 = 关（仅影响确认轴）。
-- `config.restrictedPolicy`（`{ allow?, duration? }`）：受限能力的临时放行白名单（owner 自动放行的时限）。
+- `config.restrictedPolicy`（`{ allow?, duration? }`）：受限能力的临时放行白名单（owner 自动放行的时限）。注意 `duration > 0` 的窗口只在 WebUI 保存策略时开始计时（运行时态、不持久化），重启即失效、手写 yaml 不自动武装——想让它长期有效就别填 `duration`。
 
 `DEFAULT_AUTHORITY`（未登记身份默认等级 = 0）是常量，不可配置。某操作是否 restricted 由其工具 / 指令声明的 `visibility` 决定，可经 `authorityOverrides`（等级）/ `confirmOverrides`（确认）逐操作覆盖。
 
@@ -113,3 +113,5 @@ owner-only 的「权限管理」页（`renderer: 'authority'`，order 50）。`g
 
 记录里**没有**能力 glob、密码、绑定、委托树。等级为默认（0）且无备注时直接清记录，保持文件精简。
 迁移策略为**全新开始**：非 v5 文件（含旧的能力 / 密码 / 档位模型 v1–v4）直接丢弃，不做迁移（0.5.0 未发布）。
+
+读取失败（文件在但读不出 / JSON 解析不了）时本次运行**拒绝写入** users.json 并记 error：`save` 写的是全量快照，坏文件被覆盖一次就意味着原有封禁 / 等级记录全丢。修好或移走该文件后重启即恢复正常写入；文件不存在（全新安装）不受影响。

@@ -62,6 +62,12 @@ export interface ToolCallContext {
    * 退回文字结果，而不是交出一份只剩说明文字的空壳。
    */
   acceptsImages?: boolean;
+  /**
+   * 调用方回合的中止信号（agent 工具循环传入）。守卫等待人工确认期间回合被中止
+   * （latest-wins / 手动 abort）时，工具服务据此放弃执行——否则用户稍后按下的 y 会替一个
+   * 已死的回合执行写操作。缺省 = 不可中止。
+   */
+  signal?: AbortSignal;
 }
 
 /** 工具调用状态通知（WebUI 等前端订阅展示用） */

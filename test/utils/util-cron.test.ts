@@ -115,3 +115,27 @@ describe('util-cron: 星期字段 0-7（0 与 7 均为周日）', () => {
     expect(matchesCron('0 8 * * 7', mondayUtc, 'UTC')).toBe(false);
   });
 });
+
+describe('util-cron: 别名表不受 Object.prototype 成员干扰', () => {
+  const protoKeys = ['toString', 'constructor', 'valueOf', 'hasOwnProperty', '__proto__', 'isPrototypeOf'];
+
+  it('normalizeCronExpr 对原型成员名返回 null（不返回函数/对象，守住 string|null 契约）', () => {
+    for (const key of protoKeys) {
+      expect(normalizeCronExpr(key)).toBeNull();
+    }
+  });
+
+  it('validateCronExpr / matchesCron 不抛 TypeError（否则 scheduler 的 initJob 整个 apply 抛出）', () => {
+    for (const key of protoKeys) {
+      expect(() => validateCronExpr(key)).not.toThrow();
+      expect(validateCronExpr(key).ok).toBe(false);
+      expect(() => matchesCron(key, new Date())).not.toThrow();
+      expect(matchesCron(key, new Date())).toBe(false);
+    }
+  });
+
+  it('真别名仍照常展开', () => {
+    expect(normalizeCronExpr('@weekly')).toBe('0 0 * * 0');
+    expect(validateCronExpr('@annually')).toEqual({ ok: true, kind: 'cron', normalized: '0 0 1 1 *' });
+  });
+});

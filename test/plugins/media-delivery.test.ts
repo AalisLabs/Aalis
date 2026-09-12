@@ -17,7 +17,7 @@ import type { IncomingMessage } from '../../packages/schema-message/src/index.js
 
 /** analyze_image 直通分支的远端下载桩：只替换 safeDownloadToTemp，其余走原实现 */
 const download = vi.hoisted(() => ({
-  next: null as { path: string; cleanup: () => Promise<void> } | null,
+  next: null as { path: string; uri: string; cleanup: () => Promise<void> } | null,
   seen: [] as Array<{ url: string; imageOnly: boolean | undefined }>,
 }));
 vi.mock(import('../../packages/plugin-media/src/safe-fetch.js'), async importOriginal => ({
@@ -209,7 +209,12 @@ describe('legacy vision.mode 映射（config-sync 在 apply 前裁 schema 外键
 });
 
 describe('analyze_image：按交付形态返回图片或文字', () => {
-  async function withTool(vision: Partial<MediaConfigResolved['vision']>, acceptsImages: boolean, uri: string) {
+  async function withTool(
+    vision: Partial<MediaConfigResolved['vision']>,
+    acceptsImages: boolean,
+    uri: string,
+    extraArgs: Record<string, unknown> = {},
+  ) {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     await app.ctx.useModule(toolsModule as never, {});
     await app.plugins.idle();
@@ -220,7 +225,7 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     if (!tools) throw new Error('tools 服务未注册');
     const result = await tools.execute(
       'analyze_image',
-      { image: uri },
+      { image: uri, ...extraArgs },
       { sessionId: 's', platform: 'test', ...(acceptsImages ? { acceptsImages: true } : {}) },
     );
     await app.stop();
@@ -246,6 +251,7 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     let cleaned = false;
     download.next = {
       path,
+      uri: 'tmp:/media-dl/download.png',
       cleanup: async () => {
         cleaned = true;
       },
@@ -287,6 +293,19 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     expect(calls).toHaveLength(1);
     expect(result.images).toBeUndefined();
     expect(JSON.parse(result.content).description).toBe('一只猫');
+  });
+
+  it('task 与 prompt 同传：两者都进 hint（工具描述用一整段教模型写 prompt，不能被静默丢弃）', async () => {
+    const { result, calls } = await withTool({ delivery: 'describe' }, false, toolUri(4), {
+      task: '看看这题',
+      prompt: '请用 LaTeX 抄录所有公式',
+      context: '这是第 3 页',
+    });
+    expect(JSON.parse(result.content).description).toBe('一只猫');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].hint).toContain('用户需求: 看看这题');
+    expect(calls[0].hint).toContain('分析提示词: 请用 LaTeX 抄录所有公式');
+    expect(calls[0].hint).toContain('补充上下文: 这是第 3 页');
   });
 
   it('describe：识别模型出文字，不带 images', async () => {

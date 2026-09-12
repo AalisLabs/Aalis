@@ -193,7 +193,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     // app.stop() 期间和之后插件可能仍在 logger.info('已停止') 等，给微任务一个 tick 把它们
     // 入队，再等队列清空，确保 latest.log 含完整关闭日志。
     await new Promise<void>(r => setImmediate(r));
-    await fileLogger?.flush();
+    await fileLogger?.dispose();
     process.exit(0);
   };
   process.on('SIGINT', shutdown);

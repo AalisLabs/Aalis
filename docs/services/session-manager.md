@@ -43,7 +43,6 @@ resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessio
 resolveInheritedDefaults(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'>;
 getDefaults(): Omit<SessionConfig, 'sessionDefaults'>;
 getPlatformProfiles(): Record<string, PlatformProfile>;
-setPlatformProfile(platform: string, profile: PlatformProfile): void;
 
 // 标题
 generateTitle(sessionId: string, userMessage?: string): Promise<string | undefined>;  // 调 LLM 总结
@@ -70,7 +69,7 @@ interface SessionConfig {
 }
 ```
 
-`PlatformProfile = SessionConfig`（`index.ts`）——每个平台一份模板。
+`PlatformProfile = SessionConfig`（`index.ts`）——每个平台一份模板。**平台档只从插件配置 `platformProfiles` 加载，没有运行时写接口**：改平台档就是改配置（WebUI 配置页 / `aalis.config.yaml`），改完经热重载生效。
 
 `SessionInfo`（`index.ts`）——会话本体：
 
@@ -117,7 +116,7 @@ interface SessionInfo {
 | `plugin-agent` | 每条消息 `resolveConfig()` 决定 LLM / persona / 工具分组；`/session.set`·`/session.reset` 走 `ensureSession()` 落配置（`/model` 仅列/搜可用模型，不写配置） | `plugin-agent/src/index.ts` |
 | `plugin-subtask` | `createChildSession(parentId, { inputContext: task, ... })` 派发子任务；`agent:turn:after` 里 `completeSession()` 回报父会话 | `plugin-subtask/src/index.ts` |
 | `plugin-persona` | `resolveConfig()` 取 `persona/disableOutputFormat/clientSideJsonRendering`（消费侧**窄化类型**，见 §5.2） | `plugin-persona/src/index.ts` |
-| `plugin-session-manager` 自身 actions | WebUI 通过 action 调 `listSessions/createSession/getResolvedConfig/...` | `plugin-session-manager/src/index.ts` |
+| `plugin-session-manager` 自身 actions | WebUI 通过 action 调 `listSessions/createSession/getInheritedDefaults/...` | `plugin-session-manager/src/index.ts` |
 
 ## 4. 写一个 provider（替换实现）
 
@@ -126,6 +125,8 @@ interface SessionInfo {
 **最小必须**：接口里被实际消费的这几个方法务必正确——`createSession` / `getSession` / `listSessions` / `updateSession` / `ensureSession` / `createChildSession` / `completeSession` / `resolveConfig` / `getPlatformProfiles`。其余（`getTree` / `resolveInheritedDefaults` / `generateTitle` / ...）主要服务于 WebUI，可保守实现。
 
 **配置解析的合并语义必须复刻**（否则 Agent 会拿错 LLM）：`resolveConfig` 优先级从高到低 = 会话自身 config > 父会话 `sessionDefaults` > 平台 profile > 全局 defaults，且**返回结果必须删除 `sessionDefaults` 字段**（不传递给消费方）（`plugin-session-manager/src/index.ts`）。
+
+**配置补丁是三态，不是二态**：键不出现 = 不改；键为 `null` = 删除该键、恢复继承；键为 `false` = **显式覆盖**，不等于未设置。参考实现里 `normalizeSessionConfigPatch` 把 `null` 转成 `undefined` 再交给 `updateSession` 删键，而 `stripUndefined` 只剔 `undefined` 与 `null`——因此显式 `false` 会一路压过继承来的 `true`（`plugin-session-manager/src/index.ts`）。WebUI 会话配置页的两个开关只写显式 `true` / `false` 两档：点一下就落成显式值，页面不提供回到「未设置」的入口，恢复继承要把该键从会话配置里清掉（补丁置 `null`）。
 
 ```ts
 // my-session-manager/src/index.ts —— 可编译最小骨架
@@ -257,6 +258,8 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 ### 6.5 标题生成会调 LLM
 
 `generateTitle` 会真发一次 LLM `chat`（`think:false`，`temperature:0.3`），有成本与延迟；参考实现只对 `webui` / `cli` 平台自动触发，且异步不阻塞消息处理（`plugin-session-manager/src/index.ts`）。第三方平台自动调用前请自行权衡。
+
+平台派生的会话 id（`cli-default` 等）从不经 `createSession` 预建，首条消息到达时**缺档是常态**：参考实现先 `ensureSession` 兜底建档再生成标题（与 `createChildSession` 同一条兜底路），因此这些平台的首条消息一样会拿到标题。兜底是无条件的：`cli` / `webui` 平台上任何带未知 `sessionId` 的入站消息都会建档，包括定时任务投给已删除会话的那种。
 
 ## 7. 注意事项与边界情形
 

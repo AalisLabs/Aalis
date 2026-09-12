@@ -26,6 +26,14 @@ meta.inject = { optional: ['memory'] }
 
 `session-delegate` 组仅在 `enabled` 与 `crossSessionEnabled` 均为 true 时注册；`enabled` 为 false 时本插件不注册任何服务与工具。
 
+## 跨会话委派的防雪崩
+
+委派深度随消息走：`delegate_to_session` 给目标会话注入的 `IncomingMessage` 带 `proactiveDepth`（首跳为 1），目标会话处理这条消息的那一个回合内不能再委派，调用会以「本回合由委派消息驱动，不能再委派」被拒。回合结束（`agent:turn:after`）即解除；该会话之后由下一条不带 `proactiveDepth` 的入站消息（真人消息、idle/interval 自动触发都算）驱动的回合不受影响。没有时间窗——等多久都不会自动解除，解除只来自回合结束或该会话的下一条不带 `proactiveDepth` 的入站消息。登记点在 `agent:input:before`，因此经 `inbound:message` 事件与直接调 `gateway.ingressMessage()` 两条投递路径同样生效。
+
+锁按 sessionId 记，是按会话近似回合：同会话不同 source 的并行回合共用同一把锁，后开始的回合会覆盖前一个的登记，先结束的回合会替所有人解锁。
+
+另有两道与深度无关的闸门：平台适配器可声明 `checkAndRecordProactiveSend` 做主动发送限速；同一目标会话 60 秒内的重复派发会在任务前注入 META 提醒（提醒型，不拦截派发本身）。
+
 ## 配置
 
 | 字段 | 类型 | 默认值 | 说明 |

@@ -9,7 +9,7 @@
 import type { CodeSandboxService, SandboxRunRequest } from '@aalis/api-code-sandbox';
 import type { ExecResult, ProcessService } from '@aalis/api-process';
 import { createProcessGateway } from '@aalis/api-process';
-import type { Context, Logger, PluginModule } from '@aalis/core';
+import type { Context, Logger } from '@aalis/core';
 import { type SandboxBackend, wrapForSandbox } from './sandbox.js';
 
 export const name = '@aalis/plugin-code-sandbox-os';
@@ -77,6 +77,3 @@ export async function apply(ctx: Context): Promise<void> {
     `code-sandbox-os 就绪（后端: ${backend === 'none' ? '无 —— 沙箱不可用，code_runner 将 fail-closed' : backend}）`,
   );
 }
-
-const plugin: PluginModule = { name, apply };
-export default plugin;

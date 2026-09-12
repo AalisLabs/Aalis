@@ -43,12 +43,16 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
   // 用户等级存于 data:/users.json，读取依赖 storage 服务。storage provider 可能晚于本插件
   // 上线（在 init 阶段直接 readFile 会失败且被静默吞 → 重启后等级不回载），故等 storage 就绪
   // 再 load，规避初始化时序竞态。whenService 对「已在线」的服务也会立即触发，故任意加载序都成立。
+  let loading: Promise<void> | undefined;
   ctx.whenService<StorageService>('storage', () => {
-    void authority.init().then(
+    loading = authority.init().then(
       () => ctx.logger.debug('授权用户等级已加载'),
       err => ctx.logger.warn(`授权用户等级加载失败: ${err}`),
     );
   });
+  // storage 已在线时 whenService 是同步首挂：把加载等完再让 apply 返回，避免「等级表还空着
+  // 就开始裁决」的窗口（封禁用户在这段时间按默认 0 级通过）。storage 晚上线时无从等待，仍异步。
+  if (loading) await loading;
 
   // 网络出口闸（SSRF）：把 core 配置 network 注入进程级 safeFetch 策略（启动一次）。
   // 安全归属在权限域；本地固定服务走裸 fetch、不过 safeFetch，故不受影响。
@@ -73,6 +77,7 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
       sessionId: g.sessionId,
       platform: g.platform,
       userId: g.userId,
+      signal: g.signal,
     } as const;
 
     // ── 轴 A · 授权：数字等级裁决（minLevel 由 risk/visibility/authorityOverrides 在 manager 内派生）——系统源也评估，防绕过提权 ──
@@ -301,11 +306,12 @@ export const actions: PluginModule['actions'] = {
     return { message: `${platform}:${userId} 等级已更新为 ${level}` };
   },
 
-  /** 删除用户记录 */
-  async deleteUser(ctx, args) {
+  /** 删除用户记录（仅 owner 可达：删掉封禁记录等于解封） */
+  async deleteUser(ctx, args, caller) {
     const { platform, userId } = args;
     if (!platform || !userId) throw new Error('platform, userId 必填');
     const auth = ctx.getService<AuthorityService>('authority');
+    if (caller && !auth?.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
     auth?.removeUser(platform as string, userId as string);
     auth?.save();
     return { message: `${platform}:${userId} 记录已删除` };
@@ -324,28 +330,29 @@ export const actions: PluginModule['actions'] = {
     return { message: 'Owner 列表已更新' };
   },
 
-  /** 更新受限能力的临时放行策略（restrictedPolicy） */
-  async setRestrictedPolicy(ctx, args) {
+  /** 更新受限能力的临时放行策略（restrictedPolicy）。仅 owner 可达：这是给受限能力开白名单。 */
+  async setRestrictedPolicy(ctx, args, caller) {
     const policy = args.policy as Record<string, unknown>;
     if (!policy || typeof policy !== 'object') throw new Error('policy 必须是对象');
+    const auth = ctx.getService<AuthorityService>('authority');
+    if (caller && !auth?.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
     const app = ctx.getService<AppService>('app');
     if (!app) throw new Error('App 不可用');
     ctx.config.set('restrictedPolicy', policy);
     app.saveConfig();
     if (Array.isArray(policy.allow) && policy.allow.length > 0) {
-      (
-        ctx.getService<AuthorityService>('authority') as unknown as { markPolicyEnabled?: () => void } | undefined
-      )?.markPolicyEnabled?.();
+      (auth as unknown as { markPolicyEnabled?: () => void } | undefined)?.markPolicyEnabled?.();
     }
     return { message: '临时放行策略已更新' };
   },
 
-  /** 撤销一个临时能力委托 */
-  async revokeTemporaryGrant(ctx, args) {
+  /** 撤销一个临时能力委托（仅 owner 可达） */
+  async revokeTemporaryGrant(ctx, args, caller) {
     const id = args.id as string;
     if (!id) throw new Error('id 必填');
     const auth = ctx.getService<AuthorityService>('authority');
     if (!auth) throw new Error('Authority 服务不可用');
+    if (caller && !auth.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
     const ok = auth.revokeTemporaryGrant(id);
     return { ok, message: ok ? '临时委托已撤销' : '不存在或已过期' };
   },
@@ -396,8 +403,10 @@ export const actions: PluginModule['actions'] = {
     return { message: until === -1 ? '自动确认：一直' : until === 0 ? '自动确认：关' : `自动确认：${m} 分钟`, until };
   },
 
-  /** 更新禁用能力清单 */
-  async setConfig(ctx, args) {
+  /** 更新禁用能力清单（仅 owner 可达：这是压过一切的硬禁总闸） */
+  async setConfig(ctx, args, caller) {
+    const auth = ctx.getService<AuthorityService>('authority');
+    if (caller && !auth?.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
     const app = ctx.getService<AppService>('app');
     if (!app) throw new Error('App 不可用');
     const denied = asStringList(args.deniedCapabilities, 'deniedCapabilities');

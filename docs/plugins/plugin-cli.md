@@ -12,7 +12,7 @@
 ```typescript
 meta.name = '@aalis/plugin-cli'
 meta.provides = ['cli', 'platform']
-meta.inject = { optional: ['llm', 'authority', 'commands'] }
+meta.inject = { optional: ['llm', 'commands'] }
 ```
 
 ## 配置
@@ -32,5 +32,5 @@ meta.inject = { optional: ['llm', 'authority', 'commands'] }
 - `app:started` 后接管终端进入全屏界面；stdin / stdout 任一不是 TTY（日志重定向、容器、systemd）时不接管、不画界面，控制台日志照常输出，发往 cli 会话的消息退化为一行日志
 - 用户输入经 `inbound:message` 事件发出（`platform: 'cli'`，`userId: 'console'`，即本地终端身份）
 - 斜杠指令不在本插件内解析，由 `commands` 服务（plugin-commands）在 `inbound:command` 相位统一处理（如 `/help`、`/status`），执行结果经 `outbound:message` 回显到终端
-- 意图确认（权限模型轴 B）：TUI 启动后经 `whenService('authority')` 注册终端确认通道 `setConfirmHandler('cli', …)`——跟着 authority 的胜者走，authority 后到或 bounce 后自动重挂，TUI 停止时注销并把在飞的确认按取消结算；声明了 `confirm` 的操作在 CLI 会话里按 y 确认、其他键取消，多个并发确认先到先问；非交互终端下不注册，CLI 会话落到 `'*'` 兜底通道
+- 意图确认（权限模型轴 B）：CLI 不自建确认通道，走 plugin-session-confirm 的公共协调器（authority 的 `'*'` 回调）——声明了 `confirm` 的操作会把提示（含参数摘要）作为消息发进聊天区，在输入框回复 `y`（仅本次）或 `ys`（本会话放行）后回车，其它输入取消；回复在 `inbound:confirm` 相位被拦截，不会当成对话发给模型；多个并发确认按先到先问排队；确认提示只在 chat 视图可见可答，在 logs/status/help 等视图下触发的确认需先 Ctrl+T 切回 chat 才能看到并回答，60 秒无回复视为取消
 - sessionId 默认为 `cli-default`

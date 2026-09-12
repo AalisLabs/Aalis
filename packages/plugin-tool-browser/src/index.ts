@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto';
 import { createProcessGateway } from '@aalis/api-process';
+import { createStorageGateway } from '@aalis/api-storage';
 import { useToolService, wrapUntrustedContent } from '@aalis/api-tools';
 import type { WebuiPage } from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（allowCustom）
 import { useWebuiService } from '@aalis/api-webui';
@@ -42,7 +44,9 @@ export const name = '@aalis/plugin-tool-browser';
 export const displayName = '浏览器工具';
 export const subsystem = 'tools';
 
-// tools 服务由核心提供，无需声明依赖
+// tools 服务由核心提供，无需声明依赖；storage 仅截图落盘用（不接图的调用方那一路），
+// process 仅首次自动下载 Chrome 时用（execFile 走网关面，缺席则自动下载这步不可用）
+export const inject = { optional: ['process', 'storage'] };
 
 export const configSchema: ConfigSchema = {
   headless: {
@@ -139,6 +143,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   const config = resolveConfig(rawConfig);
   const logger = ctx.logger.child('browser');
   const proc = createProcessGateway(ctx);
+  const storage = createStorageGateway(ctx);
 
   // 注册 WebUI 页面
   const webui = useWebuiService(ctx);
@@ -179,7 +184,11 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
   async function ensureBrowser(): Promise<any> {
-    if (browser) return browser;
+    // 只判句柄非空不够：Chromium 崩溃/被杀后句柄常驻，所有 browser_* 会永久失效到插件 bounce；
+    // 页面表也一起清，否则列出的是已经不存在的死页面。
+    if (browser?.connected) return browser;
+    browser = null;
+    pages.clear();
     try {
       if (!config.executablePath) {
         await ensureChrome();
@@ -191,6 +200,13 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         defaultViewport: { width: config.viewportWidth, height: config.viewportHeight },
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
         ...(config.executablePath ? { executablePath: config.executablePath } : {}),
+      });
+      const instance = browser;
+      instance.on('disconnected', () => {
+        // 只清自己那一代：迟到的旧实例事件不能把刚起来的新实例与它的页面一起清掉
+        if (browser !== instance) return;
+        browser = null;
+        pages.clear();
       });
       logger.info('浏览器已启动');
       return browser;
@@ -444,7 +460,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       type: 'function',
       function: {
         name: 'browser_screenshot',
-        description: '对当前浏览器页面截图，返回 base64 编码的 PNG 图片。',
+        description:
+          '对当前浏览器页面截图。PNG 一律落盘，结果里恒带 storage_uri（可交给 analyze_image 看图或 send_attachment 发送）；你能看图时截图同时随结果呈现给你。',
         parameters: {
           type: 'object',
           properties: {
@@ -456,7 +473,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
         },
       },
     },
-    handler: async args => {
+    handler: async (args, callCtx) => {
       const slot = pages.get(args.pageId as string);
       if (!slot) return JSON.stringify({ error: '页面不存在' });
       try {
@@ -472,11 +489,51 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           });
         }
         slot.lastAccess = Date.now();
-        const base64 = Buffer.from(buffer).toString('base64');
-        return JSON.stringify({
-          image: `data:image/png;base64,${base64}`,
-          size: buffer.length,
-        });
+        const png = Buffer.from(buffer);
+        // 交付形态（定死）：base64 绝不进 content——整张 PNG 的 base64 有几十万字符，
+        // 模型看不到图，还会灌满上下文并落进历史。所以一律先落盘 tmp 根拿 URI，
+        // content 恒带 storage_uri；调用方接得住图（agent 工具循环）时再把图随结果附上，
+        // note 按两条路分别写实：接得住写「图已随结果附上」，接不住写「图未随结果附上」。
+        // 文件名取内容 sha256 前 16 位：同一张图重截复用同一文件，零增量。
+        // 只有落盘失败才退回只给 images。base64 只在真要交图的分支上现算。
+        const digest = createHash('sha256').update(png).digest('hex').slice(0, 16);
+        const safeSession = (callCtx.sessionId || 'unknown').replace(/[:/\\]/g, '_');
+        const uri = `tmp:/browser/${safeSession}/shot-${digest}.png`;
+        let storedUri: string | undefined;
+        try {
+          await storage.writeFile(uri, png);
+          storedUri = uri;
+        } catch (err) {
+          ctx.logger.warn(`截图落盘失败: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        if (storedUri) {
+          const meta = { ok: true, url: slot.url, size: png.length, storage_uri: storedUri };
+          if (callCtx.acceptsImages) {
+            return {
+              content: JSON.stringify({
+                ...meta,
+                note: '图已随结果附上；若你看不到图，用 storage_uri 走 analyze_image / send_attachment',
+              }),
+              images: [`data:image/png;base64,${png.toString('base64')}`],
+            };
+          }
+          return JSON.stringify({
+            ...meta,
+            note: '图未随结果附上，用 storage_uri 走 analyze_image / send_attachment 查看',
+          });
+        }
+        if (callCtx.acceptsImages) {
+          return {
+            content: JSON.stringify({
+              ok: true,
+              url: slot.url,
+              size: png.length,
+              note: '截图落盘失败，图仅在本回合随结果呈现；历史中不保留图片本身，需要时重新截图',
+            }),
+            images: [`data:image/png;base64,${png.toString('base64')}`],
+          };
+        }
+        return JSON.stringify({ error: '截图落盘失败，且调用方接不住图片' });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
       }

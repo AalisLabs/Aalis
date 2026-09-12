@@ -186,11 +186,8 @@ export interface SessionManagerService {
    */
   resolveInheritedDefaults(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'>;
 
-  /** 获取已配置的平台 profile 列表 */
+  /** 获取已配置的平台 profile 列表（平台档只从插件配置加载，无运行时写入口） */
   getPlatformProfiles(): Record<string, PlatformProfile>;
-
-  /** 设置指定平台的 profile */
-  setPlatformProfile(platform: string, profile: PlatformProfile): void;
 
   /**
    * 获取全局默认配置（platform profile 之下的最低层 fallback）。

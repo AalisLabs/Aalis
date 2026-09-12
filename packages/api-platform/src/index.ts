@@ -42,7 +42,7 @@ export interface PlatformAdapter {
   /**
    * 平台可能发出的 IncomingMessage.sessionType 枚举。
    *
-   * 消费者（如 plugin-flow-control / plugin-trigger-policy）可以从中汇总出
+   * 消费者（plugin-webui-server 的 gateway-scopes 候选）从中汇总出
    * 真实可选作用域，避免在 UI 上臆造不存在的选项。
    *
    * 未声明表示适配器不区分 sessionType（如 cli / webui 都是单会话）。
@@ -67,11 +67,6 @@ export interface PlatformAdapter {
   canHandle?(sessionId: string): boolean | Promise<boolean>;
   /** 获取当前平台账号自身身份；多连接平台可用 sessionId 定位具体连接 */
   getSelfIdentity?(sessionId?: string): PlatformSelfIdentity | undefined;
-  /**
-   * 适配器是否至少有一个可用连接
-   * 默认实现：检查 getConnections() 中是否有 status === 'online'
-   */
-  isReady?(): boolean;
   /**
    * 调用平台原生 API（可选，由具体适配器实现）
    *

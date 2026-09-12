@@ -1,6 +1,5 @@
 import { stdin as input, stdout as output } from 'node:process';
 import * as readline from 'node:readline';
-import type { AuthorityService } from '@aalis/api-authority';
 import type { PersonaService } from '@aalis/api-persona';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/api-platform';
 import { getPlatformAdapters } from '@aalis/api-platform';
@@ -17,7 +16,6 @@ export type { CLIService } from './types.js';
 import { createStorageGateway } from '@aalis/api-storage';
 import { LogHub } from '@aalis/core';
 import { ChatBuffer } from './chat-buffer.js';
-import { ConfirmQueue } from './confirm-queue.js';
 import { readLogFileTail } from './log-file.js';
 
 // terminal:claimed / terminal:released 是 CLI（独占终端 UI）与宿主
@@ -36,7 +34,7 @@ export const name = '@aalis/plugin-cli';
 export const displayName = 'CLI 终端';
 export const subsystem = 'platform';
 export const inject = {
-  optional: ['llm', 'authority', 'commands'],
+  optional: ['llm', 'commands'],
 };
 export const provides = ['cli', 'platform'];
 
@@ -216,8 +214,6 @@ class CliTui {
   // 流式状态：正在生成的 assistant 回复，其行由 ChatBuffer 维护为末尾一段
   private streamingContent = '';
   private streamedRecently = false;
-  private readonly confirms = new ConfirmQueue();
-  private offConfirm: (() => void) | undefined;
   private renderQueued = false;
   private closing = false;
   private readonly restoreOnExit = () => restoreTerminalState();
@@ -275,12 +271,9 @@ class CliTui {
       chalk.gray(this.formatCont()) + chalk.gray(`欢迎使用 ${assistantName}。按 ${chalk.cyan('Ctrl+G')} 查看快捷键。`),
     ]);
 
-    // 跟着 authority 的胜者走（bounce 后重挂）；stop() 时摘掉，dispose 时由 whenService 自身清理
-    this.offConfirm = this.ctx.whenService<AuthorityService>('authority', authority =>
-      authority.setConfirmHandler('cli', async request =>
-        this.askConfirm(`/${request.name} 是受限指令，按 y 确认，其他键取消`),
-      ),
-    );
+    // 意图确认不自建通道：走 session-confirm 的公共协调器（authority 的 '*' 回调）——提示以消息
+    // 进聊天区（带参数摘要），在输入框回复 y / ys 即可；回复在 inbound:confirm 相位被拦截，不触达 agent。
+    // 与 WebUI / OneBot 同一份排队、超时、会话授予语义，CLI 不再维护第二套。
 
     input.on('keypress', this.handleKeypress);
     output.on('resize', this.queueRender);
@@ -295,10 +288,6 @@ class CliTui {
     this.running = false;
     this.removeLogListener?.();
     this.removeLogListener = null;
-    // 在飞的确认按取消结算：否则 authority.requestAccess 会一直等这些 Promise
-    this.confirms.settleAll(false);
-    this.offConfirm?.();
-    this.offConfirm = undefined;
     input.off('keypress', this.handleKeypress);
     output.off('resize', this.queueRender);
     process.off('exit', this.restoreOnExit);
@@ -383,13 +372,6 @@ class CliTui {
     if (key.ctrl && key.name === 'c') {
       this.stop();
       process.kill(process.pid, 'SIGINT');
-      return;
-    }
-
-    if (this.confirms.size > 0) {
-      const ok = key.name === 'y' || chunk?.toLowerCase() === 'y';
-      this.confirms.answer(ok);
-      this.queueRender();
       return;
     }
 
@@ -519,6 +501,8 @@ class CliTui {
     else if (key.name === 'pageup') this[field] = Math.max(0, this[field] - 10);
     else if (key.name === 'pagedown') this[field] = this[field] + 10;
     else if (key.name === 'home') this[field] = 0;
+    // End = 到底部：给个越界大值，由 renderBody 的写回钳制落到最后一屏
+    else if (key.name === 'end') this[field] = Number.MAX_SAFE_INTEGER;
     this.queueRender();
   }
 
@@ -571,13 +555,6 @@ class CliTui {
     this.queueRender();
   }
 
-  private askConfirm(text: string): Promise<boolean> {
-    if (!this.running || this.closing) return Promise.resolve(false);
-    const answer = this.confirms.ask(text);
-    this.queueRender();
-    return answer;
-  }
-
   private switchView(view: CLIView): void {
     if (this.view !== view) {
       this.previousView = this.view;
@@ -622,7 +599,7 @@ class CliTui {
 
     output.write('\x1b[?25l\x1b[H');
     output.write(out.map(line => clearLine(line, width)).join('\n'));
-    if (this.view === 'chat' && !this.confirms.current) {
+    if (this.view === 'chat') {
       // 计算光标在多行输入中的 (row, col)
       const { row: cRow, col: cCol } = this.cursorPosInInput(width);
       // 行号布局（1-based）：1=header, 2=sep, 3..2+bodyHeight=body, 之后是 inputBox(顶/中.../底), 最后是 footer
@@ -643,7 +620,7 @@ class CliTui {
         return v === this.view ? chalk.bold.cyan(`[${label}]`) : chalk.gray(` ${label} `);
       })
       .join(' ');
-    const status = this.confirms.size > 0 ? chalk.yellow('● confirm') : chalk.green('● online');
+    const status = chalk.green('● online');
     const right = ` ${tabs}  ${status} `;
     const pad = Math.max(1, width - visibleLen(left) - visibleLen(right));
     return left + ' '.repeat(pad) + right;
@@ -811,6 +788,7 @@ class CliTui {
     out.push(row('↑ / ↓', '逐行滚动'));
     out.push(row('PgUp/Dn', '翻页'));
     out.push(row('Home', '回到顶部'));
+    out.push(row('End', '到底部'));
     out.push(row('Ctrl+W', '日志页：切换换行模式（多行完整展示）'));
     out.push('');
     out.push(sec('编辑'));
@@ -832,8 +810,6 @@ class CliTui {
   /** 计算输入框的多行内容（不含边框、不含 padding） */
   private computeInputDisplayLines(width: number): string[] {
     const inner = width - 2;
-    const asking = this.confirms.current;
-    if (asking) return [`${chalk.yellow('?')} ${asking}`];
     if (this.view !== 'chat') {
       const total =
         this.view === 'logs'
@@ -863,7 +839,7 @@ class CliTui {
 
   /** 根据 cursor 索引计算其在多行输入中的 (row, col)，col 为终端可见列宽 */
   private cursorPosInInput(_width: number): { row: number; col: number } {
-    if (this.view !== 'chat' || this.confirms.current) return { row: 0, col: 0 };
+    if (this.view !== 'chat') return { row: 0, col: 0 };
     const before = this.inputLine.slice(0, this.cursor);
     const lines = before.split('\n');
     return { row: lines.length - 1, col: stringWidth(lines[lines.length - 1]) };

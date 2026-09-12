@@ -509,7 +509,6 @@ interface PlatformAdapter {
   platform: string;
   getConnections(): PlatformConnection[];
   sendMessage(sessionId: string, content: string): Promise<void>;
-  isReady?(): boolean;
 }
 
 interface PlatformConnection {
