@@ -650,15 +650,18 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
       const existing = skillsCache.get(skillName);
       if (!existing) return false;
       const { fm: oldFm } = parseSkillMd(existing.raw);
+      // 新值压过旧值（反过来的话除 description/triggers/license 外任何已存在的键都改不动）
       const fm: SkillFrontmatter = {
-        ...(updates.frontmatter ?? {}),
         ...(oldFm ?? {
           name: existing.name,
           description: existing.description,
           ...(existing.triggers ? { triggers: existing.triggers } : {}),
           ...(existing.license ? { license: existing.license } : {}),
         }),
+        ...(updates.frontmatter ?? {}),
       };
+      // 名字钉死：目录名由创建时的 sanitizeFolderName(name) 决定，改名会让卡片脱离自己的目录
+      fm.name = existing.name;
       if (updates.description !== undefined) fm.description = updates.description;
       if (updates.triggers !== undefined) fm.triggers = updates.triggers;
       if (updates.license !== undefined) fm.license = updates.license;
@@ -969,7 +972,10 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
             body: { type: 'string', description: '新的 SKILL.md 正文' },
             triggers: { type: 'array', description: '新的 triggers regex 列表' },
             license: { type: 'string', description: '新的 license' },
-            frontmatter: { type: 'object', description: '额外 frontmatter 字段（覆盖同名旧字段）' },
+            frontmatter: {
+              type: 'object',
+              description: '额外 frontmatter 字段（覆盖同名旧字段）；name 除外，技能名不可改。',
+            },
             files: {
               type: 'array',
               description: '要写入/覆盖的附属文件，每项 { relPath, content }。同名直接覆盖，不存在则新增。',

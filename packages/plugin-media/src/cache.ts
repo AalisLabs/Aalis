@@ -10,7 +10,9 @@
 // 落成两条路径。**无上下文**的描述取其中的内容哈希做键，让表情包这类高频重复内容
 // 跨会话只识别一次；**带会话上下文**的描述（contextHistory/senderContext 开启时）
 // 用原路径做键，只在本会话内复用——否则等于把 A 群的语境搬进 B 群。
-// 非内容寻址来源（http URL / data: base64）一律原样做键，与改前行为一致。
+// 非内容寻址来源（http URL / data: base64）一律原样做键，与改前行为一致；但这类来源
+// **落盘后**就有内容寻址路径了，落盘点登记一次「来源 → 落盘 ref」别名（见
+// rememberDescriptionAlias），此后按原始来源串查也落到同一条内容哈希键上。
 //
 // 落盘：一次识别少则十几秒、动图要一分钟，而纯内存缓存进程一重启就全丢。
 // 快照写在 `data:/media/descriptions.json`，启动灌回、写入后防抖落盘。
@@ -28,6 +30,15 @@ const SNAPSHOT_URI = 'data:/media/descriptions.json';
 const PERSIST_DEBOUNCE_MS = 30_000;
 
 const cache = createBoundedMap<string, string>({ max: MAX_ENTRIES, ttlMs: TTL_MS });
+
+/**
+ * 「来源 → 落盘 ref」别名表。非内容寻址的来源串（WebUI 上传的 base64 data URI、
+ * 远端 URL）本身不含内容哈希，落盘后才有内容寻址路径可用。
+ *
+ * 键空间不变：别名只把来源映到**已有**的落盘键（descriptionKey 认的那种路径），
+ * 不引入新键形态。纯派生、不进快照——快照里只有内容哈希键，重启后由新一轮落盘重登记。
+ */
+const aliases = createBoundedMap<string, string>({ max: MAX_ENTRIES, ttlMs: TTL_MS });
 
 type CacheLogger = { debug: (msg: string) => void; warn: (msg: string) => void };
 
@@ -69,6 +80,28 @@ function isFailurePlaceholder(raw: string): boolean {
 }
 
 /**
+ * 登记「来源 → 落盘 ref」别名。**落盘时调一次**（本插件 cacheImageRef 落盘成功处；
+ * 适配器落远端 URL 时经 MediaService.rememberDescriptionAlias 调进来），
+ * 此后按原始来源串读写描述都经别名落到落盘 ref 的键上：同一张图经不同来源
+ * （WebUI base64 / 适配器已落盘路径）进来只识别一次，且描述能进快照续命
+ * （快照只收内容哈希键，原始 base64 串做键的条目重启即丢）。
+ *
+ * 来源与 ref 相同（http URL 原样返回、storage URI 只换写法）时不登记——恒等别名无意义。
+ *
+ * 登记**之前**已按原始来源串写入的条目不迁移：那要求登记时反查旧键搬运，而能走到这一步
+ * 的只有「先识别、后落盘」的窄场景，代价是多识别一次，判跳。
+ */
+export function rememberDescriptionAlias(source: string, landedRef: string): void {
+  if (!source || !landedRef || source === landedRef) return;
+  aliases.set(source, landedRef);
+}
+
+/** 来源串登记过落盘 ref 就换成后者，否则原样。读写共用，两侧必须一致。 */
+function resolveAlias(source: string): string {
+  return aliases.get(source) ?? source;
+}
+
+/**
  * 写入缓存（空串与失败占位不缓存，见 isFailurePlaceholder）。
  *
  * `shareable=false` 时不跨会话共享——描述若掺进了**当前会话的对话上下文**
@@ -78,13 +111,15 @@ function isFailurePlaceholder(raw: string): boolean {
  */
 export function rememberDescription(key: string, raw: string, shareable = true): void {
   if (!raw || isFailurePlaceholder(raw)) return;
-  cache.set(shareable ? descriptionKey(key) : key, raw);
+  const src = resolveAlias(key);
+  cache.set(shareable ? descriptionKey(src) : src, raw);
   schedulePersist();
 }
 
 /** 查询缓存。命中且未过期返回字符串，否则返回 null（有界 Map 自行处理过期与淘汰）。 */
 export function lookupCachedDescription(key: string, shareable = true): string | null {
-  return cache.get(shareable ? descriptionKey(key) : key) ?? null;
+  const src = resolveAlias(key);
+  return cache.get(shareable ? descriptionKey(src) : src) ?? null;
 }
 
 /**

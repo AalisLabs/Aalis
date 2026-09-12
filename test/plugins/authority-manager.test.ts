@@ -279,3 +279,41 @@ describe('setConfirmHandler → 注销函数 / hasConfirmHandler', () => {
     await expect(m.requestAccess(req('onebot'))).resolves.toBe(false);
   });
 });
+
+describe('requestAccess 与发起回合的中止信号', () => {
+  const base: AccessRequest = {
+    name: 'exec',
+    type: 'tool',
+    capability: 'tool:exec',
+    sessionId: 's',
+    platform: 'cli',
+    confirm: 'session',
+  };
+
+  it('信号已中止：不问、立即拒', async () => {
+    const m = new AuthorityManager(mkConfig(), mkLogger(), storage);
+    let asked = 0;
+    m.setConfirmHandler('*', async () => {
+      asked++;
+      return true;
+    });
+    const ac = new AbortController();
+    ac.abort();
+    expect(await m.requestAccess({ ...base, signal: ac.signal })).toBe(false);
+    expect(asked).toBe(0);
+  });
+
+  it('等待应答期间中止：立即拒，迟到的 y 不放行也不生成会话授予', async () => {
+    const m = new AuthorityManager(mkConfig(), mkLogger(), storage);
+    let answer: ((v: boolean | { allowed: boolean; grant: { scope: 'session' } }) => void) | undefined;
+    m.setConfirmHandler('*', () => new Promise(res => (answer = res)));
+    const ac = new AbortController();
+    const pending = m.requestAccess({ ...base, signal: ac.signal });
+    await new Promise(r => setTimeout(r, 0));
+    ac.abort();
+    expect(await pending).toBe(false);
+    answer?.({ allowed: true, grant: { scope: 'session' } }); // 迟到的 YS
+    await new Promise(r => setTimeout(r, 0));
+    expect(m.listTemporaryGrants()).toEqual([]);
+  });
+});

@@ -65,7 +65,7 @@ export function FilesPage() {
     setError('');
     try {
       const data = await api<{ path: string; entries: FileEntry[] }>(`/api/files?path=${encodeURIComponent(dir)}`);
-      setEntries(data.entries);
+      setEntries(data.entries ?? []);
       setCurrentPath(data.path);
     } catch (e: any) {
       setError(e.message || '加载失败');

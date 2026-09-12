@@ -12,8 +12,10 @@
 ```typescript
 meta.name = '@aalis/plugin-vectorstore-flat'
 meta.provides = ['vectorstore']
-meta.inject = {} // 无依赖
+meta.inject = { required: ['storage'] }
 ```
+
+向量全部存在 storage 上的 `vectors.json` 里，没有 storage 既读不出也写不进，故 storage 是必需依赖。声明 `required` 也换来停机拓扑保证：消费者先关、提供者后关，flat 的 dispose 落盘时 storage 一定还在。
 
 ## 配置
 
@@ -26,5 +28,6 @@ meta.inject = {} // 无依赖
 - 向量归一化后写入 `vectors.json`
 - 搜索时使用余弦相似度（归一化后等价于点积）排序取 topK
 - 支持 `add` / `search` / `clear` / `save` / `size`
-- dispose 时自动保存
+- dispose 时自动保存，并等待落盘完成后才结束拆卸（依赖 storage 必需声明带来的关停顺序）
+- 数据文件损坏（解析失败）或内容不是数组时告警并按空库启动，不影响后续写入
 - 适合开发调试和小规模数据，大规模场景建议使用 plugin-vectorstore-lancedb

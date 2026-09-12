@@ -23,6 +23,8 @@ export class UserStore {
   private users = new Map<string, UserRecord>();
   private dirty = false;
   private saveChain: Promise<void> = Promise.resolve();
+  /** load 时「文件在但读不出/解析不了」——此后一律拒写，别让全量快照覆盖掉封禁/等级记录 */
+  private loadFailed = false;
 
   constructor(
     private readonly storage: StorageService,
@@ -47,9 +49,15 @@ export class UserStore {
     return this.users.entries();
   }
 
-  // ── 持久化（v4；非 v4 一律丢弃，净化无迁移）──────────────────
+  // ── 持久化（版本见 USERS_VERSION；非当前版本一律丢弃，净化无迁移）──
   save(): void {
     if (!this.dirty) return;
+    if (this.loadFailed) {
+      // 写的是**全量快照**：坏文件没载进内存时一次 save 就把原有记录清空。
+      // 宁可这一程的改动不落盘（内存里仍生效），也不能静默销毁封禁/等级数据。
+      this.logger.error('users.json 上次加载失败，拒绝写入以免覆盖原数据；请人工修复或移走该文件后重启');
+      return;
+    }
     const users: Record<string, UserRecord> = {};
     for (const [key, record] of this.users) users[key] = record;
     const payload = JSON.stringify({ version: USERS_VERSION, users }, null, 2);
@@ -66,16 +74,28 @@ export class UserStore {
   }
 
   async load(): Promise<void> {
+    // 重读即重判：storage 重新上线（whenService 重挂）或重启后 load 成功即恢复落盘；
+    // 同一进程内不会自动重读——没有新的 load，这一程就一直拒写。
+    this.loadFailed = false;
+    let raw: string;
     try {
-      let raw: string;
-      try {
-        raw = (await this.storage.readFile(this.fileUri, 'utf-8')) as string;
-      } catch (err) {
-        // 无文件 = 全新（owners 配置 seed owner）。其它错误（如 storage 未就绪）也落此；
-        // 记 debug 以免被完全静默——调用方应确保 storage 就绪后再 load。
-        this.logger.debug(`users.json 未读取（无文件或 storage 未就绪）: ${err instanceof Error ? err.message : err}`);
-        return;
+      raw = (await this.storage.readFile(this.fileUri, 'utf-8')) as string;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // 判据优先看 errno：文案正则会被本地化/自定义 storage 的措辞绕开，把「全新安装」误判成
+      // 「读不出」（→ 整程拒写），也可能把一条带 "not found" 字样的别的错误误判成全新。
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code === 'ENOENT' || (code === undefined && /ENOENT|not found|不存在/i.test(msg))) {
+        // 无文件 = 全新（owners 配置 seed owner）
+        this.logger.debug(`users.json 不存在，按全新开始: ${msg}`);
+      } else {
+        // 文件在但读不出（权限/storage 未就绪等）：标记失败并拒写，否则下一次等级改动即清空原表
+        this.loadFailed = true;
+        this.logger.error(`读取 users.json 失败，本次运行不再写入该文件: ${msg}`);
       }
+      return;
+    }
+    try {
       const data = JSON.parse(raw) as { version?: number; users?: Record<string, UserRecord> };
       if (data.version === USERS_VERSION && data.users && typeof data.users === 'object') {
         for (const [key, record] of Object.entries(data.users)) {
@@ -87,12 +107,19 @@ export class UserStore {
           if (clean.level !== undefined || clean.note) this.users.set(key, clean);
         }
         this.logger.debug(`加载 ${this.users.size} 条用户等级记录`);
-      } else {
+      } else if (data.version !== USERS_VERSION) {
         // 旧版本（v1-v4 能力/密码/档位模型）净化丢弃：0.5.0 未发，无迁移
         this.logger.info(`users.json 版本 ${data.version ?? '未知'} 非 v5，按净化策略丢弃旧数据，重新开始`);
+      } else {
+        // 版本对得上但 users 不是对象（截断/被外部工具写坏）：这不是「旧版本净化」，
+        // 原表仍可能在文件里，等同解析失败按拒写处理，别让一次全量快照抹掉它。
+        this.loadFailed = true;
+        this.logger.error('users.json 版本为 v5 但 users 字段结构非法，本次运行不再写入该文件');
       }
     } catch (err) {
-      this.logger.warn(`加载用户等级数据失败: ${err}`);
+      // 解析失败同理：坏文件不能被一次全量快照覆盖掉
+      this.loadFailed = true;
+      this.logger.error(`解析 users.json 失败，本次运行不再写入该文件: ${err}`);
     }
   }
 }

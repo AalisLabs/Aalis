@@ -89,4 +89,43 @@ describe('attachment-ref helpers', () => {
       expect('[图片 | ref:data/fooXbar.png]'.match(re)).toBeNull();
     });
   });
+
+  describe('desc 净化（视觉模型输出带表格/多行时仍可解析）', () => {
+    const dirty = '这是一张表格：\n| 列A | 列B |\n| 1 | 2 ]';
+
+    it('format 把换行折成空格、| 与 ] 换成全角', () => {
+      const line = formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: dirty, ref: 'data/t.png' });
+      expect(line).toBe('[图片: 这是一张表格： 丨 列A 丨 列B 丨 丨 1 丨 2 ］ | ref:data/t.png]');
+      expect(line.includes('\n')).toBe(false);
+    });
+
+    it('净化后 parseAttachmentRefs 仍认得（不净化则整条引用在历史里永远匹配不到）', () => {
+      const line = formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: dirty, ref: 'data/t.png' });
+      const refs = parseAttachmentRefs(`用户发了 ${line} 然后……`);
+      expect(refs.length).toBe(1);
+      expect(refs[0].ref).toBe('data/t.png');
+      expect(refs[0].desc).toContain('列A');
+    });
+
+    it('净化后 matcher 命中且只吃掉整条占位（update_image_description 能改写）', () => {
+      const line = formatAttachmentRef({ kind: AttachmentRefKind.Image, desc: dirty, ref: 'data/t.png' });
+      const re = buildAttachmentRefMatcher(AttachmentRefKind.Image, 'data/t.png');
+      expect(line.replace(re, '<改写>')).toBe('<改写>');
+    });
+
+    it('存量 desc 含裸 | 时 matcher 仍能改写（parse 不认，两读侧刻意不一致）', () => {
+      const legacy = '[图片: a | b | ref:data/t.png]';
+      // parse 只发现净化过的新格式
+      expect(parseAttachmentRefs(legacy)).toEqual([]);
+      // matcher 额外兼容存量：收严则这条占位符 update_image_description 再也改不动
+      const re = buildAttachmentRefMatcher(AttachmentRefKind.Image, 'data/t.png');
+      expect(legacy.replace(re, '<改写>')).toBe('<改写>');
+    });
+
+    it('宽松的 desc 字符类仍不跨 ]：不会吞掉相邻占位符', () => {
+      const text = '[图片 | ref:data/a.png][图片: x | ref:data/t.png]';
+      const re = buildAttachmentRefMatcher(AttachmentRefKind.Image, 'data/t.png');
+      expect(text.match(re)).toEqual(['[图片: x | ref:data/t.png]']);
+    });
+  });
 });

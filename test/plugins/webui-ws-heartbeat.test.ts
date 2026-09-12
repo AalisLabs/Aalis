@@ -18,22 +18,26 @@ interface FakeWs extends HeartbeatSocket {
 }
 
 function makeWs(autoPong: boolean): FakeWs {
-  let pongCb: (() => void) | undefined;
+  const handlers = new Map<string, (...args: never[]) => void>();
+  // 与 HeartbeatSocket 同款重载声明：单条「union 事件名」签名满足不了重载类型
+  function on(event: 'pong', cb: () => void): void;
+  function on(event: 'error', cb: (err: Error) => void): void;
+  function on(event: 'pong' | 'error', cb: (...args: never[]) => void): void {
+    handlers.set(event, cb);
+  }
   const ws: FakeWs = {
     pings: 0,
     terminated: false,
     ping() {
       ws.pings++;
-      if (autoPong) queueMicrotask(() => pongCb?.());
+      if (autoPong) queueMicrotask(() => handlers.get('pong')?.());
     },
     terminate() {
       ws.terminated = true;
     },
-    on(_event, cb) {
-      pongCb = cb;
-    },
+    on,
     emitPong() {
-      pongCb?.();
+      handlers.get('pong')?.();
     },
   };
   return ws;

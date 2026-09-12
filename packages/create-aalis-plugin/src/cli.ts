@@ -242,7 +242,7 @@ function renderTsconfig(): string {
   )}\n`;
 }
 
-function renderIndexTs(a: Answers): string {
+export function renderIndexTs(a: Answers): string {
   const imports: string[] = [`import type { Context, PluginModule } from '@aalis/core';`];
   if (a.features.tool) imports.push(`import { useToolService } from '@aalis/api-tools';`);
   if (a.features.command) imports.push(`import { useCommandService } from '@aalis/api-commands';`);
@@ -326,7 +326,7 @@ ${body.join('\n\n')}
 
 // 形状自检：钉住模板既有字段的名字与形状（如把 displayName 改错名即编译红）。
 // 注意它只覆盖列出的字段——模块级新增导出（如手写 configSchema）请同样收进来。
-const _shape: PluginModule = { name, displayName, inject, apply${a.features.webui ? ', webuiPages, actions' : ''} };
+const _shape: PluginModule = { name, displayName, inject, apply${a.features.webui ? ', actions' : ''} };
 void _shape;
 `;
 }

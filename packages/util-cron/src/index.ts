@@ -6,6 +6,20 @@
 // 订阅协议（CronEngine 服务契约）在 @aalis/api-cron-engine，
 // 实现在 @aalis/plugin-cron-engine。
 
+// 别名表用 Map 而非对象字面量：字面量 + `aliases[s]` 真值查找会命中 Object.prototype
+// 成员（'toString' / 'constructor' / '__proto__' …），把函数/对象当表达式返回，
+// 破掉 `string | null` 契约 —— 下游 validateCronExpr/matchesCron 随即 TypeError，
+// 而 scheduler 的 initJob 路径没有包裹，整个 apply 抛出、插件进 error 态。
+const CRON_ALIASES = new Map<string, string>([
+  ['@hourly', '0 * * * *'],
+  ['@daily', '0 0 * * *'],
+  ['@midnight', '0 0 * * *'],
+  ['@weekly', '0 0 * * 0'],
+  ['@monthly', '0 0 1 * *'],
+  ['@yearly', '0 0 1 1 *'],
+  ['@annually', '0 0 1 1 *'],
+]);
+
 /**
  * 把 cron 表达式标准化：
  * - 5 字段 cron 原样返回
@@ -16,16 +30,8 @@
 export function normalizeCronExpr(input: string): string | null {
   const s = input.trim();
   if (s.startsWith('@every')) return s;
-  const aliases: Record<string, string> = {
-    '@hourly': '0 * * * *',
-    '@daily': '0 0 * * *',
-    '@midnight': '0 0 * * *',
-    '@weekly': '0 0 * * 0',
-    '@monthly': '0 0 1 * *',
-    '@yearly': '0 0 1 1 *',
-    '@annually': '0 0 1 1 *',
-  };
-  if (aliases[s]) return aliases[s];
+  const alias = CRON_ALIASES.get(s);
+  if (alias) return alias;
   // 5 字段格式检查
   if (s.split(/\s+/).length === 5) return s;
   return null;

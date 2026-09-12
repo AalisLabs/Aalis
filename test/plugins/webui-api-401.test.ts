@@ -53,6 +53,25 @@ describe('webui api() 会话失效(401) → 跳登录页而非白屏', () => {
     expect(replaceMock).not.toHaveBeenCalled();
   });
 
+  it('api() 撞非 2xx：抛出服务端 error 文案（不把失败 resolve 成成功）', async () => {
+    // 旧行为：401 之外一律 return res.json() —— 文件页删除/重命名失败照样弹「已删除」，
+    // 列目录 404 时把 undefined 当 entries 塞进渲染。
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ error: '路径不存在' }), { status: 404 })),
+    );
+    await expect(api('/api/files?path=x')).rejects.toThrow('路径不存在');
+    expect(replaceMock, '非 401 不该跳登录页').not.toHaveBeenCalled();
+  });
+
+  it('api() 撞非 2xx 且响应体非 JSON：退回 HTTP 状态码文案', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('<html>502</html>', { status: 502 })),
+    );
+    await expect(api('/api/status')).rejects.toThrow('HTTP 502');
+  });
+
   it('pageAction() 撞 401：跳 / 并抛错', async () => {
     vi.stubGlobal(
       'fetch',

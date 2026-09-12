@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { parseIndexSelection, validateNpmName } from '../../packages/create-aalis/src/cli.js';
-import { parseYesNo, validateNpmName as validatePluginName } from '../../packages/create-aalis-plugin/src/cli.js';
+import { parseIndexSelection, positionalArgs, validateNpmName } from '../../packages/create-aalis/src/cli.js';
+import {
+  parseYesNo,
+  renderIndexTs,
+  validateNpmName as validatePluginName,
+} from '../../packages/create-aalis-plugin/src/cli.js';
 
 // ════════════════════════════════════════════════════════════
 // create-aalis / create-aalis-plugin — 交互输入校验（纯函数）
@@ -97,5 +101,50 @@ describe('parseYesNo（create-aalis-plugin 的 askYesNo 核心；修「No 默认
   it('无法识别 → null（调用方重问）', () => {
     expect(parseYesNo('maybe', true)).toBeNull();
     expect(parseYesNo('1abc', true)).toBeNull();
+  });
+});
+
+// ── create-aalis：argv 位置参数（取值 flag 的值不得被当项目名）─────────────
+describe('positionalArgs（flag 取值不当位置参数）', () => {
+  it('`--tier full my-bot` 的位置参数只有 my-bot（旧实现拿 full 当项目名、丢弃 my-bot）', () => {
+    expect(positionalArgs(['--tier', 'full', 'my-bot'])).toEqual(['my-bot']);
+  });
+
+  it('`--registry <url> my-bot` 不再把 url 当项目名（旧实现报「非法项目名」）', () => {
+    expect(positionalArgs(['--registry', 'https://registry.example.com/', 'my-bot'])).toEqual(['my-bot']);
+  });
+
+  it('布尔 flag 不吞后面的 token', () => {
+    expect(positionalArgs(['--yes', 'my-bot'])).toEqual(['my-bot']);
+    expect(positionalArgs(['my-bot', '--force', '--no-install'])).toEqual(['my-bot']);
+    expect(positionalArgs(['-y', 'my-bot', '--tier', 'minimal'])).toEqual(['my-bot']);
+  });
+
+  it('`--tier=full` 写法不影响位置参数；纯 flag 时无位置参数', () => {
+    expect(positionalArgs(['--tier=full', 'my-bot'])).toEqual(['my-bot']);
+    expect(positionalArgs(['--yes'])).toEqual([]);
+  });
+});
+
+// ── create-aalis-plugin：生成的 src/index.ts 形状自检行 ────────────────────
+describe('renderIndexTs 的 _shape 形状自检', () => {
+  const answers = (webui: boolean) => ({
+    packageName: 'aalis-plugin-demo',
+    displayName: '演示',
+    features: { tool: true, command: false, webui },
+  });
+
+  it('勾 WebUI 时 _shape 不含 webuiPages（该字段已从 PluginModule 移除，写进去生成的项目 TS2353 编译不过）', () => {
+    const src = renderIndexTs(answers(true));
+    expect(src).toContain('const _shape: PluginModule = { name, displayName, inject, apply, actions };');
+    expect(src).not.toMatch(/_shape[^\n]*webuiPages/);
+    // 页面本身仍生成，经 registerPage 注册（不是把注册也删了）
+    expect(src).toContain('for (const page of webuiPages) webui.registerPage(page);');
+  });
+
+  it('不勾 WebUI 时 _shape 只有四个字段', () => {
+    expect(renderIndexTs(answers(false))).toContain(
+      'const _shape: PluginModule = { name, displayName, inject, apply };',
+    );
   });
 });

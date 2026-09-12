@@ -54,6 +54,7 @@ outputFormat:
 | `nick_name` | 昵称列表，供触发检测使用 |
 | `skills` | 可用 skill 白名单；缺省不限制，空数组表示禁用全部 skill |
 | `outputFormatPrompt` | 替换默认的输出格式说明与字段说明；JSON 字段骨架仍按 `outputFormat` 自动生成。仅在定义了 `outputFormat` 时生效 |
+| `outputFormatRetries` | `outputFormat` 校验失败时允许的重试次数（不含首次），缺省 `1`；`0` = 不重试，首次不合格即丢弃该回复。仅接受非负整数，其它值按未设处理 |
 | `clientSideJsonRendering` | 为 `true` 时不提取回复字段，保留 JSON 由客户端渲染 |
 
 ## 结构化输出
@@ -64,7 +65,7 @@ outputFormat:
 
 1. 在 system prompt 中追加 JSON 格式要求，指示 LLM 以特定 JSON 结构回复
 2. 按 `replyField`（标记 `reply: true` 的字段）提取回复；若该字段缺失，先按 `response` / `reply` / `content` / `answer` / `text` / `msg` 别名回退，再退到唯一的字符串字段。角色卡设置 `clientSideJsonRendering: true`（或会话配置如此覆盖）时不提取回复字段，保留原始 JSON 由客户端渲染
-3. 所有声明字段都必须出现且类型正确，否则要求模型重试（1 次）；重试用尽则丢弃本次回复
+3. 所有声明字段都必须出现且类型正确，否则要求模型重试（次数由 `outputFormatRetries` 定，缺省 1 次，`0` 表示不重试）；重试用尽则丢弃本次回复
 4. 启用 `statePersistence` 时，非回复字段作为会话状态保存，下一轮注入提示
 5. 当回复字段为空字符串时跳过发送
 

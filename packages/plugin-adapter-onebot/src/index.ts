@@ -28,7 +28,7 @@ import type {
   OneBotProtocol,
   OneBotRawEvent,
 } from './types.js';
-import { segmentsToText } from './types.js';
+import { normalizeOneBotMessage, segmentsToText } from './types.js';
 import { OneBotV11 } from './v11.js';
 
 /**
@@ -583,6 +583,22 @@ function splitImageOut(content: string): string[] {
   return out.length > 0 ? out : [content];
 }
 
+/**
+ * 附件落盘成功后登记一次「原始来源 → 落盘 ref」描述缓存别名。
+ *
+ * QQ 媒体直链不含内容哈希，落盘后才有内容寻址路径。引用消息那条路径（见下方
+ * `lookupDescription`）手里只有原始 URL，不登记就查不到刚刚识别出的描述、白重认一遍。
+ * media 未装或实现较老（可选方法缺席）即跳过。
+ *
+ * 只登记 http(s) 来源：base64 data URI 做键会把整段（可达数 MB）钉进别名表，而那条
+ * 路径由 plugin-media 自己在落盘处登记，适配器再登记一遍纯属重复占位。
+ */
+function rememberLandedAlias(ctx: Context, kind: string, source: string | undefined, landedRef: string): void {
+  // 音频走转写、不进描述缓存：登记只会白占别名表一格
+  if (kind === 'audio' || !source || !/^https?:\/\//.test(source)) return;
+  ctx.getService<MediaService>('media')?.rememberDescriptionAlias?.(source, landedRef);
+}
+
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
@@ -968,12 +984,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const data = (await sendAction(state, 'get_msg', {
         message_id: Number(messageId) || messageId,
       })) as Record<string, unknown>;
-      const segments = Array.isArray(data.message) ? (data.message as import('./types.js').OneBotMessageSegment[]) : [];
+      // 与入站共用同一条归一路径（段数组 / CQ 字符串 / raw_message 原文）：
+      // CQ 码不会流进引用文本，reply/at 段语义也与数组格式一致。
+      const segments = normalizeOneBotMessage(data.message, data.raw_message);
       const sender = data.sender as Record<string, unknown> | undefined;
       const nickname = (sender?.card as string) || (sender?.nickname as string) || undefined;
 
       // 1. 用与主流程同款渲染器把所有段转成可读文本
-      let content = segments.length > 0 ? segmentsToText(segments, state.selfId) : ((data.raw_message as string) ?? '');
+      let content = segmentsToText(segments, state.selfId);
 
       const nestedReplyId = findReplySegmentId(segments);
       if (nestedReplyId) {
@@ -1154,10 +1172,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         selfId: state.selfId,
         nickname: state.selfNickname,
       };
-    },
-
-    isReady(): boolean {
-      return states.some(s => s.status === 'online');
     },
 
     async sendMessage(sessionId: string, content: string, options?: { skipSplit?: boolean }): Promise<void> {
@@ -1675,7 +1689,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
                   ctx.logger.debug(`OneBot get_record 转换失败 (file=${fileRef}): ${err}`);
                 }
               }
-              return await cacheOneAttachment(
+              const landed = await cacheOneAttachment(
                 storage,
                 proc,
                 'audio',
@@ -1684,8 +1698,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
                 attachmentMaxBytes,
                 ctx.logger,
               );
+              return landed;
             }
-            return await cacheOneAttachment(
+            const landed = await cacheOneAttachment(
               storage,
               proc,
               att.kind,
@@ -1694,6 +1709,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
               attachmentMaxBytes,
               ctx.logger,
             );
+            if (landed) rememberLandedAlias(ctx, att.kind, att.url, landed);
+            return landed;
           } catch (err) {
             ctx.logger.debug(`OneBot 附件缓存异常 [${att.kind}]: ${err}`);
             return null;
@@ -2269,6 +2286,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
               ctx.logger,
             );
             if (local) {
+              rememberLandedAlias(ctx, att.kind, att.data, local);
               // cacheAttachmentBuffer 返回相对路径 "data/images/..."，
               // 转为 storage URI "data:/images/..."，让 renderAttachmentsAsContentMarkers
               // 走 storage.readFile 读回 buffer，而非兜底成无法访问的相对 file://

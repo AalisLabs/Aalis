@@ -147,8 +147,9 @@ export function apply(ctx: Context): void {
 与代码里的 `export const provides = ['cron-engine']` 一致（参考实现 `package.json` + `index.ts`）。详见 [manifest-metadata](../concepts/manifest-metadata.md)。
 
 实现要点（参照参考实现）：
-- 多订阅者**共享一条对齐到整分钟的 tick**（`ensureCronLoop` 用 `setTimeout` 对齐到下一整分钟再 `setInterval(_, 60_000)`，`packages/plugin-cron-engine/src/index.ts`），`cronTick` 把当前分钟的秒/毫秒清零后逐个 `matchesCron`。
-- handler 必须包 try/catch，且对 Promise 返回值 `.catch` 记日志——**一个订阅者抛错不能影响其余**（参考实现的 `cronTick` 与 interval 分支各有同步/异步两条 catch）。
+- 多订阅者**共享一条对齐到整分钟的 tick**：每轮 tick 结束时按「下一个整分钟边界」重排一次 `setTimeout`（`scheduleNextTick`，`packages/plugin-cron-engine/src/index.ts`），**不用 `setInterval`**——后者的误差会累积，攒够一分钟就整分钟丢触发。`runMinute` 对某个整分钟逐个 `matchesCron`。
+- **tick 晚到要回补，且回补有上限**：引擎记下已求值过的最后一个整分钟 `lastTickMinute`，每轮把 `(lastTickMinute, 当前整分钟]` 之间的每个整分钟各求值一遍——事件循环阻塞、机器休眠唤醒导致定时器晚到时不丢分钟。落后超过 5 分钟（`MAX_CATCHUP_MINUTES`）时只回补最近 5 分钟，其余分钟明确跳过并 `logger.warn` 一次说明跳过了多少分钟：合盖一夜醒来不该把几百分钟的任务一次性全轰出去。
+- handler 必须包 try/catch，且对 Promise 返回值 `.catch` 记日志——**一个订阅者抛错不能影响其余**（参考实现的 `runMinute` 与 interval 分支各有同步/异步两条 catch）。
 - `subscribe` 里若给了 `timeZone`，应提前 `new Intl.DateTimeFormat({ timeZone })` 探测合法性并抛「非法时区」，不要拖到分钟 tick 才静默失败。
 - `onDispose` 清空所有 timer 与订阅表。
 
@@ -172,10 +173,12 @@ export function apply(ctx: Context): void {
 
 ## 7. 边界情形与注意事项
 
-- **最小粒度是分钟**：cron tick 对齐整分钟、`cronTick` 把秒清零（`packages/plugin-cron-engine/src/index.ts`），秒级 cron 不支持；要更细只能用 `@every Ns`（走独立 `setInterval`）。
+- **最小粒度是分钟**：cron tick 对齐整分钟、`runMinute` 只按整分钟求值（`packages/plugin-cron-engine/src/index.ts`），秒级 cron 不支持；要更细只能用 `@every Ns`（走独立 `setInterval`）。
+- **回补只在进程活着时发生**：休眠唤醒 / 长阻塞后的补跑上限 5 分钟，且同一分钟只补一次（不会重复触发）；handler 因此可能在整分钟之后几秒甚至几分钟才被调用，别把「被调用的时刻」当成表达式命中的时刻。
+- **墙钟回拨按当前时刻重锚**：若 tick 发现当前整分钟早于已求值过的最后一分钟（NTP 校正 / 手动改表），引擎 warn 一条「检测到墙钟回拨，按当前时刻重锚，回拨跨过的分钟不补跑」并把锚点退到当前分钟的前一分钟——当前这一分钟照常求值一次，回拨跨过的分钟不做补跑（也不会因锚点停在未来而静默停摆）；注意墙钟重新走过那段时间时命中的分钟会再触发一次，引擎不对此去重。
 - **`@every` 不参与 cron 匹配也不认时区**：`matchesCron`/`normalizeCronExpr` 对 `@every` 直接放过/原样返回（`packages/util-cron/src/index.ts`），间隔从注册时刻起算、`timeZone` 对它无意义。
 - **`nextFireTime` 有上限**：cron 在 `lookaheadMinutes`（默认 366×24×60 ≈ 一年零一天）内没命中就返回 `null`，极稀疏的表达式（如 `2/30` 月）可能落空。
-- **进程内、非持久化**：所有订阅都是内存 timer，进程重启即丢；持久化任务定义、重启恢复属上层（scheduler/workflow 各自落盘后重新 `subscribe`）。**进程停机期间错过的触发不会补跑**。
+- **进程内、非持久化**：所有订阅都是内存 timer，进程重启即丢；持久化任务定义、重启恢复属上层（scheduler/workflow 各自落盘后重新 `subscribe`）。**进程停机期间错过的触发不会补跑**（回补只覆盖进程活着但 tick 晚到的情形，且上限 5 分钟）。
 - **`day` 与 `weekday` 取交集而非并集**：`matchesCron` 用 `&&` 串联五个字段（`packages/util-cron/src/index.ts`），与 Vixie cron「日/周谁限定取并集」的传统行为**不同**——同时写日和周会变成「既是某日又是某周几」才触发。
 - **字段越界被静默夹取**：`parseCronField` 把范围夹到 `[min,max]`（`packages/util-cron/src/index.ts`），如分钟字段 `1-100` 不会塞入 60-99；但**整字段解析为空集**会在 `validate` 阶段被拒，不会生成死任务。
 - **`午夜 hour=24` 的修正**：用 IANA 时区且 `hour12=false` 时 Intl 午夜可能返回 `"24"`，已换回 `0` 以匹配 cron 0-23（`dateFieldsInTimeZone`，`packages/util-cron/src/index.ts`）；自实现 provider 需一并处理此归一。

@@ -30,10 +30,11 @@ export interface MediaService {
   processMessage(msg: IncomingMessage): Promise<MediaProcessReport>;             // 把每条附件描述写进 msg._attachmentDescriptions
 
   // ----- 单图/单视频主动识别 + 描述缓存 -----
-  describeImage(imageUrl: string, opts?: DescribeImageOptions): Promise<string>; // 带 24h 缓存；失败返回空串
+  describeImage(imageUrl: string, opts?: DescribeImageOptions): Promise<string>; // 带 30 天缓存；失败返回空串
   describeVideo(videoUrl: string, opts?: DescribeVideoOptions): Promise<string>; // 抽帧+可选音轨；失败返回空串
   lookupDescription(imageUrl: string): string | null;                            // 只查缓存不触发识别
   rememberDescription(imageUrl: string, description: string): void;
+  rememberDescriptionAlias?(source: string, landedRef: string): void;   // 落盘方登记「来源 → 落盘 ref」，可选
   buildContext(msg: IncomingMessage, opts?: BuildContextOptions): Promise<string>; // 为含图消息造视觉上下文 hint
 }
 ```
@@ -232,9 +233,11 @@ async function handle(ctx: Context, url: string) {
 
 ### 描述缓存
 
-缓存基于 `@aalis/util-bounded-map`（有界，加滑动 TTL，加 LRU），配置为 `max=1000` 条、`ttlMs=24h`。key 是 url / data-URI / 本地路径；值只存裸描述，ref 标记等包装由各消费点重建。
+缓存基于 `@aalis/util-bounded-map`（有界，加滑动 TTL，加 LRU），配置为 `max=5000` 条、`ttlMs=30 天`（图片内容不变、描述也就不过期，长留才吃得到跨天的表情包复用）。key 取落盘路径里的内容哈希，非内容寻址的来源（远端 URL、data-URI）原样做键；值只存裸描述，ref 标记等包装由各消费点重建。
 
-`describeImage` 只在「无 hint 且未 `noCache`」时读写缓存——**带 hint 不进缓存**，因为不同意图的结果不同。空串以及 `[图片:` / `[动图:` 这类占位都不会写入。`lookupDescription`/`rememberDescription` 则暴露给适配器做手动复用。
+**来源 → 落盘 ref 别名**：非内容寻址的来源串本身不含内容哈希，落盘后才有内容寻址路径。落盘方在落盘成功时登记一次「来源 → 落盘 ref」别名——本服务的 `cacheImageRef` 落 base64 data-URI 时自登记，服务外的落盘方（适配器把 QQ 媒体直链落到 `data/images/…`）经可选方法 `rememberDescriptionAlias(source, landedRef)` 登记。此后按原始来源串读写描述都落到落盘 ref 的那条内容哈希键上——**OneBot 引用消息只拿得到原始 URL**（适配器那条路径只查缓存、不主动触发识别）时经此命中，同一张图换来源进来也不重认，描述还进得了快照（快照只收内容哈希键）。别名按**完整来源串**相等命中：QQ 直链的 rkey 轮换后 get_msg 给的是另一条串，此时退化为不命中（与改前一致）。别名表纯派生、不落盘，重启后由新一轮落盘重新登记；键空间不变，别名只把来源映到已有的落盘键。登记之前已按原始来源串写入的条目不迁移（窄场景，代价只是多识别一次）。
+
+`describeImage` 只在「无 hint 且未 `noCache`」时读写缓存——**带 hint 不进缓存**，因为不同意图的结果不同。空串以及 `[图片:` / `[动图:` 这类占位都不会写入。`lookupDescription`/`rememberDescription`/`rememberDescriptionAlias` 则暴露给适配器做手动复用与别名登记。
 
 ### storage URI 用法（provider 与调度器都要懂）
 
@@ -242,7 +245,7 @@ async function handle(ctx: Context, url: string) {
 
 1. `http(s)://` → 原样保留（下载走 `safeFetch`，见下）。
 2. `isStorageUri(data)` 命中（即 storage 路径，含 `data:/...`，OneBot 已落盘）→ 转成相对路径 `root/rest`。
-3. 否则若 `data.startsWith('data:')`，当作 base64 data-URI 解码，经 `storage.writeFile` 落盘到 `data:/images/{session}/{hash}.{ext}`。
+3. 否则若 `data.startsWith('data:')`，当作 base64 data-URI 解码，经 `storage.writeFile` 落盘到 `data:/images/{session}/{hash}.{ext}`，并登记上节的「来源 → 落盘 ref」描述缓存别名。
 
 ::: warning 先问 isStorageUri，再问 startsWith('data:')
 `data:/images/x.jpg`（storage 根 `data`）与 `data:image/png;base64,...`（浏览器 data-URI）只靠冒号后是否紧跟 `/` 区分。判定顺序反了，会把 data-URI 误判成 storage 路径。完整文法见 [docs/concepts/storage-uri-grammar.md](../concepts/storage-uri-grammar.md)（§3 `data:/` 与 data-URI），它直接以本服务为示例。

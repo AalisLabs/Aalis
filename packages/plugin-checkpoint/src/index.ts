@@ -121,6 +121,11 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       if (ctx.getAllServices<StorageService>('storage').length === 0) throw new Error('storage 服务不可用');
       await storage.delete(uri);
     },
+    async (fromUri, toUri) => {
+      if (ctx.getAllServices<StorageService>('storage').length === 0) throw new Error('storage 服务不可用');
+      if (!storage.move) throw new Error('storage 不支持 move');
+      await storage.move(fromUri, toUri);
+    },
   );
 
   // 注入 chat 回滚所需依赖：memory + 事件发出器（懒解析 memory，但事件发出器立即可用）
@@ -175,9 +180,11 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     await service.endTurn(data.sessionId);
   });
 
-  // 监听 exec 工具调用，给该会话当前 turn 打 execUsed 标记（UI 显示 "部分未保护"）
+  // 监听命令类工具调用，给该会话当前 turn 打 execUsed 标记（UI 显示 "部分未保护"）：
+  // 这些工具的副作用（子进程改磁盘、装包、起服务）不经 storage，快照覆盖不到。
   ctx.middleware('agent:tool:before', async (data, next) => {
-    if (data.name === 'exec' || data.name === 'shell') {
+    const name = data.name;
+    if (name === 'exec' || name === 'exec_background' || name.startsWith('run_')) {
       service.markExecUsed(data.toolCallContext.sessionId);
     }
     await next();

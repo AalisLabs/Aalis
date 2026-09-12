@@ -657,10 +657,6 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         await next();
         return;
       }
-      if (!memory) {
-        await next();
-        return;
-      }
       try {
         // 经 store 而非直接拿 memory 删：clearAll 走 commitMetadata 一次批量原子提交，
         // 逐条删会在中途失败时留下半张图。

@@ -244,6 +244,12 @@ export interface IncomingMessage {
     platform: string;
     userId: string;
   };
+  /**
+   * 委派链深度：跨会话委派（delegate_to_session）注入目标会话时填的「这是第几跳」，
+   * 从 1 起。防雪崩的深度随消息走，不按会话计时——由委派消息驱动的那一个回合内禁止
+   * 再委派，回合结束即解除；真人消息不带此字段，其回合不受影响。缺省视为 0。
+   */
+  proactiveDepth?: number;
 }
 
 /**

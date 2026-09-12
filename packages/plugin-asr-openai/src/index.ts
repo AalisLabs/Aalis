@@ -6,6 +6,7 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
+import { extname } from 'node:path';
 import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/api-asr';
 import { createProcessGateway, type ProcessService } from '@aalis/api-process';
 import { createStorageGateway, isStorageUri, type StorageService } from '@aalis/api-storage';
@@ -42,6 +43,41 @@ const defaultConfig: Cfg = {
   priority: 50,
 };
 
+/**
+ * Whisper API 实际接受的后缀集（其余一律被判 400，包括 opus、amr 这类常见语音容器）。
+ * 后缀只决定上传文件名，不做转码——不在集内的来源改按 Content-Type 映射到集内后缀。
+ */
+const WHISPER_EXTS = new Set(['flac', 'm4a', 'mp3', 'mp4', 'mpeg', 'mpga', 'oga', 'ogg', 'wav', 'webm']);
+
+/**
+ * 猜音频文件扩展名。`url.split('.').pop()` 在无扩展名的来源上会把整条路径当扩展名
+ * （实测 `audio.com/download` → 带斜杠的文件名，被 Whisper API 判 400），故走
+ * extname + {@link WHISPER_EXTS} 实际支持集：命中即用；未命中（无后缀、或后缀不被
+ * API 接受）再按 Content-Type 映射；没有 Content-Type（file:// 与 storage 两支都不带）
+ * 时拿路径后缀过同一张映射表，`.opus` 才能落成 ogg 而非被兜底成 wav；都取不到落 'wav'。
+ */
+function guessAudioExt(source: string, contentType?: string | null): string {
+  const fromPath = extname(source.split('?')[0].split('#')[0]).replace(/^\./, '').toLowerCase();
+  if (WHISPER_EXTS.has(fromPath)) return fromPath;
+  const sub = (contentType ?? '').split(';')[0].trim().toLowerCase().split('/')[1] ?? '';
+  const byMime: Record<string, string> = {
+    mpeg: 'mp3',
+    mp3: 'mp3',
+    wav: 'wav',
+    'x-wav': 'wav',
+    wave: 'wav',
+    ogg: 'ogg',
+    opus: 'ogg',
+    oga: 'ogg',
+    mp4: 'm4a',
+    'x-m4a': 'm4a',
+    m4a: 'm4a',
+    webm: 'webm',
+    flac: 'flac',
+  };
+  return byMime[sub] ?? byMime[fromPath] ?? 'wav';
+}
+
 async function attachmentToBlob(
   data: string,
   proc: ProcessService,
@@ -52,24 +88,24 @@ async function attachmentToBlob(
   if (dataUri) {
     const mime = dataUri[1];
     const buf = Buffer.from(dataUri[2], 'base64');
-    const ext = mime.split('/')[1]?.split(';')[0] ?? 'bin';
+    // 同样过 WHISPER_EXTS 白名单：`audio/opus` 直接取 mime 子类型会上传 audio.opus，被判 400
+    const ext = guessAudioExt('', mime);
     return { blob: new Blob([buf as unknown as ArrayBuffer], { type: mime }), filename: `audio.${ext}` };
   }
   if (data.startsWith('file://') || data.startsWith('/')) {
     // 走 ProcessService.readExternalFile（治外文件能力），避免直 import node:fs
     const bytes = await proc.readExternalFile(data);
     const path = data.startsWith('file://') ? data.slice(7) : data;
-    const ext = path.split('.').pop() ?? 'bin';
-    return { blob: new Blob([bytes as unknown as ArrayBuffer]), filename: `audio.${ext}` };
+    return { blob: new Blob([bytes as unknown as ArrayBuffer]), filename: `audio.${guessAudioExt(path)}` };
   }
   if (data.startsWith('http://') || data.startsWith('https://')) {
     const resp = await safeFetch(data);
     if (!resp.ok) throw new Error(`下载失败 ${resp.status}`);
     const ab = await resp.arrayBuffer();
-    const ext = data.split('.').pop()?.split('?')[0] ?? 'bin';
+    const ctype = resp.headers.get('content-type');
     return {
-      blob: new Blob([ab], { type: resp.headers.get('content-type') ?? 'application/octet-stream' }),
-      filename: `audio.${ext}`,
+      blob: new Blob([ab], { type: ctype ?? 'application/octet-stream' }),
+      filename: `audio.${guessAudioExt(data, ctype)}`,
     };
   }
   // storage URI（scheme:/...）或历史裸相对路径（data/... → data:/...）→ 经 storage 读取
@@ -78,8 +114,7 @@ async function attachmentToBlob(
   else if (/^data\//.test(data)) storageUri = `data:/${data.slice('data/'.length)}`;
   if (storageUri) {
     const bytes = (await storage.readFile(storageUri)) as Uint8Array;
-    const ext = storageUri.split('.').pop() ?? 'bin';
-    return { blob: new Blob([bytes as unknown as ArrayBuffer]), filename: `audio.${ext}` };
+    return { blob: new Blob([bytes as unknown as ArrayBuffer]), filename: `audio.${guessAudioExt(storageUri)}` };
   }
   throw new Error(`不支持的附件来源: ${data.slice(0, 32)}`);
 }
