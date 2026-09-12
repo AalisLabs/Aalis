@@ -55,33 +55,27 @@ export class ToolRegistry implements ToolService {
   // ---- 查询 ----
 
   getDefinitions(filter?: { groups?: string[] }): ToolDefinition[] {
-    const tools = [...this.tools.values()];
-    if (filter?.groups && filter.groups.length > 0) {
-      const enabledGroups = new Set(filter.groups);
-      return tools
-        .filter(t => !t.groups || t.groups.length === 0 || t.groups.some(g => enabledGroups.has(g)))
-        .map(t => t.definition);
-    }
-    // 未指定分组时，只返回无分组（通用）工具；有分组的工具需要显式启用
-    return tools.filter(t => !t.groups || t.groups.length === 0).map(t => t.definition);
+    return this.filtered(filter).map(t => t.definition);
   }
 
   getSummaries(filter?: { groups?: string[] }): ToolSummary[] {
-    let tools = [...this.tools.values()];
-    if (filter?.groups && filter.groups.length > 0) {
-      const enabledGroups = new Set(filter.groups);
-      tools = tools.filter(t => !t.groups || t.groups.length === 0 || t.groups.some(g => enabledGroups.has(g)));
-    } else {
-      // 未指定分组时，只返回无分组（通用）工具
-      tools = tools.filter(t => !t.groups || t.groups.length === 0);
-    }
-    return tools.map(t => {
-      return {
-        name: t.definition.function.name,
-        description: t.definition.function.description,
-        groups: t.groups,
-      };
-    });
+    return this.filtered(filter).map(t => ({
+      name: t.definition.function.name,
+      description: t.definition.function.description,
+      groups: t.groups,
+    }));
+  }
+
+  /**
+   * 分组过滤：无分组的通用工具恒可见；带分组的只在命中 `groups` 时可见，`'*'` 表示全部分组。
+   * 未指定（或为空）即只给通用工具——多人平台上 public 工具的可达性靠这道闸
+   * （docs/concepts/security-model.md）；owner 专用平台由平台档显式给 `['*']`。
+   */
+  private filtered(filter?: { groups?: string[] }): RegisteredTool[] {
+    const tools = [...this.tools.values()];
+    const enabled = new Set(filter?.groups);
+    if (enabled.has('*')) return tools;
+    return tools.filter(t => !t.groups?.length || t.groups.some(g => enabled.has(g)));
   }
 
   getAll(): Array<{

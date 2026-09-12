@@ -106,13 +106,13 @@ export const configSchema: ConfigSchema = {
       { label: '使用下方固定 token', value: 'fixed' },
     ],
     description:
-      'ephemeral=每次启动随机；persist=token 写入 data/.webui-token，读取复用；fixed=使用 fixedToken 字段。所有模式都会写出便利文件 data/webui-access.txt 含访问 URL。',
+      'ephemeral=每次启动随机；persist=token 写入 data:/webui/token，读取复用；fixed=使用 fixedToken 字段。所有模式都会写出便利文件 data:/webui/access.txt 含访问 URL。',
   },
   fixedToken: {
     type: 'string',
     label: '固定 Token（仅 tokenMode=fixed 生效）',
     default: '',
-    description: '请使用足够长的随机字符串。生产环境强烈建议通过环境变量或受限文件保存。',
+    description: '请使用足够长的随机字符串；配置文件不支持环境变量插值，占位符会被原样当作字面量。',
   },
   relationGraphDefaultSpacing: {
     type: 'number',
@@ -881,15 +881,19 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     // 特殊处理 toolGroups：优先从工具分组注册表获取，回退到扫描工具
     if (serviceName === 'toolGroups') {
       const groups = ctx.getService<ToolService>('tools')?.getGroups() ?? [];
+      // '*' = 全部分组（plugin-tools 的分组过滤认它），与会话范围选项的「* （全部平台）」同一写法
       if (groups.length > 0) {
         res.json({
-          models: groups.map(g => g.name).sort(),
-          details: groups.map(g => ({
-            value: g.name,
-            label: g.label,
-            description: descSummary(g.description),
-            pluginName: g.pluginName,
-          })),
+          models: ['*', ...groups.map(g => g.name).sort()],
+          details: [
+            { value: '*', label: '* （全部分组）' },
+            ...groups.map(g => ({
+              value: g.name,
+              label: g.label,
+              description: descSummary(g.description),
+              pluginName: g.pluginName,
+            })),
+          ],
         });
       } else {
         // 回退：从已注册工具中提取分组名称
@@ -900,7 +904,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
             groupSet.add(g);
           });
         }
-        res.json({ models: [...groupSet].sort() });
+        res.json({ models: ['*', ...[...groupSet].sort()] });
       }
       return;
     }
@@ -973,7 +977,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 并保留 type:'confirm'（前端「确认模式」信号，抑制富客户端的「打字即打断」）。回复在 WS-onmessage 调 feed（下方）。
   let confirmChannel: ConfirmChannel | undefined;
   ctx.whenService<SessionConfirmService>('session-confirm', confirmSvc => {
-    confirmChannel = confirmSvc.createChannel((request, text) => {
+    const channel = confirmSvc.createChannel((request, text) => {
       const payload: WSOutgoing = { type: 'confirm', content: text, sessionId: request.sessionId };
       const json = JSON.stringify(payload);
       const sockets = sessions.get(request.sessionId);
@@ -982,7 +986,18 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         if (ws.readyState === WebSocket.OPEN) ws.send(json);
       }
     });
-    ctx.getService<AuthorityService>('authority')?.setConfirmHandler('webui', confirmChannel.handler);
+    // 挂到 authority 上要跟着它的胜者走（bounce 后重挂），所以嵌套一层 whenService；
+    // 外层 cleanup 即内层订阅的 dispose：session-confirm 换胜者或本插件 dispose 时一并注销
+    confirmChannel = channel;
+    const offAuthority = ctx.whenService<AuthorityService>('authority', authority =>
+      authority.setConfirmHandler('webui', channel.handler),
+    );
+    // cleanup：摘 handler、dispose 旧通道（在飞确认按取消结算，不留到 60s 超时）、清引用
+    return () => {
+      offAuthority();
+      channel.dispose();
+      if (confirmChannel === channel) confirmChannel = undefined;
+    };
   });
 
   // ---------- 文件管理 API ----------
@@ -1461,6 +1476,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 注册在 SPA 兜底之前，故 `/__clients` 被本路由先接走、不落到前端 index.html。
   expressApp.get('/__clients', (_req, res) => {
     res.type('html').send(renderClientSwitchPage());
+  });
+
+  // API 未命中：回 404 JSON，不落到 SPA 兜底（否则客户端拿到 HTML 去解析 JSON）。
+  expressApp.all('/api/{*path}', (req, res) => {
+    res.status(404).json({ error: `未知 API: ${req.method} ${req.path}` });
   });
 
   // SPA fallback: 所有非 API 路径返回 index.html

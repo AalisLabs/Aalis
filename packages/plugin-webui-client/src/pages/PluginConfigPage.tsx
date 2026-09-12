@@ -237,9 +237,12 @@ export function PluginConfigPage({
 
   const handleSaveGlobal = async () => {
     setSaving(true);
-    const res = await api<{ ok?: boolean; error?: string; restart?: boolean }>('/api/config', {
+    // 只回传 schema 里的键：globalDraft 为兼容旧表单保留了 config 的其余键（plugins 等），
+    // 那些是可能过期的快照，服务端不应用也不该被它们干扰。
+    const body = Object.fromEntries(Object.keys(coreSchema ?? {}).map(k => [k, globalDraft[k]]));
+    const res = await api<{ ok?: boolean; error?: string; restart?: boolean; message?: string }>('/api/config', {
       method: 'PUT',
-      body: JSON.stringify(globalDraft),
+      body: JSON.stringify(body),
     });
     setSaving(false);
     if (res.ok) {
@@ -248,7 +251,7 @@ export function PluginConfigPage({
       if (res.restart) {
         onRestart();
       } else {
-        showToast('全局配置已保存');
+        showToast(res.message ?? '全局配置已保存');
       }
     } else {
       showToast(res.error ?? '未知错误');

@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { UserIdentity } from '@aalis/api-authority';
 import type { CommandService } from '@aalis/api-commands';
 import type { ToolService } from '@aalis/api-tools';
@@ -171,24 +172,40 @@ export function registerPluginRoutes(
       return;
     }
 
-    // 只允许更新安全的顶级字段
-    const allowed = ['name', 'logLevel'] as const;
-    for (const key of allowed) {
-      if (key in updates) {
-        ctx.config.set(key, updates[key]);
+    // 可改的只有 CORE_CONFIG_SCHEMA 的键。内置前端（buildDraftFromSchema）会把 GET 到的整份配置连同
+    // _schema 原样回传，其中 plugins 等还可能是过期快照（插件配置页保存后不刷新全局 config），
+    // 所以不能按键报错：其余键一律不应用，但把真有改动的点名回给调用方——不静默吞掉却回复「已保存」。
+    const allowed = Object.keys(CORE_CONFIG_SCHEMA);
+    const current = ctx.config.getAll() as Record<string, unknown>;
+    const differs = (k: string) => !isDeepStrictEqual(updates[k], current[k]);
+    const ignored = Object.keys(updates).filter(k => k !== '_schema' && !allowed.includes(k) && differs(k));
+    const changed = allowed.filter(k => k in updates && differs(k));
+    // 与插件配置路径同一把尺子：类型不符的值（如 name 传数字）不落盘。select 的取值范围 validateConfig
+    // 刻意不管（它看不见宿主属性 allowCustom），核心字段没有 allowCustom，在这里按 options 补校验。
+    const picked = Object.fromEntries(changed.map(k => [k, updates[k]]));
+    const invalid = validateConfig(CORE_CONFIG_SCHEMA, picked).map(i => `${i.path}: ${i.message}`);
+    for (const k of changed) {
+      const field = CORE_CONFIG_SCHEMA[k] as { type?: string; options?: Array<{ value: unknown }> };
+      if (field.type === 'select' && field.options && !field.options.some(o => o.value === updates[k])) {
+        invalid.push(`${k}: 取值不在可选范围`);
       }
     }
-
-    // 检查是否有需要重启才能生效的字段
-    const restartNeeded = ['name', 'persona', 'logLevel'].some(k => k in updates);
+    if (invalid.length > 0) {
+      res.status(400).json({ error: invalid.join('; ') });
+      return;
+    }
+    for (const key of changed) ctx.config.set(key, updates[key]);
+    // name / logLevel 都要重启才生效；值没变就不重启
+    const restartNeeded = changed.length > 0;
+    const note = ignored.length > 0 ? `（已忽略不可修改的字段: ${ignored.join(', ')}）` : '';
 
     try {
       app.saveConfig();
       if (restartNeeded) {
-        res.json({ ok: true, message: '全局配置已更新，正在重启应用以生效…', restart: true });
+        res.json({ ok: true, message: `全局配置已更新，正在重启应用以生效…${note}`, restart: true, ignored });
         app.restart();
       } else {
-        res.json({ ok: true, message: '全局配置已更新并保存' });
+        res.json({ ok: true, message: `全局配置已更新并保存${note}`, ignored });
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

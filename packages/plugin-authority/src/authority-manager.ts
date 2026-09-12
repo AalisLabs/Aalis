@@ -130,8 +130,17 @@ export class AuthorityManager implements AuthorityService {
   }
 
   // ── 临时能力委托（restricted 能力的时限/限次放行）──────────────
-  setConfirmHandler(platform: string, handler: AccessConfirmHandler): void {
+  setConfirmHandler(platform: string, handler: AccessConfirmHandler): () => void {
     this.confirmHandlers.set(platform, handler);
+    // 只摘自己：同平台后来的再注册（插件重启）不能被旧实例的 dispose 清掉。
+    return () => {
+      if (this.confirmHandlers.get(platform) === handler) this.confirmHandlers.delete(platform);
+    };
+  }
+
+  /** 该平台（或 '*' 兜底）是否有确认通道——守卫据此区分「用户拒绝」与「根本无处询问」。 */
+  hasConfirmHandler(platform: string): boolean {
+    return this.confirmHandlers.has(platform) || this.confirmHandlers.has('*');
   }
 
   /**

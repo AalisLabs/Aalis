@@ -1,5 +1,6 @@
 import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
+import type { AccessConfirmHandler, AuthorityService } from '../../packages/api-authority/src/index.js';
 import type { ToolService } from '../../packages/api-tools/src/index.js';
 import { useToolService } from '../../packages/api-tools/src/index.js';
 import * as authorityModule from '../../packages/plugin-authority/src/index.js';
@@ -36,7 +37,7 @@ async function makeApp(appConfig: Record<string, unknown> = {}) {
 async function runTool(
   risk: 'safe' | 'sensitive' | 'dangerous' | undefined,
   caller: { platform: string; userId?: string; actor?: { platform: string; userId: string } },
-  opts: { appConfig?: Record<string, unknown>; confirm?: 'always' } = {},
+  opts: { appConfig?: Record<string, unknown>; confirm?: 'always'; confirmHandler?: AccessConfirmHandler } = {},
 ): Promise<{ ran: boolean; out: string }> {
   const app = await makeApp(opts.appConfig);
   let ran = false;
@@ -54,6 +55,8 @@ async function runTool(
     },
   });
 
+  if (opts.confirmHandler)
+    app.ctx.getService<AuthorityService>('authority')?.setConfirmHandler('*', opts.confirmHandler);
   const svc = app.ctx.getService<ToolService>('tools');
   if (!svc) throw new Error('tools 服务未注册');
   const out = await svc.execute('probe_tool', {}, { sessionId: 's1', ...caller });
@@ -83,8 +86,30 @@ describe('authority 执行守卫真的挂在 tools 上', () => {
     // 无 confirmHandler 时 requestAccess 直接 false —— cron 等无人值守上下文要靠
     // skipConfirm 显式豁免，而不是靠 owner 身份自动绕过。
     // 写成断言是为了钉住这条语义：哪天有人让 owner 自动跳过确认，这里会红。
-    const { ran } = await runTool('dangerous', { platform: 'webui', userId: 'console' });
+    const { ran, out } = await runTool('dangerous', { platform: 'webui', userId: 'console' });
     expect(ran).toBe(false);
+    // 拒绝原因要指出「无处询问」，否则用户会以为是自己点了取消
+    expect(out).toContain('没有确认通道');
+  });
+
+  it('有确认通道但被拒：只说「需确认后执行」，不误报「没有确认通道」', async () => {
+    const { ran, out } = await runTool(
+      'dangerous',
+      { platform: 'webui', userId: 'console' },
+      { confirmHandler: async () => false },
+    );
+    expect(ran).toBe(false);
+    expect(out).toContain('需确认后执行');
+    expect(out).not.toContain('没有确认通道');
+  });
+
+  it('有确认通道且确认：owner 执行 dangerous 工具', async () => {
+    const { ran } = await runTool(
+      'dangerous',
+      { platform: 'webui', userId: 'console' },
+      { confirmHandler: async () => true },
+    );
+    expect(ran).toBe(true);
   });
 
   it('未声明 risk 的工具对普通用户照常可用（守卫不得误伤 public）', async () => {

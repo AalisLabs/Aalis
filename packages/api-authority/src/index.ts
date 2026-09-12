@@ -290,7 +290,11 @@ export interface AuthorityService {
   requestAccess(request: AccessRequest): Promise<boolean>;
   listTemporaryGrants(): TemporaryGrant[];
   revokeTemporaryGrant(id: string): boolean;
-  setConfirmHandler(platform: string, handler: AccessConfirmHandler): void;
+  /**
+   * 注册平台确认通道（'*' 为兜底）。返回注销函数——注册方 dispose 时必须调用，
+   * 否则插件卸载后 authority 仍会把确认请求投给已死的 handler，等到超时才拒。
+   */
+  setConfirmHandler(platform: string, handler: AccessConfirmHandler): () => void;
 
   save(): void;
   listUsers(): AuthorityUserEntry[];

@@ -249,3 +249,33 @@ describe('restrictedPolicy 白名单：只救 owner 自己', () => {
     expect(m.isPreApproved(req('onebot', 'boss'))).toBe(false);
   });
 });
+
+describe('setConfirmHandler → 注销函数 / hasConfirmHandler', () => {
+  const req = (platform: string): AccessRequest => ({
+    name: 'exec',
+    type: 'tool',
+    capability: 'tool:exec',
+    sessionId: 's1',
+    platform,
+    confirm: 'session',
+  });
+
+  it('注销只摘自己：同平台后来的注册（插件重启）不被旧实例的 disposer 清掉', () => {
+    const m = new AuthorityManager(mkConfig(), mkLogger(), storage);
+    const off1 = m.setConfirmHandler('onebot', async () => true);
+    expect(m.hasConfirmHandler('onebot')).toBe(true);
+    m.setConfirmHandler('onebot', async () => false);
+    off1();
+    expect(m.hasConfirmHandler('onebot')).toBe(true);
+  });
+
+  it('注销后无通道：requestAccess 立即 false，不再投给已死 handler', async () => {
+    const m = new AuthorityManager(mkConfig(), mkLogger(), storage);
+    const off = m.setConfirmHandler('*', async () => true);
+    expect(m.hasConfirmHandler('onebot')).toBe(true); // '*' 兜底计入
+    await expect(m.requestAccess(req('onebot'))).resolves.toBe(true);
+    off();
+    expect(m.hasConfirmHandler('onebot')).toBe(false);
+    await expect(m.requestAccess(req('onebot'))).resolves.toBe(false);
+  });
+});

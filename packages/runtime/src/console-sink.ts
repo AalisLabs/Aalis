@@ -91,18 +91,22 @@ export interface ConsoleSinkHandle {
  * 与 CLI/TUI 等"独占终端 UI"的协调通过事件 `terminal:claimed/released` 完成，
  * sink 自己根据事件决定是否写 stdout——UI 不直接干预 sink。
  */
-export function installConsoleSink(): ConsoleSinkHandle {
+export function installConsoleSink(opts: { target?: 'stdout' | 'stderr' } = {}): ConsoleSinkHandle {
   const hub = LogHub.default;
+  // 缺省走 console.log（stdout）；子命令模式走 console.error（stderr），把 stdout 留给命令结果，
+  // 脚本才能消费 `aalis <cmd>` 的输出
+  const log = opts.target === 'stderr' ? console.error : console.log;
+  const write = (entry: LogEntry): void => {
+    log(formatEntry(entry));
+  };
 
   // 冲洗启动期 bootstrap buffer
-  for (const entry of getBootstrapBuffer().snapshot()) {
-    console.log(formatEntry(entry));
-  }
+  for (const entry of getBootstrapBuffer().snapshot()) write(entry);
 
   let paused = false;
   const off = hub.onEntry(entry => {
     if (paused) return;
-    console.log(formatEntry(entry));
+    write(entry);
   });
 
   let unbind: (() => void) | undefined;
