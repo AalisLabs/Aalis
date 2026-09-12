@@ -10,15 +10,9 @@
 interface AalisConfig {
   name: string;                    // 机器人名称
   logLevel: 'debug'|'info'|'warn'|'error';
-  agent?: {
-    maxToolIterations?: number;
-    temperature?: number;
-    maxTokens?: number;
-  };
-  plugins: Record<string, Record<string, unknown>>;
+  plugins: Record<string, Record<string, unknown>>;   // 各插件配置，键为插件名；指令前缀、agent 参数等都在这里
   disabledPlugins?: string[];
   servicePreferences?: Record<string, string>;
-  commandPrefix?: string;          // 指令前缀（默认 '/'）
 
   // ↓ authority 域业务字段，由 api-authority 经 declaration merging 注入
   owners?: UserIdentity[];                          // Owner 列表（owner = `*`，拥有一切）
@@ -80,4 +74,5 @@ plugins:
 |---|---|---|---|
 | `name` | string | 'Aalis' | 机器人名称 |
 | `logLevel` | select | 'info' | 日志等级 |
-| `commandPrefix` | string | '/' | 指令前缀（空 = 无前缀模式） |
+
+指令前缀不是顶层字段，写在 `plugins["@aalis/plugin-commands"].commandPrefix`（默认 `/`）；写到顶层不会生效，WebUI 的 `PUT /api/config` 也只应用上表两个键；请求体里其余顶层键一律不应用，其中与当前值不同的会在响应 `ignored` 里点名。

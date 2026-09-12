@@ -19,7 +19,7 @@ meta.inject = {} // 无依赖
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `path` | string | `data/vectorstore` | 向量数据存储目录 |
+| `path` | string | `'data:/vectorstore'` | 存储目录：JSON 向量文件存储目录（storage URI）。也兼容旧格式 “data/vectorstore”。 |
 
 ## 特性
 

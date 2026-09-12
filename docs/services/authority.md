@@ -68,7 +68,9 @@ export interface AuthorityService {
   requestAccess(request: AccessRequest): Promise<boolean>;                                 // :255
   listTemporaryGrants(): TemporaryGrant[];                                                 // :256
   revokeTemporaryGrant(id: string): boolean;                                               // :257
-  setConfirmHandler(platform: string, handler: AccessConfirmHandler): void;                // :258
+  setConfirmHandler(platform: string, handler: AccessConfirmHandler): () => void;          // 返回注销函数
+  // 注：plugin-authority 的 AuthorityManager 另有 hasConfirmHandler(platform)，供其自身守卫区分
+  // 「被拒」与「没有确认通道」；它是实现内部方法，不在本契约面上，第三方实现无需提供。
 
   save(): void;                                                                            // :260
   listUsers(): AuthorityUserEntry[];                                                       // :261
@@ -208,7 +210,10 @@ class MyAuthority implements AuthorityService {
     const d = await h(req);
     return typeof d === 'boolean' ? d : d.allowed;
   }
-  setConfirmHandler(platform: string, h: AccessConfirmHandler) { this.handlers.set(platform, h); }
+  setConfirmHandler(platform: string, h: AccessConfirmHandler) {
+    this.handlers.set(platform, h);
+    return () => { if (this.handlers.get(platform) === h) this.handlers.delete(platform); }; // 只摘自己
+  }
   setUserLevel(_t: UserIdentity, _l: number) {}
   removeUser(_p: string, _u: string) {}
   listTemporaryGrants(): TemporaryGrant[] { return []; }
@@ -267,7 +272,7 @@ auth.setUserLevel({ platform, userId }, level);
 auth.save();
 ```
 
-参考真实兜底写法：`packages/plugin-authority/src/index.ts`（`setUserLevel` action）。新建确认通道的 surface 应 `whenService('authority', a => a.setConfirmHandler('<platform>', handler))`（参考 `packages/plugin-cli/src/index.ts`）。
+参考真实兜底写法：`packages/plugin-authority/src/index.ts`（`setUserLevel` action）。新建确认通道的 surface 应 `whenService('authority', a => a.setConfirmHandler('<platform>', handler))`——回调直接返回注销函数，作为 whenService 的 cleanup，authority 换胜者或本插件 dispose 时自动注销（参考 `packages/plugin-session-confirm/src/index.ts`）。
 
 ### 5.3 错误边界
 

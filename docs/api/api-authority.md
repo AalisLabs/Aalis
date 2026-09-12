@@ -88,7 +88,7 @@ interface AuthorityService {
   requestAccess(request: AccessRequest): Promise<boolean>;
   listTemporaryGrants(): TemporaryGrant[];
   revokeTemporaryGrant(id: string): boolean;
-  setConfirmHandler(platform: string, handler: AccessConfirmHandler): void;
+  setConfirmHandler(platform: string, handler: AccessConfirmHandler): () => void; // 返回注销函数，注册方 dispose 时调用
 
   save(): void;
   listUsers(): AuthorityUserEntry[]; // { platform, userId, isOwner, level, note? }

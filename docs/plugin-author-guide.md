@@ -9,7 +9,7 @@
 > - [概念层 concepts/](concepts/README.md) —— 服务模型、惰性访问、双源 manifest、存储文法、安全模型、消息管线（**写插件前先通读这 6 篇**）。
 > - [服务契约层 services/](services/README.md) —— 26 个 `*-api` 契约逐篇讲解：如何编写 provider、如何消费、边界与常见错误。
 > - [工具库 utils/](utils/README.md) —— 4 个 `util-*` 纯函数库（bounded-map / json-repair / network-guard / text-normalize）。
-> - [脚手架上手 guide/scaffolding.md](guide/scaffolding.md) —— `npm create aalis`（建项目）与 `create-aalis-plugin`（建插件）从零到能跑。
+> - [脚手架上手 guide/scaffolding.md](guide/scaffolding.md) —— `npm create aalis@latest`（建项目）与 `create-aalis-plugin`（建插件）从零到能跑。
 >
 > 本指南（下文）专讲那些 **API 文档不会显式提醒、但容易出错**的隐式约定。
 
