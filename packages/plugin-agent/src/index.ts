@@ -460,7 +460,7 @@ class DefaultAgent implements AgentService {
       const maxToolIterations = this.maxToolIterations;
       const contextLength = llm.contextLength;
       // 预留 token 预算 = 上下文长度 × trimThresholdRatio - 最大输出 token - 安全余量
-      // trimThresholdRatio < 1 可提前触发裁剪，默认 1.0 = 占满物理上限才裁剪
+      // trimThresholdRatio < 1 可提前触发裁剪，默认 1.0 = 用满扣除输出预留后的可用窗口
       const tokenBudget = Math.max(1024, Math.floor(contextLength * this.trimThresholdRatio) - maxTokens - 512);
 
       // Bug B 防回溯：本回合中通过工具循环写入到 memory 的 (assistant+toolCalls + tool 结果) 消息时间戳。
@@ -641,11 +641,28 @@ class DefaultAgent implements AgentService {
 
           const parallelResults = await Promise.all(
             response.toolCalls.map(async toolCall => {
+              // 无参工具的 arguments 常是空串（流式路径没有 argument delta 时拼出来就是 ''），不算坏 JSON
+              const rawArgs = toolCall.function.arguments?.trim();
               let args: Record<string, unknown>;
               try {
-                args = JSON.parse(toolCall.function.arguments);
-              } catch {
-                args = {};
+                args = rawArgs ? JSON.parse(rawArgs) : {};
+              } catch (parseErr) {
+                // 参数不是合法 JSON：跳过本次执行，把错误当工具结果回给模型重新生成 arguments。
+                // 旧行为 args = {} 会让"无必填参数"的工具真的空参跑一遍（副作用已发生，模型却不知情）。
+                const reason = parseErr instanceof Error ? parseErr.message : String(parseErr);
+                this.logger.warn(
+                  `工具参数解析失败: ${toolCall.function.name} (${reason}) 原始参数=${rawArgs?.slice(0, 200)}`,
+                );
+                const failedAt = Date.now();
+                return {
+                  toolCall,
+                  result: JSON.stringify({ error: `工具参数不是合法 JSON：${reason}；请重新生成 arguments` }),
+                  resultImages: undefined,
+                  toolName: toolCall.function.name,
+                  toolArgs: {},
+                  startTime: failedAt,
+                  endTime: failedAt,
+                };
               }
 
               // Hook: agent:tool:before — 插件可以拦截或修改工具调用
@@ -1013,6 +1030,14 @@ class DefaultAgent implements AgentService {
 
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(`处理消息失败: ${message}`);
+
+        // 异常同样要结束流：不发 done，CLI 的流式块不收尾、WebUI 的工具进度与上限标记不复位，
+        // 下一轮 delta 还会抹掉这条 [错误] 与用户的新输入。顺序与正常收尾一致——先 done 再发消息。
+        await this.ctx.emit('outbound:stream', {
+          sessionId: incoming.sessionId,
+          platform: incoming.platform,
+          done: true,
+        });
         await this.dispatchOutbound({
           content: `[错误] ${message}`,
           sessionId: incoming.sessionId,
@@ -1835,7 +1860,7 @@ export const configSchema: ConfigSchema = {
     label: '裁剪触发比例',
     default: 1.0,
     description:
-      '估算输入 token 占上下文长度的比例上限 (0~1)。本次调用超过该比例才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示占满物理上限才裁剪；如需提前护航可调低。压缩触发请在“@aalis/plugin-memory-summary”中配置。',
+      '裁剪预算 = 上下文长度 × 该比例 − 最大输出 token − 512 安全余量（下限 1024）。本次调用估算输入 token 超过该预算才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示用满扣除输出预留后的可用窗口；调低可提前裁剪。压缩触发请在“@aalis/plugin-memory-summary”中配置。',
   },
 };
 
