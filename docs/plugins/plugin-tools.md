@@ -6,7 +6,7 @@
 ## 概述
 
 AI 可调用工具的中心注册表。提供 `tools` 服务，所有插件通过
-`ctx.registerTool()` 注册工具，Agent / Commands 通过
+`useToolService(ctx).register()`（`@aalis/api-tools`）注册工具，Agent / Commands 通过
 `ctx.getService<ToolService>('tools')` 查询与执行。
 
 与 `plugin-commands` 的 `CommandRegistry` 同属 "中心 Registry 模式"：
@@ -37,9 +37,9 @@ export const provides = ['tools'];
   不命中即返回与「工具未找到」同形的错误；近似名建议也不会把闸外的工具名回流给模型。
   只在列举面拦是不够的——被提示注入的模型可以叫出一个本回合没下发给它的名字，而安全模型把
   LLM 输出列为不可信。不传该字段的调用方（mcp-server / workflow）行为不变，它们各自另有暴露面控制。
-- **可见性覆盖**：工具默认可见性（`visibility: 'public' | 'restricted'`）由作者声明，
-  owner 可经 authority 配置 `visibilityOverrides`（操作名 → public/restricted）临时覆盖，
-  无需改插件。
+- **等级覆盖**：工具默认可见性（`visibility: 'public' | 'restricted'`）由作者声明并派生出最低等级；
+  owner 可经 authority 配置 `authorityOverrides`（能力键 `tool:<name>` → 整数等级）改写该等级，
+  `confirmOverrides` 同键改写确认要求，无需改插件。
 - **执行守卫**：`setExecutionGuard(guard)` 注入统一钩子（典型为 plugin-authority
   的能力统一闸 / 受限能力临时委托确认）；所有 `execute()` 调用前过钩子。
 
