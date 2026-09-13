@@ -91,7 +91,7 @@ tools.register({
 
 ## 实现者
 
-- [@aalis/plugin-tool-system](../plugins/plugin-tool-system.md) —— 提供 shell / file / system / http 工具组
+- [@aalis/plugin-tool-system](../plugins/plugin-tool-system.md) —— 提供 `system` 一个工具组（含 shell / 文件 / 系统信息 / HTTP 四类工具）
 
 ## 相关
 

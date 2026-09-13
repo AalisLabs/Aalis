@@ -96,7 +96,7 @@ export interface StorageRootInfo {
 | checkpoint | `packages/plugin-checkpoint/src/index.ts` | 同上（同时被 storage 反向调用做写前快照，见 §7） |
 | memory / persona / scheduler / media / onebot / asr / authority / office… | （`grep createStorageGateway`） | 均经 `createStorageGateway(ctx)` 消费 |
 
-`createStorageGateway` 是所有消费者的统一入口——含 plugin-tool-system 里的全部工具组：shell（`index.ts`）、file（`:149`）、system（`:160`）、http（`:166`）都经它取网关。`file.ts` / `shell.ts` 上的 `storage?: StorageService` 只是配置字段的类型标注；注册段实际传入的是该网关，没有任何消费者经 DI 拿到单 root 的 `StorageService` 句柄。
+`createStorageGateway` 是所有消费者的统一入口——含 plugin-tool-system 里的四类工具（shell / file / system / http，同属 `system` 一个分组）都经它取网关。`file.ts` / `shell.ts` 上的 `storage?: StorageService` 只是配置字段的类型标注；注册段实际传入的是该网关，没有任何消费者经 DI 拿到单 root 的 `StorageService` 句柄。
 
 ---
 

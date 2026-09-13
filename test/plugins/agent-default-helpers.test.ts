@@ -154,6 +154,20 @@ describe('describeLLMFailure — 让 LLM 解析失败可诊断', () => {
     expect(s).not.toContain('配置指向');
   });
 
+  // 实测过的空转路径：照文档 `--yes` 起步 → deepseek 缺 key 激活失败（ERROR 只在终端日志里）
+  // → 聊天里却说「请确认已安装并启用」，而装和启用这两条都对得上，用户会顺着错误方向排查一轮。
+  it('没有可用 entry 但有 LLM 插件处于 error 态 → 点名病因，不再让人去查装没装', () => {
+    const s = describeLLMFailure([], undefined, ['@aalis/plugin-llm-deepseek（未配置 apiKey，DeepSeek 插件无法启动）']);
+    expect(s).toContain('激活失败');
+    expect(s).toContain('@aalis/plugin-llm-deepseek');
+    expect(s, '要带出插件自己抛的原因').toContain('未配置 apiKey');
+    expect(s, '不能再指向「装没装/启没启用」这条错误路径').not.toContain('请确认已安装并启用');
+  });
+
+  it('没有可用 entry 且没有 error 态插件 → 回落到原来的通用提示', () => {
+    expect(describeLLMFailure([], undefined, [])).toContain('请确认已安装并启用');
+  });
+
   it('有 entry 但配置 ref 对不上 → 同时报出要找的与现有的', () => {
     const s = describeLLMFailure(['@aalis/plugin-llm-deepseek/deepseek-v4-flash'], {
       provider: '@aalis/plugin-deepseek',
