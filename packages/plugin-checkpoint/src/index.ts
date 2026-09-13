@@ -15,6 +15,16 @@ export const name = '@aalis/plugin-checkpoint';
 export const displayName = '回滚检查点';
 export const subsystem = 'scheduler';
 export const provides = ['checkpoint'];
+/**
+ * storage 是硬依赖：本插件的快照/manifest 全部经 storage 落盘。
+ *
+ * 不声明的话 topoSortByDeps 只按 requiredDeps 建边、两者 inDegree 均为 0，拆卸序退化成
+ * 注册序的逆序——storage 可能先于 checkpoint 被 retire，于是 onDispose 里的 flushAll 调
+ * storage.writeFile 时 entry 已被摘除，在飞回合的 manifest 落不了盘。
+ */
+export const inject = {
+  required: ['storage'],
+};
 
 export const configSchema: ConfigSchema = {
   rootDir: {

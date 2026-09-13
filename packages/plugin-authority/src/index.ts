@@ -370,7 +370,12 @@ export const actions: PluginModule['actions'] = {
     else delete overrides[name];
     ctx.config.set('authorityOverrides', overrides);
     app.saveConfig();
-    return { message: `操作 ${name} 最低等级已更新` };
+    // 门槛变了就撤掉该能力上的旧会话授予：否则 authorize 已按新门槛拒绝，守卫的救援闸
+    // 仍会靠旧授予放行，而救援命中直接 return null、连 confirm 轴（含 always）一并跳过。
+    const revoked = auth?.revokeGrantsOfCapability(name) ?? 0;
+    return {
+      message: `操作 ${name} 最低等级已更新${revoked > 0 ? `（已撤销 ${revoked} 条相关会话授予）` : ''}`,
+    };
   },
 
   /** owner 覆盖单条操作的确认要求（session/always/off）。key=能力键 `type:name`；非法值清除该条。 */

@@ -46,10 +46,12 @@ function fsStorage(base: string, unreadable: Set<string>, ioFailing: Set<string>
       await rename(toPath(from), toPath(to));
       return to;
     },
-    createReadStream: async (uri: string) => ({
-      stream: createReadStream(toPath(uri)),
-      stat: { isDirectory: false },
-    }),
+    createReadStream: async (uri: string) => {
+      // file_read / file_search 走的是这个口子，同样要认「存在但读不出来」
+      if (unreadable.has(uri)) throw new Error(`EACCES: permission denied, open '${uri}'`);
+      if (ioFailing.has(uri)) throw new Error(`EIO: i/o error, read '${uri}'`);
+      return { stream: createReadStream(toPath(uri)), stat: { isDirectory: false } };
+    },
     list: async (uri: string) => {
       const dir = uri.endsWith('/') ? uri.slice(0, -1) : uri;
       const dirents = await readdir(toPath(uri), { withFileTypes: true });
@@ -132,6 +134,31 @@ describe('改动类工具按 storage URI 串行：并发改同一文件不丢改
     // 先到先排队：edit 整段走完后 write 才整篇覆盖，落盘就是 write 的内容。
     // 无闸时 edit 的写会跑在 write 之后，把 write 的内容静默吞掉（两边仍都回成功）。
     expect(diskText('b.ts')).toBe('whole\n');
+  });
+});
+
+describe('file_search 目录模式：读不出来的文件不得被静默跳过', () => {
+  // 跳过此前完全无痕：该文件一行未扫，返回体却照常给 matchCount、truncated 仍为 false，
+  // 模型拿着这个「非截断」的可信信号断言「不存在」。
+  it('跳过的文件被计数并写进 advice，命中集只来自读得到的文件', async () => {
+    mkdirSync(join(base, 'dir'), { recursive: true });
+    writeFileSync(join(base, 'dir/ok.txt'), 'needle here\n');
+    writeFileSync(join(base, 'dir/blocked.txt'), 'needle there\n');
+    unreadable.add('workspace:/dir/blocked.txt');
+
+    const r = await call('file_search', { path: 'workspace:/dir', pattern: 'needle' });
+
+    expect(r.skippedFiles, '读不出来的文件必须被计数').toBe(1);
+    expect(r.matchCount, '只应有读得到的那个文件的命中').toBe(1);
+    expect(String(r.advice ?? ''), '要明确提示别据此断言找不到').toMatch(/未能读取|不要根据本次结果断言/);
+  });
+
+  it('全部可读时不出现 skippedFiles 字段', async () => {
+    mkdirSync(join(base, 'clean'), { recursive: true });
+    writeFileSync(join(base, 'clean/a.txt'), 'needle\n');
+    const r = await call('file_search', { path: 'workspace:/clean', pattern: 'needle' });
+    expect(r.skippedFiles).toBeUndefined();
+    expect(r.matchCount).toBe(1);
   });
 });
 

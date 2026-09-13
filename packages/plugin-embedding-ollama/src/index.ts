@@ -46,20 +46,15 @@ function formatError(err: unknown): string {
  * （前者是 `model "xxx" not found, try pulling it first`）。只报状态码的话，
  * 日志里就只剩一句没有信息量的「404 Not Found」，把人引向端点/网络方向排查。
  */
-async function statusError(res: Response, endpoint: string): Promise<HttpStatusError> {
+function statusError(res: { status: number; statusText: string; text: string }, endpoint: string): HttpStatusError {
   let detail = '';
-  try {
-    const text = await res.text();
-    if (text) {
-      try {
-        const parsed = JSON.parse(text) as { error?: unknown };
-        detail = typeof parsed.error === 'string' ? parsed.error : text;
-      } catch {
-        detail = text;
-      }
+  if (res.text) {
+    try {
+      const parsed = JSON.parse(res.text) as { error?: unknown };
+      detail = typeof parsed.error === 'string' ? parsed.error : res.text;
+    } catch {
+      detail = res.text;
     }
-  } catch {
-    /* 响应体读不出就只报状态码 */
   }
   const tail = detail ? ` —— ${detail.slice(0, 200)}` : '';
   return new HttpStatusError(
@@ -100,7 +95,18 @@ class OllamaEmbeddingService implements EmbeddingService {
     this.retries = Math.max(0, Math.floor(retries));
   }
 
-  private async postJson(path: string, body: Record<string, unknown>): Promise<Response> {
+  /**
+   * 发请求**并把响应体读完**，整体落在同一个超时窗口内。
+   *
+   * 不能把 Response 原样交还调用方：`return res` 时 finally 已 clearTimeout，之后的
+   * res.json()/res.text() 不再受 AbortController 保护，遇上「发完响应头却迟迟不发体」的
+   * 对端（模型正加载进显存、反代半死）会一直等到 undici 默认 bodyTimeout（300s），
+   * 配置的「请求超时」形同虚设，索引路径上的一个并发槽也跟着被占住。
+   */
+  private async postJson(
+    path: string,
+    body: Record<string, unknown>,
+  ): Promise<{ ok: boolean; status: number; statusText: string; text: string }> {
     let lastErr: unknown;
     for (let attempt = 0; attempt <= this.retries; attempt++) {
       const controller = new AbortController();
@@ -112,7 +118,11 @@ class OllamaEmbeddingService implements EmbeddingService {
           body: JSON.stringify(body),
           signal: controller.signal,
         });
-        if (res.ok || res.status < 500 || attempt >= this.retries) return res;
+        if (res.ok || res.status < 500 || attempt >= this.retries) {
+          return { ok: res.ok, status: res.status, statusText: res.statusText, text: await res.text() };
+        }
+        // 要重试：主动取消被丢弃的响应体，否则 undici 侧套接字被钉住到 GC
+        await res.body?.cancel().catch(() => undefined);
         lastErr = new Error(`HTTP ${res.status} ${res.statusText}`);
       } catch (err) {
         lastErr = err;
@@ -150,9 +160,9 @@ class OllamaEmbeddingService implements EmbeddingService {
   private async embedNew(text: string): Promise<number[]> {
     const res = await this.postJson('/api/embed', { model: this.model, input: text });
     if (!res.ok) {
-      throw await statusError(res, '/api/embed');
+      throw statusError(res, '/api/embed');
     }
-    const data = (await res.json()) as { embeddings: number[][] };
+    const data = JSON.parse(res.text) as { embeddings: number[][] };
     return data.embeddings[0];
   }
 
@@ -160,9 +170,9 @@ class OllamaEmbeddingService implements EmbeddingService {
   private async embedLegacy(text: string): Promise<number[]> {
     const res = await this.postJson('/api/embeddings', { model: this.model, prompt: text });
     if (!res.ok) {
-      throw await statusError(res, '/api/embeddings');
+      throw statusError(res, '/api/embeddings');
     }
-    const data = (await res.json()) as { embedding: number[] };
+    const data = JSON.parse(res.text) as { embedding: number[] };
     return data.embedding;
   }
 
