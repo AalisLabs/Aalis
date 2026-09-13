@@ -63,7 +63,7 @@ export interface ToolCallContext {
   userId?: string;
   platform?: string;
   actor?: { platform: string; userId: string };  // 授权身份（委派/定时/自发回合），缺省=会话身份
-  enabledGroups?: string[];  // 当前平台启用的分组，供 search_tools 等过滤
+  enabledGroups?: string[];  // 当前平台启用的分组：既供列举面过滤，也是 execute 的执行面闸；不传=不设闸
   acceptsImages?: boolean;   // 调用方能把 ToolExecutionResult.images 交给主模型（agent 循环置 true；mcp-server/workflow 不置，能出图的工具应退回文字）
   signal?: AbortSignal;      // 调用方回合的中止信号（agent 循环传入）：守卫等确认期间回合被中止则不再执行，用户迟到的 y 不替死回合放行
 }
@@ -88,6 +88,8 @@ unregisterByPlugin(pluginName: string): void;
 ```
 
 `getDefinitions`/`getSummaries` 的过滤语义（`tools.ts`）：**不传 `groups` 时只返回「无分组」的通用工具**；带分组的工具必须显式列在 `filter.groups` 里才出现，`'*'` 表示全部分组。这是 plugin-agent 按平台启用分组的依据。
+
+**执行面过同一道闸**：`execute` 在调用方给了 `ToolCallContext.enabledGroups` 时按同样判据校验，不命中即返回与「工具未找到」同形的错误；近似名建议也不会把闸外的工具名回流给模型。只在列举面拦是不够的——被提示注入的模型可以叫出一个本回合没下发给它的名字，而安全模型把 LLM 输出列为不可信（见 [security-model](../concepts/security-model.md)）。不传该字段的调用方（mcp-server / workflow）行为不变，它们各自另有暴露面控制。
 
 ### 2.4 导出的便捷封装与类型
 
@@ -128,7 +130,7 @@ export const name = '@aalis/plugin-tool-hello';
 export function apply(ctx: Context): void {
   const tools = useToolService(ctx);
 
-  // 可选：注册分组（带分组的工具需平台显式启用才进 LLM）
+  // 可选：注册分组（带分组的工具需平台显式启用才进 LLM，执行面按同一判据拦）
   tools.registerGroup({ name: 'hello', label: '示例工具' });
 
   tools.register({
