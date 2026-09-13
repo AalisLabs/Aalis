@@ -38,7 +38,7 @@ checkpoint …）都复用它们。自行重写一份正则，迟早与它们漂
 const STORAGE_URI_RE = /^[a-zA-Z][a-zA-Z0-9_-]*:\//;
 ```
 
-- 根名（scheme）**以字母开头**，后接字母/数字/下划线/连字符。
+- 根名（scheme）**以字母开头**，后接字母/数字/下划线/连字符。工具路径输入（`resolveAgainstCwd`）会把 `X:/…` 这种单字母形态判为 Windows 盘符绝对路径并拒绝，所以单字母根名在工具侧不可达——给根起名至少用两个字符。
 - 紧跟 `:/`（冒号 + 斜杠）——这一点是整套歧义消解的关键（见下文 data 根）。
 - `:/` 之后是根内相对路径。前导斜杠会被各后端归一掉（`plugin-storage-local` 的 `normalizeRelPath`，`index.ts`）。
 

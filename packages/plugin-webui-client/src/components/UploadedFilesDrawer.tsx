@@ -42,7 +42,7 @@ interface UploadedFilesDrawerProps {
 /**
  * 当前会话已上传文件列表抽屉。
  * 数据走 /api/uploaded-files（由 plugin-webui-server 暴露，背后是 plugin-file-reader
- * 持久化在 pluginData:/file-reader/{sessionId}/ 下的元数据）。
+ * 持久化在 pluginData:/file-reader/<会话目录>/ 下的元数据；会话目录名把 sessionId 里的 `:` 替换成 `_`）。
  */
 export function UploadedFilesDrawer({ open, onClose, sessionId }: UploadedFilesDrawerProps) {
   const [files, setFiles] = useState<UploadedFileInfo[]>([]);

@@ -201,7 +201,7 @@ interface FileMeta {
 }
 ```
 
-存储布局：所有文件落在 `pluginData:/file-reader/<sessionId>/<id><ext>`（`index.ts`），元信息走同名 `.meta.json` sidecar。这是 [storage URI 文法](../concepts/storage-uri-grammar.md) 的 `pluginData:` 根；**storage 不是沙箱**——隔离靠的是路径里的 `sessionId` 段 + 服务层校验，不是文件系统强隔离。
+存储布局：所有文件落在 `pluginData:/file-reader/<会话目录>/<id><ext>`（`index.ts`），会话目录名是把 sessionId 里的 `:` `/` `\` 替换为 `_` 的形式（Windows 文件名不收冒号；老版本按原样 sessionId 建的目录仍按实际位置读取），元信息走同名 `.meta.json` sidecar。这是 [storage URI 文法](../concepts/storage-uri-grammar.md) 的 `pluginData:` 根；**storage 不是沙箱**——隔离靠的是路径里的会话目录段 + 服务层校验，不是文件系统强隔离。
 
 LLM 侧工具（不在服务接口里，是插件内注册的）：`read_uploaded_file` / `list_uploaded_files` / `delete_uploaded_file`（`index.ts`）。
 
