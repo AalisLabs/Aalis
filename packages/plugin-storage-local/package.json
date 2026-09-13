@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-storage-local",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "license": "MIT",
   "repository": {
     "type": "git",
