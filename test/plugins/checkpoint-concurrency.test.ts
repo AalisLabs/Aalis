@@ -14,6 +14,7 @@ function makeService() {
       writes.push(uri);
     },
     list: async () => [], // gc 用，返回空即 no-op
+    listRoots: () => [{ name: 'ws', kind: 'workspace' }],
   };
   const logger = { debug() {}, info() {}, warn() {}, error() {} };
   const cfg = { rootUri: 'ckpt:/', maxFileSize: 1024 * 1024, keepSessions: 10, scopes: ['*'] };
@@ -30,7 +31,7 @@ describe('checkpoint 回合按会话隔离', () => {
     expect(svc.isActive()).toBe(true);
 
     // 一次文件改动 → 记进所有活跃回合（A、B 各存一份 blob 到各自 turn 目录）
-    await svc.beforeMutate('data:/x.txt', 'write', async () => ({ data: Buffer.from('orig'), size: 4 }));
+    await svc.beforeMutate('ws:/x.txt', 'write', async () => ({ data: Buffer.from('orig'), size: 4 }));
     expect(writes.filter(u => u.includes('/blobs/')).length).toBe(2);
 
     await svc.endTurn('sessA');

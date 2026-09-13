@@ -2,10 +2,14 @@ import type { MemoryService } from '@aalis/api-memory';
 import { type StorageService, toStorageUri } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
 
+/** 不记账的根类型：多会话/多平台共享写入区（data、pluginData、logs）与回合结束前就清掉的临时目录（tmp）。 */
+const UNPROTECTED_ROOT_KINDS: ReadonlySet<string> = new Set(['data', 'tmp', 'pluginData', 'logs']);
+
 /**
  * Checkpoint 服务
  *
- * 在 LLM 一次回合（assistant turn）期间记录所有受控存储中的写入/删除/重命名操作，
+ * 在 LLM 一次回合（assistant turn）期间记录受控存储中的写入/删除/重命名操作（data / tmp / pluginData /
+ * logs 这几类共享根与临时根除外，见 beforeMutate），
  * 在改动发生前自动备份原始文件内容，使用户可以从 WebUI 一键回滚整轮操作。
  *
  * 协作模型：
@@ -206,9 +210,11 @@ export class CheckpointServiceImpl implements CheckpointService {
     // 而 blob 此刻在磁盘上尚不存在 → 会给自己记一条 write-new 假账，且排在真实条目之前，
     // 回滚时先删备份再读同一 blob → ENOENT，覆盖/删除类恢复必败。
     if (this.isOwnUri(uri)) return;
-    // 易失根（kind='tmp'）下的改动不快照：code-runner 等的临时目录在回合结束前就被 cleanup 删掉，
-    // 记进 manifest 只会让回滚必报 ENOENT（整体 ok:false），还把内部 tmp 路径暴露进 filesPreview。
-    if (this.isVolatileUri(uri)) return;
+    // data / pluginData / logs 是多会话、多平台共享的写入区：既有别处落盘的附件与插件状态，也有本回合自己
+    // 经工具产生的 skill / persona / 图片，storage 写入没有会话归属、无法分辨——记进本回合，回滚就会误删
+    // 别人刚落盘的文件、把插件状态写回旧版，故整根不记账（这些改动不可回滚）；tmp 是回合结束前就清掉的
+    // 临时目录，记账只会让回滚必报 ENOENT。其余根（workspace 与用户自建的 custom 等）照常记账。
+    if (this.isUnprotectedRootUri(uri)) return;
     // 回滚自身的改动不是任何回合的改动：记进其它会话的活跃回合，那边一回滚就把这次回滚再撤掉
     if (this.rollingBack.has(uri)) return;
     // 去重按 uri，但 rename 不能因此被吞掉：同一回合里「先 write/改写 f，再把 f 移走」时，
@@ -301,7 +307,8 @@ export class CheckpointServiceImpl implements CheckpointService {
       const manifest = JSON.parse(String(raw)) as TurnManifest;
       // 存量 manifest 可能带自指条目（历史递归快照）：既不是用户改动、也不该暴露内部路径，
       // 更不能让回滚去删自己的备份 —— 在唯一的读入口就滤掉，下游（listTurns / rollback）不必各自设防。
-      manifest.files = (manifest.files ?? []).filter(f => !this.isOwnUri(f.uri));
+      // 不记账的根（data / tmp 等，见 beforeMutate）在升级前写下的条目同样滤掉：否则老回合的回滚照样删别处落盘的文件。
+      manifest.files = (manifest.files ?? []).filter(f => !this.isOwnUri(f.uri) && !this.isUnprotectedRootUri(f.uri));
       return manifest;
     } catch {
       return null;
@@ -516,15 +523,16 @@ export class CheckpointServiceImpl implements CheckpointService {
   }
 
   /**
-   * uri 是否落在易失根（kind='tmp'）下。每次现算而不缓存：调用频率是「每次文件改动一次」，
-   * 而 storage 重载可能改变根集合，缓存只会拿到陈旧的根名。
+   * uri 是否落在不记账的根下（kind 见 UNPROTECTED_ROOT_KINDS）。根未列出、kind 不在集合内（workspace 与
+   * 用户自建的 custom / external / shared 等）、以及 listRoots 拿不到时都记账——宁可多记，不丢保护。
+   * 每次现算而不缓存：调用频率是「每次文件改动一次」，而 storage 重载可能改变根集合，缓存只会拿到陈旧的根名。
    */
-  private isVolatileUri(uri: string): boolean {
+  private isUnprotectedRootUri(uri: string): boolean {
     const idx = uri.indexOf(':/');
     if (idx <= 0) return false;
     const rootName = uri.slice(0, idx);
     try {
-      return this.storage.listRoots().some(r => r.name === rootName && r.kind === 'tmp');
+      return this.storage.listRoots().some(r => r.name === rootName && UNPROTECTED_ROOT_KINDS.has(r.kind));
     } catch {
       return false;
     }

@@ -156,8 +156,8 @@ export interface MediaService {
    * 登记「来源 URL / data URI → 落盘 ref」别名：由**落盘方**在落盘成功后调一次
    * （适配器把远端 URL 落成 `data/images/…` 时、WebUI base64 落盘时）。
    * 此后 lookupDescription / rememberDescription 传**原始来源**即可命中落盘 ref
-   * 那条内容哈希键——OneBot 引用消息只拿得到原始 URL 时也不必重认。别名按完整来源串相等命中，
-   * QQ 直链 rkey 轮换后是另一条串，退化为不命中。
+   * 那条内容哈希键——OneBot 引用消息只拿得到原始 URL 时也不必重认。别名按来源串相等命中；
+   * QQ 直链的 rkey 会轮换，由适配器在登记与查询两侧剥掉后再登记/再查一次（见 plugin-adapter-onebot）。
    * 可选方法：老实现缺席时调用方跳过即可（`media.rememberDescriptionAlias?.(…)`）。
    */
   rememberDescriptionAlias?(source: string, landedRef: string): void;

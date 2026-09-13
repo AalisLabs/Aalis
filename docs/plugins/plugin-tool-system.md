@@ -43,7 +43,7 @@ meta.inject = { required: ['tools'] }
 
 - **完整 storage URI**（`aalis:/packages/core`、`workspace:/notes/a.md`）→ 直接定位
 - **相对路径**（`packages/core`、`./a.ts`、`../plugin-tools`）→ 基于当前 session 的 cwd 解析
-- **宿主机绝对路径**（`/Users/...`、`C:\...`）→ 一律拒绝
+- **宿主机绝对路径**（`/Users/...`、`C:\...`、`C:/...`）→ 一律拒绝（Windows 盘符文法与单字母根名冲突，工具路径输入侧一律按盘符处理，单字母根名在工具里不可达）
 
 `cwd` 工具返回当前目录 + 所有可用 storage 根的清单（含读/写/删权限），调用一次即可看清"我在哪、能去哪"。`cd` 工具切换当前 session 的 cwd（仅内存，进程重启回到 `workingDirectory` 配置值，不写配置文件）。
 

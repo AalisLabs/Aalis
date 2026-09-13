@@ -233,11 +233,17 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 内存索引：fileId → FileEntry（启动时从磁盘恢复，运行期与磁盘双写）
   const index = new Map<string, FileEntry>();
 
+  // 会话目录名：sessionId 含 `:`（onebot:<self>:group:<gid>），Windows 文件名不收冒号，与附件落盘同一套替换。
+  // 老版本按原样 sessionId 建过目录（POSIX 下合法）：restoreIndex 按实际所在目录恢复、deleteSessionFiles 两种
+  // 目录名都清；只有索引缺失时的 probe 回退只探新目录名（可达性极低，判跳）。
+  function sessionDirName(sessionId: string): string {
+    return sessionId.replace(/[:/\\]/g, '_');
+  }
   function dataUri(sessionId: string, id: string, ext: string): string {
-    return `${ROOT_URI}/${sessionId}/${id}${ext}`;
+    return `${ROOT_URI}/${sessionDirName(sessionId)}/${id}${ext}`;
   }
   function metaUri(sessionId: string, id: string): string {
-    return `${ROOT_URI}/${sessionId}/${id}.meta.json`;
+    return `${ROOT_URI}/${sessionDirName(sessionId)}/${id}.meta.json`;
   }
 
   async function persistMeta(meta: FileMeta): Promise<FileEntry> {
@@ -280,7 +286,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           const ext = path.extname(meta.name) || '';
           index.set(meta.id, {
             ...meta,
-            dataUri: dataUri(meta.sessionId, meta.id, ext),
+            dataUri: `${sessionDir.uri}/${meta.id}${ext}`,
             metaUri: e.uri,
           });
           restored++;
@@ -475,8 +481,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   async function deleteSessionFiles(sessionId: string): Promise<number> {
     const targets = [...index.values()].filter(e => e.sessionId === sessionId);
     for (const e of targets) await deleteFile(e.id);
-    // 顺带把空目录删掉（list 可能为空，storage.delete 对空目录通常 OK；失败忽略）
-    await storage.delete(`${ROOT_URI}/${sessionId}`).catch(() => undefined);
+    // 顺带把目录删掉（连同未入索引的残留；失败忽略）：新旧两种目录名都试
+    for (const dir of new Set([sessionDirName(sessionId), sessionId])) {
+      await storage.delete(`${ROOT_URI}/${dir}`).catch(() => undefined);
+    }
     return targets.length;
   }
 
