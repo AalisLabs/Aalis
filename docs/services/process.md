@@ -10,6 +10,8 @@
 
 > 注意：**process 不是沙箱**。`spawn` 产生的子进程拥有宿主进程的完整 OS 权限（默认继承宿主全量 `process.env`），`readExternalFile` 可读任意 OS 路径。需要隔离的不可信代码执行请看 [code-sandbox 服务](./code-sandbox.md) 与第 6 节。
 
+> 路径来自外部时请传 `maxBytes`。典型场景是 OneBot daemon 推来的附件路径——不传上限就意味着把对方指定的任意大小文件整份读进堆，事后再判超限已经晚了（峰值内存已经吃掉）。`readExternalFile` 在给了 `maxBytes` 时会先 `stat` 再决定读不读。
+
 ---
 
 ## 2. 契约
@@ -27,7 +29,8 @@ interface ProcessService {
   // 在 storage 的 tmp:/ 根下创建本地临时目录，拿到本地绝对路径，用完调 cleanup()
   makeTempDir(prefix: string): Promise<TempDirHandle>;                                     // :90
   // 读 OS 任意本地路径（绕过 storage root 沙箱）——仅限「外部推来的路径」场景
-  readExternalFile(path: string): Promise<Uint8Array>;                                     // :100
+  // maxBytes 可选：给了就读前先 stat，超限直接抛，不把整份文件读进堆
+  readExternalFile(path: string, maxBytes?: number): Promise<Uint8Array>;
 }
 ```
 

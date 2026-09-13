@@ -32,6 +32,8 @@ interface Cfg {
   language: string;
   threads: number;
   priority: number;
+  /** 子进程超时（ms）。不设就永不 settle：process-local 只在 timeout>0 时才武装 killTree */
+  timeoutMs: number;
 }
 
 export const configSchema: ConfigSchema = {
@@ -40,6 +42,12 @@ export const configSchema: ConfigSchema = {
   language: { type: 'string', label: '默认语种', default: 'auto' },
   threads: { type: 'number', label: '线程数', default: 4 },
   priority: { type: 'number', label: '优先级 (越大越优先)', default: 80 },
+  timeoutMs: {
+    type: 'number',
+    label: '子进程超时 (ms)',
+    default: 120000,
+    description: '转码与识别子进程的最长运行时间。设 0 表示不限——届时卡住的子进程会把整轮对话一起挂住。',
+  },
 };
 
 const defaultConfig: Cfg = {
@@ -48,6 +56,7 @@ const defaultConfig: Cfg = {
   language: 'auto',
   threads: 4,
   priority: 80,
+  timeoutMs: 120000,
 };
 
 /**
@@ -119,9 +128,13 @@ async function materializeAudio(
 }
 
 /** 用 ffmpeg 把任意音频转成 whisper 需要的 16kHz mono wav，写到 outLocal。 */
-async function toWav16k(proc: ProcessService, input: string, outLocal: string): Promise<void> {
+async function toWav16k(proc: ProcessService, input: string, outLocal: string, timeoutMs: number): Promise<void> {
   await proc
-    .execFile('ffmpeg', ['-y', '-i', input, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', outLocal])
+    // 必须给超时：process-local 的 spawn 只在 opts.timeout>0 时才武装 killTree，
+    // 否则子进程不退就永不 settle——整轮 agent 被挂住，abort 也停不掉子进程。
+    .execFile('ffmpeg', ['-y', '-i', input, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', outLocal], {
+      timeout: timeoutMs,
+    })
     .catch((err: Error & { result?: { stderr: string } }) => {
       throw new Error(`ffmpeg 转码失败: ${(err.result?.stderr ?? err.message).slice(-200)}`);
     });
@@ -145,7 +158,8 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       const work = await proc.makeTempDir('whisper');
       try {
         const wavLocal = `${work.path}/audio.16k.wav`;
-        await toWav16k(proc, src.path, wavLocal);
+        // 转码给一半预算，识别拿完整预算：两段都卡住时整体上界仍是 1.5 × timeoutMs
+        await toWav16k(proc, src.path, wavLocal, Math.max(0, Math.floor(cfg.timeoutMs / 2)));
         const lang = input.language ?? cfg.language;
         const args = [
           '-m',
@@ -159,9 +173,11 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
           '-nt', // no timestamps in stdout
           '--output-txt',
         ];
-        const r = await proc.execFile(cfg.binaryPath, args).catch((err: Error & { result?: { stderr: string } }) => {
-          throw new Error(`whisper-cli 失败: ${(err.result?.stderr ?? err.message).slice(-200)}`);
-        });
+        const r = await proc
+          .execFile(cfg.binaryPath, args, { timeout: cfg.timeoutMs })
+          .catch((err: Error & { result?: { stderr: string } }) => {
+            throw new Error(`whisper-cli 失败: ${(err.result?.stderr ?? err.message).slice(-200)}`);
+          });
         // whisper-cli 在 wav 旁生成 <wav>.txt（即 work 目录内）；读不到时回退 stdout
         let text = '';
         try {
