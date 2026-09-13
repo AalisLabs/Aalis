@@ -26,7 +26,7 @@ meta.inject = { required: ['process', 'storage'] }
 | `language` | string | `'auto'` | 默认语种 |
 | `threads` | number | `4` | 线程数 |
 | `priority` | number | `80` | 优先级 (越大越优先) |
-| `timeoutMs` | number | `120000` | 子进程超时 (ms)：转码与识别子进程的最长运行时间。设 0 表示不限——届时卡住的子进程会把整轮对话一起挂住 |
+| `timeoutMs` | number | `600000` | 子进程超时 (ms)：转码与识别子进程的最长运行时间。设 0 表示不限——届时卡住的子进程会把整轮对话一起挂住 |
 
 `modelPath` 为必填：未配置时 `apply` 直接抛错，插件不会注册 `asr` 服务。`priority` 作为 `ctx.provide('asr', ...)` 的注册优先级。
 
@@ -39,5 +39,7 @@ meta.inject = { required: ['process', 'storage'] }
 ## 子进程超时
 
 ffmpeg 转码与 whisper-cli 识别都经 `ProcessService.execFile` 带 `timeout` 调用：转码分到 `timeoutMs / 2`，识别拿完整 `timeoutMs`，两段都卡住时整体上界是 `1.5 × timeoutMs`。
+
+默认值取 10 分钟而非更紧的数值：这道闸的目的是掐断**真正卡死**的子进程，不是给识别限速。CPU 上跑长语音本来就可能要几分钟，闸设得太紧会把本来能用的识别切掉——那是把一个挂死问题换成一个功能问题。
 
 这个参数不是调优项而是必需项——`plugin-process-local` 的 `spawn` 只在 `opts.timeout > 0` 时才武装 `killTree`，不传就意味着子进程不退时 `wait()` 永不 settle：那一轮对话被永久挂住（回合 abort 也停不掉已经起来的子进程），而每条音频都会再堆一个 whisper/ffmpeg 进程。
