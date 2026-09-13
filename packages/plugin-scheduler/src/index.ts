@@ -69,6 +69,9 @@ interface SchedulerConfig {
 // 解析在 @aalis/api-cron-engine（normalizeCronExpr / parseEverySeconds / matchesCron）；
 // scheduler inject 'cron-engine' 后调用 subscribe()/nextFireTime()。
 
+/** setTimeout 的 delay 上限（32 位有符号毫秒，约 24.8 天）；超过即溢出成立即触发 */
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
 // ──────────── 运行时状态 ────────────
 
 interface JobRuntime {
@@ -646,11 +649,21 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
             }
           });
         } else {
-          rt.timer = setTimeout(() => {
-            if (!rt.paused) {
-              executeJob(rt).finally(() => disableOneShot(rt));
-            }
-          }, delay) as unknown as ReturnType<typeof setInterval>;
+          // 远期 runAt 分段重排：delay 超过 2^31-1ms 会溢出成立即触发。每段最多排到上限，
+          // 段末未到点就续排下一段，到点才执行
+          const arm = (wait: number): void => {
+            rt.timer = setTimeout(() => {
+              const remain = targetMs - Date.now();
+              if (remain > 0) {
+                arm(Math.min(remain, MAX_TIMEOUT_MS));
+                return;
+              }
+              if (!rt.paused) {
+                executeJob(rt).finally(() => disableOneShot(rt));
+              }
+            }, wait) as unknown as ReturnType<typeof setInterval>;
+          };
+          arm(Math.min(delay, MAX_TIMEOUT_MS));
         }
       } else {
         logger.warn(`任务 ${jobCfg.name} 的 runAt 无法解析: ${jobCfg.runAt}`);

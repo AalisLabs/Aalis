@@ -199,6 +199,8 @@ function parseStartupView(value: unknown): 'last' | CLIView {
 class CliTui {
   private view: CLIView;
   private previousView: CLIView = 'chat';
+  /** 非 chat 视图期间进入聊天区的条数（确认提示、回复）；header 的 CHAT 页签带计数，切回即清 */
+  private unreadChat = 0;
   private running = false;
   private inputLine = '';
   private cursor = 0;
@@ -299,7 +301,8 @@ class CliTui {
   pushAssistant(content: string): void {
     if (!content.trim()) return;
     this.chat.append(this.formatAssistantBlock(content));
-    if (this.view === 'chat') this.queueRender();
+    if (this.view !== 'chat') this.unreadChat++;
+    this.queueRender();
   }
 
   /**
@@ -329,6 +332,10 @@ class CliTui {
     if (!this.chat.streaming) {
       this.streamingContent = '';
       this.streamedRecently = false;
+      if (this.view !== 'chat') {
+        this.unreadChat++;
+        this.queueRender();
+      }
     }
     this.streamingContent += chunk.contentDelta;
     // 根据累积内容重建该消息占据的行
@@ -556,6 +563,7 @@ class CliTui {
   }
 
   private switchView(view: CLIView): void {
+    if (view === 'chat') this.unreadChat = 0;
     if (this.view !== view) {
       this.previousView = this.view;
       this.view = view;
@@ -617,7 +625,10 @@ class CliTui {
     const tabs = (['chat', 'logs', 'status', 'help'] as CLIView[])
       .map(v => {
         const label = v.toUpperCase();
-        return v === this.view ? chalk.bold.cyan(`[${label}]`) : chalk.gray(` ${label} `);
+        if (v === this.view) return chalk.bold.cyan(`[${label}]`);
+        // 非 chat 视图期间聊天区有新内容（确认提示等）：CHAT 页签带计数高亮，切回即清
+        if (v === 'chat' && this.unreadChat > 0) return chalk.bold.yellow(` ${label}(${this.unreadChat}) `);
+        return chalk.gray(` ${label} `);
       })
       .join(' ');
     const status = chalk.green('● online');

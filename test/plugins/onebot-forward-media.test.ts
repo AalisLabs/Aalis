@@ -350,3 +350,67 @@ describe('forward-expand 两阶段解析器（下载先行、识别受限并发�
     }
   });
 });
+
+// CQ 字符串节点曾单独用一串正则渲染：媒体/at/face 之外的文本原样保留，`&#91;` `&#93;` `&amp;`
+// 不反转义，转发正文里的方括号与 & 全是转义串。现与段数组同一条路径（先规范化成段）。
+describe('CQ 字符串节点与段数组同一渲染', () => {
+  it('文本段做 CQ 反转义，at / face / reply 与段数组一致', async () => {
+    const nodes = [
+      {
+        type: 'node',
+        data: {
+          nickname: '甲',
+          user_id: '1',
+          content: '&#91;不是段&#93; a&amp;b [CQ:at,qq=42] 看[CQ:face,id=5][CQ:reply,id=9]',
+        },
+      },
+    ];
+    const r = await expandForward('F-cq', nodes, {
+      fetchForward: async () => null,
+      maxDepth: 3,
+      maxNodesPerLevel: 30,
+      imageRecognitionEnabled: true,
+      resolveMedia: async () => new Map(),
+    });
+    expect(r.fullText).toContain('[不是段] a&b <at id="42">42</at> 看[表情:5]');
+    expect(r.fullText).not.toContain('&#91;');
+    expect(r.fullText).not.toContain('CQ:');
+  });
+});
+
+describe('CQ 字符串节点：NUL 剥除与空 url 回落', () => {
+  const opts = {
+    fetchForward: async () => null,
+    maxDepth: 3,
+    maxNodesPerLevel: 30,
+    imageRecognitionEnabled: true,
+  };
+  const strNode = (content: string) => [{ type: 'node', data: { nickname: '甲', user_id: '1', content } }];
+
+  it('整串先剥 NUL：段路径不逐段剥的 forward id 也不得带着 NUL 去抓嵌套转发', async () => {
+    const ids: string[] = [];
+    const r = await expandForward('F-nul', strNode('a\u0000b [CQ:forward,id=\u0000M0\u0000]'), {
+      ...opts,
+      fetchForward: async (id: string) => {
+        ids.push(id);
+        return null;
+      },
+      resolveMedia: async () => new Map(),
+    });
+    expect(ids).toEqual(['M0']);
+    expect(r.fullText).not.toContain('\u0000');
+    expect(r.fullText).toContain('ab ');
+  });
+
+  it('url 为空串时回落到 file（与旧字符串分支一致）', async () => {
+    const seen: string[] = [];
+    await expandForward('F-url', strNode('[CQ:image,url=,file=fallback.jpg]'), {
+      ...opts,
+      resolveMedia: async (tasks: ForwardMediaTask[]) => {
+        for (const t of tasks) seen.push(t.src);
+        return new Map();
+      },
+    });
+    expect(seen).toEqual(['fallback.jpg']);
+  });
+});

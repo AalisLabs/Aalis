@@ -632,7 +632,9 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
           return JSON.stringify({ uri, encoding: 'base64', size: info.size, content });
         }
 
-        const lines = (await readText(storage, uri)).split('\n');
+        // 与 readLineRange（readline）同口径：\n / \r\n 都算换行、行内容不带 \r，结尾换行不算多一行
+        const lines = (await readText(storage, uri)).split(/\r?\n/);
+        if (lines[lines.length - 1] === '') lines.pop();
         return JSON.stringify({
           uri,
           totalLines: lines.length,

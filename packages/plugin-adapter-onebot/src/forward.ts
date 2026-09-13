@@ -16,7 +16,7 @@
  */
 
 import type { OneBotMessageSegment } from './types.js';
-import { getForwardNodes, parseCqParams } from './types.js';
+import { getForwardNodes, parseCqMessageToSegments } from './types.js';
 
 /** 单个转发节点的扁平表示 */
 export interface ForwardLine {
@@ -97,36 +97,18 @@ function stripNul(s: string): string {
 /** 媒体任务收集器：登记任务返回 token；该类未启用或无源时直接返回占位符。 */
 type MediaCollector = (kind: ForwardMediaTask['kind'], src: string | undefined) => string;
 
-/** 把 CQ 字符串里 [CQ:<cqType>,...] 段交给收集器（登记任务或落占位符）。 */
-function replaceCqMedia(text: string, cqType: string, kind: ForwardMediaTask['kind'], collect: MediaCollector): string {
-  return text.replace(new RegExp(`\\[CQ:${cqType}(,[^\\]]+)?\\]`, 'g'), (_m, body: string | undefined) => {
-    const params = parseCqParams(body ?? '');
-    return collect(kind, params.url || params.file);
-  });
-}
-
 /**
  * 渲染一个节点 content（消息段数组或 CQ 字符串）为纯文本。
  * 媒体段（图片/语音/视频）经收集器登记为待识别任务并放 token——本函数是纯结构渲染，
  * 不发生任何网络/模型等待，保证 walk 快速完成、媒体源被尽早收集。
  */
 function renderNodeContent(content: unknown, collect: MediaCollector): string {
-  if (typeof content === 'string') {
-    // CQ 码字符串：用正则替换 image / record / video / face / at / reply
-    let out = replaceCqMedia(stripNul(content), 'image', 'image', collect);
-    out = replaceCqMedia(out, 'record', 'audio', collect);
-    out = replaceCqMedia(out, 'video', 'video', collect);
-    return out
-      .replace(/\[CQ:face,[^\]]*id=(\d+)[^\]]*\]/g, '[表情:$1]')
-      .replace(/\[CQ:at,[^\]]*qq=([^,\]]+)[^\]]*\]/g, '<at id="$1">$1</at>')
-      .replace(/\[CQ:reply[^\]]*\]/g, '')
-      .replace(/\[CQ:[a-z]+[^\]]*\]/g, '');
-  }
-
-  if (!Array.isArray(content)) return '';
+  // CQ 码字符串先规范化成段（文本段已做 CQ 反转义），与段数组走同一条渲染路径
+  const segments = typeof content === 'string' ? parseCqMessageToSegments(stripNul(content)) : content;
+  if (!Array.isArray(segments)) return '';
 
   const parts: string[] = [];
-  for (const seg of content) {
+  for (const seg of segments) {
     if (!seg || typeof seg !== 'object') continue;
     const s = seg as { type?: string; data?: Record<string, unknown> };
     const data = s.data ?? {};
@@ -143,7 +125,7 @@ function renderNodeContent(content: unknown, collect: MediaCollector): string {
         parts.push(`[表情:${stripNul(String(data.id ?? ''))}]`);
         break;
       case 'image':
-        parts.push(collect('image', (data.url ?? data.file) as string | undefined));
+        parts.push(collect('image', (data.url || data.file) as string | undefined));
         break;
       case 'reply':
         break;
@@ -152,10 +134,10 @@ function renderNodeContent(content: unknown, collect: MediaCollector): string {
         parts.push(data.id ? `<<<NESTED_FORWARD:${String(data.id)}>>>` : '[合并转发]');
         break;
       case 'record':
-        parts.push(collect('audio', (data.url ?? data.file) as string | undefined));
+        parts.push(collect('audio', (data.url || data.file) as string | undefined));
         break;
       case 'video':
-        parts.push(collect('video', (data.url ?? data.file) as string | undefined));
+        parts.push(collect('video', (data.url || data.file) as string | undefined));
         break;
       case 'share':
         parts.push(`[分享:${stripNul(String(data.title ?? ''))}]`);

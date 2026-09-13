@@ -349,7 +349,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   const storage = createStorageGateway(ctx);
 
   const loader = new WorkflowLoader(storage, config.defsDir, logger);
-  await loader.loadAll();
+  const scanned = await loader.loadAll();
 
   const runStore = new RunStore(storage, config.runsFile, config.maxRuns, logger);
   await runStore.init();
@@ -370,8 +370,9 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     },
     runStore, // once 的 firedAt 与运行历史同一份持久化
   );
-  // 定义已从磁盘删除的，once 记账不留孤儿（手删 yaml 不经 removeWorkflow）；注册前清
-  runStore.pruneOnceFired(new Set(loader.list().map(d => d.id)));
+  // 定义已从磁盘删除的，once 记账不留孤儿（手删 yaml 不经 removeWorkflow）；注册前清。
+  // 列目录失败那次启动看到的是空集，不能据此清账——否则下次启动所有过期 once 全部重放
+  if (scanned) runStore.pruneOnceFired(new Set(loader.list().map(d => d.id)));
   for (const def of loader.list()) triggers.register(def);
 
   // ── 订阅外部 trigger:fired（来自 scheduler / 其他触发源）──

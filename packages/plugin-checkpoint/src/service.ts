@@ -112,6 +112,8 @@ export class CheckpointServiceImpl implements CheckpointService {
    * 每项含：清单 + 本回合已快照 uri 集合(去重) + blob 文件计数器。
    */
   private turns = new Map<string, { manifest: TurnManifest; snapshotted: Set<string>; blobIndex: number }>();
+  /** 回滚正在处理的 URI：回滚自身的写/删/移经 storage 写前钩子回到 beforeMutate，不得记进任何活跃回合 */
+  private readonly rollingBack = new Set<string>();
 
   constructor(
     private readonly cfg: ServiceConfig,
@@ -207,6 +209,8 @@ export class CheckpointServiceImpl implements CheckpointService {
     // 易失根（kind='tmp'）下的改动不快照：code-runner 等的临时目录在回合结束前就被 cleanup 删掉，
     // 记进 manifest 只会让回滚必报 ENOENT（整体 ok:false），还把内部 tmp 路径暴露进 filesPreview。
     if (this.isVolatileUri(uri)) return;
+    // 回滚自身的改动不是任何回合的改动：记进其它会话的活跃回合，那边一回滚就把这次回滚再撤掉
+    if (this.rollingBack.has(uri)) return;
     // 去重按 uri，但 rename 不能因此被吞掉：同一回合里「先 write/改写 f，再把 f 移走」时，
     // f 已快照过 → 移动整条不入账 → 回滚照 write 条目去写/删源端（ENOENT），文件还留在目标端。
     // 对这些回合补记一条不带 blob 的 rename（内容已由更早的条目备份，不重复备份）：
@@ -323,6 +327,8 @@ export class CheckpointServiceImpl implements CheckpointService {
     // 例：`move a.txt -> b.txt` 后又改写 b.txt，正序回滚先把 b 移回 a，再把 b 的快照写回，
     // b.txt 又冒出来；逆序则先把 b 还原成改写前内容，再整体移回 a，磁盘回到回合开始的样子。
     for (const file of [...manifest.files].reverse()) {
+      this.rollingBack.add(file.uri);
+      if (file.toUri) this.rollingBack.add(file.toUri);
       try {
         if (file.action === 'write-new') {
           // 新创建的文件 → 删除。已不存在即期望状态已达成（本回合新建后又删掉：delete 条目被按 URI
@@ -369,6 +375,9 @@ export class CheckpointServiceImpl implements CheckpointService {
         }
       } catch (err) {
         result.errors.push({ uri: file.uri, reason: (err as Error).message });
+      } finally {
+        this.rollingBack.delete(file.uri);
+        if (file.toUri) this.rollingBack.delete(file.toUri);
       }
     }
     if (result.errors.length > 0) result.ok = false;

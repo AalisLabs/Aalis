@@ -184,6 +184,8 @@ export interface DescribeImageOptions {
    * - `'detailed'`：详细图像识别（不限字数、聚焦图像整体详情/网络梗/代码/表格），用于一般信息密度高的图
    * - `'professional'`：专业学科题目识别（严格 LaTeX、几何坐标识别、几何形状反幻觉），用于数学/物理/化学题
    * - `'auto'`：单次推理自路由——模型看图自判类型并按类型给相应详略（不再前置分类推理）
+   *
+   * 描述缓存按档分键：`'auto'` 与到达识别共用一条，其余三档各自一条；带 hint 不进缓存。
    */
   detailLevel?: 'auto' | 'casual' | 'detailed' | 'professional';
 }
