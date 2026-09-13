@@ -20,6 +20,15 @@ interface FileMeta {
 
 const ROOT_PREFIX = 'pluginData:/file-reader';
 
+/**
+ * 会话目录名候选：与 plugin-file-reader 同一套替换（sessionId 含 `:` 时 Windows 文件名不收），
+ * 老版本按原样 sessionId 建过目录，读侧两种都试（替换后的优先）。
+ */
+function sessionDirs(sessionId: string): string[] {
+  const safe = sessionId.replace(/[:/\\]/g, '_');
+  return safe === sessionId ? [sessionId] : [safe, sessionId];
+}
+
 interface UploadedFilesRoutesOptions {
   /** storage 服务（必填）——传入的是 createStorageGateway 的返回值，恒为对象；
    *  storage 服务缺席时 gateway 各方法内部 dispatch 抛错，而列表路由的内层 catch 会把它
@@ -42,14 +51,18 @@ export function registerUploadedFilesRoutes(
     return /^[A-Fa-f0-9]{8,64}$/.test(s);
   }
 
-  async function readMeta(sessionId: string, fileId: string): Promise<FileMeta | null> {
-    try {
-      const raw = await storage.readFile(`${ROOT_PREFIX}/${sessionId}/${fileId}.meta.json`);
-      const text = typeof raw === 'string' ? raw : raw.toString('utf-8');
-      return JSON.parse(text) as FileMeta;
-    } catch {
-      return null;
+  /** 读 meta 并返回它实际所在的会话目录名（数据文件与它同目录） */
+  async function readMeta(sessionId: string, fileId: string): Promise<{ meta: FileMeta; dir: string } | null> {
+    for (const dir of sessionDirs(sessionId)) {
+      try {
+        const raw = await storage.readFile(`${ROOT_PREFIX}/${dir}/${fileId}.meta.json`);
+        const text = typeof raw === 'string' ? raw : raw.toString('utf-8');
+        return { meta: JSON.parse(text) as FileMeta, dir };
+      } catch {
+        /* 试下一种目录名 */
+      }
     }
+    return null;
   }
 
   /** 列出某 session 下的所有上传文件元信息（不传 sessionId 时列全部 session） */
@@ -63,7 +76,7 @@ export function registerUploadedFilesRoutes(
       const results: FileMeta[] = [];
       const sessions: string[] = [];
       if (sessionId) {
-        sessions.push(sessionId);
+        sessions.push(...sessionDirs(sessionId));
       } else {
         try {
           const root = await storage.list(ROOT_PREFIX);
@@ -110,13 +123,14 @@ export function registerUploadedFilesRoutes(
       res.status(400).json({ error: 'sessionId 或 fileId 非法' });
       return;
     }
-    const meta = await readMeta(sessionId, fileId);
-    if (!meta) {
+    const found = await readMeta(sessionId, fileId);
+    if (!found) {
       res.status(404).json({ error: '文件不存在' });
       return;
     }
+    const { meta, dir } = found;
     const ext = path.extname(meta.name) || '';
-    const dataUri = `${ROOT_PREFIX}/${sessionId}/${fileId}${ext}`;
+    const dataUri = `${ROOT_PREFIX}/${dir}/${fileId}${ext}`;
     try {
       const result = await storage.createReadStream(dataUri);
       res.setHeader('Content-Type', meta.mimeType || 'application/octet-stream');
@@ -138,14 +152,15 @@ export function registerUploadedFilesRoutes(
       res.status(400).json({ error: 'sessionId 或 fileId 非法' });
       return;
     }
-    const meta = await readMeta(sessionId, fileId);
-    if (!meta) {
+    const found = await readMeta(sessionId, fileId);
+    if (!found) {
       res.status(404).json({ error: '文件不存在或已被删除' });
       return;
     }
+    const { meta, dir } = found;
     const ext = path.extname(meta.name) || '';
-    const dataUri = `${ROOT_PREFIX}/${sessionId}/${fileId}${ext}`;
-    const metaUri = `${ROOT_PREFIX}/${sessionId}/${fileId}.meta.json`;
+    const dataUri = `${ROOT_PREFIX}/${dir}/${fileId}${ext}`;
+    const metaUri = `${ROOT_PREFIX}/${dir}/${fileId}.meta.json`;
     const errors: string[] = [];
     try {
       await storage.delete(dataUri);
