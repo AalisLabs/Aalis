@@ -100,6 +100,12 @@ async function loadAttachmentBuffer(
   try {
     // storage URI 优先：data:/ 也是 storage（根名 data），不能被下面的 data: 分支误当 data-URI。
     if (isStorageUri(source)) {
+      // 读前先量：http 分支有 readBodyCapped 限额，这条此前整份读进内存再由
+      // cacheAttachmentBuffer 事后判超限——白吃一次峰值，大文件足以压垮进程。
+      if (Number.isFinite(maxBytes)) {
+        const st = await storage.stat(source);
+        if (st.size > maxBytes) return null;
+      }
       const raw = (await storage.readFile(source)) as Uint8Array;
       return Buffer.from(raw);
     }
@@ -114,7 +120,7 @@ async function loadAttachmentBuffer(
       return readBodyCapped(res, maxBytes);
     }
     // file:// 或绝对路径：OneBot daemon 推来的任意 OS 路径，走 process.readExternalFile
-    const raw = await proc.readExternalFile(source);
+    const raw = await proc.readExternalFile(source, Number.isFinite(maxBytes) ? maxBytes : undefined);
     return Buffer.from(raw);
   } catch {
     return null;

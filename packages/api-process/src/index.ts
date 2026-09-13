@@ -105,7 +105,7 @@ export interface ProcessService {
    * 本接口负责“OS 直通读外部路径”（调用方自行保证安全性）。
    * path 可以是本地绝对路径或 file:// URI。
    */
-  readExternalFile(path: string): Promise<Uint8Array>;
+  readExternalFile(path: string, maxBytes?: number): Promise<Uint8Array>;
 }
 
 declare module '@aalis/core' {
@@ -129,7 +129,7 @@ export function createProcessGateway(ctx: Context): ProcessService {
     spawn: (cmd, args, opts) => pick().spawn(cmd, args, opts),
     execFile: (cmd, args, opts) => pick().execFile(cmd, args, opts),
     makeTempDir: prefix => pick().makeTempDir(prefix),
-    readExternalFile: path => pick().readExternalFile(path),
+    readExternalFile: (path, maxBytes) => pick().readExternalFile(path, maxBytes),
   };
 }
 
