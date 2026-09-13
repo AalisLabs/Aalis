@@ -22,7 +22,7 @@ meta.inject = {
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `port` | number | `3000` | 端口：Web 管理界面的 HTTP 端口 |
-| `host` | string | `'127.0.0.1'` | 监听地址：绑定的 IP 地址，0.0.0.0 可对外访问 |
+| `host` | string | `'127.0.0.1'` | 监听地址：绑定的 IP 地址，0.0.0.0 可对外访问。**改绑非回环地址前先读下文「登录身份与权限」**——持有 token 的人等同 owner |
 | `fileRoot` | string | `'workspace'` | 文件浏览根：文件管理页面使用的 storage 根 ID，默认 workspace |
 | `autoOpen` | boolean | `true` | 启动时自动打开浏览器：启动时以含 token 的 URL 自动开启默认浏览器；SSH/headless 环境建议关闭 |
 | `tokenMode` | select | `'persist'` | Token 策略：ephemeral=每次启动随机；persist=token 写入 data:/webui/token，读取复用；fixed=使用 fixedToken 字段。所有模式都会写出便利文件 data:/webui/access.txt 含访问 URL。 |
@@ -55,6 +55,18 @@ WebUI 使用单个访问 token + HttpOnly cookie 认证。HTTP 请求与 WebSock
 1. **一键登录 URL**：浏览器打开 `http://host:port/?token=<TOKEN>` → 服务端校验后 `Set-Cookie` 并 302 到干净 URL。
 2. **手动登录**：访问 `http://host:port/`，在登录页粘贴 token → POST `/api/auth/login` `{ token }`。
 3. **登出**：POST `/api/auth/logout` 清除 cookie。
+
+### 登录身份与权限
+
+通过 token 登录后，请求身份被判定为 `webui:console`，而 `cli:console` / `webui:console` 在 authority 里直接视为 **owner（最高等级）**——可以驱动 exec 等受限工具、改配置、装卸插件。也就是说：
+
+> **谁拿到这个 token，谁就等同于这台机器的 owner。**
+
+而默认 `tokenMode=persist` 下 token 长期不变、且明文写在 `data:/webui/access.txt` 里。因此把 `host` 改成 `0.0.0.0`（或经反代暴露到公网）之前：
+
+- 确认处在可信网络，或在前面加一层独立鉴权（反代 Basic Auth / mTLS / 只对内网开放）；
+- 改用 `tokenMode=fixed` 配一个足够长的随机 token，并妥善保管 `access.txt`；
+- 权限语义详见 [plugin-authority](./plugin-authority.md)。
 
 ### Cookie
 

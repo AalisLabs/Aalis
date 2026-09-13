@@ -13,6 +13,7 @@
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
   "description": "Aalis 默认 WebUI 前端（React SPA 静态资源；由 @aalis/plugin-webui-server 托管）",
+  "displayName": "Aalis 默认 WebUI",
   "type": "module",
   "files": [
     "dist"

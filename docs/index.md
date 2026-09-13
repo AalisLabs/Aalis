@@ -20,7 +20,7 @@ features:
   - title: 按需装插件
     details: 聊天、记忆、工具调用、定时任务、联网搜索……想要什么装什么，不用的不占地方。
   - title: 接多家大模型
-    details: OpenAI / Claude / DeepSeek / 本地 Ollama 等随意切换，甚至每个会话各用各的。
+    details: OpenAI / DeepSeek / 本地 Ollama 开箱即用，任何 OpenAI 兼容端点都能接；甚至每个会话各用各的。
   - title: 自托管私有部署
     details: 一行命令起一个独立项目，自己的机器、自己的数据，不依赖任何托管服务。
 ---
@@ -34,4 +34,4 @@ npm create aalis@latest my-bot
 ```
 
 进入目录，在 `aalis.config.yaml` 里填好大模型 API 与平台账号，启动即可。
-完整步骤（配置、装插件、部署）见 [脚手架上手指南](/guide/scaffolding)。
+建项目的完整步骤见 [脚手架上手指南](/guide/scaffolding)；启动之后怎么用（要哪些 key、零 key 怎么起、CLI 与 WebUI 两个入口）见 [第一次运行](/guide/first-run)。

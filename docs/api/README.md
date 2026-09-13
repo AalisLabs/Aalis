@@ -5,7 +5,7 @@
 ```
 @aalis/core              ← 平台无关的运行时（Context / 事件 / 服务注册中心）
        ↑
-@aalis/plugin-<X>-api    ← 契约：服务接口、事件 payload、Context 扩展方法、可复用 runtime 工具
+@aalis/api-<X>           ← 契约：服务接口、事件 payload、Context 扩展方法、可复用 runtime 工具
        ↑
 @aalis/plugin-<X>        ← 实现：具体的 service 注册、handler 逻辑
 ```
@@ -25,7 +25,7 @@
 | [api-embedding](./api-embedding.md) | `EmbeddingService` —— 文本向量化 | plugin-embedding-openai / plugin-embedding-ollama |
 | [api-gateway](./api-gateway.md) | `GatewayService` —— 消息入站编排 | plugin-gateway |
 | [api-media](../services/media.md) | `MediaService` —— 多模态预处理（vision/audio/video） | plugin-media |
-| [api-llm](./api-llm.md) | `LLMService` + capability 框架 | plugin-llm-openai / plugin-llm-ollama / plugin-llm-deepseek 等 |
+| [api-llm](./api-llm.md) | `LLMModel`（per-model handle）+ capability 框架 | plugin-llm-openai / plugin-llm-ollama / plugin-llm-deepseek 等 |
 | [api-memory](./api-memory.md) | `MemoryService` —— 历史与元数据存储 | plugin-memory-inmemory / sqlite / mongodb / vector |
 | [schema-message](./schema-message.md) | 消息数据契约（无 service） | 由各 adapter 直接 emit |
 | [api-session-manager](./api-session-manager.md) | `SessionManagerService` —— 会话配置 | plugin-session-manager |
@@ -47,7 +47,7 @@
 
 ## 约定
 
-1. **服务名 = 包名去掉 `@aalis/plugin-` 前缀和 `-api` 后缀**。例：`@aalis/api-tools` 提供 `ctx.getService('tools')` 取到的 `ToolService`。
+1. **服务名 = 包名去掉 `@aalis/api-` 前缀**。例：`@aalis/api-tools` 提供 `ctx.getService('tools')` 取到的 `ToolService`。
 2. **服务一律按名字消费**：`ctx.getService('storage')` / `ctx.getAllServices('storage')` 只接收服务名，`inject.required: ['storage']` 也只列服务名（同名多实现时按「偏好 > 优先级 > 注册顺序」选胜者，可经 `ctx.preferService` 或 WebUI Services 页调整）。领域能力（如 storage 的 `local-path`、LLM 的 vision / tool-calling）挂在**服务实例 / model-handle 的元数据**上，由各领域 `*-api` helper 过滤（如 `resolveLLMModel(ctx, ref, ['vision'])`、storage gateway 的 `resolveLocalPath`），**不**经 core DI、也**不**用 `getService(name, { capabilities })`。
 3. **事件通过 `declare module '@aalis/core' { interface AalisEvents }`** 注入；订阅者用 `ctx.on('event-name', ...)`，类型自动补全。
 4. **领域 helper**：各契约包导出领域 helper（如 `useToolService(ctx)` / `useCommandService(ctx)`），内部封装 `ctx.getService` + `whenService` 延迟语义；调用方在 apply 阶段直接使用。Core 不再持有任何业务 Mixin。

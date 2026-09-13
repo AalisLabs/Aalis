@@ -8,7 +8,7 @@
     "dev": "vitepress dev",
     "build": "vitepress build",
     "preview": "vitepress preview",
-    "deploy": "vitepress build && wrangler pages deploy .vitepress/dist --project-name aalis-docs --branch main"
+    "deploy": "vitepress build && wrangler pages deploy --branch main"
   },
   "devDependencies": {
     "vitepress": "^1.6.4",

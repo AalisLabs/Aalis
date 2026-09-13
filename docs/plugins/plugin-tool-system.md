@@ -5,7 +5,7 @@
 
 ## 概述
 
-机器交互基础工具集，提供 Shell 命令、文件操作、系统信息和 HTTP 请求等工具。按工具组管理，各组可独立启用/禁用。
+机器交互基础工具集，提供 Shell 命令、文件操作、系统信息和 HTTP 请求等工具。四类工具各有独立的配置开关，但对外只暴露 `system` 一个工具分组（见下文[工具组](#工具组)）。
 
 ## 插件声明
 
@@ -52,11 +52,16 @@ meta.inject = { required: ['tools'] }
 
 ## 工具组
 
-工具从 `./tools/` 目录下的独立模块导入：
-- **shell**: Shell 命令执行
-- **file**: 文件读写操作
-- **system**: 系统信息查询
-- **http**: HTTP 请求
+本插件只向 tools 服务注册**一个**工具分组 `system`（标签「系统工具」），下面四类工具全部落在这一个分组里：
+
+| 源码模块 | 工具 | 配置开关 |
+|---|---|---|
+| shell | Shell 命令执行 | `shell.enabled` |
+| file | 文件读写操作 | `file.enabled` |
+| system | 系统信息查询 | `system.enabled` |
+| http | HTTP 请求 | `http.enabled` |
+
+> **shell / file / system / http 是配置开关与源码模块名，不是分组名。** 平台档的 `enabledToolGroups` 只认 `system` 这一个组名：写 `['file']` 匹配不到本插件的任何工具（静默、无告警；无分组的通用工具不受分组闸影响，仍照常可见）；写 `['system']` 则一次放开 exec、file_write、http_request 等全部工具。要按类收窄，用上表的配置开关关掉整类，而不是在平台档里按模块名列。
 
 ## file 工具：exclude/include 与 file_search 行为
 
@@ -127,4 +132,4 @@ storage URI 规范化（`toStorageUri` / `resolveAgainstCwd` / `parseStorageUri`
 
 ## 指令
 
-- `/tools` — 列出所有已启用的工具组和工具
+- `/tools` — 列出本插件四类工具（shell / file / system / http）各自的启用情况

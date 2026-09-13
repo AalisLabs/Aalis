@@ -633,6 +633,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         displayNameMap.set(p.instanceId, p.displayName);
       }
     }
+    // root context 即内核自身（app / plugins 两个服务由它 provide）——显示包名，别把内部 id 'root' 裸露给用户
+    displayNameMap.set('root', '@aalis/core');
 
     const serviceNames = ctx.getServiceNames();
     const services: Record<

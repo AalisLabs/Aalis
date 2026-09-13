@@ -1,0 +1,10 @@
+# Cloudflare Pages 部署配置（文档站）
+# 站点：aalis.acenyan.com ← Pages 项目 aalis-docs
+# 产物由 `vitepress build` 生成到 .vitepress/dist
+#
+# 注意：部署分支仍须在命令行给 `--branch main`。
+# wrangler 不带该参数时会按当前 git 分支名推断，而仓库日常在 dev 上，
+# 那会被当成 preview 部署、生产域名不更新。
+name = "aalis-docs"
+compatibility_date = "2026-09-13"
+pages_build_output_dir = ".vitepress/dist"
