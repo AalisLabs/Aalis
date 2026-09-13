@@ -158,3 +158,32 @@ describe('来源 → 落盘 ref 别名', () => {
     expect(svc.lookupDescription(remote), '登记后原始 URL 落到落盘 ref 的内容哈希键').toBe('猫在沙发上');
   });
 });
+
+// 描述缓存按详略档分键：analyze_image 传 detailed/professional 时曾直接命中到达时写下的简述——
+// 「详细分析」拿到的是同一句话。各档各存一条（plugin-file-reader 刻意不传 hint 就是为了让 detailed 走缓存）。
+describe('描述缓存按详略档分键', () => {
+  it('detailed 不命中 auto 条目、自己一条可复用；auto 条目不被覆盖；显式 auto 等于默认', async () => {
+    const { svc, describeCount } = makeSvc();
+    const key = 'http://example.invalid/img/detail-level.jpg';
+    expect(await svc.describeImage(key)).toBe('猫在沙发上');
+    await svc.describeImage(key);
+    expect(describeCount(), 'auto 命中缓存').toBe(1);
+    await svc.describeImage(key, { detailLevel: 'detailed' });
+    expect(describeCount(), 'detailed 不得命中 auto 的简述').toBe(2);
+    await svc.describeImage(key, { detailLevel: 'detailed' });
+    expect(describeCount(), 'detailed 自己那条可复用').toBe(2);
+    await svc.describeImage(key, { detailLevel: 'casual' });
+    expect(describeCount(), '各档各一条').toBe(3);
+    await svc.describeImage(key);
+    expect(describeCount(), 'auto 条目仍在').toBe(3);
+    await svc.describeImage(key, { detailLevel: 'auto' });
+    expect(describeCount(), '显式 auto 与默认同一条目').toBe(3);
+    // 内容哈希键同样分档：档位后缀加在哈希之后，跨会话共享与快照对各档一致
+    expect(lookupCachedDescription('data:/images/onebot_t_group_1/0123456789abcdef.jpg', true, 'detailed')).toBeNull();
+    rememberDescription('data:/images/onebot_t_group_1/0123456789abcdef.jpg', '详细版', true, 'detailed');
+    expect(lookupCachedDescription('data:/images/onebot_t_group_2/0123456789abcdef.jpg', true, 'detailed')).toBe(
+      '详细版',
+    );
+    expect(lookupCachedDescription('data:/images/onebot_t_group_2/0123456789abcdef.jpg')).toBeNull();
+  });
+});

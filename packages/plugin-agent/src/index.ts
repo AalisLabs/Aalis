@@ -457,7 +457,6 @@ class DefaultAgent implements AgentService {
       // service-granularity 后不再需要 router.getContextLengthFor() 反查，也不再会出现
       // 默认 provider 全局窗口与会话实际 model 不一致的偏差（Bug F 结构性修复）。
       const maxTokens = getModelMaxOutput(llm);
-      const maxToolIterations = this.maxToolIterations;
       const contextLength = llm.contextLength;
       // 预留 token 预算 = 上下文长度 × trimThresholdRatio - 最大输出 token - 安全余量
       // trimThresholdRatio < 1 可提前触发裁剪，默认 1.0 = 用满扣除输出预留后的可用窗口
@@ -475,6 +474,12 @@ class DefaultAgent implements AgentService {
           sessionMgr && incoming.sessionId
             ? sessionMgr.resolveConfig(incoming.sessionId, incoming.platform)
             : undefined;
+        // 会话级 maxToolIterations 覆盖（WebUI 会话页可编辑）：正整数才生效，其余视为未设置、回落全局配置
+        const sessionMaxIter = resolved?.maxToolIterations;
+        const maxToolIterations =
+          typeof sessionMaxIter === 'number' && Number.isInteger(sessionMaxIter) && sessionMaxIter >= 1
+            ? sessionMaxIter
+            : this.maxToolIterations;
 
         // 构建 persona 会话选项（从 resolved config 中提取，传给 persona 服务）
         const personaOpts: PersonaSessionOptions | undefined = resolved
