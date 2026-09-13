@@ -16,7 +16,6 @@ import type { ToolDefinition } from '@aalis/api-tools';
 import { useToolService, wrapUntrustedContent } from '@aalis/api-tools';
 import type { AppService, Context, PluginManagerService } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-// 引入 api-tools 触发 declaration merging，使 ctx.registerTool 类型生效
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 

@@ -2342,6 +2342,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       stopHeartbeat(state);
       if (state.ws) {
         state.ws.removeAllListeners();
+        // removeAllListeners 摘掉了 'error' 监听，而下面 terminate() 对 CONNECTING 套接字走
+        // abortHandshake → process.nextTick(emit('error'))，close() 路径的套接字错误同理。
+        // 无监听器的 'error' 会从 nextTick 抛成 uncaughtException，被 runtime 的处理器判为
+        // 致命并结束进程——bounce 撞上握手在途即整个实例退出（脚本实测复现）。
+        // 拆卸期的错误无需处理，只需有人接。
+        state.ws.on('error', () => {});
         if (state.ws.readyState === 0 /* CONNECTING */) {
           state.ws.terminate();
         } else {
