@@ -20,14 +20,19 @@ function makeService() {
   let svc: CheckpointServiceImpl;
 
   // storage-local 的 snapshot(): 回合活跃时，在实际改动前调 beforeMutate
-  const snapshot = async (uri: string, op: 'write' | 'delete' | 'rename') => {
+  const snapshot = async (uri: string, op: 'write' | 'delete' | 'rename', toUri?: string) => {
     if (!svc.isActive()) return;
-    await svc.beforeMutate(uri, op, async () => {
-      const cur = disk.get(uri);
-      if (cur === undefined) return null;
-      const data = Buffer.from(cur);
-      return { data, size: data.length };
-    });
+    await svc.beforeMutate(
+      uri,
+      op,
+      async () => {
+        const cur = disk.get(uri);
+        if (cur === undefined) return null;
+        const data = Buffer.from(cur);
+        return { data, size: data.length };
+      },
+      toUri,
+    );
   };
 
   const storage = {
@@ -43,6 +48,13 @@ function makeService() {
     delete: async (uri: string) => {
       await snapshot(uri, 'delete');
       if (!disk.delete(uri)) throw new Error(`ENOENT: ${uri}`);
+    },
+    move: async (from: string, to: string) => {
+      await snapshot(from, 'rename', to);
+      const cur = disk.get(from);
+      if (cur === undefined) throw new Error(`ENOENT: ${from}`);
+      disk.set(to, cur);
+      disk.delete(from);
     },
     list: async (dirUri: string) => {
       const prefix = dirUri.endsWith('/') ? dirUri : `${dirUri}/`;
@@ -68,6 +80,7 @@ function makeService() {
   svc.setBackend(
     (uri, data) => storage.writeFile(uri, data),
     uri => storage.delete(uri),
+    (from, to) => storage.move(from, to),
   );
   return { svc, disk, storage };
 }
@@ -200,5 +213,70 @@ describe('checkpoint 回滚', () => {
     const [summary] = await svc.listTurns('sessA');
     expect(summary?.fileCount).toBe(1);
     expect(summary?.filesPreview).toEqual(['data:/a.txt']);
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 回滚动作本身不是任何回合的改动：它的写回/删除经 storage 写前钩子回到 beforeMutate，
+// 曾被记进其它会话此刻活跃的回合——那边一回滚就把这次回滚再撤掉，且 listTurns 虚高。
+// ════════════════════════════════════════════════════════════
+describe('checkpoint 回滚动作不记进其它会话的活跃回合', () => {
+  it('B 回合活跃时回滚 A：磁盘回到 A 回合前，B 无改动、不落 manifest', async () => {
+    const { svc, disk, storage } = makeService();
+    disk.set('data:/a.txt', 'orig');
+
+    svc.beginTurn('sessA');
+    await storage.writeFile('data:/a.txt', 'changed');
+    await storage.writeFile('data:/new.txt', 'n');
+    await svc.endTurn('sessA');
+    const turnId = soleTurnId(disk, 'sessA');
+
+    svc.beginTurn('sessB');
+    const r = await svc.rollback('sessA', turnId);
+    expect(r.ok).toBe(true);
+    expect(disk.get('data:/a.txt')).toBe('orig');
+    expect(disk.has('data:/new.txt')).toBe(false);
+    await svc.endTurn('sessB');
+
+    expect([...disk.keys()].filter(k => k.startsWith(`${ROOT}/sessB/`))).toEqual([]);
+  });
+
+  it('回滚结束后 B 回合的真实改动照常受保护（标记不残留）', async () => {
+    const { svc, disk, storage } = makeService();
+    disk.set('data:/a.txt', 'orig');
+    svc.beginTurn('sessA');
+    await storage.writeFile('data:/a.txt', 'changed');
+    await svc.endTurn('sessA');
+    const turnId = soleTurnId(disk, 'sessA');
+
+    svc.beginTurn('sessB');
+    await svc.rollback('sessA', turnId);
+    await storage.writeFile('data:/a.txt', 'by-B');
+    await svc.endTurn('sessB');
+
+    const manifestKey = [...disk.keys()].find(k => k.startsWith(`${ROOT}/sessB/`) && k.endsWith('manifest.json'));
+    expect(manifestKey, 'B 自己的改动应有 manifest').toBeTruthy();
+    const m = JSON.parse(disk.get(manifestKey as string) as string) as TurnManifest;
+    expect(m.files.map(f => [f.uri, f.action])).toEqual([['data:/a.txt', 'write']]);
+    // 快照的是 B 改写前的 orig：若回滚的写回被记进 B（再被 B 自己的写按 URI 去重吞掉），blob 会是 changed
+    const blobKey = (manifestKey as string).replace(/manifest\.json$/, `blobs/${m.files[0].blob}`);
+    expect(disk.get(blobKey)).toBe('orig');
+  });
+
+  it('rename 条目：回滚的原路移回（toUri 侧）也不记进 B', async () => {
+    const { svc, disk, storage } = makeService();
+    disk.set('data:/a.txt', 'orig');
+    svc.beginTurn('sessA');
+    await storage.move('data:/a.txt', 'data:/b.txt');
+    await svc.endTurn('sessA');
+    const turnId = soleTurnId(disk, 'sessA');
+
+    svc.beginTurn('sessB');
+    const r = await svc.rollback('sessA', turnId);
+    expect(r.ok).toBe(true);
+    expect(disk.get('data:/a.txt')).toBe('orig');
+    expect(disk.has('data:/b.txt')).toBe(false);
+    await svc.endTurn('sessB');
+    expect([...disk.keys()].filter(k => k.startsWith(`${ROOT}/sessB/`))).toEqual([]);
   });
 });

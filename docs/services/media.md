@@ -237,7 +237,7 @@ async function handle(ctx: Context, url: string) {
 
 **来源 → 落盘 ref 别名**：非内容寻址的来源串本身不含内容哈希，落盘后才有内容寻址路径。落盘方在落盘成功时登记一次「来源 → 落盘 ref」别名——本服务的 `cacheImageRef` 落 base64 data-URI 时自登记，服务外的落盘方（适配器把 QQ 媒体直链落到 `data/images/…`）经可选方法 `rememberDescriptionAlias(source, landedRef)` 登记。此后按原始来源串读写描述都落到落盘 ref 的那条内容哈希键上——**OneBot 引用消息只拿得到原始 URL**（适配器那条路径只查缓存、不主动触发识别）时经此命中，同一张图换来源进来也不重认，描述还进得了快照（快照只收内容哈希键）。别名按**完整来源串**相等命中：QQ 直链的 rkey 轮换后 get_msg 给的是另一条串，此时退化为不命中（与改前一致）。别名表纯派生、不落盘，重启后由新一轮落盘重新登记；键空间不变，别名只把来源映到已有的落盘键。登记之前已按原始来源串写入的条目不迁移（窄场景，代价只是多识别一次）。
 
-`describeImage` 只在「无 hint 且未 `noCache`」时读写缓存——**带 hint 不进缓存**，因为不同意图的结果不同。空串以及 `[图片:` / `[动图:` 这类占位都不会写入。`lookupDescription`/`rememberDescription`/`rememberDescriptionAlias` 则暴露给适配器做手动复用与别名登记。
+`describeImage` 只在「无 hint 且未 `noCache`」时读写缓存——**带 hint 不进缓存**，因为不同意图的结果不同。缓存按详略档分键：`'auto'`（默认）与到达识别共用同一条，`casual` / `detailed` / `professional` 各自一条（否则「详细分析」会直接命中到达时写下的简述）；档位后缀加在内容哈希之后，别名与跨会话共享对各档同样生效，快照也一并落盘。空串以及 `[图片:` / `[动图:` 这类占位都不会写入。`lookupDescription`/`rememberDescription`/`rememberDescriptionAlias` 则暴露给适配器做手动复用与别名登记。
 
 ### storage URI 用法（provider 与调度器都要懂）
 

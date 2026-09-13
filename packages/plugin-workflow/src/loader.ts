@@ -56,18 +56,17 @@ export class WorkflowLoader {
     return this.loaded.get(id);
   }
 
-  /** 扫描存储 → 内存。失败的文件记 warn 跳过 */
-  async loadAll(): Promise<void> {
+  /** 扫描存储 → 内存。失败的文件记 warn 跳过。返回扫描是否成功：目录不存在算成功（零定义），列目录失败算失败 */
+  async loadAll(): Promise<boolean> {
     let entries: Array<{ name: string; uri: string; isDirectory: boolean }> = [];
     try {
       const listed = await this.storage.list(this.dirUri);
       entries = listed.entries.filter(e => !e.isDirectory && /\.(ya?ml)$/i.test(e.name));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (!/ENOENT|not found|不存在/i.test(msg)) {
-        this.logger.warn(`扫描目录失败: ${err}`);
-      }
-      return;
+      if (/ENOENT|not found|不存在/i.test(msg)) return true;
+      this.logger.warn(`扫描目录失败: ${err}`);
+      return false;
     }
     for (const e of entries) {
       try {
@@ -90,6 +89,7 @@ export class WorkflowLoader {
         this.logger.warn(`加载 workflow 文件 ${e.name} 失败: ${err}`);
       }
     }
+    return true;
   }
 
   /** 保存定义到存储（覆盖） */

@@ -173,3 +173,36 @@ describe('file_read：超限文件给了行范围仍可读', () => {
     expect(r.content).toBe('2\tb\n3\tc');
   });
 });
+
+describe('file_read：整篇与行范围两条路径同一行数口径', () => {
+  it('结尾换行不算多一行：整篇 totalLines / endLine 与行范围一致', async () => {
+    const { call } = setup({ 'workspace:/nl.txt': 'a\nb\n' });
+    const whole = await call('file_read', { path: 'workspace:/nl.txt' });
+    const ranged = await call('file_read', { path: 'workspace:/nl.txt', startLine: 1, endLine: 10 });
+    expect(ranged.totalLines).toBe(2);
+    expect(whole.totalLines).toBe(2);
+    expect(whole.endLine).toBe(2);
+    expect(whole.content).toBe('1\ta\n2\tb');
+  });
+
+  it('CRLF 文件整篇读：行内容不带 \\r，行数与行范围一致', async () => {
+    const { call } = setup({ 'workspace:/crlf.txt': 'a\r\nb\r\nc' });
+    const whole = await call('file_read', { path: 'workspace:/crlf.txt' });
+    const ranged = await call('file_read', { path: 'workspace:/crlf.txt', startLine: 1, endLine: 10 });
+    expect(whole.totalLines).toBe(3);
+    expect(ranged.totalLines).toBe(3);
+    expect(whole.content).toBe('1\ta\n2\tb\n3\tc');
+    expect(ranged.content).toBe('1\ta\n2\tb\n3\tc');
+  });
+
+  it('空文件：整篇与行范围都是 0 行（此前整篇会报 1 行、内容为一个空行）', async () => {
+    const { call } = setup({ 'workspace:/empty.txt': '' });
+    const whole = await call('file_read', { path: 'workspace:/empty.txt' });
+    const ranged = await call('file_read', { path: 'workspace:/empty.txt', startLine: 1, endLine: 10 });
+    expect(whole.totalLines).toBe(0);
+    expect(whole.endLine).toBe(0);
+    expect(whole.content).toBe('');
+    expect(ranged.totalLines).toBe(0);
+    expect(ranged.content).toBe('');
+  });
+});

@@ -62,7 +62,7 @@ interface SessionConfig {
   persona?: string;                            // 人格文件名（不含后缀）
   think?: boolean;                             // 会话级 thinking 覆盖（/session.set -t on|off；未设置=继承 provider 全局）
   systemPromptExtra?: string;
-  maxToolIterations?: number;
+  maxToolIterations?: number;                  // 覆盖 agent 全局值（正整数；非正整数视为未设置）
   disableOutputFormat?: boolean;               // 该会话回复纯文本，不走结构化输出
   clientSideJsonRendering?: boolean;           // 保留完整 JSON 给前端渲染
   sessionDefaults?: Omit<SessionConfig, 'sessionDefaults'>;  // 子会话继承的默认（解析结果里会被剥掉）

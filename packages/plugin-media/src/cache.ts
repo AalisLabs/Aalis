@@ -109,17 +109,26 @@ function resolveAlias(source: string): string {
  * 那它就是「这张图在这个群此刻的解读」，复用到别的群等于把 A 群的语境搬进 B 群。
  * 这类描述退回按落盘路径（含会话目录）做键，只在本会话内复用。
  */
-export function rememberDescription(key: string, raw: string, shareable = true): void {
+export function rememberDescription(key: string, raw: string, shareable = true, variant?: string): void {
   if (!raw || isFailurePlaceholder(raw)) return;
-  const src = resolveAlias(key);
-  cache.set(shareable ? descriptionKey(src) : src, raw);
+  cache.set(cacheKey(key, shareable, variant), raw);
   schedulePersist();
 }
 
 /** 查询缓存。命中且未过期返回字符串，否则返回 null（有界 Map 自行处理过期与淘汰）。 */
-export function lookupCachedDescription(key: string, shareable = true): string | null {
+export function lookupCachedDescription(key: string, shareable = true, variant?: string): string | null {
+  return cache.get(cacheKey(key, shareable, variant)) ?? null;
+}
+
+/**
+ * 最终缓存键：别名解析 → 内容哈希（shareable）→ 可选的变体后缀。
+ * variant 是 describeImage 的非默认详略档（casual/detailed/professional）：同一张图按档位各存一条，
+ * 默认档（auto）与到达识别共用无后缀的那条。后缀加在哈希之后，别名与跨会话共享对各档同样生效。
+ */
+function cacheKey(key: string, shareable: boolean, variant?: string): string {
   const src = resolveAlias(key);
-  return cache.get(shareable ? descriptionKey(src) : src) ?? null;
+  const base = shareable ? descriptionKey(src) : src;
+  return variant ? `${base}#${variant}` : base;
 }
 
 /**
@@ -182,7 +191,7 @@ async function persist(): Promise<void> {
     const { storage } = getMediaRuntime();
     // 只落内容哈希键：非内容寻址的来源（WebUI 上传的整条 base64 data URI 可达数 MB）
     // 写进快照会让这份纯派生缓存产生数量级的写放大，且重启后也无从复用。
-    const durable = cache.entries().filter(([k]) => /^[0-9a-f]{16}$/.test(k));
+    const durable = cache.entries().filter(([k]) => /^[0-9a-f]{16}(#[a-z]+)?$/.test(k));
     await storage.writeFile(SNAPSHOT_URI, JSON.stringify(durable));
   } catch (err) {
     logger.warn(`图片描述缓存落盘失败（仅影响重启后的复用）: ${err instanceof Error ? err.message : err}`);

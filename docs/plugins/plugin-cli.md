@@ -32,5 +32,5 @@ meta.inject = { optional: ['llm', 'commands'] }
 - `app:started` 后接管终端进入全屏界面；stdin / stdout 任一不是 TTY（日志重定向、容器、systemd）时不接管、不画界面，控制台日志照常输出，发往 cli 会话的消息退化为一行日志
 - 用户输入经 `inbound:message` 事件发出（`platform: 'cli'`，`userId: 'console'`，即本地终端身份）
 - 斜杠指令不在本插件内解析，由 `commands` 服务（plugin-commands）在 `inbound:command` 相位统一处理（如 `/help`、`/status`），执行结果经 `outbound:message` 回显到终端
-- 意图确认（权限模型轴 B）：CLI 不自建确认通道，走 plugin-session-confirm 的公共协调器（authority 的 `'*'` 回调）——声明了 `confirm` 的操作会把提示（含参数摘要）作为消息发进聊天区，在输入框回复 `y`（仅本次）或 `ys`（本会话放行）后回车，其它输入取消；回复在 `inbound:confirm` 相位被拦截，不会当成对话发给模型；多个并发确认按先到先问排队；确认提示只在 chat 视图可见可答，在 logs/status/help 等视图下触发的确认需先 Ctrl+T 切回 chat 才能看到并回答，60 秒无回复视为取消
+- 意图确认（权限模型轴 B）：CLI 不自建确认通道，走 plugin-session-confirm 的公共协调器（authority 的 `'*'` 回调）——声明了 `confirm` 的操作会把提示（含参数摘要）作为消息发进聊天区，在输入框回复 `y`（仅本次）或 `ys`（本会话放行）后回车，其它输入取消；回复在 `inbound:confirm` 相位被拦截，不会当成对话发给模型；多个并发确认按先到先问排队；确认提示只在 chat 视图可见可答；在 logs/status/help 视图下有消息（含确认提示）进入聊天区时，header 的 CHAT 页签会带计数高亮，Ctrl+T 切回 chat 即可看到并回答，60 秒无回复视为取消
 - sessionId 默认为 `cli-default`

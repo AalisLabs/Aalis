@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { createReadStream, type FSWatcher, watch as fsWatch } from 'node:fs';
+import { createReadStream, type FSWatcher, watch as fsWatch, statSync } from 'node:fs';
 import {
   chmod,
   lstat,
@@ -545,7 +545,7 @@ class ScopedStorageService implements StorageService {
    * 监听某个 URI 下的变化。基于 fs.watch + 50ms 去抖。
    *
    * - 目录 URI：尝试 recursive 监听整个子树；若平台不支持 recursive，降级为只监听该目录顶层（warn）。
-   * - 文件 URI：监听该文件本身。
+   * - 文件 URI：监听其父目录并按文件名过滤（只报该文件的事件；不直接 watch 文件本身，见实现处说明）。
    * - 事件路径会归一化为相对该 URI 的 storage URI 路径并去抖（同一相对路径 50ms 内只触发一次）。
    */
   watch(uri: string, listener: StorageWatchListener): StorageUnwatch {
@@ -584,20 +584,32 @@ class ScopedStorageService implements StorageService {
 
     let watcher: FSWatcher;
     const baseRelToRoot = normalizeRelPath(relPath);
+    // 文件 URI：监听父目录并按文件名过滤，不直接 watch 文件本身——后者回调给的 filename 是文件自己的
+    // 名字（拼到 baseRelToRoot 后路径翻倍），且绑定 inode，原子写（临时文件 rename 覆盖）之后再无事件
+    const fileName = statSync(absBase).isFile() ? basename(absBase) : null;
     const handle = (filename: string | Buffer | null): void => {
-      if (!filename) {
+      const name = !filename ? null : typeof filename === 'string' ? filename : filename.toString('utf8');
+      if (fileName !== null) {
+        if (name === null || name === fileName) emit(baseRelToRoot);
+        return;
+      }
+      if (name === null) {
         emit(baseRelToRoot);
         return;
       }
-      const name = typeof filename === 'string' ? filename : filename.toString('utf8');
       // fs.watch 给的 filename 是相对被监听路径的相对路径
       const rel = baseRelToRoot ? `${baseRelToRoot}/${name.split(sep).join('/')}` : name.split(sep).join('/');
       emit(rel);
     };
 
     try {
-      watcher = fsWatch(absBase, { recursive: true }, (_event, filename) => handle(filename));
-      this.logger.debug(`storage.watch ${toUri(this.root.name, baseRelToRoot)} (recursive)`);
+      watcher =
+        fileName !== null
+          ? fsWatch(dirname(absBase), (_event, filename) => handle(filename))
+          : fsWatch(absBase, { recursive: true }, (_event, filename) => handle(filename));
+      this.logger.debug(
+        `storage.watch ${toUri(this.root.name, baseRelToRoot)} ${fileName !== null ? '(file)' : '(recursive)'}`,
+      );
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM') {
