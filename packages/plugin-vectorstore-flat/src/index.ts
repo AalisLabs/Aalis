@@ -158,11 +158,21 @@ export class FlatVectorStore implements VectorStoreService {
     return this.saveChain;
   }
 
+  /**
+   * 不变量：**本方法永不 reject**。
+   *
+   * save() 把它挂在 saveChain 上，而 `.then(onFulfilled)` 在已 rejected 的链上只会原样传递
+   * 拒因、不再调用回调——一旦 doSave 抛一次，saveChain 就永久中毒，此后每次 save 都是空转，
+   * 连 clear() 都写不出去（只能人工删 vectors.json）。所以整个方法体必须在 try 内：
+   * JSON.stringify 会抛：entries 里混进不可序列化值（metadata 是 Record<string, unknown>，
+   * BigInt 直接 TypeError、循环引用同理），或库涨到 V8 字符串上限（约 5.4 亿字符）时 RangeError。
+   * 它此前在 try 之外。
+   */
   private async doSave(): Promise<void> {
     if (!this.dirty) return;
     this.dirty = false; // 先清脏；期间新 add 会重新置脏，触发下一次链式 save
-    const data = JSON.stringify(this.entries);
     try {
+      const data = JSON.stringify(this.entries);
       await this.storage.writeFile(this.dataUri, data);
     } catch (err) {
       this.dirty = true; // 失败重标脏，下次重试

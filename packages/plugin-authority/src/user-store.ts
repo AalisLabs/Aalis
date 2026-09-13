@@ -73,6 +73,17 @@ export class UserStore {
       );
   }
 
+  /**
+   * 等待此前挂上去的落盘真正完成。
+   *
+   * `save()` 是同步返回的（写挂在 saveChain 上），所以拆卸路径必须显式等这个，
+   * 否则进程退出时在飞的写会被丢掉——封禁/等级是安全语义，丢了就是「封了但没封住」。
+   * saveChain 已用 `.then(ok, err)` 终结、永不 reject，await 它是安全的。
+   */
+  flushed(): Promise<void> {
+    return this.saveChain;
+  }
+
   async load(): Promise<void> {
     // 重读即重判：storage 重新上线（whenService 重挂）或重启后 load 成功即恢复落盘；
     // 同一进程内不会自动重读——没有新的 load，这一程就一直拒写。

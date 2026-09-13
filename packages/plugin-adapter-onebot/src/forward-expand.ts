@@ -96,6 +96,14 @@ const FORWARD_PERSIST_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  */
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 const FORWARD_METADATA_NS = 'onebot:forward';
+/**
+ * 单条消息最多展开几个 `<forward id=...>`。
+ *
+ * 这不是性能调优而是放大闸：id 来自对**正文**的正则扫描，而 text 段在 segmentsToText 里
+ * 是原样透传的，群内任何人发一条纯文本就能伪造任意多个标记，且无需 @ 机器人（展开发生在
+ * 触发策略之前）。真实合并转发一条消息里不会带这么多，超出的保留占位符不展开。
+ */
+const MAX_FORWARD_IDS_PER_MESSAGE = 8;
 
 /**
  * 把一个异步函数包成"同时最多 N 路"的并发受限版本。
@@ -398,6 +406,13 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
       m = idRe.exec(text);
     }
     if (ids.size === 0) return text;
+    let expandIds = [...ids];
+    if (expandIds.length > MAX_FORWARD_IDS_PER_MESSAGE) {
+      ctx.logger.info(
+        `合并转发标记 ${expandIds.length} 个，超上限 ${MAX_FORWARD_IDS_PER_MESSAGE}，仅展开前 ${MAX_FORWARD_IDS_PER_MESSAGE} 个（其余保留占位符）`,
+      );
+      expandIds = expandIds.slice(0, MAX_FORWARD_IDS_PER_MESSAGE);
+    }
 
     const mediaSvc = ctx.getService<MediaService>('media');
     const concurrency = Math.max(1, forwardCfg.imageRecognitionConcurrency);
@@ -408,7 +423,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     // 识别队列之后——正是两阶段化要消灭的事故形状（审计探针实证）。id 互相独立
     // （envelopeMap 各写各键、缓存按 id、信号量在 resolver 闭包里共享），并行安全。
     await Promise.all(
-      [...ids].map(async id => {
+      expandIds.map(async id => {
         let entry = getCachedForward(id);
         if (!entry) {
           const persisted = await loadPersistedForward(id);
