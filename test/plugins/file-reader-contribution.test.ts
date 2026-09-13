@@ -10,7 +10,7 @@ import type {
 import { App } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import * as fileReaderModule from '../../packages/plugin-file-reader/src/index.js';
-import { computeFileId } from '../../packages/plugin-file-reader/src/index.js';
+import { computeFileId, type FileReaderService } from '../../packages/plugin-file-reader/src/index.js';
 import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -475,6 +475,69 @@ describe('plugin-file-reader: PDF 抽文本（unpdf）', () => {
     try {
       const { desc } = await fx.upload('s-pdf', 'bad.pdf', Buffer.from('not a pdf'), 'application/pdf');
       expect(desc).toContain('[PDF 解析失败]');
+    } finally {
+      fx.dispose();
+    }
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 会话目录名：sessionId 含冒号（onebot:<self>:group:<gid>）曾原样当目录名——Windows 文件名不收冒号，
+// 上传落盘直接失败。现与附件落盘同一套替换；老版本按原样建过的目录（POSIX 合法）按实际目录恢复。
+// ════════════════════════════════════════════════════════════
+describe('plugin-file-reader: 会话目录名', () => {
+  it('sessionId 含冒号 → 目录名替换成下划线，meta 里仍是原 sessionId', async () => {
+    const fx = await setup();
+    try {
+      await fx.upload('onebot:1:group:2', 'a.txt', 'hello');
+      const storage = fx.app.ctx.getService<StorageService>('storage')!;
+      const dirs = (await storage.list('pluginData:/file-reader')).entries.filter(e => e.isDirectory).map(e => e.name);
+      expect(dirs).toEqual(['onebot_1_group_2']);
+      const svc = fx.app.ctx.getService<FileReaderService>('file-reader')!;
+      expect(svc.listFiles('onebot:1:group:2').map(f => f.name)).toEqual(['a.txt']);
+    } finally {
+      fx.dispose();
+    }
+  });
+
+  it('老版本按原样 sessionId 建的目录：重启恢复按实际目录定位，删除删的也是那里', async () => {
+    const fx = await setup();
+    const storage = fx.app.ctx.getService<StorageService>('storage')!;
+    const sessionId = 'onebot:1:group:2';
+    const id = await computeFileId(sessionId, Buffer.from('legacy'));
+    const legacyDir = `pluginData:/file-reader/${sessionId}`;
+    await storage.writeFile(`${legacyDir}/${id}.txt`, 'legacy');
+    await storage.writeFile(
+      `${legacyDir}/${id}.meta.json`,
+      JSON.stringify({ id, name: 'old.txt', mimeType: 'text/plain', size: 6, sessionId, uploadedAt: Date.now() }),
+    );
+    fx.dispose();
+    const off = await fx.app.ctx.useModule(fileReaderModule, {}); // 重新加载 → restoreIndex 扫目录
+    try {
+      const svc = fx.app.ctx.getService<FileReaderService>('file-reader')!;
+      expect(svc.getMeta(id)?.name).toBe('old.txt');
+      expect(await svc.deleteFile(id)).toBe(true);
+      await expect(storage.stat(`${legacyDir}/${id}.txt`), '应删除实际目录里的数据文件').rejects.toThrow();
+      await expect(storage.stat(`${legacyDir}/${id}.meta.json`)).rejects.toThrow();
+    } finally {
+      off();
+    }
+  });
+});
+
+describe('plugin-file-reader: session:deleted 清理', () => {
+  it('新旧两种目录名都清，连未入索引的残留一起', async () => {
+    const fx = await setup();
+    try {
+      const sessionId = 'onebot:1:group:2';
+      await fx.upload(sessionId, 'a.txt', 'hello');
+      const storage = fx.app.ctx.getService<StorageService>('storage')!;
+      await storage.writeFile('pluginData:/file-reader/onebot_1_group_2/deadbeef00000000.txt', 'orphan'); // 无 meta 的残留
+      await storage.writeFile(`pluginData:/file-reader/${sessionId}/cafebabe00000000.txt`, 'legacy-orphan'); // 老目录残留
+      await fx.app.ctx.emit('session:deleted', sessionId);
+      await new Promise(r => setImmediate(r));
+      await expect(storage.list('pluginData:/file-reader/onebot_1_group_2'), '新目录应整个删掉').rejects.toThrow();
+      await expect(storage.list(`pluginData:/file-reader/${sessionId}`), '老目录应整个删掉').rejects.toThrow();
     } finally {
       fx.dispose();
     }

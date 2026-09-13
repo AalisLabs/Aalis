@@ -371,8 +371,10 @@ function unifySlashes(input: string): string {
  * 把**工具用户输入的路径**求值为完整 storage URI —— 工具侧路径解析的唯一入口，
  * 与 `toStorageUri`（配置路径归一）语义不同。规则（按顺序）：
  * 1. 空 / `.` → 当前 `cwd` 自身
- * 2. 含 `:/` → 视为完整 storage URI，归一化（消 `.`/`..`）后返回（任意根；根级访问控制在别处做）
- * 3. 宿主机绝对路径（`/abs` 或 `C:\path`）→ 抛错（安全：禁止越出存储体系访问宿主文件系统）
+ * 2. 宿主机绝对路径（`/abs`、`C:\path` 或 `C:/path`）→ 抛错（安全：禁止越出存储体系访问宿主文件系统）。
+ *    Windows 盘符文法与单字母根名冲突：工具路径输入侧一律按盘符处理，单字母根名在这里不可达（根名文法本身
+ *    见 docs/concepts/storage-uri-grammar.md）
+ * 3. 含 `:/` → 视为完整 storage URI，归一化（消 `.`/`..`）后返回（任意根；根级访问控制在别处做）
  * 4. 其它 → 相对 `cwd` 求值（与 unix shell 一致：`foo` 落在 cwd 之下）
  *
  * `cwd` 必须是合法 storage URI（如 `workspace:/`、`data:/work`）；调用方传各自的工作目录。
@@ -381,15 +383,15 @@ export function resolveAgainstCwd(input: string | undefined, cwd: string): strin
   const raw = (input ?? '').trim();
   const cwdParsed = parseStorageUri(cwd);
   if (!raw || raw === '.') return joinStorageUri(cwdParsed.root, cwdParsed.segments);
-  if (/^[a-zA-Z][a-zA-Z0-9_-]*:\//.test(raw)) {
-    const parsed = parseStorageUri(unifySlashes(raw));
-    return joinStorageUri(parsed.root, parsed.segments);
-  }
   if (/^[a-zA-Z]:[\\/]/.test(raw) || raw.startsWith('/')) {
     throw new Error(
       `不接受宿主机绝对路径 "${raw}"。请改用 storage URI（如 aalis:/packages/core）` +
         `或相对当前 cwd 的路径。调用 cwd 工具可查看当前目录与所有可用 storage 根。`,
     );
+  }
+  if (/^[a-zA-Z][a-zA-Z0-9_-]*:\//.test(raw)) {
+    const parsed = parseStorageUri(unifySlashes(raw));
+    return joinStorageUri(parsed.root, parsed.segments);
   }
   const relSegments = unifySlashes(raw).split('/').filter(Boolean);
   return joinStorageUri(cwdParsed.root, normalizeSegments([...cwdParsed.segments, ...relSegments]));

@@ -13,7 +13,8 @@ import * as storageLocal from '../../packages/plugin-storage-local/src/index.js'
 // 回归三处「报回滚完成、磁盘却没回去」：
 //   1) 目录递归删除完全不进 manifest（fileCount=0 却照样渲染回滚按钮）
 //   2) move/rename 回滚只写回源端、从不删目标 → 回滚后文件变两份
-//   3) 易失根（kind='tmp'）的写入被记账 → 回合结束前已被 cleanup 删掉 → 回滚必 ENOENT
+//   3) 不记账的根（tmp / data 等）的写入被记账 → tmp 在回合结束前已被 cleanup 删掉 → 回滚必 ENOENT；
+//      data 是别的平台/插件也在写的共享区 → 回滚会误删别人的文件
 // 另守：回滚逆序撤销（LIFO，「移走后又改写目标」才能一并回退）、回落删目标只豁免 ENOENT
 // （重复回滚仍 ok:true，权限失败则入 errors）、写目录在快照前就被拒（否则幽灵 write-new 让回滚删掉整棵目录）、
 // 以及 execUsed 判据（exec_background / run_* 也算「命令副作用不可回滚」）。
@@ -277,22 +278,24 @@ describe('checkpoint × storage (真 fs)', () => {
     expect(readFileSync(join(ws, 'd', 'inside.txt'), 'utf-8')).toBe('keep');
   });
 
-  it('易失根（tmp）：写入与清理都不记账，回滚不被 ENOENT 带崩', async () => {
+  it('不记账的根（tmp / data）：写入与清理都不记账，回滚不被 ENOENT 带崩、也不碰 data 根', async () => {
     writeFileSync(join(ws, 'keep.txt'), 'orig');
 
     const turnId = await runTurn('s5', async () => {
       await storage.writeFile('ws:/keep.txt', 'changed');
       await storage.writeFile('tmp:/run-1/main.py', 'print(1)'); // code-runner 临时目录
       await storage.delete('tmp:/run-1'); // 回合结束前 cleanup 已删
+      await storage.writeFile('data:/state.json', 'v2'); // 插件状态 / 别的平台落盘
     });
 
     const manifest = await svc.getManifest('s5', turnId);
-    expect(manifest?.files.map(f => f.uri)).toEqual(['ws:/keep.txt']); // 内部 tmp 路径不外泄
+    expect(manifest?.files.map(f => f.uri)).toEqual(['ws:/keep.txt']); // 内部 tmp / data 路径不外泄
 
     const result = await svc.rollback('s5', turnId);
     expect(result.errors).toEqual([]);
     expect(result.ok).toBe(true);
     expect(readFileSync(join(ws, 'keep.txt'), 'utf-8')).toBe('orig');
+    expect(String(await storage.readFile('data:/state.json', 'utf-8')), 'data 根文件不得被回滚改回').toBe('v2');
   });
 
   it('execUsed：exec_background / run_python 也算命令副作用', async () => {
