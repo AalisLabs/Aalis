@@ -53,6 +53,11 @@ export class RunStore {
     }
   }
 
+  /** 等到目前为止排队的写入全部落盘（dispose 时调用：否则 app.stop() 返回后还有写入在飞）。 */
+  flushed(): Promise<void> {
+    return this.writeChain;
+  }
+
   private flush(): void {
     const payload = JSON.stringify({ runs: this.runs, onceFired: this.onceFired }, null, 2);
     this.writeChain = this.writeChain
