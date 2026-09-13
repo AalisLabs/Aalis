@@ -3,7 +3,7 @@
 // ============================================================
 
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process';
-import { readFile as fsReadFile } from 'node:fs/promises';
+import { readFile as fsReadFile, stat as fsStat } from 'node:fs/promises';
 import type { ExecResult, ProcessService, SpawnHandle, SpawnOptions, TempDirHandle } from '@aalis/api-process';
 import { makeTempDirViaStorage } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
@@ -228,8 +228,16 @@ export class LocalProcessService implements ProcessService {
     return makeTempDirViaStorage(this.storage, prefix);
   }
 
-  async readExternalFile(path: string): Promise<Uint8Array> {
+  async readExternalFile(path: string, maxBytes?: number): Promise<Uint8Array> {
     const realPath = path.startsWith('file://') ? path.slice('file://'.length) : path;
+    // 先看大小再读：调用方（如 onebot 附件缓存）拿到的路径来自外部 daemon，
+    // 整份读进堆之后再判限额等于白吃一次峰值内存，大文件足以把进程压垮。
+    if (maxBytes !== undefined && Number.isFinite(maxBytes)) {
+      const st = await fsStat(realPath);
+      if (st.size > maxBytes) {
+        throw new Error(`外部文件超过上限: ${st.size} > ${maxBytes}`);
+      }
+    }
     return fsReadFile(realPath);
   }
 }
