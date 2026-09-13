@@ -1,3 +1,4 @@
+import { type CheckResult, useDoctorService } from '@aalis/api-doctor';
 import type { EmbeddingService } from '@aalis/api-embedding';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { Context } from '@aalis/core';
@@ -10,6 +11,10 @@ export const displayName = 'Ollama Embedding';
 export const subsystem = 'embedding';
 export const provides = ['embedding'];
 export const reusable = true;
+/** doctor 为可选依赖：服务注册成功 != 模型可用，健康状况经 registerCheck 上报 */
+export const inject = {
+  optional: ['doctor'],
+};
 
 export const configSchema: ConfigSchema = {
   baseUrl: {
@@ -32,6 +37,35 @@ export const configSchema: ConfigSchema = {
 function formatError(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+/**
+ * 把响应体里的 error 一并带进错误消息。
+ *
+ * Ollama 对「模型没 pull」与「端点不存在」都答 404，只有响应体能区分
+ * （前者是 `model "xxx" not found, try pulling it first`）。只报状态码的话，
+ * 日志里就只剩一句没有信息量的「404 Not Found」，把人引向端点/网络方向排查。
+ */
+async function statusError(res: Response, endpoint: string): Promise<HttpStatusError> {
+  let detail = '';
+  try {
+    const text = await res.text();
+    if (text) {
+      try {
+        const parsed = JSON.parse(text) as { error?: unknown };
+        detail = typeof parsed.error === 'string' ? parsed.error : text;
+      } catch {
+        detail = text;
+      }
+    }
+  } catch {
+    /* 响应体读不出就只报状态码 */
+  }
+  const tail = detail ? ` —— ${detail.slice(0, 200)}` : '';
+  return new HttpStatusError(
+    res.status,
+    `Ollama embedding 请求失败 (${endpoint}): ${res.status} ${res.statusText}${tail}`,
+  );
 }
 
 /** 带 HTTP 状态码的响应错误：新旧 API 探测据此区分「端点不存在」与瞬态故障 */
@@ -116,7 +150,7 @@ class OllamaEmbeddingService implements EmbeddingService {
   private async embedNew(text: string): Promise<number[]> {
     const res = await this.postJson('/api/embed', { model: this.model, input: text });
     if (!res.ok) {
-      throw new HttpStatusError(res.status, `Ollama embedding 请求失败: ${res.status} ${res.statusText}`);
+      throw await statusError(res, '/api/embed');
     }
     const data = (await res.json()) as { embeddings: number[][] };
     return data.embeddings[0];
@@ -126,7 +160,7 @@ class OllamaEmbeddingService implements EmbeddingService {
   private async embedLegacy(text: string): Promise<number[]> {
     const res = await this.postJson('/api/embeddings', { model: this.model, prompt: text });
     if (!res.ok) {
-      throw new HttpStatusError(res.status, `Ollama embedding 请求失败: ${res.status} ${res.statusText}`);
+      throw await statusError(res, '/api/embeddings');
     }
     const data = (await res.json()) as { embedding: number[] };
     return data.embedding;
@@ -137,8 +171,11 @@ class OllamaEmbeddingService implements EmbeddingService {
       const res = await fetch(`${this.baseUrl}/api/tags`);
       if (!res.ok) return [];
       const data = (await res.json()) as { models: { name: string }[] };
-      // 过滤出 embedding 类模型（名称中包含 embed 的）
-      // 如果没有特征可辨别，返回全部让用户自己选
+      // 原样返回本机全部模型，不按名字筛。曾改成「筛出名称含 embed 的、筛空回退全量」，
+      // 判否：混合场景（同时有 nomic-embed-text 与 bge-m3）会把后者从下拉里剔掉，而本字段
+      // 是 select、没有自由输入（allowCustom 只在 multiselect 分支实现），用户除了手改
+      // 配置文件没有别的出路。选错模型的代价小于选不到模型，且模型不可用现在由
+      // doctor 检查项直接报出来，不再依赖候选列表去做引导。
       return data.models.map(m => m.name);
     } catch {
       return [];
@@ -166,4 +203,53 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   ctx.provide('embedding', service, { label: `Ollama / ${model}` });
+
+  // 连通性失败只 warn、服务照常注册，是刻意的（Ollama 可能晚于 Aalis 起来）。
+  // 代价是「服务在、但每次调用都失败」这一态对用户完全不可见：/status 只判存在性，
+  // 插件状态是 active，向量记忆则每条消息静默失败。把真实健康状况交给 doctor 上报。
+  // doctor 的 runChecks 顺序 await 且不设超时（plugin-doctor/src/index.ts:runChecks），
+  // 而 embed 最长要等 (retries + 1) × timeoutMs（默认 60s）。/doctor 正是出问题时才跑的
+  // 命令，不能被一条网络探测拖住：探测自带上限，取 5s 与配置超时中的小者。
+  // 与服务构造函数的 clamp 对齐（this.timeoutMs = Math.max(1000, timeoutMs)）：
+  // 直接取原始配置值的话，timeoutMs 填 0 会让探测立刻 reject，/doctor 恒报假阳性。
+  const probeTimeoutMs = Math.min(5_000, Math.max(1_000, timeoutMs));
+  // 本插件 reusable=true，可按 `name:suffix` 起多实例；doctor 以 spec.id 为键，
+  // 同 id 重复注册后者覆盖前者——两个实例共用一个 id 就只有一个的健康度可见，
+  // 恰是这条检查要堵的洞。默认实例保持 `embedding.ollama`，多实例带上后缀。
+  const checkId = ctx.id?.startsWith(`${name}:`)
+    ? `embedding.ollama.${ctx.id.slice(name.length + 1)}`
+    : 'embedding.ollama';
+  useDoctorService(ctx).registerCheck({
+    id: checkId,
+    category: 'service',
+    // 不写死 pluginName：useDoctorService 会填 ctx.id，多实例才分得清是哪一个
+    async run(): Promise<CheckResult> {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          service.embed('ping'),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`探测超时（${probeTimeoutMs}ms）`)), probeTimeoutMs);
+            timer.unref?.(); // 待定的探测计时器不该挡住进程优雅退出
+          }),
+        ]);
+        return {
+          id: checkId,
+          category: 'service',
+          level: 'ok',
+          message: `Ollama Embedding 可用 (${model} @ ${baseUrl})`,
+        };
+      } catch (err) {
+        return {
+          id: checkId,
+          category: 'service',
+          level: 'error',
+          message: `Ollama Embedding 不可用 (${model} @ ${baseUrl})——向量记忆不工作`,
+          detail: formatError(err),
+        };
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    },
+  });
 }
