@@ -366,7 +366,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     return Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString('hex');
   }
 
-  async function writeAccessFile(url: string, token: string): Promise<void> {
+  /** 返回是否真的写成了：调用方据此决定能不能宣称「凭据已写入」 */
+  async function writeAccessFile(url: string, token: string): Promise<boolean> {
     const lines = [
       '# Aalis WebUI 访问凭据（自动生成）',
       `# 生成时间: ${new Date().toISOString()}`,
@@ -380,8 +381,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     ];
     try {
       await storage.writeFile(accessFileUri, `${lines.join('\n')}\n`);
+      return true;
     } catch (err) {
       ctx.logger.warn(`写入访问文件失败: ${(err as Error).message}`);
+      return false;
     }
   }
 
@@ -1640,7 +1643,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const displayHost = uiConfig.host === '0.0.0.0' || uiConfig.host === '::' ? '127.0.0.1' : uiConfig.host;
       const url = `http://${displayHost}:${uiConfig.port}/`;
       const accessUrl = `${url}?token=${authToken}`;
-      void writeAccessFile(url, authToken);
       ctx.logger.info(`WebUI 已启动: ${url}`);
       // 多前端时提示恢复页 URL：万一切到无切换 UI 的前端被卡住，可在此切回（详见 client-switch-page.ts）。
       if (clientCandidates.length > 1) {
@@ -1656,13 +1658,21 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       // 仅打不带 token 的 URL，完整一键登录链接见 access.txt（该文件应 0o600，见 token 落盘）。
       ctx.logger.info(`首次访问 URL（${tokenHint}）: ${url} —— 完整一键登录链接见 ${accessFileUri}`);
       void (async () => {
+        // 先把文件写出来，再解析它的绝对路径：resolveLocalPath 走 realpath，文件尚未落盘会抛
+        // ENOENT 被吞掉，于是「绝对路径」退化成原样重复一遍 URI——偏偏首启（新用户唯一需要
+        // 这行的时刻）必然命中，二次启动因文件已在反而正常。两者原先都是 void，谁先到看调度。
+        if (!(await writeAccessFile(url, authToken))) {
+          // 写失败上面已 warn 过；再打一条「已写入」只会让人去找一个不存在的文件
+          ctx.logger.warn(`访问凭据未能写入 ${accessFileUri}；请用 WebUI 登录页手工粘贴 token`);
+          return;
+        }
         let absHint = accessFileUri;
         try {
           if (storage.resolveLocalPath) {
             absHint = await storage.resolveLocalPath(accessFileUri, 'read');
           }
-        } catch {
-          /* ignore */
+        } catch (err) {
+          ctx.logger.debug(`解析访问凭据文件绝对路径失败: ${(err as Error).message}`);
         }
         ctx.logger.info(`访问凭据已写入: ${accessFileUri}（绝对路径: ${absHint}）`);
       })();
