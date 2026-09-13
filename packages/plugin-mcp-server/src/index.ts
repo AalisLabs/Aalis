@@ -12,7 +12,7 @@
  * - config.toolGroups 白名单：仅暴露指定分组（空数组=全部允许）
  * - config.bind 默认 127.0.0.1（仅本机访问）
  */
-import { createServer, type Server } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { ToolCallContext, ToolService } from '@aalis/api-tools';
 import { asToolExecutionResult } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
@@ -90,13 +90,29 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     ctx.logger.error('tools 服务不可用');
     return;
   }
+  // handle 是函数声明（可提升），TS 不把上面的窄化带进去；固化成非可选类型的常量
+  const toolService: ToolService = tools;
 
   // SSE 同时只支持一个活跃连接（标准约束）；新连接挤掉旧的
   let currentTransport: SSEServerTransport | undefined;
   let mcpServer: McpServer | undefined;
 
   const httpServer: Server = createServer(async (req, res) => {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    try {
+      // 不拿 Host 拼 base：这段代码根本不用 host，而畸形/空 Host（`Host:` 解析成空字符串，
+      // 空串非 nullish、?? 兜不住）会让 base 退化成 'http://' 并抛 ERR_INVALID_URL。
+      const url = new URL(req.url ?? '/', 'http://localhost');
+      await handle(req, res, url);
+    } catch (err) {
+      // 回调是 async 且这里是它唯一的出口：漏一个异常就是一条 unhandledRejection，
+      // 而 runtime 的处理器会判致命并结束进程（webui 走 express 自带兜底，这条没有）。
+      ctx.logger.warn(`MCP 请求处理失败: ${err instanceof Error ? err.message : String(err)}`);
+      if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'internal' }));
+    }
+  });
+
+  async function handle(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
     if (req.method === 'GET' && url.pathname === '/sse') {
       // 新 SSE 连接
       if (currentTransport) {
@@ -109,7 +125,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       const transport = new SSEServerTransport('/messages', res);
       currentTransport = transport;
 
-      mcpServer = buildMcpServer(ctx, tools, config);
+      mcpServer = buildMcpServer(ctx, toolService, config);
       await mcpServer.connect(transport);
       ctx.logger.info('MCP client 已通过 SSE 连接');
 
@@ -135,7 +151,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
 
     res.writeHead(404, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: 'not found' }));
-  });
+  }
 
   await new Promise<void>((resolve, reject) => {
     httpServer.once('error', reject);
