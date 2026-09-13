@@ -42,7 +42,7 @@ export interface SessionConfig {
   think?: boolean;
   /** 额外系统提示（追加到人格提示之后） */
   systemPromptExtra?: string;
-  /** 最大工具迭代次数覆盖 */
+  /** 最大工具迭代次数覆盖（正整数；非正整数视为未设置，回落 agent 全局配置） */
   maxToolIterations?: number;
   /** 禁用结构化输出格式（该会话回复纯文本） */
   disableOutputFormat?: boolean;

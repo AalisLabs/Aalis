@@ -687,9 +687,13 @@ export class MediaServiceImpl implements MediaService {
    * 单图描述（带缓存 + 自动判定动图）。供 analyze_image 工具与外部直接调用。
    */
   async describeImage(imageUrl: string, opts: DescribeImageOptions = {}): Promise<string> {
-    const noCache = opts.noCache === true;
-    if (!noCache && !opts.hint) {
-      const cached = lookupCachedDescription(imageUrl);
+    // 描述缓存按详略档分键：auto（默认）与到达识别共用一条，casual/detailed/professional 各自一条——
+    // 否则「详细分析」会直接命中到达时写下的简述。带 hint 仍不进缓存（不同意图结果不同）。
+    const detailLevel = opts.detailLevel ?? 'auto';
+    const cacheVariant = detailLevel === 'auto' ? undefined : detailLevel;
+    const useCache = opts.noCache !== true && !opts.hint;
+    if (useCache) {
+      const cached = lookupCachedDescription(imageUrl, true, cacheVariant);
       if (cached) return cached;
     }
 
@@ -744,7 +748,6 @@ export class MediaServiceImpl implements MediaService {
     } else {
       // detailLevel 决策：casual/detailed/professional 直接选定模板；
       // auto 用自路由 prompt 单次推理（模型看图自判类型、按类型给相应详略）。
-      const detailLevel = opts.detailLevel ?? 'auto';
       let basePrompt: string;
       if (detailLevel === 'casual') {
         basePrompt = this.cfg.vision.prompt || DEFAULT_VISION_PROMPT;
@@ -769,7 +772,7 @@ export class MediaServiceImpl implements MediaService {
       result = r.descriptions[0] ?? '';
     }
 
-    if (!noCache && !opts.hint && result) rememberDescription(imageUrl, result);
+    if (useCache && result) rememberDescription(imageUrl, result, true, cacheVariant);
     return result;
   }
 
