@@ -56,6 +56,9 @@ function fakeRes() {
       return res;
     },
     setHeader() {},
+    // 下载路由会挂 res.on('close') 以便客户端中断时 destroy 源流。这里是 no-op：
+    // 本用例不模拟中断，回调不该被触发。
+    on() {},
     get piped() {
       return out.piped;
     },
