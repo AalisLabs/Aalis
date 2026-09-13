@@ -70,7 +70,7 @@ meta.inject = { optional: ['commands', 'tools'] }
 
 - `config.owners`（`UserIdentity[]`）：owner 身份列表（owner = ∞，不在等级表内）。
 - `config.deniedCapabilities`（glob 列表）：全局硬禁用，命中即拒，连 owner 都压过（配置总闸，非 per-user）。
-- `config.authorityOverrides`（能力键 `type:name` → 整数）：owner 逐条覆盖单条操作的最低等级，无需改插件声明；传非整数则清除该条（回退默认派生）。
+- `config.authorityOverrides`（能力键 `type:name` → 整数）：owner 逐条覆盖单条操作的最低等级，无需改插件声明；传非整数则清除该条（回退默认派生）。经 WebUI 权限页改动该项时，**该能力上所有未过期的会话授予一并撤销**——否则 `authorize` 已按新门槛拒绝，而守卫的救援闸 `isPreApproved` 仍靠旧授予放行，且救援命中会直接返回放行、连确认轴（含 `always`）一起跳过。撤销由管理动作负责，不在救援口上复查：救援口恰恰在 `authorize` 拒绝之后才被调用，在那里复查等于把整条会话授予路径变成死代码（与 `setUserLevel` 降权撤销同源）。
 - `config.confirmOverrides`（能力键 `type:name` → `'session' | 'always' | 'off'`）：owner 逐条覆盖确认要求；`'off'` 强制关确认。
 - `config.autoConfirmUntil`（number）：auto 模式截止时间戳。`-1` = 一直；`>now` = 截止前激活；`0` / 过期 = 关（仅影响确认轴）。
 - `config.restrictedPolicy`（`{ allow?, duration? }`）：受限能力的临时放行白名单（owner 自动放行的时限）。注意 `duration > 0` 的窗口只在 WebUI 保存策略时开始计时（运行时态、不持久化），重启即失效、手写 yaml 不自动武装——想让它长期有效就别填 `duration`。

@@ -230,9 +230,13 @@ export class CheckpointServiceImpl implements CheckpointService {
     for (const t of targets) t.snapshotted.add(uri);
 
     let original: { data: Buffer; size: number } | null = null;
+    // 「读不出来」必须与「本就不存在」区分：前者记成 write-new 的话，回滚会把一个回合
+    // 开始前就存在、且没有备份的文件直接删掉（rollback 的 write-new 分支无条件删除）。
+    let loadFailed = false;
     try {
       original = await loadOriginal();
     } catch (err) {
+      loadFailed = true;
       this.logger.warn(`checkpoint 加载原文件失败 ${uri}: ${(err as Error).message}`);
     }
 
@@ -242,8 +246,18 @@ export class CheckpointServiceImpl implements CheckpointService {
       //   否则目录递归删除零记录，UI 却照样渲染「回滚本轮对话（含文件）」并报回滚完成。
       //   rename 有 toUri 时回滚仍能原路移回；delete 则如实标为不可回滚。
       if (!original) {
-        if (op === 'write') t.manifest.files.push({ uri, action: 'write-new' });
-        else t.manifest.files.push({ uri, action: op, toUri, skipped: '未快照（目录或读取失败）' });
+        if (op === 'write' && !loadFailed) {
+          t.manifest.files.push({ uri, action: 'write-new' });
+        } else {
+          // 读取失败的 write 记成 'write' + skipped：回滚时落到 skipped 分支如实报
+          // 「不可回滚」并计入 errors，而不是当作本回合新建删掉。
+          t.manifest.files.push({
+            uri,
+            action: op,
+            toUri,
+            skipped: loadFailed ? '未快照（原文件读取失败，不可回滚）' : '未快照（目录或读取失败）',
+          });
+        }
         continue;
       }
       // 情况 3：过大 → 跳过快照但记录为「skipped」

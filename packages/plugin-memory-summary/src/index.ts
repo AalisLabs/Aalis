@@ -411,6 +411,12 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
       const finalSummary = summaryText.trim();
       const summaryTs = Date.now();
+      // 摘要先落库、裁切后执行，两步不原子：裁切抛错（SQLITE_BUSY / Mongo 瞬时错，
+      // 两个 provider 的 trimHistory 都不内吞异常）时摘要已提交而历史没裁，getHistory
+      // 仍取到同一段（archived 没变、totalCount 不降），下一轮切的还是这批内容，而基底
+      // 已是刚写进去的新摘要——同一段历史被反复叠进摘要，每轮都花一次模型调用。
+      // 故记下旧摘要，裁切失败就把摘要回滚到落库前的样子，让下一轮从干净基底重摘。
+      const prevSummary = existing?.summary;
       if (finalSummary) {
         await store.upsertSummary(sessionId, finalSummary);
       }
@@ -431,7 +437,21 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       }
       let trimmed = false;
       if (memory.trimHistory) {
-        const deleted = await memory.trimHistory(sessionId, safeKeepRecent);
+        let deleted: number;
+        try {
+          deleted = await memory.trimHistory(sessionId, safeKeepRecent);
+        } catch (trimErr) {
+          // 别把「摘要已写、历史没裁」这个半成品状态留下
+          if (finalSummary) {
+            try {
+              if (prevSummary) await store.upsertSummary(sessionId, prevSummary);
+              else await store.clearSession(sessionId);
+            } catch (rollbackErr) {
+              ctx.logger.warn('裁切失败后回滚摘要也失败（下一轮会在新摘要基底上重摘）:', rollbackErr);
+            }
+          }
+          throw trimErr;
+        }
         trimmed = true;
         ctx.logger.info(
           finalSummary
@@ -648,6 +668,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
       const finalSummary = summaryText.trim();
       const summaryTs = Date.now();
+      // 与 generateSummary 同则：裁切失败要把摘要回滚，否则同一段历史被反复叠进摘要
+      const prevSummary = existing?.summary;
       if (finalSummary) {
         await store.upsertSummary(data.sessionId, finalSummary);
       }
@@ -666,7 +688,20 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       }
       let trimmed = false;
       if (memory.trimHistory) {
-        const deleted = await memory.trimHistory(data.sessionId, safeKeepRecent);
+        let deleted: number;
+        try {
+          deleted = await memory.trimHistory(data.sessionId, safeKeepRecent);
+        } catch (trimErr) {
+          if (finalSummary) {
+            try {
+              if (prevSummary) await store.upsertSummary(data.sessionId, prevSummary);
+              else await store.clearSession(data.sessionId);
+            } catch (rollbackErr) {
+              ctx.logger.warn('裁切失败后回滚摘要也失败（下一轮会在新摘要基底上重摘）:', rollbackErr);
+            }
+          }
+          throw trimErr;
+        }
         trimmed = true;
         ctx.logger.info(
           finalSummary

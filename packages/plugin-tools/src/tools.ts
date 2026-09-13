@@ -71,6 +71,17 @@ export class ToolRegistry implements ToolService {
    * 未指定（或为空）即只给通用工具——多人平台上 public 工具的可达性靠这道闸
    * （docs/concepts/security-model.md）；owner 专用平台由平台档显式给 `['*']`。
    */
+  /**
+   * 某工具是否对「这组已启用分组」可见。列举面与执行面共用同一判据。
+   *
+   * 无分组的通用工具恒可见；`'*'` 放开全部分组。
+   */
+  private groupAllowed(tool: { groups?: readonly string[] }, groups: readonly string[]): boolean {
+    if (!tool.groups?.length) return true;
+    if (groups.includes('*')) return true;
+    return tool.groups.some(g => groups.includes(g));
+  }
+
   private filtered(filter?: { groups?: string[] }): RegisteredTool[] {
     const tools = [...this.tools.values()];
     const enabled = new Set(filter?.groups);
@@ -124,11 +135,13 @@ export class ToolRegistry implements ToolService {
   }
 
   /** 工具名未命中时，按下划线分词的 token 交集 + 子串关系给出近似建议（最多 3 个）。 */
-  private suggestToolNames(query: string): string[] {
+  private suggestToolNames(query: string, enabledGroups?: readonly string[]): string[] {
     const q = query.toLowerCase();
     const qTokens = new Set(q.split(/[_\s-]+/).filter(Boolean));
     const scored: Array<{ name: string; score: number }> = [];
-    for (const name of this.tools.keys()) {
+    for (const [name, tool] of this.tools) {
+      // 不把本会话未暴露分组的工具名建议回模型：那等于替它把闸外的名字念一遍
+      if (enabledGroups && !this.groupAllowed(tool, enabledGroups)) continue;
       const n = name.toLowerCase();
       let score = 0;
       if (n.includes(q) || q.includes(n)) score += 2;
@@ -150,9 +163,20 @@ export class ToolRegistry implements ToolService {
     if (!tool) {
       // LLM 常臆造工具名（如把 send_attachment 叫成 send_image）。给出近似名建议，
       // 让模型本轮直接纠正调用，而不是再花一轮 search_tools 找正确名字。
-      const suggestions = this.suggestToolNames(toolName);
+      const suggestions = this.suggestToolNames(toolName, callCtx.enabledGroups);
       const hint = suggestions.length > 0 ? `，你是否想用：${suggestions.join(' / ')}` : '';
       return { content: JSON.stringify({ error: `工具 "${toolName}" 未找到${hint}` }) };
+    }
+
+    // 分组闸：此前只在列举面（filtered）生效，execute 按名直调完全不校验。被提示注入的
+    // 模型可以叫出一个本回合没下发给它的名字（安全模型把 LLM 输出列为不可信），于是
+    // onebot 群会话里未暴露分组的工具照样被执行——而「不在 enabledGroups 里故不可达」
+    // 正是 http_request 等 public 破坏性工具在多人平台上的前提判据。
+    // 只在调用方显式给出 enabledGroups 时生效：mcp-server / workflow 不传该字段，
+    // 各自另有暴露面控制，行为不变。
+    if (callCtx.enabledGroups && !this.groupAllowed(tool, callCtx.enabledGroups)) {
+      // 与「未找到」同形：不向闸外的调用者确认该工具存在
+      return { content: JSON.stringify({ error: `工具 "${toolName}" 未找到` }) };
     }
 
     // 参数 schema 校验：检测缺失必填项 / 多余未知键（LLM 写错参数名时给出明确提示）

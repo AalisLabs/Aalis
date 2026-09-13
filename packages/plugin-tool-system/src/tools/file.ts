@@ -12,7 +12,6 @@
  */
 
 import { basename } from 'node:path';
-import { createInterface } from 'node:readline';
 import type { StorageService } from '@aalis/api-storage';
 import { parseUriRoot, resolveAgainstCwd } from '@aalis/api-storage';
 import type { ScopedToolService } from '@aalis/api-tools';
@@ -292,7 +291,6 @@ async function searchTextStream(
   nextStartLine?: number;
 }> {
   const { stream } = await storage.createReadStream(uri);
-  const lines = createInterface({ input: stream, crlfDelay: Infinity });
   const matches: Array<{ line: number; content: string }> = [];
   let lineNumber = 0;
   let scannedBytes = 0;
@@ -300,7 +298,7 @@ async function searchTextStream(
   let truncated = false;
 
   try {
-    for await (const line of lines) {
+    for await (const { text: line } of iterLines(stream, maxSearchBytes)) {
       lineNumber++;
       if (lineNumber < startLine) continue;
 
@@ -315,7 +313,7 @@ async function searchTextStream(
       }
     }
   } finally {
-    lines.close();
+    stream.destroy();
   }
 
   return {
@@ -346,6 +344,79 @@ function resolveLineRange(startArg: unknown, endArg: unknown): { start: number; 
  * - 区间读完后只在扫描预算内继续数总行数：小文件能给出准确 totalLines，
  *   大文件则省掉整篇扫描、不返回 totalLines
  */
+/**
+ * 按行读取，且**单行自带字节上限**。
+ *
+ * 不用 node:readline：它在见到 \n 之前会把整条行累积成一个 JS 字符串，于是无换行的大文件
+ * （单行 JSON、压缩产物）被整体物化——预算判定发生在行已成型之后，maxReadSize /
+ * maxSearchBytes 形同虚设。更糟的是超过 V8 单字符串上限时抛的 RangeError 从
+ * ReadStream.emit('data') 栈上同步抛出，for-await 的 try/catch 接不住，会一路逃到
+ * runtime 的 uncaughtException 处理器把整个进程打掉（实测 640MB 无换行输入即触发）。
+ *
+ * 这里直接消费 Buffer 分块按 \n 切行：单行累计超过 maxLineBytes 时产出截断前缀并标记
+ * cut，随后丢弃直到下一个换行，峰值内存因此有界。`\r\n` 与 readline 的
+ * `crlfDelay: Infinity` 同义——按一个换行处理。
+ */
+async function* iterLines(
+  stream: NodeJS.ReadableStream,
+  maxLineBytes: number,
+): AsyncGenerator<{ text: string; cut: boolean }> {
+  const cap = Math.max(1, maxLineBytes);
+  let pending: Buffer[] = [];
+  let pendingLen = 0;
+  /** 当前行已超上限：余下部分整段丢弃，直到下一个换行 */
+  let dropping = false;
+
+  const decode = (raw: Buffer): string => {
+    const end = raw.length > 0 && raw[raw.length - 1] === 0x0d ? raw.length - 1 : raw.length;
+    return raw.subarray(0, end).toString('utf-8');
+  };
+
+  try {
+    for await (const chunk of stream) {
+      let buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
+      while (buf.length > 0) {
+        const nl = buf.indexOf(0x0a);
+        if (nl === -1) {
+          if (dropping) break;
+          pending.push(buf);
+          pendingLen += buf.length;
+          if (pendingLen > cap) {
+            yield { text: Buffer.concat(pending).subarray(0, cap).toString('utf-8'), cut: true };
+            pending = [];
+            pendingLen = 0;
+            dropping = true;
+          }
+          break;
+        }
+        const head = buf.subarray(0, nl);
+        buf = buf.subarray(nl + 1);
+        if (dropping) {
+          dropping = false;
+          continue;
+        }
+        pending.push(head);
+        pendingLen += head.length;
+        const whole = Buffer.concat(pending);
+        yield pendingLen > cap
+          ? { text: whole.subarray(0, cap).toString('utf-8'), cut: true }
+          : { text: decode(whole), cut: false };
+        pending = [];
+        pendingLen = 0;
+      }
+    }
+    if (!dropping && pendingLen > 0) {
+      const whole = Buffer.concat(pending);
+      yield pendingLen > cap
+        ? { text: whole.subarray(0, cap).toString('utf-8'), cut: true }
+        : { text: decode(whole), cut: false };
+    }
+  } finally {
+    // 提前 break 时主动断流，否则底层 fd 悬着
+    (stream as { destroy?: () => void }).destroy?.();
+  }
+}
+
 async function readLineRange(
   storage: StorageService,
   uri: string,
@@ -354,7 +425,6 @@ async function readLineRange(
   maxBytes: number,
 ): Promise<{ lines: string[]; totalLines?: number; truncated: boolean; firstLineCut: boolean }> {
   const { stream } = await storage.createReadStream(uri);
-  const reader = createInterface({ input: stream, crlfDelay: Infinity });
   const lines: string[] = [];
   let lineNumber = 0;
   let scannedBytes = 0;
@@ -364,7 +434,7 @@ async function readLineRange(
   let stopped = false;
 
   try {
-    for await (const line of reader) {
+    for await (const { text: line } of iterLines(stream, maxBytes)) {
       lineNumber++;
       const size = Buffer.byteLength(line, 'utf-8') + 1;
       scannedBytes += size;
@@ -388,7 +458,6 @@ async function readLineRange(
       }
     }
   } finally {
-    reader.close();
     stream.destroy();
   }
 
@@ -1149,6 +1218,8 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
           let totalScannedBytes = 0;
           let totalScannedLines = 0;
           let scannedFiles = 0;
+          /** 读不出来而被跳过的文件数（权限、枚举后被删…）：不计入命中也不该无声无息 */
+          let skippedFiles = 0;
           let next: { file: string; line: number } | undefined;
 
           for (let idx = 0; idx < pending.length; idx++) {
@@ -1168,7 +1239,12 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
               remainingResults,
               remainingBytes,
             ).catch(() => null);
-            if (!r) continue;
+            if (!r) {
+              // 此前静默 continue：该文件一行未扫，返回体却照常给 matchCount、truncated 仍为
+              // false，模型拿着这个「非截断」的可信信号断言「不存在」。
+              skippedFiles++;
+              continue;
+            }
             for (const m of r.matches) allMatches.push({ uri: fileUri, ...m });
             totalScannedBytes += r.scannedBytes;
             totalScannedLines += r.scannedLines;
@@ -1179,7 +1255,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
             break;
           }
 
-          const advice = next
+          const budgetAdvice = next
             ? '搜索因预算（maxResults 或 maxSearchBytes）耗尽而中断。请采取以下任一行动再查：' +
               `(1) 继续请传 path=${uri}, startFile=${next.file}, startLine=${next.line}，` +
               '并把本次的 pattern / isRegex / ignoreCase / exclude / include 原样重传' +
@@ -1190,6 +1266,12 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
               '(5) 提高 maxResults / maxSearchBytes。' +
               '**不要根据本次结果断言"找不到"——它可能只是被预算截断了。**'
             : undefined;
+          const skipAdvice =
+            skippedFiles > 0
+              ? `有 ${skippedFiles} 个文件未能读取（权限或读取错误）被跳过，其内容未参与匹配。` +
+                '**不要根据本次结果断言"找不到"。**'
+              : undefined;
+          const advice = [budgetAdvice, skipAdvice].filter(Boolean).join(' ') || undefined;
 
           return JSON.stringify({
             uri,
@@ -1197,6 +1279,7 @@ export function registerFileTools(tools: ScopedToolService, config: FileConfig):
             isDirectory: true,
             totalFiles: files.length,
             scannedFiles,
+            ...(skippedFiles > 0 ? { skippedFiles } : {}),
             ...(startFile ? { startFile, startLine } : {}),
             matches: allMatches,
             matchCount: allMatches.length,

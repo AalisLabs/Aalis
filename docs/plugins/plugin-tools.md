@@ -33,6 +33,10 @@ export const provides = ['tools'];
   未指定 `groups`（或为空）时只返回通用工具。多人平台上 public 工具的可达性靠这道分组闸
   （见 [security-model](../concepts/security-model.md)）；平台启用哪些分组由 session-manager 的平台档 /
   会话配置 `enabledToolGroups` 决定。
+- **分组闸在执行面同样生效**：`execute()` 在调用方传了 `ToolCallContext.enabledGroups` 时按同一判据校验，
+  不命中即返回与「工具未找到」同形的错误；近似名建议也不会把闸外的工具名回流给模型。
+  只在列举面拦是不够的——被提示注入的模型可以叫出一个本回合没下发给它的名字，而安全模型把
+  LLM 输出列为不可信。不传该字段的调用方（mcp-server / workflow）行为不变，它们各自另有暴露面控制。
 - **可见性覆盖**：工具默认可见性（`visibility: 'public' | 'restricted'`）由作者声明，
   owner 可经 authority 配置 `visibilityOverrides`（操作名 → public/restricted）临时覆盖，
   无需改插件。
