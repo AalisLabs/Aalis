@@ -487,7 +487,7 @@ importers:
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-llm
       '@aalis/api-process':
-        specifier: workspace:>=0.5.0 <1.0.0
+        specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-process
       '@aalis/api-storage':
         specifier: workspace:>=0.5.5 <1.0.0
@@ -659,7 +659,7 @@ importers:
   packages/plugin-authority:
     dependencies:
       '@aalis/api-authority':
-        specifier: workspace:>=0.7.1 <1.0.0
+        specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-authority
       '@aalis/api-commands':
         specifier: workspace:>=0.5.0 <1.0.0
@@ -1597,7 +1597,7 @@ importers:
   packages/plugin-process-local:
     dependencies:
       '@aalis/api-process':
-        specifier: workspace:>=0.5.0 <1.0.0
+        specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-process
       '@aalis/api-storage':
         specifier: workspace:>=0.5.5 <1.0.0
