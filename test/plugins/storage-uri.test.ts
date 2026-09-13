@@ -94,4 +94,11 @@ describe('resolveAgainstCwd（工具路径解析）', () => {
     expect(() => resolveAgainstCwd('/etc/passwd', 'workspace:/')).toThrow();
     expect(() => resolveAgainstCwd('C:\\Windows', 'workspace:/')).toThrow();
   });
+  it('正斜杠盘符 C:/... 同样是宿主机绝对路径，不被当成根名为 C 的 storage URI', () => {
+    // 曾先过 storage URI 文法：`C:/Windows/win.ini` 被当成根 C 放行，报错只落到「根不存在」
+    expect(() => resolveAgainstCwd('C:/Windows/win.ini', 'workspace:/')).toThrow(/宿主机绝对路径/);
+    expect(() => resolveAgainstCwd('d:/tmp/x', 'workspace:/')).toThrow(/宿主机绝对路径/);
+    // 两个字符起的根名不受影响
+    expect(resolveAgainstCwd('ws:/a', 'workspace:/')).toBe('ws:/a');
+  });
 });

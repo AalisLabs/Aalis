@@ -20,6 +20,7 @@ import WebSocket from 'ws';
 import { cacheOneAttachment } from './attachment-cache.js';
 import { renderAttachmentsAsContentMarkers } from './attachments.js';
 import { createForwardExpander, DEFAULT_FORWARD_SUMMARY_PROMPT, type ForwardConfig } from './forward-expand.js';
+import { lookupDescriptionByUrl, rememberLandedAlias } from './media-alias.js';
 import { extractSentMessageId, SentMessageTracker } from './sent-messages.js';
 import type {
   NormalizedRequestEvent,
@@ -583,22 +584,6 @@ function splitImageOut(content: string): string[] {
   return out.length > 0 ? out : [content];
 }
 
-/**
- * 附件落盘成功后登记一次「原始来源 → 落盘 ref」描述缓存别名。
- *
- * QQ 媒体直链不含内容哈希，落盘后才有内容寻址路径。引用消息那条路径（见下方
- * `lookupDescription`）手里只有原始 URL，不登记就查不到刚刚识别出的描述、白重认一遍。
- * media 未装或实现较老（可选方法缺席）即跳过。
- *
- * 只登记 http(s) 来源：base64 data URI 做键会把整段（可达数 MB）钉进别名表，而那条
- * 路径由 plugin-media 自己在落盘处登记，适配器再登记一遍纯属重复占位。
- */
-function rememberLandedAlias(ctx: Context, kind: string, source: string | undefined, landedRef: string): void {
-  // 音频走转写、不进描述缓存：登记只会白占别名表一格
-  if (kind === 'audio' || !source || !/^https?:\/\//.test(source)) return;
-  ctx.getService<MediaService>('media')?.rememberDescriptionAlias?.(source, landedRef);
-}
-
 // ===== 插件入口 =====
 
 export function apply(ctx: Context, config: Record<string, unknown>): void {
@@ -1028,7 +1013,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             content = content.replace(/\[图片\]/g, () => {
               const url = imageUrls[urlIdx++];
               if (!url) return '[图片]';
-              const desc = media.lookupDescription(url);
+              const desc = lookupDescriptionByUrl(media, url);
               return desc ? `[图片: ${desc}]` : '[图片]';
             });
           }
@@ -1709,7 +1694,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
               attachmentMaxBytes,
               ctx.logger,
             );
-            if (landed) rememberLandedAlias(ctx, att.kind, att.url, landed);
+            if (landed) rememberLandedAlias(ctx.getService<MediaService>('media'), att.kind, att.url, landed);
             return landed;
           } catch (err) {
             ctx.logger.debug(`OneBot 附件缓存异常 [${att.kind}]: ${err}`);
@@ -2286,7 +2271,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
               ctx.logger,
             );
             if (local) {
-              rememberLandedAlias(ctx, att.kind, att.data, local);
+              rememberLandedAlias(ctx.getService<MediaService>('media'), att.kind, att.data, local);
               // cacheAttachmentBuffer 返回相对路径 "data/images/..."，
               // 转为 storage URI "data:/images/..."，让 renderAttachmentsAsContentMarkers
               // 走 storage.readFile 读回 buffer，而非兜底成无法访问的相对 file://
