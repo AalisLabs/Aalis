@@ -203,7 +203,7 @@ ctx.provide('llm', deepseekService, { priority: 10 });
 ### 服务消费
 
 ```typescript
-const llm = ctx.getService<LLMService>('llm');
+const llm = ctx.getService<LLMModel>('llm');
 ```
 
 `getService(name)` 只接受服务名，返回当前胜者实例（不再有第二个 capabilities 参数）。

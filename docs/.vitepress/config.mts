@@ -54,7 +54,8 @@ const SUBGROUPS: Record<string, { text: string; files: string[] }[]> = {
     { text: '智能体与人设', files: ['plugin-agent', 'plugin-persona', 'plugin-session-manager', 'plugin-subtask', 'plugin-skills', 'plugin-todo-list', 'plugin-prompt-budget', 'plugin-trigger-policy', 'plugin-user-profile', 'user-relation', 'user-relation-graph'] },
     { text: '工具与 MCP', files: ['plugin-tools', 'plugin-tool-system', 'plugin-tool-browser', 'plugin-tool-search', 'plugin-websearch-serper', 'plugin-tool-code-runner', 'plugin-code-sandbox-os', 'plugin-tool-math', 'plugin-tool-onebot', 'plugin-tool-session', 'plugin-file-reader', 'plugin-office', 'plugin-okx-trading', 'mcp', 'plugin-mcp-client', 'plugin-mcp-server', 'plugin-maimai'] },
     { text: '存储与媒体', files: ['plugin-storage-local', 'plugin-checkpoint', 'plugin-media', 'plugin-draw'] },
-    { text: '调度、网关与运维', files: ['plugin-scheduler', 'plugin-workflow', 'plugin-gateway', 'plugin-flow-control', 'plugin-commands', 'plugin-cli', 'plugin-authority', 'plugin-session-confirm'] },
+    { text: '权限与确认', files: ['plugin-authority', 'plugin-session-confirm'] },
+    { text: '调度、网关与运维', files: ['plugin-scheduler', 'plugin-workflow', 'plugin-gateway', 'plugin-flow-control', 'plugin-commands', 'plugin-cli'] },
     { text: '前端 WebUI', files: ['plugin-webui-server', 'plugin-webui-client'] },
   ],
 }
@@ -121,7 +122,7 @@ const GROUP_LABELS: Record<string, string> = {
   architecture: '架构',
   roadmap: '规划与已知问题',
 }
-const ORDER = ['guide', 'concepts', 'core', 'services', 'plugins', 'api', 'design', 'utils', 'extensions', 'roadmap']
+const ORDER = ['guide', 'concepts', 'core', 'architecture', 'services', 'plugins', 'api', 'design', 'utils', 'extensions', 'roadmap']
 const COLLAPSED = new Set(['services', 'plugins', 'api', 'design', 'utils', 'extensions', 'architecture', 'roadmap'])
 
 const dirs = allDirs()
@@ -157,6 +158,7 @@ export default withMermaid(defineConfig({
     nav: [
       // 「入门」指向真教程（脚手架上手），不再指 494 行的 architecture 参考页
       { text: '入门', link: firstLink('guide') },
+      { text: '概念', link: firstLink('concepts') },
       { text: '核心', link: firstLink('core') },
       { text: '服务', link: firstLink('services') },
       { text: '插件', link: firstLink('plugins') },

@@ -445,6 +445,10 @@ ${hasWebui ? '或在 WebUI 的「插件市场」页搜索安装。\n' : ''}
 // ── 主流程 ──────────────────────────────────────────────────
 
 function argValue(flag: string): string | undefined {
+  // 兼容两种写法：`--tier minimal` 与 `--tier=minimal`。后者若不认，TTY 下会静默掉回交互向导、
+  // 非 TTY 下则撞上「检测到非交互式环境」退出——报错指向 TTY，把人往错误方向引。
+  const eq = argv.find(a => a.startsWith(`${flag}=`));
+  if (eq !== undefined) return eq.slice(flag.length + 1);
   const i = argv.indexOf(flag);
   return i >= 0 ? argv[i + 1] : undefined;
 }

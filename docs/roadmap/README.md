@@ -29,7 +29,7 @@
 `plugin-adapter-onebot/src/forward-expand.ts`、`plugin-user-profile` 与 `plugin-memory-summary`
 的清空路径，以及 `api-memory/src/index.ts` 的契约注释。
 「要不要上结构化存储/ORM/索引/namespace stamping」四条决定连同实测依据写在
-[`api-memory` 契约](../../packages/api-memory/src/index.ts)的「结构化元数据存储」一节
+`api-memory` 契约（源码 `packages/api-memory/src/index.ts`）的「结构化元数据存储」一节
 ——那里是动手前必看的地方，比 roadmap 更贴近代码、不会陈旧。
 
 **插件市场已无待办**，本目录不再收录：装/卸/更新/预检/回滚/串行闸/卸载护栏/装完即用全部落地，

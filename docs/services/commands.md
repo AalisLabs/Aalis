@@ -66,7 +66,7 @@ Builder 链式追加 `alias / option / action / usage / example`，全部返回 
 **典型消费点**（都通过 `useCommandService(ctx)` 注册命令）：
 
 - `@aalis/plugin-authority`：注册 `/authority`、`/level`、`/auto` 等，并通过 `whenService` 注入权限守卫。
-- `@aalis/plugin-agent`：`/model`、`/model.info/.set/.reset`。
+- `@aalis/plugin-agent`：`/model`、`/persona`、`/session`、`/session.set`、`/session.reset`。
 - `@aalis/plugin-doctor`：`/doctor`。
 - `@aalis/plugin-tool-system`、`@aalis/plugin-user-profile`、`@aalis/plugin-user-relation`、`@aalis/plugin-maimai` 等。
 - `commands` 几乎总是 optional 依赖，例如 `plugin-adapter-onebot`（`optional: ['…', 'commands', …]`）、`plugin-cli`、`plugin-doctor`。无指令系统时，这些插件的其它能力仍可用。
