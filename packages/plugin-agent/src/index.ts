@@ -165,6 +165,24 @@ class DefaultAgent implements AgentService {
   }
 
   /**
+   * 中止全部在飞回合（拆卸路径用）。
+   *
+   * activeControllers 是实例私有的，bounce 后新实例看不见旧实例的在飞回合；而拆卸链不等任何
+   * 回合——旧回合会在已 dispose 的 ctx 上跑完并投递（人设/模型都是 bounce 前的），用户在它
+   * 结束前再发一条，两个实例就并发答同一会话。abort 走的是已有的 AbortError 收尾
+   * （outbound:stream done + turn:after outcome='aborted'），与 WebUI「停止生成」同语义。
+   */
+  abortAll(): void {
+    let n = 0;
+    for (const [key, controller] of this.activeControllers) {
+      controller.abort();
+      this.activeControllers.delete(key);
+      n++;
+    }
+    if (n > 0) this.logger.info(`拆卸：已中止 ${n} 个在飞回合`);
+  }
+
+  /**
    * 注册消息预处理器
    *
   /**
@@ -1909,6 +1927,8 @@ type InternalAgent = {
 export function apply(ctx: Context, config: Record<string, unknown>): void {
   const agentImpl = new DefaultAgent(ctx, config);
   ctx.provide('agent', agentImpl);
+  // 拆卸即中止在飞回合：bounce / disable / unload / 停机都经此，理由见 abortAll。
+  ctx.onDispose(() => agentImpl.abortAll());
   const agent = agentImpl as unknown as InternalAgent;
 
   // 全局默认 LLM：通过 ServicePreference 锁定 ctx.getService<'llm'>() 的首选 entry。

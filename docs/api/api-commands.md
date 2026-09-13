@@ -33,7 +33,7 @@ interface CommandDefinition {
 /db migrate up      → 三层匹配，命中最深 action
 ```
 
-每一层未命中 → 调用当前层级的 `action`，若该层无 `action` 则返回 usage 提示。可见性沿树继承（restricted 父分组 → restricted 子节点，除非子节点重新声明），可在 authority 配置的 `visibilityOverrides[path-key]` 单独覆盖（key 形如 `clear.all`）。
+每一层未命中 → 调用当前层级的 `action`，若该层无 `action` 则返回 usage 提示。可见性沿树继承（restricted 父分组 → restricted 子节点，除非子节点重新声明），可在 authority 配置的 `authorityOverrides` 里按能力键单独改写最低等级（key 形如 `command:clear.all`，值为整数等级）。
 
 ## 领域 Helper
 

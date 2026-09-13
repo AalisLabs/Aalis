@@ -36,7 +36,7 @@ Core 不再内置默认的消息路由逻辑。`plugin-gateway` 提供 `gateway`
 ## 自定义扩展
 
 ```ts
-import { INBOUND_PHASE } from '@aalis/core';
+import { INBOUND_PHASE } from '@aalis/api-gateway';
 
 // 接入命令相位末尾
 ctx.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {

@@ -218,8 +218,6 @@ export class RelationStore {
   /**
    * 清空整个关系图（`memory:clear` 用）。
    *
-   * 放在本类里而不是让调用方直接拿 memory 删 —— 那样会绕过快照失效，清空后仍读到旧图。
-   *
    * 批量提交而非逐条删。**原子性按后端分档**（见 api-memory 契约）：sqlite/inmemory 真事务，
    * mongodb 只保证按序执行遇错即停。不够原子时的兜底是幂等——再清一次即可，图本来就是要清空的。
    */

@@ -54,7 +54,7 @@ interface GatewayService {
 
 ```ts
 // 自定义触发器：群聊中 idle 5 分钟后注入一条 "继续？" 消息
-ctx.useHook('inbound:trigger', async (data, next) => {
+ctx.middleware('inbound:trigger', async (data, next) => {
   if (data.message.triggerType === 'idle') {
     data.metadata.injectedReason = 'idle-followup';
   }
