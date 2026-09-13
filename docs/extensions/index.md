@@ -104,7 +104,7 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 
 | api 包 | 注入的字段 |
 |---|---|
-| `@aalis/api-authority` | `owners` / `deniedCapabilities` / `visibilityOverrides` / `restrictedPolicy` |
+| `@aalis/api-authority` | `owners` / `deniedCapabilities` / `authorityOverrides` / `confirmOverrides` / `restrictedPolicy` / `autoConfirmUntil` / `network` |
 
 ---
 

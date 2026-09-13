@@ -46,6 +46,12 @@ export const configSchema: ConfigSchema = {
     default: true,
     description: '在 OneBot 私聊中，若调用者未绑定但其 QQ 已注册查分器账号，自动以其 QQ 查分',
   },
+  timeoutMs: {
+    type: 'number',
+    label: '请求超时 (ms)',
+    default: 30000,
+    description: '查分器 API 单次请求上限。工具执行面没有外层超时，对端不应答会把整轮对话挂住',
+  },
 };
 
 interface MaimaiConfig {
@@ -54,6 +60,7 @@ interface MaimaiConfig {
   enableTools: boolean;
   enableCommands: boolean;
   defaultBindOnPrivateChat: boolean;
+  timeoutMs: number;
 }
 
 // ===== 类型（仅声明常用字段，其余以 unknown 透传） =====
@@ -182,7 +189,12 @@ class MaimaiClient {
       Accept: 'application/json',
     };
     this.logger.debug?.(`[maimai] GET ${url.toString()}`);
-    const resp = await fetch(url.toString(), { method: 'GET', headers });
+    // 工具执行面与调用方都没有外层超时：对端不应答即那轮对话永久挂住（与已修的 embedding-openai 同形）。
+    const resp = await fetch(url.toString(), {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(Math.max(1000, this.cfg.timeoutMs)),
+    });
     const text = await resp.text();
     let body: { success?: boolean; code?: number; message?: string; data?: T } | undefined;
     try {
@@ -401,6 +413,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     enableTools: rawConfig.enableTools !== false,
     enableCommands: rawConfig.enableCommands !== false,
     defaultBindOnPrivateChat: rawConfig.defaultBindOnPrivateChat !== false,
+    timeoutMs: Number(rawConfig.timeoutMs ?? 30000),
   };
 
   if (!cfg.developerToken) {
