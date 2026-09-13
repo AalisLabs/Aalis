@@ -296,6 +296,8 @@ export interface AuthorityService {
   /** 用户触达未授予的 restricted 能力时，过临时委托流程（白名单策略 → 会话临时授予 → 确认回调） */
   requestAccess(request: AccessRequest): Promise<boolean>;
   listTemporaryGrants(): TemporaryGrant[];
+  /** 撤销某能力上所有未过期的会话授予（操作门槛变更时调用），返回撤销条数 */
+  revokeGrantsOfCapability(capability: string): number;
   revokeTemporaryGrant(id: string): boolean;
   /**
    * 注册平台确认通道（'*' 为兜底）。返回注销函数——注册方 dispose 时必须调用，

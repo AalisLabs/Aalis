@@ -1,3 +1,5 @@
+import { createServer, request } from 'node:http';
+import type { AddressInfo, Socket } from 'node:net';
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { StorageRootInfo, StorageService } from '../../packages/api-storage/src/index.js';
@@ -13,6 +15,15 @@ import * as webuiServer from '../../packages/plugin-webui-server/src/index.js';
 // ════════════════════════════════════════════════════════════
 
 const ABS = '/tmp/aalis-test-root/webui/access.txt';
+
+/** 取一个空闲端口：webui-server 打日志用的是配置值，port:0 时拿不到真实端口 */
+async function freePort(): Promise<number> {
+  const probe = createServer();
+  await new Promise<void>(r => probe.listen(0, '127.0.0.1', r));
+  const { port } = probe.address() as AddressInfo;
+  await new Promise<void>(r => probe.close(() => r()));
+  return port;
+}
 
 function makeFakeStorage(opts: { failWrite?: boolean } = {}): StorageService & { written: Set<string> } {
   const written = new Set<string>();
@@ -124,6 +135,66 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
     expect(line, '退化成重复 URI 就是竞态回归了').not.toContain('绝对路径: data:/webui/access.txt');
   });
 
+  it('插件 dispose 时关闭已建立的 WebSocket 连接', async () => {
+    // ws 的 close() 在 {server} 模式下只摘监听器、对 this.clients 一个都不动，
+    // server.close() 也只停止 accept。不主动关的话，禁用/热重载后旧 socket 上注册的
+    // message 闭包仍然活着，还能经已 dispose 的 ctx 触发 inbound:message
+    // （Context.emit 是四原语里唯一没有 _disposed 守卫的）。
+    //
+    // 这里不引 ws 客户端（它是 webui-server 的私有依赖，test/ 下既解析不到也没有类型），
+    // 直接用 node:http 做升级握手拿到裸 socket，再断言服务端发来了 close 帧（opcode 0x8）。
+    const port = await freePort();
+    const token = 'test-fixed-token-placeholder';
+    const app = new App({
+      config: { name: 'T', logLevel: 'error', plugins: {} },
+      logger: makeCapturingLogger([]),
+    });
+    apps.push(app);
+    app.ctx.provide('storage', makeFakeStorage());
+    await app.ctx.useModule(webuiServer as never, {
+      port,
+      host: '127.0.0.1',
+      autoOpen: false,
+      tokenMode: 'fixed',
+      fixedToken: token,
+    });
+    await app.start();
+
+    const req = request({
+      host: '127.0.0.1',
+      port,
+      path: '/ws',
+      headers: {
+        Connection: 'Upgrade',
+        Upgrade: 'websocket',
+        'Sec-WebSocket-Key': Buffer.from('0123456789abcdef').toString('base64'),
+        'Sec-WebSocket-Version': '13',
+        // 升级请求的登录判定只认 cookie（auth.verifyWsClient）
+        Cookie: `aalis_webui_token=${token}`,
+      },
+    });
+    const socket = await new Promise<Socket>((resolve, reject) => {
+      req.on('upgrade', (_res, sock) => resolve(sock as Socket));
+      req.on('response', res => reject(new Error(`升级被拒: ${res.statusCode}`)));
+      req.on('error', reject);
+      setTimeout(() => reject(new Error('升级握手超时')), 5000).unref?.();
+      req.end();
+    });
+
+    const gotCloseFrame = new Promise<boolean>(resolve => {
+      socket.on('data', (buf: Buffer) => {
+        // 帧首字节低 4 位是 opcode，0x8 = close
+        if (buf.length > 0 && (buf[0] & 0x0f) === 0x8) resolve(true);
+      });
+      setTimeout(() => resolve(false), 4000).unref?.();
+    });
+
+    await app.stop();
+    apps.length = 0; // 已 stop，afterEach 不必再停
+
+    expect(await gotCloseFrame, '拆卸后旧连接必须被关掉，否则它还能驱动一个已 dispose 的 ctx').toBe(true);
+    socket.destroy();
+  });
   it('写入失败时不宣称「已写入」，而是指路手工登录', async () => {
     const lines: string[] = [];
     const app = new App({
