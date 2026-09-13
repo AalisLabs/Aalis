@@ -27,6 +27,7 @@ interface Cfg {
   baseUrl: string;
   model: string;
   priority: number;
+  timeoutMs: number;
 }
 
 export const configSchema: ConfigSchema = {
@@ -34,6 +35,12 @@ export const configSchema: ConfigSchema = {
   baseUrl: { type: 'string', label: 'Base URL', default: 'https://api.openai.com/v1' },
   model: { type: 'string', label: '模型', default: 'whisper-1' },
   priority: { type: 'number', label: '优先级 (越大越优先)', default: 50 },
+  timeoutMs: {
+    type: 'number',
+    label: '请求超时 (ms)',
+    default: 600000,
+    description: '整段上传+识别的上限。默认取宽（10 分钟）：闸的目的是掐断真正卡死的请求，不是给长音频限速',
+  },
 };
 
 const defaultConfig: Cfg = {
@@ -41,6 +48,7 @@ const defaultConfig: Cfg = {
   baseUrl: 'https://api.openai.com/v1',
   model: 'whisper-1',
   priority: 50,
+  timeoutMs: 600000,
 };
 
 /**
@@ -144,6 +152,9 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
         method: 'POST',
         headers: { Authorization: `Bearer ${cfg.apiKey}` },
         body: fd,
+        // 调用方（plugin-media）与工具执行面都没有外层超时：对端不应答即整轮语音回合永久挂住，
+        // 与 embedding-openai / whisper-cpp 已修的是同一形状。
+        signal: AbortSignal.timeout(Math.max(1000, cfg.timeoutMs)),
       });
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');

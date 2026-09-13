@@ -46,7 +46,7 @@ type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => P
 
 ```ts
 // 注册一个把所有用户输入末尾加签的 preprocessor
-const dispose = ctx.useHook('agent:input:before', async (data, next) => {
+const dispose = ctx.middleware('agent:input:before', async (data, next) => {
   data.message.content += ' [logged]';
   await next();
 });
