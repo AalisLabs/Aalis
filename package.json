@@ -24,10 +24,11 @@
     "test:watch": "vitest",
     "ci": "pnpm -r build && pnpm run check:biome && pnpm run test",
     "ci:local": "pnpm -r build && pnpm run check:biome && pnpm run test",
-    "preflight": "pnpm -r build && pnpm test && pnpm exec biome check . && pnpm exec knip --no-progress",
-    "publish:dry": "pnpm -r build && pnpm -r publish --dry-run --no-git-checks",
-    "publish:all": "pnpm -r build && pnpm -r publish --access public --no-git-checks",
-    "prepare": "husky"
+    "preflight": "pnpm run clean && pnpm -r build && pnpm test && pnpm exec biome check . && pnpm exec knip --no-progress",
+    "publish:dry": "pnpm run clean && pnpm -r build && pnpm -r publish --dry-run --no-git-checks",
+    "publish:all": "pnpm run clean && pnpm -r build && pnpm -r publish --access public --no-git-checks",
+    "prepare": "husky",
+    "clean": "pnpm -r exec rm -rf dist"
   },
   "devDependencies": {
     "@aalis/api-storage": "workspace:*",
