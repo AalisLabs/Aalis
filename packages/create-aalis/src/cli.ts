@@ -171,6 +171,22 @@ function baseEnabled(tier: Tier): Set<string> {
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 const AALIS_KEYWORD = 'aalis-plugin';
 
+/**
+ * 装进依赖、但不是「可加载插件」的伴生包。
+ *
+ * webui-client 带的是 `aalis-interface` 关键词（纯前端静态资源，无 apply），
+ * 加载器的关键词硬门不认它。计数时若不排除，README 与终端提示会比运行时实际
+ * 加载数多一个（standard 档实测：README 说 41，运行时「发现 40 个插件」）。
+ */
+const NON_PLUGIN_COMPANIONS = new Set(['@aalis/plugin-webui-client']);
+
+/** 依赖集里真正会被加载器发现的插件数 */
+export function countPlugins(enabled: Iterable<string>): number {
+  let n = 0;
+  for (const pkg of enabled) if (!NON_PLUGIN_COMPANIONS.has(pkg)) n++;
+  return n;
+}
+
 // 离线回退：仓库内已知、但不在 base/extra/groups 目录里的"其他"官方插件。
 const STATIC_OTHERS = [
   'asr-openai',
@@ -412,7 +428,7 @@ function renderGitignore(): string {
   return `${['node_modules/', 'data/', '*.log', 'aalis.config.yaml', 'dist/'].join('\n')}\n`;
 }
 
-function renderReadme(projectName: string, enabled: Set<string>): string {
+export function renderReadme(projectName: string, enabled: Set<string>): string {
   const hasWebui = enabled.has('@aalis/plugin-webui-server');
   return `# ${projectName}
 
@@ -438,7 +454,7 @@ ${hasWebui ? '- WebUI 管理界面默认 http://127.0.0.1:3000 。\n' : ''}
 npm install @aalis/plugin-<name>   # 装上即被自动发现加载
 \`\`\`
 ${hasWebui ? '或在 WebUI 的「插件市场」页搜索安装。\n' : ''}
-> 启用集：${[...enabled].length} 个插件。完整生态见 npm 上的 \`aalis-plugin\` 关键词。
+> 启用集：${countPlugins(enabled)} 个插件。完整生态见 npm 上的 \`aalis-plugin\` 关键词。
 `;
 }
 
@@ -631,7 +647,7 @@ async function main(): Promise<void> {
     writeFileSync(resolve(targetDir, '.gitignore'), renderGitignore(), 'utf-8');
     writeFileSync(resolve(targetDir, 'README.md'), renderReadme(projectName, enabled), 'utf-8');
 
-    console.log(`\n✓ 已生成项目: ${targetDir}（启用 ${enabledList.length} 个插件）`);
+    console.log(`\n✓ 已生成项目: ${targetDir}（启用 ${countPlugins(enabledList)} 个插件）`);
 
     // 安装依赖
     if (!noInstall) {
