@@ -351,6 +351,11 @@ export class AuthorityManager implements AuthorityService {
     return result;
   }
 
+  /** 等待落盘完成（拆卸路径用；save() 本身只是把写挂上链） */
+  flushed(): Promise<void> {
+    return this.store.flushed();
+  }
+
   save(): void {
     this.store.save();
   }
