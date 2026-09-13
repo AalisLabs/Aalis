@@ -19,7 +19,7 @@ meta.inject = { optional: ['llm'] }
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `apiKey` | string | 必填 | Serper API Key：Serper.dev API 密钥（secret） |
+| `apiKey` | string | 必填 | Serper API Key：Serper.dev API 密钥（secret）。**缺失时 apply 直接抛错，插件转 error 态**——启动不中断，但网络搜索不可用 |
 | `maxPerMinute` | number | `10` | 每分钟最大次数：频率限制：每分钟最多搜索次数 |
 | `maxPerDay` | number | `100` | 每天最大次数：频率限制：每天最多搜索次数 |
 | `maxConcurrent` | number | `3` | 最大并发：同时进行的搜索请求数上限 |

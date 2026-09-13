@@ -142,7 +142,7 @@ export const module: PluginModule = {
 class MyConsumer {
   constructor(private ctx: Context) {}
   async doWork() {
-    const llm = this.ctx.getService<LLMService>('llm');
+    const llm = this.ctx.getService<LLMModel>('llm');
     if (!llm) return;
     return llm.chat({...});
   }
@@ -152,7 +152,7 @@ class MyConsumer {
 ```typescript
 // ❌ 反模式：apply 时缓存，provider 被 bounce 后拿到还是旧实例
 class BadConsumer {
-  constructor(private llm: LLMService) {}  // 在 apply 内 = ctx.getService('llm')
+  constructor(private llm: LLMModel) {}  // 在 apply 内 = ctx.getService('llm')
 }
 ```
 
@@ -429,7 +429,7 @@ declare module '@aalis/core' {
 ```typescript
 // ❌ 没声明 inject，又直接断言
 export async function apply(ctx) {
-  const llm = ctx.getService<LLMService>('llm')!;  // provider 还没注册 → 运行时崩
+  const llm = ctx.getService<LLMModel>('llm')!;  // provider 还没注册 → 运行时崩
   // ...
 }
 ```
@@ -440,7 +440,7 @@ export async function apply(ctx) {
 // ✅ 方式 A：声明依赖
 export const inject = { required: ['llm'] };
 export async function apply(ctx) {
-  const llm = ctx.getService<LLMService>('llm')!;  // 框架保证就绪
+  const llm = ctx.getService<LLMModel>('llm')!;  // 框架保证就绪
 }
 
 // ✅ 方式 B：whenService 异步等
@@ -466,14 +466,14 @@ core 已经处理好"已就绪立刻同步触发 / 反复上下线重接 / dispo
 
 ```typescript
 // packages/api-llm/src/index.ts
-export interface LLMService {
-  chat(req: ChatRequest): Promise<ChatResponse>;
+export interface LLMModel {
+  chat(req: ChatModelRequest): Promise<ChatResponse>;
   // ...
 }
 
 declare module '@aalis/core' {
   interface ServiceTypeMap {
-    llm: LLMService;
+    llm: LLMModel;
   }
 }
 ```
@@ -488,13 +488,13 @@ import '@aalis/api-llm';  // 仅副作用：把类型注册进 ServiceTypeMap
 
 export async function apply(ctx) {
   const llm = ctx.getService('llm');
-  //    ^? LLMService | undefined  ←  无需手动 <LLMService>
+  //    ^? LLMModel | undefined  ←  无需手动 <LLMModel>
   await llm?.chat({ messages: [...] });
 }
 ```
 
 > **注意**：没 import `-api` 包时，`ctx.getService('llm')` 会 fallback 到 `unknown`，
-> 你只能 `ctx.getService<LLMService>('llm')` 手动断言。所以**消费方至少要把 -api
+> 你只能 `ctx.getService<LLMModel>('llm')` 手动断言。所以**消费方至少要把 -api
 > 包作为 devDep / dep 引入并 import 一次**。helper 形式（`useToolService(ctx)`）
 > 已经把这个副作用包好了，是负担最小的写法。
 
@@ -522,7 +522,7 @@ ServiceContainer 有个 `preferences: Map<serviceName, contextId>` 用来"锁定
 interface UserProfile {
   id: string;
   preferences: {
-    llm?: { providerHint?: string; requiredCapabilities?: string[] };
+    llm?: { ref?: ModelRef; requiredCapabilities?: LLMCapability[] };
     // ...
   };
 }
@@ -533,15 +533,13 @@ interface UserProfile {
 ```typescript
 // agent / chat 路由内
 const userPref = await getUserProfile(sessionUserId);
-const llm = ctx.getService<LLMService>('llm');
-const res = await llm.chat({
-  messages,
-  provider: req.provider ?? userPref.preferences.llm?.providerHint,
-  // ...
-});
+// 每个 model 是一个独立 entry：先把偏好落成 ModelRef，再解析出具体 entry
+const entry = resolveLLMModel(ctx, req.llm ?? userPref.preferences.llm?.ref, ['chat']);
+const res = await entry?.instance.chat({ messages });
 ```
 
-优先级链清晰可追溯：**req 显式 > user 偏好 > 管理员 preference > priority enum**。
+优先级链清晰可追溯：**req 显式 ref > user 偏好 ref > 服务偏好（`ctx.preferService('llm', contextId)`）> 注册顺序**
+——最后两级由 `resolveLLMModel` 传 `ref=undefined` 时回落到 `all[0]` 兑现（`packages/api-llm/src/index.ts`）。
 
 ### 多租户怎么办？
 

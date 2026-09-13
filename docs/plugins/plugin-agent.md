@@ -28,6 +28,36 @@ meta.inject = { optional: ['llm', 'memory', 'persona', 'message-archive', 'platf
 | `toolResultMaxRatio` | number | `0.15` | 工具结果最大比例：单条工具结果占上下文窗口的最大比例 (0~1)，超出则截断。例如 0.15 表示 15% |
 | `trimThresholdRatio` | number | `1` | 裁剪触发比例：裁剪预算 = 上下文长度 × 该比例 − 最大输出 token − 512 安全余量（下限 1024）。本次调用估算输入 token 超过该预算才会对消息列表做内存裁剪（不影响 DB）。默认 1.0 表示用满扣除输出预留后的可用窗口；调低可提前裁剪。压缩触发请在“@aalis/plugin-memory-summary”中配置。 |
 
+## 指令
+
+本插件注册以下斜杠指令（由 `commands` 服务统一解析）：
+
+| 指令 | 说明 |
+|---|---|
+| `/model [关键词]` | 列出 / 搜索可用对话模型（分页，`-p <n>` 翻页） |
+| `/persona [关键词]` | 列出 / 搜索可用人设（分页，`-p <n>` 翻页） |
+| `/session` | 查看当前对话生效的模型 / 人设 / thinking / 名称，及各自来源与解析链 |
+| `/session.set` | 设定**会话级**覆盖（持久化，重启不丢） |
+| `/session.reset` | 复位会话级覆盖：默认清模型 + 人设 + thinking，`-m`/`-p`/`-t` 单独清对应项（显示名不在此列） |
+
+`/session.set` 的选项：
+
+| 选项 | 值 | 说明 |
+|---|---|---|
+| `-m` | `provider/model` | 模型引用，即 LLM entry 的 contextId；用 `/model` 列出可选值 |
+| `-p` | 人设卡名 | 不含后缀 |
+| `-t` | `on` / `off` | thinking 开关 |
+| `-n` | 显示名 | 会话显示名称 |
+
+```
+/session.set -m @aalis/plugin-llm-openai:main/gpt-4o -p catgirl
+/session.set -p strict-reviewer
+/session.set -t off
+/session.set -n 深夜助手
+```
+
+> 全局默认模型由本插件的 `defaultLLM` 配置项决定；会话级设置优先于它。
+
 ## 核心流程
 
 1. **`agent:input:before`**: 消息预处理 / 拦截；中间件不调用 `next()` 则以下步骤（含 LLM 调用）均不执行

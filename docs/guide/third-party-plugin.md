@@ -55,12 +55,12 @@ export default {
 
 ```ts
 import type { Context, PluginModule } from '@aalis/core';
-import type { LLMService } from '@aalis/api-llm';
+import type { LLMModel } from '@aalis/api-llm';
 
 export default {
   name: '@your-scope/plugin-x',
   apply(ctx: Context) {
-    ctx.whenService<LLMService>('llm', llm => {
+    ctx.whenService<LLMModel>('llm', llm => {
       // provider 就绪时同步调用；provider bounce 后自动重新调用一次。
       // 可选返回清理函数：会在 provider 下线或 ctx dispose 时执行。
       // llm.chat(...)
@@ -75,16 +75,19 @@ export default {
 
 ```ts
 import type { Context, PluginModule } from '@aalis/core';
-import type { LLMService } from '@aalis/api-llm';
+import type { LLMModel } from '@aalis/api-llm';
 
-class MyLLM implements LLMService { /* ... */ }
+// LLM 是 per-model 服务：一个 handle 对应一个模型，而不是「一个 provider 对应一家厂商」
+class MyModelHandle implements LLMModel { /* ... */ }
 
 export default {
   name: '@your-scope/plugin-my-llm',
+  provides: ['llm'],
   apply(ctx: Context) {
-    ctx.provide('llm', new MyLLM(), {
+    ctx.provide('llm', new MyModelHandle(), {
       priority: 50,
       label: 'my-llm',
+      entryId: `${ctx.id}/my-model`,
     });
   },
 } satisfies PluginModule;
@@ -206,7 +209,7 @@ helper 内部已封装 `whenService` 延迟语义：即使在 `apply()` 阶段�
 
 `@aalis/core` 只导出**通用 IoC 类型**（Context / PluginModule / Service / Schema / 事件
 扩展点 / 能力扩展点 / Dispose / Middleware / Logger 等）。所有 **LLM/agent 领域类型**都在
-`@aalis/plugin-*-api` 里。
+`@aalis/api-*` 里。
 
 判定规则：**运行时值导入进 `dependencies`，纯类型导入进 `devDependencies`**——与本仓
 一方插件的一致实践相同（60 包实测：值 helper 如 `useToolService` 所在契约包进 deps；
@@ -234,12 +237,16 @@ npm publish --access public
 pnpm add @your-scope/plugin-hello
 ```
 
-然后在 `aalis.config.yaml` 中启用：
+装进依赖即被自动发现并加载（靠 `keywords` 含 `aalis-plugin`），**插件默认启用**。
+`aalis.config.yaml` 的 `plugins` 段只放该包的**配置项**，不是启用开关：
 
 ```yaml
 plugins:
-  "@your-scope/plugin-hello": {}
+  "@your-scope/plugin-hello":
+    someOption: true
 ```
+
+停用是把包名写进顶层 `disabledPlugins` 数组。
 
 或在 WebUI 的「插件市场」里点击安装。
 

@@ -128,7 +128,20 @@ class DefaultAgent implements AgentService {
     const available = listLLMModels(this.ctx, { caps: ['chat'] }).map(e => e.contextId);
     const sm = this.ctx.getService<SessionManagerService>('session-manager');
     const wanted = sm && sessionId ? sm.resolveConfig(sessionId, platform).llm : undefined;
-    return describeLLMFailure(available, wanted);
+    return describeLLMFailure(available, wanted, this.erroredLLMPlugins());
+  }
+
+  /** 激活失败且声明提供 llm 的插件——「一个模型都没有」时，病因通常就在它们身上（多为缺 apiKey）。 */
+  private erroredLLMPlugins(): string[] {
+    const pm = this.ctx.getService<PluginManagerService>('plugins');
+    if (!pm) return [];
+    // 这串会拼进**发到聊天**的文案里，原因文本来自插件自抛的 error，长度不可控：
+    // 与同文件 describeLLMFailure 对模型列表设 LIST_MAX 同理，这里也要封顶。
+    return pm
+      .getStatus()
+      .filter(p => p.state === 'error' && p.provides?.includes('llm'))
+      .slice(0, 3)
+      .map(p => (p.error ? `${p.instanceId}（${truncateChars(p.error, 120)}）` : p.instanceId));
   }
 
   /** 生成 lane key：同 session + 同 source 共用一个 lane */ private laneKey(
