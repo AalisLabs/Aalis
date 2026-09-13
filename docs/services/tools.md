@@ -102,7 +102,7 @@ unregisterByPlugin(pluginName: string): void;
 **提供者（唯一）**：`@aalis/plugin-tools` —— `ctx.provide('tools', new ToolRegistry(ctx.logger))`（`packages/plugin-tools/src/index.ts`，`provides = ['tools']`）。本服务是**单实例中心 Registry**，不是 router facade（没有「多 provider 枚举」概念，`tools.ts` 注释明确）。
 
 **工具提供者（注册工具的插件，非服务 provider）**：大量插件通过 `useToolService(ctx).register(...)` 往里注册工具，例如：
-- `plugin-tool-system`（shell/file/system/http 工具，`packages/plugin-tool-system/src/index.ts`）
+- `plugin-tool-system`（shell/file/system/http 四类工具，同属 `system` 一个分组，`packages/plugin-tool-system/src/index.ts`）
 - `plugin-tool-math`（纯净参考，`packages/plugin-tool-math/src/index.ts`）
 - `plugin-tool-browser` `plugin-tool-search` `plugin-tool-onebot` `plugin-tool-code-runner` `plugin-skills` `plugin-todo-list` `plugin-memory-*` 等。
 

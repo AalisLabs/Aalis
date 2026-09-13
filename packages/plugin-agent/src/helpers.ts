@@ -157,12 +157,19 @@ export function isSameMessage(a: Message, b: Message): boolean {
  *
  * @param available 当前满足所需能力的 entry contextId 列表（`<包名>/<模型名>`）
  * @param wanted    配置解析出的 ref；未配置则为空
+ * @param erroredProviders 激活失败（error 态）且声明提供 llm 的插件描述，用于在「一个模型都没有」时点名病因
  */
 export function describeLLMFailure(
   available: readonly string[],
   wanted?: { provider?: string; model?: string },
+  erroredProviders?: readonly string[],
 ): string {
   if (available.length === 0) {
+    // 最常见的成因是 LLM 插件装了也启用了、只是缺 apiKey 而激活失败。这条文案会**发进聊天**，
+    // 而 error 只出现在终端日志与 /doctor 里——跨了界面。能点名就点名，省掉用户一轮空转。
+    if (erroredProviders && erroredProviders.length > 0) {
+      return `未找到任何具备 chat 能力的 LLM —— 以下 LLM 插件激活失败：${erroredProviders.join('；')}。改好配置后重启即可，详情见 /doctor。`;
+    }
     return '未找到任何具备 chat 能力的 LLM —— 请确认已安装并启用至少一个 LLM 提供者插件（如 @aalis/plugin-llm-deepseek）。';
   }
   if (wanted?.provider && wanted?.model) {

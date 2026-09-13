@@ -79,4 +79,4 @@ interface SessionManagerService {
 
 ## 相关
 
-- `/model`、`/persona` 等指令在 [plugin-commands](../plugins/plugin-commands.md) 中由 session-manager 注册
+- `/model`、`/persona` 等指令由 [plugin-agent](../plugins/plugin-agent.md) 注册（不是 session-manager）

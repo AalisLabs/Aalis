@@ -11,16 +11,15 @@
 ## 关键类型
 
 ```ts
-interface ChatRequest {
-  messages: Message[];          // core 协议层 Message（含 role/content/tool_calls 等）
+interface ChatModelRequest {
+  messages: Message[];          // 来自 @aalis/schema-message（含 role/content/tool_calls 等）
   tools?: ToolDefinition[];
   temperature?: number;
-  maxTokens?: number;
-  model?: string;
-  provider?: string;
-  signal?: AbortSignal;
-  think?: boolean;              // 开启思考链（仅 thinking capability 支持）
+  maxTokens?: number;           // 调用方期望的输出上限
+  signal?: AbortSignal;         // 取消
+  think?: boolean;              // 思考开关：undefined=随模型默认，true/false=显式覆盖
 }
+// 注意：**不含 model / provider**——entry 本身已绑定到具体 model
 
 interface ChatResponse {
   content: string | null;
@@ -40,17 +39,31 @@ interface ChatStreamChunk {
 
 ## 服务接口
 
+service-granularity 之后没有「一个 provider 一个 facade」这回事：**一个 model 就是一个 `'llm'` service entry**，
+provider 插件在 `apply()` 里为每个 model 各调一次 `ctx.provide('llm', handle, { entryId })`。
+
 ```ts
-interface LLMService {
-  chat(request: ChatRequest): Promise<ChatResponse>;
-  chatStream(request: ChatRequest): AsyncIterable<ChatStreamChunk>;
-  getTemperature(): number;
-  getMaxTokens(): number;
-  getContextLength(): number;
-  listModels?(): Promise<ModelInfo[]>;
-  getDefaultModelId?(): string | undefined;
+interface LLMModel {
+  /** model id（provider 内唯一，如 'gpt-4o'） */
+  readonly id: string;
+  /** 所属 provider 的 contextId（即插件 instanceId） */
+  readonly providerId: string;
+  /** 上下文窗口 tokens，供上层做 prompt 截断决策 */
+  readonly contextLength: number;
+  /** provider 建议的单次最大输出 token（可选） */
+  readonly maxOutputTokens?: number;
+  /** 该 model 的能力元数据（chat/vision/tool_calling/…），是领域数据而非 DI 选择机制 */
+  readonly capabilities: readonly LLMCapability[];
+
+  chat(request: ChatModelRequest): Promise<ChatResponse>;
+  chatStream?(request: ChatModelRequest): AsyncIterable<ChatStreamChunk>;
+  /** 让管理面板触发该 provider 重新探测远端模型列表（静态契约型 provider 可不实现） */
+  refresh?(): Promise<{ added: string[]; removed: string[]; total: number }>;
 }
 ```
+
+> 旧的 `LLMService` facade（`getTemperature()` / `listModels()` / `chat({ provider })` 路由）已随该重构删除。
+> 选哪个 model 靠服务偏好（`ctx.preferService('llm', contextId)`）与会话级覆盖，不再由调用方传 `provider`。
 
 ## Capability 框架
 

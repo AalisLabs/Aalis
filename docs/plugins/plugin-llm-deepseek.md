@@ -22,7 +22,7 @@ export const reusable = true;
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `apiKey` | string | 必填 | API Key：DeepSeek API 密钥（secret） |
+| `apiKey` | string | 必填 | API Key：DeepSeek API 密钥（secret）。**缺失时 apply 直接抛错，插件转 error 态**——启动不中断，但本插件不提供任何模型 |
 | `baseUrl` | string | `'https://api.deepseek.com'` | API 地址：API 端点完整前缀（官方无版本段）；插件只在其后拼 /chat/completions 与 /models |
 | `customModels` | textarea | `''` | 自定义模型：手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。 |
 | `modelCapabilities` | textarea | `''` | 单模型能力覆盖：按行指定某个模型的能力集。有该模型的表项时**覆盖**插件启发式推断，与 adapter 默认能力仍取并集。 格式：`&lt;modelId&gt;: &lt;cap1&gt;,&lt;cap2&gt;,...`，每行一条。如：deepseek-chat: chat,tool_calling,streaming |

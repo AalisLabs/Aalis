@@ -29,6 +29,8 @@ Aalis 提供两个互不相干的脚手架，先确认你需要哪个：
 
 ### Quickstart
 
+> 前提：Node.js >= 22（与 CI 一致）。
+
 ```bash
 # 交互式：选模板档 + 同类适配器，建好后自动 npm install
 npm create aalis@latest my-bot
@@ -70,14 +72,14 @@ npm start -- status
    |---|---|
    | `bare` | 只装 `@aalis/core` + `@aalis/runtime`（完全自定义起点） |
    | `minimal` | 最简对话闭包：网关 + 指令 + agent + 权限 + 确认通道 + 会话 + 跨会话历史 + 本地存储/进程（`MINIMAL_BASE`，`cli.ts`） |
-   | `standard` | minimal + 常用全家桶：WebUI / 人设 / 向量记忆 / 工具 / 调度 / 技能 / MCP …（`STANDARD_EXTRA`，`cli.ts`） |
+   | `standard` | minimal + 常用全家桶：WebUI / 人设 / 向量记忆 / 工具 / 调度 / 技能 / MCP / 联网搜索（Serper，需 key）…（`STANDARD_EXTRA`，`cli.ts`） |
    | `full` | 实时查 npm 全装所有官方插件（可能需手动取舍，`cli.ts`） |
 
 3. **同类适配器组**（仅 `minimal` / `standard`，`cli.ts`）——避免同类插件同时装入产生冲突，按组选择：
-   - LLM 提供者（多选，默认 DeepSeek）
-   - 接入平台（多选，默认 CLI 终端）
+   - LLM 提供者（多选，默认 DeepSeek —— 需 key；OpenAI 需 key；**Ollama 为本机服务、不需要 key**）
+   - 接入平台（多选，默认 CLI 终端）—— `standard` 档的 WebUI 由档位本身带上，此处选不选都会装
    - 记忆后端（单选，默认 SQLite）
-   - Embedding 提供者 / 向量库（仅 `standard`，向量记忆所需）
+   - Embedding 提供者 / 向量库（仅 `standard`，向量记忆所需）—— 默认的 OpenAI Embedding **另需一把独立的 key**，不想再配就选 Ollama Embedding
 
    序号输入兼容逗号或空格（`"1,2"` = `"1 2"`），回车=默认集，非法输入重问（`parseIndexSelection`，`cli.ts`）。
 
@@ -143,7 +145,7 @@ plugins:
         enabledToolGroups: ["*"]
 ```
 
-带分组的工具（shell / 文件 / 技能 / 调度 / 子任务等）默认不暴露，平台档列出该组或写 `"*"` 才对模型可见。之后接入 OneBot 等多人平台时不会自动开组，需要在平台档里按需列出——群成员能驱动哪些 public 工具靠这道闸控制（见 [security-model](../concepts/security-model.md)）。
+带分组的工具（`system`、`skills`、`scheduler`、`subtask` 等）默认不暴露，平台档列出该**组名**或写 `"*"` 才对模型可见。组名要写准——`plugin-tool-system` 的 shell / 文件 / 系统 / HTTP 工具全部落在 `system` 这**一个**组里（见 [plugin-tool-system](../plugins/plugin-tool-system.md)）。之后接入 OneBot 等多人平台时不会自动开组，需要在平台档里按需列出——群成员能驱动哪些 public 工具靠这道闸控制（见 [security-model](../concepts/security-model.md)）。
 
 首次启动时 runtime 会把每个已装插件 `configSchema` 的默认值同步写回该文件（`config-sync`），几行的初始配置会展开成全量键值——这是预期行为，之后可直接在文件里改任意项；WebUI 配置页与文件双向同步。
 
@@ -256,16 +258,16 @@ useToolService(ctx).register({
       parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
     },
   },
-  // handler 必须返回 string（工具结果文本），不是对象
+  // handler 返回 string 即纯文本结果；需要把图交给主模型时返回 { content, images }
   async handler(args) {
     return `你好, ${(args as { name: string }).name}!`;
   },
 });
 ```
 
-两处常见错误，模板已按正确形状固定：
+模板已按正确形状固定，注意两点：
 - 工具声明用 OpenAI 函数调用协议的嵌套形状 `{ type: 'function', function: { name, description, parameters } }`（`ToolDefinition`，`api-tools/src/index.ts`），不是平铺的 `{ name, description }`。
-- `handler` 的返回类型是 `Promise<string>`（`RegisteredTool.handler`，`api-tools/src/index.ts`）——返回**工具结果文本**，不要返回对象。
+- `handler` 的返回类型是 `Promise<string | ToolExecutionResult>`（`RegisteredTool.handler`，`api-tools/src/index.ts`）——返回字符串即纯文本结果；需要把图片交给主模型亲眼看时返回 `{ content, images }`。
 
 选了 command / webui 时分别追加 `useCommandService(ctx).command(...).action(...)` 与 `useWebuiService(ctx).registerPage(...)` 示例（`cli.ts`）。这些注册 helper 都来自各自的 `*-api` 包，**不**来自 core——这也是为什么对应 `*-api` 要进 `dependencies`。各扩展点的 helper 一览见 [第三方插件开发者指南](./third-party-plugin.md) 第 5 节。
 
@@ -316,7 +318,7 @@ export function apply(ctx: Context, config: Record<string, unknown>) {
 
 ### 3. 本地验证 → 发布
 
-- **本地运行**：把插件目录放进一个 Aalis 项目的依赖（开发期可 `pnpm link` 或放进 monorepo `packages/`），在 `aalis.config.yaml` 的 `plugins` 段加上 `"my-plugin": {}` 启用。
+- **本地运行**：在 Aalis 项目目录里 `npm install ../my-plugin`（写进 `dependencies` 即被 node_modules 加载器发现）。**插件默认启用**——`plugins` 段只放配置，启停看顶层 `disabledPlugins` 数组，没有 `enabled` 开关。放进 monorepo `packages/` 只对自行接了 `createFsPluginLoader` 的自托管仓库有效，脚手架生成的项目不走那条路。
 - **发布**：`npm publish --access public`。用户 `npm install my-plugin` 后，因 `keywords` 含 `aalis-plugin` 即被自动发现加载（`node-modules-loader.ts`）。
 
 完整的「从零到发布」最短路径（消费/提供服务、生命周期 disposable、类型从哪个包 import、参考实现清单）见 [第三方插件开发者指南](./third-party-plugin.md)。
@@ -325,6 +327,7 @@ export function apply(ctx: Context, config: Record<string, unknown>) {
 
 ## 下一步
 
+- 启动之后怎么用（要哪些 key / 零 key 走 Ollama / CLI 与 WebUI 两个入口 / 发第一条消息）：[guide/first-run.md](./first-run.md)
 - 插件包的完整契约与发布流程：[guide/third-party-plugin.md](./third-party-plugin.md)
 - 两套元数据源（运行时导出 vs `package.json` aalis.service）与对账纪律：[concepts/manifest-metadata.md](../concepts/manifest-metadata.md)
 - 服务模型（provide / getService / 选优 / per-entry）：[concepts/service-model.md](../concepts/service-model.md)

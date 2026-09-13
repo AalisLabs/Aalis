@@ -144,8 +144,8 @@ async function main(): Promise<void> {
     console.log(`  cd ${shortName(packageName)}`);
     console.log('  pnpm install');
     console.log('  pnpm build');
-    console.log('\n要让 Aalis 加载它，把目录放进你的 Aalis 仓库的 packages/ 下，');
-    console.log('然后在 aalis.config.yaml 的 plugins 段加上对应配置项即可。');
+    console.log('\n要让 Aalis 加载它：在你的 Aalis 项目目录里执行 `npm install <本目录路径>`，');
+    console.log('装进 dependencies 即被自动发现并加载（插件默认启用；停用是把包名写进 disabledPlugins）。');
   } finally {
     rl.close();
   }
@@ -266,7 +266,7 @@ export function renderIndexTs(a: Answers): string {
         parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
       },
     },
-    // handler 必须返回 string（工具结果文本），不是对象
+    // handler 返回 string 即纯文本结果；需要把图交给主模型时返回 { content, images }
     async handler(args) {
       return \`你好, \${(args as { name: string }).name}!\`;
     },

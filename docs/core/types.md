@@ -3,16 +3,16 @@
 所有核心模块和插件之间共享的类型契约。
 
 > ⚠️ **类型归属说明（2025 重构后）**：
-> 自 cleanup-1 ~ cleanup-4 起，**所有业务服务接口**（`LLMModel`（per-model entry，取代旧 `LLMService`）/ `MemoryService` / `StorageService` / `EmbeddingService` / `VectorStoreService` / `ToolService` / `CommandService` / `GatewayService` / `WebUIService` / `AuthorityService` / `AgentService`）以及它们的关联类型（`ChatModelRequest` / `ChatResponse` / `WebuiPage` / `ExecutionGuard*` / `PluginGroupInfo` 等）**已迁出 core**，分别归属到对应的 `@aalis/plugin-*-api` 包。详见 [api 包架构](../design/api-packages.md)。
+> 自 cleanup-1 ~ cleanup-4 起，**所有业务服务接口**（`LLMModel`（per-model entry，取代旧 `LLMService`）/ `MemoryService` / `StorageService` / `EmbeddingService` / `VectorStoreService` / `ToolService` / `CommandService` / `GatewayService` / `WebUIService` / `AuthorityService` / `AgentService`）以及它们的关联类型（`ChatModelRequest` / `ChatResponse` / `WebuiPage` / `ExecutionGuard*` / `PluginGroupInfo` 等）**已迁出 core**，分别归属到对应的 `@aalis/api-*` 包。详见 [api 包架构](../design/api-packages.md)。
 >
 > 本文档保留接口定义文本以供查阅，但**实际源码不再位于 packages/core**。
-> core 仅保留：通用 IoC 数据契约（依赖声明 / 中间件 / `AalisEvents`）、App 生命周期接口、服务自清理协议（`DisposableService`），以及 4 个空扩展点（`AalisEvents` / `HookContextMap` / `ServiceTypeMap` / `ContributionPointMap`）——供各 `plugin-*-api` 通过 declaration merging 注入领域键。
+> core 仅保留：通用 IoC 数据契约（依赖声明 / 中间件 / `AalisEvents`）、App 生命周期接口、服务自清理协议（`DisposableService`），以及 4 个空扩展点（`AalisEvents` / `HookContextMap` / `ServiceTypeMap` / `ContributionPointMap`）——供各 `api-*` 通过 declaration merging 注入领域键。
 >
 > 注：**配置表单 Schema 词汇**（`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` / `SchemaFieldTypes` / `CORE_CONFIG_SCHEMA`）已迁至 `@aalis/schema-config`——它是呈现层词汇，core 把 `PluginModule.configSchema` 当 opaque 数据透传、不解释任何字段。下文相关小节仅供查阅，import 请从 config-api。
 >
 > 注：0.5.0 已**移除内核的「服务能力选择/匹配」层**——`ServiceCapabilityMap` / `getServiceCapabilities` / 按能力筛选服务的整套机制不再存在。服务选择只走「偏好 > 优先级 > 注册顺序」；领域级筛选（如按 LLM 模型能力）由各 `*-api` 的 helper 自理，不进内核 DI。
 
-**源码**: `packages/core/src/types/*.ts`（已拆分为独立文件，`index.ts` 为 barrel export）；业务服务接口源码请到 `packages/plugin-*-api/src/index.ts` 查阅。
+**源码**: `packages/core/src/types/*.ts`（已拆分为独立文件，`index.ts` 为 barrel export）；业务服务接口源码请到 `packages/api-*/src/index.ts` 查阅。
 
 ---
 
@@ -136,7 +136,7 @@ interface ToolCall {
 ```typescript
 interface RegisteredTool {
   definition: ToolDefinition;
-  handler: (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string>;
+  handler: (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<string | ToolExecutionResult>;
   pluginName: string;
   visibility?: CapabilityVisibility;  // 主能力默认可见性（轴 A；缺省 public）；restricted 须被 owner/委托授予
   confirm?: CapabilityConfirm;        // 确认要求（轴 B，与 visibility 正交、owner 也生效）：'session'/'always'；缺省=不确认
@@ -181,7 +181,7 @@ interface ToolService {
     risk?: CapabilityRisk;              // 原始风险声明（透传，供 authority 派生 minTier）
     groups?: string[];
   }>;
-  execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<string>;
+  execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<ToolExecutionResult>;
   setExecutionGuard(guard: ExecutionGuard): void;
   unregisterByPlugin(pluginName: string): void;
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, pluginName: string): () => void;
@@ -597,7 +597,7 @@ type ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArray>;
 
 内置事件类型映射表，支持 declaration merging 扩展。
 
-core 自身只声明通用 IoC / 生命周期事件；业务事件（消息 / 工具 / 会话 / gateway）由各 `plugin-*-api` 通过 declaration merging 注入。
+core 自身只声明通用 IoC / 生命周期事件；业务事件（消息 / 工具 / 会话 / gateway）由各 `api-*` 通过 declaration merging 注入。
 
 ```typescript
 // core 内置（packages/core/src/types/events.ts）
