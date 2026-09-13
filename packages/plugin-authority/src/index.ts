@@ -142,8 +142,15 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
 
   // 落盘走 onDispose 而非 app:stopping：后者只在全局停机触发一次，覆盖不了
   // bounce / unload / disable / 依赖降级级联这些拆卸路径，热重载即丢等级数据。
-  // save() 是同步的，onDispose 在所有拆卸路径上当场生效。
-  ctx.onDispose(() => authority.save());
+  //
+  // 必须 async 并 await flushed()：save() 只是把写挂到 saveChain 上就同步返回，
+  // 而 DisposableChain.disposeAsync 只在回调返回 thenable 时才等待——回调返回 void 时
+  // 整条拆卸链一个环节都不等这次写，CLI 子命令退出与 bounce 都会静默丢掉封禁/等级。
+  // flushed() 无条件 await：dirty 已为 false 时 save() 会早退，要等的是先前挂上去的那次写。
+  ctx.onDispose(async () => {
+    authority.save();
+    await authority.flushed();
+  });
 
   // ===== 权限指令 =====
 

@@ -1,5 +1,16 @@
 import { spawn } from 'node:child_process';
-import { existsSync, type FSWatcher, watch as fsWatch, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import {
+  chmodSync,
+  existsSync,
+  type FSWatcher,
+  watch as fsWatch,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -137,7 +148,22 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
   const provider: ConfigProvider = {
     save(config) {
       const yaml = buildSaveYaml(config);
-      writeFileSync(absPath, yaml, 'utf-8');
+      // 原子写：先写临时文件再 rename（同目录同分区，rename 原子覆盖）。
+      // 直接 writeFileSync 是 O_CREAT|O_TRUNC——写中断（磁盘写满 / 进程被杀）时截断已经发生、
+      // 写入却没完成，盘上留下 0 字节或半截 YAML。而空文件会被 loadFromDisk 当成「空配置」放行，
+      // 随后 config-sync 按 schema 回填并再次存盘，没有 default 的 apiKey 就此永久消失，
+      // 连「文件坏了」的现场都不留。同仓 plugin-storage-local 早已为同样的理由做原子写。
+      // watch() 守的是目录而非文件（见下），所以 rename 换 inode 不会打断热重载。
+      const tmp = `${absPath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
+      writeFileSync(tmp, yaml, 'utf-8');
+      // 沿用原文件权限位：chmod 打在 tmp 上而非 rename 后的目标，避开两步之间的窗口。
+      // 配置文件常含密钥，用户 chmod 600 过的不能因一次保存退回 0644。
+      try {
+        if (existsSync(absPath)) chmodSync(tmp, statSync(absPath).mode & 0o777);
+      } catch {
+        /* 取不到原权限就用默认，不拖累写入本身 */
+      }
+      renameSync(tmp, absPath);
       rawYaml = yaml;
     },
 

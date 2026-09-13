@@ -96,6 +96,10 @@ export function registerFileRoutes(
       const fileName = basename(result.stat.name);
       res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
       res.setHeader('Content-Length', result.stat.size);
+      // 客户端中断（取消下载/关标签页/断网）时 res 触发 'close'，而 Node 的 pipe 只 unpipe、
+      // 不 destroy 源流——fs.ReadStream 会停在 paused 态永不 end，fd 不回收。正常结束时
+      // destroy 打在已 autoClose 的流上是 no-op，happy path 行为不变。
+      res.on('close', () => result.stream.destroy());
       result.stream.pipe(res);
     } catch (err) {
       sendStorageError(res, err);
