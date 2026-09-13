@@ -33,7 +33,24 @@ plugins:
 npm install @aalis/plugin-llm-ollama
 ```
 
-装上重启即可——它默认连 `http://localhost:11434`，不需要任何 key，会把本机已有的模型全部注册为可选模型。嵌入同理，装 `@aalis/plugin-embedding-ollama`。
+装上重启即可——它默认连 `http://localhost:11434`，不需要任何 key，会把本机已有的对话模型注册为可选模型（`/api/show` 只报 embedding 能力的模型不会进列表）。
+
+嵌入（向量记忆所需）装 `@aalis/plugin-embedding-ollama`，但它和对话模型不同：**默认模型 `nomic-embed-text` 必须自己先拉下来**，否则每次向量索引都会失败。
+
+```bash
+ollama pull nomic-embed-text
+npm install @aalis/plugin-embedding-ollama
+```
+
+对话模型是「发现本机已有的」，嵌入模型是「用配置里指定的那一个」——机器上没有就一直 404。这种「服务在、但每次调用都失败」的状态用 `/doctor` 看（会报 `service/embedding.ollama` 不可用），`/status` 只判服务是否注册、看不出来。
+
+换用别的嵌入模型改这一项：
+
+```yaml
+plugins:
+  "@aalis/plugin-embedding-ollama":
+    model: "你已经 pull 下来的嵌入模型"
+```
 
 > 在**已经运行**的实例上装插件需要重启；若经 WebUI 的「插件市场」页安装，则由市场流程自动完成发现，无需手动重启。
 
