@@ -13,7 +13,15 @@ export default defineConfig({
       reporter: ['text', 'json-summary', 'html'],
       reportsDirectory: 'coverage',
       // 全工程纳入覆盖率统计（含所有插件源码）。
-      // 门槛按当前实际可达数值设置，后续随测试新增逐步抬升。
+      //
+      // 门槛是**防退化线**，取实测值下方留波动余量（2026-09-14 实测 lines/statements 56.5%、
+      // functions 68.4%、branches 72.8%）。此前定在 15/22/15/60，比实测低 41 个点——
+      // 那不是门槛，是装饰：覆盖率崩一半也照样过。
+      //
+      // **注意它不在门禁里跑**：`test` 脚本是 `vitest run`（无 --coverage），
+      // ci:local / preflight / pre-push 三处都不带覆盖率，所以本门槛只在手动
+      // `vitest run --coverage` 时生效。要让它真正拦住退化，得把带 --coverage 的一遍
+      // 加进 preflight——那会拖慢 pre-push，属于待拍板项，不在本批擅自改。
       include: ['packages/*/src/**/*.ts', 'src/**/*.ts'],
       exclude: [
         '**/dist/**',
@@ -35,10 +43,10 @@ export default defineConfig({
       // 门槛设在实际值之下并允许少量回退缓冲，避免无关 PR 误报；
       // 新插件/新 runtime 增加测试后应主动抬升此处数值。
       thresholds: {
-        lines: 15,
-        functions: 22,
-        statements: 15,
-        branches: 60,
+        lines: 55,
+        functions: 66,
+        statements: 55,
+        branches: 70,
       },
     },
   },

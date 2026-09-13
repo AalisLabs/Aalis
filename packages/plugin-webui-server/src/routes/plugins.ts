@@ -241,7 +241,13 @@ export function registerPluginRoutes(
     // 字段从内存态和 yaml 里一起抹掉。默认值从 configSchema 派生（唯一声明来源）。
     const schema = pm.getPlugin(pluginName)?.module?.configSchema;
     const defaults = defaultsFrom(schema);
-    const merged = { ...defaults, ...(newConfig as Record<string, unknown>) };
+    // 基线取「默认值叠已存值」而非裸默认值：defaultsFrom 只收录声明了 default 的键，
+    // 而 apiKey / accessToken 这类 secret 多数**没有** default（deepseek、embedding-openai、
+    // llm-openai、serper、onebot 皆是）。用裸 defaults 打底时，请求里没带 apiKey 就等于
+    // merged 里根本没有这个键，整体替换后用户的密钥从内存态与 yaml 一起消失。
+    // 叠上已存值后语义才是真正的部分更新：没提交的字段保持原样，要清空得显式传空串。
+    const stored = { ...defaults, ...ctx.config.getPluginConfig(pluginName) };
+    const merged = { ...stored, ...(newConfig as Record<string, unknown>) };
 
     // 保存前校验，拦新不追旧：只拒绝本次编辑**新引入**的 invalid（配错了）。
     // 存量问题放行——否则带着历史脏值（或 schema 表达不了的多态字段，如 mcp-client
@@ -249,7 +255,6 @@ export function registerPluginRoutes(
     // 对它们已有告警。missing（没配全）也放行：半成品配置是启用插件配到一半的
     // 正常中间态。禁用插件的 PUT 走下方 updatePluginConfig 失败分支，在那里区分
     // 「已禁用」（409，提示先启用）与「真不存在」（404）。
-    const stored = { ...defaults, ...ctx.config.getPluginConfig(pluginName) };
     const preExisting = new Set(validateConfig(schema, stored).map(i => `${i.path}|${i.message}`));
     const issues = validateConfig(schema, merged).filter(
       i => i.kind === 'invalid' && !preExisting.has(`${i.path}|${i.message}`),
