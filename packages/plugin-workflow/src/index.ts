@@ -515,12 +515,14 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   for (const page of webuiPages) webui.registerPage(page);
 
   // ── 清理 ──
-  ctx.onDispose(() => {
+  ctx.onDispose(async () => {
     triggers.dispose();
     // 先置 cancelled 再清表：只 clear 的话在飞 run 仍持有自己的 token 引用，会继续用已 dispose 的
     // ctx 跑完剩余节点、emit 事件，并把结果写回旧 RunStore 的历史快照
     for (const t of cancelTokens.values()) t.cancelled = true;
     cancelTokens.clear();
+    // 等排队中的运行历史 / once 记账写完再结束拆卸：否则 app.stop() 返回后仍有落盘在飞
+    await runStore.flushed();
   });
 
   logger.info(`工作流插件已启动 (${loader.list().length} 个定义已加载)`);
