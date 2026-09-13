@@ -177,6 +177,33 @@ describe('setRestrictedPolicy / revokeTemporaryGrant / setConfig — 仅 owner �
   });
 });
 
+describe('setAuthorityOverride — 抬门槛须撤销旧授予', () => {
+  it('抬高最低等级后，该能力上的会话授予立即失效', async () => {
+    const { ctx, manager } = makeCtx();
+    manager.setUserLevel({ platform: 'onebot', userId: 'alice' }, 2);
+    manager.setConfirmHandler('*', async () => ({ allowed: true, grant: { scope: 'session', durationSeconds: 600 } }));
+    const grantReq = {
+      name: 'shell.exec',
+      type: 'tool',
+      capability: 'tool:shell.exec',
+      sessionId: 's1',
+      platform: 'onebot',
+      userId: 'alice',
+      visibility: 'restricted',
+    } as never;
+    expect(await manager.requestAccess(grantReq), '前置：授予没建起来就测不到东西').toBe(true);
+    expect(manager.isPreApproved(grantReq)).toBe(true);
+
+    // owner 在权限页把门槛抬到 5（典型处置：不封人只抬门槛）
+    await actions.setAuthorityOverride(ctx, { name: 'tool:shell.exec', level: 5 });
+
+    expect(
+      manager.isPreApproved(grantReq),
+      'authorize 已按新门槛拒绝，救援闸却靠旧授予继续放行——且救援命中直接 return null，连 confirm 轴一并跳过',
+    ).toBe(false);
+  });
+});
+
 describe('setAuthorityOverride — owner 调整单操作最低等级', () => {
   it('写入 config.authorityOverrides 任意整数；非整数删除条目', async () => {
     const { ctx } = makeCtx();

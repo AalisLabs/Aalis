@@ -529,7 +529,9 @@ class DefaultAgent implements AgentService {
           userId: incoming.userId,
           platform: incoming.platform,
           actor: incoming.actor,
-          enabledGroups,
+          // 恒为数组：平台档没配分组时给 []（列举面本就等价于「只给无分组工具」），
+          // 让执行面的分组闸总是生效，而不是在「未配置」时整个失效。
+          enabledGroups: enabledGroups ?? [],
           // 本循环会把 ToolExecutionResult.images 挂到 tool 消息交给主模型（出口由 prepareLLMMessages 编码）
           acceptsImages: true,
           // 回合中止信号：等确认期间被 latest-wins / 手动 abort 掐掉的工具不再执行

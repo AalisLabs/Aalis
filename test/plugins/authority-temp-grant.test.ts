@@ -82,6 +82,23 @@ describe('会话临时授予不得成为救援闸上的绕过口', () => {
     expect(m.isPreApproved(req()), '被封禁的用户靠旧授予仍能过救援闸——封禁在 TTL 内对该能力形同虚设').toBe(false);
   });
 
+  it('抬高操作门槛后，该能力上的旧授予立即失效', async () => {
+    const m = await withGrant();
+    // owner 在权限页把 tool:shell.exec 的最低等级抬到 5（典型处置：不封人只抬门槛）
+    const revoked = m.revokeGrantsOfCapability('tool:shell.exec');
+    expect(revoked, '前置：确实撤掉了那条授予').toBe(1);
+    expect(
+      m.isPreApproved(req()),
+      '门槛抬了却仍被旧授予放行——救援命中还会直接 return null，把 confirm 轴一并跳过',
+    ).toBe(false);
+  });
+
+  it('撤销只作用于指定能力，不误伤其它授予', async () => {
+    const m = await withGrant();
+    expect(m.revokeGrantsOfCapability('tool:other.thing')).toBe(0);
+    expect(m.isPreApproved(req()), '撤销别的能力不该动到这条').toBe(true);
+  });
+
   it('同 userId 但不同 platform 不得命中他人的授予', async () => {
     const m = await withGrant();
     expect(

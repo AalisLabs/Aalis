@@ -139,6 +139,11 @@ ctx.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { risk: 
 >
 > 这条判据的前提是分组闸：带分组的工具只在平台档 / 会话配置列出该组（或 `'*'`）时才暴露；
 > `npm create aalis` 只给已选装的 `cli` / `webui` 写 `['*']`，多人平台一律不代开。
+>
+> 这道闸此前**只在列举面生效**：`ToolRegistry.execute` 按名直调不校验分组，被提示注入的模型
+> 叫出一个本回合没下发给它的名字即可执行（已实测复现）。现已在执行面补齐同一判据——
+> 调用方传了 `enabledGroups` 时不命中即拒。上面「不在 enabledGroups 里故不可达」的判据
+> 因此才真正成立；引用它作为维持 public 的理由时，前提是执行面的闸在。
 > 分组闸有一个旁路：多人平台开了 `session-delegate` 组时，群成员可以用 `delegate_to_session` 把任务派进
 > owner 平台（webui / cli）的会话，目标会话按**它自己的**工具集推理，授权身份仍是发起者（actor）。
 > 此时 owner 平台开放的 public 带组工具（包括 `http_request`）对发起者可达。

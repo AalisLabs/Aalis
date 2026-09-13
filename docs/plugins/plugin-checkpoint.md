@@ -13,6 +13,7 @@
 meta.name = '@aalis/plugin-checkpoint'
 meta.provides = ['checkpoint']
 meta.subsystem = 'scheduler'
+meta.inject = { required: ['storage'] }
 ```
 
 ## 配置
@@ -31,3 +32,10 @@ meta.subsystem = 'scheduler'
 - 存储服务与 URI 语法：[services/storage.md](../services/storage.md)、[concepts/storage-uri-grammar.md](../concepts/storage-uri-grammar.md)
 - 记忆服务（对话回滚依赖）：[services/memory.md](../services/memory.md)
 - WebUI 服务端：[plugin-webui-server.md](./plugin-webui-server.md)
+
+## 拆卸顺序
+
+`storage` 声明为硬依赖，不只是因为快照要经它落盘，更是为了拆卸顺序：`topoSortByDeps` 只按
+`required` 建边，不声明的话 checkpoint 与 storage 的 inDegree 都是 0，拆卸序退化成注册序的
+逆序——storage 可能先被 retire，随后 `onDispose` 里的 `flushAll()` 调 `storage.writeFile` 时
+entry 已被摘除，在飞回合的 manifest 落不了盘。声明之后消费者必然先于提供者关闭。
