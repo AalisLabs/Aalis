@@ -93,6 +93,19 @@ __pycache__/**    *.pyc      .DS_Store   Thumbs.db
 
 `file_search` 结果默认上限 200 条；超出时 `advice` 字段会建议缩小搜索范围或追加 `include`。
 
+目录模式下读不出来的文件（权限不足、枚举之后被删）不计入命中，但也不会被静默跳过：返回体带
+`skippedFiles` 计数，`advice` 里明确提示「不要据此断言找不到」。此前这类跳过完全无痕——
+该文件一行未扫，结果却照常给出 `matchCount` 且 `truncated` 仍为 `false`，模型会把这个
+「非截断」的可信信号当成「不存在」。
+
+### 单行字节上限
+
+按行读取的工具（`file_read` 的行范围、`file_search`）对**单行**另有字节上限，取自
+`file.maxReadSize` / `file.maxSearchBytes`：超上限的行按字节截断后交付，余下部分丢弃到下一个换行。
+无换行的大文件（单行 JSON、压缩产物）因此不会被整行载入内存——否则预算判定发生在整行已成型
+之后，上限形同虚设，而超过 V8 单字符串上限时抛出的 `RangeError` 是从流的 `data` 事件栈上同步
+抛出的，工具侧的 try/catch 接不住，会一路逃到宿主的未捕获异常处理器把进程打掉。
+
 ### 目录模式的续搜协议
 
 目录搜索的预算（`maxResults` / `maxSearchBytes`）跨文件累加，耗尽即 `truncated: true`。此时结果里一定带 `nextStartFile`（相对所搜目录的文件路径）与 `nextStartLine`：下一次调用传**同一个 `path`** 加这两个值，并把本次的 `pattern` / `isRegex` / `ignoreCase` / `exclude` / `include` **原样重传**，就从断点原地接着扫，不重复也不遗漏。这几个参数任一不同则断点失效：文件集或匹配规则一变，断点指向的位置就不再是同一个（漏传 `isRegex` 会静默按字面量少命中，漏传 `exclude` 则断点文件可能已被排除，直接报 `startFile` 未找到）。

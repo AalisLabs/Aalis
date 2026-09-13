@@ -26,6 +26,12 @@ export const configSchema: ConfigSchema = {
     dynamicOptions: 'embedding',
     description: '用于生成文本向量的模型',
   },
+  timeoutMs: {
+    type: 'number',
+    label: '请求超时 (ms)',
+    default: 30000,
+    description: '单次 embedding 请求超时时间。不设上限时启动探测会把插件激活链整条钉住。',
+  },
 };
 
 // ===== 服务实现 =====
@@ -34,11 +40,13 @@ class OpenAIEmbeddingService implements EmbeddingService {
   private baseUrl: string;
   private model: string;
   private apiKey: string;
+  private timeoutMs: number;
 
-  constructor(baseUrl: string, model: string, apiKey: string) {
+  constructor(baseUrl: string, model: string, apiKey: string, timeoutMs = 30000) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.model = model;
     this.apiKey = apiKey;
+    this.timeoutMs = Math.max(1000, timeoutMs);
   }
 
   async embed(text: string): Promise<number[]> {
@@ -49,6 +57,10 @@ class OpenAIEmbeddingService implements EmbeddingService {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({ model: this.model, input: text }),
+      // 没有 signal 的话这次请求永不自行了结：apply 的启动探测 await 它，而插件激活是串行的
+      // （PluginManager.recompute 逐个 await activatePlugin），一个卡住的 apply 会钉住整条引导链；
+      // 索引路径上则是 memory-vector 的一个并发槽被无限期占用。
+      signal: AbortSignal.timeout(this.timeoutMs),
     });
     if (!res.ok) {
       throw new Error(`OpenAI embedding 请求失败: ${res.status} ${res.statusText}`);
@@ -61,6 +73,7 @@ class OpenAIEmbeddingService implements EmbeddingService {
     try {
       const res = await fetch(`${this.baseUrl}/models`, {
         headers: { Authorization: `Bearer ${this.apiKey}` },
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
       if (!res.ok) return [];
       const data = (await res.json()) as { data: { id: string }[] };
@@ -88,7 +101,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
   const model = (config.model as string) ?? 'text-embedding-3-small';
 
-  const service = new OpenAIEmbeddingService(baseUrl, model, apiKey);
+  const timeoutMs = (config.timeoutMs as number) ?? 30000;
+
+  const service = new OpenAIEmbeddingService(baseUrl, model, apiKey, timeoutMs);
 
   // 启动时检查连通性（失败不阻塞，只警告）
   try {

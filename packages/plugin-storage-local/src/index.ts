@@ -319,13 +319,18 @@ class ScopedStorageService implements StorageService {
       uri,
       op,
       async () => {
+        // 只有「目录」与「文件不存在」才返回 null —— checkpoint 据此判定为本回合新建。
+        // 其余读取失败（EACCES / EMFILE / 超过单次 readFile 上限…）必须抛出去：压成 null
+        // 会让一个回合开始前就存在、且没有任何备份的文件被记成 write-new，回滚时直接删掉。
+        let s: Awaited<ReturnType<typeof stat>>;
         try {
-          const s = await stat(abs);
-          if (s.isDirectory()) return null;
-          return { data: await readFile(abs), size: s.size };
-        } catch {
-          return null;
+          s = await stat(abs);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+          throw err;
         }
+        if (s.isDirectory()) return null;
+        return { data: await readFile(abs), size: s.size };
       },
       targetUri,
     );

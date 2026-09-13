@@ -14,7 +14,7 @@ import * as embeddingOllama from '../../packages/plugin-embedding-ollama/src/ind
 // （「模型没 pull」与「端点不存在」都是 404，只有响应体能区分）。
 // ════════════════════════════════════════════════════════════
 
-type Mode = 'ok' | 'modelMissing' | 'hang';
+type Mode = 'ok' | 'modelMissing' | 'hang' | 'stallBody';
 
 interface Fake {
   server: Server;
@@ -36,6 +36,12 @@ async function startFake(mode: Mode, tags: string[] = ['nomic-embed-text']): Pro
     if (req.url === '/api/embed' || req.url === '/api/embeddings') {
       // 收下请求但永不应答：模拟 Ollama 装大模型时连得上、不回包
       if (state.mode === 'hang') return;
+      // 头发完、体只发一半就停住：反代半死 / 模型正加载进显存
+      if (state.mode === 'stallBody') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.write('{"embeddings":');
+        return; // 永不 end
+      }
       // Ollama 对「模型不存在」答的就是 404 + 这句话（实测）
       if (state.mode === 'modelMissing') {
         return reply(404, { error: 'model "nomic-embed-text" not found, try pulling it first' });
@@ -136,6 +142,23 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
     const { app } = await boot(fake);
     expect(app.ctx.getService<EmbeddingService>('embedding')).toBeDefined();
   });
+
+  it(
+    '发完响应头却不发体时，由配置的 timeoutMs 掐断，而不是等 undici 的 bodyTimeout',
+    async () => {
+      const fake = await startFake('ok');
+      servers.push(fake.server);
+      const { app } = await boot(fake, 'nomic-embed-text', { timeoutMs: 800, retries: 0 });
+      fake.mode = 'stallBody';
+      const svc = app.ctx.getService<EmbeddingService>('embedding');
+
+      const t0 = Date.now();
+      await expect(svc!.embed('你好'), '体读取若落在超时窗口之外就会一直挂着').rejects.toThrow();
+      const elapsed = Date.now() - t0;
+      expect(elapsed, `应在 timeoutMs(800ms) 附近失败，实际 ${elapsed}ms`).toBeLessThan(8_000);
+    },
+    { timeout: 20_000 },
+  );
 
   it(
     'Ollama 无响应时探测自带上限，不把 /doctor 拖到服务超时',

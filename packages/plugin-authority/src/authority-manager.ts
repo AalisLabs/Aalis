@@ -117,6 +117,27 @@ export class AuthorityManager implements AuthorityService {
     if (DEFAULT_AUTHORITY < prev) this.revokeGrantsOf(platform, userId);
   }
 
+  /**
+   * 撤销某个能力上所有未过期的会话授予（操作门槛变更时调用）。返回撤销条数。
+   *
+   * 与 setUserLevel / removeUser 的撤销同源：救援闸 isPreApproved 恰恰在 authorize
+   * 拒绝之后才被调用，在那里复查会把整条会话授予路径变成死代码，所以撤销必须由管理
+   * 动作负责。门槛变更一律撤销（不像等级那样只在降权时撤）：覆盖值可增可减、删除时
+   * 还会回落到 risk 派生值，孰高孰低无法一概而论，而管理动作本就罕见，重确认一次的
+   * 代价远小于「抬了门槛却仍被旧授予放行」。
+   */
+  revokeGrantsOfCapability(capability: string): number {
+    let n = 0;
+    for (const [id, g] of this.tempGrants) {
+      if (g.capability === capability) {
+        this.tempGrants.delete(id);
+        n++;
+      }
+    }
+    if (n > 0) this.logger.info(`已撤销能力 "${capability}" 上的 ${n} 条会话授予（门槛变更）`);
+    return n;
+  }
+
   /** 撤销某身份名下所有未过期的会话授予（降权 / 删除用户记录时调用）。 */
   private revokeGrantsOf(platform: string, userId: string): void {
     let n = 0;
