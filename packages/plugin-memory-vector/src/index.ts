@@ -578,6 +578,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     async build(data) {
       // 干跑(token 快照)不做真实的 embedding+检索——那是纯统计路径的昂贵副作用
       if (data.dryRun) return null;
+      data.signal?.throwIfAborted();
 
       const userMessages = data.messages.filter(m => m.role === 'user');
       const lastUserMsg = userMessages[userMessages.length - 1];
@@ -593,12 +594,15 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         // 占比升高后对方消息会被挤出候选（2026-08-27 审计探针实测同语料 2→0 条）
         const oversample = cfg.recallRoles === 'others-only' ? 8 : 4;
         const candidateCount = Math.min(cfg.search.topK * oversample, await getStore().size());
+        data.signal?.throwIfAborted();
         if (candidateCount === 0) return null;
 
-        const queryVec = await getEmbedder().embed(stripTimeLabel(lastUserMsg.content));
+        const queryVec = await getEmbedder().embed(stripTimeLabel(lastUserMsg.content), { signal: data.signal });
+        data.signal?.throwIfAborted();
         const candidates = (await getStore().search(queryVec, candidateCount)).filter(r =>
           candidateAdmissible(r.metadata),
         );
+        data.signal?.throwIfAborted();
 
         // 1. 阈值过滤
         const passThreshold = candidates.filter(c => c.score >= cfg.search.minScore);
@@ -670,6 +674,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         const mem = getMemory();
         if (W > 0 && mem?.getMessagesBySessionRange) {
           for (const [sid, pivots] of sessionPivots) {
+            data.signal?.throwIfAborted();
             // 用宽时间窗一次拉，再按 pivot 切片合并（避免多次小查询）
             const minTs = Math.min(...pivots);
             const maxTs = Math.max(...pivots);
@@ -677,6 +682,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
             const bufferMs = 4 * 60 * 60 * 1000;
             try {
               const all = await mem.getMessagesBySessionRange(sid, minTs - bufferMs, maxTs + bufferMs);
+              data.signal?.throwIfAborted();
               const sorted = all.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
 
               // 对每个 pivot 在 sorted 中定位并取 ±W 条
@@ -717,6 +723,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
                 }
               }
             } catch (err) {
+              data.signal?.throwIfAborted();
               ctx.logger.warn(`扩展上下文失败 (session=${sid}): ${err instanceof Error ? err.message : String(err)}`);
             }
           }
@@ -766,6 +773,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           '\n（以上为检索片段结束；它们早于当前对话，不是正在进行的聊天。）'
         );
       } catch (err) {
+        if (data.signal?.aborted) return null;
         ctx.logger.warn(`向量记忆检索失败: ${formatError(err)}`);
         return null;
       }
