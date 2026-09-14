@@ -21,6 +21,45 @@ async function startStalling(): Promise<{ server: Server; baseUrl: string }> {
   return { server, baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
 }
 
+interface ControlledFake {
+  server: Server;
+  baseUrl: string;
+  mode: 'ok' | 'hang';
+  requests: number;
+  aborted: number;
+}
+
+async function startControlled(): Promise<ControlledFake> {
+  const fake: ControlledFake = {
+    server: undefined as unknown as Server,
+    baseUrl: '',
+    mode: 'ok',
+    requests: 0,
+    aborted: 0,
+  };
+  const server = createServer((_req, res) => {
+    fake.requests++;
+    res.on('close', () => {
+      if (!res.writableEnded) fake.aborted++;
+    });
+    if (fake.mode === 'hang') return;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ data: [{ embedding: [0.1, 0.2] }] }));
+  });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  fake.server = server;
+  fake.baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  return fake;
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(`condition not met within ${timeoutMs}ms`);
+    await new Promise<void>(resolve => setTimeout(resolve, 5));
+  }
+}
+
 describe('plugin-embedding-openai: 请求自带超时', () => {
   const apps: App[] = [];
   const servers: Server[] = [];
@@ -70,4 +109,32 @@ describe('plugin-embedding-openai: 请求自带超时', () => {
     },
     { timeout: 40_000 },
   );
+
+  it('调用方 signal 会关闭在飞请求，且同一实例随后仍能正常 embed', async () => {
+    const fake = await startControlled();
+    servers.push(fake.server);
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    apps.push(app);
+    await app.ctx.useModule(embeddingOpenai as never, {
+      apiKey: 'sk-test-placeholder',
+      baseUrl: fake.baseUrl,
+      model: 'text-embedding-3-small',
+      timeoutMs: 30_000,
+    });
+    const svc = app.ctx.getService<EmbeddingService>('embedding')!;
+
+    fake.mode = 'hang';
+    fake.requests = 0;
+    fake.aborted = 0;
+    const controller = new AbortController();
+    const pending = svc.embed('cancel this request', { signal: controller.signal });
+    await waitFor(() => fake.requests === 1);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await waitFor(() => fake.aborted > 0);
+
+    fake.mode = 'ok';
+    await expect(svc.embed('normal request after abort')).resolves.toEqual([0.1, 0.2]);
+    expect(fake.requests).toBe(2);
+  });
 });

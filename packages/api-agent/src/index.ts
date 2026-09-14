@@ -227,6 +227,8 @@ export interface PromptContributionView {
   readonly userId?: string;
   readonly platform?: string;
   readonly triggerType?: IncomingMessage['triggerType'];
+  /** 本贡献构建超时或所属回合取消时中止；应传至底层请求，并在异步步骤之间检查。 */
+  readonly signal?: AbortSignal;
   /**
    * 干跑标记：本次只为估算上下文体积（token:request 快照），不会真正调用 LLM。
    * 昂贵/有副作用的构建（向量检索、档案加载）据此返回 null 跳过——代价是
