@@ -1,0 +1,72 @@
+{
+  "date": "2026-09-15",
+  "node": "v22.16.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "aalisCommit": "c6ceff2ed9e89f6d5fe655b2fca6229e5b3ad1b6",
+  "aalisCoreVersion": "0.12.1",
+  "dshCommit": "c291e7961a515f6d7af9304e7fd1d257929aef26",
+  "dshCordisVersion": "4.0.2",
+  "testFiles": 22,
+  "totalTests": 206,
+  "passedTests": 206,
+  "failedTests": 0,
+  "coverage": {
+    "lines": {
+      "total": 1672,
+      "covered": 1476,
+      "skipped": 0,
+      "pct": 88.27
+    },
+    "statements": {
+      "total": 1672,
+      "covered": 1476,
+      "skipped": 0,
+      "pct": 88.27
+    },
+    "functions": {
+      "total": 170,
+      "covered": 157,
+      "skipped": 0,
+      "pct": 92.35
+    },
+    "branches": {
+      "total": 669,
+      "covered": 578,
+      "skipped": 0,
+      "pct": 86.39
+    },
+    "branchesTrue": {
+      "total": 0,
+      "covered": 0,
+      "skipped": 0,
+      "pct": 100
+    }
+  },
+  "sourceHashes": {
+    "packages/core/src/app.ts": "f8049fc5a3fbe5d1f551aaf78b478ff6ab23839a530a5ce11a417f0497b54227",
+    "packages/core/src/config.ts": "bd213f49e6bdf8a6cf838c032aab9f9110a3c49ac47a020cda4de051ef59566b",
+    "packages/core/src/context.ts": "8d4245ded88c4174005e11e70a7a696b417ae43500d2485dd5bdb7a7dd880164",
+    "packages/core/src/contributions.ts": "498f96c46beea5f51c86d5880b4f66805744dd89c3cf75235fc5ca0bcd61c9ba",
+    "packages/core/src/disposable-chain.ts": "2c447249da61d346e9f7f5890f6ae70e130bbcefcae8132f892a19433c99b184",
+    "packages/core/src/events.ts": "60e2c423d6c7f866a2212ad5aeb3393bb180afd959cc68e3247474416ea12599",
+    "packages/core/src/hooks.ts": "b1601390587cf52e2229cb2db839d68e876f80cee67cb6028e3fca8b692c2a00",
+    "packages/core/src/index.ts": "de9a072838847d1279b9e33b9d52ed0e3df7f7f07e33911319d17d45fe83e75b",
+    "packages/core/src/logger.ts": "a0e4159896a0cee5478371d4f446c1423e92376a4ba2eb3f9dfe64747683fc2c",
+    "packages/core/src/plugin-activation.ts": "867c7c78755676ae34eb632a8f78c9b3efe3d628278082a385063a186a090537",
+    "packages/core/src/plugin-topology.ts": "665a860ba47f099e47d104bdf2b93138f7888a7725907e0a813ee61af41b05fa",
+    "packages/core/src/plugin.ts": "b1d371feabf907646f97c223565b4f9513a2b62dfac429ece4365a36c2a4eb0c",
+    "packages/core/src/providers.ts": "a2aa3bc63838a21e638214a01013b7e092fd420cb9df0da068678211bf5e5da7",
+    "packages/core/src/services-helpers.ts": "fd3b00849f167ac1066e668a019bc85ed5563da7ab607c874b70f0eef7d64088",
+    "packages/core/src/services.ts": "478905cdc622bd9f47069b8b38fcec434a862103647dd990fadf354749ba3437",
+    "packages/core/src/types/app.ts": "5f64091b4332f3e36980b480cd854edbe5f66d945fdd60cb5b3b24b01a30b4e4",
+    "packages/core/src/types/contributions.ts": "66bf19fe150fbbda3bf8a96f6219fd510559d39cd8572030542aaeb51719af2d",
+    "packages/core/src/types/disposable-service.ts": "ec7e1819e070d467f9678bb11521cff4b5c9e993a7a3902c2843ad2c9d40b0b2",
+    "packages/core/src/types/events.ts": "64149c5baf2fc1ec9e817efa5bbc510bf52c5d2df4bc44be2380f252b60d6a4f",
+    "packages/core/src/types/hooks.ts": "275730350783a26704333c0e66287b5fd84423687253d5f82e7ba3631aa751b6",
+    "packages/core/src/types/index.ts": "378051585125e10b73286128806e8ca0bf06b05e23c5dd04d3fef8d80da241c0",
+    "packages/core/src/types/plugin.ts": "0f0ac66928cb7a9ae60c807d738fd7623bc5d0198749a8425cbfd8f5e5b24b6a",
+    "packages/core/src/types/services.ts": "bc2a37511cf1c4f9a86ee7011491f1a5077bb550d640f5fe1323e89de60d2467",
+    "packages/core/package.json": "3b36fab1e4e3d55752a534ae441d8740dd5a408ad6cadd79df141d3f9187b96e"
+  }
+}

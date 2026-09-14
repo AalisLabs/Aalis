@@ -1,0 +1,32 @@
+[
+  {
+    "id": "C1",
+    "goal": "The provider selected before shutdown remains available until its consumers finish cleanup.",
+    "classification": "contract-gap",
+    "goalSatisfied": false,
+    "observed": {
+      "selectedBeforeShutdown": "primary",
+      "seenDuringCleanup": "fallback",
+      "order": ["primary-closed", "consumer-flush:fallback:false", "fallback-closed"]
+    }
+  },
+  {
+    "id": "C2",
+    "goal": "A dynamically mounted module exposes an awaitable resource-release boundary.",
+    "classification": "documented-limitation",
+    "goalSatisfied": false,
+    "observed": {
+      "closedAfterAwaitingReturnedDisposer": false
+    }
+  },
+  {
+    "id": "C3",
+    "goal": "Two separately created contexts cannot remove each other's resources just because their labels match.",
+    "classification": "documented-limitation",
+    "goalSatisfied": false,
+    "observed": {
+      "rightDisposed": false,
+      "siblingResourcePresent": false
+    }
+  }
+]

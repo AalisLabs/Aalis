@@ -1,0 +1,228 @@
+{
+  "schemaVersion": 1,
+  "kind": "observed semantic comparison; passing tests do not imply universal capability parity",
+  "dshRevision": "c291e7961a515f6d7af9304e7fd1d257929aef26",
+  "dshSourceDirectory": "/tmp/dsh-core-review.iDxwo6/deepseek-harness",
+  "node": "v22.16.0",
+  "scope": "Cordis kernel versus Aalis Context; Aalis whenService is not a PluginManager activation test",
+  "observations": [
+    {
+      "case": "C1",
+      "engine": "cordis",
+      "observed": {
+        "duplicateAccepted": false,
+        "winner": "first"
+      },
+      "desiredScenario": "Several implementations compete for a default within one service scope",
+      "interpretation": "Intentional contract: one provider per isolation label; use explicit scopes for multiple implementations."
+    },
+    {
+      "case": "C2",
+      "engine": "cordis",
+      "observed": {
+        "parent": "root",
+        "left": "left",
+        "right": "right"
+      },
+      "desiredScenario": "Override one branch without affecting the parent or sibling",
+      "interpretation": "Achieved by explicit isolate(); extend() alone inherits, and empty isolated services do not fall back."
+    },
+    {
+      "case": "C3",
+      "engine": "cordis",
+      "observed": {
+        "sharedIdentity": true,
+        "visibleAtRoot": false
+      },
+      "desiredScenario": "Join selected service scopes without exposing the service at the root",
+      "interpretation": "Achieved by reusing the same isolation label."
+    },
+    {
+      "case": "C4",
+      "engine": "cordis",
+      "observed": {
+        "transitions": ["start:first", "stop:first", "start:second"],
+        "active": true
+      },
+      "desiredScenario": "Wait for a service and cleanly attach to its replacement",
+      "interpretation": "inject() gates the entire dependent Fiber and restarts it when the provider changes."
+    },
+    {
+      "case": "C5",
+      "engine": "cordis",
+      "observed": {
+        "liveResources": 0,
+        "eventCalls": ["before"],
+        "serviceVisible": false,
+        "livePluginRuntimes": 0
+      },
+      "desiredScenario": "Parent unload removes nested registrations and resources",
+      "interpretation": "Achieved for resources registered through effects and child fibers."
+    },
+    {
+      "case": "C6",
+      "engine": "cordis",
+      "observed": {
+        "cleanedAtResolution": true,
+        "disposalResolved": true
+      },
+      "desiredScenario": "Await disposal until asynchronous cleanup completes",
+      "interpretation": "Fiber.dispose() waits for registered asynchronous effects."
+    },
+    {
+      "case": "C7-sync",
+      "engine": "cordis",
+      "observed": {
+        "afterFirstDispose": ["second"],
+        "afterBothDispose": [],
+        "providerStillActive": true
+      },
+      "desiredScenario": "Resources created through a shared service follow the caller lifetime",
+      "interpretation": "Traceable Service proxies transfer effect ownership to the calling Fiber, including across an await."
+    },
+    {
+      "case": "C7-async",
+      "engine": "cordis",
+      "observed": {
+        "afterFirstDispose": ["second"],
+        "afterBothDispose": [],
+        "providerStillActive": true
+      },
+      "desiredScenario": "Resources created through a shared service follow the caller lifetime",
+      "interpretation": "Traceable Service proxies transfer effect ownership to the calling Fiber, including across an await."
+    },
+    {
+      "case": "C8",
+      "engine": "cordis",
+      "observed": {
+        "recipients": ["left", "global"]
+      },
+      "desiredScenario": "Route an event to one logical branch",
+      "interpretation": "Explicit Context.filter receiver selects the branch; global listeners intentionally bypass filtering."
+    },
+    {
+      "case": "C9-independent",
+      "engine": "cordis",
+      "observed": {
+        "shutdownOrder": ["provider:close", "consumer:saw-closed"],
+        "consumerSawOpenProvider": false
+      },
+      "desiredScenario": "Keep a provider resource usable until dependent cleanup has completed",
+      "interpretation": "Not automatic across independent top-level effects: unload runs them concurrently. This contract needs deliberate resource composition."
+    },
+    {
+      "case": "C9-grouped",
+      "engine": "cordis",
+      "observed": {
+        "shutdownOrder": ["consumer:saw-open", "provider:close"],
+        "consumerSawOpenProvider": true
+      },
+      "desiredScenario": "Keep a provider resource usable until dependent cleanup has completed",
+      "interpretation": "Achieved with an explicit composite effect that unregisters the service before closing its resource."
+    },
+    {
+      "case": "C1",
+      "engine": "aalis",
+      "observed": {
+        "duplicateAccepted": true,
+        "winnerTransitions": ["second", "first", "second", "first"],
+        "samePriorityWinner": "first",
+        "liveProviders": 2
+      },
+      "desiredScenario": "Several implementations compete for a default within one service scope",
+      "interpretation": "Achieved through shared-container arbitration and explicit preference."
+    },
+    {
+      "case": "C2",
+      "engine": "aalis",
+      "observed": {
+        "winnersBeforeDispose": ["right", "right", "right"],
+        "winnersAfterRightDispose": ["left", "left"]
+      },
+      "desiredScenario": "Override one branch without affecting the parent or sibling",
+      "interpretation": "Not obtained from fork(): descendants intentionally share the same ServiceContainer. This is a different scope contract, not a failed cleanup."
+    },
+    {
+      "case": "C3",
+      "engine": "aalis",
+      "observed": {
+        "rootAndChildShareContainer": true
+      },
+      "desiredScenario": "Join selected service scopes without exposing the service at the root",
+      "interpretation": "fork() shares the entire container; it is not a per-service isolation-label mechanism."
+    },
+    {
+      "case": "C4",
+      "engine": "aalis",
+      "observed": {
+        "transitions": ["start:first", "stop:first", "start:second"],
+        "consumerDisposed": false
+      },
+      "desiredScenario": "Wait for a service and cleanly attach to its replacement",
+      "interpretation": "whenService() reattaches the callback and cleans its returned disposer; this test does not measure PluginManager dependency gating."
+    },
+    {
+      "case": "C5",
+      "engine": "aalis",
+      "observed": {
+        "liveResources": 0,
+        "eventCalls": ["before"],
+        "serviceVisible": false,
+        "childDisposed": true
+      },
+      "desiredScenario": "Parent unload removes nested registrations and resources",
+      "interpretation": "Achieved for Context registrations and resources explicitly registered with onDispose()."
+    },
+    {
+      "case": "C6",
+      "engine": "aalis",
+      "observed": {
+        "cleanedAtResolution": true,
+        "disposalResolved": true
+      },
+      "desiredScenario": "Await disposal until asynchronous cleanup completes",
+      "interpretation": "Achieved with disposeAsync(); the separate synchronous dispose() API intentionally does not wait."
+    },
+    {
+      "case": "C7-sync",
+      "engine": "aalis",
+      "observed": {
+        "remainingLeasesAfterBothConsumersDispose": ["first", "second"],
+        "remainingAfterProviderDispose": [],
+        "returnedBareInstance": true
+      },
+      "desiredScenario": "Resources created through a shared service follow the caller lifetime",
+      "interpretation": "Not automatic for a service that captures the provider Context. Aalis returns the bare instance; explicitly pass the caller or register a caller cleanup."
+    },
+    {
+      "case": "C7-async",
+      "engine": "aalis",
+      "observed": {
+        "remainingLeasesAfterBothConsumersDispose": ["first", "second"],
+        "remainingAfterProviderDispose": [],
+        "returnedBareInstance": true
+      },
+      "desiredScenario": "Resources created through a shared service follow the caller lifetime",
+      "interpretation": "Not automatic for a service that captures the provider Context. Aalis returns the bare instance; explicitly pass the caller or register a caller cleanup."
+    },
+    {
+      "case": "C7-explicit",
+      "engine": "aalis",
+      "observed": {
+        "remainingLeasesAfterCallerDispose": [],
+        "providerStillActive": true
+      },
+      "desiredScenario": "Resources created through a shared service follow the caller lifetime",
+      "interpretation": "Achieved with an explicit owner argument; the difference from Cordis is automatic context rebinding, not whether cleanup can be implemented."
+    },
+    {
+      "case": "C8",
+      "engine": "aalis",
+      "observed": {
+        "recipients": ["left", "right"]
+      },
+      "desiredScenario": "Route an event to one logical branch",
+      "interpretation": "fork() uses a shared EventBus. Branch selection requires application-level routing/filtering rather than Context event scope."
+    }
+  ]
+}

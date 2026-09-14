@@ -1,0 +1,104 @@
+{
+  "suite": "aalis-lifecycle",
+  "interpretation": "Vitest pass means baseline reproduced; contractPassed evaluates the stated contract.",
+  "observations": [
+    {
+      "id": "provider-winner-switching",
+      "contract": "Preference overrides priority; unavailable preference falls back; losing providers do not remount watchers.",
+      "contractPassed": true,
+      "expected": {
+        "winners": ["a", "b", "a", "b2"],
+        "afterLoserChurn": ["attach:a"],
+        "trace": ["attach:a", "cleanup:a", "attach:b", "cleanup:b", "attach:a", "cleanup:a", "attach:b2", "cleanup:b2"]
+      },
+      "observed": {
+        "winners": ["a", "b", "a", "b2"],
+        "afterLoserChurn": ["attach:a"],
+        "trace": ["attach:a", "cleanup:a", "attach:b", "cleanup:b", "attach:a", "cleanup:a", "attach:b2", "cleanup:b2"]
+      },
+      "source": ["packages/core/src/services.ts:99", "packages/core/src/context.ts:402"]
+    },
+    {
+      "id": "initialization-unload-ordering",
+      "contract": "Unload waits for initialization and asynchronous cleanup; late service registration cannot resurrect the plugin.",
+      "contractPassed": true,
+      "expected": {
+        "settledBeforeCleanup": false,
+        "trace": ["apply-entered", "acquired", "cleanup-entered", "cleanup-finished", "unload-returned"],
+        "servicePresent": false,
+        "pluginPresent": false
+      },
+      "observed": {
+        "settledBeforeCleanup": false,
+        "trace": ["apply-entered", "acquired", "cleanup-entered", "cleanup-finished", "unload-returned"],
+        "servicePresent": false,
+        "pluginPresent": false
+      },
+      "source": [
+        "packages/core/src/context.ts:807",
+        "packages/core/src/context.ts:834",
+        "packages/core/src/plugin-activation.ts:127"
+      ]
+    },
+    {
+      "id": "queued-optional-service-down",
+      "contract": "An optional consumer opting into requiresBounceOnDepChange should remount after provider loss, including during unrelated activation.",
+      "contractPassed": false,
+      "expected": {
+        "idle": {
+          "activations": 2,
+          "cleanups": 1,
+          "consumerState": "active",
+          "providerAvailable": false,
+          "retainedRemovedProvider": false
+        },
+        "contended": {
+          "activations": 2,
+          "cleanups": 1,
+          "consumerState": "active",
+          "providerAvailable": false,
+          "retainedRemovedProvider": false
+        }
+      },
+      "observed": {
+        "idle": {
+          "activations": 2,
+          "cleanups": 1,
+          "consumerState": "active",
+          "providerAvailable": false,
+          "retainedRemovedProvider": false
+        },
+        "contended": {
+          "activations": 1,
+          "cleanups": 0,
+          "consumerState": "active",
+          "providerAvailable": false,
+          "retainedRemovedProvider": true
+        }
+      },
+      "source": ["packages/core/src/plugin.ts:452", "packages/core/src/plugin-activation.ts:83"]
+    },
+    {
+      "id": "whenservice-reentrant-provider-switch",
+      "contract": "Each returned cleanup runs once when superseded or unsubscribed, including a provider switch inside the callback.",
+      "contractPassed": false,
+      "expected": {
+        "currentWinner": "b",
+        "beforeStop": ["b"],
+        "afterStop": [],
+        "cleanups": ["a", "b"]
+      },
+      "observed": {
+        "currentWinner": "b",
+        "beforeStop": ["a", "b"],
+        "afterStop": ["b"],
+        "trace": ["attach:a", "attach:b", "cleanup:a"]
+      },
+      "source": [
+        "packages/core/src/context.ts:402",
+        "packages/core/src/context.ts:433",
+        "docs/design/core-contract.md:19"
+      ]
+    }
+  ]
+}

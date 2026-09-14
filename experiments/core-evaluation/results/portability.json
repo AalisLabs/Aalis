@@ -1,0 +1,199 @@
+{
+  "node": "v22.16.0",
+  "typescript": "5.9.3",
+  "esbuild": "0.27.4",
+  "platform": "darwin/arm64",
+  "temporary": "/var/folders/p8/9np8zdsd1gl_f84gtkf44hc80000gn/T/aalis-core-portability-WgV6xy",
+  "results": {
+    "compileFreshDist": {
+      "ok": true,
+      "status": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "browserTypes": {
+      "ok": true,
+      "status": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "workerTypes": {
+      "ok": true,
+      "status": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "nodeNextTypesWithoutNodeAmbient": {
+      "ok": true,
+      "status": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "freshNodePackageImport": {
+      "ok": true,
+      "status": 0,
+      "stdout": "{\"ok\":true}",
+      "stderr": ""
+    },
+    "freshNodeCommonJsRequire": {
+      "ok": true,
+      "status": 0,
+      "stdout": "{\"ok\":true}",
+      "stderr": ""
+    },
+    "existingWorkspaceDistImport": {
+      "ok": true,
+      "status": 0,
+      "stdout": "{\"ok\":true}",
+      "stderr": ""
+    },
+    "unexportedInternalDeepImport": {
+      "ok": true,
+      "status": 0,
+      "stdout": "{\"ok\":true}",
+      "stderr": ""
+    },
+    "extensionlessDeepImport": {
+      "ok": false,
+      "status": 1,
+      "stdout": "",
+      "stderr": "node:internal/modules/esm/resolve:275\n    throw new ERR_MODULE_NOT_FOUND(\n          ^\n\nError [ERR_MODULE_NOT_FOUND]: Cannot find module '/private/var/folders/p8/9np8zdsd1gl_f84gtkf44hc80000gn/T/aalis-core-portability-WgV6xy/node_modules/@aalis/core/context' imported from /private/var/folders/p8/9np8zdsd1gl_f84gtkf44hc80000gn/T/aalis-core-portability-WgV6xy/[eval1]\n    at finalizeResolution (node:internal/modules/esm/resolve:275:11)\n    at moduleResolve (node:internal/modules/esm/resolve:860:10)\n    at defaultResolve (node:internal/modules/esm/resolve:984:11)\n    at ModuleLoader.defaultResolve (node:internal/modules/esm/loader:780:12)\n    at #cachedDefaultResolve (node:internal/modules/esm/loader:704:25)\n    at ModuleLoader.resolve (node:internal/modules/esm/loader:687:38)\n    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:305:38)\n    at onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:643:36)\n    at TracingChannel.tracePromise (node:diagnostics_channel:344:14)\n    at ModuleLoader.import (node:internal/modules/esm/loader:642:21) {\n  code: 'ERR_MODULE_NOT_FOUND',\n  url: 'file:///private/var/folders/p8/9np8zdsd1gl_f84gtkf44hc80000gn/T/aalis-core-portability-WgV6xy/node_modules/@aalis/core/context'\n}\n\nNode.js v22.16.0"
+    },
+    "providerTypeBoundary": {
+      "invalidImplementationAccepted": true,
+      "compilation": {
+        "ok": true,
+        "status": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "runtime": {
+        "ok": true,
+        "status": 0,
+        "stdout": "{\"declared\":\"number\",\"runtime\":\"string\"}",
+        "stderr": ""
+      }
+    },
+    "browserBundle": {
+      "ok": true,
+      "bytes": 36109,
+      "gzipBytes": 11060,
+      "sourceFiles": 16,
+      "externalImports": [],
+      "nodeBuiltinImports": []
+    },
+    "freshPackageBrowserBundle": {
+      "ok": true,
+      "externalImports": []
+    },
+    "cordisBrowserBundle": {
+      "ok": true,
+      "externalImports": [],
+      "nodeBuiltinImports": [],
+      "note": "Different public surfaces and smoke fixtures; bundle sizes are not a framework performance comparison."
+    },
+    "browserProcess": {
+      "ok": true,
+      "shutdown": "clean"
+    },
+    "realBrowser": {
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+      "aalis": {
+        "main": {
+          "ok": true,
+          "result": {
+            "checks": [
+              "service registration and resolution",
+              "event delivery",
+              "middleware execution",
+              "contribution enumeration",
+              "in-memory host configuration",
+              "asynchronous disposal awaited",
+              "service removed at disposal",
+              "contribution removed at disposal"
+            ],
+            "globals": {
+              "process": "undefined",
+              "require": "undefined",
+              "Buffer": "undefined",
+              "document": "object",
+              "importScripts": "undefined"
+            }
+          }
+        },
+        "worker": {
+          "ok": true,
+          "result": {
+            "checks": [
+              "service registration and resolution",
+              "event delivery",
+              "middleware execution",
+              "contribution enumeration",
+              "in-memory host configuration",
+              "asynchronous disposal awaited",
+              "service removed at disposal",
+              "contribution removed at disposal"
+            ],
+            "globals": {
+              "process": "undefined",
+              "require": "undefined",
+              "Buffer": "undefined",
+              "document": "undefined",
+              "importScripts": "function"
+            }
+          }
+        }
+      },
+      "cordis": {
+        "main": {
+          "ok": true,
+          "result": {
+            "checks": [
+              "service registration and resolution",
+              "event delivery",
+              "asynchronous disposal awaited",
+              "service removed at disposal"
+            ],
+            "globals": {
+              "process": "undefined",
+              "require": "undefined",
+              "Buffer": "undefined",
+              "document": "object",
+              "importScripts": "undefined"
+            }
+          }
+        },
+        "worker": {
+          "ok": true,
+          "result": {
+            "checks": [
+              "service registration and resolution",
+              "event delivery",
+              "asynchronous disposal awaited",
+              "service removed at disposal"
+            ],
+            "globals": {
+              "process": "undefined",
+              "require": "undefined",
+              "Buffer": "undefined",
+              "document": "undefined",
+              "importScripts": "function"
+            }
+          }
+        }
+      }
+    }
+  },
+  "package": {
+    "name": "@aalis/core",
+    "version": "0.12.1",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "exports": null,
+    "sideEffects": null,
+    "engines": null,
+    "dependencies": {}
+  },
+  "dshRevision": "c291e7961a515f6d7af9304e7fd1d257929aef26",
+  "chromeVersion": "Google Chrome 152.0.7977.83"
+}
