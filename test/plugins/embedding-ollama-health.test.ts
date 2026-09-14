@@ -14,26 +14,43 @@ import * as embeddingOllama from '../../packages/plugin-embedding-ollama/src/ind
 // （「模型没 pull」与「端点不存在」都是 404，只有响应体能区分）。
 // ════════════════════════════════════════════════════════════
 
-type Mode = 'ok' | 'modelMissing' | 'hang' | 'stallBody';
+type Mode = 'ok' | 'modelMissing' | 'hang' | 'stallBody' | 'tagsHang';
 
 interface Fake {
   server: Server;
   baseUrl: string;
   mode: Mode;
   tags: string[];
+  embeddingRequests: number;
+  abortedEmbeddingRequests: number;
 }
 
 async function startFake(mode: Mode, tags: string[] = ['nomic-embed-text']): Promise<Fake> {
-  const state: Fake = { server: undefined as unknown as Server, baseUrl: '', mode, tags };
+  const state: Fake = {
+    server: undefined as unknown as Server,
+    baseUrl: '',
+    mode,
+    tags,
+    embeddingRequests: 0,
+    abortedEmbeddingRequests: 0,
+  };
   const server = createServer((req, res) => {
     const reply = (code: number, body: unknown): void => {
       res.writeHead(code, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(body));
     };
     if (req.url === '/api/tags') {
+      if (state.mode === 'tagsHang') return;
       return reply(200, { models: state.tags.map(name => ({ name })) });
     }
     if (req.url === '/api/embed' || req.url === '/api/embeddings') {
+      state.embeddingRequests++;
+      // `res.close` also fires after a normal end, so only count a connection closed
+      // before the hanging response completed. This proves the caller cancellation
+      // reaches the actual HTTP request rather than merely racing its Promise.
+      res.on('close', () => {
+        if (!res.writableEnded) state.abortedEmbeddingRequests++;
+      });
       // 收下请求但永不应答：模拟 Ollama 装大模型时连得上、不回包
       if (state.mode === 'hang') return;
       // 头发完、体只发一半就停住：反代半死 / 模型正加载进显存
@@ -109,6 +126,14 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
     return { app, doctor };
   }
 
+  async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (!predicate()) {
+      if (Date.now() >= deadline) throw new Error(`condition not met within ${timeoutMs}ms`);
+      await new Promise<void>(resolve => setTimeout(resolve, 5));
+    }
+  }
+
   it('模型没 pull：doctor 报 error，detail 带上 Ollama 的原话', async () => {
     const fake = await startFake('modelMissing');
     servers.push(fake.server);
@@ -168,18 +193,73 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
       const fake = await startFake('ok');
       servers.push(fake.server);
       // 服务自身超时（30s）远大于探测上限（5s），于是「按时返回」只可能来自探测的 race
-      const { doctor, app } = await boot(fake, 'nomic-embed-text', { timeoutMs: 30_000, retries: 0 });
+      const { doctor, app } = await boot(fake, 'nomic-embed-text', { timeoutMs: 30_000, retries: 2 });
       fake.mode = 'hang'; // 实例已就绪，此刻让 Ollama 不再应答
+      fake.embeddingRequests = 0;
+      fake.abortedEmbeddingRequests = 0;
 
       const t0 = Date.now();
       const r = (await doctor.specs.get('embedding.ollama')!.run(app.ctx)) as CheckResult;
       const elapsed = Date.now() - t0;
+      await waitFor(() => fake.abortedEmbeddingRequests > 0); // 等服务端真正观察到 close
 
       expect(r.level).toBe('error');
       expect(r.detail, '必须由探测自己的上限掐断，而不是等服务超时').toContain('探测超时');
       expect(elapsed, `应在 5s 上限附近返回，实际 ${elapsed}ms`).toBeLessThan(15_000);
+      expect(fake.embeddingRequests, '外部中止不得触发 provider retry').toBe(1);
+      expect(fake.abortedEmbeddingRequests, '探测超时必须关闭实际 HTTP embedding 请求').toBeGreaterThan(0);
     },
     { timeout: 25_000 },
+  );
+
+  it(
+    '调用方取消会中止真实 embedding HTTP，且 retries 不会重发',
+    async () => {
+      const fake = await startFake('ok');
+      servers.push(fake.server);
+      const { app } = await boot(fake, 'nomic-embed-text', { timeoutMs: 30_000, retries: 1 });
+      const svc = app.ctx.getService<EmbeddingService>('embedding')!;
+      fake.mode = 'hang';
+      fake.embeddingRequests = 0;
+      fake.abortedEmbeddingRequests = 0;
+
+      const controller = new AbortController();
+      const t0 = Date.now();
+      const pending = svc.embed('cancel this request', { signal: controller.signal });
+      await waitFor(() => fake.embeddingRequests === 1); // 确保中止的是实际已发出的请求
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+      const elapsed = Date.now() - t0;
+      await waitFor(() => fake.abortedEmbeddingRequests > 0);
+
+      expect(elapsed, '调用方取消不得等到 provider 自身 30s timeout').toBeLessThan(1_000);
+      expect(fake.embeddingRequests, '调用方取消不得进入 retry').toBe(1);
+      expect(fake.abortedEmbeddingRequests).toBeGreaterThan(0);
+
+      const preAborted = new AbortController();
+      preAborted.abort();
+      await expect(svc.embed('must not be sent', { signal: preAborted.signal })).rejects.toMatchObject({
+        name: 'AbortError',
+      });
+      expect(fake.embeddingRequests, '预中止不得发送 HTTP 请求').toBe(1);
+    },
+    { timeout: 5_000 },
+  );
+
+  it(
+    'provider 自身 timeout 仍按 retries 重试',
+    async () => {
+      const fake = await startFake('ok');
+      servers.push(fake.server);
+      const { app } = await boot(fake, 'nomic-embed-text', { timeoutMs: 1_000, retries: 1 });
+      const svc = app.ctx.getService<EmbeddingService>('embedding')!;
+      fake.mode = 'hang';
+      fake.embeddingRequests = 0;
+
+      await expect(svc.embed('provider timeout retry')).rejects.toThrow();
+      expect(fake.embeddingRequests, '自身 timeout 与调用方取消不同，仍应按 retries 再试一次').toBe(2);
+    },
+    { timeout: 5_000 },
   );
 
   // 特征化用例（非回归钉子）：按名筛 embedding 已判否——混合场景会把 bge-m3 这类
@@ -195,4 +275,22 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
       'bge-m3:latest',
     ]);
   });
+
+  it(
+    'listModels 的 /api/tags 无响应时在配置超时内返回空列表',
+    async () => {
+      // 先正常启动，避免 apply 的 embed 连通性探测占用本例的时间窗。
+      const fake = await startFake('ok');
+      servers.push(fake.server);
+      const { app } = await boot(fake, 'nomic-embed-text', { timeoutMs: 1_000 });
+      const svc = app.ctx.getService<EmbeddingService & { listModels(): Promise<string[]> }>('embedding')!;
+      fake.mode = 'tagsHang';
+
+      const t0 = Date.now();
+      await expect(svc.listModels()).resolves.toEqual([]);
+      const elapsed = Date.now() - t0;
+      expect(elapsed, '动态模型列表不能因挂起的 Ollama 请求无限等待').toBeLessThan(5_000);
+    },
+    { timeout: 10_000 },
+  );
 });

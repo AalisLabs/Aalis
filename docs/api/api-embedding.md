@@ -13,11 +13,14 @@
 ```ts
 interface EmbeddingService {
   /** 将文本转为向量 */
-  embed(text: string): Promise<number[]>;
+  embed(text: string, options?: { signal?: AbortSignal }): Promise<number[]>;
   /** 列出远端可用模型（用于前端下拉框） */
   listModels?(): Promise<string[]>;
 }
 ```
+
+调用方可传入 `options.signal`，在回合取消或检索超时时终止请求。Ollama 和 OpenAI
+实现都会将它传至底层 HTTP 请求；调用方取消不触发重试，provider 自身的超时与重试策略仍然生效。
 
 ## 获取方式
 

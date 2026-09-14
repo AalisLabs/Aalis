@@ -1,4 +1,4 @@
-import type { EmbeddingService } from '@aalis/api-embedding';
+import type { EmbeddingRequestOptions, EmbeddingService } from '@aalis/api-embedding';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
@@ -49,7 +49,9 @@ class OpenAIEmbeddingService implements EmbeddingService {
     this.timeoutMs = Math.max(1000, timeoutMs);
   }
 
-  async embed(text: string): Promise<number[]> {
+  async embed(text: string, options?: EmbeddingRequestOptions): Promise<number[]> {
+    options?.signal?.throwIfAborted();
+    const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
     const res = await fetch(`${this.baseUrl}/embeddings`, {
       method: 'POST',
       headers: {
@@ -60,7 +62,7 @@ class OpenAIEmbeddingService implements EmbeddingService {
       // 没有 signal 的话这次请求永不自行了结：apply 的启动探测 await 它，而插件激活是串行的
       // （PluginManager.recompute 逐个 await activatePlugin），一个卡住的 apply 会钉住整条引导链；
       // 索引路径上则是 memory-vector 的一个并发槽被无限期占用。
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal: options?.signal ? AbortSignal.any([timeoutSignal, options.signal]) : timeoutSignal,
     });
     if (!res.ok) {
       throw new Error(`OpenAI embedding 请求失败: ${res.status} ${res.statusText}`);

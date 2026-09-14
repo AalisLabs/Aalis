@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentService } from '../../packages/api-agent/src/index.js';
+import type { AgentService, PromptContributionView } from '../../packages/api-agent/src/index.js';
+import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import * as agentModule from '../../packages/plugin-agent/src/index.js';
 import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
@@ -55,6 +56,88 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
 
     await turn;
     expect(seen, '拆卸不中止在飞回合，它就会在死 ctx 上跑完并把回复投出去').toEqual(['stream:done']);
+
+    await app.stop();
+  });
+
+  it('手动 abort 会中止正在构建的 prompt 贡献，且不会开始 LLM 或投递消息', async () => {
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const recorder: ChatModelRequest[] = [];
+    await app.ctx.useModule(createMockLLMPlugin({ responses: [{ content: '不应调用' }], recorder }));
+    await app.ctx.useModule(memoryInMemoryModule as never);
+    await app.ctx.useModule(messageArchiveModule as never, { debugLogs: false });
+    await app.ctx.useModule(agentModule as never, AGENT_CONFIG);
+
+    let enteredResolve!: () => void;
+    const entered = new Promise<void>(resolve => {
+      enteredResolve = resolve;
+    });
+    let contributionAborted = false;
+    let hangContribution = true;
+    app.ctx.fork('prompt-cancel-probe').contribute(
+      'agent:prompt' as never,
+      {
+        id: 'hang-until-abort',
+        anchor: 'turn-context',
+        build: (view: PromptContributionView) => {
+          if (!hangContribution) return 'RECOVERED-CONTEXT';
+          return new Promise<string>((_resolve, reject) => {
+            enteredResolve();
+            view.signal?.addEventListener(
+              'abort',
+              () => {
+                contributionAborted = true;
+                reject(view.signal?.reason);
+              },
+              { once: true },
+            );
+          });
+        },
+      } as never,
+    );
+
+    const outbound: string[] = [];
+    app.ctx.on('outbound:stream', (c: { done?: boolean }) => {
+      outbound.push(c.done ? 'stream:done' : 'stream:delta');
+    });
+    app.ctx.on('outbound:message', () => {
+      outbound.push('message');
+    });
+
+    const sessionId = 'test:prompt-abort';
+    const agent = app.ctx.getService<AgentService>('agent')!;
+    const turn = agent.handleMessage({
+      content: '你好',
+      sessionId,
+      platform: 'test',
+      userId: 'u1',
+      sessionType: 'private',
+    });
+    await entered;
+    expect(agent.abort).toBeDefined();
+    agent.abort!(sessionId);
+    await turn;
+
+    expect(contributionAborted).toBe(true);
+    expect(recorder, 'prompt build 被取消后不得开始 LLM 请求').toHaveLength(0);
+    expect(outbound, '中止路径只能关闭流，不得投递回复').toEqual(['stream:done']);
+
+    // aborted 收尾必须清掉 active controller；同一 session 的下一轮不可继承
+    // 旧 signal，也须重新执行此前未物化的贡献。
+    hangContribution = false;
+    await agent.handleMessage({
+      content: '下一条正常消息',
+      sessionId,
+      platform: 'test',
+      userId: 'u1',
+      sessionType: 'private',
+    });
+    expect(recorder, '下一回合应正常到达 LLM').toHaveLength(1);
+    expect(
+      outbound.filter(x => x === 'message'),
+      '只能投递恢复后的新回合回复',
+    ).toEqual(['message']);
+    expect(outbound.filter(x => x === 'stream:done')).toHaveLength(2);
 
     await app.stop();
   });

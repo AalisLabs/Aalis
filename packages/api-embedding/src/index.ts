@@ -3,9 +3,14 @@
 // 触发 @aalis/core 模块解析，使下方 declare module 增强生效
 import type {} from '@aalis/core';
 
+export interface EmbeddingRequestOptions {
+  /** 调用方取消或超时后停止请求，不再重试。 */
+  signal?: AbortSignal;
+}
+
 export interface EmbeddingService {
-  /** 将文本转为向量 */
-  embed(text: string): Promise<number[]>;
+  /** 将文本转为向量；支持取消的 provider 应将 signal 传至底层请求。 */
+  embed(text: string, options?: EmbeddingRequestOptions): Promise<number[]>;
   /** 列出远端可用模型（用于前端下拉框）*/
   listModels?(): Promise<string[]>;
 }

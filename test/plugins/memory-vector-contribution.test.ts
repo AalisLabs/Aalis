@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { EmbeddingService } from '../../packages/api-embedding/src/index.js';
+import type { EmbeddingRequestOptions, EmbeddingService } from '../../packages/api-embedding/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import type { MessageArchiveService } from '../../packages/api-message-archive/src/index.js';
 import type { VectorSearchResult, VectorStoreService } from '../../packages/api-vectorstore/src/index.js';
@@ -20,12 +20,12 @@ const BASE_TS = Date.UTC(2026, 0, 1, 12, 0, 0);
 /** 固定向量：假 embedder 恒定返回，假 store 也不真算距离 */
 const FIXED_VEC = [0.1, 0.2, 0.3];
 
-function makeEmbedder() {
+function makeEmbedder(embedImpl?: (text: string, options?: EmbeddingRequestOptions) => Promise<number[]>) {
   const calls: string[] = [];
   const service: EmbeddingService = {
-    async embed(text: string): Promise<number[]> {
+    async embed(text: string, options?: EmbeddingRequestOptions): Promise<number[]> {
       calls.push(text);
-      return FIXED_VEC;
+      return embedImpl ? embedImpl(text, options) : FIXED_VEC;
     },
   };
   return { calls, service };
@@ -100,6 +100,8 @@ interface SetupOptions {
   withMemory?: boolean;
   /** 是否挂真 message-archive（钉 assistant:message:archived 发射端） */
   withArchive?: boolean;
+  /** 覆盖查询 embedding 行为，用于取消传播等异步边界测试 */
+  embedImpl?: (text: string, options?: EmbeddingRequestOptions) => Promise<number[]>;
 }
 
 async function setup(opts: SetupOptions = {}) {
@@ -107,7 +109,7 @@ async function setup(opts: SetupOptions = {}) {
   if (opts.withMemory) await app.ctx.useModule(memoryInMemoryModule);
   if (opts.withArchive) await app.ctx.useModule(messageArchiveModule, { debugLogs: false });
 
-  const embedder = makeEmbedder();
+  const embedder = makeEmbedder(opts.embedImpl);
   const store = makeStore(opts.hits ?? [], { searchThrows: opts.searchThrows });
   app.ctx.provide('embedding', embedder.service);
   app.ctx.provide('vectorstore', store.service);
@@ -145,6 +147,31 @@ function injectedBlock(messages: Message[]): Message | undefined {
 }
 
 describe('plugin-memory-vector: agent:prompt 贡献', () => {
+  it('prompt 超时会传递 signal 给查询 embedding，取消后不再 search', async () => {
+    let observedAbort = false;
+    const { app, store } = await setup({
+      hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: '旧记忆' })],
+      embedImpl: (_text, options) =>
+        new Promise<number[]>((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            'abort',
+            () => {
+              observedAbort = true;
+              reject(options.signal?.reason);
+            },
+            { once: true },
+          );
+        }),
+    });
+    const messages = baseMessages();
+
+    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' }, { buildTimeoutMs: 30 });
+
+    expect(observedAbort, 'memory-vector 必须把 prompt build 的 signal 透传给 embedding').toBe(true);
+    expect(store.calls.search, '取消后不得继续检索或扩窗').toBe(0);
+    expect(injectedBlock(messages)).toBeUndefined();
+  });
+
   it('dryRun=true → 不注入，且不触发 embedding / 检索', async () => {
     const { app, embedder, store } = await setup({
       hits: [hit(0.9, { sessionId: 's-a', timestamp: BASE_TS, content: '我最喜欢吃火锅' })],

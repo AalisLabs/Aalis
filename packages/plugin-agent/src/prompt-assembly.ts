@@ -25,34 +25,46 @@ const ANCHOR_ORDER: readonly PromptAnchor[] = ['identity', 'knowledge', 'context
 export const VOLATILE_INJECTOR = 'persona-volatile';
 
 /**
- * 执行单个 build，可选超时。超时返回 null（本轮缺席）并 warn 点名；
- * 迟到的 settle 挂空 catch 防 unhandledRejection，clearTimeout 进 finally
- * 防悬空定时器拖住事件循环。
+ * 执行单个 build：超时取消该贡献并返回 null，回合取消则向上传递。
+ * race 同时保护尚未支持 signal 的贡献；底层请求通过传入的 signal 协作取消。
  */
 async function buildWithTimeout(
   ctx: Context,
   key: string,
-  run: () => ReturnType<PromptContribution['build']>,
+  run: (signal: AbortSignal) => ReturnType<PromptContribution['build']>,
   timeoutMs?: number,
+  parentSignal?: AbortSignal,
 ): Promise<Awaited<ReturnType<PromptContribution['build']>>> {
-  const p = Promise.resolve(run());
-  if (!timeoutMs || timeoutMs <= 0) return p;
+  parentSignal?.throwIfAborted();
+  const controller = new AbortController();
+  const signal = parentSignal ? AbortSignal.any([parentSignal, controller.signal]) : controller.signal;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
   try {
-    const winner = await Promise.race([
-      p.then(out => ({ out })),
-      new Promise<'timeout'>(resolve => {
-        timer = setTimeout(() => resolve('timeout'), timeoutMs);
-      }),
-    ]);
-    if (winner === 'timeout') {
-      p.catch(() => {});
-      ctx.logger.warn(`agent:prompt 贡献 "${key}" 构建超过 ${timeoutMs}ms，本轮缺席（键未物化，下一轮重试）`);
+    const interrupted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(signal.reason);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+    if (timeoutMs && timeoutMs > 0) {
+      timer = setTimeout(() => {
+        controller.abort(new DOMException(`Prompt build timed out after ${timeoutMs}ms`, 'TimeoutError'));
+      }, timeoutMs);
+    }
+    const pending = Promise.resolve().then(() => {
+      signal.throwIfAborted();
+      return run(signal);
+    });
+    return await Promise.race([pending, interrupted]);
+  } catch (err) {
+    parentSignal?.throwIfAborted();
+    if (controller.signal.aborted) {
+      ctx.logger.warn(`agent:prompt 贡献 "${key}" 构建超过 ${timeoutMs}ms，已取消，本轮缺席（下一轮重试）`);
       return null;
     }
-    return winner.out;
+    throw err;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    if (onAbort) signal.removeEventListener('abort', onAbort);
   }
 }
 
@@ -130,8 +142,11 @@ export async function assemblePromptContributions(
      * 护栏在组装器而非内核（与 DisposableChain.disposeAsync 的逐项超时同构）。
      */
     buildTimeoutMs?: number;
+    /** 所属回合取消时停止全部贡献构建，并中止本轮组装。 */
+    signal?: AbortSignal;
   },
 ): Promise<void> {
+  opts?.signal?.throwIfAborted();
   const entries = ctx.collect('agent:prompt');
   if (entries.length === 0) return;
 
@@ -157,17 +172,26 @@ export async function assemblePromptContributions(
     await Promise.all(
       pending.map(async ({ key, spec }): Promise<Built | null> => {
         try {
-          const out = await buildWithTimeout(ctx, key, () => spec.build(view), timeoutMs);
+          const out = await buildWithTimeout(
+            ctx,
+            key,
+            signal => spec.build({ ...view, signal }),
+            timeoutMs,
+            opts?.signal,
+          );
           if (out == null) return null;
           const blocks = (typeof out === 'string' ? [out] : out).filter(b => b.length > 0);
           return blocks.length > 0 ? { key, anchor: spec.anchor, blocks } : null;
         } catch (err) {
+          opts?.signal?.throwIfAborted();
           ctx.logger.warn(`agent:prompt 贡献 "${key}" 构建失败（本轮缺席）:`, err);
           return null;
         }
       }),
     )
   ).filter(r => r !== null);
+
+  opts?.signal?.throwIfAborted();
 
   for (const anchor of ANCHOR_ORDER) {
     // pending 继承 collect 的键序 → 槽内自然按全局键码元序

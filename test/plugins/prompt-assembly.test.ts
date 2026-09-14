@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { PromptContributionView } from '../../packages/api-agent/src/index.js';
 import {
   ConfigManager,
   Context,
@@ -277,6 +278,85 @@ describe('组装器护栏：非法锚位与 build 超时', () => {
     expect(messages.filter(m => String(m.content) === 'SLOW-DONE')).toHaveLength(1);
     expect(messages.filter(m => String(m.content) === 'FAST')).toHaveLength(1); // 已物化不重复
   });
+
+  it('build 超时会中止该贡献，且不影响同轮兄弟贡献', async () => {
+    const root = makeRoot();
+    let aborted = false;
+    root.fork('p-slow').contribute(POINT, {
+      id: 'slow',
+      anchor: 'context',
+      build: (view: PromptContributionView) =>
+        new Promise<string>((_resolve, reject) => {
+          view.signal?.addEventListener(
+            'abort',
+            () => {
+              aborted = true;
+              reject(view.signal?.reason);
+            },
+            { once: true },
+          );
+        }),
+    } as never);
+    root.fork('p-fast').contribute(POINT, spec('fast', 'context', 'FAST'));
+
+    const messages = baseMessages();
+    await assemblePromptContributions(root, { messages, sessionId: 's' }, { buildTimeoutMs: 30 });
+
+    expect(aborted, '超时不能只放弃等待，必须通知底层构建取消').toBe(true);
+    expect(messages.some(m => String(m.content) === 'FAST')).toBe(true);
+    expect(messages.some(m => String(m.metadata?.injector ?? '').endsWith('/slow'))).toBe(false);
+  });
+
+  it('父 signal 已中止时不执行 build', async () => {
+    const root = makeRoot();
+    const parent = new AbortController();
+    parent.abort();
+    let calls = 0;
+    root.fork('p-probe').contribute(POINT, {
+      id: 'probe',
+      anchor: 'context',
+      build: () => {
+        calls++;
+        return 'SHOULD-NOT-BUILD';
+      },
+    } as never);
+
+    await expect(
+      assemblePromptContributions(root, { messages: baseMessages(), sessionId: 's' }, { signal: parent.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(calls).toBe(0);
+  });
+
+  it('父 signal 会中止无限等待的 build 并让组装立即失败', async () => {
+    const root = makeRoot();
+    const parent = new AbortController();
+    let observedAbort = false;
+    root.fork('p-stuck').contribute(POINT, {
+      id: 'stuck',
+      anchor: 'context',
+      build: (view: PromptContributionView) =>
+        new Promise<string>((_resolve, reject) => {
+          view.signal?.addEventListener(
+            'abort',
+            () => {
+              observedAbort = true;
+              reject(view.signal?.reason);
+            },
+            { once: true },
+          );
+        }),
+    } as never);
+
+    const timer = setTimeout(() => parent.abort(), 30);
+    try {
+      await expect(
+        assemblePromptContributions(root, { messages: baseMessages(), sessionId: 's' }, { signal: parent.signal }),
+      ).rejects.toMatchObject({ name: 'AbortError' });
+    } finally {
+      clearTimeout(timer);
+    }
+    expect(observedAbort).toBe(true);
+  }, 1_000);
 
   it('buildTimeoutMs 缺省/0 不设限（慢而有终的 build 正常完成）', async () => {
     const root = makeRoot();

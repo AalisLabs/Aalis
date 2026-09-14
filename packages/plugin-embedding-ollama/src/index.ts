@@ -1,5 +1,5 @@
 import { type CheckResult, useDoctorService } from '@aalis/api-doctor';
-import type { EmbeddingService } from '@aalis/api-embedding';
+import type { EmbeddingRequestOptions, EmbeddingService } from '@aalis/api-embedding';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { Context } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
@@ -106,9 +106,11 @@ class OllamaEmbeddingService implements EmbeddingService {
   private async postJson(
     path: string,
     body: Record<string, unknown>,
+    options?: EmbeddingRequestOptions,
   ): Promise<{ ok: boolean; status: number; statusText: string; text: string }> {
     let lastErr: unknown;
     for (let attempt = 0; attempt <= this.retries; attempt++) {
+      options?.signal?.throwIfAborted();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
       try {
@@ -116,7 +118,7 @@ class OllamaEmbeddingService implements EmbeddingService {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
-          signal: controller.signal,
+          signal: options?.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal,
         });
         if (res.ok || res.status < 500 || attempt >= this.retries) {
           return { ok: res.ok, status: res.status, statusText: res.statusText, text: await res.text() };
@@ -125,6 +127,7 @@ class OllamaEmbeddingService implements EmbeddingService {
         await res.body?.cancel().catch(() => undefined);
         lastErr = new Error(`HTTP ${res.status} ${res.statusText}`);
       } catch (err) {
+        options?.signal?.throwIfAborted();
         lastErr = err;
         if (attempt >= this.retries) throw err;
       } finally {
@@ -134,7 +137,8 @@ class OllamaEmbeddingService implements EmbeddingService {
     throw new Error(`Ollama embedding 请求失败: ${formatError(lastErr)}`);
   }
 
-  async embed(text: string): Promise<number[]> {
+  async embed(text: string, options?: EmbeddingRequestOptions): Promise<number[]> {
+    options?.signal?.throwIfAborted();
     // 如果还没检测过，先尝试新版 API。
     // 只有明确的 404/405（端点不存在）才值得试旧端点：网络不通/超时/5xx 是瞬态故障
     // （典型场景是 Ollama 晚于 Aalis 起来，启动探测正好撞上），原样抛出并保持 null，
@@ -143,22 +147,23 @@ class OllamaEmbeddingService implements EmbeddingService {
     // 所以结论只在旧端点真答上来之后才钉成「旧版」，否则连同错误一起抛出、保持 null。
     if (this.useNewApi === null) {
       try {
-        const vec = await this.embedNew(text);
+        const vec = await this.embedNew(text, options);
         this.useNewApi = true;
         return vec;
       } catch (err) {
+        options?.signal?.throwIfAborted();
         if (!isEndpointMissing(err)) throw err;
-        const vec = await this.embedLegacy(text);
+        const vec = await this.embedLegacy(text, options);
         this.useNewApi = false;
         return vec;
       }
     }
-    return this.useNewApi ? this.embedNew(text) : this.embedLegacy(text);
+    return this.useNewApi ? this.embedNew(text, options) : this.embedLegacy(text, options);
   }
 
   /** 新版 Ollama API: POST /api/embed */
-  private async embedNew(text: string): Promise<number[]> {
-    const res = await this.postJson('/api/embed', { model: this.model, input: text });
+  private async embedNew(text: string, options?: EmbeddingRequestOptions): Promise<number[]> {
+    const res = await this.postJson('/api/embed', { model: this.model, input: text }, options);
     if (!res.ok) {
       throw statusError(res, '/api/embed');
     }
@@ -167,8 +172,8 @@ class OllamaEmbeddingService implements EmbeddingService {
   }
 
   /** 旧版 Ollama API: POST /api/embeddings */
-  private async embedLegacy(text: string): Promise<number[]> {
-    const res = await this.postJson('/api/embeddings', { model: this.model, prompt: text });
+  private async embedLegacy(text: string, options?: EmbeddingRequestOptions): Promise<number[]> {
+    const res = await this.postJson('/api/embeddings', { model: this.model, prompt: text }, options);
     if (!res.ok) {
       throw statusError(res, '/api/embeddings');
     }
@@ -178,7 +183,7 @@ class OllamaEmbeddingService implements EmbeddingService {
 
   async listModels(): Promise<string[]> {
     try {
-      const res = await fetch(`${this.baseUrl}/api/tags`);
+      const res = await fetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(this.timeoutMs) });
       if (!res.ok) return [];
       const data = (await res.json()) as { models: { name: string }[] };
       // 原样返回本机全部模型，不按名字筛。曾改成「筛出名称含 embed 的、筛空回退全量」，
@@ -234,12 +239,17 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     category: 'service',
     // 不写死 pluginName：useDoctorService 会填 ctx.id，多实例才分得清是哪一个
     async run(): Promise<CheckResult> {
+      const controller = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([
-          service.embed('ping'),
+          service.embed('ping', { signal: controller.signal }),
           new Promise<never>((_, reject) => {
-            timer = setTimeout(() => reject(new Error(`探测超时（${probeTimeoutMs}ms）`)), probeTimeoutMs);
+            timer = setTimeout(() => {
+              const error = new Error(`探测超时（${probeTimeoutMs}ms）`);
+              controller.abort(error);
+              reject(error);
+            }, probeTimeoutMs);
             timer.unref?.(); // 待定的探测计时器不该挡住进程优雅退出
           }),
         ]);
