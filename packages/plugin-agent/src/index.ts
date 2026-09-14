@@ -569,7 +569,10 @@ class DefaultAgent implements AgentService {
           triggerType: incoming.triggerType,
         };
         // 组装先于链：贡献块（档案/技能/记忆/即时提示）先物化，拦截者审完整成品
-        await assemblePromptContributions(this.ctx, llmBeforeData, { buildTimeoutMs: this.promptBuildTimeoutMs });
+        await assemblePromptContributions(this.ctx, llmBeforeData, {
+          buildTimeoutMs: this.promptBuildTimeoutMs,
+          signal,
+        });
         await this.ctx.runHook('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
 
         // 裁剪消息以确保不超过上下文窗口
@@ -820,7 +823,10 @@ class DefaultAgent implements AgentService {
             triggerType: incoming.triggerType,
           };
           // 已物化的贡献按全局键跳过；本轮工具调用新注册的贡献（如新激活技能）增量落位
-          await assemblePromptContributions(this.ctx, nextLlmData, { buildTimeoutMs: this.promptBuildTimeoutMs });
+          await assemblePromptContributions(this.ctx, nextLlmData, {
+            buildTimeoutMs: this.promptBuildTimeoutMs,
+            signal,
+          });
           await this.ctx.runHook('agent:llm:before', nextLlmData, undefined, { warnOnStall: true });
 
           // 裁剪消息以确保不超过上下文窗口
