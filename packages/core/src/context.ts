@@ -18,6 +18,18 @@ import type {
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
 /**
+ * `useModule` 返回的句柄——与 Context 自身的生命周期面同形，一个心智模型。
+ */
+export interface ModuleHandle {
+  /** 沙盒子 ctx 的实际 id：同名重复挂载时已唯一化（`parent#name`、`parent#name~2`…） */
+  readonly id: string;
+  /** 同步请求关闭：同步清理当场执行，异步清理不等待；名字随同步段释放（与 `ctx.dispose()` 同语义） */
+  dispose(): void;
+  /** 关闭并等待全部异步清理完成；名字在此之后才释放（与 `ctx.disposeAsync()` 同语义） */
+  disposeAsync(timeoutMs?: number): Promise<void>;
+}
+
+/**
  * 上下文 (Context)
  *
  * 每个插件获得一个子 Context。所有通过子 Context 注册的副作用
@@ -64,6 +76,8 @@ export class Context {
   private static readonly CONTRIB_KEY_SEP = '\u0000';
   /** 活跃沙盒子上下文 id（useModule）——用于同名重复挂载时唯一化 childId。 */
   private readonly _moduleIds = new Set<string>();
+  /** @internal 本 ctx teardown 彻底收尾（含枢纽清扫）后要跑的回调；仅 useModule 用于释放模块名。 */
+  private _afterTeardown?: () => void;
   /**
    * 清理归属：本 Context 本次激活的身份，每次 fork 新鲜。四原语注册时带上它，拆卸按它清。
    * 与 `id`（逻辑身份：贡献键、排序、模型引用、偏好、显示）分开——同名 Context 互不误清，
@@ -131,6 +145,10 @@ export class Context {
               }
             }
           }
+          // 最后一步：父 ctx 的模块名释放必须晚于上面按 ctx.id 的枢纽清扫，否则同名新挂载
+          // 会在链排空到此处的那一跳微任务里拿到旧名、随后被本次清扫连锅端走。
+          this._afterTeardown?.();
+          this._afterTeardown = undefined;
         },
         onTimeout: (phase, timeoutMs) => {
           if (phase === 'initialization') {
@@ -610,7 +628,7 @@ export class Context {
    * 与 `App.plugin(...)` / `PluginManager.register(...)` 的区别：
    * - 不进入全局 `PluginManager`（不参与依赖追踪、softReload）
    * - fork 一个子上下文，调用 `module.apply(child, config)`
-   * - 返回 dispose：调用即销毁该子上下文，对应子上下文里所有副作用一并清理
+   * - 返回 {@link ModuleHandle}：`dispose()` 同步关闭、`disposeAsync()` 等到子上下文里所有异步清理完成
    * - 父 ctx dispose 时也会级联销毁
    *
    * 典型场景：
@@ -619,10 +637,10 @@ export class Context {
    *
    * @param module 任意符合 `{ name, apply(ctx, config) }` 的对象
    * @param config 传给 apply 的配置（默认 `{}`）
-   * @returns dispose 函数；返回的 Promise 在 apply 完成后 resolve
+   * @returns 模块句柄；返回的 Promise 在 apply 完成后 resolve
    *
    * @example
-   * const off = await ctx.useModule({
+   * const mod = await ctx.useModule({
    *   name: 'temp-mw',
    *   apply(c) {
    *     c.middleware('agent:input:before', async (data, next) => {
@@ -632,7 +650,7 @@ export class Context {
    *   }
    * });
    * // ...
-   * off(); // 卸载临时中间件
+   * await mod.disposeAsync(); // 卸载临时中间件，等其异步清理落地
    */
   async useModule(
     module: {
@@ -640,7 +658,7 @@ export class Context {
       apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
     },
     config: Record<string, unknown> = {},
-  ): Promise<() => void> {
+  ): Promise<ModuleHandle> {
     if (this._lifecycle.disposed) {
       throw new Error(`Context "${this.id}" 已 dispose，无法 useModule`);
     }
@@ -653,19 +671,26 @@ export class Context {
     this._moduleIds.add(childId);
 
     const child = this.fork(childId);
+    // 名字在子 ctx teardown 的最末释放（清理链排空、按 ctx.id 的枢纽清扫之后）：disposeAsync 路径下
+    // 排空期间同名新挂载拿到的是 ~n 后缀而非旧名，旧模块的收尾不会清掉新模块的枢纽登记。挂在清理链上
+    // 不够：链排空到 afterCleanup 之间隔一跳微任务。同步 dispose()、父级联、apply 抛错的 catch 路径
+    // 都经 afterCleanup，单一释放点；dispose() 不等异步清理，名字随同步段释放（与 Context 一致）。
+    child._afterTeardown = () => {
+      this._moduleIds.delete(childId);
+    };
     try {
       // 登记后再 await，让父 ctx 级联拆卸时能先等子 ctx 初始化落定（见 {@link trackActivation}）
       const applying = Promise.resolve(module.apply(child, config));
       child.trackActivation(applying);
       await applying;
     } catch (err) {
-      this._moduleIds.delete(childId);
       child.dispose();
       throw err;
     }
-    return () => {
-      this._moduleIds.delete(childId);
-      child.dispose();
+    return {
+      id: childId,
+      dispose: () => child.dispose(),
+      disposeAsync: timeoutMs => child.disposeAsync(timeoutMs),
     };
   }
 
