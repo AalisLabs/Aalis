@@ -143,20 +143,17 @@ export class ConfigManager {
   }
 
   /**
-   * 持久化当前配置。委托给 provider，无 provider 时静默忽略（内存模式）。
-   * 同步语义：若 provider 异步保存，调用方不会等待完成——这与原 fs sync 行为一致。
+   * 持久化当前配置。委托给 provider，无 provider 时立即完成（内存模式）。
+   * 返回 provider 的完成：同步 provider 立即落定，异步 provider 等其 settle；失败以拒绝传出。
    *
    * @internal 机制口。公开入口是 `app.saveConfig()`（AppService 契约），全部插件
    * 消费者都应走它；本方法仅供 App 门面与宿主使用，避免同一件事两条公开路。
    */
-  save(): void {
-    if (!this.provider?.save) return;
-    const result = this.provider.save(this.config);
-    if (result instanceof Promise) {
-      result.catch(() => {
-        /* provider 自身负责报错；core 不做处理 */
-      });
-    }
+  save(): Promise<void> {
+    if (!this.provider?.save) return Promise.resolve();
+    // 非 async 函数：同步 provider 的抛错仍同步冒出（与此前一致）；
+    // 异步 provider 的拒绝经返回值传出，不再吞掉——「已保存」的假象由此消失。
+    return Promise.resolve(this.provider.save(this.config));
   }
 
   /**

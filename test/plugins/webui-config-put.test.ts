@@ -8,7 +8,7 @@ import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/rou
 
 type Handler = (req: unknown, res: unknown, next: () => Promise<void>) => unknown;
 
-function setup() {
+function setup(opts: { saveConfig?: () => Promise<void> } = {}) {
   const store: Record<string, unknown> = {
     name: 'Aalis',
     logLevel: 'info',
@@ -40,7 +40,16 @@ function setup() {
   registerPluginRoutes(
     app as never,
     ctx as never,
-    () => ({ saveConfig: () => calls.push('save'), restart: () => calls.push('restart') }) as never,
+    () =>
+      ({
+        saveConfig:
+          opts.saveConfig ??
+          (() => {
+            calls.push('save');
+            return Promise.resolve();
+          }),
+        restart: () => calls.push('restart'),
+      }) as never,
     () => ({}) as never,
     () => ({ platform: 'webui', userId: 'console' }),
     () => (_req, _res, next) => next(),
@@ -143,5 +152,15 @@ describe('PUT /api/config 值校验', () => {
     expect((r.body as { error: string }).error).toMatch(/name/);
     expect(store.name).toBe('Aalis');
     expect(calls).toEqual([]);
+  });
+  it('saveConfig 拒绝 → 500 且不重启（返回时已落盘的契约在消费侧兑现）', async () => {
+    const { calls, put } = setup({
+      saveConfig: async () => {
+        throw new Error('disk full');
+      },
+    });
+    const out = await put({ logLevel: 'debug' });
+    expect(out.status).toBe(500);
+    expect(calls).not.toContain('restart');
   });
 });

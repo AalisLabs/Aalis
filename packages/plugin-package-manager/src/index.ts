@@ -249,7 +249,8 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
     cleanupConfig: name => {
       ctx.config.removePluginConfig(name);
       ctx.config.setPluginEnabled(name, true);
-      ctx.config.save();
+      // cleanupConfig 契约返 void；落盘失败只 warn，内存态已清、下次保存会带上
+      ctx.config.save().catch(err => ctx.logger.warn(`${name}: 卸载后配置清理落盘失败:`, err));
     },
   });
 }
