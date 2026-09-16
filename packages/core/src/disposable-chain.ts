@@ -1,4 +1,7 @@
-import type { Logger } from './logger.js';
+/** 清理器只需要错误报告能力，不依赖宿主的日志系统。 */
+export interface CleanupReporter {
+  warn(message: string, ...args: unknown[]): void;
+}
 
 interface Entry {
   fn: () => unknown;
@@ -28,7 +31,7 @@ export class DisposableChain {
   private _items: Entry[] = [];
   private _disposed = false;
 
-  constructor(private readonly logger?: Logger) {}
+  constructor(private readonly logger?: CleanupReporter) {}
 
   /** 追加一个清理函数。dispose 后追加会立刻执行（异步返回值不等待）。 */
   push(fn: () => unknown, label?: string): void {
@@ -146,7 +149,11 @@ export class DisposableChain {
  * @internal 仅供 core 内部（DisposableChain 逐项等待、Context join 在飞拆卸）复用，
  *   不从包根导出。
  */
-export async function awaitWithTimeout(p: Promise<unknown>, timeoutMs: number | undefined, onTimeout: () => void) {
+export async function awaitWithTimeout(
+  p: Promise<unknown>,
+  timeoutMs: number | undefined,
+  onTimeout: (timeoutMs: number) => void,
+) {
   if (!timeoutMs || timeoutMs <= 0) {
     await p;
     return;
@@ -162,7 +169,7 @@ export async function awaitWithTimeout(p: Promise<unknown>, timeoutMs: number | 
     if (winner === 'timeout') {
       // 放弃等待，但给原 promise 挂空 catch——迟到的 rejection 不得逃逸成 unhandledRejection
       p.catch(() => {});
-      onTimeout();
+      onTimeout(timeoutMs);
     }
   } finally {
     // clearTimeout 必须在 finally：悬空定时器会拖住事件循环，延迟进程退出
