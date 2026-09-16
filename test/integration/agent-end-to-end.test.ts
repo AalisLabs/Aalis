@@ -53,10 +53,10 @@ async function loadStack(opts: { responses: ChatResponse[]; recorder?: ChatModel
     agent: env.app.ctx.getService<AgentService>('agent')!,
     memory: env.app.ctx.getService<MemoryService>('memory')!,
     cleanup: () => {
-      offArchive();
-      offAgent();
-      offMem();
-      offLLM();
+      offArchive.dispose();
+      offAgent.dispose();
+      offMem.dispose();
+      offLLM.dispose();
       env.cleanup();
     },
   };

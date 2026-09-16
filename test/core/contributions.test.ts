@@ -133,7 +133,7 @@ describe('ContributionRegistry / Context.contribute / collect', () => {
     await root.useModule(mod);
     expect(root.collect(POINT)).toHaveLength(2); // 后挂载者不顶替先挂载者
 
-    off1();
+    off1.dispose();
     // 卸载其一不连带清掉另一个仍在役沙盒的贡献
     expect(root.collect(POINT)).toHaveLength(1);
   });

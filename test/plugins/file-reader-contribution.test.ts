@@ -159,7 +159,7 @@ async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
       const desc = msg._attachmentDescriptions?.[0] ?? '';
       return { id: await computeFileId(sessionId, buffer), desc };
     },
-    dispose: off,
+    dispose: () => off.dispose(),
   };
 }
 
@@ -520,7 +520,7 @@ describe('plugin-file-reader: 会话目录名', () => {
       await expect(storage.stat(`${legacyDir}/${id}.txt`), '应删除实际目录里的数据文件').rejects.toThrow();
       await expect(storage.stat(`${legacyDir}/${id}.meta.json`)).rejects.toThrow();
     } finally {
-      off();
+      off.dispose();
     }
   });
 });
