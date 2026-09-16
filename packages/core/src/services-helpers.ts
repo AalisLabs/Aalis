@@ -14,7 +14,8 @@ import type { ServiceContainer } from './services.js';
 
 /**
  * provide() 的 dev-mode 校验集合：
- *   1. entryId 必须以 ctxId 为前缀（否则 plugin 卸载时清理不到）
+ *   1. entryId 必须以 ctxId 为前缀（逻辑身份：hasByContext 前缀查询、provides 一致性校验、
+ *      api-llm 按 provider/model 解析都靠它；清理按 owner 走，不依赖前缀）
  *   2. 同一上下文重复 provide 同一服务名静默失效（容器路由按 contextId）
  *
  * 参数 explicitEntryId 区分"调用方有意覆盖 entryId"vs"使用 ctxId 默认值"——
@@ -35,7 +36,7 @@ export function validateProvide(args: {
   if (explicitEntryId && entryId !== ctxId && !entryId.startsWith(`${ctxId}/`)) {
     logger.warn(
       `服务 "${name}" 的 entryId "${entryId}" 不以 "${ctxId}/" 为前缀。` +
-        `违反约定后 plugin 卸载时可能遗漏清理。` +
+        `脱离前缀后 hasByContext 命不中：module.provides 一致性校验将视其为未注册，按 provider/model 的模型引用也找不到它。` +
         `推荐格式：\`\${ctx.id}/\${子粒度标识}\`。`,
     );
   }

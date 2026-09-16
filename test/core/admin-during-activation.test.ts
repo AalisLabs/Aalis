@@ -419,8 +419,8 @@ describe('updatePluginConfig 撞上 activating 窗口', () => {
     expect(app.plugins.getPlugin('gated')?.config).toEqual({ n: 2 });
     expect(app.ctx.getService('gated-svc')).toEqual({ alive: true });
 
-    // 顺序钉死：旧实例 disposed 必须先于新 apply（否则同 contextId 并存，
-    // 旧链的 unregisterByContext 会扫掉新实例的注册）
+    // 顺序钉死：旧实例 disposed 必须先于新 apply（否则新旧实例同 instanceId 并存——
+    // 同名服务重复 provide、偏好按 contextId 二义；与 plugin.ts / plugin-activation.ts 守卫同口径）
     const disposedAt = trace.indexOf('disposed');
     const reapplyAt = trace.indexOf('apply:{"n":2}');
     expect(disposedAt).toBeGreaterThanOrEqual(0);
