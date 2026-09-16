@@ -75,7 +75,6 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
 
   it('Context 表面定格（四原语 8 动词 + services 读写面 + 生命周期）', () => {
     expect(Object.getOwnPropertyNames(core.Context.prototype).sort()).toEqual([
-      '_teardown', // 私有实现（JS 层可见,不属承诺面）
       'collect',
       'constructor',
       'contribute',
