@@ -44,7 +44,7 @@ describe('Context.middleware / runHook 门面', () => {
     await root.runHook('__t:hook', {} as never);
     expect(calls).toEqual(['a']);
 
-    // dispose 子 ctx → 其 middleware 被 unregisterByContext(this.id) 清扫
+    // dispose 子 ctx → 其 middleware 被 unregisterByOwner(this._owner) 清扫
     await child.dispose();
     await root.runHook('__t:hook', {} as never);
     expect(calls).toEqual(['a']); // 未再次触发
@@ -456,7 +456,7 @@ describe('Context.disposeAsync / dispose 同步不变量', () => {
     expect(() => ctx.dispose()).not.toThrow();
   });
 
-  it('异步 flush 窗口内：中间件已不响应、贡献已不可收集（注销先于清理链）', async () => {
+  it('异步 flush 窗口内：服务已不可取、中间件已不响应、贡献已不可收集（注销先于清理链）', async () => {
     const root = makeContext();
     const ctx = root.fork('plugin-a');
     let release!: () => void;
@@ -469,6 +469,9 @@ describe('Context.disposeAsync / dispose 同步不变量', () => {
       await next();
     });
     ctx.contribute('agent:prompt' as never, { id: 'blk' } as never);
+    // 须在 gate 之前登记：链逆序串行，gate 先挡住，provide 的 dispose 闭包在窗口内不会跑——
+    // 窗口内 svc 消失只能是 beforeCleanup 的 unregisterByOwner 干的，钉住 provide 带 owner
+    ctx.provide('svc', { alive: true });
     ctx.onDispose(() => gate); // 人为拉长 flush 窗口
 
     const done = ctx.disposeAsync();
@@ -477,6 +480,7 @@ describe('Context.disposeAsync / dispose 同步不变量', () => {
     await root.runHook('__t:hook' as never, {} as never);
     expect(calls).toEqual([]);
     expect(root.collect('agent:prompt' as never)).toHaveLength(0);
+    expect(root.getService('svc')).toBeUndefined();
     release();
     await done;
   });

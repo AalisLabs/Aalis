@@ -55,9 +55,10 @@ describe('HookRegistry', () => {
     expect(reached).toBe(true);
   });
 
-  it('unregisterByContext 移除指定 contextId 的 handler', async () => {
+  it('unregisterByOwner 移除指定归属的 handler', async () => {
     const reg = new HookRegistry();
     const order: string[] = [];
+    const p1 = Symbol('plugin-1');
     reg.register(
       'inbound:command',
       async (_d, n) => {
@@ -65,6 +66,7 @@ describe('HookRegistry', () => {
         await n();
       },
       'plugin-1',
+      p1,
     );
     reg.register(
       'inbound:command',
@@ -73,8 +75,9 @@ describe('HookRegistry', () => {
         await n();
       },
       'plugin-2',
+      Symbol('plugin-2'),
     );
-    reg.unregisterByContext('plugin-1');
+    reg.unregisterByOwner(p1);
     // biome-ignore lint/suspicious/noExplicitAny: test
     await reg.run('inbound:command', {} as any);
     expect(order).toEqual(['p2']);
@@ -145,9 +148,10 @@ describe('HookRegistry 运行中变更（#8.4）', () => {
     expect(reached).toBe(true);
   });
 
-  it('unregisterByContext 之后旧 dispose 闭包仍能精确移除（不再 no-op 泄漏）', async () => {
+  it('unregisterByOwner 之后旧 dispose 闭包仍能精确移除（不再 no-op 泄漏）', async () => {
     const reg = new HookRegistry();
     const order: string[] = [];
+    const a = Symbol('ctx-a');
     reg.register(
       'inbound:command',
       async (_d, n) => {
@@ -155,6 +159,7 @@ describe('HookRegistry 运行中变更（#8.4）', () => {
         await n();
       },
       'ctx-a',
+      a,
     );
     const offB = reg.register(
       'inbound:command',
@@ -163,9 +168,10 @@ describe('HookRegistry 运行中变更（#8.4）', () => {
         await n();
       },
       'ctx-b',
+      Symbol('ctx-b'),
     );
-    // unregisterByContext 整体换数组——旧实现中 offB 捕获旧数组后会变 no-op
-    reg.unregisterByContext('ctx-a');
+    // unregisterByOwner 整体换数组——旧实现中 offB 捕获旧数组后会变 no-op
+    reg.unregisterByOwner(a);
     offB();
     // biome-ignore lint/suspicious/noExplicitAny: test
     const reached = await reg.run('inbound:command', {} as any, async () => {
