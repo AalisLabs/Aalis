@@ -82,6 +82,7 @@
 |---|---|
 | 0.7.0 | `Context.createScope`、`ScopedConfigManager`、`ScopedServiceContainer` |
 | 0.9.0 | `CORE_CONFIG_SCHEMA` / `ConfigSchema` 全家、`Context.once` / `hasService` / `getServiceEntries`、`PluginManager.createInstance` / `removeInstance`、`ServiceContainer.has`、`EventBus.removeAll`、`ConfigManager.syncPluginDefaults`、`AppOptions.configSync` |
+| 0.12.0 | `ServicePriority` / `ServicePriorityValue`（0.11.0 仍从包根导出，服务优先级改为裸数字后移除） |
 
 因此插件生态里常见的 `peerDependencies: { "@aalis/core": ">=0.2.0 <1.0.0" }` **不是**"core 保证
 0.x 内兼容"的推论——它只是"没用到新 API 的插件不必随次版本重发"的便利区间。用了某个版本才有的
