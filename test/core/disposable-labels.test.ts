@@ -88,4 +88,22 @@ describe('贡献登记表枚举', () => {
     expect(ctx.listContributions()).toEqual([]);
     ctx.dispose();
   });
+  it('onDispose 同一函数登记两次：撤销精确到本次登记，余下条目的逆序不翻转', () => {
+    const ctx = makeContext('dup');
+    const log: string[] = [];
+    const fn = () => {
+      log.push('fn');
+    };
+    ctx.onDispose(fn, 'first');
+    ctx.onDispose(() => {
+      log.push('mid');
+    }, 'mid');
+    const off = ctx.onDispose(fn, 'second');
+    off();
+    off(); // 幂等
+    expect(ctx.listDisposables()).toEqual(['first', 'mid']);
+    ctx.dispose();
+    // 链按引用首匹配移除：若撤销错项（删掉 first），余下 [mid, second] 逆序执行就成了 fn→mid
+    expect(log).toEqual(['mid', 'fn']);
+  });
 });
