@@ -55,7 +55,8 @@ export interface ServiceTypeMap {}
  * - 已登记的服务名（在 ServiceTypeMap 中）→ 对应接口
  * - 未登记的服务名 → `unknown`（强制使用方主动 narrow，避免 footgun）
  *
- * 用户便利类型；core 自己用 `ServiceTypeMap[TName]` 直接索引。
+ * 消费侧（getService 重载）与生产侧（provide 的 instance 参数）共用；后者不能用重载，
+ * string 兜底重载会让已知名的错误实现落到宽签名照样通过。
  */
 export type ServiceOf<TName extends string> = TName extends keyof ServiceTypeMap ? ServiceTypeMap[TName] : unknown;
 
