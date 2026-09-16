@@ -38,7 +38,7 @@ describe('Context.useModule 沙盒插件加载', () => {
     expect(events).toEqual(['apply']);
     expect(env.app.plugins.getStatus().map(p => p.name)).not.toContain('mini');
 
-    off();
+    off.dispose();
     expect(events).toEqual(['apply', 'disposed']);
   });
 

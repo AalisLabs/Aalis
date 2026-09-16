@@ -36,7 +36,7 @@
 | 拦截/改写核心流程 | `ctx.middleware(hook, fn)` | 高频；详见 [events.md](events.md) |
 | 注册外部资源清理 | `ctx.onDispose(() => …)` | 高频；**唯一正确的清理 API** |
 | 创建子上下文 | `ctx.fork(id)` | 中频；独立生命周期、共享服务 |
-| 动态加载子模块 | `ctx.useModule(mod, cfg)` | 罕用；多用于测试装配/动态注入 |
+| 动态加载子模块 | `ctx.useModule(mod, cfg)` → `ModuleHandle` | 罕用；多用于测试装配/动态注入 |
 | 设置全局服务路由偏好 | `ctx.preferService(name, id)` | 罕用；多用于 WebUI/CLI 切换 |
 | 枚举/巡视服务（管控类） | `ctx.getAllServices/Names` | 罕用；面向 plugin-doctor / WebUI |
 
@@ -49,6 +49,16 @@
 创建子上下文。子 Context 共享父级的 EventBus、ServiceContainer、HookRegistry、ContributionRegistry，但有独立的 disposable 列表。运行时为每个插件实例 fork 一份 ctx。
 
 > ⚠． **`id` 必须全局唯一**。`ctx.id` 是逻辑身份：贡献按 `${ctx.id}/${局部id}` 成键，两个同 id 的 Context 后注册者替换先注册者；服务偏好、模型引用、`hasByContext` 前缀查询都按它。服务 entry / 中间件 / 贡献 / 监听四原语的清理**不**按它——每个 Context 在本次激活另有一个内部 owner，dispose 只清自己注册的，同名 Context 在这一层互不误清，拆卸在飞时同名新激活的注册也不会被迟到的清理误删。但经 tools / commands / webui-server 等枢纽服务登记的条目仍按 `ctx.id` 走下文第 5 步的 `unregisterByPlugin(id)` 清扫，同名 Context 在这一层仍会互清。运行时侧已保证唯一（插件用 instanceId、`useModule` 自动唯一化 childId），手工 fork 时自行保证。
+
+### `ctx.useModule(module, config?): Promise<ModuleHandle>`
+
+在当前 Context 内 fork 一个子上下文并调用 `module.apply(child, config)`，不进入 `PluginManager`（不参与依赖追踪与 softReload）。返回的句柄与 Context 自身的生命周期面同形：
+
+- `id`：子上下文实际 id，同名重复挂载时自动唯一化（`parent#name`、`parent#name~2`…）
+- `dispose()`：同步请求关闭，同步清理当场执行、异步清理不等待
+- `disposeAsync(timeoutMs?)`：关闭并等待子上下文里全部异步清理完成；给了 `timeoutMs` 则单项超时后放弃等待、继续后续清理（超时只是停止等待，不代表资源已释放）
+
+模块名在子上下文 **彻底收尾之后** 才释放（清理链排空、按 `ctx.id` 的枢纽清扫都做完）：`disposeAsync` 路径下排空期间同名新挂载拿到 `~n` 后缀而不是旧名，旧模块迟到的清理不会与新模块相撞，也不会清掉新模块的枢纽登记。`dispose()` 不等待异步清理，名字随同步段释放。父 ctx dispose 时子上下文级联销毁。
 
 ### `ctx.onDispose(fn, label?): () => void`
 

@@ -52,7 +52,7 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
       sessionType: 'private',
     });
     await new Promise(r => setTimeout(r, 50)); // 让流进入在飞
-    off(); // 只拆 agent 这一个 fork
+    off.dispose(); // 只拆 agent 这一个 fork
 
     await turn;
     expect(seen, '拆卸不中止在飞回合，它就会在死 ctx 上跑完并把回复投出去').toEqual(['stream:done']);
