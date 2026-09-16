@@ -323,7 +323,11 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
         delivery: cfg.vision.delivery,
       },
     });
-    ctx.getService<AppService>('app')?.saveConfig();
+    // 尽力而为：内存态已迁移，落盘失败下次启动 config-sync 会再物化；不让激活因磁盘错误失败
+    ctx
+      .getService<AppService>('app')
+      ?.saveConfig()
+      .catch(err => logger.warn('vision 配置迁移落盘失败:', err));
     logger.warn(
       `vision.mode="${String(legacyMode)}" 已弃用：已按旧语义迁移为 recognizeOnArrival=${cfg.vision.recognizeOnArrival}、` +
         `delivery=${cfg.vision.delivery} 并写回配置文件，旧键已移除。`,

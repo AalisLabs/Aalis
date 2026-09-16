@@ -576,7 +576,11 @@ class CliTui {
     if (view === 'help') return;
     const pluginConfig = this.ctx.config.getPluginConfig(name);
     this.ctx.config.setPluginConfig(name, { ...pluginConfig, lastView: view });
-    this.ctx.getService<AppService>('app')?.saveConfig();
+    // 尽力而为：最后视图丢了只是下次回到默认视图，不值得让渲染路径变 async
+    this.ctx
+      .getService<AppService>('app')
+      ?.saveConfig()
+      .catch(err => this.ctx.logger.warn('记录最后视图失败:', err));
   }
 
   private queueRender = (): void => {

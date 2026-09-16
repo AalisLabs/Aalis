@@ -342,10 +342,11 @@ export class App {
   }
 
   /**
-   * 保存当前配置（委托给 configProvider；无 provider 时静默忽略）。
+   * 保存当前配置（委托给 configProvider；无 provider 时立即完成）。返回时持久化已完成，
+   * provider 失败以拒绝传出——调用方应 await，见 AppService 契约。
    */
-  saveConfig(): void {
-    this.ctx.config.save();
+  async saveConfig(): Promise<void> {
+    await this.ctx.config.save();
     this.logger.info('配置已保存');
   }
 
