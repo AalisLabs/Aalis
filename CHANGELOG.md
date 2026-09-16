@@ -20,6 +20,11 @@
 `ctx.provide(name, instance)` 对已知服务名（`ServiceTypeMap` 中声明的）按契约类型检查 `instance`，错误实现在编译期被拒；未知名与动态字符串仍为 `unknown`。运行时不变。
 **迁移**：编译报错的要么是真实缺口（修实现），要么是刻意的部分替身（测试里按仓内先例 `as never`）。
 
+### useModule 返回可等待的模块句柄（@aalis/core）
+
+`ctx.useModule()` 由返回 `() => void` 改为返回 `ModuleHandle { id; dispose(); disposeAsync(timeoutMs?) }`，与 Context 自身的生命周期面同形。`await handle.disposeAsync()` 返回时子上下文里全部异步清理已完成，此前 `await off()` 只是「开始执行」。`disposeAsync` 路径下模块名在子上下文彻底收尾（清理链排空、按 `ctx.id` 的枢纽清扫）之后才释放：排空期间同名新挂载拿到 `~n` 后缀，不再复用旧名。`dispose()` 保持原同步语义，不等异步清理，名字随同步段释放；需要名字隔离的用 `disposeAsync`。
+**迁移**：`off()` → `handle.dispose()`；需要等清理落地的改 `await handle.disposeAsync()`。
+
 ### 注册表按清理归属清理（@aalis/core）
 
 四个注册表（`ServiceContainer` / `HookRegistry` / `EventBus` / `ContributionRegistry`）的 `unregisterByContext(id)` 删除，换为 `unregisterByOwner(owner: symbol)`；`register` / `on` 新增可选 `owner` 参数，`EventBus.on` 第三参由 `string` 改为 `symbol`。`ctx.id` 仍是逻辑身份（贡献键与同键替换、服务偏好、模型引用、`hasByContext` 前缀查询）；清理按每次激活新鲜的内部 owner，同名 Context 在四原语层互不误清，拆卸在飞时同名新激活的注册也不会被迟到的清理误删。经 `tools` / `commands` / `webui-server` 等枢纽服务登记的条目仍按 `ctx.id` 走 `unregisterByPlugin` 清扫，不变。

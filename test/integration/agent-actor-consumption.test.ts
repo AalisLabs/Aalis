@@ -57,11 +57,11 @@ async function runTurn(incoming: IncomingMessage): Promise<ToolCallContext | und
   });
 
   await app.ctx.getService<AgentService>('agent')!.handleMessage(incoming);
-  offAgent();
-  offArchive();
-  offMem();
-  offTools();
-  offLLM();
+  offAgent.dispose();
+  offArchive.dispose();
+  offMem.dispose();
+  offTools.dispose();
+  offLLM.dispose();
   return captured;
 }
 
