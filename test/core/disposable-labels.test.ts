@@ -40,7 +40,7 @@ describe('门面注册自动标签', () => {
     });
     ctx.contribute(POINT, { id: 'me' } as never);
     ctx.provide('svc', {});
-    ctx.provide('llm', {}, { entryId: 'p/model-a' });
+    ctx.provide('llm', {} as never, { entryId: 'p/model-a' });
     ctx.whenService('later', () => {});
 
     const labels = ctx.listDisposables();

@@ -44,7 +44,7 @@ describe('tryDispatchSubcommand', () => {
           executed = true;
           return undefined;
         },
-      });
+      } as never);
       const result = await tryDispatchSubcommand(
         app,
         ['nonexistent', 'arg1'],
@@ -72,7 +72,7 @@ describe('tryDispatchSubcommand', () => {
           executedWith = { name, args: ctx.args, raw: ctx.raw };
           return `demo executed with ${ctx.args.length} args`;
         },
-      });
+      } as never);
       const result = await tryDispatchSubcommand(
         app,
         ['demo', 'foo', 'bar'],
@@ -96,7 +96,7 @@ describe('tryDispatchSubcommand', () => {
         has: (name: string) => name === 'silent',
         // biome-ignore lint/suspicious/noExplicitAny: test mock
         execute: async (..._args: any[]) => undefined,
-      });
+      } as never);
       const result = await tryDispatchSubcommand(app, ['silent'], msg => captured.push(msg));
       expect(result).toBe(0);
       expect(captured).toEqual([]);
