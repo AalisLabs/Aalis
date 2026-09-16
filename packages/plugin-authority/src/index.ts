@@ -205,9 +205,9 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
     .action(async (argv, arg) => {
       if (!authority.isOwner(argv.session.platform, argv.session.userId)) return '只有 owner 可管理权限';
       const a = arg === undefined ? undefined : String(arg).trim().toLowerCase();
-      const setUntil = (u: number) => {
+      const setUntil = async (u: number) => {
         ctx.config.set('autoConfirmUntil', u);
-        ctx.getService<AppService>('app')?.saveConfig();
+        await ctx.getService<AppService>('app')?.saveConfig();
       };
       if (a === undefined) {
         const u = (ctx.config.get('autoConfirmUntil') as number) ?? 0;
@@ -216,16 +216,16 @@ export async function apply(ctx: Context, _config: Record<string, unknown>): Pro
         return '自动确认：关闭';
       }
       if (a === 'off' || a === '0') {
-        setUntil(0);
+        await setUntil(0);
         return '已关闭自动确认';
       }
       if (a === 'on') {
-        setUntil(-1);
+        await setUntil(-1);
         return '已开启自动确认（一直，直到手动关闭）';
       }
       const m = Number(a);
       if (!Number.isInteger(m) || m <= 0) return '用法：/auto <分钟> | off | on';
-      setUntil(Date.now() + m * 60000);
+      await setUntil(Date.now() + m * 60000);
       return `已开启自动确认 ${m} 分钟`;
     });
 }
@@ -333,7 +333,7 @@ export const actions: PluginModule['actions'] = {
     const app = ctx.getService<AppService>('app');
     if (!app) throw new Error('App 不可用');
     ctx.config.set('owners', owners);
-    app.saveConfig();
+    await app.saveConfig();
     return { message: 'Owner 列表已更新' };
   },
 
@@ -346,7 +346,7 @@ export const actions: PluginModule['actions'] = {
     const app = ctx.getService<AppService>('app');
     if (!app) throw new Error('App 不可用');
     ctx.config.set('restrictedPolicy', policy);
-    app.saveConfig();
+    await app.saveConfig();
     if (Array.isArray(policy.allow) && policy.allow.length > 0) {
       (auth as unknown as { markPolicyEnabled?: () => void } | undefined)?.markPolicyEnabled?.();
     }
@@ -376,7 +376,7 @@ export const actions: PluginModule['actions'] = {
     if (typeof level === 'number' && Number.isInteger(level)) overrides[name] = level;
     else delete overrides[name];
     ctx.config.set('authorityOverrides', overrides);
-    app.saveConfig();
+    await app.saveConfig();
     // 门槛变了就撤掉该能力上的旧会话授予：否则 authorize 已按新门槛拒绝，守卫的救援闸
     // 仍会靠旧授予放行，而救援命中直接 return null、连 confirm 轴（含 always）一并跳过。
     const revoked = auth?.revokeGrantsOfCapability(name) ?? 0;
@@ -397,7 +397,7 @@ export const actions: PluginModule['actions'] = {
     if (confirm === 'session' || confirm === 'always' || confirm === 'off') overrides[name] = confirm;
     else delete overrides[name];
     ctx.config.set('confirmOverrides', overrides);
-    app.saveConfig();
+    await app.saveConfig();
     return { message: `操作 ${name} 确认要求已更新` };
   },
 
@@ -411,7 +411,7 @@ export const actions: PluginModule['actions'] = {
     if (typeof m !== 'number' || !Number.isInteger(m)) throw new Error('minutes 必须是整数（-1 一直 / 0 关 / N 分钟）');
     const until = m === -1 ? -1 : m <= 0 ? 0 : Date.now() + m * 60000;
     ctx.config.set('autoConfirmUntil', until);
-    app.saveConfig();
+    await app.saveConfig();
     return { message: until === -1 ? '自动确认：一直' : until === 0 ? '自动确认：关' : `自动确认：${m} 分钟`, until };
   },
 
@@ -423,7 +423,7 @@ export const actions: PluginModule['actions'] = {
     if (!app) throw new Error('App 不可用');
     const denied = asStringList(args.deniedCapabilities, 'deniedCapabilities');
     if (denied) ctx.config.set('deniedCapabilities', denied);
-    app.saveConfig();
+    await app.saveConfig();
     return { message: '权限配置已更新' };
   },
 };

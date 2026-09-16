@@ -158,7 +158,7 @@ export function registerPluginRoutes(
   });
 
   // 更新全局配置字段
-  expressApp.put('/api/config', gate(), (req, res) => {
+  expressApp.put('/api/config', gate(), async (req, res) => {
     const updates = req.body;
     if (!updates || typeof updates !== 'object') {
       res.status(400).json({ error: '请求体必须是对象' });
@@ -200,7 +200,7 @@ export function registerPluginRoutes(
     const note = ignored.length > 0 ? `（已忽略不可修改的字段: ${ignored.join(', ')}）` : '';
 
     try {
-      app.saveConfig();
+      await app.saveConfig();
       if (restartNeeded) {
         res.json({ ok: true, message: `全局配置已更新，正在重启应用以生效…${note}`, restart: true, ignored });
         app.restart();
@@ -269,7 +269,7 @@ export function registerPluginRoutes(
 
     const success = await pm.updatePluginConfig(pluginName, merged);
     if (success) {
-      app.saveConfig();
+      await app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 配置已更新` });
     } else {
       // 死路文案修复：插件被禁用时这里也会走到，但「不存在」会把用户引向错误方向
@@ -294,7 +294,7 @@ export function registerPluginRoutes(
     }
     const success = await pm.enablePlugin(pluginName);
     if (success) {
-      app.saveConfig();
+      await app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 已启用` });
     } else {
       res.status(404).json({ error: `插件 ${pluginName} 不存在` });
@@ -312,7 +312,7 @@ export function registerPluginRoutes(
     }
     const success = await pm.disablePlugin(pluginName);
     if (success) {
-      app.saveConfig();
+      await app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 已禁用` });
     } else {
       res.status(400).json({ error: `核心插件不能被禁用` });
@@ -377,7 +377,7 @@ export function registerPluginRoutes(
     const mergedConfig = { ...defaultsFrom(sourceModule.configSchema), ...(config as Record<string, unknown>) };
     ctx.config.setPluginConfig(instanceId, mergedConfig);
     await pm.register(sourceModule, mergedConfig, instanceId);
-    app.saveConfig();
+    await app.saveConfig();
     res.json({ ok: true, instanceId, message: `已创建实例 ${instanceId}` });
   });
 
@@ -398,12 +398,12 @@ export function registerPluginRoutes(
     }
     await pm.unload(instanceId);
     ctx.config.removePluginConfig(instanceId);
-    app.saveConfig();
+    await app.saveConfig();
     res.json({ ok: true, message: `已删除实例 ${instanceId}` });
   });
 
   // 保存配置到磁盘
-  expressApp.post('/api/config/save', gate(), (_req, res) => {
+  expressApp.post('/api/config/save', gate(), async (_req, res) => {
     const app = getApp();
     const pm = getPluginMgr();
     if (!app || !pm) {
@@ -411,7 +411,7 @@ export function registerPluginRoutes(
       return;
     }
     try {
-      app.saveConfig();
+      await app.saveConfig();
       res.json({ ok: true, message: '配置已保存到磁盘' });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

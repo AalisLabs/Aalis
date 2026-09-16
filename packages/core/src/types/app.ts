@@ -20,8 +20,12 @@ export interface AppService {
    *   形状由宿主策略与发起方约定，core 只透传（见 `RestartStrategy`）。
    */
   restart(opts?: { rollback?: unknown }): void;
-  /** 保存配置到磁盘 */
-  saveConfig(): void;
+  /**
+   * 持久化当前配置。返回时持久化已完成：同步 provider 立即完成，异步 provider 等其落定；
+   * provider 失败以拒绝传出，**调用方应 await**（此前异步 provider 的失败被静默吞掉）。
+   * 不保证并发保存的先后与外部编辑的合并——那是宿主 provider 的契约，不在此承诺。
+   */
+  saveConfig(): Promise<void>;
 
   /** 重新扫描 packages/ 目录，返回新发现并加载的插件名列表 */
   rescanPlugins(): Promise<string[]>;

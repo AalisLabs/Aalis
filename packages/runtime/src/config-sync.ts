@@ -67,7 +67,8 @@ export function syncPluginDefaults(app: App, opts?: ConfigSyncOptions): string[]
       changed.push(status.instanceId);
     }
   }
-  if (changed.length > 0) config.save();
+  // 尽力而为：同步失败不该拦住启动/热重载；同步 provider 的抛错仍同步冒出，这里只接异步拒绝。
+  if (changed.length > 0) config.save().catch(err => app.logger.warn('配置同步落盘失败:', err));
   return changed;
 }
 

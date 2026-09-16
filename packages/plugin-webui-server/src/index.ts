@@ -689,7 +689,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
     ctx.preferService(svcName, contextId);
     ctx.config.setServicePreference(svcName, contextId);
-    ctx.config.save();
+    await ctx.config.save();
     // 切换前端：webui-client 是「前端」服务，偏好变更需重挂静态目录 + 通知客户端刷新。
     if (svcName === 'webui-client') remountActiveClient();
     res.json({ ok: true });
@@ -700,7 +700,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const svcName = String(req.params.name);
     ctx.unpreferService(svcName);
     ctx.config.removeServicePreference(svcName);
-    ctx.config.save();
+    await ctx.config.save();
     if (svcName === 'webui-client') remountActiveClient();
     res.json({ ok: true });
   });
