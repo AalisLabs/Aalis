@@ -684,24 +684,14 @@ export class Context {
         this.logger.debug(`Context "${this.id}" 拆卸进行中，onDispose${label ? `("${label}")` : ''} 纳入本次清理链`);
       }
     }
-    const who = label ? ` [${label}]` : '';
-    const wrapped = () => {
-      try {
-        const ret = fn();
-        if (ret && typeof (ret as Promise<void>).then === 'function') {
-          // 把 promise 交还给链：异步拆卸路径（disposeAsync）会等待它完成——
-          // 这是 onDispose 异步契约真正兑现的通道。错误就地消化，单个清理
-          // 失败不拖垮链上其他清理；同步 dispose() 忽略返回值（不等待）。
-          return (ret as Promise<void>).catch(err => {
-            this.logger.warn(`onDispose 异步清理抛错（已忽略）${who}:`, err);
-          });
-        }
-      } catch (err) {
-        this.logger.warn(`onDispose 清理抛错（已忽略）${who}:`, err);
-      }
-    };
-    this._lifecycle.disposables.push(wrapped, label);
-    return () => this._lifecycle.disposables.remove(wrapped);
+    // 错误兜底（同步抛出 / 异步拒绝 / 超时）全部由清理链负责，这里不套守卫：
+    // 内核必须自足才能脱离 Context 使用，Context 再包一层就是跨层重复守卫。
+    // 异步返回值原样交还给链，disposeAsync 路径会等待它。
+    // 薄闭包只为给**本次登记**一个独立身份：链按引用首匹配移除，同一函数登记两次时直接
+    // remove(fn) 会撤销错项、翻转余下条目的逆序（与其它门面经 trackDisposable 各自独立闭包对齐）。
+    const entry = () => fn();
+    this._lifecycle.disposables.push(entry, label);
+    return () => this._lifecycle.disposables.remove(entry);
   }
 
   /** @internal 当前 disposable 链长度（诊断 / 测试用：检测 provide/whenService 的闭包是否如期自移除）。 */

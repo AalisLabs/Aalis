@@ -33,17 +33,27 @@ export class DisposableChain {
 
   constructor(private readonly logger?: CleanupReporter) {}
 
-  /** 追加一个清理函数。dispose 后追加会立刻执行（异步返回值不等待）。 */
+  /** 追加一个清理函数。dispose 后追加会立刻执行（异步返回值不等待，拒绝记 warn）。 */
   push(fn: () => unknown, label?: string): void {
     if (this._disposed) {
       try {
-        fn();
+        this.settle(fn(), describe(label));
       } catch (err) {
-        this.logger?.warn(`DisposableChain: post-dispose 执行失败: ${err}`);
+        this.logger?.warn(`DisposableChain: post-dispose 执行失败${describe(label)}: ${err}`);
       }
       return;
     }
     this._items.push({ fn, label });
+  }
+
+  /**
+   * 同步路径不等待异步返回值，但拒绝必须有人接：本链是资源内核，宿主可以不经
+   * Context 直接使用，逃逸的拒绝会成为宿主进程的 unhandledRejection。
+   */
+  private settle(ret: unknown, who: string): void {
+    if (ret && typeof (ret as PromiseLike<unknown>).then === 'function') {
+      Promise.resolve(ret).catch(err => this.logger?.warn(`DisposableChain: 异步清理拒绝，已忽略${who}:`, err));
+    }
   }
 
   /** 链序标签名单（未命名项为 undefined 占位）。诊断读口，纯读不执行。 */
@@ -87,14 +97,14 @@ export class DisposableChain {
   /**
    * 同步逆序执行所有清理函数并清空。重复调用无效果。
    * 单个函数抛错被 swallow（经 logger 记 warn——清理失败是泄漏的头号成因，必须默认可见）；
-   * 异步返回值**不等待**——需要等待落盘类清理时用 {@link disposeAsync}。
+   * 异步返回值**不等待**但拒绝同样记 warn——需要等待落盘类清理时用 {@link disposeAsync}。
    */
   dispose(): void {
     if (this._disposed) return;
     const items = this.take();
     for (let i = items.length - 1; i >= 0; i--) {
       try {
-        items[i].fn();
+        this.settle(items[i].fn(), describe(items[i].label, i));
       } catch (err) {
         this.logger?.warn(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
       }
