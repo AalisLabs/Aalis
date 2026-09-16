@@ -20,7 +20,7 @@ Aalis 的依赖注入（DI / IoC）建立在一个按名字寻址、支持同名
 interface ServiceEntry {
   instance: unknown;   // 服务实例（你 provide 进去的对象）
   priority: number;    // 优先级，数字越大越优先
-  contextId: string;   // 注册者的 Context id（卸载清理的依据）
+  contextId: string;   // 注册者的 Context id（逻辑身份：路由 / 显示 / 偏好；卸载清理按内部 owner 走）
   label?: string;      // 可选展示标签，如 "OpenAI / gpt-4o"
 }
 ```
@@ -90,7 +90,7 @@ const dispose = ctx.provide('llm', handle, {
 ```
 
 ::: warning entryId 必须带 `ctx.id/` 前缀
-插件卸载时，容器靠 `unregisterByContext(ctx.id)` 批量清理，它只会移除所有「`contextId === id`，或以 `id + '/'` 为前缀」的 entry。一旦 `entryId` 脱离这个前缀，卸载时就会漏清理，留下僵尸 entry。dev 模式会对此校验并 warn，但 `dispose()` 函数本身不依赖该约定。
+插件卸载时，容器按清理归属（`unregisterByOwner`）批量清理，per-entry 子 entry 与主 entry 同 owner，一并清掉——清理不依赖前缀。前缀约定服务的是逻辑身份：`hasByContext` 的前缀查询、api-llm 按 `provider/model` 解析模型引用都靠它，`entryId` 脱离前缀会让这些查询命不中。dev 模式对此校验并 warn。
 :::
 
 实践中，各插件通常还会自管 per-entry 的 dispose 句柄（例如 `registered: Map<modelId, dispose>`），以便单独上线 / 下线某个子粒度，而不必重挂整个插件。
@@ -206,7 +206,7 @@ function listLLMEntries(ctx, caps) {
 
 1. **缓存裸 service 引用**：`const svc = ctx.getService('llm')` 存进类字段长期使用，provider bounce 后引用失效。改为每次 getService，或用 `whenService` 跟随（§4.1 / §4.3）。
 2. **重复 provide 同名服务**：同一 Context 不带 entryId 二次 provide 会静默失效。多套配置用 `reusable` + `name:suffix`；有意拆子粒度用 `entryId`（§2.2 / §3）。
-3. **entryId 不带 `ctx.id/` 前缀**：卸载会漏清理僵尸 entry。永远用 `'${ctx.id}/${sub}'`（§3）。
+3. **entryId 不带 `ctx.id/` 前缀**：`hasByContext` 前缀查询与 api-llm 按 `provider/model` 的模型引用命不中（清理不受影响，按 owner 走）。永远用 `'${ctx.id}/${sub}'`（§3）。
 4. **直接调容器层 `prefer` / `register`**：绕过事件发射，`whenService` 不会重挂。走 `ctx.preferService` / `ctx.provide`（§4.4）。
 5. **滥用 `requiresBounceOnDepChange`**：默认就应惰性查询。启用它会让 core 在依赖变化时级联重启你的插件，成本高（§5）。
 6. **期待内核按能力选服务**：0.5.0 起已无此能力。把能力写进实例元数据，靠 `*-api` helper 过滤（§6）。

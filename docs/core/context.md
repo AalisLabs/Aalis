@@ -48,7 +48,7 @@
 
 创建子上下文。子 Context 共享父级的 EventBus、ServiceContainer、HookRegistry、ContributionRegistry，但有独立的 disposable 列表。运行时为每个插件实例 fork 一份 ctx。
 
-> ⚠． **`id` 必须全局唯一**。`ctx.id` 是服务 entry、钩子、贡献三类注册的归属锚：两个同 id 的 Context 共用同一命名空间——贡献按 `${ctx.id}/${局部id}` 成键，后注册者替换先注册者；任一方 dispose 会按 contextId 连带清掉对方的注册。运行时侧已保证唯一（插件用 instanceId、`useModule` 自动唯一化 childId），手工 fork 时自行保证。
+> ⚠． **`id` 必须全局唯一**。`ctx.id` 是逻辑身份：贡献按 `${ctx.id}/${局部id}` 成键，两个同 id 的 Context 后注册者替换先注册者；服务偏好、模型引用、`hasByContext` 前缀查询都按它。服务 entry / 中间件 / 贡献 / 监听四原语的清理**不**按它——每个 Context 在本次激活另有一个内部 owner，dispose 只清自己注册的，同名 Context 在这一层互不误清，拆卸在飞时同名新激活的注册也不会被迟到的清理误删。但经 tools / commands / webui-server 等枢纽服务登记的条目仍按 `ctx.id` 走下文第 5 步的 `unregisterByPlugin(id)` 清扫，同名 Context 在这一层仍会互清。运行时侧已保证唯一（插件用 instanceId、`useModule` 自动唯一化 childId），手工 fork 时自行保证。
 
 ### `ctx.onDispose(fn, label?): () => void`
 
@@ -69,7 +69,7 @@
 两者语义相同，`dispose()` 同步返回（异步清理不等待）、`disposeAsync` 逆序串行等待每个异步清理完成（编排层用）：
 
 1. 级联销毁所有子 Context
-2. 通过 `ServiceContainer.unregisterByContext()` 移除该 Context 注册的服务
+2. 通过 `ServiceContainer.unregisterByOwner()` 移除该 Context 本次激活注册的服务
 3. 注销该 Context 的中间件与贡献（在清理链**之前**——异步等待窗口内半拆插件不再响应消息、不再被组装器收集）
 4. 逆序执行所有注册的 disposable（事件监听、命令注册、onDispose 回调等）
 5. 触发服务自清理协议：实现 `unregisterByPlugin(id)` 的服务会被通知清理该 Context 的注册项

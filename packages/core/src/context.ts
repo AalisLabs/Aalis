@@ -65,6 +65,12 @@ export class Context {
   /** 活跃沙盒子上下文 id（useModule）——用于同名重复挂载时唯一化 childId。 */
   private readonly _moduleIds = new Set<string>();
   /**
+   * 清理归属：本 Context 本次激活的身份，每次 fork 新鲜。四原语注册时带上它，拆卸按它清。
+   * 与 `id`（逻辑身份：贡献键、排序、模型引用、偏好、显示）分开——同名 Context 互不误清，
+   * 拆卸在飞时同名新激活的注册也不会被迟到的清理误删。
+   */
+  private readonly _owner: symbol;
+  /**
    * 资源寿命交给内部 Lifecycle；四原语的注册与撤回政策留在 Context。
    * 关闭后订阅类入口 warn + no-op，fork/useModule 抛错；onDispose 始终接收清理。
    */
@@ -82,6 +88,7 @@ export class Context {
     devMode?: boolean;
   }) {
     this.id = options.id;
+    this._owner = Symbol(this.id);
     this._events = options.events;
     this._services = options.services;
     this._hooks = options.hooks;
@@ -94,10 +101,10 @@ export class Context {
       {
         beforeCleanup: () => {
           // 先撤回对外注册，再执行用户清理，避免清理期间继续接收新调用。
-          removedServices = this._services.unregisterByContext(this.id);
-          this._hooks.unregisterByContext(this.id);
-          this._contributions.unregisterByContext(this.id);
-          this._events.unregisterByContext(this.id);
+          removedServices = this._services.unregisterByOwner(this._owner);
+          this._hooks.unregisterByOwner(this._owner);
+          this._contributions.unregisterByOwner(this._owner);
+          this._events.unregisterByOwner(this._owner);
         },
         afterCleanup: () => {
           for (const svc of removedServices) {
@@ -153,7 +160,8 @@ export class Context {
    * - 枚举某服务的所有 entry（含 contextId / priority / label）：
    *   → 用公开 API `ctx.getAllServices(name)`
    * - 获取服务实例：用 `ctx.getService()` / `ctx.getAllServices()`
-   * - 注册服务：用 `ctx.provide()`（会自动登记到清理链）
+   * - 注册服务：用 `ctx.provide()`（会自动登记到清理链、带上清理归属）；直接 `register`
+   *   的条目无 owner，不被拆卸自动清理，得用返回值自管
    */
   get serviceContainer(): ServiceContainer {
     return this._services;
@@ -188,7 +196,7 @@ export class Context {
       this.logger.warn(`Context "${this.id}" 已 dispose，忽略 on("${event}")`);
       return () => {};
     }
-    const off = this._events.on(event, handler, this.id);
+    const off = this._events.on(event, handler, this._owner);
     return this.trackDisposable(off, `on:${event}`);
   }
 
@@ -223,9 +231,9 @@ export class Context {
    *
    * `entryId` 选项：覆盖默认 contextId（默认 = `this.id`）。用于一个 plugin 实例
    * 需要按某种语义子粒度拆出多个 entry 的场景（典型：per-model LLM、per-path storage）。
-   * 约定：`entryId` 必须以 `this.id` 为前缀（以 `/` 分隔），以保证 plugin 卸载时
-   * `unregisterByContext(this.id)` 如需清理仍可多次调用；dispose 函数并不依赖这个约定，
-   * 但 dev 模式下会验证以避免 "entryId 与拥有者 plugin 脱联" 的 footgun。
+   * 约定：`entryId` 必须以 `this.id` 为前缀（以 `/` 分隔）——它是逻辑身份，`hasByContext`
+   * 的前缀查询与 api-llm 按 `provider/model` 解析引用都靠它；清理不依赖它（按 owner 走），
+   * dev 模式下验证只为避免 "entryId 与拥有者 plugin 脱联" 的 footgun。
    */
   provide<K extends string>(
     name: K,
@@ -249,7 +257,7 @@ export class Context {
       });
     }
 
-    const entry = this._services.register(name, instance, options?.priority ?? 0, entryId, options?.label);
+    const entry = this._services.register(name, instance, options?.priority ?? 0, entryId, options?.label, this._owner);
 
     const dispose = () => {
       // 自移除：调用方手动 dispose 后，闭包不再滞留清理链（否则它持有
@@ -503,7 +511,7 @@ export class Context {
       this.logger.warn(`Context "${this.id}" 已 dispose，忽略 middleware("${hook}")`);
       return () => {};
     }
-    return this.trackDisposable(this._hooks.register(hook, fn, this.id), `middleware:${hook}`);
+    return this.trackDisposable(this._hooks.register(hook, fn, this.id, this._owner), `middleware:${hook}`);
   }
 
   /**
@@ -511,7 +519,7 @@ export class Context {
    *
    * 任何插件都可驱动自己定义的钩子链——对称钩子系统的立身之本，地位等价于
    * `ctx.emit`。注册 handler 请用 `ctx.middleware(hook, fn)`。完整 HookRegistry
-   * （register / unregisterByContext / onStall）不对插件暴露，与 `_events` /
+   * （register / unregisterByOwner / onStall）不对插件暴露，与 `_events` /
    * `_services` 同一门面纪律。
    *
    * @returns `true` = 链路完整走完（执行了 defaultAction，或本就没有 handler）；
@@ -559,7 +567,7 @@ export class Context {
     // 再写新的——先删后写，避免旧闭包滞留（见 _contributionDisposers）。
     this._contributionDisposers.get(mapKey)?.();
     const rawOff = this.trackDisposable(
-      this._contributions.register(point, spec, this.id),
+      this._contributions.register(point, spec, this.id, this._owner),
       `contribute:${point}:${(spec as ContributionSpec).id}`,
     );
     // 包一层做自移除：不删登记表条目的话，`Map → dispose 闭包 → off 闭包 →
@@ -637,9 +645,8 @@ export class Context {
       throw new Error(`Context "${this.id}" 已 dispose，无法 useModule`);
     }
     // 同一父 ctx 重复挂载同名 module（文档背书的"每会话一实例"用法）必须拿到
-    // 互不相同的 ctx.id：id 是 contributions 全局键与 unregisterByContext 的
-    // 归属锚，重复 id 会让后挂载者静默顶替先挂载者的贡献、且任一方 dispose
-    // 连带清掉对方的。活跃集合随 dispose 收缩，长期反复挂载不会无界增长。
+    // 互不相同的 ctx.id：id 是 contributions 全局键的前半，重复 id 会让后挂载者静默顶替
+    // 先挂载者的贡献。活跃集合随 dispose 收缩，长期反复挂载不会无界增长。
     const baseId = `${this.id}#${module.name}`;
     let childId = baseId;
     for (let n = 2; this._moduleIds.has(childId); n++) childId = `${baseId}~${n}`;

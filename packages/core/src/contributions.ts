@@ -32,7 +32,10 @@ export interface ContributionHandle<S extends ContributionSpec = ContributionSpe
 
 interface Registration {
   spec: ContributionSpec;
+  /** 逻辑身份：全局键 `${contextId}/${spec.id}` 的前半，决定排序与同键替换 */
   contextId: string;
+  /** 清理归属（见 ServiceEntry.owner）；无则不被拆卸自动清理 */
+  owner?: symbol;
 }
 
 /**
@@ -66,8 +69,9 @@ export class ContributionRegistry {
    *
    * 全局键 = `${contextId}/${spec.id}`；同键重复注册为替换（幂等），
    * 旧注册的 dispose 函数在替换后失效（不会误删新注册）。
+   * @param owner 清理归属（Context 门面传入）；省略则不被拆卸自动清理，用返回的 dispose 自管。
    */
-  register(point: string, spec: ContributionSpec, contextId: string): () => void {
+  register(point: string, spec: ContributionSpec, contextId: string, owner?: symbol): () => void {
     // 空 id 会静默同键碰撞；含 '/' 的局部 id 可构造出与他人 `${contextId}/${id}`
     // 相同的全局键（如 ctx 'a' + id 'b/c' 撞 ctx 'a/b' + id 'c'），打破
     // 「spec.id 侧无法顶替他人贡献」的保证——两者都必须在注册期拒绝。
@@ -80,7 +84,7 @@ export class ContributionRegistry {
       this.points.set(point, byKey);
     }
     const key = `${contextId}/${spec.id}`;
-    const entry: Registration = { spec, contextId };
+    const entry: Registration = { spec, contextId, owner };
     byKey.set(key, entry);
 
     return () => {
@@ -106,12 +110,13 @@ export class ContributionRegistry {
   }
 
   /**
-   * 按 contextId 移除该上下文的全部贡献（插件卸载清扫）。
+   * 按清理归属移除该 Context 本次激活的全部贡献（插件卸载清扫）。同键被同名新 Context
+   * 替换后，旧 Context 的迟到清理不会删掉新占位——owner 不同。
    */
-  unregisterByContext(contextId: string): void {
+  unregisterByOwner(owner: symbol): void {
     for (const [point, byKey] of this.points) {
       for (const [key, entry] of byKey) {
-        if (entry.contextId === contextId) byKey.delete(key);
+        if (entry.owner === owner) byKey.delete(key);
       }
       if (byKey.size === 0) this.points.delete(point);
     }

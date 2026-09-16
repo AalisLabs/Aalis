@@ -24,7 +24,9 @@ interface ServiceEntry {
 
 ## 关键方法
 
-### `register(name, instance, priority?, contextId?, label?)`
+### `register(name, instance, priority?, contextId?, label?, owner?)`
+
+`owner` 是清理归属（Context 门面自动传入本次激活的 symbol）；省略则该 entry 不被拆卸自动清理，调用方用返回的 entry 自管。
 
 注册服务，返回刚插入的 `ServiceEntry`。同名服务按优先级降序排列（稳定排序：同优先级先注册者在前）。可用返回的 entry 引用调用 `unregisterEntry` 精确删除这一条。
 
@@ -50,11 +52,11 @@ interface ServiceEntry {
 
 ### `unregisterEntry(name, entry)`
 
-按 entry 引用精确删除某个提供者（推荐），避免 "同一 contextId 多次 register" 时按 contextId 删除命中错误条目的 footgun。返回是否成功删除。
+按 entry 引用精确删除某个提供者：同一 Context 多次 register（含 per-entry 子 entry）时只摘这一条；`unregisterByOwner` 则整体清掉该 Context 本次激活的全部 entry。返回是否成功删除。
 
-### `unregisterByContext(contextId)`
+### `unregisterByOwner(owner)`
 
-移除指定 Context 拥有的所有服务 entry，返回被移除的服务名列表。"拥有" 同 `hasByContext`（含 `id` 与 `id + '/'` 前缀子 entry）。用于插件卸载时清理。
+移除该清理归属注册的所有 entry，返回被移除的服务名列表。按 owner 而非 contextId：同名 Context 各有各的 owner，互不误清；per-entry 子 entry 与主 entry 同 owner，一并清掉，不再依赖 id 前缀。用于插件卸载时清理。
 
 ## 服务偏好
 

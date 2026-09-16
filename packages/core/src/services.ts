@@ -11,6 +11,12 @@ export interface ServiceEntry {
    */
   priority: number;
   contextId: string;
+  /**
+   * @internal 清理归属：注册它的 Context 在本次激活的身份。与 `contextId`（逻辑身份，供
+   * 路由 / 显示 / 偏好 / 前缀查询）分开——同名 Context 各有各的 owner，一方拆卸不清另一方。
+   * 不经 Context 门面直接注册的条目无 owner，不被拆卸自动清理，由调用方用返回值自管。
+   */
+  owner?: symbol;
   /** 可选的展示标签（如 "OpenAI / gpt-4o"） */
   label?: string;
 }
@@ -32,7 +38,8 @@ export function normalizeDependency(dep: DependencyDeclaration): NormalizedDepen
  * 设计要点：
  * - 同一个服务名可以有多个提供者（按 priority + 偏好解析）
  * - 服务选择走「偏好 > 优先级 > 注册顺序」；领域级筛选（如按 LLM 模型能力）由各 -api 自理，不在内核 DI
- * - 每个注册都关联 contextId, 以便在插件卸载时批量清理
+ * - 经 Context 门面注册的条目带清理归属 owner，插件卸载时按它批量清理（unregisterByOwner）；
+ *   contextId 只是逻辑身份（路由 / 显示 / 偏好 / 前缀查询），不参与清理
  */
 export class ServiceContainer {
   private entries = new Map<string, ServiceEntry[]>();
@@ -42,6 +49,7 @@ export class ServiceContainer {
   /**
    * 注册一个服务实例
    *
+   * @param owner 清理归属（Context 门面传入）；省略则该条目不被拆卸自动清理。
    * @returns 刚插入的 ServiceEntry，调用方可以该引用调用 {@link unregisterEntry} 精确删除这一条。
    */
   register(
@@ -50,6 +58,7 @@ export class ServiceContainer {
     priority: number = 0,
     contextId: string = 'root',
     label?: string,
+    owner?: symbol,
   ): ServiceEntry {
     let list = this.entries.get(name);
     if (!list) {
@@ -60,6 +69,7 @@ export class ServiceContainer {
       instance,
       priority,
       contextId,
+      owner,
       label,
     };
     list.push(entry);
@@ -121,9 +131,8 @@ export class ServiceContainer {
   }
 
   /**
-   * 按 entry 引用精确删除某个提供者（推荐）
-   *
-   * 避免 "同一 contextId 多次 register" 场景下按 contextId 删除会命中错误条目的 footgun。
+   * 按 entry 引用精确删除某个提供者。同一 Context 多次 register（含 per-entry 子 entry）时
+   * 只摘这一条；拆卸整体清理走 {@link unregisterByOwner}。
    * @returns 是否成功删除
    */
   unregisterEntry(name: string, entry: ServiceEntry): boolean {
@@ -137,17 +146,17 @@ export class ServiceContainer {
   }
 
   /**
-   * 按 contextId 移除该上下文拥有的所有服务 entry，返回被移除的服务名列表。
+   * 按清理归属移除该 Context 本次激活注册的所有 entry，返回被移除的服务名列表。
    *
-   * "拥有" 同 hasByContext：包括 `contextId === id` 和以 `id + '/'` 为前缀的 per-entry 子 entry。
-   * 这是插件 unload 时清理多 entry 注册（per-model LLM / per-root storage / …）的路径。
+   * 按 owner 而非 contextId：同名 Context（手工 fork 重名、拆卸在飞时同名新激活）各有各的
+   * owner，互不误清。per-entry 子 entry（`id/sub`）与主 entry 同 owner，一并清掉——
+   * 不再依赖 id 前缀约定，前缀只留给 {@link hasByContext} 这类逻辑身份查询。
    */
-  unregisterByContext(contextId: string): string[] {
+  unregisterByOwner(owner: symbol): string[] {
     const removed: string[] = [];
-    const prefix = `${contextId}/`;
     for (const [name, list] of this.entries) {
       const before = list.length;
-      const filtered = list.filter(e => e.contextId !== contextId && !e.contextId.startsWith(prefix));
+      const filtered = list.filter(e => e.owner !== owner);
       if (filtered.length < before) {
         removed.push(name);
       }

@@ -2,7 +2,10 @@ import type { HookContextMap, MiddlewareFn, MiddlewareNext } from './types/index
 
 interface HookEntry<T> {
   fn: MiddlewareFn<T>;
+  /** 逻辑身份，供卡链诊断点名 */
   contextId: string;
+  /** 清理归属（见 ServiceEntry.owner）；无则不被拆卸自动清理 */
+  owner?: symbol;
 }
 
 /**
@@ -16,8 +19,8 @@ interface HookEntry<T> {
  * 显式表达；相位内部的 handler 应顺序无关，或由相位拥有方约定。
  *
  * 插件面与 events / services 同一门面纪律（方法窄面，对象不外露）：
- * 注册 handler 只经 `ctx.middleware(hook, fn)`（闭包 ctx.id 作 contextId 并登记
- * dispose 链，插件卸载时被 `unregisterByContext` 清扫；裸 `register` 默认落
+ * 注册 handler 只经 `ctx.middleware(hook, fn)`（闭包 ctx.id 作 contextId、本次激活的
+ * owner 作清理归属，并登记 dispose 链，插件卸载时被 `unregisterByOwner` 清扫；裸 `register` 默认落
  * 'root'，会静默泄漏进全局管道）；驱动钩子链经 `ctx.runHook(hook, data,
  * defaultAction)`。完整注册表仅 App（组合根，接 onStall 到 logger）与
  * Context 内部持有。
@@ -44,22 +47,24 @@ export class HookRegistry {
   /**
    * 注册 handler，返回 dispose 函数。
    * 同一钩子键内的多个 handler 按注册顺序执行。
+   * @param owner 清理归属（Context 门面传入）；省略则不被拆卸自动清理，用返回的 dispose 自管。
    */
   register<K extends string & keyof HookContextMap>(
     hook: K,
     fn: MiddlewareFn<HookContextMap[K]>,
     contextId: string = 'root',
+    owner?: symbol,
   ): () => void {
     let list = this.hooks.get(hook);
     if (!list) {
       list = [];
       this.hooks.set(hook, list);
     }
-    const entry: HookEntry<HookContextMap[K]> = { fn, contextId };
+    const entry: HookEntry<HookContextMap[K]> = { fn, contextId, owner };
     list.push(entry);
 
     return () => {
-      // 查 registry 当前数组而非闭包捕获的 list：unregisterByContext 会整体
+      // 查 registry 当前数组而非闭包捕获的 list：unregisterByOwner 会整体
       // 换数组，捕获旧引用的 dispose 会变 no-op（中间件泄漏）。
       const current = this.hooks.get(hook);
       if (!current) return;
@@ -121,11 +126,11 @@ export class HookRegistry {
   }
 
   /**
-   * 按 contextId 移除所有中间件
+   * 按清理归属移除该 Context 本次激活注册的所有中间件（同名 Context 互不误清）。
    */
-  unregisterByContext(contextId: string): void {
+  unregisterByOwner(owner: symbol): void {
     for (const [hook, list] of this.hooks) {
-      const filtered = list.filter(e => e.contextId !== contextId);
+      const filtered = list.filter(e => e.owner !== owner);
       if (filtered.length === 0) {
         this.hooks.delete(hook);
       } else {
