@@ -47,11 +47,11 @@ export class PluginManager {
     return this.suspendDepth > 0;
   }
   /**
-   * 被推迟的 recompute 请求（修 lost wakeup：在飞期间到达的请求不再被丢弃）。
-   * 多个请求合并为一——除 shutdown 保留原 reason 外统一退化为
-   * plugin-state-changed（service-up/down 的特殊语义本就只在第一轮生效）。
+   * 被推迟的重算批次。服务下线名去重保留，供首轮判断 optional bounce；
+   * 普通状态变化合并处理，shutdown 覆盖整批。批次消费前先摘下，避免
+   * 执行期间的新变化混入正在处理的服务集合。
    */
-  private queuedReason: RecomputeReason | null = null;
+  private queuedBatch: { reason: RecomputeReason; serviceDowns: Set<string> } | null = null;
   /**
    * 全局关机标志。app.stop() 在 dispose 前置位，所有反应式级联（service:registered/
    * unregistered → checkPending/Active）都会因此跳过——避免「正在关机还去 bounce
@@ -80,14 +80,14 @@ export class PluginManager {
    *    等 flight 结束即互等死锁。
    */
   idle(): Promise<void> {
-    if (!this.reloading && !this.suspended && this.queuedReason === null) return Promise.resolve();
+    if (!this.reloading && !this.suspended && this.queuedBatch === null) return Promise.resolve();
     return new Promise(resolve => {
       this.idleWaiters.push(resolve);
     });
   }
 
   private settleIdleWaiters(): void {
-    if (this.reloading || this.suspended || this.queuedReason !== null) return;
+    if (this.reloading || this.suspended || this.queuedBatch !== null) return;
     const waiters = this.idleWaiters;
     this.idleWaiters = [];
     for (const w of waiters) w();
@@ -350,7 +350,7 @@ export class PluginManager {
       entry.state = 'pending';
       entry.error = undefined;
       // ctx 先捕获：evict 的 await 期间并发管理操作可能已拆掉并清空
-      // entry.context，重读会 TypeError 并越过收尾的 softReload（queuedReason
+      // entry.context，重读会 TypeError 并越过收尾的 softReload（queuedBatch
       // 悬挂 → idle() 永不落定）。disposeAsync 幂等，重复调用只会等在飞拆卸。
       const ctx = entry.context;
       if (ctx) {
@@ -438,31 +438,33 @@ export class PluginManager {
     if (this.shuttingDown && reason.type !== 'shutdown') {
       // 关机已置位时非关机请求无意义；但若队列里躺着一个被挂起的 shutdown
       // （stop() 与手动 dispose 段竞态），借这次调用把它接过来跑完。
-      if (this.queuedReason?.type !== 'shutdown') return;
-      reason = this.queuedReason;
-      this.queuedReason = null;
+      if (this.queuedBatch?.reason.type !== 'shutdown') return;
     }
     if (reason.type === 'shutdown') this.shuttingDown = true;
+
+    // 先合并再启动：手动 dispose 收尾的 softReload 必须与其间积累的
+    // service-down 同批处理，不能先重激活一遍、再重放旧下线原因。
+    if (!this.queuedBatch || reason.type === 'shutdown') {
+      this.queuedBatch = { reason, serviceDowns: new Set() };
+    }
+    if (reason.type === 'service-down' && this.queuedBatch.reason.type !== 'shutdown') {
+      this.queuedBatch.serviceDowns.add(reason.service);
+    }
 
     // 单飞 + 排队（修 lost wakeup）：在飞期间/手动 dispose 段的请求合并排队，
     // 由在飞 run 收尾时补跑或 dispose 段收尾的 softReload 消化。注意这里必须
     // 立即返回而不能把在飞 promise 交还调用方——若调用方恰在某插件 apply()
     // 内同步调用（在飞 run 正 await 它），等待在飞 promise 会自我死锁。
     if (this.reloading || this.suspended) {
-      // 已知语义损失（如实记账）：合并把 service-down 降级为 plugin-state-changed，
-      // 被合并的请求拿不到「首轮特殊语义」——requiresBounceOnDepChange 级联在
-      // 该路径恒不触发（当前零第一方声明方；根修需按 reason 集合排队，刀单在案）。
-      this.queuedReason = reason.type === 'shutdown' ? reason : (this.queuedReason ?? { type: 'plugin-state-changed' });
       return;
     }
 
     this.reloading = true;
     try {
-      let current: RecomputeReason | null = reason;
-      while (current) {
-        await this.recomputeOnce(current);
-        current = this.queuedReason;
-        this.queuedReason = null;
+      while (this.queuedBatch) {
+        const current = this.queuedBatch;
+        this.queuedBatch = null;
+        await this.recomputeOnce(current.reason, current.serviceDowns);
       }
     } finally {
       this.reloading = false;
@@ -471,7 +473,7 @@ export class PluginManager {
   }
 
   /** 单次完整重算：fixed-point 状态转移 + （非关机）plugins:changed 通知 */
-  private async recomputeOnce(reason: RecomputeReason): Promise<void> {
+  private async recomputeOnce(reason: RecomputeReason, serviceDowns: Set<string>): Promise<void> {
     let currentReason = reason;
     let changed = true;
     let rounds = 0;
@@ -490,7 +492,7 @@ export class PluginManager {
     const maxRounds = (): number => this.plugins.size * 2 + 8;
     let lastRoundFlips: string[] = [];
 
-    while (changed && rounds < maxRounds()) {
+    converge: while (changed && rounds < maxRounds()) {
       changed = false;
       rounds++;
       lastRoundFlips = [];
@@ -501,7 +503,7 @@ export class PluginManager {
       // Phase A: 反向遍历，关掉目标不是 active 的 active entry
       for (const entry of [...order].reverse()) {
         if (entry.state !== 'active') continue;
-        const target = computeTargetState(entry, currentReason, this.rootCtx);
+        const target = computeTargetState(entry, currentReason, this.rootCtx, serviceDowns);
         if (target === 'active') continue;
 
         // 日志：区分 shutdown / required 不满 / optional bounce
@@ -511,10 +513,15 @@ export class PluginManager {
           const unmet = entry.requiredDeps.find(d => this.rootCtx.getService(d.service) === undefined);
           if (unmet) {
             this.logger.info(`依赖 "${unmet.service}" 不可用，停用插件: ${entry.instanceId}`);
-          } else if (currentReason.type === 'service-down') {
+          } else {
             // 被动级联降级（依赖服务下线 → 转 pending 等待重新满足），
             // 区别于 bouncePlugin() 的主动重载，措辞不混用 bounce。
-            this.logger.info(`依赖服务 "${currentReason.service}" 已下线，降级插件为待激活: ${entry.instanceId}`);
+            const missing = entry.optionalDeps.find(
+              d => serviceDowns.has(d.service) && this.rootCtx.getService(d.service) === undefined,
+            );
+            if (missing) {
+              this.logger.info(`依赖服务 "${missing.service}" 已下线，降级插件为待激活: ${entry.instanceId}`);
+            }
           }
         }
 
@@ -531,8 +538,11 @@ export class PluginManager {
 
       // Phase B: 正向遍历，激活目标 active 的 pending entry
       for (const entry of order) {
+        // 先消费等待中的下线/停机批次，再启动新的实例。否则它按最新服务
+        // 状态初始化后，又会被此前排队的旧下线通知重复重建。
+        if (this.queuedBatch?.serviceDowns.size || this.queuedBatch?.reason.type === 'shutdown') break converge;
         if (entry.state !== 'pending') continue;
-        const target = computeTargetState(entry, currentReason, this.rootCtx);
+        const target = computeTargetState(entry, currentReason, this.rootCtx, serviceDowns);
         if (target !== 'active') continue;
         await activatePlugin(entry, {
           rootCtx: this.rootCtx,
@@ -550,6 +560,7 @@ export class PluginManager {
       if (currentReason.type === 'service-up' || currentReason.type === 'service-down') {
         currentReason = { type: 'plugin-state-changed' };
       }
+      serviceDowns.clear();
     }
 
     if (rounds >= maxRounds()) {

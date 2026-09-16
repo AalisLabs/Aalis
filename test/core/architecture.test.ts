@@ -11,7 +11,8 @@ import { describe, expect, it } from 'vitest';
 // 由本测试设防，使"理论上可拆"始终成立（满足特定条件时可重新评估）。
 //
 // 分层口径：
-// - 基底层：通用机制，不知道"插件"与"应用"概念的存在，可被任何宿主形态复用
+// - 资源内核：生命周期与清理链，不依赖四原语、Context 或应用编排
+// - 基底层：四原语及 Context 门面，不直接依赖插件/应用编排
 // - 编排层：把基底层机制编排成插件生命周期与应用骨架
 // - 中立层：barrel（index）与宿主 SPI（providers，type-only 桥接双向词汇，不设防）
 //
@@ -22,12 +23,14 @@ import { describe, expect, it } from 'vitest';
 
 const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../packages/core/src');
 
-/** 基底层：禁止 import 编排层 */
+/** 资源生命周期内核：只允许相互依赖，不引用 Context、四原语或编排层。 */
+const KERNEL_LAYER = ['disposable-chain.ts', 'lifecycle.ts'];
+
+/** 框架基底层：禁止 import 编排层 */
 const BASE_LAYER = [
   'config.ts',
   'context.ts',
   'contributions.ts',
-  'disposable-chain.ts',
   'events.ts',
   'hooks.ts',
   'logger.ts',
@@ -79,11 +82,11 @@ describe('core 内部分层（基底层 ⇸ 编排层）', () => {
       .filter(d => d.isFile() && d.name.endsWith('.ts'))
       .map(d => d.name)
       .sort();
-    const registered = [...BASE_LAYER, ...ORCHESTRATION_LAYER, ...NEUTRAL].sort();
+    const registered = [...KERNEL_LAYER, ...BASE_LAYER, ...ORCHESTRATION_LAYER, ...NEUTRAL].sort();
     expect(actual, '新增/删除 core 源文件时请同步更新本测试的分层清单').toEqual(registered);
   });
 
-  for (const file of BASE_LAYER) {
+  for (const file of [...KERNEL_LAYER, ...BASE_LAYER]) {
     it(`基底层 ${file} 不 import 编排层`, () => {
       const source = readFileSync(join(SRC_DIR, file), 'utf-8');
       const violations = specifiers(stripComments(source))
@@ -93,6 +96,15 @@ describe('core 内部分层（基底层 ⇸ 编排层）', () => {
         violations,
         `${file} 引用了编排层模块 [${violations.join(', ')}]——基底层不得知道"插件/应用"的存在`,
       ).toEqual([]);
+    });
+  }
+
+  for (const file of KERNEL_LAYER) {
+    it(`资源内核 ${file} 不依赖框架基底或编排层`, () => {
+      const allowed = new Set(KERNEL_LAYER.map(name => `./${name.replace(/\.ts$/, '.js')}`));
+      const source = readFileSync(join(SRC_DIR, file), 'utf-8');
+      const violations = specifiers(stripComments(source)).filter(spec => !allowed.has(spec));
+      expect(violations).toEqual([]);
     });
   }
 });

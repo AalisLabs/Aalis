@@ -1,8 +1,8 @@
 import type { ConfigManager } from './config.js';
 import type { ContributionHandle, ContributionRegistry, ContributionSpec } from './contributions.js';
-import { awaitWithTimeout, DisposableChain } from './disposable-chain.js';
 import type { EventBus } from './events.js';
 import type { HookRegistry } from './hooks.js';
+import { Lifecycle } from './lifecycle.js';
 import type { Logger } from './logger.js';
 import type { ServiceContainer } from './services.js';
 import { emitServiceRegistered, validateProvide } from './services-helpers.js';
@@ -48,7 +48,7 @@ export class Context {
    * contribute 内 mapKey 的构造保持一致；NUL 不会出现在合法键名中）。
    *
    * 用于同键重注册时先摘旧登记：注册表本身是替换语义，但门面每次 contribute
-   * 都会往 _disposables 压一个闭包——不摘旧的，反复刷新贡献（文档明示的合法
+   * 都会往清理链压一个闭包——不摘旧的，反复刷新贡献（文档明示的合法
    * 用法）会让 dispose 链无界增长且旧 build 闭包无法 GC。
    * 条目数有界于**当前存活**的贡献数：退订时由 off 的自移除逻辑摘掉本条。
    */
@@ -57,52 +57,11 @@ export class Context {
   private static readonly CONTRIB_KEY_SEP = '\u0000';
   /** 活跃沙盒子上下文 id（useModule）——用于同名重复挂载时唯一化 childId。 */
   private readonly _moduleIds = new Set<string>();
-  private _disposables: DisposableChain;
-  private _children: Set<Context> = new Set();
-  private _parent?: Context;
   /**
-   * post-dispose 注册政策（两档，各入口守卫引用此处）：
-   * - 订阅类（on/middleware/contribute/provide/whenService）：warn + no-op——调用方常是
-   *   插件的异步续段，清理路径上不抛错；也杜绝幽灵注册（provide 曾会向活总线闪发
-   *   service:registered/unregistered，whenService 曾会真跑回调）。
-   * - 构造类（fork/useModule）：抛错——在死 ctx 上造生命周期单元是编程错误，不是清理路径。
-   * - onDispose 特例：拆卸进行中（链未排空）仍进链、被本次清理正常等待（debug）；
-   *   链已排空才就地执行且异步返回值不被等待（warn）。两种都不 no-op、不抛错——
-   *   它握着待释放的资源，丢弃即泄漏。
+   * 资源寿命交给内部 Lifecycle；四原语的注册与撤回政策留在 Context。
+   * 关闭后订阅类入口 warn + no-op，fork/useModule 抛错；onDispose 始终接收清理。
    */
-  private _disposed = false;
-  /**
-   * 在飞的拆卸 promise。`_disposed` 在清理**开始前**置位，仅凭它早退会让后来者
-   * 拿到"已完成"的假象（并发 disposeAsync、父级联撞上半拆的子 ctx、unload 撞
-   * bounce、并发 app.stop 都会 0ms 返回而清理其实没落）。记住它之后，后来者
-   * join 而非早退。
-   */
-  private _inflightTeardown?: Promise<void>;
-  /**
-   * 本 ctx 的初始化在飞标记（插件 apply 的 promise，已抹平成永不 reject）。
-   *
-   * 存在的理由是一个真实竞态：插件在 apply 里**先 await 拿资源、再挂
-   * `onDispose`**（`await client.connect()` → `ctx.onDispose(() => client.close())`
-   * 是全仓最常见的写法）。若拆卸恰好落在这个窗口里，disposer 到达时清理链
-   * 已排空，`DisposableChain.push` 走 post-dispose 分支就地执行它——资源最终
-   * 会关，**但异步返回值不被等待**，于是 `disposeAsync` 的「返回时异步清理
-   * 已完成」承诺落空。
-   *
-   * 可达面要说清：`PluginManager` 的 unload / disablePlugin / bouncePlugin 会**主动**
-   * 走进这个窗口——三者对在飞 ctx 直接 disposeAsync（先把 entry.state 改离
-   * 'activating' 让激活收尾让位，见 plugin-activation.ts 的接管检查），依赖的正是
-   * 本机制「先等 apply 落定再排空链」的承诺；`evictDownstreamConsumers` 同以
-   * entry.context 为判据走进窗口；recompute 仍只对 `'active'` 动手，
-   * `App.stop` 另有 `idle()` 挡在前面。宿主直调
-   * `disposeAsync` 与 `useModule` 的沙盒子 ctx 级联同样由本机制兜住。
-   *
-   * 记住 apply 的 promise 后，`disposeAsync` 可以先等它落定再排空链——迟到的
-   * disposer 就走**正常注册路径**进链，被正常 await。插件侧零改动。
-   *
-   * 抹平成永不 reject：apply 失败时这里只关心「跑完了没」，失败本身由
-   * activatePlugin 的 catch 处理，不该在拆卸路径上二次抛出。
-   */
-  private _activation?: Promise<void>;
+  private readonly _lifecycle: Lifecycle;
 
   constructor(options: {
     id: string;
@@ -122,9 +81,57 @@ export class Context {
     this._contributions = options.contributions;
     this.logger = options.logger;
     this.config = options.config;
-    this._parent = options.parent;
     this.devMode = options.devMode ?? options.parent?.devMode ?? true;
-    this._disposables = new DisposableChain(this.logger);
+    let removedServices: string[] = [];
+    this._lifecycle = new Lifecycle(
+      {
+        beforeCleanup: () => {
+          // 先撤回对外注册，再执行用户清理，避免清理期间继续接收新调用。
+          removedServices = this._services.unregisterByContext(this.id);
+          this._hooks.unregisterByContext(this.id);
+          this._contributions.unregisterByContext(this.id);
+          this._events.unregisterByContext(this.id);
+        },
+        afterCleanup: () => {
+          for (const svc of removedServices) {
+            this._events.emit('service:unregistered', svc).catch(err => {
+              this.logger.warn(`emit service:unregistered 失败 (${svc}): ${err}`);
+            });
+          }
+          removedServices = [];
+          this._contributionDisposers.clear();
+          this._moduleIds.clear();
+
+          // 枢纽服务的旧清扫协议属于 Core，不下沉资源生命周期层。
+          // 同名多 entry 按实例去重，未被选中的提供者也可能持有登记。
+          for (const name of this._services.getServiceNames()) {
+            const seen = new Set<unknown>();
+            for (const entry of this._services.getEntries(name)) {
+              if (seen.has(entry.instance)) continue;
+              seen.add(entry.instance);
+              const svc = entry.instance as { unregisterByPlugin?: (id: string) => void };
+              try {
+                svc?.unregisterByPlugin?.(this.id);
+              } catch (err) {
+                this.logger.warn(`服务 "${name}" 的 unregisterByPlugin 抛错:`, err);
+              }
+            }
+          }
+        },
+        onTimeout: (phase, timeoutMs) => {
+          if (phase === 'initialization') {
+            this.logger.warn(
+              `Context "${this.id}": 等待初始化落定超过 ${timeoutMs}ms，放弃等待并继续拆卸` +
+                `（该插件 apply 中在飞的资源获取，其 onDispose 可能赶不上本次清理链）`,
+            );
+          } else {
+            this.logger.warn(`Context "${this.id}": 等待在飞拆卸超过 ${timeoutMs}ms，放弃等待`);
+          }
+        },
+        onError: err => this.logger.error('dispose 收尾异常:', err),
+      },
+      this.logger,
+    );
   }
 
   // ---- 子系统访问（供高级插件检查/包装用） ----
@@ -139,7 +146,7 @@ export class Context {
    * - 枚举某服务的所有 entry（含 contextId / priority / label）：
    *   → 用公开 API `ctx.getAllServices(name)`
    * - 获取服务实例：用 `ctx.getService()` / `ctx.getAllServices()`
-   * - 注册服务：用 `ctx.provide()`（会自动登记到 _disposables 链）
+   * - 注册服务：用 `ctx.provide()`（会自动登记到清理链）
    */
   get serviceContainer(): ServiceContainer {
     return this._services;
@@ -149,7 +156,7 @@ export class Context {
    * 创建子上下文（通常为每个插件创建一个）
    */
   fork(id: string): Context {
-    if (this._disposed) {
+    if (this._lifecycle.disposed) {
       throw new Error(`Context "${this.id}" 已 dispose，无法 fork("${id}")`);
     }
     const child = new Context({
@@ -163,14 +170,14 @@ export class Context {
       parent: this,
       devMode: this.devMode,
     });
-    this._children.add(child);
+    this._lifecycle.adopt(child._lifecycle);
     return child;
   }
 
   // ---- 事件 ----
 
   on<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<AalisEvents[E]>): () => void {
-    if (this._disposed) {
+    if (this._lifecycle.disposed) {
       this.logger.warn(`Context "${this.id}" 已 dispose，忽略 on("${event}")`);
       return () => {};
     }
@@ -180,17 +187,17 @@ export class Context {
 
   /**
    * 把一个底层退订原语登记到 disposable 链，并返回**自移除**的退订函数：
-   * 调用方手动退订时，闭包不再滞留 _disposables（否则它持有 handler 引用直到
+   * 调用方手动退订时，闭包不再滞留清理链（否则它持有 handler 引用直到
    * ctx.dispose 才释放——故所有注册 API 的退订都统一走此路径，杜绝该类泄漏）。
    *
    * label 进入链条目：泄漏排查与超时/抛错告警按它点名（`前缀:名字` 约定）。
    */
   private trackDisposable(off: () => void, label?: string): () => void {
     const dispose = (): void => {
-      this._disposables.remove(dispose);
+      this._lifecycle.disposables.remove(dispose);
       off();
     };
-    this._disposables.push(dispose, label);
+    this._lifecycle.disposables.push(dispose, label);
     return dispose;
   }
 
@@ -214,7 +221,7 @@ export class Context {
     instance: unknown,
     options?: { priority?: number; label?: string; entryId?: string },
   ): () => void {
-    if (this._disposed) {
+    if (this._lifecycle.disposed) {
       this.logger.warn(`Context "${this.id}" 已 dispose，忽略 provide("${name}")`);
       return () => {};
     }
@@ -234,10 +241,10 @@ export class Context {
     const entry = this._services.register(name, instance, options?.priority ?? 0, entryId, options?.label);
 
     const dispose = () => {
-      // 自移除：调用方手动 dispose 后，闭包不再滞留 _disposables（否则它持有
+      // 自移除：调用方手动 dispose 后，闭包不再滞留清理链（否则它持有
       // entry 引用，instance 无法 GC，多实例热替换场景累积僵尸）。
       // ctx.dispose 经 DisposableChain.dispose 调用本函数时 remove 返回 false，无害。
-      this._disposables.remove(dispose);
+      this._lifecycle.disposables.remove(dispose);
       const removed = this._services.unregisterEntry(name, entry);
       if (removed) {
         this._events.emit('service:unregistered', name).catch(err => {
@@ -246,7 +253,7 @@ export class Context {
       }
     };
     // 显式 entryId（一 plugin 多 entry，如 LLM 多模型）时用它点名，否则服务名已够定位
-    this._disposables.push(dispose, `provide:${options?.entryId ?? name}`);
+    this._lifecycle.disposables.push(dispose, `provide:${options?.entryId ?? name}`);
 
     emitServiceRegistered(this._events, this.logger, name);
     this.logger.debug(`服务已注册: ${name}`);
@@ -373,23 +380,25 @@ export class Context {
   whenService<T = unknown>(name: string, cb: (svc: T) => void | (() => void)): () => void;
   // biome-ignore lint/suspicious/noConfusingVoidType: cb 可隐式返回 void 或显式返回 cleanup
   whenService<T>(name: string, cb: (svc: T) => void | (() => void)): () => void {
-    if (this._disposed) {
+    if (this._lifecycle.disposed) {
       this.logger.warn(`Context "${this.id}" 已 dispose，忽略 whenService("${name}")`);
       return () => {};
     }
     let cleanup: (() => void) | undefined;
     let disposed = false;
+    let syncing = false;
     /** 当前已挂载的胜者实例；undefined = 未挂载 */
     let attached: T | undefined;
 
     const runCleanup = (): void => {
-      if (!cleanup) return;
+      const previous = cleanup;
+      cleanup = undefined;
+      if (!previous) return;
       try {
-        cleanup();
+        previous();
       } catch (err) {
         this.logger.warn(`whenService('${name}') cleanup 抛错（已忽略）:`, err);
       }
-      cleanup = undefined;
     };
 
     /**
@@ -397,40 +406,35 @@ export class Context {
      * - 胜者未变（如败者 entry 上下线、同胜者重复事件）→ 不动，避免无谓 bounce
      * - 胜者变了 → 先 cleanup 再用新实例重挂
      * - 没有胜者了 → 只 cleanup 脱挂
-     * 不读事件 payload、只看容器当前态，天然对事件乱序/合并免疫。
+     * 重入只改变容器状态，由当前调用串行对齐；先接住 cleanup 再处理下一次切换，
+     * 避免 A → B → A 时外层回调覆盖内层清理函数。持续振荡的用户回调不保证收敛。
      */
     const sync = (): void => {
-      if (disposed) return;
-      const winner = this._services.get<T>(name);
-      if (winner === attached) return;
-      runCleanup();
-      attached = winner;
-      if (winner === undefined) return;
-      // 统一错误政策：cb 抛错=warn+订阅保持。此前首挂（同步路径）抛错会逃逸
-      // 出 whenService 注册调用——复合 disposer 未入链未返回，留下半注册态；
-      // 重挂（事件路径）抛错则被 EventBus 吞成另一种沉默。两条路径同一条
-      // warn；attached 已记录本次胜者，不自动重试，等下次服务变更再对齐。
-      let ret: undefined | (() => void);
+      if (disposed || syncing) return;
+      syncing = true;
       try {
-        ret = cb(winner) as undefined | (() => void);
-      } catch (err) {
-        this.logger.warn(`whenService('${name}') 回调抛错（订阅保持，等下次服务变更）:`, err);
-        return;
-      }
-      // cb 执行期间可能同步触发了本 whenService 的 dispose（如 cb 内部链式
-      // 卸载）。此时不能把新 cleanup 挂上去——dispose 已跑过 runCleanup 且
-      // disposed=true，挂上的 cleanup 将永不执行（泄漏）。直接立即执行掉。
-      if (disposed) {
-        if (typeof ret === 'function') {
+        while (!disposed) {
+          if (this._services.get<T>(name) === attached) return;
+          attached = undefined;
+          runCleanup();
+          if (disposed) return;
+          // cleanup 自身也可能切换偏好、注销 provider；不能复用清理前的胜者。
+          const winner = this._services.get<T>(name);
+          attached = winner;
+          if (winner === undefined) return;
           try {
-            ret();
+            const ret = cb(winner);
+            if (typeof ret === 'function') cleanup = ret;
           } catch (err) {
-            this.logger.warn(`whenService('${name}') cleanup 抛错（dispose 期间，已忽略）:`, err);
+            // 首挂和重挂采用同一错误政策；同一胜者不自动重试。
+            this.logger.warn(`whenService('${name}') 回调抛错（订阅保持，等下次服务变更）:`, err);
           }
+          // 回调中已退订时，刚返回的 cleanup 仍需立即执行。
+          if (disposed) runCleanup();
         }
-        return;
+      } finally {
+        syncing = false;
       }
-      if (typeof ret === 'function') cleanup = ret;
     };
 
     // 持续订阅 provider 上下线 + 偏好切换（不退订），ctx.dispose 时由 disposable 链清理。
@@ -444,13 +448,10 @@ export class Context {
       if (svcName === name) sync();
     });
 
-    // 立即检查：若已就绪则首挂。
-    sync();
-
     const dispose = (): void => {
       if (disposed) return;
       disposed = true;
-      this._disposables.remove(dispose); // 自移除，不滞留闭包（对称 provide）
+      this._lifecycle.disposables.remove(dispose); // 自移除，不滞留闭包（对称 provide）
       offReg();
       offUnreg();
       offPref();
@@ -458,7 +459,9 @@ export class Context {
       attached = undefined;
     };
 
-    this._disposables.push(dispose, `whenService:${name}`);
+    this._lifecycle.disposables.push(dispose, `whenService:${name}`);
+    // 首挂前先登记：回调销毁 ctx 时，复合订阅已能随清理链一起退订。
+    sync();
     return dispose;
   }
 
@@ -485,7 +488,7 @@ export class Context {
    * });
    */
   middleware<K extends string & keyof HookContextMap>(hook: K, fn: MiddlewareFn<HookContextMap[K]>): () => void {
-    if (this._disposed) {
+    if (this._lifecycle.disposed) {
       this.logger.warn(`Context "${this.id}" 已 dispose，忽略 middleware("${hook}")`);
       return () => {};
     }
@@ -536,7 +539,7 @@ export class Context {
     // 同 id 活实例（如 bounce 后的新实例）的条目，随即又被立即执行的 disposer
     // 连带删除——活实例的贡献静默消失。与 useModule 同为拒绝，但取 warn+no-op
     // 而非抛错：调用方常是插件的异步续段，不该在清理路径上再抛。
-    if (this._disposed) {
+    if (this._lifecycle.disposed) {
       this.logger.warn(`Context "${this.id}" 已 dispose，忽略 contribute("${point}")`);
       return () => {};
     }
@@ -579,7 +582,7 @@ export class Context {
   // ---- 生命周期 ----
 
   get disposed(): boolean {
-    return this._disposed;
+    return this._lifecycle.disposed;
   }
 
   /**
@@ -619,7 +622,7 @@ export class Context {
     },
     config: Record<string, unknown> = {},
   ): Promise<() => void> {
-    if (this._disposed) {
+    if (this._lifecycle.disposed) {
       throw new Error(`Context "${this.id}" 已 dispose，无法 useModule`);
     }
     // 同一父 ctx 重复挂载同名 module（文档背书的"每会话一实例"用法）必须拿到
@@ -652,7 +655,7 @@ export class Context {
    * 注册一个在本 Context dispose 时执行的清理回调。
    *
    * 插件清理副作用的**唯一正确 API**：
-   * - 直接挂在 `_disposables` 链上，保证逆序执行
+   * - 登记到生命周期的清理链，保证逆序执行
    * - 在 `ctx.dispose()` 的任何路径上都会触发（app 停机 / bounce / unload /
    *   updatePluginConfig / softReload 级联 evict）
    * - 沙盒 / fork 子上下文同样适用
@@ -669,11 +672,11 @@ export class Context {
    * @returns 取消该清理回调的函数（在 dispose 前调用可阻止执行）
    */
   onDispose(fn: () => void | Promise<void>, label?: string): () => void {
-    if (this._disposed) {
-      // 判据必须用链的 disposed，不是本 ctx 的 _disposed——后者在清理**开始前**就置位，
+    if (this._lifecycle.disposed) {
+      // 判据必须用链的 disposed，不是生命周期的 disposed——后者在清理**开始前**就置位，
       // 中间隔着等 activation / 级联子 ctx 两段窗口；落在窗口里的迟到 disposer 仍进链、
-      // 被本次清理正常等待（设计内正确路径，见 _activation），只有链已排空才真是就地执行。
-      if (this._disposables.disposed) {
+      // 被本次清理正常等待，只有链已排空才真是就地执行。
+      if (this._lifecycle.disposables.disposed) {
         this.logger.warn(
           `Context "${this.id}" 已 dispose，onDispose${label ? `("${label}")` : ''} 将就地执行（异步返回值不被等待）`,
         );
@@ -697,13 +700,13 @@ export class Context {
         this.logger.warn(`onDispose 清理抛错（已忽略）${who}:`, err);
       }
     };
-    this._disposables.push(wrapped, label);
-    return () => this._disposables.remove(wrapped);
+    this._lifecycle.disposables.push(wrapped, label);
+    return () => this._lifecycle.disposables.remove(wrapped);
   }
 
   /** @internal 当前 disposable 链长度（诊断 / 测试用：检测 provide/whenService 的闭包是否如期自移除）。 */
   get disposableCount(): number {
-    return this._disposables.size;
+    return this._lifecycle.disposables.size;
   }
 
   /**
@@ -713,7 +716,7 @@ export class Context {
    * （说明有未传 label 的 onDispose，排查时按链序号对照 `[#i]` 告警）。
    */
   listDisposables(): ReadonlyArray<string | undefined> {
-    return this._disposables.labels();
+    return this._lifecycle.disposables.labels();
   }
 
   /**
@@ -729,7 +732,7 @@ export class Context {
   }
 
   /**
-   * @internal 登记本 ctx 的初始化在飞 promise（见 {@link _activation}）。
+   * @internal 登记本 ctx 的初始化在飞 promise（由内部 Lifecycle 跟踪）。
    *
    * 仅由激活路径（`activatePlugin`）与 `Context.useModule` 调用，传入 `module.apply(...)`
    * 的返回值；插件侧不得调用（非契约面）。
@@ -742,17 +745,7 @@ export class Context {
    *    回调的约束同源。`disposeAsync(timeoutMs)` 的超时是这条的兜底而非豁免。
    */
   trackActivation(applying: Promise<unknown>): void {
-    const settled = applying.then(
-      () => {},
-      () => {},
-    );
-    this._activation = settled;
-    // 落定即摘：不摘则每个插件 ctx 长期持有一个已 resolve 的 promise，且
-    // 拆卸路径要多绕一个微任务。恒等卫防止摘掉后来者（同 ctx 理论上不会
-    // 二次激活，但 recompute 路径演进后不保证）。
-    settled.then(() => {
-      if (this._activation === settled) this._activation = undefined;
-    });
+    this._lifecycle.trackInitialization(applying);
   }
 
   /**
@@ -773,15 +766,7 @@ export class Context {
    * （PluginManager 的 unload / bounce / 停机路径与 App.stop）走的是它。
    */
   dispose(): void {
-    // wait=false 分支不命中任何 await——async 函数体在首个 await 前同步执行，
-    // 本方法的可观察时序与纯同步实现一致（有测试以同步副作用守着）。
-    // 差异仅在抛错路径：异常成为 rejection 而非同步抛出（体内各步骤均自带
-    // 隔离，实际不可达），catch 兜底防 unhandledRejection。
-    const p = this._teardown(false);
-    this._inflightTeardown ??= p;
-    p.catch(err => {
-      this.logger.error('dispose 收尾异常:', err);
-    });
+    this._lifecycle.dispose();
   }
 
   /**
@@ -789,8 +774,8 @@ export class Context {
    * 清理（`onDispose` 返回的 promise）完成后才返回——bounce / unload / 停机
    * 路径上落盘类清理从此真正落地，而非只是"开始执行"。
    *
-   * 幂等且**可 join**：已有拆卸在飞时等待它完成再返回，而不是看到 `_disposed`
-   * 就早退（`_disposed` 在清理开始前置位，早退会让调用方拿到"已完成"的假象——
+   * 幂等且**可 join**：已有拆卸在飞时等待它完成再返回，而不是看到 `disposed`
+   * 就早退（`disposed` 在清理开始前置位，早退会让调用方拿到"已完成"的假象——
    * 父级联撞上半拆的子 ctx、并发 stop、unload 撞 bounce 都会走到这条路）。
    *
    * ⚠． **`onDispose` 回调里不得 await 任何最终落到本 ctx 或其祖先 ctx 拆卸上的
@@ -804,101 +789,7 @@ export class Context {
    *        以本值为上限**——在飞方可能是用更松（甚至不设限）的 timeout 启动的，
    *        无护栏地 join 会让调用方（如 `App.stop`）的停机上限失效。缺省不设限。
    */
-  async disposeAsync(timeoutMs?: number): Promise<void> {
-    const inflight = this._inflightTeardown;
-    if (inflight) {
-      await awaitWithTimeout(inflight, timeoutMs, () =>
-        this.logger.warn(`Context "${this.id}": 等待在飞拆卸超过 ${timeoutMs}ms，放弃等待`),
-      );
-      return;
-    }
-    this._inflightTeardown = this._teardown(true, timeoutMs);
-    await this._inflightTeardown;
-  }
-
-  private async _teardown(wait: boolean, timeoutMs?: number): Promise<void> {
-    if (this._disposed) return;
-    this._disposed = true;
-
-    // 等初始化落定，再动任何拆卸动作（见 _activation）。
-    //
-    // 位置必须在这里——排在本方法末段的链排空**之前**：apply 续段迟到的 `onDispose`
-    // 要赶上本次清理链，这是 disposeAsync「返回即异步清理完成」承诺的落点。
-    // 也必须排在子上下文销毁之前：续段可能对先前 fork 出的子 ctx 挂 onDispose，
-    // 下移会让该 disposer 落到已排空的子链上就地执行、返回值不被等待。
-    // （provide/fork 已各自有 post-dispose 守卫，不再构成本 await 的位置理由。）
-    //
-    // 仅异步路径等待。同步 `dispose()` 承诺「首个 await 前同步执行完」，可观察
-    // 时序与纯同步实现一致——在这里插 await 会打破它，且同步路径本就不等待任何
-    // 异步清理，等 apply 无意义。
-    if (wait && this._activation) {
-      await awaitWithTimeout(this._activation, timeoutMs, () =>
-        this.logger.warn(
-          `Context "${this.id}": 等待初始化落定超过 ${timeoutMs}ms，放弃等待并继续拆卸` +
-            `（该插件 apply 中在飞的资源获取，其 onDispose 可能赶不上本次清理链）`,
-        ),
-      );
-    }
-
-    // 先销毁子上下文（复制避免迭代中修改 Set）
-    const children = [...this._children];
-    for (const child of children) {
-      if (wait) await child.disposeAsync(timeoutMs);
-      else child.dispose();
-    }
-    this._children.clear();
-
-    // 记录此上下文注册的服务名，以便清理后发射事件
-    const removedServices = this._services.unregisterByContext(this.id);
-
-    // 钩子、贡献与事件监听在清理链**之前**注销：异步等待清理的整个窗口内，
-    // 本插件的中间件不得再响应消息、贡献不得再被组装器收集、事件 handler
-    // 不得再响应事件——半拆状态不外露。同步路径同一 tick 内完成，先后不可
-    // 观察；清理链里各注册的 disposer 靠存在性检查/身份卫自然 no-op，不会双删。
-    this._hooks.unregisterByContext(this.id);
-    this._contributions.unregisterByContext(this.id);
-    this._events.unregisterByContext(this.id);
-
-    // 逆序执行清理（unregisterByContext 已整体移除服务，provide 的 dispose 会安全跳过）
-    if (wait) await this._disposables.disposeAsync(timeoutMs);
-    else this._disposables.dispose();
-
-    // 发射服务注销事件，让 App 的自动恢复监听器能响应
-    for (const svc of removedServices) {
-      this._events.emit('service:unregistered', svc).catch(err => {
-        this.logger.warn(`emit service:unregistered 失败 (${svc}): ${err}`);
-      });
-    }
-
-    // 释放本 ctx 持有的登记表：闭包会捎带 spec（及其 build 捕获的数据），
-    // dispose 后不清则外部若仍持有本 ctx 引用，这些对象就跟着活着。
-    this._contributionDisposers.clear();
-    this._moduleIds.clear();
-
-    // 服务自清理协议：任何服务实例若实现 `unregisterByPlugin(contextId)`，
-    // dispose 时统一通知它清理本上下文相关的注册项（如 plugin-tools 的
-    // ToolService、plugin-commands 的 CommandService）。
-    // core 不再硬编码任何具体服务名。
-    // 遍历该服务名下的**所有** entry 而非只通知胜者——败者实例（低优先级
-    // 并存 provider）也可能持有本上下文注册的条目。同名多 entry 可能指向
-    // 同一实例（per-model 拆粒度），按实例去重避免重复通知。
-    for (const name of this._services.getServiceNames()) {
-      const seen = new Set<unknown>();
-      for (const entry of this._services.getEntries(name)) {
-        if (seen.has(entry.instance)) continue;
-        seen.add(entry.instance);
-        const svc = entry.instance as { unregisterByPlugin?: (id: string) => void };
-        try {
-          svc?.unregisterByPlugin?.(this.id);
-        } catch (err) {
-          this.logger.warn(`服务 "${name}" 的 unregisterByPlugin 抛错:`, err);
-        }
-      }
-    }
-
-    // 从父上下文中移除
-    if (this._parent) {
-      this._parent._children.delete(this);
-    }
+  disposeAsync(timeoutMs?: number): Promise<void> {
+    return this._lifecycle.disposeAsync(timeoutMs);
   }
 }
