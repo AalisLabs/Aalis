@@ -30,7 +30,7 @@ async function setup(config: Record<string, unknown> = {}) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
   // user-profile 的 inject.required 含 'llm'；build 路径不会触达它，
   // 这里只需一个占位 provider 让插件能激活（不联网、不调真模型）。
-  app.ctx.provide('llm', { chat: async () => ({ content: '' }) });
+  app.ctx.provide('llm', { chat: async () => ({ content: '' }) } as never);
   await app.ctx.useModule(memoryInMemoryModule);
   const memory = app.ctx.getService<MemoryService>('memory');
   if (!memory) throw new Error('memory 服务未就绪');

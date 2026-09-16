@@ -134,7 +134,7 @@ describe('media 视觉识别的接线', () => {
         seen = req;
         return { content: '一只猫' };
       },
-    });
+    } as never);
     const vision = scanLLMProcessors(app.ctx).find(p => p.capabilities.includes('vision' as never));
     if (!vision?.describe) throw new Error('未扫描出带 describe 的 vision processor');
     // data URL 直接内联，不触网
@@ -158,7 +158,7 @@ describe('识别失败的如实上报', () => {
       chat: async () => {
         throw new Error('图片全部获取失败（共 1 张），拒绝降级为纯文本请求');
       },
-    });
+    } as never);
     await app.ctx.useModule(media, {});
     await app.plugins.idle();
 

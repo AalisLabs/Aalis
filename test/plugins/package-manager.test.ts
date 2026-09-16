@@ -709,7 +709,7 @@ describe('自锁闸：生产接线算出的撤销通道名单', () => {
       ['webui-client', '@aalis/plugin-webui-client'],
       ['webui-server', '@aalis/plugin-webui-server'],
     ] as const) {
-      app.ctx.fork(pkg).provide(svc, {});
+      app.ctx.fork(pkg).provide(svc, {} as never);
     }
     // package-manager 自己：apply 跑在正确 id 的 fork 上，它 provide 出来的 contextId 就是包名，
     // 与真实加载器一致。**不能**另注册一个同名桩——那会按注册顺序占住解析结果，拿不到真服务。
@@ -728,7 +728,7 @@ describe('自锁闸：生产接线算出的撤销通道名单', () => {
       },
       execFile: async () => ({ stdout: '', stderr: '', code: 0 }),
       makeTempDir: async () => ({ path: '/tmp/fake', cleanup: async () => undefined }),
-    });
+    } as never);
     apply(app.ctx.fork('@aalis/plugin-package-manager'), {});
     const svc = app.ctx.getService<{ uninstall(n: string): Promise<{ ok: boolean; message: string }> }>(
       'package-manager',

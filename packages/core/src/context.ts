@@ -6,7 +6,14 @@ import { Lifecycle } from './lifecycle.js';
 import type { Logger } from './logger.js';
 import type { ServiceContainer } from './services.js';
 import { emitServiceRegistered, validateProvide } from './services-helpers.js';
-import type { AalisEvents, ContributionPointMap, HookContextMap, MiddlewareFn, ServiceTypeMap } from './types/index.js';
+import type {
+  AalisEvents,
+  ContributionPointMap,
+  HookContextMap,
+  MiddlewareFn,
+  ServiceOf,
+  ServiceTypeMap,
+} from './types/index.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
@@ -210,15 +217,19 @@ export class Context {
   /**
    * 注册服务，返回 dispose 函数用于精确卸载该服务
    *
+   * 已知服务名（ServiceTypeMap 里有的）按契约类型约束实现，错误实现在编译期被拒；
+   * 未知名与动态字符串放行为 unknown。单签名条件类型而非重载：string 兜底重载会让
+   * 已知名的错误实现落到宽签名照样通过（已实测）。
+   *
    * `entryId` 选项：覆盖默认 contextId（默认 = `this.id`）。用于一个 plugin 实例
    * 需要按某种语义子粒度拆出多个 entry 的场景（典型：per-model LLM、per-path storage）。
    * 约定：`entryId` 必须以 `this.id` 为前缀（以 `/` 分隔），以保证 plugin 卸载时
    * `unregisterByContext(this.id)` 如需清理仍可多次调用；dispose 函数并不依赖这个约定，
    * 但 dev 模式下会验证以避免 "entryId 与拥有者 plugin 脱联" 的 footgun。
    */
-  provide(
-    name: string,
-    instance: unknown,
+  provide<K extends string>(
+    name: K,
+    instance: ServiceOf<K>,
     options?: { priority?: number; label?: string; entryId?: string },
   ): () => void {
     if (this._lifecycle.disposed) {
