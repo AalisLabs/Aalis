@@ -69,8 +69,8 @@ async function setup(llmContent: string) {
     getConnections: () => [],
     sendMessage: () => Promise.resolve(),
   });
-  app.ctx.provide('platform', mkMockAdapter('onebot'), { entryId: 'mock/onebot' });
-  app.ctx.provide('platform', mkMockAdapter('test'), { entryId: 'mock/test' });
+  app.ctx.provide('platform', mkMockAdapter('onebot') as never, { entryId: 'mock/onebot' });
+  app.ctx.provide('platform', mkMockAdapter('test') as never, { entryId: 'mock/test' });
   const { model, calls, fail } = makeFakeLLM(llmContent);
   app.ctx.provide('llm', model, {
     label: 'fake-llm',

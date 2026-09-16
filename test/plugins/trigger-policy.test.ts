@@ -153,7 +153,7 @@ import type { IncomingMessage } from '../../packages/schema-message/src/index.js
 
 async function setupPolicy(config: Record<string, unknown> = {}) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  app.ctx.provide('gateway', {}); // 满足 required 依赖；decide 本身不经过 gateway
+  app.ctx.provide('gateway', {} as never); // 满足 required 依赖；decide 本身不经过 gateway
   await app.ctx.useModule(triggerPolicyModule, config);
   await app.plugins.idle();
   const svc = app.ctx.getService<TriggerPolicyService>('trigger-policy');

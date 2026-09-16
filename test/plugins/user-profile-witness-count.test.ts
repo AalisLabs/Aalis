@@ -15,7 +15,7 @@ const PROFILE_NS = 'user:profile';
 
 async function setup(config: Record<string, unknown>) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  app.ctx.provide('llm', { chat: async () => ({ content: '' }) });
+  app.ctx.provide('llm', { chat: async () => ({ content: '' }) } as never);
   await app.ctx.useModule(memoryInMemoryModule);
   const memory = app.ctx.getService<MemoryService>('memory');
   if (!memory) throw new Error('memory 服务未就绪');
