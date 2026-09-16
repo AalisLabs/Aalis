@@ -187,8 +187,7 @@ export class PluginManager {
     try {
       // delete 必须留在拆卸**之后**：注册表是 register/rescan 的查重闸
       // （plugins.has(id)），提前摘除会让同 id 在旧 ctx 排空期间重新注册，
-      // 新实例与旧 ctx 同 contextId，旧链的 unregisterByContext 会把新实例
-      // 的注册连根扫掉。
+      // 新旧实例同 instanceId 并存——同名服务重复 provide、偏好按 contextId 二义。
       await this.retire(entry, 'disposed');
       if (this.plugins.get(name) === entry) this.plugins.delete(name);
       this.logger.info(`插件已卸载: ${name}`);

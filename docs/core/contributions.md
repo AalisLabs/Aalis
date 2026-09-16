@@ -50,7 +50,7 @@ for (const { key, spec } of ctx.collect('agent:prompt')) {
 - **无执行**：内核只做注册与枚举，永不调用 spec 上的任何函数。如何执行（并行 / 隔离 /
   超时 / 排布）是收集方的策略——如 `agent:prompt` 的组装器（`plugin-agent` 的
   `prompt-assembly.ts`）选择并行 build + 单块错误隔离 + 五锚位排布。
-- **清理**：dispose 链与 `unregisterByContext` 双路径，插件卸载/热重载（bounce）自动清扫。
+- **清理**：dispose 链与 `unregisterByOwner` 双路径，插件卸载/热重载（bounce）自动清扫；按清理归属而非 contextId，同名 Context 的迟到清理不会删掉新占位。
 
 ## 现有贡献点
 

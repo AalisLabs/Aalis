@@ -104,9 +104,8 @@ export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): 
   if (entry.state !== 'pending') return;
 
   // 旧 ctx 仍在拆卸中（bouncePlugin 先置 'pending'、后异步拆旧 ctx，拆完才清
-  // entry.context）：此刻重新激活会让新旧实例同 contextId 并存，旧链排空时的
-  // unregisterByContext 会连新实例的注册一并扫掉。跳过本轮，等管理路径收尾
-  // 后的 softReload 重新调度。
+  // entry.context）：此刻重新激活会让新旧实例同 instanceId 并存——同名服务重复
+  // provide、偏好按 contextId 二义。跳过本轮，等管理路径收尾后的 softReload 重新调度。
   if (entry.context) return;
 
   for (const dep of entry.requiredDeps) {

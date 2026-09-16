@@ -155,7 +155,7 @@ await ctx.runHook('agent:reply:before', { content: '...' }, async () => {
 - **注册顺序执行**: 同一钩子内按注册顺序串行执行（无优先级数字；相位间次序由调度方显式表达）
 - **数据修改**: data 通过引用传递，修改 data 对象即影响后续中间件和 defaultAction
 - **流程控制**: 调用 `next()` 继续管道；不调用则中止后续中间件和 defaultAction
-- **上下文绑定**: 每个中间件关联 contextId，插件卸载时自动清理（通过 `unregisterByContext`）
+- **上下文绑定**: 每个中间件关联注册方 Context 的清理归属，插件卸载时自动清理（`unregisterByOwner`）
 
 ### 典型用法
 

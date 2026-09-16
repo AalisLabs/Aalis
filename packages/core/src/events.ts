@@ -10,11 +10,11 @@ type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<vo
  * 也可以使用任意字符串 key 注册/触发自定义事件（运行时安全）。
  */
 export class EventBus {
+  // 事件名 → (handler → 清理归属)。归属是注册方 Context 本次激活的 symbol，让拆卸的
+  // 注销段能与 hooks/services/contributions 同点整体切断（unregisterByOwner）；
+  // 直接使用总线的无主 handler（owner=undefined）不受切断影响，由调用方自管。
   // biome-ignore lint/suspicious/noExplicitAny: 泛型擦除场景，handlers 容器持有不同事件类型，运行时按事件名分发
-  // 事件名 → (handler → 归属 ctx.id)。归属让 Context 拆卸的注销段能与
-  // hooks/contributions 同点整体切断（unregisterByContext）；直接使用总线
-  // 的无主 handler（owner=undefined）不受切断影响。
-  private handlers = new Map<string, Map<EventHandler<any>, string | undefined>>();
+  private handlers = new Map<string, Map<EventHandler<any>, symbol | undefined>>();
 
   /**
    * handler 抛错时的上报回调（含 sticky 补发路径的同步/异步抛错）。
@@ -72,11 +72,12 @@ export class EventBus {
    * 若该事件已被标记为 sticky 且历史上 emit 过，则在下一个微任务里
    * 立即用缓存的参数调用 handler 一次（保证语义同步：调用方注册完返回后
    * 再触发，避免 handler 内部的 await 影响调用方流程）。
+   * @param owner 清理归属（Context 门面传入）；省略则不被拆卸自动清理，用返回的 dispose 自管。
    */
   on<E extends string & keyof AalisEvents>(
     event: E,
     handler: EventHandler<AalisEvents[E]>,
-    owner?: string,
+    owner?: symbol,
   ): () => void {
     let set = this.handlers.get(event);
     if (!set) {
@@ -106,7 +107,7 @@ export class EventBus {
     return () => {
       set!.delete(handler);
       // 身份卫：本闭包捕获的是注册时刻的那张表。若事件键已被整体清掉又被
-      // 他人重建（unregisterByContext 扫空 → 新注册进新表），按键盲删会误杀
+      // 他人重建（unregisterByOwner 扫空 → 新注册进新表），按键盲删会误杀
       // 新注册者的整张表——只有当前挂的仍是自己那张时才清空键。
       if (set!.size === 0 && this.handlers.get(event) === set) this.handlers.delete(event);
     };
@@ -118,7 +119,7 @@ export class EventBus {
    * 的 handler 不得再响应事件）。链上残留的退订闭包迟到执行时靠 off 的
    * 身份卫保持无害。
    */
-  unregisterByContext(owner: string): void {
+  unregisterByOwner(owner: symbol): void {
     for (const [event, set] of this.handlers) {
       for (const [handler, o] of set) {
         if (o === owner) set.delete(handler);
