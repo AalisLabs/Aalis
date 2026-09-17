@@ -86,7 +86,7 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 
 ### `app.saveConfig()`
 
-委托给 `configProvider` 持久化当前配置，返回 `Promise<void>`：返回时持久化已完成，provider 失败以拒绝传出，调用方应 `await`；无 provider 时立即完成。并发保存的先后与外部编辑的合并不在此契约内。
+委托给 `configProvider` 持久化当前配置，返回 `Promise<void>`：Promise 兑现时保存已完成，provider 失败以拒绝传出，调用方应 `await`；无 provider 时立即完成。并发保存的先后与外部编辑的合并不在此契约内。
 
 ### `app.restart()`
 
