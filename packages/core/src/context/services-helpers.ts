@@ -1,5 +1,5 @@
 // ============================================================
-// service-helpers.ts — Context 的服务子系统辅助
+// services-helpers.ts — Context 的服务子系统辅助
 //
 // 从 context.ts 拆出来的纯函数，消除 Context 类自身对"如何包装/校验服务"的细节
 // 知识，留下 Context 作为编排者：路由参数 → 调 helper → 登记 disposable。
