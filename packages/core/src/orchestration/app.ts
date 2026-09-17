@@ -1,12 +1,12 @@
-import { type AalisConfig, ConfigManager } from '../context/config.js';
+import { type AalisConfig, ConfigManager, type ConfigProvider } from '../context/config.js';
 import { Context } from '../context/context.js';
 import { DefaultLogger, type Logger, LogHub, type LogLevel } from '../context/logger.js';
 import { ContributionRegistry } from '../primitives/contributions.js';
 import { EventBus } from '../primitives/events.js';
 import { HookRegistry } from '../primitives/hooks.js';
 import { ServiceContainer } from '../primitives/services.js';
-import type { ConfigProvider, PluginLoader, RestartStrategy } from '../providers.js';
 import { PluginManager, type PluginModule, parseInstanceId } from './plugin.js';
+import type { PluginLoader, RestartStrategy } from './providers.js';
 
 // ----- 应用配置选项 -----
 

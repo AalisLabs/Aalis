@@ -1,5 +1,3 @@
-import type { ConfigProvider } from '../providers.js';
-
 /**
  * Aalis 应用配置（基础设施字段）
  *
@@ -39,6 +37,37 @@ const DEFAULT_CONFIG: AalisConfig = {
   plugins: {},
   disabledPlugins: [],
 };
+
+/**
+ * 配置提供者：负责"持久化层"。core 内部的 `ConfigManager` 持有运行时
+ * 解析后的 `AalisConfig` 快照，所有读写都走自己的内存结构；
+ * `save()` / `watch()` 才转交给 provider。
+ *
+ * 因此 provider 不必提供 `load()`——`AalisConfig` 由宿主在构造 `App` 之前
+ * 自己加载好传进来即可。这让 core 完全无视"配置从哪里读"的细节。
+ */
+export interface ConfigProvider {
+  /**
+   * 持久化当前完整 config 快照。
+   *
+   * 实现可以做：写文件、PUT 到 HTTP 端点、写 KV 存储等。
+   * 不提供时表示宿主拒绝持久化（典型场景：内存配置 / 只读部署）。
+   *
+   * core 不排队也不去重：上一次未结束时可能再次被调用，实现须可重入；传入的是 core 的活对象，
+   * 跨 await 使用须自行复制；写的原子性与外部编辑的合并由实现自负。
+   */
+  save?(config: AalisConfig): void | Promise<void>;
+
+  /**
+   * 订阅外部对配置源的变更（其他进程改了配置文件、远端推送等）。
+   *
+   * 当 provider 检测到 config 已变化时调用 `onChange(next)`，
+   * core 的 ConfigManager 会用新快照重置内部状态并触发热重载。
+   *
+   * 返回的 dispose 函数会在 `App.stop()` 时被调用。
+   */
+  watch?(onChange: (next: AalisConfig) => void): () => void;
+}
 
 export interface ConfigManagerOptions {
   /** 持久化与外部变更监听由 provider 提供；省略则进入纯内存模式（save() 静默） */

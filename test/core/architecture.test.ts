@@ -15,9 +15,8 @@ import { describe, expect, it } from 'vitest';
 // - primitives/：四原语注册表，只认 kernel 与类型词汇，不认识 Context、Logger、Config
 //   （需要上报的诊断经注入的回调送出）
 // - context/：Context 门面及其配置、日志、服务接线辅助，不依赖编排层
-// - orchestration/：把下层机制编排成插件生命周期与应用骨架
-// - 中立：src 根上的 barrel（index）与宿主 SPI（providers，type-only 桥接双向词汇，不设防）；
-//   context/ 为取 ConfigProvider 词汇另许 import providers，是唯一点名放行的向上引用
+// - orchestration/：把下层机制编排成插件生命周期与应用骨架，含宿主 SPI（插件加载器、重启策略）
+// src 根只留 barrel（index）。
 //
 // 检查的是源文件**直接** import 说明符（含 export-from 与内联 `import('...')` 类型
 // 引用），按**解析后的真实路径**判层——只比文件名会在目录移动后静默变绿。
@@ -31,8 +30,8 @@ const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../packages/co
 const LAYERS = ['kernel', 'primitives', 'context', 'orchestration'] as const;
 type Layer = (typeof LAYERS)[number];
 
-/** src 根目录只许这两个中立文件 */
-const NEUTRAL_ROOT = ['index.ts', 'providers.ts'];
+/** src 根目录只许 barrel */
+const ROOT_FILES = ['index.ts'];
 
 /** types/ 里属于编排层词汇的文件；其余为下层可用的基础词汇 */
 const ORCHESTRATION_TYPES = new Set(['types/app.ts', 'types/plugin.ts']);
@@ -80,16 +79,15 @@ function violation(layer: Layer, target: string): string | null {
   if (layer === 'orchestration') return null;
   if (layer === 'kernel') return 'kernel/ 只能引用 kernel/ 内部';
   if (top === 'types') return ORCHESTRATION_TYPES.has(target) ? `${target} 是编排层词汇` : null;
-  if (target === 'providers.ts' && layer === 'context') return null;
   return `${layer}/ 不得引用 ${target}`;
 }
 
 describe('core 内部分层（目录即层，依赖只许向下）', () => {
-  it('src 根目录只有中立文件与已登记的目录（新目录必须归层，防口径漂移）', () => {
+  it('src 根目录只有 barrel 与已登记的目录（新目录必须归层，防口径漂移）', () => {
     const entries = readdirSync(SRC_DIR, { withFileTypes: true });
     const files = entries.filter(d => d.isFile() && !d.name.startsWith('.')).map(d => d.name);
     const dirs = entries.filter(d => d.isDirectory()).map(d => d.name);
-    expect(files.sort(), '源文件必须放进分层目录；src 根只留 barrel 与宿主 SPI').toEqual([...NEUTRAL_ROOT].sort());
+    expect(files, '源文件必须放进分层目录；src 根只留 barrel').toEqual(ROOT_FILES);
     expect(dirs.sort(), '新增/删除 core 源码目录时请同步更新本测试的分层口径').toEqual([...LAYERS, 'types'].sort());
   });
 
