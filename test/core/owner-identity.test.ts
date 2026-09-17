@@ -108,18 +108,19 @@ describe('监听登记按次计身份：同一函数对象不因共享而互相�
     const left = app.ctx.fork('l');
     const right = app.ctx.fork('r');
     const offLeft = left.on('plugin:loaded', shared);
+    left.on('plugin:loaded', shared); // 左的第二条只随拆卸清，让下面的拆卸断言有鉴别力
     right.on('plugin:loaded', shared);
 
     offLeft();
     await app.ctx.emit('plugin:loaded', 'p');
-    expect(calls, '左退订后右的登记仍在').toEqual(['hit']);
+    expect(calls, '退订只移除自己那条').toEqual(['hit', 'hit']);
 
     left.dispose();
     await app.ctx.emit('plugin:loaded', 'p');
-    expect(calls, '左拆卸后右的登记仍在').toEqual(['hit', 'hit']);
+    expect(calls, '左拆卸后右的登记仍在').toEqual(['hit', 'hit', 'hit']);
 
     right.dispose();
     await app.ctx.emit('plugin:loaded', 'p');
-    expect(calls, '右拆卸后才真正没人听').toEqual(['hit', 'hit']);
+    expect(calls, '右拆卸后才真正没人听').toEqual(['hit', 'hit', 'hit']);
   });
 });
