@@ -107,6 +107,6 @@ core 源码按目录分四层，自下而上，每层只许 import 本层与更�
 - **Context 基础** `context/`（context、services-helpers、config、logger）：Context 门面把注入的四原语收窄成插件可见的注册面（四原语的实例由编排层构造），连同配置、日志与服务接线辅助；不 import 编排层。
 - **编排层** `orchestration/`（app、plugin、plugin-activation、plugin-topology、providers）：把下层机制编排成插件生命周期与应用骨架，含宿主 SPI（插件加载器、重启策略）。
 
-src 根只留 barrel（`index.ts`）。配置持久化的宿主 SPI（`ConfigProvider`）只依赖 `AalisConfig`，与 `ConfigManager` 同处 `context/config.ts`。`types/` 按种类存放类型词汇，其中 `app.ts`、`plugin.ts` 属编排层词汇，下层不得直接引用。
+src 根只留 barrel（`index.ts`）。配置持久化的宿主 SPI（`ConfigProvider`）只依赖 `AalisConfig`，与 `ConfigManager` 同处 `context/config.ts`。`types/` 按种类存放类型词汇：`app.ts`、`plugin.ts` 属编排层词汇，`index.ts` barrel 会把它们一并带出，下层三者都不得引用；其余基础词汇文件只许互相引用。
 
 不拆 kernel 包：包是发布单位不是模块化单位；维持可拆的依赖方向，出现不依赖 core 的真实使用者时再议。资源内核不从包根导出，其不变量：子节点级联序（先关全部子节点 → 撤回对外注册 → 自身清理链逆序 → 收尾）；关闭后登记立即执行（与 TC39 `DisposableStack` 抛错相反，用来接住初始化或子节点关闭期间迟到的资源）；超时只是停止等待，不代表资源已释放；每个 Lifecycle 至多跟踪一次初始化（调用方保证，再次调用会覆盖前一次）。

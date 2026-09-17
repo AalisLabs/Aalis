@@ -1,4 +1,4 @@
-import type { HookContextMap, MiddlewareFn, MiddlewareNext } from '../types/index.js';
+import type { HookContextMap, MiddlewareFn, MiddlewareNext } from '../types/hooks.js';
 
 interface HookEntry<T> {
   fn: MiddlewareFn<T>;
