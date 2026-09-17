@@ -21,6 +21,8 @@ export const provides = ['checkpoint'];
  * 不声明的话 topoSortByDeps 只按 requiredDeps 建边、两者 inDegree 均为 0，拆卸序退化成
  * 注册序的逆序——storage 可能先于 checkpoint 被 retire，于是 onDispose 里的 flushAll 调
  * storage.writeFile 时 entry 已被摘除，在飞回合的 manifest 落不了盘。
+ * 该保证只在 app.stop() 的整体拓扑逆序成立；单独禁用/热重载 storage 时 flushAll 会落空
+ * （回合 blob 在写点已落盘，丢的只是在飞回合的 manifest）。
  */
 export const inject = {
   required: ['storage'],

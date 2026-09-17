@@ -259,9 +259,10 @@ ctx.onDispose(() => {
 
 ### 边界情形：在 dispose hook 内访问其它服务
 
-PluginManager 保证消费者**先于**提供者 dispose（拓扑反向）。所以你的 dispose
-hook **可以**安全访问 `ctx.getService('xxx')`——前提是你在 `inject` 中声明了
-依赖。如果只是 ad-hoc 访问没声明的服务，那个服务可能已经先你一步 dispose 了。
+PluginManager 只在 `app.stop()` 的整体关停里保证消费者**先于**提供者 dispose（拓扑反向，
+且只在 `disposeTimeoutMs` 内等待异步清理）。单个插件被 `unload` / 禁用 / 热重载时它先被拆掉，
+其 required 消费者随后才降级——所以 dispose hook **不能**假定 `ctx.getService('xxx')` 一定还在：
+拿不到就跳过，不要把只能在 dispose 时落盘的数据攒到最后（每次写点后就保存）。
 
 ---
 
