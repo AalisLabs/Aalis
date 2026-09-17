@@ -10,7 +10,7 @@ import {
 } from '../../packages/core/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// post-dispose 注册政策（两档，政策原文在 context.ts 的 _disposed 字段文档）：
+// post-dispose 注册政策（两档，政策原文在 context.ts 的 _lifecycle 字段文档）：
 // - 订阅类（on/middleware/contribute/provide/whenService）：warn + no-op
 // - 构造类（fork/useModule）：抛错
 // - onDispose 特例：warn 后仍就地执行（握着资源，no-op 即泄漏）
