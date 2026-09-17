@@ -132,3 +132,17 @@ describe('EventBus sticky 补发护栏（#8.2）', () => {
     expect(fired).toEqual([]);
   });
 });
+
+describe('EventBus 登记身份', () => {
+  it('同一 handler 登记两次：触发两次，各自退订互不影响', async () => {
+    const bus = new EventBus();
+    const fn = vi.fn();
+    const off1 = bus.on('plugin:loaded', fn);
+    bus.on('plugin:loaded', fn);
+    await bus.emit('plugin:loaded', 'p');
+    expect(fn).toHaveBeenCalledTimes(2);
+    off1();
+    await bus.emit('plugin:loaded', 'p');
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+});

@@ -2,6 +2,13 @@ import type { AalisEvents } from './types/index.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
+interface Registration {
+  // biome-ignore lint/suspicious/noExplicitAny: 泛型擦除场景，同一集合持有不同事件类型的 handler
+  handler: EventHandler<any>;
+  /** 清理归属（见 ServiceEntry.owner）；无则不被拆卸自动清理 */
+  owner?: symbol;
+}
+
 /**
  * 类型安全的事件总线
  *
@@ -10,11 +17,12 @@ type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<vo
  * 也可以使用任意字符串 key 注册/触发自定义事件（运行时安全）。
  */
 export class EventBus {
-  // 事件名 → (handler → 清理归属)。归属是注册方 Context 本次激活的 symbol，让拆卸的
-  // 注销段能与 hooks/services/contributions 同点整体切断（unregisterByOwner）；
-  // 直接使用总线的无主 handler（owner=undefined）不受切断影响，由调用方自管。
-  // biome-ignore lint/suspicious/noExplicitAny: 泛型擦除场景，handlers 容器持有不同事件类型，运行时按事件名分发
-  private handlers = new Map<string, Map<EventHandler<any>, symbol | undefined>>();
+  // 事件名 → 登记集合。每次 on 一条登记：同一函数被两个 Context（或同一 Context 两次）登记
+  // 互不相干，各自退订、各自清理——按函数去重会让后登记者顶掉先登记者的归属，先登记者的退订
+  // 再删掉后登记者。归属是注册方 Context 本次激活的 symbol，让拆卸的注销段能与
+  // hooks/services/contributions 同点整体切断（unregisterByOwner）；直接使用总线的无主
+  // handler（owner=undefined）不受切断影响，由调用方自管。
+  private handlers = new Map<string, Set<Registration>>();
 
   /**
    * handler 抛错时的上报回调（含 sticky 补发路径的同步/异步抛错）。
@@ -81,16 +89,17 @@ export class EventBus {
   ): () => void {
     let set = this.handlers.get(event);
     if (!set) {
-      set = new Map();
+      set = new Set();
       this.handlers.set(event, set);
     }
-    set.set(handler, owner);
+    const entry: Registration = { handler, owner };
+    set.add(entry);
 
     if (this.stickyEvents.has(event) && this.stickyArgs.has(event)) {
       const args = this.stickyArgs.get(event) as AalisEvents[E];
       queueMicrotask(() => {
         // 注册可能在微任务执行前被立即 dispose；此时跳过补发
-        if (!set?.has(handler)) return;
+        if (!set?.has(entry)) return;
         // 补发没有 emit 调用方兜底——handler 同步抛错会直达 uncaughtException
         // 崩进程，异步抛错变 unhandledRejection，必须就地捕获。
         try {
@@ -105,7 +114,7 @@ export class EventBus {
     }
 
     return () => {
-      set!.delete(handler);
+      set!.delete(entry);
       // 身份卫：本闭包捕获的是注册时刻的那张表。若事件键已被整体清掉又被
       // 他人重建（unregisterByOwner 扫空 → 新注册进新表），按键盲删会误杀
       // 新注册者的整张表——只有当前挂的仍是自己那张时才清空键。
@@ -121,8 +130,8 @@ export class EventBus {
    */
   unregisterByOwner(owner: symbol): void {
     for (const [event, set] of this.handlers) {
-      for (const [handler, o] of set) {
-        if (o === owner) set.delete(handler);
+      for (const entry of set) {
+        if (entry.owner === owner) set.delete(entry);
       }
       if (set.size === 0) this.handlers.delete(event);
     }
@@ -143,8 +152,8 @@ export class EventBus {
     }
     const set = this.handlers.get(event);
     if (!set) return;
-    // 直接迭代活表：handler 中 dispose 尚未访问的条目会被正确跳过（Map 迭代语义）
-    for (const handler of set.keys()) {
+    // 直接迭代活表：handler 中 dispose 尚未访问的条目会被正确跳过（Set 迭代语义）
+    for (const { handler } of set) {
       try {
         await handler(...args);
       } catch (err) {

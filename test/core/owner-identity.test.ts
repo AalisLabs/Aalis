@@ -97,3 +97,29 @@ describe('清理身份与逻辑身份分离', () => {
     expect(app.ctx.getAllServices('llm')).toHaveLength(0);
   });
 });
+
+describe('监听登记按次计身份：同一函数对象不因共享而互相误清', () => {
+  it('两个 Context 用同一函数订阅同一事件：拆左不清右，左的手动退订也不清右', async () => {
+    const app = mkApp();
+    const calls: string[] = [];
+    function shared() {
+      calls.push('hit');
+    }
+    const left = app.ctx.fork('l');
+    const right = app.ctx.fork('r');
+    const offLeft = left.on('plugin:loaded', shared);
+    right.on('plugin:loaded', shared);
+
+    offLeft();
+    await app.ctx.emit('plugin:loaded', 'p');
+    expect(calls, '左退订后右的登记仍在').toEqual(['hit']);
+
+    left.dispose();
+    await app.ctx.emit('plugin:loaded', 'p');
+    expect(calls, '左拆卸后右的登记仍在').toEqual(['hit', 'hit']);
+
+    right.dispose();
+    await app.ctx.emit('plugin:loaded', 'p');
+    expect(calls, '右拆卸后才真正没人听').toEqual(['hit', 'hit']);
+  });
+});
