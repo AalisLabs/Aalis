@@ -260,7 +260,7 @@ ctx.onDispose(() => {
 ### 边界情形：在 dispose hook 内访问其它服务
 
 PluginManager 只在 `app.stop()` 的整体关停里保证消费者**先于**提供者 dispose（拓扑反向，
-且只在 `disposeTimeoutMs` 内等待异步清理）。单个插件被 `unload` / 禁用 / 热重载时它先被拆掉，
+异步清理按 `disposeTimeoutMs` 逐项设限）。单个插件被 `unload` / 禁用 / 热重载时它先被拆掉，
 其 required 消费者随后才降级——所以 dispose hook **不能**假定 `ctx.getService('xxx')` 一定还在：
 拿不到就跳过，不要把只能在 dispose 时落盘的数据攒到最后（每次写点后就保存）。
 

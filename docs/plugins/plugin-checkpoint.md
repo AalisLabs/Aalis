@@ -38,4 +38,4 @@ meta.inject = { required: ['storage'] }
 `storage` 声明为硬依赖，不只是因为快照要经它落盘，更是为了拆卸顺序：`topoSortByDeps` 只按
 `required` 建边，不声明的话 checkpoint 与 storage 的 inDegree 都是 0，拆卸序退化成注册序的
 逆序——storage 可能先被 retire，随后 `onDispose` 里的 `flushAll()` 调 `storage.writeFile` 时
-entry 已被摘除，在飞回合的 manifest 落不了盘。声明之后消费者必然先于提供者关闭。
+entry 已被摘除，在飞回合的 manifest 落不了盘。声明之后 `app.stop()` 时消费者先于提供者关闭；单独禁用或热重载 storage 时没有这条保证。
