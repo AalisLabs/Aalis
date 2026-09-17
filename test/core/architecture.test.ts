@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -23,6 +23,8 @@ import { describe, expect, it } from 'vitest';
 // types/ 按种类存放类型词汇：app.ts、plugin.ts 是编排层词汇，index.ts barrel 会把它们一并带出，
 // 下层三者都不得引用；其余为基础词汇文件，只许互相引用。下层与基础词汇文件守同一条规则，
 // 故只查直接 import 即可，不必另算传递闭包。
+// 已知盲区（说明符靠正则提取，未修）：非字面量的动态 import、被字符串里的块注释起始符骗过的注释剥离、
+// package.json imports 别名——这三类写法守卫看不见。
 // ════════════════════════════════════════════════════════════
 
 const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../packages/core/src');
@@ -65,15 +67,23 @@ function relToSrc(abs: string): string {
   return relative(SRC_DIR, abs).split(sep).join('/');
 }
 
-/** 相对说明符 → 它指向的源文件（相对 src）；非相对说明符返回 null */
+/** 相对说明符（含裸 `.` / `..`）→ 它指向的路径（相对 src）；非相对说明符返回 null */
 function resolveTarget(fromAbs: string, spec: string): string | null {
-  if (!spec.startsWith('./') && !spec.startsWith('../')) return null;
+  if (!/^\.\.?(\/|$)/.test(spec)) return null;
   return relToSrc(resolve(dirname(fromAbs), spec.replace(/\.js$/, '.ts')));
+}
+
+/**
+ * 目标必须落到 core/src 内的一个源文件上。目录形式（`'../types'`、`'..'`）会被 bundler 解析折叠成
+ * 该目录的 index.ts，按路径判层就漏了——一律不认，要求写到文件。
+ */
+function isSourceFile(target: string): boolean {
+  return !target.startsWith('../') && (statSync(join(SRC_DIR, target), { throwIfNoEntry: false })?.isFile() ?? false);
 }
 
 /** 某层文件 import 某目标是否越界；越界返回原因 */
 function violation(layer: Layer, target: string): string | null {
-  if (target.startsWith('../') || !existsSync(join(SRC_DIR, target))) return '解析不到 core/src 内的文件';
+  if (!isSourceFile(target)) return '解析不到 core/src 内的文件（相对说明符须写到文件，不认目录形式）';
   const top = target.split('/')[0];
   const targetLayer = LAYERS.indexOf(top as Layer);
   if (targetLayer >= 0) return targetLayer > LAYERS.indexOf(layer) ? `${layer}/ 不得依赖上层 ${top}/` : null;
@@ -118,7 +128,7 @@ describe('core 内部分层（目录即层，依赖只许向下）', () => {
       for (const spec of specifiers(stripComments(readFileSync(file, 'utf-8')))) {
         const target = resolveTarget(file, spec);
         if (target === null) continue;
-        const ok = target.startsWith('types/') && !UPPER_TYPES.has(target) && existsSync(join(SRC_DIR, target));
+        const ok = target.startsWith('types/') && !UPPER_TYPES.has(target) && isSourceFile(target);
         if (!ok) violations.push(`${relToSrc(file)} → ${spec}`);
       }
     }
