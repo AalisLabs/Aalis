@@ -236,7 +236,7 @@ export function registerPluginRoutes(
       return;
     }
 
-    // 补默认值再交给 updatePluginConfig：后者是**整体替换**语义（core/plugin.ts 里
+    // 补默认值再交给 updatePluginConfig：后者是**整体替换**语义（core 的 orchestration/plugin.ts 里
     // entry.config = newConfig 直接顶掉）。不补的话，PUT 一个部分对象就会把未列出的
     // 字段从内存态和 yaml 里一起抹掉。默认值从 configSchema 派生（唯一声明来源）。
     const schema = pm.getPlugin(pluginName)?.module?.configSchema;
