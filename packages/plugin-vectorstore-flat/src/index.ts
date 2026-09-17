@@ -11,7 +11,7 @@ export const subsystem = 'embedding';
 export const provides = ['vectorstore'];
 // storage 是必需依赖而非可选：向量全部存在 storage 上的 vectors.json 里，没有 storage
 // 连冷启动读取都做不到，更不可能落盘。声明 required 挣到 app.stop() 时的拓扑保证——
-// 消费者先关、提供者后关；单独禁用/热重载 storage 时无此保证，故写点后即 save，onDispose 只是最后一次冲刷。
+// 消费者先关、提供者后关；单独禁用/热重载 storage 时无此保证，onDispose 的落盘可能失败。
 export const inject = {
   required: ['storage'],
 };

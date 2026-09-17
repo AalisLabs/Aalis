@@ -39,8 +39,8 @@
   （`unregisterByPlugin(contextId)` 鸭子协议）。
 - 清理相对注册**逆序**执行；单个清理器抛错不影响其余。
 - `onDispose` 是插件清理副作用的唯一正确 API；`disposeAsync` 路径等待异步清理完成（带超时护栏）。
-- 插件启停顺序：激活 = 提供者先于消费者（required 依赖拓扑）。关停 = 消费者先于提供者**只在 `App.stop()` 的整体拓扑逆序成立**，且只在 `disposeTimeoutMs` 内等待其异步清理；单插件 `unload` / `disablePlugin` / `bouncePlugin` 先拆该插件、其 required 消费者随后才降级，消费者的 onDispose 拿到的服务可能已不可用。
-- 提供者换人（多提供者其一退出、偏好切换、更高优先级上线）不产生事件、不重算插件状态；`requiresBounceOnDepChange` 只在依赖的服务名整个落空时触发。要跟随换人用 `whenService`。
+- 插件启停顺序：激活 = 提供者先于消费者（required 依赖拓扑）。关停 = 消费者先于提供者**只在 `App.stop()` 的整体拓扑逆序成立**，异步清理按 `disposeTimeoutMs` 逐项设限；单插件 `unload` / `disablePlugin` / `bouncePlugin` 不提供该顺序保证，消费者的 onDispose 拿到的服务可能已不可用。
+- 提供者换人（多提供者其一退出、偏好切换、更高优先级上线）不改变插件的目标状态，经 `service:registered` / `service:unregistered` / `service:preference-changed` 可观察；`requiresBounceOnDepChange` 的级联只在依赖的服务名整个落空、或依赖的 provider 自身被 bounce 时触发。要跟随换人用 `whenService`。
 - required 依赖缺失 → 插件停在 pending（不阻塞、不轮询）；依赖就绪自动激活。
 
 ## 三、明确不承诺（实现自由区）

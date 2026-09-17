@@ -286,7 +286,7 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 
 ### 7.3 持久化是延迟刷盘 + 拆卸落盘
 
-写操作走 `markDirty()` → 1s 防抖刷盘；插件拆卸时（停机 / bounce / unload / 配置更新）经 `ctx.onDispose(() => manager.shutdown())` 强制落盘（`shutdown()` 幂等：清定时器 + 置 dirty + `persist()`）（`plugin-session-manager/src/index.ts`）。拆卸按拓扑逆序执行，此时 `memory` 提供者尚未关闭。崩溃（非正常退出）可能丢失最后 ~1s 的会话元数据变更。重写 provider 时若要更强一致性，请在关键写操作后同步落盘。
+写操作走 `markDirty()` → 1s 防抖刷盘；插件拆卸时（停机 / bounce / unload / 配置更新）经 `ctx.onDispose(() => manager.shutdown())` 强制落盘（`shutdown()` 幂等：清定时器 + 置 dirty + `persist()`）（`plugin-session-manager/src/index.ts`）。`app.stop()` 的整体拓扑逆序保证此时 `memory` 提供者尚未关闭；单独禁用或热重载 `memory` 提供者时没有这条保证，`shutdown()` 的落盘会失败（丢最后一个防抖窗口的元数据）。崩溃（非正常退出）可能丢失最后 ~1s 的会话元数据变更。重写 provider 时若要更强一致性，请在关键写操作后同步落盘。
 
 ## 8. 交叉链接
 
