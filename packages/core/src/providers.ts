@@ -34,6 +34,9 @@ export interface ConfigProvider {
    *
    * 实现可以做：写文件、PUT 到 HTTP 端点、写 KV 存储等。
    * 不提供时表示宿主拒绝持久化（典型场景：内存配置 / 只读部署）。
+   *
+   * core 不排队也不去重：上一次未结束时可能再次被调用，实现须可重入；传入的是 core 的活对象，
+   * 跨 await 使用须自行复制；写的原子性与外部编辑的合并由实现自负。
    */
   save?(config: AalisConfig): void | Promise<void>;
 
