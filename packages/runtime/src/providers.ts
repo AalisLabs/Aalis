@@ -176,8 +176,8 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
         // **必须监听目录，不能监听文件本身。** fs.watch 绑的是那一刻的 inode，而编辑器
         // 保存普遍是「写临时文件 → rename 覆盖」——rename 之后同名文件已是新 inode，
         // 绑在旧 inode 上的 watcher 从此永不触发，且无异常、无日志、无返回值。
-        // 而 save() 用的是原地 writeFileSync（inode 不变），所以这条死路**只有人改配置
-        // 会踩到**——恰恰是 watch 唯一存在的理由，于是自测与自动化里它永远看起来是好的。
+        // save() 同样是「写临时文件 → rename」（见上），自写回也会换 inode——守文件在
+        // 第一次保存后就失聪；守目录则人改与自写回两种来源都接得住。
         watcher = fsWatch(dataDir, (_event, filename) => {
           // filename 平台不保证非空；为空时不敢过滤，交给下面的内容比对兜底。
           if (filename && basename(filename.toString()) !== fileName) return;

@@ -45,7 +45,10 @@ export class Lifecycle {
     child.parent = this;
   }
 
-  /** 跟踪宿主的一次初始化。失败由宿主处理，关闭只等待它落定。 */
+  /**
+   * 跟踪宿主的一次初始化。失败由宿主处理，关闭只等待它落定。
+   * 每个 Lifecycle 至多 track 一次：再次调用会覆盖前一次，前一次不再被等待——调用方保证。
+   */
   trackInitialization(initializing: Promise<unknown>): void {
     const settled = initializing.then(
       () => {},
