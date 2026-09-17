@@ -33,20 +33,9 @@ export class DisposableChain {
 
   constructor(private readonly logger?: CleanupReporter) {}
 
-  /**
-   * 报告清理问题。reporter 是宿主给的（Context 传 logger，sink 可能是 stdout / 文件 / WebUI），
-   * 它自身抛错或返回拒绝都不得中断剩余清理、不得逃逸——清理链是防泄漏的最后一道防线，
-   * 连报告都失败时只能静默。
-   */
+  /** 报告清理问题；reporter 自身失败不得中断剩余清理，见 {@link reportQuietly}。 */
   private report(message: string, ...args: unknown[]): void {
-    try {
-      const ret = this.logger?.warn(message, ...args) as unknown;
-      if (ret && typeof (ret as PromiseLike<unknown>).then === 'function') {
-        (ret as Promise<unknown>).catch(() => {});
-      }
-    } catch {
-      /* 报告器自身失败不再向外传播 */
-    }
+    reportQuietly(() => this.logger?.warn(message, ...args));
   }
 
   /** 追加一个清理函数。dispose 后追加会立刻执行（异步返回值不等待，拒绝记 warn）。 */
@@ -200,5 +189,20 @@ export async function awaitWithTimeout(
   } finally {
     // clearTimeout 必须在 finally：悬空定时器会拖住事件循环，延迟进程退出
     if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * 执行一次诊断上报：同步抛错吞掉，返回值经 Promise.resolve 归一后挂空 catch。上报器由宿主注入
+ * （logger 的 sink 可能是 stdout / 文件 / WebUI），它自身失败不得中断清理或拆卸，也不得逃逸成
+ * unhandledRejection——这里是防泄漏的最后一道防线，连报告都失败时只能静默。
+ *
+ * @internal 供 core 内部（清理链、事件总线、Context 拆卸路径）复用，不从包根导出。
+ */
+export function reportQuietly(call: () => unknown): void {
+  try {
+    Promise.resolve(call()).catch(() => {});
+  } catch {
+    /* 上报器自身失败不再向外传播 */
   }
 }

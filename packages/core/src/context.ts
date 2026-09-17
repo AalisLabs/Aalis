@@ -1,5 +1,6 @@
 import type { ConfigManager } from './config.js';
 import type { ContributionHandle, ContributionRegistry, ContributionSpec } from './contributions.js';
+import { reportQuietly } from './disposable-chain.js';
 import type { EventBus } from './events.js';
 import type { HookRegistry } from './hooks.js';
 import { Lifecycle } from './lifecycle.js';
@@ -125,7 +126,7 @@ export class Context {
         afterCleanup: () => {
           for (const svc of removedServices) {
             this._events.emit('service:unregistered', svc).catch(err => {
-              this.logger.warn(`emit service:unregistered 失败 (${svc}): ${err}`);
+              reportQuietly(() => this.logger.warn(`emit service:unregistered 失败 (${svc}): ${err}`));
             });
           }
           removedServices = [];
@@ -143,7 +144,7 @@ export class Context {
               try {
                 svc?.unregisterByPlugin?.(this.id);
               } catch (err) {
-                this.logger.warn(`服务 "${name}" 的 unregisterByPlugin 抛错:`, err);
+                reportQuietly(() => this.logger.warn(`服务 "${name}" 的 unregisterByPlugin 抛错:`, err));
               }
             }
           }
@@ -152,17 +153,18 @@ export class Context {
           this._afterTeardown?.();
           this._afterTeardown = undefined;
         },
-        onTimeout: (phase, timeoutMs) => {
-          if (phase === 'initialization') {
+        // 拆卸路径上的上报走 reportQuietly：logger 由宿主注入，其 sink 抛错不得让 teardown 拒绝
+        // （onTimeout 抛错会跳过整条清理链，afterCleanup 内抛错会跳过末尾的模块名释放）。
+        onTimeout: (phase, timeoutMs) =>
+          reportQuietly(() =>
             this.logger.warn(
-              `Context "${this.id}": 等待初始化落定超过 ${timeoutMs}ms，放弃等待并继续拆卸` +
-                `（该插件 apply 中在飞的资源获取，其 onDispose 可能赶不上本次清理链）`,
-            );
-          } else {
-            this.logger.warn(`Context "${this.id}": 等待在飞拆卸超过 ${timeoutMs}ms，放弃等待`);
-          }
-        },
-        onError: err => this.logger.error('dispose 收尾异常:', err),
+              phase === 'initialization'
+                ? `Context "${this.id}": 等待初始化落定超过 ${timeoutMs}ms，放弃等待并继续拆卸` +
+                    `（该插件 apply 中在飞的资源获取，其 onDispose 可能赶不上本次清理链）`
+                : `Context "${this.id}": 等待在飞拆卸超过 ${timeoutMs}ms，放弃等待`,
+            ),
+          ),
+        onError: err => reportQuietly(() => this.logger.error('dispose 收尾异常:', err)),
       },
       this.logger,
     );

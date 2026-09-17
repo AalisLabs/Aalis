@@ -79,7 +79,7 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   });
 
-  it('保存拒绝：POST prefer 以错误返回，但静态目录已经切到新前端', async () => {
+  it('保存拒绝：POST/DELETE prefer 都以错误返回，但静态目录已同步跟上', async () => {
     const dirA = clientDir('CLIENT-A');
     const dirB = clientDir('CLIENT-B');
     dirs.push(dirA, dirB);
@@ -129,5 +129,10 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
     expect(res.ok, '落盘失败必须以错误响应传出，不能报 200').toBe(false);
     expect(app.ctx.getService<{ getClientDir(): string }>('webui-client')?.getClientDir(), '服务解析已选 B').toBe(dirB);
     expect(await home(), '偏好已指向 B，静态目录必须同步切到 B').toContain('CLIENT-B');
+
+    // 清除偏好走同一条不变量：解析回落到 A，静态目录也必须同步回落，哪怕落盘仍然拒绝
+    const del = await fetch(`${base}/api/services/webui-client/prefer`, { method: 'DELETE', headers });
+    expect(del.ok, '清除偏好同样在落盘失败时以错误响应传出').toBe(false);
+    expect(await home(), '偏好已清除，静态目录必须一起退回 A').toContain('CLIENT-A');
   });
 });

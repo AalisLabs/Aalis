@@ -194,7 +194,7 @@ describe('DisposableChain reporter 自身失败不中断清理', () => {
   });
 
   it('reporter 返回拒绝的 promise：不逃逸成 unhandledRejection', async () => {
-    const asyncBrokenSink = { warn: () => Promise.reject(new Error('async sink broken')) } as unknown as CleanupReporter;
+    const asyncBrokenSink: CleanupReporter = { warn: () => Promise.reject(new Error('async sink broken')) };
     const chain = new DisposableChain(asyncBrokenSink);
     const escaped: unknown[] = [];
     const onEscape = (err: unknown) => {
@@ -211,5 +211,34 @@ describe('DisposableChain reporter 自身失败不中断清理', () => {
       process.off('unhandledRejection', onEscape);
     }
     expect(escaped).toEqual([]);
+  });
+
+  it('reporter 抛错：同步 dispose 下异步拒绝项的上报不逃逸', async () => {
+    const escaped: unknown[] = [];
+    const onEscape = (err: unknown) => {
+      escaped.push(err);
+    };
+    process.on('unhandledRejection', onEscape);
+    try {
+      const chain = new DisposableChain(brokenSink);
+      chain.push(async () => {
+        throw new Error('boom');
+      });
+      chain.dispose();
+      await new Promise(r => setTimeout(r, 20));
+    } finally {
+      process.off('unhandledRejection', onEscape);
+    }
+    expect(escaped).toEqual([]);
+  });
+
+  it('reporter 抛错：关闭后迟到登记的执行失败不抛给登记方', () => {
+    const chain = new DisposableChain(brokenSink);
+    chain.dispose();
+    expect(() =>
+      chain.push(() => {
+        throw new Error('boom');
+      }),
+    ).not.toThrow();
   });
 });
