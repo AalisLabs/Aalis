@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 // ════════════════════════════════════════════════════════════
@@ -18,13 +19,12 @@ import { describe, expect, it } from 'vitest';
 // - orchestration/：把下层机制编排成插件生命周期与应用骨架，含宿主 SPI（插件加载器、重启策略）
 // src 根只留 barrel（index）。
 //
-// 检查的是源文件**直接** import 说明符（含 export-from 与内联 `import('...')` 类型
-// 引用），按**解析后的真实路径**判层——只比文件名会在目录移动后静默变绿。
+// 检查的是源文件**直接** import 说明符，由 TypeScript 语法树取出（import / export-from / 副作用 import /
+// `import x = require()` / 内联 `import('...')` 类型 / 字面量动态 import），按**解析后的真实路径**判层——
+// 只比文件名会在目录移动后静默变绿；用正则取说明符会被注释、字符串和转义骗过。
 // types/ 按种类存放类型词汇：app.ts、plugin.ts 是编排层词汇，index.ts barrel 会把它们一并带出，
 // 下层三者都不得引用；其余为基础词汇文件，只许互相引用。下层与基础词汇文件守同一条规则，
 // 故只查直接 import 即可，不必另算传递闭包。
-// 已知盲区（说明符靠正则提取，未修）：非字面量的动态 import、被字符串里的块注释起始符骗过的注释剥离、
-// package.json imports 别名——这三类写法守卫看不见。
 // ════════════════════════════════════════════════════════════
 
 const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../packages/core/src');
@@ -39,20 +39,47 @@ const ROOT_FILES = ['index.ts'];
 /** types/ 里下层不得引用的文件：编排层词汇，以及会把它们一并带出的 barrel；其余为基础词汇 */
 const UPPER_TYPES = new Set(['types/app.ts', 'types/plugin.ts', 'types/index.ts']);
 
-/** 剥掉块注释与行注释——否则解释这些规则的注释本身会把守卫打红。 */
-function stripComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+interface Parsed {
+  /** 全部字面量模块说明符（取 cooked 值，转义写法骗不过） */
+  specifiers: string[];
+  /** 说明符不是字面量的动态 import 个数——路径是算出来的，静态看不见它指向哪 */
+  computedImports: number;
+  /** `declare module 'x'` 的 x */
+  ambientModules: string[];
+  /** 接口名 → 成员数（同名多处声明取最大） */
+  interfaceMembers: Map<string, number>;
 }
 
-/**
- * 提取一个 TS 源文件的全部模块说明符。
- *
- * 三种位置一并覆盖：`from 'x'`（含 export-from）、纯副作用 `import 'x'`、内联 `import('x')`。
- * 只认 `from` 会漏掉副作用 import，而那正是做 declaration merging 的常用写法；
- * 且不要求 import 写在一行内——biome 的 lineWidth 会折行。
- */
-function specifiers(source: string): string[] {
-  return [...source.matchAll(/(?:from\s*|\bimport\s*\(?\s*)['"]([^'"]+)['"]/g)].map(m => m[1]);
+const parsed = new Map<string, Parsed>();
+
+function parse(file: string): Parsed {
+  const hit = parsed.get(file);
+  if (hit) return hit;
+  const out: Parsed = { specifiers: [], computedImports: 0, ambientModules: [], interfaceMembers: new Map() };
+  parsed.set(file, out);
+  const visit = (node: ts.Node): void => {
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
+      if (ts.isStringLiteralLike(node.moduleSpecifier)) out.specifiers.push(node.moduleSpecifier.text);
+    } else if (ts.isExternalModuleReference(node)) {
+      if (ts.isStringLiteralLike(node.expression)) out.specifiers.push(node.expression.text);
+    } else if (ts.isImportTypeNode(node)) {
+      if (ts.isLiteralTypeNode(node.argument) && ts.isStringLiteralLike(node.argument.literal)) {
+        out.specifiers.push(node.argument.literal.text);
+      }
+    } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      const arg = node.arguments[0];
+      if (arg && ts.isStringLiteralLike(arg)) out.specifiers.push(arg.text);
+      else out.computedImports++;
+    } else if (ts.isModuleDeclaration(node) && ts.isStringLiteral(node.name)) {
+      out.ambientModules.push(node.name.text);
+    } else if (ts.isInterfaceDeclaration(node)) {
+      const name = node.name.text;
+      out.interfaceMembers.set(name, Math.max(out.interfaceMembers.get(name) ?? 0, node.members.length));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(ts.createSourceFile(file, readFileSync(file, 'utf-8'), ts.ScriptTarget.Latest));
+  return out;
 }
 
 function walk(dir: string): string[] {
@@ -108,11 +135,9 @@ describe('core 内部分层（目录即层，依赖只许向下）', () => {
       expect(files.length, `${layer}/ 为空——守卫在空转`).toBeGreaterThan(0);
       const violations: string[] = [];
       for (const file of files) {
-        for (const spec of specifiers(stripComments(readFileSync(file, 'utf-8')))) {
+        for (const spec of parse(file).specifiers) {
           const target = resolveTarget(file, spec);
-          // kernel 连裸说明符也不许有：它不依赖任何包
-          const reason =
-            target === null ? (layer === 'kernel' ? 'kernel/ 不得引用任何包' : null) : violation(layer, target);
+          const reason = target === null ? null : violation(layer, target);
           if (reason) violations.push(`${relToSrc(file)} → ${spec}：${reason}`);
         }
       }
@@ -125,7 +150,7 @@ describe('core 内部分层（目录即层，依赖只许向下）', () => {
     expect(files.length, '基础词汇文件为空——守卫在空转').toBeGreaterThan(0);
     const violations: string[] = [];
     for (const file of files) {
-      for (const spec of specifiers(stripComments(readFileSync(file, 'utf-8')))) {
+      for (const spec of parse(file).specifiers) {
         const target = resolveTarget(file, spec);
         if (target === null) continue;
         const ok = target.startsWith('types/') && !UPPER_TYPES.has(target) && isSourceFile(target);
@@ -156,9 +181,8 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
   it('core/src 下（递归）没有任何相对路径的 declare module', () => {
     const offenders: string[] = [];
     for (const file of walk(SRC_DIR)) {
-      const code = stripComments(readFileSync(file, 'utf-8'));
-      for (const m of code.matchAll(/declare\s+module\s+['"](\.[^'"]*)['"]/g)) {
-        offenders.push(`${file.slice(SRC_DIR.length + 1)} → ${m[1]}`);
+      for (const name of parse(file).ambientModules) {
+        if (name.startsWith('.')) offenders.push(`${relToSrc(file)} → ${name}`);
       }
     }
     expect(
@@ -168,12 +192,6 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
   });
 
   // ── core 洁癖：零运行时依赖 / 环境无关 / 扩展点为空 ──
-  //
-  // CLAUDE.md 把这三条列为硬约束并声称有测试守，实际此前只有「相对 declare module」一条。
-  // 这四条把缺口补齐。
-  //
-  // 说明符一律**同时匹配 `from 'x'` 与纯副作用 `import 'x'`**：后者不含 `from`，只查前者
-  // 会留一个绕过口，而副作用 import 恰恰是本仓做 declaration merging 的常用形态。
 
   it('core 零运行时依赖（dependencies 必须为空）', () => {
     const pkg = JSON.parse(readFileSync(join(SRC_DIR, '../package.json'), 'utf-8')) as {
@@ -188,28 +206,23 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
     ).toEqual([]);
   });
 
-  it('core 源码不 import 任何 @aalis/* 包（含类型 import 与纯副作用 import）', () => {
+  it('core 源码只写相对说明符，且不用算出来的路径 import', () => {
+    // core 零依赖、环境无关、不认识领域词汇，所以任何非相对说明符都不该出现：`@aalis/*` 是领域词汇倒灌，
+    // `node:*` 破坏环境无关，其它包名（含 type-only）会让发布出去的 .d.ts 依赖一个没声明的包，
+    // `#别名` 则绕开按路径判层。不能只靠 biome：它的 noRestrictedImports 名单只有 8 个模块名，
+    // 而**上一次真实事故**注入的 `node:events` 与 `node:path` 都不在名单里——build / test / biome / knip
+    // 四道门当时全绿。这里整类拦，不维护名单。
+    // 路径是算出来的动态 import（变量、带插值的模板串）静态看不见指向，同样不许：插件从哪里来由宿主的
+    // PluginLoader 负责，core 自己没有按路径加载任何东西的理由。
     const offenders: string[] = [];
     for (const file of walk(SRC_DIR)) {
-      // stripComments 已剥掉注释，故不会被「注释里提到包名」误伤
-      for (const spec of specifiers(stripComments(readFileSync(file, 'utf-8')))) {
-        if (spec.startsWith('@aalis/')) offenders.push(`${file.slice(SRC_DIR.length + 1)} → ${spec}`);
+      const { specifiers, computedImports } = parse(file);
+      for (const spec of specifiers) {
+        if (resolveTarget(file, spec) === null) offenders.push(`${relToSrc(file)} → ${spec}`);
       }
+      if (computedImports > 0) offenders.push(`${relToSrc(file)} → ${computedImports} 处非字面量动态 import`);
     }
-    expect(offenders, 'core 引用了其它 @aalis 包——领域词汇正在倒灌进内核').toEqual([]);
-  });
-
-  it('core 源码不 import 任何 node: 内置模块（环境无关）', () => {
-    // 不能只靠 biome：它的 noRestrictedImports 名单只有 8 个模块名，而**上一次真实事故**
-    // 注入的 `node:events` 与 `node:path` 都不在名单里 —— build / test / biome / knip
-    // 四道门当时全绿。这里按前缀整类拦，不维护名单。
-    const offenders: string[] = [];
-    for (const file of walk(SRC_DIR)) {
-      for (const spec of specifiers(stripComments(readFileSync(file, 'utf-8')))) {
-        if (spec.startsWith('node:')) offenders.push(`${file.slice(SRC_DIR.length + 1)} → ${spec}`);
-      }
-    }
-    expect(offenders, 'core 必须环境无关——node 专有件由宿主 @aalis/runtime 经 AppOptions 注入').toEqual([]);
+    expect(offenders, 'core 必须零依赖、环境无关——环境专有件由宿主 @aalis/runtime 经 AppOptions 注入').toEqual([]);
   });
 
   it('三个扩展点在 core 内保持字面为空（条目一律由 -api 包增广注入）', () => {
@@ -217,12 +230,9 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
     const EMPTY_POINTS = ['ServiceTypeMap', 'HookContextMap', 'ContributionPointMap'];
     const offenders: string[] = [];
     for (const file of walk(SRC_DIR)) {
-      const code = stripComments(readFileSync(file, 'utf-8'));
+      const { interfaceMembers } = parse(file);
       for (const name of EMPTY_POINTS) {
-        // 匹配 `interface X {  }`：花括号内出现任何非空白即视为登记了条目
-        for (const m of code.matchAll(new RegExp(`interface\\s+${name}\\s*\\{([^}]*)\\}`, 'g'))) {
-          if (m[1].trim()) offenders.push(`${file.slice(SRC_DIR.length + 1)} → ${name} 内有条目`);
-        }
+        if ((interfaceMembers.get(name) ?? 0) > 0) offenders.push(`${relToSrc(file)} → ${name} 内有条目`);
       }
     }
     expect(
