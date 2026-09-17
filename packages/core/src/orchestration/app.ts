@@ -1,6 +1,7 @@
 import { type AalisConfig, ConfigManager, type ConfigProvider } from '../context/config.js';
 import { Context } from '../context/context.js';
 import { DefaultLogger, type Logger, LogHub, type LogLevel } from '../context/logger.js';
+import { reportQuietly } from '../kernel/disposable-chain.js';
 import { ContributionRegistry } from '../primitives/contributions.js';
 import { EventBus } from '../primitives/events.js';
 import { HookRegistry } from '../primitives/hooks.js';
@@ -344,8 +345,17 @@ export class App {
   /**
    * 保存当前配置（委托给 configProvider；无 provider 时立即完成）。返回时持久化已完成，
    * provider 失败以拒绝传出——调用方应 await，见 AppService 契约。
+   *
+   * 失败在这里记一笔并标记为已处理：不 await 也不 catch 的调用方（0.13.0 之前发布的插件如此）
+   * 不会因一次落盘失败变成未处理拒绝、被宿主当致命错误退出；await 的调用方照常拿到拒绝。
    */
-  async saveConfig(): Promise<void> {
+  saveConfig(): Promise<void> {
+    const done = this.persistConfig();
+    done.catch(err => reportQuietly(() => this.logger.error('配置保存失败:', err)));
+    return done;
+  }
+
+  private async persistConfig(): Promise<void> {
     await this.ctx.config.save();
     this.logger.info('配置已保存');
   }
