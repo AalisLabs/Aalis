@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 // DisposableChain 不从包根导出（内部实现细节）；直接从源文件导入测试。
-import { DisposableChain } from '../../packages/core/src/disposable-chain.js';
+import { type CleanupReporter, DisposableChain } from '../../packages/core/src/disposable-chain.js';
 import { DefaultLogger } from '../../packages/core/src/index.js';
 
 describe('DisposableChain', () => {
@@ -151,5 +151,65 @@ describe('DisposableChain.disposeAsync', () => {
     chain.dispose();
     expect(settled).toBe(false); // 返回即未等待
     await sleep(20); // 别让迟到 promise 影响后续测试
+  });
+});
+
+describe('DisposableChain reporter 自身失败不中断清理', () => {
+  const brokenSink = {
+    warn: () => {
+      throw new Error('sink broken');
+    },
+  };
+
+  it('reporter 抛错：剩余清理项照跑，dispose 不抛', () => {
+    const chain = new DisposableChain(brokenSink);
+    const order: number[] = [];
+    chain.push(() => {
+      order.push(1);
+    });
+    chain.push(() => {
+      throw new Error('boom');
+    });
+    chain.push(() => {
+      order.push(3);
+    });
+    expect(() => chain.dispose()).not.toThrow();
+    expect(order, '抛错项之后（逆序即更早登记）的清理必须仍执行').toEqual([3, 1]);
+  });
+
+  it('reporter 抛错：disposeAsync 下拒绝项之后的清理照跑，promise 正常 resolve', async () => {
+    const chain = new DisposableChain(brokenSink);
+    const order: number[] = [];
+    chain.push(() => {
+      order.push(1);
+    });
+    chain.push(async () => {
+      throw new Error('boom');
+    });
+    chain.push(() => {
+      order.push(3);
+    });
+    await expect(chain.disposeAsync()).resolves.toBeUndefined();
+    expect(order).toEqual([3, 1]);
+  });
+
+  it('reporter 返回拒绝的 promise：不逃逸成 unhandledRejection', async () => {
+    const asyncBrokenSink = { warn: () => Promise.reject(new Error('async sink broken')) } as unknown as CleanupReporter;
+    const chain = new DisposableChain(asyncBrokenSink);
+    const escaped: unknown[] = [];
+    const onEscape = (err: unknown) => {
+      escaped.push(err);
+    };
+    process.on('unhandledRejection', onEscape);
+    try {
+      chain.push(() => {
+        throw new Error('boom');
+      });
+      chain.dispose();
+      await new Promise(r => setTimeout(r, 10));
+    } finally {
+      process.off('unhandledRejection', onEscape);
+    }
+    expect(escaped).toEqual([]);
   });
 });
