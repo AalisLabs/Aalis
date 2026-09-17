@@ -49,7 +49,7 @@ export interface AgentService {
 | `agent:reply:before` | 定稿前，回复校验/修复 | `{ content, sessionId, ...; retryRequested?, retryFeedback?, attempt?, maxRetries? }`（`:94-122`）。重试协议见 §6 |
 | `agent:turn:after` | 回合终态（四条路径都发） | `{ message, reply, outcome, sessionId, metadata }`（`:85-91`）。`outcome ∈ 'replied'｜'silent'｜'aborted'｜'error'` |
 
-钩子用 `ctx.middleware(hook, fn)` 注册（`packages/core/src/context.ts`）；要让 TS 看到这些键的类型，需把 `@aalis/api-agent` 加进依赖或 side-effect import 一次（`packages/api-agent/src/index.ts`）。
+钩子用 `ctx.middleware(hook, fn)` 注册（`packages/core/src/context/context.ts`）；要让 TS 看到这些键的类型，需把 `@aalis/api-agent` 加进依赖或 side-effect import 一次（`packages/api-agent/src/index.ts`）。
 
 ## 3. 谁提供 / 谁消费
 

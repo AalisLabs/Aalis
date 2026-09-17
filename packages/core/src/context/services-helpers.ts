@@ -8,9 +8,9 @@
 // logger/events 反映出去。便于单元测试（mock 即可）。
 // ============================================================
 
-import type { EventBus } from './events.js';
+import type { EventBus } from '../primitives/events.js';
+import type { ServiceContainer } from '../primitives/services.js';
 import type { Logger } from './logger.js';
-import type { ServiceContainer } from './services.js';
 
 /**
  * provide() 的 dev-mode 校验集合：

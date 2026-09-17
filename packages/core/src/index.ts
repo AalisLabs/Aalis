@@ -13,26 +13,27 @@
 //     WebUI / Authority / Agent / Platform 等服务接口及关联业务类型同样在各自的 plugin-*-api。
 // ============================================================
 
-export type { AppOptions } from './app.js';
-// ----- 运行时基础设施 -----
-export { App, createApp } from './app.js';
-export type { AalisConfig, ConfigManagerOptions } from './config.js';
-export { ConfigManager } from './config.js';
-export { Context, type ModuleHandle } from './context.js';
+// ----- Context 基础：门面、配置、日志 -----
+export type { AalisConfig, ConfigManagerOptions } from './context/config.js';
+export { ConfigManager } from './context/config.js';
 // 注：Lifecycle / DisposableChain 是 Context 内部的资源生命周期实现，不从包根导出（零外部消费，
 // 无 semver 承诺）；dist 里的深路径同样不在承诺面。
-export { type ContributionHandle, ContributionRegistry, type ContributionSpec } from './contributions.js';
-export { EventBus } from './events.js';
-export { HookRegistry } from './hooks.js';
-// ----- 运行时基础类型 -----
-export type { LogEntry, LogLevel } from './logger.js';
-export { DefaultLogger, formatLogLine, type Logger, LogHub, parseLogLine } from './logger.js';
-// ----- 插件系统类型 -----
-export type { PluginEntry, PluginModule, PluginState } from './plugin.js';
-export { PluginManager, parseInstanceId } from './plugin.js';
+export { Context, type ModuleHandle } from './context/context.js';
+export type { LogEntry, LogLevel } from './context/logger.js';
+export { DefaultLogger, formatLogLine, type Logger, LogHub, parseLogLine } from './context/logger.js';
+// ----- 编排层：应用骨架与插件管理 -----
+export type { AppOptions } from './orchestration/app.js';
+export { App, createApp } from './orchestration/app.js';
+export type { PluginEntry, PluginModule, PluginState } from './orchestration/plugin.js';
+export { PluginManager, parseInstanceId } from './orchestration/plugin.js';
+// ----- 四原语 -----
+export { type ContributionHandle, ContributionRegistry, type ContributionSpec } from './primitives/contributions.js';
+export { EventBus } from './primitives/events.js';
+export { HookRegistry } from './primitives/hooks.js';
+export type { NormalizedDependency, ServiceEntry } from './primitives/services.js';
+export { ServiceContainer } from './primitives/services.js';
+// ----- 宿主 SPI -----
 export type { ConfigProvider, PluginDescriptor, PluginLoader, RestartStrategy } from './providers.js';
-export type { NormalizedDependency, ServiceEntry } from './services.js';
-export { ServiceContainer } from './services.js';
 // ----- 通用 IoC 数据契约 + 扩展点 -----
 export type {
   AalisEvents,
