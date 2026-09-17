@@ -73,7 +73,7 @@ type RecomputeReason =
 Phase A 反向遍历:
   对每个 active entry，computeTargetState() 计算目标态
     目标 ≠ active → dispose 子 Context → 状态 → pending（或 disposed if shutdown）
-  消费者先于提供者 dispose，dispose hook 访问依赖服务安全。
+  单轮内消费者先于提供者 dispose；跨轮（依赖此刻仍在、下一轮才降级）与单插件 unload/disable/bounce 不在此保证内。
 
 Phase B 正向遍历（非 shutdown）:
   对每个 pending entry，目标 = active 时调用 tryActivate()

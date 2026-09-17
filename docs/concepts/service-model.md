@@ -142,7 +142,7 @@ provider 的上下线会驱动插件库重算（`RecomputeReason`）：`service-
 
 默认契约是：core 不主动级联 bounce 下游。绝大多数插件应当让 `getService` 在每次调用时惰性查询，从而天然跟随 provider 切换，无需 bounce。
 
-`requiresBounceOnDepChange?: boolean` 是逃生开关（escape hatch）。只有当插件无法响应式处理状态时才设为 `true`——例如必须在启动期把 provider 引用一次性缓存进第三方 SDK 内部，或 apply 时要执行昂贵的同步初始化。设为 `true` 后，core 会在依赖的 provider 变化时主动级联 dispose 加 reapply。凡是能用 `getService` 惰性查询、或用 `whenService` 重挂的场景，都不应启用它。
+`requiresBounceOnDepChange?: boolean` 是逃生开关（escape hatch）。只有当插件无法响应式处理状态时才设为 `true`——例如必须在启动期把 provider 引用一次性缓存进第三方 SDK 内部，或 apply 时要执行昂贵的同步初始化。设为 `true` 后，core 会在依赖的 provider 变化时主动级联 dispose 加 reapply。凡是能用 `getService` 惰性查询、或用 `whenService` 重挂的场景，都不应启用它。级联只在依赖的服务名整个落空时触发；提供者换人（多提供者其一退出、偏好切换、更高优先级上线）不会触发，也不产生任何事件——要跟随换人只有 `whenService`。`preferService` 对插件状态机零重算。
 
 插件 dispose 时，容器还会执行一套「服务自清理协议」：任何实例只要实现了 `unregisterByPlugin(contextId)`，都会被统一通知，清理与本上下文相关的注册项（如 ToolService / CommandService）。core 不硬编码任何具体服务名。
 

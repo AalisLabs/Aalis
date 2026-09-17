@@ -15,7 +15,7 @@ meta.provides = ['vectorstore']
 meta.inject = { required: ['storage'] }
 ```
 
-向量全部存在 storage 上的 `vectors.json` 里，没有 storage 既读不出也写不进，故 storage 是必需依赖。声明 `required` 也换来停机拓扑保证：消费者先关、提供者后关，flat 的 dispose 落盘时 storage 一定还在。
+向量全部存在 storage 上的 `vectors.json` 里，没有 storage 既读不出也写不进，故 storage 是必需依赖。声明 `required` 换来 `app.stop()` 时的拓扑保证：消费者先关、提供者后关；单独禁用或热重载 storage 时没有这条保证，所以每次写入后立即落盘，dispose 时的保存只是最后一次冲刷。
 
 ## 配置
 
