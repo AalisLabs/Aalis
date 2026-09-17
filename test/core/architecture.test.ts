@@ -46,8 +46,8 @@ interface Parsed {
   computedImports: number;
   /** `declare module 'x'` 的 x */
   ambientModules: string[];
-  /** 接口名 → 成员数（同名多处声明取最大） */
-  interfaceMembers: Map<string, number>;
+  /** 有内容的接口名：自带成员，或经 extends 继承成员 */
+  nonEmptyInterfaces: Set<string>;
 }
 
 const parsed = new Map<string, Parsed>();
@@ -55,7 +55,7 @@ const parsed = new Map<string, Parsed>();
 function parse(file: string): Parsed {
   const hit = parsed.get(file);
   if (hit) return hit;
-  const out: Parsed = { specifiers: [], computedImports: 0, ambientModules: [], interfaceMembers: new Map() };
+  const out: Parsed = { specifiers: [], computedImports: 0, ambientModules: [], nonEmptyInterfaces: new Set() };
   parsed.set(file, out);
   const visit = (node: ts.Node): void => {
     if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
@@ -73,8 +73,7 @@ function parse(file: string): Parsed {
     } else if (ts.isModuleDeclaration(node) && ts.isStringLiteral(node.name)) {
       out.ambientModules.push(node.name.text);
     } else if (ts.isInterfaceDeclaration(node)) {
-      const name = node.name.text;
-      out.interfaceMembers.set(name, Math.max(out.interfaceMembers.get(name) ?? 0, node.members.length));
+      if (node.members.length > 0 || node.heritageClauses?.length) out.nonEmptyInterfaces.add(node.name.text);
     }
     ts.forEachChild(node, visit);
   };
@@ -230,9 +229,9 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
     const EMPTY_POINTS = ['ServiceTypeMap', 'HookContextMap', 'ContributionPointMap'];
     const offenders: string[] = [];
     for (const file of walk(SRC_DIR)) {
-      const { interfaceMembers } = parse(file);
+      const { nonEmptyInterfaces } = parse(file);
       for (const name of EMPTY_POINTS) {
-        if ((interfaceMembers.get(name) ?? 0) > 0) offenders.push(`${relToSrc(file)} → ${name} 内有条目`);
+        if (nonEmptyInterfaces.has(name)) offenders.push(`${relToSrc(file)} → ${name} 有条目或继承了别的接口`);
       }
     }
     expect(
