@@ -14,7 +14,7 @@
 // ============================================================
 
 // ----- Context 基础：门面、配置、日志 -----
-export type { AalisConfig, ConfigManagerOptions } from './context/config.js';
+export type { AalisConfig, ConfigManagerOptions, ConfigProvider } from './context/config.js';
 export { ConfigManager } from './context/config.js';
 // 注：Lifecycle / DisposableChain 是 Context 内部的资源生命周期实现，不从包根导出（零外部消费，
 // 无 semver 承诺）；dist 里的深路径同样不在承诺面。
@@ -26,14 +26,14 @@ export type { AppOptions } from './orchestration/app.js';
 export { App, createApp } from './orchestration/app.js';
 export type { PluginEntry, PluginModule, PluginState } from './orchestration/plugin.js';
 export { PluginManager, parseInstanceId } from './orchestration/plugin.js';
+// 宿主 SPI：插件加载器与重启策略（ConfigProvider 随 ConfigManager 在上一节）
+export type { PluginDescriptor, PluginLoader, RestartStrategy } from './orchestration/providers.js';
 // ----- 四原语 -----
 export { type ContributionHandle, ContributionRegistry, type ContributionSpec } from './primitives/contributions.js';
 export { EventBus } from './primitives/events.js';
 export { HookRegistry } from './primitives/hooks.js';
 export type { NormalizedDependency, ServiceEntry } from './primitives/services.js';
 export { ServiceContainer } from './primitives/services.js';
-// ----- 宿主 SPI -----
-export type { ConfigProvider, PluginDescriptor, PluginLoader, RestartStrategy } from './providers.js';
 // ----- 通用 IoC 数据契约 + 扩展点 -----
 export type {
   AalisEvents,
