@@ -84,11 +84,12 @@
 | 0.7.0 | `Context.createScope`、`ScopedConfigManager`、`ScopedServiceContainer` |
 | 0.9.0 | `CORE_CONFIG_SCHEMA` / `ConfigSchema` 全家、`Context.once` / `hasService` / `getServiceEntries`、`PluginManager.createInstance` / `removeInstance`、`ServiceContainer.has`、`EventBus.removeAll`、`ConfigManager.syncPluginDefaults`、`AppOptions.configSync` |
 | 0.12.0 | `ServicePriority` / `ServicePriorityValue`（0.11.0 仍从包根导出，服务优先级改为裸数字后移除） |
+| 0.13.0 | 四个注册表的 `unregisterByContext`（换为 `unregisterByOwner(owner: symbol)`）；另有三处改形而非删除：`saveConfig()` 返回 `Promise<void>`、`useModule()` 返回 `ModuleHandle`、`EventBus.on` 第三参由 `string` 改为 `symbol` |
 
 因此插件生态里常见的 `peerDependencies: { "@aalis/core": ">=0.2.0 <1.0.0" }` **不是**"core 保证
 0.x 内兼容"的推论——它只是"没用到新 API 的插件不必随次版本重发"的便利区间。用了某个版本才有的
-API，就把下限抬到那个版本（如本批的 plugin-webui-server / plugin-media / plugin-session-manager /
-runtime 抬到 `>=0.9.0 <1.0.0`）。
+API，就把下限抬到那个版本（如 0.13.0 这批的 runtime / plugin-cli / plugin-media / plugin-package-manager
+因用到 `saveConfig()` / `config.save()` 的 Promise 返回值，抬到 `>=0.13.0 <1.0.0`）。
 
 **版本号语义**：core 在 1.0 之前，次版本（0.x.0）可含破坏性变更并在发布说明中列出迁移路径；
 补丁版本（0.x.y）只做修复与加法。1.0 之后按标准 semver。
@@ -108,5 +109,18 @@ core 源码按目录分四层，自下而上，每层只许 import 本层与更�
 - **编排层** `orchestration/`（app、plugin、plugin-activation、plugin-topology、providers）：把下层机制编排成插件生命周期与应用骨架，含宿主 SPI（插件加载器、重启策略）。
 
 src 根只留 barrel（`index.ts`）。配置持久化的宿主 SPI（`ConfigProvider`）只依赖 `AalisConfig`，与 `ConfigManager` 同处 `context/config.ts`。`types/` 按种类存放类型词汇：`app.ts`、`plugin.ts` 属编排层词汇，`index.ts` barrel 会把它们一并带出，下层三者都不得引用；其余基础词汇文件只许互相引用。
+
+层间依赖的性质（运行时值依赖与纯类型依赖分开看）：
+
+| 从 | 到 | 性质 |
+|---|---|---|
+| primitives | kernel | 值：仅 events 用的 `reportQuietly` |
+| primitives | 基础词汇 | 纯类型 |
+| context | kernel | 值：`Lifecycle`、`reportQuietly` |
+| context | primitives、基础词汇 | 纯类型——四原语的实例由编排层构造后注入，Context 不 `new` 它们 |
+| orchestration | context、primitives、kernel | 值：App 构造 Context 与四个注册表，上报走 kernel 的 `reportQuietly` |
+| `types/app.ts`、`types/plugin.ts` | context、primitives、基础词汇 | 纯类型 |
+
+kernel 与基础词汇文件不依赖任何东西。
 
 不拆 kernel 包：包是发布单位不是模块化单位；维持可拆的依赖方向，出现不依赖 core 的真实使用者时再议。资源内核不从包根导出，其不变量：子节点级联序（先关全部子节点 → 撤回对外注册 → 自身清理链逆序 → 收尾）；关闭后登记立即执行（与 TC39 `DisposableStack` 抛错相反，用来接住初始化或子节点关闭期间迟到的资源）；超时只是停止等待，不代表资源已释放；每个 Lifecycle 至多跟踪一次初始化（调用方保证，再次调用会覆盖前一次）。
