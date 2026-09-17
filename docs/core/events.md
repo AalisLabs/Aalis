@@ -26,6 +26,7 @@ await ctx.emit('outbound:message', outMsg);
 - 异步串行：`emit()` 会 await 每个 handler 完成后再执行下一个
 - 按注册顺序调用
 - `on()` 返回 dispose 函数，可随时移除监听
+- 每次 `on()` 是一条独立登记：同一函数登记两次触发两次，各自的 dispose 只移除自己那条；两个 Context 共用同一函数也互不影响
 - Context 销毁时自动移除该 Context 注册的所有监听
 
 ### 内置事件
