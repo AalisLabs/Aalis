@@ -1,7 +1,7 @@
-import type { AccessRequest } from '@aalis/api-authority';
 import type { StorageService } from '@aalis/api-storage';
 import type { ConfigManager, Context, Logger } from '@aalis/core';
 import { describe, expect, it, vi } from 'vitest';
+import type { AccessRequest } from '../../packages/api-authority/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 import { actions as declaredActions } from '../../packages/plugin-authority/src/index.js';
 
