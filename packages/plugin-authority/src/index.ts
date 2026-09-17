@@ -346,10 +346,11 @@ export const actions: PluginModule['actions'] = {
     const app = ctx.getService<AppService>('app');
     if (!app) throw new Error('App 不可用');
     ctx.config.set('restrictedPolicy', policy);
-    await app.saveConfig();
     if (Array.isArray(policy.allow) && policy.allow.length > 0) {
       (auth as unknown as { markPolicyEnabled?: () => void } | undefined)?.markPolicyEnabled?.();
     }
+    // 内存态先整体落定再等落盘：saveConfig 拒绝会从这里抛出，其后的语句不再执行
+    await app.saveConfig();
     return { message: '临时放行策略已更新' };
   },
 
@@ -376,10 +377,11 @@ export const actions: PluginModule['actions'] = {
     if (typeof level === 'number' && Number.isInteger(level)) overrides[name] = level;
     else delete overrides[name];
     ctx.config.set('authorityOverrides', overrides);
-    await app.saveConfig();
     // 门槛变了就撤掉该能力上的旧会话授予：否则 authorize 已按新门槛拒绝，守卫的救援闸
     // 仍会靠旧授予放行，而救援命中直接 return null、连 confirm 轴（含 always）一并跳过。
+    // 撤销与门槛更新必须在同一同步段完成，再等落盘：saveConfig 拒绝会从 await 抛出。
     const revoked = auth?.revokeGrantsOfCapability(name) ?? 0;
+    await app.saveConfig();
     return {
       message: `操作 ${name} 最低等级已更新${revoked > 0 ? `（已撤销 ${revoked} 条相关会话授予）` : ''}`,
     };
