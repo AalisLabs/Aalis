@@ -4,14 +4,10 @@ import type { ContributionHandle, ContributionRegistry, ContributionSpec } from 
 import type { EventBus } from '../primitives/events.js';
 import type { HookRegistry } from '../primitives/hooks.js';
 import type { ServiceContainer } from '../primitives/services.js';
-import type {
-  AalisEvents,
-  ContributionPointMap,
-  HookContextMap,
-  MiddlewareFn,
-  ServiceOf,
-  ServiceTypeMap,
-} from '../types/index.js';
+import type { ContributionPointMap } from '../types/contributions.js';
+import type { AalisEvents } from '../types/events.js';
+import type { HookContextMap, MiddlewareFn } from '../types/hooks.js';
+import type { ServiceOf, ServiceTypeMap } from '../types/services.js';
 import type { ConfigManager } from './config.js';
 import type { Logger } from './logger.js';
 import { emitServiceRegistered, validateProvide } from './services-helpers.js';
