@@ -1,4 +1,4 @@
-import type { ConfigProvider } from './providers.js';
+import type { ConfigProvider } from '../providers.js';
 
 /**
  * Aalis 应用配置（基础设施字段）

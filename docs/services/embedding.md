@@ -160,7 +160,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
 ### priority / entryId / label
 
-`ctx.provide(name, instance, { priority?, label?, entryId? })`（`packages/core/src/context.ts`）：
+`ctx.provide(name, instance, { priority?, label?, entryId? })`（`packages/core/src/context/context.ts`）：
 
 - `priority`：默认 `0`。同名服务竞争时，winner = **preference > priority > 注册顺序**；要默认压过普通后端取更高值（如 `50`）。普通第三方提供者保持 `0` 即可，让用户在 WebUI 里用 preference 选。
 - `entryId`：默认 `this.id`，**必须以 `this.id` 为前缀（`/` 分隔）**，否则卸载时无法连带注销（`context.ts`）。一个插件想登记多个 embedding 实例（如多端点）时用 `${ctx.id}/${sub}`。

@@ -2,7 +2,7 @@
 
 管理 YAML 配置文件的读写与 Schema 验证。
 
-**源码**: `packages/core/src/config.ts`
+**源码**: `packages/core/src/context/config.ts`
 
 ## AalisConfig 结构
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ServiceContainer } from '../../packages/core/src/services.js';
+import { ServiceContainer } from '../../packages/core/src/primitives/services.js';
 
 // ════════════════════════════════════════════════════════════
 // `get()` 与「偏好 > 优先级 > 注册顺序」的一致性

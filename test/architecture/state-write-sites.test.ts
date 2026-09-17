@@ -21,9 +21,9 @@ const WRITE_RE = /\b(?:entry|other)\.(state|context)\s*=(?!=)/g;
 
 /** 文件 → { state 写入点数, context 写入点数 } 的定格。 */
 const FROZEN: Record<string, { state: number; context: number }> = {
-  'plugin-activation.ts': { state: 3, context: 2 }, // retireEntry ×2 + activating/context/active
-  'plugin.ts': { state: 2, context: 1 }, // enablePlugin + bouncePlugin（点名内联例外）
-  'plugin-topology.ts': { state: 0, context: 0 }, // evict 已全走 retireEntry
+  'orchestration/plugin-activation.ts': { state: 3, context: 2 }, // retireEntry ×2 + activating/context/active
+  'orchestration/plugin.ts': { state: 2, context: 1 }, // enablePlugin + bouncePlugin（点名内联例外）
+  'orchestration/plugin-topology.ts': { state: 0, context: 0 }, // evict 已全走 retireEntry
 };
 
 describe('插件状态机写入点定格', () => {

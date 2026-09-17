@@ -2,7 +2,7 @@
 
 `App` 是 Aalis 的顶层容器，负责初始化核心子系统、管理插件生命周期和启动消息路由。指令、权限、工具等能力由插件提供。
 
-**源码**: `packages/core/src/app.ts`
+**源码**: `packages/core/src/orchestration/app.ts`
 
 ## 构造函数
 

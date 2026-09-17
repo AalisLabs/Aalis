@@ -1,12 +1,9 @@
-import type { ConfigManager } from './config.js';
-import type { ContributionHandle, ContributionRegistry, ContributionSpec } from './contributions.js';
-import { reportQuietly } from './disposable-chain.js';
-import type { EventBus } from './events.js';
-import type { HookRegistry } from './hooks.js';
-import { Lifecycle } from './lifecycle.js';
-import type { Logger } from './logger.js';
-import type { ServiceContainer } from './services.js';
-import { emitServiceRegistered, validateProvide } from './services-helpers.js';
+import { reportQuietly } from '../kernel/disposable-chain.js';
+import { Lifecycle } from '../kernel/lifecycle.js';
+import type { ContributionHandle, ContributionRegistry, ContributionSpec } from '../primitives/contributions.js';
+import type { EventBus } from '../primitives/events.js';
+import type { HookRegistry } from '../primitives/hooks.js';
+import type { ServiceContainer } from '../primitives/services.js';
 import type {
   AalisEvents,
   ContributionPointMap,
@@ -14,7 +11,10 @@ import type {
   MiddlewareFn,
   ServiceOf,
   ServiceTypeMap,
-} from './types/index.js';
+} from '../types/index.js';
+import type { ConfigManager } from './config.js';
+import type { Logger } from './logger.js';
+import { emitServiceRegistered, validateProvide } from './services-helpers.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
