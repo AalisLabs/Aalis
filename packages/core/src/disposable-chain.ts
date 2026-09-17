@@ -33,13 +33,29 @@ export class DisposableChain {
 
   constructor(private readonly logger?: CleanupReporter) {}
 
+  /**
+   * 报告清理问题。reporter 是宿主给的（Context 传 logger，sink 可能是 stdout / 文件 / WebUI），
+   * 它自身抛错或返回拒绝都不得中断剩余清理、不得逃逸——清理链是防泄漏的最后一道防线，
+   * 连报告都失败时只能静默。
+   */
+  private report(message: string, ...args: unknown[]): void {
+    try {
+      const ret = this.logger?.warn(message, ...args) as unknown;
+      if (ret && typeof (ret as PromiseLike<unknown>).then === 'function') {
+        (ret as Promise<unknown>).catch(() => {});
+      }
+    } catch {
+      /* 报告器自身失败不再向外传播 */
+    }
+  }
+
   /** 追加一个清理函数。dispose 后追加会立刻执行（异步返回值不等待，拒绝记 warn）。 */
   push(fn: () => unknown, label?: string): void {
     if (this._disposed) {
       try {
         this.settle(fn(), describe(label));
       } catch (err) {
-        this.logger?.warn(`DisposableChain: post-dispose 执行失败${describe(label)}: ${err}`);
+        this.report(`DisposableChain: post-dispose 执行失败${describe(label)}: ${err}`);
       }
       return;
     }
@@ -52,7 +68,7 @@ export class DisposableChain {
    */
   private settle(ret: unknown, who: string): void {
     if (ret && typeof (ret as PromiseLike<unknown>).then === 'function') {
-      Promise.resolve(ret).catch(err => this.logger?.warn(`DisposableChain: 异步清理拒绝，已忽略${who}:`, err));
+      Promise.resolve(ret).catch(err => this.report(`DisposableChain: 异步清理拒绝，已忽略${who}:`, err));
     }
   }
 
@@ -106,7 +122,7 @@ export class DisposableChain {
       try {
         this.settle(items[i].fn(), describe(items[i].label, i));
       } catch (err) {
-        this.logger?.warn(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
+        this.report(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
       }
     }
   }
@@ -131,7 +147,7 @@ export class DisposableChain {
           await this.awaitWithTimeout(Promise.resolve(ret), timeoutMs, describe(items[i].label, i));
         }
       } catch (err) {
-        this.logger?.warn(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
+        this.report(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
       }
     }
   }
@@ -145,7 +161,7 @@ export class DisposableChain {
    */
   private async awaitWithTimeout(p: Promise<unknown>, timeoutMs?: number, who = ''): Promise<void> {
     await awaitWithTimeout(p, timeoutMs, () =>
-      this.logger?.warn(`DisposableChain: 异步清理${who} 超过 ${timeoutMs}ms，放弃等待，继续后续清理`),
+      this.report(`DisposableChain: 异步清理${who} 超过 ${timeoutMs}ms，放弃等待，继续后续清理`),
     );
   }
 }
