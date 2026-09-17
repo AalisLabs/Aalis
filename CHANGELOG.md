@@ -12,8 +12,8 @@
 
 ### saveConfig 返回时持久化已完成（@aalis/core）
 
-`AppService.saveConfig()` 由 `void` 改为 `Promise<void>`：同步 provider 立即完成，异步 provider 等其落定；provider 失败以拒绝传出，此前被 `ConfigManager.save` 静默吞掉、App 无条件记「配置已保存」。并发保存的先后与外部编辑的合并不在此契约内。
-**迁移**：调用方 `await app.saveConfig()`；尽力而为的后台持久化路径用 `.catch()` 记录。第三方若实现 `AppService` 需改返回类型。第一方 fs-yaml provider 为同步实现，不 await 的旧调用在该 provider 下行为不变。
+`AppService.saveConfig()` 由 `void` 改为 `Promise<void>`：同步 provider 立即完成，异步 provider 等其落定；provider 失败以拒绝传出——此前异步 provider 的拒绝被 `ConfigManager.save` 静默吞掉、App 照记「配置已保存」，同步 provider 的抛错则同步冒给调用方，现在两者都以拒绝传出。core 会把失败记一条 error 并标记为已处理，所以不 await 的调用不会变成未处理拒绝。并发保存的先后与外部编辑的合并不在此契约内。
+**迁移**：调用方 `await app.saveConfig()`；尽力而为的后台持久化路径用 `.catch()` 记录。第三方若实现 `AppService` 需改返回类型。不 await 的旧调用（0.13.0 之前发布的第一方插件如此）成功路径不变；失败路径上它们此前靠外层 `try/catch` 接同步抛错，现在接不到——失败只出现在 core 的 error 日志里，调用方会照常报成功。与 core 同批升级 plugin-webui-server ≥0.11.9 / plugin-authority ≥0.11.5 / plugin-mcp-client ≥0.10.2 / plugin-cli ≥0.10.3 / plugin-media ≥0.13.3 即恢复正确的失败处理。
 
 ### provide 按 ServiceTypeMap 约束实现类型（@aalis/core）
 
