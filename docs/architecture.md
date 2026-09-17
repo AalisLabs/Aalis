@@ -260,7 +260,7 @@ PluginManager 只有一个外部可见的状态变更入口：`recompute(reason)
 
 每轮 recompute 先按 provider→consumer 拓扑排序（Kahn），然后：
 
-1. **Phase A 反向遍历 dispose**：消费者先于提供者 dispose，保证 dispose hook 访问依赖服务安全。
+1. **Phase A 反向遍历 dispose**：单轮内消费者先于提供者 dispose。整体停机（`app.stop()`）就是一轮 shutdown；单插件 unload / disable / bounce 先拆该插件、其下游下一轮才降级，dispose hook 不能假定依赖服务仍在。
 2. **Phase B 正向遍历 activate**（非 shutdown）：提供者先于消费者 active。
 
 如本轮有变动则进入下一轮，直到稳定（fixed-point）或达到轮次上限（`maxRounds = 2×插件数 + 8`）。`service-up` /
