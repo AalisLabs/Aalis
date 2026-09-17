@@ -12,10 +12,10 @@
 
 **升级**：core 走了次版本。脚手架生成的项目里 `@aalis/core` 是 caret 区间（`^0.12.x` 不含 0.13.0），而本批 runtime / plugin-cli / plugin-media / plugin-package-manager 用到了 `saveConfig()` / `config.save()` 的 Promise 返回值、peer 下限抬到 `>=0.13.0`——直接 `npm update` 会 ERESOLVE。请显式升级：`npm install @aalis/core@latest @aalis/runtime@latest`，再 `npm update`。不要用 `--legacy-peer-deps` 绕过：那会装出新 runtime 配旧 core 的组合，启动时即 TypeError。
 
-### saveConfig 返回时持久化已完成（@aalis/core）
+### saveConfig 返回 Promise，兑现时保存已完成（@aalis/core）
 
 `AppService.saveConfig()` 由 `void` 改为 `Promise<void>`：同步 provider 立即完成，异步 provider 等其落定；provider 失败以拒绝传出——此前异步 provider 的拒绝被 `ConfigManager.save` 静默吞掉、App 照记「配置已保存」，同步 provider 的抛错则同步冒给调用方，现在两者都以拒绝传出。core 会把失败记一条 error 并标记为已处理，所以不 await 的调用不会变成未处理拒绝。并发保存的先后与外部编辑的合并不在此契约内。
-**迁移**：调用方 `await app.saveConfig()`；尽力而为的后台持久化路径用 `.catch()` 记录。第三方若实现 `AppService` 需改返回类型。不 await 的旧调用（0.13.0 之前发布的第一方插件如此）成功路径不变；失败路径上它们此前靠外层 `try/catch` 接同步抛错，现在接不到——失败只出现在 core 的 error 日志里，调用方会照常报成功。与 core 同批升级 plugin-webui-server ≥0.11.9 / plugin-authority ≥0.11.5 / plugin-mcp-client ≥0.10.2 / plugin-cli ≥0.10.3 / plugin-media ≥0.13.3 即恢复正确的失败处理。
+**迁移**：调用方 `await app.saveConfig()`；尽力而为的后台持久化路径用 `.catch()` 记录。第三方若实现 `AppService` 需改返回类型。不 await 的旧调用（0.13.0 之前发布的第一方插件如此）成功路径不变；失败路径上，旧调用者会继续后续逻辑——原本依赖同步抛错的错误处理失效，失败只出现在 core 的 error 日志里，部分调用方可能误报成功。与 core 同批升级 plugin-webui-server ≥0.11.9 / plugin-authority ≥0.11.5 / plugin-mcp-client ≥0.10.2 / plugin-cli ≥0.10.3 / plugin-media ≥0.13.3 即恢复正确的失败处理。
 
 ### provide 按 ServiceTypeMap 约束实现类型（@aalis/core）
 

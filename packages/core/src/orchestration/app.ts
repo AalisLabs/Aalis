@@ -343,7 +343,7 @@ export class App {
   }
 
   /**
-   * 保存当前配置（委托给 configProvider；无 provider 时立即完成）。返回时持久化已完成，
+   * 保存当前配置（委托给 configProvider；无 provider 时立即完成）。返回的 Promise 兑现时保存已完成，
    * provider 失败以拒绝传出——调用方应 await，见 AppService 契约。
    *
    * 失败在这里记一笔并标记为已处理：不 await 也不 catch 的调用方（0.13.0 之前发布的插件如此）
