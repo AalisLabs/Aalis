@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-// DisposableChain 不从包根导出（内部实现细节）；直接从源文件导入测试。
-import { type CleanupReporter, DisposableChain } from '../../packages/core/src/disposable-chain.js';
 import { DefaultLogger } from '../../packages/core/src/index.js';
+// DisposableChain 不从包根导出（内部实现细节）；直接从源文件导入测试。
+import { type CleanupReporter, DisposableChain } from '../../packages/core/src/kernel/disposable-chain.js';
 
 describe('DisposableChain', () => {
   it('逆序执行清理函数', () => {

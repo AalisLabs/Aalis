@@ -1,5 +1,5 @@
-import type { AalisConfig } from './config.js';
-import type { PluginModule } from './plugin.js';
+import type { AalisConfig } from './context/config.js';
+import type { PluginModule } from './orchestration/plugin.js';
 
 /**
  * `@aalis/core` 注入点（host providers）。

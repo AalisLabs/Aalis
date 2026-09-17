@@ -1,4 +1,4 @@
-import type { DependencyDeclaration } from './types/services.js';
+import type { DependencyDeclaration } from '../types/services.js';
 
 // ----- 服务系统数据契约（与容器实现同文件，同 contributions.ts 的 Spec/Handle 惯例） -----
 
