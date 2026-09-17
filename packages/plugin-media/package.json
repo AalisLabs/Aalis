@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-media",
-  "version": "0.13.2",
+  "version": "0.13.3",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -48,7 +48,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.11.0 <1.0.0"
+    "@aalis/core": ">=0.13.0 <1.0.0"
   },
   "aalis": {
     "service": {
