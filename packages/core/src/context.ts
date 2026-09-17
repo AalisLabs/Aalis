@@ -87,6 +87,8 @@ export class Context {
   /**
    * 资源寿命交给内部 Lifecycle；四原语的注册与撤回政策留在 Context。
    * 关闭后订阅类入口 warn + no-op，fork/useModule 抛错；onDispose 始终接收清理。
+   * 驱动面（emit / runHook / collect / getService）不设关闭守卫：它们只读或广播给别人，本 ctx 的
+   * 登记在 beforeCleanup 已整体摘除，而拆卸期的合法广播（如归还终端）必须能发出。
    */
   private readonly _lifecycle: Lifecycle;
 
@@ -768,7 +770,8 @@ export class Context {
    * @internal 登记本 ctx 的初始化在飞 promise（由内部 Lifecycle 跟踪）。
    *
    * 仅由激活路径（`activatePlugin`）与 `Context.useModule` 调用，传入 `module.apply(...)`
-   * 的返回值；插件侧不得调用（非契约面）。
+   * 的返回值；插件侧不得调用（非契约面）。每个 ctx 只调一次（两条路径都在新 fork 后紧接一次）：
+   * Lifecycle 只跟踪一次初始化，重复登记会让前一次不再被等待。
    * 调用方仍要自行 await 该 promise 并处理其失败——本方法只负责让拆卸路径
    * 知道「初始化还没跑完」，不改变激活语义。
    *

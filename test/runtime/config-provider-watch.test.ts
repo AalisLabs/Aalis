@@ -10,7 +10,7 @@ import { createFsYamlConfigProvider } from '../../packages/runtime/src/providers
 // 回归焦点：**监听的必须是目录，不是文件**。fs.watch 绑定的是那一刻的 inode，
 // 而编辑器保存普遍是「写临时文件 → rename 覆盖」；一旦发生原子替换，绑在旧
 // inode 上的 watcher 就永久失聪——无异常、无日志，文件说一套、进程做一套。
-// 而 save() 是原地写（inode 不变），所以这条死路只有「人改配置」会踩到。
+// save() 现已同样是 tmp + rename（config-atomic-write.test.ts 钉住 inode 必变），自写回也会踩到。
 // ════════════════════════════════════════════════════════════
 
 const DEBOUNCE_MS = 300;

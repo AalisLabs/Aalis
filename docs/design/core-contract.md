@@ -96,3 +96,13 @@ runtime 抬到 `>=0.9.0 <1.0.0`）。
 被五十余个包依赖，同样用 `workspace:>=0.9.0 <1.0.0`（发布时原样保留）。0.x 的 caret 锁死 minor——
 用了 caret，被依赖包加一个词汇就会让所有已发布消费者拒收新版，node_modules 里出现两份副本，
 而 declaration merging 按模块副本生效，扩展点的合并面会就此裂开。
+
+## 八、内部分层（非承诺面，改动须守）
+
+core 源码分三层，依赖方向由 `test/core/architecture.test.ts` 机器守（只查直接 import 说明符）：
+
+- **资源内核**（`lifecycle.ts`、`disposable-chain.ts`，300 行）：父子归属、清理链、可等待关闭与逐项超时、错误隔离与上报。不依赖四原语、Context 或编排，两个文件只许互相 import。
+- **基底层**（四原语、Context、config、logger）：定义插件之间的协作方式；不 import 编排层。
+- **编排层**（app、plugin、plugin-activation、plugin-topology）：把基底层机制编排成插件生命周期与应用骨架。
+
+不拆 kernel 包：包是发布单位不是模块化单位；维持可拆的依赖方向，出现不依赖 core 的真实使用者时再议。资源内核不从包根导出，其不变量：子节点级联序（先关全部子节点 → 撤回对外注册 → 自身清理链逆序 → 收尾）；关闭后登记立即执行（与 TC39 `DisposableStack` 抛错相反，用来接住初始化或子节点关闭期间迟到的资源）；超时只是停止等待，不代表资源已释放；每个 Lifecycle 只跟踪一次初始化。

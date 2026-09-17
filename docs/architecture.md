@@ -61,6 +61,7 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 │                    核心框架层 (Core Layer)                     │
 │   App · Context · ServiceContainer · PluginManager            │
 │   EventBus · HookRegistry · ConfigManager · Logger             │
+│   Lifecycle · DisposableChain（资源内核，不导出）              │
 │   4 个扩展点：ServiceTypeMap / AalisEvents / HookContextMap        │
 │                / ContributionPointMap                          │
 │   （业务接口均在 api-*，core 不持有）                         │
