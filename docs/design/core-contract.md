@@ -100,10 +100,13 @@ runtime 抬到 `>=0.9.0 <1.0.0`）。
 
 ## 八、内部分层（非承诺面，改动须守）
 
-core 源码分三层，依赖方向由 `test/core/architecture.test.ts` 机器守（只查直接 import 说明符）：
+core 源码按目录分四层，自下而上，每层只许 import 本层与更低层；依赖方向由 `test/core/architecture.test.ts` 机器守（按解析后的真实路径判层，只查直接 import 说明符）：
 
-- **资源内核**（`lifecycle.ts`、`disposable-chain.ts`，300 行）：父子归属、清理链、可等待关闭与逐项超时、错误隔离与上报。不依赖四原语、Context 或编排，两个文件只许互相 import。
-- **基底层**（四原语、Context、config、logger）：定义插件之间的协作方式；不 import 编排层。
-- **编排层**（app、plugin、plugin-activation、plugin-topology）：把基底层机制编排成插件生命周期与应用骨架。
+- **资源内核** `kernel/`（`lifecycle.ts`、`disposable-chain.ts`）：父子归属、清理链、可等待关闭与逐项超时、错误隔离与上报。只认自己，不依赖类型词汇、四原语、Context 或编排。
+- **四原语** `primitives/`（events、hooks、services、contributions）：定义插件之间协作方式的四个注册表。只认 kernel 与类型词汇，不认识 Context、Logger、Config；需要上报的诊断经注入的回调送出（`onHandlerError`、`onStall`）。
+- **Context 基础** `context/`（context、services-helpers、config、logger）：Context 门面把注入的四原语收窄成插件可见的注册面（四原语的实例由编排层构造），连同配置、日志与服务接线辅助；不 import 编排层。
+- **编排层** `orchestration/`（app、plugin、plugin-activation、plugin-topology）：把下层机制编排成插件生命周期与应用骨架。
 
-不拆 kernel 包：包是发布单位不是模块化单位；维持可拆的依赖方向，出现不依赖 core 的真实使用者时再议。资源内核不从包根导出，其不变量：子节点级联序（先关全部子节点 → 撤回对外注册 → 自身清理链逆序 → 收尾）；关闭后登记立即执行（与 TC39 `DisposableStack` 抛错相反，用来接住初始化或子节点关闭期间迟到的资源）；超时只是停止等待，不代表资源已释放；每个 Lifecycle 只跟踪一次初始化。
+src 根只留 barrel（`index.ts`）与宿主 SPI（`providers.ts`，type-only 桥接，不设防）；`context/` 为取 `ConfigProvider` 另许 import 它，是唯一点名放行的向上引用。`types/` 按种类存放类型词汇，其中 `app.ts`、`plugin.ts` 属编排层词汇，下层不得直接引用。
+
+不拆 kernel 包：包是发布单位不是模块化单位；维持可拆的依赖方向，出现不依赖 core 的真实使用者时再议。资源内核不从包根导出，其不变量：子节点级联序（先关全部子节点 → 撤回对外注册 → 自身清理链逆序 → 收尾）；关闭后登记立即执行（与 TC39 `DisposableStack` 抛错相反，用来接住初始化或子节点关闭期间迟到的资源）；超时只是停止等待，不代表资源已释放；每个 Lifecycle 至多跟踪一次初始化（调用方保证，再次调用会覆盖前一次）。

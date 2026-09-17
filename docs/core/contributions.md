@@ -1,6 +1,6 @@
 # ContributionRegistry — 贡献点
 
-**源码**: `packages/core/src/contributions.ts`
+**源码**: `packages/core/src/primitives/contributions.ts`
 
 贡献点是 Aalis 的另一种内核原语：**往共享产物里"交一块料"，排布权归收集方**。
 

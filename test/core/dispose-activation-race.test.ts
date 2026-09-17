@@ -8,7 +8,7 @@ import {
   HookRegistry,
   ServiceContainer,
 } from '../../packages/core/src/index.js';
-import { activatePlugin } from '../../packages/core/src/plugin-activation.js';
+import { activatePlugin } from '../../packages/core/src/orchestration/plugin-activation.js';
 import type { PluginEntry } from '../../packages/core/src/types/plugin.js';
 
 // ============================================================

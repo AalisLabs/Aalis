@@ -2,7 +2,7 @@
 
 管理插件的注册、激活、停用和热更新。
 
-**源码**: `packages/core/src/plugin.ts`
+**源码**: `packages/core/src/orchestration/plugin.ts`
 
 ## 插件模块格式
 

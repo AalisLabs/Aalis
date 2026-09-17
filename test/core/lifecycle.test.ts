@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Lifecycle } from '../../packages/core/src/lifecycle.js';
+import { Lifecycle } from '../../packages/core/src/kernel/lifecycle.js';
 
 function gate() {
   let open!: () => void;

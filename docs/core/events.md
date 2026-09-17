@@ -4,7 +4,7 @@ Aalis 提供两种互补的扩展机制：**事件**（单向通知）和**中�
 
 ## EventBus — 事件总线
 
-**源码**: `packages/core/src/events.ts`
+**源码**: `packages/core/src/primitives/events.ts`
 
 类型安全的全局发布/订阅事件总线，用于松耦合的异步通知。事件只通知、不干预流程。
 
@@ -100,7 +100,7 @@ ctx.on(`myplugin:channel:${channelId}`, async (msg) => { ... }); // msg: Channel
 
 ## HookRegistry — 中间件钩子管道
 
-**源码**: `packages/core/src/hooks.ts`
+**源码**: `packages/core/src/primitives/hooks.ts`
 
 中间件钩子是 Aalis 最强大的扩展机制。与事件不同，钩子是**有序管道**，插件可以修改管道中的数据、也可以完全中断流程。
 

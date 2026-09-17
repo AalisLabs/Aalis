@@ -1,5 +1,5 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -7,52 +7,35 @@ import { describe, expect, it } from 'vitest';
 // core 内部分层架构测试
 //
 // 设计决策：core 不拆 kernel 包——包是发布/
-// 版本化单位而非模块化单位；但内部维持「基底层不得 import 编排层」的依赖方向，
+// 版本化单位而非模块化单位；但内部维持单向的依赖方向，
 // 由本测试设防，使"理论上可拆"始终成立（满足特定条件时可重新评估）。
 //
-// 分层口径：
-// - 资源内核：生命周期与清理链，不依赖四原语、Context 或应用编排
-// - 基底层：四原语及 Context 门面，不直接依赖插件/应用编排
-// - 编排层：把基底层机制编排成插件生命周期与应用骨架
-// - 中立层：barrel（index）与宿主 SPI（providers，type-only 桥接双向词汇，不设防）
+// 分层即目录，自下而上，每层只许 import 本层与更低层：
+// - kernel/：资源生命周期与清理链，只认自己，不引用类型词汇、四原语、Context 或编排层
+// - primitives/：四原语注册表，只认 kernel 与类型词汇，不认识 Context、Logger、Config
+//   （需要上报的诊断经注入的回调送出）
+// - context/：Context 门面及其配置、日志、服务接线辅助，不依赖编排层
+// - orchestration/：把下层机制编排成插件生命周期与应用骨架
+// - 中立：src 根上的 barrel（index）与宿主 SPI（providers，type-only 桥接双向词汇，不设防）；
+//   context/ 为取 ConfigProvider 词汇另许 import providers，是唯一点名放行的向上引用
 //
 // 检查的是源文件**直接** import 说明符（含 export-from 与内联 `import('...')` 类型
-// 引用）。types/index.ts barrel 会在类型层传递性地触达编排层类型，属已知豁免——
+// 引用），按**解析后的真实路径**判层——只比文件名会在目录移动后静默变绿。
+// types/index.ts barrel 会在类型层传递性地触达编排层类型，属已知豁免——
 // 本测试设防的是值依赖与直接词汇依赖，不是类型可达性。
 // ════════════════════════════════════════════════════════════
 
 const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../packages/core/src');
 
-/** 资源生命周期内核：只允许相互依赖，不引用 Context、四原语或编排层。 */
-const KERNEL_LAYER = ['disposable-chain.ts', 'lifecycle.ts'];
+/** 分层目录，自下而上 */
+const LAYERS = ['kernel', 'primitives', 'context', 'orchestration'] as const;
+type Layer = (typeof LAYERS)[number];
 
-/** 框架基底层：禁止 import 编排层 */
-const BASE_LAYER = [
-  'config.ts',
-  'context.ts',
-  'contributions.ts',
-  'events.ts',
-  'hooks.ts',
-  'logger.ts',
-  'services-helpers.ts',
-  'services.ts',
-];
+/** src 根目录只许这两个中立文件 */
+const NEUTRAL_ROOT = ['index.ts', 'providers.ts'];
 
-/** 编排层：插件生命周期 + 应用骨架（允许向下依赖基底层） */
-const ORCHESTRATION_LAYER = ['app.ts', 'plugin.ts', 'plugin-activation.ts', 'plugin-topology.ts'];
-
-/** 中立：barrel 与宿主 SPI */
-const NEUTRAL = ['index.ts', 'providers.ts'];
-
-/** 基底层文件中被禁止出现的 import 目标（去掉 ./ 前缀与扩展名后比较） */
-const FORBIDDEN_TARGETS = new Set([
-  'app',
-  'plugin',
-  'plugin-activation',
-  'plugin-topology',
-  'types/app',
-  'types/plugin',
-]);
+/** types/ 里属于编排层词汇的文件；其余为下层可用的基础词汇 */
+const ORCHESTRATION_TYPES = new Set(['types/app.ts', 'types/plugin.ts']);
 
 /** 剥掉块注释与行注释——否则解释这些规则的注释本身会把守卫打红。 */
 function stripComments(src: string): string {
@@ -70,40 +53,60 @@ function specifiers(source: string): string[] {
   return [...source.matchAll(/(?:from\s*|\bimport\s*\(?\s*)['"]([^'"]+)['"]/g)].map(m => m[1]);
 }
 
-/** './plugin.js' / './types/app.js' → 'plugin' / 'types/app'（非相对导入返回 null） */
-function normalizeRelative(spec: string): string | null {
-  if (!spec.startsWith('./') && !spec.startsWith('../')) return null;
-  return spec.replace(/^(\.\.?\/)+/, '').replace(/\.(js|ts)$/, '');
+function walk(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap(e => {
+    const full = join(dir, e.name);
+    return e.isDirectory() ? walk(full) : e.name.endsWith('.ts') ? [full] : [];
+  });
 }
 
-describe('core 内部分层（基底层 ⇸ 编排层）', () => {
-  it('src 根目录每个文件都已分层登记（新文件必须归类，防口径漂移）', () => {
-    const actual = readdirSync(SRC_DIR, { withFileTypes: true })
-      .filter(d => d.isFile() && d.name.endsWith('.ts'))
-      .map(d => d.name)
-      .sort();
-    const registered = [...KERNEL_LAYER, ...BASE_LAYER, ...ORCHESTRATION_LAYER, ...NEUTRAL].sort();
-    expect(actual, '新增/删除 core 源文件时请同步更新本测试的分层清单').toEqual(registered);
+/** 绝对路径 → 相对 src 的 posix 路径（'context/context.ts'） */
+function relToSrc(abs: string): string {
+  return relative(SRC_DIR, abs).split(sep).join('/');
+}
+
+/** 相对说明符 → 它指向的源文件（相对 src）；非相对说明符返回 null */
+function resolveTarget(fromAbs: string, spec: string): string | null {
+  if (!spec.startsWith('./') && !spec.startsWith('../')) return null;
+  return relToSrc(resolve(dirname(fromAbs), spec.replace(/\.js$/, '.ts')));
+}
+
+/** 某层文件 import 某目标是否越界；越界返回原因 */
+function violation(layer: Layer, target: string): string | null {
+  if (target.startsWith('../') || !existsSync(join(SRC_DIR, target))) return '解析不到 core/src 内的文件';
+  const top = target.split('/')[0];
+  const targetLayer = LAYERS.indexOf(top as Layer);
+  if (targetLayer >= 0) return targetLayer > LAYERS.indexOf(layer) ? `${layer}/ 不得依赖上层 ${top}/` : null;
+  if (layer === 'orchestration') return null;
+  if (layer === 'kernel') return 'kernel/ 只能引用 kernel/ 内部';
+  if (top === 'types') return ORCHESTRATION_TYPES.has(target) ? `${target} 是编排层词汇` : null;
+  if (target === 'providers.ts' && layer === 'context') return null;
+  return `${layer}/ 不得引用 ${target}`;
+}
+
+describe('core 内部分层（目录即层，依赖只许向下）', () => {
+  it('src 根目录只有中立文件与已登记的目录（新目录必须归层，防口径漂移）', () => {
+    const entries = readdirSync(SRC_DIR, { withFileTypes: true });
+    const files = entries.filter(d => d.isFile() && !d.name.startsWith('.')).map(d => d.name);
+    const dirs = entries.filter(d => d.isDirectory()).map(d => d.name);
+    expect(files.sort(), '源文件必须放进分层目录；src 根只留 barrel 与宿主 SPI').toEqual([...NEUTRAL_ROOT].sort());
+    expect(dirs.sort(), '新增/删除 core 源码目录时请同步更新本测试的分层口径').toEqual([...LAYERS, 'types'].sort());
   });
 
-  for (const file of [...KERNEL_LAYER, ...BASE_LAYER]) {
-    it(`基底层 ${file} 不 import 编排层`, () => {
-      const source = readFileSync(join(SRC_DIR, file), 'utf-8');
-      const violations = specifiers(stripComments(source))
-        .map(normalizeRelative)
-        .filter((t): t is string => t !== null && FORBIDDEN_TARGETS.has(t));
-      expect(
-        violations,
-        `${file} 引用了编排层模块 [${violations.join(', ')}]——基底层不得知道"插件/应用"的存在`,
-      ).toEqual([]);
-    });
-  }
-
-  for (const file of KERNEL_LAYER) {
-    it(`资源内核 ${file} 不依赖框架基底或编排层`, () => {
-      const allowed = new Set(KERNEL_LAYER.map(name => `./${name.replace(/\.ts$/, '.js')}`));
-      const source = readFileSync(join(SRC_DIR, file), 'utf-8');
-      const violations = specifiers(stripComments(source)).filter(spec => !allowed.has(spec));
+  for (const layer of LAYERS) {
+    it(`${layer}/ 只依赖本层与更低层`, () => {
+      const files = walk(join(SRC_DIR, layer));
+      expect(files.length, `${layer}/ 为空——守卫在空转`).toBeGreaterThan(0);
+      const violations: string[] = [];
+      for (const file of files) {
+        for (const spec of specifiers(stripComments(readFileSync(file, 'utf-8')))) {
+          const target = resolveTarget(file, spec);
+          // kernel 连裸说明符也不许有：它不依赖任何包
+          const reason =
+            target === null ? (layer === 'kernel' ? 'kernel/ 不得引用任何包' : null) : violation(layer, target);
+          if (reason) violations.push(`${relToSrc(file)} → ${spec}：${reason}`);
+        }
+      }
       expect(violations).toEqual([]);
     });
   }
@@ -119,19 +122,13 @@ describe('core 内部分层（基底层 ⇸ 编排层）', () => {
  * `ctx.getService('storage')` 悄悄退回 `unknown`。build / test / biome / knip 四道门全绿。
  *
  * ⚠️ 递归扫**整个 core/src**，不是只扫 types/。第一版只扫 types/ 一层，实测把同一段挪进
- * `src/app.ts` 或 `src/context.ts` 就 100% 复发而守卫一声不吭——而 `src/app.ts`（编排层、
+ * `orchestration/app.ts` 或 `context/context.ts` 就 100% 复发而守卫一声不吭——而 `app.ts`（编排层、
  * 天然会写 App 相关声明）恰恰是最像会重犯的地方。
  *
  * 本条守的是**说明符形式**（相对路径会把接口绑成第二个 symbol），与「扩展点是否为空」
  * 是两件正交的事——后者由下面单独一条守。
  */
 describe('core 扩展点：增广只能用裸包名说明符', () => {
-  const walk = (dir: string): string[] =>
-    readdirSync(dir, { withFileTypes: true }).flatMap(e => {
-      const full = join(dir, e.name);
-      return e.isDirectory() ? walk(full) : e.name.endsWith('.ts') ? [full] : [];
-    });
-
   it('core/src 下（递归）没有任何相对路径的 declare module', () => {
     const offenders: string[] = [];
     for (const file of walk(SRC_DIR)) {

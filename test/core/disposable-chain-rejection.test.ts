@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DisposableChain } from '../../packages/core/src/disposable-chain.js';
+import { DisposableChain } from '../../packages/core/src/kernel/disposable-chain.js';
 
 // ════════════════════════════════════════════════════════════
 // 内核必须自足：宿主可以不经 Context 直接使用清理链。同步 dispose() 与 post-dispose 的 push

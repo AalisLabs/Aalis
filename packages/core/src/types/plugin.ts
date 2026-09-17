@@ -1,12 +1,10 @@
 // ----- 插件系统类型与纯辅助函数 -----
 //
 // 与运行时实现 (PluginManager) 分离，避免下游消费者只为类型而拉入 class。
-// 实现详见 ../plugin.ts。
+// 实现详见 ../orchestration/plugin.ts。
 
-import type { Context } from '../context.js';
-// 注：NormalizedDependency 来自 types/service.ts，但为避免在 PluginEntry
-// 中再循环引入，这里直接 import type。
-import type { NormalizedDependency } from '../services.js';
+import type { Context } from '../context/context.js';
+import type { NormalizedDependency } from '../primitives/services.js';
 import type { DependencyDeclaration } from './services.js';
 
 // ----- 插件依赖声明（module.inject 的词汇） -----

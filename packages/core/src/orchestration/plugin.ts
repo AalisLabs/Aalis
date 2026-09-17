@@ -1,16 +1,16 @@
-import type { Context } from './context.js';
-import type { Logger } from './logger.js';
-import { activatePlugin, computeTargetState, retireEntry } from './plugin-activation.js';
-import { evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
-import { normalizeDependency } from './services.js';
-import type { PluginStatusEntry } from './types/index.js';
+import type { Context } from '../context/context.js';
+import type { Logger } from '../context/logger.js';
+import { normalizeDependency } from '../primitives/services.js';
+import type { PluginStatusEntry } from '../types/index.js';
 import {
   type PluginEntry,
   type PluginModule,
   type PluginState,
   parseInstanceId,
   type RecomputeReason,
-} from './types/plugin.js';
+} from '../types/plugin.js';
+import { activatePlugin, computeTargetState, retireEntry } from './plugin-activation.js';
+import { evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
 
 export type { PluginEntry, PluginModule, PluginState };
 // 类型与纯辅助 re-export，保留同名旧导入路径
