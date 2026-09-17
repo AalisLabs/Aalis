@@ -424,7 +424,7 @@ export class PluginManager {
    *    shutdown 走单向 down 路径，其它走 fixed-point。
    * 2. 每轮先按依赖正序（提供者→消费者）做拓扑排序。
    * 3. Phase A：反向遍历，把"目标不再 active"的 entry 一并 dispose
-   *    （消费者先关、提供者后关，dispose hook 访问依赖服务安全）。
+   *    （本轮内消费者先关、提供者后关）。
    * 4. Phase B（非 shutdown）：正向遍历，激活"目标 active 且依赖满足"的 pending entry
    *    （提供者先起、消费者后起）。
    * 5. 若本轮有变动则继续下一轮，直到稳定或达到 maxRounds。
