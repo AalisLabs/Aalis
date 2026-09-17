@@ -20,8 +20,9 @@ import { describe, expect, it } from 'vitest';
 //
 // 检查的是源文件**直接** import 说明符（含 export-from 与内联 `import('...')` 类型
 // 引用），按**解析后的真实路径**判层——只比文件名会在目录移动后静默变绿。
-// types/index.ts barrel 会在类型层传递性地触达编排层类型，属已知豁免——
-// 本测试设防的是值依赖与直接词汇依赖，不是类型可达性。
+// types/ 按种类存放类型词汇：app.ts、plugin.ts 是编排层词汇，index.ts barrel 会把它们一并带出，
+// 下层三者都不得引用；其余为基础词汇文件，只许互相引用。下层与基础词汇文件守同一条规则，
+// 故只查直接 import 即可，不必另算传递闭包。
 // ════════════════════════════════════════════════════════════
 
 const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../packages/core/src');
@@ -33,8 +34,8 @@ type Layer = (typeof LAYERS)[number];
 /** src 根目录只许 barrel */
 const ROOT_FILES = ['index.ts'];
 
-/** types/ 里属于编排层词汇的文件；其余为下层可用的基础词汇 */
-const ORCHESTRATION_TYPES = new Set(['types/app.ts', 'types/plugin.ts']);
+/** types/ 里下层不得引用的文件：编排层词汇，以及会把它们一并带出的 barrel；其余为基础词汇 */
+const UPPER_TYPES = new Set(['types/app.ts', 'types/plugin.ts', 'types/index.ts']);
 
 /** 剥掉块注释与行注释——否则解释这些规则的注释本身会把守卫打红。 */
 function stripComments(src: string): string {
@@ -78,7 +79,7 @@ function violation(layer: Layer, target: string): string | null {
   if (targetLayer >= 0) return targetLayer > LAYERS.indexOf(layer) ? `${layer}/ 不得依赖上层 ${top}/` : null;
   if (layer === 'orchestration') return null;
   if (layer === 'kernel') return 'kernel/ 只能引用 kernel/ 内部';
-  if (top === 'types') return ORCHESTRATION_TYPES.has(target) ? `${target} 是编排层词汇` : null;
+  if (top === 'types') return UPPER_TYPES.has(target) ? `${target} 含编排层词汇，请直接引用基础词汇文件` : null;
   return `${layer}/ 不得引用 ${target}`;
 }
 
@@ -108,6 +109,21 @@ describe('core 内部分层（目录即层，依赖只许向下）', () => {
       expect(violations).toEqual([]);
     });
   }
+
+  it('types/ 的基础词汇文件只引用基础词汇（否则下层经它转手就触达上层）', () => {
+    const files = walk(join(SRC_DIR, 'types')).filter(file => !UPPER_TYPES.has(relToSrc(file)));
+    expect(files.length, '基础词汇文件为空——守卫在空转').toBeGreaterThan(0);
+    const violations: string[] = [];
+    for (const file of files) {
+      for (const spec of specifiers(stripComments(readFileSync(file, 'utf-8')))) {
+        const target = resolveTarget(file, spec);
+        if (target === null) continue;
+        const ok = target.startsWith('types/') && !UPPER_TYPES.has(target) && existsSync(join(SRC_DIR, target));
+        if (!ok) violations.push(`${relToSrc(file)} → ${spec}`);
+      }
+    }
+    expect(violations).toEqual([]);
+  });
 });
 
 /**
