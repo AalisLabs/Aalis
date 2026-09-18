@@ -1,4 +1,4 @@
-import type { PluginStatusEntry } from '../types/index.js';
+import type { PluginManagerService, PluginStatusEntry } from '../types/index.js';
 import {
   type PluginEntry,
   type PluginModule,
@@ -133,18 +133,20 @@ export class PluginManager {
    * @param module    插件模块
    * @param config    插件配置
    * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 module.name）
+   * @returns 口径见 {@link PluginManagerService}：false = 重名，或未声明 reusable 却要多实例（各记一笔 warn）；
+   *   true = 已落账（含注册为 disabled 态），激活是否已发生另看 idle()
    */
-  async register(module: PluginModule, config: Record<string, unknown> = {}, instanceId?: string): Promise<void> {
+  async register(module: PluginModule, config: Record<string, unknown> = {}, instanceId?: string): Promise<boolean> {
     const id = instanceId ?? module.name;
 
     // 多实例检查：同一 module 非 reusable 时不允许重复注册
     if (this.plugins.has(id)) {
       this.logger.warn(`插件 "${id}" 已注册，跳过`);
-      return;
+      return false;
     }
     if (id !== module.name && !module.reusable) {
       this.logger.warn(`插件 "${module.name}" 未声明 reusable，不允许多实例注册 "${id}"`);
-      return;
+      return false;
     }
 
     const inject = module.inject ?? {};
@@ -172,14 +174,18 @@ export class PluginManager {
       // 走统一 recompute：依赖满足则被拓扑正序激活，否则保持 pending
       await this.recompute({ type: 'plugin-state-changed' });
     }
+    return true;
   }
 
   /**
    * 卸载一个插件
+   *
+   * @returns 口径见 {@link PluginManagerService}：false = 注册表里没有这个实例；true = 其余（含卸载
+   *   已在途时 join 它——返回时该实例已拆卸并离开注册表）
    */
-  async unload(instanceId: string): Promise<void> {
+  async unload(instanceId: string): Promise<boolean> {
     const entry = this.plugins.get(instanceId);
-    if (!entry) return;
+    if (!entry) return false;
 
     // 'disposed' 单向化的 unload 侧：已有卸载在途（或停机遗留终态）时不再二次
     // retire/emit——join 其拆卸（disposeAsync 幂等）后只确保注册表摘除。删除必须
@@ -189,7 +195,7 @@ export class PluginManager {
       const inflight = entry.context;
       if (inflight) await inflight.disposeAsync(this.disposeTimeoutMs);
       if (this.plugins.get(instanceId) === entry) this.plugins.delete(instanceId);
-      return;
+      return true;
     }
 
     // dispose 段守卫（与 disable 对齐）：dispose 触发的反应式 recompute
@@ -208,6 +214,7 @@ export class PluginManager {
 
     // 级联重算：依赖被卸载插件所提供服务的下游需要转 pending
     await this.softReload();
+    return true;
   }
 
   /** retireEntry 的 deps 便签（字段皆 private，无法把 this 当结构化 deps 传）。 */
