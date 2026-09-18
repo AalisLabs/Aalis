@@ -23,7 +23,7 @@ export interface CommandService {
   command(name: string, description?: string, meta?: InternalCommandMeta): CommandBuilder;
 
   unregister(name: string): void;
-  unregisterByPlugin(pluginName: string): void;
+  unregisterByPlugin(contextId: string): void;
 
   execute(name: string, ctx: ExecutionInput): Promise<string | undefined>;
   parseCommand(input: string): { name: string; args: string[]; raw: string } | null;

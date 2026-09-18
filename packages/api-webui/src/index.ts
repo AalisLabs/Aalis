@@ -31,7 +31,7 @@ export interface WebUIService {
   registerPage(page: WebuiPage, contextId: string): () => void;
   /** 列出当前所有已注册的页面（含插件归属） */
   getPages(): Array<WebuiPage & { pluginName: string }>;
-  /** 按插件名批量清除（供插件卸载时调用） */
+  /** 按 contextId 批量清除（Context 拆卸时由 core 调用） */
   unregisterByPlugin(contextId: string): void;
 }
 
