@@ -21,8 +21,8 @@ interface HookEntry<T> {
  *
  * 插件面与 events / services 同一门面纪律（方法窄面，对象不外露）：
  * 注册 handler 只经 `ctx.middleware(hook, fn)`（闭包 ctx.id 作 contextId、本次激活的
- * owner 作清理归属，并登记 dispose 链，插件卸载时被 `unregisterByOwner` 清扫；裸 `register` 默认落
- * 'root'，会静默泄漏进全局管道）；驱动钩子链经 `ctx.runHook(hook, data,
+ * owner 作清理归属，并登记 dispose 链，插件卸载时被 `unregisterByOwner` 清扫；裸 `register`
+ * 不带 owner 的条目不被拆卸自动清理，用返回的退订闭包自管）；驱动钩子链经 `ctx.runHook(hook, data,
  * defaultAction)`。完整注册表仅 App（组合根，接 onStall 到 logger）与
  * Context 内部持有。
  *
@@ -53,7 +53,7 @@ export class HookRegistry {
   register<K extends string & keyof HookContextMap>(
     hook: K,
     fn: MiddlewareFn<HookContextMap[K]>,
-    contextId: string = 'root',
+    contextId: string,
     owner?: symbol,
   ): () => void {
     let list = this.hooks.get(hook);

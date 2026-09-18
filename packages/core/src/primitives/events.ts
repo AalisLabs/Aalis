@@ -3,7 +3,7 @@ import type { AalisEvents } from '../types/events.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
-interface Registration {
+interface EventEntry {
   // biome-ignore lint/suspicious/noExplicitAny: 泛型擦除场景，同一集合持有不同事件类型的 handler
   handler: EventHandler<any>;
   /** 清理归属（见 ServiceEntry.owner）；无则不被拆卸自动清理 */
@@ -23,7 +23,7 @@ export class EventBus {
   // 再删掉后登记者。归属是注册方 Context 本次激活的 symbol，让拆卸的注销段能与
   // hooks/services/contributions 同点整体切断（unregisterByOwner）；直接使用总线的无主
   // handler（owner=undefined）不受切断影响，由调用方自管。
-  private handlers = new Map<string, Set<Registration>>();
+  private handlers = new Map<string, Set<EventEntry>>();
 
   /**
    * handler 抛错时的上报回调（含 sticky 补发路径的同步/异步抛错）。
@@ -84,7 +84,7 @@ export class EventBus {
       set = new Set();
       this.handlers.set(event, set);
     }
-    const entry: Registration = { handler, owner };
+    const entry: EventEntry = { handler, owner };
     set.add(entry);
 
     if (this.stickyEvents.has(event) && this.stickyArgs.has(event)) {

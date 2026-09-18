@@ -84,6 +84,7 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
       'disposeAsync',
       'disposed',
       'emit',
+      'emitQuietly', // 私有实现（JS 层可见，不属承诺面）：core 自己发内置事件的唯一出口
       'fork',
       'getAllServices',
       'getPreferredService',

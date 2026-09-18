@@ -4,15 +4,15 @@ import { ServiceContainer } from '../../packages/core/src/index.js';
 describe('ServiceContainer', () => {
   it('注册并查询单个服务', () => {
     const c = new ServiceContainer();
-    c.register('__t:llm', { name: 'openai' }, 0, 'plugin-llm-openai');
+    c.register('__t:llm', { name: 'openai' }, 'plugin-llm-openai');
     const svc = c.get<{ name: string }>('__t:llm');
     expect(svc?.name).toBe('openai');
   });
 
   it('getAll 返回所有提供者', () => {
     const c = new ServiceContainer();
-    c.register('__t:llm', { name: 'openai' }, 0, 'plugin-llm-openai');
-    c.register('__t:llm', { name: 'deepseek' }, 0, 'plugin-llm-deepseek');
+    c.register('__t:llm', { name: 'openai' }, 'plugin-llm-openai');
+    c.register('__t:llm', { name: 'deepseek' }, 'plugin-llm-deepseek');
     const all = c.getAll('__t:llm');
     expect(all).toHaveLength(2);
   });
@@ -21,9 +21,9 @@ describe('ServiceContainer', () => {
     const c = new ServiceContainer();
     const x = Symbol('plug-x');
     const y = Symbol('plug-y');
-    c.register('a', { v: 1 }, 0, 'plug-x', undefined, x);
-    c.register('b', { v: 2 }, 0, 'plug-x', undefined, x);
-    c.register('c', { v: 3 }, 0, 'plug-y', undefined, y);
+    c.register('a', { v: 1 }, 'plug-x', x);
+    c.register('b', { v: 2 }, 'plug-x', x);
+    c.register('c', { v: 3 }, 'plug-y', y);
     c.unregisterByOwner(x);
     expect(c.get('a')).toBeUndefined();
     expect(c.get('b')).toBeUndefined();
@@ -34,10 +34,10 @@ describe('ServiceContainer', () => {
     const c = new ServiceContainer();
     const x = Symbol('plug-x');
     const y = Symbol('plug-y');
-    c.register('__t:llm', { v: 1 }, 0, 'plug-x/m1', undefined, x);
-    c.register('__t:llm', { v: 2 }, 0, 'plug-x/m2', undefined, x);
-    c.register('__t:llm', { v: 3 }, 0, 'plug-y', undefined, y);
-    c.register('__t:llm', { v: 4 }, 0, 'elsewhere/m3', undefined, x); // 不带 plug-x 前缀但同 owner：也要被清
+    c.register('__t:llm', { v: 1 }, 'plug-x/m1', x);
+    c.register('__t:llm', { v: 2 }, 'plug-x/m2', x);
+    c.register('__t:llm', { v: 3 }, 'plug-y', y);
+    c.register('__t:llm', { v: 4 }, 'elsewhere/m3', x); // 不带 plug-x 前缀但同 owner：也要被清
     expect(c.hasByContext('__t:llm', 'plug-x')).toBe(true);
     expect(c.hasByContext('__t:llm', 'plug-y')).toBe(true);
     expect(c.hasByContext('__t:llm', 'plug-z')).toBe(false);
@@ -50,8 +50,8 @@ describe('ServiceContainer', () => {
     const c = new ServiceContainer();
     const a = Symbol('dup');
     const b = Symbol('dup');
-    c.register('svc', { g: 1 }, 0, 'dup', undefined, a);
-    c.register('svc', { g: 2 }, 0, 'dup', undefined, b);
+    c.register('svc', { g: 1 }, 'dup', a);
+    c.register('svc', { g: 2 }, 'dup', b);
     c.unregisterByOwner(a);
     expect(c.getAll('svc')).toHaveLength(1);
     expect(c.get<{ g: number }>('svc')?.g).toBe(2);
@@ -59,17 +59,18 @@ describe('ServiceContainer', () => {
 
   it('无 owner 的条目不被 unregisterByOwner 触及（绕过门面者用返回值自管）', () => {
     const c = new ServiceContainer();
-    const e = c.register('svc', { g: 0 }, 0, 'dup');
+    const off = c.register('svc', { g: 0 }, 'dup');
     c.unregisterByOwner(Symbol('dup'));
     expect(c.getAll('svc')).toHaveLength(1);
-    expect(c.unregisterEntry('svc', e)).toBe(true);
+    expect(off(), '退订闭包报告真的摘掉了').toBe(true);
     expect(c.getAll('svc')).toHaveLength(0);
+    expect(off(), '再退订一次：条目已不在，报 false').toBe(false);
   });
 
   it('多提供者按 priority + 注册顺序解析（偏好之外）', () => {
     const c = new ServiceContainer();
-    c.register('__t:llm', { name: 'low' }, 0, 'p1');
-    c.register('__t:llm', { name: 'high' }, 50, 'p2');
+    c.register('__t:llm', { name: 'low' }, 'p1');
+    c.register('__t:llm', { name: 'high' }, 'p2', undefined, { priority: 50 });
     expect(c.get<{ name: string }>('__t:llm')?.name).toBe('high');
   });
 });
@@ -78,9 +79,9 @@ describe('ServiceContainer unregisterByOwner', () => {
   it('同一 owner 在同一服务名下相邻的多条登记全部清掉', () => {
     const c = new ServiceContainer();
     const a = Symbol('a');
-    c.register('__t:llm', { v: 1 }, 0, 'plugin-a', undefined, a);
-    c.register('__t:llm', { v: 2 }, 0, 'plugin-a/sub', undefined, a);
-    c.register('__t:llm', { v: 3 }, 0, 'plugin-b', undefined, Symbol('b'));
+    c.register('__t:llm', { v: 1 }, 'plugin-a', a);
+    c.register('__t:llm', { v: 2 }, 'plugin-a/sub', a);
+    c.register('__t:llm', { v: 3 }, 'plugin-b', Symbol('b'));
     expect(c.unregisterByOwner(a)).toEqual(['__t:llm']);
     expect(c.getAll('__t:llm').map(e => e.instance)).toEqual([{ v: 3 }]);
   });
@@ -89,7 +90,7 @@ describe('ServiceContainer unregisterByOwner', () => {
 describe('ServiceContainer 枚举口', () => {
   it('getEntries 返回快照：改动返回值不影响容器', () => {
     const c = new ServiceContainer();
-    c.register('__t:llm', { v: 1 }, 0, 'plugin-a');
+    c.register('__t:llm', { v: 1 }, 'plugin-a');
     const entries = c.getEntries('__t:llm');
     entries.length = 0;
     expect(c.getEntries('__t:llm')).toHaveLength(1);
