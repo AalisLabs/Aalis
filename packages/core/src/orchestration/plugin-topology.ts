@@ -12,9 +12,11 @@
 // 这些是无状态/弱状态的操作，分出去让 PluginManager 主体只关心生命周期编排。
 // ============================================================
 
+import type { PluginEntry } from '../types/plugin.js';
+
 import type { Context } from '../context/context.js';
 import type { Logger } from '../context/logger.js';
-import type { PluginEntry } from '../types/plugin.js';
+
 import { retireEntry } from './plugin-activation.js';
 
 /**
