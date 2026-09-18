@@ -170,7 +170,7 @@ describe('HookRegistry 运行中变更（#8.4）', () => {
       'ctx-b',
       Symbol('ctx-b'),
     );
-    // unregisterByOwner 整体换数组——旧实现中 offB 捕获旧数组后会变 no-op
+    // 旧实现的 unregisterByOwner 整体换数组，offB 捕获旧数组后会变 no-op；现在原地删，此例守的是退订闭包重查活容器
     reg.unregisterByOwner(a);
     offB();
     // biome-ignore lint/suspicious/noExplicitAny: test
@@ -179,5 +179,62 @@ describe('HookRegistry 运行中变更（#8.4）', () => {
     });
     expect(order).toEqual(['default']);
     expect(reached).toBe(true);
+  });
+});
+
+describe('HookRegistry 卡链上报', () => {
+  const stalled = async (_d: unknown, _n: () => Promise<void>) => {
+    /* 不调 next：广播型相位里这就是卡链 */
+  };
+
+  it('warnOnStall 时点名卡链者与被跳过的数量', async () => {
+    const reg = new HookRegistry();
+    const calls: unknown[][] = [];
+    reg.onStall = (...args) => calls.push(args);
+    reg.register('inbound:command', stalled, 'ctx-a', Symbol('a'));
+    reg.register('inbound:command', async (_d, n) => n(), 'ctx-b', Symbol('b'));
+    await reg.run('inbound:command', {} as never, undefined, { warnOnStall: true });
+    expect(calls).toEqual([['inbound:command', 'ctx-a', 1]]);
+  });
+
+  it('onStall 自身抛错不打断 run：诊断回调不得否决业务流程', async () => {
+    const reg = new HookRegistry();
+    reg.onStall = () => {
+      throw new Error('sink broken');
+    };
+    reg.register('inbound:command', stalled, 'ctx-a', Symbol('a'));
+    reg.register('inbound:command', async (_d, n) => n(), 'ctx-b', Symbol('b'));
+    await expect(reg.run('inbound:command', {} as never, undefined, { warnOnStall: true })).resolves.toBe(false);
+  });
+});
+
+describe('HookRegistry unregisterByOwner', () => {
+  it('同一 owner 在同一钩子上相邻的多条登记全部清掉', async () => {
+    const reg = new HookRegistry();
+    const a = Symbol('a');
+    const hits: string[] = [];
+    for (const tag of ['a1', 'a2', 'a3']) {
+      reg.register(
+        'inbound:command',
+        async (_d, n) => {
+          hits.push(tag);
+          await n();
+        },
+        'ctx-a',
+        a,
+      );
+    }
+    reg.register(
+      'inbound:command',
+      async (_d, n) => {
+        hits.push('b');
+        await n();
+      },
+      'ctx-b',
+      Symbol('b'),
+    );
+    reg.unregisterByOwner(a);
+    await reg.run('inbound:command', {} as never);
+    expect(hits).toEqual(['b']);
   });
 });

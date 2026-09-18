@@ -1,3 +1,4 @@
+import { reportQuietly } from '../kernel/disposable-chain.js';
 import type { HookContextMap, MiddlewareFn, MiddlewareNext } from '../types/hooks.js';
 
 interface HookEntry<T> {
@@ -64,8 +65,8 @@ export class HookRegistry {
     list.push(entry);
 
     return () => {
-      // 查 registry 当前数组而非闭包捕获的 list：unregisterByOwner 会整体
-      // 换数组，捕获旧引用的 dispose 会变 no-op（中间件泄漏）。
+      // 查 registry 当前数组而非闭包捕获的 list：钩子清空时表项会被删，再注册会新建数组，
+      // 捕获旧引用的 dispose 会变 no-op（中间件泄漏）。
       const current = this.hooks.get(hook);
       if (!current) return;
       const idx = current.indexOf(entry);
@@ -113,7 +114,7 @@ export class HookRegistry {
         // 广播型相位(warnOnStall):handler 返回后游标没动过 = 它没调 next(),
         // 其后所有 handler 被静默跳过——点名肇事者,别让下游注入无声蒸发。
         if (opts?.warnOnStall && index === posBefore && index < snapshot.length) {
-          this.onStall?.(hook, entry.contextId, snapshot.length - index);
+          reportQuietly(() => this.onStall?.(hook, entry.contextId, snapshot.length - index));
         }
         return;
       }
@@ -130,12 +131,10 @@ export class HookRegistry {
    */
   unregisterByOwner(owner: symbol): void {
     for (const [hook, list] of this.hooks) {
-      const filtered = list.filter(e => e.owner !== owner);
-      if (filtered.length === 0) {
-        this.hooks.delete(hook);
-      } else {
-        this.hooks.set(hook, filtered);
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i].owner === owner) list.splice(i, 1);
       }
+      if (list.length === 0) this.hooks.delete(hook);
     }
   }
 }

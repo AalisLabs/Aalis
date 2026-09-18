@@ -73,3 +73,26 @@ describe('ServiceContainer', () => {
     expect(c.get<{ name: string }>('llm')?.name).toBe('high');
   });
 });
+
+describe('ServiceContainer unregisterByOwner', () => {
+  it('同一 owner 在同一服务名下相邻的多条登记全部清掉', () => {
+    const c = new ServiceContainer();
+    const a = Symbol('a');
+    c.register('llm', { v: 1 }, 0, 'plugin-a', undefined, a);
+    c.register('llm', { v: 2 }, 0, 'plugin-a/sub', undefined, a);
+    c.register('llm', { v: 3 }, 0, 'plugin-b', undefined, Symbol('b'));
+    expect(c.unregisterByOwner(a)).toEqual(['llm']);
+    expect(c.getAll('llm').map(e => e.instance)).toEqual([{ v: 3 }]);
+  });
+});
+
+describe('ServiceContainer 枚举口', () => {
+  it('getEntries 返回快照：改动返回值不影响容器', () => {
+    const c = new ServiceContainer();
+    c.register('llm', { v: 1 }, 0, 'plugin-a');
+    const entries = c.getEntries('llm');
+    entries.length = 0;
+    expect(c.getEntries('llm')).toHaveLength(1);
+    expect(c.get('llm')).toEqual({ v: 1 });
+  });
+});
