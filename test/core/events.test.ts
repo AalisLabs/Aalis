@@ -60,6 +60,24 @@ describe('EventBus per-handler 隔离（#8.1）', () => {
     expect((reported[1][1] as Error).message).toBe('boom-b');
   });
 
+  it('onHandlerError 点名注册者：经门面注册的报 ctx.id，无 owner 的裸登记报 undefined', async () => {
+    const bus = new EventBus();
+    const who: Array<string | undefined> = [];
+    bus.onHandlerError = (_event, _err, contextId) => who.push(contextId);
+    bus.on(
+      'plugin:loaded',
+      () => {
+        throw new Error('x');
+      },
+      Symbol('plugin-a'),
+    );
+    bus.on('plugin:loaded', () => {
+      throw new Error('y');
+    });
+    await bus.emit('plugin:loaded', 'p');
+    expect(who).toEqual(['plugin-a', undefined]);
+  });
+
   it('未设置 onHandlerError 时 handler 抛错也不致 emit reject', async () => {
     const bus = new EventBus();
     bus.on('plugin:loaded', () => {
