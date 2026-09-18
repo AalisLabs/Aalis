@@ -56,6 +56,16 @@ recompute 里下一个插件的激活，监听器里 `await plugins.idle()` 则�
 plugin-adapter-onebot / plugin-flow-control / plugin-persona / plugin-skills / plugin-tool-onebot / plugin-webui-server。
 WebUI 的 WS 报文 `type: 'restarting'` 是前端协议，与 core 事件名无关，不跟改。
 
+### PluginManager 的管理动作去掉 `Plugin` 后缀（@aalis/core）
+
+`enablePlugin` → `enable`，`disablePlugin` → `disable`，`updatePluginConfig` → `updateConfig`，`bouncePlugin` → `bounce`
+（`PluginManagerService` 接口含前三个，`bounce` 仅在 `PluginManager` 类上）。持有它的对象已经叫 `plugins`，
+`plugins.enablePlugin(id)` 的后缀是同一个词说两遍；与同一接口上的 `register` / `unload` 对齐（`getPlugin` / `getStatus`
+里的名词是返回的对象，不是后缀，不动）。形参名同批统一为 `instanceId`（纯改名，不影响调用）。
+
+**迁移**：按上表改方法名即可，签名与语义不变。第一方跟改的包（发布时抬 core 下限至 `>=0.14.0`）：
+plugin-mcp-client / plugin-webui-server / runtime；WebUI 的 HTTP 路由路径（`/enable`、`/disable`）本就无后缀，不变。
+
 ## 2026-09-17（core 0.13.0 minor；patch：runtime 0.12.4 / plugin-authority 0.11.5 / plugin-cli 0.10.3 / plugin-mcp-client 0.10.2 / plugin-media 0.13.3 / plugin-package-manager 0.5.3 / plugin-webui-server 0.11.9）
 
 **升级**：core 走了次版本。脚手架生成的项目里 `@aalis/core` 是 caret 区间（`^0.12.x` 不含 0.13.0），而本批 runtime / plugin-cli / plugin-media / plugin-package-manager 用到了 `saveConfig()` / `config.save()` 的 Promise 返回值、peer 下限抬到 `>=0.13.0`——直接 `npm update` 会 ERESOLVE。请显式升级：`npm install @aalis/core@latest @aalis/runtime@latest`，再 `npm update`。不要用 `--legacy-peer-deps` 绕过：那会装出新 runtime 配旧 core 的组合，启动时即 TypeError。

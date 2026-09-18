@@ -38,7 +38,7 @@ interface ActivationDeps {
  *   重激活闸永挂、插件静默不可激活）。
  * - 清引用带恒等卫：并发路径若已 join 同一次拆卸并清过引用，不重复置空。
  *
- * 唯一不用本函数的拆卸点是 bouncePlugin：它要在写终态与拆卸之间插入
+ * 唯一不用本函数的拆卸点是 bounce：它要在写终态与拆卸之间插入
  * evictDownstreamConsumers（该 await 窗口要求状态已先落），塞进本函数
  * 需要回调钩子——宁可让它保持内联并就地注释，也不给这里加第三个参数。
  */
@@ -102,7 +102,7 @@ export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): 
   const { rootCtx, logger } = deps;
   if (entry.state !== 'pending') return;
 
-  // 旧 ctx 仍在拆卸中（bouncePlugin 先置 'pending'、后异步拆旧 ctx，拆完才清
+  // 旧 ctx 仍在拆卸中（bounce 先置 'pending'、后异步拆旧 ctx，拆完才清
   // entry.context）：此刻重新激活会让新旧实例同 instanceId 并存——同名服务重复
   // provide、偏好按 contextId 二义。跳过本轮，等管理路径收尾后的 softReload 重新调度。
   if (entry.context) return;
@@ -126,7 +126,7 @@ export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): 
     ctx.trackActivation(applying);
     await applying;
 
-    // 接管检查（CAS 式）：unload / disablePlugin / bouncePlugin 撞上在飞 apply 时
+    // 接管检查（CAS 式）：unload / disable / bounce 撞上在飞 apply 时
     // 会先把 state 改离 'activating' 再 disposeAsync（等的正是上面这个 applying）。
     // 此处一旦观察到 state 被改走，说明终态与 ctx 的拆卸责任已归管理路径所有，
     // 本次激活的收尾（置 active / 报 error / 发 plugin:loaded）全部让位。

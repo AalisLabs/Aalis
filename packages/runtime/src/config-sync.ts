@@ -5,7 +5,7 @@
 //   - handleConfigChanged / installConfigHotReload：配置外部变更的 diff + bounce 编排
 //
 // 这些是**政策**（要不要裁剪、怎么合并、何时 bounce），core 只持有机制
-// （配置快照 get/set、watch 透传、updatePluginConfig）。不接本模块的嵌入式
+// （配置快照 get/set、watch 透传、updateConfig）。不接本模块的嵌入式
 // 宿主将没有自动配置同步与热重载——需要时用公开 API 自行编排。
 // ============================================================
 
@@ -74,7 +74,7 @@ export function syncPluginDefaults(app: App, opts?: ConfigSyncOptions): string[]
 
 /**
  * 配置外部变更时的处理：先按启动路径同一政策同步，再重新计算各插件配置
- * 并热重载差异（updatePluginConfig → bounce）。
+ * 并热重载差异（updateConfig → bounce）。
  */
 export async function handleConfigChanged(app: App, opts?: ConfigSyncOptions): Promise<void> {
   app.logger.info('检测到配置变更，正在热重载...');
@@ -93,7 +93,7 @@ export async function handleConfigChanged(app: App, opts?: ConfigSyncOptions): P
       const newConfig = { ...defaults, ...fileConfig };
       if (JSON.stringify(newConfig) !== JSON.stringify(entry.config)) {
         app.logger.info(`插件 ${status.instanceId} 配置已变更，正在重新加载...`);
-        await app.plugins.updatePluginConfig(status.instanceId, newConfig);
+        await app.plugins.updateConfig(status.instanceId, newConfig);
         changed = true;
       }
     }

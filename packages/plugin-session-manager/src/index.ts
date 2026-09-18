@@ -1057,7 +1057,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       .finally(() => titleGenerating.delete(sessionId));
   });
 
-  // 持久化走 onDispose：覆盖停机与 bounce / unload / updatePluginConfig 等全部
+  // 持久化走 onDispose：覆盖停机与 bounce / unload / updateConfig 等全部
   // 拆卸路径（旧 app:stopping 只在全局停机触发，热重载即丢会话元数据）。
   // 异步收尾由编排层的 disposeAsync 等待完成；app.stop() 的拓扑逆序保证此时 memory 提供者
   // 尚未关闭，单独热重载/禁用 memory 提供者时无此保证。shutdown() 幂等：清 timer + 置 dirty + 落盘。

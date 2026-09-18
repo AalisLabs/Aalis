@@ -236,7 +236,7 @@ export function registerPluginRoutes(
       return;
     }
 
-    // 补默认值再交给 updatePluginConfig：后者是**整体替换**语义（core 的 orchestration/plugin.ts 里
+    // 补默认值再交给 updateConfig：后者是**整体替换**语义（core 的 orchestration/plugin.ts 里
     // entry.config = newConfig 直接顶掉）。不补的话，PUT 一个部分对象就会把未列出的
     // 字段从内存态和 yaml 里一起抹掉。默认值从 configSchema 派生（唯一声明来源）。
     const schema = pm.getPlugin(pluginName)?.module?.configSchema;
@@ -253,7 +253,7 @@ export function registerPluginRoutes(
     // 存量问题放行——否则带着历史脏值（或 schema 表达不了的多态字段，如 mcp-client
     // 的 args 数组形态）的插件会在 WebUI 永久存不了任何字段；启动侧 config-sync
     // 对它们已有告警。missing（没配全）也放行：半成品配置是启用插件配到一半的
-    // 正常中间态。禁用插件的 PUT 走下方 updatePluginConfig 失败分支，在那里区分
+    // 正常中间态。禁用插件的 PUT 走下方 updateConfig 失败分支，在那里区分
     // 「已禁用」（409，提示先启用）与「真不存在」（404）。
     const preExisting = new Set(validateConfig(schema, stored).map(i => `${i.path}|${i.message}`));
     const issues = validateConfig(schema, merged).filter(
@@ -267,7 +267,7 @@ export function registerPluginRoutes(
       return;
     }
 
-    const success = await pm.updatePluginConfig(pluginName, merged);
+    const success = await pm.updateConfig(pluginName, merged);
     if (success) {
       await app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 配置已更新` });
@@ -292,7 +292,7 @@ export function registerPluginRoutes(
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
-    const success = await pm.enablePlugin(pluginName);
+    const success = await pm.enable(pluginName);
     if (success) {
       await app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 已启用` });
@@ -310,7 +310,7 @@ export function registerPluginRoutes(
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
-    const success = await pm.disablePlugin(pluginName);
+    const success = await pm.disable(pluginName);
     if (success) {
       await app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 已禁用` });

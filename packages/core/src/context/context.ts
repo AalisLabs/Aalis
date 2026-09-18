@@ -695,7 +695,7 @@ export class Context {
    * 插件清理副作用的**唯一正确 API**：
    * - 登记到生命周期的清理链，保证逆序执行
    * - 在 `ctx.dispose()` 的任何路径上都会触发（app 停机 / bounce / unload /
-   *   updatePluginConfig / softReload 级联 evict）
+   *   updateConfig / softReload 级联 evict）
    * - 沙盒 / fork 子上下文同样适用
    *
    * ⚠． 不要用 `ctx.on('app:stopping', ...)` 做资源清理——那只在 app 全局停机
@@ -769,7 +769,7 @@ export class Context {
    * 知道「初始化还没跑完」，不改变激活语义。
    *
    * ⚠． 被登记的 apply **不得** await 任何最终落到本 ctx 或其祖先拆卸上的调用
-   *    （`disposeAsync` / `plugins.unload|bouncePlugin|disablePlugin` / `app.stop`
+   *    （`disposeAsync` / `plugins.unload|bounce|disable` / `app.stop`
    *    / `plugins.idle`）——拆卸正等着它返回，await 它即自等自。与 `onDispose`
    *    回调的约束同源。`disposeAsync(timeoutMs)` 的超时是这条的兜底而非豁免。
    */
@@ -809,7 +809,7 @@ export class Context {
    *
    * ⚠． **`onDispose` 回调里不得 await 任何最终落到本 ctx 或其祖先 ctx 拆卸上的
    *    调用**——在飞的拆卸正等着那个回调返回，await 它即自等自。除直接调用本方法
-   *    外，还包括 `plugins.unload/disablePlugin/bouncePlugin`（它们内部 await
+   *    外，还包括 `plugins.unload/disable/bounce`（它们内部 await
    *    `entry.context.disposeAsync`）、`app.stop()`、`plugins.idle()`。清理回调
    *    只做自己的收尾，拆卸由编排层驱动。（与 `PluginManagerService.idle()` 同类约束。）
    *

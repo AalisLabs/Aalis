@@ -5,7 +5,7 @@ import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/rou
 // PUT /api/plugins/:name/config 曾以裸 defaults 打底：`{...defaultsFrom(schema), ...body}`。
 // 而 defaultsFrom 只收录**声明了 default** 的键，apiKey / accessToken 这类 secret 多数没有
 // （deepseek、embedding-openai、llm-openai、serper、onebot 皆是）。于是请求里不带 apiKey 时
-// merged 里根本没有该键，而 updatePluginConfig → bouncePlugin 是整体替换——用户的密钥
+// merged 里根本没有该键，而 updateConfig → bounce 是整体替换——用户的密钥
 // 从内存态与 yaml 一起消失，且接口回 ok。
 // 修法是基线改用「默认值叠已存值」，语义才是真正的部分更新。
 // ════════════════════════════════════════════════════════════
@@ -54,7 +54,7 @@ function setup() {
     () =>
       ({
         getPlugin: () => ({ module: { configSchema: SCHEMA } }),
-        updatePluginConfig: async (_n: string, cfg: Record<string, unknown>) => {
+        updateConfig: async (_n: string, cfg: Record<string, unknown>) => {
           received = cfg;
           return true;
         },
@@ -96,7 +96,7 @@ describe('PUT 插件配置：部分更新不得抹掉无 default 的密钥', () 
     expect(got()?.timeoutMs, '本次提交的字段照常生效').toBe(60000);
     expect(
       got()?.apiKey,
-      '裸 defaults 打底时该键整条消失——updatePluginConfig 是整体替换，密钥就此从内存与 yaml 一起没了',
+      '裸 defaults 打底时该键整条消失——updateConfig 是整体替换，密钥就此从内存与 yaml 一起没了',
     ).toBe('sk-REAL-SECRET');
   });
 

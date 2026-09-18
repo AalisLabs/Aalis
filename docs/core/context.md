@@ -66,7 +66,7 @@
 
 - 直接挂在 `_disposables` 链上，逆序执行
 - `label` 可选，仅进诊断日志——清理超时或抛错时点名是哪一项；不传则退到链内序号
-- 在 `ctx.dispose()` 的任何路径上都会触发（app 停机 / bounce / unload / updatePluginConfig / softReload 级联）
+- 在 `ctx.dispose()` 的任何路径上都会触发（app 停机 / bounce / unload / updateConfig / softReload 级联）
 - fork 子上下文同样适用
 - **可以返回 Promise**：编排层（PluginManager / App）在 unload / bounce / 停机
   路径上走 `disposeAsync`，会逐项**等待**异步清理完成——落盘、关连接类收尾
