@@ -1204,8 +1204,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   });
 
-  // 重启通知：广播给所有客户端
-  ctx.on('restarting', () => {
+  // 重启通知：广播给所有客户端。WS 报文的 type 是前端协议，与 core 事件名无关，保持 'restarting'。
+  ctx.on('app:restarting', () => {
     const payload: WSOutgoing = { type: 'restarting' };
     const json = JSON.stringify(payload);
     for (const ws of allClients) {
@@ -1611,7 +1611,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   // 启动服务器
-  ctx.on('ready', () => {
+  ctx.on('app:ready', () => {
     discoverAndProvideClients();
     // 活跃前端 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 注册顺序）；零前端则 404。
     const activeDir = currentClientDir();

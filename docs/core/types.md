@@ -609,10 +609,10 @@ interface AalisEvents {
   'plugin:loaded': [name: string];
   'plugin:unloaded': [name: string];
   'plugins:changed': [];
-  'ready': [];
-  'app:started': [];        // 应用启动完成，适合 CLI/TUI 接管终端
-  'restarting': [];
-  'app:starting': [];       // start() 开头，服务检查/路由注册之前
+  'app:starting': [];       // start() 的第一步
+  'app:ready': [];          // 启动第一相位（sticky）
+  'app:started': [];        // 启动第二相位（sticky）：app:ready 监听器全部完成后，适合 CLI/TUI 接管终端
+  'app:restarting': [];
   'app:stopping': [];       // stop() 开头，拓扑逆序 dispose 之前
 }
 

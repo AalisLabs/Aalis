@@ -15,9 +15,9 @@
  * }
  * ```
  *
- * core 自持的条目按「发射方等不等监听器」分两节，这是契约：
- * - **屏障**（`app:starting` / `ready` / `app:started` / `restarting` / `app:stopping`）：emit 是 `App`
- *   生命周期方法里的一步，监听器全部返回后才推进下一步，监听器可以据此在「X 之前 / 之后」插入工作。
+ * core 自持的条目按「发射方等不等监听器」分两节，这是契约，节由前缀判定：
+ * - **屏障**（`app:*`）：emit 是 `App` 生命周期方法里的一步，监听器全部返回后才推进下一步，
+ *   监听器可以据此在「X 之前 / 之后」插入工作。
  * - **通知**（`service:*` / `plugin:*` / `plugins:changed`）：发射方经 `Context.emitQuietly` 发出，**不等**
  *   监听器。发射点要么是同步的注册 / 拆卸收尾（`provide`、退订、teardown），要么在 `PluginManager` 的
  *   recompute flight 或挂起段内——那里等监听器会与 `plugins.idle()` 互等死锁。监听器因此不能假设
@@ -45,20 +45,20 @@ export interface AalisEvents {
   'plugin:unloaded': [name: string];
   /** 通知：一轮 recompute 收敛，插件状态集合可能已变；关机轮不发 */
   'plugins:changed': [];
+  /** 屏障：`start()` 的第一步，早于 `app:ready` */
+  'app:starting': [];
   /**
    * 屏障：应用启动的第一相位，插件在此建立「启动后才成立」的东西。
    *
    * 与 `app:started` 是两个相位，不是同一里程碑的两个名字：`start()` 串行 await 两次 emit，
-   * 全部 `ready` 监听器完成之后才发 `app:started`。要在别人都就绪之后才动手（如 CLI 接管终端），
+   * 全部 `app:ready` 监听器完成之后才发 `app:started`。要在别人都就绪之后才动手（如 CLI 接管终端），
    * 挂 `app:started`。两者都是 sticky：晚注册的监听器（如 bounce 出来的新实例）会在下一个微任务被补发一次。
    */
-  ready: [];
-  /** 屏障：应用启动的第二相位，全部 `ready` 监听器已完成，适合 CLI / TUI 等用户交互入口接管终端 */
+  'app:ready': [];
+  /** 屏障：应用启动的第二相位，全部 `app:ready` 监听器已完成，适合 CLI / TUI 等用户交互入口接管终端 */
   'app:started': [];
   /** 屏障：`App.restart()` 先发本事件，监听器全部完成后才把控制交给宿主注入的 `RestartStrategy` */
-  restarting: [];
-  /** 屏障：`start()` 的第一步，早于 `ready` */
-  'app:starting': [];
+  'app:restarting': [];
   /**
    * 屏障：`stop()` 开头，在插件拓扑逆序 dispose 之前。
    *

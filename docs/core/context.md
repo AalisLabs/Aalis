@@ -92,7 +92,7 @@
 // 监听（返回 dispose；Context 销毁自动清理）
 const off = ctx.on('inbound:message', async msg => { ... });
 
-// sticky 事件：注册晚于发出也能收到微任务补发（'ready' / 'app:started'）
+// sticky 事件：注册晚于发出也能收到微任务补发（'app:ready' / 'app:started'）
 ctx.on('app:started', () => { ... });
 
 // 发出事件

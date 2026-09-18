@@ -15,7 +15,7 @@ Aalis 提供两种互补的扩展机制：**事件**（单向通知）和**中�
 const off = ctx.on('inbound:message', async (msg) => { ... });
 
 // 一次性监听
-ctx.on('ready', () => { ... });
+ctx.on('app:ready', () => { ... });
 
 // 发出事件（按注册顺序依次 await 每个 handler）
 await ctx.emit('outbound:message', outMsg);
@@ -53,11 +53,11 @@ await ctx.emit('outbound:message', outMsg);
 | `plugin:unloaded` | `name` | 插件卸载 |
 | `plugins:changed` | — | 插件状态变更 |
 | `app:starting` | — | 应用启动中 |
-| `ready` | — | 应用启动完成 |
+| `app:ready` | — | 应用启动完成 |
 | `app:started` | — | 应用启动完成后，适合 CLI/TUI 接管终端 |
 | `app:stopping` | — | 应用停止中 |
 | `dispose` | — | 应用关闭 |
-| `restarting` | — | 应用即将重启 |
+| `app:restarting` | — | 应用即将重启 |
 
 ### 扩展自定义事件
 
