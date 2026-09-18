@@ -102,6 +102,33 @@
           }
         }
       }
+    },
+    {
+      "includes": ["packages/core/src/**"],
+      "assist": {
+        "actions": {
+          "source": {
+            "organizeImports": {
+              "level": "on",
+              "options": {
+                "groups": [
+                  ["../types/**", "./types/**"],
+                  ":BLANK_LINE:",
+                  ["../kernel/**", "./kernel/**"],
+                  ":BLANK_LINE:",
+                  ["../primitives/**", "./primitives/**"],
+                  ":BLANK_LINE:",
+                  ["../context/**", "./context/**"],
+                  ":BLANK_LINE:",
+                  ["../orchestration/**", "./orchestration/**"],
+                  ":BLANK_LINE:",
+                  ["./**"]
+                ]
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "javascript": {
