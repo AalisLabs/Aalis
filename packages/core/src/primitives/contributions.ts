@@ -1,3 +1,5 @@
+import type { ContributionPointMap } from '../types/contributions.js';
+
 /**
  * 贡献 spec 的内核契约：只要求一个 id。
  *
@@ -56,9 +58,11 @@ interface Registration {
  * 枚举经 `ctx.collect(point)`（驱动公开——任何插件都可拥有自己的贡献点）。
  * 完整注册表仅 App（组合根）与 Context 内部持有。
  *
- * 注册表本身只认 {@link ContributionSpec}（不透明数据面）；按贡献点键精化
- * spec 类型是 Context 门面的职责（经 types/contributions.ts 的
- * ContributionPointMap declaration merging）。
+ * 按贡献点键精化 spec 类型（经 types/contributions.ts 的 ContributionPointMap
+ * declaration merging）是**注册表自己的契约**，与 events / hooks 同构：谁定义
+ * 写入口，谁声明写入口的类型。门面只把 contextId / owner 钉上去，不再重述一遍键约束。
+ * 运行时仍只认 {@link ContributionSpec}（除 id 合法性外不看 spec 一眼），
+ * 精化纯在编译期——注册表"永不执行插件代码"不受影响。
  */
 export class ContributionRegistry {
   /** point → 全局键 → 注册项 */
@@ -71,19 +75,27 @@ export class ContributionRegistry {
    * 旧注册的 dispose 函数在替换后失效（不会误删新注册）。
    * @param owner 清理归属（Context 门面传入）；省略则不被拆卸自动清理，用返回的 dispose 自管。
    */
-  register(point: string, spec: ContributionSpec, contextId: string, owner?: symbol): () => void {
+  register<K extends string & keyof ContributionPointMap>(
+    point: K,
+    spec: ContributionPointMap[K] & ContributionSpec,
+    contextId: string,
+    owner?: symbol,
+  ): () => void {
+    // 窄化取 id：core 内 ContributionPointMap 是空接口，K 落到 never，`ContributionPointMap[K]`
+    // 连同交叉一起塌成 never，索引不出成员；交叉里的 ContributionSpec 仍保证 id 存在。
+    const { id } = spec as ContributionSpec;
     // 空 id 会静默同键碰撞；含 '/' 的局部 id 可构造出与他人 `${contextId}/${id}`
     // 相同的全局键（如 ctx 'a' + id 'b/c' 撞 ctx 'a/b' + id 'c'），打破
     // 「spec.id 侧无法顶替他人贡献」的保证——两者都必须在注册期拒绝。
-    if (!spec.id || spec.id.includes('/')) {
-      throw new TypeError(`贡献点 "${point}" 的 spec.id 必须非空且不含 '/'（得到 "${spec.id}"）`);
+    if (!id || id.includes('/')) {
+      throw new TypeError(`贡献点 "${point}" 的 spec.id 必须非空且不含 '/'（得到 "${id}"）`);
     }
     let byKey = this.points.get(point);
     if (!byKey) {
       byKey = new Map();
       this.points.set(point, byKey);
     }
-    const key = `${contextId}/${spec.id}`;
+    const key = `${contextId}/${id}`;
     const entry: Registration = { spec, contextId, owner };
     byKey.set(key, entry);
 
@@ -103,10 +115,17 @@ export class ContributionRegistry {
    * 不改写字段，故 class 实例 spec 的原型方法、getter 语义均完好保留
    * （注册表"永不执行插件代码"因此在枚举侧也成立）。
    */
-  collect(point: string): ReadonlyArray<ContributionHandle> {
+  collect<K extends string & keyof ContributionPointMap>(
+    point: K,
+  ): ReadonlyArray<ContributionHandle<ContributionPointMap[K] & ContributionSpec>> {
     const byKey = this.points.get(point);
     if (!byKey) return [];
-    return [...byKey.keys()].sort().map(key => ({ key, spec: (byKey.get(key) as Registration).spec }));
+    const handles: ReadonlyArray<ContributionHandle> = [...byKey.keys()]
+      .sort()
+      .map(key => ({ key, spec: (byKey.get(key) as Registration).spec }));
+    // 内部登记只按不透明的 ContributionSpec 存放；按贡献点键精化到 ContributionPointMap[K]
+    // 是本方法的类型契约，运行时不做任何校验（spec 按引用原样交付）。
+    return handles as ReadonlyArray<ContributionHandle<ContributionPointMap[K] & ContributionSpec>>;
   }
 
   /**

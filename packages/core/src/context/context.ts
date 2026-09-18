@@ -611,9 +611,7 @@ export class Context {
   collect<K extends string & keyof ContributionPointMap>(
     point: K,
   ): ReadonlyArray<ContributionHandle<ContributionPointMap[K] & ContributionSpec>> {
-    return this._contributions.collect(point) as ReadonlyArray<
-      ContributionHandle<ContributionPointMap[K] & ContributionSpec>
-    >;
+    return this._contributions.collect(point);
   }
 
   // ---- 生命周期 ----
