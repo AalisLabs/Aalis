@@ -223,8 +223,9 @@ export class App {
    * @param module     插件模块
    * @param config     插件配置（覆盖文件配置）
    * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 module.name）
+   * @returns 同 `plugins.register`：false = 重名或未声明 reusable 的多实例，已记 warn
    */
-  async plugin(module: PluginModule, config?: Record<string, unknown>, instanceId?: string): Promise<void> {
+  async plugin(module: PluginModule, config?: Record<string, unknown>, instanceId?: string): Promise<boolean> {
     const id = instanceId ?? module.name;
     // 合并优先级: 宿主派生的默认配置 ← 配置文件 ← 代码传入，**逐层深合并**：
     // 同一路径上双方都是纯对象则递归，否则后者整体覆盖（数组与非纯对象是原子值）。
@@ -234,7 +235,7 @@ export class App {
     const defaults = this.pluginDefaults?.(module) ?? {};
     const fileConfig = this.ctx.config.getPluginConfig(id);
     const mergedConfig = mergeConfigLayers(mergeConfigLayers(defaults, fileConfig), config ?? {});
-    await this.plugins.register(module, mergedConfig, id);
+    return this.plugins.register(module, mergedConfig, id);
   }
 
   /**
@@ -329,7 +330,9 @@ export class App {
           this.logger.debug(`跳过非插件模块: ${desc.name}`);
           continue;
         }
-        await this.plugin(mod);
+        // 按 desc.name 查重只能挡住同名描述符；模块自报的 name 与 desc.name 不同且已注册时，
+        // register 会拒绝——那不算热加载，不能报进名单。
+        if (!(await this.plugin(mod))) continue;
         loaded.push(desc.name);
         this.logger.info(`热加载插件: ${desc.name}`);
       } catch (err) {
