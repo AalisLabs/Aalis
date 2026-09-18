@@ -224,20 +224,23 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
     expect(offenders, 'core 必须零依赖、环境无关——环境专有件由宿主 @aalis/runtime 经 AppOptions 注入').toEqual([]);
   });
 
-  it('三个扩展点在 core 内保持字面为空（条目一律由 -api 包增广注入）', () => {
-    // 不含 AalisEvents：core 自持 11 条基础设施事件，它从来不空（CLAUDE.md 那句话是错的）。
+  it('扩展点接口在 core 内只登记基础词汇层能完整表达的 core 自持条目', () => {
+    // 同一条规则覆盖四张表：事件的载荷是字符串，core 自持的内置事件全部登记（AalisEvents 从不为空）；
+    // services 的 core 自持条目 app / plugins 里，plugins 的契约引用编排层词汇（PluginEntry 等），
+    // 基础词汇文件不得向上引用，成对登不了就一个不登；hooks / contributions 没有 core 自持条目。
     const EMPTY_POINTS = ['ServiceTypeMap', 'HookContextMap', 'ContributionPointMap'];
     const offenders: string[] = [];
+    let eventsRegistered = false;
     for (const file of walk(SRC_DIR)) {
       const { nonEmptyInterfaces } = parse(file);
+      if (nonEmptyInterfaces.has('AalisEvents')) eventsRegistered = true;
       for (const name of EMPTY_POINTS) {
         if (nonEmptyInterfaces.has(name)) offenders.push(`${relToSrc(file)} → ${name} 有条目或继承了别的接口`);
       }
     }
-    expect(
-      offenders,
-      '扩展点在 core 内必须为空——即便是 core 自己 provide 的 app/plugins 也不例外：' +
-        '全部消费点都显式传了类型参数，写进去买不到任何东西，却要拿洁癖去换',
-    ).toEqual([]);
+    expect(offenders, 'services / hooks / contributions 的扩展点在 core 内必须为空——条目由 -api 包增广注入').toEqual(
+      [],
+    );
+    expect(eventsRegistered, 'AalisEvents 必须登记 core 自持的内置事件').toBe(true);
   });
 });

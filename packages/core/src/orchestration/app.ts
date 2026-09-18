@@ -284,10 +284,6 @@ export class App {
         this.logger.warn(`多实例配置 "${configKey}" 对应的模块 "${moduleName}" 未找到，跳过`);
         continue;
       }
-      if (!mod.reusable) {
-        this.logger.warn(`插件 "${moduleName}" 未声明 reusable，跳过多实例 "${configKey}"`);
-        continue;
-      }
       try {
         await this.plugin(mod, undefined, configKey);
       } catch (err) {
