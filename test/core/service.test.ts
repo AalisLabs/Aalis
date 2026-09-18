@@ -4,16 +4,16 @@ import { ServiceContainer } from '../../packages/core/src/index.js';
 describe('ServiceContainer', () => {
   it('注册并查询单个服务', () => {
     const c = new ServiceContainer();
-    c.register('llm', { name: 'openai' }, 0, 'plugin-llm-openai');
-    const svc = c.get<{ name: string }>('llm');
+    c.register('__t:llm', { name: 'openai' }, 0, 'plugin-llm-openai');
+    const svc = c.get<{ name: string }>('__t:llm');
     expect(svc?.name).toBe('openai');
   });
 
   it('getAll 返回所有提供者', () => {
     const c = new ServiceContainer();
-    c.register('llm', { name: 'openai' }, 0, 'plugin-llm-openai');
-    c.register('llm', { name: 'deepseek' }, 0, 'plugin-llm-deepseek');
-    const all = c.getAll('llm');
+    c.register('__t:llm', { name: 'openai' }, 0, 'plugin-llm-openai');
+    c.register('__t:llm', { name: 'deepseek' }, 0, 'plugin-llm-deepseek');
+    const all = c.getAll('__t:llm');
     expect(all).toHaveLength(2);
   });
 
@@ -34,16 +34,16 @@ describe('ServiceContainer', () => {
     const c = new ServiceContainer();
     const x = Symbol('plug-x');
     const y = Symbol('plug-y');
-    c.register('llm', { v: 1 }, 0, 'plug-x/m1', undefined, x);
-    c.register('llm', { v: 2 }, 0, 'plug-x/m2', undefined, x);
-    c.register('llm', { v: 3 }, 0, 'plug-y', undefined, y);
-    c.register('llm', { v: 4 }, 0, 'elsewhere/m3', undefined, x); // 不带 plug-x 前缀但同 owner：也要被清
-    expect(c.hasByContext('llm', 'plug-x')).toBe(true);
-    expect(c.hasByContext('llm', 'plug-y')).toBe(true);
-    expect(c.hasByContext('llm', 'plug-z')).toBe(false);
+    c.register('__t:llm', { v: 1 }, 0, 'plug-x/m1', undefined, x);
+    c.register('__t:llm', { v: 2 }, 0, 'plug-x/m2', undefined, x);
+    c.register('__t:llm', { v: 3 }, 0, 'plug-y', undefined, y);
+    c.register('__t:llm', { v: 4 }, 0, 'elsewhere/m3', undefined, x); // 不带 plug-x 前缀但同 owner：也要被清
+    expect(c.hasByContext('__t:llm', 'plug-x')).toBe(true);
+    expect(c.hasByContext('__t:llm', 'plug-y')).toBe(true);
+    expect(c.hasByContext('__t:llm', 'plug-z')).toBe(false);
     c.unregisterByOwner(x);
-    expect(c.getAll('llm')).toHaveLength(1);
-    expect(c.get<{ v: number }>('llm')?.v).toBe(3);
+    expect(c.getAll('__t:llm')).toHaveLength(1);
+    expect(c.get<{ v: number }>('__t:llm')?.v).toBe(3);
   });
 
   it('同 contextId 不同 owner：清一个不动另一个（同名 Context 互不误清）', () => {
@@ -68,9 +68,9 @@ describe('ServiceContainer', () => {
 
   it('多提供者按 priority + 注册顺序解析（偏好之外）', () => {
     const c = new ServiceContainer();
-    c.register('llm', { name: 'low' }, 0, 'p1');
-    c.register('llm', { name: 'high' }, 50, 'p2');
-    expect(c.get<{ name: string }>('llm')?.name).toBe('high');
+    c.register('__t:llm', { name: 'low' }, 0, 'p1');
+    c.register('__t:llm', { name: 'high' }, 50, 'p2');
+    expect(c.get<{ name: string }>('__t:llm')?.name).toBe('high');
   });
 });
 
@@ -78,21 +78,21 @@ describe('ServiceContainer unregisterByOwner', () => {
   it('同一 owner 在同一服务名下相邻的多条登记全部清掉', () => {
     const c = new ServiceContainer();
     const a = Symbol('a');
-    c.register('llm', { v: 1 }, 0, 'plugin-a', undefined, a);
-    c.register('llm', { v: 2 }, 0, 'plugin-a/sub', undefined, a);
-    c.register('llm', { v: 3 }, 0, 'plugin-b', undefined, Symbol('b'));
-    expect(c.unregisterByOwner(a)).toEqual(['llm']);
-    expect(c.getAll('llm').map(e => e.instance)).toEqual([{ v: 3 }]);
+    c.register('__t:llm', { v: 1 }, 0, 'plugin-a', undefined, a);
+    c.register('__t:llm', { v: 2 }, 0, 'plugin-a/sub', undefined, a);
+    c.register('__t:llm', { v: 3 }, 0, 'plugin-b', undefined, Symbol('b'));
+    expect(c.unregisterByOwner(a)).toEqual(['__t:llm']);
+    expect(c.getAll('__t:llm').map(e => e.instance)).toEqual([{ v: 3 }]);
   });
 });
 
 describe('ServiceContainer 枚举口', () => {
   it('getEntries 返回快照：改动返回值不影响容器', () => {
     const c = new ServiceContainer();
-    c.register('llm', { v: 1 }, 0, 'plugin-a');
-    const entries = c.getEntries('llm');
+    c.register('__t:llm', { v: 1 }, 0, 'plugin-a');
+    const entries = c.getEntries('__t:llm');
     entries.length = 0;
-    expect(c.getEntries('llm')).toHaveLength(1);
-    expect(c.get('llm')).toEqual({ v: 1 });
+    expect(c.getEntries('__t:llm')).toHaveLength(1);
+    expect(c.get('__t:llm')).toEqual({ v: 1 });
   });
 });
