@@ -123,7 +123,7 @@ export function apply(ctx: Context): void {
 **注入平台访问规则**（OneBot 的范式，`plugin-tool-onebot/src/index.ts`）：
 
 ```ts
-ctx.on('ready', () => {
+ctx.on('app:ready', () => {
   const history = ctx.getService<SessionHistoryService>('session-history');
   if (!history?.registerAccessChecker) {
     ctx.logger.debug('session-history 不可用，跳过规则注册');

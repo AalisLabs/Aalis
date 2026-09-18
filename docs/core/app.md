@@ -55,17 +55,19 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 ### `app.start()`
 
 1. 发出 `app:starting` 事件
-2. 发出 `ready` 事件（sticky）
-3. 监听配置外部变更（`ctx.config.watch`；provider 不支持 watch 时为 no-op）
-4. 发出 `app:started` 事件（sticky）
+2. 发出 `app:ready` 事件（sticky）
+3. 发出 `app:started` 事件（sticky）
+
+每一步都等前一个事件的监听器全部返回后才推进。配置外部变更的热重载编排属宿主政策，由宿主自行 `app.ctx.config.watch(cb)` 接管，`start()` 不做。
 
 ### `app.stop()`
 
 1. `ctx.config.unwatch()` 停止监听配置变更
-2. 发出 `app:stopping` 事件（通知用；清理一律走 `ctx.onDispose`）
-3. `plugins.stopAll()`：按拓扑逆序 `disposeAsync` 所有 active 插件（消费者先关、提供者后关，**逐项等待**其 `ctx.onDispose` 的异步清理完成——落盘/关连接真正结束才轮到下一个）
-4. 清空 sticky 缓存（`ready` / `app:started`）
-5. `disposeAsync` 根 Context（同样等待异步清理）
+2. 发出 `app:stopping` 事件（知会用；清理一律走 `ctx.onDispose`）
+3. `plugins.idle()`：等在飞的 recompute 排干，否则下一步的 shutdown 请求会被排队、拓扑逆序落空
+4. `plugins.stopAll()`：按拓扑逆序 `disposeAsync` 所有 active 插件（消费者先关、提供者后关，**逐项等待**其 `ctx.onDispose` 的异步清理完成——落盘/关连接真正结束才轮到下一个）
+5. 清空 sticky 缓存（`app:ready` / `app:started`）
+6. `disposeAsync` 根 Context（同样等待异步清理）
 
 单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 控制（默认 5000ms；0=不设限）：超时放弃该项、继续后续清理并 warn 点名，防网络类关闭卡死停机。
 
@@ -90,7 +92,7 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 
 ### `app.restart()`
 
-委托给注入的 `restartStrategy`：清空 sticky 缓存 → 发出 `restarting` 事件 → 调用
+委托给注入的 `restartStrategy`：清空 sticky 缓存 → 发出 `app:restarting` 事件 → 调用
 `strategy.restart({ stop })`（stop / restart 时序由策略决定）。**未注入 `restartStrategy` 时抛错**，
 自身不保存任何数据、也不直接 spawn 进程。
 

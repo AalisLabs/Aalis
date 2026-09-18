@@ -45,6 +45,17 @@ recompute 里下一个插件的激活，监听器里 `await plugins.idle()` 则�
 不能再假设「我返回了状态机才继续」，要看落定后的状态请 `await plugins.idle()`；监听器的异步尾巴可能在 `plugins.idle()` /
 `app.stop()` 返回之后才跑完。`packages/` 下没有 `plugin:loaded` 的监听点。
 
+### 屏障事件统一 `app:` 前缀：`ready` → `app:ready`，`restarting` → `app:restarting`（@aalis/core）
+
+五条屏障事件此前三条带 `app:` 前缀、两条不带，节的归属要靠一张手工名单；现在「屏障 ≡ `app:*`」是纯语法判据，
+架构测试直接按前缀判节，并对账 `AalisEvents` 声明的 `app:*` 集合与 `App` 实际发出的集合。`app:ready` 与 `app:started`
+仍是两个相位（`start()` 串行 await，前者的监听器全部完成后才发后者），只改名不合并。
+
+**迁移**：`ctx.on('ready', …)` → `ctx.on('app:ready', …)`，`ctx.on('restarting', …)` → `ctx.on('app:restarting', …)`；
+旧键已从 `AalisEvents` 删除，旧写法编译期报错，不会静默失效。第一方跟改的包（发布时抬 core 下限至 `>=0.14.0`）：
+plugin-adapter-onebot / plugin-flow-control / plugin-persona / plugin-skills / plugin-tool-onebot / plugin-webui-server。
+WebUI 的 WS 报文 `type: 'restarting'` 是前端协议，与 core 事件名无关，不跟改。
+
 ## 2026-09-17（core 0.13.0 minor；patch：runtime 0.12.4 / plugin-authority 0.11.5 / plugin-cli 0.10.3 / plugin-mcp-client 0.10.2 / plugin-media 0.13.3 / plugin-package-manager 0.5.3 / plugin-webui-server 0.11.9）
 
 **升级**：core 走了次版本。脚手架生成的项目里 `@aalis/core` 是 caret 区间（`^0.12.x` 不含 0.13.0），而本批 runtime / plugin-cli / plugin-media / plugin-package-manager 用到了 `saveConfig()` / `config.save()` 的 Promise 返回值、peer 下限抬到 `>=0.13.0`——直接 `npm update` 会 ERESOLVE。请显式升级：`npm install @aalis/core@latest @aalis/runtime@latest`，再 `npm update`。不要用 `--legacy-peer-deps` 绕过：那会装出新 runtime 配旧 core 的组合，启动时即 TypeError。

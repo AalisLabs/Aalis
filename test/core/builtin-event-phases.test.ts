@@ -5,7 +5,7 @@ import { App, type PluginModule } from '../../packages/core/src/index.js';
 // 内置事件的两节（见 types/events.ts 的「屏障 / 通知」JSDoc）的可观测行为：
 //   - 通知（plugin:* / plugins:changed / service:*）：发射方不等监听器——慢监听器不挡状态机推进，
 //     监听器里 await plugins.idle() 不死锁。
-//   - 屏障（app:* / ready）：发射方等监听器全部返回后才推进下一步。
+//   - 屏障（app:*）：发射方等监听器全部返回后才推进下一步。
 // 调用形式由 architecture.test.ts 静态守，这里守行为。
 // ════════════════════════════════════════════════════════════
 
@@ -67,7 +67,7 @@ describe('内置事件：屏障节等监听器', () => {
       order.push(tag);
     };
     app.ctx.on('app:starting', slow('starting'));
-    app.ctx.on('ready', slow('ready'));
+    app.ctx.on('app:ready', slow('ready'));
     app.ctx.on('app:started', () => void order.push('started'));
 
     await app.start();

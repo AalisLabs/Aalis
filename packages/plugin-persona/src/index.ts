@@ -598,7 +598,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   ctx.provide('persona', service);
 
   // 启动时一次性预扫所有 personas → cache（用于 listModels / 动态切换）+ 启动 watch
-  ctx.on('ready', async () => {
+  ctx.on('app:ready', async () => {
     try {
       const known = await scanAll(service);
       // 删除 cache 里那些已不存在的

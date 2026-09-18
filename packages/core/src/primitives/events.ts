@@ -46,7 +46,7 @@ export class EventBus {
    * 在下一个微任务里用缓存参数补发回调（异步，与 emit 的投递语义一致）。
    * 用于"应用生命周期里只发一次的里程碑事件"，
    * 让被热重载的插件在 reactivate 后仍能拿到启动通知。
-   * 当前标记为 sticky 的事件：'ready'、'app:started'。
+   * 当前标记为 sticky 的事件：'app:ready'、'app:started'。
    *
    * - 注册：`markSticky(event)` 由 App 在构造时调用
    * - 清除：`clearSticky(event)` 由 App.restart()/stop() 在复用实例时调用，

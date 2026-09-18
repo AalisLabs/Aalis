@@ -183,7 +183,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
 **reply 字段回退是尽力而为。** 当模型用错字段名时，会按别名表 `['response','reply','content','answer','text','msg']` 回退；或者在只有单个字符串字段时直接取它。没有 outputFormat 时，如果内容以 `{` 开头，也会尝试解包同类字段。这是容错行为，不是契约保证。
 
-**角色卡加载是 cache-only + 启动预扫 + watch。** `loadCard` 只查缓存，缓存由 `ready` 事件里的 `scanAll` 预填，并由 storage 的 `watch` 做热更新。新增的卡文件在扫描或 watch 触发前不可见；当 `storage.watch` 不可用时（`watch?.` 为空），只有重启才会刷新。
+**角色卡加载是 cache-only + 启动预扫 + watch。** `loadCard` 只查缓存，缓存由 `app:ready` 事件里的 `scanAll` 预填，并由 storage 的 `watch` 做热更新。新增的卡文件在扫描或 watch 触发前不可见；当 `storage.watch` 不可用时（`watch?.` 为空），只有重启才会刷新。
 
 **YAML 解析失败会点名告警，但不会阻止启动。** `tryLoadCardFromUri` 把「读不到文件」与「读到了但解析不出对象」分开：前者是候选路径探测的正常结果（静默），后者 warn 出 uri 与原因后跳过该卡。顶层不是对象（标量/数组）的卡按解析失败处理，不再被当成全空卡加载。主角色卡解析失败时回退内置 default，日志说的是「存在但解析失败」而非「未找到」。
 

@@ -26,7 +26,7 @@ runtime 不加载它；打包产物由 `@aalis/plugin-webui-server` 托管。
 ## 工作方式
 
 1. `vite build` 产出 `dist/index.html` 及静态资源
-2. webui-server 在 `ready` 时由 `client-discovery.ts` 扫描：`package.json` 标了
+2. webui-server 在 `app:ready` 时由 `client-discovery.ts` 扫描：`package.json` 标了
    `aalis.client: true` 且存在 `dist/index.html` 的包即为前端候选（不认任何具体包名）
 3. webui-server 把每个候选注册成一条 `webui-client` 服务 provider（`getClientDir()`）
 4. 活跃前端 = `webui-client` 的服务解析结果（`servicePreferences['webui-client']` 偏好 >
