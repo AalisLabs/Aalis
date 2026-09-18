@@ -19,6 +19,7 @@ interface ServiceEntry {
   priority: number;   // 优先级（越高越优先）
   contextId: string;  // 注册者 Context ID
   label?: string;     // 可选展示标签（如 "OpenAI / gpt-4o"）
+  owner?: symbol;     // 清理归属（@internal）；getAll 的 ServiceView 投影不含它
 }
 ```
 

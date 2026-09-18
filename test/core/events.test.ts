@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { EventBus } from '../../packages/core/src/index.js';
+import { App, EventBus } from '../../packages/core/src/index.js';
 
 describe('EventBus', () => {
   it('on/emit 按注册顺序串行调用', async () => {
@@ -58,6 +58,17 @@ describe('EventBus per-handler 隔离（#8.1）', () => {
     expect(reported.map(([e]) => e)).toEqual(['plugin:loaded', 'plugin:loaded']);
     expect((reported[0][1] as Error).message).toBe('boom-a');
     expect((reported[1][1] as Error).message).toBe('boom-b');
+  });
+
+  it('经 Context 门面注册的监听器抛错，上报的注册者身份就是 ctx.id', async () => {
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const who: Array<string | undefined> = [];
+    app.events.onHandlerError = (_event, _err, contextId) => who.push(contextId);
+    app.ctx.fork('plugin-x').on('plugin:loaded', () => {
+      throw new Error('x');
+    });
+    await app.ctx.emit('plugin:loaded', 'p');
+    expect(who).toEqual(['plugin-x']);
   });
 
   it('onHandlerError 点名注册者：经门面注册的报 ctx.id，无 owner 的裸登记报 undefined', async () => {

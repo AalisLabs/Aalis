@@ -60,7 +60,8 @@ interface ContributionEntry {
  *
  * 按贡献点键精化 spec 类型（经 types/contributions.ts 的 ContributionPointMap
  * declaration merging）是**注册表自己的契约**，与 events / hooks 同构：谁定义
- * 写入口，谁声明写入口的类型。门面只把 contextId / owner 钉上去，不再重述一遍键约束。
+ * 写入口，谁声明写入口的类型。于是绕开门面、直接持有注册表（包根导出、app.contributions）
+ * 的写入也受同一约束；门面为保住推断仍自带同形签名。
  * 运行时仍只认 {@link ContributionSpec}（除 id 合法性外不看 spec 一眼），
  * 精化纯在编译期——注册表"永不执行插件代码"不受影响。
  */
