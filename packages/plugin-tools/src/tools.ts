@@ -42,13 +42,14 @@ export class ToolRegistry implements ToolService {
     if (this.tools.has(name)) {
       this.logger.warn(`工具 "${name}" 已存在，将被覆盖 (来自 ${contextId})`);
     }
-    this.tools.set(name, { ...tool, pluginName: contextId });
+    const entry: RegisteredTool = { ...tool, pluginName: contextId };
+    this.tools.set(name, entry);
     this.logger.debug(`注册工具: ${name} (来自 ${contextId})`);
+    // 退订按条目引用比对：同名重注册后，旧退订闭包不得误删新登记（按 name + contextId 比对会）
     return () => {
-      if (this.tools.get(name)?.pluginName === contextId) {
-        this.tools.delete(name);
-        this.logger.debug(`注销工具: ${name}`);
-      }
+      if (this.tools.get(name) !== entry) return;
+      this.tools.delete(name);
+      this.logger.debug(`注销工具: ${name}`);
     };
   }
 
@@ -117,10 +118,9 @@ export class ToolRegistry implements ToolService {
     this._groups.set(group.name, info);
     this.logger.debug(`注册工具分组: ${group.name} (来自 ${contextId})`);
     return () => {
-      if (this._groups.get(group.name)?.pluginName === contextId) {
-        this._groups.delete(group.name);
-        this.logger.debug(`注销工具分组: ${group.name}`);
-      }
+      if (this._groups.get(group.name) !== info) return;
+      this._groups.delete(group.name);
+      this.logger.debug(`注销工具分组: ${group.name}`);
     };
   }
 
