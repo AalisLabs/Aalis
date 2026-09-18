@@ -57,9 +57,7 @@ export async function retireEntry(
   }
   if (entry.context === ctx) entry.context = undefined;
   if (opts?.emitUnloaded !== false) {
-    deps.rootCtx.emit('plugin:unloaded', entry.instanceId).catch(err => {
-      deps.logger.warn(`emit plugin:unloaded 失败 (${entry.instanceId}): ${err}`);
-    });
+    deps.rootCtx.emitQuietly('plugin:unloaded', entry.instanceId);
   }
 }
 

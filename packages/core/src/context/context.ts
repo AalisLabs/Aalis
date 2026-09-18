@@ -79,6 +79,7 @@ export class Context {
    * 清理归属：本 Context 本次激活的身份，每次 fork 新鲜。四原语注册时带上它，拆卸按它清。
    * 与 `id`（逻辑身份：贡献键、排序、模型引用、偏好、显示）分开——同名 Context 互不误清，
    * 拆卸在飞时同名新激活的注册也不会被迟到的清理误删。
+   * symbol 的 description 就是 `id`：EventBus 上报监听器错误时据此点名注册者，不是调试标签。
    */
   private readonly _owner: symbol;
   /**
@@ -237,10 +238,11 @@ export class Context {
   }
 
   /**
-   * 发 core 自己的内置事件：不等监听器、失败只记一笔。emit 由实现保证永不拒绝，这里的兜底
+   * @internal 发 core 自己的内置事件：不等监听器、失败只记一笔。emit 由实现保证永不拒绝，这里的兜底
    * 只为宿主注入自建 EventBus 的情形；上报经 reportQuietly，logger 自身抛错不再逃逸。
+   * Context 与编排层发内置事件的统一出口，不是插件 API（插件用 `emit`）。
    */
-  private emitQuietly<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): void {
+  emitQuietly<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): void {
     this._events.emit(event, ...args).catch(err => reportQuietly(() => this.logger.warn(`emit ${event} 失败:`, err)));
   }
 

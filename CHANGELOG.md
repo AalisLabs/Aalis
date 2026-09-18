@@ -13,8 +13,10 @@
 ### 四原语注册表统一形状（@aalis/core）
 
 四个注册表（`EventBus` / `HookRegistry` / `ServiceContainer` / `ContributionRegistry`）此前各写各的，现统一为：
-注册方法 `(键, 载荷, contextId, owner?)` 返回退订闭包；注册与读取动词按各自的扩展点接口约束键（`keyof AalisEvents` /
-`HookContextMap` / `ServiceTypeMap` / `ContributionPointMap`）；`contextId` 一律必填。具体变化：
+注册方法返回退订闭包；hooks / services / contributions 三家的形状是 `(键, 载荷, contextId, owner?)` 且 `contextId` 必填
+（原先两家默认 `'root'`），events 保持 `(event, handler, owner?)`、注册者身份由 owner 派生；键按各自的扩展点接口约束
+（`keyof AalisEvents` / `HookContextMap` / `ContributionPointMap`），services 例外——服务名保持开放（动态服务名是既定逃生舱），
+约束落在载荷 `ServiceOf<K>` 与 `get` / `getAll` 的按键重载上。具体变化：
 
 - `ServiceContainer.register(name, instance, contextId, owner?, options?)`：`priority` / `label` 收进 `options`；返回退订闭包
   （闭包返回这次是否真摘掉了条目），`unregisterEntry(name, entry)` 删除；`instance` 按 `ServiceTypeMap` 约束，`get` / `getAll`
@@ -26,8 +28,9 @@
 **迁移**：经 `ctx.provide` / `ctx.middleware` / `ctx.contribute` / `ctx.on` 门面的代码不受影响。直接持有注册表
 （`app.services` / `app.hooks` / `app.contributions` / `ctx.serviceContainer`，或自建 `new ServiceContainer()`）的代码：
 `register` 的返回值由 `ServiceEntry` 改为退订闭包，按引用删除改为调用该闭包；位置参数 `priority` / `label` 改写进
-`options`；补上 `contextId`；原先能编译的错误实现与错误贡献点名会开始报错，按契约修正或改用未登记的名字（落到 `unknown`，
-行为同旧）。仓内零命中。
+`options`；补上 `contextId`。原先能编译的错误实现会开始报错：services 的未登记名仍落到 `unknown`、行为同旧，已登记名按契约
+修正实现；contributions 的贡献点名必须已 declaration-merge 进 `ContributionPointMap`（0.8.0 起门面就是这个要求，现在注册表
+这条旁路也关上了）。`packages/` 下零命中；`test/core/service.test.ts` 一处夹具因此改用合成名 `__t:llm`。
 
 ## 2026-09-17（core 0.13.0 minor；patch：runtime 0.12.4 / plugin-authority 0.11.5 / plugin-cli 0.10.3 / plugin-mcp-client 0.10.2 / plugin-media 0.13.3 / plugin-package-manager 0.5.3 / plugin-webui-server 0.11.9）
 

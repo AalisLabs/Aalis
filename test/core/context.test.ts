@@ -462,14 +462,14 @@ describe('Context.disposeAsync / dispose 同步不变量', () => {
     root.on('service:unregistered', name => {
       seen.push(name);
     });
-    const off = root.fork('plugin-a').provide('__t:svc' as never, { v: 1 } as never);
+    const off = root.fork('plugin-a').provide('__t:svc', { v: 1 });
     off();
     off();
     await new Promise(r => setTimeout(r, 0));
     expect(seen).toEqual(['__t:svc']);
 
     const child = root.fork('plugin-b');
-    const offB = child.provide('__t:svc2' as never, { v: 2 } as never);
+    const offB = child.provide('__t:svc2', { v: 2 });
     await child.disposeAsync(); // beforeCleanup 的 unregisterByOwner 已摘掉条目并广播过一次
     offB();
     await new Promise(r => setTimeout(r, 0));
