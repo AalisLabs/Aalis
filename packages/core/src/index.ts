@@ -1,5 +1,5 @@
 // ============================================================
-// @aalis/core — 包根导出，按内部分层分节（见 docs/design/core-contract.md 第八节）：
+// index.ts — @aalis/core 包根导出，按内部分层分节（见 docs/design/core-contract.md 第八节）：
 //   自下而上：类型词汇与扩展点 → 四原语注册表 → Context 基础 → 编排层（含宿主 SPI）。
 // 资源内核（kernel/）不导出。领域词汇（消息、工具、LLM 等）一律在各 @aalis/api-* 包，
 // 经扩展点接口的 declaration merging 接入，core 不认识任何业务类型。

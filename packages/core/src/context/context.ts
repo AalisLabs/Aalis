@@ -169,7 +169,7 @@ export class Context {
     );
   }
 
-  // ---- 子系统访问（供高级插件检查/包装用） ----
+  // ----- 子系统访问（供高级插件检查/包装用） -----
 
   /**
    * 底层服务容器实例。
@@ -210,7 +210,7 @@ export class Context {
     return child;
   }
 
-  // ---- 事件 ----
+  // ----- 事件 -----
 
   on<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<AalisEvents[E]>): () => void {
     if (this._lifecycle.disposed) {
@@ -251,7 +251,7 @@ export class Context {
     this._events.emit(event, ...args).catch(err => reportQuietly(() => this.logger.warn(`emit ${event} 失败:`, err)));
   }
 
-  // ---- 服务 (IoC) ----
+  // ----- 服务 (IoC) -----
 
   /**
    * 注册服务，返回 dispose 函数用于精确卸载该服务
@@ -496,7 +496,7 @@ export class Context {
     return dispose;
   }
 
-  // ---- 中间件/钩子 ----
+  // ----- 中间件/钩子 -----
 
   /**
    * 注册命名生命周期事件 handler（中间件管道）
@@ -546,7 +546,7 @@ export class Context {
     return this._hooks.run(hook, data, defaultAction, opts);
   }
 
-  // ---- 贡献点 ----
+  // ----- 贡献点 -----
 
   /**
    * 向贡献点交付一份 spec，返回 dispose 函数（并挂 dispose 链，卸载自动清扫）。
@@ -608,7 +608,7 @@ export class Context {
     return this._contributions.collect(point);
   }
 
-  // ---- 生命周期 ----
+  // ----- 生命周期 -----
 
   get disposed(): boolean {
     return this._lifecycle.disposed;
