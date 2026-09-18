@@ -37,15 +37,15 @@ export class ToolRegistry implements ToolService {
 
   // ---- 注册 / 注销 ----
 
-  register(tool: Omit<RegisteredTool, 'pluginName'>, pluginName: string): () => void {
+  register(tool: Omit<RegisteredTool, 'pluginName'>, contextId: string): () => void {
     const name = tool.definition.function.name;
     if (this.tools.has(name)) {
-      this.logger.warn(`工具 "${name}" 已存在，将被覆盖 (来自 ${pluginName})`);
+      this.logger.warn(`工具 "${name}" 已存在，将被覆盖 (来自 ${contextId})`);
     }
-    this.tools.set(name, { ...tool, pluginName });
-    this.logger.debug(`注册工具: ${name} (来自 ${pluginName})`);
+    this.tools.set(name, { ...tool, pluginName: contextId });
+    this.logger.debug(`注册工具: ${name} (来自 ${contextId})`);
     return () => {
-      if (this.tools.get(name)?.pluginName === pluginName) {
+      if (this.tools.get(name)?.pluginName === contextId) {
         this.tools.delete(name);
         this.logger.debug(`注销工具: ${name}`);
       }
@@ -112,12 +112,12 @@ export class ToolRegistry implements ToolService {
     });
   }
 
-  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, pluginName: string): () => void {
-    const info: ToolGroupInfo = { ...group, pluginName };
+  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void {
+    const info: ToolGroupInfo = { ...group, pluginName: contextId };
     this._groups.set(group.name, info);
-    this.logger.debug(`注册工具分组: ${group.name} (来自 ${pluginName})`);
+    this.logger.debug(`注册工具分组: ${group.name} (来自 ${contextId})`);
     return () => {
-      if (this._groups.get(group.name)?.pluginName === pluginName) {
+      if (this._groups.get(group.name)?.pluginName === contextId) {
         this._groups.delete(group.name);
         this.logger.debug(`注销工具分组: ${group.name}`);
       }
@@ -227,15 +227,15 @@ export class ToolRegistry implements ToolService {
     }
   }
 
-  unregisterByPlugin(pluginName: string): void {
+  unregisterByPlugin(contextId: string): void {
     for (const [name, tool] of this.tools) {
-      if (tool.pluginName === pluginName) {
+      if (tool.pluginName === contextId) {
         this.tools.delete(name);
-        this.logger.debug(`注销工具: ${name} (插件 ${pluginName} 卸载)`);
+        this.logger.debug(`注销工具: ${name} (Context ${contextId} 拆卸)`);
       }
     }
     for (const [name, group] of this._groups) {
-      if (group.pluginName === pluginName) {
+      if (group.pluginName === contextId) {
         this._groups.delete(name);
       }
     }

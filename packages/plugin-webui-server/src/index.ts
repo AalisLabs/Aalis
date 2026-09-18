@@ -1757,16 +1757,16 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       mountStaticDir(dir);
       ctx.logger.info(`前端已切换: ${dir}`);
     },
-    registerPage(page, pluginName) {
-      const list = registeredPages.get(pluginName) ?? [];
-      list.push({ ...page, pluginName });
-      registeredPages.set(pluginName, list);
+    registerPage(page, contextId) {
+      const list = registeredPages.get(contextId) ?? [];
+      list.push({ ...page, pluginName: contextId });
+      registeredPages.set(contextId, list);
       return () => {
-        const cur = registeredPages.get(pluginName);
+        const cur = registeredPages.get(contextId);
         if (!cur) return;
         const idx = cur.findIndex(p => p.key === page.key);
         if (idx >= 0) cur.splice(idx, 1);
-        if (cur.length === 0) registeredPages.delete(pluginName);
+        if (cur.length === 0) registeredPages.delete(contextId);
       };
     },
     getPages() {
@@ -1774,8 +1774,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       for (const list of registeredPages.values()) out.push(...list);
       return out;
     },
-    unregisterByPlugin(pluginName) {
-      registeredPages.delete(pluginName);
+    unregisterByPlugin(contextId) {
+      registeredPages.delete(contextId);
     },
   };
   ctx.provide('webui-server', webuiService);

@@ -9,6 +9,12 @@
  *
  * core 自身不需要知道每个服务内部的注册结构，只通过这个简单接口与服务沟通。
  *
+ * 钥匙是 `ctx.id`（逻辑身份），不是四原语用的清理归属 owner symbol，判据是**登记本在谁手里**：
+ * 四原语的登记本在 core 手里，owner 由 core 自己发、自己收，同名 Context 互不误清；枢纽服务的登记本
+ * 在服务自己手里，注册那一侧是插件作者亲手写的 `svc.register(x, ctx.id)`，清扫必须用同一把钥匙——
+ * owner 是 symbol，插件作者写不出、日志打不出、跨进程传不了。代价如实：同 id 的两个 Context 并存时
+ * 在枢纽层会互清；PluginManager 的查重闸与「旧 ctx 未清不重激活」闸让这种并存不出现在受支持的用法里。
+ *
  * @example
  * class ToolService implements DisposableService {
  *   private byPlugin = new Map<string, Set<string>>();
