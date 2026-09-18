@@ -117,10 +117,11 @@ export class EventBus {
   }
 
   /**
-   * @internal 整体移除某 ctx 归属的全部监听——Context 拆卸的注销段调用，
+   * 整体移除某 ctx 归属的全部监听——Context 拆卸的注销段调用，
    * 与 hooks/contributions 同点切断（半拆状态不外露：异步排空窗口内本插件
    * 的 handler 不得再响应事件）。链上残留的退订闭包迟到执行时靠 off 的
    * 身份卫保持无害。
+   * @internal
    */
   unregisterByOwner(owner: symbol): void {
     for (const [event, set] of this.handlers) {

@@ -64,11 +64,11 @@ export interface AalisEvents {
    *
    * 本事件用于**知会**（如 CLI 打印告别语、状态条切换），**不是清理通道**。
    *
-   * ⚠． 插件内部清理副作用（关连接、停计时器、flush 缓冲区、落盘等）一律用
-   *    `ctx.onDispose(cb)`：它覆盖 bounce / unload / updateConfig 等
-   *    全部拆卸路径，且异步清理会被编排层的 disposeAsync 等待完成。
-   *    本事件只在 app 全局停机时触发一次，用它做清理会在热重载路径上
-   *    造成资源泄漏与数据丢失。
+   * 插件内部清理副作用（关连接、停计时器、flush 缓冲区、落盘等）一律用
+   * `ctx.onDispose(cb)`：它覆盖 bounce / unload / updateConfig 等
+   * 全部拆卸路径，且异步清理会被编排层的 disposeAsync 等待完成。
+   * 本事件只在 app 全局停机时触发一次，用它做清理会在热重载路径上
+   * 造成资源泄漏与数据丢失。
    */
   'app:stopping': [];
 }
