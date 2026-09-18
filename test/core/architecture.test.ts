@@ -39,6 +39,18 @@ const ROOT_FILES = ['index.ts'];
 /** types/ 里下层不得引用的文件：编排层词汇，以及会把它们一并带出的 barrel；其余为基础词汇 */
 const UPPER_TYPES = new Set(['types/app.ts', 'types/plugin.ts', 'types/index.ts']);
 
+/** 一处 `.emit(` / `.emitQuietly(` 调用 */
+interface EmitCall {
+  method: 'emit' | 'emitQuietly';
+  /** 字面量事件名；不是字面量则为 null */
+  event: string | null;
+  /** 发射方在监听器之后才推进：`await x.emit()`，或 `x.emit().then()` 接续 */
+  sequenced: boolean;
+  /** 所在类方法名；不在方法体内为 undefined */
+  within?: string;
+  line: number;
+}
+
 interface Parsed {
   /** 全部字面量模块说明符（取 cooked 值，转义写法骗不过） */
   specifiers: string[];
@@ -48,15 +60,33 @@ interface Parsed {
   ambientModules: string[];
   /** 有内容的接口名：自带成员，或经 extends 继承成员 */
   nonEmptyInterfaces: Set<string>;
+  /** 全部事件发射调用（属性访问与 `['emit']` 元素访问两种写法） */
+  emits: EmitCall[];
 }
 
 const parsed = new Map<string, Parsed>();
 
+function emitMethod(callee: ts.LeftHandSideExpression): EmitCall['method'] | null {
+  const name = ts.isPropertyAccessExpression(callee)
+    ? callee.name.text
+    : ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)
+      ? callee.argumentExpression.text
+      : null;
+  return name === 'emit' || name === 'emitQuietly' ? name : null;
+}
+
 function parse(file: string): Parsed {
   const hit = parsed.get(file);
   if (hit) return hit;
-  const out: Parsed = { specifiers: [], computedImports: 0, ambientModules: [], nonEmptyInterfaces: new Set() };
+  const out: Parsed = {
+    specifiers: [],
+    computedImports: 0,
+    ambientModules: [],
+    nonEmptyInterfaces: new Set(),
+    emits: [],
+  };
   parsed.set(file, out);
+  const sf = ts.createSourceFile(file, readFileSync(file, 'utf-8'), ts.ScriptTarget.Latest, true);
   const visit = (node: ts.Node): void => {
     if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
       if (ts.isStringLiteralLike(node.moduleSpecifier)) out.specifiers.push(node.moduleSpecifier.text);
@@ -74,10 +104,26 @@ function parse(file: string): Parsed {
       out.ambientModules.push(node.name.text);
     } else if (ts.isInterfaceDeclaration(node)) {
       if (node.members.length > 0 || node.heritageClauses?.length) out.nonEmptyInterfaces.add(node.name.text);
+    } else if (ts.isCallExpression(node)) {
+      const method = emitMethod(node.expression);
+      if (method) {
+        const arg = node.arguments[0];
+        let scope: ts.Node | undefined = node.parent;
+        while (scope && !ts.isMethodDeclaration(scope)) scope = scope.parent;
+        out.emits.push({
+          method,
+          event: arg && ts.isStringLiteralLike(arg) ? arg.text : null,
+          sequenced:
+            ts.isAwaitExpression(node.parent) ||
+            (ts.isPropertyAccessExpression(node.parent) && node.parent.name.text === 'then'),
+          within: scope && ts.isIdentifier(scope.name) ? scope.name.text : undefined,
+          line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1,
+        });
+      }
     }
     ts.forEachChild(node, visit);
   };
-  visit(ts.createSourceFile(file, readFileSync(file, 'utf-8'), ts.ScriptTarget.Latest));
+  visit(sf);
   return out;
 }
 
@@ -242,5 +288,53 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
       [],
     );
     expect(eventsRegistered, 'AalisEvents 必须登记 core 自持的内置事件').toBe(true);
+  });
+});
+
+/**
+ * core 发内置事件只有两个出口，按 AalisEvents 分好的两节（见 types/events.ts）：屏障由 App 的生命周期方法
+ * `await ctx.emit()`（restart 里是 `.then()` 接续，同样在监听器之后才推进），通知一律 `ctx.emitQuietly()`。
+ *
+ * 守的是一类真死锁：通知全部发在同步段或 PluginManager 的 recompute flight / 挂起段内，段内等监听器
+ * 与 `plugins.idle()` 互等——`plugin:loaded` 此前正是 await，监听器里 `await plugins.idle()` 必挂。
+ *
+ * 判据是语法树里的**直接调用形式**，不做"这行在不在段内"的可达性分析：
+ *   1. 字面量事件名的 `.emit('x')`：x 是屏障事件、只出现在 orchestration/app.ts、且 await 或 .then 接续；
+ *   2. 事件名不是字面量的 `.emit(...)`：只许是 Context 门面自己的 emit / emitQuietly 方法体转发给总线——
+ *      门面文件不整体豁免，在 context.ts 别处写 `void this._events.emit('plugin:loaded', …)` 同样被抓；
+ *   3. `.emitQuietly('x')`：x 是字面量且不是屏障事件。
+ * 屏障名单与 app.ts 实际发出的集合必须相等：漏发、多发、名单漂移都红。
+ */
+describe('内置事件只有两个出口：屏障 await ctx.emit()，通知 ctx.emitQuietly()', () => {
+  const BARRIER = new Set(['app:starting', 'ready', 'app:started', 'restarting', 'app:stopping']);
+  const BARRIER_FILE = 'orchestration/app.ts';
+  const FACADE = 'context/context.ts';
+
+  it('每个发射点都落在两个出口之一，且屏障名单与 App 实际发出的一致', () => {
+    const offenders: string[] = [];
+    const emittedBarriers = new Set<string>();
+    for (const file of walk(SRC_DIR)) {
+      const rel = relToSrc(file);
+      for (const { method, event, sequenced, within, line } of parse(file).emits) {
+        const at = `${rel}:${line}`;
+        if (method === 'emitQuietly') {
+          if (event === null) offenders.push(`${at} emitQuietly 的事件名须是字面量`);
+          else if (BARRIER.has(event)) offenders.push(`${at} 用 emitQuietly 发了屏障事件 '${event}'`);
+        } else if (event === null) {
+          const facadeForward = rel === FACADE && (within === 'emit' || within === 'emitQuietly');
+          if (!facadeForward) offenders.push(`${at} 事件名不是字面量的 .emit( 只许是门面转发总线`);
+        } else if (!BARRIER.has(event)) {
+          offenders.push(`${at} 通知事件 '${event}' 须走 emitQuietly`);
+        } else if (rel !== BARRIER_FILE) {
+          offenders.push(`${at} 屏障事件 '${event}' 只由 App 的生命周期方法发`);
+        } else if (!sequenced) {
+          offenders.push(`${at} 屏障事件 '${event}' 的 emit 必须 await（或 .then 接续）`);
+        } else {
+          emittedBarriers.add(event);
+        }
+      }
+    }
+    expect(offenders, '事件归节见 types/events.ts 的两节 JSDoc；换节是行为契约变更，要进 CHANGELOG').toEqual([]);
+    expect(emittedBarriers, '屏障名单与 App 实际发出的集合不一致——请同步 types/events.ts 的两节').toEqual(BARRIER);
   });
 });

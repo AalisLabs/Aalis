@@ -241,9 +241,10 @@ export class Context {
   }
 
   /**
-   * @internal 发 core 自己的内置事件：不等监听器、失败只记一笔。emit 由实现保证永不拒绝，这里的兜底
-   * 只为宿主注入自建 EventBus 的情形；上报经 reportQuietly，logger 自身抛错不再逃逸。
-   * Context 与编排层发内置事件的统一出口，不是插件 API（插件用 `emit`）。
+   * @internal 发 core 自己的**通知型**内置事件（归节见 {@link AalisEvents}）：不等监听器、失败只记一笔。
+   * 屏障型由 `App` 的生命周期方法 `await emit()`——core 发内置事件只有这两个出口，本方法不是插件 API
+   * （插件用 `emit`）。emit 由实现保证永不拒绝，这里的兜底只为宿主注入自建 EventBus 的情形；
+   * 上报经 reportQuietly，logger 自身抛错不再逃逸。
    */
   emitQuietly<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): void {
     this._events.emit(event, ...args).catch(err => reportQuietly(() => this.logger.warn(`emit ${event} 失败:`, err)));
