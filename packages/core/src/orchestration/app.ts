@@ -294,7 +294,7 @@ export class App {
 
     // 引导期收敛保证的结构化落点：register 的 recompute 在有在飞 run 时排队早退
     // （见 plugin() JSDoc），此前「本方法返回即全部收敛」靠调用点 await 交错偶然
-    // 成立——ready / app:started 的发出时机依赖这条保证，必须等静置而非碰运气。
+    // 成立——app:ready / app:started 的发出时机依赖这条保证，必须等静置而非碰运气。
     // 引导路径不在任何 apply 内，无 idle 自等死锁面。
     await this.plugins.idle();
   }
