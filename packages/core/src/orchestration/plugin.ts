@@ -111,18 +111,12 @@ export class PluginManager {
     // 单飞/挂起/关机的取舍都在 recompute 内部处理（在飞期间排队，关机后跳过）。
     rootCtx.on('service:registered', name => {
       this.recompute({ type: 'service-up', service: name }).catch(err =>
-        reportQuietly(() =>
-          this.logger.error(`recompute(service-up:${name}) 报错: ${err instanceof Error ? err.message : String(err)}`),
-        ),
+        reportQuietly(() => this.logger.error(`recompute(service-up:${name}) 报错:`, err)),
       );
     });
     rootCtx.on('service:unregistered', name => {
       this.recompute({ type: 'service-down', service: name }).catch(err =>
-        reportQuietly(() =>
-          this.logger.error(
-            `recompute(service-down:${name}) 报错: ${err instanceof Error ? err.message : String(err)}`,
-          ),
-        ),
+        reportQuietly(() => this.logger.error(`recompute(service-down:${name}) 报错:`, err)),
       );
     });
   }
@@ -381,7 +375,7 @@ export class PluginManager {
         try {
           await ctx.disposeAsync(this.disposeTimeoutMs);
         } catch (err) {
-          this.logger.error(`插件 "${instanceId}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`);
+          this.logger.error(`插件 "${instanceId}" dispose 抛错:`, err);
         }
         if (entry.context === ctx) entry.context = undefined;
         this.rootCtx.emitQuietly('plugin:unloaded', instanceId);

@@ -36,10 +36,10 @@ export class Lifecycle {
   /** 收养尚未关闭的独立节点；每个节点只有一个父节点。 */
   adopt(child: Lifecycle): void {
     if (this.closing || child.closing || child.parent) {
-      throw new Error('Lifecycle: cannot adopt a closing or already owned node');
+      throw new Error('Lifecycle: 双方都不得处于关闭中，且子节点不得已有父节点');
     }
     for (let ancestor: Lifecycle | undefined = this; ancestor; ancestor = ancestor.parent) {
-      if (ancestor === child) throw new Error('Lifecycle: ownership must not form a cycle');
+      if (ancestor === child) throw new Error('Lifecycle: 父子归属不得成环');
     }
     this.children.add(child);
     child.parent = this;

@@ -266,12 +266,10 @@ export class App {
         try {
           await this.plugin(mod);
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          this.logger.error(`注册插件 "${mod.name}" 失败: ${message}`);
+          this.logger.error(`注册插件 "${mod.name}" 失败:`, err);
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.logger.error(`加载插件 "${desc.name}" 失败: ${message}`);
+        this.logger.error(`加载插件 "${desc.name}" 失败:`, err);
       }
     }
 
@@ -288,8 +286,7 @@ export class App {
       try {
         await this.plugin(mod, undefined, configKey);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.logger.error(`加载多实例插件 "${configKey}" 失败: ${message}`);
+        this.logger.error(`加载多实例插件 "${configKey}" 失败:`, err);
       }
     }
 
@@ -336,8 +333,7 @@ export class App {
         loaded.push(desc.name);
         this.logger.info(`热加载插件: ${desc.name}`);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.logger.error(`热加载插件 "${desc.name}" 失败: ${message}`);
+        this.logger.error(`热加载插件 "${desc.name}" 失败:`, err);
       }
     }
 
@@ -399,7 +395,7 @@ export class App {
     this.ctx
       .emit('app:restarting')
       .then(() => strategy.restart({ stop: () => this.stop(), rollback: opts?.rollback }))
-      .catch(err => reportQuietly(() => this.logger.warn(`restart 失败: ${err}`)));
+      .catch(err => reportQuietly(() => this.logger.error('restart 失败:', err)));
   }
 
   /**

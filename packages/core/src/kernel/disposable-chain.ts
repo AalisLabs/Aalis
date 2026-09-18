@@ -44,7 +44,7 @@ export class DisposableChain {
       try {
         this.settle(fn(), describe(label));
       } catch (err) {
-        this.report(`DisposableChain: post-dispose 执行失败${describe(label)}: ${err}`);
+        this.report(`DisposableChain: post-dispose 执行失败${describe(label)}:`, err);
       }
       return;
     }
