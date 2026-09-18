@@ -188,7 +188,8 @@ export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): 
     return;
   }
 
-  // 激活成败只由 apply/provides 校验决定。emit 放在 try 块外：旁观插件的
-  // 监听器出问题不能把刚激活成功的无辜插件打成 error 终态（归因错位）。
-  await rootCtx.emit('plugin:loaded', entry.instanceId);
+  // 激活成败只由 apply/provides 校验决定，旁观者的监听器不参与归因。不等监听器：本函数在
+  // recompute flight 内逐个 entry 调用，等会让一个旁观者的慢 handler 挡住下一个插件的激活，
+  // 监听器里 `await plugins.idle()` 更是互等死锁（idle 等 flight 排干，flight 等它返回）。
+  rootCtx.emitQuietly('plugin:loaded', entry.instanceId);
 }
