@@ -249,7 +249,7 @@ ctx.onDispose(() => {
 
 ```typescript
 ctx.onDispose(() => {
-  ctx.serviceContainer.unregister('mysvc');     // 已自动处理
+  offProvide();                                  // ctx.provide() 返回的退订闭包已自动处理
   offMiddleware();                               // ctx.middleware() 返回的 dispose 已自动处理
 });
 ```
