@@ -111,10 +111,11 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 
 ## 5. `AalisConfig`（配置 schema 业务字段）
 
-应用根配置的字段表。core 只声明**自身管理的字段**（`logLevel` / `logBufferSize` / `dataDir`...），
-业务字段由 plugin-*-api 通过 declaration merging 注入。
+应用根配置的字段表。core 只声明**自身管理的字段**（`name` / `logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`），
+业务字段由 `-api` 包通过 declaration merging 注入。
 
-**位置**：`packages/schema-config/src/index.ts`（`CORE_CONFIG_SCHEMA`）
+**位置**：`packages/core/src/context/config.ts`（`interface AalisConfig`）。表单描述 `CORE_CONFIG_SCHEMA` 在
+`packages/schema-config/src/index.ts`，那是宿主侧的渲染词汇，与本接口是两件事。
 
 **扩展者**：
 
@@ -167,14 +168,15 @@ export default class MyPlugin {
 
 ## 7. `PluginModule`
 
-插件模块的元数据接口（`apply` / `name` / `inject` / `services` 等）。
+插件模块的元数据接口（core 自持 `name` / `displayName` / `inject` / `provides` / `core` / `reusable` / `apply` 等）。
 仅供"插件类型自身"扩展使用，业务很少 augment 这个。
 
 **扩展者**：
 
-| api 包 | 注入的字段 |
+| 包 | 注入的字段 |
 |---|---|
-| `@aalis/api-webui` | webui 元数据（`webui?: {...}`） |
+| `@aalis/schema-config` | `configSchema`（插件配置表单 schema，默认值经 `defaultsFrom` 派生） |
+| `@aalis/api-webui` | `subsystem`（WebUI 分组）/ `extends`（对 core 扩展的声明，仅前端展示）/ `actions`（插件 RPC 动作表） |
 
 ---
 
