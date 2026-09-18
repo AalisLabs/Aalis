@@ -56,8 +56,10 @@ export class Context {
    */
   readonly devMode: boolean;
 
-  private _events: EventBus;
-  private _services: ServiceContainer;
+  /** 完整事件总线——仅 Context 内部（on / emit / emitQuietly / dispose / fork）使用。 */
+  private readonly _events: EventBus;
+  /** 完整服务容器——仅 Context 内部（provide / getService 系 / whenService / dispose / fork）使用；编排层经 `serviceContainer` 读。 */
+  private readonly _services: ServiceContainer;
   /** 完整钩子注册表——仅 Context 内部（middleware / runHook / dispose / fork）使用。 */
   private readonly _hooks: HookRegistry;
   /** 完整贡献点注册表——仅 Context 内部（contribute / collect / dispose / fork）使用。 */
@@ -76,7 +78,10 @@ export class Context {
   private static readonly CONTRIB_KEY_SEP = '\u0000';
   /** 活跃沙盒子上下文 id（useModule）——用于同名重复挂载时唯一化 childId。 */
   private readonly _moduleIds = new Set<string>();
-  /** @internal 本 ctx teardown 彻底收尾（含枢纽清扫）后要跑的回调；仅 useModule 用于释放模块名。 */
+  /**
+   * 本 ctx teardown 彻底收尾（含枢纽清扫）后要跑的回调；仅 useModule 用于释放模块名。
+   * @internal
+   */
   private _afterTeardown?: () => void;
   /**
    * 清理归属：本 Context 本次激活的身份，每次 fork 新鲜。四原语注册时带上它，拆卸按它清。
@@ -174,7 +179,7 @@ export class Context {
   /**
    * 底层服务容器实例。
    *
-   * ⚠️ **@internal** —— 仅供 host 级巡视代码（如 plugin-activation 检查 provides
+   * 仅供 host 级巡视代码（如 plugin-activation 检查 provides
    * 完整性）使用。
    *
    * **插件请勿直接使用**：
@@ -183,6 +188,7 @@ export class Context {
    * - 获取服务实例：用 `ctx.getService()` / `ctx.getAllServices()`
    * - 注册服务：用 `ctx.provide()`（会自动登记到清理链、带上清理归属）；直接 `register`
    *   的条目无 owner，不被拆卸自动清理，得用返回值自管
+   * @internal
    */
   get serviceContainer(): ServiceContainer {
     return this._services;
@@ -212,6 +218,10 @@ export class Context {
 
   // ----- 事件 -----
 
+  /**
+   * 监听事件，返回退订函数（挂清理链，拆卸时自动退订）。语义见 {@link EventBus.on}：
+   * sticky 事件在下一个微任务补发，handler 抛错按条隔离并经 App 的 onHandlerError 上报。
+   */
   on<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<AalisEvents[E]>): () => void {
     if (this._lifecycle.disposed) {
       this.logger.warn(`Context "${this.id}" 已 dispose，忽略 on("${event}")`);
@@ -237,15 +247,20 @@ export class Context {
     return dispose;
   }
 
+  /**
+   * 发出事件，按注册顺序依次 await 每个 handler，永不拒绝（语义见 {@link EventBus.emit}）。
+   * 插件发自定义事件与 App 发屏障事件都走这里；core 的通知型内置事件走 {@link emitQuietly}。
+   */
   emit<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): Promise<void> {
     return this._events.emit(event, ...args);
   }
 
   /**
-   * @internal 发 core 自己的**通知型**内置事件（归节见 {@link AalisEvents}）：不等监听器、失败只记一笔。
+   * 发 core 自己的**通知型**内置事件（归节见 {@link AalisEvents}）：不等监听器、失败只记一笔。
    * 屏障型由 `App` 的生命周期方法 `await emit()`——core 发内置事件只有这两个出口，本方法不是插件 API
    * （插件用 `emit`）。emit 由实现保证永不拒绝，这里的兜底只为宿主注入自建 EventBus 的情形；
    * 上报经 reportQuietly，logger 自身抛错不再逃逸。
+   * @internal
    */
   emitQuietly<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): void {
     this._events.emit(event, ...args).catch(err => reportQuietly(() => this.logger.warn(`emit ${event} 失败:`, err)));
@@ -610,6 +625,7 @@ export class Context {
 
   // ----- 生命周期 -----
 
+  /** 是否已开始关闭（`dispose` / `disposeAsync` 一经调用即为 true，早于清理链跑完）。 */
   get disposed(): boolean {
     return this._lifecycle.disposed;
   }
@@ -695,9 +711,9 @@ export class Context {
    *   updateConfig / softReload 级联 evict）
    * - 沙盒 / fork 子上下文同样适用
    *
-   * ⚠． 不要用 `ctx.on('app:stopping', ...)` 做资源清理——那只在 app 全局停机
-   *    时触发一次，**不会**在插件 bounce / hot reload 时触发，会造成旧连接、
-   *    旧定时器泄漏。全局停机不需要特别处理——`onDispose` 也会被触发。
+   * 不要用 `ctx.on('app:stopping', ...)` 做资源清理——那只在 app 全局停机
+   * 时触发一次，**不会**在插件 bounce / hot reload 时触发，会造成旧连接、
+   * 旧定时器泄漏。全局停机不需要特别处理——`onDispose` 也会被触发。
    *
    * @example
    * const conn = await connectExternal();
@@ -729,25 +745,30 @@ export class Context {
     return () => this._lifecycle.disposables.remove(entry);
   }
 
-  /** @internal 当前 disposable 链长度（诊断 / 测试用：检测 provide/whenService 的闭包是否如期自移除）。 */
+  /**
+   * 当前 disposable 链长度（诊断 / 测试用：检测 provide/whenService 的闭包是否如期自移除）。
+   * @internal
+   */
   get disposableCount(): number {
     return this._lifecycle.disposables.size;
   }
 
   /**
-   * @internal 链序标签名单（诊断 / 测试用）：把「卸载后还剩几个」升级为「剩的是谁」。
+   * 链序标签名单（诊断 / 测试用）：把「卸载后还剩几个」升级为「剩的是谁」。
    * 内核门面注册按 `前缀:名字` 约定自动点名（on:/middleware:/contribute:/provide:/whenService:），
    * onDispose 用作者传的 label；未命名项以 undefined 占位——占位本身是信息
    * （说明有未传 label 的 onDispose，排查时按链序号对照 `[#i]` 告警）。
+   * @internal
    */
   listDisposables(): ReadonlyArray<string | undefined> {
     return this._lifecycle.disposables.labels();
   }
 
   /**
-   * @internal 贡献登记表条目名单（诊断 / 测试用）。与 {@link listDisposables} 是
+   * 贡献登记表条目名单（诊断 / 测试用）。与 {@link listDisposables} 是
    * 两本独立的账（同 {@link contributionDisposerCount} 的注释）——登记表泄漏
    * 只有这里看得见。key 天然携带贡献点与贡献 id，直接拆给调用方。
+   * @internal
    */
   listContributions(): ReadonlyArray<{ point: string; id: string }> {
     return [...this._contributionDisposers.keys()].map(k => {
@@ -757,7 +778,7 @@ export class Context {
   }
 
   /**
-   * @internal 登记本 ctx 的初始化在飞 promise（由内部 Lifecycle 跟踪）。
+   * 登记本 ctx 的初始化在飞 promise（由内部 Lifecycle 跟踪）。
    *
    * 仅由激活路径（`activatePlugin`）与 `Context.useModule` 调用，传入 `module.apply(...)`
    * 的返回值；插件侧不得调用（非契约面）。每个 ctx 只调一次（两条路径都在新 fork 后紧接一次）：
@@ -765,21 +786,23 @@ export class Context {
    * 调用方仍要自行 await 该 promise 并处理其失败——本方法只负责让拆卸路径
    * 知道「初始化还没跑完」，不改变激活语义。
    *
-   * ⚠． 被登记的 apply **不得** await 任何最终落到本 ctx 或其祖先拆卸上的调用
-   *    （`disposeAsync` / `plugins.unload|bounce|disable` / `app.stop`
-   *    / `plugins.idle`）——拆卸正等着它返回，await 它即自等自。与 `onDispose`
-   *    回调的约束同源。`disposeAsync(timeoutMs)` 的超时是这条的兜底而非豁免。
+   * 被登记的 apply **不得** await 任何最终落到本 ctx 或其祖先拆卸上的调用
+   * （`disposeAsync` / `plugins.unload|bounce|disable` / `app.stop`
+   * / `plugins.idle`）——拆卸正等着它返回，await 它即自等自。与 `onDispose`
+   * 回调的约束同源。`disposeAsync(timeoutMs)` 的超时是这条的兜底而非豁免。
+   * @internal
    */
   trackActivation(applying: Promise<unknown>): void {
     this._lifecycle.trackInitialization(applying);
   }
 
   /**
-   * @internal 当前贡献登记表条目数（诊断 / 测试用）。
+   * 当前贡献登记表条目数（诊断 / 测试用）。
    *
    * 它与 {@link disposableCount} 是**两条独立的账**：贡献的退订闭包由
    * trackDisposable 自摘出 dispose 链，而登记表条目由 contribute 返回的包装
    * 另行摘除。只看 dispose 链长度看不见登记表泄漏，故单开这个口子。
+   * @internal
    */
   get contributionDisposerCount(): number {
     return this._contributionDisposers.size;
@@ -804,11 +827,11 @@ export class Context {
    * 就早退（`disposed` 在清理开始前置位，早退会让调用方拿到"已完成"的假象——
    * 父级联撞上半拆的子 ctx、并发 stop、unload 撞 bounce 都会走到这条路）。
    *
-   * ⚠． **`onDispose` 回调里不得 await 任何最终落到本 ctx 或其祖先 ctx 拆卸上的
-   *    调用**——在飞的拆卸正等着那个回调返回，await 它即自等自。除直接调用本方法
-   *    外，还包括 `plugins.unload/disable/bounce`（它们内部 await
-   *    `entry.context.disposeAsync`）、`app.stop()`、`plugins.idle()`。清理回调
-   *    只做自己的收尾，拆卸由编排层驱动。（与 `PluginManagerService.idle()` 同类约束。）
+   * **`onDispose` 回调里不得 await 任何最终落到本 ctx 或其祖先 ctx 拆卸上的
+   * 调用**——在飞的拆卸正等着那个回调返回，await 它即自等自。除直接调用本方法
+   * 外，还包括 `plugins.unload/disable/bounce`（它们内部 await
+   * `entry.context.disposeAsync`）、`app.stop()`、`plugins.idle()`。清理回调
+   * 只做自己的收尾，拆卸由编排层驱动。（与 `PluginManagerService.idle()` 同类约束。）
    *
    * @param timeoutMs 单个异步清理项的等待上限；超时放弃该项、继续后续清理
    *        并 warn 点名（防网络类关闭卡死整个停机）。**join 已有在飞拆卸时同样

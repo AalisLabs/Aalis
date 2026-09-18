@@ -45,7 +45,7 @@
  * 表达的 core 自持条目，而 `plugins` 的契约引用编排层词汇（PluginEntry 等），成对登不了就一个不登
  * （事件的载荷是字符串，所以 AalisEvents 登记了全部内置事件）。消费点显式传类型参数。
  *
- * ⚠️ **增广只能用裸包名说明符 `'@aalis/core'`，绝不能用相对路径。**
+ * **增广只能用裸包名说明符 `'@aalis/core'`，绝不能用相对路径。**
  * 相对说明符会把接口绑成**第二个 symbol**：当 `-api` 包的
  * 增广先绑定时（biome 的 import 排序让 `@aalis/api-*` 恒排在 `@aalis/core` 之前），
  * 36 个 api 服务在 core 的签名视角里直接不存在，`getService('storage')` 静默落到

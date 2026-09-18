@@ -161,8 +161,9 @@ export class DisposableChain {
  * 环境无关性记账：`setTimeout`/`clearTimeout` 是所有 JS 运行时（浏览器/Node/
  * Deno/Worker）的共有全局，非 `node:` 专属，不引入环境假设。
  *
- * @internal 仅供 core 内部（DisposableChain 逐项等待、Context join 在飞拆卸）复用，
+ * 仅供 core 内部（DisposableChain 逐项等待、Context join 在飞拆卸）复用，
  *   不从包根导出。
+ * @internal
  */
 export async function awaitWithTimeout(
   p: Promise<unknown>,
@@ -197,7 +198,8 @@ export async function awaitWithTimeout(
  * （logger 的 sink 可能是 stdout / 文件 / WebUI），它自身失败不得中断清理或拆卸，也不得逃逸成
  * unhandledRejection——这里是防泄漏的最后一道防线，连报告都失败时只能静默。
  *
- * @internal 供 core 内部（清理链、事件总线、Context 拆卸路径）复用，不从包根导出。
+ * 供 core 内部（清理链、事件总线、Context 拆卸路径）复用，不从包根导出。
+ * @internal
  */
 export function reportQuietly(call: () => unknown): void {
   try {
