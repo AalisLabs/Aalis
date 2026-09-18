@@ -8,6 +8,27 @@
 
 ---
 
+## 未发布（core 0.13.0 → 0.14.0）
+
+### 四原语注册表统一形状（@aalis/core）
+
+四个注册表（`EventBus` / `HookRegistry` / `ServiceContainer` / `ContributionRegistry`）此前各写各的，现统一为：
+注册方法 `(键, 载荷, contextId, owner?)` 返回退订闭包；注册与读取动词按各自的扩展点接口约束键（`keyof AalisEvents` /
+`HookContextMap` / `ServiceTypeMap` / `ContributionPointMap`）；`contextId` 一律必填。具体变化：
+
+- `ServiceContainer.register(name, instance, contextId, owner?, options?)`：`priority` / `label` 收进 `options`；返回退订闭包
+  （闭包返回这次是否真摘掉了条目），`unregisterEntry(name, entry)` 删除；`instance` 按 `ServiceTypeMap` 约束，`get` / `getAll`
+  按键推导实例类型（未登记名仍走 `get<T>(name)` 兜底）。`getAll` 的元素类型具名为 `ServiceView<T>`（新导出，结构不变）。
+- `ContributionRegistry.register` / `collect` 按 `ContributionPointMap` 约束贡献点名与 spec 类型。
+- `HookRegistry.register` 的 `contextId` 不再默认 `'root'`。
+- `EventBus.onHandlerError` 回调新增可选第三参 `contextId`（注册者的逻辑身份，无 owner 的裸登记为 `undefined`）——加法。
+
+**迁移**：经 `ctx.provide` / `ctx.middleware` / `ctx.contribute` / `ctx.on` 门面的代码不受影响。直接持有注册表
+（`app.services` / `app.hooks` / `app.contributions` / `ctx.serviceContainer`，或自建 `new ServiceContainer()`）的代码：
+`register` 的返回值由 `ServiceEntry` 改为退订闭包，按引用删除改为调用该闭包；位置参数 `priority` / `label` 改写进
+`options`；补上 `contextId`；原先能编译的错误实现与错误贡献点名会开始报错，按契约修正或改用未登记的名字（落到 `unknown`，
+行为同旧）。仓内零命中。
+
 ## 2026-09-17（core 0.13.0 minor；patch：runtime 0.12.4 / plugin-authority 0.11.5 / plugin-cli 0.10.3 / plugin-mcp-client 0.10.2 / plugin-media 0.13.3 / plugin-package-manager 0.5.3 / plugin-webui-server 0.11.9）
 
 **升级**：core 走了次版本。脚手架生成的项目里 `@aalis/core` 是 caret 区间（`^0.12.x` 不含 0.13.0），而本批 runtime / plugin-cli / plugin-media / plugin-package-manager 用到了 `saveConfig()` / `config.save()` 的 Promise 返回值、peer 下限抬到 `>=0.13.0`——直接 `npm update` 会 ERESOLVE。请显式升级：`npm install @aalis/core@latest @aalis/runtime@latest`，再 `npm update`。不要用 `--legacy-peer-deps` 绕过：那会装出新 runtime 配旧 core 的组合，启动时即 TypeError。

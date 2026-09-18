@@ -24,35 +24,30 @@ interface ServiceEntry {
 
 ## 关键方法
 
-### `register(name, instance, priority?, contextId?, label?, owner?)`
+### `register(name, instance, contextId, owner?, options?)`
 
-`owner` 是清理归属（Context 门面自动传入本次激活的 symbol）；省略则该 entry 不被拆卸自动清理，调用方用返回的 entry 自管。
+与另外三个注册表同形：`(键, 载荷, contextId, owner?)`，返回退订闭包。`options` 收 `priority`（默认 0）与 `label`。
+已登记的服务名（`ServiceTypeMap` 里有的）按契约类型约束 `instance`，错误实现在编译期被拒；未登记名放行为 `unknown`。
 
-注册服务，返回刚插入的 `ServiceEntry`。同名服务按优先级降序排列（稳定排序：同优先级先注册者在前）。可用返回的 entry 引用调用 `unregisterEntry` 精确删除这一条。
+`owner` 是清理归属（Context 门面自动传入本次激活的 symbol）；省略则该 entry 不被拆卸自动清理，调用方用返回的退订闭包自管。
+退订闭包返回这次是否真的摘掉了条目——同一条目退订两次、或已被 `unregisterByOwner` 清走时为 `false`（门面据此决定要不要广播 `service:unregistered`）。
+同名服务按优先级降序排列（稳定排序：同优先级先注册者在前）。
 
-### `get<T>(name)`
+### `get(name)`
 
-返回当前胜者实例，解析顺序为 **「偏好 > 优先级 > 注册顺序」**：先看是否有偏好的提供者（且仍存在），否则取优先级最高、最先注册者。无提供者返回 `undefined`。
-
-### `has(name)`
-
-检查是否存在提供者（等价于 `get(name) !== undefined`）。
+已登记的服务名按 `ServiceTypeMap` 推导实例类型；未登记名退回 `get<T>(name)` 的兜底重载。返回当前胜者实例，解析顺序为 **「偏好 > 优先级 > 注册顺序」**：先看是否有偏好的提供者（且仍存在），否则取优先级最高、最先注册者。无提供者返回 `undefined`。
 
 ### `hasByContext(name, contextId)`
 
 检查指定 contextId 是否注册了某服务。"拥有" 语义同时匹配 `contextId === ownerId` 和以 `ownerId + '/'` 为前缀的 per-entry 子 entry（如 `@aalis/plugin-llm-ollama:main/llama3`）。
 
-### `getEntries(name)` / `getAll<T>(name)`
+### `getEntries(name)` / `getAll(name)`
 
-枚举某服务的所有提供者（给 API/管控视图暴露用）。返回顺序遵循「偏好 > 优先级 > 注册顺序」。`getAll` 附带 `contextId` / `label` 提供者信息。
+枚举某服务的所有提供者（给 API/管控视图暴露用），两者都返回数组快照，顺序遵循「偏好 > 优先级 > 注册顺序」。`getAll` 的元素是 `ServiceView`（`ServiceEntry` 的投影：`instance` / `contextId` / `priority` / `label`，刻意不含清理归属 `owner`），已登记名按 `ServiceTypeMap` 推导 `instance` 类型。
 
 ### `getServiceNames()`
 
 列出所有已注册的服务名。
-
-### `unregisterEntry(name, entry)`
-
-按 entry 引用精确删除某个提供者：同一 Context 多次 register（含 per-entry 子 entry）时只摘这一条；`unregisterByOwner` 则整体清掉该 Context 本次激活的全部 entry。返回是否成功删除。
 
 ### `unregisterByOwner(owner)`
 
