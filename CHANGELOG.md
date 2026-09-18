@@ -24,6 +24,8 @@
 - `ContributionRegistry.register` / `collect` 按 `ContributionPointMap` 约束贡献点名与 spec 类型。
 - `HookRegistry.register` 的 `contextId` 不再默认 `'root'`。
 - `EventBus.onHandlerError` 回调新增可选第三参 `contextId`（注册者的逻辑身份，无 owner 的裸登记为 `undefined`）——加法。
+- `ConfigManager.watch(onChange)` 返回退订闭包（与 core 其余订阅口同形），`unwatch()` 保留为属主 App 的整体清扫口；
+  已有订阅时再 `watch` 抛错，不再静默顶替——单订阅者口径成文。
 
 **迁移**：经 `ctx.provide` / `ctx.middleware` / `ctx.contribute` / `ctx.on` 门面的代码不受影响。直接持有注册表
 （`app.services` / `app.hooks` / `app.contributions` / `ctx.serviceContainer`，或自建 `new ServiceContainer()`）的代码：
