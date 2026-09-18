@@ -888,7 +888,7 @@ interface CommandService {
   prefix: string;
   /** 启动 builder 注册一个命令（name 可含 inline DSL）。 */
   command(name: string, description?: string, meta?: InternalCommandMeta): CommandBuilder;
-  unregister(name: string): void;
+  unregister(name: string, contextId?: string): void;
   unregisterByPlugin(contextId: string): void;
   execute(name: string, ctx: ExecutionInput): Promise<string | undefined>;
   parseCommand(input: string): { name: string; args: string[]; raw: string } | null;
