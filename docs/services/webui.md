@@ -24,9 +24,9 @@ export interface WebUIService {
   getPort(): number;
   getHost(): string;
   setClientDir?(dir: string): void;                                   // 可选——运行时替换前端目录
-  registerPage(page: WebuiPage, pluginName: string): () => void;      // 返回 dispose
+  registerPage(page: WebuiPage, contextId: string): () => void;       // 返回 dispose
   getPages(): Array<WebuiPage & { pluginName: string }>;              // 含插件归属
-  unregisterByPlugin(pluginName: string): void;                       // 插件卸载时批量清
+  unregisterByPlugin(contextId: string): void;                        // Context 拆卸时批量清
 }
 ```
 
@@ -90,12 +90,12 @@ declare module '@aalis/schema-config' {
 
 ```ts
 export function useWebuiService(ctx: Context): ScopedWebuiService {
-  const pluginName = ctx.id || 'unknown';
+  const contextId = ctx.id || 'unknown';
   return {
     registerPage(page) {
       // 委托 ctx.whenService('webui-server', ...)：每次 webui-server 重新 provide
       // （bounce/replace）都会重新 registerPage，让页面自动重挂；旧 cleanup 在 provider 下线时释放。
-      return ctx.whenService<WebUIService>('webui-server', svc => svc.registerPage(page, pluginName));
+      return ctx.whenService<WebUIService>('webui-server', svc => svc.registerPage(page, contextId));
     },
     get raw() { return ctx.getService<WebUIService>('webui-server'); },
   };

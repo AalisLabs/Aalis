@@ -26,8 +26,8 @@ export const provides = ['tools'];
 
 ## 主要能力
 
-- **注册 / 注销**：`register(tool, pluginName)` → disposer；插件 dispose
-  时按 `pluginName` 自动注销，避免遗留。
+- **注册 / 注销**：`register(tool, contextId)` → disposer；Context 拆卸
+  时按 `contextId` 自动注销，避免遗留。
 - **分组过滤**：`getDefinitions({ groups })` / `getSummaries({ groups })`
   按分组返回工具：无分组的通用工具恒可见；带分组的只在命中 `groups` 时返回，`'*'` 表示全部分组；
   未指定 `groups`（或为空）时只返回通用工具。多人平台上 public 工具的可达性靠这道分组闸

@@ -1,5 +1,5 @@
 import { createProcessGateway, type ExecResult, type ProcessService } from '@aalis/api-process';
-import type { AppService, Context } from '@aalis/core';
+import type { AppService, Context, PluginManagerService } from '@aalis/core';
 import { classifyDepSpec, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 
 // ===== 插件元数据 =====
@@ -241,7 +241,7 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
     ],
 
     unloadPlugin: async name => {
-      const pm = ctx.getService<{ unload(n: string): Promise<void> }>('plugins');
+      const pm = ctx.getService<PluginManagerService>('plugins');
       if (pm) await pm.unload(name);
     },
     // 卸载后清残留配置：删 plugins.<name> 配置块 + 从 disabledPlugins 移除

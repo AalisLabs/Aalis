@@ -37,8 +37,8 @@
 ### 内置事件分「屏障 / 通知」两节，`plugin:loaded` 不再等监听器（@aalis/core）
 
 core 自持的 11 条内置事件按「发射方等不等监听器」分两节，写进 `AalisEvents` 的 JSDoc，并由 `test/core/architecture.test.ts`
-按调用形式守：屏障（`app:starting` / `ready` / `app:started` / `restarting` / `app:stopping`）由 `App` 的生命周期方法等监听器
-全部返回后才推进下一步；通知（`service:*` / `plugin:*` / `plugins:changed`）不等监听器。
+按调用形式守：屏障（`app:starting` / `app:ready` / `app:started` / `app:restarting` / `app:stopping`，后两者改名见下节）由 `App` 的
+生命周期方法等监听器全部返回后才推进下一步；通知（`service:*` / `plugin:*` / `plugins:changed`）不等监听器。
 
 **行为变化**：`plugin:loaded` 此前是唯一 `await` 监听器的通知事件，现与同节其余事件一样不等。此前一个慢监听器会挡住同一轮
 recompute 里下一个插件的激活，监听器里 `await plugins.idle()` 则必死锁（idle 等 flight 排干，flight 等监听器返回）。现在监听器
@@ -58,8 +58,8 @@ WebUI 的 WS 报文 `type: 'restarting'` 是前端协议，与 core 事件名无
 
 ### PluginManager 的管理动作去掉 `Plugin` 后缀（@aalis/core）
 
-`enablePlugin` → `enable`，`disablePlugin` → `disable`，`updatePluginConfig` → `updateConfig`，`bouncePlugin` → `bounce`
-（`PluginManagerService` 接口含前三个，`bounce` 仅在 `PluginManager` 类上）。持有它的对象已经叫 `plugins`，
+`enablePlugin` → `enable`，`disablePlugin` → `disable`，`updatePluginConfig` → `updateConfig`，`bouncePlugin` → `bounce`；
+`bounce` 同时加进 `PluginManagerService` 接口（此前只在类上，插件作者指南却教经服务调它）。持有它的对象已经叫 `plugins`，
 `plugins.enablePlugin(id)` 的后缀是同一个词说两遍；与同一接口上的 `register` / `unload` 对齐（`getPlugin` / `getStatus`
 里的名词是返回的对象，不是后缀，不动）。形参名同批统一为 `instanceId`（纯改名，不影响调用）。
 
@@ -68,10 +68,10 @@ plugin-mcp-client / plugin-webui-server / runtime；WebUI 的 HTTP 路由路径�
 
 ### 管理动作一律返回 `Promise<boolean>`（@aalis/core）
 
-`PluginManagerService.register` / `unload` 由 `Promise<void>` 改为 `Promise<boolean>`，与 `enable` / `disable` / `updateConfig`
-（及类上的 `bounce`）同一口径：**false = 主体不在注册表，或本次动作被状态 / 政策规则挡下**（重名、未声明 `reusable` 的多实例、
+`PluginManagerService.register` / `unload` 由 `Promise<void>` 改为 `Promise<boolean>`，与 `enable` / `disable` / `bounce` /
+`updateConfig` 同一口径：**false = 主体不在注册表，或本次动作被状态 / 政策规则挡下**（重名、未声明 `reusable` 的多实例、
 core 插件禁用、`disposed` 单向终态、`disabled` 态 bounce）；**true = 其余，含主体已在目标态的幂等情形**（unload 撞上在途卸载
-即 join 它）。每个 false 分支都已记一笔日志。`App.plugin()` 透传 `register` 的结果；`App.rescanPlugins()` 据此不再把
+即 join 它）。每个 false 分支都已记一笔日志（政策挡下 warn，主体不存在与 `disposed` 在途 debug）。`App.plugin()` 透传 `register` 的结果；`App.rescanPlugins()` 据此不再把
 「描述符名与模块自报名不同、自报名已注册」的模块误报进热加载名单。
 
 **迁移**：调用方可以继续忽略返回值。自行实现 `PluginManagerService` 的第三方需把这两个方法改为返回 `Promise<boolean>`

@@ -41,8 +41,8 @@ ctx.provide('mysvc', newInstance);
 正确的做法是：**dispose 自己再让 PluginManager 重启你**：
 
 ```typescript
-// ✅ 触发 PluginManager 走完整 bounce 流程
-await ctx.getService('plugins')!.bounce(myInstanceId);
+// 触发 PluginManager 走完整 bounce 流程（bounce 在 PluginManagerService 接口上）
+await ctx.getService<PluginManagerService>('plugins')!.bounce(myInstanceId);
 ```
 
 或者直接通过 `updateConfig` 让 PluginManager 把整套 dispose+evict+reapply

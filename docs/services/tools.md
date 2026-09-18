@@ -76,15 +76,15 @@ export interface ToolCallContext {
 `index.ts`，关键方法：
 
 ```ts
-register(tool: Omit<RegisteredTool, 'pluginName'>, pluginName: string): () => void;  // 返回 disposer
+register(tool: Omit<RegisteredTool, 'pluginName'>, contextId: string): () => void;  // 返回 disposer
 getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];   // 喂给 LLM 的工具列表
 getSummaries(filter?: { groups?: string[] }): ToolSummary[];        // 不含 handler，供搜索展示
 getAll(): Array<{ name; description; pluginName; visibility; confirm?; risk?; groups? }>;  // 给 authority/WebUI
 execute(toolName, args, callCtx: ToolCallContext): Promise<ToolExecutionResult>; // 过守卫 + 校验 + 调 handler；字符串结果归一为 { content }
 setExecutionGuard(guard: ExecutionGuard): void;                     // 由 plugin-authority 注入
-registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, pluginName: string): () => void;
+registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void;
 getGroups(): ToolGroupInfo[];
-unregisterByPlugin(pluginName: string): void;
+unregisterByPlugin(contextId: string): void;
 ```
 
 `getDefinitions`/`getSummaries` 的过滤语义（`tools.ts`）：**不传 `groups` 时只返回「无分组」的通用工具**；带分组的工具必须显式列在 `filter.groups` 里才出现，`'*'` 表示全部分组。这是 plugin-agent 按平台启用分组的依据。

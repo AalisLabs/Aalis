@@ -55,17 +55,26 @@ export interface PluginStatusEntry {
  * 通过 `ctx.getService<PluginManagerService>('plugins')` 获取（**必须显式写类型参数**，
  * 理由同 {@link AppService}）。内部由 core 的 PluginManager 提供，消费方不应直接 import App 类。
  *
- * 管理动作（register / unload / enable / disable / updateConfig）的返回值同一口径：
+ * 管理动作（register / unload / enable / disable / bounce / updateConfig）的返回值同一口径：
  * **false = 主体不在注册表，或本次动作被状态 / 政策规则挡下**（重名、未声明 reusable 的多实例、core 插件禁用、
  * 'disposed' 单向终态、disabled 态 bounce）；**true = 其余，含主体已在目标态的幂等情形**。
- * 每个 false 分支都已记一笔日志，调用方不必重复。true 只说明请求已受理，不说明激活已落定——那看 `idle()`。
+ * 每个 false 分支都已记一笔日志（政策挡下 warn，主体不存在与 'disposed' 在途 debug），调用方不必重复。
+ * true 只说明请求已受理，不说明激活已落定——那看 `idle()`。
  */
 export interface PluginManagerService {
   /** 获取所有已注册插件的状态 */
   getStatus(): PluginStatusEntry[];
   /** 获取单个插件条目 */
   getPlugin(instanceId: string): PluginEntry | undefined;
-  /** 更新插件配置（自动触发软重载） */
+  /**
+   * 增量重载单个插件：dispose 旧 ctx → 转 pending → softReload 重新激活。`opts.config` 同时写回配置；
+   * `opts.module` 热替换模块引用（重新从磁盘 import 是宿主的事）。插件要重启自己就调它。
+   */
+  bounce(
+    instanceId: string,
+    opts?: { config?: Record<string, unknown>; module?: PluginEntry['module'] },
+  ): Promise<boolean>;
+  /** 更新插件配置并热重载：`bounce(instanceId, { config })` 的薄壳 */
   updateConfig(instanceId: string, config: Record<string, unknown>): Promise<boolean>;
   /** 启用插件 */
   enable(instanceId: string): Promise<boolean>;

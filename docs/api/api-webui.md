@@ -16,9 +16,9 @@ interface WebUIService {
   getHost(): string;
   setClientDir?(dir: string): void;      // 允许替换前端
   // 页面注册（一般通过 `useWebuiService(ctx)` helper 间接调用）
-  registerPage(page: WebuiPage, pluginName: string): () => void;
+  registerPage(page: WebuiPage, contextId: string): () => void;
   getPages(): Array<WebuiPage & { pluginName: string }>;
-  unregisterByPlugin(pluginName: string): void;
+  unregisterByPlugin(contextId: string): void;
 }
 ```
 

@@ -156,3 +156,19 @@ describe('AppOptions.logger 注入（Logger 接口化）', () => {
     await app.stop();
   });
 });
+
+describe('附加参数渲染（core 记错误一律把错误对象作附加参数，靠这里带出 stack）', () => {
+  it('Error 渲染成 stack（含 message 与调用帧），跨 realm 的带 stack 对象同样打 stack', () => {
+    const hub = new LogHub();
+    const messages: string[] = [];
+    hub.onEntry(e => messages.push(e.message));
+    const log = new DefaultLogger('t', 'debug', hub);
+    log.error('加载失败:', new Error('boom'));
+    log.warn('跨 realm:', { stack: 'FakeError: far\n    at somewhere' });
+    expect(messages[0]).toContain('加载失败:');
+    expect(messages[0]).toContain('Error: boom');
+    expect(messages[0], '内插 message 会丢掉调用帧，附加参数不会').toMatch(/\n\s+at /);
+    // 鸭子分支把 stack 原样打出；退化到 JSON.stringify 会变成 {"stack":"…\\n…"}，换行成字面量
+    expect(messages[1]).toMatch(/跨 realm: FakeError: far\n\s+at somewhere$/);
+  });
+});

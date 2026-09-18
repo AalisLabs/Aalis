@@ -169,7 +169,7 @@ interface ToolGroupInfo {
 
 ```typescript
 interface ToolService {
-  register(tool: Omit<RegisteredTool, 'pluginName'>, pluginName: string): () => void;
+  register(tool: Omit<RegisteredTool, 'pluginName'>, contextId: string): () => void;
   getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];
   getSummaries(filter?: { groups?: string[] }): ToolSummary[];
   getAll(): Array<{
@@ -183,8 +183,8 @@ interface ToolService {
   }>;
   execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<ToolExecutionResult>;
   setExecutionGuard(guard: ExecutionGuard): void;
-  unregisterByPlugin(pluginName: string): void;
-  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, pluginName: string): () => void;
+  unregisterByPlugin(contextId: string): void;
+  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void;
   getGroups(): ToolGroupInfo[];
 }
 ```
@@ -889,7 +889,7 @@ interface CommandService {
   /** 启动 builder 注册一个命令（name 可含 inline DSL）。 */
   command(name: string, description?: string, meta?: InternalCommandMeta): CommandBuilder;
   unregister(name: string): void;
-  unregisterByPlugin(pluginName: string): void;
+  unregisterByPlugin(contextId: string): void;
   execute(name: string, ctx: ExecutionInput): Promise<string | undefined>;
   parseCommand(input: string): { name: string; args: string[]; raw: string } | null;
   /** 给定 head + tokens 是否能解析到任何已注册指令节点（区分「已识别指令」与「碰巧带前缀」）。 */

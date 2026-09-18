@@ -18,7 +18,7 @@ import type { Logger } from '@aalis/core';
  *
  * 与 plugin-commands/CommandRegistry 同属"中心 Registry 模式"：
  * - 单一 Map<name, Registered> 存储，name 全局唯一（重名警告并覆盖）
- * - register() 返回 disposer，插件 dispose 时按 pluginName 自动注销
+ * - register() 返回 disposer，Context 拆卸时按 contextId 自动注销
  * - 通过 setExecutionGuard() 注入统一权限/安全检查钩子
  *
  * 与 LLM/Storage/Platform 路由器（同名 facade 模式）的差异：
