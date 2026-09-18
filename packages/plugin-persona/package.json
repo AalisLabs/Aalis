@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-persona",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -44,7 +44,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.11.0 <1.0.0"
+    "@aalis/core": ">=0.14.0 <1.0.0"
   },
   "aalis": {
     "service": {

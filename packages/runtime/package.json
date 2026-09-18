@@ -1,6 +1,6 @@
 {
   "name": "@aalis/runtime",
-  "version": "0.12.4",
+  "version": "0.12.5",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -33,7 +33,7 @@
     "@aalis/schema-config": "workspace:>=0.11.0 <1.0.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.13.0 <1.0.0"
+    "@aalis/core": ">=0.14.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
