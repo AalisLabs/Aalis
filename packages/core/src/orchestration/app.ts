@@ -397,9 +397,7 @@ export class App {
     this.ctx
       .emit('restarting')
       .then(() => strategy.restart({ stop: () => this.stop(), rollback: opts?.rollback }))
-      .catch(err => {
-        this.logger.warn(`restart 失败: ${err}`);
-      });
+      .catch(err => reportQuietly(() => this.logger.warn(`restart 失败: ${err}`)));
   }
 
   /**
