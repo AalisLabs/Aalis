@@ -84,7 +84,7 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
       'disposeAsync',
       'disposed',
       'emit',
-      'emitQuietly', // @internal：Context 与编排层发内置事件的统一出口，不属承诺面
+      'emitQuietly', // @internal：core 发通知型内置事件的出口（屏障型由 App await emit），不属承诺面
       'fork',
       'getAllServices',
       'getPreferredService',
