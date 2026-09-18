@@ -1,5 +1,6 @@
-import { reportQuietly } from '../kernel/disposable-chain.js';
 import type { AalisEvents } from '../types/events.js';
+
+import { reportQuietly } from '../kernel/disposable-chain.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 

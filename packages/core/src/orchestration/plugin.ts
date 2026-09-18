@@ -1,7 +1,3 @@
-import type { Context } from '../context/context.js';
-import type { Logger } from '../context/logger.js';
-import { reportQuietly } from '../kernel/disposable-chain.js';
-import { normalizeDependency } from '../primitives/services.js';
 import type { PluginStatusEntry } from '../types/index.js';
 import {
   type PluginEntry,
@@ -10,6 +6,14 @@ import {
   parseInstanceId,
   type RecomputeReason,
 } from '../types/plugin.js';
+
+import { reportQuietly } from '../kernel/disposable-chain.js';
+
+import { normalizeDependency } from '../primitives/services.js';
+
+import type { Context } from '../context/context.js';
+import type { Logger } from '../context/logger.js';
+
 import { activatePlugin, computeTargetState, retireEntry } from './plugin-activation.js';
 import { evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
 
