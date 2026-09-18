@@ -14,7 +14,7 @@ import { normalizeDependency } from '../primitives/services.js';
 import type { Context } from '../context/context.js';
 import type { Logger } from '../context/logger.js';
 
-import { activatePlugin, computeTargetState, retireEntry } from './plugin-activation.js';
+import { type ActivationDeps, activatePlugin, computeTargetState, retireEntry } from './plugin-activation.js';
 import { evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
 
 export type { PluginEntry, PluginModule, PluginState };
@@ -35,6 +35,8 @@ export class PluginManager {
   private plugins = new Map<string, PluginEntry>();
   private rootCtx: Context;
   private logger: Logger;
+  /** 交给编排层自由函数（activatePlugin / retireEntry / evictDownstreamConsumers）的宿主注入件，构造一次 */
+  private readonly deps: ActivationDeps;
   /** recompute 单飞标志：true 表示一次 recompute（含排队补跑）正在进行 */
   private reloading = false;
   /**
@@ -106,6 +108,7 @@ export class PluginManager {
   ) {
     this.rootCtx = rootCtx;
     this.logger = logger.child('plugins');
+    this.deps = { rootCtx, logger: this.logger, disposeTimeoutMs };
 
     // 监听服务注册/注销，路由到统一 recompute()。
     // 单飞/挂起/关机的取舍都在 recompute 内部处理（在飞期间排队，关机后跳过）。
@@ -211,14 +214,8 @@ export class PluginManager {
     return true;
   }
 
-  /** retireEntry 的 deps 便签（字段皆 private，无法把 this 当结构化 deps 传）。 */
   private retire(entry: PluginEntry, target: PluginState, opts?: { emitUnloaded?: boolean }): Promise<void> {
-    return retireEntry(
-      entry,
-      target,
-      { rootCtx: this.rootCtx, logger: this.logger, disposeTimeoutMs: this.disposeTimeoutMs },
-      opts,
-    );
+    return retireEntry(entry, target, this.deps, opts);
   }
 
   /**
@@ -365,13 +362,7 @@ export class PluginManager {
       // 悬挂 → idle() 永不落定）。disposeAsync 幂等，重复调用只会等在飞拆卸。
       const ctx = entry.context;
       if (ctx) {
-        await evictDownstreamConsumers({
-          provider: entry,
-          plugins: this.plugins,
-          rootCtx: this.rootCtx,
-          logger: this.logger,
-          disposeTimeoutMs: this.disposeTimeoutMs,
-        });
+        await evictDownstreamConsumers(entry, this.plugins, this.deps);
         try {
           await ctx.disposeAsync(this.disposeTimeoutMs);
         } catch (err) {
@@ -553,11 +544,7 @@ export class PluginManager {
         if (entry.state !== 'pending') continue;
         const target = computeTargetState(entry, currentReason, this.rootCtx, serviceDowns);
         if (target !== 'active') continue;
-        await activatePlugin(entry, {
-          rootCtx: this.rootCtx,
-          logger: this.logger,
-          disposeTimeoutMs: this.disposeTimeoutMs,
-        });
+        await activatePlugin(entry, this.deps);
         if ((entry.state as PluginState) === 'active') {
           changed = true;
           lastRoundFlips.push(entry.instanceId);
