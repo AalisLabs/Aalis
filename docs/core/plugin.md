@@ -90,13 +90,17 @@ service-up / service-down 在第二轮起退化为 plugin-state-changed，避免
 
 ## 关键方法
 
-### `register(module, config?)`
+管理动作一律返回 `Promise<boolean>`，口径只有一条：**false = 主体不在注册表，或本次动作被状态 / 政策规则挡下**
+（重名、未声明 `reusable` 的多实例、core 插件禁用、`disposed` 单向终态、`disabled` 态 bounce）；**true = 其余，含主体已在
+目标态的幂等情形**。每个 false 分支都已记一笔日志。true 只说明请求已受理，激活是否落定看 `idle()`。
 
-注册插件并触发 recompute。
+### `register(module, config?, instanceId?)`
+
+注册插件并触发 recompute。重名或未声明 `reusable` 却要多实例时拒绝。
 
 ### `unload(instanceId)`
 
-卸载插件，dispose 其 Context，状态设为 disposed。
+卸载插件，dispose 其 Context 并从注册表移除。撞上在途卸载时 join 它，返回时该实例已离开注册表。
 
 ### `enable(instanceId)` / `disable(instanceId)`
 

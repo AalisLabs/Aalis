@@ -54,6 +54,11 @@ export interface PluginStatusEntry {
  *
  * 通过 `ctx.getService<PluginManagerService>('plugins')` 获取（**必须显式写类型参数**，
  * 理由同 {@link AppService}）。内部由 core 的 PluginManager 提供，消费方不应直接 import App 类。
+ *
+ * 管理动作（register / unload / enable / disable / updateConfig）的返回值同一口径：
+ * **false = 主体不在注册表，或本次动作被状态 / 政策规则挡下**（重名、未声明 reusable 的多实例、core 插件禁用、
+ * 'disposed' 单向终态、disabled 态 bounce）；**true = 其余，含主体已在目标态的幂等情形**。
+ * 每个 false 分支都已记一笔日志，调用方不必重复。true 只说明请求已受理，不说明激活已落定——那看 `idle()`。
  */
 export interface PluginManagerService {
   /** 获取所有已注册插件的状态 */
@@ -67,9 +72,9 @@ export interface PluginManagerService {
   /** 禁用插件 */
   disable(instanceId: string): Promise<boolean>;
   /** 彻底卸载插件：dispose 上下文并从注册表移除（用于市场卸载，区别于 disable 仅置禁用态） */
-  unload(instanceId: string): Promise<void>;
+  unload(instanceId: string): Promise<boolean>;
   /** 注册并尝试激活一个插件模块（多实例经 instanceId 区分；供管理面基于 register/unload 组合实例编排） */
-  register(module: PluginEntry['module'], config?: Record<string, unknown>, instanceId?: string): Promise<void>;
+  register(module: PluginEntry['module'], config?: Record<string, unknown>, instanceId?: string): Promise<boolean>;
   /**
    * 等待插件状态机静置（无在飞/排队的 recompute）。变更 API 在 flight 在飞时
    * 排队早退，需要"尘埃落定后再观察"的调用方在变更后 await 本方法。
