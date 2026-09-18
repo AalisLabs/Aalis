@@ -31,12 +31,13 @@ export class EventBus {
    * EventBus 自身不依赖 Logger（保持环境无关）；宿主（App）在构造后
    * 注入一个指向自己 logger 的上报器。未设置时错误被静默丢弃——
    * 但无论是否设置，单个 handler 抛错都**不会**中断同事件的其余 handler，
-   * 也不会使 emit reject。
+   * 也不会使 emit reject。第三参点名注册者的逻辑身份（owner symbol 的 description，Context 门面
+   * 注册时即 ctx.id；不经门面、无 owner 的登记为 undefined），与 HookRegistry.onStall 同口径。
    */
-  onHandlerError?: (event: string, error: unknown) => void;
+  onHandlerError?: (event: string, error: unknown, contextId?: string) => void;
 
-  private reportHandlerError(event: string, error: unknown): void {
-    reportQuietly(() => this.onHandlerError?.(event, error));
+  private reportHandlerError(event: string, error: unknown, owner?: symbol): void {
+    reportQuietly(() => this.onHandlerError?.(event, error, owner?.description));
   }
 
   /**
@@ -97,10 +98,10 @@ export class EventBus {
         try {
           const ret = handler(...args);
           if (ret && typeof (ret as Promise<void>).then === 'function') {
-            (ret as Promise<void>).catch(err => this.reportHandlerError(event, err));
+            (ret as Promise<void>).catch(err => this.reportHandlerError(event, err, owner));
           }
         } catch (err) {
-          this.reportHandlerError(event, err);
+          this.reportHandlerError(event, err, owner);
         }
       });
     }
@@ -145,11 +146,11 @@ export class EventBus {
     const set = this.handlers.get(event);
     if (!set) return;
     // 直接迭代活表：handler 中 dispose 尚未访问的条目会被正确跳过（Set 迭代语义）
-    for (const { handler } of set) {
+    for (const { handler, owner } of set) {
       try {
         await handler(...args);
       } catch (err) {
-        this.reportHandlerError(event, err);
+        this.reportHandlerError(event, err, owner);
       }
     }
   }
