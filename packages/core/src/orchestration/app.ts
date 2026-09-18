@@ -147,7 +147,7 @@ export class App {
 
     this.events = options.events ?? new EventBus();
     // 'app:ready' / 'app:started' 是"应用启动完成"里程碑：app.start() 仅 emit
-    // 一次，但插件配置热重载会触发 bouncePlugin → 新插件实例的
+    // 一次，但插件配置热重载会触发 bounce → 新插件实例的
     // ctx.on('app:ready'/'app:started', ...) 必须也能拿到通知，否则 adapter /
     // CLI TUI 等"在启动后才建立"的逻辑在 bounce 后就永远不会重新执行。
     // 标记为 sticky 后，bounce 出来的新实例注册 listener 时立即被微任务补发一次。

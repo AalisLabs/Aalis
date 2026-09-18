@@ -118,5 +118,5 @@ App 本身不注册指令。基础指令由插件提供，例如 `@aalis/plugin-
 默认值回填、按 configSchema 裁剪未知字段、配置外部变更的热重载编排均属**宿主政策**，
 由 `@aalis/runtime` 的 config-sync 模块提供（`syncPluginDefaults` / `installConfigHotReload`，
 `startAalis` 默认接线；`configSync.trimUnknownFields=false` 可保留未知字段）。
-core 只持有机制：配置快照 get/set、`config.watch` 透传、`updatePluginConfig`。
+core 只持有机制：配置快照 get/set、`config.watch` 透传、`updateConfig`。
 不经 runtime 的嵌入式宿主需要时用这些公开 API 自行编排。

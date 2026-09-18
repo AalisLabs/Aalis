@@ -259,8 +259,8 @@ function registerSelfServiceTools(ctx: Context): void {
       }
       servers[idx] = { ...before, enabled };
 
-      const ok = await pm.updatePluginConfig(name, { ...current, servers });
-      if (!ok) return `失败：updatePluginConfig 返回 false`;
+      const ok = await pm.updateConfig(name, { ...current, servers });
+      if (!ok) return `失败：updateConfig 返回 false`;
       await app.saveConfig();
       return `已将 server "${id}" 设置为 enabled=${enabled}，插件会 bounce 后生效`;
     },

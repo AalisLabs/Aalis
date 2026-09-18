@@ -221,7 +221,7 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
     // 回滚安全网整个不存在。故 peerDependencies 下界必须是 `>=0.10.0`，不能沿用 0.2.0。
     restartApp: rollback => getApp().restart({ rollback }),
     // 彻底卸载：dispose 上下文并从注册表移除（plugins 服务缺席则 no-op）。
-    // 区别于 disablePlugin（仅置禁用态，仍滞留在插件列表里）。
+    // 区别于 disable（仅置禁用态，仍滞留在插件列表里）。
     // 撤销通道 = 市场页能用所依赖的三样：页面本身 / 托管它的服务端 / 装卸能力本身。
     // 取每个服务当前生效的 provider（`getAllServices` 首个即是），contextId 就是包名
     // （插件以包名做 ctx.id，webui-server 也用包名做前端候选的 fork id）。

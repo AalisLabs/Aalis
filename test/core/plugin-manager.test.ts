@@ -79,17 +79,17 @@ describe('App plugin lifecycle', () => {
 
   it('禁用 active 插件 → dispose 副作用 + state 转为 disabled', async () => {
     await env.app.plugin(makePlugin('p', env.state));
-    await env.app.plugins.disablePlugin('p');
+    await env.app.plugins.disable('p');
     expect(env.app.plugins.getPlugin('p')?.state).toBe('disabled');
     expect(env.state.disposed).toContain('p');
 
-    await env.app.plugins.enablePlugin('p');
+    await env.app.plugins.enable('p');
     expect(env.app.plugins.getPlugin('p')?.state).toBe('active');
   });
 
   it('core 插件不能被禁用', async () => {
     await env.app.plugin(makePlugin('core-plug', env.state, { core: true }));
-    const ok = await env.app.plugins.disablePlugin('core-plug');
+    const ok = await env.app.plugins.disable('core-plug');
     expect(ok).toBe(false);
     expect(env.app.plugins.getPlugin('core-plug')?.state).toBe('active');
   });
@@ -182,7 +182,7 @@ describe('App plugin lifecycle', () => {
     await new Promise(r => setTimeout(r, 10));
     expect(consumerCtx?.getService<{ tag: string }>('mysvc')?.tag).toBe('v1');
 
-    await env.app.plugins.updatePluginConfig('svc-provider', { tag: 'v2' });
+    await env.app.plugins.updateConfig('svc-provider', { tag: 'v2' });
     await new Promise(r => setTimeout(r, 30));
 
     // 默认不级联：consumer 不应被 dispose
@@ -221,14 +221,14 @@ describe('App plugin lifecycle', () => {
     await new Promise(r => setTimeout(r, 10));
     expect(events).toContain('consumer:apply:v1');
 
-    await env.app.plugins.updatePluginConfig('svc-provider', { tag: 'v2' });
+    await env.app.plugins.updateConfig('svc-provider', { tag: 'v2' });
     await new Promise(r => setTimeout(r, 30));
 
     expect(events).toContain('consumer:dispose');
     expect(events).toContain('consumer:apply:v2');
   });
 
-  it('updatePluginConfig 在 active 时触发重激活', async () => {
+  it('updateConfig 在 active 时触发重激活', async () => {
     const log: Array<Record<string, unknown>> = [];
     const mod: PluginModule = {
       name: 'rcfg',
@@ -242,7 +242,7 @@ describe('App plugin lifecycle', () => {
     await env.app.plugin(mod, { v: 1 });
     expect(log).toEqual([{ v: 1 }]);
 
-    await env.app.plugins.updatePluginConfig('rcfg', { v: 2 });
+    await env.app.plugins.updateConfig('rcfg', { v: 2 });
     // softReload 异步
     await new Promise(r => setTimeout(r, 30));
     expect(log).toContainEqual({ disposed: true });
@@ -412,7 +412,7 @@ describe('异步 dispose 编排（bounce/unload 等待落盘）', () => {
       },
     };
     await app.plugin(mod);
-    await app.plugins.bouncePlugin('flusher');
+    await app.plugins.bounce('flusher');
     // 第二次 apply 时 flush 必须已经完成——disposeAsync 被编排层等待
     expect(timeline).toEqual(['apply(flushed=false)', 'flush-done', 'apply(flushed=true)']);
   });

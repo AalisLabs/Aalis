@@ -49,7 +49,7 @@ describe('排队的服务下线变化', () => {
     if (phase === 'disposal') {
       await registering;
       await app.plugins.idle();
-      done = app.plugins.disablePlugin('busy');
+      done = app.plugins.disable('busy');
     }
     await entered.promise;
     return { release: gate.resolve, done };

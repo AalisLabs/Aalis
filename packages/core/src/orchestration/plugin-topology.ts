@@ -6,7 +6,7 @@
 //   - evictDownstreamConsumers：把依赖某 provider provided 服务、且声明了
 //     requiresBounceOnDepChange 的下游持活 ctx 插件（active/activating）降级为
 //     pending（默认不级联，
-//     期望下游惰性 getService；用于 updatePluginConfig / bouncePlugin 瞬态：
+//     期望下游惰性 getService；用于 updateConfig / bounce 瞬态：
 //     provider 即将被 dispose+重启，下游持有的服务引用即失效）
 //
 // 这些是无状态/弱状态的操作，分出去让 PluginManager 主体只关心生命周期编排。

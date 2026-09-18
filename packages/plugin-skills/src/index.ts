@@ -1174,7 +1174,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // ── 启动：app:ready 后一次全量扫描 + 启用 storage watch 增量同步 ──
-  // 使用 sticky 'app:ready' 事件：bouncePlugin 后新实例仍能收到。
+  // 使用 sticky 'app:ready' 事件：bounce 后新实例仍能收到。
   ctx.on('app:ready', async () => {
     try {
       await rescanSkills();

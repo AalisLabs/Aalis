@@ -38,12 +38,12 @@ export class PluginManager {
   /** recompute 单飞标志：true 表示一次 recompute（含排队补跑）正在进行 */
   private reloading = false;
   /**
-   * 手动 dispose 段计数器：disablePlugin / unload / bouncePlugin 在「dispose 旧
+   * 手动 dispose 段计数器：disable / unload / bounce 在「dispose 旧
    * ctx → 改 entry.state」这段不可分割的状态变更期间 +1。期间 dispose 触发的
    * service:unregistered 反应式 recompute 会被**排队**（而非立即跑——那会看到
    * 半成品状态，比如把正在禁用的插件重新激活），由这些方法收尾的 softReload 统一消化。
    *
-   * 用计数器而非布尔：dispose hook 内可能同步级联调用 disablePlugin/unload（级联
+   * 用计数器而非布尔：dispose hook 内可能同步级联调用 disable/unload（级联
    * 禁用），嵌套时内层的 finally 若复位布尔会过早解除外层的挂起态——计数器确保
    * 只有最外层退出（归零）才解除。
    */
@@ -192,7 +192,7 @@ export class PluginManager {
       return;
     }
 
-    // dispose 段守卫（与 disablePlugin 对齐）：dispose 触发的反应式 recompute
+    // dispose 段守卫（与 disable 对齐）：dispose 触发的反应式 recompute
     // 排队到收尾的 softReload，避免在 entry 半卸载态下重算。
     this.suspendDepth++;
     try {
@@ -223,11 +223,11 @@ export class PluginManager {
   /**
    * 启用一个已禁用的插件
    */
-  async enablePlugin(instanceId: string): Promise<boolean> {
+  async enable(instanceId: string): Promise<boolean> {
     const entry = this.plugins.get(instanceId);
     if (!entry) return false;
 
-    if (entry.state === 'disposed') return false; // 正在卸载，'disposed' 对管理路径单向（见 bouncePlugin 内注释）
+    if (entry.state === 'disposed') return false; // 正在卸载，'disposed' 对管理路径单向（见 bounce 内注释）
     if (entry.state !== 'disabled' && entry.state !== 'error') return true; // 已经启用
     // 依赖不变量：disabled/error 态的 entry 必然 context 已清（disable 与激活失败
     // 都经 retireEntry 清引用；锚在 admin-during-activation 测试）——否则此处转
@@ -243,7 +243,7 @@ export class PluginManager {
   /**
    * 禁用一个活跃的插件（core 插件不能禁用）
    */
-  async disablePlugin(instanceId: string): Promise<boolean> {
+  async disable(instanceId: string): Promise<boolean> {
     const entry = this.plugins.get(instanceId);
     if (!entry) return false;
 
@@ -252,7 +252,7 @@ export class PluginManager {
       return false;
     }
 
-    if (entry.state === 'disposed') return false; // 正在卸载，'disposed' 对管理路径单向（见 bouncePlugin 内注释）
+    if (entry.state === 'disposed') return false; // 正在卸载，'disposed' 对管理路径单向（见 bounce 内注释）
     if (entry.state === 'disabled') return true; // 已经禁用
 
     // dispose 段守卫：期间反应式 recompute 排队到收尾的 softReload
@@ -303,11 +303,11 @@ export class PluginManager {
   }
 
   /**
-   * 更新插件配置（thin alias，转发到 bouncePlugin）。保留独立方法名是为了
-   * 让 host 层调用点（WebUI / 配置文件热重载）语义清晰且向后兼容。
+   * 更新插件配置：`bounce(instanceId, { config })` 的薄壳，独立成名只为让调用点
+   * （WebUI / 配置文件热重载）语义清晰。
    */
-  async updatePluginConfig(instanceId: string, config: Record<string, unknown>): Promise<boolean> {
-    return this.bouncePlugin(instanceId, { config });
+  async updateConfig(instanceId: string, config: Record<string, unknown>): Promise<boolean> {
+    return this.bounce(instanceId, { config });
   }
 
   /**
@@ -322,14 +322,14 @@ export class PluginManager {
    *
    * @returns false 表示找不到 entry 或处于 disabled 态（拒绝 bounce）。
    */
-  async bouncePlugin(
+  async bounce(
     instanceId: string,
     opts?: { config?: Record<string, unknown>; module?: PluginModule },
   ): Promise<boolean> {
     const entry = this.plugins.get(instanceId);
     if (!entry) return false;
     if (entry.state === 'disabled') {
-      this.logger.warn(`bouncePlugin: 插件 "${instanceId}" 处于 disabled 态，跳过`);
+      this.logger.warn(`bounce: 插件 "${instanceId}" 处于 disabled 态，跳过`);
       return false;
     }
     // 'disposed' 对管理路径单向（含卸载在途与停机后的遗留终态两种情形）：
@@ -337,7 +337,7 @@ export class PluginManager {
     // await 也让出）——此窗口内把它覆写回 'pending' 会重新武装 entry，激活出
     // 一个注册表外的永生孤儿实例；停机后覆写则会把插件误写进持久化禁用清单。
     if (entry.state === 'disposed') {
-      this.logger.debug(`bouncePlugin: 插件 "${instanceId}" 已进入 disposed 终态（卸载在途或已停机），跳过`);
+      this.logger.debug(`bounce: 插件 "${instanceId}" 已进入 disposed 终态（卸载在途或已停机），跳过`);
       return false;
     }
 
@@ -350,7 +350,7 @@ export class PluginManager {
     }
     if (newModule) entry.module = newModule;
 
-    // dispose 段守卫（与 disablePlugin / unload 对齐）：dispose 触发的反应式
+    // dispose 段守卫（与 disable / unload 对齐）：dispose 触发的反应式
     // recompute 不能在 entry 尚未转 pending 时跑——会把半 bounce 态误判。
     this.suspendDepth++;
     try {
@@ -523,7 +523,7 @@ export class PluginManager {
             this.logger.info(`依赖 "${unmet.service}" 不可用，停用插件: ${entry.instanceId}`);
           } else {
             // 被动级联降级（依赖服务下线 → 转 pending 等待重新满足），
-            // 区别于 bouncePlugin() 的主动重载，措辞不混用 bounce。
+            // 区别于 bounce() 的主动重载，日志措辞不用「bounce」一词。
             const missing = entry.optionalDeps.find(
               d => serviceDowns.has(d.service) && this.rootCtx.getService(d.service) === undefined,
             );
