@@ -39,8 +39,9 @@
  * 全局服务类型注册表 —— **core 内部保持字面为空**。
  *
  * 所有条目一律由 `-api` 包就近通过 `declare module '@aalis/core'` 注入，core 与具体服务
- * 实现因此解耦。core 自己 provide 的 `app` / `plugins` 也不例外：全部消费点都显式
- * 传了类型参数（`getService<AppService>('app')`），写进这里买不到任何东西。
+ * 实现因此解耦。core 自己 provide 的 `app` / `plugins` 也不登记：扩展点只登记基础词汇层能完整
+ * 表达的 core 自持条目，而 `plugins` 的契约引用编排层词汇（PluginEntry 等），成对登不了就一个不登
+ * （事件的载荷是字符串，所以 AalisEvents 登记了全部内置事件）。消费点显式传类型参数。
  *
  * ⚠️ **增广只能用裸包名说明符 `'@aalis/core'`，绝不能用相对路径。**
  * 相对说明符会把接口绑成**第二个 symbol**：当 `-api` 包的
