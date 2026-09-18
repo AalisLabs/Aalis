@@ -2,6 +2,14 @@ import type { DependencyDeclaration, ServiceOf, ServiceTypeMap } from '../types/
 
 // ----- 服务系统数据契约（与容器实现同文件，同 contributions.ts 的 Spec/Handle 惯例） -----
 
+/** getAll / getAllServices 的元素：ServiceEntry 的投影，刻意不含清理归属 owner。 */
+export interface ServiceView<T = unknown> {
+  instance: T;
+  contextId: string;
+  priority: number;
+  label?: string;
+}
+
 export interface ServiceEntry {
   instance: unknown;
   /**
@@ -53,33 +61,36 @@ export class ServiceContainer {
    * 未登记名与动态字符串放行为 `unknown`。单签名条件类型而非重载：string 兜底重载会让
    * 已知名的错误实现落到宽签名照样通过（已实测）。
    *
-   * @param owner 清理归属（Context 门面传入）；省略则该条目不被拆卸自动清理。
-   * @returns 刚插入的 ServiceEntry，调用方可以该引用调用 {@link unregisterEntry} 精确删除这一条。
+   * @param owner 清理归属（Context 门面传入）；省略则该条目不被拆卸自动清理，用返回的退订闭包自管。
+   * @returns 退订闭包；返回这次是否真的摘掉了条目——同一条目退订两次、或已被 unregisterByOwner
+   *   清走时为 false，门面据此决定要不要发 `service:unregistered`。
    */
   register<K extends string>(
     name: K,
     instance: ServiceOf<K>,
-    priority: number = 0,
-    contextId: string = 'root',
-    label?: string,
+    contextId: string,
     owner?: symbol,
-  ): ServiceEntry {
+    options?: { priority?: number; label?: string },
+  ): () => boolean {
     let list = this.entries.get(name);
     if (!list) {
       list = [];
       this.entries.set(name, list);
     }
-    const entry: ServiceEntry = {
-      instance,
-      priority,
-      contextId,
-      owner,
-      label,
-    };
+    const entry: ServiceEntry = { instance, priority: options?.priority ?? 0, contextId, owner, label: options?.label };
     list.push(entry);
     // 按优先级降序排列（稳定排序：同优先级先注册者在前）
     list.sort((a, b) => b.priority - a.priority);
-    return entry;
+
+    return () => {
+      // 查 registry 当前数组而非闭包捕获的 list：服务名空掉时表项会被删，再注册会新建数组
+      const current = this.entries.get(name);
+      const idx = current?.indexOf(entry) ?? -1;
+      if (!current || idx < 0) return false;
+      current.splice(idx, 1);
+      if (current.length === 0) this.entries.delete(name);
+      return true;
+    };
   }
 
   /**
@@ -137,21 +148,6 @@ export class ServiceContainer {
   }
 
   /**
-   * 按 entry 引用精确删除某个提供者。同一 Context 多次 register（含 per-entry 子 entry）时
-   * 只摘这一条；拆卸整体清理走 {@link unregisterByOwner}。
-   * @returns 是否成功删除
-   */
-  unregisterEntry(name: string, entry: ServiceEntry): boolean {
-    const list = this.entries.get(name);
-    if (!list) return false;
-    const idx = list.indexOf(entry);
-    if (idx < 0) return false;
-    list.splice(idx, 1);
-    if (list.length === 0) this.entries.delete(name);
-    return true;
-  }
-
-  /**
    * 按清理归属移除该 Context 本次激活注册的所有 entry，返回被移除的服务名列表。
    *
    * 按 owner 而非 contextId：同名 Context（手工 fork 重名、拆卸在飞时同名新激活）各有各的
@@ -190,11 +186,9 @@ export class ServiceContainer {
    *
    * 返回顺序遵循「偏好 > 优先级 > 注册顺序」。
    */
-  getAll<TName extends keyof ServiceTypeMap>(
-    name: TName,
-  ): Array<{ instance: ServiceTypeMap[TName]; contextId: string; priority: number; label?: string }>;
-  getAll<T = unknown>(name: string): Array<{ instance: T; contextId: string; priority: number; label?: string }>;
-  getAll<T>(name: string): Array<{ instance: T; contextId: string; priority: number; label?: string }> {
+  getAll<TName extends keyof ServiceTypeMap>(name: TName): ServiceView<ServiceTypeMap[TName]>[];
+  getAll<T = unknown>(name: string): ServiceView<T>[];
+  getAll<T>(name: string): ServiceView<T>[] {
     return this.resolveEntries(name).map(entry => ({
       instance: entry.instance as T,
       contextId: entry.contextId,

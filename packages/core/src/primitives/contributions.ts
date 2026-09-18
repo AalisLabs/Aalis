@@ -32,7 +32,7 @@ export interface ContributionHandle<S extends ContributionSpec = ContributionSpe
   readonly spec: S;
 }
 
-interface Registration {
+interface ContributionEntry {
   spec: ContributionSpec;
   /** 逻辑身份：全局键 `${contextId}/${spec.id}` 的前半，决定排序与同键替换 */
   contextId: string;
@@ -66,7 +66,7 @@ interface Registration {
  */
 export class ContributionRegistry {
   /** point → 全局键 → 注册项 */
-  private points = new Map<string, Map<string, Registration>>();
+  private points = new Map<string, Map<string, ContributionEntry>>();
 
   /**
    * 注册一份贡献，返回 dispose 函数。
@@ -96,7 +96,7 @@ export class ContributionRegistry {
       this.points.set(point, byKey);
     }
     const key = `${contextId}/${id}`;
-    const entry: Registration = { spec, contextId, owner };
+    const entry: ContributionEntry = { spec, contextId, owner };
     byKey.set(key, entry);
 
     return () => {
@@ -122,7 +122,7 @@ export class ContributionRegistry {
     if (!byKey) return [];
     const handles: ReadonlyArray<ContributionHandle> = [...byKey.keys()]
       .sort()
-      .map(key => ({ key, spec: (byKey.get(key) as Registration).spec }));
+      .map(key => ({ key, spec: (byKey.get(key) as ContributionEntry).spec }));
     // 内部登记只按不透明的 ContributionSpec 存放；按贡献点键精化到 ContributionPointMap[K]
     // 是本方法的类型契约，运行时不做任何校验（spec 按引用原样交付）。
     return handles as ReadonlyArray<ContributionHandle<ContributionPointMap[K] & ContributionSpec>>;
