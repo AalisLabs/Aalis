@@ -278,14 +278,10 @@ export class Context {
     const entryId = options?.entryId ?? this.id;
 
     if (this.devMode) {
-      validateProvide({
-        ctxId: this.id,
-        name,
-        entryId,
-        explicitEntryId: options?.entryId !== undefined,
-        services: this._services,
-        logger: this.logger,
-      });
+      validateProvide(
+        { ctxId: this.id, name, entryId, explicitEntryId: options?.entryId !== undefined },
+        { services: this._services, logger: this.logger },
+      );
     }
 
     const off = this._services.register(name, instance, entryId, this._owner, options);

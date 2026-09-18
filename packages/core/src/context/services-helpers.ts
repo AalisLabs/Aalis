@@ -22,15 +22,12 @@ import type { Logger } from './logger.js';
  *
  * 失败模式：均为 warn（提示但不阻断）。
  */
-export function validateProvide(args: {
-  ctxId: string;
-  name: string;
-  entryId: string;
-  explicitEntryId: boolean;
-  services: ServiceContainer;
-  logger: Logger;
-}): void {
-  const { ctxId, name, entryId, explicitEntryId, services, logger } = args;
+export function validateProvide(
+  subject: { ctxId: string; name: string; entryId: string; explicitEntryId: boolean },
+  deps: { services: ServiceContainer; logger: Logger },
+): void {
+  const { ctxId, name, entryId, explicitEntryId } = subject;
+  const { services, logger } = deps;
 
   if (explicitEntryId && entryId !== ctxId && !entryId.startsWith(`${ctxId}/`)) {
     logger.warn(

@@ -15,10 +15,14 @@ import type { PluginEntry, PluginState, RecomputeReason } from '../types/plugin.
 import type { Context } from '../context/context.js';
 import type { Logger } from '../context/logger.js';
 
-interface ActivationDeps {
+/**
+ * 编排层自由函数的宿主注入件。领域数据（entry、注册表、目标态）按位置传，注入件统一收在这里，
+ * 由 PluginManager 构造一次、各函数按需读取。
+ */
+export interface ActivationDeps {
   rootCtx: Context;
   logger: Logger;
-  /** 激活失败回滚 disposeAsync 时单个异步清理项的等待上限（毫秒；缺省不设限） */
+  /** 拆卸时单个异步清理项的等待上限（毫秒；缺省不设限） */
   disposeTimeoutMs?: number;
 }
 
