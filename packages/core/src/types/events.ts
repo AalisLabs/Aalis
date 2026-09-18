@@ -40,9 +40,9 @@ export interface AalisEvents {
    */
   'service:preference-changed': [name: string];
   /** 通知：插件已激活。同一轮 recompute 可能紧接着激活下一个插件，不等本事件的监听器 */
-  'plugin:loaded': [name: string];
+  'plugin:loaded': [instanceId: string];
   /** 通知：插件已拆卸。激活失败的回滚（从未 loaded）与关机拆卸（`stop()` 自有事件）不发 */
-  'plugin:unloaded': [name: string];
+  'plugin:unloaded': [instanceId: string];
   /** 通知：一轮 recompute 收敛，插件状态集合可能已变；关机轮不发 */
   'plugins:changed': [];
   /** 屏障：`start()` 的第一步，早于 `app:ready` */
