@@ -373,9 +373,7 @@ export class PluginManager {
           this.logger.error(`插件 "${name}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`);
         }
         if (entry.context === ctx) entry.context = undefined;
-        this.rootCtx.emit('plugin:unloaded', name).catch(err => {
-          this.logger.warn(`emit plugin:unloaded 失败 (${name}): ${err}`);
-        });
+        this.rootCtx.emitQuietly('plugin:unloaded', name);
       }
     } finally {
       this.suspendDepth--;
@@ -581,8 +579,6 @@ export class PluginManager {
 
     if (reason.type === 'shutdown') return;
 
-    this.rootCtx.emit('plugins:changed').catch(err => {
-      this.logger.warn(`emit plugins:changed 失败: ${err}`);
-    });
+    this.rootCtx.emitQuietly('plugins:changed');
   }
 }
