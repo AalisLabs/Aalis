@@ -2,7 +2,7 @@
 
 **包名**: `@aalis/api-tools`  
 **源码**: `packages/api-tools/src/index.ts`  
-**实现**: `@aalis/plugin-tool-system`
+**实现**: `@aalis/plugin-tools`（`tools` 服务本体）；`@aalis/plugin-tool-system` 等 `plugin-tool-*` 是往里注册工具组的生产方
 
 ## 概述
 
@@ -91,7 +91,8 @@ tools.register({
 
 ## 实现者
 
-- [@aalis/plugin-tool-system](../plugins/plugin-tool-system.md) —— 提供 `system` 一个工具组（含 shell / 文件 / 系统信息 / HTTP 四类工具）
+- [@aalis/plugin-tools](../plugins/plugin-tools.md) —— `tools` 服务本体（注册表、分组、可见性）
+- [@aalis/plugin-tool-system](../plugins/plugin-tool-system.md) —— 往里注册 `system` 一个工具组（含 shell / 文件 / 系统信息 / HTTP 四类工具）
 
 ## 相关
 

@@ -22,7 +22,7 @@ export interface CommandService {
   /** 启动 builder 注册一个命令。name 含 inline DSL：'memory.set <key:string> [value:text]' */
   command(name: string, description?: string, meta?: InternalCommandMeta): CommandBuilder;
 
-  unregister(name: string): void;
+  unregister(name: string, contextId?: string): void;
   unregisterByPlugin(contextId: string): void;
 
   execute(name: string, ctx: ExecutionInput): Promise<string | undefined>;

@@ -39,7 +39,7 @@ interface CommandDefinition {
 
 ```ts
 const commands = useCommandService(ctx);
-commands.command(definition: CommandDefinition): () => void;
+commands.command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;
 ```
 
 helper 内部使用 `ctx.getService('commands')`；服务未 provide 时 `command()` 调用会被 `whenService` 自动延迟到服务就绪。
@@ -52,9 +52,9 @@ interface CommandService {
   command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;   // 插件侧用 useCommandService(ctx).command
   unregister(name: string, contextId?: string): void;
   unregisterByPlugin(contextId: string): void;
-  parse(text: string): { name: string; args: string[] } | null;
-  execute(name: string, args: string[], ctx: CommandContext): Promise<string | undefined>;
-  list(): CommandNodeInfo[];                                 // 扁平树视图，供 WebUI
+  execute(name: string, ctx: ExecutionInput): Promise<string | undefined>;
+  parseCommand(input: string): { name: string; args: string[]; raw: string } | null;
+  getAll(): Command[];                                       // 供 WebUI / help 枚举
   setExecutionGuard(guard: ExecutionGuard): void;
 }
 ```
