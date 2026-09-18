@@ -1759,12 +1759,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     },
     registerPage(page, contextId) {
       const list = registeredPages.get(contextId) ?? [];
-      list.push({ ...page, pluginName: contextId });
+      const entry = { ...page, pluginName: contextId };
+      list.push(entry);
       registeredPages.set(contextId, list);
+      // 退订按条目引用比对：同 key 重注册后，旧退订闭包不得摘掉新登记
       return () => {
         const cur = registeredPages.get(contextId);
         if (!cur) return;
-        const idx = cur.findIndex(p => p.key === page.key);
+        const idx = cur.indexOf(entry);
         if (idx >= 0) cur.splice(idx, 1);
         if (cur.length === 0) registeredPages.delete(contextId);
       };
