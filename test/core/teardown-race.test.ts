@@ -116,7 +116,7 @@ describe('App.stop 撞上在飞 recompute', () => {
     await app.start();
 
     // 不 await：让 bounce 处于在飞状态时发起停机
-    void app.plugins.bouncePlugin('noisy', { config: { n: 2 } });
+    void app.plugins.bounce('noisy', { config: { n: 2 } });
     await app.stop();
 
     expect(order).toContain('consumer-flushed');

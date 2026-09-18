@@ -39,7 +39,7 @@
   （`unregisterByPlugin(contextId)` 鸭子协议）。
 - 清理相对注册**逆序**执行；单个清理器抛错不影响其余。
 - `onDispose` 是插件清理副作用的唯一正确 API；`disposeAsync` 路径等待异步清理完成（带超时护栏）。
-- 插件启停顺序：激活 = 提供者先于消费者（required 依赖拓扑）。关停 = 消费者先于提供者**只在 `App.stop()` 的整体拓扑逆序成立**，异步清理按 `disposeTimeoutMs` 逐项设限；单插件 `unload` / `disablePlugin` / `bouncePlugin` 不提供该顺序保证，消费者的 onDispose 拿到的服务可能已不可用。
+- 插件启停顺序：激活 = 提供者先于消费者（required 依赖拓扑）。关停 = 消费者先于提供者**只在 `App.stop()` 的整体拓扑逆序成立**，异步清理按 `disposeTimeoutMs` 逐项设限；单插件 `unload` / `disable` / `bounce` 不提供该顺序保证，消费者的 onDispose 拿到的服务可能已不可用。
 - 提供者换人（多提供者其一退出、偏好切换、更高优先级上线）不改变插件的目标状态，经 `service:registered` / `service:unregistered` / `service:preference-changed` 可观察；`requiresBounceOnDepChange` 的级联只在依赖的服务名整个落空、或依赖的 provider 自身被 bounce 时触发。要跟随换人用 `whenService`。
 - required 依赖缺失 → 插件停在 pending（不阻塞、不轮询）；依赖就绪自动激活。
 
@@ -85,7 +85,7 @@
 | 0.9.0 | `CORE_CONFIG_SCHEMA` / `ConfigSchema` 全家、`Context.once` / `hasService` / `getServiceEntries`、`PluginManager.createInstance` / `removeInstance`、`ServiceContainer.has`、`EventBus.removeAll`、`ConfigManager.syncPluginDefaults`、`AppOptions.configSync` |
 | 0.12.0 | `ServicePriority` / `ServicePriorityValue`（0.11.0 仍从包根导出，服务优先级改为裸数字后移除） |
 | 0.13.0 | 四个注册表的 `unregisterByContext`（换为 `unregisterByOwner(owner: symbol)`）；另有三处改形而非删除：`saveConfig()` 返回 `Promise<void>`、`useModule()` 返回 `ModuleHandle`、`EventBus.on` 第三参由 `string` 改为 `symbol` |
-| 0.14.0 | `ServiceContainer.unregisterEntry`（`register` 改为返回退订闭包）；改形：`ServiceContainer.register(name, instance, contextId, owner?, options?)` 与 `HookRegistry.register` 的 `contextId` 必填；`ContributionRegistry` 的注册与读取动词按 `ContributionPointMap` 约束键；`ServiceContainer` 的服务名保持开放，约束落在载荷 `ServiceOf<K>` 与 `get` / `getAll` 的按键重载上；事件键 `ready` / `restarting`（改名 `app:ready` / `app:restarting`，屏障统一 `app:` 前缀）；行为：`plugin:loaded` 不再等监听器 |
+| 0.14.0 | `ServiceContainer.unregisterEntry`（`register` 改为返回退订闭包）；改形：`ServiceContainer.register(name, instance, contextId, owner?, options?)` 与 `HookRegistry.register` 的 `contextId` 必填；`ContributionRegistry` 的注册与读取动词按 `ContributionPointMap` 约束键；`ServiceContainer` 的服务名保持开放，约束落在载荷 `ServiceOf<K>` 与 `get` / `getAll` 的按键重载上；事件键 `ready` / `restarting`（改名 `app:ready` / `app:restarting`，屏障统一 `app:` 前缀）；`PluginManagerService.enablePlugin` / `disablePlugin` / `updatePluginConfig`（改名 `enable` / `disable` / `updateConfig`；类上的 `bouncePlugin` 改 `bounce`）；行为：`plugin:loaded` 不再等监听器 |
 
 因此插件生态里常见的 `peerDependencies: { "@aalis/core": ">=0.2.0 <1.0.0" }` **不是**"core 保证
 0.x 内兼容"的推论——它只是"没用到新 API 的插件不必随次版本重发"的便利区间。用了某个版本才有的

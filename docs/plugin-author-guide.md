@@ -23,7 +23,7 @@
 |---|---|
 | 插件 dispose 时不主动 dispose 自己 provided 的服务实例 | **什么都不用做**，PluginManager 会处理 |
 | 插件 active 期间临时换一个服务实例（同名 provide 二次） | **必须**手动 evict 下游消费者，否则它们仍持有旧引用 |
-| 插件配置变更触发热重载 | **调用 `updatePluginConfig()`**（现为 `bouncePlugin(instanceId, { config })` 别名）；PluginManager 负责 dispose 与 reapply。下游是否级联取决于 `requiresBounceOnDepChange`（默认否） |
+| 插件配置变更触发热重载 | **调用 `updateConfig()`**（现为 `bounce(instanceId, { config })` 别名）；PluginManager 负责 dispose 与 reapply。下游是否级联取决于 `requiresBounceOnDepChange`（默认否） |
 
 ### 为什么
 
@@ -42,16 +42,16 @@ ctx.provide('mysvc', newInstance);
 
 ```typescript
 // ✅ 触发 PluginManager 走完整 bounce 流程
-await ctx.getService('plugins')!.bouncePlugin(myInstanceId);
+await ctx.getService('plugins')!.bounce(myInstanceId);
 ```
 
-或者直接通过 `updatePluginConfig` 让 PluginManager 把整套 dispose+evict+reapply
+或者直接通过 `updateConfig` 让 PluginManager 把整套 dispose+evict+reapply
 统一完成。
 
 ### 什么时候真的需要在 apply 内部替换实例？
 
 **几乎从不需要**。若你认为需要，通常是混淆了「配置驱动」与「运行时驱动」：
-配置变了 → `updatePluginConfig`；运行时事件让服务能力变了 → 改服务内部状态而非
+配置变了 → `updateConfig`；运行时事件让服务能力变了 → 改服务内部状态而非
 重新 provide。
 
 ---
@@ -277,8 +277,8 @@ PluginManager 只在 `app.stop()` 的整体关停里保证消费者**先于**提
 
 ### 配置变更如何触发 reload
 
-用户在 WebUI 点保存 → `updatePluginConfig(instanceId, newConfig)`（现为
-`bouncePlugin(instanceId, { config })` 的别名）：
+用户在 WebUI 点保存 → `updateConfig(instanceId, newConfig)`（现为
+`bounce(instanceId, { config })` 的别名）：
 
 1. `entry.config = newConfig` + 写回 ConfigManager
 2. 如果当前 active：

@@ -57,7 +57,7 @@
    安全 bounce；标注 "进程池 / 浏览器会话" 的服务 bounce 会断开外部资源，
    建议先停止依赖工作流再重载。
 
-3. **配置变更走 `updatePluginConfig` 而非 `reloadPlugin`**：前者会把新配置
+3. **配置变更走 `updateConfig` 而非 `reloadPlugin`**：前者会把新配置
    写回 `ctx.config` 后 bounce；后者只重新 import 代码，不更新配置。
 
 4. **多实例插件 (`name:suffix`) 仅作用于指定 instanceId**：同 module 的其
@@ -74,10 +74,10 @@
 await app.reloadPlugin('@aalis/plugin-foo');
 
 // 不重新 import，仅 dispose+重新 apply（罕用，调试时可手动调）
-await ctx.getService('plugins').bouncePlugin('@aalis/plugin-foo');
+await ctx.getService('plugins').bounce('@aalis/plugin-foo');
 
 // 配置变化（含 enable/disable）后的标准入口
-await ctx.getService('plugins').updatePluginConfig(instanceId, newConfig);
+await ctx.getService('plugins').updateConfig(instanceId, newConfig);
 
 // 全局收敛：所有生命周期路径的统一入口，按 reason 调度拓扑 dispose / activate
 await ctx.getService('plugins').recompute({ type: 'plugin-state-changed' });
