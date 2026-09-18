@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-adapter-onebot",
-  "version": "0.12.3",
+  "version": "0.12.4",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -51,7 +51,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.11.0 <1.0.0"
+    "@aalis/core": ">=0.14.0 <1.0.0"
   },
   "aalis": {
     "service": {
