@@ -310,7 +310,7 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
  * 判据是语法树里的**直接调用形式**，不做"这行在不在段内"的可达性分析：
  *   1. 字面量事件名的 `.emit('x')`：x 是屏障事件、只出现在 orchestration/app.ts、且 await 或 .then 接续；
  *   2. 事件名不是字面量的 `.emit(...)`：只许是 Context 门面自己的 emit / emitQuietly 方法体转发给总线——
- *      门面文件不整体豁免，在 context.ts 别处写 `void this._events.emit('plugin:loaded', …)` 同样被抓；
+ *      门面文件不整体豁免，在 context.ts 别处写 `void this.#events.emit('plugin:loaded', …)` 同样被抓；
  *   3. `.emitQuietly('x')`：x 是字面量且不是屏障事件。
  * AalisEvents 里声明的 `app:*` 键集合与 app.ts 实际发出的集合必须相等：声明了不发、发了没声明、名单漂移都红。
  */
