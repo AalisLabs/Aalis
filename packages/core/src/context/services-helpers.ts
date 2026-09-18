@@ -4,11 +4,9 @@
 // 从 context.ts 拆出来的纯函数，消除 Context 类自身对"如何包装/校验服务"的细节
 // 知识，留下 Context 作为编排者：路由参数 → 调 helper → 登记 disposable。
 //
-// 这里不持有任何状态，所有副作用（注册/警告/事件）都通过参数传入的 services/
-// logger/events 反映出去。便于单元测试（mock 即可）。
+// 这里不持有任何状态，副作用（查表/警告）都通过参数传入的 services/logger 反映出去。
 // ============================================================
 
-import type { EventBus } from '../primitives/events.js';
 import type { ServiceContainer } from '../primitives/services.js';
 import type { Logger } from './logger.js';
 
@@ -50,14 +48,4 @@ export function validateProvide(args: {
         `若是有意拆出多个子粒度 entry（如 per-model LLM），请传入 options.entryId。`,
     );
   }
-}
-
-/**
- * 异步发射 service:registered 事件，捕获并 warn 任何监听器抛错。
- * 抽出为函数主要让 provide() 主体看起来更短。
- */
-export function emitServiceRegistered(events: EventBus, logger: Logger, name: string): void {
-  events.emit('service:registered', name).catch(err => {
-    logger.warn(`服务注册事件发射失败 [${name}]:`, err);
-  });
 }

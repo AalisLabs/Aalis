@@ -3,14 +3,14 @@ import { Lifecycle } from '../kernel/lifecycle.js';
 import type { ContributionHandle, ContributionRegistry, ContributionSpec } from '../primitives/contributions.js';
 import type { EventBus } from '../primitives/events.js';
 import type { HookRegistry } from '../primitives/hooks.js';
-import type { ServiceContainer } from '../primitives/services.js';
+import type { ServiceContainer, ServiceView } from '../primitives/services.js';
 import type { ContributionPointMap } from '../types/contributions.js';
 import type { AalisEvents } from '../types/events.js';
 import type { HookContextMap, MiddlewareFn } from '../types/hooks.js';
 import type { ServiceOf, ServiceTypeMap } from '../types/services.js';
 import type { ConfigManager } from './config.js';
 import type { Logger } from './logger.js';
-import { emitServiceRegistered, validateProvide } from './services-helpers.js';
+import { validateProvide } from './services-helpers.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
@@ -121,9 +121,7 @@ export class Context {
         },
         afterCleanup: () => {
           for (const svc of removedServices) {
-            this._events.emit('service:unregistered', svc).catch(err => {
-              reportQuietly(() => this.logger.warn(`emit service:unregistered 失败 (${svc}): ${err}`));
-            });
+            this.emitQuietly('service:unregistered', svc);
           }
           removedServices = [];
           this._contributionDisposers.clear();
@@ -238,6 +236,14 @@ export class Context {
     return this._events.emit(event, ...args);
   }
 
+  /**
+   * 发 core 自己的内置事件：不等监听器、失败只记一笔。emit 由实现保证永不拒绝，这里的兜底
+   * 只为宿主注入自建 EventBus 的情形；上报经 reportQuietly，logger 自身抛错不再逃逸。
+   */
+  private emitQuietly<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): void {
+    this._events.emit(event, ...args).catch(err => reportQuietly(() => this.logger.warn(`emit ${event} 失败:`, err)));
+  }
+
   // ---- 服务 (IoC) ----
 
   /**
@@ -275,24 +281,17 @@ export class Context {
       });
     }
 
-    const entry = this._services.register(name, instance, options?.priority ?? 0, entryId, options?.label, this._owner);
+    const off = this._services.register(name, instance, entryId, this._owner, options);
+    // 显式 entryId（一 plugin 多 entry，如 LLM 多模型）时用它点名，否则服务名已够定位。
+    // 退订闭包只在真摘掉条目时广播：同一条目退订两次、或已被拆卸清走时不重复发。
+    const dispose = this.trackDisposable(
+      () => {
+        if (off()) this.emitQuietly('service:unregistered', name);
+      },
+      `provide:${options?.entryId ?? name}`,
+    );
 
-    const dispose = () => {
-      // 自移除：调用方手动 dispose 后，闭包不再滞留清理链（否则它持有
-      // entry 引用，instance 无法 GC，多实例热替换场景累积僵尸）。
-      // ctx.dispose 经 DisposableChain.dispose 调用本函数时 remove 返回 false，无害。
-      this._lifecycle.disposables.remove(dispose);
-      const removed = this._services.unregisterEntry(name, entry);
-      if (removed) {
-        this._events.emit('service:unregistered', name).catch(err => {
-          this.logger.warn(`emit service:unregistered 失败 (${name}): ${err}`);
-        });
-      }
-    };
-    // 显式 entryId（一 plugin 多 entry，如 LLM 多模型）时用它点名，否则服务名已够定位
-    this._lifecycle.disposables.push(dispose, `provide:${options?.entryId ?? name}`);
-
-    emitServiceRegistered(this._events, this.logger, name);
+    this.emitQuietly('service:registered', name);
     this.logger.debug(`服务已注册: ${name}`);
 
     return dispose;
@@ -331,13 +330,9 @@ export class Context {
    * @example
    * const allLLMs = ctx.getAllServices('llm');
    */
-  getAllServices<TName extends keyof ServiceTypeMap>(
-    name: TName,
-  ): Array<{ instance: ServiceTypeMap[TName]; contextId: string; priority: number; label?: string }>;
-  getAllServices<T = unknown>(
-    name: string,
-  ): Array<{ instance: T; contextId: string; priority: number; label?: string }>;
-  getAllServices<T>(name: string): Array<{ instance: T; contextId: string; priority: number; label?: string }> {
+  getAllServices<TName extends keyof ServiceTypeMap>(name: TName): ServiceView<ServiceTypeMap[TName]>[];
+  getAllServices<T = unknown>(name: string): ServiceView<T>[];
+  getAllServices<T>(name: string): ServiceView<T>[] {
     return this._services.getAll<T>(name);
   }
 
@@ -354,9 +349,7 @@ export class Context {
     const ok = this._services.prefer(name, contextId);
     if (ok) {
       this.logger.debug(`服务偏好已设置: ${name} -> ${contextId}`);
-      this._events.emit('service:preference-changed', name).catch(err => {
-        this.logger.warn(`emit service:preference-changed 失败 (${name}): ${err}`);
-      });
+      this.emitQuietly('service:preference-changed', name);
     }
     return ok;
   }
@@ -368,9 +361,7 @@ export class Context {
     const ok = this._services.unprefer(name);
     if (ok) {
       this.logger.debug(`服务偏好已清除: ${name}`);
-      this._events.emit('service:preference-changed', name).catch(err => {
-        this.logger.warn(`emit service:preference-changed 失败 (${name}): ${err}`);
-      });
+      this.emitQuietly('service:preference-changed', name);
     }
     return ok;
   }

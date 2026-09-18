@@ -75,7 +75,7 @@ const CASES: Case[] = [
 
 function build(c: Case): ServiceContainer {
   const sc = new ServiceContainer();
-  for (const e of c.entries) sc.register('svc', { tag: e.ctxId }, e.priority, e.ctxId);
+  for (const e of c.entries) sc.register('svc', { tag: e.ctxId }, e.ctxId, undefined, { priority: e.priority });
   if (c.preference) sc.prefer('svc', c.preference);
   return sc;
 }
