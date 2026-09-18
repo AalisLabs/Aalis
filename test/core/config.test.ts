@@ -168,3 +168,36 @@ describe('注册期配置合并（app.plugin：defaults ← 配置文件 ← 代
     await app.stop();
   });
 });
+
+describe('ConfigManager.watch', () => {
+  const base = { name: 'T', logLevel: 'error', plugins: {} };
+
+  it('返回退订闭包；退订后 provider 侧也停表，可再次订阅', () => {
+    let stopped = 0;
+    let push!: (next: typeof base) => void;
+    const cm = new ConfigManager(base, {
+      provider: {
+        watch: onChange => {
+          push = onChange;
+          return () => {
+            stopped++;
+          };
+        },
+      },
+    });
+    const seen: number[] = [];
+    const off = cm.watch(() => seen.push(1));
+    push({ ...base, name: 'T2' });
+    expect(seen).toHaveLength(1);
+    expect(cm.get('name')).toBe('T2');
+    off();
+    expect(stopped).toBe(1);
+    expect(() => cm.watch(() => {})).not.toThrow();
+  });
+
+  it('单订阅者：已有订阅时再 watch 抛错，不静默顶替', () => {
+    const cm = new ConfigManager(base);
+    cm.watch(() => {});
+    expect(() => cm.watch(() => {})).toThrow(/只支持一个订阅者/);
+  });
+});
