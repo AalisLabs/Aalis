@@ -83,8 +83,8 @@ export class PluginManager {
    * 同步触发的变更调用上自我死锁）。需要"尘埃落定后再观察"的外部调用方
    * （宿主引导、WebUI 刷新、测试断言）在变更后 await 本方法。
    *
-   * ⚠． **不得在插件 apply / onDispose 内调用**——flight 正等着你返回，
-   *    等 flight 结束即互等死锁。
+   * **不得在插件 apply / onDispose 内调用**——flight 正等着你返回，
+   * 等 flight 结束即互等死锁。
    */
   idle(): Promise<void> {
     if (!this.reloading && !this.suspended && this.queuedBatch === null) return Promise.resolve();

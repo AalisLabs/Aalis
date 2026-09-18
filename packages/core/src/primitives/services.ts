@@ -20,9 +20,10 @@ export interface ServiceEntry {
   priority: number;
   contextId: string;
   /**
-   * @internal 清理归属：注册它的 Context 在本次激活的身份。与 `contextId`（逻辑身份，供
+   * 清理归属：注册它的 Context 在本次激活的身份。与 `contextId`（逻辑身份，供
    * 路由 / 显示 / 偏好 / 前缀查询）分开——同名 Context 各有各的 owner，一方拆卸不清另一方。
    * 不经 Context 门面直接注册的条目无 owner，不被拆卸自动清理，由调用方用返回值自管。
+   * @internal
    */
   owner?: symbol;
   /** 可选的展示标签（如 "OpenAI / gpt-4o"） */
@@ -204,8 +205,9 @@ export class ServiceContainer {
    * 哪怕它的 priority 数值低于其它 entry。
    *
    * @returns true 表示偏好已记录（即使目标 entry 当下尚未注册也会接受——一旦注册即生效）
-   * @internal 公开 API 走 `ctx.preferService()`（额外 emit service:preference-changed
+   * 公开 API 走 `ctx.preferService()`（额外 emit service:preference-changed
    *   触发 whenService 重挂）；本方法仅供 Context 内部转发，插件勿直接调用。
+   * @internal
    */
   prefer(name: string, contextId: string): boolean {
     this.preferences.set(name, contextId);
@@ -214,7 +216,8 @@ export class ServiceContainer {
 
   /**
    * 清除某服务的偏好（恢复 priority + 注册顺序解析）
-   * @internal 公开 API 走 `ctx.unpreferService()`；本方法仅供 Context 内部转发。
+   * 公开 API 走 `ctx.unpreferService()`；本方法仅供 Context 内部转发。
+   * @internal
    */
   unprefer(name: string): boolean {
     return this.preferences.delete(name);
@@ -222,7 +225,8 @@ export class ServiceContainer {
 
   /**
    * 读取某服务当前的偏好 contextId（无偏好返回 undefined）
-   * @internal 公开 API 走 `ctx.getPreferredService()`；本方法仅供 Context 内部转发。
+   * 公开 API 走 `ctx.getPreferredService()`；本方法仅供 Context 内部转发。
+   * @internal
    */
   getPreferred(name: string): string | undefined {
     return this.preferences.get(name);

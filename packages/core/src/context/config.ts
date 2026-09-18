@@ -175,8 +175,9 @@ export class ConfigManager {
    * 持久化当前配置。委托给 provider，无 provider 时立即完成（内存模式）。
    * 返回 provider 的完成：同步 provider 立即落定，异步 provider 等其 settle；失败以拒绝传出。
    *
-   * @internal 机制口。公开入口是 `app.saveConfig()`（AppService 契约），全部插件
+   * 机制口。公开入口是 `app.saveConfig()`（AppService 契约），全部插件
    * 消费者都应走它；本方法仅供 App 门面与宿主使用，避免同一件事两条公开路。
+   * @internal
    */
   save(): Promise<void> {
     if (!this.provider?.save) return Promise.resolve();
