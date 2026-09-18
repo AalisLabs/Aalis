@@ -128,6 +128,8 @@ kernel 与基础词汇文件不依赖任何东西。
 
 文件前言与分节：带前言的文件用 60 个 `=` 的 `//` 横幅夹住前言（首行「文件名 — 一句话」），无前言的文件不补；文件内分节一律一行 `// ----- 节名 -----`。JSDoc 描述在前、`@internal` 等标签收尾（单行式也展开成多行）；不用警示符号，告诫写成陈述句。
 
+私有成员的写法：面向插件的 `Context` 一律 ECMAScript `#` 私有（运行时对插件不可见，`test/core/purity.test.ts` 用实例自有属性快照守）；其余类用 TypeScript `private` 裸名；都不带 `_` 前缀（biome 对 `packages/core/src/**` 的 `useNamingConvention` 守）。
+
 诊断与错误的写法（文字规矩，无机器守——正则守卫经变异证明会被折行调用与含引号的英文骗过）：错误对象一律作 logger 的附加参数
 （`logger.error('xxx 失败:', err)`），不内插进消息——内插只剩 message、丢 stack，logger 写入前会把换行转义成单行。宿主 SPI
 （插件加载器、重启策略、配置 provider）的失败一律 `error` 级。kernel 抛出的错误信息用中文、带 `Lifecycle:` 前缀、不带节点 id
