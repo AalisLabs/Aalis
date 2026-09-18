@@ -23,7 +23,7 @@
 |---|---|
 | 插件 dispose 时不主动 dispose 自己 provided 的服务实例 | **什么都不用做**，PluginManager 会处理 |
 | 插件 active 期间临时换一个服务实例（同名 provide 二次） | **必须**手动 evict 下游消费者，否则它们仍持有旧引用 |
-| 插件配置变更触发热重载 | **调用 `updatePluginConfig()`**（现为 `bouncePlugin(name, { config })` 别名）；PluginManager 负责 dispose 与 reapply。下游是否级联取决于 `requiresBounceOnDepChange`（默认否） |
+| 插件配置变更触发热重载 | **调用 `updatePluginConfig()`**（现为 `bouncePlugin(instanceId, { config })` 别名）；PluginManager 负责 dispose 与 reapply。下游是否级联取决于 `requiresBounceOnDepChange`（默认否） |
 
 ### 为什么
 
@@ -277,8 +277,8 @@ PluginManager 只在 `app.stop()` 的整体关停里保证消费者**先于**提
 
 ### 配置变更如何触发 reload
 
-用户在 WebUI 点保存 → `updatePluginConfig(name, newConfig)`（现为
-`bouncePlugin(name, { config })` 的别名）：
+用户在 WebUI 点保存 → `updatePluginConfig(instanceId, newConfig)`（现为
+`bouncePlugin(instanceId, { config })` 的别名）：
 
 1. `entry.config = newConfig` + 写回 ConfigManager
 2. 如果当前 active：

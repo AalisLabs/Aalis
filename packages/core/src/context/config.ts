@@ -113,8 +113,8 @@ export class ConfigManager {
     return this.config[key];
   }
 
-  getPluginConfig<T extends Record<string, unknown> = Record<string, unknown>>(pluginName: string): T {
-    return (this.config.plugins[pluginName] ?? {}) as T;
+  getPluginConfig<T extends Record<string, unknown> = Record<string, unknown>>(instanceId: string): T {
+    return (this.config.plugins[instanceId] ?? {}) as T;
   }
 
   /**
@@ -133,27 +133,27 @@ export class ConfigManager {
     this.config[key] = value;
   }
 
-  setPluginConfig(pluginName: string, config: Record<string, unknown>): void {
-    this.config.plugins[pluginName] = config;
+  setPluginConfig(instanceId: string, config: Record<string, unknown>): void {
+    this.config.plugins[instanceId] = config;
   }
 
-  removePluginConfig(pluginName: string): void {
-    delete this.config.plugins[pluginName];
+  removePluginConfig(instanceId: string): void {
+    delete this.config.plugins[instanceId];
   }
 
-  isPluginDisabled(pluginName: string): boolean {
-    return (this.config.disabledPlugins ?? []).includes(pluginName);
+  isPluginDisabled(instanceId: string): boolean {
+    return (this.config.disabledPlugins ?? []).includes(instanceId);
   }
 
-  setPluginEnabled(pluginName: string, enabled: boolean): void {
+  setPluginEnabled(instanceId: string, enabled: boolean): void {
     if (!this.config.disabledPlugins) {
       this.config.disabledPlugins = [];
     }
-    const idx = this.config.disabledPlugins.indexOf(pluginName);
+    const idx = this.config.disabledPlugins.indexOf(instanceId);
     if (enabled && idx >= 0) {
       this.config.disabledPlugins.splice(idx, 1);
     } else if (!enabled && idx < 0) {
-      this.config.disabledPlugins.push(pluginName);
+      this.config.disabledPlugins.push(instanceId);
     }
   }
 
