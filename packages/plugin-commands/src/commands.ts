@@ -245,13 +245,13 @@ export class CommandRegistry implements CommandService {
   /**
    * 注销。
    *
-   * @param pluginName 只摘该插件的那一层声明——下面被它覆盖的声明会自动重新生效。
+   * @param contextId 只摘该 Context 的那一层声明——下面被它覆盖的声明会自动重新生效。
    *   缺省则摘掉全部层（管理面用；插件自己的 dispose 必须传名字，否则会连别人的一起删）。
    */
-  unregister(name: string, pluginName?: string): void {
+  unregister(name: string, contextId?: string): void {
     const stack = this.nodes.get(name);
     if (!stack) return;
-    const dropped = pluginName === undefined ? stack.splice(0) : removeWhere(stack, d => d.pluginName === pluginName);
+    const dropped = contextId === undefined ? stack.splice(0) : removeWhere(stack, d => d.pluginName === contextId);
     if (dropped.length === 0) return;
     // 栈空但仍有子节点 → 退回自动分组节点（`/parent` 仍可列出子指令），不删。
     if (stack.length === 0 && this.directChildren(name).length === 0) this.nodes.delete(name);
@@ -265,7 +265,7 @@ export class CommandRegistry implements CommandService {
     // （直接 unregister）做就留幽灵、经插件卸载做就干净——契约面不对称。放在早退之后，
     // 只有真摘到东西才扫。
     this.pruneEmptyGroups();
-    this.logger.debug(`注销指令: ${this.prefix}${name} (来自 ${pluginName ?? '全部'})`);
+    this.logger.debug(`注销指令: ${this.prefix}${name} (来自 ${contextId ?? '全部'})`);
   }
 
   /**
@@ -285,9 +285,9 @@ export class CommandRegistry implements CommandService {
     this.aliases.delete(alias);
   }
 
-  unregisterByPlugin(pluginName: string): void {
+  unregisterByPlugin(contextId: string): void {
     // 回收由 unregister 自己负责（见那里的注释），这里不再重复扫一遍。
-    for (const name of [...this.nodes.keys()]) this.unregister(name, pluginName);
+    for (const name of [...this.nodes.keys()]) this.unregister(name, contextId);
   }
 
   /**

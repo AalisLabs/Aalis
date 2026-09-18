@@ -165,11 +165,11 @@ export interface CommandService {
 
   /**
    * 注销指令。
-   * @param pluginName 只摘该插件的那一层声明，被它覆盖的声明会自动复位。
+   * @param contextId 只摘该 Context 的那一层声明，被它覆盖的声明会自动复位。
    *   **插件自己的清理必须传它**；缺省会摘掉全部层（管理面用）。
    */
-  unregister(name: string, pluginName?: string): void;
-  unregisterByPlugin(pluginName: string): void;
+  unregister(name: string, contextId?: string): void;
+  unregisterByPlugin(contextId: string): void;
 
   execute(name: string, ctx: ExecutionInput): Promise<string | undefined>;
   parseCommand(input: string): { name: string; args: string[]; raw: string } | null;
@@ -243,7 +243,7 @@ function makeBuilder(
       else if (c.kind === 'example') realBuilder.example(c.line);
     }
     return () => {
-      // 必须带上 pluginName：只摘自己那一层声明。不带的话会把同名指令的**全部**声明
+      // 必须带上 contextId（meta.pluginName）：只摘自己那一层声明。不带的话会把同名指令的**全部**声明
       // 一起删掉——包括别的插件先注册的那份，且它不会重新出现。
       svc.unregister(registryKey, meta.pluginName);
       realBuilder = undefined;
