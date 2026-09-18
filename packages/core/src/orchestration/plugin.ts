@@ -1,5 +1,6 @@
 import type { Context } from '../context/context.js';
 import type { Logger } from '../context/logger.js';
+import { reportQuietly } from '../kernel/disposable-chain.js';
 import { normalizeDependency } from '../primitives/services.js';
 import type { PluginStatusEntry } from '../types/index.js';
 import {
@@ -105,14 +106,20 @@ export class PluginManager {
     // 监听服务注册/注销，路由到统一 recompute()。
     // 单飞/挂起/关机的取舍都在 recompute 内部处理（在飞期间排队，关机后跳过）。
     rootCtx.on('service:registered', name => {
-      this.recompute({ type: 'service-up', service: name }).catch(err => {
-        this.logger.error(`recompute(service-up:${name}) 报错: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      this.recompute({ type: 'service-up', service: name }).catch(err =>
+        reportQuietly(() =>
+          this.logger.error(`recompute(service-up:${name}) 报错: ${err instanceof Error ? err.message : String(err)}`),
+        ),
+      );
     });
     rootCtx.on('service:unregistered', name => {
-      this.recompute({ type: 'service-down', service: name }).catch(err => {
-        this.logger.error(`recompute(service-down:${name}) 报错: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      this.recompute({ type: 'service-down', service: name }).catch(err =>
+        reportQuietly(() =>
+          this.logger.error(
+            `recompute(service-down:${name}) 报错: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+        ),
+      );
     });
   }
 
