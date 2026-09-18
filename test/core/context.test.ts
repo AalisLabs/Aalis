@@ -44,7 +44,7 @@ describe('Context.middleware / runHook 门面', () => {
     await root.runHook('__t:hook', {} as never);
     expect(calls).toEqual(['a']);
 
-    // dispose 子 ctx → 其 middleware 被 unregisterByOwner(this._owner) 清扫
+    // dispose 子 ctx → 其 middleware 被 unregisterByOwner(this.#owner) 清扫
     await child.dispose();
     await root.runHook('__t:hook', {} as never);
     expect(calls).toEqual(['a']); // 未再次触发

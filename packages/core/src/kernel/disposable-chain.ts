@@ -28,8 +28,9 @@ function describe(label?: string, index?: number): string {
  * 「忘记 push / 忘记清空 / 错误处理不一致」等低级 bug。
  */
 export class DisposableChain {
-  private _items: Entry[] = [];
-  private _disposed = false;
+  private items: Entry[] = [];
+  /** 链是否已被 {@link take} 取走；对外读口是 `disposed`。不叫 disposed 是因为与那个 getter 撞名。 */
+  private taken = false;
 
   constructor(private readonly logger?: CleanupReporter) {}
 
@@ -40,7 +41,7 @@ export class DisposableChain {
 
   /** 追加一个清理函数。dispose 后追加会立刻执行（异步返回值不等待，拒绝记 warn）。 */
   push(fn: () => unknown, label?: string): void {
-    if (this._disposed) {
+    if (this.taken) {
       try {
         this.settle(fn(), describe(label));
       } catch (err) {
@@ -48,7 +49,7 @@ export class DisposableChain {
       }
       return;
     }
-    this._items.push({ fn, label });
+    this.items.push({ fn, label });
   }
 
   /**
@@ -63,28 +64,28 @@ export class DisposableChain {
 
   /** 链序标签名单（未命名项为 undefined 占位）。诊断读口，纯读不执行。 */
   labels(): ReadonlyArray<string | undefined> {
-    return this._items.map(e => e.label);
+    return this.items.map(e => e.label);
   }
 
   /** 精确移除单个 disposable（不执行）。用于缓冲项"取消"场景。 */
   remove(fn: () => unknown): boolean {
-    const idx = this._items.findIndex(e => e.fn === fn);
+    const idx = this.items.findIndex(e => e.fn === fn);
     if (idx < 0) return false;
-    this._items.splice(idx, 1);
+    this.items.splice(idx, 1);
     return true;
   }
 
   get disposed(): boolean {
-    return this._disposed;
+    return this.taken;
   }
 
   /** 当前登记的清理函数数量（诊断 / 测试用：可检测闭包是否如期自移除）。 */
   get size(): number {
-    return this._items.length;
+    return this.items.length;
   }
 
   /**
-   * 置位 disposed、快照并清空 items——两个 dispose 入口共用，避免逻辑漂移。
+   * 置位 taken、快照并清空 items——两个 dispose 入口共用，避免逻辑漂移。
    *
    * 先清空再迭代快照：dispose 期间 disposer 常回调 remove(自身)（provide /
    * whenService / subscribe 的自移除语义）。若在迭代中 splice 活动数组，索引
@@ -93,9 +94,9 @@ export class DisposableChain {
    * 的预期），快照索引也始终稳定。
    */
   private take(): Entry[] {
-    this._disposed = true;
-    const items = this._items;
-    this._items = [];
+    this.taken = true;
+    const items = this.items;
+    this.items = [];
     return items;
   }
 
@@ -105,7 +106,7 @@ export class DisposableChain {
    * 异步返回值**不等待**但拒绝同样记 warn——需要等待落盘类清理时用 {@link disposeAsync}。
    */
   dispose(): void {
-    if (this._disposed) return;
+    if (this.taken) return;
     const items = this.take();
     for (let i = items.length - 1; i >= 0; i--) {
       try {
@@ -127,7 +128,7 @@ export class DisposableChain {
    *        缺省或 <=0 不设限。
    */
   async disposeAsync(timeoutMs?: number): Promise<void> {
-    if (this._disposed) return;
+    if (this.taken) return;
     const items = this.take();
     for (let i = items.length - 1; i >= 0; i--) {
       try {

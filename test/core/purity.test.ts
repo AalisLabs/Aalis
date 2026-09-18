@@ -100,10 +100,18 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
       'runHook',
       'serviceContainer', // @internal host 巡视
       'trackActivation', // @internal 激活路径注入 apply 在飞 promise，供 disposeAsync 先等初始化落定
-      'trackDisposable', // 私有实现（JS 层可见,不属承诺面）
       'unpreferService',
       'useModule',
       'whenService',
     ]);
+  });
+
+  it('Context 实例只有四个自有属性——私有状态全在 # 字段，运行时对插件不可见', () => {
+    const app = new core.App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const child = app.ctx.fork('probe');
+    // 不排序：顺序即构造函数赋值序，漂了也要有人看见
+    expect(Object.getOwnPropertyNames(child)).toEqual(['id', 'logger', 'config', 'devMode']);
+    expect(Object.getOwnPropertySymbols(child)).toEqual([]);
+    app.ctx.dispose();
   });
 });
