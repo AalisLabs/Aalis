@@ -413,7 +413,7 @@ export class PluginManager {
     await this.recompute({ type: 'plugin-state-changed' });
   }
 
-  // ---- 单一状态转移入口 ----
+  // ----- 单一状态转移入口 -----
 
   /**
    * 重算所有插件的目标态并按依赖拓扑序应用转移。

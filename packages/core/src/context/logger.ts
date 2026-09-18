@@ -18,8 +18,7 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
   error: 3,
 };
 
-// ════════════════════════════════════════════════════════════
-// 单行日志序列化契约（format ↔ parse 对偶）
+// ----- 单行日志序列化契约（format ↔ parse 对偶） -----
 //
 // 行格式：`seq|timestamp|level|scope|message\n`
 //   - message 内部换行被转义为字面 `\n`，保证「一行一条」可逐行解析
@@ -27,7 +26,6 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
 //
 // 唯一权威：runtime 的 file-logger 写、webui-server / cli 读历史，全部复用这一对函数，
 // 避免格式契约在多个插件里各抄一份后悄然漂移。
-// ════════════════════════════════════════════════════════════
 
 /** 把一条 LogEntry 序列化为单行文本（含结尾换行）。 */
 export function formatLogLine(entry: LogEntry): string {
