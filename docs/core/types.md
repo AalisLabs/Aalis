@@ -606,8 +606,8 @@ interface AalisEvents {
   'service:unregistered': [name: string];
   // 某服务偏好 provider 切换（preferService / unpreferService）；whenService 借此重挂
   'service:preference-changed': [name: string];
-  'plugin:loaded': [name: string];
-  'plugin:unloaded': [name: string];
+  'plugin:loaded': [instanceId: string];
+  'plugin:unloaded': [instanceId: string];
   'plugins:changed': [];
   'app:starting': [];       // start() 的第一步
   'app:ready': [];          // 启动第一相位（sticky）
