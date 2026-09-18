@@ -200,18 +200,21 @@ export class ConfigManager {
   }
 
   /**
-   * 订阅配置外部变更。委托给 provider；无 provider 时为 no-op。
+   * 订阅配置外部变更，返回退订闭包（与 core 其余订阅口同形）。委托给 provider；无 provider 时为 no-op。
+   * 单订阅者：已有订阅时再调即抛错，而不是静默顶替。
    */
-  watch(onChange: () => void): void {
+  watch(onChange: () => void): () => void {
+    if (this.onChangeCallback) throw new Error('ConfigManager: 配置变更只支持一个订阅者，先 unwatch 再订阅');
     this.onChangeCallback = onChange;
-    if (!this.provider?.watch) return;
-    if (this.unwatchFn) return;
-    this.unwatchFn = this.provider.watch(next => {
-      this.config = mergeDefaultsConfig(next);
-      this.onChangeCallback?.();
-    });
+    this.unwatchFn =
+      this.provider?.watch?.(next => {
+        this.config = mergeDefaultsConfig(next);
+        this.onChangeCallback?.();
+      }) ?? null;
+    return () => this.unwatch();
   }
 
+  /** 整体清扫（属主 App 在 stop() 时调用；订阅者是宿主，App 不持退订句柄）。 */
   unwatch(): void {
     this.unwatchFn?.();
     this.unwatchFn = null;
