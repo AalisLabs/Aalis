@@ -77,7 +77,7 @@ await app.reloadPlugin('@aalis/plugin-foo');
 await ctx.getService('plugins').bouncePlugin('@aalis/plugin-foo');
 
 // 配置变化（含 enable/disable）后的标准入口
-await ctx.getService('plugins').updatePluginConfig(name, newConfig);
+await ctx.getService('plugins').updatePluginConfig(instanceId, newConfig);
 
 // 全局收敛：所有生命周期路径的统一入口，按 reason 调度拓扑 dispose / activate
 await ctx.getService('plugins').recompute({ type: 'plugin-state-changed' });

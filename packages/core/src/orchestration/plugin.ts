@@ -177,8 +177,8 @@ export class PluginManager {
   /**
    * 卸载一个插件
    */
-  async unload(name: string): Promise<void> {
-    const entry = this.plugins.get(name);
+  async unload(instanceId: string): Promise<void> {
+    const entry = this.plugins.get(instanceId);
     if (!entry) return;
 
     // 'disposed' 单向化的 unload 侧：已有卸载在途（或停机遗留终态）时不再二次
@@ -188,7 +188,7 @@ export class PluginManager {
     if (entry.state === 'disposed') {
       const inflight = entry.context;
       if (inflight) await inflight.disposeAsync(this.disposeTimeoutMs);
-      if (this.plugins.get(name) === entry) this.plugins.delete(name);
+      if (this.plugins.get(instanceId) === entry) this.plugins.delete(instanceId);
       return;
     }
 
@@ -200,8 +200,8 @@ export class PluginManager {
       // （plugins.has(id)），提前摘除会让同 id 在旧 ctx 排空期间重新注册，
       // 新旧实例同 instanceId 并存——同名服务重复 provide、偏好按 contextId 二义。
       await this.retire(entry, 'disposed');
-      if (this.plugins.get(name) === entry) this.plugins.delete(name);
-      this.logger.info(`插件已卸载: ${name}`);
+      if (this.plugins.get(instanceId) === entry) this.plugins.delete(instanceId);
+      this.logger.info(`插件已卸载: ${instanceId}`);
     } finally {
       this.suspendDepth--;
     }
@@ -223,8 +223,8 @@ export class PluginManager {
   /**
    * 启用一个已禁用的插件
    */
-  async enablePlugin(name: string): Promise<boolean> {
-    const entry = this.plugins.get(name);
+  async enablePlugin(instanceId: string): Promise<boolean> {
+    const entry = this.plugins.get(instanceId);
     if (!entry) return false;
 
     if (entry.state === 'disposed') return false; // 正在卸载，'disposed' 对管理路径单向（见 bouncePlugin 内注释）
@@ -234,8 +234,8 @@ export class PluginManager {
     // pending 后会被激活侧的「旧 ctx 未清」闸永久跳过。
     entry.state = 'pending';
     entry.error = undefined;
-    this.rootCtx.config.setPluginEnabled(name, true);
-    this.logger.info(`插件已启用: ${name}`);
+    this.rootCtx.config.setPluginEnabled(instanceId, true);
+    this.logger.info(`插件已启用: ${instanceId}`);
     await this.softReload();
     return true;
   }
@@ -243,12 +243,12 @@ export class PluginManager {
   /**
    * 禁用一个活跃的插件（core 插件不能禁用）
    */
-  async disablePlugin(name: string): Promise<boolean> {
-    const entry = this.plugins.get(name);
+  async disablePlugin(instanceId: string): Promise<boolean> {
+    const entry = this.plugins.get(instanceId);
     if (!entry) return false;
 
     if (entry.module.core) {
-      this.logger.warn(`核心插件 "${name}" 不能被禁用`);
+      this.logger.warn(`核心插件 "${instanceId}" 不能被禁用`);
       return false;
     }
 
@@ -258,9 +258,9 @@ export class PluginManager {
     // dispose 段守卫：期间反应式 recompute 排队到收尾的 softReload
     this.suspendDepth++;
     try {
-      this.rootCtx.config.setPluginEnabled(name, false);
+      this.rootCtx.config.setPluginEnabled(instanceId, false);
       await this.retire(entry, 'disabled');
-      this.logger.info(`插件已禁用: ${name}`);
+      this.logger.info(`插件已禁用: ${instanceId}`);
     } finally {
       this.suspendDepth--;
     }
@@ -298,16 +298,16 @@ export class PluginManager {
   /**
    * 获取单个插件
    */
-  getPlugin(name: string): PluginEntry | undefined {
-    return this.plugins.get(name);
+  getPlugin(instanceId: string): PluginEntry | undefined {
+    return this.plugins.get(instanceId);
   }
 
   /**
    * 更新插件配置（thin alias，转发到 bouncePlugin）。保留独立方法名是为了
    * 让 host 层调用点（WebUI / 配置文件热重载）语义清晰且向后兼容。
    */
-  async updatePluginConfig(name: string, config: Record<string, unknown>): Promise<boolean> {
-    return this.bouncePlugin(name, { config });
+  async updatePluginConfig(instanceId: string, config: Record<string, unknown>): Promise<boolean> {
+    return this.bouncePlugin(instanceId, { config });
   }
 
   /**
@@ -323,13 +323,13 @@ export class PluginManager {
    * @returns false 表示找不到 entry 或处于 disabled 态（拒绝 bounce）。
    */
   async bouncePlugin(
-    name: string,
+    instanceId: string,
     opts?: { config?: Record<string, unknown>; module?: PluginModule },
   ): Promise<boolean> {
-    const entry = this.plugins.get(name);
+    const entry = this.plugins.get(instanceId);
     if (!entry) return false;
     if (entry.state === 'disabled') {
-      this.logger.warn(`bouncePlugin: 插件 "${name}" 处于 disabled 态，跳过`);
+      this.logger.warn(`bouncePlugin: 插件 "${instanceId}" 处于 disabled 态，跳过`);
       return false;
     }
     // 'disposed' 对管理路径单向（含卸载在途与停机后的遗留终态两种情形）：
@@ -337,7 +337,7 @@ export class PluginManager {
     // await 也让出）——此窗口内把它覆写回 'pending' 会重新武装 entry，激活出
     // 一个注册表外的永生孤儿实例；停机后覆写则会把插件误写进持久化禁用清单。
     if (entry.state === 'disposed') {
-      this.logger.debug(`bouncePlugin: 插件 "${name}" 已进入 disposed 终态（卸载在途或已停机），跳过`);
+      this.logger.debug(`bouncePlugin: 插件 "${instanceId}" 已进入 disposed 终态（卸载在途或已停机），跳过`);
       return false;
     }
 
@@ -346,7 +346,7 @@ export class PluginManager {
 
     if (newConfig) {
       entry.config = newConfig;
-      this.rootCtx.config.setPluginConfig(name, newConfig);
+      this.rootCtx.config.setPluginConfig(instanceId, newConfig);
     }
     if (newModule) entry.module = newModule;
 
@@ -374,10 +374,10 @@ export class PluginManager {
         try {
           await ctx.disposeAsync(this.disposeTimeoutMs);
         } catch (err) {
-          this.logger.error(`插件 "${name}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`);
+          this.logger.error(`插件 "${instanceId}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`);
         }
         if (entry.context === ctx) entry.context = undefined;
-        this.rootCtx.emitQuietly('plugin:unloaded', name);
+        this.rootCtx.emitQuietly('plugin:unloaded', instanceId);
       }
     } finally {
       this.suspendDepth--;
