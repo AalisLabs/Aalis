@@ -222,7 +222,7 @@ export class ConfigManager {
   }
 }
 
-// ---- helpers ----
+// ----- helpers -----
 
 function mergeDefaultsConfig(input: AalisConfig | Partial<AalisConfig>): AalisConfig {
   const merged: AalisConfig = {

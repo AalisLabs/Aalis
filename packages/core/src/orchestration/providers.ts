@@ -1,26 +1,24 @@
+// ============================================================
+// providers.ts — `@aalis/core` 注入点（host providers）
+//
+// 把"配置从哪里来 / 插件从哪里来 / 怎么重启"这三件 I/O 相关的事抽成接口，
+// 由宿主（@aalis/runtime 或外部嵌入者）实现并注入。core 本身不再 import 任何
+// `node:fs` / `node:path` / `node:url` / `node:child_process` / `yaml`，
+// 可在浏览器、单文件二进制、嵌入式集成等场景里运行。
+//
+// 设计原则：
+//   - 同步优先：能同步就同步（fs sync 读 yaml 完全可接受）；异步留给真异步源
+//     （HTTP、远程配置中心等）。
+//   - 可选能力：`save` / `watch` / `reload` 都标记为可选；只读宿主可以不提供。
+//   - opaque metadata：descriptor.source 等字段是 loader 自己理解的字符串；core 不解释。
+//
+// 本文件放后两件。`ConfigProvider` 只依赖 `AalisConfig`，与它服务的 `ConfigManager`
+// 同处 `context/config.ts`——放在那里 context 层就不必向上引用。
+// ============================================================
+
 import type { PluginModule } from './plugin.js';
 
-/**
- * `@aalis/core` 注入点（host providers）。
- *
- * 把"配置从哪里来 / 插件从哪里来 / 怎么重启"这三件 I/O 相关的事
- * 抽成接口，由宿主（@aalis/runtime 或外部嵌入者）实现并注入。core 本身
- * 不再 import 任何 `node:fs` / `node:path` / `node:url` / `node:child_process`
- * / `yaml`，可在浏览器、单文件二进制、嵌入式集成等场景里运行。
- *
- * 设计原则：
- * - **同步优先**：能同步就同步（fs sync 读 yaml 完全可接受）；异步留给真异步源
- *   （HTTP、远程配置中心等）。
- * - **可选能力**：`save` / `watch` / `reload` 都标记为可选；只读宿主可以不提供。
- * - **opaque metadata**：descriptor.source 等字段是 loader 自己理解的字符串；core 不解释。
- *
- * 本文件放后两件。`ConfigProvider` 只依赖 `AalisConfig`，与它服务的 `ConfigManager`
- * 同处 `context/config.ts`——放在那里 context 层就不必向上引用。
- */
-
-// ============================================================
-// 插件加载器
-// ============================================================
+// ----- 插件加载器 -----
 
 /**
  * 已发现但尚未导入的插件条目。`source` 是 loader 自己理解的字符串
@@ -50,9 +48,7 @@ export interface PluginLoader {
   reload?(descriptor: PluginDescriptor): Promise<PluginModule | null>;
 }
 
-// ============================================================
-// 重启策略
-// ============================================================
+// ----- 重启策略 -----
 
 /**
  * 重启策略：`App.restart()` 把"如何重启"委托给宿主。

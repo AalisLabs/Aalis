@@ -126,6 +126,8 @@ kernel 与基础词汇文件不依赖任何东西。
 
 文件内的 import 与包根 index.ts 的导出按同一层序自下而上排列：types → kernel → primitives → context → orchestration → 同层兄弟，组间空行；由 biome 对 `packages/core/src/**` 的 organizeImports 分组配置守。同一模块既导值又导类型时写成一条语句、类型加内联 `type` 修饰符；全是类型的模块用 `export type {}`。
 
+文件前言与分节：带前言的文件用 60 个 `=` 的 `//` 横幅夹住前言（首行「文件名 — 一句话」），无前言的文件不补；文件内分节一律一行 `// ----- 节名 -----`。
+
 诊断与错误的写法（文字规矩，无机器守——正则守卫经变异证明会被折行调用与含引号的英文骗过）：错误对象一律作 logger 的附加参数
 （`logger.error('xxx 失败:', err)`），不内插进消息——内插只剩 message、丢 stack，logger 写入前会把换行转义成单行。宿主 SPI
 （插件加载器、重启策略、配置 provider）的失败一律 `error` 级。kernel 抛出的错误信息用中文、带 `Lifecycle:` 前缀、不带节点 id
