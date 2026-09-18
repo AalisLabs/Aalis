@@ -115,15 +115,15 @@ describe('EventBus sticky 补发护栏（#8.2）', () => {
     const reported: string[] = [];
     bus.onHandlerError = event => reported.push(event);
 
-    bus.markSticky('ready');
-    await bus.emit('ready');
+    bus.markSticky('app:ready');
+    await bus.emit('app:ready');
 
-    bus.on('ready', () => {
+    bus.on('app:ready', () => {
       throw new Error('sync-boom');
     });
     // 补发在微任务里执行
     await new Promise(r => setTimeout(r, 0));
-    expect(reported).toEqual(['ready']);
+    expect(reported).toEqual(['app:ready']);
   });
 
   it('sticky 补发时 handler 异步抛错同样被捕获（不变 unhandledRejection）', async () => {
@@ -131,28 +131,28 @@ describe('EventBus sticky 补发护栏（#8.2）', () => {
     const reported: string[] = [];
     bus.onHandlerError = event => reported.push(event);
 
-    bus.markSticky('ready');
-    await bus.emit('ready');
+    bus.markSticky('app:ready');
+    await bus.emit('app:ready');
 
-    bus.on('ready', async () => {
+    bus.on('app:ready', async () => {
       throw new Error('async-boom');
     });
     await new Promise(r => setTimeout(r, 0));
-    expect(reported).toEqual(['ready']);
+    expect(reported).toEqual(['app:ready']);
   });
 
   it('clearSticky() 无参清空全部 sticky 缓存（#8.6 app:started 残留）', async () => {
     const bus = new EventBus();
-    bus.markSticky('ready');
+    bus.markSticky('app:ready');
     bus.markSticky('app:started');
-    await bus.emit('ready');
+    await bus.emit('app:ready');
     await bus.emit('app:started');
 
     bus.clearSticky();
 
     const fired: string[] = [];
-    bus.on('ready', () => {
-      fired.push('ready');
+    bus.on('app:ready', () => {
+      fired.push('app:ready');
     });
     bus.on('app:started', () => {
       fired.push('app:started');

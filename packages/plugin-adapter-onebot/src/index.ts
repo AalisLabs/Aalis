@@ -2322,7 +2322,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ----- 生命周期 -----
 
-  ctx.on('ready', () => {
+  ctx.on('app:ready', () => {
     for (const connConfig of connections) {
       if (!connConfig.url) {
         ctx.logger.warn('OneBot 连接配置缺少 url，跳过');

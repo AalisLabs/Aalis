@@ -547,7 +547,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 仅当 OneBot 平台可用时才注册工具
   // 使用 ready 事件确保平台已加载
-  ctx.on('ready', () => {
+  ctx.on('app:ready', () => {
     if (!getPlatformNames(ctx).includes('onebot')) {
       ctx.logger.info('未检测到 OneBot 平台，跳过 OneBot 工具注册');
       return;
@@ -1696,7 +1696,7 @@ interface OneBotSessionHistoryConfig {
  * 调用 service 时都会走这条规则链 —— 不存在绕过路径。
  */
 function registerOneBotHistoryAccessChecker(ctx: Context, cfg: OneBotSessionHistoryConfig): void {
-  ctx.on('ready', () => {
+  ctx.on('app:ready', () => {
     const historyService = ctx.getService<SessionHistoryService>('session-history');
     if (!historyService?.registerAccessChecker) {
       ctx.logger.debug('session-history 服务未提供 registerAccessChecker, 跳过 OneBot 访问规则注册');

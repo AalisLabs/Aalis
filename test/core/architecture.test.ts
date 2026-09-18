@@ -60,6 +60,8 @@ interface Parsed {
   ambientModules: string[];
   /** 有内容的接口名：自带成员，或经 extends 继承成员 */
   nonEmptyInterfaces: Set<string>;
+  /** 接口的直接成员名（不含继承）；只记本测试要对账的 AalisEvents */
+  eventKeys: string[];
   /** 全部事件发射调用（属性访问与 `['emit']` 元素访问两种写法） */
   emits: EmitCall[];
 }
@@ -83,6 +85,7 @@ function parse(file: string): Parsed {
     computedImports: 0,
     ambientModules: [],
     nonEmptyInterfaces: new Set(),
+    eventKeys: [],
     emits: [],
   };
   parsed.set(file, out);
@@ -104,6 +107,11 @@ function parse(file: string): Parsed {
       out.ambientModules.push(node.name.text);
     } else if (ts.isInterfaceDeclaration(node)) {
       if (node.members.length > 0 || node.heritageClauses?.length) out.nonEmptyInterfaces.add(node.name.text);
+      if (node.name.text === 'AalisEvents') {
+        for (const m of node.members) {
+          if (m.name && (ts.isIdentifier(m.name) || ts.isStringLiteralLike(m.name))) out.eventKeys.push(m.name.text);
+        }
+      }
     } else if (ts.isCallExpression(node)) {
       const method = emitMethod(node.expression);
       if (method) {
@@ -294,6 +302,7 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
 /**
  * core 发内置事件只有两个出口，按 AalisEvents 分好的两节（见 types/events.ts）：屏障由 App 的生命周期方法
  * `await ctx.emit()`（restart 里是 `.then()` 接续，同样在监听器之后才推进），通知一律 `ctx.emitQuietly()`。
+ * 节由前缀判定：`app:*` 是屏障，其余是通知——没有手工名单。
  *
  * 守的是一类真死锁：通知全部发在同步段或 PluginManager 的 recompute flight / 挂起段内，段内等监听器
  * 与 `plugins.idle()` 互等——`plugin:loaded` 此前正是 await，监听器里 `await plugins.idle()` 必挂。
@@ -303,27 +312,30 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
  *   2. 事件名不是字面量的 `.emit(...)`：只许是 Context 门面自己的 emit / emitQuietly 方法体转发给总线——
  *      门面文件不整体豁免，在 context.ts 别处写 `void this._events.emit('plugin:loaded', …)` 同样被抓；
  *   3. `.emitQuietly('x')`：x 是字面量且不是屏障事件。
- * 屏障名单与 app.ts 实际发出的集合必须相等：漏发、多发、名单漂移都红。
+ * AalisEvents 里声明的 `app:*` 键集合与 app.ts 实际发出的集合必须相等：声明了不发、发了没声明、名单漂移都红。
  */
 describe('内置事件只有两个出口：屏障 await ctx.emit()，通知 ctx.emitQuietly()', () => {
-  const BARRIER = new Set(['app:starting', 'ready', 'app:started', 'restarting', 'app:stopping']);
+  const isBarrier = (event: string): boolean => event.startsWith('app:');
   const BARRIER_FILE = 'orchestration/app.ts';
   const FACADE = 'context/context.ts';
 
-  it('每个发射点都落在两个出口之一，且屏障名单与 App 实际发出的一致', () => {
+  it('每个发射点都落在两个出口之一，且 app:* 的声明集合与 App 实际发出的一致', () => {
     const offenders: string[] = [];
+    const declaredBarriers = new Set<string>();
     const emittedBarriers = new Set<string>();
     for (const file of walk(SRC_DIR)) {
       const rel = relToSrc(file);
-      for (const { method, event, sequenced, within, line } of parse(file).emits) {
+      const { emits, eventKeys } = parse(file);
+      for (const key of eventKeys) if (isBarrier(key)) declaredBarriers.add(key);
+      for (const { method, event, sequenced, within, line } of emits) {
         const at = `${rel}:${line}`;
         if (method === 'emitQuietly') {
           if (event === null) offenders.push(`${at} emitQuietly 的事件名须是字面量`);
-          else if (BARRIER.has(event)) offenders.push(`${at} 用 emitQuietly 发了屏障事件 '${event}'`);
+          else if (isBarrier(event)) offenders.push(`${at} 用 emitQuietly 发了屏障事件 '${event}'`);
         } else if (event === null) {
           const facadeForward = rel === FACADE && (within === 'emit' || within === 'emitQuietly');
           if (!facadeForward) offenders.push(`${at} 事件名不是字面量的 .emit( 只许是门面转发总线`);
-        } else if (!BARRIER.has(event)) {
+        } else if (!isBarrier(event)) {
           offenders.push(`${at} 通知事件 '${event}' 须走 emitQuietly`);
         } else if (rel !== BARRIER_FILE) {
           offenders.push(`${at} 屏障事件 '${event}' 只由 App 的生命周期方法发`);
@@ -335,6 +347,7 @@ describe('内置事件只有两个出口：屏障 await ctx.emit()，通知 ctx.
       }
     }
     expect(offenders, '事件归节见 types/events.ts 的两节 JSDoc；换节是行为契约变更，要进 CHANGELOG').toEqual([]);
-    expect(emittedBarriers, '屏障名单与 App 实际发出的集合不一致——请同步 types/events.ts 的两节').toEqual(BARRIER);
+    expect(declaredBarriers.size, 'AalisEvents 里没有 app:* 事件——守卫在空转').toBeGreaterThan(0);
+    expect(emittedBarriers, 'AalisEvents 声明的 app:* 集合与 App 实际发出的不一致').toEqual(declaredBarriers);
   });
 });

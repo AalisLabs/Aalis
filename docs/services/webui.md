@@ -112,7 +112,7 @@ export function useWebuiService(ctx: Context): ScopedWebuiService {
 **提供方**
 
 - `@aalis/plugin-webui-server` —— 唯一参考实现。`provides = ['webui-server', 'platform']`（`packages/plugin-webui-server/src/index.ts`），服务实例在 `:1587-1616` 构造并 `ctx.provide('webui-server', webuiService)`。它同时是一个 `platform` adapter（WebUI 当聊天界面，`:1541-1575`）。
-- `@aalis/plugin-webui-client` —— 默认前端（React SPA）。**不是被加载的插件**，而是带 `aalis.client: true` 标记 + `dist/index.html` 的纯静态包，被 webui-server 在 `ready` 时自动发现并注册成 `webui-client` 的一个 provider（`packages/plugin-webui-server/src/index.ts`）。`@aalis/plugin-webui-client-example` 是替换前端的最小示例。
+- `@aalis/plugin-webui-client` —— 默认前端（React SPA）。**不是被加载的插件**，而是带 `aalis.client: true` 标记 + `dist/index.html` 的纯静态包，被 webui-server 在 `app:ready` 时自动发现并注册成 `webui-client` 的一个 provider（`packages/plugin-webui-server/src/index.ts`）。`@aalis/plugin-webui-client-example` 是替换前端的最小示例。
 
 **消费方**（全部经 `useWebuiService(ctx).registerPage(...)` 注册侧边栏页面）：
 

@@ -10,7 +10,7 @@
 - 监听器错误互相隔离：单个 handler 抛错（同步或异步）不影响其余 handler，也不使 `emit` reject。
 - `emit` 按注册顺序依次调用，但**顺序不构成语义**：监听方不得依赖自己相对其他监听方的位置。
 - 无返回通道、不可变更 payload 语义、不可截停。
-- sticky 事件（`ready` / `app:started`）：注册晚于 emit 的监听器在下一个微任务收到补发。
+- sticky 事件（`app:ready` / `app:started`）：注册晚于 emit 的监听器在下一个微任务收到补发。
 
 **services（`ctx.provide` / `ctx.getService` / `ctx.getAllServices` / `whenService` / preference 三件套）——供需**
 - 解析顺序恒为 **偏好 > 优先级 > 注册顺序**，所有读口（getService / getAllServices）一致。
@@ -85,7 +85,7 @@
 | 0.9.0 | `CORE_CONFIG_SCHEMA` / `ConfigSchema` 全家、`Context.once` / `hasService` / `getServiceEntries`、`PluginManager.createInstance` / `removeInstance`、`ServiceContainer.has`、`EventBus.removeAll`、`ConfigManager.syncPluginDefaults`、`AppOptions.configSync` |
 | 0.12.0 | `ServicePriority` / `ServicePriorityValue`（0.11.0 仍从包根导出，服务优先级改为裸数字后移除） |
 | 0.13.0 | 四个注册表的 `unregisterByContext`（换为 `unregisterByOwner(owner: symbol)`）；另有三处改形而非删除：`saveConfig()` 返回 `Promise<void>`、`useModule()` 返回 `ModuleHandle`、`EventBus.on` 第三参由 `string` 改为 `symbol` |
-| 0.14.0 | `ServiceContainer.unregisterEntry`（`register` 改为返回退订闭包）；改形：`ServiceContainer.register(name, instance, contextId, owner?, options?)` 与 `HookRegistry.register` 的 `contextId` 必填；`ContributionRegistry` 的注册与读取动词按 `ContributionPointMap` 约束键；`ServiceContainer` 的服务名保持开放，约束落在载荷 `ServiceOf<K>` 与 `get` / `getAll` 的按键重载上 |
+| 0.14.0 | `ServiceContainer.unregisterEntry`（`register` 改为返回退订闭包）；改形：`ServiceContainer.register(name, instance, contextId, owner?, options?)` 与 `HookRegistry.register` 的 `contextId` 必填；`ContributionRegistry` 的注册与读取动词按 `ContributionPointMap` 约束键；`ServiceContainer` 的服务名保持开放，约束落在载荷 `ServiceOf<K>` 与 `get` / `getAll` 的按键重载上；事件键 `ready` / `restarting`（改名 `app:ready` / `app:restarting`，屏障统一 `app:` 前缀）；行为：`plugin:loaded` 不再等监听器 |
 
 因此插件生态里常见的 `peerDependencies: { "@aalis/core": ">=0.2.0 <1.0.0" }` **不是**"core 保证
 0.x 内兼容"的推论——它只是"没用到新 API 的插件不必随次版本重发"的便利区间。用了某个版本才有的
