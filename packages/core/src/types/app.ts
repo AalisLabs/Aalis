@@ -61,12 +61,12 @@ export interface PluginManagerService {
   /** 获取单个插件条目 */
   getPlugin(instanceId: string): PluginEntry | undefined;
   /** 更新插件配置（自动触发软重载） */
-  updatePluginConfig(instanceId: string, config: Record<string, unknown>): Promise<boolean>;
+  updateConfig(instanceId: string, config: Record<string, unknown>): Promise<boolean>;
   /** 启用插件 */
-  enablePlugin(instanceId: string): Promise<boolean>;
+  enable(instanceId: string): Promise<boolean>;
   /** 禁用插件 */
-  disablePlugin(instanceId: string): Promise<boolean>;
-  /** 彻底卸载插件：dispose 上下文并从注册表移除（用于市场卸载，区别于 disablePlugin 仅置禁用态） */
+  disable(instanceId: string): Promise<boolean>;
+  /** 彻底卸载插件：dispose 上下文并从注册表移除（用于市场卸载，区别于 disable 仅置禁用态） */
   unload(instanceId: string): Promise<void>;
   /** 注册并尝试激活一个插件模块（多实例经 instanceId 区分；供管理面基于 register/unload 组合实例编排） */
   register(module: PluginEntry['module'], config?: Record<string, unknown>, instanceId?: string): Promise<void>;

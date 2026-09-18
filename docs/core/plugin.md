@@ -98,18 +98,18 @@ service-up / service-down 在第二轮起退化为 plugin-state-changed，避免
 
 卸载插件，dispose 其 Context，状态设为 disposed。
 
-### `enablePlugin(instanceId)` / `disablePlugin(instanceId)`
+### `enable(instanceId)` / `disable(instanceId)`
 
 启用/禁用插件。core 插件不可禁用。
 
-### `updatePluginConfig(instanceId, config)`
+### `updateConfig(instanceId, config)`
 
-更新配置并热重载。**现为 `bouncePlugin(instanceId, { config })` 的薄壳别名**，
+更新配置并热重载。**现为 `bounce(instanceId, { config })` 的薄壳别名**，
 保留化名便于调用点语义明确（WebUI / mcp-client / ConfigWatcher 都调这个）。
 本插件会被 dispose + reapply；下游是否被级联 evict 取决于各下游插件的
 `requiresBounceOnDepChange`（默认 false 不级联）。
 
-### `bouncePlugin(instanceId, opts?: { config?, module? }): Promise<boolean>`
+### `bounce(instanceId, opts?: { config?, module? }): Promise<boolean>`
 
 增量重载单个插件的统一入口：
 - 可选 `opts.config`：同时写回 ConfigManager + entry.config

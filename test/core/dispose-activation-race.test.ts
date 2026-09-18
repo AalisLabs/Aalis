@@ -20,7 +20,7 @@ import type { PluginEntry } from '../../packages/core/src/types/plugin.js';
 // disposer 到达时清理链已排空，DisposableChain.push 走 post-dispose 分支就地
 // 执行它——资源最终会关，但**异步返回值不被等待**，承诺落空。
 //
-// 可达面：PluginManager 的 unload / disablePlugin / bouncePlugin 会主动走进
+// 可达面：PluginManager 的 unload / disable / bounce 会主动走进
 // 本窗口（先改 entry.state 让激活收尾让位，再对在飞 ctx disposeAsync——那三条
 // 路径的行为锚在 test/core/admin-during-activation.test.ts）；本文件守的是
 // disposeAsync 这个公开契约本身（宿主直调）与 useModule 的沙盒子 ctx 级联。

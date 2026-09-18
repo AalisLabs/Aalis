@@ -6,7 +6,7 @@ import { App } from '../../packages/core/src/index.js';
 // 管理操作撞上 activating 窗口（apply 在飞）的行为锚。
 //
 // 修复前的三种坏后果（探针实证）：unload 静默跳过拆卸→幽灵插件继续处理流量；
-// disablePlugin 返回 true 但终态被激活收尾覆写回 'active'；updatePluginConfig
+// disable 返回 true 但终态被激活收尾覆写回 'active'；updateConfig
 // 静默 no-op（apply 从未见过新配置）。三者共因：拆卸判据 `state === 'active'`
 // 漏掉 'activating'，且 activatePlugin 收尾无条件写 'active'。
 //
@@ -107,14 +107,14 @@ describe('unload 撞上 activating 窗口', () => {
   });
 });
 
-describe('disablePlugin 撞上 activating 窗口', () => {
+describe('disable 撞上 activating 窗口', () => {
   it('终态锁定 disabled，不被激活收尾覆写回 active；服务已拆', async () => {
     const { app, trace } = makeWorld();
     const { module, entered, release } = makeGatedPlugin(trace);
     const registering = app.plugin(module);
     await entered;
 
-    const disabling = app.plugins.disablePlugin('gated');
+    const disabling = app.plugins.disable('gated');
     release();
     const ok = await disabling;
     await registering;
@@ -123,7 +123,7 @@ describe('disablePlugin 撞上 activating 窗口', () => {
     expect(app.plugins.getPlugin('gated')?.state).toBe('disabled');
     expect(app.ctx.getService('gated-svc')).toBeUndefined();
     expect(trace).toContain('disposed');
-    // enablePlugin 依赖的不变量：disabled 态 context 必已清（否则重激活被闸永跳）
+    // enable 依赖的不变量：disabled 态 context 必已清（否则重激活被闸永跳）
     expect(app.plugins.getPlugin('gated')?.context).toBeUndefined();
   });
 });
@@ -163,10 +163,10 @@ describe('evict 不得进入终态拆卸窗口（disabled 的慢 onDispose 撞�
     await app.plugins.idle();
 
     // disable 写下 'disabled' 终态、卡在慢 onDispose 上（ctx 未清的终态窗口）
-    const disabling = app.plugins.disablePlugin('cons');
+    const disabling = app.plugins.disable('cons');
     await disposeEnteredP;
     // 并发 bounce provider——修前 evict 凭 ctx 在场扫进窗口，把 disabled 覆写回 pending 复活
-    const bouncing = app.plugins.updatePluginConfig('prov', { v: 2 });
+    const bouncing = app.plugins.updateConfig('prov', { v: 2 });
     releaseDispose();
     await Promise.all([disabling, bouncing]);
     await app.plugins.idle();
@@ -213,7 +213,7 @@ describe('evict 疏散 activating 下游（判据=entry.context）', () => {
     const registering = app.plugin(consumer);
     await enteredP;
 
-    const bouncing = app.plugins.updatePluginConfig('prov', { v: 2 });
+    const bouncing = app.plugins.updateConfig('prov', { v: 2 });
     release();
     await Promise.all([registering, bouncing]);
     await new Promise(r => setTimeout(r, 20));
@@ -226,7 +226,7 @@ describe('evict 疏散 activating 下游（判据=entry.context）', () => {
 });
 
 describe('error 终态的不变量：context 已清', () => {
-  it('apply 抛错进 error 后 context 为空（enablePlugin 复活路径依赖此不变量）', async () => {
+  it('apply 抛错进 error 后 context 为空（enable 复活路径依赖此不变量）', async () => {
     const { app } = makeWorld();
     let attempts = 0;
     await app.plugin({
@@ -243,7 +243,7 @@ describe('error 终态的不变量：context 已清', () => {
     expect(app.plugins.getPlugin('boom')?.context).toBeUndefined();
     // 复活路径畅通的鉴别性断言：enable 后第二次激活**确实发生**（apply 计数 +1）。
     // 若 context 未清，激活会被「旧 ctx 未清」闸永久跳过，attempts 停在 1。
-    const ok = await app.plugins.enablePlugin('boom');
+    const ok = await app.plugins.enable('boom');
     expect(ok).toBe(true);
     await app.plugins.idle();
     expect(attempts).toBe(2);
@@ -251,14 +251,14 @@ describe('error 终态的不变量：context 已清', () => {
   });
 });
 
-describe('disablePlugin 撞 activating 且 apply 抛错：catch 段接管让位', () => {
+describe('disable 撞 activating 且 apply 抛错：catch 段接管让位', () => {
   it('终态锁 disabled 而非 error（catch 让位被删则此处写入 error）', async () => {
     const { app, trace } = makeWorld();
     const { module, entered, release } = makeGatedPlugin(trace, { failAfterGate: true });
     const registering = app.plugin(module);
     await entered;
 
-    const disabling = app.plugins.disablePlugin('gated');
+    const disabling = app.plugins.disable('gated');
     release();
     const ok = await disabling;
     await registering;
@@ -306,7 +306,7 @@ describe('级联拆卸窗口内 disable：终态不被拆卸收尾覆写', () =>
     // unload 提供者 → softReload Phase A 开拆 cons，卡在 gated onDispose 上
     const unloading = app.plugins.unload('prov');
     await disposeEnteredP;
-    const disabling = app.plugins.disablePlugin('cons');
+    const disabling = app.plugins.disable('cons');
     releaseDispose();
     await Promise.all([unloading, disabling]);
 
@@ -403,14 +403,14 @@ describe('并发双 unload', () => {
   });
 });
 
-describe('updatePluginConfig 撞上 activating 窗口', () => {
+describe('updateConfig 撞上 activating 窗口', () => {
   it('旧实例先排空、新实例再以新配置激活（严格串行，不同期）', async () => {
     const { app, trace } = makeWorld();
     const { module, entered, release } = makeGatedPlugin(trace);
     const registering = app.plugin(module, { n: 1 });
     await entered;
 
-    const updating = app.plugins.updatePluginConfig('gated', { n: 2 });
+    const updating = app.plugins.updateConfig('gated', { n: 2 });
     release();
     expect(await updating).toBe(true);
     await registering;
