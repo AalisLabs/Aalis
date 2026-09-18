@@ -459,7 +459,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const getPluginMgr = (): PluginManagerService | undefined => ctx.getService<PluginManagerService>('plugins');
 
   // 前端静态文件托管：前端包不是插件（无 apply，纯静态资源），托管权在本插件——
-  // ready 时由 client-discovery 按 `aalis.client` 标记发现候选，本插件把每个候选注册成
+  // app:ready 时由 client-discovery 按 `aalis.client` 标记发现候选，本插件把每个候选注册成
   // 一条 webui-client 服务 provider，再由服务解析（偏好 > 优先级 > 注册顺序）定出活跃前端。
   let clientDist = '';
   let staticMiddleware: express.RequestHandler | null = null;
@@ -474,7 +474,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   }
 
-  // 已发现的前端候选（ready 时填充，逐个注册为 webui-client 服务 provider）。
+  // 已发现的前端候选（app:ready 时填充，逐个注册为 webui-client 服务 provider）。
   const clientCandidates: Array<{ id: string; label: string; dir: string }> = [];
   /**
    * 候选 id → 它那条 webui-client provider 的注销句柄。
@@ -556,7 +556,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // ---------- 插件管理 + 全局配置 ----------
-  // fs 扫描 env：discoverClients（ready 时）与市场「已装」兜底共用一份，避免两处重复。
+  // fs 扫描 env：discoverClients（app:ready 时）与市场「已装」兜底共用一份，避免两处重复。
   const fsScanEnv = {
     existsSync,
     readdirSync: (p: string) => {
@@ -1586,7 +1586,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       ctx.logger.info(`前端已消失，摘除候选: ${stale.label} (${stale.dir})`);
     }
     // 摘掉 provider 只改了「服务解析结果」，**真正服务 HTTP 的是 clientDist / staticMiddleware**，
-    // 它们在 ready 时绑定、之后只由 remountActiveClient 更新。不重挂的话，被摘掉的正好是当前
+    // 它们在 app:ready 时绑定、之后只由 remountActiveClient 更新。不重挂的话，被摘掉的正好是当前
     // 活跃前端时，express.static 仍指向已删目录 —— 请求落到 SPA 兜底、`index.html` 不存在
     // → 整站 404，而服务池里明明还有别的可用前端。切换偏好那条路径早就这么做了，这里对齐。
     if (removed > 0) remountActiveClient();
