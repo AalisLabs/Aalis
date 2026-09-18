@@ -1688,7 +1688,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     // 先把已建立的连接收口再关服务端：ws 的 close() 在 {server} 模式下只摘监听器、对
     // this.clients 一个都不动，server.close() 也只停止 accept。不主动关的话，旧 socket 上
     // 注册的 message 闭包在插件卸载后仍然活着，照常 ctx.emit('inbound:message')——而
-    // Context.emit 没有 _disposed 守卫（同文件 on/provide/fork 都有）。
+    // Context.emit 不设关闭守卫（同文件 on/provide/fork 都有）。
     // 发 1001 触发前端既有的 onclose 重连路径，bounce 之后自动接回新实例。
     for (const ws of allClients) {
       try {
