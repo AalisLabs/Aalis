@@ -1,4 +1,4 @@
-import type { DependencyDeclaration } from '../types/services.js';
+import type { DependencyDeclaration, ServiceOf, ServiceTypeMap } from '../types/services.js';
 
 // ----- 服务系统数据契约（与容器实现同文件，同 contributions.ts 的 Spec/Handle 惯例） -----
 
@@ -49,12 +49,16 @@ export class ServiceContainer {
   /**
    * 注册一个服务实例
    *
+   * 已登记的服务名（ServiceTypeMap 里有的）按契约类型约束实现，错误实现在编译期被拒；
+   * 未登记名与动态字符串放行为 `unknown`。单签名条件类型而非重载：string 兜底重载会让
+   * 已知名的错误实现落到宽签名照样通过（已实测）。
+   *
    * @param owner 清理归属（Context 门面传入）；省略则该条目不被拆卸自动清理。
    * @returns 刚插入的 ServiceEntry，调用方可以该引用调用 {@link unregisterEntry} 精确删除这一条。
    */
-  register(
-    name: string,
-    instance: unknown,
+  register<K extends string>(
+    name: K,
+    instance: ServiceOf<K>,
     priority: number = 0,
     contextId: string = 'root',
     label?: string,
@@ -106,6 +110,8 @@ export class ServiceContainer {
    * 语义与 `resolveEntries` 保持一致：偏好项存在则取它，否则取 `list[0]` ——
    * `list` 在 `register` 里就按 priority 降序排好（稳定排序，同优先级保持注册顺序）。
    */
+  get<TName extends keyof ServiceTypeMap>(name: TName): ServiceTypeMap[TName] | undefined;
+  get<T = unknown>(name: string): T | undefined;
   get<T>(name: string): T | undefined {
     const list = this.entries.get(name);
     if (!list || list.length === 0) return undefined;
@@ -184,6 +190,10 @@ export class ServiceContainer {
    *
    * 返回顺序遵循「偏好 > 优先级 > 注册顺序」。
    */
+  getAll<TName extends keyof ServiceTypeMap>(
+    name: TName,
+  ): Array<{ instance: ServiceTypeMap[TName]; contextId: string; priority: number; label?: string }>;
+  getAll<T = unknown>(name: string): Array<{ instance: T; contextId: string; priority: number; label?: string }>;
   getAll<T>(name: string): Array<{ instance: T; contextId: string; priority: number; label?: string }> {
     return this.resolveEntries(name).map(entry => ({
       instance: entry.instance as T,
