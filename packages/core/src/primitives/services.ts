@@ -156,15 +156,11 @@ export class ServiceContainer {
     const removed: string[] = [];
     for (const [name, list] of this.entries) {
       const before = list.length;
-      const filtered = list.filter(e => e.owner !== owner);
-      if (filtered.length < before) {
-        removed.push(name);
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i].owner === owner) list.splice(i, 1);
       }
-      if (filtered.length === 0) {
-        this.entries.delete(name);
-      } else {
-        this.entries.set(name, filtered);
-      }
+      if (list.length < before) removed.push(name);
+      if (list.length === 0) this.entries.delete(name);
     }
     return removed;
   }
@@ -177,12 +173,10 @@ export class ServiceContainer {
   }
 
   /**
-   * 获取某个服务的所有 entry（给 API 暴露用）
-   *
-   * 返回顺序遵循「偏好 > 优先级 > 注册顺序」。
+   * 获取某个服务的所有 entry（给 API 暴露用）。返回数组快照，顺序遵循「偏好 > 优先级 > 注册顺序」。
    */
   getEntries(name: string): ServiceEntry[] {
-    return this.resolveEntries(name);
+    return [...this.resolveEntries(name)];
   }
 
   /**
