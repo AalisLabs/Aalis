@@ -131,7 +131,8 @@ export class Context {
           this._contributionDisposers.clear();
           this._moduleIds.clear();
 
-          // 枢纽服务的旧清扫协议属于 Core，不下沉资源生命周期层。
+          // 枢纽服务的清扫协议属于 Core，不下沉资源生命周期层。传 this.id 而非 this._owner 是刻意的：
+          // 枢纽的登记本在服务自己手里，钥匙必须是插件作者写得出的那把（判据见 DisposableService）。
           // 同名多 entry 按实例去重，未被选中的提供者也可能持有登记。
           for (const name of this._services.getServiceNames()) {
             const seen = new Set<unknown>();

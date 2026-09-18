@@ -141,7 +141,7 @@ export interface ToolGroupInfo {
  * 由 plugin-tools 创建 ToolRegistry 并注册为服务。
  */
 export interface ToolService {
-  register(tool: Omit<RegisteredTool, 'pluginName'>, pluginName: string): () => void;
+  register(tool: Omit<RegisteredTool, 'pluginName'>, contextId: string): () => void;
 
   /**
    * 获取工具定义列表
@@ -171,10 +171,10 @@ export interface ToolService {
   /** 注入执行守卫，用于能力裁决与 restricted 二次确认 */
   setExecutionGuard(guard: ExecutionGuard): void;
 
-  unregisterByPlugin(pluginName: string): void;
+  unregisterByPlugin(contextId: string): void;
 
   /** 注册工具分组 */
-  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, pluginName: string): () => void;
+  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void;
   /** 获取所有已注册的工具分组 */
   getGroups(): ToolGroupInfo[];
 }
@@ -245,7 +245,7 @@ export function asToolExecutionResult(result: string | ToolExecutionResult): Too
 }
 
 export function useToolService(ctx: Context): ScopedToolService {
-  const pluginName = ctx.id;
+  const contextId = ctx.id;
 
   /** 用于读 API：服务未就绪时抛错。 */
   function need(): ToolService {
@@ -259,8 +259,8 @@ export function useToolService(ctx: Context): ScopedToolService {
   }
 
   return {
-    register: tool => ctx.whenService<ToolService>('tools', s => s.register(tool, pluginName)),
-    registerGroup: group => ctx.whenService<ToolService>('tools', s => s.registerGroup(group, pluginName)),
+    register: tool => ctx.whenService<ToolService>('tools', s => s.register(tool, contextId)),
+    registerGroup: group => ctx.whenService<ToolService>('tools', s => s.registerGroup(group, contextId)),
     getDefinitions: (...args) => need().getDefinitions(...args),
     getSummaries: (...args) => need().getSummaries(...args),
     getAll: (...args) => need().getAll(...args),
