@@ -28,11 +28,11 @@ export interface WebUIService {
    */
   setClientDir?(dir: string): void;
   /** 注册一个 WebUI 页面；返回 dispose */
-  registerPage(page: WebuiPage, pluginName: string): () => void;
+  registerPage(page: WebuiPage, contextId: string): () => void;
   /** 列出当前所有已注册的页面（含插件归属） */
   getPages(): Array<WebuiPage & { pluginName: string }>;
   /** 按插件名批量清除（供插件卸载时调用） */
-  unregisterByPlugin(pluginName: string): void;
+  unregisterByPlugin(contextId: string): void;
 }
 
 // -- 声明式页面组件类型 --
@@ -253,10 +253,10 @@ export interface ScopedWebuiService {
  * 自动重挂；上次注册的 cleanup 在 provider 下线时自动释放。
  */
 export function useWebuiService(ctx: Context): ScopedWebuiService {
-  const pluginName = ctx.id || 'unknown';
+  const contextId = ctx.id || 'unknown';
   return {
     registerPage(page: WebuiPage): () => void {
-      return ctx.whenService<WebUIService>('webui-server', svc => svc.registerPage(page, pluginName));
+      return ctx.whenService<WebUIService>('webui-server', svc => svc.registerPage(page, contextId));
     },
     get raw() {
       return ctx.getService<WebUIService>('webui-server');
