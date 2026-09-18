@@ -182,7 +182,7 @@ export class PluginManager {
    */
   async unload(instanceId: string): Promise<boolean> {
     const entry = this.plugins.get(instanceId);
-    if (!entry) return false;
+    if (!entry) return this.refuse('unload', instanceId, '不在注册表');
 
     // 'disposed' 单向化的 unload 侧：已有卸载在途（或停机遗留终态）时不再二次
     // retire/emit——join 其拆卸（disposeAsync 幂等）后只确保注册表摘除。删除必须
@@ -214,6 +214,15 @@ export class PluginManager {
     return true;
   }
 
+  /**
+   * 管理动作的 false 分支之一：主体不在注册表，或处于 'disposed' 单向终态。记 debug 而非 warn——
+   * 这不是故障，调用方（WebUI 路由、市场卸载流程）常在探测；被政策挡下的分支各自就地 warn。
+   */
+  private refuse(action: string, instanceId: string, why: string): false {
+    this.logger.debug(`${action}: 插件 "${instanceId}" ${why}`);
+    return false;
+  }
+
   private retire(entry: PluginEntry, target: PluginState, opts?: { emitUnloaded?: boolean }): Promise<void> {
     return retireEntry(entry, target, this.deps, opts);
   }
@@ -223,9 +232,9 @@ export class PluginManager {
    */
   async enable(instanceId: string): Promise<boolean> {
     const entry = this.plugins.get(instanceId);
-    if (!entry) return false;
-
-    if (entry.state === 'disposed') return false; // 正在卸载，'disposed' 对管理路径单向（见 bounce 内注释）
+    if (!entry) return this.refuse('enable', instanceId, '不在注册表');
+    // 'disposed' 对管理路径单向（见 bounce 内注释）
+    if (entry.state === 'disposed') return this.refuse('enable', instanceId, '处于 disposed 终态');
     if (entry.state !== 'disabled' && entry.state !== 'error') return true; // 已经启用
     // 依赖不变量：disabled/error 态的 entry 必然 context 已清（disable 与激活失败
     // 都经 retireEntry 清引用；锚在 admin-during-activation 测试）——否则此处转
@@ -243,14 +252,15 @@ export class PluginManager {
    */
   async disable(instanceId: string): Promise<boolean> {
     const entry = this.plugins.get(instanceId);
-    if (!entry) return false;
+    if (!entry) return this.refuse('disable', instanceId, '不在注册表');
 
     if (entry.module.core) {
       this.logger.warn(`核心插件 "${instanceId}" 不能被禁用`);
       return false;
     }
 
-    if (entry.state === 'disposed') return false; // 正在卸载，'disposed' 对管理路径单向（见 bounce 内注释）
+    // 'disposed' 对管理路径单向（见 bounce 内注释）
+    if (entry.state === 'disposed') return this.refuse('disable', instanceId, '处于 disposed 终态');
     if (entry.state === 'disabled') return true; // 已经禁用
 
     // dispose 段守卫：期间反应式 recompute 排队到收尾的 softReload
@@ -325,7 +335,7 @@ export class PluginManager {
     opts?: { config?: Record<string, unknown>; module?: PluginModule },
   ): Promise<boolean> {
     const entry = this.plugins.get(instanceId);
-    if (!entry) return false;
+    if (!entry) return this.refuse('bounce', instanceId, '不在注册表');
     if (entry.state === 'disabled') {
       this.logger.warn(`bounce: 插件 "${instanceId}" 处于 disabled 态，跳过`);
       return false;
@@ -334,10 +344,7 @@ export class PluginManager {
     // unload 写入终态与从注册表摘除之间隔着 retire 的微任务（即使无 ctx 可拆，
     // await 也让出）——此窗口内把它覆写回 'pending' 会重新武装 entry，激活出
     // 一个注册表外的永生孤儿实例；停机后覆写则会把插件误写进持久化禁用清单。
-    if (entry.state === 'disposed') {
-      this.logger.debug(`bounce: 插件 "${instanceId}" 已进入 disposed 终态（卸载在途或已停机），跳过`);
-      return false;
-    }
+    if (entry.state === 'disposed') return this.refuse('bounce', instanceId, '处于 disposed 终态');
 
     const newConfig = opts?.config;
     const newModule = opts?.module;

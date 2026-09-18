@@ -71,7 +71,7 @@
 
 | 层 | 成员 | 承诺 |
 |---|---|---|
-| stable | 四原语门面全部动词、`fork` / `useModule` / `onDispose` / `dispose` / `disposeAsync`、`App` / `createApp` / `AppOptions` providers、`ConfigManager` 快照读写、`PluginManagerService` 接口的全部成员（接口即清单，不在此另抄一份）与 `PluginManager.bounce` | 1.x 内不破坏 |
+| stable | 四原语门面全部动词、`fork` / `useModule` / `onDispose` / `dispose` / `disposeAsync`、`App` / `createApp` / `AppOptions` providers、`ConfigManager` 快照读写、`PluginManagerService` 接口的全部成员（接口即清单，不在此另抄一份） | 1.x 内不破坏 |
 | experimental | 四个注册表类（`EventBus` / `HookRegistry` / `ServiceContainer` / `ContributionRegistry`）的直接持有面：签名随原语统一工作调整，0.13 / 0.14 各改过一轮 | 1.x 内可变，变更走 minor |
 | internal | `@internal` 标注成员、私有方法、`DisposableChain` 等未从包根导出者 | 无承诺 |
 

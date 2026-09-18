@@ -70,17 +70,12 @@
 ## 增量重载的 API 速查
 
 ```ts
-// 重新 import 单个插件的代码并 bounce
-await app.reloadPlugin('@aalis/plugin-foo');
+// dispose + 重新 apply（不重新 import：从磁盘重载代码是宿主的事，见 App.rescanPlugins / PluginLoader.reload）
+await ctx.getService<PluginManagerService>('plugins')!.bounce('@aalis/plugin-foo');
 
-// 不重新 import，仅 dispose+重新 apply（罕用，调试时可手动调）
-await ctx.getService('plugins').bounce('@aalis/plugin-foo');
-
-// 配置变化（含 enable/disable）后的标准入口
-await ctx.getService('plugins').updateConfig(instanceId, newConfig);
-
-// 全局收敛：所有生命周期路径的统一入口，按 reason 调度拓扑 dispose / activate
-await ctx.getService('plugins').recompute({ type: 'plugin-state-changed' });
-// （softReload() 是它的薄壳，仍可用）
-await ctx.getService('plugins').softReload();
+// 配置变化后的标准入口（bounce(id, { config }) 的薄壳）
+await ctx.getService<PluginManagerService>('plugins')!.updateConfig(instanceId, newConfig);
 ```
+
+全局收敛（`recompute` / `softReload`）由 `PluginManager` 内部驱动，不在 `PluginManagerService` 接口上；宿主持有
+`app.plugins` 时可直接调用。

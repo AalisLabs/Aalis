@@ -101,8 +101,9 @@ const m = ctx.getService('memory');         // MemoryService | undefined
 const all = ctx.getAllServices('memory');   // ServiceView<MemoryService>[]
 ```
 
-- 增广只能用裸包名 `'@aalis/core'`，不能用相对路径：相对说明符会把接口绑成第二个 symbol，core 的签名视角里这些
-  服务名直接不存在，`getService('memory')` 静默落回 `<T = unknown>` 兜底重载，且不产生任何诊断。
+- 增广只能用裸包名 `'@aalis/core'`：`declare module` 按说明符解析到的模块身份合并，只有解析到与 `-api` 包同一份
+  `@aalis/core` 才进同一张 `ServiceTypeMap`。装进两份 core 时两份声明会绑成两个接口（TS2717，被 `skipLibCheck`
+  吞掉），`getService('memory')` 静默落回 `<T = unknown>` 兜底重载——peer 区间禁 caret 就是为了避免装出两份。
 - 未登记的名字照常可用，退回 `unknown`：`provide` 的实例放行，`getService<T>(name)` 由调用方 narrow。按运行时变量
   （而非字面量）寻址服务的场景走这条路。
 - 这里只登记「服务名 → 实例接口」一件事。领域能力（LLM 的 `vision`、storage 的 `local-path`）挂在服务实例 / model

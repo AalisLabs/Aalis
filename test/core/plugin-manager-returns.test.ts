@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { App, type PluginDescriptor, type PluginModule } from '../../packages/core/src/index.js';
+import { App, LogHub, type PluginDescriptor, type PluginModule } from '../../packages/core/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 管理动作返回值的统一口径（PluginManagerService 的 JSDoc）：
@@ -84,6 +84,55 @@ describe('rescanPlugins 只报真正落账的插件', () => {
       },
     };
     expect(await app.rescanPlugins()).toEqual(['fresh']);
+    await app.stop();
+  });
+});
+
+describe('enable / disable / bounce 的 false 分支（口径句里点名的「主体不在注册表」与「被规则挡下」）', () => {
+  it('主体不在注册表：三个动作都是 false，且各记一条 debug 而非静默', async () => {
+    const hub = new LogHub();
+    const lines: string[] = [];
+    hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
+    const app = new App({ config: { name: 'T', logLevel: 'debug', plugins: {} }, logHub: hub });
+    expect(await app.plugins.enable('nobody')).toBe(false);
+    expect(await app.plugins.disable('nobody')).toBe(false);
+    expect(await app.plugins.bounce('nobody')).toBe(false);
+    expect(lines.filter(l => l.startsWith('debug:') && l.includes('"nobody" 不在注册表'))).toHaveLength(3);
+    await app.stop();
+  });
+
+  it('被规则挡下：disabled 态 bounce 为 false，core 插件 disable 为 false', async () => {
+    const app = silentApp();
+    await app.plugins.register(plugin('p'));
+    await app.plugins.register(plugin('c', { core: true }));
+    await app.plugins.idle();
+    expect(await app.plugins.disable('p')).toBe(true);
+    expect(await app.plugins.bounce('p'), 'disabled 态 bounce').toBe(false);
+    expect(await app.plugins.disable('c'), 'core 插件不能禁用').toBe(false);
+    await app.stop();
+  });
+
+  it("'disposed' 在途：enable / disable 为 false（终态对管理路径单向）", async () => {
+    const app = silentApp();
+    let release!: () => void;
+    const gate = new Promise<void>(r => {
+      release = r;
+    });
+    await app.plugins.register(
+      plugin('p', {
+        apply(ctx) {
+          ctx.onDispose(() => gate);
+        },
+      }),
+    );
+    await app.plugins.idle();
+    const unloading = app.plugins.unload('p');
+    await new Promise<void>(r => setTimeout(r, 0));
+    expect(app.plugins.getPlugin('p')?.state).toBe('disposed');
+    expect(await app.plugins.enable('p')).toBe(false);
+    expect(await app.plugins.disable('p')).toBe(false);
+    release();
+    await unloading;
     await app.stop();
   });
 });

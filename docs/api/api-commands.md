@@ -49,7 +49,9 @@ helper 内部使用 `ctx.getService('commands')`；服务未 provide 时 `comman
 ```ts
 interface CommandService {
   prefix: string;                                           // 通常是 "/"
-  register(cmd: CommandDefinition, pluginName: string): () => void;
+  command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;   // 插件侧用 useCommandService(ctx).command
+  unregister(name: string, contextId?: string): void;
+  unregisterByPlugin(contextId: string): void;
   parse(text: string): { name: string; args: string[] } | null;
   execute(name: string, args: string[], ctx: CommandContext): Promise<string | undefined>;
   list(): CommandNodeInfo[];                                 // 扁平树视图，供 WebUI

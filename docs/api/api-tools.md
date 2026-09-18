@@ -20,14 +20,14 @@
 
 ```ts
 interface ToolService {
-  register(tool: Omit<RegisteredTool, 'pluginName'>, pluginName: string): () => void;
+  register(tool: Omit<RegisteredTool, 'pluginName'>, contextId: string): () => void;
   getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];
   getSummaries(filter?: { groups?: string[] }): ToolSummary[];
   getAll(): Array<{ name; description; pluginName; visibility; groups? }>;
   execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<ToolExecutionResult>;
   setExecutionGuard(guard: ExecutionGuard): void;
-  unregisterByPlugin(pluginName: string): void;
-  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, pluginName: string): () => void;
+  unregisterByPlugin(contextId: string): void;
+  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void;
   getGroups(): ToolGroupInfo[];
 }
 ```

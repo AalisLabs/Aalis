@@ -13,7 +13,8 @@
  * 四原语的登记本在 core 手里，owner 由 core 自己发、自己收，同名 Context 互不误清；枢纽服务的登记本
  * 在服务自己手里，注册那一侧是插件作者亲手写的 `svc.register(x, ctx.id)`，清扫必须用同一把钥匙——
  * owner 是 symbol，插件作者写不出、日志打不出、跨进程传不了。代价如实：同 id 的两个 Context 并存时
- * 在枢纽层会互清；PluginManager 的查重闸与「旧 ctx 未清不重激活」闸让这种并存不出现在受支持的用法里。
+ * 在枢纽层会互清。id 唯一由各路径自保：插件实例经 PluginManager 的查重闸，`useModule` 自动加 `~n` 后缀，
+ * 手工 `fork(id)` 由调用方自己保证（core 不校验）。
  *
  * @example
  * class ToolService implements DisposableService {
