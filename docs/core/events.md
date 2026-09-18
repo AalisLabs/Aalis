@@ -14,10 +14,10 @@ Aalis 提供两种互补的扩展机制：**事件**（单向通知）和**中�
 // 监听事件（返回 dispose 函数）
 const off = ctx.on('inbound:message', async (msg) => { ... });
 
-// 一次性监听
+// sticky 事件：注册晚于发出也能在下一个微任务收到补发（'app:ready' / 'app:started'）
 ctx.on('app:ready', () => { ... });
 
-// 发出事件（按注册顺序依次 await 每个 handler）
+// 发出事件（按注册顺序依次 await 每个 handler，永不拒绝）
 await ctx.emit('outbound:message', outMsg);
 ```
 
@@ -29,35 +29,40 @@ await ctx.emit('outbound:message', outMsg);
 - 每次 `on()` 是一条独立登记：同一函数登记两次触发两次，各自的 dispose 只移除自己那条；两个 Context 共用同一函数也互不影响
 - Context 销毁时自动移除该 Context 注册的所有监听
 
-### 内置事件
+### core 内置事件
 
-| 事件 | 参数 | 说明 |
+core 自持的只有下面十一个基础设施事件（源码 `packages/core/src/types/events.ts`）。消息、工具、会话、
+调度等业务事件不在 core，由各 `-api` 包经 declaration merging 注入——谁注入了哪一族见
+[扩展点索引 §2](../extensions/index.md)，键与 payload 的权威定义在该包的 `declare module` 声明里。
+
+十一个事件按「发射方等不等监听器」分两节，节由前缀判定：
+
+**屏障**（`app:*`）：emit 是 `App` 生命周期方法里的一步，监听器全部返回后才推进下一步。
+
+| 事件 | 参数 | 时机 |
 |---|---|---|
-| `inbound:message` | `IncomingMessage` | 平台收到用户消息 |
-| `inbound:message:archived` | `{ sessionId, incoming, archivedMessage }` | 入站消息已完成落库 |
-| `outbound:message` | `OutgoingMessage` | AI 回复即将发送 |
-| `outbound:stream` | `StreamChunkMessage` | 流式输出增量 |
-| `tool:execute` | `ToolExecuteMessage` | 工具调用开始/结束 |
-| `session:created` | `sessionId` | 会话创建 |
-| `session:updated` | `sessionId` | 会话更新 |
-| `session:switched` | `sessionId` | 会话切换 |
-| `session:deleted` | `sessionId` | 会话删除 |
-| `session:completed` | `sessionId` | 子任务会话完成 |
-| `todo:updated` | `sessionId, items`（两个位置参数） | 待办事项变化 |
-| `scheduler:job:start` | `jobId` | 定时任务开始 |
-| `scheduler:job:done` | `jobId` | 定时任务完成 |
-| `scheduler:job:error` | `jobId, error` | 定时任务出错 |
-| `service:registered` | `name, capabilities[]` | 服务注册 |
-| `service:unregistered` | `name` | 服务移除 |
-| `plugin:loaded` | `name` | 插件加载 |
-| `plugin:unloaded` | `name` | 插件卸载 |
-| `plugins:changed` | — | 插件状态变更 |
-| `app:starting` | — | 应用启动中 |
-| `app:ready` | — | 应用启动完成 |
-| `app:started` | — | 应用启动完成后，适合 CLI/TUI 接管终端 |
-| `app:stopping` | — | 应用停止中 |
-| `dispose` | — | 应用关闭 |
-| `app:restarting` | — | 应用即将重启 |
+| `app:starting` | — | `start()` 的第一步 |
+| `app:ready` | — | 启动第一相位（sticky） |
+| `app:started` | — | 启动第二相位：全部 `app:ready` 监听器完成之后（sticky）；CLI / TUI 在此接管终端 |
+| `app:restarting` | — | `restart()` 先发本事件，监听器全部完成后才把控制交给宿主的 `RestartStrategy` |
+| `app:stopping` | — | `stop()` 开头，插件拓扑逆序 dispose 之前 |
+
+**通知**（`service:*` / `plugin:*` / `plugins:changed`）：发射方不等监听器。发射点要么是同步的注册 / 拆卸收尾，
+要么在 `PluginManager` 的 recompute flight 或挂起段内——那里等监听器会与 `plugins.idle()` 互等死锁。
+监听器因此不能假设「我返回了状态机才继续」；要看落定后的状态请 `await plugins.idle()`。
+
+| 事件 | 参数 | 时机 |
+|---|---|---|
+| `service:registered` | `name` | 某服务多了一个提供者（`ctx.provide`） |
+| `service:unregistered` | `name` | 某服务少了一个提供者（退订闭包或 Context 拆卸） |
+| `service:preference-changed` | `name` | 该服务的偏好 provider 切换（`preferService` / `unpreferService`）；`whenService` 借此重挂 |
+| `plugin:loaded` | `instanceId` | 插件实例已激活；同一轮 recompute 可能紧接着激活下一个插件 |
+| `plugin:unloaded` | `instanceId` | 插件实例已拆卸；激活失败的回滚与关机拆卸不发 |
+| `plugins:changed` | — | 一轮 recompute 收敛，插件状态集合可能已变；关机轮不发 |
+
+`app:ready` 与 `app:started` 是两个相位，不是同一里程碑的两个名字：`start()` 串行 await，`app:started` 严格晚于
+全部 `app:ready` 监听器完成。`app:stopping` 用于知会（打印告别语、切状态条），不是清理通道——清理副作用一律走
+`ctx.onDispose(fn)`，它覆盖 bounce / unload / 停机全部路径。总线上没有 `dispose` 事件。
 
 ### 扩展自定义事件
 
@@ -140,16 +145,14 @@ await ctx.runHook('agent:reply:before', { content: '...' }, async () => {
 
 ### 内置钩子
 
-| 钩子 | 数据类型 | 用途 |
+core 的 `HookContextMap` 是空接口：内核不内置任何钩子键，全部由 `-api` 包注入。本仓库第一方包注入的键族如下，
+键名与 data 类型的权威定义在各包的 `declare module` 声明里（按包查见[扩展点索引 §3](../extensions/index.md)）：
+
+| 注入方 | 钩子键 | 用途 |
 |---|---|---|
-| `agent:input:before` | `{ message: IncomingMessage, metadata: Record<string, unknown> }` | 修改/拦截收到的消息 |
-| `agent:turn:after` | `{ message: IncomingMessage, reply: string, sessionId: string, metadata: Record<string, unknown> }` | agent 回复周期完成后 |
-| `agent:llm:before` | `{ messages: Message[], tools: ToolDefinition[] }` | 修改发给 LLM 的消息列表和工具 |
-| `agent:llm:after` | `{ response: ChatResponse, messages: Message[] }` | 处理 LLM 返回的响应 |
-| `agent:tool:before` | `{ name: string, args: Record<string, unknown>, toolCallContext: ToolCallContext }` | 修改工具调用参数 |
-| `agent:tool:after` | `{ name: string, result: string, toolCallContext: ToolCallContext }` | 处理工具返回结果 |
-| `agent:reply:before` | `{ content: string, sessionId: string }` | 修改最终回复内容 |
-| `memory:clear` | `{ scope, types?, sessionId?, results, rollbacks }` | 统一记忆清理编排，供 `/clear` 与各记忆插件协作 |
+| `@aalis/api-agent` | `agent:input:before` / `agent:llm:before` / `agent:llm:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:turn:after` | agent 一轮处理的各相位 |
+| `@aalis/api-gateway` | `inbound:confirm` / `inbound:command` / `inbound:flow` / `inbound:trigger` / `inbound:dispatch` / `outbound:dispatch` | 网关出入站的命名相位 |
+| `@aalis/api-memory` | `memory:clear` | 统一记忆清理编排，供 `/clear` 与各记忆插件协作 |
 
 ### 中间件特性
 

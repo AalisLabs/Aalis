@@ -4,6 +4,10 @@
 
 **源码**: `packages/core/src/primitives/services.ts`
 
+插件不直接持有容器：注册与消费走 Context 门面（`ctx.provide` / `ctx.getService` / `ctx.getAllServices` / `ctx.whenService` /
+偏好三件套，见 [context.md — 服务 API](context.md)）。本页是注册表类本身的参考：宿主经 `AppOptions.services` 注入替身、
+或管控类代码经 `app.services` 巡视时用；其方法签名按契约表归 experimental（随原语统一工作调整）。
+
 ## 核心概念
 
 - 一个服务名可有多个提供者（如 `llm` 有 DeepSeek 和 OpenAI 两个实现）
@@ -71,3 +75,38 @@ function normalizeDependency(dep: string | ServiceDependency): NormalizedDepende
 ```
 
 将依赖声明统一为 `{ service }`：字符串 `'llm'` 与对象 `{ service: 'llm' }` 都归一为 `{ service: 'llm' }`。
+
+## 扩展服务名（declaration merging）
+
+服务名 → 实例接口的映射表是 `ServiceTypeMap`（core 内字面为空）。`-api` 契约包就近注入自己那一条，之后注册表的
+`register` / `get` / `getAll` 与门面上的 `ctx.provide` / `ctx.getService` / `ctx.getAllServices` 在编译期即按契约类型工作：
+
+```typescript
+// packages/api-memory/src/index.ts —— 契约包，与接口定义同文件
+export interface MemoryService { /* ... */ }
+
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    memory: MemoryService;
+  }
+}
+```
+
+```typescript
+// 消费方：import 一次契约包（仅副作用，把类型注册进 ServiceTypeMap）
+import '@aalis/api-memory';
+
+ctx.provide('memory', new SqliteMemory());  // 实现不符契约 → 编译期被拒
+const m = ctx.getService('memory');         // MemoryService | undefined
+const all = ctx.getAllServices('memory');   // ServiceView<MemoryService>[]
+```
+
+- 增广只能用裸包名 `'@aalis/core'`，不能用相对路径：相对说明符会把接口绑成第二个 symbol，core 的签名视角里这些
+  服务名直接不存在，`getService('memory')` 静默落回 `<T = unknown>` 兜底重载，且不产生任何诊断。
+- 未登记的名字照常可用，退回 `unknown`：`provide` 的实例放行，`getService<T>(name)` 由调用方 narrow。按运行时变量
+  （而非字面量）寻址服务的场景走这条路。
+- 这里只登记「服务名 → 实例接口」一件事。领域能力（LLM 的 `vision`、storage 的 `local-path`）挂在服务实例 / model
+  handle 的元数据上，由各 `-api` 的 helper 按需筛选，不进内核 DI。
+- core 自己 provide 的 `app` / `plugins` 不登记：`plugins` 的契约引用编排层词汇（`PluginEntry` 等），基础词汇文件
+  `types/services.ts` 不得向上引用，成对登不了就一个不登；消费点显式传类型参数（`getService<AppService>('app')`）。
+  谁注入了哪个服务名，见[扩展点索引 §1](../extensions/index.md)。

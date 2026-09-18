@@ -439,33 +439,9 @@ WebUI authority 页（仅 owner）+ 指令 `/level`（设某用户等级）与 `
 
 ## 事件列表
 
-| 事件 | 参数 | 说明 |
-|---|---|---|
-| `inbound:message` | `IncomingMessage` | 平台收到用户消息 |
-| `outbound:message` | `OutgoingMessage` | AI 回复即将发送 |
-| `outbound:stream` | `StreamChunkMessage` | 流式输出增量 |
-| `tool:execute` | `ToolExecuteMessage` | 工具调用开始/结束 |
-| `session:created` | `sessionId` | 会话创建 |
-| `session:updated` | `sessionId` | 会话更新 |
-| `session:switched` | `sessionId` | 会话切换 |
-| `session:deleted` | `sessionId` | 会话删除 |
-| `session:completed` | `sessionId` | 子任务会话完成 |
-| `todo:updated` | `{ sessionId, items }` | 待办事项更新 |
-| `scheduler:job:start` | `jobId` | 定时任务开始 |
-| `scheduler:job:done` | `jobId` | 定时任务完成 |
-| `scheduler:job:error` | `jobId, error` | 定时任务出错 |
-| `memory:clear` | `scope, types?, sessionId?, results, rollbacks` | 统一记忆清理编排 |
-| `service:registered` | `name` | 服务注册 |
-| `service:unregistered` | `name` | 服务移除 |
-| `service:preference-changed` | `name` | 服务偏好切换（驱动 whenService 重挂） |
-| `plugin:loaded` | `name` | 插件加载 |
-| `plugin:unloaded` | `name` | 插件卸载 |
-| `plugins:changed` | — | 插件状态变更 |
-| `app:starting` | — | 应用启动中 |
-| `app:ready` | — | 应用启动完成 |
-| `app:stopping` | — | 应用停止中 |
-| `dispose` | — | 应用关闭 |
-| `app:restarting` | — | 应用即将重启 |
+core 自持的十一个基础设施事件（`app:*` 五个屏障、`service:*` / `plugin:*` / `plugins:changed` 六个通知）及其时序见
+[core/events.md](core/events.md)；业务事件由各 `-api` 包注入，按包查见[扩展点索引 §2](extensions/index.md)。
+总线上没有 `dispose` 事件，清理副作用用 `ctx.onDispose(fn)`；`memory:clear` 是钩子不是事件，见 events.md 的钩子节。
 
 ## 向量语义记忆
 
