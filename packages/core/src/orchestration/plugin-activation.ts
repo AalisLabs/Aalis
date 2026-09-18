@@ -54,7 +54,7 @@ export async function retireEntry(
   try {
     await ctx.disposeAsync(deps.disposeTimeoutMs);
   } catch (err) {
-    deps.logger.error(`插件 "${entry.instanceId}" dispose 抛错: ${err instanceof Error ? err.message : String(err)}`);
+    deps.logger.error(`插件 "${entry.instanceId}" dispose 抛错:`, err);
   }
   if (entry.context === ctx) entry.context = undefined;
   if (opts?.emitUnloaded !== false) {
@@ -176,10 +176,10 @@ export async function activatePlugin(entry: PluginEntry, deps: ActivationDeps): 
     // 接管让位同上：管理路径已持有终态与 ctx 的拆卸责任，此处再写 error /
     // 二次 dispose 会踩掉 disposed / disabled / pending 终态。
     if (entry.state !== 'activating') {
-      logger.debug(`插件 "${entry.instanceId}" 激活中止且已被管理操作接管（现态 ${entry.state}）: ${message}`);
+      logger.debug(`插件 "${entry.instanceId}" 激活中止且已被管理操作接管（现态 ${entry.state}）:`, err);
       return;
     }
-    logger.error(`插件 "${entry.instanceId}" 激活失败: ${message}`);
+    logger.error(`插件 "${entry.instanceId}" 激活失败:`, err);
     // retireEntry 先写 'error' 再等清理——并发观察者（getStatus / 早退返回的
     // 调用方）依赖状态机即时转移，异步清理不该拖延 'error' 的可见时点。
     // 不发 unloaded：本插件从未 loaded 过，配对事件无从谈起。
