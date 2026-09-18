@@ -1,337 +1,113 @@
 # Aalis
 
-一个基于大型语言模型的模块化智能助手框架，采用 **服务 IoC + 依赖注入** 架构。
+可扩展的插件化框架：极简内核 + 万物皆插件。当下的主场是 LLM Agent / Bot，但内核不认识任何业务词汇。
 
-> 📖 **详细技术文档**: 参见 [`docs/`](docs/) 目录
+技术文档在 [`docs/`](docs/)（文档站按「入门 → 概念 → 核心 → 服务 → 插件 → API」组织）；写插件先读
+[插件作者指南](docs/plugin-author-guide.md)。
 
-## 特性
+## 内核做什么
 
-- **模块化插件系统** — 所有功能均为可热插拔的插件（40+），核心框架零外部依赖
-- **服务 IoC + 依赖注入** — 插件声明所需服务，框架按偏好 > 优先级 > 注册顺序选取最佳实现
-- **多 LLM 支持** — DeepSeek / OpenAI / Ollama 及兼容接口，支持深度思考与工具调用
-- **语义记忆** — 向量化长期记忆，基于语义相似度 + 时间衰减检索历史上下文
-- **对话摘要** — LLM 驱动的消息摘要压缩，自动在消息积累后触发
-- **多后端存储** — SQLite / MongoDB / 内存 消息历史，LanceDB / 平面文件向量存储
-- **智能上下文管理** — 自动 token 计数、五阶段消息裁剪、用户消息保护、压缩后延续提示
-- **子任务并行** — 会话树形结构，支持 `create_subtask` / `wait_subtasks` 并行任务协调
-- **定时调度** — AI 可自主创建 cron 定时任务，绕过速率控制主动执行
-- **丰富工具集** — Shell / 文件 / HTTP / 浏览器自动化 / 代码执行 / 数学计算 / Office 文档操作
-- **多平台接入** — CLI 终端、Web 管理界面、OneBot v11/v12 协议
-- **联网搜索** — Serper API 集成，AI 可主动搜索互联网
-- **工具搜索层** — 工具数量多时自动启用搜索机制，减少 LLM token 消耗
-- **Web 管理界面** — 实时对话、流式输出、插件配置、服务状态、平台监控、文件管理、待办事项
-- **角色人格** — YAML 角色卡定义 AI 的性格、行为与结构化输出格式
-- **技能系统** — AI 可自主学习和管理技能库，支持模板参数化
-- **权限系统** — 多级权限控制、时限危险操作白名单、平台级确认处理
-- **图像理解** — 多模态视觉识别，自动模型选择
-- **Office 文档** — Word / Excel / PPT / PDF 创建与编辑，支持子任务协同操作
+`@aalis/core` 零运行时依赖、环境无关（不 import 任何 `node:*`），只做两件事。
 
-## 稳定性与契约（0.x · pre-1.0）
+第一，把插件之间的协作方式收成四个原语，每个插件经自己的 `Context` 使用：
 
-Aalis 处于 **0.x 阶段**——核心机制已可用、作者长期自用，但**公开 API 与插件契约仍在演进，1.0 之前可能变更**。请据此评估采用成本：
-
-- **`@aalis/core`** 稳定性承诺**自 1.0 起生效**（条款见 [core 语义契约](docs/design/core-contract.md)）；1.0 之前次版本可含破坏性变更，迁移路径记在 [CHANGELOG](CHANGELOG.md)。插件把 core 设为 `peerDependencies: ">=0.9.0 <1.0.0"`（用了哪版的 API 就把下限写到哪版），**不要用 caret 锁死**。
-- **但这条承诺只覆盖 `@aalis/core` 本身。** `@aalis/plugin-*-api` 等**契约包不在其内**——服务接口、类型、工具定义形状在 0.x 期间**可能改签名、增删字段、重命名导出**。**第三方开发者请勿把当前契约当成冻结的稳定面**：跟随 `CHANGELOG.md`、预期需要适配，对所依赖的 `*-api` 用宽松区间。
-- 仍有少量已知功能项（见 [docs/roadmap/](docs/roadmap/README.md) 与 issues），欢迎 issue / PR。
-
-> 想要冻结的稳定承诺？等 1.0。当前阶段更适合“愿意跟着迭代”的早期采用者。
-
-## 设计理念
-
-Aalis 采用服务提供与依赖注入机制，核心设计为：
-
-| 模式 | 说明 |
-|---|---|
-| **服务 IoC 容器 + 多提供者选择** | 同名服务可多实现并存，框架按偏好 > 优先级 > 注册顺序选取胜者（owner 可经 WebUI 设偏好） |
-| **类型安全事件总线** | 插件间通过事件松耦合通信 |
-| **中间件钩子管道** | 插件可拦截消息处理、LLM 调用、工具调用等核心流程 |
-| **反应式插件生命周期** | 依赖的服务就绪时自动激活插件，服务移除时自动停用 |
-| **优雅降级** | 核心服务缺失时自动 fallback（如内存记忆），插件加载失败不影响其他功能 |
-
-### 多提供者服务选择 (Service Selection)
-
-插件按名字声明依赖（如"我需要 `llm` 服务"）。当同一服务有多个实现并存时，框架按
-**偏好 > 优先级 > 注册顺序** 解析出唯一胜者：
-
-```typescript
-// 插件声明依赖（字符串或 { service } 对象）
-export const inject = {
-  required: ['llm'],
-  optional: [{ service: 'memory' }],
-};
-
-// 各 LLM 插件以默认优先级注册同名 'llm' 服务
-ctx.provide('llm', service); // 可选 { priority, label }
-```
-
-当有多个 `llm` 实现时，`ctx.getService('llm')` 返回当前胜者；owner 可在 WebUI 的「服务」页
-或经 `ctx.preferService(name, contextId)` 指定偏好提供者。LLM 的工具调用 / 视觉等能力由模型
-句柄（handle）元数据描述，存储访问由 root 权限位控制——均不再走统一的"服务能力匹配"层。
-
-## 项目结构
-
-```
-aalis/
-├── aalis.config.yaml         # 全局配置（YAML；含密钥，不入库）
-├── data/                     # 运行时数据（角色卡 / SQLite / LanceDB / 权限 / 插件配置覆盖）
-├── docs/                     # 技术文档（architecture / core / plugins / api）
-├── packages/
-│   ├── core/                              # 核心框架（零外部依赖）
-│   └── plugin-*/                          # 插件（60+ 个，按名称前缀分类）
-│       ├── plugin-agent / api-agent    # 对话编排
-│       ├── plugin-llm-* / plugin-embedding-*  # LLM / Embedding provider
-│       ├── plugin-memory-* / plugin-vectorstore-*  # 记忆 / 向量存储
-│       ├── plugin-tool-* / plugin-tools       # 工具集与注册表
-│       ├── plugin-storage-*                   # 存储后端 + 路由
-│       ├── plugin-adapter-* / plugin-platform # 平台适配 / 网关
-│       ├── plugin-cli / plugin-webui-*        # 用户界面
-│       └── ...                                # 详见 docs/plugins/
-└── src/index.ts                # 主入口
-```
-
-> 完整插件清单与职责说明见 [`docs/plugins/`](docs/plugins/)。
-
-## 核心服务
-
-| 服务名 | 描述 | 实现插件 |
+| 原语 | 门面动词 | 语义 |
 |---|---|---|
-| `llm` | AI 模型调用（对话、工具调用、流式输出） | plugin-llm-deepseek, plugin-llm-openai, plugin-llm-ollama |
-| `agent` | 对话编排（消息构建、工具循环、上下文管理） | plugin-agent |
-| `memory` | 消息历史存储与检索 | plugin-memory-sqlite, plugin-memory-mongodb, plugin-memory-inmemory |
-| `embedding` | 文本向量化 | plugin-embedding-ollama, plugin-embedding-openai |
-| `vectorstore` | 向量存储与相似度检索 | plugin-vectorstore-lancedb, plugin-vectorstore-flat |
-| `persona` | 角色人格管理 | plugin-persona |
-| `platform` | 聊天平台适配器 | plugin-adapter-onebot, plugin-cli, plugin-webui-server |
-| `websearch` | 联网搜索 | plugin-websearch-serper |
-| `tools` | AI 工具注册表 | plugin-tools（工具集生产方：plugin-tool-system / plugin-tool-* ）|
-| `semantic-memory` | 语义长期记忆 | plugin-memory-vector |
-| `session-manager` | 会话生命周期、平台配置、会话树 | plugin-session-manager |
-| `scheduler` | 定时任务调度 | plugin-scheduler |
-| `authority` | 权限等级与高危操作管理 | plugin-authority |
-| `commands` | 指令注册与工具桥接 | plugin-commands |
-| `gateway` | 入站/出站消息编排（`inbound:command/flow/trigger/dispatch` 相位 + `outbound:dispatch` 钩子） | plugin-gateway |
-| `flow-control` | 平台无关流控（禁言/冷却/限速/闲置触发） | plugin-flow-control |
-| `trigger-policy` | 平台无关触发策略（@/名字/关键词/计数/评分） | plugin-trigger-policy |
+| 事件 | `ctx.on` / `ctx.emit` | 广播通知：无返回、错误隔离、不可拦截 |
+| 服务 | `ctx.provide` / `ctx.getService` / `ctx.whenService` | IoC：同名多提供者并存，按「偏好 > 优先级 > 注册顺序」选胜者 |
+| 中间件钩子 | `ctx.middleware` / `ctx.runHook` | 有序管道：可改数据、可短路 |
+| 贡献点 | `ctx.contribute` / `ctx.collect` | 往共享产物交一块料，排布权归收集方 |
+
+第二，把它们编排成反应式插件生命周期（`App` / `PluginManager`）：依赖的服务就绪即激活，服务下线即降级，
+配置变更即热重载；所有副作用随 `Context` 拆卸自动清理。
+
+消息、会话、LLM、工具、存储、权限……全部是插件。各 `@aalis/api-*` 契约包用 declaration merging 把服务名、
+事件键、钩子键注入 core 的四个扩展点（`ServiceTypeMap` / `AalisEvents` / `HookContextMap` / `ContributionPointMap`），
+core 本身不出现任何领域类型。宿主 `@aalis/runtime` 负责 core 刻意不做的事：读配置文件、发现并加载插件、重启进程。
+
+内核 API 见 [docs/core/](docs/core/README.md)，语义契约与稳定性条款见 [core 语义契约](docs/design/core-contract.md)。
+
+## 仓库布局
+
+pnpm monorepo，约 100 个包：
+
+| 目录 | 内容 |
+|---|---|
+| `packages/core` | 内核 |
+| `packages/runtime` | Node 宿主：配置文件、插件发现、进程重启 |
+| `packages/api-*` | 25 个契约包，一个服务一个（`api-llm` / `api-memory` / `api-tools` …），只含接口与 helper |
+| `packages/plugin-*` | 60 余个插件：LLM 与 Embedding 提供者、记忆与向量存储、工具集、平台适配器（OneBot / CLI / WebUI）、调度、权限、技能等，清单见 [docs/plugins/](docs/plugins/README.md) |
+| `packages/create-aalis` / `create-aalis-plugin` | 脚手架：建机器人项目 / 建插件骨架 |
+| `docs/` | 文档站源码 |
 
 ## 快速开始
 
-### 前置要求
-
-- Node.js >= 22
-- pnpm >= 9
-
-### 安装
+Node.js >= 22。
 
 ```bash
-git clone <your-repo-url> aalis
-cd aalis
-pnpm install
-pnpm build
+npm create aalis@latest my-bot
+cd my-bot
+# 在 aalis.config.yaml 里填大模型 API key 与平台账号
+npm start
 ```
 
-### 配置
+要哪些 key、零 key 怎么起（本地 Ollama）、CLI 与 WebUI 两个入口，见 [第一次运行](docs/guide/first-run.md)；
+建项目的完整步骤见 [脚手架上手](docs/guide/scaffolding.md)。
 
-编辑 `aalis.config.yaml`:
+在本仓库里开发：`pnpm install && pnpm build`，`pnpm dev` 启动，`pnpm run ci:local` 跑门禁（build + test + biome）。
 
-```yaml
-name: Aalis
-logLevel: info
+## 写一个插件
 
-plugins:
-  "@aalis/plugin-llm-deepseek":
-    apiKey: "sk-..."                # 直接填；该文件在 .gitignore 里，不入库
-    baseUrl: "https://api.deepseek.com"
-    model: "deepseek-chat"
-  "@aalis/plugin-memory-sqlite":
-    path: "data/aalis.db"
-  "@aalis/plugin-embedding-ollama":
-    baseUrl: "http://localhost:11434"
-    model: "qwen3-embedding:8b"
-  "@aalis/plugin-persona":
-    persona: default
-    personasDir: data/personas
-  "@aalis/plugin-cli":
-    prompt: "You"
-  "@aalis/plugin-webui-server":
-    port: 8080
-    host: 127.0.0.1
-  "@aalis/plugin-adapter-onebot":
-    connections:
-      - url: ws://127.0.0.1:3001
-        protocol: auto              # auto | v11 | v12
-
-# 禁用不需要的插件
-disabledPlugins:
-  - "@aalis/plugin-memory-mongodb"
-  - "@aalis/plugin-llm-openai"
-
-commandPrefix: "/"
-
-# 权限：owner 列表（拥有全部权限，等级 ∞）；其余外部身份默认等级 0
-owners:
-  - { platform: cli, userId: local }
-```
-
-### 启动
-
-```bash
-# 开发模式
-pnpm dev
-
-# 生产模式
-pnpm build && pnpm start
-```
-
-启动后可通过 CLI 终端直接对话，或访问 Web 管理界面。
-
-## 编写插件
-
-一个 Aalis 插件需要导出 `name`、可选的 `inject`/`provides`/`configSchema` 和 `apply` 函数：
+插件是一个导出 `name` 与 `apply` 的模块，可选 `inject`（依赖的服务）、`provides`（提供的服务）、`configSchema`：
 
 ```typescript
 import type { Context } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { useToolService } from '@aalis/api-tools';
 
 export const name = 'my-plugin';
+export const inject = { required: ['tools'] };
 
-export const inject = {
-  required: ['llm'],
-  optional: [{ service: 'memory' }],
-};
-
-export const provides = ['my-service'];
-
-export const configSchema: ConfigSchema = {
-  apiKey: { type: 'string', label: 'API Key', required: true, secret: true },
-  maxRetries: { type: 'number', label: '最大重试', default: 3 },
-};
-
-export function apply(ctx: Context, config: Record<string, unknown>) {
-  // 注册 AI 工具
-  ctx.registerTool({
+export function apply(ctx: Context) {
+  useToolService(ctx).register({
     definition: {
       type: 'function',
       function: {
-        name: 'my_tool',
-        strict: true,
-        description: '工具描述',
-        parameters: {
-          type: 'object',
-          properties: { input: { type: 'string', description: '输入' } },
-          required: ['input'],
-          additionalProperties: false,
-        },
+        name: 'echo',
+        description: '原样返回输入',
+        parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
       },
     },
-    handler: async (args) => `处理结果: ${args.input}`,
+    handler: async args => String(args.text),
   });
 
-  // 监听事件
-  ctx.on('message:received', async (msg) => {
-    ctx.logger.info(`收到消息: ${msg.content}`);
+  ctx.on('app:ready', () => ctx.logger.info('就绪'));
+  ctx.onDispose(() => {
+    // 关连接、停计时器：bounce / unload / 停机全部路径都会走到这里
   });
-
-  // 注册中间件钩子
-  ctx.middleware('response:before', async (data, next) => {
-    await next();
-    data.content += '\n\n— by my-plugin';
-  });
-
-  // 提供服务（可选 priority / label / entryId）
-  ctx.provide('my-service', myServiceInstance, { priority: 10 });
 }
 ```
 
-> 📖 更多插件开发细节参见 [docs/architecture.md](docs/architecture.md)
+`npm create aalis-plugin` 生成可发布的插件骨架。从零到发布（消费与提供服务、扩展点、元数据、插件市场）见
+[第三方插件开发者指南](docs/guide/third-party-plugin.md)。
 
-## 角色卡
+## 稳定性（0.x）
 
-角色卡使用 YAML 格式，放在 `data/personas/` 目录下:
-
-```yaml
-name: Aalis
-description: 一个友善的 AI 助手
-prompt: |
-  你是 Aalis，一个运行在用户电脑上的智能助手。
-  请以友好、专业的态度与用户交流。
-traits:
-  - 友善
-  - 专业
-  - 诚实
-greeting: "你好！有什么我可以帮你的吗？"
-# 结构化输出（可选）— 空 reply 字段可实现静默不回复
-outputFormat:
-  reply:
-    description: 发送给用户的回复（置空则不回复）
-    reply: true
-  thinking:
-    description: 内部推理过程（不发送）
-```
-
-## CLI 命令
-
-在终端或 WebUI 对话中可使用（"最低等级"= 触发该操作所需的数字等级，默认身份为 0，owner=∞）：
-
-| 命令 | 描述 | 最低等级 |
-|---|---|---|
-| `/help` | 显示帮助信息 | 0 |
-| `/clear` | 清空当前会话记忆；用 `--type` 选择消息/摘要/向量/图片等类型；`/clear all` 清空全部会话（受限） | 0 |
-| `/status` | 显示系统状态 | 0 |
-| `/model` | 查看或切换会话模型 | 0 |
-| `/tools` | 列出所有 AI 工具 | 0 |
-| `/shutdown` | 关闭应用（restricted） | 2 |
-| `/restart` | 重启应用（restricted） | 2 |
-| `/authority [platform:userId]` | 查看自己或指定用户的权限等级 | 0 |
-| `/level <platform:userId> <整数>` | 设置用户权限等级（越大越高，0 默认，负数封禁；仅 owner 可用） | owner |
-| `/auto [分钟\|on\|off]` | 自动确认模式：临时免危险操作二次确认（仅 owner 本人） | owner |
-
-## 技术文档
-
-详细的技术实现文档位于 [`docs/`](docs/) 目录：
-
-### 核心模块
-
-| 文档 | 内容 |
-|---|---|
-| [架构总览](docs/architecture.md) | 系统架构、消息处理流程、设计模式 |
-| [应用容器](docs/core/app.md) | App 类、启动流程、内置指令 |
-| [执行上下文](docs/core/context.md) | Context 类、IoC 容器、生命周期 |
-| [服务容器](docs/core/service.md) | 服务注册、多提供者选择、偏好与优先级 |
-| [插件管理](docs/core/plugin.md) | 插件生命周期、Soft Reload、依赖追踪 |
-| [事件系统](docs/core/events.md) | EventBus、钩子管道 |
-| [配置管理](docs/core/config.md) | YAML 配置、环境变量、Schema |
-| [指令系统](docs/core/commands.md) | 指令注册、权限检查、工具桥接 |
-| [工具注册表](docs/core/tools.md) | 工具注册、权限、执行 |
-| [权限系统](docs/core/authority.md) | 权限等级、Owner、高危确认 |
-| [类型定义](docs/core/types.md) | 所有核心类型参考 |
-
-### 插件文档
-
-按子系统分类查阅 [`docs/plugins/`](docs/plugins/)：
-
-| 子系统 | 代表插件 |
-|---|---|
-| **编排 / 会话** | [plugin-agent](docs/plugins/plugin-agent.md)、[plugin-session-manager](docs/plugins/plugin-session-manager.md)、[plugin-commands](docs/plugins/plugin-commands.md) |
-| **LLM / Embedding** | [plugin-llm-openai](docs/plugins/plugin-llm-openai.md)、[plugin-llm-deepseek](docs/plugins/plugin-llm-deepseek.md)、[plugin-llm-ollama](docs/plugins/plugin-llm-ollama.md)、[plugin-embedding-*](docs/plugins/) |
-| **记忆 / 向量** | [plugin-memory-sqlite](docs/plugins/plugin-memory-sqlite.md)、[plugin-memory-mongodb](docs/plugins/plugin-memory-mongodb.md)、[plugin-memory-vector](docs/plugins/plugin-memory-vector.md)、[plugin-vectorstore-lancedb](docs/plugins/plugin-vectorstore-lancedb.md) |
-| **工具集** | [plugin-tools](docs/plugins/plugin-tools.md)、[plugin-tool-system](docs/plugins/plugin-tool-system.md)、[plugin-tool-browser](docs/plugins/plugin-tool-browser.md)、[plugin-tool-code-runner](docs/plugins/plugin-tool-code-runner.md)、[plugin-tool-math](docs/plugins/plugin-tool-math.md)、[plugin-tool-search](docs/plugins/plugin-tool-search.md) |
-| **平台适配** | [plugin-adapter-onebot](docs/plugins/plugin-adapter-onebot.md)、[plugin-cli](docs/plugins/plugin-cli.md)、[plugin-webui-server](docs/plugins/plugin-webui-server.md)、[plugin-webui-client](docs/plugins/plugin-webui-client.md) |
-| **其他** | persona / authority / websearch-serper / office / file-reader / image-recognition / okx-trading / scheduler / todo-list / skills / mcp … 见目录 |
-
-> API 契约（跨插件服务接口）见 [`docs/api/`](docs/api/)。
+- `@aalis/core` 的稳定性承诺自 1.0 起生效（条款见 [core 语义契约](docs/design/core-contract.md)）；1.0 之前次版本可含
+  破坏性变更，迁移路径记在 [CHANGELOG](CHANGELOG.md)。插件把 core 写成
+  `peerDependencies: { "@aalis/core": ">=x.y.z <1.0.0" }`（用了哪版的 API 就把下限写到哪版），不要用 caret 锁死。
+- `@aalis/api-*` 契约包不在承诺之内：0.x 期间服务接口与类型可能改签名、增删字段。第三方开发者请跟随 CHANGELOG、
+  对所依赖的 `api-*` 用宽松区间。
 
 ## 许可证
 
-Aalis 采用 **分层授权**：核心与绝大多数插件宽松开源，仅"市场 / WebUI 控制台"实现层用 AGPL-3.0 防止被直接打包成闭源竞品。
+分层授权：核心与绝大多数插件宽松开源，仅「市场 / WebUI 控制台」实现层用 AGPL-3.0。
 
 | 层 | 许可证 | 包 |
 |---|---|---|
-| 核心 / API / 工具 / 功能插件 | **MIT** | `@aalis/core`、所有 `*-api`、`util-*`、各功能插件、`@aalis/api-webui`（WebUI 契约）、`@aalis/plugin-package-manager`、`create-aalis(-plugin)` |
-| 市场 / WebUI 控制台实现层 | **AGPL-3.0-only** | `@aalis/plugin-webui-server`、`@aalis/plugin-webui-client` |
+| 核心 / API / 工具 / 功能插件 | MIT | `@aalis/core`、所有 `api-*`、`util-*`、各功能插件、`@aalis/api-webui`、`@aalis/plugin-package-manager`、`create-aalis(-plugin)` |
+| 市场 / WebUI 控制台实现层 | AGPL-3.0-only | `@aalis/plugin-webui-server`、`@aalis/plugin-webui-client` |
 
-含义：
-
-- **写插件、扩展功能、二次开发** —— 基于 MIT 层（含通过 `@aalis/api-webui` 注册 WebUI 页面）完全自由，只需保留版权声明。
-- **修改 / 分发 WebUI 控制台或插件市场本体** —— 受 AGPL-3.0 约束（含作为网络服务提供时须公开对应源码）。
+基于 MIT 层写插件、扩展功能、二次开发（含经 `@aalis/api-webui` 注册 WebUI 页面）完全自由，只需保留版权声明；
+修改或分发 WebUI 控制台与插件市场本体受 AGPL-3.0 约束（含作为网络服务提供时须公开对应源码）。
 
 版权 © 2026 Ace Nyan。各包根目录附 `LICENSE`；贡献授权见 [CONTRIBUTING.md](CONTRIBUTING.md#0-贡献授权-cla)。
