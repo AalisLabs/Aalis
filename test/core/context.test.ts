@@ -456,6 +456,26 @@ describe('Context.disposeAsync / dispose 同步不变量', () => {
     expect(() => ctx.dispose()).not.toThrow();
   });
 
+  it('provide 的退订闭包调两次只广播一次 service:unregistered；拆卸已清走的条目不再广播', async () => {
+    const root = makeContext();
+    const seen: string[] = [];
+    root.on('service:unregistered', name => {
+      seen.push(name);
+    });
+    const off = root.fork('plugin-a').provide('__t:svc' as never, { v: 1 } as never);
+    off();
+    off();
+    await new Promise(r => setTimeout(r, 0));
+    expect(seen).toEqual(['__t:svc']);
+
+    const child = root.fork('plugin-b');
+    const offB = child.provide('__t:svc2' as never, { v: 2 } as never);
+    await child.disposeAsync(); // beforeCleanup 的 unregisterByOwner 已摘掉条目并广播过一次
+    offB();
+    await new Promise(r => setTimeout(r, 0));
+    expect(seen.filter(n => n === '__t:svc2')).toHaveLength(1);
+  });
+
   it('异步 flush 窗口内：服务已不可取、中间件已不响应、贡献已不可收集（注销先于清理链）', async () => {
     const root = makeContext();
     const ctx = root.fork('plugin-a');

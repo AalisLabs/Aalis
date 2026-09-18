@@ -32,7 +32,7 @@ export type { PluginDescriptor, PluginLoader, RestartStrategy } from './orchestr
 export { type ContributionHandle, ContributionRegistry, type ContributionSpec } from './primitives/contributions.js';
 export { EventBus } from './primitives/events.js';
 export { HookRegistry } from './primitives/hooks.js';
-export type { NormalizedDependency, ServiceEntry } from './primitives/services.js';
+export type { NormalizedDependency, ServiceEntry, ServiceView } from './primitives/services.js';
 export { ServiceContainer } from './primitives/services.js';
 // ----- 通用 IoC 数据契约 + 扩展点 -----
 export type {

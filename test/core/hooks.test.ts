@@ -6,16 +6,24 @@ describe('HookRegistry', () => {
     const reg = new HookRegistry();
     const order: string[] = [];
 
-    reg.register('inbound:command', async (_data, next) => {
-      order.push('a-before');
-      await next();
-      order.push('a-after');
-    });
-    reg.register('inbound:command', async (_data, next) => {
-      order.push('b-before');
-      await next();
-      order.push('b-after');
-    });
+    reg.register(
+      'inbound:command',
+      async (_data, next) => {
+        order.push('a-before');
+        await next();
+        order.push('a-after');
+      },
+      'ctx-test',
+    );
+    reg.register(
+      'inbound:command',
+      async (_data, next) => {
+        order.push('b-before');
+        await next();
+        order.push('b-after');
+      },
+      'ctx-test',
+    );
 
     // biome-ignore lint/suspicious/noExplicitAny: test
     const reached = await reg.run('inbound:command', {} as any, async () => {
@@ -29,13 +37,21 @@ describe('HookRegistry', () => {
   it('handler 不调 next 中断管道，返回 false', async () => {
     const reg = new HookRegistry();
     const order: string[] = [];
-    reg.register('inbound:command', async () => {
-      order.push('a');
-      // 不调 next
-    });
-    reg.register('inbound:command', async () => {
-      order.push('b');
-    });
+    reg.register(
+      'inbound:command',
+      async () => {
+        order.push('a');
+        // 不调 next
+      },
+      'ctx-test',
+    );
+    reg.register(
+      'inbound:command',
+      async () => {
+        order.push('b');
+      },
+      'ctx-test',
+    );
     // biome-ignore lint/suspicious/noExplicitAny: test
     const reached = await reg.run('inbound:command', {} as any, async () => {
       order.push('default');
@@ -86,10 +102,14 @@ describe('HookRegistry', () => {
   it('register 返回的 dispose 精确移除该 handler', async () => {
     const reg = new HookRegistry();
     const order: string[] = [];
-    const off = reg.register('inbound:command', async (_d, n) => {
-      order.push('x');
-      await n();
-    });
+    const off = reg.register(
+      'inbound:command',
+      async (_d, n) => {
+        order.push('x');
+        await n();
+      },
+      'ctx-test',
+    );
     off();
     // biome-ignore lint/suspicious/noExplicitAny: test
     await reg.run('inbound:command', {} as any);
@@ -102,15 +122,23 @@ describe('HookRegistry 运行中变更（#8.4）', () => {
     const reg = new HookRegistry();
     const order: string[] = [];
     let offSelf: () => void = () => {};
-    offSelf = reg.register('inbound:command', async (_d, n) => {
-      order.push('self');
-      offSelf(); // 运行中注销自己（一次性 handler 模式）
-      await n();
-    });
-    reg.register('inbound:command', async (_d, n) => {
-      order.push('next');
-      await n();
-    });
+    offSelf = reg.register(
+      'inbound:command',
+      async (_d, n) => {
+        order.push('self');
+        offSelf(); // 运行中注销自己（一次性 handler 模式）
+        await n();
+      },
+      'ctx-test',
+    );
+    reg.register(
+      'inbound:command',
+      async (_d, n) => {
+        order.push('next');
+        await n();
+      },
+      'ctx-test',
+    );
     // biome-ignore lint/suspicious/noExplicitAny: test
     const reached = await reg.run('inbound:command', {} as any, async () => {
       order.push('default');
@@ -129,19 +157,31 @@ describe('HookRegistry 运行中变更（#8.4）', () => {
     const reg = new HookRegistry();
     const order: string[] = [];
     let offLater: () => void = () => {};
-    reg.register('inbound:command', async (_d, n) => {
-      order.push('first');
-      offLater(); // 注销还没轮到的 handler
-      await n();
-    });
-    offLater = reg.register('inbound:command', async (_d, n) => {
-      order.push('later');
-      await n();
-    });
-    reg.register('inbound:command', async (_d, n) => {
-      order.push('last');
-      await n();
-    });
+    reg.register(
+      'inbound:command',
+      async (_d, n) => {
+        order.push('first');
+        offLater(); // 注销还没轮到的 handler
+        await n();
+      },
+      'ctx-test',
+    );
+    offLater = reg.register(
+      'inbound:command',
+      async (_d, n) => {
+        order.push('later');
+        await n();
+      },
+      'ctx-test',
+    );
+    reg.register(
+      'inbound:command',
+      async (_d, n) => {
+        order.push('last');
+        await n();
+      },
+      'ctx-test',
+    );
     // biome-ignore lint/suspicious/noExplicitAny: test
     const reached = await reg.run('inbound:command', {} as any);
     expect(order).toEqual(['first', 'last']);
