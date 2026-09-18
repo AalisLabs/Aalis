@@ -599,6 +599,8 @@ type ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArray>;
 
 core 自身只声明通用 IoC / 生命周期事件；业务事件（消息 / 工具 / 会话 / gateway）由各 `api-*` 通过 declaration merging 注入。
 
+下面是 core 源码的摘抄。面向读者的事件目录以 [events.md](events.md) 为准（含屏障 / 通知两节与 sticky 语义）；谁注入了哪一族业务事件，见[扩展点索引 §2](../extensions/index.md)。
+
 ```typescript
 // core 内置（packages/core/src/types/events.ts）
 interface AalisEvents {

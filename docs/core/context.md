@@ -2,26 +2,26 @@
 
 `Context` 是 Aalis 的核心抽象，每个插件获得独立的子 Context，所有副作用在 dispose 时自动清理。它是插件与框架交互的唯一入口。
 
-**源码**: [packages/core/src/context/context.ts](https://github.com/AalisLabs/Aalis/blob/main/packages/core/src/context/context.ts)
+**源码**: `packages/core/src/context/context.ts`
 
 ## 设计理念
 
 - 每个插件获得独立的子 Context（运行时通过 `rootCtx.fork(instanceId)` 创建）
 - 所有副作用（事件监听、服务注册、中间件、命令、工具）都绑定到 Context
 - Context 销毁时级联清理所有子 Context 与注册的资源 —— **无需手动清理**
-- core 自身极薄：**Context 只提供事件、服务、中间件、钩子、生命周期五大原语**；工具、命令、调度、权限等"业务能力"都由插件以服务方式提供，开发者通过对应 api 包的 `useXxxService(ctx)` helper 消费
+- core 自身极薄：**Context 只提供四个原语——事件（`on` / `emit`）、服务（`provide` / `getService` / `whenService`）、中间件钩子（`middleware` / `runHook`）、贡献点（`contribute` / `collect`）——外加生命周期（`fork` / `onDispose` / `dispose`）**；工具、命令、调度、权限等"业务能力"都由插件以服务方式提供，开发者通过对应 api 包的 `useXxxService(ctx)` helper 消费
 
 ## 核心属性
 
 | 属性 | 类型 | 说明 |
 |---|---|---|
-| `id` | `string` | 上下文 ID（根 ctx = 'app'，子 ctx = 插件 instanceId） |
+| `id` | `string` | 上下文 ID（根 ctx = 'root'，子 ctx = 插件 instanceId） |
 | `logger` | `Logger` | 日志器（scope = id） |
 | `config` | `ConfigManager` | 配置管理 |
-| `hooks` | `HookRegistry` | 钩子管道注册表（中间件底层） |
+| `devMode` | `boolean` | 开发模式（`provide` 是否跑一致性校验）；由 `AppOptions.devMode` 经根 ctx 继承 |
 | `disposed` | `boolean` | 是否已销毁 |
 
-> ⚠️ `ctx.serviceContainer` 标 `@internal`，仅 core 自身（如 `plugin-activation` 检查 provides 完整性）使用。**业务插件不要直接访问** —— 走 `ctx.on/emit/provide/getService/getAllServices` 等公共 API，副作用才能进入自动清理链。
+> `ctx.serviceContainer` 标 `@internal`，仅 core 自身（如 `plugin-activation` 检查 provides 完整性）使用。**业务插件不要直接访问** —— 走 `ctx.on/emit/provide/getService/getAllServices` 等公共 API，副作用才能进入自动清理链。四个注册表本身（`#events` / `#services` / `#hooks` / `#contributions`）是 ECMAScript 私有字段，运行时对插件不可见。
 
 ## 按场景选 API（速查）
 
@@ -34,6 +34,8 @@
 | 消费已知一定存在的服务 | `useXxxService(ctx)` helper | 高频；通过 api 包提供，自带类型 |
 | 一次性按名拿服务 | `ctx.getService('name')` | 中频；服务未就绪返回 undefined |
 | 拦截/改写核心流程 | `ctx.middleware(hook, fn)` | 高频；详见 [events.md](events.md) |
+| 往共享产物交一块料（如提示词块） | `ctx.contribute(point, spec)` | 中频；自带幂等与确定性排布，详见 [contributions.md](contributions.md) |
+| 枚举自己贡献点收到的全部料 | `ctx.collect(point)` | 罕用；仅贡献点 owner 调用 |
 | 注册外部资源清理 | `ctx.onDispose(() => …)` | 高频；**唯一正确的清理 API** |
 | 创建子上下文 | `ctx.fork(id)` | 中频；独立生命周期、共享服务 |
 | 动态加载子模块 | `ctx.useModule(mod, cfg)` → `ModuleHandle` | 罕用；多用于测试装配/动态注入 |
@@ -167,6 +169,21 @@ ctx.middleware('agent:reply:before', async (data, next) => {
 
 详见 [events.md — 中间件钩子管道](events.md)。
 
+## 贡献点 API
+
+往共享产物里交一块料，排布权归收集方：`contribute` 返回 dispose 函数并挂清理链；同一 ctx 内同 `id` 重复注册为替换（幂等）；
+收集方 `collect` 拿到按全局键排序的快照。贡献者不掌握控制流（无排序影响力、无短路、看不见其他贡献）。
+
+```typescript
+// 贡献者：交一块提示词
+const off = ctx.contribute('agent:prompt', { id: 'weather', anchor: 'context', build: () => '今天有雨' });
+
+// 收集方（贡献点 owner）：拿到全部料自己排布
+for (const { key, spec } of ctx.collect('agent:prompt')) { ... }
+```
+
+详见 [contributions.md](contributions.md)。
+
 ## 工具与命令（走 api 包）
 
 工具、命令、调度等"业务能力"都由插件以服务形式提供，不在 core 上挂方法。开发者通过对应 api 包的 helper 消费：
@@ -200,6 +217,7 @@ Context 作为唯一入口，使 Aalis 的扩展模型非常统一：
 |---|---|---|
 | 事件通知 | `ctx.on()` / `ctx.emit()` | 松耦合的发布/订阅 |
 | 流程拦截 | `ctx.middleware()` | 中间件管道，可修改数据或中断流程 |
+| 汇集产物 | `ctx.contribute()` / `ctx.collect()` | 无执行注册表，幂等 + 确定性排布，排布权归收集方 |
 | 服务能力 | `ctx.provide()` + `whenService()` | IoC 容器，同名服务按"偏好 > 优先级 > 注册序"竞争 |
 | AI 工具 | `useToolService(ctx).register()` | 注册 LLM 可调用的工具 |
 | 用户指令 | `useCommandService(ctx).command()` | 注册斜杠指令 |

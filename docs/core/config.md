@@ -1,6 +1,9 @@
 # ConfigManager — 配置管理
 
-管理 YAML 配置文件的读写与 Schema 验证。
+持有应用配置快照，提供分层访问器（顶层字段 / 插件配置 / 禁用名单 / 服务偏好）。core 不碰文件系统、也不解释
+任何 schema：配置由宿主从任意来源加载好，作为快照传进 `AppOptions.config`；持久化经注入的 `ConfigProvider`
+回交给宿主；默认值回填与按 `configSchema` 裁剪未知字段属宿主政策，在 `@aalis/runtime`。下文出现的
+`aalis.config.yaml` 是 runtime 宿主的落盘形态，不是 core 的概念。
 
 **源码**: `packages/core/src/context/config.ts`
 
@@ -34,23 +37,25 @@ interface AalisConfig {
 ### 读取
 
 ```typescript
-config.get('name')                // 获取顶级配置
-config.getPluginConfig('plugin')  // 获取插件配置
-config.getAll()                   // 获取完整配置
-config.isPluginDisabled('name')   // 检查是否被禁用
-config.getServicePreferences()    // 获取服务偏好
+config.get('name')                     // 获取顶级配置
+config.getPluginConfig(instanceId)     // 获取插件配置（键是实例 id）
+config.getAll()                        // 获取完整配置
+config.isPluginDisabled(instanceId)    // 检查是否被禁用
+config.getServicePreferences()         // 获取服务偏好
 ```
 
 ### 写入
 
 ```typescript
-config.set('logLevel', 'debug')           // 修改配置（不自动保存）
-config.setPluginConfig('name', {...})      // 修改插件配置
-config.setPluginEnabled('name', true)      // 启用/禁用插件
-config.setServicePreference('llm', ctxId)  // 设置服务偏好
-config.save()                              // 持久化到磁盘
-config.reloadFrom(next)                    // 用外部快照覆盖内部状态（provider watch 回调用）
+config.set('logLevel', 'debug')                // 修改内存快照（不自动持久化）
+config.setPluginConfig(instanceId, {...})      // 修改插件配置
+config.setPluginEnabled(instanceId, true)      // 启用/禁用插件
+config.setServicePreference('llm', ctxId)      // 设置服务偏好
+config.reloadFrom(next)                        // 用外部快照覆盖内部状态（provider watch 回调用）
 ```
+
+持久化走 `app.saveConfig()`（`AppService` 契约，返回 `Promise<void>`：兑现时保存已完成，provider 失败以拒绝传出）。
+`ConfigManager.save()` 标 `@internal`——它是 App 转发给注入 `ConfigProvider` 的机制口，插件不要直接调用。
 
 ## 密钥配置
 

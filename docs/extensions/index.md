@@ -28,17 +28,25 @@
 
 **扩展者**：
 
-| api 包 | 注册的服务 |
+每个 `-api` 契约包注入一条，服务名即包名去掉 `api-` 前缀（`agent` / `asr` / `authority` / `code-sandbox` / `commands` /
+`cron-engine` / `doctor` / `embedding` / `flow-control` / `gateway` / `llm` / `media` / `memory` / `message-archive` / `persona` /
+`platform` / `process` / `session-confirm` / `session-manager` / `storage` / `tools` / `vectorstore` / `workflow`），两个例外：
+`@aalis/api-tool-session` 注入 `session-history`，`@aalis/api-webui` 注入 `webui-server` 与 `webui-client`。
+
+没有独立契约包、在自己 `src/index.ts` 里就地声明的插件：
+
+| 插件包 | 注册的服务 |
 |---|---|
-| `@aalis/api-llm` | `llm` |
-| `@aalis/api-memory` | `memory` |
-| `@aalis/api-storage` | `storage` |
-| `@aalis/api-media` | `media` |
-| `@aalis/api-session-manager` | `session-manager` |
-| `@aalis/api-platform` | `platform`（helper: `resolvePlatformBySession` / `aggregatePlatformDetails`） |
+| `@aalis/plugin-checkpoint` | `checkpoint` |
+| `@aalis/plugin-cli` | `cli` |
+| `@aalis/plugin-file-reader` | `file-reader` |
+| `@aalis/plugin-memory-vector` | `semantic-memory` |
 | `@aalis/plugin-package-manager` | `package-manager` |
-| `@aalis/api-message-archive` | `message-archive` |
-| `@aalis/plugin-websearch-serper`（`src/types.ts`） | `websearch` |
+| `@aalis/plugin-scheduler` | `scheduler` |
+| `@aalis/plugin-skills` | `skills` |
+| `@aalis/plugin-trigger-policy` | `trigger-policy` |
+| `@aalis/plugin-user-relation` | `user-relation` |
+| `@aalis/plugin-websearch-serper` | `web-search` |
 
 ---
 
@@ -46,17 +54,25 @@
 
 EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件名 + payload 约束。
 
-**位置**：`packages/core/src/types/events.ts`（core 内置十一项：`service:registered` / `service:unregistered` / `service:preference-changed` / `plugin:loaded` / `plugin:unloaded` / `plugins:changed` / `app:starting` / `app:ready` / `app:started` / `app:restarting` / `app:stopping`；**没有 `dispose` 事件**——清理副作用用 `ctx.onDispose(fn)`，见 [context](../core/context.md)）
+**位置**：`packages/core/src/types/events.ts`。core 内置十一项，目录与时序说明以 [core/events.md](../core/events.md) 为准
+（没有 `dispose` 事件——清理副作用用 `ctx.onDispose(fn)`，见 [context](../core/context.md)）
 
 **扩展者**：
 
 | api 包 | 注入的事件键 |
 |---|---|
-| `@aalis/schema-message` | `inbound:message` / `inbound:message:archived` / `outbound:message` / `outbound:stream` |
+| `@aalis/schema-message` | `inbound:message` / `inbound:message:archived` / `assistant:message:archived` / `outbound:message` / `outbound:stream` |
+| `@aalis/api-agent` | `token:usage` / `token:request` |
+| `@aalis/api-doctor` | `doctor:updated` |
 | `@aalis/api-gateway` | `gateway:phase:done` |
+| `@aalis/api-media` | `media:processed` |
+| `@aalis/api-memory` | `memory:messages-deleted` / `history:changed` / `session:compress` / `session:compressing` |
+| `@aalis/api-session-manager` | `session:created` / `session:updated` / `session:completed` / `session:deleted` |
 | `@aalis/api-tools` | `tool:execute` |
-| `@aalis/api-session-manager` | `session:*` |
-| `@aalis/plugin-todo-list` | `todo:*` |
+| `@aalis/api-workflow` | `trigger:fired` / `workflow:run:start` / `workflow:run:done` / `workflow:run:error` / `workflow:node:done` |
+| `@aalis/plugin-scheduler` | `scheduler:job:start` / `scheduler:job:done` / `scheduler:job:error` |
+| `@aalis/plugin-todo-list` | `todo:updated` |
+| `@aalis/runtime`、`@aalis/plugin-cli` | `terminal:claimed` / `terminal:released`（同一对键，两处等价声明） |
 
 ---
 
@@ -70,8 +86,8 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 
 | api 包 | 注入的钩子键 |
 |---|---|
-| `@aalis/api-agent` | `agent:llm:before` / `agent:llm:after` / `agent:tool:*` / `agent:reply:*` / `agent:input:*` / `agent:turn:*` |
-| `@aalis/api-gateway` | `inbound:*` / `outbound:dispatch` |
+| `@aalis/api-agent` | `agent:input:before` / `agent:llm:before` / `agent:llm:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:turn:after` |
+| `@aalis/api-gateway` | `inbound:confirm` / `inbound:command` / `inbound:flow` / `inbound:trigger` / `inbound:dispatch` / `outbound:dispatch` |
 | `@aalis/api-memory` | `memory:clear` |
 
 ---

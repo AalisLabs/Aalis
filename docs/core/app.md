@@ -28,14 +28,15 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 | `events` | `EventBus` | 自定义事件总线 |
 | `services` | `ServiceContainer` | 自定义服务容器 |
 | `hooks` | `HookRegistry` | 自定义钩子注册表 |
+| `contributions` | `ContributionRegistry` | 自定义贡献点注册表 |
 | `logHub` | `LogHub` | 自定义日志通道；缺省=`LogHub.default`（进程级共享） |
 | `logger` | `Logger` | 自定义 Logger 实现；缺省=`DefaultLogger`（写入 logHub） |
-| `devMode` | `boolean` | 传给根 Context，决定 `provide` 是否跑能力探测；默认 `true` |
+| `devMode` | `boolean` | 传给根 Context，决定 `provide` 是否跑一致性校验；默认 `true` |
 
 构造时：
 
 - 将 `config`（快照或现成 `ConfigManager`）规范为 `ConfigManager`
-- 初始化 events / services / hooks / logger 及根 Context（注入或自建）
+- 初始化 events / services / hooks / contributions / logger 及根 Context（注入或自建）
 - 创建 `PluginManager`，并 `provide('app', this)` / `provide('plugins', …)`
 - 应用配置中已有的服务偏好（`preferService`）
 
@@ -49,6 +50,7 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 | `events` | `EventBus` | 事件总线 |
 | `services` | `ServiceContainer` | 服务容器 |
 | `hooks` | `HookRegistry` | 钩子注册表 |
+| `contributions` | `ContributionRegistry` | 贡献点注册表 |
 
 ## 核心方法
 
