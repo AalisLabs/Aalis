@@ -398,7 +398,7 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
   });
 
   // 平台级 idle 启动
-  ctx.on('ready', () => {
+  ctx.on('app:ready', () => {
     platformIdle.start();
   });
 

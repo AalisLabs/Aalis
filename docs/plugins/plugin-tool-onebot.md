@@ -18,7 +18,7 @@ export const inject = {
 }
 ```
 
-> 工具经 `useToolService(ctx)` 注册到 `tools` 服务，分为三个工具组：`onebot-daily`（只读查询与戳一戳、好友赞）、`onebot-group`（群务管理、群打卡、审批加群申请）、`onebot-personal`（退群、删好友、处理好友申请与入群邀请）。工具只在 `ready` 时检测到 OneBot 平台才注册，否则整体跳过。
+> 工具经 `useToolService(ctx)` 注册到 `tools` 服务，分为三个工具组：`onebot-daily`（只读查询与戳一戳、好友赞）、`onebot-group`（群务管理、群打卡、审批加群申请）、`onebot-personal`（退群、删好友、处理好友申请与入群邀请）。工具只在 `app:ready` 时检测到 OneBot 平台才注册，否则整体跳过。
 
 ## 跨会话调用
 

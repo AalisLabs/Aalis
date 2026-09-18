@@ -46,7 +46,7 @@
 
 EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件名 + payload 约束。
 
-**位置**：`packages/core/src/types/events.ts`（core 内置十一项：`service:registered` / `service:unregistered` / `service:preference-changed` / `plugin:loaded` / `plugin:unloaded` / `plugins:changed` / `ready` / `app:starting` / `app:started` / `app:stopping` / `restarting`；**没有 `dispose` 事件**——清理副作用用 `ctx.onDispose(fn)`，见 [context](../core/context.md)）
+**位置**：`packages/core/src/types/events.ts`（core 内置十一项：`service:registered` / `service:unregistered` / `service:preference-changed` / `plugin:loaded` / `plugin:unloaded` / `plugins:changed` / `app:starting` / `app:ready` / `app:started` / `app:restarting` / `app:stopping`；**没有 `dispose` 事件**——清理副作用用 `ctx.onDispose(fn)`，见 [context](../core/context.md)）
 
 **扩展者**：
 

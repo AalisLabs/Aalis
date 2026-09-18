@@ -462,10 +462,10 @@ WebUI authority 页（仅 owner）+ 指令 `/level`（设某用户等级）与 `
 | `plugin:unloaded` | `name` | 插件卸载 |
 | `plugins:changed` | — | 插件状态变更 |
 | `app:starting` | — | 应用启动中 |
-| `ready` | — | 应用启动完成 |
+| `app:ready` | — | 应用启动完成 |
 | `app:stopping` | — | 应用停止中 |
 | `dispose` | — | 应用关闭 |
-| `restarting` | — | 应用即将重启 |
+| `app:restarting` | — | 应用即将重启 |
 
 ## 向量语义记忆
 

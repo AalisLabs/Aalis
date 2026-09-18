@@ -146,12 +146,12 @@ export class App {
           });
 
     this.events = options.events ?? new EventBus();
-    // 'ready' / 'app:started' 是"应用启动完成"里程碑：app.start() 仅 emit
+    // 'app:ready' / 'app:started' 是"应用启动完成"里程碑：app.start() 仅 emit
     // 一次，但插件配置热重载会触发 bouncePlugin → 新插件实例的
-    // ctx.on('ready'/'app:started', ...) 必须也能拿到通知，否则 adapter /
+    // ctx.on('app:ready'/'app:started', ...) 必须也能拿到通知，否则 adapter /
     // CLI TUI 等"在启动后才建立"的逻辑在 bounce 后就永远不会重新执行。
     // 标记为 sticky 后，bounce 出来的新实例注册 listener 时立即被微任务补发一次。
-    this.events.markSticky('ready');
+    this.events.markSticky('app:ready');
     this.events.markSticky('app:started');
     this.services = options.services ?? new ServiceContainer();
     this.hooks = options.hooks ?? new HookRegistry();
@@ -370,7 +370,7 @@ export class App {
     await this.ctx.emit('app:starting');
 
     // 注：消息路由由 @aalis/plugin-gateway 承担。
-    await this.ctx.emit('ready');
+    await this.ctx.emit('app:ready');
 
     this.logger.info('启动完成');
     await this.ctx.emit('app:started');
@@ -379,7 +379,7 @@ export class App {
   /**
    * 重启应用——委托给 `restartStrategy`。
    *
-   * core 只负责发出 `restarting` 事件并把 `stop` 回调交给策略；
+   * core 只负责发出 `app:restarting` 事件并把 `stop` 回调交给策略；
    * **任何"等响应返回"的延迟、stop 与 restart 的顺序都由策略决定**。
    *
    * 未注入策略时抛错（明确暴露"嵌入式宿主没声明重启能力"的事实）。
@@ -389,12 +389,12 @@ export class App {
       throw new Error('App.restart() 不可用：未注入 restartStrategy。');
     }
     const strategy = this.restartStrategy;
-    // 防御性清掉全部 sticky 缓存（'ready' + 'app:started'）：strategy 可能走
+    // 防御性清掉全部 sticky 缓存（'app:ready' + 'app:started'）：strategy 可能走
     // "快速重启"路径不调 stop()，此时新一轮启动期间的早期订阅者会收到上一轮
     // 的 sticky 信号。stop() 内部会再清一次，重复调用无副作用。
     this.events.clearSticky();
     this.ctx
-      .emit('restarting')
+      .emit('app:restarting')
       .then(() => strategy.restart({ stop: () => this.stop(), rollback: opts?.rollback }))
       .catch(err => reportQuietly(() => this.logger.warn(`restart 失败: ${err}`)));
   }
@@ -415,7 +415,7 @@ export class App {
     // 插件的 ctx.onDispose 还能安全访问其依赖的服务。stopAll 会置位 shuttingDown，
     // 屏蔽反应式 service:unregistered 级联，避免无意义 bounce 噪声。
     await this.plugins.stopAll();
-    // 清掉全部 sticky 缓存（'ready' + 'app:started'），防止后续 restart
+    // 清掉全部 sticky 缓存（'app:ready' + 'app:started'），防止后续 restart
     // 复用过时的"已启动"标记
     this.events.clearSticky();
     // 等待根 ctx 的异步清理（含各插件 onDispose 的落盘）真正完成再宣告停止
