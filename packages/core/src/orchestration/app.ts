@@ -158,8 +158,8 @@ export class App {
       new DefaultLogger('aalis', config.get('logLevel') as LogLevel, options.logHub ?? LogHub.default, options.now);
     // EventBus 保持环境无关不持有 Logger，handler 错误经此回调上报。
     // 外部注入的 bus 若已自带上报器则尊重之（??=）。
-    this.events.onHandlerError ??= (event, err) => {
-      this.logger.warn(`事件 "${event}" 的监听器抛错（已隔离）:`, err);
+    this.events.onHandlerError ??= (event, err, contextId) => {
+      this.logger.warn(`事件 "${event}" 的监听器抛错（已隔离${contextId ? `，来自 ${contextId}` : ''}）:`, err);
     };
     // 广播型钩子相位的"卡链"上报同理（handler 忘调 next 会静默吞掉下游注入）。
     this.hooks.onStall ??= (hook, contextId, skipped) =>
