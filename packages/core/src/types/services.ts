@@ -1,4 +1,5 @@
-// ----- 服务类型注册表（service name → service interface） -----
+// ============================================================
+// services.ts — 服务类型注册表（service name → service interface）
 //
 // 登记服务名 → 服务实例接口本身，供 `Context.provide` / `getService` 在编译期约束类型。
 //
@@ -34,6 +35,7 @@
 // - 第三方插件未 declare：使用方就走 unknown 重载（依旧能用，但失去自动推断）。
 // - 同名服务多个实现（如 'memory' 同时被 sqlite/inmemory/mongodb provide）：
 //   类型契约相同，落到同一条目即可，运行时按 priority + preference 选择。
+// ============================================================
 
 /**
  * 全局服务类型注册表 —— **core 内部保持字面为空**。

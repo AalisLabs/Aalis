@@ -1,5 +1,5 @@
 // ============================================================
-// 贡献点扩展点（空接口；由各 plugin-*-api 通过 declaration merging 注入
+// contributions.ts — 贡献点扩展点（空接口；由各 plugin-*-api 通过 declaration merging 注入
 // 「贡献点名 → spec 类型」，与 HookContextMap 同构）。
 //
 // 键名按域命名空间化（如 'agent:prompt'）；spec 类型须含 `id: string`
