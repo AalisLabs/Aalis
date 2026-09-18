@@ -128,6 +128,33 @@
             }
           }
         }
+      },
+      "linter": {
+        "rules": {
+          "style": {
+            "useNamingConvention": {
+              "level": "error",
+              "options": {
+                "strictCase": false,
+                "conventions": [
+                  {
+                    "selector": {
+                      "kind": "classMember",
+                      "modifiers": ["static"]
+                    },
+                    "match": "[A-Z][A-Z0-9_]*|[a-z][A-Za-z0-9]*"
+                  },
+                  {
+                    "selector": {
+                      "kind": "classMember"
+                    },
+                    "match": "[a-z][A-Za-z0-9]*"
+                  }
+                ]
+              }
+            }
+          }
+        }
       }
     }
   ],
