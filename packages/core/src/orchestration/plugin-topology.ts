@@ -14,10 +14,9 @@
 
 import type { PluginEntry } from '../types/plugin.js';
 
-import type { Context } from '../context/context.js';
 import type { Logger } from '../context/logger.js';
 
-import { retireEntry } from './plugin-activation.js';
+import { type ActivationDeps, retireEntry } from './plugin-activation.js';
 
 /**
  * 按"提供者 → 消费者"方向的拓扑排序（Kahn）。
@@ -99,15 +98,12 @@ export function topoSortByDeps(entries: PluginEntry[], logger: Logger): PluginEn
  * `requiresBounceOnDepChange` 的状态敏感插件，落盘类清理更需要真正完成。
  * caller 紧接着会 await softReload 完成全部重激活。
  */
-export async function evictDownstreamConsumers(args: {
-  provider: PluginEntry;
-  plugins: ReadonlyMap<string, PluginEntry>;
-  rootCtx: Context;
-  logger: Logger;
-  /** 单个异步清理项的等待上限（毫秒；缺省不设限） */
-  disposeTimeoutMs?: number;
-}): Promise<void> {
-  const { provider, plugins, rootCtx, logger, disposeTimeoutMs } = args;
+export async function evictDownstreamConsumers(
+  provider: PluginEntry,
+  plugins: ReadonlyMap<string, PluginEntry>,
+  deps: ActivationDeps,
+): Promise<void> {
+  const { logger } = deps;
   const provided = provider.module.provides ?? [];
   if (provided.length === 0) return;
   const providedSet = new Set(provided);
@@ -123,7 +119,7 @@ export async function evictDownstreamConsumers(args: {
     if (!other.module.requiresBounceOnDepChange) continue;
     const allDeps = [...other.requiredDeps, ...other.optionalDeps];
     if (!allDeps.some(d => providedSet.has(d.service))) continue;
-    await retireEntry(other, 'pending', { rootCtx, logger, disposeTimeoutMs });
+    await retireEntry(other, 'pending', deps);
     logger.info(
       `级联 bounce 下游消费者 "${other.instanceId}"（requiresBounceOnDepChange=true，依赖 provider "${provider.instanceId}"）`,
     );
