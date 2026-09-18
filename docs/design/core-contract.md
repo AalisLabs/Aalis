@@ -85,6 +85,7 @@
 | 0.9.0 | `CORE_CONFIG_SCHEMA` / `ConfigSchema` 全家、`Context.once` / `hasService` / `getServiceEntries`、`PluginManager.createInstance` / `removeInstance`、`ServiceContainer.has`、`EventBus.removeAll`、`ConfigManager.syncPluginDefaults`、`AppOptions.configSync` |
 | 0.12.0 | `ServicePriority` / `ServicePriorityValue`（0.11.0 仍从包根导出，服务优先级改为裸数字后移除） |
 | 0.13.0 | 四个注册表的 `unregisterByContext`（换为 `unregisterByOwner(owner: symbol)`）；另有三处改形而非删除：`saveConfig()` 返回 `Promise<void>`、`useModule()` 返回 `ModuleHandle`、`EventBus.on` 第三参由 `string` 改为 `symbol` |
+| 0.14.0 | `ServiceContainer.unregisterEntry`（`register` 改为返回退订闭包）；改形：`ServiceContainer.register(name, instance, contextId, owner?, options?)` 与 `HookRegistry.register` 的 `contextId` 必填；`ServiceContainer` / `ContributionRegistry` 的注册与读取动词按各自扩展点接口约束键 |
 
 因此插件生态里常见的 `peerDependencies: { "@aalis/core": ">=0.2.0 <1.0.0" }` **不是**"core 保证
 0.x 内兼容"的推论——它只是"没用到新 API 的插件不必随次版本重发"的便利区间。用了某个版本才有的
@@ -114,7 +115,7 @@ src 根只留 barrel（`index.ts`）。配置持久化的宿主 SPI（`ConfigPro
 
 | 从 | 到 | 性质 |
 |---|---|---|
-| primitives | kernel | 值：仅 events 用的 `reportQuietly` |
+| primitives | kernel | 值：events / hooks 上报诊断用的 `reportQuietly` |
 | primitives | 基础词汇 | 纯类型 |
 | context | kernel | 值：`Lifecycle`、`reportQuietly` |
 | context | primitives、基础词汇 | 纯类型——四原语的实例由编排层构造后注入，Context 不 `new` 它们 |
