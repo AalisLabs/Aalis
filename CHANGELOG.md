@@ -8,7 +8,13 @@
 
 ---
 
-## 未发布（core 0.13.0 → 0.14.0）
+## 2026-09-18（core 0.14.0 minor；patch：runtime 0.12.5 / api-commands 0.5.2 / api-tools 0.8.2 / api-webui 0.9.3 / plugin-adapter-onebot 0.12.4 / plugin-commands 0.10.1 / plugin-flow-control 0.9.4 / plugin-mcp-client 0.10.3 / plugin-persona 0.9.5 / plugin-skills 0.10.3 / plugin-tool-onebot 0.9.3 / plugin-tools 0.7.3 / plugin-webui-server 0.11.10）
+
+**升级**：core 又走了次版本，且这次改了事件名与管理动词，**旧版第一方插件配新 core 会失效**——`ctx.on('ready')` 永远
+收不到（静默），`plugins.enablePlugin` 不存在（TypeError）。下列包必须与 core 同批升级，它们的 core 下限已抬到 `>=0.14.0`：
+runtime / plugin-adapter-onebot / plugin-flow-control / plugin-persona / plugin-skills / plugin-tool-onebot / plugin-webui-server /
+plugin-mcp-client。脚手架项目里 `@aalis/core` 若仍是 caret 区间，请显式 `npm install @aalis/core@latest @aalis/runtime@latest`
+再 `npm update`；不要用 `--legacy-peer-deps` 绕过。第三方插件按下面各节的迁移路径改。
 
 ### 四原语注册表统一形状（@aalis/core）
 
