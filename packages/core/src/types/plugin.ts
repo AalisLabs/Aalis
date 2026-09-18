@@ -3,8 +3,10 @@
 // 与运行时实现 (PluginManager) 分离，避免下游消费者只为类型而拉入 class。
 // 实现详见 ../orchestration/plugin.ts。
 
-import type { Context } from '../context/context.js';
 import type { NormalizedDependency } from '../primitives/services.js';
+
+import type { Context } from '../context/context.js';
+
 import type { DependencyDeclaration } from './services.js';
 
 // ----- 插件依赖声明（module.inject 的词汇） -----

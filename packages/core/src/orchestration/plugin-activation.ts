@@ -10,9 +10,10 @@
 // 自身只负责"事件路由 + recompute 编排"。
 // ============================================================
 
+import type { PluginEntry, PluginState, RecomputeReason } from '../types/plugin.js';
+
 import type { Context } from '../context/context.js';
 import type { Logger } from '../context/logger.js';
-import type { PluginEntry, PluginState, RecomputeReason } from '../types/plugin.js';
 
 interface ActivationDeps {
   rootCtx: Context;

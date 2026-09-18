@@ -1,13 +1,16 @@
-import { reportQuietly } from '../kernel/disposable-chain.js';
-import { Lifecycle } from '../kernel/lifecycle.js';
-import type { ContributionHandle, ContributionRegistry, ContributionSpec } from '../primitives/contributions.js';
-import type { EventBus } from '../primitives/events.js';
-import type { HookRegistry } from '../primitives/hooks.js';
-import type { ServiceContainer, ServiceView } from '../primitives/services.js';
 import type { ContributionPointMap } from '../types/contributions.js';
 import type { AalisEvents } from '../types/events.js';
 import type { HookContextMap, MiddlewareFn } from '../types/hooks.js';
 import type { ServiceOf, ServiceTypeMap } from '../types/services.js';
+
+import { reportQuietly } from '../kernel/disposable-chain.js';
+import { Lifecycle } from '../kernel/lifecycle.js';
+
+import type { ContributionHandle, ContributionRegistry, ContributionSpec } from '../primitives/contributions.js';
+import type { EventBus } from '../primitives/events.js';
+import type { HookRegistry } from '../primitives/hooks.js';
+import type { ServiceContainer, ServiceView } from '../primitives/services.js';
+
 import type { ConfigManager } from './config.js';
 import type { Logger } from './logger.js';
 import { validateProvide } from './services-helpers.js';
