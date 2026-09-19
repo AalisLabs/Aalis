@@ -2,16 +2,18 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { AgentService } from '../../packages/api-agent/src/index.js';
 import { toolsWithGroups, useToolService } from '../../packages/api-tools/src/index.js';
 import type { WebUIService } from '../../packages/api-webui/src/index.js';
 import { App, type Context } from '../../packages/core/src/index.js';
+import * as agentPlugin from '../../packages/plugin-agent/src/index.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import * as webuiServer from '../../packages/plugin-webui-server/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 枢纽服务的退订闭包必须按「这一次登记」比对，而不是按 name + contextId：
 // 同一 Context 用同名重注册后，旧闭包仍然成立的判据会把新登记一起删掉。
-// core 四个注册表按条目引用退订；这里钉住 tools / 工具分组 / webui 页面三处同一口径。
+// core 四个注册表按条目引用退订；这里钉住 tools / 工具分组 / webui 页面 / agent 预处理器四处同一口径。
 // ════════════════════════════════════════════════════════════
 
 function silentLogger(): Logger {
@@ -151,7 +153,8 @@ describe('useToolService 绑定：同名替换与整体重挂', () => {
     expect(reg2.getGroups()).toEqual([]);
   });
 
-  it('拆卸后枢纽清空；关闭后的登记每次 warn、不进枢纽、不抛（与 core 登记面同口径）', async () => {
+  /** 带 warn 收集的世界：关闭后政策要数 warn */
+  function warningWorld() {
     const warnings: string[] = [];
     const app = new App({
       config: { name: 'T', logLevel: 'error', plugins: {} },
@@ -166,6 +169,11 @@ describe('useToolService 绑定：同名替换与整体重挂', () => {
     apps.push(app);
     const reg = new ToolRegistry(silentLogger());
     app.ctx.provide('tools', reg);
+    return { app, reg, warnings, refusals: () => warnings.filter(w => w.includes('忽略 tools 登记')).length };
+  }
+
+  it('拆卸后枢纽清空；关闭后的登记每次 warn、不进枢纽、不抛（与 core 登记面同口径）', async () => {
+    const { app, reg, refusals } = warningWorld();
     const ctx = app.ctx.fork('p');
     const tools = useToolService(ctx);
     tools.register({ definition: def('t'), handler: async () => '' });
@@ -174,33 +182,37 @@ describe('useToolService 绑定：同名替换与整体重挂', () => {
     for (const n of ['late1', 'late2']) {
       expect(() => tools.register({ definition: def(n), handler: async () => '' })).not.toThrow();
     }
-    expect(warnings.filter(w => w.includes('忽略 tools 登记')).length).toBe(2);
+    expect(refusals()).toBe(2);
     expect(names(reg)).toEqual([]);
   });
 
-  it('拆卸窗口内（等在飞 apply）已挂载绑定的登记仍挂上并随撤回段摘净', async () => {
-    const { app, reg } = world();
+  it('拆卸窗口内（等在飞 apply）的登记与 ctx.on 同口径：disposed 即拒、warn、不进枢纽', async () => {
+    const { app, reg, refusals } = warningWorld();
     let release!: () => void;
     const gate = new Promise<void>(r => {
       release = r;
     });
     let child!: Context;
+    let lateOff!: () => void;
     const mounting = app.ctx.useModule({
       name: 'late-registrar',
       async apply(c) {
         child = c;
         useToolService(c).register({ definition: def('early'), handler: async () => '' });
         await gate;
-        useToolService(c).register({ definition: def('late'), handler: async () => '' });
+        lateOff = useToolService(c).register({ definition: def('late'), handler: async () => '' });
       },
     });
     await Promise.resolve();
+    expect(names(reg)).toEqual(['early']);
     const disposing = child.disposeAsync();
     expect(child.disposed).toBe(true);
     release();
     await mounting;
+    expect(refusals(), '窗口内的登记被拒并记 warn').toBe(1);
     await disposing;
-    expect(names(reg), '窗口内的登记进过枢纽又被撤回段摘净').toEqual([]);
+    expect(names(reg)).toEqual([]);
+    expect(() => lateOff(), '拒收返回的退订可调、无动作').not.toThrow();
   });
 
   it('toolsWithGroups 视图的 raw 活取，跟着提供者换人', () => {
@@ -257,5 +269,34 @@ describe('webui-server 页面退订按条目身份', () => {
     ).toEqual(['old']);
     oldOff();
     expect(pages()).toEqual([]);
+  });
+});
+
+describe('agent 预处理器退订按条目身份', () => {
+  it('同名替换后，旧退订闭包只摘自己的中间件，不删新登记的账目', async () => {
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger: silentLogger() });
+    const ctx = app.ctx.fork('agent');
+    await agentPlugin.apply(ctx, {});
+    const svc = ctx.getService<AgentService>('agent')!;
+    const ran: string[] = [];
+    const handler = (tag: string) => async (_m: unknown, next: () => Promise<void>) => {
+      ran.push(tag);
+      await next();
+    };
+    const run = () => ctx.runHook('agent:input:before', { message: {} as never, metadata: {} }, async () => undefined);
+
+    const oldOff = svc.registerPreprocessor!('x', handler('old'));
+    svc.registerPreprocessor!('x', handler('new'));
+    oldOff();
+    expect(
+      svc.getPreprocessors?.().map(p => p.name),
+      '旧闭包对已被替换的登记应无动作',
+    ).toEqual(['x']);
+
+    // 账目仍在，所以第三次同名登记能替换掉「new」的中间件——链上只剩最新一个
+    svc.registerPreprocessor!('x', handler('newer'));
+    await run();
+    expect(ran).toEqual(['newer']);
+    await app.stop();
   });
 });
