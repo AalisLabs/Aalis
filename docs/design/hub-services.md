@@ -137,22 +137,14 @@ export function useXxx(ctx: Context) {
 关闭后登记的口径（warn、不进枢纽）一行委托版由 `whenService` 的入口守卫兜底，绑定版绕过它直连枢纽，必须自己在入口判
 `ctx.disposed`，否则就成了绑定版独有的漏。`@aalis/api-tools` 的 `useToolService` 是这个形状的现行实现。
 
-枢纽的退订若是异步的（摘登记要等远端确认），绑定的批量撤回要合并等待，否则 `disposeAsync` 等不到它们。cleanup 的两句脱挂照旧，
-只把逐条 `off` 换成合并等待：
+这个范本的前提是枢纽的 `register` 与退订闭包**同步且不抛错**。`register` 在批量重挂中途抛错，`whenService` 只记 warn、订阅保持，
+但抛错前已登记的条目没有 cleanup 可撤，提供者换人时留在旧枢纽里，只有拆卸时的 `unregisterByPlugin` 清扫能摘掉它们；"整体重挂"的保证只对不抛错的枢纽成立。
 
-```ts
-return () => {
-  b.svc = undefined;
-  const offs = [...b.items.values()].map(e => {
-    const settled = e.off?.();
-    e.off = undefined;
-    return settled;
-  });
-  return Promise.all(offs).then(() => undefined);
-};
-```
-
-`whenService` 的 cleanup 返回 promise 即被等待（拒绝记 warn、不逃逸）；此时契约包里的 `register` 应声明返回 `() => Promise<void>`。
+退订是异步的枢纽（摘登记要等远端确认）不能照抄这个范本：批量撤回要用 `Promise.allSettled` 合并等待（`Promise.all` 一项拒绝就提前落定，
+其余撤回还没完成，清理段就开始了）；同步抛错的退订要转成拒绝，否则后面的条目不再撤回；同名替换与手动退订直接调用的退订闭包会丢掉
+promise，core 等不到也接不住它的拒绝，helper 要自己把它挂进清理链并在落地后摘除；契约包里 `register` 的返回类型要改成
+`() => Promise<void>`。`whenService` 的 cleanup 返回 promise 即被等待（拒绝记 warn、不逃逸），但只覆盖经它撤回的那一批。
+第一方没有这样的枢纽，这页不提供经验证的异步范本。
 
 ## 共同契约与允许的差异
 
