@@ -37,7 +37,7 @@
 - 经 Context 门面注册的一切副作用（事件监听、服务、钩子、贡献、`onDispose` 回调），
   在该 Context `dispose` 后**必然消失**——包括子上下文级联与寄存在枢纽服务里的条目
   （`unregisterByPlugin(contextId)` 鸭子协议）。
-- 清理相对注册**逆序**执行；单个清理器抛错不影响其余。
+- 清理链分撤回段（`whenService` 的 cleanup）与清理段（`onDispose`）：撤回段整体先于清理段，段内相对注册**逆序**执行；单个清理器抛错不影响其余。
 - `onDispose` 是插件清理副作用的唯一正确 API；`disposeAsync` 路径等待异步清理完成（带超时护栏）。
 - 插件启停顺序：激活 = 提供者先于消费者（required 依赖拓扑）。关停 = 消费者先于提供者**只在 `App.stop()` 的整体拓扑逆序成立**，异步清理按 `disposeTimeoutMs` 逐项设限；单插件 `unload` / `disable` / `bounce` 不提供该顺序保证，消费者的 onDispose 拿到的服务可能已不可用。
 - 提供者换人（多提供者其一退出、偏好切换、更高优先级上线）不改变插件的目标状态，经 `service:registered` / `service:unregistered` / `service:preference-changed` 可观察；`requiresBounceOnDepChange` 的级联只在依赖的服务名整个落空、或依赖的 provider 自身被 bounce 时触发。要跟随换人用 `whenService`。
@@ -135,4 +135,4 @@ kernel 与基础词汇文件不依赖任何东西。
 （插件加载器、重启策略、配置 provider）的失败一律 `error` 级。kernel 抛出的错误信息用中文、带 `Lifecycle:` 前缀、不带节点 id
 （kernel 不认识 Context；这两条抛错是收养关系写错的编程错误，不是运行时故障，抛给调用方即止）。
 
-不拆 kernel 包：包是发布单位不是模块化单位；维持可拆的依赖方向，出现不依赖 core 的真实使用者时再议。资源内核不从包根导出，其不变量：子节点级联序（先关全部子节点 → 撤回对外注册 → 自身清理链逆序 → 收尾）；关闭后登记立即执行（与 TC39 `DisposableStack` 抛错相反，用来接住初始化或子节点关闭期间迟到的资源）；超时只是停止等待，不代表资源已释放；每个 Lifecycle 至多跟踪一次初始化（调用方保证，再次调用会覆盖前一次）。
+不拆 kernel 包：包是发布单位不是模块化单位；维持可拆的依赖方向，出现不依赖 core 的真实使用者时再议。资源内核不从包根导出，其不变量：子节点级联序（先关全部子节点 → 撤回对外注册 → 自身清理链按段逆序 → 收尾）；关闭后登记立即执行（与 TC39 `DisposableStack` 抛错相反，用来接住初始化或子节点关闭期间迟到的资源）；超时只是停止等待，不代表资源已释放；每个 Lifecycle 至多跟踪一次初始化（调用方保证，再次调用会覆盖前一次）。

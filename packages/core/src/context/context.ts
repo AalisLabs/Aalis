@@ -454,10 +454,11 @@ export class Context {
       try {
         const ret = previous();
         if (ret && typeof (ret as PromiseLike<unknown>).then === 'function') {
+          // 上报经 reportQuietly：宿主 sink 抛错不得让 settled 转拒绝，否则在飞集合永不排空、条目永不自移除
           const settled: Promise<void> = Promise.resolve(ret)
             .then(
               () => undefined,
-              err => this.logger.warn(`whenService('${name}') cleanup 拒绝（已忽略）:`, err),
+              err => reportQuietly(() => this.logger.warn(`whenService('${name}') cleanup 拒绝（已忽略）:`, err)),
             )
             .then(() => {
               inflight.delete(settled);
@@ -465,7 +466,7 @@ export class Context {
           inflight.add(settled);
         }
       } catch (err) {
-        this.logger.warn(`whenService('${name}') cleanup 抛错（已忽略）:`, err);
+        reportQuietly(() => this.logger.warn(`whenService('${name}') cleanup 抛错（已忽略）:`, err));
       }
     };
 
@@ -490,7 +491,9 @@ export class Context {
      * 避免 A → B → A 时外层回调覆盖内层清理函数。持续振荡的用户回调不保证收敛。
      */
     const sync = (): void => {
-      if (disposed || syncing) return;
+      // 本 ctx 已开始关闭（含等在飞激活 / 等子级联的窗口）就不再对齐：窗口内的服务事件既不能让
+      // 关闭中的 ctx 挂上新提供者，也不该在四原语切断前引爆 cleanup——cleanup 统一留给撤回段。
+      if (disposed || syncing || this.#lifecycle.disposed) return;
       syncing = true;
       try {
         while (!disposed) {
@@ -747,7 +750,8 @@ export class Context {
    *
    * 插件清理副作用的**唯一正确 API**：
    * - 登记到生命周期清理链的清理段，段内逆序执行；此时本 ctx 的四原语登记与
-   *   {@link whenService} 的对外绑定（撤回段）都已撤回，外部不会再把活派进来
+   *   {@link whenService} 的对外绑定（撤回段）都已撤回（不经 whenService 的裸登记除外，它们靠
+   *   afterCleanup 按 ctx.id 的枢纽清扫兜底）
    * - 在 `ctx.dispose()` 的任何路径上都会触发（app 停机 / bounce / unload /
    *   updateConfig / softReload 级联 evict）
    * - 沙盒 / fork 子上下文同样适用
@@ -860,7 +864,7 @@ export class Context {
   }
 
   /**
-   * 可等待的销毁：语义与 {@link dispose} 相同，但逆序**串行等待**每个异步
+   * 可等待的销毁：语义与 {@link dispose} 相同，但按段逆序**串行等待**每个异步
    * 清理（`onDispose` 返回的 promise）完成后才返回——bounce / unload / 停机
    * 路径上落盘类清理从此真正落地，而非只是"开始执行"。
    *
