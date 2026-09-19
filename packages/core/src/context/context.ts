@@ -141,7 +141,7 @@ export class Context {
           // 同名多 entry 按实例去重，未被选中的提供者也可能持有登记。
           for (const name of this.#services.getServiceNames()) {
             const seen = new Set<unknown>();
-            for (const entry of this.#services.getEntries(name)) {
+            for (const entry of this.#services.getAll(name)) {
               if (seen.has(entry.instance)) continue;
               seen.add(entry.instance);
               const svc = entry.instance as { unregisterByPlugin?: (id: string) => void };

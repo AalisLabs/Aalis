@@ -30,7 +30,6 @@ export { HookRegistry } from './primitives/hooks.js';
 export {
   type NormalizedDependency,
   ServiceContainer,
-  type ServiceEntry,
   type ServiceView,
 } from './primitives/services.js';
 
