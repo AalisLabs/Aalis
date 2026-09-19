@@ -68,27 +68,34 @@ export async function retireEntry(
 }
 
 /**
- * 停机的成批拆卸：与 {@link retireEntry} 同一四步，只是「拆 ctx」对整批激活（连同各自的子模块）
- * 统一编排——消费者先于它依赖的提供者关闭，归属树与服务依赖一起决定顺序（见 close-plan.ts）。
- * entries 的给定次序是无依赖关系时的关闭次序。不发 plugin:unloaded（停机的编排自有事件语义）。
+ * 成批拆卸：与 {@link retireEntry} 同一四步，只是「拆 ctx」对整批激活（连同各自的子模块）统一编排——
+ * 消费者先于它依赖的提供者关闭，归属树与服务依赖一起决定顺序（见 close-plan.ts）。同一轮里要停的
+ * 插件必须走这里而不是逐个 retireEntry，否则它们之间的关闭次序只剩注册序。
+ * entries 的给定次序是无依赖关系时的关闭次序。
+ *
+ * @param planRoot 停机时传根激活：宿主的根绑定（app.bind）与全部插件进同一张计划，
+ *   宿主的收尾因此排在它用到的插件关闭之前。
  */
-export async function retireAll(entries: PluginEntry[], deps: ActivationDeps): Promise<void> {
+export async function retireBatch(
+  entries: PluginEntry[],
+  targetState: 'pending' | 'disposed',
+  deps: ActivationDeps,
+  opts?: { emitUnloaded?: boolean; planRoot?: Context },
+): Promise<void> {
   const closing: Array<{ entry: PluginEntry; ctx: Context }> = [];
   for (const entry of entries) {
-    entry.state = 'disposed';
+    entry.state = targetState;
     if (entry.context) closing.push({ entry, ctx: entry.context });
   }
   try {
-    await closeActivations(
-      closing.map(item => item.ctx),
-      deps.disposeTimeoutMs,
-      deps.logger,
-    );
+    const roots = opts?.planRoot ? [opts.planRoot] : closing.map(item => item.ctx);
+    await closeActivations(roots, deps.disposeTimeoutMs, deps.logger);
   } catch (err) {
-    deps.logger.error('停机拆卸抛错:', err);
+    deps.logger.error('成批拆卸抛错:', err);
   }
   for (const { entry, ctx } of closing) {
     if (entry.context === ctx) entry.context = undefined;
+    if (opts?.emitUnloaded !== false) deps.rootCtx.emitQuietly('plugin:unloaded', entry.instanceId);
   }
 }
 

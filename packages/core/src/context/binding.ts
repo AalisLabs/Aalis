@@ -124,7 +124,9 @@ function refBinder<P>(port: BindingPort<P>): ServiceRef<P> {
 }
 
 /** 内置能力的标记：绑的是激活自身，不参与激活闸，也不产生依赖边 */
-const BUILTIN = Symbol('aalis.builtin-capability');
+// 全局 symbol：装了两份 core 时另一份副本的内置描述符仍被认出，随后在 activationOf 处明确报错，
+// 而不是被当成普通服务名永远等不到提供者
+const BUILTIN = Symbol.for('aalis.builtin-capability');
 
 /** @internal */
 export function markBuiltin<D extends object>(descriptor: D): D {
@@ -303,6 +305,8 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
       let provider: P | undefined;
 
       const attachOne = (target: P, entry: Entry, key: string): void => {
+        // register 回调里重入 add 的条目已经就地登记过了：再挂一次会把它的句柄覆盖掉、永不撤回
+        if (entry.off !== undefined) return;
         try {
           entry.off = options.register(target, entry.item);
         } catch (err) {
@@ -315,7 +319,7 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
       // 被动注册表换人时立即重挂（旧条目的撤回在后台落定、关闭会等）——走内部的 overlap 路径
       follow(target => {
         provider = target;
-        for (const [key, entry] of entries) attachOne(target, entry, key);
+        for (const [key, entry] of [...entries]) attachOne(target, entry, key);
         return () => {
           provider = undefined;
           const pending: PromiseLike<unknown>[] = [];

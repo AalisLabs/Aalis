@@ -20,7 +20,7 @@ import {
   type ProviderOf,
   type ServiceDescriptor,
 } from './binding.js';
-import type { Context } from './context.js';
+import type { Context, ModuleHandle } from './context.js';
 import type { Logger } from './logger.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
@@ -46,11 +46,6 @@ export const events = builtinService<Events>('events', ctx => ({
 }));
 
 // ----- lifecycle -----
-
-export interface ModuleHandle {
-  dispose(): void;
-  disposeAsync(timeoutMs?: number): Promise<void>;
-}
 
 export interface LifecycleCap {
   /** 这次激活已开始关闭 */
