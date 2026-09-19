@@ -52,6 +52,7 @@ export {
   type LifecycleCap,
   lifecycle,
   logger,
+  type ModuleDefinition,
   type Provide,
   provide,
   type Services,

@@ -18,7 +18,7 @@ import {
   type ActivationDeps,
   activatePlugin,
   computeTargetState,
-  retireAll,
+  retireBatch,
   retireEntry,
 } from './plugin-activation.js';
 import { evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
@@ -450,7 +450,12 @@ export class PluginManager {
     if (this.shuttingDown && reason.type !== 'shutdown') {
       // 关机已置位时非关机请求无意义；但若队列里躺着一个被挂起的 shutdown
       // （stop() 与手动 dispose 段竞态），借这次调用把它接过来跑完。
-      if (this.queuedBatch?.reason.type !== 'shutdown') return;
+      if (this.queuedBatch?.reason.type !== 'shutdown') {
+        // 早退也要结算 idle 等待者：管理段收尾的 softReload 走到这里时状态机已静置，
+        // 不结算的话此前压进来的 idle() 永不落定（结算自己会核对三条静置守卫）
+        this.settleIdleWaiters();
+        return;
+      }
     }
     if (reason.type === 'shutdown') this.shuttingDown = true;
 
@@ -512,19 +517,18 @@ export class PluginManager {
       const entries = [...this.plugins.values()];
       const order = topoSortByDeps(entries, this.logger);
 
-      // 停机：整批激活（含子模块）统一编排关闭顺序，不走逐个 retire
+      // 停机：全部插件激活与宿主的根激活进同一张计划（无依赖关系时后注册的先关）
       if (currentReason.type === 'shutdown') {
-        const active = entries.filter(entry => entry.state === 'active');
-        // 无依赖关系时后注册的先关
-        await retireAll(active.reverse(), this.deps);
+        const active = entries.filter(entry => entry.state === 'active').reverse();
+        await retireBatch(active, 'disposed', this.deps, { emitUnloaded: false, planRoot: this.rootCtx });
         break;
       }
 
-      // Phase A: 反向遍历，关掉目标不是 active 的 active entry（运行期级联：按声明拓扑的逆序）
+      // Phase A: 本轮目标不再是 active 的，成批关闭——它们之间的次序由关停编排按实际依赖定
+      const retiring: PluginEntry[] = [];
       for (const entry of [...order].reverse()) {
         if (entry.state !== 'active') continue;
-        const target = computeTargetState(entry, currentReason, this.rootCtx, serviceDowns);
-        if (target === 'active') continue;
+        if (computeTargetState(entry, currentReason, this.rootCtx, serviceDowns) === 'active') continue;
 
         // 日志：区分 required 不满 / optional 下线
         const unmet = entry.requiredDeps.find(d => this.rootCtx.getService(d.service) === undefined);
@@ -540,10 +544,12 @@ export class PluginManager {
             this.logger.info(`依赖服务 "${missing.service}" 已下线，降级插件为待激活: ${entry.instanceId}`);
           }
         }
-
-        await this.retire(entry, 'pending');
-        changed = true;
+        retiring.push(entry);
         lastRoundFlips.push(entry.instanceId);
+      }
+      if (retiring.length > 0) {
+        await retireBatch(retiring, 'pending', this.deps);
+        changed = true;
       }
 
       // Phase B: 正向遍历，激活目标 active 的 pending entry
