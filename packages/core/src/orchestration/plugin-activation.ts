@@ -12,6 +12,7 @@
 
 import type { PluginEntry, PluginState, RecomputeReason } from '../types/plugin.js';
 
+import { closeActivations } from '../context/close-plan.js';
 import type { Context } from '../context/context.js';
 import type { Logger } from '../context/logger.js';
 
@@ -63,6 +64,31 @@ export async function retireEntry(
   if (entry.context === ctx) entry.context = undefined;
   if (opts?.emitUnloaded !== false) {
     deps.rootCtx.emitQuietly('plugin:unloaded', entry.instanceId);
+  }
+}
+
+/**
+ * 停机的成批拆卸：与 {@link retireEntry} 同一四步，只是「拆 ctx」对整批激活（连同各自的子模块）
+ * 统一编排——消费者先于它依赖的提供者关闭，归属树与服务依赖一起决定顺序（见 close-plan.ts）。
+ * entries 的给定次序是无依赖关系时的关闭次序。不发 plugin:unloaded（停机的编排自有事件语义）。
+ */
+export async function retireAll(entries: PluginEntry[], deps: ActivationDeps): Promise<void> {
+  const closing: Array<{ entry: PluginEntry; ctx: Context }> = [];
+  for (const entry of entries) {
+    entry.state = 'disposed';
+    if (entry.context) closing.push({ entry, ctx: entry.context });
+  }
+  try {
+    await closeActivations(
+      closing.map(item => item.ctx),
+      deps.disposeTimeoutMs,
+      deps.logger,
+    );
+  } catch (err) {
+    deps.logger.error('停机拆卸抛错:', err);
+  }
+  for (const { entry, ctx } of closing) {
+    if (entry.context === ctx) entry.context = undefined;
   }
 }
 

@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 // 承重面（先写终态、CAS 接管、context 闸全部以它们为判据），写入点每多
 // 一处就多一个可能漏抄约定的竞态源——刀 0 的 Phase A 回归即实证。
 //
-// 拆卸一律走 retireEntry（plugin-activation.ts），不许手写四步；激活收尾
+// 拆卸一律走 retireEntry / retireAll（plugin-activation.ts），不许手写四步；激活收尾
 // 与 enable/bounce 是点名的例外。新增写入点必须：
 //   1. 过刀单（core 修改逐条拍板）；
 //   2. 对照 retireEntry JSDoc 的顺序约定自查；
@@ -21,7 +21,8 @@ const WRITE_RE = /\b(?:entry|other)\.(state|context)\s*=(?!=)/g;
 
 /** 文件 → { state 写入点数, context 写入点数 } 的定格。 */
 const FROZEN: Record<string, { state: number; context: number }> = {
-  'orchestration/plugin-activation.ts': { state: 3, context: 2 }, // retireEntry ×2 + activating/context/active
+  // retireEntry ×2 + activating/context/active + retireAll ×2（停机的成批拆卸：同一四步，拆 ctx 改为整批编排）
+  'orchestration/plugin-activation.ts': { state: 4, context: 3 },
   'orchestration/plugin.ts': { state: 2, context: 1 }, // enable + bounce（点名内联例外）
   'orchestration/plugin-topology.ts': { state: 0, context: 0 }, // evict 已全走 retireEntry
 };
