@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { definePlugin, defineService, optional, services } from '../../packages/core/src/index.js';
+import {
+  definePlugin,
+  defineService,
+  logger,
+  optional,
+  provide,
+  type ServiceRef,
+} from '../../packages/core/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 类型推导：uses 声明 → apply 参数。负向用例用 @ts-expect-error 钉住——该行若不再报错，
 // tsc（test/architecture/test-types.test.ts）会把多余的 expect-error 当错误报出来。
+// 没有默认注入：没写进 uses 的能力（含 logger / events）在类型上就不存在。
 // ════════════════════════════════════════════════════════════
 
 interface KvService {
@@ -12,14 +20,26 @@ interface KvService {
 }
 const kv = defineService<KvService>('zz-kv');
 
+/** 第三方自定义门面：同时长得像 ServiceRef（current / require）又带自己的成员 */
+interface Hybrid {
+  readonly current: string | undefined;
+  require(): string;
+  register(item: string): () => void;
+}
+const hybrid = defineService<unknown, Hybrid>('zz-hybrid', () => ({
+  current: undefined,
+  require: () => '',
+  register: () => () => {},
+}));
+
 describe('uses → apply 的类型推导', () => {
-  it('声明即得；未声明、可选未处理、错误提供者、非描述符都在编译期被拒', () => {
+  it('声明即得；未声明不可见；required 与 optional 同一接口；提供者按描述符约束', () => {
     const plugin = definePlugin({
       name: 'typed',
-      uses: { kv, maybe: optional(kv), tools, services },
+      uses: { kv, maybe: optional(kv), tools, provide, logger, hybrid: optional(hybrid) },
       apply(caps) {
-        // 正向：调用型 required → require()；注册型 → 门面；默认注入免声明
         const n: number | undefined = caps.kv.require().get('a');
+        caps.logger.info(String(n));
         caps.tools.register({
           definition: {
             type: 'function',
@@ -27,36 +47,46 @@ describe('uses → apply 的类型推导', () => {
           },
           handler: async () => '',
         });
-        caps.events.on('app:ready', () => {});
-        caps.logger.info(String(n));
-        caps.lifecycle.onDispose(() => {});
-        const own: Readonly<Record<string, unknown>> = caps.config;
-        void own;
 
-        // 负向 1：未声明的能力不可见
-        // @ts-expect-error hooks 未在 uses 里声明
-        caps.hooks;
-
-        // 负向 2：可选的调用型没有 require()，current 可能为空必须处理
-        // @ts-expect-error optional 的 ServiceRef 不含 require
+        // optional 与 required 是同一个 ServiceRef：require() 合法（缺席时运行期抛错），follow 可用
+        const ref: ServiceRef<KvService> = caps.maybe;
+        ref.follow(provider => {
+          provider.get('a');
+          return undefined;
+        });
         caps.maybe.require();
-        // @ts-expect-error current 可能是 undefined
-        caps.maybe.current.get('a');
         caps.maybe.current?.get('a');
+        // @ts-expect-error current 可能是 undefined，未判空不得直接用
+        caps.maybe.current.get('a');
+        // @ts-expect-error required 的 current 同样可能为空
+        caps.kv.current.get('a');
 
-        // 负向 3：提供者实现必须符合描述符的提供者类型
-        caps.services.provide(kv, { get: () => 1 });
+        // 第三方门面经 optional 后不丢成员
+        caps.hybrid.register('x');
+        caps.hybrid.require();
+
+        // 未声明的能力不可见——包括内置的
+        // @ts-expect-error events 未写进 uses
+        caps.events;
+        // @ts-expect-error lifecycle 未写进 uses
+        caps.lifecycle;
+
+        // 提供者实现必须符合描述符的提供者类型
+        caps.provide(kv, { get: () => 1 });
         // @ts-expect-error 错误的提供者形状
-        caps.services.provide(kv, { fetch: () => 1 });
+        caps.provide(kv, { fetch: () => 1 });
 
-        // 负向 4：绑定接口不是提供者——拿不到原始枢纽的带归属参数的登记口
+        // 绑定接口不是提供者：拿不到原始枢纽带归属参数的登记口
         // @ts-expect-error 绑定门面的 register 不接受 contextId
         caps.tools.register({} as never, 'someone-else');
       },
     });
-    expect(plugin.inject).toEqual({ required: ['zz-kv', 'tools'], optional: ['zz-kv'] });
+    expect(plugin.inject, '内置能力不参与激活闸').toEqual({
+      required: ['zz-kv', 'tools'],
+      optional: ['zz-kv', 'zz-hybrid'],
+    });
 
-    // 负向 5：uses 的值必须是描述符（编译期拒；绕过类型的 JS 调用方在定义期得到明确报错）
+    // uses 的值必须是描述符：编译期拒；绕过类型的 JS 调用方在定义期得到明确报错
     expect(() =>
       definePlugin({
         name: 'bad',
@@ -67,7 +97,8 @@ describe('uses → apply 的类型推导', () => {
     ).toThrow('不是服务描述符');
   });
 
-  it('uses 的键与默认注入重名在定义期报错', () => {
-    expect(() => definePlugin({ name: 'clash', uses: { events: kv }, apply() {} })).toThrow('与默认注入重名');
+  it('不声明任何能力的插件照样合法（归属与关闭由框架管理，不取决于声明了什么）', () => {
+    const bare = definePlugin({ name: 'bare', apply() {} });
+    expect(bare.inject).toEqual({ required: [], optional: [] });
   });
 });

@@ -17,9 +17,12 @@ import { tools as toolsService, wrapUntrustedContent } from '@aalis/api-tools';
 import {
   type AppService,
   appService,
-  type DefaultCaps,
+  config as configService,
   definePlugin,
+  type LifecycleCap,
   type Logger,
+  lifecycle as lifecycleService,
+  logger as loggerService,
   optional,
   type PluginManagerService,
   pluginsService,
@@ -60,11 +63,12 @@ interface BridgeCaps {
   logger: Logger;
 }
 
-type Caps = DefaultCaps &
-  BridgeCaps & {
-    plugins: Pick<ServiceRef<PluginManagerService>, 'current'>;
-    app: Pick<ServiceRef<AppService>, 'current'>;
-  };
+interface Caps extends BridgeCaps {
+  lifecycle: LifecycleCap;
+  config: Readonly<Record<string, unknown>>;
+  plugins: ServiceRef<PluginManagerService>;
+  app: ServiceRef<AppService>;
+}
 
 export const configSchema: ConfigSchema = {
   servers: {
@@ -464,6 +468,13 @@ function formatToolResult(result: unknown, source: string): string {
 export default definePlugin({
   name,
   displayName: 'MCP 客户端',
-  uses: { tools: toolsService, plugins: optional(pluginsService), app: optional(appService) },
+  uses: {
+    tools: toolsService,
+    logger: loggerService,
+    lifecycle: lifecycleService,
+    config: configService,
+    plugins: optional(pluginsService),
+    app: optional(appService),
+  },
   apply: run,
 });
