@@ -2,6 +2,7 @@ import type { FlowControlService } from '@aalis/api-flow-control';
 import type { MessageArchiveService } from '@aalis/api-message-archive';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { Context } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { type IncomingMessage, selfInitiatedActor, WellKnownNoticeTypes } from '@aalis/schema-message';
 import type { TriggerDecision, TriggerPolicyService } from './types.js';
@@ -254,3 +255,6 @@ declare module '@aalis/core' {
     'trigger-policy': import('./types.js').TriggerPolicyService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const triggerPolicy = defineService<import('./types.js').TriggerPolicyService>('trigger-policy');

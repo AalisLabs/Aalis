@@ -13,6 +13,7 @@
  */
 
 import type { ToolCallContext } from '@aalis/api-tools';
+import { defineService } from '@aalis/core';
 
 /**
  * Access checker 的判定结果。
@@ -95,3 +96,6 @@ declare module '@aalis/core' {
     'session-history': SessionHistoryService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const sessionHistory = defineService<SessionHistoryService>('session-history');

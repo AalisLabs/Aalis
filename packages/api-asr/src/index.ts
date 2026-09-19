@@ -11,6 +11,7 @@
 // ============================================================
 
 import type { Context } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { MessageAttachment } from '@aalis/schema-message';
 
 export interface TranscribeInput {
@@ -51,3 +52,6 @@ declare module '@aalis/core' {
     asr: ASRService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const asr = defineService<ASRService>('asr');

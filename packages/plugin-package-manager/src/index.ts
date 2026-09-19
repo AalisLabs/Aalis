@@ -1,5 +1,6 @@
 import { createProcessGateway, type ExecResult, type ProcessService } from '@aalis/api-process';
 import type { AppService, Context, PluginManagerService } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import { classifyDepSpec, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 
 // ===== 插件元数据 =====
@@ -888,3 +889,6 @@ declare module '@aalis/core' {
     'package-manager': PackageManagerService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const packageManager = defineService<PackageManagerService>('package-manager');

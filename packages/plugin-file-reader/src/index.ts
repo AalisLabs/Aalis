@@ -9,6 +9,7 @@ import { createStorageGateway } from '@aalis/api-storage';
 import type { ToolCallContext } from '@aalis/api-tools';
 import { toolsWithGroups, useToolService } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { formatImageSection, recognizeImages } from './doc-images.js';
@@ -910,3 +911,6 @@ declare module '@aalis/core' {
     'file-reader': FileReaderService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const fileReader = defineService<FileReaderService>('file-reader');

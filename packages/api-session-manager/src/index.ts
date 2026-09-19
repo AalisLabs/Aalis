@@ -7,6 +7,7 @@
 
 // 锚定 @aalis/core，使下方 declare module 的 ServiceTypeMap/AalisEvents 增强生效。
 import type {} from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 /**
  * 会话级配置覆盖
@@ -220,3 +221,6 @@ declare module '@aalis/core' {
     'session-manager': SessionManagerService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const sessionManager = defineService<SessionManagerService>('session-manager');

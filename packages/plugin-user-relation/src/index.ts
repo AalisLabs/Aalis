@@ -19,6 +19,7 @@
 import type { MemoryService } from '@aalis/api-memory';
 import { useWebuiService, type WebuiPage } from '@aalis/api-webui';
 import type { Context, PluginModule } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { actions as baseActions } from './actions.js';
 import { registerRelationCommands } from './commands.js';
@@ -697,3 +698,6 @@ declare module '@aalis/core' {
     'user-relation': import('./service.js').RelationService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const userRelation = defineService<import('./service.js').RelationService>('user-relation');

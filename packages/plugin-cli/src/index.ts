@@ -4,6 +4,7 @@ import type { PersonaService } from '@aalis/api-persona';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/api-platform';
 import { getPlatformAdapters } from '@aalis/api-platform';
 import type { AppService, Context, LogEntry } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { StreamChunkMessage } from '@aalis/schema-message';
 import chalk from 'chalk';
@@ -1017,3 +1018,6 @@ declare module '@aalis/core' {
     cli: import('./types.js').CLIService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const cli = defineService<import('./types.js').CLIService>('cli');
