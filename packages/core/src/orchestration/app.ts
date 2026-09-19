@@ -5,6 +5,7 @@ import { EventBus } from '../primitives/events.js';
 import { HookRegistry } from '../primitives/hooks.js';
 import { ServiceContainer } from '../primitives/services.js';
 
+import { assemble, type BoundOf, type Uses } from '../context/binding.js';
 import { type AalisConfig, ConfigManager, type ConfigProvider } from '../context/config.js';
 import { Context } from '../context/context.js';
 import { DefaultLogger, type Logger, LogHub, type LogLevel } from '../context/logger.js';
@@ -208,6 +209,14 @@ export class App {
     // 版本由宿主注入（core 不自读 package.json）；未注入时省略版本段。
     const versionSeg = options.version ? ` Core ${options.version}` : ' Core';
     this.logger.info(`Aalis${versionSeg} - ${config.get('name')}`);
+  }
+
+  /**
+   * 宿主取根激活绑定的服务接口：与插件同一套描述符与装配，登记归属根激活、随 App 停止撤回。
+   * 插件拿的是自己激活的绑定，不复用这里的。
+   */
+  bind<U extends Uses>(uses: U): BoundOf<U> {
+    return assemble(this.ctx, uses);
   }
 
   /**

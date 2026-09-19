@@ -10,6 +10,7 @@
 import type { Readable, Writable } from 'node:stream';
 import type { StorageService } from '@aalis/api-storage';
 import type { Context } from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 export interface SpawnOptions {
   cwd?: string;
@@ -154,3 +155,6 @@ export async function makeTempDirViaStorage(storage: StorageService, prefix: str
     },
   };
 }
+
+/** `process` 是普通调用型服务：绑定接口是 ServiceRef，每次读当前胜者。 */
+export const processService = defineService<ProcessService>('process');
