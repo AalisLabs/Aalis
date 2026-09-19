@@ -83,6 +83,9 @@ export class Context {
    * @internal
    */
   #afterTeardown?: () => void;
+  readonly #parent?: Context;
+  /** 本激活（含子激活）绑定过的提供者的 contextId：关停排序用，宁多勿漏，随激活一起消失 */
+  readonly #boundProviders = new Set<string>();
   /**
    * 清理归属：本 Context 本次激活的身份，每次 fork 新鲜。四原语注册时带上它，拆卸按它清。
    * 与 `id`（逻辑身份：贡献键、排序、模型引用、偏好、显示）分开——同名 Context 互不误清，
@@ -111,6 +114,7 @@ export class Context {
   }) {
     this.id = options.id;
     this.#owner = Symbol(this.id);
+    this.#parent = options.parent;
     this.#events = options.events;
     this.#services = options.services;
     this.#hooks = options.hooks;
@@ -804,6 +808,34 @@ export class Context {
       const sep = k.indexOf(Context.#CONTRIB_KEY_SEP);
       return { point: k.slice(0, sep), id: k.slice(sep + 1) };
     });
+  }
+
+  /**
+   * 记一条「本激活绑定过该服务的当前胜者」：关停时消费者先于它绑定过的提供者关闭。
+   * 子激活的绑定同样记到祖先上（插件级的排序要看得见子模块的依赖）。绑定层专用。
+   * @internal
+   */
+  noteBinding(name: string): void {
+    const owner = this.#services.getAll(name)[0]?.contextId;
+    if (owner === undefined) return;
+    for (let ctx: Context | undefined = this; ctx; ctx = ctx.#parent) ctx.#boundProviders.add(owner);
+  }
+
+  /** @internal */
+  get boundProviders(): ReadonlySet<string> {
+    return this.#boundProviders;
+  }
+
+  /**
+   * 登记收尾回调：关闭时最先执行（子激活关完之后、本激活撤回对外登记之前），此刻监听、
+   * 钩子、枢纽登记与依赖都还在，适合「停接新活、把在手的数据交给下层并等它确认」。
+   * 异步返回值被 disposeAsync 等待（同一超时护栏）。
+   * @internal 经 lifecycle 能力暴露
+   */
+  onDrain(fn: () => void | Promise<void>, label?: string): () => void {
+    const entry = () => fn();
+    this.#lifecycle.draining.push(entry, label);
+    return () => this.#lifecycle.draining.remove(entry);
   }
 
   /**
