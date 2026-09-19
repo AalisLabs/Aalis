@@ -265,3 +265,4 @@ plugins:
 
 - [架构总览](../architecture.md)
 - [api 包设计](../design/api-packages.md)
+- [枢纽服务：第三方能力的登记契约](../design/hub-services.md)

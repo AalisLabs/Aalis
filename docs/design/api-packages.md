@@ -202,6 +202,11 @@ export function resolveMyService(ctx: Context, caps?: MyCapability[]): MyService
 }
 ```
 
+### 提供一种可登记的能力
+
+工具、命令、页面这类"登记进某个服务、由它派活"的能力，由契约包、枢纽服务、helper 三件套组成；范本、与四原语的共同契约及允许的差异见
+[枢纽服务](./hub-services.md)。
+
 ## CI 校验
 
 Biome 在 CI 上对全仓库执行 lint + format check（informational 模式）以及对变更文件执行 hard check。业务接口是否回流 core 由代码审查 + 类型系统兜底（任何业务字段重新进入 `packages/core` 都会立刻反映在 PR diff 中）。
