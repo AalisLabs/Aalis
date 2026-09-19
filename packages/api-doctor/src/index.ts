@@ -15,7 +15,8 @@
  *   重复声明导致 TS 合并冲突。
  */
 
-import type { Context } from '@aalis/core';
+import type { Context, ServiceRef } from '@aalis/core';
+import { defineService, serviceRef } from '@aalis/core';
 
 // ===== 公共类型 =====
 
@@ -111,3 +112,19 @@ declare module '@aalis/core' {
     doctor: DoctorService;
   }
 }
+
+// ===== 服务描述符（按激活绑定）=====
+
+/** `doctor` 的绑定接口：调用那一半是 ServiceRef，登记检查项自动归属这次激活 */
+export interface BoundDoctor extends ServiceRef<DoctorService> {
+  /** 登记一条检查项：同 id 替换，提供者换人自动重挂，随激活撤回 */
+  registerCheck(spec: CheckSpec): () => void;
+}
+
+export const doctor = defineService<DoctorService, BoundDoctor>('doctor', port => {
+  const checks = port.registrar<CheckSpec>({
+    key: spec => spec.id,
+    register: (service, spec) => service.registerCheck(spec),
+  });
+  return serviceRef(port, { registerCheck: (spec: CheckSpec) => checks.add({ pluginName: port.id, ...spec }) });
+});

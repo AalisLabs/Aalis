@@ -5,7 +5,8 @@
 // 任何需要声明 webuiPages 的插件应从本包导入相关类型。
 
 import type { UserIdentity } from '@aalis/api-authority';
-import type { Context } from '@aalis/core';
+import type { Context, ServiceRef } from '@aalis/core';
+import { defineService, serviceRef } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 
 /**
@@ -31,9 +32,20 @@ export interface WebUIService {
   registerPage(page: WebuiPage, contextId: string): () => void;
   /** 列出当前所有已注册的页面（含插件归属） */
   getPages(): Array<WebuiPage & { pluginName: string }>;
+  /**
+   * 登记一个页面动作：宿主路由层（POST /api/page-action/:plugin/:method）在权限闸门放行后调用。
+   * 同一插件同名动作为替换；返回 dispose。
+   */
+  registerAction(method: string, handler: WebuiActionHandler, contextId: string): () => void;
   /** 按 contextId 批量清除（Context 拆卸时由 core 调用） */
   unregisterByPlugin(contextId: string): void;
 }
+
+/**
+ * 页面动作处理函数。caller 是路由层解析出的调用者身份，可用来做业务级检查
+ * （如"不能委托超出自身持有的能力"）。
+ */
+export type WebuiActionHandler = (args: Record<string, unknown>, caller?: UserIdentity) => Promise<unknown>;
 
 // -- 声明式页面组件类型 --
 
@@ -361,3 +373,31 @@ declare module '@aalis/core' {
     'webui-client': WebuiClientProvider;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const webuiClient = defineService<WebuiClientProvider>('webui-client');
+
+// ===== 服务描述符（按激活绑定）=====
+
+/** `webui-server` 的绑定接口：页面与页面动作的登记自动归属这次激活 */
+export interface BoundWebui extends ServiceRef<WebUIService> {
+  /** 登记页面：提供者换人自动重挂，随激活撤回 */
+  registerPage(page: WebuiPage): () => void;
+  /** 登记页面动作：同名替换，提供者换人自动重挂，随激活撤回 */
+  registerAction(method: string, handler: WebuiActionHandler): () => void;
+}
+
+export const webuiServer = defineService<WebUIService, BoundWebui>('webui-server', port => {
+  const pages = port.registrar<WebuiPage>({
+    key: page => page.key,
+    register: (service, page) => service.registerPage(page, port.id),
+  });
+  const actions = port.registrar<{ method: string; handler: WebuiActionHandler }>({
+    key: action => action.method,
+    register: (service, action) => service.registerAction(action.method, action.handler, port.id),
+  });
+  return serviceRef(port, {
+    registerPage: (page: WebuiPage) => pages.add(page),
+    registerAction: (method: string, handler: WebuiActionHandler) => actions.add({ method, handler }),
+  });
+});

@@ -89,6 +89,8 @@ export const contributions = builtinService<Contributions>('contributions', ctx 
 // ----- lifecycle -----
 
 export interface LifecycleCap {
+  /** 这次激活的实例 id（多实例为 `name:suffix`，子模块为 `父id#模块名`）：日志、展示、路由用的逻辑名 */
+  readonly id: string;
   /** 这次激活已开始关闭 */
   readonly closed: boolean;
   /**
@@ -116,6 +118,7 @@ export interface ModuleDefinition {
 }
 
 export const lifecycle = builtinService<LifecycleCap>('lifecycle', ctx => ({
+  id: ctx.id,
   get closed() {
     return ctx.disposed;
   },
@@ -174,6 +177,10 @@ export interface Services {
   /** 按名查询：没有描述符可依凭，类型由调用方自行收窄 */
   getByName(name: string): unknown;
   all<D extends AnyDescriptor>(descriptor: D): ServiceView<ProviderOf<D>>[];
+  /** 当前已注册的全部服务名 */
+  names(): string[];
+  /** 某服务当前的偏好提供者（contextId）；无偏好为 undefined */
+  preferred(descriptor: AnyDescriptor): string | undefined;
   prefer(descriptor: AnyDescriptor, contextId: string): boolean;
   unprefer(descriptor: AnyDescriptor): boolean;
 }
@@ -182,6 +189,8 @@ export const services = builtinService<Services>('services', ctx => ({
   get: descriptor => ctx.getService(descriptor.name),
   getByName: name => ctx.getService(name),
   all: descriptor => ctx.getAllServices(descriptor.name),
+  names: () => ctx.getServiceNames(),
+  preferred: descriptor => ctx.getPreferredService(descriptor.name),
   prefer: (descriptor, contextId) => ctx.preferService(descriptor.name, contextId),
   unprefer: descriptor => ctx.unpreferService(descriptor.name),
 }));

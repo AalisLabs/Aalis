@@ -153,6 +153,7 @@ export const StorageCapabilities = {
 } as const satisfies StorageCapabilityRegistry;
 
 import type { Context } from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 // ----- 聚合 / 路由 helper -----
 //
@@ -569,3 +570,6 @@ declare module '@aalis/core' {
     storage: StorageService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const storage = defineService<StorageService>('storage');

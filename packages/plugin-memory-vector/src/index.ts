@@ -4,6 +4,7 @@ import type { MemoryService } from '@aalis/api-memory';
 import { useToolService } from '@aalis/api-tools';
 import type { VectorStoreService } from '@aalis/api-vectorstore';
 import type { Context } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { prefixSender, WellKnownKinds } from '@aalis/schema-message';
@@ -1012,3 +1013,7 @@ declare module '@aalis/core' {
     };
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+/** 存在性标记服务：只表明「语义记忆已就绪」，检索本身走 memory 契约 */
+export const semanticMemory = defineService<{ name: string }>('semantic-memory');

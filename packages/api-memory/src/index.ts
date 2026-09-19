@@ -1,5 +1,6 @@
 // ----- 记忆服务接口 -----
 import type {} from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
 
 /** 跨会话最近消息查询参数 */
@@ -226,3 +227,6 @@ declare module '@aalis/core' {
     'session:compressing': [info: { sessionId: string; status: 'start' | 'done' | 'error' }];
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const memory = defineService<MemoryService>('memory');

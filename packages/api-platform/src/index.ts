@@ -93,6 +93,7 @@ export interface PlatformAdapter {
 // 没有 router facade entry，没有自递归隐患。
 
 import type { Context } from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 export interface PlatformAdapterEntry {
   instance: PlatformAdapter;
@@ -203,3 +204,6 @@ declare module '@aalis/core' {
     platform: PlatformAdapter;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const platform = defineService<PlatformAdapter>('platform');

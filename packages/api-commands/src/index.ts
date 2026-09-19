@@ -11,7 +11,8 @@
 // 实现见 @aalis/plugin-commands。
 
 import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
-import type { Context } from '@aalis/core';
+import type { Context, ServiceRef } from '@aalis/core';
+import { defineService, serviceRef } from '@aalis/core';
 
 // ===== handler 接口 =====
 
@@ -199,9 +200,10 @@ export interface ScopedCommandService {
 
 export function useCommandService(ctx: Context): ScopedCommandService {
   const pluginName = ctx.id;
+  const follow: BuilderHost['follow'] = attach => ctx.whenService<CommandService>('commands', attach);
   return {
     command(name, description, meta) {
-      return makeBuilder(ctx, name, description, { ...meta, pluginName });
+      return makeBuilder({ follow }, name, description, { ...meta, pluginName });
     },
     get raw() {
       return ctx.getService<CommandService>('commands');
@@ -221,8 +223,13 @@ type DeferredCall =
  * - calls[] 是权威源：provider 每次上线的 cb 里重新创建 real builder 并重放。
  * - 同时保留 realBuilder 引用：有值时同步转发调用，与原快路径语义一致。
  */
+/** builder 只需要「跟随 commands 提供者」这一件事 */
+interface BuilderHost {
+  follow(attach: (service: CommandService) => () => void): () => void;
+}
+
 function makeBuilder(
-  ctx: Context,
+  host: BuilderHost,
   name: string,
   description: string | undefined,
   meta: InternalCommandMeta,
@@ -233,7 +240,7 @@ function makeBuilder(
   // 注销必须用同一份键：直接传 'memory.clear <key:string>' 这类原始名会键不匹配、整条注销静默 no-op。
   const registryKey = name.trim().split(/\s+/)[0];
 
-  ctx.whenService<CommandService>('commands', svc => {
+  host.follow(svc => {
     realBuilder = svc.command(name, description, meta);
     for (const c of calls) {
       if (c.kind === 'alias') realBuilder.alias(c.name);
@@ -286,3 +293,18 @@ declare module '@aalis/core' {
     commands: CommandService;
   }
 }
+
+// ===== 服务描述符（按激活绑定）=====
+
+/** `commands` 的绑定接口：指令声明自动归属这次激活（每个激活一层声明，撤回时被覆盖的声明自动复位） */
+export interface BoundCommands extends ServiceRef<CommandService> {
+  command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;
+}
+
+export const commands = defineService<CommandService, BoundCommands>('commands', port => {
+  const host: BuilderHost = { follow: attach => port.follow(attach) };
+  return serviceRef(port, {
+    command: (name: string, description?: string, meta?: CommandMeta) =>
+      makeBuilder(host, name, description, { ...meta, pluginName: port.id }),
+  });
+});

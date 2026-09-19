@@ -12,6 +12,7 @@
 
 import type { AccessConfirmHandler, AccessRequest } from '@aalis/api-authority';
 import type {} from '@aalis/core'; // declaration merging 锚点
+import { defineService } from '@aalis/core';
 
 /** 一条确认通道：handler 注册到 authority；feed 在平台拦截点喂回复。 */
 export interface ConfirmChannel {
@@ -40,3 +41,6 @@ declare module '@aalis/core' {
     'session-confirm': SessionConfirmService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const sessionConfirm = defineService<SessionConfirmService>('session-confirm');

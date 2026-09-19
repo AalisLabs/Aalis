@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { UserIdentity } from '@aalis/api-authority';
 import type { CommandService } from '@aalis/api-commands';
 import type { ToolService } from '@aalis/api-tools';
-import type { WebUIService, WebuiPage } from '@aalis/api-webui';
+import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui';
 import type { AppService, Context, PluginManagerService } from '@aalis/core';
 import { parseInstanceId } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA, defaultsFrom, validateConfig } from '@aalis/schema-config';
@@ -17,6 +17,7 @@ export function registerPluginRoutes(
   getPluginMgr: () => PluginManagerService | undefined,
   identify: (req: { headers: { cookie?: string } }) => UserIdentity | undefined,
   gate: RouteGate,
+  getAction: (plugin: string, method: string) => WebuiActionHandler | undefined,
 ): void {
   // 获取插件列表及状态
   expressApp.get('/api/plugins', gate(), (_req, res) => {
@@ -121,13 +122,14 @@ export function registerPluginRoutes(
       return;
     }
 
-    const handler = entry.module.actions?.[method];
-    if (typeof handler !== 'function') {
+    const registered = getAction(pluginName, method);
+    // UNIFY-TRANSITION：未迁移的插件仍用静态 actions（处理函数吃 ctx）；全部迁完后连同这条回落一起删
+    const legacy = registered ? undefined : entry.module.actions?.[method];
+    if (!registered && typeof legacy !== 'function') {
       res.status(404).json({ error: `处理器 ${method} 不存在` });
       return;
     }
-
-    if (!entry.context) {
+    if (legacy && !entry.context) {
       res.status(500).json({ error: `插件 ${pluginName} 上下文不可用` });
       return;
     }
@@ -143,7 +145,13 @@ export function registerPluginRoutes(
     }
 
     try {
-      const result = await handler(entry.context, args, caller);
+      const result = registered
+        ? await registered(args, caller)
+        : await (legacy as NonNullable<typeof legacy>)(
+            entry.context as NonNullable<typeof entry.context>,
+            args,
+            caller,
+          );
       res.json({ ok: true, data: result });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

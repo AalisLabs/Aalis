@@ -2,6 +2,7 @@
 
 // 触发 @aalis/core 模块解析，使文末 declare module 增强生效
 import type {} from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 /** 向量搜索结果条目 */
 export interface VectorSearchResult {
@@ -33,3 +34,6 @@ declare module '@aalis/core' {
     vectorstore: VectorStoreService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const vectorstore = defineService<VectorStoreService>('vectorstore');

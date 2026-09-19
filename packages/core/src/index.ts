@@ -44,6 +44,7 @@ export {
   type Registrar,
   type ServiceDescriptor,
   type ServiceRef,
+  serviceRef,
   type Uses,
 } from './context/binding.js';
 export {
