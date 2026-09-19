@@ -1,3 +1,4 @@
+import { defineService } from '@aalis/core';
 // ============================================================
 // @aalis/api-workflow
 //
@@ -197,3 +198,6 @@ declare module '@aalis/core' {
     workflow: WorkflowService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const workflow = defineService<WorkflowService>('workflow');

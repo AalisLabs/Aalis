@@ -28,7 +28,7 @@ import type {} from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
 import { createStorageGateway, readTailLines } from '@aalis/api-storage';
 import type { ToolExecuteMessage, ToolService } from '@aalis/api-tools';
-import type { WebUIService, WebuiPage } from '@aalis/api-webui'; // declaration merging WebuiPage.content
+import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui'; // declaration merging WebuiPage.content
 import { DEFAULT_SUBSYSTEM_METADATA } from '@aalis/api-webui';
 import type { AppService, Context, LogEntry, PluginManagerService } from '@aalis/core';
 import { LogHub, parseLogLine } from '@aalis/core';
@@ -575,7 +575,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     },
     join: (...parts: string[]) => resolve(...parts),
   };
-  registerPluginRoutes(expressApp, ctx, getApp, getPluginMgr, auth.identify, gate);
+  // 页面动作登记表：插件经 webui-server 的绑定接口登记，路由层按「插件 id + 方法名」查
+  const registeredActions = new Map<string, Map<string, WebuiActionHandler>>();
+  registerPluginRoutes(expressApp, ctx, getApp, getPluginMgr, auth.identify, gate, (plugin, method) =>
+    registeredActions.get(plugin)?.get(method),
+  );
   // 市场「已装」判定、依赖图、前端候选发现共用这一份扫描目录（pnpm 工作区下 require.resolve
   // 从仓库根解析不到工作区包，只能扫盘）。每请求懒扫，量小。
   const localScanDirs = LOCAL_SCAN_DIRS;
@@ -1775,6 +1779,17 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const out: Array<WebuiPage & { pluginName: string }> = [];
       for (const list of registeredPages.values()) out.push(...list);
       return out;
+    },
+    registerAction(method, handler, contextId) {
+      const actions = registeredActions.get(contextId) ?? new Map<string, WebuiActionHandler>();
+      actions.set(method, handler);
+      registeredActions.set(contextId, actions);
+      // 退订按这一次登记比对：同名替换后旧退订闭包不得摘掉新登记
+      return () => {
+        if (actions.get(method) !== handler) return;
+        actions.delete(method);
+        if (actions.size === 0 && registeredActions.get(contextId) === actions) registeredActions.delete(contextId);
+      };
     },
     unregisterByPlugin(contextId) {
       registeredPages.delete(contextId);

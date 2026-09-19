@@ -4,6 +4,7 @@ import type { StorageService } from '@aalis/api-storage';
 import { createStorageGateway } from '@aalis/api-storage';
 import type {} from '@aalis/api-webui'; // PluginModule.actions 槽位的 merging 可见性
 import type { Context, PluginModule } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { type CheckpointService, CheckpointServiceImpl, resolveConfig } from './service.js';
 
@@ -267,3 +268,6 @@ declare module '@aalis/core' {
     checkpoint: import('./service.js').CheckpointService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const checkpoint = defineService<import('./service.js').CheckpointService>('checkpoint');

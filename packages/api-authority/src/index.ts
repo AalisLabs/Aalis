@@ -1,3 +1,4 @@
+import { defineService } from '@aalis/core';
 // ----- 权限服务接口 + 执行守卫契约（数字等级模型）-----
 //
 // 模型：操作能力（capability）+ 用户数字等级（level，整数，越大越高）+ 操作最低等级（minLevel）。
@@ -366,3 +367,6 @@ declare module '@aalis/core' {
     authority: AuthorityService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const authority = defineService<AuthorityService>('authority');

@@ -2,6 +2,7 @@ import { resolveLLMModel } from '@aalis/api-llm';
 import { useToolService, wrapUntrustedContent } from '@aalis/api-tools';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import type { Context } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import type { WebSearchRequest, WebSearchResponse, WebSearchResult, WebSearchService } from './types.js';
@@ -434,3 +435,6 @@ declare module '@aalis/core' {
     'web-search': import('./types.js').WebSearchService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const webSearch = defineService<import('./types.js').WebSearchService>('web-search');

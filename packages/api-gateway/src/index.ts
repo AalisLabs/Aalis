@@ -13,6 +13,7 @@
 // 不加载 gateway 则 `inbound:message` 无人消费、消息静默丢弃，按必需件对待。
 
 import type { AgentService } from '@aalis/api-agent';
+import { defineService } from '@aalis/core';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
 
 /**
@@ -144,3 +145,6 @@ declare module '@aalis/core' {
     gateway: GatewayService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const gateway = defineService<GatewayService>('gateway');

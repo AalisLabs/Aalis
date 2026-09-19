@@ -4,6 +4,7 @@ import { useToolService } from '@aalis/api-tools';
 import type { WebuiPage } from '@aalis/api-webui';
 import { useWebuiService } from '@aalis/api-webui';
 import type { Context, PluginModule } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { parseEverySeconds } from '@aalis/util-cron';
@@ -1127,3 +1128,6 @@ declare module '@aalis/core' {
     'scheduler:job:error': [jobName: string, message: string];
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const scheduler = defineService<SchedulerService>('scheduler');

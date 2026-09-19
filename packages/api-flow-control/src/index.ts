@@ -17,6 +17,7 @@
 
 // 触发 @aalis/core 模块解析，使文件末尾的 declare module 增强生效
 import type {} from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 /** 单会话的流控状态快照（只读视图，便于 trigger-policy 计算） */
 export interface FlowSessionStateSnapshot {
@@ -81,3 +82,6 @@ declare module '@aalis/core' {
     'flow-control': FlowControlService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const flowControl = defineService<FlowControlService>('flow-control');
