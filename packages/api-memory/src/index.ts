@@ -135,9 +135,9 @@ export interface MemoryService {
   //    能告诉我们哪个 namespace 归谁）。
   //
   // 若将来真要上结构化存储：**不自建 ORM**。选一个依赖轻、无框架绑定、driver 同时覆盖
-  // sqlite/mongo/mysql/postgres 的现成库；drizzle / kysely 都不支持
-  // mongo，与本项目已有的 mongodb 后端对不上。届时它应作为**实现细节**藏在某个存储插件里，
-  // 而不是把该库的 API 抬成 Aalis 的公开契约。
+  // sqlite/mongo/mysql/postgres 的现成库；drizzle / kysely 都不支持 mongo，与本项目已有的
+  // mongodb 后端对不上。届时它应作为**实现细节**藏在某个存储插件里，而不是把该库的 API
+  // 抬成 Aalis 的公开契约。
   // ═══════════════════════════════════════════════════════════════════════
 
   /** 保存结构化元数据（namespace 隔离，key 唯一） */
