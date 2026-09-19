@@ -50,8 +50,10 @@ export interface BindingPort<P> {
   /** 当前胜者 */
   current(): P | undefined;
   /**
-   * 跟随提供者：在场即挂、换人先撤后挂、下线与关闭时撤。attach 返回的撤回可以是异步的，
-   * 关闭会等它落地。
+   * 跟随提供者建立有状态资源，串行交接：在场即调 attach（同步）；换人时先跑上次返回的清理，
+   * 等它的 Promise **落定**（完成或被拒——被拒只记 warn，不代表资源已释放）之后才用新实例调
+   * attach；等待期间再换人只跟到最新的。关闭或退订之后不再挂载，哪怕旧清理后来才落定。
+   * 旧清理永不落定则新实例永不挂上；关闭时按超时放弃并点名。与 ServiceRef.follow 同一语义。
    */
   follow(attach: (provider: P) => undefined | (() => unknown)): () => void;
   /**
@@ -121,6 +123,19 @@ function refBinder<P>(port: BindingPort<P>): ServiceRef<P> {
   };
 }
 
+/** 内置能力的标记：绑的是激活自身，不参与激活闸，也不产生依赖边 */
+const BUILTIN = Symbol('aalis.builtin-capability');
+
+/** @internal */
+export function markBuiltin<D extends object>(descriptor: D): D {
+  return Object.assign(descriptor, { [BUILTIN]: true });
+}
+
+/** @internal */
+export function isBuiltin(descriptor: object): boolean {
+  return (descriptor as { [BUILTIN]?: boolean })[BUILTIN] === true;
+}
+
 // 核心内置描述符需要激活记录本身（事件总线的归属、配置视图）；对能力作者公开的资源口不含它。
 const activations = new WeakMap<object, Context>();
 
@@ -137,76 +152,115 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
 
 /** @internal 为一次激活造某个服务的资源口 */
 export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
-  /** 手动退订 / 同键替换启动的异步撤回：挂进撤回段让关闭等到它，落地后自摘 */
-  const settle = (result: unknown, what: string): void => {
-    if (!isThenable(result)) return;
-    const settled = Promise.resolve(result).then(
-      () => undefined,
-      err => reportQuietly(() => ctx.logger.warn(`${what} 撤回拒绝（已忽略）:`, err)),
-    );
-    const release = ctx.trackWithdrawal(() => settled, `${name}:inflight`);
-    settled.then(() => ctx.untrackWithdrawal(release));
-  };
-
-  /** 调一条撤回：同步抛错与异步拒绝都隔离，不影响同批其余条目 */
-  const withdraw = (off: () => unknown, what: string): unknown => {
+  /** 调一条撤回：同步抛错就地隔离；异步结果交给激活的在飞账，关闭等到它、拒绝被接住 */
+  const withdraw = (off: () => unknown, what: string): PromiseLike<unknown> | undefined => {
+    let result: unknown;
     try {
-      return off();
+      result = off();
     } catch (err) {
       reportQuietly(() => ctx.logger.warn(`${what} 撤回抛错（已忽略）:`, err));
       return undefined;
     }
+    if (!isThenable(result)) return undefined;
+    ctx.holdInflight(result, what);
+    return result;
   };
 
-  // 一个资源口一条提供者订阅：同口的多个跟随者（如分组账本与工具账本）按登记顺序一起挂、一起撤
+  // 一个资源口一条提供者订阅；每个跟随者自己一台小状态机
   interface Follower {
     attach(provider: P): undefined | (() => unknown);
+    /** 注册账本走的内部路径：换人不等旧撤回落定，立即挂新实例（被动注册表） */
+    overlap: boolean;
+    attached?: P;
     cleanup?: () => unknown;
+    /** 依赖边：挂上时登记，该次挂载的撤回落定后释放 */
+    releaseEdge?: () => void;
+    /** 串行交接：旧清理的 Promise 尚未落定 */
+    busy: boolean;
+    /** attach 回调正在执行：期间的退订 / 换人只记状态，等回调返回（拿到它的清理器）后再收敛 */
+    attaching: boolean;
+    cancelled: boolean;
   }
   const followers: Follower[] = [];
   let live: P | undefined;
   let subscribed = false;
 
-  // 关停排序的依据：这次激活实际绑定过谁。只在解析到的实例变化时记一次
-  let noted: P | undefined;
-  const note = (provider: P | undefined): void => {
-    if (provider === undefined || provider === noted) return;
-    noted = provider;
-    ctx.noteBinding(name);
-  };
-
-  const runAttach = (follower: Follower, provider: P): void => {
-    try {
-      follower.cleanup = follower.attach(provider) ?? undefined;
-    } catch (err) {
-      reportQuietly(() => ctx.logger.warn(`${name} 跟随回调抛错（订阅保持，等下次提供者变更）:`, err));
+  /** 让一个跟随者向「当前应挂的实例」收敛；任何状态变化后都调它 */
+  const pump = (follower: Follower): void => {
+    if (follower.busy || follower.attaching) return;
+    const desired = follower.cancelled || ctx.disposed ? undefined : live;
+    if (follower.attached !== undefined && follower.attached !== desired) {
+      const cleanup = follower.cleanup;
+      const releaseEdge = follower.releaseEdge;
+      follower.attached = undefined;
+      follower.cleanup = undefined;
+      follower.releaseEdge = undefined;
+      const pending = cleanup ? withdraw(cleanup, name) : undefined;
+      if (!pending) {
+        releaseEdge?.();
+      } else {
+        // 落定（完成或被拒——被拒不代表资源已释放，只是不再等）之后释放依赖边
+        const settled = Promise.resolve(pending).then(
+          () => undefined,
+          () => undefined,
+        );
+        if (follower.overlap) {
+          settled.then(() => releaseEdge?.());
+        } else {
+          follower.busy = true;
+          settled.then(() => {
+            releaseEdge?.();
+            follower.busy = false;
+            pump(follower);
+          });
+          return;
+        }
+      }
+    }
+    if (follower.attached === undefined && desired !== undefined) {
+      follower.attached = desired;
+      follower.releaseEdge = ctx.retainBinding(name);
+      follower.attaching = true;
+      try {
+        follower.cleanup = follower.attach(desired) ?? undefined;
+      } catch (err) {
+        reportQuietly(() => ctx.logger.warn(`${name} 跟随回调抛错（订阅保持，等下次提供者变更）:`, err));
+      } finally {
+        follower.attaching = false;
+      }
+      // 回调里取消了自己、或挂载途中又换了人：刚拿到的清理器不能丢，立刻按新目标收敛
+      if (follower.cancelled || follower.attached !== live) pump(follower);
     }
   };
-  const runCleanup = (follower: Follower): unknown => {
-    const cleanup = follower.cleanup;
-    follower.cleanup = undefined;
-    return cleanup ? withdraw(cleanup, name) : undefined;
-  };
+
   const subscribe = (): void => {
     subscribed = true;
     ctx.whenService<P>(name, provider => {
       live = provider;
-      note(provider);
-      for (const follower of [...followers]) runAttach(follower, provider);
+      for (const follower of [...followers]) pump(follower);
       return () => {
         live = undefined;
-        const pending = [...followers].map(runCleanup).filter(isThenable);
-        if (pending.length === 0) return undefined;
-        // allSettled：一项拒绝不得让其余撤回在关闭看来提前完成
-        return Promise.allSettled(pending).then(results => {
-          for (const r of results) {
-            if (r.status === 'rejected') {
-              reportQuietly(() => ctx.logger.warn(`${name} 撤回拒绝（已忽略）:`, r.reason));
-            }
-          }
-        }) as unknown as undefined;
+        for (const follower of [...followers]) pump(follower);
       };
     });
+  };
+
+  const follow = (attach: Follower['attach'], overlap: boolean): (() => void) => {
+    if (ctx.disposed) {
+      ctx.logger.warn(`"${ctx.id}" 已关闭，忽略对 ${name} 的跟随`);
+      return () => {};
+    }
+    const follower: Follower = { attach, overlap, busy: false, attaching: false, cancelled: false };
+    followers.push(follower);
+    if (!subscribed) subscribe();
+    else pump(follower);
+    return () => {
+      if (follower.cancelled) return;
+      follower.cancelled = true;
+      const index = followers.indexOf(follower);
+      if (index >= 0) followers.splice(index, 1);
+      pump(follower);
+    };
   };
 
   const port: BindingPort<P> = {
@@ -215,39 +269,26 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
     get closed() {
       return ctx.disposed;
     },
-    current() {
-      const provider = ctx.getService<P>(name);
-      note(provider);
-      return provider;
-    },
-    follow(attach) {
-      if (ctx.disposed) {
-        ctx.logger.warn(`"${ctx.id}" 已关闭，忽略对 ${name} 的跟随`);
-        return () => {};
-      }
-      const follower: Follower = { attach };
-      followers.push(follower);
-      if (!subscribed) subscribe();
-      else if (live !== undefined) runAttach(follower, live);
-      return () => {
-        const index = followers.indexOf(follower);
-        if (index < 0) return;
-        followers.splice(index, 1);
-        settle(runCleanup(follower), name);
-      };
-    },
+    current: () => ctx.getService<P>(name),
+    follow: attach => follow(attach, false),
     track(off, label) {
-      let done = false;
-      const once = (): unknown => {
-        if (done) return undefined;
-        done = true;
-        return off();
+      const what = label ?? name;
+      // 一次性且结果记忆：无论由手动退订、另一个句柄、还是清理链先调到，发起的都是同一笔清理，
+      // 清理链上的这一项返回同一个 Promise——关闭前登记的清理，关闭一定等到它
+      let started = false;
+      let result: PromiseLike<unknown> | undefined;
+      const run = (): PromiseLike<unknown> | undefined => {
+        if (!started) {
+          started = true;
+          result = withdraw(off, what);
+        }
+        return result;
       };
-      const dispose = ctx.trackWithdrawal(once, label ?? name);
+      const dispose = ctx.trackWithdrawal(run, what);
       return () => {
-        if (done) return;
+        if (started) return;
         ctx.untrackWithdrawal(dispose);
-        settle(withdraw(once, label ?? name), label ?? name);
+        run();
       };
     },
     registrar<Item>(options: {
@@ -270,29 +311,24 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
         }
       };
 
-      // 账本创建即跟随：同口多账本的重挂次序 = 创建次序（如分组先于工具），不取决于谁先被登记
-      port.follow(target => {
+      // 账本创建即跟随：同口多账本的重挂次序 = 创建次序（如分组先于工具），不取决于谁先被登记。
+      // 被动注册表换人时立即重挂（旧条目的撤回在后台落定、关闭会等）——走内部的 overlap 路径
+      follow(target => {
         provider = target;
         for (const [key, entry] of entries) attachOne(target, entry, key);
         return () => {
           provider = undefined;
-          const pending: unknown[] = [];
+          const pending: PromiseLike<unknown>[] = [];
           for (const [key, entry] of entries) {
             const off = entry.off;
             entry.off = undefined;
-            if (off) pending.push(withdraw(off, `${name} "${key}"`));
+            const result = off ? withdraw(off, `${name} "${key}"`) : undefined;
+            if (result) pending.push(result);
           }
-          const asyncOnes = pending.filter(isThenable);
-          if (asyncOnes.length === 0) return undefined;
-          return Promise.allSettled(asyncOnes).then(results => {
-            for (const r of results) {
-              if (r.status === 'rejected') {
-                reportQuietly(() => ctx.logger.warn(`${name} 批量撤回中有拒绝（已忽略）:`, r.reason));
-              }
-            }
-          });
+          // 返回聚合 Promise 只为让依赖边留到整批撤回落定；拒绝已各自接住
+          return pending.length === 0 ? undefined : Promise.allSettled(pending);
         };
-      });
+      }, true);
 
       return {
         add(item: Item) {
@@ -305,7 +341,7 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
           if (previous?.off) {
             const off = previous.off;
             previous.off = undefined;
-            settle(withdraw(off, `${name} "${key}"`), `${name} "${key}"`);
+            withdraw(off, `${name} "${key}"`);
           }
           const entry: Entry = { item };
           // 提供者在场即登记；register 抛错原样抛给调用方，账上不留半条——同键替换失败时
@@ -324,7 +360,7 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
             entries.delete(key);
             const off = entry.off;
             entry.off = undefined;
-            if (off) settle(withdraw(off, `${name} "${key}"`), `${name} "${key}"`);
+            if (off) withdraw(off, `${name} "${key}"`);
           };
         },
       };
@@ -344,6 +380,13 @@ export function assemble<U extends Uses>(ctx: Context, uses: U): BoundOf<U> {
     const descriptor = 'optional' in use ? use.optional : use;
     bound[key] = descriptor.bind(createPort(ctx, descriptor.name));
   }
+  // 声明即计入关停编排（required 与 optional，访问与否无关）；内置能力绑的是激活自身，不成边
+  ctx.declareDependencies(
+    Object.values(uses)
+      .map(use => ('optional' in use ? use.optional : use))
+      .filter(descriptor => !isBuiltin(descriptor))
+      .map(descriptor => descriptor.name),
+  );
   return bound as BoundOf<U>;
 }
 

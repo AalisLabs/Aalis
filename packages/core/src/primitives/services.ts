@@ -176,6 +176,14 @@ export class ServiceContainer {
   }
 
   /**
+   * 当前胜者的清理归属（关停编排用它认「这个服务现在由哪次激活提供」，不从 contextId 字符串猜）。
+   * @internal
+   */
+  ownerOf(name: string): symbol | undefined {
+    return this.resolveEntries(name)[0]?.owner;
+  }
+
+  /**
    * 获取某个服务的所有实例（带提供者信息与优先级）
    *
    * 返回顺序遵循「偏好 > 优先级 > 注册顺序」。

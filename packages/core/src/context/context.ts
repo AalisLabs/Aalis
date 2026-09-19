@@ -3,7 +3,7 @@ import type { AalisEvents } from '../types/events.js';
 import type { HookContextMap, MiddlewareFn } from '../types/hooks.js';
 import type { ServiceOf, ServiceTypeMap } from '../types/services.js';
 
-import { reportQuietly } from '../kernel/disposable-chain.js';
+import { awaitWithTimeout, reportQuietly } from '../kernel/disposable-chain.js';
 import { Lifecycle } from '../kernel/lifecycle.js';
 
 import type { ContributionHandle, ContributionRegistry, ContributionSpec } from '../primitives/contributions.js';
@@ -11,6 +11,7 @@ import type { EventBus } from '../primitives/events.js';
 import type { HookRegistry } from '../primitives/hooks.js';
 import type { ServiceContainer, ServiceView } from '../primitives/services.js';
 
+import { closeActivations } from './close-plan.js';
 import type { ConfigManager } from './config.js';
 import type { Logger } from './logger.js';
 import { validateProvide } from './services-helpers.js';
@@ -84,8 +85,17 @@ export class Context {
    */
   #afterTeardown?: () => void;
   readonly #parent?: Context;
-  /** 本激活（含子激活）绑定过的提供者的 contextId：关停排序用，宁多勿漏，随激活一起消失 */
-  readonly #boundProviders = new Set<string>();
+  /** 存活的子激活（关停编排按整棵激活树排序） */
+  readonly #children = new Set<Context>();
+  /** 本激活声明的依赖服务名（required 与 optional，不含内置能力）；关停时解析到当时的胜者 */
+  readonly #declared = new Set<string>();
+  /** 存活的托管绑定与尚未落地的撤回：提供者的清理归属 → 引用计数。撤回落地即释放，不累积历史 */
+  readonly #bindings = new Map<symbol, number>();
+  /** 已发起、尚未落地的异步清理（手动退订、同键替换、换人时的旧撤回）：关闭必须等到它们 */
+  readonly #inflight = new Set<Promise<void>>();
+  #closing?: Promise<void>;
+  /** 清理归属 → 激活：关停编排据此由容器条目认出提供者是哪次激活 */
+  static readonly #byOwner = new Map<symbol, Context>();
   /**
    * 清理归属：本 Context 本次激活的身份，每次 fork 新鲜。四原语注册时带上它，拆卸按它清。
    * 与 `id`（逻辑身份：贡献键、排序、模型引用、偏好、显示）分开——同名 Context 互不误清，
@@ -115,6 +125,8 @@ export class Context {
     this.id = options.id;
     this.#owner = Symbol(this.id);
     this.#parent = options.parent;
+    Context.#byOwner.set(this.#owner, this);
+    if (this.#parent) this.#parent.#children.add(this);
     this.#events = options.events;
     this.#services = options.services;
     this.#hooks = options.hooks;
@@ -132,6 +144,13 @@ export class Context {
           this.#contributions.unregisterByOwner(this.#owner);
           this.#events.unregisterByOwner(this.#owner);
         },
+        // 段收口：段内任何回调（含别的句柄、清理段里的手动退订）发起的异步清理，关闭都等得到
+        settlePhase: () =>
+          this.#inflight.size === 0
+            ? undefined
+            : (async () => {
+                while (this.#inflight.size > 0) await Promise.all([...this.#inflight]);
+              })(),
         afterCleanup: () => {
           for (const svc of removedServices) {
             this.emitQuietly('service:unregistered', svc);
@@ -144,6 +163,8 @@ export class Context {
           // 会在链排空到此处的那一跳微任务里拿到旧名、随后被本次清扫连锅端走。
           this.#afterTeardown?.();
           this.#afterTeardown = undefined;
+          Context.#byOwner.delete(this.#owner);
+          if (this.#parent) this.#parent.#children.delete(this);
         },
         // 拆卸路径上的上报走 reportQuietly：logger 由宿主注入，其 sink 抛错不得让 teardown 拒绝
         // （onTimeout 抛错会跳过整条清理链，afterCleanup 内抛错会跳过末尾的模块名释放）。
@@ -811,19 +832,81 @@ export class Context {
   }
 
   /**
-   * 记一条「本激活绑定过该服务的当前胜者」：关停时消费者先于它绑定过的提供者关闭。
-   * 子激活的绑定同样记到祖先上（插件级的排序要看得见子模块的依赖）。绑定层专用。
+   * 记下本激活声明的依赖（装配时调用）。声明即计入关停编排，不取决于是否访问过。
    * @internal
    */
-  noteBinding(name: string): void {
-    const owner = this.#services.getAll(name)[0]?.contextId;
-    if (owner === undefined) return;
-    for (let ctx: Context | undefined = this; ctx; ctx = ctx.#parent) ctx.#boundProviders.add(owner);
+  declareDependencies(names: Iterable<string>): void {
+    for (const name of names) this.#declared.add(name);
+  }
+
+  /**
+   * 托管绑定挂上某服务的当前胜者时登记一条依赖边；返回的释放在该绑定的撤回**落地**后调用。
+   * 提供者没有清理归属（不经激活注册的裸条目）时无边可记。
+   * @internal
+   */
+  retainBinding(name: string): () => void {
+    const owner = this.#services.ownerOf(name);
+    if (owner === undefined) return () => {};
+    this.#bindings.set(owner, (this.#bindings.get(owner) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (this.#bindings.get(owner) ?? 1) - 1;
+      if (left > 0) this.#bindings.set(owner, left);
+      else this.#bindings.delete(owner);
+    };
+  }
+
+  /**
+   * 把一笔已发起的异步清理交给本激活：拒绝被接住并记 warn，关闭在每一段排空后等它落定。
+   * 关闭途中才发起的同样等得到。
+   * @internal
+   */
+  holdInflight(work: PromiseLike<unknown>, what: string): void {
+    const settled: Promise<void> = Promise.resolve(work)
+      .then(
+        () => undefined,
+        err => reportQuietly(() => this.logger.warn(`${what} 撤回拒绝（已忽略）:`, err)),
+      )
+      .then(() => {
+        this.#inflight.delete(settled);
+      });
+    this.#inflight.add(settled);
+  }
+
+  /** @internal 关停编排读取：子激活与本激活此刻依赖的提供者激活 */
+  closeInfo(): { children: Context[]; providers: Context[] } {
+    const providers = new Set<Context>();
+    for (const name of this.#declared) {
+      const owner = this.#services.ownerOf(name);
+      const provider = owner && Context.#byOwner.get(owner);
+      if (provider) providers.add(provider);
+    }
+    for (const owner of this.#bindings.keys()) {
+      const provider = Context.#byOwner.get(owner);
+      if (provider) providers.add(provider);
+    }
+    providers.delete(this);
+    return { children: [...this.#children], providers: [...providers] };
+  }
+
+  /**
+   * @internal 关停编排的截止点：置关闭位，此后本激活不再新增绑定（跟随不再挂新实例、登记被拒）。
+   * 编排先对本轮涉及的全部激活调它，再读取依赖关系建计划——排序依据冻结之后不会再挂到别的提供者。
+   */
+  freezeStage(): void {
+    this.#lifecycle.markClosing();
+  }
+
+  /** @internal 关停编排的两个阶段：收尾，以及撤回加清理（不再重新编排子树） */
+  drainStage(timeoutMs?: number): Promise<void> | undefined {
+    return this.#lifecycle.drain(timeoutMs);
   }
 
   /** @internal */
-  get boundProviders(): ReadonlySet<string> {
-    return this.#boundProviders;
+  closeStage(timeoutMs?: number): Promise<void> {
+    return this.#lifecycle.disposeAsync(timeoutMs);
   }
 
   /**
@@ -920,6 +1003,14 @@ export class Context {
    *        无护栏地 join 会让调用方（如 `App.stop`）的停机上限失效。缺省不设限。
    */
   disposeAsync(timeoutMs?: number): Promise<void> {
-    return this.#lifecycle.disposeAsync(timeoutMs);
+    // 没有子激活：没有可编排的东西，直接走内核（首个清理回调与本调用同栈发起）
+    if (this.#children.size === 0 && !this.#closing) return this.#lifecycle.disposeAsync(timeoutMs);
+    if (this.#closing) {
+      return awaitWithTimeout(this.#closing, timeoutMs, limit =>
+        reportQuietly(() => this.logger.warn(`Context "${this.id}": 等待在飞拆卸超过 ${limit}ms，放弃等待`)),
+      );
+    }
+    this.#closing = closeActivations([this], timeoutMs, this.logger);
+    return this.#closing;
   }
 }

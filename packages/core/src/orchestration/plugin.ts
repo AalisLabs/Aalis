@@ -14,8 +14,14 @@ import { normalizeDependency } from '../primitives/services.js';
 import type { Context } from '../context/context.js';
 import type { Logger } from '../context/logger.js';
 
-import { type ActivationDeps, activatePlugin, computeTargetState, retireEntry } from './plugin-activation.js';
-import { closeOrder, evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
+import {
+  type ActivationDeps,
+  activatePlugin,
+  computeTargetState,
+  retireAll,
+  retireEntry,
+} from './plugin-activation.js';
+import { evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
 
 export type { PluginEntry, PluginModule, PluginState };
 // 类型与纯辅助 re-export，保留同名旧导入路径
@@ -506,46 +512,39 @@ export class PluginManager {
       const entries = [...this.plugins.values()];
       const order = topoSortByDeps(entries, this.logger);
 
-      // Phase A: 关掉目标不是 active 的 active entry，消费者先、提供者后。
-      // 停机按实际绑定排序（含 optional、子模块、仍在撤回的旧绑定）；运行期的级联仍用声明拓扑的逆序。
-      const closing =
-        currentReason.type === 'shutdown'
-          ? closeOrder(entries, service => this.rootCtx.serviceContainer.getAll(service)[0]?.contextId, this.logger)
-          : [...order].reverse();
-      for (const entry of closing) {
+      // 停机：整批激活（含子模块）统一编排关闭顺序，不走逐个 retire
+      if (currentReason.type === 'shutdown') {
+        const active = entries.filter(entry => entry.state === 'active');
+        // 无依赖关系时后注册的先关
+        await retireAll(active.reverse(), this.deps);
+        break;
+      }
+
+      // Phase A: 反向遍历，关掉目标不是 active 的 active entry（运行期级联：按声明拓扑的逆序）
+      for (const entry of [...order].reverse()) {
         if (entry.state !== 'active') continue;
         const target = computeTargetState(entry, currentReason, this.rootCtx, serviceDowns);
         if (target === 'active') continue;
 
-        // 日志：区分 shutdown / required 不满 / optional bounce
-        if (currentReason.type === 'shutdown') {
-          // 静默
+        // 日志：区分 required 不满 / optional 下线
+        const unmet = entry.requiredDeps.find(d => this.rootCtx.getService(d.service) === undefined);
+        if (unmet) {
+          this.logger.info(`依赖 "${unmet.service}" 不可用，停用插件: ${entry.instanceId}`);
         } else {
-          const unmet = entry.requiredDeps.find(d => this.rootCtx.getService(d.service) === undefined);
-          if (unmet) {
-            this.logger.info(`依赖 "${unmet.service}" 不可用，停用插件: ${entry.instanceId}`);
-          } else {
-            // 被动级联降级（依赖服务下线 → 转 pending 等待重新满足），
-            // 区别于 bounce() 的主动重载，日志措辞不用「bounce」一词。
-            const missing = entry.optionalDeps.find(
-              d => serviceDowns.has(d.service) && this.rootCtx.getService(d.service) === undefined,
-            );
-            if (missing) {
-              this.logger.info(`依赖服务 "${missing.service}" 已下线，降级插件为待激活: ${entry.instanceId}`);
-            }
+          // 被动级联降级（依赖服务下线 → 转 pending 等待重新满足），
+          // 区别于 bounce() 的主动重载，日志措辞不用「bounce」一词。
+          const missing = entry.optionalDeps.find(
+            d => serviceDowns.has(d.service) && this.rootCtx.getService(d.service) === undefined,
+          );
+          if (missing) {
+            this.logger.info(`依赖服务 "${missing.service}" 已下线，降级插件为待激活: ${entry.instanceId}`);
           }
         }
 
-        // 关机降级不发 unloaded：stopAll 的编排自有事件语义，逐插件不重复广播。
-        await this.retire(entry, currentReason.type === 'shutdown' ? 'disposed' : 'pending', {
-          emitUnloaded: currentReason.type !== 'shutdown',
-        });
+        await this.retire(entry, 'pending');
         changed = true;
         lastRoundFlips.push(entry.instanceId);
       }
-
-      // 关机不需要再激活
-      if (currentReason.type === 'shutdown') break;
 
       // Phase B: 正向遍历，激活目标 active 的 pending entry
       for (const entry of order) {

@@ -42,7 +42,15 @@ export class DisposableChain {
   /** 链是否已被 {@link take} 取走；对外读口是 `disposed`。不叫 disposed 是因为与那个 getter 撞名。 */
   private taken = false;
 
-  constructor(private readonly logger?: CleanupReporter) {}
+  /**
+   * @param settlePhase 段收口：disposeAsync 每排空一段后调用，返回该段内**发起但尚未落定**的异步清理
+   *   （宿主自己记账，链不认识它们）。链等它落定（同一超时护栏）再进下一段——不占链上条目，
+   *   诊断用的条目数与标签名单不受影响。
+   */
+  constructor(
+    private readonly logger?: CleanupReporter,
+    private readonly settlePhase?: () => Promise<unknown> | undefined,
+  ) {}
 
   /** 报告清理问题；reporter 自身失败不得中断剩余清理，见 {@link reportQuietly}。 */
   private report(message: string, ...args: unknown[]): void {
@@ -155,6 +163,8 @@ export class DisposableChain {
           this.report(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
         }
       }
+      const pending = this.settlePhase?.();
+      if (pending) await this.awaitWithTimeout(Promise.resolve(pending), timeoutMs, ` [${phase} 段内发起的在飞清理]`);
     }
   }
 
