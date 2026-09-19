@@ -272,8 +272,7 @@ export function registerPluginRoutes(
       await app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 配置已更新` });
     } else {
-      // 死路文案修复：插件被禁用时这里也会走到，但「不存在」会把用户引向错误方向
-      // 区分「禁用」与「真不存在」并给出下一步。
+      // 插件被禁用时这里也会走到，但「不存在」会把用户引向错误方向——区分「禁用」与「真不存在」并给出下一步。
       const disabled = ctx.config.isPluginDisabled(pluginName);
       if (disabled) {
         res.status(409).json({ error: `插件 ${pluginName} 已禁用，配置未写入——先启用插件再修改配置` });
