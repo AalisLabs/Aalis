@@ -7,7 +7,7 @@
 // ============================================================
 
 import type { AppService, PluginManagerService } from '../types/app.js';
-import type { PluginModule } from '../types/plugin.js';
+import type { PluginMeta, PluginModule } from '../types/plugin.js';
 
 import {
   assemble,
@@ -19,10 +19,11 @@ import {
   type Uses,
 } from '../context/binding.js';
 import { isBuiltinService, type ModuleDefinition, setActivationConfig } from '../context/builtins.js';
+import type { ConfigManager } from '../context/config.js';
 import type { Context } from '../context/context.js';
 
 // biome-ignore lint/complexity/noBannedTypes: 无声明时的空声明表
-export interface PluginDefinition<U extends Uses = {}> {
+export interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
   name: string;
   displayName?: string;
   /**
@@ -58,19 +59,22 @@ export function definePlugin<U extends Uses = {}>(definition: PluginDefinition<U
     return definition.apply(assemble(ctx, uses) as BoundOf<U>);
   };
 
+  // 元数据（PluginMeta 上经 declaration merging 挂进来的字段，如 configSchema / subsystem）原样带上
+  const { uses: _uses, provides, apply: _apply, ...meta } = definition;
   return {
-    name: definition.name,
-    displayName: definition.displayName,
-    core: definition.core,
-    reusable: definition.reusable,
+    ...meta,
     inject: { required: requires, optional: optionalNames(gated) },
-    provides: definition.provides?.map(d => d.name),
+    provides: provides?.map(d => d.name),
     apply: mount,
     requires,
     mount,
   };
 }
 
-/** 宿主管理面：App 在根激活上提供的两个普通调用型服务。管理类插件显式声明才拿得到。 */
+/**
+ * 宿主管理面：App 在根激活上提供的普通调用型服务，管理类插件显式声明才拿得到。
+ * 插件自己的配置视图是内置能力 `config`；这里的 hostConfig 是整份配置的读写与落盘。
+ */
 export const appService = defineService<AppService>('app');
 export const pluginsService = defineService<PluginManagerService>('plugins');
+export const hostConfig = defineService<ConfigManager>('host-config');

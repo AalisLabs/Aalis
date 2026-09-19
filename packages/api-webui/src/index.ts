@@ -196,7 +196,7 @@ export interface WebuiPage {
  * 不作为静态 module 字段存在。
  */
 declare module '@aalis/core' {
-  interface PluginModule {
+  interface PluginMeta {
     /**
      * 子系统归属，仅用于 WebUI 分组展示。
      *

@@ -17,6 +17,7 @@ export type {
   MiddlewareFn,
   MiddlewareNext,
   PluginManagerService,
+  PluginMeta,
   PluginStatusEntry,
   ServiceDependency,
   ServiceOf,
@@ -46,9 +47,13 @@ export {
   type Uses,
 } from './context/binding.js';
 export {
+  type Contributions,
   config,
+  contributions,
   type Events,
   events,
+  type Hooks,
+  hooks,
   type LifecycleCap,
   lifecycle,
   logger,
@@ -78,6 +83,7 @@ export { App, type AppOptions, createApp } from './orchestration/app.js';
 export {
   appService,
   definePlugin,
+  hostConfig,
   type PluginDefinition,
   pluginsService,
 } from './orchestration/define-plugin.js';
