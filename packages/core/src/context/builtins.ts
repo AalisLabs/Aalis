@@ -51,7 +51,12 @@ export interface ModuleHandle {
 export interface LifecycleCap {
   /** 这次激活已开始关闭 */
   readonly closed: boolean;
-  /** 登记清理（清理段）：此时本激活的全部对外登记已撤回 */
+  /**
+   * 登记收尾（最先执行）：此刻本激活的监听、登记与依赖都还在，用于停接新活、把在手的数据
+   * 交给下层并等它确认。关停时消费者先于它绑定过的提供者关闭，所以这里调下层是安全的。
+   */
+  onDrain(fn: () => void | Promise<void>, label?: string): () => void;
+  /** 登记清理（清理段）：此时本激活的全部对外登记已撤回；声明的依赖仍可调用 */
   onDispose(fn: () => void | Promise<void>, label?: string): () => void;
   /**
    * 挂一个子模块：独立身份与生命周期，能力按子激活重新绑定，随父关闭。子模块不进调度器：
@@ -74,6 +79,7 @@ export const lifecycle = builtinService<LifecycleCap>('lifecycle', ctx => ({
   get closed() {
     return ctx.disposed;
   },
+  onDrain: (fn, label) => ctx.onDrain(fn, label),
   onDispose: (fn, label) => ctx.onDispose(fn, label),
   module: async (definition, config = {}) => {
     const missing = definition.requires.filter(name => ctx.getService(name) === undefined);

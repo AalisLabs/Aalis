@@ -167,6 +167,14 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
   let live: P | undefined;
   let subscribed = false;
 
+  // 关停排序的依据：这次激活实际绑定过谁。只在解析到的实例变化时记一次
+  let noted: P | undefined;
+  const note = (provider: P | undefined): void => {
+    if (provider === undefined || provider === noted) return;
+    noted = provider;
+    ctx.noteBinding(name);
+  };
+
   const runAttach = (follower: Follower, provider: P): void => {
     try {
       follower.cleanup = follower.attach(provider) ?? undefined;
@@ -183,6 +191,7 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
     subscribed = true;
     ctx.whenService<P>(name, provider => {
       live = provider;
+      note(provider);
       for (const follower of [...followers]) runAttach(follower, provider);
       return () => {
         live = undefined;
@@ -206,7 +215,11 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
     get closed() {
       return ctx.disposed;
     },
-    current: () => ctx.getService<P>(name),
+    current() {
+      const provider = ctx.getService<P>(name);
+      note(provider);
+      return provider;
+    },
     follow(attach) {
       if (ctx.disposed) {
         ctx.logger.warn(`"${ctx.id}" 已关闭，忽略对 ${name} 的跟随`);

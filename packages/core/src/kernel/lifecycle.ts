@@ -16,6 +16,8 @@ interface LifecycleOptions {
  */
 export class Lifecycle {
   readonly disposables: DisposableChain;
+  /** 收尾段：子节点关闭之后、宿主撤回对外资源之前执行——此时对外登记与依赖都还在。 */
+  readonly draining: DisposableChain;
   private readonly children = new Set<Lifecycle>();
   private parent?: Lifecycle;
   private closing = false;
@@ -27,6 +29,7 @@ export class Lifecycle {
     reporter?: CleanupReporter,
   ) {
     this.disposables = new DisposableChain(reporter);
+    this.draining = new DisposableChain(reporter);
   }
 
   get disposed(): boolean {
@@ -103,6 +106,14 @@ export class Lifecycle {
       else child.dispose();
     }
     this.children.clear();
+
+    // 没有收尾项时不得多让出一拍：撤回与清理的首个回调一向与 disposeAsync() 同栈发起
+    if (this.draining.size > 0) {
+      if (wait) await this.draining.disposeAsync(timeoutMs);
+      else this.draining.dispose();
+    } else {
+      this.draining.dispose();
+    }
 
     this.options.beforeCleanup?.();
     if (wait) await this.disposables.disposeAsync(timeoutMs);
