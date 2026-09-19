@@ -33,6 +33,29 @@ export {
   type ServiceView,
 } from './primitives/services.js';
 
+// ----- 服务描述符与按激活绑定（原型）-----
+export {
+  type BindingPort,
+  type BoundOf,
+  defineService,
+  optional,
+  type ProviderOf,
+  type Registrar,
+  type ServiceDescriptor,
+  type ServiceRef,
+  type Uses,
+} from './context/binding.js';
+export {
+  config,
+  type DefaultCaps,
+  type Events,
+  events,
+  type LifecycleCap,
+  lifecycle,
+  logger,
+  type Services,
+  services,
+} from './context/builtins.js';
 // ----- Context 基础：门面、配置、日志 -----
 export { type AalisConfig, ConfigManager, type ConfigManagerOptions, type ConfigProvider } from './context/config.js';
 // 注：Lifecycle / DisposableChain 是 Context 内部的资源生命周期实现，不从包根导出（零外部消费，
@@ -50,6 +73,12 @@ export {
 
 // ----- 编排层：应用骨架与插件管理 -----
 export { App, type AppOptions, createApp } from './orchestration/app.js';
+export {
+  appService,
+  definePlugin,
+  type PluginDefinition,
+  pluginsService,
+} from './orchestration/define-plugin.js';
 export {
   type PluginEntry,
   PluginManager,
