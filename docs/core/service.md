@@ -15,15 +15,16 @@
 - 服务选择走 **「偏好 > 优先级 > 注册顺序」**：`get()` 返回当前胜者实例
 - 领域级筛选（如按 LLM 模型能力路由）由各 `-api` 自理，不在内核 DI
 
-## ServiceEntry 结构
+## ServiceView 结构
+
+容器对外只交出条目的投影，每次读都是新对象，改它不影响容器；清理归属 `owner` 是容器内部的钥匙，任何读口都不交出：
 
 ```typescript
-interface ServiceEntry {
-  instance: unknown;  // 服务实例
-  priority: number;   // 优先级（越高越优先）
+interface ServiceView<T = unknown> {
+  instance: T;        // 服务实例
   contextId: string;  // 注册者 Context ID
+  priority: number;   // 优先级（越高越优先）
   label?: string;     // 可选展示标签（如 "OpenAI / gpt-4o"）
-  owner?: symbol;     // 清理归属（@internal）；getAll 的 ServiceView 投影不含它
 }
 ```
 
@@ -46,9 +47,9 @@ interface ServiceEntry {
 
 检查指定 contextId 是否注册了某服务。"拥有" 语义同时匹配 `contextId === ownerId` 和以 `ownerId + '/'` 为前缀的 per-entry 子 entry（如 `@aalis/plugin-llm-ollama:main/llama3`）。
 
-### `getEntries(name)` / `getAll(name)`
+### `getAll(name)`
 
-枚举某服务的所有提供者（给 API/管控视图暴露用），两者都返回数组快照，顺序遵循「偏好 > 优先级 > 注册顺序」。`getAll` 的元素是 `ServiceView`（`ServiceEntry` 的投影：`instance` / `contextId` / `priority` / `label`，刻意不含清理归属 `owner`），已登记名按 `ServiceTypeMap` 推导 `instance` 类型。
+枚举某服务的所有提供者（业务遍历与管控视图共用），返回 `ServiceView` 投影的数组快照，顺序遵循「偏好 > 优先级 > 注册顺序」；已登记名按 `ServiceTypeMap` 推导 `instance` 类型。
 
 ### `getServiceNames()`
 

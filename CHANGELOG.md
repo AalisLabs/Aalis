@@ -8,6 +8,15 @@
 
 ---
 
+## 未发布（core 0.16.0 → 0.17.0）
+
+### `ServiceContainer.getEntries` 删除（@aalis/core）
+
+它把容器内部的条目对象原样交出（只拷贝外层数组），调用方能改 `priority` / `contextId` / 清理归属 `owner` 绕过容器不变量；
+`ServiceEntry` 类型随之不再从包根导出。
+
+**迁移**：改用 `getAll(name)`（`ctx.getAllServices(name)`），元素是 `ServiceView` 投影（`instance` / `contextId` / `priority` / `label`），顺序相同。
+
 ## 2026-09-20（core 0.16.0 minor；patch：api-tools 0.8.4 / plugin-agent 0.13.6）
 
 ### `bounce` 不再接受 `module`（@aalis/core）

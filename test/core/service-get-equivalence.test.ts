@@ -9,7 +9,7 @@ import { ServiceContainer } from '../../packages/core/src/primitives/services.js
 // 眼里会是两个不同的实例 —— 这类分歧不会报错，只会让调用方拿到意料之外的 provider。
 //
 // 这里穷举「几个 entry × 各种 priority × 偏好指向谁（含指向已不存在的 ctxId）」，
-// 逐组比对 `get()` 与 `getEntries()[0]`。
+// 逐组比对 `get()` 与 `getAll()[0]`。
 // ════════════════════════════════════════════════════════════
 
 interface Case {
@@ -85,7 +85,7 @@ describe('ServiceContainer.get 与全表解析给出同一个冠军', () => {
     it(c.label, () => {
       const sc = build(c);
       const viaGet = sc.get<{ tag: string }>('svc');
-      const viaEntries = sc.getEntries('svc')[0]?.instance as { tag: string } | undefined;
+      const viaEntries = sc.getAll('svc')[0]?.instance as { tag: string } | undefined;
       expect(viaGet, '短路径与全表解析的冠军不一致').toBe(viaEntries);
     });
   }
@@ -93,7 +93,7 @@ describe('ServiceContainer.get 与全表解析给出同一个冠军', () => {
   it('服务不存在时两条路径都给 undefined', () => {
     const sc = new ServiceContainer();
     expect(sc.get('nope')).toBeUndefined();
-    expect(sc.getEntries('nope')[0]).toBeUndefined();
+    expect(sc.getAll('nope')[0]).toBeUndefined();
   });
 
   it('偏好被撤销后回落到 priority 冠军', () => {
@@ -108,6 +108,6 @@ describe('ServiceContainer.get 与全表解析给出同一个冠军', () => {
     expect((sc.get<{ tag: string }>('svc') as { tag: string }).tag).toBe('low');
     sc.unprefer('svc');
     expect((sc.get<{ tag: string }>('svc') as { tag: string }).tag).toBe('high');
-    expect(sc.get<{ tag: string }>('svc')).toBe(sc.getEntries('svc')[0]?.instance);
+    expect(sc.get<{ tag: string }>('svc')).toBe(sc.getAll('svc')[0]?.instance);
   });
 });

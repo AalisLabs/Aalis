@@ -10,7 +10,7 @@ export interface ServiceView<T = unknown> {
   label?: string;
 }
 
-export interface ServiceEntry {
+interface ServiceEntry {
   instance: unknown;
   /**
    * 数字越大越优先；同值先注册者胜（稳定降序）。解析序恒为
@@ -100,7 +100,7 @@ export class ServiceContainer {
    *   1. 用户偏好的 entry（如有，且仍存在）
    *   2. 其余 entry，按 priority 降序 + 注册顺序
    *
-   * 这是 get/getEntries/getAll 的共同基础——保证「偏好 > 优先级 > 注册顺序」语义在所有读路径一致。
+   * 这是 get/getAll 的共同基础——保证「偏好 > 优先级 > 注册顺序」语义在所有读路径一致。
    */
   private resolveEntries(name: string): ServiceEntry[] {
     const list = this.entries.get(name);
@@ -173,13 +173,6 @@ export class ServiceContainer {
    */
   getServiceNames(): string[] {
     return [...this.entries.keys()];
-  }
-
-  /**
-   * 获取某个服务的所有 entry（给 API 暴露用）。返回数组快照，顺序遵循「偏好 > 优先级 > 注册顺序」。
-   */
-  getEntries(name: string): ServiceEntry[] {
-    return [...this.resolveEntries(name)];
   }
 
   /**
