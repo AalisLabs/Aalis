@@ -183,9 +183,6 @@ class DefaultAgent implements AgentService {
   }
 
   /**
-   * 注册消息预处理器
-   *
-  /**
    * 注册输入预处理器（如图片识别、文件读取、用户画像等）。
    * 多个预处理器按注册顺序串行执行（Koa-style 洋葱模型）。
    *
@@ -194,25 +191,26 @@ class DefaultAgent implements AgentService {
    */
   registerPreprocessor(name: string, handler: PreprocessorFn): () => void {
     // 同名替换
-    const existing = this.preprocessors.get(name);
-    if (existing) existing.dispose();
+    this.preprocessors.get(name)?.dispose();
 
     const dispose = this.ctx.middleware('agent:input:before', async (data, next) => {
       await handler(data.message, next);
     });
 
-    const cleanup = () => {
-      dispose();
-      this.preprocessors.delete(name);
-      this.logger.info(`预处理器已注销: ${name}`);
+    // 退订按条目引用比对：同名重注册后，旧退订闭包只摘自己的中间件，不动新登记的账目
+    const entry = {
+      dispose: () => {
+        dispose();
+        if (this.preprocessors.get(name) !== entry) return;
+        this.preprocessors.delete(name);
+        this.logger.info(`预处理器已注销: ${name}`);
+      },
     };
-
-    this.preprocessors.set(name, { dispose: cleanup });
+    this.preprocessors.set(name, entry);
     this.logger.info(`预处理器已注册: ${name}`);
-    return cleanup;
+    return entry.dispose;
   }
 
-  /**
   /**
    * 获取当前所有已注册预处理器的元信息（按注册顺序返回）
    */
