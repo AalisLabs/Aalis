@@ -53,6 +53,7 @@ function setup(opts: { saveConfig?: () => Promise<void> } = {}) {
     () => ({}) as never,
     () => ({ platform: 'webui', userId: 'console' }),
     () => (_req, _res, next) => next(),
+    () => undefined,
   );
   const put = async (body: unknown) => {
     const handlers = routes.get('PUT /api/config');

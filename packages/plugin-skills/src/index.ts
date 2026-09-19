@@ -6,6 +6,7 @@ import { useToolService } from '@aalis/api-tools';
 import type { WebuiPage } from '@aalis/api-webui';
 import { useWebuiService } from '@aalis/api-webui';
 import type { Context, PluginModule, ServiceOf } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
@@ -1234,3 +1235,6 @@ type __ServiceTypeMapIntact = [
   __AssertTrue<__Exact<ServiceOf<'storage'>, StorageService>>,
   __AssertTrue<__Exact<ServiceOf<'skills'>, SkillsService>>,
 ];
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const skills = defineService<SkillsService>('skills');

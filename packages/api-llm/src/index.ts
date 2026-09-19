@@ -5,6 +5,7 @@
 
 import type { ToolDefinition } from '@aalis/api-tools';
 import type { Context } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { Message, ToolCall } from '@aalis/schema-message';
 
 export interface ChatResponse {
@@ -261,3 +262,6 @@ declare module '@aalis/core' {
     llm: LLMModel;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const llm = defineService<LLMModel>('llm');

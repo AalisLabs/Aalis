@@ -2,6 +2,7 @@
 
 // 触发 @aalis/core 模块解析，使下方 declare module 增强生效
 import type {} from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 export interface EmbeddingRequestOptions {
   /** 调用方取消或超时后停止请求，不再重试。 */
@@ -21,3 +22,6 @@ declare module '@aalis/core' {
     embedding: EmbeddingService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const embedding = defineService<EmbeddingService>('embedding');

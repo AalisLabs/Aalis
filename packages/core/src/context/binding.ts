@@ -11,6 +11,8 @@
 
 import { reportQuietly } from '../kernel/disposable-chain.js';
 
+import type { ServiceView } from '../primitives/services.js';
+
 import type { Context } from './context.js';
 import type { Logger } from './logger.js';
 
@@ -24,6 +26,8 @@ export interface ServiceRef<P> {
   readonly current: P | undefined;
   /** 取当前胜者，无提供者抛错。required 依赖丢失到调度收敛之间也可能短暂为空。 */
   require(): P;
+  /** 本服务的全部提供者（偏好 > 优先级 > 注册顺序），每次调用重新枚举 */
+  all(): ServiceView<P>[];
   /**
    * 跟随提供者建立有状态资源：在场即调 attach，换人时先跑上次返回的清理再用新实例调，
    * 下线与关闭时清理。清理可以是异步的，关闭会等它落地。取代整插件重启式的依赖更新。
@@ -49,6 +53,8 @@ export interface BindingPort<P> {
   readonly closed: boolean;
   /** 当前胜者 */
   current(): P | undefined;
+  /** 全部提供者（偏好 > 优先级 > 注册顺序） */
+  all(): ServiceView<P>[];
   /**
    * 跟随提供者建立有状态资源，串行交接：在场即调 attach（同步）；换人时先跑上次返回的清理，
    * 等它的 Promise **落定**（完成或被拒——被拒只记 warn，不代表资源已释放）之后才用新实例调
@@ -101,7 +107,7 @@ export type ProviderOf<D> = D extends ServiceDescriptor<infer P, any> ? P : neve
 export function defineService<P>(name: string): ServiceDescriptor<P, ServiceRef<P>>;
 export function defineService<P, B>(name: string, bind: (port: BindingPort<P>) => B): ServiceDescriptor<P, B>;
 export function defineService<P, B>(name: string, bind?: (port: BindingPort<P>) => B): ServiceDescriptor<P, B> {
-  return { name, bind: bind ?? (refBinder as unknown as (port: BindingPort<P>) => B) };
+  return { name, bind: bind ?? (serviceRef as unknown as (port: BindingPort<P>) => B) };
 }
 
 /** 可选依赖：只是不参与激活闸；绑定接口与 required 完全相同。 */
@@ -109,8 +115,15 @@ export function optional<P, B>(descriptor: ServiceDescriptor<P, B>): OptionalUse
   return { optional: descriptor };
 }
 
-function refBinder<P>(port: BindingPort<P>): ServiceRef<P> {
-  return {
+/**
+ * 由资源口造调用型接口。既登记又被调用的服务（如 agent：预处理器登记 + 对话调用）在自定义 bind 里
+ * 把登记方法作为第二参数传入：`serviceRef(port, { registerX })`。不要用对象展开去拼——
+ * `current` 是 getter，展开会把它求值成一次性的快照。
+ */
+export function serviceRef<P>(port: BindingPort<P>): ServiceRef<P>;
+export function serviceRef<P, E extends object>(port: BindingPort<P>, extra: E): ServiceRef<P> & E;
+export function serviceRef<P>(port: BindingPort<P>, extra?: object): ServiceRef<P> {
+  const ref: ServiceRef<P> = {
     get current() {
       return port.current();
     },
@@ -119,8 +132,10 @@ function refBinder<P>(port: BindingPort<P>): ServiceRef<P> {
       if (provider === undefined) throw new Error(`服务不可用（"${port.id}" 的依赖当前没有提供者）`);
       return provider;
     },
+    all: () => port.all(),
     follow: attach => port.follow(attach),
   };
+  return extra ? Object.assign(ref, extra) : ref;
 }
 
 /** 内置能力的标记：绑的是激活自身，不参与激活闸，也不产生依赖边 */
@@ -272,6 +287,7 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
       return ctx.disposed;
     },
     current: () => ctx.getService<P>(name),
+    all: () => ctx.getAllServices<P>(name),
     follow: attach => follow(attach, false),
     track(off, label) {
       const what = label ?? name;

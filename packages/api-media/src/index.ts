@@ -11,6 +11,7 @@
 
 import type { ModelRef } from '@aalis/api-llm';
 import type { Context } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
 
 /** 媒体能力枚举（与 LLM Capability 互不重叠：LLM 描述模型能力，Media 描述处理动作） */
@@ -248,3 +249,6 @@ declare module '@aalis/core' {
     media: MediaService;
   }
 }
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const media = defineService<MediaService>('media');
