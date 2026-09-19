@@ -5,6 +5,8 @@ interface LifecycleOptions {
   beforeCleanup?: () => void;
   /** 清理链结束后执行宿主收尾；两个阶段回调均为同步操作。 */
   afterCleanup?: () => void;
+  /** 清理链每排空一段后调用：返回该段内发起、尚未落定的异步清理，链会等它（见 DisposableChain）。 */
+  settlePhase?: () => Promise<unknown> | undefined;
   onTimeout?: (phase: 'initialization' | 'disposal', timeoutMs: number) => void;
   onError?: (error: unknown) => void;
 }
@@ -21,6 +23,8 @@ export class Lifecycle {
   private readonly children = new Set<Lifecycle>();
   private parent?: Lifecycle;
   private closing = false;
+  private tearingDown = false;
+  private drained?: Promise<void>;
   private completion?: Promise<void>;
   private initialization?: Promise<void>;
 
@@ -28,8 +32,8 @@ export class Lifecycle {
     private readonly options: LifecycleOptions = {},
     reporter?: CleanupReporter,
   ) {
-    this.disposables = new DisposableChain(reporter);
-    this.draining = new DisposableChain(reporter);
+    this.disposables = new DisposableChain(reporter, options.settlePhase);
+    this.draining = new DisposableChain(reporter, options.settlePhase);
   }
 
   get disposed(): boolean {
@@ -63,6 +67,34 @@ export class Lifecycle {
     });
   }
 
+  /** 只置关闭位：此后宿主不再接新登记；收尾、撤回与清理由后续调用执行。 */
+  markClosing(): void {
+    this.closing = true;
+  }
+
+  /**
+   * 提前执行收尾段（幂等）：置关闭位、等初始化落定、排空收尾链。子节点与撤回、清理不在此列——
+   * 调用方（编排层）据此把「谁先收尾」与「谁先撤回」分开安排；不调用它时 disposeAsync 照旧
+   * 在子节点关闭之后自己收尾。没有待等的东西时同栈完成、返回 undefined。
+   */
+  drain(timeoutMs?: number): Promise<void> | undefined {
+    if (this.drained) return this.drained;
+    this.closing = true;
+    if (!this.initialization && this.draining.size === 0) {
+      this.draining.dispose();
+      return undefined;
+    }
+    this.drained = (async () => {
+      if (this.initialization) {
+        await awaitWithTimeout(this.initialization, timeoutMs, limit =>
+          this.options.onTimeout?.('initialization', limit),
+        );
+      }
+      await this.draining.disposeAsync(timeoutMs);
+    })();
+    return this.drained;
+  }
+
   /** 同栈发起并执行同步清理；保留不等待异步清理的语义。 */
   dispose(): void {
     this.beginDisposal(false).catch(error => this.options.onError?.(error));
@@ -91,7 +123,8 @@ export class Lifecycle {
   }
 
   private async teardown(wait: boolean, timeoutMs?: number): Promise<void> {
-    if (this.closing) return;
+    if (this.tearingDown) return;
+    this.tearingDown = true;
     this.closing = true;
 
     if (wait && this.initialization) {
@@ -108,7 +141,9 @@ export class Lifecycle {
     this.children.clear();
 
     // 没有收尾项时不得多让出一拍：撤回与清理的首个回调一向与 disposeAsync() 同栈发起
-    if (this.draining.size > 0) {
+    if (this.drained) {
+      if (wait) await this.drained;
+    } else if (this.draining.size > 0) {
       if (wait) await this.draining.disposeAsync(timeoutMs);
       else this.draining.dispose();
     } else {

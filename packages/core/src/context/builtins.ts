@@ -11,22 +11,26 @@ import type { AalisEvents } from '../types/events.js';
 
 import type { ServiceView } from '../primitives/services.js';
 
-import { activationOf, type BindingPort, defineService, type ProviderOf, type ServiceDescriptor } from './binding.js';
+import {
+  activationOf,
+  type BindingPort,
+  defineService,
+  isBuiltin,
+  markBuiltin,
+  type ProviderOf,
+  type ServiceDescriptor,
+} from './binding.js';
 import type { Context } from './context.js';
 import type { Logger } from './logger.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
-/** 内置能力的标记：装配时不参与激活闸 */
-const BUILTIN = Symbol('aalis.builtin-capability');
-
 function builtinService<B>(name: string, bind: (ctx: Context) => B): ServiceDescriptor<never, B> {
-  const descriptor = defineService<never, B>(name, (port: BindingPort<never>) => bind(activationOf(port)));
-  return Object.assign(descriptor, { [BUILTIN]: true });
+  return markBuiltin(defineService<never, B>(name, (port: BindingPort<never>) => bind(activationOf(port))));
 }
 
 export function isBuiltinService(descriptor: ServiceDescriptor<unknown, unknown>): boolean {
-  return (descriptor as { [BUILTIN]?: boolean })[BUILTIN] === true;
+  return isBuiltin(descriptor);
 }
 
 // ----- events -----
