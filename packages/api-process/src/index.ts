@@ -9,8 +9,8 @@
 
 import type { Readable, Writable } from 'node:stream';
 import type { StorageService } from '@aalis/api-storage';
-import type { Context } from '@aalis/core';
-import { defineService } from '@aalis/core';
+import type { ServiceSource } from '@aalis/core';
+import { asServiceRef, defineService } from '@aalis/core';
 
 export interface SpawnOptions {
   cwd?: string;
@@ -118,9 +118,10 @@ declare module '@aalis/core' {
 /**
  * 返回一个无服务实例时抛错、单实例时直接转发的 ProcessService 网关。
  */
-export function createProcessGateway(ctx: Context): ProcessService {
+export function createProcessGateway(source: ServiceSource<ProcessService>): ProcessService {
+  const ref = asServiceRef(source, 'process');
   const pick = (): ProcessService => {
-    const inst = ctx.getService<ProcessService>('process');
+    const inst = ref.current;
     if (!inst) {
       throw new Error('未找到 process 服务（请启用 @aalis/plugin-process-local 或其他 process 提供方）');
     }

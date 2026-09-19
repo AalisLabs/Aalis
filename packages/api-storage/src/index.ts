@@ -152,8 +152,8 @@ export const StorageCapabilities = {
   Watch: 'watch',
 } as const satisfies StorageCapabilityRegistry;
 
-import type { Context } from '@aalis/core';
-import { defineService } from '@aalis/core';
+import type { ServiceSource } from '@aalis/core';
+import { asServiceRef, defineService } from '@aalis/core';
 
 // ----- 聚合 / 路由 helper -----
 //
@@ -196,14 +196,14 @@ function safeListRoots(entry: { instance: StorageService; contextId: string }): 
 }
 
 /** 枚举所有 storage entry。 */
-export function getStorageEntries(ctx: Context): StorageProviderEntry[] {
-  return ctx.getAllServices<StorageService>('storage');
+export function getStorageEntries(source: ServiceSource<StorageService>): StorageProviderEntry[] {
+  return asServiceRef(source, 'storage').all();
 }
 
 /** 聚合所有 entry 的 root 列表（保留 providerId/label） */
-export function aggregateStorageRoots(ctx: Context): AggregatedStorageRoot[] {
+export function aggregateStorageRoots(source: ServiceSource<StorageService>): AggregatedStorageRoot[] {
   const out: AggregatedStorageRoot[] = [];
-  for (const entry of getStorageEntries(ctx)) {
+  for (const entry of getStorageEntries(source)) {
     for (const r of safeListRoots(entry)) {
       out.push({ ...r, providerId: entry.contextId, provider: entry.label });
     }
@@ -212,9 +212,9 @@ export function aggregateStorageRoots(ctx: Context): AggregatedStorageRoot[] {
 }
 
 /** 同名 root 冲突诊断（用于 doctor / 启动日志） */
-export function getStorageRootConflicts(ctx: Context): StorageRootConflict[] {
+export function getStorageRootConflicts(source: ServiceSource<StorageService>): StorageRootConflict[] {
   const grouped = new Map<string, AggregatedStorageRoot[]>();
-  for (const r of aggregateStorageRoots(ctx)) {
+  for (const r of aggregateStorageRoots(source)) {
     const arr = grouped.get(r.name);
     if (arr) arr.push(r);
     else grouped.set(r.name, [r]);
@@ -264,11 +264,11 @@ function rootSatisfies(
 
 /** 按 root 名查找首个服务该 root 且满足 caps（按 root 权限位）的 entry */
 export function resolveStorageEntryForRoot(
-  ctx: Context,
+  source: ServiceSource<StorageService>,
   rootName: string,
   requiredCaps?: readonly StorageCapability[],
 ): StorageProviderEntry | undefined {
-  for (const entry of getStorageEntries(ctx)) {
+  for (const entry of getStorageEntries(source)) {
     const root = safeListRoots(entry).find(r => r.name === rootName);
     if (root && rootSatisfies(root, entry.instance, requiredCaps)) return entry;
   }
@@ -277,11 +277,11 @@ export function resolveStorageEntryForRoot(
 
 /** 按 storage URI（`<root>:/<path>`）找到对应 entry */
 export function resolveStorageByPath(
-  ctx: Context,
+  source: ServiceSource<StorageService>,
   uri: string,
   requiredCaps?: readonly StorageCapability[],
 ): StorageProviderEntry | undefined {
-  return resolveStorageEntryForRoot(ctx, parseUriRoot(uri), requiredCaps);
+  return resolveStorageEntryForRoot(source, parseUriRoot(uri), requiredCaps);
 }
 
 /** 存储 URI 的 scheme 文法：`<root>:/<path>`，root 以字母开头 + 字母/数字/下划线/连字符。 */
@@ -406,16 +406,16 @@ export function resolveAgainstCwd(input: string | undefined, cwd: string): strin
  *
  * 调用方无需关心当前有哪些 root 由哪个后端提供；URI 即标识 + 路由 key。
  */
-export function createStorageGateway(ctx: Context): StorageService {
+export function createStorageGateway(source: ServiceSource<StorageService>): StorageService {
   const knownRootsList = (): string[] => {
     const set = new Set<string>();
-    for (const entry of getStorageEntries(ctx)) {
+    for (const entry of getStorageEntries(source)) {
       for (const r of safeListRoots(entry)) set.add(r.name);
     }
     return [...set];
   };
   const dispatch = (uri: string, caps?: readonly StorageCapability[]): StorageService => {
-    const target = resolveStorageByPath(ctx, uri, caps);
+    const target = resolveStorageByPath(source, uri, caps);
     if (!target) {
       const known = knownRootsList();
       throw new Error(
@@ -430,7 +430,7 @@ export function createStorageGateway(ctx: Context): StorageService {
   return {
     listRoots() {
       const seen = new Map<string, StorageRootInfo>();
-      for (const r of aggregateStorageRoots(ctx)) {
+      for (const r of aggregateStorageRoots(source)) {
         if (seen.has(r.name)) continue;
         const { providerId: _p, provider: _l, ...info } = r;
         seen.set(r.name, info);

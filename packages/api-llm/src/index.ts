@@ -4,8 +4,8 @@
 // 任何需要调用或实现 LLM 服务的插件都应从本包导入相关类型。
 
 import type { ToolDefinition } from '@aalis/api-tools';
-import type { Context } from '@aalis/core';
-import { defineService } from '@aalis/core';
+import type { ServiceSource } from '@aalis/core';
+import { asServiceRef, defineService } from '@aalis/core';
 import type { Message, ToolCall } from '@aalis/schema-message';
 
 export interface ChatResponse {
@@ -218,8 +218,8 @@ export interface ModelRef {
  * 按能力过滤 LLM entries —— 能力源为 handle 元数据 `instance.capabilities`，
  * 不再依赖 core 的能力过滤（core 已不做能力选择，服务选择走配置 + 按名解析）。
  */
-function listLLMEntries(ctx: Context, caps?: readonly LLMCapability[]): LLMModelEntry[] {
-  const all = ctx.getAllServices<LLMModel>('llm');
+function listLLMEntries(source: ServiceSource<LLMModel>, caps?: readonly LLMCapability[]): LLMModelEntry[] {
+  const all = asServiceRef(source, 'llm').all();
   if (!caps || caps.length === 0) return all;
   return all.filter(e => caps.every(c => (e.instance.capabilities ?? []).includes(c)));
 }
@@ -228,8 +228,11 @@ function listLLMEntries(ctx: Context, caps?: readonly LLMCapability[]): LLMModel
  * 列出（可按能力过滤的）LLM model entries，供 `/model` 列表与前端下拉用。
  * 能力源为 `instance.capabilities`（model 自带元数据），是展示/列举用途，非 DI 选择。
  */
-export function listLLMModels(ctx: Context, opts?: { caps?: readonly LLMCapability[] }): LLMModelEntry[] {
-  return listLLMEntries(ctx, opts?.caps);
+export function listLLMModels(
+  source: ServiceSource<LLMModel>,
+  opts?: { caps?: readonly LLMCapability[] },
+): LLMModelEntry[] {
+  return listLLMEntries(source, opts?.caps);
 }
 
 /**
@@ -244,11 +247,11 @@ export function listLLMModels(ctx: Context, opts?: { caps?: readonly LLMCapabili
  * requiredCaps 按 handle 元数据 `instance.capabilities` 过滤。找不到返回 undefined。
  */
 export function resolveLLMModel(
-  ctx: Context,
+  source: ServiceSource<LLMModel>,
   ref?: ModelRef | null,
   requiredCaps?: LLMCapability[],
 ): LLMModelEntry | undefined {
-  const all = listLLMEntries(ctx, requiredCaps);
+  const all = listLLMEntries(source, requiredCaps);
   if (ref?.provider && ref?.model) return all.find(e => e.contextId === `${ref.provider}/${ref.model}`);
   if (ref?.provider) return all.find(e => e.contextId.startsWith(`${ref.provider}/`));
   if (ref?.model) return all.find(e => e.instance.id === ref.model);
