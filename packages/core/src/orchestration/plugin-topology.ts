@@ -80,6 +80,82 @@ export function topoSortByDeps(entries: PluginEntry[], logger: Logger): PluginEn
 }
 
 /**
+ * 关停顺序：消费者先于它依赖的提供者关闭，让消费者的收尾与清理里还能调到下层。
+ *
+ * 边的来源是框架自己管理的关系，不猜 JavaScript 引用：
+ * - 声明的依赖（required 与 optional）当前解析到的胜者归属的插件；
+ * - 这次激活（含子模块）实际绑定过的提供者——换人后仍在撤回的旧绑定也在内（只增不减，宁多勿漏）。
+ * 经 services 动态查到的服务不产生边。
+ *
+ * 成环时点名告警，环上节点按注册逆序关闭——环上无法保证人人都先于自己的提供者关闭。
+ */
+export function closeOrder(
+  entries: PluginEntry[],
+  winnerOwner: (service: string) => string | undefined,
+  logger: Logger,
+): PluginEntry[] {
+  const ids = entries.map(e => e.instanceId);
+  /** contextId（可能是 `插件id/子条目` 或 `插件id#子模块`）→ 归属的插件：最长前缀匹配 */
+  const pluginOf = (contextId: string): string | undefined => {
+    let best: string | undefined;
+    for (const id of ids) {
+      const owns = contextId === id || contextId.startsWith(`${id}/`) || contextId.startsWith(`${id}#`);
+      if (owns && (best === undefined || id.length > best.length)) best = id;
+    }
+    return best;
+  };
+
+  /** 消费者 → 它依赖的提供者插件 */
+  const providersOf = new Map<string, Set<string>>();
+  /** 提供者 → 还没关的消费者数 */
+  const consumers = new Map<string, number>();
+  for (const id of ids) {
+    providersOf.set(id, new Set());
+    consumers.set(id, 0);
+  }
+  for (const entry of entries) {
+    const owners = new Set<string>(entry.context?.boundProviders ?? []);
+    for (const dep of [...entry.requiredDeps, ...entry.optionalDeps]) {
+      const owner = winnerOwner(dep.service);
+      if (owner !== undefined) owners.add(owner);
+    }
+    for (const owner of owners) {
+      const provider = pluginOf(owner);
+      if (provider === undefined || provider === entry.instanceId) continue;
+      const set = providersOf.get(entry.instanceId)!;
+      if (set.has(provider)) continue;
+      set.add(provider);
+      consumers.set(provider, consumers.get(provider)! + 1);
+    }
+  }
+
+  const byId = new Map(entries.map(e => [e.instanceId, e]));
+  const result: PluginEntry[] = [];
+  // 同为「已无消费者」的节点按注册逆序关（后注册的先关），结果确定
+  const ready = ids.filter(id => consumers.get(id) === 0).reverse();
+  const done = new Set<string>();
+  while (ready.length > 0) {
+    const id = ready.shift()!;
+    done.add(id);
+    result.push(byId.get(id)!);
+    const released: string[] = [];
+    for (const provider of providersOf.get(id)!) {
+      const left = consumers.get(provider)! - 1;
+      consumers.set(provider, left);
+      if (left === 0) released.push(provider);
+    }
+    released.sort((a, b) => ids.indexOf(b) - ids.indexOf(a));
+    ready.push(...released);
+  }
+  if (result.length < entries.length) {
+    const cyclic = ids.filter(id => !done.has(id)).reverse();
+    logger.warn(`关停顺序：依赖成环 [${cyclic.join(', ')}]，环上按注册逆序关闭，无法保证都先于各自的提供者`);
+    for (const id of cyclic) result.push(byId.get(id)!);
+  }
+  return result;
+}
+
+/**
  * 把下游消费者降级为 pending —— 仅对显式声明 `requiresBounceOnDepChange: true`
  * 的插件生效。
  *
