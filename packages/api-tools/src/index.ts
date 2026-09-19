@@ -418,6 +418,18 @@ export interface BoundTools {
   readonly current: ToolService | undefined;
 }
 
+/** 给一份 tools 绑定接口加默认分组：经它登记的工具自动带上这些分组（一组工具共用分组时用） */
+export function withToolGroups(bound: BoundTools, groups: string[]): BoundTools {
+  return {
+    register: tool => bound.register({ ...tool, groups: [...(tool.groups ?? []), ...groups] }),
+    registerGroup: group => bound.registerGroup(group),
+    // current 必须活取才能跟着提供者换人
+    get current() {
+      return bound.current;
+    },
+  };
+}
+
 export const tools = defineService<ToolService, BoundTools>('tools', port => {
   // 分组账本先建：提供者换人时分组先于工具重挂
   const groups = port.registrar<Omit<ToolGroupInfo, 'pluginName'>>({
