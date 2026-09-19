@@ -27,6 +27,6 @@ export type { AalisEvents } from './events.js';
 // 钩子扩展点 + 中间件签名
 export type { HookContextMap, MiddlewareFn, MiddlewareNext } from './hooks.js';
 // 插件模块词汇
-export type { InjectDeclaration } from './plugin.js';
+export type { InjectDeclaration, PluginMeta } from './plugin.js';
 // 服务类型注册表 + 服务依赖声明
 export type { DependencyDeclaration, ServiceDependency, ServiceOf, ServiceTypeMap } from './services.js';
