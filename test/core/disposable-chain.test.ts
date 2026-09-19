@@ -86,6 +86,41 @@ describe('DisposableChain', () => {
   });
 });
 
+describe('DisposableChain 分段', () => {
+  it('排空快照内撤回段先、清理段后，各段内部逆序（dispose 与 disposeAsync 同序）', async () => {
+    const run = async (mode: 'sync' | 'async') => {
+      const order: string[] = [];
+      const chain = new DisposableChain(new DefaultLogger('test'));
+      chain.push(() => order.push('c1'));
+      chain.push(() => order.push('w1'), 'w1', 'withdraw');
+      chain.push(() => order.push('c2'), 'c2', 'cleanup');
+      chain.push(() => order.push('w2'), 'w2', 'withdraw');
+      if (mode === 'sync') chain.dispose();
+      else await chain.disposeAsync();
+      return order;
+    };
+    expect(await run('sync')).toEqual(['w2', 'w1', 'c2', 'c1']);
+    expect(await run('async')).toEqual(['w2', 'w1', 'c2', 'c1']);
+  });
+
+  it('排空期间的迟到登记仍立即执行，不受段约束（撤回段回调里登记的清理段项插在剩余撤回之前）', () => {
+    const order: string[] = [];
+    const chain = new DisposableChain(new DefaultLogger('test'));
+    chain.push(() => order.push('c1'));
+    chain.push(() => order.push('w1'), 'w1', 'withdraw');
+    chain.push(
+      () => {
+        order.push('w2');
+        chain.push(() => order.push('late'), 'late', 'cleanup');
+      },
+      'w2',
+      'withdraw',
+    );
+    chain.dispose();
+    expect(order).toEqual(['w2', 'late', 'w1', 'c1']);
+  });
+});
+
 describe('DisposableChain.disposeAsync', () => {
   const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 

@@ -403,6 +403,10 @@ export class Context {
    * - provider 重新 provide（unregister → register）会先调上次 cleanup、
    *   再用新 svc 调一次 cb；保证不持有失效引用。
    * - `cb` 可返回 cleanup 函数；返回的 dispose 与 `ctx.dispose()` 都会调它。
+   * - cleanup 是**对外绑定的撤回**，拆卸时走清理链的撤回段：先于全部 {@link onDispose} 回调执行，
+   *   且执行时本 ctx 自己的四原语登记已切断（监听不再收事件、自己 provide 的服务已下线）。
+   *   依赖同一资源的最终提交与关闭要组织在同一个有序清理流程里（都放 onDispose，或都放 cleanup），
+   *   不要一半靠 cleanup 一半靠 onDispose。
    * - 返回的 dispose 函数 idempotent，可手动调（多次安全）。
    * - 同名 provider 仅取 `getService(name)` 的胜者，多 entry 并存场景按容器优先级。
    *   **胜者不变则不动**：败者 entry 上下线不会触发重挂；胜者换人（含
@@ -505,7 +509,8 @@ export class Context {
       attached = undefined;
     };
 
-    this.#lifecycle.disposables.push(dispose, `whenService:${name}`);
+    // 挂撤回段：枢纽登记在用户清理跑之前撤净，半拆的 ctx 不再被枢纽派活（与四原语的 beforeCleanup 同一承诺）
+    this.#lifecycle.disposables.push(dispose, `whenService:${name}`, 'withdraw');
     // 首挂前先登记：回调销毁 ctx 时，复合订阅已能随清理链一起退订。
     sync();
     return dispose;
@@ -706,7 +711,8 @@ export class Context {
    * 注册一个在本 Context dispose 时执行的清理回调。
    *
    * 插件清理副作用的**唯一正确 API**：
-   * - 登记到生命周期的清理链，保证逆序执行
+   * - 登记到生命周期清理链的清理段，段内逆序执行；此时本 ctx 的四原语登记与
+   *   {@link whenService} 的对外绑定（撤回段）都已撤回，外部不会再把活派进来
    * - 在 `ctx.dispose()` 的任何路径上都会触发（app 停机 / bounce / unload /
    *   updateConfig / softReload 级联 evict）
    * - 沙盒 / fork 子上下文同样适用
