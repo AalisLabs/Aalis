@@ -2,9 +2,9 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
-import { useToolService } from '../../packages/api-tools/src/index.js';
+import { toolsWithGroups, useToolService } from '../../packages/api-tools/src/index.js';
 import type { WebUIService } from '../../packages/api-webui/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { App, type Context } from '../../packages/core/src/index.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import * as webuiServer from '../../packages/plugin-webui-server/src/index.js';
 
@@ -151,13 +151,67 @@ describe('useToolService 绑定：同名替换与整体重挂', () => {
     expect(reg2.getGroups()).toEqual([]);
   });
 
-  it('拆卸后枢纽清空；关闭后的登记不进枢纽、不抛', async () => {
-    const { reg, ctx, tools } = world();
+  it('拆卸后枢纽清空；关闭后的登记每次 warn、不进枢纽、不抛（与 core 登记面同口径）', async () => {
+    const warnings: string[] = [];
+    const app = new App({
+      config: { name: 'T', logLevel: 'error', plugins: {} },
+      logger: {
+        ...silentLogger(),
+        warn: (m: unknown) => warnings.push(String(m)),
+        child() {
+          return this;
+        },
+      } as unknown as Logger,
+    });
+    apps.push(app);
+    const reg = new ToolRegistry(silentLogger());
+    app.ctx.provide('tools', reg);
+    const ctx = app.ctx.fork('p');
+    const tools = useToolService(ctx);
     tools.register({ definition: def('t'), handler: async () => '' });
     await ctx.disposeAsync();
     expect(names(reg)).toEqual([]);
-    expect(() => tools.register({ definition: def('late'), handler: async () => '' })).not.toThrow();
+    for (const n of ['late1', 'late2']) {
+      expect(() => tools.register({ definition: def(n), handler: async () => '' })).not.toThrow();
+    }
+    expect(warnings.filter(w => w.includes('忽略 tools 登记')).length).toBe(2);
     expect(names(reg)).toEqual([]);
+  });
+
+  it('拆卸窗口内（等在飞 apply）已挂载绑定的登记仍挂上并随撤回段摘净', async () => {
+    const { app, reg } = world();
+    let release!: () => void;
+    const gate = new Promise<void>(r => {
+      release = r;
+    });
+    let child!: Context;
+    const mounting = app.ctx.useModule({
+      name: 'late-registrar',
+      async apply(c) {
+        child = c;
+        useToolService(c).register({ definition: def('early'), handler: async () => '' });
+        await gate;
+        useToolService(c).register({ definition: def('late'), handler: async () => '' });
+      },
+    });
+    await Promise.resolve();
+    const disposing = child.disposeAsync();
+    expect(child.disposed).toBe(true);
+    release();
+    await mounting;
+    await disposing;
+    expect(names(reg), '窗口内的登记进过枢纽又被撤回段摘净').toEqual([]);
+  });
+
+  it('toolsWithGroups 视图的 raw 活取，跟着提供者换人', () => {
+    const { app, reg, offProvide, ctx } = world();
+    const view = toolsWithGroups(useToolService(ctx), ['g']);
+    expect(view.raw).toBe(reg);
+    offProvide();
+    expect(view.raw).toBeUndefined();
+    const reg2 = new ToolRegistry(silentLogger());
+    app.ctx.provide('tools', reg2);
+    expect(view.raw).toBe(reg2);
   });
 });
 
