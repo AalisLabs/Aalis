@@ -66,7 +66,7 @@
 
 注册一个在本 Context dispose 时执行的清理回调。**这是插件清理副作用的唯一正确 API**：
 
-- 直接挂在 `_disposables` 链上，逆序执行
+- 挂在清理链的清理段，段内逆序执行；`whenService` 的 cleanup 走撤回段，先于全部 onDispose
 - `label` 可选，仅进诊断日志——清理超时或抛错时点名是哪一项；不传则退到链内序号
 - 在 `ctx.dispose()` 的任何路径上都会触发（app 停机 / bounce / unload / updateConfig / softReload 级联）
 - fork 子上下文同样适用
@@ -81,10 +81,12 @@
 两者语义相同，`dispose()` 同步返回（异步清理不等待）、`disposeAsync` 逆序串行等待每个异步清理完成（编排层用）：
 
 1. 级联销毁所有子 Context
-2. 通过 `ServiceContainer.unregisterByOwner()` 移除该 Context 本次激活注册的服务
-3. 注销该 Context 的中间件与贡献（在清理链**之前**——异步等待窗口内半拆插件不再响应消息、不再被组装器收集）
-4. 逆序执行所有注册的 disposable（事件监听、命令注册、onDispose 回调等）
-5. 触发服务自清理协议：实现 `unregisterByPlugin(id)` 的服务会被通知清理该 Context 的注册项
+2. 按本次激活的 owner 撤回四原语登记：服务、中间件、贡献、事件监听（在清理链**之前**——异步等待窗口内半拆插件不再响应事件与消息、不再被组装器收集）
+3. 清理链撤回段：逆序执行 `whenService` 的 cleanup（经枢纽服务交出去的登记在这里撤回）
+4. 清理链清理段：逆序执行 `onDispose` 回调——此时本 Context 对外的登记已全部撤回，外部不会再把活派进来
+5. 触发服务自清理协议：实现 `unregisterByPlugin(id)` 的服务会被通知清理该 Context 的注册项（不经 `whenService` 的裸登记靠它兜底）
+
+清理链的分段只约束排空快照内的次序；排空开始后迟到登记的清理仍立即执行。
 
 `disposeAsync` 的 `timeoutMs`（App 经 `AppOptions.disposeTimeoutMs` 注入，默认 5000）是单个异步清理项的等待上限：超时放弃该项、继续后续清理并 warn 点名，保证网络类关闭卡死时停机仍能走完。
 
@@ -114,7 +116,9 @@ ctx.provide('llm', service, {
 
 // 推荐消费方式：whenService —— 自动响应 provider 上下/下线
 ctx.whenService('llm', llm => {
-  // provider 就绪时调用；返回的清理函数在 provider 下线或 ctx dispose 时执行
+  // provider 就绪时调用；返回的清理函数在 provider 下线或 ctx dispose 时执行。
+  // 它是对外绑定的撤回：拆卸时先于全部 onDispose 回调执行——最终提交与关闭若依赖同一资源，
+  // 要组织在同一个有序清理流程里（都放 onDispose，或都放这里），不要一半一半。
   const off = llm.onChunk(handle);
   return () => off();
 });
