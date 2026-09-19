@@ -2,7 +2,19 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { type ProcessService, processService } from '../../packages/api-process/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { assemble } from '../../packages/core/src/context/binding.js';
-import { App, definePlugin, defineService, type Logger, optional, services } from '../../packages/core/src/index.js';
+import {
+  App,
+  config,
+  definePlugin,
+  defineService,
+  events,
+  type Logger,
+  lifecycle,
+  logger,
+  optional,
+  provide,
+  services,
+} from '../../packages/core/src/index.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 
 // ════════════════════════════════════════════════════════════
@@ -95,17 +107,17 @@ function world() {
   };
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
   apps.push(app);
-  return { app, warnings, host: app.bind({ services }) };
+  return { app, warnings, host: app.bind({ provide, services }) };
 }
 
 /** 提供 zz-hub 的插件（第三方提供者，走同一套定义入口） */
 const hubProvider = (instance: HubService, name = 'hub-provider') =>
   definePlugin({
     name,
-    uses: { services },
+    uses: { provide },
     provides: [hub],
-    apply({ services }) {
-      services.provide(hub, instance);
+    apply({ provide }) {
+      provide(hub, instance);
     },
   });
 
@@ -120,7 +132,7 @@ describe('目标接口：声明描述符，拿按激活绑定的接口', () => {
     await app.plugin(
       definePlugin({
         name: 'consumer',
-        uses: { hub },
+        uses: { hub, events, logger, lifecycle, config },
         apply({ hub, events, logger, lifecycle, config }) {
           hub.register({ name: 'echo' });
           events.on('app:ready', () => {
@@ -146,9 +158,9 @@ describe('目标接口：声明描述符，拿按激活绑定的接口', () => {
   it('真实注册型能力 tools 与真实调用型服务 process 走同一声明', async () => {
     const { app, host } = world();
     const registry = new ToolRegistry(app.ctx.logger);
-    host.services.provide(tools, registry);
+    host.provide(tools, registry);
     const fakeProcess = { execFile: async () => ({ stdout: 'v1', stderr: '', code: 0 }) } as unknown as ProcessService;
-    host.services.provide(processService, fakeProcess);
+    host.provide(processService, fakeProcess);
     let out = '';
     await app.plugin(
       definePlugin({
@@ -184,7 +196,7 @@ describe('资源身份：同名不同激活互不清扫', () => {
   it('两个同 id 的激活各登记一条，拆左不清右', async () => {
     const { app, host } = world();
     const instance = makeHub();
-    host.services.provide(hub, instance);
+    host.provide(hub, instance);
     const left = app.ctx.fork('dup');
     const right = app.ctx.fork('dup');
     assemble(left, { hub }).hub.register({ name: 'from-left' });
@@ -229,7 +241,7 @@ describe('子模块：重新绑定与父子关闭', () => {
     await app.plugin(
       definePlugin({
         name: 'parent',
-        uses: { hub },
+        uses: { hub, lifecycle },
         async apply({ hub, lifecycle }) {
           hub.register({ name: 'parent-item' });
           handles = [await lifecycle.module(child)];
@@ -254,7 +266,7 @@ describe('动态依赖：提供者更换、偏好、required 丢失与恢复', (
   it('注册型：换提供者整体重挂到新实例，旧实例撤净；任一微任务只见 0 条或全部', async () => {
     const { app, host } = world();
     const first = makeHub('first');
-    const offFirst = host.services.provide(hub, first);
+    const offFirst = host.provide(hub, first);
     await app.plugin(
       definePlugin({
         name: 'many',
@@ -268,7 +280,7 @@ describe('动态依赖：提供者更换、偏好、required 丢失与恢复', (
     expect(first.list()).toHaveLength(20);
     const second = makeHub('second');
     offFirst();
-    host.services.provide(hub, second);
+    host.provide(hub, second);
     const seen = new Set<number>();
     for (let hop = 0; hop < 30; hop++) {
       seen.add(second.list().length);
@@ -285,7 +297,7 @@ describe('动态依赖：提供者更换、偏好、required 丢失与恢复', (
   it('调用型：ServiceRef 每次读当前胜者——优先级更高者上线、偏好切换都即时跟随', async () => {
     const { app, host } = world();
     const kv = defineService<{ tag: string }>('zz-kv');
-    host.services.provide(kv, { tag: 'low' }, { priority: 1, entryId: 'root/low' });
+    host.provide(kv, { tag: 'low' }, { priority: 1, entryId: 'root/low' });
     const seen: string[] = [];
     let read!: () => void;
     await app.plugin(
@@ -299,7 +311,7 @@ describe('动态依赖：提供者更换、偏好、required 丢失与恢复', (
     );
     await app.plugins.idle();
     read();
-    host.services.provide(kv, { tag: 'high' }, { priority: 9, entryId: 'root/high' });
+    host.provide(kv, { tag: 'high' }, { priority: 9, entryId: 'root/high' });
     read();
     host.services.prefer(kv, 'root/low');
     read();
@@ -348,7 +360,7 @@ describe('动态依赖：提供者更换、偏好、required 丢失与恢复', (
     await app.plugins.idle();
     expect(state(app, 'early')).toBe('active');
     const instance = makeHub();
-    host.services.provide(hub, instance);
+    host.provide(hub, instance);
     await sleep(0); // 重挂随 service:registered 的广播到达，不与 provide 同栈
     expect(instance.list()).toEqual(['queued']);
   });
@@ -358,7 +370,7 @@ describe('失败回滚', () => {
   it('部分装配失败：先装配的绑定已挂上的跟随与句柄全部回滚，插件进 error，apply 不执行', async () => {
     const { app, host } = world();
     const instance = makeHub();
-    host.services.provide(hub, instance);
+    host.provide(hub, instance);
     const events: string[] = [];
     const eager = defineService<HubService, null>('zz-hub', port => {
       port.follow(provider => {
@@ -375,7 +387,7 @@ describe('失败回滚', () => {
     const broken = defineService<unknown, never>('zz-broken', () => {
       throw new Error('bind 失败');
     });
-    host.services.provide(broken, {});
+    host.provide(broken, {});
     let applied = false;
     await app.plugin(
       definePlugin({
@@ -396,7 +408,7 @@ describe('失败回滚', () => {
   it('重挂中途某条 register 抛错：其余照挂、该条留待重试，批次的撤回没有丢', async () => {
     const { app, host, warnings } = world();
     const first = makeHub('first');
-    host.services.provide(hub, first);
+    host.provide(hub, first);
     const flaky: HubItem = { name: 'flaky' };
     await app.plugin(
       definePlugin({
@@ -413,7 +425,7 @@ describe('失败回滚', () => {
     // 胜者换人但服务名从不落空（required 落空会走「转 pending → 重新激活」，是另一条路径）
     flaky.failOnRegister = true;
     const second = makeHub('second');
-    host.services.provide(hub, second, { priority: 9, entryId: 'root/second' });
+    host.provide(hub, second, { priority: 9, entryId: 'root/second' });
     await sleep(0);
     expect(first.list(), '旧提供者上的整批已撤').toEqual([]);
     expect(second.list()).toEqual(['a', 'b']);
@@ -421,7 +433,7 @@ describe('失败回滚', () => {
     // 再换一次：second 上已挂的两条必须被撤回（那次抛错没有让批次的 cleanup 丢失），flaky 被重试
     flaky.failOnRegister = false;
     const third = makeHub('third');
-    host.services.provide(hub, third, { priority: 99, entryId: 'root/third' });
+    host.provide(hub, third, { priority: 99, entryId: 'root/third' });
     await sleep(0);
     expect(second.list()).toEqual([]);
     expect(third.list()).toEqual(['a', 'b', 'flaky']);
@@ -431,12 +443,12 @@ describe('失败回滚', () => {
   it('登记时提供者在场且 register 抛错：原样抛给调用方，账上不留半条', async () => {
     const { app, host } = world();
     const instance = makeHub();
-    host.services.provide(hub, instance);
+    host.provide(hub, instance);
     const ctx = app.ctx.fork('p');
     const bound = assemble(ctx, { hub }).hub;
     expect(() => bound.register({ name: 'bad', failOnRegister: true })).toThrow('拒绝登记');
     const second = makeHub('second');
-    host.services.provide(hub, second, { priority: 9, entryId: 'root/second' });
+    host.provide(hub, second, { priority: 9, entryId: 'root/second' });
     await sleep(0);
     expect(second.list(), '失败的登记不在账上，不会被重挂').toEqual([]);
   });
@@ -479,7 +491,7 @@ describe('关闭契约', () => {
   it('手动退订与同键替换启动的异步撤回，由随后的关闭等到', async () => {
     const { app, host } = world();
     const instance = makeHub();
-    host.services.provide(hub, instance);
+    host.provide(hub, instance);
     const ctx = app.ctx.fork('p');
     const bound = assemble(ctx, { hub }).hub;
     const off = bound.register({ name: 'manual', off: 'slow' });
@@ -504,7 +516,7 @@ describe('关闭契约', () => {
     const registering = app.plugin(
       definePlugin({
         name: 'late',
-        uses: { hub },
+        uses: { hub, lifecycle },
         async apply({ hub, lifecycle }) {
           hub.register({ name: 'early' });
           await gate;
@@ -530,7 +542,7 @@ describe('关闭契约', () => {
   it('旧退订对已被替换的登记无动作；重复关闭幂等', async () => {
     const { app, host } = world();
     const instance = makeHub();
-    host.services.provide(hub, instance);
+    host.provide(hub, instance);
     const ctx = app.ctx.fork('p');
     const bound = assemble(ctx, { hub }).hub;
     const oldOff = bound.register({ name: 'x' });
@@ -547,7 +559,7 @@ describe('宿主：最小内存宿主', () => {
   it('启动、注册第三方能力、跑插件、停止；根绑定的登记随 stop 撤回', async () => {
     const { app, host } = world();
     const instance = makeHub();
-    host.services.provide(hub, instance);
+    host.provide(hub, instance);
     const rootHub = app.bind({ hub }).hub;
     rootHub.register({ name: 'from-host' });
     await app.plugin(

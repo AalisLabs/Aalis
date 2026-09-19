@@ -14,12 +14,21 @@ import { reportQuietly } from '../kernel/disposable-chain.js';
 import type { Context } from './context.js';
 import type { Logger } from './logger.js';
 
-/** 普通调用型服务的绑定接口：每次读当前胜者，不缓存实例。 */
+/**
+ * 普通调用型服务的绑定接口。契约是「每次查询解析当前值」：current / require 返回的是提供者本身，
+ * 调用方把它存起来就得自己承担它失效；要用提供者建立长期状态（SDK 句柄、订阅）走 follow。
+ * required 与 optional 拿到的是同一接口——两者只差激活闸。
+ */
 export interface ServiceRef<P> {
   /** 当前胜者（偏好 > 优先级 > 注册顺序）；无提供者为 undefined */
   readonly current: P | undefined;
-  /** 取当前胜者，无提供者抛错。required 依赖在插件 active 期间恒有提供者。 */
+  /** 取当前胜者，无提供者抛错。required 依赖丢失到调度收敛之间也可能短暂为空。 */
   require(): P;
+  /**
+   * 跟随提供者建立有状态资源：在场即调 attach，换人时先跑上次返回的清理再用新实例调，
+   * 下线与关闭时清理。清理可以是异步的，关闭会等它落地。取代整插件重启式的依赖更新。
+   */
+  follow(attach: (provider: P) => undefined | (() => unknown)): () => void;
 }
 
 /** 注册型能力的账本：同键替换、提供者换人整体重挂、关闭后拒收、异步撤回被关闭等待。 */
@@ -45,8 +54,11 @@ export interface BindingPort<P> {
    * 关闭会等它落地。
    */
   follow(attach: (provider: P) => undefined | (() => unknown)): () => void;
-  /** 登记一条随本次激活撤回的句柄；返回自移除的退订。关闭后登记的句柄就地执行。 */
-  track(off: () => unknown, label?: string): () => unknown;
+  /**
+   * 登记一条随本次激活撤回的句柄；返回一次性的退订。与 registrar 同一清理契约：手动退订启动的
+   * 异步清理被随后的关闭等到、拒绝被接住；关闭后登记的句柄就地执行。
+   */
+  track(off: () => unknown, label?: string): () => void;
   /** 注册型能力的通用账本，见 {@link Registrar} */
   registrar<Item>(options: {
     key(item: Item): string;
@@ -66,16 +78,13 @@ export interface OptionalUse<P, B> {
 // biome-ignore lint/suspicious/noExplicitAny: 声明表的值类型只作推导载体
 export type Uses = Record<string, ServiceDescriptor<any, any> | OptionalUse<any, any>>;
 
-/** 可选依赖的绑定接口：调用型去掉 require()——存在性必须由调用方处理；注册型原样（账本本就容忍提供者缺席） */
-export type OptionalBound<B> = B extends ServiceRef<infer P> ? Pick<ServiceRef<P>, 'current'> : B;
-
 export type BoundOf<U extends Uses> = {
   // biome-ignore lint/suspicious/noExplicitAny: 同上
   [K in keyof U]: U[K] extends ServiceDescriptor<any, infer B>
     ? B
     : // biome-ignore lint/suspicious/noExplicitAny: 同上
       U[K] extends OptionalUse<any, infer B>
-      ? OptionalBound<B>
+      ? B
       : never;
 };
 
@@ -93,7 +102,7 @@ export function defineService<P, B>(name: string, bind?: (port: BindingPort<P>) 
   return { name, bind: bind ?? (refBinder as unknown as (port: BindingPort<P>) => B) };
 }
 
-/** 可选依赖：不参与激活闸，绑定接口与 required 相同（提供者随时来去，存在性由接口自己表达）。 */
+/** 可选依赖：只是不参与激活闸；绑定接口与 required 完全相同。 */
 export function optional<P, B>(descriptor: ServiceDescriptor<P, B>): OptionalUse<P, B> {
   return { optional: descriptor };
 }
@@ -108,6 +117,7 @@ function refBinder<P>(port: BindingPort<P>): ServiceRef<P> {
       if (provider === undefined) throw new Error(`服务不可用（"${port.id}" 的依赖当前没有提供者）`);
       return provider;
     },
+    follow: attach => port.follow(attach),
   };
 }
 
@@ -117,7 +127,7 @@ const activations = new WeakMap<object, Context>();
 /** @internal 仅 core 内置描述符使用 */
 export function activationOf(port: BindingPort<unknown>): Context {
   const ctx = activations.get(port);
-  if (!ctx) throw new Error('资源口不属于任何激活');
+  if (!ctx) throw new Error('资源口不属于本 core 副本的任何激活（@aalis/core 必须是单副本 peer 依赖）');
   return ctx;
 }
 
@@ -213,7 +223,20 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
         settle(runCleanup(follower), name);
       };
     },
-    track: (off, label) => ctx.trackWithdrawal(off, label ?? name),
+    track(off, label) {
+      let done = false;
+      const once = (): unknown => {
+        if (done) return undefined;
+        done = true;
+        return off();
+      };
+      const dispose = ctx.trackWithdrawal(once, label ?? name);
+      return () => {
+        if (done) return;
+        ctx.untrackWithdrawal(dispose);
+        settle(withdraw(once, label ?? name), label ?? name);
+      };
+    },
     registrar<Item>(options: {
       key(item: Item): string;
       register(provider: P, item: Item): () => unknown;
@@ -272,8 +295,16 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
             settle(withdraw(off, `${name} "${key}"`), `${name} "${key}"`);
           }
           const entry: Entry = { item };
-          // 提供者在场即登记；register 抛错原样抛给调用方，账上不留半条
-          if (provider !== undefined) entry.off = options.register(provider, item);
+          // 提供者在场即登记；register 抛错原样抛给调用方，账上不留半条——同键替换失败时
+          // 旧登记已撤，旧条目一并出账，不会在下次换提供者时复活
+          if (provider !== undefined) {
+            try {
+              entry.off = options.register(provider, item);
+            } catch (err) {
+              entries.delete(key);
+              throw err;
+            }
+          }
           entries.set(key, entry);
           return () => {
             if (entries.get(key) !== entry) return;
