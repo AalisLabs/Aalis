@@ -112,6 +112,29 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
     await app.stop();
   });
 
+  it('已删除的 module 热替换：旧调用传 module 记 warn 并返回 false，插件不被重启', async () => {
+    const hub = new LogHub();
+    const lines: string[] = [];
+    hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
+    const app = new App({ config: { name: 'T', logLevel: 'warn', plugins: {} }, logHub: hub });
+    let applied = 0;
+    await app.plugins.register(
+      plugin('p', {
+        apply() {
+          applied++;
+        },
+      }),
+    );
+    await app.plugins.idle();
+    // 类型面已无 module 字段，这里模拟无类型约束的 JavaScript 调用方
+    const legacy = { module: plugin('p') } as unknown as { config?: Record<string, unknown> };
+    expect(await app.plugins.bounce('p', legacy)).toBe(false);
+    await app.plugins.idle();
+    expect(applied, '拒绝即不重启：apply 只跑过注册那一次').toBe(1);
+    expect(lines.some(l => l.startsWith('warn:') && l.includes('不再支持 module 热替换'))).toBe(true);
+    await app.stop();
+  });
+
   it("'disposed' 在途：enable / disable 为 false（终态对管理路径单向）", async () => {
     const app = silentApp();
     let release!: () => void;

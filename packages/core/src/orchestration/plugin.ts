@@ -321,19 +321,16 @@ export class PluginManager {
   /**
    * 增量重载单个插件（核心入口）：
    *
-   * 1. 持久化新 config（如有）+ 替换 module（如有）+ dispose 旧 ctx
-   *    + 转 pending + softReload 重新激活。下游消费者默认不会被级联 bounce，
-   *    除非显式声明 `requiresBounceOnDepChange: true`（见 evictDownstreamConsumers）。
+   * 1. 持久化新 config（如有）+ dispose 旧 ctx + 转 pending + softReload 重新激活。
+   *    下游消费者默认不会被级联 bounce，除非显式声明 `requiresBounceOnDepChange: true`
+   *    （见 evictDownstreamConsumers）。
    * 2. `error` 态插件会被重置为 pending 重试 apply。
    *
-   * 不负责"重新从磁盘 import"——那是宿主层的职责。
+   * 不换模块：跑的仍是注册时的那份代码。要换代码走 `unload` + `register`。
    *
    * @returns false 表示找不到 entry 或处于 disabled 态（拒绝 bounce）。
    */
-  async bounce(
-    instanceId: string,
-    opts?: { config?: Record<string, unknown>; module?: PluginModule },
-  ): Promise<boolean> {
+  async bounce(instanceId: string, opts?: { config?: Record<string, unknown> }): Promise<boolean> {
     const entry = this.plugins.get(instanceId);
     if (!entry) return this.refuse('bounce', instanceId, '不在注册表');
     if (entry.state === 'disabled') {
@@ -345,15 +342,17 @@ export class PluginManager {
     // await 也让出）——此窗口内把它覆写回 'pending' 会重新武装 entry，激活出
     // 一个注册表外的永生孤儿实例；停机后覆写则会把插件误写进持久化禁用清单。
     if (entry.state === 'disposed') return this.refuse('bounce', instanceId, '处于 disposed 终态');
+    // 旧调用方（JS 无类型约束）传 module 期望换码：拒绝而非静默跑旧代码，否则调用方以为换成功了。
+    if (opts && 'module' in opts) {
+      this.logger.warn(`bounce: 插件 "${instanceId}" 不再支持 module 热替换，改走 unload + register`);
+      return false;
+    }
 
     const newConfig = opts?.config;
-    const newModule = opts?.module;
-
     if (newConfig) {
       entry.config = newConfig;
       this.rootCtx.config.setPluginConfig(instanceId, newConfig);
     }
-    if (newModule) entry.module = newModule;
 
     // dispose 段守卫（与 disable / unload 对齐）：dispose 触发的反应式
     // recompute 不能在 entry 尚未转 pending 时跑——会把半 bounce 态误判。

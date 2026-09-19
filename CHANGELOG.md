@@ -8,6 +8,18 @@
 
 ---
 
+## 未发布（core 0.15.0 → 0.16.0）
+
+### `bounce` 不再接受 `module`（@aalis/core）
+
+`PluginManager.bounce(instanceId, { module })` 的模块热替换选项删除。它只换了模块引用，没有随之换新 `inject` 的依赖声明，
+也在按旧模块 `provides` 疏散下游之前就换了引用——新模块声明的必需依赖缺失时仍会被激活。仓内没有调用方。
+
+**迁移**：要在不改 instanceId 的前提下换代码，走 `await plugins.unload(id); await plugins.register(fresh, config, id)`。
+与旧 `bounce` 的差异：注册表里的位置重置（只影响 required 依赖成环时的声明序兜底）、多发一次 `plugin:unloaded`。
+`bounce(id, { config })` 与 `updateConfig` 不变。仍传 `module` 的调用（TypeScript 编译期报错；JavaScript 运行期）会记 warn 并返回 `false`，
+不会静默跑旧代码。
+
 ## 2026-09-19（core 0.15.0 minor；patch：api-tools 0.8.3 / plugin-tools 0.7.4 / plugin-webui-server 0.11.11）
 
 ### `whenService` 的 cleanup 先于 `onDispose` 执行（@aalis/core）
