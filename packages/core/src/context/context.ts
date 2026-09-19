@@ -92,7 +92,7 @@ export class Context {
   /** 存活的托管绑定与尚未落地的撤回：提供者的清理归属 → 引用计数。撤回落地即释放，不累积历史 */
   readonly #bindings = new Map<symbol, number>();
   /** 已发起、尚未落地的异步清理（手动退订、同键替换、换人时的旧撤回）：关闭必须等到它们 */
-  readonly #inflight = new Set<Promise<void>>();
+  readonly #inflight = new Map<Promise<void>, string>();
   #closing?: Promise<void>;
   /** 清理归属 → 激活：关停编排据此由容器条目认出提供者是哪次激活 */
   static readonly #byOwner = new Map<symbol, Context>();
@@ -145,12 +145,7 @@ export class Context {
           this.#events.unregisterByOwner(this.#owner);
         },
         // 段收口：段内任何回调（含别的句柄、清理段里的手动退订）发起的异步清理，关闭都等得到
-        settlePhase: () =>
-          this.#inflight.size === 0
-            ? undefined
-            : (async () => {
-                while (this.#inflight.size > 0) await Promise.all([...this.#inflight]);
-              })(),
+        settlePhase: timeoutMs => (this.#inflight.size === 0 ? undefined : this.#settleInflight(timeoutMs)),
         afterCleanup: () => {
           for (const svc of removedServices) {
             this.emitQuietly('service:unregistered', svc);
@@ -744,7 +739,9 @@ export class Context {
       child.trackActivation(applying);
       await applying;
     } catch (err) {
-      child.dispose();
+      // 回滚与其它关闭入口同一条路：编排子树、等异步清理落定之后再把失败交还调用方。
+      // applying 已落定，不存在自等自
+      await child.disposeAsync();
       throw err;
     }
     return {
@@ -872,7 +869,20 @@ export class Context {
       .then(() => {
         this.#inflight.delete(settled);
       });
-    this.#inflight.add(settled);
+    this.#inflight.set(settled, what);
+  }
+
+  /** 等在飞清理落定。超时的那几笔点名一次并出账——后面的段不再为同一笔重复计时 */
+  async #settleInflight(timeoutMs?: number): Promise<void> {
+    while (this.#inflight.size > 0) {
+      const batch = [...this.#inflight];
+      await awaitWithTimeout(Promise.all(batch.map(([work]) => work)), timeoutMs, limit => {
+        for (const [work, what] of batch) {
+          if (!this.#inflight.delete(work)) continue;
+          reportQuietly(() => this.logger.warn(`Context "${this.id}": 等待 ${what} 的撤回超过 ${limit}ms，放弃等待`));
+        }
+      });
+    }
   }
 
   /** @internal 关停编排读取：子激活与本激活此刻依赖的提供者激活 */
@@ -892,11 +902,18 @@ export class Context {
   }
 
   /**
-   * @internal 关停编排的截止点：置关闭位，此后本激活不再新增绑定（跟随不再挂新实例、登记被拒）。
-   * 编排先对本轮涉及的全部激活调它，再读取依赖关系建计划——排序依据冻结之后不会再挂到别的提供者。
+   * @internal 关停编排的截止点：置关闭位（此后本激活不再新增绑定：跟随不再挂新实例、登记被拒），
+   * 并登记「正由一张计划关闭」。返回该激活的完成信号（计划在它关完时调用）；已在别的计划里则返回
+   * undefined。登记之后对本激活的 disposeAsync 一律汇入那张计划，等的是本激活自己关完。
    */
-  freezeStage(): void {
+  joinPlan(): (() => void) | undefined {
+    if (this.#closing) return undefined;
     this.#lifecycle.markClosing();
+    let done!: () => void;
+    this.#closing = new Promise<void>(resolve => {
+      done = resolve;
+    });
+    return done;
   }
 
   /** @internal 关停编排的两个阶段：收尾，以及撤回加清理（不再重新编排子树） */
@@ -1003,14 +1020,14 @@ export class Context {
    *        无护栏地 join 会让调用方（如 `App.stop`）的停机上限失效。缺省不设限。
    */
   disposeAsync(timeoutMs?: number): Promise<void> {
-    // 没有子激活：没有可编排的东西，直接走内核（首个清理回调与本调用同栈发起）
-    if (this.#children.size === 0 && !this.#closing) return this.#lifecycle.disposeAsync(timeoutMs);
     if (this.#closing) {
       return awaitWithTimeout(this.#closing, timeoutMs, limit =>
         reportQuietly(() => this.logger.warn(`Context "${this.id}": 等待在飞拆卸超过 ${limit}ms，放弃等待`)),
       );
     }
-    this.#closing = closeActivations([this], timeoutMs, this.logger);
-    return this.#closing;
+    // 没有子激活：没有可编排的东西，直接走内核（首个清理回调与本调用同栈发起）
+    if (this.#children.size === 0) return this.#lifecycle.disposeAsync(timeoutMs);
+    const closing = closeActivations([this], timeoutMs, this.logger);
+    return closing;
   }
 }

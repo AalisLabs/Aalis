@@ -6,7 +6,7 @@ interface LifecycleOptions {
   /** 清理链结束后执行宿主收尾；两个阶段回调均为同步操作。 */
   afterCleanup?: () => void;
   /** 清理链每排空一段后调用：返回该段内发起、尚未落定的异步清理，链会等它（见 DisposableChain）。 */
-  settlePhase?: () => Promise<unknown> | undefined;
+  settlePhase?: (timeoutMs?: number) => Promise<unknown> | undefined;
   onTimeout?: (phase: 'initialization' | 'disposal', timeoutMs: number) => void;
   onError?: (error: unknown) => void;
 }
