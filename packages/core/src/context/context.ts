@@ -407,6 +407,10 @@ export class Context {
    *   且执行时本 ctx 自己的四原语登记已切断（监听不再收事件、自己 provide 的服务已下线）。
    *   依赖同一资源的最终提交与关闭要组织在同一个有序清理流程里（都放 onDispose，或都放 cleanup），
    *   不要一半靠 cleanup 一半靠 onDispose。
+   * - cleanup 可以是 async 的（签名仍是 `() => void`，返回 promise 本就可赋值）：拒绝被接住记 warn、
+   *   不逃逸；`disposeAsync` 等它落地——包括此前经手动退订或提供者切换启动、尚未完成的那些（超时
+   *   护栏同 onDispose）。提供者切换**不等**旧 cleanup 落地就挂新实例（对齐是同步的）。cleanup 里
+   *   不得 await 本 ctx 或祖先的拆卸（与 onDispose 同源约束）。
    * - 返回的 dispose 函数 idempotent，可手动调（多次安全）。
    * - 同名 provider 仅取 `getService(name)` 的胜者，多 entry 并存场景按容器优先级。
    *   **胜者不变则不动**：败者 entry 上下线不会触发重挂；胜者换人（含
@@ -434,21 +438,47 @@ export class Context {
       this.logger.warn(`Context "${this.id}" 已 dispose，忽略 whenService("${name}")`);
       return () => {};
     }
-    let cleanup: (() => void) | undefined;
+    /** cleanup 签名保持 `() => void`（返回 promise 本就可赋值，且不排斥返回 boolean 的 off）；返回值按 thenable 处理 */
+    let cleanup: (() => unknown) | undefined;
     let disposed = false;
     let syncing = false;
     /** 当前已挂载的胜者实例；undefined = 未挂载 */
     let attached: T | undefined;
+    /** 已启动、尚未落地的异步 cleanup（拒绝已接住）：拆卸的 disposeAsync 要等它们全部落地 */
+    const inflight = new Set<Promise<void>>();
 
     const runCleanup = (): void => {
       const previous = cleanup;
       cleanup = undefined;
       if (!previous) return;
       try {
-        previous();
+        const ret = previous();
+        if (ret && typeof (ret as PromiseLike<unknown>).then === 'function') {
+          const settled: Promise<void> = Promise.resolve(ret)
+            .then(
+              () => undefined,
+              err => this.logger.warn(`whenService('${name}') cleanup 拒绝（已忽略）:`, err),
+            )
+            .then(() => {
+              inflight.delete(settled);
+            });
+          inflight.add(settled);
+        }
       } catch (err) {
         this.logger.warn(`whenService('${name}') cleanup 抛错（已忽略）:`, err);
       }
+    };
+
+    /**
+     * 退订后的自移除：无在飞清理立即从链上摘除（不滞留闭包，对称 provide）；有则留到全部落地——
+     * 条目留在链上，拆卸的 disposeAsync 才等得到早先启动的清理。
+     */
+    const settleEntry = (): void => {
+      if (inflight.size === 0) {
+        this.#lifecycle.disposables.remove(dispose);
+        return;
+      }
+      Promise.all(inflight).then(settleEntry);
     };
 
     /**
@@ -484,6 +514,8 @@ export class Context {
         }
       } finally {
         syncing = false;
+        // 退订发生在本次对齐期间（回调或 cleanup 里自退订）：此时才知道有没有在飞清理，自移除放在这里
+        if (disposed) settleEntry();
       }
     };
 
@@ -498,15 +530,18 @@ export class Context {
       if (svcName === name) sync();
     });
 
-    const dispose = (): void => {
-      if (disposed) return;
-      disposed = true;
-      this.#lifecycle.disposables.remove(dispose); // 自移除，不滞留闭包（对称 provide）
-      offReg();
-      offUnreg();
-      offPref();
-      runCleanup();
-      attached = undefined;
+    const dispose = (): Promise<void> | undefined => {
+      if (!disposed) {
+        disposed = true;
+        offReg();
+        offUnreg();
+        offPref();
+        runCleanup();
+        attached = undefined;
+        if (!syncing) settleEntry();
+      }
+      // 链排空时经此返回在飞清理的合流，disposeAsync 按超时护栏等它；手动调用不承诺返回值
+      return inflight.size === 0 ? undefined : Promise.all(inflight).then(() => undefined);
     };
 
     // 挂撤回段：枢纽登记在用户清理跑之前撤净，半拆的 ctx 不再被枢纽派活（与四原语的 beforeCleanup 同一承诺）
