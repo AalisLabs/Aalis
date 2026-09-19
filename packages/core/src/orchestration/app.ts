@@ -191,6 +191,7 @@ export class App {
     // 4. 注册核心服务
     this.ctx.provide('app', this);
     this.ctx.provide('plugins', this.plugins);
+    this.ctx.provide('host-config', config);
 
     // 5. 应用启动时已存在的服务偏好
     const initialPrefs = config.getServicePreferences();
