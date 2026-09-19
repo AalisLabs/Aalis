@@ -119,6 +119,8 @@ ctx.whenService('llm', llm => {
   // provider 就绪时调用；返回的清理函数在 provider 下线或 ctx dispose 时执行。
   // 它是对外绑定的撤回：拆卸时先于全部 onDispose 回调执行——最终提交与关闭若依赖同一资源，
   // 要组织在同一个有序清理流程里（都放 onDispose，或都放这里），不要一半一半。
+  // 可以返回 Promise：拒绝被接住记 warn，disposeAsync 等它落地（含手动退订或提供者切换时启动的）；
+  // 提供者切换不等旧清理落地就挂新实例。
   const off = llm.onChunk(handle);
   return () => off();
 });
