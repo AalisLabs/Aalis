@@ -67,13 +67,10 @@ export interface PluginManagerService {
   /** 获取单个插件条目 */
   getPlugin(instanceId: string): PluginEntry | undefined;
   /**
-   * 增量重载单个插件：dispose 旧 ctx → 转 pending → softReload 重新激活。`opts.config` 同时写回配置；
-   * `opts.module` 热替换模块引用（重新从磁盘 import 是宿主的事）。插件要重启自己就调它。
+   * 增量重载单个插件：dispose 旧 ctx → 转 pending → softReload 重新激活。`opts.config` 同时写回配置。
+   * 插件要重启自己就调它。不换模块——要换代码走 `unload` + `register`。
    */
-  bounce(
-    instanceId: string,
-    opts?: { config?: Record<string, unknown>; module?: PluginEntry['module'] },
-  ): Promise<boolean>;
+  bounce(instanceId: string, opts?: { config?: Record<string, unknown> }): Promise<boolean>;
   /** 更新插件配置并热重载：`bounce(instanceId, { config })` 的薄壳 */
   updateConfig(instanceId: string, config: Record<string, unknown>): Promise<boolean>;
   /** 启用插件 */
