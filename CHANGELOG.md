@@ -8,7 +8,7 @@
 
 ---
 
-## 未发布（core 0.14.0 → 0.15.0）
+## 2026-09-19（core 0.15.0 minor；patch：api-tools 0.8.3 / plugin-tools 0.7.4 / plugin-webui-server 0.11.11）
 
 ### `whenService` 的 cleanup 先于 `onDispose` 执行（@aalis/core）
 
