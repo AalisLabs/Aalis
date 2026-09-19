@@ -322,12 +322,9 @@ export function useToolService(ctx: Context): ScopedToolService {
     return s;
   }
 
-  /**
-   * 关闭后登记：与 core 登记面同口径（warn + no-op）。判据是「绑定挂不上」而非裸 `ctx.disposed`——
-   * 拆卸窗口内（等在飞 apply）已挂载的绑定仍能登记且随撤回段一起摘净；没绑定或已撤回的才真挂不上。
-   */
+  /** 关闭后登记：与 core 登记面（`on` / `whenService`）同口径——`ctx.disposed` 即 warn + no-op。 */
   function refused(key: string): (() => void) | undefined {
-    if (!ctx.disposed || bindings.get(ctx)?.svc) return undefined;
+    if (!ctx.disposed) return undefined;
     ctx.logger.warn(`Context "${contextId}" 已 dispose，忽略 tools 登记 "${key}"`);
     return () => {};
   }
