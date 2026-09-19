@@ -36,6 +36,7 @@ export {
 
 // ----- 服务描述符与按激活绑定（原型）-----
 export {
+  asServiceRef,
   type BindingPort,
   type BoundOf,
   defineService,
@@ -44,6 +45,7 @@ export {
   type Registrar,
   type ServiceDescriptor,
   type ServiceRef,
+  type ServiceSource,
   serviceRef,
   type Uses,
 } from './context/binding.js';

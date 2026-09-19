@@ -138,6 +138,30 @@ export function serviceRef<P>(port: BindingPort<P>, extra?: object): ServiceRef<
   return extra ? Object.assign(ref, extra) : ref;
 }
 
+/**
+ * UNIFY-TRANSITION：契约包的 helper 在迁移期同时接受旧 Context 与 ServiceRef。
+ * 全部调用方迁完后，连同各 helper 参数里的联合类型一起删除，只留 ServiceRef。
+ */
+export type ServiceSource<P> = ServiceRef<P> | Context;
+
+/** UNIFY-TRANSITION：见 {@link ServiceSource} */
+export function asServiceRef<P>(source: ServiceSource<P>, name: string): ServiceRef<P> {
+  if (!('getAllServices' in source)) return source;
+  const ctx = source;
+  return {
+    get current() {
+      return ctx.getService<P>(name);
+    },
+    require() {
+      const provider = ctx.getService<P>(name);
+      if (provider === undefined) throw new Error(`服务不可用（"${name}" 当前没有提供者）`);
+      return provider;
+    },
+    all: () => ctx.getAllServices<P>(name),
+    follow: attach => ctx.whenService<P>(name, provider => attach(provider) as undefined | (() => void)),
+  };
+}
+
 /** 内置能力的标记：绑的是激活自身，不参与激活闸，也不产生依赖边 */
 // 全局 symbol：装了两份 core 时另一份副本的内置描述符仍被认出，随后在 activationOf 处明确报错，
 // 而不是被当成普通服务名永远等不到提供者
