@@ -144,6 +144,31 @@ describe('whenService 异步 cleanup', () => {
     expect(warnings.some(w => w.includes('whenService:svc') && w.includes('超过 30ms'))).toBe(true);
   });
 
+  it('宿主 logger sink 抛错：拒绝仍不逃逸，在飞集合照常排空、条目照常自移除', async () => {
+    const boom = (message: unknown) => {
+      if (String(message).includes('cleanup 拒绝')) throw new Error('sink boom');
+    };
+    const logger = { debug() {}, info() {}, warn: boom, error: boom, child: () => logger } as unknown as Logger;
+    const root = new Context({
+      id: 'root',
+      events: new EventBus(),
+      services: new ServiceContainer(),
+      hooks: new HookRegistry(),
+      contributions: new ContributionRegistry(),
+      logger,
+      config: new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} }),
+    });
+    roots.push(root);
+    root.provide('svc', {});
+    const ctx = root.fork('p');
+    const base = ctx.disposableCount;
+    const { cleanup } = slowCleanup(10, 'boom');
+    const off = ctx.whenService('svc', () => cleanup);
+    off();
+    await sleep(40);
+    expect(ctx.disposableCount, 'sink 抛错不得让在飞集合永不排空').toBe(base);
+  });
+
   it('同步 dispose() 不等待，但拒绝同样被接住', async () => {
     const { root, warnings } = makeWorld();
     root.provide('svc', {});

@@ -6,8 +6,9 @@ export interface CleanupReporter {
 /**
  * 清理链的两段，排空时按此顺序：`withdraw`（撤回交到别人手里的登记）先，`cleanup`（释放自有资源）后。
  * 分段只约束**排空快照内**的次序：撤回段先、清理段后、各段内部逆序；排空开始后的迟到登记仍立即执行。
+ * kernel 不出包，本类型不导出（未用导出会被 knip 拦下）。
  */
-export type DisposePhase = 'withdraw' | 'cleanup';
+type DisposePhase = 'withdraw' | 'cleanup';
 
 const PHASES: readonly DisposePhase[] = ['withdraw', 'cleanup'];
 
