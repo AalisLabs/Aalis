@@ -113,12 +113,12 @@ service-up / service-down 在第二轮起退化为 plugin-state-changed，避免
 本插件会被 dispose + reapply；下游是否被级联 evict 取决于各下游插件的
 `requiresBounceOnDepChange`（默认 false 不级联）。
 
-### `bounce(instanceId, opts?: { config?, module? }): Promise<boolean>`
+### `bounce(instanceId, opts?: { config? }): Promise<boolean>`
 
 增量重载单个插件的统一入口：
 - 可选 `opts.config`：同时写回 ConfigManager + entry.config
-- 可选 `opts.module`：热替换 module 引用（热重载代码场景）
 - dispose 旧 ctx → 粗状态转 pending → `recompute({type:'plugin-state-changed'})`
+- 不换模块：重新激活跑的仍是注册时的那份代码。要换代码（热重载）走 `unload(id)` + `register(fresh, config, id)`
 - 下游是否被级联 evict：仅当下游声明 `requiresBounceOnDepChange: true` 时才级联，
   默认不动。详见 [plugin-author-guide §3.5](../plugin-author-guide.md#_3-5-级联契约-opt-in-requiresbounceondepchange)。
 
