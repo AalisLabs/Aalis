@@ -57,8 +57,9 @@ const groupTools = toolsWithGroups(tools, ['my-group']);
 groupTools.register({ definition, handler });   // 自动 groups: ['my-group']
 ```
 
-helper 内部封装了 `ctx.getService('tools')` 与 `whenService` 延迟逻辑：
-服务尚未 provide 时 `register` 调用会被自动延迟到服务就绪，调用方无需关心顺序。
+helper 内部为每个 Context 维护一份绑定，经一条 `whenService` 订阅跟随 `tools` 提供者：
+服务尚未 provide 时 `register` 调用会被自动延迟到服务就绪，提供者换人时整体重挂，调用方无需关心顺序。
+同一 Context 内同名（工具名 / 分组名）是替换语义——新登记顶掉旧登记，旧登记的退订闭包随即失效，不会误删新登记。
 
 ## 事件（AalisEvents）
 
