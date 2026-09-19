@@ -322,18 +322,33 @@ export function useToolService(ctx: Context): ScopedToolService {
     return s;
   }
 
+  /**
+   * 关闭后登记：与 core 登记面同口径（warn + no-op）。判据是「绑定挂不上」而非裸 `ctx.disposed`——
+   * 拆卸窗口内（等在飞 apply）已挂载的绑定仍能登记且随撤回段一起摘净；没绑定或已撤回的才真挂不上。
+   */
+  function refused(key: string): (() => void) | undefined {
+    if (!ctx.disposed || bindings.get(ctx)?.svc) return undefined;
+    ctx.logger.warn(`Context "${contextId}" 已 dispose，忽略 tools 登记 "${key}"`);
+    return () => {};
+  }
+
   return {
     register: tool => {
+      const name = tool.definition.function.name;
+      const refuse = refused(name);
+      if (refuse) return refuse;
       const b = bind(ctx);
       return addBound(
         b.tools,
-        tool.definition.function.name,
+        name,
         tool,
         s => s.register(tool, contextId),
         () => b.svc,
       );
     },
     registerGroup: group => {
+      const refuse = refused(group.name);
+      if (refuse) return refuse;
       const b = bind(ctx);
       return addBound(
         b.groups,
@@ -369,6 +384,10 @@ export function toolsWithGroups(tools: ScopedToolService, groups: string[]): Sco
         ...tool,
         groups: [...(tool.groups ?? []), ...groups],
       }),
+    // 展开会把 getter 求值成构造时的快照；raw 必须活取才能跟着提供者换人
+    get raw() {
+      return tools.raw;
+    },
   };
 }
 
