@@ -126,6 +126,39 @@ describe('whenService cleanup 走撤回段', () => {
     expect(order).toEqual(['withdraw:B', 'late', 'withdraw:A', 'cleanup:early']);
   });
 
+  it('拆卸窗口内的服务事件不引爆 cleanup：子级联摘掉提供者时，父的 cleanup 仍等到自己的撤回段', async () => {
+    const root = makeRoot();
+    const parent = root.fork('parent');
+    parent.provide('own', {});
+    parent.fork('child').provide('dep', {});
+    let ownVisibleAtCleanup: boolean | undefined;
+    parent.whenService('dep', () => () => {
+      // 撤回段跑在 beforeCleanup 之后：本 ctx 自己 provide 的服务此刻应已下线
+      ownVisibleAtCleanup = parent.getService('own') !== undefined;
+    });
+    await parent.disposeAsync();
+    expect(ownVisibleAtCleanup, 'cleanup 若在子级联期间被 service:unregistered 引爆，四原语尚未切断').toBe(false);
+  });
+
+  it('拆卸窗口内提供者重新上线：关闭中的 ctx 不再挂新实例', async () => {
+    const root = makeRoot();
+    const parent = root.fork('parent');
+    const child = parent.fork('child');
+    const offDep = root.provide('dep', { id: 'old' });
+    const attached: string[] = [];
+    parent.whenService<{ id: string }>('dep', svc => {
+      attached.push(svc.id);
+    });
+    // 子的异步 onDispose 撑开父的拆卸窗口（父在 beforeCleanup 之前等子级联）
+    child.onDispose(async () => {
+      offDep();
+      root.provide('dep', { id: 'new' });
+      await new Promise(r => setTimeout(r, 10));
+    });
+    await parent.disposeAsync();
+    expect(attached).toEqual(['old']);
+  });
+
   it('手动退订仍从链上自移除，撤回段不滞留闭包', () => {
     const root = makeRoot();
     root.provide('svc', {});

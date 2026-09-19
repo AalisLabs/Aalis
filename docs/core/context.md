@@ -78,15 +78,15 @@
 
 ### `ctx.dispose()` / `ctx.disposeAsync(timeoutMs?)`
 
-两者语义相同，`dispose()` 同步返回（异步清理不等待）、`disposeAsync` 逆序串行等待每个异步清理完成（编排层用）：
+两者语义相同，`dispose()` 同步返回（异步清理不等待）、`disposeAsync` 按段串行等待每个异步清理完成（撤回段先、清理段后，段内逆序；编排层用）：
 
 1. 级联销毁所有子 Context
 2. 按本次激活的 owner 撤回四原语登记：服务、中间件、贡献、事件监听（在清理链**之前**——异步等待窗口内半拆插件不再响应事件与消息、不再被组装器收集）
 3. 清理链撤回段：逆序执行 `whenService` 的 cleanup（经枢纽服务交出去的登记在这里撤回）
-4. 清理链清理段：逆序执行 `onDispose` 回调——此时本 Context 对外的登记已全部撤回，外部不会再把活派进来
-5. 触发服务自清理协议：实现 `unregisterByPlugin(id)` 的服务会被通知清理该 Context 的注册项（不经 `whenService` 的裸登记靠它兜底）
+4. 清理链清理段：逆序执行 `onDispose` 回调——此时四原语登记与经 `whenService` 交出去的登记已撤回；不经 `whenService` 的裸登记仍待第 5 步兜底
+5. 触发服务自清理协议：实现 `unregisterByPlugin(id)` 的服务会被通知清理该 Context 的注册项——不经 `whenService` 的裸登记只有在服务实现了该协议时才被兜底
 
-清理链的分段只约束排空快照内的次序；排空开始后迟到登记的清理仍立即执行。
+清理链的分段只约束排空快照内的次序；排空开始后迟到登记的清理仍立即执行。异步 cleanup 只在 `disposeAsync` 路径被等待，`dispose()` 不等：启动次序两条路径一致，落地次序只有 `disposeAsync` 保证。
 
 `disposeAsync` 的 `timeoutMs`（App 经 `AppOptions.disposeTimeoutMs` 注入，默认 5000）是单个异步清理项的等待上限：超时放弃该项、继续后续清理并 warn 点名，保证网络类关闭卡死时停机仍能走完。
 

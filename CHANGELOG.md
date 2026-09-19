@@ -18,7 +18,7 @@ webui 等枢纽服务交出去的登记仍在册，半拆的插件还会被枢�
 
 **迁移**：凡是"关闭在 `whenService` 的 cleanup、最终提交在 `onDispose`"的写法，顺序会从"提交 → 关闭"反转为"关闭 → 提交"。
 依赖同一资源的最终提交与关闭要组织在同一个有序清理流程里——都放 `onDispose`（推荐），或都放 cleanup。
-公开签名无变化；只调枢纽 `off()` 的 cleanup（第一方全部如此）不受影响。分段只约束排空快照内的次序，排空期间迟到登记的清理仍立即执行。
+公开签名无变化；只调枢纽 `off()` 的 cleanup 不受影响（第一方已逐处核过）。分段只约束排空快照内的次序，排空期间迟到登记的清理仍立即执行。
 
 ## 2026-09-18（core 0.14.0 minor；patch：runtime 0.12.5 / api-commands 0.5.2 / api-tools 0.8.2 / api-webui 0.9.3 / plugin-adapter-onebot 0.12.4 / plugin-commands 0.10.1 / plugin-flow-control 0.9.4 / plugin-mcp-client 0.10.3 / plugin-persona 0.9.5 / plugin-skills 0.10.3 / plugin-tool-onebot 0.9.3 / plugin-tools 0.7.3 / plugin-webui-server 0.11.10）
 
