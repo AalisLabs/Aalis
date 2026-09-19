@@ -3,10 +3,19 @@ export interface CleanupReporter {
   warn(message: string, ...args: unknown[]): void;
 }
 
+/**
+ * 清理链的两段，排空时按此顺序：`withdraw`（撤回交到别人手里的登记）先，`cleanup`（释放自有资源）后。
+ * 分段只约束**排空快照内**的次序：撤回段先、清理段后、各段内部逆序；排空开始后的迟到登记仍立即执行。
+ */
+export type DisposePhase = 'withdraw' | 'cleanup';
+
+const PHASES: readonly DisposePhase[] = ['withdraw', 'cleanup'];
+
 interface Entry {
   fn: () => unknown;
   /** 可选来源标注，仅用于诊断日志（超时/抛错时点名是哪一项）。 */
   label?: string;
+  phase: DisposePhase;
 }
 
 /** 诊断用的条目标识：有 label 用 label，否则退到链内序号；两者都没有则不加缀。 */
@@ -19,10 +28,10 @@ function describe(label?: string, index?: number): string {
  * 一次性清理器链
  *
  * 用途：Context 及其他需要累积「注册 → 卸载」副作用的场景，提供：
- * - `push(fn, label?)` 追加清理函数（label 仅进诊断日志）
+ * - `push(fn, label?, phase?)` 追加清理函数（label 仅进诊断日志；phase 见 {@link DisposePhase}，默认 cleanup）
  * - `remove(fn)` 精确移除单个清理函数（不执行）
- * - `dispose()` 同步逆序调用所有清理函数并清空；期间任一抛错不影响其他
- * - `disposeAsync(timeoutMs?)` 逆序**串行等待**每个清理函数（含异步返回值）
+ * - `dispose()` 同步按段逆序调用所有清理函数并清空；期间任一抛错不影响其他
+ * - `disposeAsync(timeoutMs?)` 按段逆序**串行等待**每个清理函数（含异步返回值）
  *
  * 相比散落的 `this._disposables: (() => void)[]`，集中管理能避免
  * 「忘记 push / 忘记清空 / 错误处理不一致」等低级 bug。
@@ -39,8 +48,8 @@ export class DisposableChain {
     reportQuietly(() => this.logger?.warn(message, ...args));
   }
 
-  /** 追加一个清理函数。dispose 后追加会立刻执行（异步返回值不等待，拒绝记 warn）。 */
-  push(fn: () => unknown, label?: string): void {
+  /** 追加一个清理函数。dispose 后追加会立刻执行（异步返回值不等待，拒绝记 warn），与段无关。 */
+  push(fn: () => unknown, label?: string, phase: DisposePhase = 'cleanup'): void {
     if (this.taken) {
       try {
         this.settle(fn(), describe(label));
@@ -49,7 +58,7 @@ export class DisposableChain {
       }
       return;
     }
-    this.items.push({ fn, label });
+    this.items.push({ fn, label, phase });
   }
 
   /**
@@ -101,24 +110,27 @@ export class DisposableChain {
   }
 
   /**
-   * 同步逆序执行所有清理函数并清空。重复调用无效果。
+   * 同步执行所有清理函数并清空：撤回段先、清理段后，段内逆序。重复调用无效果。
    * 单个函数抛错被 swallow（经 logger 记 warn——清理失败是泄漏的头号成因，必须默认可见）；
    * 异步返回值**不等待**但拒绝同样记 warn——需要等待落盘类清理时用 {@link disposeAsync}。
    */
   dispose(): void {
     if (this.taken) return;
     const items = this.take();
-    for (let i = items.length - 1; i >= 0; i--) {
-      try {
-        this.settle(items[i].fn(), describe(items[i].label, i));
-      } catch (err) {
-        this.report(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
+    for (const phase of PHASES) {
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (items[i].phase !== phase) continue;
+        try {
+          this.settle(items[i].fn(), describe(items[i].label, i));
+        } catch (err) {
+          this.report(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
+        }
       }
     }
   }
 
   /**
-   * 逆序**串行**等待所有清理函数完成。
+   * 按段**串行**等待所有清理函数完成：撤回段先、清理段后，段内逆序。
    *
    * 串行而非并发是刻意的：逆序是本类对外承诺的语义（消费侧清理先于提供侧），
    * 落盘类清理常有顺序依赖。单项抛错/拒绝被隔离，不中断后续清理。
@@ -130,14 +142,17 @@ export class DisposableChain {
   async disposeAsync(timeoutMs?: number): Promise<void> {
     if (this.taken) return;
     const items = this.take();
-    for (let i = items.length - 1; i >= 0; i--) {
-      try {
-        const ret = items[i].fn();
-        if (ret && typeof (ret as PromiseLike<unknown>).then === 'function') {
-          await this.awaitWithTimeout(Promise.resolve(ret), timeoutMs, describe(items[i].label, i));
+    for (const phase of PHASES) {
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (items[i].phase !== phase) continue;
+        try {
+          const ret = items[i].fn();
+          if (ret && typeof (ret as PromiseLike<unknown>).then === 'function') {
+            await this.awaitWithTimeout(Promise.resolve(ret), timeoutMs, describe(items[i].label, i));
+          }
+        } catch (err) {
+          this.report(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
         }
-      } catch (err) {
-        this.report(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
       }
     }
   }

@@ -42,8 +42,8 @@ describe('ToolRegistry 退订按条目身份', () => {
 
   it('工具分组同一口径', () => {
     const reg = new ToolRegistry(silentLogger());
-    const oldOff = reg.registerGroup({ name: 'g', description: 'old' }, 'p');
-    reg.registerGroup({ name: 'g', description: 'new' }, 'p');
+    const oldOff = reg.registerGroup({ name: 'g', label: 'g', description: 'old' }, 'p');
+    reg.registerGroup({ name: 'g', label: 'g', description: 'new' }, 'p');
 
     oldOff();
     expect(reg.getGroups().map(g => g.description)).toEqual(['new']);
