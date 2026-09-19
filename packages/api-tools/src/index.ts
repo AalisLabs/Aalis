@@ -179,14 +179,12 @@ export interface ToolService {
   getGroups(): ToolGroupInfo[];
 }
 
-// ===== 领域便捷封装（M2：Mixin→Service 收编后的 API）=====
+// ===== 领域便捷封装 =====
 //
 // useToolService(ctx) 是 api-tools 暴露给消费端的 helper：
-// - 自动 inject 检查（找不到服务时抛出明确错误）
+// - 自动 inject 检查（读 API 找不到服务时抛出明确错误）
 // - 自动用 ctx.id 填充 pluginName 字段
-// - 仅做参数透传，零额外语义
-//
-// 这取代了原 `ctx.registerTool` / `ctx.registerToolGroup` mixin。
+// - 登记经每 Context 一份的绑定跟随 tools 提供者（见 bind）
 //
 // 用法：
 //   import { useToolService } from '@aalis/api-tools';
@@ -197,9 +195,12 @@ export interface ToolService {
 
 /** ToolService 绑定到当前 Context 的便捷视图（pluginName 自动填充） */
 export interface ScopedToolService {
-  /** 注册工具。服务未就绪时通过 whenService 自动延迟到就绪后执行（与原 mixin 语义一致）。 */
+  /**
+   * 注册工具。服务未就绪时延迟到就绪后执行，提供者换人自动重挂。
+   * 同一 Context 内同名是**替换**：新登记顶掉旧登记，旧登记的退订闭包随即失效（不会误删新登记）。
+   */
   register(tool: Omit<RegisteredTool, 'pluginName'>): () => void;
-  /** 注册工具分组。服务未就绪时通过 whenService 自动延迟。 */
+  /** 注册工具分组。就绪 / 重挂 / 同名替换语义同 {@link register}。 */
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void;
   getDefinitions: ToolService['getDefinitions'];
   getSummaries: ToolService['getSummaries'];
@@ -244,6 +245,69 @@ export function asToolExecutionResult(result: string | ToolExecutionResult): Too
   return typeof result === 'string' ? { content: result } : result;
 }
 
+/** 绑定里的一条登记：item 是交给枢纽的载荷，off 是当前提供者返回的退订（未挂载为 undefined） */
+interface BoundEntry<T> {
+  item: T;
+  off?: () => void;
+}
+
+/**
+ * 每个 Context 一份绑定：经 helper 的全部登记记在这里，整体经**一条** `whenService` 订阅跟随 tools
+ * 提供者——上线 / 换人时一次回调重挂全部，下线 / 拆卸时按条目摘。此前一条登记一条订阅：同名覆盖不退订，
+ * 提供者重挂时早已退场的旧登记会复活；每条登记三个 service:* 监听，广播与重挂成本随登记数线性增长。
+ */
+interface Binding {
+  svc: ToolService | undefined;
+  tools: Map<string, BoundEntry<Omit<RegisteredTool, 'pluginName'>>>;
+  groups: Map<string, BoundEntry<Omit<ToolGroupInfo, 'pluginName'>>>;
+}
+
+const bindings = new WeakMap<Context, Binding>();
+
+function bind(ctx: Context): Binding {
+  const existing = bindings.get(ctx);
+  if (existing) return existing;
+  const b: Binding = { svc: undefined, tools: new Map(), groups: new Map() };
+  bindings.set(ctx, b);
+  const contextId = ctx.id;
+  ctx.whenService<ToolService>('tools', s => {
+    b.svc = s;
+    for (const e of b.groups.values()) e.off = s.registerGroup(e.item, contextId);
+    for (const e of b.tools.values()) e.off = s.register(e.item, contextId);
+    return () => {
+      b.svc = undefined;
+      for (const e of [...b.tools.values(), ...b.groups.values()]) {
+        e.off?.();
+        e.off = undefined;
+      }
+    };
+  });
+  return b;
+}
+
+/**
+ * 向绑定加一条登记：同名先摘旧登记（替换语义，与 core 对贡献点的同键替换同口径）；提供者在场立即登记。
+ * 返回的退订按条目身份比对——被同名替换后的旧闭包是 no-op。
+ */
+function addBound<T>(
+  map: Map<string, BoundEntry<T>>,
+  key: string,
+  item: T,
+  registerNow: (svc: ToolService) => () => void,
+  current: () => ToolService | undefined,
+): () => void {
+  map.get(key)?.off?.();
+  const svc = current();
+  const entry: BoundEntry<T> = { item, off: svc ? registerNow(svc) : undefined };
+  map.set(key, entry);
+  return () => {
+    if (map.get(key) !== entry) return;
+    map.delete(key);
+    entry.off?.();
+    entry.off = undefined;
+  };
+}
+
 export function useToolService(ctx: Context): ScopedToolService {
   const contextId = ctx.id;
 
@@ -259,8 +323,26 @@ export function useToolService(ctx: Context): ScopedToolService {
   }
 
   return {
-    register: tool => ctx.whenService<ToolService>('tools', s => s.register(tool, contextId)),
-    registerGroup: group => ctx.whenService<ToolService>('tools', s => s.registerGroup(group, contextId)),
+    register: tool => {
+      const b = bind(ctx);
+      return addBound(
+        b.tools,
+        tool.definition.function.name,
+        tool,
+        s => s.register(tool, contextId),
+        () => b.svc,
+      );
+    },
+    registerGroup: group => {
+      const b = bind(ctx);
+      return addBound(
+        b.groups,
+        group.name,
+        group,
+        s => s.registerGroup(group, contextId),
+        () => b.svc,
+      );
+    },
     getDefinitions: (...args) => need().getDefinitions(...args),
     getSummaries: (...args) => need().getSummaries(...args),
     getAll: (...args) => need().getAll(...args),
