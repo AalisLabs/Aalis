@@ -47,12 +47,13 @@ export {
 } from './context/binding.js';
 export {
   config,
-  type DefaultCaps,
   type Events,
   events,
   type LifecycleCap,
   lifecycle,
   logger,
+  type Provide,
+  provide,
   type Services,
   services,
 } from './context/builtins.js';
