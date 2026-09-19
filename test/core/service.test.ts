@@ -88,12 +88,14 @@ describe('ServiceContainer unregisterByOwner', () => {
 });
 
 describe('ServiceContainer 枚举口', () => {
-  it('getEntries 返回快照：改动返回值不影响容器', () => {
+  it('getAll 返回投影快照：改动返回值（数组与元素）都不影响容器', () => {
     const c = new ServiceContainer();
-    c.register('__t:llm', { v: 1 }, 'plugin-a');
-    const entries = c.getEntries('__t:llm');
-    entries.length = 0;
-    expect(c.getEntries('__t:llm')).toHaveLength(1);
+    c.register('__t:llm', { v: 1 }, 'plugin-a', undefined, { priority: 5 });
+    const views = c.getAll('__t:llm');
+    views[0]!.priority = 999;
+    views[0]!.contextId = 'hijacked';
+    views.length = 0;
+    expect(c.getAll('__t:llm')).toEqual([{ instance: { v: 1 }, contextId: 'plugin-a', priority: 5, label: undefined }]);
     expect(c.get('__t:llm')).toEqual({ v: 1 });
   });
 });
