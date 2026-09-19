@@ -15,7 +15,7 @@ import type { Context } from '../context/context.js';
 import type { Logger } from '../context/logger.js';
 
 import { type ActivationDeps, activatePlugin, computeTargetState, retireEntry } from './plugin-activation.js';
-import { evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
+import { closeOrder, evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
 
 export type { PluginEntry, PluginModule, PluginState };
 // 类型与纯辅助 re-export，保留同名旧导入路径
@@ -506,8 +506,13 @@ export class PluginManager {
       const entries = [...this.plugins.values()];
       const order = topoSortByDeps(entries, this.logger);
 
-      // Phase A: 反向遍历，关掉目标不是 active 的 active entry
-      for (const entry of [...order].reverse()) {
+      // Phase A: 关掉目标不是 active 的 active entry，消费者先、提供者后。
+      // 停机按实际绑定排序（含 optional、子模块、仍在撤回的旧绑定）；运行期的级联仍用声明拓扑的逆序。
+      const closing =
+        currentReason.type === 'shutdown'
+          ? closeOrder(entries, service => this.rootCtx.serviceContainer.getAll(service)[0]?.contextId, this.logger)
+          : [...order].reverse();
+      for (const entry of closing) {
         if (entry.state !== 'active') continue;
         const target = computeTargetState(entry, currentReason, this.rootCtx, serviceDowns);
         if (target === 'active') continue;
