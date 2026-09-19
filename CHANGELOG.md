@@ -8,7 +8,7 @@
 
 ---
 
-## 未发布（core 0.15.0 → 0.16.0）
+## 2026-09-20（core 0.16.0 minor；patch：api-tools 0.8.4 / plugin-agent 0.13.6）
 
 ### `bounce` 不再接受 `module`（@aalis/core）
 
