@@ -133,13 +133,23 @@ export function useXxx(ctx: Context) {
 }
 ```
 
-绑定版多给三条保证：同名替换后旧退订闭包失效、不复活；提供者换人对同一 Context 是整体重挂，任一微任务观察到的都是 0 条或全部；
-关闭后登记与 `ctx.on` 同口径（warn、不进枢纽）。`@aalis/api-tools` 的 `useToolService` 是这个形状的现行实现。
+绑定版多给两条保证：同名替换后旧退订闭包失效、不复活；提供者换人对同一 Context 是整体重挂，任一微任务观察到的都是 0 条或全部。
+关闭后登记的口径（warn、不进枢纽）一行委托版由 `whenService` 的入口守卫兜底，绑定版绕过它直连枢纽，必须自己在入口判
+`ctx.disposed`，否则就成了绑定版独有的漏。`@aalis/api-tools` 的 `useToolService` 是这个形状的现行实现。
 
-枢纽的退订若是异步的（摘登记要等远端确认），绑定的批量撤回要合并等待，否则 `disposeAsync` 等不到它们：
+枢纽的退订若是异步的（摘登记要等远端确认），绑定的批量撤回要合并等待，否则 `disposeAsync` 等不到它们。cleanup 的两句脱挂照旧，
+只把逐条 `off` 换成合并等待：
 
 ```ts
-return () => Promise.all([...b.items.values()].map(e => e.off?.())).then(() => undefined);
+return () => {
+  b.svc = undefined;
+  const offs = [...b.items.values()].map(e => {
+    const settled = e.off?.();
+    e.off = undefined;
+    return settled;
+  });
+  return Promise.all(offs).then(() => undefined);
+};
 ```
 
 `whenService` 的 cleanup 返回 promise 即被等待（拒绝记 warn、不逃逸）；此时契约包里的 `register` 应声明返回 `() => Promise<void>`。
