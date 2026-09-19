@@ -108,6 +108,19 @@ class FakeToolService implements ToolService {
   }
 }
 
+/** 桥接函数只要两样能力：绑定好的 tools 门面与 logger——不必伪造运行时 */
+function makeBridgeCaps(toolService: FakeToolService) {
+  return {
+    logger: makeLogger(),
+    tools: {
+      register: (tool: Parameters<FakeToolService['register']>[0]) => toolService.register(tool, 'test-mcp-client'),
+      registerGroup: () => () => {},
+      current: undefined,
+    },
+  };
+}
+
+// mcp-server 尚未迁移，仍吃 Context：原型期保留它的桩
 /** 极简 Context stub，覆盖 useToolService 用到的字段 */
 function makeFakeCtx(toolService: FakeToolService): Context {
   const logger = makeLogger();
@@ -354,7 +367,7 @@ describe('plugin-mcp-client — bridgeClientToTools 把远端 MCP 工具注册�
   it('注册的工具名带 mcp_<id>_ 前缀，且 inputSchema 被规范化', async () => {
     const { client, server } = await setupRemote();
     const tools = new FakeToolService();
-    await bridgeClientToTools(makeFakeCtx(tools), client, { id: 'remote', command: '<irrelevant>' });
+    await bridgeClientToTools(makeBridgeCaps(tools), client, { id: 'remote', command: '<irrelevant>' });
 
     const registered = tools.list();
     expect(registered).toHaveLength(2);
@@ -384,7 +397,7 @@ describe('plugin-mcp-client — bridgeClientToTools 把远端 MCP 工具注册�
   it('调用桥接后的工具 → 透传到远端 MCP server，返回文本内容', async () => {
     const { client, server, calls } = await setupRemote();
     const tools = new FakeToolService();
-    await bridgeClientToTools(makeFakeCtx(tools), client, { id: 'remote', command: '<irrelevant>' });
+    await bridgeClientToTools(makeBridgeCaps(tools), client, { id: 'remote', command: '<irrelevant>' });
 
     const result = await tools.execute('mcp_remote_greet', { who: 'aalis' }, {
       sessionId: 's',

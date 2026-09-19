@@ -136,22 +136,6 @@ export class Context {
           this.#contributionDisposers.clear();
           this.#moduleIds.clear();
 
-          // 枢纽服务的清扫协议属于 Core，不下沉资源生命周期层。传 this.id 而非 this.#owner 是刻意的：
-          // 枢纽的登记本在服务自己手里，钥匙必须是插件作者写得出的那把（判据见 DisposableService）。
-          // 同名多 entry 按实例去重，未被选中的提供者也可能持有登记。
-          for (const name of this.#services.getServiceNames()) {
-            const seen = new Set<unknown>();
-            for (const entry of this.#services.getAll(name)) {
-              if (seen.has(entry.instance)) continue;
-              seen.add(entry.instance);
-              const svc = entry.instance as { unregisterByPlugin?: (id: string) => void };
-              try {
-                svc?.unregisterByPlugin?.(this.id);
-              } catch (err) {
-                reportQuietly(() => this.logger.warn(`服务 "${name}" 的 unregisterByPlugin 抛错:`, err));
-              }
-            }
-          }
           // 最后一步：父 ctx 的模块名释放必须晚于上面按 ctx.id 的枢纽清扫，否则同名新挂载
           // 会在链排空到此处的那一跳微任务里拿到旧名、随后被本次清扫连锅端走。
           this.#afterTeardown?.();
@@ -820,6 +804,26 @@ export class Context {
       const sep = k.indexOf(Context.#CONTRIB_KEY_SEP);
       return { point: k.slice(0, sep), id: k.slice(sep + 1) };
     });
+  }
+
+  /**
+   * 把一条对外登记的撤回句柄记入清理链的撤回段（与 {@link whenService} 的 cleanup 同段）：
+   * 拆卸时先于全部 onDispose 执行，异步返回值被 disposeAsync 等待；返回的退订自移除后再执行。
+   * 链已排空时登记的句柄就地执行（链的既有语义）。绑定层（binding.ts）专用。
+   * @internal
+   */
+  trackWithdrawal(off: () => unknown, label?: string): () => unknown {
+    const dispose = (): unknown => {
+      this.#lifecycle.disposables.remove(dispose);
+      return off();
+    };
+    this.#lifecycle.disposables.push(dispose, label, 'withdraw');
+    return dispose;
+  }
+
+  /** 摘掉一条撤回句柄而不执行它（在飞撤回落地后的自摘）。@internal */
+  untrackWithdrawal(dispose: () => unknown): void {
+    this.#lifecycle.disposables.remove(dispose);
   }
 
   /**

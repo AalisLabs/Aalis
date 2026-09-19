@@ -12,9 +12,19 @@
  * - 安全级别由 config 中按 server 配置（默认 safe）；高危 server 应显式设为 dangerous
  */
 
-import type { ToolDefinition } from '@aalis/api-tools';
-import { useToolService, wrapUntrustedContent } from '@aalis/api-tools';
-import type { AppService, Context, PluginManagerService } from '@aalis/core';
+import type { BoundTools, ToolDefinition } from '@aalis/api-tools';
+import { tools as toolsService, wrapUntrustedContent } from '@aalis/api-tools';
+import {
+  type AppService,
+  appService,
+  type DefaultCaps,
+  definePlugin,
+  type Logger,
+  optional,
+  type PluginManagerService,
+  pluginsService,
+  type ServiceRef,
+} from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -42,10 +52,19 @@ interface Config {
 }
 
 export const name = '@aalis/plugin-mcp-client';
-export const displayName = 'MCP 客户端';
 export const subsystem = 'tools';
 
-export const inject = { required: ['tools'] };
+/** 桥接函数用到的能力：测试只需给这两样，不必伪造整个运行时 */
+interface BridgeCaps {
+  tools: BoundTools;
+  logger: Logger;
+}
+
+type Caps = DefaultCaps &
+  BridgeCaps & {
+    plugins: Pick<ServiceRef<PluginManagerService>, 'current'>;
+    app: Pick<ServiceRef<AppService>, 'current'>;
+  };
 
 export const configSchema: ConfigSchema = {
   servers: {
@@ -136,22 +155,22 @@ export function deriveMcpToolPolicy(
   return { visibility: 'restricted' };
 }
 
-export async function apply(ctx: Context, rawConfig: Record<string, unknown>): Promise<void> {
-  const rawServers = ((rawConfig as { servers?: unknown }).servers ?? []) as unknown[];
+async function run(caps: Caps): Promise<void> {
+  const rawServers = ((caps.config as { servers?: unknown }).servers ?? []) as unknown[];
   const servers: ServerSpec[] = rawServers
-    .map((s, i) => normalizeServerSpec(s, i, ctx))
+    .map((s, i) => normalizeServerSpec(s, i, caps.logger))
     .filter((s): s is ServerSpec => s !== undefined);
 
   if (servers.length === 0) {
-    ctx.logger.info('未配置任何 MCP server，仅注册元数据工具');
-    registerSelfServiceTools(ctx);
+    caps.logger.info('未配置任何 MCP server，仅注册元数据工具');
+    registerSelfServiceTools(caps);
     return;
   }
 
   // 注册分组：每个 enabled server 一个分组，让平台可按需启用
   for (const spec of servers) {
     if (spec.enabled === false) continue;
-    useToolService(ctx).registerGroup({
+    caps.tools.registerGroup({
       name: `mcp:${spec.id}`,
       label: `MCP / ${spec.id}`,
       description: `通过 plugin-mcp-client 桥接的远端 MCP server "${spec.id}"`,
@@ -163,8 +182,8 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     servers
       .filter(s => s.enabled !== false)
       .map(spec =>
-        connectServer(ctx, spec).catch(err => {
-          ctx.logger.error(`连接 MCP server "${spec.id}" 失败: ${err instanceof Error ? err.message : String(err)}`);
+        connectServer(caps, spec).catch(err => {
+          caps.logger.error(`连接 MCP server "${spec.id}" 失败: ${err instanceof Error ? err.message : String(err)}`);
         }),
       ),
   );
@@ -172,15 +191,15 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   // 注册 agent 自服务工具：只读列表 + toggle 已配置 server 的启用开关。
   // 故意不提供「新增 server」工具——那等价于让 agent 任意 spawn 子进程，授权风险过大。
   // 若要新增 server，应在 WebUI / yaml 手工配置。
-  registerSelfServiceTools(ctx);
+  registerSelfServiceTools(caps);
 }
 
 /**
  * 在 ToolService 中注册 mcp_list_servers / mcp_set_server_enabled 两个 agent 自服务工具。
  * 二者都属于 `mcp:_meta` 分组，便于平台按需开放。
  */
-function registerSelfServiceTools(ctx: Context): void {
-  const tools = useToolService(ctx);
+function registerSelfServiceTools(caps: Caps): void {
+  const { tools } = caps;
   tools.registerGroup({
     name: 'mcp:_meta',
     label: 'MCP / 元数据',
@@ -199,7 +218,7 @@ function registerSelfServiceTools(ctx: Context): void {
     groups: ['mcp:_meta'],
     visibility: 'public',
     handler: async () => {
-      const cfg = ctx.config.getPluginConfig<{ servers?: unknown[] }>(name);
+      const cfg = caps.config as { servers?: unknown[] };
       const list = (cfg.servers ?? []).map((s, i) => {
         const r = (s as Record<string, unknown>) ?? {};
         return {
@@ -241,11 +260,11 @@ function registerSelfServiceTools(ctx: Context): void {
       const enabled = args.enabled === true;
       if (!id) return '失败：参数 id 必填';
 
-      const pm = ctx.getService<PluginManagerService>('plugins');
-      const app = ctx.getService<AppService>('app');
+      const pm = caps.plugins.current;
+      const app = caps.app.current;
       if (!pm || !app) return '失败：app/plugins 服务不可用';
 
-      const current = ctx.config.getPluginConfig<{ servers?: unknown[] }>(name);
+      const current = caps.config as { servers?: unknown[] };
       const servers = Array.isArray(current.servers) ? [...current.servers] : [];
       const idx = servers.findIndex(s => {
         const r = (s as Record<string, unknown>) ?? {};
@@ -271,16 +290,16 @@ function registerSelfServiceTools(ctx: Context): void {
  * 把来自 WebUI（textarea 字符串）/ yaml（数组对象）两种形态的 server 配置项统一成 ServerSpec。
  * 非法条目（缺 id 或 command）跳过并日志警告，避免整插件挂掉。
  */
-function normalizeServerSpec(raw: unknown, index: number, ctx: Context): ServerSpec | undefined {
+function normalizeServerSpec(raw: unknown, index: number, logger: Logger): ServerSpec | undefined {
   if (!raw || typeof raw !== 'object') {
-    ctx.logger.warn(`servers[${index}] 不是对象，跳过`);
+    logger.warn(`servers[${index}] 不是对象，跳过`);
     return undefined;
   }
   const r = raw as Record<string, unknown>;
   const id = typeof r.id === 'string' ? r.id.trim() : '';
   const command = typeof r.command === 'string' ? r.command.trim() : '';
   if (!id || !command) {
-    ctx.logger.warn(`servers[${index}] 缺少 id 或 command，跳过`);
+    logger.warn(`servers[${index}] 缺少 id 或 command，跳过`);
     return undefined;
   }
 
@@ -322,7 +341,7 @@ function normalizeServerSpec(raw: unknown, index: number, ctx: Context): ServerS
   return { id, command, args, env, enabled, visibility };
 }
 
-async function connectServer(ctx: Context, spec: ServerSpec): Promise<void> {
+async function connectServer(caps: Caps, spec: ServerSpec): Promise<void> {
   const transport = new StdioClientTransport({
     command: spec.command,
     args: spec.args ?? [],
@@ -332,28 +351,28 @@ async function connectServer(ctx: Context, spec: ServerSpec): Promise<void> {
   const client = new Client({ name: 'aalis-mcp-client', version: '0.1.0' }, { capabilities: {} });
 
   await client.connect(transport);
-  ctx.logger.info(`MCP server "${spec.id}" 已连接 (${spec.command} ${(spec.args ?? []).join(' ')})`);
+  caps.logger.info(`MCP server "${spec.id}" 已连接 (${spec.command} ${(spec.args ?? []).join(' ')})`);
 
-  // 连接生命周期：ctx dispose 时关闭
-  ctx.onDispose(async () => {
+  // 连接生命周期：激活关闭时关闭。握手跨 await，关闭可能已开始——迟到的清理仍会被执行
+  caps.lifecycle.onDispose(async () => {
     try {
       await client.close();
-      ctx.logger.info(`MCP server "${spec.id}" 已关闭`);
+      caps.logger.info(`MCP server "${spec.id}" 已关闭`);
     } catch (err) {
-      ctx.logger.debug(`关闭 MCP server "${spec.id}" 抛错（已忽略）:`, err);
+      caps.logger.debug(`关闭 MCP server "${spec.id}" 抛错（已忽略）:`, err);
     }
   });
 
-  await bridgeClientToTools(ctx, client, spec);
+  await bridgeClientToTools(caps, client, spec);
 }
 
 /**
  * 把一个已连接的 MCP Client 上暴露的所有工具桥接进 Aalis ToolService。
  * 导出以便集成测试直接传入 InMemoryTransport 配对的 client。
  */
-export async function bridgeClientToTools(ctx: Context, client: Client, spec: ServerSpec): Promise<void> {
+export async function bridgeClientToTools(caps: BridgeCaps, client: Client, spec: ServerSpec): Promise<void> {
   const { tools: mcpTools } = (await client.listTools()) as { tools: ToolMeta[] };
-  ctx.logger.info(`  发现 ${mcpTools.length} 个工具`);
+  caps.logger.info(`  发现 ${mcpTools.length} 个工具`);
 
   for (const t of mcpTools) {
     const toolName = sanitizeToolName(`mcp_${spec.id}_${t.name}`);
@@ -368,7 +387,7 @@ export async function bridgeClientToTools(ctx: Context, client: Client, spec: Se
       },
     };
 
-    useToolService(ctx).register({
+    caps.tools.register({
       definition,
       groups: [`mcp:${spec.id}`],
       ...deriveMcpToolPolicy(t.annotations, spec.visibility),
@@ -386,7 +405,7 @@ export async function bridgeClientToTools(ctx: Context, client: Client, spec: Se
       },
     });
 
-    ctx.logger.debug(`  - 工具已注册: ${toolName}`);
+    caps.logger.debug(`  - 工具已注册: ${toolName}`);
   }
 }
 
@@ -441,3 +460,10 @@ function formatToolResult(result: unknown, source: string): string {
   // 就是外部内容，同 http_request 一样套不可信边界。错误信息不是抓取内容，不套。
   return r.isError ? `MCP 工具返回错误:\n${body}` : wrapUntrustedContent(body, `MCP ${source}`);
 }
+
+export default definePlugin({
+  name,
+  displayName: 'MCP 客户端',
+  uses: { tools: toolsService, plugins: optional(pluginsService), app: optional(appService) },
+  apply: run,
+});

@@ -16,6 +16,7 @@
 
 import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
 import type { Context } from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 // ----- LLM 函数声明协议类型 -----
 // 描述发给 LLM 的函数调用 wire format，被 RegisteredTool 包装为完整注册项。
@@ -406,3 +407,32 @@ declare module '@aalis/core' {
     tools: ToolService;
   }
 }
+
+// ===== 服务描述符（按激活绑定）=====
+
+/** `tools` 的按激活绑定接口：登记自动归属这次激活，同名替换、提供者换人整体重挂、关闭后拒收。 */
+export interface BoundTools {
+  register(tool: Omit<RegisteredTool, 'pluginName'>): () => void;
+  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void;
+  /** 当前提供者（读 API：getDefinitions / execute 等）；未就绪为 undefined */
+  readonly current: ToolService | undefined;
+}
+
+export const tools = defineService<ToolService, BoundTools>('tools', port => {
+  // 分组账本先建：提供者换人时分组先于工具重挂
+  const groups = port.registrar<Omit<ToolGroupInfo, 'pluginName'>>({
+    key: group => group.name,
+    register: (service, group) => service.registerGroup(group, port.id),
+  });
+  const entries = port.registrar<Omit<RegisteredTool, 'pluginName'>>({
+    key: tool => tool.definition.function.name,
+    register: (service, tool) => service.register(tool, port.id),
+  });
+  return {
+    register: tool => entries.add(tool),
+    registerGroup: group => groups.add(group),
+    get current() {
+      return port.current();
+    },
+  };
+});
