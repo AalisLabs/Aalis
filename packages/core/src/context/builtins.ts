@@ -7,8 +7,11 @@
 // 不声明 lifecycle / logger 不影响框架对这次激活的管理：登记归属、撤回与关闭都照常。
 // ============================================================
 
+import type { ContributionPointMap } from '../types/contributions.js';
 import type { AalisEvents } from '../types/events.js';
+import type { HookContextMap, MiddlewareFn } from '../types/hooks.js';
 
+import type { ContributionHandle, ContributionSpec } from '../primitives/contributions.js';
 import type { ServiceView } from '../primitives/services.js';
 
 import {
@@ -43,6 +46,44 @@ export interface Events {
 export const events = builtinService<Events>('events', ctx => ({
   on: (event, handler) => ctx.on(event, handler),
   emit: (event, ...args) => ctx.emit(event, ...args),
+}));
+
+// ----- hooks -----
+
+export interface Hooks {
+  /** 注册中间件（洋葱模型，按注册顺序）；返回退订，随这次激活撤回 */
+  middleware<K extends string & keyof HookContextMap>(hook: K, fn: MiddlewareFn<HookContextMap[K]>): () => void;
+  /** 驱动一条钩子链；返回 false 表示被某个中间件截停 */
+  run<K extends string & keyof HookContextMap>(
+    hook: K,
+    data: HookContextMap[K],
+    defaultAction?: () => Promise<void>,
+    opts?: { warnOnStall?: boolean },
+  ): Promise<boolean>;
+}
+
+export const hooks = builtinService<Hooks>('hooks', ctx => ({
+  middleware: (hook, fn) => ctx.middleware(hook, fn),
+  run: (hook, data, defaultAction, opts) => ctx.runHook(hook, data, defaultAction, opts),
+}));
+
+// ----- contributions -----
+
+export interface Contributions {
+  /** 向贡献点交付一份 spec（局部 id 自动冠本激活的前缀，同 id 重复交付为替换）；返回退订 */
+  contribute<K extends string & keyof ContributionPointMap>(
+    point: K,
+    spec: ContributionPointMap[K] & ContributionSpec,
+  ): () => void;
+  /** 收集某贡献点的全部交付（快照，顺序是全局键的纯函数） */
+  collect<K extends string & keyof ContributionPointMap>(
+    point: K,
+  ): ReadonlyArray<ContributionHandle<ContributionPointMap[K] & ContributionSpec>>;
+}
+
+export const contributions = builtinService<Contributions>('contributions', ctx => ({
+  contribute: (point, spec) => ctx.contribute(point, spec),
+  collect: point => ctx.collect(point),
 }));
 
 // ----- lifecycle -----

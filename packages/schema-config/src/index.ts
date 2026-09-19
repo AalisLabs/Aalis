@@ -306,7 +306,7 @@ import type {} from '@aalis/core';
 // type / 漏 label 在编译期即报），而非以前 core 声明的 opaque Record。
 // ============================================================
 declare module '@aalis/core' {
-  interface PluginModule {
+  interface PluginMeta {
     /** 配置表单 Schema：插件配置的唯一声明来源（默认值经 defaultsFrom 派生）。 */
     configSchema?: ConfigSchema;
   }
