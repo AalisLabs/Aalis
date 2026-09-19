@@ -1,19 +1,11 @@
-import type { MemoryService } from '@aalis/api-memory';
+import { memory } from '@aalis/api-memory';
 import type {} from '@aalis/api-session-manager';
-import type { ToolCallContext } from '@aalis/api-tools';
-import { useToolService } from '@aalis/api-tools';
-import type {} from '@aalis/api-webui'; // PluginModule.actions 槽位的 merging 可见性
-import type { Context, PluginModule } from '@aalis/core';
+import { type ToolCallContext, tools } from '@aalis/api-tools';
+import { webuiServer } from '@aalis/api-webui';
+import { type BoundOf, config, definePlugin, events, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 
-// ===== 插件元数据 =====
-
-export const name = '@aalis/plugin-todo-list';
-export const displayName = '任务计划';
-export const subsystem = 'scheduler';
-export const inject = {};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   enabled: { type: 'boolean', label: '启用任务计划工具', default: true },
 };
 
@@ -25,41 +17,9 @@ export interface TodoItem {
   status: 'not-started' | 'in-progress' | 'completed';
 }
 
-/** sessionId → TodoItem[] */
-const store = new Map<string, TodoItem[]>();
-
 const TODO_NAMESPACE = 'todo-list';
 const MAX_TODO_ITEMS = 50;
 const MAX_TODO_TITLE_LENGTH = 120;
-
-/**
- * 将 todo 持久化到 MemoryService。
- *
- * 持久化依赖 memory 服务，而本插件不 require 它（没有 memory 也能当纯回合内清单用）：
- * 无 memory 时这里静默 no-op，todo 只存活于本次装载的模块级缓存里，卸载/重装即丢。
- */
-async function persistTodos(ctx: Context, sessionId: string, items: TodoItem[]): Promise<void> {
-  const memory = ctx.getService<MemoryService>('memory');
-  if (memory) {
-    await memory.saveMetadata(TODO_NAMESPACE, sessionId, { items });
-  }
-}
-
-/** 从 MemoryService 加载 todo（优先内存缓存） */
-async function loadTodos(ctx: Context, sessionId: string): Promise<TodoItem[]> {
-  const cached = store.get(sessionId);
-  if (cached) return cached;
-  const memory = ctx.getService<MemoryService>('memory');
-  if (memory) {
-    const data = await memory.getMetadata(TODO_NAMESPACE, sessionId);
-    if (data?.items && Array.isArray(data.items)) {
-      const items = data.items as TodoItem[];
-      store.set(sessionId, items);
-      return items;
-    }
-  }
-  return [];
-}
 
 // ===== 声明扩展事件 =====
 
@@ -69,50 +29,74 @@ declare module '@aalis/core' {
   }
 }
 
-// ===== Actions =====
+// ===== 插件入口 =====
 
-export const actions: PluginModule['actions'] = {
-  async getTodos(ctx, args) {
+const uses = { tools, events, config, memory: optional(memory), webui: optional(webuiServer) };
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-todo-list',
+  displayName: '任务计划',
+  subsystem: 'scheduler',
+  configSchema,
+  uses,
+  apply(caps) {
+    if (caps.config.enabled === false) return;
+    registerTodoList(caps);
+  },
+});
+
+function registerTodoList({ tools, events, memory, webui }: Caps): void {
+  /** sessionId → TodoItem[]：随这次激活存亡，插件重载或换 memory 后端后不会命中陈旧条目 */
+  const store = new Map<string, TodoItem[]>();
+
+  /**
+   * 持久化依赖 memory 服务，而本插件不 require 它（没有 memory 也能当纯回合内清单用）：
+   * 无 memory 时静默 no-op，todo 只存活于这次激活的缓存里。
+   */
+  async function persistTodos(sessionId: string, items: TodoItem[]): Promise<void> {
+    await memory.current?.saveMetadata(TODO_NAMESPACE, sessionId, { items });
+  }
+
+  /** 从 memory 加载 todo（优先缓存） */
+  async function loadTodos(sessionId: string): Promise<TodoItem[]> {
+    const cached = store.get(sessionId);
+    if (cached) return cached;
+    const data = await memory.current?.getMetadata(TODO_NAMESPACE, sessionId);
+    if (data?.items && Array.isArray(data.items)) {
+      const items = data.items as TodoItem[];
+      store.set(sessionId, items);
+      return items;
+    }
+    return [];
+  }
+
+  // ===== 页面动作 =====
+
+  webui.registerAction('getTodos', async args => {
     const sessionId = args.sessionId as string;
     if (!sessionId) return [];
-    return await loadTodos(ctx, sessionId);
-  },
+    return await loadTodos(sessionId);
+  });
 
-  async clearTodos(ctx, args) {
+  webui.registerAction('clearTodos', async args => {
     const sessionId = args.sessionId as string;
     if (!sessionId) throw new Error('缺少 sessionId');
     store.delete(sessionId);
-    const memory = ctx.getService<MemoryService>('memory');
-    if (memory) {
-      await memory.deleteMetadata(TODO_NAMESPACE, sessionId);
-    }
-    await ctx.emit('todo:updated', sessionId, []);
+    await memory.current?.deleteMetadata(TODO_NAMESPACE, sessionId);
+    await events.emit('todo:updated', sessionId, []);
     return { success: true };
-  },
-};
-
-// ===== 插件入口 =====
-
-export function apply(ctx: Context, config: Record<string, unknown>): void {
-  // store 是模块级缓存（actions 与工具 handler 共用，不能挪进 apply 闭包），
-  // 于是它默认跨 bounce 存活：装载时清一次 + dispose 时清空，避免插件重载或换
-  // memory 后端后命中陈旧条目而不回读新 provider，也给这张无上限的 Map 一个回收点。
-  // 代价是 clear 的作用域为整个进程：同进程再起一个 App 装本插件，会清掉前一个 App 的缓存
-  // （模块级缓存的固有代价：有 memory 时下次读会回源，没 memory 时 todo 就真丢了）。
-  store.clear();
-  ctx.onDispose(() => store.clear(), 'todo-list:store.clear');
-
-  if (config.enabled === false) return;
+  });
 
   // 注册工具分组
-  useToolService(ctx).registerGroup({
+  tools.registerGroup({
     name: 'todo',
     label: '任务计划',
     description: '创建和管理任务计划列表，拆分复杂任务并追踪进度',
   });
 
   // ---- manage_todo_list ----
-  useToolService(ctx).register({
+  tools.register({
     groups: ['todo'],
     definition: {
       type: 'function',
@@ -197,8 +181,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       });
 
       store.set(callCtx.sessionId, items);
-      await persistTodos(ctx, callCtx.sessionId, items);
-      await ctx.emit('todo:updated', callCtx.sessionId, items);
+      await persistTodos(callCtx.sessionId, items);
+      await events.emit('todo:updated', callCtx.sessionId, items);
 
       const total = items.length;
       const completed = items.filter(i => i.status === 'completed').length;
@@ -212,11 +196,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // 会话删除时清理
-  ctx.on('session:deleted', (sessionId: string) => {
+  events.on('session:deleted', (sessionId: string) => {
     store.delete(sessionId);
-    const memory = ctx.getService<MemoryService>('memory');
-    if (memory) {
-      memory.deleteMetadata(TODO_NAMESPACE, sessionId).catch(() => {});
-    }
+    memory.current?.deleteMetadata(TODO_NAMESPACE, sessionId).catch(() => {});
   });
 }
