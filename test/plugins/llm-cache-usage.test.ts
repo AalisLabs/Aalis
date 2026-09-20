@@ -1,4 +1,4 @@
-import { App, type PluginModule, services } from '@aalis/core';
+import { App, type PluginDefinition, services } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { llm } from '../../packages/api-llm/src/index.js';
 import deepseekPlugin from '../../packages/plugin-llm-deepseek/src/index.js';
@@ -37,7 +37,7 @@ function stubFetch(modelId: string, usage: Record<string, unknown>): void {
   }) as typeof fetch;
 }
 
-async function chatWith(plugin: PluginModule, modelId: string, usage: Record<string, unknown>) {
+async function chatWith(plugin: PluginDefinition, modelId: string, usage: Record<string, unknown>) {
   stubFetch(modelId, usage);
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
   await app.plugins.register(plugin, { apiKey: 'test-key' });

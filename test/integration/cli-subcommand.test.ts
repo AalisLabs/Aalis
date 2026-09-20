@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
-import { App, provide } from '../../packages/core/src/index.js';
+import { App, provide, services } from '../../packages/core/src/index.js';
 import { tryDispatchSubcommand } from '../../packages/runtime/src/subcommand.js';
 
 /**
@@ -19,7 +19,7 @@ describe('tryDispatchSubcommand', () => {
     const errors: string[] = [];
     try {
       const result = await tryDispatchSubcommand(
-        app,
+        app.bind({ services }).services,
         ['doctor'],
         () => {},
         msg => errors.push(msg),
@@ -38,7 +38,8 @@ describe('tryDispatchSubcommand', () => {
     const errors: string[] = [];
     let executed = false;
     try {
-      app.bind({ provide }).provide(commands, {
+      const host = app.bind({ provide, services });
+      host.provide(commands, {
         has: (_: string) => false,
         // biome-ignore lint/suspicious/noExplicitAny: test mock
         execute: async (..._args: any[]) => {
@@ -47,7 +48,7 @@ describe('tryDispatchSubcommand', () => {
         },
       } as never);
       const result = await tryDispatchSubcommand(
-        app,
+        host.services,
         ['nonexistent', 'arg1'],
         () => {},
         msg => errors.push(msg),
@@ -67,7 +68,8 @@ describe('tryDispatchSubcommand', () => {
     const errors: string[] = [];
     let executedWith: { name: string; args: string[]; raw: string } | undefined;
     try {
-      app.bind({ provide }).provide(commands, {
+      const host = app.bind({ provide, services });
+      host.provide(commands, {
         has: (name: string) => name === 'demo',
         execute: async (name: string, input: { args: string[]; raw: string }) => {
           executedWith = { name, args: input.args, raw: input.raw };
@@ -75,7 +77,7 @@ describe('tryDispatchSubcommand', () => {
         },
       } as never);
       const result = await tryDispatchSubcommand(
-        app,
+        host.services,
         ['demo', 'foo', 'bar'],
         msg => captured.push(msg),
         msg => errors.push(msg),
@@ -93,12 +95,13 @@ describe('tryDispatchSubcommand', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const captured: string[] = [];
     try {
-      app.bind({ provide }).provide(commands, {
+      const host = app.bind({ provide, services });
+      host.provide(commands, {
         has: (name: string) => name === 'silent',
         // biome-ignore lint/suspicious/noExplicitAny: test mock
         execute: async (..._args: any[]) => undefined,
       } as never);
-      const result = await tryDispatchSubcommand(app, ['silent'], msg => captured.push(msg));
+      const result = await tryDispatchSubcommand(host.services, ['silent'], msg => captured.push(msg));
       expect(result).toBe(0);
       expect(captured).toEqual([]);
     } finally {

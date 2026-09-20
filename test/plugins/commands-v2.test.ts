@@ -1,6 +1,7 @@
-import type { Logger } from '@aalis/core';
+import { App, definePlugin, type Logger, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { capabilityMinLevel } from '../../packages/api-authority/src/index.js';
+import { type BoundCommands, commands } from '../../packages/api-commands/src/index.js';
 import { CommandRegistry } from '../../packages/plugin-commands/src/commands.js';
 
 // 简易 logger（仅 child + 几个等级，足以驱动 CommandRegistry）
@@ -18,6 +19,45 @@ function makeLogger(): Logger {
 
 function input(args: string[]) {
   return { sessionId: 's', platform: 'test', args, raw: args.join(' ') };
+}
+
+/**
+ * 指令随激活撤回：宿主提供注册表，插件经 `commands` 门面登记，卸载走 `plugins.unload`。
+ * 门面把声明挂在这次激活的 id 上，撤回时只摘自己那一层。
+ */
+async function withCmdApp(
+  run: (api: {
+    r: CommandRegistry;
+    load: (id: string, register: (bound: BoundCommands) => void) => Promise<void>;
+    unload: (id: string) => Promise<void>;
+  }) => Promise<void>,
+): Promise<void> {
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const r = new CommandRegistry(makeLogger());
+  app.bind({ provide }).provide(commands, r);
+  const load = async (id: string, register: (bound: BoundCommands) => void): Promise<void> => {
+    await app.plugin(
+      definePlugin({
+        name: id,
+        uses: { commands },
+        apply({ commands: bound }) {
+          register(bound);
+        },
+      }),
+    );
+    await app.plugins.idle();
+    const state = app.plugins.getPlugin(id)?.state;
+    if (state !== 'active') throw new Error(`插件 "${id}" 未激活（state=${state}）`);
+  };
+  const unload = async (id: string): Promise<void> => {
+    await app.plugins.unload(id);
+    await app.plugins.idle();
+  };
+  try {
+    await run({ r, load, unload });
+  } finally {
+    await app.stop();
+  }
 }
 
 describe('commands v2 — 链式 builder', () => {
@@ -174,30 +214,33 @@ describe('同名指令（声明栈）', () => {
   });
 
   it('覆盖者卸载后，被覆盖的声明**自动复位**', async () => {
-    const r = reg();
-    r.command('ping', 'A 的', { pluginName: 'A' }).action(async () => 'from-A');
-    r.command('ping', 'B 的', { pluginName: 'B' }).action(async () => 'from-B');
-    r.unregisterByPlugin('B');
-    expect(find(r, 'ping'), '节点不该整个消失').toBeDefined();
-    expect(await r.execute('ping', input([]))).toBe('from-A');
-    expect(find(r, 'ping')?.pluginName).toBe('A');
+    await withCmdApp(async ({ r, load, unload }) => {
+      await load('A', bound => void bound.command('ping', 'A 的').action(async () => 'from-A'));
+      await load('B', bound => void bound.command('ping', 'B 的').action(async () => 'from-B'));
+      await unload('B');
+      expect(find(r, 'ping'), '节点不该整个消失').toBeDefined();
+      expect(await r.execute('ping', input([]))).toBe('from-A');
+      expect(find(r, 'ping')?.pluginName).toBe('A');
+    });
   });
 
   it('先注册者卸载：只摘自己那层，覆盖者照常工作', async () => {
-    const r = reg();
-    r.command('ping', 'A 的', { pluginName: 'A' }).action(async () => 'from-A');
-    r.command('ping', 'B 的', { pluginName: 'B' }).action(async () => 'from-B');
-    r.unregisterByPlugin('A');
-    expect(await r.execute('ping', input([]))).toBe('from-B');
+    await withCmdApp(async ({ r, load, unload }) => {
+      await load('A', bound => void bound.command('ping', 'A 的').action(async () => 'from-A'));
+      await load('B', bound => void bound.command('ping', 'B 的').action(async () => 'from-B'));
+      await unload('A');
+      expect(await r.execute('ping', input([]))).toBe('from-B');
+    });
   });
 
-  it('全部卸载后节点才消失', () => {
-    const r = reg();
-    r.command('ping', 'A', { pluginName: 'A' }).action(async () => 'a');
-    r.command('ping', 'B', { pluginName: 'B' }).action(async () => 'b');
-    r.unregisterByPlugin('A');
-    r.unregisterByPlugin('B');
-    expect(find(r, 'ping')).toBeUndefined();
+  it('全部卸载后节点才消失', async () => {
+    await withCmdApp(async ({ r, load, unload }) => {
+      await load('A', bound => void bound.command('ping', 'A').action(async () => 'a'));
+      await load('B', bound => void bound.command('ping', 'B').action(async () => 'b'));
+      await unload('A');
+      await unload('B');
+      expect(find(r, 'ping')).toBeUndefined();
+    });
   });
 
   // ⚠️ 断言必须落在**门槛等级**上，不能只看 visibility 那一栏。
@@ -283,13 +326,14 @@ describe('同名指令（声明栈）', () => {
     expect(minLevelOf(r, 'foo')).toBe(2);
   });
 
-  it('收紧方卸载后，门槛退回剩余声明的最严值', () => {
-    const r = reg();
-    r.command('foo', 'A', { pluginName: 'A' }).action(async () => 'a');
-    r.command('foo', 'B', { visibility: 'restricted', pluginName: 'B' }).action(async () => 'b');
-    expect(minLevelOf(r, 'foo')).toBe(2);
-    r.unregisterByPlugin('B');
-    expect(minLevelOf(r, 'foo')).toBe(0);
+  it('收紧方卸载后，门槛退回剩余声明的最严值', async () => {
+    await withCmdApp(async ({ r, load, unload }) => {
+      await load('A', bound => void bound.command('foo', 'A').action(async () => 'a'));
+      await load('B', bound => void bound.command('foo', 'B', { visibility: 'restricted' }).action(async () => 'b'));
+      expect(minLevelOf(r, 'foo')).toBe(2);
+      await unload('B');
+      expect(minLevelOf(r, 'foo')).toBe(0);
+    });
   });
 
   // ⚠️ 上面整组只钉了**门槛等级**这一轴。confirm 是 authority 的独立轴 B，曾经一条断言都没有，
@@ -316,16 +360,17 @@ describe('同名指令（声明栈）', () => {
     expect(confirmOf(r, 'wipe'), '既有的 always 不能被抹掉').toBe('always');
   });
 
-  it('**确认闸**：后注册者仍可收紧（单向），且卸载后退回剩余声明的最严值', () => {
-    const r = reg();
-    r.command('foo', 'A', { pluginName: 'A' }).action(async () => 'a');
-    expect(confirmOf(r, 'foo')).toBeUndefined();
-    r.command('foo', 'B', { confirm: 'session', pluginName: 'B' }).action(async () => 'b');
-    expect(confirmOf(r, 'foo'), '收紧要生效').toBe('session');
-    r.command('foo', 'C', { confirm: 'always', pluginName: 'C' }).action(async () => 'c');
-    expect(confirmOf(r, 'foo'), 'always 比 session 更严').toBe('always');
-    r.unregisterByPlugin('C');
-    expect(confirmOf(r, 'foo'), '最严者卸载后退回次严').toBe('session');
+  it('**确认闸**：后注册者仍可收紧（单向），且卸载后退回剩余声明的最严值', async () => {
+    await withCmdApp(async ({ r, load, unload }) => {
+      await load('A', bound => void bound.command('foo', 'A').action(async () => 'a'));
+      expect(confirmOf(r, 'foo')).toBeUndefined();
+      await load('B', bound => void bound.command('foo', 'B', { confirm: 'session' }).action(async () => 'b'));
+      expect(confirmOf(r, 'foo'), '收紧要生效').toBe('session');
+      await load('C', bound => void bound.command('foo', 'C', { confirm: 'always' }).action(async () => 'c'));
+      expect(confirmOf(r, 'foo'), 'always 比 session 更严').toBe('always');
+      await unload('C');
+      expect(confirmOf(r, 'foo'), '最严者卸载后退回次严').toBe('session');
+    });
   });
 
   it('**确认闸**：祖先声明的 confirm 沿 dot path 向下生效', () => {
@@ -347,52 +392,91 @@ describe('同名指令（声明栈）', () => {
 
   it('别名撞名：抢占者卸载后，先注册者的别名要复位而不是被连坐删除', async () => {
     // 与「覆盖者卸载把整个节点连根删掉」同一个病，只是从指令节点挪到了别名表。
-    const r = reg();
-    r.command('ping', 'A', { pluginName: 'A' })
-      .alias('p')
-      .action(async () => 'a');
-    r.command('other', 'B', { pluginName: 'B' })
-      .alias('p')
-      .action(async () => 'b');
-    expect(await r.execute('p', input([])), '抢占期间指向 B').toBe('b');
-    r.unregisterByPlugin('B');
-    expect(r.hasMatch('p', []), '别名不该被连坐删除').toBe(true);
-    expect(await r.execute('p', input([])), '应复位到仍声明它的 A').toBe('a');
+    await withCmdApp(async ({ r, load, unload }) => {
+      await load(
+        'A',
+        bound =>
+          void bound
+            .command('ping', 'A')
+            .alias('p')
+            .action(async () => 'a'),
+      );
+      await load(
+        'B',
+        bound =>
+          void bound
+            .command('other', 'B')
+            .alias('p')
+            .action(async () => 'b'),
+      );
+      expect(await r.execute('p', input([])), '抢占期间指向 B').toBe('b');
+      await unload('B');
+      expect(r.hasMatch('p', []), '别名不该被连坐删除').toBe(true);
+      expect(await r.execute('p', input([])), '应复位到仍声明它的 A').toBe('a');
+    });
   });
 
   it('同名指令栈内的别名：栈顶卸载后退回下层声明的别名', async () => {
-    const r = reg();
-    r.command('ping', 'A', { pluginName: 'A' })
-      .alias('pa')
-      .action(async () => 'a');
-    r.command('ping', 'B', { pluginName: 'B' })
-      .alias('pb')
-      .action(async () => 'b');
-    r.unregisterByPlugin('B');
-    expect(r.hasMatch('pb', []), 'B 自己的别名该消失').toBe(false);
-    expect(await r.execute('pa', input([])), 'A 的别名仍可用且指向 A').toBe('a');
+    await withCmdApp(async ({ r, load, unload }) => {
+      await load(
+        'A',
+        bound =>
+          void bound
+            .command('ping', 'A')
+            .alias('pa')
+            .action(async () => 'a'),
+      );
+      await load(
+        'B',
+        bound =>
+          void bound
+            .command('ping', 'B')
+            .alias('pb')
+            .action(async () => 'b'),
+      );
+      await unload('B');
+      expect(r.hasMatch('pb', []), 'B 自己的别名该消失').toBe(false);
+      expect(await r.execute('pa', input([])), 'A 的别名仍可用且指向 A').toBe('a');
+    });
   });
 
   it('无人再声明的别名要真的删掉（不能只重绑）', async () => {
-    const r = reg();
-    r.command('ping', 'A', { pluginName: 'A' })
-      .alias('solo')
-      .action(async () => 'a');
-    r.unregisterByPlugin('A');
-    expect(r.hasMatch('solo', [])).toBe(false);
+    await withCmdApp(async ({ r, load, unload }) => {
+      await load(
+        'A',
+        bound =>
+          void bound
+            .command('ping', 'A')
+            .alias('solo')
+            .action(async () => 'a'),
+      );
+      await unload('A');
+      expect(r.hasMatch('solo', [])).toBe(false);
+    });
   });
 
   it('别名随其所属声明一起回收，不误删他人的', async () => {
-    const r = reg();
-    r.command('ping', 'A', { pluginName: 'A' })
-      .alias('pa')
-      .action(async () => 'a');
-    r.command('other', 'B', { pluginName: 'B' })
-      .alias('pb')
-      .action(async () => 'b');
-    r.unregisterByPlugin('A');
-    expect(await r.execute('pb', input([])), '别人的别名不该被误删').toBe('b');
-    expect(r.hasMatch('pa', []), '自己的别名随声明一起回收').toBe(false);
+    await withCmdApp(async ({ r, load, unload }) => {
+      await load(
+        'A',
+        bound =>
+          void bound
+            .command('ping', 'A')
+            .alias('pa')
+            .action(async () => 'a'),
+      );
+      await load(
+        'B',
+        bound =>
+          void bound
+            .command('other', 'B')
+            .alias('pb')
+            .action(async () => 'b'),
+      );
+      await unload('A');
+      expect(await r.execute('pb', input([])), '别人的别名不该被误删').toBe('b');
+      expect(r.hasMatch('pa', []), '自己的别名随声明一起回收').toBe(false);
+    });
   });
 
   it('分组节点：子指令还在时父节点退回分组而非消失', () => {
@@ -408,41 +492,46 @@ describe('同名指令（声明栈）', () => {
 });
 
 describe('分组节点回收', () => {
-  const reg = () => new CommandRegistry(makeLogger());
-
   it('插件卸载后不留幽灵分组——`/relation` 不该继续被指令相位吞掉', async () => {
-    // 分组节点由 ensureGroups 自动创建（空栈、无 pluginName），任何按插件名的摘除都匹配
-    // 不到它们。旧实现与声明栈实现都漏，是既有缺陷而非重构引入。
-    const r = reg();
-    r.command('relation.show', '看', { pluginName: 'P' }).action(async () => 's');
-    r.command('relation.cleanup.all', '清', { pluginName: 'P' }).action(async () => 'c');
-    r.unregisterByPlugin('P');
-    expect(
-      r.getAll().map(c => c.name),
-      '两级分组都该被回收',
-    ).toEqual([]);
-    expect(r.hasMatch('relation', []), '不再吞掉 /relation').toBe(false);
+    // 分组节点由 ensureGroups 自动创建（空栈、无 pluginName），任何按激活 id 的摘除都匹配
+    // 不到它们。漏掉回收会让指令相位继续吞掉 `/relation`。
+    await withCmdApp(async ({ r, load, unload }) => {
+      await load('P', bound => {
+        bound.command('relation.show', '看').action(async () => 's');
+        bound.command('relation.cleanup.all', '清').action(async () => 'c');
+      });
+      await unload('P');
+      expect(
+        r.getAll().map(c => c.name),
+        '两级分组都该被回收',
+      ).toEqual([]);
+      expect(r.hasMatch('relation', []), '不再吞掉 /relation').toBe(false);
+    });
   });
 
   it('还有子指令时分组节点保留', async () => {
-    const r = reg();
-    r.command('grp.a', 'A', { pluginName: 'P' }).action(async () => 'a');
-    r.command('grp.b', 'B', { pluginName: 'Q' }).action(async () => 'b');
-    r.unregisterByPlugin('P');
-    expect(
-      r
-        .getAll()
-        .map(c => c.name)
-        .sort(),
-    ).toEqual(['grp', 'grp.b']);
+    await withCmdApp(async ({ r, load, unload }) => {
+      await load('P', bound => void bound.command('grp.a', 'A').action(async () => 'a'));
+      await load('Q', bound => void bound.command('grp.b', 'B').action(async () => 'b'));
+      await unload('P');
+      expect(
+        r
+          .getAll()
+          .map(c => c.name)
+          .sort(),
+      ).toEqual(['grp', 'grp.b']);
+    });
   });
 
   it('被显式声明过的分组节点，卸载后同样回收（不留空壳）', async () => {
-    const r = reg();
-    r.command('grp', '分组本体', { pluginName: 'P' }).action(async () => 'g');
-    r.command('grp.sub', '子', { pluginName: 'P' }).action(async () => 's');
-    r.unregisterByPlugin('P');
-    expect(r.getAll().map(c => c.name)).toEqual([]);
+    await withCmdApp(async ({ r, load, unload }) => {
+      await load('P', bound => {
+        bound.command('grp', '分组本体').action(async () => 'g');
+        bound.command('grp.sub', '子').action(async () => 's');
+      });
+      await unload('P');
+      expect(r.getAll().map(c => c.name)).toEqual([]);
+    });
   });
 });
 

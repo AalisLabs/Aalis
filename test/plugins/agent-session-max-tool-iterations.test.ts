@@ -3,7 +3,7 @@ import { agent } from '../../packages/api-agent/src/index.js';
 import type { ChatResponse } from '../../packages/api-llm/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { App, type BoundOf, type PluginModule } from '../../packages/core/src/index.js';
+import { App, type BoundOf, type PluginDefinition } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
@@ -31,7 +31,7 @@ const AGENT_CONFIG = {
  * 装一个插件并确认它真的激活了。激活闸会把缺 required 依赖的插件静静留在 pending 且不报错，
  * 不核一下的话「插件根本没跑」会伪装成用例通过。
  */
-async function use(app: App, module: PluginModule, config?: Record<string, unknown>): Promise<void> {
+async function use(app: App, module: PluginDefinition, config?: Record<string, unknown>): Promise<void> {
   await app.plugin(module, config);
   await app.plugins.idle();
   const state = app.plugins.getPlugin(module.name)?.state;
