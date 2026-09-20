@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { BoundTools, RegisteredTool } from '../../packages/api-tools/src/index.js';
+import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { registerFileTools } from '../../packages/plugin-tool-system/src/tools/file.js';
+import { stubBoundTools } from '../fixtures/bound-tools.js';
 
 // ════════════════════════════════════════════════════════════
 // file 读类能力闸回归：
@@ -12,15 +13,11 @@ import { registerFileTools } from '../../packages/plugin-tool-system/src/tools/f
 
 function captureFileTools(): Record<string, Omit<RegisteredTool, 'pluginName'>> {
   const tools: Record<string, Omit<RegisteredTool, 'pluginName'>> = {};
-  const svc: BoundTools = {
-    register: (t: Omit<RegisteredTool, 'pluginName'>) => {
+  const svc = stubBoundTools({
+    onRegister: t => {
       tools[t.definition.function.name] = t;
-      return () => undefined;
     },
-    registerGroup: () => () => undefined,
-    current: undefined,
-    follow: () => () => undefined,
-  };
+  });
   // 注册期不触碰 storage/cwd（仅构造工具声明），最小 config 即可 capture。
   registerFileTools(svc, {
     maxReadSize: 1048576,
@@ -59,15 +56,11 @@ describe('file_move / file_mkdir 的 allowedRoots 闸（审计补配）', () => 
   // 等级 2 用户一次会话确认即可 file_move data:/users.json（对 authority 等价删除）。
   function capture(allowed: string[]): Record<string, Omit<RegisteredTool, 'pluginName'>> {
     const tools: Record<string, Omit<RegisteredTool, 'pluginName'>> = {};
-    const svc: BoundTools = {
-      register: (t: Omit<RegisteredTool, 'pluginName'>) => {
+    const svc = stubBoundTools({
+      onRegister: t => {
         tools[t.definition.function.name] = t;
-        return () => undefined;
       },
-      registerGroup: () => () => undefined,
-      current: undefined,
-      follow: () => () => undefined,
-    };
+    });
     const storage = {
       listRoots: () => [
         { name: 'workspace', readable: true },

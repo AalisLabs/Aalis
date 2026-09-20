@@ -1552,7 +1552,7 @@ function registerUserProfile({
     if (instructionExtractionInflight) return;
     // 指令只采信有权下指令的人，门槛是发言人的**数字权限等级**；authority 契约没有暴露读等级的
     // 方法，只能按运行期形状探测。探测不到就跳过 LLM 自动提取（/instruct 命令通道不受影响）。
-    const guard = services.getByName('authority') as
+    const guard = services.get('authority') as
       | { getAuthority?: (platform: string, userId?: string) => number }
       | undefined;
     const authorityFn = guard?.getAuthority?.bind(guard);
@@ -1786,7 +1786,7 @@ function registerUserProfile({
           // user-relation 由插件提供，本包不反向依赖那个插件包：按名动态查，只借它的类型。
           let communityLine = '';
           try {
-            const relation = services.getByName('user-relation') as RelationService | undefined;
+            const relation = services.get('user-relation') as RelationService | undefined;
             if (relation) {
               const r = await relation.getCommunityPeers(userKey, 5);
               if (r.peers.length > 0) {

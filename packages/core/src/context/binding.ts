@@ -17,6 +17,13 @@ import type { Context } from './context.js';
 import type { Logger } from './logger.js';
 
 /**
+ * 跟随回调的返回：不需要清理就什么都不返回，需要就返回清理函数。用 void 而非 undefined，
+ * 块体回调不必写 `return undefined`；联合里的 void 不吞 Promise，async 回调照样被类型拒掉。
+ */
+// biome-ignore lint/suspicious/noConfusingVoidType: 见上——这里要的正是「可以不返回」
+export type FollowCleanup = void | (() => unknown);
+
+/**
  * 普通调用型服务的绑定接口。契约是「每次查询解析当前值」：current / require 返回的是提供者本身，
  * 调用方把它存起来就得自己承担它失效；要用提供者建立长期状态（SDK 句柄、订阅）走 follow。
  * required 与 optional 拿到的是同一接口——两者只差激活闸。
@@ -31,8 +38,9 @@ export interface ServiceRef<P> {
   /**
    * 跟随提供者建立有状态资源：在场即调 attach，换人时先跑上次返回的清理再用新实例调，
    * 下线与关闭时清理。清理可以是异步的，关闭会等它落地。取代整插件重启式的依赖更新。
+   * attach 本身必须同步，见 {@link FollowCleanup}。
    */
-  follow(attach: (provider: P) => undefined | (() => unknown)): () => void;
+  follow(attach: (provider: P) => FollowCleanup): () => void;
 }
 
 /** 注册型能力的账本：同键替换、提供者换人整体重挂、关闭后拒收、异步撤回被关闭等待。 */
@@ -46,6 +54,8 @@ export interface Registrar<Item> {
  * 不含清扫凭据——经它登记的每一条都由这次激活的撤回段逐条撤回。
  */
 export interface BindingPort<P> {
+  /** 所绑定的服务名 */
+  readonly name: string;
   /** 实例 id：日志、展示、路由用的逻辑名，不是资源身份 */
   readonly id: string;
   readonly logger: Logger;
@@ -61,7 +71,7 @@ export interface BindingPort<P> {
    * attach；等待期间再换人只跟到最新的。关闭或退订之后不再挂载，哪怕旧清理后来才落定。
    * 旧清理永不落定则新实例永不挂上；关闭时按超时放弃并点名。与 ServiceRef.follow 同一语义。
    */
-  follow(attach: (provider: P) => undefined | (() => unknown)): () => void;
+  follow(attach: (provider: P) => FollowCleanup): () => void;
   /**
    * 登记一条随本次激活撤回的句柄；返回一次性的退订。与 registrar 同一清理契约：手动退订启动的
    * 异步清理被随后的关闭等到、拒绝被接住；关闭后登记的句柄就地执行。
@@ -129,7 +139,8 @@ export function serviceRef<P>(port: BindingPort<P>, extra?: object): ServiceRef<
     },
     require() {
       const provider = port.current();
-      if (provider === undefined) throw new Error(`服务不可用（"${port.id}" 的依赖当前没有提供者）`);
+      if (provider === undefined)
+        throw new Error(`服务 "${port.name}" 不可用（"${port.id}" 声明的依赖当前没有提供者）`);
       return provider;
     },
     all: () => port.all(),
@@ -209,7 +220,7 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
 
   // 一个资源口一条提供者订阅；每个跟随者自己一台小状态机
   interface Follower {
-    attach(provider: P): undefined | (() => unknown);
+    attach(provider: P): FollowCleanup;
     /** 注册账本走的内部路径：换人不等旧撤回落定，立即挂新实例（被动注册表） */
     overlap: boolean;
     attached?: P;
@@ -305,6 +316,7 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
   };
 
   const port: BindingPort<P> = {
+    name,
     id: ctx.id,
     logger: ctx.logger,
     get closed() {
@@ -425,24 +437,20 @@ export function assemble<U extends Uses>(ctx: Context, uses: U): BoundOf<U> {
     bound[key] = descriptor.bind(createPort(ctx, descriptor.name));
   }
   // 声明即计入关停编排（required 与 optional，访问与否无关）；内置能力绑的是激活自身，不成边
-  ctx.declareDependencies(
-    Object.values(uses)
-      .map(use => ('optional' in use ? use.optional : use))
-      .filter(descriptor => !isBuiltin(descriptor))
-      .map(descriptor => descriptor.name),
-  );
+  ctx.declareDependencies(requiredNames(uses), optionalNames(uses));
   return bound as BoundOf<U>;
 }
 
-/** 声明表里参与激活闸的服务名（optional 不参与） */
-export function requiredNames(uses: Uses): string[] {
+/** 声明表里的依赖服务名。内置能力绑的是激活自身，不是依赖：不进激活闸，也不成关停边 */
+function dependencyNames(uses: Uses, wantOptional: boolean): string[] {
   return Object.values(uses)
-    .filter((use): use is ServiceDescriptor<unknown, unknown> => !('optional' in use))
-    .map(use => use.name);
+    .filter(use => 'optional' in use === wantOptional)
+    .map(use => ('optional' in use ? use.optional : use))
+    .filter(descriptor => !isBuiltin(descriptor))
+    .map(descriptor => descriptor.name);
 }
 
-export function optionalNames(uses: Uses): string[] {
-  return Object.values(uses)
-    .filter((use): use is OptionalUse<unknown, unknown> => 'optional' in use)
-    .map(use => use.optional.name);
-}
+/** 参与激活闸的依赖 */
+export const requiredNames = (uses: Uses): string[] => dependencyNames(uses, false);
+/** 不参与激活闸的依赖 */
+export const optionalNames = (uses: Uses): string[] => dependencyNames(uses, true);

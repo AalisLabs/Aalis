@@ -15,8 +15,8 @@
 // 实现见 @aalis/plugin-tool-system。
 
 import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
-import type { Context } from '@aalis/core';
-import { defineService } from '@aalis/core';
+import type { Context, ServiceRef } from '@aalis/core';
+import { defineService, serviceRef } from '@aalis/core';
 
 // ----- LLM 函数声明协议类型 -----
 // 描述发给 LLM 的函数调用 wire format，被 RegisteredTool 包装为完整注册项。
@@ -411,30 +411,18 @@ declare module '@aalis/core' {
 // ===== 服务描述符（按激活绑定）=====
 
 /** `tools` 的按激活绑定接口：登记自动归属这次激活，同名替换、提供者换人整体重挂、关闭后拒收。 */
-export interface BoundTools {
+export interface BoundTools extends ServiceRef<ToolService> {
   register(tool: Omit<RegisteredTool, 'pluginName'>): () => void;
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void;
-  /** 当前提供者（读 API：getDefinitions / execute 等）；未就绪为 undefined */
-  readonly current: ToolService | undefined;
-  /**
-   * 跟随提供者建立有状态接线：在场即调 attach，换人时先跑上次返回的清理再用新实例调，
-   * 下线与关闭时清理（语义同 `ServiceRef.follow`）。执行守卫这类「挂在提供者身上、
-   * 提供者重启就得重挂」的接线必须经它，`current` 只能看见此刻的实例。
-   */
-  follow(attach: (provider: ToolService) => undefined | (() => unknown)): () => void;
 }
 
 /** 给一份 tools 绑定接口加默认分组：经它登记的工具自动带上这些分组（一组工具共用分组时用） */
 export function withToolGroups(bound: BoundTools, groups: string[]): BoundTools {
-  return {
-    register: tool => bound.register({ ...tool, groups: [...(tool.groups ?? []), ...groups] }),
-    registerGroup: group => bound.registerGroup(group),
-    follow: attach => bound.follow(attach),
-    // current 必须活取才能跟着提供者换人
-    get current() {
-      return bound.current;
-    },
-  };
+  // 只覆盖 register，其余（含 current 这个 getter）沿原型链落到原接口上，跟着提供者换人
+  return Object.assign(Object.create(bound) as BoundTools, {
+    register: (tool: Omit<RegisteredTool, 'pluginName'>) =>
+      bound.register({ ...tool, groups: [...(tool.groups ?? []), ...groups] }),
+  });
 }
 
 export const tools = defineService<ToolService, BoundTools>('tools', port => {
@@ -447,12 +435,8 @@ export const tools = defineService<ToolService, BoundTools>('tools', port => {
     key: tool => tool.definition.function.name,
     register: (service, tool) => service.register(tool, port.id),
   });
-  return {
-    register: tool => entries.add(tool),
-    registerGroup: group => groups.add(group),
-    follow: attach => port.follow(attach),
-    get current() {
-      return port.current();
-    },
-  };
+  return serviceRef(port, {
+    register: (tool: Omit<RegisteredTool, 'pluginName'>) => entries.add(tool),
+    registerGroup: (group: Omit<ToolGroupInfo, 'pluginName'>) => groups.add(group),
+  });
 });
