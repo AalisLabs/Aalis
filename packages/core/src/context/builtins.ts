@@ -18,7 +18,6 @@ import {
   activationOf,
   type BindingPort,
   defineService,
-  isBuiltin,
   markBuiltin,
   type ProviderOf,
   type ServiceDescriptor,
@@ -30,10 +29,6 @@ type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<vo
 
 function builtinService<B>(name: string, bind: (ctx: Context) => B): ServiceDescriptor<never, B> {
   return markBuiltin(defineService<never, B>(name, (port: BindingPort<never>) => bind(activationOf(port))));
-}
-
-export function isBuiltinService(descriptor: ServiceDescriptor<unknown, unknown>): boolean {
-  return isBuiltin(descriptor);
 }
 
 // ----- events -----
@@ -167,30 +162,32 @@ export const provide = builtinService<Provide>(
   ctx => (descriptor, implementation, options) => ctx.provide(descriptor.name, implementation as never, options),
 );
 
+/** 动态查询的键：有描述符就用描述符（带类型），只有运行期字符串（URL、配置里的服务名）就用名字 */
+export type ServiceKey = AnyDescriptor | string;
+type KeyedProvider<K extends ServiceKey> = K extends AnyDescriptor ? ProviderOf<K> : unknown;
+const keyName = (key: ServiceKey): string => (typeof key === 'string' ? key : key.name);
+
 /**
  * 动态查询与偏好管理（管理、展示面用）。查到的服务不是声明依赖：不参与激活闸，
  * 不享有重绑与关停顺序保证——需要这些保证就写进 uses。
  */
 export interface Services {
-  /** 当前胜者 */
-  get<D extends AnyDescriptor>(descriptor: D): ProviderOf<D> | undefined;
-  /** 按名查询：没有描述符可依凭，类型由调用方自行收窄 */
-  getByName(name: string): unknown;
-  all<D extends AnyDescriptor>(descriptor: D): ServiceView<ProviderOf<D>>[];
+  /** 当前胜者。按名字查时没有类型可依凭，由调用方自行收窄 */
+  get<K extends ServiceKey>(key: K): KeyedProvider<K> | undefined;
+  all<K extends ServiceKey>(key: K): ServiceView<KeyedProvider<K>>[];
   /** 当前已注册的全部服务名 */
   names(): string[];
   /** 某服务当前的偏好提供者（contextId）；无偏好为 undefined */
-  preferred(descriptor: AnyDescriptor): string | undefined;
-  prefer(descriptor: AnyDescriptor, contextId: string): boolean;
-  unprefer(descriptor: AnyDescriptor): boolean;
+  preferred(key: ServiceKey): string | undefined;
+  prefer(key: ServiceKey, contextId: string): boolean;
+  unprefer(key: ServiceKey): boolean;
 }
 
 export const services = builtinService<Services>('services', ctx => ({
-  get: descriptor => ctx.getService(descriptor.name),
-  getByName: name => ctx.getService(name),
-  all: descriptor => ctx.getAllServices(descriptor.name),
+  get: key => ctx.getService(keyName(key)),
+  all: key => ctx.getAllServices(keyName(key)),
   names: () => ctx.getServiceNames(),
-  preferred: descriptor => ctx.getPreferredService(descriptor.name),
-  prefer: (descriptor, contextId) => ctx.preferService(descriptor.name, contextId),
-  unprefer: descriptor => ctx.unpreferService(descriptor.name),
+  preferred: key => ctx.getPreferredService(keyName(key)),
+  prefer: (key, contextId) => ctx.preferService(keyName(key), contextId),
+  unprefer: key => ctx.unpreferService(keyName(key)),
 }));

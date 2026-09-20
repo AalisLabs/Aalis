@@ -320,7 +320,7 @@ class ScopedStorageService implements StorageService {
     // 按名动态查：checkpoint 的描述符在实现包里，而 checkpoint 自己要用存储——
     // 声明它会让两个实现包互指。动态查到的不算声明依赖，与这里需要的语义一致
     // （快照能力有就用、没有就直接落盘，不设激活闸）。
-    const cp = this.services.getByName('checkpoint') as CheckpointLike | undefined;
+    const cp = this.services.get('checkpoint') as CheckpointLike | undefined;
     if (!cp?.isActive()) return;
     await cp.beforeMutate(
       uri,

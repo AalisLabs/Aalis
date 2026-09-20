@@ -216,7 +216,7 @@ describe('关停编排：归属树与服务依赖共同决定顺序', () => {
     expect(w.saved).toEqual(['new:last']);
   });
 
-  it('真实的环只在环内降级：环外的下层仍最后关', async () => {
+  it('optional 依赖成环：环内让步不告警，环外的下层仍最后关', async () => {
     const w = world();
     const a = defineService<{ hit(): void }>('zz-cp-a');
     const b = defineService<{ hit(): void }>('zz-cp-b');
@@ -240,8 +240,41 @@ describe('关停编排：归属树与服务依赖共同决定顺序', () => {
     );
     await w.app.plugins.idle();
     await w.app.stop();
-    expect(w.warnings.some(x => x.includes('依赖成环') && x.includes('consumer') && x.includes('peer'))).toBe(true);
-    expect(w.warnings.some(x => x.includes('依赖成环') && x.includes('storage'))).toBe(false);
+    expect(w.warnings.filter(x => x.includes('成环'))).toEqual([]);
+    expect(w.saved).toEqual(['storage:consumer:last']);
+  });
+
+  it('required 依赖成环只在环内降级：告警只点环内的，环外的下层仍最后关', async () => {
+    const w = world();
+    const a = defineService<{ hit(): void }>('zz-cp-ra');
+    const b = defineService<{ hit(): void }>('zz-cp-rb');
+    await w.app.plugin(storageDef(w));
+    await w.app.plugin(
+      definePlugin({ name: 'seed', uses: { provide }, apply: ({ provide }) => void provide(b, { hit() {} }) }),
+    );
+    await w.app.plugin(
+      definePlugin({
+        name: 'consumer',
+        uses: { b, storage, provide, lifecycle },
+        apply({ storage, provide, lifecycle }) {
+          provide(a, { hit() {} });
+          lifecycle.onDrain(() => storage.require().save('consumer:last'));
+        },
+      }),
+    );
+    // peer 要 consumer 的 a，又以更高优先级顶替了 consumer 所依赖的 b：两条边都是 required
+    await w.app.plugin(
+      definePlugin({
+        name: 'peer',
+        uses: { a, provide },
+        apply: ({ provide }) => void provide(b, { hit() {} }, { priority: 10 }),
+      }),
+    );
+    await w.app.plugins.idle();
+    await w.app.stop();
+    const cycle = w.warnings.filter(x => x.includes('required 依赖成环'));
+    expect(cycle).toHaveLength(1);
+    expect(cycle[0]).toContain('[peer, consumer]');
     expect(w.saved).toEqual(['storage:consumer:last']);
   });
 

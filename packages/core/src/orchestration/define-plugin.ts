@@ -18,7 +18,7 @@ import {
   type ServiceDescriptor,
   type Uses,
 } from '../context/binding.js';
-import { isBuiltinService, type ModuleDefinition, setActivationConfig } from '../context/builtins.js';
+import { type ModuleDefinition, setActivationConfig } from '../context/builtins.js';
 import type { ConfigManager } from '../context/config.js';
 import type { Context } from '../context/context.js';
 
@@ -48,10 +48,7 @@ export function definePlugin<U extends Uses = {}>(definition: PluginDefinition<U
       throw new Error(`插件 "${definition.name}" 的 uses.${key} 不是服务描述符（应为 defineService 的结果）`);
     }
   }
-  const gated = Object.fromEntries(
-    Object.entries(uses).filter(([, use]) => !isBuiltinService('optional' in use ? use.optional : use)),
-  );
-  const requires = requiredNames(gated);
+  const requires = requiredNames(uses);
 
   const mount = (ctx: Context, config: Record<string, unknown>): void | Promise<void> => {
     setActivationConfig(ctx, config);
@@ -63,7 +60,7 @@ export function definePlugin<U extends Uses = {}>(definition: PluginDefinition<U
   const { uses: _uses, provides, apply: _apply, ...meta } = definition;
   return {
     ...meta,
-    inject: { required: requires, optional: optionalNames(gated) },
+    inject: { required: requires, optional: optionalNames(uses) },
     provides: provides?.map(d => d.name),
     apply: mount,
     requires,

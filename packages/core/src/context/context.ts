@@ -87,10 +87,13 @@ export class Context {
   readonly #parent?: Context;
   /** 存活的子激活（关停编排按整棵激活树排序） */
   readonly #children = new Set<Context>();
-  /** 本激活声明的依赖服务名（required 与 optional，不含内置能力）；关停时解析到当时的胜者 */
-  readonly #declared = new Set<string>();
-  /** 存活的托管绑定与尚未落地的撤回：提供者的清理归属 → 引用计数。撤回落地即释放，不累积历史 */
-  readonly #bindings = new Map<symbol, number>();
+  /** 本激活声明的依赖服务名（不含内置能力）→ 是否 required；关停时解析到当时的胜者 */
+  readonly #declared = new Map<string, boolean>();
+  /**
+   * 存活的托管绑定与尚未落地的撤回：提供者的清理归属 → [optional, required] 两种引用计数。
+   * 撤回落地即释放，不累积历史
+   */
+  readonly #bindings = new Map<symbol, [optional: number, required: number]>();
   /** 已发起、尚未落地的异步清理（手动退订、同键替换、换人时的旧撤回）：关闭必须等到它们 */
   readonly #inflight = new Map<Promise<void>, string>();
   #closing?: Promise<void>;
@@ -832,8 +835,9 @@ export class Context {
    * 记下本激活声明的依赖（装配时调用）。声明即计入关停编排，不取决于是否访问过。
    * @internal
    */
-  declareDependencies(names: Iterable<string>): void {
-    for (const name of names) this.#declared.add(name);
+  declareDependencies(required: Iterable<string>, optional: Iterable<string>): void {
+    for (const name of optional) if (!this.#declared.has(name)) this.#declared.set(name, false);
+    for (const name of required) this.#declared.set(name, true);
   }
 
   /**
@@ -844,14 +848,16 @@ export class Context {
   retainBinding(name: string): () => void {
     const owner = this.#services.ownerOf(name);
     if (owner === undefined) return () => {};
-    this.#bindings.set(owner, (this.#bindings.get(owner) ?? 0) + 1);
+    const kind = this.#declared.get(name) ? 1 : 0;
+    const counts = this.#bindings.get(owner) ?? [0, 0];
+    counts[kind]++;
+    this.#bindings.set(owner, counts);
     let released = false;
     return () => {
       if (released) return;
       released = true;
-      const left = (this.#bindings.get(owner) ?? 1) - 1;
-      if (left > 0) this.#bindings.set(owner, left);
-      else this.#bindings.delete(owner);
+      counts[kind]--;
+      if (counts[0] === 0 && counts[1] === 0) this.#bindings.delete(owner);
     };
   }
 
@@ -885,20 +891,19 @@ export class Context {
     }
   }
 
-  /** @internal 关停编排读取：子激活与本激活此刻依赖的提供者激活 */
-  closeInfo(): { children: Context[]; providers: Context[] } {
-    const providers = new Set<Context>();
-    for (const name of this.#declared) {
-      const owner = this.#services.ownerOf(name);
+  /**
+   * @internal 关停编排读取：子激活，与本激活此刻依赖的提供者激活（值为该依赖是否 required；
+   * 同一提供者既有 required 又有 optional 的依赖时按 required 算）
+   */
+  closeInfo(): { children: Context[]; providers: Map<Context, boolean> } {
+    const providers = new Map<Context, boolean>();
+    const depend = (owner: symbol | undefined, required: boolean): void => {
       const provider = owner && Context.#byOwner.get(owner);
-      if (provider) providers.add(provider);
-    }
-    for (const owner of this.#bindings.keys()) {
-      const provider = Context.#byOwner.get(owner);
-      if (provider) providers.add(provider);
-    }
-    providers.delete(this);
-    return { children: [...this.#children], providers: [...providers] };
+      if (provider && provider !== this) providers.set(provider, required || providers.get(provider) === true);
+    };
+    for (const [name, required] of this.#declared) depend(this.#services.ownerOf(name), required);
+    for (const [owner, counts] of this.#bindings) depend(owner, counts[1] > 0);
+    return { children: [...this.#children], providers };
   }
 
   /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { tools } from '../../packages/api-tools/src/index.js';
+import { type ToolService, tools } from '../../packages/api-tools/src/index.js';
 import {
   definePlugin,
   defineService,
@@ -50,10 +50,18 @@ describe('uses → apply 的类型推导', () => {
 
         // optional 与 required 是同一个 ServiceRef：require() 合法（缺席时运行期抛错），follow 可用
         const ref: ServiceRef<KvService> = caps.maybe;
+        // 不需要清理的 attach 不必显式 return
         ref.follow(provider => {
           provider.get('a');
-          return undefined;
         });
+        ref.follow(provider => () => provider.get('a'));
+        // @ts-expect-error attach 必须同步：async 回调的清理无处可取，类型上就拒掉
+        ref.follow(async provider => {
+          provider.get('a');
+        });
+        // 注册型门面与调用型同一套读面：tools 也有 require / all / follow
+        const toolsRef: ServiceRef<ToolService> = caps.tools;
+        toolsRef.all();
         caps.maybe.require();
         caps.maybe.current?.get('a');
         // @ts-expect-error current 可能是 undefined，未判空不得直接用

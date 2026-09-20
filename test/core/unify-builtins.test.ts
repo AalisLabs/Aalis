@@ -17,9 +17,13 @@ import {
   config,
   contributions,
   definePlugin,
+  defineService,
   hooks,
   hostConfig,
   type Logger,
+  optional,
+  provide,
+  services,
 } from '../../packages/core/src/index.js';
 
 // 内置能力 hooks / contributions、插件元数据随定义携带、宿主配置管理面（显式声明才可见）。
@@ -95,6 +99,56 @@ describe('内置能力', () => {
     await app.plugins.idle();
     expect(own).toEqual({ greeting: 'hi' });
     expect(whole).toEqual({ greeting: 'hi' });
+  });
+
+  it('services：描述符与名字是同一把键——查询、枚举、偏好都认两种写法', async () => {
+    const kv = defineService<{ tag: string }>('__t:kv');
+    const app = makeApp();
+    for (const tag of ['a', 'b']) {
+      await app.plugin(
+        definePlugin({
+          name: `kv-${tag}`,
+          uses: { provide },
+          apply: ({ provide }) => void provide(kv, { tag }),
+        }),
+      );
+    }
+    await app.plugins.idle();
+    const host = app.bind({ services });
+
+    expect(host.services.get(kv)?.tag).toBe('a');
+    expect((host.services.get('__t:kv') as { tag: string }).tag).toBe('a');
+    expect(host.services.all('__t:kv').map(view => view.contextId)).toEqual(['kv-a', 'kv-b']);
+    expect(host.services.get('__t:nobody')).toBeUndefined();
+
+    // 按名设的偏好，按描述符读得到，反之亦然
+    expect(host.services.prefer('__t:kv', 'kv-b')).toBe(true);
+    expect(host.services.preferred(kv)).toBe('kv-b');
+    expect(host.services.get(kv)?.tag).toBe('b');
+    expect(host.services.unprefer(kv)).toBe(true);
+    expect(host.services.preferred('__t:kv')).toBeUndefined();
+  });
+
+  it('require() 缺席时点名是哪个服务、谁声明的', async () => {
+    const missing = defineService<{ ping(): void }>('__t:missing');
+    const app = makeApp();
+    let thrown: unknown;
+    await app.plugin(
+      definePlugin({
+        name: 'needs-missing',
+        uses: { missing: optional(missing) },
+        apply({ missing }) {
+          try {
+            missing.require();
+          } catch (err) {
+            thrown = err;
+          }
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(String(thrown)).toContain('"__t:missing"');
+    expect(String(thrown)).toContain('"needs-missing"');
   });
 
   it('元数据随定义携带，宿主从插件条目上读得到', async () => {

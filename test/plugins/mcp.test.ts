@@ -24,6 +24,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { describe, expect, it } from 'vitest';
 import { bridgeClientToTools } from '../../packages/plugin-mcp-client/src/index.js';
 import { buildMcpServer } from '../../packages/plugin-mcp-server/src/index.js';
+import { stubBoundTools } from '../fixtures/bound-tools.js';
 
 // ===== helpers =====
 
@@ -112,12 +113,7 @@ class FakeToolService implements ToolService {
 function makeBridgeCaps(toolService: FakeToolService) {
   return {
     logger: makeLogger(),
-    tools: {
-      register: (tool: Parameters<FakeToolService['register']>[0]) => toolService.register(tool, 'test-mcp-client'),
-      registerGroup: () => () => {},
-      follow: () => () => {},
-      current: undefined,
-    },
+    tools: stubBoundTools({ onRegister: tool => void toolService.register(tool, 'test-mcp-client') }),
   };
 }
 
