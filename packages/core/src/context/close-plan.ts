@@ -13,6 +13,10 @@
 //      可能已错过祖先的收尾。2 与 3 叠加时硬要「整个关完」会与归属自相矛盾，那不是业务依赖成环。
 // 资源内核只提供「分阶段关闭」，不认识服务；依赖政策全在这里。
 //
+// 依赖成环时：optional 依赖的契约本就是「缺席也能工作」，环里的 optional 边按自然次序让步，
+// 不告警——互为 optional 依赖在插件之间是常态。环里只剩 required 边仍无解才告警并强行放行。
+// 归属约束与环外的约束一条不松。
+//
 // 边只来自框架自己管理的关系：每个激活声明的依赖（含子模块的、含尚未访问的 optional）在编排
 // 那一刻解析到的胜者，以及存活的托管绑定与尚未落地的撤回。不追踪调用方缓存的裸引用，
 // 经 services 动态查到的服务不产生边。
@@ -29,14 +33,15 @@ interface Stage {
   kind: Kind;
   /** 无约束时的自然次序：子先于父、同层后挂的先关、同一激活先收尾后关闭 */
   index: number;
-  after: Set<Stage>;
+  /** 必须先于本阶段的阶段 → 该约束是否为硬约束（归属、required 依赖；optional 依赖为软） */
+  after: Map<Stage, boolean>;
   before: Set<Stage>;
 }
 
-function link(earlier: Stage, later: Stage): void {
+function link(earlier: Stage, later: Stage, hard: boolean): void {
   if (earlier === later) return;
   earlier.before.add(later);
-  later.after.add(earlier);
+  later.after.set(earlier, hard || later.after.get(earlier) === true);
 }
 
 /**
@@ -81,7 +86,7 @@ function planClose(roots: Context[], logger: Logger): Stage[] {
   const drainOf = new Map<Context, Stage>();
   const closeOf = new Map<Context, Stage>();
   const parentOf = new Map<Context, Context>();
-  const providersOf = new Map<Context, Context[]>();
+  const providersOf = new Map<Context, Map<Context, boolean>>();
   const stages: Stage[] = [];
 
   const visit = (ctx: Context): void => {
@@ -89,8 +94,8 @@ function planClose(roots: Context[], logger: Logger): Stage[] {
     const info = ctx.closeInfo();
     providersOf.set(ctx, info.providers);
     // 先占位再下探子树：自然次序是「子全部在前」，但占位保证成环的树形输入也能终止
-    const drain: Stage = { ctx, kind: 'drain', index: -1, after: new Set(), before: new Set() };
-    const close: Stage = { ctx, kind: 'close', index: -1, after: new Set(), before: new Set() };
+    const drain: Stage = { ctx, kind: 'drain', index: -1, after: new Map(), before: new Set() };
+    const close: Stage = { ctx, kind: 'close', index: -1, after: new Map(), before: new Set() };
     drainOf.set(ctx, drain);
     closeOf.set(ctx, close);
     // 同层无依赖关系时后挂的先关（与清理链的逆序同一惯例；后挂的常隐含依赖先挂的）
@@ -110,20 +115,20 @@ function planClose(roots: Context[], logger: Logger): Stage[] {
 
   for (const [ctx, drain] of drainOf) {
     const close = closeOf.get(ctx)!;
-    link(drain, close);
+    link(drain, close, true);
     const parent = parentOf.get(ctx);
     // 归属：子的撤回先于父的撤回
-    if (parent) link(close, closeOf.get(parent)!);
-    for (const provider of providersOf.get(ctx)!) {
+    if (parent) link(close, closeOf.get(parent)!, true);
+    for (const [provider, required] of providersOf.get(ctx)!) {
       const providerDrain = drainOf.get(provider);
       if (!providerDrain) continue; // 提供者不在本次关闭范围内：它活得更久，无需约束
       if (isAncestor(ctx, provider) || isAncestor(provider, ctx)) {
         // 用的是自己子树里的、或祖先提供的服务：只约束收尾次序（自己先于提供者）。
         // 祖先那一种在没有别的约束时，自然次序本就让自己整个关完祖先才收尾
-        link(drain, providerDrain);
+        link(drain, providerDrain, required);
       } else {
         // 普通依赖：消费者整个关完，提供者才开始收尾
-        link(close, providerDrain);
+        link(close, providerDrain, required);
       }
     }
   }
@@ -148,12 +153,19 @@ function planClose(roots: Context[], logger: Logger): Stage[] {
       release(ready);
       continue;
     }
-    const cycle = sourceCycle(remaining);
-    const names = [...new Set(cycle.map(stage => stage.ctx.id))];
-    reportQuietly(() =>
-      logger.warn(`关停顺序：依赖成环 [${names.join(', ')}]，环内无法保证都先于各自的提供者，其余顺序不受影响`),
-    );
-    const forced = cycle.reduce((a, b) => (a.index < b.index ? a : b));
+    // 按自然次序排：点名的顺序就是环内实际的关闭次序，与图的遍历次序无关
+    const cycle = sourceCycle(remaining).sort((x, y) => x.index - y.index);
+    const names = [...new Set(cycle.map(stage => stage.ctx.id))].join(', ');
+    // 源分量之外没有未放行的前驱，故只被软约束挡着的阶段放行后不违反任何硬约束
+    const yielding = cycle.filter(stage => ![...stage.after].some(([prev, hard]) => hard && remaining.has(prev)));
+    if (yielding.length > 0) {
+      reportQuietly(() => logger.debug(`关停顺序：optional 依赖成环 [${names}]，环内按自然次序让步`));
+    } else {
+      reportQuietly(() =>
+        logger.warn(`关停顺序：required 依赖成环 [${names}]，环内无法保证都先于各自的提供者，其余顺序不受影响`),
+      );
+    }
+    const forced = (yielding.length > 0 ? yielding : cycle)[0];
     blockers.set(forced, 0);
     release(forced);
   }
@@ -203,7 +215,7 @@ function sourceCycle(remaining: Set<Stage>): Stage[] {
   for (const stage of remaining) if (!indexOf.has(stage)) connect(stage);
 
   const hasOutsideBlocker = (component: Stage[], id: number): boolean =>
-    component.some(stage => [...stage.after].some(prev => remaining.has(prev) && componentOf.get(prev) !== id));
+    component.some(stage => [...stage.after.keys()].some(prev => remaining.has(prev) && componentOf.get(prev) !== id));
   const source = components.findIndex((component, id) => component.length > 1 && !hasOutsideBlocker(component, id));
   // 卡住时必有一个不被外部阻塞的多节点分量；找不到就退回第一个多节点分量（防御）
   return components[source >= 0 ? source : components.findIndex(c => c.length > 1)] ?? [...remaining];

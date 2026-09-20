@@ -36,7 +36,6 @@ import {
   type BoundOf,
   config,
   definePlugin,
-  defineService,
   events,
   hostConfig,
   type LogEntry,
@@ -323,13 +322,6 @@ export function resolveSessionPlatform(sessionId: string, known: ReadonlySet<str
   return known.has(prefix) ? prefix : 'webui';
 }
 
-/**
- * 管理面按运行期名字操作服务：服务名来自 URL 参数或 `services.names()` 的枚举结果，
- * 此处没有编译期描述符可依凭。动态查询面只有单值的 `getByName` 是按名的，枚举提供者与
- * 读写偏好都要描述符，故按名现造一个同名描述符当传参载体——它只用来携带服务名。
- */
-const byName = (serviceName: string) => defineService<unknown>(serviceName);
-
 // storage 等一律 optional：webui 是管理面，任何被管对象缺席都只该让对应页面降级，不该把
 // 整个控制台拖进 pending。storage 尤其不能 required——plugin-storage-local bounce 会让它
 // 暂时消失，webui-server 跟着重启就清空 registeredPages，其他插件的侧边栏页面再也回不来。
@@ -571,15 +563,15 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     const personaSvc = caps.persona.current;
     // 判断上传能力。media / file-reader / cli 在本插件里只做在场探测，为一个布尔值反向依赖
     // 它们的包不值当（file-reader 还是插件包），故按名动态查——动态查到的不算声明依赖。
-    const hasMedia = services.getByName('media') !== undefined;
+    const hasMedia = services.get('media') !== undefined;
     const llmHasVision = listLLMModels(caps.llm).some(e => e.instance.capabilities.includes('vision'));
-    const hasFileReader = services.getByName('file-reader') !== undefined;
+    const hasFileReader = services.get('file-reader') !== undefined;
 
     res.json({
       name: personaSvc?.getPersonaName() ?? caps.hostConfig.require().get('name'),
       services: {
         'webui-server': services.get(webuiServer) !== undefined,
-        cli: services.getByName('cli') !== undefined,
+        cli: services.get('cli') !== undefined,
         llm: caps.llm.current !== undefined,
         agent: caps.agent.current !== undefined,
         memory: caps.memory.current !== undefined,
@@ -646,7 +638,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       logger,
       plugins: caps.plugins,
       // package-manager 由插件提供，本包不反向依赖那个插件包：按名动态查，缺席时装卸路由回 503
-      packageManager: () => services.getByName('package-manager') as PackageManagerService | undefined,
+      packageManager: () => services.get('package-manager') as PackageManagerService | undefined,
     },
     gate,
     uiConfig.marketplaceRegistry,
@@ -720,7 +712,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
     for (const svcName of serviceNames) {
       // 枚举已按「偏好 > 优先级 > 注册顺序」排序，附带 priority 字段
-      const entries = services.all(byName(svcName));
+      const entries = services.all(svcName);
       detail[svcName] = {
         providers: entries.map(e => ({
           contextId: e.contextId,
@@ -728,7 +720,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
           label: e.label,
           priority: e.priority,
         })),
-        preferred: services.preferred(byName(svcName)) ?? null,
+        preferred: services.preferred(svcName) ?? null,
       };
     }
 
@@ -747,13 +739,13 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       return;
     }
     // 校验 entry 存在
-    const entries = services.all(byName(svcName));
+    const entries = services.all(svcName);
     if (!entries.some(e => e.contextId === contextId)) {
       res.status(404).json({ ok: false, error: `service "${svcName}" has no provider with contextId "${contextId}"` });
       return;
     }
     const host = caps.hostConfig.require();
-    services.prefer(byName(svcName), contextId);
+    services.prefer(svcName, contextId);
     host.setServicePreference(svcName, contextId);
     // 切换前端：webui-client 是「前端」服务，偏好变更需重挂静态目录 + 通知客户端刷新。
     // 重挂与偏好同属内存态，必须在等落盘之前一起生效：save 拒绝时才不会留下「解析选 B、静态挂 A」。
@@ -766,7 +758,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   expressApp.delete('/api/services/:name/prefer', gate(), async (req, res) => {
     const svcName = String(req.params.name);
     const host = caps.hostConfig.require();
-    services.unprefer(byName(svcName));
+    services.unprefer(svcName);
     host.removeServicePreference(svcName);
     if (svcName === 'webui-client') remountActiveClient();
     await host.save();
@@ -1020,16 +1012,14 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       return;
     }
 
-    const service = services.getByName(serviceName) as { listModels?(): Promise<unknown[]> } | undefined;
+    const service = services.get(serviceName) as { listModels?(): Promise<unknown[]> } | undefined;
     if (!service || typeof service.listModels !== 'function') {
       res.json({ models: [] });
       return;
     }
     try {
       // 聚合所有提供者的模型列表（embedding 等服务仍走 listModels()）。
-      const allProviders = services.all(byName(serviceName)) as Array<
-        ServiceView<{ listModels?(): Promise<unknown[]> }>
-      >;
+      const allProviders = services.all(serviceName) as Array<ServiceView<{ listModels?(): Promise<unknown[]> }>>;
       const aggregated: Array<{
         value: string;
         model: string;
@@ -1102,7 +1092,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     {
       storage,
       logger,
-      fileIndex: () => services.getByName('file-reader') as { deleteFile?(id: string): Promise<boolean> } | undefined,
+      fileIndex: () => services.get('file-reader') as { deleteFile?(id: string): Promise<boolean> } | undefined,
     },
     gate,
   );

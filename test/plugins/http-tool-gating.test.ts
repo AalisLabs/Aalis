@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { BoundTools, RegisteredTool } from '../../packages/api-tools/src/index.js';
+import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { registerHttpTools } from '../../packages/plugin-tool-system/src/tools/http.js';
+import { stubBoundTools } from '../fixtures/bound-tools.js';
 
 // ════════════════════════════════════════════════════════════
 // http_download 写工具必须挂闸（restricted + confirm），
@@ -9,15 +10,11 @@ import { registerHttpTools } from '../../packages/plugin-tool-system/src/tools/h
 
 function captureRegistered(): Record<string, Omit<RegisteredTool, 'pluginName'>> {
   const tools: Record<string, Omit<RegisteredTool, 'pluginName'>> = {};
-  const svc: BoundTools = {
-    register: (t: Omit<RegisteredTool, 'pluginName'>) => {
+  const svc = stubBoundTools({
+    onRegister: t => {
       tools[t.definition.function.name] = t;
-      return () => undefined;
     },
-    registerGroup: () => () => undefined,
-    current: undefined,
-    follow: () => () => undefined,
-  };
+  });
   registerHttpTools(svc, { defaultTimeout: 30000, maxResponseSize: 1048576 });
   return tools;
 }

@@ -1,8 +1,9 @@
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import type { BoundTools, RegisteredTool } from '../../packages/api-tools/src/index.js';
+import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { CwdState } from '../../packages/plugin-tool-system/src/tools/cwd-state.js';
 import { registerFileTools } from '../../packages/plugin-tool-system/src/tools/file.js';
+import { stubBoundTools } from '../fixtures/bound-tools.js';
 
 // ════════════════════════════════════════════════════════════
 // file_edit / file_read 的两类静默改坏与死胡同：
@@ -45,15 +46,11 @@ function memoryStorage(files: Record<string, string>) {
 
 function setup(files: Record<string, string>, maxReadSize = 1048576) {
   const tools: Record<string, Omit<RegisteredTool, 'pluginName'>> = {};
-  const svc: BoundTools = {
-    register: (t: Omit<RegisteredTool, 'pluginName'>) => {
+  const svc = stubBoundTools({
+    onRegister: t => {
       tools[t.definition.function.name] = t;
-      return () => undefined;
     },
-    registerGroup: () => () => undefined,
-    current: undefined,
-    follow: () => () => undefined,
-  };
+  });
   registerFileTools(svc, {
     maxReadSize,
     maxSearchBytes: 1048576,

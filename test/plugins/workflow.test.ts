@@ -4,6 +4,7 @@ import type { WorkflowDef } from '../../packages/api-workflow/src/index.js';
 import type { Events, Hooks, Logger } from '../../packages/core/src/index.js';
 import type { EngineCaps } from '../../packages/plugin-workflow/src/engine.js';
 import { runDag, validateGraph } from '../../packages/plugin-workflow/src/engine.js';
+import { stubBoundTools } from '../fixtures/bound-tools.js';
 
 const noopLogger = (): Logger =>
   ({
@@ -18,19 +19,17 @@ const noopEvents = (): Events => ({ on: () => () => {}, emit: vi.fn(async () => 
 
 const noopHooks = (): Hooks => ({ middleware: () => () => {}, run: async () => true }) as unknown as Hooks;
 
-const boundTools = (toolFn?: (name: string, args: unknown) => Promise<string> | string): BoundTools => ({
-  register: () => () => {},
-  registerGroup: () => () => {},
-  follow: () => () => {},
-  current: toolFn
-    ? ({
-        // 与真实 ToolService.execute 同形：结果归一为 { content }
-        async execute(name: string, args: unknown) {
-          return { content: await toolFn(name, args) };
-        },
-      } as unknown as ToolService)
-    : undefined,
-});
+const boundTools = (toolFn?: (name: string, args: unknown) => Promise<string> | string): BoundTools =>
+  stubBoundTools({
+    current: toolFn
+      ? ({
+          // 与真实 ToolService.execute 同形：结果归一为 { content }
+          async execute(name: string, args: unknown) {
+            return { content: await toolFn(name, args) };
+          },
+        } as unknown as ToolService)
+      : undefined,
+  });
 
 /** 只有 tool 节点会真跑起来的能力桩：events / hooks 收到什么都不做 */
 const toolCaps = (toolFn?: (name: string, args: unknown) => Promise<string> | string): EngineCaps => ({

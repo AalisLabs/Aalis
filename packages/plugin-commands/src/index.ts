@@ -327,19 +327,19 @@ function registerCommands({
     // 按名枚举：这张表回答的只是"在不在"，其中大半个子系统本插件并不依赖，
     // 按名动态查不产生依赖边，也就不会把它们拖进本插件的激活闸与关停顺序。
     const checks = [
-      ['WebUI Server', services.getByName('webui-server') !== undefined],
-      ['CLI', services.getByName('cli') !== undefined],
-      ['LLM 服务', services.getByName('llm') !== undefined],
-      ['Agent', services.getByName('agent') !== undefined],
-      ['记忆服务', services.getByName('memory') !== undefined],
-      ['人格服务', services.getByName('persona') !== undefined],
-      ['Embedding', services.getByName('embedding') !== undefined],
-      ['向量库', services.getByName('vectorstore') !== undefined],
+      ['WebUI Server', services.get('webui-server') !== undefined],
+      ['CLI', services.get('cli') !== undefined],
+      ['LLM 服务', services.get('llm') !== undefined],
+      ['Agent', services.get('agent') !== undefined],
+      ['记忆服务', services.get('memory') !== undefined],
+      ['人格服务', services.get('persona') !== undefined],
+      ['Embedding', services.get('embedding') !== undefined],
+      ['向量库', services.get('vectorstore') !== undefined],
     ] as const;
     for (const [label, ok] of checks) {
       lines.push(`- ${label}: ${ok ? '✅ 可用' : '❌ 不可用'}`);
     }
-    const toolService = services.getByName('tools') as ToolService | undefined;
+    const toolService = services.get('tools') as ToolService | undefined;
     lines.push(`- 已注册工具: ${toolService ? toolService.getAll().length : 0} 个`);
     lines.push(`- 已注册指令: ${registry.getAll().length} 个`);
     return lines.join('\n');

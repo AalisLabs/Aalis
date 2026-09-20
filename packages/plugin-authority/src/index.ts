@@ -71,12 +71,12 @@ async function run(caps: Caps): Promise<void> {
   // 上线（在 init 阶段直接 readFile 会失败且被静默吞 → 重启后等级不回载），故等 storage 就绪
   // 再 load，规避初始化时序竞态。follow 对「已在线」的服务也会立即触发，故任意加载序都成立。
   let loading: Promise<void> | undefined;
+  // 读一次即完，storage 换人时没有要拆的东西，故不返回清理
   storage.follow(() => {
     loading = manager.init().then(
       () => logger.debug('授权用户等级已加载'),
       err => logger.warn(`授权用户等级加载失败: ${err}`),
     );
-    return undefined; // 读一次即完，storage 换人时没有要拆的东西
   });
   // storage 已在线时 follow 是同步首挂：把加载等完再让 apply 返回，避免「等级表还空着
   // 就开始裁决」的窗口（封禁用户在这段时间按默认 0 级通过）。storage 晚上线时无从等待，仍异步。
@@ -160,12 +160,10 @@ async function run(caps: Caps): Promise<void> {
   commands.follow(svc => {
     svc.setExecutionGuard(guard);
     logger.debug('权限守卫已注入: commands');
-    return undefined;
   });
   tools.follow(svc => {
     svc.setExecutionGuard(guard);
     logger.debug('权限守卫已注入: tools');
-    return undefined;
   });
 
   // 落盘走 onDispose 而非 app:stopping：后者只在全局停机触发一次，覆盖不了

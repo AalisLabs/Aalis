@@ -3,9 +3,10 @@ import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { BoundTools, RegisteredTool } from '../../packages/api-tools/src/index.js';
+import type { RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { CwdState } from '../../packages/plugin-tool-system/src/tools/cwd-state.js';
 import { registerFileTools } from '../../packages/plugin-tool-system/src/tools/file.js';
+import { stubBoundTools } from '../fixtures/bound-tools.js';
 
 // ════════════════════════════════════════════════════════════
 // file_* 三处「成功回执下的破坏」：
@@ -72,15 +73,11 @@ beforeEach(() => {
   unreadable = new Set<string>();
   ioFailing = new Set<string>();
   const tools: Record<string, Omit<RegisteredTool, 'pluginName'>> = {};
-  const svc: BoundTools = {
-    register: (t: Omit<RegisteredTool, 'pluginName'>) => {
+  const svc = stubBoundTools({
+    onRegister: t => {
       tools[t.definition.function.name] = t;
-      return () => undefined;
     },
-    registerGroup: () => () => undefined,
-    current: undefined,
-    follow: () => () => undefined,
-  };
+  });
   registerFileTools(svc, {
     maxReadSize: 1048576,
     maxSearchBytes: 1048576,
