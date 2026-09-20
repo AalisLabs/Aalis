@@ -10,6 +10,7 @@ import {
   optional,
   provide,
 } from '../../packages/core/src/index.js';
+import { rootActivation } from '../../packages/core/src/orchestration/app.js';
 
 // ════════════════════════════════════════════════════════════
 // 段 A 对抗审计（39 个代理，探针在 Aalis-local-only/…/audit-a-*）确认的契约违例，逐条转成回归测试。
@@ -283,7 +284,7 @@ describe('等待业务交出来的 Promise', () => {
 
   it('收尾段里才登记的 onDrain：同样被等到', async () => {
     const w = world();
-    const ctx = w.app.ctx.fork('p');
+    const ctx = rootActivation(w.app).fork('p');
     let finished = false;
     ctx.onDrain(() => {
       ctx.onDrain(async () => {
@@ -297,7 +298,7 @@ describe('等待业务交出来的 Promise', () => {
 
   it('在飞清理永不落定：超时点名一次、随即出账，后续各段不再重复计时', async () => {
     const w = world();
-    const ctx = w.app.ctx.fork('p');
+    const ctx = rootActivation(w.app).fork('p');
     const port = createPort<unknown>(ctx, 'zz-aa-stuck');
     port.track(() => new Promise<void>(() => {}), 'zz-aa-stuck-handle')();
     const started = Date.now();

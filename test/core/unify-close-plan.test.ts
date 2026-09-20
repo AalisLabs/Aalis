@@ -10,6 +10,7 @@ import {
   optional,
   provide,
 } from '../../packages/core/src/index.js';
+import { rootActivation } from '../../packages/core/src/orchestration/app.js';
 
 // ════════════════════════════════════════════════════════════
 // 关停编排与重入清理的契约测试。来源：第二轮独立复核（REVIEW-fcac1dc0）的全部反例，
@@ -411,7 +412,7 @@ describe('重入清理', () => {
     const w = world();
     const d = defineService<{ tag: string }>('zz-cp-reentrant');
     w.host(d, { tag: 'a' }, { entryId: 'root/a' });
-    const ctx = w.app.ctx.fork('consumer');
+    const ctx = rootActivation(w.app).fork('consumer');
     const ref = assemble(ctx, { ref: d }).ref;
     const live = new Set<string>();
     const off: () => void = ref.follow(p => {
@@ -428,7 +429,7 @@ describe('重入清理', () => {
 
   it('撤回途中调用另一个 track 句柄：关闭前登记的异步清理，关闭一定等到', async () => {
     const w = world();
-    const ctx = w.app.ctx.fork('consumer');
+    const ctx = rootActivation(w.app).fork('consumer');
     const port = createPort<unknown>(ctx, 'zz-cp-track');
     const gate = deferred();
     let finished = false;
@@ -453,7 +454,7 @@ describe('重入清理', () => {
 
   it('清理段里才发起的异步撤回同样被等到', async () => {
     const w = world();
-    const ctx = w.app.ctx.fork('consumer');
+    const ctx = rootActivation(w.app).fork('consumer');
     const port = createPort<unknown>(ctx, 'zz-cp-track2');
     const gate = deferred();
     let finished = false;
@@ -490,7 +491,7 @@ describe('follow 的串行交接', () => {
       },
     });
     w.host(d, make('a', true), { entryId: 'root/a' });
-    const ctx = w.app.ctx.fork('consumer');
+    const ctx = rootActivation(w.app).fork('consumer');
     assemble(ctx, { ref: d }).ref.follow(p => p.subscribe());
     w.host(d, make('b', false), { entryId: 'root/b', priority: 2 });
     await tick();
@@ -523,7 +524,7 @@ describe('follow 的串行交接', () => {
       },
     });
     w.host(d, make('a'), { entryId: 'root/a' });
-    const ctx = w.app.ctx.fork('consumer');
+    const ctx = rootActivation(w.app).fork('consumer');
     assemble(ctx, { ref: d }).ref.follow(p => p.acquire());
     w.host(d, make('b'), { entryId: 'root/b', priority: 2 });
     await tick();
@@ -544,7 +545,7 @@ describe('follow 的串行交接', () => {
     const d = defineService<{ tag: string }>('zz-cp-reject');
     const attached: string[] = [];
     w.host(d, { tag: 'a' }, { entryId: 'root/a' });
-    const ctx = w.app.ctx.fork('consumer');
+    const ctx = rootActivation(w.app).fork('consumer');
     assemble(ctx, { ref: d }).ref.follow(p => {
       attached.push(p.tag);
       return () => (p.tag === 'a' ? Promise.reject(new Error('释放失败')) : undefined);
@@ -562,7 +563,7 @@ describe('follow 的串行交接', () => {
     const gate = deferred();
     const attached: string[] = [];
     w.host(d, { tag: 'a' }, { entryId: 'root/a' });
-    const ctx = w.app.ctx.fork('consumer');
+    const ctx = rootActivation(w.app).fork('consumer');
     assemble(ctx, { ref: d }).ref.follow(p => {
       attached.push(p.tag);
       return () => (p.tag === 'a' ? gate.promise : undefined);
@@ -587,7 +588,7 @@ describe('follow 的串行交接', () => {
     const gate = deferred();
     const attached: string[] = [];
     w.host(d, { tag: 'a' }, { entryId: 'root/a' });
-    const ctx = w.app.ctx.fork('consumer');
+    const ctx = rootActivation(w.app).fork('consumer');
     const off = assemble(ctx, { ref: d }).ref.follow(p => {
       attached.push(p.tag);
       return () => (p.tag === 'a' ? gate.promise : undefined);
