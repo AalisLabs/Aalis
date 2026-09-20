@@ -54,7 +54,11 @@ function setup() {
     {
       app: ref<AppService>({ saveConfig: () => {}, restart: () => {} }),
       plugins: ref<PluginManagerService>({
-        getPlugin: () => ({ module: { configSchema: SCHEMA } }),
+        getPlugin: () => ({
+          definition: { configSchema: SCHEMA },
+          // 诱饵：生产若误读 module，defaultsFrom 会打上 FROM_MODULE，下面用例会红
+          module: { configSchema: { ...SCHEMA, trap: { type: 'string', default: 'FROM_MODULE' } } },
+        }),
         updateConfig: async (_n: string, cfg: Record<string, unknown>) => {
           received = cfg;
           return true;
@@ -105,6 +109,7 @@ describe('PUT 插件配置：部分更新不得抹掉无 default 的密钥', () 
       got()?.apiKey,
       '裸 defaults 打底时该键整条消失——updateConfig 是整体替换，密钥就此从内存与 yaml 一起没了',
     ).toBe('sk-REAL-SECRET');
+    expect(got()?.trap, '打底必须读 definition.configSchema，不得读 module').toBeUndefined();
   });
 
   it('显式传空串仍可清空（部分更新不等于改不掉）', async () => {

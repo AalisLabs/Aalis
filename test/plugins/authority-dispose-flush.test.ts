@@ -1,15 +1,13 @@
-import { describe, expect, it } from 'vitest';
-import type { StorageService } from '../../packages/api-storage/src/index.js';
-import type { ConfigManager, Logger } from '../../packages/core/src/index.js';
+import { afterEach, describe, expect, it } from 'vitest';
+import { authority } from '../../packages/api-authority/src/index.js';
+import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
+import { App, type ConfigManager, type Logger, provide } from '../../packages/core/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
+import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 
-// ════════════════════════════════════════════════════════════
-// users.json 的落盘从来没人等：save() 只是把写挂到 saveChain 上就同步返回，而
-// DisposableChain.disposeAsync 只在回调返回 thenable 时才 await——插件注册的是
-// `ctx.onDispose(() => authority.save())`，返回 void，于是整条拆卸链一个环节都不等这次写。
-// CLI 子命令改完等级即退进程、bounce 热重载同理：封禁/等级静默丢失，而命令还报成功。
-// 修法是给出 flushed()，让拆卸路径能真正等到写完。
-// ════════════════════════════════════════════════════════════
+// users.json 落盘：save() 只把写挂到 saveChain 上就同步返回。拆卸路径必须 await flushed()，
+// 否则 CLI 子命令退出与 bounce 会丢掉封禁/等级。plugin-authority 在 lifecycle.onDispose 里
+// 先 save() 再 await flushed()，停机才能等到在飞写入。
 
 function mkConfig(): ConfigManager {
   const store: Record<string, unknown> = { owners: [] };
@@ -38,6 +36,35 @@ function slowStorage(done: { written: boolean }): StorageService {
   } as unknown as StorageService;
 }
 
+const DATA_ROOT: StorageRootInfo = {
+  name: 'data',
+  label: 'data',
+  kind: 'data',
+  browsable: true,
+  readable: true,
+  writable: true,
+  deletable: true,
+};
+
+function pluginSlowStorage(done: { written: boolean; uri?: string }): StorageService {
+  return {
+    listRoots: () => [DATA_ROOT],
+    async readFile() {
+      throw new Error('不存在');
+    },
+    async writeFile(uri: string) {
+      await new Promise(r => setTimeout(r, 40));
+      done.written = true;
+      done.uri = uri;
+    },
+  } as unknown as StorageService;
+}
+
+const apps: App[] = [];
+afterEach(async () => {
+  for (const app of apps.splice(0)) await app.stop().catch(() => {});
+});
+
 describe('authority 落盘必须可被拆卸路径等待', () => {
   it('flushed() 等到写真正完成；不等它则写还在飞', async () => {
     const done = { written: false };
@@ -56,5 +83,26 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
     const done = { written: false };
     const m = new AuthorityManager(mkConfig(), mkLogger(), slowStorage(done));
     await expect(m.flushed()).resolves.toBeUndefined();
+  });
+
+  it('装配真实 plugin-authority 后 app.stop 等到 onDispose 落盘', async () => {
+    const done = { written: false } as { written: boolean; uri?: string };
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    apps.push(app);
+    const host = app.bind({ provide, authority });
+    host.provide(storage, pluginSlowStorage(done));
+    await app.plugin(authorityPlugin, {});
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin(authorityPlugin.name)?.state).toBe('active');
+
+    const mgr = host.authority.current;
+    if (!mgr) throw new Error('authority 未发布');
+    mgr.setUserLevel({ platform: 'onebot', userId: 'alice' }, -5);
+    mgr.save();
+    expect(done.written, 'save() 同步返回，此刻写还在飞').toBe(false);
+
+    await app.stop();
+    expect(done.written, '停机必须跑到插件 onDispose 的 flushed()，等到在飞写入').toBe(true);
+    expect(done.uri).toBe('data:/users.json');
   });
 });

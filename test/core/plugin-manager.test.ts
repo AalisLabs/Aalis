@@ -12,6 +12,9 @@ import {
   type ServiceRef,
 } from '../../packages/core/src/index.js';
 
+// activating 窗口里的管理动作（unload / disable / bounce / updateConfig 撞上在飞 apply）
+// 由 admin-during-activation.test.ts 守；本文件钉调度稳态路径。
+
 interface ScratchState {
   applied: string[];
   disposed: string[];

@@ -11,8 +11,8 @@
 // 测试据 gen.txt 断言只有一代。
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { definePlugin, lifecycle, provide, services } from '@aalis/core';
 import { commands } from '../../packages/api-commands/src/index.js';
-import { definePlugin, lifecycle, provide, services } from '../../packages/core/src/index.js';
 import { startAalis } from '../../packages/runtime/src/start.js';
 
 const GEN_FILE = resolve(process.cwd(), 'gen.txt');

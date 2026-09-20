@@ -6,6 +6,7 @@ import { App, definePlugin, lifecycle } from '../../packages/core/src/index.js';
 // 不等待，名字随同步段释放）；disposeAsync 等到全部异步清理完成，名字在子激活 teardown
 // 最末（清理链排空、按 ctx.id 的枢纽清扫之后）才释放。同名重复挂载在旧模块仍占名时拿到
 // `parent#name~2`，收尾后再挂回到原名——否则新挂载会在那一跳微任务里被旧清扫连锅端走。
+// 挂载时缺 required 即拒绝由 unify-review.test.ts「挂载时缺 required 即拒绝」守，本文件不覆盖那道闸。
 // ════════════════════════════════════════════════════════════
 
 const apps: App[] = [];
