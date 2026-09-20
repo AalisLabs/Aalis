@@ -15,6 +15,8 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
+import { rootActivation } from '../../packages/core/src/orchestration/app.js';
+import type { PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 
 // ════════════════════════════════════════════════════════════
@@ -146,18 +148,18 @@ describe('目标接口：声明描述符，拿按激活绑定的接口', () => {
     await app.plugins.idle();
     expect(state(app, 'consumer')).toBe('active');
     expect(instance.list()).toEqual(['echo']);
-    await app.ctx.emit('app:ready');
+    await app.bind({ events }).events.emit('app:ready');
     expect(ready).toBe(1);
 
     await app.plugins.unload('consumer');
     expect(instance.list(), '注册型登记随激活撤回，不靠按名字清扫').toEqual([]);
-    await app.ctx.emit('app:ready');
+    await app.bind({ events }).events.emit('app:ready');
     expect(ready, '事件监听同样撤回').toBe(1);
   });
 
   it('真实注册型能力 tools 与真实调用型服务 process 走同一声明', async () => {
     const { app, host } = world();
-    const registry = new ToolRegistry(app.ctx.logger);
+    const registry = new ToolRegistry(app.bind({ logger }).logger);
     host.provide(tools, registry);
     const fakeProcess = { execFile: async () => ({ stdout: 'v1', stderr: '', code: 0 }) } as unknown as ProcessService;
     host.provide(processService, fakeProcess);
@@ -197,8 +199,8 @@ describe('资源身份：同名不同激活互不清扫', () => {
     const { app, host } = world();
     const instance = makeHub();
     host.provide(hub, instance);
-    const left = app.ctx.fork('dup');
-    const right = app.ctx.fork('dup');
+    const left = rootActivation(app).fork('dup');
+    const right = rootActivation(app).fork('dup');
     assemble(left, { hub }).hub.register({ name: 'from-left' });
     assemble(right, { hub }).hub.register({ name: 'from-right' });
     expect(instance.list()).toEqual(['from-left', 'from-right']);
@@ -253,9 +255,9 @@ describe('子模块：重新绑定与父子关闭', () => {
     await handles[0]!.disposeAsync();
     expect(instance.list(), '关子不动父的登记').toEqual(['parent-item']);
 
-    // 再挂一个子，然后关父：级联
-    const parentCtx = app.plugins.getPlugin('parent')!.context!;
-    await child.mount(parentCtx.fork('parent#again'), {});
+    // 再挂一个子，然后关父：级联。公开条目没有激活记录，挂载口是父激活的 lifecycle.module
+    const parentCtx = (app.plugins.getPlugin('parent') as PluginRecord).context!;
+    await assemble(parentCtx, { lifecycle }).lifecycle.module(child);
     expect(instance.list()).toEqual(['child-item', 'parent-item']);
     await app.plugins.unload('parent');
     expect(instance.list()).toEqual([]);
@@ -444,7 +446,7 @@ describe('失败回滚', () => {
     const { app, host } = world();
     const instance = makeHub();
     host.provide(hub, instance);
-    const ctx = app.ctx.fork('p');
+    const ctx = rootActivation(app).fork('p');
     const bound = assemble(ctx, { hub }).hub;
     expect(() => bound.register({ name: 'bad', failOnRegister: true })).toThrow('拒绝登记');
     const second = makeHub('second');
@@ -492,7 +494,7 @@ describe('关闭契约', () => {
     const { app, host } = world();
     const instance = makeHub();
     host.provide(hub, instance);
-    const ctx = app.ctx.fork('p');
+    const ctx = rootActivation(app).fork('p');
     const bound = assemble(ctx, { hub }).hub;
     const off = bound.register({ name: 'manual', off: 'slow' });
     bound.register({ name: 'replaced', off: 'slow' });
@@ -543,7 +545,7 @@ describe('关闭契约', () => {
     const { app, host } = world();
     const instance = makeHub();
     host.provide(hub, instance);
-    const ctx = app.ctx.fork('p');
+    const ctx = rootActivation(app).fork('p');
     const bound = assemble(ctx, { hub }).hub;
     const oldOff = bound.register({ name: 'x' });
     bound.register({ name: 'x' });
