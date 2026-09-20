@@ -134,7 +134,12 @@ export const config = builtinService<Readonly<Record<string, unknown>>>('config'
 // biome-ignore lint/suspicious/noExplicitAny: 描述符泛型只作推导载体
 type AnyDescriptor = ServiceDescriptor<any, any>;
 
-/** 发布服务：唯一的发布入口。实现按描述符的提供者类型约束；返回退订，随这次激活撤回。 */
+/**
+ * 发布服务：唯一的发布入口。实现按描述符的提供者类型约束；返回退订，随这次激活撤回。
+ *
+ * `options.onBehalfOf`：条目的逻辑身份取被代者 id（偏好、服务页、provides 校验的 hasByContext 都认这个 id），
+ * 清理仍归本激活。代登记不计入代理人的 `provides`；写进去会按「未提供」让本次激活进入 error。
+ */
 export type Provide = <D extends AnyDescriptor>(
   descriptor: D,
   implementation: ProviderOf<D>,

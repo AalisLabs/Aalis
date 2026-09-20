@@ -128,3 +128,40 @@ describe('uses → apply 的类型推导', () => {
     expect(app.plugins.getPlugin('bare')?.optional).toEqual([]);
   });
 });
+
+describe('定义对象的 name', () => {
+  it('缺 name、空串在 definePlugin 即抛', () => {
+    expect(() =>
+      // @ts-expect-error name 是必填字段；运行期同样拒绝，不把 undefined 当实例 id
+      definePlugin({
+        apply() {},
+      }),
+    ).toThrow(/缺少合法 name/);
+
+    expect(() =>
+      definePlugin({
+        name: '',
+        apply() {},
+      }),
+    ).toThrow(/缺少合法 name/);
+  });
+
+  it('name 不能含 instanceId 的 ":" 后缀分隔或子模块的 "#"', () => {
+    expect(() =>
+      definePlugin({
+        name: 'mod:inst',
+        apply() {},
+      }),
+    ).toThrow(/实例后缀/);
+
+    expect(() =>
+      definePlugin({
+        name: 'parent#child',
+        apply() {},
+      }),
+    ).toThrow('#');
+
+    // 作用域包名含 '/'；parseInstanceId 只把 '/' 之后的 ':' 当成 suffix——这是合法 name
+    expect(definePlugin({ name: '@scope/plugin', apply() {} }).name).toBe('@scope/plugin');
+  });
+});

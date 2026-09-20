@@ -17,7 +17,10 @@ export interface PluginMeta {}
 
 // biome-ignore lint/complexity/noBannedTypes: 无声明时的空声明表
 export interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
-  /** 插件名，与 package.json 的 name 一致；单实例时即实例 id */
+  /**
+   * 插件名，与 package.json 的 name 一致；单实例时即实例 id。
+   * 须为非空字符串，且不含 instanceId 的 `:suffix`（parseInstanceId 从 '/' 之后切开）与子模块的 `#`。
+   */
   name: string;
   displayName?: string;
   /**
@@ -30,7 +33,11 @@ export interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
    * 可选依赖包一层 optional()。没有默认注入——这里写了什么，插件就只能碰到什么。
    */
   uses?: U;
-  /** 本插件提供的服务（激活后校验确已提供） */
+  /**
+   * 本插件提供的服务（激活后按本次激活的 instanceId 校验确已提供）。
+   * `provide(..., { onBehalfOf })` 代登记的条目归属被代者身份，不计入代理人：
+   * 若把代登记的服务写进本清单，会以「声明 provides 但未实际注册」进入 error。
+   */
   // biome-ignore lint/suspicious/noExplicitAny: 描述符泛型只作推导载体
   provides?: ServiceDescriptor<any, any>[];
   /** 核心插件不能被用户禁用 */
@@ -43,8 +50,44 @@ export interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
   apply(caps: BoundOf<U>): void | Promise<void>;
 }
 
-/** 校验一份定义的声明表：每一项都得是描述符（或 optional 包着的描述符） */
+/**
+ * id 形状的公共闸：非空字符串，且不含 `#`（子模块 id 是 `父id#模块名`）。
+ * `definition.name` 额外禁止 `:suffix`；`register` 第三参 instanceId 允许 `name:suffix`。
+ */
+function assertValidId(id: unknown, kind: 'name' | 'instanceId'): asserts id is string {
+  if (typeof id !== 'string' || id === '') {
+    throw new Error(
+      kind === 'name' ? '插件定义缺少合法 name（须为非空字符串）' : '插件缺少合法 instanceId（须为非空字符串）',
+    );
+  }
+  if (id.includes('#')) {
+    throw new Error(
+      kind === 'name'
+        ? `插件 "${id}" 的 name 不能包含 "#"——"#" 是子模块 id 的分隔符（父id#模块名）`
+        : `instanceId "${id}" 不能包含 "#"——"#" 是子模块 id 的分隔符（父id#模块名）`,
+    );
+  }
+}
+
+/** register 第三参：与 name 同一套非空 / `#` 闸；`:suffix` 合法（多实例）。 */
+export function assertValidInstanceId(id: unknown): asserts id is string {
+  assertValidId(id, 'instanceId');
+}
+
+function assertValidPluginName(name: unknown): asserts name is string {
+  assertValidId(name, 'name');
+  const slashIdx = name.indexOf('/');
+  const searchFrom = slashIdx >= 0 ? slashIdx + 1 : 0;
+  if (name.includes(':', searchFrom)) {
+    throw new Error(
+      `插件 "${name}" 的 name 不能带实例后缀——":suffix" 只用于 instanceId（parseInstanceId 从 '/' 之后切开），不进定义 name`,
+    );
+  }
+}
+
+/** 校验一份定义：name 合法，且 uses 每一项都是描述符（或 optional 包着的描述符） */
 export function validateDefinition(definition: PluginDefinition): void {
+  assertValidPluginName(definition.name);
   for (const [key, use] of Object.entries(definition.uses ?? {})) {
     const descriptor = (use as { optional?: unknown } | null)?.optional ?? use;
     if (typeof (descriptor as { bind?: unknown } | null)?.bind !== 'function') {

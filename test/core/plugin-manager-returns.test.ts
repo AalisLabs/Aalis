@@ -43,6 +43,78 @@ describe('register 的返回值', () => {
     expect(await app.plugin(plugin('p'))).toBe(false);
     await app.stop();
   });
+
+  it('手写缺 name / 空串 / 非法分隔符：false + warn 一次 + 不落账', async () => {
+    const hub = new LogHub();
+    const lines: string[] = [];
+    hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
+    const app = new App({ config: { name: 'T', logLevel: 'warn', plugins: {} }, logHub: hub });
+
+    // 手写对象绕过 definePlugin：类型上缺 name，运行期必须拒落账
+    expect(await app.plugins.register({ apply() {} } as unknown as PluginDefinition)).toBe(false);
+    expect(await app.plugins.register({ name: '', apply() {} })).toBe(false);
+    expect(await app.plugins.register({ name: 'a#b', apply() {} })).toBe(false);
+    expect(await app.plugins.register({ name: 'a:b', apply() {} })).toBe(false);
+
+    await app.plugins.idle();
+    expect(app.plugins.getStatus()).toEqual([]);
+    expect(JSON.parse(JSON.stringify(app.plugins.getStatus()))).toEqual([]);
+
+    const warns = lines.filter(l => l.startsWith('warn:') && l.includes('拒绝注册'));
+    expect(warns, '每个非法定义恰好 warn 一次').toHaveLength(4);
+    await app.stop();
+  });
+
+  it('App.plugin 对手写缺 name 同样返回 false、不落账', async () => {
+    const app = silentApp();
+    expect(await app.plugin({ apply() {} } as unknown as PluginDefinition)).toBe(false);
+    await app.plugins.idle();
+    expect(app.plugins.getStatus()).toEqual([]);
+    await app.stop();
+  });
+
+  it('非法 instanceId：false + warn；合法多实例仍 true', async () => {
+    const hub = new LogHub();
+    const lines: string[] = [];
+    hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
+    const app = new App({ config: { name: 'T', logLevel: 'warn', plugins: {} }, logHub: hub });
+    const reusable = plugin('q', { reusable: true });
+
+    expect(await app.plugins.register(reusable, {}, '')).toBe(false);
+    expect(await app.plugins.register(reusable, {}, 'q#x')).toBe(false);
+    expect(await app.plugins.register(reusable, {}, 'q:second')).toBe(true);
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('q:second')?.state).toBe('active');
+    expect(app.plugins.getPlugin('')).toBeUndefined();
+    expect(app.plugins.getPlugin('q#x')).toBeUndefined();
+
+    const warns = lines.filter(l => l.startsWith('warn:') && l.includes('拒绝注册'));
+    expect(warns, '空串与 # 各 warn 一次').toHaveLength(2);
+    expect(warns.some(l => l.includes('缺少合法 instanceId'))).toBe(true);
+    expect(warns.some(l => l.includes('#') && l.includes('instanceId'))).toBe(true);
+    await app.stop();
+  });
+
+  it('手写 uses 非描述符：false + warn，不落账', async () => {
+    const hub = new LogHub();
+    const lines: string[] = [];
+    hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
+    const app = new App({ config: { name: 'T', logLevel: 'warn', plugins: {} }, logHub: hub });
+
+    expect(
+      await app.plugins.register({
+        name: 'bad-uses',
+        uses: { x: 'not-a-descriptor' },
+        apply() {},
+      } as unknown as PluginDefinition),
+    ).toBe(false);
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('bad-uses')).toBeUndefined();
+    expect(
+      lines.filter(l => l.startsWith('warn:') && l.includes('拒绝注册') && l.includes('不是服务描述符')),
+    ).toHaveLength(1);
+    await app.stop();
+  });
 });
 
 describe('unload 的返回值', () => {
