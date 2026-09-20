@@ -1,25 +1,29 @@
 // 探针事件经真实的 declaration merging 登记，不用 as never 绕过类型面。
 declare module '@aalis/core' {
   interface AalisEvents {
-    '__t:probe': [];
+    '__t:ws-withdraw-probe': [];
   }
 }
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { assemble } from '../../packages/core/src/context/binding.js';
 import {
-  ConfigManager,
-  Context,
-  ContributionRegistry,
-  EventBus,
-  HookRegistry,
+  App,
+  definePlugin,
+  defineService,
+  events,
   type Logger,
-  ServiceContainer,
+  lifecycle,
+  optional,
+  provide,
+  services,
 } from '../../packages/core/src/index.js';
+import { rootActivation } from '../../packages/core/src/orchestration/app.js';
 
 // ════════════════════════════════════════════════════════════
-// whenService 的 cleanup 是「对外绑定的撤回」，拆卸时走清理链的撤回段：
-// 先于全部 onDispose 执行，且此时四原语登记已切断。这让「半拆状态不外露」对经枢纽服务
-// 登记的条目同样成立——用户清理跑的时候，枢纽已经不会再把活派给这个 ctx。
+// follow 的 cleanup 是对外绑定的撤回：拆卸时先于全部 onDispose 执行，
+// 且此时四原语登记已切断。这让「半拆状态不外露」对经枢纽服务登记的条目同样成立——
+// 用户清理跑的时候，枢纽已经不会再把活派给这次激活。
 // 契约只约束排空快照内的次序；排空期间的迟到登记仍立即执行（链的既有语义，不被分段改变）。
 // ════════════════════════════════════════════════════════════
 
@@ -42,131 +46,192 @@ function makeHub(): Hub {
   };
 }
 
-const roots: Context[] = [];
-afterEach(() => {
-  for (const root of roots.splice(0)) root.dispose();
+const hubDesc = defineService<Hub>('__t:ws-hub');
+const ownDesc = defineService('__t:ws-own');
+const depDesc = defineService<{ id: string }>('__t:ws-dep');
+const svcDesc = defineService('__t:ws-wd-svc');
+
+const apps: App[] = [];
+afterEach(async () => {
+  for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
 
-function makeRoot(): Context {
+function makeApp() {
   const logger: Logger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => logger };
-  const root = new Context({
-    id: 'root',
-    events: new EventBus(),
-    services: new ServiceContainer(),
-    hooks: new HookRegistry(),
-    contributions: new ContributionRegistry(),
-    logger,
-    config: new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} }),
-  });
-  roots.push(root);
-  return root;
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+  apps.push(app);
+  return { app, host: app.bind({ provide, events }) };
 }
 
-describe('whenService cleanup 走撤回段', () => {
-  it('cleanup 先于 onDispose 执行，与登记先后无关（close 在 flush 之前）', async () => {
-    const root = makeRoot();
-    root.provide('db', {});
+describe('follow cleanup 走撤回段', () => {
+  it('cleanup 先于 onDispose 执行，与登记先后无关', async () => {
+    const { app, host } = makeApp();
+    host.provide(svcDesc, {});
     const order: string[] = [];
-    const ctx = root.fork('p');
-    ctx.onDispose(() => {
-      order.push('flush:early');
-    });
-    ctx.whenService('db', () => () => {
-      order.push('close');
-    });
-    ctx.onDispose(() => {
-      order.push('flush:late');
-    });
-    await ctx.disposeAsync();
+    await app.plugin(
+      definePlugin({
+        name: 'p',
+        uses: { x: optional(svcDesc), lifecycle },
+        apply({ x, lifecycle }) {
+          lifecycle.onDispose(() => {
+            order.push('flush:early');
+          });
+          x.follow(() => () => {
+            order.push('close');
+          });
+          lifecycle.onDispose(() => {
+            order.push('flush:late');
+          });
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('p')?.state).toBe('active');
+    await app.plugins.unload('p');
     expect(order).toEqual(['close', 'flush:late', 'flush:early']);
   });
 
-  it('用户 onDispose 执行时，经 whenService 交出的枢纽登记与 ctx.on 的监听同为已撤回', async () => {
-    const root = makeRoot();
+  it('用户 onDispose 执行时，经 follow 交出的枢纽登记与 events.on 的监听同为已撤回', async () => {
+    const { app, host } = makeApp();
     const hub = makeHub();
-    root.provide('hub', hub);
-    const ctx = root.fork('p');
-    ctx.whenService<Hub>('hub', svc => svc.register('my-item', ctx.id));
+    host.provide(hubDesc, hub);
     let eventCalls = 0;
-    ctx.on('__t:probe', () => {
-      eventCalls++;
-    });
     const snapshots: string[][] = [];
-    ctx.onDispose(async () => {
-      await root.emit('__t:probe');
-      snapshots.push(hub.list());
-    });
-    ctx.onDispose(async () => {
-      snapshots.push(hub.list());
-    });
+    await app.plugin(
+      definePlugin({
+        name: 'p',
+        uses: { hub: optional(hubDesc), events, lifecycle },
+        apply({ hub: hubRef, events: ev, lifecycle }) {
+          hubRef.follow(svc => svc.register('my-item', lifecycle.id));
+          ev.on('__t:ws-withdraw-probe', () => {
+            eventCalls++;
+          });
+          lifecycle.onDispose(async () => {
+            await host.events.emit('__t:ws-withdraw-probe');
+            snapshots.push(hub.list());
+          });
+          lifecycle.onDispose(async () => {
+            snapshots.push(hub.list());
+          });
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('p')?.state).toBe('active');
     expect(hub.list(), '前置：登记已进枢纽').toEqual(['my-item']);
-    await ctx.disposeAsync();
+    await app.plugins.unload('p');
     expect(eventCalls, '监听已在 beforeCleanup 切断').toBe(0);
     expect(snapshots, '两个 onDispose 看到的都是已撤回的枢纽').toEqual([[], []]);
   });
 
-  it('撤回段回调里迟到登记的 onDispose 仍立即执行（链的既有语义不被分段改变）', () => {
-    const root = makeRoot();
-    root.provide('svc', {});
-    const ctx = root.fork('p');
+  it('撤回段回调里迟到登记的 onDispose 仍立即执行（链的既有语义不被分段改变）', async () => {
+    const { app, host } = makeApp();
+    host.provide(svcDesc, {});
     const order: string[] = [];
-    ctx.onDispose(() => {
-      order.push('cleanup:early');
-    });
-    ctx.whenService('svc', () => () => {
-      order.push('withdraw:A');
-    });
-    ctx.whenService('svc', () => () => {
-      order.push('withdraw:B');
-      ctx.onDispose(() => {
-        order.push('late');
-      });
-    });
-    ctx.dispose();
-    expect(order).toEqual(['withdraw:B', 'late', 'withdraw:A', 'cleanup:early']);
+    await app.plugin(
+      definePlugin({
+        name: 'p',
+        uses: { x: optional(svcDesc), lifecycle },
+        apply({ x, lifecycle }) {
+          lifecycle.onDispose(() => {
+            order.push('cleanup:early');
+          });
+          x.follow(() => () => {
+            order.push('withdraw');
+            lifecycle.onDispose(() => {
+              order.push('late');
+            });
+          });
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('p')?.state).toBe('active');
+    await app.plugins.unload('p');
+    expect(order).toEqual(['withdraw', 'late', 'cleanup:early']);
   });
 
   it('拆卸窗口内的服务事件不引爆 cleanup：子级联摘掉提供者时，父的 cleanup 仍等到自己的撤回段', async () => {
-    const root = makeRoot();
-    const parent = root.fork('parent');
-    parent.provide('own', {});
-    parent.fork('child').provide('dep', {});
+    const { app } = makeApp();
     let ownVisibleAtCleanup: boolean | undefined;
-    parent.whenService('dep', () => () => {
-      // 撤回段跑在 beforeCleanup 之后：本 ctx 自己 provide 的服务此刻应已下线
-      ownVisibleAtCleanup = parent.getService('own') !== undefined;
-    });
-    await parent.disposeAsync();
+    await app.plugin(
+      definePlugin({
+        name: 'parent',
+        uses: { provide, lifecycle, dep: optional(depDesc), services },
+        provides: [ownDesc],
+        apply({ provide: pub, lifecycle, dep, services: svc }) {
+          pub(ownDesc, {});
+          void lifecycle.module(
+            definePlugin({
+              name: 'child',
+              uses: { provide },
+              provides: [depDesc],
+              apply({ provide: childPub }) {
+                childPub(depDesc, { id: 'child' });
+              },
+            }),
+          );
+          dep.follow(() => () => {
+            // 撤回段跑在 beforeCleanup 之后：本激活自己 provide 的服务此刻应已下线
+            ownVisibleAtCleanup = svc.get(ownDesc) !== undefined;
+          });
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('parent')?.state).toBe('active');
+    await app.plugins.unload('parent');
     expect(ownVisibleAtCleanup, 'cleanup 若在子级联期间被 service:unregistered 引爆，四原语尚未切断').toBe(false);
   });
 
-  it('拆卸窗口内提供者重新上线：关闭中的 ctx 不再挂新实例', async () => {
-    const root = makeRoot();
-    const parent = root.fork('parent');
-    const child = parent.fork('child');
-    const offDep = root.provide('dep', { id: 'old' });
+  it('拆卸窗口内提供者重新上线：关闭中的激活不再挂新实例', async () => {
+    const { app, host } = makeApp();
+    const offDep = host.provide(depDesc, { id: 'old' });
     const attached: string[] = [];
-    parent.whenService<{ id: string }>('dep', svc => {
-      attached.push(svc.id);
+    // 子定义必须在 apply 之外：apply 解构出的 lifecycle 会挡住描述符导入
+    const child = definePlugin({
+      name: 'child',
+      uses: { lifecycle },
+      apply({ lifecycle }) {
+        lifecycle.onDispose(async () => {
+          offDep();
+          host.provide(depDesc, { id: 'new' });
+          await new Promise(r => setTimeout(r, 10));
+        });
+      },
     });
-    // 子的异步 onDispose 撑开父的拆卸窗口（父在 beforeCleanup 之前等子级联）
-    child.onDispose(async () => {
-      offDep();
-      root.provide('dep', { id: 'new' });
-      await new Promise(r => setTimeout(r, 10));
-    });
-    await parent.disposeAsync();
+    await app.plugin(
+      definePlugin({
+        name: 'parent',
+        uses: { lifecycle, dep: optional(depDesc) },
+        apply({ lifecycle, dep }) {
+          dep.follow(svc => {
+            attached.push(svc.id);
+          });
+          void lifecycle.module(child);
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('parent')?.state).toBe('active');
+    await app.plugins.unload('parent');
     expect(attached).toEqual(['old']);
   });
 
   it('手动退订仍从链上自移除，撤回段不滞留闭包', () => {
-    const root = makeRoot();
-    root.provide('svc', {});
-    const ctx = root.fork('p');
+    const { app, host } = makeApp();
+    host.provide(svcDesc, {});
+    const ctx = rootActivation(app).fork('p');
+    const ref = assemble(ctx, { x: optional(svcDesc) }).x;
     const base = ctx.disposableCount;
-    const off = ctx.whenService('svc', () => () => {});
-    expect(ctx.disposableCount).toBeGreaterThan(base);
+    const off = ref.follow(() => () => {});
+    const afterFollow = ctx.disposableCount;
+    expect(afterFollow).toBeGreaterThan(base);
     off();
-    expect(ctx.disposableCount).toBe(base);
+    // 资源口的订阅仍在，但同步退订不得另留 follower 的链上条目
+    expect(ctx.disposableCount).toBe(afterFollow);
+    const off2 = ref.follow(() => () => {});
+    off2();
+    expect(ctx.disposableCount, '同一口复用订阅，二次跟随不叠加条目').toBe(afterFollow);
   });
 });
