@@ -10,7 +10,7 @@ import type express from 'express';
 import type { RouteGate } from '../gate.js';
 
 /** 插件管理 + 全局配置路由用到的能力 */
-export interface PluginRoutesCaps {
+interface PluginRoutesCaps {
   app: ServiceRef<AppService>;
   plugins: ServiceRef<PluginManagerService>;
   /** 整份配置的读写与落盘（宿主管理面） */

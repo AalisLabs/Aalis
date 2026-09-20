@@ -175,7 +175,7 @@ export function markBuiltin<D extends object>(descriptor: D): D {
 }
 
 /** @internal */
-export function isBuiltin(descriptor: object): boolean {
+function isBuiltin(descriptor: object): boolean {
   return (descriptor as { [BUILTIN]?: boolean })[BUILTIN] === true;
 }
 

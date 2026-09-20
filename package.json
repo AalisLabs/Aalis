@@ -31,8 +31,11 @@
     "clean": "pnpm -r exec rm -rf dist"
   },
   "devDependencies": {
+    "@aalis/api-gateway": "workspace:*",
+    "@aalis/api-process": "workspace:*",
     "@aalis/api-storage": "workspace:*",
     "@aalis/api-tools": "workspace:*",
+    "@aalis/api-webui": "workspace:*",
     "@aalis/schema-message": "workspace:*",
     "@biomejs/biome": "2.4.15",
     "@modelcontextprotocol/sdk": "^1.29.0",
