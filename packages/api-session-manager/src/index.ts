@@ -5,7 +5,7 @@
 // 触发 session:* 事件 augmentation 的下游插件应当依赖本包，而不是 impl 包，
 // 以避免不必要的工作区依赖与编译循环风险。
 
-// 锚定 @aalis/core，使下方 declare module 的 ServiceTypeMap/AalisEvents 增强生效。
+// 锚定 @aalis/core，使下方 declare module 的 AalisEvents 增强生效。
 import type {} from '@aalis/core';
 import { defineService } from '@aalis/core';
 
@@ -212,13 +212,6 @@ declare module '@aalis/core' {
     'session:updated': [session: SessionInfo];
     'session:completed': [session: SessionInfo];
     'session:deleted': [sessionId: string];
-  }
-}
-
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    'session-manager': SessionManagerService;
   }
 }
 

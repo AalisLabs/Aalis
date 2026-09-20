@@ -46,12 +46,5 @@ export interface MessageArchiveService {
   findByMessageId?(sessionId: string, messageId: string, scanLimit?: number): Promise<Message | null>;
 }
 
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    'message-archive': MessageArchiveService;
-  }
-}
-
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const messageArchive = defineService<MessageArchiveService>('message-archive');

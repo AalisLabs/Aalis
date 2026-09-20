@@ -1,5 +1,3 @@
-import type { DependencyDeclaration, ServiceOf, ServiceTypeMap } from '../types/services.js';
-
 // ----- 服务系统数据契约（与容器实现同文件，同 contributions.ts 的 Spec/Handle 惯例） -----
 
 /** getAll / getAllServices 的元素：ServiceEntry 的投影，刻意不含清理归属 owner。 */
@@ -30,17 +28,6 @@ interface ServiceEntry {
   label?: string;
 }
 
-export interface NormalizedDependency {
-  service: string;
-}
-
-/**
- * 将 string | ServiceDependency 统一为 NormalizedDependency
- */
-export function normalizeDependency(dep: DependencyDeclaration): NormalizedDependency {
-  return { service: typeof dep === 'string' ? dep : dep.service };
-}
-
 /**
  * 服务容器 —— 支持同名多实现
  *
@@ -56,19 +43,16 @@ export class ServiceContainer {
   private preferences = new Map<string, string>();
 
   /**
-   * 注册一个服务实例
-   *
-   * 已登记的服务名（ServiceTypeMap 里有的）按契约类型约束实现，错误实现在编译期被拒；
-   * 未登记名与动态字符串放行为 `unknown`。单签名条件类型而非重载：string 兜底重载会让
-   * 已知名的错误实现落到宽签名照样通过（已实测）。
+   * 注册一个服务实例。容器只按名字存取，不认识类型——实现是否满足契约由服务描述符在
+   * `provide(descriptor, impl)` 处约束。
    *
    * @param owner 清理归属（Context 门面传入）；省略则该条目不被拆卸自动清理，用返回的退订闭包自管。
    * @returns 退订闭包；返回这次是否真的摘掉了条目——同一条目退订两次、或已被 unregisterByOwner
    *   清走时为 false，门面据此决定要不要发 `service:unregistered`。
    */
-  register<K extends string>(
-    name: K,
-    instance: ServiceOf<K>,
+  register(
+    name: string,
+    instance: unknown,
     contextId: string,
     owner?: symbol,
     options?: { priority?: number; label?: string },
@@ -122,9 +106,7 @@ export class ServiceContainer {
    * 语义与 `resolveEntries` 保持一致：偏好项存在则取它，否则取 `list[0]` ——
    * `list` 在 `register` 里就按 priority 降序排好（稳定排序，同优先级保持注册顺序）。
    */
-  get<TName extends keyof ServiceTypeMap>(name: TName): ServiceTypeMap[TName] | undefined;
-  get<T = unknown>(name: string): T | undefined;
-  get<T>(name: string): T | undefined {
+  get<T = unknown>(name: string): T | undefined {
     const list = this.entries.get(name);
     if (!list || list.length === 0) return undefined;
     const preferredCtxId = this.preferences.get(name);
@@ -188,9 +170,7 @@ export class ServiceContainer {
    *
    * 返回顺序遵循「偏好 > 优先级 > 注册顺序」。
    */
-  getAll<TName extends keyof ServiceTypeMap>(name: TName): ServiceView<ServiceTypeMap[TName]>[];
-  getAll<T = unknown>(name: string): ServiceView<T>[];
-  getAll<T>(name: string): ServiceView<T>[] {
+  getAll<T = unknown>(name: string): ServiceView<T>[] {
     return this.resolveEntries(name).map(entry => ({
       instance: entry.instance as T,
       contextId: entry.contextId,

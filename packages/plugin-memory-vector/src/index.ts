@@ -283,15 +283,6 @@ function messageKey(sessionId: string, m: Message): string {
 // `semantic-memory` 是**能力标记**而非查询 API：它只声明「本实例具备语义检索能力」，
 // 供依赖声明与拓扑排序识别，以及消费方做能力探测。语义检索本身经工具与
 // memory 契约走，不从这里取。如实声明它的真实形状，不臆造一个没人实现的查询接口。
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    'semantic-memory': {
-      /** 实现标识（当前唯一实现为 `vector-memory`）。 */
-      name: string;
-    };
-  }
-}
-
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 /** 存在性标记服务：只表明「语义记忆已就绪」，检索本身走 memory 契约 */
 export const semanticMemory = defineService<{ name: string }>('semantic-memory');

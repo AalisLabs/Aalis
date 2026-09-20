@@ -4,14 +4,14 @@
 //
 // 核心理念：
 // - 单一 Command 类型，命令层级用 name 的点路径表达（'memory.clear.all'）
-// - Builder API：useCommandService(ctx).command(name).option().action()
+// - Builder API：commands.command(name).option().action()（`commands` 为本包导出的服务描述符，经 uses 声明）
 // - inline DSL 声明位置参数：'memory.set <key:string> [value:text]'
 // - 位置参数作为 handler 形参传入：(argv, key, value) => ...
 //
 // 实现见 @aalis/plugin-commands。
 
 import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
-import type { Context, ServiceRef } from '@aalis/core';
+import type { BindingPort, ServiceRef } from '@aalis/core';
 import { defineService, serviceRef } from '@aalis/core';
 
 // ===== handler 接口 =====
@@ -166,11 +166,10 @@ export interface CommandService {
 
   /**
    * 注销指令。
-   * @param contextId 只摘该 Context 的那一层声明，被它覆盖的声明会自动复位。
-   *   **插件自己的清理必须传它**；缺省会摘掉全部层（管理面用）。
+   * @param contextId 只摘该登记者的那一层声明，被它覆盖的声明会自动复位。
+   *   **插件自己的清理必须传它**（`commands` 门面的退订已代传）；缺省会摘掉全部层（管理面用）。
    */
   unregister(name: string, contextId?: string): void;
-  unregisterByPlugin(contextId: string): void;
 
   execute(name: string, ctx: ExecutionInput): Promise<string | undefined>;
   parseCommand(input: string): { name: string; args: string[]; raw: string } | null;
@@ -191,25 +190,7 @@ export interface CommandService {
   setExecutionGuard(guard: ExecutionGuard): void;
 }
 
-// ===== useCommandService helper =====
-
-export interface ScopedCommandService {
-  command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;
-  readonly raw: CommandService | undefined;
-}
-
-export function useCommandService(ctx: Context): ScopedCommandService {
-  const pluginName = ctx.id;
-  const follow: BuilderHost['follow'] = attach => ctx.whenService<CommandService>('commands', attach);
-  return {
-    command(name, description, meta) {
-      return makeBuilder({ follow }, name, description, { ...meta, pluginName });
-    },
-    get raw() {
-      return ctx.getService<CommandService>('commands');
-    },
-  };
-}
+// ===== 指令 builder =====
 
 type DeferredCall =
   | { kind: 'alias'; name: string }
@@ -219,17 +200,12 @@ type DeferredCall =
   | { kind: 'example'; line: string };
 
 /**
- * 同时支持热转发与 bounce 重放的 builder：
- * - calls[] 是权威源：provider 每次上线的 cb 里重新创建 real builder 并重放。
- * - 同时保留 realBuilder 引用：有值时同步转发调用，与原快路径语义一致。
+ * 同时支持热转发与提供者换人重放的 builder：
+ * - calls[] 是权威源：provider 每次上线的回调里重新创建 real builder 并重放。
+ * - 同时保留 realBuilder 引用：有值时同步转发调用。
  */
-/** builder 只需要「跟随 commands 提供者」这一件事 */
-interface BuilderHost {
-  follow(attach: (service: CommandService) => () => void): () => void;
-}
-
 function makeBuilder(
-  host: BuilderHost,
+  port: BindingPort<CommandService>,
   name: string,
   description: string | undefined,
   meta: InternalCommandMeta,
@@ -240,7 +216,7 @@ function makeBuilder(
   // 注销必须用同一份键：直接传 'memory.clear <key:string>' 这类原始名会键不匹配、整条注销静默 no-op。
   const registryKey = name.trim().split(/\s+/)[0];
 
-  host.follow(svc => {
+  port.follow(svc => {
     realBuilder = svc.command(name, description, meta);
     for (const c of calls) {
       if (c.kind === 'alias') realBuilder.alias(c.name);
@@ -287,13 +263,6 @@ function makeBuilder(
   return self;
 }
 
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    commands: CommandService;
-  }
-}
-
 // ===== 服务描述符（按激活绑定）=====
 
 /** `commands` 的绑定接口：指令声明自动归属这次激活（每个激活一层声明，撤回时被覆盖的声明自动复位） */
@@ -301,10 +270,9 @@ export interface BoundCommands extends ServiceRef<CommandService> {
   command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;
 }
 
-export const commands = defineService<CommandService, BoundCommands>('commands', port => {
-  const host: BuilderHost = { follow: attach => port.follow(attach) };
-  return serviceRef(port, {
+export const commands = defineService<CommandService, BoundCommands>('commands', port =>
+  serviceRef(port, {
     command: (name: string, description?: string, meta?: CommandMeta) =>
-      makeBuilder(host, name, description, { ...meta, pluginName: port.id }),
-  });
-});
+      makeBuilder(port, name, description, { ...meta, pluginName: port.id }),
+  }),
+);

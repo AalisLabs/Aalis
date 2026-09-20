@@ -928,10 +928,3 @@ async function run(caps: Caps): Promise<void> {
     `文件读取插件已加载 (最大 ${(maxFileSize / 1024 / 1024).toFixed(0)}MB, autoInline=${autoInlineLimit} 字符, 保留 ${retentionDays} 天, LRU=${(lruMaxTotalBytes / 1024 / 1024).toFixed(0)}MB, 已恢复 ${index.size} 个文件)`,
   );
 }
-
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    'file-reader': FileReaderService;
-  }
-}

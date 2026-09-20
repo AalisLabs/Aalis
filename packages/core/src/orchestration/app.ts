@@ -8,9 +8,10 @@ import { ServiceContainer } from '../primitives/services.js';
 import { assemble, type BoundOf, type Uses } from '../context/binding.js';
 import { type AalisConfig, ConfigManager, type ConfigProvider } from '../context/config.js';
 import { Context } from '../context/context.js';
+import type { PluginDefinition } from '../context/definition.js';
 import { DefaultLogger, type Logger, LogHub, type LogLevel } from '../context/logger.js';
 
-import { PluginManager, type PluginModule, parseInstanceId } from './plugin.js';
+import { PluginManager, parseInstanceId } from './plugin.js';
 import type { PluginLoader, RestartStrategy } from './providers.js';
 
 // ----- 应用配置选项 -----
@@ -47,9 +48,9 @@ export interface AppOptions {
    *
    * 配置声明是宿主词汇（configSchema，见 @aalis/schema-config），core 不解释——
    * 宿主注入「从声明里派生默认值」的函数，core 只在注册合并时调用。
-   * runtime 注入的是 `m => defaultsFrom(m.configSchema)`。
+   * runtime 注入的是 `d => defaultsFrom(d.configSchema)`。
    */
-  pluginDefaults?: (module: PluginModule) => Record<string, unknown>;
+  pluginDefaults?: (definition: PluginDefinition) => Record<string, unknown>;
   /** 重启策略；缺省=`restart()` 抛错 */
   restartStrategy?: RestartStrategy;
   /** 注入自定义事件总线 */
@@ -80,7 +81,7 @@ export interface AppOptions {
    */
   logger?: Logger;
   /**
-   * 开发模式开关——传递给根 Context，决定 `provide` 是否跑能力探测。
+   * 开发模式开关——传递给根激活，决定 `provide` 与激活路径是否跑一致性劝告。
    * 默认 `true`（dev-safe）；生产宿主应显式传入 `false` 跳过热路径开销。
    * core 不读 `process.env`，完全以宿主传入为准。
    */
@@ -97,6 +98,18 @@ export interface AppOptions {
    * 缺省时 banner 省略版本段（嵌入 / 测试场景无宿主注入）。
    */
   version?: string;
+}
+
+const roots = new WeakMap<App, Context>();
+
+/**
+ * @internal core 自己的白盒测试取根激活用。不从包根导出，无 semver 承诺；
+ * 宿主与插件经 `app.bind(uses)` 取能力。
+ */
+export function rootActivation(app: App): Context {
+  const root = roots.get(app);
+  if (!root) throw new Error('未知的 App 实例');
+  return root;
 }
 
 /**
@@ -122,9 +135,12 @@ export function createApp(options: AppOptions): App {
  * 不接触任何外部 I/O。所有 I/O 通过 `AppOptions` 注入的 provider 完成。
  */
 export class App {
-  readonly ctx: Context;
+  /** 根激活：宿主绑定（{@link bind}）与核心服务的归属，全部插件激活的父。不对外——宿主经 bind 取能力 */
+  readonly #root: Context;
   readonly plugins: PluginManager;
   readonly logger: Logger;
+  /** 整份配置的读写、落盘与外部变更监听（插件侧的同一对象经 `hostConfig` 描述符声明获取） */
+  readonly config: ConfigManager;
 
   readonly events: EventBus;
   readonly services: ServiceContainer;
@@ -132,7 +148,7 @@ export class App {
   readonly contributions: ContributionRegistry;
 
   private readonly pluginLoader?: PluginLoader;
-  private pluginDefaults?: (module: PluginModule) => Record<string, unknown>;
+  private pluginDefaults?: (definition: PluginDefinition) => Record<string, unknown>;
   private readonly restartStrategy?: RestartStrategy;
   private readonly disposeTimeoutMs: number;
 
@@ -146,10 +162,11 @@ export class App {
             dataDir: options.dataDir,
           });
 
+    this.config = config;
     this.events = options.events ?? new EventBus();
     // 'app:ready' / 'app:started' 是"应用启动完成"里程碑：app.start() 仅 emit
     // 一次，但插件配置热重载会触发 bounce → 新插件实例的
-    // ctx.on('app:ready'/'app:started', ...) 必须也能拿到通知，否则 adapter /
+    // events.on('app:ready'/'app:started', ...) 必须也能拿到通知，否则 adapter /
     // CLI TUI 等"在启动后才建立"的逻辑在 bounce 后就永远不会重新执行。
     // 标记为 sticky 后，bounce 出来的新实例注册 listener 时立即被微任务补发一次。
     this.events.markSticky('app:ready');
@@ -173,8 +190,8 @@ export class App {
     this.restartStrategy = options.restartStrategy;
     this.disposeTimeoutMs = options.disposeTimeoutMs ?? 5000;
 
-    // 2. 根上下文
-    this.ctx = new Context({
+    // 2. 根激活
+    this.#root = new Context({
       id: 'root',
       events: this.events,
       services: this.services,
@@ -186,21 +203,22 @@ export class App {
     });
 
     // 3. 插件管理器
-    this.plugins = new PluginManager(this.ctx, this.logger, this.disposeTimeoutMs);
+    this.plugins = new PluginManager(this.#root, this.logger, this.disposeTimeoutMs);
+    roots.set(this, this.#root);
 
     // 4. 注册核心服务
-    this.ctx.provide('app', this);
-    this.ctx.provide('plugins', this.plugins);
-    this.ctx.provide('host-config', config);
+    this.#root.provide('app', this);
+    this.#root.provide('plugins', this.plugins);
+    this.#root.provide('host-config', config);
 
     // 5. 应用启动时已存在的服务偏好
     const initialPrefs = config.getServicePreferences();
     for (const [svcName, ctxId] of Object.entries(initialPrefs)) {
-      this.ctx.preferService(svcName, ctxId);
+      this.#root.preferService(svcName, ctxId);
     }
 
     // 6. 服务偏好诊断日志
-    this.ctx.on('service:registered', svcName => {
+    this.#root.on('service:registered', svcName => {
       const pref = config.getServicePreferences()[svcName];
       if (pref) {
         this.logger.debug(`服务 "${svcName}" 注册时存在用户偏好: ${pref}`);
@@ -217,7 +235,7 @@ export class App {
    * 插件拿的是自己激活的绑定，不复用这里的。
    */
   bind<U extends Uses>(uses: U): BoundOf<U> {
-    return assemble(this.ctx, uses);
+    return assemble(this.#root, uses);
   }
 
   /**
@@ -230,27 +248,27 @@ export class App {
    * 「激活已落定」的确定时机，调用后 `await app.plugins.idle()`（不得在插件
    * apply/onDispose 内这样做——自等死锁，见 idle）。
    *
-   * @param module     插件模块
+   * @param definition 插件定义（definePlugin 的产物）
    * @param config     插件配置（覆盖文件配置）
-   * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 module.name）
+   * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 definition.name）
    * @returns 同 `plugins.register`：false = 重名或未声明 reusable 的多实例，已记 warn
    */
-  async plugin(module: PluginModule, config?: Record<string, unknown>, instanceId?: string): Promise<boolean> {
-    const id = instanceId ?? module.name;
+  async plugin(definition: PluginDefinition, config?: Record<string, unknown>, instanceId?: string): Promise<boolean> {
+    const id = instanceId ?? definition.name;
     // 合并优先级: 宿主派生的默认配置 ← 配置文件 ← 代码传入，**逐层深合并**：
     // 同一路径上双方都是纯对象则递归，否则后者整体覆盖（数组与非纯对象是原子值）。
     // 与宿主层（runtime/config-sync.ts）落盘回填默认值时的合并语义一致——顶层浅合并会让
     // 配置文件里只写了半块的嵌套组（只写 server.port）把派生默认值整块顶掉，
     // 插件首次 apply 就拿到缺 server.host 的配置。
-    const defaults = this.pluginDefaults?.(module) ?? {};
-    const fileConfig = this.ctx.config.getPluginConfig(id);
+    const defaults = this.pluginDefaults?.(definition) ?? {};
+    const fileConfig = this.config.getPluginConfig(id);
     const mergedConfig = mergeConfigLayers(mergeConfigLayers(defaults, fileConfig), config ?? {});
-    return this.plugins.register(module, mergedConfig, id);
+    return this.plugins.register(definition, mergedConfig, id);
   }
 
   /**
    * 通过 `pluginLoader` 自动加载所有发现的插件。
-   * 未注入 loader 时为 no-op，调用方需自行 `app.plugin(mod)` 手动注册。
+   * 未注入 loader 时为 no-op，调用方需自行 `app.plugin(definition)` 手动注册。
    */
   async autoLoadPlugins(): Promise<void> {
     if (!this.pluginLoader) {
@@ -262,9 +280,9 @@ export class App {
     this.logger.info(`发现 ${discovered.length} 个插件`);
 
     // 按模块名索引（用于多实例查找）
-    const loadedModules = new Map<string, PluginModule>();
+    const loadedModules = new Map<string, PluginDefinition>();
 
-    // 加载所有模块（M2 后无 Context.extend 顶层副作用，单次遍历即可：加载并立即注册激活）
+    // 加载并立即注册激活（导入插件模块没有顶层副作用，单次遍历即可）
     for (const desc of discovered) {
       try {
         const mod = await this.pluginLoader.load(desc);
@@ -284,7 +302,7 @@ export class App {
     }
 
     // 扫描配置中的多实例条目（name:suffix 格式）
-    const pluginConfigs = this.ctx.config.get('plugins') ?? {};
+    const pluginConfigs = this.config.get('plugins') ?? {};
     for (const configKey of Object.keys(pluginConfigs)) {
       const { moduleName, suffix } = parseInstanceId(configKey);
       if (!suffix) continue;
@@ -364,7 +382,7 @@ export class App {
   }
 
   private async persistConfig(): Promise<void> {
-    await this.ctx.config.save();
+    await this.config.save();
     this.logger.info('配置已保存');
   }
 
@@ -372,17 +390,17 @@ export class App {
    * 启动应用
    *
    * 配置外部变更的热重载编排（diff + bounce）属宿主政策：
-   * 宿主自行 `app.ctx.config.watch(cb)` 接管。
+   * 宿主自行 `app.config.watch(cb)` 接管。
    */
   async start(): Promise<void> {
     this.logger.info('正在启动...');
-    await this.ctx.emit('app:starting');
+    await this.#root.emit('app:starting');
 
     // 注：消息路由由 @aalis/plugin-gateway 承担。
-    await this.ctx.emit('app:ready');
+    await this.#root.emit('app:ready');
 
     this.logger.info('启动完成');
-    await this.ctx.emit('app:started');
+    await this.#root.emit('app:started');
   }
 
   /**
@@ -402,7 +420,7 @@ export class App {
     // "快速重启"路径不调 stop()，此时新一轮启动期间的早期订阅者会收到上一轮
     // 的 sticky 信号。stop() 内部会再清一次，重复调用无副作用。
     this.events.clearSticky();
-    this.ctx
+    this.#root
       .emit('app:restarting')
       .then(() => strategy.restart({ stop: () => this.stop(), rollback: opts?.rollback }))
       .catch(err => reportQuietly(() => this.logger.error('restart 失败:', err)));
@@ -413,22 +431,21 @@ export class App {
    */
   async stop(): Promise<void> {
     this.logger.info('正在停止...');
-    this.ctx.config.unwatch();
-    await this.ctx.emit('app:stopping');
+    this.config.unwatch();
+    await this.#root.emit('app:stopping');
     // 先等状态机静置：recompute 是单飞的，若此刻恰有 bounce/unload 在飞，
-    // stopAll 的 shutdown 请求会被排队后**立即返回**，拓扑逆序编排整个落空，
-    // 退化成根 ctx 按 fork 正序级联（提供者先关），下游插件的 onDispose 落盘
+    // stopAll 的 shutdown 请求会被排队后**立即返回**，关停编排整个落空，
+    // 退化成根激活按挂载正序级联（提供者先关），下游插件的收尾落盘
     // 会写进已关闭的连接。App.stop 不在 apply/onDispose 内，await idle 无死锁风险。
     await this.plugins.idle();
-    // 按拓扑逆序 dispose 所有 active 插件——消费者先关，提供者后关——这样下游
-    // 插件的 ctx.onDispose 还能安全访问其依赖的服务。stopAll 会置位 shuttingDown，
-    // 屏蔽反应式 service:unregistered 级联，避免无意义 bounce 噪声。
+    // 全部 active 插件与根激活进同一张关停计划——消费者先关，提供者后关——下游的收尾
+    // 还能安全访问其依赖的服务。stopAll 会置位 shuttingDown，屏蔽反应式重算。
     await this.plugins.stopAll();
     // 清掉全部 sticky 缓存（'app:ready' + 'app:started'），防止后续 restart
     // 复用过时的"已启动"标记
     this.events.clearSticky();
-    // 等待根 ctx 的异步清理（含各插件 onDispose 的落盘）真正完成再宣告停止
-    await this.ctx.disposeAsync(this.disposeTimeoutMs);
+    // 等待根激活的异步清理真正完成再宣告停止
+    await this.#root.disposeAsync(this.disposeTimeoutMs);
     this.logger.info('已停止');
   }
 }

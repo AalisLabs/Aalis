@@ -3,7 +3,7 @@
 // scheduler / workflow 等插件共享的 cron 解析与订阅协议。
 // 实现见 @aalis/plugin-cron-engine。
 
-import { type Context, defineService } from '@aalis/core';
+import { defineService } from '@aalis/core';
 import type { ValidateResult } from '@aalis/util-cron';
 
 // ─── 类型转出 ───
@@ -49,18 +49,5 @@ export interface CronEngine {
   nextFireTime(expr: string, from?: Date, lookaheadMinutes?: number, options?: CronSubscribeOptions): number | null;
 }
 
-// ----- 服务类型注册 -----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    'cron-engine': CronEngine;
-  }
-}
-
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const cronEngine = defineService<CronEngine>('cron-engine');
-
-export function useCronEngine(ctx: Context): CronEngine {
-  const svc = ctx.getService<CronEngine>('cron-engine');
-  if (!svc) throw new Error('cron-engine 服务未就绪，请在 inject.required 中声明 "cron-engine"');
-  return svc;
-}

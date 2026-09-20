@@ -3,101 +3,24 @@
 // 与运行时实现 (PluginManager) 分离，避免下游消费者只为类型而拉入 class。
 // 实现详见 ../orchestration/plugin.ts。
 
-import type { NormalizedDependency } from '../primitives/services.js';
-
-import type { Context } from '../context/context.js';
-
-import type { DependencyDeclaration } from './services.js';
-
-// ----- 插件依赖声明（module.inject 的词汇） -----
-
-export interface InjectDeclaration {
-  required?: DependencyDeclaration[];
-  optional?: DependencyDeclaration[];
-}
-
-// ----- 插件定义格式 -----
-
-/**
- * 插件元数据的扩展点：core 对这里的字段零感知，只原样带在插件定义上。配置表单（configSchema）由
- * @aalis/schema-config、WebUI 展示与分组由 @aalis/api-webui 经 declaration merging 挂进来。
- */
-export interface PluginMeta {}
-
-export interface PluginModule extends PluginMeta {
-  name: string;
-  /** 插件的显示名称，用于前端展示 */
-  displayName?: string;
-  /** 归类标签（展示元数据），见 PluginDefinition.subsystem */
-  subsystem?: string;
-  inject?: InjectDeclaration;
-  provides?: string[];
-  /** 标记为 core 的插件不能被用户禁用 */
-  core?: boolean;
-  /**
-   * 是否允许同一插件以不同配置多次加载（多实例）
-   *
-   * 默认 false：同一 module 只能注册一次（防止重复注册命令等副作用）。
-   * 设为 true 后，可通过 `name:suffix` 格式注册多个实例，
-   * 每个实例拥有独立的 Context、配置和 contextId。
-   *
-   * 适合多实例的插件：LLM adapters、embedding adapters、platform adapters、memory backends。
-   */
-  reusable?: boolean;
-  // 注：配置声明（configSchema）不在此列——那是表单/配置词汇，由 @aalis/schema-config
-  // 经 declaration merging 挂上，core 对其零感知；默认值由宿主派生后经
-  // `AppOptions.pluginDefaults` 注入（core 不认识任何配置词汇，也没有第二份默认值）。
-  /**
-   * 逃生舱：声明本插件在依赖的 provider 发生变化（被 dispose / 替换）时
-   * 必须由 core 主动级联 dispose + reapply 才能恢复正确状态。
-   *
-   * 默认 `false`：core **不会**主动级联 bounce 下游。绝大多数插件应让
-   * `ctx.getService(...)` 在 handler/方法体内每次惰性查询，从而天然跟随
-   * provider 切换，无需 bounce。
-   *
-   * 仅当插件无法响应式处理状态（如必须在启动期一次性把 provider 引用
-   * 缓存到第三方 SDK 内部、或必须在 apply 时跑昂贵的同步初始化）时设为
-   * `true`。第三方插件开发者迁移成本太高时也可以临时打开。
-   */
-  requiresBounceOnDepChange?: boolean;
-  apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
-  // 注：subsystem / extends 等纯 WebUI 展示元数据，以及 host-RPC 槽位
-  // actions（含调用者身份类型），均由 @aalis/api-webui
-  // 通过 declaration merging 注入；core 不读取它们。
-  // webuiPages 已迁移到 useWebuiService(ctx).registerPage()。
-}
+import type { PluginDefinition } from '../context/definition.js';
 
 // ----- 插件状态 -----
 
 export type PluginState = 'pending' | 'activating' | 'active' | 'disabled' | 'disposed' | 'error';
 
-/**
- * recompute() 的触发原因。所有导致插件库状态需重新计算的事件
- * 都收拢到这个判别联合上，让 PluginManager 只有一条状态转移路径。
- *
- * - service-up：某服务刚被 provide —— 可能让 pending 插件能激活
- * - service-down：某服务刚被 unregister —— required 依赖其的要停用；
- *   optional 依赖其且声明了 requiresBounceOnDepChange 的才 bounce
- *   （默认不级联，期望下游每次访问时惰性 getService）
- * - plugin-state-changed：插件被显式禁用/启用/重载/改配置后调用
- * - shutdown：App.stop() 调用，按拓扑逆序 dispose 所有插件
- */
-export type RecomputeReason =
-  | { type: 'service-up'; service: string }
-  | { type: 'service-down'; service: string }
-  | { type: 'plugin-state-changed' }
-  | { type: 'shutdown' };
-
+/** 注册表里的一条插件实例（管理面经 `plugins.getPlugin` 读到的形状） */
 export interface PluginEntry {
-  module: PluginModule;
-  /** 实例 ID：单实例时与 module.name 相同，多实例时为 `name:suffix` */
+  definition: PluginDefinition;
+  /** 实例 ID：单实例时与 definition.name 相同，多实例时为 `name:suffix` */
   instanceId: string;
   config: Record<string, unknown>;
   state: PluginState;
   error?: string;
-  context?: Context;
-  requiredDeps: NormalizedDependency[];
-  optionalDeps: NormalizedDependency[];
+  /** 参与激活闸的依赖服务名（uses 里未包 optional 的外部服务） */
+  required: string[];
+  /** 不参与激活闸的依赖服务名 */
+  optional: string[];
 }
 
 /**

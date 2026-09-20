@@ -17,19 +17,14 @@ import { pathToFileURL } from 'node:url';
 import type {
   AalisConfig,
   ConfigProvider,
+  PluginDefinition,
   PluginDescriptor,
   PluginLoader,
-  PluginModule,
   RestartStrategy,
 } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import {
-  isLoadablePlugin,
-  unwrapPluginModule,
-  warnLikelyPluginMissingKeyword,
-  warnShape,
-} from './node-modules-loader.js';
+import { isLoadablePlugin, pluginDefinitionOf, warnLikelyPluginMissingKeyword } from './node-modules-loader.js';
 import { disarmTerminalStateRestorer } from './terminal.js';
 
 // ============================================================
@@ -291,21 +286,18 @@ export function createFsPluginLoader(packagesDir?: string): PluginLoader {
       return discovered;
     },
 
-    async load(desc): Promise<PluginModule | null> {
-      const mod = unwrapPluginModule(await import(pathToFileURL(desc.source).href));
-      warnShape(loaderLogger, desc.name, mod);
-      return mod;
+    async load(desc): Promise<PluginDefinition | null> {
+      return pluginDefinitionOf(await import(pathToFileURL(desc.source).href), desc.name, loaderLogger);
     },
 
-    async reload(desc): Promise<PluginModule | null> {
+    async reload(desc): Promise<PluginDefinition | null> {
       let cacheKey = '';
       try {
         cacheKey = `?t=${(await stat(desc.source)).mtimeMs}`;
       } catch {
         /* stat 失败时用空 key，让 import 自己报错 */
       }
-      const mod = unwrapPluginModule(await import(pathToFileURL(desc.source).href + cacheKey));
-      return mod;
+      return pluginDefinitionOf(await import(pathToFileURL(desc.source).href + cacheKey), desc.name, loaderLogger);
     },
   };
 }
