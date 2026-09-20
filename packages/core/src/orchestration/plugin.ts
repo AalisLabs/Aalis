@@ -5,7 +5,7 @@ import { reportQuietly } from '../kernel/disposable-chain.js';
 
 import { optionalNames, requiredNames } from '../context/binding.js';
 import type { Context } from '../context/context.js';
-import { type PluginDefinition, validateDefinition } from '../context/definition.js';
+import { assertValidInstanceId, type PluginDefinition, validateDefinition } from '../context/definition.js';
 import type { Logger } from '../context/logger.js';
 
 import {
@@ -127,14 +127,24 @@ export class PluginManager implements PluginManagerService {
    * @param definition 插件定义（definePlugin 的产物）
    * @param config    插件配置
    * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 definition.name）
-   * @returns 口径见 {@link PluginManagerService}：false = 重名，或未声明 reusable 却要多实例（各记一笔 warn）；
-   *   true = 已落账（含注册为 disabled 态），激活是否已发生另看 idle()
+   * @returns 口径见 {@link PluginManagerService}：false = 重名、未声明 reusable 却要多实例、或定义 / 实例 id 校验失败
+   *   （缺 / 空 / 非法 name、uses 非描述符、非法 instanceId；各记一笔 warn）；true = 已落账（含注册为 disabled 态），激活是否已发生另看 idle()
    */
   async register(
     definition: PluginDefinition,
     config: Record<string, unknown> = {},
     instanceId?: string,
   ): Promise<boolean> {
+    // 手写的定义对象（没经 definePlugin）在这里补上同一道校验。失败不抛——六个管理动作统一 Promise<boolean>
+    try {
+      validateDefinition(definition);
+      if (instanceId !== undefined) assertValidInstanceId(instanceId);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`插件定义校验失败，拒绝注册: ${reason}`);
+      return false;
+    }
+
     const id = instanceId ?? definition.name;
 
     // 多实例检查：同一份定义非 reusable 时不允许重复注册
@@ -146,8 +156,6 @@ export class PluginManager implements PluginManagerService {
       this.logger.warn(`插件 "${definition.name}" 未声明 reusable，不允许多实例注册 "${id}"`);
       return false;
     }
-    // 手写的定义对象（没经 definePlugin）在这里补上同一道校验
-    validateDefinition(definition);
 
     // 检查是否被配置禁用（按 instanceId 检查）
     const isDisabled = this.rootCtx.config.isPluginDisabled(id);
