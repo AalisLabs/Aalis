@@ -4,213 +4,178 @@
 
 服务模型是 Aalis 最基础的概念。几乎所有其它能力（LLM、存储、命令、鉴权……）都以「服务」的形态注入容器，再由消费方按名取用。读懂本文后，后续 `docs/services/*` 里的各篇服务详解才有依托。
 
-Aalis 的依赖注入（DI / IoC）建立在一个按名字寻址、支持同名多实现的服务容器之上。插件通过 `ctx.provide(name, instance)` 把一个实例登记进容器；消费方通过 `ctx.getService(name)` 取回当前胜者。容器只认名字，没有「能力维度」的选择——这一点很关键，详见 [能力选择已下沉](#能力选择已下沉至-api-层0510-移除)。
+一个服务有两张面：共享的提供者（容器里的实例，全 App 一份）与按激活绑定的调用接口（每次插件激活一份，登记自动归属这次激活）。契约包导出**描述符**（`defineService` 的结果），消费方在 `uses` 里声明它，装配时由描述符自带的 `bind` 为这次激活造接口。容器按名字寻址，同名多实现并存；没有「能力维度」的选择——领域能力挂在实例 / handle 元数据上，由各 `*-api` helper 过滤。
 
 ---
 
 ## 1. 核心模型
 
-### 1.1 一个名字，多个提供者
+### 1.1 描述符与名字
 
-容器内部是一张 `Map<string, ServiceEntry[]>`：每个服务名对应的不是单个实例，而是一个 entry 列表。这意味着 `llm`、`storage`、`memory` 这些名字可以同时被多个插件 provide——OpenAI 与 DeepSeek 可以同时 `provide('llm', ...)`，sqlite 与 mongodb 可以同时 `provide('memory', ...)`，它们并存在同一个列表里。
+服务身份是描述符的 `name`。契约包装了两份也指向同一服务；binder 随消费方 import 的那份契约包走，类型与绑定实现同版本。
 
-一个 `ServiceEntry` 的形状如下：
+普通调用型不给自定义 `bind`，绑定接口是 `ServiceRef<P>`（`current` / `require()` / `all()` / `follow()`）。注册型能力给 `bind`，用资源口的 `registrar` / `follow` / `track` 造自动归属的门面（如 `tools.register`）。
+
+容器内部每个服务名对应一个 entry 列表。`llm`、`storage`、`memory` 可以同时被多个插件 `provide`——OpenAI 与 DeepSeek 并存在同一列表里。
+
+公开投影是 `ServiceView`（不含清理归属）：
 
 ```ts
-interface ServiceEntry {
-  instance: unknown;   // 服务实例（你 provide 进去的对象）
-  priority: number;    // 优先级，数字越大越优先
-  contextId: string;   // 注册者的 Context id（逻辑身份：路由 / 显示 / 偏好；卸载清理按内部 owner 走）
-  label?: string;      // 可选展示标签，如 "OpenAI / gpt-4o"
+interface ServiceView<T = unknown> {
+  instance: T;
+  contextId: string;  // 逻辑身份：路由 / 显示 / 偏好
+  priority: number;
+  label?: string;
 }
 ```
 
-### 1.2 胜者解析规则：偏好 > 优先级 > 注册顺序
+### 1.2 胜者解析：偏好 > 优先级 > 注册顺序
 
-`getService(name)` 返回的是当前唯一的胜者。容器统一经 `resolveEntries()` 排序，三层规则严格依此优先级：
+`current` / `require()` 返回的是当前唯一的胜者。三层规则严格依此优先级：
 
-1. **偏好（preference）**：所有者显式 `preferService(name, contextId)` 指定的 provider 永远排第一，即使它的 `priority` 数值更低。偏好可以在目标 entry 注册之前就设置，一旦对应的 contextId 注册即生效。
-2. **优先级（priority）**：没有偏好、或偏好目标当前不存在时，按 `priority` 降序。register 时即完成稳定降序排序。
-3. **注册顺序**：`priority` 相同时，先注册者胜出，由稳定排序保证。
+1. **偏好**：`services.prefer(key, contextId)` 指定的 provider 永远排第一，即使它的 `priority` 更低。偏好可以在目标 entry 注册之前就设置。
+2. **优先级**：没有偏好、或偏好目标当前不存在时，按 `priority` 降序。
+3. **注册顺序**：`priority` 相同时，先注册者胜出。
 
-`get<T>()` 直接返回排序后列表的第 0 个。
+`priority` 是普通数字：越大越优先。没有预设档位，数值含义由 provider 自行记载；部署可调的场景习惯把它开进自己的 `configSchema`。默认 `0`；要盖过参考实现，取一个更高的值（如 `50`）。
 
-`priority` 是普通数字：数字越大越优先，同值先注册者胜（稳定降序）。没有预设档位，
-数值含义由 provider 自行记载；部署可调的场景习惯把它开进自己的 configSchema（如 asr 后端）。
-默认 `0`；要默认盖过参考实现，取一个更高的值（如 `50`）。
+`services.prefer` / `unprefer` / `preferred` 会 emit `service:preference-changed`，从而触发 `follow` 重挂。不要直接调容器层的 `prefer`。所有者也可以在 WebUI 的 Services 页面设置偏好。
 
 ---
 
-## 2. 提供方（Provider）
+## 2. 提供方
 
-### 2.1 `ctx.provide(name, instance, options?)`
+### 2.1 `provide(descriptor, implementation, options?)`
 
-注册一个服务实例，返回一个 `dispose()` 函数，用于精确卸载这一条 entry：
+发布服务的唯一入口。实现按描述符的提供者类型约束；返回退订，随这次激活撤回：
 
 ```ts
-const dispose = ctx.provide('memory', myMemoryService, {
-  priority: 0, // 缺省即 0，可省略
-  label: 'SQLite memory',
+import { memory } from '@aalis/api-memory';
+import { definePlugin, provide } from '@aalis/core';
+
+export default definePlugin({
+  name: 'example-provide',
+  provides: [memory],
+  uses: { provide },
+  apply({ provide }) {
+    provide(memory, myMemoryService, { label: 'SQLite memory' });
+  },
 });
-// 之后若想主动下线：dispose();
 ```
 
-`provide` 会自动把卸载登记进 Context 的 disposable 链，插件 unload / bounce 时无需你手动清理。卸载会 emit `service:unregistered`，触发依赖此服务的下游重新解析（见 §5）。
+`options`：
 
-`options` 支持三个字段：
+- `priority?: number`
+- `label?: string` —— 供管控视图展示
+- `entryId?: string` —— 一个激活登记多条时的子粒度 id，须以本激活 id 为前缀（`${id}/${子粒度}`）
+- `onBehalfOf?: string` —— 代为登记：条目的逻辑身份取被代者 id（偏好、服务页、`provides` 校验的 `hasByContext` 都认这个 id），清理仍归本激活。与 `entryId` 二选一。代登记**不计入**代理人的 `provides`；写进去会按「声明了但未实际注册」让本次激活进入 error。
 
-- `priority?: number` —— 含义见 §1.2。
-- `label?: string` —— 供管控视图（WebUI / CLI status）展示用。
-- `entryId?: string` —— 覆盖默认的 `contextId`（默认为 `ctx.id`）。用于「一个插件实例拆出多条逻辑 entry」的场景，见 §3。
+内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services` / `hooks` / `contributions`）绑的是这次激活自身，不可被普通 `provide` 替换，不参与外部服务激活闸。`hostConfig` / `app` / `plugins` 是普通宿主服务，须显式写进 `uses`。
 
-### 2.2 一个插件实例只 provide 一次同名服务（默认）
+### 2.2 同一激活默认只 provide 一次同名服务
 
-默认情况下，同一个 Context 对同一个服务名只能 `provide` 一次。重复 provide（不带显式 `entryId`）会被 dev 校验拦截并 warn：下游若按 `contextId` 路由，只能命中第一条，后续注册会静默失效。
+同一个激活对同一个服务名默认只能 `provide` 一次。重复 provide（不带显式 `entryId`）会被 dev 校验 warn：下游若按 `contextId` 路由，只能命中第一条。
 
-要在同一个插件里跑多套配置（例如多个 API key），推荐的做法是在 module 上声明 `reusable = true`，再用 `name:suffix` 形式注册多个插件实例，每个实例有独立的 Context 与 contextId。
+要在同一个插件里跑多套配置（例如多个 API key），在定义上声明 `reusable: true`，再用 `name:suffix` 注册多个插件实例。要在单实例里拆子粒度，用 `entryId`。
 
 ---
 
-## 3. Per-entry 粒度与 entryId 约定
+## 3. Per-entry 与 entryId 约定
 
-有些插件天然需要为「子粒度」各开一条 entry，而不是为每个子粒度起一个插件实例。典型场景有两类：
+有些插件天然需要为「子粒度」各开一条 entry：
 
-- **per-model LLM**：一个 OpenAI 插件实例发现并挂载多个模型，每个模型一条 `llm` entry。
+- **per-model LLM**：一个 OpenAI 插件实例挂载多个模型，每个模型一条 `llm` entry。
 - **per-root storage**：一个存储插件挂载多个 root，每个 root 一条 entry。
 
-这种情况下用 `options.entryId` 覆盖默认的 contextId。约定是：`entryId` 必须以 `ctx.id` 为前缀、以 `/` 分隔，即 `'${ctx.id}/${子粒度标识}'`。
-
-以 plugin-llm-openai 为例：
+`entryId` 必须以本次激活 id 为前缀、以 `/` 分隔，即 `` `${lifecycle.id}/${子粒度}` ``。
 
 ```ts
-const dispose = ctx.provide('llm', handle, {
-  label: `${baseLabel} / ${modelId}`,
-  entryId: `${ctx.id}/${modelId}`,  // 如 "@aalis/plugin-llm-openai:main/gpt-4o"
+caps.provide(storage, scoped, {
+  label: root.label || `本地根 ${root.name}`,
+  entryId: `${caps.lifecycle.id}/${root.name}`,
 });
 ```
 
-::: warning entryId 必须带 `ctx.id/` 前缀
-插件卸载时，容器按清理归属（`unregisterByOwner`）批量清理，per-entry 子 entry 与主 entry 同 owner，一并清掉——清理不依赖前缀。前缀约定服务的是逻辑身份：`hasByContext` 的前缀查询、api-llm 按 `provider/model` 解析模型引用都靠它，`entryId` 脱离前缀会让这些查询命不中。dev 模式对此校验并 warn。
-:::
-
-实践中，各插件通常还会自管 per-entry 的 dispose 句柄（例如 `registered: Map<modelId, dispose>`），以便单独上线 / 下线某个子粒度，而不必重挂整个插件。
+插件卸载时按清理归属批量清理，per-entry 与主 entry 同 owner，一并清掉——清理不依赖前缀。前缀约定服务的是逻辑身份：`hasByContext` 的前缀查询、api-llm 按 `provider/model` 解析模型引用都靠它。dev 模式对此校验并 warn。
 
 ---
 
-## 4. 消费方（Consumer）
+## 4. 消费方
 
-### 4.1 `ctx.getService(name)` —— 即取即用，勿缓存裸引用
+### 4.1 `ServiceRef`：`current` / `require()` / `all()` / `follow()`
 
-`ctx.getService(name)` 返回当前时点的胜者裸实例，或者 `undefined`。
+写进 `uses` 之后，apply 里拿到的是绑定接口。required 与 optional 拿到的是**同一接口**——两者只差激活闸：required 缺席会让顶层插件 pending；optional 缺席不拦激活，到场后自动接上。
 
-::: warning 不要缓存裸实例
-返回的是调用那一刻的裸实例，provider 发生换跳后它不会跟随更新。不要把它长期存进类字段——provider bounce 或偏好切换都会让旧引用失效。常规做法是在 handler 或方法体作用域内每次重新 `getService`。
-:::
+- `current`：当前胜者，无提供者为 `undefined`。每次读取重新解析。
+- `require()`：无提供者抛错。required 依赖丢失到调度收敛之间也可能短暂为空。
+- `all()`：全部提供者，每次调用重新枚举。
+- `follow(attach)`：跟随胜者建立有状态资源。详见 [惰性服务访问](./lazy-service-access.md)。
 
-容器查询是 O(1) 的 map 命中加上从已排序列表取首，每次 `getService` 都重查，开销可以忽略。
+不要把 `current` 或 `all()[i].instance` 长期缓存。写了 `uses` 并不保护任意取出的缓存引用。
 
-类型推断方面：传入字面量服务名（如 `'memory'`）会命中 `ServiceTypeMap`，自动推断为 `MemoryService | undefined`；传入字符串变量或未登记的名字则退回 `<T = unknown>`，需要你自行 narrow。`ServiceTypeMap` 由各 `*-api` 包通过 declaration merging 反向注入，core 内部不登记任何条目。
+### 4.2 动态查询：`services`
 
-### 4.2 `ctx.getAllServices(name)` —— 枚举所有提供者
+管理、展示面用 `services.get` / `all` / `names` / `prefer`。按描述符查带类型，按运行期字符串查则由调用方收窄。动态查询**不产生依赖边**，不参与激活闸，关停期可能拿空。需要保证就写进 `uses`。
 
-`ctx.getAllServices(name)` 返回所有 entry 的 `{ instance, contextId, label }`，顺序遵循「偏好 > 优先级 > 注册顺序」。它是领域级筛选的入口（见 §6）：像「列出所有 LLM 模型」「找一个支持 vision 的模型」这类需求，都从这里拿到全集，再自行过滤。
+### 4.3 登记型门面
 
-### 4.3 `ctx.whenService(name, cb)` —— 晚绑定 / 跟随切换
-
-`ctx.whenService(name, cb)` 是一个持续订阅：胜者上线时调用一次 `cb(svc)`，胜者下线或换人时自动运行上一次 `cb` 返回的 cleanup。它内部监听 `service:registered` / `service:unregistered` / `service:preference-changed`，但只关心容器当前的胜者态，因此对事件乱序或合并天然免疫。
-
-它适用于两类场景：
-
-- **把副作用挂到 hub 服务上**：`ctx.whenService('tools', svc => svc.register(myTool, ctx.id))`，hub 被 bounce 或换提供者时会自动重挂。
-- **跟随 provider 切换**：`cb` 返回 cleanup，胜者换人时先 cleanup、再用新实例重挂。
-
-语义细则如下：
-
-- 调用时若服务已就绪，立即首挂。
-- 胜者不变则不动：败者 entry 的上下线不触发重挂；只有胜者换人（包括偏好切换、以及胜者注销后由次优顶上）才会 cleanup 加重挂。
-- `cb` 可以返回 cleanup；返回的 dispose 与 `ctx.dispose()` 都会调用它，且 dispose 是幂等的，可多次调用。
-
-### 4.4 偏好的公开 API
-
-偏好的公开 API 是 `ctx.preferService(name, contextId)` / `unpreferService` / `getPreferredService`。请走 Context 的这套公开 API，而不是容器层的 `prefer`：前者会额外 emit `service:preference-changed`，从而触发 `whenService` 重挂；容器层的 `prefer` 标注为 `@internal`，插件不应直接调用容器。所有者也可以在 WebUI 的 Services 页面设置偏好。
+`tools` / `commands` / `webuiServer` / `agent` 等描述符在 `bind` 里用 `registrar` 把登记方法挂到 `ServiceRef` 上。经门面 `register` 的条目随激活撤回、同键替换、提供者换人整体重挂。绕过门面直接打到 `current` 上会丢掉这套账本。
 
 ---
 
-## 5. 生命周期：bounce、级联与惰性的默认契约
+## 5. 生命周期：激活闸、bounce、关停
 
-provider 的上下线会驱动插件库重算（`RecomputeReason`）：`service-up` 可能让 pending 插件激活；`service-down` 会让 required 依赖者停用、让 optional 依赖者 bounce。
+顶层插件：required 缺席会 pending，恢复后重新激活；胜者替换不一律重启消费者。子模块（`lifecycle.module`）挂载时缺 required 即拒绝（抛错，apply 不执行）；挂载之后没有独立持续激活闸——提供者离场时登记排队、引用可能为空，由父模块决定是否关掉它。不能说子模块与顶层插件调度完全相同。
 
-默认契约是：core 不主动级联 bounce 下游。绝大多数插件应当让 `getService` 在每次调用时惰性查询，从而天然跟随 provider 切换，无需 bounce。
+`bounce(instanceId, opts?)`：拆掉当前激活 → 转 pending → 重算后重新激活。`updateConfig` 是 `bounce(instanceId, { config })` 的薄壳。true 只说明请求已受理，激活是否落定看 `idle()`。停机进行中 `bounce` / `register` 返回 false。
 
-`requiresBounceOnDepChange?: boolean` 是逃生开关（escape hatch）。只有当插件无法响应式处理状态时才设为 `true`——例如必须在启动期把 provider 引用一次性缓存进第三方 SDK 内部，或 apply 时要执行昂贵的同步初始化。设为 `true` 后，core 会在依赖的 provider 变化时主动级联 dispose 加 reapply。凡是能用 `getService` 惰性查询、或用 `whenService` 重挂的场景，都不应启用它。级联只在依赖的服务名整个落空、或依赖的 provider 自身被 bounce（含配置热重载，此时同名尚有其它提供者也照样级联）时触发；其余的提供者换人（其一 unload 退出、偏好切换、更高优先级上线）不触发级联，但会发对应的 `service:registered` / `service:unregistered` / `service:preference-changed`——要跟随换人用 `whenService`。`preferService` 对插件状态机零重算。
+关停以激活为单位，分收尾（drain）与关闭（close）两阶段。普通依赖（required，以及 optional 当时的胜者）：消费者整个 close 完，提供者才 drain。父使用子树服务：父 drain 先于子 close。后代使用祖先服务：不加排序边，归属树保证子 close 先于祖先 close。环：optional 让步；required 环告警并强行放行。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。
 
-插件 dispose 时，容器还会执行一套「服务自清理协议」：任何实例只要实现了 `unregisterByPlugin(contextId)`，都会被统一通知，清理与本上下文相关的注册项（如 ToolService / CommandService）。core 不硬编码任何具体服务名。
+`App.stop()` 先排干在飞重算，冻结新增绑定并进入停机态，再发 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。停机期间 `unload` / `disable` 汇入计划后立即返回 true（不等拆卸完成）。单独卸载提供者不享有交接保证。动态 `services.get` 不产生依赖边，关停期间可能取到空。缓存的 `all()[i]` 引用不受关停边保护。
 
----
-
-## 6. 能力选择已下沉至 *-api 层（0.5.0 移除）
-
-这是相对旧版的一个关键变化，需要正确理解。
-
-0.5.0 之前，内核 DI 里有一个「服务能力选择层」（`ServiceCapabilityMap` / `getServiceCapabilities`，`getService` / `provide` 可以带能力维度）。该层已整体删除。现在：
-
-- `provide` / `getService` / `getAllServices` 只接受 name，没有能力参数（签名见上文 §2 / §4）。
-- 容器选择只走「偏好 > 优先级 > 注册顺序」，没有能力维度。
-- 能力是实例 / handle 上的元数据，由各领域 `*-api` 的 helper 函数自行过滤，不进内核 DI。
-
-以 api-llm 为例，「按能力过滤 LLM」不再询问容器，而是先用 `ctx.getAllServices('llm')` 取全集，再按 `instance.capabilities` 过滤：
-
-```ts
-function listLLMEntries(ctx, caps) {
-  const all = ctx.getAllServices<LLMModel>('llm');
-  if (!caps?.length) return all;
-  return all.filter(e => caps.every(c => (e.instance.capabilities ?? []).includes(c)));
-}
-```
-
-`resolveLLMModel` 进一步演示了另一种寻址：把 `{ provider, model }` ref 拼成 `entryId = '${provider}/${model}'`，直接命中那条 per-entry。这正是 §3 中 entryId 约定的下游消费面——领域路由器靠 entryId 字符串寻址具体的子粒度，而不靠内核的能力匹配。
-
-对插件作者而言，结论是：如果你希望自己的 provider 被「按能力选中」，就把能力如实写进实例的元数据字段（如 LLM handle 的 `capabilities`），消费方会经对应的 `*-api` helper 过滤。内核 DI 不做能力选择，它只认名字、优先级和偏好。
+插件 dispose 时，容器按清理归属撤回本激活登记的全部服务。登记型 hub（工具 / 命令）由描述符的 registrar 在提供者侧按激活身份退订。
 
 ---
 
-## 7. 作用域子容器已移除（0.7.0）
+## 6. 能力选择在 `*-api` 层
 
-实验性的 `ctx.createScope(id)` / `ScopedServiceContainer` / `ScopedConfigManager`（叠加式的服务 / 配置隔离）已在 0.7.0 移除：全生态没有消费者，而且共享事件 / 钩子 / 文件系统的边界不足以支撑「沙盒」语义。
+`provide` / `current` / `all` 只认名字，没有能力参数。容器选择只走「偏好 > 优先级 > 注册顺序」。
 
-替代方案有两条。按会话 / 租户做差异化配置，用键控解析，即 session-manager 的 `resolveConfig(sessionId)` 模式。需要真正的隔离，则用独立的 `App` 实例。
+能力是实例 / handle 上的元数据，由各领域 `*-api` helper 自行过滤。以 api-llm 为例：先 `llm.all()` 取全集，再按 `instance.capabilities` 过滤；`resolveLLMModel(llm, ref, caps)` 把 `{ provider, model }` 拼成 `entryId = '${provider}/${model}'` 命中那条 per-entry。
+
+如果你希望自己的 provider 被「按能力选中」，把能力写进实例的元数据字段，消费方经对应 helper 过滤。内核 DI 不做能力选择。
+
+---
+
+## 7. 隔离：键控解析或新 App
+
+按会话 / 租户做差异化配置，用键控解析（session-manager 的 `resolveConfig(sessionId)` 模式）。需要真正隔离的事件总线 / 日志通道 / 服务容器，用独立的 `App` 实例（`createApp({ events, services, hooks, … })`）。同租户内多用户偏好不要写进容器的 `prefer`——那是进程级 default，见 [插件作者指南](../plugin-author-guide.md) 第 13 节。
+
+子模块（`lifecycle.module`）是同一 App 内的独立激活：独立身份与生命周期，能力按子激活重新绑定，随父关闭，**不进调度器**。
 
 ---
 
 ## 8. 双源 manifest：声明要与运行时一致
 
-服务的「声明」有两个独立来源，二者必须保持一致：
-
 | 来源 | 位置 | 用途 |
 | --- | --- | --- |
-| **包级 manifest** | `package.json` 的 `aalis.service.{provides,required,optional}` | 市场 / 安装前的静态披露（用户装前就知道这插件提供 / 依赖什么） |
-| **运行时 DI 声明** | 模块导出 `export const provides` / `export const inject`（或 module 字段 `provides` / `inject`） | core 实际据此做依赖解析与激活时序 |
+| **包级 manifest** | `package.json` 的 `aalis.service.{provides,required,optional}` | 市场 / 安装前的静态披露 |
+| **运行时定义** | `export default definePlugin({ provides, uses })` | core 实际据此做依赖解析与激活时序 |
 
-以 plugin-llm-openai 为例，两处声明分别是：
-
-- `package.json` → `"aalis": { "service": { "provides": ["llm"] } }`
-- 模块导出 → `export const provides = ['llm']`
-
-`inject` 的形状是 `{ required?, optional? }`，元素可以是字符串或 `{ service }`，运行时统一经 `normalizeDependency` 归一为 `{ service }`。
-
-> 这是两条独立链路：manifest 不参与运行时 DI（core 读的是导出或 module 字段），但市场展示与「装前体检」读的是 manifest。任意一边漏写或写错，要么市场披露失真，要么运行时的依赖解析与披露对不上。务必同步维护。
+`provides` 写描述符数组，对账时取 `.name`。`uses` 里未包 `optional()` 的外部服务进 `required`，包了的进 `optional`；内置能力不进 `aalis.service`。对账守卫见 [清单元数据](./manifest-metadata.md)。
 
 ---
 
 ## 9. 常见错误与边界情形
 
-1. **缓存裸 service 引用**：`const svc = ctx.getService('llm')` 存进类字段长期使用，provider bounce 后引用失效。改为每次 getService，或用 `whenService` 跟随（§4.1 / §4.3）。
-2. **重复 provide 同名服务**：同一 Context 不带 entryId 二次 provide 会静默失效。多套配置用 `reusable` + `name:suffix`；有意拆子粒度用 `entryId`（§2.2 / §3）。
-3. **entryId 不带 `ctx.id/` 前缀**：`hasByContext` 前缀查询与 api-llm 按 `provider/model` 的模型引用命不中（清理不受影响，按 owner 走）。永远用 `'${ctx.id}/${sub}'`（§3）。
-4. **直接调容器层 `prefer` / `register`**：绕过事件发射，`whenService` 不会重挂。走 `ctx.preferService` / `ctx.provide`（§4.4）。
-5. **滥用 `requiresBounceOnDepChange`**：默认就应惰性查询。启用它会让 core 在依赖变化时级联重启你的插件，成本高（§5）。
-6. **期待内核按能力选服务**：0.5.0 起已无此能力。把能力写进实例元数据，靠 `*-api` helper 过滤（§6）。
-7. **manifest 与运行时声明不一致**：两条独立链路都要写、要对齐（§8）。
+1. **缓存裸引用**：`const svc = x.current` 存进类字段，provider 换人后失效。每次读 `current`，或 `follow`。
+2. **重复 provide 同名服务**：同一激活不带 `entryId` 二次 provide 会静默失效。多套配置用 `reusable` + `name:suffix`；拆子粒度用 `entryId`。
+3. **`entryId` 不带激活 id 前缀**：前缀查询与模型引用命不中。永远用 `` `${lifecycle.id}/${sub}` ``。
+4. **把代登记写进自己的 `provides`**：`onBehalfOf` 归属被代者，不计入代理人。
+5. **动态 `services.get` 当依赖**：无激活闸、无关停边、关停期可能拿空。
+6. **期待内核按能力选服务**：把能力写进实例元数据，靠 `*-api` helper 过滤。
+7. **manifest 与 `definePlugin` 不一致**：两条独立链路都要写、要对齐。
+8. **缺 `name` / 非法 `instanceId`**：`definePlugin` 与 `register` 两层拒绝（非空字符串；`name` 不含 `:suffix` 与 `#`；`instanceId` 允许 `name:suffix`）。
 
 ---
 
@@ -218,17 +183,17 @@ function listLLMEntries(ctx, caps) {
 
 兄弟概念（`docs/concepts/`）：
 
+- 惰性访问、`follow`、网关、缓存引用的关停边界 → `docs/concepts/lazy-service-access.md`
 - 存储 URI 文法与 `entryId`（per-root）的下游消费面 → `docs/concepts/storage-uri-grammar.md`
-- 鉴权数字等级与服务消费的安全边界 → `docs/services/authority.md`
-- 消息 / LLM 管线（`prepareLLMMessages` 等 egress 约定）→ `docs/concepts/message-llm-pipeline.md`
+- 消息 / LLM 管线 → `docs/concepts/message-llm-pipeline.md`
 
-服务详解（forward-ref，`docs/services/`）：
+服务详解（`docs/services/`）：
 
-- `docs/services/llm.md` —— per-model entry、`capabilities` 元数据、`resolveLLMModel` 路由
-- `docs/services/storage.md` —— per-root entry、`createStorageGateway` 聚合
+- `docs/services/llm.md` —— per-model entry、`capabilities` 元数据、`resolveLLMModel`
+- `docs/services/storage.md` —— per-root entry、`createStorageGateway`
 
 核心 API 参考：
 
-- `docs/core/service.md` —— ServiceContainer 方法逐一参考
-- `docs/core/context.md` —— Context 完整 API
-- `docs/core/plugin.md` —— PluginModule 字段（`provides` / `inject` / `reusable` / `requiresBounceOnDepChange`）
+- `docs/core/service.md`
+- `docs/core/context.md`（插件定义与能力）
+- `docs/core/plugin.md`
