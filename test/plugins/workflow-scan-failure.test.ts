@@ -48,9 +48,14 @@ async function bootOnce(listError: string): Promise<Record<string, number>> {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
   // 宿主侧提供桩 storage：只实现本用例走到的那几个方法
   app.bind({ provide }).provide(storage, store.service as never);
-  await app.ctx.useModule(cronEnginePlugin, {});
+  await app.plugin(cronEnginePlugin, {});
   await app.plugin(workflowPlugin, { enableTools: false });
   await app.plugins.idle();
+  // 插件停在 pending（required 依赖缺席）时，"没清账" 会因为根本没启动而恒真
+  for (const id of ['@aalis/plugin-cron-engine', '@aalis/plugin-workflow']) {
+    const state = app.plugins.getPlugin(id)?.state;
+    if (state !== 'active') throw new Error(`插件 "${id}" 未激活（state=${state}）`);
+  }
   await app.stop();
   return (JSON.parse(store.files.get(RUNS_FILE) as string) as { onceFired: Record<string, number> }).onceFired;
 }

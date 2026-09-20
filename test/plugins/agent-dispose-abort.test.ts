@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentService, PromptContributionView } from '../../packages/api-agent/src/index.js';
+import { agent as agentService, type PromptContributionView } from '../../packages/api-agent/src/index.js';
 import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { App, contributions, definePlugin, events } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
@@ -9,10 +9,10 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-agent 此前零 onDispose：activeControllers 是实例私有的，bounce 后新实例看不见旧实例的
-// 在飞回合，而拆卸链不等任何回合——旧回合在已 dispose 的 ctx 上跑完并投递（人设/模型都是
+// 在飞回合，而拆卸链不等任何回合——旧回合在已拆卸的激活上跑完并投递（人设/模型都是
 // bounce 前的），用户在它结束前再发一条，两个实例并发答同一会话。
 // 修法：拆卸即 abortAll，走已有的 AbortError 收尾（只发 stream done，不投递）。
-// 观测点：只拆 agent 这一个 fork（useModule 的 disposer），根 ctx 活着收出站事件。
+// 观测点：只卸 agent 这一个插件，App 根激活活着收出站事件。
 // ════════════════════════════════════════════════════════════
 
 const AGENT_CONFIG = {
@@ -26,25 +26,28 @@ const AGENT_CONFIG = {
 };
 
 describe('plugin-agent 拆卸时中止在飞回合', () => {
-  it('拆卸后在飞回合以 aborted 收尾，而不是在死 ctx 上跑完投递', async () => {
+  it('拆卸后在飞回合以 aborted 收尾，而不是在已拆卸的激活上跑完投递', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     // 每个 chunk 前等 300ms：给拆卸留出「回合在飞」的窗口
-    await app.ctx.useModule(createMockLLMPlugin({ latencyMs: 300, responses: [{ content: '回复内容' }] }));
-    await app.ctx.useModule(memoryInMemoryPlugin);
-    await app.ctx.useModule(messageArchivePlugin, { debugLogs: false });
-    const off = await app.ctx.useModule(agentPlugin, AGENT_CONFIG);
+    await app.plugin(createMockLLMPlugin({ latencyMs: 300, responses: [{ content: '回复内容' }] }));
+    await app.plugin(memoryInMemoryPlugin);
+    await app.plugin(messageArchivePlugin, { debugLogs: false });
+    await app.plugin(agentPlugin, AGENT_CONFIG);
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin(agentPlugin.name)?.state, 'agent 未激活则整条断言恒真').toBe('active');
 
-    // agent:turn:after 是 hook（runHook）而非事件，根 ctx 用 on 收不到；鉴别信号取根 ctx 能看到的
+    // agent:turn:after 是钩子而非事件，根激活用 on 收不到；鉴别信号取根激活能看到的
     // 出站序列：中止路径只发 stream done，未中止则 delta → done → message（回复照常投递）。
+    const host = app.bind({ events, agent: agentService });
     const seen: string[] = [];
-    app.ctx.on('outbound:stream', (c: { done?: boolean; contentDelta?: string }) => {
+    host.events.on('outbound:stream', c => {
       seen.push(c.done ? 'stream:done' : `stream:delta(${c.contentDelta})`);
     });
-    app.ctx.on('outbound:message', (m: { content: string }) => {
+    host.events.on('outbound:message', m => {
       seen.push(`message(${m.content})`);
     });
 
-    const turn = app.ctx.getService<AgentService>('agent')!.handleMessage({
+    const turn = host.agent.require().handleMessage({
       content: '你好',
       sessionId: 'test:dispose-abort',
       platform: 'test',
@@ -52,10 +55,11 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
       sessionType: 'private',
     });
     await new Promise(r => setTimeout(r, 50)); // 让流进入在飞
-    off.dispose(); // 只拆 agent 这一个 fork
+    const unloading = app.plugins.unload(agentPlugin.name); // 只卸 agent 这一个插件
 
     await turn;
-    expect(seen, '拆卸不中止在飞回合，它就会在死 ctx 上跑完并把回复投出去').toEqual(['stream:done']);
+    expect(seen, '拆卸不中止在飞回合，它就会在已拆卸的激活上跑完并把回复投出去').toEqual(['stream:done']);
+    await unloading;
 
     await app.stop();
   });
@@ -63,10 +67,6 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
   it('手动 abort 会中止正在构建的 prompt 贡献，且不会开始 LLM 或投递消息', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const recorder: ChatModelRequest[] = [];
-    await app.ctx.useModule(createMockLLMPlugin({ responses: [{ content: '不应调用' }], recorder }));
-    await app.ctx.useModule(memoryInMemoryPlugin);
-    await app.ctx.useModule(messageArchivePlugin, { debugLogs: false });
-    await app.ctx.useModule(agentPlugin, AGENT_CONFIG);
 
     let enteredResolve!: () => void;
     const entered = new Promise<void>(resolve => {
@@ -74,38 +74,54 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
     });
     let contributionAborted = false;
     let hangContribution = true;
-    app.ctx.fork('prompt-cancel-probe').contribute(
-      'agent:prompt' as never,
-      {
-        id: 'hang-until-abort',
-        anchor: 'turn-context',
-        build: (view: PromptContributionView) => {
-          if (!hangContribution) return 'RECOVERED-CONTEXT';
-          return new Promise<string>((_resolve, reject) => {
-            enteredResolve();
-            view.signal?.addEventListener(
-              'abort',
-              () => {
-                contributionAborted = true;
-                reject(view.signal?.reason);
-              },
-              { once: true },
-            );
-          });
-        },
-      } as never,
-    );
 
+    // 换个身份交贡献：最小探针插件经 app.plugin 装载，贡献自动归属它这次激活
+    const probePlugin = definePlugin({
+      name: 'zz-prompt-cancel-probe',
+      uses: { contributions },
+      apply({ contributions }) {
+        contributions.contribute('agent:prompt', {
+          id: 'hang-until-abort',
+          anchor: 'turn-context',
+          build: (view: PromptContributionView) => {
+            if (!hangContribution) return 'RECOVERED-CONTEXT';
+            return new Promise<string>((_resolve, reject) => {
+              enteredResolve();
+              view.signal?.addEventListener(
+                'abort',
+                () => {
+                  contributionAborted = true;
+                  reject(view.signal?.reason);
+                },
+                { once: true },
+              );
+            });
+          },
+        });
+      },
+    });
+
+    await app.plugin(createMockLLMPlugin({ responses: [{ content: '不应调用' }], recorder }));
+    await app.plugin(memoryInMemoryPlugin);
+    await app.plugin(messageArchivePlugin, { debugLogs: false });
+    await app.plugin(agentPlugin, AGENT_CONFIG);
+    await app.plugin(probePlugin);
+    await app.plugins.idle();
+    for (const id of [agentPlugin.name, probePlugin.name]) {
+      expect(app.plugins.getPlugin(id)?.state, id).toBe('active');
+    }
+
+    const host = app.bind({ events, agent: agentService });
     const outbound: string[] = [];
-    app.ctx.on('outbound:stream', (c: { done?: boolean }) => {
+    host.events.on('outbound:stream', c => {
       outbound.push(c.done ? 'stream:done' : 'stream:delta');
     });
-    app.ctx.on('outbound:message', () => {
+    host.events.on('outbound:message', () => {
       outbound.push('message');
     });
 
     const sessionId = 'test:prompt-abort';
-    const agent = app.ctx.getService<AgentService>('agent')!;
+    const agent = host.agent.require();
     const turn = agent.handleMessage({
       content: '你好',
       sessionId,

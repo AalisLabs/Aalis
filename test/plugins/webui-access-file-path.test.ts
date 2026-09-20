@@ -2,8 +2,8 @@ import { createServer, request } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { StorageRootInfo, StorageService } from '../../packages/api-storage/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -114,7 +114,7 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
       logger: makeCapturingLogger(lines),
     });
     apps.push(app);
-    app.ctx.provide('storage', makeFakeStorage());
+    app.bind({ provide }).provide(storage, makeFakeStorage());
     await app.plugins.register(webuiServer, {
       port: 0,
       host: '127.0.0.1',
@@ -139,8 +139,8 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
   it('插件 dispose 时关闭已建立的 WebSocket 连接', async () => {
     // ws 的 close() 在 {server} 模式下只摘监听器、对 this.clients 一个都不动，
     // server.close() 也只停止 accept。不主动关的话，禁用/热重载后旧 socket 上注册的
-    // message 闭包仍然活着，还能经已 dispose 的 ctx 触发 inbound:message
-    // （Context.emit 是四原语里唯一没有 _disposed 守卫的）。
+    // message 闭包仍然活着，还能替一次已关闭的激活发出 inbound:message
+    // （事件发射是四原语里唯一不校验「已关闭」的：on/provide/contribute 都会拒并 warn）。
     //
     // 这里不引 ws 客户端（它是 webui-server 的私有依赖，test/ 下既解析不到也没有类型），
     // 直接用 node:http 做升级握手拿到裸 socket，再断言服务端发来了 close 帧（opcode 0x8）。
@@ -151,7 +151,7 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
       logger: makeCapturingLogger([]),
     });
     apps.push(app);
-    app.ctx.provide('storage', makeFakeStorage());
+    app.bind({ provide }).provide(storage, makeFakeStorage());
     await app.plugins.register(webuiServer, {
       port,
       host: '127.0.0.1',
@@ -194,7 +194,7 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
     await app.stop();
     apps.length = 0; // 已 stop，afterEach 不必再停
 
-    expect(await gotCloseFrame, '拆卸后旧连接必须被关掉，否则它还能驱动一个已 dispose 的 ctx').toBe(true);
+    expect(await gotCloseFrame, '拆卸后旧连接必须被关掉，否则它还能驱动一次已关闭的激活').toBe(true);
     socket.destroy();
   });
   it('写入失败时不宣称「已写入」，而是指路手工登录', async () => {
@@ -204,7 +204,7 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
       logger: makeCapturingLogger(lines),
     });
     apps.push(app);
-    app.ctx.provide('storage', makeFakeStorage({ failWrite: true }));
+    app.bind({ provide }).provide(storage, makeFakeStorage({ failWrite: true }));
     await app.plugins.register(webuiServer, {
       port: 0,
       host: '127.0.0.1',

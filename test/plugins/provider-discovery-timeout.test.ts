@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
-import { App, provide } from '../../packages/core/src/index.js';
+import { App, type PluginModule, provide } from '../../packages/core/src/index.js';
 import deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
 import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 import openai from '../../packages/plugin-llm-openai/src/index.js';
@@ -45,6 +45,17 @@ function captureFetch(): { signalFor: (match: string) => AbortSignal | undefined
   return { signalFor: match => seen.find(s => s.url.includes(match))?.signal };
 }
 
+/**
+ * 装一个插件并等激活落定。激活闸会把依赖不全的插件停在 pending 而不报错，
+ * 那时插件压根没发请求——这里当场点名，免得后面的"没带 signal"把原因指错地方。
+ */
+async function load(app: App, plugin: PluginModule, config: Record<string, unknown>): Promise<void> {
+  await app.plugin(plugin, config);
+  await app.plugins.idle();
+  const state = app.plugins.getPlugin(plugin.name)?.state;
+  if (state !== 'active') throw new Error(`${plugin.name} 未激活（state=${state}）`);
+}
+
 function expectLiveSignal(signal: AbortSignal | undefined, label: string): void {
   expect(signal, `${label} 未带 AbortSignal`).toBeInstanceOf(AbortSignal);
   expect(signal?.aborted, `${label} 的 signal 不该一开始就 aborted`).toBe(false);
@@ -58,8 +69,7 @@ describe('模型发现请求带超时', () => {
   it('Ollama /api/tags', async () => {
     const cap = captureFetch();
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(ollama, { baseUrl: 'http://127.0.0.1:11434' });
-    await app.plugins.idle();
+    await load(app, ollama, { baseUrl: 'http://127.0.0.1:11434' });
     expectLiveSignal(cap.signalFor('/api/tags'), 'Ollama /api/tags');
     await app.stop();
   });
@@ -67,8 +77,7 @@ describe('模型发现请求带超时', () => {
   it('OpenAI /models', async () => {
     const cap = captureFetch();
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(openai, { apiKey: 'k', baseUrl: 'https://gw.invalid/v1' });
-    await app.plugins.idle();
+    await load(app, openai, { apiKey: 'k', baseUrl: 'https://gw.invalid/v1' });
     expectLiveSignal(cap.signalFor('/models'), 'OpenAI /models');
     await app.stop();
   });
@@ -76,8 +85,7 @@ describe('模型发现请求带超时', () => {
   it('DeepSeek /models', async () => {
     const cap = captureFetch();
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(deepseek, { apiKey: 'k', baseUrl: 'https://gw.invalid' });
-    await app.plugins.idle();
+    await load(app, deepseek, { apiKey: 'k', baseUrl: 'https://gw.invalid' });
     expectLiveSignal(cap.signalFor('/models'), 'DeepSeek /models');
     await app.stop();
   });
@@ -95,7 +103,7 @@ describe('serper search_images 带超时（挂起时不占死限流槽）', () =
       },
       registerGroup: () => () => {},
     } as never);
-    await app.ctx.useModule(serper, { apiKey: 'k' });
+    await load(app, serper, { apiKey: 'k' });
     const out = JSON.parse((await handlers.search_images({ query: '猫' }, { sessionId: 's' })) as string);
     expect(out.error).toBeUndefined();
     expectLiveSignal(cap.signalFor('serper.dev/images'), 'serper /images');

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { App } from '../../packages/core/src/index.js';
+import { commands } from '../../packages/api-commands/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import { tryDispatchSubcommand } from '../../packages/runtime/src/subcommand.js';
 
 /**
@@ -37,7 +38,7 @@ describe('tryDispatchSubcommand', () => {
     const errors: string[] = [];
     let executed = false;
     try {
-      app.ctx.provide('commands', {
+      app.bind({ provide }).provide(commands, {
         has: (_: string) => false,
         // biome-ignore lint/suspicious/noExplicitAny: test mock
         execute: async (..._args: any[]) => {
@@ -66,11 +67,11 @@ describe('tryDispatchSubcommand', () => {
     const errors: string[] = [];
     let executedWith: { name: string; args: string[]; raw: string } | undefined;
     try {
-      app.ctx.provide('commands', {
+      app.bind({ provide }).provide(commands, {
         has: (name: string) => name === 'demo',
-        execute: async (name: string, ctx: { args: string[]; raw: string }) => {
-          executedWith = { name, args: ctx.args, raw: ctx.raw };
-          return `demo executed with ${ctx.args.length} args`;
+        execute: async (name: string, input: { args: string[]; raw: string }) => {
+          executedWith = { name, args: input.args, raw: input.raw };
+          return `demo executed with ${input.args.length} args`;
         },
       } as never);
       const result = await tryDispatchSubcommand(
@@ -92,7 +93,7 @@ describe('tryDispatchSubcommand', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const captured: string[] = [];
     try {
-      app.ctx.provide('commands', {
+      app.bind({ provide }).provide(commands, {
         has: (name: string) => name === 'silent',
         // biome-ignore lint/suspicious/noExplicitAny: test mock
         execute: async (..._args: any[]) => undefined,

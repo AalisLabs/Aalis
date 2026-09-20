@@ -43,7 +43,7 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
   const boot = async (): Promise<{ app: App; svc: WorkflowService }> => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     apps.push(app);
-    await app.ctx.useModule(storageLocalPlugin, {
+    await app.plugin(storageLocalPlugin, {
       roots: ['data', 'workspace'].map(name => ({
         name,
         path: join(base, name),
@@ -55,8 +55,8 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
         deletable: true,
       })),
     });
-    await app.ctx.useModule(toolsPlugin, {});
-    await app.ctx.useModule(cronEnginePlugin, {});
+    await app.plugin(toolsPlugin, {});
+    await app.plugin(cronEnginePlugin, {});
     // 宿主侧登记测试工具：与插件同一套描述符装配，登记归属根激活
     app.bind({ tools: toolsService }).tools.register({
       definition: {
@@ -70,6 +70,16 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
     });
     await app.plugin(workflowPlugin, { enableTools: false });
     await app.plugins.idle();
+    // 插件停在 pending（required 依赖缺席）时会让整条用例悄悄空转，装载后当场判死
+    for (const id of [
+      '@aalis/plugin-storage-local',
+      '@aalis/plugin-tools',
+      '@aalis/plugin-cron-engine',
+      '@aalis/plugin-workflow',
+    ]) {
+      const state = app.plugins.getPlugin(id)?.state;
+      if (state !== 'active') throw new Error(`插件 "${id}" 未激活（state=${state}）`);
+    }
     return { app, svc: app.bind({ services }).services.get(workflow) as WorkflowService };
   };
 

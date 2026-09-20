@@ -5,8 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { StorageRootInfo, StorageService } from '../../packages/api-storage/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
+import { webuiClient } from '../../packages/api-webui/src/index.js';
+import { App, definePlugin, provide } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -64,6 +65,21 @@ function clientDir(marker: string): string {
   return dir;
 }
 
+/**
+ * 最小前端提供者：偏好按登记者的逻辑身份点名，所以两份前端必须来自两次不同身份的激活，
+ * 插件名即那个身份（HTTP 里的 contextId）。
+ */
+function clientProvider(name: string, dir: string) {
+  return definePlugin({
+    name,
+    provides: [webuiClient],
+    uses: { provide },
+    apply({ provide }) {
+      provide(webuiClient, { getClientDir: () => dir });
+    },
+  });
+}
+
 describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => {
   const apps: App[] = [];
   const dirs: string[] = [];
@@ -95,10 +111,16 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
       },
     });
     apps.push(app);
-    app.ctx.provide('storage', makeFakeStorage());
-    // 先注册者默认胜出：A 是启动时挂载的前端，B 是切换目标
-    app.ctx.fork('clientA').provide('webui-client', { getClientDir: () => dirA });
-    app.ctx.fork('clientB').provide('webui-client', { getClientDir: () => dirB });
+    const host = app.bind({ provide, webuiClient });
+    host.provide(storage, makeFakeStorage());
+    // 先注册者默认胜出：A 是启动时挂载的前端，B 是切换目标。逐个 await，登记顺序才确定。
+    await app.plugin(clientProvider('clientA', dirA));
+    await app.plugin(clientProvider('clientB', dirB));
+    await app.plugins.idle();
+    for (const id of ['clientA', 'clientB']) {
+      // 装载过激活闸：探针没激活时前端根本没登记，后面的断言会退化成「两边都是 A」
+      if (app.plugins.getPlugin(id)?.state !== 'active') throw new Error(`前端探针 ${id} 未激活`);
+    }
     await app.plugins.register(webuiServer, {
       port,
       host: '127.0.0.1',
@@ -128,7 +150,7 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
       body: JSON.stringify({ contextId: 'clientB' }),
     });
     expect(res.ok, '落盘失败必须以错误响应传出，不能报 200').toBe(false);
-    expect(app.ctx.getService<{ getClientDir(): string }>('webui-client')?.getClientDir(), '服务解析已选 B').toBe(dirB);
+    expect(host.webuiClient.current?.getClientDir(), '服务解析已选 B').toBe(dirB);
     expect(await home(), '偏好已指向 B，静态目录必须同步切到 B').toContain('CLIENT-B');
 
     // 清除偏好走同一条不变量：解析回落到 A，静态目录也必须同步回落，哪怕落盘仍然拒绝

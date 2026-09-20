@@ -1,4 +1,4 @@
-import { App } from '@aalis/core';
+import { App, events } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
 
@@ -56,10 +56,17 @@ describe('plugin-cli 非 chat 视图的聊天区新消息提示', () => {
       const idx = all.lastIndexOf(FRAME_SPLIT);
       return stripAnsi(idx < 0 ? all : all.slice(idx));
     };
+    // 宿主侧的发消息口：与插件同一套描述符，登记归属根激活
+    const host = app.bind({ events });
     const send = (content: string) =>
-      app.ctx.emit('outbound:message', { content, sessionId: 'cli-default', platform: 'cli', source: 'system' });
+      host.events.emit('outbound:message', { content, sessionId: 'cli-default', platform: 'cli', source: 'system' });
     try {
-      await app.ctx.useModule(cliPlugin, { startupView: 'logs' });
+      await app.plugin(cliPlugin, { startupView: 'logs' });
+      await app.plugins.idle();
+      // 激活闸会让缺依赖的插件停在 pending 而不报错：不核一下，下面的 header 断言会
+      // 在「TUI 压根没起来」上变成对空帧的比对。
+      const state = app.plugins.getPlugin(cliPlugin.name)?.state;
+      if (state !== 'active') throw new Error(`plugin-cli 未激活（state=${state}）`);
       await app.start();
       await settle();
       expect(lastFrame()).toContain('[LOGS]');
@@ -75,13 +82,13 @@ describe('plugin-cli 非 chat 视图的聊天区新消息提示', () => {
 
       // 流式回复：首块计一次，后续块与收尾不再计；随后整条 outbound:message 被流式去重吃掉，也不双计
       const stream = (chunk: Record<string, unknown>) =>
-        app.ctx.emit('outbound:stream', { sessionId: 'cli-default', platform: 'cli', ...chunk } as never);
+        host.events.emit('outbound:stream', { sessionId: 'cli-default', platform: 'cli', ...chunk } as never);
       await stream({ contentDelta: '流式' });
       await stream({ contentDelta: '回复' });
       await stream({ done: true });
       await settle();
       expect(lastFrame()).toContain('CHAT(3)');
-      await app.ctx.emit('outbound:message', {
+      await host.events.emit('outbound:message', {
         content: '流式回复',
         sessionId: 'cli-default',
         platform: 'cli',

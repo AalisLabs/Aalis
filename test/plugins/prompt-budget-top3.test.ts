@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TokenUsageEvent } from '../../packages/api-agent/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { App, services } from '../../packages/core/src/index.js';
+import { App, events, services } from '../../packages/core/src/index.js';
 import promptBudget from '../../packages/plugin-prompt-budget/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 
@@ -42,9 +42,17 @@ const usage: TokenUsageEvent = {
 describe('prompt_budget_info 的 top3 与 advice', () => {
   it('top3 只含数值桶且等于真实前三；advice 不再教模型调 memory.compress', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(toolsPlugin, {});
-    await app.ctx.useModule(promptBudget, {});
-    const registry = app.bind({ services }).services.get(tools)!;
+    await app.plugin(toolsPlugin, {});
+    await app.plugin(promptBudget, {});
+    await app.plugins.idle();
+    // 激活闸会把依赖不全的插件停在 pending 而不报错，那时工具不存在、事件也没人听——当场点名，
+    // 免得后面的报错落在 registry.execute 上、指不出真正的原因
+    for (const name of [toolsPlugin.name, promptBudget.name]) {
+      const state = app.plugins.getPlugin(name)?.state;
+      if (state !== 'active') throw new Error(`${name} 未激活（state=${state}）`);
+    }
+    const host = app.bind({ services, events });
+    const registry = host.services.get(tools)!;
 
     const query = async () => {
       const result = await registry.execute(
@@ -59,11 +67,11 @@ describe('prompt_budget_info 的 top3 与 advice', () => {
       };
     };
 
-    await app.ctx.emit('token:usage', usage);
+    await host.events.emit('token:usage', usage);
     const payload = await query();
 
     // 0.75 落在 WARN 支路：这条支路与 CRITICAL 共用同一句 compressionNote，别漏改
-    await app.ctx.emit('token:usage', { ...usage, usageRatio: 0.75 });
+    await host.events.emit('token:usage', { ...usage, usageRatio: 0.75 });
     const warn = await query();
     await app.stop();
 

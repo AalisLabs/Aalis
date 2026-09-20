@@ -36,10 +36,14 @@ async function setup(config: Record<string, unknown>) {
   lastInput.text = '';
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
   const host = app.bind({ provide, services, events, hooks });
-  await app.ctx.useModule(memoryInMemory);
+  await app.plugin(memoryInMemory);
   host.provide(llm, fakeLLM());
-  await app.ctx.useModule(memorySummary, config);
+  await app.plugin(memorySummary, config);
   await app.plugins.idle();
+  // 激活闸：required 依赖（memory / llm）缺席时插件停在 pending 且不报错，
+  // 摘要输入永远是空串——断言会红在渲染细节上、掩盖真实原因，故在此显式点名。
+  if (app.plugins.getPlugin('@aalis/plugin-memory-summary')?.state !== 'active')
+    throw new Error('plugin-memory-summary 未激活');
   const store = host.services.get(memory);
   if (!store) throw new Error('memory 服务未就绪');
   return { app, host, memory: store };

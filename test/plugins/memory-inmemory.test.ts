@@ -1,12 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
+import { App, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 
-function makeApp() {
+/** 每个用例一份干净的 App：装上 in-memory 后端，取出它提供的 memory 服务 */
+async function boot(): Promise<{ app: App; mem: MemoryService }> {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  return { app, cleanup: () => {} };
+  await app.plugin(memoryInMemory);
+  await app.plugins.idle();
+  if (app.plugins.getPlugin(memoryInMemory.name)?.state !== 'active') {
+    throw new Error('plugin-memory-inmemory 未激活');
+  }
+  const mem = app.bind({ services }).services.get(memory);
+  if (!mem) throw new Error('memory 服务未就绪');
+  return { app, mem };
 }
 
 const msg = (role: Message['role'], content: string, ts?: number): Message => ({
@@ -16,16 +24,12 @@ const msg = (role: Message['role'], content: string, ts?: number): Message => ({
 });
 
 describe('plugin-memory-inmemory', () => {
-  let env: ReturnType<typeof makeApp>;
+  let app: App;
   let mem: MemoryService;
   beforeEach(async () => {
-    env = makeApp();
-    await env.app.ctx.useModule(memoryInMemory);
-    const m = env.app.ctx.getService<MemoryService>('memory');
-    if (!m) throw new Error('memory service missing');
-    mem = m;
+    ({ app, mem } = await boot());
   });
-  afterEach(() => env.cleanup());
+  afterEach(() => app.stop());
 
   it('saveMessage + getHistory', async () => {
     await mem.saveMessage('s1', msg('user', 'hello'));
@@ -135,16 +139,12 @@ describe('plugin-memory-inmemory', () => {
 // ════════════════════════════════════════════════════════════
 
 describe('plugin-memory-inmemory: metadata 契约', () => {
-  let env: ReturnType<typeof makeApp>;
+  let app: App;
   let mem: MemoryService;
   beforeEach(async () => {
-    env = makeApp();
-    await env.app.ctx.useModule(memoryInMemory);
-    const m = env.app.ctx.getService<MemoryService>('memory');
-    if (!m) throw new Error('memory service missing');
-    mem = m;
+    ({ app, mem } = await boot());
   });
-  afterEach(() => env.cleanup());
+  afterEach(() => app.stop());
 
   it('listMetadata 带出 updatedAt，且写入后会推进', async () => {
     const before = Date.now();
@@ -189,16 +189,12 @@ describe('plugin-memory-inmemory: metadata 契约', () => {
 });
 
 describe('plugin-memory-inmemory: 与另两家后端的语义对齐', () => {
-  let env: ReturnType<typeof makeApp>;
+  let app: App;
   let mem: MemoryService;
   beforeEach(async () => {
-    env = makeApp();
-    await env.app.ctx.useModule(memoryInMemory);
-    const m = env.app.ctx.getService<MemoryService>('memory');
-    if (!m) throw new Error('memory service missing');
-    mem = m;
+    ({ app, mem } = await boot());
   });
-  afterEach(() => env.cleanup());
+  afterEach(() => app.stop());
 
   it('存的是深拷贝：事后改原对象不污染存储', async () => {
     const src: Record<string, unknown> = { v: 'original' };
