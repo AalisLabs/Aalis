@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { Context } from '../../packages/core/src/context/context.js';
 import {
   ConfigManager,
-  Context,
   ContributionRegistry,
   DefaultLogger,
   EventBus,
@@ -123,14 +123,11 @@ describe('ContributionRegistry / Context.contribute / collect', () => {
 
   it('useModule 同名重复挂载：ctx.id 唯一化，贡献互不顶替、dispose 不误清兄弟', async () => {
     const root = makeContext();
-    const mod = {
-      name: 'dyn',
-      apply(c: Context) {
-        c.contribute(POINT, { id: 'blk' } as never);
-      },
+    const mount = (c: Context) => {
+      c.contribute(POINT, { id: 'blk' } as never);
     };
-    const off1 = await root.useModule(mod);
-    await root.useModule(mod);
+    const off1 = await root.useModule('dyn', mount);
+    await root.useModule('dyn', mount);
     expect(root.collect(POINT)).toHaveLength(2); // 后挂载者不顶替先挂载者
 
     off1.dispose();

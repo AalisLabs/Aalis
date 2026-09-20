@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { Context } from '../../packages/core/src/context/context.js';
 import {
   ConfigManager,
-  Context,
   ContributionRegistry,
   DefaultLogger,
   EventBus,
@@ -180,7 +180,7 @@ describe('构造类 post-dispose：抛错', () => {
   it('useModule：抛错（既有行为，纳入同一政策锚）', async () => {
     const ctx = makeContext('parent');
     ctx.dispose();
-    await expect(ctx.useModule({ name: 'm', apply() {} }, {})).rejects.toThrow(/无法 useModule/);
+    await expect(ctx.useModule('m', () => {})).rejects.toThrow(/无法 useModule/);
   });
 });
 
