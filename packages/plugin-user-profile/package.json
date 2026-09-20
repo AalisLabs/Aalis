@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-user-profile",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -29,13 +29,13 @@
     "eval:behavior": "node evals/profile-behavior-eval.mjs"
   },
   "dependencies": {
-    "@aalis/api-commands": "workspace:>=0.5.0 <1.0.0",
-    "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/api-llm": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/api-memory": "workspace:>=0.5.1 <1.0.0",
-    "@aalis/api-persona": "workspace:>=0.6.0 <1.0.0",
+    "@aalis/api-commands": "workspace:>=0.6.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.12.0 <1.0.0",
+    "@aalis/api-llm": "workspace:>=0.11.0 <1.0.0",
+    "@aalis/api-memory": "workspace:>=0.6.0 <1.0.0",
+    "@aalis/api-persona": "workspace:>=0.7.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.5.1 <1.0.0",
-    "@aalis/api-tools": "workspace:>=0.5.1 <1.0.0",
+    "@aalis/api-tools": "workspace:>=0.9.0 <1.0.0",
     "@aalis/util-json-repair": "workspace:>=0.5.1 <1.0.0"
   },
   "devDependencies": {
@@ -46,7 +46,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.11.0 <1.0.0"
+    "@aalis/core": ">=0.17.0 <1.0.0"
   },
   "aalis": {
     "service": {
