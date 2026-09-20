@@ -76,12 +76,13 @@ export async function retireEntry(
  *
  * @param planRoot 停机时传根激活：宿主的根绑定（app.bind）与全部插件进同一张计划，
  *   宿主的收尾因此排在它用到的插件关闭之前。
+ * @param settle 已冻的计划（`App.stop` 在 `app:stopping` 之前 freeze）；缺省由 closeActivations 现冻。
  */
 export async function retireBatch(
   entries: PluginRecord[],
   targetState: 'pending' | 'disposed',
   deps: ActivationDeps,
-  opts?: { emitUnloaded?: boolean; planRoot?: Context },
+  opts?: { emitUnloaded?: boolean; planRoot?: Context; settle?: Map<Context, () => void> },
 ): Promise<void> {
   const closing: Array<{ entry: PluginRecord; ctx: Context }> = [];
   for (const entry of entries) {
@@ -90,7 +91,7 @@ export async function retireBatch(
   }
   try {
     const roots = opts?.planRoot ? [opts.planRoot] : closing.map(item => item.ctx);
-    await closeActivations(roots, deps.disposeTimeoutMs, deps.logger);
+    await closeActivations(roots, deps.disposeTimeoutMs, deps.logger, opts?.settle);
   } catch (err) {
     deps.logger.error('成批拆卸抛错:', err);
   }

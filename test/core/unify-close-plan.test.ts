@@ -297,6 +297,51 @@ describe('关停编排：归属树与服务依赖共同决定顺序', () => {
     await w.app.stop();
     expect(w.saved).toEqual(['provider:last']);
   });
+
+  it('顶层 optional、消费者先于提供者注册：onDispose 仍写得到提供者', async () => {
+    const w = world();
+    const store = defineService<Store>('zz-cp-unfav');
+    const provider = definePlugin({
+      name: 'prov',
+      uses: { provide, lifecycle },
+      provides: [store],
+      apply({ provide, lifecycle }) {
+        let closed = false;
+        provide(store, {
+          save(data) {
+            if (closed) throw new Error('prov 已关闭');
+            w.saved.push(data);
+          },
+        });
+        lifecycle.onDispose(() => {
+          closed = true;
+          w.log.push('prov-close');
+        });
+      },
+    });
+    const consumer = definePlugin({
+      name: 'cons',
+      uses: { store: optional(store), lifecycle },
+      apply({ store, lifecycle }) {
+        lifecycle.onDrain(() => {
+          store.require().save('cons:last');
+          w.log.push('cons-drain');
+        });
+        lifecycle.onDispose(() => {
+          store.require().save('cons-dispose');
+          w.log.push('cons-close');
+        });
+      },
+    });
+    await w.app.plugin(consumer);
+    await w.app.plugin(provider);
+    await w.app.plugins.idle();
+    expect(w.app.plugins.getPlugin('cons')?.state).toBe('active');
+    expect(w.app.plugins.getPlugin('prov')?.state).toBe('active');
+    await w.app.stop();
+    expect(w.saved, `log=${w.log.join('>')}`).toEqual(['cons:last', 'cons-dispose']);
+    expect(w.log.indexOf('cons-close')).toBeLessThan(w.log.indexOf('prov-close'));
+  });
 });
 
 describe('各关闭入口共用同一套编排', () => {

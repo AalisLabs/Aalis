@@ -58,6 +58,7 @@ export interface PluginStatusEntry {
  * 'disposed' 单向终态、disabled 态 bounce、定义或实例 id 校验失败）；**true = 其余，含主体已在目标态的幂等情形**。
  * 每个 false 分支都已记一笔日志（政策挡下 warn，主体不存在与 'disposed' 在途 debug），调用方不必重复。
  * true 只说明请求已受理，不说明激活已落定——那看 `idle()`。
+ * 停机进行中，unload / disable 汇入停机计划后立即返回 true（不等待拆卸完成，拆卸由停机计划执行）；register / bounce 返回 false。
  */
 export interface PluginManagerService {
   /** 获取所有已注册插件的状态 */
