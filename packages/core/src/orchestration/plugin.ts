@@ -4,6 +4,7 @@ import { type PluginEntry, type PluginState, parseInstanceId } from '../types/pl
 import { reportQuietly } from '../kernel/disposable-chain.js';
 
 import { optionalNames, requiredNames } from '../context/binding.js';
+import { freezeActivations } from '../context/close-plan.js';
 import type { Context } from '../context/context.js';
 import { assertValidInstanceId, type PluginDefinition, validateDefinition } from '../context/definition.js';
 import type { Logger } from '../context/logger.js';
@@ -69,10 +70,22 @@ export class PluginManager implements PluginManagerService {
    * 试图 register 命令 / 监听服务等动作触发误重入。
    */
   private shuttingDown = false;
+  /** 停机计划的完成信号：beginShutdown 冻树时填，stopAll 执行该计划 */
+  private shutdownSettle?: Map<Context, () => void>;
 
   /** 是否正在关机——供插件 dispose hook 短路用 */
   isShuttingDown(): boolean {
     return this.shuttingDown;
+  }
+
+  /**
+   * 停机截止点：置 shuttingDown，并把根激活整棵树冻进一张计划。
+   * 之后 register 拒绝；对本树的 disposeAsync 汇入该计划。真正的 drain/close 由 stopAll 执行。
+   */
+  beginShutdown(): void {
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
+    this.shutdownSettle = freezeActivations([this.rootCtx]);
   }
 
   /** idle() 的等待者——在 recompute flight 排干（无在飞、无排队、无挂起段）时统一放行 */
@@ -148,6 +161,8 @@ export class PluginManager implements PluginManagerService {
 
     const id = instanceId ?? definition.name;
 
+    if (this.shuttingDown) return this.refuse('register', id, '处于停机终态');
+
     // 多实例检查：同一份定义非 reusable 时不允许重复注册
     if (this.plugins.has(id)) {
       this.logger.warn(`插件 "${id}" 已注册，跳过`);
@@ -200,6 +215,13 @@ export class PluginManager implements PluginManagerService {
       const inflight = entry.context;
       if (inflight) await inflight.disposeAsync(this.disposeTimeoutMs);
       if (this.plugins.get(instanceId) === entry) this.plugins.delete(instanceId);
+      return true;
+    }
+
+    if (this.shuttingDown) {
+      // 已冻进停机计划：不在这里 await 拆卸，以免 app:stopping 监听器与计划互等
+      if (entry.context) void entry.context.disposeAsync(this.disposeTimeoutMs);
+      this.logger.debug(`unload: 插件 "${instanceId}" 停机中已汇入停机计划`);
       return true;
     }
 
@@ -271,6 +293,12 @@ export class PluginManager implements PluginManagerService {
     if (entry.state === 'disposed') return this.refuse('disable', instanceId, '处于 disposed 终态');
     if (entry.state === 'disabled') return true; // 已经禁用
 
+    if (this.shuttingDown) {
+      if (entry.context) void entry.context.disposeAsync(this.disposeTimeoutMs);
+      this.logger.debug(`disable: 插件 "${instanceId}" 停机中已汇入停机计划`);
+      return true;
+    }
+
     // dispose 段守卫：期间反应式 recompute 排队到收尾的 softReload
     this.suspendDepth++;
     try {
@@ -330,7 +358,7 @@ export class PluginManager implements PluginManagerService {
    * 下游不跟着重启：消费者经绑定接口每次解析当前提供者，有状态的接线由 follow 在提供者换人时交接。
    * 不换代码：跑的仍是注册时的那份定义。要换代码走 `unload` + `register`。
    *
-   * @returns false 表示找不到 entry、处于 disabled 态或 'disposed' 终态（拒绝 bounce）。
+   * @returns false 表示找不到 entry、处于 disabled 态或 'disposed' 终态，或停机进行中（拒绝重建）。
    */
   async bounce(instanceId: string, opts?: { config?: Record<string, unknown> }): Promise<boolean> {
     const entry = this.plugins.get(instanceId);
@@ -344,6 +372,7 @@ export class PluginManager implements PluginManagerService {
     // await 也让出）——此窗口内把它覆写回 'pending' 会重新武装 entry，激活出
     // 一个注册表外的永生孤儿实例；停机后覆写则会把插件误写进持久化禁用清单。
     if (entry.state === 'disposed') return this.refuse('bounce', instanceId, '处于 disposed 终态');
+    if (this.shuttingDown) return this.refuse('bounce', instanceId, '停机中不重建');
     // 旧调用方（JS 无类型约束）传 module 期望换码：拒绝而非静默跑旧代码，否则调用方以为换成功了。
     if (opts && 'module' in opts) {
       this.logger.warn(`bounce: 插件 "${instanceId}" 不再支持 module 热替换，改走 unload + register`);
@@ -442,7 +471,11 @@ export class PluginManager implements PluginManagerService {
     // 停机：全部插件激活与宿主的根激活进同一张计划（无依赖关系时后注册的先关）
     if (kind === 'shutdown') {
       const active = [...this.plugins.values()].filter(entry => entry.state === 'active').reverse();
-      await retireBatch(active, 'disposed', this.deps, { emitUnloaded: false, planRoot: this.rootCtx });
+      await retireBatch(active, 'disposed', this.deps, {
+        emitUnloaded: false,
+        planRoot: this.rootCtx,
+        settle: this.shutdownSettle,
+      });
       return;
     }
 

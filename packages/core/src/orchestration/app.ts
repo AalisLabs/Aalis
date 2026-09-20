@@ -433,14 +433,13 @@ export class App {
   async stop(): Promise<void> {
     this.logger.info('正在停止...');
     this.config.unwatch();
-    await this.#root.emit('app:stopping');
-    // 先等状态机静置：recompute 是单飞的，若此刻恰有 bounce/unload 在飞，
-    // stopAll 的 shutdown 请求会被排队后**立即返回**，关停编排整个落空，
-    // 退化成根激活按挂载正序级联（提供者先关），下游插件的收尾落盘
-    // 会写进已关闭的连接。App.stop 不在 apply/onDispose 内，await idle 无死锁风险。
+    // 先等状态机静置：在飞 bounce/unload 的 recompute 排干后再冻。
+    // 否则 freeze 会 markClosing，尚未 fork 完的激活会撞上「已 dispose」。
     await this.plugins.idle();
-    // 全部 active 插件与根激活进同一张关停计划——消费者先关，提供者后关——下游的收尾
-    // 还能安全访问其依赖的服务。stopAll 会置位 shuttingDown，屏蔽反应式重算。
+    this.plugins.beginShutdown();
+    await this.#root.emit('app:stopping');
+    await this.plugins.idle();
+    // 全部 active 插件与根激活进同一张关停计划——beginShutdown 已冻，这里执行 drain/close。
     await this.plugins.stopAll();
     // 清掉全部 sticky 缓存（'app:ready' + 'app:started'），防止后续 restart
     // 复用过时的"已启动"标记
