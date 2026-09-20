@@ -128,6 +128,12 @@ class DefaultAgent implements AgentService {
    */
   private activeControllers = new Map<string, AbortController>();
 
+  /**
+   * 在飞回合 Promise。关停时 abort 之后等它们以 AbortError（或正常完成）收尾，
+   * 而不是等 LLM 跑完——收尾里的钩子 / 出站事件还要用 memory。
+   */
+  private inflightTurns = new Set<Promise<void>>();
+
   /** 同一 lane 的入站消息归档串行化，避免连续消息读取历史时漏掉前一条输入。 */
   private archiveQueues = new Map<string, Promise<void>>();
 
@@ -225,10 +231,10 @@ class DefaultAgent implements AgentService {
   /**
    * 中止全部在飞回合（拆卸路径用）。
    *
-   * activeControllers 是实例私有的，bounce 后新实例看不见旧实例的在飞回合；而拆卸链不等任何
-   * 回合——旧回合会在已拆卸的那次激活上跑完并投递（人设/模型都是 bounce 前的），用户在它
-   * 结束前再发一条，两个实例就并发答同一会话。abort 走的是已有的 AbortError 收尾
-   * （outbound:stream done + turn:after outcome='aborted'），与 WebUI「停止生成」同语义。
+   * activeControllers 是实例私有的，bounce 后新实例看不见旧实例的在飞回合。
+   * abort 走已有的 AbortError 收尾（outbound:stream done + turn:after outcome='aborted'），
+   * 与 WebUI「停止生成」同语义。关停在 onDrain 里先调本方法再等回合 Promise；
+   * onDispose 再调一次作兜底（已中止的 controller 不在表里，是空操作）。
    */
   abortAll(): void {
     let n = 0;
@@ -238,6 +244,16 @@ class DefaultAgent implements AgentService {
       n++;
     }
     if (n > 0) this.logger.info(`拆卸：已中止 ${n} 个在飞回合`);
+  }
+
+  /**
+   * 关停收尾：中止在飞回合并等待其 AbortError（或正常完成）收尾落定。
+   * 超时由 core 对 onDrain 回调的 disposeTimeoutMs 护栏负责，不另加配置键。
+   */
+  async abortInflightAndSettle(): Promise<void> {
+    this.abortAll();
+    if (this.inflightTurns.size === 0) return;
+    await Promise.allSettled([...this.inflightTurns]);
   }
 
   /**
@@ -498,13 +514,21 @@ class DefaultAgent implements AgentService {
     const controller = new AbortController();
     this.activeControllers.set(lane, controller);
 
-    try {
-      await this._handleMessageInner(incoming, controller.signal, lane);
-    } finally {
-      // 仅清理自己创建的 controller（避免清掉后续新请求的）
-      if (this.activeControllers.get(lane) === controller) {
-        this.activeControllers.delete(lane);
+    const turn = (async () => {
+      try {
+        await this._handleMessageInner(incoming, controller.signal, lane);
+      } finally {
+        // 仅清理自己创建的 controller（避免清掉后续新请求的）
+        if (this.activeControllers.get(lane) === controller) {
+          this.activeControllers.delete(lane);
+        }
       }
+    })();
+    this.inflightTurns.add(turn);
+    try {
+      await turn;
+    } finally {
+      this.inflightTurns.delete(turn);
     }
   }
 
@@ -1974,8 +1998,11 @@ type InternalAgent = {
 function run(caps: Caps): void {
   const agentImpl = new DefaultAgent(caps);
   caps.provide(agentService, agentImpl);
-  // 拆卸即中止在飞回合：bounce / disable / unload / 停机都经此，理由见 abortAll。
-  caps.lifecycle.onDispose(() => agentImpl.abortAll());
+  // 收尾段中止在飞回合并等 AbortError 落定：此时 memory / 钩子还在，交接写得进去。
+  // 超时沿用 core 对 onDrain 的 disposeTimeoutMs，不另加配置键。
+  caps.lifecycle.onDrain(() => agentImpl.abortInflightAndSettle(), '中止在飞回合');
+  // 清理段再 abort 一次：drain 超时或未走到收尾时的兜底，表空则空操作。
+  caps.lifecycle.onDispose(() => agentImpl.abortAll(), '中止在飞回合（兜底）');
   const agent = agentImpl as unknown as InternalAgent;
 
   // 全局默认 LLM：通过 ServicePreference 锁定 llm 服务的首选 entry。
