@@ -186,6 +186,7 @@ describe('评审 4：调用型服务的有状态消费者——follow 取代整�
     const log: string[] = [];
     let applied = 0;
     let cached!: Sdk;
+    let view!: { current: Sdk | undefined; require(): Sdk };
     const gate = deferred();
     await app.plugin(
       definePlugin({
@@ -193,6 +194,7 @@ describe('评审 4：调用型服务的有状态消费者——follow 取代整�
         uses: { sdk },
         apply({ sdk }) {
           applied++;
+          view = sdk;
           cached = sdk.require(); // 反面教材：缓存裸提供者，换人后就是失效引用——契约如此，由调用方负责
           sdk.follow(provider => {
             log.push(`open:${provider.tag}`);
@@ -213,6 +215,8 @@ describe('评审 4：调用型服务的有状态消费者——follow 取代整�
     expect(log).toEqual(['open:a', 'close:a', 'open:b']);
     expect(applied, '换人不重启插件').toBe(1);
     expect(cached.closed, '缓存的裸引用已失效；重新 require() 才是当前值').toBe(true);
+    expect(view.current, '每次查询重新解析，不是绑定时的快照').toBe(b);
+    expect(view.require()).toBe(b);
 
     let unloaded = false;
     const unloading = app.plugins.unload('stateful').then(() => {
