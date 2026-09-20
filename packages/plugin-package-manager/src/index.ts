@@ -173,13 +173,6 @@ export function validatePackageSpec(spec: unknown): string | undefined {
 
 export const packageManager = defineService<PackageManagerService>('package-manager');
 
-/**
- * 撤销通道另外两端的服务。这里只问「当前提供者是谁」（读 contextId），不消费它们的契约类型，
- * 故就地造描述符——服务身份是描述符的 name，与契约包导出的那份指向同一服务。
- */
-const webuiClient = defineService<unknown>('webui-client');
-const webuiServer = defineService<unknown>('webui-server');
-
 // ===== 插件入口 =====
 
 const uses = {
@@ -260,8 +253,8 @@ function createService(caps: Caps): PackageManagerService {
     // 而这三个都没有，故也不需要为此加解析。
     recoveryChannelProviders: () => [
       ...new Set(
-        [webuiClient, webuiServer, packageManager].flatMap(descriptor => {
-          const id = caps.services.all(descriptor)[0]?.contextId;
+        ['webui-client', 'webui-server', packageManager.name].flatMap(service => {
+          const id = caps.services.all(service)[0]?.contextId;
           return id ? [id] : [];
         }),
       ),

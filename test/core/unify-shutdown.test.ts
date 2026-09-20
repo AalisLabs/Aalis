@@ -255,7 +255,7 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
     expect(w.log.indexOf('close:host-plugin')).toBeLessThan(w.log.indexOf('close:memory'));
   });
 
-  it('依赖成环：点名告警并按确定顺序关闭，停机不悬挂', async () => {
+  it('optional 依赖成环：后挂的先整个关完（期间对方仍在），不告警，停机不悬挂', async () => {
     const w = world();
     const app = makeApp(w);
     const ping = defineService<{ hit(): void }>('zz-ping');
@@ -265,8 +265,8 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
         name: 'a',
         uses: { pong: optional(pong), provide, lifecycle },
         apply({ pong, provide, lifecycle }) {
-          provide(ping, { hit() {} });
-          lifecycle.onDrain(() => pong.current?.hit());
+          provide(ping, { hit: () => void w.log.push('ping<-b') });
+          lifecycle.onDrain(() => void w.log.push(`drain:a pong=${pong.current ? 'alive' : 'gone'}`));
           lifecycle.onDispose(() => void w.log.push('close:a'));
         },
       }),
@@ -277,15 +277,62 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
         uses: { ping: optional(ping), provide, lifecycle },
         apply({ ping, provide, lifecycle }) {
           provide(pong, { hit() {} });
-          lifecycle.onDrain(() => ping.current?.hit());
+          lifecycle.onDrain(() => ping.require().hit());
           lifecycle.onDispose(() => void w.log.push('close:b'));
         },
       }),
     );
     await app.plugins.idle();
     await app.stop();
-    expect(w.warnings.some(x => x.includes('依赖成环') && x.includes('a') && x.includes('b'))).toBe(true);
-    expect(w.log).toEqual(['close:b', 'close:a']);
+    expect(w.warnings.filter(x => x.includes('成环'))).toEqual([]);
+    // b 后挂：它的交接发生在 a 还活着的时候；a 收尾时 b 已经不在——optional 的契约允许
+    expect(w.log).toEqual(['ping<-b', 'close:b', 'drain:a pong=gone', 'close:a']);
+  });
+
+  it('required 依赖成环（胜者换人造成）：点名告警并按确定顺序关闭，停机不悬挂', async () => {
+    const w = world();
+    const app = makeApp(w);
+    const ping = defineService<{ hit(): void }>('zz-rping');
+    const pong = defineService<{ hit(): void }>('zz-rpong');
+    const closes = (name: string) => () => void w.log.push(`close:${name}`);
+    await app.plugin(
+      definePlugin({
+        name: 'seed',
+        uses: { provide, lifecycle },
+        apply({ provide, lifecycle }) {
+          provide(ping, { hit() {} });
+          lifecycle.onDispose(closes('seed'));
+        },
+      }),
+    );
+    await app.plugin(
+      definePlugin({
+        name: 'a',
+        uses: { ping, provide, lifecycle },
+        apply({ provide, lifecycle }) {
+          provide(pong, { hit() {} });
+          lifecycle.onDispose(closes('a'));
+        },
+      }),
+    );
+    // b 要 a 的 pong，又以更高优先级顶替了 a 所依赖的 ping：a ↔ b 两条边都是 required
+    await app.plugin(
+      definePlugin({
+        name: 'b',
+        uses: { pong, provide, lifecycle },
+        apply({ provide, lifecycle }) {
+          provide(ping, { hit() {} }, { priority: 10 });
+          lifecycle.onDispose(closes('b'));
+        },
+      }),
+    );
+    await app.plugins.idle();
+    await app.stop();
+    const cycle = w.warnings.filter(x => x.includes('required 依赖成环'));
+    expect(cycle).toHaveLength(1);
+    expect(cycle[0]).toContain('[b, a]');
+    // seed 已被顶替、无人依赖，不受环牵连：环卡住时它是唯一就绪的，先走；环内按自然次序 b、a
+    expect(w.log).toEqual(['close:seed', 'close:b', 'close:a']);
   });
 });
 
