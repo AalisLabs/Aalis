@@ -9,6 +9,7 @@ import {
   config,
   contributions,
   definePlugin,
+  defineService,
   events,
   hooks,
   logger,
@@ -436,6 +437,9 @@ function renderHistoryForExtract(history: Message[], userId: string, platform: s
     .join('\n');
 }
 
+// 同名描述符即同一服务：本地声明 optional 依赖，类型来自兄弟插件的 type-only 导入，不构成运行时包依赖。
+const userRelation = defineService<RelationService>('user-relation');
+
 const uses = {
   memory,
   llm,
@@ -448,6 +452,7 @@ const uses = {
   tools: optional(tools),
   commands: optional(commands),
   persona: optional(persona),
+  userRelation: optional(userRelation),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -472,6 +477,7 @@ function registerUserProfile({
   tools,
   commands,
   persona,
+  userRelation,
 }: Caps): void {
   const cfg: UserProfileConfig = {
     extractEveryNMessages: (config.extractEveryNMessages as number) ?? 5,
@@ -1783,10 +1789,10 @@ function registerUserProfile({
           const relationLine = renderRelationLine(profile);
           // 可选：从 user-relation 服务取「同社群活跃成员」（Louvain 标签 + PageRank 排序）。
           // 服务不存在 / 节点没社群标签 / 报错都静默跳过；该字段是锦上添花，不破坏档案主体。
-          // user-relation 由插件提供，本包不反向依赖那个插件包：按名动态查，只借它的类型。
+          // 同名描述符声明 optional 依赖，类型来自兄弟插件的 type-only 导入，不构成运行时包依赖。
           let communityLine = '';
           try {
-            const relation = services.get('user-relation') as RelationService | undefined;
+            const relation = userRelation.current;
             if (relation) {
               const r = await relation.getCommunityPeers(userKey, 5);
               if (r.peers.length > 0) {
