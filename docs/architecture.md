@@ -6,12 +6,13 @@
 
 Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设施（事件、服务容器、中间件管道、插件生命周期），所有功能——LLM 调用、消息存储、对话编排、平台接入——由可插拔插件提供。核心的任何行为均可被插件拦截、修改或完全替换。
 
-**类型与接口层面**：所有业务服务接口（LLM / Memory / Storage / Tools / Commands / Gateway / WebUI / Authority / Agent 等）由对应的 `@aalis/api-*` 包提供，core 不持有任何业务接口。详见 [api 包架构](design/api-packages.md)。
+插件的交界面是 `definePlugin({ name, uses, provides, apply(caps) })`：能力经描述符显式声明，按激活绑定。没有默认注入。业务服务接口由对应的 `@aalis/api-*` 包以描述符导出，core 不持有任何业务接口。详见 [api 包架构](design/api-packages.md)。
 
 `@aalis/core` 对外暴露：
 
-- 运行时基础设施：`App` / `Context` / `EventBus` / `ServiceContainer` / `HookRegistry` / `ConfigManager` / `Logger` / `PluginManager`
-- 四个扩展点：`ServiceTypeMap` / `AalisEvents` / `HookContextMap` / `ContributionPointMap`（均通过 declaration merging 由 `@aalis/api-*` 注入业务键）
+- 运行时基础设施：`App` / `definePlugin` / `defineService` / `EventBus` / `ServiceContainer` / `HookRegistry` / `ConfigManager` / `Logger` / `PluginManager`，以及内置能力描述符（`events` / `hooks` / `contributions` / `lifecycle` / `logger` / `config` / `provide` / `services`）
+- 三张扩展点表：`AalisEvents` / `HookContextMap` / `ContributionPointMap`（由 `@aalis/api-*` 经 declaration merging 注入业务键）。服务类型随描述符走，没有服务名类型表
+- 宿主入口：`app.plugin` / `app.bind` / `app.config` / `app.plugins` 与四张底层注册表
 - `AalisConfig` 仅声明基础字段（`name` / `logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`）加 `[key: string]: unknown` 兜底；业务字段（owners / deniedCapabilities / authorityOverrides / confirmOverrides 等）由对应 api-* 通过 declaration merging 注入，core 不知晓其语义
 - `ConfigManager` 是纯内存配置中枢：自身不读写文件，`save()` 把整份配置快照原样委托给宿主注入的 `ConfigProvider.save()`（无 provider 时静默忽略），对所有顶层字段一视同仁、不含任何业务特例（合并默认值时 `mergeDefaultsConfig()` 也是先填 core 已知字段、再透传其余）
 
@@ -59,12 +60,12 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 │        接口由 api-* 提供，实现可多提供者并存                  │
 ├──────────────────────────────────────────────────────────────┤
 │                    核心框架层 (Core Layer)                     │
-│   App · Context · ServiceContainer · PluginManager            │
-│   EventBus · HookRegistry · ConfigManager · Logger             │
+│   App · definePlugin / defineService · PluginManager          │
+│   EventBus · ServiceContainer · HookRegistry · ConfigManager   │
+│   Logger · 内置能力描述符                                      │
 │   Lifecycle · DisposableChain（资源内核，不导出）              │
-│   4 个扩展点：ServiceTypeMap / AalisEvents / HookContextMap        │
-│                / ContributionPointMap                          │
-│   （业务接口均在 api-*，core 不持有）                         │
+│   扩展点：AalisEvents / HookContextMap / ContributionPointMap  │
+│   （业务接口均在 api-*，类型随描述符走）                       │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -79,7 +80,7 @@ Platform 适配器接收 → 发出 inbound:message 事件
   ▼
 App 路由 → Agent.handleMessage(incoming) 作为中间件默认行为
   │
-  ├─ 1. ctx.runHook('agent:input:before', { message, metadata }, defaultAction)
+  ├─ 1. hooks.run('agent:input:before', { message, metadata }, defaultAction)
   │     │
   │     ├─ [ChatFlow 中间件] 流控拦截/缓冲
   │     ├─ [其他插件中间件]
@@ -93,27 +94,27 @@ App 路由 → Agent.handleMessage(incoming) 作为中间件默认行为
   │     ├─ plugin-user-profile / user-relation: 档案、关系（identity 槽）
   │     └─ plugin-skills: 技能库路标与已激活正文（knowledge 槽）
   │
-  ├─ 4. ctx.runHook('agent:llm:before') ← 拦截者审已成型的 messages
+  ├─ 4. hooks.run('agent:llm:before') ← 拦截者审已成型的 messages
   │     └─ plugin-tool-search: 替换工具列表为搜索层
   │
   ├─ 5. trimMessages() ← 按 token 预算裁剪
   │
   ├─ 6. LLM.chatStream() → 流式输出 → outbound:stream 事件
   │
-  ├─ 7. ctx.runHook('agent:llm:after')
+  ├─ 7. hooks.run('agent:llm:after')
   │
   ├─ 8. 工具调用循环 (最多 maxToolIterations 次)
-  │     ├─ ctx.runHook('agent:tool:before')
-  │     ├─ ctx.getService<ToolService>('tools')!.execute() ← 权限检查 + 执行
-  │     ├─ ctx.runHook('agent:tool:after')
+  │     ├─ hooks.run('agent:tool:before')
+  │     ├─ tools.require().execute() ← 权限检查 + 执行
+  │     ├─ hooks.run('agent:tool:after')
   │     └─ 追加工具结果 → 继续调用 LLM
   │
-  ├─ 9. ctx.runHook('agent:reply:before')
+  ├─ 9. hooks.run('agent:reply:before')
   │     └─ plugin-persona: outputFormat JSON 解析
   │
   ├─ 10. 保存到 memory (用户+助手消息)
   │
-  └─ 11. emit('outbound:message') → 各平台输出给用户
+  └─ 11. events.emit('outbound:message') → 各平台输出给用户
 ```
 
 ## 核心扩展机制
@@ -122,11 +123,11 @@ Aalis 提供四种互补的扩展手段，覆盖不同粒度的定制需求：
 
 ### 1. 中间件管道 (Hooks)
 
-插件通过 `ctx.middleware(hook, fn)` 注册中间件，拦截核心流程的各阶段。中间件可修改数据或中断流程。同一钩子内多个 handler 按注册顺序执行洋葱模型（无优先级数字）；跨钩子顺序由调度方（如 plugin-gateway）显式决定。
+插件通过 `hooks.middleware(hook, fn)` 注册中间件，拦截核心流程的各阶段。中间件可修改数据或中断流程。同一钩子内多个 handler 按注册顺序执行洋葱模型（无优先级数字）；跨钩子顺序由调度方（如 plugin-gateway）显式决定。
 
 ```typescript
 // 拦截消息（不调用 next = 中断整个管道）
-ctx.middleware('agent:input:before', async (data, next) => {
+hooks.middleware('agent:input:before', async (data, next) => {
   if (shouldBlock(data.message)) return; // 中断
   data.message.content += ' [已审核]';   // 修改
   await next();                           // 继续
@@ -140,18 +141,17 @@ ctx.middleware('agent:input:before', async (data, next) => {
 任何服务都可以被替换。提供同名服务的插件自动参与优先级竞争：
 
 ```typescript
-// 注册自定义 Agent 实现
-ctx.provide('agent', myAgent, { priority: 20 });
+provide(agent, myAgent, { priority: 20 });
 ```
 
-详见 [service.md — 服务容器](core/service.md)
+详见 [service.md — 服务](core/service.md)
 
 ### 3. 事件监听 (EventBus)
 
 松耦合的发布/订阅模式，用于响应系统事件而不干预流程：
 
 ```typescript
-ctx.on('outbound:message', async (msg) => { /* 记录日志、统计等 */ });
+events.on('outbound:message', async (msg) => { /* 记录日志、统计等 */ });
 ```
 
 ### 4. 贡献点 (Contribution Points)
@@ -159,20 +159,18 @@ ctx.on('outbound:message', async (msg) => { /* 记录日志、统计等 */ });
 向共享产物提交一块内容，排布权归收集方。与 hooks 的分工：**改写或截停既有流程 → hooks；向共享产物添加自己的一块 → 贡献点**。贡献者拿只读视图、不掌握控制流（无短路、无排序影响力、看不到他人产出），因此重复注入、排布漂移、错误连坐在 API 上无法表达。
 
 ```typescript
-// 往 LLM 提示词交一块（agent:prompt 是 plugin-agent 定义的贡献点）
-ctx.contribute('agent:prompt', {
+contributions.contribute('agent:prompt', {
   id: 'my-block',
   anchor: 'context',
   build: async view => (view.dryRun ? null : `补充上下文：${await load(view.sessionId)}`),
 });
 
-// 任何插件也可拥有自己的贡献点：收集并自行决定执行策略
-for (const { key, spec } of ctx.collect('my-plugin:panel')) { /* ... */ }
+for (const { key, spec } of contributions.collect('my-plugin:panel')) { /* ... */ }
 ```
 
 ### 5. Declaration Merging
 
-第三方插件可通过 TypeScript 声明合并来扩展核心类型：
+第三方插件可通过 TypeScript 声明合并来扩展核心类型（事件 / 钩子 / 贡献点）。服务类型随描述符走，不往扩展点表里登记服务名。
 
 ```typescript
 declare module '@aalis/core' {
@@ -193,7 +191,7 @@ declare module '@aalis/core' {
 ### 服务注册
 
 ```typescript
-ctx.provide('llm', deepseekService, { priority: 10 });
+provide(llm, deepseekService, { priority: 10 });
 ```
 
 `provide` 不接受 `capabilities` 选项——内核 DI 只关心「按名解析服务实例」。
@@ -204,28 +202,28 @@ ctx.provide('llm', deepseekService, { priority: 10 });
 ### 服务消费
 
 ```typescript
-const llm = ctx.getService<LLMModel>('llm');
+const model = llm.current; // ServiceRef：每次读取重新解析胜者
 ```
 
-`getService(name)` 只接受服务名，返回当前胜者实例（不再有第二个 capabilities 参数）。
+`current` / `require` 只接受已经写进 `uses` 的描述符所绑定的接口，返回当前胜者（不再有 capabilities 参数）。动态按名查询走 `services.get`，不产生依赖边。
 
 ### 多实现解析顺序
 
 同一服务可有多个提供者。解析顺序为 **偏好 > 优先级 > 注册顺序**：
-`getService()` 先看是否有用户偏好的 entry，否则取 priority 最高者（同优先级取先注册者）。
+先看是否有用户偏好的 entry，否则取 priority 最高者（同优先级取先注册者）。
 
 ```
 llm 服务:
-  [0] plugin-llm-deepseek (priority=10)   ← getService('llm') 默认胜者
+  [0] plugin-llm-deepseek (priority=10)   ← current 默认胜者
   [1] plugin-llm-openai   (priority=0)
 ```
 
 ### 服务偏好
 
 用户可通过配置（`servicePreferences`）或 WebUI Services 页切换首选提供者
-（`ctx.preferService(name, contextId)`）。偏好者总是 `getService()` 的第一返回值，
+（`services.prefer(key, contextId)`）。偏好者总是 `current` 的第一返回值，
 即使其 priority 低于其他 entry；切换偏好会发出 `service:preference-changed`，
-驱动 `whenService` 订阅者重挂。
+驱动 `follow` 订阅者按胜者变化重挂。
 
 ## 插件生命周期
 
@@ -243,46 +241,44 @@ disabled ←─(手动禁用)─ active
   └─(手动启用)─→ pending → ...
 ```
 
-### 统一状态机：`recompute(reason)`
+### 统一状态机：`recompute(kind)`
 
-PluginManager 只有一个外部可见的状态变更入口：`recompute(reason)`。所有生命周期路径
-（服务注册/移除、启用/禁用、配置更新、bounce、关机）都被归一为 `RecomputeReason` 后
-汇入同一状态机。
+PluginManager 只有一个外部可见的状态变更入口：`recompute(kind)`。种类只有 `'changed' | 'shutdown'`。所有生命周期路径（服务注册/移除、启用/禁用、配置更新、bounce、关机）都汇入同一状态机。
 
-| Reason | 触发场景 |
+| kind | 触发场景 |
 |---|---|
-| `service-up` | `service:registered` 反应式调用 |
-| `service-down` | `service:unregistered` 反应式调用；仅下游声明 `requiresBounceOnDepChange: true` 时才级联 bounce（默认否） |
-| `plugin-state-changed` | enable/disable/updateConfig/bounce 后调用（`softReload()` 薄壳） |
-| `shutdown` | `App.stop()` 调用（`stopAll()` 薄壳） |
+| `changed` | `service:registered` / `service:unregistered`、enable / disable / updateConfig / bounce、`softReload()` |
+| `shutdown` | `App.stop()` 经 `stopAll()` |
+
+optional 上下线与胜者替换不改变目标态，不级联 bounce。有状态接线走 `ServiceRef.follow`。
 
 #### 单轮两阶段（拓扑保证）
 
 每轮 recompute 先按 provider→consumer 拓扑排序（Kahn），然后：
 
-1. **Phase A 反向遍历 dispose**：单轮内消费者先于提供者 dispose。整体停机（`app.stop()`）就是一轮 shutdown；单插件 unload / disable / bounce 先拆该插件、其下游下一轮才降级，dispose hook 不能假定依赖服务仍在。
+1. **Phase A 成批关闭**：本轮目标不再是 active 的，它们之间的次序由关停编排按实际绑定决定。
 2. **Phase B 正向遍历 activate**（非 shutdown）：提供者先于消费者 active。
 
-如本轮有变动则进入下一轮，直到稳定（fixed-point）或达到轮次上限（`maxRounds = 2×插件数 + 8`）。`service-up` /
-`service-down` 在第二轮起退化为 `plugin-state-changed`，避免无限 optional bounce。
+如本轮有变动则进入下一轮，直到稳定或达到轮次上限（`maxRounds = 2×插件数 + 8`）。
+
+整体停机（`app.stop()`）先冻结新增绑定并进入停机态，再发 `app:stopping`，等监听器完成后执行停机计划。全部 active 插件与根激活进同一张计划：每个激活 drain 后 close。边规则见 [插件定义与能力](core/context.md)。单插件 unload / disable / bounce 只拆该插件，不享有整次停机的交接保证。动态 `services.get` 不产生依赖边，关停期间可能取到空。
 
 ### 隔离粒度
 
-- **`ctx.fork(id)`** — 复用全部根子系统，仅独立 `_disposables`。适合"同 App 内一个独立插件实例"。
+- **子模块** — `lifecycle.module(definition, cfg)`：独立身份与生命周期，能力按子激活重新绑定，随父关闭。不进 PluginManager。挂载时缺 required 即拒绝；挂载后没有独立持续激活闸。
 - **完全隔离** — 需要独立事件总线、独立日志通道时，应直接 `createApp({ events, services, hooks, ... })` 创建新的 `App` 实例。`Logger` 可注入独立 `LogHub` 隔离日志缓冲。
-- 按会话/租户**差异化配置**不需要上下文隔离——用键控解析（参考 session-manager 的 `resolveConfig(sessionId)` 模式）。
-- 曾经的实验性 `ctx.createScope(id)`（`ScopedServiceContainer` + `ScopedConfigManager` 叠加隔离）已在 0.7.0 移除：全生态零消费者，且共享事件/钩子/文件系统的边界不足以承担"沙盒"语义（此前文档即预告"长期未消费可能被精简"）。
-- `whenService(name, cb)` 是**稳定 API**：每次 provider 上线都调一次 `cb`，下线/ctx dispose 自动调上次返回的 cleanup，跨 bounce 自动重挂——是消费 hub 型服务的推荐入口（参见 [docs/core/context.md](core/context.md)）。
+- 按会话/租户**差异化配置**不需要激活隔离——用键控解析（参考 session-manager 的 `resolveConfig(sessionId)` 模式）。
+- `ServiceRef.follow(attach)`：在场即调 attach，换人时先跑上次返回的清理再用新实例调，下线与关闭时清理。attach 必须同步返回函数 cleanup（或不需要清理时不返回）；thenable 会被接住并 warn。这是消费枢纽型服务、建立有状态资源的入口（参见 [docs/core/context.md](core/context.md)）。
 
-#### Context dispose 推荐 API
+#### 激活关闭时的推荐 API
 
 | 场景 | API |
 |---|---|
-| 监听事件 | `ctx.on(event, fn)` — dispose 时自动注销 |
-| 注册中间件 | `ctx.middleware(hook, fn)` — dispose 时自动注销 |
-| 注册服务 | `ctx.provide(name, impl, { priority })` — dispose 时自动注销 |
-| 清理外部资源（连接、定时器、子进程） | `ctx.onDispose(() => cleanup())` |
-| ⚠️ 绕过自动清理 | 无公开通道——`ctx.serviceContainer` 属 @internal、无版本承诺，插件不应使用 |
+| 监听事件 | `events.on(event, fn)` — 关闭时自动注销 |
+| 注册中间件 | `hooks.middleware(hook, fn)` — 关闭时自动注销 |
+| 发布服务 | `provide(descriptor, impl)` — 关闭时自动注销 |
+| 清理外部资源（连接、定时器、子进程） | `lifecycle.onDrain` / `lifecycle.onDispose` |
+| 跟随提供者 | `x.follow(attach)` |
 
 ## 中间件钩子管道
 
@@ -291,7 +287,7 @@ PluginManager 只有一个外部可见的状态变更入口：`recompute(reason)
 ### 执行模型
 
 ```
-ctx.runHook(hookName, data, defaultAction?) → reachedEnd: boolean
+hooks.run(hookName, data, defaultAction?) → reachedEnd: boolean
   │
   ▼
 handler A（先注册）─── await fn(data, next)
@@ -305,7 +301,7 @@ defaultAction()        ← 所有 handler 通过后执行
 
 **关键约定**：
 - 同一钩子内多个 handler 按 **注册顺序** 执行洋葱模型，无优先级数字
-- 不调用 `next()` 即中止整个管道（含 defaultAction）；`ctx.runHook()` 返回 `false`
+- 不调用 `next()` 即中止整个管道（含 defaultAction）；`hooks.run()` 返回 `false`
 - 跨钩子的顺序由调度方（如 plugin-gateway）显式决定
 
 ### Gateway 入站生命周期相位
@@ -314,12 +310,13 @@ defaultAction()        ← 所有 handler 通过后执行
 
 | 相位 | 数据载荷 | 占据者 | 默认动作 |
 |---|---|---|---|
+| `inbound:confirm` | `InboundPhaseData` | plugin-session-confirm | （无）|
 | `inbound:command` | `InboundPhaseData` | plugin-commands | （无）|
 | `inbound:flow` | `InboundPhaseData` | plugin-flow-control | （无）|
 | `inbound:trigger` | `InboundPhaseData` | plugin-trigger-policy | （无）|
 | `inbound:dispatch` | `InboundPhaseData` | — | `agent.handleMessage(message)` |
 
-`InboundPhaseData = { message, metadata, agent }`，对象在四个相位间共享传递。
+`InboundPhaseData = { message, metadata, agent }`，对象在各相位间共享传递。
 第三方插件可注册到任一相位获得清晰的语义位置——无需理解优先级数字、无需与其他插件协商占位。
 
 ### 其他钩子
@@ -347,12 +344,12 @@ defaultAction()        ← 所有 handler 通过后执行
 
 ```typescript
 // 定义钩子的插件
-await ctx.runHook('my-plugin:before', { task: taskData }, async () => {
+await hooks.run('my-plugin:before', { task: taskData }, async () => {
   // defaultAction
 });
 
 // 注入 handler 的第三方插件
-ctx.middleware('my-plugin:before', async (data, next) => {
+hooks.middleware('my-plugin:before', async (data, next) => {
   data.task.modified = true;
   await next();
 });
@@ -441,7 +438,7 @@ WebUI authority 页（仅 owner）+ 指令 `/level`（设某用户等级）与 `
 
 core 自持的十一个基础设施事件（`app:*` 五个屏障、`service:*` / `plugin:*` / `plugins:changed` 六个通知）及其时序见
 [core/events.md](core/events.md)；业务事件由各 `-api` 包注入，按包查见[扩展点索引 §2](extensions/index.md)。
-总线上没有 `dispose` 事件，清理副作用用 `ctx.onDispose(fn)`；`memory:clear` 是钩子不是事件，见 events.md 的钩子节。
+总线上没有 `dispose` 事件，清理副作用用 `lifecycle.onDrain` / `lifecycle.onDispose`；`memory:clear` 是钩子不是事件，见 events.md 的钩子节。
 
 ## 向量语义记忆
 
