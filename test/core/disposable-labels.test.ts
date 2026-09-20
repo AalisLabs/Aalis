@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { Context } from '../../packages/core/src/context/context.js';
 import {
   ConfigManager,
-  Context,
   ContributionRegistry,
   DefaultLogger,
   EventBus,
