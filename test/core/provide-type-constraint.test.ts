@@ -1,40 +1,70 @@
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { App, definePlugin, defineService, type Logger, provide } from '../../packages/core/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// provide 曾接受 unknown：声明 increment(): number、注册返回 string 的实现，编译照过，
-// 运行时拿到 string——消费侧类型正确不代表注册的实现正确。
-// 单签名条件类型 ServiceOf<K>：已知名收窄到契约类型；未知名与动态字符串仍为 unknown。
-// 不能用 string 兜底重载：重载解析会落到宽签名，已知名的错误实现照样通过（已实测）。
-// 负向用例不能放进 test/（test-types 绊线要求零错），故写到临时目录、spawn tsc、断言错误落点。
-// 夹具自己 declare module 增广 ServiceTypeMap，覆盖「跨包 declaration merging 后仍收窄」。
+// provide 按描述符约束实现类型：声明 increment(): number、注册返回
+// string 的实现，必须在编译期被拒。入口是 uses 里的内置能力 provide，
+// 签名是 provide(descriptor, impl)，不再接受服务名字符串。
+//
+// 负向用例不能放进 test/（test-types 绊线要求零错），故写到临时目录、
+// spawn tsc、断言错误落点。负向探针先确认「去掉错误就能编过」，防恒真。
 // ════════════════════════════════════════════════════════════
 
 const ROOT = resolve(__dirname, '../..');
 
-const FIXTURE = `import type { Context } from '@aalis/core';
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    probe: { increment(): number };
-  }
-}
-declare const ctx: Context;
-declare const dyn: string;
-ctx.provide('probe', { increment: (): number => 1 });
-ctx.provide('probe', { increment: (): string => 'x' }); // BAD
-ctx.provide('unknown-svc', { anything: true });
-ctx.provide(dyn, { anything: true });
-`;
-const BAD_LINE = FIXTURE.split('\n').findIndex(l => l.includes('// BAD')) + 1;
+const GOOD = `import { definePlugin, defineService, provide } from '@aalis/core';
 
-function runTsc(): string[] {
+const x = defineService<{ increment(): number }>('x');
+const impl = { increment: (): number => 1 };
+
+definePlugin({
+  name: 'probe-ok',
+  provides: [x],
+  uses: { provide },
+  apply({ provide }) {
+    provide(x, impl);
+  },
+});
+`;
+
+const BAD_IMPL = `import { definePlugin, defineService, provide } from '@aalis/core';
+
+const x = defineService<{ increment(): number }>('x');
+
+definePlugin({
+  name: 'probe-bad-impl',
+  provides: [x],
+  uses: { provide },
+  apply({ provide }) {
+    provide(x, { increment: (): string => 'x' }); // BAD
+  },
+});
+`;
+
+const BAD_STRING = `import { definePlugin, defineService, provide } from '@aalis/core';
+
+const x = defineService<{ increment(): number }>('x');
+const impl = { increment: (): number => 1 };
+
+definePlugin({
+  name: 'probe-bad-string',
+  provides: [x],
+  uses: { provide },
+  apply({ provide }) {
+    provide('x', impl); // BAD
+  },
+});
+`;
+
+function runTsc(source: string): string[] {
   // 夹具必须在仓内：tsconfig.test.json 的 rootDir 是仓根，path-mapped 进来的 core 源码要在其下，
   // 否则 tsc 报 TS6059。node_modules 下：gitignored、biome 不扫、不在任何 include 里。
   const dir = mkdtempSync(join(ROOT, 'node_modules', '.aalis-type-probe-'));
   try {
-    writeFileSync(join(dir, 'fixture.ts'), FIXTURE);
+    writeFileSync(join(dir, 'fixture.ts'), source);
     writeFileSync(
       join(dir, 'tsconfig.json'),
       JSON.stringify({
@@ -58,19 +88,102 @@ function runTsc(): string[] {
   }
 }
 
-describe('provide 生产者类型约束', () => {
-  const errs = runTsc();
-  const atBad = errs.filter(e => e.includes(`fixture.ts(${BAD_LINE},`));
-  const elsewhere = errs.filter(e => !e.includes(`fixture.ts(${BAD_LINE},`));
+function badLineOf(source: string): number {
+  return source.split('\n').findIndex(l => l.includes('// BAD')) + 1;
+}
 
-  it('已知服务名 + 错误实现 → 编译失败', () => {
-    // TS 把错误定位在箭头函数的返回类型上（TS2322 string 不可赋给 number），不是实参整体（TS2345）；
-    // 两者都说明约束生效——只认 BAD 行有类型错误、且错误提到 string/number 这对不匹配。
-    expect(atBad.length, `第 ${BAD_LINE} 行应有类型错误，实际：${errs.join('\n') || '（零错误）'}`).toBeGreaterThan(0);
+const apps: App[] = [];
+afterEach(async () => {
+  for (const app of apps.splice(0)) await app.stop().catch(() => {});
+});
+
+function capturingLogger() {
+  const warns: string[] = [];
+  const logger: Logger = {
+    debug() {},
+    info() {},
+    warn(message: string) {
+      warns.push(message);
+    },
+    error() {},
+    child() {
+      return logger;
+    },
+  };
+  return { logger, warns };
+}
+
+describe('provide 生产者类型约束', () => {
+  it('正向：describe + 匹配的 impl → 编译通过', () => {
+    const errs = runTsc(GOOD);
+    expect(errs, `合法 provide(desc, impl) 必须放行，实际：${errs.join('\n') || '（零错误）'}`).toEqual([]);
+  });
+
+  it('负向：impl 类型不合描述符的提供者类型 → 编译失败', () => {
+    const good = runTsc(GOOD);
+    expect(good, '去掉错误行后必须能编过，否则本探针恒真').toEqual([]);
+    const errs = runTsc(BAD_IMPL);
+    const line = badLineOf(BAD_IMPL);
+    const atBad = errs.filter(e => e.includes(`fixture.ts(${line},`));
+    expect(atBad.length, `第 ${line} 行应有类型错误，实际：${errs.join('\n') || '（零错误）'}`).toBeGreaterThan(0);
     expect(atBad.some(e => /string/.test(e) && /number/.test(e))).toBe(true);
   });
 
-  it('正确实现、未知名、动态字符串 → 零错误', () => {
-    expect(elsewhere, '这些调用必须放行，否则约束误伤合法用法').toEqual([]);
+  it('负向：provide 传入服务名字符串 → 编译失败', () => {
+    const good = runTsc(GOOD);
+    expect(good, '去掉错误行后必须能编过，否则本探针恒真').toEqual([]);
+    const errs = runTsc(BAD_STRING);
+    const line = badLineOf(BAD_STRING);
+    const atBad = errs.filter(e => e.includes(`fixture.ts(${line},`));
+    expect(
+      atBad.length,
+      `第 ${line} 行应有类型错误（须传描述符而非字符串），实际：${errs.join('\n') || '（零错误）'}`,
+    ).toBeGreaterThan(0);
+  });
+
+  it('负向：provide 未在 provides 声明的描述符——类型不拒，devMode 下 warn', async () => {
+    // Provide 的签名不把 provides 数组收进类型参数，未声明的描述符不是类型错误；
+    // 激活路径在 devMode 下对实际注册但不在 provides 里的服务名劝告。
+    const undeclared = `import { definePlugin, defineService, provide } from '@aalis/core';
+const x = defineService<{ n: number }>('x');
+const y = defineService<{ n: number }>('y');
+definePlugin({
+  name: 'probe-undeclared',
+  provides: [x],
+  uses: { provide },
+  apply({ provide }) {
+    provide(y, { n: 1 });
+  },
+});
+`;
+    const typeErrs = runTsc(undeclared);
+    expect(typeErrs, `未在 provides 声明的描述符不是类型错误，实际：${typeErrs.join('\n')}`).toEqual([]);
+
+    const { logger, warns } = capturingLogger();
+    const app = new App({
+      config: { name: 'T', logLevel: 'error', plugins: {} },
+      logger,
+      devMode: true,
+    });
+    apps.push(app);
+    const x = defineService<{ n: number }>('x');
+    const y = defineService<{ n: number }>('y');
+    await app.plugin(
+      definePlugin({
+        name: 'probe-undeclared',
+        provides: [x],
+        uses: { provide },
+        apply({ provide }) {
+          provide(x, { n: 1 });
+          provide(y, { n: 2 });
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('probe-undeclared')?.state).toBe('active');
+    expect(
+      warns.some(w => w.includes('y') && w.includes('未在 provides')),
+      `devMode 应对未声明的 provide 出声，实际：${warns.join('\n') || '（无 warn）'}`,
+    ).toBe(true);
   });
 });

@@ -1,5 +1,6 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import * as core from '../../packages/core/src/index.js';
@@ -9,11 +10,13 @@ import * as core from '../../packages/core/src/index.js';
 //
 // 1) 词汇禁令：呈现层/政策词汇不得出现在 core 源码——表单词汇归
 //    @aalis/schema-config，配置同步政策归 @aalis/runtime。
-// 2) 公开面快照：core 的运行时导出与 Context 表面是版本承诺面，
-//    任何增删必须是有意识的决定（同步更新本清单 = 留下决策记录）。
+// 2) 公开面快照：core 包根的运行时导出是版本承诺面，任何增删必须是
+//    有意识的决定（同步更新本清单 = 留下决策记录）。激活记录类
+//    Context 不从包根导出，其表面不是公开契约。
 // ════════════════════════════════════════════════════════════
 
 const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../packages/core/src');
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 /** 呈现层/政策词汇黑名单：命中即说明词汇正在渗回内核 */
 const BANNED_TOKENS = [
@@ -30,11 +33,83 @@ const BANNED_TOKENS = [
   'removeExtraFields',
 ];
 
+/** 包根运行时导出定格：与 packages/core/src/index.ts 的值导出对齐，不从 index 自动派生 */
+const RUNTIME_EXPORTS = [
+  'App',
+  'ConfigManager',
+  'ContributionRegistry',
+  'DefaultLogger',
+  'EventBus',
+  'HookRegistry',
+  'LogHub',
+  'PluginManager',
+  'ServiceContainer',
+  'appService',
+  'config',
+  'contributions',
+  'createApp',
+  'definePlugin',
+  'defineService',
+  'events',
+  'formatLogLine',
+  'hooks',
+  'hostConfig',
+  'lifecycle',
+  'logger',
+  'optional',
+  'parseInstanceId',
+  'parseLogLine',
+  'pluginsService',
+  'provide',
+  'serviceRef',
+  'services',
+];
+
+/** 已删机制或内部实现，不得从包根出现 */
+const FORBIDDEN_ROOT_EXPORTS = [
+  'Context',
+  'DisposableService',
+  'InjectDeclaration',
+  'PluginModule',
+  'ServiceTypeMap',
+  'requiresBounceOnDepChange',
+  'unwrapPluginModule',
+  'useModule',
+] as const;
+
 function* walkTs(dir: string): Generator<string> {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     if (statSync(p).isDirectory()) yield* walkTs(p);
     else if (name.endsWith('.ts')) yield p;
+  }
+}
+
+function runTscProbe(source: string): string[] {
+  // 夹具必须在仓内：tsconfig.test.json 的 rootDir 是仓根，path-mapped 进来的 core 源码要在其下。
+  const dir = mkdtempSync(join(ROOT, 'node_modules', '.aalis-type-probe-'));
+  try {
+    writeFileSync(join(dir, 'fixture.ts'), source);
+    writeFileSync(
+      join(dir, 'tsconfig.json'),
+      JSON.stringify({
+        extends: join(ROOT, 'tsconfig.test.json'),
+        compilerOptions: { noEmit: true },
+        include: [join(dir, 'fixture.ts')],
+      }),
+    );
+    const res = spawnSync(
+      join(ROOT, 'node_modules/.bin/tsc'),
+      ['-p', join(dir, 'tsconfig.json'), '--pretty', 'false'],
+      {
+        cwd: ROOT,
+        encoding: 'utf-8',
+      },
+    );
+    if (res.error) throw res.error;
+    return `${res.stdout ?? ''}${res.stderr ?? ''}`.split('\n').filter(l => l.includes('error TS'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 
@@ -55,63 +130,55 @@ describe('core 词汇禁令（呈现层/政策词汇不得渗回内核）', () =
 
 describe('core 公开面快照（增删必须是有意识的决定）', () => {
   it('运行时导出定格', () => {
-    expect(Object.keys(core).sort()).toEqual([
-      'App',
-      'ConfigManager',
-      'Context',
-      'ContributionRegistry',
-      'DefaultLogger',
-      'EventBus',
-      'HookRegistry',
-      'LogHub',
-      'PluginManager',
-      'ServiceContainer',
-      'createApp',
-      'formatLogLine',
-      'parseInstanceId',
-      'parseLogLine',
-    ]);
+    expect(Object.keys(core).sort()).toEqual([...RUNTIME_EXPORTS].sort());
   });
 
-  it('Context 表面定格（四原语 8 动词 + services 读写面 + 生命周期）', () => {
-    expect(Object.getOwnPropertyNames(core.Context.prototype).sort()).toEqual([
-      'collect',
-      'constructor',
-      'contribute',
-      'contributionDisposerCount', // @internal 诊断
-      'disposableCount', // @internal 诊断
-      'dispose',
-      'disposeAsync',
-      'disposed',
-      'emit',
-      'emitQuietly', // @internal：core 发通知型内置事件的出口（屏障型由 App await emit），不属承诺面
-      'fork',
-      'getAllServices',
-      'getPreferredService',
-      'getService',
-      'getServiceNames',
-      'listContributions', // @internal 诊断（登记表点名，同 contributionDisposerCount 一本账）
-      'listDisposables', // @internal 诊断（链序标签名单，同 disposableCount 一本账）
-      'middleware',
-      'on',
-      'onDispose',
-      'preferService',
-      'provide',
-      'runHook',
-      'serviceContainer', // @internal host 巡视
-      'trackActivation', // @internal 激活路径注入 apply 在飞 promise，供 disposeAsync 先等初始化落定
-      'unpreferService',
-      'useModule',
-      'whenService',
-    ]);
+  it('包根不得导出已删机制与内部激活记录', () => {
+    const present = FORBIDDEN_ROOT_EXPORTS.filter(name => name in core);
+    expect(present, '这些标识已不是公开契约，不得从 @aalis/core 包根出现').toEqual([]);
   });
 
-  it('Context 实例只有四个自有属性——私有状态全在 # 字段，运行时对插件不可见', () => {
-    const app = new core.App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    const child = app.ctx.fork('probe');
-    // 不排序：顺序即构造函数赋值序，漂了也要有人看见
-    expect(Object.getOwnPropertyNames(child)).toEqual(['id', 'logger', 'config', 'devMode']);
-    expect(Object.getOwnPropertySymbols(child)).toEqual([]);
-    app.ctx.dispose();
+  it('类型面不得从包根导入已删标识（去掉这些 import 后探针能编过）', () => {
+    const header = `import { App } from '@aalis/core';\nvoid App;\n`;
+    const forbidden = `import type {
+  Context,
+  DisposableService,
+  InjectDeclaration,
+  PluginModule,
+  ServiceTypeMap,
+} from '@aalis/core';
+import { requiresBounceOnDepChange, unwrapPluginModule, useModule } from '@aalis/core';
+`;
+    const good = runTscProbe(header);
+    expect(good, `合法探针应能编过，实际：${good.join('\n') || '（零错误）'}`).toEqual([]);
+
+    const errs = runTscProbe(header + forbidden);
+    expect(errs.length, `禁止导出的标识应从包根不可见，实际：${errs.join('\n') || '（零错误）'}`).toBeGreaterThan(0);
+    for (const name of FORBIDDEN_ROOT_EXPORTS) {
+      expect(
+        errs.some(e => e.includes(name)),
+        `${name} 应无法从包根导入，实际：${errs.join('\n')}`,
+      ).toBe(true);
+    }
+  });
+
+  it('公开 PluginEntry 类型不含 context 字段', () => {
+    const good = `import type { PluginEntry } from '@aalis/core';
+declare const entry: PluginEntry;
+export const id: string = entry.instanceId;
+export const state = entry.state;
+`;
+    const bad = `${good}export const leaked = entry.context; // BAD
+`;
+    const goodErrs = runTscProbe(good);
+    expect(goodErrs, `去掉 context 访问应能编过，实际：${goodErrs.join('\n') || '（零错误）'}`).toEqual([]);
+
+    const errs = runTscProbe(bad);
+    const badLine = bad.split('\n').findIndex(l => l.includes('// BAD')) + 1;
+    const atBad = errs.filter(e => e.includes(`fixture.ts(${badLine},`));
+    expect(
+      atBad.length,
+      `第 ${badLine} 行应有类型错误（PluginEntry 无 context），实际：${errs.join('\n') || '（零错误）'}`,
+    ).toBeGreaterThan(0);
   });
 });
