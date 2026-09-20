@@ -1,6 +1,6 @@
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMModel } from '../../packages/api-llm/src/index.js';
-import { LLMCapabilities } from '../../packages/api-llm/src/index.js';
-import type { Context } from '../../packages/core/src/index.js';
+import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
+import { definePlugin, provide } from '../../packages/core/src/index.js';
 import type { ConfigSchema } from '../../packages/schema-config/src/index.js';
 
 /**
@@ -111,16 +111,17 @@ export interface MockLLMPluginConfig extends MockLLMOptions {}
 
 export function createMockLLMPlugin(options: MockLLMOptions = {}) {
   const service = new MockLLMService(options);
-  return {
+  const plugin = definePlugin({
     name: '@aalis/test-fixture-mock-llm',
-    apply(ctx: Context, _config: Record<string, unknown>) {
-      // 能力挂在 handle 自身的 `capabilities` 字段上，不是 provide 的选项——
-      // `provide` 的第三参只有 `{ priority?, label?, entryId? }`。
-      ctx.provide('llm', service, { entryId: `${service.providerId}/${service.id}` });
+    provides: [llm],
+    uses: { provide },
+    apply({ provide }) {
+      // 能力挂在 handle 自身的 `capabilities` 字段上，不是 provide 的选项
+      provide(llm, service, { entryId: `${service.providerId}/${service.id}` });
     },
-    /** 直接访问以便断言 */
-    service,
-  };
+  });
+  /** service：直接访问以便断言 */
+  return Object.assign(plugin, { service });
 }
 
 export const mockLLMConfigSchema: ConfigSchema = {};
