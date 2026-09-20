@@ -4,9 +4,9 @@
 
 | 篇目 | 讲什么 |
 |---|---|
-| [脚手架上手指南](./scaffolding.md) | `npm create aalis` 建项目：模板档、适配器组、生成了什么、配置约定；以及 `create-aalis-plugin` 建插件骨架 |
+| [脚手架上手指南](./scaffolding.md) | `npm create aalis` 建项目：模板档、适配器组、生成了什么、配置约定；以及 `create-aalis-plugin` 建插件骨架（`definePlugin` / 描述符 `uses`） |
 | [第一次运行](./first-run.md) | 启动之后：要哪些 key、零 key 怎么起、CLI 与 WebUI 两个入口、发第一条消息、换模型、停止与数据位置 |
-| [第三方插件开发者指南](./third-party-plugin.md) | 从零到发布：消费/提供服务、扩展点、两套元数据、发布到插件市场 |
+| [第三方插件开发者指南](./third-party-plugin.md) | 从零到发布：`definePlugin`、消费/提供服务、扩展点、两套元数据、发布到插件市场 |
 
 ## 接着读
 

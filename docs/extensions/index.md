@@ -7,33 +7,27 @@
 > `declare module '@aalis/core' { ... }`（见 [plugin-author-guide](../plugin-author-guide.md)），
 > 编译期即生效——**无需在本表登记**，也不会（无法）出现在本表里。扩展点的**权威定义**在各
 > `-api` 包的 `declare module` 声明；本表只收录本仓库的一方包，作发现与查阅之用，并非全集。
-查找一个事件/能力/钩子的真实定义，按本表"扩展者"列的包名去 `packages/<包目录>/src/index.ts` 查（一方实现；例外路径在行内标注）。
+查找一个事件/钩子/贡献点的真实定义，按本表「扩展者」列的包名去 `packages/<包目录>/src/index.ts` 查（一方实现；例外路径在行内标注）。
 
-> **核心原则**：core 自身只声明**空接口**，所有键值由 plugin-*-api 通过 declaration merging 注入。
+> **核心原则**：core 自身只声明空的钩子/贡献点接口，所有键值由 `-api` 包通过 declaration merging 注入。
+> `AalisEvents` 自持基础设施事件，从来不空。服务类型随描述符走，不经一张核心服务名表。
 > 这是「忒修斯之船」原则——业务概念可以全部换掉，core 永远不感知它们。
 
 ---
 
-## 1. `ServiceTypeMap`
+## 1. 服务描述符（不是一张核心类型表）
 
-服务名 → 服务实例接口类型映射。`ctx.provide(name, inst)` 和 `ctx.getService(name)` / `ctx.getAllServices(name)`
-在编译期靠它把服务名字面量推断成对应实例类型（未登记的名字退回 `unknown`）。
-取用只传**名字**，不带任何 capabilities 参数；同名多实现时的胜者由 preference > priority > 注册顺序决定。
+契约包导出运行时描述符（`defineService` 的结果）。消费方 `import { tools } from '@aalis/api-tools'` 写进 `uses`，`apply` 参数类型从描述符推导。同名多实现时的胜者由 preference > priority > 注册顺序决定。
 
-> 领域能力（LLM 的 tool-calling / vision、storage 的 local-path 等）**不在这里**——
-> 它们挂在服务**实例 / model-handle 元数据**上，由各领域 `*-api` 的 helper（如 `resolveLLMModel`）按需筛选，
-> 而非走 core 的 DI。core 的服务注册只认名字与实例类型。
+> 领域能力（LLM 的 tool-calling / vision、storage 的 local-path 等）**不在描述符的 name 上**——
+> 它们挂在服务**实例 / model-handle 元数据**上，由各领域 `*-api` 的 helper（如 `resolveLLMModel`）按需筛选。
 
-**位置**：`packages/core/src/types/services.ts`
-
-**扩展者**：
-
-每个 `-api` 契约包注入一条，服务名即包名去掉 `api-` 前缀（`agent` / `asr` / `authority` / `code-sandbox` / `commands` /
+一方契约包各导出一条描述符，服务名即包名去掉 `api-` 前缀（`agent` / `asr` / `authority` / `code-sandbox` / `commands` /
 `cron-engine` / `doctor` / `embedding` / `flow-control` / `gateway` / `llm` / `media` / `memory` / `message-archive` / `persona` /
 `platform` / `process` / `session-confirm` / `session-manager` / `storage` / `tools` / `vectorstore` / `workflow`），两个例外：
-`@aalis/api-tool-session` 注入 `session-history`，`@aalis/api-webui` 注入 `webui-server` 与 `webui-client`。
+`@aalis/api-tool-session` 为 `session-history`，`@aalis/api-webui` 为 `webui-server` 与 `webui-client`。
 
-没有独立契约包、在自己 `src/index.ts` 里就地声明的插件：
+没有独立契约包、在自己 `src/index.ts` 里就地 `defineService` 的插件：
 
 | 插件包 | 注册的服务 |
 |---|---|
@@ -48,14 +42,16 @@
 | `@aalis/plugin-user-relation` | `user-relation` |
 | `@aalis/plugin-websearch-serper` | `web-search` |
 
+宿主管理面（须显式 uses）：`app` / `plugins` / `host-config`（`packages/core/src/orchestration/host-services.ts`）。
+
 ---
 
 ## 2. `AalisEvents`
 
-EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件名 + payload 约束。
+EventBus 事件签名表。`events.on(name, handler)` 在编译期靠它做事件名 + payload 约束。
 
 **位置**：`packages/core/src/types/events.ts`。core 内置十一项，目录与时序说明以 [core/events.md](../core/events.md) 为准
-（没有 `dispose` 事件——清理副作用用 `ctx.onDispose(fn)`，见 [context](../core/context.md)）
+（没有 `dispose` 事件——清理副作用用 `lifecycle.onDispose`，见 [context](../core/context.md)）
 
 **扩展者**：
 
@@ -78,7 +74,7 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 
 ## 3. `HookContextMap`
 
-中间件钩子上下文表。`ctx.middleware(name, fn)` 在编译期靠它推 data 类型。
+中间件钩子上下文表。`hooks.middleware(name, fn)` 在编译期靠它推 data 类型。
 
 **位置**：`packages/core/src/types/hooks.ts`（空 interface）
 
@@ -94,7 +90,7 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 
 ## 4. `ContributionPointMap`
 
-贡献点表：贡献点名 → spec 类型。`ctx.contribute(point, spec)` / `ctx.collect(point)` 在编译期靠它推 spec 类型。
+贡献点表：贡献点名 → spec 类型。`contributions.contribute(point, spec)` / `collect(point)` 在编译期靠它推 spec 类型。
 
 与 `HookContextMap` 的分工：**改写或截停既有流程 → hooks；往共享产物添自己的一块 → 贡献点**。
 贡献者拿只读视图、无短路、无排序影响力；排布与执行策略归收集方（贡献点 owner）。
@@ -125,58 +121,69 @@ EventBus 事件签名表。`ctx.on(name, handler)` 在编译期靠它做事件�
 
 ---
 
-## 6. `Context` 领域 Helper
+## 6. 按激活绑定的领域门面
 
-各契约包导出 **领域 helper**（一个普通函数，输入 `ctx`，输出 typed scoped service），调用方在 `apply()` 内自取自用。helper 内部封装 `ctx.getService` 与 `whenService` 延迟逻辑，保留「即插即用、无需关心顺序」的体验。
+各契约包导出**描述符**（值）。消费方写进 `uses`，`apply` 拿到按本次激活绑定的接口：登记自动归属这次激活，提供者换人整体重挂。不要再给 Context 挂领域方法。
 
 **扩展者**：
 
-| api 包 | 领域 helper |
+| api 包 | 绑定门面（在 `ServiceRef` 上额外挂的方法） |
 |---|---|
-| `@aalis/api-tools` | `useToolService(ctx)` / `toolsWithGroups(tools, groups)` |
-| `@aalis/api-commands` | `useCommandService(ctx)` |
-| `@aalis/api-webui` | `useWebuiService(ctx)` |
-| `@aalis/api-agent` | `useAgent(ctx)` |
+| `@aalis/api-tools` | `tools.register` / `registerGroup`；`withToolGroups(bound, groups)` |
+| `@aalis/api-commands` | `commands.command(name, description?)` |
+| `@aalis/api-webui` | `webuiServer.registerPage` / `registerAction` |
+| `@aalis/api-agent` | `agent.registerPreprocessor` |
 
 示例：
 
 ```ts
-import { useToolService, toolsWithGroups } from '@aalis/api-tools';
-import { useCommandService } from '@aalis/api-commands';
-import { useWebuiService } from '@aalis/api-webui';
-import { useAgent } from '@aalis/api-agent';
+import { agent } from '@aalis/api-agent';
+import { commands } from '@aalis/api-commands';
+import { tools, withToolGroups } from '@aalis/api-tools';
+import { type WebuiPage, webuiServer } from '@aalis/api-webui';
+import { definePlugin, optional } from '@aalis/core';
 
-export default class MyPlugin {
-  apply(ctx: Context) {
-    const tools = toolsWithGroups(useToolService(ctx), ['my-group']);
-    tools.register({ definition, handler });
+export default definePlugin({
+  name: 'my-plugin',
+  uses: { tools, commands: optional(commands), webui: optional(webuiServer), agent: optional(agent) },
+  apply({ tools, commands, webui, agent }) {
+    const grouped = withToolGroups(tools, ['my-group']);
+    grouped.register({
+      definition: {
+        type: 'function',
+        function: { name: 'ping', description: 'ping', parameters: { type: 'object', properties: {} } },
+      },
+      handler: async () => 'pong',
+    });
 
-    const commands = useCommandService(ctx);
     commands.command('hello', 'hi').action(async () => 'hi');
 
-    // 注册 WebUI 页面（webui-server 未就绪时自动延迟绑定）
-    const webui = useWebuiService(ctx);
-    webui.registerPage({ key: 'my', label: '我的', icon: 'star', order: 50, renderer: 'my' });
+    const page: WebuiPage = { key: 'my', label: '我的', icon: 'star', order: 50 };
+    webui.registerPage(page);
 
-    // 注册 agent 输入预处理器
-    useAgent(ctx).registerPreprocessor('my-preproc', async (msg, next) => { /* ... */ await next(); });
-  }
-}
+    agent.registerPreprocessor('my-preproc', async (msg, next) => {
+      await next();
+    });
+  },
+});
 ```
+
+第三方要造同类登记门面：在自己的契约包 `defineService(name, port => …)`，用 `port.registrar` / `follow` / `track`（`BindingPort`），不要给内部激活记录加方法。
 
 ---
 
-## 7. `PluginModule`
+## 7. `PluginMeta`
 
-插件模块的元数据接口（core 自持 `name` / `displayName` / `inject` / `provides` / `core` / `reusable` / `apply` 等）。
-仅供"插件类型自身"扩展使用，业务很少 augment 这个。
+插件定义的元数据扩展点（core 对这里的字段零感知，只原样带在定义上）。`PluginDefinition` 自持 `name` / `displayName` / `subsystem` / `uses` / `provides` / `core` / `reusable` / `apply`。
 
 **扩展者**：
 
 | 包 | 注入的字段 |
 |---|---|
 | `@aalis/schema-config` | `configSchema`（插件配置表单 schema，默认值经 `defaultsFrom` 派生） |
-| `@aalis/api-webui` | `subsystem`（WebUI 分组）/ `extends`（对 core 扩展的声明，仅前端展示）/ `actions`（插件 RPC 动作表） |
+| `@aalis/api-webui` | `extends`（对 core 扩展的声明，仅前端展示；页面与页面动作在 apply 里 `registerPage` / `registerAction`） |
+
+`subsystem` 是 `PluginDefinition` 上的展示字符串，core 不读不校验；第一方界面认的 id 见 `DEFAULT_SUBSYSTEM_METADATA`。
 
 ---
 
@@ -206,6 +213,6 @@ declare module '@aalis/api-llm' {
 - 加一个**新事件** → 在自己的 `*-api` 包内 `declare module '@aalis/core' { interface AalisEvents { ... } }`
 - 加一个**新钩子** → 同上但写 `HookContextMap`
 - 加一个**新贡献点** → 同上但写 `ContributionPointMap`（spec 须含 `id: string`）
-- 加一个**新服务名** → 同上但写 `ServiceTypeMap`（服务名 → 服务实例接口类型）。领域能力不在这里登记——按需在自己的 `*-api` 里把它们放到服务实例 / model-handle 元数据上，用 helper 筛选（可选 `XxxCapabilityRegistry` 见第 8 节）
-- 加一个 **`ctx.xxx()` 便捷方法** → 在 `*-api` 包用 `declare module '@aalis/core' { interface Context { xxx(...): ...; } }`，并在 plugin 实现里 `Context.prototype.xxx = ...`。**慎用**——优先考虑改成 Service。
+- 加一个**新服务** → 在 `-api` 包 `export const mySvc = defineService<MyIface>('my-svc')`（登记型再给 `bind`）。领域能力放到实例 / model-handle 元数据上，用 helper 筛选（可选 `XxxCapabilityRegistry` 见第 8 节）
+- 加一个**登记门面** → `defineService` 的 `bind` 里用 `BindingPort.registrar` / `serviceRef(port, extra)`
 - 加一个**配置字段** → 在 `*-api` 包 `declare module '@aalis/core' { interface AalisConfig { myField: ... } }`，并提供 schema 给 ConfigManager
