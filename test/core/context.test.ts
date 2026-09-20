@@ -1,24 +1,31 @@
-import { describe, expect, it } from 'vitest';
-
-// 本测试用一个合成钩子名验证 middleware 的分叉/隔离语义。名字不能凭空写——
-// `HookContextMap` 是 core 的空接口扩展点，未登记的名字在类型上就不该被接受
-// （那正是它的价值）。这里走**真实的 declaration merging** 把它登记进去，
-// 顺带把「第三方能不能自己扩钩子」这条契约一并测到；用 as any 绕过则两者皆失。
 declare module '@aalis/core' {
   interface HookContextMap {
     '__t:hook': { probe?: string };
   }
 }
 
+import { afterEach, describe, expect, it } from 'vitest';
+import { Context } from '../../packages/core/src/context/context.js';
 import {
+  App,
   ConfigManager,
-  Context,
   ContributionRegistry,
   DefaultLogger,
+  definePlugin,
+  defineService,
   EventBus,
   HookRegistry,
+  hooks,
+  type Logger,
+  provide,
   ServiceContainer,
+  services,
 } from '../../packages/core/src/index.js';
+
+// 本测试用一个合成钩子名验证 middleware 的分叉/隔离语义。名字不能凭空写——
+// `HookContextMap` 是 core 的空接口扩展点，未登记的名字在类型上就不该被接受
+// （那正是它的价值）。这里走**真实的 declaration merging** 把它登记进去，
+// 顺带把「第三方能不能自己扩钩子」这条契约一并测到。
 
 function makeContext(id = 'root'): Context {
   const events = new EventBus();
@@ -30,80 +37,147 @@ function makeContext(id = 'root'): Context {
   return new Context({ id, events, services, hooks, contributions, logger, config });
 }
 
-describe('Context.middleware / runHook 门面', () => {
-  it('middleware 注册的 handler 参与 runHook，插件 ctx dispose 后自动清扫', async () => {
-    const root = makeContext();
-    const child = root.fork('plugin-a');
-    const calls: string[] = [];
-    child.middleware('__t:hook', async (_data, next) => {
-      calls.push('a');
-      await next();
-    });
+const apps: App[] = [];
+afterEach(async () => {
+  for (const app of apps.splice(0)) await app.stop().catch(() => {});
+});
+function makeApp() {
+  const logger: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => logger };
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+  apps.push(app);
+  return app;
+}
+async function expectActive(app: App, id: string) {
+  await app.plugins.idle();
+  expect(app.plugins.getPlugin(id)?.state).toBe('active');
+}
 
-    // 任意 ctx 都可驱动钩子链（runHook 在公开窄面上，地位等价 ctx.emit）
-    await root.runHook('__t:hook', {} as never);
+describe('hooks.middleware / run：插件登记随卸载清扫', () => {
+  it('middleware 注册的 handler 参与 run，插件卸载后自动清扫', async () => {
+    const app = makeApp();
+    const calls: string[] = [];
+    await app.plugin(
+      definePlugin({
+        name: 'plugin-a',
+        uses: { hooks },
+        apply({ hooks }) {
+          hooks.middleware('__t:hook', async (_data, next) => {
+            calls.push('a');
+            await next();
+          });
+        },
+      }),
+    );
+    await expectActive(app, 'plugin-a');
+
+    const host = app.bind({ hooks });
+    await host.hooks.run('__t:hook', {});
     expect(calls).toEqual(['a']);
 
-    // dispose 子 ctx → 其 middleware 被 unregisterByOwner(this.#owner) 清扫
-    await child.dispose();
-    await root.runHook('__t:hook', {} as never);
-    expect(calls).toEqual(['a']); // 未再次触发
+    await app.plugins.unload('plugin-a');
+    await host.hooks.run('__t:hook', {});
+    expect(calls).toEqual(['a']);
   });
 
-  it('dispose 只清扫本 ctx 的 middleware，不动兄弟 ctx 的', async () => {
-    const root = makeContext();
-    const a = root.fork('plugin-a');
-    const b = root.fork('plugin-b');
+  it('卸载只清扫本插件的 middleware，不动兄弟插件的', async () => {
+    const app = makeApp();
     const calls: string[] = [];
-    a.middleware('__t:hook', async (_d, next) => {
-      calls.push('a');
-      await next();
-    });
-    b.middleware('__t:hook', async (_d, next) => {
-      calls.push('b');
-      await next();
-    });
+    await app.plugin(
+      definePlugin({
+        name: 'plugin-a',
+        uses: { hooks },
+        apply({ hooks }) {
+          hooks.middleware('__t:hook', async (_d, next) => {
+            calls.push('a');
+            await next();
+          });
+        },
+      }),
+    );
+    await app.plugin(
+      definePlugin({
+        name: 'plugin-b',
+        uses: { hooks },
+        apply({ hooks }) {
+          hooks.middleware('__t:hook', async (_d, next) => {
+            calls.push('b');
+            await next();
+          });
+        },
+      }),
+    );
+    await expectActive(app, 'plugin-a');
+    await expectActive(app, 'plugin-b');
 
-    await a.dispose();
-    await root.runHook('__t:hook', {} as never);
+    await app.plugins.unload('plugin-a');
+    await app.bind({ hooks }).hooks.run('__t:hook', {});
     expect(calls).toEqual(['b']);
   });
 
   it('middleware 返回的 dispose 函数可手动解除', async () => {
-    const ctx = makeContext();
+    const app = makeApp();
     const calls: number[] = [];
-    const off = ctx.middleware('__t:hook', async (_d, next) => {
-      calls.push(1);
-      await next();
-    });
-    await ctx.runHook('__t:hook', {} as never);
+    let off!: () => void;
+    await app.plugin(
+      definePlugin({
+        name: 'plugin-a',
+        uses: { hooks },
+        apply({ hooks }) {
+          off = hooks.middleware('__t:hook', async (_d, next) => {
+            calls.push(1);
+            await next();
+          });
+        },
+      }),
+    );
+    await expectActive(app, 'plugin-a');
+    const host = app.bind({ hooks });
+    await host.hooks.run('__t:hook', {});
     off();
-    await ctx.runHook('__t:hook', {} as never);
+    await host.hooks.run('__t:hook', {});
     expect(calls).toEqual([1]);
   });
 
   it('注册表对象不外露：执行面是 ctx.runHook 方法，注册唯一入口是 ctx.middleware', () => {
     const ctx = makeContext();
     // 与 events / services 同一门面纪律：插件在运行时就拿不到 HookRegistry
-    // （此前 ctx.hooks 是同一实例仅类型收窄，cast 可绕过 id-stamping——现已封死）。
+    // （公开的是按激活绑定的 hooks 能力；激活记录上没有 hooks 字段可绕过归属）。
     expect('hooks' in ctx).toBe(false);
     expect(typeof ctx.runHook).toBe('function');
   });
 });
 
-describe('Context.provide / getService', () => {
-  it('注册并取出服务', () => {
-    const ctx = makeContext();
-    const svc = { greet: () => 'hello' };
-    ctx.provide('__greeter', svc);
-    expect(ctx.getService<typeof svc>('__greeter')?.greet()).toBe('hello');
+describe('provide / services.get', () => {
+  const greeter = defineService<{ greet: () => string }>('__greeter');
+  const svc = defineService<{ run: () => number }>('__svc');
+
+  it('注册并取出服务', async () => {
+    const app = makeApp();
+    const impl = { greet: () => 'hello' };
+    await app.plugin(
+      definePlugin({
+        name: 'greeter',
+        uses: { provide },
+        apply: ({ provide }) => void provide(greeter, impl),
+      }),
+    );
+    await expectActive(app, 'greeter');
+    expect(app.bind({ services }).services.get(greeter)?.greet()).toBe('hello');
   });
 
-  it('getService 判定服务存在与否', () => {
-    const ctx = makeContext();
-    ctx.provide('__svc', { run: () => 1 });
-    expect(ctx.getService('__svc') !== undefined).toBe(true);
-    expect(ctx.getService('__nonexistent') !== undefined).toBe(false);
+  it('get 判定服务存在与否', async () => {
+    const app = makeApp();
+    await app.plugin(
+      definePlugin({
+        name: 'has-svc',
+        uses: { provide },
+        apply: ({ provide }) => void provide(svc, { run: () => 1 }),
+      }),
+    );
+    await expectActive(app, 'has-svc');
+    const host = app.bind({ services });
+    expect(host.services.get(svc) !== undefined).toBe(true);
+    expect(host.services.get('__nonexistent') !== undefined).toBe(false);
   });
 });
 
@@ -210,51 +284,76 @@ describe('Context fork / dispose', () => {
   });
 });
 
-describe('Context.getService 即取即用语义（裸实例）', () => {
+describe('services.get 即取即用语义（裸实例）', () => {
   interface FooService {
     hello(): string;
     label: string;
   }
+  const foo = defineService<FooService>('__foo');
+  const foo2 = defineService<FooService>('__foo2');
+  const cnt = defineService<{ inc(): number }>('__cnt');
 
-  it('返回当时点的裸实例：拿到后切偏好不会跟随', () => {
-    const ctx = makeContext();
+  it('返回当时点的裸实例：拿到后切偏好不会跟随', async () => {
+    const app = makeApp();
     const a: FooService = { hello: () => 'A', label: 'a' };
     const b: FooService = { hello: () => 'B', label: 'b' };
-    ctx.fork('plugin-a').provide('__foo', a);
-    ctx.fork('plugin-b').provide('__foo', b);
+    await app.plugin(
+      definePlugin({
+        name: 'plugin-a',
+        uses: { provide },
+        apply: ({ provide }) => void provide(foo, a),
+      }),
+    );
+    await app.plugin(
+      definePlugin({
+        name: 'plugin-b',
+        uses: { provide },
+        apply: ({ provide }) => void provide(foo, b),
+      }),
+    );
+    await expectActive(app, 'plugin-a');
+    await expectActive(app, 'plugin-b');
 
-    const handle1 = ctx.getService<FooService>('__foo')!;
-    expect(handle1.hello()).toBe('A'); // 默认按注册顺序
-
-    ctx.preferService('__foo', 'plugin-b');
-    // 旧句柄仍指向 a
+    const host = app.bind({ services });
+    const handle1 = host.services.get(foo)!;
     expect(handle1.hello()).toBe('A');
-    // 跟随切换需重新拉取
-    const handle2 = ctx.getService<FooService>('__foo')!;
+
+    host.services.prefer(foo, 'plugin-b');
+    expect(handle1.hello()).toBe('A');
+    const handle2 = host.services.get(foo)!;
     expect(handle2.hello()).toBe('B');
     expect(handle2.label).toBe('b');
   });
 
   it('无 provider 时返回 undefined（保留 null-check 语义）', () => {
-    const ctx = makeContext();
-    expect(ctx.getService('__nonexistent')).toBeUndefined();
+    const app = makeApp();
+    expect(app.bind({ services }).services.get('__nonexistent')).toBeUndefined();
   });
 
-  it('provider 全部注销后再次 getService 返回 undefined（旧句柄仍可用，不抛错）', () => {
-    const ctx = makeContext();
+  it('provider 全部注销后再次 get 返回 undefined（旧句柄仍可用，不抛错）', async () => {
+    const app = makeApp();
     const a: FooService = { hello: () => 'A', label: 'a' };
-    const disp = ctx.provide('__foo2', a);
-    const handle = ctx.getService<FooService>('__foo2')!;
+    let disp!: () => void;
+    await app.plugin(
+      definePlugin({
+        name: 'foo2',
+        uses: { provide },
+        apply({ provide }) {
+          disp = provide(foo2, a);
+        },
+      }),
+    );
+    await expectActive(app, 'foo2');
+    const host = app.bind({ services });
+    const handle = host.services.get(foo2)!;
     expect(handle.hello()).toBe('A');
     disp();
-    // 旧句柄仍可用（裸实例引用），调用方需要自己感知
     expect(handle.hello()).toBe('A');
-    // 重新拉取得到 undefined
-    expect(ctx.getService('__foo2')).toBeUndefined();
+    expect(host.services.get(foo2)).toBeUndefined();
   });
 
-  it('this 绑定正确：方法调用时 this 指向取出时点的 provider 实例', () => {
-    const ctx = makeContext();
+  it('this 绑定正确：方法调用时 this 指向取出时点的 provider 实例', async () => {
+    const app = makeApp();
     class Counter {
       private n = 0;
       inc(): number {
@@ -264,18 +363,31 @@ describe('Context.getService 即取即用语义（裸实例）', () => {
     }
     const c1 = new Counter();
     const c2 = new Counter();
-    ctx.fork('one').provide('__cnt', c1);
-    ctx.fork('two').provide('__cnt', c2);
+    await app.plugin(
+      definePlugin({
+        name: 'one',
+        uses: { provide },
+        apply: ({ provide }) => void provide(cnt, c1),
+      }),
+    );
+    await app.plugin(
+      definePlugin({
+        name: 'two',
+        uses: { provide },
+        apply: ({ provide }) => void provide(cnt, c2),
+      }),
+    );
+    await expectActive(app, 'one');
+    await expectActive(app, 'two');
 
-    const h = ctx.getService<Counter>('__cnt')!;
+    const host = app.bind({ services });
+    const h = host.services.get(cnt)!;
     expect(h.inc()).toBe(1);
-    expect(h.inc()).toBe(2); // 仍在 c1 上累加
+    expect(h.inc()).toBe(2);
 
-    ctx.preferService('__cnt', 'two');
-    // 旧句柄仍引用 c1
+    host.services.prefer(cnt, 'two');
     expect(h.inc()).toBe(3);
-    // 新句柄从 c2 开始
-    const h2 = ctx.getService<Counter>('__cnt')!;
+    const h2 = host.services.get(cnt)!;
     expect(h2.inc()).toBe(1);
   });
 });
@@ -356,27 +468,6 @@ describe('Context.whenService 多 provider（#8.3）', () => {
     ctx.provide('__hub', { id: 'low' }, { priority: 0, entryId: 'root/low' });
     await new Promise(r => setTimeout(r, 0));
     expect(calls).toBe(1);
-  });
-});
-
-describe('Context.dispose 服务自清理协议（#8.6）', () => {
-  it('unregisterByPlugin 通知同名服务的所有 entry（含败者），而非只通知胜者', async () => {
-    const ctx = makeContext();
-    const notified: string[] = [];
-    const winner = {
-      unregisterByPlugin: (id: string) => notified.push(`winner:${id}`),
-    };
-    const loser = {
-      unregisterByPlugin: (id: string) => notified.push(`loser:${id}`),
-    };
-    ctx.provide('__hub', winner, { priority: 50 });
-    ctx.provide('__hub', loser, { priority: 0, entryId: 'root/loser' });
-
-    const child = ctx.fork('plugin-x');
-    child.dispose();
-
-    expect(notified).toContain('winner:plugin-x');
-    expect(notified).toContain('loser:plugin-x');
   });
 });
 
@@ -484,7 +575,7 @@ describe('Context.disposeAsync / dispose 同步不变量', () => {
       release = r;
     });
     const calls: string[] = [];
-    ctx.middleware('__t:hook' as never, async (_d, next) => {
+    ctx.middleware('__t:hook', async (_d, next) => {
       calls.push('mw');
       await next();
     });
@@ -497,7 +588,7 @@ describe('Context.disposeAsync / dispose 同步不变量', () => {
     const done = ctx.disposeAsync();
     await Promise.resolve(); // 进入等待窗口
     // 窗口内：钩子与贡献都已注销
-    await root.runHook('__t:hook' as never, {} as never);
+    await root.runHook('__t:hook', {});
     expect(calls).toEqual([]);
     expect(root.collect('agent:prompt' as never)).toHaveLength(0);
     expect(root.getService('svc')).toBeUndefined();

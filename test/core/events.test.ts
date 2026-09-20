@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { App, EventBus } from '../../packages/core/src/index.js';
+import { rootActivation } from '../../packages/core/src/orchestration/app.js';
 
 describe('EventBus', () => {
   it('on/emit 按注册顺序串行调用', async () => {
@@ -64,11 +65,13 @@ describe('EventBus per-handler 隔离（#8.1）', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const who: Array<string | undefined> = [];
     app.events.onHandlerError = (_event, _err, contextId) => who.push(contextId);
-    app.ctx.fork('plugin-x').on('plugin:loaded', () => {
+    const root = rootActivation(app);
+    root.fork('plugin-x').on('plugin:loaded', () => {
       throw new Error('x');
     });
-    await app.ctx.emit('plugin:loaded', 'p');
+    await root.emit('plugin:loaded', 'p');
     expect(who).toEqual(['plugin-x']);
+    await app.stop();
   });
 
   it('onHandlerError 点名注册者：经门面注册的报 ctx.id，无 owner 的裸登记报 undefined', async () => {
