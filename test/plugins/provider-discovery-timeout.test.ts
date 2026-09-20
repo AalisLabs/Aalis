@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
-import { App, type PluginModule, provide } from '../../packages/core/src/index.js';
+import { App, type PluginDefinition, provide } from '../../packages/core/src/index.js';
 import deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
 import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 import openai from '../../packages/plugin-llm-openai/src/index.js';
@@ -49,7 +49,7 @@ function captureFetch(): { signalFor: (match: string) => AbortSignal | undefined
  * 装一个插件并等激活落定。激活闸会把依赖不全的插件停在 pending 而不报错，
  * 那时插件压根没发请求——这里当场点名，免得后面的"没带 signal"把原因指错地方。
  */
-async function load(app: App, plugin: PluginModule, config: Record<string, unknown>): Promise<void> {
+async function load(app: App, plugin: PluginDefinition, config: Record<string, unknown>): Promise<void> {
   await app.plugin(plugin, config);
   await app.plugins.idle();
   const state = app.plugins.getPlugin(plugin.name)?.state;

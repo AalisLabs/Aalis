@@ -7,7 +7,7 @@
  *  3. **provider 换人重挂**：提供者被注销 → 换一个新的，先前声明的指令带全部
  *     alias/option/action 自动挂到新提供者上，旧提供者上不留残留
  */
-import { App, definePlugin, optional, type PluginModule, provide } from '@aalis/core';
+import { App, definePlugin, optional, type PluginDefinition, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { BoundCommands, ExecutionInput } from '../../packages/api-commands/src/index.js';
 import {
@@ -100,7 +100,7 @@ async function settle(app: App): Promise<void> {
  * 门面的跟随回调承重。声明为 required 的话提供者一走 core 就把整个插件降级重激活，
  * 测到的是调度器而不是门面。
  */
-function commandProbe(name: string, register: (commands: BoundCommands) => void): PluginModule {
+function commandProbe(name: string, register: (commands: BoundCommands) => void): PluginDefinition {
   return definePlugin({
     name,
     uses: { commands: optional(commands) },
@@ -111,7 +111,7 @@ function commandProbe(name: string, register: (commands: BoundCommands) => void)
 }
 
 /** 装载探针并确认它真的激活了：停在 pending 的话下面的断言会变成对空账本的比对 */
-async function loadProbe(app: App, probe: PluginModule): Promise<void> {
+async function loadProbe(app: App, probe: PluginDefinition): Promise<void> {
   await app.plugin(probe);
   await app.plugins.idle();
   const state = app.plugins.getPlugin(probe.name)?.state;
