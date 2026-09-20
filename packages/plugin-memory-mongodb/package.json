@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-memory-mongodb",
-  "version": "0.9.4",
+  "version": "0.10.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -28,8 +28,8 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/api-memory": "workspace:>=0.5.1 <1.0.0",
-    "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/api-memory": "workspace:>=0.6.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.12.0 <1.0.0",
     "mongodb": "^6.12.0"
   },
   "devDependencies": {
@@ -39,7 +39,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.11.0 <1.0.0"
+    "@aalis/core": ">=0.17.0 <1.0.0"
   },
   "aalis": {
     "service": {
