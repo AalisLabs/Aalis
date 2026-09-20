@@ -2,15 +2,16 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createProcessGateway } from '../../packages/api-process/src/index.js';
-import { createStorageGateway, type StorageService } from '../../packages/api-storage/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { createProcessGateway, processService } from '../../packages/api-process/src/index.js';
+import { createStorageGateway, type StorageService, storage } from '../../packages/api-storage/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
+import { App, events, provide } from '../../packages/core/src/index.js';
 import { cacheOneAttachment } from '../../packages/plugin-adapter-onebot/src/attachment-cache.js';
 import { renderAttachmentsAsContentMarkers } from '../../packages/plugin-adapter-onebot/src/attachments.js';
-import * as drawPlugin from '../../packages/plugin-draw/src/index.js';
-import * as imageSender from '../../packages/plugin-image-sender/src/index.js';
-import * as processLocal from '../../packages/plugin-process-local/src/index.js';
-import * as storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import drawPlugin from '../../packages/plugin-draw/src/index.js';
+import imageSender from '../../packages/plugin-image-sender/src/index.js';
+import processLocal from '../../packages/plugin-process-local/src/index.js';
+import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 画→发→编码 全链交接测试（真 App/storage/process/Chromium/ffmpeg）：
@@ -23,6 +24,8 @@ import * as storageLocal from '../../packages/plugin-storage-local/src/index.js'
 
 const logger = { info: () => {}, warn: () => {}, debug: () => {}, error: () => {}, child: () => logger } as never;
 
+type ToolHandler = (args: Record<string, unknown>, callCtx: { sessionId: string }) => Promise<string>;
+
 const SPIN_SVG =
   '<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg"><rect width="120" height="120" rx="10" fill="#0f172a"/>' +
   '<g transform="translate(60,60)"><circle r="8" fill="#38bdf8">' +
@@ -31,14 +34,14 @@ const SPIN_SVG =
 describe('绘图产物 → OneBot 出站编码全链', () => {
   let base: string;
   let app: App;
-  let storage: StorageService;
-  let handlers: Record<string, (a: Record<string, unknown>, c: { sessionId: string }) => Promise<string>>;
+  let storageGateway: StorageService;
+  let handlers: Record<string, ToolHandler>;
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-draw-chain-'));
     for (const d of ['data', 'tmp']) mkdirSync(join(base, d), { recursive: true });
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocal as unknown as Parameters<typeof app.ctx.useModule>[0], {
+    await app.plugin(storageLocal, {
       roots: [
         {
           name: 'data',
@@ -62,20 +65,22 @@ describe('绘图产物 → OneBot 出站编码全链', () => {
         },
       ],
     });
-    await app.ctx.useModule(processLocal as unknown as Parameters<typeof app.ctx.useModule>[0], {});
-    storage = createStorageGateway(app.ctx);
+    await app.plugin(processLocal);
+    storageGateway = createStorageGateway(app.bind({ storage }).storage);
 
+    // 宿主侧最小 tools 提供者：把两个插件登记的 handler 交到测试手上
     handlers = {};
-    const fakeTools = {
-      register: (t: { definition: { function: { name: string } }; handler: (typeof handlers)[string] }) => {
-        handlers[t.definition.function.name] = t.handler;
-        return () => {};
+    app.bind({ provide }).provide(tools, {
+      register(tool: { definition: { function: { name: string } }; handler: ToolHandler }) {
+        const name = tool.definition.function.name;
+        handlers[name] = tool.handler;
+        return () => void delete handlers[name];
       },
-      registerGroup: () => {},
-    };
-    app.ctx.provide('tools', fakeTools as never);
-    drawPlugin.apply(app.ctx, { idleShutdownSec: 0 });
-    imageSender.apply(app.ctx);
+      registerGroup: () => () => {},
+    } as never);
+    await app.plugin(drawPlugin, { idleShutdownSec: 0 });
+    await app.plugin(imageSender);
+    await app.plugins.idle();
   });
 
   afterEach(async () => {
@@ -95,7 +100,7 @@ describe('绘图产物 → OneBot 出站编码全链', () => {
 
     // 2. 发（捕获 outbound:message）
     const outbound: Array<{ sessionId: string; attachments?: Array<{ kind: string; data: string }> }> = [];
-    app.ctx.on('outbound:message', msg => {
+    app.bind({ events }).events.on('outbound:message', msg => {
       outbound.push(msg as (typeof outbound)[number]);
     });
     const sent = JSON.parse(
@@ -107,13 +112,17 @@ describe('绘图产物 → OneBot 出站编码全链', () => {
     expect(att?.kind).toBe('image');
 
     // 3. adapter 出站两步：落盘改写 → 渲染内联标记（与 index.ts 出站监听同一套调用）
-    const proc = createProcessGateway(app.ctx);
-    const local = await cacheOneAttachment(storage, proc, 'image', att?.data ?? '', session, 10 * 1024 * 1024, {
+    const proc = createProcessGateway(app.bind({ processService }).processService);
+    const local = await cacheOneAttachment(storageGateway, proc, 'image', att?.data ?? '', session, 10 * 1024 * 1024, {
       warn: () => {},
     });
     expect(local).toMatch(/^data\/images\//);
     const storageUri = (local ?? '').replace(/^([^/]+)\//, '$1:/');
-    const markers = await renderAttachmentsAsContentMarkers([{ kind: 'image', data: storageUri }], storage, logger);
+    const markers = await renderAttachmentsAsContentMarkers(
+      [{ kind: 'image', data: storageUri }],
+      storageGateway,
+      logger,
+    );
     const m = markers.match(/<image url="base64:\/\/([A-Za-z0-9+/=]+)"/);
     expect(m, `出站标记形态不符: ${markers.slice(0, 120)}`).toBeTruthy();
 

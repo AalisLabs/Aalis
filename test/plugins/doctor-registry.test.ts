@@ -8,98 +8,68 @@
  * - generatedAt / summary 正确生成
  * - formatReport 输出按 level 分组并包含换行（聊天栏可读性）
  */
-import type { Context, Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
+import { commands } from '../../packages/api-commands/src/index.js';
+import { doctor } from '../../packages/api-doctor/src/index.js';
+import { webuiServer } from '../../packages/api-webui/src/index.js';
+import { App, provide, services } from '../../packages/core/src/index.js';
 import type { CheckResult, DoctorService } from '../../packages/plugin-doctor/src/index.js';
-import { apply as applyDoctor, formatReport } from '../../packages/plugin-doctor/src/index.js';
+import doctorPlugin, { formatReport } from '../../packages/plugin-doctor/src/index.js';
 
 // ===== helpers =====
 
-function makeLogger(): Logger {
-  const noop = () => undefined;
-  const l: Logger = { debug: noop, info: noop, warn: noop, error: noop, child: () => l } as unknown as Logger;
-  return l;
-}
-
-interface Captured {
-  doctor?: DoctorService;
-  webuiPages: unknown[];
-  commands: Array<{ name: string; desc: string }>;
-}
-
-function makeWebuiService(captured: Captured) {
+/** 极简 commands 替身：只记下声明了哪些指令，builder 的链式调用原样吞掉 */
+function makeCommandService(recorded: Array<{ name: string; description?: string }>) {
+  const builder = {
+    alias: () => builder,
+    option: () => builder,
+    action: () => builder,
+    usage: () => builder,
+    example: () => builder,
+  };
   return {
-    registerPage(page: unknown) {
-      captured.webuiPages.push(page);
-      return () => undefined;
+    command(name: string, description?: string) {
+      recorded.push({ name, description });
+      return builder;
     },
+    unregister: () => undefined,
   };
 }
 
-function makeCommandService(captured: Captured) {
-  return {
-    command(name: string, desc: string) {
-      const node = { name, desc, action: (_fn: unknown) => node };
-      captured.commands.push({ name, desc });
-      return node;
-    },
-  };
-}
-
-// 在 ctx.getService 里塞入 webui / commands stub
-function makeFullCtx(captured: Captured): Context {
-  const baseProvideMap = new Map<string, unknown>();
-  baseProvideMap.set('webui', makeWebuiService(captured));
-  baseProvideMap.set('commands', makeCommandService(captured));
-
-  const ctx = {
-    id: 'plugin-doctor-test',
-    logger: makeLogger(),
-    provide<T>(name: string, svc: T): () => void {
-      baseProvideMap.set(name, svc);
-      if (name === 'doctor') captured.doctor = svc as unknown as DoctorService;
-      return () => baseProvideMap.delete(name);
-    },
-    getService<T>(name: string): T | undefined {
-      return baseProvideMap.get(name) as T | undefined;
-    },
-    whenService<T>(name: string, cb: (svc: T) => undefined | (() => void)): () => void {
-      const svc = baseProvideMap.get(name);
-      if (svc === undefined) return () => undefined;
-      const cleanup = cb(svc as T);
-      return () => cleanup?.();
-    },
-    onDispose: () => undefined,
-    emit: async () => undefined,
-    on: () => () => undefined,
-  } as unknown as Context;
-  return ctx;
+async function boot() {
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const host = app.bind({ provide, services });
+  const recordedCommands: Array<{ name: string; description?: string }> = [];
+  host.provide(webuiServer, {
+    registerPage: () => () => undefined,
+    registerAction: () => () => undefined,
+  } as never);
+  host.provide(commands, makeCommandService(recordedCommands) as never);
+  await app.plugins.register(doctorPlugin, {});
+  await app.plugins.idle();
+  return { app, recordedCommands, doctor: host.services.get(doctor) as DoctorService };
 }
 
 // ===== tests =====
 
 describe('plugin-doctor — 开放检查项注册中心', () => {
-  it('apply() 注册 doctor 服务，并预装内置检查项', () => {
-    const captured: Captured = { webuiPages: [], commands: [] };
-    const ctx = makeFullCtx(captured);
-    applyDoctor(ctx, {});
-    expect(captured.doctor).toBeDefined();
-    const ids = captured.doctor!.listChecks().map(c => c.id);
+  it('装载后提供 doctor 服务，并预装内置检查项', async () => {
+    const { app, recordedCommands, doctor } = await boot();
+    expect(doctor).toBeDefined();
+    const ids = doctor.listChecks().map(c => c.id);
     expect(ids).toContain('env.node');
     expect(ids).toContain('env.platform');
     expect(ids).toContain('plugins.status');
     // fs.data 已迁出到 plugin-storage-local；commands.overrides 已迁出到 plugin-commands。
-    // 它们不再由 doctor 自带，由所属插件通过 useDoctorService 自行注册。
+    // 它们不再由 doctor 自带，由所属插件经 doctor 契约自行注册。
     expect(ids).not.toContain('fs.data');
     expect(ids).not.toContain('commands.overrides');
-    expect(captured.commands.some(c => c.name === 'doctor')).toBe(true);
+    expect(recordedCommands.some(c => c.name === 'doctor')).toBe(true);
+    await app.stop();
   });
 
   it('第三方插件可注册自定义检查项，runChecks 全部执行', async () => {
-    const captured: Captured = { webuiPages: [], commands: [] };
-    const ctx = makeFullCtx(captured);
-    applyDoctor(ctx, {});
-    const doctor = captured.doctor!;
+    const { app, doctor } = await boot();
 
     doctor.registerCheck({
       id: 'custom.single',
@@ -126,13 +96,11 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     expect(report.summary.ok).toBeGreaterThan(0);
     expect(report.summary.warn).toBeGreaterThanOrEqual(1);
     expect(report.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    await app.stop();
   });
 
   it('同 id 重复注册以最后一次为准', async () => {
-    const captured: Captured = { webuiPages: [], commands: [] };
-    const ctx = makeFullCtx(captured);
-    applyDoctor(ctx, {});
-    const doctor = captured.doctor!;
+    const { app, doctor } = await boot();
 
     doctor.registerCheck({
       id: 'dup',
@@ -149,13 +117,11 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     const dup = report.checks.find(c => c.id === 'dup');
     expect(dup?.message).toBe('第二次');
     expect(dup?.level).toBe('warn');
+    await app.stop();
   });
 
   it('check.run 抛错被收纳为 error 级别，不影响其他检查', async () => {
-    const captured: Captured = { webuiPages: [], commands: [] };
-    const ctx = makeFullCtx(captured);
-    applyDoctor(ctx, {});
-    const doctor = captured.doctor!;
+    const { app, doctor } = await boot();
 
     doctor.registerCheck({
       id: 'broken',
@@ -172,13 +138,11 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     expect(broken!.detail).toContain('炸了');
     // 其它内置检查仍然存在
     expect(report.checks.some(c => c.id === 'env.node')).toBe(true);
+    await app.stop();
   });
 
   it('formatReport 按 level 分组，包含换行与汇总行', async () => {
-    const captured: Captured = { webuiPages: [], commands: [] };
-    const ctx = makeFullCtx(captured);
-    applyDoctor(ctx, {});
-    const doctor = captured.doctor!;
+    const { app, doctor } = await boot();
     doctor.registerCheck({
       id: 'warn.one',
       category: 'other',
@@ -194,13 +158,11 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     expect(text).toMatch(/! 警告/);
     // 多行（聊天栏不是一坨）
     expect(text.split('\n').length).toBeGreaterThan(5);
+    await app.stop();
   });
 
   it('registerCheck 返回 dispose 函数可移除项', async () => {
-    const captured: Captured = { webuiPages: [], commands: [] };
-    const ctx = makeFullCtx(captured);
-    applyDoctor(ctx, {});
-    const doctor = captured.doctor!;
+    const { app, doctor } = await boot();
     const off = doctor.registerCheck({
       id: 'temp',
       category: 'other',
@@ -209,5 +171,6 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     expect(doctor.listChecks().some(c => c.id === 'temp')).toBe(true);
     off();
     expect(doctor.listChecks().some(c => c.id === 'temp')).toBe(false);
+    await app.stop();
   });
 });

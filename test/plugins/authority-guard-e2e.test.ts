@@ -1,8 +1,8 @@
 import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { CommandService, ExecutionInput } from '../../packages/api-commands/src/index.js';
-import * as authorityModule from '../../packages/plugin-authority/src/index.js';
-import * as commandsModule from '../../packages/plugin-commands/src/index.js';
+import authorityPlugin from '../../packages/plugin-authority/src/index.js';
+import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // authority 执行守卫 —— 端到端（装上去之后真的拦不拦）
@@ -23,8 +23,8 @@ import * as commandsModule from '../../packages/plugin-commands/src/index.js';
 
 async function makeApp() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(commandsModule as never, {});
-  await app.ctx.useModule(authorityModule as never, {});
+  await app.ctx.useModule(commandsPlugin, {});
+  await app.ctx.useModule(authorityPlugin, {});
   await app.plugins.idle();
   const commands = app.ctx.getService<CommandService>('commands');
   if (!commands) throw new Error('commands 服务未注册');

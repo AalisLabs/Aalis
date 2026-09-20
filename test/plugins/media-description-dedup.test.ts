@@ -1,4 +1,4 @@
-import type { Context, Logger } from '@aalis/core';
+import type { Logger, ServiceRef } from '@aalis/core';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { MediaProcessor } from '../../packages/api-media/src/index.js';
 import {
@@ -10,7 +10,7 @@ import {
   VIDEO_FAILURE_TEXTS,
 } from '../../packages/plugin-media/src/cache.js';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
-import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
+import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 
@@ -24,8 +24,24 @@ import type { IncomingMessage } from '../../packages/schema-message/src/index.js
 // 识别一次静态图十几秒、动图近一分钟，这是纯赚的算力。
 // ════════════════════════════════════════════════════════════
 
-const ctx = { getAllServices: () => [], getService: () => undefined } as unknown as Context;
 const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
+
+/** 无提供者的按激活绑定桩：识别走外部注册的 processor，其余能力一律缺席 */
+const empty = <P>(): ServiceRef<P> => ({
+  current: undefined,
+  require: () => {
+    throw new Error('无提供者');
+  },
+  all: () => [],
+  follow: () => () => {},
+});
+const caps: MediaServiceCaps = {
+  logger,
+  llm: empty(),
+  asr: empty(),
+  sessionManager: empty(),
+  memory: empty(),
+};
 
 /** 内存 storage：只实现 cache.ts 用到的两个方法，够用即可。 */
 const files = new Map<string, string>();
@@ -52,7 +68,7 @@ function makeSvc(over: Record<string, unknown> = {}): { svc: MediaServiceImpl; d
     senderContext: { enabled: false, profileMaxChars: 0 },
     ...over,
   } as unknown as MediaConfigResolved;
-  const svc = new MediaServiceImpl(ctx, logger, cfg);
+  const svc = new MediaServiceImpl(caps, cfg);
   svc.registerProcessor({
     name: 'fake-vision',
     capabilities: ['vision'],

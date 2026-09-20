@@ -1,13 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentService } from '../../packages/api-agent/src/index.js';
+import { agent as agentService } from '../../packages/api-agent/src/index.js';
 import type { ChatResponse } from '../../packages/api-llm/src/index.js';
-import type { ToolCallContext } from '../../packages/api-tools/src/index.js';
-import { useToolService } from '../../packages/api-tools/src/index.js';
+import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as agentDefaultModule from '../../packages/plugin-agent/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import * as messageArchiveModule from '../../packages/plugin-message-archive/src/index.js';
-import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import agentPlugin from '../../packages/plugin-agent/src/index.js';
+import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
+import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
@@ -26,15 +25,16 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 async function runTurn(incoming: IncomingMessage): Promise<ToolCallContext | undefined> {
   const app = new App({ config: { name: 'E2E', logLevel: 'error', plugins: {} } });
+  const host = app.bind({ tools, agent: agentService });
   const toolCallResponse: ChatResponse = {
     content: null,
     toolCalls: [{ id: 'call-1', type: 'function', function: { name: 'probe_ctx', arguments: '{}' } }],
   };
-  const offLLM = await app.ctx.useModule(createMockLLMPlugin({ responses: [toolCallResponse, { content: 'done' }] }));
-  const offTools = await app.ctx.useModule(toolsModule as never, {});
-  const offMem = await app.ctx.useModule(memoryInMemoryModule as never);
-  const offArchive = await app.ctx.useModule(messageArchiveModule as never, { debugLogs: false });
-  const offAgent = await app.ctx.useModule(agentDefaultModule as never, {
+  await app.plugin(createMockLLMPlugin({ responses: [toolCallResponse, { content: 'done' }] }));
+  await app.plugin(toolsPlugin, {});
+  await app.plugin(memoryInMemoryPlugin);
+  await app.plugin(messageArchivePlugin, { debugLogs: false });
+  await app.plugin(agentPlugin, {
     systemPrompt: 'test',
     historyLimit: 50,
     memoryTokenBudget: 1024,
@@ -43,9 +43,10 @@ async function runTurn(incoming: IncomingMessage): Promise<ToolCallContext | und
     trimThresholdRatio: 1.0,
     preferredModel: '',
   });
+  await app.plugins.idle();
 
   let captured: ToolCallContext | undefined;
-  useToolService(app.ctx).register({
+  host.tools.register({
     definition: {
       type: 'function',
       function: { name: 'probe_ctx', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -56,18 +57,14 @@ async function runTurn(incoming: IncomingMessage): Promise<ToolCallContext | und
     },
   });
 
-  await app.ctx.getService<AgentService>('agent')!.handleMessage(incoming);
-  offAgent.dispose();
-  offArchive.dispose();
-  offMem.dispose();
-  offTools.dispose();
-  offLLM.dispose();
+  await host.agent.require().handleMessage(incoming);
+  await app.stop();
   return captured;
 }
 
 describe('actor 消费端：agent 把 incoming.actor 折进 ToolCallContext', () => {
   it('带 actor 的委派消息：actor 到达工具 callCtx，platform/userId 保持会话语义', async () => {
-    const ctx = await runTurn({
+    const callCtx = await runTurn({
       content: '执行任务',
       sessionId: 'onebot:1:group:2',
       platform: 'onebot',
@@ -75,23 +72,23 @@ describe('actor 消费端：agent 把 incoming.actor 折进 ToolCallContext', ()
       triggerType: 'proactive',
       actor: { platform: 'webui', userId: 'console' },
     });
-    expect(ctx, '工具未被调用——mock LLM 的 toolCalls 回合没走通').toBeDefined();
-    expect(ctx?.actor).toEqual({ platform: 'webui', userId: 'console' });
-    expect(ctx?.platform, 'platform 必须保持会话平台，不被 actor 覆盖').toBe('onebot');
-    expect(ctx?.userId, 'userId 保持物理来源（委派消息无发言者）').toBeUndefined();
+    expect(callCtx, '工具未被调用——mock LLM 的 toolCalls 回合没走通').toBeDefined();
+    expect(callCtx?.actor).toEqual({ platform: 'webui', userId: 'console' });
+    expect(callCtx?.platform, 'platform 必须保持会话平台，不被 actor 覆盖').toBe('onebot');
+    expect(callCtx?.userId, 'userId 保持物理来源（委派消息无发言者）').toBeUndefined();
   });
 
   it('无 actor 的普通消息：callCtx.actor 缺省，身份即物理来源', async () => {
-    const ctx = await runTurn({
+    const callCtx = await runTurn({
       content: 'hi',
       sessionId: 's1',
       platform: 'test',
       userId: 'u1',
       sessionType: 'private',
     });
-    expect(ctx).toBeDefined();
-    expect(ctx?.actor).toBeUndefined();
-    expect(ctx?.platform).toBe('test');
-    expect(ctx?.userId).toBe('u1');
+    expect(callCtx).toBeDefined();
+    expect(callCtx?.actor).toBeUndefined();
+    expect(callCtx?.platform).toBe('test');
+    expect(callCtx?.userId).toBe('u1');
   });
 });

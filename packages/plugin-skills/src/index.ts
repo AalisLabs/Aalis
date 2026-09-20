@@ -1,12 +1,23 @@
 import { Buffer } from 'node:buffer';
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
-import type { PersonaService } from '@aalis/api-persona';
-import { createStorageGateway, type StorageService } from '@aalis/api-storage';
-import { useToolService } from '@aalis/api-tools';
-import type { WebuiPage } from '@aalis/api-webui';
-import { useWebuiService } from '@aalis/api-webui';
-import type { Context, PluginModule, ServiceOf } from '@aalis/core';
-import { defineService } from '@aalis/core';
+import { persona } from '@aalis/api-persona';
+import { createStorageGateway, type StorageService, storage } from '@aalis/api-storage';
+import { tools } from '@aalis/api-tools';
+import { type WebuiPage, webuiServer } from '@aalis/api-webui';
+import {
+  type BoundOf,
+  config,
+  contributions,
+  definePlugin,
+  defineService,
+  events,
+  hooks,
+  lifecycle,
+  logger,
+  optional,
+  provide,
+  type ServiceOf,
+} from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
@@ -119,15 +130,12 @@ export interface SkillsService {
   getLoadedSkills(sessionId: string): string[];
 }
 
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const skills = defineService<SkillsService>('skills');
+
 // ──────────── 插件元数据 ────────────
 
-export const name = '@aalis/plugin-skills';
-export const displayName = '技能系统 (Agent Skills)';
-export const subsystem = 'skills';
-
-export const provides = ['skills'];
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   skillsUri: {
     type: 'string',
     label: '技能存储 URI',
@@ -205,44 +213,6 @@ const webuiPages: WebuiPage[] = [
   },
 ];
 
-export const actions: PluginModule['actions'] = {
-  async listSkills(ctx) {
-    const svc = ctx.getService<SkillsService>('skills');
-    if (!svc) return [];
-    return svc.listSkills().map(s => ({
-      name: s.name,
-      description: s.description,
-      triggers: s.triggers?.join(', ') || '',
-      fileCount: `脚本 ${s.scripts.length} / 引用 ${s.references.length} / 资源 ${s.assets.length}`,
-      dir: s.uri,
-    }));
-  },
-  async getSkill(ctx, args) {
-    const svc = ctx.getService<SkillsService>('skills');
-    const s = svc?.getSkill(args.name as string);
-    if (!s) return { error: '技能不存在' };
-    return {
-      name: s.name,
-      description: s.description,
-      triggers: s.triggers,
-      license: s.license,
-      dir: s.uri,
-      scripts: s.scripts,
-      references: s.references,
-      assets: s.assets,
-      raw: s.raw,
-    };
-  },
-  async deleteSkill(ctx, args) {
-    const svc = ctx.getService<SkillsService>('skills');
-    return (await svc?.deleteSkill(args.name as string)) ? { ok: true } : { error: '技能不存在' };
-  },
-  async getStats(ctx) {
-    const svc = ctx.getService<SkillsService>('skills');
-    return { value: svc?.listSkills().length ?? 0 };
-  },
-};
-
 // ──────────── frontmatter 解析 ────────────
 
 /** 解析 SKILL.md：分离 YAML frontmatter 与 markdown body。
@@ -289,7 +259,7 @@ function buildSkillMd(fm: SkillFrontmatter, body: string): string {
 
 // ──────────── 辅助 ────────────
 
-function resolveConfig(raw: Record<string, unknown>): SkillsConfig {
+function resolveConfig(raw: Readonly<Record<string, unknown>>): SkillsConfig {
   return {
     skillsUri: (raw.skillsUri as string) ?? defaultConfig.skillsUri,
     maxSkillBytes: (raw.maxSkillBytes as number) ?? defaultConfig.maxSkillBytes,
@@ -364,16 +334,41 @@ function validateSkillRelPath(relPath: string): string {
 
 // ──────────── 插件入口 ────────────
 
-export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
-  const config = resolveConfig(rawConfig);
-  const logger = ctx.logger.child('skills');
+const uses = {
+  tools: optional(tools),
+  webui: optional(webuiServer),
+  storage: optional(storage),
+  persona: optional(persona),
+  contributions,
+  hooks,
+  events,
+  lifecycle,
+  logger,
+  config,
+  provide,
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-skills',
+  displayName: '技能系统 (Agent Skills)',
+  subsystem: 'skills',
+  configSchema,
+  provides: [skills],
+  uses,
+  apply: run,
+});
+
+function run(caps: Caps): void {
+  const { tools, webui, persona, contributions, hooks, events, lifecycle, provide } = caps;
+  const logger = caps.logger.child('skills');
+  const config = resolveConfig(caps.config);
 
   // 通过 storage gateway 访问 skills 目录；不直接耦合 fs。
-  const storage = createStorageGateway(ctx);
+  const storage = createStorageGateway(caps.storage);
   const skillsUri = config.skillsUri;
 
   // WebUI 页面
-  const webui = useWebuiService(ctx);
   for (const page of webuiPages) webui.registerPage(page);
 
   // ── 加载所有 skill ──
@@ -485,8 +480,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   // ── 获取 persona 允许的 skill 白名单 ──
   function getAllowedSkills(): SkillDefinition[] {
     const all = [...skillsCache.values()];
-    const persona = ctx.getService<PersonaService>('persona');
-    const whitelist = persona?.getPersonaSkills?.();
+    const whitelist = persona.current?.getPersonaSkills?.();
     if (whitelist === undefined) return all;
     const set = new Set(whitelist);
     return all.filter(s => set.has(s.name));
@@ -500,7 +494,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   // 不注入技能清单本身：清单随技能增删变化会打前缀缓存，且体积随技能数线性膨胀。
   // 路标是常量文本，具体技能靠 list_skills 检索（keyword 匹配 / offset 翻页）。
   if (config.discoveryEnabled) {
-    ctx.contribute('agent:prompt', {
+    contributions.contribute('agent:prompt', {
       id: DISCOVERY_SOURCE,
       anchor: 'knowledge',
       build() {
@@ -538,7 +532,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     }
     activationIdOwner.set(localId, skillName);
     activationContributed.add(skillName);
-    ctx.contribute('agent:prompt', {
+    contributions.contribute('agent:prompt', {
       id: localId,
       anchor: 'knowledge',
       build(view) {
@@ -560,7 +554,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // ── 自动激活：agent:input:before 监听 user message 文本 ──
   if (config.triggersEnabled) {
-    ctx.middleware('agent:input:before', async (data, next) => {
+    hooks.middleware('agent:input:before', async (data, next) => {
       const sessionId = data.message?.sessionId;
       const text = data.message?.content;
       if (sessionId && typeof text === 'string' && text.length > 0) {
@@ -773,10 +767,42 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     },
   };
 
-  ctx.provide('skills', service);
+  provide(skills, service);
+
+  // ── 页面动作：直接读这次激活自己的服务实例，页面与服务同生共死 ──
+  webui.registerAction('listSkills', async () =>
+    service.listSkills().map(s => ({
+      name: s.name,
+      description: s.description,
+      triggers: s.triggers?.join(', ') || '',
+      fileCount: `脚本 ${s.scripts.length} / 引用 ${s.references.length} / 资源 ${s.assets.length}`,
+      dir: s.uri,
+    })),
+  );
+
+  webui.registerAction('getSkill', async args => {
+    const s = service.getSkill(args.name as string);
+    if (!s) return { error: '技能不存在' };
+    return {
+      name: s.name,
+      description: s.description,
+      triggers: s.triggers,
+      license: s.license,
+      dir: s.uri,
+      scripts: s.scripts,
+      references: s.references,
+      assets: s.assets,
+      raw: s.raw,
+    };
+  });
+
+  webui.registerAction('deleteSkill', async args =>
+    (await service.deleteSkill(args.name as string)) ? { ok: true } : { error: '技能不存在' },
+  );
+
+  webui.registerAction('getStats', async () => ({ value: service.listSkills().length }));
 
   // ── 注册工具分组与工具 ──
-  const tools = useToolService(ctx);
   tools.registerGroup({
     name: 'skills',
     label: '技能管理',
@@ -1176,7 +1202,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // ── 启动：app:ready 后一次全量扫描 + 启用 storage watch 增量同步 ──
   // 使用 sticky 'app:ready' 事件：bounce 后新实例仍能收到。
-  ctx.on('app:ready', async () => {
+  events.on('app:ready', async () => {
     try {
       await rescanSkills();
       logger.info(`技能系统已启动 (Anthropic Agent Skills) uri=${skillsUri} 已加载 ${skillsCache.size} 个技能`);
@@ -1204,7 +1230,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           logger.warn(`重扫 skills 失败：${err}`);
         }
       });
-      if (unwatch) ctx.onDispose(unwatch);
+      if (unwatch) lifecycle.onDispose(unwatch);
     } catch (err) {
       logger.warn(`skills 目录监听启动失败，请手动调用 skill_rescan: ${err}`);
     }
@@ -1235,6 +1261,3 @@ type __ServiceTypeMapIntact = [
   __AssertTrue<__Exact<ServiceOf<'storage'>, StorageService>>,
   __AssertTrue<__Exact<ServiceOf<'skills'>, SkillsService>>,
 ];
-
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
-export const skills = defineService<SkillsService>('skills');

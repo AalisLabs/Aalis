@@ -33,6 +33,7 @@
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
+    "@aalis/api-webui": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },
@@ -43,6 +44,11 @@
     "service": {
       "required": [
         "process"
+      ],
+      "optional": [
+        "app",
+        "plugins",
+        "host-config"
       ],
       "provides": [
         "package-manager"

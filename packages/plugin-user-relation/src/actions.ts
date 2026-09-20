@@ -1,14 +1,15 @@
 /**
  * plugin-user-relation —— page-actions（M4）
  *
- * 全部通过 ctx.getService<RelationService>('user-relation') 拿服务实例。
- * actions 返回值用于声明式 WebUI 组件渲染：
+ * 动作处理函数是 apply 的闭包，直接用本次激活构造的 RelationService。
+ * 返回值用于声明式 WebUI 组件渲染：
  * - listXxx → table 表格 source
  * - getStats → stat 组件 source
  * - getXxx  → 详情对话框 source
  * - 其余    → 操作类按钮
  */
-import type { Context, PluginModule } from '@aalis/core';
+import type { BoundWebui } from '@aalis/api-webui';
+import type { Logger } from '@aalis/core';
 import type { RelationService } from './service.js';
 import { scoreToTier } from './service.js';
 import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js';
@@ -63,10 +64,6 @@ function labelZh(raw: string | undefined): string | undefined {
   return RELATION_LABEL_ZH[raw] ?? raw;
 }
 
-function svc(ctx: Context): RelationService | undefined {
-  return ctx.getService<RelationService>('user-relation');
-}
-
 function previewEvidence(e: RelationEdge | EventNode): string {
   if (e.evidence.length === 0) return '';
   const recent = [...e.evidence].sort((a, b) => b.extractedAt - a.extractedAt)[0];
@@ -106,12 +103,11 @@ function expandEvidence(
     }));
 }
 
-export const actions: PluginModule['actions'] = {
+/** 把全部页面动作登记到 webui-server（随本次激活撤回） */
+export function registerRelationActions(webui: BoundWebui, service: RelationService, logger: Logger): void {
   // ───── 表格数据源 ─────
-  async listPersons(ctx) {
-    const s = svc(ctx);
-    if (!s) return [];
-    const snap = await s.loadAll();
+  webui.registerAction('listPersons', async () => {
+    const snap = await service.loadAll();
     return snap.persons
       .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
       .map((p: PersonNode) => ({
@@ -122,12 +118,10 @@ export const actions: PluginModule['actions'] = {
         firstSeenAt: formatDate(p.firstSeenAt),
         lastSeenAt: formatDate(p.lastSeenAt),
       }));
-  },
+  });
 
-  async listEvents(ctx) {
-    const s = svc(ctx);
-    if (!s) return [];
-    const snap = await s.loadAll();
+  webui.registerAction('listEvents', async () => {
+    const snap = await service.loadAll();
     return snap.events
       .sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt)
       .map((e: EventNode) => ({
@@ -140,12 +134,10 @@ export const actions: PluginModule['actions'] = {
         preview: previewEvidence(e),
         lastReinforcedAt: formatDate(e.lastReinforcedAt),
       }));
-  },
+  });
 
-  async listEntities(ctx) {
-    const s = svc(ctx);
-    if (!s) return [];
-    const snap = await s.loadAll();
+  webui.registerAction('listEntities', async () => {
+    const snap = await service.loadAll();
     return snap.entities
       .sort((a, b) => b.lastReinforcedAt - a.lastReinforcedAt)
       .map((e: EntityNode) => ({
@@ -157,12 +149,10 @@ export const actions: PluginModule['actions'] = {
         evidenceCount: e.evidence.length,
         lastReinforcedAt: formatDate(e.lastReinforcedAt),
       }));
-  },
+  });
 
   // ───── 关系图（Cytoscape elements） ─────
-  async getRelationGraph(ctx, args) {
-    const s = svc(ctx);
-    if (!s) return { nodes: [], edges: [] };
+  webui.registerAction('getRelationGraph', async args => {
     // 焦点可为 person(`platform:userId`，含冒号) / event / entity(UUID)。
     // 不再以「包含冒号」来过滤——event/entity UUID 不含冒号也应被接受。
     const focusIdRaw = typeof args.focusId === 'string' ? args.focusId.trim() : '';
@@ -177,7 +167,7 @@ export const actions: PluginModule['actions'] = {
     let focusEdge: RelationEdge | undefined;
 
     // 全图 snapshot：用于给每个返回节点附 compositeScore + tier（基于全图位置而非子图）。
-    const fullSnap = await s.loadAll();
+    const fullSnap = await service.loadAll();
 
     if (focusId) {
       // 先检测 focusId 是否为某条边的 id：若是 → 取边两端点作为起点 + 1 跳邻域
@@ -185,14 +175,14 @@ export const actions: PluginModule['actions'] = {
       if (edgeMatch) {
         focusEdge = edgeMatch;
         const endpointIds = edgeEndpointIds(edgeMatch);
-        const sub = await s.traverseSubgraph({ startNodeIds: endpointIds, maxDepth, maxBreadth });
+        const sub = await service.traverseSubgraph({ startNodeIds: endpointIds, maxDepth, maxBreadth });
         persons = sub.persons;
         events = sub.events;
         entities = sub.entities;
         edges = sub.edges;
         if (!edges.some(e => e.id === edgeMatch.id)) edges.push(edgeMatch);
       } else {
-        const sub = await s.traverseSubgraph({ startNodeIds: [focusId], maxDepth, maxBreadth });
+        const sub = await service.traverseSubgraph({ startNodeIds: [focusId], maxDepth, maxBreadth });
         persons = sub.persons;
         events = sub.events;
         entities = sub.entities;
@@ -213,7 +203,7 @@ export const actions: PluginModule['actions'] = {
     const truncate = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max)}…` : text);
 
     // 给每个返回节点附 compositeScore + tier：用全图位置计算百分位，避免子图局部错觉。
-    const scoreOf = (id: string) => s._computeSingleNodeScore(id, fullSnap);
+    const scoreOf = (id: string) => service._computeSingleNodeScore(id, fullSnap);
     const allScored: { id: string; kind: 'person' | 'event' | 'entity'; score: number }[] = [];
     for (const p of fullSnap.persons) {
       const sc = scoreOf(p.id);
@@ -308,10 +298,9 @@ export const actions: PluginModule['actions'] = {
         }
       }
       if (danglingPairs.length > 0) {
-        const logger = (ctx as unknown as { logger?: { warn: (msg: string) => void } }).logger;
         const sample = danglingPairs.slice(0, 5).join(', ');
         const more = danglingPairs.length > 5 ? `，… 共 ${danglingPairs.length} 条` : '';
-        logger?.warn(
+        logger.warn(
           `[user-relation] getRelationGraph: 跳过 ${danglingPairs.length}/${before} 条幽灵边（节点缺失）: ${sample}${more}`,
         );
       }
@@ -479,16 +468,14 @@ export const actions: PluginModule['actions'] = {
         };
       }),
     };
-  },
+  });
 
-  async getGraphNodeDetail(ctx, args) {
-    const s = svc(ctx);
-    if (!s) return { error: 'service 不可用' };
+  webui.registerAction('getGraphNodeDetail', async args => {
     const nodeId = String(args.nodeId ?? '');
     const kind = String(args.kind ?? '');
     if (kind === 'person') {
       if (!nodeId.includes(':')) return { error: '无效 personId' };
-      const nb = await s.getNeighborhood(nodeId);
+      const nb = await service.getNeighborhood(nodeId);
       return {
         person: withReadableDates(nb.person as unknown as Record<string, unknown>),
         eventCount: nb.events.length,
@@ -525,7 +512,7 @@ export const actions: PluginModule['actions'] = {
       };
     }
     if (kind === 'event') {
-      const e = await s.getEvent(nodeId);
+      const e = await service.getEvent(nodeId);
       if (!e) return { error: '事件不存在' };
       return {
         ...withReadableDates(e as unknown as Record<string, unknown>),
@@ -534,7 +521,7 @@ export const actions: PluginModule['actions'] = {
       };
     }
     if (kind === 'entity') {
-      const e = await s.getEntity(nodeId);
+      const e = await service.getEntity(nodeId);
       if (!e) return { error: '实体不存在' };
       return {
         ...withReadableDates(e as unknown as Record<string, unknown>),
@@ -544,13 +531,11 @@ export const actions: PluginModule['actions'] = {
       };
     }
     return { error: `未知 kind: ${kind}` };
-  },
+  });
 
   // ───── stat / info ─────
-  async getStats(ctx) {
-    const s = svc(ctx);
-    if (!s) return { value: 0 };
-    const snap = await s.loadAll();
+  webui.registerAction('getStats', async () => {
+    const snap = await service.loadAll();
     const pe = snap.edges.filter(e => e.kind === 'person-event').length;
     const pp = snap.edges.filter(e => e.kind === 'person-person').length;
     const pent = snap.edges.filter(e => e.kind === 'person-entity').length;
@@ -561,80 +546,64 @@ export const actions: PluginModule['actions'] = {
       value: snap.persons.length,
       detail: `人物 ${snap.persons.length} / 事件 ${snap.events.length} / 实体 ${snap.entities.length} / 人-事 ${pe} / 人-人 ${pp} / 人-实体 ${pent} / 事-事 ${ee} / 事-实体 ${eent} / 实体-实体 ${entent}`,
     };
-  },
+  });
 
   // ───── 详情 ─────
-  async getPerson(ctx, args) {
-    const s = svc(ctx);
-    if (!s) return { error: 'service 不可用' };
+  webui.registerAction('getPerson', async args => {
     const id = String(args.id ?? '');
     const [platform = '', userId = ''] = id.split(':');
     if (!platform || !userId) return { error: '无效 personId' };
-    const nb = await s.getNeighborhood(id);
+    const nb = await service.getNeighborhood(id);
     return {
       person: nb.person,
       events: nb.events,
       edges: nb.edges,
     };
-  },
+  });
 
-  async getEvent(ctx, args) {
-    const s = svc(ctx);
-    if (!s) return { error: 'service 不可用' };
-    const e = await s.getEvent(String(args.id ?? ''));
+  webui.registerAction('getEvent', async args => {
+    const e = await service.getEvent(String(args.id ?? ''));
     if (!e) return { error: '事件不存在' };
     return e;
-  },
+  });
 
   // ───── 操作类 ─────
-  async deletePerson(ctx, args) {
-    const s = svc(ctx);
-    if (!s) return { error: 'service 不可用' };
+  webui.registerAction('deletePerson', async args => {
     const id = String(args.id ?? '');
     const [platform = '', userId = ''] = id.split(':');
     if (!platform || !userId) return { error: '无效 personId' };
-    await s.deletePerson(platform, userId);
+    await service.deletePerson(platform, userId);
     return { ok: true };
-  },
+  });
 
-  async deleteEvent(ctx, args) {
-    const s = svc(ctx);
-    if (!s) return { error: 'service 不可用' };
-    await s.deleteEvent(String(args.id ?? ''));
+  webui.registerAction('deleteEvent', async args => {
+    await service.deleteEvent(String(args.id ?? ''));
     return { ok: true };
-  },
+  });
 
-  async deleteEntity(ctx, args) {
-    const s = svc(ctx);
-    if (!s) return { error: 'service 不可用' };
-    await s.deleteEntity(String(args.id ?? ''));
+  webui.registerAction('deleteEntity', async args => {
+    await service.deleteEntity(String(args.id ?? ''));
     return { ok: true };
-  },
+  });
 
-  async deleteEdge(ctx, args) {
-    const s = svc(ctx);
-    if (!s) return { error: 'service 不可用' };
-    await s.deleteEdge(String(args.id ?? ''));
+  webui.registerAction('deleteEdge', async args => {
+    await service.deleteEdge(String(args.id ?? ''));
     return { ok: true };
-  },
+  });
 
-  async triggerExtraction(ctx, args) {
-    const s = svc(ctx);
-    if (!s) return { error: 'service 不可用' };
+  webui.registerAction('triggerExtraction', async args => {
     const sessionId = String(args.sessionId ?? '').trim();
     if (!sessionId) return { error: '请输入 sessionId' };
-    return s.triggerExtraction(sessionId);
-  },
+    return service.triggerExtraction(sessionId);
+  });
 
   // ───── 多层查询（webui view + 调试用，参数走 view.* 范畴的默认值/上限由 index.ts 注入） ─────
-  async expandPerson(ctx, args) {
-    const s = svc(ctx);
-    if (!s) return { error: 'service 不可用' };
+  webui.registerAction('expandPerson', async args => {
     const personId = String(args.personId ?? args.id ?? '').trim();
     if (!personId.includes(':')) return { error: 'personId 格式应为 platform:userId' };
     const maxDepth = numArg(args.maxDepth, 2);
     const maxBreadth = numArg(args.maxBreadth, 10);
-    const sub = await s.traverseSubgraph({
+    const sub = await service.traverseSubgraph({
       startNodeIds: [personId],
       maxDepth,
       maxBreadth,
@@ -652,16 +621,14 @@ export const actions: PluginModule['actions'] = {
       events: sub.events,
       edges: sub.edges,
     };
-  },
+  });
 
-  async findPath(ctx, args) {
-    const s = svc(ctx);
-    if (!s) return { error: 'service 不可用' };
+  webui.registerAction('findPath', async args => {
     const from = String(args.fromPersonId ?? args.from ?? '').trim();
     const to = String(args.toPersonId ?? args.to ?? '').trim();
     if (!from.includes(':') || !to.includes(':')) return { error: 'person id 格式应为 platform:userId' };
     const maxDepth = numArg(args.maxDepth, 3);
-    const path = await s.findPath(from, to, maxDepth);
+    const path = await service.findPath(from, to, maxDepth);
     if (!path) return { found: false, from, to, maxDepth };
     return {
       found: true,
@@ -669,21 +636,19 @@ export const actions: PluginModule['actions'] = {
       nodes: path.nodes,
       edges: path.edges,
     };
-  },
+  });
 
-  async searchEvents(ctx, args) {
-    const s = svc(ctx);
-    if (!s) return { error: 'service 不可用' };
+  webui.registerAction('searchEvents', async args => {
     const keyword = typeof args.keyword === 'string' ? args.keyword : undefined;
     const days = numArgOptional(args.days);
     const limit = numArg(args.limit, 20);
-    const events = await s.searchEvents({ keyword, days, limit });
+    const events = await service.searchEvents({ keyword, days, limit });
     return {
       count: events.length,
       events,
     };
-  },
-};
+  });
+}
 
 function numArg(v: unknown, fallback: number): number {
   if (typeof v === 'number' && Number.isFinite(v)) return v;

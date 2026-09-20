@@ -1,5 +1,5 @@
 import type { StorageService } from '@aalis/api-storage';
-import type { ScopedToolService } from '@aalis/api-tools';
+import type { BoundTools } from '@aalis/api-tools';
 import PptxGenJS from 'pptxgenjs';
 import type { DocSessionManager } from '../session.js';
 import { loadImage } from '../utils.js';
@@ -330,7 +330,7 @@ function applyTemplate(pptx: PptxGenJS, templateName: string): PresetTemplate | 
 }
 
 export function registerPptTools(
-  tools: ScopedToolService,
+  tools: BoundTools,
   sessions: DocSessionManager,
   storage: StorageService,
   outputUri: string,

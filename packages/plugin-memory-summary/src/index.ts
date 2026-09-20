@@ -1,9 +1,11 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import type { LLMModel } from '@aalis/api-llm';
-import { resolveLLMModel } from '@aalis/api-llm';
+import { llm, resolveLLMModel } from '@aalis/api-llm';
 import type { MemoryService } from '@aalis/api-memory';
-import type { MessageArchiveService } from '@aalis/api-message-archive';
-import type { Context } from '@aalis/core';
+import { memory } from '@aalis/api-memory';
+import { messageArchive } from '@aalis/api-message-archive';
+import type { BoundOf, ServiceRef } from '@aalis/core';
+import { config, contributions, definePlugin, events, hooks, lifecycle, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import { WellKnownKinds } from '@aalis/schema-message';
@@ -68,15 +70,7 @@ function formatMsgForSummary(m: Message, nameByToolCallId: ReadonlyMap<string, s
 
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-memory-summary';
-export const displayName = '记忆摘要';
-export const subsystem = 'memory';
-export const inject = {
-  required: ['memory', 'llm'],
-  optional: ['message-archive'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   threshold: {
     type: 'number',
     label: '摘要触发阈值',
@@ -180,44 +174,60 @@ interface SummaryRecord {
   summary: string;
 }
 
+/** 持有 ServiceRef 而非提供者实例：每次调用重新解析当前胜者，provider 重载后不会用到失效引用。 */
 class SummaryStore {
-  constructor(private readonly ctx: Context) {}
-
-  /** 每次惰性查询 memory provider，避免 apply 时缓存裸引用在 provider 重载后失效。 */
-  private get memory(): MemoryService {
-    const m = this.ctx.getService<MemoryService>('memory');
-    if (!m) throw new Error('[memory-summary] memory 服务不可用');
-    return m;
-  }
+  constructor(private readonly memory: ServiceRef<MemoryService>) {}
 
   async getSummary(sessionId: string): Promise<SummaryRecord | null> {
-    const data = await this.memory.getMetadata(SUMMARY_NAMESPACE, sessionId);
+    const data = await this.memory.require().getMetadata(SUMMARY_NAMESPACE, sessionId);
     if (!data) return null;
     return { summary: String(data.summary ?? '') };
   }
 
   async upsertSummary(sessionId: string, summary: string): Promise<void> {
-    await this.memory.saveMetadata(SUMMARY_NAMESPACE, sessionId, {
+    await this.memory.require().saveMetadata(SUMMARY_NAMESPACE, sessionId, {
       summary,
       updatedAt: new Date().toISOString(),
     });
   }
 
   async clearSession(sessionId: string): Promise<void> {
-    await this.memory.deleteMetadata(SUMMARY_NAMESPACE, sessionId);
+    await this.memory.require().deleteMetadata(SUMMARY_NAMESPACE, sessionId);
   }
 
   async clearAll(): Promise<void> {
-    const items = await this.memory.listMetadata(SUMMARY_NAMESPACE);
-    await this.memory.commitMetadata(
-      items.map(it => ({ op: 'del' as const, namespace: SUMMARY_NAMESPACE, key: it.key })),
-    );
+    const provider = this.memory.require();
+    const items = await provider.listMetadata(SUMMARY_NAMESPACE);
+    await provider.commitMetadata(items.map(it => ({ op: 'del' as const, namespace: SUMMARY_NAMESPACE, key: it.key })));
   }
 }
 
 // ===== 插件入口 =====
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
+const uses = {
+  memory,
+  llm,
+  messageArchive: optional(messageArchive),
+  config,
+  logger,
+  events,
+  hooks,
+  contributions,
+  lifecycle,
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-memory-summary',
+  displayName: '记忆摘要',
+  subsystem: 'memory',
+  configSchema,
+  uses,
+  apply: run,
+});
+
+async function run(caps: Caps): Promise<void> {
+  const { memory, llm, messageArchive, config, logger, events, hooks, contributions, lifecycle } = caps;
   const cfg: SummaryConfig = {
     threshold: (config.threshold as number) ?? 30,
     keepRecent: (config.keepRecent as number) ?? 20,
@@ -234,14 +244,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         : undefined,
   };
 
-  const memory = ctx.getService<MemoryService>('memory');
-  if (!memory) {
-    ctx.logger.warn('memory 服务不可用，摘要插件将不会启动');
+  if (!memory.current) {
+    logger.warn('memory 服务不可用，摘要插件将不会启动');
     return;
   }
-  const store = new SummaryStore(ctx);
+  const store = new SummaryStore(memory);
 
-  ctx.logger.info('会话摘要插件已启动（摘要持久化经由 memory.metadata）');
+  logger.info('会话摘要插件已启动（摘要持久化经由 memory.metadata）');
 
   // 正在摘要中的 session，避免并发重复摘要
   const summarizing = new Set<string>();
@@ -254,14 +263,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   let warnedUnresolvedSummaryLLM = false;
   function resolveSummaryModel(): LLMModel | undefined {
     const ref = cfg.summaryModelMode === 'custom' ? cfg.summaryLLM : undefined;
-    const resolved = resolveLLMModel(ctx, ref, ['chat'])?.instance;
+    const resolved = resolveLLMModel(llm, ref, ['chat'])?.instance;
     // custom 指定了模型却解析落空 → 自动压缩会静默不跑、上下文持续膨胀
     //（2026-08「压缩静默死亡」事故的根因形态；手动路径已有报错，这里补自动路径）。
     // 只警一次防刷屏，恢复后复位以便下次失效再警。
     if (ref && !resolved) {
       if (!warnedUnresolvedSummaryLLM) {
         warnedUnresolvedSummaryLLM = true;
-        ctx.logger.warn(`摘要模型解析失败（${ref.provider}/${ref.model} 不存在或未激活），自动压缩将不运行`);
+        logger.warn(`摘要模型解析失败（${ref.provider}/${ref.model} 不存在或未激活），自动压缩将不运行`);
       }
     } else if (resolved) {
       warnedUnresolvedSummaryLLM = false;
@@ -321,12 +330,12 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     summarizing.add(sessionId);
 
     try {
-      const memory = ctx.getService<MemoryService>('memory');
+      const provider = memory.current;
       const summaryModel = resolveSummaryModel();
-      if (!memory || !summaryModel) return;
+      if (!provider || !summaryModel) return;
 
       // 获取较多的历史消息来判断是否需要摘要
-      const allHistory = await memory.getHistory(sessionId, getHistoryProbeLimit());
+      const allHistory = await provider.getHistory(sessionId, getHistoryProbeLimit());
       const totalCount = allHistory.length;
 
       if (totalCount < cfg.threshold) return;
@@ -367,7 +376,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         });
       }
 
-      ctx.logger.debug(
+      logger.debug(
         `正在为 session=${sessionId} 生成摘要 (${messagesToSummarize.length} 条旧消息 → 摘要，保留最近 ${cfg.keepRecent} 条)`,
       );
 
@@ -406,7 +415,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         // 半截流式输出必须丢弃：provider 超时常在吐出部分内容后中断流，把截断文本
         // 入库会让它成为后续所有增量摘要的权威基底，链条被永久污染（对抗审计实测）
         summaryText = '';
-        ctx.logger.warn('生成会话摘要失败，降级为纯裁切（该段历史无摘要，归档层仍可检索）:', err);
+        logger.warn('生成会话摘要失败，降级为纯裁切（该段历史无摘要，归档层仍可检索）:', err);
       }
 
       const finalSummary = summaryText.trim();
@@ -436,10 +445,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         }
       }
       let trimmed = false;
-      if (memory.trimHistory) {
+      if (provider.trimHistory) {
         let deleted: number;
         try {
-          deleted = await memory.trimHistory(sessionId, safeKeepRecent);
+          deleted = await provider.trimHistory(sessionId, safeKeepRecent);
         } catch (trimErr) {
           // 别把「摘要已写、历史没裁」这个半成品状态留下
           if (finalSummary) {
@@ -447,25 +456,25 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
               if (prevSummary) await store.upsertSummary(sessionId, prevSummary);
               else await store.clearSession(sessionId);
             } catch (rollbackErr) {
-              ctx.logger.warn('裁切失败后回滚摘要也失败（下一轮会在新摘要基底上重摘）:', rollbackErr);
+              logger.warn('裁切失败后回滚摘要也失败（下一轮会在新摘要基底上重摘）:', rollbackErr);
             }
           }
           throw trimErr;
         }
         trimmed = true;
-        ctx.logger.info(
+        logger.info(
           finalSummary
             ? `会话已压缩: session=${sessionId}, 归档 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`
             : `会话已裁切（无摘要）: session=${sessionId}, 归档 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`,
         );
       } else {
-        ctx.logger.warn('记忆服务不支持 trimHistory，旧消息未归档');
+        logger.warn('记忆服务不支持 trimHistory，旧消息未归档');
       }
 
       // 保存系统事件消息，供前端持久化显示压缩分隔线。
       // 失败降级的"已裁切" marker 以真的裁切了为前提——provider 不支持 trimHistory 时
       // 什么都没发生，写 marker 是说谎且每轮重复追加一条
-      const archive = ctx.getService<MessageArchiveService>('message-archive');
+      const archive = messageArchive.current;
       if (archive && (finalSummary || trimmed))
         await archive.saveMessage(sessionId, {
           role: 'system',
@@ -474,14 +483,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           timestamp: summaryTs,
         });
     } catch (err) {
-      ctx.logger.warn('生成会话摘要失败:', err);
+      logger.warn('生成会话摘要失败:', err);
     } finally {
       summarizing.delete(sessionId);
     }
   }
 
   // === 贡献：在 LLM 调用前注入摘要（agent:prompt / context 槽）===
-  ctx.contribute('agent:prompt', {
+  contributions.contribute('agent:prompt', {
     id: 'memory-summary',
     anchor: 'context',
     async build(view) {
@@ -509,7 +518,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // === 在 agent:turn:after 钩子触发摘要生成 ===
   // 每轮对话结束后，异步检查是否需要生成摘要
-  ctx.middleware('agent:turn:after', async (data, next) => {
+  hooks.middleware('agent:turn:after', async (data, next) => {
     await next();
     // 中止/异常回合不触发摘要：本轮没有产生有效新内容（用户停止或报错），
     // 摘要无意义且浪费算力。turn:after 现已在 aborted/error 路径也触发（生命周期收口），
@@ -517,7 +526,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     if (data.outcome === 'aborted' || data.outcome === 'error') return;
     // 异步触发，不阻塞主流程
     generateSummary(data.sessionId).catch(err => {
-      ctx.logger.warn('异步摘要生成失败:', err);
+      logger.warn('异步摘要生成失败:', err);
     });
   });
 
@@ -525,24 +534,22 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // agent 在每次 LLM 调用前发出 token 使用统计；
   // 当使用率超过 autoCompressThreshold（默认 0.7）时，转发为 session:compress(reason='auto') 启动后台压缩。
   // 注意：generateSummary/session:compress 内部已有 summarizing 锁，这里再做一次提前判断避免无谓 emit。
-  ctx.on('token:usage', async (...args: unknown[]) => {
-    const data = args[0] as { sessionId: string; usageRatio: number };
-    if (!data?.sessionId) return;
+  events.on('token:usage', async usage => {
+    if (!usage?.sessionId) return;
     if (cfg.autoCompressThreshold <= 0) return;
-    if (data.usageRatio < cfg.autoCompressThreshold) return;
-    if (summarizing.has(data.sessionId)) return;
-    ctx.logger.info(
-      `Token 使用率 ${(data.usageRatio * 100).toFixed(1)}% 超过阈值 ${(cfg.autoCompressThreshold * 100).toFixed(0)}%，触发后台压缩`,
+    if (usage.usageRatio < cfg.autoCompressThreshold) return;
+    if (summarizing.has(usage.sessionId)) return;
+    logger.info(
+      `Token 使用率 ${(usage.usageRatio * 100).toFixed(1)}% 超过阈值 ${(cfg.autoCompressThreshold * 100).toFixed(0)}%，触发后台压缩`,
     );
-    ctx
-      .emit('session:compress', { sessionId: data.sessionId, reason: 'auto', usageRatio: data.usageRatio })
+    events
+      .emit('session:compress', { sessionId: usage.sessionId, reason: 'auto', usageRatio: usage.usageRatio })
       .catch(() => {});
   });
 
   // === 监听手动/自动压缩事件 ===
-  ctx.on('session:compress', async (...args: unknown[]) => {
-    const data = args[0] as { sessionId: string; reason: 'manual' | 'auto'; usageRatio?: number };
-    ctx.logger.info(`收到压缩请求: session=${data.sessionId}, reason=${data.reason}`);
+  events.on('session:compress', async data => {
+    logger.info(`收到压缩请求: session=${data.sessionId}, reason=${data.reason}`);
 
     // reason 必填且仅 manual|auto（api-memory 契约），两个发射方也只发这两种：
     // 两者都走同一条压缩路径——手动/自动之别只体现在 taskHint 措辞上。
@@ -551,32 +558,32 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     summarizing.add(data.sessionId);
 
     // 通知前端：压缩开始
-    ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'start' }).catch(() => {});
+    events.emit('session:compressing', { sessionId: data.sessionId, status: 'start' }).catch(() => {});
 
     try {
-      const memory = ctx.getService<MemoryService>('memory');
+      const provider = memory.current;
       const summaryModel = resolveSummaryModel();
-      if (!memory || !summaryModel) {
+      if (!provider || !summaryModel) {
         // 报 error 而非 done：报 done 会让前端插入"对话已压缩"的假成功分隔线。
         // 常见触发：summaryModelMode=custom 指向的 provider 被卸载/重载中。
-        ctx.logger.warn(
-          `压缩跳过: ${!memory ? 'memory 服务不可用' : '摘要模型解析失败（检查 summaryModelMode/summaryLLM 配置）'}`,
+        logger.warn(
+          `压缩跳过: ${!provider ? 'memory 服务不可用' : '摘要模型解析失败（检查 summaryModelMode/summaryLLM 配置）'}`,
         );
-        ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'error' }).catch(() => {});
+        events.emit('session:compressing', { sessionId: data.sessionId, status: 'error' }).catch(() => {});
         return;
       }
 
-      const allHistory = await memory.getHistory(data.sessionId, getHistoryProbeLimit());
+      const allHistory = await provider.getHistory(data.sessionId, getHistoryProbeLimit());
       // 手动压缩：只要有 > keepRecent 条消息就压缩
       if (allHistory.length <= cfg.keepRecent) {
-        ctx.logger.info(`会话消息数 ${allHistory.length} ≤ keepRecent(${cfg.keepRecent})，无需压缩`);
-        ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'done' }).catch(() => {});
+        logger.info(`会话消息数 ${allHistory.length} ≤ keepRecent(${cfg.keepRecent})，无需压缩`);
+        events.emit('session:compressing', { sessionId: data.sessionId, status: 'done' }).catch(() => {});
         return;
       }
 
       const messagesToSummarize = allHistory.slice(0, allHistory.length - cfg.keepRecent);
       if (messagesToSummarize.length === 0) {
-        ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'done' }).catch(() => {});
+        events.emit('session:compressing', { sessionId: data.sessionId, status: 'done' }).catch(() => {});
         return;
       }
 
@@ -633,7 +640,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         });
       }
 
-      ctx.logger.debug(`正在压缩 session=${data.sessionId} (${messagesToSummarize.length} 条旧消息)`);
+      logger.debug(`正在压缩 session=${data.sessionId} (${messagesToSummarize.length} 条旧消息)`);
 
       let summaryText = '';
       try {
@@ -663,7 +670,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         // auto 触发（usageRatio 阈值）的失败若不裁切，会滞留在"每次 LLM 调用
         // 都再触发一次压缩→再烧一次超时"的循环里，条数触发路径救不了它。
         summaryText = '';
-        ctx.logger.warn('压缩摘要生成失败，降级为纯裁切（该段历史无摘要）:', err);
+        logger.warn('压缩摘要生成失败，降级为纯裁切（该段历史无摘要）:', err);
       }
 
       const finalSummary = summaryText.trim();
@@ -687,34 +694,34 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         }
       }
       let trimmed = false;
-      if (memory.trimHistory) {
+      if (provider.trimHistory) {
         let deleted: number;
         try {
-          deleted = await memory.trimHistory(data.sessionId, safeKeepRecent);
+          deleted = await provider.trimHistory(data.sessionId, safeKeepRecent);
         } catch (trimErr) {
           if (finalSummary) {
             try {
               if (prevSummary) await store.upsertSummary(data.sessionId, prevSummary);
               else await store.clearSession(data.sessionId);
             } catch (rollbackErr) {
-              ctx.logger.warn('裁切失败后回滚摘要也失败（下一轮会在新摘要基底上重摘）:', rollbackErr);
+              logger.warn('裁切失败后回滚摘要也失败（下一轮会在新摘要基底上重摘）:', rollbackErr);
             }
           }
           throw trimErr;
         }
         trimmed = true;
-        ctx.logger.info(
+        logger.info(
           finalSummary
             ? `压缩完成: session=${data.sessionId}, 归档 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`
             : `已裁切（无摘要）: session=${data.sessionId}, 归档 ${deleted} 条旧消息，保留 ${safeKeepRecent} 条`,
         );
       } else {
-        ctx.logger.warn('记忆服务不支持 trimHistory，旧消息未归档');
+        logger.warn('记忆服务不支持 trimHistory，旧消息未归档');
       }
 
       // 保存系统事件消息，供前端持久化显示压缩分隔线（同 generateSummary：
       // 失败降级的"已裁切" marker 以真的裁切了为前提）
-      const archive = ctx.getService<MessageArchiveService>('message-archive');
+      const archive = messageArchive.current;
       if (archive && (finalSummary || trimmed))
         await archive.saveMessage(data.sessionId, {
           role: 'system',
@@ -725,58 +732,47 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
       // 通知前端：成功报 done；降级报 error（摘要确实失败了，裁切结果经历史刷新可见）。
       // 空响应此前既不裁也不发事件，前端会永远停在 'start'——现在归入降级路径一并解决。
-      ctx
+      events
         .emit('session:compressing', { sessionId: data.sessionId, status: finalSummary ? 'done' : 'error' })
         .catch(() => {});
     } catch (err) {
-      ctx.logger.warn('压缩会话失败:', err);
+      logger.warn('压缩会话失败:', err);
       // 通知前端：压缩失败
-      ctx.emit('session:compressing', { sessionId: data.sessionId, status: 'error' }).catch(() => {});
+      events.emit('session:compressing', { sessionId: data.sessionId, status: 'error' }).catch(() => {});
     } finally {
       summarizing.delete(data.sessionId);
     }
   });
 
   // 统一记忆清除：通过 memory:clear hook 参与编排
-  ctx.middleware(
-    'memory:clear',
-    async (
-      data: {
-        scope: 'session' | 'all';
-        types?: string[];
-        sessionId?: string;
-        results: Array<{ source: string; success: boolean; message: string }>;
-      },
-      next,
-    ) => {
-      // 类型过滤：如果指定了 types 且不包含 summary，跳过
-      if (data.types && !data.types.includes('summary')) {
-        await next();
-        return;
-      }
-
-      try {
-        if (data.scope === 'all') {
-          await store.clearAll();
-          data.results.push({ source: 'summary', success: true, message: '所有会话摘要已清空' });
-          ctx.logger.info('所有会话摘要已清空');
-        } else if (data.sessionId) {
-          await store.clearSession(data.sessionId);
-          data.results.push({ source: 'summary', success: true, message: '当前会话摘要已清空' });
-          ctx.logger.info(`会话摘要已清空: session=${data.sessionId}`);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        data.results.push({ source: 'summary', success: false, message: `摘要清空失败: ${msg}` });
-        ctx.logger.warn('摘要清空失败:', err);
-      }
-
+  hooks.middleware('memory:clear', async (data, next) => {
+    // 类型过滤：如果指定了 types 且不包含 summary，跳过
+    if (data.types && !data.types.includes('summary')) {
       await next();
-    },
-  );
+      return;
+    }
+
+    try {
+      if (data.scope === 'all') {
+        await store.clearAll();
+        data.results.push({ source: 'summary', success: true, message: '所有会话摘要已清空' });
+        logger.info('所有会话摘要已清空');
+      } else if (data.sessionId) {
+        await store.clearSession(data.sessionId);
+        data.results.push({ source: 'summary', success: true, message: '当前会话摘要已清空' });
+        logger.info(`会话摘要已清空: session=${data.sessionId}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      data.results.push({ source: 'summary', success: false, message: `摘要清空失败: ${msg}` });
+      logger.warn('摘要清空失败:', err);
+    }
+
+    await next();
+  });
 
   // 清理
-  ctx.onDispose(() => {
-    ctx.logger.info('会话摘要插件已卸载');
+  lifecycle.onDispose(() => {
+    logger.info('会话摘要插件已卸载');
   });
 }

@@ -1,9 +1,9 @@
-import { resolveLLMModel } from '@aalis/api-llm';
+import { type LLMModel, resolveLLMModel } from '@aalis/api-llm';
 import type { MediaService } from '@aalis/api-media';
 import type { MemoryService } from '@aalis/api-memory';
 import type { ProcessService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
-import type { Context } from '@aalis/core';
+import type { Logger, ServiceRef } from '@aalis/core';
 import { cacheOneAttachment } from './attachment-cache.js';
 import type { ForwardMediaTask } from './forward.js';
 import { buildEnvelope, expandForward } from './forward.js';
@@ -59,8 +59,20 @@ export interface ForwardConfig {
   summaryPrompt?: string;
 }
 
+/**
+ * 展开器要用到的能力。逐项传入而非整包转交：这里只碰日志与五个服务引用，
+ * 服务引用每次调用重新解析当前提供者（展开发生在消息到达时，提供者可能已换人）。
+ */
 export interface ForwardExpanderDeps<TState> {
-  ctx: Context;
+  logger: Logger;
+  /** 原文持久化（缺席时只走内存缓存） */
+  memory: ServiceRef<MemoryService>;
+  /** 转发内媒体识别（缺席时保留占位符） */
+  media: ServiceRef<MediaService>;
+  /** 摘要模型（缺席时不生成摘要） */
+  llm: ServiceRef<LLMModel>;
+  storage: ServiceRef<StorageService>;
+  processService: ServiceRef<ProcessService>;
   forwardCfg: ForwardConfig;
   /** 单附件落盘字节上限（与入站附件缓存同源） */
   attachmentMaxBytes: number;
@@ -155,7 +167,7 @@ function createConcurrencyLimited<TArg, TRet>(
  * 内存缓存 1h TTL；持久化由 memory metadata 兜底（如果实现支持）。
  */
 export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>): ForwardExpander<TState> {
-  const { ctx, sendAction, forwardCfg, attachmentMaxBytes } = deps;
+  const { logger, memory, media, llm, storage, processService, sendAction, forwardCfg, attachmentMaxBytes } = deps;
   const forwardCache = new Map<string, { entry: ForwardEntry; expiresAt: number }>();
   /** 上次回收过期持久化条目的时刻。0 = 本次启动还没扫过，首条消息即扫一次。 */
   let lastSweepAt = 0;
@@ -176,12 +188,12 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     // 只回收死条目（原本永不删→堆积成泄漏），绝不淘汰未过期的有效缓存。
     const now = Date.now();
     for (const [k, v] of forwardCache) if (v.expiresAt < now) forwardCache.delete(k);
-    const memory = ctx.getService<MemoryService>('memory');
-    if (memory) {
-      memory
+    const store = memory.current;
+    if (store) {
+      store
         .saveMetadata(FORWARD_METADATA_NS, id, entry as unknown as Record<string, unknown>)
         .then(() => sweepPersisted())
-        .catch((err: unknown) => ctx.logger.debug(`forward metadata 持久化失败 id=${id}: ${err}`));
+        .catch((err: unknown) => logger.debug(`forward metadata 持久化失败 id=${id}: ${err}`));
     }
   }
 
@@ -203,30 +215,30 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     const now = Date.now();
     if (now - lastSweepAt < SWEEP_INTERVAL_MS) return;
     lastSweepAt = now;
-    const memory = ctx.getService<MemoryService>('memory');
-    if (!memory) return;
+    const store = memory.current;
+    if (!store) return;
     try {
       const cutoff = Date.now() - FORWARD_PERSIST_TTL_MS;
-      const stale = (await memory.listMetadata(FORWARD_METADATA_NS)).filter(e => e.updatedAt < cutoff);
+      const stale = (await store.listMetadata(FORWARD_METADATA_NS)).filter(e => e.updatedAt < cutoff);
       if (stale.length === 0) return;
-      await memory.commitMetadata(stale.map(e => ({ op: 'del', namespace: FORWARD_METADATA_NS, key: e.key })));
-      ctx.logger.debug(`forward metadata 已回收 ${stale.length} 条过期原文`);
+      await store.commitMetadata(stale.map(e => ({ op: 'del', namespace: FORWARD_METADATA_NS, key: e.key })));
+      logger.debug(`forward metadata 已回收 ${stale.length} 条过期原文`);
     } catch (err) {
-      ctx.logger.debug(`forward metadata 回收失败: ${err}`);
+      logger.debug(`forward metadata 回收失败: ${err}`);
     }
   }
 
   /** 从持久化层加载（缓存未命中时尝试） */
   async function loadPersistedForward(id: string): Promise<ForwardEntry | undefined> {
-    const memory = ctx.getService<MemoryService>('memory');
-    if (!memory) return undefined;
+    const store = memory.current;
+    if (!store) return undefined;
     try {
-      const data = await memory.getMetadata(FORWARD_METADATA_NS, id);
+      const data = await store.getMetadata(FORWARD_METADATA_NS, id);
       if (data && typeof data === 'object' && typeof (data as { fullText?: unknown }).fullText === 'string') {
         return data as unknown as ForwardEntry;
       }
     } catch (err) {
-      ctx.logger.debug(`forward metadata 读取失败 id=${id}: ${err}`);
+      logger.debug(`forward metadata 读取失败 id=${id}: ${err}`);
     }
     return undefined;
   }
@@ -246,7 +258,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
         lastErr = err;
       }
     }
-    ctx.logger.debug(`get_forward_msg 全部参数尝试失败 id=${id}: ${lastErr}`);
+    logger.debug(`get_forward_msg 全部参数尝试失败 id=${id}: ${lastErr}`);
     return null;
   }
 
@@ -257,12 +269,12 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
   ): Promise<string | null> {
     if (!forwardCfg.summarize) return null;
 
-    const entry = resolveLLMModel(ctx, forwardCfg.summaryLLM, ['chat']);
+    const entry = resolveLLMModel(llm, forwardCfg.summaryLLM, ['chat']);
     if (!entry) {
-      ctx.logger.debug('forward 摘要：无可用 LLM 服务，跳过');
+      logger.debug('forward 摘要：无可用 LLM 服务，跳过');
       return null;
     }
-    const llm = entry.instance;
+    const model = entry.instance;
 
     const inputLimit = forwardCfg.summaryInputLimit;
     const trimmedInput =
@@ -277,7 +289,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     const userPrompt = `合并转发包含 ${hint.count} 条消息，主要参与人：${hint.participants.join(', ') || '未知'}。\n目标字数：≤${forwardCfg.summaryMaxChars} 字（可超出 10% 以完整保留互动结构）。\n\n原文：\n${trimmedInput}`;
 
     try {
-      const resp = await llm.chat({
+      const resp = await model.chat({
         messages: [
           { role: 'system', content: sys },
           { role: 'user', content: userPrompt },
@@ -288,14 +300,14 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
       });
       const out = (resp.content ?? '').trim();
       if (!out) {
-        ctx.logger.debug(
+        logger.debug(
           `forward 摘要返回空内容: model=${forwardCfg.summaryLLM ? `${forwardCfg.summaryLLM.provider}/${forwardCfg.summaryLLM.model}` : 'default'}, chars=${forwardCfg.summaryMaxChars}`,
         );
         return null;
       }
       return out;
     } catch (err) {
-      ctx.logger.warn(`forward 摘要生成失败: ${err}`);
+      logger.warn(`forward 摘要生成失败: ${err}`);
       return null;
     }
   }
@@ -328,18 +340,10 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     // 全身 try：任何单点异常（含服务解析）都只降级本项为原始 src，绝不让整批 Promise.all 崩掉
     const download = createConcurrencyLimited(async (task: ForwardMediaTask): Promise<string> => {
       try {
-        const storage = ctx.getService<StorageService>('storage');
-        const proc = ctx.getService<ProcessService>('process');
-        if (!storage || !proc) return task.src;
-        const local = await cacheOneAttachment(
-          storage,
-          proc,
-          task.kind,
-          task.src,
-          sessionId,
-          attachmentMaxBytes,
-          ctx.logger,
-        );
+        const store = storage.current;
+        const proc = processService.current;
+        if (!store || !proc) return task.src;
+        const local = await cacheOneAttachment(store, proc, task.kind, task.src, sessionId, attachmentMaxBytes, logger);
         // 落盘成功即登记「原始 URL → 落盘 ref」描述缓存别名：识别阶段按落盘 ref 写入的
         // 描述，此后经原始 URL（引用消息手里只有它）也查得到。
         if (local) rememberLandedAlias(mediaSvc, task.kind, task.src, local);
@@ -364,7 +368,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
       const cap = forwardCfg.recognitionMaxItems;
       const active = cap > 0 ? tasks.slice(0, cap) : tasks;
       if (active.length < tasks.length) {
-        ctx.logger.info(
+        logger.info(
           `合并转发媒体识别超出上限（${tasks.length} 项 > ${cap}），后 ${tasks.length - active.length} 项按占位符保留`,
         );
       }
@@ -408,13 +412,13 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     if (ids.size === 0) return text;
     let expandIds = [...ids];
     if (expandIds.length > MAX_FORWARD_IDS_PER_MESSAGE) {
-      ctx.logger.info(
+      logger.info(
         `合并转发标记 ${expandIds.length} 个，超上限 ${MAX_FORWARD_IDS_PER_MESSAGE}，仅展开前 ${MAX_FORWARD_IDS_PER_MESSAGE} 个（其余保留占位符）`,
       );
       expandIds = expandIds.slice(0, MAX_FORWARD_IDS_PER_MESSAGE);
     }
 
-    const mediaSvc = ctx.getService<MediaService>('media');
+    const mediaSvc = media.current;
     const concurrency = Math.max(1, forwardCfg.imageRecognitionConcurrency);
     const resolveMedia = mediaSvc ? createMediaResolver(sessionId, mediaSvc, concurrency) : undefined;
 
@@ -488,14 +492,14 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
           // 不再做 80 字 preview 截断，避免「日志看不到全貌」。原文/摘要都已入库到
           // forwardCache + memory metadata，后续 onebot_get_forward_msg 可直接取回。
           const fullPreview = (summary ?? expanded.fullText).replace(/\n/g, ' ');
-          ctx.logger.debug(
+          logger.debug(
             `forward 展开完成 id=${id} count=${expanded.count} participants=[${expanded.participants.join(',')}]` +
               ` summary=${summary ? `${summary.length}字` : 'null'}${truncFlag} content="${fullPreview}"`,
           );
 
           envelopeMap.set(id, buildEnvelope(expanded, summary));
         } catch (err) {
-          ctx.logger.warn(`forward 展开失败 id=${id}: ${err}`);
+          logger.warn(`forward 展开失败 id=${id}: ${err}`);
           envelopeMap.set(id, `<forward id="${id}">[合并转发消息：展开过程出错]</forward>`);
         }
       }),

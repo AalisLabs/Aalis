@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { TokenUsageEvent } from '../../packages/api-agent/src/index.js';
-import { useToolService } from '../../packages/api-tools/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as promptBudgetModule from '../../packages/plugin-prompt-budget/src/index.js';
-import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
+import { App, services } from '../../packages/core/src/index.js';
+import promptBudget from '../../packages/plugin-prompt-budget/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // prompt_budget_info 的 top3 与 advice：
@@ -42,11 +42,12 @@ const usage: TokenUsageEvent = {
 describe('prompt_budget_info 的 top3 与 advice', () => {
   it('top3 只含数值桶且等于真实前三；advice 不再教模型调 memory.compress', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(toolsModule as never, {});
-    await app.ctx.useModule(promptBudgetModule as never, {});
+    await app.ctx.useModule(toolsPlugin, {});
+    await app.ctx.useModule(promptBudget, {});
+    const registry = app.bind({ services }).services.get(tools)!;
 
     const query = async () => {
-      const result = await useToolService(app.ctx).execute(
+      const result = await registry.execute(
         'prompt_budget_info',
         { sessionId: 'zz-budget' },
         { sessionId: 'zz-budget', platform: 'test' },

@@ -1,8 +1,7 @@
-import { resolveLLMModel } from '@aalis/api-llm';
-import { useToolService, wrapUntrustedContent } from '@aalis/api-tools';
+import { llm, resolveLLMModel } from '@aalis/api-llm';
+import { tools, wrapUntrustedContent } from '@aalis/api-tools';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import type { Context } from '@aalis/core';
-import { defineService } from '@aalis/core';
+import { type BoundOf, config, definePlugin, defineService, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import type { WebSearchRequest, WebSearchResponse, WebSearchResult, WebSearchService } from './types.js';
@@ -14,17 +13,17 @@ export type {
   WebSearchService,
 } from './types.js';
 
-// ===== 插件元数据 =====
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    'web-search': import('./types.js').WebSearchService;
+  }
+}
 
-export const name = '@aalis/plugin-websearch-serper';
-export const displayName = 'Serper 网络搜索';
-export const subsystem = 'tools';
-export const provides = ['web-search'];
-export const inject = {
-  optional: ['llm'],
-};
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const webSearch = defineService<WebSearchService>('web-search');
 
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   apiKey: { type: 'string', label: 'Serper API Key', required: true, secret: true, description: 'Serper.dev API 密钥' },
   maxPerMinute: { type: 'number', label: '每分钟最大次数', default: 10, description: '频率限制：每分钟最多搜索次数' },
   maxPerDay: { type: 'number', label: '每天最大次数', default: 100, description: '频率限制：每天最多搜索次数' },
@@ -60,6 +59,25 @@ interface WebSearchConfig {
   enableCompression: boolean;
   compressionLLM?: { provider: string; model: string };
   compressionPrompt: string;
+}
+
+function readConfig(raw: Readonly<Record<string, unknown>>): WebSearchConfig {
+  return {
+    apiKey: (raw.apiKey as string) ?? '',
+    maxPerMinute: (raw.maxPerMinute as number) ?? 10,
+    maxPerDay: (raw.maxPerDay as number) ?? 100,
+    maxConcurrent: (raw.maxConcurrent as number) ?? 3,
+    defaultNumResults: (raw.defaultNumResults as number) ?? 5,
+    enableCompression: (raw.enableCompression as boolean) ?? false,
+    compressionLLM:
+      raw.compressionLLM &&
+      typeof raw.compressionLLM === 'object' &&
+      (raw.compressionLLM as { provider?: unknown }).provider &&
+      (raw.compressionLLM as { model?: unknown }).model
+        ? (raw.compressionLLM as { provider: string; model: string })
+        : undefined,
+    compressionPrompt: (raw.compressionPrompt as string) ?? '',
+  };
 }
 
 // ===== 速率限制器 =====
@@ -212,23 +230,23 @@ function toStandardResults(data: SerperResponse): WebSearchResult[] {
 
 // ===== 插件入口 =====
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
-  const cfg: WebSearchConfig = {
-    apiKey: (config.apiKey as string) ?? '',
-    maxPerMinute: (config.maxPerMinute as number) ?? 10,
-    maxPerDay: (config.maxPerDay as number) ?? 100,
-    maxConcurrent: (config.maxConcurrent as number) ?? 3,
-    defaultNumResults: (config.defaultNumResults as number) ?? 5,
-    enableCompression: (config.enableCompression as boolean) ?? false,
-    compressionLLM:
-      config.compressionLLM &&
-      typeof config.compressionLLM === 'object' &&
-      (config.compressionLLM as { provider?: unknown }).provider &&
-      (config.compressionLLM as { model?: unknown }).model
-        ? (config.compressionLLM as { provider: string; model: string })
-        : undefined,
-    compressionPrompt: (config.compressionPrompt as string) ?? '',
-  };
+const uses = { tools: optional(tools), logger, config, provide, llm: optional(llm) };
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-websearch-serper',
+  displayName: 'Serper 网络搜索',
+  subsystem: 'tools',
+  configSchema,
+  provides: [webSearch],
+  uses,
+  apply(caps) {
+    registerSerper(caps);
+  },
+});
+
+function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
+  const cfg = readConfig(config);
 
   if (!cfg.apiKey) {
     throw new Error('未配置 Serper API Key，网络搜索不可用');
@@ -243,7 +261,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   /** 使用 LLM 压缩搜索结果 */
   async function compressResults(query: string, rawResults: string): Promise<string> {
-    const entry = resolveLLMModel(ctx, cfg.compressionLLM, ['chat']);
+    const entry = resolveLLMModel(llm, cfg.compressionLLM, ['chat']);
     if (!entry) return rawResults;
 
     const promptTemplate = cfg.compressionPrompt || DEFAULT_COMPRESSION_PROMPT;
@@ -259,12 +277,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return response.content?.trim() || rawResults;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      ctx.logger.warn(`搜索结果压缩失败，返回原始结果: ${msg}`);
+      logger.warn(`搜索结果压缩失败，返回原始结果: ${msg}`);
       return rawResults;
     }
   }
 
-  ctx.logger.info(
+  logger.info(
     `网络搜索已启用 (provider: serper, ` +
       `限制: ${cfg.maxPerMinute}/min, ${cfg.maxPerDay}/day, ` +
       `并发: ${cfg.maxConcurrent}` +
@@ -285,19 +303,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       };
     },
   };
-  ctx.provide('web-search', serperService, {
+  provide(webSearch, serperService, {
     label: 'Serper',
   });
 
   // 注册工具分组
-  useToolService(ctx).registerGroup({
+  tools.registerGroup({
     name: 'search',
     label: '网页搜索',
     description: '通过 Serper API 搜索互联网获取最新信息',
   });
 
   // 注册搜索工具
-  useToolService(ctx).register({
+  tools.register({
     groups: ['search'],
     definition: {
       type: 'function',
@@ -334,7 +352,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       // 速率限制检查
       const rejectReason = limiter.check();
       if (rejectReason) {
-        ctx.logger.warn(`搜索被限流: ${rejectReason}`);
+        logger.warn(`搜索被限流: ${rejectReason}`);
         return JSON.stringify({
           error: `搜索请求被限流: ${rejectReason}`,
           status: limiter.getStatus(),
@@ -343,21 +361,21 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       limiter.acquire();
       try {
-        ctx.logger.debug(`执行搜索: "${query}" (${numResults} 条结果)`);
+        logger.debug(`执行搜索: "${query}" (${numResults} 条结果)`);
         const data = await serperSearch(query, cfg.apiKey, numResults);
         let result = formatSearchResults(data);
 
         // 压缩整合
         if (cfg.enableCompression) {
-          ctx.logger.debug(`压缩搜索结果 (原始长度: ${result.length})`);
+          logger.debug(`压缩搜索结果 (原始长度: ${result.length})`);
           result = await compressResults(query, result);
-          ctx.logger.debug(`压缩完成 (压缩后长度: ${result.length})`);
+          logger.debug(`压缩完成 (压缩后长度: ${result.length})`);
         }
 
         return result;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        ctx.logger.error(`搜索失败: ${message}`);
+        logger.error(`搜索失败: ${message}`);
         return JSON.stringify({ error: `搜索失败: ${message}` });
       } finally {
         limiter.release();
@@ -366,7 +384,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // 图片搜索工具：返回候选图片 URL 列表，配合 send_attachment 使用
-  useToolService(ctx).register({
+  tools.register({
     groups: ['search'],
     definition: {
       type: 'function',
@@ -428,13 +446,3 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
   });
 }
-
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    'web-search': import('./types.js').WebSearchService;
-  }
-}
-
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
-export const webSearch = defineService<import('./types.js').WebSearchService>('web-search');

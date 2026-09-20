@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { Logger, ServiceRef } from '../../packages/core/src/index.js';
 import { createForwardExpander, type ForwardConfig } from '../../packages/plugin-adapter-onebot/src/forward-expand.js';
 
 // ════════════════════════════════════════════════════════════
@@ -20,15 +21,35 @@ const CFG: ForwardConfig = {
   summaryInputLimit: 0,
 };
 
+/** 无提供者的服务引用：本用例只数协议端请求，memory/media/llm/storage/process 一律缺席。 */
+function absentRef<P>(): ServiceRef<P> {
+  return {
+    current: undefined,
+    require: () => {
+      throw new Error('本用例不该取用该服务');
+    },
+    all: () => [],
+    follow: () => () => {},
+  };
+}
+
 function setup() {
   const asked: string[] = [];
   const logs: string[] = [];
-  const ctx = {
-    logger: { info: (m: string) => logs.push(m), warn() {}, debug() {}, error() {} },
-    getService: () => undefined,
+  const logger: Logger = {
+    info: (m: string) => logs.push(m),
+    warn() {},
+    debug() {},
+    error() {},
+    child: () => logger,
   };
   const expander = createForwardExpander<null>({
-    ctx: ctx as never,
+    logger,
+    memory: absentRef(),
+    media: absentRef(),
+    llm: absentRef(),
+    storage: absentRef(),
+    processService: absentRef(),
     forwardCfg: CFG,
     attachmentMaxBytes: 1024 * 1024,
     sendAction: async (_state, _action, params) => {

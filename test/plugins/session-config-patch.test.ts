@@ -1,8 +1,7 @@
 import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
-import * as sessionManagerModule from '../../packages/plugin-session-manager/src/index.js';
-import { normalizeSessionConfigPatch } from '../../packages/plugin-session-manager/src/index.js';
+import sessionManagerPlugin, { normalizeSessionConfigPatch } from '../../packages/plugin-session-manager/src/index.js';
 
 // WebUI 会话配置「重置为继承」：JSON 带不了 undefined，前端用 null 表示删除该键；
 // updateSession 是合并语义，键置为 undefined 后 resolveConfig 里就不再有它。
@@ -43,7 +42,7 @@ describe('会话配置重置为继承', () => {
   it('置 null 的键从生效配置里消失，回落到平台档', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     app.ctx.provide('memory', fakeMemory() as never);
-    await app.ctx.useModule(sessionManagerModule, {
+    await app.ctx.useModule(sessionManagerPlugin, {
       platformProfiles: [{ platform: 'webui', persona: 'from-profile', enabledToolGroups: ['*'] }],
     });
     await app.plugins.idle();

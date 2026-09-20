@@ -1,4 +1,5 @@
-import { App } from '@aalis/core';
+import { gateway } from '@aalis/api-gateway';
+import { App, events, logger } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveFlowControlConfig } from '../../packages/plugin-flow-control/src/config.js';
@@ -15,11 +16,13 @@ import { createState, type MutableFlowSessionState } from '../../packages/plugin
 
 function setup() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  // 调度器要的三样能力由宿主侧绑定给出；无 gateway 提供者时它回落到直接发入站事件
+  const caps = app.bind({ logger, events, gateway });
   const seen: IncomingMessage[] = [];
-  app.ctx.on('inbound:message', (msg: IncomingMessage) => {
+  caps.events.on('inbound:message', (msg: IncomingMessage) => {
     seen.push(msg);
   });
-  return { app, seen };
+  return { app, caps, seen };
 }
 
 /** 造一个「很久没动过」的状态（满足 all-quiet） */
@@ -39,7 +42,7 @@ describe('PlatformIdleScheduler：无候选 / 无活动记录时不得 1 Hz 死�
   });
 
   it('候选被静音挤出后退避到阈值量级，解除静音也不会在 1s 内开聊', async () => {
-    const { app, seen } = setup();
+    const { app, caps, seen } = setup();
     const cfg = resolveFlowControlConfig({
       idleTriggerScope: 'platform',
       idleTriggerStrategy: 'all-quiet',
@@ -48,7 +51,7 @@ describe('PlatformIdleScheduler：无候选 / 无活动记录时不得 1 Hz 死�
     const states = new Map<string, MutableFlowSessionState>();
     const s = quietState({ mutedUntil: Date.now() + 60 * 60_000 });
     states.set('S1', s);
-    const sched = new PlatformIdleScheduler(app.ctx, cfg, states);
+    const sched = new PlatformIdleScheduler(caps, cfg, states);
     sched.start();
 
     // 第一次 tick：静默已达标但唯一候选被静音 → 无候选
@@ -68,7 +71,7 @@ describe('PlatformIdleScheduler：无候选 / 无活动记录时不得 1 Hz 死�
   });
 
   it('会话无任何活动记录时按整个阈值等，而非立刻开聊', async () => {
-    const { app, seen } = setup();
+    const { app, caps, seen } = setup();
     const cfg = resolveFlowControlConfig({
       idleTriggerScope: 'platform',
       idleTriggerStrategy: 'all-quiet',
@@ -76,7 +79,7 @@ describe('PlatformIdleScheduler：无候选 / 无活动记录时不得 1 Hz 死�
     });
     const states = new Map<string, MutableFlowSessionState>();
     states.set('S1', createState('onebot', 'group', 'g1')); // lastMessageTime/lastReplyTime 全 0
-    const sched = new PlatformIdleScheduler(app.ctx, cfg, states);
+    const sched = new PlatformIdleScheduler(caps, cfg, states);
     sched.start();
 
     await vi.advanceTimersByTimeAsync(10_000);
@@ -98,7 +101,7 @@ describe('PlatformIdleScheduler：per-scope overrides', () => {
   });
 
   it('单独关掉闲置触发的会话不被抓来开聊，提示词取该会话的有效配置', async () => {
-    const { app, seen } = setup();
+    const { app, caps, seen } = setup();
     const cfg = resolveFlowControlConfig({
       idleTriggerScope: 'platform',
       idleTriggerStrategy: 'all-quiet',
@@ -118,7 +121,7 @@ describe('PlatformIdleScheduler：per-scope overrides', () => {
     on.lastMessageTime = Date.now() - 10 * 60_000;
     states.set('S-on', on);
 
-    const sched = new PlatformIdleScheduler(app.ctx, cfg, states);
+    const sched = new PlatformIdleScheduler(caps, cfg, states);
     sched.start();
     await vi.advanceTimersByTimeAsync(1_100);
     sched.stop();
@@ -140,12 +143,13 @@ describe('PlatformIdleScheduler：stop() 之后不再重排', () => {
 
   it('tick 飞行中 stop() 后不再重排（无僵尸定时器）', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const caps = app.bind({ logger, events, gateway });
     let release!: () => void;
     const inFlight = new Promise<void>(r => {
       release = r;
     });
     let injected = 0;
-    app.ctx.on('inbound:message', async () => {
+    caps.events.on('inbound:message', async () => {
       injected++;
       await inFlight; // 卡住注入，制造「tick 飞行中」的窗口
     });
@@ -155,7 +159,7 @@ describe('PlatformIdleScheduler：stop() 之后不再重排', () => {
       idleTriggerMinutes: 1,
     });
     const states = new Map<string, MutableFlowSessionState>([['S1', quietState()]]);
-    const sched = new PlatformIdleScheduler(app.ctx, cfg, states);
+    const sched = new PlatformIdleScheduler(caps, cfg, states);
     sched.start();
 
     await vi.advanceTimersByTimeAsync(1_100);

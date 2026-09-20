@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { embedding } from '../../packages/api-embedding/src/index.js';
+import { llm } from '../../packages/api-llm/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import { RelationService, RelationStore } from '../../packages/plugin-user-relation/src/index.js';
 import {
   eventKey,
@@ -31,8 +33,7 @@ import {
 
 async function makeStore() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  // biome-ignore lint/suspicious/noExplicitAny: src 与 dist 的 PluginModule 类型路径不同，运行时结构等价
-  await app.ctx.useModule(memoryInMemoryModule as any);
+  await app.ctx.useModule(memoryInMemory);
   const mem = app.ctx.getService<MemoryService>('memory');
   if (!mem) throw new Error('memory service missing');
   return { app, mem, store: new RelationStore(mem) };
@@ -207,23 +208,20 @@ describe('行为等价：consolidate 事件召回（dryRun 直驱私有路径）
 
 describe('行为等价：consolidate 实体召回（autoLink + 假 llm 驱动真实入口）', () => {
   async function makeEntityHarness() {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    // biome-ignore lint/suspicious/noExplicitAny: 同 makeStore
-    await app.ctx.useModule(memoryInMemoryModule as any);
-    const mem = app.ctx.getService<MemoryService>('memory');
-    if (!mem) throw new Error('memory service missing');
-    const store = new RelationStore(mem);
+    const { app, mem, store } = await makeStore();
+    // 宿主侧绑定：桩服务经描述符发布，服务引用直接交给 RelationService
+    const host = app.bind({ provide, embedding, llm });
     const embedCalls: string[] = [];
-    app.ctx.provide('embedding', {
+    host.provide(embedding, {
       embed: async (text: string) => {
         embedCalls.push(text);
         return VEC;
       },
-    } as never);
+    });
     // 最小 chat 模型：宽召回的 LLM 终判会拿到不可解析回复而跳过——本测试只关心召回前的向量路径
-    app.ctx.provide('llm', { id: 'fake-chat', capabilities: ['chat'], chat: async () => ({ content: '{}' }) } as never);
-    const service = new RelationService(store, app.ctx);
-    return { app, mem, store, service, embedCalls };
+    host.provide(llm, { id: 'fake-chat', capabilities: ['chat'], chat: async () => ({ content: '{}' }) } as never);
+    const service = new RelationService(store, app.logger, host.embedding);
+    return { app, mem, store, service, host, embedCalls };
   }
 
   function seedTwinEntities(mem: MemoryService, store: RelationStore, withVectors: boolean) {
@@ -238,16 +236,16 @@ describe('行为等价：consolidate 实体召回（autoLink + 假 llm 驱动真
   }
 
   it('hash 命中 + 向量在库：consolidate 全程零 embed 调用', async () => {
-    const { app, mem, store, service, embedCalls } = await makeEntityHarness();
+    const { mem, store, service, host, embedCalls } = await makeEntityHarness();
     await seedTwinEntities(mem, store, true);
-    await service.consolidate({ autoLink: true, llm: { ctx: app.ctx, modelRef: {} } });
+    await service.consolidate({ autoLink: true, llm: { models: host.llm, modelRef: {} } });
     expect(embedCalls, 'hash 一致且向量在库时实体召回不得重算').toHaveLength(0);
   });
 
   it('向量缺失自愈：重算入向量命名空间，节点文档不再内嵌', async () => {
-    const { app, mem, store, service, embedCalls } = await makeEntityHarness();
+    const { mem, store, service, host, embedCalls } = await makeEntityHarness();
     await seedTwinEntities(mem, store, false);
-    await service.consolidate({ autoLink: true, llm: { ctx: app.ctx, modelRef: {} } });
+    await service.consolidate({ autoLink: true, llm: { models: host.llm, modelRef: {} } });
     expect(embedCalls.length, '两个实体各重算一次').toBe(2);
     expect(await store.getVector('entity', 'x1')).toEqual(VEC);
     const raw = (await mem.getMetadata(RELATION_NAMESPACE, 'entity:x1')) as Record<string, unknown>;

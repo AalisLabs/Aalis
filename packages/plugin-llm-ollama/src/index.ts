@@ -1,8 +1,8 @@
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/api-llm';
-import { LLMCapabilities } from '@aalis/api-llm';
-import { createProcessGateway, type ProcessService } from '@aalis/api-process';
+import { LLMCapabilities, llm } from '@aalis/api-llm';
+import { createProcessGateway, type ProcessService, processService } from '@aalis/api-process';
 import type { ToolDefinition } from '@aalis/api-tools';
-import type { Context, Logger } from '@aalis/core';
+import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
@@ -41,14 +41,7 @@ export async function readBodyCapped(res: Response, maxBytes: number): Promise<B
   return Buffer.concat(chunks);
 }
 
-export const name = '@aalis/plugin-llm-ollama';
-export const displayName = 'Ollama';
-export const subsystem = 'llm';
-export const provides = ['llm'];
-export const inject = { optional: ['process'] };
-export const reusable = true;
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   baseUrl: {
     type: 'string',
     label: 'Ollama 地址',
@@ -1092,7 +1085,21 @@ class OllamaModelHandle implements LLMModel {
   }
 }
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
+const uses = { config, logger, lifecycle, provide, proc: optional(processService) };
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-llm-ollama',
+  displayName: 'Ollama',
+  subsystem: 'llm',
+  configSchema,
+  reusable: true,
+  provides: [llm],
+  uses,
+  apply: start,
+});
+
+async function start({ config, logger, lifecycle, provide, proc }: Caps): Promise<void> {
   const ollamaConfig: OllamaConfig = {
     baseUrl: (config.baseUrl as string) ?? 'http://localhost:11434',
     customModels: parseCustomModels(config.customModels),
@@ -1106,10 +1113,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     thinking: config.thinking !== false,
   };
 
-  const client = new OllamaClient(ollamaConfig, ctx.logger, createProcessGateway(ctx));
+  const client = new OllamaClient(ollamaConfig, logger, createProcessGateway(proc));
   const baseLabel = `Ollama (${ollamaConfig.baseUrl.replace(/^https?:\/\//, '')})`;
 
-  // 已注册 model entry 的句柄表：modelId → dispose（来自 ctx.provide 返回值）
+  // 已注册 model entry 的句柄表：modelId → 该 entry 的退订
   const registered = new Map<string, () => void>();
 
   // 前置声明：refresh 闭包稍后定义，但每个 handle 在创建时就需要它的引用
@@ -1130,22 +1137,22 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       detected,
     );
     if (capabilities.length === 0) {
-      ctx.logger.debug(`跳过 model entry "${modelId}": /api/show 未报告对话能力(embedding 等非对话模型)`);
+      logger.debug(`跳过 model entry "${modelId}": /api/show 未报告对话能力(embedding 等非对话模型)`);
       return;
     }
     const handle = new OllamaModelHandle(
       client,
       modelId,
-      ctx.id,
+      lifecycle.id,
       ollamaConfig.contextLength,
       ollamaConfig.maxTokens,
       ollamaConfig.thinking,
       refresh,
       capabilities,
     );
-    const dispose = ctx.provide('llm', handle, {
+    const dispose = provide(llm, handle, {
       label: `${baseLabel} / ${modelId}`,
-      entryId: `${ctx.id}/${modelId}`,
+      entryId: `${lifecycle.id}/${modelId}`,
     });
     registered.set(modelId, dispose);
   }
@@ -1156,7 +1163,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     try {
       d();
     } catch (err) {
-      ctx.logger.warn(`卸载 model entry "${modelId}" 失败: ${err}`);
+      logger.warn(`卸载 model entry "${modelId}" 失败: ${err}`);
     }
     registered.delete(modelId);
   }
@@ -1166,7 +1173,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const remoteSet = new Set(remoteIds);
     for (const cm of ollamaConfig.customModels) {
       if (remoteSet.has(cm)) {
-        ctx.logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
+        logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
       }
     }
     return [...remoteIds, ...ollamaConfig.customModels.filter(id => !remoteSet.has(id))];
@@ -1175,12 +1182,12 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 初次注册
   const initialIds = await discoverAllModelIds();
   if (initialIds.length === 0) {
-    ctx.logger.warn(`Ollama 已连接: ${ollamaConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
+    logger.warn(`Ollama 已连接: ${ollamaConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
   } else {
     // 并行查每个模型的真实能力(顺序保留→注册顺序稳定→优先级稳定);失败者回退家族表。
     const detectedCaps = await Promise.all(initialIds.map(id => client.fetchModelCapabilities(id)));
     for (let i = 0; i < initialIds.length; i++) registerOne(initialIds[i], detectedCaps[i]);
-    ctx.logger.info(`Ollama 已连接: ${ollamaConfig.baseUrl}，注册 ${registered.size} 个 model entry`);
+    logger.info(`Ollama 已连接: ${ollamaConfig.baseUrl}，注册 ${registered.size} 个 model entry`);
   }
 
   // 装配 refresh 真实实现：webui 触发时无需重启插件，按 diff 增删 entries。
@@ -1203,11 +1210,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       }
     }
     if (added.length || removed.length) {
-      ctx.logger.info(
+      logger.info(
         `Ollama 模型列表已刷新: +${added.length} (${added.join(',') || '-'}) / -${removed.length} (${removed.join(',') || '-'}) / 现共 ${registered.size}`,
       );
     } else {
-      ctx.logger.debug(`Ollama 模型列表已刷新: 无变化 (共 ${registered.size})`);
+      logger.debug(`Ollama 模型列表已刷新: 无变化 (共 ${registered.size})`);
     }
     return { added, removed, total: registered.size };
   };

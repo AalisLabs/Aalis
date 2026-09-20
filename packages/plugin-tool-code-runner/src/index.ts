@@ -1,24 +1,12 @@
-import { useCodeSandbox } from '@aalis/api-code-sandbox';
-import { createProcessGateway, type ProcessService } from '@aalis/api-process';
-import type { StorageService } from '@aalis/api-storage';
-import { createStorageGateway, resolveAgainstCwd } from '@aalis/api-storage';
-import { toolsWithGroups, useToolService } from '@aalis/api-tools';
-import type { Context } from '@aalis/core';
+import { codeSandbox } from '@aalis/api-code-sandbox';
+import { createProcessGateway, processService } from '@aalis/api-process';
+import { createStorageGateway, resolveAgainstCwd, storage } from '@aalis/api-storage';
+import { tools, withToolGroups } from '@aalis/api-tools';
+import { type BoundOf, config, definePlugin, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { type RunnerConfig, runCode } from './runner.js';
 
-// ===== 插件元数据 =====
-
-export const name = '@aalis/plugin-tool-code-runner';
-export const displayName = '代码执行器';
-export const subsystem = 'tools';
-export const inject = {
-  // storage 仅按名等待；local-path 由 createRunnerConfig 运行时探测 resolveLocalPath 守卫。
-  required: ['storage', 'process'],
-  optional: ['code-sandbox'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   python: {
     label: 'Python',
     fields: {
@@ -110,7 +98,7 @@ interface CodeRunnerConfig {
   sandbox: { mode: 'auto' | 'none'; network: 'deny' | 'allow' };
 }
 
-function resolveConfig(config: Record<string, unknown>): CodeRunnerConfig {
+function resolveConfig(config: Readonly<Record<string, unknown>>): CodeRunnerConfig {
   const py = config.python as Record<string, unknown> | undefined;
   const js = config.javascript as Record<string, unknown> | undefined;
   const sb = config.sandbox as Record<string, unknown> | undefined;
@@ -147,154 +135,194 @@ function safeEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-async function createRunnerConfig(ctx: Context, cfg: CodeRunnerConfig): Promise<RunnerConfig> {
-  if (!ctx.getAllServices<StorageService>('storage').some(e => typeof e.instance.resolveLocalPath === 'function')) {
+// ===== 插件入口 =====
+
+// storage 仅按名等待；local-path 由 createRunnerConfig 运行时探测 resolveLocalPath 守卫。
+// tools 只被登记、不被读，缺席时登记在账上等提供者到场，因此不设激活闸。
+const uses = {
+  tools: optional(tools),
+  storage,
+  proc: processService,
+  codeSandbox: optional(codeSandbox),
+  logger,
+  config,
+};
+type Caps = BoundOf<typeof uses>;
+
+async function createRunnerConfig(
+  caps: Pick<Caps, 'storage' | 'codeSandbox'>,
+  cfg: CodeRunnerConfig,
+): Promise<RunnerConfig> {
+  if (!caps.storage.all().some(e => typeof e.instance.resolveLocalPath === 'function')) {
     throw new Error('代码执行器需要至少一个支持 local-path 的 storage entry');
   }
-  const storage = createStorageGateway(ctx);
+  const gateway = createStorageGateway(caps.storage);
   const cwdUri = toRunnerCwdUri(cfg.workingDirectory);
   return {
     defaultTimeout: cfg.defaultTimeout,
     maxTimeout: cfg.maxTimeout,
     maxOutputSize: cfg.maxOutputSize,
-    cwd: await storage.resolveLocalPath!(cwdUri, 'read'),
+    cwd: await gateway.resolveLocalPath!(cwdUri, 'read'),
     env: safeEnv(),
     // mode='none' → 不带 sandbox（裸跑）；mode='auto' → 带策略，runCode 经 code-sandbox 强制隔离或 fail-closed
     sandbox: cfg.sandbox.mode === 'none' ? undefined : { network: cfg.sandbox.network },
-    codeSandbox: useCodeSandbox(ctx),
+    codeSandbox: caps.codeSandbox.current,
   };
 }
 
-// ===== 插件入口 =====
+export default definePlugin({
+  name: '@aalis/plugin-tool-code-runner',
+  displayName: '代码执行器',
+  subsystem: 'tools',
+  configSchema,
+  uses,
+  apply(caps) {
+    const { tools, proc, storage, codeSandbox, logger, config } = caps;
+    const cfg = resolveConfig(config);
+    if (cfg.sandbox.mode === 'none') {
+      logger.warn(
+        '⚠️ code-runner 运行在【无隔离】模式（sandbox.mode=none）：代码以宿主用户全权限裸跑，仅在完全可信环境使用。',
+      );
+    }
+    const cwdUri = toRunnerCwdUri(cfg.workingDirectory);
+    const processGateway = createProcessGateway(proc);
+    const storageGateway = createStorageGateway(storage);
+    // 每次调用现取：cwd 要按当时的 storage 实况解析，沙箱后端也可能中途上下线
+    const runnerDeps = { storage, codeSandbox };
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
-  const cfg = resolveConfig(config);
-  if (cfg.sandbox.mode === 'none') {
-    ctx.logger.warn(
-      '⚠️ code-runner 运行在【无隔离】模式（sandbox.mode=none）：代码以宿主用户全权限裸跑，仅在完全可信环境使用。',
-    );
-  }
-  const cwdUri = toRunnerCwdUri(cfg.workingDirectory);
-  const proc: ProcessService = createProcessGateway(ctx);
-  const storage: StorageService = createStorageGateway(ctx);
+    // 创建带分组标记的工具视图
+    const groupTools = withToolGroups(tools, ['code-runner']);
 
-  // 创建带分组标记的工具视图
-  const baseTools = useToolService(ctx);
-  const groupTools = toolsWithGroups(baseTools, ['code-runner']);
-
-  // 注册工具分组
-  baseTools.registerGroup({
-    name: 'code-runner',
-    label: '代码执行',
-    description: '编写并运行 Python / JavaScript 代码来解决计算、分析、文件处理等问题',
-  });
-
-  const osName = process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : 'Linux';
-
-  // ==================== run_python ====================
-  if (cfg.python.enabled) {
-    groupTools.register({
-      definition: {
-        type: 'function',
-        function: {
-          name: 'run_python',
-          description:
-            `在本机 ${osName} 系统上编写并执行一段 Python 脚本，返回 stdout 和 stderr。` +
-            '代码会保存到临时文件后执行，无需担心转义问题，可以编写任意多行代码。\n\n' +
-            '**适用场景（请在合适时主动使用）：**\n' +
-            '- 复杂数学计算、方程求解、符号推导（math / sympy / numpy / scipy）\n' +
-            '- 数据统计分析、CSV/JSON 数据处理（pandas / json / csv）\n' +
-            '- 批量文件解析与文本处理（正则匹配、格式转换、批量重命名）\n' +
-            '- 编码转换、加解密、哈希计算（base64 / hashlib）\n' +
-            '- 日期 / 时间计算（datetime / calendar）\n' +
-            '- 需要精确结果而非近似回答的任何计算问题\n' +
-            '- 生成结构化输出（表格、Markdown、LaTeX）\n\n' +
-            '**使用技巧：**\n' +
-            '- 将最终结果通过 print() 输出，该输出会作为工具返回值\n' +
-            '- 可使用标准库和已安装的第三方库（如 numpy, sympy, pandas 等）\n' +
-            '- 处理多个文件时，在一个脚本内循环处理并汇总输出，效率远高于多次调用\n' +
-            '- 若需读写文件，请优先使用相对于逻辑工作目录的路径；不要依赖宿主机绝对路径',
-          parameters: {
-            type: 'object',
-            properties: {
-              code: {
-                type: 'string',
-                description: '完整的 Python 脚本源代码',
-              },
-              timeout: {
-                type: 'number',
-                description: `超时毫秒数（可选，默认 ${cfg.defaultTimeout}，最大 ${cfg.maxTimeout}）`,
-              },
-            },
-            required: ['code'],
-            additionalProperties: false,
-          },
-        },
-      },
-      visibility: 'restricted',
-      handler: async args => {
-        const code = args.code as string;
-        const timeout = args.timeout as number | undefined;
-        ctx.logger.debug(`run_python: ${code.length} 字符`);
-        const runnerConfig = await createRunnerConfig(ctx, cfg);
-        const result = await runCode(proc, storage, cfg.python.interpreter, code, '.py', runnerConfig, timeout);
-        return JSON.stringify(result);
-      },
+    // 注册工具分组
+    tools.registerGroup({
+      name: 'code-runner',
+      label: '代码执行',
+      description: '编写并运行 Python / JavaScript 代码来解决计算、分析、文件处理等问题',
     });
 
-    ctx.logger.info(`Python 代码执行工具已启用 (解释器: ${cfg.python.interpreter})`);
-  }
+    const osName = process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : 'Linux';
 
-  // ==================== run_javascript ====================
-  if (cfg.javascript.enabled) {
-    groupTools.register({
-      definition: {
-        type: 'function',
-        function: {
-          name: 'run_javascript',
-          description:
-            `在本机 ${osName} 系统上编写并执行一段 JavaScript (Node.js) 脚本，返回 stdout 和 stderr。` +
-            '代码会保存为 .mjs 文件（ESM 模块）后执行，支持 top-level await。\n\n' +
-            '**适用场景（请在合适时主动使用）：**\n' +
-            '- JSON 数据处理与转换\n' +
-            '- 正则表达式测试与文本处理\n' +
-            '- Node.js API 调用、文件系统操作\n' +
-            '- HTTP 请求与 API 测试（fetch）\n' +
-            '- 需要 JavaScript 运行时特性的验证和计算\n\n' +
-            '**使用技巧：**\n' +
-            '- 通过 console.log() 输出结果\n' +
-            '- 使用 ESM import 语法导入模块\n' +
-            '- 支持 top-level await，可直接使用 await fetch(...) 等',
-          parameters: {
-            type: 'object',
-            properties: {
-              code: {
-                type: 'string',
-                description: '完整的 JavaScript (Node.js ESM) 脚本源代码',
+    // ==================== run_python ====================
+    if (cfg.python.enabled) {
+      groupTools.register({
+        definition: {
+          type: 'function',
+          function: {
+            name: 'run_python',
+            description:
+              `在本机 ${osName} 系统上编写并执行一段 Python 脚本，返回 stdout 和 stderr。` +
+              '代码会保存到临时文件后执行，无需担心转义问题，可以编写任意多行代码。\n\n' +
+              '**适用场景（请在合适时主动使用）：**\n' +
+              '- 复杂数学计算、方程求解、符号推导（math / sympy / numpy / scipy）\n' +
+              '- 数据统计分析、CSV/JSON 数据处理（pandas / json / csv）\n' +
+              '- 批量文件解析与文本处理（正则匹配、格式转换、批量重命名）\n' +
+              '- 编码转换、加解密、哈希计算（base64 / hashlib）\n' +
+              '- 日期 / 时间计算（datetime / calendar）\n' +
+              '- 需要精确结果而非近似回答的任何计算问题\n' +
+              '- 生成结构化输出（表格、Markdown、LaTeX）\n\n' +
+              '**使用技巧：**\n' +
+              '- 将最终结果通过 print() 输出，该输出会作为工具返回值\n' +
+              '- 可使用标准库和已安装的第三方库（如 numpy, sympy, pandas 等）\n' +
+              '- 处理多个文件时，在一个脚本内循环处理并汇总输出，效率远高于多次调用\n' +
+              '- 若需读写文件，请优先使用相对于逻辑工作目录的路径；不要依赖宿主机绝对路径',
+            parameters: {
+              type: 'object',
+              properties: {
+                code: {
+                  type: 'string',
+                  description: '完整的 Python 脚本源代码',
+                },
+                timeout: {
+                  type: 'number',
+                  description: `超时毫秒数（可选，默认 ${cfg.defaultTimeout}，最大 ${cfg.maxTimeout}）`,
+                },
               },
-              timeout: {
-                type: 'number',
-                description: `超时毫秒数（可选，默认 ${cfg.defaultTimeout}，最大 ${cfg.maxTimeout}）`,
-              },
+              required: ['code'],
+              additionalProperties: false,
             },
-            required: ['code'],
-            additionalProperties: false,
           },
         },
-      },
-      visibility: 'restricted',
-      handler: async args => {
-        const code = args.code as string;
-        const timeout = args.timeout as number | undefined;
-        ctx.logger.debug(`run_javascript: ${code.length} 字符`);
-        const runnerConfig = await createRunnerConfig(ctx, cfg);
-        const result = await runCode(proc, storage, cfg.javascript.interpreter, code, '.mjs', runnerConfig, timeout);
-        return JSON.stringify(result);
-      },
-    });
+        visibility: 'restricted',
+        handler: async args => {
+          const code = args.code as string;
+          const timeout = args.timeout as number | undefined;
+          logger.debug(`run_python: ${code.length} 字符`);
+          const runnerConfig = await createRunnerConfig(runnerDeps, cfg);
+          const result = await runCode(
+            processGateway,
+            storageGateway,
+            cfg.python.interpreter,
+            code,
+            '.py',
+            runnerConfig,
+            timeout,
+          );
+          return JSON.stringify(result);
+        },
+      });
 
-    ctx.logger.info(`JavaScript 代码执行工具已启用 (解释器: ${cfg.javascript.interpreter})`);
-  }
+      logger.info(`Python 代码执行工具已启用 (解释器: ${cfg.python.interpreter})`);
+    }
 
-  ctx.logger.info(`代码执行器插件已启动 (工作目录: ${cwdUri})`);
-}
+    // ==================== run_javascript ====================
+    if (cfg.javascript.enabled) {
+      groupTools.register({
+        definition: {
+          type: 'function',
+          function: {
+            name: 'run_javascript',
+            description:
+              `在本机 ${osName} 系统上编写并执行一段 JavaScript (Node.js) 脚本，返回 stdout 和 stderr。` +
+              '代码会保存为 .mjs 文件（ESM 模块）后执行，支持 top-level await。\n\n' +
+              '**适用场景（请在合适时主动使用）：**\n' +
+              '- JSON 数据处理与转换\n' +
+              '- 正则表达式测试与文本处理\n' +
+              '- Node.js API 调用、文件系统操作\n' +
+              '- HTTP 请求与 API 测试（fetch）\n' +
+              '- 需要 JavaScript 运行时特性的验证和计算\n\n' +
+              '**使用技巧：**\n' +
+              '- 通过 console.log() 输出结果\n' +
+              '- 使用 ESM import 语法导入模块\n' +
+              '- 支持 top-level await，可直接使用 await fetch(...) 等',
+            parameters: {
+              type: 'object',
+              properties: {
+                code: {
+                  type: 'string',
+                  description: '完整的 JavaScript (Node.js ESM) 脚本源代码',
+                },
+                timeout: {
+                  type: 'number',
+                  description: `超时毫秒数（可选，默认 ${cfg.defaultTimeout}，最大 ${cfg.maxTimeout}）`,
+                },
+              },
+              required: ['code'],
+              additionalProperties: false,
+            },
+          },
+        },
+        visibility: 'restricted',
+        handler: async args => {
+          const code = args.code as string;
+          const timeout = args.timeout as number | undefined;
+          logger.debug(`run_javascript: ${code.length} 字符`);
+          const runnerConfig = await createRunnerConfig(runnerDeps, cfg);
+          const result = await runCode(
+            processGateway,
+            storageGateway,
+            cfg.javascript.interpreter,
+            code,
+            '.mjs',
+            runnerConfig,
+            timeout,
+          );
+          return JSON.stringify(result);
+        },
+      });
+
+      logger.info(`JavaScript 代码执行工具已启用 (解释器: ${cfg.javascript.interpreter})`);
+    }
+
+    logger.info(`代码执行器插件已启动 (工作目录: ${cwdUri})`);
+  },
+});

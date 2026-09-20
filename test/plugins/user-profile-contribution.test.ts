@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { llm } from '../../packages/api-llm/src/index.js';
+import { type MemoryService, memory as memoryService } from '../../packages/api-memory/src/index.js';
+import { App, contributions, logger, provide } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import * as userProfileModule from '../../packages/plugin-user-profile/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
+import userProfile from '../../packages/plugin-user-profile/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -28,14 +29,17 @@ function makeFact(id: string, text: string, category?: string, updatedAt = TS) {
 
 async function setup(config: Record<string, unknown> = {}) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  // user-profile 的 inject.required 含 'llm'；build 路径不会触达它，
+  // 组装器只要两样能力：agent:prompt 的枚举与日志；provide / memory 供本测试自己种数据。
+  const host = app.bind({ provide, contributions, logger, memory: memoryService });
+  // user-profile 的 uses 含 required 的 llm；build 路径不会触达它，
   // 这里只需一个占位 provider 让插件能激活（不联网、不调真模型）。
-  app.ctx.provide('llm', { chat: async () => ({ content: '' }) } as never);
-  await app.ctx.useModule(memoryInMemoryModule);
-  const memory = app.ctx.getService<MemoryService>('memory');
+  host.provide(llm, { chat: async () => ({ content: '' }) } as never);
+  await app.plugins.register(memoryInMemory, {});
+  await app.plugins.idle();
+  const memory: MemoryService | undefined = host.memory.current;
   if (!memory) throw new Error('memory 服务未就绪');
   // 读取计数代理：透传原实现，只记 getMetadata/listMetadata 调用次数。
-  // 插件每次经 getService 取到的都是同一实例，实例属性覆盖原型方法即全程生效。
+  // 插件每次经绑定接口取到的都是同一实例，实例属性覆盖原型方法即全程生效。
   const reads = { count: 0 };
   const rawGetMetadata = memory.getMetadata.bind(memory);
   const rawListMetadata = memory.listMetadata.bind(memory);
@@ -47,9 +51,9 @@ async function setup(config: Record<string, unknown> = {}) {
     reads.count += 1;
     return rawListMetadata(namespace);
   };
-  await app.ctx.useModule(userProfileModule, config);
+  await app.plugins.register(userProfile, config);
   await app.plugins.idle();
-  return { app, memory, reads };
+  return { host, memory, reads };
 }
 
 /**
@@ -83,12 +87,12 @@ async function seedPrimaryProfile(memory: MemoryService) {
 
 describe('plugin-user-profile: agent:prompt 贡献', () => {
   it('dryRun：不注入，且完全跳过档案 IO（零元数据读取）', async () => {
-    const { app, memory, reads } = await setup();
+    const { host, memory, reads } = await setup();
     await seedPrimaryProfile(memory);
 
     const messages = baseMessages();
     reads.count = 0; // 只统计本次组装期间的读取
-    await assemblePromptContributions(app.ctx, {
+    await assemblePromptContributions(host, {
       messages,
       sessionId: 's1',
       userId: 'u1',
@@ -107,11 +111,11 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     'immediate',
     undefined,
   ] as const)('triggerType=%s + 主发言者有档案：注入完整档案块（含事实与关系强度）', async triggerType => {
-    const { app, memory } = await setup();
+    const { host, memory } = await setup();
     await seedPrimaryProfile(memory);
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, {
+    await assemblePromptContributions(host, {
       messages,
       sessionId: 's1',
       userId: 'u1',
@@ -139,7 +143,7 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
   });
 
   it('多块返回：准则 → 自档案 → 主发言者档案 → 其他参与者，块序稳定且共用同一 injector 键', async () => {
-    const { app, memory } = await setup({
+    const { host, memory } = await setup({
       enableInstructions: true,
       enableSelfProfile: true,
       maxOtherParticipants: 3,
@@ -175,7 +179,7 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     const messages = baseMessages([
       { role: 'user', content: '我也在', metadata: { userId: 'u2', platform: 'onebot', nickname: '小二' } },
     ]);
-    await assemblePromptContributions(app.ctx, {
+    await assemblePromptContributions(host, {
       messages,
       sessionId: 's1',
       userId: 'u1',
@@ -213,11 +217,11 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
   });
 
   it('triggerType=interval：不注入主发言者完整档案，改为「在场参与者」compact 摘要', async () => {
-    const { app, memory } = await setup({ maxOtherParticipants: 3 });
+    const { host, memory } = await setup({ maxOtherParticipants: 3 });
     await seedPrimaryProfile(memory);
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, {
+    await assemblePromptContributions(host, {
       messages,
       sessionId: 's1',
       userId: 'u1',
@@ -237,11 +241,11 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
   });
 
   it('triggerType=interval + maxOtherParticipants=0：完全不注入', async () => {
-    const { app, memory } = await setup({ maxOtherParticipants: 0 });
+    const { host, memory } = await setup({ maxOtherParticipants: 0 });
     await seedPrimaryProfile(memory);
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, {
+    await assemblePromptContributions(host, {
       messages,
       sessionId: 's1',
       userId: 'u1',
@@ -252,9 +256,9 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
   });
 
   it('无任何档案：build 返回 null，不注入', async () => {
-    const { app } = await setup();
+    const { host } = await setup();
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, {
+    await assemblePromptContributions(host, {
       messages,
       sessionId: 's1',
       userId: 'u1',
@@ -266,7 +270,7 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
   });
 
   it('主发言者档案只剩过期 temporary 事实：不注入', async () => {
-    const { app, memory } = await setup({ temporaryFactMaxAgeDays: 90, maxOtherParticipants: 0 });
+    const { host, memory } = await setup({ temporaryFactMaxAgeDays: 90, maxOtherParticipants: 0 });
     const stale = Date.now() - 200 * 86_400_000;
     await memory.saveMetadata(PROFILE_NS, 'onebot:u1', {
       facts: [
@@ -285,7 +289,7 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     });
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, {
+    await assemblePromptContributions(host, {
       messages,
       sessionId: 's1',
       userId: 'u1',
@@ -296,7 +300,7 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
   });
 
   it('enableSelfProfile=false：已有自档案也不注入', async () => {
-    const { app, memory } = await setup({ enableSelfProfile: false, maxOtherParticipants: 0 });
+    const { host, memory } = await setup({ enableSelfProfile: false, maxOtherParticipants: 0 });
     await memory.saveMetadata(PROFILE_NS, SELF_KEY, {
       facts: [makeFact('s001', '自我观察占位')],
       updatedAt: TS,
@@ -304,7 +308,7 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
     await seedPrimaryProfile(memory);
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, {
+    await assemblePromptContributions(host, {
       messages,
       sessionId: 's1',
       userId: 'u1',
@@ -319,7 +323,7 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
   });
 
   it('allowGlobalBackfill 跨会话补齐：自档案不会被当作「在场参与者」泄漏', async () => {
-    const { app, memory } = await setup({
+    const { host, memory } = await setup({
       allowGlobalBackfill: true,
       maxOtherParticipants: 3,
       enableSelfProfile: false,
@@ -341,7 +345,7 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
       { role: 'system', content: 'persona' },
       { role: 'user', content: '（群里有人闲聊）' },
     ];
-    await assemblePromptContributions(app.ctx, {
+    await assemblePromptContributions(host, {
       messages,
       sessionId: 's1',
       platform: 'onebot',
@@ -358,7 +362,7 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
   });
 
   it('幂等：同一 messages 重复组装不重复注入', async () => {
-    const { app, memory } = await setup();
+    const { host, memory } = await setup();
     await seedPrimaryProfile(memory);
 
     const messages = baseMessages();
@@ -369,8 +373,8 @@ describe('plugin-user-profile: agent:prompt 贡献', () => {
       platform: 'onebot',
       triggerType: 'direct' as const,
     };
-    await assemblePromptContributions(app.ctx, view);
-    await assemblePromptContributions(app.ctx, view);
+    await assemblePromptContributions(host, view);
+    await assemblePromptContributions(host, view);
     expect(injectedBlocks(messages)).toHaveLength(1);
   });
 });

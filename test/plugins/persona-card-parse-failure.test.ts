@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { PersonaService } from '../../packages/api-persona/src/index.js';
 import { App, type Logger } from '../../packages/core/src/index.js';
-import * as personaModule from '../../packages/plugin-persona/src/index.js';
-import * as storageLocalModule from '../../packages/plugin-storage-local/src/index.js';
+import personaPlugin from '../../packages/plugin-persona/src/index.js';
+import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 坏角色卡不能静默：YAML 解析失败曾被 catch 吞成 undefined，与"文件不存在"
@@ -45,7 +45,7 @@ describe('persona 坏角色卡的告警与守卫（真 fs）', () => {
   const bootPersona = async (persona: string): Promise<PersonaService> => {
     logs = [];
     app = new App({ config: { name: 'T', logLevel: 'debug', plugins: {} }, logger: recordingLogger(logs) });
-    await app.ctx.useModule(storageLocalModule as never, {
+    await app.ctx.useModule(storageLocal, {
       roots: [
         {
           name: 'data',
@@ -59,7 +59,7 @@ describe('persona 坏角色卡的告警与守卫（真 fs）', () => {
         },
       ],
     });
-    await app.ctx.useModule(personaModule as never, { persona, personasDir: 'data/personas' });
+    await app.ctx.useModule(personaPlugin, { persona, personasDir: 'data/personas' });
     return app.ctx.getService<PersonaService>('persona')!;
   };
 

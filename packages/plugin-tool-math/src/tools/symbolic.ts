@@ -1,4 +1,4 @@
-import type { ScopedToolService } from '@aalis/api-tools';
+import type { BoundTools } from '@aalis/api-tools';
 import { all, create, type MathNode } from 'mathjs';
 
 const math = create(all, {
@@ -18,7 +18,7 @@ const math = create(all, {
  * - 多元方程 solve（mathjs 只有数值 lusolve 和单变量根）
  * - 极限的 ε-δ 推理（仍需 LLM 自己分析路径）
  */
-export function registerSymbolicTools(tools: ScopedToolService): void {
+export function registerSymbolicTools(tools: BoundTools): void {
   tools.register({
     definition: {
       type: 'function',

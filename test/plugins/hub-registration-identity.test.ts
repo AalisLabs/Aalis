@@ -2,13 +2,13 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AgentService } from '../../packages/api-agent/src/index.js';
+import { agent } from '../../packages/api-agent/src/index.js';
 import { toolsWithGroups, useToolService } from '../../packages/api-tools/src/index.js';
-import type { WebUIService } from '../../packages/api-webui/src/index.js';
-import { App, type Context } from '../../packages/core/src/index.js';
-import * as agentPlugin from '../../packages/plugin-agent/src/index.js';
+import { webuiServer } from '../../packages/api-webui/src/index.js';
+import { App, type Context, hooks, services } from '../../packages/core/src/index.js';
+import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
-import * as webuiServer from '../../packages/plugin-webui-server/src/index.js';
+import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 枢纽服务的退订闭包必须按「这一次登记」比对，而不是按 name + contextId：
@@ -244,7 +244,7 @@ describe('webui-server 页面退订按条目身份', () => {
   it('同 key 重注册后，旧退订闭包不摘掉新登记', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger: silentLogger() });
     apps.push(app);
-    await app.ctx.useModule(webuiServer as never, {
+    await app.plugins.register(webuiServerPlugin, {
       port: await freePort(),
       host: '127.0.0.1',
       autoOpen: false,
@@ -252,7 +252,7 @@ describe('webui-server 页面退订按条目身份', () => {
       fixedToken: 'test-fixed-token-placeholder',
     });
     await app.plugins.idle();
-    const svc = app.ctx.getService<WebUIService>('webui-server')!;
+    const svc = app.bind({ services }).services.get(webuiServer)!;
     const pages = () => svc.getPages().filter(p => p.pluginName === 'p');
 
     const oldOff = svc.registerPage({ key: 'k', label: 'old' }, 'p');
@@ -275,15 +275,17 @@ describe('webui-server 页面退订按条目身份', () => {
 describe('agent 预处理器退订按条目身份', () => {
   it('同名替换后，旧退订闭包只摘自己的中间件，不删新登记的账目', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger: silentLogger() });
-    const ctx = app.ctx.fork('agent');
-    await agentPlugin.apply(ctx, {});
-    const svc = ctx.getService<AgentService>('agent')!;
+    await app.plugins.register(agentPlugin, {});
+    await app.plugins.idle();
+    const host = app.bind({ services, hooks });
+    const svc = host.services.get(agent)!;
     const ran: string[] = [];
     const handler = (tag: string) => async (_m: unknown, next: () => Promise<void>) => {
       ran.push(tag);
       await next();
     };
-    const run = () => ctx.runHook('agent:input:before', { message: {} as never, metadata: {} }, async () => undefined);
+    const run = () =>
+      host.hooks.run('agent:input:before', { message: {} as never, metadata: {} }, async () => undefined);
 
     const oldOff = svc.registerPreprocessor!('x', handler('old'));
     svc.registerPreprocessor!('x', handler('new'));

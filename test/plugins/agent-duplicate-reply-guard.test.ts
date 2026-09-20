@@ -5,11 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AgentService } from '../../packages/api-agent/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as agentModule from '../../packages/plugin-agent/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import * as messageArchiveModule from '../../packages/plugin-message-archive/src/index.js';
-import * as personaModule from '../../packages/plugin-persona/src/index.js';
-import * as storageLocalModule from '../../packages/plugin-storage-local/src/index.js';
+import agentPlugin from '../../packages/plugin-agent/src/index.js';
+import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
+import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
+import personaPlugin from '../../packages/plugin-persona/src/index.js';
+import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import type { OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
@@ -58,7 +58,7 @@ describe('agent 重复回复守卫（outputFormat 人设 · 真 fs 角色卡）'
   const boot = async (clientSide: boolean): Promise<{ sent: OutgoingMessage[]; sessionId: string }> => {
     writeFileSync(join(base, 'personas', 'zz-fmt.yaml'), cardYaml(clientSide));
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocalModule as never, {
+    await app.ctx.useModule(storageLocalPlugin, {
       roots: [
         {
           name: 'data',
@@ -73,10 +73,10 @@ describe('agent 重复回复守卫（outputFormat 人设 · 真 fs 角色卡）'
       ],
     });
     await app.ctx.useModule(createMockLLMPlugin({ responses: [{ content: RAW_JSON }] }));
-    await app.ctx.useModule(memoryInMemoryModule as never);
-    await app.ctx.useModule(messageArchiveModule as never, { debugLogs: false });
-    await app.ctx.useModule(personaModule as never, { persona: 'zz-fmt', personasDir: 'data/personas' });
-    await app.ctx.useModule(agentModule as never, AGENT_CONFIG);
+    await app.ctx.useModule(memoryInMemoryPlugin);
+    await app.ctx.useModule(messageArchivePlugin, { debugLogs: false });
+    await app.ctx.useModule(personaPlugin, { persona: 'zz-fmt', personasDir: 'data/personas' });
+    await app.ctx.useModule(agentPlugin, AGENT_CONFIG);
 
     const sent: OutgoingMessage[] = [];
     app.ctx.on('outbound:message', (msg: OutgoingMessage) => {

@@ -76,9 +76,15 @@ function setup() {
     get: (path: string, ...handlers: Handler[]) => void routes.set(`GET ${path}`, handlers[handlers.length - 1]),
     post: (path: string, ...handlers: Handler[]) => void routes.set(`POST ${path}`, handlers[handlers.length - 1]),
   };
-  const ctx = { logger: { debug() {}, warn() {} }, getService: () => undefined };
-  registerUploadedFilesRoutes(app as never, ctx as never, { storage: memoryStorage(files) as never }, (() =>
-    () => {}) as never);
+  registerUploadedFilesRoutes(
+    app as never,
+    {
+      storage: memoryStorage(files) as never,
+      logger: { debug() {}, warn() {} } as never,
+      fileIndex: () => undefined,
+    },
+    (() => () => {}) as never,
+  );
   const call = async (key: string, req: Record<string, unknown>) => {
     const { res, out } = fakeRes();
     await routes.get(key)!(req, res);

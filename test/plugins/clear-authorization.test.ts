@@ -1,8 +1,10 @@
-import { App } from '@aalis/core';
+import { App, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import type { AuthorityService } from '../../packages/api-authority/src/index.js';
-import * as commandsModule from '../../packages/plugin-commands/src/index.js';
-import * as memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
+import { type AuthorityService, authority } from '../../packages/api-authority/src/index.js';
+import { type BoundCommands, commands as commandsService } from '../../packages/api-commands/src/index.js';
+import { gateway } from '../../packages/api-gateway/src/index.js';
+import commandsPlugin from '../../packages/plugin-commands/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // /clear 的分场景授权
@@ -31,30 +33,33 @@ function fakeAuthority(levels: Record<string, number>, owners: string[] = []): A
 
 async function setup(levels: Record<string, number>, owners: string[] = []) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(memoryInMemory);
-  app.ctx.provide('authority', fakeAuthority(levels, owners));
-  await app.ctx.useModule(commandsModule as never, {});
+  const host = app.bind({ provide, commands: commandsService });
+  await app.plugins.register(memoryInMemory, {});
+  host.provide(authority, fakeAuthority(levels, owners));
+  // plugin-commands 把 gateway 声明为 required（命令结果经它出站）。本测直接驱动 /clear
+  // 的 action，不走入站管道，给一份只满足「在场」的桩即可让它过激活闸。
+  host.provide(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
+  await app.plugins.register(commandsPlugin, {});
   await app.plugins.idle();
-  return app;
+  return { app, commands: host.commands };
 }
 
 /** 直接驱动已注册的 /clear action，绕开网关的解析层 */
 async function runClear(
-  app: App,
+  commands: BoundCommands,
   session: { sessionId: string; platform: string; userId?: string; sessionType?: 'group' | 'private' | 'channel' },
 ): Promise<string> {
-  const cmds = app.ctx.getService<{
-    getAll(): Array<{ name: string; handler: (argv: unknown) => Promise<string> }>;
-  }>('commands');
-  const clear = cmds?.getAll().find(c => c.name === 'clear');
-  if (!clear) throw new Error('/clear 未注册');
-  return clear.handler({ session: { ...session, raw: '/clear' }, options: {}, args: [] });
+  const clear = commands.current?.getAll().find(c => c.name === 'clear');
+  if (!clear?.handler) throw new Error('/clear 未注册');
+  const out = await clear.handler({ session: { ...session, raw: '/clear' }, options: {} });
+  if (typeof out !== 'string') throw new Error('/clear 没有返回结果');
+  return out;
 }
 
 describe('/clear 分场景授权', () => {
   it('私聊：level-0 用户可以清理自己的会话（自助权不被剥夺）', async () => {
-    const app = await setup({ 'onebot:u1': 0 });
-    const out = await runClear(app, {
+    const { app, commands } = await setup({ 'onebot:u1': 0 });
+    const out = await runClear(commands, {
       sessionId: 's-private',
       platform: 'onebot',
       userId: 'u1',
@@ -65,8 +70,8 @@ describe('/clear 分场景授权', () => {
   });
 
   it('群聊：level-0 用户被拒，提示里说明私聊可自助', async () => {
-    const app = await setup({ 'onebot:u1': 0 });
-    const out = await runClear(app, {
+    const { app, commands } = await setup({ 'onebot:u1': 0 });
+    const out = await runClear(commands, {
       sessionId: 'onebot:g1',
       platform: 'onebot',
       userId: 'u1',
@@ -78,8 +83,8 @@ describe('/clear 分场景授权', () => {
   });
 
   it('群聊：level-2 用户放行', async () => {
-    const app = await setup({ 'onebot:u2': 2 });
-    const out = await runClear(app, {
+    const { app, commands } = await setup({ 'onebot:u2': 2 });
+    const out = await runClear(commands, {
       sessionId: 'onebot:g1',
       platform: 'onebot',
       userId: 'u2',
@@ -90,8 +95,8 @@ describe('/clear 分场景授权', () => {
   });
 
   it('群聊：owner 放行（不看等级）', async () => {
-    const app = await setup({}, ['onebot:boss']);
-    const out = await runClear(app, {
+    const { app, commands } = await setup({}, ['onebot:boss']);
+    const out = await runClear(commands, {
       sessionId: 'onebot:g1',
       platform: 'onebot',
       userId: 'boss',

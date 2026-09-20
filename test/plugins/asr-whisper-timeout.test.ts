@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { App } from '../../packages/core/src/index.js';
-import * as whisper from '../../packages/plugin-asr-whisper-cpp/src/index.js';
+import whisper from '../../packages/plugin-asr-whisper-cpp/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 两处 execFile 必须带 timeout：LocalProcessService.spawn 只在 opts.timeout>0 时才武装
@@ -52,7 +52,8 @@ describe('plugin-asr-whisper-cpp: 子进程必须带超时', () => {
     const calls: Call[] = [];
     const app = makeApp(calls);
     apps.push(app);
-    await app.ctx.useModule(whisper as never, { modelPath: '/models/ggml.bin', timeoutMs: 30_000 });
+    await app.plugin(whisper, { modelPath: '/models/ggml.bin', timeoutMs: 30_000 });
+    await app.plugins.idle();
 
     const asr = app.ctx.getService<{
       transcribe: (i: unknown) => Promise<{ text: string }>;

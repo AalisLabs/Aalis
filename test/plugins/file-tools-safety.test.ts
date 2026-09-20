@@ -3,7 +3,7 @@ import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { RegisteredTool, ScopedToolService } from '../../packages/api-tools/src/index.js';
+import type { BoundTools, RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { CwdState } from '../../packages/plugin-tool-system/src/tools/cwd-state.js';
 import { registerFileTools } from '../../packages/plugin-tool-system/src/tools/file.js';
 
@@ -72,13 +72,15 @@ beforeEach(() => {
   unreadable = new Set<string>();
   ioFailing = new Set<string>();
   const tools: Record<string, Omit<RegisteredTool, 'pluginName'>> = {};
-  const svc = {
+  const svc: BoundTools = {
     register: (t: Omit<RegisteredTool, 'pluginName'>) => {
       tools[t.definition.function.name] = t;
       return () => undefined;
     },
     registerGroup: () => () => undefined,
-  } as unknown as ScopedToolService;
+    current: undefined,
+    follow: () => () => undefined,
+  };
   registerFileTools(svc, {
     maxReadSize: 1048576,
     maxSearchBytes: 1048576,

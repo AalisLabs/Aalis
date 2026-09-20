@@ -1,8 +1,7 @@
 import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import type { ToolService } from '../../packages/api-tools/src/index.js';
-import { useToolService } from '../../packages/api-tools/src/index.js';
-import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import { tools as toolsService } from '../../packages/api-tools/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 守卫（authority 的人工确认）可能等很久：期间回合被 latest-wins / 手动 abort 掐掉后，
@@ -11,10 +10,11 @@ import * as toolsModule from '../../packages/plugin-tools/src/index.js';
 
 async function setup() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(toolsModule as never, {});
+  await app.plugins.register(toolsPlugin, {});
   await app.plugins.idle();
   let executed = 0;
-  useToolService(app.ctx).register({
+  const host = app.bind({ tools: toolsService });
+  host.tools.register({
     definition: {
       type: 'function',
       function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -24,7 +24,7 @@ async function setup() {
       return 'done';
     },
   });
-  const tools = app.ctx.getService<ToolService>('tools');
+  const tools = host.tools.current;
   if (!tools) throw new Error('tools 服务未注册');
   return { app, tools, executed: () => executed };
 }

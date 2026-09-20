@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TokenUsageEvent } from '../../packages/api-agent/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as agentModule from '../../packages/plugin-agent/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import * as messageArchiveModule from '../../packages/plugin-message-archive/src/index.js';
+import agent from '../../packages/plugin-agent/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
+import messageArchive from '../../packages/plugin-message-archive/src/index.js';
 import { resolveSessionPlatform } from '../../packages/plugin-webui-server/src/index.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
@@ -35,9 +35,10 @@ afterEach(async () => {
 async function boot(): Promise<TokenUsageEvent[]> {
   app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
   await app.ctx.useModule(createMockLLMPlugin({}));
-  await app.ctx.useModule(memoryInMemoryModule as never);
-  await app.ctx.useModule(messageArchiveModule as never, { debugLogs: false });
-  await app.ctx.useModule(agentModule as never, AGENT_CONFIG);
+  await app.plugins.register(memoryInMemory, {});
+  await app.plugins.register(messageArchive, { debugLogs: false });
+  await app.plugins.register(agent, AGENT_CONFIG);
+  await app.plugins.idle();
   const seen: TokenUsageEvent[] = [];
   app.ctx.on('token:usage', (u: TokenUsageEvent) => {
     seen.push(u);

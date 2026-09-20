@@ -1,4 +1,4 @@
-import type { Context } from '@aalis/core';
+import type { Logger } from '@aalis/core';
 import { safeFetch } from '@aalis/util-network-guard';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
@@ -48,7 +48,7 @@ export function waitWritable(res: DrainTarget): Promise<boolean> {
  * 仅做透明代理：不缓存到磁盘，不重写 EXIF，纯流式转发。auth 中间件已在外层挂载，
  * 未登录请求拿不到 cookie 自然过不来；这里只关心 SSRF 与体积/超时。
  */
-export function registerProxyRoutes(expressApp: express.Express, ctx: Context, gate: RouteGate): void {
+export function registerProxyRoutes(expressApp: express.Express, logger: Logger, gate: RouteGate): void {
   expressApp.get('/api/proxy/image', gate(), async (req, res) => {
     const raw = req.query.url;
     if (typeof raw !== 'string' || !raw) {
@@ -129,7 +129,7 @@ export function registerProxyRoutes(expressApp: express.Express, ctx: Context, g
       res.end();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      ctx.logger.warn(`图片代理失败 url=${raw} err=${msg}`);
+      logger.warn(`图片代理失败 url=${raw} err=${msg}`);
       if (!res.headersSent) res.status(502).json({ error: `代理失败: ${msg}` });
       else res.end();
     } finally {

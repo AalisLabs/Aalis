@@ -1,5 +1,5 @@
-import type { ScopedToolService } from '@aalis/api-tools';
-export function registerGeometryTools(tools: ScopedToolService): void {
+import type { BoundTools } from '@aalis/api-tools';
+export function registerGeometryTools(tools: BoundTools): void {
   tools.register({
     definition: {
       type: 'function',

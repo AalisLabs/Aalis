@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import {
   type EventEntityEdge,
   type EvidenceRef,
@@ -32,8 +32,7 @@ import {
 
 async function makeService() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  // biome-ignore lint/suspicious/noExplicitAny: src 与 dist 的 PluginModule 类型路径不同，运行时结构等价
-  await app.ctx.useModule(memoryInMemoryModule as any);
+  await app.ctx.useModule(memoryInMemory);
   const mem = app.ctx.getService<MemoryService>('memory');
   if (!mem) throw new Error('memory service missing');
   const store = new RelationStore(mem);
@@ -1884,8 +1883,6 @@ describe('plugin-user-relation: event duplicate consolidation', () => {
     // biome-ignore lint/suspicious/noExplicitAny: 访问 private _consolidateEventDuplicates 用于单测
     const r = await (service as any)._consolidateEventDuplicates({
       llmModel: model,
-      // biome-ignore lint/suspicious/noExplicitAny: 仅为日志接口
-      llmCtx: { logger: { info() {}, warn() {}, error() {}, debug() {} } } as any,
       embedding: undefined,
       dryRun: false,
     });
@@ -1913,8 +1910,6 @@ describe('plugin-user-relation: event duplicate consolidation', () => {
     // biome-ignore lint/suspicious/noExplicitAny: private 调用
     const r1 = await (service as any)._consolidateEventDuplicates({
       llmModel: m1,
-      // biome-ignore lint/suspicious/noExplicitAny: logger
-      llmCtx: { logger: { info() {}, warn() {}, error() {}, debug() {} } } as any,
       embedding: undefined,
       dryRun: false,
     });
@@ -1926,8 +1921,6 @@ describe('plugin-user-relation: event duplicate consolidation', () => {
     // biome-ignore lint/suspicious/noExplicitAny: private
     const r2 = await (service as any)._consolidateEventDuplicates({
       llmModel: m2,
-      // biome-ignore lint/suspicious/noExplicitAny: logger
-      llmCtx: { logger: { info() {}, warn() {}, error() {}, debug() {} } } as any,
       embedding: undefined,
       dryRun: false,
     });
@@ -1952,8 +1945,6 @@ describe('plugin-user-relation: event duplicate consolidation', () => {
     // biome-ignore lint/suspicious/noExplicitAny: private
     const r = await (service as any)._consolidateEventDuplicates({
       llmModel: model,
-      // biome-ignore lint/suspicious/noExplicitAny: logger
-      llmCtx: { logger: { info() {}, warn() {}, error() {}, debug() {} } } as any,
       embedding: undefined,
       dryRun: false,
     });
@@ -1978,8 +1969,6 @@ describe('plugin-user-relation: event duplicate consolidation', () => {
     // biome-ignore lint/suspicious/noExplicitAny: private
     const r = await (service as any)._consolidateEventDuplicates({
       llmModel: model,
-      // biome-ignore lint/suspicious/noExplicitAny: logger
-      llmCtx: { logger: { info() {}, warn() {}, error() {}, debug() {} } } as any,
       embedding: undefined,
       dryRun: true,
     });
@@ -2015,8 +2004,6 @@ describe('plugin-user-relation: event duplicate consolidation', () => {
     // biome-ignore lint/suspicious/noExplicitAny: private
     const r = await (service as any)._consolidateEventDuplicates({
       llmModel: model,
-      // biome-ignore lint/suspicious/noExplicitAny: logger
-      llmCtx: { logger: { info() {}, warn() {}, error() {}, debug() {} } } as any,
       embedding,
       dryRun: false,
       fusedThreshold: 0.3,
@@ -2052,8 +2039,6 @@ describe('plugin-user-relation: event duplicate consolidation', () => {
     // biome-ignore lint/suspicious/noExplicitAny: private
     const r = await (service as any)._consolidateEventDuplicates({
       llmModel: model,
-      // biome-ignore lint/suspicious/noExplicitAny: logger
-      llmCtx: { logger: { info() {}, warn() {}, error() {}, debug() {} } } as any,
       embedding,
       dryRun: false,
       // 默认 fusedThreshold=0.7、jaccardThreshold=0.4；不覆盖

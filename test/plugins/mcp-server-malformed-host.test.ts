@@ -1,8 +1,9 @@
 import { createServer } from 'node:http';
 import { type AddressInfo, connect } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { App } from '../../packages/core/src/index.js';
-import * as mcpServer from '../../packages/plugin-mcp-server/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
+import mcpServer from '../../packages/plugin-mcp-server/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // createServer 的 async 回调此前全程无 try/catch，且第一行用 Host 头拼 URL base。
@@ -52,19 +53,21 @@ describe('plugin-mcp-server: 畸形 Host 不得打死进程', () => {
     const port = await freePort();
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     apps.push(app);
-    app.ctx.provide('tools', {
+    const host = app.bind({ provide });
+    host.provide(tools, {
       getAll: () => [],
       getDefinitions: () => [],
       getSummaries: () => [],
       listGroups: () => [],
       execute: async () => ({ content: '' }),
     } as never);
-    await app.ctx.useModule(mcpServer as never, {
+    await app.plugins.register(mcpServer, {
       port,
       bind: '127.0.0.1',
       toolGroups: [],
       allowRestricted: false,
     });
+    await app.plugins.idle();
 
     const rejections: unknown[] = [];
     const onRejection = (r: unknown) => rejections.push(r);

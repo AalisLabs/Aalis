@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { LLMModel } from '../../packages/api-llm/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as openaiModule from '../../packages/plugin-llm-openai/src/index.js';
+import { llm } from '../../packages/api-llm/src/index.js';
+import { App, services } from '../../packages/core/src/index.js';
+import openaiPlugin from '../../packages/plugin-llm-openai/src/index.js';
 
 // 背景：isReasoningModel 原本只认 /^o\d/，gpt-5 系列被当普通模型发 max_tokens + temperature，
 // 被 OpenAI 直接 400。这里用桩 fetch 捕获请求体，锚定「推理模型 → max_completion_tokens 且不带
@@ -36,11 +36,12 @@ async function setup(modelId: string) {
   const bodies: Record<string, unknown>[] = [];
   stubFetch(modelId, bodies);
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(openaiModule as never, { apiKey: 'test-key' });
+  await app.plugin(openaiPlugin, { apiKey: 'test-key' });
   await app.plugins.idle();
-  const llm = app.ctx.getService<LLMModel>('llm');
-  if (!llm?.chatStream) throw new Error('llm entry 未注册');
-  return { app, llm, bodies };
+  const host = app.bind({ services });
+  const model = host.services.get(llm);
+  if (!model?.chatStream) throw new Error('llm entry 未注册');
+  return { app, model, bodies };
 }
 
 const messages = [{ role: 'user' as const, content: '在吗' }];
@@ -48,9 +49,9 @@ const messages = [{ role: 'user' as const, content: '在吗' }];
 describe('isReasoningModel：gpt-5 系列与 o 系列同为推理模型', () => {
   for (const modelId of ['gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'gpt-5-chat', 'o3']) {
     it(`${modelId} 走 max_completion_tokens 且不带 temperature（chat 与 stream 两条路径）`, async () => {
-      const { app, llm, bodies } = await setup(modelId);
-      await llm.chat({ messages, maxTokens: 128 });
-      for await (const _ of llm.chatStream!({ messages, maxTokens: 128 })) {
+      const { app, model, bodies } = await setup(modelId);
+      await model.chat({ messages, maxTokens: 128 });
+      for await (const _ of model.chatStream!({ messages, maxTokens: 128 })) {
         // 消费完整条流
       }
       await app.stop();
@@ -65,9 +66,9 @@ describe('isReasoningModel：gpt-5 系列与 o 系列同为推理模型', () => 
   }
 
   it('gpt-4o 仍走 max_tokens 且带 temperature（chat 与 stream 两条路径）', async () => {
-    const { app, llm, bodies } = await setup('gpt-4o');
-    await llm.chat({ messages, maxTokens: 128, temperature: 0.3 });
-    for await (const _ of llm.chatStream!({ messages, maxTokens: 128, temperature: 0.3 })) {
+    const { app, model, bodies } = await setup('gpt-4o');
+    await model.chat({ messages, maxTokens: 128, temperature: 0.3 });
+    for await (const _ of model.chatStream!({ messages, maxTokens: 128, temperature: 0.3 })) {
       // 消费完整条流
     }
     await app.stop();

@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { PersonaService } from '../../packages/api-persona/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as personaModule from '../../packages/plugin-persona/src/index.js';
-import * as storageLocalModule from '../../packages/plugin-storage-local/src/index.js';
+import personaPlugin from '../../packages/plugin-persona/src/index.js';
+import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 角色卡的 outputFormatRetries 必须真的传到重试闸：asCard 曾漏抄这个键，
@@ -19,7 +19,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
 
   const boot = async (persona: string): Promise<PersonaService> => {
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocalModule as never, {
+    await app.ctx.useModule(storageLocal, {
       roots: [
         {
           name: 'data',
@@ -33,7 +33,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
         },
       ],
     });
-    await app.ctx.useModule(personaModule as never, { persona, personasDir: 'data/personas' });
+    await app.ctx.useModule(personaPlugin, { persona, personasDir: 'data/personas' });
     return app.ctx.getService<PersonaService>('persona')!;
   };
 

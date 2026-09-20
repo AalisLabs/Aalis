@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createStorageGateway, type StorageService } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // delete 的删根守卫——字面空路径与「解析回根」两条路都必须拒。
@@ -26,7 +26,7 @@ describe('storage.delete 删根守卫 (真 fs)', () => {
     mkdirSync(join(ws, 'sub'), { recursive: true });
     writeFileSync(join(ws, 'keep.txt'), 'survivor');
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocal as unknown as Parameters<typeof app.ctx.useModule>[0], {
+    await app.ctx.useModule(storageLocal, {
       roots: [
         {
           name: 'ws',

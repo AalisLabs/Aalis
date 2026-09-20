@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { BoundTools, ToolService } from '../../packages/api-tools/src/index.js';
 import type { WorkflowDef } from '../../packages/api-workflow/src/index.js';
-import type { Context, Logger } from '../../packages/core/src/index.js';
+import type { Events, Hooks, Logger } from '../../packages/core/src/index.js';
+import type { EngineCaps } from '../../packages/plugin-workflow/src/engine.js';
 import { runDag, validateGraph } from '../../packages/plugin-workflow/src/engine.js';
 
 const noopLogger = (): Logger =>
@@ -12,22 +14,31 @@ const noopLogger = (): Logger =>
     child: () => noopLogger(),
   }) as unknown as Logger;
 
-const fakeCtx = (toolFn?: (name: string, args: unknown) => Promise<string> | string): Context => {
-  const tools = toolFn
-    ? {
+const noopEvents = (): Events => ({ on: () => () => {}, emit: vi.fn(async () => {}) }) as unknown as Events;
+
+const noopHooks = (): Hooks => ({ middleware: () => () => {}, run: async () => true }) as unknown as Hooks;
+
+const boundTools = (toolFn?: (name: string, args: unknown) => Promise<string> | string): BoundTools => ({
+  register: () => () => {},
+  registerGroup: () => () => {},
+  follow: () => () => {},
+  current: toolFn
+    ? ({
         // 与真实 ToolService.execute 同形：结果归一为 { content }
         async execute(name: string, args: unknown) {
           return { content: await toolFn(name, args) };
         },
-      }
-    : undefined;
-  return {
-    getService(name: string) {
-      return name === 'tools' ? tools : undefined;
-    },
-    emit: vi.fn(async () => {}),
-  } as unknown as Context;
-};
+      } as unknown as ToolService)
+    : undefined,
+});
+
+/** 只有 tool 节点会真跑起来的能力桩：events / hooks 收到什么都不做 */
+const toolCaps = (toolFn?: (name: string, args: unknown) => Promise<string> | string): EngineCaps => ({
+  tools: boundTools(toolFn),
+  events: noopEvents(),
+  hooks: noopHooks(),
+  logger: noopLogger(),
+});
 
 interface AgentReply {
   reply: string;
@@ -35,17 +46,16 @@ interface AgentReply {
 }
 
 /**
- * 模拟一个会响应 inbound:message 的 ctx：emit('inbound:message') 时按 replyFor 决定回复，
- * 若有回复则同步触发已注册的 'agent:turn:after' 中间件（仿 agent 跑完一轮）。
+ * 模拟一个会响应 inbound:message 的环境：emit('inbound:message') 时按 replyFor 决定回复，
+ * 若有回复则同步驱动已注册的 'agent:turn:after' 中间件（仿 agent 跑完一轮）。
  * replyFor 返回 null 表示"无 agent 应答"（用于触发超时路径）。
  */
-const agentCtx = (
+const agentCaps = (
   replyFor: (sessionId: string, content: string) => AgentReply | null,
   emitted: Array<{ sessionId: string; content: string; platform?: string }> = [],
-): Context => {
+): EngineCaps => {
   const handlers: Array<(data: unknown, next: () => Promise<void>) => Promise<void>> = [];
-  return {
-    getService: () => undefined,
+  const hooks = {
     middleware(hook: string, handler: (data: unknown, next: () => Promise<void>) => Promise<void>) {
       if (hook !== 'agent:turn:after') return () => {};
       handlers.push(handler);
@@ -54,6 +64,10 @@ const agentCtx = (
         if (i >= 0) handlers.splice(i, 1);
       };
     },
+    run: async () => true,
+  } as unknown as Hooks;
+  const events = {
+    on: () => () => {},
     async emit(event: string, msg: { sessionId: string; content: string; platform?: string }) {
       if (event !== 'inbound:message') return;
       emitted.push({ sessionId: msg.sessionId, content: msg.content, platform: msg.platform });
@@ -68,7 +82,8 @@ const agentCtx = (
       };
       for (const h of [...handlers]) await h(data, async () => {});
     },
-  } as unknown as Context;
+  } as unknown as Events;
+  return { tools: boundTools(), events, hooks, logger: noopLogger() };
 };
 
 describe('workflow validateGraph', () => {
@@ -146,7 +161,7 @@ describe('workflow validateGraph', () => {
 describe('workflow runDag', () => {
   it('按 deps 顺序执行 tool 节点 + 模板插值', async () => {
     const calls: Array<{ name: string; args: unknown }> = [];
-    const ctx = fakeCtx(async (name, args) => {
+    const caps = toolCaps(async (name, args) => {
       calls.push({ name, args });
       if (name === 't1') return 'hello';
       if (name === 't2') return `got:${(args as { msg: string }).msg}`;
@@ -167,8 +182,7 @@ describe('workflow runDag', () => {
       ],
     };
     const res = await runDag({
-      ctx,
-      logger: noopLogger(),
+      ...caps,
       def,
       runId: 'r1',
       triggerSource: 'test',
@@ -185,7 +199,7 @@ describe('workflow runDag', () => {
   });
 
   it('节点失败后下游被 skipped', async () => {
-    const ctx = fakeCtx(async name => {
+    const caps = toolCaps(async name => {
       if (name === 'fail') throw new Error('boom');
       return 'ok';
     });
@@ -198,8 +212,7 @@ describe('workflow runDag', () => {
       ],
     };
     const res = await runDag({
-      ctx,
-      logger: noopLogger(),
+      ...caps,
       def,
       runId: 'r2',
       triggerSource: 'test',
@@ -216,7 +229,7 @@ describe('workflow runDag', () => {
   it('并行执行同一层节点', async () => {
     let active = 0;
     let peak = 0;
-    const ctx = fakeCtx(async () => {
+    const caps = toolCaps(async () => {
       active++;
       peak = Math.max(peak, active);
       await new Promise(r => setTimeout(r, 20));
@@ -233,8 +246,7 @@ describe('workflow runDag', () => {
       ],
     };
     const res = await runDag({
-      ctx,
-      logger: noopLogger(),
+      ...caps,
       def,
       runId: 'r3',
       triggerSource: 'test',
@@ -250,7 +262,7 @@ describe('workflow runDag', () => {
 describe('workflow agent 节点', () => {
   it('派发→等回复→out 入 outputs，下游 agent 经 deps 接收上游结果（编排管道）', async () => {
     const emitted: Array<{ sessionId: string; content: string }> = [];
-    const ctx = agentCtx((_sid, content) => {
+    const caps = agentCaps((_sid, content) => {
       if (content.includes('请分解')) return { reply: '子任务结果X' };
       if (content.includes('子任务结果X')) return { reply: '聚合完成' };
       return { reply: '?' };
@@ -264,8 +276,7 @@ describe('workflow agent 节点', () => {
       ],
     };
     const res = await runDag({
-      ctx,
-      logger: noopLogger(),
+      ...caps,
       def,
       runId: 'rA',
       triggerSource: 'test',
@@ -285,7 +296,7 @@ describe('workflow agent 节点', () => {
 
   it('显式 sessionId/platform + vars 插值', async () => {
     const emitted: Array<{ sessionId: string; content: string; platform?: string }> = [];
-    const ctx = agentCtx(() => ({ reply: 'ok' }), emitted);
+    const caps = agentCaps(() => ({ reply: 'ok' }), emitted);
     const def: WorkflowDef = {
       id: 'w',
       trigger: { type: 'manual' },
@@ -300,8 +311,7 @@ describe('workflow agent 节点', () => {
       ],
     };
     const res = await runDag({
-      ctx,
-      logger: noopLogger(),
+      ...caps,
       def,
       runId: 'rS',
       triggerSource: 'test',
@@ -316,15 +326,14 @@ describe('workflow agent 节点', () => {
   });
 
   it('超时（无 agent 应答）→ 节点失败', async () => {
-    const ctx = agentCtx(() => null);
+    const caps = agentCaps(() => null);
     const def: WorkflowDef = {
       id: 'w',
       trigger: { type: 'manual' },
       nodes: [{ id: 'a', type: 'agent', instruction: 'x', timeoutSeconds: 0.05 }],
     };
     const res = await runDag({
-      ctx,
-      logger: noopLogger(),
+      ...caps,
       def,
       runId: 'rT',
       triggerSource: 'test',
@@ -337,15 +346,14 @@ describe('workflow agent 节点', () => {
   });
 
   it('outcome=error → 节点失败', async () => {
-    const ctx = agentCtx(() => ({ reply: '', outcome: 'error' }));
+    const caps = agentCaps(() => ({ reply: '', outcome: 'error' }));
     const def: WorkflowDef = {
       id: 'w',
       trigger: { type: 'manual' },
       nodes: [{ id: 'a', type: 'agent', instruction: 'x' }],
     };
     const res = await runDag({
-      ctx,
-      logger: noopLogger(),
+      ...caps,
       def,
       runId: 'rE',
       triggerSource: 'test',
@@ -358,15 +366,14 @@ describe('workflow agent 节点', () => {
   });
 
   it('outcome=silent → 成功且输出空串（agent 选择不回复是合法结果）', async () => {
-    const ctx = agentCtx(() => ({ reply: '', outcome: 'silent' }));
+    const caps = agentCaps(() => ({ reply: '', outcome: 'silent' }));
     const def: WorkflowDef = {
       id: 'w',
       trigger: { type: 'manual' },
       nodes: [{ id: 'a', type: 'agent', instruction: 'x', out: 'r' }],
     };
     const res = await runDag({
-      ctx,
-      logger: noopLogger(),
+      ...caps,
       def,
       runId: 'rSilent',
       triggerSource: 'test',

@@ -16,7 +16,7 @@ import * as os from 'node:os';
 import * as process from 'node:process';
 import type { StorageService } from '@aalis/api-storage';
 import { parseStorageUri, resolveAgainstCwd } from '@aalis/api-storage';
-import type { ScopedToolService } from '@aalis/api-tools';
+import type { BoundTools } from '@aalis/api-tools';
 import type { CwdState } from './cwd-state.js';
 
 interface SystemConfig {
@@ -26,7 +26,7 @@ interface SystemConfig {
   skipTimeTool?: boolean;
 }
 
-export function registerSystemTools(tools: ScopedToolService, config: SystemConfig): void {
+export function registerSystemTools(tools: BoundTools, config: SystemConfig): void {
   // ==================== system_info ====================
   tools.register({
     definition: {

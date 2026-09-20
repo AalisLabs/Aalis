@@ -1,14 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import { type EvidenceRef, RelationService, RelationStore } from '../../packages/plugin-user-relation/src/index.js';
 
 async function makeService() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  // biome-ignore lint/suspicious/noExplicitAny: src/dist 类型路径差异
-  await app.ctx.useModule(memoryInMemoryModule as any);
-  const mem = app.ctx.getService<MemoryService>('memory');
+  const host = app.bind({ memory });
+  await app.plugins.register(memoryInMemory, {});
+  await app.plugins.idle();
+  const mem = host.memory.current;
   if (!mem) throw new Error('memory service missing');
   const store = new RelationStore(mem);
   return { app, store, mem, service: new RelationService(store) };

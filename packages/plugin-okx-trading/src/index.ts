@@ -1,6 +1,6 @@
-import { useToolService } from '@aalis/api-tools';
+import { tools } from '@aalis/api-tools';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import type { Context } from '@aalis/core';
+import { type BoundOf, config, definePlugin, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { OkxClient } from './client.js';
 import { registerAccountTools } from './tools/account.js';
@@ -11,14 +11,7 @@ import { registerRubikTools } from './tools/rubik.js';
 import { registerTradeTools } from './tools/trade.js';
 import { registerTransferTools } from './tools/transfer.js';
 
-// ===== 插件元数据 =====
-
-export const name = '@aalis/plugin-okx-trading';
-export const displayName = 'OKX 交易';
-export const subsystem = 'external';
-export const inject = { optional: ['tools'] };
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   apiKey: {
     type: 'string',
     label: 'API Key',
@@ -93,7 +86,7 @@ interface PluginConfig {
   maxPageLimit: number;
 }
 
-function resolveConfig(config: Record<string, unknown>): PluginConfig {
+function resolveConfig(config: Readonly<Record<string, unknown>>): PluginConfig {
   const maxPageLimit = Math.max(1, Math.min(1000, Number(config.maxPageLimit) || 100));
   const defaultPageLimitRaw = Math.max(1, Math.floor(Number(config.defaultPageLimit) || 20));
   return {
@@ -179,11 +172,23 @@ export const ACCOUNT_READ_OKX_TOOLS = new Set([
 
 // ===== 插件入口 =====
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
+const uses = { tools: optional(tools), logger, config };
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-okx-trading',
+  displayName: 'OKX 交易',
+  subsystem: 'external',
+  configSchema,
+  uses,
+  apply: registerOkxTools,
+});
+
+function registerOkxTools({ tools: baseTools, logger, config }: Caps): void {
   const cfg = resolveConfig(config);
 
   if (!cfg.apiKey || !cfg.secretKey || !cfg.passphrase) {
-    ctx.logger.warn('OKX 交易插件缺少 API 凭证，已跳过初始化');
+    logger.warn('OKX 交易插件缺少 API 凭证，已跳过初始化');
     return;
   }
 
@@ -195,9 +200,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   const modeLabel = cfg.demo ? '模拟盘' : '实盘';
-  ctx.logger.info(`OKX 交易插件已初始化 (${modeLabel})`);
+  logger.info(`OKX 交易插件已初始化 (${modeLabel})`);
 
-  const baseTools = useToolService(ctx);
   baseTools.registerGroup({
     name: 'okx',
     label: 'OKX 交易',
@@ -223,7 +227,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 不加逐单人工确认（保留实时/算法交易能力）——以「一次性显式确认 + 启动告警」替代。
   const tradingArmed = cfg.demo || cfg.confirmRealMoney;
   if (!cfg.demo) {
-    ctx.logger.warn(
+    logger.warn(
       cfg.confirmRealMoney
         ? '⚠️ OKX 实盘模式：LLM 可用真实资金下单/撤单/划转/提币，且无逐单人工确认，请确认这是本意。'
         : 'OKX 处于实盘(demo:false)但未设 confirmRealMoney:true，已禁用交易/策略/划转工具（仅保留查询）。',

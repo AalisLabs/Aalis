@@ -9,7 +9,10 @@ import {
   HookRegistry,
   ServiceContainer,
 } from '../../packages/core/src/index.js';
-import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
+import {
+  assemblePromptContributions,
+  type PromptAssemblyCaps,
+} from '../../packages/plugin-agent/src/prompt-assembly.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 
 // 测试直接从 core 源码路径导入，agent-api 对 '@aalis/core' 的 declaration
@@ -26,6 +29,14 @@ function makeRoot(): Context {
     logger: new DefaultLogger('test'),
     config: new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} }),
   });
+}
+
+/**
+ * 组装器只要「收集贡献」与「记日志」两样能力——贡献仍由真实激活登记（全局键带实例 id 前缀，
+ * 断言要比对它），故收集面直接转发给这个根激活。
+ */
+function capsOf(root: Context): PromptAssemblyCaps {
+  return { contributions: { collect: point => root.collect(point) }, logger: root.logger };
 }
 
 function baseMessages(): Message[] {
@@ -57,7 +68,7 @@ describe('assemblePromptContributions', () => {
         root.fork(ctxId).contribute(POINT, spec(id, anchor, out));
       }
       const messages = baseMessages();
-      await assemblePromptContributions(root, { messages, sessionId: 's' });
+      await assemblePromptContributions(capsOf(root), { messages, sessionId: 's' });
       layouts.push(messages.map(m => String(m.content)));
     }
     // persona → identity → knowledge → context → 历史 →（最后一条 user 前）
@@ -80,7 +91,7 @@ describe('assemblePromptContributions', () => {
         { role: 'user', content: 'hist-u2' },
         { role: 'system', content: '[跨会话委派] 任务', metadata: { injector: 'cross-session-delegation' } },
       ];
-      await assemblePromptContributions(root, { messages, sessionId: 's' });
+      await assemblePromptContributions(capsOf(root), { messages, sessionId: 's' });
       expect(messages.map(m => String(m.content))).toEqual([
         'persona',
         'hist-u1',
@@ -104,7 +115,7 @@ describe('assemblePromptContributions', () => {
         { role: 'system', content: '【当前焦点】', metadata: { injector: 'focus-guidance' } },
         { role: 'user', content: 'u2' },
       ];
-      await assemblePromptContributions(root, { messages, sessionId: 's' });
+      await assemblePromptContributions(capsOf(root), { messages, sessionId: 's' });
       expect(messages.map(m => String(m.content))).toEqual([
         'persona',
         'u1',
@@ -121,7 +132,7 @@ describe('assemblePromptContributions', () => {
       const root = makeRoot();
       root.fork('p-tctx').contribute(POINT, spec('tc', 'turn-context', 'TC'));
       const messages: Message[] = [{ role: 'system', content: 'persona' }];
-      await assemblePromptContributions(root, { messages, sessionId: 's' });
+      await assemblePromptContributions(capsOf(root), { messages, sessionId: 's' });
       expect(messages.map(m => String(m.content))).toEqual(['persona', 'TC']);
     }
   });
@@ -146,7 +157,7 @@ describe('assemblePromptContributions', () => {
         ...extraHistory,
         { role: 'user', content: '当前消息' },
       ];
-      return assemblePromptContributions(root, { messages, sessionId: 's' }).then(() => messages);
+      return assemblePromptContributions(capsOf(root), { messages, sessionId: 's' }).then(() => messages);
     };
 
     // 第 N 轮与第 N+1 轮：历史 append 了一对消息，turn 材料完全不同
@@ -174,13 +185,13 @@ describe('assemblePromptContributions', () => {
     const root = makeRoot();
     root.fork('p-a').contribute(POINT, spec('cx', 'context', 'CX'));
     const messages = baseMessages();
-    await assemblePromptContributions(root, { messages, sessionId: 's' });
-    await assemblePromptContributions(root, { messages, sessionId: 's' });
+    await assemblePromptContributions(capsOf(root), { messages, sessionId: 's' });
+    await assemblePromptContributions(capsOf(root), { messages, sessionId: 's' });
     expect(messages.filter(m => String(m.content) === 'CX')).toHaveLength(1);
 
     // 回合中途注册新贡献（如 load_skill 激活新技能）→ 下一轮增量物化
     root.fork('p-b').contribute(POINT, spec('kn', 'knowledge', 'KN'));
-    await assemblePromptContributions(root, { messages, sessionId: 's' });
+    await assemblePromptContributions(capsOf(root), { messages, sessionId: 's' });
     expect(messages.filter(m => String(m.content) === 'KN')).toHaveLength(1);
     const knIdx = messages.findIndex(m => String(m.content) === 'KN');
     const firstUserIdx = messages.findIndex(m => m.role === 'user');
@@ -199,7 +210,7 @@ describe('assemblePromptContributions', () => {
     } as never);
     root.fork('p-good').contribute(POINT, spec('good', 'context', 'OK'));
     const messages = baseMessages();
-    await assemblePromptContributions(root, { messages, sessionId: 's' });
+    await assemblePromptContributions(capsOf(root), { messages, sessionId: 's' });
     expect(messages.some(m => String(m.content) === 'OK')).toBe(true);
     expect(messages.some(m => String(m.metadata?.injector ?? '').endsWith('/bad'))).toBe(false);
   });
@@ -209,7 +220,7 @@ describe('assemblePromptContributions', () => {
     root.fork('p-multi').contribute(POINT, spec('m', 'identity', ['B1', '', 'B2']));
     root.fork('p-null').contribute(POINT, spec('n', 'identity', null));
     const messages = baseMessages();
-    await assemblePromptContributions(root, { messages, sessionId: 's' });
+    await assemblePromptContributions(capsOf(root), { messages, sessionId: 's' });
     const contents = messages.map(m => String(m.content));
     expect(contents.indexOf('B1')).toBe(1);
     expect(contents.indexOf('B2')).toBe(2);
@@ -230,7 +241,7 @@ describe('assemblePromptContributions', () => {
     } as never);
     root.fork('p-b').contribute(POINT, spec('th', 'turn-hint', 'TH'));
     const messages: Message[] = [{ role: 'system', content: 'persona' }];
-    await assemblePromptContributions(root, { messages, dryRun: true });
+    await assemblePromptContributions(capsOf(root), { messages, dryRun: true });
     expect(seen).toEqual([true]);
     expect(messages).toHaveLength(1); // turn-hint 无落点被弃置
   });
@@ -246,7 +257,7 @@ describe('组装器护栏：非法锚位与 build 超时', () => {
     root.fork('p-bad').contribute(POINT, spec('b', 'bogus-anchor', 'BAD'));
     root.fork('p-ok').contribute(POINT, spec('ok', 'context', 'OK'));
     const messages = baseMessages();
-    await assemblePromptContributions(root, { messages, sessionId: 's' });
+    await assemblePromptContributions(capsOf(root), { messages, sessionId: 's' });
     expect(messages.some(m => String(m.content) === 'OK')).toBe(true);
     expect(messages.some(m => String(m.content) === 'BAD')).toBe(false);
     expect(warns.some(w => w.includes('bogus-anchor') && w.includes('不是合法锚位'))).toBe(true);
@@ -267,14 +278,14 @@ describe('组装器护栏：非法锚位与 build 超时', () => {
     root.fork('p-fast').contribute(POINT, spec('fast', 'context', 'FAST'));
 
     const messages = baseMessages();
-    await assemblePromptContributions(root, { messages, sessionId: 's' }, { buildTimeoutMs: 30 });
+    await assemblePromptContributions(capsOf(root), { messages, sessionId: 's' }, { buildTimeoutMs: 30 });
     expect(messages.some(m => String(m.content) === 'FAST')).toBe(true);
     expect(messages.some(m => String(m.content) === 'SLOW-DONE')).toBe(false);
     expect(warns.some(w => w.includes('/slow') && w.includes('超过 30ms'))).toBe(true);
 
     // 键未物化 → 下一轮恢复后补上
     stuck = false;
-    await assemblePromptContributions(root, { messages, sessionId: 's' }, { buildTimeoutMs: 30 });
+    await assemblePromptContributions(capsOf(root), { messages, sessionId: 's' }, { buildTimeoutMs: 30 });
     expect(messages.filter(m => String(m.content) === 'SLOW-DONE')).toHaveLength(1);
     expect(messages.filter(m => String(m.content) === 'FAST')).toHaveLength(1); // 已物化不重复
   });
@@ -300,7 +311,7 @@ describe('组装器护栏：非法锚位与 build 超时', () => {
     root.fork('p-fast').contribute(POINT, spec('fast', 'context', 'FAST'));
 
     const messages = baseMessages();
-    await assemblePromptContributions(root, { messages, sessionId: 's' }, { buildTimeoutMs: 30 });
+    await assemblePromptContributions(capsOf(root), { messages, sessionId: 's' }, { buildTimeoutMs: 30 });
 
     expect(aborted, '超时不能只放弃等待，必须通知底层构建取消').toBe(true);
     expect(messages.some(m => String(m.content) === 'FAST')).toBe(true);
@@ -322,7 +333,11 @@ describe('组装器护栏：非法锚位与 build 超时', () => {
     } as never);
 
     await expect(
-      assemblePromptContributions(root, { messages: baseMessages(), sessionId: 's' }, { signal: parent.signal }),
+      assemblePromptContributions(
+        capsOf(root),
+        { messages: baseMessages(), sessionId: 's' },
+        { signal: parent.signal },
+      ),
     ).rejects.toMatchObject({ name: 'AbortError' });
     expect(calls).toBe(0);
   });
@@ -350,7 +365,11 @@ describe('组装器护栏：非法锚位与 build 超时', () => {
     const timer = setTimeout(() => parent.abort(), 30);
     try {
       await expect(
-        assemblePromptContributions(root, { messages: baseMessages(), sessionId: 's' }, { signal: parent.signal }),
+        assemblePromptContributions(
+          capsOf(root),
+          { messages: baseMessages(), sessionId: 's' },
+          { signal: parent.signal },
+        ),
       ).rejects.toMatchObject({ name: 'AbortError' });
     } finally {
       clearTimeout(timer);
@@ -366,7 +385,7 @@ describe('组装器护栏：非法锚位与 build 超时', () => {
       build: () => new Promise<string>(r => setTimeout(() => r('DONE'), 40)),
     } as never);
     const messages = baseMessages();
-    await assemblePromptContributions(root, { messages, sessionId: 's' }, { buildTimeoutMs: 0 });
+    await assemblePromptContributions(capsOf(root), { messages, sessionId: 's' }, { buildTimeoutMs: 0 });
     expect(messages.some(m => String(m.content) === 'DONE')).toBe(true);
   });
 });

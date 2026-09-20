@@ -416,6 +416,12 @@ export interface BoundTools {
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void;
   /** 当前提供者（读 API：getDefinitions / execute 等）；未就绪为 undefined */
   readonly current: ToolService | undefined;
+  /**
+   * 跟随提供者建立有状态接线：在场即调 attach，换人时先跑上次返回的清理再用新实例调，
+   * 下线与关闭时清理（语义同 `ServiceRef.follow`）。执行守卫这类「挂在提供者身上、
+   * 提供者重启就得重挂」的接线必须经它，`current` 只能看见此刻的实例。
+   */
+  follow(attach: (provider: ToolService) => undefined | (() => unknown)): () => void;
 }
 
 /** 给一份 tools 绑定接口加默认分组：经它登记的工具自动带上这些分组（一组工具共用分组时用） */
@@ -423,6 +429,7 @@ export function withToolGroups(bound: BoundTools, groups: string[]): BoundTools 
   return {
     register: tool => bound.register({ ...tool, groups: [...(tool.groups ?? []), ...groups] }),
     registerGroup: group => bound.registerGroup(group),
+    follow: attach => bound.follow(attach),
     // current 必须活取才能跟着提供者换人
     get current() {
       return bound.current;
@@ -443,6 +450,7 @@ export const tools = defineService<ToolService, BoundTools>('tools', port => {
   return {
     register: tool => entries.add(tool),
     registerGroup: group => groups.add(group),
+    follow: attach => port.follow(attach),
     get current() {
       return port.current();
     },

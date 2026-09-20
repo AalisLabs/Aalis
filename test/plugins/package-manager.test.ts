@@ -7,6 +7,7 @@ import {
   findUnmetPeers,
   hasWorkspaceProtocol,
   type PackageManagerDeps,
+  packageManager,
   stripVersion,
 } from '../../packages/plugin-package-manager/src/index.js';
 
@@ -701,18 +702,31 @@ describe('uninstall', () => {
 // ════════════════════════════════════════════════════════════
 describe('自锁闸：生产接线算出的撤销通道名单', () => {
   async function bootWithChannels() {
-    const { App } = await import('../../packages/core/src/index.js');
-    const { apply } = await import('../../packages/plugin-package-manager/src/index.js');
+    const { App, definePlugin, defineService, provide, services } = await import('../../packages/core/src/index.js');
+    const packageManagerPlugin = (await import('../../packages/plugin-package-manager/src/index.js')).default;
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    // 另两个撤销通道注册桩，各以自己的包名做 ctx.id —— 与真实加载器一致（scoped 包名带 /）
+
+    /** 提供单个服务的桩插件：实例 id = 包名，于是 contextId 也是包名（与真实加载器一致）。 */
+    const stubPlugin = (pkg: string, service: string) => {
+      const descriptor = defineService<object>(service);
+      return definePlugin({
+        name: pkg,
+        provides: [descriptor],
+        uses: { provide },
+        apply(caps) {
+          caps.provide(descriptor, {});
+        },
+      });
+    };
+    // 另两个撤销通道各以自己的包名注册（scoped 包名带 /）
     for (const [svc, pkg] of [
       ['webui-client', '@aalis/plugin-webui-client'],
       ['webui-server', '@aalis/plugin-webui-server'],
     ] as const) {
-      app.ctx.fork(pkg).provide(svc, {} as never);
+      await app.plugins.register(stubPlugin(pkg, svc));
     }
-    // package-manager 自己：apply 跑在正确 id 的 fork 上，它 provide 出来的 contextId 就是包名，
-    // 与真实加载器一致。**不能**另注册一个同名桩——那会按注册顺序占住解析结果，拿不到真服务。
+    // package-manager 自己按真实形态装载，它 provide 出来的 contextId 就是包名。
+    // **不能**另注册一个同名桩——那会按注册顺序占住解析结果，拿不到真服务。
     // 闸的顺序是「先读 package.json 判类型、再查撤销通道」，所以得让这几个包可解析——
     // 注入一个只回 package.json 的假 process 服务（它们在真实部署里本就装着）。
     const CHANNEL_PKGS: Record<string, string> = {
@@ -720,7 +734,8 @@ describe('自锁闸：生产接线算出的撤销通道名单', () => {
       '@aalis/plugin-webui-server': JSON.stringify({ keywords: ['aalis', 'aalis-plugin'] }),
       '@aalis/plugin-package-manager': JSON.stringify({ keywords: ['aalis', 'aalis-plugin'] }),
     };
-    app.ctx.fork('fake-process').provide('process', {
+    const host = app.bind({ provide, services });
+    host.provide(defineService<object>('process'), {
       readExternalFile: async (abs: string) => {
         const hit = Object.keys(CHANNEL_PKGS).find(n => abs.includes(n));
         if (!hit) throw new Error('ENOENT');
@@ -728,11 +743,10 @@ describe('自锁闸：生产接线算出的撤销通道名单', () => {
       },
       execFile: async () => ({ stdout: '', stderr: '', code: 0 }),
       makeTempDir: async () => ({ path: '/tmp/fake', cleanup: async () => undefined }),
-    } as never);
-    apply(app.ctx.fork('@aalis/plugin-package-manager'), {});
-    const svc = app.ctx.getService<{ uninstall(n: string): Promise<{ ok: boolean; message: string }> }>(
-      'package-manager',
-    );
+    });
+    await app.plugins.register(packageManagerPlugin, {});
+    await app.plugins.idle();
+    const svc = host.services.get(packageManager);
     if (!svc) throw new Error('package-manager 服务未就绪');
     return { app, svc };
   }

@@ -3,7 +3,7 @@ import { type MemoryService, memory } from '../../packages/api-memory/src/index.
 import { tools } from '../../packages/api-tools/src/index.js';
 import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, provide, services } from '../../packages/core/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import todoList from '../../packages/plugin-todo-list/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -15,7 +15,7 @@ type ToolHandler = (args: Record<string, unknown>, ctx: unknown) => Promise<stri
 
 async function boot() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(memoryInMemoryModule);
+  await app.plugins.register(memoryInMemory, {});
   const host = app.bind({ provide, services });
   const handlers = new Map<string, ToolHandler>();
   const actions = new Map<string, WebuiActionHandler>();

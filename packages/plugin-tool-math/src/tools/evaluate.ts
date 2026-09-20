@@ -1,7 +1,7 @@
-import type { ScopedToolService } from '@aalis/api-tools';
+import type { BoundTools } from '@aalis/api-tools';
 import { listFunctions, safeEval } from '../lib/expression.js';
 
-export function registerEvaluateTools(tools: ScopedToolService): void {
+export function registerEvaluateTools(tools: BoundTools): void {
   const funcs = listFunctions();
   const funcList = [
     `常量: ${funcs.constants.join(', ')}`,

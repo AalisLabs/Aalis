@@ -1,6 +1,6 @@
-import { createStorageGateway, toStorageUri } from '@aalis/api-storage';
-import type { VectorSearchResult, VectorStoreService } from '@aalis/api-vectorstore';
-import type { Context } from '@aalis/core';
+import { createStorageGateway, storage, toStorageUri } from '@aalis/api-storage';
+import { type VectorSearchResult, type VectorStoreService, vectorstore } from '@aalis/api-vectorstore';
+import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { type Connection, connect, type Table as LanceTable } from '@lancedb/lancedb';
 
@@ -9,18 +9,7 @@ function toUri(input: string): string {
   return s ? toStorageUri(s) : 'data:/lancedb';
 }
 
-// ===== 插件元数据 =====
-
-export const name = '@aalis/plugin-vectorstore-lancedb';
-export const displayName = 'LanceDB 向量库';
-export const subsystem = 'embedding';
-export const provides = ['vectorstore'];
-// 数据目录经存储网关解析（resolveLocalPath），没有 storage 连库都开不了。
-export const inject = {
-  required: ['storage'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   path: {
     type: 'string',
     label: '数据库目录',
@@ -324,37 +313,43 @@ export class LanceDBVectorStore implements VectorStoreService {
 
 // ===== 插件入口 =====
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
-  const cfg: LanceDBConfig = {
-    path: (config.path as string) ?? 'data:/lancedb',
-    tableName: (config.tableName as string) ?? 'vectors',
-    optimizeEvery: (config.optimizeEvery as number) ?? 500,
-    cleanupRetentionMinutes: (config.cleanupRetentionMinutes as number) ?? 60,
-  };
+// storage 是 required 而非 optional：数据目录经存储网关解析（resolveLocalPath），没有它连库都开不了。
+const uses = { storage, provide, config, logger, lifecycle };
 
-  const storage = createStorageGateway(ctx);
-  const dbUri = toUri(cfg.path);
-  if (!storage.resolveLocalPath) {
-    ctx.logger.error('存储实现未提供 resolveLocalPath 能力，无法初始化 LanceDB');
-    return;
-  }
-  const dbPath = await storage.resolveLocalPath(dbUri, 'write');
-  const store = new LanceDBVectorStore(
-    dbPath,
-    cfg.tableName,
-    cfg.optimizeEvery,
-    cfg.cleanupRetentionMinutes,
-    ctx.logger,
-  );
+export default definePlugin({
+  name: '@aalis/plugin-vectorstore-lancedb',
+  displayName: 'LanceDB 向量库',
+  subsystem: 'embedding',
+  configSchema,
+  provides: [vectorstore],
+  uses,
+  async apply({ storage, provide, config, logger, lifecycle }) {
+    const cfg: LanceDBConfig = {
+      path: (config.path as string) ?? 'data:/lancedb',
+      tableName: (config.tableName as string) ?? 'vectors',
+      optimizeEvery: (config.optimizeEvery as number) ?? 500,
+      cleanupRetentionMinutes: (config.cleanupRetentionMinutes as number) ?? 60,
+    };
 
-  await store.init();
+    const gateway = createStorageGateway(storage);
+    const dbUri = toUri(cfg.path);
+    if (!gateway.resolveLocalPath) {
+      logger.error('存储实现未提供 resolveLocalPath 能力，无法初始化 LanceDB');
+      return;
+    }
+    const dbPath = await gateway.resolveLocalPath(dbUri, 'write');
+    const store = new LanceDBVectorStore(dbPath, cfg.tableName, cfg.optimizeEvery, cfg.cleanupRetentionMinutes, logger);
 
-  const count = await store.size();
-  ctx.logger.info(`LanceDB 向量数据库已加载: ${count} 条记录, URI=${dbUri}, 表=${cfg.tableName}`);
+    await store.init();
 
-  ctx.provide('vectorstore', store, { priority: 10 });
+    const count = await store.size();
+    logger.info(`LanceDB 向量数据库已加载: ${count} 条记录, URI=${dbUri}, 表=${cfg.tableName}`);
 
-  ctx.onDispose(async () => {
-    await store.close();
-  }, 'lancedb:store.close');
-}
+    provide(vectorstore, store, { priority: 10 });
+
+    // 建库跨 await，激活可能已在关闭：迟到的清理照样被执行
+    lifecycle.onDispose(async () => {
+      await store.close();
+    }, 'lancedb:store.close');
+  },
+});

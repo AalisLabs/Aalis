@@ -1,10 +1,9 @@
 import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import type { AccessConfirmHandler, AuthorityService } from '../../packages/api-authority/src/index.js';
-import type { ToolService } from '../../packages/api-tools/src/index.js';
-import { useToolService } from '../../packages/api-tools/src/index.js';
-import * as authorityModule from '../../packages/plugin-authority/src/index.js';
-import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import { type AccessConfirmHandler, authority } from '../../packages/api-authority/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
+import authorityPlugin from '../../packages/plugin-authority/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -25,10 +24,10 @@ import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
 // ════════════════════════════════════════════════════════════
 
 async function makeApp(appConfig: Record<string, unknown> = {}) {
-  // authority 读的是顶层 ctx.config（restrictedPolicy / owners / confirmOverrides 等），不是模块入参
+  // authority 读的是顶层宿主配置（restrictedPolicy / owners / confirmOverrides 等），不是插件入参
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {}, ...appConfig } as never });
-  await app.ctx.useModule(toolsModule as never, {});
-  await app.ctx.useModule(authorityModule as never, {});
+  await app.plugins.register(toolsPlugin, {});
+  await app.plugins.register(authorityPlugin, {});
   await app.plugins.idle();
   return app;
 }
@@ -40,8 +39,10 @@ async function runTool(
   opts: { appConfig?: Record<string, unknown>; confirm?: 'always'; confirmHandler?: AccessConfirmHandler } = {},
 ): Promise<{ ran: boolean; out: string }> {
   const app = await makeApp(opts.appConfig);
+  // 宿主侧按根激活取绑定接口：探针工具的登记与真实插件走同一条门面
+  const host = app.bind({ tools, authority });
   let ran = false;
-  useToolService(app.ctx).register({
+  host.tools.register({
     groups: ['probe'],
     ...(risk ? { risk } : {}),
     ...(opts.confirm ? { confirm: opts.confirm } : {}),
@@ -55,9 +56,8 @@ async function runTool(
     },
   });
 
-  if (opts.confirmHandler)
-    app.ctx.getService<AuthorityService>('authority')?.setConfirmHandler('*', opts.confirmHandler);
-  const svc = app.ctx.getService<ToolService>('tools');
+  if (opts.confirmHandler) host.authority.current?.setConfirmHandler('*', opts.confirmHandler);
+  const svc = host.tools.current;
   if (!svc) throw new Error('tools 服务未注册');
   const out = await svc.execute('probe_tool', {}, { sessionId: 's1', ...caller });
   await app.stop();

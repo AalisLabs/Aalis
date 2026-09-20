@@ -1,8 +1,7 @@
 import { App } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
-import * as deepseekModule from '../../packages/plugin-llm-deepseek/src/index.js';
-import { normalizeSystemPlacement } from '../../packages/plugin-llm-deepseek/src/index.js';
+import deepseek, { normalizeSystemPlacement } from '../../packages/plugin-llm-deepseek/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { WellKnownKinds } from '../../packages/schema-message/src/index.js';
 
@@ -157,7 +156,7 @@ describe('chat 出口接线', () => {
     }) as typeof fetch;
 
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(deepseekModule as never, { apiKey: 'test-key' });
+    await app.plugin(deepseek, { apiKey: 'test-key' });
     await app.plugins.idle();
     const llm = app.ctx.getService<LLMModel>('llm');
     if (!llm) throw new Error('llm entry 未注册');

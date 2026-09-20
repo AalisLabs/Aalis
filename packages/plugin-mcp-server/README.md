@@ -49,7 +49,7 @@ Claude Desktop 客户端配置（仅供参考；MCP client 配置因 host app �
 ## 依赖
 
 - `@modelcontextprotocol/sdk` ^1.0.4
-- inject.required: `tools`
+- required 依赖：`tools`（在插件定义的 `uses` 里声明）
 
 ## 工具调用上下文
 

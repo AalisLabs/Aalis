@@ -1,18 +1,43 @@
 import { Buffer } from 'node:buffer';
-import type { AgentService, PluginGroupInfo, PreprocessorFn, PreprocessorInfo } from '@aalis/api-agent';
-import { useCommandService } from '@aalis/api-commands';
-import type { GatewayService } from '@aalis/api-gateway';
+import {
+  type AgentService,
+  agent as agentService,
+  type PluginGroupInfo,
+  type PreprocessorFn,
+  type PreprocessorInfo,
+} from '@aalis/api-agent';
+import { commands as commandsService } from '@aalis/api-commands';
+import { gateway as gatewayService } from '@aalis/api-gateway';
 import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@aalis/api-llm';
-import { listLLMModels, resolveLLMModel } from '@aalis/api-llm';
-import type { MemoryService } from '@aalis/api-memory';
-import type { MessageArchiveService } from '@aalis/api-message-archive';
-import type { PersonaService, PersonaSessionOptions } from '@aalis/api-persona';
-import { getPlatformSelfIdentity } from '@aalis/api-platform';
-import type { SessionConfig, SessionManagerService } from '@aalis/api-session-manager';
-import type { StorageService } from '@aalis/api-storage';
-import type { ToolCallContext, ToolDefinition, ToolService } from '@aalis/api-tools';
-import { asToolExecutionResult } from '@aalis/api-tools';
-import type { Context, Logger, PluginManagerService } from '@aalis/core';
+import { listLLMModels, llm as llmService, resolveLLMModel } from '@aalis/api-llm';
+import { media as mediaService } from '@aalis/api-media';
+import { memory as memoryService } from '@aalis/api-memory';
+import { messageArchive as messageArchiveService } from '@aalis/api-message-archive';
+import { type PersonaSessionOptions, persona as personaService } from '@aalis/api-persona';
+import { getPlatformSelfIdentity, platform as platformService } from '@aalis/api-platform';
+import { type SessionConfig, sessionManager as sessionManagerService } from '@aalis/api-session-manager';
+import { storage as storageService } from '@aalis/api-storage';
+import {
+  asToolExecutionResult,
+  type ToolCallContext,
+  type ToolDefinition,
+  tools as toolsService,
+} from '@aalis/api-tools';
+import {
+  type BoundOf,
+  config as configCap,
+  contributions,
+  definePlugin,
+  events,
+  hooks,
+  type Logger,
+  lifecycle,
+  logger as loggerCap,
+  optional,
+  pluginsService,
+  provide,
+  services,
+} from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/schema-message';
 import { CONTROL_KINDS, getMessageName, getSenderLabel, WellKnownKinds } from '@aalis/schema-message';
@@ -28,6 +53,38 @@ import {
   isSameMessage,
 } from './helpers.js';
 import { assemblePromptContributions, VOLATILE_INJECTOR } from './prompt-assembly.js';
+
+// ===== 能力声明 =====
+//
+// 对话编排要碰的东西全在这里：没写进 uses 的，插件碰不到。全部 optional——少一样能力
+// 只是少一段能力（没有 memory 就没有历史、没有 tools 就把「工具不可用」回给模型、没有
+// gateway 就直接走事件总线），不该让整个 agent 停活。
+const uses = {
+  logger: loggerCap,
+  config: configCap,
+  events,
+  hooks,
+  contributions,
+  lifecycle,
+  provide,
+  services,
+  commands: optional(commandsService),
+  tools: optional(toolsService),
+  llm: optional(llmService),
+  memory: optional(memoryService),
+  persona: optional(personaService),
+  messageArchive: optional(messageArchiveService),
+  sessionManager: optional(sessionManagerService),
+  platform: optional(platformService),
+  media: optional(mediaService),
+  storage: optional(storageService),
+  gateway: optional(gatewayService),
+  plugins: optional(pluginsService),
+};
+type Caps = BoundOf<typeof uses>;
+
+/** 编排器自己要用的能力：装配面（发布服务、偏好、指令、生命周期）留在 apply，不进类里 */
+type AgentCaps = Omit<Caps, 'provide' | 'services' | 'commands' | 'lifecycle'>;
 
 /**
  * 默认 Agent 实现 —— 对话编排器
@@ -50,7 +107,7 @@ function getModelMaxOutput(llm: Pick<LLMModel, 'maxOutputTokens'>): number {
 }
 
 class DefaultAgent implements AgentService {
-  private ctx: Context;
+  private caps: AgentCaps;
   private logger: Logger;
   private systemPrompt: string;
   private memoryTokenBudget: number;
@@ -85,9 +142,10 @@ class DefaultAgent implements AgentService {
   /** 已注册的预处理器（name → { priority, dispose }） */
   private preprocessors = new Map<string, { dispose: () => void }>();
 
-  constructor(ctx: Context, config: Record<string, unknown>) {
-    this.ctx = ctx;
-    this.logger = ctx.logger.child('agent');
+  constructor(caps: AgentCaps) {
+    this.caps = caps;
+    this.logger = caps.logger.child('agent');
+    const config = caps.config;
     this.systemPrompt = (config.systemPrompt as string) || '';
     this.memoryTokenBudget = (config.memoryTokenBudget as number) ?? 4096;
     this.historyLimit = (config.historyLimit as number) ?? 50;
@@ -113,27 +171,27 @@ class DefaultAgent implements AgentService {
     let ref: { provider?: string; model?: string } | undefined;
 
     // session-manager 一步到位：会话 > 父 sessionDefaults > platform profile
-    const sm = this.ctx.getService<SessionManagerService>('session-manager');
+    const sm = this.caps.sessionManager.current;
     if (sm && sessionId) {
       const resolved = sm.resolveConfig(sessionId, platform);
       if (resolved.llm?.provider && resolved.llm?.model) ref = resolved.llm;
     }
 
     // 解析为具体 LLMModel entry（要求至少 chat 能力；ref 为空时走 ServicePreference / 优先级）
-    return resolveLLMModel(this.ctx, ref, ['chat']);
+    return resolveLLMModel(this.caps.llm, ref, ['chat']);
   }
 
   /** 解析失败时说清**为什么**（取数在此，措辞在 helpers 的 describeLLMFailure，纯函数便于单测）。 */
   private explainLLMFailure(platform?: string, sessionId?: string): string {
-    const available = listLLMModels(this.ctx, { caps: ['chat'] }).map(e => e.contextId);
-    const sm = this.ctx.getService<SessionManagerService>('session-manager');
+    const available = listLLMModels(this.caps.llm, { caps: ['chat'] }).map(e => e.contextId);
+    const sm = this.caps.sessionManager.current;
     const wanted = sm && sessionId ? sm.resolveConfig(sessionId, platform).llm : undefined;
     return describeLLMFailure(available, wanted, this.erroredLLMPlugins());
   }
 
   /** 激活失败且声明提供 llm 的插件——「一个模型都没有」时，病因通常就在它们身上（多为缺 apiKey）。 */
   private erroredLLMPlugins(): string[] {
-    const pm = this.ctx.getService<PluginManagerService>('plugins');
+    const pm = this.caps.plugins.current;
     if (!pm) return [];
     // 这串会拼进**发到聊天**的文案里，原因文本来自插件自抛的 error，长度不可控：
     // 与同文件 describeLLMFailure 对模型列表设 LIST_MAX 同理，这里也要封顶。
@@ -168,7 +226,7 @@ class DefaultAgent implements AgentService {
    * 中止全部在飞回合（拆卸路径用）。
    *
    * activeControllers 是实例私有的，bounce 后新实例看不见旧实例的在飞回合；而拆卸链不等任何
-   * 回合——旧回合会在已 dispose 的 ctx 上跑完并投递（人设/模型都是 bounce 前的），用户在它
+   * 回合——旧回合会在已拆卸的那次激活上跑完并投递（人设/模型都是 bounce 前的），用户在它
    * 结束前再发一条，两个实例就并发答同一会话。abort 走的是已有的 AbortError 收尾
    * （outbound:stream done + turn:after outcome='aborted'），与 WebUI「停止生成」同语义。
    */
@@ -193,7 +251,7 @@ class DefaultAgent implements AgentService {
     // 同名替换
     this.preprocessors.get(name)?.dispose();
 
-    const dispose = this.ctx.middleware('agent:input:before', async (data, next) => {
+    const dispose = this.caps.hooks.middleware('agent:input:before', async (data, next) => {
       await handler(data.message, next);
     });
 
@@ -225,7 +283,7 @@ class DefaultAgent implements AgentService {
    * （平台属于独立子系统，由 api-platform 的 helper 负责）。
    */
   getPluginGroups(): PluginGroupInfo[] {
-    const pm = this.ctx.getService<PluginManagerService>('plugins');
+    const pm = this.caps.plugins.current;
     if (!pm) return [];
 
     // 子系统归属：Agent 域的服务（不含 platform——平台是独立子系统）
@@ -276,7 +334,7 @@ class DefaultAgent implements AgentService {
       if (chunk.contentDelta) {
         content += chunk.contentDelta;
         appendDelta('text', chunk.contentDelta);
-        await this.ctx.emit('outbound:stream', {
+        await this.caps.events.emit('outbound:stream', {
           sessionId,
           platform,
           contentDelta: chunk.contentDelta,
@@ -285,14 +343,14 @@ class DefaultAgent implements AgentService {
       if (chunk.reasoningDelta) {
         reasoningContent += chunk.reasoningDelta;
         appendDelta('reasoning_text', chunk.reasoningDelta);
-        await this.ctx.emit('outbound:stream', {
+        await this.caps.events.emit('outbound:stream', {
           sessionId,
           platform,
           reasoningDelta: chunk.reasoningDelta,
         });
       }
       if (chunk.toolCallProgress) {
-        await this.ctx.emit('outbound:stream', {
+        await this.caps.events.emit('outbound:stream', {
           sessionId,
           platform,
           toolCallProgress: chunk.toolCallProgress,
@@ -311,7 +369,7 @@ class DefaultAgent implements AgentService {
       // 兜底剥离 LLM 端漏出的特殊 token 残渣（DSML 等），同时修复 GFM 表格
       const { sanitized, hadLeak } = stripLeakedSpecialTokens(content);
       if (hadLeak) {
-        this.ctx.logger.warn(
+        this.caps.logger.warn(
           `agent: 检测到 LLM 内容残留 DSML 标记，已剥离（session=${sessionId} platform=${platform} 原长=${content.length} 净化后=${sanitized.length}）`,
         );
       }
@@ -460,7 +518,7 @@ class DefaultAgent implements AgentService {
 
     let handled = false;
 
-    await this.ctx.runHook('agent:input:before', msgHookData, async () => {
+    await this.caps.hooks.run('agent:input:before', msgHookData, async () => {
       handled = true;
       // ===== defaultAction: 全部消息处理逻辑在此 =====
       // 中间件不调用 next() → 此处永远不执行 → 消息被拦截
@@ -498,7 +556,7 @@ class DefaultAgent implements AgentService {
 
       try {
         // 统一解析 session 配置（一次解析，多处复用）
-        const sessionMgr = this.ctx.getService<SessionManagerService>('session-manager');
+        const sessionMgr = this.caps.sessionManager.current;
         const resolved =
           sessionMgr && incoming.sessionId
             ? sessionMgr.resolveConfig(incoming.sessionId, incoming.platform)
@@ -533,9 +591,7 @@ class DefaultAgent implements AgentService {
           `工具分组: platform=${incoming.platform}, enabledGroups=${enabledGroups ? JSON.stringify(enabledGroups) : '(无)'}`,
         );
         const tools =
-          this.ctx
-            .getService<ToolService>('tools')
-            ?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? [];
+          this.caps.tools.current?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? [];
         const toolCtx: ToolCallContext = {
           sessionId: incoming.sessionId,
           // platform/userId 保持**会话/物理**语义（定时任务归属、平台档继承、记忆平台域、
@@ -567,11 +623,11 @@ class DefaultAgent implements AgentService {
           triggerType: incoming.triggerType,
         };
         // 组装先于链：贡献块（档案/技能/记忆/即时提示）先物化，拦截者审完整成品
-        await assemblePromptContributions(this.ctx, llmBeforeData, {
+        await assemblePromptContributions(this.caps, llmBeforeData, {
           buildTimeoutMs: this.promptBuildTimeoutMs,
           signal,
         });
-        await this.ctx.runHook('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
+        await this.caps.hooks.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
 
         // 裁剪消息以确保不超过上下文窗口
         llmBeforeData.messages = this.trimMessages(llmBeforeData.messages, tokenBudget);
@@ -638,7 +694,7 @@ class DefaultAgent implements AgentService {
 
         // Hook: agent:llm:after — 插件可以处理 LLM 返回结果
         const llmAfterData = { response, messages: llmBeforeData.messages };
-        await this.ctx.runHook('agent:llm:after', llmAfterData);
+        await this.caps.hooks.run('agent:llm:after', llmAfterData);
         response = llmAfterData.response;
 
         // 收集所有思考内容
@@ -708,10 +764,10 @@ class DefaultAgent implements AgentService {
 
               // Hook: agent:tool:before — 插件可以拦截或修改工具调用
               const toolBeforeData = { name: toolCall.function.name, args, toolCallContext: toolCtx };
-              await this.ctx.runHook('agent:tool:before', toolBeforeData);
+              await this.caps.hooks.run('agent:tool:before', toolBeforeData);
 
               // 通知平台：工具开始执行
-              await this.ctx.emit('tool:execute', {
+              await this.caps.events.emit('tool:execute', {
                 sessionId: incoming.sessionId,
                 platform: incoming.platform,
                 toolName: toolBeforeData.name,
@@ -722,9 +778,7 @@ class DefaultAgent implements AgentService {
               this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${JSON.stringify(toolBeforeData.args)}`);
               const toolT0 = Date.now();
               const executed = asToolExecutionResult(
-                await (this.ctx
-                  .getService<ToolService>('tools')
-                  ?.execute(toolBeforeData.name, toolBeforeData.args, toolCtx) ??
+                await (this.caps.tools.current?.execute(toolBeforeData.name, toolBeforeData.args, toolCtx) ??
                   Promise.resolve({ content: JSON.stringify({ error: 'tools 服务不可用' }) })),
               );
               let result = executed.content;
@@ -734,7 +788,7 @@ class DefaultAgent implements AgentService {
 
               // Hook: agent:tool:after — 插件可以处理工具执行结果
               const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: toolCtx };
-              await this.ctx.runHook('agent:tool:after', toolAfterData);
+              await this.caps.hooks.run('agent:tool:after', toolAfterData);
               result = toolAfterData.result;
 
               // 工具结果截断：按上下文窗口比例限制单条工具结果长度
@@ -753,7 +807,7 @@ class DefaultAgent implements AgentService {
               this.logger.debug(`工具完成: ${toolBeforeData.name} (${toolEndTime - toolT0}ms) 结果=${result}`);
 
               // 通知平台：工具执行完成
-              await this.ctx.emit('tool:execute', {
+              await this.caps.events.emit('tool:execute', {
                 sessionId: incoming.sessionId,
                 platform: incoming.platform,
                 toolName: toolBeforeData.name,
@@ -821,11 +875,11 @@ class DefaultAgent implements AgentService {
             triggerType: incoming.triggerType,
           };
           // 已物化的贡献按全局键跳过；本轮工具调用新注册的贡献（如新激活技能）增量落位
-          await assemblePromptContributions(this.ctx, nextLlmData, {
+          await assemblePromptContributions(this.caps, nextLlmData, {
             buildTimeoutMs: this.promptBuildTimeoutMs,
             signal,
           });
-          await this.ctx.runHook('agent:llm:before', nextLlmData, undefined, { warnOnStall: true });
+          await this.caps.hooks.run('agent:llm:before', nextLlmData, undefined, { warnOnStall: true });
 
           // 裁剪消息以确保不超过上下文窗口
           nextLlmData.messages = this.trimMessages(nextLlmData.messages, tokenBudget);
@@ -862,7 +916,7 @@ class DefaultAgent implements AgentService {
           this.debugLogResponse(response, Date.now() - tN, iterations);
 
           const nextLlmAfterData = { response, messages: nextLlmData.messages };
-          await this.ctx.runHook('agent:llm:after', nextLlmAfterData);
+          await this.caps.hooks.run('agent:llm:after', nextLlmAfterData);
           response = nextLlmAfterData.response;
 
           if (response.reasoningContent) {
@@ -903,7 +957,7 @@ class DefaultAgent implements AgentService {
           triggerType: incoming.triggerType,
           attempt: 0,
         };
-        await this.ctx.runHook('agent:reply:before', responseData);
+        await this.caps.hooks.run('agent:reply:before', responseData);
 
         // 重试循环：当 hook（如 persona 的 outputFormat 解析）报告 retryRequested 时，
         // 把失败的 assistant 输出 + 系统反馈追加到消息列表，重新请求 LLM；最多按 maxRetries 次。
@@ -947,7 +1001,7 @@ class DefaultAgent implements AgentService {
           responseData.retryRequested = false;
           responseData.retryFeedback = undefined;
           responseData.attempt = attempt;
-          await this.ctx.runHook('agent:reply:before', responseData);
+          await this.caps.hooks.run('agent:reply:before', responseData);
         }
 
         // 双保险：循环结束后若 hook 仍标记 retryRequested（理论上 persona 已在用尽时自动走兜底），
@@ -973,7 +1027,7 @@ class DefaultAgent implements AgentService {
         }
 
         // 发出流结束标记
-        await this.ctx.emit('outbound:stream', {
+        await this.caps.events.emit('outbound:stream', {
           sessionId: incoming.sessionId,
           platform: incoming.platform,
           done: true,
@@ -1026,7 +1080,7 @@ class DefaultAgent implements AgentService {
 
         // Hook: agent:turn:after — 插件可以在完整消息周期结束后做后处理
         const turnOutcome: 'replied' | 'silent' = replyContent.trim().length === 0 ? 'silent' : 'replied';
-        await this.ctx.runHook('agent:turn:after', {
+        await this.caps.hooks.run('agent:turn:after', {
           message: incoming,
           reply: replyContent,
           outcome: turnOutcome,
@@ -1053,7 +1107,7 @@ class DefaultAgent implements AgentService {
                 ? `（保留本轮已完成的 ${turnPersistedTimestamps.length} 条工具调用记录，便于下一轮 agent 感知）`
                 : ''),
           );
-          await this.ctx.emit('outbound:stream', {
+          await this.caps.events.emit('outbound:stream', {
             sessionId: incoming.sessionId,
             platform: incoming.platform,
             done: true,
@@ -1063,7 +1117,7 @@ class DefaultAgent implements AgentService {
           // session-manager 把会话状态从 active 收口为 completed（否则永远停在"进行中"），
           // checkpoint 关闭当前回合（否则中止后回合不关闭、长期泄漏）。
           // 文档与 agent-api 早已声明 outcome 含 aborted，此处兑现契约。
-          await this.ctx.runHook('agent:turn:after', {
+          await this.caps.hooks.run('agent:turn:after', {
             message: incoming,
             reply: '',
             outcome: 'aborted',
@@ -1079,7 +1133,7 @@ class DefaultAgent implements AgentService {
 
         // 异常同样要结束流：不发 done，CLI 的流式块不收尾、WebUI 的工具进度与上限标记不复位，
         // 下一轮 delta 还会抹掉这条 [错误] 与用户的新输入。顺序与正常收尾一致——先 done 再发消息。
-        await this.ctx.emit('outbound:stream', {
+        await this.caps.events.emit('outbound:stream', {
           sessionId: incoming.sessionId,
           platform: incoming.platform,
           done: true,
@@ -1094,7 +1148,7 @@ class DefaultAgent implements AgentService {
         // 异常也是回合终态：同样发 turn:after(outcome=error) 让 checkpoint 关闭回合、
         // session-manager 收口状态。dispatchOutbound 已发系统错误消息，状态可被 outbound:message
         // 与本钩子双路径幂等收口。
-        await this.ctx.runHook('agent:turn:after', {
+        await this.caps.hooks.run('agent:turn:after', {
           message: incoming,
           reply: '',
           outcome: 'error',
@@ -1106,7 +1160,7 @@ class DefaultAgent implements AgentService {
 
     // 消息被拦截（如流控缓冲），通知前端结束 loading
     if (!handled) {
-      await this.ctx.emit('outbound:stream', {
+      await this.caps.events.emit('outbound:stream', {
         sessionId: incoming.sessionId,
         platform: incoming.platform,
         done: true,
@@ -1129,7 +1183,7 @@ class DefaultAgent implements AgentService {
     messages.push({ role: 'system', content: systemPrompt, metadata: { injector: 'persona' } });
 
     // 2. 历史消息
-    const memory = this.ctx.getService<MemoryService>('memory');
+    const memory = this.caps.memory.current;
     if (memory) {
       try {
         const history = this.sanitizeToolCallHistory(
@@ -1220,7 +1274,7 @@ class DefaultAgent implements AgentService {
     // 多模态：把 attachments 中的 image 项传递给 LLM（视觉模型多模态字段）
     const imageAtts = incoming.attachments?.filter(a => a.kind === 'image') ?? [];
     if (imageAtts.length > 0) {
-      if (this.ctx.getService('media') !== undefined) {
+      if (this.caps.media.current !== undefined) {
         // media 在场：原样透传。出口形态由 media 的 agent:llm:before 中间件规范化
         //（describe 剥离 / passthrough 物化），此处不做任何转换——它的描述缓存键与
         // 动图提示都按 attachment.data 原串命中，改形态会打散。
@@ -1247,7 +1301,7 @@ class DefaultAgent implements AgentService {
     // 秒级时间戳一变，人设 + 记忆 + 历史近 7 万 token 的前缀全部作废——实测每个
     // 新回合命中率恒为 0，只有同回合内的工具迭代（prompt 不重建）才命中。
     // 放到这里语义也更顺：它们本就是「此刻的事实」，紧挨当前消息说更自然。
-    const persona = this.ctx.getService<PersonaService>('persona');
+    const persona = this.caps.persona.current;
     const volatileCtx = persona?.getVolatilePrompt?.(personaOpts);
     if (volatileCtx) {
       messages.push({ role: 'system', content: volatileCtx, metadata: { injector: VOLATILE_INJECTOR } });
@@ -1267,7 +1321,7 @@ class DefaultAgent implements AgentService {
    * 构建系统提示词
    */
   private buildSystemPrompt(personaOpts?: PersonaSessionOptions): string {
-    const persona = this.ctx.getService<PersonaService>('persona');
+    const persona = this.caps.persona.current;
     const base = persona
       ? this.systemPrompt
         ? `${persona.getSystemPrompt(personaOpts)}\n\n${this.systemPrompt}`
@@ -1312,7 +1366,7 @@ class DefaultAgent implements AgentService {
     for (const msg of messages) {
       const t = estimateMsgTokens(msg);
       if (msg.role === 'system') {
-        // 贡献点物化块的 injector 是全局键 `${ctx.id}/${局部标签}`（ctx.id 含 '/'），
+        // 贡献点物化块的 injector 是全局键 `${贡献方实例 id}/${局部标签}`（实例 id 含 '/'），
         // 归桶按局部标签（末段）匹配——桶规则与统计明细键保持迁移前的稳定值；
         // 非贡献来源（persona / system-other 等）无 '/'，末段即原值，不受影响。
         const rawSource = msg.metadata?.injector as string | undefined;
@@ -1375,7 +1429,7 @@ class DefaultAgent implements AgentService {
     const totalUsed = systemTokens + historyTokens + toolResultTokens + toolDefsTokens;
     const usageRatio = contextLength > 0 ? totalUsed / contextLength : 0;
 
-    this.ctx
+    this.caps.events
       .emit('token:usage', {
         sessionId,
         platform,
@@ -1433,7 +1487,7 @@ class DefaultAgent implements AgentService {
     const t = data.trim();
     const rel = t.match(/^data\/((?:images|videos|audios|files)\/.+)$/);
     if (!rel) return t;
-    const storage = this.ctx.getService<StorageService>('storage');
+    const storage = this.caps.storage.current;
     if (!storage) return null;
     try {
       const raw = (await storage.readFile(`data:/${rel[1]}`)) as Uint8Array;
@@ -1698,7 +1752,7 @@ class DefaultAgent implements AgentService {
    * 保存消息到记忆服务
    */
   private async saveToMemory(sessionId: string, message: Message): Promise<void> {
-    const archive = this.ctx.getService<MessageArchiveService>('message-archive');
+    const archive = this.caps.messageArchive.current;
     if (archive) {
       try {
         await archive.saveMessage(sessionId, message);
@@ -1709,7 +1763,7 @@ class DefaultAgent implements AgentService {
   }
 
   private buildAssistantMetadata(incoming: IncomingMessage): Record<string, unknown> | undefined {
-    const identity = getPlatformSelfIdentity(this.ctx, incoming.platform, incoming.sessionId);
+    const identity = getPlatformSelfIdentity(this.caps.platform, incoming.platform, incoming.sessionId);
     const metadata: Record<string, unknown> = {
       platform: incoming.platform,
       senderType: 'assistant',
@@ -1810,7 +1864,7 @@ class DefaultAgent implements AgentService {
   private async archiveIncomingMessage(incoming: IncomingMessage): Promise<Message | undefined> {
     // 跳过非真实用户输入：闲聊主动触发是系统提示，不应作为 user 消息写入历史
     if (incoming.source === 'idle-trigger') return undefined;
-    const archive = this.ctx.getService<MessageArchiveService>('message-archive');
+    const archive = this.caps.messageArchive.current;
     if (!archive) return undefined;
     try {
       const result = await archive.archiveIncoming(incoming);
@@ -1828,41 +1882,30 @@ class DefaultAgent implements AgentService {
    * 此时该 fallback 永远不命中——出站消息总是经过 outbound:dispatch 钩子链
    * （审计 / 脱敏 / 限速 / authority 等中间件）。
    *
-   * 由于 plugin-agent-default 未在 inject.required 中声明 'gateway'，
-   * 即使 gateway 未加载本插件仍会激活，因此保留该 fallback 以便：
+   * gateway 只是本插件的 optional 依赖，它不在场时 agent 照常激活，因此保留该 fallback 以便：
    *   - 集成测试不必启动 gateway
    *   - 嵌入式 / 单 agent 部署场景
    * 生产部署务必确保 plugin-gateway 已加载，否则中间件链会被跳过。
    */
   private async dispatchOutbound(message: OutgoingMessage): Promise<void> {
-    const gateway = this.ctx.getService<GatewayService>('gateway');
+    const gateway = this.caps.gateway.current;
     if (gateway) {
       await gateway.dispatchOutbound(message);
       return;
     }
-    this.logger.warn('Gateway 服务不可用，回退至 ctx.emit(outbound:message)（中间件链被跳过）');
-    await this.ctx.emit('outbound:message', message);
+    this.logger.warn('Gateway 服务不可用，回退至 outbound:message 事件（中间件链被跳过）');
+    await this.caps.events.emit('outbound:message', message);
   }
 }
 
 // ----- 插件导出 -----
 
-export const name = '@aalis/plugin-agent';
-export const displayName = '默认 Agent';
-export const subsystem = 'agent';
-
-export const provides = ['agent'];
-
-export const inject = {
-  optional: ['llm', 'memory', 'persona', 'message-archive', 'platform', 'media', 'storage'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   defaultLLM: {
     type: 'llm-ref',
     label: '默认对话模型',
     description:
-      '全局默认 LLM。apply() 时调用 ctx.preferService("llm", `provider/model`) 锁定 ServiceContainer 偏好。会话 / 平台 profile 未覆盖时生效。',
+      '全局默认 LLM。apply() 时经 services.prefer 锁定 llm 服务的偏好提供者。会话 / 平台 profile 未覆盖时生效。',
   },
   systemPrompt: {
     type: 'textarea',
@@ -1928,19 +1971,19 @@ type InternalAgent = {
   ): void;
 };
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
-  const agentImpl = new DefaultAgent(ctx, config);
-  ctx.provide('agent', agentImpl);
+function run(caps: Caps): void {
+  const agentImpl = new DefaultAgent(caps);
+  caps.provide(agentService, agentImpl);
   // 拆卸即中止在飞回合：bounce / disable / unload / 停机都经此，理由见 abortAll。
-  ctx.onDispose(() => agentImpl.abortAll());
+  caps.lifecycle.onDispose(() => agentImpl.abortAll());
   const agent = agentImpl as unknown as InternalAgent;
 
-  // 全局默认 LLM：通过 ServicePreference 锁定 ctx.getService<'llm'>() 的首选 entry。
+  // 全局默认 LLM：通过 ServicePreference 锁定 llm 服务的首选 entry。
   // 偏好持久化由 core 配置层负责（servicePreferences 字段）；这里只是开机时按 agent
   // 自己的 cfg.defaultLLM 覆写一次，便于纯文件配置流（无 webui 干预）也能生效。
-  const defaultLLM = config.defaultLLM as { provider?: string; model?: string } | undefined;
+  const defaultLLM = caps.config.defaultLLM as { provider?: string; model?: string } | undefined;
   if (defaultLLM?.provider && defaultLLM?.model) {
-    ctx.preferService('llm', `${defaultLLM.provider}/${defaultLLM.model}`);
+    caps.services.prefer(llmService, `${defaultLLM.provider}/${defaultLLM.model}`);
   }
 
   // ===== 会话级配置指令 =====
@@ -1958,7 +2001,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     label: string,
     pick: (c: CfgView) => string | undefined,
   ): string[] {
-    const smSvc = ctx.getService<SessionManagerService>('session-manager');
+    const smSvc = caps.sessionManager.current;
     if (!smSvc) return [`${label}: (session-manager 不可用)`];
     const session = smSvc.getSession(sessionId);
     const own = pick(session?.config);
@@ -2005,13 +2048,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     return lines.join('\n');
   }
 
-  useCommandService(ctx)
+  caps.commands
     .command('model [keyword:string]', '列出/搜索可用对话模型（分页，-p 翻页；如 /model grok）')
     .option('page', '-p <n:number>', { description: '页码（默认 1）' })
     .action(async (argv, keyword) => {
       const seen = new Set<string>();
       const ids: string[] = [];
-      for (const e of listLLMModels(ctx, { caps: ['chat'] })) {
+      for (const e of listLLMModels(caps.llm, { caps: ['chat'] })) {
         if (seen.has(e.contextId)) continue;
         seen.add(e.contextId);
         ids.push(e.contextId);
@@ -2020,21 +2063,21 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return renderPaged(ids, String(keyword ?? ''), page, '可用模型', '/model');
     });
 
-  useCommandService(ctx)
+  caps.commands
     .command('persona [keyword:string]', '列出/搜索可用人设（分页，-p 翻页）')
     .option('page', '-p <n:number>', { description: '页码（默认 1）' })
     .action(async (argv, keyword) => {
-      const persona = ctx.getService<PersonaService>('persona');
+      const persona = caps.persona.current;
       const names = persona?.listModels ? await persona.listModels() : [];
       const page = typeof argv.options.page === 'number' ? argv.options.page : 1;
       return renderPaged(names, String(keyword ?? ''), page, '可用人设', '/persona');
     });
 
   // ---- 会话级「模型 + 人设 + thinking + 名称」配置（onebot 等平台对话直接改当前对话生效） ----
-  useCommandService(ctx)
+  caps.commands
     .command('session', '查看当前对话生效的模型 / 人设 / thinking / 名称及来源与解析链', { risk: 'sensitive' })
     .action(async argv => {
-      const smSvc = ctx.getService<SessionManagerService>('session-manager');
+      const smSvc = caps.sessionManager.current;
       if (!smSvc) return 'session-manager 服务不可用';
       const sid = argv.session.sessionId;
       const session = smSvc.getSession(sid);
@@ -2052,7 +2095,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         .join('\n');
     });
 
-  useCommandService(ctx)
+  caps.commands
     .command('session.set', '设定当前对话的模型 / 人设 / thinking / 显示名（会话级覆盖，持久化，重启不丢）', {
       risk: 'sensitive',
       examples: [
@@ -2069,7 +2112,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     })
     .option('name', '-n <label:string>', { description: '会话显示名（可选）' })
     .action(async argv => {
-      const smSvc = ctx.getService<SessionManagerService>('session-manager');
+      const smSvc = caps.sessionManager.current;
       if (!smSvc) return 'session-manager 服务不可用';
       const modelRef = typeof argv.options.model === 'string' ? argv.options.model.trim() : '';
       const personaName = typeof argv.options.persona === 'string' ? argv.options.persona.trim() : '';
@@ -2089,7 +2132,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         if (lastSlash <= 0 || lastSlash === modelRef.length - 1) {
           return '模型格式错误。请用 `provider/model`，例如 `@aalis/plugin-llm-openai:main/gpt-4o`';
         }
-        const chatModels = listLLMModels(ctx, { caps: ['chat'] });
+        const chatModels = listLLMModels(caps.llm, { caps: ['chat'] });
         if (!chatModels.some(e => e.contextId === modelRef)) {
           return `未知模型 "${modelRef}"。用 /model <关键词> 搜索（如 /model grok），共 ${chatModels.length} 个可用。`;
         }
@@ -2097,7 +2140,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
       // 人设：listModels 可选，缺失则不校验（persona 插件缺席时不误拒）
       if (personaName) {
-        const persona = ctx.getService<PersonaService>('persona');
+        const persona = caps.persona.current;
         if (persona?.listModels) {
           const names = await persona.listModels();
           if (!names.includes(personaName)) {
@@ -2120,7 +2163,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return lines.join('\n');
     });
 
-  useCommandService(ctx)
+  caps.commands
     .command('session.reset', '复位当前对话的会话级覆盖（默认清模型+人设+thinking；-m/-p/-t 单独清对应项）', {
       risk: 'sensitive',
       examples: ['/session.reset', '/session.reset -m', '/session.reset -p', '/session.reset -t'],
@@ -2129,7 +2172,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     .option('persona', '-p', { description: '仅复位人设覆盖' })
     .option('think', '-t', { description: '仅复位 thinking 覆盖' })
     .action(async argv => {
-      const smSvc = ctx.getService<SessionManagerService>('session-manager');
+      const smSvc = caps.sessionManager.current;
       if (!smSvc) return 'session-manager 服务不可用';
       const mFlag = argv.options.model === true;
       const pFlag = argv.options.persona === true;
@@ -2159,8 +2202,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
 
   // 监听 token:request 事件 — 客户端刷新/重连时主动请求 token 用量
-  ctx.on('token:request', async (...args: unknown[]) => {
-    const data = args[0] as { sessionId: string; platform?: string };
+  caps.events.on('token:request', async data => {
     if (!data?.sessionId) return;
     // 唯一发射方是 WebUI；平台缺省按 'webui' 兜底，否则模型/会话配置解析会绕过平台 profile 层
     const platform = data.platform ?? 'webui';
@@ -2175,7 +2217,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const tokenBudget = Math.max(1024, contextLength - maxTokens - 512);
 
       // 获取历史消息并构建基础消息列表
-      const memory = ctx.getService<MemoryService>('memory');
+      const memory = caps.memory.current;
       const messages: Message[] = [];
 
       // 系统提示
@@ -2190,12 +2232,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
       // 与真实回合同序：先组装 agent:prompt 贡献（摘要/向量记忆/档案等物化为 system 块），
       // 再跑 agent:llm:before（工具搜索层过滤等拦截职责），使快照贴近实际送入 LLM 的形态
-      const sm = ctx.getService<SessionManagerService>('session-manager');
+      const sm = caps.sessionManager.current;
       const sessionResolved = sm ? sm.resolveConfig(data.sessionId, platform) : undefined;
       const enabledGroups = sessionResolved?.enabledToolGroups?.length ? sessionResolved.enabledToolGroups : undefined;
-      const tools =
-        ctx.getService<ToolService>('tools')?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ??
-        [];
+      const tools = caps.tools.current?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? [];
 
       const llmBeforeData = {
         messages,
@@ -2205,8 +2245,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         platform,
         dryRun: true, // 纯统计路径:昂贵注入者(向量检索/档案加载)据此跳过副作用
       };
-      await assemblePromptContributions(ctx, llmBeforeData, { buildTimeoutMs: agent.promptBuildTimeoutMs });
-      await ctx.runHook('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
+      await assemblePromptContributions(caps, llmBeforeData, { buildTimeoutMs: agent.promptBuildTimeoutMs });
+      await caps.hooks.run('agent:llm:before', llmBeforeData, undefined, { warnOnStall: true });
 
       agent.emitTokenUsage(
         data.sessionId,
@@ -2218,7 +2258,17 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         tokenBudget,
       );
     } catch (err) {
-      ctx.logger.debug('token:request 处理失败:', err);
+      caps.logger.debug('token:request 处理失败:', err);
     }
   });
 }
+
+export default definePlugin({
+  name: '@aalis/plugin-agent',
+  displayName: '默认 Agent',
+  subsystem: 'agent',
+  configSchema,
+  provides: [agentService],
+  uses,
+  apply: run,
+});

@@ -10,8 +10,8 @@ const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages')
  *
  * 每个生产插件都应该：
  * 1. 能被 import 成功（编译/依赖链路 OK）
- * 2. 导出 `name: string`（PluginManager 用作 ID）
- * 3. 导出 `apply: function`（PluginManager 用作激活入口）
+ * 2. 默认导出是 definePlugin 的产物，带 `name: string`（PluginManager 用作 ID）
+ * 3. 默认导出带 `apply: function`（PluginManager 用作激活入口）
  *
  * 目的不是验证业务行为，而是防止破坏性重构悄无声息地把插件搞坏：
  * 编译过 ≠ 模块能被 ESM 加载 ≠ 入口契约还在。
@@ -65,10 +65,10 @@ describe('全插件 smoke import 契约', () => {
       continue;
     }
     it(`${dir} 导出 name + apply`, async () => {
-      const mod = await import(`../../packages/${dir}/src/index.ts`);
-      expect(typeof mod.name).toBe('string');
-      expect(mod.name.length).toBeGreaterThan(0);
-      expect(typeof mod.apply).toBe('function');
+      const { default: plugin } = await import(`../../packages/${dir}/src/index.ts`);
+      expect(typeof plugin?.name).toBe('string');
+      expect(plugin.name.length).toBeGreaterThan(0);
+      expect(typeof plugin.apply).toBe('function');
     });
   }
 });

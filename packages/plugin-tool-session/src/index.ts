@@ -1,10 +1,15 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
-import type { MemoryService } from '@aalis/api-memory';
-import { resolvePlatformBySession } from '@aalis/api-platform';
-import type { AccessChecker, AccessCheckerDisposer, SessionHistoryService } from '@aalis/api-tool-session';
-import type { ToolCallContext } from '@aalis/api-tools';
-import { useToolService } from '@aalis/api-tools';
-import type { Context } from '@aalis/core';
+import { memory } from '@aalis/api-memory';
+import { persona } from '@aalis/api-persona';
+import { platform, resolvePlatformBySession } from '@aalis/api-platform';
+import {
+  type AccessChecker,
+  type AccessCheckerDisposer,
+  type SessionHistoryService,
+  sessionHistory,
+} from '@aalis/api-tool-session';
+import { type ToolCallContext, tools } from '@aalis/api-tools';
+import { type BoundOf, config, definePlugin, events, hooks, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 
@@ -14,35 +19,6 @@ import type { IncomingMessage, Message } from '@aalis/schema-message';
 // 该会话之后由下一条不带 proactiveDepth 的入站消息（真人消息、idle/interval 自动触发都算）
 // 驱动的回合不受影响。
 const PROACTIVE_DEPTH_MAX = 1;
-/** sessionId → 该会话当前回合的入站消息所带 proactiveDepth（非委派回合不在表内）。 */
-const turnProactiveDepth = new Map<string, number>();
-
-/**
- * 登记「当前回合由深度 N 的委派消息驱动」。
- *
- * 登记点在 `agent:input:before`——回合真正开始的那一刻，且是所有投递方式的汇合处：
- * 经 `inbound:message` 事件进来的和直接调 `gateway.ingressMessage()` 的都要过这道钩子，
- * 登记因而必然早于本回合的任何工具调用。
- *
- * 入站即写、回合结束（`agent:turn:after`）即清；下一条不带 proactiveDepth 的入站消息
- * （真人消息、idle/interval 自动触发都算）会覆盖清除该会话的登记，所以即使某轮没等到
- * turn:after（被中间件吞、进程重启前残留），这样的下一条消息也能立刻解锁——无需任何超时兜底。
- *
- * 锁按 sessionId 记，是「会话近似回合」：同会话不同 source 的并行回合共用同一把锁，
- * 后开始的那个会覆盖前一个的登记、先结束的那个会替所有人解锁。
- */
-function trackProactiveTurnDepth(ctx: Context): void {
-  ctx.middleware('agent:input:before', async (data, next) => {
-    const depth = typeof data.message.proactiveDepth === 'number' ? data.message.proactiveDepth : 0;
-    if (depth > 0) turnProactiveDepth.set(data.message.sessionId, depth);
-    else turnProactiveDepth.delete(data.message.sessionId);
-    await next();
-  });
-  ctx.middleware('agent:turn:after', async (data, next) => {
-    await next();
-    turnProactiveDepth.delete(data.sessionId);
-  });
-}
 
 // ===== 跨会话委派：近期派发记录（提醒型，不硬挡） =====
 // 记录每个 (target_session_id, task) 最近一次派发状态。
@@ -60,7 +36,7 @@ interface RecentDelegationEntry {
   lastReplyPreview?: string;
   lastOutcome?: string;
 }
-const recentDelegations = new Map<string, RecentDelegationEntry>();
+type RecentDelegations = Map<string, RecentDelegationEntry>;
 
 function recentDelegationKey(targetSessionId: string, taskHash: string): string {
   return `${targetSessionId}::${taskHash}`;
@@ -76,23 +52,27 @@ function hashTask(task: string): string {
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
-function pruneRecentDelegations(now: number): void {
-  for (const [key, entry] of recentDelegations) {
-    if (entry.expiresAt <= now) recentDelegations.delete(key);
+function pruneRecentDelegations(store: RecentDelegations, now: number): void {
+  for (const [key, entry] of store) {
+    if (entry.expiresAt <= now) store.delete(key);
   }
   // 超上限时删最早的
-  if (recentDelegations.size > RECENT_DELEGATION_MAX) {
-    const oldest = [...recentDelegations.entries()].sort((a, b) => a[1].firedAt - b[1].firedAt);
+  if (store.size > RECENT_DELEGATION_MAX) {
+    const oldest = [...store.entries()].sort((a, b) => a[1].firedAt - b[1].firedAt);
     for (let i = 0; i < oldest.length - RECENT_DELEGATION_MAX; i++) {
-      recentDelegations.delete(oldest[i][0]);
+      store.delete(oldest[i][0]);
     }
   }
 }
 
-function findRecentDelegationsForTarget(targetSessionId: string, now: number): RecentDelegationEntry[] {
+function findRecentDelegationsForTarget(
+  store: RecentDelegations,
+  targetSessionId: string,
+  now: number,
+): RecentDelegationEntry[] {
   const prefix = `${targetSessionId}::`;
   const list: RecentDelegationEntry[] = [];
-  for (const [key, entry] of recentDelegations) {
+  for (const [key, entry] of store) {
     if (entry.expiresAt <= now) continue;
     if (!key.startsWith(prefix)) continue;
     list.push(entry);
@@ -132,17 +112,9 @@ function buildDelegationMetaBlock(
   return lines.join('\n');
 }
 
-// ===== 插件元数据 =====
+// ===== 插件元数据与能力声明 =====
 
-export const name = '@aalis/plugin-tool-session';
-export const displayName = '会话工具';
-export const subsystem = 'session';
-export const provides = ['session-history'];
-export const inject = {
-  optional: ['memory'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   enabled: { type: 'boolean', label: '启用会话历史读取工具', default: true },
   maxLimit: {
     type: 'number',
@@ -187,6 +159,22 @@ export const configSchema: ConfigSchema = {
     description: 'delegate_to_session 在未显式指定 timeout_seconds 时使用的等待上限。',
   },
 };
+
+const uses = {
+  tools: optional(tools),
+  events,
+  hooks,
+  logger,
+  config,
+  provide,
+  memory: optional(memory),
+  platform: optional(platform),
+  persona: optional(persona),
+};
+type Caps = BoundOf<typeof uses>;
+type HistoryCaps = Pick<Caps, 'memory' | 'logger'>;
+type HistoryToolCaps = Pick<Caps, 'tools' | 'logger'>;
+type CrossSessionCaps = Pick<Caps, 'tools' | 'logger' | 'events' | 'hooks' | 'memory' | 'platform' | 'persona'>;
 
 interface PluginConfig {
   enabled: boolean;
@@ -286,7 +274,7 @@ export function resolveTimeRange(
   return null;
 }
 
-function resolveConfig(raw: Record<string, unknown>): PluginConfig {
+function resolveConfig(raw: Readonly<Record<string, unknown>>): PluginConfig {
   const scopeRaw = raw.scope;
   const scope = scopeRaw === 'current' || scopeRaw === 'all' ? scopeRaw : 'platform';
   const maxLimit = Math.max(1, Math.min(1000, Number(raw.maxLimit) || 100));
@@ -365,7 +353,7 @@ function canReadSessionHistory(
   return { ok: true };
 }
 
-function createSessionHistoryService(ctx: Context, cfg: PluginConfig): SessionHistoryService {
+function createSessionHistoryService({ memory, logger }: HistoryCaps, cfg: PluginConfig): SessionHistoryService {
   const checkers: AccessChecker[] = [];
 
   return {
@@ -378,8 +366,8 @@ function createSessionHistoryService(ctx: Context, cfg: PluginConfig): SessionHi
     },
 
     async getHistory(options, callCtx) {
-      const memory = ctx.getService<MemoryService>('memory');
-      if (!memory) return { error: 'memory 服务不可用' };
+      const store = memory.current;
+      if (!store) return { error: 'memory 服务不可用' };
 
       const targetSessionId = String(options.sessionId ?? '').trim();
       if (!targetSessionId) return { error: 'sessionId 不能为空' };
@@ -409,15 +397,15 @@ function createSessionHistoryService(ctx: Context, cfg: PluginConfig): SessionHi
           let ranged: Message[];
           // 区间后端（getMessagesBySessionRange）天然含归档；仅当退化到 getHistory 时才是「仅活跃」。
           let includesArchived = true;
-          if (memory.getMessagesBySessionRange) {
-            ranged = await memory.getMessagesBySessionRange(targetSessionId, fromTs, toTs);
+          if (store.getMessagesBySessionRange) {
+            ranged = await store.getMessagesBySessionRange(targetSessionId, fromTs, toTs);
           } else {
             // 后端不支持原生区间查询：退回扫描历史 + 客户端按时间过滤（best-effort，很早的窗口可能不全）。
             let base: Message[];
-            if (memory.getFullHistory) {
-              base = await memory.getFullHistory(targetSessionId, RANGE_FALLBACK_SCAN);
+            if (store.getFullHistory) {
+              base = await store.getFullHistory(targetSessionId, RANGE_FALLBACK_SCAN);
             } else {
-              base = await memory.getHistory(targetSessionId, RANGE_FALLBACK_SCAN);
+              base = await store.getHistory(targetSessionId, RANGE_FALLBACK_SCAN);
               includesArchived = false; // getHistory 不含归档，诚实回显
             }
             ranged = base.filter(m => {
@@ -444,35 +432,39 @@ function createSessionHistoryService(ctx: Context, cfg: PluginConfig): SessionHi
         }
 
         const history =
-          includeArchived && memory.getFullHistory
-            ? await memory.getFullHistory(targetSessionId, limit)
-            : await memory.getHistory(targetSessionId, limit);
+          includeArchived && store.getFullHistory
+            ? await store.getFullHistory(targetSessionId, limit)
+            : await store.getHistory(targetSessionId, limit);
         const result: SessionHistoryResult = {
           ok: true,
           sessionId: targetSessionId,
           count: history.length,
           limit,
-          includeArchived: includeArchived && !!memory.getFullHistory,
+          includeArchived: includeArchived && !!store.getFullHistory,
           messages: history.map((message, index) => formatHistoryMessage(message, index + 1, cfg.perMessageMaxChars)),
         };
         return result;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        ctx.logger.warn(`session-history 读取失败 (${targetSessionId}): ${message}`);
+        logger.warn(`session-history 读取失败 (${targetSessionId}): ${message}`);
         return { error: `读取会话历史失败: ${message}` };
       }
     },
   };
 }
 
-function registerSessionHistoryTools(ctx: Context, historyService: SessionHistoryService, cfg: PluginConfig): void {
-  useToolService(ctx).registerGroup({
+function registerSessionHistoryTools(
+  { tools, logger }: HistoryToolCaps,
+  historyService: SessionHistoryService,
+  cfg: PluginConfig,
+): void {
+  tools.registerGroup({
     name: 'session-history',
     label: '会话历史读取',
     description: '按 Aalis sessionId 读取近期会话历史，用于核实跨会话上下文',
   });
 
-  useToolService(ctx).register({
+  tools.register({
     groups: ['session-history'],
     definition: {
       type: 'function',
@@ -540,11 +532,51 @@ function registerSessionHistoryTools(ctx: Context, historyService: SessionHistor
     },
   });
 
-  ctx.logger.info('会话历史读取工具已注册');
+  logger.info('会话历史读取工具已注册');
 }
 
-function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
-  useToolService(ctx).registerGroup({
+/**
+ * 登记「当前回合由深度 N 的委派消息驱动」。
+ *
+ * 登记点在 `agent:input:before`——回合真正开始的那一刻，且是所有投递方式的汇合处：
+ * 经 `inbound:message` 事件进来的和直接调 `gateway.ingressMessage()` 的都要过这道钩子，
+ * 登记因而必然早于本回合的任何工具调用。
+ *
+ * 入站即写、回合结束（`agent:turn:after`）即清；下一条不带 proactiveDepth 的入站消息
+ * （真人消息、idle/interval 自动触发都算）会覆盖清除该会话的登记，所以即使某轮没等到
+ * turn:after（被中间件吞、进程重启前残留），这样的下一条消息也能立刻解锁——无需任何超时兜底。
+ *
+ * 锁按 sessionId 记，是「会话近似回合」：同会话不同 source 的并行回合共用同一把锁，
+ * 后开始的那个会覆盖前一个的登记、先结束的那个会替所有人解锁。
+ */
+function trackProactiveTurnDepth(hooks: Caps['hooks'], turnProactiveDepth: Map<string, number>): void {
+  hooks.middleware('agent:input:before', async (data, next) => {
+    const depth = typeof data.message.proactiveDepth === 'number' ? data.message.proactiveDepth : 0;
+    if (depth > 0) turnProactiveDepth.set(data.message.sessionId, depth);
+    else turnProactiveDepth.delete(data.message.sessionId);
+    await next();
+  });
+  hooks.middleware('agent:turn:after', async (data, next) => {
+    await next();
+    turnProactiveDepth.delete(data.sessionId);
+  });
+}
+
+function registerCrossSessionTools(caps: CrossSessionCaps, cfg: PluginConfig): void {
+  const { tools, logger, events, hooks, memory, platform, persona } = caps;
+
+  /**
+   * sessionId → 该会话当前回合的入站消息所带 proactiveDepth（非委派回合不在表内）。
+   * 随这次激活存亡：锁由本次激活的 `agent:input:before` 中间件写入、由本次激活注册的工具读取，
+   * 插件重载后旧锁必须一并消失，否则新激活会拿着没有对应回合的残留锁拒绝委派。
+   */
+  const turnProactiveDepth = new Map<string, number>();
+  /** (目标会话, task) → 最近一次派发状态；同样随激活存亡（60s 提醒窗，跨重载无保留价值） */
+  const recentDelegations: RecentDelegations = new Map();
+
+  trackProactiveTurnDepth(hooks, turnProactiveDepth);
+
+  tools.registerGroup({
     name: 'session-delegate',
     label: '跨会话派发',
     description: '向已存在的其他会话（如另一个群、另一个 QQ 好友、另一个平台）派发任务并可选等待结果。',
@@ -553,7 +585,7 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
   // ---- list_known_sessions ----
   // 列出最近活跃的会话（按平台/最近活跃时间），供 agent 在 delegate 前发现可派发目标，
   // 避免凭空拼接 sessionId 出错。基于 memory 的 getRecentMessagesAcrossSessions 能力。
-  useToolService(ctx).register({
+  tools.register({
     groups: ['session-delegate'],
     definition: {
       type: 'function',
@@ -594,8 +626,8 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
       },
     },
     handler: async (args, callCtx) => {
-      const memory = ctx.getService<MemoryService>('memory');
-      if (!memory?.getRecentMessagesAcrossSessions) {
+      const store = memory.current;
+      if (!store?.getRecentMessagesAcrossSessions) {
         return JSON.stringify({
           error: '当前 memory 服务不支持 getRecentMessagesAcrossSessions 能力',
         });
@@ -608,7 +640,7 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
       const sinceTs = Date.now() - sinceHours * 3600 * 1000;
 
       // 多取一些消息再按 session 聚合，确保 limit 个会话能凑齐
-      const records = await memory.getRecentMessagesAcrossSessions({
+      const records = await store.getRecentMessagesAcrossSessions({
         limit: Math.max(limit * 10, 200),
         sinceTs,
         platform: platformFilter,
@@ -623,13 +655,13 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
         if (!existing || ts > existing.lastTs) {
           const content = typeof rec.message.content === 'string' ? rec.message.content : '';
           const preview = content.length > 80 ? `${content.slice(0, 80)}...` : content;
-          const platform =
+          const platformName =
             (rec.message.metadata as Record<string, unknown> | undefined)?.platform != null
               ? String((rec.message.metadata as Record<string, unknown>).platform)
               : rec.sessionId.split(':')[0] || undefined;
           bySession.set(rec.sessionId, {
             sessionId: rec.sessionId,
-            platform,
+            platform: platformName,
             lastTs: ts,
             preview,
           });
@@ -657,7 +689,7 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
   // ---- delegate_to_session ----
   // 向已存在的目标会话派发一次任务，目标会话的 agent 在自己原本的人设/记忆/工具集下完整推理；
   // 与 create_subtask 不同：目标不是新建的"子会话"，而是任意已知 sessionId（如群聊、私聊、跨平台）。
-  useToolService(ctx).register({
+  tools.register({
     groups: ['session-delegate'],
     definition: {
       type: 'function',
@@ -763,7 +795,7 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
       // 解析目标平台，应用可选限速闸门
       let platformName: string | undefined;
       try {
-        const adapter = await resolvePlatformBySession(ctx, targetSessionId);
+        const adapter = await resolvePlatformBySession(platform, targetSessionId, logger);
         if (adapter) {
           platformName = adapter.platform;
           const gate = adapter.checkAndRecordProactiveSend;
@@ -775,15 +807,15 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
           }
         }
       } catch (err) {
-        ctx.logger.warn(`[delegate] 解析目标平台失败 (${targetSessionId}): ${err}`);
+        logger.warn(`[delegate] 解析目标平台失败 (${targetSessionId}): ${err}`);
       }
 
       // ===== 注入 META 提示（提醒型，不挡派发） =====
       const now = Date.now();
-      pruneRecentDelegations(now);
+      pruneRecentDelegations(recentDelegations, now);
       const taskHash = hashTask(task);
       const dedupKey = recentDelegationKey(targetSessionId, taskHash);
-      const recents = findRecentDelegationsForTarget(targetSessionId, now);
+      const recents = findRecentDelegationsForTarget(recentDelegations, targetSessionId, now);
       const taskWithMeta = buildDelegationMetaBlock(callCtx.sessionId, targetSessionId, task, recents, now);
       const entry: RecentDelegationEntry = {
         firedAt: now,
@@ -795,9 +827,7 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
       };
       recentDelegations.set(dedupKey, entry);
       if (recents.length > 0) {
-        ctx.logger.info(
-          `[delegate] META 提醒已注入：${targetSessionId} 在 60s 内已收到 ${recents.length} 次同/近期任务`,
-        );
+        logger.info(`[delegate] META 提醒已注入：${targetSessionId} 在 60s 内已收到 ${recents.length} 次同/近期任务`);
       }
 
       const incoming: IncomingMessage = {
@@ -820,15 +850,15 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
 
       const taskPreview =
         task.length > 80 ? `${task.slice(0, 80)}... (+${task.length - 80}字，全文已完整传递给目标会话)` : task;
-      ctx.logger.info(
+      logger.info(
         `[delegate] from=${callCtx.sessionId} -> ${targetSessionId} depth=${targetDepth} wait=${waitForResult} task="${taskPreview}"`,
       );
 
       if (!waitForResult) {
-        ctx.emit('inbound:message', incoming).catch(err => {
-          ctx.logger.warn(`[delegate] 派发失败 (${targetSessionId}): ${err}`);
+        events.emit('inbound:message', incoming).catch(err => {
+          logger.warn(`[delegate] 派发失败 (${targetSessionId}): ${err}`);
         });
-        ctx.logger.info(`[delegate] return -> ${callCtx.sessionId} wait=false (fire-and-forget)`);
+        logger.info(`[delegate] return -> ${callCtx.sessionId} wait=false (fire-and-forget)`);
         return JSON.stringify({
           delegated: true,
           targetSessionId,
@@ -844,7 +874,7 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
       const waitPromise = new Promise<void>(resolve => {
         resolveWait = resolve;
       });
-      const dispose = ctx.middleware('agent:turn:after', async (data, next) => {
+      const dispose = hooks.middleware('agent:turn:after', async (data, next) => {
         await next();
         if (captured) return;
         // 只认本次委派那条 incoming：同一目标会话上并发的真实用户消息 source 不同，不会被误当委派结果。
@@ -856,7 +886,7 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
 
       const timeoutHandle = setTimeout(() => resolveWait?.(), timeoutMs);
       try {
-        await ctx.emit('inbound:message', incoming);
+        await events.emit('inbound:message', incoming);
         await waitPromise;
       } finally {
         clearTimeout(timeoutHandle);
@@ -864,7 +894,7 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
       }
 
       if (!captured) {
-        ctx.logger.warn(
+        logger.warn(
           `[delegate] return -> ${callCtx.sessionId} timedOut=true wait=${timeoutSec}s (未捕获 agent:turn:after)`,
         );
         return JSON.stringify({
@@ -894,10 +924,7 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
       // 不挂载或未产出时不放该字段，避免上游对「persona 一定存在」做假设。
       let personaState: Record<string, unknown> | undefined;
       try {
-        const personaService = ctx.getService<{
-          getSessionState?: (sid: string) => Record<string, unknown> | undefined;
-        }>('persona');
-        const state = personaService?.getSessionState?.(targetSessionId);
+        const state = persona.current?.getSessionState?.(targetSessionId);
         if (state && Object.keys(state).length > 0) {
           personaState = state;
         }
@@ -922,28 +949,35 @@ function registerCrossSessionTools(ctx: Context, cfg: PluginConfig): void {
           : captured.reply.length > 60
             ? `"${captured.reply.slice(0, 60).replace(/\n/g, ' ')}..." (+${captured.reply.length - 60}字)`
             : `"${captured.reply.replace(/\n/g, ' ')}"`;
-      ctx.logger.info(
+      logger.info(
         `[delegate] return -> ${callCtx.sessionId} outcome=${captured.outcome} reply=${replyPreview}${personaState ? ' personaState=yes' : ''}`,
       );
       return JSON.stringify(payload);
     },
   });
 
-  ctx.logger.info('跨会话协作工具已注册');
+  logger.info('跨会话协作工具已注册');
 }
 
 // ===== 插件入口 =====
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
-  const cfg = resolveConfig(config);
-  if (!cfg.enabled) return;
+export default definePlugin({
+  name: '@aalis/plugin-tool-session',
+  displayName: '会话工具',
+  subsystem: 'session',
+  configSchema,
+  provides: [sessionHistory],
+  uses,
+  apply(caps) {
+    const cfg = resolveConfig(caps.config);
+    if (!cfg.enabled) return;
 
-  const historyService = createSessionHistoryService(ctx, cfg);
-  ctx.provide('session-history', historyService, { label: '会话历史读取' });
-  registerSessionHistoryTools(ctx, historyService, cfg);
+    const historyService = createSessionHistoryService(caps, cfg);
+    caps.provide(sessionHistory, historyService, { label: '会话历史读取' });
+    registerSessionHistoryTools(caps, historyService, cfg);
 
-  if (cfg.crossSessionEnabled) {
-    trackProactiveTurnDepth(ctx);
-    registerCrossSessionTools(ctx, cfg);
-  }
-}
+    if (cfg.crossSessionEnabled) {
+      registerCrossSessionTools(caps, cfg);
+    }
+  },
+});

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as ollama from '../../packages/plugin-llm-ollama/src/index.js';
+import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 流式请求被提前退出时必须 cancel 响应体，不能只 releaseLock。

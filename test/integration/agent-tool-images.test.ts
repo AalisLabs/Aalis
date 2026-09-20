@@ -1,15 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentService } from '../../packages/api-agent/src/index.js';
+import { agent as agentService } from '../../packages/api-agent/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import type { MessageArchiveService } from '../../packages/api-message-archive/src/index.js';
-import type { ToolCallContext } from '../../packages/api-tools/src/index.js';
-import { useToolService } from '../../packages/api-tools/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as agentModule from '../../packages/plugin-agent/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import * as messageArchiveModule from '../../packages/plugin-message-archive/src/index.js';
-import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import { memory as memoryService } from '../../packages/api-memory/src/index.js';
+import { messageArchive } from '../../packages/api-message-archive/src/index.js';
+import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
+import { App, hooks } from '../../packages/core/src/index.js';
+import agentPlugin from '../../packages/plugin-agent/src/index.js';
+import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
+import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
@@ -28,18 +27,25 @@ const SESSION = 'test:tool-images';
 
 async function runTurn() {
   const app = new App({ config: { name: 'E2E', logLevel: 'error', plugins: {} } });
+  const host = app.bind({
+    tools,
+    hooks,
+    agent: agentService,
+    memory: memoryService,
+    messageArchive,
+  });
   const recorder: ChatModelRequest[] = [];
   const toolCall = (id: string): ChatResponse => ({
     content: null,
     toolCalls: [{ id, type: 'function', function: { name: 'probe_img', arguments: '{}' } }],
   });
-  await app.ctx.useModule(
+  await app.plugin(
     createMockLLMPlugin({ responses: [toolCall('call-1'), toolCall('call-2'), { content: 'done' }], recorder }),
   );
-  await app.ctx.useModule(toolsModule as never, {});
-  await app.ctx.useModule(memoryInMemoryModule as never);
-  await app.ctx.useModule(messageArchiveModule as never, { debugLogs: false });
-  await app.ctx.useModule(agentModule as never, {
+  await app.plugin(toolsPlugin, {});
+  await app.plugin(memoryInMemoryPlugin);
+  await app.plugin(messageArchivePlugin, { debugLogs: false });
+  await app.plugin(agentPlugin, {
     systemPrompt: 'test',
     historyLimit: 50,
     memoryTokenBudget: 1024,
@@ -48,8 +54,10 @@ async function runTurn() {
     trimThresholdRatio: 1.0,
     preferredModel: '',
   });
+  await app.plugins.idle();
+
   let seenCtx: ToolCallContext | undefined;
-  useToolService(app.ctx).register({
+  host.tools.register({
     definition: {
       type: 'function',
       function: { name: 'probe_img', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -60,28 +68,26 @@ async function runTurn() {
     },
   });
   const saved: Message[] = [];
-  const archive = app.ctx.getService<MessageArchiveService>('message-archive');
-  if (!archive) throw new Error('message-archive 未注册');
+  const archive = host.messageArchive.require();
   const origSave = archive.saveMessage.bind(archive);
   archive.saveMessage = async (sid, msg) => {
     saved.push(msg);
     return origSave(sid, msg);
   };
   let hookResult: string | undefined;
-  app.ctx.middleware('agent:tool:after', async (data, next) => {
+  host.hooks.middleware('agent:tool:after', async (data, next) => {
     hookResult = data.result;
     return next();
   });
 
-  await app.ctx.getService<AgentService>('agent')!.handleMessage({
+  await host.agent.require().handleMessage({
     content: '看图',
     sessionId: SESSION,
     platform: 'test',
     userId: 'u1',
     sessionType: 'private',
   });
-  const memory = app.ctx.getService<MemoryService>('memory');
-  const history = memory ? await memory.getHistory(SESSION, 50) : [];
+  const history = (await host.memory.current?.getHistory(SESSION, 50)) ?? [];
   await app.stop();
   return { recorder, hookResult, history, saved, seenCtx };
 }

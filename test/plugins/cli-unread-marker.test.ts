@@ -1,6 +1,6 @@
 import { App } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import * as cliModule from '../../packages/plugin-cli/src/index.js';
+import cliPlugin from '../../packages/plugin-cli/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 非 chat 视图期间进入聊天区的消息（意图确认提示走的就是 outbound:message）此前没有任何可见
@@ -59,7 +59,7 @@ describe('plugin-cli 非 chat 视图的聊天区新消息提示', () => {
     const send = (content: string) =>
       app.ctx.emit('outbound:message', { content, sessionId: 'cli-default', platform: 'cli', source: 'system' });
     try {
-      await app.ctx.useModule(cliModule as never, { startupView: 'logs' });
+      await app.ctx.useModule(cliPlugin, { startupView: 'logs' });
       await app.start();
       await settle();
       expect(lastFrame()).toContain('[LOGS]');

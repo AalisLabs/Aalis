@@ -11,23 +11,16 @@
 // ============================================================
 
 import { Buffer } from 'node:buffer';
-import { createProcessGateway } from '@aalis/api-process';
-import { createStorageGateway } from '@aalis/api-storage';
-import { useToolService } from '@aalis/api-tools';
-import type { Context } from '@aalis/core';
+import { createProcessGateway, processService } from '@aalis/api-process';
+import { createStorageGateway, storage } from '@aalis/api-storage';
+import { tools } from '@aalis/api-tools';
+import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { DrawEngine } from './engine.js';
 import { framesToGif } from './gif.js';
 import { type DrawCaps, lintAnimationSource, resolveCanvas } from './plan.js';
 
-// ===== 插件元数据 =====
-
-export const name = '@aalis/plugin-draw';
-export const displayName = '绘图';
-export const subsystem = 'tools';
-export const inject = { optional: ['tools', 'storage', 'process'] };
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   defaultWidth: {
     type: 'number',
     label: '默认画布宽 (px)',
@@ -121,25 +114,25 @@ interface DrawConfig extends DrawCaps {
   animMaxOutputMB: number;
 }
 
-function resolveConfig(config: Record<string, unknown>): DrawConfig {
+function resolveConfig(raw: Readonly<Record<string, unknown>>): DrawConfig {
   const num = (v: unknown, dflt: number, lo: number, hi: number): number => {
     const n = Number(v);
     return Number.isFinite(n) && n >= lo ? Math.min(hi, Math.floor(n)) : dflt;
   };
   return {
-    defaultWidth: num(config.defaultWidth, 800, 16, 4096),
-    maxWidth: num(config.maxWidth, 1600, 16, 4096),
-    maxPixels: num(config.maxPixels, 4_000_000, 65536, 16_000_000),
-    maxSourceBytes: num(config.maxSourceKB, 256, 1, 4096) * 1024,
-    scale: num(config.scale, 2, 1, 3),
-    headless: (config.headless as boolean) ?? true,
-    executablePath: (config.executablePath as string) ?? '',
-    idleShutdownSec: num(config.idleShutdownSec, 300, 0, 86400),
-    maxConcurrency: num(config.maxConcurrency, 2, 1, 8),
-    animMaxDurationSec: num(config.animMaxDurationSec, 8, 1, 30),
-    animDefaultFps: num(config.animDefaultFps, 15, 1, 25),
-    animMaxFrames: num(config.animMaxFrames, 160, 2, 600),
-    animMaxOutputMB: num(config.animMaxOutputMB, 9, 1, 9),
+    defaultWidth: num(raw.defaultWidth, 800, 16, 4096),
+    maxWidth: num(raw.maxWidth, 1600, 16, 4096),
+    maxPixels: num(raw.maxPixels, 4_000_000, 65536, 16_000_000),
+    maxSourceBytes: num(raw.maxSourceKB, 256, 1, 4096) * 1024,
+    scale: num(raw.scale, 2, 1, 3),
+    headless: (raw.headless as boolean) ?? true,
+    executablePath: (raw.executablePath as string) ?? '',
+    idleShutdownSec: num(raw.idleShutdownSec, 300, 0, 86400),
+    maxConcurrency: num(raw.maxConcurrency, 2, 1, 8),
+    animMaxDurationSec: num(raw.animMaxDurationSec, 8, 1, 30),
+    animDefaultFps: num(raw.animDefaultFps, 15, 1, 25),
+    animMaxFrames: num(raw.animMaxFrames, 160, 2, 600),
+    animMaxOutputMB: num(raw.animMaxOutputMB, 9, 1, 9),
   };
 }
 
@@ -153,11 +146,33 @@ function safeSessionDir(sessionId: string): string {
   );
 }
 
-export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
-  const cfg = resolveConfig(rawConfig);
-  const logger = ctx.logger.child('draw');
-  const storage = createStorageGateway(ctx);
-  const proc = createProcessGateway(ctx);
+// 三项服务都是 optional：缺 tools 时登记排队、缺 storage/process 时落盘与编码在调用点报错，
+// 插件本身照常激活（渲染引擎不依赖它们启动）。
+const uses = {
+  tools: optional(tools),
+  storage: optional(storage),
+  processService: optional(processService),
+  logger,
+  lifecycle,
+  config,
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-draw',
+  displayName: '绘图',
+  subsystem: 'tools',
+  configSchema,
+  uses,
+  apply: registerDraw,
+});
+
+function registerDraw(caps: Caps): void {
+  const cfg = resolveConfig(caps.config);
+  const logger = caps.logger.child('draw');
+  const storage = createStorageGateway(caps.storage);
+  const proc = createProcessGateway(caps.processService);
+  const { tools } = caps;
 
   const engine = new DrawEngine(logger, {
     headless: cfg.headless,
@@ -166,9 +181,8 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     stepTimeoutMs: 15_000,
     maxConcurrency: cfg.maxConcurrency,
   });
-  ctx.onDispose(() => engine.dispose());
+  caps.lifecycle.onDispose(() => engine.dispose());
 
-  const tools = useToolService(ctx);
   tools.registerGroup({
     name: 'draw',
     label: '绘图',

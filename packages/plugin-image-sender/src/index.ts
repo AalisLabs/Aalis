@@ -12,12 +12,14 @@
 // 由各 platform adapter（OneBot / WebUI）按自身能力处理结构化附件。
 // ============================================================
 
-import type { MediaService } from '@aalis/api-media';
-import type { MemoryService } from '@aalis/api-memory';
-import type { MessageArchiveService } from '@aalis/api-message-archive';
-import { createStorageGateway, type StorageService, toStorageUri } from '@aalis/api-storage';
-import { useToolService } from '@aalis/api-tools';
-import type { Context } from '@aalis/core';
+import { media } from '@aalis/api-media';
+import { memory } from '@aalis/api-memory';
+import { messageArchive } from '@aalis/api-message-archive';
+import { createStorageGateway, type StorageService, storage, toStorageUri } from '@aalis/api-storage';
+import { tools } from '@aalis/api-tools';
+// subsystem 这项展示元数据由 api-webui 经 declaration merging 挂到 PluginMeta 上
+import type {} from '@aalis/api-webui';
+import { type BoundOf, definePlugin, events, logger, optional } from '@aalis/core';
 import {
   AttachmentRefKind,
   formatAttachmentRef,
@@ -26,11 +28,6 @@ import {
   type OutgoingMessage,
   WellKnownKinds,
 } from '@aalis/schema-message';
-
-export const name = '@aalis/plugin-image-sender';
-export const displayName = '图片发送';
-export const subsystem = 'tools';
-export const inject = { optional: ['memory', 'media', 'message-archive'] };
 
 /** 可发送的附件类型。 */
 type MediaKind = 'image' | 'audio' | 'video';
@@ -45,9 +42,34 @@ const VIDEO_DESCRIBE_TIMEOUT_MS = 30_000;
 /** preview_image 单次允许的候选数量上限。 */
 const PREVIEW_MAX_CANDIDATES = 8;
 
-export function apply(ctx: Context): void {
-  const tools = useToolService(ctx);
-  const storage = createStorageGateway(ctx);
+// tools 不入激活闸：出站附件归档（outbound:message 监听）只靠 archive / media，
+// 没有工具服务时也该照常挂上；工具登记走注册账本，提供者上线后自动补挂。
+const uses = {
+  tools: optional(tools),
+  events,
+  logger,
+  storage: optional(storage),
+  media: optional(media),
+  memory: optional(memory),
+  archive: optional(messageArchive),
+};
+type Caps = BoundOf<typeof uses>;
+/** 描述媒体只需要 media 与日志。 */
+type DescribeCaps = Pick<Caps, 'media' | 'logger'>;
+/** 出站入档只需要归档服务与日志。 */
+type ArchiveCaps = Pick<Caps, 'archive' | 'logger'>;
+
+export default definePlugin({
+  name: '@aalis/plugin-image-sender',
+  displayName: '图片发送',
+  subsystem: 'tools',
+  uses,
+  apply: registerImageSender,
+});
+
+function registerImageSender(caps: Caps): void {
+  const { tools, events, logger, media, memory, archive } = caps;
+  const storage = createStorageGateway(caps.storage);
 
   // 把 storage URI（含 ':/'）解析为发送可用的数据串：
   // - stat 验证存在性
@@ -104,8 +126,8 @@ export function apply(ctx: Context): void {
         return JSON.stringify({ error: `最多 ${PREVIEW_MAX_CANDIDATES} 张` });
       }
 
-      const media = ctx.getService<MediaService>('media');
-      if (!media?.describeImage) {
+      const service = media.current;
+      if (!service?.describeImage) {
         return JSON.stringify({ error: '未启用 media 服务，无法识别图片' });
       }
 
@@ -121,7 +143,7 @@ export function apply(ctx: Context): void {
         }
         try {
           const desc = await Promise.race([
-            media.describeImage(trimmed, { hint, detailLevel: 'casual' }),
+            service.describeImage(trimmed, { hint, detailLevel: 'casual' }),
             new Promise<string>((_resolve, reject) =>
               setTimeout(() => reject(new Error('vision 超时')), PREVIEW_TIMEOUT_MS),
             ),
@@ -205,7 +227,7 @@ export function apply(ctx: Context): void {
           refTag = resolved.ref;
           via = 'storage_uri';
         } else if (historyRef) {
-          const found = await resolveHistoryRef(ctx, storage, callCtx.sessionId, historyRef);
+          const found = await resolveHistoryRef(memory, storage, callCtx.sessionId, historyRef);
           if (!found) return JSON.stringify({ error: `未在历史中找到引用: ${historyRef}` });
           data = found;
           refTag = historyRef.replace(/^ref:/, '').trim();
@@ -216,12 +238,12 @@ export function apply(ctx: Context): void {
 
         // 不在发送路径上同步做 vision 描述：本地视觉模型单图常需 15-25s，
         // 而 emit 串行 await 各监听器，同步等待会直接拖慢真正的出站（onebot/webui 发送）。
-        // 描述改由全局出站归档监听器在后台计算（见 apply 内 outbound:message 监听），
+        // 描述改由全局出站归档监听器在后台计算（见下方 outbound:message 监听），
         // 不阻塞发送，且用稳定 ref 规避平台落盘改写 data 的竞态。
         const attachment: MessageAttachment = {
           kind,
           data,
-          // 归档承载：ref 随事件携带，由全局出站归档统一入档（见 apply 内 outbound:message 监听）。
+          // 归档承载：ref 随事件携带，由全局出站归档统一入档（见下方 outbound:message 监听）。
           // history_ref 重发标记 skipArchive，避免重复入档 / 向量库膨胀。
           ref: refTag ?? data,
           skipArchive: via === 'history_ref',
@@ -232,7 +254,7 @@ export function apply(ctx: Context): void {
           attachments: [attachment],
           source: 'agent',
         };
-        ctx.emit('outbound:message', outgoing);
+        events.emit('outbound:message', outgoing);
 
         return JSON.stringify({ ok: true, sent: { kind, via, ref: refTag } });
       } catch (err) {
@@ -241,17 +263,16 @@ export function apply(ctx: Context): void {
     },
   });
 
-  ctx.logger.info('[image-sender] 工具 send_attachment / preview_image 已注册');
+  logger.info('[image-sender] 工具 send_attachment / preview_image 已注册');
 
   // ── 出站附件归档：统一咽喉 ───────────────────────────────────────────────
   // 监听唯一出站汇聚点 outbound:message，对所有 agent 出站附件统一入档，
   // 与生产者（send_attachment 或将来任何直接 emit 附件的插件）和平台都解耦。
   // 用 att.ref（生产者声明的稳定引用）而非 att.data 入档，避免 onebot 等适配器
   // 落盘后改写 data 造成归档到不可访问路径；att.skipArchive 跳过 history_ref 重发。
-  ctx.on('outbound:message', msg => {
+  events.on('outbound:message', msg => {
     if (msg.source !== 'agent' || !msg.attachments?.length) return;
-    const archive = ctx.getService<MessageArchiveService>('message-archive');
-    if (!archive?.saveMessage) return;
+    if (!archive.current?.saveMessage) return;
     for (const att of msg.attachments) {
       if (att.skipArchive) continue;
       if (att.kind !== 'image' && att.kind !== 'audio' && att.kind !== 'video') continue;
@@ -264,9 +285,9 @@ export function apply(ctx: Context): void {
       void (async () => {
         let desc = carried;
         if (!desc && (kind === 'image' || kind === 'video') && /^https?:\/\//i.test(ref)) {
-          desc = await safeDescribeMedia(ctx, kind, ref, ARCHIVE_DESCRIBE_TIMEOUT_MS);
+          desc = await safeDescribeMedia({ media, logger }, kind, ref, ARCHIVE_DESCRIBE_TIMEOUT_MS);
         }
-        await archiveOutboundAttachment(ctx, msg.sessionId, ref, desc, kind);
+        await archiveOutboundAttachment({ archive, logger }, msg.sessionId, ref, desc, kind);
       })();
     }
   });
@@ -274,60 +295,64 @@ export function apply(ctx: Context): void {
 
 /** 按 kind 调用对应的 media 描述能力，超时或失败返回空串（不阻塞发送）。 */
 async function safeDescribeMedia(
-  ctx: Context,
+  caps: DescribeCaps,
   kind: MediaKind,
   data: string,
   timeoutMs = ARCHIVE_DESCRIBE_TIMEOUT_MS,
 ): Promise<string> {
-  if (kind === 'image') return safeDescribe(ctx, data, timeoutMs);
-  if (kind === 'video') return safeDescribeVideo(ctx, data);
+  if (kind === 'image') return safeDescribe(caps, data, timeoutMs);
+  if (kind === 'video') return safeDescribeVideo(caps, data);
   // audio 暂无描述能力
   return '';
 }
 
 /** 调 media.describeImage，超时或失败返回空串（不阻塞发送）。 */
-async function safeDescribe(ctx: Context, imageData: string, timeoutMs = ARCHIVE_DESCRIBE_TIMEOUT_MS): Promise<string> {
-  const media = ctx.getService<MediaService>('media');
-  if (!media?.describeImage) return '';
+async function safeDescribe(
+  caps: DescribeCaps,
+  imageData: string,
+  timeoutMs = ARCHIVE_DESCRIBE_TIMEOUT_MS,
+): Promise<string> {
+  const service = caps.media.current;
+  if (!service?.describeImage) return '';
   try {
     const desc = await Promise.race([
-      media.describeImage(imageData),
+      service.describeImage(imageData),
       new Promise<string>((_resolve, reject) => setTimeout(() => reject(new Error('vision 超时')), timeoutMs)),
     ]);
     return (desc ?? '').trim();
   } catch (err) {
-    ctx.logger.debug(`[image-sender] vision 失败，跳过描述: ${err instanceof Error ? err.message : err}`);
+    caps.logger.debug(`[image-sender] vision 失败，跳过描述: ${err instanceof Error ? err.message : err}`);
     return '';
   }
 }
 
 /** 调 media.describeVideo，超时或失败返回空串（视频抽帧耗时长，用更宽松的超时）。 */
-async function safeDescribeVideo(ctx: Context, videoUrl: string): Promise<string> {
-  const media = ctx.getService<MediaService>('media');
-  if (!media?.describeVideo) return '';
+async function safeDescribeVideo(caps: DescribeCaps, videoUrl: string): Promise<string> {
+  const service = caps.media.current;
+  if (!service?.describeVideo) return '';
   try {
     const desc = await Promise.race([
-      media.describeVideo(videoUrl),
+      service.describeVideo(videoUrl),
       new Promise<string>((_resolve, reject) =>
         setTimeout(() => reject(new Error('video 描述超时')), VIDEO_DESCRIBE_TIMEOUT_MS),
       ),
     ]);
     return (desc ?? '').trim();
   } catch (err) {
-    ctx.logger.debug(`[image-sender] video 描述失败，跳过: ${err instanceof Error ? err.message : err}`);
+    caps.logger.debug(`[image-sender] video 描述失败，跳过: ${err instanceof Error ? err.message : err}`);
     return '';
   }
 }
 
 /** 把 AI 自己发出的图/语音/视频入档为一条 assistant 消息，让 memory_recall 能找到。 */
 async function archiveOutboundAttachment(
-  ctx: Context,
+  caps: ArchiveCaps,
   sessionId: string,
   ref: string,
   description: string,
   kind: MediaKind,
 ): Promise<void> {
-  const archive = ctx.getService<MessageArchiveService>('message-archive');
+  const archive = caps.archive.current;
   if (!archive?.saveMessage) return;
   const attachKind =
     kind === 'video' ? AttachmentRefKind.Video : kind === 'audio' ? AttachmentRefKind.Audio : AttachmentRefKind.Image;
@@ -351,22 +376,22 @@ async function archiveOutboundAttachment(
       debugLabel: `[image-sender] 已入档发送的${label}`,
     });
   } catch (err) {
-    ctx.logger.warn(`[image-sender] 入档失败: ${err instanceof Error ? err.message : err}`);
+    caps.logger.warn(`[image-sender] 入档失败: ${err instanceof Error ? err.message : err}`);
   }
 }
 
 /** 在最近 200 条消息里寻找匹配 historyRef 的图片来源（取本地路径或 URL）。 */
 async function resolveHistoryRef(
-  ctx: Context,
+  memory: Caps['memory'],
   storage: StorageService,
   sessionId: string,
   ref: string,
 ): Promise<string | null> {
-  const memory = ctx.getService<MemoryService>('memory');
-  if (!memory) return null;
-  const history: Message[] = memory.getFullHistory
-    ? await memory.getFullHistory(sessionId, 200)
-    : await memory.getHistory(sessionId, 200);
+  const service = memory.current;
+  if (!service) return null;
+  const history: Message[] = service.getFullHistory
+    ? await service.getFullHistory(sessionId, 200)
+    : await service.getHistory(sessionId, 200);
   const normalized = ref.replace(/^ref:/, '').trim();
   // http(s) ref：直接当 URL 用
   if (normalized.startsWith('http://') || normalized.startsWith('https://')) {

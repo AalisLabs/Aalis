@@ -7,20 +7,13 @@
 
 import { Buffer } from 'node:buffer';
 import { extname } from 'node:path';
-import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/api-asr';
-import { createProcessGateway, type ProcessService } from '@aalis/api-process';
-import { createStorageGateway, isStorageUri, type StorageService } from '@aalis/api-storage';
+import { type ASRService, asr, type TranscribeInput, type TranscribeResult } from '@aalis/api-asr';
+import { createProcessGateway, type ProcessService, processService } from '@aalis/api-process';
+import { createStorageGateway, isStorageUri, type StorageService, storage as storageService } from '@aalis/api-storage';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import type { Context } from '@aalis/core';
+import { config, definePlugin, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { safeFetch } from '@aalis/util-network-guard';
-
-export const name = '@aalis/plugin-asr-openai';
-export const displayName = 'OpenAI Whisper ASR';
-export const subsystem = 'media';
-export const provides = ['asr'];
-export const inject = { optional: ['process', 'storage'] };
-export const reusable = true;
 
 interface Cfg {
   apiKey: string;
@@ -30,7 +23,7 @@ interface Cfg {
   timeoutMs: number;
 }
 
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   apiKey: { type: 'string', label: 'API Key', secret: true, default: '' },
   baseUrl: { type: 'string', label: 'Base URL', default: 'https://api.openai.com/v1' },
   model: { type: 'string', label: '模型', default: 'whisper-1' },
@@ -127,20 +120,41 @@ async function attachmentToBlob(
   throw new Error(`不支持的附件来源: ${data.slice(0, 32)}`);
 }
 
-export function apply(ctx: Context, raw: Record<string, unknown>): void {
-  const cfg: Cfg = { ...defaultConfig, ...(raw as Partial<Cfg>) };
-  const logger = ctx.logger.child('asr-openai');
+const uses = {
+  logger,
+  config,
+  provide,
+  proc: optional(processService),
+  storage: optional(storageService),
+};
 
-  if (!cfg.apiKey) {
-    // 与 openai/embedding-openai 一致：缺必填配置时抛清晰错误（而非静默 return，
-    // 否则声明了 provides:['asr'] 却不注册会触发难懂的 provides 校验错）。
-    throw new Error('OpenAI Whisper ASR 需要配置 apiKey（不使用 OpenAI ASR 可在插件管理里禁用本插件）');
-  }
+export default definePlugin({
+  name: '@aalis/plugin-asr-openai',
+  displayName: 'OpenAI Whisper ASR',
+  subsystem: 'media',
+  configSchema,
+  reusable: true,
+  provides: [asr],
+  uses,
+  apply(caps) {
+    const cfg: Cfg = { ...defaultConfig, ...(caps.config as Partial<Cfg>) };
 
-  const proc = createProcessGateway(ctx);
-  const storage = createStorageGateway(ctx);
+    if (!cfg.apiKey) {
+      // 与 openai/embedding-openai 一致：缺必填配置时抛清晰错误（而非静默 return，
+      // 否则声明了提供 asr 却不注册会触发难懂的 provides 校验错）。
+      throw new Error('OpenAI Whisper ASR 需要配置 apiKey（不使用 OpenAI ASR 可在插件管理里禁用本插件）');
+    }
 
-  const asr: ASRService = {
+    const proc = createProcessGateway(caps.proc);
+    const storage = createStorageGateway(caps.storage);
+
+    caps.provide(asr, buildAsrService(cfg, proc, storage), { priority: cfg.priority });
+    caps.logger.info(`OpenAI Whisper ASR 已注册 (model=${cfg.model}, prio=${cfg.priority})`);
+  },
+});
+
+function buildAsrService(cfg: Cfg, proc: ProcessService, storage: StorageService): ASRService {
+  return {
     async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
       const { blob, filename } = await attachmentToBlob(input.attachment.data, proc, storage);
       const fd = new FormData();
@@ -168,7 +182,4 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       return { text: data.text ?? '', segments };
     },
   };
-
-  ctx.provide('asr', asr, { priority: cfg.priority });
-  logger.info(`OpenAI Whisper ASR 已注册 (model=${cfg.model}, prio=${cfg.priority})`);
 }

@@ -4,10 +4,17 @@
 // platform 范围：跨平台一个 tick，挑"最久未联系"的 session 主动开聊。
 
 import type { GatewayService } from '@aalis/api-gateway';
-import type { Context } from '@aalis/core';
+import type { Events, Logger, ServiceRef } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { type FlowControlConfig, resolveEffectiveConfig } from './config.js';
 import type { MutableFlowSessionState } from './state.js';
+
+/** 调度器用到的能力：日志、入站事件、网关引用 */
+export interface IdleCaps {
+  logger: Logger;
+  events: Events;
+  gateway: ServiceRef<GatewayService>;
+}
 
 const DEFAULT_PROMPT =
   '当前会话已长时间无消息，请根据人设主动开启一个轻松的话题或问候。不要提及"系统提示"或表明你是被触发发言的。';
@@ -22,19 +29,19 @@ function buildIdleMessage(sessionId: string, platform: string, prompt: string): 
   };
 }
 
-async function injectIdle(ctx: Context, msg: IncomingMessage): Promise<void> {
-  const gateway = ctx.getService<GatewayService>('gateway');
+async function injectIdle(caps: IdleCaps, msg: IncomingMessage): Promise<void> {
+  const gateway = caps.gateway.current;
   if (gateway) {
     await gateway.ingressMessage(msg);
   } else {
-    await ctx.emit('inbound:message', msg);
+    await caps.events.emit('inbound:message', msg);
   }
 }
 
 // ===== session 范围调度 =====
 
 export function scheduleSessionIdle(
-  ctx: Context,
+  caps: IdleCaps,
   cfg: FlowControlConfig,
   state: MutableFlowSessionState,
   sessionId: string,
@@ -58,18 +65,18 @@ export function scheduleSessionIdle(
 
   state.idleTimer = setTimeout(async () => {
     try {
-      ctx.logger.info(`[flow] 空闲触发: session=${sessionId} (退避 x${state.idleBackoff})`);
+      caps.logger.info(`[flow] 空闲触发: session=${sessionId} (退避 x${state.idleBackoff})`);
       if (cfg.idleTriggerStyle === 'exponential') {
         state.idleBackoff = Math.min(state.idleBackoff * 2, 64);
       }
-      await injectIdle(ctx, buildIdleMessage(sessionId, platform, cfg.idleTriggerPrompt));
+      await injectIdle(caps, buildIdleMessage(sessionId, platform, cfg.idleTriggerPrompt));
       reschedule();
     } catch (err) {
-      ctx.logger.warn(`空闲触发执行失败: ${err}`);
+      caps.logger.warn(`空闲触发执行失败: ${err}`);
     }
   }, delayMs);
 
-  ctx.logger.debug(`[flow] 空闲触发已调度: session=${sessionId}, ${Math.round(delayMs / 60_000)}分钟后`);
+  caps.logger.debug(`[flow] 空闲触发已调度: session=${sessionId}, ${Math.round(delayMs / 60_000)}分钟后`);
 }
 
 export function clearSessionIdle(state: MutableFlowSessionState): void {
@@ -93,7 +100,7 @@ export class PlatformIdleScheduler {
   private startedAt = 0;
 
   constructor(
-    private readonly ctx: Context,
+    private readonly caps: IdleCaps,
     private readonly cfg: FlowControlConfig,
     private readonly states: Map<string, MutableFlowSessionState>,
   ) {}
@@ -157,16 +164,16 @@ export class PlatformIdleScheduler {
     try {
       const target = this.pickTarget();
       if (!target) {
-        this.ctx.logger.debug('[flow] platform idle tick: 无可发送候选，跳过');
+        this.caps.logger.debug('[flow] platform idle tick: 无可发送候选，跳过');
         return;
       }
-      this.ctx.logger.info(
+      this.caps.logger.info(
         `[flow] platform idle tick: 主动开聊 → ${target.sessionId} ` +
           `(idle=${Math.round((Date.now() - target.lastActivity) / 60_000)}min)`,
       );
-      await injectIdle(this.ctx, buildIdleMessage(target.sessionId, target.platform, target.prompt));
+      await injectIdle(this.caps, buildIdleMessage(target.sessionId, target.platform, target.prompt));
     } catch (err) {
-      this.ctx.logger.warn(`[flow] platform idle tick 失败: ${err}`);
+      this.caps.logger.warn(`[flow] platform idle tick 失败: ${err}`);
     } finally {
       this.running = false;
     }

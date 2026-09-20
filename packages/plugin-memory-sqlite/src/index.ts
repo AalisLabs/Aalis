@@ -1,12 +1,13 @@
-import type {
-  MemoryService,
-  MetadataEntry,
-  MetadataOp,
-  RecentMessageRecord,
-  RecentMessagesAcrossSessionsQuery,
+import {
+  type MemoryService,
+  type MetadataEntry,
+  type MetadataOp,
+  memory,
+  type RecentMessageRecord,
+  type RecentMessagesAcrossSessionsQuery,
 } from '@aalis/api-memory';
-import { createStorageGateway, toStorageUri } from '@aalis/api-storage';
-import type { Context } from '@aalis/core';
+import { createStorageGateway, storage, toStorageUri } from '@aalis/api-storage';
+import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { ContentSegment, Message } from '@aalis/schema-message';
 import Database from 'better-sqlite3';
@@ -16,18 +17,7 @@ function toUri(input: string): string {
   return s ? toStorageUri(s) : 'data:/aalis.db';
 }
 
-// ===== 插件元数据 =====
-
-export const name = '@aalis/plugin-memory-sqlite';
-export const displayName = 'SQLite 记忆';
-export const subsystem = 'memory';
-export const provides = ['memory'];
-export const reusable = true;
-export const inject = {
-  required: ['storage'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   path: {
     type: 'string',
     label: '数据库路径',
@@ -421,49 +411,66 @@ export class SQLiteMemoryService implements MemoryService {
 
 // ===== 插件入口 =====
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
-  const sqliteConfig: SQLiteMemoryConfig = {
-    path: (config.path as string) ?? 'data:/aalis.db',
-  };
+export default definePlugin({
+  name: '@aalis/plugin-memory-sqlite',
+  displayName: 'SQLite 记忆',
+  subsystem: 'memory',
+  reusable: true,
+  configSchema,
+  provides: [memory],
+  uses: {
+    /** 数据库文件的位置由 storage 根解析（URI → 本地路径），没有它就无从开库 */
+    storage,
+    provide,
+    logger,
+    lifecycle,
+    config,
+  },
+  async apply(caps) {
+    const sqliteConfig: SQLiteMemoryConfig = {
+      path: (caps.config.path as string) ?? 'data:/aalis.db',
+    };
 
-  // 解析数据库路径：storage URI → 本地路径
-  const storage = createStorageGateway(ctx);
-  const dbUri = toUri(sqliteConfig.path);
-  if (!storage.resolveLocalPath) {
-    throw new Error('存储实现未提供 resolveLocalPath 能力，无法打开 SQLite 数据库');
-  }
-  let dbPath: string;
-  try {
-    dbPath = await storage.resolveLocalPath(dbUri, 'write');
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`无法解析数据库路径 ${dbUri}: ${msg}`);
-  }
+    // 解析数据库路径：storage URI → 本地路径
+    const gateway = createStorageGateway(caps.storage);
+    const dbUri = toUri(sqliteConfig.path);
+    if (!gateway.resolveLocalPath) {
+      throw new Error('存储实现未提供 resolveLocalPath 能力，无法打开 SQLite 数据库');
+    }
+    let dbPath: string;
+    try {
+      dbPath = await gateway.resolveLocalPath(dbUri, 'write');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`无法解析数据库路径 ${dbUri}: ${msg}`);
+    }
 
-  ctx.logger.info(`正在打开 SQLite 数据库: ${dbPath}`);
+    caps.logger.info(`正在打开 SQLite 数据库: ${dbPath}`);
 
-  try {
-    const db = new Database(dbPath);
-    // 设置 WAL 模式提升并发性能
-    db.pragma('journal_mode = WAL');
+    try {
+      const db = new Database(dbPath);
+      // 设置 WAL 模式提升并发性能
+      db.pragma('journal_mode = WAL');
 
-    const service = new SQLiteMemoryService(db, {
-      rangeQueryLimit: config.rangeQueryLimit as number | undefined,
-      crossSessionMaxLimit: config.crossSessionMaxLimit as number | undefined,
-    });
+      const service = new SQLiteMemoryService(db, {
+        rangeQueryLimit: caps.config.rangeQueryLimit as number | undefined,
+        crossSessionMaxLimit: caps.config.crossSessionMaxLimit as number | undefined,
+      });
 
-    ctx.provide('memory', service, {
-      priority: 10,
-    });
+      caps.provide(memory, service, {
+        priority: 10,
+      });
 
-    ctx.logger.info(`SQLite 数据库已就绪: ${dbPath}`);
+      caps.logger.info(`SQLite 数据库已就绪: ${dbPath}`);
 
-    ctx.onDispose(() => {
-      service.close();
-      ctx.logger.info('SQLite 数据库已关闭');
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`SQLite 打开失败: ${message}`);
-  }
-}
+      // 开库跨了 await：激活可能已在关闭，迟到的清理照样会被执行，句柄不会漏
+      caps.lifecycle.onDispose(() => {
+        service.close();
+        caps.logger.info('SQLite 数据库已关闭');
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`SQLite 打开失败: ${message}`);
+    }
+  },
+});

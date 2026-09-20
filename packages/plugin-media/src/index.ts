@@ -12,10 +12,29 @@
 //   - 所有图片/动图/视频/音频路径统一走 attachments[]
 // ============================================================
 
-import { useAgent } from '@aalis/api-agent';
-import { createProcessGateway } from '@aalis/api-process';
-import { createStorageGateway } from '@aalis/api-storage';
-import type { AppService, Context } from '@aalis/core';
+import { agent } from '@aalis/api-agent';
+import { asr } from '@aalis/api-asr';
+import { llm } from '@aalis/api-llm';
+import { media } from '@aalis/api-media';
+import { memory } from '@aalis/api-memory';
+import { createProcessGateway, processService } from '@aalis/api-process';
+import { sessionManager } from '@aalis/api-session-manager';
+import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
+import { tools } from '@aalis/api-tools';
+import type {} from '@aalis/api-webui'; // declaration merging：PluginMeta 的 subsystem 字段由本包挂上
+import {
+  appService,
+  type BoundOf,
+  config,
+  definePlugin,
+  events,
+  hooks,
+  hostConfig,
+  lifecycle,
+  logger,
+  optional,
+  provide,
+} from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { flushDescriptionCache, loadDescriptionCache } from './cache.js';
 import { DEFAULT_AUDIO_PROMPT, DEFAULT_VISION_BATCH_PROMPT, DEFAULT_VISION_PROMPT } from './llm-adapter.js';
@@ -24,16 +43,9 @@ import { setMediaRuntime } from './runtime.js';
 import { type MediaConfigResolved, MediaServiceImpl } from './service.js';
 import { registerMediaTools } from './tools.js';
 
-export const name = '@aalis/plugin-media';
-export const displayName = '多模态媒体识别';
-export const subsystem = 'media';
-export const provides = ['media'];
-export const inject = {
-  required: ['process', 'storage'],
-  optional: ['llm', 'agent', 'asr'],
-};
+const name = '@aalis/plugin-media';
 
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   vision: {
     label: '图像识别',
     fields: {
@@ -259,7 +271,7 @@ export function legacyVisionMode(
   }
 }
 
-function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
+function resolveCfg(raw: Readonly<Record<string, unknown>>): MediaConfigResolved {
   const vision = (raw.vision ?? {}) as Record<string, unknown>;
   const audio = (raw.audio ?? {}) as Record<string, unknown>;
   const video = (raw.video ?? {}) as Record<string, unknown>;
@@ -308,14 +320,45 @@ function resolveCfg(raw: Record<string, unknown>): MediaConfigResolved {
   };
 }
 
-export function apply(ctx: Context, raw: Record<string, unknown>): void {
+const uses = {
+  logger,
+  config,
+  lifecycle,
+  events,
+  hooks,
+  provide,
+  proc: processService,
+  storage: storageService,
+  llm: optional(llm),
+  agent: optional(agent),
+  asr: optional(asr),
+  tools: optional(tools),
+  memory: optional(memory),
+  sessionManager: optional(sessionManager),
+  hostConfig: optional(hostConfig),
+  app: optional(appService),
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name,
+  displayName: '多模态媒体识别',
+  subsystem: 'media',
+  configSchema,
+  provides: [media],
+  uses,
+  apply: run,
+});
+
+function run(caps: Caps): void {
+  const raw = caps.config;
   const cfg = resolveCfg(raw);
-  const logger = ctx.logger.child('media');
+  const logger = caps.logger;
   const { mode: legacyMode, ...visionWithoutMode } = (raw.vision ?? {}) as Record<string, unknown>;
   if (legacyVisionMode(legacyMode)) {
     // 一次性迁移：按旧语义把结果写进新键并删掉旧键，落盘（config-sync 每次启动都物化默认值，
     // 存量部署里这个键一定有值；不迁移的话新键永远是死键，WebUI 也清不掉旧键）。
-    ctx.config.setPluginConfig(name, {
+    caps.hostConfig.require().setPluginConfig(name, {
       ...raw,
       vision: {
         ...visionWithoutMode,
@@ -324,26 +367,23 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       },
     });
     // 尽力而为：内存态已迁移，落盘失败下次启动 config-sync 会再物化；不让激活因磁盘错误失败
-    ctx
-      .getService<AppService>('app')
-      ?.saveConfig()
-      .catch(err => logger.warn('vision 配置迁移落盘失败:', err));
+    caps.app.current?.saveConfig().catch(err => logger.warn('vision 配置迁移落盘失败:', err));
     logger.warn(
       `vision.mode="${String(legacyMode)}" 已弃用：已按旧语义迁移为 recognizeOnArrival=${cfg.vision.recognizeOnArrival}、` +
         `delivery=${cfg.vision.delivery} 并写回配置文件，旧键已移除。`,
     );
   }
-  setMediaRuntime({ proc: createProcessGateway(ctx), storage: createStorageGateway(ctx) });
-  const svc = new MediaServiceImpl(ctx, logger, cfg);
+  setMediaRuntime({ proc: createProcessGateway(caps.proc), storage: createStorageGateway(caps.storage) });
+  const svc = new MediaServiceImpl(caps, cfg);
 
-  ctx.provide('media', svc);
+  caps.provide(media, svc);
 
   // 描述缓存续命：识别一次动辄十几秒（动图近一分钟），纯内存缓存重启即全丢。
   // 启动灌回快照、dispose 落盘；读写失败都只降级为「本次不复用」，不影响识别。
   void loadDescriptionCache(logger).then(n => {
     if (n > 0) logger.info(`图片描述缓存已恢复 ${n} 条（跨重启复用，免去重复识别）`);
   });
-  ctx.onDispose(() => flushDescriptionCache());
+  caps.lifecycle.onDispose(() => flushDescriptionCache());
 
   // 出口形态变换：agent 组装完成后、发出之前，按交付形态决定末条 user 消息的 images[]
   // 交给主模型什么——describe 清空（识别归识别模型，结果已在正文文字里），passthrough
@@ -357,7 +397,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   // （15s 超时 × 30 轮）。每条消息只处理一次，成败皆不重来；消息对象随回合结束被回收，
   // 无生命周期管理。
   const transformed = new WeakSet<object>();
-  ctx.middleware('agent:llm:before', async (data, next) => {
+  caps.hooks.middleware('agent:llm:before', async (data, next) => {
     // 所有交付形态都要进来——这道闸此前被模式挡住，于是 describe 模式下
     // agent 塞进 message.images 的历史相对路径 ref（`data/images/…`）一路畅通到 provider，
     // 被当成 base64 送出去，整轮请求被拒（400 illegal base64 data）。
@@ -390,32 +430,20 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   };
   refreshAudioPrefer();
   for (const ev of ['service:registered', 'service:unregistered'] as const) {
-    const off = ctx.on(ev, (name: string) => {
-      if (name === 'asr' || name === 'llm') refreshAudioPrefer();
+    caps.events.on(ev, (changed: string) => {
+      if (changed === 'asr' || changed === 'llm') refreshAudioPrefer();
     });
-    ctx.onDispose(off);
   }
 
   // 注册 analyze_image / update_image_description 工具
-  try {
-    registerMediaTools(ctx, () => svc);
-  } catch (err) {
-    logger.debug(`媒体工具注册跳过（plugin-tools 未就绪？）: ${err instanceof Error ? err.message : err}`);
-  }
+  registerMediaTools(caps, () => svc);
 
-  // 注册 preprocessor（agent 不一定可用，可选 inject）
-  // dispose 必须挂 onDispose：插件 bounce/reload 时旧 preprocessor 中间件不会被
-  // 自动清理（注册在 agent.ctx 而非自身 ctx 上）。
-  try {
-    const disposePreproc = useAgent(ctx).registerPreprocessor(
-      'media',
-      buildPreprocessor(ctx, () => svc),
-    );
-    ctx.onDispose(disposePreproc);
-    logger.info(
-      `媒体识别预处理器已注册 (vision=${cfg.vision.recognizeOnArrival ? 'recognize-on-arrival' : 'pointer-only'}/${cfg.vision.delivery}, audio=${cfg.audio.mode}, video=${cfg.video.mode})`,
-    );
-  } catch (err) {
-    logger.debug(`预处理器注册跳过: ${err instanceof Error ? err.message : err}`);
-  }
+  // 注册 preprocessor：agent 不在场时登记留在账上，它上线后自动补挂，随本次激活撤回
+  caps.agent.registerPreprocessor(
+    'media',
+    buildPreprocessor(caps, () => svc),
+  );
+  logger.info(
+    `媒体识别预处理器已注册 (vision=${cfg.vision.recognizeOnArrival ? 'recognize-on-arrival' : 'pointer-only'}/${cfg.vision.delivery}, audio=${cfg.audio.mode}, video=${cfg.video.mode})`,
+  );
 }

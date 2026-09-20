@@ -1,12 +1,24 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
-import type { FlowControlService } from '@aalis/api-flow-control';
-import type { MediaService } from '@aalis/api-media';
-import type { MessageArchiveService } from '@aalis/api-message-archive';
-import type { PlatformAdapter, PlatformConnection } from '@aalis/api-platform';
-import { createProcessGateway } from '@aalis/api-process';
-import { createStorageGateway } from '@aalis/api-storage';
+import { flowControl } from '@aalis/api-flow-control';
+import { llm } from '@aalis/api-llm';
+import { media } from '@aalis/api-media';
+import { memory } from '@aalis/api-memory';
+import { messageArchive } from '@aalis/api-message-archive';
+import { type PlatformAdapter, type PlatformConnection, platform } from '@aalis/api-platform';
+import { createProcessGateway, processService } from '@aalis/api-process';
+import { createStorageGateway, storage } from '@aalis/api-storage';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import type { Context } from '@aalis/core';
+import {
+  type BoundOf,
+  config,
+  contributions,
+  definePlugin,
+  events,
+  lifecycle,
+  logger,
+  optional,
+  provide,
+} from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import {
   AttachmentRefKind,
@@ -35,8 +47,8 @@ import { OneBotV11 } from './v11.js';
 /**
  * 从原始配置对象中解析出 forward 子配置。
  */
-function parseForwardConfig(config: Record<string, unknown>): ForwardConfig {
-  const fwdRaw = (config.forward ?? {}) as Record<string, unknown>;
+function parseForwardConfig(raw: Readonly<Record<string, unknown>>): ForwardConfig {
+  const fwdRaw = (raw.forward ?? {}) as Record<string, unknown>;
   return {
     enabled: fwdRaw.enabled !== false,
     maxDepth: typeof fwdRaw.maxDepth === 'number' ? Math.max(1, Math.floor(fwdRaw.maxDepth)) : 3,
@@ -69,17 +81,7 @@ import { OneBotV12 } from './v12.js';
 
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-adapter-onebot';
-export const displayName = 'OneBot 适配器';
-export const subsystem = 'platform';
-export const inject = {
-  required: ['storage', 'process'],
-  optional: ['llm', 'commands', 'message-archive', 'persona', 'flow-control'],
-};
-export const provides = ['platform'];
-export const reusable = true;
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   connections: {
     type: 'array',
     label: '连接列表',
@@ -293,7 +295,7 @@ export function settlePendingActions(
 //   - @aalis/plugin-flow-control   （计数 / 冷却 / 限速 / idle 调度）
 //   - @aalis/plugin-trigger-policy （@/名字检测 + 间隔/评分判定）
 // 适配器只保留两个最小桥接：
-//   - 群禁言事件 → ctx.getService<FlowControlService>('flow-control').setMuted()
+//   - 群禁言事件 → flow-control 的 setMuted()
 //   - shut_up_timestamp 启动恢复 → 同上
 // 其他路径全部走 inbound:command/flow/trigger/dispatch 生命周期相位。
 
@@ -586,9 +588,32 @@ function splitImageOut(content: string): string[] {
 
 // ===== 插件入口 =====
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
-  const storage = createStorageGateway(ctx);
-  const proc = createProcessGateway(ctx);
+/**
+ * media / memory 缺席即降级——不登记落盘附件的描述别名、转发原文只剩 1h 内存缓存，
+ * 收发主干照常，故声明为 optional，不进激活闸。
+ */
+const uses = {
+  storage,
+  processService,
+  events,
+  logger,
+  lifecycle,
+  config,
+  contributions,
+  provide,
+  llm: optional(llm),
+  media: optional(media),
+  memory: optional(memory),
+  messageArchive: optional(messageArchive),
+  flowControl: optional(flowControl),
+};
+type Caps = BoundOf<typeof uses>;
+
+function runAdapter(caps: Caps): void {
+  const { contributions, events, lifecycle, logger, media, messageArchive, flowControl } = caps;
+  const config = caps.config;
+  const storage = createStorageGateway(caps.storage);
+  const proc = createProcessGateway(caps.processService);
   const connections: OneBotConnectionConfig[] = Array.isArray(config.connections)
     ? (config.connections as OneBotConnectionConfig[])
     : [];
@@ -622,7 +647,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     typeof attCacheRaw.maxBytes === 'number' && attCacheRaw.maxBytes > 0 ? attCacheRaw.maxBytes : 10 * 1024 * 1024;
 
   if (connections.length === 0) {
-    ctx.logger.info('OneBot 适配器未配置任何连接');
+    logger.info('OneBot 适配器未配置任何连接');
   }
 
   const states: ConnectionState[] = [];
@@ -702,7 +727,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const sentTracker = new SentMessageTracker();
 
   function setSelfMute(sessionId: string, durationSec: number, platform = 'onebot'): void {
-    const flow = ctx.getService<FlowControlService>('flow-control');
+    const flow = flowControl.current;
     if (durationSec > 0) {
       selfMuted.set(sessionId, Date.now() + durationSec * 1000);
       flow?.setMuted(sessionId, durationSec, platform);
@@ -725,7 +750,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     operatorId?: string;
     data?: Record<string, unknown>;
   }): Promise<void> {
-    const archive = ctx.getService<MessageArchiveService>('message-archive');
+    const archive = messageArchive.current;
     if (!archive?.archiveNotice) return;
     try {
       await archive.archiveNotice({
@@ -742,7 +767,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         timestamp: Date.now(),
       });
     } catch (err) {
-      ctx.logger.warn(`notice 入档失败 (${opts.noticeType}): ${err}`);
+      logger.warn(`notice 入档失败 (${opts.noticeType}): ${err}`);
     }
   }
 
@@ -784,7 +809,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (ts > nowSec) {
         const remainSec = ts - nowSec;
         setSelfMute(sessionId, remainSec);
-        ctx.logger.info(
+        logger.info(
           `[禁言恢复] session=${sessionId} 检测到 shut_up_timestamp=${ts}，剩余 ${remainSec}s，已恢复禁言状态`,
         );
         await archivePlatformNotice({
@@ -799,7 +824,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
     } catch (err) {
       // 静默失败：可能是协议端不支持或群已退出
-      ctx.logger.debug(
+      logger.debug(
         `[禁言恢复] session=${sessionId} shut_up_timestamp 查询失败: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
@@ -875,7 +900,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       selfMemberInfoCache.set(key, info);
       return info;
     } catch (err) {
-      ctx.logger.debug(
+      logger.debug(
         `获取 self 群身份失败 (selfId=${selfId} groupId=${groupId}): ${err instanceof Error ? err.message : String(err)}`,
       );
       return null;
@@ -942,7 +967,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 0. 优先查我们自己的归档：命中即可拿到已烘焙了图片描述、forward 摘要等的"富文本"原文，
     //    避免再走 OneBot get_msg（且能跨 URL 鉴权失效）。
     if (sessionId) {
-      const archive = ctx.getService<MessageArchiveService>('message-archive');
+      const archive = messageArchive.current;
       if (archive?.findByMessageId) {
         try {
           const archived = await archive.findByMessageId(sessionId, messageId);
@@ -960,7 +985,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             return { content: body || undefined, userId, nickname };
           }
         } catch (err) {
-          ctx.logger.debug(`引用消息归档反查失败: ${err}`);
+          logger.debug(`引用消息归档反查失败: ${err}`);
         }
       }
     }
@@ -992,14 +1017,14 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         try {
           content = await expandForwardsInText(state, content, segments, sessionId ?? 'onebot:unknown');
         } catch (err) {
-          ctx.logger.debug(`引用消息中的合并转发展开失败: ${err}`);
+          logger.debug(`引用消息中的合并转发展开失败: ${err}`);
         }
       }
 
       // 3. 引用消息中的图片：仅查描述缓存复用，不主动触发视觉模型
       if (content.includes('[图片]')) {
-        const media = ctx.getService<MediaService>('media');
-        if (media?.lookupDescription) {
+        const mediaSvc = media.current;
+        if (mediaSvc?.lookupDescription) {
           const imageUrls: string[] = [];
           for (const seg of segments) {
             const s = seg as unknown as Record<string, unknown>;
@@ -1013,7 +1038,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             content = content.replace(/\[图片\]/g, () => {
               const url = imageUrls[urlIdx++];
               if (!url) return '[图片]';
-              const desc = lookupDescriptionByUrl(media, url);
+              const desc = lookupDescriptionByUrl(mediaSvc, url);
               return desc ? `[图片: ${desc}]` : '[图片]';
             });
           }
@@ -1032,7 +1057,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ===== 合并转发自动展开（详见 ./forward-expand.ts）=====
   const forwardExpander = createForwardExpander({
-    ctx,
+    logger,
+    memory: caps.memory,
+    media,
+    llm: caps.llm,
+    storage: caps.storage,
+    processService: caps.processService,
     forwardCfg,
     attachmentMaxBytes,
     sendAction,
@@ -1080,7 +1110,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       } catch (err) {
         lastErr = err;
         if (attempt < SEND_MAX_RETRIES) {
-          ctx.logger.warn(
+          logger.warn(
             `OneBot ${action} 发送失败(第 ${attempt + 1}/${SEND_MAX_RETRIES + 1} 次),${SEND_RETRY_DELAY_MS}ms 后重试: ${err}`,
           );
           await new Promise(r => setTimeout(r, SEND_RETRY_DELAY_MS));
@@ -1100,7 +1130,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const data = await sendAction(state, 'get_version_info', {});
       const info = data as Record<string, unknown>;
       const protoVer = String(info?.protocol_version ?? '');
-      ctx.logger.info(
+      logger.info(
         `OneBot 版本检测: get_version_info 成功 (protocol_version=${protoVer}, app=${info?.app_name ?? 'unknown'})`,
       );
       // 有些实现可能报 v12 但走的 v11 接口，以接口可用性为准
@@ -1112,7 +1142,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     try {
       const data = await sendAction(state, 'get_version', {});
       const info = data as Record<string, unknown>;
-      ctx.logger.info(
+      logger.info(
         `OneBot 版本检测: get_version 成功 (impl=${info?.impl ?? 'unknown'}, onebot_version=${info?.onebot_version ?? '?'})`,
       );
       return protocolV12;
@@ -1120,7 +1150,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       // 也不可用
     }
 
-    ctx.logger.warn('OneBot 版本自动检测失败，默认使用 v11 协议');
+    logger.warn('OneBot 版本自动检测失败，默认使用 v11 协议');
     return protocolV11;
   }
 
@@ -1162,7 +1192,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     async sendMessage(sessionId: string, content: string, options?: { skipSplit?: boolean }): Promise<void> {
       const parsed = parseSessionId(sessionId);
       if (!parsed) {
-        ctx.logger.warn(`无法解析 sessionId: ${sessionId}`);
+        logger.warn(`无法解析 sessionId: ${sessionId}`);
         return;
       }
 
@@ -1176,7 +1206,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             : !state.ws
               ? 'ws 为空'
               : '协议未初始化';
-        ctx.logger.warn(`OneBot 连接不可用: selfId=${parsed.selfId} (${reason})`);
+        logger.warn(`OneBot 连接不可用: selfId=${parsed.selfId} (${reason})`);
         return;
       }
 
@@ -1262,7 +1292,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
      * 若 flow-control 未加载或会话不存在，默认放行（不限速）。
      */
     checkAndRecordProactiveSend(sessionId: string): { allowed: boolean; reason?: string } {
-      const flow = ctx.getService<FlowControlService>('flow-control');
+      const flow = flowControl.current;
       if (!flow) return { allowed: true };
       if (flow.isRateLimited(sessionId)) {
         return {
@@ -1350,7 +1380,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
   };
 
-  ctx.provide('platform', adapter);
+  caps.provide(platform, adapter);
 
   // ----- 连接管理 -----
 
@@ -1385,10 +1415,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   function doConnect(state: ConnectionState): void {
-    if (ctx.disposed) return;
+    if (lifecycle.closed) return;
 
     state.status = 'connecting';
-    ctx.logger.info(`正在连接 OneBot: ${state.config.url} (协议: ${state.protocol?.version ?? '待检测'})`);
+    logger.info(`正在连接 OneBot: ${state.config.url} (协议: ${state.protocol?.version ?? '待检测'})`);
 
     const headers: Record<string, string> = {};
     if (state.config.accessToken) {
@@ -1400,35 +1430,33 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     // 诊断：捕获 unexpected-response（服务器返回非 101 时触发，且不会触发 error）
     ws.on('unexpected-response', (_req, res) => {
-      ctx.logger.warn(`OneBot unexpected-response: status=${res.statusCode}, headers=${JSON.stringify(res.headers)}`);
+      logger.warn(`OneBot unexpected-response: status=${res.statusCode}, headers=${JSON.stringify(res.headers)}`);
       let body = '';
       res.on('data', (chunk: Buffer) => {
         body += chunk.toString();
       });
       res.on('end', () => {
-        ctx.logger.warn(`OneBot unexpected-response body: ${body}`);
+        logger.warn(`OneBot unexpected-response body: ${body}`);
       });
     });
 
     // 连接超时：如果 WS 握手在 CONNECT_TIMEOUT 内未完成，主动关闭并触发重连
     const connectTimer = setTimeout(() => {
       if (ws.readyState === WebSocket.CONNECTING) {
-        ctx.logger.warn(
-          `OneBot 连接超时 (${CONNECT_TIMEOUT / 1000}s): ${state.config.url}, readyState=${ws.readyState}`,
-        );
+        logger.warn(`OneBot 连接超时 (${CONNECT_TIMEOUT / 1000}s): ${state.config.url}, readyState=${ws.readyState}`);
         ws.terminate();
       }
     }, CONNECT_TIMEOUT);
 
     ws.on('upgrade', res => {
-      ctx.logger.debug(`OneBot WS upgrade: status=${res.statusCode}`);
+      logger.debug(`OneBot WS upgrade: status=${res.statusCode}`);
     });
 
     ws.on('open', () => {
       clearTimeout(connectTimer);
       state.status = 'online';
       state.lastPong = Date.now();
-      ctx.logger.info(`OneBot 已连接: ${state.config.url}`);
+      logger.info(`OneBot 已连接: ${state.config.url}`);
 
       // 客户端心跳：定期 ping，检测待机后的死连接
       stopHeartbeat(state);
@@ -1438,7 +1466,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       state.heartbeatTimer = setInterval(() => {
         if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
         if (Date.now() - state.lastPong > HEARTBEAT_INTERVAL + HEARTBEAT_TIMEOUT) {
-          ctx.logger.warn(`OneBot 心跳超时，主动断开: ${state.config.url}`);
+          logger.warn(`OneBot 心跳超时，主动断开: ${state.config.url}`);
           state.ws.terminate();
           return;
         }
@@ -1488,12 +1516,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           // 未识别事件类型（如 NapCat 的 post_type='message_sent' 自身消息回显、自定义 post_type 等）
           const ev = event as Record<string, unknown>;
           const ident = String(ev.post_type ?? ev.type ?? 'unknown');
-          ctx.logger.debug(
+          logger.debug(
             `OneBot[${state.protocol.version}] 跳过未识别事件类型: post_type=${ident}, keys=[${Object.keys(ev).slice(0, 12).join(',')}]`,
           );
         }
       } catch (err) {
-        ctx.logger.debug('OneBot 消息解析失败:', err);
+        logger.debug('OneBot 消息解析失败:', err);
       }
     });
 
@@ -1504,13 +1532,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       stopHeartbeat(state);
       settlePendingActions(state.pendingActions, '连接已关闭');
 
-      ctx.logger.warn(`OneBot 连接断开: ${state.config.url}，${RECONNECT_INTERVAL / 1000}s 后重连`);
+      logger.warn(`OneBot 连接断开: ${state.config.url}，${RECONNECT_INTERVAL / 1000}s 后重连`);
       scheduleReconnect(state);
     });
 
     ws.on('error', err => {
       clearTimeout(connectTimer);
-      ctx.logger.warn(
+      logger.warn(
         `OneBot 连接错误: ${err.message}, code=${(err as NodeJS.ErrnoException).code}, readyState=${ws.readyState}`,
       );
     });
@@ -1521,9 +1549,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (!state.protocol) {
       try {
         state.protocol = await detectProtocol(state);
-        ctx.logger.info(`OneBot 协议版本: ${state.protocol.version} (${state.config.url})`);
+        logger.info(`OneBot 协议版本: ${state.protocol.version} (${state.config.url})`);
       } catch (err) {
-        ctx.logger.warn(`OneBot 协议检测异常: ${err}，默认使用 v11`);
+        logger.warn(`OneBot 协议检测异常: ${err}，默认使用 v11`);
         state.protocol = protocolV11;
       }
     }
@@ -1538,10 +1566,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         if (selfInfo.nickname) state.selfNickname = selfInfo.nickname;
         if (selfInfo.userId || selfInfo.nickname) {
           const namePart = state.selfNickname ? `, nickname=${state.selfNickname}` : '';
-          ctx.logger.info(`OneBot self_id: ${state.selfId ?? '?'}${namePart} (via ${action})`);
+          logger.info(`OneBot self_id: ${state.selfId ?? '?'}${namePart} (via ${action})`);
         }
       } catch (err) {
-        ctx.logger.debug(`获取 self info 失败: ${err}`);
+        logger.debug(`获取 self info 失败: ${err}`);
       }
     }
 
@@ -1556,12 +1584,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   function scheduleReconnect(state: ConnectionState): void {
-    if (ctx.disposed) return;
+    if (lifecycle.closed) return;
     if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
-    ctx.logger.info(`OneBot 将在 ${RECONNECT_INTERVAL / 1000}s 后尝试重连: ${state.config.url}`);
+    logger.info(`OneBot 将在 ${RECONNECT_INTERVAL / 1000}s 后尝试重连: ${state.config.url}`);
     state.reconnectTimer = setTimeout(() => {
       state.reconnectTimer = undefined;
-      ctx.logger.info(`OneBot 正在重试连接: ${state.config.url}`);
+      logger.info(`OneBot 正在重试连接: ${state.config.url}`);
       doConnect(state);
     }, RECONNECT_INTERVAL);
   }
@@ -1594,7 +1622,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         ? (raw.message as Array<{ type?: string }>).map(s => String(s?.type ?? '?')).filter(Boolean)
         : [];
       const rawText = typeof raw.raw_message === 'string' ? raw.raw_message : '';
-      ctx.logger.debug(
+      logger.debug(
         `OneBot[${state.protocol.version}] 消息事件被解析器丢弃（text 为空）: post_type=${String(raw.post_type ?? raw.type ?? '?')}, message_type=${String(raw.message_type ?? raw.detail_type ?? '?')}, segments=[${segs.join(',')}], raw_message=${rawText}`,
       );
       return;
@@ -1606,7 +1634,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
 
     if (shouldSuppressInviteCardMessage(event)) {
-      ctx.logger.debug(`OneBot[${state.protocol.version}] 忽略重复入群邀请 JSON 卡片: userId=${event.userId}`);
+      logger.debug(`OneBot[${state.protocol.version}] 忽略重复入群邀请 JSON 卡片: userId=${event.userId}`);
       return;
     }
 
@@ -1619,7 +1647,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       event.channelId,
     );
 
-    ctx.logger.debug(
+    logger.debug(
       `OneBot[${state.protocol.version}] 收到消息 [${event.detailType}] ${event.userId ?? '?'}: ${event.text}`,
     );
 
@@ -1666,12 +1694,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
                   if (data?.base64) source = `data:audio/mpeg;base64,${data.base64}`;
                   else if (data?.url) source = String(data.url);
                   else if (data?.file) source = `file://${data.file}`;
-                  ctx.logger.debug(
+                  logger.debug(
                     `OneBot get_record 完成 (file=${fileRef}, ` +
                       `kind=${data?.base64 ? 'base64' : data?.url ? 'url' : data?.file ? 'file' : 'empty'})`,
                   );
                 } catch (err) {
-                  ctx.logger.debug(`OneBot get_record 转换失败 (file=${fileRef}): ${err}`);
+                  logger.debug(`OneBot get_record 转换失败 (file=${fileRef}): ${err}`);
                 }
               }
               const landed = await cacheOneAttachment(
@@ -1681,7 +1709,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
                 source,
                 sessionId,
                 attachmentMaxBytes,
-                ctx.logger,
+                logger,
               );
               return landed;
             }
@@ -1692,12 +1720,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
               att.url,
               sessionId,
               attachmentMaxBytes,
-              ctx.logger,
+              logger,
             );
-            if (landed) rememberLandedAlias(ctx.getService<MediaService>('media'), att.kind, att.url, landed);
+            if (landed) rememberLandedAlias(media.current, att.kind, att.url, landed);
             return landed;
           } catch (err) {
-            ctx.logger.debug(`OneBot 附件缓存异常 [${att.kind}]: ${err}`);
+            logger.debug(`OneBot 附件缓存异常 [${att.kind}]: ${err}`);
             return null;
           }
         }),
@@ -1712,7 +1740,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         try {
           event.text = await expandForwardsInText(state, event.text, event.message, sessionId);
         } catch (err) {
-          ctx.logger.debug(`合并转发自动展开失败: ${err}`);
+          logger.debug(`合并转发自动展开失败: ${err}`);
         }
       }
 
@@ -1760,7 +1788,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
       }
 
-      ctx.emit('inbound:message', {
+      events.emit('inbound:message', {
         content: event.text,
         sessionId,
         platform: 'onebot',
@@ -1791,7 +1819,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         // triggerType 由 trigger-policy 在 inbound:trigger 相位中填充
       });
     })().catch(err => {
-      ctx.logger.warn(`OneBot 消息处理异常: ${err}`);
+      logger.warn(`OneBot 消息处理异常: ${err}`);
     });
   }
 
@@ -1803,7 +1831,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const fallbackSelfId = state.selfId ?? 'unknown';
     const req: NormalizedRequestEvent | null = state.protocol.parseRequestEvent(raw, fallbackSelfId);
     if (!req) {
-      ctx.logger.debug(
+      logger.debug(
         `OneBot[${state.protocol.version}] 跳过未识别 request: request_type=${String(raw.request_type ?? raw.detail_type ?? '?')}, sub_type=${String(raw.sub_type ?? '?')}`,
       );
       return;
@@ -1811,7 +1839,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     const requestLabel = req.requestType === 'group' ? `${req.requestType}/${req.subType}` : req.requestType;
     const requestGroupId = req.requestType === 'group' ? req.groupId : '-';
-    ctx.logger.info(
+    logger.info(
       `OneBot[${state.protocol.version}] 请求事件: ${requestLabel}, userId=${req.userId}, groupId=${requestGroupId}`,
     );
 
@@ -1824,7 +1852,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const commentPart = req.comment ? `，验证信息："${req.comment}"` : '';
       const content = `[系统通知] 用户 ${req.userId} 向我发出了好友申请${commentPart}。请决定是否同意，调用 onebot_handle_friend_request 工具处理（user_id="${req.userId}"）。`;
 
-      ctx
+      events
         .emit('inbound:message', {
           content,
           sessionId,
@@ -1832,7 +1860,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           userId: req.userId,
           sessionType: 'private',
         })
-        .catch((err: unknown) => ctx.logger.warn(`请求事件处理失败: ${err}`));
+        .catch((err: unknown) => logger.warn(`请求事件处理失败: ${err}`));
     } else if (req.requestType === 'group') {
       const key = `${req.userId}:${req.groupId}`;
       pendingGroupRequests.set(key, { flag: req.flag, subType: req.subType, selfId: req.selfId });
@@ -1850,7 +1878,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         // sub_type === 'add': 有人申请加入 bot 管理的群（bot 是管理员）
         const gsId = makeSessionId(req.selfId, 'group', undefined, req.groupId);
         content = `[系统通知] 用户 ${req.userId} 申请加入${groupPart}${commentPart}。请决定是否同意，调用 onebot_approve_join_request 工具处理（user_id="${req.userId}", group_id="${req.groupId}"）。`;
-        ctx
+        events
           .emit('inbound:message', {
             content,
             sessionId: gsId,
@@ -1859,11 +1887,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             sessionType: 'group',
             groupId: req.groupId,
           })
-          .catch((err: unknown) => ctx.logger.warn(`群申请事件处理失败: ${err}`));
+          .catch((err: unknown) => logger.warn(`群申请事件处理失败: ${err}`));
         return;
       }
 
-      ctx
+      events
         .emit('inbound:message', {
           content,
           sessionId,
@@ -1871,7 +1899,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           userId: req.userId,
           sessionType: 'private',
         })
-        .catch((err: unknown) => ctx.logger.warn(`邀请事件处理失败: ${err}`));
+        .catch((err: unknown) => logger.warn(`邀请事件处理失败: ${err}`));
     }
   }
 
@@ -1881,7 +1909,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const fallbackSelfId = state.selfId ?? 'unknown';
     const notice = state.protocol.parseNoticeEvent(raw, fallbackSelfId);
     if (!notice) {
-      ctx.logger.debug(
+      logger.debug(
         `OneBot[${state.protocol.version}] 跳过未识别 notice: notice_type=${String(raw.notice_type ?? raw.detail_type ?? '?')}, sub_type=${String(raw.sub_type ?? '?')}`,
       );
       return;
@@ -1890,7 +1918,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 过滤高频无用通知（输入状态等）
     if (notice.noticeType === 'notify' && notice.subType === 'input_status') return;
 
-    ctx.logger.debug(
+    logger.debug(
       `OneBot[${state.protocol.version}] 通知事件: ${notice.noticeType}${notice.subType ? `/${notice.subType}` : ''}`,
     );
 
@@ -1902,7 +1930,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (notice.groupId) {
         // 群聊 poke：只有被戳的是 bot 才回复
         if (!targetIsBot) {
-          ctx.logger.debug(`群聊戳一戳: ${notice.userId} → ${notice.targetId}（非 bot，忽略）`);
+          logger.debug(`群聊戳一戳: ${notice.userId} → ${notice.targetId}（非 bot，忽略）`);
           return;
         }
         (async () => {
@@ -1910,7 +1938,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           const who = nick ? `${nick}(${notice.userId})` : notice.userId;
           const content = `[戳一戳: ${who} 戳了你]`;
           const sessionId = makeSessionId(selfId, 'group', notice.userId, notice.groupId);
-          ctx.emit('inbound:message', {
+          events.emit('inbound:message', {
             content,
             sessionId,
             platform: 'onebot',
@@ -1920,7 +1948,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             groupId: notice.groupId,
             noticeType: WellKnownNoticeTypes.Poke,
           });
-        })().catch(err => ctx.logger.warn(`poke 处理异常: ${err}`));
+        })().catch(err => logger.warn(`poke 处理异常: ${err}`));
       } else if (notice.userId) {
         // 私聊 poke：始终回复
         (async () => {
@@ -1928,7 +1956,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           const who = nick ? `${nick}(${notice.userId})` : notice.userId;
           const content = `[戳一戳: ${who} 戳了你]`;
           const sessionId = makeSessionId(selfId, 'private', notice.userId);
-          ctx.emit('inbound:message', {
+          events.emit('inbound:message', {
             content,
             sessionId,
             platform: 'onebot',
@@ -1937,7 +1965,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             sessionType: 'private',
             noticeType: WellKnownNoticeTypes.Poke,
           });
-        })().catch(err => ctx.logger.warn(`poke 处理异常: ${err}`));
+        })().catch(err => logger.warn(`poke 处理异常: ${err}`));
       }
       return;
     }
@@ -1960,12 +1988,12 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         if (isSelf) {
           if (isLift) {
             setSelfMute(sessionId, 0);
-            ctx.logger.info(`[禁言解除] session=${sessionId} 操作者=${operatorId ?? 'unknown'}`);
+            logger.info(`[禁言解除] session=${sessionId} 操作者=${operatorId ?? 'unknown'}`);
           } else {
             // 时长未知时按 60s 兜底（旧 flowCfg.muteTimeSeconds 默认值）
             const dur = duration > 0 ? duration : 60;
             setSelfMute(sessionId, dur);
-            ctx.logger.info(
+            logger.info(
               `[被禁言] session=${sessionId} 时长=${dur}s 操作者=${operatorId ?? 'unknown'}，` +
                 `已通知 flow-control 暂停该群触发`,
             );
@@ -1997,7 +2025,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             operatorId,
             data: { duration, isSelf, isLift, untilTs },
           });
-        })().catch(err => ctx.logger.warn(`group_ban 入档异常: ${err}`));
+        })().catch(err => logger.warn(`group_ban 入档异常: ${err}`));
       }
       return;
     }
@@ -2027,9 +2055,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         let original: { content: string; timestamp?: number } | undefined;
         if (messageId) {
           try {
-            const found = await ctx
-              .getService<MessageArchiveService>('message-archive')
-              ?.findByMessageId?.(sessionId, messageId, 500);
+            const found = await messageArchive.current?.findByMessageId?.(sessionId, messageId, 500);
             if (found && typeof found.content === 'string' && found.content) {
               original = { content: found.content, timestamp: found.timestamp };
             }
@@ -2047,7 +2073,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           operatorId,
           data: { messageId },
         });
-      })().catch(err => ctx.logger.warn(`recall 入档异常: ${err}`));
+      })().catch(err => logger.warn(`recall 入档异常: ${err}`));
       return;
     }
 
@@ -2087,7 +2113,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           operatorId,
           data: { isSelf },
         });
-      })().catch(err => ctx.logger.warn(`group_member 变动 入档异常: ${err}`));
+      })().catch(err => logger.warn(`group_member 变动 入档异常: ${err}`));
       return;
     }
 
@@ -2112,7 +2138,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           groupId: notice.groupId,
           data: { isSelf, isSet },
         });
-      })().catch(err => ctx.logger.warn(`group_admin 入档异常: ${err}`));
+      })().catch(err => logger.warn(`group_admin 入档异常: ${err}`));
       return;
     }
 
@@ -2130,7 +2156,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           content,
           userId: notice.userId,
         });
-      })().catch(err => ctx.logger.warn(`friend_add 入档异常: ${err}`));
+      })().catch(err => logger.warn(`friend_add 入档异常: ${err}`));
       return;
     }
 
@@ -2141,7 +2167,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const fileName = notice.data?.fileName ?? '未知文件';
       const content = `[文件上传: ${notice.userId} 上传了 ${fileName}]`;
 
-      ctx.emit('inbound:message', {
+      events.emit('inbound:message', {
         content,
         sessionId,
         platform: 'onebot',
@@ -2160,22 +2186,22 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     const meta = state.protocol.parseMetaEvent(raw);
 
     if (meta.subType === 'connect' || meta.subType === 'lifecycle') {
-      ctx.logger.debug(`OneBot[${state.protocol.version}] meta 事件: ${meta.subType}`);
+      logger.debug(`OneBot[${state.protocol.version}] meta 事件: ${meta.subType}`);
       if (meta.selfId && !state.selfId) {
         state.selfId = meta.selfId;
-        ctx.logger.info(`OneBot self_id (via meta): ${state.selfId}`);
+        logger.info(`OneBot self_id (via meta): ${state.selfId}`);
       }
       if (meta.version) {
-        ctx.logger.info(
+        logger.info(
           `OneBot 实现: ${meta.version.impl ?? 'unknown'} v${meta.version.version ?? '?'} (onebot ${meta.version.onebot_version ?? '?'})`,
         );
       }
     } else if (meta.subType === 'heartbeat') {
       // 心跳事件不输出日志
     } else if (meta.subType === 'status_update') {
-      ctx.logger.debug(`OneBot[${state.protocol.version}] 状态更新事件`);
+      logger.debug(`OneBot[${state.protocol.version}] 状态更新事件`);
     } else {
-      ctx.logger.debug(`OneBot[${state.protocol.version}] 跳过未识别 meta 事件: sub_type=${meta.subType ?? '?'}`);
+      logger.debug(`OneBot[${state.protocol.version}] 跳过未识别 meta 事件: sub_type=${meta.subType ?? '?'}`);
     }
   }
 
@@ -2210,7 +2236,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 合成**一个**贡献返回多块：同槽多贡献按全局键排序、槽内顺序无语义，而这两块
   // 有位置语义——事件提示的"这条消息"必须紧贴它描述的那条 user 消息（组装器把
   // 多块保序物化，故事件提示恒为末块）。幂等由组装器按全局键保障。
-  ctx.contribute('agent:prompt', {
+  contributions.contribute('agent:prompt', {
     id: 'platform-hint',
     anchor: 'turn-hint',
     build(view) {
@@ -2247,7 +2273,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ----- 监听消息回复事件 -----
 
-  ctx.on('outbound:message', async msg => {
+  events.on('outbound:message', async msg => {
     if (!msg.sessionId.startsWith('onebot:')) return;
 
     // 把结构化 attachments 渲染为 <image url="base64://..."/> 标记，
@@ -2268,10 +2294,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
               att.data,
               msg.sessionId,
               attachmentMaxBytes,
-              ctx.logger,
+              logger,
             );
             if (local) {
-              rememberLandedAlias(ctx.getService<MediaService>('media'), att.kind, att.data, local);
+              rememberLandedAlias(media.current, att.kind, att.data, local);
               // cacheAttachmentBuffer 返回相对路径 "data/images/..."，
               // 转为 storage URI "data:/images/..."，让 renderAttachmentsAsContentMarkers
               // 走 storage.readFile 读回 buffer，而非兜底成无法访问的相对 file://
@@ -2279,33 +2305,33 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
               if (att.kind === 'audio') att.mimeType = 'audio/wav';
             }
           } catch (err) {
-            ctx.logger.debug(`OneBot 出站附件缓存异常 [${att.kind}]: ${err}`);
+            logger.debug(`OneBot 出站附件缓存异常 [${att.kind}]: ${err}`);
           }
         }),
       );
 
       try {
-        const markers = await renderAttachmentsAsContentMarkers(msg.attachments, storage, ctx.logger);
+        const markers = await renderAttachmentsAsContentMarkers(msg.attachments, storage, logger);
         if (markers) content = content ? `${content}\n${markers}` : markers;
       } catch (err) {
-        ctx.logger.warn(`OneBot 渲染附件失败: ${err}`);
+        logger.warn(`OneBot 渲染附件失败: ${err}`);
       }
     }
 
     if (!content.trim()) {
-      ctx.logger.debug(`OneBot 跳过空消息 [${msg.sessionId}]`);
+      logger.debug(`OneBot 跳过空消息 [${msg.sessionId}]`);
       return;
     }
-    ctx.logger.debug(`OneBot 发送消息 [${msg.sessionId}]: ${content}`);
+    logger.debug(`OneBot 发送消息 [${msg.sessionId}]: ${content}`);
 
     // 冷却 / 退避 / idle 调度由 plugin-flow-control 自行处理（监听 outbound:message）
 
     adapter.sendMessage(msg.sessionId, content, { skipSplit: msg.source !== 'agent' }).catch(err => {
-      ctx.logger.warn(`OneBot 发送消息失败(已重试): ${err}`);
+      logger.warn(`OneBot 发送消息失败(已重试): ${err}`);
       // 反馈给 agent:多次重试仍失败 → 写一条系统提示进会话记忆,让 agent 下一轮知晓
       // 「刚才那条(可能含图片)没送达」,而不是误以为已发成功。被动记录,不立即触发回复。
       if (msg.source === 'agent') {
-        const archive = ctx.getService<MessageArchiveService>('message-archive');
+        const archive = messageArchive.current;
         const note: Message = {
           role: 'system',
           kind: 'outbound-delivery-failed',
@@ -2315,24 +2341,24 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           timestamp: Date.now(),
           metadata: { source: 'adapter-onebot', error: String(err) },
         };
-        archive?.saveMessage(msg.sessionId, note).catch(e => ctx.logger.debug(`投递失败提示入档失败: ${e}`));
+        archive?.saveMessage(msg.sessionId, note).catch(e => logger.debug(`投递失败提示入档失败: ${e}`));
       }
     });
   });
 
   // ----- 生命周期 -----
 
-  ctx.on('app:ready', () => {
+  events.on('app:ready', () => {
     for (const connConfig of connections) {
       if (!connConfig.url) {
-        ctx.logger.warn('OneBot 连接配置缺少 url，跳过');
+        logger.warn('OneBot 连接配置缺少 url，跳过');
         continue;
       }
       connectOne(connConfig);
     }
   });
 
-  ctx.onDispose(() => {
+  lifecycle.onDispose(() => {
     selfMuted.clear();
     muteRecoveryChecked.clear();
     nicknameCache.clear();
@@ -2355,8 +2381,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
       }
       const settled = settlePendingActions(state.pendingActions, '适配器已停止');
-      if (settled > 0) ctx.logger.debug(`适配器停止：拒绝 ${settled} 个在飞 action`);
+      if (settled > 0) logger.debug(`适配器停止：拒绝 ${settled} 个在飞 action`);
     }
     states.length = 0;
   });
 }
+
+export default definePlugin({
+  name: '@aalis/plugin-adapter-onebot',
+  displayName: 'OneBot 适配器',
+  subsystem: 'platform',
+  configSchema,
+  reusable: true,
+  provides: [platform],
+  uses,
+  apply: runAdapter,
+});

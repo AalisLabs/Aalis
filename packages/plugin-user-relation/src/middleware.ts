@@ -12,7 +12,7 @@
  */
 
 import type { PromptContributionView } from '@aalis/api-agent';
-import type { Context } from '@aalis/core';
+import type { Contributions, Logger } from '@aalis/core';
 import type { RelationService } from './service.js';
 import type {
   EntityNode,
@@ -47,9 +47,19 @@ interface MiddlewareConfig {
   debug: boolean;
 }
 
-export function registerRelationContribution(ctx: Context, service: RelationService, cfg: MiddlewareConfig): void {
+/** 注入贡献用到的能力 */
+interface ContributionCaps {
+  contributions: Contributions;
+  logger: Logger;
+}
+
+export function registerRelationContribution(
+  { contributions, logger }: ContributionCaps,
+  service: RelationService,
+  cfg: MiddlewareConfig,
+): void {
   if (!cfg.enabled) return;
-  ctx.contribute('agent:prompt', {
+  contributions.contribute('agent:prompt', {
     id: 'user-relation',
     anchor: 'turn-context',
     async build(view) {
@@ -58,7 +68,7 @@ export function registerRelationContribution(ctx: Context, service: RelationServ
       try {
         return await buildBlock(service, view, cfg);
       } catch (err) {
-        if (cfg.debug) ctx.logger.debug(`[user-relation] 贡献构建异常: ${stringifyErr(err)}`);
+        if (cfg.debug) logger.debug(`[user-relation] 贡献构建异常: ${stringifyErr(err)}`);
         return null;
       }
     },

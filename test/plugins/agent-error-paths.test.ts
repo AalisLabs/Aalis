@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 import type { AgentService } from '../../packages/api-agent/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import { useToolService } from '../../packages/api-tools/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as agentModule from '../../packages/plugin-agent/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import * as messageArchiveModule from '../../packages/plugin-message-archive/src/index.js';
-import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import agentPlugin from '../../packages/plugin-agent/src/index.js';
+import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
+import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { OutgoingMessage, StreamChunkMessage } from '../../packages/schema-message/src/index.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
@@ -34,9 +34,9 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
   it('普通异常分支先发 outbound:stream done 再发 [错误] 消息', async () => {
     const app = new App({ config: { name: 'E2E', logLevel: 'error', plugins: {} } });
     await app.ctx.useModule(createMockLLMPlugin({ throwOnce: new Error('模型炸了') }));
-    await app.ctx.useModule(memoryInMemoryModule as never);
-    await app.ctx.useModule(messageArchiveModule as never, { debugLogs: false });
-    await app.ctx.useModule(agentModule as never, AGENT_CONFIG);
+    await app.ctx.useModule(memoryInMemoryPlugin);
+    await app.ctx.useModule(messageArchivePlugin, { debugLogs: false });
+    await app.ctx.useModule(agentPlugin, AGENT_CONFIG);
 
     const timeline: string[] = [];
     app.ctx.on('outbound:stream', (chunk: StreamChunkMessage) => {
@@ -66,13 +66,13 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
       toolCalls: [{ id: 'call-bad', type: 'function', function: { name: 'probe', arguments: '{"a": ' } }],
     };
     await app.ctx.useModule(createMockLLMPlugin({ responses: [badCall, { content: '已收到' }], recorder }));
-    await app.ctx.useModule(toolsModule as never, {});
-    await app.ctx.useModule(memoryInMemoryModule as never);
-    await app.ctx.useModule(messageArchiveModule as never, { debugLogs: false });
-    await app.ctx.useModule(agentModule as never, AGENT_CONFIG);
+    await app.ctx.useModule(toolsPlugin, {});
+    await app.ctx.useModule(memoryInMemoryPlugin);
+    await app.ctx.useModule(messageArchivePlugin, { debugLogs: false });
+    await app.ctx.useModule(agentPlugin, AGENT_CONFIG);
 
     let executed = 0;
-    useToolService(app.ctx).register({
+    app.bind({ tools }).tools.register({
       definition: {
         type: 'function',
         function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -119,13 +119,13 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
       toolCalls: [{ id: 'call-empty', type: 'function', function: { name: 'probe', arguments: '' } }],
     };
     await app.ctx.useModule(createMockLLMPlugin({ responses: [emptyCall, { content: '已收到' }] }));
-    await app.ctx.useModule(toolsModule as never, {});
-    await app.ctx.useModule(memoryInMemoryModule as never);
-    await app.ctx.useModule(messageArchiveModule as never, { debugLogs: false });
-    await app.ctx.useModule(agentModule as never, AGENT_CONFIG);
+    await app.ctx.useModule(toolsPlugin, {});
+    await app.ctx.useModule(memoryInMemoryPlugin);
+    await app.ctx.useModule(messageArchivePlugin, { debugLogs: false });
+    await app.ctx.useModule(agentPlugin, AGENT_CONFIG);
 
     let executed = 0;
-    useToolService(app.ctx).register({
+    app.bind({ tools }).tools.register({
       definition: {
         type: 'function',
         function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -155,14 +155,14 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
       toolCalls: [{ id: 'call-sig', type: 'function', function: { name: 'probe', arguments: '{}' } }],
     };
     await app.ctx.useModule(createMockLLMPlugin({ responses: [call, { content: '已收到' }] }));
-    await app.ctx.useModule(toolsModule as never, {});
-    await app.ctx.useModule(memoryInMemoryModule as never);
-    await app.ctx.useModule(messageArchiveModule as never, { debugLogs: false });
-    await app.ctx.useModule(agentModule as never, AGENT_CONFIG);
+    await app.ctx.useModule(toolsPlugin, {});
+    await app.ctx.useModule(memoryInMemoryPlugin);
+    await app.ctx.useModule(messageArchivePlugin, { debugLogs: false });
+    await app.ctx.useModule(agentPlugin, AGENT_CONFIG);
 
     let seen: AbortSignal | undefined;
     let abortedInsideTool = false;
-    useToolService(app.ctx).register({
+    app.bind({ tools }).tools.register({
       definition: {
         type: 'function',
         function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },

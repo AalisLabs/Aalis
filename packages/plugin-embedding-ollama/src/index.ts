@@ -1,22 +1,14 @@
-import { type CheckResult, useDoctorService } from '@aalis/api-doctor';
-import type { EmbeddingRequestOptions, EmbeddingService } from '@aalis/api-embedding';
+import { type CheckResult, doctor } from '@aalis/api-doctor';
+import { type EmbeddingRequestOptions, type EmbeddingService, embedding } from '@aalis/api-embedding';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import type { Context } from '@aalis/core';
+import { type BoundOf, config, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-embedding-ollama';
-export const displayName = 'Ollama Embedding';
-export const subsystem = 'embedding';
-export const provides = ['embedding'];
-export const reusable = true;
-/** doctor 为可选依赖：服务注册成功 != 模型可用，健康状况经 registerCheck 上报 */
-export const inject = {
-  optional: ['doctor'],
-};
+const name = '@aalis/plugin-embedding-ollama';
 
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   baseUrl: {
     type: 'string',
     label: 'Ollama 地址',
@@ -200,7 +192,22 @@ class OllamaEmbeddingService implements EmbeddingService {
 
 // ===== 插件入口 =====
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
+/** doctor 是可选依赖：服务注册成功 != 模型可用，健康状况经 registerCheck 上报 */
+const uses = { config, logger, lifecycle, provide, doctor: optional(doctor) };
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name,
+  displayName: 'Ollama Embedding',
+  subsystem: 'embedding',
+  configSchema,
+  reusable: true,
+  provides: [embedding],
+  uses,
+  apply: startOllamaEmbedding,
+});
+
+async function startOllamaEmbedding({ config, logger, lifecycle, provide, doctor }: Caps): Promise<void> {
   const baseUrl = (config.baseUrl as string) ?? 'http://localhost:11434';
   const model = (config.model as string) ?? 'nomic-embed-text';
   const timeoutMs = (config.timeoutMs as number) ?? 30000;
@@ -211,13 +218,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 启动时检查连通性（失败不阻塞，只警告）
   try {
     await service.embed('ping');
-    ctx.logger.info(`Ollama Embedding 已就绪: ${model} @ ${baseUrl}`);
+    logger.info(`Ollama Embedding 已就绪: ${model} @ ${baseUrl}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    ctx.logger.warn(`Ollama Embedding 连通性检查失败 (${baseUrl}, model=${model}): ${msg}，服务仍将注册`);
+    logger.warn(`Ollama Embedding 连通性检查失败 (${baseUrl}, model=${model}): ${msg}，服务仍将注册`);
   }
 
-  ctx.provide('embedding', service, { label: `Ollama / ${model}` });
+  provide(embedding, service, { label: `Ollama / ${model}` });
 
   // 连通性失败只 warn、服务照常注册，是刻意的（Ollama 可能晚于 Aalis 起来）。
   // 代价是「服务在、但每次调用都失败」这一态对用户完全不可见：/status 只判存在性，
@@ -231,13 +238,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 本插件 reusable=true，可按 `name:suffix` 起多实例；doctor 以 spec.id 为键，
   // 同 id 重复注册后者覆盖前者——两个实例共用一个 id 就只有一个的健康度可见，
   // 恰是这条检查要堵的洞。默认实例保持 `embedding.ollama`，多实例带上后缀。
-  const checkId = ctx.id?.startsWith(`${name}:`)
-    ? `embedding.ollama.${ctx.id.slice(name.length + 1)}`
+  const checkId = lifecycle.id.startsWith(`${name}:`)
+    ? `embedding.ollama.${lifecycle.id.slice(name.length + 1)}`
     : 'embedding.ollama';
-  useDoctorService(ctx).registerCheck({
+  doctor.registerCheck({
     id: checkId,
     category: 'service',
-    // 不写死 pluginName：useDoctorService 会填 ctx.id，多实例才分得清是哪一个
+    // 不写死 pluginName：绑定门面会填这次激活的 id，多实例才分得清是哪一个
     async run(): Promise<CheckResult> {
       const controller = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;

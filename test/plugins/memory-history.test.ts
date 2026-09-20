@@ -1,13 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { type MemoryService, memory as memoryService } from '../../packages/api-memory/src/index.js';
+import { App, contributions, logger, services } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
-import * as memoryHistory from '../../packages/plugin-memory-history/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
+import memoryHistory from '../../packages/plugin-memory-history/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 
-function makeApp() {
-  return new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+/**
+ * 宿主侧装好 memory 后端。host 是根激活的绑定门面：`collect` 看到的是全局贡献，
+ * 与 agent 组装器在生产里拿到的同一份视图。
+ */
+async function boot() {
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const host = app.bind({ services, contributions, logger });
+  await app.plugin(memoryInMemory);
+  await app.plugins.idle();
+  const memory = host.services.get(memoryService);
+  if (!memory) throw new Error('memory 服务未就绪');
+  return { app, host, memory };
 }
 
 async function saveAcross(
@@ -26,9 +36,7 @@ async function saveAcross(
 
 describe('plugin-memory-history', () => {
   it('cross-platform: 注入跨会话最近消息为独立 system block', async () => {
-    const app = makeApp();
-    await app.ctx.useModule(memoryInMemoryModule);
-    const memory = app.ctx.getService<MemoryService>('memory')!;
+    const { app, host, memory } = await boot();
 
     const baseTs = Date.now() - 10_000;
     await saveAcross(memory, [
@@ -37,12 +45,13 @@ describe('plugin-memory-history', () => {
       { sessionId: 's-a', platform: 'onebot', content: 'A2', ts: baseTs + 3 },
     ]);
 
-    await app.ctx.useModule(memoryHistory, {
+    await app.plugin(memoryHistory, {
       scope: 'cross-platform',
       maxAgeMinutes: 0,
       excludeCurrentSession: false,
       headerText: '[TEST-HEADER]',
     });
+    await app.plugins.idle();
 
     const messages: Message[] = [
       { role: 'system', content: 'sys' },
@@ -52,7 +61,7 @@ describe('plugin-memory-history', () => {
       { role: 'assistant', content: 'old-a' },
       { role: 'user', content: 'now' },
     ];
-    await assemblePromptContributions(app.ctx, {
+    await assemblePromptContributions(host, {
       messages,
       sessionId: 'current',
       platform: 'onebot',
@@ -73,9 +82,7 @@ describe('plugin-memory-history', () => {
   });
 
   it('same-platform: 仅注入当前 platform 的消息', async () => {
-    const app = makeApp();
-    await app.ctx.useModule(memoryInMemoryModule);
-    const memory = app.ctx.getService<MemoryService>('memory')!;
+    const { app, host, memory } = await boot();
 
     const baseTs = Date.now() - 5000;
     await saveAcross(memory, [
@@ -83,14 +90,15 @@ describe('plugin-memory-history', () => {
       { sessionId: 's-b', platform: 'webui', content: 'WEB', ts: baseTs + 2 },
     ]);
 
-    await app.ctx.useModule(memoryHistory, {
+    await app.plugin(memoryHistory, {
       scope: 'same-platform',
       maxAgeMinutes: 0,
       excludeCurrentSession: false,
     });
+    await app.plugins.idle();
 
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await assemblePromptContributions(app.ctx, {
+    await assemblePromptContributions(host, {
       messages,
       sessionId: 'current',
       platform: 'onebot',
@@ -102,9 +110,7 @@ describe('plugin-memory-history', () => {
   });
 
   it('excludeCurrentSession: 默认排除当前会话', async () => {
-    const app = makeApp();
-    await app.ctx.useModule(memoryInMemoryModule);
-    const memory = app.ctx.getService<MemoryService>('memory')!;
+    const { app, host, memory } = await boot();
 
     const baseTs = Date.now() - 1000;
     await saveAcross(memory, [
@@ -112,9 +118,10 @@ describe('plugin-memory-history', () => {
       { sessionId: 'other', platform: 'onebot', content: 'OTHER', ts: baseTs + 2 },
     ]);
 
-    await app.ctx.useModule(memoryHistory, { scope: 'cross-platform', maxAgeMinutes: 0 });
+    await app.plugin(memoryHistory, { scope: 'cross-platform', maxAgeMinutes: 0 });
+    await app.plugins.idle();
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await assemblePromptContributions(app.ctx, {
+    await assemblePromptContributions(host, {
       messages,
       sessionId: 'current',
       platform: 'onebot',
@@ -125,15 +132,14 @@ describe('plugin-memory-history', () => {
   });
 
   it('injectEnabled=false: 不注入（兼容旧 scope=off）', async () => {
-    const app = makeApp();
-    await app.ctx.useModule(memoryInMemoryModule);
-    const memory = app.ctx.getService<MemoryService>('memory')!;
+    const { app, host, memory } = await boot();
     await saveAcross(memory, [{ sessionId: 's-a', platform: 'onebot', content: 'X', ts: Date.now() - 1000 }]);
 
     // 同时传旧字段 scope:'off' 验证向后兼容
-    await app.ctx.useModule(memoryHistory, { scope: 'off' });
+    await app.plugin(memoryHistory, { scope: 'off' });
+    await app.plugins.idle();
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await assemblePromptContributions(app.ctx, {
+    await assemblePromptContributions(host, {
       messages,
       sessionId: 'current',
       platform: 'onebot',
@@ -142,22 +148,21 @@ describe('plugin-memory-history', () => {
   });
 
   it('maxAgeMinutes 过滤旧消息', async () => {
-    const app = makeApp();
-    await app.ctx.useModule(memoryInMemoryModule);
-    const memory = app.ctx.getService<MemoryService>('memory')!;
+    const { app, host, memory } = await boot();
     const now = Date.now();
     await saveAcross(memory, [
       { sessionId: 's-a', platform: 'onebot', content: 'OLD', ts: now - 10 * 60_000 },
       { sessionId: 's-a', platform: 'onebot', content: 'NEW', ts: now - 60_000 },
     ]);
 
-    await app.ctx.useModule(memoryHistory, {
+    await app.plugin(memoryHistory, {
       scope: 'cross-platform',
       maxAgeMinutes: 5,
       excludeCurrentSession: false,
     });
+    await app.plugins.idle();
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await assemblePromptContributions(app.ctx, {
+    await assemblePromptContributions(host, {
       messages,
       sessionId: 'current',
       platform: 'onebot',
@@ -167,27 +172,24 @@ describe('plugin-memory-history', () => {
   });
 
   it('重复触发 hook 不重复注入', async () => {
-    const app = makeApp();
-    await app.ctx.useModule(memoryInMemoryModule);
-    const memory = app.ctx.getService<MemoryService>('memory')!;
+    const { app, host, memory } = await boot();
     await saveAcross(memory, [{ sessionId: 's-a', platform: 'onebot', content: 'X', ts: Date.now() - 1000 }]);
 
-    await app.ctx.useModule(memoryHistory, {
+    await app.plugin(memoryHistory, {
       scope: 'cross-platform',
       maxAgeMinutes: 0,
       excludeCurrentSession: false,
     });
+    await app.plugins.idle();
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 'current', platform: 'onebot' });
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 'current', platform: 'onebot' });
+    await assemblePromptContributions(host, { messages, sessionId: 'current', platform: 'onebot' });
+    await assemblePromptContributions(host, { messages, sessionId: 'current', platform: 'onebot' });
     const injected = messages.filter(m => String(m.metadata?.injector ?? '').endsWith('/memory-history'));
     expect(injected.length).toBe(1);
   });
 
   it('perSessionLimit 限制单会话刷屏占满 limit', async () => {
-    const app = makeApp();
-    await app.ctx.useModule(memoryInMemoryModule);
-    const memory = app.ctx.getService<MemoryService>('memory')!;
+    const { app, host, memory } = await boot();
 
     const base = Date.now() - 1000;
     // s-spam 刷 20 条；s-quiet 只有 1 条但更新
@@ -206,16 +208,17 @@ describe('plugin-memory-history', () => {
       metadata: { platform: 'onebot' },
     });
 
-    await app.ctx.useModule(memoryHistory, {
+    await app.plugin(memoryHistory, {
       scope: 'cross-platform',
       maxAgeMinutes: 0,
       excludeCurrentSession: false,
       limit: 10,
       perSessionLimit: 3,
     });
+    await app.plugins.idle();
 
     const messages: Message[] = [{ role: 'user', content: 'now' }];
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 'current', platform: 'onebot' });
+    await assemblePromptContributions(host, { messages, sessionId: 'current', platform: 'onebot' });
     const block = messages[0].content as string;
     // s-spam 只允许 3 条
     const spamCount = (block.match(/spam-/g) ?? []).length;

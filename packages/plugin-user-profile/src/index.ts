@@ -1,9 +1,21 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
-import { useCommandService } from '@aalis/api-commands';
-import { resolveLLMModel } from '@aalis/api-llm';
-import type { MemoryService } from '@aalis/api-memory';
-import { useToolService } from '@aalis/api-tools';
-import type { Context } from '@aalis/core';
+import { commands } from '@aalis/api-commands';
+import { llm, resolveLLMModel } from '@aalis/api-llm';
+import { memory } from '@aalis/api-memory';
+import { persona } from '@aalis/api-persona';
+import { tools } from '@aalis/api-tools';
+import {
+  type BoundOf,
+  config,
+  contributions,
+  definePlugin,
+  events,
+  hooks,
+  logger,
+  optional,
+  services,
+} from '@aalis/core';
+import type { RelationService } from '@aalis/plugin-user-relation';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import { WellKnownKinds } from '@aalis/schema-message';
@@ -33,14 +45,6 @@ import { parseLLMJsonObject } from '@aalis/util-json-repair';
 // 例：群聊纯旁观一条 = +0.1；群聊被 @ 并回复 = +0.1 + 1.5 = +1.6；私聊一条 = +0.1 + 1.0 = +1.1
 // ════════════════════════════════════════════════════════════
 
-export const name = '@aalis/plugin-user-profile';
-export const displayName = '用户事实档案';
-export const subsystem = 'memory';
-export const inject = {
-  required: ['memory', 'llm'],
-  optional: ['user-relation', 'tools'],
-};
-
 const PROFILE_NS = 'user:profile';
 /** Aalis 自档案的 userKey 前缀。userKeyOf 形如 `platform:userId`，
  *  这里用 `__self__:<personaName>` 这种不可能在真实平台出现的形式做隔离。
@@ -55,7 +59,7 @@ const DEFAULT_PERSONA_NAME = 'Aalis';
  *  同名 persona（如 onebot 与 webui 两张都叫 Aalis）共享准则；不同 persona（如 Babel）各自独立。 */
 const INSTRUCTIONS_NS = 'aalis:instructions';
 
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   extractEveryNMessages: {
     type: 'number',
     label: '每 N 条消息提取一次',
@@ -432,7 +436,43 @@ function renderHistoryForExtract(history: Message[], userId: string, platform: s
     .join('\n');
 }
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
+const uses = {
+  memory,
+  llm,
+  events,
+  hooks,
+  contributions,
+  config,
+  logger,
+  services,
+  tools: optional(tools),
+  commands: optional(commands),
+  persona: optional(persona),
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-user-profile',
+  displayName: '用户事实档案',
+  subsystem: 'memory',
+  configSchema,
+  uses,
+  apply: registerUserProfile,
+});
+
+function registerUserProfile({
+  memory,
+  llm,
+  events,
+  hooks,
+  contributions,
+  config,
+  logger,
+  services,
+  tools,
+  commands,
+  persona,
+}: Caps): void {
   const cfg: UserProfileConfig = {
     extractEveryNMessages: (config.extractEveryNMessages as number) ?? 5,
     historyForExtraction: Math.max(2, (config.historyForExtraction as number) ?? 8),
@@ -492,8 +532,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
    *  若 persona 服务不可用或未配 name，回退到默认 `aalis`。 */
   function getCurrentPersonaName(): string {
     try {
-      const persona = ctx.getService<{ getPersonaName?: () => string }>('persona');
-      const name = persona?.getPersonaName?.()?.trim();
+      const name = persona.current?.getPersonaName().trim();
       return name && name.length > 0 ? name : DEFAULT_PERSONA_NAME;
     } catch {
       return DEFAULT_PERSONA_NAME;
@@ -561,24 +600,24 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   async function loadInstructions(): Promise<InstructionDoc> {
-    const memory = ctx.getService<MemoryService>('memory');
+    const mem = memory.current;
     const empty: InstructionDoc = { instructions: [], updatedAt: 0 };
-    if (!memory) return empty;
+    if (!mem) return empty;
     try {
-      const doc = await memory.getMetadata(INSTRUCTIONS_NS, getInstructionsKey());
+      const doc = await mem.getMetadata(INSTRUCTIONS_NS, getInstructionsKey());
       if (!doc) return empty;
       const instructions = Array.isArray(doc.instructions) ? parseInstructionArray(doc.instructions as unknown[]) : [];
       return { instructions, updatedAt: typeof doc.updatedAt === 'number' ? doc.updatedAt : 0 };
     } catch (err) {
-      ctx.logger.debug(`加载指令档案失败: ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`加载指令档案失败: ${err instanceof Error ? err.message : String(err)}`);
       return empty;
     }
   }
 
   async function saveInstructions(doc: InstructionDoc): Promise<void> {
-    const memory = ctx.getService<MemoryService>('memory');
-    if (!memory) return;
-    await memory.saveMetadata(INSTRUCTIONS_NS, getInstructionsKey(), {
+    const mem = memory.current;
+    if (!mem) return;
+    await mem.saveMetadata(INSTRUCTIONS_NS, getInstructionsKey(), {
       instructions: doc.instructions,
       updatedAt: doc.updatedAt,
     });
@@ -718,10 +757,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   /** 读取一个用户的现有档案（不存在返回 undefined）。兼容旧格式 string[]，自动迁移 */
   async function loadProfile(userKey: string): Promise<UserProfile | undefined> {
-    const memory = ctx.getService<MemoryService>('memory');
-    if (!memory) return undefined;
+    const mem = memory.current;
+    if (!mem) return undefined;
     try {
-      const doc = await memory.getMetadata(PROFILE_NS, userKey);
+      const doc = await mem.getMetadata(PROFILE_NS, userKey);
       if (!doc) return undefined;
       const facts = Array.isArray(doc.facts) ? parseFactArray(doc.facts as unknown[]) : [];
       return {
@@ -732,15 +771,15 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         updatedAt: typeof doc.updatedAt === 'number' ? doc.updatedAt : 0,
       };
     } catch (err) {
-      ctx.logger.debug(`加载用户档案失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`加载用户档案失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
       return undefined;
     }
   }
 
   /** 保存档案（覆盖式） */
   async function saveProfile(userKey: string, profile: UserProfile): Promise<void> {
-    const memory = ctx.getService<MemoryService>('memory');
-    if (!memory) return;
+    const mem = memory.current;
+    if (!mem) return;
     const payload: Record<string, unknown> = {
       facts: profile.facts,
       relationScore: profile.relationScore ?? 0,
@@ -748,7 +787,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       lastInteractionAt: profile.lastInteractionAt,
       updatedAt: profile.updatedAt,
     };
-    await memory.saveMetadata(PROFILE_NS, userKey, payload);
+    await mem.saveMetadata(PROFILE_NS, userKey, payload);
   }
 
   interface ExtractAddItem {
@@ -837,7 +876,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       `\n\n# 会话历史（含多用户，仅供消歧；只能从「目标用户」发言中提取事实）\n${renderedHistory || '（暂无会话历史）'}`;
 
     // 优先用 cfg.extractLLM 指定的模型；否则取默认 chat-capable LLM。
-    const entry = resolveLLMModel(ctx, cfg.extractLLM, ['chat']);
+    const entry = resolveLLMModel(llm, cfg.extractLLM, ['chat']);
     if (!entry) return empty;
     const extractLlm = entry.instance;
 
@@ -858,7 +897,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (!parsed) {
         // util-json-repair 已尝试剥 fence + 修裸引号 + 补括号；仍失败 → 模型多半
         // 写成了纯文本/markdown。给一次显式反馈再来一次，避免一次失败丢失整批事实。
-        ctx.logger.warn(`[user-profile] LLM 输出无法解析为 JSON，尝试重试一次。原文前 200 字：${text.slice(0, 200)}`);
+        logger.warn(`[user-profile] LLM 输出无法解析为 JSON，尝试重试一次。原文前 200 字：${text.slice(0, 200)}`);
         const retryResp = await extractLlm.chat({
           messages: [
             ...baseMessages,
@@ -879,12 +918,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         text = (retryResp.content ?? '').trim();
         ({ parsed } = parseLLMJsonObject(text));
         if (!parsed) {
-          ctx.logger.warn(
-            `[user-profile] LLM 重试后仍无法解析 JSON，放弃本批次。重试原文前 200 字：${text.slice(0, 200)}`,
-          );
+          logger.warn(`[user-profile] LLM 重试后仍无法解析 JSON，放弃本批次。重试原文前 200 字：${text.slice(0, 200)}`);
           return empty;
         }
-        ctx.logger.debug('[user-profile] LLM 重试后解析成功');
+        logger.debug('[user-profile] LLM 重试后解析成功');
       }
       const parsedObj = parsed as {
         add?: unknown;
@@ -944,7 +981,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const validateSourceQuote = (item: { text: string; sourceQuote?: string }, kind: 'add' | 'update'): boolean => {
         const q = item.sourceQuote?.trim() ?? '';
         if (!q) {
-          ctx.logger.warn(`[user-profile] 丢弃 ${kind} fact（未提供 sourceQuote）: ${item.text}`);
+          logger.warn(`[user-profile] 丢弃 ${kind} fact（未提供 sourceQuote）: ${item.text}`);
           return false;
         }
         const lines = q
@@ -956,7 +993,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           const normalized = normalizeForQuoteMatch(frag);
           if (!normalized) continue;
           if (!targetCorpus.includes(normalized)) {
-            ctx.logger.warn(
+            logger.warn(
               `[user-profile] 丢弃 ${kind} fact（sourceQuote 片段不在目标用户 ${userId} 发言中）: text="${item.text}" fragment="${frag}"`,
             );
             return false;
@@ -979,7 +1016,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         remove,
       };
     } catch (err) {
-      ctx.logger.debug(`事实提取 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`事实提取 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
       return empty;
     }
   }
@@ -1121,10 +1158,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 若同一用户已有提取在飞，跳过（消息计数继续累加，下次 N 条后再尝试）
     if (inflightExtractions.has(userKey)) return;
     inflightExtractions.add(userKey);
-    const memory = ctx.getService<MemoryService>('memory');
+    const mem = memory.current;
     try {
-      if (!memory?.getHistory) return;
-      const rawHistory = await memory.getHistory(sessionId, cfg.historyForExtraction);
+      if (!mem?.getHistory) return;
+      const rawHistory = await mem.getHistory(sessionId, cfg.historyForExtraction);
       // 跨会话委派是另一个 agent 实例发出的指令·不是该用户发言，不能作为他的用户存档提取语料
       const history = rawHistory.filter(m => m.kind !== WellKnownKinds.CrossSessionDelegation);
       // 序列中至少需要一条目标用户发言，否则没有可提取语料
@@ -1146,11 +1183,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         facts: newFacts,
         updatedAt: Date.now(),
       });
-      ctx.logger.debug(
+      logger.debug(
         `用户档案已更新 (${userKey}): facts +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条`,
       );
     } catch (err) {
-      ctx.logger.debug(`事实提取失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`事实提取失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       inflightExtractions.delete(userKey);
     }
@@ -1220,7 +1257,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     const user = `# 已知的关于 Aalis 自己的事实（带 id）\n${factListText}\n\n# 最近对话历史\n${renderedHistory || '（暂无）'}`;
 
-    const entry = resolveLLMModel(ctx, cfg.extractLLM, ['chat']);
+    const entry = resolveLLMModel(llm, cfg.extractLLM, ['chat']);
     if (!entry) return empty;
 
     try {
@@ -1237,7 +1274,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (!text) return empty;
       const { parsed } = parseLLMJsonObject(text);
       if (!parsed) {
-        ctx.logger.warn(`[user-profile] 自反思 LLM 输出无法解析为 JSON，原文前 200 字：${text.slice(0, 200)}`);
+        logger.warn(`[user-profile] 自反思 LLM 输出无法解析为 JSON，原文前 200 字：${text.slice(0, 200)}`);
         return empty;
       }
       const obj = parsed as { add?: unknown; update?: unknown; remove?: unknown };
@@ -1284,7 +1321,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         : [];
       return { ...empty, add, update, remove };
     } catch (err) {
-      ctx.logger.debug(`自反思 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`自反思 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
       return empty;
     }
   }
@@ -1295,9 +1332,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (selfReflectionInflight) return;
     selfReflectionInflight = true;
     try {
-      const memory = ctx.getService<MemoryService>('memory');
-      if (!memory?.getHistory) return;
-      const rawHistory = await memory.getHistory(sessionId, cfg.selfReflectHistory);
+      const mem = memory.current;
+      if (!mem?.getHistory) return;
+      const rawHistory = await mem.getHistory(sessionId, cfg.selfReflectHistory);
       const history = rawHistory.filter(m => m.kind !== WellKnownKinds.CrossSessionDelegation);
       // 至少需要一些 assistant 发言作为"自反思"的材料
       if (!history.some(m => m.role === 'assistant' && m.content)) return;
@@ -1313,11 +1350,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       const newFacts = mergeFactList(profile.facts, ops.add, ops.update, ops.remove, cfg.maxSelfFacts);
       const fresh = (await loadProfile(selfKey)) ?? profile;
       await saveProfile(selfKey, { ...fresh, facts: newFacts, updatedAt: Date.now() });
-      ctx.logger.debug(
+      logger.debug(
         `Aalis 自档案已更新 (${selfKey}): +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newFacts.length} 条`,
       );
     } catch (err) {
-      ctx.logger.debug(`自反思失败：${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`自反思失败：${err instanceof Error ? err.message : String(err)}`);
     } finally {
       selfReflectionInflight = false;
     }
@@ -1431,7 +1468,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         : '（暂无）';
     const user = `# 当前 persona\n${getCurrentPersonaName()}\n\n# 已有指令（带 id，可在 update/remove 中精确引用）\n${existingText}\n\n# 最近会话（仅含授权人 + Aalis + 系统通知）\n${rendered}`;
 
-    const entry = resolveLLMModel(ctx, cfg.extractLLM, ['chat']);
+    const entry = resolveLLMModel(llm, cfg.extractLLM, ['chat']);
     if (!entry) return empty;
     try {
       const resp = await entry.instance.chat({
@@ -1447,7 +1484,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       if (!text) return empty;
       const { parsed } = parseLLMJsonObject(text);
       if (!parsed) {
-        ctx.logger.warn(`[user-profile] 指令提取 LLM 输出无法解析为 JSON，原文前 200 字：${text.slice(0, 200)}`);
+        logger.warn(`[user-profile] 指令提取 LLM 输出无法解析为 JSON，原文前 200 字：${text.slice(0, 200)}`);
         return empty;
       }
       const obj = parsed as { add?: unknown; update?: unknown; remove?: unknown };
@@ -1463,7 +1500,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             const srcKey = typeof o.sourceUserKey === 'string' ? o.sourceUserKey.trim() : '';
             // 拒收：声称的 sourceUserKey 不在授权人集合里 → 说明 LLM 编造或越权采纳
             if (!srcKey || !allowedUserKeys.has(srcKey)) {
-              ctx.logger.warn(
+              logger.warn(
                 `[user-profile] 丢弃 instruction add（sourceUserKey 不在授权人列表中）: text="${t}" claimed="${srcKey}"`,
               );
               return [];
@@ -1503,7 +1540,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         : [];
       return { add, update, remove };
     } catch (err) {
-      ctx.logger.debug(`指令提取 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`指令提取 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
       return empty;
     }
   }
@@ -1513,18 +1550,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     if (!cfg.enableInstructions) return;
     if (cfg.instructionExtractEveryNMessages <= 0) return;
     if (instructionExtractionInflight) return;
-    const authority = ctx.getService<{ getAuthority: (platform: string, userId?: string) => number }>('authority');
-    if (!authority?.getAuthority) {
-      // authority 不可用 → 无法验证权限，跳过 LLM 自动提取（命令通道仍可用）
-      return;
-    }
-    const authorityFn = (platform: string, userId?: string) => authority.getAuthority(platform, userId);
+    // 指令只采信有权下指令的人，门槛是发言人的**数字权限等级**；authority 契约没有暴露读等级的
+    // 方法，只能按运行期形状探测。探测不到就跳过 LLM 自动提取（/instruct 命令通道不受影响）。
+    const guard = services.getByName('authority') as
+      | { getAuthority?: (platform: string, userId?: string) => number }
+      | undefined;
+    const authorityFn = guard?.getAuthority?.bind(guard);
+    if (!authorityFn) return;
 
     instructionExtractionInflight = true;
     try {
-      const memory = ctx.getService<MemoryService>('memory');
-      if (!memory?.getHistory) return;
-      const rawHistory = await memory.getHistory(sessionId, cfg.instructionHistoryForExtraction);
+      const mem = memory.current;
+      if (!mem?.getHistory) return;
+      const rawHistory = await mem.getHistory(sessionId, cfg.instructionHistoryForExtraction);
       const history = rawHistory.filter(m => m.kind !== WellKnownKinds.CrossSessionDelegation);
       if (history.length === 0) return;
       const doc = await loadInstructions();
@@ -1545,11 +1583,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         instructions: newInstructions,
         updatedAt: Date.now(),
       });
-      ctx.logger.debug(
+      logger.debug(
         `指令档案已更新 (${getInstructionsKey()}): +${ops.add.length} ~${ops.update.length} -${ops.remove.length} → ${newInstructions.length} 条`,
       );
     } catch (err) {
-      ctx.logger.debug(`指令提取失败：${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`指令提取失败：${err instanceof Error ? err.message : String(err)}`);
     } finally {
       instructionExtractionInflight = false;
     }
@@ -1568,40 +1606,25 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // 注:钩子无优先级机制,同相位 handler 按插件激活序执行;本 handler 只做副作用
   // (更新关系分数)不改消息,与其它 handler 顺序无关。
   // 关系强度与"是否触发回复"绑定，因此仍走 agent:input:before 中间件。
-  ctx.middleware(
-    'agent:input:before',
-    async (
-      data: {
-        message: {
-          sessionId: string;
-          userId?: string;
-          platform?: string;
-          nickname?: string;
-          triggerType?: 'direct' | 'immediate' | 'interval' | 'idle' | 'proactive';
-        };
-      },
-      next,
-    ) => {
-      const { userId, platform, triggerType } = data.message;
-      if (userId) {
-        const userKey = userKeyOf(platform, userId);
-        try {
-          // 仅叠加 score，互动计数与时戳由 witness 路径统一负责，
-          // 避免同一条入站消息被计两次 interactionCount。
-          await updateRelationForUser(userKey, triggerType, { countInteraction: false });
-        } catch (err) {
-          ctx.logger.debug(`关系强度更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
-        }
+  hooks.middleware('agent:input:before', async (data, next) => {
+    const { userId, platform, triggerType } = data.message;
+    if (userId) {
+      const userKey = userKeyOf(platform, userId);
+      try {
+        // 仅叠加 score，互动计数与时戳由 witness 路径统一负责，
+        // 避免同一条入站消息被计两次 interactionCount。
+        await updateRelationForUser(userKey, triggerType, { countInteraction: false });
+      } catch (err) {
+        logger.debug(`关系强度更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
       }
-      await next();
-    },
-  );
+    }
+    await next();
+  });
 
   // ─── 事实提取触发：每条入站消息落库后立即计数，与 agent 是否回复无关 ───
   // 监听 message-archive 在 archiveIncoming 落库成功后发出的 inbound:message:archived 事件，
   // 确保缓冲消息（onebot saveBufferedMessage 等不触发 agent 回复的路径）也能纳入计数。
-  ctx.on('inbound:message:archived', (...args: unknown[]) => {
-    const data = args[0] as { sessionId: string; incoming: { userId?: string; platform?: string; nickname?: string } };
+  events.on('inbound:message:archived', data => {
     const { sessionId, incoming } = data;
     const { userId, platform, nickname } = incoming;
     if (!userId) return;
@@ -1613,7 +1636,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     // 排序全失效）。增量为 0 时 relationIncrementFor 自然返回 0，不加分即可。
     const userKey = userKeyOf(platform, userId);
     void updateRelationForUser(userKey, 'witness').catch((err: unknown) =>
-      ctx.logger.debug(`witness 关系更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`),
+      logger.debug(`witness 关系更新异常 (${userKey}): ${err instanceof Error ? err.message : String(err)}`),
     );
 
     const countKey = extractionCountKeyOf(sessionId, platform, userId);
@@ -1621,7 +1644,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     userMessageCount.set(countKey, count);
     if (cfg.extractEveryNMessages > 0 && count % cfg.extractEveryNMessages === 0) {
       void triggerExtractionForUser(sessionId, userId, platform ?? '', nickname).catch((err: unknown) =>
-        ctx.logger.debug(`事实提取异常 (${countKey}): ${err instanceof Error ? err.message : String(err)}`),
+        logger.debug(`事实提取异常 (${countKey}): ${err instanceof Error ? err.message : String(err)}`),
       );
     }
 
@@ -1630,7 +1653,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       globalInboundCount += 1;
       if (globalInboundCount % cfg.selfReflectEveryNMessages === 0) {
         void triggerSelfReflection(sessionId).catch((err: unknown) =>
-          ctx.logger.debug(`自反思异常: ${err instanceof Error ? err.message : String(err)}`),
+          logger.debug(`自反思异常: ${err instanceof Error ? err.message : String(err)}`),
         );
       }
     }
@@ -1640,7 +1663,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       globalInstructionCount += 1;
       if (globalInstructionCount % cfg.instructionExtractEveryNMessages === 0) {
         void triggerInstructionExtraction(sessionId).catch((err: unknown) =>
-          ctx.logger.debug(`指令提取异常: ${err instanceof Error ? err.message : String(err)}`),
+          logger.debug(`指令提取异常: ${err instanceof Error ? err.message : String(err)}`),
         );
       }
     }
@@ -1706,7 +1729,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   //   interval                   → 无主发言者（只是恰好撞上频率），所有参与者一律 compact 摘要
   //   idle                       → 无 userId，只注入历史 messages 中出现的参与者 compact 摘要
   // 多块返回保序共键：准则 → 自档案 → 主发言者档案 → 其他参与者。
-  ctx.contribute('agent:prompt', {
+  contributions.contribute('agent:prompt', {
     id: 'user-profile',
     anchor: 'turn-context',
     async build(data) {
@@ -1760,19 +1783,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           const relationLine = renderRelationLine(profile);
           // 可选：从 user-relation 服务取「同社群活跃成员」（Louvain 标签 + PageRank 排序）。
           // 服务不存在 / 节点没社群标签 / 报错都静默跳过；该字段是锦上添花，不破坏档案主体。
+          // user-relation 由插件提供，本包不反向依赖那个插件包：按名动态查，只借它的类型。
           let communityLine = '';
           try {
-            const relation = ctx.getService<{
-              getCommunityPeers: (
-                id: string,
-                limit?: number,
-              ) => Promise<{
-                communityId: string | null;
-                communitySize: number;
-                peers: Array<{ id: string; displayName: string }>;
-              }>;
-            }>('user-relation');
-            if (relation?.getCommunityPeers) {
+            const relation = services.getByName('user-relation') as RelationService | undefined;
+            if (relation) {
               const r = await relation.getCommunityPeers(userKey, 5);
               if (r.peers.length > 0) {
                 const names = r.peers.map(p => p.displayName).join('、');
@@ -1780,7 +1795,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
               }
             }
           } catch (err) {
-            ctx.logger.debug(`读取 community peers 失败: ${err instanceof Error ? err.message : String(err)}`);
+            logger.debug(`读取 community peers 失败: ${err instanceof Error ? err.message : String(err)}`);
           }
           const block =
             `# 关于当前对话者（${data.userId}）的已知事实\n` +
@@ -1828,10 +1843,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         }
 
         if (cfg.allowGlobalBackfill && others.size < candidateLimit) {
-          const memory = ctx.getService<MemoryService>('memory');
-          if (memory) {
+          const mem = memory.current;
+          if (mem) {
             try {
-              const globalRecent = await memory.listMetadata(PROFILE_NS);
+              const globalRecent = await mem.listMetadata(PROFILE_NS);
               globalRecent.sort((a, b) => {
                 const at = typeof a.data.lastInteractionAt === 'number' ? a.data.lastInteractionAt : 0;
                 const bt = typeof b.data.lastInteractionAt === 'number' ? b.data.lastInteractionAt : 0;
@@ -1848,7 +1863,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
                 addOther(uid, platform);
               }
             } catch (err) {
-              ctx.logger.debug(`加载最近互动用户失败: ${err instanceof Error ? err.message : String(err)}`);
+              logger.debug(`加载最近互动用户失败: ${err instanceof Error ? err.message : String(err)}`);
             }
           }
         }
@@ -1886,76 +1901,63 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // ─── 参与统一的 memory:clear ───
-  ctx.middleware(
-    'memory:clear',
-    async (
-      data: {
-        scope: 'session' | 'all';
-        types?: string[];
-        sessionId?: string;
-        results: Array<{ source: string; success: boolean; message: string }>;
-      },
-      next,
-    ) => {
-      if (data.types && !data.types.includes('user-profile')) {
-        await next();
-        return;
-      }
-      if (data.scope !== 'all') {
-        // 用户档案是跨会话的，会话级清除不动它
-        await next();
-        return;
-      }
-      const memory = ctx.getService<MemoryService>('memory');
-      if (!memory) {
-        await next();
-        return;
-      }
+  hooks.middleware('memory:clear', async (data, next) => {
+    if (data.types && !data.types.includes('user-profile')) {
+      await next();
+      return;
+    }
+    if (data.scope !== 'all') {
+      // 用户档案是跨会话的，会话级清除不动它
+      await next();
+      return;
+    }
+    const mem = memory.current;
+    if (!mem) {
+      await next();
+      return;
+    }
+    try {
+      // 批量提交：逐条 delete 中途失败会留下「删了一半」的档案，而用户看到的是报了成功。
+      // 注意 commitMetadata 的原子性**按后端分档**（见 api-memory 契约）——sqlite/inmemory
+      // 是真原子，mongodb 只保证按序执行遇错即停，仍可能停在半新半旧。批量的确定收益是
+      // 一次往返 + 遇错即停，不是无条件的「要么全成」。
+      const items = await mem.listMetadata(PROFILE_NS);
+      await mem.commitMetadata(items.map(it => ({ op: 'del' as const, namespace: PROFILE_NS, key: it.key })));
+      data.results.push({ source: 'user-profile', success: true, message: `用户档案已清空 (${items.length} 条)` });
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      data.results.push({ source: 'user-profile', success: false, message: `用户档案清空失败: ${m}` });
+    }
+    // 同步清空第三方行为指令档案（per-persona）。指令是档案的兄弟概念，
+    // memory:clear scope='all' 时一并清理；types 默认包含 user-profile 即也清。
+    if (cfg.enableInstructions) {
       try {
-        // 批量提交：逐条 delete 中途失败会留下「删了一半」的档案，而用户看到的是报了成功。
-        // 注意 commitMetadata 的原子性**按后端分档**（见 api-memory 契约）——sqlite/inmemory
-        // 是真原子，mongodb 只保证按序执行遇错即停，仍可能停在半新半旧。批量的确定收益是
-        // 一次往返 + 遇错即停，不是无条件的「要么全成」。
-        const items = await memory.listMetadata(PROFILE_NS);
-        await memory.commitMetadata(items.map(it => ({ op: 'del' as const, namespace: PROFILE_NS, key: it.key })));
-        data.results.push({ source: 'user-profile', success: true, message: `用户档案已清空 (${items.length} 条)` });
+        const insItems = await mem.listMetadata(INSTRUCTIONS_NS);
+        await mem.commitMetadata(insItems.map(it => ({ op: 'del' as const, namespace: INSTRUCTIONS_NS, key: it.key })));
+        data.results.push({
+          source: 'user-profile-instructions',
+          success: true,
+          message: `第三方行为指令已清空 (${insItems.length} 条)`,
+        });
       } catch (err) {
         const m = err instanceof Error ? err.message : String(err);
-        data.results.push({ source: 'user-profile', success: false, message: `用户档案清空失败: ${m}` });
+        data.results.push({ source: 'user-profile-instructions', success: false, message: `指令清空失败: ${m}` });
       }
-      // 同步清空第三方行为指令档案（per-persona）。指令是档案的兄弟概念，
-      // memory:clear scope='all' 时一并清理；types 默认包含 user-profile 即也清。
-      if (cfg.enableInstructions) {
-        try {
-          const insItems = await memory.listMetadata(INSTRUCTIONS_NS);
-          await memory.commitMetadata(
-            insItems.map(it => ({ op: 'del' as const, namespace: INSTRUCTIONS_NS, key: it.key })),
-          );
-          data.results.push({
-            source: 'user-profile-instructions',
-            success: true,
-            message: `第三方行为指令已清空 (${insItems.length} 条)`,
-          });
-        } catch (err) {
-          const m = err instanceof Error ? err.message : String(err);
-          data.results.push({ source: 'user-profile-instructions', success: false, message: `指令清空失败: ${m}` });
-        }
-      }
-      await next();
-    },
-  );
+    }
+    await next();
+  });
 
   // ─── 工具：user_profile_lookup ───
   // 让 Agent 在对话中主动查询任意用户（或 Aalis 自己）的事实档案。
   // 设计要点：
   // - 全局可查（用户决定 C）：跨平台/跨群均可，含 __self__ 自档案
   // - 三种调用方式：① user_key 直传；② platform+user_id 组合；③ self=true（查当前 persona 自档案）
-  useToolService(ctx).registerGroup({
+  tools.registerGroup({
     name: 'user-profile',
     label: '用户档案',
     description: '查询 Aalis 已经积累的某人事实档案（包括自档案）。',
   });
-  useToolService(ctx).register({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -2036,45 +2038,41 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // /profile              查看自己的档案
   // /profile clear        清除自己的档案（authority=2，自己删自己的）
   // /profile clear nuke   清空所有用户档案（authority=3，dangerous）
-  useCommandService(ctx)
-    .command('profile', '查看你在 Aalis 中的事实档案')
-    .action(async argv => {
-      const userId = argv.session.userId;
-      if (!userId) return '当前会话未识别用户身份，无法查看档案。';
-      const userKey = userKeyOf(argv.session.platform, userId);
-      const profile = await loadProfile(userKey);
-      if (!profile || profile.facts.length === 0) {
-        return `📭 暂无档案数据 (${userKey})`;
-      }
-      const block = renderProfileBlock(profile.facts, userKey, false);
-      const meta = `关系强度：${(profile.relationScore ?? 0).toFixed(relationScorePrecision)}/100，互动次数：${profile.interactionCount ?? 0}`;
-      return `📇 你的档案 (${userKey})\n${meta}\n\n${block}`;
-    });
+  commands.command('profile', '查看你在 Aalis 中的事实档案').action(async argv => {
+    const userId = argv.session.userId;
+    if (!userId) return '当前会话未识别用户身份，无法查看档案。';
+    const userKey = userKeyOf(argv.session.platform, userId);
+    const profile = await loadProfile(userKey);
+    if (!profile || profile.facts.length === 0) {
+      return `📭 暂无档案数据 (${userKey})`;
+    }
+    const block = renderProfileBlock(profile.facts, userKey, false);
+    const meta = `关系强度：${(profile.relationScore ?? 0).toFixed(relationScorePrecision)}/100，互动次数：${profile.interactionCount ?? 0}`;
+    return `📇 你的档案 (${userKey})\n${meta}\n\n${block}`;
+  });
 
-  useCommandService(ctx)
-    .command('profile.clear', '清除你自己的事实档案', { visibility: 'restricted' })
-    .action(async argv => {
-      const userId = argv.session.userId;
-      if (!userId) return '当前会话未识别用户身份，无法清除档案。';
-      const userKey = userKeyOf(argv.session.platform, userId);
-      const memory = ctx.getService<MemoryService>('memory');
-      if (!memory) return '记忆服务不支持档案删除。';
-      try {
-        const existed = await memory.getMetadata(PROFILE_NS, userKey);
-        if (!existed) return `📭 你当前没有档案数据 (${userKey})`;
-        await memory.deleteMetadata(PROFILE_NS, userKey);
-        return `✅ 已清除你的档案 (${userKey})`;
-      } catch (err) {
-        const m = err instanceof Error ? err.message : String(err);
-        return `❌ 清除失败：${m}`;
-      }
-    });
+  commands.command('profile.clear', '清除你自己的事实档案', { visibility: 'restricted' }).action(async argv => {
+    const userId = argv.session.userId;
+    if (!userId) return '当前会话未识别用户身份，无法清除档案。';
+    const userKey = userKeyOf(argv.session.platform, userId);
+    const mem = memory.current;
+    if (!mem) return '记忆服务不支持档案删除。';
+    try {
+      const existed = await mem.getMetadata(PROFILE_NS, userKey);
+      if (!existed) return `📭 你当前没有档案数据 (${userKey})`;
+      await mem.deleteMetadata(PROFILE_NS, userKey);
+      return `✅ 已清除你的档案 (${userKey})`;
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      return `❌ 清除失败：${m}`;
+    }
+  });
 
   // 定点除毒入口（2026-08 群主档案投毒事件的运维刚需）：此前删单条事实只能
   // mongosh 手术或 nuke 全清。dangerous → 等级 2 + confirm，与同族 self.clear/nuke 对齐
   //（它改的是**他人**档案，且 target 含冒号时直传 key、可触及 __self__ 自档案，
   // 必须与 self.clear 同样上确认闸）。id 未命中时列出前若干条供定位。
-  useCommandService(ctx)
+  commands
     .command('profile.forget <target:string> <factId:string>', '定点删除某用户档案中的一条事实（运维除毒）', {
       risk: 'dangerous',
     })
@@ -2100,75 +2098,67 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return `✅ 已删除 ${userKey} 的事实 [${factId}]：${hit.text.slice(0, 60)}`;
     });
 
-  useCommandService(ctx)
-    .command('profile.self', '查看 Aalis 的自档案（跨会话的内心状态）')
-    .action(async () => {
-      const selfKey = getSelfKey();
-      const profile = await loadProfile(selfKey);
-      if (!profile || profile.facts.length === 0) {
-        return `🌱 ${getCurrentPersonaName()} 还没有积累任何自反思事实。（key=${selfKey}）`;
-      }
-      const block = renderProfileBlock(profile.facts, getCurrentPersonaName(), false);
-      return `🪞 ${getCurrentPersonaName()} 自档案（共 ${profile.facts.length} 条，key=${selfKey}）\n\n${block}`;
-    });
+  commands.command('profile.self', '查看 Aalis 的自档案（跨会话的内心状态）').action(async () => {
+    const selfKey = getSelfKey();
+    const profile = await loadProfile(selfKey);
+    if (!profile || profile.facts.length === 0) {
+      return `🌱 ${getCurrentPersonaName()} 还没有积累任何自反思事实。（key=${selfKey}）`;
+    }
+    const block = renderProfileBlock(profile.facts, getCurrentPersonaName(), false);
+    return `🪞 ${getCurrentPersonaName()} 自档案（共 ${profile.facts.length} 条，key=${selfKey}）\n\n${block}`;
+  });
 
-  useCommandService(ctx)
-    .command('profile.self.clear', '【慎用】清空 Aalis 自档案', { risk: 'dangerous' })
-    .action(async () => {
-      const memory = ctx.getService<MemoryService>('memory');
-      if (!memory) return '记忆服务不支持档案删除。';
-      const selfKey = getSelfKey();
-      try {
-        await memory.deleteMetadata(PROFILE_NS, selfKey);
-        return `✅ ${getCurrentPersonaName()} 自档案已清空（key=${selfKey}）`;
-      } catch (err) {
-        return `❌ 清空失败：${err instanceof Error ? err.message : String(err)}`;
-      }
-    });
+  commands.command('profile.self.clear', '【慎用】清空 Aalis 自档案', { risk: 'dangerous' }).action(async () => {
+    const mem = memory.current;
+    if (!mem) return '记忆服务不支持档案删除。';
+    const selfKey = getSelfKey();
+    try {
+      await mem.deleteMetadata(PROFILE_NS, selfKey);
+      return `✅ ${getCurrentPersonaName()} 自档案已清空（key=${selfKey}）`;
+    } catch (err) {
+      return `❌ 清空失败：${err instanceof Error ? err.message : String(err)}`;
+    }
+  });
 
-  useCommandService(ctx)
-    .command('profile.clear.nuke', '【危险】清空所有用户档案', { risk: 'dangerous' })
-    .action(async () => {
-      const memory = ctx.getService<MemoryService>('memory');
-      if (!memory) {
-        return '记忆服务不支持档案批量删除。';
-      }
-      try {
-        const items = await memory.listMetadata(PROFILE_NS);
-        await memory.commitMetadata(items.map(it => ({ op: 'del' as const, namespace: PROFILE_NS, key: it.key })));
-        return `✅ 已清空全部用户档案（${items.length} 条）`;
-      } catch (err) {
-        const m = err instanceof Error ? err.message : String(err);
-        return `❌ 清空失败：${m}`;
-      }
-    });
+  commands.command('profile.clear.nuke', '【危险】清空所有用户档案', { risk: 'dangerous' }).action(async () => {
+    const mem = memory.current;
+    if (!mem) {
+      return '记忆服务不支持档案批量删除。';
+    }
+    try {
+      const items = await mem.listMetadata(PROFILE_NS);
+      await mem.commitMetadata(items.map(it => ({ op: 'del' as const, namespace: PROFILE_NS, key: it.key })));
+      return `✅ 已清空全部用户档案（${items.length} 条）`;
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      return `❌ 清空失败：${m}`;
+    }
+  });
 
   // ─── /instruct 指令族：第三方行为指令 (per-persona) ───
   // /instruct              查看当前 persona 的所有指令
   // /instruct.add <text>   手动添加一条指令（authority=2）
   // /instruct.remove <id>  按 id 删除一条（authority=2）
   // /instruct.clear        清空当前 persona 的全部指令（authority=3, dangerous）
-  useCommandService(ctx)
-    .command('instruct', '查看当前 persona 的第三方行为指令')
-    .action(async () => {
-      if (!cfg.enableInstructions) return '🚫 第三方行为指令功能未启用。';
-      const persona = getCurrentPersonaName();
-      const doc = await loadInstructions();
-      if (doc.instructions.length === 0) {
-        return `📭 ${persona} 当前没有任何第三方行为指令。`;
-      }
-      const lines = doc.instructions.map(ins => {
-        const tag = ins.severity === 'must' ? '【必须】' : ins.severity === 'avoid' ? '【避免】' : '【应当】';
-        const cat = ins.category ? `[${ins.category}]` : '';
-        const src = ins.sourceUserName
-          ? `（来自 ${ins.sourceUserName}${ins.sourceChannel === 'command' ? '·手动' : '·LLM'}）`
-          : '';
-        return `  ${ins.id}  ${tag}${cat} ${ins.text}${src}`;
-      });
-      return `📋 ${persona} 的第三方行为指令（共 ${doc.instructions.length} 条）\n${lines.join('\n')}`;
+  commands.command('instruct', '查看当前 persona 的第三方行为指令').action(async () => {
+    if (!cfg.enableInstructions) return '🚫 第三方行为指令功能未启用。';
+    const personaName = getCurrentPersonaName();
+    const doc = await loadInstructions();
+    if (doc.instructions.length === 0) {
+      return `📭 ${personaName} 当前没有任何第三方行为指令。`;
+    }
+    const lines = doc.instructions.map(ins => {
+      const tag = ins.severity === 'must' ? '【必须】' : ins.severity === 'avoid' ? '【避免】' : '【应当】';
+      const cat = ins.category ? `[${ins.category}]` : '';
+      const src = ins.sourceUserName
+        ? `（来自 ${ins.sourceUserName}${ins.sourceChannel === 'command' ? '·手动' : '·LLM'}）`
+        : '';
+      return `  ${ins.id}  ${tag}${cat} ${ins.text}${src}`;
     });
+    return `📋 ${personaName} 的第三方行为指令（共 ${doc.instructions.length} 条）\n${lines.join('\n')}`;
+  });
 
-  useCommandService(ctx)
+  commands
     .command('instruct.add <text:text>', '手动添加一条第三方行为指令', { visibility: 'restricted' })
     .action(async (argv, text) => {
       if (!cfg.enableInstructions) return '🚫 第三方行为指令功能未启用。';
@@ -2197,7 +2187,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return `✅ 已添加行为指令${added ? `（id=${added.id}）` : ''}：${clipInstructionText(body)}`;
     });
 
-  useCommandService(ctx)
+  commands
     .command('instruct.remove <id:string>', '按 id 删除一条第三方行为指令', { visibility: 'restricted' })
     .action(async (_argv, id) => {
       if (!cfg.enableInstructions) return '🚫 第三方行为指令功能未启用。';
@@ -2211,24 +2201,24 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return `✅ 已删除指令（id=${targetId}）：${target.text}`;
     });
 
-  useCommandService(ctx)
+  commands
     .command('instruct.clear', '【危险】清空当前 persona 的全部第三方行为指令', {
       visibility: 'restricted',
     })
     .action(async () => {
       if (!cfg.enableInstructions) return '🚫 第三方行为指令功能未启用。';
-      const memory = ctx.getService<MemoryService>('memory');
-      if (!memory) return '记忆服务不支持指令删除。';
+      const mem = memory.current;
+      if (!mem) return '记忆服务不支持指令删除。';
       try {
         const before = (await loadInstructions()).instructions.length;
-        await memory.deleteMetadata(INSTRUCTIONS_NS, getInstructionsKey());
+        await mem.deleteMetadata(INSTRUCTIONS_NS, getInstructionsKey());
         return `✅ ${getCurrentPersonaName()} 的第三方行为指令已清空（删除 ${before} 条）。`;
       } catch (err) {
         return `❌ 清空失败：${err instanceof Error ? err.message : String(err)}`;
       }
     });
 
-  ctx.logger.info(
+  logger.info(
     `用户事实档案已启用 (every=${cfg.extractEveryNMessages <= 0 ? '禁用提取' : `${cfg.extractEveryNMessages}msgs`}, history=${cfg.historyForExtraction}, ` +
       `maxFacts=${cfg.maxFactsPerUser}, ` +
       `self=${cfg.enableSelfProfile ? `every ${cfg.selfReflectEveryNMessages}msgs/max ${cfg.maxSelfFacts}, key=${getSelfKey()}` : 'disabled'}, ` +

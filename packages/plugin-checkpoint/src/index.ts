@@ -1,10 +1,19 @@
 import type {} from '@aalis/api-agent'; // 加载 agent:* 钩子的 HookContextMap augmentation
-import type { MemoryService } from '@aalis/api-memory';
-import type { StorageService } from '@aalis/api-storage';
-import { createStorageGateway } from '@aalis/api-storage';
-import type {} from '@aalis/api-webui'; // PluginModule.actions 槽位的 merging 可见性
-import type { Context, PluginModule } from '@aalis/core';
-import { defineService } from '@aalis/core';
+import { memory } from '@aalis/api-memory';
+import { createStorageGateway, storage } from '@aalis/api-storage';
+import { webuiServer } from '@aalis/api-webui';
+import {
+  type BoundOf,
+  config,
+  definePlugin,
+  defineService,
+  events,
+  hooks,
+  lifecycle,
+  logger,
+  optional,
+  provide,
+} from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { type CheckpointService, CheckpointServiceImpl, resolveConfig } from './service.js';
 
@@ -12,24 +21,7 @@ import { type CheckpointService, CheckpointServiceImpl, resolveConfig } from './
 // plugin-checkpoint — 文件操作快照与回滚
 // ════════════════════════════════════════════════════════════
 
-export const name = '@aalis/plugin-checkpoint';
-export const displayName = '回滚检查点';
-export const subsystem = 'scheduler';
-export const provides = ['checkpoint'];
-/**
- * storage 是硬依赖：本插件的快照/manifest 全部经 storage 落盘。
- *
- * 不声明的话 topoSortByDeps 只按 requiredDeps 建边、两者 inDegree 均为 0，拆卸序退化成
- * 注册序的逆序——storage 可能先于 checkpoint 被 retire，于是 onDispose 里的 flushAll 调
- * storage.writeFile 时 entry 已被摘除，在飞回合的 manifest 落不了盘。
- * 该保证只在 app.stop() 的整体拓扑逆序成立；单独禁用/热重载 storage 时 flushAll 会落空
- * （回合 blob 在写点已落盘，丢的只是在飞回合的 manifest）。
- */
-export const inject = {
-  required: ['storage'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   rootDir: {
     type: 'string',
     label: '存储目录',
@@ -65,113 +57,124 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-// ──────────── Plugin actions (供 WebUI 调用) ────────────
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const checkpoint = defineService<CheckpointService>('checkpoint');
 
-export const actions: PluginModule['actions'] = {
-  async listTurns(ctx, args) {
-    const svc = ctx.getService<CheckpointService>('checkpoint');
-    if (!svc) return [];
+const uses = {
+  /**
+   * storage 是硬依赖：本插件的快照/manifest 全部经 storage 落盘。
+   *
+   * 声明成 required 同时决定关停次序：storage 排在本插件之后退场，onDispose 里的 flushAll 才写得动。
+   * 该保证只在 app.stop() 的整体拓扑逆序成立；单独禁用/热重载 storage 时 flushAll 会落空
+   * （回合 blob 在写点已落盘，丢的只是在飞回合的 manifest）。
+   */
+  storage,
+  /** 只有「回滚整轮对话」用得到（抓消息时间戳、删消息）；没有 memory 也能做纯文件回滚 */
+  memory: optional(memory),
+  /** 页面动作的登记口；无 WebUI 时本插件照常在后台记账 */
+  webui: optional(webuiServer),
+  events,
+  hooks,
+  lifecycle,
+  logger,
+  config,
+  provide,
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-checkpoint',
+  displayName: '回滚检查点',
+  subsystem: 'scheduler',
+  configSchema,
+  provides: [checkpoint],
+  uses,
+  apply: run,
+});
+
+function run(caps: Caps): void {
+  const { storage, memory, webui, events, hooks, lifecycle, provide } = caps;
+  /** 服务内部的 commitTurn / gc / flush 都写这个 source，日志页按 `…:checkpoint` 归组 */
+  const logger = caps.logger.child('checkpoint');
+  const cfg = resolveConfig(caps.config);
+  const gateway = createStorageGateway(storage);
+
+  const service = new CheckpointServiceImpl(cfg, logger, gateway);
+  provide(checkpoint, service);
+
+  // 注入回滚后端：gateway 按 URI 路由到各 root，调用时才枚举提供者，所以此刻 storage 还没到位也无妨
+  service.setBackend(
+    async (uri, data) => {
+      if (storage.all().length === 0) throw new Error('storage 服务不可用');
+      await gateway.writeFile(uri, data);
+    },
+    async uri => {
+      if (storage.all().length === 0) throw new Error('storage 服务不可用');
+      await gateway.delete(uri);
+    },
+    async (fromUri, toUri) => {
+      if (storage.all().length === 0) throw new Error('storage 服务不可用');
+      if (!gateway.move) throw new Error('storage 不支持 move');
+      await gateway.move(fromUri, toUri);
+    },
+  );
+
+  // 注入 chat 回滚所需依赖：memory 引用（每次调用解析当前提供者）+ 事件发出器
+  service.setChatRollbackDeps({
+    memory,
+    emitMessagesDeleted: (sessionId, timestamps) => {
+      events
+        .emit('memory:messages-deleted', { sessionId, timestamps })
+        .catch(err => logger.debug(`emit memory:messages-deleted 失败: ${(err as Error).message}`));
+    },
+    emitHistoryChanged: sessionId => {
+      events
+        .emit('history:changed', { sessionId })
+        .catch(err => logger.debug(`emit history:changed 失败: ${(err as Error).message}`));
+    },
+  });
+
+  // ──────────── 页面动作（供 WebUI 调用）────────────
+
+  webui.registerAction('listTurns', async args => {
     const sessionId = (args.sessionId as string | undefined) ?? '';
     if (!sessionId) return { error: '缺少 sessionId' };
-    return svc.listTurns(sessionId);
-  },
-  async getManifest(ctx, args) {
-    const svc = ctx.getService<CheckpointService>('checkpoint');
-    if (!svc) return null;
-    const sessionId = args.sessionId as string;
-    const turnId = args.turnId as string;
-    return svc.getManifest(sessionId, turnId);
-  },
-  async rollback(ctx, args) {
-    const svc = ctx.getService<CheckpointService>('checkpoint');
-    if (!svc) return { ok: false, errors: [{ uri: '', reason: 'checkpoint 服务未启用' }] };
+    return service.listTurns(sessionId);
+  });
+
+  webui.registerAction('getManifest', async args =>
+    service.getManifest(args.sessionId as string, args.turnId as string),
+  );
+
+  webui.registerAction('rollback', async args => {
     const sessionId = args.sessionId as string;
     const turnId = args.turnId as string;
     if (!sessionId || !turnId) return { ok: false, errors: [{ uri: '', reason: '缺少 sessionId 或 turnId' }] };
-    return svc.rollback(sessionId, turnId);
-  },
-  async rollbackWithChat(ctx, args) {
-    const svc = ctx.getService<CheckpointService>('checkpoint');
-    if (!svc)
-      return {
-        ok: false,
-        errors: [{ uri: '', reason: 'checkpoint 服务未启用' }],
-        deletedMessages: 0,
-        chatDeleted: false,
-      };
+    return service.rollback(sessionId, turnId);
+  });
+
+  webui.registerAction('rollbackWithChat', async args => {
     const sessionId = args.sessionId as string;
     const turnId = args.turnId as string;
-    if (!sessionId || !turnId)
+    if (!sessionId || !turnId) {
       return {
         ok: false,
         errors: [{ uri: '', reason: '缺少 sessionId 或 turnId' }],
         deletedMessages: 0,
         chatDeleted: false,
       };
-    return svc.rollbackWithChat(sessionId, turnId);
-  },
-};
-
-// ──────────── 插件入口 ────────────
-
-export async function apply(ctx: Context, rawConfig: Record<string, unknown>): Promise<void> {
-  const config = resolveConfig(rawConfig);
-  const logger = ctx.logger.child('checkpoint');
-  const storage = createStorageGateway(ctx);
-
-  const service = new CheckpointServiceImpl(config, logger, storage);
-  ctx.provide('checkpoint', service);
-
-  // 注入回滚后端：通过 storage gateway helper 按 URI 路由到各 root
-  // 在 apply 阶段，storage 可能还没注册；gateway 本身是闭包，调用时才枚举 entry
-
-  service.setBackend(
-    async (uri, data) => {
-      if (ctx.getAllServices<StorageService>('storage').length === 0) throw new Error('storage 服务不可用');
-      await storage.writeFile(uri, data);
-    },
-    async uri => {
-      if (ctx.getAllServices<StorageService>('storage').length === 0) throw new Error('storage 服务不可用');
-      await storage.delete(uri);
-    },
-    async (fromUri, toUri) => {
-      if (ctx.getAllServices<StorageService>('storage').length === 0) throw new Error('storage 服务不可用');
-      if (!storage.move) throw new Error('storage 不支持 move');
-      await storage.move(fromUri, toUri);
-    },
-  );
-
-  // 注入 chat 回滚所需依赖：memory + 事件发出器（懒解析 memory，但事件发出器立即可用）
-  const memoryProxy: MemoryService = new Proxy({} as MemoryService, {
-    get(_t, prop) {
-      const m = ctx.getService<MemoryService>('memory');
-      if (!m) return undefined;
-      const v = (m as unknown as Record<string | symbol, unknown>)[prop as string];
-      return typeof v === 'function' ? (v as (...args: unknown[]) => unknown).bind(m) : v;
-    },
-  });
-  service.setChatRollbackDeps({
-    memory: memoryProxy,
-    emitMessagesDeleted: (sessionId, timestamps) => {
-      ctx
-        .emit('memory:messages-deleted', { sessionId, timestamps })
-        .catch(err => logger.debug(`emit memory:messages-deleted 失败: ${(err as Error).message}`));
-    },
-    emitHistoryChanged: sessionId => {
-      ctx
-        .emit('history:changed', { sessionId })
-        .catch(err => logger.debug(`emit history:changed 失败: ${(err as Error).message}`));
-    },
+    }
+    return service.rollbackWithChat(sessionId, turnId);
   });
 
   // ──────────── 回合生命周期 ────────────
   // agent:input:before：一次 LLM 回合开始（一个用户消息进来）
   // 仅对配置 scopes 匹配的会话参与回合生命周期，避免 onebot 等聊天平台为每条消息都创建空 checkpoint。
   const isScopeEnabled = (platform?: string, sessionType?: string): boolean => {
-    if (config.scopes.length === 0) return false;
+    if (cfg.scopes.length === 0) return false;
     const p = platform ?? '';
     const t = sessionType ?? '';
-    for (const raw of config.scopes) {
+    for (const raw of cfg.scopes) {
       const [sp = '*', st = '*'] = raw.includes(':') ? raw.split(':', 2) : [raw, '*'];
       const platOk = sp === '*' || sp === '' || sp === p;
       const typeOk = st === '*' || st === '' || st === t;
@@ -180,7 +183,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     return false;
   };
 
-  ctx.middleware('agent:input:before', async (data, next) => {
+  hooks.middleware('agent:input:before', async (data, next) => {
     if (isScopeEnabled(data.message.platform, data.message.sessionType)) {
       service.beginTurn(data.message.sessionId);
     }
@@ -188,14 +191,14 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   });
 
   // agent:turn:after：回合结束（按 sessionId 提交该会话回合；无对应回合则直接 return）
-  ctx.middleware('agent:turn:after', async (data, next) => {
+  hooks.middleware('agent:turn:after', async (data, next) => {
     await next();
     await service.endTurn(data.sessionId);
   });
 
   // 监听命令类工具调用，给该会话当前 turn 打 execUsed 标记（UI 显示 "部分未保护"）：
   // 这些工具的副作用（子进程改磁盘、装包、起服务）不经 storage，快照覆盖不到。
-  ctx.middleware('agent:tool:before', async (data, next) => {
+  hooks.middleware('agent:tool:before', async (data, next) => {
     const name = data.name;
     if (name === 'exec' || name === 'exec_background' || name.startsWith('run_')) {
       service.markExecUsed(data.toolCallContext.sessionId);
@@ -205,51 +208,40 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
 
   // ──────────── 参与统一的 memory:clear ────────────
   // /clear 与 session-manager.deleteSession 都通过 memory:clear hook 编排，
-  // 之前 checkpoint 没监听，导致 checkpoint 目录无人清理，长期泄漏。
-  ctx.middleware(
-    'memory:clear',
-    async (
-      data: {
-        scope: 'session' | 'all';
-        types?: string[];
-        sessionId?: string;
-        results: Array<{ source: string; success: boolean; message: string }>;
-      },
-      next,
-    ) => {
-      if (data.types && !data.types.includes('checkpoint')) {
-        await next();
-        return;
-      }
-      try {
-        if (data.scope === 'all') {
-          const n = await service.clearAll();
-          data.results.push({
-            source: 'checkpoint',
-            success: true,
-            message: `所有 checkpoint 已清空（${n} 个 session）`,
-          });
-        } else if (data.sessionId) {
-          const n = await service.clearSession(data.sessionId);
-          data.results.push({
-            source: 'checkpoint',
-            success: true,
-            message: n > 0 ? `当前会话 checkpoint 已清空（${n} 个 turn）` : '当前会话无 checkpoint',
-          });
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        data.results.push({ source: 'checkpoint', success: false, message: `checkpoint 清空失败: ${msg}` });
-      }
+  // 不监听的话 checkpoint 目录无人清理，长期泄漏。
+  hooks.middleware('memory:clear', async (data, next) => {
+    if (data.types && !data.types.includes('checkpoint')) {
       await next();
-    },
-  );
+      return;
+    }
+    try {
+      if (data.scope === 'all') {
+        const n = await service.clearAll();
+        data.results.push({
+          source: 'checkpoint',
+          success: true,
+          message: `所有 checkpoint 已清空（${n} 个 session）`,
+        });
+      } else if (data.sessionId) {
+        const n = await service.clearSession(data.sessionId);
+        data.results.push({
+          source: 'checkpoint',
+          success: true,
+          message: n > 0 ? `当前会话 checkpoint 已清空（${n} 个 turn）` : '当前会话无 checkpoint',
+        });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      data.results.push({ source: 'checkpoint', success: false, message: `checkpoint 清空失败: ${msg}` });
+    }
+    await next();
+  });
 
   // 进程退出前提交所有未结束的活跃回合，避免崩溃/重载时丢失（per-session 化后不再有"任意新回合 flush 旧回合"的兜底）
-  ctx.onDispose(() => service.flushAll());
+  lifecycle.onDispose(() => service.flushAll());
 
   logger.info(
-    `checkpoint 服务就绪 rootUri=${config.rootUri} maxFileSize=${config.maxFileSize} scopes=${config.scopes.join('|') || '<空>'}`,
+    `checkpoint 服务就绪 rootUri=${cfg.rootUri} maxFileSize=${cfg.maxFileSize} scopes=${cfg.scopes.join('|') || '<空>'}`,
   );
 }
 
@@ -265,9 +257,6 @@ export type {
 // ----- 服务类型注册（declaration merging）-----
 declare module '@aalis/core' {
   interface ServiceTypeMap {
-    checkpoint: import('./service.js').CheckpointService;
+    checkpoint: CheckpointService;
   }
 }
-
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
-export const checkpoint = defineService<import('./service.js').CheckpointService>('checkpoint');

@@ -10,7 +10,7 @@
  * - 不动 mentionCount / lastMentionedAt（与「显式提及」区分），仅刷 lastSeenAt；
  * - 与 extractionEnabled 解耦：即便关掉写入提取，改名同步仍生效。
  */
-import type { Context } from '@aalis/core';
+import type { Events, Logger } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
 import type { RelationService } from './service.js';
 
@@ -18,8 +18,14 @@ interface ArchivedPayload {
   archivedMessage?: Message;
 }
 
-export function startRenameWatcher(ctx: Context, service: RelationService): void {
-  ctx.on('inbound:message:archived', (...args: unknown[]) => {
+/** 本 watcher 用到的能力 */
+interface RenameWatcherCaps {
+  events: Events;
+  logger: Logger;
+}
+
+export function startRenameWatcher({ events, logger }: RenameWatcherCaps, service: RelationService): void {
+  events.on('inbound:message:archived', (...args: unknown[]) => {
     const data = args[0] as ArchivedPayload | undefined;
     const meta = data?.archivedMessage?.metadata as
       | { platform?: string; userId?: string; nickname?: string }
@@ -30,7 +36,7 @@ export function startRenameWatcher(ctx: Context, service: RelationService): void
 
     const pid = `${platform}:${userId}`;
     service.syncDisplayName(platform, userId, nickname).catch(err => {
-      ctx.logger.debug(`[user-relation] rename-watcher 同步失败 pid=${pid}: ${err}`);
+      logger.debug(`[user-relation] rename-watcher 同步失败 pid=${pid}: ${err}`);
     });
   });
 }

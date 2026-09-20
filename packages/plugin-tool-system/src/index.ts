@@ -1,10 +1,10 @@
-import { useCommandService } from '@aalis/api-commands';
-import { createProcessGateway } from '@aalis/api-process';
-import type { StorageService } from '@aalis/api-storage';
-import { createStorageGateway } from '@aalis/api-storage';
-import { toolsWithGroups, useToolService } from '@aalis/api-tools';
+import { commands } from '@aalis/api-commands';
+import { persona } from '@aalis/api-persona';
+import { createProcessGateway, processService } from '@aalis/api-process';
+import { createStorageGateway, storage } from '@aalis/api-storage';
+import { tools, withToolGroups } from '@aalis/api-tools';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import type { Context } from '@aalis/core';
+import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { CwdState } from './tools/cwd-state.js';
 import { registerFileTools } from './tools/file.js';
@@ -12,16 +12,7 @@ import { registerHttpTools } from './tools/http.js';
 import { registerShellTools } from './tools/shell.js';
 import { registerSystemTools } from './tools/system.js';
 
-// ===== 插件元数据 =====
-
-export const name = '@aalis/plugin-tool-system';
-export const displayName = '系统工具';
-export const subsystem = 'tools';
-export const inject = {
-  optional: ['commands', 'persona', 'storage', 'process'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   workingDirectory: {
     type: 'string',
     label: '初始工作目录',
@@ -99,15 +90,36 @@ export interface ToolsBasicConfig {
 
 // ===== 插件入口 =====
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
-  const cfg = resolveConfig(config);
+const uses = {
+  tools: optional(tools),
+  logger,
+  lifecycle,
+  config,
+  commands: optional(commands),
+  persona: optional(persona),
+  storage: optional(storage),
+  process: optional(processService),
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-tool-system',
+  displayName: '系统工具',
+  subsystem: 'tools',
+  configSchema,
+  uses,
+  apply: registerSystemToolset,
+});
+
+function registerSystemToolset(caps: Caps): void {
+  const { tools, logger, storage, persona } = caps;
+  const cfg = resolveConfig(caps.config);
   const cwdUri = cfg.workingDirectory || 'workspace:/';
   // 全局唯一的 cwd 状态：system.cwd / system.cd / file_* 都共享同一个 CwdState 实例，
   // 这是"shell 心智模型一致性"的唯一保证。per-session 在 CwdState 内部按 sessionId 分桶。
   const cwdState = new CwdState(cwdUri);
 
-  const tools = useToolService(ctx);
-  const systemTools = toolsWithGroups(tools, ['system']);
+  const systemTools = withToolGroups(tools, ['system']);
 
   // 注册工具分组
   tools.registerGroup({
@@ -116,62 +128,61 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     description: 'Shell 命令执行、文件操作、系统信息查询、HTTP 请求等系统级工具',
   });
 
-  const hasStorage = ctx.getAllServices<StorageService>('storage').length > 0;
+  // 网关按 URI 路由到当时的提供者，四个工具组共用一份即可
+  const storageGateway = storage.all().length > 0 ? createStorageGateway(storage) : undefined;
 
   // 注册各工具组
   if (cfg.shell.enabled) {
-    const hasProc = ctx.getService('process') !== undefined;
-    if (hasStorage && hasProc) {
-      const storage = createStorageGateway(ctx);
-      const proc = createProcessGateway(ctx);
-      registerShellTools(systemTools, { ctx, cwdUri, storage, proc, ...cfg.shell });
-      ctx.logger.info('Shell 工具已启用');
+    if (storageGateway && caps.process.current !== undefined) {
+      registerShellTools(systemTools, {
+        logger,
+        lifecycle: caps.lifecycle,
+        cwdUri,
+        storage: storageGateway,
+        proc: createProcessGateway(caps.process),
+        ...cfg.shell,
+      });
+      logger.info('Shell 工具已启用');
     } else {
-      ctx.logger.warn('Shell 工具需要 storage 与 process 服务，已跳过注册');
+      logger.warn('Shell 工具需要 storage 与 process 服务，已跳过注册');
     }
   }
 
   if (cfg.file.enabled) {
-    if (hasStorage) {
-      const storage = createStorageGateway(ctx);
-      registerFileTools(systemTools, { ...cfg.file, storage, cwdState });
-      ctx.logger.info('文件工具已启用');
+    if (storageGateway) {
+      registerFileTools(systemTools, { ...cfg.file, storage: storageGateway, cwdState });
+      logger.info('文件工具已启用');
     } else {
-      ctx.logger.warn('文件工具需要 storage 服务，已跳过注册');
+      logger.warn('文件工具需要 storage 服务，已跳过注册');
     }
   }
 
   if (cfg.system.enabled) {
-    const persona = ctx.getService<{ isTimeInjectionEnabled?(): boolean }>('persona');
-    const skipTimeTool = !!persona?.isTimeInjectionEnabled?.();
-    const storage = hasStorage ? createStorageGateway(ctx) : undefined;
-    registerSystemTools(systemTools, { cwdState, storage, skipTimeTool });
-    ctx.logger.info(`系统工具已启用${skipTimeTool ? '（已由 persona 注入时间，跳过 system_time）' : ''}`);
+    const skipTimeTool = !!persona.current?.isTimeInjectionEnabled?.();
+    registerSystemTools(systemTools, { cwdState, storage: storageGateway, skipTimeTool });
+    logger.info(`系统工具已启用${skipTimeTool ? '（已由 persona 注入时间，跳过 system_time）' : ''}`);
   }
 
   if (cfg.http.enabled) {
-    const storage = hasStorage ? createStorageGateway(ctx) : undefined;
-    registerHttpTools(systemTools, { ...cfg.http, storage });
-    ctx.logger.info('HTTP 工具已启用');
+    registerHttpTools(systemTools, { ...cfg.http, storage: storageGateway });
+    logger.info('HTTP 工具已启用');
   }
 
   // 注册 /tools 指令以查看可用工具
-  useCommandService(ctx)
-    .command('tools', '列出所有已注册的机器交互工具')
-    .action(async () => {
-      const groups = ['shell', 'file', 'system', 'http'].filter(
-        g => (cfg as unknown as Record<string, { enabled?: boolean }>)[g]?.enabled !== false,
-      );
-      const lines = ['📦 机器交互工具:', ...groups.map(g => `  ✅ ${g}`)];
-      return lines.join('\n');
-    });
+  caps.commands.command('tools', '列出所有已注册的机器交互工具').action(async () => {
+    const groups = ['shell', 'file', 'system', 'http'].filter(
+      g => (cfg as unknown as Record<string, { enabled?: boolean }>)[g]?.enabled !== false,
+    );
+    const lines = ['📦 机器交互工具:', ...groups.map(g => `  ✅ ${g}`)];
+    return lines.join('\n');
+  });
 
-  ctx.logger.info(`机器交互工具插件已启动 (工作目录: ${cwdUri})`);
+  logger.info(`机器交互工具插件已启动 (工作目录: ${cwdUri})`);
 }
 
 // ===== 辅助函数 =====
 
-function resolveConfig(config: Record<string, unknown>): ToolsBasicConfig {
+function resolveConfig(config: Readonly<Record<string, unknown>>): ToolsBasicConfig {
   const shell = config.shell as Record<string, unknown> | undefined;
   const file = config.file as Record<string, unknown> | undefined;
   const system = config.system as Record<string, unknown> | undefined;

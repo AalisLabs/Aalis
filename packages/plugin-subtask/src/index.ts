@@ -1,8 +1,8 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
-import type { MessageArchiveService } from '@aalis/api-message-archive';
-import type { SessionInfo, SessionManagerService } from '@aalis/api-session-manager';
-import { useToolService } from '@aalis/api-tools';
-import type { Context } from '@aalis/core';
+import { messageArchive } from '@aalis/api-message-archive';
+import { type SessionInfo, sessionManager } from '@aalis/api-session-manager';
+import { tools } from '@aalis/api-tools';
+import { type BoundOf, config, definePlugin, events, hooks, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage } from '@aalis/schema-message';
 
@@ -23,16 +23,7 @@ import type { IncomingMessage } from '@aalis/schema-message';
 // 子会话内可自行再用 manage_todo_list / load_skill / workflow_run 等工具。
 // =====================================================================
 
-// ===== 插件元数据 =====
-
-export const name = '@aalis/plugin-subtask';
-export const displayName = '子任务';
-export const subsystem = 'session';
-export const inject = {
-  optional: ['session-manager', 'message-archive'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   enabled: { type: 'boolean', label: '启用子任务工具', default: true },
   maxWaitMs: { type: 'number', label: '单次等待最大时长 (ms)', default: 300000 },
   defaultProvider: {
@@ -56,7 +47,7 @@ interface PluginConfig {
   defaultModel: string;
 }
 
-function resolveConfig(raw: Record<string, unknown>): PluginConfig {
+function resolveConfig(raw: Readonly<Record<string, unknown>>): PluginConfig {
   return {
     enabled: raw.enabled !== false,
     maxWaitMs: Number(raw.maxWaitMs) || 300000,
@@ -67,19 +58,43 @@ function resolveConfig(raw: Record<string, unknown>): PluginConfig {
 
 // ===== 插件入口 =====
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
-  const cfg = resolveConfig(config);
-  if (!cfg.enabled) return;
+const uses = {
+  tools: optional(tools),
+  events,
+  hooks,
+  logger,
+  config,
+  sessionManager: optional(sessionManager),
+  messageArchive: optional(messageArchive),
+};
+type Caps = BoundOf<typeof uses>;
 
+export default definePlugin({
+  name: '@aalis/plugin-subtask',
+  displayName: '子任务',
+  subsystem: 'session',
+  configSchema,
+  uses,
+  apply(caps) {
+    const cfg = resolveConfig(caps.config);
+    if (!cfg.enabled) return;
+    registerSubtask(caps, cfg);
+  },
+});
+
+function registerSubtask(
+  { tools, events, hooks, logger, sessionManager, messageArchive }: Caps,
+  cfg: PluginConfig,
+): void {
   // 注册工具分组
-  useToolService(ctx).registerGroup({
+  tools.registerGroup({
     name: 'subtask',
     label: '子任务管理',
     description: '创建、管理和协调子任务会话，支持并行执行',
   });
 
   // ---- create_subtask ----
-  useToolService(ctx).register({
+  tools.register({
     groups: ['subtask'],
     // 每个子任务是一条独立的 LLM 会话链——不受信任的调用方可连续创建以放大 API 开销。
     // sensitive(L1) 挡住 level-0，不加逐次 confirm（正常用法是 agent 连续创建多个并行子任务）。
@@ -133,7 +148,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       },
     },
     handler: async (args, callCtx) => {
-      const sm = ctx.getService<SessionManagerService>('session-manager');
+      const sm = sessionManager.current;
       if (!sm) return JSON.stringify({ error: 'session-manager 服务不可用' });
 
       const task = String(args.task || '');
@@ -191,8 +206,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           callCtx.actor ??
           (callCtx.platform && callCtx.userId ? { platform: callCtx.platform, userId: callCtx.userId } : undefined);
         if (createActor) incoming.actor = createActor;
-        ctx.emit('inbound:message', incoming).catch(err => {
-          ctx.logger.warn(`子任务消息派发失败 (${child.id}):`, err);
+        events.emit('inbound:message', incoming).catch(err => {
+          logger.warn(`子任务消息派发失败 (${child.id}):`, err);
         });
 
         return JSON.stringify({
@@ -208,7 +223,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // ---- check_subtask ----
-  useToolService(ctx).register({
+  tools.register({
     groups: ['subtask'],
     definition: {
       type: 'function',
@@ -234,7 +249,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       },
     },
     handler: async args => {
-      const sm = ctx.getService<SessionManagerService>('session-manager');
+      const sm = sessionManager.current;
       if (!sm) return JSON.stringify({ error: 'session-manager 服务不可用' });
 
       const ids = (args.subtask_ids as string[]) || [];
@@ -276,7 +291,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // ---- send_to_subtask ----
-  useToolService(ctx).register({
+  tools.register({
     groups: ['subtask'],
     // 向子任务追加指令 = 驱动其再跑一轮 LLM，同 create_subtask 的开销放大面。
     risk: 'sensitive',
@@ -307,7 +322,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       },
     },
     handler: async (args, callCtx) => {
-      const sm = ctx.getService<SessionManagerService>('session-manager');
+      const sm = sessionManager.current;
       if (!sm) return JSON.stringify({ error: 'session-manager 服务不可用' });
 
       const subtaskId = String(args.subtask_id || '');
@@ -344,8 +359,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         callCtx.actor ??
         (callCtx.platform && callCtx.userId ? { platform: callCtx.platform, userId: callCtx.userId } : undefined);
       if (followUpActor) followUp.actor = followUpActor;
-      ctx.emit('inbound:message', followUp).catch(err => {
-        ctx.logger.warn(`向子任务发送消息失败 (${subtaskId}):`, err);
+      events.emit('inbound:message', followUp).catch(err => {
+        logger.warn(`向子任务发送消息失败 (${subtaskId}):`, err);
       });
 
       return JSON.stringify({
@@ -357,7 +372,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // ---- delete_subtask ----
-  useToolService(ctx).register({
+  tools.register({
     groups: ['subtask'],
     // 销毁子任务会话（含其未完成工作）——破坏性且影响他人发起的任务。
     risk: 'sensitive',
@@ -384,7 +399,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       },
     },
     handler: async (args, callCtx) => {
-      const sm = ctx.getService<SessionManagerService>('session-manager');
+      const sm = sessionManager.current;
       if (!sm) return JSON.stringify({ error: 'session-manager 服务不可用' });
 
       const subtaskId = String(args.subtask_id || '').trim();
@@ -417,7 +432,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   });
 
   // ---- wait_subtasks ----
-  useToolService(ctx).register({
+  tools.register({
     groups: ['subtask'],
     definition: {
       type: 'function',
@@ -451,7 +466,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       },
     },
     handler: async (args, _callCtx) => {
-      const sm = ctx.getService<SessionManagerService>('session-manager');
+      const sm = sessionManager.current;
       if (!sm) return JSON.stringify({ error: 'session-manager 服务不可用' });
 
       const ids = (args.subtask_ids as string[]) || [];
@@ -486,7 +501,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           };
 
           // 监听 session:completed 事件
-          const disposeCompleted = ctx.on('session:completed', (session: SessionInfo) => {
+          const disposeCompleted = events.on('session:completed', (session: SessionInfo) => {
             pending.delete(session.id);
             if (pending.size === 0) {
               cleanup();
@@ -495,7 +510,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           });
 
           // 兜底：也监听 session:updated 以防状态通过 updateSession 变更
-          const disposeUpdated = ctx.on('session:updated', (session: SessionInfo) => {
+          const disposeUpdated = events.on('session:updated', (session: SessionInfo) => {
             if ((session.status === 'completed' || session.status === 'error') && pending.has(session.id)) {
               pending.delete(session.id);
               if (pending.size === 0) {
@@ -545,8 +560,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   /** 提醒消息的 injector 标识：每轮重注时按它摘旧、token 统计按它归桶 */
   const PARENT_STATUS_INJECTOR = 'subtask/parent-status';
 
-  ctx.middleware('agent:llm:before', async (data, next) => {
-    const sm = ctx.getService<SessionManagerService>('session-manager');
+  hooks.middleware('agent:llm:before', async (data, next) => {
+    const sm = sessionManager.current;
     if (!sm) {
       await next();
       return;
@@ -684,13 +699,13 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // ---- 子任务自动完成 ----
   // 当子任务 agent 正常回复后，自动将回复内容作为结果完成会话
   // 同时在子会话历史中合成一条 tool call 记录，展示"报告给父会话"的流程
-  ctx.middleware('agent:turn:after', async (data, next) => {
+  hooks.middleware('agent:turn:after', async (data, next) => {
     await next();
 
     // 仅在本轮真正产生回复时回报父会话；silent / aborted 不应触发自动完成
     if (data.outcome !== 'replied') return;
 
-    const sm = ctx.getService<SessionManagerService>('session-manager');
+    const sm = sessionManager.current;
     if (!sm) return;
 
     const session = sm.getSession(data.sessionId);
@@ -702,7 +717,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
     try {
       // 在子会话历史中合成 tool call 记录，展示报告流程
-      const archive = ctx.getService<MessageArchiveService>('message-archive');
+      const archive = messageArchive.current;
       if (archive) {
         const syntheticToolCallId = `report-${Date.now()}`;
         // 合成 assistant 消息（含 tool_calls）
@@ -731,11 +746,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
 
       await sm.completeSession(data.sessionId, result.trim());
-      ctx.logger.info(`子任务自动完成: ${session.name} (${data.sessionId})`);
+      logger.info(`子任务自动完成: ${session.name} (${data.sessionId})`);
     } catch (err) {
-      ctx.logger.warn(`子任务自动完成失败 (${data.sessionId}):`, err);
+      logger.warn(`子任务自动完成失败 (${data.sessionId}):`, err);
     }
   });
 
-  ctx.logger.info('子任务工具已注册');
+  logger.info('子任务工具已注册');
 }

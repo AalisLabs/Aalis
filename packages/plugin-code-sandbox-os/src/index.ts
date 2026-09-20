@@ -6,18 +6,10 @@
 // 也不直接 import node:child_process / node:fs——OS 探测靠经网关功能性试跑）。
 // ============================================================
 
-import type { CodeSandboxService, SandboxRunRequest } from '@aalis/api-code-sandbox';
-import type { ExecResult, ProcessService } from '@aalis/api-process';
-import { createProcessGateway } from '@aalis/api-process';
-import type { Context, Logger } from '@aalis/core';
+import { type CodeSandboxService, codeSandbox, type SandboxRunRequest } from '@aalis/api-code-sandbox';
+import { createProcessGateway, type ExecResult, type ProcessService, processService } from '@aalis/api-process';
+import { definePlugin, type Logger, logger, provide } from '@aalis/core';
 import { type SandboxBackend, wrapForSandbox } from './sandbox.js';
-
-export const name = '@aalis/plugin-code-sandbox-os';
-export const displayName = '代码沙箱（OS）';
-export const provides = ['code-sandbox'];
-export const inject = {
-  required: ['process'],
-};
 
 /**
  * 功能性探测：经 process 网关真正跑一次最小沙箱命令，跑通才算可用。
@@ -68,12 +60,19 @@ class OsCodeSandboxService implements CodeSandboxService {
   }
 }
 
-export async function apply(ctx: Context): Promise<void> {
-  const logger = ctx.logger.child('code-sandbox-os');
-  const proc = createProcessGateway(ctx);
-  const backend = await probeBackend(proc, logger);
-  ctx.provide('code-sandbox', new OsCodeSandboxService(proc, backend));
-  logger.info(
-    `code-sandbox-os 就绪（后端: ${backend === 'none' ? '无 —— 沙箱不可用，code_runner 将 fail-closed' : backend}）`,
-  );
-}
+export default definePlugin({
+  name: '@aalis/plugin-code-sandbox-os',
+  displayName: '代码沙箱（OS）',
+  provides: [codeSandbox],
+  uses: { processService, logger, provide },
+  async apply(caps) {
+    const log = caps.logger.child('code-sandbox-os');
+    // 网关每次调用重新解析当前胜者，process 提供者换人后无需重启本插件
+    const proc = createProcessGateway(caps.processService);
+    const backend = await probeBackend(proc, log);
+    caps.provide(codeSandbox, new OsCodeSandboxService(proc, backend));
+    log.info(
+      `code-sandbox-os 就绪（后端: ${backend === 'none' ? '无 —— 沙箱不可用，code_runner 将 fail-closed' : backend}）`,
+    );
+  },
+});

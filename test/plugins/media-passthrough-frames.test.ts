@@ -1,4 +1,4 @@
-import { App, type Context } from '@aalis/core';
+import { App, type Logger, type ServiceRef } from '@aalis/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 
@@ -27,11 +27,25 @@ vi.mock(import('../../packages/plugin-media/src/ffmpeg.js'), async importOrigina
   };
 });
 
-import { type MediaConfigResolved, MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
+import {
+  type MediaConfigResolved,
+  type MediaServiceCaps,
+  MediaServiceImpl,
+} from '../../packages/plugin-media/src/service.js';
 
 const GIF_DATA = 'data:image/gif;base64,R0lGODlh';
 const PLAIN_URL = 'https://example.invalid/img.jpg';
 const NOEXT_URL = 'https://example.invalid/rkey/pic?id=1';
+
+/** 无提供者的按激活绑定桩：动图判定与抽帧都不碰服务 */
+const empty = <P>(): ServiceRef<P> => ({
+  current: undefined,
+  require: () => {
+    throw new Error('无提供者');
+  },
+  all: () => [],
+  follow: () => () => {},
+});
 
 function makeSvc(recognizeOnArrival = false): MediaServiceImpl {
   const cfg = {
@@ -42,8 +56,14 @@ function makeSvc(recognizeOnArrival = false): MediaServiceImpl {
     contextHistory: { enabled: false },
     senderContext: false,
   } as unknown as MediaConfigResolved;
-  const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
-  return new MediaServiceImpl({} as Context, logger as never, cfg);
+  const caps: MediaServiceCaps = {
+    logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn() } as unknown as Logger,
+    llm: empty(),
+    asr: empty(),
+    sessionManager: empty(),
+    memory: empty(),
+  };
+  return new MediaServiceImpl(caps, cfg);
 }
 
 beforeEach(() => {
@@ -131,8 +151,8 @@ describe('agent:llm:before 中间件接线', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     app.ctx.provide('process', {} as never);
     app.ctx.provide('storage', {} as never);
-    const mediaModule = await import('../../packages/plugin-media/src/index.js');
-    await app.ctx.useModule(mediaModule as never, { vision: { delivery } });
+    const media = (await import('../../packages/plugin-media/src/index.js')).default;
+    await app.plugin(media, { vision: { delivery } });
     await app.plugins.idle();
     const data = {
       messages: [
@@ -170,8 +190,8 @@ describe('agent:llm:before 中间件接线', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     app.ctx.provide('process', {} as never);
     app.ctx.provide('storage', {} as never);
-    const mediaModule = await import('../../packages/plugin-media/src/index.js');
-    await app.ctx.useModule(mediaModule as never, { vision: { delivery: 'passthrough' } });
+    const media = (await import('../../packages/plugin-media/src/index.js')).default;
+    await app.plugin(media, { vision: { delivery: 'passthrough' } });
     await app.plugins.idle();
 
     // 失败形态：物化返回 null → 原图放回 images（仍是动图特征）

@@ -1,6 +1,7 @@
-import type { Context } from '@aalis/core';
-import { describe, expect, it } from 'vitest';
-import { ACCOUNT_READ_OKX_TOOLS, apply, MUTATING_OKX_TOOLS } from '../../packages/plugin-okx-trading/src/index.js';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
+import okxTrading, { ACCOUNT_READ_OKX_TOOLS, MUTATING_OKX_TOOLS } from '../../packages/plugin-okx-trading/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // OKX 工具权限三分结构——全量快照 + 补集断言。
@@ -44,27 +45,19 @@ interface Captured {
   visibility?: string;
 }
 
-function runApply(): Captured[] {
+/** 装载插件（全开关打开），用桩 tools 提供者收下它注册的每个工具及其档位字段 */
+async function captureRegistrations(): Promise<Captured[]> {
   const captured: Captured[] = [];
-  const fakeTools = {
-    register: (tool: { definition: { function: { name: string } }; risk?: string; visibility?: string }) => {
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const host = app.bind({ provide });
+  host.provide(tools, {
+    register(tool: Omit<RegisteredTool, 'pluginName'>) {
       captured.push({ name: tool.definition.function.name, risk: tool.risk, visibility: tool.visibility });
       return () => {};
     },
-    registerGroup: () => {},
-  };
-  const ctx = {
-    id: '@aalis/plugin-okx-trading',
-    logger: { info: () => {}, warn: () => {}, debug: () => {} },
-    getService: (name: string) => (name === 'tools' ? fakeTools : undefined),
-    whenService: (name: string, cb: (svc: unknown) => void) => {
-      if (name === 'tools') cb(fakeTools);
-      return () => {};
-    },
-    onDispose: () => {},
-  } as unknown as Context;
-  // 全开关打开：让 trade/algo/transfer 的全部工具都注册进来接受断言
-  apply(ctx, {
+    registerGroup: () => () => {},
+  } as never);
+  await app.plugins.register(okxTrading, {
     apiKey: 'k',
     secretKey: 's',
     passphrase: 'p',
@@ -73,11 +66,25 @@ function runApply(): Captured[] {
     enableAlgo: true,
     enableTransfer: true,
   });
+  await app.plugins.idle();
+  await app.stop();
   return captured;
 }
 
 describe('OKX 工具权限三分结构（全量快照）', () => {
-  const tools = runApply();
+  let registered: Captured[];
+
+  beforeAll(async () => {
+    registered = await captureRegistrations();
+  });
+
+  it('全量捕获：注册数等于三分名单总数（apply 半途出错会被激活路径吞掉，只靠 >0 挡不住）', () => {
+    // 经 App 装载时，apply 抛错只落一条 error 日志、实例转 'error'，register/idle 都不会拒绝。
+    // 少注册一批工具时，补集与档位断言只是少了检查对象、依旧全绿——所以把闸钉在总数上。
+    // 数字与三分名单同源：三个集合两两不交、并起来就是插件注册的全部工具。
+    const expected = MUTATING_OKX_TOOLS.size + ACCOUNT_READ_OKX_TOOLS.size + PUBLIC_MARKET_OKX_TOOLS.size;
+    expect(registered.length, '注册工具数与三分名单不符——要么工具没注册全，要么名单有过期条目').toBe(expected);
+  });
 
   it('MUTATING 与 ACCOUNT_READ 互斥（risk 遮蔽 visibility，同标即降门槛）', () => {
     const overlap = [...MUTATING_OKX_TOOLS].filter(n => ACCOUNT_READ_OKX_TOOLS.has(n));
@@ -85,14 +92,14 @@ describe('OKX 工具权限三分结构（全量快照）', () => {
   });
 
   it('补集断言：每个注册的工具都必须属于三分名单之一——新工具不归类即红', () => {
-    const unclassified = tools
+    const unclassified = registered
       .map(t => t.name)
       .filter(n => !MUTATING_OKX_TOOLS.has(n) && !ACCOUNT_READ_OKX_TOOLS.has(n) && !PUBLIC_MARKET_OKX_TOOLS.has(n));
     expect(unclassified, '未归类工具——请在三分名单中做一次有意识的档位决定').toEqual([]);
   });
 
   it('动账户类全部 restricted 且不带 risk（防降档），账户读全部 sensitive，公开类双无', () => {
-    for (const t of tools) {
+    for (const t of registered) {
       if (MUTATING_OKX_TOOLS.has(t.name)) {
         expect(t.visibility, t.name).toBe('restricted');
         expect(t.risk, `${t.name} 不得带 risk（会把门槛从 2 降到 1）`).toBeUndefined();

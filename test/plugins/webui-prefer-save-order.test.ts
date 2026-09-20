@@ -7,7 +7,7 @@ import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { StorageRootInfo, StorageService } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as webuiServer from '../../packages/plugin-webui-server/src/index.js';
+import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 切换前端偏好的处理器要做三件事：改服务偏好、写配置、重挂静态目录。前两件与第三件同属
@@ -99,13 +99,14 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
     // 先注册者默认胜出：A 是启动时挂载的前端，B 是切换目标
     app.ctx.fork('clientA').provide('webui-client', { getClientDir: () => dirA });
     app.ctx.fork('clientB').provide('webui-client', { getClientDir: () => dirB });
-    await app.ctx.useModule(webuiServer as never, {
+    await app.plugins.register(webuiServer, {
       port,
       host: '127.0.0.1',
       autoOpen: false,
       tokenMode: 'fixed',
       fixedToken: token,
     });
+    await app.plugins.idle();
     await app.start();
 
     const base = `http://127.0.0.1:${port}`;

@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { App } from '../../packages/core/src/index.js';
-import * as agentDefaultModule from '../../packages/plugin-agent/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import * as messageArchiveModule from '../../packages/plugin-message-archive/src/index.js';
+import { agent as agentService } from '../../packages/api-agent/src/index.js';
+import { App, events } from '../../packages/core/src/index.js';
+import agentPlugin from '../../packages/plugin-agent/src/index.js';
+import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
+import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 
-// agent-default 通过 useCommandService(ctx).command(...) 注册 /model 指令。
-// 集成测试不加载 plugin-commands；useCommandService 在 commands 服务不可用时
-// 会通过 whenService 延迟注册，不会立即抛错，集成测试无需额外桩。
+// agent 把 /model 指令登记在可选能力 commands 上。集成测试不加载 plugin-commands，
+// 登记留在账上等提供者出现，不抛错，集成测试无需额外桩。
 
-import type { AgentService } from '../../packages/api-agent/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
+import { llm as llmService } from '../../packages/api-llm/src/index.js';
+import { memory as memoryService } from '../../packages/api-memory/src/index.js';
 import type { IncomingMessage, OutgoingMessage } from '../../packages/schema-message/src/index.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
@@ -21,18 +21,19 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
  * IncomingMessage → agent.handleMessage → outbound:message
  */
 
-function setupApp() {
-  const app = new App({ config: { name: 'E2E', logLevel: 'error', plugins: {} } });
-  return { app, cleanup: () => {} };
-}
-
 async function loadStack(opts: { responses: ChatResponse[]; recorder?: ChatModelRequest[] }) {
-  const env = setupApp();
-  const llmPlugin = createMockLLMPlugin({ responses: opts.responses, recorder: opts.recorder });
-  const offLLM = await env.app.ctx.useModule(llmPlugin);
-  const offMem = await env.app.ctx.useModule(memoryInMemoryModule);
-  const offArchive = await env.app.ctx.useModule(messageArchiveModule, { debugLogs: false });
-  const offAgent = await env.app.ctx.useModule(agentDefaultModule, {
+  const app = new App({ config: { name: 'E2E', logLevel: 'error', plugins: {} } });
+  const host = app.bind({ events, agent: agentService, memory: memoryService, llm: llmService });
+
+  const outbound: OutgoingMessage[] = [];
+  host.events.on('outbound:message', (m: OutgoingMessage) => {
+    outbound.push(m);
+  });
+
+  await app.plugin(createMockLLMPlugin({ responses: opts.responses, recorder: opts.recorder }));
+  await app.plugin(memoryInMemoryPlugin);
+  await app.plugin(messageArchivePlugin, { debugLogs: false });
+  await app.plugin(agentPlugin, {
     systemPrompt: 'you are a test bot',
     historyLimit: 50,
     memoryTokenBudget: 1024,
@@ -41,24 +42,15 @@ async function loadStack(opts: { responses: ChatResponse[]; recorder?: ChatModel
     trimThresholdRatio: 1.0,
     preferredModel: '',
   });
-
-  const outbound: OutgoingMessage[] = [];
-  env.app.ctx.on('outbound:message', (m: OutgoingMessage) => {
-    outbound.push(m);
-  });
+  await app.plugins.idle();
 
   return {
-    env,
+    app,
+    host,
     outbound,
-    agent: env.app.ctx.getService<AgentService>('agent')!,
-    memory: env.app.ctx.getService<MemoryService>('memory')!,
-    cleanup: () => {
-      offArchive.dispose();
-      offAgent.dispose();
-      offMem.dispose();
-      offLLM.dispose();
-      env.cleanup();
-    },
+    agent: host.agent.require(),
+    memory: host.memory.require(),
+    cleanup: () => app.stop(),
   };
 }
 
@@ -91,7 +83,7 @@ describe('Agent end-to-end (mock LLM + in-memory)', () => {
       expect(hist.length).toBeGreaterThanOrEqual(2);
       expect(hist.find(m => m.role === 'assistant')?.content).toBe('hello back');
     } finally {
-      stack.cleanup();
+      await stack.cleanup();
     }
   });
 
@@ -112,7 +104,7 @@ describe('Agent end-to-end (mock LLM + in-memory)', () => {
       expect(second).toContain('r1');
       expect(second).toContain('q2');
     } finally {
-      stack.cleanup();
+      await stack.cleanup();
     }
   });
 
@@ -120,10 +112,10 @@ describe('Agent end-to-end (mock LLM + in-memory)', () => {
     const stack = await loadStack({
       responses: [{ content: 'never' }],
     });
-    // 替换 service 让 chat 抛错
-    const llm = stack.env.app.ctx.getService<{ chat: () => Promise<ChatResponse> }>('llm')!;
-    const orig = llm.chat;
-    llm.chat = async () => {
+    // 替换胜出 model 的 chat 让它抛错
+    const model = stack.host.llm.require();
+    const orig = model.chat;
+    model.chat = async () => {
       throw new Error('rate limited');
     };
     try {
@@ -131,8 +123,8 @@ describe('Agent end-to-end (mock LLM + in-memory)', () => {
       // outbound 可能是错误提示也可能为空，都不应抛
       expect(stack.outbound.every(m => typeof m.content === 'string')).toBe(true);
     } finally {
-      llm.chat = orig;
-      stack.cleanup();
+      model.chat = orig;
+      await stack.cleanup();
     }
   });
 
@@ -153,7 +145,7 @@ describe('Agent end-to-end (mock LLM + in-memory)', () => {
       expect(aHist.some(m => m.content?.includes('q-b'))).toBe(false);
       expect(bHist.some(m => m.content?.includes('q-a'))).toBe(false);
     } finally {
-      stack.cleanup();
+      await stack.cleanup();
     }
   });
 });

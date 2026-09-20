@@ -1,10 +1,16 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { CheckResult, CheckSpec, DoctorReport, DoctorService } from '../../packages/api-doctor/src/index.js';
-import type { EmbeddingService } from '../../packages/api-embedding/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as embeddingOllama from '../../packages/plugin-embedding-ollama/src/index.js';
+import {
+  type CheckResult,
+  type CheckSpec,
+  type DoctorReport,
+  type DoctorService,
+  doctor as doctorService,
+} from '../../packages/api-doctor/src/index.js';
+import { type EmbeddingService, embedding } from '../../packages/api-embedding/src/index.js';
+import { App, provide, services } from '../../packages/core/src/index.js';
+import embeddingOllama from '../../packages/plugin-embedding-ollama/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 「服务注册成功 != 模型可用」：连通性检查失败只 warn、服务照常注册（刻意，Ollama 可能
@@ -15,6 +21,9 @@ import * as embeddingOllama from '../../packages/plugin-embedding-ollama/src/ind
 // ════════════════════════════════════════════════════════════
 
 type Mode = 'ok' | 'modelMissing' | 'hang' | 'stallBody' | 'tagsHang';
+
+/** 本插件的 embedding 实现始终带 listModels，而契约里它是可选方法 */
+type OllamaEmbedding = EmbeddingService & { listModels(): Promise<string[]> };
 
 interface Fake {
   server: Server;
@@ -115,15 +124,17 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     apps.push(app);
     const doctor = makeDoctor();
-    app.ctx.provide('doctor', doctor);
-    await app.ctx.useModule(embeddingOllama as never, {
+    const host = app.bind({ provide, services });
+    host.provide(doctorService, doctor);
+    await app.plugins.register(embeddingOllama, {
       baseUrl: fake.baseUrl,
       model,
       timeoutMs: 2000,
       retries: 0,
       ...over,
     });
-    return { app, doctor };
+    await app.plugins.idle();
+    return { host, doctor };
   }
 
   async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
@@ -137,12 +148,12 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
   it('模型没 pull：doctor 报 error，detail 带上 Ollama 的原话', async () => {
     const fake = await startFake('modelMissing');
     servers.push(fake.server);
-    const { doctor, app } = await boot(fake);
+    const { doctor } = await boot(fake);
 
     const spec = doctor.specs.get('embedding.ollama');
     expect(spec, '插件应注册一条自我诊断检查项').toBeDefined();
 
-    const r = (await spec!.run(app.ctx)) as CheckResult;
+    const r = (await spec!.run()) as CheckResult;
     expect(r.level).toBe('error');
     expect(r.message).toContain('不可用');
     expect(r.detail, '只报 404 会把人引向端点/网络方向；要带上「模型没 pull」这句原话').toContain(
@@ -153,9 +164,9 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
   it('模型可用：doctor 报 ok', async () => {
     const fake = await startFake('ok');
     servers.push(fake.server);
-    const { doctor, app } = await boot(fake);
+    const { doctor } = await boot(fake);
 
-    const r = (await doctor.specs.get('embedding.ollama')!.run(app.ctx)) as CheckResult;
+    const r = (await doctor.specs.get('embedding.ollama')!.run()) as CheckResult;
     expect(r.level).toBe('ok');
   });
 
@@ -164,8 +175,8 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
   it('政策守卫：连通性失败不阻塞服务注册', async () => {
     const fake = await startFake('modelMissing');
     servers.push(fake.server);
-    const { app } = await boot(fake);
-    expect(app.ctx.getService<EmbeddingService>('embedding')).toBeDefined();
+    const { host } = await boot(fake);
+    expect(host.services.get(embedding)).toBeDefined();
   });
 
   it(
@@ -173,9 +184,9 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
     async () => {
       const fake = await startFake('ok');
       servers.push(fake.server);
-      const { app } = await boot(fake, 'nomic-embed-text', { timeoutMs: 800, retries: 0 });
+      const { host } = await boot(fake, 'nomic-embed-text', { timeoutMs: 800, retries: 0 });
       fake.mode = 'stallBody';
-      const svc = app.ctx.getService<EmbeddingService>('embedding');
+      const svc = host.services.get(embedding);
 
       const t0 = Date.now();
       await expect(svc!.embed('你好'), '体读取若落在超时窗口之外就会一直挂着').rejects.toThrow();
@@ -193,13 +204,13 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
       const fake = await startFake('ok');
       servers.push(fake.server);
       // 服务自身超时（30s）远大于探测上限（5s），于是「按时返回」只可能来自探测的 race
-      const { doctor, app } = await boot(fake, 'nomic-embed-text', { timeoutMs: 30_000, retries: 2 });
+      const { doctor } = await boot(fake, 'nomic-embed-text', { timeoutMs: 30_000, retries: 2 });
       fake.mode = 'hang'; // 实例已就绪，此刻让 Ollama 不再应答
       fake.embeddingRequests = 0;
       fake.abortedEmbeddingRequests = 0;
 
       const t0 = Date.now();
-      const r = (await doctor.specs.get('embedding.ollama')!.run(app.ctx)) as CheckResult;
+      const r = (await doctor.specs.get('embedding.ollama')!.run()) as CheckResult;
       const elapsed = Date.now() - t0;
       await waitFor(() => fake.abortedEmbeddingRequests > 0); // 等服务端真正观察到 close
 
@@ -217,8 +228,8 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
     async () => {
       const fake = await startFake('ok');
       servers.push(fake.server);
-      const { app } = await boot(fake, 'nomic-embed-text', { timeoutMs: 30_000, retries: 1 });
-      const svc = app.ctx.getService<EmbeddingService>('embedding')!;
+      const { host } = await boot(fake, 'nomic-embed-text', { timeoutMs: 30_000, retries: 1 });
+      const svc = host.services.get(embedding)!;
       fake.mode = 'hang';
       fake.embeddingRequests = 0;
       fake.abortedEmbeddingRequests = 0;
@@ -251,8 +262,8 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
     async () => {
       const fake = await startFake('ok');
       servers.push(fake.server);
-      const { app } = await boot(fake, 'nomic-embed-text', { timeoutMs: 1_000, retries: 1 });
-      const svc = app.ctx.getService<EmbeddingService>('embedding')!;
+      const { host } = await boot(fake, 'nomic-embed-text', { timeoutMs: 1_000, retries: 1 });
+      const svc = host.services.get(embedding)!;
       fake.mode = 'hang';
       fake.embeddingRequests = 0;
 
@@ -267,8 +278,8 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
   it('listModels 原样返回本机全部模型，不按名字筛', async () => {
     const fake = await startFake('ok', ['gemma4:12b', 'qwen3-embedding:8b', 'bge-m3:latest']);
     servers.push(fake.server);
-    const { app } = await boot(fake);
-    const svc = app.ctx.getService<EmbeddingService & { listModels(): Promise<string[]> }>('embedding');
+    const { host } = await boot(fake);
+    const svc = host.services.get(embedding) as OllamaEmbedding | undefined;
     expect(await svc!.listModels(), '名字不含 embed 的合法嵌入模型也必须留在候选里').toEqual([
       'gemma4:12b',
       'qwen3-embedding:8b',
@@ -282,8 +293,8 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
       // 先正常启动，避免 apply 的 embed 连通性探测占用本例的时间窗。
       const fake = await startFake('ok');
       servers.push(fake.server);
-      const { app } = await boot(fake, 'nomic-embed-text', { timeoutMs: 1_000 });
-      const svc = app.ctx.getService<EmbeddingService & { listModels(): Promise<string[]> }>('embedding')!;
+      const { host } = await boot(fake, 'nomic-embed-text', { timeoutMs: 1_000 });
+      const svc = host.services.get(embedding) as OllamaEmbedding;
       fake.mode = 'tagsHang';
 
       const t0 = Date.now();

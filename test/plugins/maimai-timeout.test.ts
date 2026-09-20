@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ToolService } from '../../packages/api-tools/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as maimai from '../../packages/plugin-maimai/src/index.js';
-import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import { type ToolService, tools } from '../../packages/api-tools/src/index.js';
+import { App, services } from '../../packages/core/src/index.js';
+import maimaiPlugin from '../../packages/plugin-maimai/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // MaimaiClient.request 的 fetch 此前不带 signal。工具执行面没有外层超时，对端不应答即那轮
@@ -30,22 +30,23 @@ describe('plugin-maimai: 查分器请求必须带超时', () => {
   async function setup(timeoutMs?: number): Promise<ToolService> {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     apps.push(app);
-    await app.ctx.useModule(toolsModule as never);
-    await app.ctx.useModule(maimai as never, {
+    await app.plugins.register(toolsPlugin, {});
+    await app.plugins.register(maimaiPlugin, {
       developerToken: 'tok',
       enableCommands: false,
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     });
-    const tools = app.ctx.getService<ToolService>('tools');
-    expect(tools).toBeDefined();
-    return tools!;
+    await app.plugins.idle();
+    const registry = app.bind({ services }).services.get(tools);
+    expect(registry).toBeDefined();
+    return registry!;
   }
 
   it('对端不应答时在 timeoutMs 内以错误结果返回，而不是永久挂住', async () => {
     vi.stubGlobal('fetch', hangingFetch());
-    const tools = await setup(1000); // 实现有 1000ms 地板
+    const registry = await setup(1000); // 实现有 1000ms 地板
     const outcome = await Promise.race([
-      tools
+      registry
         .execute('maimai_get_player_info', { friend_code: '123' }, { sessionId: 's1' })
         .then(r => `result:${r.content}`),
       new Promise<string>(r => setTimeout(() => r('still-hanging'), 2500)),
@@ -61,8 +62,8 @@ describe('plugin-maimai: 查分器请求必须带超时', () => {
       (async () =>
         new Response(JSON.stringify({ success: true, data: PLAYER }), { status: 200 })) as unknown as typeof fetch,
     );
-    const tools = await setup();
-    const r = await tools.execute('maimai_get_player_info', { friend_code: '123' }, { sessionId: 's1' });
+    const registry = await setup();
+    const r = await registry.execute('maimai_get_player_info', { friend_code: '123' }, { sessionId: 's1' });
     expect(r.content).toContain('测试玩家');
   });
 });

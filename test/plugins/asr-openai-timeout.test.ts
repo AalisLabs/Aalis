@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../../packages/core/src/index.js';
-import * as asrOpenai from '../../packages/plugin-asr-openai/src/index.js';
+import asrOpenai from '../../packages/plugin-asr-openai/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // transcribe 的 fetch 此前不带 signal。调用方（plugin-media）与工具执行面都没有外层超时：
@@ -32,7 +32,8 @@ describe('plugin-asr-openai: 请求必须带超时', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     apps.push(app);
     // 实现有 1000ms 地板（与 embedding-openai 同），故取 1000
-    await app.ctx.useModule(asrOpenai as never, { apiKey: 'k', timeoutMs: 1000 });
+    await app.plugin(asrOpenai, { apiKey: 'k', timeoutMs: 1000 });
+    await app.plugins.idle();
     const asr = app.ctx.getService<Asr>('asr');
     expect(asr).toBeDefined();
 
@@ -53,7 +54,8 @@ describe('plugin-asr-openai: 请求必须带超时', () => {
     );
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     apps.push(app);
-    await app.ctx.useModule(asrOpenai as never, { apiKey: 'k' });
+    await app.plugin(asrOpenai, { apiKey: 'k' });
+    await app.plugins.idle();
     const r = await app.ctx.getService<Asr>('asr')!.transcribe({ attachment: { data: 'data:audio/wav;base64,AAAA' } });
     expect(r.text).toBe('你好');
   });

@@ -13,8 +13,14 @@
 // ============================================================
 
 import type { MemoryService } from '@aalis/api-memory';
-import type { Context } from '@aalis/core';
+import type { Logger, ServiceRef } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
+
+/** 构造上下文用到的能力：读历史与画像的 memory（可缺席），以及记降级原因的 logger */
+export interface ContextCaps {
+  memory: ServiceRef<MemoryService>;
+  logger: Logger;
+}
 
 const HISTORY_LIMIT_DEFAULT = 4;
 /** plugin-user-profile 写入 metadata 时使用的 namespace；保持同步！ */
@@ -41,14 +47,14 @@ function compactText(input: string | null | undefined, maxLength = 500): string 
  * 任何失败都返回空串，调用方原样跳过。
  */
 async function loadSenderProfileSummary(
-  ctx: Context,
+  caps: ContextCaps,
   platform: string | undefined,
   userId: string | undefined,
   maxChars: number,
 ): Promise<string> {
   if (maxChars <= 0 || !userId) return '';
   try {
-    const memory = ctx.getService<MemoryService>('memory');
+    const memory = caps.memory.current;
     if (!memory) return '';
     const key = `${platform ?? ''}:${userId}`;
     const doc = await memory.getMetadata(USER_PROFILE_NAMESPACE, key);
@@ -68,7 +74,7 @@ async function loadSenderProfileSummary(
     const joined = texts.join('；');
     return joined.length > maxChars ? `${joined.slice(0, maxChars)}…` : joined;
   } catch (err) {
-    ctx.logger.debug(`读取发送者 user-profile 失败: ${err instanceof Error ? err.message : err}`);
+    caps.logger.debug(`读取发送者 user-profile 失败: ${err instanceof Error ? err.message : err}`);
     return '';
   }
 }
@@ -78,7 +84,7 @@ async function loadSenderProfileSummary(
  * 优先级：当前消息 > 引用消息 > 最近 N 条历史 > 发送者画像。
  */
 export async function buildIncomingImageContext(
-  ctx: Context,
+  caps: ContextCaps,
   msg: IncomingMessage,
   beforeLimit = HISTORY_LIMIT_DEFAULT,
   senderCfg?: SenderContextConfig,
@@ -96,7 +102,7 @@ export async function buildIncomingImageContext(
 
   if (beforeLimit > 0 && msg.sessionId) {
     try {
-      const memory = ctx.getService<MemoryService>('memory');
+      const memory = caps.memory.current;
       if (memory) {
         const history = await memory.getHistory(msg.sessionId, beforeLimit);
         if (history.length > 0) {
@@ -108,13 +114,13 @@ export async function buildIncomingImageContext(
         }
       }
     } catch (err) {
-      ctx.logger.debug(`读取图片识别上下文失败: ${err instanceof Error ? err.message : err}`);
+      caps.logger.debug(`读取图片识别上下文失败: ${err instanceof Error ? err.message : err}`);
     }
   }
 
   // 发送者画像（可配置，失败不阻断）
   if (senderCfg?.enabled && msg.userId) {
-    const summary = await loadSenderProfileSummary(ctx, msg.platform, msg.userId, senderCfg.profileMaxChars);
+    const summary = await loadSenderProfileSummary(caps, msg.platform, msg.userId, senderCfg.profileMaxChars);
     if (summary) {
       const who = msg.nickname ? `${msg.nickname}(${msg.userId})` : msg.userId;
       lines.push(`发送者画像[${who}]: ${summary}`);

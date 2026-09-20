@@ -1,7 +1,11 @@
 import { Buffer } from 'node:buffer';
 import { describe, expect, it } from 'vitest';
+import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import type { MediaService } from '../../packages/api-media/src/index.js';
-import type { Context } from '../../packages/core/src/index.js';
+import type { MemoryService } from '../../packages/api-memory/src/index.js';
+import type { ProcessService } from '../../packages/api-process/src/index.js';
+import type { StorageService } from '../../packages/api-storage/src/index.js';
+import type { Logger, ServiceRef } from '../../packages/core/src/index.js';
 import type { ForwardMediaTask } from '../../packages/plugin-adapter-onebot/src/forward.js';
 import { expandForward } from '../../packages/plugin-adapter-onebot/src/forward.js';
 import type { ForwardConfig } from '../../packages/plugin-adapter-onebot/src/forward-expand.js';
@@ -184,6 +188,19 @@ interface Harness {
   infoLogs: string[];
 }
 
+/** 固定提供者（或缺席）的服务引用——展开器只读 `.current`。 */
+function serviceRef<P>(current: P | undefined): ServiceRef<P> {
+  return {
+    current,
+    require: () => {
+      if (!current) throw new Error('本夹具未提供该服务');
+      return current;
+    },
+    all: () => [],
+    follow: () => () => {},
+  };
+}
+
 function makeHarness(overrides: Partial<ForwardConfig> = {}, opts: { brokenDownload?: boolean } = {}): Harness {
   const writes: string[] = [];
   const describeCalls: string[] = [];
@@ -228,21 +245,15 @@ function makeHarness(overrides: Partial<ForwardConfig> = {}, opts: { brokenDownl
       throw new Error('测试不落 temp');
     },
   };
-  const services: Record<string, unknown> = {
-    media,
-    storage: opts.brokenDownload ? undefined : storage,
-    process: opts.brokenDownload ? undefined : proc,
-  };
-  const ctx = {
-    getService: (name: string) => services[name],
-    logger: {
-      info: (msg: string) => {
-        infoLogs.push(msg);
-      },
-      debug: () => {},
-      warn: () => {},
+  const logger = {
+    info: (msg: string) => {
+      infoLogs.push(msg);
     },
-  } as unknown as Context;
+    debug: () => {},
+    warn: () => {},
+    error: () => {},
+    child: () => logger,
+  } as Logger;
 
   const forwardCfg: ForwardConfig = {
     enabled: true,
@@ -259,7 +270,13 @@ function makeHarness(overrides: Partial<ForwardConfig> = {}, opts: { brokenDownl
   };
 
   h.expander = createForwardExpander<object>({
-    ctx,
+    logger,
+    // 本文件测的是两阶段解析结构：原文持久化与摘要模型缺席，展开只走内存缓存
+    memory: serviceRef<MemoryService>(undefined),
+    media: serviceRef(media as MediaService),
+    llm: serviceRef<LLMModel>(undefined),
+    storage: serviceRef(opts.brokenDownload ? undefined : (storage as unknown as StorageService)),
+    processService: serviceRef(opts.brokenDownload ? undefined : (proc as unknown as ProcessService)),
     forwardCfg,
     attachmentMaxBytes: 20 * 1024 * 1024,
     sendAction: async (_state, action) => {
