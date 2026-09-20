@@ -2,129 +2,123 @@
 
 管理插件的注册、激活、停用和热更新。
 
-**源码**: `packages/core/src/orchestration/plugin.ts`
+**源码**: `packages/core/src/orchestration/plugin.ts`、`packages/core/src/types/plugin.ts`
 
-## 插件模块格式
+## 插件定义
+
+插件是 `definePlugin` 的产物（`PluginDefinition`），由加载器以 default 导出接入。形状与能力见 [插件定义与能力](context.md)。
+
+注册表里的一条实例（管理面经 `plugins.getPlugin` 读到的形状）是 `PluginEntry`：
 
 ```typescript
-interface PluginModule {
-  name: string;               // 插件名（如 '@aalis/plugin-llm-deepseek'）
-  inject?: InjectDeclaration; // 依赖声明
-  provides?: string[];        // 提供的服务名
-  core?: boolean;             // 核心插件标记（不可禁用）
-  reusable?: boolean;         // 允许同 module 多实例注册（`name:suffix`）
-  /**
-   * 级联契约：下游 inject 了本插件 provided 服务的消费者，
-   * 是否需要在本插件 bounce 时被级联重新 apply。
-   * 默认 false。绝大多数 provider 不需要设为 true，
-   * 下游应使用 lazy `ctx.getService()` 透明获取新实例。
-   * 详见 [plugin-author-guide §3.5](../plugin-author-guide.md#_3-5-级联契约-opt-in-requiresbounceondepchange)。
-   */
-  requiresBounceOnDepChange?: boolean;
-  /** core 视为 opaque 数据原样透传；形状类型 ConfigSchema 在 @aalis/schema-config */
-  configSchema?: Record<string, unknown>;
-  apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
+interface PluginEntry {
+  definition: PluginDefinition;
+  instanceId: string;          // 单实例时与 definition.name 相同，多实例时为 `name:suffix`
+  config: Record<string, unknown>;
+  state: PluginState;
+  error?: string;
+  required: string[];          // 参与激活闸的依赖服务名（uses 里未包 optional 的外部服务）
+  optional: string[];          // 不参与激活闸的依赖服务名
 }
 ```
+
+公开条目不含内部激活记录。`required` / `optional` 是服务名数组，在注册时从 `uses` 抽出（内置能力不成依赖）。
+
+`parseInstanceId(instanceId)`：`@scope/plugin-name:suffix` → `{ moduleName, suffix }`；无 suffix 时 `suffix` 为 `undefined`。从 `/` 之后切开，不把 scope 里的字符当成后缀。
 
 ## 插件状态
 
 | 状态 | 说明 |
 |---|---|
-| `pending` | 已注册，等待依赖满足 |
-| `activating` | 正在激活（调用 apply） |
+| `pending` | 已注册，等待 required 依赖满足 |
+| `activating` | 正在激活（调用 `apply`） |
 | `active` | 已激活，正常运行 |
 | `disabled` | 手动禁用 |
-| `disposed` | 已卸载 |
-| `error` | 激活失败 |
+| `disposed` | 已卸载（单向终态） |
+| `error` | 激活失败（带 `error` 信息；不会在后续 recompute 中自动重试，需 `enable` / `bounce`） |
 
 ## 生命周期流程
 
 ```
-register(module, config?)
+register(definition, config?, instanceId?)
   │
-  ├─ 创建 PluginEntry (状态=pending)
-  ├─ 归一化依赖声明
-  ├─ 如果所有 required 依赖已满足 → tryActivate()
-  │     ├─ fork 子 Context
-  │     ├─ 调用 module.apply(ctx, config)
-  │     ├─ 状态 → active
-  │     └─ 发出 plugin:loaded 事件
-  └─ 否则保持 pending，等待 service:registered 事件
+  ├─ 校验 definition / instanceId（失败 → false）
+  ├─ 创建 PluginEntry（状态 = pending 或配置禁用则为 disabled）
+  ├─ 从 uses 抽出 required / optional
+  └─ recompute('changed')
+        required 已满足 → 激活（fork 内部激活、mountDefinition、校验 provides）
+        否则保持 pending，等待 service:registered
 ```
 
-## 统一状态机：`recompute(reason)`
+激活成功发 `plugin:loaded`（通知，不等监听器）。激活失败转入 `error`，不发 `plugin:unloaded`（从未 loaded）。
 
-PluginManager 只有一个状态变更入口 `recompute(reason)`。所有路径
-（启用/禁用、配置更新、bounce、关机、服务注册/移除反应式回调）都被归一为一个
-`RecomputeReason` 后汇入：
+子模块由 `lifecycle.module` 挂载，不进本管理器，见 [插件定义与能力](context.md)。
+
+## 统一状态机：`recompute(kind)`
+
+PluginManager 只有一个状态变更入口。种类只有两种：
 
 ```typescript
-type RecomputeReason =
-  | { type: 'service-up'; service: string }      // service:registered 反应式
-  | { type: 'service-down'; service: string }    // service:unregistered 反应式
-  | { type: 'plugin-state-changed' }             // enable/disable/updateConfig/bounce
-  | { type: 'shutdown' };                        // App.stop()
+type RecomputeKind = 'changed' | 'shutdown';
 ```
 
-每轮 recompute 先按 provider→consumer 拓扑排序，然后：
+- `'changed'`（默认）：服务上下线、注册、启停、bounce、配置更新。合并处理。
+- `'shutdown'`：覆盖整批；`App.stop()` 经 `stopAll()` 走这一条。
 
-```
-Phase A 反向遍历:
-  对每个 active entry，computeTargetState() 计算目标态
-    目标 ≠ active → dispose 子 Context → 状态 → pending（或 disposed if shutdown）
-  单轮内消费者先于提供者 dispose；跨轮（依赖此刻仍在、下一轮才降级）与单插件 unload/disable/bounce 不在此保证内。
+在飞 recompute 或手动 dispose 段期间到来的请求合并成一次，停机覆盖普通变化。目标态只看容器里此刻有没有服务。
 
-Phase B 正向遍历（非 shutdown）:
-  对每个 pending entry，目标 = active 时调用 tryActivate()
-  提供者先于消费者 active。
+每轮（非 shutdown）：
 
-如本轮有变动则进入下一轮，直到稳定（fixed-point）或 maxRounds=20。
-service-up / service-down 在第二轮起退化为 plugin-state-changed，避免无限 optional bounce。
-```
+1. 按 required 依赖正序（提供者 → 消费者）拓扑排序。仅 required 参与建图；optional 缺席照样激活，不制造排序约束。
+2. **Phase A**：把目标不再是 `active` 的成批关闭。它们之间的次序由关停编排按实际绑定决定，不是注册序。
+3. **Phase B**：正向遍历，激活目标 `active` 且依赖满足的 pending entry（提供者先起、消费者后起）。
+4. 本轮有变动则继续下一轮，直到稳定或达到上限（`2×插件数 + 8`）。非停机时发 `plugins:changed`。
 
-收尾发出 `plugins:changed` 事件（shutdown 时跳过）。
+`computeTargetState`：`disabled` / `disposed` / `error` 是显式态，recompute 不动它们；required 不满足 → `pending`；其余 → `active`。optional 依赖的上下线不改变目标态：绑定接口每次查询解析当前值，有状态的接线经 `follow` 跟随提供者换人，不靠重启插件。
 
-`stopAll()` 与 `softReload()` 现在是 `recompute({type:'shutdown'})` 与
-`recompute({type:'plugin-state-changed'})` 的薄壳。
+`softReload()` 是 `recompute('changed')` 的薄壳；`stopAll()` 是 `recompute('shutdown')` 的薄壳。`App.stop()` 在 `stopAll()` 之前先 `beginShutdown()`：置停机态并把根激活整棵树冻进该计划，真正的 drain / close 由 `stopAll()` 执行。
 
-## 关键方法
+停机时全部 active 插件与宿主的根激活进同一张关停计划（无依赖关系时后注册的先关）。每个激活 drain 后 close；边规则见 [插件定义与能力](context.md)。单插件 `unload` / `disable` / `bounce` 只拆该插件及其子树，不享有整次 `App.stop()` 的交接保证；其下游在下一轮 recompute 才按目标态降级。
 
-管理动作一律返回 `Promise<boolean>`，口径只有一条：**false = 主体不在注册表，或本次动作被状态 / 政策规则挡下**
-（重名、未声明 `reusable` 的多实例、core 插件禁用、`disposed` 单向终态、`disabled` 态 bounce）；**true = 其余，含主体已在
-目标态的幂等情形**。每个 false 分支都已记一笔日志（政策挡下 warn，主体不存在与 `disposed` 在途 debug）。true 只说明请求已受理，激活是否落定看 `idle()`。
+## 管理动作口径
 
-### `register(module, config?, instanceId?)`
+六个管理动作（`register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig`）一律返回 `Promise<boolean>`：
 
-注册插件并触发 recompute。重名或未声明 `reusable` 却要多实例时拒绝。
+**false** = 主体不在注册表，或本次动作被状态 / 政策规则挡下（重名、未声明 `reusable` 的多实例、core 插件禁用、`disposed` 单向终态、`disabled` 态 bounce、**定义或实例 id 校验失败**、停机中的 `register` / `bounce`）。
+
+**true** = 其余，含主体已在目标态的幂等情形。停机进行中，`unload` / `disable` 汇入停机计划后立即返回 true——不等待拆卸完成，拆卸由停机计划执行（在 `app:stopping` 监听器里等待会与屏障事件死锁）。
+
+每个 false 分支都已记一笔日志（政策挡下 warn，主体不存在与 `disposed` 在途 debug）。true 只说明请求已受理，不说明激活已落定——那看 `idle()`。`enable` / `updateConfig` 对已 `disposed` 的插件返回 false 不变。
+
+`idle()` 等待状态机静置（无在飞 recompute、无排队、无手动 dispose 段）。变更 API 在已有 flight 在飞时排队并立即返回。**不得在插件 `apply` / `onDispose` 内调用**——flight 正等着你返回，互等死锁。
+
+### `register(definition, config?, instanceId?)`
+
+注册并尝试激活。手写的定义对象（没经 `definePlugin`）在这里补上同一道校验。缺 / 空 / 非法 `name`、`uses` 非描述符、非法 `instanceId`（空、含 `#`）各记一笔 warn 并返回 false。停机中拒绝新登记。
 
 ### `unload(instanceId)`
 
-卸载插件，dispose 其 Context 并从注册表移除。撞上在途卸载时 join 它，返回时该实例已离开注册表。
+拆掉激活并从注册表移除。撞上在途卸载时 join 它，返回时该实例已离开注册表。并发首个 unload 完成后同 id 可能已重新注册，删除带恒等卫，不会按名盲删新 entry。停机中把该激活汇入已冻计划后立即返回 true，不在这里等待拆卸。
 
 ### `enable(instanceId)` / `disable(instanceId)`
 
-启用/禁用插件。core 插件不可禁用。
+启用 / 禁用。core 插件不可禁用。`error` 态可经 `enable` 转 `pending` 重试。停机中 `disable` 汇入已冻计划后立即返回 true。
+
+### `bounce(instanceId, opts?: { config? })`
+
+增量重载：可选写回配置 → 拆掉当前激活 → 转 `pending` → 重算后重新激活。即 **retire + 重算**。
+
+- 下游不跟着重启：消费者经绑定接口每次解析当前提供者，有状态的接线由 `follow` 在提供者换人时交接。
+- 不换代码：跑的仍是注册时的那份定义。要换代码走 `unload` + `register`。
+- `disabled`、`disposed`、停机进行中拒绝 bounce。传 `opts.module` 期望换码会 warn 并返回 false。
+- `error` 态会被重置为 pending 重试。
 
 ### `updateConfig(instanceId, config)`
 
-更新配置并热重载。**现为 `bounce(instanceId, { config })` 的薄壳别名**，
-保留化名便于调用点语义明确（WebUI / mcp-client / ConfigWatcher 都调这个）。
-本插件会被 dispose + reapply；下游是否被级联 evict 取决于各下游插件的
-`requiresBounceOnDepChange`（默认 false 不级联）。
-
-### `bounce(instanceId, opts?: { config? }): Promise<boolean>`
-
-增量重载单个插件的统一入口：
-- 可选 `opts.config`：同时写回 ConfigManager + entry.config
-- dispose 旧 ctx → 粗状态转 pending → `recompute({type:'plugin-state-changed'})`
-- 不换模块：重新激活跑的仍是注册时的那份代码。要换代码（热重载）走 `unload(id)` + `register(fresh, config, id)`
-- 下游是否被级联 evict：仅当下游声明 `requiresBounceOnDepChange: true` 时才级联，
-  默认不动。详见 [plugin-author-guide §3.5](../plugin-author-guide.md#_3-5-级联契约-opt-in-requiresbounceondepchange)。
+`bounce(instanceId, { config })` 的薄壳。入参会拷贝后再挂到 entry 与 ConfigManager，避免插件经内置 `config` 就地改嵌套写穿快照。
 
 ## 反应式监听
 
-- `service:registered` → `recompute({ type: 'service-up', service })`
-- `service:unregistered` → `recompute({ type: 'service-down', service })`
+- `service:registered` / `service:unregistered` → `recompute('changed')`
 
-`reloading` 与 `shuttingDown` 标志在 recompute 期间屏蔽重入。
+单飞 / 挂起 / 关机的取舍都在 `recompute` 内部：在飞期间排队，关机后非 shutdown 请求跳过。

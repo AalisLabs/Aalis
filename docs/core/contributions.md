@@ -2,7 +2,7 @@
 
 **源码**: `packages/core/src/primitives/contributions.ts`
 
-贡献点是 Aalis 的另一种内核原语：**往共享产物里"交一块料"，排布权归收集方**。
+贡献点是 Aalis 的另一种内核原语：**往共享产物里"交一块料"，排布权归收集方**。插件在 `uses` 里声明 `contributions`。
 
 四原语按「执行 / 数据」二分：
 
@@ -26,31 +26,31 @@
 ## API
 
 ```typescript
-// 交付一份贡献（返回 dispose；挂 dispose 链，插件卸载自动清扫）
-const off = ctx.contribute('agent:prompt', {
-  id: 'my-block',            // 局部幂等键：非空、不含 '/'；同 ctx 同 id 重复注册 = 替换
+// 交付一份贡献（返回 dispose；随这次激活撤回）
+const off = contributions.contribute('agent:prompt', {
+  id: 'my-block',            // 局部幂等键：非空、不含 '/'；同激活同 id 重复注册 = 替换
   anchor: 'context',         // 点自己的字段（agent:prompt 的槽位词汇）
   build: async view => (view.dryRun ? null : await loadBlock(view.sessionId)),
 });
 
 // 收集（贡献点 owner 调用；任何插件都可拥有自己的贡献点——驱动公开）
-for (const { key, spec } of ctx.collect('agent:prompt')) {
-  // key  = 全局键 `${贡献方 ctx.id}/${局部 id}`——归属标识
+for (const { key, spec } of contributions.collect('agent:prompt')) {
+  // key  = 全局键 `${贡献方 lifecycle.id}/${局部 id}`——归属标识
   // spec = 注册方交付的本体（引用，不拷贝、不改写）
 }
 ```
 
 ## 内核语义
 
-- **全局键**：注册时自动冠 `${ctx.id}/` 前缀。spec.id 侧无法顶替他人贡献（含 `/` 的
-  局部 id 在注册期抛 `TypeError`，防跨 ctx 键碰撞构造）。信任锚是 ctx.id 本身——
-  `fork(id)` 不保证唯一，这是 Context 模型的既有信任边界，与 provide / middleware 一致。
+- **全局键**：注册时自动冠 `${激活 id}/` 前缀。spec.id 侧无法顶替他人贡献（含 `/` 的
+  局部 id 在注册期抛 `TypeError`，防跨激活键碰撞构造）。信任锚是激活的逻辑 id 本身——
+  内部 `fork(id)` 不保证唯一，这是激活模型的既有信任边界，与 provide / middleware 一致。
 - **确定性**：`collect` 按全局键码元序排序；同一注册集合在任意注册顺序、任意机器上
   枚举结果逐字节相同。顺序是键的纯函数，重复注册无法影响排位。
 - **无执行**：内核只做注册与枚举，永不调用 spec 上的任何函数。如何执行（并行 / 隔离 /
   超时 / 排布）是收集方的策略——如 `agent:prompt` 的组装器（`plugin-agent` 的
   `prompt-assembly.ts`）选择并行 build + 单块错误隔离 + 五锚位排布。
-- **清理**：dispose 链与 `unregisterByOwner` 双路径，插件卸载/热重载（bounce）自动清扫；按清理归属而非 contextId，同名 Context 的迟到清理不会删掉新占位。
+- **清理**：按清理归属而非逻辑 id 撤回；同名激活的迟到清理不会删掉新占位。
 
 ## 现有贡献点
 
@@ -72,7 +72,7 @@ declare module '@aalis/core' {
 }
 
 // my-plugin（贡献点 owner）：收集、排布、执行全在这里
-const sections = ctx.collect('my-plugin:panel').map(({ key, spec }) => {
+const sections = contributions.collect('my-plugin:panel').map(({ key, spec }) => {
   try {
     return `## ${spec.title}\n${spec.render()}`;
   } catch {
