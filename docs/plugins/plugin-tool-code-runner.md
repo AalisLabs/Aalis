@@ -14,8 +14,18 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-tool-code-runner'
-meta.inject = { required: ['storage', 'process'], optional: ['code-sandbox'] }
+export default definePlugin({
+  name: '@aalis/plugin-tool-code-runner',
+  uses: {
+    tools: optional(tools),
+    storage,
+    proc: processService,
+    codeSandbox: optional(codeSandbox),
+    logger,
+    config,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

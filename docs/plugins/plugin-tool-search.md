@@ -10,10 +10,16 @@
 ## 插件声明
 
 ```typescript
-export const name = '@aalis/plugin-tool-search'
-export const displayName = '搜索工具'
-export const subsystem = 'tools'
-// 未导出 provides / inject（tools 服务由核心提供，无需声明依赖）
+export default definePlugin({
+  name: '@aalis/plugin-tool-search',
+  uses: {
+    tools: optional(tools),
+    hooks,
+    logger,
+    config,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

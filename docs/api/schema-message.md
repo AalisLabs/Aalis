@@ -6,7 +6,7 @@
 
 ## 概述
 
-定义 `IncomingMessage` / `OutgoingMessage` / `StreamChunkMessage` —— Aalis 平台 adapter 层（OneBot / WebUI / CLI）与内核之间的消息边界。与 core 的 OpenAI 风格 `Message`（协议层）严格区分：前者是平台语义，后者是 LLM 协议。
+定义 `IncomingMessage` / `OutgoingMessage` / `StreamChunkMessage` 以及 LLM 协议层 `Message` —— Aalis 平台 adapter 层（OneBot / WebUI / CLI）与编排层之间的消息边界。平台语义（Incoming/Outgoing）与 LLM 协议层 `Message` 同包、严格区分。
 
 ## IncomingMessage 关键字段
 

@@ -11,10 +11,10 @@
 - 工具数据结构（`RegisteredTool` / `ToolGroupInfo` / `ToolSummary`）
 - 工具调用上下文（`ToolCallContext`）—— 平台/会话语义
 - 工具执行通知（`ToolExecuteMessage`）
-- 服务接口 `ToolService` 与领域 helper `useToolService` / `toolsWithGroups`
+- 服务接口 `ToolService`、描述符 `tools`、绑定接口 `BoundTools`、`withToolGroups`
 - 向 `AalisEvents` 注入 `'tool:execute'`
 
-**注**：runtime 工具函数已迁出本契约包（见 `index.ts` 迁出注释）：SSRF/私网判定 → `@aalis/util-network-guard`；工具输入路径解析 → `@aalis/api-storage`。本包只保留契约/类型。
+**注**：runtime 工具函数已迁出本契约包（见 `packages/api-tools/src/index.ts` 迁出注释）：SSRF/私网判定 → `@aalis/util-network-guard`；工具输入路径解析 → `@aalis/api-storage`。本包只保留契约/类型与登记门面。
 
 ## 服务接口
 
@@ -23,14 +23,15 @@ interface ToolService {
   register(tool: Omit<RegisteredTool, 'pluginName'>, contextId: string): () => void;
   getDefinitions(filter?: { groups?: string[] }): ToolDefinition[];
   getSummaries(filter?: { groups?: string[] }): ToolSummary[];
-  getAll(): Array<{ name; description; pluginName; visibility; groups? }>;
+  getAll(): Array<{ name; description; pluginName; visibility; confirm?; risk?; groups? }>;
   execute(toolName: string, args: Record<string, unknown>, callCtx: ToolCallContext): Promise<ToolExecutionResult>;
   setExecutionGuard(guard: ExecutionGuard): void;
-  unregisterByPlugin(contextId: string): void;
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void;
   getGroups(): ToolGroupInfo[];
 }
 ```
+
+插件侧不要直接调 `ToolService.register(..., contextId)`。`contextId` 由绑定门面填本次激活 id。
 
 ## RegisteredTool 结构
 
@@ -40,27 +41,30 @@ interface RegisteredTool {
   handler: (args, callCtx: ToolCallContext) => Promise<string | ToolExecutionResult>; // { content, images? }：images 交主模型亲眼看
   pluginName: string;
   visibility?: CapabilityVisibility;      // 'public' | 'restricted'（默认 public）
-  // 注：CapabilityVisibility 从 @aalis/api-authority 导入
+  confirm?: CapabilityConfirm;
+  risk?: CapabilityRisk;
   groups?: string[];                      // 工具分组，未设置时始终可用
 }
 ```
 
-## 领域 Helper
+`CapabilityVisibility` / `CapabilityConfirm` / `CapabilityRisk` 从 `@aalis/api-authority` 导入。
+
+## 描述符与绑定门面
 
 ```ts
-const tools = useToolService(ctx);
-tools.register({ definition, handler, ... }): () => void;
-tools.registerGroup({ name, label, description? }): () => void;
+interface BoundTools extends ServiceRef<ToolService> {
+  register(tool: Omit<RegisteredTool, 'pluginName'>): () => void;
+  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void;
+}
 
-// 自动给后续 register 注入 groups 字段
-const groupTools = toolsWithGroups(tools, ['my-group']);
-groupTools.register({ definition, handler });   // 自动 groups: ['my-group']
+function withToolGroups(bound: BoundTools, groups: string[]): BoundTools;
 ```
 
-helper 内部为每个 Context 维护一份绑定，经一条 `whenService` 订阅跟随 `tools` 提供者：
-服务尚未 provide 时 `register` 调用会被自动延迟到服务就绪，提供者换人时整体重挂，调用方无需关心顺序。
-同一 Context 内同名（工具名 / 分组名）是替换语义——新登记顶掉旧登记，旧登记的退订闭包随即失效，不会误删新登记。
-Context 已 dispose 后的登记与 `ctx.on` 同口径：记 warn、不进枢纽，返回的退订闭包无动作。
+`tools` 是登记型能力：`register` / `registerGroup` 走 `registrar`，同名替换、提供者换人整体重挂、关闭后拒收。查询与执行走 `ServiceRef`：`tools.current?.getDefinitions(...)`、`tools.require().execute(...)`。
+
+`withToolGroups` 只覆盖 `register`，其余（含 `current` 这个 getter）沿原型链落到原接口，跟着提供者换人。不要对象展开一份 `BoundTools`——会把 `current` 求成一次性快照。
+
+同一激活内同名（工具名 / 分组名）是替换语义：新登记顶掉旧登记，旧登记的退订闭包随即失效，不会误删新登记。
 
 ## 事件（AalisEvents）
 
@@ -80,16 +84,34 @@ Context 已 dispose 后的登记与 `ctx.on` 同口径：记 warn、不进枢纽
 ## 典型用法
 
 ```ts
-import { useToolService } from '@aalis/api-tools';
+import { tools, withToolGroups } from '@aalis/api-tools';
+import { definePlugin, optional } from '@aalis/core';
 
-const tools = useToolService(ctx);
-tools.register({
-  definition: { type: 'function', function: { name: 'my_tool', ... } },
-  handler: async (args, callCtx) => '...',
-  visibility: 'public',
-  groups: ['custom'],
+export default definePlugin({
+  name: '@acme/plugin-example-tools',
+  uses: { tools: optional(tools) },
+  apply({ tools }) {
+    const grouped = withToolGroups(tools, ['custom']);
+    grouped.register({
+      definition: {
+        type: 'function',
+        function: {
+          name: 'echo',
+          description: '原样返回 text',
+          parameters: {
+            type: 'object',
+            properties: { text: { type: 'string' } },
+            required: ['text'],
+          },
+        },
+      },
+      handler: async args => String(args.text ?? ''),
+    });
+  },
 });
 ```
+
+登记不强制把 `tools` 标成 required：绑定门面在提供者未就绪时排队，就绪后挂上。若还要读 `getDefinitions` / `getAll` / `execute`，应 `uses: { tools }`（required），用 `tools.require()` 或先判 `tools.current`。
 
 ## 实现者
 

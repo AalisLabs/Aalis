@@ -10,9 +10,23 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-authority'
-meta.provides = ['authority']
-meta.inject = { optional: ['commands', 'tools'] }
+export default definePlugin({
+  name: '@aalis/plugin-authority',
+  provides: [authority],
+  uses: {
+    provide,
+    hostConfig: optional(hostConfig),
+    logger,
+    lifecycle,
+    webui: optional(webuiServer),
+    commands: optional(commands),
+    tools: optional(tools),
+    storage: optional(storage),
+    platform: optional(platform),
+    app: optional(appService),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 两轴正交模型

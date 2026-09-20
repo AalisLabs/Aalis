@@ -6,6 +6,27 @@
 
 ChatFlow 状态机提供：消息计数、活跃指数衰减、禁言/冷却/限速窗口、空闲主动触发。逻辑实现为 `inbound:flow` 相位的 handler 与 `flow-control` 服务，不依赖具体平台；是否对某个平台或会话类型生效，由 `scopes` / `overrides` 决定。默认只覆盖 `*:group`；CLI、WebUI 等不区分会话类型的平台，需要在 `scopes` 中另加 `cli`、`webui` 或 `*`。
 
+## 插件声明
+
+```ts
+export default definePlugin({
+  name: '@aalis/plugin-flow-control',
+  provides: [flowControl],
+  uses: {
+    logger,
+    events,
+    hooks,
+    lifecycle,
+    config,
+    provide,
+    gateway,
+    storage: optional(storage),
+    messageArchive: optional(messageArchive),
+  },
+  apply(caps) { /* 见源码 */ },
+});
+```
+
 ## 注册的服务
 
 | 服务名 | 接口 | 主要方法 |

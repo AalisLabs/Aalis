@@ -6,6 +6,26 @@
 
 回答的是"这条消息要不要让 agent 接管？"这个问题。基于 `flow-control` 暴露的会话快照，结合自身的 @ / 名字 / 关键词检测，决定 swallow 还是放行（并标记 `triggerType`）。
 
+## 插件声明
+
+```ts
+export default definePlugin({
+  name: '@aalis/plugin-trigger-policy',
+  provides: [triggerPolicy],
+  uses: {
+    logger,
+    hooks,
+    config,
+    provide,
+    gateway,
+    flowControl: optional(flowControl),
+    persona: optional(persona),
+    messageArchive: optional(messageArchive),
+  },
+  apply(caps) { /* 见源码 */ },
+});
+```
+
 ## 注册的服务
 
 | 服务名 | 接口 | 说明 |

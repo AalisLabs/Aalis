@@ -5,7 +5,7 @@
 
 ## 1. 定位
 
-session-manager 维护对话会话的生命周期（创建 / 查询 / 状态 / 树形父子关系），并把分层会话配置合并成一份「最终生效配置」交给 Agent 消费。取用名 `getService<SessionManagerService>('session-manager')`，契约包 `@aalis/api-session-manager`，参考实现 `@aalis/plugin-session-manager`。
+session-manager 维护对话会话的生命周期（创建 / 查询 / 状态 / 树形父子关系），并把分层会话配置合并成一份「最终生效配置」交给 Agent 消费。取用名 `sessionManager.current`，契约包 `@aalis/api-session-manager`，参考实现 `@aalis/plugin-session-manager`。
 
 核心职责两件：
 
@@ -107,7 +107,7 @@ interface SessionInfo {
 
 ## 3. 谁提供 / 谁消费
 
-**提供方（唯一参考实现）**：`@aalis/plugin-session-manager`，在 `apply()` 里 `ctx.provide('session-manager', manager, { label: '会话管理' })`（`plugin-session-manager/src/index.ts`）。它 `inject.required = ['memory']`、`optional = ['agent','platform','persona','llm']`（`index.ts`）。没有 `memory` 时直接拒绝启动（`index.ts`）。
+**提供方（唯一参考实现）**：`@aalis/plugin-session-manager`，在 `apply()` 里 `provide(sessionManager, manager, { label: '会话管理' })`（`plugin-session-manager/src/index.ts`）。它 `uses required = ['memory']`、`optional = ['agent','platform','persona','llm']`（`index.ts`）。没有 `memory` 时直接拒绝启动（`index.ts`）。
 
 **典型消费点**：
 
@@ -129,20 +129,18 @@ interface SessionInfo {
 **配置补丁是三态，不是二态**：键不出现 = 不改；键为 `null` = 删除该键、恢复继承；键为 `false` = **显式覆盖**，不等于未设置。参考实现里 `normalizeSessionConfigPatch` 把 `null` 转成 `undefined` 再交给 `updateSession` 删键，而 `stripUndefined` 只剔 `undefined` 与 `null`——因此显式 `false` 会一路压过继承来的 `true`（`plugin-session-manager/src/index.ts`）。WebUI 会话配置页的两个开关只写显式 `true` / `false` 两档：点一下就落成显式值，页面不提供回到「未设置」的入口，恢复继承要把该键从会话配置里清掉（补丁置 `null`）。
 
 ```ts
+import { definePlugin } from '@aalis/core';
 // my-session-manager/src/index.ts —— 可编译最小骨架
-import type { Context, PluginModule } from '@aalis/core';
 import type {
   PlatformProfile, SessionConfig, SessionInfo, SessionManagerService, SessionTreeNode,
 } from '@aalis/api-session-manager';
 
-export const name = '@me/plugin-session-manager';
-export const inject = { required: ['memory'] as const, optional: ['llm', 'persona'] as const };
-export const provides = ['session-manager'];   // ← 与 package.json aalis.service.provides 同步
+provides: [sessionManager];   // ← 与 package.json aalis.service.provides 同步
 
 class MySessionManager implements SessionManagerService {
   private sessions = new Map<string, SessionInfo>();
   private profiles = new Map<string, PlatformProfile>();
-  constructor(private ctx: Context) {}
+  constructor() {}
 
   async createSession(opts = {}): Promise<SessionInfo> {
     const now = Date.now();
@@ -158,7 +156,7 @@ class MySessionManager implements SessionManagerService {
     };
     this.sessions.set(id, s);
     if (s.parentId) this.sessions.get(s.parentId)?.children.push(id);
-    await this.ctx.emit('session:created', s);   // 发出生命周期事件
+    await this.events.emit('session:created', s);   // 发出生命周期事件
     return s;
   }
 
@@ -175,18 +173,22 @@ class MySessionManager implements SessionManagerService {
   // completeSession / getPlatformProfiles ... 同理实现
 }
 
-export const apply: PluginModule['apply'] = async ctx => {
-  if (ctx.getService('memory') === undefined) { ctx.logger.error('需要 memory 服务'); return; }
-  const mgr = new MySessionManager(ctx);
-  ctx.provide('session-manager', mgr, {
+export default definePlugin({
+  name: '@me/plugin-session-manager',
+  uses: { memory, llm: optional(llm), persona: optional(persona) },
+  apply({ provide, events, hooks, lifecycle, logger, memory }) {
+  if (memory.current === undefined) { logger.error('需要 memory 服务'); return; }
+  const mgr = new MySessionManager();
+  provide(sessionManager, mgr, {
     label: '会话管理',
     // 若要压过参考实现：priority 高于默认 0，或让 owner 用 preferService 选你
     priority: 50,
   });
-};
+},
+});
 ```
 
-`package.json` **双源**必须与 `export const inject/provides` 一致（参考实现的样子，`plugin-session-manager/package.json`）：
+`package.json` **双源**必须与 `uses/provides` 一致（参考实现的样子，`plugin-session-manager/package.json`）：
 
 ```jsonc
 "keywords": ["aalis", "aalis-plugin"],
@@ -205,11 +207,11 @@ export const apply: PluginModule['apply'] = async ctx => {
 
 ### 5.1 惰性取用 + 可选降级
 
-`session-manager` 在很多场景是**可选依赖**（`inject.optional`）——它可能没装。每次用都现取，**不要缓存到字段**（provider bounce 会让旧引用失效，见 [惰性服务访问](../concepts/lazy-service-access.md)）：
+`session-manager` 在很多场景是**可选依赖**（`uses optional`）——它可能没装。每次用都现取，**不要缓存到字段**（provider bounce 会让旧引用失效，见 [惰性服务访问](../concepts/lazy-service-access.md)）：
 
 ```ts
 // Agent 的标准写法（plugin-agent/src/index.ts）
-const sm = ctx.getService<SessionManagerService>('session-manager');
+const sm = sessionManager.current;
 const resolved = sm && sessionId ? sm.resolveConfig(sessionId, platform) : undefined;
 // sm 缺失 → resolved 为 undefined → 回落到全局 ServicePreference / 默认行为，不致中断
 ```
@@ -225,7 +227,7 @@ interface SessionConfigResolver {
   resolveConfig(sessionId: string, platform?: string):
     { persona?: string; disableOutputFormat?: boolean; clientSideJsonRendering?: boolean };
 }
-const sm = ctx.getService<SessionConfigResolver>('session-manager');
+const sm = sessionManager.current;
 ```
 
 ### 5.3 监听生命周期事件
@@ -286,13 +288,13 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 
 ### 7.3 持久化是延迟刷盘 + 拆卸落盘
 
-写操作走 `markDirty()` → 1s 防抖刷盘；插件拆卸时（停机 / bounce / unload / 配置更新）经 `ctx.onDispose(() => manager.shutdown())` 强制落盘（`shutdown()` 幂等：清定时器 + 置 dirty + `persist()`）（`plugin-session-manager/src/index.ts`）。`app.stop()` 的整体拓扑逆序保证此时 `memory` 提供者尚未关闭；单独禁用或热重载 `memory` 提供者时没有这条保证，`shutdown()` 的落盘会失败（丢最后一个防抖窗口的元数据）。崩溃（非正常退出）可能丢失最后 ~1s 的会话元数据变更。重写 provider 时若要更强一致性，请在关键写操作后同步落盘。
+写操作走 `markDirty()` → 1s 防抖刷盘；插件拆卸时（停机 / bounce / unload / 配置更新）经 `lifecycle.onDispose(() => manager.shutdown())` 强制落盘（`shutdown()` 幂等：清定时器 + 置 dirty + `persist()`）（`plugin-session-manager/src/index.ts`）。session-manager 对 memory 是普通依赖：关停以激活为单位分 drain / close，消费者整个 close 完提供者才 drain，因此 **`onDispose` 落盘期间 memory 仍在**。该保证只在双方同进一张计划时成立（`App.stop()` 先冻结再发 `app:stopping` 再执行计划）；单独卸载 / 禁用 memory 没有交接保证，`shutdown()` 会失败（丢最后一个防抖窗口的元数据）。依赖交接应放 `onDrain`——本插件落盘用的是自己的依赖而不是交出自己提供的服务，放在 `onDispose` 与「消费者 close 期间依赖仍可用」一致。崩溃（非正常退出）可能丢失最后 ~1s 的会话元数据变更。重写 provider 时若要更强一致性，请在关键写操作后同步落盘。
 
 ## 8. 交叉链接
 
 - [服务模型](../concepts/service-model.md) —— DI 按名解析、同名竞争（preference > priority > 注册顺序）。
-- [惰性服务访问](../concepts/lazy-service-access.md) —— 为何每次 `getService()`、不要缓存。
-- [清单元数据](../concepts/manifest-metadata.md) —— `provides`/`inject` 与 `package.json aalis.service` 双源同步与校验。
+- [惰性服务访问](../concepts/lazy-service-access.md) —— 为何每次 `current`、不要缓存。
+- [清单元数据](../concepts/manifest-metadata.md) —— `provides`/`uses` 与 `package.json aalis.service` 双源同步与校验。
 - [消息-LLM 流水线](../concepts/message-llm-pipeline.md) —— `resolveConfig` 的产物如何进入 `agent:input:before` / `agent:llm:before` / `agent:turn:after`。
 - [Agent 服务](agent.md) —— 头号消费方。
 - [Memory 服务](memory.md) —— 会话元数据与历史的持久化后端。

@@ -15,6 +15,21 @@
 | Linux | `bubblewrap`（`bwrap`） | 是：`apt/dnf install bubblewrap`，且需启用 unprivileged user namespaces |
 | 其它 | — | 无后端 → `available=false` |
 
+## 插件声明
+
+```ts
+export default definePlugin({
+  name: '@aalis/plugin-code-sandbox-os',
+  provides: [codeSandbox],
+  uses: {
+    processService,
+    logger,
+    provide,
+  },
+  apply(caps) { /* 见源码 */ },
+});
+```
+
 ## 设计要点
 
 - **独立服务，不污染通用 `process` 契约**：「隔离执行不可信代码」是 code_runner 独有诉求，故自成

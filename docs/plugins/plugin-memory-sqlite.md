@@ -10,10 +10,19 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-memory-sqlite'
-meta.subsystem = 'memory'
-meta.provides = ['memory']
-meta.inject = { required: ['storage'] }
+export default definePlugin({
+  name: '@aalis/plugin-memory-sqlite',
+  subsystem: 'memory',
+  provides: [memory],
+  uses: {
+    storage,
+    provide,
+    logger,
+    lifecycle,
+    config,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 注册优先级: **10**（高于 `plugin-memory-mongodb` 的 5 和 `plugin-memory-inmemory` 的 -100；通过 `servicePreferences` 显式指定偏好时不按优先级选择）

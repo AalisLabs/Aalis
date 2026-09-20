@@ -2,7 +2,7 @@
 
 > 面向：要为 Aalis 写一个代码沙箱后端（provider），或在自己的插件里安全执行不可信代码（consumer）的第三方作者。
 
-`code-sandbox` 把「在 OS 隔离下执行不可信代码」收口成一个独立服务。注册名是字符串 `'code-sandbox'`，通过 `ctx.getService('code-sandbox')` 取用；契约包是 `@aalis/api-code-sandbox`。
+`code-sandbox` 把「在 OS 隔离下执行不可信代码」收口成一个独立服务。注册名是字符串 `'code-sandbox'`，通过 `codeSandbox.current` 取用；契约包是 `@aalis/api-code-sandbox`。
 
 它为什么单独成服务，而不塞进通用的 `process`？「在 OS 隔离里跑不可信代码」是 `code_runner` 独有的诉求。package-manager、scheduler 等同样会跑子进程的插件都不需要它，把它塞进共享的 `process` 契约会污染公共面。
 
@@ -75,12 +75,12 @@ export function useCodeSandbox(ctx: Context): CodeSandboxService | undefined;
 | 角色 | 包 | 关键 API |
 |---|---|---|
 | 契约 | `@aalis/api-code-sandbox` | 导出 interface / type / `useCodeSandbox` |
-| 参考实现 | `@aalis/plugin-code-sandbox-os` | `ctx.provide('code-sandbox', …)` |
-| 唯一消费方 | `@aalis/plugin-tool-code-runner` | `useCodeSandbox(ctx)` → `codeSandbox.run(...)` |
+| 参考实现 | `@aalis/plugin-code-sandbox-os` | `provide(codeSandbox, …)` |
+| 唯一消费方 | `@aalis/plugin-tool-code-runner` | `codeSandbox.current` → `codeSandbox.run(...)` |
 
 参考实现有几个关键设计，写 provider 时值得参照：
 
-- 不直接 import `node:child_process` / `node:fs`。它把不可信代码包成沙箱启动器命令后，经现有的 `process` 服务网关来 spawn（`inject.required = ['process']`）。OS 探测同样靠经网关做功能性试跑。
+- 不直接 import `node:child_process` / `node:fs`。它把不可信代码包成沙箱启动器命令后，经现有的 `process` 服务网关来 spawn（`uses required = ['process']`）。OS 探测同样靠经网关做功能性试跑。
 - 功能性探测（`probeBackend`）：经 `process` 网关真跑一次最小沙箱命令（macOS `sandbox-exec -p '(version 1)(allow default)' true`、Linux `bwrap --ro-bind / / --unshare-all true`），跑通才算可用。这比「命令是否存在」更强——一次同时覆盖存在性，以及 Linux unprivileged userns 是否真能用。探测失败（未装 bwrap、或 userns 被禁）时，`backend = 'none'`、`available = false`。
 - 命令改写（`wrapForSandbox()`，纯逻辑、便于单测）：把 `(cmd, args)` 改写为「经沙箱启动器运行」，全程 shell-free，不拼 shell 字符串。
 
@@ -97,25 +97,31 @@ export function useCodeSandbox(ctx: Context): CodeSandboxService | undefined;
 2. 强制 `policy`：`fsWrite` 之外只读或拒写、`network === 'deny'` 必须真正断网、`env` 之外的宿主环境变量必须清零。这是契约的安全语义，consumer 依赖它来防「写出工作区 / 联网外泄 / secrets 泄漏」。
 3. `run()` 的错误约定要对齐 `ExecResult`：非零退出 reject，错误对象挂 `.result`（见 §5）。
 
-### 注册（`ctx.provide`）
+### 注册（`provide`）
 参考实现在 `apply` 里先探测后端，再注册单例：
 
 ```ts
-export async function apply(ctx: Context): Promise<void> {
-  const logger = ctx.logger.child('my-sandbox');
-  const proc = createProcessGateway(ctx);          // 经 process 网关，别直接碰 child_process
+import { definePlugin } from '@aalis/core';
+
+
+export default definePlugin({
+  name: '@acme/plugin-example',
+  apply({ provide, events, hooks, lifecycle, logger, config }) {
+  const logger = logger.child('my-sandbox');
+  const proc = createProcessGateway(process);          // 经 process 网关，别直接碰 child_process
   const backend = await probeBackend(proc, logger);
-  ctx.provide('code-sandbox', new MyCodeSandboxService(proc, backend));
+  provide(codeSandbox, new MyCodeSandboxService(proc, backend));
   // 默认 priority 0。想默认压过别的后端取更高值（如 50）。
-}
+},
+});
 ```
 
 同名多实现时，胜者 = `preference > priority > 注册顺序`——这是纯按名选择，没有能力维度的匹配（详见 [服务模型](../concepts/service-model.md)）。
 
 ### 双源元数据要同步
-`provides` / `inject` 有两套独立来源，部署时都要写对（见 [清单元数据](../concepts/manifest-metadata.md)）：
+`provides` / `uses` 有两套独立来源，部署时都要写对（见 [清单元数据](../concepts/manifest-metadata.md)）：
 
-- 代码导出：`export const provides = ['code-sandbox']`、`export const inject = { required: ['process'] }`。
+- 代码导出：`provides: [codeSandbox]`、`uses: { process }`。
 - `package.json` 的 `aalis.service`：
 
 ```jsonc
@@ -137,13 +143,9 @@ export async function apply(ctx: Context): Promise<void> {
 ### 最小可编译骨架
 
 ```ts
-import type { Context, PluginModule } from '@aalis/core';
+import { definePlugin } from '@aalis/core';
 import type { CodeSandboxService, SandboxRunRequest } from '@aalis/api-code-sandbox';
 import { type ExecResult, type ProcessService, createProcessGateway } from '@aalis/api-process';
-
-export const name = '@example/plugin-code-sandbox-mybackend';
-export const provides = ['code-sandbox'];
-export const inject = { required: ['process'] };
 
 class MyCodeSandboxService implements CodeSandboxService {
   constructor(private readonly proc: ProcessService, private readonly _ok: boolean) {}
@@ -160,31 +162,30 @@ class MyCodeSandboxService implements CodeSandboxService {
   }
 }
 
-export async function apply(ctx: Context): Promise<void> {
-  const proc = createProcessGateway(ctx);
+export default definePlugin({
+  name: '@example/plugin-code-sandbox-mybackend',
+  provides: [codeSandbox],
+  uses: { process },
+  apply({ provide, events, hooks, lifecycle, logger, config }) {
+  const proc = createProcessGateway(process);
   const ok = await probeMyBackend(proc);         // 功能性试跑，跑通才 true
-  ctx.provide('code-sandbox', new MyCodeSandboxService(proc, ok));
-}
-
-const plugin: PluginModule = { name, apply };
-export default plugin;
+  provide(codeSandbox, new MyCodeSandboxService(proc, ok));
+},
+});
 ```
 
 ---
 
 ## 4. 标准消费方式
 
-`code-sandbox` 通常是可选依赖：consumer 把它声明在 `inject.optional`，运行时取不到就 fail-closed。`code_runner` 就是这么做的：
+`code-sandbox` 通常是可选依赖：consumer 把它声明在 `uses optional`，运行时取不到就 fail-closed。`code_runner` 就是这么做的：
 
 ```ts
-export const inject = {
-  required: ['storage', 'process'],
-  optional: ['code-sandbox'],
-};
+uses: { storage, process, codeSandbox: optional(codeSandbox) };
 ```
 
-### lazy getService + fail-closed
-每次用都重新取，不要把服务句柄缓存进类字段——provider 替换或 bounce 会让旧引用失效，见 [惰性服务访问](../concepts/lazy-service-access.md)。`code_runner` 在每次工具调用前，经 `createRunnerConfig` 重新 `useCodeSandbox(ctx)`，再在 `runCode` 里检查 `available`：
+### 惰性读取 `.current` + fail-closed
+每次用都重新取，不要把服务句柄缓存进类字段——provider 替换或 bounce 会让旧引用失效，见 [惰性服务访问](../concepts/lazy-service-access.md)。`code_runner` 在每次工具调用前，经 `createRunnerConfig` 重新 `codeSandbox.current`，再在 `runCode` 里检查 `available`：
 
 ```ts
 // 节选
@@ -254,6 +255,6 @@ provider 实现必须落实这三条强制语义；consumer 也必须传一个�
 
 ## 7. 交叉链接
 
-- 概念：[服务模型](../concepts/service-model.md)（按名 DI / 同名多实现 / 优先级选择）· [惰性服务访问](../concepts/lazy-service-access.md)（每次用都重取）· [清单元数据](../concepts/manifest-metadata.md)（`provides`/`inject` 双源）· [安全模型](../concepts/security-model.md)（§4 OS 沙箱边界、§5 存储不是沙箱）· [存储 URI 文法](../concepts/storage-uri-grammar.md)。
+- 概念：[服务模型](../concepts/service-model.md)（按名 DI / 同名多实现 / 优先级选择）· [惰性服务访问](../concepts/lazy-service-access.md)（每次用都重取）· [清单元数据](../concepts/manifest-metadata.md)（`provides`/`uses` 双源）· [安全模型](../concepts/security-model.md)（§4 OS 沙箱边界、§5 存储不是沙箱）· [存储 URI 文法](../concepts/storage-uri-grammar.md)。
 - 核心：[权限两轴（authority）](../plugins/plugin-authority.md)（`restricted` 工具受闸）。
 - 相关服务/插件：`process` 契约（`ExecResult` / spawn 网关）· 消费方插件 [`plugin-tool-code-runner`](../plugins/plugin-tool-code-runner.md) · 参考实现 [`plugin-code-sandbox-os`](../plugins/plugin-code-sandbox-os.md)。

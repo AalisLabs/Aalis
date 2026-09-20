@@ -4,9 +4,9 @@
 
 `llm` 是 Aalis 的 **LLM 对话服务**：把一次「消息列表 + 工具定义 → 文本/思考/工具调用」的推理调用抽象成统一契约，屏蔽 OpenAI / DeepSeek / Ollama 等后端差异。
 
-- 服务注册名：`getService<LLMModel>('llm')`（DI 容器里的字符串键）。
+- 服务注册名：`llm.current`（DI 容器里的字符串键）。
 - 契约包：`@aalis/api-llm`（`packages/api-llm/src/index.ts`，`aalis.types: true` 的纯类型契约包）。
-- 关键设计：**每个 model 是一个独立 entry**。一个 provider 插件（如 OpenAI）会按 `listModels()` 结果为**每个模型**单独 `ctx.provide('llm', handle, …)`，entry 已绑定具体 `(provider, model)`，`ChatModelRequest` 不再携带 `model` 字段（`packages/api-llm/src/index.ts`）。
+- 关键设计：**每个 model 是一个独立 entry**。一个 provider 插件（如 OpenAI）会按 `listModels()` 结果为**每个模型**单独 `provide(llm, handle, …)`，entry 已绑定具体 `(provider, model)`，`ChatModelRequest` 不再携带 `model` 字段（`packages/api-llm/src/index.ts`）。
 
 ## 2. 契约
 
@@ -61,8 +61,8 @@ interface ChatModelRequest {
 
 ### 解析助手（消费方用）
 
-- `resolveLLMModel(ctx, ref?, requiredCaps?): LLMModelEntry | undefined`——把 `{ provider?, model? }` 解析为最匹配 entry。解析顺序：① provider+model 都有 → 拼 entryId `${provider}/${model}` 精确查；② 仅 provider → 该 provider 下首个；③ 仅 model → 全局按 `instance.id` 匹配；④ 都空 → 取首个满足能力者（即按 preference/priority/注册顺序的容器胜者）。
-- `listLLMModels(ctx, { caps? }): LLMModelEntry[]`——列举（可按能力过滤），供 `/model` 列表与前端下拉。
+- `resolveLLMModel(llm, ref?, requiredCaps?): LLMModelEntry | undefined`——把 `{ provider?, model? }` 解析为最匹配 entry。解析顺序：① provider+model 都有 → 拼 entryId `${provider}/${model}` 精确查；② 仅 provider → 该 provider 下首个；③ 仅 model → 全局按 `instance.id` 匹配；④ 都空 → 取首个满足能力者（即按 preference/priority/注册顺序的容器胜者）。
+- `listLLMModels(llm, { caps? }): LLMModelEntry[]`——列举（可按能力过滤），供 `/model` 列表与前端下拉。
 - `LLMModelEntry`：`{ instance: LLMModel; contextId: string; label? }`。
 - `ModelRef`：`{ provider?, model? }`，由 ConfigSchema `type: 'llm-ref'` 字段编辑，YAML 存为嵌套对象。
 
@@ -100,7 +100,7 @@ provider 既要在源码导出 `provides`，又要在 `package.json` 写 `aalis.
 源码（`packages/plugin-llm-deepseek/src/index.ts`）：
 ```ts
 export const subsystem = 'llm';
-export const provides = ['llm'];
+provides: [llm];
 export const reusable = true; // LLM provider 通常允许多实例（不同 baseUrl/账号）
 ```
 
@@ -108,13 +108,14 @@ export const reusable = true; // LLM provider 通常允许多实例（不同 bas
 ```json
 { "aalis": { "service": { "provides": ["llm"] } } }
 ```
-若依赖可选服务（如 Ollama 用 `process` 读本地文件），两处都要写 `inject.optional` / `aalis.service.optional`（`packages/plugin-llm-ollama/src/index.ts`、`package.json`）。
+若依赖可选服务（如 Ollama 用 `process` 读本地文件），两处都要写 `uses optional` / `aalis.service.optional`（`packages/plugin-llm-ollama/src/index.ts`、`package.json`）。
 
 ### 注册：每个 model 一个 entry
 
 参考 `packages/plugin-llm-deepseek/src/index.ts`：
 
 ```ts
+import { definePlugin } from '@aalis/core';
 class MyModelHandle implements LLMModel {
   constructor(
     private client: MyClient,
@@ -142,57 +143,60 @@ class MyModelHandle implements LLMModel {
   async *chatStream(request: ChatModelRequest): AsyncIterable<ChatStreamChunk> { /* SSE 解析 → yield chunk */ }
 }
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
-  const client = new MyClient(config, ctx.logger);
+export default definePlugin({
+  name: '@acme/plugin-example',
+  apply({ provide, events, hooks, lifecycle, logger, config }) {
+  const client = new MyClient(config, logger);
   const modelIds = await client.fetchRemoteModelIds(); // + 合并 customModels
   for (const modelId of modelIds) {
-    const handle = new MyModelHandle(client, modelId, ctx.id, contextLength, maxOutputTokens, resolveCaps(modelId));
-    ctx.provide('llm', handle, {
-      entryId: `${ctx.id}/${modelId}`,         // 关键：per-entry id，resolveLLMModel 按它精确查找
+    const handle = new MyModelHandle(client, modelId, lifecycle.id, contextLength, maxOutputTokens, resolveCaps(modelId));
+    provide(llm, handle, {
+      entryId: `${lifecycle.id}/${modelId}`,         // 关键：per-entry id，resolveLLMModel 按它精确查找
       label: `MyProvider / ${modelId}`,         // webui 下拉显示
     });
   }
-}
+},
+});
 ```
 
 要点：
-- **`entryId` 必须是 `${ctx.id}/${modelId}`**——`resolveLLMModel` 用 `contextId === \`${provider}/${model}\`` 精确命中（`packages/api-llm/src/index.ts`）；不按此约定会导致 `llm-ref` 选择失效。
+- **`entryId` 必须是 `${lifecycle.id}/${modelId}`**——`resolveLLMModel` 用 `contextId === \`${provider}/${model}\`` 精确命中（`packages/api-llm/src/index.ts`）；不按此约定会导致 `llm-ref` 选择失效。
 - 不要传 `priority`，默认 `0` 即可；用户通过 preference / persona 选默认 model（见 §5）。同名多 provider 并存由容器按 preference>priority>注册顺序裁决（[服务模型](../concepts/service-model.md)）。
 - `capabilities` 要**如实**反映该 model 实际能力——它驱动 media 的多模态处理器注册与前端过滤（§6）。
-- `ctx.provide` 返回 dispose 函数；实现 `refresh()` 时缓存它以便增删 entry（`packages/plugin-llm-ollama/src/index.ts`）。
+- `provide` 返回 dispose 函数；实现 `refresh()` 时缓存它以便增删 entry（`packages/plugin-llm-ollama/src/index.ts`）。
 
 ## 5. 消费方标准用法
 
-### lazy getService + 每次重取
+### 惰性读取 `.current` + 每次重取
 
-不要缓存 entry/handle：provider bounce（重载）会让旧 instance 失效，必须每次用时重取（见 [惰性服务访问](../concepts/lazy-service-access.md)）。推荐用 `resolveLLMModel` 而非直接 `getService`，因为它顺带做 ref 解析与能力过滤：
+不要缓存 entry/handle：provider bounce（重载）会让旧 instance 失效，必须每次用时重取（见 [惰性服务访问](../concepts/lazy-service-access.md)）。推荐用 `resolveLLMModel` 而非直接读 `.current`，因为它顺带做 ref 解析与能力过滤：
 
 ```ts
 import { resolveLLMModel } from '@aalis/api-llm';
 
-const entry = resolveLLMModel(ctx, cfg.compressionLLM /* ModelRef */, ['chat']);
+const entry = resolveLLMModel(llm, cfg.compressionLLM /* ModelRef */, ['chat']);
 if (!entry) return rawResults;                 // 服务缺失/无满足能力者 → 优雅降级
 try {
   const resp = await entry.instance.chat({ messages, maxTokens: 1024 });
   return resp.content?.trim() || rawResults;
 } catch (err) {
-  ctx.logger.warn(`LLM 调用失败，降级：${err}`);
+  logger.warn(`LLM 调用失败，降级：${err}`);
   return rawResults;                            // 错误边界：provider 抛错要兜住
 }
 ```
-（实证：`packages/plugin-websearch-serper/src/index.ts`，并配 `inject.optional: ['llm']`。）
+（实证：`packages/plugin-websearch-serper/src/index.ts`，并配 `uses optional: ['llm']`。）
 
 ### 可选依赖处理
 
-消费方若把 LLM 当可选增强，用 `inject.optional`，`resolveLLMModel`/`getService` 返回 `undefined` 时降级（如上）。若是硬依赖（如 agent），用 `inject` 必选，并在 ref 解析不到时报错。
+消费方若把 LLM 当可选增强，用 `uses optional`，`resolveLLMModel`/`.current` 返回 `undefined` 时降级（如上）。若是硬依赖（如 agent），用 `uses` 必选，并在 ref 解析不到时报错。
 
 ### 流式消费
 
-agent 直接调 `llm.chatStream!(request)`（`packages/plugin-agent/src/index.ts`）——因此它通过 `resolveLLMModel(ctx, ref, ['chat'])` 拿到的 model 默认假定能 chat；若要流式，应确保选中的 model 声明了 `streaming`，或对 `chatStream` 存在性做判定后回退 `chat`。流中要尊重 `signal.aborted`。
+agent 直接调 `llm.chatStream!(request)`（`packages/plugin-agent/src/index.ts`）——因此它通过 `resolveLLMModel(llm, ref, ['chat'])` 拿到的 model 默认假定能 chat；若要流式，应确保选中的 model 声明了 `streaming`，或对 `chatStream` 存在性做判定后回退 `chat`。流中要尊重 `signal.aborted`。
 
 ### 选默认 model
 
-未传 ref 时，`resolveLLMModel` 取容器胜者。要锁定全局默认 model，用 `ctx.preferService('llm', contextId)`（contextId = `${provider}/${model}`）或 persona.yaml 的 `defaultServices`（`packages/api-llm/src/index.ts`）；会话级覆盖走 `session-manager.resolveConfig`（`packages/plugin-agent/src/index.ts`）。token 预算估算用 `maxOutputTokens`：`tokenBudget ≈ contextLength - maxOutputTokens - safetyMargin`。
+未传 ref 时，`resolveLLMModel` 取容器胜者。要锁定全局默认 model，用 `services.prefer('llm', contextId)`（contextId = `${provider}/${model}`）或 persona.yaml 的 `defaultServices`（`packages/api-llm/src/index.ts`）；会话级覆盖走 `session-manager.resolveConfig`（`packages/plugin-agent/src/index.ts`）。token 预算估算用 `maxOutputTokens`：`tokenBudget ≈ contextLength - maxOutputTokens - safetyMargin`。
 
 ## 6. 能力 / 风险 → 影响
 
@@ -230,9 +234,9 @@ provider 在**序列化前**（流式与非流式两条路径都要）必须先�
 
 ## 8. 交叉链接
 
-- [服务模型](../concepts/service-model.md)——按名 DI、同名多实现、preference>priority>注册顺序裁决、`ctx.provide`。
+- [服务模型](../concepts/service-model.md)——按名 DI、同名多实现、preference>priority>注册顺序裁决、`provide`。
 - [惰性服务访问](../concepts/lazy-service-access.md)——为何每次重取、provider bounce。
-- [manifest 元数据](../concepts/manifest-metadata.md)——`provides`/`inject` 双源同步。
+- [manifest 元数据](../concepts/manifest-metadata.md)——`provides`/`uses` 双源同步。
 - [消息→LLM 管线](../concepts/message-llm-pipeline.md)——`prepareLLMMessages` / role 转译 / kind 前缀。
 - [安全模型](../concepts/security-model.md)——`safeFetch` SSRF 防护。
 - [core/service](../core/service.md)、[plugins/plugin-tools](../plugins/plugin-tools.md)、[core/context](../core/context.md)、[plugins/plugin-authority](../plugins/plugin-authority.md)。

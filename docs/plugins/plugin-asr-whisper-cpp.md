@@ -9,12 +9,21 @@
 
 ## 插件声明
 
-```typescript
-meta.name = '@aalis/plugin-asr-whisper-cpp'
-meta.displayName = 'Whisper.cpp 本地转写'
-meta.subsystem = 'media'
-meta.provides = ['asr']
-meta.inject = { required: ['process', 'storage'] }
+```ts
+definePlugin({
+  name: '@aalis/plugin-asr-whisper-cpp',
+  displayName: 'Whisper.cpp 本地转写',
+  subsystem: 'media',
+  provides: [asr],
+  uses: {
+    logger,
+    config,
+    provide,
+    proc: processService,
+    storage,
+  },
+  apply(caps) { /* 见源码 */ },
+})
 ```
 
 ## 配置
@@ -28,7 +37,7 @@ meta.inject = { required: ['process', 'storage'] }
 | `priority` | number | `80` | 优先级 (越大越优先) |
 | `timeoutMs` | number | `600000` | 子进程超时 (ms)：转码与识别子进程的最长运行时间。设 0 表示不限——届时卡住的子进程会把整轮对话一起挂住 |
 
-`modelPath` 为必填：未配置时 `apply` 直接抛错，插件不会注册 `asr` 服务。`priority` 作为 `ctx.provide('asr', ...)` 的注册优先级。
+`modelPath` 为必填：未配置时 `apply` 直接抛错，插件不会注册 `asr` 服务。`priority` 作为 `provide(asr, impl, { priority })` 的注册优先级。
 
 ## 相关
 

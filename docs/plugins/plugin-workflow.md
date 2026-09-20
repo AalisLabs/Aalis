@@ -15,11 +15,25 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-workflow'
-meta.displayName = '工作流'
-meta.provides = ['workflow']
-meta.subsystem = 'workflow'
-meta.inject = { required: ['cron-engine'], optional: ['tools', 'storage', 'webui'] }
+export default definePlugin({
+  name: '@aalis/plugin-workflow',
+  displayName: '工作流',
+  subsystem: 'workflow',
+  provides: [workflow],
+  uses: {
+    cronEngine,
+    storage: optional(storage),
+    tools: optional(tools),
+    webui: optional(webuiServer),
+    events,
+    hooks,
+    lifecycle,
+    logger,
+    config,
+    provide,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

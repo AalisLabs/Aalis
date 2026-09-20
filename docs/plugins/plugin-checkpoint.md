@@ -9,11 +9,24 @@
 
 ## 插件声明
 
-```typescript
-meta.name = '@aalis/plugin-checkpoint'
-meta.provides = ['checkpoint']
-meta.subsystem = 'scheduler'
-meta.inject = { required: ['storage'] }
+```ts
+definePlugin({
+  name: '@aalis/plugin-checkpoint',
+  provides: [checkpoint],
+  subsystem: 'scheduler',
+  uses: {
+    storage,
+    memory: optional(memory),
+    webui: optional(webuiServer),
+    events,
+    hooks,
+    lifecycle,
+    logger,
+    config,
+    provide,
+  },
+  apply: run,
+})
 ```
 
 ## 配置
@@ -35,7 +48,4 @@ meta.inject = { required: ['storage'] }
 
 ## 拆卸顺序
 
-`storage` 声明为硬依赖，不只是因为快照要经它落盘，更是为了拆卸顺序：`topoSortByDeps` 只按
-`required` 建边，不声明的话 checkpoint 与 storage 的 inDegree 都是 0，拆卸序退化成注册序的
-逆序——storage 可能先被 retire，随后 `onDispose` 里的 `flushAll()` 调 `storage.writeFile` 时
-entry 已被摘除，在飞回合的 manifest 落不了盘。声明之后 `app.stop()` 时消费者先于提供者关闭；单独禁用或热重载 storage 时没有这条保证。
+`storage` 声明为 required，不只是因为快照要经它落盘，更是为了关停次序。关停以激活为单位分 drain / close：checkpoint 对 storage 是普通依赖，消费者整个 close 完提供者才 drain，因此 `lifecycle.onDispose` 里的 `flushAll()` 仍能调 `storage.writeFile`。该保证只在双方同进一张计划时成立（`App.stop()`）；单独禁用或热重载 storage 时没有交接保证，`flushAll` 会落空（回合 blob 在写点已落盘，丢的只是在飞回合的 manifest）。依赖交接放 `onDrain`；本插件冲刷用的是自己的依赖，放在 `onDispose` 与「消费者 close 期间依赖仍可用」一致。

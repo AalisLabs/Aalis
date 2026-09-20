@@ -53,19 +53,25 @@ interface GatewayService {
 ## 典型用法
 
 ```ts
-// 自定义触发器：群聊中 idle 5 分钟后注入一条 "继续？" 消息
-ctx.middleware('inbound:trigger', async (data, next) => {
-  if (data.message.triggerType === 'idle') {
-    data.metadata.injectedReason = 'idle-followup';
-  }
-  await next();
-});
+import { gateway } from '@aalis/api-gateway';
+import { definePlugin, hooks } from '@aalis/core';
 
-// 主动发起出站
-await gateway.dispatchOutbound({
-  content: '系统通知：xxx',
-  sessionId,
-  source: 'system',
+export default definePlugin({
+  name: '@acme/plugin-example-gateway',
+  uses: { gateway, hooks },
+  apply({ gateway, hooks }) {
+    hooks.middleware('inbound:trigger', async (data, next) => {
+      if (data.message.triggerType === 'idle') {
+        data.metadata.injectedReason = 'idle-followup';
+      }
+      await next();
+    });
+    void gateway.current?.dispatchOutbound({
+      content: '系统通知：xxx',
+      sessionId: 'demo',
+      source: 'system',
+    });
+  },
 });
 ```
 
@@ -76,4 +82,4 @@ await gateway.dispatchOutbound({
 ## 相关
 
 - 入站消息类型见 [schema-message](./schema-message.md)
-- 业务层**不应**再直接 `emit('outbound:message')` —— 改用 `dispatchOutbound` 走钩子链
+- 业务层**不应**再直接 `events.emit('outbound:message')` —— 改用 `dispatchOutbound` 走钩子链

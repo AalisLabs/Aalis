@@ -10,10 +10,20 @@ Word (docx)、Excel (xlsx)、PowerPoint (pptx) 和 PDF 文档的创建与编辑�
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-office'
-meta.displayName = 'Office 文档工具'
-meta.subsystem = 'tools'
-meta.inject = { required: ['storage', 'tools'], optional: ['process'] }
+export default definePlugin({
+  name: '@aalis/plugin-office',
+  displayName: 'Office 文档工具',
+  subsystem: 'tools',
+  uses: {
+    tools,
+    storage,
+    processService: optional(processService),
+    logger,
+    lifecycle,
+    config,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

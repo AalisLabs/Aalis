@@ -4,7 +4,7 @@
 
 声明式的「触发器 + DAG」编排引擎：把多步骤任务（工具调用 / 发消息 / 等待 / 派发给 agent）按依赖图拓扑分层并行执行，支持 cron / interval / once / event / manual 多种触发方式。
 
-- 服务注册名：`'workflow'`（`ctx.getService<WorkflowService>('workflow')`）。
+- 服务注册名：`'workflow'`（`workflow.current`）。
 - 契约包：`@aalis/api-workflow`。
 - 该契约**有运行时服务**：`-api` 包只导出 interface + DSL 类型 + 事件契约，实现由 `@aalis/plugin-workflow` 提供。
 - 设计取向（`packages/api-workflow/src/index.ts`）：工作流「定义」是用户/AI 资产，存 `workspace`；「运行实例」是运行时记录，存 `data`。
@@ -41,7 +41,7 @@ export interface WorkflowService {
 }
 ```
 
-并通过 declaration merging 把服务名登记进核心 `ServiceTypeMap`（`packages/api-workflow/src/index.ts`），使 `getService('workflow')` 得到强类型。
+并通过 declaration merging 把服务名登记进核心 `服务描述符`（`packages/api-workflow/src/index.ts`），使 `workflow.current` 得到强类型。
 
 ### 工作流定义（DSL）
 
@@ -71,10 +71,10 @@ export type TriggerSpec =
 
 节点（`packages/api-workflow/src/index.ts`）。基础字段 `id` / `type` / `deps?`（上游依赖，空=根节点）/ `out?`（把结果存入 `outputs[out]` 供下游 `{{outputs.<out>}}` 插值）。四种类型：
 
-- `tool`：`{ tool: string; args?: Record<string, unknown> }`——调用已注册工具；`args` 内字符串值会被插值（`:41-47`）。
-- `send-message`：`{ sessionId: string; platform?: string; content: string }`——fire-and-forget 发一条消息（`:49-55`）。
-- `wait`：`{ seconds: number }`——等待 N 秒（`:57-61`）。
-- `agent`：`{ instruction: string; sessionId?: string; platform?: string; timeoutSeconds?: number }`——把指令派发给 agent **并等待本轮回复**，回复文本作为节点结果（`:70-86`，详见 §6）。
+- `tool`：`{ tool: string; args?: Record<string, unknown> }`——调用已注册工具；`args` 内字符串值会被插值（）。
+- `send-message`：`{ sessionId: string; platform?: string; content: string }`——fire-and-forget 发一条消息（）。
+- `wait`：`{ seconds: number }`——等待 N 秒（）。
+- `agent`：`{ instruction: string; sessionId?: string; platform?: string; timeoutSeconds?: number }`——把指令派发给 agent **并等待本轮回复**，回复文本作为节点结果（，详见 §6）。
 
 ### 运行实例
 
@@ -111,7 +111,7 @@ export interface WorkflowRun {
 ### 参考实现（provider）
 
 唯一一等实现 **`@aalis/plugin-workflow`**：
-- 注册：`ctx.provide('workflow', service)`（`packages/plugin-workflow/src/index.ts`）。
+- 注册：`provide(workflow, service)`（`packages/plugin-workflow/src/index.ts`）。
 - 模块拆分：`engine.ts`（DAG 拓扑调度 + 节点执行 + `{{...}}` 插值）、`triggers.ts`（`TriggerManager`，cron/interval/once/event 接线）、`loader.ts`（YAML 定义加载/持久化）、`persistence.ts`（`RunStore` 运行历史滚动写盘）、`index.ts`（服务装配 + AI 工具 + WebUI 页）。
 - 依赖（`package.json` `aalis.service` 与 `index.ts` 双源）：`required: ['cron-engine']`（周期型触发器全部委托 cron-engine，见 §6）；`optional: ['tools', 'storage', 'webui']`。
 
@@ -120,7 +120,7 @@ export interface WorkflowRun {
 **`@aalis/plugin-scheduler`** 在执行调度任务时同时广播 `trigger:fired`，供 workflow 订阅（`packages/plugin-scheduler/src/index.ts`）：
 
 ```ts
-await ctx.emit('trigger:fired' as any, {
+await events.emit('trigger:fired' as any, {
   source: `scheduler:${jobName}`,
   type: rt.config.cron ? 'cron' : 'interval',
   payload: { jobName, sessionId, platform, content },
@@ -131,9 +131,9 @@ await ctx.emit('trigger:fired' as any, {
 
 ### 典型消费点
 
-- **AI 工具**（同插件内自我消费）：`enableTools` 开启时向 LLM 暴露 `workflow_define` / `workflow_list` / `workflow_run` / `workflow_get_runs` / `workflow_remove`（`packages/plugin-workflow/src/index.ts`），全部走 `tools` 服务注册（optional 依赖，`getService('tools')` 缺失则跳过，`:506`）。
-- **WebUI actions**（同插件内）：`workflowStats` / `listWorkflowsTable` / `listRunsTable` / `triggerWorkflow` / `toggleWorkflow` / `removeWorkflow` / `upsertWorkflowYaml` 等都以 `const svc = ctx.getService<WorkflowService>('workflow')` 取服务、判空降级（`:200-330`）——这是**每次用都重新 getService** 的标准范例。
-- 跨插件外部消费者：当前仓内 workflow 服务的主要消费方就是 workflow 自身的工具/WebUI 层 + scheduler 的事件桥；第三方插件可经 `ctx.getService<WorkflowService>('workflow')` 编程式触发/查询。
+- **AI 工具**（同插件内自我消费）：`enableTools` 开启时向 LLM 暴露 `workflow_define` / `workflow_list` / `workflow_run` / `workflow_get_runs` / `workflow_remove`（`packages/plugin-workflow/src/index.ts`），全部走 `tools` 服务注册（optional 依赖，`tools.current` 缺失则跳过，）。
+- **WebUI actions**（同插件内）：`workflowStats` / `listWorkflowsTable` / `listRunsTable` / `triggerWorkflow` / `toggleWorkflow` / `removeWorkflow` / `upsertWorkflowYaml` 等都以 `const svc = workflow.current` 取服务、判空降级（）——这是**每次读取 `.current` 重新解析** 的标准范例。
+- 跨插件外部消费者：当前仓内 workflow 服务的主要消费方就是 workflow 自身的工具/WebUI 层 + scheduler 的事件桥；第三方插件可经 `workflow.current` 编程式触发/查询。
 
 ## 4. 写一个 provider
 
@@ -147,7 +147,7 @@ await ctx.emit('trigger:fired' as any, {
 - `runWorkflow`：拓扑执行，返回完整 `WorkflowRun`。**务必透传 `caller` 身份到内部工具调用**（见 §6）。
 - `cancelRun` / `getRun` / `listRuns`：运行实例管理（`cancelRun` 可降级为始终返回 false，但参考实现用 cancelToken 真实支持）。
 
-### provides/inject 双源必须同步
+### aalis.service 与 definePlugin provides/uses 双源必须同步
 
 DI 靠包清单 + 代码导出**双源**声明（见 [manifest-metadata](../concepts/manifest-metadata.md)）。两处都要写 `provides: ['workflow']`：
 
@@ -168,22 +168,22 @@ DI 靠包清单 + 代码导出**双源**声明（见 [manifest-metadata](../conc
 `src/index.ts` 导出（`packages/plugin-workflow/src/index.ts`）：
 ```ts
 export const subsystem = 'workflow';
-export const provides = ['workflow'];
-export const inject = { required: ['cron-engine'], optional: ['tools', 'storage', 'webui'] };
+provides: [workflow];
+uses: { cronEngine, tools: optional(tools), storage: optional(storage), webui: optional(webui) };
 ```
 
 ### 最小可编译骨架
 
 ```ts
-import type { Context } from '@aalis/core';
+import { definePlugin } from '@aalis/core';
 import type { WorkflowDef, WorkflowRun, WorkflowService } from '@aalis/api-workflow';
 
-export const name = '@yourscope/plugin-workflow-foo';
-export const subsystem = 'workflow';
-export const provides = ['workflow'];
-export const inject = { required: ['cron-engine'], optional: ['tools', 'storage', 'webui'] };
-
-export async function apply(ctx: Context): Promise<void> {
+export default definePlugin({
+  name: '@yourscope/plugin-workflow-foo',
+  subsystem: 'workflow',
+  provides: [workflow],
+  uses: { cronEngine, tools: optional(tools), storage: optional(storage), webui: optional(webui) },
+  apply({ provide, events, hooks, lifecycle, logger, config }) {
   const defs = new Map<string, WorkflowDef>();
   const runs: WorkflowRun[] = [];
 
@@ -225,27 +225,28 @@ export async function apply(ctx: Context): Promise<void> {
     },
   };
 
-  ctx.provide('workflow', service);
-}
+  provide(workflow, service);
+},
+});
 ```
 
 ### priority / entryId / label
 
-`ctx.provide(name, instance, { priority?, label?, entryId? })`：
+`provide(name, instance, { priority?, label?, entryId? })`：
 - `priority`：默认 `0`。同名服务竞争时 winner = **preference > priority > 注册顺序**（无能力匹配，0.5.0 已移除——能力挂在实例上而非 DI 层）。普通第三方实现保持 `0`，让用户在 WebUI 用 preference 选；要默认压过参考实现才取更高值（如 `50`）。
-- `entryId`：默认 `ctx.id`，**必须以 `ctx.id` 为前缀**，否则卸载时无法连带注销。
+- `entryId`：默认 `lifecycle.id`，**必须以 `lifecycle.id` 为前缀**，否则卸载时无法连带注销。
 - `label`：WebUI 选择器展示名。
 
 详见 [service-model](../concepts/service-model.md) 与 [core/service](../core/service.md)。
 
 ## 5. 标准消费方式
 
-### lazy getService（不要缓存实例）
+### 惰性读取 `.current`（不要缓存实例）
 
-提供者重新 `provide` / 切换会使旧实例失效，所以**每次用都重新取**（见 [lazy-service-access](../concepts/lazy-service-access.md)）。参考实现的 WebUI action 就是逐次 `getService`：
+提供者重新 `provide` / 切换会使旧实例失效，所以**每次用都重新取**（见 [lazy-service-access](../concepts/lazy-service-access.md)）。参考实现的 WebUI action 就是逐次读取 `.current`：
 
 ```ts
-const svc = ctx.getService<WorkflowService>('workflow');
+const svc = workflow.current;
 if (!svc) return { ok: false, error: 'workflow 服务未就绪' };
 const run = await svc.runWorkflow(id, vars, 'manual:foo', { platform, userId });
 ```
@@ -255,10 +256,10 @@ const run = await svc.runWorkflow(id, vars, 'manual:foo', { platform, userId });
 ```ts
 import type { WorkflowService } from '@aalis/api-workflow';
 
-const wf = ctx.getService<WorkflowService>('workflow');   // 可能 undefined
+const wf = workflow.current;   // 可能 undefined
 if (!wf) return;                             // optional 依赖：判空降级
 const run = await wf.runWorkflow('daily-report', { date: '2026-06-22' }, 'event:custom');
-if (run.status !== 'success') ctx.logger.warn(run.error);
+if (run.status !== 'success') logger.warn(run.error);
 ```
 
 ### 用事件触发（解耦，推荐跨插件做法）
@@ -266,7 +267,7 @@ if (run.status !== 'success') ctx.logger.warn(run.error);
 不直接拿服务，而是 emit `trigger:fired`（像 scheduler 那样）——workflow 订阅后会按 `workflowId` 跑，并把 `payload` 注入 `vars`：
 
 ```ts
-await ctx.emit('trigger:fired', {
+await events.emit('trigger:fired', {
   source: 'myplugin:something',
   type: 'event',
   workflowId: 'my-workflow',
@@ -287,7 +288,7 @@ await ctx.emit('trigger:fired', {
 
 工作流定义是 owner 资产，但**「谁触发就按谁的权限裁决」**，杜绝借他人 workflow 提权（`packages/plugin-workflow/src/index.ts`）：
 
-- `workflow_run` 工具触发时把调用者 `{ platform, userId }` 透传给 `runWorkflow` 的 `caller`（`:612-616`），引擎再据此构造 `toolCallContext`，让工作流内部的 `tool` 节点按**调用者**等级过 authority 闸（`engine.ts` 把 `toolCallContext` 传给 `tools.execute`）。
+- `workflow_run` 工具触发时把调用者 `{ platform, userId }` 透传给 `runWorkflow` 的 `caller`（），引擎再据此构造 `toolCallContext`，让工作流内部的 `tool` 节点按**调用者**等级过 authority 闸（`engine.ts` 把 `toolCallContext` 传给 `tools.execute`）。
 - cron / event / once / WebUI「立即运行」触发**无调用者** → 保持匿名（`platform: 'workflow'`、`userId: undefined`），只能跑 `public`（risk safe、minLevel 0）工具（`index.ts`）。
 - provider 作者重实现时**必须保留这条透传链**：否则匿名触发的工作流能跑 owner 才允许的危险工具，等于绕过 [authority](../plugins/plugin-authority.md)。risk{safe/sensitive/dangerous}→minLevel、确认（confirm 轴）等都在 `tools.execute` 那层裁决，workflow 只负责传对身份。
 
@@ -301,7 +302,7 @@ await ctx.emit('trigger:fired', {
 
 ### 触发器全部委托 cron-engine
 
-`cron` / `interval` 触发器都转成 cron-engine 的 `subscribe`（`interval` → `@every Ns`），与 scheduler 共享整分钟 tick，不再各自 `setInterval`（`triggers.ts`）。所以 `cron-engine` 是**硬依赖**（`required`）。`once` 用 `setTimeout`，触发即把 `firedAt` 记入 `runsFile`，一生只触发一次；**定义不存在时记账随之清除**——`removeWorkflow` 当场清，手删 yaml 则由启动时的 `pruneOnceFired`（扫完定义、注册触发器之前）按现存定义集补清；`event` 用 `ctx.on` 订阅（`triggers.ts`）。
+`cron` / `interval` 触发器都转成 cron-engine 的 `subscribe`（`interval` → `@every Ns`），与 scheduler 共享整分钟 tick，不再各自 `setInterval`（`triggers.ts`）。所以 `cron-engine` 是**硬依赖**（`required`）。`once` 用 `setTimeout`，触发即把 `firedAt` 记入 `runsFile`，一生只触发一次；**定义不存在时记账随之清除**——`removeWorkflow` 当场清，手删 yaml 则由启动时的 `pruneOnceFired`（扫完定义、注册触发器之前）按现存定义集补清；`event` 用 `events.on` 订阅（`triggers.ts`）。
 
 ### storage 不是沙盒
 
@@ -319,6 +320,6 @@ await ctx.emit('trigger:fired', {
 
 ## 8. 交叉链接
 
-- 概念：[service-model](../concepts/service-model.md)（DI 按名解析 / 同名竞争）、[lazy-service-access](../concepts/lazy-service-access.md)（每次 getService）、[manifest-metadata](../concepts/manifest-metadata.md)（provides/inject 双源）、[storage-uri-grammar](../concepts/storage-uri-grammar.md)（定义/历史存储）、[security-model](../concepts/security-model.md)、[message-llm-pipeline](../concepts/message-llm-pipeline.md)（agent 节点经 `inbound:message` 接入主链路）。
+- 概念：[service-model](../concepts/service-model.md)（DI 按名解析 / 同名竞争）、[lazy-service-access](../concepts/lazy-service-access.md)（每次读取 `.current`）、[manifest-metadata](../concepts/manifest-metadata.md)（aalis.service 与 definePlugin provides/uses 双源）、[storage-uri-grammar](../concepts/storage-uri-grammar.md)（定义/历史存储）、[security-model](../concepts/security-model.md)、[message-llm-pipeline](../concepts/message-llm-pipeline.md)（agent 节点经 `inbound:message` 接入主链路）。
 - 核心：[core/service](../core/service.md)、[core/context](../core/context.md)、[core/plugin](../core/plugin.md)、[core/events](../core/events.md)、[plugins/plugin-authority](../plugins/plugin-authority.md)、[plugins/plugin-tools](../plugins/plugin-tools.md)。
 - 相关服务：[services/tools](./tools.md)（`tool` 节点的执行面 + `workflow_*` 工具）、[services/agent](./agent.md)（`agent` 节点的回复 join）、[services/storage](./storage.md)（定义/历史落盘）。相关插件：`@aalis/plugin-scheduler`（`trigger:fired` 触发源）、`@aalis/plugin-cron-engine`（cron/interval 调度底座）。

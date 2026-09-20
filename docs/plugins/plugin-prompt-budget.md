@@ -13,11 +13,20 @@
 ## 插件声明
 
 ```ts
-meta.name = '@aalis/plugin-prompt-budget'
-meta.subsystem = 'agent'
+export default definePlugin({
+  name: '@aalis/plugin-prompt-budget',
+  subsystem: 'agent',
+  apply(caps) { /* 见源码 */ },
+  uses: {
+    tools: optional(tools),
+    events,
+    lifecycle,
+    logger,
+  },
+});
 ```
 
-无 `inject` 依赖（订阅事件不强依赖 emit 方；若无 agent 则永远返回 noData）。
+无 `uses` 服务依赖（订阅事件不强依赖 emit 方；若无 agent 则永远返回 noData）。
 
 ## 行为
 

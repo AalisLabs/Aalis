@@ -5,7 +5,7 @@
 
 ## 0. 命名澄清（先读）
 
-本文件名 `tool-session` 是 **文档分组名**，不是任何一个 `getService()` 的注册名。Aalis 里**没有**名为 `'tool-session'` 的服务。这一类「按会话隔离的工具状态」实际由两个独立服务承担，作者按需取用：
+本文件名 `tool-session` 是 **文档分组名**，不是任何一个 `current` 的注册名。Aalis 里**没有**名为 `'tool-session'` 的服务。这一类「按会话隔离的工具状态」实际由两个独立服务承担，作者按需取用：
 
 | 关注点 | 服务注册名 | 契约包 / 实现 | 性质 |
 | --- | --- | --- | --- |
@@ -20,7 +20,7 @@
 
 ## A.1 定位
 
-**按 Aalis `sessionId` 读取某会话的消息历史，并给平台插件提供注入「跨会话读取访问规则」的钩子。** 取用名 `getService<SessionHistoryService>('session-history')`，契约包 `@aalis/api-tool-session`。
+**按 Aalis `sessionId` 读取某会话的消息历史，并给平台插件提供注入「跨会话读取访问规则」的钩子。** 取用名 `sessionHistory.current`，契约包 `@aalis/api-tool-session`。
 
 它不是存储后端——历史数据来自 `memory` 服务；本服务是「读取入口 + 访问控制链 + 给 LLM 的工具壳（`session_get_history`）」。设计上保证**通用工具与平台专属工具都走同一条 access-checker 链，不存在绕过路径**（`packages/api-tool-session/src/index.ts`）。
 
@@ -55,7 +55,7 @@ export interface SessionHistoryService {
 
 判定语义：**any-deny 短路** —— 同一 platform 多个 checker，任一返回 `deny` 即拒绝（`index.ts`，实现见 `plugin-tool-session/src/index.ts`）。
 
-契约里还通过 declaration merging 把名字登记进 `ServiceTypeMap`（`index.ts`），所以 `ctx.getService('session-history')` 无需手写泛型即有类型。消费方源码顶部要 `import '@aalis/api-tool-session'` 触发该 merge。
+契约里还通过 declaration merging 把名字登记进 `服务描述符`（`index.ts`），所以 `sessionHistory.current` 无需手写泛型即有类型。消费方源码顶部要 `import '@aalis/api-tool-session'` 触发该 merge。
 
 ## A.3 谁提供 / 谁消费
 
@@ -63,7 +63,7 @@ export interface SessionHistoryService {
 
 ```ts
 const historyService = createSessionHistoryService(ctx, cfg);
-ctx.provide('session-history', historyService, { label: '会话历史读取' });
+provide(sessionHistory, historyService, { label: '会话历史读取' });
 ```
 
 它还注册了 LLM 工具 `session_get_history`（`index.ts`，handler 转调 `historyService.getHistory`）以及跨会话委派工具组 `session-delegate`（`delegate_to_session` / `list_known_sessions`，`index.ts`，这部分不经本服务接口，是直接的工具实现）。
@@ -79,14 +79,14 @@ ctx.provide('session-history', historyService, { label: '会话历史读取' });
 通常你不需要重写 `session-history`——更常见的是**给已有 provider 注入平台访问规则**（见 A.5）。若确要替换实现（例如对接非 memory 的历史后端），最小骨架：
 
 ```ts
-import type { Context } from '@aalis/core';
+import { definePlugin } from '@aalis/core';
 import type { SessionHistoryService } from '@aalis/api-tool-session';
-import '@aalis/api-tool-session'; // 触发 ServiceTypeMap declaration merge
+import '@aalis/api-tool-session'; // 触发 服务描述符 declaration merge
 
-export const name = '@you/plugin-my-history';
-export const provides = ['session-history'];
-
-export function apply(ctx: Context): void {
+export default definePlugin({
+  name: '@you/plugin-my-history',
+  provides: [sessionHistory],
+  apply({ provide, events, hooks, lifecycle, logger, config }) {
   const checkers: import('@aalis/api-tool-session').AccessChecker[] = [];
   const svc: SessionHistoryService = {
     registerAccessChecker(checker) {
@@ -109,12 +109,13 @@ export function apply(ctx: Context): void {
       return { ok: true, sessionId: target, count: 0, limit: options.limit ?? 20, includeArchived: false, messages: [] };
     },
   };
-  ctx.provide('session-history', svc, { label: '我的历史读取' });
-}
+  provide(sessionHistory, svc, { label: '我的历史读取' });
+},
+});
 ```
 
 要点：
-- **必须** `provides` / `inject` 双源与 `package.json` 的 `aalis.service.provides` 同步（[清单元数据](../concepts/manifest-metadata.md)）。
+- **必须** `provides` / `uses` 双源与 `package.json` 的 `aalis.service.provides` 同步（[清单元数据](../concepts/manifest-metadata.md)）。
 - `getHistory` **必须自己执行 access-checker 链**——否则注入规则的平台插件被静默架空，破坏「无绕过」契约。
 - 失败返回 `{ error }`，**不要** throw 到工具壳外。
 
@@ -123,10 +124,10 @@ export function apply(ctx: Context): void {
 **注入平台访问规则**（OneBot 的范式，`plugin-tool-onebot/src/index.ts`）：
 
 ```ts
-ctx.on('app:ready', () => {
-  const history = ctx.getService<SessionHistoryService>('session-history');
+events.on('app:ready', () => {
+  const history = sessionHistory.current;
   if (!history?.registerAccessChecker) {
-    ctx.logger.debug('session-history 不可用，跳过规则注册');
+    logger.debug('session-history 不可用，跳过规则注册');
     return; // 可选依赖：缺失就跳过，不报错
   }
   const dispose = history.registerAccessChecker({
@@ -137,19 +138,19 @@ ctx.on('app:ready', () => {
       return /* ...你的细粒度规则... */ undefined;
     },
   });
-  ctx.onDispose(dispose); // ← 见 A.7 常见错误①
+  lifecycle.onDispose(dispose); // ← 见 A.7 常见错误①
 });
 ```
 
 **直接读取历史**（平台专属工具的范式，`plugin-tool-onebot/src/index.ts`）：每次现取，不要缓存实例（provider bounce 会失效，见 [惰性服务访问](../concepts/lazy-service-access.md)）：
 
 ```ts
-const history = ctx.getService<SessionHistoryService>('session-history');
+const history = sessionHistory.current;
 if (!history) return JSON.stringify({ error: 'session-history 服务不可用，请启用 @aalis/plugin-tool-session' });
 const result = await history.getHistory({ sessionId, limit }, callCtx);
 ```
 
-`inject` 里把它列为 `optional`（`plugin-tool-onebot/src/index.ts`：`optional: ['platform', 'session-history']`）——它不是硬依赖，缺失时优雅降级。
+`uses` 里把它列为 `optional`（`plugin-tool-onebot/src/index.ts`：`sessionHistory: optional(sessionHistory)`）——它不是硬依赖，缺失时优雅降级。
 
 ## A.6 能力 / 风险
 
@@ -159,7 +160,7 @@ const result = await history.getHistory({ sessionId, limit }, callCtx);
 
 ## A.7 注意事项与边界情形
 
-- **常见错误①（OneBot 已修复，新接入者沿用此写法）**：总线上**不存在 `'dispose'` 事件**。早期写法 `ctx.on('dispose', disposeChecker)` 永不触发，导致插件 bounce 后 access-checker 泄漏。正确写法是 `ctx.onDispose(dispose)`（`plugin-tool-onebot/src/index.ts` 有明确注释）。
+- **常见错误①（OneBot 已修复，新接入者沿用此写法）**：总线上**不存在 `'dispose'` 事件**。早期写法 `events.on('dispose', disposeChecker)` 永不触发，导致插件 bounce 后 access-checker 泄漏。正确写法是 `lifecycle.onDispose(dispose)`（`plugin-tool-onebot/src/index.ts` 有明确注释）。
 - **时间区间模式**：给 `sinceTs`/`untilTs` 任一即进入区间检索；此模式恒含归档记录，结果 `includeArchived` 字段会回显实际生效值（`plugin-tool-session/src/index.ts`）。后端无原生区间查询（`memory.getMessagesBySessionRange` 缺失）时退回扫描 `RANGE_FALLBACK_SCAN=5000` 条客户端过滤，极早窗口可能不全；窗口内超 `limit` 时置 `truncated: true` 而非静默丢弃。
 - `getHistory` 强依赖 `memory` 服务：缺失直接返回 `{ error: 'memory 服务不可用' }`（`index.ts`）。所以参考实现把 `memory` 列为 `optional`（运行期检测）而非 `required`。
 
@@ -169,9 +170,9 @@ const result = await history.getHistory({ sessionId, limit }, callCtx);
 
 ## B.1 定位
 
-**登记并按会话隔离地访问「用户上传的文件」的元信息与本地路径。** 取用名 `getService('file-reader')`，实现包 `@aalis/plugin-file-reader`。
+**登记并按会话隔离地访问「用户上传的文件」的元信息与本地路径。** 取用名 `fileReader.current`，实现包 `@aalis/plugin-file-reader`。
 
-**没有独立的 `@aalis/api-file-reader` 契约包**——契约与实现同住一包：`@aalis/plugin-file-reader` 直接导出 `FileReaderService` 接口，并经 declaration merging 把 `'file-reader'` 登记进 `ServiceTypeMap`（`packages/plugin-file-reader/src/index.ts`）。因此消费方 `import type { FileReaderService } from '@aalis/plugin-file-reader'` 即可拿到完整类型，`ctx.getService('file-reader')` 也无需手写泛型。它与 `session-history` 的差异只在于「契约是否单独成包」，而非「有没有可 import 的接口」。
+**没有独立的 `@aalis/api-file-reader` 契约包**——契约与实现同住一包：`@aalis/plugin-file-reader` 直接导出 `FileReaderService` 接口，并经 declaration merging 把 `'file-reader'` 登记进 `服务描述符`（`packages/plugin-file-reader/src/index.ts`）。因此消费方 `import type { FileReaderService } from '@aalis/plugin-file-reader'` 即可拿到完整类型，`fileReader.current` 也无需手写泛型。它与 `session-history` 的差异只在于「契约是否单独成包」，而非「有没有可 import 的接口」。
 
 ## B.2 契约（导出的 `FileReaderService` 接口）
 
@@ -207,10 +208,10 @@ LLM 侧工具（不在服务接口里，是插件内注册的）：`read_uploade
 
 ## B.3 谁提供 / 谁消费
 
-**提供**：`@aalis/plugin-file-reader`（`index.ts` `provides = ['file-reader']`；`package.json` `aalis.service.provides: ['file-reader']`，required `storage`，optional `agent`/`memory`/`media`）。
+**提供**：`@aalis/plugin-file-reader`（`index.ts` `provides: [file_reader]`；`package.json` `aalis.service.provides: ['file-reader']`，required `storage`，optional `agent`/`memory`/`media`）。
 
 **消费**：`@aalis/plugin-webui-server`
-- 能力探测：`ctx.getService('file-reader') !== undefined` 决定前端是否显示文件上传按钮（`packages/plugin-webui-server/src/index.ts`）。
+- 能力探测：`fileReader.current !== undefined` 决定前端是否显示文件上传按钮（`packages/plugin-webui-server/src/index.ts`）。
 - 删除同步：删文件后通知服务清内存索引（`packages/plugin-webui-server/src/routes/uploaded-files.ts`）——注意这里**故意只用 duck-typed 子集** `{ deleteFile?: ... }` 取用，避免 webui-server 反向依赖 file-reader 插件包（`uploaded-files.ts` 有注释，连 `FileMeta` 都是各自定义而非 import）。
 
 ## B.4 标准用法
@@ -218,11 +219,11 @@ LLM 侧工具（不在服务接口里，是插件内注册的）：`read_uploade
 消费方可 `import type { FileReaderService }` 拿到完整类型；若不愿反向依赖实现包（webui-server 即出于此考量），也可自带最小形状声明。两种都要每次现取、不缓存实例：
 
 ```ts
-const reader = ctx.getService<{ deleteFile?: (id: string) => Promise<boolean> }>('file-reader');
+const reader = caps.services.get<{ deleteFile?: (id: string) => Promise<boolean> }>('file-reader');
 if (reader?.deleteFile) await reader.deleteFile(fileId);
 ```
 
-或先 `ctx.getService('file-reader') !== undefined` 做能力位探测。**不要缓存实例**（[惰性服务访问](../concepts/lazy-service-access.md)）。
+或先 `fileReader.current !== undefined` 做能力位探测。**不要缓存实例**（[惰性服务访问](../concepts/lazy-service-access.md)）。
 
 ## B.5 会话隔离 —— LLM 工具层（审计遗留问题已修复）
 

@@ -12,9 +12,22 @@ AI 可主动创建的定时任务系统，支持三种调度方式：cron 表达
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-scheduler'
-meta.provides = ['scheduler']
-meta.inject = { required: ['tools', 'cron-engine'], optional: ['agent'] }
+export default definePlugin({
+  name: '@aalis/plugin-scheduler',
+  provides: [scheduler],
+  uses: {
+    tools,
+    cronEngine,
+    storage: optional(storage),
+    webui: optional(webuiServer),
+    events,
+    lifecycle,
+    logger,
+    config,
+    provide,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

@@ -6,6 +6,23 @@
 
 Core 不再内置默认的消息路由逻辑。`plugin-gateway` 提供 `gateway` 服务，在 `inbound:message` 事件上按 `INBOUND_PHASE_ORDER` 顺序串行调度四个**命名生命周期相位**，并暴露 `dispatchOutbound()` 接口运行 `outbound:dispatch` 钩子链。所有"对消息流的横切关注"——命令拦截、流控、触发策略、脱敏、限速、审计——都应通过相位中间件参与。
 
+## 插件声明
+
+```ts
+export default definePlugin({
+  name: '@aalis/plugin-gateway',
+  provides: [gateway],
+  uses: {
+    events,
+    hooks,
+    logger,
+    provide,
+    agent: optional(agent),
+  },
+  apply(caps) { /* 见源码 */ },
+});
+```
+
 ## 注册的服务
 
 | 服务名 | 接口 | 说明 |
@@ -31,23 +48,26 @@ Core 不再内置默认的消息路由逻辑。`plugin-gateway` 提供 `gateway`
 
 | 钩子键 | 数据 | 默认动作 |
 |---|---|---|
-| `outbound:dispatch` | `{ message, metadata }` | `ctx.emit('outbound:message', message)` |
+| `outbound:dispatch` | `{ message, metadata }` | `events.emit('outbound:message', message)` |
 
 ## 自定义扩展
 
 ```ts
 import { INBOUND_PHASE } from '@aalis/api-gateway';
+import { definePlugin, hooks } from '@aalis/core';
 
-// 接入命令相位末尾
-ctx.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
-  // 自定义逻辑；调用 next() 继续，不调用即终止整个入站管道
-  await next();
-});
-
-// 出站脱敏
-ctx.middleware('outbound:dispatch', async (data, next) => {
-  data.message.content = redact(data.message.content);
-  await next();
+export default definePlugin({
+  name: '@acme/plugin-example-gateway-mw',
+  uses: { hooks },
+  apply({ hooks }) {
+    hooks.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
+      await next();
+    });
+    hooks.middleware('outbound:dispatch', async (data, next) => {
+      data.message.content = redact(data.message.content);
+      await next();
+    });
+  },
 });
 ```
 
@@ -56,8 +76,12 @@ ctx.middleware('outbound:dispatch', async (data, next) => {
 每个 inbound 相位执行结束后 emit `gateway:phase:done`：
 
 ```ts
-ctx.on('gateway:phase:done', ({ phase, reachedEnd, durationMs, sessionId, platform }) => {
-  // 记录耗时 / 统计 swallow 率 / 追踪流转路径
+events.on('gateway:phase:done', ({ phase, reachedEnd, durationMs, sessionId, platform }) => {
+  void phase;
+  void reachedEnd;
+  void durationMs;
+  void sessionId;
+  void platform;
 });
 ```
 
@@ -65,9 +89,9 @@ ctx.on('gateway:phase:done', ({ phase, reachedEnd, durationMs, sessionId, platfo
 
 ## 与 `inbound:message` / `outbound:message` 事件的关系
 
-- 平台适配器仍以 `ctx.emit('inbound:message', msg)` 提交入站消息；gateway 监听该事件并把它送进相位链。
-- 适配器仍以 `ctx.on('outbound:message', ...)` 接收最终发送指令；gateway 在 `dispatchOutbound` 末尾 `emit` 该事件。
-- 业务侧（agent / commands / scheduler 等）应改用 `gateway.dispatchOutbound(msg)` 而非直接 `emit('outbound:message')`，以便经过 `outbound:dispatch` 链。
+- 平台适配器仍以 `events.emit('inbound:message', msg)` 提交入站消息；gateway 监听该事件并把它送进相位链。
+- 适配器仍以 `events.on('outbound:message', ...)` 接收最终发送指令；gateway 在 `dispatchOutbound` 末尾 `emit` 该事件。
+- 业务侧（agent / commands / scheduler 等）应改用 `gateway.require().dispatchOutbound(msg)`（或先判 `gateway.current`）而非直接 `events.emit('outbound:message')`，以便经过 `outbound:dispatch` 链。
 
 ## 应用入口要求
 

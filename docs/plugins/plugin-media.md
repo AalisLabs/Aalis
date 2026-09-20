@@ -10,9 +10,29 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-media'
-meta.provides = ['media']
-meta.inject = { required: ['process', 'storage'], optional: ['llm', 'agent', 'asr'] }
+export default definePlugin({
+  name: '@aalis/plugin-media',
+  provides: [media],
+  uses: {
+    logger,
+    config,
+    lifecycle,
+    events,
+    hooks,
+    provide,
+    proc: processService,
+    storage,
+    llm: optional(llm),
+    agent: optional(agent),
+    asr: optional(asr),
+    tools: optional(tools),
+    memory: optional(memory),
+    sessionManager: optional(sessionManager),
+    hostConfig: optional(hostConfig),
+    app: optional(appService),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

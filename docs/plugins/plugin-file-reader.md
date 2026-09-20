@@ -10,9 +10,25 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-file-reader'
-meta.provides = ['file-reader']
-meta.inject = { required: ['storage'], optional: ['agent', 'memory', 'media'] }
+export default definePlugin({
+  name: '@aalis/plugin-file-reader',
+  provides: [fileReader],
+  uses: {
+    storage,
+    config,
+    logger,
+    lifecycle,
+    events,
+    hooks,
+    contributions,
+    provide,
+    tools: optional(tools),
+    agent: optional(agent),
+    memory: optional(memory),
+    media: optional(media),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

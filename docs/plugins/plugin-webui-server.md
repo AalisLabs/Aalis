@@ -10,11 +10,33 @@ Express + WebSocket 实现的 Web 管理后台和聊天平台，提供 REST API 
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-webui-server'
-meta.provides = ['webui-server', 'platform']
-meta.inject = {
-  optional: ['storage', 'authority', 'commands', 'platform', 'process', 'session-confirm'],
-}
+export default definePlugin({
+  name: '@aalis/plugin-webui-server',
+  provides: [webuiServer, platform],
+  uses: {
+    events,
+    logger,
+    lifecycle,
+    config,
+    provide,
+    services,
+    hostConfig: optional(hostConfig),
+    app: optional(appService),
+    plugins: optional(pluginsService),
+    storage: optional(storage),
+    authority: optional(authority),
+    commands: optional(commands),
+    platform: optional(platform),
+    process: optional(processService),
+    sessionConfirm: optional(sessionConfirm),
+    tools: optional(tools),
+    llm: optional(llm),
+    persona: optional(persona),
+    agent: optional(agent),
+    memory: optional(memory),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

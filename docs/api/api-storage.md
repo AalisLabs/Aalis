@@ -20,7 +20,7 @@
 
 ```ts
 interface StorageRootInfo {
-  name: string;                                            // 'workspace' / 'data' / 自定义
+  name: string;
   label?: string;
   kind: 'workspace' | 'data' | 'tmp' | 'pluginData' | 'logs' | string;
   browsable: boolean;
@@ -51,6 +51,24 @@ interface StorageService {
 }
 ```
 
+描述符 `storage` 是普通调用型：绑定接口是 `ServiceRef<StorageService>`。每个 entry 只负责一个根，以 `entryId = '${激活id}/${rootName}'` 名义 `provide`。上层跨 root 调度用 `createStorageGateway(storage)`（第一参是 `ServiceRef`，不是激活记录）。gateway **不**注册进容器。
+
+```ts
+import { createStorageGateway, storage } from '@aalis/api-storage';
+import { definePlugin } from '@aalis/core';
+
+export default definePlugin({
+  name: '@acme/plugin-example-storage',
+  uses: { storage },
+  apply({ storage }) {
+    const gateway = createStorageGateway(storage);
+    void gateway.readFile('data:/example.json', 'utf8');
+  },
+});
+```
+
+网关每次方法调用按 URI 重新枚举 `storage.all()` 并路由。构造一次网关对象可以长期持有——它不缓存某个 root 的 `StorageService` 实例。不要把 `storage.current` 或 `storage.all()[i]` 存进字段当「当前后端」。
+
 ## Capability 框架
 
 ```
@@ -61,16 +79,7 @@ delete        .delete()
 local-path    .resolveLocalPath() —— shell/code-runner 必需
 ```
 
-每个 `storage` entry 只负责一个根 (root)，以 `entryId = '<plugin-id>/<rootName>'` 名义注册。上层如需跨多个 root 调度，使用 `createStorageGateway(ctx)` 拿一个在调用点按 URI 路由的 `StorageService`（该 gateway **不**注册进容器，避免出现同名 facade entry）。
-```
-
-依赖声明：
-
-```ts
-export const inject = {
-  required: ['storage'],
-};
-```
+这些是按 root 权限位 + 方法是否存在做过滤，不是 DI 能力声明。
 
 ## URI 规范
 
@@ -80,23 +89,26 @@ export const inject = {
 - `pluginData:/my-plugin/state.json` —— 插件私有
 - `host:/` —— 宿主机绝对路径（仅在 storage 配置显式开启时存在，**默认关闭**）
 
-文件工具与各后端消费者复用的统一 `toStorageUri()` 实现在本包 `src/index.ts`（契约级文法，勿各自重抄）。
+文件工具与各后端消费者复用的统一 `toStorageUri()` 实现在本包 `packages/api-storage/src/index.ts`（契约级文法，勿各自重抄）。
 
 ## 权限
 
-每个 storage 根自带 `readable` / `writable` / `deletable` 读写删开关；`resolveLocalPath(uri, access)` 在解析时按 `access` 校验对应根是否允许该操作，越权即抛错。能访问哪些操作由根自身的权限位（`readable`/`writable`/`deletable`）决定，而非 DI 能力声明。
+每个 storage 根自带 `readable` / `writable` / `deletable` 读写删开关；`resolveLocalPath(uri, access)` 在解析时按 `access` 校验对应根是否允许该操作，越权即抛错。
 
 ## 实现者
 
-- `@aalis/plugin-storage-local` — 本地文件系统；`apply()` 里为每个 `roots[]` 条目独立 `ctx.provide('storage', ScopedStorageService, { entryId, label })`。
+- `@aalis/plugin-storage-local` — 本地文件系统；`apply` 里为每个 `roots[]` 条目独立 `provide(storage, scoped, { entryId, label })`。
 
 ## Helper
 
-- `getStorageEntries(ctx)` — 拿到全部注册过的 storage entry。
-- `aggregateStorageRoots(ctx)` / `getStorageRootConflicts(ctx)` — 跨 entry 汇总根、识别同名冲突。
-- `resolveStorageEntryForRoot(ctx, rootName, requiredCaps?)` / `resolveStorageByPath(ctx, uri, requiredCaps?)` — 按 root 名或 URI 查到负责该路径的 entry。
-- `createStorageGateway(ctx)` — 返回一个在调用点路由 URI 、职责该 entry 的临时 `StorageService`；适用于文件工具、code-runner 、checkpoint 、webui-server 等需要统一入口的使用者。
+第一参均为 `ServiceRef<StorageService>`：
+
+- `getStorageEntries(source)` — 全部注册过的 storage entry
+- `aggregateStorageRoots(source)` / `getStorageRootConflicts(source)` — 跨 entry 汇总根、识别同名冲突
+- `resolveStorageEntryForRoot(source, rootName, requiredCaps?)` / `resolveStorageByPath(source, uri, requiredCaps?)` — 按 root 名或 URI 查负责该路径的 entry
+- `createStorageGateway(source)` — 调用点按 URI 路由的临时 `StorageService`
+- `isStorageUri` / `parseUriRoot` / `toStorageUri` / `parseStorageUri` / `resolveAgainstCwd` — 契约级路径文法
 
 ## 相关
 
-- 路径安全：本包 `toStorageUri()` / `parseStorageUri()` / `resolveAgainstCwd()`（契约级路径归一与解析）
+- 路径安全：本包 `toStorageUri()` / `parseStorageUri()` / `resolveAgainstCwd()`

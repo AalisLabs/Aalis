@@ -10,9 +10,22 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-persona'
-meta.provides = ['persona']
-meta.inject = { optional: ['platform'] }
+export default definePlugin({
+  name: '@aalis/plugin-persona',
+  provides: [persona],
+  uses: {
+    provide,
+    config,
+    logger,
+    events,
+    hooks,
+    lifecycle,
+    platform: optional(platform),
+    storage: optional(storage),
+    sessionManager: optional(sessionManager),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

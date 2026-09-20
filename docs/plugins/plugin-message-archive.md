@@ -10,11 +10,21 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-message-archive'
-meta.displayName = '消息归档'
-meta.subsystem = 'message'
-meta.provides = ['message-archive']
-meta.inject = { required: ['memory'], optional: ['media'] }
+export default definePlugin({
+  name: '@aalis/plugin-message-archive',
+  displayName: '消息归档',
+  subsystem: 'message',
+  provides: [messageArchive],
+  uses: {
+    memory,
+    media: optional(media),
+    events,
+    logger,
+    config,
+    provide,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

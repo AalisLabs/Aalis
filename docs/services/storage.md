@@ -2,7 +2,7 @@
 
 **定位**：命名根（named root）+ storage URI（`<root>:/path`）的文件后端——为宿主机若干目录赋予稳定名称，对外提供 `read/write/delete/rename/list/stat` 等基于 URI 的文件操作，使上层无需硬编码绝对路径。
 
-- **服务注册名**：`getService('storage')` / `getAllServices('storage')`（字符串键 `storage`）。
+- **服务注册名**：描述符 `storage`（`name: 'storage'`），绑定接口是 `ServiceRef<StorageService>`。
 - **契约包**：`@aalis/api-storage`（`packages/api-storage/src/index.ts`）。
 - **参考实现**：`@aalis/plugin-storage-local`（`packages/plugin-storage-local/src/index.ts`）。
 - **它不是沙箱**：见 [§6](#6-能力风险--影响安全边界)。
@@ -17,64 +17,61 @@
 
 ```ts
 export interface StorageService {
-  listRoots(): StorageRootInfo[];                                       // :88 该 provider 声明的所有根
-  list(uri: string): Promise<StorageListResult>;                        // :89
-  stat(uri: string): Promise<StorageStat>;                              // :90
-  readFile(uri: string, encoding?: BufferEncoding): Promise<string | Buffer>; // :91 不传 encoding 返回 Buffer
-  readFileRange?(uri: string, start: number, end: number): Promise<Buffer>;   // :97 可选，按字节区间 [start,end) 读取（大文件窗口化）
-  createReadStream(uri: string): Promise<StorageReadStreamResult>;      // :98 流式下载
-  writeFile(uri: string, data: string | Buffer): Promise<void>;         // :99
-  rename(uri: string, newName: string): Promise<string>;                // :100 仅改名（同目录），返回新 URI
-  move?(fromUri: string, toUri: string): Promise<string>;               // :107 可选，移动/重命名到完整目标 URI（可跨目录，须同根）
-  mkdir?(uri: string): Promise<string>;                                 // :113 可选，递归创建目录
-  delete(uri: string): Promise<void>;                                   // :114
-  resolveLocalPath?(uri: string, access?: 'read' | 'write' | 'delete'): Promise<string>; // :121 可选
-  watch?(uri: string, listener: StorageWatchListener): StorageUnwatch;  // :130 可选
+  listRoots(): StorageRootInfo[];
+  list(uri: string): Promise<StorageListResult>;
+  stat(uri: string): Promise<StorageStat>;
+  readFile(uri: string, encoding?: BufferEncoding): Promise<string | Buffer>;
+  readFileRange?(uri: string, start: number, end: number): Promise<Buffer>;
+  createReadStream(uri: string): Promise<StorageReadStreamResult>;
+  writeFile(uri: string, data: string | Buffer): Promise<void>;
+  rename(uri: string, newName: string): Promise<string>;
+  move?(fromUri: string, toUri: string): Promise<string>;
+  mkdir?(uri: string): Promise<string>;
+  delete(uri: string): Promise<void>;
+  resolveLocalPath?(uri: string, access?: 'read' | 'write' | 'delete'): Promise<string>;
+  watch?(uri: string, listener: StorageWatchListener): StorageUnwatch;
 }
 ```
 
 ### 关键类型
 
-**`StorageRootInfo`**（`:7-22`）——根的标识与权限位，承载整套权限模型：
+**`StorageRootInfo`**——根的标识与权限位：
 
 ```ts
 export interface StorageRootInfo {
-  name: string;        // 根 ID = URI scheme，如 workspace、data；正则 /^[a-zA-Z][a-zA-Z0-9_-]*$/
-  label?: string;      // 展示名
-  kind: StorageRootKind; // 'workspace'|'data'|'tmp'|'pluginData'|'logs'|string（语义标签，:5）
-  browsable: boolean;  // 是否允许通用文件浏览 UI 展示（仅 hint，见 §7）
-  readable: boolean;   // 默认是否允许读
-  writable: boolean;   // 默认是否允许写
-  deletable: boolean;  // 默认是否允许删除
+  name: string;
+  label?: string;
+  kind: StorageRootKind;
+  browsable: boolean;
+  readable: boolean;
+  writable: boolean;
+  deletable: boolean;
 }
 ```
 
-**`StorageEntry`**（`:24-32`，list 的元素）与 **`StorageStat`**（`:34-43`，stat 返回）字段相近，都带 `uri`/`path`/`isDirectory`/`size`/`mtime`/`ext`；`StorageStat` 额外有 `birthtime`。
+**`StorageEntry`** 与 **`StorageStat`** 字段相近，都带 `uri`/`path`/`isDirectory`/`size`/`mtime`/`ext`；`StorageStat` 额外有 `birthtime`。
 
-**`StorageReadStreamResult`**（`:51-54`）：`{ stream: Readable; stat: StorageStat }`。
-
-**`StorageWatchEvent`**（`:60-66`）：`{ type: 'change'; uri: string; path: string }`——当前实现把创建/修改/删除统一上报为 `change`；`StorageWatchListener = (event) => void`（`:68`），`watch` 返回 `StorageUnwatch = () => void`（`:71`）取消监听。
+**`StorageWatchEvent`**：`{ type: 'change'; uri: string; path: string }`——当前实现把创建/修改/删除统一上报为 `change`。
 
 ### 能力声明常量（可选互操作用）
 
-`StorageCapabilities`（`:146-153`）：`{ List:'list', Read:'read', Write:'write', Delete:'delete', LocalPath:'local-path', Watch:'watch' }`。这些**不是 DI 能力声明**——`storage` 已不走能力选择（0.5.0 移除）。它们只在 helper（`createStorageGateway` / `resolveStorageEntryForRoot`）里被解释为「按 root 的 `readable/writable/deletable` 权限位 + `resolveLocalPath`/`watch` 方法是否存在」来过滤（`rootSatisfies`，`:239-262`）。
+`StorageCapabilities`：`{ List:'list', Read:'read', Write:'write', Delete:'delete', LocalPath:'local-path', Watch:'watch' }`。这些**不是 DI 能力声明**。它们只在 helper（`createStorageGateway` / `resolveStorageEntryForRoot`）里被解释为「按 root 的 `readable/writable/deletable` 权限位 + `resolveLocalPath`/`watch` 方法是否存在」来过滤。
 
 ---
 
-## 2. 契约包导出的 helper（消费者复用，避免各自重复实现）
+## 2. 契约包导出的 helper
 
-`@aalis/api-storage` 不只是类型——它导出一组纯函数 helper（`packages/api-storage/src/index.ts`），是消费者的标准入口：
+第一参均为 `ServiceRef<StorageService>`：
 
-| 函数 | file:line | 用途 |
-| --- | --- | --- |
-| `createStorageGateway(ctx)` | `:406` | **消费者首选**：返回一个 `StorageService`，每次方法调用按 URI 自动路由到对应 root 的 entry。不注册进容器。 |
-| `getStorageEntries(ctx)` | `:198` | 枚举所有 storage entry（`= ctx.getAllServices('storage')`）。 |
-| `aggregateStorageRoots(ctx)` | `:203` | 聚合全部 entry 的 root 列表（带 `providerId`/`provider`）。 |
-| `getStorageRootConflicts(ctx)` | `:214` | 同名 root 冲突诊断（doctor / 启动日志用）。 |
-| `resolveStorageByPath(ctx, uri, caps?)` | `:278` | 按 URI 找到服务该 root 的 entry。 |
-| `isStorageUri(s)` | `:298` | **权威文法判定**：`s` 是不是 `<root>:/path`。区分 `http/https/file` 与标准 `data:image/...;base64,`。全体消费者复用。 |
-| `parseUriRoot(uri)` | `:305` | 取根名（`data:/x` → `data`）。 |
-| `toStorageUri(input, fallbackRoot='data')` | `:320` | 把配置里的裸名/相对路径归一为 storage URI。 |
+| 函数 | 用途 |
+| --- | --- |
+| `createStorageGateway(source)` | **消费者首选**：返回一个 `StorageService`，每次方法调用按 URI 自动路由到对应 root 的 entry。不注册进容器。 |
+| `getStorageEntries(source)` | 枚举所有 storage entry（`source.all()`）。 |
+| `aggregateStorageRoots(source)` | 聚合全部 entry 的 root 列表（带 `providerId`/`provider`）。 |
+| `getStorageRootConflicts(source)` | 同名 root 冲突诊断。 |
+| `resolveStorageEntryForRoot(source, rootName, caps?)` / `resolveStorageByPath(source, uri, caps?)` | 按 root 名或 URI 找到负责该路径的 entry。 |
+| `isStorageUri(s)` | **权威文法判定**。 |
+| `parseUriRoot(uri)` / `toStorageUri(input, fallbackRoot='data')` / `parseStorageUri` / `resolveAgainstCwd` | 契约级路径文法。 |
 
 ---
 
@@ -82,21 +79,11 @@ export interface StorageRootInfo {
 
 ### 提供者（参考实现）
 
-`@aalis/plugin-storage-local`（`packages/plugin-storage-local/src/index.ts`）——把 `config.roots` 里声明的若干本机目录注册为命名根。内部用 `ScopedStorageService`（`:257`）：**每个 root 一个实例 + 一个容器 entry**（见 §4 entryId）。
+`@aalis/plugin-storage-local`——把 `config.roots` 里声明的若干本机目录注册为命名根。**每个 root 一个实例 + 一个容器 entry**。
 
 ### 典型消费点
 
-| 消费者 | file:line | 用法 |
-| --- | --- | --- |
-| 文件工具组 | `packages/plugin-tool-system/src/index.ts` | `createStorageGateway(ctx)` 做 read/write/list（注册段把网关传给 `file.ts` 的 `storage` 配置字段） |
-| shell 工具 | `packages/plugin-tool-system/src/index.ts` | `createStorageGateway(ctx)`；网关传给 `shell.ts` 后用 `resolveLocalPath(uri,'read')` 取 cwd 本地路径 |
-| code-runner | `packages/plugin-tool-code-runner/src/index.ts` | 运行时探测 `resolveLocalPath`，解析子进程 cwd |
-| skills | `packages/plugin-skills/src/index.ts` | `storage.watch?.(skillsUri, …)` 监听技能目录增量同步 |
-| file-reader | `packages/plugin-file-reader/src/index.ts` | `createStorageGateway(ctx)` |
-| checkpoint | `packages/plugin-checkpoint/src/index.ts` | 同上（同时被 storage 反向调用做写前快照，见 §7） |
-| memory / persona / scheduler / media / onebot / asr / authority / office… | （`grep createStorageGateway`） | 均经 `createStorageGateway(ctx)` 消费 |
-
-`createStorageGateway` 是所有消费者的统一入口——含 plugin-tool-system 里的四类工具（shell / file / system / http，同属 `system` 一个分组）都经它取网关。`file.ts` / `shell.ts` 上的 `storage?: StorageService` 只是配置字段的类型标注；注册段实际传入的是该网关，没有任何消费者经 DI 拿到单 root 的 `StorageService` 句柄。
+文件工具组、shell、code-runner、skills、file-reader、checkpoint、memory / persona / scheduler / media / onebot / asr / authority / office 等，均经 `createStorageGateway(storage)` 消费。没有任何消费者经 DI 拿到单 root 的 `StorageService` 句柄当长期缓存。
 
 ---
 
@@ -106,163 +93,153 @@ export interface StorageRootInfo {
 
 | 必须 | 可选 |
 | --- | --- |
-| `listRoots` `list` `stat` `readFile` `createReadStream` `writeFile` `rename` `delete` | `resolveLocalPath`（无本地路径语义的远程/虚拟根可不实现）、`watch`（远程/虚拟根可不实现）、`move` / `mkdir` / `readFileRange`（后端不支持时消费方降级报错） |
+| `listRoots` `list` `stat` `readFile` `createReadStream` `writeFile` `rename` `delete` | `resolveLocalPath`、`watch`、`move` / `mkdir` / `readFileRange` |
 
-不实现可选方法时，`createStorageGateway` 会在调用方抛出明确报错（如 `:466`/`:473`：「存储根 X 不支持 local-path/watch」；`move`/`mkdir`/`readFileRange` 缺失同样抛「不支持…」），不会静默。
+不实现可选方法时，`createStorageGateway` 会在调用方抛出明确报错，不会静默。
 
-### 4.2 注册：`ctx.provide` + per-root entryId
-
-参考实现的注册段（`packages/plugin-storage-local/src/index.ts`）——**一个 root 一个 entry**：
+### 4.2 注册：`provide` + per-root entryId
 
 ```ts
 for (const root of roots) {
-  const scoped = new ScopedStorageService(root, logger, ctx);
-  ctx.provide('storage', scoped, {
-    entryId: `${ctx.id}/${root.name}`,      // 每个 root 独立 entryId，避免跨实例/跨根同名冲突
+  const scoped = new ScopedStorageService(root, logger);
+  provide(storage, scoped, {
+    entryId: `${lifecycle.id}/${root.name}`,
     label: root.label || `本地根 ${root.name}`,
   });
 }
 ```
 
-- **`entryId: ${ctx.id}/${root.name}`**：service-granularity 约定（per-entry provide）。同一插件可注册多个 storage entry，每个对应一个 root；`getAllServices('storage')` 会把它们全部枚举出来，gateway 据此按 URI 路由。
-- **`label`**：会进入 `AggregatedStorageRoot.provider`（`:169`），用于冲突诊断展示。
-- **`priority`**：本服务靠「URI → root 名」精确路由，不靠 DI 同名优胜，所以**通常不设 priority**。若你确实要覆盖内置某个同名 root（如自己实现 `data` 根），设更高的 `priority`（数字越大越优先）。同名 root 不会两个都生效——`createStorageGateway.listRoots` 按枚举顺序去重首个胜出（`:428-436`），冲突可由 `getStorageRootConflicts` 暴露。
+- **`entryId: ${lifecycle.id}/${root.name}`**：同一插件可注册多个 storage entry；`storage.all()` 全部枚举，gateway 按 URI 路由。
+- **`priority`**：本服务靠「URI → root 名」精确路由，通常不设。同名 root 不会两个都生效——`createStorageGateway.listRoots` 按枚举顺序去重首个胜出，冲突由 `getStorageRootConflicts` 暴露。
 
-### 4.3 双源 manifest 同步
-
-`provides`/`inject` 必须同时写进 `package.json` 的 `aalis.service`。参考实现：
-
-```jsonc
-// packages/plugin-storage-local/package.json
-"aalis": {
-  "service": {
-    "optional": ["doctor"],   // 对应 export const inject = { optional: ['doctor'] }
-    "provides": ["storage"]   // 对应 export const provides = ['storage']
-  }
-}
-```
-
-源码侧（`packages/plugin-storage-local/src/index.ts`）：
+### 4.3 可编译的最小骨架
 
 ```ts
-export const provides = ['storage'];
-export const inject = { optional: ['doctor'] };
-```
-
-两源不一致会被 manifest 校验拦下，详见 [docs/concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。
-
-### 4.4 可编译的最小骨架
-
-```ts
-import type { Context } from '@aalis/core';
-import type {
-  StorageService, StorageRootInfo, StorageListResult, StorageStat, StorageReadStreamResult,
+import {
+  storage,
+  type StorageListResult,
+  type StorageReadStreamResult,
+  type StorageRootInfo,
+  type StorageService,
+  type StorageStat,
 } from '@aalis/api-storage';
-
-export const name = '@aalis/plugin-storage-mybackend';
-export const provides = ['storage'];
+import { definePlugin, lifecycle, provide } from '@aalis/core';
 
 class MyRoot implements StorageService {
   constructor(private readonly root: StorageRootInfo) {}
-  listRoots() { return [this.root]; }
-  async list(uri: string): Promise<StorageListResult> { /* … */ throw new Error('todo'); }
-  async stat(uri: string): Promise<StorageStat> { /* … */ throw new Error('todo'); }
-  async readFile(uri: string, enc?: BufferEncoding): Promise<string | Buffer> { /* … */ throw new Error('todo'); }
-  async createReadStream(uri: string): Promise<StorageReadStreamResult> { /* … */ throw new Error('todo'); }
-  async writeFile(uri: string, data: string | Buffer): Promise<void> { /* … */ }
-  async rename(uri: string, newName: string): Promise<string> { /* … */ return uri; }
-  async delete(uri: string): Promise<void> { /* … */ }
-  // resolveLocalPath / watch / move / mkdir / readFileRange 均可选，按后端能力决定是否实现
+  listRoots() {
+    return [this.root];
+  }
+  async list(_uri: string): Promise<StorageListResult> {
+    throw new Error('todo');
+  }
+  async stat(_uri: string): Promise<StorageStat> {
+    throw new Error('todo');
+  }
+  async readFile(_uri: string, _enc?: BufferEncoding): Promise<string | Buffer> {
+    throw new Error('todo');
+  }
+  async createReadStream(_uri: string): Promise<StorageReadStreamResult> {
+    throw new Error('todo');
+  }
+  async writeFile(_uri: string, _data: string | Buffer): Promise<void> {}
+  async rename(uri: string, _newName: string): Promise<string> {
+    return uri;
+  }
+  async delete(_uri: string): Promise<void> {}
 }
 
-export async function apply(ctx: Context): Promise<void> {
-  const root: StorageRootInfo = {
-    name: 'mybackend', label: 'My Backend', kind: 'external',
-    browsable: false, readable: true, writable: true, deletable: false,
-  };
-  ctx.provide('storage', new MyRoot(root), { entryId: `${ctx.id}/${root.name}`, label: root.label });
-}
+export default definePlugin({
+  name: '@aalis/plugin-storage-mybackend',
+  provides: [storage],
+  uses: { provide, lifecycle },
+  apply({ provide, lifecycle }) {
+    const root: StorageRootInfo = {
+      name: 'mybackend',
+      label: 'My Backend',
+      kind: 'external',
+      browsable: false,
+      readable: true,
+      writable: true,
+      deletable: false,
+    };
+    provide(storage, new MyRoot(root), { entryId: `${lifecycle.id}/${root.name}`, label: root.label });
+  },
+});
 ```
 
-> provider 内部务必自己做 `..` 穿越 / symlink 越界校验（参考实现 `isInside`+`realpath`，`:601-623`）——契约对 URI 只规定文法，不保证安全。
+> provider 内部务必自己做 `..` 穿越 / symlink 越界校验——契约对 URI 只规定文法，不保证安全。
 
 ---
 
 ## 5. 标准消费方式
 
-### 5.1 lazy + gateway（推荐）
+### 5.1 gateway（推荐）
 
 ```ts
-import { createStorageGateway } from '@aalis/api-storage';
+import { createStorageGateway, storage } from '@aalis/api-storage';
+import { definePlugin } from '@aalis/core';
 
-export const inject = { required: ['storage'] };          // 双源，package.json 同步
-export async function apply(ctx: Context) {
-  const storage = createStorageGateway(ctx);              // 每个 apply 重新构造
-  const buf = await storage.readFile('data:/persona.yaml');
-}
+export default definePlugin({
+  name: '@acme/plugin-example-storage-consumer',
+  uses: { storage },
+  apply({ storage }) {
+    const gateway = createStorageGateway(storage);
+    void gateway.readFile('data:/persona.yaml');
+  },
+});
 ```
 
-- gateway 内部用 `ctx.getAllServices('storage')`，自身就是 lazy 的——每次方法调用现取 entry。
-- **不要把单个 root 的 `StorageService` 实例缓存到模块作用域**：provider bounce / 重载会让旧实例失效。每次 `apply`（含被 bounce 后重跑）重新 `createStorageGateway(ctx)`。详见 [docs/concepts/lazy-service-access.md](../concepts/lazy-service-access.md)。
+网关每次方法调用重新枚举 `storage.all()`。构造一次网关对象可以长期持有——它不缓存某个 root 的实例。**不要把 `storage.current` 或 `storage.all()[i]` 存进字段**：提供者换人后旧引用失效（有失效逻辑则抛，无则静默成功）；关停边不保护缓存引用。
 
-### 5.2 把 storage 设为 `required` 还是 `optional`
+### 5.2 required 还是 optional
 
-- 强依赖文件（file-reader、skills、checkpoint）→ `required: ['storage']`（参考 `plugin-file-reader/src/index.ts`）。框架保证 `apply` 时 storage 已就绪。
-- 非必需增强（如某 UI 仅在存在 storage 时显示文件页）→ `optional`；消费时 `createStorageGateway` 仍可调用，但若没有任何 storage entry，`dispatch` 会抛「未知存储根」。
+- 强依赖文件 → `uses: { storage }`（required）。框架保证激活时 storage 已就绪。
+- 非必需增强 → `optional(storage)`；若没有任何 storage entry，`dispatch` 会抛「未知存储根」。
 
 ### 5.3 错误边界
 
-`createStorageGateway` 的 `dispatch`（`:414-425`）在路由不到 root 时抛带「已注册根列表」的 Error。常见失败：
-
-- **未知根 / 根没有所需权限**：`未知存储根: X（已注册根: …, 需能力 [write]）`。
-- **可选方法缺失**：`存储根 X 不支持 local-path/watch（远程协议或纯虚拟根）`——调用 `resolveLocalPath`/`watch` 前可先判 `if (storage.resolveLocalPath)`（参考 shell 工具 `shell.ts`）。
-- **权限位拒绝**：provider 内 `requirePermission` 抛 `存储根 X 不允许该操作 (writable)`（`plugin-storage-local/src/index.ts`）。
-- **路径越界**：抛 `路径不合法`。
-
-消费者应捕获并转成对 LLM/用户友好的提示，而不是把原始栈抛给模型。
+路由不到 root 时抛带「已注册根列表」的 Error。调用 `resolveLocalPath`/`watch` 前可先判方法是否存在。消费者应捕获并转成对 LLM/用户友好的提示。
 
 ---
 
 ## 6. 能力/风险 → 影响（安全边界）
 
-### `resolveLocalPath` 不是沙箱 —— provider 与 consumer 均须理解
+### `resolveLocalPath` 不是沙箱
 
-契约注释明确了这条边界（`packages/api-storage/src/index.ts`、`:115-120`，参考实现 `:28-49`）：
-
-- `resolveLocalPath` 把 URI 解析成宿主机**绝对路径**，交给 `run_python`/shell/code-runner 当 cwd 或起点用。
-- 解析过程**只校验目标在声明根内**（lexical + realpath 双查，`:601-607`），**不约束子进程之后的访问范围**。子进程拿到路径后能访问当前 OS 用户可访问的任何文件。
-- **真正的隔离靠 OS 用户权限 / 容器 / OS 沙箱**（bwrap、seatbelt），不是这一层。code-runner 据此运行时探测 `resolveLocalPath` 并自建沙箱策略（`plugin-tool-code-runner/src/runner.ts`）。
-- 因此：consumer 不应把 `resolveLocalPath` 的返回值视为访问边界；provider 也不应暗示其具备此语义。
+- 把 URI 解析成宿主机**绝对路径**，交给 shell/code-runner 当 cwd 或起点用。
+- 解析过程**只校验目标在声明根内**，**不约束子进程之后的访问范围**。
+- **真正的隔离靠 OS 用户权限 / 容器 / OS 沙箱**，不是这一层。
 
 ### 高危直通根
 
-参考实现允许 `{ name:'host', path:'/' }` 这种直通根（`plugin-storage-local/src/index.ts`、`:721-731`）——agent 即可 `host:/绝对路径` 访问宿主机任意位置。注册时会打 WARN。provider 作者若开放此类根，须明确这是高危配置。
+参考实现允许 `{ name:'host', path:'/' }` 这种直通根——agent 即可 `host:/绝对路径` 访问宿主机任意位置。注册时会打 WARN。
 
 ### 权限位即授权语义
 
-root 的 `readable/writable/deletable`（`StorageRootInfo`）就是该根的访问策略：参考实现每次操作前 `requirePermission`（`:597-601`），gateway 路由时按位过滤（`rootSatisfies`，`:239-262`）。这与框架的 [authority 等级体系](../plugins/plugin-authority.md)是**两套**机制——storage 不读 session 等级，权限只看 root 位。若你的工具要按调用者 authority 收紧文件访问，须在工具层（api-tools 的 risk/minLevel）实现，storage 不承担此职责。
+root 的 `readable/writable/deletable` 就是该根的访问策略。这与 authority 等级体系是**两套**机制——storage 不读 session 等级。若工具要按调用者 authority 收紧文件访问，须在工具层实现。
 
-### SSRF 与 storage 无关，但勿混淆
+### SSRF 与 storage 无关
 
-`isStorageUri`（`:298-302`）刻意把 `http/https/file`（`RESERVED_URI_SCHEMES`，`:289`）排除在 storage URI 之外——这些 scheme 走专门读取路径（外网抓取用 `safeFetch` / util-network-guard）。消费者拿到一条 URI 时应先 `isStorageUri` 分流：storage URI 走 gateway，外网 URL 走 `safeFetch`，不应把外部 URL 传入 storage，也不应让 storage 访问网络。详见 [docs/concepts/security-model.md](../concepts/security-model.md)。
+`isStorageUri` 刻意把 `http/https/file` 排除。消费者拿到一条 URI 时应先分流：storage URI 走 gateway，外网 URL 走 `safeFetch`。
 
 ### data 根：可删 + 持久化原子写
 
-内置 `data` 根默认 `deletable: true`（`plugin-storage-local/src/index.ts`）——`/clear` 的附件清理（`data/images` 等目录）依赖它，关闭会让开箱部署连手动清理都失败。`deletable` 是后端能力位而非权限闸：agent 侧的删除面由各工具自身的权限档把关（如 `file_delete` 为 `restricted`+`confirm` 且受 `allowedRoots` 约束、`skill_delete` 为 `sensitive`），档位随工具语义各异。该根存放 users.json / scheduler-jobs / skills / persona 等关键持久化数据，参考实现对写操作做「临时文件 + rename」原子覆盖（`:424-440`）防半写损坏，并在 rename 前把临时文件的权限位对齐被覆盖的原文件——否则临时文件的默认 mode 会被目标继承，可执行脚本写一次就掉到 644；目标不存在时保持默认 mode。若你实现自己的后端用于承载这些数据，应保证写的原子性。
+内置 `data` 根默认 `deletable: true`——`/clear` 的附件清理依赖它。`deletable` 是后端能力位而非权限闸：agent 侧的删除面由各工具自身的权限档把关。参考实现对写操作做「临时文件 + rename」原子覆盖。
 
 ---
 
 ## 7. 边界与注意事项
 
-1. **`browsable` 当前是部分生效的 hint**：参考实现注释已说明（`plugin-storage-local/src/index.ts`、configSchema `:135-140`）——`plugin-webui-server` 的文件页**只显示其 `fileRoot` 配置指向的那一个根**（默认 workspace），其它根即便 `browsable:true` 也不会出现在文件页里，仅供 agent/工具按 URI 寻址。设置某根 `browsable` 并不能使其在 WebUI 文件页中浏览。
-2. **rename 仅同目录改名**：`rename(uri, newName)` 的 `newName` 不能含 `/`、`\`、`.`、`..`（参考实现 `rename`），不是「移动」。同根跨目录移动改用可选的 `move(fromUri, toUri)`（参考实现 `move`，底层 `fs.rename`，原子、零拷贝、须同根、不覆盖已存在目标）；跨存储根仍需 read+write+delete 组合。
-3. **同名 root 静默遮蔽**：多个 provider 各注册一个 `data` 根时，gateway 按枚举顺序取首个，其余被遮蔽且不报错。用 `getStorageRootConflicts(ctx)`（`:214`）在 doctor/启动日志里暴露。
-4. **watch 去抖 + 平台降级**：参考实现 `watch` 基于 `fs.watch` + 50ms 去抖，且事件统一为 `change`（`plugin-storage-local/src/index.ts`）；不支持 recursive 的平台降级为只监听顶层并打 WARN。消费者不应假定「一次写 = 一次事件」，也不应依赖事件类型细分。
-5. **checkpoint 写前快照耦合**：参考实现的 `snapshot` 辅助方法在 `writeFile` / `delete` / `rename` / `move` 动手之前调用 `checkpoint` 服务做快照。若你写自定义 storage 后端但希望兼容 checkpoint 回滚，需复刻这一 `beforeMutate` 钩子；否则该后端的写操作不可回滚。checkpoint 按根的 `kind` 决定是否记账：`data` / `tmp` / `pluginData` / `logs` 不记账（共享写入区与临时目录），其余 kind（含 `custom`）都记账，`listRoots` 里的 `kind` 要如实声明。rename/move 还应把改动后的目标 URI 作为 `beforeMutate` 的第四个可选参数传入——缺省时回滚只把原内容写回源路径，目标端会留下一份重复文件。
+1. **`browsable` 当前是部分生效的 hint**：`plugin-webui-server` 的文件页**只显示其 `fileRoot` 配置指向的那一个根**。
+2. **rename 仅同目录改名**。同根跨目录移动改用可选的 `move`。
+3. **同名 root 静默遮蔽**：用 `getStorageRootConflicts(storage)` 暴露。
+4. **watch 去抖 + 平台降级**：事件统一为 `change`。消费者不应假定「一次写 = 一次事件」。
+5. **checkpoint 写前快照耦合**：自定义后端若希望兼容 checkpoint 回滚，需复刻 `beforeMutate` 钩子。checkpoint 按根的 `kind` 决定是否记账：`data` / `tmp` / `pluginData` / `logs` 不记账。
 
 ---
 
 ## 8. 交叉链接
 
-- 概念：[storage-uri-grammar](../concepts/storage-uri-grammar.md)（URI 文法，先读）、[service-model](../concepts/service-model.md)、[lazy-service-access](../concepts/lazy-service-access.md)、[manifest-metadata](../concepts/manifest-metadata.md)、[security-model](../concepts/security-model.md)。
-- 内核：[core/service.md](../core/service.md)（DI / priority / per-entry provide）、[plugins/plugin-authority.md](../plugins/plugin-authority.md)（与权限位的区别）、[plugins/plugin-tools.md](../plugins/plugin-tools.md)（工具层 risk/minLevel 才是按调用者收紧的地方）、[core/context.md](../core/context.md)（`provide` / `getAllServices`）。
+- 概念：[storage-uri-grammar](../concepts/storage-uri-grammar.md)、[service-model](../concepts/service-model.md)、[lazy-service-access](../concepts/lazy-service-access.md)、[manifest-metadata](../concepts/manifest-metadata.md)、[security-model](../concepts/security-model.md)。
+- 内核：[core/service.md](../core/service.md)、[plugins/plugin-authority.md](../plugins/plugin-authority.md)、[plugins/plugin-tools.md](../plugins/plugin-tools.md)、[core/context.md](../core/context.md)。
