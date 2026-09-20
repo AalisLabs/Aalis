@@ -12,7 +12,7 @@ import type { Events, Logger } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 /** 预处理器用到的能力：广播 media:processed 的 events，与记失败的 logger */
-export interface PreprocessorCaps {
+interface PreprocessorCaps {
   events: Events;
   logger: Logger;
 }
