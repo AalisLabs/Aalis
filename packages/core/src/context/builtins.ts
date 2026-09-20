@@ -22,7 +22,7 @@ import {
   type ProviderOf,
   type ServiceDescriptor,
 } from './binding.js';
-import type { Context, ModuleHandle } from './context.js';
+import type { Context, ModuleHandle, ProvideOptions } from './context.js';
 import type { Logger } from './logger.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
@@ -154,7 +154,7 @@ type AnyDescriptor = ServiceDescriptor<any, any>;
 export type Provide = <D extends AnyDescriptor>(
   descriptor: D,
   implementation: ProviderOf<D>,
-  options?: { priority?: number; label?: string; entryId?: string },
+  options?: ProvideOptions,
 ) => () => void;
 
 export const provide = builtinService<Provide>(

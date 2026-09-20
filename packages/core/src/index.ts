@@ -63,6 +63,7 @@ export {
   type ModuleDefinition,
   type Provide,
   provide,
+  type ServiceKey,
   type Services,
   services,
 } from './context/builtins.js';
@@ -70,7 +71,7 @@ export {
 export { type AalisConfig, ConfigManager, type ConfigManagerOptions, type ConfigProvider } from './context/config.js';
 // 注：Lifecycle / DisposableChain 是 Context 内部的资源生命周期实现，不从包根导出（零外部消费，
 // 无 semver 承诺）；dist 里的深路径同样不在承诺面。
-export { Context, type ModuleHandle } from './context/context.js';
+export { Context, type ModuleHandle, type ProvideOptions } from './context/context.js';
 export {
   DefaultLogger,
   formatLogLine,

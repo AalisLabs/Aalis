@@ -18,6 +18,20 @@ import { validateProvide } from './services-helpers.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
+/** `provide` 的登记选项 */
+export interface ProvideOptions {
+  priority?: number;
+  /** 展示名（服务页下拉等） */
+  label?: string;
+  /** 一个激活登记多条时的子粒度 id，须以本激活 id 为前缀（`${id}/${子粒度}`） */
+  entryId?: string;
+  /**
+   * 代为登记：条目的逻辑身份取这个 id（而非本激活的），用于托管自己不运行代码的包——如 WebUI 服务端
+   * 替扫描到的静态前端包登记，偏好与展示认的是前端包名。清理仍归本激活。与 entryId 二选一。
+   */
+  onBehalfOf?: string;
+}
+
 /**
  * `useModule` 返回的句柄——与 Context 自身的生命周期面同形，一个心智模型。
  */
@@ -288,18 +302,15 @@ export class Context {
    * 的前缀查询与 api-llm 按 `provider/model` 解析引用都靠它；清理不依赖它（按 owner 走），
    * dev 模式下验证只为避免 "entryId 与拥有者 plugin 脱联" 的 footgun。
    */
-  provide<K extends string>(
-    name: K,
-    instance: ServiceOf<K>,
-    options?: { priority?: number; label?: string; entryId?: string },
-  ): () => void {
+  provide<K extends string>(name: K, instance: ServiceOf<K>, options?: ProvideOptions): () => void {
     if (this.#lifecycle.disposed) {
       this.logger.warn(`Context "${this.id}" 已 dispose，忽略 provide("${name}")`);
       return () => {};
     }
-    const entryId = options?.entryId ?? this.id;
+    const entryId = options?.onBehalfOf ?? options?.entryId ?? this.id;
 
-    if (this.devMode) {
+    // 代为登记是有意取别人的逻辑身份，前缀劝告不适用
+    if (this.devMode && options?.onBehalfOf === undefined) {
       validateProvide(
         { ctxId: this.id, name, entryId, explicitEntryId: options?.entryId !== undefined },
         { services: this.#services, logger: this.logger },
@@ -313,7 +324,7 @@ export class Context {
       () => {
         if (off()) this.emitQuietly('service:unregistered', name);
       },
-      `provide:${options?.entryId ?? name}`,
+      `provide:${options?.onBehalfOf ?? options?.entryId ?? name}`,
     );
 
     this.emitQuietly('service:registered', name);

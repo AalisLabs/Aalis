@@ -202,20 +202,13 @@ export interface WebuiPage {
 
 /**
  * 通过 declaration merging 向 core 的 PluginModule 注入
- * 纯展示元数据字段（subsystem / extends）与 host-RPC 槽位（actions）。
+ * 纯展示元数据字段（extends）与 host-RPC 槽位（actions）。
  *
  * WebuiPage 注册路径为运行时 `useWebuiService(ctx).registerPage(...)`，
  * 不作为静态 module 字段存在。
  */
 declare module '@aalis/core' {
   interface PluginMeta {
-    /**
-     * 子系统归属，仅用于 WebUI 分组展示。
-     *
-     * 可用 id 与中文 label 由本包的 `DEFAULT_SUBSYSTEM_METADATA` 提供，
-     * 但允许使用任意自定义字符串（未匹配 metadata 时直接以 id 作为 label 显示）。
-     */
-    subsystem?: string;
     /** 声明该插件对 core 的扩展（新增事件、钩子），仅用于前端展示。 */
     extends?: ExtendDeclaration;
     /**
