@@ -1,45 +1,68 @@
-import { describe, expect, it } from 'vitest';
-import type { Context, PluginModule } from '../../packages/core/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+declare module '@aalis/core' {
+  interface HookContextMap {
+    '__t:ada-hook': Record<string, never>;
+  }
+}
 
-// ============================================================
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  App,
+  config,
+  definePlugin,
+  defineService,
+  events,
+  hooks,
+  lifecycle,
+  type PluginDefinition,
+  provide,
+  services,
+} from '../../packages/core/src/index.js';
+import type { PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
+
 // 管理操作撞上 activating 窗口（apply 在飞）的行为锚。
 //
-// 修复前的三种坏后果（探针实证）：unload 静默跳过拆卸→幽灵插件继续处理流量；
-// disable 返回 true 但终态被激活收尾覆写回 'active'；updateConfig
-// 静默 no-op（apply 从未见过新配置）。三者共因：拆卸判据 `state === 'active'`
-// 漏掉 'activating'，且 activatePlugin 收尾无条件写 'active'。
+// 拆卸方一律「先写目标态、再对在飞 ctx disposeAsync」——管理意图是后写者，
+// 激活收尾以「state 仍为 activating」为继续条件（接管即让位）。
+// bounce = retireEntry(pending) + 重算；required 下游看容器现态，optional 不级联重启。
 //
-// 修后契约：拆卸方（三管理入口 + recomputeOnce Phase A + evictDownstreamConsumers）
-// 一律「先写目标态、再对在飞 ctx disposeAsync」——管理意图是后写者、拆卸收尾
-// 不再写状态；activatePlugin 以「state 仍为 'activating'」为收尾继续条件（接管
-// 即让位）。新旧实例不同期由两道闸分担：同一 entry 靠「entry.context 未清不
-// 重新激活」（bounce 路径），同 id 重装靠注册表查重（unload 在拆卸完成后才
-// delete，窗口内 register 被 plugins.has 挡下）。
+// 新旧实例不同期由两道闸分担：同一 entry 靠「激活记录未清不重新激活」
+// （bounce 路径，白盒读 PluginRecord.context），同 id 重装靠注册表查重
+// （unload 在拆卸完成后才 delete，窗口内 register 被 plugins.has 挡下）。
 //
 // 时序不靠 sleep 赌：apply / onDispose 进门时解析 entered、卡在 gate 上，
 // 「管理操作发起时对方必定在飞」是结构保证。
-// ============================================================
 
-const HOOK = '__t:ada-hook' as never;
+const gatedSvc = defineService<{ alive: boolean }>('ada-gated-svc');
+const pSvc = defineService<{ v: number }>('ada-p-svc');
+
+const apps: App[] = [];
+afterEach(async () => {
+  for (const app of apps.splice(0)) await app.stop().catch(() => {});
+});
+
+function recordOf(app: App, id: string): PluginRecord | undefined {
+  return app.plugins.getPlugin(id) as PluginRecord | undefined;
+}
 
 function makeWorld() {
   const trace: string[] = [];
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  app.ctx.on('plugin:loaded', (id: string) => {
+  apps.push(app);
+  const host = app.bind({ events, services, hooks });
+  host.events.on('plugin:loaded', (id: string) => {
     trace.push(`loaded:${id}`);
   });
-  app.ctx.on('plugin:unloaded', (id: string) => {
+  host.events.on('plugin:unloaded', (id: string) => {
     trace.push(`unloaded:${id}`);
   });
-  return { app, trace };
+  return { app, host, trace };
 }
 
 /** apply 进门解析 entered、卡在 gate 上；期间注册服务/中间件/onDispose。 */
 function makeGatedPlugin(
   trace: string[],
   opts: { failAfterGate?: boolean } = {},
-): { module: PluginModule; entered: Promise<void>; release: () => void } {
+): { definition: PluginDefinition; entered: Promise<void>; release: () => void } {
   let enter!: () => void;
   let release!: () => void;
   const entered = new Promise<void>(r => {
@@ -48,31 +71,33 @@ function makeGatedPlugin(
   const gate = new Promise<void>(r => {
     release = r;
   });
-  const module: PluginModule = {
+  const definition = definePlugin({
     name: 'gated',
-    async apply(ctx: Context, config: Record<string, unknown>) {
+    provides: [gatedSvc],
+    uses: { provide, hooks, lifecycle, config },
+    async apply({ provide, hooks, lifecycle, config }) {
       trace.push(`apply:${JSON.stringify(config)}`);
-      ctx.provide('gated-svc', { alive: true });
-      ctx.middleware(HOOK, (async (_d: unknown, next: () => Promise<void>) => {
+      provide(gatedSvc, { alive: true });
+      hooks.middleware('__t:ada-hook', async (_d, next) => {
         trace.push('middleware-hit');
         await next();
-      }) as never);
-      ctx.onDispose(() => {
+      });
+      lifecycle.onDispose(() => {
         trace.push('disposed');
       }, 'gated:res');
       enter();
       await gate;
       if (opts.failAfterGate) throw new Error('apply 自爆');
     },
-  };
-  return { module, entered, release };
+  });
+  return { definition, entered, release };
 }
 
 describe('unload 撞上 activating 窗口', () => {
   it('在飞 ctx 被完整拆卸：无服务残留、无幽灵中间件、发 unloaded 不发 loaded', async () => {
-    const { app, trace } = makeWorld();
-    const { module, entered, release } = makeGatedPlugin(trace);
-    const registering = app.plugin(module);
+    const { app, host, trace } = makeWorld();
+    const { definition, entered, release } = makeGatedPlugin(trace);
+    const registering = app.plugin(definition);
     await entered;
 
     expect(app.plugins.getPlugin('gated')?.state).toBe('activating');
@@ -82,19 +107,19 @@ describe('unload 撞上 activating 窗口', () => {
     await new Promise(r => setTimeout(r, 0)); // 冲刷异步 emit
 
     expect(app.plugins.getPlugin('gated')).toBeUndefined();
-    expect(app.ctx.getService('gated-svc')).toBeUndefined();
+    expect(host.services.get(gatedSvc)).toBeUndefined();
     expect(trace).toContain('disposed');
     expect(trace).toContain('unloaded:gated');
     expect(trace).not.toContain('loaded:gated');
 
-    await app.ctx.runHook(HOOK, {} as never);
+    await host.hooks.run('__t:ada-hook', {});
     expect(trace).not.toContain('middleware-hit');
   });
 
   it('apply 在窗口内抛错也不残留：接管让位，无 error 终态写入', async () => {
-    const { app, trace } = makeWorld();
-    const { module, entered, release } = makeGatedPlugin(trace, { failAfterGate: true });
-    const registering = app.plugin(module);
+    const { app, host, trace } = makeWorld();
+    const { definition, entered, release } = makeGatedPlugin(trace, { failAfterGate: true });
+    const registering = app.plugin(definition);
     await entered;
 
     const unloading = app.plugins.unload('gated');
@@ -102,16 +127,16 @@ describe('unload 撞上 activating 窗口', () => {
     await Promise.all([registering, unloading]);
 
     expect(app.plugins.getPlugin('gated')).toBeUndefined();
-    expect(app.ctx.getService('gated-svc')).toBeUndefined();
+    expect(host.services.get(gatedSvc)).toBeUndefined();
     expect(trace).toContain('disposed');
   });
 });
 
 describe('disable 撞上 activating 窗口', () => {
   it('终态锁定 disabled，不被激活收尾覆写回 active；服务已拆', async () => {
-    const { app, trace } = makeWorld();
-    const { module, entered, release } = makeGatedPlugin(trace);
-    const registering = app.plugin(module);
+    const { app, host, trace } = makeWorld();
+    const { definition, entered, release } = makeGatedPlugin(trace);
+    const registering = app.plugin(definition);
     await entered;
 
     const disabling = app.plugins.disable('gated');
@@ -121,23 +146,24 @@ describe('disable 撞上 activating 窗口', () => {
 
     expect(ok).toBe(true);
     expect(app.plugins.getPlugin('gated')?.state).toBe('disabled');
-    expect(app.ctx.getService('gated-svc')).toBeUndefined();
+    expect(host.services.get(gatedSvc)).toBeUndefined();
     expect(trace).toContain('disposed');
-    // enable 依赖的不变量：disabled 态 context 必已清（否则重激活被闸永跳）
-    expect(app.plugins.getPlugin('gated')?.context).toBeUndefined();
+    // enable 依赖的不变量：disabled 态激活记录必已清（否则重激活被闸永跳）
+    expect(recordOf(app, 'gated')?.context).toBeUndefined();
   });
 });
 
-describe('evict 不得进入终态拆卸窗口（disabled 的慢 onDispose 撞并发 bounce）', () => {
-  it('disable 在飞时 provider 被 bounce：消费者终态锁 disabled，不被 evict 复活', async () => {
-    const { app, trace } = makeWorld();
-    const provider: PluginModule = {
+describe('disable 终态窗口内 provider 重载不得复活消费者', () => {
+  it('disable 在飞时 provider 被 bounce：消费者终态锁 disabled，不被重算复活', async () => {
+    const { app, host, trace } = makeWorld();
+    const provider = definePlugin({
       name: 'prov',
-      provides: ['p-svc'],
-      apply(ctx: Context, config: Record<string, unknown>) {
-        ctx.provide('p-svc', { v: config.v ?? 1 });
+      provides: [pSvc],
+      uses: { provide, config },
+      apply({ provide, config }) {
+        provide(pSvc, { v: typeof config.v === 'number' ? config.v : 1 });
       },
-    };
+    });
     let releaseDispose!: () => void;
     let disposeEntered!: () => void;
     const disposeGate = new Promise<void>(r => {
@@ -146,26 +172,24 @@ describe('evict 不得进入终态拆卸窗口（disabled 的慢 onDispose 撞�
     const disposeEnteredP = new Promise<void>(r => {
       disposeEntered = r;
     });
-    const consumer: PluginModule = {
+    const consumer = definePlugin({
       name: 'cons',
-      inject: { optional: ['p-svc'] },
-      requiresBounceOnDepChange: true,
-      apply(ctx: Context) {
+      uses: { lifecycle, pSvc },
+      apply({ lifecycle }) {
         trace.push('cons:apply');
-        ctx.onDispose(async () => {
+        lifecycle.onDispose(async () => {
           disposeEntered();
           await disposeGate;
         }, 'cons:gated');
       },
-    };
+    });
     await app.plugin(provider, { v: 1 });
     await app.plugin(consumer);
     await app.plugins.idle();
+    expect(app.plugins.getPlugin('cons')?.state).toBe('active');
 
-    // disable 写下 'disabled' 终态、卡在慢 onDispose 上（ctx 未清的终态窗口）
     const disabling = app.plugins.disable('cons');
     await disposeEnteredP;
-    // 并发 bounce provider——修前 evict 凭 ctx 在场扫进窗口，把 disabled 覆写回 pending 复活
     const bouncing = app.plugins.updateConfig('prov', { v: 2 });
     releaseDispose();
     await Promise.all([disabling, bouncing]);
@@ -173,20 +197,21 @@ describe('evict 不得进入终态拆卸窗口（disabled 的慢 onDispose 撞�
 
     expect(app.plugins.getPlugin('cons')?.state).toBe('disabled');
     expect(trace.filter(t => t === 'cons:apply')).toHaveLength(1);
-    expect(app.ctx.getService('cons-svc')).toBeUndefined();
+    expect(host.services.get(gatedSvc)).toBeUndefined();
   });
 });
 
-describe('evict 疏散 activating 下游（判据=entry.context）', () => {
-  it('provider 重载时在飞下游同样被疏散并以新 provider 重激活', async () => {
-    const { app, trace } = makeWorld();
-    const provider: PluginModule = {
+describe('provider 重载时 activating 的 required 下游一并收敛', () => {
+  it('provider 重载时在飞下游同样被拆并以新 provider 重激活', async () => {
+    const { app, host, trace } = makeWorld();
+    const provider = definePlugin({
       name: 'prov',
-      provides: ['p-svc'],
-      apply(ctx: Context, config: Record<string, unknown>) {
-        ctx.provide('p-svc', { v: config.v ?? 1 });
+      provides: [pSvc],
+      uses: { provide, config },
+      apply({ provide, config }) {
+        provide(pSvc, { v: typeof config.v === 'number' ? config.v : 1 });
       },
-    };
+    });
     let release!: () => void;
     let entered!: () => void;
     const gate = new Promise<void>(r => {
@@ -196,53 +221,52 @@ describe('evict 疏散 activating 下游（判据=entry.context）', () => {
       entered = r;
     });
     let seq = 0;
-    const consumer: PluginModule = {
+    const consumer = definePlugin({
       name: 'cons',
-      inject: { optional: ['p-svc'] },
-      requiresBounceOnDepChange: true,
+      uses: { pSvc },
       async apply() {
         const n = ++seq;
         trace.push(`cons:apply#${n}`);
         if (n === 1) {
           entered();
-          await gate; // 首次激活卡在飞——bounce provider 时它正处 activating
+          await gate;
         }
       },
-    };
+    });
     await app.plugin(provider, { v: 1 });
+    await app.plugins.idle();
     const registering = app.plugin(consumer);
     await enteredP;
 
     const bouncing = app.plugins.updateConfig('prov', { v: 2 });
     release();
     await Promise.all([registering, bouncing]);
-    await new Promise(r => setTimeout(r, 20));
+    await app.plugins.idle();
 
-    // 修前：activating 的下游漏疏散，抱着旧 provider 引用完成激活且不重载
     expect(trace.filter(t => t.startsWith('cons:apply'))).toEqual(['cons:apply#1', 'cons:apply#2']);
     expect(app.plugins.getPlugin('cons')?.state).toBe('active');
-    expect((app.ctx.getService('p-svc') as { v: number }).v).toBe(2);
+    expect(host.services.get(pSvc)?.v).toBe(2);
   });
 });
 
-describe('error 终态的不变量：context 已清', () => {
+describe('error 终态的不变量：激活记录已清', () => {
   it('apply 抛错进 error 后 context 为空（enable 复活路径依赖此不变量）', async () => {
     const { app } = makeWorld();
     let attempts = 0;
-    await app.plugin({
-      name: 'boom',
-      apply() {
-        attempts++;
-        throw new Error('立即爆炸');
-      },
-    });
-    // 等静置：ctor 里 provide('app'/'plugins') 触发的反应式 recompute 可能在飞，
-    // 首个 app.plugin() 会走单飞排队分支提前返回（resolve≠激活完成——已立刀候选）
+    await app.plugin(
+      definePlugin({
+        name: 'boom',
+        apply() {
+          attempts++;
+          throw new Error('立即爆炸');
+        },
+      }),
+    );
     await app.plugins.idle();
     expect(app.plugins.getPlugin('boom')?.state).toBe('error');
-    expect(app.plugins.getPlugin('boom')?.context).toBeUndefined();
-    // 复活路径畅通的鉴别性断言：enable 后第二次激活**确实发生**（apply 计数 +1）。
-    // 若 context 未清，激活会被「旧 ctx 未清」闸永久跳过，attempts 停在 1。
+    expect(recordOf(app, 'boom')?.context).toBeUndefined();
+    // 复活路径畅通的鉴别性断言：enable 后第二次激活确实发生（apply 计数 +1）。
+    // 若激活记录未清，激活会被「旧 ctx 未清」闸永久跳过，attempts 停在 1。
     const ok = await app.plugins.enable('boom');
     expect(ok).toBe(true);
     await app.plugins.idle();
@@ -253,9 +277,9 @@ describe('error 终态的不变量：context 已清', () => {
 
 describe('disable 撞 activating 且 apply 抛错：catch 段接管让位', () => {
   it('终态锁 disabled 而非 error（catch 让位被删则此处写入 error）', async () => {
-    const { app, trace } = makeWorld();
-    const { module, entered, release } = makeGatedPlugin(trace, { failAfterGate: true });
-    const registering = app.plugin(module);
+    const { app, host, trace } = makeWorld();
+    const { definition, entered, release } = makeGatedPlugin(trace, { failAfterGate: true });
+    const registering = app.plugin(definition);
     await entered;
 
     const disabling = app.plugins.disable('gated');
@@ -265,7 +289,7 @@ describe('disable 撞 activating 且 apply 抛错：catch 段接管让位', () =
 
     expect(ok).toBe(true);
     expect(app.plugins.getPlugin('gated')?.state).toBe('disabled');
-    expect(app.ctx.getService('gated-svc')).toBeUndefined();
+    expect(host.services.get(gatedSvc)).toBeUndefined();
   });
 });
 
@@ -281,29 +305,30 @@ describe('级联拆卸窗口内 disable：终态不被拆卸收尾覆写', () =>
       disposeEntered = r;
     });
 
-    const provider: PluginModule = {
+    const provider = definePlugin({
       name: 'prov',
-      provides: ['p-svc'],
-      apply(ctx: Context) {
-        ctx.provide('p-svc', { v: 1 });
+      provides: [pSvc],
+      uses: { provide },
+      apply({ provide }) {
+        provide(pSvc, { v: 1 });
       },
-    };
-    const consumer: PluginModule = {
+    });
+    const consumer = definePlugin({
       name: 'cons',
-      inject: { required: ['p-svc'] },
-      apply(ctx: Context) {
+      uses: { lifecycle, pSvc },
+      apply({ lifecycle }) {
         trace.push('cons:apply');
-        ctx.onDispose(async () => {
+        lifecycle.onDispose(async () => {
           disposeEntered();
           await disposeGate;
         }, 'cons:gated');
       },
-    };
+    });
     await app.plugin(provider);
     await app.plugin(consumer);
+    await app.plugins.idle();
     expect(app.plugins.getPlugin('cons')?.state).toBe('active');
 
-    // unload 提供者 → softReload Phase A 开拆 cons，卡在 gated onDispose 上
     const unloading = app.plugins.unload('prov');
     await disposeEnteredP;
     const disabling = app.plugins.disable('cons');
@@ -311,8 +336,8 @@ describe('级联拆卸窗口内 disable：终态不被拆卸收尾覆写', () =>
     await Promise.all([unloading, disabling]);
 
     expect(app.plugins.getPlugin('cons')?.state).toBe('disabled');
-    // 提供者回归也不得复活（修前 Phase A 后写 'pending' 会让它自动二次 apply）
     await app.plugin(provider);
+    await app.plugins.idle();
     expect(app.plugins.getPlugin('cons')?.state).toBe('disabled');
     expect(trace.filter(t => t === 'cons:apply')).toHaveLength(1);
   });
@@ -320,7 +345,7 @@ describe('级联拆卸窗口内 disable：终态不被拆卸收尾覆写', () =>
 
 describe('unload 拆卸未完成时同 id 重装', () => {
   it('窗口内 register 被注册表查重闸挡下；拆完重装干净（服务在场，无被扫空的假 active）', async () => {
-    const { app, trace } = makeWorld();
+    const { app, host, trace } = makeWorld();
     let releaseDispose!: () => void;
     let disposeEntered!: () => void;
     const disposeGate = new Promise<void>(r => {
@@ -330,22 +355,26 @@ describe('unload 拆卸未完成时同 id 重装', () => {
       disposeEntered = r;
     });
 
-    const make = (): PluginModule => ({
-      name: 'gated',
-      apply(ctx: Context) {
-        trace.push('apply');
-        ctx.provide('gated-svc', { alive: true });
-        ctx.onDispose(async () => {
-          disposeEntered();
-          await disposeGate;
-        }, 'gated:res');
-      },
-    });
+    const make = (): PluginDefinition =>
+      definePlugin({
+        name: 'gated',
+        provides: [gatedSvc],
+        uses: { provide, lifecycle },
+        apply({ provide, lifecycle }) {
+          trace.push('apply');
+          provide(gatedSvc, { alive: true });
+          lifecycle.onDispose(async () => {
+            disposeEntered();
+            await disposeGate;
+          }, 'gated:res');
+        },
+      });
     await app.plugin(make());
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('gated')?.state).toBe('active');
     const unloading = app.plugins.unload('gated');
     await disposeEnteredP;
 
-    // 旧 ctx 仍在排空：同 id 注册必须被挡下（entry 仍在注册表、state=disposed）
     await app.plugin(make());
     expect(app.plugins.getPlugin('gated')?.state).toBe('disposed');
     expect(trace.filter(t => t === 'apply')).toHaveLength(1);
@@ -354,17 +383,17 @@ describe('unload 拆卸未完成时同 id 重装', () => {
     await unloading;
     expect(app.plugins.getPlugin('gated')).toBeUndefined();
 
-    // 拆完重装：干净激活，服务真实在场（修前窗口重装会被旧链扫成空壳 active）
     await app.plugin(make());
+    await app.plugins.idle();
     expect(app.plugins.getPlugin('gated')?.state).toBe('active');
-    expect(app.ctx.getService('gated-svc')).toEqual({ alive: true });
+    expect(host.services.get(gatedSvc)).toEqual({ alive: true });
     expect(trace.filter(t => t === 'apply')).toHaveLength(2);
   });
 });
 
 describe('并发双 unload', () => {
   it('第二个 unload join 首个的拆卸：单次 unloaded 事件，且不盲删重装的新 entry', async () => {
-    const { app, trace } = makeWorld();
+    const { app, host, trace } = makeWorld();
     let releaseDispose!: () => void;
     let disposeEntered!: () => void;
     const disposeGate = new Promise<void>(r => {
@@ -373,22 +402,26 @@ describe('并发双 unload', () => {
     const disposeEnteredP = new Promise<void>(r => {
       disposeEntered = r;
     });
-    const make = (): PluginModule => ({
-      name: 'gated',
-      apply(ctx: Context) {
-        trace.push('apply');
-        ctx.provide('gated-svc', { alive: true });
-        ctx.onDispose(async () => {
-          disposeEntered();
-          await disposeGate;
-        }, 'gated:res');
-      },
-    });
+    const make = (): PluginDefinition =>
+      definePlugin({
+        name: 'gated',
+        provides: [gatedSvc],
+        uses: { provide, lifecycle },
+        apply({ provide, lifecycle }) {
+          trace.push('apply');
+          provide(gatedSvc, { alive: true });
+          lifecycle.onDispose(async () => {
+            disposeEntered();
+            await disposeGate;
+          }, 'gated:res');
+        },
+      });
     await app.plugin(make());
+    await app.plugins.idle();
 
     const u1 = app.plugins.unload('gated');
     await disposeEnteredP;
-    const u2 = app.plugins.unload('gated'); // 撞在拆卸窗口内
+    const u2 = app.plugins.unload('gated');
     releaseDispose();
     await Promise.all([u1, u2]);
     await new Promise(r => setTimeout(r, 0));
@@ -396,37 +429,35 @@ describe('并发双 unload', () => {
     expect(trace.filter(t => t === 'unloaded:gated')).toHaveLength(1);
     expect(app.plugins.getPlugin('gated')).toBeUndefined();
 
-    // 双 unload 落定后重装必须干净成活（此前第二个 delete 会按名盲删新 entry）
     await app.plugin(make());
+    await app.plugins.idle();
     expect(app.plugins.getPlugin('gated')?.state).toBe('active');
-    expect(app.ctx.getService('gated-svc')).toEqual({ alive: true });
+    expect(host.services.get(gatedSvc)).toEqual({ alive: true });
   });
 });
 
 describe('updateConfig 撞上 activating 窗口', () => {
   it('旧实例先排空、新实例再以新配置激活（严格串行，不同期）', async () => {
-    const { app, trace } = makeWorld();
-    const { module, entered, release } = makeGatedPlugin(trace);
-    const registering = app.plugin(module, { n: 1 });
+    const { app, host, trace } = makeWorld();
+    const { definition, entered, release } = makeGatedPlugin(trace);
+    const registering = app.plugin(definition, { n: 1 });
     await entered;
 
     const updating = app.plugins.updateConfig('gated', { n: 2 });
     release();
     expect(await updating).toBe(true);
     await registering;
+    await app.plugins.idle();
 
     expect(app.plugins.getPlugin('gated')?.state).toBe('active');
     expect(app.plugins.getPlugin('gated')?.config).toEqual({ n: 2 });
-    expect(app.ctx.getService('gated-svc')).toEqual({ alive: true });
+    expect(host.services.get(gatedSvc)).toEqual({ alive: true });
 
-    // 顺序钉死：旧实例 disposed 必须先于新 apply（否则新旧实例同 instanceId 并存——
-    // 同名服务重复 provide、偏好按 contextId 二义；与 plugin.ts / plugin-activation.ts 守卫同口径）
     const disposedAt = trace.indexOf('disposed');
     const reapplyAt = trace.indexOf('apply:{"n":2}');
     expect(disposedAt).toBeGreaterThanOrEqual(0);
     expect(reapplyAt).toBeGreaterThanOrEqual(0);
     expect(disposedAt).toBeLessThan(reapplyAt);
-    // 且新实例只激活一次、旧配置的 apply 只出现一次
     expect(trace.filter(t => t.startsWith('apply:')).sort()).toEqual(['apply:{"n":1}', 'apply:{"n":2}']);
   });
 });

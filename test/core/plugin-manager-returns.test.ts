@@ -1,18 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { App, LogHub, type PluginDescriptor, type PluginModule } from '../../packages/core/src/index.js';
+import {
+  App,
+  definePlugin,
+  LogHub,
+  lifecycle,
+  type PluginDefinition,
+  type PluginDescriptor,
+} from '../../packages/core/src/index.js';
 
-// ════════════════════════════════════════════════════════════
 // 管理动作返回值的统一口径（PluginManagerService 的 JSDoc）：
 //   false = 主体不在注册表，或本次动作被状态 / 政策规则挡下；true = 其余，含幂等。
-// 六个动作里 enable / disable / updateConfig / bounce 早已如此，本文件钉住新并入的
+// 六个动作里 enable / disable / updateConfig / bounce 早已如此，本文件钉住
 // register / unload 与 App.plugin / rescanPlugins 的转发。
-// ════════════════════════════════════════════════════════════
 
 function silentApp(): App {
   return new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
 }
 
-const plugin = (name: string, extra: Partial<PluginModule> = {}): PluginModule => ({ name, apply() {}, ...extra });
+const plugin = (name: string, extra: Partial<Pick<PluginDefinition, 'reusable' | 'core'>> = {}): PluginDefinition =>
+  definePlugin({ name, apply() {}, ...extra });
 
 describe('register 的返回值', () => {
   it('落账为 true；重名与未声明 reusable 的多实例为 false', async () => {
@@ -49,13 +55,16 @@ describe('unload 的返回值', () => {
       release = r;
     });
     await app.plugins.register(
-      plugin('p', {
-        apply(ctx) {
-          ctx.onDispose(() => gate);
+      definePlugin({
+        name: 'p',
+        uses: { lifecycle },
+        apply({ lifecycle }) {
+          lifecycle.onDispose(() => gate);
         },
       }),
     );
     await app.plugins.idle();
+    expect(app.plugins.getPlugin('p')?.state).toBe('active');
 
     const first = app.plugins.unload('p'); // 卡在 onDispose 上，state 已是 'disposed'
     await new Promise<void>(r => setTimeout(r, 0));
@@ -79,7 +88,7 @@ describe('rescanPlugins 只报真正落账的插件', () => {
           { name: 'fresh', source: 'stub', metadata: {} },
         ];
       },
-      async load(desc: PluginDescriptor): Promise<PluginModule> {
+      async load(desc: PluginDescriptor): Promise<PluginDefinition> {
         return plugin(desc.name === 'alias-of-real' ? 'real' : desc.name);
       },
     };
@@ -119,13 +128,15 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
     const app = new App({ config: { name: 'T', logLevel: 'warn', plugins: {} }, logHub: hub });
     let applied = 0;
     await app.plugins.register(
-      plugin('p', {
+      definePlugin({
+        name: 'p',
         apply() {
           applied++;
         },
       }),
     );
     await app.plugins.idle();
+    expect(app.plugins.getPlugin('p')?.state).toBe('active');
     // 类型面已无 module 字段，这里模拟无类型约束的 JavaScript 调用方
     const legacy = { module: plugin('p') } as unknown as { config?: Record<string, unknown> };
     expect(await app.plugins.bounce('p', legacy)).toBe(false);
@@ -142,13 +153,16 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
       release = r;
     });
     await app.plugins.register(
-      plugin('p', {
-        apply(ctx) {
-          ctx.onDispose(() => gate);
+      definePlugin({
+        name: 'p',
+        uses: { lifecycle },
+        apply({ lifecycle }) {
+          lifecycle.onDispose(() => gate);
         },
       }),
     );
     await app.plugins.idle();
+    expect(app.plugins.getPlugin('p')?.state).toBe('active');
     const unloading = app.plugins.unload('p');
     await new Promise<void>(r => setTimeout(r, 0));
     expect(app.plugins.getPlugin('p')?.state).toBe('disposed');
