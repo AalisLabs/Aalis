@@ -1,6 +1,6 @@
 {
   "name": "@aalis/api-memory",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -34,7 +34,7 @@
     "types": true
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.2.0 <1.0.0"
+    "@aalis/core": ">=0.17.0 <1.0.0"
   },
   "keywords": [
     "aalis",

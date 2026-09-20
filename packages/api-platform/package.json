@@ -1,6 +1,6 @@
 {
   "name": "@aalis/api-platform",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -27,7 +27,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.2.0 <1.0.0"
+    "@aalis/core": ">=0.17.0 <1.0.0"
   },
   "aalis": {
     "types": true

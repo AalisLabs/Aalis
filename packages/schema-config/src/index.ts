@@ -4,10 +4,10 @@
 // 类型部分描述"配置如何呈现为表单"（label / options / textarea …）；
 // 函数部分是对这套词汇的**中立解释**：默认值派生（defaultsFrom）与只读
 // 结构校验（validateConfig）。两者都不属于 @aalis/core——core 只把
-// `PluginModule.configSchema` 当作 opaque 数据透传，不解释任何字段。
+// `PluginMeta.configSchema` 当作 opaque 数据透传，不解释任何字段。
 //
 // 消费方：
-// - 插件：`export const configSchema: ConfigSchema = {...}` 获得形状检查
+// - 插件：在 `definePlugin({ configSchema })` 的定义对象里声明
 // - 渲染宿主（webui-server/client 等）：读取并渲染表单
 // - 宿主政策（@aalis/runtime 的 config-sync）：按 schema 裁剪未知字段、校验告警
 //
@@ -296,12 +296,12 @@ function describeType(value: unknown): string {
   return typeof value;
 }
 
-// PluginModule.configSchema 由本包经 declaration merging 挂上。
+// PluginMeta.configSchema 由本包经 declaration merging 挂上。
 // type-only import 仅作模块增强的解析锚点，编译后擦除——本包仍是零运行时依赖。
 import type {} from '@aalis/core';
 
 // ============================================================
-// PluginModule.configSchema 由本包经 declaration merging 挂上——
+// PluginMeta.configSchema 由本包经 declaration merging 挂上——
 // core 对表单词汇零感知（词汇出核），插件拿到的却是强类型（写错
 // type / 漏 label 在编译期即报），而非以前 core 声明的 opaque Record。
 // ============================================================
