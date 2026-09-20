@@ -10,12 +10,171 @@
 
 ## 未发布（core 0.16.0 → 0.17.0）
 
+### 版本与必须同批升级的包
+
+**升级**：core 0.17.0 把插件入口从公开激活记录改成定义对象与按激活绑定的能力。旧版插件（具名 `export const name` / `inject` / `provides`、`export default function`、`apply(ctx, config)`）配新 runtime **不会被加载**——`pluginDefinitionOf` 记 warn 后跳过；新插件配旧 core 没有 `definePlugin`。契约包删除全部 `useXxxService(ctx)` helper，描述符改为运行时值导出。下列 **89** 个包必须同批升级（自身即 core，或 core peer 已抬到 `>=0.17.0 <1.0.0`）：
+
+- `@aalis/core` 0.17.0
+- 25 个 `@aalis/api-*`（均 minor）：agent 0.8.0 / asr 0.10.0 / authority 0.9.0 / code-sandbox 0.6.0 / commands 0.6.0 / cron-engine 0.6.0 / doctor 0.6.0 / embedding 0.6.0 / flow-control 0.6.0 / gateway 0.6.0 / llm 0.11.0 / media 0.10.0 / memory 0.6.0 / message-archive 0.6.0 / persona 0.7.0 / platform 0.7.0 / process 0.7.0 / session-confirm 0.6.0 / session-manager 0.9.0 / storage 0.6.0 / tool-session 0.6.0 / tools 0.9.0 / vectorstore 0.6.0 / webui 0.10.0 / workflow 0.10.0
+- 61 个第一方插件（均 minor）：adapter-onebot 0.13.0 / agent 0.14.0 / asr-openai 0.10.0 / asr-whisper-cpp 0.10.0 / authority 0.12.0 / checkpoint 0.12.0 / cli 0.11.0 / code-sandbox-os 0.6.0 / commands 0.11.0 / cron-engine 0.7.0 / doctor 0.6.0 / draw 0.2.0 / embedding-ollama 0.10.0 / embedding-openai 0.11.0 / file-reader 0.12.0 / flow-control 0.10.0 / gateway 0.6.0 / image-sender 0.6.0 / llm-deepseek 0.12.0 / llm-ollama 0.10.0 / llm-openai 0.12.0 / maimai 0.10.0 / mcp-client 0.11.0 / mcp-server 0.11.0 / media 0.14.0 / memory-history 0.11.0 / memory-inmemory 0.10.0 / memory-mongodb 0.10.0 / memory-sqlite 0.10.0 / memory-summary 0.11.0 / memory-vector 0.12.0 / message-archive 0.11.0 / office 0.10.0 / okx-trading 0.10.0 / package-manager 0.6.0 / persona 0.10.0 / process-local 0.7.0 / prompt-budget 0.6.0 / scheduler 0.12.0 / session-confirm 0.6.0 / session-manager 0.12.0 / skills 0.11.0 / storage-local 0.11.0 / subtask 0.12.0 / todo-list 0.10.0 / tool-browser 0.11.0 / tool-code-runner 0.10.0 / tool-math 0.10.0 / tool-onebot 0.10.0 / tool-search 0.10.0 / tool-session 0.12.0 / tool-system 0.11.0 / tools 0.8.0 / trigger-policy 0.12.0 / user-profile 0.12.0 / user-relation 0.13.0 / vectorstore-flat 0.11.0 / vectorstore-lancedb 0.11.0 / websearch-serper 0.10.0 / webui-server 0.12.0 / workflow 0.13.0
+- `@aalis/runtime` 0.13.0（加载器）
+- `@aalis/schema-config` 0.12.0（`PluginMeta.configSchema`；53 个消费方 dependencies 下限同步抬到 `>=0.12.0`）
+
+脚手架 `create-aalis-plugin` 0.10.0 与前端 `@aalis/plugin-webui-client` 0.12.6 同批发版，无 core peer，不计入上面 89。`plugin-todo-list` 把 `@aalis/api-memory` / `@aalis/api-webui` 从 `devDependencies` 归位到 `dependencies`（值导入描述符）；`@aalis/api-session-manager` 仍是 type-only，留在 `devDependencies`。api-* 互依里的 type-only 导入不抬下限。脚手架项目里 `@aalis/core` 若仍是 caret 区间，请显式装 `0.17.0` 与上列 peer 已抬的包，再 `npm update`；不要用 `--legacy-peer-deps` 绕过。
+
+### 插件形状：`definePlugin`（@aalis/core / @aalis/runtime）
+
+入口必须是 `export default definePlugin({ name, uses, provides, apply })`。`name` 须为非空字符串，且不含 instanceId 的 `:suffix` 与子模块的 `#`。`uses` 的值是描述符（或 `optional(描述符)`），没有默认注入——写了什么，`apply` 就只能碰到什么。`provides` 是描述符数组，激活后按本次 `instanceId` 校验确已登记。
+
+```ts
+import { definePlugin, defineService, logger, provide } from '@aalis/core';
+
+const counter = defineService<{ n: number }>('counter');
+
+export default definePlugin({
+  name: '@scope/plugin-example',
+  uses: { logger, provide },
+  provides: [counter],
+  apply({ logger, provide }) {
+    provide(counter, { n: 1 });
+    logger.info('ready');
+  },
+});
+```
+
+**迁移**：删掉具名 `export const name` / `inject` / `provides` 与 `export default function (ctx, config)`。`inject: { x: 'tools' }` 改为 `uses: { x: tools }`（值导入契约包描述符）；可选依赖包一层 `optional(tools)`。`apply(ctx, config)` 改为 `apply(caps)`，配置改从 `uses` 里的 `config` 读。加载器不再接受具名导出或函数 / 类 default，会 warn 并跳过该包。
+
+### 能力入口（@aalis/core）
+
+四原语与配置、日志、生命周期、发布、动态查询均须在 `uses` 里声明对应描述符。对照：
+
+| 0.16 | 0.17 |
+|---|---|
+| `ctx.on` / `ctx.emit` | `events.on` / `events.emit` |
+| `ctx.logger` | `logger` |
+| `ctx.config` / `apply` 第二参 | `config`（本插件配置视图，只读） |
+| `ctx.onDispose` | `lifecycle.onDispose`；新增 `lifecycle.onDrain` |
+| `ctx.provide(name, impl)` | `provide(descriptor, impl, options?)` |
+| `ctx.getService` / `ctx.getAllServices` | `uses` 后 `x.current` / `x.require()` / `x.all()` |
+| `ctx.whenService(name, attach)` | `x.follow(attach)` |
+| `ctx.useModule` | `lifecycle.module(def, cfg)` |
+| `ctx.middleware` / `ctx.runHook` | `hooks.middleware` / `hooks.run` |
+| `ctx.contribute` / `ctx.collect` | `contributions.contribute` / `contributions.collect` |
+| 整份宿主配置 | `hostConfig`（普通宿主服务，须显式 `uses`） |
+| 动态按名取服务 | `services.get` / `services.all`（不产生依赖边） |
+
+`current` / `require()` 返回**当时点的提供者本身**，不是自动转发的代理；把引用存起来须自行承担它失效。`require()` 在 required 依赖丢失到调度收敛之间也可能短暂抛错。`all()` 每次调用重新枚举；长期缓存的非默认提供者（例如 `all()[1]`）不在关停编排的依赖边上——提供者自己有失效逻辑则调用会抛，没有则可能静默成功。
+
+`follow(attach)`：在场即调 `attach`；换人时先跑上次返回的清理，等它的 Promise 落定之后才用新实例再挂；下线与关闭时清理。`attach` 必须同步：需要清理就返回函数，不需要就不返回。返回 thenable 会被接住并 warn，不会当 cleanup 用。拒绝被隔离并报告，但不证明旧资源已释放。
+
+```ts
+import { storage } from '@aalis/api-storage';
+import { definePlugin, lifecycle } from '@aalis/core';
+
+export default definePlugin({
+  name: '@scope/plugin-follow',
+  uses: { storage, lifecycle },
+  apply({ storage, lifecycle }) {
+    storage.follow(svc => {
+      const off = svc.watch?.('data:/example', () => {});
+      return () => off?.();
+    });
+    lifecycle.onDrain(async () => {
+      await storage.current?.stat('data:/example').catch(() => undefined);
+    });
+    lifecycle.onDispose(() => {});
+  },
+});
+```
+
+`services.get` 是动态查询：不参与激活闸，不享有重绑与关停顺序保证，关停期可能拿空。需要这些保证就把描述符写进 `uses`。
+
+子模块：
+
+```ts
+import { definePlugin, lifecycle, logger } from '@aalis/core';
+
+const child = definePlugin({
+  name: 'child',
+  uses: { logger },
+  apply({ logger }) {
+    logger.info('child');
+  },
+});
+
+export default definePlugin({
+  name: '@scope/plugin-parent',
+  uses: { lifecycle },
+  async apply({ lifecycle }) {
+    await lifecycle.module(child, { extra: true });
+  },
+});
+```
+
+挂载时缺 required 服务即拒绝（抛错，`apply` 不执行）；挂上之后没有独立持续激活闸，提供者离场时登记排队、引用可能为空，由父模块决定是否关掉它。子模块不进 `PluginManager`。
+
+**迁移**：按上表改名即可。`whenService` 的 cleanup 语义由 `follow` 接过（含异步清理被关闭等待）。宿主要读整份配置，在 `uses` 里声明 `hostConfig`，不要假定会默认注入。
+
+### 服务契约（各 `@aalis/api-*`）
+
+每个契约包导出运行时描述符（`defineService` 的产物）。消费方必须把它放进 `dependencies`（值导入），不能只写 type-only / `devDependencies`。类型随描述符走，不再有全局服务类型表，也没有 `ServiceOf`。
+
+`useToolService` / `useCommandService` / `useWebuiService` / `useAgent` / `useStorage` 等 helper 全部删除。`createStorageGateway` 等绑定 helper 的第一参改为 `ServiceRef`（`uses` 里声明的那一项直接传入）。
+
+第三方能力作者用 `defineService(name, bind)` 自定义绑定接口，经 `BindingPort` 的 `registrar` / `follow` / `track` 接入归属与清理；`serviceRef(port, extra)` 可在调用型接口上叠登记方法——不要对象展开，`current` 是 getter。
+
+**迁移**：`import { tools } from '@aalis/api-tools'`，写进 `uses`；`useToolService(ctx)` 改为 `caps.tools`。`createStorageGateway(ctx.getService('storage'))` 改为 `createStorageGateway(caps.storage)`。实现插件 `provide(tools, impl)`，不要 `ctx.provide('tools', impl)`。
+
+### 调度与宿主入口（@aalis/core）
+
+级联 bounce 开关与 `evictDownstreamConsumers` 删除。提供者换人不再一律重启消费者；有状态接线走 `follow`。管理器的手动 `bounce(instanceId, { config? })` 仍在：拆掉当前激活 → pending → 重算后重新激活，不换代码。仍传 `module` 的调用记 warn 并返回 `false`。
+
+内部重算只分 `'changed' | 'shutdown'` 两档，不从包根导出。`PluginEntry.module` 改为 `definition`；`requiredDeps` / `optionalDeps` 改为 `required` / `optional`（服务名数组）。公开的 `PluginEntry` 类型不含内部激活字段。激活记录类不再从包根导出；`app.ctx` 删除。
+
+宿主入口：`app.plugin(definition, config?, instanceId?)`、`app.bind(uses)`、`app.config`、`app.plugins`，以及四张底层注册表（`app.events` / `app.services` / `app.hooks` / `app.contributions`）。管理类插件经 `appService` / `pluginsService` / `hostConfig` 描述符声明获取，不要直接 import `App` 类当运行时依赖。
+
+**迁移**：`app.plugin(mod)` 的 `mod` 改为 `definePlugin` 的产物。`app.ctx.getService(...)` 改为 `app.bind({ services }).services.get(...)` 或给那段宿主代码写 `uses`。读插件条目用 `entry.definition`，不要 `entry.module`。依赖列表用 `entry.required` / `entry.optional`。
+
+### 关停编排与 `app:stopping`（@aalis/core）
+
+关停按激活为单位，每个激活拆成收尾（`lifecycle.onDrain`：此刻本激活的监听、登记与声明的依赖都还在）与撤回加清理（`lifecycle.onDispose`：对外登记已撤回）。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。边只来自框架管理的关系：声明的依赖（含子模块、含尚未访问的 optional）在编排那一刻解析到的胜者，以及存活的托管绑定与尚未落地的撤回。经 `services` 动态查到的服务不产生边；调用方缓存的裸引用也不追踪。
+
+普通依赖（别的插件、兄弟模块）：消费者整个 close 完，提供者才 drain。父使用自己子树的服务：父 drain 先于子 close，父 `onDrain` 期间子树仍活着。后代使用祖先的服务：不往排序图加边——归属树已保证子 close 先于祖先 close，drain 在 close 之前，故子 drain 时祖先仍活着。环内 optional 可让步；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭，但不享有整 App 关停那一层「根绑定与全部插件同计划」的交接保证。
+
+`App.stop()` 现序：停配置 watch → `plugins.idle()`（排干在飞重算）→ 冻结新增绑定并进入停机态 → 发出 `app:stopping`（屏障，等监听器）→ 再 `idle()` → 执行已冻计划的 drain / close → 清 sticky → 根激活 `disposeAsync`。`app:stopping` 只在全局停机触发一次，bounce / unload / disable 不发；知会（告别语、状态条）可以挂它，资源清理走 `onDrain` / `onDispose`。发出时停机计划已冻：窗口内 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成，拆卸由停机计划执行）；`register` / `bounce` 返回 false（与定义或实例 id 校验失败同属政策挡下的 false 口径；`register` 不落账）。监听器里对已冻激活 `provide` 记 warn 后忽略、不抛；`lifecycle.module` 抛「已 dispose」。停机完成后：对新定义 `register` 返回 false 且不落账；对已 disposed 实例的 `enable` / `updateConfig` / `bounce` 返回 false；`idle()` 落定。
+
+**迁移**：数据交接（flush、abort 在飞工作并等待收尾）放 `onDrain`；拆连接、摘登记放 `onDispose`，不要假定此时依赖仍在。不要用 `events.on('app:stopping', …)` 当清理通道。
+
+### 定义与登记校验（@aalis/core）
+
+缺 `name`、空串、含 `#`、或 `name` 带 `:suffix`：`definePlugin` 抛错；手写对象绕过它时 `register` / `app.plugin` 返回 `false` 并 warn，不落账。显式 `instanceId` 同样须非空、不含 `#`，但允许 `name:suffix`（多实例）。`uses` 里不是描述符的项，定义期抛、登记期 `false`。
+
+`provides` 声明了但激活后未按本次 `instanceId` 登记 → 本次激活进入 `error`。`provide(..., { onBehalfOf })` 的条目逻辑身份取被代者，清理仍归本激活；代登记**不计入**代理人的 `provides`，写进去会按「未提供」报错。
+
+**迁移**：保证 `export default definePlugin({ name })` 的 `name` 与包名一致（不一致加载器会 warn，配置键 / 热扫描 / 卸载以定义名为准）。代登记的服务不要写进本插件的 `provides`。
+
+### 配置合并（@aalis/core / @aalis/schema-config）
+
+注册期逐层深合并（宿主 `pluginDefaults` ← 配置文件 ← `app.plugin` 第三参）：全程返回新对象。纯对象递归拷贝，数组拷一层（元素若为纯对象也拷）；`Date` / `Map` / 类实例等非纯对象按引用透传。危险键 `__proto__` / `constructor` / `prototype` 跳过。`bounce` / `updateConfig` 的入参先拷贝再挂：`entry.config` 与 `ConfigManager` 各持一份，调用方事后改 payload 或插件经内置 `config` 就地改嵌套都不得写穿快照。
+
+`schema-config` 0.12.0：配置表单声明挂到 `PluginMeta.configSchema`（此前挂在插件模块形状上）。`defaultsFrom` 对 array / object default 返回拷贝。core 仍把 `configSchema` 当 opaque 透传，不解释字段。
+
+**迁移**：插件在 `definePlugin({ configSchema })` 里声明。依赖 `@aalis/schema-config` 的包下限抬到 `>=0.12.0 <1.0.0`。不要再改 `pluginDefaults` 或 `bounce` 入参并假定那就是登记后的活对象。
+
+### 加载器与双副本（@aalis/runtime / @aalis/core）
+
+两加载器共用 `pluginDefinitionOf`：只认 default 导出的定义对象（带非空 `name` 与 `apply` 函数）。具名导出、函数 / 类 default、普通对象缺字段，一律 warn「入口须 `export default definePlugin({ … })`」并跳过。定义 `name` 与包名不一致另 warn 一次，仍加载，但配置键以定义名为准。
+
+`@aalis/core` 必须是单副本 peer。装了两份时，内置描述符仍能被认出，随后在装配处抛「必须是单副本」；该 error 默认可见（`consoleSink: false` 仍有 minLevel=`warn` 的 stderr sink）。
+
+**迁移**：入口改 default 定义。确认依赖树里 `@aalis/core` 只有一份（peer `>=0.17.0 <1.0.0`，禁 caret）。
+
 ### `ServiceContainer.getEntries` 删除（@aalis/core）
 
 它把容器内部的条目对象原样交出（只拷贝外层数组），调用方能改 `priority` / `contextId` / 清理归属 `owner` 绕过容器不变量；
 `ServiceEntry` 类型随之不再从包根导出。
 
-**迁移**：改用 `getAll(name)`（`ctx.getAllServices(name)`），元素是 `ServiceView` 投影（`instance` / `contextId` / `priority` / `label`），顺序相同。
+**迁移**：改用 `ServiceContainer.getAll(name)`，或声明 `services` 后 `services.all(name)`，或在 `uses` 里声明该服务后 `x.all()`。元素是 `ServiceView` 投影（`instance` / `contextId` / `priority` / `label`），顺序相同。
 
 ## 2026-09-20（core 0.16.0 minor；patch：api-tools 0.8.4 / plugin-agent 0.13.6）
 
