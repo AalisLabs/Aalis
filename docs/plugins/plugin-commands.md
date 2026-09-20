@@ -10,9 +10,25 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-commands'
-meta.provides = ['commands']
-meta.inject = { required: ['gateway'] }
+export default definePlugin({
+  name: '@aalis/plugin-commands',
+  provides: [commands],
+  uses: {
+    commands: optional(commands),
+    gateway,
+    storage: optional(storage),
+    memory: optional(memory),
+    authority: optional(authority),
+    app: optional(appService),
+    events,
+    hooks,
+    logger,
+    config,
+    provide,
+    services,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

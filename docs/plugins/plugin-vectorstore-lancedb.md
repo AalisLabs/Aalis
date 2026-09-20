@@ -10,11 +10,20 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-vectorstore-lancedb'
-meta.displayName = 'LanceDB 向量库'
-meta.subsystem = 'embedding'
-meta.provides = ['vectorstore']
-meta.inject = { required: ['storage'] }
+export default definePlugin({
+  name: '@aalis/plugin-vectorstore-lancedb',
+  displayName: 'LanceDB 向量库',
+  subsystem: 'embedding',
+  provides: [vectorstore],
+  uses: {
+    storage,
+    provide,
+    config,
+    logger,
+    lifecycle,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 运行时经存储网关把 `path` 解析为本地目录，没有 storage 连库都开不了，故 storage 是必需依赖；还要求该 URI 所在的存储根具备 write 与 local-path 能力。声明 `required` 换来 `app.stop()` 时的拓扑保证：消费者先关、提供者后关；单独禁用或热重载 storage 时没有这条保证。

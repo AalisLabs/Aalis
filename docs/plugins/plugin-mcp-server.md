@@ -12,10 +12,13 @@
 ## 插件声明
 
 ```ts
-name = '@aalis/plugin-mcp-server'
-displayName = 'MCP 服务端'
-subsystem = 'tools'
-inject = { required: ['tools'] }
+export default definePlugin({
+  name: '@aalis/plugin-mcp-server',
+  displayName: 'MCP 服务端',
+  subsystem: 'tools',
+  uses: { tools, logger, lifecycle, config },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 传输
@@ -81,7 +84,7 @@ MCP 协议不传 session / user 概念，server 每次调用注入合成 `ToolCa
 ## 依赖
 
 - `@modelcontextprotocol/sdk` ^1.0.4
-- inject.required: `tools`
+- uses required: `tools`
 
 ## 已知限制
 

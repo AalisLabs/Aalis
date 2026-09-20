@@ -4,7 +4,7 @@
 
 `flow-control` 管理**每会话的「流控状态」**——决定缓冲中的入站消息何时（以及是否）有资格触发一次 agent 回合：计数器/活跃指数（间隔触发依据）、回复后冷却、限速窗口（防 DDoS/刷屏）、自禁言时段、闲置主动触发调度。它**不做触发判定本身**（触发判定是 `trigger-policy` 的职责），只维护被判定方读写的状态 + 在入站管线里把禁言/冷却/限速的消息直接「吞掉」。
 
-- 服务注册名：`getService('flow-control')`（字符串键）
+- 服务注册名：`flowControl.current`（字符串键）
 - 契约包：`@aalis/api-flow-control`
 - 参考实现：`@aalis/plugin-flow-control`
 - 紧密协作的兄弟服务：`@aalis/plugin-trigger-policy`（`trigger-policy`），二者占据入站管线相邻两个相位。
@@ -63,7 +63,7 @@ export interface FlowSessionStateSnapshot {
 }
 ```
 
-类型绑定经 declaration merging 随 -api 包提供（`packages/api-flow-control/src/index.ts`），下游只 `import '@aalis/api-flow-control'` 即可让 `ctx.getService('flow-control')` 拿到类型，**不必硬依赖实现包**。
+类型绑定经 declaration merging 随 -api 包提供（`packages/api-flow-control/src/index.ts`），下游只 `import '@aalis/api-flow-control'` 即可让 `flowControl.current` 拿到类型，**不必硬依赖实现包**。
 
 要点：
 - `getStateSnapshot` / `getThreshold` 是**纯读**；其余方法带状态变更副作用。
@@ -72,11 +72,11 @@ export interface FlowSessionStateSnapshot {
 
 ## 3. 谁提供 / 谁消费
 
-**提供方（唯一参考实现）**：`@aalis/plugin-flow-control`，`ctx.provide('flow-control', service)`（`packages/plugin-flow-control/src/index.ts`）。它同时占据入站管线 `inbound:flow` 相位做前置闸门，并监听 `outbound:message` 自动记冷却。
+**提供方（唯一参考实现）**：`@aalis/plugin-flow-control`，`provide(flowControl, service)`（`packages/plugin-flow-control/src/index.ts`）。它同时占据入站管线 `inbound:flow` 相位做前置闸门，并监听 `outbound:message` 自动记冷却。
 
 **典型消费点**：
 
-- `@aalis/plugin-trigger-policy`（核心消费者）：`inbound:trigger` 相位里 `getService('flow-control')` 读快照算 `fixedOk/dynamicOk`、命中 mute 关键词后 `setMuted` + `rescheduleIdle`、触发后 `recordTriggered`（`packages/plugin-trigger-policy/src/index.ts`）。
+- `@aalis/plugin-trigger-policy`（核心消费者）：`inbound:trigger` 相位里 `flowControl.current` 读快照算 `fixedOk/dynamicOk`、命中 mute 关键词后 `setMuted` + `rescheduleIdle`、触发后 `recordTriggered`（`packages/plugin-trigger-policy/src/index.ts`）。
 - `@aalis/plugin-adapter-onebot`：
   - 平台群禁言/解禁 notice → `flow.setMuted(sessionId, durationSec, platform)` 桥接（`packages/plugin-adapter-onebot/src/index.ts`）。
   - agent 主动发送前限速门：`flow.isRateLimited` + `flow.recordReply`（`packages/plugin-adapter-onebot/src/index.ts`）；flow-control 未加载时默认放行（不限速）。
@@ -88,7 +88,7 @@ export interface FlowSessionStateSnapshot {
 
 替换默认实现（例如换一套触发算法）时，**最小必须实现整个 `FlowControlService` 接口**——没有可选方法，`trigger-policy` 会同时用到 `getStateSnapshot` / `getThreshold` / `recordTriggered` / `setMuted` / `rescheduleIdle`，adapter 会用到 `isRateLimited` / `recordReply`。若你只想接管「状态存储」而保留管线相位行为，更简单的做法是直接 fork `plugin-flow-control`；自建 provider 时务必把它占据的 `inbound:flow` 中间件一并搬过来（否则禁言/冷却/限速闸门会失效）。
 
-双源 manifest 必须同步（`package.json` 的 `aalis.service` 与 `index.ts` 的 `provides/inject` 两处都要写，见 [concepts/manifest-metadata](../concepts/manifest-metadata.md)）。参考实现的两源：
+双源 manifest 必须同步（`package.json` 的 `aalis.service` 与源码 `provides`/`uses` 两处都要写，见 [concepts/manifest-metadata](../concepts/manifest-metadata.md)）。参考实现的两源：
 
 `package.json` → `aalis.service`：
 ```json
@@ -101,22 +101,22 @@ export interface FlowSessionStateSnapshot {
 
 `index.ts`（`packages/plugin-flow-control/src/index.ts`）：
 ```ts
-export const provides = ['flow-control'];
-export const inject = { required: ['gateway'], optional: ['message-archive'] };
+provides: [flowControl];
+uses: { gateway, messageArchive: optional(messageArchive) };
 ```
 
 最小骨架（可编译，省略算法细节）：
 
 ```ts
-import type { Context } from '@aalis/core';
+import { definePlugin } from '@aalis/core';
 import { INBOUND_PHASE } from '@aalis/api-gateway';
 import type { FlowControlService } from '@aalis/api-flow-control';
 
-export const name = '@aalis/plugin-my-flow-control';
-export const provides = ['flow-control'];
-export const inject = { required: ['gateway'], optional: ['message-archive'] };
-
-export function apply(ctx: Context): void {
+export default definePlugin({
+  name: '@aalis/plugin-my-flow-control',
+  provides: [flowControl],
+  uses: { gateway, messageArchive: optional(messageArchive) },
+  apply({ provide, events, hooks, lifecycle, logger, config }) {
   const service: FlowControlService = {
     ensureState(/* ... */) {/* 初始化 per-session 状态 */},
     getStateSnapshot(/* ... */) { return undefined; },
@@ -132,10 +132,10 @@ export function apply(ctx: Context): void {
   };
 
   // priority 留默认(0=Backend)即可，无人会跟 flow-control 抢名
-  ctx.provide('flow-control', service);
+  provide(flowControl, service);
 
   // 关键：占据入站「前置闸门」相位，禁言/冷却/限速直接 swallow（不调 next）
-  ctx.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
+  hooks.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
     const { message } = data;
     if (message.source === 'idle-trigger') return next(); // 内部注入不再过流控
     service.ensureState(message.sessionId, message.platform, message.sessionType);
@@ -145,23 +145,24 @@ export function apply(ctx: Context): void {
     }
     await next();
   });
-}
+},
+});
 ```
 
-注册选项说明（`ctx.provide(name, instance, { priority, label, entryId })`，`packages/core/src/context/context.ts`）：
+注册选项说明（`provide(name, instance, { priority, label, entryId })`，`packages/core/src/context/context.ts`）：
 
 - **priority**：`flow-control` 是单实例后端服务，无 per-entry 分裂场景，留默认 `0` 即可。同名胜出规则为 `偏好 > priority > 注册顺序`（详见 [concepts/service-model](../concepts/service-model.md)），框架已**移除 0.5.0 的能力匹配选择**——不能按 capability 选 provider。
-- **entryId**：只在「按子作用域分裂多个 entry」时用 `'${ctx.id}/${sub}'`；flow-control 用全局单例 `Map<sessionId, state>` 管多会话，**不**需要 entryId。
+- **entryId**：只在「按子作用域分裂多个 entry」时用 `'${lifecycle.id}/${sub}'`；flow-control 用全局单例 `Map<sessionId, state>` 管多会话，**不**需要 entryId。
 
 ## 5. 标准消费方式
 
-按 [concepts/lazy-service-access](../concepts/lazy-service-access.md) 的规则：**每次用都 `getService()` 现取，不缓存引用**（provider 反弹会让旧引用失效）。flow-control 是 `optional` 依赖的典范——缺失即降级放行：
+按 [concepts/lazy-service-access](../concepts/lazy-service-access.md) 的规则：**每次用都 `current` 现取，不缓存引用**（provider 反弹会让旧引用失效）。flow-control 是 `optional` 依赖的典范——缺失即降级放行：
 
 ```ts
 import type { FlowControlService } from '@aalis/api-flow-control';
 
 // trigger-policy 读快照算是否到点（packages/plugin-trigger-policy/src/index.ts）
-const flow = ctx.getService<FlowControlService>('flow-control');
+const flow = flowControl.current;
 const snap = flow?.getStateSnapshot(message.sessionId);
 if (!snap) {
   // 没有 flow 状态（私聊/CLI/未启用流控的 scope）→ 默认放行
@@ -173,7 +174,7 @@ const dynamicOk = snap.activityScore >= (flow?.getThreshold(message.sessionId) ?
 
 ```ts
 // adapter 主动发送前限速门（packages/plugin-adapter-onebot/src/index.ts）
-const flow = ctx.getService<FlowControlService>('flow-control');
+const flow = flowControl.current;
 if (!flow) return { allowed: true };          // 未加载 → 不限速
 if (flow.isRateLimited(sessionId)) return { allowed: false, reason: '已达限速上限' };
 flow.recordReply(sessionId, 'onebot');         // 记一次出站
@@ -215,7 +216,7 @@ flow-control 不直接接触 authority/SSRF/沙盒，但它是**对外可见行�
 
 - [concepts/message-llm-pipeline](../concepts/message-llm-pipeline.md) — 入站相位 `CONFIRM → COMMAND → FLOW → TRIGGER → DISPATCH` 全貌（相位常量见 `packages/api-gateway/src/index.ts`）。
 - [concepts/service-model](../concepts/service-model.md)、[concepts/lazy-service-access](../concepts/lazy-service-access.md) — DI 选名规则、现取不缓存。
-- [concepts/manifest-metadata](../concepts/manifest-metadata.md) — `provides/inject` 双源同步。
+- [concepts/manifest-metadata](../concepts/manifest-metadata.md) — `provides`/`uses` 双源同步。
 - [concepts/storage-uri-grammar](../concepts/storage-uri-grammar.md) — `mutedUntil` 持久化用的 `data:` root 文法。
 - [services/gateway](./gateway.md) — 谁驱动入站相位、`ingressMessage`/`outbound:message`。
 - [services/message-archive](./message-archive.md) — `archiveIncoming` 烘焙/落库语义与 `inbound:message:archived` 事件（影子归档的目标）。

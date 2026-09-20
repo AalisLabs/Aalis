@@ -10,8 +10,24 @@ Agent Skills 技能系统，兼容 Anthropic Agent Skills 标准。每个技能�
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-skills'
-meta.provides = ['skills']
+export default definePlugin({
+  name: '@aalis/plugin-skills',
+  provides: [skills],
+  apply(caps) { /* 见源码 */ },
+  uses: {
+    tools: optional(tools),
+    webui: optional(webuiServer),
+    storage: optional(storage),
+    persona: optional(persona),
+    contributions,
+    hooks,
+    events,
+    lifecycle,
+    logger,
+    config,
+    provide,
+  },
+});
 ```
 
 ## 配置

@@ -9,17 +9,41 @@
 
 ## 插件声明
 
-```typescript
-meta.name = '@aalis/plugin-agent'
-meta.provides = ['agent']
-meta.inject = { optional: ['llm', 'memory', 'persona', 'message-archive', 'platform', 'media', 'storage'] }
+```ts
+definePlugin({
+  name: '@aalis/plugin-agent',
+  provides: [agent],
+  uses: {
+    logger,
+    config,
+    events,
+    hooks,
+    contributions,
+    lifecycle,
+    provide,
+    services,
+    commands: optional(commands),
+    tools: optional(tools),
+    llm: optional(llm),
+    memory: optional(memory),
+    persona: optional(persona),
+    messageArchive: optional(messageArchive),
+    sessionManager: optional(sessionManager),
+    platform: optional(platform),
+    media: optional(media),
+    storage: optional(storage),
+    gateway: optional(gateway),
+    plugins: optional(pluginsService),
+  },
+  apply: run,
+})
 ```
 
 ## 配置
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `defaultLLM` | llm-ref | — | 默认对话模型：全局默认 LLM。apply() 时调用 ctx.preferService("llm", `provider/model`) 锁定 ServiceContainer 偏好。会话 / 平台 profile 未覆盖时生效。 |
+| `defaultLLM` | llm-ref | — | 默认对话模型：全局默认 LLM。apply 时经 `services.prefer(llm, \`${provider}/${model}\`)` 锁定偏好。会话 / 平台 profile 未覆盖时生效。 |
 | `systemPrompt` | textarea | `''` | 行为准则提示词：定义 Agent 的行为准则。当人设插件存在时，身份描述由人设提供，此处仅作为行为指令追加。 |
 | `memoryTokenBudget` | number | `4096` | 长期记忆预留 Token：为长期记忆注入的 system 消息预留的 token 额度，截断时不会删除这些消息 |
 | `historyLimit` | number | `50` | 历史消息条数：从记忆中加载的最近对话历史条数 |

@@ -10,12 +10,26 @@ OneBot 协议适配器，通过 WebSocket 连接一个或多个 OneBot 实现端
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-adapter-onebot'
-meta.provides = ['platform']
-meta.inject = {
-  required: ['storage', 'process'],
-  optional: ['llm', 'commands', 'message-archive', 'persona', 'flow-control'],
-}
+export default definePlugin({
+  name: '@aalis/plugin-adapter-onebot',
+  provides: [platform],
+  uses: {
+    storage,
+    processService,
+    events,
+    logger,
+    lifecycle,
+    config,
+    contributions,
+    provide,
+    llm: optional(llm),
+    media: optional(media),
+    memory: optional(memory),
+    messageArchive: optional(messageArchive),
+    flowControl: optional(flowControl),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置
