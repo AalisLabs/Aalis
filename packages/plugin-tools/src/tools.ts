@@ -13,17 +13,17 @@ import type { Logger } from '@aalis/core';
 /**
  * 工具注册表 —— 管理 AI 可调用工具的注册、查询、执行
  *
- * 由 @aalis/plugin-tools 创建并注册为服务 'tools'，
- * 插件通过 useToolService(ctx) 注册与查询工具（服务名 'tools'）。
+ * 由 @aalis/plugin-tools 创建并发布为服务 'tools'，
+ * 消费方声明 @aalis/api-tools 的 `tools` 描述符，经绑定接口注册与查询。
  *
  * 与 plugin-commands/CommandRegistry 同属"中心 Registry 模式"：
  * - 单一 Map<name, Registered> 存储，name 全局唯一（重名警告并覆盖）
- * - register() 返回 disposer，Context 拆卸时按 contextId 自动注销
+ * - register() 返回退订，登记方的激活拆卸时按 contextId 自动注销
  * - 通过 setExecutionGuard() 注入统一权限/安全检查钩子
  *
  * 与 LLM/Storage/Platform 路由器（同名 facade 模式）的差异：
  * - 这里没有"多个底层 provider"概念——所有工具都直接落到这个 Map
- * - 因此不需要 ctx.getAllServices('tools') 枚举，也不需要 'router' capability
+ * - 因此不需要枚举 'tools' 的全部提供者，也不需要 'router' capability
  */
 export class ToolRegistry implements ToolService {
   private tools = new Map<string, RegisteredTool>();
@@ -231,7 +231,7 @@ export class ToolRegistry implements ToolService {
     for (const [name, tool] of this.tools) {
       if (tool.pluginName === contextId) {
         this.tools.delete(name);
-        this.logger.debug(`注销工具: ${name} (Context ${contextId} 拆卸)`);
+        this.logger.debug(`注销工具: ${name} (激活 ${contextId} 拆卸)`);
       }
     }
     for (const [name, group] of this._groups) {

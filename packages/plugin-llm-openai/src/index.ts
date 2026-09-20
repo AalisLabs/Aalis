@@ -1,8 +1,8 @@
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/api-llm';
-import { LLMCapabilities } from '@aalis/api-llm';
+import { LLMCapabilities, llm } from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import type { Context } from '@aalis/core';
+import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message, ToolCall } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
@@ -27,13 +27,7 @@ function parseApiError(provider: string, status: number, body: string): string {
   return `${provider} API 错误 (${status}): ${body}`;
 }
 
-export const name = '@aalis/plugin-llm-openai';
-export const displayName = 'OpenAI';
-export const subsystem = 'llm';
-export const provides = ['llm'];
-export const reusable = true;
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   apiKey: { type: 'string', label: 'API Key', secret: true, description: 'OpenAI API 密钥（本地服务可留空）' },
   baseUrl: {
     type: 'string',
@@ -175,7 +169,7 @@ class OpenAIClient {
   private thinkingParam: boolean;
   private logger;
 
-  constructor(config: OpenAIConfig, logger: Context['logger']) {
+  constructor(config: OpenAIConfig, logger: Logger) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl.replace(/\/+$/, '');
     // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
@@ -637,7 +631,23 @@ class OpenAIModelHandle implements LLMModel {
   }
 }
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
+// ===== 插件定义 =====
+
+const uses = { config, logger, lifecycle, provide };
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-llm-openai',
+  displayName: 'OpenAI',
+  subsystem: 'llm',
+  configSchema,
+  reusable: true,
+  provides: [llm],
+  uses,
+  apply: registerModels,
+});
+
+async function registerModels({ config, logger, lifecycle, provide }: Caps): Promise<void> {
   const openaiConfig: OpenAIConfig = {
     apiKey: (config.apiKey as string) ?? '',
     baseUrl: (config.baseUrl as string) ?? 'https://api.openai.com/v1',
@@ -655,7 +665,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 物化进配置文件，所以「未配置 baseUrl」的存量部署实际都带着旧默认值——精确命中时
   // 就地升级为新默认并提示；自定义端点（聚合网关等）无法代改，见 CHANGELOG 迁移说明。
   if (openaiConfig.baseUrl === 'https://api.openai.com') {
-    ctx.logger.warn('baseUrl 语义已改为完整前缀（插件不再自动拼 /v1）：旧默认值已自动升级为 https://api.openai.com/v1');
+    logger.warn('baseUrl 语义已改为完整前缀（插件不再自动拼 /v1）：旧默认值已自动升级为 https://api.openai.com/v1');
     openaiConfig.baseUrl = 'https://api.openai.com/v1';
   }
 
@@ -671,10 +681,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     throw new Error('使用 OpenAI 官方 API 需要配置 apiKey');
   }
 
-  const client = new OpenAIClient(openaiConfig, ctx.logger);
+  const client = new OpenAIClient(openaiConfig, logger);
   const baseLabel = `OpenAI (${openaiConfig.baseUrl.replace(/^https?:\/\//, '')})`;
 
-  // 已注册 model entry 的句柄表：modelId → dispose（来自 ctx.provide 返回值）
+  // 已注册 model entry 的句柄表：modelId → dispose（来自 provide 返回值）
   const registered = new Map<string, () => void>();
 
   // refresh 闭包：apply 末尾装配；先占位以打破环依赖。
@@ -695,15 +705,15 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const handle = new OpenAIModelHandle(
       client,
       modelId,
-      ctx.id,
+      lifecycle.id,
       openaiConfig.contextLength,
       openaiConfig.maxTokens,
       refresh,
       capabilities,
     );
-    const dispose = ctx.provide('llm', handle, {
+    const dispose = provide(llm, handle, {
       label: `${baseLabel} / ${modelId}`,
-      entryId: `${ctx.id}/${modelId}`,
+      entryId: `${lifecycle.id}/${modelId}`,
     });
     registered.set(modelId, dispose);
   }
@@ -714,7 +724,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     try {
       d();
     } catch (err) {
-      ctx.logger.warn(`卸载 model entry "${modelId}" 失败: ${err}`);
+      logger.warn(`卸载 model entry "${modelId}" 失败: ${err}`);
     }
     registered.delete(modelId);
   }
@@ -724,7 +734,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const remoteSet = new Set(remoteIds);
     for (const cm of openaiConfig.customModels) {
       if (remoteSet.has(cm)) {
-        ctx.logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
+        logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
       }
     }
     return [...remoteIds, ...openaiConfig.customModels.filter(id => !remoteSet.has(id))];
@@ -733,10 +743,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 初次注册
   const initialIds = await discoverAllModelIds();
   if (initialIds.length === 0) {
-    ctx.logger.warn(`已连接: ${openaiConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
+    logger.warn(`已连接: ${openaiConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
   } else {
     for (const modelId of initialIds) registerOne(modelId);
-    ctx.logger.info(`已连接: ${openaiConfig.baseUrl}，注册 ${initialIds.length} 个 model entry`);
+    logger.info(`已连接: ${openaiConfig.baseUrl}，注册 ${initialIds.length} 个 model entry`);
   }
 
   // 装配 refresh 真实实现
@@ -758,11 +768,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       }
     }
     if (added.length || removed.length) {
-      ctx.logger.info(
+      logger.info(
         `OpenAI 模型列表已刷新: +${added.length} (${added.join(',') || '-'}) / -${removed.length} (${removed.join(',') || '-'}) / 现共 ${registered.size}`,
       );
     } else {
-      ctx.logger.debug(`OpenAI 模型列表已刷新: 无变化 (共 ${registered.size})`);
+      logger.debug(`OpenAI 模型列表已刷新: 无变化 (共 ${registered.size})`);
     }
     return { added, removed, total: registered.size };
   };

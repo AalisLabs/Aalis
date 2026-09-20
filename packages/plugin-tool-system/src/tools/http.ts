@@ -8,7 +8,7 @@
 
 import type { StorageService } from '@aalis/api-storage';
 import { parseUriRoot, resolveAgainstCwd } from '@aalis/api-storage';
-import { type ScopedToolService, wrapUntrustedContent } from '@aalis/api-tools';
+import { type BoundTools, wrapUntrustedContent } from '@aalis/api-tools';
 import { safeFetch } from '@aalis/util-network-guard';
 
 interface HttpConfig {
@@ -38,7 +38,7 @@ async function readBodyCapped(response: Response, maxBytes: number): Promise<Buf
   return Buffer.concat(chunks);
 }
 
-export function registerHttpTools(tools: ScopedToolService, config: HttpConfig): void {
+export function registerHttpTools(tools: BoundTools, config: HttpConfig): void {
   // ==================== http_request ====================
   tools.register({
     definition: {

@@ -13,9 +13,15 @@ import type {
   TranscribeInput,
   TranscribeResult,
 } from '@aalis/api-media';
-import type { Context } from '@aalis/core';
+import type { Logger, ServiceRef } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
 import { materializeAttachment, transcodeAudioToWav } from './ffmpeg.js';
+
+/** 包装 LLM 为 processor 用到的能力：枚举 LLM entry 的 llm，以及识别过程的 logger */
+export interface AdapterCaps {
+  llm: ServiceRef<LLMModel>;
+  logger: Logger;
+}
 
 export const DEFAULT_VISION_PROMPT =
   '请像有经验的朋友一样看这张图，用自然中文客观描述实际可见的内容。' +
@@ -285,6 +291,7 @@ async function audioToBase64(data: string): Promise<string> {
 function wrapLLMAsProcessor(
   entry: LLMModelEntry,
   cap: MediaCapability,
+  logger: Logger,
   opts: LlmProcessorOptions = {},
 ): MediaProcessor {
   const llm: LLMModel = entry.instance;
@@ -294,7 +301,7 @@ function wrapLLMAsProcessor(
     capabilities: [cap],
     displayName: `${entry.label ?? entry.contextId} (${capShortName(cap)})`,
     priority: 0,
-    async describe(input: DescribeInput, _ctx: Context): Promise<DescribeResult> {
+    async describe(input: DescribeInput): Promise<DescribeResult> {
       // base 优先级：调用方显式 basePrompt > wrap 时注入的 opts.prompt > 内置默认
       // 调用方需要切换 prompt（如详细/专业模板或自路由）时必须传 input.basePrompt，
       // 不要塞进 hint —— 否则会和默认 base 同时存在产生指令冲突。
@@ -329,7 +336,7 @@ function wrapLLMAsProcessor(
         const sizes = images.map(s => (s.startsWith('data:') ? `${Math.round((s.length * 3) / 4 / 1024)}KB` : 'URL'));
         const messages: Message[] = [{ role: 'user', content: prompt, images }];
         const t0 = Date.now();
-        _ctx.logger.info(
+        logger.info(
           `[${cap}.describe] 调用 ${llm.id}，${images.length} 张图 (${sizes.join('/')}), ` +
             `prompt=${prompt.length}字, maxTokens=${maxTokens}, think=${think}`,
         );
@@ -340,7 +347,7 @@ function wrapLLMAsProcessor(
         const usedTokens = resp.usage?.totalTokens;
         if (rawLen === 0) {
           const usedPct = usedTokens && maxTokens > 0 ? Math.round((usedTokens / maxTokens) * 100) : -1;
-          _ctx.logger.warn(
+          logger.warn(
             `[${cap}.describe] ${llm.id} 空响应：${Date.now() - t0}ms, 图源=[${sizes.join('/')}], ` +
               `prompt=${prompt.length}字, tokens=${usedTokens ?? '?'}/${maxTokens}` +
               (usedPct >= 80
@@ -351,7 +358,7 @@ function wrapLLMAsProcessor(
               `, think=${think}`,
           );
         } else {
-          _ctx.logger.info(
+          logger.info(
             `[${cap}.describe] ${llm.id} 完成 ${Date.now() - t0}ms, raw=${rawLen}字 trim=${text.length}字, tokens=${usedTokens ?? '?'}`,
           );
         }
@@ -367,7 +374,7 @@ function wrapLLMAsProcessor(
   };
 
   if (cap === 'audio') {
-    proc.transcribe = async (input: TranscribeInput, _ctx: Context): Promise<TranscribeResult> => {
+    proc.transcribe = async (input: TranscribeInput): Promise<TranscribeResult> => {
       const langHint = input.language ? `\n* 输出语言：${input.language}` : '';
       const ctxBlock = input.context ? `\n\n上下文/最近对话:\n${input.context}` : '';
       const prompt = `${opts.prompt ?? DEFAULT_AUDIO_PROMPT}${langHint}${ctxBlock}`;
@@ -378,7 +385,7 @@ function wrapLLMAsProcessor(
       const maxTokens = opts.maxTokens ?? 1024;
       const think = opts.think ?? true;
       const t0 = Date.now();
-      _ctx.logger.info(
+      logger.info(
         `[audio.transcribe] 调用 ${llm.id}，音频 ${sizeKB}KB, prompt ${prompt.length}字, maxTokens=${maxTokens}, think=${think}`,
       );
       const resp = await llm.chat({ messages, maxTokens, think });
@@ -389,7 +396,7 @@ function wrapLLMAsProcessor(
         // 空响应通常不是“非语音”——而是 maxTokens 不足 / prompt+音频 token 占用过高 / 模型超时。
         // 把可能原因都打出来，便于排查 nemotron/gemma 等模型的资源不足情况。
         const usedPct = usedTokens && maxTokens > 0 ? Math.round((usedTokens / maxTokens) * 100) : -1;
-        _ctx.logger.warn(
+        logger.warn(
           `[audio.transcribe] ${llm.id} 空响应：${Date.now() - t0}ms, sizeKB=${sizeKB}, prompt=${prompt.length}字, ` +
             `tokens=${usedTokens ?? '?'}/${maxTokens}` +
             (usedPct >= 80
@@ -400,7 +407,7 @@ function wrapLLMAsProcessor(
             `, think=${think}`,
         );
       } else {
-        _ctx.logger.info(
+        logger.info(
           `[audio.transcribe] ${llm.id} 完成 ${Date.now() - t0}ms, raw=${rawLen}字 trim=${text.length}字, tokens=${usedTokens ?? '?'}, ` +
             `内容="${(resp.content ?? '').replace(/\n/g, ' ')}"`,
         );
@@ -436,14 +443,14 @@ function defaultPromptFor(cap: MediaCapability, count: number): string {
 }
 
 /**
- * 扫描当前 ctx 中所有 LLM entry，按其声明的能力返回应注册的 MediaProcessor 数组。
+ * 扫描当前全部 LLM entry，按其声明的能力返回应注册的 MediaProcessor 数组。
  * @param opts 默认应用于所有 cap 的参数，以及 per-cap 覆盖（vision/audio 可独立配 prompt/maxTokens/think）
  *
  * 不注册 `video.passthrough`（原生视频 LLM）与 `document.image`：service 从不按这两个 cap 选
  * processor（视频一律走「抽帧 → vision」，文件交给 file-reader），注册只会让配置面多出永不生效的键。
  */
 export function scanLLMProcessors(
-  ctx: Context,
+  caps: AdapterCaps,
   opts: LlmProcessorOptions & {
     vision?: LlmProcessorOptions;
     audio?: LlmProcessorOptions;
@@ -451,15 +458,14 @@ export function scanLLMProcessors(
 ): MediaProcessor[] {
   const { vision: visionOverride, audio: audioOverride, ...defaults } = opts;
   const processors: MediaProcessor[] = [];
-  const all = ctx.getAllServices<LLMModel>('llm');
-  for (const entry of all) {
-    const caps = entry.instance.capabilities;
-    if (caps.includes(LLMCapabilities.Vision)) {
-      processors.push(wrapLLMAsProcessor(entry, 'vision', { ...defaults, ...visionOverride }));
+  for (const entry of caps.llm.all()) {
+    const modelCaps = entry.instance.capabilities;
+    if (modelCaps.includes(LLMCapabilities.Vision)) {
+      processors.push(wrapLLMAsProcessor(entry, 'vision', caps.logger, { ...defaults, ...visionOverride }));
     }
-    if (caps.includes(LLMCapabilities.Audio)) {
+    if (modelCaps.includes(LLMCapabilities.Audio)) {
       // Gemma 3n / Gemini / GPT-4o-audio 等原生音频 LLM 单一 cap 覆盖转写 + 描述，由全能 prompt 驱动
-      processors.push(wrapLLMAsProcessor(entry, 'audio', { ...defaults, ...audioOverride }));
+      processors.push(wrapLLMAsProcessor(entry, 'audio', caps.logger, { ...defaults, ...audioOverride }));
     }
   }
   return processors;

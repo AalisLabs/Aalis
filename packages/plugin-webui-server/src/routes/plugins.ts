@@ -3,22 +3,39 @@ import type { UserIdentity } from '@aalis/api-authority';
 import type { CommandService } from '@aalis/api-commands';
 import type { ToolService } from '@aalis/api-tools';
 import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui';
-import type { AppService, Context, PluginManagerService } from '@aalis/core';
+import type { AppService, ConfigManager, PluginManagerService, ServiceRef } from '@aalis/core';
 import { parseInstanceId } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA, defaultsFrom, validateConfig } from '@aalis/schema-config';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 
+/** 插件管理 + 全局配置路由用到的能力 */
+export interface PluginRoutesCaps {
+  app: ServiceRef<AppService>;
+  plugins: ServiceRef<PluginManagerService>;
+  /** 整份配置的读写与落盘（宿主管理面） */
+  hostConfig: ServiceRef<ConfigManager>;
+  tools: Pick<ServiceRef<ToolService>, 'current'>;
+  commands: Pick<ServiceRef<CommandService>, 'current'>;
+  /**
+   * 取当前 webui-server 提供者（页面登记表的读取面）。本插件自己提供这个服务，
+   * 写死引用就绕过了解析——第三方若以更高优先级接管 webui-server，页面列表该跟着走。
+   */
+  webui(): WebUIService | undefined;
+}
+
 /** 注册插件管理 + 全局配置相关 REST 路由 */
 export function registerPluginRoutes(
   expressApp: express.Express,
-  ctx: Context,
-  getApp: () => AppService | undefined,
-  getPluginMgr: () => PluginManagerService | undefined,
+  caps: PluginRoutesCaps,
   identify: (req: { headers: { cookie?: string } }) => UserIdentity | undefined,
   gate: RouteGate,
   getAction: (plugin: string, method: string) => WebuiActionHandler | undefined,
 ): void {
+  const getApp = (): AppService | undefined => caps.app.current;
+  const getPluginMgr = (): PluginManagerService | undefined => caps.plugins.current;
+  const hostConfig = (): ConfigManager => caps.hostConfig.require();
+
   // 获取插件列表及状态
   expressApp.get('/api/plugins', gate(), (_req, res) => {
     const app = getApp();
@@ -37,7 +54,7 @@ export function registerPluginRoutes(
       set.add('visibility:restricted');
       capsByPlugin.set(plugin, set);
     };
-    const tools = ctx.getService<ToolService>('tools')?.getAll() ?? [];
+    const tools = caps.tools.current?.getAll() ?? [];
     for (const t of tools) {
       const list = toolsByPlugin.get(t.pluginName) ?? [];
       list.push(t.name);
@@ -45,7 +62,7 @@ export function registerPluginRoutes(
       addCaps(t.pluginName, t.visibility);
     }
     const commandsByPlugin = new Map<string, string[]>();
-    const cmds = ctx.getService<CommandService>('commands')?.getAll() ?? [];
+    const cmds = caps.commands.current?.getAll() ?? [];
     for (const c of cmds) {
       const owner = c.pluginName ?? 'unknown';
       const list = commandsByPlugin.get(owner) ?? [];
@@ -78,7 +95,7 @@ export function registerPluginRoutes(
     res.json({ plugins });
   });
 
-  // 获取可用的 WebUI 页面（由活跃插件通过 useWebuiService.registerPage 注册）
+  // 获取可用的 WebUI 页面（由活跃插件经 webui-server 的绑定接口 registerPage 登记）
   expressApp.get('/api/pages', gate(), (_req, res) => {
     const app = getApp();
     const pm = getPluginMgr();
@@ -87,7 +104,7 @@ export function registerPluginRoutes(
       return;
     }
 
-    const webuiSvc = ctx.getService<WebUIService>('webui-server');
+    const webuiSvc = caps.webui();
     if (!webuiSvc) {
       res.json([]);
       return;
@@ -123,7 +140,7 @@ export function registerPluginRoutes(
     }
 
     const registered = getAction(pluginName, method);
-    // UNIFY-TRANSITION：未迁移的插件仍用静态 actions（处理函数吃 ctx）；全部迁完后连同这条回落一起删
+    // UNIFY-TRANSITION：未迁移的插件仍用静态 actions（处理函数吃旧上下文）；全部迁完后连同这条回落一起删
     const legacy = registered ? undefined : entry.module.actions?.[method];
     if (!registered && typeof legacy !== 'function') {
       res.status(404).json({ error: `处理器 ${method} 不存在` });
@@ -161,7 +178,7 @@ export function registerPluginRoutes(
 
   // 获取当前全局配置
   expressApp.get('/api/config', gate(), (_req, res) => {
-    const allConfig = ctx.config.getAll();
+    const allConfig = hostConfig().getAll();
     res.json({ ...allConfig, _schema: CORE_CONFIG_SCHEMA });
   });
 
@@ -184,7 +201,7 @@ export function registerPluginRoutes(
     // _schema 原样回传，其中 plugins 等还可能是过期快照（插件配置页保存后不刷新全局 config），
     // 所以不能按键报错：其余键一律不应用，但把真有改动的点名回给调用方——不静默吞掉却回复「已保存」。
     const allowed = Object.keys(CORE_CONFIG_SCHEMA);
-    const current = ctx.config.getAll() as Record<string, unknown>;
+    const current = hostConfig().getAll() as Record<string, unknown>;
     const differs = (k: string) => !isDeepStrictEqual(updates[k], current[k]);
     const ignored = Object.keys(updates).filter(k => k !== '_schema' && !allowed.includes(k) && differs(k));
     const changed = allowed.filter(k => k in updates && differs(k));
@@ -202,7 +219,7 @@ export function registerPluginRoutes(
       res.status(400).json({ error: invalid.join('; ') });
       return;
     }
-    for (const key of changed) ctx.config.set(key, updates[key]);
+    for (const key of changed) hostConfig().set(key, updates[key]);
     // name / logLevel 都要重启才生效；值没变就不重启
     const restartNeeded = changed.length > 0;
     const note = ignored.length > 0 ? `（已忽略不可修改的字段: ${ignored.join(', ')}）` : '';
@@ -224,7 +241,7 @@ export function registerPluginRoutes(
   // 获取单个插件的原始配置（未脱敏，给编辑器用）
   expressApp.get('/api/plugins/:name/config', gate(), (req, res) => {
     const pluginName = req.params.name;
-    const pluginConfig = ctx.config.getPluginConfig(pluginName);
+    const pluginConfig = hostConfig().getPluginConfig(pluginName);
     res.json({ name: pluginName, config: pluginConfig });
   });
 
@@ -254,7 +271,7 @@ export function registerPluginRoutes(
     // llm-openai、serper、onebot 皆是）。用裸 defaults 打底时，请求里没带 apiKey 就等于
     // merged 里根本没有这个键，整体替换后用户的密钥从内存态与 yaml 一起消失。
     // 叠上已存值后语义才是真正的部分更新：没提交的字段保持原样，要清空得显式传空串。
-    const stored = { ...defaults, ...ctx.config.getPluginConfig(pluginName) };
+    const stored = { ...defaults, ...hostConfig().getPluginConfig(pluginName) };
     const merged = { ...stored, ...(newConfig as Record<string, unknown>) };
 
     // 保存前校验，拦新不追旧：只拒绝本次编辑**新引入**的 invalid（配错了）。
@@ -281,7 +298,7 @@ export function registerPluginRoutes(
       res.json({ ok: true, message: `插件 ${pluginName} 配置已更新` });
     } else {
       // 插件被禁用时这里也会走到，但「不存在」会把用户引向错误方向——区分「禁用」与「真不存在」并给出下一步。
-      const disabled = ctx.config.isPluginDisabled(pluginName);
+      const disabled = hostConfig().isPluginDisabled(pluginName);
       if (disabled) {
         res.status(409).json({ error: `插件 ${pluginName} 已禁用，配置未写入——先启用插件再修改配置` });
       } else {
@@ -382,7 +399,7 @@ export function registerPluginRoutes(
       return;
     }
     const mergedConfig = { ...defaultsFrom(sourceModule.configSchema), ...(config as Record<string, unknown>) };
-    ctx.config.setPluginConfig(instanceId, mergedConfig);
+    hostConfig().setPluginConfig(instanceId, mergedConfig);
     await pm.register(sourceModule, mergedConfig, instanceId);
     await app.saveConfig();
     res.json({ ok: true, instanceId, message: `已创建实例 ${instanceId}` });
@@ -404,7 +421,7 @@ export function registerPluginRoutes(
       return;
     }
     await pm.unload(instanceId);
-    ctx.config.removePluginConfig(instanceId);
+    hostConfig().removePluginConfig(instanceId);
     await app.saveConfig();
     res.json({ ok: true, message: `已删除实例 ${instanceId}` });
   });

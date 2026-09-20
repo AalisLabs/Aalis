@@ -11,11 +11,10 @@
  * - WebUI 端点 → M4 的 actions
  */
 
-// type-only import：触发 declare module '@aalis/core' 合并，使 ctx.getService<'embedding'> 可用。
-// 运行时通过 ctx.getService 注入，无需把 @aalis/api-embedding 列入 dependencies。
 import type { EmbeddingService } from '@aalis/api-embedding';
 import type { LLMModel, ModelRef } from '@aalis/api-llm';
-import type { Context } from '@aalis/core';
+import type { PlatformAdapter } from '@aalis/api-platform';
+import type { Logger, ServiceRef } from '@aalis/core';
 
 import {
   inferEntityHierarchy,
@@ -110,13 +109,15 @@ export class RelationService {
 
   constructor(
     private readonly store: RelationStore,
-    /** 可选 ctx：仅用于写 logger 审计（deleteNode / mergeNodes / changeEntityKind 等 agent 写入路径）。测试不传则 fallback 到 console。 */
-    private readonly ctx?: Context,
+    /** 审计与 consolidate 过程日志；省略则 fallback 到 console（单测） */
+    private readonly logger?: Logger,
+    /** 相似度召回用；省略或提供者缺席时 consolidate 自动降级为纯文本路径 */
+    private readonly embedding?: ServiceRef<EmbeddingService>,
   ) {}
 
-  /** 写 audit 日志；ctx 存在走 logger.warn，否则 fallback console.warn（主要照顾单元测试）。 */
+  /** 写 audit 日志；有 logger 走 logger.warn，否则 fallback console.warn（主要照顾单元测试）。 */
   private _audit(msg: string): void {
-    if (this.ctx) this.ctx.logger.warn(msg);
+    if (this.logger) this.logger.warn(msg);
     else console.warn(msg);
   }
 
@@ -1633,7 +1634,7 @@ export class RelationService {
         for (const m of list) allCommIds.add(m.id);
       }
       const q = computeModularity(after, primary);
-      this.ctx?.logger?.info(
+      this.logger?.info(
         `[user-relation] community algorithm=${alg} Q=${q.toFixed(4)} communities=${allCommIds.size} (nodes=${after.persons.length + after.events.length + after.entities.length})`,
       );
       for (const p of after.persons) {
@@ -2406,7 +2407,7 @@ export class RelationService {
     opts: {
       autoLink?: boolean;
       /** 可选：传入后 consolidate 末尾会调用 LLM 做别名核验与摘要重写 */
-      llm?: { ctx: Context; modelRef: ModelRef; disableThinking?: boolean };
+      llm?: { models: ServiceRef<LLMModel>; modelRef: ModelRef; disableThinking?: boolean };
       /** 调用来源标识，仅用于 getLastConsolidateInfo() 报告。默认 api。 */
       triggerSource?: 'manual' | 'eviction' | 'api';
       /**
@@ -2419,21 +2420,20 @@ export class RelationService {
       lowScoreThreshold?: number;
       /**
        * Entity 宽召回的 embedding cos 阈值，默认 0.86。
-       * 仅在 `ctx.getService('embedding')` 可用时生效；name+summary embed 后 cos≥该值即作为额外候选。
+       * 仅在 embedding 服务可用时生效；name+summary embed 后 cos≥该值即作为额外候选。
        * 设 0 = 关闭（依然走 substring/alias 路径）。
        */
       entityCosThreshold?: number;
       /**
-       * 可选 ctx。若传入则 consolidate 会顺带做一次「伪 person 自动清理」：
-       * platform 不在 `getPlatformNames(ctx)` 运行时白名单内（或 userId 命中
+       * 可选的 platform 引用。传入后 consolidate 会顺带做一次「伪 person 自动清理」：
+       * platform 不在 `getPlatformNames(platform)` 运行时白名单内（或 userId 命中
        * 通用占位 self/me/bot/assistant）的 person，连同级联边一起删除。
        * 与写入守卫 `isPlaceholderSelfPersonId` 共用同一谓词，口径一致。
        *
        * 警告：临时禁用了某个 adapter 时（白名单收缩），这里会把对应平台的
-       * **真实历史 person** 误判为 fake。`getPlatformNames(ctx)` 为空时本步骤
-       * 自动跳过以保护历史数据。
+       * **真实历史 person** 误判为 fake。白名单为空时本步骤自动跳过以保护历史数据。
        */
-      ctx?: Context;
+      platform?: ServiceRef<PlatformAdapter>;
     } = {},
   ): Promise<{
     aliasCandidates: Array<{
@@ -2464,22 +2464,22 @@ export class RelationService {
     eventDuplicatesMerged: number;
   }> {
     // ─── (0) 伪 person 自动清理：与 extractor 落库守卫共用同一谓词。
-    //   仅在 opts.ctx 传入且 `getPlatformNames(ctx)` 非空时启用 platform-whitelist
+    //   仅在 opts.platform 传入且白名单非空时启用 platform-whitelist
     //   分支；否则只兜底过滤 userId 通用占位（self/me/bot/assistant）。
     //   先做此步，再 loadAll，避免后续 alias / 层级推断把 fake person 牵连进去。
     let fakePersonsDeleted = 0;
     let fakePersonEdgesDeleted = 0;
     {
       const preSnap = await this.store.loadAll();
-      const knownPlatforms = opts.ctx ? getKnownPlatformsLower(opts.ctx) : new Set<string>();
+      const knownPlatforms = opts.platform ? getKnownPlatformsLower(opts.platform) : new Set<string>();
       const fakes = preSnap.persons.filter(p => isPlaceholderSelfPersonId(p.platform, p.userId, knownPlatforms));
       for (const p of fakes) {
         const r = await this.store.deletePersonCascade(p.platform, p.userId);
         fakePersonsDeleted++;
         fakePersonEdgesDeleted += r.deletedEdges;
       }
-      if (fakes.length > 0 && opts.llm?.ctx?.logger) {
-        opts.llm.ctx.logger.info(
+      if (fakes.length > 0) {
+        this.logger?.info(
           `[user-relation] consolidate 清理伪 person ${fakes.length} 个 / 级联边 ${fakePersonEdgesDeleted} 条`,
         );
       }
@@ -2505,7 +2505,7 @@ export class RelationService {
     let summariesRewritten = 0;
 
     // 解析可选 LLM 模型（A: 别名核验；B: 合并后摘要重写）
-    const llmModel = opts.llm ? resolveConsolidateModel(opts.llm.ctx, { modelRef: opts.llm.modelRef }) : undefined;
+    const llmModel = opts.llm ? resolveConsolidateModel(opts.llm.models, { modelRef: opts.llm.modelRef }) : undefined;
     const llmDisableThinking = opts.llm?.disableThinking ?? true;
     /** 待合并实体 id → 经过 LLM 确认（或未启用 LLM 时直接 true）的列表 */
     const mergedCanonicals = new Set<string>();
@@ -2556,15 +2556,9 @@ export class RelationService {
             );
             if (knownHierarchyEdge) {
               shouldMerge = false;
-              if (opts.llm?.ctx.logger) {
-                opts.llm.ctx.logger.info(
-                  `[user-relation] consolidate 跳过严格等价合并 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边（evidence≥1）`,
-                );
-              } else if (this.ctx?.logger) {
-                this.ctx.logger.info(
-                  `[user-relation] consolidate 跳过严格等价合并 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边（evidence≥1）`,
-                );
-              }
+              this.logger?.info(
+                `[user-relation] consolidate 跳过严格等价合并 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边（evidence≥1）`,
+              );
             }
             if (shouldMerge && llmModel && opts.llm) {
               // negativeCache：双方 evidence 数都未变 → 跳过 LLM，复用上次否决结论
@@ -2576,18 +2570,14 @@ export class RelationService {
               if (cached && cached.aEvidenceCount === sCount && cached.bEvidenceCount === lCount) {
                 llmRejectCacheHits++;
                 shouldMerge = false;
-                if (opts.llm.ctx.logger) {
-                  opts.llm.ctx.logger.debug(
-                    `[user-relation] consolidate 命中 mergeReject 缓存 ${a.id} ↔ ${b.id}（${cached.decidedBy}）：${cached.reason}`,
-                  );
-                }
+                this.logger?.debug(
+                  `[user-relation] consolidate 命中 mergeReject 缓存 ${a.id} ↔ ${b.id}（${cached.decidedBy}）：${cached.reason}`,
+                );
               } else {
-                const v = await verifyAliasPair(opts.llm.ctx, llmModel, a, b, llmDisableThinking);
+                const v = await verifyAliasPair(llmModel, a, b, llmDisableThinking);
                 if (v.isSame) {
                   llmVerified++;
-                  if (opts.llm.ctx.logger) {
-                    opts.llm.ctx.logger.info(`[user-relation] consolidate LLM 同意合并 ${a.id} ↔ ${b.id}: ${v.reason}`);
-                  }
+                  this.logger?.info(`[user-relation] consolidate LLM 同意合并 ${a.id} ↔ ${b.id}: ${v.reason}`);
                   // 之前否决但本次同意 → 清掉缓存（节点已演化）
                   if (cached) await this.store.deleteMergeReject(a.id, b.id);
                 } else {
@@ -2600,19 +2590,17 @@ export class RelationService {
                       parentId,
                       `consolidate LLM 判定 hierarchy：${v.reason}`,
                     );
-                    if (opts.llm.ctx.logger) {
-                      const outcomeText =
-                        partOfOutcome === 'built'
-                          ? '（已新建 part-of 边）'
-                          : partOfOutcome === 'exists'
-                            ? '（part-of 边已存在）'
-                            : '（端点已被合并，跳过落边）';
-                      opts.llm.ctx.logger.info(
-                        `[user-relation] consolidate LLM 判定 hierarchy ${childId} part-of ${parentId}: ${v.reason}${outcomeText}`,
-                      );
-                    }
-                  } else if (opts.llm.ctx.logger) {
-                    opts.llm.ctx.logger.info(`[user-relation] consolidate LLM 否决合并 ${a.id} ↔ ${b.id}: ${v.reason}`);
+                    const outcomeText =
+                      partOfOutcome === 'built'
+                        ? '（已新建 part-of 边）'
+                        : partOfOutcome === 'exists'
+                          ? '（part-of 边已存在）'
+                          : '（端点已被合并，跳过落边）';
+                    this.logger?.info(
+                      `[user-relation] consolidate LLM 判定 hierarchy ${childId} part-of ${parentId}: ${v.reason}${outcomeText}`,
+                    );
+                  } else {
+                    this.logger?.info(`[user-relation] consolidate LLM 否决合并 ${a.id} ↔ ${b.id}: ${v.reason}`);
                   }
                   // 落 negativeCache，避免下次 maintain 重复送 LLM（hierarchy 与 different 都阻断合并）
                   await this.store.saveMergeReject({
@@ -2658,8 +2646,8 @@ export class RelationService {
             // alias 节点已不存在 → 直接 no-op；还在 → 正常合并。
             const mergeResult = await this.mergeAlias({ aliasId: a.id, canonicalId: b.id, kind: 'entity' });
             mergedCanonicals.add(mergeResult.effectiveCanonicalId);
-            if (mergeResult.aliasDeleted && this.ctx?.logger) {
-              this.ctx.logger.info(
+            if (mergeResult.aliasDeleted) {
+              this.logger?.info(
                 `[user-relation] consolidate strict-equiv 真合并：${mergeResult.effectiveAliasId} → ${mergeResult.effectiveCanonicalId}`,
               );
             }
@@ -2699,7 +2687,7 @@ export class RelationService {
       // 设计与 event ensureEmbedding 完全对称：当 EntityNode.embeddingHash 与
       // computeEntityEmbeddingHash(name, summary, entityKind) 不一致或缺失时，
       // 调 embed 服务一次，写回 store + 同步本地副本。embedding 服务缺失则全部 skip。
-      const embedding = this.ctx?.getService<EmbeddingService>('embedding');
+      const embedding = this.embedding?.current;
       const entityCosThreshold = opts.entityCosThreshold ?? 0.86;
       const embedCache = new Map<string, number[] | null>();
       const ensureEntityEmbedding = async (en: EntityNode): Promise<number[] | null> => {
@@ -2739,7 +2727,7 @@ export class RelationService {
           embedCache.set(en.id, vec);
           return vec;
         } catch (err) {
-          opts.llm?.ctx?.logger?.warn(
+          this.logger?.warn(
             `[user-relation] consolidate entity embed 失败 ${en.id} (${en.name.slice(0, 20)}): ${err instanceof Error ? err.message : String(err)}`,
           );
           embedCache.set(en.id, null);
@@ -2942,11 +2930,9 @@ export class RelationService {
         const sB = scoreOf(b.id);
         if (skipLowScore && lowScoreThreshold > 0 && sA < lowScoreThreshold && sB < lowScoreThreshold) {
           lowScoreSkipped++;
-          if (opts.llm.ctx.logger) {
-            opts.llm.ctx.logger.debug(
-              `[user-relation] consolidate 跳过低权候选 ${a.id}(${sA.toFixed(2)}) ↔ ${b.id}(${sB.toFixed(2)})：双方都低于 ${lowScoreThreshold}`,
-            );
-          }
+          this.logger?.debug(
+            `[user-relation] consolidate 跳过低权候选 ${a.id}(${sA.toFixed(2)}) ↔ ${b.id}(${sB.toFixed(2)})：双方都低于 ${lowScoreThreshold}`,
+          );
           continue;
         }
         // hierarchy 守门（同严格等价段）：仅信任 evidence≥1 的真实层级边，幻觉边不再阻塞。
@@ -2958,11 +2944,9 @@ export class RelationService {
             ((e.fromEntityId === a.id && e.toEntityId === b.id) || (e.fromEntityId === b.id && e.toEntityId === a.id)),
         );
         if (knownHierarchy) {
-          if (opts.llm.ctx.logger) {
-            opts.llm.ctx.logger.info(
-              `[user-relation] consolidate 跳过宽召回候选 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边（evidence≥1，层级关系优先）`,
-            );
-          }
+          this.logger?.info(
+            `[user-relation] consolidate 跳过宽召回候选 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边（evidence≥1，层级关系优先）`,
+          );
           continue;
         }
         // negativeCache：双方 evidence 数都未变 → 跳过 LLM，复用上次否决结论
@@ -2973,14 +2957,12 @@ export class RelationService {
         const cached = await this.store.getMergeReject(a.id, b.id);
         if (cached && cached.aEvidenceCount === sCount && cached.bEvidenceCount === lCount) {
           llmRejectCacheHits++;
-          if (opts.llm.ctx.logger) {
-            opts.llm.ctx.logger.debug(
-              `[user-relation] consolidate 命中 mergeReject 缓存（宽召回）${a.id} ↔ ${b.id}：${cached.reason}`,
-            );
-          }
+          this.logger?.debug(
+            `[user-relation] consolidate 命中 mergeReject 缓存（宽召回）${a.id} ↔ ${b.id}：${cached.reason}`,
+          );
           continue;
         }
-        const v = await verifyAliasPair(opts.llm.ctx, llmModel, a, b, llmDisableThinking, {
+        const v = await verifyAliasPair(llmModel, a, b, llmDisableThinking, {
           aEvidenceQuotes: (a.evidence ?? [])
             .slice(-3)
             .map(ev => (ev.quote ?? '').trim())
@@ -3007,21 +2989,17 @@ export class RelationService {
               parentId,
               `consolidate LLM 判定 hierarchy：${v.reason}`,
             );
-            if (opts.llm.ctx.logger) {
-              const outcomeText =
-                partOfOutcome === 'built'
-                  ? '（已新建 part-of 边）'
-                  : partOfOutcome === 'exists'
-                    ? '（part-of 边已存在）'
-                    : '（端点已被合并，跳过落边）';
-              opts.llm.ctx.logger.info(
-                `[user-relation] consolidate LLM 判定 hierarchy（宽召回）${childId} part-of ${parentId}: ${v.reason}${outcomeText}`,
-              );
-            }
-          } else if (opts.llm.ctx.logger) {
-            opts.llm.ctx.logger.info(
-              `[user-relation] consolidate LLM 否决合并（宽召回）${a.id} ↔ ${b.id}: ${v.reason}`,
+            const outcomeText =
+              partOfOutcome === 'built'
+                ? '（已新建 part-of 边）'
+                : partOfOutcome === 'exists'
+                  ? '（part-of 边已存在）'
+                  : '（端点已被合并，跳过落边）';
+            this.logger?.info(
+              `[user-relation] consolidate LLM 判定 hierarchy（宽召回）${childId} part-of ${parentId}: ${v.reason}${outcomeText}`,
             );
+          } else {
+            this.logger?.info(`[user-relation] consolidate LLM 否决合并（宽召回）${a.id} ↔ ${b.id}: ${v.reason}`);
           }
           // 落 negativeCache，下次扫描双方未变就跳过（hierarchy 与 different 都阻断合并，复用同一缓存）
           await this.store.saveMergeReject({
@@ -3037,16 +3015,14 @@ export class RelationService {
           continue;
         }
         llmVerified++;
-        if (opts.llm.ctx.logger) {
-          opts.llm.ctx.logger.info(`[user-relation] consolidate LLM 同意合并（宽召回）${a.id} ↔ ${b.id}: ${v.reason}`);
-        }
+        this.logger?.info(`[user-relation] consolidate LLM 同意合并（宽召回）${a.id} ↔ ${b.id}: ${v.reason}`);
         // 之前否决但本次同意 → 清掉旧缓存
         if (cached) await this.store.deleteMergeReject(a.id, b.id);
         yesPairs.push({ aId: a.id, bId: b.id, reason });
       }
 
-      if (lowScoreSkipped > 0 && opts.llm.ctx.logger) {
-        opts.llm.ctx.logger.info(
+      if (lowScoreSkipped > 0) {
+        this.logger?.info(
           `[user-relation] consolidate F3 低权阈值跳过 ${lowScoreSkipped} 个 pair（阈值 ${lowScoreThreshold}）`,
         );
       }
@@ -3116,8 +3092,8 @@ export class RelationService {
               kind: 'entity',
             });
             mergedCanonicals.add(mergeResult.effectiveCanonicalId);
-            if (mergeResult.aliasDeleted && this.ctx?.logger) {
-              this.ctx.logger.info(
+            if (mergeResult.aliasDeleted) {
+              this.logger?.info(
                 `[user-relation] consolidate wide-recall 真合并：${mergeResult.effectiveAliasId} → ${mergeResult.effectiveCanonicalId}`,
               );
             }
@@ -3302,7 +3278,7 @@ export class RelationService {
           }
         }
         const newSummary = await rewriteEntitySummary(
-          opts.llm.ctx,
+          this.logger,
           llmModel,
           ent,
           {
@@ -3357,8 +3333,7 @@ export class RelationService {
 
         if (llmModel && opts.llm) {
           // LLM 核验：批量确认
-          const llmCtx = opts.llm.ctx;
-          const results = await inferEntityHierarchy(llmCtx, llmModel, hierarchyCandidates, llmDisableThinking);
+          const results = await inferEntityHierarchy(this.logger, llmModel, hierarchyCandidates, llmDisableThinking);
           for (const r of results) {
             if (r.confirmed) toCreate.push({ parentId: r.parentId, childId: r.childId });
           }
@@ -3451,17 +3426,15 @@ export class RelationService {
           const existingParent = await this.findEntityByKindAndName(entityKind, cluster.lcp);
           if (existingParent) continue;
           const verdict = await inferMissingParent(
-            opts.llm.ctx,
+            this.logger,
             llmModel,
             { parentName: cluster.lcp, kind, siblings: cluster.members },
             llmDisableThinking,
           );
           if (!verdict.accept) {
-            if (opts.llm.ctx.logger) {
-              opts.llm.ctx.logger.info(
-                `[user-relation] consolidate LLM 否决侧向父实体「${cluster.lcp}」(${kind}): ${verdict.reason}`,
-              );
-            }
+            this.logger?.info(
+              `[user-relation] consolidate LLM 否决侧向父实体「${cluster.lcp}」(${kind}): ${verdict.reason}`,
+            );
             continue;
           }
           const finalName = verdict.suggestedName ?? cluster.lcp;
@@ -3506,9 +3479,8 @@ export class RelationService {
     if (opts.autoLink && llmModel && opts.llm) {
       const r = await this._consolidateEventDuplicates({
         llmModel,
-        llmCtx: opts.llm.ctx,
         disableThinking: llmDisableThinking,
-        embedding: this.ctx?.getService<EmbeddingService>('embedding'),
+        embedding: this.embedding?.current,
         dryRun: false,
       });
       eventDuplicateCandidates = r.candidates.length;
@@ -3577,7 +3549,6 @@ export class RelationService {
    */
   private async _consolidateEventDuplicates(opts: {
     llmModel?: LLMModel;
-    llmCtx?: Context;
     embedding?: EmbeddingService;
     disableThinking?: boolean;
     /** dryRun=true: 仅返回候选 + LLM 终判结果，不执行 mergeAlias */
@@ -3609,7 +3580,7 @@ export class RelationService {
     const fusedThreshold = opts.fusedThreshold ?? 0.7;
     const jaccardThreshold = opts.jaccardThreshold ?? 0.4;
     const structuralThreshold = opts.structuralThreshold ?? 0.5;
-    const logger = opts.llmCtx?.logger ?? this.ctx?.logger;
+    const logger = this.logger;
 
     const snapshot = await this.store.loadAll();
     const events = snapshot.events;
@@ -3846,7 +3817,7 @@ export class RelationService {
         fusedScore: cand.fusedScore,
       } as (typeof report)[number];
 
-      if (!opts.llmModel || !opts.llmCtx) {
+      if (!opts.llmModel) {
         // dryRun 但没传 LLM —— 直接收集候选不判定
         report.push(reportEntry);
         continue;
@@ -3867,7 +3838,7 @@ export class RelationService {
         continue;
       }
 
-      const verdict = await verifyEventPair(opts.llmCtx, opts.llmModel, a, b, opts.disableThinking ?? true, {
+      const verdict = await verifyEventPair(opts.llmModel, a, b, opts.disableThinking ?? true, {
         aEvidenceQuotes: (a.evidence ?? [])
           .slice(-3)
           .map(ev => (ev.quote ?? '').trim())
@@ -3959,7 +3930,7 @@ export class RelationService {
    */
   async findEventDuplicates(
     opts: {
-      llm?: { ctx: Context; modelRef: ModelRef; disableThinking?: boolean };
+      llm?: { models: ServiceRef<LLMModel>; modelRef: ModelRef; disableThinking?: boolean };
       fusedThreshold?: number;
       jaccardThreshold?: number;
       structuralThreshold?: number;
@@ -3983,11 +3954,10 @@ export class RelationService {
     llmRejectCacheHits: number;
     embeddingAvailable: boolean;
   }> {
-    const llmModel = opts.llm ? resolveConsolidateModel(opts.llm.ctx, { modelRef: opts.llm.modelRef }) : undefined;
-    const embedding = this.ctx?.getService<EmbeddingService>('embedding');
+    const llmModel = opts.llm ? resolveConsolidateModel(opts.llm.models, { modelRef: opts.llm.modelRef }) : undefined;
+    const embedding = this.embedding?.current;
     const r = await this._consolidateEventDuplicates({
       llmModel,
-      llmCtx: opts.llm?.ctx,
       disableThinking: opts.llm?.disableThinking ?? true,
       embedding,
       dryRun: true,

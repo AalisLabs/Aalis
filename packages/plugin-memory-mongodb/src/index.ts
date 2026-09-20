@@ -1,24 +1,17 @@
-import type {
-  MemoryService,
-  MetadataEntry,
-  MetadataOp,
-  RecentMessageRecord,
-  RecentMessagesAcrossSessionsQuery,
+import {
+  type MemoryService,
+  type MetadataEntry,
+  type MetadataOp,
+  memory,
+  type RecentMessageRecord,
+  type RecentMessagesAcrossSessionsQuery,
 } from '@aalis/api-memory';
-import type { Context } from '@aalis/core';
+import { type BoundOf, config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import { type Collection, type Db, MongoClient } from 'mongodb';
 
-// ===== 插件元数据 =====
-
-export const name = '@aalis/plugin-memory-mongodb';
-export const displayName = 'MongoDB 记忆';
-export const subsystem = 'memory';
-export const provides = ['memory'];
-export const reusable = true;
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   uri: {
     type: 'string',
     label: 'MongoDB URI',
@@ -311,7 +304,21 @@ export function redactMongoUri(uri: string): string {
   return uri.replace(/^(mongodb(?:\+srv)?:\/\/[^:@/]+:)[^@]*(@)/i, '$1***$2');
 }
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
+const uses = { logger, config, lifecycle, provide };
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-memory-mongodb',
+  displayName: 'MongoDB 记忆',
+  subsystem: 'memory',
+  configSchema,
+  reusable: true,
+  provides: [memory],
+  uses,
+  apply: connectAndProvide,
+});
+
+async function connectAndProvide({ logger, config, lifecycle, provide }: Caps): Promise<void> {
   const mongoConfig: MongoMemoryConfig = {
     uri: (config.uri as string) ?? 'mongodb://localhost:27017',
     database: (config.database as string) ?? 'aalis',
@@ -321,7 +328,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     crossSessionMaxLimit: config.crossSessionMaxLimit as number | undefined,
   };
 
-  ctx.logger.info(`正在连接 MongoDB: ${redactMongoUri(mongoConfig.uri)} (超时: ${mongoConfig.connectTimeoutMs}ms)`);
+  logger.info(`正在连接 MongoDB: ${redactMongoUri(mongoConfig.uri)} (超时: ${mongoConfig.connectTimeoutMs}ms)`);
 
   const client = new MongoClient(mongoConfig.uri, {
     serverSelectionTimeoutMS: mongoConfig.connectTimeoutMs,
@@ -344,19 +351,19 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       rangeQueryLimit: mongoConfig.rangeQueryLimit,
       crossSessionMaxLimit: mongoConfig.crossSessionMaxLimit,
     });
-    ctx.provide('memory', service, {
+    provide(memory, service, {
       // priority 与同类 memory provider 自文档化对照：
       //   sqlite=10（零配置默认）, mongodb=5（需服务，但更强）, inmemory=-100（仅测试）
       // 用户通过 servicePreferences 显式偏好时该字段不影响选择。
       priority: 5,
     });
 
-    ctx.logger.info(`MongoDB 已连接: ${mongoConfig.database}/${mongoConfig.collection}`);
+    logger.info(`MongoDB 已连接: ${mongoConfig.database}/${mongoConfig.collection}`);
 
-    // 在上下文销毁时关闭连接
-    ctx.onDispose(async () => {
+    // 连接握手跨 await，关闭可能已开始；迟到的清理照样被执行
+    lifecycle.onDispose(async () => {
       await client.close();
-      ctx.logger.info('MongoDB 连接已关闭');
+      logger.info('MongoDB 连接已关闭');
     }, 'mongodb:client.close');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

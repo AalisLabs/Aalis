@@ -2,14 +2,16 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createProcessGateway } from '../../packages/api-process/src/index.js';
-import { createStorageGateway, type StorageService } from '../../packages/api-storage/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { createProcessGateway, processService } from '../../packages/api-process/src/index.js';
+import { createStorageGateway, type StorageService, storage } from '../../packages/api-storage/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
 import { DrawEngine } from '../../packages/plugin-draw/src/engine.js';
 import { ffmpegEncodeArgs, ffmpegPaletteArgs, framesToGif } from '../../packages/plugin-draw/src/gif.js';
+import drawPlugin from '../../packages/plugin-draw/src/index.js';
 import { type DrawCaps, resolveCanvas } from '../../packages/plugin-draw/src/plan.js';
-import * as processLocal from '../../packages/plugin-process-local/src/index.js';
-import * as storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import processLocal from '../../packages/plugin-process-local/src/index.js';
+import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 动图路径真机 E2E：真 Chromium 逐帧 + 真 ffmpeg 编码。
@@ -22,6 +24,22 @@ import * as storageLocal from '../../packages/plugin-storage-local/src/index.js'
 
 const caps: DrawCaps = { defaultWidth: 800, maxWidth: 1600, maxPixels: 4_000_000, maxSourceBytes: 262144, scale: 2 };
 const logger = { info: () => {}, warn: () => {}, debug: () => {}, error: () => {}, child: () => logger } as never;
+
+type ToolHandler = (args: Record<string, unknown>, callCtx: { sessionId: string }) => Promise<string>;
+
+/** 宿主侧最小 tools 提供者：把插件登记的 handler 交到测试手上。 */
+function provideCapturingTools(app: App): Record<string, ToolHandler> {
+  const handlers: Record<string, ToolHandler> = {};
+  app.bind({ provide }).provide(tools, {
+    register(tool: { definition: { function: { name: string } }; handler: ToolHandler }) {
+      const name = tool.definition.function.name;
+      handlers[name] = tool.handler;
+      return () => void delete handlers[name];
+    },
+    registerGroup: () => () => {},
+  } as never);
+  return handlers;
+}
 
 // SMIL 位移 + CSS 透明度双动画（探针会数出 ≥2 个动画）
 const ANIMATED_SVG =
@@ -51,14 +69,14 @@ describe('gif 参数（纯函数）', () => {
 describe('DrawEngine 动画（真浏览器 + 真 ffmpeg）', () => {
   let base: string;
   let app: App;
-  let storage: StorageService;
+  let storageGateway: StorageService;
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-draw-anim-'));
     mkdirSync(join(base, 'ws'), { recursive: true });
     mkdirSync(join(base, 'tmp'), { recursive: true });
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocal as unknown as Parameters<typeof app.ctx.useModule>[0], {
+    await app.plugin(storageLocal, {
       roots: [
         {
           name: 'ws',
@@ -82,8 +100,9 @@ describe('DrawEngine 动画（真浏览器 + 真 ffmpeg）', () => {
         },
       ],
     });
-    await app.ctx.useModule(processLocal as unknown as Parameters<typeof app.ctx.useModule>[0], {});
-    storage = createStorageGateway(app.ctx);
+    await app.plugin(processLocal);
+    await app.plugins.idle();
+    storageGateway = createStorageGateway(app.bind({ storage }).storage);
   });
 
   afterEach(async () => {
@@ -121,8 +140,8 @@ describe('DrawEngine 动画（真浏览器 + 真 ffmpeg）', () => {
         expect(a.frames[i].equals(b.frames[i]), `frame ${i}`).toBe(true);
       }
 
-      const proc = createProcessGateway(app.ctx);
-      const gif = await framesToGif(proc, storage, a.frames, opts.fps);
+      const proc = createProcessGateway(app.bind({ processService }).processService);
+      const gif = await framesToGif(proc, storageGateway, a.frames, opts.fps);
       expect(gif.subarray(0, 6).toString('ascii')).toBe('GIF89a');
       expect(gif.byteLength).toBeGreaterThan(5000);
       expect(existsSync(join(base, 'tmp'))).toBe(true); // 临时目录已清（目录在、内容清）
@@ -132,7 +151,7 @@ describe('DrawEngine 动画（真浏览器 + 真 ffmpeg）', () => {
   }, 60_000);
 });
 
-describe('draw_animation 工具全流（真 ctx：lint 告警 + 检查帧落盘）', () => {
+describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧落盘）', () => {
   it('复合位移动画：结果带漂移 warning、check_frames 两张已落盘、GIF 可 stat', async () => {
     const base2 = mkdtempSync(join(tmpdir(), 'aalis-draw-tool-'));
     mkdirSync(join(base2, 'ws'), { recursive: true });
@@ -140,7 +159,7 @@ describe('draw_animation 工具全流（真 ctx：lint 告警 + 检查帧落盘�
     mkdirSync(join(base2, 'data'), { recursive: true });
     const app2 = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     try {
-      await app2.ctx.useModule(storageLocal as unknown as Parameters<typeof app2.ctx.useModule>[0], {
+      await app2.plugin(storageLocal, {
         roots: [
           {
             name: 'data',
@@ -164,20 +183,11 @@ describe('draw_animation 工具全流（真 ctx：lint 告警 + 检查帧落盘�
           },
         ],
       });
-      await app2.ctx.useModule(processLocal as unknown as Parameters<typeof app2.ctx.useModule>[0], {});
-      const storage2 = createStorageGateway(app2.ctx);
-
-      const { apply } = await import('../../packages/plugin-draw/src/index.js');
-      const captured: Record<string, (a: Record<string, unknown>, c: { sessionId: string }) => Promise<string>> = {};
-      const fakeTools = {
-        register: (t: { definition: { function: { name: string } }; handler: (typeof captured)[string] }) => {
-          captured[t.definition.function.name] = t.handler;
-          return () => {};
-        },
-        registerGroup: () => {},
-      };
-      app2.ctx.provide('tools', fakeTools as never);
-      apply(app2.ctx, { idleShutdownSec: 0 });
+      await app2.plugin(processLocal);
+      const storage2 = createStorageGateway(app2.bind({ storage }).storage);
+      const captured = provideCapturingTools(app2);
+      await app2.plugin(drawPlugin, { idleShutdownSec: 0 });
+      await app2.plugins.idle();
 
       // 首秀实犯的复合位移错误形态
       const buggy =
@@ -211,7 +221,7 @@ describe('draw_animation 工具全流（真 ctx：lint 告警 + 检查帧落盘�
     for (const d of ['data', 'tmp']) mkdirSync(join(base4, d), { recursive: true });
     const app4 = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     try {
-      await app4.ctx.useModule(storageLocal as unknown as Parameters<typeof app4.ctx.useModule>[0], {
+      await app4.plugin(storageLocal, {
         roots: [
           {
             name: 'data',
@@ -235,17 +245,10 @@ describe('draw_animation 工具全流（真 ctx：lint 告警 + 检查帧落盘�
           },
         ],
       });
-      await app4.ctx.useModule(processLocal as unknown as Parameters<typeof app4.ctx.useModule>[0], {});
-      const { apply } = await import('../../packages/plugin-draw/src/index.js');
-      const captured: Record<string, (a: Record<string, unknown>, c: { sessionId: string }) => Promise<string>> = {};
-      app4.ctx.provide('tools', {
-        register: (t: { definition: { function: { name: string } }; handler: (typeof captured)[string] }) => {
-          captured[t.definition.function.name] = t.handler;
-          return () => {};
-        },
-        registerGroup: () => {},
-      } as never);
-      apply(app4.ctx, { idleShutdownSec: 0 });
+      await app4.plugin(processLocal);
+      const captured = provideCapturingTools(app4);
+      await app4.plugin(drawPlugin, { idleShutdownSec: 0 });
+      await app4.plugins.idle();
       const out = JSON.parse(
         await captured.draw_animation(
           {
@@ -272,7 +275,7 @@ describe('draw_animation 工具全流（真 ctx：lint 告警 + 检查帧落盘�
     for (const d of ['data', 'tmp']) mkdirSync(join(base3, d), { recursive: true });
     const app3 = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     try {
-      await app3.ctx.useModule(storageLocal as unknown as Parameters<typeof app3.ctx.useModule>[0], {
+      await app3.plugin(storageLocal, {
         roots: [
           {
             name: 'data',
@@ -296,17 +299,10 @@ describe('draw_animation 工具全流（真 ctx：lint 告警 + 检查帧落盘�
           },
         ],
       });
-      await app3.ctx.useModule(processLocal as unknown as Parameters<typeof app3.ctx.useModule>[0], {});
-      const { apply } = await import('../../packages/plugin-draw/src/index.js');
-      const captured: Record<string, (a: Record<string, unknown>, c: { sessionId: string }) => Promise<string>> = {};
-      app3.ctx.provide('tools', {
-        register: (t: { definition: { function: { name: string } }; handler: (typeof captured)[string] }) => {
-          captured[t.definition.function.name] = t.handler;
-          return () => {};
-        },
-        registerGroup: () => {},
-      } as never);
-      apply(app3.ctx, { maxSourceKB: 1, idleShutdownSec: 0 }); // 1KB 上限
+      await app3.plugin(processLocal);
+      const captured = provideCapturingTools(app3);
+      await app3.plugin(drawPlugin, { maxSourceKB: 1, idleShutdownSec: 0 }); // 1KB 上限
+      await app3.plugins.idle();
       const big = `<svg viewBox="0 0 10 10">${'<rect/>'.repeat(500)}</svg>`; // 远超 1KB
       const out = JSON.parse(await captured.draw_image({ source: big }, { sessionId: 'onebot:t:group:1' }));
       expect(out.error).toMatch(/超过大小上限/);

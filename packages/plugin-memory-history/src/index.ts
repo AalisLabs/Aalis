@@ -19,26 +19,16 @@
  */
 
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
-import type { MemoryService, RecentMessageRecord } from '@aalis/api-memory';
-import { useToolService } from '@aalis/api-tools';
-import type { Context } from '@aalis/core';
+import { memory, type RecentMessageRecord } from '@aalis/api-memory';
+import { tools } from '@aalis/api-tools';
+import { config, contributions, definePlugin, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-
-// ===== 插件元数据 =====
-
-export const name = '@aalis/plugin-memory-history';
-export const displayName = '跨会话历史上下文';
-export const subsystem = 'memory';
-export const inject = {
-  required: ['memory'],
-  optional: ['tools'],
-};
 
 // ===== 配置 schema =====
 
 export type HistoryScope = 'same-platform' | 'cross-platform';
 
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   injectEnabled: {
     type: 'boolean',
     label: '被动注入 prompt',
@@ -134,7 +124,7 @@ interface QueryOptions {
   perSessionLimit?: number;
 }
 
-function normalizeConfig(raw: Record<string, unknown>): HistoryConfig {
+function normalizeConfig(raw: Readonly<Record<string, unknown>>): HistoryConfig {
   // 向后兼容：旧配置 scope='off' = 关闭被动注入 + scope 回退为 same-platform
   const scopeRaw = (raw.scope as string) ?? 'same-platform';
   const legacyOff = scopeRaw === 'off';
@@ -189,142 +179,152 @@ function formatRecords(records: RecentMessageRecord[]): string {
 
 // ===== 入口 =====
 
-export async function apply(ctx: Context, rawConfig: Record<string, unknown>): Promise<void> {
-  const cfg = normalizeConfig(rawConfig);
+const uses = { memory, config, logger, contributions, tools: optional(tools) };
 
-  ctx.logger.info(
-    `跨会话历史上下文插件已启动（inject=${cfg.injectEnabled} scope=${cfg.scope} limit=${cfg.limit} maxAge=${cfg.maxAgeMinutes}min tool=${cfg.toolEnabled ? TOOL_NAME : 'off'}）`,
-  );
+export default definePlugin({
+  name: '@aalis/plugin-memory-history',
+  displayName: '跨会话历史上下文',
+  subsystem: 'memory',
+  configSchema,
+  uses,
+  apply({ memory, config, logger, contributions, tools }) {
+    const cfg = normalizeConfig(config);
 
-  async function queryRecent(opts: QueryOptions): Promise<RecentMessageRecord[]> {
-    const scope: HistoryScope = opts.scope ?? cfg.scope;
+    logger.info(
+      `跨会话历史上下文插件已启动（inject=${cfg.injectEnabled} scope=${cfg.scope} limit=${cfg.limit} maxAge=${cfg.maxAgeMinutes}min tool=${cfg.toolEnabled ? TOOL_NAME : 'off'}）`,
+    );
 
-    const memory = ctx.getService<MemoryService>('memory');
-    if (!memory?.getRecentMessagesAcrossSessions) {
-      ctx.logger.debug('memory-history: 当前 memory 后端不支持 getRecentMessagesAcrossSessions，跳过');
-      return [];
+    async function queryRecent(opts: QueryOptions): Promise<RecentMessageRecord[]> {
+      const scope: HistoryScope = opts.scope ?? cfg.scope;
+
+      // 每次查询取当前提供者：换后端时下一次查询自然走新实例
+      const backend = memory.current;
+      if (!backend?.getRecentMessagesAcrossSessions) {
+        logger.debug('memory-history: 当前 memory 后端不支持 getRecentMessagesAcrossSessions，跳过');
+        return [];
+      }
+
+      const limit = Math.max(1, opts.limit ?? cfg.limit);
+      const maxAge = opts.maxAgeMinutes ?? cfg.maxAgeMinutes;
+      const sinceTs = maxAge > 0 ? Date.now() - maxAge * 60_000 : undefined;
+      const platform = scope === 'same-platform' ? opts.currentPlatform : undefined;
+      const excludeSessionIds =
+        cfg.excludeCurrentSession && opts.currentSessionId ? [opts.currentSessionId] : undefined;
+
+      // 若启用 per-session cap，需要向 backend overscan；上限按 limit * 10 与 1000 取小，
+      // 既能覆盖单会话刷屏场景，又避免极端情况下拉太多。
+      const perSessionLimit = Math.max(0, opts.perSessionLimit ?? cfg.perSessionLimit);
+      const backendLimit = perSessionLimit > 0 ? Math.min(limit * 10, 1000) : limit;
+
+      const raw = await backend.getRecentMessagesAcrossSessions({
+        limit: backendLimit,
+        sinceTs,
+        platform,
+        excludeSessionIds,
+        roles: ['user', 'assistant', 'notice'],
+      });
+
+      if (perSessionLimit <= 0 || raw.length <= limit) return raw.slice(-limit);
+
+      // raw 是时间升序；为做 per-session cap 时优先保留每会话最新若干条，
+      // 先反转为降序遍历，命中即累计；累计到 limit 或扫完为止；最后再反转回升序。
+      const perSessionCount = new Map<string, number>();
+      const picked: RecentMessageRecord[] = [];
+      for (let i = raw.length - 1; i >= 0 && picked.length < limit; i--) {
+        const rec = raw[i];
+        const cnt = perSessionCount.get(rec.sessionId) ?? 0;
+        if (cnt >= perSessionLimit) continue;
+        perSessionCount.set(rec.sessionId, cnt + 1);
+        picked.push(rec);
+      }
+      picked.reverse();
+      return picked;
     }
 
-    const limit = Math.max(1, opts.limit ?? cfg.limit);
-    const maxAge = opts.maxAgeMinutes ?? cfg.maxAgeMinutes;
-    const sinceTs = maxAge > 0 ? Date.now() - maxAge * 60_000 : undefined;
-    const platform = scope === 'same-platform' ? opts.currentPlatform : undefined;
-    const excludeSessionIds = cfg.excludeCurrentSession && opts.currentSessionId ? [opts.currentSessionId] : undefined;
+    // ---- 注入贡献（agent:prompt / turn-context 槽；幂等与落点由组装器统一保障）----
 
-    // 若启用 per-session cap，需要向 backend overscan；上限按 limit * 10 与 1000 取小，
-    // 既能覆盖单会话刷屏场景，又避免极端情况下拉太多。
-    const perSessionLimit = Math.max(0, opts.perSessionLimit ?? cfg.perSessionLimit);
-    const backendLimit = perSessionLimit > 0 ? Math.min(limit * 10, 1000) : limit;
-
-    const raw = await memory.getRecentMessagesAcrossSessions({
-      limit: backendLimit,
-      sinceTs,
-      platform,
-      excludeSessionIds,
-      roles: ['user', 'assistant', 'notice'],
-    });
-
-    if (perSessionLimit <= 0 || raw.length <= limit) return raw.slice(-limit);
-
-    // raw 是时间升序；为做 per-session cap 时优先保留每会话最新若干条，
-    // 先反转为降序遍历，命中即累计；累计到 limit 或扫完为止；最后再反转回升序。
-    const perSessionCount = new Map<string, number>();
-    const picked: RecentMessageRecord[] = [];
-    for (let i = raw.length - 1; i >= 0 && picked.length < limit; i--) {
-      const rec = raw[i];
-      const cnt = perSessionCount.get(rec.sessionId) ?? 0;
-      if (cnt >= perSessionLimit) continue;
-      perSessionCount.set(rec.sessionId, cnt + 1);
-      picked.push(rec);
-    }
-    picked.reverse();
-    return picked;
-  }
-
-  // ---- 注入贡献（agent:prompt / turn-context 槽；幂等与落点由组装器统一保障）----
-
-  if (cfg.injectEnabled) {
-    ctx.contribute('agent:prompt', {
-      id: 'memory-history',
-      anchor: 'turn-context',
-      async build(view) {
-        let records: RecentMessageRecord[];
-        try {
-          records = await queryRecent({
-            currentPlatform: view.platform,
-            currentSessionId: view.sessionId,
-          });
-        } catch (err) {
-          ctx.logger.warn('memory-history: 查询近期消息失败，跳过注入:', err);
-          return null;
-        }
-        if (records.length === 0) {
-          ctx.logger.debug(
-            `memory-history: 未找到可注入的跨会话消息 (scope=${cfg.scope}, platform=${view.platform ?? '?'}, session=${view.sessionId ?? '?'})`,
+    if (cfg.injectEnabled) {
+      contributions.contribute('agent:prompt', {
+        id: 'memory-history',
+        anchor: 'turn-context',
+        async build(view) {
+          let records: RecentMessageRecord[];
+          try {
+            records = await queryRecent({
+              currentPlatform: view.platform,
+              currentSessionId: view.sessionId,
+            });
+          } catch (err) {
+            logger.warn('memory-history: 查询近期消息失败，跳过注入:', err);
+            return null;
+          }
+          if (records.length === 0) {
+            logger.debug(
+              `memory-history: 未找到可注入的跨会话消息 (scope=${cfg.scope}, platform=${view.platform ?? '?'}, session=${view.sessionId ?? '?'})`,
+            );
+            return null;
+          }
+          const block = `${cfg.headerText}\n\n${formatRecords(records)}\n\n（以上为参考片段结束；请按当前 system 提示的输出格式作答。）`;
+          logger.debug(
+            `memory-history: 已注入 ${records.length} 条跨会话消息 (scope=${cfg.scope}, platform=${view.platform ?? '?'}, sessions=${new Set(records.map(r => r.sessionId)).size}, bytes=${block.length})`,
           );
-          return null;
-        }
-        const block = `${cfg.headerText}\n\n${formatRecords(records)}\n\n（以上为参考片段结束；请按当前 system 提示的输出格式作答。）`;
-        ctx.logger.debug(
-          `memory-history: 已注入 ${records.length} 条跨会话消息 (scope=${cfg.scope}, platform=${view.platform ?? '?'}, sessions=${new Set(records.map(r => r.sessionId)).size}, bytes=${block.length})`,
-        );
-        return block;
-      },
-    });
-  }
+          return block;
+        },
+      });
+    }
 
-  // ---- 工具注册 ----
+    // ---- 工具注册 ----
 
-  if (cfg.toolEnabled) {
-    const tools = useToolService(ctx);
-    tools.register({
-      // 归入 plugin-tool-session 的 'session-history' 分组（同属"读取/聚合会话历史"语义）。
-      // 若 plugin-tool-session 未启用，本工具落入未分组，WebUI 会以"其他"兜底展示。
-      groups: ['session-history'],
-      definition: {
-        type: 'function',
-        function: {
-          name: TOOL_NAME,
-          description:
-            '查询跨会话近期消息上下文。返回按时间升序排列的消息片段，可用于了解平台/跨平台的近期对话动态。每条格式为 [time][platform/session][role/sender] content。',
-          parameters: {
-            type: 'object',
-            properties: {
-              scope: {
-                type: 'string',
-                enum: ['same-platform', 'cross-platform'],
-                description: `same-platform = 仅取与当前消息同平台的历史；cross-platform = 跨所有平台聚合。不传则使用插件配置默认值（当前为 ${cfg.scope}）。`,
+    if (cfg.toolEnabled) {
+      tools.register({
+        // 归入 plugin-tool-session 的 'session-history' 分组（同属"读取/聚合会话历史"语义）。
+        // 若 plugin-tool-session 未启用，本工具落入未分组，WebUI 会以"其他"兜底展示。
+        groups: ['session-history'],
+        definition: {
+          type: 'function',
+          function: {
+            name: TOOL_NAME,
+            description:
+              '查询跨会话近期消息上下文。返回按时间升序排列的消息片段，可用于了解平台/跨平台的近期对话动态。每条格式为 [time][platform/session][role/sender] content。',
+            parameters: {
+              type: 'object',
+              properties: {
+                scope: {
+                  type: 'string',
+                  enum: ['same-platform', 'cross-platform'],
+                  description: `same-platform = 仅取与当前消息同平台的历史；cross-platform = 跨所有平台聚合。不传则使用插件配置默认值（当前为 ${cfg.scope}）。`,
+                },
+                limit: {
+                  type: 'number',
+                  description: `返回条数上限（默认 ${cfg.limit}）。`,
+                },
+                maxAgeMinutes: {
+                  type: 'number',
+                  description: `只返回最近 N 分钟内的消息；0 = 不限。默认 ${cfg.maxAgeMinutes}。`,
+                },
+                perSessionLimit: {
+                  type: 'number',
+                  description: `同一 sessionId 最多保留 N 条，避免某个活跃群刷屏占满总 limit；0 = 不限。默认 ${cfg.perSessionLimit}。`,
+                },
               },
-              limit: {
-                type: 'number',
-                description: `返回条数上限（默认 ${cfg.limit}）。`,
-              },
-              maxAgeMinutes: {
-                type: 'number',
-                description: `只返回最近 N 分钟内的消息；0 = 不限。默认 ${cfg.maxAgeMinutes}。`,
-              },
-              perSessionLimit: {
-                type: 'number',
-                description: `同一 sessionId 最多保留 N 条，避免某个活跃群刷屏占满总 limit；0 = 不限。默认 ${cfg.perSessionLimit}。`,
-              },
+              additionalProperties: false,
             },
-            additionalProperties: false,
           },
         },
-      },
-      handler: async (args, callCtx) => {
-        const scope = args.scope === 'same-platform' || args.scope === 'cross-platform' ? args.scope : undefined;
-        const records = await queryRecent({
-          scope,
-          currentPlatform: callCtx.platform,
-          currentSessionId: callCtx.sessionId,
-          limit: typeof args.limit === 'number' ? args.limit : undefined,
-          maxAgeMinutes: typeof args.maxAgeMinutes === 'number' ? args.maxAgeMinutes : undefined,
-          perSessionLimit: typeof args.perSessionLimit === 'number' ? args.perSessionLimit : undefined,
-        });
-        if (records.length === 0) return '（最近没有匹配的消息）';
-        return formatRecords(records);
-      },
-    });
-  }
-}
+        handler: async (args, callCtx) => {
+          const scope = args.scope === 'same-platform' || args.scope === 'cross-platform' ? args.scope : undefined;
+          const records = await queryRecent({
+            scope,
+            currentPlatform: callCtx.platform,
+            currentSessionId: callCtx.sessionId,
+            limit: typeof args.limit === 'number' ? args.limit : undefined,
+            maxAgeMinutes: typeof args.maxAgeMinutes === 'number' ? args.maxAgeMinutes : undefined,
+            perSessionLimit: typeof args.perSessionLimit === 'number' ? args.perSessionLimit : undefined,
+          });
+          if (records.length === 0) return '（最近没有匹配的消息）';
+          return formatRecords(records);
+        },
+      });
+    }
+  },
+});

@@ -51,7 +51,8 @@
         "cron-engine"
       ],
       "optional": [
-        "agent"
+        "storage",
+        "webui-server"
       ],
       "provides": [
         "scheduler"

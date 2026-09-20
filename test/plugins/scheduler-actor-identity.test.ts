@@ -1,8 +1,9 @@
-import { App } from '@aalis/core';
+import { storage } from '@aalis/api-storage';
+import { App, events, provide, services } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import * as cronEngineModule from '../../packages/plugin-cron-engine/src/index.js';
-import * as schedulerModule from '../../packages/plugin-scheduler/src/index.js';
-import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
+import schedulerPlugin, { type SchedulerService, scheduler } from '../../packages/plugin-scheduler/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // scheduler 触发时的代理身份：owner 只能来自显式来源，绝不能由「字段缺失」推断
@@ -63,35 +64,31 @@ function memoryStorage(seed: Record<string, string> = {}) {
 /** 起一个装了 scheduler 的实例，触发指定任务，返回它发出的 inbound:message 上的 actor。 */
 async function actorOfTriggeredJob(
   schedulerConfig: Record<string, unknown>,
-  setup?: (svc: SchedulerLike) => void,
+  setup?: (svc: SchedulerService) => void,
   jobName = 'j',
   storageSeed?: Record<string, string>,
 ): Promise<{ actor: Actor; emitted: boolean }> {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  app.ctx.provide('storage', memoryStorage(storageSeed).service as never);
-  await app.ctx.useModule(toolsModule as never, {});
-  await app.ctx.useModule(cronEngineModule as never, {});
-  await app.ctx.useModule(schedulerModule as never, schedulerConfig);
+  const host = app.bind({ provide, services, events });
+  host.provide(storage, memoryStorage(storageSeed).service as never);
+  await app.plugins.register(toolsPlugin, {});
+  await app.plugins.register(cronEnginePlugin, {});
+  await app.plugins.register(schedulerPlugin, schedulerConfig);
   await app.plugins.idle();
 
   let actor: Actor;
   let emitted = false;
-  app.ctx.on('inbound:message', (msg: { actor?: { platform: string; userId: string } }) => {
+  host.events.on('inbound:message', msg => {
     emitted = true;
     actor = msg.actor;
   });
 
-  const svc = app.ctx.getService<SchedulerLike>('scheduler');
+  const svc = host.services.get(scheduler);
   expect(svc, 'scheduler 服务未注册').toBeDefined();
-  setup?.(svc as SchedulerLike);
-  await (svc as SchedulerLike).triggerJob(jobName);
+  setup?.(svc as SchedulerService);
+  await (svc as SchedulerService).triggerJob(jobName);
   await app.stop();
   return { actor, emitted };
-}
-
-interface SchedulerLike {
-  addJob(job: Record<string, unknown>): void;
-  triggerJob(name: string): Promise<boolean>;
 }
 
 const baseJob = { name: 'j', interval: 3600, content: 'x', sessionId: 'internal', platform: 'internal', enabled: true };

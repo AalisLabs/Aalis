@@ -1,7 +1,6 @@
 import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import * as mediaModule from '../../packages/plugin-media/src/index.js';
-import { legacyVisionMode } from '../../packages/plugin-media/src/index.js';
+import media, { legacyVisionMode } from '../../packages/plugin-media/src/index.js';
 
 // 旧键 vision.mode 的一次性迁移：apply 时按旧语义写入新键、删除旧键并写回配置。
 // 不迁移的话：config-sync 每次启动都物化默认值，存量部署里旧键永远有值、永远覆盖新键，
@@ -11,7 +10,7 @@ async function applyWith(vision: Record<string, unknown>) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
   app.ctx.provide('process', {} as never);
   app.ctx.provide('storage', {} as never);
-  await app.ctx.useModule(mediaModule as never, { vision });
+  await app.plugin(media, { vision });
   await app.plugins.idle();
   const stored = app.ctx.config.getPluginConfig<{ vision?: Record<string, unknown> }>('@aalis/plugin-media');
   await app.stop().catch(() => {});

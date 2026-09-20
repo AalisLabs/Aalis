@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/api-persona": "workspace:>=0.6.0 <1.0.0",
     "@aalis/api-platform": "workspace:>=0.5.0 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.5.5 <1.0.0",
     "chalk": "^5.4.0",
@@ -38,7 +39,6 @@
   "devDependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/schema-message": "workspace:*",
-    "@aalis/api-persona": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },
@@ -48,8 +48,11 @@
   "aalis": {
     "service": {
       "optional": [
-        "llm",
-        "commands"
+        "platform",
+        "persona",
+        "storage",
+        "app",
+        "host-config"
       ],
       "provides": [
         "cli",

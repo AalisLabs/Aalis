@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ToolCallContext, ToolExecutionResult } from '../../packages/api-tools/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
-import * as ollama from '../../packages/plugin-llm-ollama/src/index.js';
-import * as openai from '../../packages/plugin-llm-openai/src/index.js';
-import * as serper from '../../packages/plugin-websearch-serper/src/index.js';
+import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
+import deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
+import ollama from '../../packages/plugin-llm-ollama/src/index.js';
+import openai from '../../packages/plugin-llm-openai/src/index.js';
+import serper from '../../packages/plugin-websearch-serper/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 「接连接但不回包」的端点必须有 AbortSignal 兜底。
@@ -58,7 +58,7 @@ describe('模型发现请求带超时', () => {
   it('Ollama /api/tags', async () => {
     const cap = captureFetch();
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(ollama as never, { baseUrl: 'http://127.0.0.1:11434' });
+    await app.ctx.useModule(ollama, { baseUrl: 'http://127.0.0.1:11434' });
     await app.plugins.idle();
     expectLiveSignal(cap.signalFor('/api/tags'), 'Ollama /api/tags');
     await app.stop();
@@ -67,7 +67,7 @@ describe('模型发现请求带超时', () => {
   it('OpenAI /models', async () => {
     const cap = captureFetch();
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(openai as never, { apiKey: 'k', baseUrl: 'https://gw.invalid/v1' });
+    await app.ctx.useModule(openai, { apiKey: 'k', baseUrl: 'https://gw.invalid/v1' });
     await app.plugins.idle();
     expectLiveSignal(cap.signalFor('/models'), 'OpenAI /models');
     await app.stop();
@@ -76,7 +76,7 @@ describe('模型发现请求带超时', () => {
   it('DeepSeek /models', async () => {
     const cap = captureFetch();
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(deepseek as never, { apiKey: 'k', baseUrl: 'https://gw.invalid' });
+    await app.ctx.useModule(deepseek, { apiKey: 'k', baseUrl: 'https://gw.invalid' });
     await app.plugins.idle();
     expectLiveSignal(cap.signalFor('/models'), 'DeepSeek /models');
     await app.stop();
@@ -88,14 +88,14 @@ describe('serper search_images 带超时（挂起时不占死限流槽）', () =
     const cap = captureFetch();
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const handlers: Record<string, Handler> = {};
-    app.ctx.provide('tools', {
+    app.bind({ provide }).provide(tools, {
       register: (t: { definition: { function: { name: string } }; handler: Handler }) => {
         handlers[t.definition.function.name] = t.handler;
         return () => {};
       },
       registerGroup: () => () => {},
     } as never);
-    serper.apply(app.ctx, { apiKey: 'k' });
+    await app.ctx.useModule(serper, { apiKey: 'k' });
     const out = JSON.parse((await handlers.search_images({ query: '猫' }, { sessionId: 's' })) as string);
     expect(out.error).toBeUndefined();
     expectLiveSignal(cap.signalFor('serper.dev/images'), 'serper /images');

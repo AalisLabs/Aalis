@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
-import { LLMCapabilities } from '../../packages/api-llm/src/index.js';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import * as memorySummary from '../../packages/plugin-memory-summary/src/index.js';
+import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
+import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
+import { App, events, hooks, provide, services } from '../../packages/core/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
+import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 摘要输入里的工具回合必须留痕：
@@ -35,29 +35,30 @@ function fakeLLM(): LLMModel {
 async function setup(config: Record<string, unknown>) {
   lastInput.text = '';
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(memoryInMemoryModule);
-  app.ctx.provide('llm', fakeLLM());
+  const host = app.bind({ provide, services, events, hooks });
+  await app.ctx.useModule(memoryInMemory);
+  host.provide(llm, fakeLLM());
   await app.ctx.useModule(memorySummary, config);
   await app.plugins.idle();
-  const memory = app.ctx.getService<MemoryService>('memory');
-  if (!memory) throw new Error('memory 服务未就绪');
-  return { app, memory };
+  const store = host.services.get(memory);
+  if (!store) throw new Error('memory 服务未就绪');
+  return { app, host, memory: store };
 }
 
 /** 一个真实形状的工具回合：user 提问 → assistant(toolCalls, content 空) → tool 结果 → assistant 回答 */
-async function seedToolTurn(memory: MemoryService, sessionId: string, filler: number): Promise<void> {
-  await memory.saveMessage(sessionId, { role: 'user', content: '北京天气怎么样' });
-  await memory.saveMessage(sessionId, {
+async function seedToolTurn(store: MemoryService, sessionId: string, filler: number): Promise<void> {
+  await store.saveMessage(sessionId, { role: 'user', content: '北京天气怎么样' });
+  await store.saveMessage(sessionId, {
     role: 'assistant',
     content: '',
     toolCalls: [{ id: 'c1', type: 'function', function: { name: 'get_weather', arguments: '{"city":"北京"}' } }],
   });
   // 自带 name 刻意写错：tool 消息的 name 是可选字段、由上游适配器回填，可能陈旧；
   // 工具名以同回合 assistant.toolCalls 按 toolCallId 反查为准，m.name 只作回落
-  await memory.saveMessage(sessionId, { role: 'tool', toolCallId: 'c1', name: 'stale_name', content: LONG_RESULT });
-  await memory.saveMessage(sessionId, { role: 'assistant', content: '北京今天晴' });
+  await store.saveMessage(sessionId, { role: 'tool', toolCallId: 'c1', name: 'stale_name', content: LONG_RESULT });
+  await store.saveMessage(sessionId, { role: 'assistant', content: '北京今天晴' });
   for (let i = 0; i < filler; i++) {
-    await memory.saveMessage(sessionId, { role: i % 2 === 0 ? 'user' : 'assistant', content: `填充 ${i}` });
+    await store.saveMessage(sessionId, { role: i % 2 === 0 ? 'user' : 'assistant', content: `填充 ${i}` });
   }
 }
 
@@ -74,10 +75,10 @@ function assertToolTurnRendered(text: string): void {
 
 describe('plugin-memory-summary: 工具回合进摘要输入', () => {
   it('generateSummary 路径：渲染工具调用与工具结果（每条硬截断）', async () => {
-    const { app, memory } = await setup({ threshold: 10, keepRecent: 4 });
+    const { app, host, memory } = await setup({ threshold: 10, keepRecent: 4 });
     await seedToolTurn(memory, 's-t0', 20);
 
-    await app.ctx.runHook(
+    await host.hooks.run(
       'agent:turn:after' as never,
       { message: { sessionId: 's-t0' }, reply: 'ok', outcome: 'replied', sessionId: 's-t0', metadata: {} } as never,
     );
@@ -88,10 +89,10 @@ describe('plugin-memory-summary: 工具回合进摘要输入', () => {
   });
 
   it('session:compress 路径：同款渲染', async () => {
-    const { app, memory } = await setup({ threshold: 10, keepRecent: 4 });
+    const { app, host, memory } = await setup({ threshold: 10, keepRecent: 4 });
     await seedToolTurn(memory, 's-t1', 20);
 
-    await app.ctx.emit('session:compress', { sessionId: 's-t1', reason: 'manual' });
+    await host.events.emit('session:compress', { sessionId: 's-t1', reason: 'manual' });
     await new Promise<void>(r => setTimeout(r, 50));
 
     assertToolTurnRendered(lastInput.text);

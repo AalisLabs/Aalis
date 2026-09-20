@@ -1,7 +1,8 @@
-import type { MediaService } from '@aalis/api-media';
-import type { MemoryService } from '@aalis/api-memory';
+import { media } from '@aalis/api-media';
+import { memory } from '@aalis/api-memory';
 import type { ArchiveNoticeOptions, MessageArchiveService } from '@aalis/api-message-archive';
-import type { Context } from '@aalis/core';
+import { messageArchive } from '@aalis/api-message-archive';
+import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { getMessageName, getSenderLabel, prefixSender, WellKnownKinds } from '@aalis/schema-message';
@@ -12,16 +13,7 @@ export type {
   MessageArchiveService,
 } from '@aalis/api-message-archive';
 
-export const name = '@aalis/plugin-message-archive';
-export const displayName = '消息归档';
-export const subsystem = 'message';
-export const inject = {
-  required: ['memory'],
-  optional: ['media'],
-};
-export const provides = ['message-archive'];
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   debugLogs: {
     type: 'boolean',
     label: '归档调试日志',
@@ -29,10 +21,6 @@ export const configSchema: ConfigSchema = {
     description: '记录图片解释完成和消息写入记忆等调试日志。',
   },
 };
-
-interface PluginConfig {
-  debugLogs: boolean;
-}
 
 /** 从消息文本中抽取 @提及的用户 ID 列表（平台无关：依赖各 adapter 输出统一的 <at id="X"> 标签） */
 function extractMentions(text: string): string[] {
@@ -77,31 +65,38 @@ function buildIncomingContent(incoming: IncomingMessage): string {
   return content;
 }
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
-  const cfg: PluginConfig = {
-    debugLogs: config.debugLogs !== false,
-  };
+const uses = { memory, media: optional(media), events, logger, config, provide };
+type Caps = BoundOf<typeof uses>;
 
-  // 必须懒查：ServiceRegistry.get 返回裸引用，apply 时缓存会在 memory provider 重载后失效。
-  // 表面上多一次查表调用，实际开销可忽，换取 provider 切换/bounce 时本插件不被级联 dispose。
-  function getMemory(): MemoryService {
-    const m = ctx.getService<MemoryService>('memory');
-    if (!m) throw new Error('message-archive 需要 memory 服务');
-    return m;
-  }
+export default definePlugin({
+  name: '@aalis/plugin-message-archive',
+  displayName: '消息归档',
+  subsystem: 'message',
+  configSchema,
+  provides: [messageArchive],
+  uses,
+  apply(caps) {
+    caps.provide(messageArchive, createArchiveService(caps));
+  },
+});
 
-  const service: MessageArchiveService = {
+function createArchiveService({ memory, media, events, logger, config }: Caps): MessageArchiveService {
+  const debugLogs = config.debugLogs !== false;
+
+  // 不缓存 memory 引用，每次调用现取：一次激活内胜者也可能换人（偏好变更、更高优先级的
+  // 提供者登场），ServiceRef 的契约就是每次解析当前值。多一次查表的开销可忽。
+  return {
     async saveMessage(sessionId: string, message: Message, options?: { debugLabel?: string }): Promise<void> {
-      await getMemory().saveMessage(sessionId, message);
+      await memory.require().saveMessage(sessionId, message);
       // assistant 回复落库后通知监听者（memory-vector 据此索引 AI 自身发言）。
       // 只发「对外可见的回复」：带 toolCalls 的行是工具调用回合的内部前言
       //（「我来查一下」），从未发给任何人，不该进语义记忆；tool/摘要等其他
       // saveMessage 用途同理不发。core 的 emit 恒 resolve（per-handler try/catch），无需 catch。
       if (message.role === 'assistant' && message.content?.trim() && !message.toolCalls?.length) {
-        void ctx.emit('assistant:message:archived', { sessionId, message });
+        void events.emit('assistant:message:archived', { sessionId, message });
       }
-      if (cfg.debugLogs && options?.debugLabel) {
-        ctx.logger.debug(options.debugLabel);
+      if (debugLogs && options?.debugLabel) {
+        logger.debug(options.debugLabel);
       }
     },
 
@@ -117,11 +112,11 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       // 调用 plugin-media 一站式处理（识别 attachments 并写回 _attachmentDescriptions）
       // 仅在 preprocessor 尚未运行（_attachmentDescriptions 未预设）时才调用，避免重复识别。
       if (working.attachments && working.attachments.length > 0 && !working._attachmentDescriptions) {
-        const mediaSvc = ctx.getService<MediaService>('media');
+        const mediaSvc = media.current;
         if (mediaSvc?.processMessage) {
           const report = await mediaSvc.processMessage(working);
-          if (cfg.debugLogs && report.total > 0) {
-            ctx.logger.debug(`附件识别完成: ${report.successCount}/${report.total} 个成功 | ${working.content}`);
+          if (debugLogs && report.total > 0) {
+            logger.debug(`附件识别完成: ${report.successCount}/${report.total} 个成功 | ${working.content}`);
           }
         }
       }
@@ -166,23 +161,23 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         metadata: Object.keys(meta).length > 0 ? meta : undefined,
       };
 
-      await getMemory().saveMessage(working.sessionId, message);
+      await memory.require().saveMessage(working.sessionId, message);
 
-      if (cfg.debugLogs && working.attachments?.length) {
-        ctx.logger.debug(
+      if (debugLogs && working.attachments?.length) {
+        logger.debug(
           `附件消息已写入记忆: session=${working.sessionId}, attachments=${working.attachments.length} | ${content}`,
         );
       }
 
       // 通知监听者：入站消息已落库（用于触发用户档案事实提取等后台任务）
       // 与 agent 是否回复无关，所有走 archiveIncoming 的消息都会发出
-      ctx
+      events
         .emit('inbound:message:archived', {
           sessionId: working.sessionId,
           incoming: working,
           archivedMessage: message,
         })
-        .catch(err => ctx.logger.debug(`inbound:message:archived 事件分发失败: ${err}`));
+        .catch(err => logger.debug(`inbound:message:archived 事件分发失败: ${err}`));
 
       return {
         message,
@@ -211,10 +206,10 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       };
 
-      await getMemory().saveMessage(opts.sessionId, message);
+      await memory.require().saveMessage(opts.sessionId, message);
 
-      if (cfg.debugLogs) {
-        ctx.logger.debug(
+      if (debugLogs) {
+        logger.debug(
           `[notice 入档] session=${opts.sessionId} type=${opts.noticeType}${opts.subType ? `/${opts.subType}` : ''} | ${text}`,
         );
       }
@@ -227,7 +222,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       // 缺省 100；撤回反查按需显式传大窗（见 onebot 撤回处）。不把缺省抬到 500：
       // 引用回填热路径也调本方法并按 maxDepth 递归，抬缺省会让它每层多扫 400 条。
       const limit = Math.max(1, Math.min(500, Math.floor(scanLimit ?? 100)));
-      const history = await getMemory().getHistory(sessionId, limit);
+      const history = await memory.require().getHistory(sessionId, limit);
       // 从最新往旧找：引用通常指向最近发的消息
       for (let i = history.length - 1; i >= 0; i -= 1) {
         const m = history[i];
@@ -237,6 +232,4 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       return null;
     },
   };
-
-  ctx.provide('message-archive', service);
 }

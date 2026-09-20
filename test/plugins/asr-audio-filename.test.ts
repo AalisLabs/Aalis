@@ -3,11 +3,11 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Context } from '@aalis/core';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { App, type PluginModule } from '@aalis/core';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ASRService } from '../../packages/api-asr/src/index.js';
-import * as asrOpenai from '../../packages/plugin-asr-openai/src/index.js';
-import * as asrWhisper from '../../packages/plugin-asr-whisper-cpp/src/index.js';
+import asrOpenai from '../../packages/plugin-asr-openai/src/index.js';
+import asrWhisper from '../../packages/plugin-asr-whisper-cpp/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -26,28 +26,26 @@ let base: string;
 let server: Server;
 let port: number;
 
-const logger = { info: () => {}, debug: () => {}, warn: () => {}, error: () => {}, child: () => logger } as never;
+const apps: App[] = [];
+afterEach(async () => {
+  for (const a of apps.splice(0)) await a.stop().catch(() => {});
+});
 
-/** 捞出插件 provide 的 asr 服务；services 同时喂 getService 与 getAllServices */
-function fakeCtx(services: Record<string, unknown>): { ctx: Context; asr: () => ASRService } {
-  let provided: ASRService | undefined;
-  const ctx = {
-    id: 'test/asr',
-    logger,
-    provide: (name: string, instance: unknown) => {
-      if (name === 'asr') provided = instance as ASRService;
-      return () => {};
-    },
-    getService: (name: string) => services[name],
-    getAllServices: (name: string) => (services[name] ? [{ contextId: `test/${name}`, instance: services[name] }] : []),
-  } as unknown as Context;
-  return {
-    ctx,
-    asr: () => {
-      if (!provided) throw new Error('插件未注册 asr');
-      return provided;
-    },
-  };
+/** 装载插件并捞出它 provide 的 asr 服务；process / storage 用本用例的真 fs 桩 */
+async function bootAsr(
+  plugin: PluginModule,
+  config: Record<string, unknown>,
+  services: { process: Record<string, unknown>; storage: Record<string, unknown> },
+): Promise<ASRService> {
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  apps.push(app);
+  app.ctx.provide('process', services.process as never);
+  app.ctx.provide('storage', services.storage as never);
+  await app.plugin(plugin, config);
+  await app.plugins.idle();
+  const asr = app.ctx.getService<ASRService>('asr');
+  if (!asr) throw new Error('插件未注册 asr');
+  return asr;
 }
 
 /** 真 fs 的 process 网关面：readExternalFile 真读盘，makeTempDir 指向真目录 */
@@ -113,11 +111,14 @@ describe('plugin-asr-openai：交给 Whisper API 的 filename', () => {
     return { filename: () => filename };
   }
 
+  /** 本套用例的被测插件与桩：每条独立装一次 */
+  const bootOpenai = () =>
+    bootAsr(asrOpenai, { apiKey: 'k' }, { process: procService(base), storage: storageService([]) });
+
   it('无扩展名的 URL：按 Content-Type 兜底成 audio.mp3，文件名里没有斜杠', async () => {
     const cap = captureUpload();
-    const { ctx, asr } = fakeCtx({ process: procService(base), storage: storageService([]) });
-    asrOpenai.apply(ctx, { apiKey: 'k' });
-    const r = await asr().transcribe({ attachment: { kind: 'audio', data: `http://127.0.0.1:${port}/download` } }, ctx);
+    const asr = await bootOpenai();
+    const r = await asr.transcribe({ attachment: { kind: 'audio', data: `http://127.0.0.1:${port}/download` } });
     expect(r.text).toBe('转写文本');
     expect(cap.filename()).toBe('audio.mp3');
     expect(cap.filename()).not.toContain('/');
@@ -126,12 +127,8 @@ describe('plugin-asr-openai：交给 Whisper API 的 filename', () => {
 
   it('后缀不在 Whisper 支持集内（.opus）时按 Content-Type 换成集内后缀，不原样上传', async () => {
     const cap = captureUpload();
-    const { ctx, asr } = fakeCtx({ process: procService(base), storage: storageService([]) });
-    asrOpenai.apply(ctx, { apiKey: 'k' });
-    const r = await asr().transcribe(
-      { attachment: { kind: 'audio', data: `http://127.0.0.1:${port}/download.opus` } },
-      ctx,
-    );
+    const asr = await bootOpenai();
+    const r = await asr.transcribe({ attachment: { kind: 'audio', data: `http://127.0.0.1:${port}/download.opus` } });
     expect(r.text).toBe('转写文本');
     expect(cap.filename()).toBe('audio.mp3'); // .opus 被 API 判 400，故按 audio/mpeg 映射
     vi.unstubAllGlobals();
@@ -139,12 +136,10 @@ describe('plugin-asr-openai：交给 Whisper API 的 filename', () => {
 
   it('base64 data URI：mime 子类型不在 Whisper 支持集内（audio/opus）时按白名单换成 audio.ogg', async () => {
     const cap = captureUpload();
-    const { ctx, asr } = fakeCtx({ process: procService(base), storage: storageService([]) });
-    asrOpenai.apply(ctx, { apiKey: 'k' });
-    const r = await asr().transcribe(
-      { attachment: { kind: 'audio', data: `data:audio/opus;base64,${MP3.toString('base64')}` } },
-      ctx,
-    );
+    const asr = await bootOpenai();
+    const r = await asr.transcribe({
+      attachment: { kind: 'audio', data: `data:audio/opus;base64,${MP3.toString('base64')}` },
+    });
     expect(r.text).toBe('转写文本');
     expect(cap.filename()).toBe('audio.ogg'); // 直取 mime 子类型会上传 audio.opus，被 API 判 400
     vi.unstubAllGlobals();
@@ -154,9 +149,8 @@ describe('plugin-asr-openai：交给 Whisper API 的 filename', () => {
     const local = join(base, 'voicenote.opus');
     await writeFile(local, MP3);
     const cap = captureUpload();
-    const { ctx, asr } = fakeCtx({ process: procService(base), storage: storageService([]) });
-    asrOpenai.apply(ctx, { apiKey: 'k' });
-    const r = await asr().transcribe({ attachment: { kind: 'audio', data: `file://${local}` } }, ctx);
+    const asr = await bootOpenai();
+    const r = await asr.transcribe({ attachment: { kind: 'audio', data: `file://${local}` } });
     expect(r.text).toBe('转写文本');
     expect(cap.filename()).toBe('audio.ogg'); // 兜底成 wav 会让 Whisper 按错容器解
     vi.unstubAllGlobals();
@@ -166,9 +160,8 @@ describe('plugin-asr-openai：交给 Whisper API 的 filename', () => {
     const local = join(base, 'voicenote'); // 刻意无后缀
     await writeFile(local, MP3);
     const cap = captureUpload();
-    const { ctx, asr } = fakeCtx({ process: procService(base), storage: storageService([]) });
-    asrOpenai.apply(ctx, { apiKey: 'k' });
-    const r = await asr().transcribe({ attachment: { kind: 'audio', data: `file://${local}` } }, ctx);
+    const asr = await bootOpenai();
+    const r = await asr.transcribe({ attachment: { kind: 'audio', data: `file://${local}` } });
     expect(r.text).toBe('转写文本');
     expect(cap.filename()).toBe('audio.wav'); // 无 mime 可依时的白名单兜底
     expect(cap.filename()).not.toContain('/');
@@ -179,14 +172,14 @@ describe('plugin-asr-openai：交给 Whisper API 的 filename', () => {
 describe('plugin-asr-whisper-cpp：下载件的 storage 写路径', () => {
   it('无扩展名的 URL 不造嵌套垃圾目录（写在临时目录下的单个文件里）', async () => {
     const written: string[] = [];
-    const { ctx, asr } = fakeCtx({
-      process: procService(join(base, 'whisper-in')),
-      storage: storageService(written),
-    });
-    asrWhisper.apply(ctx, { modelPath: join(base, 'ggml-base.bin') });
+    const asr = await bootAsr(
+      asrWhisper,
+      { modelPath: join(base, 'ggml-base.bin') },
+      { process: procService(join(base, 'whisper-in')), storage: storageService(written) },
+    );
     // 转写本身靠假 execFile，成不成功不是本用例的断言点——断言的是下载件的写路径
-    await asr()
-      .transcribe({ attachment: { kind: 'audio', data: `http://127.0.0.1:${port}/download` } }, ctx)
+    await asr
+      .transcribe({ attachment: { kind: 'audio', data: `http://127.0.0.1:${port}/download` } })
       .catch(() => undefined);
     expect(written).toHaveLength(1);
     expect(written[0]).toBe('tmp:/whisper-in/audio.mp3');

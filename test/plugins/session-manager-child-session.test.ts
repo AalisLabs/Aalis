@@ -1,7 +1,7 @@
 import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
-import * as sessionManagerModule from '../../packages/plugin-session-manager/src/index.js';
+import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 
 // 背景：平台派生会话（cli-default、OneBot 的 `onebot:bot:group:x`）从不经 createSession 预建，
 // createChildSession 原本对未建档的父直接抛「父会话不存在」，create_subtask 在这些平台必败。
@@ -26,7 +26,7 @@ function fakeMemory() {
 async function setup() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
   app.ctx.provide('memory', fakeMemory() as never);
-  await app.ctx.useModule(sessionManagerModule, {});
+  await app.ctx.useModule(sessionManagerPlugin, {});
   await app.plugins.idle();
   const sm = app.ctx.getService<SessionManagerService>('session-manager');
   if (!sm) throw new Error('session-manager 服务未注册');

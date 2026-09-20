@@ -28,12 +28,12 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "@aalis/api-memory": "workspace:>=0.5.1 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
     "mongodb": "^6.12.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/api-memory": "workspace:*",
     "@aalis/schema-message": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"

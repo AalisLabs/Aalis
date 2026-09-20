@@ -424,10 +424,16 @@ describe('重入清理', () => {
     const port = createPort<unknown>(ctx, 'zz-cp-track2');
     const gate = deferred();
     let finished = false;
-    const off = port.track(() => gate.promise.then(() => void (finished = true)));
+    const off = port.track(() =>
+      gate.promise.then(() => {
+        finished = true;
+      }),
+    );
     ctx.onDispose(() => off());
     let closed = false;
-    const closing = ctx.disposeAsync().then(() => void (closed = true));
+    const closing = ctx.disposeAsync().then(() => {
+      closed = true;
+    });
     await tick();
     expect(closed).toBe(false);
     gate.resolve();
@@ -477,7 +483,10 @@ describe('follow 的串行交接', () => {
         if (owner) throw new Error(`租约被 ${owner} 占着`);
         owner = tag;
         acquired.push(tag);
-        return () => (tag === 'a' ? gate.promise.then(() => void (owner = undefined)) : void (owner = undefined));
+        const release = (): void => {
+          owner = undefined;
+        };
+        return () => (tag === 'a' ? gate.promise.then(release) : release());
       },
     });
     w.host(d, make('a'), { entryId: 'root/a' });
@@ -528,7 +537,9 @@ describe('follow 的串行交接', () => {
     w.host(d, { tag: 'b' }, { entryId: 'root/b', priority: 2 });
     await tick();
     let closed = false;
-    const closing = ctx.disposeAsync().then(() => void (closed = true));
+    const closing = ctx.disposeAsync().then(() => {
+      closed = true;
+    });
     await tick();
     expect(closed, '关闭等旧清理落定').toBe(false);
     gate.resolve();

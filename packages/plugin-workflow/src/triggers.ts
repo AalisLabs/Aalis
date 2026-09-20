@@ -3,13 +3,13 @@
 //
 // 通过 cron-engine 服务订阅 cron / @every，scheduler 与 workflow
 // 共享一个整分钟 tick 与 setInterval；once 用 setTimeout；
-// event 通过 ctx.on 订阅。所有"周期型"触发器现在都走 cron-engine，
+// event 经事件总线订阅。所有"周期型"触发器现在都走 cron-engine，
 // 不再在本文件里直接 new setInterval。
 // ============================================================
 
-import { useCronEngine } from '@aalis/api-cron-engine';
+import type { CronEngine } from '@aalis/api-cron-engine';
 import type { WorkflowDef } from '@aalis/api-workflow';
-import type { Context, Logger } from '@aalis/core';
+import type { Events, Logger, ServiceRef } from '@aalis/core';
 
 // event 触发器禁止订阅的内部事件：这些承载会话原文/出站内容，若被 workflow 的 send-message
 // 节点转发到任意 sessionId，会构成跨会话内容窃听/外泄通道。只允许订阅编排/信号类事件。
@@ -33,8 +33,16 @@ interface OnceLedger {
   markOnceFired(workflowId: string): void;
 }
 
+/** 触发器登记用到的能力：cron / interval 经 cron-engine 订阅，event 触发器订阅事件总线。 */
+export interface TriggerCaps {
+  cronEngine: ServiceRef<CronEngine>;
+  events: Events;
+  logger: Logger;
+}
+
 export class TriggerManager {
-  private ctx: Context;
+  private cronEngine: ServiceRef<CronEngine>;
+  private events: Events;
   private logger: Logger;
   private fire: FireFn;
   private once: OnceLedger;
@@ -43,9 +51,10 @@ export class TriggerManager {
   private onceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private eventDisposers = new Map<string, () => void>();
 
-  constructor(ctx: Context, logger: Logger, fire: FireFn, once: OnceLedger) {
-    this.ctx = ctx;
-    this.logger = logger;
+  constructor(caps: TriggerCaps, fire: FireFn, once: OnceLedger) {
+    this.cronEngine = caps.cronEngine;
+    this.events = caps.events;
+    this.logger = caps.logger;
     this.fire = fire;
     this.once = once;
   }
@@ -58,7 +67,7 @@ export class TriggerManager {
     switch (t.type) {
       case 'cron': {
         try {
-          const dispose = useCronEngine(this.ctx).subscribe(t.expr, () => {
+          const dispose = this.cronEngine.require().subscribe(t.expr, () => {
             this.fire(def.id, `cron:${t.expr}`);
           });
           this.cronDisposers.set(def.id, dispose);
@@ -72,7 +81,7 @@ export class TriggerManager {
         const sec = Math.max(1, Math.floor(t.seconds));
         const expr = `@every ${sec}s`;
         try {
-          const dispose = useCronEngine(this.ctx).subscribe(expr, () => {
+          const dispose = this.cronEngine.require().subscribe(expr, () => {
             this.fire(def.id, `interval:${sec}s`);
           });
           this.cronDisposers.set(def.id, dispose);
@@ -136,7 +145,7 @@ export class TriggerManager {
         }
         const filter = t.filter ?? {};
         // biome-ignore lint/suspicious/noExplicitAny: 动态事件订阅，事件名不在编译期可知
-        const dispose = this.ctx.on(evtName as any, (...args: unknown[]) => {
+        const dispose = this.events.on(evtName as any, (...args: unknown[]) => {
           if (!matchFilter(args[0], filter)) return;
           this.fire(def.id, `event:${evtName}`, { args });
         });

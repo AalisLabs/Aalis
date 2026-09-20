@@ -1,10 +1,19 @@
-import { useCronEngine } from '@aalis/api-cron-engine';
-import { createStorageGateway, toStorageUri } from '@aalis/api-storage';
-import { useToolService } from '@aalis/api-tools';
+import { cronEngine } from '@aalis/api-cron-engine';
+import { createStorageGateway, storage, toStorageUri } from '@aalis/api-storage';
+import { tools } from '@aalis/api-tools';
 import type { WebuiPage } from '@aalis/api-webui';
-import { useWebuiService } from '@aalis/api-webui';
-import type { Context, PluginModule } from '@aalis/core';
-import { defineService } from '@aalis/core';
+import { webuiServer } from '@aalis/api-webui';
+import {
+  type BoundOf,
+  config,
+  definePlugin,
+  defineService,
+  events,
+  lifecycle,
+  logger,
+  optional,
+  provide,
+} from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { parseEverySeconds } from '@aalis/util-cron';
@@ -68,7 +77,7 @@ interface SchedulerConfig {
 
 // ──────────── Cron 解析 ────────────
 // 解析在 @aalis/api-cron-engine（normalizeCronExpr / parseEverySeconds / matchesCron）；
-// scheduler inject 'cron-engine' 后调用 subscribe()/nextFireTime()。
+// scheduler 声明 cronEngine 后调用 subscribe()/nextFireTime()。
 
 /** setTimeout 的 delay 上限（32 位有符号毫秒，约 24.8 天）；超过即溢出成立即触发 */
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
@@ -123,26 +132,12 @@ export interface SchedulerService {
   removeJob(name: string): boolean;
 }
 
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const scheduler = defineService<SchedulerService>('scheduler');
+
 // ──────────── 插件元数据 ────────────
 
-export const name = '@aalis/plugin-scheduler';
-export const displayName = '定时任务';
-export const subsystem = 'scheduler';
-
-export const provides = ['scheduler'];
-
-export const inject = {
-  // 'tools' 必须先就绪，否则下方 register tool 全部静默丢失（optional 不参与拓扑排序）
-  // 'cron-engine' 提供共享 cron tick 与表达式校验
-  required: ['tools', 'cron-engine'],
-  optional: ['agent'],
-};
-
-export const extends_: PluginModule['extends'] = {
-  events: ['scheduler:tick', 'scheduler:job:start', 'scheduler:job:done', 'scheduler:job:error'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   jobs: {
     type: 'array',
     label: '计划任务列表',
@@ -285,134 +280,42 @@ const webuiPages: WebuiPage[] = [
   },
 ];
 
-// ──────────── WebUI Handlers ────────────
-
-export const actions: PluginModule['actions'] = {
-  async listJobs(ctx) {
-    const svc = ctx.getService<SchedulerService>('scheduler');
-    if (!svc) return [];
-    return svc.getJobs().map(j => {
-      const ready = j.enabled && !j.paused && !j.running;
-      return {
-        ...j,
-        nextRun: ready ? j.nextRun : 0,
-        schedule: j.cron ?? (j.interval ? `每 ${j.interval}s` : j.runAt ? `一次性@${j.runAt}` : '未设置'),
-        status: !j.enabled ? '❌ 禁用' : j.paused ? '⏸ 暂停' : j.running ? '⏳ 执行中' : '✅ 就绪',
-        lastRunText: j.lastRun ? new Date(j.lastRun).toLocaleString('zh-CN') : '从未',
-      };
-    });
-  },
-  async triggerJob(ctx, args) {
-    const svc = ctx.getService<SchedulerService>('scheduler');
-    return svc?.triggerJob(args.name as string);
-  },
-  // 三个开关类 action 返回 { ok, error }：裸 boolean 会被前端按成功处理（一次性任务不能暂停就是这样被静默掉的）
-  async pauseJob(ctx, args) {
-    const svc = ctx.getService<SchedulerService>('scheduler');
-    if (!svc) return { ok: false, error: 'scheduler 服务未就绪' };
-    return svc.pauseJob(args.name as string)
-      ? { ok: true }
-      : { ok: false, error: '任务不存在，或是一次性任务（不能暂停，只能删除重建）' };
-  },
-  async resumeJob(ctx, args) {
-    const svc = ctx.getService<SchedulerService>('scheduler');
-    if (!svc) return { ok: false, error: 'scheduler 服务未就绪' };
-    return svc.resumeJob(args.name as string) ? { ok: true } : { ok: false, error: '任务不存在' };
-  },
-  async removeJob(ctx, args) {
-    const svc = ctx.getService<SchedulerService>('scheduler');
-    if (!svc) return { ok: false, error: 'scheduler 服务未就绪' };
-    return svc.removeJob(args.name as string) ? { ok: true } : { ok: false, error: '任务不存在' };
-  },
-  async newJobDraft() {
-    return {
-      name: '',
-      cron: '',
-      interval: 0,
-      runAt: '',
-      delaySeconds: 0,
-      sessionId: '',
-      platform: 'internal',
-      content: '',
-      enabled: true,
-      paused: false,
-    };
-  },
-  async upsertJob(ctx, args, caller) {
-    const svc = ctx.getService<SchedulerService>('scheduler');
-    if (!svc) return { ok: false, error: 'scheduler 服务未就绪' };
-    const name = String(args.name ?? '').trim();
-    if (!name) return { ok: false, error: '任务名称不能为空' };
-    const cron = String(args.cron ?? '').trim() || undefined;
-    const interval = Number(args.interval) > 0 ? Number(args.interval) : undefined;
-    const delaySeconds = Number(args.delaySeconds) > 0 ? Math.floor(Number(args.delaySeconds)) : undefined;
-    const rawRunAt = String(args.runAt ?? '').trim() || undefined;
-    // 调度方式恰好一个：四者同时也是四种互不相容的定时语义（周期 cron / 周期间隔 / 一次性），
-    // 多填时取哪个都是猜，一律报错要求填一个——与 scheduler_create_job 工具路径同一条判据。
-    const provided = [cron, interval, delaySeconds, rawRunAt].filter(v => v !== undefined).length;
-    if (provided === 0) {
-      return { ok: false, error: 'cron / interval / runAt / delaySeconds 必须填写其中之一' };
-    }
-    if (provided > 1) {
-      return { ok: false, error: 'cron / interval / runAt / delaySeconds 互斥，只能填一个' };
-    }
-    // delaySeconds → runAt：与 scheduler_create_job 工具路径同一份转换（到点执行一次后自动停止）
-    const runAt = delaySeconds !== undefined ? new Date(Date.now() + delaySeconds * 1000).toISOString() : rawRunAt;
-    // 「创建后立即暂停」只对周期任务有意义：一次性任务被暂停时到点的 setTimeout 直接跳过，
-    // 之后既不会重排也不会自删（disableOneShot 只在真执行后走），任务就永久卡死在那里。
-    if (args.paused === true && runAt) {
-      return { ok: false, error: '创建后立即暂停对一次性任务（runAt / delaySeconds）没有可用语义' };
-    }
-    // 防资源耗尽（scheduler 工具对聊天访客公开）：interval 下限，挡住 interval:0.5 这类高频任务。
-    if (interval !== undefined && interval < 5) {
-      return { ok: false, error: 'interval 不能小于 5 秒（防高频任务耗尽资源）' };
-    }
-    const sessionId = String(args.sessionId ?? '').trim();
-    if (!sessionId) return { ok: false, error: 'sessionId 不能为空' };
-    const content = String(args.content ?? '').trim();
-    if (!content) return { ok: false, error: 'content 不能为空' };
-    // 防资源耗尽：单会话任务数上限；更新已有任务（同名）不计入，仅拦新建。
-    const MAX_JOBS_PER_SESSION = 20;
-    const allJobs = svc.getJobs();
-    if (
-      !allJobs.some(j => j.name === name) &&
-      allJobs.filter(j => j.sessionId === sessionId).length >= MAX_JOBS_PER_SESSION
-    ) {
-      return { ok: false, error: `本会话定时任务数已达上限 ${MAX_JOBS_PER_SESSION}，请先删除部分任务再新建` };
-    }
-    try {
-      // actor 从权限闸放行后的 caller 快照（登录账户或单 token 模式的 webui:console），
-      // 不从 args 读取，避免 WebUI 调用方伪造他人身份。
-      const actor = caller ?? { platform: 'webui', userId: 'console' };
-      svc.setJob({
-        name,
-        cron,
-        interval,
-        runAt,
-        sessionId,
-        platform: String(args.platform ?? 'internal'),
-        actorPlatform: actor.platform,
-        actorUserId: actor.userId,
-        content,
-        enabled: args.enabled !== false,
-        paused: args.paused === true,
-      });
-      return { ok: true };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  },
-};
-
 // ──────────── 插件入口 ────────────
 
-export async function apply(ctx: Context, rawConfig: Record<string, unknown>): Promise<void> {
-  const config = resolveConfig(rawConfig);
-  const logger = ctx.logger.child('scheduler');
-  const cronEngine = useCronEngine(ctx);
+const uses = {
+  // tools 必须先就绪，否则下方 register tool 全部静默丢失（optional 不参与激活闸）
+  tools,
+  // 共享 cron tick 与表达式校验
+  cronEngine,
+  /** 动态任务的持久化出口；没有 storage 时任务只活在本次激活里（读写各自降级） */
+  storage: optional(storage),
+  /** 页面与页面动作的登记口；无 WebUI 时调度照常运行 */
+  webui: optional(webuiServer),
+  events,
+  lifecycle,
+  logger,
+  config,
+  provide,
+};
+type Caps = BoundOf<typeof uses>;
 
-  // 注册 WebUI 页面
-  const webui = useWebuiService(ctx);
+export default definePlugin({
+  name: '@aalis/plugin-scheduler',
+  displayName: '定时任务',
+  subsystem: 'scheduler',
+  extends: {
+    events: ['scheduler:tick', 'scheduler:job:start', 'scheduler:job:done', 'scheduler:job:error'],
+  },
+  configSchema,
+  provides: [scheduler],
+  uses,
+  apply: run,
+});
+
+async function run(caps: Caps): Promise<void> {
+  const { cronEngine, storage, webui, events, lifecycle, logger, provide, tools } = caps;
+  const config = resolveConfig(caps.config);
+
   for (const page of webuiPages) webui.registerPage(page);
 
   const runtimes = new Map<string, JobRuntime>();
@@ -424,14 +327,14 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
 
   // ── 持久化读写 （经 storage 抽象，默认 data:/scheduler-jobs.json） ──
 
-  const storage = createStorageGateway(ctx);
+  const storageGateway = createStorageGateway(storage);
   const persistUri = toStorageUri(config.persistPath);
 
   async function loadDynamicJobs(): Promise<SchedulerJobConfig[]> {
     try {
       let raw: string;
       try {
-        raw = (await storage.readFile(persistUri, 'utf-8')) as string;
+        raw = (await storageGateway.readFile(persistUri, 'utf-8')) as string;
       } catch {
         return [];
       }
@@ -484,7 +387,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     const jobs = [...dynamicJobs.values()];
     const payload = JSON.stringify(jobs, null, 2);
     saveChain = saveChain
-      .then(() => storage.writeFile(persistUri, payload))
+      .then(() => storageGateway.writeFile(persistUri, payload))
       .then(
         () => {
           logger.debug(`已持久化 ${jobs.length} 个动态任务`);
@@ -505,13 +408,13 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
 
     try {
       logger.info(`执行任务: ${jobName}`);
-      await ctx.emit('scheduler:job:start', jobName);
+      await events.emit('scheduler:job:start', jobName);
 
       // 通用触发事件：供 workflow 等订阅者使用
       // （任务本身仍走 inbound:message 投递，这里同时广播 trigger:fired，
       //  便于平滑迁移到 plugin-workflow）
       // biome-ignore lint/suspicious/noExplicitAny: 事件类型由 api-workflow 增广，scheduler 不直接依赖
-      await ctx.emit('trigger:fired' as any, {
+      await events.emit('trigger:fired' as any, {
         source: `scheduler:${jobName}`,
         type: rt.config.cron ? 'cron' : 'interval',
         payload: {
@@ -540,17 +443,17 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         message.actor = { platform: actorPlatform, userId: actorUserId };
       }
 
-      await ctx.emit('inbound:message', message);
+      await events.emit('inbound:message', message);
 
       rt.lastRun = Date.now();
       rt.runCount++;
       rt.lastResult = '成功';
-      await ctx.emit('scheduler:job:done', jobName);
+      await events.emit('scheduler:job:done', jobName);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       rt.lastResult = `失败: ${msg}`;
       logger.error(`任务 "${jobName}" 执行失败: ${msg}`);
-      await ctx.emit('scheduler:job:error', jobName, msg);
+      await events.emit('scheduler:job:error', jobName, msg);
     } finally {
       rt.running = false;
     }
@@ -568,7 +471,8 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     }
     if (job.cron) {
       const tz = job.timeZone?.trim() || undefined;
-      return cronEngine.nextFireTime(job.cron, new Date(), undefined, tz ? { timeZone: tz } : undefined) ?? 0;
+      // 每次求值取当前提供者：cron-engine 换人后不会算在旧实例上
+      return cronEngine.require().nextFireTime(job.cron, new Date(), undefined, tz ? { timeZone: tz } : undefined) ?? 0;
     }
     return 0;
   }
@@ -623,7 +527,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     if (jobCfg.cron && jobCfg.enabled) {
       try {
         const tz = jobCfg.timeZone?.trim() || undefined;
-        rt.cronDispose = cronEngine.subscribe(
+        rt.cronDispose = cronEngine.require().subscribe(
           jobCfg.cron,
           () => {
             if (rt.paused || !rt.config.enabled) return;
@@ -824,17 +728,126 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     },
   };
 
-  ctx.provide('scheduler', service);
+  provide(scheduler, service);
+
+  // ── WebUI 页面动作 ──
+  // 动作是本次激活的闭包，直接操作本插件自己的调度表；登记随激活撤回。
+
+  webui.registerAction('listJobs', async () => {
+    return service.getJobs().map(j => {
+      const ready = j.enabled && !j.paused && !j.running;
+      return {
+        ...j,
+        nextRun: ready ? j.nextRun : 0,
+        schedule: j.cron ?? (j.interval ? `每 ${j.interval}s` : j.runAt ? `一次性@${j.runAt}` : '未设置'),
+        status: !j.enabled ? '❌ 禁用' : j.paused ? '⏸ 暂停' : j.running ? '⏳ 执行中' : '✅ 就绪',
+        lastRunText: j.lastRun ? new Date(j.lastRun).toLocaleString('zh-CN') : '从未',
+      };
+    });
+  });
+
+  webui.registerAction('triggerJob', async args => service.triggerJob(args.name as string));
+
+  // 三个开关类 action 返回 { ok, error }：裸 boolean 会被前端按成功处理（一次性任务不能暂停就是这样被静默掉的）
+  webui.registerAction('pauseJob', async args =>
+    service.pauseJob(args.name as string)
+      ? { ok: true }
+      : { ok: false, error: '任务不存在，或是一次性任务（不能暂停，只能删除重建）' },
+  );
+
+  webui.registerAction('resumeJob', async args =>
+    service.resumeJob(args.name as string) ? { ok: true } : { ok: false, error: '任务不存在' },
+  );
+
+  webui.registerAction('removeJob', async args =>
+    service.removeJob(args.name as string) ? { ok: true } : { ok: false, error: '任务不存在' },
+  );
+
+  webui.registerAction('newJobDraft', async () => ({
+    name: '',
+    cron: '',
+    interval: 0,
+    runAt: '',
+    delaySeconds: 0,
+    sessionId: '',
+    platform: 'internal',
+    content: '',
+    enabled: true,
+    paused: false,
+  }));
+
+  webui.registerAction('upsertJob', async (args, caller) => {
+    const jobName = String(args.name ?? '').trim();
+    if (!jobName) return { ok: false, error: '任务名称不能为空' };
+    const cron = String(args.cron ?? '').trim() || undefined;
+    const interval = Number(args.interval) > 0 ? Number(args.interval) : undefined;
+    const delaySeconds = Number(args.delaySeconds) > 0 ? Math.floor(Number(args.delaySeconds)) : undefined;
+    const rawRunAt = String(args.runAt ?? '').trim() || undefined;
+    // 调度方式恰好一个：四者同时也是四种互不相容的定时语义（周期 cron / 周期间隔 / 一次性），
+    // 多填时取哪个都是猜，一律报错要求填一个——与 scheduler_create_job 工具路径同一条判据。
+    const provided = [cron, interval, delaySeconds, rawRunAt].filter(v => v !== undefined).length;
+    if (provided === 0) {
+      return { ok: false, error: 'cron / interval / runAt / delaySeconds 必须填写其中之一' };
+    }
+    if (provided > 1) {
+      return { ok: false, error: 'cron / interval / runAt / delaySeconds 互斥，只能填一个' };
+    }
+    // delaySeconds → runAt：与 scheduler_create_job 工具路径同一份转换（到点执行一次后自动停止）
+    const runAt = delaySeconds !== undefined ? new Date(Date.now() + delaySeconds * 1000).toISOString() : rawRunAt;
+    // 「创建后立即暂停」只对周期任务有意义：一次性任务被暂停时到点的 setTimeout 直接跳过，
+    // 之后既不会重排也不会自删（disableOneShot 只在真执行后走），任务就永久卡死在那里。
+    if (args.paused === true && runAt) {
+      return { ok: false, error: '创建后立即暂停对一次性任务（runAt / delaySeconds）没有可用语义' };
+    }
+    // 防资源耗尽（scheduler 工具对聊天访客公开）：interval 下限，挡住 interval:0.5 这类高频任务。
+    if (interval !== undefined && interval < 5) {
+      return { ok: false, error: 'interval 不能小于 5 秒（防高频任务耗尽资源）' };
+    }
+    const sessionId = String(args.sessionId ?? '').trim();
+    if (!sessionId) return { ok: false, error: 'sessionId 不能为空' };
+    const content = String(args.content ?? '').trim();
+    if (!content) return { ok: false, error: 'content 不能为空' };
+    // 防资源耗尽：单会话任务数上限；更新已有任务（同名）不计入，仅拦新建。
+    const MAX_JOBS_PER_SESSION = 20;
+    const allJobs = service.getJobs();
+    if (
+      !allJobs.some(j => j.name === jobName) &&
+      allJobs.filter(j => j.sessionId === sessionId).length >= MAX_JOBS_PER_SESSION
+    ) {
+      return { ok: false, error: `本会话定时任务数已达上限 ${MAX_JOBS_PER_SESSION}，请先删除部分任务再新建` };
+    }
+    try {
+      // actor 从权限闸放行后的 caller 快照（登录账户或单 token 模式的 webui:console），
+      // 不从 args 读取，避免 WebUI 调用方伪造他人身份。
+      const actor = caller ?? { platform: 'webui', userId: 'console' };
+      service.setJob({
+        name: jobName,
+        cron,
+        interval,
+        runAt,
+        sessionId,
+        platform: String(args.platform ?? 'internal'),
+        actorPlatform: actor.platform,
+        actorUserId: actor.userId,
+        content,
+        enabled: args.enabled !== false,
+        paused: args.paused === true,
+      });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
 
   // ── 注册 AI 工具：让 Agent 可以自主创建/管理任务 ──
-  // tools 已在 inject.required 中声明，必然就绪
-  useToolService(ctx).registerGroup({
+
+  tools.registerGroup({
     name: 'scheduler',
     label: '定时任务',
     description: '创建、查看和取消定时/周期性自主行动计划',
   });
 
-  useToolService(ctx).register({
+  tools.register({
     groups: ['scheduler'],
     definition: {
       type: 'function',
@@ -930,7 +943,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     },
   });
 
-  useToolService(ctx).register({
+  tools.register({
     groups: ['scheduler'],
     definition: {
       type: 'function',
@@ -994,7 +1007,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     },
   });
 
-  useToolService(ctx).register({
+  tools.register({
     groups: ['scheduler'],
     definition: {
       type: 'function',
@@ -1019,7 +1032,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     },
   });
 
-  useToolService(ctx).register({
+  tools.register({
     groups: ['scheduler'],
     definition: {
       type: 'function',
@@ -1045,7 +1058,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     },
   });
 
-  useToolService(ctx).register({
+  tools.register({
     groups: ['scheduler'],
     definition: {
       type: 'function',
@@ -1072,7 +1085,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
 
   // ── 清理 ──
 
-  ctx.onDispose(() => {
+  lifecycle.onDispose(() => {
     for (const rt of runtimes.values()) {
       if (rt.timer) clearInterval(rt.timer);
       if (rt.cronDispose) rt.cronDispose();
@@ -1128,6 +1141,3 @@ declare module '@aalis/core' {
     'scheduler:job:error': [jobName: string, message: string];
   }
 }
-
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
-export const scheduler = defineService<SchedulerService>('scheduler');

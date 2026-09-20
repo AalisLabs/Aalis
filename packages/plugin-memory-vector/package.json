@@ -31,14 +31,14 @@
     "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.5.1 <1.0.0",
+    "@aalis/api-embedding": "workspace:>=0.5.1 <1.0.0",
+    "@aalis/api-memory": "workspace:>=0.5.1 <1.0.0",
+    "@aalis/api-vectorstore": "workspace:>=0.5.0 <1.0.0",
     "@aalis/util-text-normalize": "workspace:>=0.5.1 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/api-agent": "workspace:*",
-    "@aalis/api-embedding": "workspace:*",
-    "@aalis/api-memory": "workspace:*",
-    "@aalis/api-vectorstore": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },
@@ -52,7 +52,8 @@
         "embedding"
       ],
       "optional": [
-        "memory"
+        "memory",
+        "tools"
       ],
       "provides": [
         "semantic-memory"

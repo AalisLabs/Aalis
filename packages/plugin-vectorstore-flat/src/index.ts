@@ -1,22 +1,9 @@
-import { createStorageGateway, type StorageService, toStorageUri } from '@aalis/api-storage';
-import type { VectorSearchResult, VectorStoreService } from '@aalis/api-vectorstore';
-import type { Context } from '@aalis/core';
+import { createStorageGateway, type StorageService, storage, toStorageUri } from '@aalis/api-storage';
+import { type VectorSearchResult, type VectorStoreService, vectorstore } from '@aalis/api-vectorstore';
+import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 
-// ===== 插件元数据 =====
-
-export const name = '@aalis/plugin-vectorstore-flat';
-export const displayName = 'Flat 向量库';
-export const subsystem = 'embedding';
-export const provides = ['vectorstore'];
-// storage 是必需依赖而非可选：向量全部存在 storage 上的 vectors.json 里，没有 storage
-// 连冷启动读取都做不到，更不可能落盘。声明 required 挣到 app.stop() 时的拓扑保证——
-// 消费者先关、提供者后关；单独禁用/热重载 storage 时无此保证，onDispose 的落盘可能失败。
-export const inject = {
-  required: ['storage'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   path: {
     type: 'string',
     label: '存储目录',
@@ -184,27 +171,37 @@ export class FlatVectorStore implements VectorStoreService {
 
 // ===== 插件入口 =====
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
-  const storeConfig: VectorStoreConfig = {
-    path: (config.path as string) ?? 'data:/vectorstore',
-  };
+// storage 声明为 required 而非 optional：向量全部存在 storage 上的 vectors.json 里，没有 storage
+// 连冷启动读取都做不到，更不可能落盘。required 挣到 app.stop() 时的拓扑保证——消费者先关、
+// 提供者后关；单独禁用/热重载 storage 时无此保证，onDispose 的落盘可能失败。
+const uses = { storage, provide, config, logger, lifecycle };
 
-  // 兼容旧格式 “data/vectorstore”
-  const toUri = (input: string): string => toStorageUri(input);
+export default definePlugin({
+  name: '@aalis/plugin-vectorstore-flat',
+  displayName: 'Flat 向量库',
+  subsystem: 'embedding',
+  configSchema,
+  provides: [vectorstore],
+  uses,
+  async apply(caps) {
+    const storeConfig: VectorStoreConfig = {
+      path: (caps.config.path as string) ?? 'data:/vectorstore',
+    };
 
-  const dirUri = toUri(storeConfig.path);
-  const dataUri = dirUri.endsWith('/') ? `${dirUri}vectors.json` : `${dirUri}/vectors.json`;
-  const storage = createStorageGateway(ctx);
-  const store = new FlatVectorStore(storage, dataUri, ctx.logger);
-  await store.init();
+    // toStorageUri 兼容旧格式 “data/vectorstore”
+    const dirUri = toStorageUri(storeConfig.path);
+    const dataUri = dirUri.endsWith('/') ? `${dirUri}vectors.json` : `${dirUri}/vectors.json`;
+    const store = new FlatVectorStore(createStorageGateway(caps.storage), dataUri, caps.logger);
+    await store.init();
 
-  ctx.logger.info(`向量数据库已加载: ${await store.size()} 条记录, 存储 URI=${dataUri}`);
+    caps.logger.info(`向量数据库已加载: ${await store.size()} 条记录, 存储 URI=${dataUri}`);
 
-  ctx.provide('vectorstore', store);
+    caps.provide(vectorstore, store);
 
-  // 必须 await：onDispose 支持异步（同组 lancedb 就是 await close），
-  // void 化会让停机时最后一批向量来不及落盘就退出。
-  ctx.onDispose(async () => {
-    await store.save();
-  }, 'flat:store.save');
-}
+    // 必须 await：onDispose 支持异步（同组 lancedb 就是 await close），
+    // void 化会让停机时最后一批向量来不及落盘就退出。
+    caps.lifecycle.onDispose(async () => {
+      await store.save();
+    }, 'flat:store.save');
+  },
+});

@@ -1,11 +1,28 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import type {} from '@aalis/api-memory'; // 本包唯一的 declaration merging 激活点（memory:clear 钩子）——删掉会丢键类型，不可删
-import type { OutputFormat, OutputFormatField, PersonaService, PersonaSessionOptions } from '@aalis/api-persona';
-import { getPlatformSelfIdentity } from '@aalis/api-platform';
-import { createStorageGateway, type StorageService, toStorageUri } from '@aalis/api-storage';
+import {
+  type OutputFormat,
+  type OutputFormatField,
+  type PersonaService,
+  type PersonaSessionOptions,
+  persona,
+} from '@aalis/api-persona';
+import { getPlatformSelfIdentity, platform as platformService } from '@aalis/api-platform';
+import { sessionManager as sessionManagerService } from '@aalis/api-session-manager';
+import { createStorageGateway, type StorageService, storage as storageService, toStorageUri } from '@aalis/api-storage';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import type { Context } from '@aalis/core';
+import {
+  type BoundOf,
+  config as configCap,
+  definePlugin,
+  events as eventsCap,
+  hooks as hooksCap,
+  lifecycle as lifecycleCap,
+  logger as loggerCap,
+  optional,
+  provide as provideCap,
+} from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { extractJsonCandidate, tryParseJsonObject } from '@aalis/util-json-repair';
 import { parse as parseYaml } from 'yaml';
@@ -28,34 +45,9 @@ interface PersonaIdentity {
 
 export type { OutputFormat, OutputFormatField, PersonaService, PersonaSessionOptions } from '@aalis/api-persona';
 
-/**
- * 读取 session-manager 服务时使用的最小结构化切片
- * —— 避免 import 全量 `SessionManagerService` 类型带来的包循环。
- * `ctx.getService<T>(name)` 的 T 按设计是消费侧结构化窄化，
- * 消费侧只需声明“我要用的那一部分”。
- */
-interface SessionConfigResolver {
-  resolveConfig(
-    sessionId: string,
-    platform?: string,
-  ): {
-    persona?: string;
-    disableOutputFormat?: boolean;
-    clientSideJsonRendering?: boolean;
-  };
-}
-
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-persona';
-export const displayName = '人设系统';
-export const subsystem = 'persona';
-export const provides = ['persona'];
-export const inject = {
-  optional: ['platform'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   persona: {
     type: 'select',
     label: '人设',
@@ -466,14 +458,38 @@ class PersonaServiceImpl implements PersonaService {
 
 // ===== 插件入口 =====
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
+const uses = {
+  provide: provideCap,
+  config: configCap,
+  logger: loggerCap,
+  events: eventsCap,
+  hooks: hooksCap,
+  lifecycle: lifecycleCap,
+  platform: optional(platformService),
+  storage: optional(storageService),
+  sessionManager: optional(sessionManagerService),
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-persona',
+  displayName: '人设系统',
+  subsystem: 'persona',
+  configSchema,
+  provides: [persona],
+  uses,
+  apply: run,
+});
+
+async function run(caps: Caps): Promise<void> {
+  const { provide, config, logger, events, hooks, lifecycle } = caps;
   const personaName = (config.persona as string) || 'default';
   const personasDirRaw = (config.personasDir as string) || 'data/personas';
   const statePersistence = (config.statePersistence as boolean) ?? false;
   const timeInjection = (config.timeInjection as boolean) ?? true;
   const timeZone = (config.timeZone as string) ?? '';
 
-  const storage = createStorageGateway(ctx);
+  const storage = createStorageGateway(caps.storage);
 
   // 候选目录：用户配置 + configDir/personas（若存在 configDir 根，则用 configDir 根；否则跳过）
   const searchUris: string[] = [toStorageUri(personasDirRaw)];
@@ -497,7 +513,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       }
       return asCard(parsed as Record<string, unknown>);
     } catch (err) {
-      ctx.logger.warn(`角色卡解析失败，已跳过：${uri} —— ${err instanceof Error ? err.message : err}`);
+      logger.warn(`角色卡解析失败，已跳过：${uri} —— ${err instanceof Error ? err.message : err}`);
       return INVALID;
     }
   }
@@ -576,7 +592,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const found = await findCard(personaName);
   if (found && found !== INVALID) {
     card = found.card;
-    ctx.logger.info(`已加载角色卡: ${card.name} (${found.uri})`);
+    logger.info(`已加载角色卡: ${card.name} (${found.uri})`);
   } else {
     card = {
       name: 'Aalis',
@@ -584,9 +600,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       prompt: '请友好、专业地与用户交流。',
     };
     if (found === INVALID) {
-      ctx.logger.warn(`角色卡 "${personaName}" 存在但解析失败（原因见上条告警），暂用内置默认角色`);
+      logger.warn(`角色卡 "${personaName}" 存在但解析失败（原因见上条告警），暂用内置默认角色`);
     } else {
-      ctx.logger.info(`未找到角色卡 "${personaName}"，使用默认角色`);
+      logger.info(`未找到角色卡 "${personaName}"，使用默认角色`);
     }
   }
 
@@ -595,10 +611,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     timeInjection,
     timeZone,
   });
-  ctx.provide('persona', service);
+  provide(persona, service);
 
   // 启动时一次性预扫所有 personas → cache（用于 listModels / 动态切换）+ 启动 watch
-  ctx.on('app:ready', async () => {
+  events.on('app:ready', async () => {
     try {
       const known = await scanAll(service);
       // 删除 cache 里那些已不存在的
@@ -606,9 +622,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         if (!known.has(n) && n !== personaName) service.removeCardCacheEntry(n);
       }
       service.reloadPrimaryCardFromCache();
-      ctx.logger.debug(`persona 启动扫描完成，已知 ${known.size} 张卡`);
+      logger.debug(`persona 启动扫描完成，已知 ${known.size} 张卡`);
     } catch (err) {
-      ctx.logger.warn(`persona 启动扫描失败：${err}`);
+      logger.warn(`persona 启动扫描失败：${err}`);
     }
     // 首启主目录尚不存在时 watch 会 ENOENT：先补建（只建本插件的主目录，configDir 等外部根不代建）。
     // 与监听分开：只读根 / 符号链接目录上 mkdir 会抛，不能连带放弃对已存在目录的监听。
@@ -630,20 +646,20 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
               if (!known.has(n) && n !== personaName) service.removeCardCacheEntry(n);
             }
             service.reloadPrimaryCardFromCache();
-            ctx.logger.debug(`persona 目录变化已重新加载（${dir}）`);
+            logger.debug(`persona 目录变化已重新加载（${dir}）`);
           } catch (err) {
-            ctx.logger.warn(`persona 重扫失败：${err}`);
+            logger.warn(`persona 重扫失败：${err}`);
           }
         });
-        if (unwatch) ctx.onDispose(unwatch);
+        if (unwatch) lifecycle.onDispose(unwatch);
       } catch (err) {
-        ctx.logger.warn(`persona 目录监听失败（${dir}）：${err}`);
+        logger.warn(`persona 目录监听失败（${dir}）：${err}`);
       }
     }
   });
 
   // 参与 memory:clear 清除当前会话的 persona 状态
-  ctx.middleware(
+  hooks.middleware(
     'memory:clear',
     async (
       data: {
@@ -678,8 +694,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 跟踪当前会话信息（始终启用）：身份装进 AsyncLocalStorage 的异步上下文，
   // 穿透 await 不串、并发会话各自隔离——杜绝跨会话身份泄漏进他人 LLM 提示。
-  ctx.middleware('agent:input:before', async (data, next) => {
-    const selfIdentity = getPlatformSelfIdentity(ctx, data.message.platform, data.message.sessionId);
+  hooks.middleware('agent:input:before', async (data, next) => {
+    const selfIdentity = getPlatformSelfIdentity(caps.platform, data.message.platform, data.message.sessionId);
     const identity: PersonaIdentity = {
       sessionId: data.message.sessionId,
       platform: data.message.platform,
@@ -703,16 +719,16 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const baseFormat = service.getOutputFormat();
 
   if (baseFormat) {
-    ctx.logger.info(`角色卡启用结构化输出 (回复字段: ${baseFormat.replyField})`);
+    logger.info(`角色卡启用结构化输出 (回复字段: ${baseFormat.replyField})`);
   }
 
-  ctx.middleware('agent:reply:before', async (data, next) => {
+  hooks.middleware('agent:reply:before', async (data, next) => {
     await next();
 
     // 从 session-manager 构造 PersonaSessionOptions，统一传给 service 方法
     let personaOpts: PersonaSessionOptions | undefined;
     try {
-      const sm = ctx.getService<SessionConfigResolver>('session-manager');
+      const sm = caps.sessionManager.current;
       if (sm && data.sessionId) {
         const resolved = sm.resolveConfig(data.sessionId, data.platform);
         personaOpts = {
@@ -739,7 +755,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       for (const key of replyKeys) {
         if (typeof obj[key] === 'string') {
           data.content = obj[key] as string;
-          ctx.logger.debug(`JSON 回退提取: 使用字段 "${key}"`);
+          logger.debug(`JSON 回退提取: 使用字段 "${key}"`);
           return;
         }
       }
@@ -770,14 +786,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       }
       if (Object.keys(state).length > 0) {
         service.saveSessionState(data.sessionId, state);
-        ctx.logger.debug(`状态已持久化 (session=${data.sessionId}): ${JSON.stringify(state)}`);
+        logger.debug(`状态已持久化 (session=${data.sessionId}): ${JSON.stringify(state)}`);
       }
     };
 
     const jsonStr = extractJsonCandidate(data.content);
     const { parsed, repairsApplied } = tryParseJsonObject(jsonStr);
     if (parsed && repairsApplied.length > 0) {
-      ctx.logger.debug(`outputFormat JSON 自动修复成功：${repairsApplied.join(' → ')}`);
+      logger.debug(`outputFormat JSON 自动修复成功：${repairsApplied.join(' → ')}`);
     }
     try {
       if (!parsed) throw new Error('JSON 解析失败');
@@ -789,7 +805,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         for (const alias of aliases) {
           if (alias !== outputFormat.replyField && typeof parsed[alias] === 'string') {
             reply = parsed[alias];
-            ctx.logger.debug(`outputFormat 回退：模型使用了 "${alias}" 而非 "${outputFormat.replyField}"，已自动纠正`);
+            logger.debug(`outputFormat 回退：模型使用了 "${alias}" 而非 "${outputFormat.replyField}"，已自动纠正`);
             break;
           }
         }
@@ -800,7 +816,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         const stringEntries = Object.entries(parsed).filter(([, v]) => typeof v === 'string');
         if (stringEntries.length === 1) {
           reply = stringEntries[0][1] as string;
-          ctx.logger.debug(`outputFormat 回退：仅一个字符串字段 "${stringEntries[0][0]}"，作为回复使用`);
+          logger.debug(`outputFormat 回退：仅一个字符串字段 "${stringEntries[0][0]}"，作为回复使用`);
         }
       }
 
@@ -855,11 +871,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           })
           .join(', ');
         if (reply.length > 0) {
-          ctx.logger.debug(
-            `outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: ${reply.slice(0, 100)}`,
-          );
+          logger.debug(`outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: ${reply.slice(0, 100)}`);
         } else {
-          ctx.logger.debug(`outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: (空，静默)`);
+          logger.debug(`outputFormat 解码成功 [${fieldSummary}] → ${outputFormat.replyField}: (空，静默)`);
         }
         // 状态持久化：保存非回复字段（按 field type 强制类型）
         if (statePersistence) {
@@ -885,9 +899,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
       if (attempt < maxRetries) {
         // 还有重试名额：要求模型严格按照 outputFormat 重新输出 JSON
-        ctx.logger.debug(
-          `outputFormat 解码失败 (attempt=${attempt}/${maxRetries})，请求重试：${message}; json=${preview}`,
-        );
+        logger.debug(`outputFormat 解码失败 (attempt=${attempt}/${maxRetries})，请求重试：${message}; json=${preview}`);
         const fieldSpec = Object.entries(outputFormat.fields)
           .map(
             ([k, v]) =>
@@ -905,7 +917,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       } else {
         // 重试用尽：静默丢弃（避免原始 JSON 被当成回复发出）
         // 同时通过 archiveContent 写入一条"系统提醒"，让下一轮 LLM 看到自己上次因格式不符被丢弃
-        ctx.logger.warn(
+        logger.warn(
           `outputFormat 解码连续 ${attempt + 1} 次失败（已用尽 ${maxRetries} 次重试），静默丢弃回复：${message}; json=${preview}`,
         );
         data.retryRequested = false;

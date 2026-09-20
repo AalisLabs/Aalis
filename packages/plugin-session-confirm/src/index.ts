@@ -10,20 +10,10 @@
 // 纯协议（parseConfirmReply / composeConfirmPrompt）是本插件私有的无状态实现，内联于此——
 // 契约包（authority-api）只放类型、不放实现（避免运行时跨包边 + 版本漂移）。
 
-import type { AccessConfirmHandler, AccessDecision, AccessRequest, AuthorityService } from '@aalis/api-authority';
-import type { GatewayService } from '@aalis/api-gateway';
-import { INBOUND_PHASE } from '@aalis/api-gateway';
-import type { ConfirmChannel, SessionConfirmService } from '@aalis/api-session-confirm';
-import type { Context } from '@aalis/core';
-
-export const name = '@aalis/plugin-session-confirm';
-export const displayName = '会话确认';
-export const subsystem = 'authority';
-export const provides = ['session-confirm'];
-export const inject = {
-  required: ['gateway'],
-  optional: ['authority'],
-};
+import { type AccessConfirmHandler, type AccessDecision, type AccessRequest, authority } from '@aalis/api-authority';
+import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
+import { type ConfirmChannel, type SessionConfirmService, sessionConfirm } from '@aalis/api-session-confirm';
+import { definePlugin, hooks, lifecycle, logger, optional, provide } from '@aalis/core';
 
 /** 确认等待超时（毫秒）；超时默认拒（无人在场即安全失败）。 */
 const CONFIRM_TIMEOUT_MS = 60_000;
@@ -175,34 +165,41 @@ function createChannel(deliver: (request: AccessRequest, text: string) => void):
   return { handler, feed, dispose };
 }
 
-export async function apply(ctx: Context): Promise<void> {
-  const service: SessionConfirmService = { createChannel };
-  ctx.provide('session-confirm', service);
+export default definePlugin({
+  name: '@aalis/plugin-session-confirm',
+  displayName: '会话确认',
+  subsystem: 'authority',
+  provides: [sessionConfirm],
+  uses: { gateway, authority: optional(authority), hooks, lifecycle, logger, provide },
+  apply({ gateway, authority, hooks, lifecycle, logger, provide }) {
+    const service: SessionConfirmService = { createChannel };
+    provide(sessionConfirm, service);
 
-  // 自用 bus 通道：覆盖 onebot/cli 等仅靠消息总线的会话型平台。
-  const busChannel = createChannel((request, text) => {
-    const gateway = ctx.getService<GatewayService>('gateway');
-    void gateway?.dispatchOutbound({
-      content: text,
-      sessionId: request.sessionId,
-      platform: request.platform,
-      source: 'system',
+    // 自用 bus 通道：覆盖 onebot/cli 等仅靠消息总线的会话型平台。
+    // 投递时才取 gateway：确认可能在 gateway 换提供者之后才结算，句柄不能提前存下来。
+    const busChannel = createChannel((request, text) => {
+      void gateway.current?.dispatchOutbound({
+        content: text,
+        sessionId: request.sessionId,
+        platform: request.platform,
+        source: 'system',
+      });
     });
-  });
 
-  // authority 可能晚于本插件上线 → whenService 在其上线/重启时注册 '*' fallback（精确平台 handler 优先）。
-  ctx.whenService<AuthorityService>('authority', authority => {
-    if (!authority.setConfirmHandler) return;
-    const off = authority.setConfirmHandler('*', busChannel.handler);
-    ctx.logger.debug('会话确认 fallback handler 已注册 (*)');
-    return off; // whenService cleanup：authority 换胜者或本插件 dispose 时注销
-  });
+    // authority 可能晚于本插件上线 → 跟随它的上线/换人注册 '*' fallback（精确平台 handler 优先）。
+    authority.follow(provider => {
+      if (!provider.setConfirmHandler) return;
+      const off = provider.setConfirmHandler('*', busChannel.handler);
+      logger.debug('会话确认 fallback handler 已注册 (*)');
+      return off; // 跟随清理：authority 换胜者或本次激活关闭时注销
+    });
 
-  // inbound:confirm 相位（最前）：命中未决确认即喂入解析并吞掉，避免触达 agent（防 abort 在途生成）。
-  ctx.middleware(INBOUND_PHASE.CONFIRM, async (data, next) => {
-    if (busChannel.feed(data.message.sessionId, data.message.content ?? '', data.message.userId)) return; // 吞掉确认回复
-    return next();
-  });
+    // inbound:confirm 相位（最前）：命中未决确认即喂入解析并吞掉，避免触达 agent（防 abort 在途生成）。
+    hooks.middleware(INBOUND_PHASE.CONFIRM, async (data, next) => {
+      if (busChannel.feed(data.message.sessionId, data.message.content ?? '', data.message.userId)) return; // 吞掉确认回复
+      return next();
+    });
 
-  ctx.onDispose(() => busChannel.dispose());
-}
+    lifecycle.onDispose(() => busChannel.dispose());
+  },
+});

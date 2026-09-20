@@ -15,29 +15,33 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
-import type { CheckResult } from '@aalis/api-doctor';
-import { useDoctorService } from '@aalis/api-doctor';
-import type {
-  StorageEntry,
-  StorageListResult,
-  StorageReadStreamResult,
-  StorageRootInfo,
-  StorageService,
-  StorageStat,
-  StorageUnwatch,
-  StorageWatchEvent,
-  StorageWatchListener,
+import { type CheckResult, doctor } from '@aalis/api-doctor';
+import {
+  type StorageEntry,
+  type StorageListResult,
+  type StorageReadStreamResult,
+  type StorageRootInfo,
+  type StorageService,
+  type StorageStat,
+  type StorageUnwatch,
+  type StorageWatchEvent,
+  type StorageWatchListener,
+  storage,
 } from '@aalis/api-storage';
-import type { Context, Logger } from '@aalis/core';
+import {
+  config,
+  definePlugin,
+  type Logger,
+  lifecycle,
+  logger,
+  optional,
+  provide,
+  type Services,
+  services,
+} from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 
-export const name = '@aalis/plugin-storage-local';
-export const displayName = '本地存储根（命名 + 路径解析）';
-export const subsystem = 'storage';
-export const provides = ['storage'];
-export const inject = {
-  optional: ['doctor'],
-};
+const PLUGIN_NAME = '@aalis/plugin-storage-local';
 
 /**
  * 这个插件不是沙箱。它做三件事：
@@ -62,7 +66,7 @@ export const inject = {
  *     宿主机任何位置（高危，启动时会有 WARN 日志）
  */
 
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   roots: {
     type: 'array',
     label: '存储根目录',
@@ -268,7 +272,7 @@ interface CheckpointLike {
  *
  * 与 service-granularity 整体方向对齐：每个 root 的真实权限由 StorageRootInfo 的
  * readable/writable/deletable 位携带；storage-api 网关按位路由，按 URI 调度交给
- * `createStorageGateway(ctx)` helper。
+ * `createStorageGateway(storage)` helper。
  *
  * 自包含设计：URI→root 分发不依赖外部 router 插件，单文件即可理解整条数据流。
  */
@@ -276,7 +280,7 @@ class ScopedStorageService implements StorageService {
   constructor(
     private readonly root: RootDefinition,
     private readonly logger: Logger,
-    private readonly ctx: Context,
+    private readonly services: Services,
   ) {}
 
   /**
@@ -313,7 +317,10 @@ class ScopedStorageService implements StorageService {
     abs: string,
     targetUri?: string,
   ): Promise<void> {
-    const cp = this.ctx.getService<CheckpointLike>('checkpoint');
+    // 按名动态查：checkpoint 的描述符在实现包里，而 checkpoint 自己要用存储——
+    // 声明它会让两个实现包互指。动态查到的不算声明依赖，与这里需要的语义一致
+    // （快照能力有就用、没有就直接落盘，不设激活闸）。
+    const cp = this.services.getByName('checkpoint') as CheckpointLike | undefined;
     if (!cp?.isActive()) return;
     await cp.beforeMutate(
       uri,
@@ -795,47 +802,57 @@ async function buildRoots(rawRoots: unknown, logger: Logger): Promise<RootDefini
   return out;
 }
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
-  const logger = ctx.logger.child('storage');
-  const roots = await buildRoots(config.roots, logger);
-  if (roots.length === 0) throw new Error('plugin-storage-local: 没有任何可用根，请检查 roots 配置');
+const uses = { provide, services, logger, lifecycle, config, doctor: optional(doctor) };
 
-  // service-granularity：每个 root 单独注册一个 entry。
-  // - entryId = `${ctx.id}/${root.name}`，便于在 ServiceContainer 中按根定位、避免跨实例同名冲突；
-  // - 权限由 root 的 readable/writable/deletable 位携带（StorageRootInfo），storage-api 网关按位路由；
-  // - URI 路由由 createStorageGateway(ctx) helper 在调用方完成，不再有 facade。
-  for (const root of roots) {
-    if (!root.readable && !root.writable && !root.deletable) {
-      logger.warn(`root ${root.name} 没有任何权限位，跳过注册`);
-      continue;
+export default definePlugin({
+  name: PLUGIN_NAME,
+  displayName: '本地存储根（命名 + 路径解析）',
+  subsystem: 'storage',
+  configSchema,
+  provides: [storage],
+  uses,
+  async apply(caps) {
+    const logger = caps.logger.child('storage');
+    const roots = await buildRoots(caps.config.roots, logger);
+    if (roots.length === 0) throw new Error('plugin-storage-local: 没有任何可用根，请检查 roots 配置');
+
+    // service-granularity：每个 root 单独注册一个 entry。
+    // - entryId = `${实例 id}/${root.name}`，便于在 ServiceContainer 中按根定位、避免跨实例同名冲突；
+    // - 权限由 root 的 readable/writable/deletable 位携带（StorageRootInfo），storage-api 网关按位路由；
+    // - URI 路由由 createStorageGateway(storage) helper 在调用方完成，不再有 facade。
+    for (const root of roots) {
+      if (!root.readable && !root.writable && !root.deletable) {
+        logger.warn(`root ${root.name} 没有任何权限位，跳过注册`);
+        continue;
+      }
+      const scoped = new ScopedStorageService(root, logger, caps.services);
+      caps.provide(storage, scoped, {
+        entryId: `${caps.lifecycle.id}/${root.name}`,
+        label: root.label || `本地根 ${root.name}`,
+      });
     }
-    const scoped = new ScopedStorageService(root, logger, ctx);
-    ctx.provide('storage', scoped, {
-      entryId: `${ctx.id}/${root.name}`,
-      label: root.label || `本地根 ${root.name}`,
-    });
-  }
 
-  // 诊断检查项：探测每个 writable root 是否真的可写。
-  // 由 storage 插件按当前 roots 配置上报，而非 doctor 硬编码 fs.data：data/ 仅是默认 root 之一，
-  // 不应由 doctor 单独「祝福」；按 roots 上报才能反映用户自定义根（如 host:/、project_x）的真实状态。
-  useDoctorService(ctx).registerCheck({
-    id: 'storage.roots',
-    category: 'filesystem',
-    pluginName: name,
-    async run() {
-      const targets = roots.filter(r => r.writable);
-      if (targets.length === 0) {
-        return { id: 'storage.roots', category: 'filesystem', level: 'warn', message: '没有任何 writable 存储根' };
-      }
-      const results: CheckResult[] = [];
-      for (const root of targets) {
-        results.push(await probeRootWritable(root.name, root.realPath));
-      }
-      return results;
-    },
-  });
-}
+    // 诊断检查项：探测每个 writable root 是否真的可写。
+    // 由 storage 插件按当前 roots 配置上报，而非 doctor 硬编码 fs.data：data/ 仅是默认 root 之一，
+    // 不应由 doctor 单独「祝福」；按 roots 上报才能反映用户自定义根（如 host:/、project_x）的真实状态。
+    caps.doctor.registerCheck({
+      id: 'storage.roots',
+      category: 'filesystem',
+      pluginName: PLUGIN_NAME,
+      async run() {
+        const targets = roots.filter(r => r.writable);
+        if (targets.length === 0) {
+          return { id: 'storage.roots', category: 'filesystem', level: 'warn', message: '没有任何 writable 存储根' };
+        }
+        const results: CheckResult[] = [];
+        for (const root of targets) {
+          results.push(await probeRootWritable(root.name, root.realPath));
+        }
+        return results;
+      },
+    });
+  },
+});
 
 /** 探测某个根目录是否可写：在根下写一个临时文件并立即删除 */
 async function probeRootWritable(rootName: string, dir: string): Promise<CheckResult> {

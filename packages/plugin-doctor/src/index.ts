@@ -1,23 +1,42 @@
 import { version as nodeVersion, platform } from 'node:process';
-import { useCommandService } from '@aalis/api-commands';
-import type { CheckCategory, CheckLevel, CheckResult, CheckSpec, DoctorReport, DoctorService } from '@aalis/api-doctor';
-import type { WebuiPage } from '@aalis/api-webui';
-import { useWebuiService } from '@aalis/api-webui';
-import type { Context, PluginManagerService, PluginModule } from '@aalis/core';
+import { commands } from '@aalis/api-commands';
+import {
+  type CheckCategory,
+  type CheckLevel,
+  type CheckResult,
+  type CheckSpec,
+  type DoctorReport,
+  type DoctorService,
+  doctor,
+} from '@aalis/api-doctor';
+import { type WebuiPage, webuiServer } from '@aalis/api-webui';
+import {
+  type BoundOf,
+  definePlugin,
+  events,
+  logger,
+  optional,
+  type PluginManagerService,
+  pluginsService,
+  provide,
+  type ServiceRef,
+} from '@aalis/core';
 
 // 公共类型由 api-doctor 维护并增强 @aalis/core；本包从那里 re-export，
 // 让旧消费者 `import { CheckResult } from '@aalis/plugin-doctor'` 继续可用。
 export type { CheckCategory, CheckLevel, CheckResult, CheckSpec, DoctorReport, DoctorService };
 
-// ===== 元数据 =====
+const PLUGIN_NAME = '@aalis/plugin-doctor';
 
-export const name = '@aalis/plugin-doctor';
-export const displayName = '系统诊断';
-export const subsystem = 'platform';
-export const provides = ['doctor'];
-export const inject = {
-  optional: ['plugins', 'commands'],
+const uses = {
+  provide,
+  logger,
+  events,
+  plugins: optional(pluginsService),
+  commands: optional(commands),
+  webui: optional(webuiServer),
 };
+type Caps = BoundOf<typeof uses>;
 
 // ===== Registry =====
 
@@ -25,7 +44,7 @@ class DoctorRegistry implements DoctorService {
   private last: DoctorReport | undefined;
   private readonly specs = new Map<string, CheckSpec>();
 
-  constructor(private readonly ctx: Context) {}
+  constructor(private readonly caps: Pick<Caps, 'logger' | 'events'>) {}
 
   getLastReport(): DoctorReport | undefined {
     return this.last;
@@ -33,7 +52,7 @@ class DoctorRegistry implements DoctorService {
 
   registerCheck(spec: CheckSpec): () => void {
     if (this.specs.has(spec.id)) {
-      this.ctx.logger.debug(`doctor: 检查项 ${spec.id} 被覆盖注册`);
+      this.caps.logger.debug(`doctor: 检查项 ${spec.id} 被覆盖注册`);
     }
     this.specs.set(spec.id, spec);
     return () => {
@@ -51,7 +70,7 @@ class DoctorRegistry implements DoctorService {
 
     for (const spec of this.specs.values()) {
       try {
-        const r = await spec.run(this.ctx);
+        const r = await spec.run();
         const list = Array.isArray(r) ? r : [r];
         for (const c of list) checks.push(c);
       } catch (err) {
@@ -80,7 +99,7 @@ class DoctorRegistry implements DoctorService {
     };
 
     // 通知 WebUI 同步刷新（webui-server 监听并广播到所有连接的客户端）
-    this.ctx.emit('doctor:updated', { generatedAt: this.last.generatedAt, summary }).catch(() => {});
+    this.caps.events.emit('doctor:updated', { generatedAt: this.last.generatedAt, summary }).catch(() => {});
 
     return this.last;
   }
@@ -121,57 +140,54 @@ const webuiPages: WebuiPage[] = [
   },
 ];
 
-// ===== Actions（供 WebUI 调用） =====
+// ===== 插件入口 =====
 
-export const actions: PluginModule['actions'] = {
-  async runChecks(ctx: Context): Promise<DoctorReport | undefined> {
-    return ctx.getService<DoctorService>('doctor')?.runChecks();
-  },
-  async getReport(ctx: Context): Promise<CheckResult[]> {
-    return ctx.getService<DoctorService>('doctor')?.getLastReport()?.checks ?? [];
-  },
-  async getLastRunAt(ctx: Context): Promise<{ value: string }> {
-    const last = ctx.getService<DoctorService>('doctor')?.getLastReport();
-    if (!last) return { value: '尚未运行' };
-    const s = last.summary;
-    return { value: `${formatLocalTime(last.generatedAt)} — ok=${s.ok} warn=${s.warn} error=${s.error}` };
-  },
-};
+export default definePlugin({
+  name: PLUGIN_NAME,
+  displayName: '系统诊断',
+  subsystem: 'platform',
+  provides: [doctor],
+  uses,
+  apply({ provide, logger, events, plugins, commands, webui }) {
+    const registry = new DoctorRegistry({ logger, events });
+    provide(doctor, registry);
 
-// ===== apply =====
+    // 注册 builtin 检查项（与第三方插件走同一条注册路径，自然出现在 listChecks 里）
+    registerBuiltinChecks(registry, plugins);
 
-export function apply(ctx: Context, _config: Record<string, unknown>): void {
-  const registry = new DoctorRegistry(ctx);
-  ctx.provide('doctor', registry);
+    for (const page of webuiPages) webui.registerPage(page);
 
-  // 注册 builtin 检查项（与第三方插件走同一条注册路径，自然出现在 listChecks 里）
-  registerBuiltinChecks(registry);
+    // 页面动作直接闭包本次激活的 registry：页面属于本插件，不该去查「当前胜出的 doctor」
+    webui.registerAction('runChecks', () => registry.runChecks());
+    webui.registerAction('getReport', async () => registry.getLastReport()?.checks ?? []);
+    webui.registerAction('getLastRunAt', async () => {
+      const last = registry.getLastReport();
+      if (!last) return { value: '尚未运行' };
+      const s = last.summary;
+      return { value: `${formatLocalTime(last.generatedAt)} — ok=${s.ok} warn=${s.warn} error=${s.error}` };
+    });
 
-  const webui = useWebuiService(ctx);
-  for (const page of webuiPages) webui.registerPage(page);
-
-  // 注册 /doctor 命令 —— chat 与 CLI 通用入口
-  useCommandService(ctx)
-    .command('doctor', '运行系统诊断（环境 / 文件系统 / 插件状态）')
-    .action(async () => {
+    // 注册 /doctor 命令 —— chat 与 CLI 通用入口
+    commands.command('doctor', '运行系统诊断（环境 / 文件系统 / 插件状态）').action(async () => {
       const report = await registry.runChecks();
       return formatReport(report);
     });
-}
+  },
+});
 
 // ===== Builtin checks（同样走 registerCheck，所有 check 一视同仁）=====
 //
 // 此处只保留「与领域无关、纯 doctor 自身职能」的检查项。原本的 fs.data /
 // commands.overrides 已迁出到对应领域插件（plugin-storage-local / plugin-commands），
-// 它们通过 useDoctorService 自行注册——避免 doctor 反向硬依赖业务插件。
+// 它们经 doctor 契约自行注册——避免 doctor 反向硬依赖业务插件。
 //
 // `plugins.status` 留在这里：它读 PluginManager（核心服务），不属于任何业务插件领域；
 // 若未来 PluginManager 自带 self-check，可一并迁走。
-function registerBuiltinChecks(reg: DoctorRegistry): void {
+function registerBuiltinChecks(reg: DoctorRegistry, plugins: ServiceRef<PluginManagerService>): void {
   reg.registerCheck({
     id: 'env.node',
     category: 'env',
-    pluginName: '@aalis/plugin-doctor',
+    pluginName: PLUGIN_NAME,
     run() {
       const major = Number(nodeVersion.replace(/^v/, '').split('.')[0]);
       return {
@@ -187,7 +203,7 @@ function registerBuiltinChecks(reg: DoctorRegistry): void {
   reg.registerCheck({
     id: 'env.platform',
     category: 'env',
-    pluginName: '@aalis/plugin-doctor',
+    pluginName: PLUGIN_NAME,
     run() {
       return { id: 'env.platform', category: 'env', level: 'ok', message: `平台 ${platform}` };
     },
@@ -196,9 +212,9 @@ function registerBuiltinChecks(reg: DoctorRegistry): void {
   reg.registerCheck({
     id: 'plugins.status',
     category: 'plugins',
-    pluginName: '@aalis/plugin-doctor',
-    run(ctx) {
-      const pm = ctx.getService<PluginManagerService>('plugins');
+    pluginName: PLUGIN_NAME,
+    run() {
+      const pm = plugins.current;
       if (!pm) {
         return {
           id: 'plugins.service',

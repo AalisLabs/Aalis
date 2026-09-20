@@ -1,31 +1,30 @@
 import path from 'node:path';
-import type { AgentService } from '@aalis/api-agent';
-import { useAgent } from '@aalis/api-agent';
-import type { MediaService } from '@aalis/api-media';
-import type { MemoryService } from '@aalis/api-memory';
+import { agent } from '@aalis/api-agent';
+import { media } from '@aalis/api-media';
+import { memory } from '@aalis/api-memory';
 import type {} from '@aalis/api-session-manager'; // declaration merging：session:deleted 事件
-import type { StorageService } from '@aalis/api-storage';
-import { createStorageGateway } from '@aalis/api-storage';
-import type { ToolCallContext } from '@aalis/api-tools';
-import { toolsWithGroups, useToolService } from '@aalis/api-tools';
-import type { Context } from '@aalis/core';
-import { defineService } from '@aalis/core';
+import { createStorageGateway, storage } from '@aalis/api-storage';
+import { type ToolCallContext, tools, withToolGroups } from '@aalis/api-tools';
+import {
+  type BoundOf,
+  config,
+  contributions,
+  definePlugin,
+  defineService,
+  events,
+  hooks,
+  lifecycle,
+  logger,
+  optional,
+  provide,
+} from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { formatImageSection, recognizeImages } from './doc-images.js';
 
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-file-reader';
-export const displayName = '文件读取';
-export const subsystem = 'tools';
-export const provides = ['file-reader'];
-export const inject = {
-  required: ['storage'],
-  optional: ['agent', 'memory', 'media'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   maxFileSizeMB: {
     type: 'number',
     label: '最大文件大小 (MB)',
@@ -169,6 +168,9 @@ export interface FileReaderService {
   deleteFile(fileId: string): Promise<boolean>;
 }
 
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const fileReader = defineService<FileReaderService>('file-reader');
+
 interface FileEntry extends FileMeta {
   /** 数据文件 URI */
   dataUri: string;
@@ -199,7 +201,35 @@ export async function computeFileId(sessionId: string, buffer: Buffer): Promise<
 
 // ===== 插件入口 =====
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
+const uses = {
+  storage,
+  config,
+  logger,
+  lifecycle,
+  events,
+  hooks,
+  contributions,
+  provide,
+  tools: optional(tools),
+  agent: optional(agent),
+  memory: optional(memory),
+  media: optional(media),
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-file-reader',
+  displayName: '文件读取',
+  subsystem: 'tools',
+  configSchema,
+  provides: [fileReader],
+  uses,
+  apply: run,
+});
+
+async function run(caps: Caps): Promise<void> {
+  const { config, logger, lifecycle, events, hooks, contributions, provide, tools, agent, memory, media } = caps;
+
   const maxFileSize = ((config.maxFileSizeMB as number) ?? 20) * 1024 * 1024;
   const autoInlineLimit = (config.autoInlineLimit as number) ?? 100000;
   const toolDefaultMaxLength = (config.toolDefaultMaxLength as number) ?? 50000;
@@ -210,14 +240,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const maxDocImages = Math.max(0, Math.floor((config.maxDocImages as number) ?? 8));
   const HISTORY_HINT_SOURCE = 'file-reader-history';
 
-  const _storage = ctx.getService<StorageService>('storage');
-  if (!_storage) {
-    ctx.logger.error('storage 服务不可用，file-reader 无法启动');
-    return;
-  }
   // 每个 storage root 是独立 entry；file-reader 跳跨使用 pluginData:/ 必须走 gateway
   // 路由，否则 scoped entry 会报 'URI 根 "pluginData" 不属于本 entry'。
-  const storage: StorageService = createStorageGateway(ctx);
+  const storage = createStorageGateway(caps.storage);
 
   // 启动时确保根目录存在（写一个 placeholder 然后立即删——避免目录不存在导致 list 失败）
   try {
@@ -227,7 +252,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     try {
       await storage.writeFile(`${ROOT_URI}/.keep`, '');
     } catch (err) {
-      ctx.logger.warn('初始化 file-reader 根目录失败:', err);
+      logger.warn('初始化 file-reader 根目录失败:', err);
     }
   }
 
@@ -265,7 +290,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const text = typeof buf === 'string' ? buf : buf.toString('utf-8');
       return JSON.parse(text) as FileMeta;
     } catch (err) {
-      ctx.logger.debug(`加载 meta 失败 ${uri}:`, err);
+      logger.debug(`加载 meta 失败 ${uri}:`, err);
       return null;
     }
   }
@@ -293,9 +318,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           restored++;
         }
       }
-      if (restored > 0) ctx.logger.info(`已从磁盘恢复 ${restored} 个上传文件`);
+      if (restored > 0) logger.info(`已从磁盘恢复 ${restored} 个上传文件`);
     } catch (err) {
-      ctx.logger.warn('恢复文件索引失败:', err);
+      logger.warn('恢复文件索引失败:', err);
     }
   }
 
@@ -341,7 +366,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const raw = await storage.readFile(entry.dataUri);
       buf = typeof raw === 'string' ? Buffer.from(raw, 'utf-8') : raw;
     } catch (err) {
-      ctx.logger.warn(`读取文件失败 ${entry.dataUri}:`, err);
+      logger.warn(`读取文件失败 ${entry.dataUri}:`, err);
       return '[文件读取失败]';
     }
     const text = await extractTextFromBuffer(buf, entry.mimeType);
@@ -350,7 +375,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       entry.textCache = text;
       await storage
         .writeFile(entry.metaUri, JSON.stringify({ ...entry, dataUri: undefined, metaUri: undefined }, null, 2))
-        .catch((err: unknown) => ctx.logger.debug('更新 textCache 失败:', err));
+        .catch((err: unknown) => logger.debug('更新 textCache 失败:', err));
     }
     return text;
   }
@@ -364,7 +389,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const { text } = await extractText(pdf, { mergePages: true });
       return text.trim() || '[PDF 无文本内容]';
     } catch (err) {
-      ctx.logger.warn('PDF 解析失败:', err);
+      logger.warn('PDF 解析失败:', err);
       return '[PDF 解析失败]';
     }
   }
@@ -378,7 +403,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       if (imageSection) text += imageSection;
       return text;
     } catch (err) {
-      ctx.logger.warn('DOCX 解析失败:', err);
+      logger.warn('DOCX 解析失败:', err);
       return '[DOCX 解析失败]';
     }
   }
@@ -389,8 +414,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
    */
   async function describeDocxImages(mammoth: typeof import('mammoth'), buffer: Buffer): Promise<string> {
     if (!recognizeDocImages || maxDocImages <= 0) return '';
-    const media = ctx.getService<MediaService>('media');
-    if (!media?.describeImage) return '';
+    const mediaService = media.current;
+    if (!mediaService?.describeImage) return '';
 
     const uris: string[] = [];
     try {
@@ -403,14 +428,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
               const b64 = await image.readAsBase64String();
               uris.push(`data:${image.contentType || 'image/png'};base64,${b64}`);
             } catch (err) {
-              ctx.logger.debug('DOCX 内嵌图片读取失败:', err);
+              logger.debug('DOCX 内嵌图片读取失败:', err);
             }
             return { src: '' };
           }),
         },
       );
     } catch (err) {
-      ctx.logger.warn('DOCX 图片提取失败（仅影响图片识别，正文不受影响）:', err);
+      logger.warn('DOCX 图片提取失败（仅影响图片识别，正文不受影响）:', err);
       return '';
     }
     if (uris.length === 0) return '';
@@ -418,13 +443,17 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     // 关键：不传 hint —— 传 hint 会绕过 media 的 24h 描述缓存（同图重复读会重复识别）；
     // 显式 detailLevel:'detailed'：文档内嵌图要的是 OCR 完整性，不适合让模型自判详略。
     // 并发 3 + 整体 30s 预算：避免多图 DOCX 在上传预处理阶段长时间阻塞首个回复。
-    const descriptions = await recognizeImages(uris, uri => media.describeImage(uri, { detailLevel: 'detailed' }), {
-      maxImages: maxDocImages,
-      concurrency: 3,
-      timeoutMs: 30_000,
-    });
+    const descriptions = await recognizeImages(
+      uris,
+      uri => mediaService.describeImage(uri, { detailLevel: 'detailed' }),
+      {
+        maxImages: maxDocImages,
+        concurrency: 3,
+        timeoutMs: 30_000,
+      },
+    );
     if (descriptions.length === 0) {
-      ctx.logger.warn(`DOCX 内嵌 ${uris.length} 张图片但识别结果为空（vision 不可用 / 配额耗尽 / 超时？）`);
+      logger.warn(`DOCX 内嵌 ${uris.length} 张图片但识别结果为空（vision 不可用 / 配额耗尽 / 超时？）`);
     }
     return formatImageSection(descriptions);
   }
@@ -450,7 +479,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       existing.uploadedAt = Date.now();
       await storage
         .writeFile(existing.metaUri, JSON.stringify({ ...existing, dataUri: undefined, metaUri: undefined }, null, 2))
-        .catch((err: unknown) => ctx.logger.debug('刷新 mtime 失败:', err));
+        .catch((err: unknown) => logger.debug('刷新 mtime 失败:', err));
       return existing;
     }
     const meta: FileMeta = {
@@ -471,8 +500,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const entry = index.get(fileId);
     if (!entry) return false;
     try {
-      await storage.delete(entry.dataUri).catch((err: unknown) => ctx.logger.debug('删除数据文件失败:', err));
-      await storage.delete(entry.metaUri).catch((err: unknown) => ctx.logger.debug('删除 meta 失败:', err));
+      await storage.delete(entry.dataUri).catch((err: unknown) => logger.debug('删除数据文件失败:', err));
+      await storage.delete(entry.metaUri).catch((err: unknown) => logger.debug('删除 meta 失败:', err));
     } finally {
       index.delete(fileId);
     }
@@ -500,7 +529,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const cutoff = now - retentionDays * 86_400_000;
       for (const e of all) {
         if (e.uploadedAt < cutoff) {
-          ctx.logger.debug(`retention 淘汰: ${e.name} (uploaded ${new Date(e.uploadedAt).toISOString()})`);
+          logger.debug(`retention 淘汰: ${e.name} (uploaded ${new Date(e.uploadedAt).toISOString()})`);
           await deleteFile(e.id);
         }
       }
@@ -511,7 +540,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       let total = remaining.reduce((s, e) => s + e.size, 0);
       for (const e of remaining) {
         if (total <= lruMaxTotalBytes) break;
-        ctx.logger.debug(
+        logger.debug(
           `LRU 淘汰: ${e.name} (${(e.size / 1024).toFixed(1)} KB, total=${(total / 1024 / 1024).toFixed(1)}MB)`,
         );
         await deleteFile(e.id);
@@ -524,10 +553,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   async function findCachedToolResult(fileId: string, sessionId?: string): Promise<string | null> {
     if (!sessionId) return null;
-    const memory = ctx.getService<MemoryService>('memory');
-    if (!memory?.getHistory) return null;
+    const memoryService = memory.current;
+    if (!memoryService?.getHistory) return null;
     try {
-      const history = await memory.getHistory(sessionId, 200);
+      const history = await memoryService.getHistory(sessionId, 200);
       for (let i = history.length - 1; i >= 0; i--) {
         const m = history[i];
         if (m.role !== 'tool') continue;
@@ -538,7 +567,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         }
       }
     } catch (err) {
-      ctx.logger.debug('memory 反查失败:', err);
+      logger.debug('memory 反查失败:', err);
     }
     return null;
   }
@@ -546,38 +575,36 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // ===== 初始化阶段：恢复索引 + 起一次清理 =====
 
   await restoreIndex();
-  await runCleanup().catch((err: unknown) => ctx.logger.warn('初次清理失败:', err));
+  await runCleanup().catch((err: unknown) => logger.warn('初次清理失败:', err));
 
   const cleanupTimer = setInterval(
     () => {
-      runCleanup().catch((err: unknown) => ctx.logger.warn('定时清理失败:', err));
+      runCleanup().catch((err: unknown) => logger.warn('定时清理失败:', err));
     },
     60 * 60 * 1000, // 每小时跑一次
   );
 
-  ctx.onDispose(() => {
+  lifecycle.onDispose(() => {
     clearInterval(cleanupTimer);
     index.clear();
   });
 
   // session 删除时联动清理该 session 的所有文件
-  ctx.on('session:deleted', async (...args: unknown[]) => {
-    const sessionId = args[0] as string;
+  events.on('session:deleted', async sessionId => {
     const n = await deleteSessionFiles(sessionId).catch(() => 0);
-    if (n > 0) ctx.logger.info(`session:deleted ${sessionId} → 已清理 ${n} 个上传文件`);
+    if (n > 0) logger.info(`session:deleted ${sessionId} → 已清理 ${n} 个上传文件`);
   });
 
   // ===== 工具注册 =====
 
-  const baseTools = useToolService(ctx);
-  baseTools.registerGroup({
+  tools.registerGroup({
     name: 'file-reader',
     label: '文件读取',
     description: '读取用户上传的文档文件（TXT、PDF、DOCX 等）的文本内容',
   });
-  const toolTools = toolsWithGroups(baseTools, ['file-reader']);
+  const fileTools = withToolGroups(tools, ['file-reader']);
 
-  toolTools.register({
+  fileTools.register({
     definition: {
       type: 'function',
       function: {
@@ -614,7 +641,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         // 死链兜底：查 memory 是否有该 fileId 的旧 tool result（按本会话历史，天然隔离）
         const cached = await findCachedToolResult(fileId, callCtx.sessionId);
         if (cached) {
-          ctx.logger.debug(`fileId=${fileId} 在 index 中缺失，已用历史 tool result 兜底`);
+          logger.debug(`fileId=${fileId} 在 index 中缺失，已用历史 tool result 兜底`);
           if (maxLength && cached.length > maxLength) {
             return `${cached.slice(0, maxLength)}\n\n... [文本已截断，原始长度: ${cached.length} 字符]`;
           }
@@ -630,13 +657,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         return `文件: ${entry.name}\n类型: ${entry.mimeType}\n大小: ${(entry.size / 1024).toFixed(1)} KB\n\n--- 内容 ---\n${text}`;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        ctx.logger.warn(`文件读取失败 (${entry.name}):`, msg);
+        logger.warn(`文件读取失败 (${entry.name}):`, msg);
         return `错误：读取文件 "${entry.name}" 失败: ${msg}`;
       }
     },
   });
 
-  toolTools.register({
+  fileTools.register({
     definition: {
       type: 'function',
       function: {
@@ -663,7 +690,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     },
   });
 
-  toolTools.register({
+  fileTools.register({
     definition: {
       type: 'function',
       function: {
@@ -749,7 +776,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
         const mimeType = inferMimeType(fileName, resolvedMime);
         const entry = await storeFile(fileName, buffer, mimeType, msg.sessionId);
-        ctx.logger.debug(`文件已存储: ${entry.name} (ID: ${entry.id}, ${(buffer.length / 1024).toFixed(1)} KB)`);
+        logger.debug(`文件已存储: ${entry.name} (ID: ${entry.id}, ${(buffer.length / 1024).toFixed(1)} KB)`);
 
         attDescs[i] = await buildAttachmentDesc(entry);
         // 替换原始 data 为 ID 引用，避免下游链路重复携带大 buffer
@@ -757,7 +784,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         touched = true;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        ctx.logger.warn(`文件处理失败 (${fileName}):`, errMsg);
+        logger.warn(`文件处理失败 (${fileName}):`, errMsg);
         attDescs[i] = `[文件: ${fileName} - 处理失败]`;
         touched = true;
       }
@@ -785,18 +812,15 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   // ===== 注册到 agent =====
-  // 关键：注册返回的 dispose 必须挂到 ctx.onDispose，否则插件 bounce/reload 时
-  // 旧 preprocessor 中间件会残留在 agent.ctx 上，造成下一轮重复执行（同名 dedupe
-  // 只在新实例及时 register 时才生效；若 file-reader 卸载而未立即重载，便会泄漏）。
+  // registerPreprocessor 在 AgentService 上是可选方法：当前提供者不实现它时退到
+  // `agent:input:before` 中间件，让附件预处理照常发生在同一阶段。
 
-  const agent = ctx.getService<AgentService>('agent');
-  if (agent && !agent.registerPreprocessor) {
-    ctx.middleware('agent:input:before', async (data, next) => {
+  if (agent.current && !agent.current.registerPreprocessor) {
+    hooks.middleware('agent:input:before', async (data, next) => {
       await preprocessFiles(data.message, next);
     });
   } else {
-    const disposePreproc = useAgent(ctx).registerPreprocessor('file-reader', preprocessFiles);
-    ctx.onDispose(disposePreproc);
+    agent.registerPreprocessor('file-reader', preprocessFiles);
   }
 
   // ===== 历史 / 本轮新上传文件清单注入（agent:llm:before） =====
@@ -811,7 +835,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 新文件描述带上了。本轮新上传的 ID 用正则 `\(ID:\s*([0-9a-fA-F]+)` 从这条
   // user message 中提取（兼容 `(ID: xxx)` 和 `(ID: xxx，N KB)` 两种格式）。
   if (historyHintEnabled) {
-    ctx.contribute('agent:prompt', {
+    contributions.contribute('agent:prompt', {
       id: HISTORY_HINT_SOURCE,
       anchor: 'turn-context',
       build(view) {
@@ -865,7 +889,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           );
           block = `📎 本会话历史上传文件 (${files.length} 个，当前轮次未新上传)：\n${lines.join('\n')}\n\n如需引用上述文件内容，请调用 ${TOOL_READ}(fileId="...") 读取；列出请用 ${TOOL_LIST}。`;
         }
-        ctx.logger.debug(
+        logger.debug(
           `file-reader: 已注入文件清单 (${hasNewUpload ? '本轮新上传' : '历史'}, session=${view.sessionId})`,
         );
         return block;
@@ -875,7 +899,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // ===== 暴露 file-reader 服务 =====
 
-  ctx.provide('file-reader', {
+  provide(fileReader, {
     available: true,
     /** 给 webui-server / 其他插件查文件清单用 */
     listFiles(sessionId?: string): FileMeta[] {
@@ -900,7 +924,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     deleteFile,
   });
 
-  ctx.logger.info(
+  logger.info(
     `文件读取插件已加载 (最大 ${(maxFileSize / 1024 / 1024).toFixed(0)}MB, autoInline=${autoInlineLimit} 字符, 保留 ${retentionDays} 天, LRU=${(lruMaxTotalBytes / 1024 / 1024).toFixed(0)}MB, 已恢复 ${index.size} 个文件)`,
   );
 }
@@ -911,6 +935,3 @@ declare module '@aalis/core' {
     'file-reader': FileReaderService;
   }
 }
-
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
-export const fileReader = defineService<FileReaderService>('file-reader');

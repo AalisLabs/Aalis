@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { ExecutionGuardContext } from '../../packages/api-authority/src/index.js';
-import type { ToolService } from '../../packages/api-tools/src/index.js';
-import { useToolService } from '../../packages/api-tools/src/index.js';
+import { tools as toolsService } from '../../packages/api-tools/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as authorityModule from '../../packages/plugin-authority/src/index.js';
-import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import authority from '../../packages/plugin-authority/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // actor 的守卫侧接线（tools → guard → authority）——与
@@ -19,15 +18,17 @@ import * as toolsModule from '../../packages/plugin-tools/src/index.js';
 describe('tools 守卫的 actor 接线', () => {
   it('plugin-tools 透传 actor 给守卫，platform 保持会话值', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(toolsModule as never, {});
-    let seen: ExecutionGuardContext | undefined;
-    const svc = app.ctx.getService<ToolService>('tools');
+    await app.plugins.register(toolsPlugin, {});
+    await app.plugins.idle();
+    const { tools } = app.bind({ tools: toolsService });
+    const svc = tools.current;
     if (!svc) throw new Error('tools 服务未注册');
+    let seen: ExecutionGuardContext | undefined;
     svc.setExecutionGuard(async g => {
       seen = g;
       return null;
     });
-    useToolService(app.ctx).register({
+    tools.register({
       definition: {
         type: 'function',
         function: { name: 'probe_g', description: '探针', parameters: { type: 'object', properties: {} } },
@@ -51,11 +52,12 @@ describe('tools 守卫的 actor 接线', () => {
   it('authority 等级裁决按 actor：物理匿名 + owner actor 可执行 sensitive 工具，无 actor 则不能', async () => {
     const run = async (actor?: { platform: string; userId: string }): Promise<boolean> => {
       const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-      await app.ctx.useModule(toolsModule as never, {});
-      await app.ctx.useModule(authorityModule as never, {});
+      await app.plugins.register(toolsPlugin, {});
+      await app.plugins.register(authority, {});
       await app.plugins.idle();
       let ran = false;
-      useToolService(app.ctx).register({
+      const { tools } = app.bind({ tools: toolsService });
+      tools.register({
         risk: 'sensitive',
         definition: {
           type: 'function',
@@ -66,7 +68,7 @@ describe('tools 守卫的 actor 接线', () => {
           return 'ok';
         },
       });
-      const svc = app.ctx.getService<ToolService>('tools');
+      const svc = tools.current;
       if (!svc) throw new Error('tools 服务未注册');
       await svc.execute('probe_s', {}, { sessionId: 's1', platform: 'onebot', ...(actor ? { actor } : {}) });
       await app.stop();

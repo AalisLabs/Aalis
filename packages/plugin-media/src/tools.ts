@@ -6,8 +6,8 @@
 // ============================================================
 
 import type { MemoryService } from '@aalis/api-memory';
-import { useToolService } from '@aalis/api-tools';
-import type { Context } from '@aalis/core';
+import type { BoundTools } from '@aalis/api-tools';
+import type { ServiceRef } from '@aalis/core';
 import { AttachmentRefKind, buildAttachmentRefMatcher, formatAttachmentRef, type Message } from '@aalis/schema-message';
 import { fileToDataUri } from './ffmpeg.js';
 import { getMediaRuntime } from './runtime.js';
@@ -61,8 +61,14 @@ function findImageDescriptionTokens(messages: Message[], imageRef: string): stri
   return [...tokens];
 }
 
-export function registerMediaTools(ctx: Context, getSvc: () => MediaServiceImpl): void {
-  const tools = useToolService(ctx);
+/** 工具登记用到的能力：登记门面 tools，以及 update_image_description 回写历史的 memory */
+export interface ToolsCaps {
+  tools: BoundTools;
+  memory: ServiceRef<MemoryService>;
+}
+
+export function registerMediaTools(caps: ToolsCaps, getSvc: () => MediaServiceImpl): void {
+  const { tools } = caps;
 
   tools.register({
     definition: {
@@ -213,7 +219,7 @@ export function registerMediaTools(ctx: Context, getSvc: () => MediaServiceImpl)
       const sessionId =
         typeof args.session_id === 'string' && args.session_id.trim() ? args.session_id.trim() : callCtx.sessionId;
 
-      const memory = ctx.getService<MemoryService>('memory');
+      const memory = caps.memory.current;
       if (!memory?.updateMessageContent) {
         return JSON.stringify({ error: '记忆服务不可用或不支持内容更新' });
       }
