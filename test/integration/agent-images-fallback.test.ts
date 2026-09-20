@@ -1,12 +1,13 @@
 import { Buffer } from 'node:buffer';
 import { describe, expect, it } from 'vitest';
-import type { AgentService } from '../../packages/api-agent/src/index.js';
+import { agent as agentService } from '../../packages/api-agent/src/index.js';
 import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
-import type { StorageService } from '../../packages/api-storage/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as agentModule from '../../packages/plugin-agent/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import * as messageArchiveModule from '../../packages/plugin-message-archive/src/index.js';
+import { media } from '../../packages/api-media/src/index.js';
+import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
+import agentPlugin from '../../packages/plugin-agent/src/index.js';
+import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
+import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
@@ -30,7 +31,8 @@ const HTTP_URL = 'https://example.invalid/pic.jpg';
 
 async function loadStack(recorder: ChatModelRequest[], opts: { media?: boolean; storage?: boolean } = {}) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(createMockLLMPlugin({ responses: [{ content: 'ok' }], recorder }));
+  const host = app.bind({ provide, agent: agentService });
+  await app.plugin(createMockLLMPlugin({ responses: [{ content: 'ok' }], recorder }));
   if (opts.storage !== false) {
     const fakeStorage = {
       readFile: async (uri: string) => {
@@ -38,14 +40,14 @@ async function loadStack(recorder: ChatModelRequest[], opts: { media?: boolean; 
         return PNG_BYTES;
       },
     } as unknown as StorageService;
-    app.ctx.provide('storage', fakeStorage);
+    host.provide(storage, fakeStorage);
   }
   if (opts.media) {
-    app.ctx.provide('media', {} as never);
+    host.provide(media, {} as never);
   }
-  await app.ctx.useModule(memoryInMemoryModule);
-  await app.ctx.useModule(messageArchiveModule, { debugLogs: false });
-  await app.ctx.useModule(agentModule, {
+  await app.plugin(memoryInMemoryPlugin);
+  await app.plugin(messageArchivePlugin, { debugLogs: false });
+  await app.plugin(agentPlugin, {
     systemPrompt: 'test bot',
     historyLimit: 10,
     memoryTokenBudget: 1024,
@@ -53,9 +55,7 @@ async function loadStack(recorder: ChatModelRequest[], opts: { media?: boolean; 
     preferredModel: '',
   });
   await app.plugins.idle();
-  const agent = app.ctx.getService<AgentService>('agent');
-  if (!agent) throw new Error('agent 服务未就绪');
-  return { app, agent };
+  return { app, agent: host.agent.require() };
 }
 
 function incomingWith(images: string[]): IncomingMessage {

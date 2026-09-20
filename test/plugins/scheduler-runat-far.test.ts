@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { App } from '../../packages/core/src/index.js';
-import * as schedulerModule from '../../packages/plugin-scheduler/src/index.js';
-import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import { cronEngine } from '../../packages/api-cron-engine/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
+import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
+import { App, events, provide, services } from '../../packages/core/src/index.js';
+import schedulerPlugin, { scheduler } from '../../packages/plugin-scheduler/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 一次性任务的远期 runAt：setTimeout 的 delay 超过 2^31-1ms（约 24.8 天）会溢出成立即触发，
@@ -34,10 +37,6 @@ const cronEngineStub = {
   nextFireTime: () => null,
 };
 
-interface JobView {
-  name: string;
-}
-
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -45,31 +44,34 @@ afterEach(() => {
 describe('scheduler 一次性任务的远期 runAt', () => {
   it('runAt = +30 天：推进 25 天不执行，到点执行一次并删除', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    app.ctx.provide('storage', memoryStorage() as never);
-    app.ctx.provide('cron-engine', cronEngineStub as never);
-    await app.ctx.useModule(toolsModule as never, {});
-    await app.ctx.useModule(schedulerModule as never, { jobs: [] });
+    const host = app.bind({ provide, services, events });
+    host.provide(storage, memoryStorage() as never);
+    host.provide(cronEngine, cronEngineStub as never);
+    // 页面动作是本次激活的闭包，经 webui 登记；桩 webui 把登记表截下来按名调用
+    const actions = new Map<string, WebuiActionHandler>();
+    host.provide(webuiServer, {
+      registerPage: () => () => {},
+      registerAction(method: string, handler: WebuiActionHandler) {
+        actions.set(method, handler);
+        return () => void actions.delete(method);
+      },
+    } as never);
+    await app.plugins.register(toolsPlugin, {});
+    await app.plugins.register(schedulerPlugin, { jobs: [] });
     await app.plugins.idle();
 
     const started: string[] = [];
-    app.ctx.on(
-      'scheduler:job:start' as never,
-      ((name: string) => {
-        started.push(name);
-      }) as never,
-    );
-    const jobs = () => app.ctx.getService<{ getJobs(): JobView[] }>('scheduler')?.getJobs() ?? [];
-    const actions = (
-      schedulerModule as unknown as {
-        actions: Record<string, (ctx: unknown, args: Record<string, unknown>, caller?: unknown) => Promise<unknown>>;
-      }
-    ).actions;
+    host.events.on('scheduler:job:start', name => {
+      started.push(name);
+    });
+    const jobs = () => host.services.get(scheduler)?.getJobs() ?? [];
+    const upsertJob = actions.get('upsertJob');
+    if (!upsertJob) throw new Error('页面动作 "upsertJob" 未登记 —— 管理面缺失');
 
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     try {
       const runAt = new Date(Date.now() + 30 * DAY).toISOString();
-      const res = await actions.upsertJob(
-        app.ctx,
+      const res = await upsertJob(
         { name: 'far', sessionId: 'internal', platform: 'internal', content: 'x', enabled: true, runAt },
         { platform: 'webui', userId: 'console' },
       );

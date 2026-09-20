@@ -1,10 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import type { ProcessService } from '../../packages/api-process/src/index.js';
+import { processService } from '../../packages/api-process/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as processLocal from '../../packages/plugin-process-local/src/index.js';
-import { LocalProcessService } from '../../packages/plugin-process-local/src/index.js';
+import { App, services } from '../../packages/core/src/index.js';
+import processLocal, { LocalProcessService } from '../../packages/plugin-process-local/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 子进程生命周期：孙进程不再让 exec「安静地永不返回」。
@@ -95,8 +94,10 @@ describe('process-local 子进程生命周期', () => {
   it.skipIf(!posix)('宿主停机：登记在册的存活子进程被杀', async () => {
     const marker = mark('dispose');
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(processLocal as unknown as Parameters<typeof app.ctx.useModule>[0], {});
-    const service = app.ctx.getService<ProcessService>('process');
+    await app.plugin(processLocal);
+    await app.plugins.idle();
+    const host = app.bind({ services });
+    const service = host.services.get(processService);
     if (!service) throw new Error('process 服务未注册');
     service.spawn('bash', ['-c', `exec -a ${marker} sleep 30`], {});
     await sleep(200);

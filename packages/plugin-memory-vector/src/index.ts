@@ -1,10 +1,20 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
-import type { EmbeddingService } from '@aalis/api-embedding';
-import type { MemoryService } from '@aalis/api-memory';
-import { useToolService } from '@aalis/api-tools';
-import type { VectorStoreService } from '@aalis/api-vectorstore';
-import type { Context } from '@aalis/core';
-import { defineService } from '@aalis/core';
+import { embedding } from '@aalis/api-embedding';
+import { memory } from '@aalis/api-memory';
+import { tools } from '@aalis/api-tools';
+import { vectorstore } from '@aalis/api-vectorstore';
+import {
+  type BoundOf,
+  config,
+  contributions,
+  definePlugin,
+  defineService,
+  events,
+  hooks,
+  logger,
+  optional,
+  provide,
+} from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { prefixSender, WellKnownKinds } from '@aalis/schema-message';
@@ -12,16 +22,7 @@ import { truncateChars } from '@aalis/util-text-normalize';
 
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-memory-vector';
-export const displayName = '向量记忆';
-export const subsystem = 'memory';
-export const provides = ['semantic-memory'];
-export const inject = {
-  required: ['vectorstore', 'embedding'],
-  optional: ['memory'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   search: {
     label: '搜索设置',
     fields: {
@@ -278,23 +279,65 @@ function messageKey(sessionId: string, m: Message): string {
   return `${sessionId}|${m.timestamp ?? 0}|${m.role}`;
 }
 
+// ----- 服务类型注册（declaration merging）-----
+// `semantic-memory` 是**能力标记**而非查询 API：它只声明「本实例具备语义检索能力」，
+// 供依赖声明与拓扑排序识别，以及消费方做能力探测。语义检索本身经工具与
+// memory 契约走，不从这里取。如实声明它的真实形状，不臆造一个没人实现的查询接口。
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    'semantic-memory': {
+      /** 实现标识（当前唯一实现为 `vector-memory`）。 */
+      name: string;
+    };
+  }
+}
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+/** 存在性标记服务：只表明「语义记忆已就绪」，检索本身走 memory 契约 */
+export const semanticMemory = defineService<{ name: string }>('semantic-memory');
+
 // ===== 插件入口 =====
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
-  function getStore(): VectorStoreService {
-    return ctx.getService<VectorStoreService>('vectorstore')!;
-  }
-  function getEmbedder(): EmbeddingService {
-    return ctx.getService<EmbeddingService>('embedding')!;
-  }
-  // memory 是 optional 依赖，不级联 bounce 本插件：apply 时缓存裸引用会在 provider
-  // 重载后落在已 close 的 client 上，扩窗永久退化成一条 warn；能力探测同理必须在
-  // 调用点现算，否则 provider 晚于本插件注册时 hasRangeQuery 永久为假。
-  function getMemory(): MemoryService | undefined {
-    return ctx.getService<MemoryService>('memory');
-  }
+const uses = {
+  vectorstore,
+  embedding,
+  memory: optional(memory),
+  tools: optional(tools),
+  events,
+  hooks,
+  contributions,
+  provide,
+  logger,
+  config,
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-memory-vector',
+  displayName: '向量记忆',
+  subsystem: 'memory',
+  configSchema,
+  provides: [semanticMemory],
+  uses,
+  apply: run,
+});
+
+async function run({
+  vectorstore,
+  embedding,
+  memory,
+  tools,
+  events,
+  hooks,
+  contributions,
+  provide,
+  logger,
+  config,
+}: Caps): Promise<void> {
+  // memory 是可选依赖，provider 换人不级联 bounce 本插件：引用与能力探测都必须在调用点现算，
+  // 否则 provider 晚于本插件注册时 hasRangeQuery 永久为假，或扩窗落在已关闭的旧实例上。
   function hasRangeQuery(): boolean {
-    return !!getMemory()?.getMessagesBySessionRange;
+    return !!memory.current?.getMessagesBySessionRange;
   }
 
   const searchRaw = (config.search ?? {}) as Record<string, unknown>;
@@ -337,8 +380,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   };
 
   // 启动日志与下方 warn 都是启动时刻的快照（此后按调用点现算，不再据此判定）
-  ctx.logger.info(
-    `向量记忆已启动: ${await getStore().size()} 条向量, 范围查询=${hasRangeQuery() ? '可用' : '不可用'}, ` +
+  logger.info(
+    `向量记忆已启动: ${await vectorstore.require().size()} 条向量, 范围查询=${hasRangeQuery() ? '可用' : '不可用'}, ` +
       `userBoost=${cfg.search.userPriorityBoost}, expandWindow=${cfg.contextExpand.window}, ` +
       `单条截断=${cfg.search.perItemMaxChars > 0 ? `${cfg.search.perItemMaxChars}字` : '不截断'}, minScore=${cfg.search.minScore}, ` +
       `indexConcurrency=${cfg.indexing.concurrency <= 0 ? 'unlimited' : cfg.indexing.concurrency}, ` +
@@ -346,10 +389,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   );
 
   if (!hasRangeQuery() && cfg.contextExpand.window > 0) {
-    ctx.logger.warn('当前 memory 后端不支持范围查询，contextExpand 将退化为仅命中本身');
+    logger.warn('当前 memory 后端不支持范围查询，contextExpand 将退化为仅命中本身');
   }
 
-  ctx.provide('semantic-memory', { name: 'vector-memory' });
+  provide(semanticMemory, { name: 'vector-memory' });
 
   /** 候选准入（两条检索管线共用）：剔存量委派 META 噪音；others-only 档过滤 AI 自身发言。
    * 存量旧向量无 role 字段 → 不等于 'assistant' → 按对方对待。 */
@@ -372,7 +415,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     pendingIndexMessages.push(item);
     if (cfg.indexing.maxQueueSize > 0 && pendingIndexMessages.length > cfg.indexing.maxQueueSize) {
       const dropped = pendingIndexMessages.splice(0, pendingIndexMessages.length - cfg.indexing.maxQueueSize).length;
-      ctx.logger.warn(`向量索引队列过长，已丢弃 ${dropped} 条最旧待索引消息`);
+      logger.warn(`向量索引队列过长，已丢弃 ${dropped} 条最旧待索引消息`);
     }
     void drainIndexQueue();
   }
@@ -410,14 +453,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     if (msg.source?.startsWith('workflow:')) return;
     if (msg.userId?.startsWith('parent:')) return;
     // 向量文本 = 归档文本（单一来源）：archive 已按平台规则加发送者前缀、烘入引用与
-    // 附件描述。此前 embed 的是 incoming.content——图片消息只剩 [图片 | ref:…] 占位符，
+    // 附件描述。若 embed 的是 incoming.content，图片消息只剩 [图片 | ref:…] 占位符，
     // 识别出的描述从未进向量空间，图片记忆不可召回。
     const rawText = clipForEmbed(archived.content?.trim() ?? '');
     if (!rawText) return;
     // 归档写入时间戳：保证后续按时间戳精确删除（如「回滚本轮对话」）能命中向量条目
     const messageTimestamp = archived.timestamp ?? Date.now();
     try {
-      const vec = await getEmbedder().embed(rawText);
+      const vec = await embedding.require().embed(rawText);
       const mentions = extractMentions(rawText);
       const metadata: Record<string, unknown> = {
         sessionId: msg.sessionId,
@@ -435,23 +478,23 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         // @提及到的用户 ID 列表，用于检索时同用户加权
         mentions,
       };
-      await getStore().add(vec, metadata);
-      await getStore().save();
+      await vectorstore.require().add(vec, metadata);
+      await vectorstore.require().save();
     } catch (err) {
-      ctx.logger.warn(`向量索引失败: ${formatError(err)}`);
+      logger.warn(`向量索引失败: ${formatError(err)}`);
     }
   }
 
   // 与 plugin-user-profile 等「派生持久数据」插件统一锚点：仅对已成功落库的入站消息建索引，
   // 避免归档失败的消息进入向量库，也消除归档前/后两套订阅时机的不一致。
-  ctx.on('inbound:message:archived', data => {
+  events.on('inbound:message:archived', data => {
     enqueueIndexMessage({ kind: 'user', msg: data.incoming, archived: data.archivedMessage });
   });
 
   // assistant 自身发言入库（2026-08-27，recallRoles 双模式的存储侧）：
   // 经 archive.saveMessage 落库的 assistant 回复（含 image-sender 的出站附件档案）。
   // metadata 带 role='assistant'，检索側据此过滤与标注；渲染必带「Assistant·你自己」。
-  ctx.on('assistant:message:archived', data => {
+  events.on('assistant:message:archived', data => {
     enqueueIndexMessage({ kind: 'assistant', sessionId: data.sessionId, message: data.message });
   });
 
@@ -470,7 +513,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const selfUserId = (meta.userId as string | undefined) ?? '';
       // 与 user 侧对称：embed 带发送者前缀，身份信号入向量空间
       const embedText = prefixSender(rawText, nickname || undefined, selfUserId || undefined);
-      const vec = await getEmbedder().embed(embedText);
+      const vec = await embedding.require().embed(embedText);
       const metadata: Record<string, unknown> = {
         sessionId,
         role: 'assistant',
@@ -486,20 +529,19 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         content: rawText,
         mentions: extractMentions(rawText),
       };
-      await getStore().add(vec, metadata);
-      await getStore().save();
+      await vectorstore.require().add(vec, metadata);
+      await vectorstore.require().save();
     } catch (err) {
-      ctx.logger.warn(`assistant 向量索引失败: ${formatError(err)}`);
+      logger.warn(`assistant 向量索引失败: ${formatError(err)}`);
     }
   }
 
   // === 按时间戳删除向量（供 plugin-checkpoint 回滚整轮对话使用） ===
-  ctx.on('memory:messages-deleted', async (...args: unknown[]) => {
-    const data = args[0] as { sessionId?: string; timestamps?: number[] } | undefined;
+  events.on('memory:messages-deleted', async data => {
     if (!data?.sessionId || !Array.isArray(data.timestamps) || data.timestamps.length === 0) return;
-    const currentStore = getStore();
+    const currentStore = vectorstore.require();
     if (!currentStore.deleteByFilter) {
-      ctx.logger.warn('当前向量存储不支持按条件删除，跳过 memory:messages-deleted');
+      logger.warn('当前向量存储不支持按条件删除，跳过 memory:messages-deleted');
       return;
     }
     let total = 0;
@@ -507,73 +549,62 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       try {
         total += await currentStore.deleteByFilter({ sessionId: data.sessionId, timestamp: ts });
       } catch (err) {
-        ctx.logger.warn(`按时间戳删除向量失败 (ts=${ts}): ${formatError(err)}`);
+        logger.warn(`按时间戳删除向量失败 (ts=${ts}): ${formatError(err)}`);
       }
     }
     if (total > 0) {
       try {
         await currentStore.save();
       } catch (err) {
-        ctx.logger.warn(`向量保存失败: ${formatError(err)}`);
+        logger.warn(`向量保存失败: ${formatError(err)}`);
       }
-      ctx.logger.info(`回滚清除向量: session=${data.sessionId}, 删除 ${total} 条`);
+      logger.info(`回滚清除向量: session=${data.sessionId}, 删除 ${total} 条`);
     }
   });
 
   // === 统一记忆清除 ===
 
-  ctx.middleware(
-    'memory:clear',
-    async (
-      data: {
-        scope: 'session' | 'all';
-        types?: string[];
-        sessionId?: string;
-        results: Array<{ source: string; success: boolean; message: string }>;
-      },
-      next,
-    ) => {
-      if (data.types && !data.types.includes('vector')) {
-        await next();
-        return;
-      }
-
-      try {
-        if (data.scope === 'all') {
-          await getStore().clear();
-          await getStore().save();
-          data.results.push({ source: 'vector', success: true, message: '所有向量记忆已清空' });
-          ctx.logger.info('向量记忆已全部清空');
-        } else if (data.sessionId) {
-          const currentStore = getStore();
-          if (currentStore.deleteByFilter) {
-            const deleted = await currentStore.deleteByFilter({ sessionId: data.sessionId });
-            await currentStore.save();
-            data.results.push({ source: 'vector', success: true, message: `向量记忆已清空 (${deleted} 条)` });
-            ctx.logger.info(`向量记忆已清空: session=${data.sessionId}, 删除 ${deleted} 条向量`);
-          } else {
-            // 老实报告：不支持会话级删除时不能谎称成功（此前会 push success 且「已清空 0 条」误导用户）。
-            ctx.logger.warn('当前向量存储不支持按条件删除，会话级向量清空跳过');
-            data.results.push({
-              source: 'vector',
-              success: false,
-              message: '当前向量存储不支持会话级清空，向量记忆未清除（可改用 /clear.all 或换支持按条件删除的后端）',
-            });
-          }
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        data.results.push({ source: 'vector', success: false, message: `向量清空失败: ${msg}` });
-        ctx.logger.warn(`向量清空失败: ${formatError(err)}`);
-      }
-
+  hooks.middleware('memory:clear', async (data, next) => {
+    if (data.types && !data.types.includes('vector')) {
       await next();
-    },
-  );
+      return;
+    }
+
+    try {
+      if (data.scope === 'all') {
+        await vectorstore.require().clear();
+        await vectorstore.require().save();
+        data.results.push({ source: 'vector', success: true, message: '所有向量记忆已清空' });
+        logger.info('向量记忆已全部清空');
+      } else if (data.sessionId) {
+        const currentStore = vectorstore.require();
+        if (currentStore.deleteByFilter) {
+          const deleted = await currentStore.deleteByFilter({ sessionId: data.sessionId });
+          await currentStore.save();
+          data.results.push({ source: 'vector', success: true, message: `向量记忆已清空 (${deleted} 条)` });
+          logger.info(`向量记忆已清空: session=${data.sessionId}, 删除 ${deleted} 条向量`);
+        } else {
+          // 老实报告：不支持会话级删除时不能谎称成功（此前会 push success 且「已清空 0 条」误导用户）。
+          logger.warn('当前向量存储不支持按条件删除，会话级向量清空跳过');
+          data.results.push({
+            source: 'vector',
+            success: false,
+            message: '当前向量存储不支持会话级清空，向量记忆未清除（可改用 /clear.all 或换支持按条件删除的后端）',
+          });
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      data.results.push({ source: 'vector', success: false, message: `向量清空失败: ${msg}` });
+      logger.warn(`向量清空失败: ${formatError(err)}`);
+    }
+
+    await next();
+  });
 
   // === 检索并注入上下文（agent:prompt 贡献 / turn-context 槽：按当前消息检索、每轮必变，落历史后护前缀缓存）===
 
-  ctx.contribute('agent:prompt', {
+  contributions.contribute('agent:prompt', {
     id: 'memory-vector',
     anchor: 'turn-context',
     async build(data) {
@@ -594,13 +625,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         // others-only 档过滤发生在检索后：候选池放大一倍补偿，否则 assistant 语料
         // 占比升高后对方消息会被挤出候选（2026-08-27 审计探针实测同语料 2→0 条）
         const oversample = cfg.recallRoles === 'others-only' ? 8 : 4;
-        const candidateCount = Math.min(cfg.search.topK * oversample, await getStore().size());
+        const candidateCount = Math.min(cfg.search.topK * oversample, await vectorstore.require().size());
         data.signal?.throwIfAborted();
         if (candidateCount === 0) return null;
 
-        const queryVec = await getEmbedder().embed(stripTimeLabel(lastUserMsg.content), { signal: data.signal });
+        const queryVec = await embedding.require().embed(stripTimeLabel(lastUserMsg.content), { signal: data.signal });
         data.signal?.throwIfAborted();
-        const candidates = (await getStore().search(queryVec, candidateCount)).filter(r =>
+        const candidates = (await vectorstore.require().search(queryVec, candidateCount)).filter(r =>
           candidateAdmissible(r.metadata),
         );
         data.signal?.throwIfAborted();
@@ -672,7 +703,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         }
 
         // 拉取每个会话的扩展消息
-        const mem = getMemory();
+        const mem = memory.current;
         if (W > 0 && mem?.getMessagesBySessionRange) {
           for (const [sid, pivots] of sessionPivots) {
             data.signal?.throwIfAborted();
@@ -725,7 +756,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
               }
             } catch (err) {
               data.signal?.throwIfAborted();
-              ctx.logger.warn(`扩展上下文失败 (session=${sid}): ${err instanceof Error ? err.message : String(err)}`);
+              logger.warn(`扩展上下文失败 (session=${sid}): ${err instanceof Error ? err.message : String(err)}`);
             }
           }
         }
@@ -775,7 +806,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         );
       } catch (err) {
         if (data.signal?.aborted) return null;
-        ctx.logger.warn(`向量记忆检索失败: ${formatError(err)}`);
+        logger.warn(`向量记忆检索失败: ${formatError(err)}`);
         return null;
       }
     },
@@ -783,7 +814,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // === 工具：主动语义召回 ===
   // LLM 可在判断"被动注入不够用"时主动调用，按任意 query 检索
-  useToolService(ctx).register({
+  tools.register({
     definition: {
       type: 'function',
       function: {
@@ -870,15 +901,15 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const curPlatform = callCtx.platform ?? (curSessionId ? parsePlatform(curSessionId) : '');
 
       try {
-        const storeSize = await getStore().size();
+        const storeSize = await vectorstore.require().size();
         if (storeSize === 0) {
           return JSON.stringify({ ok: true, query, results: [], message: '向量库为空' });
         }
 
-        const queryVec = await getEmbedder().embed(query);
+        const queryVec = await embedding.require().embed(query);
         const toolOversample = cfg.recallRoles === 'others-only' ? 8 : 4;
         const candidates = (
-          await getStore().search(queryVec, Math.min(requestedTopK * toolOversample, storeSize))
+          await vectorstore.require().search(queryVec, Math.min(requestedTopK * toolOversample, storeSize))
         ).filter(r => candidateAdmissible(r.metadata));
 
         const passThreshold = candidates.filter(c => c.score >= cfg.search.minScore);
@@ -912,7 +943,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         // 仅当 effectiveWindow > 0 且 memory 服务支持范围查询时启用
         type CtxEntry = { ts: number; role: string; text: string };
         const contextBySessionPivot = new Map<string, CtxEntry[]>(); // key = `${sid}|${ts}`
-        const mem = getMemory();
+        const mem = memory.current;
         if (effectiveWindow > 0 && mem?.getMessagesBySessionRange) {
           // 按 sessionId 聚合 pivots
           const sessionPivots = new Map<string, number[]>();
@@ -954,7 +985,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
                 if (ctxArr.length > 0) contextBySessionPivot.set(`${sid}|${pivotTs}`, ctxArr);
               }
             } catch (err) {
-              ctx.logger.warn(
+              logger.warn(
                 `memory_recall 上下文扩展失败 (session=${sid}): ${err instanceof Error ? err.message : String(err)}`,
               );
             }
@@ -994,26 +1025,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        ctx.logger.warn(`memory_recall 失败: ${msg}`);
+        logger.warn(`memory_recall 失败: ${msg}`);
         return JSON.stringify({ error: `检索失败: ${msg}` });
       }
     },
   });
 }
-
-// ----- 服务类型注册（declaration merging）-----
-// `semantic-memory` 是**能力标记**而非查询 API：它只声明「本实例具备语义检索能力」，
-// 供 inject.optional 与拓扑排序识别，以及消费方做能力探测。语义检索本身经工具与
-// memory 契约走，不从这里取。如实声明它的真实形状，不臆造一个没人实现的查询接口。
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    'semantic-memory': {
-      /** 实现标识（当前唯一实现为 `vector-memory`）。 */
-      name: string;
-    };
-  }
-}
-
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
-/** 存在性标记服务：只表明「语义记忆已就绪」，检索本身走 memory 契约 */
-export const semanticMemory = defineService<{ name: string }>('semantic-memory');

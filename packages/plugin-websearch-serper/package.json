@@ -45,7 +45,8 @@
   "aalis": {
     "service": {
       "optional": [
-        "llm"
+        "llm",
+        "tools"
       ],
       "provides": [
         "web-search"

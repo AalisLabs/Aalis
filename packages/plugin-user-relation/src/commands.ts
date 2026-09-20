@@ -9,15 +9,24 @@
  * - `relation cleanup all`：清空整个关系图（authority=4, dangerous，需要二次确认 --yes）
  */
 
-import { useCommandService } from '@aalis/api-commands';
-import { sendPlatformMessage } from '@aalis/api-platform';
-import type { Context } from '@aalis/core';
+import type { BoundCommands } from '@aalis/api-commands';
+import type { LLMModel } from '@aalis/api-llm';
+import { type PlatformAdapter, sendPlatformMessage } from '@aalis/api-platform';
+import type { Logger, ServiceRef } from '@aalis/core';
 import { getKnownPlatformsLower, isPlaceholderSelfPersonId } from './extractor.js';
 import type { RelationService } from './service.js';
 import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js';
 
+/** /relation 指令用到的能力 */
+interface CommandsCaps {
+  commands: BoundCommands;
+  platform: ServiceRef<PlatformAdapter>;
+  llm: ServiceRef<LLMModel>;
+  logger: Logger;
+}
+
 export function registerRelationCommands(
-  ctx: Context,
+  { commands: cmds, platform, llm, logger }: CommandsCaps,
   service: RelationService,
   options?: {
     consolidateLLM?: { modelRef: { provider: string; model: string }; disableThinking?: boolean };
@@ -47,8 +56,6 @@ export function registerRelationCommands(
     consolidateLowScoreThreshold?: number;
   },
 ): void {
-  const cmds = useCommandService(ctx);
-
   // ---- show ----
   cmds
     .command('relation.show <kind:string> <id:text>', '查看关系图中某节点及其直连边')
@@ -175,7 +182,7 @@ export function registerRelationCommands(
 
   // ---- cleanup fake-self ----
   // 专门清理 LLM 误抽出的「伪 person」占位：platform 不在运行时白名单
-  // (`getPlatformNames(ctx)`) 中，或者 userId 命中通用占位词 `{self, me, bot, assistant}`。
+  // (`getPlatformNames(platform)`) 中，或者 userId 命中通用占位词 `{self, me, bot, assistant}`。
   // 以往的「aalis:aalis / aalis:self / onebot:aalis」都被该规则覆盖，且同时 persona-agnostic
   // （改 persona 名为 Mia / 任意名字都不需要改代码）。依赖 extractor.isPlaceholderSelfPersonId
   // 保证与写入守卫、consolidate 三处口径一致。
@@ -190,7 +197,7 @@ export function registerRelationCommands(
     .option('dry-run', '--dry-run', { description: '只列出会被删的节点，不实际删除' })
     .action(async argv => {
       const snap = await service.loadAll();
-      const knownPlatforms = getKnownPlatformsLower(ctx);
+      const knownPlatforms = getKnownPlatformsLower(platform);
       const fakes = snap.persons.filter(p => isPlaceholderSelfPersonId(p.platform, p.userId, knownPlatforms));
       if (fakes.length === 0) return '✓ 未发现伪 person。';
       const dry = argv.options['dry-run'] === true;
@@ -241,11 +248,11 @@ export function registerRelationCommands(
    * - 失败静默（CLI 会话没有 platform adapter 会抛错，不影响主流程）
    * - 不 await 完成，纯并发
    */
-  function ackBackground(sessionId: string, platform: string, text: string): void {
+  function ackBackground(sessionId: string, platformName: string, text: string): void {
     // internal 平台（scheduler / workflow 等系统触发）没有真实用户等待，跳过推送
-    if (platform === 'internal') return;
-    void sendPlatformMessage(ctx, sessionId, text).catch(err => {
-      ctx.logger?.debug?.(`[user-relation] 立即反馈推送失败（可忽略）：${(err as Error).message}`);
+    if (platformName === 'internal') return;
+    void sendPlatformMessage(platform, sessionId, text).catch(err => {
+      logger.debug(`[user-relation] 立即反馈推送失败（可忽略）：${(err as Error).message}`);
     });
   }
 
@@ -289,7 +296,7 @@ export function registerRelationCommands(
         const r = await service.consolidate({
           autoLink,
           triggerSource: 'manual',
-          ctx,
+          platform,
           ...(options?.consolidateSkipLowScorePairs !== undefined
             ? { skipLowScorePairs: options.consolidateSkipLowScorePairs }
             : {}),
@@ -299,7 +306,7 @@ export function registerRelationCommands(
           ...(useLlm && options?.consolidateLLM
             ? {
                 llm: {
-                  ctx,
+                  models: llm,
                   modelRef: options.consolidateLLM.modelRef,
                   disableThinking: options.consolidateLLM.disableThinking ?? true,
                 },
@@ -390,7 +397,7 @@ export function registerRelationCommands(
           ...(useLlm && options?.consolidateLLM
             ? {
                 llm: {
-                  ctx,
+                  models: llm,
                   modelRef: options.consolidateLLM.modelRef,
                   disableThinking: options.consolidateLLM.disableThinking ?? true,
                 },
@@ -522,7 +529,7 @@ export function registerRelationCommands(
         const cr = await service.consolidate({
           autoLink,
           triggerSource: 'manual',
-          ctx,
+          platform,
           ...(options?.consolidateSkipLowScorePairs !== undefined
             ? { skipLowScorePairs: options.consolidateSkipLowScorePairs }
             : {}),
@@ -532,7 +539,7 @@ export function registerRelationCommands(
           ...(useLlm && options?.consolidateLLM
             ? {
                 llm: {
-                  ctx,
+                  models: llm,
                   modelRef: options.consolidateLLM.modelRef,
                   disableThinking: options.consolidateLLM.disableThinking ?? true,
                 },

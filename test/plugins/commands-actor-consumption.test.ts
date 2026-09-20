@@ -1,8 +1,8 @@
-import { App } from '@aalis/core';
+import { App, events, services } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import type { CommandService, ExecutionInput } from '../../packages/api-commands/src/index.js';
-import * as commandsModule from '../../packages/plugin-commands/src/index.js';
-import * as gatewayModule from '../../packages/plugin-gateway/src/index.js';
+import { commands as commandsDescriptor, type ExecutionInput } from '../../packages/api-commands/src/index.js';
+import commandsPlugin from '../../packages/plugin-commands/src/index.js';
+import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // commands 的 inbound 相位：actor 消费端 + 受信系统源判定
@@ -23,12 +23,13 @@ interface Captured {
 
 async function runInbound(message: Record<string, unknown>): Promise<Captured> {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(gatewayModule as never, {});
-  await app.ctx.useModule(commandsModule as never, {});
+  await app.plugin(gatewayPlugin);
+  await app.plugin(commandsPlugin);
   await app.plugins.idle();
 
+  const host = app.bind({ events, services });
   const captured: Captured = {};
-  const commands = app.ctx.getService<CommandService>('commands');
+  const commands = host.services.get(commandsDescriptor);
   if (!commands) throw new Error('commands 服务未注册');
   commands.command('probe', '探针').action(async function (this: unknown) {
     return 'ok';
@@ -40,7 +41,7 @@ async function runInbound(message: Record<string, unknown>): Promise<Captured> {
     return orig(name, input);
   };
 
-  await app.ctx.emit('inbound:message', message as never);
+  await host.events.emit('inbound:message', message as never);
   await app.stop();
   return captured;
 }

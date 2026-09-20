@@ -1,8 +1,8 @@
-import type { Context, Logger } from '@aalis/core';
+import type { Logger, ServiceRef } from '@aalis/core';
 import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
-import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
+import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 
 // ════════════════════════════════════════════════════════════
@@ -17,8 +17,24 @@ import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 // 本地模型后当场引爆。契约：出口只交出 provider 能解码的形态，交不出就丢这一张。
 // ════════════════════════════════════════════════════════════
 
-const ctx = { getAllServices: () => [], getService: () => undefined } as unknown as Context;
 const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
+
+/** 无提供者的按激活绑定桩：本套用例只考出口形态变换，不需要任何服务在场 */
+const empty = <P>(): ServiceRef<P> => ({
+  current: undefined,
+  require: () => {
+    throw new Error('无提供者');
+  },
+  all: () => [],
+  follow: () => () => {},
+});
+const caps: MediaServiceCaps = {
+  logger,
+  llm: empty(),
+  asr: empty(),
+  sessionManager: empty(),
+  memory: empty(),
+};
 
 const REF = 'data/images/onebot_1321759429_group_878279594/b4476ff0fcb7e633.gif';
 const DATA_URI = 'data:image/png;base64,iVBORw0KGgo=';
@@ -31,7 +47,7 @@ function svcWith(): MediaServiceImpl {
     animatedImage: { maxFrames: 4 },
     contextHistory: { enabled: false, maxMessages: 0 },
   } as unknown as MediaConfigResolved;
-  return new MediaServiceImpl(ctx, logger, cfg);
+  return new MediaServiceImpl(caps, cfg);
 }
 
 describe('transformModelImages：裸路径 ref 不得流向 provider', () => {
@@ -80,8 +96,8 @@ describe('agent:llm:before 中间件：describe 模式也必须过形态闸', ()
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     app.ctx.provide('process', {} as never);
     app.ctx.provide('storage', {} as never);
-    const mediaModule = await import('../../packages/plugin-media/src/index.js');
-    await app.ctx.useModule(mediaModule as never, { vision: { delivery: 'describe' } });
+    const media = (await import('../../packages/plugin-media/src/index.js')).default;
+    await app.plugin(media, { vision: { delivery: 'describe' } });
     await app.plugins.idle();
 
     const data = {

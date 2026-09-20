@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import type { RegisteredTool, ScopedToolService } from '../../packages/api-tools/src/index.js';
+import type { BoundTools, RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { CwdState } from '../../packages/plugin-tool-system/src/tools/cwd-state.js';
 import { registerFileTools } from '../../packages/plugin-tool-system/src/tools/file.js';
 
@@ -45,13 +45,15 @@ function memoryStorage(files: Record<string, string>) {
 
 function setup(files: Record<string, string>, maxReadSize = 1048576) {
   const tools: Record<string, Omit<RegisteredTool, 'pluginName'>> = {};
-  const svc = {
+  const svc: BoundTools = {
     register: (t: Omit<RegisteredTool, 'pluginName'>) => {
       tools[t.definition.function.name] = t;
       return () => undefined;
     },
     registerGroup: () => () => undefined,
-  } as unknown as ScopedToolService;
+    current: undefined,
+    follow: () => () => undefined,
+  };
   registerFileTools(svc, {
     maxReadSize,
     maxSearchBytes: 1048576,

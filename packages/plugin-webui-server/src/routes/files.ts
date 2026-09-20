@@ -7,7 +7,6 @@
 
 import { basename } from 'node:path';
 import type { StorageService } from '@aalis/api-storage';
-import type { Context } from '@aalis/core';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 
@@ -19,12 +18,7 @@ export interface FileRoutesOptions {
 }
 
 /** 注册文件管理相关 REST 路由 */
-export function registerFileRoutes(
-  expressApp: express.Express,
-  _ctx: Context,
-  opts: FileRoutesOptions,
-  gate: RouteGate,
-): void {
+export function registerFileRoutes(expressApp: express.Express, opts: FileRoutesOptions, gate: RouteGate): void {
   const { storage, fileRoot } = opts;
 
   function storageUri(relPath: string): string {

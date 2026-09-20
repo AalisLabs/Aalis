@@ -12,11 +12,13 @@
 import type { ProcessService, SpawnHandle } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
 import { resolveAgainstCwd } from '@aalis/api-storage';
-import type { ScopedToolService } from '@aalis/api-tools';
-import type { Context } from '@aalis/core';
+import type { BoundTools } from '@aalis/api-tools';
+import type { LifecycleCap, Logger } from '@aalis/core';
 
 interface ShellConfig {
-  ctx: Context;
+  logger: Logger;
+  /** 用于在激活关闭时收掉后台进程 */
+  lifecycle: LifecycleCap;
   cwdUri: string;
   proc: ProcessService;
   storage?: StorageService;
@@ -78,8 +80,8 @@ async function resolveCwd(config: ShellConfig, cwdArg: unknown): Promise<{ uri: 
   return { uri, localPath: await config.storage.resolveLocalPath(uri, 'read') };
 }
 
-export function registerShellTools(tools: ScopedToolService, config: ShellConfig): void {
-  const ctx = config.ctx;
+export function registerShellTools(tools: BoundTools, config: ShellConfig): void {
+  const logger = config.logger;
   const proc = config.proc;
   const isWin = process.platform === 'win32';
   const shellCmd = isWin ? 'cmd' : '/bin/sh';
@@ -131,7 +133,7 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
       const cwd = await resolveCwd(config, args.cwd);
       const timeout = Math.min(Math.max(1000, (args.timeout as number) || config.defaultTimeout), config.maxTimeout);
 
-      ctx.logger.debug(`exec: ${command} (cwd: ${cwd.uri}, timeout: ${timeout}ms)`);
+      logger.debug(`exec: ${command} (cwd: ${cwd.uri}, timeout: ${timeout}ms)`);
 
       // exec 继承宿主完整环境（含代理与密钥类变量）——owner 工具的既定取舍（2026-08-23 拍板，
       // 曾有的 env 白名单从未生效、已删）。需要环境隔离的执行走 code-sandbox-os（env -i 真清）。
@@ -239,7 +241,7 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
       );
 
       processes.set(id, managed);
-      ctx.logger.debug(`exec_background: ${command} -> ${id} (pid: ${child.pid})`);
+      logger.debug(`exec_background: ${command} -> ${id} (pid: ${child.pid})`);
 
       return JSON.stringify({
         processId: id,
@@ -394,7 +396,7 @@ export function registerShellTools(tools: ScopedToolService, config: ShellConfig
   });
 
   // 清理：插件卸载时终止所有后台进程
-  ctx.onDispose(async () => {
+  config.lifecycle.onDispose(async () => {
     for (const [, processes] of backgroundProcesses) {
       for (const [, managed] of processes) {
         if (!managed.done) {

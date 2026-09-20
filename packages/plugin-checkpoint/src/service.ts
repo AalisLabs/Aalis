@@ -1,6 +1,6 @@
 import type { MemoryService } from '@aalis/api-memory';
 import { type StorageService, toStorageUri } from '@aalis/api-storage';
-import type { Logger } from '@aalis/core';
+import type { Logger, ServiceRef } from '@aalis/core';
 
 /** 不记账的根类型：多会话/多平台共享写入区（data、pluginData、logs）与回合结束前就清掉的临时目录（tmp）。 */
 const UNPROTECTED_ROOT_KINDS: ReadonlySet<string> = new Set(['data', 'tmp', 'pluginData', 'logs']);
@@ -13,8 +13,8 @@ const UNPROTECTED_ROOT_KINDS: ReadonlySet<string> = new Set(['data', 'tmp', 'plu
  * 在改动发生前自动备份原始文件内容，使用户可以从 WebUI 一键回滚整轮操作。
  *
  * 协作模型：
- * - plugin-storage-local 在执行 writeFile/delete/rename 之前，通过
- *   `ctx.getService<CheckpointService>('checkpoint')?.beforeMutate(...)` 探测本服务。
+ * - plugin-storage-local 在执行 writeFile/delete/rename 之前先探测 checkpoint 服务，
+ *   在场就调它的 `beforeMutate(...)` 留一次快照机会。
  * - 本服务通过 hooks `agent:input:before` / `agent:turn:after` 维护「当前回合」状态。
  * - exec / exec_background / run_* 等命令类工具直接调用系统命令，不在本服务保护范围内
  *   （前端 UI 标注「未保护」）。
@@ -169,10 +169,11 @@ export class CheckpointServiceImpl implements CheckpointService {
     const m = turn.manifest;
     m.endedAt = Date.now();
     // 在持久化前抓取本轮对话的消息时间戳（供 rollbackWithChat 使用）；即使无文件改动，只要有消息就持久化
-    if (this._memory && typeof this._memory.getMessagesBySessionRange === 'function') {
+    const memory = this._memory?.current;
+    if (memory && typeof memory.getMessagesBySessionRange === 'function') {
       try {
         // 宽松边界 200ms，用于容纳 archiveIncoming/saveMessage 时钟偏差
-        const msgs = await this._memory.getMessagesBySessionRange(m.sessionId, m.startedAt - 200, m.endedAt + 200);
+        const msgs = await memory.getMessagesBySessionRange(m.sessionId, m.startedAt - 200, m.endedAt + 200);
         m.messageTimestamps = msgs.map(msg => msg.timestamp).filter((t): t is number => typeof t === 'number');
       } catch (err) {
         this.logger.warn(`抓取本轮消息时间戳失败: ${(err as Error).message}`);
@@ -409,7 +410,7 @@ export class CheckpointServiceImpl implements CheckpointService {
   private _backendWrite?: (uri: string, data: Buffer) => Promise<void>;
   private _backendDelete?: (uri: string) => Promise<void>;
   private _backendMove?: (fromUri: string, toUri: string) => Promise<void>;
-  private _memory?: MemoryService;
+  private _memory?: ServiceRef<MemoryService>;
   private _emitMessagesDeleted?: (sessionId: string, timestamps: number[]) => void;
   private _emitHistoryChanged?: (sessionId: string) => void;
 
@@ -423,9 +424,9 @@ export class CheckpointServiceImpl implements CheckpointService {
     this._backendMove = move;
   }
 
-  /** 注入聊天回滚所需的依赖：memory 服务 + 事件发出器 */
+  /** 注入聊天回滚所需的依赖：memory 引用（每次用时解析当前提供者）+ 事件发出器 */
   setChatRollbackDeps(deps: {
-    memory: MemoryService;
+    memory: ServiceRef<MemoryService>;
     emitMessagesDeleted: (sessionId: string, timestamps: number[]) => void;
     emitHistoryChanged: (sessionId: string) => void;
   }): void {
@@ -461,14 +462,15 @@ export class CheckpointServiceImpl implements CheckpointService {
       return result;
     }
 
-    if (!this._memory || typeof this._memory.deleteMessagesByTimestamps !== 'function') {
+    const memory = this._memory?.current;
+    if (!memory || typeof memory.deleteMessagesByTimestamps !== 'function') {
       result.errors.push({ uri: '', reason: '当前 memory 后端不支持 deleteMessagesByTimestamps' });
       result.ok = false;
       return result;
     }
 
     try {
-      result.deletedMessages = await this._memory.deleteMessagesByTimestamps(sessionId, timestamps);
+      result.deletedMessages = await memory.deleteMessagesByTimestamps(sessionId, timestamps);
       result.chatDeleted = true;
     } catch (err) {
       result.errors.push({ uri: '', reason: `删除消息失败: ${(err as Error).message}` });

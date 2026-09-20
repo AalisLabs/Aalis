@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentService, PromptContributionView } from '../../packages/api-agent/src/index.js';
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMModel } from '../../packages/api-llm/src/index.js';
-import { LLMCapabilities } from '../../packages/api-llm/src/index.js';
+import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import { App, type Context } from '../../packages/core/src/index.js';
-import * as agentModule from '../../packages/plugin-agent/src/index.js';
-import * as memoryHistoryModule from '../../packages/plugin-memory-history/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import * as memorySummaryModule from '../../packages/plugin-memory-summary/src/index.js';
-import * as messageArchiveModule from '../../packages/plugin-message-archive/src/index.js';
+import { App, contributions, definePlugin, hooks, provide } from '../../packages/core/src/index.js';
+import agentPlugin from '../../packages/plugin-agent/src/index.js';
+import memoryHistoryPlugin from '../../packages/plugin-memory-history/src/index.js';
+import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
+import memorySummaryPlugin from '../../packages/plugin-memory-summary/src/index.js';
+import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import type { IncomingMessage, Message, OutgoingMessage, ToolCall } from '../../packages/schema-message/src/index.js';
 
 /**
@@ -80,22 +80,24 @@ function createProbeLLMPlugin(opts: { replies: ProbeReply[]; recorder: Message[]
     },
   };
 
-  return {
+  return definePlugin({
     name: '@aalis/test-fixture-probe-llm',
-    apply(ctx: Context) {
+    uses: { provide },
+    apply(caps) {
       // 能力挂在 handle 自身的 capabilities 字段（model 上已声明），不是 provide 的选项。
-      ctx.provide('llm', model, { entryId: `${model.providerId}/${model.id}` });
+      caps.provide(llm, model, { entryId: `${model.providerId}/${model.id}` });
     },
-  };
+  });
 }
 
 // ---------- 探针贡献插件（三锚位贡献 + 进链布局录制 + 中场贡献）----------
 
 function createProbeContributionPlugin(views: PromptContributionView[], hookLayouts: string[][]) {
-  return {
+  return definePlugin({
     name: '@aalis/test-fixture-prompt-probe',
-    apply(ctx: Context) {
-      ctx.contribute(POINT, {
+    uses: { contributions, hooks },
+    apply({ contributions, hooks }) {
+      contributions.contribute(POINT, {
         id: 'identity-probe',
         anchor: 'identity',
         build(view: PromptContributionView) {
@@ -103,26 +105,29 @@ function createProbeContributionPlugin(views: PromptContributionView[], hookLayo
           return 'IDENTITY-PROBE-BLOCK';
         },
       } as never);
-      ctx.contribute(POINT, {
+      contributions.contribute(POINT, {
         id: 'knowledge-probe',
         anchor: 'knowledge',
         build: () => 'KNOWLEDGE-PROBE-BLOCK',
       } as never);
-      ctx.contribute(POINT, {
+      contributions.contribute(POINT, {
         id: 'turn-hint-probe',
         anchor: 'turn-hint',
         build: () => 'TURN-HINT-PROBE-BLOCK',
       } as never);
       // 进链探针：录下 agent:llm:before 链看到的布局。组装先于链是核心时序保证——
       // 进链时全部贡献块应已物化，拦截者审的是完整成品。
-      ctx.middleware('agent:llm:before' as never, async (data: { messages: Message[] }, next: () => Promise<void>) => {
-        hookLayouts.push(layoutOf(data.messages));
-        await next();
-      });
+      hooks.middleware(
+        'agent:llm:before' as never,
+        async (data: { messages: Message[] }, next: () => Promise<void>) => {
+          hookLayouts.push(layoutOf(data.messages));
+          await next();
+        },
+      );
       // 中场贡献探针：工具执行后（工具循环的二次组装之前）注册新贡献。
       // MIDTURN 块只能由二次 assemblePromptContributions 物化——该调用被删则测试必挂。
-      ctx.middleware('agent:tool:after' as never, async (_data: unknown, next: () => Promise<void>) => {
-        ctx.contribute(POINT, {
+      hooks.middleware('agent:tool:after' as never, async (_data: unknown, next: () => Promise<void>) => {
+        contributions.contribute(POINT, {
           id: 'midturn-probe',
           anchor: 'knowledge',
           build: () => 'MIDTURN',
@@ -130,7 +135,7 @@ function createProbeContributionPlugin(views: PromptContributionView[], hookLayo
         await next();
       });
     },
-  };
+  });
 }
 
 // ---------- 装栈 ----------
@@ -157,7 +162,7 @@ async function loadStack(replies: ProbeReply[]): Promise<Stack> {
   const outbound: OutgoingMessage[] = [];
 
   await app.ctx.useModule(createProbeLLMPlugin({ replies, recorder }));
-  await app.ctx.useModule(memoryInMemoryModule);
+  await app.ctx.useModule(memoryInMemoryPlugin);
   const memory = app.ctx.getService<MemoryService>('memory');
   if (!memory) throw new Error('memory 服务未就绪');
 
@@ -175,8 +180,8 @@ async function loadStack(replies: ProbeReply[]): Promise<Stack> {
     messageCount: 1,
   });
 
-  await app.ctx.useModule(messageArchiveModule, { debugLogs: false });
-  await app.ctx.useModule(memoryHistoryModule, {
+  await app.ctx.useModule(messageArchivePlugin, { debugLogs: false });
+  await app.ctx.useModule(memoryHistoryPlugin, {
     injectEnabled: true,
     scope: 'cross-platform',
     maxAgeMinutes: 0,
@@ -184,13 +189,13 @@ async function loadStack(replies: ProbeReply[]): Promise<Stack> {
     headerText: '[HISTORY-HEADER]',
     toolEnabled: false,
   });
-  await app.ctx.useModule(memorySummaryModule, {
+  await app.ctx.useModule(memorySummaryPlugin, {
     // 阈值拉高 + 关自动压缩：本测试内不触发任何后台摘要 LLM 调用
     threshold: 9999,
     autoCompressThreshold: 0,
   });
   await app.ctx.useModule(createProbeContributionPlugin(views, hookLayouts));
-  await app.ctx.useModule(agentModule, {
+  await app.ctx.useModule(agentPlugin, {
     systemPrompt: 'PERSONA-BASE-PROMPT',
     historyLimit: 50,
     memoryTokenBudget: 4096,

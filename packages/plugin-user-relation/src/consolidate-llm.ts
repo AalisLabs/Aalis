@@ -7,7 +7,7 @@
  */
 
 import { LLMCapabilities, type LLMModel, type ModelRef, resolveLLMModel } from '@aalis/api-llm';
-import type { Context } from '@aalis/core';
+import type { Logger, ServiceRef } from '@aalis/core';
 
 import type { EntityNode, EventNode, PersonNode } from './types.js';
 
@@ -17,9 +17,12 @@ interface ConsolidateLLMConfig {
 }
 
 /** 解析配置的 LLM 模型；未配置或不可用时返回 undefined。 */
-export function resolveConsolidateModel(ctx: Context, cfg: ConsolidateLLMConfig | undefined): LLMModel | undefined {
+export function resolveConsolidateModel(
+  llm: ServiceRef<LLMModel>,
+  cfg: ConsolidateLLMConfig | undefined,
+): LLMModel | undefined {
   if (!cfg) return undefined;
-  const entry = resolveLLMModel(ctx, cfg.modelRef, [LLMCapabilities.Chat]);
+  const entry = resolveLLMModel(llm, cfg.modelRef, [LLMCapabilities.Chat]);
   return entry?.instance;
 }
 
@@ -115,7 +118,6 @@ interface AliasPairResult {
 }
 
 export async function verifyAliasPair(
-  _ctx: Context,
   model: LLMModel,
   a: EntityNode,
   b: EntityNode,
@@ -224,7 +226,6 @@ interface EventPairContext {
 }
 
 export async function verifyEventPair(
-  _ctx: Context,
   model: LLMModel,
   a: EventNode,
   b: EventNode,
@@ -289,7 +290,7 @@ export async function verifyEventPair(
  * 失败返回 undefined（保留原 summary）。
  */
 export async function rewriteEntitySummary(
-  ctx: Context,
+  logger: Logger | undefined,
   model: LLMModel,
   entity: EntityNode,
   context: {
@@ -336,7 +337,7 @@ export async function rewriteEntitySummary(
       .trim();
     return cleaned || undefined;
   } catch (err) {
-    ctx.logger.warn(`[user-relation] consolidate 摘要重写失败: ${err instanceof Error ? err.message : String(err)}`);
+    logger?.warn(`[user-relation] consolidate 摘要重写失败: ${err instanceof Error ? err.message : String(err)}`);
     return undefined;
   }
 }
@@ -348,7 +349,7 @@ export async function rewriteEntitySummary(
  * 解析失败 / LLM 表示 false → confirmed=false。
  */
 export async function inferEntityHierarchy(
-  ctx: Context,
+  logger: Logger | undefined,
   model: LLMModel,
   candidates: Array<{ parent: EntityNode; child: EntityNode }>,
   disableThinking = true,
@@ -377,7 +378,7 @@ export async function inferEntityHierarchy(
     const raw = typeof resp.content === 'string' ? resp.content : JSON.stringify(resp.content);
     const parsed = tryParseJson(raw) as Array<{ index?: number; isPartOf?: unknown; reason?: unknown }> | undefined;
     if (!Array.isArray(parsed)) {
-      ctx.logger.warn('[user-relation] inferEntityHierarchy: LLM 输出无法解析为数组');
+      logger?.warn('[user-relation] inferEntityHierarchy: LLM 输出无法解析为数组');
       return candidates.map(c => ({
         parentId: c.parent.id,
         childId: c.child.id,
@@ -398,7 +399,7 @@ export async function inferEntityHierarchy(
       };
     });
   } catch (err) {
-    ctx.logger.warn(
+    logger?.warn(
       `[user-relation] inferEntityHierarchy LLM 调用失败: ${err instanceof Error ? err.message : String(err)}`,
     );
     return candidates.map(c => ({
@@ -420,7 +421,7 @@ export async function inferEntityHierarchy(
  * 解析失败 / LLM 失败 → accept=false。
  */
 export async function inferMissingParent(
-  ctx: Context,
+  logger: Logger | undefined,
   model: LLMModel,
   candidate: { parentName: string; kind: string; siblings: EntityNode[] },
   disableThinking = true,
@@ -463,7 +464,7 @@ export async function inferMissingParent(
       reason: typeof parsed.reason === 'string' ? parsed.reason : '',
     };
   } catch (err) {
-    ctx.logger.warn(
+    logger?.warn(
       `[user-relation] inferMissingParent LLM 调用失败: ${err instanceof Error ? err.message : String(err)}`,
     );
     return { accept: false, reason: `LLM 失败: ${err instanceof Error ? err.message : String(err)}` };

@@ -1,8 +1,9 @@
-import { INBOUND_PHASE } from '@aalis/api-gateway';
-import type { MessageArchiveService } from '@aalis/api-message-archive';
-import { createStorageGateway } from '@aalis/api-storage';
+import { flowControl } from '@aalis/api-flow-control';
+import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
+import { messageArchive } from '@aalis/api-message-archive';
+import { createStorageGateway, storage } from '@aalis/api-storage';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import type { Context } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, hooks, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { OutgoingMessage } from '@aalis/schema-message';
 import type { FlowControlService, FlowSessionStateSnapshot } from './types.js';
@@ -16,7 +17,7 @@ import {
   resolveEffectiveConfig,
   resolveFlowControlConfig,
 } from './config.js';
-import { clearSessionIdle, PlatformIdleScheduler, scheduleSessionIdle } from './idle-scheduler.js';
+import { clearSessionIdle, type IdleCaps, PlatformIdleScheduler, scheduleSessionIdle } from './idle-scheduler.js';
 import {
   applyScoreDecay,
   calculateScoreIncrement,
@@ -29,16 +30,7 @@ import {
 
 // ----- 元数据 -----
 
-export const name = '@aalis/plugin-flow-control';
-export const displayName = '消息流控';
-export const subsystem = 'core';
-export const provides = ['flow-control'];
-export const inject = {
-  required: ['gateway'],
-  optional: ['message-archive'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   scopes: {
     type: 'multiselect',
     label: '生效作用域',
@@ -148,15 +140,41 @@ export const configSchema: ConfigSchema = {
 
 // ----- 入口 -----
 
-export async function apply(ctx: Context, raw: Record<string, unknown>): Promise<void> {
-  const cfg = resolveFlowControlConfig(raw);
+const uses = {
+  logger,
+  events,
+  hooks,
+  lifecycle,
+  config,
+  provide,
+  gateway,
+  // 持久化禁言状态用；缺席时 loadMuteState / saveMuteState 各自兜住错误，流控照常跑
+  storage: optional(storage),
+  messageArchive: optional(messageArchive),
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-flow-control',
+  displayName: '消息流控',
+  subsystem: 'core',
+  configSchema,
+  provides: [flowControl],
+  uses,
+  apply: run,
+});
+
+async function run(caps: Caps): Promise<void> {
+  const { logger, events, hooks, lifecycle, provide, messageArchive } = caps;
+  const cfg = resolveFlowControlConfig(caps.config);
   const states = new Map<string, MutableFlowSessionState>();
-  const platformIdle = new PlatformIdleScheduler(ctx, cfg, states);
+  const idleCaps: IdleCaps = { logger, events, gateway: caps.gateway };
+  const platformIdle = new PlatformIdleScheduler(idleCaps, cfg, states);
 
   // ===== mutedUntil 持久化（仅此字段） =====
   // 其他运行时态（cooldownUntil/replyTimestamps/activityScore等）都是秒级短期，
   // 重启后重建无危；但 mutedUntil 可能是小时级的「用户意图」，丢失会导致重启后静默解除。
-  const storage = createStorageGateway(ctx);
+  const storage = createStorageGateway(caps.storage);
   const muteStateUri = 'data:/flow-control-mutes.json';
 
   async function loadMuteState(): Promise<void> {
@@ -180,9 +198,9 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
         states.set(sessionId, s);
         restored++;
       }
-      if (restored > 0) ctx.logger.info(`[flow] 已恢复 ${restored} 个未过期的禁言状态`);
+      if (restored > 0) logger.info(`[flow] 已恢复 ${restored} 个未过期的禁言状态`);
     } catch (err) {
-      ctx.logger.warn(`[flow] 加载禁言状态失败: ${err}`);
+      logger.warn(`[flow] 加载禁言状态失败: ${err}`);
     }
   }
 
@@ -197,7 +215,7 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
     saveChain = saveChain
       .then(() => storage.writeFile(muteStateUri, payload))
       .catch(err => {
-        ctx.logger.warn(`[flow] 持久化禁言状态失败: ${err}`);
+        logger.warn(`[flow] 持久化禁言状态失败: ${err}`);
       });
   }
 
@@ -232,7 +250,7 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
   function logStatus(sessionId: string, s: MutableFlowSessionState, label: string): void {
     const e = eff(s);
     const threshold = getCurrentThreshold(s, e);
-    ctx.logger.debug(
+    logger.debug(
       `[flow] ${label} | session=${sessionId} | ` +
         `计数=${s.messageCount}/${e.fixedInterval} | ` +
         `指数=${s.activityScore.toFixed(3)} (阈值=${threshold.toFixed(3)})`,
@@ -241,12 +259,12 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
 
   /** 把"被流控吞掉"的入站消息归档到 message-archive，下次触发时作为上下文 */
   async function shadowArchive(message: import('@aalis/schema-message').IncomingMessage): Promise<void> {
-    const archive = ctx.getService<MessageArchiveService>('message-archive');
+    const archive = messageArchive.current;
     if (!archive) return;
     try {
       await archive.archiveIncoming(message);
     } catch (err) {
-      ctx.logger.warn(`[flow] shadow 归档失败: ${err}`);
+      logger.warn(`[flow] shadow 归档失败: ${err}`);
     }
   }
 
@@ -320,7 +338,7 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
       if (durationSec <= 0) {
         s.mutedUntil = 0;
         saveMuteState();
-        ctx.logger.info(`[flow] 已解除自禁言: session=${sessionId}`);
+        logger.info(`[flow] 已解除自禁言: session=${sessionId}`);
         return;
       }
       s.mutedUntil = Date.now() + durationSec * 1000;
@@ -328,7 +346,7 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
       s.activityScore = 0;
       clearSessionIdle(s);
       saveMuteState();
-      ctx.logger.info(`[flow] 已设置自禁言: session=${sessionId}, ${durationSec}s`);
+      logger.info(`[flow] 已设置自禁言: session=${sessionId}, ${durationSec}s`);
     },
     getThreshold(sessionId) {
       const s = states.get(sessionId);
@@ -338,13 +356,13 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
     rescheduleIdle(sessionId, platform) {
       const s = states.get(sessionId);
       if (!s) return;
-      scheduleSessionIdle(ctx, eff(s), s, sessionId, platform, () => this.rescheduleIdle(sessionId, platform));
+      scheduleSessionIdle(idleCaps, eff(s), s, sessionId, platform, () => this.rescheduleIdle(sessionId, platform));
     },
   };
 
-  ctx.provide('flow-control', service);
+  provide(flowControl, service);
 
-  ctx.logger.info(
+  logger.info(
     `[flow] 已启用 (固定间隔=${cfg.fixedInterval}, 阈值=${cfg.activityScoreLower}~${cfg.activityScoreUpper}, ` +
       `冷却=${cfg.cooldownSeconds}s, 限速=${cfg.rateLimitWindow}s/${cfg.rateLimitMaxReplies}次, ` +
       `idle=${cfg.idleTriggerScope}/${cfg.idleTriggerStrategy}, scopes=${cfg.scopes.join('|') || '<空>'}, ` +
@@ -355,7 +373,7 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
   // 由 plugin-gateway 在 inbound:command 之后、inbound:trigger 之前触发。
   // 默认 scopes=['*:group'] 与历史 OneBot ChatFlow 行为一致；
   // overrides 中任一 scope 命中也视为启用（用于 *:private 等单独覆盖场景）。
-  ctx.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
+  hooks.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
     const { message } = data;
     if (!isScopeEnabled(cfg, message.platform, message.sessionType, extractTargetId(message))) return next();
     if (message.source === 'idle-trigger') return next(); // 内部注入不再过流控
@@ -389,7 +407,7 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
   });
 
   // 出站消息后记录冷却 / 重置退避（同样仅对群会话计入流控）
-  ctx.on('outbound:message', (msg: OutgoingMessage) => {
+  events.on('outbound:message', (msg: OutgoingMessage) => {
     if (!msg.sessionId) return;
     if (msg.source !== 'agent') return; // 命令/系统回复不算"对话回复"
     const s = states.get(msg.sessionId);
@@ -398,7 +416,7 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
   });
 
   // 平台级 idle 启动
-  ctx.on('app:ready', () => {
+  events.on('app:ready', () => {
     platformIdle.start();
   });
 
@@ -417,11 +435,11 @@ export async function apply(ctx: Context, raw: Record<string, unknown>): Promise
         cleaned++;
       }
     }
-    if (cleaned > 0) ctx.logger.debug(`[flow] TTL 清理已淘汰 ${cleaned} 个长期非活跃会话状态`);
+    if (cleaned > 0) logger.debug(`[flow] TTL 清理已淘汰 ${cleaned} 个长期非活跃会话状态`);
   }, SWEEP_INTERVAL_MS);
   if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
 
-  ctx.onDispose(() => {
+  lifecycle.onDispose(() => {
     clearInterval(sweepTimer);
     platformIdle.stop();
     for (const s of states.values()) clearSessionIdle(s);

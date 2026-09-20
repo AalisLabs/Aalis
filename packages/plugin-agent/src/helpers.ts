@@ -1,10 +1,10 @@
 /**
  * DefaultAgent 内部纯工具函数。
  *
- * 这些函数**不访问 ctx / this**，可独立测试与替换。
+ * 这些函数**不碰能力、也不碰 this**，可独立测试与替换。
  * 拆分目的：
  * - 让 index.ts 主类聚焦在编排/状态管理，而不是 token 估算细节
- * - 让纯函数可被 vitest 单独覆盖（无需 mock Context）
+ * - 让纯函数可被 vitest 单独覆盖（无需搭出一次激活）
  */
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 /**

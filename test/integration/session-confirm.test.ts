@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { AccessConfirmHandler, AccessRequest } from '../../packages/api-authority/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
-import * as sessionConfirmPlugin from '../../packages/plugin-session-confirm/src/index.js';
+import { type AccessConfirmHandler, type AccessRequest, authority } from '../../packages/api-authority/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
+import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
+import sessionConfirmPlugin from '../../packages/plugin-session-confirm/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 端到端：统一会话确认环路（轴 B 的交互通道）
@@ -24,9 +24,10 @@ async function setup() {
       };
     },
   };
-  await app.plugins.register(gatewayPlugin as never);
-  app.ctx.provide('authority', stubAuthority as never);
-  await app.plugins.register(sessionConfirmPlugin as never);
+  await app.plugins.register(gatewayPlugin);
+  const host = app.bind({ provide });
+  host.provide(authority, stubAuthority as never);
+  await app.plugins.register(sessionConfirmPlugin);
   await tick();
   return { app, getHandler: () => starHandler };
 }

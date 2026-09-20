@@ -1,15 +1,15 @@
-import type { FlowControlService } from '@aalis/api-flow-control';
-import type { MessageArchiveService } from '@aalis/api-message-archive';
+import { flowControl } from '@aalis/api-flow-control';
+import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
+import { messageArchive } from '@aalis/api-message-archive';
+import { persona } from '@aalis/api-persona';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import type { Context } from '@aalis/core';
-import { defineService } from '@aalis/core';
+import { type BoundOf, config, definePlugin, defineService, hooks, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { type IncomingMessage, selfInitiatedActor, WellKnownNoticeTypes } from '@aalis/schema-message';
 import type { TriggerDecision, TriggerPolicyService } from './types.js';
 
 export type { TriggerDecision, TriggerKind, TriggerPolicyService } from './types.js';
 
-import { INBOUND_PHASE } from '@aalis/api-gateway';
 import {
   defaultTriggerPolicyConfig,
   isScopeEnabled,
@@ -21,16 +21,7 @@ import { checkImmediateTrigger, checkMuteKeyword, getBotNames } from './detector
 
 // ----- 元数据 -----
 
-export const name = '@aalis/plugin-trigger-policy';
-export const displayName = '触发策略';
-export const subsystem = 'scheduler';
-export const provides = ['trigger-policy'];
-export const inject = {
-  required: ['gateway'],
-  optional: ['flow-control', 'persona', 'message-archive'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   scopes: {
     type: 'multiselect',
     label: '生效作用域',
@@ -94,10 +85,44 @@ export const configSchema: ConfigSchema = {
   },
 };
 
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    'trigger-policy': import('./types.js').TriggerPolicyService;
+  }
+}
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const triggerPolicy = defineService<TriggerPolicyService>('trigger-policy');
+
 // ----- 入口 -----
 
-export function apply(ctx: Context, raw: Record<string, unknown>): void {
-  const cfg = resolveTriggerPolicyConfig(raw);
+const uses = {
+  logger,
+  hooks,
+  config,
+  provide,
+  gateway,
+  // 缺席时按"无状态即放行"评估；归档缺席则被吞掉的消息不进档，判定照常
+  flowControl: optional(flowControl),
+  persona: optional(persona),
+  messageArchive: optional(messageArchive),
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-trigger-policy',
+  displayName: '触发策略',
+  subsystem: 'scheduler',
+  configSchema,
+  provides: [triggerPolicy],
+  uses,
+  apply: run,
+});
+
+function run(caps: Caps): void {
+  const { logger, hooks, provide, persona, flowControl, messageArchive } = caps;
+  const cfg = resolveTriggerPolicyConfig(caps.config);
 
   /** 从 IncomingMessage 派生 per-scope override 用的 targetId（群=groupId / 私=userId / 其他=空） */
   function extractTargetId(message: IncomingMessage): string {
@@ -108,12 +133,12 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
 
   /** 把"被策略吞掉"的入站消息归档（与 flow-control 的 shadow 归档对齐） */
   async function shadowArchive(message: IncomingMessage): Promise<void> {
-    const archive = ctx.getService<MessageArchiveService>('message-archive');
+    const archive = messageArchive.current;
     if (!archive) return;
     try {
       await archive.archiveIncoming(message);
     } catch (err) {
-      ctx.logger.warn(`[trigger] shadow 归档失败: ${err}`);
+      logger.warn(`[trigger] shadow 归档失败: ${err}`);
     }
   }
 
@@ -136,10 +161,10 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
         if (eff.triggerOnPoke) {
           return { kind: 'immediate', reason: 'poke notice' };
         }
-      } else if (checkImmediateTrigger(ctx, eff, message.content)) {
+      } else if (checkImmediateTrigger(persona, eff, message.content)) {
         return { kind: 'immediate', reason: '@/name match' };
       }
-      const flow = ctx.getService<FlowControlService>('flow-control');
+      const flow = flowControl.current;
       const snap = flow?.getStateSnapshot(message.sessionId);
       if (!snap) {
         return { kind: 'interval', reason: 'no flow state, default-pass' };
@@ -163,16 +188,16 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
         : { kind: 'swallow', reason: 'below threshold' };
     },
     getBotNames() {
-      return getBotNames(ctx, cfg);
+      return getBotNames(persona, cfg);
     },
     detectMuteKeyword(content) {
-      return checkMuteKeyword(ctx, cfg, content);
+      return checkMuteKeyword(cfg, content);
     },
   };
 
-  ctx.provide('trigger-policy', service);
+  provide(triggerPolicy, service);
 
-  ctx.logger.info(
+  logger.info(
     `[trigger] 已启用 (模式=${cfg.intervalMode}, @提及=${cfg.triggerOnAt}, ` +
       `别名=${cfg.triggerNames.length}, mute关键词=${cfg.muteKeywords.length}, ` +
       `mute时长=${cfg.muteTimeSeconds}s, scopes=${cfg.scopes.join('|') || '<空>'}, ` +
@@ -182,11 +207,11 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
   // ===== inbound:trigger 相位：触发判定 =====
   // 由 plugin-gateway 在 inbound:flow 之后、inbound:dispatch 之前触发。
   // 进入本相位意味着已通过冷却/限速闸门。
-  ctx.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
+  hooks.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
     const { message } = data;
     if (message.source === 'idle-trigger') return next(); // 内部注入跳过策略
 
-    const flow = ctx.getService<FlowControlService>('flow-control');
+    const flow = flowControl.current;
     const tid = extractTargetId(message);
 
     // 不在触发策略作用域内（默认 *:group）：直接放行。
@@ -197,8 +222,8 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     const eff = resolveEffectiveConfig(cfg, message.platform, message.sessionType, tid);
 
     // mute 关键词命中：设置自禁言并 swallow
-    if (checkMuteKeyword(ctx, eff, message.content)) {
-      ctx.logger.info(`[trigger] mute 关键词命中 → swallow + setMuted(${eff.muteTimeSeconds}s): ${message.sessionId}`);
+    if (checkMuteKeyword(eff, message.content)) {
+      logger.info(`[trigger] mute 关键词命中 → swallow + setMuted(${eff.muteTimeSeconds}s): ${message.sessionId}`);
       flow?.setMuted(message.sessionId, eff.muteTimeSeconds);
       // 与 dev OneBot ChatFlow 一致：设置自禁言后调度一次 idle，
       // 让禁言结束附近能正常进入「长期静默→主动招呼」路径。
@@ -211,7 +236,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     try {
       decision = service.decide(message);
     } catch (err) {
-      ctx.logger.warn(`[trigger] decide() 异常，默认放行: ${err}`);
+      logger.warn(`[trigger] decide() 异常，默认放行: ${err}`);
       await next();
       return;
     }
@@ -225,7 +250,7 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       : '无 flow 状态';
 
     if (decision.kind === 'immediate' || decision.kind === 'interval') {
-      ctx.logger.debug(
+      logger.debug(
         `[trigger] ${decision.kind} → 触发 | session=${message.sessionId} | ${stateStr} | ${decision.reason}`,
       );
       flow?.recordTriggered(message.sessionId);
@@ -241,20 +266,10 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       return;
     }
     // swallow
-    ctx.logger.debug(`[trigger] 未触发 → 吞噬 | session=${message.sessionId} | ${stateStr} | ${decision.reason}`);
+    logger.debug(`[trigger] 未触发 → 吞噬 | session=${message.sessionId} | ${stateStr} | ${decision.reason}`);
     await shadowArchive(message);
     // flow-control 已在前置中调度 idle，无需重复
   });
 }
 
 export type { TriggerPolicyConfig };
-
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    'trigger-policy': import('./types.js').TriggerPolicyService;
-  }
-}
-
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
-export const triggerPolicy = defineService<import('./types.js').TriggerPolicyService>('trigger-policy');

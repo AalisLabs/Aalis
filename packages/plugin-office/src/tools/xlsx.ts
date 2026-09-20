@@ -1,5 +1,5 @@
 import type { StorageService } from '@aalis/api-storage';
-import type { ScopedToolService } from '@aalis/api-tools';
+import type { BoundTools } from '@aalis/api-tools';
 import ExcelJS from 'exceljs';
 import type { DocSessionManager } from '../session.js';
 
@@ -25,7 +25,7 @@ function parseAddr(addr: string): { row: number; col: number } {
 }
 
 export function registerExcelTools(
-  tools: ScopedToolService,
+  tools: BoundTools,
   sessions: DocSessionManager,
   storage: StorageService,
   outputUri: string,

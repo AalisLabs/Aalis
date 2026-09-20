@@ -10,21 +10,15 @@
 
 import { Buffer } from 'node:buffer';
 import { extname } from 'node:path';
-import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/api-asr';
+import { type ASRService, asr, type TranscribeInput, type TranscribeResult } from '@aalis/api-asr';
 import type { ProcessService } from '@aalis/api-process';
-import { createProcessGateway } from '@aalis/api-process';
+import { createProcessGateway, processService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
-import { createStorageGateway, isStorageUri } from '@aalis/api-storage';
-import type { Context } from '@aalis/core';
+import { createStorageGateway, isStorageUri, storage as storageService } from '@aalis/api-storage';
+import type {} from '@aalis/api-webui'; // declaration merging：PluginMeta 的 subsystem 字段由本包挂上
+import { config, definePlugin, logger, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { safeFetch } from '@aalis/util-network-guard';
-
-export const name = '@aalis/plugin-asr-whisper-cpp';
-export const displayName = 'Whisper.cpp 本地转写';
-export const subsystem = 'media';
-export const provides = ['asr'];
-export const inject = { required: ['process', 'storage'] };
-export const reusable = true;
 
 interface Cfg {
   binaryPath: string;
@@ -36,7 +30,7 @@ interface Cfg {
   timeoutMs: number;
 }
 
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   binaryPath: { type: 'string', label: 'whisper-cli 路径', default: 'whisper-cli' },
   modelPath: { type: 'string', label: '模型文件路径 (.bin)', default: '' },
   language: { type: 'string', label: '默认语种', default: 'auto' },
@@ -142,18 +136,33 @@ async function toWav16k(proc: ProcessService, input: string, outLocal: string, t
     });
 }
 
-export function apply(ctx: Context, raw: Record<string, unknown>): void {
-  const cfg: Cfg = { ...defaultConfig, ...(raw as Partial<Cfg>) };
-  const logger = ctx.logger.child('asr-whisper-cpp');
+const uses = { logger, config, provide, proc: processService, storage: storageService };
 
-  if (!cfg.modelPath) {
-    // 缺必填配置抛清晰错误（而非静默 return），避免 provides:['asr'] 未注册触发难懂的校验错
-    throw new Error('Whisper.cpp 需要配置 modelPath（GGML 模型文件 .bin 路径）');
-  }
-  const proc = createProcessGateway(ctx);
-  const storage = createStorageGateway(ctx);
+export default definePlugin({
+  name: '@aalis/plugin-asr-whisper-cpp',
+  displayName: 'Whisper.cpp 本地转写',
+  subsystem: 'media',
+  configSchema,
+  reusable: true,
+  provides: [asr],
+  uses,
+  apply(caps) {
+    const cfg: Cfg = { ...defaultConfig, ...(caps.config as Partial<Cfg>) };
 
-  const asr: ASRService = {
+    if (!cfg.modelPath) {
+      // 缺必填配置抛清晰错误（而非静默 return），避免声明了提供 asr 却不注册触发难懂的校验错
+      throw new Error('Whisper.cpp 需要配置 modelPath（GGML 模型文件 .bin 路径）');
+    }
+    const proc = createProcessGateway(caps.proc);
+    const storage = createStorageGateway(caps.storage);
+
+    caps.provide(asr, buildAsrService(cfg, proc, storage), { priority: cfg.priority });
+    caps.logger.info(`Whisper.cpp ASR 已注册 (model=${cfg.modelPath}, prio=${cfg.priority})`);
+  },
+});
+
+function buildAsrService(cfg: Cfg, proc: ProcessService, storage: StorageService): ASRService {
+  return {
     async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
       const src = await materializeAudio(proc, storage, input.attachment.data);
       // ffmpeg 与 whisper-cli 的产物统一落在专用临时目录，避免污染输入所在的数据目录
@@ -195,7 +204,4 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
       }
     },
   };
-
-  ctx.provide('asr', asr, { priority: cfg.priority });
-  logger.info(`Whisper.cpp ASR 已注册 (model=${cfg.modelPath}, prio=${cfg.priority})`);
 }

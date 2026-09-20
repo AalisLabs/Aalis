@@ -1,8 +1,9 @@
-import { App } from '@aalis/core';
+import { App, type PluginModule } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import * as subtaskModule from '../../packages/plugin-subtask/src/index.js';
-import * as browserModule from '../../packages/plugin-tool-browser/src/index.js';
-import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import { tools as toolsService } from '../../packages/api-tools/src/index.js';
+import subtask from '../../packages/plugin-subtask/src/index.js';
+import browser from '../../packages/plugin-tool-browser/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 工具能力策略守卫
@@ -22,20 +23,20 @@ interface RegisteredTool {
   visibility?: string;
 }
 
-async function registeredTools(modules: Array<[unknown, Record<string, unknown>]>): Promise<RegisteredTool[]> {
+async function registeredTools(plugin: PluginModule): Promise<RegisteredTool[]> {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(toolsModule as never, {});
-  for (const [mod, cfg] of modules) await app.ctx.useModule(mod as never, cfg);
+  await app.plugins.register(toolsPlugin, {});
+  await app.plugins.register(plugin, {});
   await app.plugins.idle();
-  const svc = app.ctx.getService<{ getAll(): RegisteredTool[] }>('tools');
-  const all = svc?.getAll() ?? [];
+  const { tools } = app.bind({ tools: toolsService });
+  const all: RegisteredTool[] = tools.current?.getAll() ?? [];
   await app.stop();
   return all;
 }
 
 describe('高危工具不得退回 public', () => {
   it('subtask 的派发/销毁类工具须非 public（每个子任务是一条独立 LLM 链，可被用来放大 API 开销）', async () => {
-    const all = await registeredTools([[subtaskModule, {}]]);
+    const all = await registeredTools(subtask);
     for (const name of ['create_subtask', 'send_to_subtask', 'delete_subtask']) {
       const t = all.find(x => x.name === name);
       expect(t, `${name} 未注册`).toBeDefined();
@@ -44,14 +45,14 @@ describe('高危工具不得退回 public', () => {
   });
 
   it('subtask 的只读查询工具保持 public（不该被这条守卫误伤）', async () => {
-    const all = await registeredTools([[subtaskModule, {}]]);
+    const all = await registeredTools(subtask);
     for (const name of ['check_subtask', 'wait_subtasks']) {
       expect(all.find(x => x.name === name)?.visibility ?? 'public').toBe('public');
     }
   });
 
   it('browser 的写类工具须非 public（页面池进程级共享，取页时不校验会话归属）', async () => {
-    const all = await registeredTools([[browserModule, {}]]);
+    const all = await registeredTools(browser);
     for (const name of ['browser_navigate', 'browser_click', 'browser_type', 'browser_close_page']) {
       const t = all.find(x => x.name === name);
       expect(t, `${name} 未注册`).toBeDefined();
@@ -60,7 +61,7 @@ describe('高危工具不得退回 public', () => {
   });
 
   it('browser 的只读读取工具保持 public', async () => {
-    const all = await registeredTools([[browserModule, {}]]);
+    const all = await registeredTools(browser);
     for (const name of ['browser_get_text', 'browser_get_links']) {
       expect(all.find(x => x.name === name)?.visibility ?? 'public').toBe('public');
     }

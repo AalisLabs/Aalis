@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
-import { LLMCapabilities } from '../../packages/api-llm/src/index.js';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
+import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
+import { App, contributions, logger, provide, services } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import * as memorySummary from '../../packages/plugin-memory-summary/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
+import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 
 // 测试直接从 core 源码路径导入，agent-api 对 '@aalis/core' 的 declaration
@@ -34,20 +34,23 @@ function fakeLLMModel(contextLength: number): LLMModel {
 
 async function setup(opts: { contextLength?: number; config?: Record<string, unknown> } = {}) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(memoryInMemoryModule);
-  const memory = app.ctx.getService<MemoryService>('memory');
-  if (!memory) throw new Error('memory 服务未就绪');
+  const host = app.bind({ provide, services });
+  /** 组装器只要「枚举贡献」与「记日志」两样能力，从根激活绑定即可 */
+  const assembly = app.bind({ contributions, logger });
+  await app.ctx.useModule(memoryInMemory);
+  const store = host.services.get(memory);
+  if (!store) throw new Error('memory 服务未就绪');
   // contextLength 未给 = 完全不注册 llm，走插件内 4096 兜底预算
   if (opts.contextLength !== undefined) {
-    app.ctx.provide('llm', fakeLLMModel(opts.contextLength));
+    host.provide(llm, fakeLLMModel(opts.contextLength));
   }
   await app.ctx.useModule(memorySummary, opts.config ?? {});
   await app.plugins.idle();
-  return { app, memory };
+  return { app, assembly, memory: store };
 }
 
-async function seedSummary(memory: MemoryService, sessionId: string, summary: string): Promise<void> {
-  await memory.saveMetadata(SUMMARY_NAMESPACE, sessionId, {
+async function seedSummary(store: MemoryService, sessionId: string, summary: string): Promise<void> {
+  await store.saveMetadata(SUMMARY_NAMESPACE, sessionId, {
     summary,
     coveredUpTo: 10,
     messageCount: 30,
@@ -75,39 +78,39 @@ function summaryBlocks(messages: Message[]): Message[] {
 
 describe('plugin-memory-summary: agent:prompt 贡献', () => {
   it('无 sessionId → 不注入', async () => {
-    const { app, memory } = await setup();
+    const { assembly, memory } = await setup();
     // 库里存着别的会话的摘要，但本轮没有 sessionId
     await seedSummary(memory, 's-a', '不该出现的摘要');
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages });
+    await assemblePromptContributions(assembly, { messages });
 
     expect(findSummaryBlock(messages)).toBeUndefined();
     expect(messages).toHaveLength(5);
   });
 
   it('无摘要记录 → 不注入', async () => {
-    const { app } = await setup();
+    const { assembly } = await setup();
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
 
     expect(findSummaryBlock(messages)).toBeUndefined();
     expect(messages).toHaveLength(5);
   });
 
   it('摘要为空串 → 不注入', async () => {
-    const { app, memory } = await setup();
+    const { assembly, memory } = await setup();
     await seedSummary(memory, 's-a', '');
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
 
     expect(findSummaryBlock(messages)).toBeUndefined();
     expect(messages).toHaveLength(5);
   });
 
   it('有摘要 → 注入含摘要文本的 system 块，落点在 context 槽', async () => {
-    const { app, memory } = await setup();
+    const { app, assembly, memory } = await setup();
     await seedSummary(memory, 's-a', 'SUM-BODY 用户偏好夜间工作');
 
     // 同槽区对照：identity 落首条 system 后，knowledge 落头部 system 区末尾并先于 context。
@@ -118,7 +121,7 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
     app.ctx.fork('zz-probe-knowledge').contribute(POINT, { id: 'kn', anchor: 'knowledge', build: () => 'KN' } as never);
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
 
     const contents = messages.map(m => String(m.content));
     const idx = messages.findIndex(m => String(m.metadata?.injector ?? '').endsWith('/memory-summary'));
@@ -134,26 +137,26 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
   });
 
   it('会话隔离：只注入当前 sessionId 的摘要', async () => {
-    const { app, memory } = await setup();
+    const { assembly, memory } = await setup();
     await seedSummary(memory, 's-a', 'A 会话摘要');
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-b' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-b' });
     expect(findSummaryBlock(messages)).toBeUndefined();
 
     const messagesA = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages: messagesA, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages: messagesA, sessionId: 's-a' });
     expect(String(findSummaryBlock(messagesA)?.content)).toContain('A 会话摘要');
   });
 
   it('超预算 → 按 contextLength×ratio 截断并带截断后缀', async () => {
     // budget = floor(30000 × 0.02) = 600 → maxChars = 1800
-    const { app, memory } = await setup({ contextLength: 30000, config: { summaryTokenRatio: 0.02 } });
+    const { assembly, memory } = await setup({ contextLength: 30000, config: { summaryTokenRatio: 0.02 } });
     const longSummary = `HEAD-MARKER${'x'.repeat(2000)}TAIL-MARKER`; // 2022 字符 → 674 tokens > 600
     await seedSummary(memory, 's-a', longSummary);
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
 
     const content = String(findSummaryBlock(messages)?.content);
     expect(content).toContain('HEAD-MARKER');
@@ -163,12 +166,12 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
 
   it('无 LLM 时按 4096 兜底 contextLength 计算预算（下限 512 tokens）', async () => {
     // 无 llm entry → contextLength 兜底 4096；floor(4096 × 0.05)=204 被下限抬到 512 → maxChars = 1536
-    const { app, memory } = await setup();
+    const { assembly, memory } = await setup();
     const longSummary = `HEAD-MARKER${'x'.repeat(2000)}TAIL-MARKER`;
     await seedSummary(memory, 's-a', longSummary);
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
 
     const content = String(findSummaryBlock(messages)?.content);
     expect(content.endsWith(longSummary.slice(0, 1536) + TRUNCATED_SUFFIX)).toBe(true);
@@ -176,12 +179,12 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
 
   it('预算充足 → 全文注入，不加截断后缀', async () => {
     // budget = floor(300000 × 0.02) = 6000 → maxChars = 18000，远超摘要长度
-    const { app, memory } = await setup({ contextLength: 300000, config: { summaryTokenRatio: 0.02 } });
+    const { assembly, memory } = await setup({ contextLength: 300000, config: { summaryTokenRatio: 0.02 } });
     const longSummary = `HEAD-MARKER${'x'.repeat(2000)}TAIL-MARKER`;
     await seedSummary(memory, 's-a', longSummary);
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
 
     const content = String(findSummaryBlock(messages)?.content);
     expect(content).toContain('TAIL-MARKER');
@@ -191,28 +194,28 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
 
   // 与下一条幂等用例互补：这里验"键未物化 → 下一轮补跑"，下面验"键已物化 → 不重跑"。
   it('首轮无摘要不物化，摘要迟到后同一 messages 再组装即补上', async () => {
-    const { app, memory } = await setup();
+    const { assembly, memory } = await setup();
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
     expect(findSummaryBlock(messages)).toBeUndefined();
 
     // 模拟摘要在 agent:turn:after 异步落库：首轮之后、次轮之前才就绪
     await seedSummary(memory, 's-a', 'SUM-LATE 迟到的摘要');
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
 
     expect(summaryBlocks(messages)).toHaveLength(1);
     expect(String(findSummaryBlock(messages)?.content)).toContain('SUM-LATE 迟到的摘要');
   });
 
   it('连跑两次组装：幂等，不重复物化', async () => {
-    const { app, memory } = await setup();
+    const { assembly, memory } = await setup();
     await seedSummary(memory, 's-a', 'SUM-BODY');
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
     const lenAfterFirst = messages.length;
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-a' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
 
     expect(summaryBlocks(messages)).toHaveLength(1);
     expect(messages).toHaveLength(lenAfterFirst);

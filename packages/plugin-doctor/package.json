@@ -44,7 +44,8 @@
     "service": {
       "optional": [
         "plugins",
-        "commands"
+        "commands",
+        "webui-server"
       ],
       "provides": [
         "doctor"

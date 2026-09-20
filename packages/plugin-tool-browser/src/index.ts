@@ -1,10 +1,17 @@
 import { createHash } from 'node:crypto';
-import { createProcessGateway } from '@aalis/api-process';
-import { createStorageGateway } from '@aalis/api-storage';
-import { useToolService, wrapUntrustedContent } from '@aalis/api-tools';
-import type { WebuiPage } from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（allowCustom）
-import { useWebuiService } from '@aalis/api-webui';
-import type { Context, PluginModule } from '@aalis/core';
+import { createProcessGateway, processService } from '@aalis/api-process';
+import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
+import { tools as toolsService, wrapUntrustedContent } from '@aalis/api-tools';
+// WebuiPage 一并带来 declaration merging：SchemaField 表单属性（allowCustom）
+import { type WebuiPage, webuiServer } from '@aalis/api-webui';
+import {
+  type BoundOf,
+  config as configService,
+  definePlugin,
+  lifecycle as lifecycleService,
+  logger as loggerService,
+  optional,
+} from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { assertSafeHost, isPrivateHost } from '@aalis/util-network-guard';
 
@@ -40,15 +47,7 @@ interface PageSlot {
 
 // ──────────── 插件元数据 ────────────
 
-export const name = '@aalis/plugin-tool-browser';
-export const displayName = '浏览器工具';
-export const subsystem = 'tools';
-
-// tools 服务由核心提供，无需声明依赖；storage 仅截图落盘用（不接图的调用方那一路），
-// process 仅首次自动下载 Chrome 时用（execFile 走网关面，缺席则自动下载这步不可用）
-export const inject = { optional: ['process', 'storage'] };
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   headless: {
     type: 'boolean',
     label: '无头模式',
@@ -139,14 +138,37 @@ const webuiPages: WebuiPage[] = [
 
 // ──────────── 插件入口 ────────────
 
-export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
-  const config = resolveConfig(rawConfig);
-  const logger = ctx.logger.child('browser');
-  const proc = createProcessGateway(ctx);
-  const storage = createStorageGateway(ctx);
+// tools / webui-server 全部声明为 optional：登记面在提供者缺席时排队，上线后自动补挂，
+// 不必把激活闸架在它们身上。storage 仅截图落盘用（不接图的调用方那一路），
+// process 仅首次自动下载 Chrome 时用（execFile 走网关面，缺席则自动下载这步不可用）。
+const uses = {
+  config: configService,
+  logger: loggerService,
+  lifecycle: lifecycleService,
+  tools: optional(toolsService),
+  webui: optional(webuiServer),
+  proc: optional(processService),
+  storage: optional(storageService),
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-tool-browser',
+  displayName: '浏览器工具',
+  subsystem: 'tools',
+  configSchema,
+  uses,
+  apply: runBrowserTools,
+});
+
+function runBrowserTools(caps: Caps): void {
+  const { tools, webui, lifecycle } = caps;
+  const config = resolveConfig(caps.config);
+  const logger = caps.logger.child('browser');
+  const proc = createProcessGateway(caps.proc);
+  const storage = createStorageGateway(caps.storage);
 
   // 注册 WebUI 页面
-  const webui = useWebuiService(ctx);
   for (const page of webuiPages) webui.registerPage(page);
 
   // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
@@ -278,7 +300,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
 
   // ── 注册工具分组 ──
 
-  useToolService(ctx).registerGroup({
+  tools.registerGroup({
     name: 'browser',
     label: '浏览器',
     description: '使用 Puppeteer 无头浏览器进行网页导航、内容提取、截图等操作',
@@ -287,7 +309,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   // ── 注册工具 ──
 
   // 1. 导航 (navigate)
-  useToolService(ctx).register({
+  tools.register({
     groups: ['browser'],
     // 浏览器页面池是**进程级共享**、取页时不校验会话归属：拿到 pageId 就能操作
     // 别人（含 owner）打开的页面，那页面可能带着登录态。写类浏览器操作一律 sensitive(L1)。
@@ -335,7 +357,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // 2. 获取页面文本
-  useToolService(ctx).register({
+  tools.register({
     groups: ['browser'],
     definition: {
       type: 'function',
@@ -374,7 +396,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // 3. 点击元素
-  useToolService(ctx).register({
+  tools.register({
     groups: ['browser'],
     // 对共享页面池里的任意页面点击——见 browser_navigate 处的说明。
     risk: 'sensitive',
@@ -410,7 +432,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // 4. 输入文本
-  useToolService(ctx).register({
+  tools.register({
     groups: ['browser'],
     // 向共享页面池里的任意页面输入文本（可能是他人已登录的表单）。
     risk: 'sensitive',
@@ -454,7 +476,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // 5. 截图
-  useToolService(ctx).register({
+  tools.register({
     groups: ['browser'],
     definition: {
       type: 'function',
@@ -504,7 +526,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
           await storage.writeFile(uri, png);
           storedUri = uri;
         } catch (err) {
-          ctx.logger.warn(`截图落盘失败: ${err instanceof Error ? err.message : String(err)}`);
+          logger.warn(`截图落盘失败: ${err instanceof Error ? err.message : String(err)}`);
         }
         if (storedUri) {
           const meta = { ok: true, url: slot.url, size: png.length, storage_uri: storedUri };
@@ -541,7 +563,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // 6. 获取页面链接列表
-  useToolService(ctx).register({
+  tools.register({
     groups: ['browser'],
     definition: {
       type: 'function',
@@ -579,7 +601,7 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   });
 
   // 7. 关闭页面
-  useToolService(ctx).register({
+  tools.register({
     groups: ['browser'],
     // 关闭他人正在用的页面。
     risk: 'sensitive',
@@ -609,42 +631,41 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
     },
   });
 
-  // ── WebUI handlers ──
+  // ── WebUI 页面动作 ──
 
-  // biome-ignore lint/suspicious/noExplicitAny: 使用模块级 apply 函数作为运行时句柄挂载 webui handlers，供actions 闭包调用
-  (apply as any).__webuiHandlerFns = {
-    async listPages() {
-      return [...pages.entries()].map(([id, slot]) => ({
-        id,
-        title: slot.title || '(无标题)',
-        url: slot.url,
-        lastAccessText: new Date(slot.lastAccess).toLocaleString('zh-CN'),
-      }));
-    },
-    async closePage(_ctx: Context, args: Record<string, unknown>) {
-      const id = args.id as string;
-      const slot = pages.get(id);
-      if (!slot) return { error: '页面不存在' };
+  webui.registerAction('listPages', async () =>
+    [...pages.entries()].map(([id, slot]) => ({
+      id,
+      title: slot.title || '(无标题)',
+      url: slot.url,
+      lastAccessText: new Date(slot.lastAccess).toLocaleString('zh-CN'),
+    })),
+  );
+
+  webui.registerAction('closePage', async args => {
+    const id = args.id as string;
+    const slot = pages.get(id);
+    if (!slot) return { error: '页面不存在' };
+    try {
+      await slot.page.close();
+    } catch {}
+    pages.delete(id);
+    return { ok: true };
+  });
+
+  webui.registerAction('closeAll', async () => {
+    for (const [id, slot] of pages) {
       try {
         await slot.page.close();
       } catch {}
       pages.delete(id);
-      return { ok: true };
-    },
-    async closeAll() {
-      for (const [id, slot] of pages) {
-        try {
-          await slot.page.close();
-        } catch {}
-        pages.delete(id);
-      }
-      return { ok: true };
-    },
-  };
+    }
+    return { ok: true };
+  });
 
   // ── 清理 ──
 
-  ctx.onDispose(async () => {
+  lifecycle.onDispose(async () => {
     for (const [, slot] of pages) {
       try {
         await slot.page.close();
@@ -662,30 +683,9 @@ export function apply(ctx: Context, rawConfig: Record<string, unknown>): void {
   logger.info(`浏览器工具已启用 (headless=${config.headless}, maxPages=${config.maxPages})`);
 }
 
-// ──────────── actions（闭包内需引用 pages，通过插件模块级代理） ────────────
-
-export const actions: PluginModule['actions'] = {
-  async listPages(_ctx) {
-    // 通过事件通知获取运行时数据 — 由 apply 内部设置
-    // biome-ignore lint/suspicious/noExplicitAny: 读取 apply 上的运行时句柄
-    const fns = (apply as any).__webuiHandlerFns;
-    return fns ? await fns.listPages() : [];
-  },
-  async closePage(ctx, args) {
-    // biome-ignore lint/suspicious/noExplicitAny: 读取 apply 上的运行时句柄
-    const fns = (apply as any).__webuiHandlerFns;
-    return fns ? await fns.closePage(ctx, args) : { error: '插件未初始化' };
-  },
-  async closeAll(_ctx) {
-    // biome-ignore lint/suspicious/noExplicitAny: 读取 apply 上的运行时句柄
-    const fns = (apply as any).__webuiHandlerFns;
-    return fns ? await fns.closeAll() : { error: '插件未初始化' };
-  },
-};
-
 // ──────────── 辅助函数 ────────────
 
-function resolveConfig(raw: Record<string, unknown>): BrowserConfig {
+function resolveConfig(raw: Readonly<Record<string, unknown>>): BrowserConfig {
   return {
     headless: (raw.headless as boolean) ?? true,
     defaultTimeout: (raw.defaultTimeout as number) ?? 30000,

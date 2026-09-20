@@ -1,7 +1,8 @@
-import type { Context } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
-import { describe, expect, it } from 'vitest';
-import { apply } from '../../packages/plugin-tool-session/src/index.js';
+import { afterEach, describe, expect, it } from 'vitest';
+import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
+import { App, events, provide } from '../../packages/core/src/index.js';
+import sessionTools from '../../packages/plugin-tool-session/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // delegate_to_session 的授权身份透传（schema-message actor 契约）。
@@ -16,48 +17,41 @@ import { apply } from '../../packages/plugin-tool-session/src/index.js';
 
 type Handler = (args: Record<string, unknown>, callCtx: Record<string, unknown>) => Promise<string>;
 
-function setup(): { handlers: Map<string, Handler>; emitted: Array<{ event: string; payload: IncomingMessage }> } {
+const booted: App[] = [];
+
+afterEach(async () => {
+  for (const app of booted.splice(0)) await app.stop();
+});
+
+/** 真实 App 装载插件；tools 由宿主提供桩实现以捕获注册的 handler，事件走真实总线 */
+async function setup(): Promise<{ handlers: Map<string, Handler>; emitted: IncomingMessage[] }> {
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  booted.push(app);
+  const host = app.bind({ provide, events });
+
   const handlers = new Map<string, Handler>();
-  const emitted: Array<{ event: string; payload: IncomingMessage }> = [];
-  const fakeTools = {
-    register: (tool: { definition: { function: { name: string } }; handler: Handler }) => {
-      handlers.set(tool.definition.function.name, tool.handler);
-      return () => {};
+  host.provide(tools, {
+    register(tool: Omit<RegisteredTool, 'pluginName'>) {
+      const name = tool.definition.function.name;
+      handlers.set(name, tool.handler as unknown as Handler);
+      return () => void handlers.delete(name);
     },
-    registerGroup: () => {},
-  };
-  const logger = {
-    info: () => {},
-    warn: () => {},
-    debug: () => {},
-    error: () => {},
-    child: () => logger,
-  };
-  const ctx = {
-    id: '@aalis/plugin-tool-session',
-    logger,
-    getService: (name: string) => (name === 'tools' ? fakeTools : undefined),
-    whenService: (name: string, cb: (svc: unknown) => void) => {
-      if (name === 'tools') cb(fakeTools);
-      return () => {};
-    },
-    emit: async (event: string, payload: IncomingMessage) => {
-      emitted.push({ event, payload });
-    },
-    onDispose: () => {},
-    provide: () => {},
-    on: () => () => {},
-    contribute: () => () => {},
-    middleware: () => () => {},
-    runHook: async () => {},
-  } as unknown as Context;
-  apply(ctx, {});
+    registerGroup: () => () => {},
+  } as never);
+
+  const emitted: IncomingMessage[] = [];
+  host.events.on('inbound:message', message => {
+    emitted.push(message);
+  });
+
+  await app.plugins.register(sessionTools, {});
+  await app.plugins.idle();
   return { handlers, emitted };
 }
 
 describe('delegate_to_session actor 透传', () => {
   it('有身份的调用者：actor 原样回填进下游 IncomingMessage', async () => {
-    const { handlers, emitted } = setup();
+    const { handlers, emitted } = await setup();
     const handler = handlers.get('delegate_to_session');
     expect(handler, 'delegate_to_session 未注册').toBeDefined();
 
@@ -69,13 +63,12 @@ describe('delegate_to_session actor 透传', () => {
     );
     expect(res.delegated).toBe(true);
     expect(emitted).toHaveLength(1);
-    expect(emitted[0].event).toBe('inbound:message');
-    expect(emitted[0].payload.triggerType).toBe('proactive');
-    expect(emitted[0].payload.actor).toEqual({ platform: 'onebot', userId: 'user-a' });
+    expect(emitted[0].triggerType).toBe('proactive');
+    expect(emitted[0].actor).toEqual({ platform: 'onebot', userId: 'user-a' });
   });
 
   it('匿名调用者：不发明身份，actor 缺省（目标落 defaultAuthority）', async () => {
-    const { handlers, emitted } = setup();
+    const { handlers, emitted } = await setup();
     const handler = handlers.get('delegate_to_session')!;
 
     await handler(
@@ -83,22 +76,22 @@ describe('delegate_to_session actor 透传', () => {
       { sessionId: 'src-session' },
     );
     expect(emitted).toHaveLength(1);
-    expect(emitted[0].payload.actor).toBeUndefined();
+    expect(emitted[0].actor).toBeUndefined();
   });
 
   it('链式委派：callCtx.actor 优先于物理身份（A 替 X 运行时再委派，X 一路传递）', async () => {
-    const { handlers, emitted } = setup();
+    const { handlers, emitted } = await setup();
     const handler = handlers.get('delegate_to_session')!;
 
     await handler(
       { target_session_id: 'onebot:1:group:9', task: '去做某事', wait_for_result: false },
       { sessionId: 'src', platform: 'onebot', userId: 'phys-sender', actor: { platform: 'webui', userId: 'console' } },
     );
-    expect(emitted[0].payload.actor).toEqual({ platform: 'webui', userId: 'console' });
+    expect(emitted[0].actor).toEqual({ platform: 'webui', userId: 'console' });
   });
 
   it('wait_for_result=true 分支：同一 incoming 对象，actor 同样在场（超时路径回归）', async () => {
-    const { handlers, emitted } = setup();
+    const { handlers, emitted } = await setup();
     const handler = handlers.get('delegate_to_session')!;
 
     const res = JSON.parse(
@@ -108,12 +101,12 @@ describe('delegate_to_session actor 透传', () => {
       ),
     );
     expect(emitted).toHaveLength(1);
-    expect(emitted[0].payload.actor).toEqual({ platform: 'onebot', userId: 'user-a' });
+    expect(emitted[0].actor).toEqual({ platform: 'onebot', userId: 'user-a' });
     expect(res.outcome ?? res.error ?? '').toBeDefined();
   }, 8000);
 
   it('actor 只认 callCtx snapshot，LLM 工具入参无法指定身份（防提权）', async () => {
-    const { handlers, emitted } = setup();
+    const { handlers, emitted } = await setup();
     const handler = handlers.get('delegate_to_session')!;
 
     await handler(
@@ -128,6 +121,6 @@ describe('delegate_to_session actor 透传', () => {
       { sessionId: 'src-session', platform: 'onebot', userId: 'user-b' },
     );
     expect(emitted).toHaveLength(1);
-    expect(emitted[0].payload.actor).toEqual({ platform: 'onebot', userId: 'user-b' });
+    expect(emitted[0].actor).toEqual({ platform: 'onebot', userId: 'user-b' });
   });
 });

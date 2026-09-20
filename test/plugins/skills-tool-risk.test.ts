@@ -1,6 +1,7 @@
-import type { Context } from '@aalis/core';
-import { describe, expect, it } from 'vitest';
-import { apply } from '../../packages/plugin-skills/src/index.js';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { tools } from '../../packages/api-tools/src/index.js';
+import { App, provide, services } from '../../packages/core/src/index.js';
+import skillsPlugin from '../../packages/plugin-skills/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // skills 工具权限档定格。
@@ -20,15 +21,13 @@ interface Captured {
   confirm?: string;
 }
 
-function runApply(): Captured[] {
+/** 装载插件、用桩 tools 提供者收下它登记的全部工具 */
+async function collectTools(): Promise<Captured[]> {
   const captured: Captured[] = [];
-  const fakeTools = {
-    register: (tool: {
-      definition: { function: { name: string } };
-      risk?: string;
-      visibility?: string;
-      confirm?: string;
-    }) => {
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const host = app.bind({ provide, services });
+  host.provide(tools, {
+    register(tool: Captured & { definition: { function: { name: string } } }) {
       captured.push({
         name: tool.definition.function.name,
         risk: tool.risk,
@@ -37,37 +36,22 @@ function runApply(): Captured[] {
       });
       return () => {};
     },
-    registerGroup: () => {},
-  };
-  const logger = {
-    info: () => {},
-    warn: () => {},
-    debug: () => {},
-    error: () => {},
-    child: () => logger,
-  };
-  const ctx = {
-    id: '@aalis/plugin-skills',
-    logger,
-    getService: (name: string) => (name === 'tools' ? fakeTools : undefined),
-    whenService: (name: string, cb: (svc: unknown) => void) => {
-      if (name === 'tools') cb(fakeTools);
-      return () => {};
-    },
-    onDispose: () => {},
-    provide: () => {},
-    on: () => () => {},
-    contribute: () => () => {},
-    middleware: () => () => {},
-    runHook: async () => {},
-  } as unknown as Context;
-  apply(ctx, {});
+    registerGroup: () => () => {},
+  } as never);
+  await app.plugins.register(skillsPlugin, {});
+  await app.plugins.idle();
+  await app.stop();
   return captured;
 }
 
 describe('skills 工具权限档', () => {
-  const tools = runApply();
-  const byName = new Map(tools.map(t => [t.name, t]));
+  let registered: Captured[];
+  let byName: Map<string, Captured>;
+
+  beforeAll(async () => {
+    registered = await collectTools();
+    byName = new Map(registered.map(t => [t.name, t]));
+  });
 
   it('删除类：restricted + session 确认，且不带 risk（防遮蔽降档）', () => {
     for (const name of ['skill_delete', 'skill_remove_file']) {
@@ -80,7 +64,7 @@ describe('skills 工具权限档', () => {
   });
 
   it('非删除类不被顺手改动（仍无 restricted+confirm 组合变化）', () => {
-    for (const t of tools) {
+    for (const t of registered) {
       if (t.name === 'skill_delete' || t.name === 'skill_remove_file') continue;
       expect(t.confirm, `${t.name} 不应在本批被加 confirm`).toBeUndefined();
     }

@@ -1,6 +1,6 @@
-import type { ScopedToolService } from '@aalis/api-tools';
+import type { BoundTools } from '@aalis/api-tools';
 
-export type RegFn = ScopedToolService['register'];
+export type RegFn = BoundTools['register'];
 
 /** 分页 limit 参数的 default 与硬上限（OKX API 单页一般 100，个别 300）。 */
 export interface PageLimitCfg {

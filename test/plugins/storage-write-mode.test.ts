@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createStorageGateway, type StorageService } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // storage.writeFile 原子写的权限位回归（真 fs）。
@@ -25,7 +25,7 @@ describe('storage.writeFile 权限位（真 fs）', () => {
     ws = join(base, 'ws');
     mkdirSync(ws, { recursive: true });
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocal as unknown as Parameters<typeof app.ctx.useModule>[0], {
+    await app.ctx.useModule(storageLocal, {
       roots: [
         {
           name: 'ws',

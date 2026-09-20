@@ -1,22 +1,15 @@
-import type { MediaService } from '@aalis/api-media';
-import { getPlatformAdapters, getPlatformNames, type PlatformAdapter } from '@aalis/api-platform';
-import { createStorageGateway, type StorageService } from '@aalis/api-storage';
-import type { AccessChecker, SessionHistoryService } from '@aalis/api-tool-session';
-import type { ScopedToolService, ToolCallContext } from '@aalis/api-tools';
-import { toolsWithGroups, useToolService } from '@aalis/api-tools';
-import type { Context } from '@aalis/core';
+import { media } from '@aalis/api-media';
+import { getPlatformAdapters, getPlatformNames, type PlatformAdapter, platform } from '@aalis/api-platform';
+import { createStorageGateway, type StorageService, storage } from '@aalis/api-storage';
+import { type AccessChecker, sessionHistory } from '@aalis/api-tool-session';
+import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
+import { tools, withToolGroups } from '@aalis/api-tools';
+import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-tool-onebot';
-export const displayName = 'OneBot 工具';
-export const subsystem = 'tools';
-export const inject = {
-  optional: ['platform', 'session-history'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   groupManagement: {
     label: '群管理工具',
     fields: {
@@ -95,6 +88,28 @@ export const configSchema: ConfigSchema = {
   },
 };
 
+// ===== 能力声明 =====
+
+const uses = {
+  tools: optional(tools),
+  platform: optional(platform),
+  storage: optional(storage),
+  media: optional(media),
+  sessionHistory: optional(sessionHistory),
+  events,
+  logger,
+  lifecycle,
+  config,
+};
+type Caps = BoundOf<typeof uses>;
+
+/** OneBot 平台适配器引用：工具实现全部经它拿 callAction */
+type PlatformRef = Caps['platform'];
+/** 绝大多数工具只需要平台适配器与日志 */
+type ToolCaps = Pick<Caps, 'platform' | 'logger'>;
+/** 合并转发展开还要识别其中的图片 */
+type ForwardCaps = Pick<Caps, 'platform' | 'logger' | 'media'>;
+
 // ===== 辅助函数 =====
 
 /** 从 sessionId 解析 OneBot 连接信息 */
@@ -108,14 +123,14 @@ function parseOneBotSession(sessionId: string): { selfId: string; detailType: st
   };
 }
 
-/** 从上下文中找到支持 callAction 的 OneBot 平台适配器 */
-function findOneBotAdapter(ctx: Context): PlatformAdapter | undefined {
-  return getPlatformAdapters(ctx).find(a => a.platform === 'onebot' && typeof a.callAction === 'function');
+/** 在已注册的平台适配器里找出支持 callAction 的 OneBot 适配器 */
+function findOneBotAdapter(platform: PlatformRef): PlatformAdapter | undefined {
+  return getPlatformAdapters(platform).find(a => a.platform === 'onebot' && typeof a.callAction === 'function');
 }
 
 /** 从已连接的 OneBot 适配器中找出任意一个 selfId（优先 online） */
-function getAnyOneBotSelfId(ctx: Context): string | undefined {
-  for (const a of getPlatformAdapters(ctx)) {
+function getAnyOneBotSelfId(platform: PlatformRef): string | undefined {
+  for (const a of getPlatformAdapters(platform)) {
     if (a.platform !== 'onebot') continue;
     const conns = a.getConnections?.() ?? [];
     const online = conns.find(c => c.status === 'online' && c.selfId);
@@ -131,12 +146,12 @@ function getAnyOneBotSelfId(ctx: Context): string | undefined {
  * 优先级：args.self_id → 当前 callCtx 是 OneBot 会话时取它的 selfId → 任意可用 adapter 的第一个 selfId。
  * 找不到则抛错（无可用 OneBot 连接）。
  */
-function resolveSelfId(ctx: Context, callCtx: ToolCallContext, args: Record<string, unknown>): string {
+function resolveSelfId(platform: PlatformRef, callCtx: ToolCallContext, args: Record<string, unknown>): string {
   const fromArgs = args.self_id != null && String(args.self_id).trim() ? String(args.self_id).trim() : '';
   if (fromArgs) return fromArgs;
   const parsed = parseOneBotSession(callCtx.sessionId);
   if (parsed?.selfId) return parsed.selfId;
-  const fallback = getAnyOneBotSelfId(ctx);
+  const fallback = getAnyOneBotSelfId(platform);
   if (fallback) return fallback;
   throw new Error('未找到可用的 OneBot 连接');
 }
@@ -146,12 +161,12 @@ function resolveSelfId(ctx: Context, callCtx: ToolCallContext, args: Record<stri
  * 不再限制工具必须在群会话上下文中调用。
  */
 function resolveGroupTarget(
-  ctx: Context,
+  platform: PlatformRef,
   callCtx: ToolCallContext,
   args: Record<string, unknown>,
 ): { selfId: string; groupId: string } {
   const argGroupId = args.group_id != null && String(args.group_id).trim() ? String(args.group_id).trim() : '';
-  const selfId = resolveSelfId(ctx, callCtx, args);
+  const selfId = resolveSelfId(platform, callCtx, args);
   if (argGroupId) return { selfId, groupId: argGroupId };
   const parsed = parseOneBotSession(callCtx.sessionId);
   if (parsed?.detailType === 'group' && parsed.targetId) {
@@ -164,12 +179,12 @@ function resolveGroupTarget(
  * 解析"目标用户"：args.user_id 优先；否则当前会话必须是 OneBot 私聊。
  */
 function _resolveUserTarget(
-  ctx: Context,
+  platform: PlatformRef,
   callCtx: ToolCallContext,
   args: Record<string, unknown>,
 ): { selfId: string; userId: string } {
   const argUserId = args.user_id != null && String(args.user_id).trim() ? String(args.user_id).trim() : '';
-  const selfId = resolveSelfId(ctx, callCtx, args);
+  const selfId = resolveSelfId(platform, callCtx, args);
   if (argUserId) return { selfId, userId: argUserId };
   const parsed = parseOneBotSession(callCtx.sessionId);
   if (parsed?.detailType === 'private' && parsed.targetId) {
@@ -188,12 +203,12 @@ function buildOneBotSessionId(selfId: string, detailType: string, targetId: stri
  * 因此这里用合成 sessionId（"onebot:<selfId>:internal:0"）即可，与目标会话类型无关。
  */
 async function callAction(
-  ctx: Context,
+  platform: PlatformRef,
   selfId: string,
   action: string,
   params: Record<string, unknown>,
 ): Promise<unknown> {
-  const adapter = findOneBotAdapter(ctx);
+  const adapter = findOneBotAdapter(platform);
   if (!adapter?.callAction) throw new Error('OneBot 适配器不可用或不支持 callAction');
   return adapter.callAction(buildOneBotSessionId(selfId, 'internal', '0'), action, params);
 }
@@ -316,15 +331,19 @@ function collectForwardImageRefs(data: unknown, limit: number): ForwardImageRef[
 }
 
 async function resolveForwardImageSource(
-  ctx: Context,
+  caps: ForwardCaps,
   storage: StorageService,
   selfId: string,
   ref: ForwardImageRef,
 ): Promise<string> {
   if (/^(https?:|data:)/i.test(ref.source)) return ref.source;
+  const { platform, logger } = caps;
 
   try {
-    const imageData = (await callAction(ctx, selfId, 'get_image', { file: ref.source })) as Record<string, unknown>;
+    const imageData = (await callAction(platform, selfId, 'get_image', { file: ref.source })) as Record<
+      string,
+      unknown
+    >;
     const resolvedSource = imageData.url ?? imageData.file ?? ref.source;
     if (typeof resolvedSource === 'string') {
       if (/^(https?:|data:)/i.test(resolvedSource)) return resolvedSource;
@@ -333,7 +352,7 @@ async function resolveForwardImageSource(
       return resolvedSource;
     }
   } catch (err) {
-    ctx.logger.debug(`get_image 解析转发图片失败 (${ref.source}): ${err}`);
+    logger.debug(`get_image 解析转发图片失败 (${ref.source}): ${err}`);
   }
 
   const dataUri = await localImageToDataUri(storage, ref.source);
@@ -341,7 +360,7 @@ async function resolveForwardImageSource(
 }
 
 async function recognizeForwardImages(
-  ctx: Context,
+  caps: ForwardCaps,
   storage: StorageService,
   selfId: string,
   data: unknown,
@@ -351,9 +370,10 @@ async function recognizeForwardImages(
   const imageDescriptions = new Map<string, string>();
   if (refs.length === 0) return { imageDescriptions };
 
-  const mediaSvc = ctx.getService<MediaService>('media');
-  if (!mediaSvc?.describeImage) {
-    ctx.logger.debug(`合并转发包含 ${refs.length} 张图片，但 media 服务不可用`);
+  const { logger, media } = caps;
+  const mediaService = media.current;
+  if (!mediaService?.describeImage) {
+    logger.debug(`合并转发包含 ${refs.length} 张图片，但 media 服务不可用`);
     return { imageDescriptions };
   }
 
@@ -363,11 +383,11 @@ async function recognizeForwardImages(
     if (seen.has(key)) continue;
     seen.add(key);
     try {
-      const imageSource = await resolveForwardImageSource(ctx, storage, selfId, ref);
-      const description = await mediaSvc.describeImage(imageSource);
+      const imageSource = await resolveForwardImageSource(caps, storage, selfId, ref);
+      const description = await mediaService.describeImage(imageSource);
       if (description) imageDescriptions.set(key, description);
     } catch (err) {
-      ctx.logger.debug(`合并转发图片识别失败 (${ref.source}): ${err}`);
+      logger.debug(`合并转发图片识别失败 (${ref.source}): ${err}`);
     }
   }
 
@@ -471,13 +491,13 @@ function roleLevel(role: string): number {
 
 /** 查询群成员信息（失败返回 null） */
 async function getGroupMemberInfo(
-  ctx: Context,
+  platform: PlatformRef,
   selfId: string,
   groupId: string,
   userId: string,
 ): Promise<Record<string, unknown> | null> {
   try {
-    return (await callAction(ctx, selfId, 'get_group_member_info', {
+    return (await callAction(platform, selfId, 'get_group_member_info', {
       group_id: Number(groupId),
       user_id: Number(userId),
       no_cache: true,
@@ -489,13 +509,13 @@ async function getGroupMemberInfo(
 
 /** 检查管理操作权限，返回错误消息（null 表示通过或无法验证） */
 async function checkAdminPermission(
-  ctx: Context,
+  platform: PlatformRef,
   selfId: string,
   groupId: string,
   targetUserId?: string,
   requireOwner?: boolean,
 ): Promise<string | null> {
-  const selfInfo = await getGroupMemberInfo(ctx, selfId, groupId, selfId);
+  const selfInfo = await getGroupMemberInfo(platform, selfId, groupId, selfId);
   if (!selfInfo) return null; // 无法获取自身信息，跳过权限检查
 
   const selfRole = String(selfInfo.role ?? 'member');
@@ -508,7 +528,7 @@ async function checkAdminPermission(
   }
 
   if (targetUserId) {
-    const targetInfo = await getGroupMemberInfo(ctx, selfId, groupId, targetUserId);
+    const targetInfo = await getGroupMemberInfo(platform, selfId, groupId, targetUserId);
     if (!targetInfo) {
       return `操作失败：无法获取用户 ${targetUserId} 的信息，该用户可能不在群中`;
     }
@@ -531,89 +551,97 @@ async function checkAdminPermission(
  * - onebot-personal：影响 bot 账号本身的人际关系（退群/删好友/处理好友申请/接受入群邀请）
  */
 interface OneBotToolBundle {
-  daily: ScopedToolService;
-  group: ScopedToolService;
-  personal: ScopedToolService;
+  daily: BoundTools;
+  group: BoundTools;
+  personal: BoundTools;
 }
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
-  const tools = useToolService(ctx);
-  const storage = createStorageGateway(ctx);
-  const bundle: OneBotToolBundle = {
-    daily: toolsWithGroups(tools, ['onebot-daily']),
-    group: toolsWithGroups(tools, ['onebot-group']),
-    personal: toolsWithGroups(tools, ['onebot-personal']),
-  };
-
-  // 仅当 OneBot 平台可用时才注册工具
-  // 使用 app:ready 事件确保平台已加载
-  ctx.on('app:ready', () => {
-    if (!getPlatformNames(ctx).includes('onebot')) {
-      ctx.logger.info('未检测到 OneBot 平台，跳过 OneBot 工具注册');
-      return;
-    }
-
-    ctx.logger.info('检测到 OneBot 平台，开始注册 OneBot 工具');
-
-    // 注册工具分组：按职责语义切分，彼此不重叠
-    tools.registerGroup({
-      name: 'onebot-daily',
-      label: 'OneBot 只读与日常',
-      description: '只读查询（群信息/成员/好友列表/历史/登录信息）+ 日常低风险互动（戳一戳、好友赞）',
-    });
-    tools.registerGroup({
-      name: 'onebot-group',
-      label: 'OneBot 群务',
-      description: '群务管理：禁言/全员禁言/踢人/撤回消息/设置群名片/改群名/设管理员/群打卡/审批加群申请 等',
-    });
-    tools.registerGroup({
-      name: 'onebot-personal',
-      label: 'OneBot 个人/私聊',
-      description: '影响 bot 账号本身的人际关系：退群、删好友、处理好友申请、接受/拒绝入群邀请',
-    });
-
-    const cfg = {
-      groupManagement: { enabled: true, ...((config.groupManagement as Record<string, unknown>) ?? {}) },
-      groupInfo: { enabled: true, ...((config.groupInfo as Record<string, unknown>) ?? {}) },
-      account: { enabled: true, ...((config.account as Record<string, unknown>) ?? {}) },
-      interaction: { enabled: true, ...((config.interaction as Record<string, unknown>) ?? {}) },
-      sessionHistory: {
-        enabled: true,
-        maxLimit: 100,
-        defaultLimit: 20,
-        allowGroupReadPrivate: false,
-        allowCrossSelf: false,
-        allowCrossGroup: true,
-        allowCrossPrivate: false,
-        ...((config.sessionHistory as Record<string, unknown>) ?? {}),
-      },
+export default definePlugin({
+  name: '@aalis/plugin-tool-onebot',
+  displayName: 'OneBot 工具',
+  subsystem: 'tools',
+  configSchema,
+  uses,
+  apply(caps) {
+    const { tools, events, logger, platform, config } = caps;
+    const storage = createStorageGateway(caps.storage);
+    const bundle: OneBotToolBundle = {
+      daily: withToolGroups(tools, ['onebot-daily']),
+      group: withToolGroups(tools, ['onebot-group']),
+      personal: withToolGroups(tools, ['onebot-personal']),
     };
 
-    if (cfg.groupManagement.enabled) registerGroupManagementTools(ctx, bundle);
-    if (cfg.groupInfo.enabled) registerGroupInfoTools(ctx, storage, bundle);
-    if (cfg.account.enabled) registerAccountTools(ctx, bundle);
-    if (cfg.interaction.enabled) registerInteractionTools(ctx, bundle);
-    if (cfg.sessionHistory.enabled) {
-      const maxLimit = Math.max(1, Math.min(1000, Number(cfg.sessionHistory.maxLimit) || 100));
-      const defaultLimitRaw = Math.max(1, Math.floor(Number(cfg.sessionHistory.defaultLimit) || 20));
-      const historyCfg: OneBotSessionHistoryConfig = {
-        maxLimit,
-        defaultLimit: Math.min(defaultLimitRaw, maxLimit),
-        allowGroupReadPrivate: cfg.sessionHistory.allowGroupReadPrivate === true,
-        allowCrossSelf: cfg.sessionHistory.allowCrossSelf === true,
-        allowCrossGroup: cfg.sessionHistory.allowCrossGroup !== false,
-        allowCrossPrivate: cfg.sessionHistory.allowCrossPrivate === true,
+    // 仅当 OneBot 平台可用时才注册工具
+    // 使用 app:ready 事件确保平台已加载
+    events.on('app:ready', () => {
+      if (!getPlatformNames(platform).includes('onebot')) {
+        logger.info('未检测到 OneBot 平台，跳过 OneBot 工具注册');
+        return;
+      }
+
+      logger.info('检测到 OneBot 平台，开始注册 OneBot 工具');
+
+      // 注册工具分组：按职责语义切分，彼此不重叠
+      tools.registerGroup({
+        name: 'onebot-daily',
+        label: 'OneBot 只读与日常',
+        description: '只读查询（群信息/成员/好友列表/历史/登录信息）+ 日常低风险互动（戳一戳、好友赞）',
+      });
+      tools.registerGroup({
+        name: 'onebot-group',
+        label: 'OneBot 群务',
+        description: '群务管理：禁言/全员禁言/踢人/撤回消息/设置群名片/改群名/设管理员/群打卡/审批加群申请 等',
+      });
+      tools.registerGroup({
+        name: 'onebot-personal',
+        label: 'OneBot 个人/私聊',
+        description: '影响 bot 账号本身的人际关系：退群、删好友、处理好友申请、接受/拒绝入群邀请',
+      });
+
+      const cfg = {
+        groupManagement: { enabled: true, ...((config.groupManagement as Record<string, unknown>) ?? {}) },
+        groupInfo: { enabled: true, ...((config.groupInfo as Record<string, unknown>) ?? {}) },
+        account: { enabled: true, ...((config.account as Record<string, unknown>) ?? {}) },
+        interaction: { enabled: true, ...((config.interaction as Record<string, unknown>) ?? {}) },
+        sessionHistory: {
+          enabled: true,
+          maxLimit: 100,
+          defaultLimit: 20,
+          allowGroupReadPrivate: false,
+          allowCrossSelf: false,
+          allowCrossGroup: true,
+          allowCrossPrivate: false,
+          ...((config.sessionHistory as Record<string, unknown>) ?? {}),
+        },
       };
-      registerSessionHistoryTools(ctx, bundle, historyCfg);
-      registerOneBotHistoryAccessChecker(ctx, historyCfg);
-    }
-    registerRequestTools(ctx, bundle);
-  });
-}
+
+      if (cfg.groupManagement.enabled) registerGroupManagementTools(caps, bundle);
+      if (cfg.groupInfo.enabled) registerGroupInfoTools(caps, storage, bundle);
+      if (cfg.account.enabled) registerAccountTools(caps, bundle);
+      if (cfg.interaction.enabled) registerInteractionTools(caps, bundle);
+      if (cfg.sessionHistory.enabled) {
+        const maxLimit = Math.max(1, Math.min(1000, Number(cfg.sessionHistory.maxLimit) || 100));
+        const defaultLimitRaw = Math.max(1, Math.floor(Number(cfg.sessionHistory.defaultLimit) || 20));
+        const historyCfg: OneBotSessionHistoryConfig = {
+          maxLimit,
+          defaultLimit: Math.min(defaultLimitRaw, maxLimit),
+          allowGroupReadPrivate: cfg.sessionHistory.allowGroupReadPrivate === true,
+          allowCrossSelf: cfg.sessionHistory.allowCrossSelf === true,
+          allowCrossGroup: cfg.sessionHistory.allowCrossGroup !== false,
+          allowCrossPrivate: cfg.sessionHistory.allowCrossPrivate === true,
+        };
+        registerSessionHistoryTools(caps, bundle, historyCfg);
+        registerOneBotHistoryAccessChecker(caps, historyCfg);
+      }
+      registerRequestTools(caps, bundle);
+    });
+  },
+});
 
 // ===== 群管理工具 =====
 
-function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): void {
+function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
+  const { platform, logger } = caps;
   const { group, personal } = bundle;
   // ---- 群禁言（单人）----
   group.register({
@@ -634,20 +662,20 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
       },
     },
     handler: async (args, callCtx) => {
-      const { selfId, groupId } = resolveGroupTarget(ctx, callCtx, args);
+      const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
       const duration = typeof args.duration === 'number' ? args.duration : 60;
 
-      const permError = await checkAdminPermission(ctx, selfId, groupId, String(args.user_id));
+      const permError = await checkAdminPermission(platform, selfId, groupId, String(args.user_id));
       if (permError) return permError;
 
-      await callAction(ctx, selfId, 'set_group_ban', {
+      await callAction(platform, selfId, 'set_group_ban', {
         group_id: Number(groupId),
         user_id: Number(args.user_id),
         duration,
       });
 
       // 验证禁言是否生效
-      const info = await getGroupMemberInfo(ctx, selfId, groupId, String(args.user_id));
+      const info = await getGroupMemberInfo(platform, selfId, groupId, String(args.user_id));
       if (info && 'shut_up_timestamp' in info) {
         const shutUp = Number(info.shut_up_timestamp);
         const now = Math.floor(Date.now() / 1000);
@@ -684,12 +712,12 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
       },
     },
     handler: async (args, callCtx) => {
-      const { selfId, groupId } = resolveGroupTarget(ctx, callCtx, args);
+      const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
 
-      const permError = await checkAdminPermission(ctx, selfId, groupId);
+      const permError = await checkAdminPermission(platform, selfId, groupId);
       if (permError) return permError;
 
-      await callAction(ctx, selfId, 'set_group_whole_ban', {
+      await callAction(platform, selfId, 'set_group_whole_ban', {
         group_id: Number(groupId),
         enable: !!args.enable,
       });
@@ -716,12 +744,12 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
       },
     },
     handler: async (args, callCtx) => {
-      const { selfId, groupId } = resolveGroupTarget(ctx, callCtx, args);
+      const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
 
-      const permError = await checkAdminPermission(ctx, selfId, groupId, String(args.user_id));
+      const permError = await checkAdminPermission(platform, selfId, groupId, String(args.user_id));
       if (permError) return permError;
 
-      await callAction(ctx, selfId, 'set_group_kick', {
+      await callAction(platform, selfId, 'set_group_kick', {
         group_id: Number(groupId),
         user_id: Number(args.user_id),
         reject_add_request: !!args.reject_add_request,
@@ -748,12 +776,12 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
     },
     handler: async (args, callCtx) => {
       const argGroupId = args.group_id != null && String(args.group_id).trim() ? String(args.group_id).trim() : '';
-      const selfId = resolveSelfId(ctx, callCtx, args);
+      const selfId = resolveSelfId(platform, callCtx, args);
       const parsed = parseOneBotSession(callCtx.sessionId);
       const groupId = argGroupId || (parsed?.detailType === 'group' ? parsed.targetId : '');
       if (!groupId) return '请提供 group_id，或在要退出的群聊中调用此工具';
 
-      await callAction(ctx, selfId, 'set_group_leave', {
+      await callAction(platform, selfId, 'set_group_leave', {
         group_id: Number(groupId),
         is_dismiss: false,
       });
@@ -780,12 +808,12 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
       },
     },
     handler: async (args, callCtx) => {
-      const { selfId, groupId } = resolveGroupTarget(ctx, callCtx, args);
+      const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
 
-      const permError = await checkAdminPermission(ctx, selfId, groupId);
+      const permError = await checkAdminPermission(platform, selfId, groupId);
       if (permError) return permError;
 
-      await callAction(ctx, selfId, 'set_group_card', {
+      await callAction(platform, selfId, 'set_group_card', {
         group_id: Number(groupId),
         user_id: Number(args.user_id),
         card: String(args.card ?? ''),
@@ -812,12 +840,12 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
       },
     },
     handler: async (args, callCtx) => {
-      const { selfId, groupId } = resolveGroupTarget(ctx, callCtx, args);
+      const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
 
-      const permError = await checkAdminPermission(ctx, selfId, groupId);
+      const permError = await checkAdminPermission(platform, selfId, groupId);
       if (permError) return permError;
 
-      await callAction(ctx, selfId, 'set_group_name', {
+      await callAction(platform, selfId, 'set_group_name', {
         group_id: Number(groupId),
         group_name: String(args.group_name),
       });
@@ -844,12 +872,12 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
       },
     },
     handler: async (args, callCtx) => {
-      const { selfId, groupId } = resolveGroupTarget(ctx, callCtx, args);
+      const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
 
-      const permError = await checkAdminPermission(ctx, selfId, groupId, undefined, true);
+      const permError = await checkAdminPermission(platform, selfId, groupId, undefined, true);
       if (permError) return permError;
 
-      await callAction(ctx, selfId, 'set_group_special_title', {
+      await callAction(platform, selfId, 'set_group_special_title', {
         group_id: Number(groupId),
         user_id: Number(args.user_id),
         special_title: String(args.special_title ?? ''),
@@ -878,12 +906,12 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
       },
     },
     handler: async (args, callCtx) => {
-      const { selfId, groupId } = resolveGroupTarget(ctx, callCtx, args);
+      const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
 
-      const permError = await checkAdminPermission(ctx, selfId, groupId, undefined, true);
+      const permError = await checkAdminPermission(platform, selfId, groupId, undefined, true);
       if (permError) return permError;
 
-      await callAction(ctx, selfId, 'set_group_admin', {
+      await callAction(platform, selfId, 'set_group_admin', {
         group_id: Number(groupId),
         user_id: Number(args.user_id),
         enable: !!args.enable,
@@ -911,8 +939,8 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
     },
     handler: async (args, callCtx) => {
       // 不限制必须是群聊；只要能找到可用的 OneBot 账号即可
-      const selfId = resolveSelfId(ctx, callCtx, args);
-      await callAction(ctx, selfId, 'delete_msg', {
+      const selfId = resolveSelfId(platform, callCtx, args);
+      await callAction(platform, selfId, 'delete_msg', {
         message_id: Number(args.message_id),
       });
       return `已撤回消息 ${args.message_id}`;
@@ -942,7 +970,7 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
       },
     },
     handler: async (args, callCtx) => {
-      const selfId = resolveSelfId(ctx, callCtx, args);
+      const selfId = resolveSelfId(platform, callCtx, args);
       const argGroupId = args.group_id != null && String(args.group_id).trim() ? String(args.group_id).trim() : '';
       const argUserId = args.user_id != null && String(args.user_id).trim() ? String(args.user_id).trim() : '';
       let targetSessionId: string;
@@ -954,7 +982,7 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
         targetSessionId = callCtx.sessionId;
       }
 
-      const adapter = findOneBotAdapter(ctx) as
+      const adapter = findOneBotAdapter(platform) as
         | (PlatformAdapter & {
             getSentMessages?: (
               sessionId: string,
@@ -977,7 +1005,7 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
       const failed: string[] = [];
       for (const t of targets) {
         try {
-          await callAction(ctx, selfId, 'delete_msg', { message_id: Number(t.messageId) || t.messageId });
+          await callAction(platform, selfId, 'delete_msg', { message_id: Number(t.messageId) || t.messageId });
           adapter.forgetSentMessage?.(targetSessionId, t.messageId);
           recalled.push(t.preview ? `「${t.preview}」` : `msg=${t.messageId}`);
         } catch (err) {
@@ -995,12 +1023,13 @@ function registerGroupManagementTools(ctx: Context, bundle: OneBotToolBundle): v
     },
   });
 
-  ctx.logger.info('OneBot 群管理工具已注册');
+  logger.info('OneBot 群管理工具已注册');
 }
 
 // ===== 群信息查询工具 =====
 
-function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: OneBotToolBundle): void {
+function registerGroupInfoTools(caps: ForwardCaps, storage: StorageService, bundle: OneBotToolBundle): void {
+  const { platform, logger } = caps;
   const { daily } = bundle;
   // ---- 查看合并转发 ----
   daily.register({
@@ -1024,7 +1053,7 @@ function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: O
       },
     },
     handler: async (args, callCtx) => {
-      const selfId = resolveSelfId(ctx, callCtx, args);
+      const selfId = resolveSelfId(platform, callCtx, args);
       if (!args.id)
         return '参数错误：缺少 id（合并转发 ID）。请使用 <forward id="..."> 中的 id 字符串，不要使用 message_id。';
       const forwardId = String(args.id);
@@ -1034,7 +1063,7 @@ function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: O
       // 并维护了一份接收时即抓取并展开（含摘要与图像识别）的缓存。
       let data: unknown;
       try {
-        data = await callAction(ctx, selfId, 'get_forward_msg', { id: forwardId });
+        data = await callAction(platform, selfId, 'get_forward_msg', { id: forwardId });
       } catch (err) {
         return `合并转发读取失败：${err instanceof Error ? err.message : String(err)}。该转发可能已在协议端过期，或当前 OneBot 实现不支持跨会话读取。`;
       }
@@ -1048,7 +1077,7 @@ function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: O
         return `${header}${summaryLine}\n原文：\n${entry.fullText}`;
       }
 
-      const formatContext = await recognizeForwardImages(ctx, storage, selfId, data, limit);
+      const formatContext = await recognizeForwardImages(caps, storage, selfId, data, limit);
       return formatForwardMessage(data, limit, formatContext);
     },
   });
@@ -1070,8 +1099,8 @@ function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: O
       },
     },
     handler: async (args, callCtx) => {
-      const { selfId, groupId } = resolveGroupTarget(ctx, callCtx, args);
-      const data = await callAction(ctx, selfId, 'get_group_info', {
+      const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
+      const data = await callAction(platform, selfId, 'get_group_info', {
         group_id: Number(groupId),
       });
       return JSON.stringify(data);
@@ -1097,9 +1126,9 @@ function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: O
       },
     },
     handler: async (args, callCtx) => {
-      const { selfId, groupId } = resolveGroupTarget(ctx, callCtx, args);
+      const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
       const userId = args.user_id ? String(args.user_id) : selfId;
-      const data = await callAction(ctx, selfId, 'get_group_member_info', {
+      const data = await callAction(platform, selfId, 'get_group_member_info', {
         group_id: Number(groupId),
         user_id: Number(userId),
         no_cache: true,
@@ -1130,8 +1159,8 @@ function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: O
       },
     },
     handler: async (args, callCtx) => {
-      const { selfId, groupId } = resolveGroupTarget(ctx, callCtx, args);
-      const data = await callAction(ctx, selfId, 'get_group_member_list', {
+      const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
+      const data = await callAction(platform, selfId, 'get_group_member_list', {
         group_id: Number(groupId),
       });
       const list = Array.isArray(data) ? data : [];
@@ -1198,7 +1227,7 @@ function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: O
     },
     handler: async (args, callCtx) => {
       const argGroupId = args.group_id != null && String(args.group_id).trim() ? String(args.group_id).trim() : '';
-      const selfId = resolveSelfId(ctx, callCtx, args);
+      const selfId = resolveSelfId(platform, callCtx, args);
       const parsed = parseOneBotSession(callCtx.sessionId);
       let groupId = argGroupId;
       if (!groupId) {
@@ -1207,11 +1236,11 @@ function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: O
         }
         groupId = parsed.targetId;
       }
-      const adapter = findOneBotAdapter(ctx);
+      const adapter = findOneBotAdapter(platform);
       if (!adapter?.callAction) return JSON.stringify({ available: false, reason: 'OneBot 适配器不可用' });
       let info: Record<string, unknown> | null = null;
       try {
-        info = (await callAction(ctx, selfId, 'get_group_member_info', {
+        info = (await callAction(platform, selfId, 'get_group_member_info', {
           group_id: Number(groupId),
           user_id: Number(selfId),
           no_cache: true,
@@ -1260,7 +1289,7 @@ function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: O
       },
     },
     handler: async args => {
-      const adapter = findOneBotAdapter(ctx) as
+      const adapter = findOneBotAdapter(platform) as
         | (PlatformAdapter & {
             getSelfMutes?: () => Array<{ selfId: string; groupId: string; untilTs: number; remainingSec: number }>;
           })
@@ -1311,10 +1340,10 @@ function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: O
       },
     },
     handler: async (args, callCtx) => {
-      const selfId = resolveSelfId(ctx, callCtx, args);
+      const selfId = resolveSelfId(platform, callCtx, args);
       if (!args.message_id) return '参数错误：缺少 message_id';
       try {
-        const data = await callAction(ctx, selfId, 'get_msg', {
+        const data = await callAction(platform, selfId, 'get_msg', {
           message_id: Number(args.message_id),
         });
         return JSON.stringify(data);
@@ -1347,9 +1376,9 @@ function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: O
       },
     },
     handler: async (args, callCtx) => {
-      const { selfId, groupId } = resolveGroupTarget(ctx, callCtx, args);
+      const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
       const honorType = typeof args.type === 'string' ? args.type : 'all';
-      const data = await callAction(ctx, selfId, 'get_group_honor_info', {
+      const data = await callAction(platform, selfId, 'get_group_honor_info', {
         group_id: Number(groupId),
         type: honorType,
       });
@@ -1357,12 +1386,13 @@ function registerGroupInfoTools(ctx: Context, storage: StorageService, bundle: O
     },
   });
 
-  ctx.logger.info('OneBot 群信息查询工具已注册');
+  logger.info('OneBot 群信息查询工具已注册');
 }
 
 // ===== 账号 / 好友 / 群列表查询工具 =====
 
-function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
+function registerAccountTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
+  const { platform, logger } = caps;
   const { daily, personal } = bundle;
   // ---- 群列表 ----
   daily.register({
@@ -1387,8 +1417,8 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
       },
     },
     handler: async (args, callCtx) => {
-      const selfId = resolveSelfId(ctx, callCtx, args);
-      const data = await callAction(ctx, selfId, 'get_group_list', {});
+      const selfId = resolveSelfId(platform, callCtx, args);
+      const data = await callAction(platform, selfId, 'get_group_list', {});
       const list = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
 
       const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
@@ -1442,8 +1472,8 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
       },
     },
     handler: async (args, callCtx) => {
-      const selfId = resolveSelfId(ctx, callCtx, args);
-      const data = await callAction(ctx, selfId, 'get_friend_list', {});
+      const selfId = resolveSelfId(platform, callCtx, args);
+      const data = await callAction(platform, selfId, 'get_friend_list', {});
       const list = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
 
       const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : '';
@@ -1496,8 +1526,8 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
       },
     },
     handler: async (args, callCtx) => {
-      const selfId = resolveSelfId(ctx, callCtx, args);
-      const data = await callAction(ctx, selfId, 'get_stranger_info', {
+      const selfId = resolveSelfId(platform, callCtx, args);
+      const data = await callAction(platform, selfId, 'get_stranger_info', {
         user_id: Number(args.user_id),
         no_cache: !!args.no_cache,
       });
@@ -1517,8 +1547,8 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
       },
     },
     handler: async (_args, callCtx) => {
-      const selfId = resolveSelfId(ctx, callCtx, _args);
-      const data = await callAction(ctx, selfId, 'get_login_info', {});
+      const selfId = resolveSelfId(platform, callCtx, _args);
+      const data = await callAction(platform, selfId, 'get_login_info', {});
       return JSON.stringify(data);
     },
   });
@@ -1542,24 +1572,25 @@ function registerAccountTools(ctx: Context, bundle: OneBotToolBundle): void {
     },
     handler: async (args, callCtx) => {
       const argUserId = args.user_id != null && String(args.user_id).trim() ? String(args.user_id).trim() : '';
-      const selfId = resolveSelfId(ctx, callCtx, args);
+      const selfId = resolveSelfId(platform, callCtx, args);
       const parsed = parseOneBotSession(callCtx.sessionId);
       const userId = argUserId || (parsed?.detailType === 'private' ? parsed.targetId : '');
       if (!userId) return '请提供 user_id，或在要删除的好友私聊中调用此工具';
 
-      await callAction(ctx, selfId, 'delete_friend', {
+      await callAction(platform, selfId, 'delete_friend', {
         user_id: Number(userId),
       });
       return `已删除好友 ${userId}`;
     },
   });
 
-  ctx.logger.info('OneBot 账号 / 好友 / 群列表查询工具已注册');
+  logger.info('OneBot 账号 / 好友 / 群列表查询工具已注册');
 }
 
 // ===== 特殊交互工具 =====
 
-function registerInteractionTools(ctx: Context, bundle: OneBotToolBundle): void {
+function registerInteractionTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
+  const { platform, logger } = caps;
   const { daily, group } = bundle;
   // ---- 戳一戳 ----
   daily.register({
@@ -1584,7 +1615,7 @@ function registerInteractionTools(ctx: Context, bundle: OneBotToolBundle): void 
       },
     },
     handler: async (args, callCtx) => {
-      const selfId = resolveSelfId(ctx, callCtx, args);
+      const selfId = resolveSelfId(platform, callCtx, args);
       const parsed = parseOneBotSession(callCtx.sessionId);
       const argGroupId = args.group_id != null && String(args.group_id).trim() ? String(args.group_id).trim() : '';
       const argUserId = args.user_id != null && String(args.user_id).trim() ? String(args.user_id).trim() : '';
@@ -1596,12 +1627,12 @@ function registerInteractionTools(ctx: Context, bundle: OneBotToolBundle): void 
           throw new Error('群聊戳一戳必须显式提供 user_id（要戳的对象）。');
         }
         try {
-          await callAction(ctx, selfId, 'group_poke', {
+          await callAction(platform, selfId, 'group_poke', {
             group_id: Number(groupId),
             user_id: Number(argUserId),
           });
         } catch {
-          await callAction(ctx, selfId, 'send_group_poke', {
+          await callAction(platform, selfId, 'send_group_poke', {
             group_id: Number(groupId),
             user_id: Number(argUserId),
           });
@@ -1616,9 +1647,9 @@ function registerInteractionTools(ctx: Context, bundle: OneBotToolBundle): void 
       }
       // NapCat: friend_poke { user_id }；其他实现可能用 send_poke
       try {
-        await callAction(ctx, selfId, 'friend_poke', { user_id: Number(userId) });
+        await callAction(platform, selfId, 'friend_poke', { user_id: Number(userId) });
       } catch {
-        await callAction(ctx, selfId, 'send_poke', { user_id: Number(userId) });
+        await callAction(platform, selfId, 'send_poke', { user_id: Number(userId) });
       }
       return `已戳了 ${userId} 一下`;
     },
@@ -1643,9 +1674,9 @@ function registerInteractionTools(ctx: Context, bundle: OneBotToolBundle): void 
       },
     },
     handler: async (args, callCtx) => {
-      const selfId = resolveSelfId(ctx, callCtx, args);
+      const selfId = resolveSelfId(platform, callCtx, args);
       const times = Math.min(10, Math.max(1, typeof args.times === 'number' ? Math.floor(args.times) : 1));
-      await callAction(ctx, selfId, 'send_like', {
+      await callAction(platform, selfId, 'send_like', {
         user_id: Number(args.user_id),
         times,
       });
@@ -1670,16 +1701,21 @@ function registerInteractionTools(ctx: Context, bundle: OneBotToolBundle): void 
       },
     },
     handler: async (args, callCtx) => {
-      const { selfId, groupId } = resolveGroupTarget(ctx, callCtx, args);
-      await callAction(ctx, selfId, 'send_group_sign', {
+      const { selfId, groupId } = resolveGroupTarget(platform, callCtx, args);
+      await callAction(platform, selfId, 'send_group_sign', {
         group_id: Number(groupId),
       });
       return '打卡成功';
     },
   });
 
-  ctx.logger.info('OneBot 特殊交互工具已注册');
+  logger.info('OneBot 特殊交互工具已注册');
 }
+
+/** 平台专属历史工具：查历史服务 + 平台适配器解析 selfId */
+type HistoryToolCaps = Pick<Caps, 'platform' | 'logger' | 'sessionHistory'>;
+/** 访问规则注入：等 app:ready 后把规则挂到历史服务上，并登记撤回 */
+type HistoryCheckerCaps = Pick<Caps, 'events' | 'logger' | 'lifecycle' | 'sessionHistory'>;
 
 interface OneBotSessionHistoryConfig {
   maxLimit: number;
@@ -1695,11 +1731,12 @@ interface OneBotSessionHistoryConfig {
  * 通用工具 session_get_history 和平台专属工具 onebot_get_session_history
  * 调用 service 时都会走这条规则链 —— 不存在绕过路径。
  */
-function registerOneBotHistoryAccessChecker(ctx: Context, cfg: OneBotSessionHistoryConfig): void {
-  ctx.on('app:ready', () => {
-    const historyService = ctx.getService<SessionHistoryService>('session-history');
+function registerOneBotHistoryAccessChecker(caps: HistoryCheckerCaps, cfg: OneBotSessionHistoryConfig): void {
+  const { events, logger, lifecycle, sessionHistory } = caps;
+  events.on('app:ready', () => {
+    const historyService = sessionHistory.current;
     if (!historyService?.registerAccessChecker) {
-      ctx.logger.debug('session-history 服务未提供 registerAccessChecker, 跳过 OneBot 访问规则注册');
+      logger.debug('session-history 服务未提供 registerAccessChecker, 跳过 OneBot 访问规则注册');
       return;
     }
     const checker: AccessChecker = {
@@ -1737,14 +1774,19 @@ function registerOneBotHistoryAccessChecker(ctx: Context, cfg: OneBotSessionHist
       },
     };
     const dispose = historyService.registerAccessChecker(checker);
-    // 注意：总线上并不存在 'dispose' 事件——此前 ctx.on('dispose', ...) 永远不会
-    // 触发，access checker 在插件 bounce 后泄漏。正确挂法是 onDispose 清理链。
-    ctx.onDispose(dispose);
-    ctx.logger.info('OneBot 会话历史访问规则已注册到 session-history');
+    // 规则挂在 session-history 提供者身上，不随本插件的登记账本自动撤回：
+    // 必须进清理链，否则插件 bounce / 卸载后规则会留在下层泄漏。
+    lifecycle.onDispose(dispose);
+    logger.info('OneBot 会话历史访问规则已注册到 session-history');
   });
 }
 
-function registerSessionHistoryTools(ctx: Context, bundle: OneBotToolBundle, cfg: OneBotSessionHistoryConfig): void {
+function registerSessionHistoryTools(
+  caps: HistoryToolCaps,
+  bundle: OneBotToolBundle,
+  cfg: OneBotSessionHistoryConfig,
+): void {
+  const { platform, logger, sessionHistory } = caps;
   const { daily } = bundle;
   daily.register({
     definition: {
@@ -1777,7 +1819,7 @@ function registerSessionHistoryTools(ctx: Context, bundle: OneBotToolBundle, cfg
       }
       if (!targetId) return JSON.stringify({ error: 'target_id 不能为空' });
       const argSelfId = args.self_id ? String(args.self_id).trim() : '';
-      const selfId = argSelfId || current?.selfId || getAnyOneBotSelfId(ctx) || '';
+      const selfId = argSelfId || current?.selfId || getAnyOneBotSelfId(platform) || '';
       if (!selfId) return JSON.stringify({ error: '无法确定 self_id，且未找到可用的 OneBot 连接' });
       // 跨账号限制：仅在当前也是 OneBot 会话时才作为参考点检查
       if (current && !cfg.allowCrossSelf && selfId !== current.selfId) {
@@ -1837,10 +1879,10 @@ function registerSessionHistoryTools(ctx: Context, bundle: OneBotToolBundle, cfg
       if (!targetId) return JSON.stringify({ error: 'target_id 不能为空' });
 
       const argSelfId = args.self_id ? String(args.self_id).trim() : '';
-      const selfId = argSelfId || current?.selfId || getAnyOneBotSelfId(ctx) || '';
+      const selfId = argSelfId || current?.selfId || getAnyOneBotSelfId(platform) || '';
       if (!selfId) return JSON.stringify({ error: '无法确定 self_id，且未找到可用的 OneBot 连接' });
 
-      const history = ctx.getService<SessionHistoryService>('session-history');
+      const history = sessionHistory.current;
       if (!history)
         return JSON.stringify({
           error: 'session-history 服务不可用，请启用 @aalis/plugin-tool-session',
@@ -1864,27 +1906,28 @@ function registerSessionHistoryTools(ctx: Context, bundle: OneBotToolBundle, cfg
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        ctx.logger.warn(`onebot_get_session_history 失败 (${sessionId}): ${message}`);
+        logger.warn(`onebot_get_session_history 失败 (${sessionId}): ${message}`);
         return JSON.stringify({ error: `读取 OneBot 会话历史失败: ${message}` });
       }
     },
   });
 
-  ctx.logger.info('OneBot 会话历史工具已注册');
+  logger.info('OneBot 会话历史工具已注册');
 }
 
 // ===== 请求处理工具（好友申请 / 群请求）=====
 
-function registerRequestTools(ctx: Context, bundle: OneBotToolBundle): void {
+function registerRequestTools(caps: ToolCaps, bundle: OneBotToolBundle): void {
+  const { platform, logger } = caps;
   const { group, personal } = bundle;
   /** 找到支持 handleFriendRequest 的 OneBot 适配器 */
-  function findRequestAdapter(ctx: Context):
+  function findRequestAdapter(platform: PlatformRef):
     | (PlatformAdapter & {
         handleFriendRequest(userId: string, approve: boolean, remark?: string): Promise<string>;
         handleGroupRequest(userId: string, groupId: string, approve: boolean, reason?: string): Promise<string>;
       })
     | undefined {
-    const adapter = getPlatformAdapters(ctx).find(
+    const adapter = getPlatformAdapters(platform).find(
       a =>
         a.platform === 'onebot' && typeof (a as unknown as Record<string, unknown>).handleFriendRequest === 'function',
     );
@@ -1912,7 +1955,7 @@ function registerRequestTools(ctx: Context, bundle: OneBotToolBundle): void {
       },
     },
     handler: async args => {
-      const adapter = findRequestAdapter(ctx);
+      const adapter = findRequestAdapter(platform);
       if (!adapter) return '未找到支持请求处理的 OneBot 适配器';
       return adapter.handleFriendRequest(
         String(args.user_id),
@@ -1946,7 +1989,7 @@ function registerRequestTools(ctx: Context, bundle: OneBotToolBundle): void {
       },
     },
     handler: async args => {
-      const adapter = findRequestAdapter(ctx);
+      const adapter = findRequestAdapter(platform);
       if (!adapter) return '未找到支持请求处理的 OneBot 适配器';
       return adapter.handleGroupRequest(
         String(args.user_id),
@@ -1977,7 +2020,7 @@ function registerRequestTools(ctx: Context, bundle: OneBotToolBundle): void {
       },
     },
     handler: async args => {
-      const adapter = findRequestAdapter(ctx);
+      const adapter = findRequestAdapter(platform);
       if (!adapter) return '未找到支持请求处理的 OneBot 适配器';
       return adapter.handleGroupRequest(
         String(args.user_id),
@@ -1988,5 +2031,5 @@ function registerRequestTools(ctx: Context, bundle: OneBotToolBundle): void {
     },
   });
 
-  ctx.logger.info('OneBot 请求处理工具已注册');
+  logger.info('OneBot 请求处理工具已注册');
 }

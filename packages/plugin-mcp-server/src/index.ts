@@ -13,9 +13,15 @@
  * - config.bind 默认 127.0.0.1（仅本机访问）
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { ToolCallContext, ToolService } from '@aalis/api-tools';
-import { asToolExecutionResult } from '@aalis/api-tools';
-import type { Context } from '@aalis/core';
+import { asToolExecutionResult, type ToolCallContext, type ToolService, tools as toolsService } from '@aalis/api-tools';
+import type {} from '@aalis/api-webui'; // 加载 PluginMeta.subsystem 的 augmentation（纯类型，运行时零负担）
+import {
+  type BoundOf,
+  config as configService,
+  definePlugin,
+  lifecycle as lifecycleService,
+  logger as loggerService,
+} from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { Server as McpServer } from '@modelcontextprotocol/sdk/server/index.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
@@ -32,13 +38,7 @@ interface Config {
   allowRestricted: boolean;
 }
 
-export const name = '@aalis/plugin-mcp-server';
-export const displayName = 'MCP 服务端';
-export const subsystem = 'tools';
-
-export const inject = { required: ['tools'] };
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   port: {
     type: 'number',
     label: '监听端口',
@@ -70,28 +70,32 @@ export const configSchema: ConfigSchema = {
   } as ConfigSchema[string],
 };
 
-export async function apply(ctx: Context, rawConfig: Record<string, unknown>): Promise<void> {
-  const config = rawConfig as unknown as Config;
+const uses = {
+  tools: toolsService,
+  logger: loggerService,
+  lifecycle: lifecycleService,
+  config: configService,
+};
+type Caps = BoundOf<typeof uses>;
 
-  if (!Number.isInteger(config.port) || config.port <= 0 || config.port > 65535) {
-    ctx.logger.error(
-      `plugin-mcp-server 端口非法：port=${config.port}。请设置 1-65535 之间的整数；要停服务请在插件列表里禁用本插件。`,
+async function run({ tools, logger, lifecycle, config: rawConfig }: Caps): Promise<void> {
+  const raw = rawConfig as unknown as Config;
+
+  if (!Number.isInteger(raw.port) || raw.port <= 0 || raw.port > 65535) {
+    logger.error(
+      `plugin-mcp-server 端口非法：port=${raw.port}。请设置 1-65535 之间的整数；要停服务请在插件列表里禁用本插件。`,
     );
     return;
   }
 
-  // 兼容两种 toolGroups 形态：string[]（yaml 手写）/ Array<{name:string}>（WebUI 数组项）
-  config.toolGroups = (config.toolGroups as unknown as Array<string | { name?: unknown }>)
-    .map(g => (typeof g === 'string' ? g : typeof g?.name === 'string' ? g.name : ''))
-    .filter(Boolean);
-
-  const tools = ctx.getService<ToolService>('tools');
-  if (!tools) {
-    ctx.logger.error('tools 服务不可用');
-    return;
-  }
-  // handle 是函数声明（可提升），TS 不把上面的窄化带进去；固化成非可选类型的常量
-  const toolService: ToolService = tools;
+  // 兼容两种 toolGroups 形态：string[]（yaml 手写）/ Array<{name:string}>（WebUI 数组项）。
+  // 配置视图是只读的，归一化结果放进本次激活自己的副本。
+  const config: Config = {
+    ...raw,
+    toolGroups: (raw.toolGroups as unknown as Array<string | { name?: unknown }>)
+      .map(g => (typeof g === 'string' ? g : typeof g?.name === 'string' ? g.name : ''))
+      .filter(Boolean),
+  };
 
   // SSE 同时只支持一个活跃连接（标准约束）；新连接挤掉旧的
   let currentTransport: SSEServerTransport | undefined;
@@ -106,7 +110,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     } catch (err) {
       // 回调是 async 且这里是它唯一的出口：漏一个异常就是一条 unhandledRejection，
       // 而 runtime 的处理器会判致命并结束进程（webui 走 express 自带兜底，这条没有）。
-      ctx.logger.warn(`MCP 请求处理失败: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn(`MCP 请求处理失败: ${err instanceof Error ? err.message : String(err)}`);
       if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: 'internal' }));
     }
@@ -114,6 +118,15 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
 
   async function handle(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
     if (req.method === 'GET' && url.pathname === '/sse') {
+      // 每条新连接按当前提供者构建：工具服务换人之后连上来的 client 直接用新实例。
+      // 提供者短暂缺席（换人的空档）时不建会话，让 client 重连。
+      const toolService = tools.current;
+      if (!toolService) {
+        res.writeHead(503, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'tools service unavailable' }));
+        return;
+      }
+
       // 新 SSE 连接
       if (currentTransport) {
         try {
@@ -125,15 +138,15 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       const transport = new SSEServerTransport('/messages', res);
       currentTransport = transport;
 
-      mcpServer = buildMcpServer(ctx, toolService, config);
+      mcpServer = buildMcpServer(toolService, config);
       await mcpServer.connect(transport);
-      ctx.logger.info('MCP client 已通过 SSE 连接');
+      logger.info('MCP client 已通过 SSE 连接');
 
       req.on('close', () => {
         if (currentTransport === transport) {
           currentTransport = undefined;
           mcpServer = undefined;
-          ctx.logger.info('MCP client 已断开');
+          logger.info('MCP client 已断开');
         }
       });
       return;
@@ -161,11 +174,11 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     });
   });
 
-  ctx.logger.info(
+  logger.info(
     `MCP server 监听 http://${config.bind}:${config.port}/sse (allowRestricted=${config.allowRestricted}, groups=${config.toolGroups.length === 0 ? '*' : config.toolGroups.join(',')})`,
   );
 
-  ctx.onDispose(async () => {
+  lifecycle.onDispose(async () => {
     if (currentTransport) {
       try {
         await currentTransport.close();
@@ -174,7 +187,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       }
     }
     await new Promise<void>(resolve => httpServer.close(() => resolve()));
-    ctx.logger.info('MCP server 已停止');
+    logger.info('MCP server 已停止');
   });
 }
 
@@ -183,7 +196,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
  * 不绑定 transport；调用方负责 `server.connect(transport)`。
  * 导出以便集成测试通过 InMemoryTransport 直连，避开 HTTP/SSE 层。
  */
-export function buildMcpServer(_ctx: Context, tools: ToolService, config: Config): McpServer {
+export function buildMcpServer(tools: ToolService, config: Config): McpServer {
   const server = new McpServer({ name: 'aalis-mcp-server', version: '0.1.0' }, { capabilities: { tools: {} } });
 
   // 暴露策略（allowRestricted + toolGroups 白名单）：ListTools 与 CallTool 必须共用同一谓词，
@@ -251,3 +264,12 @@ export function buildMcpServer(_ctx: Context, tools: ToolService, config: Config
 
   return server;
 }
+
+export default definePlugin({
+  name: '@aalis/plugin-mcp-server',
+  displayName: 'MCP 服务端',
+  subsystem: 'tools',
+  configSchema,
+  uses,
+  apply: run,
+});

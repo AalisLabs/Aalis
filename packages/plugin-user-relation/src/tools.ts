@@ -22,8 +22,8 @@
  * 所有 depth/breadth/limit 参数会被 hardMax 截断，防止 Agent 一次拉满爆 token。
  */
 
-import { useToolService } from '@aalis/api-tools';
-import type { Context } from '@aalis/core';
+import type { BoundTools } from '@aalis/api-tools';
+import type { Logger } from '@aalis/core';
 import type { RelationService } from './service.js';
 import type {
   EntityEntityEdge,
@@ -59,9 +59,14 @@ interface ToolsConfig {
   debug: boolean;
 }
 
-export function registerRelationTools(ctx: Context, service: RelationService, cfg: ToolsConfig): void {
+/** 工具注册用到的能力 */
+interface ToolsCaps {
+  tools: BoundTools;
+  logger: Logger;
+}
+
+export function registerRelationTools({ tools, logger }: ToolsCaps, service: RelationService, cfg: ToolsConfig): void {
   if (!cfg.enabled) return;
-  const tools = useToolService(ctx);
   const groupName = cfg.group || 'user-relation';
 
   tools.registerGroup({
@@ -1529,7 +1534,7 @@ export function registerRelationTools(ctx: Context, service: RelationService, cf
   });
 
   if (cfg.debug) {
-    ctx.logger.debug(
+    logger.debug(
       `[user-relation] 已注册 21 个工具到分组 ${groupName}（resolve_node / expand_node / find_path / score / search_persons / search_entities / search_events / list_edges / timeline / recommend_persons / gossip / shared / rename_node / correct_edge / delete_node / delete_edge / merge_nodes / change_entity_kind / split_alias / node_score / directional_degree）`,
     );
   }

@@ -1,16 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentService, PreprocessorFn } from '../../packages/api-agent/src/index.js';
-import type {
-  StorageEntry,
-  StorageListResult,
-  StorageRootInfo,
-  StorageService,
-  StorageStat,
+import { type AgentService, agent, type PreprocessorFn } from '../../packages/api-agent/src/index.js';
+import {
+  type StorageEntry,
+  type StorageListResult,
+  type StorageRootInfo,
+  type StorageService,
+  type StorageStat,
+  storage,
 } from '../../packages/api-storage/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
-import * as fileReaderModule from '../../packages/plugin-file-reader/src/index.js';
-import { computeFileId, type FileReaderService } from '../../packages/plugin-file-reader/src/index.js';
+import { App, contributions, definePlugin, events, logger, provide, services } from '../../packages/core/src/index.js';
+import {
+  assemblePromptContributions,
+  type PromptAssemblyCaps,
+} from '../../packages/plugin-agent/src/prompt-assembly.js';
+import fileReaderPlugin, {
+  computeFileId,
+  type FileReaderService,
+  fileReader,
+} from '../../packages/plugin-file-reader/src/index.js';
 import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -105,6 +112,13 @@ function createMemoryStorage(): StorageService {
 
 interface Fixture {
   app: App;
+  /** 宿主侧的内存 storage 桩（插件装卸期间不换） */
+  store: StorageService;
+  /** 组装器要的两样能力：收集贡献 + 记日志 */
+  promptCaps: PromptAssemblyCaps;
+  /** 插件当前提供的 file-reader 服务（缺席即用例本身没测到东西，直接失败） */
+  service(): FileReaderService;
+  emitSessionDeleted(sessionId: string): Promise<void>;
   /** 经插件注册的 preprocessor 上传一个文件（默认按文本），返回文件 ID 与附件描述 */
   upload(
     sessionId: string,
@@ -112,15 +126,19 @@ interface Fixture {
     content: string | Buffer,
     mimeType?: string,
   ): Promise<{ id: string; desc: string }>;
-  dispose(): void;
+  /** 重新装载插件（用于「重启后按磁盘恢复索引」这类用例） */
+  load(config?: Record<string, unknown>): Promise<void>;
+  dispose(): Promise<void>;
 }
 
 async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  app.ctx.provide('storage', createMemoryStorage());
+  const host = app.bind({ provide, services, events, contributions, logger });
+  const store = createMemoryStorage();
+  host.provide(storage, store);
 
   // agent 桩：只负责把插件的 preprocessor 交到测试手上（file-reader 走
-  // useAgent(ctx).registerPreprocessor 分支，因为桩实现了 registerPreprocessor）
+  // registerPreprocessor 分支，因为桩实现了这个可选方法）
   let preprocessor: PreprocessorFn | undefined;
   const agentStub: AgentService = {
     async handleMessage() {
@@ -133,12 +151,24 @@ async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
       };
     },
   };
-  app.ctx.provide('agent', agentStub);
+  host.provide(agent, agentStub);
 
-  const off = await app.ctx.useModule(fileReaderModule, config);
+  const load = async (cfg: Record<string, unknown> = config): Promise<void> => {
+    await app.plugin(fileReaderPlugin, cfg);
+    await app.plugins.idle();
+  };
+  await load();
 
   return {
     app,
+    store,
+    promptCaps: { contributions: host.contributions, logger: host.logger },
+    service: () => {
+      const svc = host.services.get(fileReader);
+      if (!svc) throw new Error('file-reader 服务未注册');
+      return svc;
+    },
+    emitSessionDeleted: sessionId => host.events.emit('session:deleted', sessionId),
     async upload(sessionId: string, name: string, content: string | Buffer, mimeType = 'text/plain') {
       if (!preprocessor) throw new Error('插件未注册 preprocessor');
       const buffer = typeof content === 'string' ? Buffer.from(content, 'utf-8') : content;
@@ -159,7 +189,10 @@ async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
       const desc = msg._attachmentDescriptions?.[0] ?? '';
       return { id: await computeFileId(sessionId, buffer), desc };
     },
-    dispose: () => off.dispose(),
+    load,
+    dispose: async () => {
+      await app.plugins.unload(fileReaderPlugin.name);
+    },
   };
 }
 
@@ -168,7 +201,7 @@ async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
  * history 插在 persona 与最后一条 user 之间，用于多轮 fixture。
  */
 async function assemble(
-  app: App,
+  fx: Fixture,
   opts: { sessionId?: string; lastUser: string; history?: Message[] },
 ): Promise<{ messages: Message[]; injected?: Message }> {
   const messages: Message[] = [
@@ -176,7 +209,7 @@ async function assemble(
     ...(opts.history ?? []),
     { role: 'user', content: opts.lastUser },
   ];
-  await assemblePromptContributions(app.ctx, { messages, sessionId: opts.sessionId, platform: 'test' });
+  await assemblePromptContributions(fx.promptCaps, { messages, sessionId: opts.sessionId, platform: 'test' });
   return {
     messages,
     injected: messages.find(m => String(m.metadata?.injector ?? '').endsWith('/file-reader-history')),
@@ -187,6 +220,17 @@ function contentOf(msg?: Message): string {
   return typeof msg?.content === 'string' ? msg.content : '';
 }
 
+/** 对照探针：用真插件登记一条贡献，全局键前缀即插件名（码元序可控）。 */
+function anchorProbe(name: string, id: string, anchor: string, out: string) {
+  return definePlugin({
+    name,
+    uses: { contributions },
+    apply(caps) {
+      caps.contributions.contribute('agent:prompt' as never, { id, anchor, build: () => out } as never);
+    },
+  });
+}
+
 describe('plugin-file-reader: agent:prompt 贡献', () => {
   it('上传后本轮无新上传 → 注入历史文件清单（含文件名与 ID），落在 turn-context 锚位', async () => {
     const fx = await setup();
@@ -195,20 +239,17 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       const b = await fx.upload('s-1', 'plan.md', '第二个文件正文');
 
       // 同槽区对照探针：fixture 只有 [system, ...history, user] 时各锚位插入点重合，
-      // 单看下标无法区分锚位。identity 探针给出上界；knowledge 探针的 ctx id 必须
-      // **码元序排在被测插件全局键之后**（插件经 useModule 加载，键形如
-      // `root#@aalis/plugin-file-reader`，故用 zz- 前缀）——否则 anchor 错标成
-      // knowledge 时两块仍按同样次序落位，断言恒真、变异测不出。
-      fx.app.ctx
-        .fork('probe-identity')
-        .contribute('agent:prompt' as never, { id: 'idn', anchor: 'identity', build: () => 'IDN' } as never);
-      fx.app.ctx
-        .fork('zz-probe-knowledge')
-        .contribute('agent:prompt' as never, { id: 'kn', anchor: 'knowledge', build: () => 'KN' } as never);
+      // 单看下标无法区分锚位。identity 探针给出上界；knowledge 探针的插件名必须
+      // **码元序排在被测插件全局键之后**（键形如 `@aalis/plugin-file-reader/file-reader-history`，
+      // 故用 zz- 前缀）——否则 anchor 错标成 knowledge 时两块仍按同样次序落位，
+      // 断言恒真、变异测不出。
+      await fx.app.plugin(anchorProbe('probe-identity', 'idn', 'identity', 'IDN'));
+      await fx.app.plugin(anchorProbe('zz-probe-knowledge', 'kn', 'knowledge', 'KN'));
+      await fx.app.plugins.idle();
 
       // 带一轮历史：没有它时"第一条非 system"与"最后一条 user"重合，
       // context 与 turn-hint 落点相同，锚位断言对 turn-hint 恒真。
-      const { messages, injected } = await assemble(fx.app, {
+      const { messages, injected } = await assemble(fx, {
         sessionId: 's-1',
         lastUser: '刚才那些文件讲了啥',
         history: [
@@ -244,7 +285,7 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       expect(messages[messages.length - 1].role).toBe('user');
       expect(frIdx, '文件清单须在最后一条 user 之前').toBeLessThan(messages.length - 1);
     } finally {
-      fx.dispose();
+      await fx.dispose();
     }
   });
 
@@ -258,7 +299,7 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       expect(fresh.desc).toContain('[文件: fresh.txt');
       expect(fresh.desc).toContain(`(ID: ${fresh.id})`);
 
-      const { injected } = await assemble(fx.app, {
+      const { injected } = await assemble(fx, {
         sessionId: 's-1',
         lastUser: `帮我看看\n${fresh.desc}`,
       });
@@ -274,7 +315,7 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       // 本轮分支不再打「当前轮次未新上传」的历史抬头
       expect(text).not.toContain('当前轮次未新上传');
     } finally {
-      fx.dispose();
+      await fx.dispose();
     }
   });
 
@@ -282,14 +323,14 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
     const fx = await setup();
     try {
       const only = await fx.upload('s-1', 'only.txt', '唯一的正文');
-      const { injected } = await assemble(fx.app, { sessionId: 's-1', lastUser: `请总结\n${only.desc}` });
+      const { injected } = await assemble(fx, { sessionId: 's-1', lastUser: `请总结\n${only.desc}` });
       const text = contentOf(injected);
 
       expect(text).toContain('本轮用户新上传了 1 个文件');
       expect(text).toContain('only.txt');
       expect(text).not.toContain('历史还有');
     } finally {
-      fx.dispose();
+      await fx.dispose();
     }
   });
 
@@ -300,7 +341,7 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
 
       // 判定「本轮是否新上传」只看倒序第一条 user；往轮 user 虽含 [文件: 描述，
       // 不该把本轮误判成新上传
-      const { injected } = await assemble(fx.app, {
+      const { injected } = await assemble(fx, {
         sessionId: 's-1',
         history: [
           { role: 'user', content: `看看这个\n${old.desc}` },
@@ -317,7 +358,7 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       expect(text).toContain(old.id);
       expect(text).not.toContain('本轮用户新上传');
     } finally {
-      fx.dispose();
+      await fx.dispose();
     }
   });
 
@@ -327,7 +368,7 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       const old = await fx.upload('s-1', 'old.txt', '往轮上传的正文');
       const fresh = await fx.upload('s-1', 'fresh.txt', '本轮上传的正文');
 
-      const { injected } = await assemble(fx.app, {
+      const { injected } = await assemble(fx, {
         sessionId: 's-1',
         history: [
           { role: 'user', content: `看看这个\n${old.desc}` },
@@ -348,7 +389,7 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       expect(text.indexOf('old.txt')).toBeGreaterThan(histIdx);
       expect(text).toContain(fresh.id);
     } finally {
-      fx.dispose();
+      await fx.dispose();
     }
   });
 
@@ -356,13 +397,13 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
     const fx = await setup();
     try {
       await fx.upload('s-1', 'notes.txt', '正文');
-      const { injected } = await assemble(fx.app, {
+      const { injected } = await assemble(fx, {
         sessionId: 's-1',
         lastUser: '[文件: ghost.txt (ID: deadbeefdeadbeef)] 这个呢',
       });
       expect(injected).toBeUndefined();
     } finally {
-      fx.dispose();
+      await fx.dispose();
     }
   });
 
@@ -370,10 +411,10 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
     const fx = await setup();
     try {
       await fx.upload('s-1', 'notes.txt', '正文');
-      const { injected } = await assemble(fx.app, { sessionId: 's-other', lastUser: '有文件吗' });
+      const { injected } = await assemble(fx, { sessionId: 's-other', lastUser: '有文件吗' });
       expect(injected).toBeUndefined();
     } finally {
-      fx.dispose();
+      await fx.dispose();
     }
   });
 
@@ -383,7 +424,7 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       await fx.upload('s-1', 'alice.txt', 'A 的正文');
       const mine = await fx.upload('s-2', 'bob.txt', 'B 的正文');
 
-      const { injected } = await assemble(fx.app, { sessionId: 's-2', lastUser: '我传过什么' });
+      const { injected } = await assemble(fx, { sessionId: 's-2', lastUser: '我传过什么' });
       const text = contentOf(injected);
 
       expect(text).toContain('(1 个');
@@ -391,7 +432,7 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       expect(text).toContain(mine.id);
       expect(text).not.toContain('alice.txt');
     } finally {
-      fx.dispose();
+      await fx.dispose();
     }
   });
 
@@ -399,10 +440,10 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
     const fx = await setup();
     try {
       await fx.upload('s-1', 'notes.txt', '正文');
-      const { injected } = await assemble(fx.app, { lastUser: '随便聊聊' });
+      const { injected } = await assemble(fx, { lastUser: '随便聊聊' });
       expect(injected).toBeUndefined();
     } finally {
-      fx.dispose();
+      await fx.dispose();
     }
   });
 
@@ -410,11 +451,11 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
     const fx = await setup({ historyHintEnabled: false });
     try {
       await fx.upload('s-1', 'notes.txt', '正文');
-      const { messages, injected } = await assemble(fx.app, { sessionId: 's-1', lastUser: '那个文件呢' });
+      const { messages, injected } = await assemble(fx, { sessionId: 's-1', lastUser: '那个文件呢' });
       expect(injected).toBeUndefined();
       expect(messages).toHaveLength(2);
     } finally {
-      fx.dispose();
+      await fx.dispose();
     }
   });
 
@@ -425,12 +466,12 @@ describe('plugin-file-reader: agent:prompt 贡献', () => {
       const second = await fx.upload('s-1', 'dup.txt', '同样的正文');
       expect(second.id).toBe(first.id);
 
-      const { injected } = await assemble(fx.app, { sessionId: 's-1', lastUser: '刚那个文件' });
+      const { injected } = await assemble(fx, { sessionId: 's-1', lastUser: '刚那个文件' });
       const text = contentOf(injected);
       expect(text).toContain('(1 个');
       expect((text.match(/dup\.txt/g) ?? []).length).toBe(1);
     } finally {
-      fx.dispose();
+      await fx.dispose();
     }
   });
 });
@@ -466,7 +507,7 @@ describe('plugin-file-reader: PDF 抽文本（unpdf）', () => {
       expect(desc).toContain('--- 文件内容 ---');
       expect(desc).toContain('Hello unpdf');
     } finally {
-      fx.dispose();
+      await fx.dispose();
     }
   });
 
@@ -476,7 +517,7 @@ describe('plugin-file-reader: PDF 抽文本（unpdf）', () => {
       const { desc } = await fx.upload('s-pdf', 'bad.pdf', Buffer.from('not a pdf'), 'application/pdf');
       expect(desc).toContain('[PDF 解析失败]');
     } finally {
-      fx.dispose();
+      await fx.dispose();
     }
   });
 });
@@ -490,37 +531,40 @@ describe('plugin-file-reader: 会话目录名', () => {
     const fx = await setup();
     try {
       await fx.upload('onebot:1:group:2', 'a.txt', 'hello');
-      const storage = fx.app.ctx.getService<StorageService>('storage')!;
-      const dirs = (await storage.list('pluginData:/file-reader')).entries.filter(e => e.isDirectory).map(e => e.name);
+      const dirs = (await fx.store.list('pluginData:/file-reader')).entries.filter(e => e.isDirectory).map(e => e.name);
       expect(dirs).toEqual(['onebot_1_group_2']);
-      const svc = fx.app.ctx.getService<FileReaderService>('file-reader')!;
-      expect(svc.listFiles('onebot:1:group:2').map(f => f.name)).toEqual(['a.txt']);
+      expect(
+        fx
+          .service()
+          .listFiles('onebot:1:group:2')
+          .map(f => f.name),
+      ).toEqual(['a.txt']);
     } finally {
-      fx.dispose();
+      await fx.dispose();
     }
   });
 
   it('老版本按原样 sessionId 建的目录：重启恢复按实际目录定位，删除删的也是那里', async () => {
     const fx = await setup();
-    const storage = fx.app.ctx.getService<StorageService>('storage')!;
+    const store = fx.store;
     const sessionId = 'onebot:1:group:2';
     const id = await computeFileId(sessionId, Buffer.from('legacy'));
     const legacyDir = `pluginData:/file-reader/${sessionId}`;
-    await storage.writeFile(`${legacyDir}/${id}.txt`, 'legacy');
-    await storage.writeFile(
+    await store.writeFile(`${legacyDir}/${id}.txt`, 'legacy');
+    await store.writeFile(
       `${legacyDir}/${id}.meta.json`,
       JSON.stringify({ id, name: 'old.txt', mimeType: 'text/plain', size: 6, sessionId, uploadedAt: Date.now() }),
     );
-    fx.dispose();
-    const off = await fx.app.ctx.useModule(fileReaderModule, {}); // 重新加载 → restoreIndex 扫目录
+    await fx.dispose();
+    await fx.load({}); // 重新装载 → restoreIndex 扫目录
     try {
-      const svc = fx.app.ctx.getService<FileReaderService>('file-reader')!;
+      const svc = fx.service();
       expect(svc.getMeta(id)?.name).toBe('old.txt');
       expect(await svc.deleteFile(id)).toBe(true);
-      await expect(storage.stat(`${legacyDir}/${id}.txt`), '应删除实际目录里的数据文件').rejects.toThrow();
-      await expect(storage.stat(`${legacyDir}/${id}.meta.json`)).rejects.toThrow();
+      await expect(store.stat(`${legacyDir}/${id}.txt`), '应删除实际目录里的数据文件').rejects.toThrow();
+      await expect(store.stat(`${legacyDir}/${id}.meta.json`)).rejects.toThrow();
     } finally {
-      off.dispose();
+      await fx.dispose();
     }
   });
 });
@@ -531,15 +575,14 @@ describe('plugin-file-reader: session:deleted 清理', () => {
     try {
       const sessionId = 'onebot:1:group:2';
       await fx.upload(sessionId, 'a.txt', 'hello');
-      const storage = fx.app.ctx.getService<StorageService>('storage')!;
-      await storage.writeFile('pluginData:/file-reader/onebot_1_group_2/deadbeef00000000.txt', 'orphan'); // 无 meta 的残留
-      await storage.writeFile(`pluginData:/file-reader/${sessionId}/cafebabe00000000.txt`, 'legacy-orphan'); // 老目录残留
-      await fx.app.ctx.emit('session:deleted', sessionId);
+      await fx.store.writeFile('pluginData:/file-reader/onebot_1_group_2/deadbeef00000000.txt', 'orphan'); // 无 meta 的残留
+      await fx.store.writeFile(`pluginData:/file-reader/${sessionId}/cafebabe00000000.txt`, 'legacy-orphan'); // 老目录残留
+      await fx.emitSessionDeleted(sessionId);
       await new Promise(r => setImmediate(r));
-      await expect(storage.list('pluginData:/file-reader/onebot_1_group_2'), '新目录应整个删掉').rejects.toThrow();
-      await expect(storage.list(`pluginData:/file-reader/${sessionId}`), '老目录应整个删掉').rejects.toThrow();
+      await expect(fx.store.list('pluginData:/file-reader/onebot_1_group_2'), '新目录应整个删掉').rejects.toThrow();
+      await expect(fx.store.list(`pluginData:/file-reader/${sessionId}`), '老目录应整个删掉').rejects.toThrow();
     } finally {
-      fx.dispose();
+      await fx.dispose();
     }
   });
 });

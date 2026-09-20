@@ -1,11 +1,12 @@
-import type {
-  MemoryService,
-  MetadataEntry,
-  MetadataOp,
-  RecentMessageRecord,
-  RecentMessagesAcrossSessionsQuery,
+import {
+  type MemoryService,
+  type MetadataEntry,
+  type MetadataOp,
+  memory,
+  type RecentMessageRecord,
+  type RecentMessagesAcrossSessionsQuery,
 } from '@aalis/api-memory';
-import type { Context } from '@aalis/core';
+import { config, definePlugin, logger, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 
@@ -244,14 +245,9 @@ class InMemoryFallbackService implements MemoryService {
   }
 }
 
-// ===== 插件元数据 =====
+// ===== 插件入口 =====
 
-export const name = '@aalis/plugin-memory-inmemory';
-export const displayName = '内存记忆';
-export const subsystem = 'memory';
-export const provides = ['memory'];
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   rangeQueryLimit: {
     type: 'number',
     label: '范围查询返回上限',
@@ -266,15 +262,20 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-// ===== 插件入口 =====
-
-export function apply(ctx: Context, config: Record<string, unknown>): void {
-  const service = new InMemoryFallbackService({
-    rangeQueryLimit: config.rangeQueryLimit as number | undefined,
-    crossSessionMaxLimit: config.crossSessionMaxLimit as number | undefined,
-  });
-  ctx.provide('memory', service, {
-    priority: -100,
-  });
-  ctx.logger.info('内存记忆服务已启用 (数据不会持久化)');
-}
+export default definePlugin({
+  name: '@aalis/plugin-memory-inmemory',
+  displayName: '内存记忆',
+  subsystem: 'memory',
+  configSchema,
+  provides: [memory],
+  uses: { config, logger, provide },
+  apply(caps) {
+    const service = new InMemoryFallbackService({
+      rangeQueryLimit: caps.config.rangeQueryLimit as number | undefined,
+      crossSessionMaxLimit: caps.config.crossSessionMaxLimit as number | undefined,
+    });
+    // 负优先级：本后端是兜底，任何持久化后端在场都该压过它
+    caps.provide(memory, service, { priority: -100 });
+    caps.logger.info('内存记忆服务已启用 (数据不会持久化)');
+  },
+});

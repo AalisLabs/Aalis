@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
-import type { Context, Logger } from '@aalis/core';
+import type { Logger, ServiceRef } from '@aalis/core';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { MediaProcessor } from '../../packages/api-media/src/index.js';
 import {
@@ -9,7 +9,7 @@ import {
   VIDEO_FAILURE_TEXTS,
 } from '../../packages/plugin-media/src/cache.js';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
-import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
+import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 
@@ -22,8 +22,24 @@ import type { IncomingMessage } from '../../packages/schema-message/src/index.js
 // 反向命中则丢 ref。契约：入库一律裸描述；归档消费时按形态重新包装。
 // ════════════════════════════════════════════════════════════
 
-const ctx = { getAllServices: () => [], getService: () => undefined } as unknown as Context;
 const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
+
+/** 无提供者的按激活绑定桩：识别走外部注册的 processor，其余能力一律缺席 */
+const empty = <P>(): ServiceRef<P> => ({
+  current: undefined,
+  require: () => {
+    throw new Error('无提供者');
+  },
+  all: () => [],
+  follow: () => () => {},
+});
+const caps: MediaServiceCaps = {
+  logger,
+  llm: empty(),
+  asr: empty(),
+  sessionManager: empty(),
+  memory: empty(),
+};
 
 function makeSvc(): { svc: MediaServiceImpl; describeCount: () => number } {
   let n = 0;
@@ -34,7 +50,7 @@ function makeSvc(): { svc: MediaServiceImpl; describeCount: () => number } {
     animatedImage: { maxFrames: 4 },
     contextHistory: { enabled: false, maxMessages: 0 },
   } as unknown as MediaConfigResolved;
-  const svc = new MediaServiceImpl(ctx, logger, cfg);
+  const svc = new MediaServiceImpl(caps, cfg);
   const proc: MediaProcessor = {
     name: 'fake-vision',
     capabilities: ['vision'],

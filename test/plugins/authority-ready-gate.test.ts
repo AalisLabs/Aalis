@@ -5,7 +5,7 @@ import { App } from '@aalis/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AuthorityService } from '../../packages/api-authority/src/index.js';
 import type { StorageRootInfo, StorageService } from '../../packages/api-storage/src/index.js';
-import * as authorityModule from '../../packages/plugin-authority/src/index.js';
+import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // authority apply 的 ready 闸 —— storage 已在线时，apply 返回即等级表已载入
@@ -53,7 +53,7 @@ describe('authority：storage 已在线时 apply 等完等级表加载', () => {
   it('useModule 返回即可读到 users.json 里的封禁记录（未调 idle）', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     app.ctx.provide('storage', fsStorage() as never);
-    await app.ctx.useModule(authorityModule as never, {});
+    await app.ctx.useModule(authorityPlugin, {});
 
     const auth = app.ctx.getService<AuthorityService>('authority');
     if (!auth) throw new Error('authority 服务未注册');

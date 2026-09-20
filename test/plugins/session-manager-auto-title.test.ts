@@ -1,7 +1,7 @@
 import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
-import * as sessionManagerModule from '../../packages/plugin-session-manager/src/index.js';
+import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 
 // 背景（C11）：自动标题监听在「会话不存在」时只打一条 warn 就返回，而平台派生会话
 // （cli-default、OneBot 会话 id）从不经 createSession 预建 —— 于是 CLI 会话永远没有标题，
@@ -35,7 +35,7 @@ async function setup() {
       return { content: '装修预算' };
     },
   } as never);
-  await app.ctx.useModule(sessionManagerModule, {});
+  await app.ctx.useModule(sessionManagerPlugin, {});
   await app.plugins.idle();
   const sm = app.ctx.getService<SessionManagerService>('session-manager');
   if (!sm) throw new Error('session-manager 服务未注册');

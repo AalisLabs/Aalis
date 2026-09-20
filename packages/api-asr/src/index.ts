@@ -2,15 +2,14 @@
 // @aalis/api-asr — 语音识别(ASR)服务契约
 //
 // 把"音频 → 文本"抽象为核心 `asr` 服务：whisper.cpp / 云 ASR / LLM-as-audio
-// 都以 `ctx.provide('asr', impl, { capabilities, priority })` 注册为多 provider，
-// 消费方 `getService('asr', ['audio'])` 由核心按「偏好 > 优先级 > capability」解析。
+// 都以 `provide(asr, impl, { priority })` 注册为多 provider，消费方声明 `asr`
+// 描述符后由核心按「偏好 > 优先级 > 注册顺序」解析出当前胜者。
 // 用哪个 provider 经核心 servicePreferences（WebUI「服务」页下拉框）切换——
 // 多个 whisper / whisper+云ASR / LLM-as-audio 在同一下拉框里平等可选。
 //
 // 依赖：仅 @aalis/core 与 @aalis/schema-message。
 // ============================================================
 
-import type { Context } from '@aalis/core';
 import { defineService } from '@aalis/core';
 import type { MessageAttachment } from '@aalis/schema-message';
 
@@ -43,7 +42,7 @@ export interface TranscribeResult {
  * 多个 provider 由核心 DI 仲裁（偏好 > 优先级 > capability）；消费方无需感知具体后端。
  */
 export interface ASRService {
-  transcribe(input: TranscribeInput, ctx: Context): Promise<TranscribeResult>;
+  transcribe(input: TranscribeInput): Promise<TranscribeResult>;
 }
 
 // ----- 服务类型注册（declaration merging）-----

@@ -1,7 +1,7 @@
 import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import { useToolService } from '../../packages/api-tools/src/index.js';
-import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import { tools as toolsService } from '../../packages/api-tools/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 
 // 分组过滤语义（getDefinitions / getSummaries 共用一套）：
 //   无分组的通用工具恒可见；带分组的只在命中 groups 时可见；'*' = 全部分组。
@@ -12,16 +12,18 @@ async function withRegistry(
   fn: (names: (f?: { groups?: string[] }) => string[], summaries: (f?: { groups?: string[] }) => string[]) => void,
 ): Promise<void> {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(toolsModule as never, {});
+  await app.plugins.register(toolsPlugin, {});
   await app.plugins.idle();
-  const reg = useToolService(app.ctx);
+  const { tools } = app.bind({ tools: toolsService });
   const def = (name: string) => ({
     type: 'function' as const,
     function: { name, description: name, parameters: { type: 'object' as const, properties: {} } },
   });
-  reg.register({ definition: def('plain'), handler: async () => '' });
-  reg.register({ definition: def('sys_a'), handler: async () => '', groups: ['system'] });
-  reg.register({ definition: def('skill_a'), handler: async () => '', groups: ['skills'] });
+  tools.register({ definition: def('plain'), handler: async () => '' });
+  tools.register({ definition: def('sys_a'), handler: async () => '', groups: ['system'] });
+  tools.register({ definition: def('skill_a'), handler: async () => '', groups: ['skills'] });
+  const reg = tools.current;
+  if (!reg) throw new Error('tools 服务未注册');
   try {
     fn(
       f =>

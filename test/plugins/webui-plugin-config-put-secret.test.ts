@@ -1,3 +1,4 @@
+import type { AppService, ConfigManager, PluginManagerService, ServiceRef } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 
@@ -11,6 +12,11 @@ import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/rou
 // ════════════════════════════════════════════════════════════
 
 type Handler = (req: unknown, res: unknown, next: () => Promise<void>) => unknown;
+
+/** 最小 ServiceRef 桩：路由只经 current / require 取提供者 */
+function ref<T>(instance: unknown): ServiceRef<T> {
+  return { current: instance as T, require: () => instance as T, all: () => [], follow: () => () => {} };
+}
 
 /** schema 刻意复刻真实形态：apiKey 无 default（真实仓里多数 secret 如此），baseUrl 有 */
 const SCHEMA = {
@@ -37,30 +43,30 @@ function setup() {
         },
     },
   );
-  const ctx = {
-    config: {
-      set: () => {},
-      getAll: () => ({}),
-      getPluginConfig: () => ({ ...pluginConfig }),
-      isPluginDisabled: () => false,
-    },
-    getService: () => undefined,
-    logger: { child: () => ctx.logger, debug() {}, info() {}, warn() {}, error() {} },
+  const hostConfig = {
+    set: () => {},
+    getAll: () => ({}),
+    getPluginConfig: () => ({ ...pluginConfig }),
+    isPluginDisabled: () => false,
   };
   registerPluginRoutes(
     app as never,
-    ctx as never,
-    () => ({ saveConfig: () => {}, restart: () => {} }) as never,
-    () =>
-      ({
+    {
+      app: ref<AppService>({ saveConfig: () => {}, restart: () => {} }),
+      plugins: ref<PluginManagerService>({
         getPlugin: () => ({ module: { configSchema: SCHEMA } }),
         updateConfig: async (_n: string, cfg: Record<string, unknown>) => {
           received = cfg;
           return true;
         },
-      }) as never,
+      }),
+      hostConfig: ref<ConfigManager>(hostConfig),
+      tools: { current: undefined },
+      commands: { current: undefined },
+      webui: () => undefined,
+    },
     () => ({ platform: 'webui', userId: 'console' }),
-    () => (_req, _res, next) => next(),
+    () => (_req: unknown, _res: unknown, next: () => void) => next(),
     () => undefined,
   );
   const put = async (body: unknown) => {

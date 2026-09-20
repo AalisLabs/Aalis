@@ -2,11 +2,15 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createStorageGateway, type StorageService } from '../../packages/api-storage/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as checkpoint from '../../packages/plugin-checkpoint/src/index.js';
+import {
+  createStorageGateway,
+  type StorageService,
+  storage as storageService,
+} from '../../packages/api-storage/src/index.js';
+import { App, type Hooks, hooks as hooksCap } from '../../packages/core/src/index.js';
+import checkpointPlugin, { checkpoint } from '../../packages/plugin-checkpoint/src/index.js';
 import type { CheckpointServiceImpl } from '../../packages/plugin-checkpoint/src/service.js';
-import * as storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // checkpoint × storage-local 真 fs 集成：回滚承诺必须与磁盘实况一致。
@@ -25,6 +29,7 @@ describe('checkpoint × storage (真 fs)', () => {
   let ws: string;
   let app: App;
   let storage: StorageService;
+  let hooks: Hooks;
   let svc: CheckpointServiceImpl;
 
   beforeEach(async () => {
@@ -32,7 +37,7 @@ describe('checkpoint × storage (真 fs)', () => {
     ws = join(base, 'ws');
     mkdirSync(ws, { recursive: true });
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocal as unknown as Parameters<typeof app.ctx.useModule>[0], {
+    await app.plugins.register(storageLocalPlugin, {
       roots: [
         { name: 'ws', path: ws, kind: 'workspace', browsable: true, readable: true, writable: true, deletable: true },
         {
@@ -55,13 +60,17 @@ describe('checkpoint × storage (真 fs)', () => {
         },
       ],
     });
-    await app.ctx.useModule(checkpoint as unknown as Parameters<typeof app.ctx.useModule>[0], {
+    await app.plugins.register(checkpointPlugin, {
       rootDir: 'data:/checkpoints',
       scopes: ['*'],
       keepSessions: 0,
     });
-    storage = createStorageGateway(app.ctx);
-    svc = app.ctx.getService('checkpoint') as unknown as CheckpointServiceImpl;
+    await app.plugins.idle();
+    const host = app.bind({ storage: storageService, checkpoint, hooks: hooksCap });
+    storage = createStorageGateway(host.storage);
+    hooks = host.hooks;
+    // beginTurn / endTurn / setBackend 是实现类上的驱动面，不在对外服务契约里
+    svc = host.checkpoint.require() as CheckpointServiceImpl;
   });
 
   afterEach(async () => {
@@ -306,7 +315,7 @@ describe('checkpoint × storage (真 fs)', () => {
       ['e4', 'file_write'],
     ] as const) {
       const turnId = await runTurn(sessionId, async () => {
-        await app.ctx.runHook('agent:tool:before', {
+        await hooks.run('agent:tool:before', {
           name: toolName,
           args: {},
           toolCallContext: { sessionId },

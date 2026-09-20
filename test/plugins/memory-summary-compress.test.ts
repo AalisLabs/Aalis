@@ -1,10 +1,10 @@
-import { App } from '@aalis/core';
+import { App, events, hooks, provide, services } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
-import { LLMCapabilities } from '../../packages/api-llm/src/index.js';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import * as memorySummary from '../../packages/plugin-memory-summary/src/index.js';
+import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
+import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
+import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 自动压缩的触发条件
@@ -36,16 +36,18 @@ function summarizedCount(): number {
   return (lastSummaryInput.text.match(/第 \d+ 条消息/g) ?? []).length;
 }
 
-async function setup(config: Record<string, unknown>) {
+/** 装好两个插件、挂上桩 LLM（默认是会正常出摘要的那个），返回这次 App 的 memory 与宿主门面 */
+async function setup(config: Record<string, unknown>, model: LLMModel = fakeLLM()) {
   lastSummaryInput.text = '';
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(memoryInMemoryModule);
-  app.ctx.provide('llm', fakeLLM());
-  await app.ctx.useModule(memorySummary, config);
+  const host = app.bind({ provide, services, hooks, events });
+  await app.plugin(memoryInMemory);
+  host.provide(llm, model);
+  await app.plugin(memorySummary, config);
   await app.plugins.idle();
-  const memory = app.ctx.getService<MemoryService>('memory');
-  if (!memory) throw new Error('memory 服务未就绪');
-  return { app, memory };
+  const service = host.services.get(memory);
+  if (!service) throw new Error('memory 服务未就绪');
+  return { app, host, memory: service };
 }
 
 async function seedMessages(memory: MemoryService, sessionId: string, count: number): Promise<void> {
@@ -61,13 +63,13 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
   it('threshold 大于历史探测条数时仍触发压缩并归档旧消息', async () => {
     const threshold = 240;
     const keepRecent = 40;
-    const { app, memory } = await setup({ threshold, keepRecent });
+    const { app, host, memory } = await setup({ threshold, keepRecent });
 
     await seedMessages(memory, 's-1', threshold + 5);
     expect((await memory.getHistory('s-1', 1000)).length).toBe(threshold + 5);
 
     // 走真实触发路径：agent:turn:after 钩子
-    await app.ctx.runHook(
+    await host.hooks.run(
       'agent:turn:after' as never,
       {
         message: { sessionId: 's-1' },
@@ -90,10 +92,10 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
     // 探测条数兼作单次摘要输入上界。若只按 threshold 推导，默认配置（30/20）
     // 单次只摘 10 条，而 trimHistory 仍按 keepRecent 归档全部活跃历史——
     // 超出探测窗的那批被归档却从未进摘要。
-    const { app, memory } = await setup({ threshold: 30, keepRecent: 20 });
+    const { app, host, memory } = await setup({ threshold: 30, keepRecent: 20 });
     await seedMessages(memory, 's-3', 120);
 
-    await app.ctx.runHook(
+    await host.hooks.run(
       'agent:turn:after' as never,
       {
         message: { sessionId: 's-3' },
@@ -114,10 +116,10 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
   });
 
   it('消息数不足 threshold → 不压缩', async () => {
-    const { app, memory } = await setup({ threshold: 240, keepRecent: 40 });
+    const { app, host, memory } = await setup({ threshold: 240, keepRecent: 40 });
     await seedMessages(memory, 's-2', 100);
 
-    await app.ctx.runHook(
+    await host.hooks.run(
       'agent:turn:after' as never,
       {
         message: { sessionId: 's-2' },
@@ -135,9 +137,7 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
 
   it('摘要 LLM 失败 → 降级为纯裁切，不滞留"涨破阈值原样重试"循环', async () => {
     // 失败路径专用装配：LLM 恒抛错（模拟慢模型超时）
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(memoryInMemoryModule);
-    app.ctx.provide('llm', {
+    const { app, host, memory } = await setup({ threshold: 240, keepRecent: 40 }, {
       id: 'boom',
       providerId: 'boom',
       contextLength: 8192,
@@ -146,13 +146,9 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
         throw new Error('fake timeout');
       },
     } as unknown as LLMModel);
-    await app.ctx.useModule(memorySummary, { threshold: 240, keepRecent: 40 });
-    await app.plugins.idle();
-    const memory = app.ctx.getService<MemoryService>('memory');
-    if (!memory) throw new Error('memory 服务未就绪');
     await seedMessages(memory, 's-4', 245);
 
-    await app.ctx.runHook(
+    await host.hooks.run(
       'agent:turn:after' as never,
       {
         message: { sessionId: 's-4' },
@@ -173,9 +169,7 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
   });
 
   it('摘要 LLM 返回空串（不抛错）→ 同样降级纯裁切、不写空摘要', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(memoryInMemoryModule);
-    app.ctx.provide('llm', {
+    const { app, host, memory } = await setup({ threshold: 240, keepRecent: 40 }, {
       id: 'empty',
       providerId: 'empty',
       contextLength: 8192,
@@ -184,13 +178,9 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
         return { content: '' };
       },
     } as unknown as LLMModel);
-    await app.ctx.useModule(memorySummary, { threshold: 240, keepRecent: 40 });
-    await app.plugins.idle();
-    const memory = app.ctx.getService<MemoryService>('memory');
-    if (!memory) throw new Error('memory 服务未就绪');
     await seedMessages(memory, 's-7', 245);
 
-    await app.ctx.runHook(
+    await host.hooks.run(
       'agent:turn:after' as never,
       { message: { sessionId: 's-7' }, reply: 'ok', outcome: 'replied', sessionId: 's-7', metadata: {} } as never,
     );
@@ -204,9 +194,7 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
 
   it('session:compress 手动路径：LLM 失败同样降级裁切，事件 start→error，旧摘要保留', async () => {
     // compress handler 是 generateSummary 之外的第二份降级实现，必须单独钉住
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(memoryInMemoryModule);
-    app.ctx.provide('llm', {
+    const { app, host, memory } = await setup({ threshold: 240, keepRecent: 40 }, {
       id: 'boom2',
       providerId: 'boom2',
       contextLength: 8192,
@@ -215,10 +203,6 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
         throw new Error('fake timeout');
       },
     } as unknown as LLMModel);
-    await app.ctx.useModule(memorySummary, { threshold: 240, keepRecent: 40 });
-    await app.plugins.idle();
-    const memory = app.ctx.getService<MemoryService>('memory');
-    if (!memory) throw new Error('memory 服务未就绪');
     await memory.saveMetadata('summary', 's-6', {
       summary: 'GOOD-OLD-SUMMARY',
       coveredUpTo: 1,
@@ -228,11 +212,11 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
     await seedMessages(memory, 's-6', 120);
 
     const statuses: string[] = [];
-    app.ctx.on('session:compressing', info => {
+    host.events.on('session:compressing', info => {
       if (info.sessionId === 's-6') statuses.push(info.status);
     });
 
-    await app.ctx.emit('session:compress', { sessionId: 's-6', reason: 'manual' });
+    await host.events.emit('session:compress', { sessionId: 's-6', reason: 'manual' });
     await new Promise<void>(r => setTimeout(r, 50));
 
     expect((await memory.getHistory('s-6', 1000)).length, '手动压缩失败也应降级裁切').toBeLessThanOrEqual(45);
@@ -245,9 +229,7 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
   it('流式中途失败：半截输出不得入库为摘要，旧摘要原样保留（降级纯裁切）', async () => {
     // 生产主路径是 chatStream；provider 超时常在吐出部分内容后中断流。
     // 半截文本一旦 upsert，会成为后续增量摘要的权威基底，链条被永久污染。
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(memoryInMemoryModule);
-    app.ctx.provide('llm', {
+    const { app, host, memory } = await setup({ threshold: 240, keepRecent: 40 }, {
       id: 'partial',
       providerId: 'partial',
       contextLength: 8192,
@@ -261,10 +243,6 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
         throw new Error('fake stream timeout');
       },
     } as unknown as LLMModel);
-    await app.ctx.useModule(memorySummary, { threshold: 240, keepRecent: 40 });
-    await app.plugins.idle();
-    const memory = app.ctx.getService<MemoryService>('memory');
-    if (!memory) throw new Error('memory 服务未就绪');
     // 预置一份完好的旧摘要：失败路径必须原样保留，不得被半截/空文本覆盖
     await memory.saveMetadata('summary', 's-5', {
       summary: 'GOOD-OLD-SUMMARY',
@@ -274,7 +252,7 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
     });
     await seedMessages(memory, 's-5', 245);
 
-    await app.ctx.runHook(
+    await host.hooks.run(
       'agent:turn:after' as never,
       {
         message: { sessionId: 's-5' },

@@ -16,7 +16,7 @@ import type {
   ToolService,
   ToolSummary,
 } from '@aalis/api-tools';
-import type { Context, Logger } from '@aalis/core';
+import type { Logger } from '@aalis/core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Server as McpSdkServer } from '@modelcontextprotocol/sdk/server/index.js';
@@ -115,28 +115,10 @@ function makeBridgeCaps(toolService: FakeToolService) {
     tools: {
       register: (tool: Parameters<FakeToolService['register']>[0]) => toolService.register(tool, 'test-mcp-client'),
       registerGroup: () => () => {},
+      follow: () => () => {},
       current: undefined,
     },
   };
-}
-
-// mcp-server 尚未迁移，仍吃 Context：原型期保留它的桩
-/** 极简 Context stub，覆盖 useToolService 用到的字段 */
-function makeFakeCtx(toolService: FakeToolService): Context {
-  const logger = makeLogger();
-  return {
-    id: 'test-mcp-client',
-    logger,
-    getService: <T>(name: string): T | undefined => (name === 'tools' ? (toolService as unknown as T) : undefined),
-    whenService: <T>(name: string, cb: (svc: T) => undefined | (() => void)): (() => void) => {
-      if (name !== 'tools') return () => undefined;
-      const cleanup = cb(toolService as unknown as T);
-      return () => cleanup?.();
-    },
-    onDispose: () => {
-      /* noop */
-    },
-  } as unknown as Context;
 }
 
 // ===== Test A：mcp-server 侧 =====
@@ -168,7 +150,7 @@ describe('plugin-mcp-server — buildMcpServer 通过 InMemoryTransport 暴露 A
       handler: async () => 'boom',
     });
 
-    const server = buildMcpServer(makeFakeCtx(tools), tools, {
+    const server = buildMcpServer(tools, {
       port: 0,
       bind: '127.0.0.1',
       toolGroups: [],
@@ -257,7 +239,7 @@ describe('plugin-mcp-server — toolGroups 白名单 ListTools/CallTool 一致�
       groups: ['b'],
       handler: async () => 'b-ok',
     });
-    const server = buildMcpServer(makeFakeCtx(tools), tools, {
+    const server = buildMcpServer(tools, {
       port: 0,
       bind: '127.0.0.1',
       toolGroups: ['a'], // 只暴露 a 组
@@ -296,7 +278,7 @@ describe('plugin-mcp-server — toolGroups 白名单 ListTools/CallTool 一致�
       groups: ['x'],
       handler: async () => 'x',
     });
-    const server = buildMcpServer(makeFakeCtx(tools), tools, {
+    const server = buildMcpServer(tools, {
       port: 0,
       bind: '127.0.0.1',
       toolGroups: ['*'],
