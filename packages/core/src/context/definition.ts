@@ -6,7 +6,7 @@
 // 写入这次激活的配置 → 按 uses 装配绑定接口 → 调 apply。
 // ============================================================
 
-import { assemble, type BoundOf, type ServiceDescriptor, type Uses } from './binding.js';
+import { assemble, type BoundOf, isOptional, type ServiceDescriptor, type Uses } from './binding.js';
 import type { Context } from './context.js';
 
 /**
@@ -89,7 +89,7 @@ function assertValidPluginName(name: unknown): asserts name is string {
 export function validateDefinition(definition: PluginDefinition): void {
   assertValidPluginName(definition.name);
   for (const [key, use] of Object.entries(definition.uses ?? {})) {
-    const descriptor = (use as { optional?: unknown } | null)?.optional ?? use;
+    const descriptor = isOptional(use) ? use.optional : use;
     if (typeof (descriptor as { bind?: unknown } | null)?.bind !== 'function') {
       throw new Error(`插件 "${definition.name}" 的 uses.${key} 不是服务描述符（应为 defineService 的结果）`);
     }

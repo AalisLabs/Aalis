@@ -47,7 +47,9 @@ export {
   type LifecycleCap,
   lifecycle,
   logger,
+  type ModuleHandle,
   type Provide,
+  type ProvideOptions,
   provide,
   type ServiceKey,
   type Services,
@@ -55,7 +57,6 @@ export {
 } from './context/builtins.js';
 // ----- 配置、日志 -----
 export { type AalisConfig, ConfigManager, type ConfigManagerOptions, type ConfigProvider } from './context/config.js';
-export type { ModuleHandle, ProvideOptions } from './context/context.js';
 // ----- 插件定义 -----
 export { definePlugin, type PluginDefinition, type PluginMeta } from './context/definition.js';
 export {
