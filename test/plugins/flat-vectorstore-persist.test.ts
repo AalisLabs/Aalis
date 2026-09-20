@@ -73,7 +73,8 @@ describe('plugin-vectorstore-flat 落盘与损坏容错（真 fs）', () => {
   });
 
   async function loadFlat(): Promise<VectorStoreService> {
-    await app.ctx.useModule(vectorstoreFlat, { path: 'ws:/vectorstore' });
+    await app.plugin(vectorstoreFlat, { path: 'ws:/vectorstore' });
+    await app.plugins.idle();
     const store = host.services.get(vectorstore);
     if (!store) throw new Error('vectorstore 服务未就绪');
     return store;

@@ -1,6 +1,7 @@
-import { App } from '@aalis/core';
+import { App, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -31,8 +32,9 @@ function fakeMemory() {
 
 async function setup() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  app.ctx.provide('memory', fakeMemory() as never);
-  await app.ctx.useModule(sessionManagerPlugin, {
+  const host = app.bind({ provide, sessionManager });
+  host.provide(memory, fakeMemory() as never);
+  await app.plugin(sessionManagerPlugin, {
     platformProfiles: [
       {
         platform: 'onebot',
@@ -43,9 +45,10 @@ async function setup() {
     ],
   });
   await app.plugins.idle();
-  const sm = app.ctx.getService<SessionManagerService>('session-manager');
-  if (!sm) throw new Error('session-manager 服务未注册');
-  return { app, sm };
+  // required 依赖缺席时插件停在 pending 且不报错——核激活状态，别让「压根没跑起来」冒充绿
+  const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
+  if (state !== 'active') throw new Error(`session-manager 未激活（state=${state}）`);
+  return { app, sm: host.sessionManager.require() };
 }
 
 describe('resolveConfig：null 与 undefined 同义（都表示继承上层）', () => {

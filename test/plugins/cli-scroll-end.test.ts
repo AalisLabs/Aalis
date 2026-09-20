@@ -57,7 +57,12 @@ async function framesAroundKey(keyName: string, prelude: string[] = []): Promise
   });
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
   try {
-    await app.ctx.useModule(cliPlugin, { startupView: 'help' });
+    await app.plugin(cliPlugin, { startupView: 'help' });
+    await app.plugins.idle();
+    // 激活闸会让缺依赖的插件停在 pending 而不报错：不核一下，下面的帧断言会在
+    // 「TUI 压根没起来」上变成对空帧的比对。
+    const state = app.plugins.getPlugin(cliPlugin.name)?.state;
+    if (state !== 'active') throw new Error(`plugin-cli 未激活（state=${state}）`);
     await app.start();
     await settle();
     const lastFrame = () => {

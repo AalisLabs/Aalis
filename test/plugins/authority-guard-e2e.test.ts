@@ -1,6 +1,7 @@
-import { App } from '@aalis/core';
+import { App, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import type { CommandService, ExecutionInput } from '../../packages/api-commands/src/index.js';
+import { commands as commandsService, type ExecutionInput } from '../../packages/api-commands/src/index.js';
+import { gateway } from '../../packages/api-gateway/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 
@@ -23,12 +24,20 @@ import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 
 async function makeApp() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(commandsPlugin, {});
-  await app.ctx.useModule(authorityPlugin, {});
+  // 宿主侧按根激活取绑定接口：探针指令的登记与真实插件走同一条门面
+  const host = app.bind({ provide, commands: commandsService });
+  // plugin-commands 把 gateway 声明为 required（指令结果经它出站）。本测直接调 execute，
+  // 不走出站管道，给一份只满足「在场」的桩即可让它过激活闸。
+  host.provide(gateway, { ingressMessage: async () => {}, dispatchOutbound: async () => {} });
+  await app.plugin(commandsPlugin, {});
+  await app.plugin(authorityPlugin, {});
   await app.plugins.idle();
-  const commands = app.ctx.getService<CommandService>('commands');
-  if (!commands) throw new Error('commands 服务未注册');
-  return { app, commands };
+  // 守卫是 authority 激活时挂上去的：它若停在 pending，下面三条会一起退化成「无守卫」下的恒真
+  for (const p of [commandsPlugin, authorityPlugin]) {
+    const state = app.plugins.getPlugin(p.name)?.state;
+    if (state !== 'active') throw new Error(`${p.name} 未激活（state=${state}）`);
+  }
+  return { app, commands: host.commands };
 }
 
 const input = (over: Partial<ExecutionInput> = {}): ExecutionInput => ({
@@ -50,7 +59,7 @@ describe('authority 执行守卫真的挂在 commands 上', () => {
       return 'ran';
     });
 
-    const out = await commands.execute('probe', input());
+    const out = await commands.require().execute('probe', input());
     await app.stop();
 
     expect(ran, 'restricted 指令被匿名用户执行了 —— 守卫没生效').toBe(false);
@@ -65,7 +74,7 @@ describe('authority 执行守卫真的挂在 commands 上', () => {
       return 'ran';
     });
 
-    await commands.execute('probe', input({ platform: 'webui', userId: 'console' }));
+    await commands.require().execute('probe', input({ platform: 'webui', userId: 'console' }));
     await app.stop();
 
     expect(ran, 'owner 被守卫误拦 —— 权限系统把自己锁死了').toBe(true);
@@ -79,7 +88,7 @@ describe('authority 执行守卫真的挂在 commands 上', () => {
       return 'ok';
     });
 
-    const out = await commands.execute('open', input({ raw: '/open' }));
+    const out = await commands.require().execute('open', input({ raw: '/open' }));
     await app.stop();
 
     expect(ran, 'public 指令被误拦').toBe(true);

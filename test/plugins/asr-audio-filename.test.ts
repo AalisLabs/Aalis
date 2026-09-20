@@ -3,9 +3,11 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { App, type PluginModule } from '@aalis/core';
+import { App, type PluginModule, provide } from '@aalis/core';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { ASRService } from '../../packages/api-asr/src/index.js';
+import { type ASRService, asr } from '../../packages/api-asr/src/index.js';
+import { processService } from '../../packages/api-process/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
 import asrOpenai from '../../packages/plugin-asr-openai/src/index.js';
 import asrWhisper from '../../packages/plugin-asr-whisper-cpp/src/index.js';
 import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js';
@@ -17,7 +19,7 @@ import { setNetworkPolicy } from '../../packages/util-network-guard/src/index.js
 //   - whisper-cpp 拿它当 storage 写路径 → 造嵌套垃圾目录
 // 正解同仓已有（safe-fetch.ts 的 extname + Content-Type 兜底）。
 //
-// 真 http 服务 + 真 fs；两个插件的 ASRService 从 ctx.provide 捞出来直接调。
+// 真 http 服务 + 真 fs；两个插件 provide 出来的 ASRService 经宿主绑定捞出来直接调。
 // ════════════════════════════════════════════════════════════
 
 const MP3 = Buffer.concat([Buffer.from('ID3'), Buffer.alloc(16)]);
@@ -39,13 +41,17 @@ async function bootAsr(
 ): Promise<ASRService> {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
   apps.push(app);
-  app.ctx.provide('process', services.process as never);
-  app.ctx.provide('storage', services.storage as never);
+  const host = app.bind({ provide, asr });
+  // 桩先就位：whisper-cpp 把 process / storage 声明成 required，缺席会被激活闸挡在 pending
+  host.provide(processService, services.process as never);
+  host.provide(storage, services.storage as never);
   await app.plugin(plugin, config);
   await app.plugins.idle();
-  const asr = app.ctx.getService<ASRService>('asr');
-  if (!asr) throw new Error('插件未注册 asr');
-  return asr;
+  const state = app.plugins.getPlugin(plugin.name)?.state;
+  if (state !== 'active') throw new Error(`插件 ${plugin.name} 未激活（state=${state}）`);
+  const service = host.asr.current;
+  if (!service) throw new Error('插件未注册 asr');
+  return service;
 }
 
 /** 真 fs 的 process 网关面：readExternalFile 真读盘，makeTempDir 指向真目录 */

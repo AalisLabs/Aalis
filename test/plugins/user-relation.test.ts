@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
+import { afterEach, describe, expect, it } from 'vitest';
+import { memory } from '../../packages/api-memory/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import {
@@ -30,11 +30,29 @@ import {
   trimEvidence,
 } from '../../packages/plugin-user-relation/src/utils.js';
 
+const apps: App[] = [];
+
+afterEach(async () => {
+  // 逐个 try/finally：任一 stop 抛错也不能让后面的实例漏掉（数组已 splice，漏了就永久泄漏）
+  for (const a of apps.splice(0)) {
+    try {
+      await a.stop();
+    } catch {
+      /* 停不掉也要继续停下一个 */
+    }
+  }
+});
+
 async function makeService() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(memoryInMemory);
-  const mem = app.ctx.getService<MemoryService>('memory');
-  if (!mem) throw new Error('memory service missing');
+  apps.push(app);
+  await app.plugin(memoryInMemory);
+  await app.plugins.idle();
+  // 装载过激活闸：没激活时服务根本不在，后面的断言会以「取不到 memory」的形式含糊失败
+  if (app.plugins.getPlugin(memoryInMemory.name)?.state !== 'active') {
+    throw new Error('memory 插件未激活');
+  }
+  const mem = app.bind({ memory }).memory.require();
   const store = new RelationStore(mem);
   return { app, mem, store, service: new RelationService(store) };
 }

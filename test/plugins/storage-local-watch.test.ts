@@ -2,7 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { StorageService, StorageWatchEvent } from '../../packages/api-storage/src/index.js';
+import {
+  type StorageService,
+  type StorageWatchEvent,
+  storage as storageService,
+} from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 
@@ -25,13 +29,14 @@ const waitUntil = async (pred: () => boolean, timeoutMs = 4000): Promise<boolean
 describe('storage-local watch 文件 URI', () => {
   let base: string;
   let app: App;
+  let storage: StorageService;
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-watch-'));
     mkdirSync(join(base, 'data', 'notes'), { recursive: true });
     writeFileSync(join(base, 'data', 'notes', 'a.txt'), 'v0');
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocal, {
+    await app.plugin(storageLocal, {
       roots: [
         {
           name: 'data',
@@ -46,6 +51,9 @@ describe('storage-local watch 文件 URI', () => {
       ],
     });
     await app.plugins.idle();
+    // 停在 pending 会让「没有事件」看起来像被测行为出错，先把激活闸的结果钉死
+    expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
+    storage = app.bind({ storage: storageService }).storage.require();
   });
 
   afterEach(async () => {
@@ -54,7 +62,6 @@ describe('storage-local watch 文件 URI', () => {
   });
 
   it('事件路径不翻倍；原子覆盖写换掉 inode 后仍有事件', async () => {
-    const storage = app.ctx.getService<StorageService>('storage')!;
     const events: StorageWatchEvent[] = [];
     const unwatch = storage.watch!('data:/notes/a.txt', e => {
       events.push(e);

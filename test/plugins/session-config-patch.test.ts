@@ -1,6 +1,7 @@
-import { App } from '@aalis/core';
+import { App, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import sessionManagerPlugin, { normalizeSessionConfigPatch } from '../../packages/plugin-session-manager/src/index.js';
 
 // WebUI 会话配置「重置为继承」：JSON 带不了 undefined，前端用 null 表示删除该键；
@@ -41,13 +42,16 @@ describe('normalizeSessionConfigPatch', () => {
 describe('会话配置重置为继承', () => {
   it('置 null 的键从生效配置里消失，回落到平台档', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    app.ctx.provide('memory', fakeMemory() as never);
-    await app.ctx.useModule(sessionManagerPlugin, {
+    const host = app.bind({ provide, sessionManager });
+    // memory 是会话管理的 required 依赖：不先摆上，插件会停在 pending
+    host.provide(memory, fakeMemory() as never);
+    await app.plugin(sessionManagerPlugin, {
       platformProfiles: [{ platform: 'webui', persona: 'from-profile', enabledToolGroups: ['*'] }],
     });
     await app.plugins.idle();
-    const sm = app.ctx.getService<SessionManagerService>('session-manager');
-    if (!sm) throw new Error('session-manager 未注册');
+    const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
+    if (state !== 'active') throw new Error(`会话管理未激活（state=${state}）`);
+    const sm = host.sessionManager.require();
     try {
       const s = await sm.createSession({ config: { persona: 'own', enabledToolGroups: ['system'] } });
       expect(sm.resolveConfig(s.id, 'webui')).toMatchObject({ persona: 'own', enabledToolGroups: ['system'] });

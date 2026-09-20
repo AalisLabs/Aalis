@@ -1,4 +1,6 @@
-import { App, type Logger, type ServiceRef } from '@aalis/core';
+import { processService } from '@aalis/api-process';
+import { storage } from '@aalis/api-storage';
+import { App, hooks, type Logger, provide, type ServiceRef } from '@aalis/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 
@@ -147,13 +149,21 @@ describe('transformModelImages 交付形态真值表', () => {
 });
 
 describe('agent:llm:before 中间件接线', () => {
-  async function runHookWith(delivery: string, dryRun: boolean) {
+  /** 装一份真 media：process / storage 是它的 required 依赖，不放桩它停在 pending、中间件不挂 */
+  async function bootMedia(delivery: string) {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    app.ctx.provide('process', {} as never);
-    app.ctx.provide('storage', {} as never);
+    const host = app.bind({ provide, hooks });
+    host.provide(processService, {} as never);
+    host.provide(storage, {} as never);
     const media = (await import('../../packages/plugin-media/src/index.js')).default;
     await app.plugin(media, { vision: { delivery } });
     await app.plugins.idle();
+    if (app.plugins.getPlugin(media.name)?.state !== 'active') throw new Error('plugin-media 未激活');
+    return { app, host };
+  }
+
+  async function runHookWith(delivery: string, dryRun: boolean) {
+    const { app, host } = await bootMedia(delivery);
     const data = {
       messages: [
         { role: 'system' as const, content: '头' },
@@ -164,7 +174,7 @@ describe('agent:llm:before 中间件接线', () => {
       sessionId: 's',
       dryRun,
     };
-    await app.ctx.runHook('agent:llm:before', data as never);
+    await host.hooks.run('agent:llm:before', data as never);
     await app.stop();
     return data;
   }
@@ -187,12 +197,7 @@ describe('agent:llm:before 中间件接线', () => {
   });
 
   it('工具循环重跑钩子：每条消息只处理一次（成功不重做，失败不重试）', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    app.ctx.provide('process', {} as never);
-    app.ctx.provide('storage', {} as never);
-    const media = (await import('../../packages/plugin-media/src/index.js')).default;
-    await app.plugin(media, { vision: { delivery: 'passthrough' } });
-    await app.plugins.idle();
+    const { app, host } = await bootMedia('passthrough');
 
     // 失败形态：物化返回 null → 原图放回 images（仍是动图特征）
     mocks.materializeAttachment.mockResolvedValue(null);
@@ -202,11 +207,11 @@ describe('agent:llm:before 中间件接线', () => {
       sessionId: 's',
       dryRun: false,
     };
-    await app.ctx.runHook('agent:llm:before', data as never);
+    await host.hooks.run('agent:llm:before', data as never);
     expect(data.messages[0].images).toEqual([GIF_DATA]); // 失败原样退回
     // 工具循环第二、三轮重跑同一钩子：不得再次尝试物化（负缓存生效）
-    await app.ctx.runHook('agent:llm:before', data as never);
-    await app.ctx.runHook('agent:llm:before', data as never);
+    await host.hooks.run('agent:llm:before', data as never);
+    await host.hooks.run('agent:llm:before', data as never);
     expect(mocks.materializeAttachment).toHaveBeenCalledTimes(1);
     await app.stop();
   });

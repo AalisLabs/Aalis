@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { App } from '../../packages/core/src/index.js';
+import { App, definePlugin, defineService, lifecycle, provide } from '../../packages/core/src/index.js';
 
 /**
  * 异常恢复测试：插件出错不应炸掉宿主或泄漏资源
  */
+
+/** 观测用的服务：只看它在容器里出现 / 不出现，实现本身无行为 */
+const marker = defineService<{ ok: boolean }>('marker');
+const halfLeak = defineService<{ x: number }>('half-leak');
+const p1svc = defineService<Record<string, never>>('p1svc');
+const p2svc = defineService<Record<string, never>>('p2svc');
 
 function tempApp() {
   const app = new App({ config: { name: 'ER', logLevel: 'error', plugins: {} } });
@@ -22,30 +28,33 @@ function tempApp() {
 describe('插件错误恢复', () => {
   it('apply 抛错的插件不会污染 app', async () => {
     const { app, cleanup } = tempApp();
+    const host = app.bind({ lifecycle, marker });
     try {
-      const bad = {
+      const bad = definePlugin({
         name: '@test/bad-apply',
         apply() {
           throw new Error('boom on apply');
         },
-      };
+      });
       // register 不抛错（错误被 PluginManager 捕获），而是把 entry 标记为 'error'
       await app.plugins.register(bad);
       const status = app.plugins.getStatus().find(s => s.instanceId === '@test/bad-apply');
       expect(status?.state).toBe('error');
       expect(status?.error).toMatch(/boom on apply/);
       // app 仍然可用
-      expect(app.ctx.disposed).toBe(false);
+      expect(host.lifecycle.closed).toBe(false);
       // 后续注册其他插件正常
-      const ok = {
+      const ok = definePlugin({
         name: '@test/ok',
-        apply(ctx: { provide: (n: string, v: unknown) => void }) {
-          ctx.provide('marker', { ok: true });
+        uses: { provide },
+        apply(caps) {
+          caps.provide(marker, { ok: true });
         },
-      };
+      });
       await app.plugins.register(ok);
       await app.plugins.idle(); // register 在 flight 在飞时排队早退，静置后再断言
-      expect(app.ctx.getService('marker')).toEqual({ ok: true });
+      expect(app.plugins.getPlugin('@test/ok')?.state).toBe('active');
+      expect(host.marker.current).toEqual({ ok: true });
     } finally {
       await cleanup();
     }
@@ -55,27 +64,32 @@ describe('插件错误恢复', () => {
     const { app, cleanup } = tempApp();
     try {
       const order: string[] = [];
-      const p1 = {
+      const p1 = definePlugin({
         name: '@test/p1',
-        apply(ctx: { onDispose: (fn: () => void) => void; provide: (n: string, v: unknown) => void }) {
-          ctx.onDispose(() => {
+        uses: { lifecycle, provide },
+        apply(caps) {
+          caps.lifecycle.onDispose(() => {
             order.push('p1');
             throw new Error('p1 dispose fail');
           });
-          ctx.provide('p1svc', {});
+          caps.provide(p1svc, {});
         },
-      };
-      const p2 = {
+      });
+      const p2 = definePlugin({
         name: '@test/p2',
-        apply(ctx: { onDispose: (fn: () => void) => void; provide: (n: string, v: unknown) => void }) {
-          ctx.onDispose(() => {
+        uses: { lifecycle, provide },
+        apply(caps) {
+          caps.lifecycle.onDispose(() => {
             order.push('p2');
           });
-          ctx.provide('p2svc', {});
+          caps.provide(p2svc, {});
         },
-      };
+      });
       await app.plugins.register(p1);
       await app.plugins.register(p2);
+      await app.plugins.idle();
+      expect(app.plugins.getPlugin('@test/p1')?.state).toBe('active');
+      expect(app.plugins.getPlugin('@test/p2')?.state).toBe('active');
       // 停掉 app；即使 p1 dispose 抛错，p2 应仍被调用
       await app.stop();
       expect(order).toContain('p1');
@@ -87,17 +101,19 @@ describe('插件错误恢复', () => {
 
   it('apply 抛错的插件不留下 service', async () => {
     const { app, cleanup } = tempApp();
+    const host = app.bind({ halfLeak });
     try {
-      const bad = {
+      const bad = definePlugin({
         name: '@test/half',
-        apply(ctx: { provide: (n: string, v: unknown) => void }) {
-          ctx.provide('half-leak', { x: 1 });
+        uses: { provide },
+        apply(caps) {
+          caps.provide(halfLeak, { x: 1 });
           throw new Error('mid-apply boom');
         },
-      };
+      });
       await app.plugins.register(bad);
-      // 插件 ctx 应被 dispose，注入的 service 不应残留
-      expect(app.ctx.getService('half-leak')).toBeUndefined();
+      // 插件激活应被拆掉，注入的 service 不应残留
+      expect(host.halfLeak.current).toBeUndefined();
       const status = app.plugins.getStatus().find(s => s.instanceId === '@test/half');
       expect(status?.state).toBe('error');
     } finally {
