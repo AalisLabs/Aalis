@@ -11,6 +11,8 @@
 // 测试据 gen.txt 断言只有一代。
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { commands } from '../../packages/api-commands/src/index.js';
+import { definePlugin, lifecycle, provide, services } from '../../packages/core/src/index.js';
 import { startAalis } from '../../packages/runtime/src/start.js';
 
 const GEN_FILE = resolve(process.cwd(), 'gen.txt');
@@ -21,29 +23,30 @@ if (gen > 1) process.exit(99);
 const mode = process.env.AALIS_E2E_MODE ?? 'subcommand';
 const slowMs = Number(process.env.AALIS_E2E_SLOW_MS ?? '0');
 
-const plugin = {
+const plugin = definePlugin({
   name: 'e2e-probe',
-  provides: ['commands'],
-  // biome-ignore lint/suspicious/noExplicitAny: 夹具只需 ctx 的极小面
-  async apply(ctx: any) {
-    ctx.provide('commands', {
+  provides: [commands],
+  uses: { provide, lifecycle, services },
+  apply({ provide, lifecycle, services }) {
+    provide(commands, {
       has: (name: string) => name === 'probe' || name === 'restart',
       async execute(name: string, input: { args: string[] }) {
         if (name === 'probe') return `probe ok ${input.args.join(' ')}`.trim();
         // 镜像 CommandRegistry：handler 抛错折成「指令执行失败」文本，不向上抛。
         try {
-          ctx.getService('app').restart();
+          (services.get('app') as { restart(): void }).restart();
           return '正在重启应用…';
         } catch (err) {
           return `指令执行失败: ${err instanceof Error ? err.message : String(err)}`;
         }
       },
-    });
-    ctx.onDispose(async () => {
+    } as never);
+    lifecycle.onDispose(async () => {
       if (slowMs > 0) await new Promise<void>(r => setTimeout(r, slowMs));
     });
   },
-};
+});
+export default plugin;
 
 const pluginLoader = {
   async discover() {

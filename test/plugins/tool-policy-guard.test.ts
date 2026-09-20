@@ -1,4 +1,4 @@
-import { App, type PluginModule } from '@aalis/core';
+import { App, type PluginDefinition } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { tools as toolsService } from '../../packages/api-tools/src/index.js';
 import subtask from '../../packages/plugin-subtask/src/index.js';
@@ -23,7 +23,7 @@ interface RegisteredTool {
   visibility?: string;
 }
 
-async function registeredTools(plugin: PluginModule): Promise<RegisteredTool[]> {
+async function registeredTools(plugin: PluginDefinition): Promise<RegisteredTool[]> {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.register(plugin, {});
