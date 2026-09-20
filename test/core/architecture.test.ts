@@ -309,8 +309,11 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
  *
  * 判据是语法树里的**直接调用形式**，不做"这行在不在段内"的可达性分析：
  *   1. 字面量事件名的 `.emit('x')`：x 是屏障事件、只出现在 orchestration/app.ts、且 await 或 .then 接续；
- *   2. 事件名不是字面量的 `.emit(...)`：只许是 Context 门面自己的 emit / emitQuietly 方法体转发给总线——
- *      门面文件不整体豁免，在 context.ts 别处写 `void this.#events.emit('plugin:loaded', …)` 同样被抓；
+ *   2. 事件名不是字面量的 `.emit(...)`：只许两处转发——
+ *      Context 门面自己的 emit / emitQuietly 方法体转发给总线（门面文件不整体豁免，在 context.ts 别处写
+ *      `void this.#events.emit('plugin:loaded', …)` 同样被抓）；
+ *      以及 `context/builtins.ts` 内置 events 对激活 `ctx.emit` 的直接转发——该文件 `.emit(` 只许 1 处，
+ *      且不得 await，形态必须是 `(event, ...args) => ctx.emit(event, ...args)`；
  *   3. `.emitQuietly('x')`：x 是字面量且不是屏障事件。
  * AalisEvents 里声明的 `app:*` 键集合与 app.ts 实际发出的集合必须相等：声明了不发、发了没声明、名单漂移都红。
  */
@@ -318,23 +321,34 @@ describe('内置事件只有两个出口：屏障 await ctx.emit()，通知 ctx.
   const isBarrier = (event: string): boolean => event.startsWith('app:');
   const BARRIER_FILE = 'orchestration/app.ts';
   const FACADE = 'context/context.ts';
+  const BUILTIN_EVENTS = 'context/builtins.ts';
+  const BUILTIN_FORWARD = /^\s*emit:\s*\(event,\s*\.\.\.args\)\s*=>\s*ctx\.emit\(event,\s*\.\.\.args\),?\s*$/;
 
   it('每个发射点都落在两个出口之一，且 app:* 的声明集合与 App 实际发出的一致', () => {
     const offenders: string[] = [];
     const declaredBarriers = new Set<string>();
     const emittedBarriers = new Set<string>();
+    const builtinEmits: Array<{ at: string; event: string | null; sequenced: boolean; line: number }> = [];
     for (const file of walk(SRC_DIR)) {
       const rel = relToSrc(file);
       const { emits, eventKeys } = parse(file);
       for (const key of eventKeys) if (isBarrier(key)) declaredBarriers.add(key);
       for (const { method, event, sequenced, within, line } of emits) {
         const at = `${rel}:${line}`;
+        if (rel === BUILTIN_EVENTS && method === 'emit') {
+          builtinEmits.push({ at, event, sequenced, line });
+        }
         if (method === 'emitQuietly') {
           if (event === null) offenders.push(`${at} emitQuietly 的事件名须是字面量`);
           else if (isBarrier(event)) offenders.push(`${at} 用 emitQuietly 发了屏障事件 '${event}'`);
         } else if (event === null) {
           const facadeForward = rel === FACADE && (within === 'emit' || within === 'emitQuietly');
-          if (!facadeForward) offenders.push(`${at} 事件名不是字面量的 .emit( 只许是门面转发总线`);
+          const builtinEventsForward = rel === BUILTIN_EVENTS && !sequenced;
+          if (!facadeForward && !builtinEventsForward) {
+            offenders.push(
+              `${at} 事件名不是字面量的 .emit( 只许是门面转发总线，或 builtins 内置 events 转发到 ctx.emit`,
+            );
+          }
         } else if (!isBarrier(event)) {
           offenders.push(`${at} 通知事件 '${event}' 须走 emitQuietly`);
         } else if (rel !== BARRIER_FILE) {
@@ -344,6 +358,21 @@ describe('内置事件只有两个出口：屏障 await ctx.emit()，通知 ctx.
         } else {
           emittedBarriers.add(event);
         }
+      }
+    }
+    if (builtinEmits.length !== 1) {
+      offenders.push(
+        `${BUILTIN_EVENTS} 的 .emit( 须恰好 1 处（内置 events 转发到 ctx.emit），实际 ${builtinEmits.length} 处` +
+          (builtinEmits.length > 0 ? `：${builtinEmits.map(e => e.at).join(', ')}` : ''),
+      );
+    } else {
+      const hit = builtinEmits[0];
+      const srcLine = readFileSync(join(SRC_DIR, BUILTIN_EVENTS), 'utf-8').split('\n')[hit.line - 1] ?? '';
+      if (hit.sequenced || /\bawait\b/.test(srcLine)) {
+        offenders.push(`${hit.at} 内置 events 转发不得 await`);
+      }
+      if (hit.event !== null || !BUILTIN_FORWARD.test(srcLine)) {
+        offenders.push(`${hit.at} 形态必须是直接转发到激活的 ctx.emit：(event, ...args) => ctx.emit(event, ...args)`);
       }
     }
     expect(offenders, '事件归节见 types/events.ts 的两节 JSDoc；换节是行为契约变更，要进 CHANGELOG').toEqual([]);
