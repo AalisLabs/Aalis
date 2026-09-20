@@ -8,14 +8,14 @@
  *
  *   为避免 storage/commands 等下游插件直接 runtime depend 实现包 plugin-doctor
  *   （会形成「实现包 ↔ 业务插件」的双向耦合），仿照 api-storage /
- *   api-commands 的模式抽出本 api 包，仅含类型 + 一个 useDoctorService
- *   helper（懒注册、doctor 未上线时延后到 whenService 触发）。
+ *   api-commands 的模式抽出本 api 包，仅含类型 + 服务描述符 `doctor`
+ *   （检查项的登记随激活撤回、doctor 未上线时排队到它上线）。
  *
  *   AalisEvents 的模块增强统一在本文件做，避免多包
  *   重复声明导致 TS 合并冲突。
  */
 
-import type { Context, ServiceRef } from '@aalis/core';
+import type { ServiceRef } from '@aalis/core';
 import { defineService, serviceRef } from '@aalis/core';
 
 // ===== 公共类型 =====
@@ -71,45 +71,6 @@ declare module '@aalis/core' {
   interface AalisEvents {
     /** 一次诊断完成后发射，供 WebUI 等订阅者即时刷新 */
     'doctor:updated': [info: { generatedAt: string; summary: { ok: number; warn: number; error: number } }];
-  }
-}
-
-// ===== Helper：useDoctorService =====
-
-/**
- * 在 ctx scope 内注册一个诊断检查项；doctor 服务未就绪时延迟到 whenService 触发。
- * 返回的 dispose 既能在 doctor 已就绪时立即解注册，也能在 doctor 还未来时取消挂起的
- * whenService 订阅。
- *
- * 用法：
- *   useDoctorService(ctx).registerCheck({
- *     id: 'storage.roots',
- *     category: 'filesystem',
- *     async run() { ... }
- *   });
- *
- * 调用方应在 inject.optional 中声明 'doctor'，否则 doctor 重启时不会带动本插件。
- */
-export interface ScopedDoctorService {
-  /** 立即或延迟注册一条 check；返回 dispose */
-  registerCheck(spec: CheckSpec): () => void;
-}
-
-export function useDoctorService(ctx: Context): ScopedDoctorService {
-  return {
-    registerCheck(spec: CheckSpec): () => void {
-      const filledSpec: CheckSpec = { pluginName: ctx.id ?? spec.pluginName, ...spec };
-      // 持续订阅 'doctor'：服务每次上线都重新挂 check；下线/dispose 时 whenService
-      // 自动调用上次 cb 返回的解注册函数。
-      return ctx.whenService<DoctorService>('doctor', svc => svc.registerCheck(filledSpec));
-    },
-  };
-}
-
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    doctor: DoctorService;
   }
 }
 

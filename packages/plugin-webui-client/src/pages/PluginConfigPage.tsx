@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { AlertTriangle, Radio, Workflow, Link2, Loader2 } from 'lucide-react';
+import { AlertTriangle, Radio, Workflow, Loader2 } from 'lucide-react';
 import { api, errText } from '../api';
 import { SchemaForm, buildDraftFromSchema, flattenConfig, unflattenConfig, type LLMProviderEntry } from '../components/SchemaForm';
 import { ConfigValue } from '../components/ConfigValue';
@@ -396,7 +396,7 @@ export function PluginConfigPage({
         const isOpen = openSections.has(iid);
         const isSub = isSubInstance(p);
         const suffix = isSub ? iid.slice(p.name.length + 1) : undefined;
-        const hasExtends = p.extends && (p.extends.events?.length || p.extends.hooks?.length || p.extends.mixins && Object.keys(p.extends.mixins).length);
+        const hasExtends = p.extends && (p.extends.events?.length || p.extends.hooks?.length);
         const hasDetail = hasExtends || (p.config && Object.keys(p.config).length > 0) || !!p.configSchema;
         const hasSchema = !!p.configSchema;
         return (
@@ -508,9 +508,6 @@ export function PluginConfigPage({
                 <span className="extends-label">扩展 Core:</span>
                 {p.extends!.events?.map(e => <span className="extends-chip event" key={`e-${e}`}><Radio size={12} /> {e}</span>)}
                 {p.extends!.hooks?.map(h => <span className="extends-chip hook" key={`h-${h}`}><Workflow size={12} /> {h}</span>)}
-                {p.extends!.mixins && Object.entries(p.extends!.mixins).map(([svc, methods]) =>
-                  methods.map(m => <span className="extends-chip mixin" key={`m-${svc}-${m}`}><Link2 size={12} /> ctx.{m}()</span>)
-                )}
               </div>
             )}
 

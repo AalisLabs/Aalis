@@ -139,12 +139,5 @@ export const INBOUND_PHASE_ORDER = [
 
 export type InboundPhase = (typeof INBOUND_PHASE_ORDER)[number];
 
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    gateway: GatewayService;
-  }
-}
-
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const gateway = defineService<GatewayService>('gateway');

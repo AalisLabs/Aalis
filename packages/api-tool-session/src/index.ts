@@ -91,11 +91,5 @@ export interface SessionHistoryService {
   registerAccessChecker(checker: AccessChecker): AccessCheckerDisposer;
 }
 
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    'session-history': SessionHistoryService;
-  }
-}
-
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const sessionHistory = defineService<SessionHistoryService>('session-history');

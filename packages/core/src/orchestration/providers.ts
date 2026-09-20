@@ -16,7 +16,7 @@
 // 同处 `context/config.ts`——放在那里 context 层就不必向上引用。
 // ============================================================
 
-import type { PluginModule } from './plugin.js';
+import type { PluginDefinition } from '../context/definition.js';
 
 // ----- 插件加载器 -----
 
@@ -26,7 +26,7 @@ import type { PluginModule } from './plugin.js';
  * core 仅用它在 `reload()` 调用时回传——不解释含义。
  */
 export interface PluginDescriptor {
-  /** 插件模块名，与 `PluginModule.name` 一致；core 用此匹配多实例配置 */
+  /** 插件名，与定义的 `name` 一致；core 用此匹配多实例配置 */
   name: string;
   /** 给 loader 自己用的不透明定位串 */
   source: string;
@@ -38,14 +38,14 @@ export interface PluginDescriptor {
  * 插件加载器：负责"插件从哪里来"。
  *
  * - `discover()` 列出当前可用的插件条目
- * - `load(descriptor)` 把条目 import 成 `PluginModule`
+ * - `load(descriptor)` 把条目导入成插件定义（模块默认导出的 definePlugin 产物）；不是插件返回 null
  * - `reload(descriptor)` 可选——支持热重载（fs loader 用 mtime 做 cache buster）
  */
 export interface PluginLoader {
   discover(): Promise<PluginDescriptor[]>;
-  load(descriptor: PluginDescriptor): Promise<PluginModule | null>;
+  load(descriptor: PluginDescriptor): Promise<PluginDefinition | null>;
   /** 热重载——不提供时 `App.rescanPlugins()` 会退化为 `load()` */
-  reload?(descriptor: PluginDescriptor): Promise<PluginModule | null>;
+  reload?(descriptor: PluginDescriptor): Promise<PluginDefinition | null>;
 }
 
 // ----- 重启策略 -----

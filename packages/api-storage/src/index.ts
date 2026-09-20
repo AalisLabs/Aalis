@@ -152,8 +152,8 @@ export const StorageCapabilities = {
   Watch: 'watch',
 } as const satisfies StorageCapabilityRegistry;
 
-import type { ServiceSource } from '@aalis/core';
-import { asServiceRef, defineService } from '@aalis/core';
+import type { ServiceRef } from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 // ----- 聚合 / 路由 helper -----
 //
@@ -196,12 +196,12 @@ function safeListRoots(entry: { instance: StorageService; contextId: string }): 
 }
 
 /** 枚举所有 storage entry。 */
-export function getStorageEntries(source: ServiceSource<StorageService>): StorageProviderEntry[] {
-  return asServiceRef(source, 'storage').all();
+export function getStorageEntries(source: ServiceRef<StorageService>): StorageProviderEntry[] {
+  return source.all();
 }
 
 /** 聚合所有 entry 的 root 列表（保留 providerId/label） */
-export function aggregateStorageRoots(source: ServiceSource<StorageService>): AggregatedStorageRoot[] {
+export function aggregateStorageRoots(source: ServiceRef<StorageService>): AggregatedStorageRoot[] {
   const out: AggregatedStorageRoot[] = [];
   for (const entry of getStorageEntries(source)) {
     for (const r of safeListRoots(entry)) {
@@ -212,7 +212,7 @@ export function aggregateStorageRoots(source: ServiceSource<StorageService>): Ag
 }
 
 /** 同名 root 冲突诊断（用于 doctor / 启动日志） */
-export function getStorageRootConflicts(source: ServiceSource<StorageService>): StorageRootConflict[] {
+export function getStorageRootConflicts(source: ServiceRef<StorageService>): StorageRootConflict[] {
   const grouped = new Map<string, AggregatedStorageRoot[]>();
   for (const r of aggregateStorageRoots(source)) {
     const arr = grouped.get(r.name);
@@ -264,7 +264,7 @@ function rootSatisfies(
 
 /** 按 root 名查找首个服务该 root 且满足 caps（按 root 权限位）的 entry */
 export function resolveStorageEntryForRoot(
-  source: ServiceSource<StorageService>,
+  source: ServiceRef<StorageService>,
   rootName: string,
   requiredCaps?: readonly StorageCapability[],
 ): StorageProviderEntry | undefined {
@@ -277,7 +277,7 @@ export function resolveStorageEntryForRoot(
 
 /** 按 storage URI（`<root>:/<path>`）找到对应 entry */
 export function resolveStorageByPath(
-  source: ServiceSource<StorageService>,
+  source: ServiceRef<StorageService>,
   uri: string,
   requiredCaps?: readonly StorageCapability[],
 ): StorageProviderEntry | undefined {
@@ -406,7 +406,7 @@ export function resolveAgainstCwd(input: string | undefined, cwd: string): strin
  *
  * 调用方无需关心当前有哪些 root 由哪个后端提供；URI 即标识 + 路由 key。
  */
-export function createStorageGateway(source: ServiceSource<StorageService>): StorageService {
+export function createStorageGateway(source: ServiceRef<StorageService>): StorageService {
   const knownRootsList = (): string[] => {
     const set = new Set<string>();
     for (const entry of getStorageEntries(source)) {
@@ -561,13 +561,6 @@ export async function readTailLines(
     } catch {
       return [];
     }
-  }
-}
-
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    storage: StorageService;
   }
 }
 

@@ -261,9 +261,7 @@ export class CommandRegistry implements CommandService {
     // 是同一个病，只是从指令节点挪到了别名表。而且删完 A 的 `Decl.aliases` 里仍留着 `p`，
     // `/help` 会展示一个解析不到的别名，注册表自相矛盾。
     for (const a of new Set(dropped.flatMap(d => d.aliases))) this.rebindAlias(a);
-    // 回收随之变空的祖先分组。必须挂在这里而非只挂 unregisterByPlugin：否则同一件事经管理面
-    // （直接 unregister）做就留幽灵、经插件卸载做就干净——契约面不对称。放在早退之后，
-    // 只有真摘到东西才扫。
+    // 回收随之变空的祖先分组。放在早退之后，只有真摘到东西才扫。
     this.pruneEmptyGroups();
     this.logger.debug(`注销指令: ${this.prefix}${name} (来自 ${contextId ?? '全部'})`);
   }
@@ -283,11 +281,6 @@ export class CommandRegistry implements CommandService {
       }
     }
     this.aliases.delete(alias);
-  }
-
-  unregisterByPlugin(contextId: string): void {
-    // 回收由 unregister 自己负责（见那里的注释），这里不再重复扫一遍。
-    for (const name of [...this.nodes.keys()]) this.unregister(name, contextId);
   }
 
   /**

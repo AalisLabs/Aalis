@@ -73,7 +73,6 @@ export interface SystemStatus {
 export interface ExtendDeclaration {
   events?: string[];
   hooks?: string[];
-  mixins?: Record<string, string[]>;
 }
 
 export interface PluginInfo {

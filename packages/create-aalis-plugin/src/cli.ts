@@ -173,26 +173,31 @@ async function generate(dir: string, a: Answers): Promise<void> {
 }
 
 function renderPackageJson(a: Answers): string {
-  // 运行时依赖：用了 useXxxService（运行时 helper）的 api 包进 dependencies；@aalis/core
+  // 运行时依赖：服务描述符是值导入，用到的 api 包进 dependencies；@aalis/core
   // 是宿主必有的核心，走 peerDependencies + devDep。
   // 注意：这里写进的是【生成给外部作者项目】的字面版本，不能用 workspace:（脚手架产物不在
   // 本 monorepo，workspace: 协议在外部装不上）——统一用 'latest'：npm install 时取最新、自我
   // 修正，不硬编码会过时的版本（与 create-aalis 同策略）。
-  // core peerDep 用宽松区间 `>=0.2.0 <1.0.0`：接受任何 0.x 宿主 core，插件不必随 core
-  // 次版本升级而重发。注意 1.0 之前 core 的公开面可能在次版本被删（0.7.0 / 0.9.0 都删过）——
-  // 用了某版本才有的 API，就把下限抬到那个版本。稳定性承诺自 1.0 起生效。
+  // core peerDep 的下限是 definePlugin / 服务描述符首次出现的版本；上限放到 1.0 之前，插件不必随
+  // core 次版本升级而重发。注意 1.0 之前 core 的公开面可能在次版本被删——用了某版本才有的 API，
+  // 就把下限抬到那个版本。稳定性承诺自 1.0 起生效。
   const deps: Record<string, string> = {};
+  // 与 renderIndexTs 生成的 uses 对应的服务名
+  const optionalServices = [
+    ...(a.features.tool ? ['tools'] : []),
+    ...(a.features.command ? ['commands'] : []),
+    ...(a.features.webui ? ['webui-server'] : []),
+  ];
   if (a.features.tool) deps['@aalis/api-tools'] = 'latest';
   if (a.features.command) deps['@aalis/api-commands'] = 'latest';
   if (a.features.webui) deps['@aalis/api-webui'] = 'latest';
 
-  // aalis.service：声明运行时服务依赖/提供，供市场装前披露。示例插件无服务依赖，
-  // 留空提示作者按需填（用了 ctx.inject.required / provides 时同步到这里）。
+  // aalis.service：声明运行时服务依赖/提供，供市场装前披露，须与 definePlugin 的 uses / provides 一致。
   const json: Record<string, unknown> = {
     name: a.packageName,
     version: '0.1.0',
     type: 'module',
-    // description / author 供插件市场展示（市场直接读 package.json，不入 PluginModule）
+    // description / author 供插件市场展示（市场直接读 package.json，不进插件定义）
     description: `${a.displayName} —— Aalis 插件`,
     // keyword 'aalis-plugin' 是加载硬门（加载器只认它，漏写即永不加载），市场检索也按它
     keywords: ['aalis-plugin'],
@@ -205,15 +210,16 @@ function renderPackageJson(a: Answers): string {
     },
     ...(Object.keys(deps).length ? { dependencies: deps } : {}),
     peerDependencies: {
-      '@aalis/core': '>=0.2.0 <1.0.0',
+      '@aalis/core': '>=0.17.0 <1.0.0',
     },
     devDependencies: {
       '@aalis/core': 'latest',
       typescript: '^5.7.0',
       '@types/node': '^22.0.0',
     },
-    // 有服务依赖/提供时在此声明，市场据此做安装前能力披露：
-    // aalis: { service: { required: ['llm'], optional: ['memory'], provides: ['my-service'] } }
+    // 市场据此做安装前能力披露，须与 definePlugin 的 uses / provides 保持一致：
+    // { service: { required: ['llm'], optional: ['memory'], provides: ['my-service'] } }
+    ...(optionalServices.length ? { aalis: { service: { optional: optionalServices } } } : {}),
   };
   return `${JSON.stringify(json, null, 2)}\n`;
 }
@@ -243,45 +249,58 @@ function renderTsconfig(): string {
 }
 
 export function renderIndexTs(a: Answers): string {
-  const imports: string[] = [`import type { Context, PluginModule } from '@aalis/core';`];
-  if (a.features.tool) imports.push(`import { useToolService } from '@aalis/api-tools';`);
-  if (a.features.command) imports.push(`import { useCommandService } from '@aalis/api-commands';`);
-  if (a.features.webui) {
-    imports.push(`import type { WebuiPage } from '@aalis/api-webui';`);
-    imports.push(`import { useWebuiService } from '@aalis/api-webui';`);
-  }
-
-  const body: string[] = [];
+  // uses 里声明了什么，apply 就只能碰到什么：没有默认注入
+  const coreImports = ['definePlugin', 'logger'];
+  const uses = ['logger'];
+  const imports: string[] = [];
   if (a.features.tool) {
-    body.push(`  // 注册 AI 可调用的工具
-  useToolService(ctx).register({
-    // 能力档位：不声明 = public（任意等级 0 用户可经自然语言驱动）。
-    // 只读但涉隐私 → risk: 'sensitive'；写/删/执行 → visibility: 'restricted' + confirm: 'session'。
-    // 参见 Aalis 安全模型文档 concepts/security-model.md「插件作者怎么标操作风险」。
-    definition: {
-      type: 'function',
-      function: {
-        name: 'hello',
-        description: '示例工具：返回问候语',
-        parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
-      },
-    },
-    // handler 返回 string 即纯文本结果；需要把图交给主模型时返回 { content, images }
-    async handler(args) {
-      return \`你好, \${(args as { name: string }).name}!\`;
-    },
-  });`);
+    imports.push(`import { tools } from '@aalis/api-tools';`);
+    uses.push('tools: optional(tools)');
   }
   if (a.features.command) {
-    body.push(`  // 注册斜杠命令
-  useCommandService(ctx)
-    .command('hello', '示例命令')
-    .action(async () => '你好');`);
+    imports.push(`import { commands } from '@aalis/api-commands';`);
+    uses.push('commands: optional(commands)');
   }
   if (a.features.webui) {
-    body.push(`  // 注册 WebUI 页面
-  const webui = useWebuiService(ctx);
-  for (const page of webuiPages) webui.registerPage(page);`);
+    imports.push(`import { type WebuiPage, webuiServer } from '@aalis/api-webui';`);
+    uses.push('webui: optional(webuiServer)');
+  }
+  if (uses.length > 1) coreImports.push('optional');
+  imports.push(`import { ${coreImports.sort().join(', ')} } from '@aalis/core';`);
+
+  const params = ['logger'];
+  const body: string[] = [];
+  if (a.features.tool) {
+    params.push('tools');
+    body.push(`    // 注册 AI 可调用的工具。登记随这次激活撤回；tools 服务晚上线或换人时自动重挂
+    tools.register({
+      // 能力档位：不声明 = public（任意等级 0 用户可经自然语言驱动）。
+      // 只读但涉隐私 → risk: 'sensitive'；写/删/执行 → visibility: 'restricted' + confirm: 'session'。
+      // 参见 Aalis 安全模型文档 concepts/security-model.md「插件作者怎么标操作风险」。
+      definition: {
+        type: 'function',
+        function: {
+          name: 'hello',
+          description: '示例工具：返回问候语',
+          parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+        },
+      },
+      // handler 返回 string 即纯文本结果；需要把图交给主模型时返回 { content, images }
+      async handler(args) {
+        return \`你好, \${(args as { name: string }).name}!\`;
+      },
+    });`);
+  }
+  if (a.features.command) {
+    params.push('commands');
+    body.push(`    // 注册斜杠命令
+    commands.command('hello', '示例命令').action(async () => '你好');`);
+  }
+  if (a.features.webui) {
+    params.push('webui');
+    body.push(`    // 注册 WebUI 页面与它的页面动作（处理函数是闭包，直接用 apply 里的能力）
+    for (const page of webuiPages) webui.registerPage(page);
+    webui.registerAction('getInfo', async () => ({ 提示: '这是 ${a.displayName} 插件的示例信息面板。' }));`);
   }
 
   const webuiPagesBlock = a.features.webui
@@ -300,34 +319,21 @@ const webuiPages: WebuiPage[] = [
     ],
   },
 ];
-
-export const actions = {
-  async getInfo() {
-    return { 提示: '这是 ${a.displayName} 插件的示例信息面板。' };
-  },
-};
 `
     : '';
 
   return `${imports.join('\n')}
-
-// ===== 插件元数据 =====
-
-export const name = '${a.packageName}';
-export const displayName = '${a.displayName}';
-export const inject: PluginModule['inject'] = {};
 ${webuiPagesBlock}
-export function apply(ctx: Context, _config: Record<string, unknown>): void {
-  const logger = ctx.logger.child('${shortName(a.packageName).replace(/^plugin-/, '')}');
-  logger.info('插件已加载');
-
-${body.join('\n\n')}
-}
-
-// 形状自检：钉住模板既有字段的名字与形状（如把 displayName 改错名即编译红）。
-// 注意它只覆盖列出的字段——模块级新增导出（如手写 configSchema）请同样收进来。
-const _shape: PluginModule = { name, displayName, inject, apply${a.features.webui ? ', actions' : ''} };
-void _shape;
+// 入口必须默认导出 definePlugin 的产物：加载器只认它
+export default definePlugin({
+  name: '${a.packageName}',
+  displayName: '${a.displayName}',
+  // 用到的全部能力。可选依赖包一层 optional()：缺席不拦激活，到场后自动接上
+  uses: { ${uses.join(', ')} },
+  apply({ ${params.join(', ')} }) {
+    logger.info('插件已加载');
+${body.length ? `\n${body.join('\n\n')}\n` : ''}  },
+});
 `;
 }
 

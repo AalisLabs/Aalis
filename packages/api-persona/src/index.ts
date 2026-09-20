@@ -82,12 +82,5 @@ export interface PersonaService {
   getSessionState?(sessionId: string): Record<string, unknown> | undefined;
 }
 
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    persona: PersonaService;
-  }
-}
-
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const persona = defineService<PersonaService>('persona');

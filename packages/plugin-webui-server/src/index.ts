@@ -809,11 +809,11 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   expressApp.get('/api/service-groups', gate(), (_req, res) => {
     const pluginMgr = caps.plugins.current;
     const pluginStatus = pluginMgr ? pluginMgr.getStatus() : [];
-    // 按插件 subsystem 归组（未声明 → 'external'）。subsystem 是 WebUI 展示概念、
-    // 由 @aalis/api-webui 声明合并到 PluginModule，core 状态契约不含——从 module 直接读。
+    // 按插件 subsystem 归组（未声明 → 'external'）。subsystem 是插件定义上的展示标签，
+    // core 状态契约不含——从定义直接读。
     const groupsMap = new Map<string, Array<{ name: string; provides: string[] }>>();
     for (const p of pluginStatus) {
-      const sub = pluginMgr?.getPlugin(p.instanceId)?.module?.subsystem ?? 'external';
+      const sub = pluginMgr?.getPlugin(p.instanceId)?.definition?.subsystem ?? 'external';
       if (!groupsMap.has(sub)) groupsMap.set(sub, []);
       groupsMap.get(sub)!.push({ name: p.name, provides: p.provides ?? [] });
     }
@@ -1830,9 +1830,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         actions.delete(method);
         if (actions.size === 0 && registeredActions.get(contextId) === actions) registeredActions.delete(contextId);
       };
-    },
-    unregisterByPlugin(contextId) {
-      registeredPages.delete(contextId);
     },
   };
   provide(webuiServer, webuiService);

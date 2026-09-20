@@ -13,13 +13,6 @@ export type {
   WebSearchService,
 } from './types.js';
 
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    'web-search': import('./types.js').WebSearchService;
-  }
-}
-
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const webSearch = defineService<WebSearchService>('web-search');
 

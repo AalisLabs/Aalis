@@ -226,20 +226,6 @@ export class ToolRegistry implements ToolService {
       return { content: JSON.stringify({ error: message }) };
     }
   }
-
-  unregisterByPlugin(contextId: string): void {
-    for (const [name, tool] of this.tools) {
-      if (tool.pluginName === contextId) {
-        this.tools.delete(name);
-        this.logger.debug(`注销工具: ${name} (激活 ${contextId} 拆卸)`);
-      }
-    }
-    for (const [name, group] of this._groups) {
-      if (group.pluginName === contextId) {
-        this._groups.delete(name);
-      }
-    }
-  }
 }
 
 /**

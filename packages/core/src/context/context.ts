@@ -1,7 +1,6 @@
 import type { ContributionPointMap } from '../types/contributions.js';
 import type { AalisEvents } from '../types/events.js';
 import type { HookContextMap, MiddlewareFn } from '../types/hooks.js';
-import type { ServiceOf, ServiceTypeMap } from '../types/services.js';
 
 import { awaitWithTimeout, reportQuietly } from '../kernel/disposable-chain.js';
 import { Lifecycle } from '../kernel/lifecycle.js';
@@ -292,9 +291,7 @@ export class Context {
   /**
    * 注册服务，返回 dispose 函数用于精确卸载该服务
    *
-   * 已知服务名（ServiceTypeMap 里有的）按契约类型约束实现，错误实现在编译期被拒；
-   * 未知名与动态字符串放行为 unknown。单签名条件类型而非重载：string 兜底重载会让
-   * 已知名的错误实现落到宽签名照样通过（已实测）。
+   * 这里只按名字登记；实现是否满足契约由内置能力 provide 按描述符的提供者类型约束。
    *
    * `entryId` 选项：覆盖默认 contextId（默认 = `this.id`）。用于一个 plugin 实例
    * 需要按某种语义子粒度拆出多个 entry 的场景（典型：per-model LLM、per-path storage）。
@@ -302,7 +299,7 @@ export class Context {
    * 的前缀查询与 api-llm 按 `provider/model` 解析引用都靠它；清理不依赖它（按 owner 走），
    * dev 模式下验证只为避免 "entryId 与拥有者 plugin 脱联" 的 footgun。
    */
-  provide<K extends string>(name: K, instance: ServiceOf<K>, options?: ProvideOptions): () => void {
+  provide(name: string, instance: unknown, options?: ProvideOptions): () => void {
     if (this.#lifecycle.disposed) {
       this.logger.warn(`Context "${this.id}" 已 dispose，忽略 provide("${name}")`);
       return () => {};
@@ -339,15 +336,8 @@ export class Context {
    * 返回的是**当时点的裸实例**，调用后 provider 发生换跳不会跟随。
    * 需要跟随切换的场景请听 `service:registered` / `service:unregistered`
    * 事件重新拉取；常规场景推荐在函数作用域内即取即用，不要长期存入类字段。
-   *
-   * 重载行为：
-   * - 传入字面量服务名（如 `'memory'`）→ 命中 `ServiceTypeMap` 自动推断为 `MemoryService | undefined`；
-   * - 传入字符串变量或未登记服务名 → 退回 `<T = unknown>`，调用方需自行 narrow，
-   *   仍可显式传 `<T>` 兼容旧写法。
    */
-  getService<TName extends keyof ServiceTypeMap>(name: TName): ServiceTypeMap[TName] | undefined;
-  getService<T = unknown>(name: string): T | undefined;
-  getService<T>(name: string): T | undefined {
+  getService<T = unknown>(name: string): T | undefined {
     return this.#services.get<T>(name);
   }
 
@@ -366,9 +356,7 @@ export class Context {
    * @example
    * const allLLMs = ctx.getAllServices('llm');
    */
-  getAllServices<TName extends keyof ServiceTypeMap>(name: TName): ServiceView<ServiceTypeMap[TName]>[];
-  getAllServices<T = unknown>(name: string): ServiceView<T>[];
-  getAllServices<T>(name: string): ServiceView<T>[] {
+  getAllServices<T = unknown>(name: string): ServiceView<T>[] {
     return this.#services.getAll<T>(name);
   }
 
@@ -443,15 +431,8 @@ export class Context {
    *   return () => handle.dispose();
    * });
    */
-  whenService<TName extends keyof ServiceTypeMap>(
-    name: TName,
-    // biome-ignore lint/suspicious/noConfusingVoidType: cb 可隐式返回 void 或显式返回 cleanup
-    cb: (svc: ServiceTypeMap[TName]) => void | (() => void),
-  ): () => void;
   // biome-ignore lint/suspicious/noConfusingVoidType: cb 可隐式返回 void 或显式返回 cleanup
-  whenService<T = unknown>(name: string, cb: (svc: T) => void | (() => void)): () => void;
-  // biome-ignore lint/suspicious/noConfusingVoidType: cb 可隐式返回 void 或显式返回 cleanup
-  whenService<T>(name: string, cb: (svc: T) => void | (() => void)): () => void {
+  whenService<T = unknown>(name: string, cb: (svc: T) => void | (() => void)): () => void {
     if (this.#lifecycle.disposed) {
       this.logger.warn(`Context "${this.id}" 已 dispose，忽略 whenService("${name}")`);
       return () => {};
@@ -692,49 +673,19 @@ export class Context {
   }
 
   /**
-   * 在当前 Context 内动态加载一个插件 module 作为"沙盒插件"。
+   * 挂一个子激活（lifecycle.module 的实现）：独立 id 与生命周期，随本激活关闭；不进调度器，
+   * 不参与依赖追踪。mount 在子激活上执行挂载，抛错即回滚子激活并把失败交还调用方。
    *
-   * 与 `App.plugin(...)` / `PluginManager.register(...)` 的区别：
-   * - 不进入全局 `PluginManager`（不参与依赖追踪、softReload）
-   * - fork 一个子上下文，调用 `module.apply(child, config)`
-   * - 返回 {@link ModuleHandle}：`dispose()` 同步关闭、`disposeAsync()` 等到子上下文里所有异步清理完成
-   * - 父 ctx dispose 时也会级联销毁
-   *
-   * 典型场景：
-   * - 会话级动态工具/中间件
-   * - 单元测试里组装最小可运行单元
-   *
-   * @param module 任意符合 `{ name, apply(ctx, config) }` 的对象
-   * @param config 传给 apply 的配置（默认 `{}`）
-   * @returns 模块句柄；返回的 Promise 在 apply 完成后 resolve
-   *
-   * @example
-   * const mod = await ctx.useModule({
-   *   name: 'temp-mw',
-   *   apply(c) {
-   *     c.middleware('agent:input:before', async (data, next) => {
-   *       data.message.content += ' [临时标记]';
-   *       await next();
-   *     });
-   *   }
-   * });
-   * // ...
-   * await mod.disposeAsync(); // 卸载临时中间件，等其异步清理落地
+   * @returns 子激活的句柄；返回的 Promise 在 mount 完成后兑现
    */
-  async useModule(
-    module: {
-      name: string;
-      apply(ctx: Context, config: Record<string, unknown>): void | Promise<void>;
-    },
-    config: Record<string, unknown> = {},
-  ): Promise<ModuleHandle> {
+  async useModule(name: string, mount: (child: Context) => void | Promise<void>): Promise<ModuleHandle> {
     if (this.#lifecycle.disposed) {
       throw new Error(`Context "${this.id}" 已 dispose，无法 useModule`);
     }
     // 同一父 ctx 重复挂载同名 module（文档背书的"每会话一实例"用法）必须拿到
     // 互不相同的 ctx.id：id 是 contributions 全局键的前半，重复 id 会让后挂载者静默顶替
     // 先挂载者的贡献。活跃集合随 dispose 收缩，长期反复挂载不会无界增长。
-    const baseId = `${this.id}#${module.name}`;
+    const baseId = `${this.id}#${name}`;
     let childId = baseId;
     for (let n = 2; this.#moduleIds.has(childId); n++) childId = `${baseId}~${n}`;
     this.#moduleIds.add(childId);
@@ -749,7 +700,7 @@ export class Context {
     };
     try {
       // 登记后再 await，让父 ctx 级联拆卸时能先等子 ctx 初始化落定（见 {@link trackActivation}）
-      const applying = Promise.resolve(module.apply(child, config));
+      const applying = Promise.resolve(mount(child));
       child.trackActivation(applying);
       await applying;
     } catch (err) {

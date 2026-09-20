@@ -20,9 +20,11 @@ import {
   defineService,
   markBuiltin,
   type ProviderOf,
+  requiredNames,
   type ServiceDescriptor,
 } from './binding.js';
 import type { Context, ModuleHandle, ProvideOptions } from './context.js';
+import { activationConfigOf, mountDefinition, type PluginDefinition, validateDefinition } from './definition.js';
 import type { Logger } from './logger.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
@@ -100,16 +102,7 @@ export interface LifecycleCap {
    * 挂载时缺 required 服务即拒绝（抛错，apply 不执行）；挂载之后不再设闸——提供者离场时
    * 登记排队、引用可能为空，由父模块决定是否关掉它。
    */
-  module(definition: ModuleDefinition, config?: Record<string, unknown>): Promise<ModuleHandle>;
-}
-
-/** 子模块定义在 plugin-definition.ts 里收窄为 PluginDefinition；这里只需要 name 与装配入口 */
-export interface ModuleDefinition {
-  readonly name: string;
-  /** @internal 由 definePlugin 填入：required 服务名 */
-  readonly requires: readonly string[];
-  /** @internal 由 definePlugin 填入 */
-  readonly mount: (ctx: Context, config: Record<string, unknown>) => void | Promise<void>;
+  module(definition: PluginDefinition, config?: Record<string, unknown>): Promise<ModuleHandle>;
 }
 
 export const lifecycle = builtinService<LifecycleCap>('lifecycle', ctx => ({
@@ -120,11 +113,12 @@ export const lifecycle = builtinService<LifecycleCap>('lifecycle', ctx => ({
   onDrain: (fn, label) => ctx.onDrain(fn, label),
   onDispose: (fn, label) => ctx.onDispose(fn, label),
   module: async (definition, config = {}) => {
-    const missing = definition.requires.filter(name => ctx.getService(name) === undefined);
+    validateDefinition(definition);
+    const missing = requiredNames(definition.uses ?? {}).filter(name => ctx.getService(name) === undefined);
     if (missing.length > 0) {
       throw new Error(`子模块 "${definition.name}" 缺少 required 服务 [${missing.join(', ')}]，未挂载`);
     }
-    return ctx.useModule({ name: definition.name, apply: (child, cfg) => definition.mount(child, cfg) }, config);
+    return ctx.useModule(definition.name, child => mountDefinition(child, definition, config));
   },
 }));
 
@@ -132,18 +126,8 @@ export const lifecycle = builtinService<LifecycleCap>('lifecycle', ctx => ({
 
 export const logger = builtinService<Logger>('logger', ctx => ctx.logger);
 
-const activationConfig = new WeakMap<Context, Readonly<Record<string, unknown>>>();
-
-/** @internal 装配前由激活路径写入这次激活的插件配置 */
-export function setActivationConfig(ctx: Context, config: Record<string, unknown>): void {
-  activationConfig.set(ctx, config);
-}
-
 /** 插件自己的配置视图（只读）。宿主级的配置管理是另一项能力，不默认发给插件。 */
-export const config = builtinService<Readonly<Record<string, unknown>>>(
-  'config',
-  ctx => activationConfig.get(ctx) ?? {},
-);
+export const config = builtinService<Readonly<Record<string, unknown>>>('config', activationConfigOf);
 
 // ----- services（提供与动态查找）-----
 

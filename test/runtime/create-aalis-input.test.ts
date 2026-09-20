@@ -1,3 +1,8 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { parseIndexSelection, positionalArgs, validateNpmName } from '../../packages/create-aalis/src/cli.js';
 import {
@@ -126,25 +131,57 @@ describe('positionalArgs（flag 取值不当位置参数）', () => {
   });
 });
 
-// ── create-aalis-plugin：生成的 src/index.ts 形状自检行 ────────────────────
-describe('renderIndexTs 的 _shape 形状自检', () => {
-  const answers = (webui: boolean) => ({
+// ── create-aalis-plugin：生成的 src/index.ts ────────────────────
+describe('renderIndexTs：生成的入口', () => {
+  const answers = (features: { tool: boolean; command: boolean; webui: boolean }) => ({
     packageName: 'aalis-plugin-demo',
     displayName: '演示',
-    features: { tool: true, command: false, webui },
+    features,
   });
+  const COMBOS = [
+    { tool: false, command: false, webui: false },
+    { tool: true, command: false, webui: false },
+    { tool: true, command: true, webui: true },
+  ];
 
-  it('勾 WebUI 时 _shape 不含 webuiPages（该字段已从 PluginModule 移除，写进去生成的项目 TS2353 编译不过）', () => {
-    const src = renderIndexTs(answers(true));
-    expect(src).toContain('const _shape: PluginModule = { name, displayName, inject, apply, actions };');
-    expect(src).not.toMatch(/_shape[^\n]*webuiPages/);
-    // 页面本身仍生成，经 registerPage 注册（不是把注册也删了）
-    expect(src).toContain('for (const page of webuiPages) webui.registerPage(page);');
-  });
+  it('默认导出 definePlugin 的产物；勾了什么能力，uses 里就声明什么', () => {
+    const bare = renderIndexTs(answers(COMBOS[0]));
+    expect(bare).toContain('export default definePlugin({');
+    expect(bare).toContain('uses: { logger },');
+    expect(bare).toContain("import { definePlugin, logger } from '@aalis/core';");
 
-  it('不勾 WebUI 时 _shape 只有四个字段', () => {
-    expect(renderIndexTs(answers(false))).toContain(
-      'const _shape: PluginModule = { name, displayName, inject, apply };',
+    const full = renderIndexTs(answers(COMBOS[2]));
+    expect(full).toContain(
+      'uses: { logger, tools: optional(tools), commands: optional(commands), webui: optional(webuiServer) },',
     );
+    // 页面与页面动作都在 apply 里登记，不是静态导出
+    expect(full).toContain('for (const page of webuiPages) webui.registerPage(page);');
+    expect(full).toContain("webui.registerAction('getInfo',");
+    expect(full).not.toMatch(/export const (name|actions|inject)\b/);
+  });
+
+  // 模板是给外部作者的第一份代码：契约一变它就可能编译不过，而脚手架自己的构建不会发现。
+  // 这里按与 test/ 相同的路径映射把每种组合真编译一遍。
+  it('每种能力组合生成的源码都能对着当前契约通过类型检查', { timeout: 120_000 }, () => {
+    const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
+    const configPath = join(root, 'tsconfig.test.json');
+    const parsed = ts.parseJsonConfigFileContent(ts.readConfigFile(configPath, ts.sys.readFile).config, ts.sys, root);
+    const dir = mkdtempSync(join(tmpdir(), 'aalis-scaffold-typecheck-'));
+    try {
+      const files = COMBOS.map((features, i) => {
+        const file = join(dir, `combo-${i}.ts`);
+        writeFileSync(file, renderIndexTs(answers(features)));
+        return file;
+      });
+      const program = ts.createProgram(files, { ...parsed.options, rootDir: undefined, noEmit: true });
+      const problems = files.flatMap(file =>
+        ts
+          .getPreEmitDiagnostics(program, program.getSourceFile(file))
+          .map(d => `${basename(file)}: ${ts.flattenDiagnosticMessageText(d.messageText, '\n')}`),
+      );
+      expect(problems).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
