@@ -1,7 +1,7 @@
 # 服务持久化与重载语义参考
 
-本文档梳理 Aalis 内置 / 一方插件提供的关键服务在 `App.reloadPlugin(name)`、
-`recompute(reason)`、整进程 `restart()` 三种生命周期事件下的状态保持情况，供
+本文档梳理 Aalis 内置 / 一方插件提供的关键服务在 `plugins.bounce(id)`、
+`recompute(kind)`、整进程 `restart()` 三种生命周期事件下的状态保持情况，供
 插件作者与运维人员判断"我能不能热重载这个插件"。
 
 ## 概念
@@ -23,7 +23,7 @@
 | `commands` | `@aalis/plugin-commands` | 命令注册表（Map） | n/a | 否 | bounce 后由各插件 apply 时重新 `register` |
 | `agent` | `@aalis/plugin-agent` | preprocessor / processor 列表 | n/a | 否 | 同上，依赖下游插件 apply 时回注 |
 | `tools` | `@aalis/plugin-tool-system` | tool 定义 Map | n/a | 否 | 同上 |
-| `webui-server` | `@aalis/plugin-webui-server` | 已注册页面 Map | n/a | 否 | bounce 后下游插件通过 `useWebuiService.registerPage` 重新注册 |
+| `webui-server` | `@aalis/plugin-webui-server` | 已注册页面 Map | n/a | 否 | bounce 后下游插件通过绑定门面 `registerPage` 由 registrar 跟随重挂 |
 | `doctor` | `@aalis/plugin-doctor` | `lastReport` 单例 | n/a | 否 | 重载后报告丢失，需重新 `runChecks` |
 | `scheduler` | `@aalis/plugin-scheduler` | 任务调度状态 | `data/scheduler-jobs.json` | 是（持久部分） | bounce 后从 JSON 读回；运行中的 timer 会重建 |
 | `authority` | `@aalis/plugin-authority` | 角色规则 | 配置文件 | 是 | 规则随配置一起回填 |
@@ -41,41 +41,31 @@
 
 ## 重载注意事项
 
-> **重要变更**（新契约）：下游依赖默认**不**随 provider bounce 级联重启。
-> 只有显式声明 `PluginModule.requiresBounceOnDepChange: true` 的下游会被级联 evict。
-> 其他下游应使用 lazy `ctx.getService()` 透明拿到新实例（参见
-> plugin-session-manager / plugin-memory-summary / plugin-message-archive 实现）。
+下游依赖**不**随 provider bounce 级联重启。消费者经 `ServiceRef` 每次查询解析当前提供者；有状态接线（SDK 句柄、订阅）用 `follow` 跟随重建。登记型能力（工具、页面、命令）由描述符的 `registrar` 在提供者换人时整体重挂。
 
-1. **级联 bounce 是 opt-in**：`App.reloadPlugin(target)` 时，target dispose
-   导致其 provided 服务从 ServiceContainer 中移除。
-   - 下游声明 `requiresBounceOnDepChange: true` 的、且在 `inject.required` / `inject.optional`
-     中声明了该服务 → 会被 `recompute(service-down)` 自动 dispose+pending，
-     随后 target 重新 apply 注册新服务，下游被重新激活。
-   - **未**声明该字段的下游 → 不被级联，lazy lookup 下次调用时拿新实例。
+1. **bounce 只拆被点名的插件**：`bounce(target)` 拆掉 target 的激活，其 provided 服务从容器移除。下游目标态不变（optional 上下线不改变目标态；required 整个落空才会转 pending）。下游下次读 `current` / `require` 拿到新胜者；`follow` / `registrar` 负责交接。
 
 2. **避免 bounce 持有外部连接的插件**：上表中标注 "重建即可用" 的插件可以
    安全 bounce；标注 "进程池 / 浏览器会话" 的服务 bounce 会断开外部资源，
    建议先停止依赖工作流再重载。
 
-3. **配置变更走 `updateConfig` 而非 `reloadPlugin`**：前者会把新配置
-   写回 `ctx.config` 后 bounce；后者只重新 import 代码，不更新配置。
+3. **配置变更走 `updateConfig` 而非换代码**：前者把新配置写回后 bounce；换代码走 `unload` + `register`（宿主热加载见 `App.rescanPlugins` / `PluginLoader.reload`）。
 
 4. **多实例插件 (`name:suffix`) 仅作用于指定 instanceId**：同 module 的其
-   他实例不受影响，需各自调用 `reloadPlugin(instanceId)`。
+   他实例不受影响，需各自调用 `bounce(instanceId)`。
 
-5. **integration / e2e 推荐在 bounce 后等 `plugins:changed`**：直接调用 bounce
-   之后立即 assert 服务可用会读到 dispose 中间态，应等 recompute 收收尾发出
-   `plugins:changed` 事件后再断言。
+5. **integration / e2e 推荐在 bounce 后等 `plugins.idle()`**：直接调用 bounce
+   之后立即 assert 服务可用会读到拆卸中间态。`plugins:changed` 在非关机 recompute 收敛时发出，同样可用。
 
 ## 增量重载的 API 速查
 
 ```ts
 // dispose + 重新 apply（不重新 import：从磁盘重载代码是宿主的事，见 App.rescanPlugins / PluginLoader.reload）
-await ctx.getService<PluginManagerService>('plugins')!.bounce('@aalis/plugin-foo');
+await plugins.require().bounce('@aalis/plugin-foo');
 
 // 配置变化后的标准入口（bounce(id, { config }) 的薄壳）
-await ctx.getService<PluginManagerService>('plugins')!.updateConfig(instanceId, newConfig);
+await plugins.require().updateConfig(instanceId, newConfig);
 ```
 
 全局收敛（`recompute` / `softReload`）由 `PluginManager` 内部驱动，不在 `PluginManagerService` 接口上；宿主持有
-`app.plugins` 时可直接调用。
+`app.plugins` 时可直接调用。管理类插件在 `uses` 里声明 `pluginsService`。

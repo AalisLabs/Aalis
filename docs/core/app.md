@@ -23,7 +23,8 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 | `config` | `AalisConfig \| ConfigManager` | **必填**。配置快照（如 `{ name, logLevel, plugins }`），或已构造的 `ConfigManager` |
 | `configProvider` | `ConfigProvider` | 配置持久化与外部变更监听；缺省=只读内存模式 |
 | `dataDir` | `string` | 业务数据目录（plugin 用作相对路径基准） |
-| `pluginLoader` | `PluginLoader` | 插件加载器；缺省=`autoLoadPlugins()` 为 no-op，须手动 `app.plugin(mod)` |
+| `pluginLoader` | `PluginLoader` | 插件加载器；缺省=`autoLoadPlugins()` 为 no-op，须手动 `app.plugin(definition)` |
+| `pluginDefaults` | `(definition) => Record<string, unknown>` | 插件默认配置的派生器；缺省=无默认值。core 不解释 `configSchema`，由宿主注入（runtime 用 `defaultsFrom(d.configSchema)`） |
 | `restartStrategy` | `RestartStrategy` | 重启策略；缺省=`restart()` 抛错 |
 | `events` | `EventBus` | 自定义事件总线 |
 | `services` | `ServiceContainer` | 自定义服务容器 |
@@ -31,28 +32,43 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 | `contributions` | `ContributionRegistry` | 自定义贡献点注册表 |
 | `logHub` | `LogHub` | 自定义日志通道；缺省=`LogHub.default`（进程级共享） |
 | `logger` | `Logger` | 自定义 Logger 实现；缺省=`DefaultLogger`（写入 logHub） |
-| `devMode` | `boolean` | 传给根 Context，决定 `provide` 是否跑一致性校验；默认 `true` |
+| `devMode` | `boolean` | 传给根激活，决定 `provide` 与激活路径是否跑一致性校验；默认 `true` |
+| `disposeTimeoutMs` | `number` | 单个异步清理项的等待上限（毫秒），默认 5000；0=不设限 |
+| `now` | `() => Date` | 日志时间戳时钟；缺省墙上时间 |
+| `version` | `string` | 启动 banner 用的内核版本；core 不自读 package.json |
 
 构造时：
 
 - 将 `config`（快照或现成 `ConfigManager`）规范为 `ConfigManager`
-- 初始化 events / services / hooks / contributions / logger 及根 Context（注入或自建）
-- 创建 `PluginManager`，并 `provide('app', this)` / `provide('plugins', …)`
-- 应用配置中已有的服务偏好（`preferService`）
+- 初始化 events / services / hooks / contributions / logger 及根激活（注入或自建）
+- 创建 `PluginManager`，并在根激活上 `provide('app' / 'plugins' / 'host-config')`
+- 应用配置中已有的服务偏好
 
 ## 关键属性
 
 | 属性 | 类型 | 说明 |
 |---|---|---|
-| `ctx` | `Context` | 根执行上下文 |
 | `plugins` | `PluginManager` | 插件管理器 |
+| `config` | `ConfigManager` | 整份配置的读写、落盘与外部变更监听（插件侧同一对象经 `hostConfig` 描述符声明获取） |
 | `logger` | `Logger` | 日志器 |
 | `events` | `EventBus` | 事件总线 |
 | `services` | `ServiceContainer` | 服务容器 |
 | `hooks` | `HookRegistry` | 钩子注册表 |
 | `contributions` | `ContributionRegistry` | 贡献点注册表 |
 
+根激活不对外。宿主经 `bind` 取能力；插件经自己激活上的 `uses` 取能力。
+
 ## 核心方法
+
+### `app.bind(uses)`
+
+按与插件同一套描述符为根激活装配绑定接口。登记归属根激活、随 App 停止撤回。插件拿的是自己激活的绑定，不复用这里的。
+
+```typescript
+import { logger, events } from '@aalis/core';
+
+const { logger: log, events: bus } = app.bind({ logger, events });
+```
 
 ### `app.start()`
 
@@ -60,33 +76,38 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 2. 发出 `app:ready` 事件（sticky）
 3. 发出 `app:started` 事件（sticky）
 
-每一步都等前一个事件的监听器全部返回后才推进。配置外部变更的热重载编排属宿主政策，由宿主自行 `app.ctx.config.watch(cb)` 接管，`start()` 不做。
+每一步都等前一个事件的监听器全部返回后才推进。配置外部变更的热重载编排属宿主政策，由宿主自行 `app.config.watch(cb)` 接管，`start()` 不做。
 
 ### `app.stop()`
 
-1. `ctx.config.unwatch()` 停止监听配置变更
-2. 发出 `app:stopping` 事件（知会用；清理一律走 `ctx.onDispose`）
-3. `plugins.idle()`：等在飞的 recompute 排干，否则下一步的 shutdown 请求会被排队、拓扑逆序落空
-4. `plugins.stopAll()`：按拓扑逆序 `disposeAsync` 所有 active 插件（消费者先关、提供者后关，**逐项等待**其 `ctx.onDispose` 的异步清理完成——落盘/关连接真正结束才轮到下一个）
-5. 清空 sticky 缓存（`app:ready` / `app:started`）
-6. `disposeAsync` 根 Context（同样等待异步清理）
+1. `config.unwatch()` 停止监听配置变更
+2. `plugins.idle()`：等在飞的 bounce / unload recompute 排干后再冻；否则 freeze 会 markClosing，尚未 fork 完的激活会撞上「已 dispose」
+3. `plugins.beginShutdown()`：置停机态，并把根激活整棵树冻进一张计划（之后 `register` 拒绝；对本树的 `disposeAsync` 汇入该计划）
+4. 发出 `app:stopping`（知会用；清理一律走 `lifecycle.onDrain` / `onDispose`）。监听器全部返回后才继续
+5. 再 `plugins.idle()`
+6. `plugins.stopAll()`：执行已冻计划的 drain / close
+7. 清空 sticky 缓存（`app:ready` / `app:started`）
+8. `disposeAsync` 根激活（等待异步清理）
 
-单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 控制（默认 5000ms；0=不设限）：超时放弃该项、继续后续清理并 warn 点名，防网络类关闭卡死停机。
+单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 控制。边规则见 [插件定义与能力](context.md)。
 
-### `app.plugin(module, config?, instanceId?)`
+### `app.plugin(definition, config?, instanceId?)`
 
-注册单个插件，返回值同 `plugins.register`（false = 重名或未声明 `reusable` 的多实例）。`instanceId` 缺省用 `module.name`。配置合并优先级：`代码传入 > 配置文件 > 宿主派生默认值`（默认值经 `AppOptions.pluginDefaults` 注入，core 不认识任何配置词汇；缺省注入 = 无默认值）。三层是**逐层深合并**：同一路径上双方都是纯对象则递归合并，否则后者整体覆盖；数组与非纯对象（`Date` / `Map` / 类实例）是原子值，只覆盖不逐元素合并。所以配置文件里只写了嵌套组中的一个键（只写 `server.port`），同组其余默认值（`server.host`）在插件首次 `apply` 时依然在位。
+注册单个插件，返回值同 `plugins.register`（false = 重名、未声明 `reusable` 的多实例、定义 / 实例 id 校验失败、或停机中）。`instanceId` 缺省用 `definition.name`。配置合并优先级：`代码传入 > 配置文件 > 宿主派生默认值`。三层是**逐层深合并**：同一路径上双方都是纯对象则递归合并，否则后者整体覆盖；数组与非纯对象是原子值。危险键（`__proto__` / `constructor` / `prototype`）跳过。全程返回新对象、不改写入参。
+
+resolve 语义 = 注册落账 + 尽力即时激活。有在飞 recompute 或手动 dispose 段时本次请求排队，resolve 时激活可能尚未发生。需要「激活已落定」则 `await app.plugins.idle()`（不得在插件 apply / onDispose 内）。
 
 ### `app.autoLoadPlugins()`
 
 通过注入的 `pluginLoader` 自动发现并注册所有插件；未注入 loader 时为 no-op。流程：
 `discover()` 发现插件 → 逐个 `load()` 并 `app.plugin(mod)` 注册 → 扫描配置中的多实例条目
-（`name:suffix`，要求模块声明 `reusable`）。
+（`name:suffix`，要求模块声明 `reusable`）。返回前 `await plugins.idle()`。
 
 ### `app.rescanPlugins()`
 
 重新扫描插件源，加载新发现的插件（已注册的跳过），返回新加载的插件名列表。优先调用
 `pluginLoader.reload(desc)` 做热重载，未实现时退化为 `load(desc)`；未注入 loader 时返回 `[]`。
+刻意不等静置（HTTP 热路径）。
 
 ### `app.saveConfig()`
 
