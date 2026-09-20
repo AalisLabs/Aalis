@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { type ToolService, tools } from '../../packages/api-tools/src/index.js';
 import {
+  App,
   definePlugin,
   defineService,
   logger,
@@ -33,7 +34,12 @@ const hybrid = defineService<unknown, Hybrid>('zz-hybrid', () => ({
 }));
 
 describe('uses → apply 的类型推导', () => {
-  it('声明即得；未声明不可见；required 与 optional 同一接口；提供者按描述符约束', () => {
+  const apps: App[] = [];
+  afterEach(async () => {
+    for (const app of apps.splice(0)) await app.stop().catch(() => {});
+  });
+
+  it('声明即得；未声明不可见；required 与 optional 同一接口；提供者按描述符约束', async () => {
     const plugin = definePlugin({
       name: 'typed',
       uses: { kv, maybe: optional(kv), tools, provide, logger, hybrid: optional(hybrid) },
@@ -89,10 +95,16 @@ describe('uses → apply 的类型推导', () => {
         caps.tools.register({} as never, 'someone-else');
       },
     });
-    expect(plugin.inject, '内置能力不参与激活闸').toEqual({
-      required: ['zz-kv', 'tools'],
-      optional: ['zz-kv', 'zz-hybrid'],
-    });
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    apps.push(app);
+    await app.plugin(plugin);
+    await app.plugins.idle();
+    const entry = app.plugins.getPlugin('typed');
+    // 登记时已写入依赖表；内置能力（provide / logger）不进激活闸。
+    // 本用例不提供 zz-kv / tools，插件保持 pending——钉的是条目上的服务名数组，不是 apply 是否跑过。
+    expect(entry?.required, '内置能力不参与激活闸').toEqual(['zz-kv', 'tools']);
+    expect(entry?.optional).toEqual(['zz-kv', 'zz-hybrid']);
+    expect(entry?.state).toBe('pending');
 
     // uses 的值必须是描述符：编译期拒；绕过类型的 JS 调用方在定义期得到明确报错
     expect(() =>
@@ -105,8 +117,14 @@ describe('uses → apply 的类型推导', () => {
     ).toThrow('不是服务描述符');
   });
 
-  it('不声明任何能力的插件照样合法（归属与关闭由框架管理，不取决于声明了什么）', () => {
+  it('不声明任何能力的插件照样合法（归属与关闭由框架管理，不取决于声明了什么）', async () => {
     const bare = definePlugin({ name: 'bare', apply() {} });
-    expect(bare.inject).toEqual({ required: [], optional: [] });
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    apps.push(app);
+    await app.plugin(bare);
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('bare')?.state).toBe('active');
+    expect(app.plugins.getPlugin('bare')?.required).toEqual([]);
+    expect(app.plugins.getPlugin('bare')?.optional).toEqual([]);
   });
 });
