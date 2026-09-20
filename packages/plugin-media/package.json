@@ -58,9 +58,14 @@
         "storage"
       ],
       "optional": [
-        "llm",
         "agent",
-        "asr"
+        "app",
+        "asr",
+        "host-config",
+        "llm",
+        "memory",
+        "session-manager",
+        "tools"
       ],
       "provides": [
         "media"

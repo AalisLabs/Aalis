@@ -46,6 +46,12 @@
   },
   "aalis": {
     "service": {
+      "optional": [
+        "persona",
+        "storage",
+        "tools",
+        "webui-server"
+      ],
       "provides": [
         "skills"
       ]
