@@ -188,8 +188,9 @@ describe('内置能力', () => {
     const app = makeApp();
     await app.plugin(definePlugin({ name: 'meta', displayName: '带元数据', __tMeta: { tag: 'x' }, apply() {} }));
     await app.plugins.idle();
-    const module = app.plugins.getPlugin('meta')?.module;
-    expect(module?.displayName).toBe('带元数据');
-    expect(module?.__tMeta).toEqual({ tag: 'x' });
+    expect(app.plugins.getPlugin('meta')?.state).toBe('active');
+    const definition = app.plugins.getPlugin('meta')?.definition;
+    expect(definition?.displayName).toBe('带元数据');
+    expect(definition?.__tMeta).toEqual({ tag: 'x' });
   });
 });

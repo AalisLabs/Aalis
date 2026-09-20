@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { App, ConfigManager, type PluginModule } from '../../packages/core/src/index.js';
+import { App, ConfigManager, config, definePlugin } from '../../packages/core/src/index.js';
 import { type TempConfigHandle, tempConfig } from '../fixtures/app.js';
 
 describe('ConfigManager (内存快照模式)', () => {
@@ -87,12 +87,14 @@ describe('FsYamlConfigProvider (集成)', () => {
 // test/runtime/config-sync.test.ts——政策属宿主层,core 只持有配置快照机制。
 
 describe('注册期配置合并（app.plugin：defaults ← 配置文件 ← 代码传入，逐层深合并）', () => {
-  const nestedModule = (seen: { config?: Record<string, unknown> }): PluginModule => ({
-    name: 'np',
-    apply(_ctx, config) {
-      seen.config = config;
-    },
-  });
+  const nestedPlugin = (seen: { config?: Record<string, unknown> }) =>
+    definePlugin({
+      name: 'np',
+      uses: { config },
+      apply({ config }) {
+        seen.config = config;
+      },
+    });
 
   const defaults = () => ({
     server: { host: '127.0.0.1', port: 8080 },
@@ -107,7 +109,9 @@ describe('注册期配置合并（app.plugin：defaults ← 配置文件 ← 代
       config: { name: 'T', logLevel: 'error', plugins: { np: { server: { port: 9000 } } } },
       pluginDefaults: () => defaults(),
     });
-    await app.plugin(nestedModule(seen));
+    await app.plugin(nestedPlugin(seen));
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('np')?.state).toBe('active');
     expect(seen.config?.server).toEqual({ host: '127.0.0.1', port: 9000 });
     await app.stop();
   });
@@ -118,7 +122,9 @@ describe('注册期配置合并（app.plugin：defaults ← 配置文件 ← 代
       config: { name: 'T', logLevel: 'error', plugins: { np: { server: { port: 9000, host: 'file' } } } },
       pluginDefaults: () => defaults(),
     });
-    await app.plugin(nestedModule(seen), { server: { host: 'code' } });
+    await app.plugin(nestedPlugin(seen), { server: { host: 'code' } });
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('np')?.state).toBe('active');
     expect(seen.config?.server).toEqual({ host: 'code', port: 9000 });
     await app.stop();
   });
@@ -133,7 +139,9 @@ describe('注册期配置合并（app.plugin：defaults ← 配置文件 ← 代
       },
       pluginDefaults: () => defaults(),
     });
-    await app.plugin(nestedModule(seen));
+    await app.plugin(nestedPlugin(seen));
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('np')?.state).toBe('active');
     expect(seen.config?.hosts).toEqual(['b', 'c']);
     // Date 不是纯对象：整体覆盖且原型保持，不被递归成 {} 形状的普通对象
     expect(seen.config?.stamp).toBeInstanceOf(Date);
@@ -148,7 +156,9 @@ describe('注册期配置合并（app.plugin：defaults ← 配置文件 ← 代
       pluginDefaults: () => defaults(),
     });
     // 对象字面量里的 __proto__ 是原型语法糖，只有 JSON.parse（配置文件）这类路径产出自有键
-    await app.plugin(nestedModule(seen), JSON.parse('{"__proto__":{"polluted":"yes"}}'));
+    await app.plugin(nestedPlugin(seen), JSON.parse('{"__proto__":{"polluted":"yes"}}'));
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('np')?.state).toBe('active');
     expect(Object.getPrototypeOf(seen.config as object)).toBe(Object.prototype);
     expect((seen.config as Record<string, unknown>).polluted).toBeUndefined();
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
@@ -162,9 +172,12 @@ describe('注册期配置合并（app.plugin：defaults ← 配置文件 ← 代
       config: { name: 'T', logLevel: 'error', plugins: { np: { server: { port: 9000 } } } },
       pluginDefaults: () => sharedDefaults,
     });
-    await app.plugin(nestedModule(seen), { server: { host: 'code' } });
+    await app.plugin(nestedPlugin(seen), { server: { host: 'code' } });
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('np')?.state).toBe('active');
+    expect(seen.config?.server).toEqual({ host: 'code', port: 9000 });
     expect(sharedDefaults.server).toEqual({ host: '127.0.0.1', port: 8080 });
-    expect(app.ctx.config.getPluginConfig('np')).toEqual({ server: { port: 9000 } });
+    expect(app.config.getPluginConfig('np')).toEqual({ server: { port: 9000 } });
     await app.stop();
   });
 });
