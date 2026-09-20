@@ -5,29 +5,33 @@
 
 ## 概述
 
-AI 可调用工具的中心注册表。提供 `tools` 服务，所有插件通过
-`useToolService(ctx).register()`（`@aalis/api-tools`）注册工具，Agent / Commands 通过
-`ctx.getService<ToolService>('tools')` 查询与执行。
+AI 可调用工具的中心注册表。提供 `tools` 服务，所有插件通过 `@aalis/api-tools` 的绑定门面 `tools.register()` 登记工具，Agent / Commands 通过 `tools.current` / `tools.require()` 查询与执行。
 
-与 `plugin-commands` 的 `CommandRegistry` 同属 "中心 Registry 模式"：
-单一 `Map<name, Registered>` 存储、`register()` 返回 disposer、`setExecutionGuard()`
-注入统一权限/安全检查钩子。与 LLM / Storage 的 "多 provider 路由" 模式不同——
-所有工具都直接落到这个 Map，不需要 `getAllServices('tools')` 枚举。
+与 `plugin-commands` 同属中心 Registry：单一 `Map<name, Registered>` 存储、`register()` 返回 disposer、`setExecutionGuard()` 注入统一权限/安全检查钩子。与 LLM / Storage 的多 provider 路由不同——所有工具都直接落到这个 Map，不需要 `tools.all()` 枚举多个枢纽。
 
 ## 插件声明
 
-```typescript
-export const name = '@aalis/plugin-tools';
-export const subsystem = 'agent';
-export const provides = ['tools'];
+```ts
+import { tools } from '@aalis/api-tools';
+import { definePlugin, logger, provide } from '@aalis/core';
+
+export default definePlugin({
+  name: '@aalis/plugin-tools',
+  displayName: '工具注册表',
+  subsystem: 'agent',
+  provides: [tools],
+  uses: { logger, provide },
+  apply({ logger, provide }) {
+    provide(tools, new ToolRegistry(logger));
+  },
+});
 ```
 
-无配置项。无 inject 依赖（权限钩子由消费方通过 `setExecutionGuard()` 注入）。
+无配置项。无其它服务依赖（权限钩子由消费方通过 `setExecutionGuard()` 注入）。
 
 ## 主要能力
 
-- **注册 / 注销**：`register(tool, contextId)` → disposer；Context 拆卸
-  时按 `contextId` 自动注销，避免遗留。
+- **注册 / 注销**：插件侧 `tools.register(tool)` → disposer；登记归属本次激活，激活撤回时按条目退订，避免遗留。不要自己传 `contextId`。
 - **分组过滤**：`getDefinitions({ groups })` / `getSummaries({ groups })`
   按分组返回工具：无分组的通用工具恒可见；带分组的只在命中 `groups` 时返回，`'*'` 表示全部分组；
   未指定 `groups`（或为空）时只返回通用工具。多人平台上 public 工具的可达性靠这道分组闸
@@ -52,7 +56,6 @@ export const provides = ['tools'];
 ```ts
 import { wrapUntrustedContent } from '@aalis/api-tools';
 
-// 只包「抓取来的正文」；status/headers/title 等元数据与 error 分支不包
 return JSON.stringify({ status, body: wrapUntrustedContent(responseBody, `HTTP 响应 ${url}`) });
 ```
 

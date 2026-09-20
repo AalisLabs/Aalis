@@ -10,9 +10,20 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-subtask'
-meta.subsystem = 'session'
-meta.inject = { optional: ['session-manager', 'message-archive'] }
+export default definePlugin({
+  name: '@aalis/plugin-subtask',
+  subsystem: 'session',
+  uses: {
+    tools: optional(tools),
+    events,
+    hooks,
+    logger,
+    config,
+    sessionManager: optional(sessionManager),
+    messageArchive: optional(messageArchive),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 注册工具组

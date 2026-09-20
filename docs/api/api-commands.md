@@ -6,78 +6,92 @@
 
 ## 概述
 
-定义斜杠指令系统：指令定义、子指令递归结构、领域 helper `useCommandService(ctx)`、CommandService 接口。所有插件注册的指令最终汇聚到 `CommandService`，由 `plugin-commands` 解析并派发。
+定义斜杠指令系统：链式 builder、点路径子指令、描述符 `commands` 与绑定接口 `BoundCommands`。所有插件登记的指令汇聚到 `CommandService`，由 `plugin-commands` 解析并派发。
 
 ## 关键类型
 
+指令层级用 **name 的点路径**表达（`'memory.clear.all'`），位置参数写在 inline DSL 里：`'memory.set <key:string> [value:text]'`。handler 形参是 `(argv, ...positionals)`，不是对象式 `CommandDefinition`。
+
 ```ts
-interface CommandDefinition {
-  name: string;                          // 不含前缀 "/"
-  description: string;
-  visibility?: CapabilityVisibility;     // 'public' | 'restricted'（默认 public）
-  // CapabilityVisibility 从 @aalis/api-authority 导入
-  arguments?: CommandArgumentDefinition[];
-  options?: CommandOptionDefinition[];
-  subcommands?: SubcommandDefinition[];  // 子指令递归
+interface CommandArgv {
+  session: { sessionId: string; platform: string; userId?: string; sessionType?: 'group' | 'private' | 'channel'; raw: string };
+  options: Record<string, unknown>;
+}
+
+type CommandHandler = (argv: CommandArgv, ...positionals: unknown[]) => Promise<string | undefined> | string | undefined;
+
+interface CommandBuilder {
+  alias(name: string): CommandBuilder;
+  option(name: string, syntax: string, options?: OptionRegisterOptions): CommandBuilder;
+  action(handler: CommandHandler): CommandBuilder;
+  usage(text: string): CommandBuilder;
+  example(line: string): CommandBuilder;
+}
+
+interface CommandMeta {
+  visibility?: CapabilityVisibility;
+  confirm?: CapabilityConfirm;
+  risk?: CapabilityRisk;
   usage?: string;
   examples?: string[];
-  action: (ctx: CommandContext) => Promise<string | undefined>;
 }
 ```
 
-### 子指令递归
+### 子指令
 
 ```
-/clear all          → 命中 subcommand "all"
-/clear              → 命中 root action（args=[]）
-/db migrate up      → 三层匹配，命中最深 action
+/clear all          → 点路径 clear.all
+/clear              → 命中 clear 根节点的 action（若有）
+/db migrate up      → db.migrate.up
 ```
 
-每一层未命中 → 调用当前层级的 `action`，若该层无 `action` 则返回 usage 提示。可见性沿树继承（restricted 父分组 → restricted 子节点，除非子节点重新声明），可在 authority 配置的 `authorityOverrides` 里按能力键单独改写最低等级（key 形如 `command:clear.all`，值为整数等级）。
+可见性沿树继承（restricted 父分组 → restricted 子节点，除非子节点重新声明），可在 authority 配置的 `authorityOverrides` 里按能力键单独改写最低等级（key 形如 `command:clear.all`，值为整数等级）。
 
-## 领域 Helper
+## 绑定门面
 
 ```ts
-const commands = useCommandService(ctx);
-commands.command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;
+interface BoundCommands extends ServiceRef<CommandService> {
+  command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;
+}
 ```
 
-helper 内部使用 `ctx.getService('commands')`；服务未 provide 时 `command()` 调用会被 `whenService` 自动延迟到服务就绪。
+`commands.command(...)` 把 `pluginName` 填成本次激活 id。builder 同时支持热转发与提供者换人重放：`follow` 在场即重放 `alias` / `option` / `action` 等调用；撤回时 `unregister(registryKey, pluginName)` 只摘自己那一层声明。不要自己调不带 `contextId` 的 `unregister`——那会摘掉同名指令的全部层。
 
 ## 服务接口（节选）
 
 ```ts
 interface CommandService {
-  prefix: string;                                           // 通常是 "/"
-  command(name: string, description?: string, meta?: CommandMeta): CommandBuilder;   // 插件侧用 useCommandService(ctx).command
+  prefix: string;
+  command(name: string, description?: string, meta?: InternalCommandMeta): CommandBuilder;
   unregister(name: string, contextId?: string): void;
-  unregisterByPlugin(contextId: string): void;
   execute(name: string, ctx: ExecutionInput): Promise<string | undefined>;
   parseCommand(input: string): { name: string; args: string[]; raw: string } | null;
-  getAll(): Command[];                                       // 供 WebUI / help 枚举
+  hasMatch(head: string, tokens?: string[]): boolean;
+  has(name: string): boolean;
+  get(name: string): Command | undefined;
+  getAll(): Command[];
   setExecutionGuard(guard: ExecutionGuard): void;
 }
 ```
 
+`unregister` 的 `contextId`：**插件自己的清理必须传它**（绑定门面的退订已代传）；缺省会摘掉全部层（管理面用）。注销键是点路径（inline DSL 在注册时被切掉），传 `'memory.clear <key:string>'` 会键不匹配、静默 no-op。
+
 ## 典型用法
 
 ```ts
-const commands = useCommandService(ctx);
-commands.command({
-  name: 'persona',
-  description: '查看/切换人格',
-  visibility: 'restricted',
-  arguments: [{ name: 'persona', type: 'string', required: false }],
-  subcommands: [
-    {
-      name: 'list',
-      description: '列出可选人格',
-      action: async () => listPersonas().join('\n'),
-    },
-  ],
-  action: async (ctx) => {
-    if (!ctx.args.length) return getCurrentPersona();
-    return await setPersona(ctx.args[0]);
+import { commands } from '@aalis/api-commands';
+import { definePlugin, optional } from '@aalis/core';
+
+export default definePlugin({
+  name: '@acme/plugin-example-commands',
+  uses: { commands: optional(commands) },
+  apply({ commands }) {
+    commands
+      .command('persona [persona:string]', '查看/切换人格', { visibility: 'restricted' })
+      .action(async (argv, persona) => {
+        if (typeof persona !== 'string' || persona.length === 0) return '当前人格：…';
+        return `已切换到 ${persona}`;
+      });
   },
 });
 ```

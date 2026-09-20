@@ -10,9 +10,24 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-cli'
-meta.provides = ['cli', 'platform']
-meta.inject = { optional: ['llm', 'commands'] }
+export default definePlugin({
+  name: '@aalis/plugin-cli',
+  provides: [cli, platform],
+  uses: {
+    events,
+    logger,
+    lifecycle,
+    config,
+    provide,
+    services,
+    hostConfig: optional(hostConfig),
+    platform: optional(platform),
+    app: optional(appService),
+    storage: optional(storage),
+    persona: optional(persona),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

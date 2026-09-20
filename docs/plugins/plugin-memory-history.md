@@ -10,9 +10,18 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-memory-history'
-meta.subsystem = 'memory'
-meta.inject = { required: ['memory'], optional: ['tools'] }
+export default definePlugin({
+  name: '@aalis/plugin-memory-history',
+  subsystem: 'memory',
+  uses: {
+    memory,
+    config,
+    logger,
+    contributions,
+    tools: optional(tools),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

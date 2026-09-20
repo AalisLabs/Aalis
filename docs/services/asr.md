@@ -1,8 +1,8 @@
 # asr 语音识别服务
 
-把「单条音频附件 → 文本」抽象成核心可替换服务。消费方用 `getService('asr')` 拿到当前胜出的后端（whisper.cpp / 云 ASR / 兼容 OpenAI 的网关），无需感知具体实现。
+把「单条音频附件 → 文本」抽象成核心可替换服务。消费方用 `asr.current` 拿到当前胜出的后端（whisper.cpp / 云 ASR / 兼容 OpenAI 的网关），无需感知具体实现。
 
-- 服务注册名：`'asr'`（`ctx.getService('asr')`）
+- 服务注册名：`'asr'`（`asr.current`）
 - 契约包：`@aalis/api-asr`（`packages/api-asr/src/index.ts`）
 - 参考实现：`@aalis/plugin-asr-openai`、`@aalis/plugin-asr-whisper-cpp`
 - 典型消费方：`@aalis/plugin-media`（把每个 asr provider 包成 `cap='audio'` 的 MediaProcessor）
@@ -17,7 +17,7 @@
 
 ```ts
 export interface ASRService {
-  transcribe(input: TranscribeInput, ctx: Context): Promise<TranscribeResult>;
+  transcribe(input: TranscribeInput): Promise<TranscribeResult>;
 }
 ```
 
@@ -45,9 +45,9 @@ export interface TranscribeResult {
 
 输入的 `attachment.data` 是一个字符串，约定承载多种来源（`packages/schema-message/src/index.ts`）：base64 data URL / `http(s)://` URL / `file://` URI / storage URI（`<root>:/path`）。provider 负责把它物化成可读字节，下文「写一个 provider」详述。
 
-接口经 declaration merging 登记到 `ServiceTypeMap`（`index.ts`），所以 `ctx.getService('asr')` 在装了本契约包的工程里能自动推断为 `ASRService | undefined`——无可用后端时即为 `undefined`。
+接口经 declaration merging 登记到 `服务描述符`（`index.ts`），所以 `asr.current` 在装了本契约包的工程里能自动推断为 `ASRService | undefined`——无可用后端时即为 `undefined`。
 
-> 契约包头部注释（`index.ts`）写的 `getService('asr', ['audio'])`「按偏好 > 优先级 > capability 解析」是**过时措辞**：0.5.0 已删除内核的「服务能力选择层」，`getService(name)` 只接受名字一个参数（`packages/core/src/context/context.ts`），仲裁只看「偏好 > 优先级 > 注册顺序」。详见 `docs/concepts/service-model.md`。
+> 契约包头部注释（`index.ts`）写的 `('asr', ['audio'])`「按偏好 > 优先级 > capability 解析」是**过时措辞**：0.5.0 已删除内核的「服务能力选择层」，`(name)` 只接受名字一个参数（`packages/core/src/context/context.ts`），仲裁只看「偏好 > 优先级 > 注册顺序」。详见 `docs/concepts/service-model.md`。
 
 ---
 
@@ -55,14 +55,14 @@ export interface TranscribeResult {
 
 ### Provider（两个参考实现）
 
-| 包 | 后端 | inject | 默认 priority |
+| 包 | 后端 | uses | 默认 priority |
 |---|---|---|---|
 | `@aalis/plugin-asr-openai` | OpenAI 兼容 `/audio/transcriptions`（OpenAI / Groq / 本地网关） | `optional: ['process','storage']`（`plugin-asr-openai/src/index.ts`） | 50 |
 | `@aalis/plugin-asr-whisper-cpp` | 本地 `whisper-cli` 二进制 + ffmpeg 转码 | `required: ['process','storage']`（`plugin-asr-whisper-cpp/src/index.ts`） | 80 |
 
-两者都 `export const provides = ['asr']`，都在 `apply` 内 `ctx.provide('asr', asr, { priority })` 注册（`plugin-asr-openai/src/index.ts`；`plugin-asr-whisper-cpp/src/index.ts`）。
+两者都 `provides: [asr]`，都在 `apply` 内 `provide(asr, asr, { priority })` 注册（`plugin-asr-openai/src/index.ts`；`plugin-asr-whisper-cpp/src/index.ts`）。
 
-inject 一个 optional 一个 required 的原因：openai 后端只在「附件是本地路径/storage URI」时才需要 process/storage（base64/http 自带数据），所以可选；whisper-cpp 永远要落临时文件并跑 ffmpeg/whisper-cli，process/storage 是硬依赖。
+`uses` 一个 optional 一个 required 的原因：openai 后端只在「附件是本地路径/storage URI」时才需要 process/storage（base64/http 自带数据），所以可选；whisper-cpp 永远要落临时文件并跑 ffmpeg/whisper-cli，process/storage 是硬依赖。
 
 ### Consumer（标准消费点）
 
@@ -70,13 +70,13 @@ inject 一个 optional 一个 required 的原因：openai 后端只在「附件�
 
 ```ts
 private asrProcessors(): MediaProcessor[] {
-  return this.ctx.getAllServices('asr').map(e => {
+  return this.x.all('asr').map(e => {
     const asr = e.instance as ASRService;
     const name = `asr:${e.contextId}`;
     return {
       name, capabilities: ['audio'], priority: e.priority,
       transcribe: async (input, ctx) => {
-        const r = await asr.transcribe(input, ctx);
+        const r = await asr.transcribe(input);
         return { text: r.text, segments: r.segments, language: r.language,
                  meta: { processor: name, model: r.meta?.model } };
       },
@@ -96,21 +96,21 @@ private asrProcessors(): MediaProcessor[] {
 最小必须实现：一个返回 `{ text }` 的 `transcribe`，加 `provides`/`apply`。`segments`/`language`/`meta` 全可选。
 
 ```ts
-import type { Context } from '@aalis/core';
+import { definePlugin } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/api-asr';
 import { safeFetch } from '@aalis/util-network-guard';
 
-export const name = '@aalis/plugin-asr-mybackend';
-export const provides = ['asr'];                 // 源 A：拓扑权威，apply 内必须真的注册同名服务
-export const inject = { optional: ['process', 'storage'] };
-export const reusable = true;
-
+provides: [asr];                 // 源 A：拓扑权威，apply 内必须真的注册同名服务
 export const configSchema: ConfigSchema = {
   priority: { type: 'number', label: '优先级 (越大越优先)', default: 50 },
 };
 
-export function apply(ctx: Context, raw: Record<string, unknown>): void {
+export default definePlugin({
+  name: '@aalis/plugin-asr-mybackend',
+  reusable: true,
+  uses: { process: optional(process), storage: optional(storage) },
+  apply({ provide, events, hooks, lifecycle, logger, config }) {
   const cfg = { priority: 50, ...(raw as { priority?: number }) };
 
   const asr: ASRService = {
@@ -121,24 +121,25 @@ export function apply(ctx: Context, raw: Record<string, unknown>): void {
     },
   };
 
-  ctx.provide('asr', asr, { priority: cfg.priority });
-}
+  provide(asr, asr, { priority: cfg.priority });
+},
+});
 ```
 
 ### 注册要点
 
-- `ctx.provide(name, instance, { priority, label, entryId })`（签名 `packages/core/src/context/context.ts`）。同名多 provider 共存，胜者按「偏好 > 优先级 > 注册顺序」（`docs/concepts/service-model.md`、`docs/core/service.md`）。
+- `provide(name, instance, { priority, label, entryId })`（签名 `packages/core/src/context/context.ts`）。同名多 provider 共存，胜者按「偏好 > 优先级 > 注册顺序」（`docs/concepts/service-model.md`、`docs/core/service.md`）。
 - **priority**：普通数字，越大越优先，含义自行记载。参考实现用 50（云）/ 80（本地，质量更高默认更优先），并把 priority 暴露为可配置项让用户重排。
-- **缺必填配置要抛错，不要静默 `return`**：因为声明了 `provides:['asr']` 却没 `ctx.provide`，core 激活后校验会把插件标记为 error（`docs/concepts/manifest-metadata.md` §`provides` / `plugin-activation.ts`），错误信息很难懂。参考实现的做法是抛清晰中文错误（`plugin-asr-openai/src/index.ts`、`plugin-asr-whisper-cpp/src/index.ts`）。
+- **缺必填配置要抛错，不要静默 `return`**：因为声明了 `provides:['asr']` 却没 `provide`，core 激活后校验会把插件标记为 error（`docs/concepts/manifest-metadata.md` §`provides` / `plugin-activation.ts`），错误信息很难懂。参考实现的做法是抛清晰中文错误（`plugin-asr-openai/src/index.ts`、`plugin-asr-whisper-cpp/src/index.ts`）。
 - 若你想被 media 的 `audio.prefer` 精确选中，注意 media 生成的 processor 名是 `asr:${contextId}`，可在 `provide` 时传 `label` 让 WebUI 列表更可读（media 在 `displayName` 里用了它，`service.ts`）。
 
 ### 双源元数据要对齐
 
 manifest 是双源的（`docs/concepts/manifest-metadata.md`）：
-- **源 A（运行时 DI，core 读）**：模块导出 `provides` / `inject`。
+- **源 A（运行时 DI，core 读）**：模块导出 `provides` / `uses`。
 - **源 B（安装前披露，市场读）**：`package.json` 的 `aalis.service.{provides,required,optional}`。core 不读源 B，市场不读源 A，两者无对账。
 
-两源必须写全同一份信息，否则各自失真。典型陷阱是源 A 声明了 `provides`、源 B 却只写 `inject`（`optional`/`required`）漏了 `provides`：运行时完全正常（core 只看源 A），但 npm 市场的「装它会引入哪些服务」披露里**不会显示该插件提供 `asr`**。两个参考实现的 `package.json` 都已把两源写全：
+两源必须写全同一份信息，否则各自失真。典型陷阱是源 A 声明了 `provides`、源 B 却只写 `required`/`optional`（`optional`/`required`）漏了 `provides`：运行时完全正常（core 只看源 A），但 npm 市场的「装它会引入哪些服务」披露里**不会显示该插件提供 `asr`**。两个参考实现的 `package.json` 都已把两源写全：
 
 ```jsonc
 // plugin-asr-openai/package.json
@@ -154,21 +155,30 @@ manifest 是双源的（`docs/concepts/manifest-metadata.md`）：
 ### lazy 取服务，不要缓存实例
 
 ```ts
-import type { ASRService } from '@aalis/api-asr';
+import type { MessageAttachment } from '@aalis/schema-message';
+import { asr } from '@aalis/api-asr';
+import { definePlugin, optional } from '@aalis/core';
 
-async function transcribeOne(ctx: Context, att: MessageAttachment) {
-  const asr = ctx.getService<ASRService>('asr');   // 即取即用，别存进字段
-  if (!asr) return undefined;           // 没装任何 asr 后端 → 优雅降级
-  const { text } = await asr.transcribe({ attachment: att, language: 'zh' }, ctx);
-  return text;
-}
+export default definePlugin({
+  name: '@acme/plugin-example-asr-consumer',
+  uses: { asr: optional(asr) },
+  apply({ asr }) {
+    async function transcribeOne(att: MessageAttachment) {
+      const svc = asr.current;
+      if (!svc) return undefined;
+      const { text } = await svc.transcribe({ attachment: att, language: 'zh' });
+      return text;
+    }
+    void transcribeOne;
+  },
+});
 ```
 
-`getService` 返回的是**当时点的裸实例**，provider 发生换跳（热插拔 / 偏好切换）不会跟随（`packages/core/src/context/context.ts`）。所以每次用都重新 `getService`，不要缓存到类字段。详见 `docs/concepts/lazy-service-access.md`。
+`.current` 返回的是**当时点的裸实例**，provider 发生换跳（热插拔 / 偏好切换）不会跟随（`packages/core/src/context/context.ts`）。所以每次用都重新读取 `.current`，不要缓存到类字段。详见 `docs/concepts/lazy-service-access.md`。
 
 ### asr 是可选依赖，缺失要降级
 
-`asr` 几乎总该声明为 `inject.optional`（像 media 那样），因为单 owner 工程可能未安装任何语音后端。消费方拿到 `undefined` 时应静默返回「未识别」占位，而不是抛错——media 的做法是日志 debug 后 `return undefined`（`plugin-media/src/service.ts`），并在最终描述里补占位文本让主 LLM 知情「有音频但没识别」（`service.ts`）。
+`asr` 几乎总该声明为 `uses optional`（像 media 那样），因为单 owner 工程可能未安装任何语音后端。消费方拿到 `undefined` 时应静默返回「未识别」占位，而不是抛错——media 的做法是日志 debug 后 `return undefined`（`plugin-media/src/service.ts`），并在最终描述里补占位文本让主 LLM 知情「有音频但没识别」（`service.ts`）。
 
 ### 错误边界
 
@@ -185,7 +195,7 @@ async function transcribeOne(ctx: Context, att: MessageAttachment) {
 3. **`http(s)://`**：**必须用 `safeFetch`（`@aalis/util-network-guard`）下载**，不要用裸 `fetch`（见 §6）。
 4. **storage URI / 历史裸相对路径**：`isStorageUri(data)` 判定（`packages/api-storage/src/index.ts`）；历史格式 `data/...` 补成 `data:/...`。openai 用 `storage.readFile(uri)` 读字节；whisper-cpp 用 `storage.resolveLocalPath?.(uri, 'read')` 拿本地路径喂 ffmpeg。
 
-process/storage 经 gateway 注入：`createProcessGateway(ctx)` / `createStorageGateway(ctx)`（`api-process/src/index.ts`、`api-storage/src/index.ts`），临时文件用 `proc.makeTempDir(prefix)`（返回 `{ path, uri, cleanup }`，`api-process/src/index.ts`），用完务必 `cleanup()`（whisper-cpp 在 `finally` 里清理，`plugin-asr-whisper-cpp/src/index.ts`）。
+process/storage 经 gateway 注入：`createProcessGateway(process)` / `createStorageGateway(storage)`（`api-process/src/index.ts`、`api-storage/src/index.ts`），临时文件用 `proc.makeTempDir(prefix)`（返回 `{ path, uri, cleanup }`，`api-process/src/index.ts`），用完务必 `cleanup()`（whisper-cpp 在 `finally` 里清理，`plugin-asr-whisper-cpp/src/index.ts`）。
 
 ### SSRF / 网络出口
 
@@ -205,7 +215,7 @@ process/storage 经 gateway 注入：`createProcessGateway(ctx)` / `createStorag
 
 ## 6. 注意事项与边界情形
 
-- **契约头注释过时**：`getService('asr', ['audio'])` + capability 仲裁是 0.5.0 前的描述，实际无 capability 选择（见 §1 末）。
+- **契约头注释过时**：`('asr', ['audio'])` + capability 仲裁是 0.5.0 前的描述，实际无 capability 选择（见 §1 末）。
 - **asr-openai 转写 POST 用裸 fetch**：仅附件下载走 safeFetch（详见 §5）。
 - **whisper-cpp 是重外部依赖**：需 `brew install whisper-cpp` + ffmpeg + 下载 GGML 模型（`plugin-asr-whisper-cpp/src/index.ts`），缺 `modelPath` 直接抛错。
 - **whisper-cpp 时间戳被丢**：它命令行带 `-nt`（no timestamps）只取纯文本（`plugin-asr-whisper-cpp/src/index.ts`），`TranscribeInput.withTimestamps` 在该后端**无效**，`TranscribeResult.segments` 永远为空。需要分段的消费方应优先选 openai 后端（`verbose_json`，`plugin-asr-openai/src/index.ts`）。
@@ -216,8 +226,8 @@ process/storage 经 gateway 注入：`createProcessGateway(ctx)` / `createStorag
 ## 7. 交叉链接
 
 - `docs/concepts/service-model.md` —— DI 按名仲裁（偏好 > 优先级 > 注册顺序）、无 capability 选择
-- `docs/concepts/lazy-service-access.md` —— 为什么每次 `getService`、provider bounce
-- `docs/concepts/manifest-metadata.md` —— `provides`/`inject` 双源、市场披露
+- `docs/concepts/lazy-service-access.md` —— 为什么每次读取 `.current`、provider bounce
+- `docs/concepts/manifest-metadata.md` —— `provides`/`uses` 双源、市场披露
 - `docs/concepts/storage-uri-grammar.md` —— `<root>:/path` 文法、`isStorageUri`
 - `docs/concepts/security-model.md` —— `safeFetch` SSRF 防护、storage 非沙箱
 - `docs/concepts/message-llm-pipeline.md` —— asr 在多模态/消息管线中的位置

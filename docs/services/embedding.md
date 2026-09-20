@@ -4,7 +4,7 @@
 
 把一段文本编码成稠密向量（`text → number[]`）的提供者，是语义检索 / 向量记忆的底层能力。
 
-- 服务注册名：`'embedding'`（`ctx.getService<EmbeddingService>('embedding')`）。
+- 服务注册名：`'embedding'`（`embedding.current`）。
 - 契约包：`@aalis/api-embedding`。
 - 该契约**有运行时服务**（非纯类型契约），但 `-api` 包本身只导出 interface + declaration merging，不含实现；实现来自 `plugin-embedding-*` 提供者插件。
 
@@ -22,12 +22,12 @@ export interface EmbeddingService {
 }
 ```
 
-并通过 declaration merging 把服务名登记进核心的 `ServiceTypeMap`，使 `getService('embedding')` 拿到强类型：
+并通过 declaration merging 把服务名登记进核心的 `服务描述符`，使 `embedding.current` 拿到强类型：
 
 ```ts
 // packages/api-embedding/src/index.ts
 declare module '@aalis/core' {
-  interface ServiceTypeMap {
+  interface 服务描述符 {
     embedding: EmbeddingService;
   }
 }
@@ -55,37 +55,37 @@ declare module '@aalis/core' {
 OpenAI 实现（`packages/plugin-embedding-openai/src/index.ts`）：
 - `embed`：取响应 `data.data[0].embedding`；失败抛 `Error`，不静默。
 - `listModels`：拉 `{baseUrl}/models`，失败返回 `[]`。
-- 注册：`ctx.provide('embedding', service, { label: \`OpenAI / ${model}\` })`。
+- 注册：`provide(embedding, service, { label: \`OpenAI / ${model}\` })`。
 
 Ollama 实现（`packages/plugin-embedding-ollama/src/index.ts`）：
 - 自动探测新旧 API：首次 `embed` 先试 `/api/embed`，失败则缓存为旧版走 `/api/embeddings`。
 - 自带超时（`AbortController`）+ 5xx 重试（`postJson`）；`embed` 失败时同样抛 `Error`。
-- 注册：`ctx.provide('embedding', service, { label: \`Ollama / ${model}\` })`。
+- 注册：`provide(embedding, service, { label: \`Ollama / ${model}\` })`。
 
 两者 `apply` 都做了启动连通性自检：调一次 `embed('ping')`，**失败只 warn 不阻塞注册**——即服务可能注册成功但实际不可用，消费者不应假设 `embed` 一定成功。
 
 ### 典型消费点
 
 **参考消费者 `@aalis/plugin-memory-vector`**（向量记忆，硬依赖）：
-- 声明依赖：`export const inject = { required: ['vectorstore', 'embedding'], optional: ['memory'] }`（`packages/plugin-memory-vector/src/index.ts`），并同步写在 `package.json` 的 `aalis.service.required`。
-- 取用：`function getEmbedder() { return ctx.getService<EmbeddingService>('embedding')!; }`——封装成函数，**每次用都重新 getService**（lazy）。
+- 声明依赖：`uses: { vectorstore, embedding, memory: optional(memory) }`（`packages/plugin-memory-vector/src/index.ts`），并同步写在 `package.json` 的 `aalis.service.required`。
+- 取用：`function getEmbedder() { return embedding.current!; }`——封装成函数，**每次读取 `.current` 重新解析**（lazy）。
 - 调用点：索引时 `await getEmbedder().embed(embedText)`，查询时 `await getEmbedder().embed(query)`，得到向量后交给 `vectorstore` 检索。
 
 **可选消费者 `@aalis/plugin-user-relation`**（实体 / 事件去重的语义召回，软依赖）：
-- 取用：`const embedding = this.ctx?.getService<EmbeddingService>('embedding')`（`packages/plugin-user-relation/src/service.ts`）。
+- 取用：`const embedding = this.caps.embedding.current`（`packages/plugin-user-relation/src/service.ts`）。
 - 缺失即降级：`if (!embedding) return null;`（`ensureEntityEmbedding`），不报错、走非语义路径。
 
-**WebUI（`@aalis/plugin-webui-server`）** 通过 `listModels` 聚合下拉：对配置里 `dynamicOptions: 'embedding'` 的字段，调 `ctx.getAllServices('embedding')` 遍历所有提供者，逐个 `await provider.instance.listModels()` 汇总（`packages/plugin-webui-server/src/index.ts`）。单个提供者失败不影响整体。
+**WebUI（`@aalis/plugin-webui-server`）** 通过 `listModels` 聚合下拉：对配置里 `dynamicOptions: 'embedding'` 的字段，调 `x.all('embedding')` 遍历所有提供者，逐个 `await provider.instance.listModels()` 汇总（`packages/plugin-webui-server/src/index.ts`）。单个提供者失败不影响整体。
 
 ## 4. 写一个 provider
 
 ### 必须 vs 可选
 
-- 必须：实现 `embed(text): Promise<number[]>`；在 `apply` 里 `ctx.provide('embedding', impl)`。
+- 必须：实现 `embed(text): Promise<number[]>`；在 `apply` 里 `provide(embedding, impl)`。
 - 可选：`listModels()`（仅为 WebUI 下拉服务，不实现也能正常 embed）。
 - 强烈建议：启动连通性自检失败时 **warn 而非 throw**（与两个参考实现一致），让插件能装上、错误暴露在第一次真实调用。
 
-### provides / inject 双源必须同步
+### provides / uses 双源必须同步
 
 DI 靠包清单 + 代码导出**双源**声明（见 [manifest-metadata](../concepts/manifest-metadata.md)）。provider 两处都要写 `provides: ['embedding']`：
 
@@ -99,7 +99,7 @@ DI 靠包清单 + 代码导出**双源**声明（见 [manifest-metadata](../conc
 
 `src/index.ts` 导出：
 ```ts
-export const provides = ['embedding'];
+provides: [embedding];
 export const subsystem = 'embedding'; // 同子系统的提供者在 WebUI 里归组
 export const reusable = true;          // 允许同插件多实例（多账号/多端点）
 ```
@@ -107,13 +107,8 @@ export const reusable = true;          // 允许同插件多实例（多账号/�
 ### 最小可编译骨架
 
 ```ts
-import type { Context } from '@aalis/core';
+import { definePlugin } from '@aalis/core';
 import type { EmbeddingService } from '@aalis/api-embedding';
-
-export const name = '@yourscope/plugin-embedding-foo';
-export const provides = ['embedding'];
-export const subsystem = 'embedding';
-export const reusable = true;
 
 class FooEmbedding implements EmbeddingService {
   constructor(private endpoint: string, private model: string) {}
@@ -141,53 +136,59 @@ class FooEmbedding implements EmbeddingService {
   }
 }
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
+export default definePlugin({
+  name: '@yourscope/plugin-embedding-foo',
+  subsystem: 'embedding',
+  reusable: true,
+  provides: [embedding],
+  apply({ provide, events, hooks, lifecycle, logger, config }) {
   const endpoint = (config.endpoint as string) ?? 'http://localhost:9000';
   const model = (config.model as string) ?? 'foo-embed-v1';
   const service = new FooEmbedding(endpoint, model);
 
   try {
     await service.embed('ping');
-    ctx.logger.info(`Foo Embedding 已就绪: ${model} @ ${endpoint}`);
+    logger.info(`Foo Embedding 已就绪: ${model} @ ${endpoint}`);
   } catch (err) {
-    ctx.logger.warn(`Foo Embedding 连通性检查失败，服务仍将注册: ${String(err)}`);
+    logger.warn(`Foo Embedding 连通性检查失败，服务仍将注册: ${String(err)}`);
   }
 
-  // entryId 默认 = ctx.id；多实例/分子项时用 `${ctx.id}/${sub}` 前缀
-  ctx.provide('embedding', service, { label: `Foo / ${model}` });
-}
+  // entryId 默认等于本次激活 id；多实例/分子项时用 `${lifecycle.id}/${sub}` 前缀
+  provide(embedding, service, { label: `Foo / ${model}` });
+},
+});
 ```
 
 ### priority / entryId / label
 
-`ctx.provide(name, instance, { priority?, label?, entryId? })`（`packages/core/src/context/context.ts`）：
+`provide(name, instance, { priority?, label?, entryId? })`（`packages/core/src/context/context.ts`）：
 
 - `priority`：默认 `0`。同名服务竞争时，winner = **preference > priority > 注册顺序**；要默认压过普通后端取更高值（如 `50`）。普通第三方提供者保持 `0` 即可，让用户在 WebUI 里用 preference 选。
-- `entryId`：默认 `this.id`，**必须以 `this.id` 为前缀（`/` 分隔）**，否则卸载时无法连带注销（`context.ts`）。一个插件想登记多个 embedding 实例（如多端点）时用 `${ctx.id}/${sub}`。
+- `entryId`：默认本次激活 id，**必须以本次激活 id 为前缀（`/` 分隔）**，否则卸载时无法连带注销（`context.ts`）。一个插件想登记多个 embedding 实例（如多端点）时用 `${lifecycle.id}/${sub}`。
 - `label`：人类可读名，WebUI 选择器和 `getAllServices` 里展示（两个参考实现都用 `\`OpenAI / ${model}\`` 这种形态）。
 
 详见 [service-model](../concepts/service-model.md) 与 [core/service](../core/service.md)。
 
 ## 5. 标准消费方式
 
-### lazy getService（不要缓存实例）
+### 惰性读取 `.current`（不要缓存实例）
 
 提供者重新 `provide` / 切换会使旧实例失效，所以**每次用都重新取**（见 [lazy-service-access](../concepts/lazy-service-access.md)）。参考实现就是包成 getter 函数：
 
 ```ts
 function getEmbedder(): EmbeddingService {
-  return ctx.getService<EmbeddingService>('embedding')!; // 硬依赖：inject.required 已保证存在
+  return embedding.current!; // 硬依赖：uses required 已保证存在
 }
 // 每个调用点：await getEmbedder().embed(text)
 ```
 
 ### 硬依赖 vs 可选依赖
 
-- **硬依赖**：声明 `inject.required = ['embedding']`（双源同步到 `package.json`）。运行时框架保证存在，取用可用 `!` 断言（如 memory-vector）。
-- **可选依赖**：声明 `inject.optional`（或干脆不声明），取用要判空降级：
+- **硬依赖**：声明 `uses required = ['embedding']`（双源同步到 `package.json`）。运行时框架保证存在，取用可用 `!` 断言（如 memory-vector）。
+- **可选依赖**：声明 `uses optional`（或干脆不声明），取用要判空降级：
 
 ```ts
-const embedding = ctx.getService<EmbeddingService>('embedding');
+const embedding = embedding.current;
 if (!embedding) {
   // 降级：跳过语义召回，走纯结构化路径（user-relation 的做法）
   return null;
@@ -216,6 +217,6 @@ const vec = await embedding.embed(text);
 
 ## 8. 交叉链接
 
-- 概念：[service-model](../concepts/service-model.md)（DI 按名解析 / 同名竞争）、[lazy-service-access](../concepts/lazy-service-access.md)（每次 getService）、[manifest-metadata](../concepts/manifest-metadata.md)（provides/inject 双源）、[security-model](../concepts/security-model.md)（SSRF / safeFetch）。
+- 概念：[service-model](../concepts/service-model.md)（DI 按名解析 / 同名竞争）、[lazy-service-access](../concepts/lazy-service-access.md)（每次读取 `.current`）、[manifest-metadata](../concepts/manifest-metadata.md)（aalis.service 与 definePlugin provides/uses 双源）、[security-model](../concepts/security-model.md)（SSRF / safeFetch）。
 - 核心：[core/service](../core/service.md)、[core/context](../core/context.md)、[core/plugin](../core/plugin.md)、[plugins/plugin-authority](../plugins/plugin-authority.md)。
 - 相关服务：`vectorstore`（向量存储与检索，embedding 的直接下游）、`memory`（消息历史，memory-vector 的 optional 依赖）。

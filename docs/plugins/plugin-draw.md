@@ -10,10 +10,20 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-draw'
-meta.displayName = '绘图'
-meta.subsystem = 'tools'
-meta.inject = { optional: ['tools', 'storage', 'process'] }
+export default definePlugin({
+  name: '@aalis/plugin-draw',
+  displayName: '绘图',
+  subsystem: 'tools',
+  uses: {
+    tools: optional(tools),
+    storage: optional(storage),
+    processService: optional(processService),
+    logger,
+    lifecycle,
+    config,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

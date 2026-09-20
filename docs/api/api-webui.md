@@ -6,7 +6,7 @@
 
 ## 概述
 
-定义 WebUI 后台服务接口、声明式页面组件 schema、页面注册 helper。插件不需要懂 HTTP/React，只需在 `apply(ctx)` 中调用 `useWebuiService(ctx).registerPage(page)`，由 webui-server 自动渲染并暴露 REST + WebSocket。
+定义 WebUI 后台服务接口、声明式页面组件 schema、按激活绑定的登记门面。插件不需要懂 HTTP/React，只需在 `apply` 里 `uses` 声明 `webuiServer`，调用 `webui.registerPage` / `webui.registerAction`。webui-server 负责渲染并暴露 REST + WebSocket。页面动作随本次激活撤回；同名动作为替换。
 
 ## 服务接口
 
@@ -14,70 +14,87 @@
 interface WebUIService {
   getPort(): number;
   getHost(): string;
-  setClientDir?(dir: string): void;      // 允许替换前端
-  // 页面注册（一般通过 `useWebuiService(ctx)` helper 间接调用）
+  setClientDir?(dir: string): void;
   registerPage(page: WebuiPage, contextId: string): () => void;
   getPages(): Array<WebuiPage & { pluginName: string }>;
-  unregisterByPlugin(contextId: string): void;
+  registerAction(method: string, handler: WebuiActionHandler, contextId: string): () => void;
+}
+
+type WebuiActionHandler = (args: Record<string, unknown>, caller?: UserIdentity) => Promise<unknown>;
+```
+
+插件侧走绑定门面，不要自己传 `contextId`。
+
+## 绑定接口
+
+```ts
+interface BoundWebui extends ServiceRef<WebUIService> {
+  registerPage(page: WebuiPage): () => void;
+  registerAction(method: string, handler: WebuiActionHandler): () => void;
 }
 ```
 
-## PluginModule 注入槽位（declaration merging）
+`webuiServer` 的 `registerPage` / `registerAction` 走 `registrar`：同键替换、提供者换人整体重挂、关闭后拒收。调用型查询（`getPort` / `getPages`）走 `current` / `require()`。
 
-本包向 core 的 `PluginModule` 合并注入以下字段（core 不读取，仅 webui 消费）：
+另有调用型描述符 `webuiClient`（`WebuiClientProvider`），绑定接口是普通 `ServiceRef`。
 
-- `subsystem?: string` / `extends?: ExtendDeclaration` —— 纯展示元数据；
-- `actions?: Record<string, (ctx, args, caller?: UserIdentity) => Promise<unknown>>` ——
-  插件 RPC 动作表，webui-server 经 `POST /api/page-action/:plugin/:method` 调起。
-  第三参 caller 为权限闸放行后的调用者身份（登录账户或单 token 模式的
-  `webui:console`），handler 可用它做业务级检查；忽略即向后兼容；
-- `actionsMeta?: Record<string, { visibility?: CapabilityVisibility }>` —— action 的默认可见性
-  （`'public'` / `'restricted'`）。**未声明的 action 默认 restricted（默认拒绝）**，作者必须
-  显式标 `visibility: 'public'` 才放开；闸的 capability 形状为 `action:<plugin>:<method>`，
-  由 authority 数字等级闸裁决——`authorize` 比对用户 `level >= minLevel`（minLevel 由 risk/visibility
-  与 `authorityOverrides` 派生），owner（`*`）放行一切，`deniedCapabilities` 全局硬禁压过一切（见 api-authority）。
+## 展示元数据（declaration merging）
+
+本包向 `PluginMeta` 注入 `extends?: ExtendDeclaration`（core 不读，仅 WebUI 展示）。`subsystem` 是 `PluginDefinition` 上的展示字段，写在 `definePlugin({ subsystem })`。
+
+向 `@aalis/schema-config` 的 `SchemaField` 注入 `secret` / `dynamicOptions` / `allowCustom`。
+
+页面与页面动作**不是**静态模块字段：在 `apply` 里经 `webui.registerPage` / `webui.registerAction` 登记。
+
+`POST /api/page-action/:plugin/:method` 在身份闸放行后调用已登记的 handler，并把 `caller` 作为第二参传入（`packages/plugin-webui-server/src/routes/plugins.ts`）。单 owner 终态下该路由要求 owner 身份。
+
+action 的业务失败**返回** `{ ok: false, error: '原因' }`，HTTP 仍是 200——路由只把 handler 的抛错转成 5xx；前端 form / actions / table 三种组件都据此显示原因，返回其它任何值（含 `undefined`）视为成功；table 的非 danger / confirm 操作若返回不带 `ok` 的普通对象，会被当作详情弹窗内容展示，只想刷新表格就返回 `undefined` 或 `{ ok: true }`。
+
+## 页面登记
 
 ```ts
-export const actions: PluginModule['actions'] = {
-  async getStats(ctx) { /* ... */ },
+import { type WebuiPage, webuiServer } from '@aalis/api-webui';
+import { definePlugin, optional } from '@aalis/core';
+
+const page: WebuiPage = {
+  key: 'shell',
+  label: 'Shell',
+  content: [{ type: 'stat', label: '条目数', source: 'stats' }],
 };
-export const actionsMeta = { getStats: { visibility: 'public' } }; // 显式放开才对所有人开放
+
+export default definePlugin({
+  name: '@acme/plugin-example-webui',
+  subsystem: 'tools',
+  uses: { webui: optional(webuiServer) },
+  apply({ webui }) {
+    webui.registerPage(page);
+    webui.registerAction('stats', async () => ({ total: 42 }));
+  },
+});
 ```
 
-## 页面注册 helper
-
-```ts
-import { useWebuiService } from '@aalis/api-webui';
-
-export function apply(ctx: Context) {
-  const webui = useWebuiService(ctx);
-  webui.registerPage({ key: 'shell', label: 'Shell', content: [/* ... */] });
-}
-```
-
-helper 内部先 `ctx.getService('webui-server')` 取服务；未就绪时自动 `whenService` 延迟。`registerPage` 返回 disposer，插件 `ctx.dispose()` 时自动取消注册。
+`webui-server` 未就绪时登记排队，就绪后挂上，缺失时页面不显示。不必把 `webuiServer` 标成 required，除非还要读 `getPort` / `getPages`。
 
 ## 声明式页面组件
 
 ```ts
 type WebuiComponent =
-  | WebuiStatComponent       // 数字统计卡
-  | WebuiTableComponent      // 表格 + 行内操作
-  | WebuiFormComponent       // 配置表单（复用 ConfigSchema）
-  | WebuiActionsComponent    // 按钮组
-  | WebuiInfoComponent       // 键值面板
-  | WebuiMarkdownComponent   // Markdown 内容
-  | WebuiTabsComponent;      // 子标签页容器
+  | WebuiStatComponent
+  | WebuiTableComponent
+  | WebuiFormComponent
+  | WebuiActionsComponent
+  | WebuiInfoComponent
+  | WebuiMarkdownComponent
+  | WebuiTabsComponent
+  | WebuiGraphComponent;
 ```
 
 每种组件都有：
 
 - `source` —— 拉数据的 action 方法名（不是 HTTP 路径；前端调 `POST /api/page-action/:plugin/:method`）
-- `save / method` —— 提交动作的 action 方法名，同上
+- `save` / `method` —— 提交动作的 action 方法名，同上
 - `confirm` —— 行内/按钮确认提示
 - `danger` —— 红色样式标记
-
-**失败约定**：action 的业务失败**返回** `{ ok: false, error: '原因' }`，HTTP 仍是 200——路由只把 handler 的抛错转成 5xx；前端 form / actions / table 三种组件都据此显示原因，返回其它任何值（含 `undefined`）视为成功；table 的非 danger / confirm 操作若返回不带 `ok` 的普通对象，会被当作详情弹窗内容展示，只想刷新表格就返回 `undefined` 或 `{ ok: true }`。
 
 ### 示例：表格 + 操作
 
@@ -92,10 +109,9 @@ type WebuiComponent =
     { key: 'startedAt', label: '启动时间', render: 'date' },
   ],
   actions: [
-    // 点击时把整行作为 args 传给 killProcess；失败让它返回 { ok: false, error: '进程已退出' }
     { label: '终止', method: 'killProcess', confirm: '确定？', danger: true },
   ],
-  refresh: 5,      // 每 5 秒自动刷新（单位：秒）
+  refresh: 5,
 }
 ```
 
@@ -105,9 +121,9 @@ type WebuiComponent =
 {
   type: 'form',
   label: '基础配置',
-  source: 'getConfig',   // 返回表单初值对象
-  save: 'saveConfig',    // 失败返回 { ok: false, error: '...' }，前端显示原因
-  schema: ctx.configSchema,
+  source: 'getConfig',
+  save: 'saveConfig',
+  schema: configSchema,
 }
 ```
 
@@ -115,28 +131,21 @@ type WebuiComponent =
 
 ```ts
 interface WebuiPage {
-  key: string;                       // URL 段
+  key: string;
   label: string;
   icon?: string;
-  order?: number;                    // 排序权重（越小越靠前，默认 99）
-  content?: WebuiComponent[];        // 声明式页面内容（不提供则用客户端内置页面）
+  order?: number;
+  renderer?: string;
+  content?: WebuiComponent[];
 }
 ```
 
-在插件 `apply()` 中注册：
+## 前端提供者
 
-```ts
-import { useWebuiService } from '@aalis/api-webui';
+`WebuiClientProvider`：`getClientDir()` 返回含 `index.html` 的静态目录。两条接入：
 
-const PAGES: WebuiPage[] = [
-  { key: 'shell', label: 'Shell', content: [/* ... */] },
-];
-
-export function apply(ctx: Context) {
-  const webui = useWebuiService(ctx);
-  for (const p of PAGES) webui.registerPage(p);
-}
-```
+- **纯静态包**：`package.json` 标 `aalis.client: true` + 含 `dist/index.html`，被 webui-server 自动发现挂载（无需 `apply`）。
+- **主动覆盖**：插件 `apply` 里 `provide(webuiClient, impl)`。`onBehalfOf` 代登记归属被代者身份，不计入代理人 `provides`。
 
 ## 实现者
 

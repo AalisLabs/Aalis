@@ -9,14 +9,22 @@
 
 ## 插件声明
 
-```typescript
-meta.name = '@aalis/plugin-memory-inmemory'
-meta.displayName = '内存记忆'
-meta.subsystem = 'memory'
-meta.provides = ['memory']
+```ts
+definePlugin({
+  name: '@aalis/plugin-memory-inmemory',
+  displayName: '内存记忆',
+  subsystem: 'memory',
+  provides: [memory],
+  apply(caps) { caps.provide(memory, service, { priority: -100 }); },
+  uses: {
+    config,
+    logger,
+    provide,
+  },
+})
 ```
 
-注册优先级: **-100**（在 `apply` 中经 `ctx.provide` 传入，低于 `plugin-memory-sqlite` 的 10 与 `plugin-memory-mongodb` 的 5）
+注册优先级 **-100**（低于 `plugin-memory-sqlite` 的 10 与 `plugin-memory-mongodb` 的 5）。
 
 ## 配置
 

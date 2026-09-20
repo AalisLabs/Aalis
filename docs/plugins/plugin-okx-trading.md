@@ -10,9 +10,16 @@ OKX 加密货币交易所 API 集成，支持模拟盘和实盘，包含行情�
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-okx-trading'
-meta.subsystem = 'external'
-meta.inject = { optional: ['tools'] }
+export default definePlugin({
+  name: '@aalis/plugin-okx-trading',
+  subsystem: 'external',
+  uses: {
+    tools: optional(tools),
+    logger,
+    config,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

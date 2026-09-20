@@ -10,12 +10,21 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-vectorstore-flat'
-meta.provides = ['vectorstore']
-meta.inject = { required: ['storage'] }
+export default definePlugin({
+  name: '@aalis/plugin-vectorstore-flat',
+  provides: [vectorstore],
+  uses: {
+    storage,
+    provide,
+    config,
+    logger,
+    lifecycle,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
-向量全部存在 storage 上的 `vectors.json` 里，没有 storage 既读不出也写不进，故 storage 是必需依赖。声明 `required` 换来 `app.stop()` 时的拓扑保证：消费者先关、提供者后关；单独禁用或热重载 storage 时没有这条保证；落盘由调用方调用 `save()` 触发（见 api-vectorstore 契约），dispose 时的保存是兜底冲刷。
+向量全部存在 storage 上的 `vectors.json` 里，没有 storage 既读不出也写不进，故 storage 是必需依赖。关停以激活为单位分 drain / close：本插件对 storage 是普通依赖，消费者整个 close 完提供者才 drain，因此 `onDispose` 里 `await store.save()` 时 storage 仍在。该保证只在双方同进一张计划时成立（`App.stop()`）；单独禁用或热重载 storage 时没有交接保证。落盘由调用方调用 `save()` 触发（见 api-vectorstore 契约），dispose 时的保存是兜底冲刷。
 
 ## 配置
 
@@ -28,6 +37,6 @@ meta.inject = { required: ['storage'] }
 - 向量归一化后写入 `vectors.json`
 - 搜索时使用余弦相似度（归一化后等价于点积）排序取 topK
 - 支持 `add` / `search` / `clear` / `save` / `size`
-- dispose 时自动保存，并等待落盘完成后才结束拆卸（依赖 storage 必需声明带来的关停顺序）
+- dispose 时自动保存，并 `await` 落盘完成后才结束拆卸（普通依赖：本插件 close 完 storage 才 drain；必须 await，void 化会让停机时最后一批向量来不及落盘）
 - 数据文件损坏（解析失败）或内容不是数组时告警并按空库启动，不影响后续写入
 - 适合开发调试和小规模数据，大规模场景建议使用 plugin-vectorstore-lancedb

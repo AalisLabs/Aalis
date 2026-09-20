@@ -10,8 +10,20 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-tool-system'
-meta.inject = { required: ['tools'] }
+export default definePlugin({
+  name: '@aalis/plugin-tool-system',
+  uses: {
+    tools: optional(tools),
+    logger,
+    lifecycle,
+    config,
+    commands: optional(commands),
+    persona: optional(persona),
+    storage: optional(storage),
+    process: optional(processService),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

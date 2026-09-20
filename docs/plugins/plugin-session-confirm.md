@@ -12,9 +12,19 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-session-confirm'
-meta.provides = ['session-confirm']
-meta.inject = { required: ['gateway'], optional: ['authority'] }
+export default definePlugin({
+  name: '@aalis/plugin-session-confirm',
+  provides: [sessionConfirm],
+  uses: {
+    gateway,
+    authority: optional(authority),
+    hooks,
+    lifecycle,
+    logger,
+    provide,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 行为

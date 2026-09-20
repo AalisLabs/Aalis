@@ -6,7 +6,7 @@ memory 是会话记忆与持久化层。它把对话消息（`Message`）按 `se
 
 agent 构建 LLM 上下文、checkpoint 回滚、summary 压缩等所有依赖「记住对话」的功能，都建立在它之上。
 
-- 服务注册名：`getService('memory')`（对应 `ServiceTypeMap.memory = MemoryService`）
+- 服务注册名：`memory.current`（对应 `服务描述符.memory = MemoryService`）
 - 契约包：`@aalis/api-memory`
 - 参考实现：`@aalis/plugin-memory-sqlite`（默认推荐）、`@aalis/plugin-memory-inmemory`（fallback）、`@aalis/plugin-memory-mongodb`
 
@@ -83,7 +83,7 @@ deleteMessagesByTimestamps?(sessionId, timestamps): Promise<number>; // 按时�
 
 | 包 | priority | 说明 |
 |---|---|---|
-| `plugin-memory-sqlite` | `10` | 默认持久化，`inject.required=['storage']`，全量实现所有可选方法 |
+| `plugin-memory-sqlite` | `10` | 默认持久化，`uses required=['storage']`，全量实现所有可选方法 |
 | `plugin-memory-inmemory` | `-100` | 进程内 fallback，不持久化，同样全量实现可选方法 |
 | `plugin-memory-mongodb` | `5` | MongoDB 后端 |
 
@@ -91,7 +91,7 @@ DI 按名选出 winner：preference > priority > 注册顺序（见 `docs/concep
 
 ### 消费方（典型读写点）
 
-- **`plugin-message-archive`**（写入唯一入口）：`saveMessage` 经它封装，是消息进库的标准路径。它声明 `inject.required=['memory']`。
+- **`plugin-message-archive`**（写入唯一入口）：`saveMessage` 经它封装，是消息进库的标准路径。它声明 `uses required=['memory']`。
 - **`plugin-agent`**（构建 LLM 上下文）：调用 `memory.getHistory(sessionId, historyLimit)` 拉历史，拼进 messages。
 - **`plugin-checkpoint`**（回滚）：通过惰性查询 Proxy 持有 memory，调用 `deleteMessagesByTimestamps`，并 emit `memory:messages-deleted` / `history:changed`。
 - **`plugin-memory-summary`**（压缩）：用 `getHistory(..., 200)` + `trimHistory` 裁剪，摘要本体存进 `saveMetadata` / `getMetadata`（namespace 为 `SUMMARY_NAMESPACE`）。
@@ -112,12 +112,12 @@ DI 按名选出 winner：preference > priority > 注册顺序（见 `docs/concep
 
 ### 双源元数据必须同步
 
-`provides` / `inject` 既要在源码导出，也要写进 `package.json` 的 `aalis.service`（见 `docs/concepts/manifest-metadata.md`）。sqlite 的两处：
+`provides` / `uses` 既要在源码导出，也要写进 `package.json` 的 `aalis.service`（见 `docs/concepts/manifest-metadata.md`）。sqlite 的两处：
 
 源码：
 ```ts
-export const provides = ['memory'];
-export const inject = { required: ['storage'] };
+provides: [memory];
+uses: { storage };
 ```
 `package.json` `aalis.service`：
 ```json
@@ -127,14 +127,12 @@ export const inject = { required: ['storage'] };
 ### 可编译最小骨架
 
 ```ts
-import type { Context } from '@aalis/core';
+import { definePlugin } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { MemoryService } from '@aalis/api-memory';
 import type { Message } from '@aalis/schema-message';
 
-export const name = '@aalis/plugin-memory-myimpl';
-export const provides = ['memory'];
-// 若依赖 storage 落盘：export const inject = { required: ['storage'] };
+// 若依赖 storage 落盘：uses: { storage };
 
 class MyMemoryService implements MemoryService {
   private store = new Map<string, Message[]>();
@@ -154,13 +152,17 @@ class MyMemoryService implements MemoryService {
   // 可选方法按需补全（trimHistory / getRecentMessagesAcrossSessions / *Metadata ...）
 }
 
-export function apply(ctx: Context): void {
+export default definePlugin({
+  name: '@aalis/plugin-memory-myimpl',
+  provides: [memory],
+  apply({ provide, events, hooks, lifecycle, logger, config }) {
   // priority 决定与 sqlite(10)/inmemory(-100) 的竞争结果
-  ctx.provide('memory', new MyMemoryService(), { priority: 10 });
-}
+  provide(memory, new MyMemoryService(), { priority: 10 });
+},
+});
 ```
 
-> 若 provider 是单实例（不按子上下文分裂），不需要 per-entry `entryId`；memory 后端一贯是每进程单实例，直接 `ctx.provide('memory', svc, { priority })` 即可。
+> 若 provider 是单实例（不按子上下文分裂），不需要 per-entry `entryId`；memory 后端一贯是每进程单实例，直接 `provide(memory, svc, { priority })` 即可。
 
 ## 5. 标准消费方式
 
@@ -169,25 +171,25 @@ export function apply(ctx: Context): void {
 ```ts
 import type { MemoryService } from '@aalis/api-memory';
 
-const memory = ctx.getService<MemoryService>('memory');
+const memory = memory.current;
 if (!memory) return; // memory 是可选依赖时：缺失则降级，不抛异常
 try {
   const history = await memory.getHistory(sessionId, 50);
   // ...
 } catch (err) {
-  ctx.logger.warn('获取历史消息失败:', err); // agent 的处理方式：捕获后以空历史继续
+  logger.warn('获取历史消息失败:', err); // agent 的处理方式：捕获后以空历史继续
 }
 ```
 
-- **硬依赖**：声明 `inject.required=['memory']`（如 message-archive），缺失时框架不会加载你的插件；运行期仍建议 `if (!m) throw`。
-- **可选依赖**：直接 `getService` + null 守卫降级（agent 采用这种方式）。
+- **硬依赖**：声明 `uses required=['memory']`（如 message-archive），缺失时框架不会加载你的插件；运行期仍建议 `if (!m) throw`。
+- **可选依赖**：直接读 `.current` + null 守卫降级（agent 采用这种方式）。
 - **可选方法守卫**：调用可选方法前先判断存在性 —— `if (memory.trimHistory) await memory.trimHistory(...)`。
 - **跨 provider 重载安全**：需要长期持有引用时，用惰性查询 Proxy（checkpoint 采用这种方式）。
 
 ## 6. 能力 / 风险 → 影响
 
 - **本服务不做 authority 鉴权**。memory 是内部基础设施服务，调用方拿到引用即可读写任意 `sessionId` 的全部消息；没有 visibility/risk 分级，也没有逐调用确认。跨会话隔离完全依赖调用方传入正确的 `sessionId`，以及 `getRecentMessagesAcrossSessions` 的 `excludeSessionIds` / `platform` 过滤。**provider 不得自行添加额外鉴权门**，否则会破坏 agent 流水线。authority 模型见 `docs/plugins/plugin-authority.md` 与 `docs/concepts/security-model.md`。
-- **持久化要走 storage 契约**。sqlite 后端不直接拼接文件系统路径，而是用 `createStorageGateway(ctx)` + `storage.resolveLocalPath(uri, 'write')` 解析 `'<root>:/path'`（默认 `data:/aalis.db`）。storage 不是沙箱（见 `docs/concepts/storage-uri-grammar.md`），但通过它可以拿到框架统一的根隔离与路径解析；自写 provider 落盘时应沿用这种方式，而不是裸用 `fs`。
+- **持久化要走 storage 契约**。sqlite 后端不直接拼接文件系统路径，而是用 `createStorageGateway(storage)` + `storage.resolveLocalPath(uri, 'write')` 解析 `'<root>:/path'`（默认 `data:/aalis.db`）。storage 不是沙箱（见 `docs/concepts/storage-uri-grammar.md`），但通过它可以拿到框架统一的根隔离与路径解析；自写 provider 落盘时应沿用这种方式，而不是裸用 `fs`。
 - **删除要广播**。实现 `deleteMessagesByTimestamps` 的 provider，删除后下游（向量库、前端）靠 `memory:messages-deleted` / `history:changed` 事件同步；但 emit 事件是**消费方**（checkpoint）的责任，不是 memory 服务自身。
 - **PII 注意**。消息原文（含用户昵称、平台 ID 等）会原样落库。示例代码一律用占位符，不要在 configSchema、默认值或日志里硬编码真实账号信息。
 
@@ -201,5 +203,5 @@ try {
 
 ## 8. 交叉链接
 
-- 概念：[`docs/concepts/service-model.md`](../concepts/service-model.md)（DI 选 winner 规则）、[`docs/concepts/lazy-service-access.md`](../concepts/lazy-service-access.md)（必须惰性查询的原因）、[`docs/concepts/manifest-metadata.md`](../concepts/manifest-metadata.md)（provides/inject 双源）、[`docs/concepts/message-llm-pipeline.md`](../concepts/message-llm-pipeline.md)（消息如何被 archive→memory→agent 流转）、[`docs/concepts/storage-uri-grammar.md`](../concepts/storage-uri-grammar.md)（持久化路径）、[`docs/concepts/security-model.md`](../concepts/security-model.md)。
+- 概念：[`docs/concepts/service-model.md`](../concepts/service-model.md)（DI 选 winner 规则）、[`docs/concepts/lazy-service-access.md`](../concepts/lazy-service-access.md)（必须惰性查询的原因）、[`docs/concepts/manifest-metadata.md`](../concepts/manifest-metadata.md)（aalis.service 与 definePlugin provides/uses 双源）、[`docs/concepts/message-llm-pipeline.md`](../concepts/message-llm-pipeline.md)（消息如何被 archive→memory→agent 流转）、[`docs/concepts/storage-uri-grammar.md`](../concepts/storage-uri-grammar.md)（持久化路径）、[`docs/concepts/security-model.md`](../concepts/security-model.md)。
 - 核心：[`docs/core/service.md`](../core/service.md)、[`docs/plugins/plugin-authority.md`](../plugins/plugin-authority.md)、[`docs/core/events.md`](../core/events.md)、[`docs/core/context.md`](../core/context.md)。

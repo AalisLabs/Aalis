@@ -10,11 +10,19 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-embedding-ollama'
-meta.subsystem = 'embedding'
-meta.provides = ['embedding']
-meta.reusable = true
-meta.inject = { optional: ['doctor'] }
+export default definePlugin({
+  name: '@aalis/plugin-embedding-ollama',
+  subsystem: 'embedding',
+  provides: [embedding],
+  uses: {
+    config,
+    logger,
+    lifecycle,
+    provide,
+    doctor: optional(doctor),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

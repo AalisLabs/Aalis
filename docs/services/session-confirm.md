@@ -6,9 +6,9 @@
 
 它刻意**不**自己投递提示、也**不**自己拦截回复——这两件事因平台而异（OneBot/CLI 走 gateway 总线，WebUI 走 WS）。本服务把协调器做成一个工厂 `createChannel(deliver)`：调用方注入「怎么把文案发给用户」的 `deliver`，拿回一条 `{ handler, feed, dispose }` 通道；把 `handler` 注册到 `authority.setConfirmHandler(platform, ...)`（返回注销函数，dispose 时调用），在自己的拦截点调 `feed`。各平台经 DI 复用同一份协调器实现，零重复、零 plugin→plugin 依赖。
 
-- 服务注册名：`session-confirm` —— 即 `ctx.getService<SessionConfirmService>('session-confirm')` 里的字符串。
+- 服务注册名：`session-confirm` —— 即 `sessionConfirm.current` 里的字符串。
 - 契约包：`@aalis/api-session-confirm`（`packages/api-session-confirm/src/index.ts`）。
-- 默认实现包：`@aalis/plugin-session-confirm`（`packages/plugin-session-confirm/src/index.ts`，`provides = ['session-confirm']`，`packages/plugin-session-confirm/src/index.ts`）。
+- 默认实现包：`@aalis/plugin-session-confirm`（`packages/plugin-session-confirm/src/index.ts`，`provides: [sessionConfirm]`，`packages/plugin-session-confirm/src/index.ts`）。
 
 > 这是「轴 B」的传输/协调层。**裁决**仍在 authority：哪条能力需要确认、确认成功后授不授临时委托，都是 authority 的事（见 §6 与 docs/concepts/security-model.md）。本服务只负责把 authority 抛来的 `AccessRequest` 变成一次会话内的一问一答。
 
@@ -47,7 +47,7 @@ export interface ConfirmChannel {
 }
 ```
 
-服务类型经 declaration merging 注册到 core：`ServiceTypeMap['session-confirm'] = SessionConfirmService`（`packages/api-session-confirm/src/index.ts`）。
+服务类型经 declaration merging 注册到 core：`服务描述符['session-confirm'] = SessionConfirmService`（`packages/api-session-confirm/src/index.ts`）。
 
 ### 2.3 复用 api-authority 的类型
 
@@ -86,16 +86,16 @@ export type CapabilityConfirm = 'session' | 'always';
 ### 提供方（参考实现）
 
 - `@aalis/plugin-session-confirm`（`packages/plugin-session-confirm/src/index.ts`）：
-  - `apply` 里 `ctx.provide('session-confirm', { createChannel })`（`packages/plugin-session-confirm/src/index.ts`）。
+  - `apply` 里 `provide(sessionConfirm, { createChannel })`（`packages/plugin-session-confirm/src/index.ts`）。
   - 同时它**自用**一条 bus 通道（`createChannel` 传入「投递走 gateway 总线」），并把这条通道的 `handler` 注册成 authority 的 `'*'` fallback、把 `feed` 挂到 `inbound:confirm` 相位——从而覆盖 OneBot/CLI 等「仅靠消息总线」的会话型平台（`packages/plugin-session-confirm/src/index.ts`）。
-  - `inject`：`required: ['gateway']`、`optional: ['authority']`（`packages/plugin-session-confirm/src/index.ts`，与 `package.json` 的 `aalis.service` 双源一致）。注意它**依赖 gateway（投递/拦截通道），不依赖 authority 作为运行前提**——authority 缺席时仍能 provide 服务、只是没人调它的 handler。
+  - `uses`：`gateway` required、`authority` optional（`packages/plugin-session-confirm/src/index.ts`，与 `package.json` 的 `aalis.service` 双源一致）。注意它**依赖 gateway（投递/拦截通道），不依赖 authority 作为运行前提**——authority 缺席时仍能 provide 服务、只是没人调它的 handler。
 
 ### 消费方（典型消费点）
 
 - `@aalis/plugin-webui-server`（`packages/plugin-webui-server/src/index.ts`）：标准「另一种平台复用同一协调器」的范例。
-  - `ctx.whenService<SessionConfirmService>('session-confirm', ...)` 里 `createChannel`，注入**WS 投递**（`type: 'confirm'`，兼作前端「确认模式」信号，抑制富客户端的「打字即打断」），并把 `handler` 注册到 `authority.setConfirmHandler('webui', ...)`（`packages/plugin-webui-server/src/index.ts`）。
+  - `sessionConfirm.follow` 里 `createChannel`，注入**WS 投递**（`type: 'confirm'`，兼作前端「确认模式」信号，抑制富客户端的「打字即打断」），并把 `handler` 经 `authority.follow` 注册到 `setConfirmHandler('webui', ...)`（`packages/plugin-webui-server/src/index.ts`）。
   - 在 WS `onmessage` 里调 `confirmChannel.feed(sessionId, trimmed, wsIdentity.userId)`，命中即 `return`（吞掉，不当普通消息处理）（`packages/plugin-webui-server/src/index.ts`）。
-- `@aalis/plugin-authority`（`packages/plugin-authority/src/authority-manager.ts`）：不是直接 `getService('session-confirm')`，而是**经 `setConfirmHandler` 反向持有** handler。`requestAccess` 里取 `confirmHandlers.get(request.platform) ?? confirmHandlers.get('*')` 调用确认回调（`packages/plugin-authority/src/authority-manager.ts`）。这就是协调器 `handler` 被实际触发的入口。
+- `@aalis/plugin-authority`（`packages/plugin-authority/src/authority-manager.ts`）：不是直接 `sessionConfirm.current`，而是**经 `setConfirmHandler` 反向持有** handler。`requestAccess` 里取 `confirmHandlers.get(request.platform) ?? confirmHandlers.get('*')` 调用确认回调（`packages/plugin-authority/src/authority-manager.ts`）。这就是协调器 `handler` 被实际触发的入口。
 
 ## 4. 写一个 provider
 
@@ -109,11 +109,11 @@ export type CapabilityConfirm = 'session' | 'always';
 - **可选但强烈建议**：超时兜底（无人应答时 resolve `false` —— 默认实现 60s，见 `packages/plugin-session-confirm/src/index.ts`）；同一 session 多个并行确认请求的**串行 FIFO 排队**（同一回合并行工具可触发多个确认，不能抢占式互相 `resolve(false)`，见 `packages/plugin-session-confirm/src/index.ts`）。
 - **必须遵守的语义**：`feed` 必须做触发者校验 `head.userId === replyUserId` 才消费（见 §6）；`confirm === 'always'` 时不接受任何会话记忆（每次都问）。
 
-### 注册（ctx.provide + 双源同步）
+### 注册（provide + 双源同步）
 
 ```ts
+import { definePlugin } from '@aalis/core';
 // packages/<your-plugin>/src/index.ts
-import type { Context } from '@aalis/core';
 import type {
   AccessConfirmHandler,
   AccessDecision,
@@ -121,10 +121,7 @@ import type {
 } from '@aalis/api-authority';
 import type { ConfirmChannel, SessionConfirmService } from '@aalis/api-session-confirm';
 
-export const name = '@aalis/plugin-my-session-confirm';
-export const provides = ['session-confirm'];           // ← 双源之一：导出 provides
-export const inject = { required: ['gateway'], optional: ['authority'] };
-
+provides: [sessionConfirm];           // ← 双源之一：导出 provides
 function createChannel(deliver: (request: AccessRequest, text: string) => void): ConfirmChannel {
   const pending = new Map<string, {
     request: AccessRequest;
@@ -167,16 +164,20 @@ function createChannel(deliver: (request: AccessRequest, text: string) => void):
   return { handler, feed, dispose };
 }
 
-export async function apply(ctx: Context): Promise<void> {
+export default definePlugin({
+  name: '@aalis/plugin-my-session-confirm',
+  uses: { gateway, authority: optional(authority) },
+  apply({ provide, events, hooks, lifecycle, logger, config }) {
   const service: SessionConfirmService = { createChannel };
-  ctx.provide('session-confirm', service);
+  provide(sessionConfirm, service);
   // …（若也要自用 bus 通道覆盖会话型平台，参照默认实现 §3）
-}
+},
+});
 ```
 
 > 上例是**简化骨架**，省略了 FIFO 排队与 `parseConfirmReply` 的 Y/YS 语义；正式实现请直接对照 `packages/plugin-session-confirm/src/index.ts`。
 
-`package.json` 的 `aalis.service` 必须与导出的 `provides`/`inject` 保持**双源一致**（manifest 双源约定见 docs/concepts/manifest-metadata.md）：
+`package.json` 的 `aalis.service` 必须与导出的 `provides`/`uses` 保持**双源一致**（manifest 双源约定见 docs/concepts/manifest-metadata.md）：
 
 ```jsonc
 // package.json
@@ -193,44 +194,42 @@ export async function apply(ctx: Context): Promise<void> {
 
 ### 同名竞争 / 覆盖
 
-DI 按名选胜者，顺序为 偏好 > 优先级（数字越大越优先）> 注册顺序（见 docs/concepts/service-model.md、docs/core/service.md）。默认实现以 `ctx.provide('session-confirm', service)` 注册（未显式抬高优先级），第三方若要**覆盖**它，用更高优先级 provide 或让用户偏好选择即可。`createChannel` 无 `entryId`、非 per-entry，全局一个服务实例。
+DI 按名选胜者，顺序为 偏好 > 优先级（数字越大越优先）> 注册顺序（见 docs/concepts/service-model.md、docs/core/service.md）。默认实现以 `provide(sessionConfirm, service)` 注册（未显式抬高优先级），第三方若要**覆盖**它，用更高优先级 provide 或让用户偏好选择即可。`createChannel` 无 `entryId`、非 per-entry，全局一个服务实例。
 
 ## 5. 标准消费用法（接一个新平台的确认通道）
 
 最常见的使用方式是**作为一个新平台**复用协调器，正如 webui-server 所做：
 
 ```ts
-import type { AuthorityService } from '@aalis/api-authority';
-import type { ConfirmChannel, SessionConfirmService } from '@aalis/api-session-confirm';
+import { authority } from '@aalis/api-authority';
+import { sessionConfirm } from '@aalis/api-session-confirm';
+import { definePlugin, optional } from '@aalis/core';
 
-let confirmChannel: ConfirmChannel | undefined;
-
-// session-confirm 可能晚于本插件上线 → 用 whenService 等它就绪
-ctx.whenService<SessionConfirmService>('session-confirm', confirmSvc => {
-  // 注入「本平台怎么把文案发给用户」
-  confirmChannel = confirmSvc.createChannel((request, text) => {
-    sendToMyPlatform(request.sessionId, text);
-  });
-  // 把 handler 挂到 authority，键用本平台名（authorize 时按 request.platform 取）
-  // getService 每次现取，别缓存（provider 反弹会失效，见 lazy-service-access）；
-  // 返回注销函数作 whenService 的 cleanup，本插件 dispose 时注销，authority 不再投给已死通道
-  return ctx.getService<AuthorityService>('authority')?.setConfirmHandler('myplatform', confirmChannel.handler);
+export default definePlugin({
+  name: '@acme/plugin-example-confirm',
+  uses: { sessionConfirm: optional(sessionConfirm), authority: optional(authority) },
+  apply({ sessionConfirm, authority }) {
+    sessionConfirm.follow(confirmSvc => {
+      const channel = confirmSvc.createChannel((request, text) => {
+        void request;
+        void text;
+      });
+      const offAuthority = authority.follow(authoritySvc =>
+        authoritySvc.setConfirmHandler('myplatform', channel.handler),
+      );
+      return () => {
+        offAuthority();
+        channel.dispose();
+      };
+    });
+  },
 });
-
-// 在本平台的入站拦截点喂回复；命中即吞掉，别让它当普通消息进 agent
-function onInbound(sessionId: string, text: string, userId?: string): void {
-  if (confirmChannel?.feed(sessionId, text, userId)) return;  // 吞掉确认回复
-  // …正常处理
-}
-
-// 热重载/卸载时清理
-ctx.onDispose(() => confirmChannel?.dispose());
 ```
 
 要点：
 
-- **lazy / whenService**：`session-confirm` 与 `authority` 都可能晚上线或热重载反弹，故用 `whenService` 注册时机、`getService` 每用现取——切勿把服务实例缓存进闭包（见 docs/concepts/lazy-service-access.md）。
-- **服务缺失即降级**：`session-confirm` 缺席时 `whenService` 不回调，没人注册 handler；authority 的 `requestAccess` 取不到 handler 时**返回 `false`（拒绝）**（`packages/plugin-authority/src/authority-manager.ts`）——「无人在场即安全失败」。authority 缺席时 `setConfirmHandler` 那行的 `?.` 直接短路，不报错。
+- **lazy / follow**：`session-confirm` 与 `authority` 都可能晚上线或热重载反弹，故用 `follow` 跟随重建、`.current` 每用现取——切勿把服务实例缓存进闭包（见 docs/concepts/lazy-service-access.md）。
+- **服务缺失即降级**：`session-confirm` 缺席时 `follow` 不回调，没人注册 handler；authority 的 `requestAccess` 取不到 handler 时**返回 `false`（拒绝）**（`packages/plugin-authority/src/authority-manager.ts`）——「无人在场即安全失败」。authority 缺席时 `setConfirmHandler` 那行的 `?.` 直接短路，不报错。
 - **吞掉命中的回复**：`feed` 返回 `true` 时务必中止后续处理（默认 bus 通道把 `feed` 放在 `inbound:confirm` 相位最前，命中即不调 `next()`，避免回复触达 agent 触发对在途生成的 abort —— `packages/plugin-session-confirm/src/index.ts`、`packages/api-gateway/src/index.ts`）。
 - **错误边界**：handler 抛异常时 authority 侧 catch 并按拒绝处理（`packages/plugin-authority/src/authority-manager.ts`），但你自己的 `deliver` 失败不应让 Promise 永挂——超时兜底是最后防线。
 
@@ -255,9 +254,9 @@ ctx.onDispose(() => confirmChannel?.dispose());
 ## 8. 交叉链接
 
 - docs/concepts/security-model.md —— 两轴鉴权（level + confirm）、risk → (visibility, confirm) 推导、owner 仍吃 confirm。
-- docs/concepts/service-model.md、docs/core/service.md —— DI 按名选胜者、priority、provide/inject 双源。
-- docs/concepts/lazy-service-access.md —— whenService 注册时机、getService 每用现取、provider 反弹失效。
-- docs/concepts/manifest-metadata.md —— `package.json aalis.service` 与导出 `provides`/`inject` 双源一致。
+- docs/concepts/service-model.md、docs/core/service.md —— DI 按名选胜者、priority、provide/uses 双源。
+- docs/concepts/lazy-service-access.md —— follow 跟随重建、`.current` 每用现取、provider 反弹失效。
+- docs/concepts/manifest-metadata.md —— `package.json aalis.service` 与导出 `provides`/`uses` 双源一致。
 - docs/concepts/message-llm-pipeline.md —— `inbound:confirm` 相位在入站管道里的位置（最前、命中即吞）。
 - docs/plugins/plugin-authority.md —— authority 服务、临时能力委托、`requestAccess` / `setConfirmHandler`。
 - docs/services/gateway.md —— bus 投递（`dispatchOutbound`）与 `INBOUND_PHASE` 相位常量来源。

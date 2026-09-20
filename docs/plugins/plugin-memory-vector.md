@@ -10,10 +10,24 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-memory-vector'
-meta.subsystem = 'memory'
-meta.provides = ['semantic-memory']
-meta.inject = { required: ['vectorstore', 'embedding'], optional: ['memory'] }
+export default definePlugin({
+  name: '@aalis/plugin-memory-vector',
+  subsystem: 'memory',
+  provides: [semanticMemory],
+  uses: {
+    vectorstore,
+    embedding,
+    memory: optional(memory),
+    tools: optional(tools),
+    events,
+    hooks,
+    contributions,
+    provide,
+    logger,
+    config,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

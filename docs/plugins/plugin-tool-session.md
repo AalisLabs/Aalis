@@ -10,10 +10,23 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-tool-session'
-meta.subsystem = 'session'
-meta.provides = ['session-history']
-meta.inject = { optional: ['memory'] }
+export default definePlugin({
+  name: '@aalis/plugin-tool-session',
+  subsystem: 'session',
+  provides: [sessionHistory],
+  uses: {
+    tools: optional(tools),
+    events,
+    hooks,
+    logger,
+    config,
+    provide,
+    memory: optional(memory),
+    platform: optional(platform),
+    persona: optional(persona),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 注册工具组

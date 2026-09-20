@@ -58,16 +58,26 @@ interface SessionTreeNode {
 
 ## 服务接口（节选）
 
+描述符 `sessionManager`（`name: 'session-manager'`），绑定接口是普通 `ServiceRef<SessionManagerService>`。
+
 ```ts
 interface SessionManagerService {
-  ensureSession(sessionId: string, platform: string): Promise<SessionInfo>;
-  getSession(sessionId: string): SessionInfo | undefined;
-  list(filter?: { parentId?: string; status?: string }): SessionInfo[];
-  createChild(parentId: string, input: { name?; inputContext? }): Promise<SessionInfo>;
-  updateConfig(sessionId: string, patch: Partial<SessionConfig>): Promise<void>;
-  resolveConfig(sessionId: string, platform: string): Promise<SessionConfig>;
+  createSession(opts?): Promise<SessionInfo>;
+  getSession(id: string): SessionInfo | undefined;
+  listSessions(filter?: { parentId?: string | null; status?: SessionInfo['status'] }): SessionInfo[];
+  updateSession(id, updates): Promise<SessionInfo>;
+  ensureSession(id, patch?): Promise<SessionInfo>;
+  deleteSession(id: string): Promise<void>;
+  createChildSession(parentId, opts?): Promise<SessionInfo>;
+  getChildren(parentId: string): SessionInfo[];
   getTree(rootId?: string): SessionTreeNode[];
-  setStatus(sessionId: string, status: SessionInfo['status']): Promise<void>;
+  completeSession(id: string, result?: string): Promise<void>;
+  resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'>;
+  resolveInheritedDefaults(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'>;
+  getPlatformProfiles(): Record<string, PlatformProfile>;
+  getDefaults(): Omit<SessionConfig, 'sessionDefaults'>;
+  generateTitle(sessionId: string, userMessage?: string): Promise<string | undefined>;
+  updateSessionTitle(sessionId: string, title: string): Promise<void>;
 }
 ```
 

@@ -1,6 +1,6 @@
 # message 服务（契约包速查）
 
-> **这不是一个 DI 服务。** `@aalis/schema-message` 是**纯契约包**——只导出消息载体类型、`WellKnownRole`/`WellKnownKinds`、`prepareLLMMessages`/`toLLMRole`、附件占位符文法、发送者标识工具，外加经 declaration merging 注入的几个事件。**没有任何插件用 `ctx.provide('message', …)` 注册运行时服务，也没有 `getService('message')`**（已 grep 全仓确认：`provides/provide/getService` 均无 `'message'` 命中）。
+> **这不是一个 DI 服务。** `@aalis/schema-message` 是**纯契约包**——只导出消息载体类型、`WellKnownRole`/`WellKnownKinds`、`prepareLLMMessages`/`toLLMRole`、附件占位符文法、发送者标识工具，外加经 declaration merging 注入的几个事件。**没有任何插件用 `provide(message, …)` 注册运行时服务，也没有 `message.current`**（已 grep 全仓确认：`provides/provide/getService` 均无 `'message'` 命中）。
 >
 > 包元数据也证明这一点：`packages/schema-message/package.json` 只有 `"aalis": { "types": true }`（**没有** `aalis.service` 字段），keyword 是 `aalis-schema`。第三方作者**不是"实现/消费 message 服务"**，而是 **import 这些类型/函数**来写自己的 LLM provider / 适配器 / 读历史的插件。
 

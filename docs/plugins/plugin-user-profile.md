@@ -10,10 +10,26 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-user-profile'
-meta.displayName = '用户事实档案'
-meta.subsystem = 'memory'
-meta.inject = { required: ['memory', 'llm'], optional: ['user-relation', 'tools'] }
+export default definePlugin({
+  name: '@aalis/plugin-user-profile',
+  displayName: '用户事实档案',
+  subsystem: 'memory',
+  uses: {
+    memory,
+    llm,
+    events,
+    hooks,
+    contributions,
+    config,
+    logger,
+    services,
+    tools: optional(tools),
+    commands: optional(commands),
+    persona: optional(persona),
+    userRelation: optional(userRelation),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

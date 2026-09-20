@@ -6,13 +6,13 @@
 
 ## 概述
 
-最小化的向量数据库服务契约：存向量、查最近邻、按 metadata 过滤删除。常被 `plugin-memory-vector` 消费做语义历史检索。
+最小化的向量数据库服务契约：存向量、查最近邻、按 metadata 过滤删除。常被 `plugin-memory-vector` 消费做语义历史检索。描述符 `vectorstore` 是普通调用型 `ServiceRef<VectorStoreService>`。
 
 ## 关键类型
 
 ```ts
 interface VectorSearchResult {
-  score: number;                              // 余弦相似度
+  score: number;
   metadata: Record<string, unknown>;
 }
 
@@ -29,15 +29,27 @@ interface VectorStoreService {
 ## 典型用法
 
 ```ts
-const embedding = ctx.getService<EmbeddingService>('embedding');
-const vs = ctx.getService<VectorStoreService>('vectorstore');
-if (!embedding || !vs) return;
+import { embedding } from '@aalis/api-embedding';
+import { vectorstore } from '@aalis/api-vectorstore';
+import { definePlugin } from '@aalis/core';
 
-const vec = await embedding.embed('查询内容');
-const hits = await vs.search(vec, 5);
-for (const { score, metadata } of hits) {
-  console.log(score, metadata.sessionId, metadata.text);
-}
+export default definePlugin({
+  name: '@acme/plugin-example-vectorstore',
+  uses: { embedding, vectorstore },
+  apply({ embedding, vectorstore }) {
+    const embedSvc = embedding.current;
+    const vs = vectorstore.current;
+    if (!embedSvc || !vs) return;
+    void (async () => {
+      const vec = await embedSvc.embed('查询内容');
+      const hits = await vs.search(vec, 5);
+      for (const { score, metadata } of hits) {
+        void score;
+        void metadata;
+      }
+    })();
+  },
+});
 ```
 
 ## 维度一致性
