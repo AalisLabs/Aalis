@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { EmbeddingRequestOptions, EmbeddingService } from '../../packages/api-embedding/src/index.js';
 import { embedding } from '../../packages/api-embedding/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
@@ -6,7 +6,7 @@ import { messageArchive } from '../../packages/api-message-archive/src/index.js'
 import { tools } from '../../packages/api-tools/src/index.js';
 import type { VectorSearchResult, VectorStoreService } from '../../packages/api-vectorstore/src/index.js';
 import { vectorstore } from '../../packages/api-vectorstore/src/index.js';
-import { App, contributions, events, logger, provide, services } from '../../packages/core/src/index.js';
+import { App, contributions, definePlugin, events, logger, provide, services } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
@@ -107,13 +107,21 @@ interface SetupOptions {
   embedImpl?: (text: string, options?: EmbeddingRequestOptions) => Promise<number[]>;
 }
 
+/** 本文件创建的 App 全部登记在此，用例结束统一停掉，避免索引队列与监听器泄漏到别的用例 */
+const apps: App[] = [];
+
+afterEach(async () => {
+  for (const app of apps.splice(0)) await app.stop();
+});
+
 async function setup(opts: SetupOptions = {}) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  apps.push(app);
   const host = app.bind({ provide, services, events });
   /** 组装器只要「枚举贡献」与「记日志」两样能力，从根激活绑定即可 */
   const assembly = app.bind({ contributions, logger });
-  if (opts.withMemory) await app.ctx.useModule(memoryInMemory);
-  if (opts.withArchive) await app.ctx.useModule(messageArchivePlugin, { debugLogs: false });
+  if (opts.withMemory) await app.plugin(memoryInMemory);
+  if (opts.withArchive) await app.plugin(messageArchivePlugin, { debugLogs: false });
 
   const embedder = makeEmbedder(opts.embedImpl);
   const store = makeStore(opts.hits ?? [], { searchThrows: opts.searchThrows });
@@ -129,7 +137,7 @@ async function setup(opts: SetupOptions = {}) {
     registerGroup: () => () => {},
   } as never);
 
-  await app.ctx.useModule(memoryVector, {
+  await app.plugin(memoryVector, {
     // timeWeight=0：排名只看语义分，杜绝「当前时间」渗进断言
     search: { topK: 5, timeWeight: 0, userPriorityBoost: 2, perItemMaxChars: 0, minScore: 0, ...opts.search },
     contextExpand: { window: 0, crossSession: true, ...opts.contextExpand },
@@ -137,6 +145,11 @@ async function setup(opts: SetupOptions = {}) {
     crossSessionMode: opts.crossSessionMode ?? 'all',
     recallRoles: opts.recallRoles ?? 'all',
   });
+  await app.plugins.idle();
+  // 激活闸：required 依赖（vectorstore / embedding）缺席时插件停在 pending 且不报错，
+  // 「不注入 / 不检索」那一批断言会因此恒真。装载后直接点名状态。
+  if (app.plugins.getPlugin('@aalis/plugin-memory-vector')?.state !== 'active')
+    throw new Error('plugin-memory-vector 未激活');
 
   return { app, host, assembly, embedder, store, toolHandlers };
 }
@@ -150,6 +163,17 @@ function baseMessages(userText = '还记得我上次说的吗'): Message[] {
 
 function injectedBlock(messages: Message[]): Message | undefined {
   return messages.find(m => String(m.metadata?.injector ?? '').endsWith('/memory-vector'));
+}
+
+/** 对照探针：用真插件登记一条贡献，全局键前缀即插件名（码元序可控）。 */
+function anchorProbe(name: string, id: string, anchor: string, out: string) {
+  return definePlugin({
+    name,
+    uses: { contributions },
+    apply(caps) {
+      caps.contributions.contribute(POINT, { id, anchor, build: () => out } as never);
+    },
+  });
 }
 
 describe('plugin-memory-vector: agent:prompt 贡献', () => {
@@ -236,10 +260,12 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       ],
     });
 
-    // knowledge 侧对照探针：ctx id 必须**码元序排在被测插件全局键之后**（插件经
-    // useModule 加载，键形如 `root#@aalis/plugin-memory-vector`，故用 zz- 前缀）。
-    // 否则 anchor 错标成 knowledge 时两块仍按同样次序落位，锚位断言恒真。
-    app.ctx.fork('zz-probe-knowledge').contribute(POINT, { id: 'kn', anchor: 'knowledge', build: () => 'KN' } as never);
+    // knowledge 侧对照探针：探针插件名必须**码元序排在被测插件全局键之后**
+    // （键形如 `@aalis/plugin-memory-vector/memory-vector`，'@' 的码元在字母之前，
+    // 故 zz- 前缀落在其后）。否则 anchor 错标成 knowledge 时两块仍按同样次序落位，
+    // 锚位断言恒真。
+    await app.plugin(anchorProbe('zz-probe-knowledge', 'kn', 'knowledge', 'KN'));
+    await app.plugins.idle();
 
     // 前缀时间标签（agent 注入的 "(刚刚) "）应在 embed 前被剥掉。
     // fixture 带一轮历史：没有它时"第一条非 system"与"最后一条 user"重合，
@@ -327,11 +353,8 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       searchThrows: true,
       hits: [hit(0.9, { sessionId: 's-a', timestamp: BASE_TS, content: '拿不到的记忆' })],
     });
-    app.ctx.fork('probe').contribute(POINT, {
-      id: 'probe',
-      anchor: 'context',
-      build: () => 'PROBE-OK',
-    } as never);
+    await app.plugin(anchorProbe('probe', 'probe', 'context', 'PROBE-OK'));
+    await app.plugins.idle();
 
     const messages = baseMessages();
     await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });

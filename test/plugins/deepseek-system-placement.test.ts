@@ -1,6 +1,6 @@
-import { App } from '@aalis/core';
+import { App, services } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { LLMModel } from '../../packages/api-llm/src/index.js';
+import { llm } from '../../packages/api-llm/src/index.js';
 import deepseek, { normalizeSystemPlacement } from '../../packages/plugin-llm-deepseek/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 import { WellKnownKinds } from '../../packages/schema-message/src/index.js';
@@ -158,9 +158,9 @@ describe('chat 出口接线', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     await app.plugin(deepseek, { apiKey: 'test-key' });
     await app.plugins.idle();
-    const llm = app.ctx.getService<LLMModel>('llm');
-    if (!llm) throw new Error('llm entry 未注册');
-    await llm.chat({
+    const model = app.bind({ services }).services.get(llm);
+    if (!model) throw new Error('llm entry 未注册');
+    await model.chat({
       messages: [
         { role: 'system', content: '人设' },
         { role: 'user', content: '(今天 10:00) [张三(10001)]: 早' },

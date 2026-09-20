@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import type { EvidenceRef } from '../../packages/plugin-user-relation/src/index.js';
@@ -13,10 +13,12 @@ import { RelationService, RelationStore } from '../../packages/plugin-user-relat
 
 async function makeService() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(memoryInMemory);
-  const mem = app.ctx.getService<MemoryService>('memory');
-  if (!mem) throw new Error('memory service missing');
-  const store = new RelationStore(mem);
+  await app.plugin(memoryInMemory);
+  await app.plugins.idle();
+  // 激活闸下「没激活」不报错，核一下状态，别让空存储伪装成绿
+  const state = app.plugins.getPlugin(memoryInMemory.name)?.state;
+  if (state !== 'active') throw new Error(`memory-inmemory 插件未激活（state=${state}）`);
+  const store = new RelationStore(app.bind({ memory }).memory.require());
   return { app, service: new RelationService(store) };
 }
 

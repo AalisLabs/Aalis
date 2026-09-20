@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { PersonaService } from '../../packages/api-persona/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { type PersonaService, persona } from '../../packages/api-persona/src/index.js';
+import { App, type BoundOf, hooks, services } from '../../packages/core/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 
@@ -13,13 +13,18 @@ import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 // 真 fs 角色卡 + 真 agent:reply:before 钩子驱动（生产路径），断言 0 = 不重试。
 // ════════════════════════════════════════════════════════════
 
+/** 宿主侧要的两样：驱动钩子链、取 persona 服务 */
+const hostUses = { hooks, services };
+
 describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => {
   let base: string;
   let app: App;
+  let host: BoundOf<typeof hostUses>;
 
-  const boot = async (persona: string): Promise<PersonaService> => {
+  const boot = async (personaName: string): Promise<PersonaService> => {
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocal, {
+    // storage 先装：persona 的 storage 是可选依赖，缺席时它照样激活，只是一张卡都读不到
+    await app.plugin(storageLocal, {
       roots: [
         {
           name: 'data',
@@ -33,8 +38,15 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
         },
       ],
     });
-    await app.ctx.useModule(personaPlugin, { persona, personasDir: 'data/personas' });
-    return app.ctx.getService<PersonaService>('persona')!;
+    await app.plugin(personaPlugin, { persona: personaName, personasDir: 'data/personas' });
+    await app.plugins.idle();
+    // 停在 pending 的插件既不提供服务也不挂中间件，下面的钩子断言会退化成恒真
+    expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
+    expect(app.plugins.getPlugin(personaPlugin.name)?.state, 'persona 未激活').toBe('active');
+    host = app.bind(hostUses);
+    const svc = host.services.get(persona);
+    if (!svc) throw new Error('persona 服务未就绪');
+    return svc;
   };
 
   const card = (retriesLine: string) =>
@@ -67,7 +79,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
       content: '{"message":"你好"}',
       attempt: 0,
     };
-    await app.ctx.runHook('agent:reply:before', data as never);
+    await host.hooks.run('agent:reply:before', data as never);
 
     expect(data.maxRetries).toBe(0);
     expect(data.retryRequested).not.toBe(true);
@@ -84,7 +96,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
       content: '{"message":"你好"}',
       attempt: 0,
     };
-    await app.ctx.runHook('agent:reply:before', data as never);
+    await host.hooks.run('agent:reply:before', data as never);
 
     expect(data.maxRetries).toBe(1);
     expect(data.retryRequested).toBe(true);
@@ -96,8 +108,8 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
     ['zz-negative', '负数'],
     ['zz-fractional', '小数'],
     ['zz-string', '字符串'],
-  ])('角色卡 outputFormatRetries 写脏值（%s，%s）→ 按未设处理，回落缺省 1', async persona => {
-    const svc = await boot(persona);
+  ])('角色卡 outputFormatRetries 写脏值（%s，%s）→ 按未设处理，回落缺省 1', async personaName => {
+    const svc = await boot(personaName);
     expect(svc.getOutputFormat?.()?.retries).toBe(1);
   });
 });

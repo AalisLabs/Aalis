@@ -1,5 +1,7 @@
+import { processService } from '@aalis/api-process';
+import { storage } from '@aalis/api-storage';
 import type { Logger, ServiceRef } from '@aalis/core';
-import { App } from '@aalis/core';
+import { App, hooks, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
@@ -94,11 +96,14 @@ describe('transformModelImages：裸路径 ref 不得流向 provider', () => {
 describe('agent:llm:before 中间件：describe 模式也必须过形态闸', () => {
   it('describe 模式下末条 user 的裸路径 ref 不会原样送到 provider（现场 400 的那条路径）', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    app.ctx.provide('process', {} as never);
-    app.ctx.provide('storage', {} as never);
+    const host = app.bind({ provide, hooks });
+    // media 把 process / storage 声明为 required：不放桩它就停在 pending，中间件根本没挂上。
+    host.provide(processService, {} as never);
+    host.provide(storage, {} as never);
     const media = (await import('../../packages/plugin-media/src/index.js')).default;
     await app.plugin(media, { vision: { delivery: 'describe' } });
     await app.plugins.idle();
+    if (app.plugins.getPlugin(media.name)?.state !== 'active') throw new Error('plugin-media 未激活');
 
     const data = {
       messages: [
@@ -109,7 +114,7 @@ describe('agent:llm:before 中间件：describe 模式也必须过形态闸', ()
       sessionId: 's',
       dryRun: false,
     };
-    await app.ctx.runHook('agent:llm:before', data as never);
+    await host.hooks.run('agent:llm:before', data as never);
     await app.stop();
 
     // 改前：中间件被 mode 闸挡住 → REF 原样进 provider → 400 illegal base64。

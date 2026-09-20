@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentService, PromptContributionView } from '../../packages/api-agent/src/index.js';
+import { type AgentService, agent, type PromptContributionView } from '../../packages/api-agent/src/index.js';
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMModel } from '../../packages/api-llm/src/index.js';
 import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import { App, contributions, definePlugin, hooks, provide } from '../../packages/core/src/index.js';
+import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
+import { App, contributions, definePlugin, events, hooks, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryHistoryPlugin from '../../packages/plugin-memory-history/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
@@ -19,7 +19,7 @@ import type { IncomingMessage, Message, OutgoingMessage, ToolCall } from '../../
  * LLM.chatStream。两路观测：**假 LLM 实际收到的 messages**（管线终点），以及
  * **agent:llm:before 进链时的布局**（探针中间件录制，断言"组装先于链"的时序）。
  *
- * 拓扑（全部 useModule，无网络 / 无真实 LLM / 无真实文件系统）：
+ * 拓扑（全部经 app.plugin 装载，无网络 / 无真实 LLM / 无真实文件系统）：
  * - 探针 LLM（本文件内定义）：录下每次 chatStream 收到的 messages 快照
  * - memory-inmemory：memory 服务
  * - message-archive：入站消息烘焙（与真实部署一致）
@@ -154,34 +154,48 @@ interface Stack {
   dispose: () => Promise<void>;
 }
 
+/** 装完必须真激活：required 依赖缺席时插件只是停在 pending，不报错，容易伪装成绿 */
+const ACTIVE_IDS = [
+  '@aalis/test-fixture-probe-llm',
+  '@aalis/plugin-memory-inmemory',
+  '@aalis/plugin-message-archive',
+  '@aalis/plugin-memory-history',
+  '@aalis/plugin-memory-summary',
+  '@aalis/test-fixture-prompt-probe',
+  '@aalis/plugin-agent',
+];
+
 async function loadStack(replies: ProbeReply[]): Promise<Stack> {
   const app = new App({ config: { name: 'PP', logLevel: 'error', plugins: {} } });
+  const host = app.bind({ events, memory, agent });
   const recorder: Message[][] = [];
   const views: PromptContributionView[] = [];
   const hookLayouts: string[][] = [];
   const outbound: OutgoingMessage[] = [];
 
-  await app.ctx.useModule(createProbeLLMPlugin({ replies, recorder }));
-  await app.ctx.useModule(memoryInMemoryPlugin);
-  const memory = app.ctx.getService<MemoryService>('memory');
-  if (!memory) throw new Error('memory 服务未就绪');
+  await app.plugin(createProbeLLMPlugin({ replies, recorder }));
+  await app.plugin(memoryInMemoryPlugin);
+  // 装载请求可能排队，种子要写进真实的 memory 提供者，先静置
+  await app.plugins.idle();
+  const memoryService = host.memory.current;
+  if (!memoryService) throw new Error('memory 服务未就绪');
 
   // 种子一：另一会话的消息 → memory-history 的 context 贡献料
-  await memory.saveMessage(CROSS_SESSION, {
+  await memoryService.saveMessage(CROSS_SESSION, {
     role: 'user',
     content: 'CROSS-SESSION-SEED',
     timestamp: SEED_TS,
     metadata: { platform: 'test' },
   });
   // 种子二：当前会话的摘要 → memory-summary 的 context 贡献料
-  await memory.saveMetadata('summary', SESSION, {
+  await memoryService.saveMetadata('summary', SESSION, {
     summary: 'SUMMARY-SEED',
     coveredUpTo: SEED_TS,
     messageCount: 1,
   });
 
-  await app.ctx.useModule(messageArchivePlugin, { debugLogs: false });
-  await app.ctx.useModule(memoryHistoryPlugin, {
+  await app.plugin(messageArchivePlugin, { debugLogs: false });
+  await app.plugin(memoryHistoryPlugin, {
     injectEnabled: true,
     scope: 'cross-platform',
     maxAgeMinutes: 0,
@@ -189,13 +203,13 @@ async function loadStack(replies: ProbeReply[]): Promise<Stack> {
     headerText: '[HISTORY-HEADER]',
     toolEnabled: false,
   });
-  await app.ctx.useModule(memorySummaryPlugin, {
+  await app.plugin(memorySummaryPlugin, {
     // 阈值拉高 + 关自动压缩：本测试内不触发任何后台摘要 LLM 调用
     threshold: 9999,
     autoCompressThreshold: 0,
   });
-  await app.ctx.useModule(createProbeContributionPlugin(views, hookLayouts));
-  await app.ctx.useModule(agentPlugin, {
+  await app.plugin(createProbeContributionPlugin(views, hookLayouts));
+  await app.plugin(agentPlugin, {
     systemPrompt: 'PERSONA-BASE-PROMPT',
     historyLimit: 50,
     memoryTokenBudget: 4096,
@@ -204,20 +218,24 @@ async function loadStack(replies: ProbeReply[]): Promise<Stack> {
     trimThresholdRatio: 1.0,
   });
 
-  app.ctx.on('outbound:message', (m: OutgoingMessage) => {
+  host.events.on('outbound:message', (m: OutgoingMessage) => {
     outbound.push(m);
   });
 
   // 插件变更 API 可能排队，等尘埃落定再发消息
   await app.plugins.idle();
+  for (const id of ACTIVE_IDS) {
+    const state = app.plugins.getPlugin(id)?.state;
+    if (state !== 'active') throw new Error(`插件 "${id}" 未激活（state=${state}）`);
+  }
 
-  const agent = app.ctx.getService<AgentService>('agent');
-  if (!agent) throw new Error('agent 服务未就绪');
+  const agentService = host.agent.current;
+  if (!agentService) throw new Error('agent 服务未就绪');
 
   return {
     app,
-    agent,
-    memory,
+    agent: agentService,
+    memory: memoryService,
     recorder,
     views,
     hookLayouts,
@@ -291,7 +309,7 @@ describe('提示词管线端到端（真实 agent.handleMessage + 探针 LLM）'
       // 组装先于链：agent:llm:before 进链时全部贡献块已物化，链上看到的就是送入 LLM 的成品布局
       expect(stack.hookLayouts).toEqual([layoutOf(sent)]);
 
-      // 各贡献块的 injector 是全局键（含贡献方 ctx.id 前缀），且各只有一份
+      // 各贡献块的 injector 是全局键（含贡献方实例 id 前缀），且各只有一份
       for (const id of CONTRIBUTION_IDS) {
         const blocks = injectedBy(sent, id);
         expect(blocks).toHaveLength(1);

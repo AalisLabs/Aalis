@@ -1,54 +1,68 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { PluginManagerService } from '../../packages/core/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import {
+  App,
+  appService,
+  defineService,
+  events,
+  hostConfig,
+  lifecycle,
+  pluginsService,
+  provide,
+} from '../../packages/core/src/index.js';
 import { tempConfig } from '../fixtures/app.js';
 
 /**
  * App 生命周期与配置集成测试
  */
 
+/** 隔离探针：只由 appA 发布，appB 绑同一描述符，用来看两个容器是否串台 */
+const shared = defineService<{ v: number }>('shared');
+
 describe('App 生命周期', () => {
   it('createApp 仅靠最小配置可构造', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    expect(app.ctx).toBeDefined();
     expect(app.plugins).toBeDefined();
-    expect(app.ctx.config).toBeDefined();
     expect(app.events).toBeDefined();
     expect(app.services).toBeDefined();
     expect(app.hooks).toBeDefined();
+    // 根激活可装配能力，宿主管理面（整份配置的读写口）在场
+    expect(app.bind({ hostConfig }).hostConfig.current).toBeDefined();
   });
 
   it('config get 读取顶层字段', () => {
     const app = new App({ config: { name: 'MyApp', logLevel: 'warn', plugins: {} } });
-    expect(app.ctx.config.get('name')).toBe('MyApp');
-    expect(app.ctx.config.get('logLevel')).toBe('warn');
+    const host = app.bind({ hostConfig });
+    expect(host.hostConfig.require().get('name')).toBe('MyApp');
+    expect(host.hostConfig.require().get('logLevel')).toBe('warn');
   });
 
-  it('app.stop 触发 app:stopping 事件并清理 ctx（ctx.onDispose 随 ctx.dispose() 触发）', async () => {
+  it('app.stop 触发 app:stopping 事件并关闭根激活（onDispose 随之触发）', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    const ctx = app.ctx;
-    const events: string[] = [];
-    ctx.on('app:stopping', () => {
-      events.push('stopping');
+    const host = app.bind({ events, lifecycle });
+    const seen: string[] = [];
+    host.events.on('app:stopping', () => {
+      seen.push('stopping');
     });
-    ctx.onDispose(() => {
-      events.push('dispose');
+    host.lifecycle.onDispose(() => {
+      seen.push('dispose');
     });
     await app.stop();
-    expect(events).toEqual(['stopping', 'dispose']);
-    expect(ctx.disposed).toBe(true);
+    expect(seen).toEqual(['stopping', 'dispose']);
+    expect(host.lifecycle.closed).toBe(true);
   });
 
   it('两个并存 App 实例互不干扰（service 隔离）', () => {
     const appA = new App({ config: { name: 'A', logLevel: 'error', plugins: {} } });
     const appB = new App({ config: { name: 'B', logLevel: 'error', plugins: {} } });
     expect(appA.services).not.toBe(appB.services);
-    appA.ctx.provide('shared', { v: 1 });
-    expect(appA.ctx.getService('shared')).toBeDefined();
-    expect(appB.ctx.getService('shared')).toBeUndefined();
-    expect(appA.ctx.config.get('name')).toBe('A');
-    expect(appB.ctx.config.get('name')).toBe('B');
+    const hostA = appA.bind({ provide, shared, hostConfig });
+    const hostB = appB.bind({ shared, hostConfig });
+    hostA.provide(shared, { v: 1 });
+    expect(hostA.shared.current).toBeDefined();
+    expect(hostB.shared.current).toBeUndefined();
+    expect(hostA.hostConfig.require().get('name')).toBe('A');
+    expect(hostB.hostConfig.require().get('name')).toBe('B');
   });
 
   it('config.setPluginConfig + save 把更改写回 yaml', () => {
@@ -59,8 +73,9 @@ describe('App 生命周期', () => {
         configProvider: cfg.provider,
         dataDir: cfg.dataDir,
       });
-      app.ctx.config.setPluginConfig('@aalis/plugin-test', { foo: 'bar', n: 42 });
-      app.ctx.config.save();
+      const config = app.bind({ hostConfig }).hostConfig.require();
+      config.setPluginConfig('@aalis/plugin-test', { foo: 'bar', n: 42 });
+      config.save();
       const yaml = readFileSync(cfg.path, 'utf-8');
       expect(yaml).toContain('@aalis/plugin-test');
       expect(yaml).toContain('foo');
@@ -70,14 +85,11 @@ describe('App 生命周期', () => {
     }
   });
 
-  it('内置 app / plugins 服务在 ctx 中可见', () => {
+  it('内置 app / plugins 服务经描述符可取', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    const appSvc = app.ctx.getService<App>('app');
-    // `ServiceTypeMap` 在 core 内保持字面为空，故内核原语也要显式给类型参数
-    // （走 `getService<T = unknown>` 兜底重载）——与其余 20 处消费点写法一致。
-    const pluginsSvc = app.ctx.getService<PluginManagerService>('plugins');
-    expect(appSvc).toBeDefined();
-    expect(pluginsSvc).toBeDefined();
-    expect(pluginsSvc).toEqual(app.plugins);
+    const host = app.bind({ appService, pluginsService });
+    expect(host.appService.current).toBeDefined();
+    expect(host.pluginsService.current).toBeDefined();
+    expect(host.pluginsService.current).toEqual(app.plugins);
   });
 });

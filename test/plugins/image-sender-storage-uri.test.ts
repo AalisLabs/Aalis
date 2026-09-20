@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { App, provide } from '../../packages/core/src/index.js';
+import { App, type Events, events, provide } from '../../packages/core/src/index.js';
 import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 
@@ -20,6 +20,7 @@ import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js
 describe('send_attachment storage_uri 归一化', () => {
   let base: string;
   let app: App;
+  let hostEvents: Events;
   let handlers: Record<string, (a: Record<string, unknown>, c: { sessionId: string }) => Promise<string>>;
 
   beforeEach(async () => {
@@ -29,7 +30,9 @@ describe('send_attachment storage_uri 归一化', () => {
     writeFileSync(join(base, 'data', 'images', 'onebot_x_group_1', 'abcd1234.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0]));
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     handlers = {};
-    app.bind({ provide }).provide(tools, {
+    const host = app.bind({ provide, events });
+    hostEvents = host.events;
+    host.provide(tools, {
       register: (t: { definition: { function: { name: string } }; handler: (typeof handlers)[string] }) => {
         handlers[t.definition.function.name] = t.handler;
         return () => {};
@@ -52,6 +55,8 @@ describe('send_attachment storage_uri 归一化', () => {
     });
     await app.plugins.register(imageSenderPlugin, {});
     await app.plugins.idle();
+    const state = app.plugins.getPlugin(imageSenderPlugin.name)?.state;
+    if (state !== 'active') throw new Error(`plugin-image-sender 未激活（state=${state}）`);
   });
 
   afterEach(async () => {
@@ -61,7 +66,7 @@ describe('send_attachment storage_uri 归一化', () => {
 
   it('历史相对路径（data/images/...，无冒号）→ 成功发送（删归一化即红）', async () => {
     const outbound: unknown[] = [];
-    app.ctx.on('outbound:message', m => {
+    hostEvents.on('outbound:message', m => {
       outbound.push(m); // 花括号吞掉 push 的返回值：监听器签名要求 void | Promise<void>
     });
     const out = JSON.parse(
