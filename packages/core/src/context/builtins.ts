@@ -23,11 +23,37 @@ import {
   requiredNames,
   type ServiceDescriptor,
 } from './binding.js';
-import type { Context, ModuleHandle, ProvideOptions } from './context.js';
+import type { Context } from './context.js';
 import { activationConfigOf, mountDefinition, type PluginDefinition, validateDefinition } from './definition.js';
 import type { Logger } from './logger.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
+
+/** `provide` 的登记选项 */
+export interface ProvideOptions {
+  priority?: number;
+  /** 展示名（服务页下拉等） */
+  label?: string;
+  /** 一个激活登记多条时的子粒度 id，须以本激活 id 为前缀（`${id}/${子粒度}`） */
+  entryId?: string;
+  /**
+   * 代为登记：条目的逻辑身份取这个 id（而非本激活的），用于托管自己不运行代码的包——如 WebUI 服务端
+   * 替扫描到的静态前端包登记，偏好与展示认的是前端包名。清理仍归本激活。与 entryId 二选一。
+   */
+  onBehalfOf?: string;
+}
+
+/**
+ * `lifecycle.module` 返回的句柄——与激活自身的生命周期面同形，一个心智模型。
+ */
+export interface ModuleHandle {
+  /** 沙盒子 ctx 的实际 id：同名重复挂载时已唯一化（`parent#name`、`parent#name~2`…） */
+  readonly id: string;
+  /** 同步请求关闭：同步清理当场执行，异步清理不等待；名字随同步段释放（与 `ctx.dispose()` 同语义） */
+  dispose(): void;
+  /** 关闭并等待全部异步清理完成；名字在此之后才释放（与 `ctx.disposeAsync()` 同语义） */
+  disposeAsync(timeoutMs?: number): Promise<void>;
+}
 
 function builtinService<B>(name: string, bind: (ctx: Context) => B): ServiceDescriptor<never, B> {
   return markBuiltin(defineService<never, B>(name, (port: BindingPort<never>) => bind(activationOf(port))));

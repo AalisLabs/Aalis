@@ -181,4 +181,23 @@ export const state = entry.state;
       `第 ${badLine} 行应有类型错误（PluginEntry 无 context），实际：${errs.join('\n') || '（零错误）'}`,
     ).toBeGreaterThan(0);
   });
+
+  it('包根 export from 路径不含内部 Context 模块', () => {
+    const source = readFileSync(join(SRC_DIR, 'index.ts'), 'utf-8');
+    const paths = [
+      ...source.matchAll(/\bexport\s+(?:type\s+)?(?:\*\s+as\s+\w+\s+|\{[\s\S]*?\}\s+)?from\s+['"]([^'"]+)['"]/g),
+    ].map(m => m[1]!);
+    expect(
+      paths.filter(p => p.includes('context/context')),
+      `包根不得经内部 Context 再导出，实际：${paths.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('类型面不得从包根导入内部 ServiceEntry', () => {
+    const errs = runTscProbe(`import type { ServiceEntry } from '@aalis/core';\n`);
+    expect(
+      errs.some(e => e.includes('ServiceEntry')),
+      `ServiceEntry 应无法从包根导入，实际：${errs.join('\n') || '（零错误）'}`,
+    ).toBe(true);
+  });
 });
