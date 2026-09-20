@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { cpSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { createPort } from '../../packages/core/src/context/binding.js';
 import {
   App,
@@ -27,8 +31,12 @@ function deferred() {
 }
 
 const apps: App[] = [];
+const coreCopies: string[] = [];
 afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
+});
+afterAll(() => {
+  for (const dir of coreCopies.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
 function world(options?: { disposeTimeoutMs?: number; logger?: Logger }) {
@@ -374,20 +382,36 @@ describe('调度与类型面', () => {
   });
 
   it('来自另一份 core 副本的内置能力描述符：明确报错进 error，不静默停在 pending', async () => {
-    const w = world();
-    // 另一份副本的内置描述符：标记经全局 symbol 注册表可识别，但资源口不属于本副本的任何激活
-    const foreign = {
-      name: 'logger',
-      [Symbol.for('aalis.builtin-capability')]: true,
-      bind(): never {
-        throw new Error('资源口不属于本 core 副本的任何激活（@aalis/core 必须是单副本 peer 依赖）');
+    // 只给 barrel 加查询串不够：子图仍解析到同一份 binding.ts，WeakMap 共用，插件会假绿成 active。
+    // 拷整棵 core src 到 os.tmpdir() 再动态导入，相对路径都落在副本里，activationOf 才是第二份。
+    type CoreNs = typeof import('../../packages/core/src/index.js');
+    const srcRoot = fileURLToPath(new URL('../../packages/core/src', import.meta.url));
+    const dir = mkdtempSync(join(tmpdir(), 'aalis-core-copy-'));
+    coreCopies.push(dir);
+    cpSync(srcRoot, dir, { recursive: true });
+    const stacks: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn() {},
+      error(...a: unknown[]) {
+        for (const x of a) {
+          if (x instanceof Error) stacks.push(x.stack ?? x.message);
+        }
       },
+      child: () => logger,
     };
-    await w.app.plugin(definePlugin({ name: 'mixed', uses: { logger: foreign }, apply() {} }));
+    const A = (await import(`${pathToFileURL(join(dir, 'index.ts')).href}?copy=2`)) as CoreNs;
+    const w = world({ logger });
+    await w.app.plugin(A.definePlugin({ name: 'mixed', uses: { logger: A.logger }, apply() {} }));
     await w.app.plugins.idle();
     const status = w.app.plugins.getStatus().find(s => s.instanceId === 'mixed');
     expect(status?.state).toBe('error');
     expect(status?.error).toContain('单副本');
+    expect(
+      stacks.some(s => s.includes('activationOf')),
+      `报错必须来自 activationOf，实际堆栈：${stacks.join('\n---\n') || '(空)'}`,
+    ).toBe(true);
   });
 
   it('包根导出的 ModuleHandle 就是 lifecycle.module() 的返回类型，带子激活 id', async () => {
