@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { type Logger, LogHub } from '../../packages/core/src/index.js';
+import { DefaultLogger, type Logger, LogHub } from '../../packages/core/src/index.js';
+import { installConsoleSink } from '../../packages/runtime/src/console-sink.js';
 import { createNodeModulesPluginLoader, pluginDefinitionOf } from '../../packages/runtime/src/node-modules-loader.js';
 
 // ════════════════════════════════════════════════════════════
@@ -151,5 +152,30 @@ describe('加载链信号', () => {
     const desc = (await loader.discover()).find(d => d.name === 'plugin-mismatch');
     await loader.load?.(desc as never);
     expect(warns.some(w => w.includes('plugin-mismatch') && w.includes('定义 name'))).toBe(true);
+  });
+});
+
+// 双副本判定在 core 以 error 入 LogHub；consoleSink: false 时以前没有任何 sink，
+// 默认 stderr 只剩下游「commands 服务不可用」。warn+ 打 stderr 后这条与「装了没反应」同级可见。
+describe('双副本判定默认可见', () => {
+  it('error 文案含「必须是单副本」，minLevel=warn 的 stderr sink 看得到（不依赖 consoleSink: true）', () => {
+    const errCaptured: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      errCaptured.push(args.map(String).join(' '));
+    };
+    const handle = installConsoleSink({ target: 'stderr', minLevel: 'warn' });
+    try {
+      const logger = new DefaultLogger('aalis:plugins');
+      logger.info('无法执行子命令「probe」：commands 服务不可用（未安装 @aalis/plugin-commands？）');
+      logger.error('资源口不属于本 core 副本的任何激活（@aalis/core 必须是单副本 peer 依赖）');
+      const hit = errCaptured.find(line => line.includes('必须是单副本'));
+      expect(hit).toBeDefined();
+      expect(hit).toContain('ERROR');
+      expect(errCaptured.some(line => line.includes('commands 服务不可用'))).toBe(false);
+    } finally {
+      handle.dispose();
+      console.error = originalError;
+    }
   });
 });

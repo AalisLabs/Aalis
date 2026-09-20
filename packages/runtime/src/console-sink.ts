@@ -62,6 +62,13 @@ const LEVEL_COLORS: Record<LogLevel, (s: string) => string> = COLORIZE
 const dim = COLORIZE ? chalk.gray : IDENTITY;
 const accent = COLORIZE ? chalk.magenta : IDENTITY;
 
+const LEVEL_PRIORITY: Record<LogLevel, number> = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3,
+};
+
 function formatEntry(entry: LogEntry): string {
   const colorFn = LEVEL_COLORS[entry.level];
   // LogEntry.timestamp 是完整 ISO（YYYY-MM-DDTHH:mm:ss.sssZ）；stdout 只看当前运行，
@@ -90,13 +97,20 @@ export interface ConsoleSinkHandle {
  *
  * 与 CLI/TUI 等"独占终端 UI"的协调通过事件 `terminal:claimed/released` 完成，
  * sink 自己根据事件决定是否写 stdout——UI 不直接干预 sink。
+ *
+ * `minLevel` 缺省 debug（全量）。`consoleSink: false` 的宿主传 `warn`，让双副本
+ * 「必须是单副本」与「装了没反应」仍打到 stderr，info/debug 保持安静。
  */
-export function installConsoleSink(opts: { target?: 'stdout' | 'stderr' } = {}): ConsoleSinkHandle {
+export function installConsoleSink(
+  opts: { target?: 'stdout' | 'stderr'; minLevel?: LogLevel } = {},
+): ConsoleSinkHandle {
   const hub = LogHub.default;
   // 缺省走 console.log（stdout）；子命令模式走 console.error（stderr），把 stdout 留给命令结果，
   // 脚本才能消费 `aalis <cmd>` 的输出
   const log = opts.target === 'stderr' ? console.error : console.log;
+  const minPriority = LEVEL_PRIORITY[opts.minLevel ?? 'debug'];
   const write = (entry: LogEntry): void => {
+    if (LEVEL_PRIORITY[entry.level] < minPriority) return;
     log(formatEntry(entry));
   };
 

@@ -150,7 +150,7 @@ export interface CommandBuilder {
 
 // ===== 服务接口 =====
 
-/** 仅供 useCommandService 内部使用：调用 service.command 时携带 pluginName 隐式参数 */
+/** 经 `commands` 描述符按激活绑定的门面调用 `service.command` 时携带 pluginName（激活 id）；插件侧不必传 */
 export interface InternalCommandMeta extends CommandMeta {
   pluginName?: string;
 }
