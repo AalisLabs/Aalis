@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { assemble, createPort } from '../../packages/core/src/context/binding.js';
 import { App, definePlugin, defineService, type Logger, lifecycle, provide } from '../../packages/core/src/index.js';
+import { rootActivation } from '../../packages/core/src/orchestration/app.js';
 
 // ════════════════════════════════════════════════════════════
 // 独立评审（REVIEW-eebaf214）复现出的反例，逐条钉住修正后的契约。
@@ -58,7 +59,7 @@ describe('评审 1：异步撤回时的提供者切换', () => {
     const a = makeHub(gate.promise);
     const b = makeHub();
     host.provide(hub, a, { priority: 1, entryId: 'root/a' });
-    const ctx = app.ctx.fork('consumer');
+    const ctx = rootActivation(app).fork('consumer');
     assemble(ctx, { hub }).hub.register({ name: 'tool' });
     host.provide(hub, b, { priority: 2, entryId: 'root/b' });
     await sleep(0);
@@ -83,7 +84,7 @@ describe('评审 2：同键替换失败', () => {
     const a = makeHub();
     const b = makeHub();
     host.provide(hub, a, { priority: 1, entryId: 'root/a' });
-    const ctx = app.ctx.fork('consumer');
+    const ctx = rootActivation(app).fork('consumer');
     const bound = assemble(ctx, { hub }).hub;
     bound.register({ name: 'tool' });
     expect(() => bound.register({ name: 'tool', fail: true })).toThrow('registration rejected');
@@ -97,7 +98,7 @@ describe('评审 2：同键替换失败', () => {
 describe('评审 3：port.track 与 registrar 同一清理契约', () => {
   it('手动退订启动的异步清理被随后的关闭等到；重复退订只执行一次', async () => {
     const { app } = world();
-    const ctx = app.ctx.fork('p');
+    const ctx = rootActivation(app).fork('p');
     const port = createPort<unknown>(ctx, 'zz-any');
     const gate = deferred();
     let calls = 0;
@@ -124,7 +125,7 @@ describe('评审 3：port.track 与 registrar 同一清理契约', () => {
 
   it('手动退订的异步清理拒绝：被接住，不逃逸', async () => {
     const { app } = world();
-    const ctx = app.ctx.fork('p');
+    const ctx = rootActivation(app).fork('p');
     const port = createPort<unknown>(ctx, 'zz-any');
     const escaped: unknown[] = [];
     const onEscape = (err: unknown) => escaped.push(err);
