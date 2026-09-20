@@ -1,3 +1,5 @@
+import { isUnsafeConfigKey } from './safe-keys.js';
+
 /**
  * Aalis 应用配置（基础设施字段）
  *
@@ -234,6 +236,7 @@ function mergeDefaultsConfig(input: AalisConfig | Partial<AalisConfig>): AalisCo
   };
   for (const [key, value] of Object.entries(input)) {
     if (key === 'name' || key === 'logLevel' || key === 'plugins' || key === 'disabledPlugins') continue;
+    if (isUnsafeConfigKey(key)) continue;
     merged[key] = value;
   }
   return merged;

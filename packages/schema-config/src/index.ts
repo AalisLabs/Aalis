@@ -124,11 +124,12 @@ export function defaultsFrom(schema: ConfigSchema | undefined): Record<string, u
   const out: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(schema ?? {})) {
     if (!entry || typeof entry !== 'object') continue;
+    if (isUnsafeConfigKey(key)) continue;
     if ('fields' in entry) {
       out[key] = defaultsFrom(entry.fields);
       continue;
     }
-    if ('default' in entry) out[key] = entry.default;
+    if ('default' in entry) out[key] = cloneConfigValue(entry.default);
   }
   return out;
 }
@@ -294,6 +295,37 @@ function describeType(value: unknown): string {
   if (Array.isArray(value)) return 'array';
   if (typeof value === 'number' && !Number.isFinite(value)) return String(value);
   return typeof value;
+}
+
+// 与 packages/core/src/context/safe-keys.ts 同一规则（本包零运行时依赖，不能 import core）。
+// 防漂移：test/architecture/config-copy-parity.test.ts
+const UNSAFE_CONFIG_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function isUnsafeConfigKey(key: string): boolean {
+  return UNSAFE_CONFIG_KEYS.has(key);
+}
+
+function isPlainConfigObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function cloneConfigValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(item => (isPlainConfigObject(item) ? cloneConfigObject(item) : item));
+  }
+  if (isPlainConfigObject(value)) return cloneConfigObject(value);
+  return value;
+}
+
+export function cloneConfigObject(obj: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (isUnsafeConfigKey(key)) continue;
+    out[key] = cloneConfigValue(value);
+  }
+  return out;
 }
 
 // PluginMeta.configSchema 由本包经 declaration merging 挂上。
