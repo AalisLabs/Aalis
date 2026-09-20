@@ -16,12 +16,5 @@ export interface EmbeddingService {
   listModels?(): Promise<string[]>;
 }
 
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    embedding: EmbeddingService;
-  }
-}
-
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const embedding = defineService<EmbeddingService>('embedding');

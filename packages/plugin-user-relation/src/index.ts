@@ -695,12 +695,6 @@ export * from './types.js';
 
 // ----- 服务类型注册（declaration merging）-----
 // 无独立 `-api` 包：只有这一个实现，契约住在实现包里（同 web-search / scheduler 等）。
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    'user-relation': RelationService;
-  }
-}
-
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const userRelation = defineService<RelationService>('user-relation');
 

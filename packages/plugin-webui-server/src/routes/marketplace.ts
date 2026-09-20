@@ -101,7 +101,7 @@ interface PluginManifest {
  * 市场组件类别。'plugin'=可装卸功能；'api'=服务契约（只读）；'schema'=数据格式规范（只读）；
  * 'interface'=前端界面（可换）；'util'=工具库（被插件 import）
  *
- * 'api' 与 'schema' 的界线：`-api` 必然 declare 一个 `ServiceTypeMap` 成员（有对应服务可查）；
+ * 'api' 与 'schema' 的界线：`-api` 必然导出一个服务描述符（有对应服务可查）；
  * `schema-*` 只定义跨服务流动的数据形状（`Message` / `ConfigSchema`），无对应服务、
  * 不可能有第二实现。
  */

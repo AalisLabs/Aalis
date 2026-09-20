@@ -253,10 +253,3 @@ export type {
   TurnManifest,
   TurnSummary,
 } from './service.js';
-
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    checkpoint: CheckpointService;
-  }
-}

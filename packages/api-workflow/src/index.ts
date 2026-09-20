@@ -13,7 +13,7 @@ import { defineService } from '@aalis/core';
 //   - 工作流"定义"是用户/AI 资产，存 workspace；"运行实例"是运行时，存 data
 // ============================================================
 
-import type {} from '@aalis/core'; // declaration merging 锚点（下方 ServiceTypeMap / AalisEvents 增强）
+import type {} from '@aalis/core'; // declaration merging 锚点（下方 AalisEvents 增强）
 
 // ============ 触发器 ============
 
@@ -189,13 +189,6 @@ declare module '@aalis/core' {
     'workflow:run:done': [run: WorkflowRun];
     'workflow:run:error': [run: WorkflowRun];
     'workflow:node:done': [info: { runId: string; node: NodeRunInfo }];
-  }
-}
-
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    workflow: WorkflowService;
   }
 }
 

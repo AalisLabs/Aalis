@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { App, type PluginLoader } from '@aalis/core';
+import { App, events, type PluginLoader, services } from '@aalis/core';
 import { defaultsFrom } from '@aalis/schema-config';
 import { installBootstrapBuffer } from './bootstrap-buffer.js';
 import { type ConfigSyncOptions, installConfigHotReload, syncPluginDefaults } from './config-sync.js';
@@ -144,8 +144,10 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     version: readCoreVersion(),
   });
 
-  // 不变量①：App 构造完成后再让 sink 监听终端归属事件——此前没有 ctx 可订阅。
-  consoleHandle?.bindEvents(app.ctx);
+  // 宿主的根绑定：事件订阅与服务查询都经它，随 App 停止撤回
+  const host = app.bind({ events, services });
+  // 不变量①：App 构造完成后再让 sink 监听终端归属事件——此前没有事件总线可订阅。
+  consoleHandle?.bindEvents(host.events);
 
   await app.autoLoadPlugins();
 
@@ -159,7 +161,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   // 两种情况都干净退出、**绝不进守护进程**——打错的命令名若照常起守护，就是与运行中实例并存的
   // 第二个实例（同时连 onebot、每条消息回两遍）。与具体命令解耦——各插件自行注册命令。
   if (subcommandMode) {
-    const exitCode = await tryDispatchSubcommand(app, subcommands);
+    const exitCode = await tryDispatchSubcommand(host.services, subcommands);
     await app.stop();
     await new Promise<void>(r => setImmediate(r));
     process.exit(exitCode);
@@ -174,7 +176,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   // （实例：embedding-openai 缺 key → memory-vector 永远不激活，向量记忆整个不工作）。
   for (const p of app.plugins.getStatus()) {
     if (p.state !== 'pending') continue;
-    const unmet = (p.requiredServices ?? []).filter(svc => app.ctx.getService(svc) === undefined);
+    const unmet = (p.requiredServices ?? []).filter(svc => host.services.get(svc) === undefined);
     if (unmet.length > 0) {
       app.logger.warn(`插件 "${p.instanceId}" 依赖未满足，未激活（缺少服务: ${unmet.join('、')}）`);
     }

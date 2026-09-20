@@ -194,13 +194,6 @@ declare module '@aalis/core' {
   }
 }
 
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    memory: MemoryService;
-  }
-}
-
 // ----- 记忆变更事件契约 -----
 //
 // 发射方：plugin-checkpoint（回滚删除消息时）；

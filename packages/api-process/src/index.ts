@@ -9,8 +9,8 @@
 
 import type { Readable, Writable } from 'node:stream';
 import type { StorageService } from '@aalis/api-storage';
-import type { ServiceSource } from '@aalis/core';
-import { asServiceRef, defineService } from '@aalis/core';
+import type { ServiceRef } from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 export interface SpawnOptions {
   cwd?: string;
@@ -109,17 +109,10 @@ export interface ProcessService {
   readExternalFile(path: string, maxBytes?: number): Promise<Uint8Array>;
 }
 
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    process: ProcessService;
-  }
-}
-
 /**
  * 返回一个无服务实例时抛错、单实例时直接转发的 ProcessService 网关。
  */
-export function createProcessGateway(source: ServiceSource<ProcessService>): ProcessService {
-  const ref = asServiceRef(source, 'process');
+export function createProcessGateway(ref: ServiceRef<ProcessService>): ProcessService {
   const pick = (): ProcessService => {
     const inst = ref.current;
     if (!inst) {

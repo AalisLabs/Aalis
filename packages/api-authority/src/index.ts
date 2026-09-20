@@ -11,7 +11,7 @@ import { defineService } from '@aalis/core';
 // 任何需要「执行前权限校验」的服务（plugin-tools / plugin-commands 等）从本包导入
 // ExecutionGuard / ExecutionGuardContext；消费权限服务的插件导入 AuthorityService。
 
-import type {} from '@aalis/core'; // declaration merging 锚点（下方 AalisConfig/ServiceTypeMap 增强）
+import type {} from '@aalis/core'; // declaration merging 锚点（下方 AalisConfig 增强）
 
 /** 细粒度能力标识，如 tool:file.write、command:shutdown */
 export type CapabilityId = string;
@@ -358,13 +358,6 @@ declare module '@aalis/core' {
       /** 仅允许这些目标端口（非空生效），如 [80, 443]。 */
       allowedPorts?: number[];
     };
-  }
-}
-
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    authority: AuthorityService;
   }
 }
 

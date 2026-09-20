@@ -6,7 +6,7 @@
 // - 工具调用上下文（ToolCallContext）—— 平台/会话语义
 // - 工具执行通知（ToolExecuteMessage）
 // - 服务接口（ToolService）
-// - useToolService(ctx) helper（M2 后取代 ctx.registerTool mixin）
+// - 服务描述符 `tools`（按激活绑定的登记门面）与 `withToolGroups`
 // - 通过 declaration merging 向 AalisEvents 注入 'tool:execute'
 //
 // 注：`ToolCall`（assistant 消息携带的调用载荷）位于 @aalis/schema-message，
@@ -15,7 +15,7 @@
 // 实现见 @aalis/plugin-tool-system。
 
 import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
-import type { Context, ServiceRef } from '@aalis/core';
+import type { ServiceRef } from '@aalis/core';
 import { defineService, serviceRef } from '@aalis/core';
 
 // ----- LLM 函数声明协议类型 -----
@@ -172,45 +172,10 @@ export interface ToolService {
   /** 注入执行守卫，用于能力裁决与 restricted 二次确认 */
   setExecutionGuard(guard: ExecutionGuard): void;
 
-  unregisterByPlugin(contextId: string): void;
-
   /** 注册工具分组 */
   registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>, contextId: string): () => void;
   /** 获取所有已注册的工具分组 */
   getGroups(): ToolGroupInfo[];
-}
-
-// ===== 领域便捷封装 =====
-//
-// useToolService(ctx) 是 api-tools 暴露给消费端的 helper：
-// - 自动 inject 检查（读 API 找不到服务时抛出明确错误）
-// - 自动用 ctx.id 填充 pluginName 字段
-// - 登记经每 Context 一份的绑定跟随 tools 提供者（见 bind）
-//
-// 用法：
-//   import { useToolService } from '@aalis/api-tools';
-//   export function apply(ctx: Context) {
-//     const tools = useToolService(ctx);
-//     tools.register({ name: 'foo', ... });
-//   }
-
-/** ToolService 绑定到当前 Context 的便捷视图（pluginName 自动填充） */
-export interface ScopedToolService {
-  /**
-   * 注册工具。服务未就绪时延迟到就绪后执行，提供者换人自动重挂。
-   * 同一 Context 内同名是**替换**：新登记顶掉旧登记，旧登记的退订闭包随即失效（不会误删新登记）。
-   */
-  register(tool: Omit<RegisteredTool, 'pluginName'>): () => void;
-  /** 注册工具分组。就绪 / 重挂 / 同名替换语义同 {@link register}。 */
-  registerGroup(group: Omit<ToolGroupInfo, 'pluginName'>): () => void;
-  getDefinitions: ToolService['getDefinitions'];
-  getSummaries: ToolService['getSummaries'];
-  getAll: ToolService['getAll'];
-  getGroups: ToolService['getGroups'];
-  execute: ToolService['execute'];
-  setExecutionGuard: ToolService['setExecutionGuard'];
-  /** 原始 ToolService 引用（服务未就绪时为 undefined） */
-  readonly raw: ToolService | undefined;
 }
 
 /**
@@ -246,149 +211,6 @@ export function asToolExecutionResult(result: string | ToolExecutionResult): Too
   return typeof result === 'string' ? { content: result } : result;
 }
 
-/** 绑定里的一条登记：item 是交给枢纽的载荷，off 是当前提供者返回的退订（未挂载为 undefined） */
-interface BoundEntry<T> {
-  item: T;
-  off?: () => void;
-}
-
-/**
- * 每个 Context 一份绑定：经 helper 的全部登记记在这里，整体经**一条** `whenService` 订阅跟随 tools
- * 提供者——上线 / 换人时一次回调重挂全部，下线 / 拆卸时按条目摘。此前一条登记一条订阅：同名覆盖不退订，
- * 提供者重挂时早已退场的旧登记会复活；每条登记三个 service:* 监听，广播与重挂成本随登记数线性增长。
- */
-interface Binding {
-  svc: ToolService | undefined;
-  tools: Map<string, BoundEntry<Omit<RegisteredTool, 'pluginName'>>>;
-  groups: Map<string, BoundEntry<Omit<ToolGroupInfo, 'pluginName'>>>;
-}
-
-const bindings = new WeakMap<Context, Binding>();
-
-function bind(ctx: Context): Binding {
-  const existing = bindings.get(ctx);
-  if (existing) return existing;
-  const b: Binding = { svc: undefined, tools: new Map(), groups: new Map() };
-  bindings.set(ctx, b);
-  const contextId = ctx.id;
-  ctx.whenService<ToolService>('tools', s => {
-    b.svc = s;
-    for (const e of b.groups.values()) e.off = s.registerGroup(e.item, contextId);
-    for (const e of b.tools.values()) e.off = s.register(e.item, contextId);
-    return () => {
-      b.svc = undefined;
-      for (const e of [...b.tools.values(), ...b.groups.values()]) {
-        e.off?.();
-        e.off = undefined;
-      }
-    };
-  });
-  return b;
-}
-
-/**
- * 向绑定加一条登记：同名先摘旧登记（替换语义，与 core 对贡献点的同键替换同口径）；提供者在场立即登记。
- * 返回的退订按条目身份比对——被同名替换后的旧闭包是 no-op。
- */
-function addBound<T>(
-  map: Map<string, BoundEntry<T>>,
-  key: string,
-  item: T,
-  registerNow: (svc: ToolService) => () => void,
-  current: () => ToolService | undefined,
-): () => void {
-  map.get(key)?.off?.();
-  const svc = current();
-  const entry: BoundEntry<T> = { item, off: svc ? registerNow(svc) : undefined };
-  map.set(key, entry);
-  return () => {
-    if (map.get(key) !== entry) return;
-    map.delete(key);
-    entry.off?.();
-    entry.off = undefined;
-  };
-}
-
-export function useToolService(ctx: Context): ScopedToolService {
-  const contextId = ctx.id;
-
-  /** 用于读 API：服务未就绪时抛错。 */
-  function need(): ToolService {
-    const s = ctx.getService<ToolService>('tools');
-    if (!s) {
-      throw new Error(
-        `useToolService: 'tools' 服务不可用。请在插件 manifest 的 inject 中声明 'tools'，或确认 @aalis/plugin-tools 已激活。`,
-      );
-    }
-    return s;
-  }
-
-  /** 关闭后登记：与 core 登记面（`on` / `whenService`）同口径——`ctx.disposed` 即 warn + no-op。 */
-  function refused(key: string): (() => void) | undefined {
-    if (!ctx.disposed) return undefined;
-    ctx.logger.warn(`Context "${contextId}" 已 dispose，忽略 tools 登记 "${key}"`);
-    return () => {};
-  }
-
-  return {
-    register: tool => {
-      const name = tool.definition.function.name;
-      const refuse = refused(name);
-      if (refuse) return refuse;
-      const b = bind(ctx);
-      return addBound(
-        b.tools,
-        name,
-        tool,
-        s => s.register(tool, contextId),
-        () => b.svc,
-      );
-    },
-    registerGroup: group => {
-      const refuse = refused(group.name);
-      if (refuse) return refuse;
-      const b = bind(ctx);
-      return addBound(
-        b.groups,
-        group.name,
-        group,
-        s => s.registerGroup(group, contextId),
-        () => b.svc,
-      );
-    },
-    getDefinitions: (...args) => need().getDefinitions(...args),
-    getSummaries: (...args) => need().getSummaries(...args),
-    getAll: (...args) => need().getAll(...args),
-    getGroups: (...args) => need().getGroups(...args),
-    execute: (...args) => need().execute(...args),
-    setExecutionGuard: (...args) => need().setExecutionGuard(...args),
-    get raw() {
-      return ctx.getService<ToolService>('tools');
-    },
-  };
-}
-
-/**
- * 返回一个 ScopedToolService 的视图，其 `register` 会自动为工具
- * 追加给定 groups（合并而不是覆盖原 tool.groups）。
- *
- * 用于一组工具想共享相同分组的场景（如某游戏插件的 'game' 分组）。
- */
-export function toolsWithGroups(tools: ScopedToolService, groups: string[]): ScopedToolService {
-  return {
-    ...tools,
-    register: tool =>
-      tools.register({
-        ...tool,
-        groups: [...(tool.groups ?? []), ...groups],
-      }),
-    // 展开会把 getter 求值成构造时的快照；raw 必须活取才能跟着提供者换人
-    get raw() {
-      return tools.raw;
-    },
-  };
-}
-
 // ===== AalisEvents 扩展（declaration merging） =====
 
 declare module '@aalis/core' {
@@ -400,13 +222,6 @@ declare module '@aalis/core' {
 // runtime 工具函数已迁出本契约包：SSRF/私网判定 → @aalis/util-network-guard
 // （isPrivateAddress/isPrivateHost）；工具输入路径解析 → @aalis/api-storage
 // （resolveAgainstCwd/parseStorageUri）。本包只保留契约/类型。
-
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    tools: ToolService;
-  }
-}
 
 // ===== 服务描述符（按激活绑定）=====
 

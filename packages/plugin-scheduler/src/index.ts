@@ -1129,9 +1129,6 @@ export function resolveConfig(raw: Record<string, unknown>): SchedulerConfig {
 
 // ----- 服务类型注册（declaration merging）-----
 declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    scheduler: SchedulerService;
-  }
   interface AalisEvents {
     /** 任务开始执行 */
     'scheduler:job:start': [jobName: string];

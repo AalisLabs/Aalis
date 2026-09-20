@@ -1,4 +1,4 @@
-import type { Context } from '@aalis/core';
+import type { Events } from '@aalis/core';
 import { type LogEntry, LogHub, type LogLevel } from '@aalis/core';
 import chalk from 'chalk';
 import { getBootstrapBuffer } from './bootstrap-buffer.js';
@@ -78,9 +78,9 @@ export interface ConsoleSinkHandle {
    * 当任何 UI 接管终端时自动停止写 stdout。
    *
    * 必须显式调用——`installConsoleSink()` 在 App 之前运行（需要捕获最早期日志），
-   * 此时没有 ctx 可订阅。
+   * 此时还没有事件总线可订阅。传宿主根绑定的 events（`app.bind({ events }).events`）。
    */
-  bindEvents(ctx: Context): void;
+  bindEvents(events: Events): void;
   /** 当前是否染色输出（供调试 / 状态视图使用） */
   readonly colorized: boolean;
 }
@@ -116,7 +116,7 @@ export function installConsoleSink(opts: { target?: 'stdout' | 'stderr' } = {}):
       off();
       unbind?.();
     },
-    bindEvents(ctx: Context) {
+    bindEvents(events: Events) {
       // 多终端 owner（理论上不会同时）用计数器避免一个 release 提前解锁
       let owners = 0;
       const onClaim = (): void => {
@@ -127,8 +127,8 @@ export function installConsoleSink(opts: { target?: 'stdout' | 'stderr' } = {}):
         if (owners > 0) owners -= 1;
         if (owners === 0) paused = false;
       };
-      const offClaim = ctx.on('terminal:claimed', onClaim);
-      const offRelease = ctx.on('terminal:released', onRelease);
+      const offClaim = events.on('terminal:claimed', onClaim);
+      const offRelease = events.on('terminal:released', onRelease);
       unbind = () => {
         offClaim();
         offRelease();

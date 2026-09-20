@@ -85,11 +85,11 @@ export function registerPluginRoutes(
       core: p.core ?? false,
       reusable: p.reusable ?? false,
       // extends / config / configSchema / defaultConfig 非内核状态摘要字段
-      // （getStatus 只含内核事实）：从 entry.config / entry.module 补齐给前端。
-      extends: pm.getPlugin(p.instanceId)?.module?.extends,
+      // （getStatus 只含内核事实）：从 entry.config / entry.definition 补齐给前端。
+      extends: pm.getPlugin(p.instanceId)?.definition?.extends,
       config: pm.getPlugin(p.instanceId)?.config ?? {},
-      configSchema: pm.getPlugin(p.instanceId)?.module?.configSchema,
-      defaultConfig: defaultsFrom(pm.getPlugin(p.instanceId)?.module?.configSchema),
+      configSchema: pm.getPlugin(p.instanceId)?.definition?.configSchema,
+      defaultConfig: defaultsFrom(pm.getPlugin(p.instanceId)?.definition?.configSchema),
       error: p.error,
     }));
     res.json({ plugins });
@@ -121,7 +121,7 @@ export function registerPluginRoutes(
     res.json(pages);
   });
 
-  // 通用声明式页面操作：调用插件的 actions
+  // 通用声明式页面操作：调用插件经 webuiServer.registerAction 登记的处理函数
   expressApp.post('/api/page-action/:plugin/:method', async (req, res) => {
     const { plugin: pluginName, method } = req.params;
     const args: Record<string, unknown> = req.body ?? {};
@@ -139,15 +139,9 @@ export function registerPluginRoutes(
       return;
     }
 
-    const registered = getAction(pluginName, method);
-    // UNIFY-TRANSITION：未迁移的插件仍用静态 actions（处理函数吃旧上下文）；全部迁完后连同这条回落一起删
-    const legacy = registered ? undefined : entry.module.actions?.[method];
-    if (!registered && typeof legacy !== 'function') {
+    const handler = getAction(pluginName, method);
+    if (!handler) {
       res.status(404).json({ error: `处理器 ${method} 不存在` });
-      return;
-    }
-    if (legacy && !entry.context) {
-      res.status(500).json({ error: `插件 ${pluginName} 上下文不可用` });
       return;
     }
 
@@ -162,14 +156,7 @@ export function registerPluginRoutes(
     }
 
     try {
-      const result = registered
-        ? await registered(args, caller)
-        : await (legacy as NonNullable<typeof legacy>)(
-            entry.context as NonNullable<typeof entry.context>,
-            args,
-            caller,
-          );
-      res.json({ ok: true, data: result });
+      res.json({ ok: true, data: await handler(args, caller) });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });
@@ -264,7 +251,7 @@ export function registerPluginRoutes(
     // 补默认值再交给 updateConfig：后者是**整体替换**语义（core 的 orchestration/plugin.ts 里
     // entry.config = newConfig 直接顶掉）。不补的话，PUT 一个部分对象就会把未列出的
     // 字段从内存态和 yaml 里一起抹掉。默认值从 configSchema 派生（唯一声明来源）。
-    const schema = pm.getPlugin(pluginName)?.module?.configSchema;
+    const schema = pm.getPlugin(pluginName)?.definition?.configSchema;
     const defaults = defaultsFrom(schema);
     // 基线取「默认值叠已存值」而非裸默认值：defaultsFrom 只收录声明了 default 的键，
     // 而 apiKey / accessToken 这类 secret 多数**没有** default（deepseek、embedding-openai、
@@ -383,7 +370,7 @@ export function registerPluginRoutes(
     // 查同名 module → reusable/查重校验 → 合并默认配置写入 → register 激活。
     const sourceModule = pm
       .getStatus()
-      .map(p => pm.getPlugin(p.instanceId)?.module)
+      .map(p => pm.getPlugin(p.instanceId)?.definition)
       .find(m => m?.name === moduleName);
     if (!sourceModule) {
       res.status(400).json({ error: `无法创建实例：模块 "${moduleName}" 未找到` });

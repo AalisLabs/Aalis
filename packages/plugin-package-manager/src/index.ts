@@ -906,10 +906,3 @@ export default definePlugin({
     caps.provide(packageManager, createService(caps), { label: 'package-manager' });
   },
 });
-
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    'package-manager': PackageManagerService;
-  }
-}

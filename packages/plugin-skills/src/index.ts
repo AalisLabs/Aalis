@@ -16,7 +16,6 @@ import {
   logger,
   optional,
   provide,
-  type ServiceOf,
 } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
@@ -1236,28 +1235,3 @@ function run(caps: Caps): void {
     }
   });
 }
-
-// ----- 服务类型注册 -----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    skills: SkillsService;
-  }
-}
-
-// ----- 扩展点回归守卫（编译期，零运行时） -----
-//
-// 钉住的性质是「`-api` 包 declare 的服务名，在 core 的签名视角里真的存在」。
-// core 曾用相对 `declare module './services.js'` 增广 ServiceTypeMap，把接口绑成第二个
-// symbol，于是 36 个 api 服务全部退回 `unknown`——而 build / test / biome / knip 四道门
-// 全绿，它就这样潜伏了下来。architecture 测试里那条文本守卫只能拦住「写成相对说明符」这一
-// 种形态；这里直接断言**推断结果**，任何原因导致的退化都抓得到。
-//
-// 放在本包是因为它同时依赖 api-storage / api-tools 且已被 `pnpm -r build` 覆盖——
-// 断言失败即构建失败，不需要新开类型测试设施。三行，纯类型，编译后不产出任何东西。
-type __AssertTrue<T extends true> = T;
-type __Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
-// 不 export：断言只需被本文件的编译覆盖，导出会让它进入本包的公开 d.ts。
-type __ServiceTypeMapIntact = [
-  __AssertTrue<__Exact<ServiceOf<'storage'>, StorageService>>,
-  __AssertTrue<__Exact<ServiceOf<'skills'>, SkillsService>>,
-];

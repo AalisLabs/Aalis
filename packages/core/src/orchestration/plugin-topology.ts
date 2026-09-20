@@ -1,40 +1,28 @@
 // ============================================================
 // plugin-topology.ts — 插件依赖图工具
 //
-// 从 plugin.ts 拆出的纯依赖图算法：
-//   - topoSortByDeps：按"提供者→消费者"方向的 Kahn 拓扑排序
-//   - evictDownstreamConsumers：把依赖某 provider provided 服务、且声明了
-//     requiresBounceOnDepChange 的下游持活 ctx 插件（active/activating）降级为
-//     pending（默认不级联，
-//     期望下游惰性 getService；用于 updateConfig / bounce 瞬态：
-//     provider 即将被 dispose+重启，下游持有的服务引用即失效）
-//
-// 这些是无状态/弱状态的操作，分出去让 PluginManager 主体只关心生命周期编排。
+// topoSortByDeps：按"提供者→消费者"方向的 Kahn 拓扑排序，决定激活次序。
+// 关闭次序不在这里：那由关停编排按实际依赖与归属树决定（context/close-plan.ts）。
 // ============================================================
-
-import type { PluginEntry } from '../types/plugin.js';
 
 import type { Logger } from '../context/logger.js';
 
-import { type ActivationDeps, retireEntry } from './plugin-activation.js';
+import type { PluginRecord } from './plugin-activation.js';
 
 /**
- * 按"提供者 → 消费者"方向的拓扑排序（Kahn）。
+ * 按"提供者 → 消费者"方向的拓扑排序（Kahn），结果正序即激活顺序。
+ * 服务名 → 提供者映射只取首个声明 provides 该服务的 entry，足以表达依赖图。
  *
- * 关闭顺序 = 此结果反向；激活顺序 = 此结果正序。
- * 服务名 → 提供者映射只取首个 provides 该服务名的 entry，足以表达依赖图。
- *
- * 仅 `requiredDeps` 参与建图：optional 依赖语义为"如果存在则消费"，
- * 由运行时 `service-up`/`service-down` recompute 异步补救（whenService 钩子等），
- * 不应制造排序约束。否则插件之间互相 optional 会产生伪环并退化到声明序。
+ * 仅 required 依赖参与建图：optional 的语义是"如果存在则消费"，缺席照样激活，
+ * 不应制造排序约束——否则插件之间互为 optional 会产生伪环并退化到声明序。
  *
  * 残留环（仅由 required 形成的真环）按声明序兜底追加。
  */
-export function topoSortByDeps(entries: PluginEntry[], logger: Logger): PluginEntry[] {
+export function topoSortByDeps(entries: PluginRecord[], logger: Logger): PluginRecord[] {
   const providerOf = new Map<string, string>();
   for (const e of entries) {
-    for (const svc of e.module.provides ?? []) {
-      if (!providerOf.has(svc)) providerOf.set(svc, e.instanceId);
+    for (const descriptor of e.definition.provides ?? []) {
+      if (!providerOf.has(descriptor.name)) providerOf.set(descriptor.name, e.instanceId);
     }
   }
   const inDegree = new Map<string, number>();
@@ -46,8 +34,8 @@ export function topoSortByDeps(entries: PluginEntry[], logger: Logger): PluginEn
   }
   for (const e of entries) {
     const seenProviders = new Set<string>();
-    for (const dep of e.requiredDeps) {
-      const providerId = providerOf.get(dep.service);
+    for (const service of e.required) {
+      const providerId = providerOf.get(service);
       if (!providerId || providerId === e.instanceId) continue;
       if (!entryById.has(providerId)) continue;
       if (seenProviders.has(providerId)) continue;
@@ -56,7 +44,7 @@ export function topoSortByDeps(entries: PluginEntry[], logger: Logger): PluginEn
       inDegree.set(e.instanceId, (inDegree.get(e.instanceId) ?? 0) + 1);
     }
   }
-  const result: PluginEntry[] = [];
+  const result: PluginRecord[] = [];
   const queue: string[] = [];
   for (const [id, deg] of inDegree) {
     if (deg === 0) queue.push(id);
@@ -77,51 +65,4 @@ export function topoSortByDeps(entries: PluginEntry[], logger: Logger): PluginEn
     logger.warn(`topoSortByDeps: 检测到 required 依赖环，残留 ${entries.length - seen.size} 个按声明序追加`);
   }
   return result;
-}
-
-/**
- * 把下游消费者降级为 pending —— 仅对显式声明 `requiresBounceOnDepChange: true`
- * 的插件生效。
- *
- * 历史背景：早期 core 默认对所有 active 下游做级联 bounce，前提是所有插件都会
- * 在 apply 时把 `ctx.getService(...)` 的结果缓存到长寿命对象里（class field /
- * 闭包），导致 provider 一旦 dispose+重启，下游缓存的裸引用立刻失效。
- *
- * 当前的契约改为："插件应在每次访问时通过 `ctx.getService(...)` 惰性查询"，
- * 这样 provider 切换天然跟随，无需级联 bounce。绝大多数 first-party 插件已经
- * 满足该契约，因此默认行为是**不**级联 dispose 下游。
- *
- * `requiresBounceOnDepChange: true` 是给少数无法响应式处理状态的插件
- * （或迁移成本高的第三方插件）的逃生舱。
- *
- * 异步执行：逐个 await 被 evict 插件的 disposeAsync——它们正是声明了
- * `requiresBounceOnDepChange` 的状态敏感插件，落盘类清理更需要真正完成。
- * caller 紧接着会 await softReload 完成全部重激活。
- */
-export async function evictDownstreamConsumers(
-  provider: PluginEntry,
-  plugins: ReadonlyMap<string, PluginEntry>,
-  deps: ActivationDeps,
-): Promise<void> {
-  const { logger } = deps;
-  const provided = provider.module.provides ?? [];
-  if (provided.length === 0) return;
-  const providedSet = new Set(provided);
-  for (const other of plugins.values()) {
-    // 目标集按状态正面枚举 active/activating（'activating' 的在飞下游同样持着
-    // 即将失效的 provider 引用，漏疏散会让它抱着死引用完成激活；retireEntry 先写
-    // 'pending'，在飞激活由接管检查让位）。不能仅凭 ctx 在场判目标：disabled/
-    // error/disposed 的拆卸窗口内 ctx 未清，凭 ctx 会把刚写下的终态覆写回
-    // 'pending'——实测复活刚禁用的插件。ctx 判「有没有东西要拆」，状态判
-    // 「是不是合法疏散目标」，两个问题两个判据。
-    if (other === provider) continue;
-    if (other.state !== 'active' && other.state !== 'activating') continue;
-    if (!other.module.requiresBounceOnDepChange) continue;
-    const allDeps = [...other.requiredDeps, ...other.optionalDeps];
-    if (!allDeps.some(d => providedSet.has(d.service))) continue;
-    await retireEntry(other, 'pending', deps);
-    logger.info(
-      `级联 bounce 下游消费者 "${other.instanceId}"（requiresBounceOnDepChange=true，依赖 provider "${provider.instanceId}"）`,
-    );
-  }
 }

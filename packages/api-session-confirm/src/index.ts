@@ -36,11 +36,5 @@ export interface SessionConfirmService {
   createChannel(deliver: (request: AccessRequest, text: string) => void): ConfirmChannel;
 }
 
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    'session-confirm': SessionConfirmService;
-  }
-}
-
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const sessionConfirm = defineService<SessionConfirmService>('session-confirm');
