@@ -1,31 +1,28 @@
 import type { PluginManagerService, PluginStatusEntry } from '../types/index.js';
-import {
-  type PluginEntry,
-  type PluginModule,
-  type PluginState,
-  parseInstanceId,
-  type RecomputeReason,
-} from '../types/plugin.js';
+import { type PluginEntry, type PluginState, parseInstanceId } from '../types/plugin.js';
 
 import { reportQuietly } from '../kernel/disposable-chain.js';
 
-import { normalizeDependency } from '../primitives/services.js';
-
+import { optionalNames, requiredNames } from '../context/binding.js';
 import type { Context } from '../context/context.js';
+import { type PluginDefinition, validateDefinition } from '../context/definition.js';
 import type { Logger } from '../context/logger.js';
 
 import {
   type ActivationDeps,
   activatePlugin,
   computeTargetState,
+  type PluginRecord,
   retireBatch,
   retireEntry,
 } from './plugin-activation.js';
-import { evictDownstreamConsumers, topoSortByDeps } from './plugin-topology.js';
+import { topoSortByDeps } from './plugin-topology.js';
 
-export type { PluginEntry, PluginModule, PluginState };
-// 类型与纯辅助 re-export，保留同名旧导入路径
+export type { PluginEntry, PluginState };
 export { parseInstanceId };
+
+/** 一次重算的种类：普通状态变化（服务上下线、注册、启停、重载）合并处理；停机覆盖整批 */
+type RecomputeKind = 'changed' | 'shutdown';
 
 /**
  * 插件管理器
@@ -37,11 +34,11 @@ export { parseInstanceId };
  * - 当所需服务移除时自动停用插件
  * - 插件启用/禁用控制
  */
-export class PluginManager {
-  private plugins = new Map<string, PluginEntry>();
+export class PluginManager implements PluginManagerService {
+  private plugins = new Map<string, PluginRecord>();
   private rootCtx: Context;
   private logger: Logger;
-  /** 交给编排层自由函数（activatePlugin / retireEntry / evictDownstreamConsumers）的宿主注入件，构造一次 */
+  /** 交给编排层自由函数（activatePlugin / retireEntry / retireBatch）的宿主注入件，构造一次 */
   private readonly deps: ActivationDeps;
   /** recompute 单飞标志：true 表示一次 recompute（含排队补跑）正在进行 */
   private reloading = false;
@@ -60,11 +57,10 @@ export class PluginManager {
     return this.suspendDepth > 0;
   }
   /**
-   * 被推迟的重算批次。服务下线名去重保留，供首轮判断 optional bounce；
-   * 普通状态变化合并处理，shutdown 覆盖整批。批次消费前先摘下，避免
-   * 执行期间的新变化混入正在处理的服务集合。
+   * 被推迟的重算：在飞 recompute 或手动 dispose 段期间到来的请求合并成一次，停机覆盖普通变化。
+   * 目标态只看容器里此刻有没有服务，合并不丢信息。消费前先摘下，执行期间的新请求另起一次。
    */
-  private queuedBatch: { reason: RecomputeReason; serviceDowns: Set<string> } | null = null;
+  private queued: RecomputeKind | null = null;
   /**
    * 全局关机标志。app.stop() 在 dispose 前置位，所有反应式级联（service:registered/
    * unregistered → checkPending/Active）都会因此跳过——避免「正在关机还去 bounce
@@ -93,14 +89,14 @@ export class PluginManager {
    * 等 flight 结束即互等死锁。
    */
   idle(): Promise<void> {
-    if (!this.reloading && !this.suspended && this.queuedBatch === null) return Promise.resolve();
+    if (!this.reloading && !this.suspended && this.queued === null) return Promise.resolve();
     return new Promise(resolve => {
       this.idleWaiters.push(resolve);
     });
   }
 
   private settleIdleWaiters(): void {
-    if (this.reloading || this.suspended || this.queuedBatch !== null) return;
+    if (this.reloading || this.suspended || this.queued !== null) return;
     const waiters = this.idleWaiters;
     this.idleWaiters = [];
     for (const w of waiters) w();
@@ -118,54 +114,51 @@ export class PluginManager {
 
     // 监听服务注册/注销，路由到统一 recompute()。
     // 单飞/挂起/关机的取舍都在 recompute 内部处理（在飞期间排队，关机后跳过）。
-    rootCtx.on('service:registered', name => {
-      this.recompute({ type: 'service-up', service: name }).catch(err =>
-        reportQuietly(() => this.logger.error(`recompute(service-up:${name}) 报错:`, err)),
-      );
-    });
-    rootCtx.on('service:unregistered', name => {
-      this.recompute({ type: 'service-down', service: name }).catch(err =>
-        reportQuietly(() => this.logger.error(`recompute(service-down:${name}) 报错:`, err)),
-      );
-    });
+    for (const event of ['service:registered', 'service:unregistered'] as const) {
+      rootCtx.on(event, name => {
+        this.recompute().catch(err => reportQuietly(() => this.logger.error(`recompute(${event}:${name}) 报错:`, err)));
+      });
+    }
   }
 
   /**
    * 注册并尝试加载一个插件
    *
-   * @param module    插件模块
+   * @param definition 插件定义（definePlugin 的产物）
    * @param config    插件配置
-   * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 module.name）
+   * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 definition.name）
    * @returns 口径见 {@link PluginManagerService}：false = 重名，或未声明 reusable 却要多实例（各记一笔 warn）；
    *   true = 已落账（含注册为 disabled 态），激活是否已发生另看 idle()
    */
-  async register(module: PluginModule, config: Record<string, unknown> = {}, instanceId?: string): Promise<boolean> {
-    const id = instanceId ?? module.name;
+  async register(
+    definition: PluginDefinition,
+    config: Record<string, unknown> = {},
+    instanceId?: string,
+  ): Promise<boolean> {
+    const id = instanceId ?? definition.name;
 
-    // 多实例检查：同一 module 非 reusable 时不允许重复注册
+    // 多实例检查：同一份定义非 reusable 时不允许重复注册
     if (this.plugins.has(id)) {
       this.logger.warn(`插件 "${id}" 已注册，跳过`);
       return false;
     }
-    if (id !== module.name && !module.reusable) {
-      this.logger.warn(`插件 "${module.name}" 未声明 reusable，不允许多实例注册 "${id}"`);
+    if (id !== definition.name && !definition.reusable) {
+      this.logger.warn(`插件 "${definition.name}" 未声明 reusable，不允许多实例注册 "${id}"`);
       return false;
     }
-
-    const inject = module.inject ?? {};
-    const requiredDeps = (inject.required ?? []).map(normalizeDependency);
-    const optionalDeps = (inject.optional ?? []).map(normalizeDependency);
+    // 手写的定义对象（没经 definePlugin）在这里补上同一道校验
+    validateDefinition(definition);
 
     // 检查是否被配置禁用（按 instanceId 检查）
     const isDisabled = this.rootCtx.config.isPluginDisabled(id);
 
-    const entry: PluginEntry = {
-      module,
+    const entry: PluginRecord = {
+      definition,
       instanceId: id,
       config,
       state: isDisabled ? 'disabled' : 'pending',
-      requiredDeps,
-      optionalDeps,
+      required: requiredNames(definition.uses ?? {}),
+      optional: optionalNames(definition.uses ?? {}),
     };
 
     this.plugins.set(id, entry);
@@ -175,7 +168,7 @@ export class PluginManager {
     } else {
       this.logger.info(`插件已注册: ${id}`);
       // 走统一 recompute：依赖满足则被拓扑正序激活，否则保持 pending
-      await this.recompute({ type: 'plugin-state-changed' });
+      await this.recompute();
     }
     return true;
   }
@@ -229,7 +222,7 @@ export class PluginManager {
     return false;
   }
 
-  private retire(entry: PluginEntry, target: PluginState, opts?: { emitUnloaded?: boolean }): Promise<void> {
+  private retire(entry: PluginRecord, target: PluginState, opts?: { emitUnloaded?: boolean }): Promise<void> {
     return retireEntry(entry, target, this.deps, opts);
   }
 
@@ -260,7 +253,7 @@ export class PluginManager {
     const entry = this.plugins.get(instanceId);
     if (!entry) return this.refuse('disable', instanceId, '不在注册表');
 
-    if (entry.module.core) {
+    if (entry.definition.core) {
       this.logger.warn(`核心插件 "${instanceId}" 不能被禁用`);
       return false;
     }
@@ -290,23 +283,20 @@ export class PluginManager {
    * 编译期保证两边不漂移。
    */
   getStatus(): PluginStatusEntry[] {
-    // 状态摘要只含内核事实。配置详情（config / configSchema）与
-    // WebUI 展示概念（subsystem/extends）由消费者经 getPlugin(instanceId) 从
-    // entry.config / entry.module 读取——core 状态契约不携带。
-    return [...this.plugins.entries()].map(([, entry]) => {
-      return {
-        name: entry.module.name,
-        instanceId: entry.instanceId,
-        displayName: entry.module.displayName,
-        state: entry.state,
-        provides: entry.module.provides,
-        core: entry.module.core,
-        reusable: entry.module.reusable,
-        requiredServices: entry.requiredDeps.length > 0 ? entry.requiredDeps.map(d => d.service) : undefined,
-        optionalServices: entry.optionalDeps.length > 0 ? entry.optionalDeps.map(d => d.service) : undefined,
-        error: entry.error,
-      };
-    });
+    // 状态摘要只含内核事实。配置详情（config / configSchema）与展示元数据（subsystem / extends）
+    // 由消费者经 getPlugin(instanceId) 从 entry.config / entry.definition 读取——core 状态契约不携带。
+    return [...this.plugins.values()].map(entry => ({
+      name: entry.definition.name,
+      instanceId: entry.instanceId,
+      displayName: entry.definition.displayName,
+      state: entry.state,
+      provides: entry.definition.provides?.map(descriptor => descriptor.name),
+      core: entry.definition.core,
+      reusable: entry.definition.reusable,
+      requiredServices: entry.required.length > 0 ? entry.required : undefined,
+      optionalServices: entry.optional.length > 0 ? entry.optional : undefined,
+      error: entry.error,
+    }));
   }
 
   /**
@@ -325,16 +315,13 @@ export class PluginManager {
   }
 
   /**
-   * 增量重载单个插件（核心入口）：
+   * 增量重载单个插件（核心入口）：持久化新 config（如有）→ 拆掉当前激活 → 转 pending → 重算后重新激活。
+   * `error` 态插件会被重置为 pending 重试。
    *
-   * 1. 持久化新 config（如有）+ dispose 旧 ctx + 转 pending + softReload 重新激活。
-   *    下游消费者默认不会被级联 bounce，除非显式声明 `requiresBounceOnDepChange: true`
-   *    （见 evictDownstreamConsumers）。
-   * 2. `error` 态插件会被重置为 pending 重试 apply。
+   * 下游不跟着重启：消费者经绑定接口每次解析当前提供者，有状态的接线由 follow 在提供者换人时交接。
+   * 不换代码：跑的仍是注册时的那份定义。要换代码走 `unload` + `register`。
    *
-   * 不换模块：跑的仍是注册时的那份代码。要换代码走 `unload` + `register`。
-   *
-   * @returns false 表示找不到 entry 或处于 disabled 态（拒绝 bounce）。
+   * @returns false 表示找不到 entry、处于 disabled 态或 'disposed' 终态（拒绝 bounce）。
    */
   async bounce(instanceId: string, opts?: { config?: Record<string, unknown> }): Promise<boolean> {
     const entry = this.plugins.get(instanceId);
@@ -364,25 +351,8 @@ export class PluginManager {
     // recompute 不能在 entry 尚未转 pending 时跑——会把半 bounce 态误判。
     this.suspendDepth++;
     try {
-      // 唯一不走 retireEntry 的拆卸点（见其 JSDoc）：写终态与拆卸之间要插入
-      // evictDownstreamConsumers，且该 await 窗口要求状态已先落——塞进 helper
-      // 需要回调钩子，不值得。本块内联复刻 helper 的四步顺序，勿改动次序。
-      entry.state = 'pending';
       entry.error = undefined;
-      // ctx 先捕获：evict 的 await 期间并发管理操作可能已拆掉并清空
-      // entry.context，重读会 TypeError 并越过收尾的 softReload（queuedBatch
-      // 悬挂 → idle() 永不落定）。disposeAsync 幂等，重复调用只会等在飞拆卸。
-      const ctx = entry.context;
-      if (ctx) {
-        await evictDownstreamConsumers(entry, this.plugins, this.deps);
-        try {
-          await ctx.disposeAsync(this.disposeTimeoutMs);
-        } catch (err) {
-          this.logger.error(`插件 "${instanceId}" dispose 抛错:`, err);
-        }
-        if (entry.context === ctx) entry.context = undefined;
-        this.rootCtx.emitQuietly('plugin:unloaded', instanceId);
-      }
+      await this.retire(entry, 'pending');
     } finally {
       this.suspendDepth--;
     }
@@ -394,79 +364,46 @@ export class PluginManager {
   // 内核只保留多实例机制本身（register 带 instanceId + reusable 校验）。
 
   /**
-   * 全局停机：按依赖拓扑逆序 dispose 所有 active 插件。
+   * 全局停机：全部 active 插件与宿主的根激活进同一张关停计划——消费者先于它依赖的提供者关闭，
+   * 下游的收尾还能把数据交给下层（见 context/close-plan.ts）。
    *
-   * 顺序原则：「消费者先关，提供者后关」——一个插件若 require/optional 依赖另一个
-   * 插件 provides 的服务，则前者 dispose 必须先于后者。这样下游插件的 dispose hook
-   * 还能安全地访问其依赖的服务（如把待持久化数据冲到 storage、把订阅从 gateway 摘掉）。
-   *
-   * 实现是 Kahn 风格 BFS：
-   * 1. 把 active 插件构成「依赖图」边：consumer → provider（基于 module.provides）
-   * 2. 反复挑出 in-degree==0 的节点（没人依赖它们 = 处于拓扑顶端 = 应当先 dispose）
-   * 3. dispose 后从图中移除，刷新 in-degree
-   * 4. 若残留环（不应该发生，softReload 期间会警告），按声明顺序 dispose 兜底
-   *
-   * 此方法预设 `shuttingDown=true`，service:unregistered 不再触发反应式 bounce；
-   * 因此本方法是**关机时唯一**的 dispose 编排者，不与级联机制竞争。
+   * 停机置位后服务上下线不再触发反应式重算，本方法是关机时唯一的拆卸编排者。
    */
   async stopAll(): Promise<void> {
-    await this.recompute({ type: 'shutdown' });
+    await this.recompute('shutdown');
   }
 
-  /**
-   * 软重载（薄壳）：把"插件状态需要重算"统一委托给 recompute()。
-   *
-   * 历史上 softReload / stopAll / checkActivePlugins / checkPendingPlugins 是四
-   * 条独立路径，每条都自己判断"哪些插件该跑、按什么顺序"。逻辑漂移导致 stopAll
-   * 之外的三条路径在"同一轮多个插件同时变状态"时无法保证消费者先于提供者关闭，
-   * 瞬态会出现 dispose hook 访问已失效服务的情况。现在四条路径共用 recompute()。
-   */
+  /** 软重载：管理动作（启停、重载、卸载）收尾时请求一次重算 */
   async softReload(): Promise<void> {
-    await this.recompute({ type: 'plugin-state-changed' });
+    await this.recompute();
   }
 
   // ----- 单一状态转移入口 -----
 
   /**
-   * 重算所有插件的目标态并按依赖拓扑序应用转移。
+   * 重算所有插件的目标态并按依赖拓扑序应用转移。这是 PluginManager 唯一的状态变更入口。
    *
-   * 这是 PluginManager 唯一的状态变更入口。
+   * 每轮：
+   * 1. 按 required 依赖正序（提供者→消费者）拓扑排序。
+   * 2. Phase A：把目标不再是 active 的成批关闭，它们之间的次序由关停编排按实际依赖定。
+   * 3. Phase B：正向遍历，激活目标 active 且依赖满足的 pending entry（提供者先起、消费者后起）。
+   * 4. 本轮有变动则继续下一轮，直到稳定或达到 maxRounds；非停机时发 plugins:changed。
    *
-   * 算法：
-   * 1. 反应式 reason 决定"是否走完整 fixed-point + 是否触发 optional bounce"；
-   *    shutdown 走单向 down 路径，其它走 fixed-point。
-   * 2. 每轮先按依赖正序（提供者→消费者）做拓扑排序。
-   * 3. Phase A：反向遍历，把"目标不再 active"的 entry 一并 dispose
-   *    （本轮内消费者先关、提供者后关）。
-   * 4. Phase B（非 shutdown）：正向遍历，激活"目标 active 且依赖满足"的 pending entry
-   *    （提供者先起、消费者后起）。
-   * 5. 若本轮有变动则继续下一轮，直到稳定或达到 maxRounds。
-   * 6. 非 shutdown 时发出 plugins:changed。
-   *
-   * Aalis 直接用"服务在不在容器里"做判断（capability 匹配层已于 0.5.0
-   * 删除）—— 表达力等价、复杂度更低。
+   * 判据只有一条：服务此刻在不在容器里。
    */
-  async recompute(reason: RecomputeReason): Promise<void> {
-    if (this.shuttingDown && reason.type !== 'shutdown') {
+  async recompute(kind: RecomputeKind = 'changed'): Promise<void> {
+    if (this.shuttingDown && kind !== 'shutdown') {
       // 关机已置位时非关机请求无意义；但若队列里躺着一个被挂起的 shutdown
       // （stop() 与手动 dispose 段竞态），借这次调用把它接过来跑完。
-      if (this.queuedBatch?.reason.type !== 'shutdown') {
+      if (this.queued !== 'shutdown') {
         // 早退也要结算 idle 等待者：管理段收尾的 softReload 走到这里时状态机已静置，
         // 不结算的话此前压进来的 idle() 永不落定（结算自己会核对三条静置守卫）
         this.settleIdleWaiters();
         return;
       }
     }
-    if (reason.type === 'shutdown') this.shuttingDown = true;
-
-    // 先合并再启动：手动 dispose 收尾的 softReload 必须与其间积累的
-    // service-down 同批处理，不能先重激活一遍、再重放旧下线原因。
-    if (!this.queuedBatch || reason.type === 'shutdown') {
-      this.queuedBatch = { reason, serviceDowns: new Set() };
-    }
-    if (reason.type === 'service-down' && this.queuedBatch.reason.type !== 'shutdown') {
-      this.queuedBatch.serviceDowns.add(reason.service);
-    }
+    if (kind === 'shutdown') this.shuttingDown = true;
+    if (this.queued === null || kind === 'shutdown') this.queued = kind;
 
     // 单飞 + 排队（修 lost wakeup）：在飞期间/手动 dispose 段的请求合并排队，
     // 由在飞 run 收尾时补跑或 dispose 段收尾的 softReload 消化。注意这里必须
@@ -478,10 +415,10 @@ export class PluginManager {
 
     this.reloading = true;
     try {
-      while (this.queuedBatch) {
-        const current = this.queuedBatch;
-        this.queuedBatch = null;
-        await this.recomputeOnce(current.reason, current.serviceDowns);
+      while (this.queued) {
+        const current = this.queued;
+        this.queued = null;
+        await this.recomputeOnce(current);
       }
     } finally {
       this.reloading = false;
@@ -490,22 +427,23 @@ export class PluginManager {
   }
 
   /** 单次完整重算：fixed-point 状态转移 + （非关机）plugins:changed 通知 */
-  private async recomputeOnce(reason: RecomputeReason, serviceDowns: Set<string>): Promise<void> {
-    let currentReason = reason;
+  private async recomputeOnce(kind: RecomputeKind): Promise<void> {
+    // 停机：全部插件激活与宿主的根激活进同一张计划（无依赖关系时后注册的先关）
+    if (kind === 'shutdown') {
+      const active = [...this.plugins.values()].filter(entry => entry.state === 'active').reverse();
+      await retireBatch(active, 'disposed', this.deps, { emitUnloaded: false, planRoot: this.rootCtx });
+      return;
+    }
+
     let changed = true;
     let rounds = 0;
-    // 收敛上限从图规模推导，不是调优旋钮。紧界推导：单个插件每次 recomputeOnce
-    // 至多翻转 2 次。第 2 轮起 currentReason 退化为 plugin-state-changed（见下方），
-    // 此时目标态 =「required 依赖齐则 active，否则 pending」，是服务可用集的单调
-    // 函数；依赖图无环（静态 required 环由 topoSortByDeps 检出，且只致停滞不致振荡），
-    // 故拆除波与激活波各自单调单向推进，每插件至多翻 1 次。唯一的第 2 次翻转来自
-    // 首轮 optional bounce（active→pending→再 active），而 bounce 仅第 1 轮生效、
-    // 不重复（其下游子树同样至多随之翻 2 次，仍 ≤2）。因此总翻转 ≤2N ⇒ 轮数 ≤2N：
-    // 2N 是紧的最坏界而非余量，+8 只为小 N 垫底。真振荡（激活条件互相矛盾）翻转
-    // 无界，必越过任何线性界——上限把"无限挂死"换成"有界放弃 + 点名"。
-    // 每轮现算而非入口冻结：注册期 recompute 排队立即返回，后续 app.plugin() 会在
-    // 本 recomputeOnce 在飞时追加 entry（每轮快照重取），上限须随图同步增长，否则
-    // 合法的增量注册流会被按旧规模误判为振荡。
+    // 收敛上限从图规模推导，不是调优旋钮。目标态 =「required 依赖齐则 active，否则 pending」，是服务
+    // 可用集的单调函数；依赖图无环（静态 required 环由 topoSortByDeps 检出，且只致停滞不致振荡），故拆除波与
+    // 激活波各自单调推进，单个插件在一次 recomputeOnce 里至多先被拆、再被激活——总翻转 ≤2N ⇒ 轮数 ≤2N，
+    // +8 只为小 N 垫底。真振荡（激活条件互相矛盾）翻转无界，必越过任何线性界——上限把"无限挂死"换成
+    // "有界放弃 + 点名"。每轮现算而非入口冻结：注册期 recompute 排队立即返回，后续 app.plugin() 会在本
+    // recomputeOnce 在飞时追加 entry（每轮快照重取），上限须随图同步增长，否则合法的增量注册流会被按
+    // 旧规模误判为振荡。
     const maxRounds = (): number => this.plugins.size * 2 + 8;
     let lastRoundFlips: string[] = [];
 
@@ -514,36 +452,15 @@ export class PluginManager {
       rounds++;
       lastRoundFlips = [];
 
-      const entries = [...this.plugins.values()];
-      const order = topoSortByDeps(entries, this.logger);
-
-      // 停机：全部插件激活与宿主的根激活进同一张计划（无依赖关系时后注册的先关）
-      if (currentReason.type === 'shutdown') {
-        const active = entries.filter(entry => entry.state === 'active').reverse();
-        await retireBatch(active, 'disposed', this.deps, { emitUnloaded: false, planRoot: this.rootCtx });
-        break;
-      }
+      const order = topoSortByDeps([...this.plugins.values()], this.logger);
 
       // Phase A: 本轮目标不再是 active 的，成批关闭——它们之间的次序由关停编排按实际依赖定
-      const retiring: PluginEntry[] = [];
+      const retiring: PluginRecord[] = [];
       for (const entry of [...order].reverse()) {
         if (entry.state !== 'active') continue;
-        if (computeTargetState(entry, currentReason, this.rootCtx, serviceDowns) === 'active') continue;
-
-        // 日志：区分 required 不满 / optional 下线
-        const unmet = entry.requiredDeps.find(d => this.rootCtx.getService(d.service) === undefined);
-        if (unmet) {
-          this.logger.info(`依赖 "${unmet.service}" 不可用，停用插件: ${entry.instanceId}`);
-        } else {
-          // 被动级联降级（依赖服务下线 → 转 pending 等待重新满足），
-          // 区别于 bounce() 的主动重载，日志措辞不用「bounce」一词。
-          const missing = entry.optionalDeps.find(
-            d => serviceDowns.has(d.service) && this.rootCtx.getService(d.service) === undefined,
-          );
-          if (missing) {
-            this.logger.info(`依赖服务 "${missing.service}" 已下线，降级插件为待激活: ${entry.instanceId}`);
-          }
-        }
+        if (computeTargetState(entry, this.rootCtx) === 'active') continue;
+        const unmet = entry.required.find(name => this.rootCtx.getService(name) === undefined);
+        this.logger.info(`依赖 "${unmet}" 不可用，停用插件: ${entry.instanceId}`);
         retiring.push(entry);
         lastRoundFlips.push(entry.instanceId);
       }
@@ -554,25 +471,16 @@ export class PluginManager {
 
       // Phase B: 正向遍历，激活目标 active 的 pending entry
       for (const entry of order) {
-        // 先消费等待中的下线/停机批次，再启动新的实例。否则它按最新服务
-        // 状态初始化后，又会被此前排队的旧下线通知重复重建。
-        if (this.queuedBatch?.serviceDowns.size || this.queuedBatch?.reason.type === 'shutdown') break converge;
+        // 停机已在排队：不再启动新的实例
+        if (this.queued === 'shutdown') break converge;
         if (entry.state !== 'pending') continue;
-        const target = computeTargetState(entry, currentReason, this.rootCtx, serviceDowns);
-        if (target !== 'active') continue;
+        if (computeTargetState(entry, this.rootCtx) !== 'active') continue;
         await activatePlugin(entry, this.deps);
         if ((entry.state as PluginState) === 'active') {
           changed = true;
           lastRoundFlips.push(entry.instanceId);
         }
       }
-
-      // service-up / service-down 的"特殊语义"只在第一轮生效（避免无限 bounce）；
-      // 第二轮起退化为普通的 plugin-state-changed 重算。
-      if (currentReason.type === 'service-up' || currentReason.type === 'service-down') {
-        currentReason = { type: 'plugin-state-changed' };
-      }
-      serviceDowns.clear();
     }
 
     if (rounds >= maxRounds()) {
@@ -584,8 +492,6 @@ export class PluginManager {
           `疑似插件间状态振荡。最后一轮仍在翻转: ${lastRoundFlips.join(', ') || '(无记录)'}`,
       );
     }
-
-    if (reason.type === 'shutdown') return;
 
     this.rootCtx.emitQuietly('plugins:changed');
   }

@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { Logger, PluginDescriptor, PluginLoader, PluginModule } from '@aalis/core';
+import type { Logger, PluginDefinition, PluginDescriptor, PluginLoader } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
 
 // ============================================================
@@ -39,36 +39,32 @@ export function isLoadablePlugin(meta: Record<string, unknown>): boolean {
 }
 
 /**
- * ESM 命名空间可能把插件挂在 default 上（`export default {...}`）——此前该形态
- * 会被加载判据静默拒收（作者最自然的写法=永不加载的死门）。解包后统一交判据。
+ * 从已导入的模块取出插件定义：入口的 default 导出须是 definePlugin 的产物（带 name 与 apply 的对象）。
+ * 不是就告警并返回 null——「装了没反应」必须出声。两加载器共用。
+ *
+ * default 为函数或类不算：它们天然继承 Function.prototype.apply，只查 .apply 会把
+ * `export default function` 误当插件，随后被调用的是 Function.prototype.apply——插件体空跑却被标记已激活。
  */
-export function unwrapPluginModule(ns: unknown): PluginModule {
-  const mod = ns as PluginModule & { default?: PluginModule };
-  // default 必须是**对象**才解包：函数/类天然继承 Function.prototype.apply，
-  // 只查 .apply 会把 `export default function/class` 误当插件解包——core 随后
-  // 调用的是 Function.prototype.apply，插件体以 ctx=undefined 空跑并被标记
-  // 已激活（比修前的静默不装更坏）。对象判据下这两种形态落回命名空间，
-  // 由 warnShape 发正确的「缺少具名导出」告警。
-  return typeof mod?.apply !== 'function' &&
-    typeof mod?.default === 'object' &&
-    mod.default !== null &&
-    typeof mod.default.apply === 'function'
-    ? mod.default
-    : mod;
-}
-
-/** 加载后形状告警：违例此前完全静默（仅 core 一行 debug），是「装了没反应」死门族。两加载器共用。 */
-export function warnShape(logger: Logger, pkgName: string, mod: PluginModule): void {
-  if (!mod?.name || typeof mod?.apply !== 'function') {
+export function pluginDefinitionOf(ns: unknown, pkgName: string, logger: Logger): PluginDefinition | null {
+  const candidate = (ns as { default?: unknown } | null)?.default as Partial<PluginDefinition> | null | undefined;
+  if (
+    typeof candidate !== 'object' ||
+    candidate === null ||
+    typeof candidate.name !== 'string' ||
+    candidate.name === '' ||
+    typeof candidate.apply !== 'function'
+  ) {
     logger.warn(
-      `插件 "${pkgName}" 缺少具名导出 name/apply，将被跳过——入口须具名导出这两者，` +
-        `或 default 导出一个 { name, apply } 对象（default 为函数/类不属插件契约，不会被解包）`,
+      `插件 "${pkgName}" 的入口没有默认导出插件定义，将被跳过——入口须 \`export default definePlugin({ … })\``,
     );
-  } else if (mod.name !== pkgName) {
+    return null;
+  }
+  if (candidate.name !== pkgName) {
     logger.warn(
-      `插件包 "${pkgName}" 的 module.name 为 "${mod.name}"——配置键/热扫描/卸载均以 module.name 为准，二者应一致`,
+      `插件包 "${pkgName}" 的定义 name 为 "${candidate.name}"——配置键/热扫描/卸载均以定义的 name 为准，二者应一致`,
     );
   }
+  return candidate as PluginDefinition;
 }
 
 /**
@@ -143,22 +139,18 @@ export function createNodeModulesPluginLoader(projectDir: string = process.cwd()
       return discovered;
     },
 
-    async load(desc): Promise<PluginModule | null> {
-      const mod = unwrapPluginModule(await import(pathToFileURL(desc.source).href));
-      warnShape(logger, desc.name, mod);
-      return mod;
+    async load(desc): Promise<PluginDefinition | null> {
+      return pluginDefinitionOf(await import(pathToFileURL(desc.source).href), desc.name, logger);
     },
 
-    async reload(desc): Promise<PluginModule | null> {
+    async reload(desc): Promise<PluginDefinition | null> {
       let cacheKey = '';
       try {
         cacheKey = `?t=${(await stat(desc.source)).mtimeMs}`;
       } catch {
         /* stat 失败时用空 key，让 import 自己报错 */
       }
-      const mod = unwrapPluginModule(await import(pathToFileURL(desc.source).href + cacheKey));
-      warnShape(logger, desc.name, mod);
-      return mod;
+      return pluginDefinitionOf(await import(pathToFileURL(desc.source).href + cacheKey), desc.name, logger);
     },
   };
 }

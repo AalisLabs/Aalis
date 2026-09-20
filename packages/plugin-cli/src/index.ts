@@ -40,13 +40,6 @@ declare module '@aalis/core' {
   }
 }
 
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    cli: CLIService;
-  }
-}
-
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const cli = defineService<CLIService>('cli');
 

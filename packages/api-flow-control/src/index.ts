@@ -77,11 +77,5 @@ export interface FlowControlService {
 // 与其他 api 包一致：服务名 → 接口类型的绑定随本 api 包提供，
 // 下游消费者只需 import 本包即可获得 ctx.getService('flow-control') 的类型，
 // 无需依赖具体实现包 plugin-flow-control。
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    'flow-control': FlowControlService;
-  }
-}
-
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const flowControl = defineService<FlowControlService>('flow-control');

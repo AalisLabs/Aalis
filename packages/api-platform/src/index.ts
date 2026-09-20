@@ -92,8 +92,8 @@ export interface PlatformAdapter {
 // 所有按 sessionId 分发、按平台名汇总的逻辑都用纯函数表达，调用方传 ctx 即可，
 // 没有 router facade entry，没有自递归隐患。
 
-import type { Logger, ServiceSource } from '@aalis/core';
-import { asServiceRef, defineService } from '@aalis/core';
+import type { Logger, ServiceRef } from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 export interface PlatformAdapterEntry {
   instance: PlatformAdapter;
@@ -102,31 +102,29 @@ export interface PlatformAdapterEntry {
 }
 
 /** 枚举所有 platform adapter 条目 */
-export function getPlatformAdapterEntries(source: ServiceSource<PlatformAdapter>): PlatformAdapterEntry[] {
-  return asServiceRef(source, 'platform')
-    .all()
-    .filter(e => typeof e.instance?.getConnections === 'function');
+export function getPlatformAdapterEntries(source: ServiceRef<PlatformAdapter>): PlatformAdapterEntry[] {
+  return source.all().filter(e => typeof e.instance?.getConnections === 'function');
 }
 
 /** 枚举所有 platform adapter 实例 */
-export function getPlatformAdapters(source: ServiceSource<PlatformAdapter>): PlatformAdapter[] {
+export function getPlatformAdapters(source: ServiceRef<PlatformAdapter>): PlatformAdapter[] {
   return getPlatformAdapterEntries(source).map(e => e.instance);
 }
 
 /** 枚举所有平台名（来自 adapter.platform 字段，去重） */
-export function getPlatformNames(source: ServiceSource<PlatformAdapter>): string[] {
+export function getPlatformNames(source: ServiceRef<PlatformAdapter>): string[] {
   const names = new Set<string>();
   for (const a of getPlatformAdapters(source)) names.add(a.platform);
   return [...names];
 }
 
 /** 聚合所有 adapter 的连接 */
-export function aggregatePlatformConnections(source: ServiceSource<PlatformAdapter>): PlatformConnection[] {
+export function aggregatePlatformConnections(source: ServiceRef<PlatformAdapter>): PlatformConnection[] {
   return getPlatformAdapters(source).flatMap(a => a.getConnections());
 }
 
 /** 聚合所有 adapter 的展示详情（含 contextId / connections） */
-export function aggregatePlatformDetails(source: ServiceSource<PlatformAdapter>): Array<{
+export function aggregatePlatformDetails(source: ServiceRef<PlatformAdapter>): Array<{
   adapterName: string;
   platform: string;
   contextId: string;
@@ -142,7 +140,7 @@ export function aggregatePlatformDetails(source: ServiceSource<PlatformAdapter>)
 
 /** 按平台名查询 adapter 自身身份 */
 export function getPlatformSelfIdentity(
-  source: ServiceSource<PlatformAdapter>,
+  source: ServiceRef<PlatformAdapter>,
   platform: string,
   sessionId?: string,
 ): PlatformSelfIdentity | undefined {
@@ -158,7 +156,7 @@ export function getPlatformSelfIdentity(
  * `sessionId.startsWith(platform + ':')`（适合协议类平台）。
  */
 export async function resolvePlatformBySession(
-  source: ServiceSource<PlatformAdapter>,
+  source: ServiceRef<PlatformAdapter>,
   sessionId: string,
   logger?: Pick<Logger, 'warn'>,
 ): Promise<PlatformAdapter | undefined> {
@@ -178,7 +176,7 @@ export async function resolvePlatformBySession(
 
 /** 按 sessionId 路由发送纯文本消息 */
 export async function sendPlatformMessage(
-  source: ServiceSource<PlatformAdapter>,
+  source: ServiceRef<PlatformAdapter>,
   sessionId: string,
   content: string,
   options?: { skipSplit?: boolean },
@@ -190,7 +188,7 @@ export async function sendPlatformMessage(
 
 /** 按 sessionId 路由调用平台原生 action */
 export async function callPlatformAction(
-  source: ServiceSource<PlatformAdapter>,
+  source: ServiceRef<PlatformAdapter>,
   sessionId: string,
   action: string,
   params: Record<string, unknown>,
@@ -201,13 +199,6 @@ export async function callPlatformAction(
     throw new Error(`platform adapter "${adapter.adapterName}" 不支持 callAction`);
   }
   return adapter.callAction(sessionId, action, params);
-}
-
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    platform: PlatformAdapter;
-  }
 }
 
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----

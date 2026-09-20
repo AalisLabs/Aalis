@@ -26,17 +26,17 @@ export interface ConfigSyncOptions {
  * 移除多余字段。返回发生变更的插件 instanceId 列表。
  *
  * 副作用：对每个变化条目 setPluginConfig；若有变化最终调用 save()。
- * 插件的 configSchema 经 `getPlugin(instanceId).module` 读取
+ * 插件的 configSchema 经 `getPlugin(instanceId).definition` 读取
  * （core 的状态摘要不携带配置详情）。
  */
 export function syncPluginDefaults(app: App, opts?: ConfigSyncOptions): string[] {
   const trim = opts?.trimUnknownFields ?? true;
-  const config = app.ctx.config;
+  const config = app.config;
   const changed: string[] = [];
   for (const status of app.plugins.getStatus()) {
     const entry = app.plugins.getPlugin(status.instanceId);
     if (!entry) continue;
-    const schema = entry.module.configSchema;
+    const schema = entry.definition.configSchema;
     const defaults = defaultsFrom(schema);
     const fileConfig = config.getPluginConfig(status.instanceId);
 
@@ -84,21 +84,17 @@ export async function handleConfigChanged(app: App, opts?: ConfigSyncOptions): P
     const synced = syncPluginDefaults(app, opts);
     for (const id of synced) app.logger.debug(`热重载配置同步: ${id}`);
 
-    let changed = false;
+    // 每次 updateConfig 收尾的重算都会发 plugins:changed，这里不必再补发
     for (const status of app.plugins.getStatus()) {
       const entry = app.plugins.getPlugin(status.instanceId);
       if (!entry) continue;
-      const defaults = defaultsFrom(entry.module.configSchema);
-      const fileConfig = app.ctx.config.getPluginConfig(status.instanceId);
+      const defaults = defaultsFrom(entry.definition.configSchema);
+      const fileConfig = app.config.getPluginConfig(status.instanceId);
       const newConfig = { ...defaults, ...fileConfig };
       if (JSON.stringify(newConfig) !== JSON.stringify(entry.config)) {
         app.logger.info(`插件 ${status.instanceId} 配置已变更，正在重新加载...`);
         await app.plugins.updateConfig(status.instanceId, newConfig);
-        changed = true;
       }
-    }
-    if (changed) {
-      await app.ctx.emit('plugins:changed');
     }
     app.logger.info('配置热重载完成');
   } catch (e) {
@@ -111,7 +107,7 @@ export async function handleConfigChanged(app: App, opts?: ConfigSyncOptions): P
  * startAalis 默认调用；嵌入式宿主可自行选择是否接。
  */
 export function installConfigHotReload(app: App, opts?: ConfigSyncOptions): void {
-  app.ctx.config.watch(() => void handleConfigChanged(app, opts));
+  app.config.watch(() => void handleConfigChanged(app, opts));
 }
 
 // ---- helpers ----

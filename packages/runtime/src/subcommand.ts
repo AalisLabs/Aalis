@@ -1,5 +1,5 @@
 import type { CommandService } from '@aalis/api-commands';
-import type { App } from '@aalis/core';
+import type { Services } from '@aalis/core';
 
 /**
  * 把 argv 当作命令调用：`aalis <name> [args...]` ↔ chat 中的 `/<name> args`。
@@ -13,13 +13,13 @@ import type { App } from '@aalis/core';
  * 抽离到独立模块以便单测（src/index.ts 有顶层副作用，直接 import 会触发）。
  */
 export async function tryDispatchSubcommand(
-  app: App,
+  services: Services,
   argv: string[],
   out: (msg: string) => void = msg => console.log(msg),
   err: (msg: string) => void = msg => console.error(msg),
 ): Promise<number> {
   const [cmdName = '', ...rest] = argv;
-  const commands = app.ctx.getService<CommandService>('commands');
+  const commands = services.get('commands') as CommandService | undefined;
   if (!commands) {
     err(`无法执行子命令「${cmdName}」：commands 服务不可用（未安装 @aalis/plugin-commands？）`);
     return 2;

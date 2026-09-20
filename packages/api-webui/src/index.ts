@@ -5,7 +5,7 @@
 // 任何需要声明 webuiPages 的插件应从本包导入相关类型。
 
 import type { UserIdentity } from '@aalis/api-authority';
-import type { Context, ServiceRef } from '@aalis/core';
+import type { ServiceRef } from '@aalis/core';
 import { defineService, serviceRef } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 
@@ -37,8 +37,6 @@ export interface WebUIService {
    * 同一插件同名动作为替换；返回 dispose。
    */
   registerAction(method: string, handler: WebuiActionHandler, contextId: string): () => void;
-  /** 按 contextId 批量清除（Context 拆卸时由 core 调用） */
-  unregisterByPlugin(contextId: string): void;
 }
 
 /**
@@ -201,25 +199,13 @@ export interface WebuiPage {
 }
 
 /**
- * 通过 declaration merging 向 core 的 PluginModule 注入
- * 纯展示元数据字段（extends）与 host-RPC 槽位（actions）。
- *
- * WebuiPage 注册路径为运行时 `useWebuiService(ctx).registerPage(...)`，
- * 不作为静态 module 字段存在。
+ * 通过 declaration merging 向插件定义注入展示元数据 extends。
+ * 页面与页面动作不是静态字段：在 apply 里经 `webuiServer.registerPage / registerAction` 登记。
  */
 declare module '@aalis/core' {
   interface PluginMeta {
     /** 声明该插件对 core 的扩展（新增事件、钩子），仅用于前端展示。 */
     extends?: ExtendDeclaration;
-    /**
-     * 插件 RPC 动作表 —— 供 host（webui-server 等）远程调用。
-     *
-     * core 不感知此字段；host 路由层（POST /api/page-action/:plugin/:method）
-     * 在权限闸门放行后以插件自身的 `entry.context` 调用 handler。
-     * 第三参 caller 为路由层解析出的调用者身份，handler 可用它做业务级
-     * 检查（如"不能委托超出自身持有的能力"）；忽略该参数即向后兼容。
-     */
-    actions?: Record<string, (ctx: Context, args: Record<string, unknown>, caller?: UserIdentity) => Promise<unknown>>;
   }
 }
 
@@ -238,59 +224,23 @@ declare module '@aalis/schema-config' {
   }
 }
 
-// ----- 领域 helper -----
-
-/**
- * Scoped WebUI 服务：在插件 apply() 中注册页面，自动绑定到当前 ctx 生命周期。
- */
-export interface ScopedWebuiService {
-  /** 注册页面；返回 dispose（与 ctx 生命周期绑定）。 */
-  registerPage(page: WebuiPage): () => void;
-  /** 获取底层 service（未就绪时为 undefined）。 */
-  readonly raw: WebUIService | undefined;
-}
-
-/**
- * 获取 ScopedWebuiService。
- *
- * 实现委托给 `ctx.whenService('webui-server', ...)`：每次 webui-server
- * 重新 provide（bounce/replace）都会重新调用 `registerPage`，让插件页面
- * 自动重挂；上次注册的 cleanup 在 provider 下线时自动释放。
- */
-export function useWebuiService(ctx: Context): ScopedWebuiService {
-  const contextId = ctx.id || 'unknown';
-  return {
-    registerPage(page: WebuiPage): () => void {
-      return ctx.whenService<WebUIService>('webui-server', svc => svc.registerPage(page, contextId));
-    },
-    get raw() {
-      return ctx.getService<WebUIService>('webui-server');
-    },
-  };
-}
-
 /**
  * 插件可以声明它对 core 做了哪些扩展，用于前端展示和文档生成。
  *
- * 仅是元数据描述，core 不会读取也不会校验，仅透传给 WebUI 展示。
- *
- * 字段名是 `extends`（PluginModule 契约与消费端一致）；它是保留字，具名导出
- * 须用别名形式：
+ * 仅是元数据描述，core 不会读取也不会校验，仅透传给 WebUI 展示。写在 definePlugin 的 `extends` 字段里：
  *
  * @example
- * const ext: ExtendDeclaration = {
- *   events: ['scheduler:tick', 'scheduler:error'],
- *   hooks: ['schedule:before'],
- * };
- * export { ext as extends };
+ * definePlugin({
+ *   name: '@aalis/plugin-scheduler',
+ *   extends: { events: ['scheduler:tick', 'scheduler:error'], hooks: ['schedule:before'] },
+ *   …
+ * });
  */
 export interface ExtendDeclaration {
   /** 该插件新增的自定义事件名 */
   events?: string[];
   /** 该插件新增的自定义钩子名 */
   hooks?: string[];
-  /** 该插件向哪些服务混入了方法（服务名 → 方法名列表），仅用于前端展示。 */
-  mixins?: Record<string, string[]>;
 }
 
 // ----- 子系统展示目录 -----
@@ -300,7 +250,7 @@ export interface ExtendDeclaration {
  *
  * **职责边界**：
  * - 这是 **WebUI 展示层契约**，唯一消费者是 webui-server 的 `/api/service-groups` 路由。
- * - `core` 完全不知道 subsystem 概念，仅在 PluginModule 上保留一个透传字段
+ * - `core` 不解释 subsystem 的取值，插件定义上只有一个透传的字符串字段
  *   `subsystem?: string`（不读不解释，纯粹搬运给 WebUI）。
  * - 本表只描述 **展示元数据**（中文 label / 排序 / icon），**不再写死插件归属**。
  *   归属由每个插件自己在 index.ts 中声明：`export const subsystem = 'llm';`
@@ -311,7 +261,7 @@ export interface ExtendDeclaration {
  *   - webui-api 不再反向耦合具体插件 npm 名
  */
 export interface SubsystemMetadata {
-  /** subsystem id（与 PluginModule.subsystem 对应） */
+  /** subsystem id（与插件定义的 subsystem 字段对应） */
   id: string;
   /** 显示名（中文 label） */
   label: string;
@@ -357,14 +307,6 @@ export interface WebuiClientProvider {
   getClientDir(): string;
   /** 可选展示名（多前端切换/选择时用） */
   label?: string;
-}
-
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    'webui-server': WebUIService;
-    'webui-client': WebuiClientProvider;
-  }
 }
 
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
