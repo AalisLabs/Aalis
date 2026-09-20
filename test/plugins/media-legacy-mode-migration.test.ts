@@ -1,4 +1,6 @@
-import { App } from '@aalis/core';
+import { processService } from '@aalis/api-process';
+import { storage } from '@aalis/api-storage';
+import { App, hostConfig, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import media, { legacyVisionMode } from '../../packages/plugin-media/src/index.js';
 
@@ -8,11 +10,16 @@ import media, { legacyVisionMode } from '../../packages/plugin-media/src/index.j
 
 async function applyWith(vision: Record<string, unknown>) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  app.ctx.provide('process', {} as never);
-  app.ctx.provide('storage', {} as never);
+  const host = app.bind({ provide, hostConfig });
+  // media 的 process / storage 是 required：桩不在场时插件停在 pending，apply 根本不跑，
+  // 「配置没被改写」会把未激活伪装成迁移正确。
+  host.provide(processService, {} as never);
+  host.provide(storage, {} as never);
   await app.plugin(media, { vision });
   await app.plugins.idle();
-  const stored = app.ctx.config.getPluginConfig<{ vision?: Record<string, unknown> }>('@aalis/plugin-media');
+  const state = app.plugins.getPlugin(media.name)?.state;
+  if (state !== 'active') throw new Error(`plugin-media 未激活（state=${state}），断言无效`);
+  const stored = host.hostConfig.require().getPluginConfig<{ vision?: Record<string, unknown> }>('@aalis/plugin-media');
   await app.stop().catch(() => {});
   return stored;
 }

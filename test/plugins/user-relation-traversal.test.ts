@@ -1,16 +1,28 @@
-import { describe, expect, it } from 'vitest';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
+import { afterEach, describe, expect, it } from 'vitest';
+import { memory } from '../../packages/api-memory/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import { RelationService } from '../../packages/plugin-user-relation/src/service.js';
 import { RelationStore } from '../../packages/plugin-user-relation/src/store.js';
 
+/** 每个用例各建自己的 App（图数据彼此隔离），用例结束统一停掉，监听器不外溢 */
+const booted: App[] = [];
+
+afterEach(async () => {
+  for (const app of booted.splice(0)) {
+    await app.stop();
+  }
+});
+
 async function setup() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(memoryInMemory);
-  const mem = app.ctx.getService<MemoryService>('memory');
-  if (!mem) throw new Error('no memory');
-  return new RelationService(new RelationStore(mem));
+  booted.push(app);
+  await app.plugin(memoryInMemory);
+  await app.plugins.idle();
+  // 激活闸下「没激活」不报错，核一下状态，别让空存储伪装成绿
+  const state = app.plugins.getPlugin(memoryInMemory.name)?.state;
+  if (state !== 'active') throw new Error(`memory-inmemory 插件未激活（state=${state}）`);
+  return new RelationService(new RelationStore(app.bind({ memory }).memory.require()));
 }
 
 describe('plugin-user-relation: 多层遍历', () => {

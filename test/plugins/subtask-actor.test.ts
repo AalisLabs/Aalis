@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { App, provide, services } from '../../packages/core/src/index.js';
+import { App, events, provide, services } from '../../packages/core/src/index.js';
 import subtask from '../../packages/plugin-subtask/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 
@@ -21,7 +21,7 @@ async function setup(): Promise<{
   inbound: IncomingMessage[];
 }> {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  const host = app.bind({ provide, services });
+  const host = app.bind({ provide, services, events });
   const handlers = new Map<string, Handler>();
   host.provide(tools, {
     register(tool: { definition: { function: { name: string } }; handler: Handler }) {
@@ -40,7 +40,7 @@ async function setup(): Promise<{
 
   // 派发走的是 inbound:message 通道：只订阅这一个事件，收到即证明通道正确
   const inbound: IncomingMessage[] = [];
-  app.ctx.on('inbound:message', message => {
+  host.events.on('inbound:message', message => {
     inbound.push(message);
   });
 

@@ -1,6 +1,7 @@
 import { App, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 
@@ -25,10 +26,11 @@ function fakeMemory() {
 
 async function setup() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  app.ctx.provide('memory', fakeMemory() as never);
   // 桩 webui-server：页面动作登记到这里，测试按 method 取处理函数
   const actions = new Map<string, WebuiActionHandler>();
-  const host = app.bind({ provide });
+  const host = app.bind({ provide, sessionManager });
+  // memory 是会话管理的 required 依赖：不先摆上，插件会停在 pending
+  host.provide(memory, fakeMemory() as never);
   host.provide(webuiServer, {
     registerPage: () => () => {},
     registerAction(method: string, handler: WebuiActionHandler) {
@@ -36,10 +38,11 @@ async function setup() {
       return () => void actions.delete(method);
     },
   } as never);
-  await app.ctx.useModule(sessionManagerPlugin, {});
+  await app.plugin(sessionManagerPlugin, {});
   await app.plugins.idle();
-  const sm = app.ctx.getService<SessionManagerService>('session-manager');
-  if (!sm) throw new Error('session-manager 服务未注册');
+  const state = app.plugins.getPlugin(sessionManagerPlugin.name)?.state;
+  if (state !== 'active') throw new Error(`会话管理未激活（state=${state}）`);
+  const sm = host.sessionManager.require();
   return { app, sm, actions };
 }
 

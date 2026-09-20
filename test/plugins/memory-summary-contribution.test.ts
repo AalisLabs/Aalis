@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
-import { App, contributions, logger, provide, services } from '../../packages/core/src/index.js';
+import { App, contributions, definePlugin, logger, provide, services } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
@@ -32,21 +32,46 @@ function fakeLLMModel(contextLength: number): LLMModel {
   };
 }
 
+/** 不指定窗口时用的大窗口：预算远超用例里的摘要长度，截断路径不会被误触发 */
+const ROOMY_CONTEXT_LENGTH = 128_000;
+
+const started: App[] = [];
+afterEach(async () => {
+  for (const app of started.splice(0)) await app.stop();
+});
+
+/**
+ * 摘要插件把 memory 与 llm 都声明为 required：两者缺一它就停在 pending，
+ * 贡献根本不会登记。所以这里总是先备齐服务，再装插件并核激活。
+ */
 async function setup(opts: { contextLength?: number; config?: Record<string, unknown> } = {}) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  started.push(app);
   const host = app.bind({ provide, services });
   /** 组装器只要「枚举贡献」与「记日志」两样能力，从根激活绑定即可 */
   const assembly = app.bind({ contributions, logger });
-  await app.ctx.useModule(memoryInMemory);
+  await app.plugin(memoryInMemory);
+  await app.plugins.idle();
   const store = host.services.get(memory);
   if (!store) throw new Error('memory 服务未就绪');
-  // contextLength 未给 = 完全不注册 llm，走插件内 4096 兜底预算
-  if (opts.contextLength !== undefined) {
-    host.provide(llm, fakeLLMModel(opts.contextLength));
-  }
-  await app.ctx.useModule(memorySummary, opts.config ?? {});
+  host.provide(llm, fakeLLMModel(opts.contextLength ?? ROOMY_CONTEXT_LENGTH));
+  await app.plugin(memorySummary, opts.config ?? {});
   await app.plugins.idle();
+  if (app.plugins.getPlugin(memorySummary.name)?.state !== 'active') {
+    throw new Error('plugin-memory-summary 未激活');
+  }
   return { app, assembly, memory: store };
+}
+
+/** 换个身份往 agent:prompt 交一块固定文本的探针插件（登记自动归属这次激活，键前缀即插件名） */
+function anchorProbe(name: string, id: string, anchor: string, text: string) {
+  return definePlugin({
+    name,
+    uses: { contributions },
+    apply({ contributions }) {
+      contributions.contribute(POINT, { id, anchor, build: () => text } as never);
+    },
+  });
 }
 
 async function seedSummary(store: MemoryService, sessionId: string, summary: string): Promise<void> {
@@ -114,11 +139,13 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
     await seedSummary(memory, 's-a', 'SUM-BODY 用户偏好夜间工作');
 
     // 同槽区对照：identity 落首条 system 后，knowledge 落头部 system 区末尾并先于 context。
-    // knowledge 探针的 ctx id 必须**码元序排在被测插件全局键之后**（插件经 useModule
-    // 加载，键形如 `root#@aalis/plugin-...`，故用 zz- 前缀）——否则被测块错标成
-    // knowledge 时两者仍按同样次序落位，断言恒真、变异测不出。
-    app.ctx.fork('probe-identity').contribute(POINT, { id: 'idn', anchor: 'identity', build: () => 'IDN' } as never);
-    app.ctx.fork('zz-probe-knowledge').contribute(POINT, { id: 'kn', anchor: 'knowledge', build: () => 'KN' } as never);
+    // knowledge 探针的插件名必须**码元序排在被测插件全局键之后**：被测键是
+    // `@aalis/plugin-memory-summary/memory-summary`，首字符 '@'(0x40) 排在字母之前，
+    // 故 `zz-` 前缀稳压其后。否则被测块错标成 knowledge 时两者仍按同样次序落位，
+    // 断言恒真、变异测不出。
+    await app.plugin(anchorProbe('probe-identity', 'idn', 'identity', 'IDN'));
+    await app.plugin(anchorProbe('zz-probe-knowledge', 'kn', 'knowledge', 'KN'));
+    await app.plugins.idle();
 
     const messages = baseMessages();
     await assemblePromptContributions(assembly, { messages, sessionId: 's-a' });
@@ -164,9 +191,13 @@ describe('plugin-memory-summary: agent:prompt 贡献', () => {
     expect(content.endsWith(longSummary.slice(0, 1800) + TRUNCATED_SUFFIX)).toBe(true);
   });
 
-  it('无 LLM 时按 4096 兜底 contextLength 计算预算（下限 512 tokens）', async () => {
-    // 无 llm entry → contextLength 兜底 4096；floor(4096 × 0.05)=204 被下限抬到 512 → maxChars = 1536
-    const { assembly, memory } = await setup();
+  it('摘要模型解析落空时按 4096 兜底 contextLength 计算预算（下限 512 tokens）', async () => {
+    // custom 指定的摘要模型不存在 → 解析落空（自动压缩静默不跑的那条路径）→ contextLength
+    // 兜底 4096；floor(4096 × 0.05)=204 被下限抬到 512 → maxChars = 1536。
+    // 在场的那个 llm 窗口是 128000：兜底若失效，预算 6400 → maxChars 19200，全文进、断言转红。
+    const { assembly, memory } = await setup({
+      config: { summaryModelMode: 'custom', summaryLLM: { provider: '不存在的供应商', model: '不存在的模型' } },
+    });
     const longSummary = `HEAD-MARKER${'x'.repeat(2000)}TAIL-MARKER`;
     await seedSummary(memory, 's-a', longSummary);
 

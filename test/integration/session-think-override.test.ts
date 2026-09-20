@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentService } from '../../packages/api-agent/src/index.js';
-import type { CommandService } from '../../packages/api-commands/src/index.js';
+import { agent as agentService } from '../../packages/api-agent/src/index.js';
+import { commands as commandsService } from '../../packages/api-commands/src/index.js';
 import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
-import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
+import { sessionManager as sessionManagerService } from '../../packages/api-session-manager/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
+import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
@@ -21,12 +22,14 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 async function loadStack(recorder: ChatModelRequest[]) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(createMockLLMPlugin({ responses: [{ content: 'ok' }], recorder }));
-  await app.ctx.useModule(memoryInMemoryPlugin);
-  await app.ctx.useModule(messageArchivePlugin, { debugLogs: false });
-  await app.ctx.useModule(commandsPlugin, {});
-  await app.ctx.useModule(sessionManagerPlugin, {});
-  await app.ctx.useModule(agentPlugin, {
+  await app.plugin(createMockLLMPlugin({ responses: [{ content: 'ok' }], recorder }));
+  await app.plugin(memoryInMemoryPlugin);
+  await app.plugin(messageArchivePlugin, { debugLogs: false });
+  // gateway 是 plugin-commands 的 required 依赖：生产里指令插件只在网关在场时才激活
+  await app.plugin(gatewayPlugin, {});
+  await app.plugin(commandsPlugin, {});
+  await app.plugin(sessionManagerPlugin, {});
+  await app.plugin(agentPlugin, {
     systemPrompt: 'test bot',
     historyLimit: 10,
     memoryTokenBudget: 1024,
@@ -34,11 +37,13 @@ async function loadStack(recorder: ChatModelRequest[]) {
     preferredModel: '',
   });
   await app.plugins.idle();
-  const agent = app.ctx.getService<AgentService>('agent');
-  const sm = app.ctx.getService<SessionManagerService>('session-manager');
-  const commands = app.ctx.getService<CommandService>('commands');
-  if (!agent || !sm || !commands) throw new Error('服务缺失');
-  return { app, agent, sm, commands };
+  // 装载过激活闸：依赖没凑齐的插件停在 pending 而不报错，会让「整条链根本没跑」伪装成绿
+  for (const id of [commandsPlugin.name, sessionManagerPlugin.name, agentPlugin.name]) {
+    const state = app.plugins.getPlugin(id)?.state;
+    if (state !== 'active') throw new Error(`插件 ${id} 未激活（state=${state}）`);
+  }
+  const host = app.bind({ agent: agentService, sessionManager: sessionManagerService, commands: commandsService });
+  return { app, agent: host.agent.require(), sm: host.sessionManager.require(), commands: host.commands.require() };
 }
 
 const incoming = (sessionId: string): IncomingMessage => ({

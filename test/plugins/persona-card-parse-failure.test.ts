@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { PersonaService } from '../../packages/api-persona/src/index.js';
-import { App, type Logger } from '../../packages/core/src/index.js';
+import { type PersonaService, persona } from '../../packages/api-persona/src/index.js';
+import { App, type Logger, services } from '../../packages/core/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 
@@ -42,10 +42,11 @@ describe('persona 坏角色卡的告警与守卫（真 fs）', () => {
   let app: App;
   let logs: Recorded[];
 
-  const bootPersona = async (persona: string): Promise<PersonaService> => {
+  const bootPersona = async (personaName: string): Promise<PersonaService> => {
     logs = [];
     app = new App({ config: { name: 'T', logLevel: 'debug', plugins: {} }, logger: recordingLogger(logs) });
-    await app.ctx.useModule(storageLocal, {
+    // storage 先装：persona 的 storage 是可选依赖，缺席时它照样激活，只是一张卡都读不到
+    await app.plugin(storageLocal, {
       roots: [
         {
           name: 'data',
@@ -59,8 +60,14 @@ describe('persona 坏角色卡的告警与守卫（真 fs）', () => {
         },
       ],
     });
-    await app.ctx.useModule(personaPlugin, { persona, personasDir: 'data/personas' });
-    return app.ctx.getService<PersonaService>('persona')!;
+    await app.plugin(personaPlugin, { persona: personaName, personasDir: 'data/personas' });
+    await app.plugins.idle();
+    // 停在 pending 的插件一行都不跑，日志断言会退化成「什么都没发生」的假绿
+    expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
+    expect(app.plugins.getPlugin(personaPlugin.name)?.state, 'persona 未激活').toBe('active');
+    const svc = app.bind({ services }).services.get(persona);
+    if (!svc) throw new Error('persona 服务未就绪');
+    return svc;
   };
 
   beforeEach(() => {

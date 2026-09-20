@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { LLMModel } from '../../packages/api-llm/src/index.js';
+import { llm } from '../../packages/api-llm/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 
@@ -32,9 +32,13 @@ function stubOllama(caps: Record<string, string[] | null>): void {
 async function registeredIds(caps: Record<string, string[] | null>, config: Record<string, unknown> = {}) {
   stubOllama(caps);
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(ollama, { baseUrl: 'http://127.0.0.1:11434', ...config });
+  const host = app.bind({ llm });
+  await app.plugin(ollama, { baseUrl: 'http://127.0.0.1:11434', ...config });
   await app.plugins.idle();
-  const entries = app.ctx.getAllServices<LLMModel>('llm').map(e => e.instance.id);
+  // 插件没激活时 entry 表恒空，`toEqual([...])` 只会红在"少了谁"上；先点名真实原因。
+  if (app.plugins.getPlugin('@aalis/plugin-llm-ollama')?.state !== 'active')
+    throw new Error('plugin-llm-ollama 未激活');
+  const entries = host.llm.all().map(e => e.instance.id);
   await app.stop();
   return entries;
 }

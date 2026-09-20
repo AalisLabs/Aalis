@@ -2,9 +2,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { AgentService } from '../../packages/api-agent/src/index.js';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { agent as agentService } from '../../packages/api-agent/src/index.js';
+import { memory as memoryService } from '../../packages/api-memory/src/index.js';
+import { App, events } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
@@ -51,14 +51,18 @@ const cardYaml = (clientSide: boolean): string =>
     '',
   ].join('\n');
 
+/** 宿主侧绑定：出站事件的观测口 + 回合驱动与历史核对所需的两个服务 */
+const bindHost = (app: App) => app.bind({ events, agent: agentService, memory: memoryService });
+
 describe('agent 重复回复守卫（outputFormat 人设 · 真 fs 角色卡）', () => {
   let base: string;
   let app: App;
+  let host: ReturnType<typeof bindHost>;
 
   const boot = async (clientSide: boolean): Promise<{ sent: OutgoingMessage[]; sessionId: string }> => {
     writeFileSync(join(base, 'personas', 'zz-fmt.yaml'), cardYaml(clientSide));
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocalPlugin, {
+    await app.plugin(storageLocalPlugin, {
       roots: [
         {
           name: 'data',
@@ -72,21 +76,29 @@ describe('agent 重复回复守卫（outputFormat 人设 · 真 fs 角色卡）'
         },
       ],
     });
-    await app.ctx.useModule(createMockLLMPlugin({ responses: [{ content: RAW_JSON }] }));
-    await app.ctx.useModule(memoryInMemoryPlugin);
-    await app.ctx.useModule(messageArchivePlugin, { debugLogs: false });
-    await app.ctx.useModule(personaPlugin, { persona: 'zz-fmt', personasDir: 'data/personas' });
-    await app.ctx.useModule(agentPlugin, AGENT_CONFIG);
+    await app.plugin(createMockLLMPlugin({ responses: [{ content: RAW_JSON }] }));
+    await app.plugin(memoryInMemoryPlugin);
+    await app.plugin(messageArchivePlugin, { debugLogs: false });
+    await app.plugin(personaPlugin, { persona: 'zz-fmt', personasDir: 'data/personas' });
+    await app.plugin(agentPlugin, AGENT_CONFIG);
+    await app.plugins.idle();
+    // 装载过激活闸：依赖没凑齐的插件停在 pending 而不报错，会让「守卫根本没跑」伪装成绿
+    for (const id of [storageLocalPlugin.name, personaPlugin.name, agentPlugin.name]) {
+      const state = app.plugins.getPlugin(id)?.state;
+      if (state !== 'active') throw new Error(`插件 ${id} 未激活（state=${state}）`);
+    }
+
+    host = bindHost(app);
 
     const sent: OutgoingMessage[] = [];
-    app.ctx.on('outbound:message', (msg: OutgoingMessage) => {
+    host.events.on('outbound:message', msg => {
       sent.push(msg);
     });
     return { sent, sessionId: `test:dup-${clientSide ? 'client' : 'server'}` };
   };
 
   const say = async (sessionId: string): Promise<void> => {
-    await app.ctx.getService<AgentService>('agent')!.handleMessage({
+    await host.agent.require().handleMessage({
       content: '你好',
       sessionId,
       platform: 'test',
@@ -114,7 +126,7 @@ describe('agent 重复回复守卫（outputFormat 人设 · 真 fs 角色卡）'
     expect(sent.length, '第二轮应被重复守卫拦下').toBe(1);
 
     // 历史里只留一条 assistant，且是整串 JSON（落库口径 = archiveContent）
-    const history = await app.ctx.getService<MemoryService>('memory')!.getHistory(sessionId, 50);
+    const history = await host.memory.require().getHistory(sessionId, 50);
     const assistants = history.filter(m => m.role === 'assistant');
     expect(assistants.length).toBe(1);
     expect(assistants[0].content).toBe(JSON.stringify({ mood: '平静', message: '你好呀' }));

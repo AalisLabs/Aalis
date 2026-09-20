@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createStorageGateway, type StorageService } from '../../packages/api-storage/src/index.js';
+import { createStorageGateway, type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 
@@ -18,7 +18,7 @@ describe('storage.delete 删根守卫 (真 fs)', () => {
   let base: string;
   let ws: string;
   let app: App;
-  let storage: StorageService;
+  let gateway: StorageService;
 
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-delroot-'));
@@ -26,7 +26,7 @@ describe('storage.delete 删根守卫 (真 fs)', () => {
     mkdirSync(join(ws, 'sub'), { recursive: true });
     writeFileSync(join(ws, 'keep.txt'), 'survivor');
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocal, {
+    await app.plugin(storageLocal, {
       roots: [
         {
           name: 'ws',
@@ -40,7 +40,11 @@ describe('storage.delete 删根守卫 (真 fs)', () => {
         },
       ],
     });
-    storage = createStorageGateway(app.ctx);
+    await app.plugins.idle();
+    // 插件没激活的话网关会一路 404 根，测出来的「拒绝」就与守卫无关了
+    const state = app.plugins.getPlugin(storageLocal.name)?.state;
+    if (state !== 'active') throw new Error(`storage-local 未激活（state=${state}）`);
+    gateway = createStorageGateway(app.bind({ storage }).storage);
   });
 
   afterEach(async () => {
@@ -49,19 +53,19 @@ describe('storage.delete 删根守卫 (真 fs)', () => {
   });
 
   it('字面根 URI → 拒绝', async () => {
-    await expect(storage.delete('ws:/')).rejects.toThrow(/不能删除根目录/);
+    await expect(gateway.delete('ws:/')).rejects.toThrow(/不能删除根目录/);
     expect(existsSync(join(ws, 'keep.txt'))).toBe(true);
   });
 
   it('解析回根的路径（sub/..）→ 拒绝，根内容原样幸存', async () => {
-    await expect(storage.delete('ws:/sub/..')).rejects.toThrow(/不能删除根目录|路径不合法/);
+    await expect(gateway.delete('ws:/sub/..')).rejects.toThrow(/不能删除根目录|路径不合法/);
     expect(existsSync(join(ws, 'keep.txt'))).toBe(true);
     expect(existsSync(join(ws, 'sub'))).toBe(true);
   });
 
   it('正常子路径删除不受影响', async () => {
     writeFileSync(join(ws, 'sub', 'x.txt'), 'x');
-    await storage.delete('ws:/sub/x.txt');
+    await gateway.delete('ws:/sub/x.txt');
     expect(existsSync(join(ws, 'sub', 'x.txt'))).toBe(false);
     expect(existsSync(join(ws, 'keep.txt'))).toBe(true);
   });

@@ -2,7 +2,11 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writ
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createStorageGateway, type StorageService } from '../../packages/api-storage/src/index.js';
+import {
+  createStorageGateway,
+  type StorageService,
+  storage as storageService,
+} from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 
@@ -25,7 +29,7 @@ describe('storage.writeFile 权限位（真 fs）', () => {
     ws = join(base, 'ws');
     mkdirSync(ws, { recursive: true });
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocal, {
+    await app.plugin(storageLocal, {
       roots: [
         {
           name: 'ws',
@@ -39,7 +43,10 @@ describe('storage.writeFile 权限位（真 fs）', () => {
         },
       ],
     });
-    storage = createStorageGateway(app.ctx);
+    await app.plugins.idle();
+    // 停在 pending 会让网关的「未知存储根」看起来像路由出错，先把激活闸的结果钉死
+    expect(app.plugins.getPlugin(storageLocal.name)?.state, 'storage-local 未激活').toBe('active');
+    storage = createStorageGateway(app.bind({ storage: storageService }).storage);
   });
 
   afterEach(async () => {

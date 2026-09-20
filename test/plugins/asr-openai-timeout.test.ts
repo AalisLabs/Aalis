@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { asr } from '../../packages/api-asr/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import asrOpenai from '../../packages/plugin-asr-openai/src/index.js';
 
@@ -18,7 +19,7 @@ function hangingFetch(): typeof fetch {
     })) as unknown as typeof fetch;
 }
 
-type Asr = { transcribe: (i: unknown) => Promise<{ text: string }> };
+const AUDIO = { kind: 'audio', data: 'data:audio/wav;base64,AAAA' } as const;
 
 describe('plugin-asr-openai: 请求必须带超时', () => {
   const apps: App[] = [];
@@ -27,18 +28,25 @@ describe('plugin-asr-openai: 请求必须带超时', () => {
     for (const a of apps.splice(0)) await a.stop().catch(() => {});
   });
 
-  it('对端不应答时在 timeoutMs 内被掐断，而不是永久挂住', async () => {
-    vi.stubGlobal('fetch', hangingFetch());
+  /** 装载插件并捞出它 provide 的 asr 服务；激活闸会把没激活的插件静静留在 pending，故先核状态 */
+  async function bootOpenai(config: Record<string, unknown>): Promise<App> {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     apps.push(app);
-    // 实现有 1000ms 地板（与 embedding-openai 同），故取 1000
-    await app.plugin(asrOpenai, { apiKey: 'k', timeoutMs: 1000 });
+    await app.plugin(asrOpenai, config);
     await app.plugins.idle();
-    const asr = app.ctx.getService<Asr>('asr');
-    expect(asr).toBeDefined();
+    expect(app.plugins.getPlugin(asrOpenai.name)?.state, '插件必须真的激活').toBe('active');
+    return app;
+  }
+
+  it('对端不应答时在 timeoutMs 内被掐断，而不是永久挂住', async () => {
+    vi.stubGlobal('fetch', hangingFetch());
+    // 实现有 1000ms 地板（与 embedding-openai 同），故取 1000
+    const app = await bootOpenai({ apiKey: 'k', timeoutMs: 1000 });
+    const service = app.bind({ asr }).asr.current;
+    expect(service).toBeDefined();
 
     const outcome = await Promise.race([
-      asr!.transcribe({ attachment: { data: 'data:audio/wav;base64,AAAA' } }).then(
+      service!.transcribe({ attachment: AUDIO }).then(
         () => 'resolved',
         (e: Error) => `rejected:${e.name}`,
       ),
@@ -52,11 +60,8 @@ describe('plugin-asr-openai: 请求必须带超时', () => {
       'fetch',
       (async () => new Response(JSON.stringify({ text: '你好' }), { status: 200 })) as unknown as typeof fetch,
     );
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    apps.push(app);
-    await app.plugin(asrOpenai, { apiKey: 'k' });
-    await app.plugins.idle();
-    const r = await app.ctx.getService<Asr>('asr')!.transcribe({ attachment: { data: 'data:audio/wav;base64,AAAA' } });
+    const app = await bootOpenai({ apiKey: 'k' });
+    const r = await app.bind({ asr }).asr.require().transcribe({ attachment: AUDIO });
     expect(r.text).toBe('你好');
   });
 });

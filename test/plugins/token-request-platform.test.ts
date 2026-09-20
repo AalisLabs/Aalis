@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TokenUsageEvent } from '../../packages/api-agent/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { App, events } from '../../packages/core/src/index.js';
 import agent from '../../packages/plugin-agent/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchive from '../../packages/plugin-message-archive/src/index.js';
@@ -32,18 +32,29 @@ afterEach(async () => {
   await app?.stop();
 });
 
-async function boot(): Promise<TokenUsageEvent[]> {
+/** 激活闸下「插件没激活」会让缺断言的用例伪装成绿：装载后逐个核实状态 */
+function requireActive(...names: string[]): void {
+  for (const name of names) {
+    const state = app.plugins.getPlugin(name)?.state;
+    if (state !== 'active') throw new Error(`插件 "${name}" 未激活（state=${state}）`);
+  }
+}
+
+async function boot() {
   app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(createMockLLMPlugin({}));
+  const mockLLM = createMockLLMPlugin({});
+  await app.plugin(mockLLM);
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.register(messageArchive, { debugLogs: false });
   await app.plugins.register(agent, AGENT_CONFIG);
   await app.plugins.idle();
+  requireActive(mockLLM.name, memoryInMemory.name, messageArchive.name, agent.name);
+  const host = app.bind({ events });
   const seen: TokenUsageEvent[] = [];
-  app.ctx.on('token:usage', (u: TokenUsageEvent) => {
+  host.events.on('token:usage', (u: TokenUsageEvent) => {
     seen.push(u);
   });
-  return seen;
+  return { seen, host };
 }
 
 describe('resolveSessionPlatform（webui-server 发射侧的平台归属）', () => {
@@ -68,15 +79,15 @@ describe('resolveSessionPlatform（webui-server 发射侧的平台归属）', ()
 
 describe('token:request 的平台归属', () => {
   it('缺省 platform：快照按 webui 归属，不发空平台', async () => {
-    const seen = await boot();
-    await app.ctx.emit('token:request', { sessionId: 'webui-default' });
+    const { seen, host } = await boot();
+    await host.events.emit('token:request', { sessionId: 'webui-default' });
     expect(seen.length).toBe(1);
     expect(seen[0].platform).toBe('webui');
   });
 
   it('显式 platform 照用，不被兜底覆盖', async () => {
-    const seen = await boot();
-    await app.ctx.emit('token:request', { sessionId: 'onebot:1', platform: 'onebot' });
+    const { seen, host } = await boot();
+    await host.events.emit('token:request', { sessionId: 'onebot:1', platform: 'onebot' });
     expect(seen.length).toBe(1);
     expect(seen[0].platform).toBe('onebot');
   });

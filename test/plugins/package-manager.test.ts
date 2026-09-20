@@ -18,7 +18,7 @@ type ExecResult = Awaited<ReturnType<ProcessService['execFile']>>;
 // ════════════════════════════════════════════════════════════
 // package-manager — install/uninstall 集成测试（mock process 网关）
 //
-// createPackageManager(deps) 已从 ctx/网关解耦：所有文件操作走 process 子进程
+// createPackageManager(deps) 只吃一张显式依赖表：所有文件操作走 process 子进程
 // （npm/tar/mkdir/rm/test），目标是真实 <cwd>/packages（不经 storage 沙盒——
 // 沙盒根是 workspace，够不到 packages，历史 bug 即源于此）。
 // 覆盖成功 / 已存在 / 失败回滚 / pack 解析失败 / 卸载（含目录不存在仍移除）。
@@ -164,7 +164,7 @@ describe('install（只有一条路径：写根依赖）', () => {
   });
 
   it('非法包名在**服务层**被拒，一次 npm 都不发', async () => {
-    // 服务经 ctx.provide 公开，插件能绕过 HTTP 路由直接调——校验不能只放在路由上。
+    // 服务经 provide 公开，插件能绕过 HTTP 路由直接调——校验不能只放在路由上。
     // `foo@.` / `@a/b@..` 是 npm 的本地目录 spec，`--force` 是真实存在的可发布包名。
     for (const evil of ['--force', 'foo@.', '@a/b@..', '../../etc', '', 'a b']) {
       const h = makeHarness({ json: { [rootPkg]: { dependencies: {} } } });
@@ -415,7 +415,7 @@ describe('update — 流程', () => {
   });
 
   it('拒绝更新传递依赖：npm 会提升进根依赖并留下嵌套第二份（两份 declare module 撞 TS2717）', async () => {
-    // 闸在服务层而非路由——服务经 ctx.provide 公开，插件能绕过前端直接调
+    // 闸在服务层而非路由——服务经 provide 公开，插件能绕过前端直接调
     const h = makeHarness({
       text: { [rootPkgPath]: '{"dependencies":{"@aalis/plugin-agent":"^0.9.0"}}' },
     });
@@ -696,8 +696,8 @@ describe('uninstall', () => {
 // 上面那组自锁闸用例注入的是假的 recoveryChannelProviders，从不执行 createService 里真正
 // 算这份名单的那几行——实测把 `id.split('/')[0]` 原样放回去，全量用例仍全绿。
 //
-// ⚠️ 第一版这条用例也是假绿：它断言的是 core 的 getAllServices 与 JS 的 String.split，
-// 一行 package-manager 的代码都没验。现在改为**真走 uninstallOne 的闸**——走真 Context、
+// ⚠️ 第一版这条用例也是假绿：它断言的是内核的服务枚举与 JS 的 String.split，
+// 一行 package-manager 的代码都没验。现在改为**真走 uninstallOne 的闸**——经 App 真装载、
 // 真 apply()、真 uninstall()，把 bug 放回去即转红。
 // ════════════════════════════════════════════════════════════
 describe('自锁闸：生产接线算出的撤销通道名单', () => {

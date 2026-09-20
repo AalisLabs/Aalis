@@ -17,6 +17,14 @@ import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
 // 驱动面全部走公开面：真 fs storage + 真 tools + app.plugins.unload（生产卸载路径）。
 // ════════════════════════════════════════════════════════════
 
+/** 插件停在 pending（required 依赖缺席）时会让整条用例悄悄空转，装载后当场判死 */
+function assertActive(app: App, ids: string[]): void {
+  for (const id of ids) {
+    const state = app.plugins.getPlugin(id)?.state;
+    if (state !== 'active') throw new Error(`插件 "${id}" 未激活（state=${state}）`);
+  }
+}
+
 describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
   let base: string;
   let app: App;
@@ -34,7 +42,7 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
 
   it('unload 后被阻塞的首节点放行：下游节点 skipped、run 记 cancelled', async () => {
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocalPlugin, {
+    await app.plugin(storageLocalPlugin, {
       roots: ['data', 'workspace'].map(name => ({
         name,
         path: join(base, name),
@@ -46,8 +54,8 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
         deletable: true,
       })),
     });
-    await app.ctx.useModule(toolsPlugin, {});
-    await app.ctx.useModule(cronEnginePlugin, {});
+    await app.plugin(toolsPlugin, {});
+    await app.plugin(cronEnginePlugin, {});
 
     // gate：卡住第一个节点，直到测试放行；downstream：只记录"我被跑了"
     let gateEntered!: () => void;
@@ -83,9 +91,14 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
       },
     });
 
-    // 经 app.plugin 注册（而非 ctx.useModule）才进插件注册表，unload 才拿得到它
     await app.plugin(workflowPlugin, { enableTools: false });
     await app.plugins.idle();
+    assertActive(app, [
+      '@aalis/plugin-storage-local',
+      '@aalis/plugin-tools',
+      '@aalis/plugin-cron-engine',
+      '@aalis/plugin-workflow',
+    ]);
     const host = app.bind({ services });
     const svc = host.services.get(workflow)!;
     await svc.defineWorkflow(

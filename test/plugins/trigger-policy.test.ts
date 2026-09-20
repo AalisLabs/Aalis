@@ -143,21 +143,21 @@ describe('checkMuteKeyword', () => {
 // decide()：poke 直触发与 triggerOnPoke 开关（走真实插件装配）
 // ════════════════════════════════════════════════════════════
 
-import { App, provide, services } from '@aalis/core';
+import { App, type Hooks, hooks, provide } from '@aalis/core';
 import { gateway } from '../../packages/api-gateway/src/index.js';
-import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
-import type { TriggerPolicyService } from '../../packages/plugin-trigger-policy/src/types.js';
+import triggerPolicyPlugin, { triggerPolicy } from '../../packages/plugin-trigger-policy/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 
 async function setupPolicy(config: Record<string, unknown> = {}) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  const host = app.bind({ provide, services });
+  const host = app.bind({ provide, hooks, triggerPolicy });
   host.provide(gateway, {} as never); // 满足 required 依赖；decide 本身不经过 gateway
   await app.plugins.register(triggerPolicyPlugin, config);
   await app.plugins.idle();
-  const svc = app.ctx.getService<TriggerPolicyService>('trigger-policy');
-  if (!svc) throw new Error('trigger-policy 服务未注册');
-  return { app, svc };
+  // 激活闸：required 依赖缺席时插件停在 pending 而不报错，不核状态会让整组用例伪装成绿
+  const state = app.plugins.getPlugin(triggerPolicyPlugin.name)?.state;
+  if (state !== 'active') throw new Error(`trigger-policy 插件未激活（state=${state}）`);
+  return { app, svc: host.triggerPolicy.require(), host };
 }
 
 const pokeMsg = (platform = 'onebot'): IncomingMessage =>
@@ -237,16 +237,11 @@ describe('trigger-policy config (triggerOnPoke)', () => {
 
 /** 直接驱动相位钩子链（不装 gateway/flow-control）：无 flow 状态时非 @ 群消息即 interval（default-pass） */
 async function runTriggerPhase(
-  app: App,
+  chain: Hooks,
   message: IncomingMessage,
 ): Promise<{ reached: boolean; message: IncomingMessage }> {
   let reached = false;
-  const runHookLoose = app.ctx.runHook.bind(app.ctx) as (
-    event: string,
-    data: unknown,
-    next: () => Promise<void>,
-  ) => Promise<unknown>;
-  await runHookLoose('inbound:trigger', { message, metadata: {}, agent: undefined }, async () => {
+  await chain.run('inbound:trigger', { message, metadata: {}, agent: undefined }, async () => {
     reached = true;
   });
   return { reached, message };
@@ -267,8 +262,8 @@ describe('trigger-policy inbound:trigger 授权身份', () => {
   it('interval 触发：回填无主体 actor（空 userId），不继承撞阈值那条消息的发言者身份', async () => {
     // 事故形态（2026-09 日志实测 1415 次 interval 触发）：authority 经 actor ?? {platform,userId}
     // 回退到最后发言者——99.4% 回合按陌生人 0 级判权，owner 恰好最后发言时整轮按 owner 执行。
-    const { app } = await setupPolicy();
-    const { reached, message } = await runTriggerPhase(app, groupMsg('随便聊聊'));
+    const { app, host } = await setupPolicy();
+    const { reached, message } = await runTriggerPhase(host.hooks, groupMsg('随便聊聊'));
     await app.stop();
     expect(reached).toBe(true);
     expect(message.triggerType).toBe('interval');
@@ -278,8 +273,8 @@ describe('trigger-policy inbound:trigger 授权身份', () => {
   });
 
   it('immediate（被 @）：点名者就是主体，actor 维持缺省', async () => {
-    const { app } = await setupPolicy();
-    const { reached, message } = await runTriggerPhase(app, groupMsg('<at self id="bot">Aalis</at> 在吗'));
+    const { app, host } = await setupPolicy();
+    const { reached, message } = await runTriggerPhase(host.hooks, groupMsg('<at self id="bot">Aalis</at> 在吗'));
     await app.stop();
     expect(reached).toBe(true);
     expect(message.triggerType).toBe('immediate');
@@ -289,7 +284,7 @@ describe('trigger-policy inbound:trigger 授权身份', () => {
   it('私聊纳入 scope 时的 interval：发言者就是唯一主体，不回填无主体 actor', async () => {
     // scope 可配成 `*` / `onebot:*` / `*:private`（WebUI 下拉一等公民值），私聊里没人 @ 就是 interval；
     // 若也回填无主体，owner 在私聊里调任何 sensitive 工具都会变成「权限不足」。
-    const { app } = await setupPolicy({ scopes: ['onebot:*'] });
+    const { app, host } = await setupPolicy({ scopes: ['onebot:*'] });
     const msg = {
       platform: 'onebot',
       sessionType: 'private',
@@ -297,7 +292,7 @@ describe('trigger-policy inbound:trigger 授权身份', () => {
       userId: 'owner-1',
       content: '帮我看下日志',
     } as unknown as IncomingMessage;
-    const { reached, message } = await runTriggerPhase(app, msg);
+    const { reached, message } = await runTriggerPhase(host.hooks, msg);
     await app.stop();
     expect(reached).toBe(true);
     expect(message.triggerType).toBe('interval');
@@ -305,10 +300,10 @@ describe('trigger-policy inbound:trigger 授权身份', () => {
   });
 
   it('interval 但消息已带 actor（委派等系统投递）：不覆盖既有授权身份', async () => {
-    const { app } = await setupPolicy();
+    const { app, host } = await setupPolicy();
     const msg = groupMsg('派发任务');
     msg.actor = { platform: 'webui', userId: 'console' };
-    const { message } = await runTriggerPhase(app, msg);
+    const { message } = await runTriggerPhase(host.hooks, msg);
     await app.stop();
     expect(message.triggerType).toBe('interval');
     expect(message.actor).toEqual({ platform: 'webui', userId: 'console' });

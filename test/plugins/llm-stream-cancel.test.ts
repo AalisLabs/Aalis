@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { LLMModel } from '../../packages/api-llm/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { type LLMModel, llm } from '../../packages/api-llm/src/index.js';
+import { App, services } from '../../packages/core/src/index.js';
 import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -12,11 +12,16 @@ import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 // 的流是 no-op，完整读完的路径不受影响。
 // ════════════════════════════════════════════════════════════
 
+const apps: App[] = [];
+
 async function makeModel(): Promise<LLMModel> {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(ollama, { baseUrl: 'http://127.0.0.1:11434', customModels: 'teststream' });
+  apps.push(app);
+  await app.plugin(ollama, { baseUrl: 'http://127.0.0.1:11434', customModels: 'teststream' });
   await app.plugins.idle();
-  const entries = app.ctx.getAllServices<LLMModel>('llm');
+  const state = app.plugins.getPlugin(ollama.name)?.state;
+  if (state !== 'active') throw new Error(`ollama 未激活（state=${state}）`);
+  const entries = app.bind({ services }).services.all(llm);
   const model = entries.find(e => e.instance.id.includes('teststream'))?.instance ?? entries[0]?.instance;
   if (!model) throw new Error('未注册出 llm model entry');
   return model;
@@ -44,8 +49,10 @@ function stubEndlessStream(): { cancelled: () => boolean } {
   return { cancelled: () => cancelled };
 }
 
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllGlobals();
+  // 装过插件的 App 要停掉：ollama 的模型发现会留下定时器，泄漏到别的用例
+  for (const a of apps.splice(0)) await a.stop().catch(() => {});
 });
 
 describe('chatStream 提前退出释放响应体', () => {

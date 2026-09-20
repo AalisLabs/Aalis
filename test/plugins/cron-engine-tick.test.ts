@@ -42,7 +42,10 @@ async function withEngine(startWall: number, fn: (h: Harness) => Promise<void> |
     if (e.level === 'warn') warns.push(e.message);
   });
   const app = new App({ config: { name: 'T', logLevel: 'warn', plugins: {} }, logHub: hub });
-  await app.ctx.useModule(cronEnginePlugin, {});
+  await app.plugin(cronEnginePlugin, {});
+  await app.plugins.idle();
+  if (app.plugins.getPlugin(cronEnginePlugin.name)?.state !== 'active')
+    throw new Error('cron-engine 未激活，后面的 tick 断言会变成空转');
   await app.start();
   const host = app.bind({ services });
   let wall = startWall;

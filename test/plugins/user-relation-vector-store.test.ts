@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { embedding } from '../../packages/api-embedding/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
+import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import { RelationService, RelationStore } from '../../packages/plugin-user-relation/src/index.js';
@@ -31,11 +31,29 @@ import {
 //     不多调 embed；向量丢失时自愈重算，且重算结果不再内嵌回节点。
 // ════════════════════════════════════════════════════════════
 
+const apps: App[] = [];
+
+afterEach(async () => {
+  // 逐个 try/finally：任一 stop 抛错也不能让后面的实例漏掉（数组已 splice，漏了就永久泄漏）
+  for (const a of apps.splice(0)) {
+    try {
+      await a.stop();
+    } catch {
+      /* 停不掉也要继续停下一个 */
+    }
+  }
+});
+
 async function makeStore() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(memoryInMemory);
-  const mem = app.ctx.getService<MemoryService>('memory');
-  if (!mem) throw new Error('memory service missing');
+  apps.push(app);
+  await app.plugin(memoryInMemory);
+  await app.plugins.idle();
+  // 装载过激活闸：没激活时服务根本不在，后面的断言会以「取不到 memory」的形式含糊失败
+  if (app.plugins.getPlugin(memoryInMemory.name)?.state !== 'active') {
+    throw new Error('memory 插件未激活');
+  }
+  const mem = app.bind({ memory }).memory.require();
   return { app, mem, store: new RelationStore(mem) };
 }
 

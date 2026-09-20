@@ -1,6 +1,6 @@
-import { App, type LogEntry, LogHub } from '@aalis/core';
+import { App, events, type LogEntry, LogHub } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { PlatformAdapter } from '../../packages/api-platform/src/index.js';
+import { platform } from '../../packages/api-platform/src/index.js';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
 
 // stdin / stdout 不是 TTY（日志重定向、容器、systemd）时 CLI 不得接管终端：
@@ -31,17 +31,21 @@ describe('plugin-cli 非 TTY', () => {
     const offLog = LogHub.default.onEntry(e => entries.push(e));
 
     const app = new App({ config: { name: 'T', logLevel: 'info', plugins: {} } });
+    // 宿主侧按根激活取绑定接口：事件订阅与平台枚举都走公开门面
+    const host = app.bind({ events, platform });
     const claimed = vi.fn();
-    app.ctx.on('terminal:claimed', claimed);
+    host.events.on('terminal:claimed', claimed);
     try {
-      await app.ctx.useModule(cliPlugin, {});
+      await app.plugin(cliPlugin, {});
       await app.start();
+      // 插件若停在 pending，「没接管终端」三条会一起变成恒真
+      expect(app.plugins.getPlugin(cliPlugin.name)?.state, 'cli 插件未激活').toBe('active');
 
       expect(writes.join('')).not.toContain(ALT_SCREEN);
       expect(claimed).not.toHaveBeenCalled();
       expect(entries.some(e => e.message.includes('CLI 界面未启动'))).toBe(true);
 
-      const cli = app.ctx.getAllServices<PlatformAdapter>('platform').find(p => p.instance.platform === 'cli');
+      const cli = host.platform.all().find(p => p.instance.platform === 'cli');
       expect(cli, 'cli 平台服务应已注册').toBeDefined();
       await cli?.instance.sendMessage('cli-default', 'probe-reply');
       expect(entries.some(e => e.message.includes('[cli] probe-reply'))).toBe(true);
