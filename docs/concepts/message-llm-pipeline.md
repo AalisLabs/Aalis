@@ -333,4 +333,4 @@ default model 通过 `ServiceContainer.setPreference('llm', preferredContextId)`
 
 - `docs/services/llm.md` — `LLMModel` / `ChatModelRequest` / `resolveLLMModel` / per-model entry 注册全貌。
 - `docs/services/authority.md` — 数字等级鉴权、`actor` 授权身份、HITL 确认。
-- `docs/core/service.md` — `provide` / `getService` / `getAllServices` / `setPreference` / `whenService`。
+- `docs/core/service.md` — 描述符、`ServiceRef`、`services.prefer`。

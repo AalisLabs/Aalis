@@ -1,162 +1,168 @@
-# 惰性服务访问（Lazy Service Access）
+# 惰性服务访问
 
-Aalis 的服务图是"活"的：服务名是稳定的，但名字背后的实例会在运行时被替换——插件热重载、或用户切换偏好 provider，都会换掉某个服务名当前的胜者实例。因此访问服务有一条基本原则：**每次要用就重新 `ctx.getService()`，不要把拿到的实例缓存进类字段或闭包。**
+Aalis 的服务图是活的：服务名稳定，名字背后的实例会在运行时被替换——插件热重载、或用户切换偏好 provider，都会换掉某个服务名当前的胜者。访问服务的基本原则是：**每次查询重新解析**。`ServiceRef.current` 与 `require()` 返回的是本次解析的提供者本身，不是自动转发所有调用的代理；把它存进类字段或闭包，之后的调用不会跟着换人。
 
-这篇讲清楚为什么要这样，以及两个配套工具：什么时候改用 `ctx.whenService()`、`*-api` 的"惰性网关"为什么是推荐的默认做法，还有 `requiresBounceOnDepChange` 这个逃生舱什么时候才该用。
+这篇说明为什么要这样，以及配套手段：`follow`、登记型绑定门面、以及吃 `ServiceRef` 的惰性网关。
 
-## 为什么"每次都查"
+## 每次查询重新解析
 
-`getService()` 返回的是"此刻的实例快照"——之后 provider 换了人，你手里的引用并不会跟着更新。所以把它存进长寿命的地方是危险的。先看一段不推荐的写法：
-
-```typescript
-// ❌ 反模式：把裸实例缓存到闭包里
-export function apply(ctx: Context) {
-  const storage = ctx.getService('storage'); // 当时点的裸实例
-  ctx.middleware('inbound:message', async (data, next) => {
-    await storage.writeFile('data:/log.txt', data.text); // storage 可能早已失效
-    await next();
-  });
-}
-```
-
-一旦 storage 被热重载，闭包里的 `storage` 就指向一个已销毁的旧实例，旧连接、旧句柄全废。把查询挪进函数作用域，用时即取，就没有这个问题：
+`current` 是 getter：每次读取都向容器要当前胜者。把读出来的值存起来，之后 provider 换了人，手里的引用并不会更新。
 
 ```typescript
-// ✅ 每次用时重新查
-export function apply(ctx: Context) {
-  ctx.middleware('inbound:message', async (data, next) => {
-    const storage = ctx.getService('storage'); // 每次都是当前胜者
-    await storage?.writeFile('data:/log.txt', data.text);
-    await next();
-  });
-}
-```
+import { INBOUND_PHASE } from '@aalis/api-gateway';
+import { storage } from '@aalis/api-storage';
+import { definePlugin, hooks } from '@aalis/core';
 
-不必担心性能：`getService()` 只是查一次容器，按"偏好 > 优先级 > 注册顺序"返回当前胜者，成本极低，且每次都拿到最新实例。
-
-## provider 换人时会发生什么
-
-理解了"要每次查"，还得知道"实例是怎么被换掉的"，才能明白这条原则的边界。
-
-**默认不级联。** 一个 provider 被热重载时，Aalis 默认不动它的下游——只有显式声明了 `requiresBounceOnDepChange: true` 的下游才会跟着重载，其余原地不动。这是刻意的设计：早期版本会级联重载所有下游（那时假设大家都缓存了裸引用、必须强制刷新），现在假设反了过来——你应该惰性查询，provider 一换你自然跟上，级联就没必要了。
-
-::: warning 这是你这一侧的责任
-如果你既没惰性查询、又没声明 `requiresBounceOnDepChange`，那么 provider 一换人，你就持有了一个失效的旧引用，框架不会替你兜底。
-:::
-
-**一次热重载的完整流程**是：持久化新配置、替换模块 → 摘除下游 → 销毁旧 context → 转入 pending → 重新 `apply`。销毁这一步会把该插件注册的所有服务实例一并注销，重新激活时新实例重新注册。服务名没变，实例却是全新的——这正是缓存裸引用会出事的根本原因。
-
-具体到"谁是当前胜者"，有三种信号会改变它：
-
-| 信号 | 触发 | 事件 |
-| --- | --- | --- |
-| provider 注册 | `ctx.provide(name, inst)` | `service:registered` |
-| provider 注销 | dispose | `service:unregistered` |
-| 偏好切换 | `ctx.preferService` / `unpreferService` | `service:preference-changed` |
-
-偏好切换是个特例：它不改变实例集合，只改变谁是胜者，所以单独用一个事件、不复用注册/注销。下一节的 `whenService` 三种信号都会监听。
-
-## `whenService`：订阅"会迟到、会换人"的服务
-
-`getService()` 解决的是"每次读到最新值"。但还有一类需求它不覆盖：**一次性地把某个副作用挂上去**，最典型的就是把工具注册进 `tools` 这个 hub 服务。麻烦在于，hub 可能比你晚上线，或者中途被热重载换了实例——手动监听 `service:registered` 既啰嗦又容易漏掉清理。
-
-`ctx.whenService(name, cb)` 就是为这个设计的，一行搞定"就绪即挂、换人即重挂、下线即清理"：
-
-```typescript
-// 例 A：把工具注册进 tools hub（最常见用法）
-// tools 可能晚于本插件就绪，whenService 会等它就绪再注册、换人时自动重挂
-ctx.whenService('tools', svc => svc.register(myTool, ctx.id));
-
-// 例 B：订阅 provider 的内部状态，返回一个 cleanup
-ctx.whenService('llm', llm => {
-  const handle = llm.onModelChange(updateUI);
-  return () => handle.dispose(); // llm 被换人时自动调用
+export default definePlugin({
+  name: 'example-cache-ref',
+  uses: { storage, hooks },
+  apply({ storage, hooks }) {
+    // 反模式：把当时点的裸实例缓存进闭包
+    const frozen = storage.current;
+    hooks.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
+      await frozen?.writeFile('data:/log.txt', data.message.content ?? '');
+      await next();
+    });
+  },
 });
 ```
 
-它替你保证这几件事：服务若已就绪，调用时**立即**触发一次 `cb`；provider 换人时，**先跑上次返回的 cleanup、再用新实例调一次 `cb`**，所以你手里永远不是失效引用；`cb` 返回的 cleanup 会在插件卸载或 provider 换人时自动调用，且这个过程是幂等的，重复触发也安全。它只认胜者——低优先级的败者 provider 上下线不会惊动你，只有胜者真的换了才会 cleanup 加重挂。
-
-选型上，读取一个值用 `getService()`，挂载一个需要跟随 provider 的副作用用 `whenService()`；两者都不要把裸实例存进类字段。
-
-## 惰性网关：`*-api` 的推荐用法
-
-`storage`、`process` 这类服务，消费者通常不想关心"当前哪个 root 由哪个后端提供"。为此，它们的 `*-api` 包提供了**惰性网关工厂**：给你一个用起来和普通服务一样的句柄，但它每个方法内部都会重新查一次容器，等于把"每次 `getService`"包进了句柄。
-
-这样做的好处是这个句柄**可以长期持有**——存进类字段完全没问题，因为它从不捕获裸实例，只在方法被调用的那一刻才去解析当前 provider：
+把查询留在用到的那一刻：
 
 ```typescript
-// createProcessGateway：每个方法调用时才 pick() 出当前的 process 实例
-export function createProcessGateway(ctx: Context): ProcessService {
-  const pick = (): ProcessService => {
-    const inst = ctx.getService<ProcessService>('process');
-    if (!inst) throw new Error('未找到 process 服务（请启用 @aalis/plugin-process-local …）');
-    return inst;
-  };
-  return {
-    spawn: (cmd, args, opts) => pick().spawn(cmd, args, opts),
-    execFile: (cmd, args, opts) => pick().execFile(cmd, args, opts),
-    makeTempDir: prefix => pick().makeTempDir(prefix),
-    readExternalFile: path => pick().readExternalFile(path),
-  };
-}
+import { INBOUND_PHASE } from '@aalis/api-gateway';
+import { storage } from '@aalis/api-storage';
+import { definePlugin, hooks } from '@aalis/core';
+
+export default definePlugin({
+  name: 'example-reread',
+  uses: { storage, hooks },
+  apply({ storage, hooks }) {
+    hooks.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
+      await storage.current?.writeFile('data:/log.txt', data.message.content ?? '');
+      await next();
+    });
+  },
+});
 ```
 
-所以下面这种写法是安全的，正好和第一节的反模式相反——句柄长寿命，但内部惰性：
+不必担心性能：解析只是查一次容器，按「偏好 > 优先级 > 注册顺序」返回当前胜者。`require()` 在无提供者时抛错；required 依赖丢失到调度收敛之间也可能短暂为空，不要假设「声明了 required 就永不 `undefined`」。
+
+`all()` 每次调用重新枚举全部提供者（同一套排序）。`all()[i]` 取到的是那一时刻的 `ServiceView`；长期缓存其中的 `instance` 同样会失效。
+
+## 提供者换人时会发生什么
+
+胜者替换**不会**一律重启消费者。下游应通过 `current` / `require()` 惰性读到新实例，或用 `follow` / 登记型门面处理有状态资源。
+
+一次 `bounce` 的流程是：写入配置 → 拆掉当前激活 → 转入 pending → 重算后重新 `apply`。销毁会把该插件登记的服务一并注销，重新激活时新实例重新 `provide`。服务名没变，实例却是全新的——这正是缓存裸引用会出事的原因。
+
+改变「谁是当前胜者」的信号：
+
+| 信号 | 触发 | 事件 |
+| --- | --- | --- |
+| provider 注册 | `provide(desc, impl)` | `service:registered` |
+| provider 注销 | 激活撤回 | `service:unregistered` |
+| 偏好切换 | `services.prefer` / `unprefer` | `service:preference-changed` |
+
+偏好切换不改变实例集合，只改变谁是胜者。`follow` 对三种信号都跟随胜者。
+
+## `follow`：有状态资源跟随提供者
+
+`current` 解决的是「每次读到最新值」。还有一类需求它不覆盖：一次性把副作用挂上去（SDK 句柄、订阅、确认通道）。hub 可能比你晚上线，或中途被换实例。
+
+`x.follow(attach)` 在场即调 `attach`；换人时先跑上次返回的清理，等它的 Promise **落定**（完成或被拒）之后才用新实例再调；下线与关闭时清理。等待期间的多次切换合并到最新；退订或关闭之后不再挂载，哪怕旧清理后来才落定。
 
 ```typescript
-export function apply(ctx: Context) {
-  const proc = createProcessGateway(ctx); // 长期持有 OK
-  ctx.middleware('inbound:command', async (data, next) => {
-    await proc.execFile('echo', ['hi']); // 这一刻才解析当前 process 提供方
-    await next();
-  });
-}
+import { authority } from '@aalis/api-authority';
+import { definePlugin, logger, optional } from '@aalis/core';
+
+export default definePlugin({
+  name: 'example-follow',
+  uses: { authority: optional(authority), logger },
+  apply({ authority, logger }) {
+    authority.follow(provider => {
+      if (!provider.setConfirmHandler) return;
+      const off = provider.setConfirmHandler('*', async () => false);
+      logger.debug('fallback handler 已注册');
+      return off;
+    });
+  },
+});
 ```
 
-`createStorageGateway` 在惰性之外还多做一件事：**按 storage URI 跨 root 路由**。它的每个方法会根据传入的 `<root>:/path` 解析出该由哪个 root 的后端处理，并且每次都重新解析，所以它同时是"惰性"和"多后端聚合器"：
+约束（源码契约，不是口号）：
+
+- `attach` **必须同步**返回 `void` 或清理函数。`async` 回调在类型上被拒；运行期若返回 thenable，会被接住并 warn，拒绝不会逃逸成 `unhandledRejection`，但**不会**被当成清理器。
+- 清理可以是异步的，关闭会等它落地。拒绝被隔离并报告，**不证明**旧资源已释放。
+- 运行期旧清理永久不落定会阻塞交接；关闭时按超时放弃并点名。
+
+登记型能力（工具、命令、页面）不要手写 `follow`：契约包描述符用 `BindingPort.registrar` 造绑定门面，`tools.register` / `commands.command` / `webui.registerPage` 已包含「同键替换、提供者换人整体重挂、关闭后拒收」。registrar 与 `follow` 的串行资源交接不同：换人时立即在新提供者重挂，旧异步撤回可后台进行，不能声称所有新旧资源绝无重叠。
+
+## 惰性网关：吃 `ServiceRef`
+
+`storage`、`process` 这类服务，消费者通常不想关心「当前哪个 root 由哪个后端提供」。对应 `*-api` 的网关工厂接受 `ServiceRef`，每个方法内部重新解析当前提供者（storage 还按 URI 跨 root 路由）。这个句柄**可以长期持有**——它从不捕获裸实例：
 
 ```typescript
-const storage = createStorageGateway(ctx);
-await storage.writeFile('data:/notes/today.md', text); // 路由到提供 data 根的后端
-await storage.readFile('cache:/x.bin');                // 路由到提供 cache 根的后端
+import { INBOUND_PHASE } from '@aalis/api-gateway';
+import { createProcessGateway, processService } from '@aalis/api-process';
+import { createStorageGateway, storage } from '@aalis/api-storage';
+import { definePlugin, hooks } from '@aalis/core';
+
+export default definePlugin({
+  name: 'example-gateway',
+  uses: { process: processService, storage, hooks },
+  apply({ process, storage, hooks }) {
+    const proc = createProcessGateway(process);
+    const store = createStorageGateway(storage);
+    hooks.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
+      await proc.execFile('echo', ['hi']);
+      await store.writeFile('data:/notes/today.md', 'ok');
+      await next();
+    });
+  },
+});
 ```
 
-怎么选：如果服务是单实例、你只要当前胜者，`getService()` 直接用即可（或者用网关，两者都惰性）；如果是多实例（每 root 或每 model 一个），且你想按 URI 或模型透明调度，就用对应 `*-api` 的网关或 `resolveXxx` helper，不要自己重抄聚合逻辑。这也是社区里的主流做法，多数官方插件都走惰性句柄。storage 的 URI 文法细节见 [storage URI 文法](./storage-uri-grammar.md)。
+单实例、只要当前胜者：每次读 `current` 即可，或用网关。多实例且要按 URI / 模型透明调度：用对应 `*-api` 的网关或 `resolveXxx` helper（如 `resolveLLMModel(llm, ref, caps)`），不要自己重抄聚合逻辑。storage 的 URI 文法见 [storage URI 文法](./storage-uri-grammar.md)。
 
-## `requiresBounceOnDepChange`：逃生舱，不是默认
+## 动态查询没有依赖边
 
-```typescript
-// 声明在插件模块（PluginModule）上
-requiresBounceOnDepChange?: boolean;
-```
+`services.get` / `services.all` 是管理、展示面用的动态查询：查到的服务**不是**声明依赖，不参与激活闸，不享有重绑与关停顺序保证。需要这些保证就写进 `uses`。关停期动态查询可能拿空，这是预期（例如 webui 在 file-reader 已关后按名查删除接口会得到 `undefined`，改走自己的 storage）。
 
-设为 `true` 后，只要你依赖的 provider（required 或 optional）被热重载或下线，框架就会把你自己也降级为 pending 并重新 `apply`。
-
-它是留给少数实在无法响应式处理状态的插件（或者迁移成本很高的老插件）的逃生舱。代价不小：依赖一抖动你就整体重启，比惰性查询贵得多，还可能放大级联。所以优先按下面的顺序处理，尽量避免设它：
-
-1. 能改成"每次 `getService()`、或用网关句柄"吗？能就这么做，**不要**设这个标志。
-2. 副作用是"一次性挂进某个 hub"吗？用 `whenService()`，它已经替你处理了换人重挂。
-3. 实在做不到响应式——比如你在 `apply` 里基于 provider 当前状态构建了大量难以增量更新的内部结构——才设 `requiresBounceOnDepChange: true`。
-
-::: tip 一个容易混淆的边界
-required 依赖**彻底消失**时，无论你设不设这个标志，框架都会把你转入 pending，因为没了 required 依赖你本就不该运行。这个标志真正改变的，只是 provider 仅仅热重载（随后就回来）时你要不要跟着重启，以及 optional 依赖下线时的行为。
-:::
+单独卸载提供者不享有整个 App 关停的交接保证。
 
 ## 注意事项
 
-- **裸引用进类字段或闭包，就是僵尸引用。** 这是第一节反模式的根因，默认没有级联兜底，是你自己的责任。
-- **不要用 `ctx.on('app:stopping', …)` 清理资源。** 它只在整个应用停机时触发一次，插件热重载并不会触发它，旧连接、旧定时器会因此泄漏。清理副作用请一律走 `ctx.onDispose(fn)`——热重载、卸载、更新配置等任何销毁路径都会触发它。
-- **`whenService` 的 cb 里同步触发自身卸载也是安全的。** 框架处理了"cb 执行期间就被卸载"的竞态，返回的 cleanup 会被立即执行，不会泄漏。
-- **要枚举所有并存的 provider**（比较少见，多用于管控或展示），用 `ctx.getAllServices(name)`，同样每次重新枚举。
-- **手动卸载后，回调会自动摘除**，不阻碍垃圾回收。你不需要、也不该缓存实例去"帮忙"延长它的生命周期。
+- 裸引用进类字段或闭包，就是失效引用。框架不会因为写了 `uses` 就保护你缓存的任意取值。
+- **不要用 `events.on('app:stopping', …)` 清理资源。** 它只在整个应用停机时触发一次，插件热重载并不会触发它。清理副作用走 `lifecycle.onDispose`；需要在对外登记仍在、依赖仍可调用时交接数据，走 `lifecycle.onDrain`。
+- `follow` 的 `attach` 执行期间退订或换人：刚拿到的清理器不会丢，会立刻按新目标收敛。
+- 要枚举所有并存的 provider（管控或展示），用 `x.all()` 或 `services.all(desc)`，同样每次重新枚举。
+- 长期缓存 `all()[i].instance`：**关停边不保护这份缓存引用**。提供者自己有失效逻辑则调用会抛；没有则可能静默成功（例如工具表按名覆盖、旧对象仍能 `add`）。需要关停保护就不要把裸实例存出去。
+
+## 关停顺序
+
+关停以激活为单位，分收尾（drain，`lifecycle.onDrain`）与关闭（close，含 `onDispose`）两阶段。依赖交接放 `onDrain`（声明的依赖仍可用）；`onDispose` 阶段依赖可能已不可用，只释放自己的资源。
+
+编排按依赖形状分三种，不是一条无条件规则：
+
+- 普通依赖（required，以及 optional 当时解析到的胜者）：消费者整个 close 完，提供者才 drain。
+- 父使用自己子树的服务：父 drain 先于子 close；父收尾时子树仍活着。到父 close 时子已按归属关闭。
+- 后代使用祖先服务：不往排序图加边。归属树保证子 close 先于祖先 close，故子 drain 时祖先仍活着。祖先若同时用这棵子树，第 2 种边把祖先 drain 插在子 close 之前，两笔收尾都能用到对方。
+
+环：optional 边按自然次序让步（不告警）；只剩 required 边仍无解才告警并强行放行。
+
+`App.stop()` 先排干在飞重算，冻结新增绑定并进入停机态，再发屏障事件 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。停机期间 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成）；`register` / `bounce` 返回 false。
+
+单独卸载提供者不享有上述交接保证。动态 `services.get` 不产生依赖边，关停期间可能取到空。缓存的 `all()[i]` 引用不受关停边保护。
 
 ## 一页速查
 
 | 你想做的事 | 用什么 | 不要 |
 | --- | --- | --- |
-| 偶尔读一次某服务的当前胜者 | `ctx.getService(name)`，即取即用 | 不要存进类字段或闭包 |
-| 长期持有一个自动跟随换人的句柄 | `createStorageGateway` / `createProcessGateway`，句柄惰性可缓存 | 不要 `getService()` 一次后缓存裸实例 |
-| 把副作用一次性挂进 hub，且随 provider 重挂 | `ctx.whenService(name, cb)`，cb 可返回 cleanup | 不要手写 `on('service:registered', …)` |
+| 偶尔读一次某服务的当前胜者 | `x.current` / `x.require()`，即取即用 | 不要把读出的值存进类字段或闭包 |
+| 长期持有一个自动跟随换人的句柄 | `createStorageGateway(storage)` / `createProcessGateway(process)` | 不要缓存 `current` 的裸实例 |
+| 把有状态资源挂到会换人的提供者上 | `x.follow(attach)`，attach 同步返回 cleanup | 不要 `async` attach；不要手写监听 `service:registered` |
+| 往 hub 登记工具 / 命令 / 页面 | `uses` 描述符的绑定门面（`register` / `command` / `registerPage`） | 不要绕过门面直接打到 `current` 上（会丢掉换人重挂） |
 | 跨 root 或跨 model 透明路由 | `*-api` 的 `resolveXxx` 或网关 helper | 不要自己重抄聚合逻辑 |
-| 清理资源（连接、定时器、外部句柄） | `ctx.onDispose(fn)` | 不要用 `on('app:stopping', …)` |
-| 依赖抖动时整体重启（最后手段） | `requiresBounceOnDepChange: true` | 不要当默认，优先惰性或 `whenService` |
+| 清理资源（连接、定时器、外部句柄） | `lifecycle.onDispose`；交接在手数据用 `onDrain` | 不要用 `app:stopping` 当清理通道 |
+| 动态按名查找（无依赖边） | `services.get` / `services.all` | 不要指望关停期一定还能拿到 |
