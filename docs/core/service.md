@@ -1,114 +1,102 @@
-# ServiceContainer — 服务容器
+# 服务：描述符、按名解析、偏好
 
-服务容器实现同名多实现的 IoC 查找。
+插件通过**服务描述符**声明与发布服务；容器按名保存多个提供者，按「偏好 > 优先级 > 注册顺序」选出胜者。
 
-**源码**: `packages/core/src/primitives/services.ts`
+**源码**: `packages/core/src/context/binding.ts`、`packages/core/src/primitives/services.ts`、`packages/core/src/context/builtins.ts`
 
-插件不直接持有容器：注册与消费走 Context 门面（`ctx.provide` / `ctx.getService` / `ctx.getAllServices` / `ctx.whenService` /
-偏好三件套，见 [context.md — 服务 API](context.md)）。本页是注册表类本身的参考：宿主经 `AppOptions.services` 注入替身、
-或管控类代码经 `app.services` 巡视时用；其方法签名按契约表归 experimental（随原语统一工作调整）。
+消费与发布的插件侧入口见 [插件定义与能力](context.md)。本页补描述符、容器投影、以及动态查询 / 偏好（`services`）。
 
-## 核心概念
+## 描述符
 
-- 一个服务名可有多个提供者（如 `llm` 有 DeepSeek 和 OpenAI 两个实现）
-- 每个提供者声明优先级（priority）；可选偏好（preference）覆盖优先级
-- 服务选择走 **「偏好 > 优先级 > 注册顺序」**：`get()` 返回当前胜者实例
-- 领域级筛选（如按 LLM 模型能力路由）由各 `-api` 自理，不在内核 DI
+一个服务有两张面：共享的提供者（容器里的实例，全 App 一份）与按激活绑定的调用接口（每次插件激活一份，登记自动归属这次激活）。描述符把两者连起来。
 
-## ServiceView 结构
+```typescript
+import { defineService, type BindingPort, serviceRef, type ServiceRef } from '@aalis/core';
 
-容器对外只交出条目的投影，每次读都是新对象，改它不影响容器；清理归属 `owner` 是容器内部的钥匙，任何读口都不交出：
+interface Clock {
+  now(): number;
+}
+
+// 普通调用型：不给 bind，绑定接口是 ServiceRef<Clock>
+export const clock = defineService<Clock>('clock');
+
+// 注册型：给 bind，用资源口的 registrar / follow / track 造自动归属的门面
+interface Inbox {
+  add(handler: (msg: string) => void): () => void;
+}
+export interface BoundInbox extends ServiceRef<Inbox> {
+  register(handler: (msg: string) => void): () => void;
+}
+export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
+  const entries = port.registrar<{ id: string; handler: (msg: string) => void }>({
+    key: item => item.id,
+    register: (provider, item) => provider.add(item.handler),
+  });
+  const extra = {
+    register: (handler: (msg: string) => void) => entries.add({ id: 'default', handler }),
+  };
+  return serviceRef(port, extra);
+});
+```
+
+- 契约包导出描述符（**值导入**，进 `dependencies`，不是 type-only）。类型与绑定实现随描述符走，不需要一张全局服务名 → 类型表。
+- 服务身份是描述符的 `name`。契约包装了两份也指向同一服务。
+- `provide(descriptor, impl)` 按描述符约束实现类型。
+- 领域能力（LLM 的 `vision`、storage 的 `local-path`）挂在服务实例 / model handle 的元数据上，由各 `-api` 的 helper 筛选，不进内核 DI。
+
+第三方登记契约（`BindingPort` / `Registrar`）见 [枢纽服务](../design/hub-services.md)。
+
+## 解析顺序
+
+同一服务名可有多个提供者。`current` / `get` 的解析顺序为 **偏好 > 优先级 > 注册顺序**：先看是否有偏好的提供者（且仍存在），否则取优先级最高、最先注册者。无提供者返回 `undefined`。
+
+## ServiceView
+
+容器对外只交出条目的投影，每次读都是新对象，改它不影响容器；清理归属是容器内部的钥匙，任何读口都不交出：
 
 ```typescript
 interface ServiceView<T = unknown> {
-  instance: T;        // 服务实例
-  contextId: string;  // 注册者 Context ID
-  priority: number;   // 优先级（越高越优先）
-  label?: string;     // 可选展示标签（如 "OpenAI / gpt-4o"）
+  instance: T;
+  contextId: string;  // 注册者逻辑身份（展示 / 偏好 / 路由），不是清理钥匙
+  priority: number;
+  label?: string;
 }
 ```
 
-## 关键方法
+`all()` / `services.all(key)` 返回该投影的数组快照，顺序同样遵循「偏好 > 优先级 > 注册顺序」。
 
-### `register(name, instance, contextId, owner?, options?)`
+## 行为边界
 
-与另外三个注册表同形：`(键, 载荷, contextId, owner?)`，返回退订闭包。`options` 收 `priority`（默认 0）与 `label`。
-已登记的服务名（`ServiceTypeMap` 里有的）按契约类型约束 `instance`，错误实现在编译期被拒；未登记名放行为 `unknown`。
+- `current` / `require` 返回本次解析的提供者本身。缓存引用可能失效，不是自动转发的代理。
+- `all()[i]` 手动选非默认提供者并长期缓存：关停边不覆盖这些引用。提供者有失效逻辑则后续调用抛错，无则可能静默成功。
+- `services.get` / `services.all` 是动态查询，**不产生依赖边**，不参与激活闸，关停期可能拿空。需要等待、重绑、关停顺序保证的，写进 `uses`。
+- 顶层 required 缺席会 `pending`，恢复重新激活；胜者替换不一律重启消费者。
 
-`owner` 是清理归属（Context 门面自动传入本次激活的 symbol）；省略则该 entry 不被拆卸自动清理，调用方用返回的退订闭包自管。
-退订闭包返回这次是否真的摘掉了条目——同一条目退订两次、或已被 `unregisterByOwner` 清走时为 `false`（门面据此决定要不要广播 `service:unregistered`）。
-同名服务按优先级降序排列（稳定排序：同优先级先注册者在前）。
+## `services`：动态查询与偏好
 
-### `get(name)`
-
-已登记的服务名按 `ServiceTypeMap` 推导实例类型；未登记名退回 `get<T>(name)` 的兜底重载。返回当前胜者实例，解析顺序为 **「偏好 > 优先级 > 注册顺序」**：先看是否有偏好的提供者（且仍存在），否则取优先级最高、最先注册者。无提供者返回 `undefined`。
-
-### `hasByContext(name, contextId)`
-
-检查指定 contextId 是否注册了某服务。"拥有" 语义同时匹配 `contextId === ownerId` 和以 `ownerId + '/'` 为前缀的 per-entry 子 entry（如 `@aalis/plugin-llm-ollama:main/llama3`）。
-
-### `getAll(name)`
-
-枚举某服务的所有提供者（业务遍历与管控视图共用），返回 `ServiceView` 投影的数组快照，顺序遵循「偏好 > 优先级 > 注册顺序」；已登记名按 `ServiceTypeMap` 推导 `instance` 类型。
-
-### `getServiceNames()`
-
-列出所有已注册的服务名。
-
-### `unregisterByOwner(owner)`
-
-移除该清理归属注册的所有 entry，返回被移除的服务名列表。按 owner 而非 contextId：同名 Context 各有各的 owner，互不误清；per-entry 子 entry 与主 entry 同 owner，一并清掉，不再依赖 id 前缀。用于插件卸载时清理。
-
-## 服务偏好
-
-当多个插件提供同名服务时，所有者可显式指定偏好的提供者（按 contextId），使其无视 priority 数值始终成为 `get()` 的胜者。
-
-### `prefer(name, contextId)` / `unprefer(name)` / `getPreferred(name)`
-
-容器层的偏好读写。偏好可在目标 entry 注册前提前设置——一旦该 contextId 注册即生效。
-
-> 公开 API 走 `ctx.preferService()` / `ctx.unpreferService()` / `ctx.getPreferredService()`（额外 emit `service:preference-changed` 触发 `whenService` 重挂）；容器层方法仅供 Context 内部转发，插件勿直接调用。所有者也可在 WebUI 的 Services 页面设置偏好。
-
-## 依赖规范化
+管理、展示面用。插件在 `uses` 里声明 `services` 后拿到：
 
 ```typescript
-function normalizeDependency(dep: string | ServiceDependency): NormalizedDependency
-```
-
-将依赖声明统一为 `{ service }`：字符串 `'llm'` 与对象 `{ service: 'llm' }` 都归一为 `{ service: 'llm' }`。
-
-## 扩展服务名（declaration merging）
-
-服务名 → 实例接口的映射表是 `ServiceTypeMap`（core 内字面为空）。`-api` 契约包就近注入自己那一条，之后注册表的
-`register` / `get` / `getAll` 与门面上的 `ctx.provide` / `ctx.getService` / `ctx.getAllServices` 在编译期即按契约类型工作：
-
-```typescript
-// packages/api-memory/src/index.ts —— 契约包，与接口定义同文件
-export interface MemoryService { /* ... */ }
-
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    memory: MemoryService;
-  }
+interface Services {
+  get(key: ServiceDescriptor | string): unknown | undefined;
+  all(key: ServiceDescriptor | string): ServiceView[];
+  names(): string[];
+  preferred(key: ServiceDescriptor | string): string | undefined;
+  prefer(key: ServiceDescriptor | string, contextId: string): boolean;
+  unprefer(key: ServiceDescriptor | string): boolean;
 }
 ```
 
-```typescript
-// 消费方：import 一次契约包（仅副作用，把类型注册进 ServiceTypeMap）
-import '@aalis/api-memory';
+有描述符就用描述符（带类型）；只有运行期字符串（URL、配置里的服务名）就用名字，类型由调用方收窄。
 
-ctx.provide('memory', new SqliteMemory());  // 实现不符契约 → 编译期被拒
-const m = ctx.getService('memory');         // MemoryService | undefined
-const all = ctx.getAllServices('memory');   // ServiceView<MemoryService>[]
-```
+`prefer(key, contextId)` 把该服务的胜者钉到指定逻辑身份，无视 priority。偏好可在目标 entry 注册前提前设置。切换偏好发出 `service:preference-changed`，驱动 `follow` 订阅者按胜者变化重挂。也可在 WebUI 的 Services 页设置；配置项为 `servicePreferences`。
 
-- 增广只能用裸包名 `'@aalis/core'`：`declare module` 按说明符解析到的模块身份合并，只有解析到与 `-api` 包同一份
-  `@aalis/core` 才进同一张 `ServiceTypeMap`。装进两份 core 时两份声明会绑成两个接口（TS2717，被 `skipLibCheck`
-  吞掉），`getService('memory')` 静默落回 `<T = unknown>` 兜底重载——peer 区间禁 caret 就是为了避免装出两份。
-- 未登记的名字照常可用，退回 `unknown`：`provide` 的实例放行，`getService<T>(name)` 由调用方 narrow。按运行时变量
-  （而非字面量）寻址服务的场景走这条路。
-- 这里只登记「服务名 → 实例接口」一件事。领域能力（LLM 的 `vision`、storage 的 `local-path`）挂在服务实例 / model
-  handle 的元数据上，由各 `-api` 的 helper 按需筛选，不进内核 DI。
-- core 自己 provide 的 `app` / `plugins` 不登记：`plugins` 的契约引用编排层词汇（`PluginEntry` 等），基础词汇文件
-  `types/services.ts` 不得向上引用，成对登不了就一个不登；消费点显式传类型参数（`getService<AppService>('app')`）。
-  谁注入了哪个服务名，见[扩展点索引 §1](../extensions/index.md)。
+跨多 entry 按会话持久化选择，推荐走请求维度的 hint（把选择存在用户 profile），而不是容器维度的偏好——`prefer` 是全局、进程级单例，不适合 per-user。参见 [plugin-author-guide §13](../plugin-author-guide.md#13-用户偏好放哪里-per-user-不进-servicecontainer)。
+
+## ServiceContainer
+
+宿主经 `AppOptions.services` 注入替身、或管控类代码经 `app.services` 巡视时用。插件不直接持有容器：注册走 `provide(descriptor, impl)`，消费走 `uses` 后的 `ServiceRef` 或 `services.get`。
+
+容器按名字存取，不认识类型——实现是否满足契约由描述符在 `provide` 处约束。`register` 的 `owner` 是清理归属（激活门面自动传入）；省略则该 entry 不被拆卸自动清理，调用方用返回的退订闭包自管。`unregisterByOwner` 按 owner 而非 contextId 批量清理，同名激活互不误清。
+
+`hasByContext(name, contextId)` 的「拥有」语义同时匹配 `contextId === ownerId` 和以 `ownerId + '/'` 为前缀的 per-entry 子 entry（如 `@aalis/plugin-llm-ollama:main/llama3`）。
