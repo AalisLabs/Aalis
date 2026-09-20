@@ -44,6 +44,10 @@
     "service": {
       "required": [
         "tools"
+      ],
+      "optional": [
+        "app",
+        "plugins"
       ]
     }
   }

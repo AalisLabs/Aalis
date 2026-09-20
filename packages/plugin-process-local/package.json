@@ -41,6 +41,9 @@
   },
   "aalis": {
     "service": {
+      "optional": [
+        "storage"
+      ],
       "provides": [
         "process"
       ]
