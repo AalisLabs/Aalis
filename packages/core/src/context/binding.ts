@@ -89,8 +89,12 @@ export interface ServiceDescriptor<P, B = ServiceRef<P>> {
   bind(port: BindingPort<P>): B;
 }
 
+/** 模块私有品牌：assemble 只认 optional() 盖过的包装，描述符自有 `optional` 字段不算 */
+const OPTIONAL = Symbol('aalis.optional-use');
+
 export interface OptionalUse<P, B> {
   readonly optional: ServiceDescriptor<P, B>;
+  readonly [OPTIONAL]: true;
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: 声明表的值类型只作推导载体
@@ -122,7 +126,18 @@ export function defineService<P, B>(name: string, bind?: (port: BindingPort<P>) 
 
 /** 可选依赖：只是不参与激活闸；绑定接口与 required 完全相同。 */
 export function optional<P, B>(descriptor: ServiceDescriptor<P, B>): OptionalUse<P, B> {
-  return { optional: descriptor };
+  return { optional: descriptor, [OPTIONAL]: true };
+}
+
+/** @internal 是否为 optional() 包装。不看自有 `optional` 字段。 */
+// biome-ignore lint/suspicious/noExplicitAny: 与 Uses 的 any 载体一致
+export function isOptional(use: unknown): use is OptionalUse<any, any> {
+  return typeof use === 'object' && use !== null && (use as { [OPTIONAL]?: boolean })[OPTIONAL] === true;
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: 与 Uses 的 any 载体一致
+function unwrapDescriptor(use: Uses[string]): ServiceDescriptor<any, any> {
+  return isOptional(use) ? use.optional : use;
 }
 
 /**
@@ -250,7 +265,18 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
       follower.releaseEdge = ctx.retainBinding(name);
       follower.attaching = true;
       try {
-        follower.cleanup = follower.attach(desired) ?? undefined;
+        const ret: unknown = follower.attach(desired);
+        if (typeof ret === 'function') {
+          follower.cleanup = ret as () => unknown;
+        } else if (isThenable(ret)) {
+          // attach 同步契约：不 await 取 cleanup；接住拒绝以免逃成 unhandledRejection
+          reportQuietly(() =>
+            ctx.logger.warn(
+              `${name} 跟随回调返回了 thenable（attach 应同步返回 cleanup 函数；该 Promise 已被接住，拒绝不会逃逸）`,
+            ),
+          );
+          ret.then(undefined, () => undefined);
+        }
       } catch (err) {
         reportQuietly(() => ctx.logger.warn(`${name} 跟随回调抛错（订阅保持，等下次提供者变更）:`, err));
       } finally {
@@ -347,7 +373,12 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
       // 被动注册表换人时立即重挂（旧条目的撤回在后台落定、关闭会等）——走内部的 overlap 路径
       follow(target => {
         provider = target;
-        for (const [key, entry] of [...entries]) attachOne(target, entry, key);
+        // 按键再取当前 Entry：register 回调里重入 add 会换掉 map 里的对象，
+        // 快照里的旧 Entry 再挂一次就是账外孤儿。新 Entry 已就地登记则 attachOne 跳过。
+        for (const key of [...entries.keys()]) {
+          const entry = entries.get(key);
+          if (entry) attachOne(target, entry, key);
+        }
         return () => {
           provider = undefined;
           const pending: PromiseLike<unknown>[] = [];
@@ -409,7 +440,7 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
 export function assemble<U extends Uses>(ctx: Context, uses: U): BoundOf<U> {
   const bound: Record<string, unknown> = {};
   for (const [key, use] of Object.entries(uses)) {
-    const descriptor = 'optional' in use ? use.optional : use;
+    const descriptor = unwrapDescriptor(use);
     bound[key] = descriptor.bind(createPort(ctx, descriptor.name));
   }
   // 声明即计入关停编排（required 与 optional，访问与否无关）；内置能力绑的是激活自身，不成边
@@ -420,8 +451,8 @@ export function assemble<U extends Uses>(ctx: Context, uses: U): BoundOf<U> {
 /** 声明表里的依赖服务名。内置能力绑的是激活自身，不是依赖：不进激活闸，也不成关停边 */
 function dependencyNames(uses: Uses, wantOptional: boolean): string[] {
   return Object.values(uses)
-    .filter(use => 'optional' in use === wantOptional)
-    .map(use => ('optional' in use ? use.optional : use))
+    .filter(use => isOptional(use) === wantOptional)
+    .map(use => unwrapDescriptor(use))
     .filter(descriptor => !isBuiltin(descriptor))
     .map(descriptor => descriptor.name);
 }
