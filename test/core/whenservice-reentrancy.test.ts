@@ -1,21 +1,26 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { assemble } from '../../packages/core/src/context/binding.js';
 import {
-  ConfigManager,
-  Context,
-  ContributionRegistry,
-  EventBus,
-  HookRegistry,
+  App,
+  definePlugin,
+  defineService,
   type Logger,
-  ServiceContainer,
+  optional,
+  provide,
+  type ServiceRef,
+  services,
 } from '../../packages/core/src/index.js';
+import { rootActivation } from '../../packages/core/src/orchestration/app.js';
 
 interface Provider {
   id: string;
 }
 
-const roots: Context[] = [];
-afterEach(() => {
-  for (const root of roots.splice(0)) root.dispose();
+const svc = defineService<Provider>('__t:ws-re');
+
+const apps: App[] = [];
+afterEach(async () => {
+  for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
 
 function makeWorld() {
@@ -23,22 +28,14 @@ function makeWorld() {
   const logger: Logger = {
     debug: () => {},
     info: () => {},
-    warn: message => warnings.push(message),
+    warn: (message, extra) => warnings.push(extra instanceof Error ? `${message} ${extra.message}` : String(message)),
     error: () => {},
     child: () => logger,
   };
-  const root = new Context({
-    id: 'root',
-    events: new EventBus(),
-    services: new ServiceContainer(),
-    hooks: new HookRegistry(),
-    contributions: new ContributionRegistry(),
-    logger,
-    config: new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} }),
-  });
-  roots.push(root);
-  for (const id of ['a', 'b', 'c']) root.fork(id).provide('svc', { id });
-  const watcher = root.fork('watcher');
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+  apps.push(app);
+  const host = app.bind({ provide, services });
+  for (const id of ['a', 'b', 'c']) host.provide(svc, { id }, { entryId: `root/${id}` });
   const trace: string[] = [];
   const live = new Set<string>();
   const released: string[] = [];
@@ -53,16 +50,33 @@ function makeWorld() {
       live.delete(key);
     };
   };
-  return { root, watcher, trace, live, released, attach, warnings };
+  return { app, host, trace, live, released, attach, warnings };
 }
 
-describe('whenService 重入时的资源归属', () => {
-  it('挂载 A 时切到 B：先释放 A，再保留 B 的清理句柄', () => {
-    const { root, watcher, trace, live, released, attach } = makeWorld();
-    const off = watcher.whenService<Provider>('svc', provider => {
-      const cleanup = attach(provider);
-      if (provider.id === 'a') root.preferService('svc', 'b');
-      return cleanup;
+async function watch(app: App, follow: (ref: ServiceRef<Provider>) => void) {
+  await app.plugin(
+    definePlugin({
+      name: 'watcher',
+      uses: { x: optional(svc) },
+      apply({ x }) {
+        follow(x);
+      },
+    }),
+  );
+  await app.plugins.idle();
+  expect(app.plugins.getPlugin('watcher')?.state).toBe('active');
+}
+
+describe('follow 重入时的资源归属', () => {
+  it('挂载 A 时切到 B：先释放 A，再保留 B 的清理句柄', async () => {
+    const { app, host, trace, live, released, attach } = makeWorld();
+    let off!: () => void;
+    await watch(app, x => {
+      off = x.follow(provider => {
+        const cleanup = attach(provider);
+        if (provider.id === 'a') host.services.prefer(svc, 'root/b');
+        return cleanup;
+      });
     });
 
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1', 'attach:b:2']);
@@ -71,16 +85,18 @@ describe('whenService 重入时的资源归属', () => {
     off();
     expect([...live]).toEqual([]);
     expect(released).toEqual(['a:1', 'b:2']);
-    expect(watcher.disposableCount).toBe(0);
   });
 
-  it('A → B → A：同一个 provider 的不同挂载不能相互覆盖清理句柄', () => {
-    const { root, watcher, trace, live, released, attach } = makeWorld();
+  it('A → B → A：同一个 provider 的不同挂载不能相互覆盖清理句柄', async () => {
+    const { app, host, trace, live, released, attach } = makeWorld();
     let transitions = 0;
-    const off = watcher.whenService<Provider>('svc', provider => {
-      const cleanup = attach(provider);
-      if (transitions++ < 2) root.preferService('svc', provider.id === 'a' ? 'b' : 'a');
-      return cleanup;
+    let off!: () => void;
+    await watch(app, x => {
+      off = x.follow(provider => {
+        const cleanup = attach(provider);
+        if (transitions++ < 2) host.services.prefer(svc, provider.id === 'a' ? 'root/b' : 'root/a');
+        return cleanup;
+      });
     });
 
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1', 'attach:b:2', 'cleanup:b:2', 'attach:a:3']);
@@ -90,21 +106,24 @@ describe('whenService 重入时的资源归属', () => {
     expect([...live]).toEqual([]);
   });
 
-  it.each(['a', 'c'])('cleanup 将胜者从 B 改为 %s：只清一次并重读最终胜者', target => {
-    const { root, watcher, trace, live, released, attach } = makeWorld();
+  it.each(['a', 'c'])('cleanup 将胜者从 B 改为 %s：只清一次并重读最终胜者', async target => {
+    const { app, host, trace, live, released, attach } = makeWorld();
     let redirected = false;
-    const off = watcher.whenService<Provider>('svc', provider => {
-      const cleanup = attach(provider);
-      return () => {
-        cleanup();
-        if (provider.id === 'a' && !redirected) {
-          redirected = true;
-          root.preferService('svc', target);
-        }
-      };
+    let off!: () => void;
+    await watch(app, x => {
+      off = x.follow(provider => {
+        const cleanup = attach(provider);
+        return () => {
+          cleanup();
+          if (provider.id === 'a' && !redirected) {
+            redirected = true;
+            host.services.prefer(svc, `root/${target}`);
+          }
+        };
+      });
     });
 
-    root.preferService('svc', 'b');
+    host.services.prefer(svc, 'root/b');
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1', `attach:${target}:2`]);
     expect([...live]).toEqual([`${target}:2`]);
     off();
@@ -112,111 +131,127 @@ describe('whenService 重入时的资源归属', () => {
     expect([...live]).toEqual([]);
   });
 
-  it('首挂回调同步销毁 Context：停止跟随，并立即清理回调随后返回的资源', () => {
-    const { root, watcher, trace, live, released, attach } = makeWorld();
-    const off = watcher.whenService<Provider>('svc', provider => {
+  it('首挂回调同步销毁激活：停止跟随，并立即清理回调随后返回的资源', async () => {
+    const { app, host, trace, live, released, attach } = makeWorld();
+    // 公开的 lifecycle 没有同步 dispose：要在 attach 同栈关掉这次激活，只能拿内部激活记录
+    const ctx = rootActivation(app).fork('watcher');
+    const ref = assemble(ctx, { x: optional(svc) }).x;
+    const off = ref.follow(provider => {
       const cleanup = attach(provider);
-      watcher.dispose();
-      root.preferService('svc', 'b');
+      ctx.dispose();
+      host.services.prefer(svc, 'root/b');
       return cleanup;
     });
 
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1']);
     expect([...live]).toEqual([]);
-    expect(watcher.disposableCount).toBe(0);
+    expect(ctx.disposableCount).toBe(0);
     off();
-    root.preferService('svc', 'c');
+    host.services.prefer(svc, 'root/c');
     expect(released).toEqual(['a:1']);
   });
 
-  it('重挂回调退订：本次回调的 cleanup 不会遗失，也不会再挂后续胜者', () => {
-    const { root, watcher, trace, live, released, attach } = makeWorld();
-    const off = watcher.whenService<Provider>('svc', provider => {
-      const cleanup = attach(provider);
-      if (provider.id === 'b') {
-        off();
-        root.preferService('svc', 'c');
-      }
-      return cleanup;
+  it('重挂回调退订：本次回调的 cleanup 不会遗失，也不会再挂后续胜者', async () => {
+    const { app, host, trace, live, released, attach } = makeWorld();
+    let off!: () => void;
+    await watch(app, x => {
+      off = x.follow(provider => {
+        const cleanup = attach(provider);
+        if (provider.id === 'b') {
+          off();
+          host.services.prefer(svc, 'root/c');
+        }
+        return cleanup;
+      });
     });
 
-    root.preferService('svc', 'b');
+    host.services.prefer(svc, 'root/b');
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1', 'attach:b:2', 'cleanup:b:2']);
     expect([...live]).toEqual([]);
     expect(released).toEqual(['a:1', 'b:2']);
-    expect(watcher.disposableCount).toBe(0);
   });
 
-  it('cleanup 内退订：不会重入旧 cleanup，也不会继续挂载', () => {
-    const { root, watcher, trace, live, released, attach } = makeWorld();
+  it('cleanup 内退订：不会重入旧 cleanup，也不会继续挂载', async () => {
+    const { app, host, trace, live, released, attach } = makeWorld();
     let stopped = false;
-    const off = watcher.whenService<Provider>('svc', provider => {
-      const cleanup = attach(provider);
-      return () => {
-        cleanup();
-        if (!stopped) {
-          stopped = true;
-          off();
-          root.preferService('svc', 'c');
-        }
-      };
+    let off!: () => void;
+    await watch(app, x => {
+      off = x.follow(provider => {
+        const cleanup = attach(provider);
+        return () => {
+          cleanup();
+          if (!stopped) {
+            stopped = true;
+            off();
+            host.services.prefer(svc, 'root/c');
+          }
+        };
+      });
     });
 
-    root.preferService('svc', 'b');
+    host.services.prefer(svc, 'root/b');
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1']);
     expect(released).toEqual(['a:1']);
     expect([...live]).toEqual([]);
-    expect(watcher.disposableCount).toBe(0);
   });
 
-  it('回调切换胜者后抛错：仍能对齐新胜者，错误只警告一次', () => {
-    const { root, watcher, live, attach, warnings } = makeWorld();
-    const off = watcher.whenService<Provider>('svc', provider => {
-      if (provider.id === 'a') {
-        root.preferService('svc', 'b');
-        throw new Error('failed setup');
-      }
-      return attach(provider);
+  it('回调切换胜者后抛错：仍能对齐新胜者，错误只警告一次', async () => {
+    const { app, host, live, attach, warnings } = makeWorld();
+    let off!: () => void;
+    await watch(app, x => {
+      off = x.follow(provider => {
+        if (provider.id === 'a') {
+          host.services.prefer(svc, 'root/b');
+          throw new Error('failed setup');
+        }
+        return attach(provider);
+      });
     });
 
     expect([...live]).toEqual(['b:1']);
-    expect(warnings.filter(message => message.includes('回调抛错'))).toHaveLength(1);
-    root.preferService('svc', 'c');
+    expect(warnings.filter(message => message.includes('跟随回调抛错'))).toHaveLength(1);
+    host.services.prefer(svc, 'root/c');
     expect([...live]).toEqual(['c:2']);
     off();
     expect([...live]).toEqual([]);
   });
 
-  it('cleanup 切换胜者后抛错：错误不阻止挂载最终胜者', () => {
-    const { root, watcher, trace, live, attach, warnings } = makeWorld();
-    const off = watcher.whenService<Provider>('svc', provider => {
-      const cleanup = attach(provider);
-      return () => {
-        cleanup();
-        if (provider.id === 'a') {
-          root.preferService('svc', 'c');
-          throw new Error('failed cleanup');
-        }
-      };
+  it('cleanup 切换胜者后抛错：错误不阻止挂载最终胜者', async () => {
+    const { app, host, trace, live, attach, warnings } = makeWorld();
+    let off!: () => void;
+    await watch(app, x => {
+      off = x.follow(provider => {
+        const cleanup = attach(provider);
+        return () => {
+          cleanup();
+          if (provider.id === 'a') {
+            host.services.prefer(svc, 'root/c');
+            throw new Error('failed cleanup');
+          }
+        };
+      });
     });
 
-    root.preferService('svc', 'b');
+    host.services.prefer(svc, 'root/b');
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1', 'attach:c:2']);
     expect([...live]).toEqual(['c:2']);
-    expect(warnings.filter(message => message.includes('cleanup 抛错'))).toHaveLength(1);
+    expect(warnings.filter(message => message.includes('撤回抛错'))).toHaveLength(1);
     off();
     expect([...live]).toEqual([]);
   });
 
-  it('挂载时发生无关服务或败者的变化：不重复挂载当前胜者', () => {
-    const { root, watcher, trace, live, attach } = makeWorld();
-    const off = watcher.whenService<Provider>('svc', provider => {
-      const cleanup = attach(provider);
-      const other = root.fork('other');
-      other.provide('unrelated', {});
-      const removeLoser = other.provide('svc', { id: 'loser' }, { priority: -1 });
-      removeLoser();
-      return cleanup;
+  it('挂载时发生无关服务或败者的变化：不重复挂载当前胜者', async () => {
+    const { app, host, trace, live, attach } = makeWorld();
+    const unrelated = defineService('__t:ws-re-unrelated');
+    let off!: () => void;
+    await watch(app, x => {
+      off = x.follow(provider => {
+        const cleanup = attach(provider);
+        host.provide(unrelated, {});
+        const removeLoser = host.provide(svc, { id: 'loser' }, { priority: -1, entryId: 'root/loser' });
+        removeLoser();
+        return cleanup;
+      });
     });
 
     expect(trace).toEqual(['attach:a:1']);
@@ -225,18 +260,21 @@ describe('whenService 重入时的资源归属', () => {
     expect([...live]).toEqual([]);
   });
 
-  it('有限长切换链不递归调用挂载回调，每次释放后才进入下一次挂载', () => {
-    const { root, watcher, live, released, attach } = makeWorld();
+  it('有限长切换链不递归调用挂载回调，每次释放后才进入下一次挂载', async () => {
+    const { app, host, live, released, attach } = makeWorld();
     let remaining = 200;
     let depth = 0;
     let maxDepth = 0;
-    const off = watcher.whenService<Provider>('svc', provider => {
-      depth++;
-      maxDepth = Math.max(maxDepth, depth);
-      const cleanup = attach(provider);
-      if (remaining-- > 0) root.preferService('svc', provider.id === 'a' ? 'b' : 'a');
-      depth--;
-      return cleanup;
+    let off!: () => void;
+    await watch(app, x => {
+      off = x.follow(provider => {
+        depth++;
+        maxDepth = Math.max(maxDepth, depth);
+        const cleanup = attach(provider);
+        if (remaining-- > 0) host.services.prefer(svc, provider.id === 'a' ? 'root/b' : 'root/a');
+        depth--;
+        return cleanup;
+      });
     });
 
     expect(maxDepth).toBe(1);
