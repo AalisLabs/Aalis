@@ -14,7 +14,6 @@
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { asToolExecutionResult, type ToolCallContext, type ToolService, tools as toolsService } from '@aalis/api-tools';
-import type {} from '@aalis/api-webui'; // 加载 PluginMeta.subsystem 的 augmentation（纯类型，运行时零负担）
 import {
   type BoundOf,
   config as configService,

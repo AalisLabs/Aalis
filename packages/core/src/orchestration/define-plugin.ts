@@ -27,6 +27,11 @@ export interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
   name: string;
   displayName?: string;
   /**
+   * 归类标签，与 displayName 同为展示元数据：core 不读、不校验取值，管理界面据它分组。
+   * 第一方界面认的 id 见 @aalis/api-webui 的 DEFAULT_SUBSYSTEM_METADATA，其它字符串原样显示。
+   */
+  subsystem?: string;
+  /**
    * 用到的全部能力：键是 apply 里的参数名，值是描述符（内置能力从 @aalis/core、其余从契约包导入）；
    * 可选依赖包一层 optional()。没有默认注入——这里写了什么，插件就只能碰到什么。
    */

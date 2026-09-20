@@ -1640,12 +1640,16 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // 把每个新发现的前端注册为 webui-client 服务的一个 provider（带 label，供「服务」页下拉切换）。
     // 外部插件在 apply 里主动提供 webui-client 的也已在服务池中（注册更早 → 默认胜出，仍可被偏好切换）。
     //
-    // entryId 取前端**包名本身**而非本插件 id 的子粒度：它是服务页展示的 contextId，也是
-    // servicePreferences['webui-client'] 里持久化的键——换个写法，用户存量的前端偏好就认不回来了。
+    // 代前端包登记：条目身份是前端**包名本身**——它是服务页展示的 contextId，也是
+    // servicePreferences['webui-client'] 里持久化的键，还是装卸闸按包名比对的对象。
     for (const candidate of fresh) {
       clientProviderDisposers.set(
         candidate.id,
-        provide(webuiClient, { getClientDir: () => candidate.dir }, { label: candidate.label, entryId: candidate.id }),
+        provide(
+          webuiClient,
+          { getClientDir: () => candidate.dir },
+          { label: candidate.label, onBehalfOf: candidate.id },
+        ),
       );
       logger.info(`发现前端: ${candidate.label} (${candidate.dir})`);
     }

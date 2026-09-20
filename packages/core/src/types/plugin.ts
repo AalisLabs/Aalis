@@ -28,6 +28,8 @@ export interface PluginModule extends PluginMeta {
   name: string;
   /** 插件的显示名称，用于前端展示 */
   displayName?: string;
+  /** 归类标签（展示元数据），见 PluginDefinition.subsystem */
+  subsystem?: string;
   inject?: InjectDeclaration;
   provides?: string[];
   /** 标记为 core 的插件不能被用户禁用 */
