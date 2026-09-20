@@ -1,19 +1,12 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import type {} from '@aalis/api-memory'; // declaration merging：memory:clear 钩子类型
-import type { ToolCallContext, ToolDefinition, ToolService, ToolSummary } from '@aalis/api-tools';
-import { useToolService } from '@aalis/api-tools';
+import type { ToolCallContext, ToolDefinition, ToolSummary } from '@aalis/api-tools';
+import { tools } from '@aalis/api-tools';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import type { Context } from '@aalis/core';
+import { type BoundOf, config, definePlugin, hooks, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 
-// ===== 插件元数据 =====
-
-export const name = '@aalis/plugin-tool-search';
-export const displayName = '搜索工具';
-export const subsystem = 'tools';
-// tools 服务由核心提供，无需声明依赖
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   enabled: {
     type: 'boolean',
     label: '启用工具搜索层',
@@ -263,8 +256,20 @@ function normalizeToolNames(value: unknown): Set<string> {
 
 // ===== 插件入口 =====
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
-  const logger = ctx.logger.child('tool-search');
+// tools 只作可选依赖：本插件没有它也能装载（搜索层此时什么都注册不上），激活条件与依赖到齐无关
+const uses = { tools: optional(tools), hooks, logger, config };
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-tool-search',
+  displayName: '搜索工具',
+  subsystem: 'tools',
+  configSchema,
+  uses,
+  apply: registerToolSearch,
+});
+
+function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
   const enabled = (config.enabled as boolean) ?? true;
   const showToolNames = (config.showToolNames as boolean) ?? true;
   const maxDirectTools = (config.maxDirectTools as number) ?? 5;
@@ -273,7 +278,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const maxDiscoveredKeep = Math.max(0, Math.floor(Number(config.maxDiscoveredKeep ?? 20)));
   const discoveredRegistry = new DiscoveredToolsRegistry(maxDiscoveredKeep);
   // /clear 等记忆清除时同步遗忘发现集,与"会话重新开始"的语义对齐
-  ctx.middleware('memory:clear', async (data, next) => {
+  hooks.middleware('memory:clear', async (data, next) => {
     if (data.scope === 'all') discoveredRegistry.clear();
     else if (data.sessionId) discoveredRegistry.clear(data.sessionId);
     await next();
@@ -286,7 +291,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   }
 
   // 注册 search_tools 工具（初始定义，钩子中会动态更新 description）
-  useToolService(ctx).register({
+  tools.register({
     definition: buildSearchToolDef(),
     async handler(args: Record<string, unknown>, callCtx: ToolCallContext) {
       const query = String(args.query ?? '');
@@ -299,15 +304,19 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
             ? maxSearchResults
             : Infinity;
 
+      // handler 由 tools 提供者自己调起，正常情况下它必然在场；缺席只可能是拆卸竞态
+      const service = tools.current;
+      if (!service) return JSON.stringify({ error: '工具服务当前不可用，请稍后重试' });
+
       // 使用与当前平台一致的分组过滤
       const filter = callCtx.enabledGroups ? { groups: callCtx.enabledGroups } : undefined;
-      const summaries = ctx.getService<ToolService>('tools')!.getSummaries(filter);
+      const summaries = service.getSummaries(filter);
       const allResults = searchTools(summaries, query);
       const paged = allResults.slice(offset, offset + effectiveLimit);
       // 搜索结果直接包含完整参数定义（parameters schema），配合 getDefinitions 提供
 
       // 获取完整工具定义（含 parameters schema），构建查找表
-      const defs = ctx.getService<ToolService>('tools')!.getDefinitions(filter);
+      const defs = service.getDefinitions(filter);
       const defMap = new Map(defs.map(d => [d.function.name, d]));
 
       const toolDetails = paged.map(t => {
@@ -367,7 +376,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // 注册 agent:llm:before 钩子 —— 整体替换 data.tools(agent 每轮迭代会重置
   // tools 为原始全量后重跑本钩子,过滤幂等重算,与其它 handler 顺序无关)
-  ctx.middleware('agent:llm:before', async (data, next) => {
+  hooks.middleware('agent:llm:before', async (data, next) => {
     const allDefs = data.tools;
 
     // 工具数量不超过阈值时，跳过搜索层 (+1 因为 search_tools 自身也在列表中)

@@ -1,5 +1,5 @@
-import { toolsWithGroups, useToolService } from '@aalis/api-tools';
-import type { Context } from '@aalis/core';
+import { type BoundTools, tools, withToolGroups } from '@aalis/api-tools';
+import { config, definePlugin, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { registerBaseConvertTools } from './tools/base-convert.js';
 import { registerCalculusTools } from './tools/calculus.js';
@@ -13,13 +13,9 @@ import { registerNumberTheoryTools } from './tools/number-theory.js';
 import { registerStatisticsTools } from './tools/statistics.js';
 import { registerSymbolicTools } from './tools/symbolic.js';
 
-// ===== 插件元数据 =====
+// ===== 插件配置 =====
 
-export const name = '@aalis/plugin-tool-math';
-export const displayName = '数学工具';
-export const subsystem = 'tools';
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   evaluate: {
     label: '表达式计算',
     fields: {
@@ -93,8 +89,6 @@ export const configSchema: ConfigSchema = {
   },
 };
 
-// ===== 配置类型 =====
-
 interface ToolMathConfig {
   evaluate: { enabled: boolean };
   statistics: { enabled: boolean };
@@ -111,80 +105,89 @@ interface ToolMathConfig {
 
 // ===== 插件入口 =====
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
-  const tools = useToolService(ctx);
-  const cfg = resolveConfig(config);
+// 工具服务声明为可选：本插件是纯工具集，tools 缺席时只是没有落脚处（登记排队等提供者），
+// 不构成激活前提。
+const uses = { tools: optional(tools), config, logger };
 
-  // 注册工具分组
-  tools.registerGroup({
-    name: 'math',
-    label: '数学工具',
-    description: '表达式计算、统计分析、矩阵运算、数论、几何、单位换算、金融数学、微积分、方程求解、进制转换',
-  });
+export default definePlugin({
+  name: '@aalis/plugin-tool-math',
+  displayName: '数学工具',
+  subsystem: 'tools',
+  configSchema,
+  uses,
+  apply({ tools, config, logger }) {
+    const cfg = resolveConfig(config);
 
-  const grouped = toolsWithGroups(tools, ['math']);
+    tools.registerGroup({
+      name: 'math',
+      label: '数学工具',
+      description: '表达式计算、统计分析、矩阵运算、数论、几何、单位换算、金融数学、微积分、方程求解、进制转换',
+    });
 
-  if (cfg.evaluate.enabled) {
-    registerEvaluateTools(grouped);
-    ctx.logger.info('表达式计算工具已启用');
-  }
+    const grouped: BoundTools = withToolGroups(tools, ['math']);
 
-  if (cfg.statistics.enabled) {
-    registerStatisticsTools(grouped);
-    ctx.logger.info('统计分析工具已启用');
-  }
+    if (cfg.evaluate.enabled) {
+      registerEvaluateTools(grouped);
+      logger.info('表达式计算工具已启用');
+    }
 
-  if (cfg.matrix.enabled) {
-    registerMatrixTools(grouped);
-    ctx.logger.info('矩阵运算工具已启用');
-  }
+    if (cfg.statistics.enabled) {
+      registerStatisticsTools(grouped);
+      logger.info('统计分析工具已启用');
+    }
 
-  if (cfg.numberTheory.enabled) {
-    registerNumberTheoryTools(grouped);
-    ctx.logger.info('数论与组合工具已启用');
-  }
+    if (cfg.matrix.enabled) {
+      registerMatrixTools(grouped);
+      logger.info('矩阵运算工具已启用');
+    }
 
-  if (cfg.geometry.enabled) {
-    registerGeometryTools(grouped);
-    ctx.logger.info('几何计算工具已启用');
-  }
+    if (cfg.numberTheory.enabled) {
+      registerNumberTheoryTools(grouped);
+      logger.info('数论与组合工具已启用');
+    }
 
-  if (cfg.conversion.enabled) {
-    registerConversionTools(grouped);
-    ctx.logger.info('单位换算工具已启用');
-  }
+    if (cfg.geometry.enabled) {
+      registerGeometryTools(grouped);
+      logger.info('几何计算工具已启用');
+    }
 
-  if (cfg.financial.enabled) {
-    registerFinancialTools(grouped);
-    ctx.logger.info('金融数学工具已启用');
-  }
+    if (cfg.conversion.enabled) {
+      registerConversionTools(grouped);
+      logger.info('单位换算工具已启用');
+    }
 
-  if (cfg.calculus.enabled) {
-    registerCalculusTools(grouped);
-    ctx.logger.info('微积分工具已启用');
-  }
+    if (cfg.financial.enabled) {
+      registerFinancialTools(grouped);
+      logger.info('金融数学工具已启用');
+    }
 
-  if (cfg.equation.enabled) {
-    registerEquationTools(grouped);
-    ctx.logger.info('方程求解工具已启用');
-  }
+    if (cfg.calculus.enabled) {
+      registerCalculusTools(grouped);
+      logger.info('微积分工具已启用');
+    }
 
-  if (cfg.baseConvert.enabled) {
-    registerBaseConvertTools(grouped);
-    ctx.logger.info('进制转换工具已启用');
-  }
+    if (cfg.equation.enabled) {
+      registerEquationTools(grouped);
+      logger.info('方程求解工具已启用');
+    }
 
-  if (cfg.symbolic.enabled) {
-    registerSymbolicTools(grouped);
-    ctx.logger.info('符号代数工具已启用 (mathjs)');
-  }
+    if (cfg.baseConvert.enabled) {
+      registerBaseConvertTools(grouped);
+      logger.info('进制转换工具已启用');
+    }
 
-  ctx.logger.info('数学工具插件已启动');
-}
+    if (cfg.symbolic.enabled) {
+      registerSymbolicTools(grouped);
+      logger.info('符号代数工具已启用 (mathjs)');
+    }
+
+    logger.info('数学工具插件已启动');
+  },
+});
 
 // ===== 辅助函数 =====
 
-function resolveConfig(config: Record<string, unknown>): ToolMathConfig {
+function resolveConfig(config: Readonly<Record<string, unknown>>): ToolMathConfig {
   const get = (key: string) => {
     const section = config[key] as Record<string, unknown> | undefined;
     return { enabled: section?.enabled !== false };

@@ -14,7 +14,7 @@
 import { basename } from 'node:path';
 import type { StorageService } from '@aalis/api-storage';
 import { parseUriRoot, resolveAgainstCwd } from '@aalis/api-storage';
-import type { ScopedToolService } from '@aalis/api-tools';
+import type { BoundTools } from '@aalis/api-tools';
 import type { CwdState } from './cwd-state.js';
 
 interface FileConfig {
@@ -627,7 +627,7 @@ async function collectFiles(
   return out;
 }
 
-export function registerFileTools(tools: ScopedToolService, config: FileConfig): void {
+export function registerFileTools(tools: BoundTools, config: FileConfig): void {
   // ==================== file_read ====================
   tools.register({
     definition: {

@@ -15,9 +15,10 @@ import type {
   MediaService,
   TranscribeOptions,
 } from '@aalis/api-media';
+import type { MemoryService } from '@aalis/api-memory';
 import type { SessionManagerService } from '@aalis/api-session-manager';
 import { isStorageUri, parseUriRoot } from '@aalis/api-storage';
-import type { Context, Logger } from '@aalis/core';
+import type { Logger, ServiceRef } from '@aalis/core';
 import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
 import { AttachmentRefKind, formatAttachmentRef } from '@aalis/schema-message';
 
@@ -35,7 +36,7 @@ import {
   rememberDescriptionAlias,
   VIDEO_FAILURE_TEXTS,
 } from './cache.js';
-import { buildIncomingImageContext } from './context.js';
+import { buildIncomingImageContext, type ContextCaps } from './context.js';
 import {
   downloadToTemp,
   extractAudioTrack,
@@ -56,6 +57,18 @@ import {
 } from './llm-adapter.js';
 import { normalizeAttachments } from './normalize.js';
 import { getMediaRuntime } from './runtime.js';
+
+/**
+ * 调度器用到的能力。llm / asr 是 processor 池的两个来源；sessionManager 供 auto 交付形态
+ * 解析本会话主模型；memory 供识别上下文取历史与发送者画像。四者都可缺席（各自路径降级）。
+ */
+export interface MediaServiceCaps {
+  logger: Logger;
+  llm: ServiceRef<LLMModel>;
+  asr: ServiceRef<ASRService>;
+  sessionManager: ServiceRef<SessionManagerService>;
+  memory: ServiceRef<MemoryService>;
+}
 
 export interface MediaConfigResolved {
   vision: {
@@ -119,11 +132,19 @@ export class MediaServiceImpl implements MediaService {
   /** 上一次扫描得到的 LLM-as-processor 列表（懒计算）。 */
   private llmCache: { processors: MediaProcessor[]; signature: string } | null = null;
 
+  private readonly logger: Logger;
+
   constructor(
-    private readonly ctx: Context,
-    private readonly logger: Logger,
+    private readonly caps: MediaServiceCaps,
     private readonly cfg: MediaConfigResolved,
-  ) {}
+  ) {
+    this.logger = caps.logger;
+  }
+
+  /** 识别上下文的能力切片（memory 可能缺席，失败一律降级为无上下文） */
+  private get contextCaps(): ContextCaps {
+    return { memory: this.caps.memory, logger: this.logger };
+  }
 
   registerProcessor(p: MediaProcessor): () => void {
     this.external.push(p);
@@ -143,8 +164,8 @@ export class MediaServiceImpl implements MediaService {
    * 与「audio 能力的 LLM」同池，供 pickProcessor('audio', prefer) 统一仲裁。transcribe 直接转调 asr 服务。
    */
   private asrProcessors(): MediaProcessor[] {
-    return this.ctx.getAllServices('asr').map(e => {
-      const asr = e.instance as ASRService;
+    return this.caps.asr.all().map(e => {
+      const asr = e.instance;
       const name = `asr:${e.contextId}`;
       return {
         name,
@@ -152,8 +173,8 @@ export class MediaServiceImpl implements MediaService {
         displayName: `Whisper/ASR · ${e.label ?? e.contextId}`,
         priority: e.priority,
         // asr-api 的 meta.processor 可选、media-api 必填 → 显式映射并盖上桥接器名。
-        transcribe: async (input, ctx) => {
-          const r = await asr.transcribe(input, ctx);
+        transcribe: async input => {
+          const r = await asr.transcribe(input);
           return {
             text: r.text,
             segments: r.segments,
@@ -205,10 +226,12 @@ export class MediaServiceImpl implements MediaService {
       if (proc?.describe) {
         try {
           const subset = byKind.image.map(i => attachments[i]);
-          const r = await proc.describe(
-            { attachments: subset, mode: 'single', hint: opts.hint, maxTokens: opts.maxTokens },
-            this.ctx,
-          );
+          const r = await proc.describe({
+            attachments: subset,
+            mode: 'single',
+            hint: opts.hint,
+            maxTokens: opts.maxTokens,
+          });
           for (let j = 0; j < byKind.image.length; j++) {
             out[byKind.image[j]] = r.descriptions[j] ?? r.descriptions[0];
           }
@@ -224,10 +247,11 @@ export class MediaServiceImpl implements MediaService {
       if (proc?.transcribe) {
         for (const i of byKind.audio) {
           try {
-            const r = await proc.transcribe(
-              { attachment: attachments[i], language: this.cfg.audio.language, context: opts.hint },
-              this.ctx,
-            );
+            const r = await proc.transcribe({
+              attachment: attachments[i],
+              language: this.cfg.audio.language,
+              context: opts.hint,
+            });
             out[i] = r.text || undefined;
           } catch (err) {
             this.logger.warn(`音频识别失败: ${err instanceof Error ? err.message : err}`);
@@ -251,15 +275,12 @@ export class MediaServiceImpl implements MediaService {
       return undefined;
     }
     try {
-      const r = await proc.transcribe(
-        {
-          attachment,
-          language: opts.language ?? this.cfg.audio.language,
-          withTimestamps: opts.withTimestamps,
-          context: opts.context,
-        },
-        this.ctx,
-      );
+      const r = await proc.transcribe({
+        attachment,
+        language: opts.language ?? this.cfg.audio.language,
+        withTimestamps: opts.withTimestamps,
+        context: opts.context,
+      });
       return r.text;
     } catch (err) {
       this.logger.warn(`音频识别失败: ${err instanceof Error ? err.message : err}`);
@@ -321,13 +342,7 @@ export class MediaServiceImpl implements MediaService {
     // 多模态上下文：在进入任何 processor 调用前构造一次，后续复用。
     const ctxText =
       this.cfg.contextHistory.enabled && attachments.length > 0
-        ? await safeBuildContext(
-            this.ctx,
-            msg,
-            this.cfg.contextHistory.maxMessages,
-            this.cfg.senderContext,
-            this.logger,
-          )
+        ? await safeBuildContext(this.contextCaps, msg, this.cfg.contextHistory.maxMessages, this.cfg.senderContext)
         : undefined;
 
     // 描述是否可跨会话复用：带了本会话对话上下文的描述属于「此群此刻的解读」，
@@ -389,16 +404,13 @@ export class MediaServiceImpl implements MediaService {
                   `[vision.describe] source=auto promptChars=${basePrompt.length} (session=${msg.sessionId})`,
                 );
                 const [r, ref] = await Promise.all([
-                  proc.describe(
-                    {
-                      attachments: [att],
-                      mode: 'single',
-                      maxTokens: this.cfg.vision.maxTokens,
-                      basePrompt,
-                      context: ctxText,
-                    },
-                    this.ctx,
-                  ),
+                  proc.describe({
+                    attachments: [att],
+                    mode: 'single',
+                    maxTokens: this.cfg.vision.maxTokens,
+                    basePrompt,
+                    context: ctxText,
+                  }),
                   this.cacheImageRef(att, msg.sessionId),
                 ]);
                 const raw = r.descriptions[0];
@@ -491,9 +503,9 @@ export class MediaServiceImpl implements MediaService {
    */
   resolveDelivery(sessionId?: string, platform?: string): 'passthrough' | 'describe' {
     if (this.cfg.vision.delivery !== 'auto') return this.cfg.vision.delivery;
-    const sm = this.ctx.getService<SessionManagerService>('session-manager');
+    const sm = this.caps.sessionManager.current;
     const ref = sm && sessionId ? sm.resolveConfig(sessionId, platform).llm : undefined;
-    const entry = resolveLLMModel(this.ctx, ref?.provider && ref?.model ? ref : undefined, ['chat']);
+    const entry = resolveLLMModel(this.caps.llm, ref?.provider && ref?.model ? ref : undefined, ['chat']);
     return entry?.instance.capabilities.includes(LLMCapabilities.Vision) ? 'passthrough' : 'describe';
   }
 
@@ -588,16 +600,13 @@ export class MediaServiceImpl implements MediaService {
         const proc = this.pickProcessor('vision', this.cfg.vision.prefer);
         if (proc?.describe) {
           const frameAtts: MessageAttachment[] = frames.map(d => ({ kind: 'image', data: d, mimeType: 'image/png' }));
-          const r = await proc.describe(
-            {
-              attachments: frameAtts,
-              mode: 'combined',
-              maxTokens: this.cfg.vision.maxTokens,
-              hint: this.cfg.video.framesHint ?? '以下为同一视频的关键帧，按时间顺序排列。',
-              context: contextText,
-            },
-            this.ctx,
-          );
+          const r = await proc.describe({
+            attachments: frameAtts,
+            mode: 'combined',
+            maxTokens: this.cfg.vision.maxTokens,
+            hint: this.cfg.video.framesHint ?? '以下为同一视频的关键帧，按时间顺序排列。',
+            context: contextText,
+          });
           const text = r.descriptions[0];
           if (text) {
             frameTexts.push(`${this.cfg.video.framePrefix}${text}`);
@@ -640,13 +649,13 @@ export class MediaServiceImpl implements MediaService {
 
   /** 重新扫描 LLM entries（按 entry id 列表的签名变化决定是否重建）。 */
   private refreshLLMProcessors(): MediaProcessor[] {
-    const all = this.ctx.getAllServices<LLMModel>('llm');
+    const all = this.caps.llm.all();
     const sig = all
       .map(e => `${e.contextId}:${e.instance.capabilities.join(',')}`)
       .sort()
       .join('|');
     if (this.llmCache?.signature === sig) return this.llmCache.processors;
-    const processors = scanLLMProcessors(this.ctx, {
+    const processors = scanLLMProcessors(this.caps, {
       prompt: this.cfg.vision.prompt,
       maxTokens: this.cfg.vision.maxTokens,
       vision: {
@@ -680,7 +689,7 @@ export class MediaServiceImpl implements MediaService {
   }
 
   async buildContext(msg: IncomingMessage, opts?: BuildContextOptions): Promise<string> {
-    return buildIncomingImageContext(this.ctx, msg, opts?.beforeLimit, this.cfg.senderContext);
+    return buildIncomingImageContext(this.contextCaps, msg, opts?.beforeLimit, this.cfg.senderContext);
   }
 
   /**
@@ -728,16 +737,13 @@ export class MediaServiceImpl implements MediaService {
               data: d,
               mimeType: 'image/png',
             }));
-            const r = await proc.describe(
-              {
-                attachments: frameAtts,
-                mode: 'combined',
-                maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
-                basePrompt: this.cfg.video.animatedPrompt || DEFAULT_VISION_BATCH_PROMPT,
-                hint: opts.hint,
-              },
-              this.ctx,
-            );
+            const r = await proc.describe({
+              attachments: frameAtts,
+              mode: 'combined',
+              maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
+              basePrompt: this.cfg.video.animatedPrompt || DEFAULT_VISION_BATCH_PROMPT,
+              hint: opts.hint,
+            });
             result = r.descriptions[0] ?? '';
           }
         } finally {
@@ -759,16 +765,13 @@ export class MediaServiceImpl implements MediaService {
         basePrompt = this.cfg.vision.prompt || DEFAULT_VISION_AUTO_PROMPT;
       }
       this.logger.info(`[vision.describe] source=tool detailLevel=${detailLevel} promptChars=${basePrompt.length}`);
-      const r = await proc.describe(
-        {
-          attachments: [{ kind: 'image', data: imageUrl }],
-          mode: 'single',
-          maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
-          basePrompt,
-          hint: opts.hint,
-        },
-        this.ctx,
-      );
+      const r = await proc.describe({
+        attachments: [{ kind: 'image', data: imageUrl }],
+        mode: 'single',
+        maxTokens: opts.maxTokens ?? this.cfg.vision.maxTokens,
+        basePrompt,
+        hint: opts.hint,
+      });
       result = r.descriptions[0] ?? '';
     }
 
@@ -798,17 +801,16 @@ export class MediaServiceImpl implements MediaService {
 
 /** 安全构造对话上下文：失败/异常返回 undefined，不让 processor 调用受阻。 */
 async function safeBuildContext(
-  ctx: Context,
+  caps: ContextCaps,
   msg: IncomingMessage,
   beforeLimit: number,
   senderCfg: { enabled: boolean; profileMaxChars: number } | undefined,
-  logger: Logger,
 ): Promise<string | undefined> {
   try {
-    const text = await buildIncomingImageContext(ctx, msg, beforeLimit, senderCfg);
+    const text = await buildIncomingImageContext(caps, msg, beforeLimit, senderCfg);
     return text && text.trim().length > 0 ? text : undefined;
   } catch (err) {
-    logger.debug(`buildContext 失败，跳过: ${err instanceof Error ? err.message : err}`);
+    caps.logger.debug(`buildContext 失败，跳过: ${err instanceof Error ? err.message : err}`);
     return undefined;
   }
 }

@@ -245,7 +245,7 @@ export class CommandRegistry implements CommandService {
   /**
    * 注销。
    *
-   * @param contextId 只摘该 Context 的那一层声明——下面被它覆盖的声明会自动重新生效。
+   * @param contextId 只摘该激活的那一层声明——下面被它覆盖的声明会自动重新生效。
    *   缺省则摘掉全部层（管理面用；插件自己的 dispose 必须传名字，否则会连别人的一起删）。
    */
   unregister(name: string, contextId?: string): void {

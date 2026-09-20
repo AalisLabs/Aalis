@@ -44,8 +44,11 @@ function setup() {
     get: (path: string, ...h: Handler[]) => void routes.set(`GET ${path}`, h[h.length - 1]),
     post: (path: string, ...h: Handler[]) => void routes.set(`POST ${path}`, h[h.length - 1]),
   };
-  const ctx = { logger: { debug() {}, warn() {} }, getService: () => undefined };
-  registerUploadedFilesRoutes(app as never, ctx as never, { storage: storage as never }, (() => () => {}) as never);
+  registerUploadedFilesRoutes(
+    app as never,
+    { storage: storage as never, logger: { debug() {}, warn() {} } as never, fileIndex: () => undefined },
+    (() => () => {}) as never,
+  );
   return { routes, destroyed };
 }
 

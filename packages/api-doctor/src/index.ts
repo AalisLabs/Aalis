@@ -47,8 +47,8 @@ export interface CheckSpec {
   label?: string;
   /** 来源插件名，自动由 DoctorService 注入；外部传入也可 */
   pluginName?: string;
-  /** 执行函数：返回 1~N 条结果（一个 spec 可输出多条相关 check） */
-  run(ctx: Context): Promise<CheckResult | CheckResult[]> | CheckResult | CheckResult[];
+  /** 执行函数：返回 1~N 条结果（一个 spec 可输出多条相关 check）。要用到的能力由注册方闭包带入 */
+  run(): Promise<CheckResult | CheckResult[]> | CheckResult | CheckResult[];
 }
 
 export interface DoctorService {

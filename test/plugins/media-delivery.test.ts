@@ -1,18 +1,23 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Context, Logger } from '@aalis/core';
-import { App } from '@aalis/core';
+import type { Logger, ServiceRef, ServiceView } from '@aalis/core';
+import { App, provide, services } from '@aalis/core';
 import { describe, expect, it, vi } from 'vitest';
-import type { DescribeInput, MediaProcessor, MediaService } from '../../packages/api-media/src/index.js';
-import type { ToolService } from '../../packages/api-tools/src/index.js';
-import * as mediaModule from '../../packages/plugin-media/src/index.js';
-import { legacyVisionMode } from '../../packages/plugin-media/src/index.js';
+import type { LLMModel } from '../../packages/api-llm/src/index.js';
+import type { DescribeInput, MediaProcessor } from '../../packages/api-media/src/index.js';
+import { media } from '../../packages/api-media/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
+import { processService } from '../../packages/api-process/src/index.js';
+import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
+import mediaPlugin, { legacyVisionMode } from '../../packages/plugin-media/src/index.js';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
-import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
+import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import { registerMediaTools } from '../../packages/plugin-media/src/tools.js';
-import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 
 /** analyze_image 直通分支的远端下载桩：只替换 safeDownloadToTemp，其余走原实现 */
@@ -51,32 +56,53 @@ function cfgWith(vision: Partial<MediaConfigResolved['vision']>): MediaConfigRes
   } as unknown as MediaConfigResolved;
 }
 
-/** 假 ctx：可挂若干 LLM entry（带 capabilities）与一个 session-manager */
-function fakeCtx(
+/** 按激活绑定的服务桩：当前胜者取首个 entry */
+function ref<P>(entries: ServiceView<P>[] = []): ServiceRef<P> {
+  return {
+    current: entries[0]?.instance,
+    require: () => {
+      const provider = entries[0]?.instance;
+      if (provider === undefined) throw new Error('无提供者');
+      return provider;
+    },
+    all: () => entries,
+    follow: () => () => {},
+  };
+}
+
+/** MediaServiceImpl 的能力桩：可挂若干 LLM entry（带 capabilities）与一个 session-manager */
+function makeCaps(
   entries: Array<{ contextId: string; caps: string[] }>,
   sessionLLM?: { provider: string; model: string },
-): Context {
-  return {
-    getAllServices: () =>
-      entries.map(e => ({ contextId: e.contextId, instance: { id: e.contextId.split('/')[1], capabilities: e.caps } })),
-    getService: (name: string) =>
-      name === 'session-manager' && sessionLLM ? { resolveConfig: () => ({ llm: sessionLLM }) } : undefined,
-  } as unknown as Context;
+): MediaServiceCaps {
+  const models: ServiceView<LLMModel>[] = entries.map(e => ({
+    contextId: e.contextId,
+    instance: { id: e.contextId.split('/')[1], capabilities: e.caps } as unknown as LLMModel,
+    priority: 0,
+  }));
+  const sessionManager: ServiceView<SessionManagerService>[] = sessionLLM
+    ? [
+        {
+          contextId: 'session-manager',
+          instance: { resolveConfig: () => ({ llm: sessionLLM }) } as unknown as SessionManagerService,
+          priority: 0,
+        },
+      ]
+    : [];
+  return { logger, llm: ref(models), asr: ref(), sessionManager: ref(sessionManager), memory: ref() };
 }
 
 describe('resolveDelivery：auto 按本会话生效主模型的 vision 能力', () => {
   it('默认 entry 有 vision → passthrough；无 vision → describe', () => {
     expect(
-      new MediaServiceImpl(
-        fakeCtx([{ contextId: 'p/m', caps: ['chat', 'vision'] }]),
-        logger,
-        cfgWith({}),
-      ).resolveDelivery('s'),
+      new MediaServiceImpl(makeCaps([{ contextId: 'p/m', caps: ['chat', 'vision'] }]), cfgWith({})).resolveDelivery(
+        's',
+      ),
     ).toBe('passthrough');
     expect(
-      new MediaServiceImpl(fakeCtx([{ contextId: 'p/m', caps: ['chat'] }]), logger, cfgWith({})).resolveDelivery('s'),
+      new MediaServiceImpl(makeCaps([{ contextId: 'p/m', caps: ['chat'] }]), cfgWith({})).resolveDelivery('s'),
     ).toBe('describe');
-    expect(new MediaServiceImpl(fakeCtx([]), logger, cfgWith({})).resolveDelivery('s')).toBe('describe');
+    expect(new MediaServiceImpl(makeCaps([]), cfgWith({})).resolveDelivery('s')).toBe('describe');
   });
 
   it('会话指定了模型时按该模型判（与 agent 的解析链同源），而不是按列表首个', () => {
@@ -84,21 +110,17 @@ describe('resolveDelivery：auto 按本会话生效主模型的 vision 能力', 
       { contextId: 'p/vision-model', caps: ['chat', 'vision'] },
       { contextId: 'p/text-model', caps: ['chat'] },
     ];
-    const svc = new MediaServiceImpl(fakeCtx(entries, { provider: 'p', model: 'text-model' }), logger, cfgWith({}));
+    const svc = new MediaServiceImpl(makeCaps(entries, { provider: 'p', model: 'text-model' }), cfgWith({}));
     expect(svc.resolveDelivery('s', 'onebot')).toBe('describe');
-    const svc2 = new MediaServiceImpl(fakeCtx(entries, { provider: 'p', model: 'vision-model' }), logger, cfgWith({}));
+    const svc2 = new MediaServiceImpl(makeCaps(entries, { provider: 'p', model: 'vision-model' }), cfgWith({}));
     expect(svc2.resolveDelivery('s', 'onebot')).toBe('passthrough');
   });
 
   it('显式 passthrough / describe 不看模型能力', () => {
-    const noLLM = fakeCtx([]);
-    expect(new MediaServiceImpl(noLLM, logger, cfgWith({ delivery: 'passthrough' })).resolveDelivery('s')).toBe(
-      'passthrough',
-    );
-    const vision = fakeCtx([{ contextId: 'p/m', caps: ['chat', 'vision'] }]);
-    expect(new MediaServiceImpl(vision, logger, cfgWith({ delivery: 'describe' })).resolveDelivery('s')).toBe(
-      'describe',
-    );
+    const noLLM = makeCaps([]);
+    expect(new MediaServiceImpl(noLLM, cfgWith({ delivery: 'passthrough' })).resolveDelivery('s')).toBe('passthrough');
+    const vision = makeCaps([{ contextId: 'p/m', caps: ['chat', 'vision'] }]);
+    expect(new MediaServiceImpl(vision, cfgWith({ delivery: 'describe' })).resolveDelivery('s')).toBe('describe');
   });
 });
 
@@ -127,7 +149,7 @@ describe('recognizeOnArrival：到达即识别 vs 只留指针', () => {
     }) as unknown as IncomingMessage;
 
   it('开：识别模型被调，描述写进 _attachmentDescriptions', async () => {
-    const svc = new MediaServiceImpl(fakeCtx([]), logger, cfgWith({ recognizeOnArrival: true }));
+    const svc = new MediaServiceImpl(makeCaps([]), cfgWith({ recognizeOnArrival: true }));
     const calls = withFakeVision(svc);
     const m = msg();
     const report = await svc.processMessage(m);
@@ -137,7 +159,7 @@ describe('recognizeOnArrival：到达即识别 vs 只留指针', () => {
   });
 
   it('关：不调识别模型；无落盘运行时（OneBot 场景正文已有 ref）描述位留空', async () => {
-    const svc = new MediaServiceImpl(fakeCtx([]), logger, cfgWith({ recognizeOnArrival: false }));
+    const svc = new MediaServiceImpl(makeCaps([]), cfgWith({ recognizeOnArrival: false }));
     const calls = withFakeVision(svc);
     const m = msg();
     const report = await svc.processMessage(m);
@@ -152,7 +174,7 @@ describe('recognizeOnArrival：到达即识别 vs 只留指针', () => {
       proc: {} as never,
       storage: { writeFile: async (uri: string) => void written.push(uri) } as never,
     });
-    const svc = new MediaServiceImpl(fakeCtx([]), logger, cfgWith({ recognizeOnArrival: false }));
+    const svc = new MediaServiceImpl(makeCaps([]), cfgWith({ recognizeOnArrival: false }));
     withFakeVision(svc);
     const m = { ...msg(), content: '' } as IncomingMessage;
     await svc.processMessage(m);
@@ -174,14 +196,15 @@ describe('legacy vision.mode 映射（config-sync 在 apply 前裁 schema 外键
   /** 真实装配 media 插件，注册假 vision processor，喂一张独一无二的图（描述缓存是模块级的） */
   async function callsUnder(vision: Record<string, unknown>, uri: string): Promise<number> {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    app.ctx.provide('process', {} as never);
-    app.ctx.provide('storage', {} as never);
-    await app.ctx.useModule(mediaModule as never, { vision });
+    const host = app.bind({ provide, services });
+    host.provide(processService, {} as never);
+    host.provide(storage, {} as never);
+    await app.plugin(mediaPlugin, { vision });
     await app.plugins.idle();
-    const media = app.ctx.getService<MediaService>('media');
-    if (!media) throw new Error('media 未注册');
+    const service = host.services.get(media);
+    if (!service) throw new Error('media 未注册');
     const calls: unknown[] = [];
-    media.registerProcessor({
+    service.registerProcessor({
       name: 'fake-vision',
       capabilities: ['vision'],
       priority: 10,
@@ -196,7 +219,7 @@ describe('legacy vision.mode 映射（config-sync 在 apply 前裁 schema 外键
       content: '',
       attachments: [{ kind: 'image', data: uri, mimeType: 'image/png' }],
     } as unknown as IncomingMessage;
-    await media.processMessage(m);
+    await service.processMessage(m);
     await app.stop();
     return calls.length;
   }
@@ -216,14 +239,16 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     extraArgs: Record<string, unknown> = {},
   ) {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(toolsModule as never, {});
+    // 工具经宿主根激活的绑定门面登记，落进 plugin-tools 的真实注册表
+    const host = app.bind({ services, tools, memory });
+    await app.plugin(toolsPlugin);
     await app.plugins.idle();
-    const svc = new MediaServiceImpl(fakeCtx([]), logger, cfgWith(vision));
+    const svc = new MediaServiceImpl(makeCaps([]), cfgWith(vision));
     const calls = withFakeVision(svc);
-    registerMediaTools(app.ctx, () => svc);
-    const tools = app.ctx.getService<ToolService>('tools');
-    if (!tools) throw new Error('tools 服务未注册');
-    const result = await tools.execute(
+    registerMediaTools(host, () => svc);
+    const registry = host.services.get(tools);
+    if (!registry) throw new Error('tools 服务未注册');
+    const result = await registry.execute(
       'analyze_image',
       { image: uri, ...extraArgs },
       { sessionId: 's', platform: 'test', ...(acceptsImages ? { acceptsImages: true } : {}) },

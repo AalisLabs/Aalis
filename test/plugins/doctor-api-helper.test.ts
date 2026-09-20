@@ -32,7 +32,7 @@ function makeDoctor(): { svc: DoctorService; specs: Map<string, CheckSpec> } {
     async runChecks() {
       const checks: CheckResult[] = [];
       for (const s of specs.values()) {
-        const r = await s.run({} as Context);
+        const r = await s.run();
         if (Array.isArray(r)) checks.push(...r);
         else checks.push(r);
       }

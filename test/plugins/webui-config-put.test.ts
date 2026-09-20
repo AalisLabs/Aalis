@@ -1,3 +1,4 @@
+import type { AppService, ConfigManager, PluginManagerService, ServiceRef } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 
@@ -7,6 +8,11 @@ import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/rou
 // 路由注册器只调用 app.<method>(path, ...handlers)，这里用记录处理器的假 app 直接调用，不起端口。
 
 type Handler = (req: unknown, res: unknown, next: () => Promise<void>) => unknown;
+
+/** 最小 ServiceRef 桩：路由只经 current / require 取提供者 */
+function ref<T>(instance: unknown): ServiceRef<T> {
+  return { current: instance as T, require: () => instance as T, all: () => [], follow: () => () => {} };
+}
 
 function setup(opts: { saveConfig?: () => Promise<void> } = {}) {
   const store: Record<string, unknown> = {
@@ -27,21 +33,16 @@ function setup(opts: { saveConfig?: () => Promise<void> } = {}) {
         },
     },
   );
-  const ctx = {
-    config: {
-      set: (k: string, v: unknown) => {
-        store[k] = v;
-      },
-      getAll: () => ({ ...store }),
+  const hostConfig = {
+    set: (k: string, v: unknown) => {
+      store[k] = v;
     },
-    getService: () => undefined,
-    logger: { child: () => ctx.logger, debug() {}, info() {}, warn() {}, error() {} },
+    getAll: () => ({ ...store }),
   };
   registerPluginRoutes(
     app as never,
-    ctx as never,
-    () =>
-      ({
+    {
+      app: ref<AppService>({
         saveConfig:
           opts.saveConfig ??
           (() => {
@@ -49,10 +50,15 @@ function setup(opts: { saveConfig?: () => Promise<void> } = {}) {
             return Promise.resolve();
           }),
         restart: () => calls.push('restart'),
-      }) as never,
-    () => ({}) as never,
+      }),
+      plugins: ref<PluginManagerService>({}),
+      hostConfig: ref<ConfigManager>(hostConfig),
+      tools: { current: undefined },
+      commands: { current: undefined },
+      webui: () => undefined,
+    },
     () => ({ platform: 'webui', userId: 'console' }),
-    () => (_req, _res, next) => next(),
+    () => (_req: unknown, _res: unknown, next: () => void) => next(),
     () => undefined,
   );
   const put = async (body: unknown) => {

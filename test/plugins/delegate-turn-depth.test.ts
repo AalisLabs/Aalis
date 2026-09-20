@@ -1,7 +1,8 @@
-import type { Context } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apply } from '../../packages/plugin-tool-session/src/index.js';
+import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
+import { App, events, hooks, provide } from '../../packages/core/src/index.js';
+import sessionTools from '../../packages/plugin-tool-session/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // delegate_to_session 的防雪崩：深度随消息走，不按会话计时。
@@ -17,7 +18,6 @@ import { apply } from '../../packages/plugin-tool-session/src/index.js';
 // ════════════════════════════════════════════════════════════
 
 type Handler = (args: Record<string, unknown>, callCtx: Record<string, unknown>) => Promise<string>;
-type HookFn = (data: Record<string, unknown>, next: () => Promise<void>) => Promise<void>;
 
 interface Harness {
   handler: Handler;
@@ -26,89 +26,66 @@ interface Harness {
   /** 直接调 gateway.ingressMessage() 投递——不过事件总线 */
   ingress: (msg: Partial<IncomingMessage> & { sessionId: string }) => Promise<void>;
   runTurnAfter: (sessionId: string) => Promise<void>;
-  emitted: Array<{ event: string; payload: IncomingMessage }>;
+  emitted: IncomingMessage[];
 }
 
-function setup(): Harness {
+const booted: App[] = [];
+
+const makeIncoming = (msg: Partial<IncomingMessage> & { sessionId: string }): IncomingMessage => ({
+  content: '任务正文',
+  platform: 'onebot',
+  ...msg,
+});
+
+async function setup(): Promise<Harness> {
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  booted.push(app);
+  const host = app.bind({ provide, events, hooks });
+
   const handlers = new Map<string, Handler>();
-  const emitted: Array<{ event: string; payload: IncomingMessage }> = [];
-  const listeners = new Map<string, Array<(payload: unknown) => void | Promise<void>>>();
-  const hooks = new Map<string, HookFn[]>();
-  /** 按中间件语义跑一条钩子链（每个中间件自己决定是否 next()）。 */
-  const runChain = async (hook: string, data: Record<string, unknown>): Promise<void> => {
-    const list = hooks.get(hook) ?? [];
-    const dispatch = async (i: number): Promise<void> => {
-      const fn = list[i];
-      if (!fn) return;
-      await fn(data, () => dispatch(i + 1));
-    };
-    await dispatch(0);
-  };
-  const fakeTools = {
-    register: (tool: { definition: { function: { name: string } }; handler: Handler }) => {
-      handlers.set(tool.definition.function.name, tool.handler);
-      return () => {};
+  host.provide(tools, {
+    register(tool: Omit<RegisteredTool, 'pluginName'>) {
+      const name = tool.definition.function.name;
+      handlers.set(name, tool.handler as unknown as Handler);
+      return () => void handlers.delete(name);
     },
-    registerGroup: () => {},
-  };
-  const logger = { info: () => {}, warn: () => {}, debug: () => {}, error: () => {}, child: () => logger };
-  const ctx = {
-    id: '@aalis/plugin-tool-session',
-    logger,
-    getService: (name: string) => (name === 'tools' ? fakeTools : undefined),
-    whenService: (name: string, cb: (svc: unknown) => void) => {
-      if (name === 'tools') cb(fakeTools);
-      return () => {};
-    },
-    emit: async (event: string, payload: IncomingMessage) => {
-      emitted.push({ event, payload });
-      for (const fn of listeners.get(event) ?? []) await fn(payload);
-    },
-    on: (event: string, fn: (payload: unknown) => void | Promise<void>) => {
-      const list = listeners.get(event) ?? [];
-      list.push(fn);
-      listeners.set(event, list);
-      return () => {};
-    },
-    middleware: (hook: string, fn: HookFn) => {
-      const list = hooks.get(hook) ?? [];
-      list.push(fn);
-      hooks.set(hook, list);
-      return () => {
-        hooks.set(
-          hook,
-          (hooks.get(hook) ?? []).filter(f => f !== fn),
-        );
-      };
-    },
-    onDispose: () => {},
-    provide: () => {},
-    contribute: () => () => {},
-    runHook: async () => {},
-  } as unknown as Context;
-  apply(ctx, {});
-  const handler = handlers.get('delegate_to_session');
-  if (!handler) throw new Error('delegate_to_session 未注册');
+    registerGroup: () => () => {},
+  } as never);
+
   // 伪 gateway + agent：ingressMessage 与 inbound:message 监听共用同一条内部处理路径，
   // 该路径以 agent:input:before 钩子开场——与 plugin-gateway / plugin-agent 同构。
-  const processInbound = async (msg: IncomingMessage): Promise<void> => {
-    await runChain('agent:input:before', { message: msg, metadata: {} });
+  const processInbound = async (message: IncomingMessage): Promise<void> => {
+    await host.hooks.run('agent:input:before', { message, metadata: {} });
   };
-  listeners.set('inbound:message', [
-    ...(listeners.get('inbound:message') ?? []),
-    payload => processInbound(payload as IncomingMessage),
-  ]);
+
+  const emitted: IncomingMessage[] = [];
+  host.events.on('inbound:message', async message => {
+    emitted.push(message);
+    await processInbound(message);
+  });
+
+  await app.plugins.register(sessionTools, {});
+  await app.plugins.idle();
+
+  const handler = handlers.get('delegate_to_session');
+  if (!handler) throw new Error('delegate_to_session 未注册');
   return {
     handler,
     emitted,
     emitInbound: async msg => {
-      await (ctx.emit as unknown as (e: string, p: unknown) => Promise<void>)('inbound:message', msg);
+      await host.events.emit('inbound:message', makeIncoming(msg));
     },
     ingress: async msg => {
-      await processInbound(msg as IncomingMessage);
+      await processInbound(makeIncoming(msg));
     },
     runTurnAfter: async sessionId => {
-      await runChain('agent:turn:after', { sessionId });
+      await host.hooks.run('agent:turn:after', {
+        message: makeIncoming({ sessionId }),
+        reply: '',
+        outcome: 'replied',
+        sessionId,
+        metadata: {},
+      });
     },
   };
 }
@@ -121,20 +98,21 @@ const delegate = (h: Harness, fromSession: string, target: string) =>
     )
     .then(r => JSON.parse(r) as { delegated?: boolean; error?: string });
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers();
+  for (const app of booted.splice(0)) await app.stop();
 });
 
 describe('delegate_to_session 回合深度防雪崩', () => {
   it('委派注入的 IncomingMessage 带 proactiveDepth=1', async () => {
-    const h = setup();
+    const h = await setup();
     await delegate(h, 'src-a', 'onebot:1:group:100');
     expect(h.emitted).toHaveLength(1);
-    expect(h.emitted[0].payload.proactiveDepth).toBe(1);
+    expect(h.emitted[0].proactiveDepth).toBe(1);
   });
 
   it('被委派回合内：delegate 被拒', async () => {
-    const h = setup();
+    const h = await setup();
     await h.emitInbound({ sessionId: 'onebot:1:group:101', proactiveDepth: 1, triggerType: 'proactive' });
     const res = await delegate(h, 'onebot:1:group:101', 'onebot:1:group:999');
     expect(res.error).toBe('本回合由委派消息驱动，不能再委派');
@@ -142,7 +120,7 @@ describe('delegate_to_session 回合深度防雪崩', () => {
   });
 
   it('回合结束（agent:turn:after）即解除', async () => {
-    const h = setup();
+    const h = await setup();
     const sid = 'onebot:1:group:102';
     await h.emitInbound({ sessionId: sid, proactiveDepth: 1, triggerType: 'proactive' });
     expect((await delegate(h, sid, 'onebot:1:group:999')).error).toBe('本回合由委派消息驱动，不能再委派');
@@ -151,7 +129,7 @@ describe('delegate_to_session 回合深度防雪崩', () => {
   });
 
   it('同会话下一条真人消息的回合不受影响（哪怕没等到 turn:after）', async () => {
-    const h = setup();
+    const h = await setup();
     const sid = 'onebot:1:group:103';
     await h.emitInbound({ sessionId: sid, proactiveDepth: 1, triggerType: 'proactive' });
     expect((await delegate(h, sid, 'onebot:1:group:999')).error).toBe('本回合由委派消息驱动，不能再委派');
@@ -160,7 +138,7 @@ describe('delegate_to_session 回合深度防雪崩', () => {
   });
 
   it('经 gateway.ingressMessage 投递的委派消息同样上锁', async () => {
-    const h = setup();
+    const h = await setup();
     const sid = 'onebot:1:group:107';
     await h.ingress({ sessionId: sid, proactiveDepth: 1, triggerType: 'proactive' });
     expect((await delegate(h, sid, 'onebot:1:group:999')).error).toBe('本回合由委派消息驱动，不能再委派');
@@ -169,13 +147,13 @@ describe('delegate_to_session 回合深度防雪崩', () => {
   });
 
   it('其他会话的委派回合不影响本会话', async () => {
-    const h = setup();
+    const h = await setup();
     await h.emitInbound({ sessionId: 'onebot:1:group:104', proactiveDepth: 1, triggerType: 'proactive' });
     expect((await delegate(h, 'onebot:1:group:105', 'onebot:1:group:999')).delegated).toBe(true);
   });
 
   it('没有时间窗：委派回合里过 11 分钟仍被拒（原 10 分钟 TTL 已不存在）', async () => {
-    const h = setup();
+    const h = await setup();
     const sid = 'onebot:1:group:106';
     vi.useFakeTimers();
     await h.emitInbound({ sessionId: sid, proactiveDepth: 1, triggerType: 'proactive' });

@@ -4,10 +4,12 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { ToolCallContext, ToolExecutionResult } from '../../packages/api-tools/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as storageLocal from '../../packages/plugin-storage-local/src/index.js';
-import * as browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
+import { type ToolCallContext, type ToolExecutionResult, tools } from '../../packages/api-tools/src/index.js';
+import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
+import { App, type BoundOf, provide, services } from '../../packages/core/src/index.js';
+import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import browserPlugin from '../../packages/plugin-tool-browser/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 浏览器工具的两条实证缺陷（真 Chromium + 真本机 http 服务 + 真 fs）：
@@ -24,11 +26,16 @@ type Handler = (args: Record<string, unknown>, ctx: ToolCallContext) => Promise<
 
 const PAGE_HTML = '<html><title>截图页</title><body style="background:#3b82f6"><h1>hello</h1></body></html>';
 
+/** 宿主侧要用的能力：发布桩服务 + 动态取 storage 实例挂 spy */
+const hostUses = { provide, services };
+
 let base: string;
 let app: App;
+let host: BoundOf<typeof hostUses>;
 let server: Server;
 let port: number;
 let handlers: Record<string, Handler>;
+let actions: Map<string, WebuiActionHandler>;
 
 /** SIGKILL 掉本进程下的 Chromium 子进程——真崩溃，不是 browser.close() 的优雅退出 */
 function killChromium(): number {
@@ -56,7 +63,7 @@ beforeAll(async () => {
   port = (server.address() as { port: number }).port;
 
   app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(storageLocal as unknown as Parameters<typeof app.ctx.useModule>[0], {
+  await app.plugins.register(storageLocal, {
     roots: [
       {
         name: 'tmp',
@@ -70,16 +77,26 @@ beforeAll(async () => {
       },
     ],
   });
+  host = app.bind(hostUses);
   handlers = {};
-  app.ctx.provide('tools', {
+  actions = new Map();
+  host.provide(tools, {
     register: (t: { definition: { function: { name: string } }; handler: Handler }) => {
       handlers[t.definition.function.name] = t.handler;
       return () => {};
     },
     registerGroup: () => () => {},
   } as never);
+  host.provide(webuiServer, {
+    registerPage: () => () => {},
+    registerAction(method: string, handler: WebuiActionHandler) {
+      actions.set(method, handler);
+      return () => void actions.delete(method);
+    },
+  } as never);
   // blockPrivate:false 才连得上本机测试服务（同时省掉请求拦截）
-  browserPlugin.apply(app.ctx, { headless: true, blockPrivate: false });
+  await app.plugins.register(browserPlugin, { headless: true, blockPrivate: false });
+  await app.plugins.idle();
 }, 60_000);
 
 afterAll(async () => {
@@ -144,7 +161,7 @@ describe('browser_screenshot 的交付形态', () => {
   it('落盘失败：接得住图的仍拿到图（只丢 storage_uri），只读 content 的拿到明确错误而非 base64', async () => {
     const pageId = await navigate();
     // 真 storage 的写口上挂失败：落盘那一步失败，其余全真
-    const storageSvc = app.ctx.getService('storage') as { writeFile: (uri: string, data: Buffer) => Promise<void> };
+    const storageSvc = host.services.get(storage)!;
     const spy = vi.spyOn(storageSvc, 'writeFile').mockRejectedValue(new Error('zz-写盘失败'));
     try {
       const withImg = (await handlers.browser_screenshot(
@@ -173,7 +190,7 @@ describe('ensureBrowser 对断连的浏览器', () => {
     expect(freshPageId).not.toBe(deadPageId);
 
     // 死页面不留在表里（webui 的页面列表也不该列它）
-    const listed = (await browserPlugin.actions?.listPages?.(app.ctx, {})) as Array<{ id: string }>;
+    const listed = (await actions.get('listPages')!({})) as Array<{ id: string }>;
     expect(listed.map(p => p.id)).toEqual([freshPageId]);
     const stale = JSON.parse((await handlers.browser_get_text({ pageId: deadPageId }, { sessionId: 's' })) as string);
     expect(stale.error).toBe('页面不存在');

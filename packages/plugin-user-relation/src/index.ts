@@ -16,12 +16,28 @@
  * - view.*：WebUI / actions 查询用，给人看，可中等深度。
  */
 
-import type { MemoryService } from '@aalis/api-memory';
-import { useWebuiService, type WebuiPage } from '@aalis/api-webui';
-import type { Context, PluginModule } from '@aalis/core';
-import { defineService } from '@aalis/core';
+import { agent } from '@aalis/api-agent';
+import { commands } from '@aalis/api-commands';
+import { embedding } from '@aalis/api-embedding';
+import { llm } from '@aalis/api-llm';
+import { memory } from '@aalis/api-memory';
+import { platform } from '@aalis/api-platform';
+import { tools } from '@aalis/api-tools';
+import { type WebuiPage, webuiServer } from '@aalis/api-webui';
+import {
+  type BoundOf,
+  config,
+  contributions,
+  definePlugin,
+  defineService,
+  events,
+  hooks,
+  logger,
+  optional,
+  provide,
+} from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import { actions as baseActions } from './actions.js';
+import { registerRelationActions } from './actions.js';
 import { registerRelationCommands } from './commands.js';
 import { RelationExtractor } from './extractor.js';
 import { registerRelationContribution } from './middleware.js';
@@ -30,16 +46,7 @@ import { RelationService } from './service.js';
 import { RelationStore } from './store.js';
 import { registerRelationTools } from './tools.js';
 
-export const name = '@aalis/plugin-user-relation';
-export const displayName = '人物关系图';
-export const subsystem = 'memory';
-export const provides = ['user-relation'];
-export const inject = {
-  required: ['memory'],
-  optional: ['llm', 'webui-server', 'agent', 'tools', 'embedding'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   // ────── 抽取（写入）侧 ──────
   extractionEnabled: {
     type: 'boolean',
@@ -494,20 +501,16 @@ const webuiPages: WebuiPage[] = [
   },
 ];
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
-  const memory = ctx.getService<MemoryService>('memory');
-  if (!memory) {
-    throw new Error('[plugin-user-relation] memory 服务不可用，无法初始化关系图存储');
-  }
+function start(caps: Caps): void {
+  const config = caps.config;
+  const store = new RelationStore(caps.memory.require());
+  const service = new RelationService(store, caps.logger, caps.embedding);
 
-  const store = new RelationStore(memory);
-  const service = new RelationService(store, ctx);
-
-  ctx.provide('user-relation', service);
+  caps.provide(userRelation, service);
 
   // 平台 displayName 同步：与 extractionEnabled 解耦，即便关掉写入提取，
   // 改名也应反映到已存在的 Person 节点（仅同步，不创建新节点）。
-  startRenameWatcher(ctx, service);
+  startRenameWatcher({ events: caps.events, logger: caps.logger }, service);
 
   const debug = config.debug === true;
 
@@ -517,55 +520,65 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const extractionEnabled = config.extractionEnabled !== false;
   const triggerEveryN = numCfg(config.triggerEveryNMessages, 20);
   if (extractionEnabled) {
-    const extractor = new RelationExtractor(ctx, service, {
-      triggerEveryNMessages: triggerEveryN,
-      readWindowSize: numCfg(config.readWindowSize, 30),
-      mode: config.mode === 'all-new' ? 'all-new' : 'incremental',
-      allNewMaxMessages: numCfg(config.allNewMaxMessages, 200),
-      readScope:
-        config.readScope === 'cross-platform'
-          ? 'cross-platform'
-          : config.readScope === 'same-platform'
-            ? 'same-platform'
-            : 'same-session',
-      crossSessionMaxAgeMinutes: numCfg(config.crossSessionMaxAgeMinutes, 60),
-      candidateEventDays: numCfg(config.candidateEventDays, 7),
-      candidateEventLimit: numCfg(config.candidateEventLimit, 20),
-      senderNeighborhoodEdgeLimit: numCfg(config.senderNeighborhoodEdgeLimit, 8),
-      extractionModel: config.extractionModel as { provider: string; model: string } | undefined,
-      disableThinking: config.extractionDisableThinking !== false,
-      strictSelfAssertion: config.strictSelfAssertion !== false,
-      evictionEnabled: config.evictionEnabled !== false,
-      maxPersons: numCfg(config.maxPersons, 1500),
-      maxEvents: numCfg(config.maxEvents, 2500),
-      maxEntities: numCfg(config.maxEntities, 1500),
-      maxEdges: numCfg(config.maxEdges, 10000),
-      pagerankDamping: numCfg(config.pagerankDamping, 0.85),
-      pagerankIterations: numCfg(config.pagerankIterations, 20),
-      pagerankEpsilon: numCfg(config.pagerankEpsilon, 0.0001),
-      evictHysteresisPct: numCfg(config.evictHysteresisPct, 0.2),
-      evictTargetPct: numCfg(config.evictTargetPct, 0.8),
-      weightDecayHalfLifeDays: numCfg(config.weightDecayHalfLifeDays, 180),
-      weightDecayFloor: numCfg(config.weightDecayFloor, 0.3),
-      communityAlgorithm: (() => {
-        const raw = config.communityAlgorithm as string | undefined;
-        return raw === 'leiden' || raw === 'slpa' ? raw : 'louvain';
-      })(),
-      consolidateAfterEviction: config.consolidateAfterEviction !== false,
-      consolidateLLMModelRef: config.consolidationModel as { provider: string; model: string } | undefined,
-      consolidateLLMDisableThinking: config.consolidationDisableThinking !== false,
-      consolidateAutoLink: config.consolidationAutoLink === true,
-      consolidateSkipLowScorePairs: config.consolidationSkipLowScorePairs !== false,
-      consolidateLowScoreThreshold: numCfg(config.consolidationLowScoreThreshold, 0.2),
-      debug,
-    });
+    const extractor = new RelationExtractor(
+      {
+        events: caps.events,
+        logger: caps.logger,
+        memory: caps.memory,
+        llm: caps.llm,
+        platform: caps.platform,
+      },
+      service,
+      {
+        triggerEveryNMessages: triggerEveryN,
+        readWindowSize: numCfg(config.readWindowSize, 30),
+        mode: config.mode === 'all-new' ? 'all-new' : 'incremental',
+        allNewMaxMessages: numCfg(config.allNewMaxMessages, 200),
+        readScope:
+          config.readScope === 'cross-platform'
+            ? 'cross-platform'
+            : config.readScope === 'same-platform'
+              ? 'same-platform'
+              : 'same-session',
+        crossSessionMaxAgeMinutes: numCfg(config.crossSessionMaxAgeMinutes, 60),
+        candidateEventDays: numCfg(config.candidateEventDays, 7),
+        candidateEventLimit: numCfg(config.candidateEventLimit, 20),
+        senderNeighborhoodEdgeLimit: numCfg(config.senderNeighborhoodEdgeLimit, 8),
+        extractionModel: config.extractionModel as { provider: string; model: string } | undefined,
+        disableThinking: config.extractionDisableThinking !== false,
+        strictSelfAssertion: config.strictSelfAssertion !== false,
+        evictionEnabled: config.evictionEnabled !== false,
+        maxPersons: numCfg(config.maxPersons, 1500),
+        maxEvents: numCfg(config.maxEvents, 2500),
+        maxEntities: numCfg(config.maxEntities, 1500),
+        maxEdges: numCfg(config.maxEdges, 10000),
+        pagerankDamping: numCfg(config.pagerankDamping, 0.85),
+        pagerankIterations: numCfg(config.pagerankIterations, 20),
+        pagerankEpsilon: numCfg(config.pagerankEpsilon, 0.0001),
+        evictHysteresisPct: numCfg(config.evictHysteresisPct, 0.2),
+        evictTargetPct: numCfg(config.evictTargetPct, 0.8),
+        weightDecayHalfLifeDays: numCfg(config.weightDecayHalfLifeDays, 180),
+        weightDecayFloor: numCfg(config.weightDecayFloor, 0.3),
+        communityAlgorithm: (() => {
+          const raw = config.communityAlgorithm as string | undefined;
+          return raw === 'leiden' || raw === 'slpa' ? raw : 'louvain';
+        })(),
+        consolidateAfterEviction: config.consolidateAfterEviction !== false,
+        consolidateLLMModelRef: config.consolidationModel as { provider: string; model: string } | undefined,
+        consolidateLLMDisableThinking: config.consolidationDisableThinking !== false,
+        consolidateAutoLink: config.consolidationAutoLink === true,
+        consolidateSkipLowScorePairs: config.consolidationSkipLowScorePairs !== false,
+        consolidateLowScoreThreshold: numCfg(config.consolidationLowScoreThreshold, 0.2),
+        debug,
+      },
+    );
     extractor.start();
     service.setTriggerExtractionHandler(sessionId => extractor.triggerNow(sessionId));
   }
 
   // ─── Middleware 注入（读取）─── 受 agentInjection 控制
   if (config.agentInjection !== false) {
-    registerRelationContribution(ctx, service, {
+    registerRelationContribution({ contributions: caps.contributions, logger: caps.logger }, service, {
       enabled: true,
       maxDepth: numCfg(config.injectionMaxDepth, 2),
       maxBreadth: numCfg(config.injectionMaxBreadth, 10),
@@ -582,7 +595,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   // ─── Agent 工具 ─── 受 toolsEnabled 控制
   if (config.toolsEnabled !== false) {
-    registerRelationTools(ctx, service, {
+    registerRelationTools({ tools: caps.tools, logger: caps.logger }, service, {
       enabled: true,
       group: 'user-relation',
       defaultMaxDepth: numCfg(config.digToolDefaultMaxDepth, 2),
@@ -597,85 +610,78 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     });
   }
 
-  // WebUI 页面
-  const webui = useWebuiService(ctx);
-  for (const page of webuiPages) webui.registerPage(page);
+  // WebUI 页面与页面动作
+  for (const page of webuiPages) caps.webui.registerPage(page);
+  registerRelationActions(caps.webui, service, caps.logger);
 
   // /relation 指令
   if (config.commandsEnabled !== false) {
     const consolidateModel = config.consolidationModel as { provider: string; model: string } | undefined;
-    registerRelationCommands(ctx, service, {
-      ...(consolidateModel
-        ? {
-            consolidateLLM: {
-              modelRef: consolidateModel,
-              disableThinking: config.consolidationDisableThinking !== false,
-            },
-          }
-        : {}),
-      eviction: {
-        maxPersons: numCfg(config.maxPersons, 1500),
-        maxEvents: numCfg(config.maxEvents, 2500),
-        maxEntities: numCfg(config.maxEntities, 1500),
-        maxEdges: numCfg(config.maxEdges, 10000),
-        pagerankDamping: numCfg(config.pagerankDamping, 0.85),
-        pagerankIterations: numCfg(config.pagerankIterations, 20),
-        pagerankEpsilon: numCfg(config.pagerankEpsilon, 0.0001),
-        hysteresisPct: numCfg(config.evictHysteresisPct, 0.2),
-        targetPct: numCfg(config.evictTargetPct, 0.8),
-        weightDecayHalfLifeDays: numCfg(config.weightDecayHalfLifeDays, 180),
-        weightDecayFloor: numCfg(config.weightDecayFloor, 0.3),
-        communityAlgorithm: (() => {
-          const raw = config.communityAlgorithm as string | undefined;
-          return raw === 'leiden' || raw === 'slpa' ? raw : 'louvain';
-        })(),
+    registerRelationCommands(
+      { commands: caps.commands, platform: caps.platform, llm: caps.llm, logger: caps.logger },
+      service,
+      {
+        ...(consolidateModel
+          ? {
+              consolidateLLM: {
+                modelRef: consolidateModel,
+                disableThinking: config.consolidationDisableThinking !== false,
+              },
+            }
+          : {}),
+        eviction: {
+          maxPersons: numCfg(config.maxPersons, 1500),
+          maxEvents: numCfg(config.maxEvents, 2500),
+          maxEntities: numCfg(config.maxEntities, 1500),
+          maxEdges: numCfg(config.maxEdges, 10000),
+          pagerankDamping: numCfg(config.pagerankDamping, 0.85),
+          pagerankIterations: numCfg(config.pagerankIterations, 20),
+          pagerankEpsilon: numCfg(config.pagerankEpsilon, 0.0001),
+          hysteresisPct: numCfg(config.evictHysteresisPct, 0.2),
+          targetPct: numCfg(config.evictTargetPct, 0.8),
+          weightDecayHalfLifeDays: numCfg(config.weightDecayHalfLifeDays, 180),
+          weightDecayFloor: numCfg(config.weightDecayFloor, 0.3),
+          communityAlgorithm: (() => {
+            const raw = config.communityAlgorithm as string | undefined;
+            return raw === 'leiden' || raw === 'slpa' ? raw : 'louvain';
+          })(),
+        },
+        consolidateAutoLink: config.consolidationAutoLink === true,
+        consolidateSkipLowScorePairs: config.consolidationSkipLowScorePairs !== false,
+        consolidateLowScoreThreshold: numCfg(config.consolidationLowScoreThreshold, 0.2),
       },
-      consolidateAutoLink: config.consolidationAutoLink === true,
-      consolidateSkipLowScorePairs: config.consolidationSkipLowScorePairs !== false,
-      consolidateLowScoreThreshold: numCfg(config.consolidationLowScoreThreshold, 0.2),
-    });
+    );
   }
 
   // ─── 参与统一的 memory:clear（与 plugin-user-profile 对称） ───
   // scope='all'：清空整个关系图；scope='session'：跨会话存储，不动。
   // types 过滤：未指定 / 包含 'user-relation' 时执行。
-  ctx.middleware(
-    'memory:clear',
-    async (
-      data: {
-        scope: 'session' | 'all';
-        types?: string[];
-        sessionId?: string;
-        results: Array<{ source: string; success: boolean; message: string }>;
-      },
-      next,
-    ) => {
-      if (data.types && !data.types.includes('user-relation')) {
-        await next();
-        return;
-      }
-      if (data.scope !== 'all') {
-        await next();
-        return;
-      }
-      try {
-        // 经 store 而非直接拿 memory 删：clearAll 走 commitMetadata 一次批量原子提交，
-        // 逐条删会在中途失败时留下半张图。
-        const cleared = await store.clearAll();
-        ctx.logger.info(`[user-relation] 关系图已清空 (${cleared} 条)`);
-        data.results.push({
-          source: 'user-relation',
-          success: true,
-          message: `关系图已清空 (${cleared} 条)`,
-        });
-      } catch (err) {
-        const m = err instanceof Error ? err.message : String(err);
-        ctx.logger.warn(`[user-relation] 清空失败: ${m}`);
-        data.results.push({ source: 'user-relation', success: false, message: `关系图清空失败: ${m}` });
-      }
+  caps.hooks.middleware('memory:clear', async (data, next) => {
+    if (data.types && !data.types.includes('user-relation')) {
       await next();
-    },
-  );
+      return;
+    }
+    if (data.scope !== 'all') {
+      await next();
+      return;
+    }
+    try {
+      // 经 store 而非直接拿 memory 删：clearAll 走 commitMetadata 一次批量原子提交，
+      // 逐条删会在中途失败时留下半张图。
+      const cleared = await store.clearAll();
+      caps.logger.info(`[user-relation] 关系图已清空 (${cleared} 条)`);
+      data.results.push({
+        source: 'user-relation',
+        success: true,
+        message: `关系图已清空 (${cleared} 条)`,
+      });
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      caps.logger.warn(`[user-relation] 清空失败: ${m}`);
+      data.results.push({ source: 'user-relation', success: false, message: `关系图清空失败: ${m}` });
+    }
+    await next();
+  });
 }
 
 function numCfg(v: unknown, fallback: number): number {
@@ -683,21 +689,45 @@ function numCfg(v: unknown, fallback: number): number {
   return fallback;
 }
 
-export const actions: PluginModule['actions'] = baseActions;
-
 export { RelationService } from './service.js';
 export { RelationStore } from './store.js';
 export * from './types.js';
 
 // ----- 服务类型注册（declaration merging）-----
 // 无独立 `-api` 包：只有这一个实现，契约住在实现包里（同 web-search / scheduler 等）。
-// 补上这段之前，消费方只能写 `ctx.getService<RelationService>('user-relation')` 显式传泛型
-// ——那是「手抄一份类型」，与实现漂移了也不会报错。
 declare module '@aalis/core' {
   interface ServiceTypeMap {
-    'user-relation': import('./service.js').RelationService;
+    'user-relation': RelationService;
   }
 }
 
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
-export const userRelation = defineService<import('./service.js').RelationService>('user-relation');
+export const userRelation = defineService<RelationService>('user-relation');
+
+const uses = {
+  memory,
+  logger,
+  config,
+  events,
+  hooks,
+  contributions,
+  provide,
+  llm: optional(llm),
+  platform: optional(platform),
+  tools: optional(tools),
+  commands: optional(commands),
+  webui: optional(webuiServer),
+  embedding: optional(embedding),
+  agent: optional(agent),
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-user-relation',
+  displayName: '人物关系图',
+  subsystem: 'memory',
+  configSchema,
+  provides: [userRelation],
+  uses,
+  apply: start,
+});

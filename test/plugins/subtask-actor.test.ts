@@ -1,7 +1,9 @@
-import type { Context } from '@aalis/core';
-import type { IncomingMessage } from '@aalis/schema-message';
 import { describe, expect, it } from 'vitest';
-import { apply } from '../../packages/plugin-subtask/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
+import { App, provide, services } from '../../packages/core/src/index.js';
+import subtask from '../../packages/plugin-subtask/src/index.js';
+import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // create_subtask 的授权身份透传（schema-message actor 契约）。
@@ -13,59 +15,43 @@ import { apply } from '../../packages/plugin-subtask/src/index.js';
 
 type Handler = (args: Record<string, unknown>, callCtx: Record<string, unknown>) => Promise<string>;
 
-function setup(): { handlers: Map<string, Handler>; emitted: Array<{ event: string; payload: IncomingMessage }> } {
+async function setup(): Promise<{
+  app: App;
+  handlers: Map<string, Handler>;
+  inbound: IncomingMessage[];
+}> {
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const host = app.bind({ provide, services });
   const handlers = new Map<string, Handler>();
-  const emitted: Array<{ event: string; payload: IncomingMessage }> = [];
-  const fakeTools = {
-    register: (tool: { definition: { function: { name: string } }; handler: Handler }) => {
+  host.provide(tools, {
+    register(tool: { definition: { function: { name: string } }; handler: Handler }) {
       handlers.set(tool.definition.function.name, tool.handler);
-      return () => {};
+      return () => void handlers.delete(tool.definition.function.name);
     },
-    registerGroup: () => {},
-  };
-  const fakeSessionManager = {
+    registerGroup: () => () => {},
+  } as never);
+  host.provide(sessionManager, {
     // parent-1 无 parentId（非嵌套）；child-session-1 供 send_to_subtask 的归属校验
     getSession: (id: string) => (id === 'child-session-1' ? { id, parentId: 'parent-1', status: 'active' } : undefined),
     resolveConfig: () => ({}),
     createChildSession: async () => ({ id: 'child-session-1' }),
     updateSession: async () => {},
-  };
-  const logger = {
-    info: () => {},
-    warn: () => {},
-    debug: () => {},
-    error: () => {},
-    child: () => logger,
-  };
-  const ctx = {
-    id: '@aalis/plugin-subtask',
-    logger,
-    getService: (name: string) => {
-      if (name === 'tools') return fakeTools;
-      if (name === 'session-manager') return fakeSessionManager;
-      return undefined;
-    },
-    whenService: (name: string, cb: (svc: unknown) => void) => {
-      if (name === 'tools') cb(fakeTools);
-      return () => {};
-    },
-    emit: async (event: string, payload: IncomingMessage) => {
-      emitted.push({ event, payload });
-    },
-    onDispose: () => {},
-    provide: () => {},
-    on: () => () => {},
-    contribute: () => () => {},
-    middleware: () => () => {},
-    runHook: async () => {},
-  } as unknown as Context;
-  apply(ctx, {});
-  return { handlers, emitted };
+  } as never);
+
+  // 派发走的是 inbound:message 通道：只订阅这一个事件，收到即证明通道正确
+  const inbound: IncomingMessage[] = [];
+  app.ctx.on('inbound:message', message => {
+    inbound.push(message);
+  });
+
+  await app.plugins.register(subtask, {});
+  await app.plugins.idle();
+  return { app, handlers, inbound };
 }
 
 describe('create_subtask actor 透传', () => {
   it('有身份的创建者：actor 回填，userId 仍为 parent 标记（物理来源与授权身份分离）', async () => {
-    const { handlers, emitted } = setup();
+    const { app, handlers, inbound } = await setup();
     const handler = handlers.get('create_subtask');
     expect(handler, 'create_subtask 未注册').toBeDefined();
 
@@ -73,34 +59,36 @@ describe('create_subtask actor 透传', () => {
       await handler!({ task: '做一件事' }, { sessionId: 'parent-1', platform: 'onebot', userId: 'user-a' }),
     );
     expect(res.subtaskId).toBe('child-session-1');
-    expect(emitted).toHaveLength(1);
-    expect(emitted[0].event).toBe('inbound:message');
-    expect(emitted[0].payload.userId).toBe('parent:parent-1');
-    expect(emitted[0].payload.actor).toEqual({ platform: 'onebot', userId: 'user-a' });
+    expect(inbound).toHaveLength(1);
+    expect(inbound[0].userId).toBe('parent:parent-1');
+    expect(inbound[0].actor).toEqual({ platform: 'onebot', userId: 'user-a' });
+    await app.stop();
   });
 
   it('匿名创建者：不发明身份，actor 缺省', async () => {
-    const { handlers, emitted } = setup();
+    const { app, handlers, inbound } = await setup();
     const handler = handlers.get('create_subtask')!;
 
     await handler({ task: '做一件事' }, { sessionId: 'parent-1' });
-    expect(emitted).toHaveLength(1);
-    expect(emitted[0].payload.actor).toBeUndefined();
+    expect(inbound).toHaveLength(1);
+    expect(inbound[0].actor).toBeUndefined();
+    await app.stop();
   });
 
   it('链式：callCtx.actor 优先于物理身份', async () => {
-    const { handlers, emitted } = setup();
+    const { app, handlers, inbound } = await setup();
     const handler = handlers.get('create_subtask')!;
 
     await handler(
       { task: '做一件事' },
       { sessionId: 'parent-1', platform: 'onebot', userId: 'phys', actor: { platform: 'webui', userId: 'console' } },
     );
-    expect(emitted[0].payload.actor).toEqual({ platform: 'webui', userId: 'console' });
+    expect(inbound[0].actor).toEqual({ platform: 'webui', userId: 'console' });
+    await app.stop();
   });
 
   it('send_to_subtask 同约束：追问轮不掉权（与创建轮同源透传）', async () => {
-    const { handlers, emitted } = setup();
+    const { app, handlers, inbound } = await setup();
     const handler = handlers.get('send_to_subtask');
     expect(handler, 'send_to_subtask 未注册').toBeDefined();
 
@@ -108,8 +96,9 @@ describe('create_subtask actor 透传', () => {
       { subtask_id: 'child-session-1', message: '继续' },
       { sessionId: 'parent-1', platform: 'onebot', userId: 'user-a' },
     );
-    expect(emitted).toHaveLength(1);
-    expect(emitted[0].payload.actor).toEqual({ platform: 'onebot', userId: 'user-a' });
-    expect(emitted[0].payload.userId).toBe('parent:parent-1');
+    expect(inbound).toHaveLength(1);
+    expect(inbound[0].actor).toEqual({ platform: 'onebot', userId: 'user-a' });
+    expect(inbound[0].userId).toBe('parent:parent-1');
+    await app.stop();
   });
 });

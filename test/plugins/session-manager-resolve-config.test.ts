@@ -1,7 +1,7 @@
 import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
-import * as sessionManagerModule from '../../packages/plugin-session-manager/src/index.js';
+import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // resolveConfig 的继承链：会话 config > 父 sessionDefaults > 平台 profile > 全局 defaults。
@@ -32,7 +32,7 @@ function fakeMemory() {
 async function setup() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
   app.ctx.provide('memory', fakeMemory() as never);
-  await app.ctx.useModule(sessionManagerModule, {
+  await app.ctx.useModule(sessionManagerPlugin, {
     platformProfiles: [
       {
         platform: 'onebot',

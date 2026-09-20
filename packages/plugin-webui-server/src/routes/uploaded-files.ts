@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { StorageService } from '@aalis/api-storage';
-import type { Context } from '@aalis/core';
+import type { Logger } from '@aalis/core';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 
@@ -29,20 +29,27 @@ function sessionDirs(sessionId: string): string[] {
   return safe === sessionId ? [sessionId] : [safe, sessionId];
 }
 
+/** file-reader 的内存索引维护面：删文件后要同步通知它，本包不反向依赖那个插件包，故只描述用到的一角 */
+interface FileIndex {
+  deleteFile?: (id: string) => Promise<boolean>;
+}
+
 interface UploadedFilesRoutesOptions {
   /** storage 服务（必填）——传入的是 createStorageGateway 的返回值，恒为对象；
    *  storage 服务缺席时 gateway 各方法内部 dispatch 抛错，而列表路由的内层 catch 会把它
    *  吞成空列表（前端看到「没有文件」而非「存储不可用」），download/delete 则落 404 */
   storage: StorageService;
+  logger: Logger;
+  /** 取当前 file-reader 提供者；每次现取，插件热重载后不留陈旧引用 */
+  fileIndex(): FileIndex | undefined;
 }
 
 export function registerUploadedFilesRoutes(
   expressApp: express.Express,
-  ctx: Context,
   opts: UploadedFilesRoutesOptions,
   gate: RouteGate,
 ): void {
-  const { storage } = opts;
+  const { storage, logger, fileIndex } = opts;
 
   function isSafeSessionId(s: string): boolean {
     return /^[A-Za-z0-9._:-]{1,128}$/.test(s);
@@ -100,7 +107,7 @@ export function registerUploadedFilesRoutes(
               const { textCache: _tc, ...slim } = meta;
               results.push(slim as FileMeta);
             } catch (err) {
-              ctx.logger.debug(`读取 meta 失败 ${e.uri}:`, err);
+              logger.debug(`读取 meta 失败 ${e.uri}:`, err);
             }
           }
         } catch {
@@ -110,7 +117,7 @@ export function registerUploadedFilesRoutes(
       results.sort((a, b) => b.uploadedAt - a.uploadedAt);
       res.json({ files: results });
     } catch (err) {
-      ctx.logger.warn('列出上传文件失败:', err);
+      logger.warn('列出上传文件失败:', err);
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
     }
   });
@@ -142,7 +149,7 @@ export function registerUploadedFilesRoutes(
       res.on('close', () => result.stream.destroy());
       result.stream.pipe(res);
     } catch (err) {
-      ctx.logger.warn('下载上传文件失败:', err);
+      logger.warn('下载上传文件失败:', err);
       res.status(404).json({ error: err instanceof Error ? err.message : String(err) });
     }
   });
@@ -178,10 +185,10 @@ export function registerUploadedFilesRoutes(
     }
     // 同步通知 file-reader 服务把内存索引也清掉
     try {
-      const reader = ctx.getService<{ deleteFile?: (id: string) => Promise<boolean> }>('file-reader');
+      const reader = fileIndex();
       if (reader?.deleteFile) await reader.deleteFile(fileId);
     } catch (err) {
-      ctx.logger.debug('file-reader 索引同步失败:', err);
+      logger.debug('file-reader 索引同步失败:', err);
     }
     if (errors.length > 0) {
       res.status(500).json({ error: errors.join('; ') });

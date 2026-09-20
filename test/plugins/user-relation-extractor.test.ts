@@ -1,8 +1,9 @@
-import { App } from '@aalis/core';
+import { App, events, logger, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import type { ChatModelRequest, ChatResponse, LLMModel } from '../../packages/api-llm/src/index.js';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
+import { type ChatModelRequest, type ChatResponse, type LLMModel, llm } from '../../packages/api-llm/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
+import { platform } from '../../packages/api-platform/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import type { ExtractorConfig } from '../../packages/plugin-user-relation/src/extractor.js';
 import { EXTRACTOR_CONFIG_DEFAULTS, RelationExtractor } from '../../packages/plugin-user-relation/src/extractor.js';
 import { RelationService } from '../../packages/plugin-user-relation/src/service.js';
@@ -53,30 +54,37 @@ function makeFakeLLM(cannedResponse: string): {
   return { model, calls, fail };
 }
 
+/** 宿主侧能力：provide 种桩服务，其余五样正是 RelationExtractor 声明要用的 */
+function bindHost(app: App) {
+  return app.bind({ provide, events, logger, memory, llm, platform });
+}
+
 async function setup(llmContent: string) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(memoryInMemoryModule);
-  const mem = app.ctx.getService<MemoryService>('memory');
+  const host = bindHost(app);
+  await app.plugins.register(memoryInMemory, {});
+  await app.plugins.idle();
+  const mem = host.memory.current;
   if (!mem) throw new Error('no memory');
   const store = new RelationStore(mem);
   const service = new RelationService(store);
-  // 注册若干 mock platform adapter，让 `getPlatformNames(ctx)` 在测试里也有
+  // 注册若干 mock platform adapter，让 `getPlatformNames(platform)` 在测试里也有
   // 真实集合（{onebot, test}），从而触发 extractor 的 persona-agnostic 平台白名单
   // 守卫。否则空集会落入 permissive 模式，绕过守卫。
-  const mkMockAdapter = (platform: string): unknown => ({
-    adapterName: `mock-${platform}`,
-    platform,
+  const mkMockAdapter = (name: string): unknown => ({
+    adapterName: `mock-${name}`,
+    platform: name,
     getConnections: () => [],
     sendMessage: () => Promise.resolve(),
   });
-  app.ctx.provide('platform', mkMockAdapter('onebot') as never, { entryId: 'mock/onebot' });
-  app.ctx.provide('platform', mkMockAdapter('test') as never, { entryId: 'mock/test' });
+  host.provide(platform, mkMockAdapter('onebot') as never, { entryId: 'mock/onebot' });
+  host.provide(platform, mkMockAdapter('test') as never, { entryId: 'mock/test' });
   const { model, calls, fail } = makeFakeLLM(llmContent);
-  app.ctx.provide('llm', model, {
+  host.provide(llm, model, {
     label: 'fake-llm',
     entryId: 'fake/extractor',
   });
-  const extractor = new RelationExtractor(app.ctx, service, {
+  const extractor = new RelationExtractor(host, service, {
     ...EXTRACTOR_DEFAULTS,
     triggerEveryNMessages: 3,
     readWindowSize: 10,
@@ -91,7 +99,7 @@ async function setup(llmContent: string) {
   });
   extractor.start();
   service.setTriggerExtractionHandler(sid => extractor.triggerNow(sid));
-  return { app, mem, service, extractor, calls, fail };
+  return { app, host, mem, service, extractor, calls, fail };
 }
 
 const mkUserMsg = (messageId: string, userId: string, content: string, nickname?: string): Message => ({
@@ -174,7 +182,7 @@ describe('plugin-user-relation: extractor', () => {
   // 138 条既有 user-relation 用例没有一条关心读次数：把这次合并整个回滚，测试照样全绿。
   // 这正是它当初能长出来的原因，所以断言必须落在**次数**上。
   it('提取一轮内只读一次全图（候选与邻居共享同一份快照）', async () => {
-    const { app, mem, service } = await setup(JSON.stringify({ persons: [], events: [], entities: [] }));
+    const { app, host, mem, service } = await setup(JSON.stringify({ persons: [], events: [], entities: [] }));
     try {
       await service.observePerson('onebot', 'a', 'A');
       for (const m of [mkUserMsg('m1', 'a', '随便说点什么'), mkUserMsg('m2', 'a', '再说一句')]) {
@@ -186,7 +194,7 @@ describe('plugin-user-relation: extractor', () => {
         if (ns === 'user-relation') reads++;
         return orig(ns);
       };
-      const extractor = new RelationExtractor(app.ctx, service, {
+      const extractor = new RelationExtractor(host, service, {
         ...EXTRACTOR_DEFAULTS,
         triggerEveryNMessages: 1,
         readWindowSize: 10,
@@ -253,12 +261,14 @@ describe('plugin-user-relation: extractor', () => {
       chat: () => new Promise<ChatResponse>(r => setTimeout(() => r({ content: '{}' }), 30)),
     } as unknown as LLMModel;
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(memoryInMemoryModule);
-    const mem = app.ctx.getService<MemoryService>('memory');
+    const host = bindHost(app);
+    await app.plugins.register(memoryInMemory, {});
+    await app.plugins.idle();
+    const mem = host.memory.current;
     if (!mem) throw new Error('no memory');
     const service = new RelationService(new RelationStore(mem));
-    app.ctx.provide('llm', slowLLM, { entryId: 'slow/x' });
-    const extractor = new RelationExtractor(app.ctx, service, {
+    host.provide(llm, slowLLM, { entryId: 'slow/x' });
+    const extractor = new RelationExtractor(host, service, {
       ...EXTRACTOR_DEFAULTS,
       triggerEveryNMessages: 1,
       readWindowSize: 5,
@@ -305,14 +315,14 @@ describe('plugin-user-relation: extractor', () => {
       entities: [{ refKey: 'g1', name: '游戏', entityKind: 'work' }],
       personEntityEdges: [{ personPlatform: 'onebot', personUserId: 'c', entityRefKey: 'g1', role: 'mentioned' }],
     });
-    const { app, mem, service, calls } = await setup(llmJson);
+    const { host, mem, service, calls } = await setup(llmJson);
     await mem.saveMessage('sess2', mkUserMsg('m1', 'c', '消息1'));
     // 阈值 3：emit 两次不触发
-    app.ctx.emit('inbound:message:archived', { sessionId: 'sess2' } as never);
-    app.ctx.emit('inbound:message:archived', { sessionId: 'sess2' } as never);
+    host.events.emit('inbound:message:archived', { sessionId: 'sess2' } as never);
+    host.events.emit('inbound:message:archived', { sessionId: 'sess2' } as never);
     expect(calls).toHaveLength(0);
     // 第三次触发
-    app.ctx.emit('inbound:message:archived', { sessionId: 'sess2' } as never);
+    host.events.emit('inbound:message:archived', { sessionId: 'sess2' } as never);
     // 提取是异步的，等一拍
     await new Promise(r => setTimeout(r, 20));
     expect(calls.length).toBeGreaterThanOrEqual(1);
@@ -334,12 +344,12 @@ describe('plugin-user-relation: extractor', () => {
   });
 
   it('连续失败退避：跳过触发点几何加深、封顶，LLM 恢复后一次成功即归位', async () => {
-    const { app, mem, calls, fail } = await setup(EMPTY_EXTRACTION);
+    const { host, mem, calls, fail } = await setup(EMPTY_EXTRACTION);
     await mem.saveMessage('sb', mkUserMsg('m1', 'a', 'hi'));
     // 逐个触发点推进（阈值 3 → 每点 3 条消息），点间等提取落定，保证时序确定
     const advance = async (points: number) => {
       for (let p = 0; p < points; p++) {
-        for (let i = 0; i < 3; i++) app.ctx.emit('inbound:message:archived', { sessionId: 'sb' } as never);
+        for (let i = 0; i < 3; i++) host.events.emit('inbound:message:archived', { sessionId: 'sb' } as never);
         await new Promise(r => setTimeout(r, 15));
       }
     };
@@ -380,10 +390,10 @@ describe('plugin-user-relation: extractor', () => {
   });
 
   it('手动 triggerNow 不受退避门限制，成功即清除退避', async () => {
-    const { app, mem, extractor, calls, fail } = await setup(EMPTY_EXTRACTION);
+    const { host, mem, extractor, calls, fail } = await setup(EMPTY_EXTRACTION);
     await mem.saveMessage('sb2', mkUserMsg('m1', 'a', 'hi'));
     const advance = async () => {
-      for (let i = 0; i < 3; i++) app.ctx.emit('inbound:message:archived', { sessionId: 'sb2' } as never);
+      for (let i = 0; i < 3; i++) host.events.emit('inbound:message:archived', { sessionId: 'sb2' } as never);
       await new Promise(r => setTimeout(r, 15));
     };
 
@@ -425,7 +435,7 @@ describe('plugin-user-relation: extractor', () => {
     });
     // 第二轮用空 LLM 输出，只为捕获 prompt 中的 neighbor 渲染
     const probeJson = '{}';
-    const { app, mem, service, extractor, calls } = await setup(seedJson);
+    const { host, mem, service, extractor, calls } = await setup(seedJson);
     // 把 cfg 中的 senderNeighborhoodEdgeLimit 改成 5（setup 默认为 0）
     (extractor as unknown as { cfg: { senderNeighborhoodEdgeLimit: number } }).cfg.senderNeighborhoodEdgeLimit = 5;
 
@@ -436,7 +446,7 @@ describe('plugin-user-relation: extractor', () => {
     expect(snapAfterSeed.entities.some(e => e.name === '三角洲')).toBe(true);
 
     // 切换 fake LLM 的 canned response 到 probe（替换 model 内部回应）
-    const llmHandle = app.ctx.getService<{ chat(): Promise<{ content: string }> }>('llm');
+    const llmHandle = host.llm.current;
     // 简单 hack: 用新的 fake 替换原本的；改用直接修改原 chat 行为
     type LlmInternal = { chat: (req: unknown) => Promise<{ content: string }> };
     (llmHandle as unknown as LlmInternal).chat = (req: unknown) => {
@@ -518,7 +528,7 @@ describe('plugin-user-relation: extractor', () => {
 
   it('self-placeholder 守卫扩展：platform 不在白名单 + userId 通用占位 全部拦截（persona-agnostic）', async () => {
     // 新规则（persona-agnostic）：
-    //   - platform 不在 `getPlatformNames(ctx)` 运行时白名单 → 一律视为伪 id 丢弃；
+    //   - platform 不在 `getPlatformNames(platform)` 运行时白名单 → 一律视为伪 id 丢弃；
     //   - userId 命中通用占位 {self, me, bot, assistant} → 一律丢弃。
     //   - **不**再硬编码 persona 专属词（aalis / 本机器人 / Mia 等）；那种「平台真实但
     //     userId 是 persona 名」的脏数据（如 `onebot:aalis`）交给
@@ -590,7 +600,7 @@ describe('plugin-user-relation: extractor', () => {
 
   it('跨会话 hub 建模：readScope=same-platform 时，prompt 含 hub 规则段 + candidate 含 scope 标签 + 消息行带 [sid:] 前缀', async () => {
     // 用空 LLM 输出（不落任何节点），只断言 prompt 内容
-    const { app, mem, service, calls } = await setup('{}');
+    const { host, mem, service, calls } = await setup('{}');
     // 先在 sessA 写一条消息触发自动建一个 current 事件
     await mem.saveMessage('sessA', mkUserMsg('mA1', 'a', 'A 群约工会战', 'Alice'));
     // 手动建一个 sessA 的 current event 作为已有候选
@@ -603,7 +613,7 @@ describe('plugin-user-relation: extractor', () => {
     await mem.saveMessage('sessB', mkUserMsg('mB1', 'b', 'B 群也聊工会战', 'Bob'));
 
     // 跨平台拉取的 extractor
-    const xExtractor = new RelationExtractor(app.ctx, service, {
+    const xExtractor = new RelationExtractor(host, service, {
       ...EXTRACTOR_DEFAULTS,
       triggerEveryNMessages: 999,
       readWindowSize: 10,

@@ -29,7 +29,6 @@
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/api-embedding": "workspace:*",
     "@aalis/api-webui": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
@@ -45,6 +44,7 @@
     }
   },
   "dependencies": {
+    "@aalis/api-embedding": "workspace:>=0.5.1 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0"
   }
 }

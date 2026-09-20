@@ -11,13 +11,9 @@
  */
 
 import type { TokenUsageEvent } from '@aalis/api-agent';
-import { useToolService } from '@aalis/api-tools';
-import type { Context } from '@aalis/core';
+import { tools } from '@aalis/api-tools';
+import { type BoundOf, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import { createBoundedMap } from '@aalis/util-bounded-map';
-
-export const name = '@aalis/plugin-prompt-budget';
-export const displayName = 'Prompt 预算自检';
-export const subsystem = 'agent';
 
 /** 事件契约形状来自 @aalis/api-agent 的 TokenUsageEvent，本插件只追加入库时刻 */
 interface TokenUsage extends TokenUsageEvent {
@@ -25,12 +21,25 @@ interface TokenUsage extends TokenUsageEvent {
   observedAt: number;
 }
 
-export function apply(ctx: Context): void {
-  const tools = useToolService(ctx);
+/** tools 声明为可选：没有工具服务时本插件照常激活，缓存先攒着，工具服务上线即补登记 */
+const uses = { tools: optional(tools), events, lifecycle, logger };
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-prompt-budget',
+  displayName: 'Prompt 预算自检',
+  subsystem: 'agent',
+  uses,
+  apply(caps) {
+    registerBudgetTool(caps);
+  },
+});
+
+function registerBudgetTool({ tools, events, lifecycle, logger }: Caps): void {
   /** sessionId → 最新一次的 token:usage 快照（派生只读，逐出后 AI 重查即重算）；有界防长跑泄漏 */
   const cache = createBoundedMap<string, TokenUsage>({ max: 500, ttlMs: 6 * 60 * 60 * 1000 });
 
-  ctx.on('token:usage', u => {
+  events.on('token:usage', u => {
     if (!u || typeof u.sessionId !== 'string') return;
     cache.set(u.sessionId, { ...u, observedAt: Date.now() });
   });
@@ -108,6 +117,6 @@ export function apply(ctx: Context): void {
     },
   });
 
-  ctx.onDispose(() => cache.clear());
-  ctx.logger.info('prompt_budget_info 工具已注册');
+  lifecycle.onDispose(() => cache.clear());
+  logger.info('prompt_budget_info 工具已注册');
 }

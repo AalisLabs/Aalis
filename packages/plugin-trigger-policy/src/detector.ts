@@ -1,9 +1,12 @@
 import type { PersonaService } from '@aalis/api-persona';
-import type { Context } from '@aalis/core';
+import type { ServiceRef } from '@aalis/core';
 import type { TriggerPolicyConfig } from './config.js';
 
 // PersonaService 仅用于 getBotNames（读取昵称/名字）。mute 关键词统一由 trigger-policy 下发配置，
 // 不再从 persona 读取（避免单例 PersonaService 跨平台泄漏）。
+
+/** 名字检测只在调用的那一刻读当前 persona 提供者，不建立跟随状态，因此只需要这一面 */
+export type PersonaRef = Pick<ServiceRef<PersonaService>, 'current'>;
 
 /**
  * @ 检测：只认 `<at self>` 标记。
@@ -16,13 +19,13 @@ export function checkImmediateMention(content: string): boolean {
   return /<at self[\s>][\s\S]*?<\/at>/.test(content);
 }
 
-export function getBotNames(ctx: Context, cfg: TriggerPolicyConfig): string[] {
+export function getBotNames(persona: PersonaRef, cfg: TriggerPolicyConfig): string[] {
   const names = [...cfg.triggerNames];
-  const persona = ctx.getService<PersonaService>('persona');
-  if (persona) {
-    const personaName = persona.getPersonaName?.();
+  const service = persona.current;
+  if (service) {
+    const personaName = service.getPersonaName?.();
     if (personaName && !names.includes(personaName)) names.push(personaName);
-    const nicks = persona.getNickNames?.() ?? [];
+    const nicks = service.getNickNames?.() ?? [];
     for (const n of nicks) {
       if (n && !names.includes(n)) names.push(n);
     }
@@ -37,13 +40,13 @@ export function checkNameMention(content: string, names: string[]): boolean {
   return false;
 }
 
-export function checkImmediateTrigger(ctx: Context, cfg: TriggerPolicyConfig, content: string): boolean {
+export function checkImmediateTrigger(persona: PersonaRef, cfg: TriggerPolicyConfig, content: string): boolean {
   if (cfg.triggerOnAt && checkImmediateMention(content)) return true;
-  if (checkNameMention(content, getBotNames(ctx, cfg))) return true;
+  if (checkNameMention(content, getBotNames(persona, cfg))) return true;
   return false;
 }
 
-export function checkMuteKeyword(_ctx: Context, cfg: TriggerPolicyConfig, content: string): boolean {
+export function checkMuteKeyword(cfg: TriggerPolicyConfig, content: string): boolean {
   for (const kw of cfg.muteKeywords) {
     if (content.includes(kw)) return true;
   }

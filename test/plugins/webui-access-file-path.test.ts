@@ -4,7 +4,7 @@ import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { StorageRootInfo, StorageService } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as webuiServer from '../../packages/plugin-webui-server/src/index.js';
+import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 启动日志承诺给出 access.txt 的绝对路径（纯 CLI 用户唯一的找法）。
@@ -115,12 +115,13 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
     });
     apps.push(app);
     app.ctx.provide('storage', makeFakeStorage());
-    await app.ctx.useModule(webuiServer as never, {
+    await app.plugins.register(webuiServer, {
       port: 0,
       host: '127.0.0.1',
       autoOpen: false,
       tokenMode: 'ephemeral',
     });
+    await app.plugins.idle();
     await app.start();
 
     // listen 回调里的日志是异步落的，轮询等它出现
@@ -151,13 +152,14 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
     });
     apps.push(app);
     app.ctx.provide('storage', makeFakeStorage());
-    await app.ctx.useModule(webuiServer as never, {
+    await app.plugins.register(webuiServer, {
       port,
       host: '127.0.0.1',
       autoOpen: false,
       tokenMode: 'fixed',
       fixedToken: token,
     });
+    await app.plugins.idle();
     await app.start();
 
     const req = request({
@@ -203,12 +205,13 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
     });
     apps.push(app);
     app.ctx.provide('storage', makeFakeStorage({ failWrite: true }));
-    await app.ctx.useModule(webuiServer as never, {
+    await app.plugins.register(webuiServer, {
       port: 0,
       host: '127.0.0.1',
       autoOpen: false,
       tokenMode: 'ephemeral',
     });
+    await app.plugins.idle();
     await app.start();
 
     let failLine: string | undefined;

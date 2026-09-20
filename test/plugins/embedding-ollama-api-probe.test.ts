@@ -1,9 +1,9 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { EmbeddingService } from '../../packages/api-embedding/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as embeddingOllama from '../../packages/plugin-embedding-ollama/src/index.js';
+import { type EmbeddingService, embedding } from '../../packages/api-embedding/src/index.js';
+import { App, services } from '../../packages/core/src/index.js';
+import embeddingOllama from '../../packages/plugin-embedding-ollama/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 新旧 API 探测（真 HTTP 服务）：
@@ -60,8 +60,9 @@ describe('plugin-embedding-ollama: 新旧 API 探测', () => {
   async function load(baseUrl: string): Promise<EmbeddingService> {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     apps.push(app);
-    await app.ctx.useModule(embeddingOllama, { baseUrl, model: 'm', timeoutMs: 2000, retries: 0 });
-    const svc = app.ctx.getService<EmbeddingService>('embedding');
+    await app.plugins.register(embeddingOllama, { baseUrl, model: 'm', timeoutMs: 2000, retries: 0 });
+    await app.plugins.idle();
+    const svc = app.bind({ services }).services.get(embedding);
     if (!svc) throw new Error('embedding 服务未就绪');
     return svc;
   }

@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { AgentService, PromptContributionView } from '../../packages/api-agent/src/index.js';
 import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as agentModule from '../../packages/plugin-agent/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import * as messageArchiveModule from '../../packages/plugin-message-archive/src/index.js';
+import agentPlugin from '../../packages/plugin-agent/src/index.js';
+import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
+import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
@@ -30,9 +30,9 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     // 每个 chunk 前等 300ms：给拆卸留出「回合在飞」的窗口
     await app.ctx.useModule(createMockLLMPlugin({ latencyMs: 300, responses: [{ content: '回复内容' }] }));
-    await app.ctx.useModule(memoryInMemoryModule as never);
-    await app.ctx.useModule(messageArchiveModule as never, { debugLogs: false });
-    const off = await app.ctx.useModule(agentModule as never, AGENT_CONFIG);
+    await app.ctx.useModule(memoryInMemoryPlugin);
+    await app.ctx.useModule(messageArchivePlugin, { debugLogs: false });
+    const off = await app.ctx.useModule(agentPlugin, AGENT_CONFIG);
 
     // agent:turn:after 是 hook（runHook）而非事件，根 ctx 用 on 收不到；鉴别信号取根 ctx 能看到的
     // 出站序列：中止路径只发 stream done，未中止则 delta → done → message（回复照常投递）。
@@ -64,9 +64,9 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const recorder: ChatModelRequest[] = [];
     await app.ctx.useModule(createMockLLMPlugin({ responses: [{ content: '不应调用' }], recorder }));
-    await app.ctx.useModule(memoryInMemoryModule as never);
-    await app.ctx.useModule(messageArchiveModule as never, { debugLogs: false });
-    await app.ctx.useModule(agentModule as never, AGENT_CONFIG);
+    await app.ctx.useModule(memoryInMemoryPlugin);
+    await app.ctx.useModule(messageArchivePlugin, { debugLogs: false });
+    await app.ctx.useModule(agentPlugin, AGENT_CONFIG);
 
     let enteredResolve!: () => void;
     const entered = new Promise<void>(resolve => {

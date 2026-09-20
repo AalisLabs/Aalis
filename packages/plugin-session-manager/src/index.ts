@@ -1,20 +1,19 @@
-// 副作用导入：注入 agent:turn:after 等 agent 域钩子到 HookContextMap（declaration merging），
-// 使 ctx.middleware('agent:turn:after', ...) 的类型可见。
-import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
-import { listLLMModels, resolveLLMModel } from '@aalis/api-llm';
-import type { MemoryService, MetadataOp } from '@aalis/api-memory';
-import type { PersonaService } from '@aalis/api-persona';
-import type {
-  PlatformProfile,
-  SessionConfig,
-  SessionInfo,
-  SessionManagerService,
-  SessionTreeNode,
+import { agent } from '@aalis/api-agent';
+import { listLLMModels, llm, resolveLLMModel } from '@aalis/api-llm';
+import { type MemoryService, type MetadataOp, memory } from '@aalis/api-memory';
+import { persona } from '@aalis/api-persona';
+import { platform } from '@aalis/api-platform';
+import {
+  type PlatformProfile,
+  type SessionConfig,
+  type SessionInfo,
+  type SessionManagerService,
+  type SessionTreeNode,
+  sessionManager,
 } from '@aalis/api-session-manager';
-import type { ToolService } from '@aalis/api-tools';
-import type { WebuiPage } from '@aalis/api-webui';
-import { useWebuiService } from '@aalis/api-webui';
-import type { Context, PluginModule } from '@aalis/core';
+import { tools } from '@aalis/api-tools';
+import { type WebuiPage, webuiServer } from '@aalis/api-webui';
+import { type BoundOf, config, definePlugin, events, hooks, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 
@@ -26,18 +25,7 @@ export type {
   SessionTreeNode,
 } from '@aalis/api-session-manager';
 
-// ===== 插件元数据 =====
-
-export const name = '@aalis/plugin-session-manager';
-export const displayName = '会话管理';
-export const subsystem = 'session';
-export const inject = {
-  required: ['memory'] as const,
-  optional: ['agent', 'platform', 'persona', 'llm'] as const,
-};
-export const provides = ['session-manager'];
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   defaults: {
     label: '全局默认配置',
     description:
@@ -143,239 +131,12 @@ const webuiPages: WebuiPage[] = [
   },
 ];
 
-// ===== Actions =====
-
-export const actions: PluginModule['actions'] = {
-  async listSessions(ctx) {
-    const sm = ctx.getService<SessionManagerService>('session-manager');
-    if (!sm) return [];
-    const sessions = sm.listSessions();
-    return sessions.map(s => ({
-      ...s,
-      displayTitle: s.title || s.name,
-      configSummary: formatConfigSummary(s.config),
-      childCount: s.children.length,
-    }));
-  },
-
-  async createSession(ctx, args) {
-    const sm = ctx.getService<SessionManagerService>('session-manager');
-    if (!sm) throw new Error('session-manager 服务不可用');
-    const parentId = (args.parentId as string) || undefined;
-    // 新建会话时复制当前生效配置，而非留空继承
-    let config = (args.config as SessionConfig) || {};
-    if (Object.keys(config).length === 0) {
-      if (parentId) {
-        // 子会话：复制父会话的 resolved config
-        config = { ...sm.resolveConfig(parentId, 'webui') };
-      } else {
-        // 根会话：复制 webui 平台 profile 作为初始配置
-        const profiles = sm.getPlatformProfiles();
-        if (profiles.webui) config = { ...profiles.webui };
-      }
-    }
-    const session = await sm.createSession({
-      name:
-        (args.name as string) ||
-        `会话 ${new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
-      parentId,
-      config,
-      createdBy: 'user',
-      // 新建的空会话尚未发生任何对话，初始为 'waiting'（等待中）而非 'active'（进行中）。
-      // 否则侧栏新建的会话会一直显示"进行中"——直到首条消息触发 inbound→active→turn:after→completed。
-      status: 'waiting',
-    });
-    return session;
-  },
-
-  async deleteSession(ctx, args) {
-    const sm = ctx.getService<SessionManagerService>('session-manager');
-    if (!sm) throw new Error('session-manager 服务不可用');
-    const id = args.id as string;
-    if (!id) throw new Error('缺少会话 ID');
-    await sm.deleteSession(id);
-    return { success: true };
-  },
-
-  async updateSessionConfig(ctx, args) {
-    const sm = ctx.getService<SessionManagerService>('session-manager');
-    if (!sm) throw new Error('session-manager 服务不可用');
-    const id = args.id as string;
-    if (!id) throw new Error('缺少会话 ID');
-    const session = await sm.updateSession(id, { config: normalizeSessionConfigPatch(args.config) });
-    return session;
-  },
-
-  async getSessionHistory(ctx, args) {
-    const memory = ctx.getService<MemoryService>('memory');
-    if (!memory) throw new Error('memory 服务不可用');
-    const sessionId = args.sessionId as string;
-    if (!sessionId) throw new Error('缺少 sessionId');
-    const limit = (args.limit as number) || 100;
-    const history = await memory.getHistory(sessionId, limit);
-    return { sessionId, messages: history };
-  },
-
-  /** 批量归档会话 */
-  async batchArchive(ctx, args) {
-    const sm = ctx.getService<SessionManagerService>('session-manager');
-    if (!sm) throw new Error('session-manager 服务不可用');
-    const ids = args.ids as string[];
-    if (!Array.isArray(ids) || ids.length === 0) throw new Error('缺少会话 ID 列表');
-    let count = 0;
-    for (const id of ids) {
-      try {
-        await sm.updateSession(id, { status: 'archived' });
-        count++;
-      } catch {
-        /* skip */
-      }
-    }
-    return { success: true, count };
-  },
-
-  /** 批量删除会话 */
-  async batchDelete(ctx, args) {
-    const sm = ctx.getService<SessionManagerService>('session-manager');
-    if (!sm) throw new Error('session-manager 服务不可用');
-    const ids = args.ids as string[];
-    if (!Array.isArray(ids) || ids.length === 0) throw new Error('缺少会话 ID 列表');
-    let count = 0;
-    for (const id of ids) {
-      try {
-        await sm.deleteSession(id);
-        count++;
-      } catch {
-        /* skip */
-      }
-    }
-    return { success: true, count };
-  },
-
-  async getSessionTree(ctx) {
-    const sm = ctx.getService<SessionManagerService>('session-manager');
-    if (!sm) return [];
-    return sm.getTree();
-  },
-
-  /** 获取可选项列表（供前端下拉框使用） */
-  async getConfigOptions(ctx) {
-    // 可用人设列表
-    const persona = ctx.getService<PersonaService>('persona');
-    const personas = persona?.listModels ? await persona.listModels() : [];
-
-    // 可用 LLM 模型列表（枚举所有 chat-capable entry）
-    let models: Array<{ id: string; capabilities: string[]; provider?: string; contextId?: string }> = [];
-    try {
-      const entries = listLLMModels(ctx, { caps: ['chat'] });
-      models = entries.map(e => ({
-        id: e.instance.id,
-        capabilities: [...e.instance.capabilities],
-        provider: e.instance.providerId,
-        contextId: e.contextId,
-      }));
-    } catch {
-      /* llm 服务不可用 */
-    }
-
-    // 工具分组列表
-    let toolGroups: Array<{ name: string; label: string }> = [];
-    try {
-      const tools = ctx.getService<ToolService>('tools');
-      if (tools) toolGroups = tools.getGroups().map(g => ({ name: g.name, label: g.label }));
-    } catch {
-      /* tools 服务不可用 */
-    }
-
-    // 已注册平台列表
-    const platforms: string[] = [];
-    try {
-      const allPlatforms = ctx.getAllServices<{ platform: string }>('platform');
-      for (const p of allPlatforms) {
-        if (p.instance.platform && !platforms.includes(p.instance.platform)) {
-          platforms.push(p.instance.platform);
-        }
-      }
-    } catch {
-      /* platform 服务不可用 */
-    }
-
-    // 平台 profiles
-    const sm = ctx.getService<SessionManagerService>('session-manager');
-    const profiles = sm?.getPlatformProfiles() ?? {};
-
-    return { personas, models, toolGroups, platforms, profiles };
-  },
-
-  /** 获取指定会话的最终生效配置（合并所有层级后的结果） */
-  async getResolvedConfig(ctx, args) {
-    const sm = ctx.getService<SessionManagerService>('session-manager');
-    if (!sm) throw new Error('session-manager 服务不可用');
-    const sessionId = args.sessionId as string;
-    if (!sessionId) throw new Error('缺少 sessionId');
-    const platform = args.platform as string | undefined;
-    return sm.resolveConfig(sessionId, platform);
-  },
-
-  /**
-   * 获取「继承默认」——不含 session 自身 config，只算 platform profile + 父 sessionDefaults。
-   * WebUI 「继承 (xxx)」提示用这个，避免显示用户自己的覆盖值。
-   */
-  async getInheritedDefaults(ctx, args) {
-    const sm = ctx.getService<SessionManagerService>('session-manager');
-    if (!sm) throw new Error('session-manager 服务不可用');
-    const sessionId = args.sessionId as string;
-    if (!sessionId) throw new Error('缺少 sessionId');
-    const platform = args.platform as string | undefined;
-    return sm.resolveInheritedDefaults(sessionId, platform);
-  },
-
-  /** 获取会话详情（含完整消息历史，包括已归档消息） */
-  async getSessionDetail(ctx, args) {
-    const sm = ctx.getService<SessionManagerService>('session-manager');
-    const memory = ctx.getService<MemoryService>('memory');
-    if (!sm || !memory) throw new Error('服务不可用');
-    const id = args.id as string;
-    if (!id) throw new Error('缺少会话 ID');
-    const session = sm.getSession(id);
-    if (!session) throw new Error(`会话不存在: ${id}`);
-    const limit = (args.limit as number) || 200;
-    // 优先使用 getFullHistory（含已归档消息），确保 UI 能看到完整对话
-    const messages = memory.getFullHistory
-      ? await memory.getFullHistory(id, limit)
-      : await memory.getHistory(id, limit);
-    return { session, messages };
-  },
-
-  /** 手动重命名会话标题 */
-  async renameSession(ctx, args) {
-    const sm = ctx.getService<SessionManagerService>('session-manager');
-    if (!sm) throw new Error('session-manager 服务不可用');
-    const id = args.id as string;
-    const title = args.title as string;
-    if (!id || !title) throw new Error('缺少 id 或 title');
-    await sm.updateSessionTitle(id, title);
-    return { success: true };
-  },
-
-  /** 归档子会话（父已不再需要） */
-  async archiveSession(ctx, args) {
-    const sm = ctx.getService<SessionManagerService>('session-manager');
-    if (!sm) throw new Error('session-manager 服务不可用');
-    const id = args.id as string;
-    if (!id) throw new Error('缺少会话 ID');
-    await archiveRecursively(sm, id);
-    return { success: true };
-  },
-};
-
 // ===== 辅助函数 =====
 
 /**
  * 递归归档：先归档所有子会话再归档自己。
  *
- * 不能写成 action 里的 `this.archiveSession(...)` —— webui-server 是把函数从 actions 对象里
- * 取出来单独调用的（this === undefined），一旦有子会话就抛 TypeError 且父会话也没归档。
+ * 写成自由函数而非方法：页面动作是被单独取出调用的（没有 receiver），递归不能依赖 this。
  */
 async function archiveRecursively(sm: SessionManagerService, id: string): Promise<void> {
   const session = sm.getSession(id);
@@ -401,9 +162,12 @@ function formatConfigSummary(config: SessionConfig): string {
 
 // ===== SessionManager 实现 =====
 
+/** SessionManager 用到的能力：落盘的 memory、会话事件、memory:clear 钩子、标题生成的 LLM */
+type ManagerCaps = Pick<Caps, 'memory' | 'events' | 'hooks' | 'logger' | 'llm'>;
+
 class SessionManager implements SessionManagerService {
   private sessions = new Map<string, SessionInfo>();
-  private ctx: Context;
+  private caps: ManagerCaps;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private dirty = false;
   /** 平台 → 默认 SessionConfig 模板 */
@@ -411,17 +175,17 @@ class SessionManager implements SessionManagerService {
   /** 全局默认配置（platform profile 之下的最低层 fallback） */
   private defaults: Omit<SessionConfig, 'sessionDefaults'> = {};
 
-  constructor(ctx: Context) {
-    this.ctx = ctx;
+  constructor(caps: ManagerCaps) {
+    this.caps = caps;
   }
 
   /**
-   * memory provider 每次惰性查询：ServiceRegistry.get 返回的是裸 entry.instance，
-   * 缓存到 field 在 provider 重载后会失效。每次调用走 getService 让 provider 切换
+   * memory provider 每次惰性查询：ServiceRef.current 返回的是提供者本身，
+   * 缓存到 field 在 provider 重载后会失效。每次调用重新解析让 provider 切换
    * 后自然跟随，无需级联 bounce 本插件。
    */
   private get memory(): MemoryService {
-    const m = this.ctx.getService<MemoryService>('memory');
+    const m = this.caps.memory.current;
     if (!m) throw new Error('session-manager 需要 memory 服务');
     return m;
   }
@@ -436,9 +200,9 @@ class SessionManager implements SessionManagerService {
           this.sessions.set(key, info);
         }
       }
-      this.ctx.logger.info(`已加载 ${this.sessions.size} 个会话`);
+      this.caps.logger.info(`已加载 ${this.sessions.size} 个会话`);
     } catch (err) {
-      this.ctx.logger.warn('加载会话数据失败:', err);
+      this.caps.logger.warn('加载会话数据失败:', err);
     }
   }
 
@@ -448,7 +212,7 @@ class SessionManager implements SessionManagerService {
     if (!this.persistTimer) {
       this.persistTimer = setTimeout(() => {
         this.persistTimer = null;
-        this.persist().catch(err => this.ctx.logger.warn('持久化会话失败:', err));
+        this.persist().catch(err => this.caps.logger.warn('持久化会话失败:', err));
       }, 1000);
     }
   }
@@ -456,10 +220,10 @@ class SessionManager implements SessionManagerService {
   /**
    * 持久化到 memory metadata —— **一次批量提交**。
    *
-   * 旧写法是「逐条 saveMetadata + 全表扫逐个 deleteMetadata」，而 `dirty` 在开头就被置 false：
+   * 逐条 saveMetadata + 全表扫逐个 deleteMetadata 的写法配上开头就置 false 的 `dirty`：
    * 任何一条抛错就停在半新半旧，且下一次 debounce 不会重试。
    *
-   * 改成整批提交后，**原子性按后端分档**（见 api-memory 契约）：sqlite/inmemory 真事务，
+   * 整批提交的**原子性按后端分档**（见 api-memory 契约）：sqlite/inmemory 真事务，
    * mongodb 只保证按序执行遇错即停，仍可能停在半新半旧。本场景对此免疫，靠的不是原子性
    * 而是**幂等 + 可重试**：每次写的是全量快照（不是增量），失败时 dirty 复位，下一次
    * markDirty 会把完整状态重写一遍并重扫孤儿，前一次的半成品被整体覆盖。
@@ -476,7 +240,7 @@ class SessionManager implements SessionManagerService {
     }));
     try {
       // 清理孤儿：元数据里有、内存里没有的记录，与上面的写入同批提交。
-      // **这一句必须在 try 内**：它同样会抛（provider bounce 窗口里 `this.memory` getter 就会），
+      // **这一句必须在 try 内**：它同样会抛（provider 换人的窗口里 `this.memory` getter 就会），
       // 而 dirty 已在上面置 false —— 落在外面就等于「这批变更丢了且永不重试」，正是本方法
       // 要消灭的那个病。
       for (const { key } of await this.memory.listMetadata(METADATA_NAMESPACE)) {
@@ -522,8 +286,8 @@ class SessionManager implements SessionManagerService {
     };
     this.sessions.set(id, session);
     this.markDirty();
-    await this.ctx.emit('session:created', session);
-    this.ctx.logger.info(`会话建档(ensure): ${session.name} (${id})`);
+    await this.caps.events.emit('session:created', session);
+    this.caps.logger.info(`会话建档(ensure): ${session.name} (${id})`);
     return session;
   }
 
@@ -566,8 +330,8 @@ class SessionManager implements SessionManagerService {
     }
 
     this.markDirty();
-    await this.ctx.emit('session:created', session);
-    this.ctx.logger.info(`会话创建: ${session.name} (${id})`);
+    await this.caps.events.emit('session:created', session);
+    this.caps.logger.info(`会话创建: ${session.name} (${id})`);
     return session;
   }
 
@@ -609,7 +373,7 @@ class SessionManager implements SessionManagerService {
     session.updatedAt = Date.now();
 
     this.markDirty();
-    await this.ctx.emit('session:updated', session);
+    await this.caps.events.emit('session:updated', session);
     return session;
   }
 
@@ -636,8 +400,8 @@ class SessionManager implements SessionManagerService {
     await this.clearDeletedSessionData(id);
 
     this.markDirty();
-    await this.ctx.emit('session:deleted', id);
-    this.ctx.logger.info(`会话删除: ${session.name} (${id})`);
+    await this.caps.events.emit('session:deleted', id);
+    this.caps.logger.info(`会话删除: ${session.name} (${id})`);
   }
 
   private async clearDeletedSessionData(id: string): Promise<void> {
@@ -647,7 +411,7 @@ class SessionManager implements SessionManagerService {
       results: [],
     };
 
-    await this.ctx.runHook('memory:clear', clearData, async () => {
+    await this.caps.hooks.run('memory:clear', clearData, async () => {
       try {
         await this.memory.clearSession(id);
         clearData.results.push({ source: 'memory', success: true, message: '会话消息历史已清空' });
@@ -659,7 +423,7 @@ class SessionManager implements SessionManagerService {
 
     const failed = clearData.results.filter(r => !r.success);
     if (failed.length > 0) {
-      this.ctx.logger.warn(
+      this.caps.logger.warn(
         `会话数据清理存在失败项 [${id}]: ${failed.map(r => `${r.source}: ${r.message}`).join('; ')}`,
       );
     }
@@ -718,9 +482,9 @@ class SessionManager implements SessionManagerService {
     this.markDirty();
 
     // 发事件通知（wait_subtasks 通过事件驱动感知完成）
-    await this.ctx.emit('session:completed', session);
+    await this.caps.events.emit('session:completed', session);
 
-    this.ctx.logger.info(`会话完成: ${session.name} (${id})${result ? ` - ${result.slice(0, 100)}` : ''}`);
+    this.caps.logger.info(`会话完成: ${session.name} (${id})${result ? ` - ${result.slice(0, 100)}` : ''}`);
   }
 
   // ---- 标题管理 ----
@@ -731,13 +495,13 @@ class SessionManager implements SessionManagerService {
     // 已有标题则跳过
     if (session.title) return session.title;
 
-    const entry = resolveLLMModel(this.ctx, undefined, ['chat']);
+    const entry = resolveLLMModel(this.caps.llm, undefined, ['chat']);
     if (!entry) {
-      this.ctx.logger.warn(`无可用 LLM，无法生成标题: ${sessionId}`);
+      this.caps.logger.warn(`无可用 LLM，无法生成标题: ${sessionId}`);
       return undefined;
     }
-    this.ctx.logger.debug(`标题生成使用 LLM: ${entry.contextId}`);
-    const llm = entry.instance;
+    this.caps.logger.debug(`标题生成使用 LLM: ${entry.contextId}`);
+    const model = entry.instance;
 
     // 优先使用直接传入的用户消息；否则从历史获取
     let contextStr: string;
@@ -757,7 +521,7 @@ class SessionManager implements SessionManagerService {
 
     let title: string | undefined;
     try {
-      const resp = await llm.chat({
+      const resp = await model.chat({
         messages: [
           {
             role: 'system',
@@ -773,26 +537,26 @@ class SessionManager implements SessionManagerService {
       });
       title = (resp.content || '').trim().slice(0, 50);
       if (!title) {
-        this.ctx.logger.warn(
+        this.caps.logger.warn(
           `会话标题 LLM 返回空内容: ${sessionId} (resp.content=${JSON.stringify(resp.content)}, reasoning=${(resp.reasoningContent ?? '').length}字)`,
         );
       }
     } catch (err) {
-      this.ctx.logger.warn(`自动生成标题失败 [${sessionId}]:`, err);
+      this.caps.logger.warn(`自动生成标题失败 [${sessionId}]:`, err);
     }
 
     // 兜底：LLM 失败或返回空时，用用户消息首段作为临时标题，避免会话永远没有标题
     if (!title && userMessage?.trim()) {
       title = userMessage.trim().replace(/\s+/g, ' ').slice(0, 20);
-      this.ctx.logger.info(`使用用户消息兜底生成标题: ${sessionId} -> ${title}`);
+      this.caps.logger.info(`使用用户消息兜底生成标题: ${sessionId} -> ${title}`);
     }
 
     if (title) {
       session.title = title;
       session.updatedAt = Date.now();
       this.markDirty();
-      await this.ctx.emit('session:updated', session);
-      this.ctx.logger.info(`会话标题已生成: [${sessionId}] ${title}`);
+      await this.caps.events.emit('session:updated', session);
+      this.caps.logger.info(`会话标题已生成: [${sessionId}] ${title}`);
       return title;
     }
     return undefined;
@@ -804,7 +568,7 @@ class SessionManager implements SessionManagerService {
     session.title = title;
     session.updatedAt = Date.now();
     this.markDirty();
-    await this.ctx.emit('session:updated', session);
+    await this.caps.events.emit('session:updated', session);
   }
 
   // ---- 配置解析 ----
@@ -893,7 +657,7 @@ class SessionManager implements SessionManagerService {
     if (typeof r.persona === 'string' && r.persona) next.persona = r.persona;
     this.defaults = next;
     if (Object.keys(next).length > 0) {
-      this.ctx.logger.info(`已加载全局 defaults: ${Object.keys(next).join(', ')}`);
+      this.caps.logger.info(`已加载全局 defaults: ${Object.keys(next).join(', ')}`);
     }
   }
 
@@ -926,7 +690,7 @@ class SessionManager implements SessionManagerService {
       this.platformProfiles.set(entry.platform, profile);
     }
     if (this.platformProfiles.size > 0) {
-      this.ctx.logger.info(
+      this.caps.logger.info(
         `已加载 ${this.platformProfiles.size} 个平台配置模板: ${[...this.platformProfiles.keys()].join(', ')}`,
       );
     }
@@ -967,37 +731,254 @@ function stripUndefined(obj: object | undefined): Record<string, unknown> {
 /** stripDefaults 与 stripUndefined 功能相同 —— 只保留有值的字段 */
 const stripDefaults = stripUndefined;
 
+// ===== 页面动作 =====
+
+/** 页面动作用到的能力：登记口 webui、读历史的 memory，以及供下拉框枚举选项的 persona / llm / tools / platform */
+type ActionCaps = Pick<Caps, 'webui' | 'memory' | 'persona' | 'llm' | 'tools' | 'platform'>;
+
+/**
+ * 页面动作全是 apply 里的闭包：直接用这次激活的 manager 与能力，
+ * 登记随激活存亡（插件不在，WebUI 就调不到这些方法）。
+ */
+function registerSessionActions(caps: ActionCaps, manager: SessionManager): void {
+  const { webui, memory, persona, llm, tools, platform } = caps;
+
+  webui.registerAction('listSessions', async () =>
+    manager.listSessions().map(s => ({
+      ...s,
+      displayTitle: s.title || s.name,
+      configSummary: formatConfigSummary(s.config),
+      childCount: s.children.length,
+    })),
+  );
+
+  webui.registerAction('createSession', async args => {
+    const parentId = (args.parentId as string) || undefined;
+    // 新建会话时复制当前生效配置，而非留空继承
+    let config = (args.config as SessionConfig) || {};
+    if (Object.keys(config).length === 0) {
+      if (parentId) {
+        // 子会话：复制父会话的 resolved config
+        config = { ...manager.resolveConfig(parentId, 'webui') };
+      } else {
+        // 根会话：复制 webui 平台 profile 作为初始配置
+        const profiles = manager.getPlatformProfiles();
+        if (profiles.webui) config = { ...profiles.webui };
+      }
+    }
+    return manager.createSession({
+      name:
+        (args.name as string) ||
+        `会话 ${new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
+      parentId,
+      config,
+      createdBy: 'user',
+      // 新建的空会话尚未发生任何对话，初始为 'waiting'（等待中）而非 'active'（进行中）。
+      // 否则侧栏新建的会话会一直显示"进行中"——直到首条消息触发 inbound→active→turn:after→completed。
+      status: 'waiting',
+    });
+  });
+
+  webui.registerAction('deleteSession', async args => {
+    const id = args.id as string;
+    if (!id) throw new Error('缺少会话 ID');
+    await manager.deleteSession(id);
+    return { success: true };
+  });
+
+  webui.registerAction('updateSessionConfig', async args => {
+    const id = args.id as string;
+    if (!id) throw new Error('缺少会话 ID');
+    return manager.updateSession(id, { config: normalizeSessionConfigPatch(args.config) });
+  });
+
+  webui.registerAction('getSessionHistory', async args => {
+    const store = memory.current;
+    if (!store) throw new Error('memory 服务不可用');
+    const sessionId = args.sessionId as string;
+    if (!sessionId) throw new Error('缺少 sessionId');
+    const limit = (args.limit as number) || 100;
+    const history = await store.getHistory(sessionId, limit);
+    return { sessionId, messages: history };
+  });
+
+  /** 批量归档会话 */
+  webui.registerAction('batchArchive', async args => {
+    const ids = args.ids as string[];
+    if (!Array.isArray(ids) || ids.length === 0) throw new Error('缺少会话 ID 列表');
+    let count = 0;
+    for (const id of ids) {
+      try {
+        await manager.updateSession(id, { status: 'archived' });
+        count++;
+      } catch {
+        /* skip */
+      }
+    }
+    return { success: true, count };
+  });
+
+  /** 批量删除会话 */
+  webui.registerAction('batchDelete', async args => {
+    const ids = args.ids as string[];
+    if (!Array.isArray(ids) || ids.length === 0) throw new Error('缺少会话 ID 列表');
+    let count = 0;
+    for (const id of ids) {
+      try {
+        await manager.deleteSession(id);
+        count++;
+      } catch {
+        /* skip */
+      }
+    }
+    return { success: true, count };
+  });
+
+  webui.registerAction('getSessionTree', async () => manager.getTree());
+
+  /** 获取可选项列表（供前端下拉框使用） */
+  webui.registerAction('getConfigOptions', async () => {
+    // 可用人设列表
+    const personaService = persona.current;
+    const personas = personaService?.listModels ? await personaService.listModels() : [];
+
+    // 可用 LLM 模型列表（枚举所有 chat-capable entry）
+    const models = listLLMModels(llm, { caps: ['chat'] }).map(e => ({
+      id: e.instance.id,
+      capabilities: [...e.instance.capabilities],
+      provider: e.instance.providerId,
+      contextId: e.contextId,
+    }));
+
+    // 工具分组列表
+    const toolGroups = tools.current?.getGroups().map(g => ({ name: g.name, label: g.label })) ?? [];
+
+    // 已注册平台列表
+    const platforms: string[] = [];
+    for (const entry of platform.all()) {
+      const platformName = entry.instance.platform;
+      if (platformName && !platforms.includes(platformName)) platforms.push(platformName);
+    }
+
+    return { personas, models, toolGroups, platforms, profiles: manager.getPlatformProfiles() };
+  });
+
+  /** 获取指定会话的最终生效配置（合并所有层级后的结果） */
+  webui.registerAction('getResolvedConfig', async args => {
+    const sessionId = args.sessionId as string;
+    if (!sessionId) throw new Error('缺少 sessionId');
+    return manager.resolveConfig(sessionId, args.platform as string | undefined);
+  });
+
+  /**
+   * 获取「继承默认」——不含 session 自身 config，只算 platform profile + 父 sessionDefaults。
+   * WebUI 「继承 (xxx)」提示用这个，避免显示用户自己的覆盖值。
+   */
+  webui.registerAction('getInheritedDefaults', async args => {
+    const sessionId = args.sessionId as string;
+    if (!sessionId) throw new Error('缺少 sessionId');
+    return manager.resolveInheritedDefaults(sessionId, args.platform as string | undefined);
+  });
+
+  /** 获取会话详情（含完整消息历史，包括已归档消息） */
+  webui.registerAction('getSessionDetail', async args => {
+    const store = memory.current;
+    if (!store) throw new Error('memory 服务不可用');
+    const id = args.id as string;
+    if (!id) throw new Error('缺少会话 ID');
+    const session = manager.getSession(id);
+    if (!session) throw new Error(`会话不存在: ${id}`);
+    const limit = (args.limit as number) || 200;
+    // 优先使用 getFullHistory（含已归档消息），确保 UI 能看到完整对话
+    const messages = store.getFullHistory ? await store.getFullHistory(id, limit) : await store.getHistory(id, limit);
+    return { session, messages };
+  });
+
+  /** 手动重命名会话标题 */
+  webui.registerAction('renameSession', async args => {
+    const id = args.id as string;
+    const title = args.title as string;
+    if (!id || !title) throw new Error('缺少 id 或 title');
+    await manager.updateSessionTitle(id, title);
+    return { success: true };
+  });
+
+  /** 归档子会话（父已不再需要） */
+  webui.registerAction('archiveSession', async args => {
+    const id = args.id as string;
+    if (!id) throw new Error('缺少会话 ID');
+    await archiveRecursively(manager, id);
+    return { success: true };
+  });
+}
+
 // ===== 插件入口 =====
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
+const uses = {
+  /** 会话档案与消息历史的唯一落点：没有 memory 就没有会话管理 */
+  memory,
+  /**
+   * 本插件不调用 agent 的方法，声明它是为了 agent:* 钩子：键类型由这条导入带来，
+   * 依赖声明让本插件排在 agent 之前退场，回合还在跑时终态收口的中间件不会先消失。
+   */
+  agent: optional(agent),
+  /** 自动标题的模型来源；没有 LLM 时退回用户消息首段 */
+  llm: optional(llm),
+  /** 下列三项只供 WebUI 下拉框枚举选项，缺席即空列表 */
+  persona: optional(persona),
+  platform: optional(platform),
+  tools: optional(tools),
+  /** 页面与页面动作的登记口；无 WebUI 时会话管理照常在后台运行 */
+  webui: optional(webuiServer),
+  events,
+  hooks,
+  lifecycle,
+  logger,
+  config,
+  provide,
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-session-manager',
+  displayName: '会话管理',
+  subsystem: 'session',
+  configSchema,
+  provides: [sessionManager],
+  uses,
+  apply: run,
+});
+
+async function run(caps: Caps): Promise<void> {
+  const { memory, webui, events, hooks, lifecycle, logger, provide } = caps;
+
   // 注册 WebUI 页面
-  const webui = useWebuiService(ctx);
   for (const page of webuiPages) webui.registerPage(page);
 
-  if (ctx.getService('memory') === undefined) {
-    ctx.logger.error('memory 服务不可用，会话管理无法启动');
+  if (memory.current === undefined) {
+    logger.error('memory 服务不可用，会话管理无法启动');
     return;
   }
 
-  const manager = new SessionManager(ctx);
+  const manager = new SessionManager(caps);
 
   // 从持久化存储加载
   await manager.load();
 
   // 加载平台 profiles
-  manager.loadPlatformProfiles(config.platformProfiles);
+  manager.loadPlatformProfiles(caps.config.platformProfiles);
   // 加载全局 defaults
-  manager.loadDefaults(config.defaults);
+  manager.loadDefaults(caps.config.defaults);
 
   // 注册服务
-  ctx.provide('session-manager', manager, {
-    label: '会话管理',
-  });
+  provide(sessionManager, manager, { label: '会话管理' });
+
+  registerSessionActions(caps, manager);
 
   // ===== 会话状态自治管理 =====
   // 监听消息事件，自动维护会话状态（从 Agent 职责中迁出）
 
-  ctx.on('inbound:message', (msg: { sessionId: string }) => {
+  events.on('inbound:message', (msg: { sessionId: string }) => {
     if (!msg.sessionId) return;
     const session = manager.getSession(msg.sessionId);
     if (session && session.status !== 'active') {
@@ -1005,7 +986,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   });
 
-  ctx.on('outbound:message', (msg: { sessionId: string }) => {
+  events.on('outbound:message', (msg: { sessionId: string }) => {
     if (!msg.sessionId) return;
     const session = manager.getSession(msg.sessionId);
     // 子会话（有 parentId）由 plugin-session-tools 的 agent:turn:after 中间件负责完成并提取 result
@@ -1018,7 +999,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 上面的 outbound:message 只覆盖"产生了回复"的情形——用户中途停止生成（aborted）或
   // 空回复（silent）时不发 outbound:message，会话会永远停在 'active'（即"进行中"）。
   // 这里订阅生命周期钩子作幂等互补，确保任何回合结束都把根会话收口为 'completed'。
-  ctx.middleware('agent:turn:after', async (data, next) => {
+  hooks.middleware('agent:turn:after', async (data, next) => {
     await next();
     if (!data.sessionId) return;
     const session = manager.getSession(data.sessionId);
@@ -1033,10 +1014,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 仅对 webui / cli 等用户交互平台生效，onebot 等外部平台不生成标题
   const TITLE_PLATFORMS = new Set(['webui', 'cli']);
   const titleGenerating = new Set<string>();
-  ctx.on('inbound:message', (msg: { content: string; sessionId: string; platform?: string }) => {
+  events.on('inbound:message', (msg: { content: string; sessionId: string; platform?: string }) => {
     const { sessionId, platform } = msg;
     if (!sessionId) {
-      ctx.logger.debug('标题生成跳过: 缺少 sessionId');
+      logger.debug('标题生成跳过: 缺少 sessionId');
       return;
     }
     if (titleGenerating.has(sessionId)) return;
@@ -1047,21 +1028,21 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     // 已有标题或子任务会话跳过（静默）
     if (session && (session.title || session.parentId)) return;
     titleGenerating.add(sessionId);
-    ctx.logger.info(`开始生成会话标题: ${sessionId} (platform=${platform})`);
+    logger.info(`开始生成会话标题: ${sessionId} (platform=${platform})`);
     // 平台派生会话（cli-default 等）从不经 createSession 预建，缺档是常态：先兜底建档再生成
     // 标题（与 createChildSession 同路），否则这些平台永远没有标题、且每条消息告警一次。
     // 异步生成，不阻塞消息处理；直接传入用户消息避免依赖历史
     (session ? Promise.resolve() : manager.ensureSession(sessionId).then(() => undefined))
       .then(() => manager.generateTitle(sessionId, msg.content))
-      .catch(err => ctx.logger.warn('标题生成失败:', err))
+      .catch(err => logger.warn('标题生成失败:', err))
       .finally(() => titleGenerating.delete(sessionId));
   });
 
   // 持久化走 onDispose：覆盖停机与 bounce / unload / updateConfig 等全部
-  // 拆卸路径（旧 app:stopping 只在全局停机触发，热重载即丢会话元数据）。
+  // 拆卸路径（只在全局停机触发的话，热重载即丢会话元数据）。
   // 异步收尾由编排层的 disposeAsync 等待完成；app.stop() 的拓扑逆序保证此时 memory 提供者
   // 尚未关闭，单独热重载/禁用 memory 提供者时无此保证。shutdown() 幂等：清 timer + 置 dirty + 落盘。
-  ctx.onDispose(() => manager.shutdown());
+  lifecycle.onDispose(() => manager.shutdown());
 
-  ctx.logger.info('会话管理服务已启用');
+  logger.info('会话管理服务已启用');
 }

@@ -1,5 +1,5 @@
 import type { StorageService } from '@aalis/api-storage';
-import type { ScopedToolService } from '@aalis/api-tools';
+import type { BoundTools } from '@aalis/api-tools';
 import {
   AlignmentType,
   BorderStyle,
@@ -125,7 +125,7 @@ const alignMap: Record<string, (typeof AlignmentType)[keyof typeof AlignmentType
 };
 
 export function registerDocxTools(
-  tools: ScopedToolService,
+  tools: BoundTools,
   sessions: DocSessionManager,
   storage: StorageService,
   outputUri: string,

@@ -1,19 +1,38 @@
-import type { Context, Logger } from '@aalis/core';
+import type { Logger, ServiceRef, ServiceView } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import type { ModelRef } from '../../packages/api-llm/src/index.js';
+import type { ASRService } from '../../packages/api-asr/src/index.js';
+import type { LLMModel, ModelRef } from '../../packages/api-llm/src/index.js';
 import type { MediaProcessor } from '../../packages/api-media/src/index.js';
-import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
+import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import type { MessageAttachment } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // MediaService.pickProcessor — 模型选择
 // 覆盖 issue 3：vision/audio 的 prefer 配置支持 ModelRef，能钉死「具体模型」而非只认提供者名；
-// 匹配不到时确定性按 priority 回落（而非静默乱用）。无 LLM 服务（getAllServices→[]）时只用外部注册的 processor。
+// 匹配不到时确定性按 priority 回落（而非静默乱用）。无 LLM 提供者（llm.all()→[]）时只用外部注册的 processor。
 // ════════════════════════════════════════════════════════════
 
-const ctx = { getAllServices: () => [] } as unknown as Context;
 const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
+
+/** 按激活绑定的服务桩：按 entries 解析当前胜者与全量提供者 */
+function ref<P>(entries: ServiceView<P>[] = []): ServiceRef<P> {
+  return {
+    current: entries[0]?.instance,
+    require: () => {
+      const provider = entries[0]?.instance;
+      if (provider === undefined) throw new Error('无提供者');
+      return provider;
+    },
+    all: () => entries,
+    follow: () => () => {},
+  };
+}
+
+function caps(over: Partial<MediaServiceCaps> = {}): MediaServiceCaps {
+  return { logger, llm: ref(), asr: ref(), sessionManager: ref(), memory: ref(), ...over };
+}
+
 const cfg = {
   vision: { maxTokens: 300, think: false },
   audio: { maxTokens: 1024, think: true },
@@ -25,7 +44,7 @@ function proc(name: string, priority: number): MediaProcessor {
 }
 
 function svc(): MediaServiceImpl {
-  const s = new MediaServiceImpl(ctx, logger, cfg);
+  const s = new MediaServiceImpl(caps(), cfg);
   // processor.name 模拟 llm-adapter 生成的 `llm:<provider>/<model>#<capShort>` 格式
   s.registerProcessor(proc('llm:@aalis/plugin-llm-openai:main/gpt-4o#vis', 10));
   s.registerProcessor(proc('llm:@aalis/plugin-llm-deepseek:main/deepseek-vl#vis', 20));
@@ -34,8 +53,8 @@ function svc(): MediaServiceImpl {
 
 describe('MediaService.pickProcessor（模型选择 / issue 3）', () => {
   it('ModelRef {provider,model} → 精确命中对应模型（钉死具体模型）', () => {
-    const ref: ModelRef = { provider: '@aalis/plugin-llm-openai:main', model: 'gpt-4o' };
-    expect(svc().pickProcessor('vision', ref)?.name).toBe('llm:@aalis/plugin-llm-openai:main/gpt-4o#vis');
+    const modelRef: ModelRef = { provider: '@aalis/plugin-llm-openai:main', model: 'gpt-4o' };
+    expect(svc().pickProcessor('vision', modelRef)?.name).toBe('llm:@aalis/plugin-llm-openai:main/gpt-4o#vis');
   });
 
   it('ModelRef 仅 provider → 命中该 provider', () => {
@@ -64,7 +83,7 @@ describe('MediaService.pickProcessor（模型选择 / issue 3）', () => {
   });
 
   it('无候选 processor → null', () => {
-    const empty = new MediaServiceImpl(ctx, logger, cfg);
+    const empty = new MediaServiceImpl(caps(), cfg);
     expect(empty.pickProcessor('vision', { model: 'gpt-4o' })).toBeNull();
   });
 });
@@ -79,19 +98,15 @@ describe('MediaService 音频统一池（asr 桥 + 音频 LLM 一个池）', () 
 
   function audioSvc(prefer?: string): MediaServiceImpl {
     // 一个 asr provider（whisper.cpp，pri 5）→ 被桥成 cap='audio' 的 processor
-    const asrSvc = {
-      transcribe: async (i: { attachment: MessageAttachment }) => ({ text: `[whisper] ${i.attachment.data}` }),
+    const asrSvc: ASRService = {
+      transcribe: async i => ({ text: `[whisper] ${i.attachment.data}` }),
     };
-    const audioCtx = {
-      getAllServices: (name: string) =>
-        name === 'asr'
-          ? [{ instance: asrSvc, contextId: '@aalis/plugin-asr-whisper-cpp', priority: 5, label: 'whisper.cpp' }]
-          : [],
-    } as unknown as Context;
-    const s = new MediaServiceImpl(audioCtx, logger, {
-      ...cfg,
-      audio: { mode: 'enabled', prefer, maxTokens: 1024, think: true },
-    } as unknown as MediaConfigResolved);
+    const s = new MediaServiceImpl(
+      caps({
+        asr: ref([{ instance: asrSvc, contextId: '@aalis/plugin-asr-whisper-cpp', priority: 5, label: 'whisper.cpp' }]),
+      }),
+      { ...cfg, audio: { mode: 'enabled', prefer, maxTokens: 1024, think: true } } as unknown as MediaConfigResolved,
+    );
     // 一个「音频 LLM」外部 processor（模拟 llm-adapter 对 audio cap 的包装，pri 1）
     s.registerProcessor({
       name: 'llm:@aalis/plugin-llm-ollama:main/gemma#aud',
@@ -117,7 +132,7 @@ describe('MediaService 音频统一池（asr 桥 + 音频 LLM 一个池）', () 
     const bridge = audioSvc()
       .listProcessors('audio')
       .find(p => p.name.startsWith('asr:'));
-    const r = await bridge?.transcribe?.({ attachment: audioAtt('X') }, ctx);
+    const r = await bridge?.transcribe?.({ attachment: audioAtt('X') });
     expect(r?.text).toBe('[whisper] X');
     expect(r?.meta?.processor).toBe('asr:@aalis/plugin-asr-whisper-cpp');
   });
@@ -136,17 +151,19 @@ describe('MediaService 音频统一池（asr 桥 + 音频 LLM 一个池）', () 
 
   it('真·scanLLMProcessors 路径：声明 audio 能力的 LLM 自动进池、带 transcribe、可被 prefer 钉中（非手搓）', () => {
     // 一个声明 audio 能力的真 LLM 服务（chat 被 transcribe 内部调用；本测只验「进池 + 选中」，不触发到 chat/ffmpeg）
-    const audioLLM = { id: 'gemma:e4b', capabilities: ['audio'], chat: async () => ({ content: '' }) };
-    const llmCtx = {
-      getAllServices: (n: string) =>
-        n === 'llm'
-          ? [{ instance: audioLLM, contextId: '@aalis/plugin-llm-ollama:main/gemma', priority: 0, label: 'ollama' }]
-          : [],
-    } as unknown as Context;
-    const s = new MediaServiceImpl(llmCtx, logger, {
-      ...cfg,
-      audio: { mode: 'enabled', maxTokens: 1024, think: true },
-    } as unknown as MediaConfigResolved);
+    const audioLLM = {
+      id: 'gemma:e4b',
+      capabilities: ['audio'],
+      chat: async () => ({ content: '' }),
+    } as unknown as LLMModel;
+    const s = new MediaServiceImpl(
+      caps({
+        llm: ref([
+          { instance: audioLLM, contextId: '@aalis/plugin-llm-ollama:main/gemma', priority: 0, label: 'ollama' },
+        ]),
+      }),
+      { ...cfg, audio: { mode: 'enabled', maxTokens: 1024, think: true } } as unknown as MediaConfigResolved,
+    );
     const llmProc = s.listProcessors('audio').find(p => p.name.startsWith('llm:'));
     expect(llmProc).toBeDefined(); // scanLLMProcessors 确实把 audio LLM 包进了 audio 池
     expect(typeof llmProc?.transcribe).toBe('function'); // 真 proc 带 transcribe（曾经那段「死代码」的归宿）

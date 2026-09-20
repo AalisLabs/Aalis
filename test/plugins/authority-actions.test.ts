@@ -1,78 +1,136 @@
-import type { StorageService } from '@aalis/api-storage';
-import type { ConfigManager, Context, Logger } from '@aalis/core';
-import { describe, expect, it } from 'vitest';
-import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
-import { actions as declaredActions } from '../../packages/plugin-authority/src/index.js';
-
-// `actions` 是 `PluginModule['actions']` 的可选成员。一次性断言存在而非逐处 `?.`——
-// 它整个缺失本身就是本文件要发现的回归（管理面动作没挂上去），用可选链会把这条静默吞掉。
-if (!declaredActions) throw new Error('plugin-authority 未导出 actions —— 管理面动作全部缺失');
-const actions = declaredActions;
+import { afterEach, describe, expect, it } from 'vitest';
+import { type AuthorityService, authority, type UserIdentity } from '../../packages/api-authority/src/index.js';
+import { type CommandBuilder, type CommandService, commands } from '../../packages/api-commands/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
+import { type ToolService, tools } from '../../packages/api-tools/src/index.js';
+import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
+import { App, hostConfig, provide, services } from '../../packages/core/src/index.js';
+import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 
 // ════════════════════════════════════════════════════════════
-// authority actions — WebUI surface（数字等级单轴）
+// authority 页面动作 — WebUI surface（数字等级单轴）
+//
+// 动作是 apply 里的闭包，经 webui-server 登记；测试装上真插件、用桩 webui 截下登记表，
+// 按名调用。动作缺席（没登记上去）会在 call() 处直接抛错——管理面整体消失这条回归不会被静默吞掉。
 //
 // 关键安全性：权限管理（setUserLevel/setAuthorityOverride/setConfirmOverride）仅 owner 可达（防自我提权）。
 // ════════════════════════════════════════════════════════════
 
-function makeLogger(): Logger {
-  const noop = () => undefined;
-  const l = { debug: noop, info: noop, warn: noop, error: noop, child: () => l } as unknown as Logger;
-  return l;
+/** getOverview 读 commands/tools 服务拿操作清单；两半各给一份同形桩 */
+interface OpNode {
+  name: string;
+  pluginName: string;
+  visibility?: 'public' | 'restricted';
+  risk?: 'safe' | 'sensitive' | 'dangerous';
 }
 
-function makeCtx(cfg: Record<string, unknown> = {}): { ctx: Context; manager: AuthorityManager } {
-  const data: Record<string, unknown> = { ...cfg };
-  const config = {
-    get: (k: string) => data[k],
-    set: (k: string, v: unknown) => {
-      data[k] = v;
+function fakeCommandService(nodes: OpNode[]): CommandService {
+  const builder = {} as CommandBuilder;
+  Object.assign(builder, {
+    alias: () => builder,
+    option: () => builder,
+    action: () => builder,
+    usage: () => builder,
+    example: () => builder,
+  });
+  return {
+    prefix: '/',
+    command: () => builder,
+    unregister: () => {},
+    getAll: () => nodes,
+    setExecutionGuard: () => {},
+  } as unknown as CommandService;
+}
+
+function fakeToolService(nodes: OpNode[]): ToolService {
+  return {
+    register: () => () => {},
+    registerGroup: () => () => {},
+    getAll: () => nodes,
+    setExecutionGuard: () => {},
+  } as unknown as ToolService;
+}
+
+const running: App[] = [];
+afterEach(async () => {
+  for (const app of running.splice(0)) await app.stop();
+});
+
+interface BootOptions {
+  /** 宿主配置的起始值（owners / deniedCapabilities…） */
+  config?: Record<string, unknown>;
+  /** 给出即提供 commands / tools 桩，getAll 返回这份清单 */
+  operations?: OpNode[];
+}
+
+async function boot(opts: BootOptions = {}) {
+  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {}, ...opts.config } });
+  running.push(app);
+  const host = app.bind({ provide, services, hostConfig });
+  const registered = new Map<string, WebuiActionHandler>();
+  host.provide(webuiServer, {
+    registerPage: () => () => {},
+    registerAction: (method: string, handler: WebuiActionHandler) => {
+      registered.set(method, handler);
+      return () => void registered.delete(method);
     },
-  } as unknown as ConfigManager;
-  const storage = { writeFile: async () => undefined } as unknown as StorageService;
-  const manager = new AuthorityManager(config, makeLogger(), storage);
-  const app = { saveConfig: () => undefined };
-  const ctx = {
-    config,
-    getService: (name: string) => (name === 'authority' ? manager : name === 'app' ? app : undefined),
-    getAllServices: () => [],
-  } as unknown as Context;
-  return { ctx, manager };
+  } as never);
+  // 等级表落盘用；本组用例不验持久化，读到「无文件」即空表
+  host.provide(storage, {
+    readFile: async () => {
+      throw new Error('不存在');
+    },
+    writeFile: async () => undefined,
+  } as never);
+  if (opts.operations) {
+    host.provide(commands, fakeCommandService(opts.operations) as never);
+    host.provide(tools, fakeToolService(opts.operations) as never);
+  }
+
+  await app.plugins.register(authorityPlugin, {});
+  await app.plugins.idle();
+
+  const manager = host.services.get(authority);
+  if (!manager) throw new Error('authority 服务未注册 —— 插件没起来');
+  const call = async (method: string, args: Record<string, unknown> = {}, caller?: UserIdentity): Promise<unknown> => {
+    const handler = registered.get(method);
+    if (!handler) throw new Error(`页面动作 "${method}" 未登记 —— 管理面缺失`);
+    return handler(args, caller);
+  };
+  return { app, manager, call, config: host.hostConfig.require() };
 }
 
-const canRestricted = (m: AuthorityManager, platform: string, userId: string, cap: string) =>
+const canRestricted = (m: AuthorityService, platform: string, userId: string, cap: string) =>
   m.authorize({ platform, userId }, { capability: cap, visibility: 'restricted' }) === null;
 
 describe('setUserLevel — 仅 owner 可管理', () => {
   it('owner（console）可设等级；达标可过受限操作', async () => {
-    const { ctx, manager } = makeCtx();
+    const { manager, call } = await boot();
     const owner = { platform: 'webui', userId: 'console' };
-    await actions.setUserLevel(ctx, { platform: 'onebot', userId: '123', level: 2 }, owner);
+    await call('setUserLevel', { platform: 'onebot', userId: '123', level: 2 }, owner);
     expect(canRestricted(manager, 'onebot', '123', 'tool:shell.exec')).toBe(true);
   });
 
   it('非 owner 调用被拒（防自我提权）', async () => {
-    const { ctx } = makeCtx();
+    const { call } = await boot();
     const alice = { platform: 'onebot', userId: 'alice' }; // 非 owner
-    await expect(actions.setUserLevel(ctx, { platform: 'onebot', userId: 'alice', level: 5 }, alice)).rejects.toThrow(
+    await expect(call('setUserLevel', { platform: 'onebot', userId: 'alice', level: 5 }, alice)).rejects.toThrow(
       /只有 owner/,
     );
   });
 
   it('非整数等级 / 缺 platform 抛错', async () => {
-    const { ctx } = makeCtx();
-    await expect(actions.setUserLevel(ctx, { platform: 'onebot', userId: 'a', level: 1.5 })).rejects.toThrow(/level/);
-    await expect(actions.setUserLevel(ctx, { platform: 'onebot', level: 1 })).rejects.toThrow(/必填/);
+    const { call } = await boot();
+    await expect(call('setUserLevel', { platform: 'onebot', userId: 'a', level: 1.5 })).rejects.toThrow(/level/);
+    await expect(call('setUserLevel', { platform: 'onebot', level: 1 })).rejects.toThrow(/必填/);
   });
 });
 
 describe('getOverview — 总览快照', () => {
   it('返回 users(含 level) / owners / 命令工具清单', async () => {
-    const { ctx, manager } = makeCtx({
-      owners: [{ platform: 'webui', userId: 'boss' }],
-    });
+    const { manager, call } = await boot({ config: { owners: [{ platform: 'webui', userId: 'boss' }] } });
     manager.setUserLevel({ platform: 'onebot', userId: 'a' }, 1);
-    const ov = (await actions.getOverview(ctx, {})) as {
+    const ov = (await call('getOverview')) as {
       users: Array<{ userId: string; level: number }>;
       owners: unknown[];
       commands: unknown[];
@@ -86,9 +144,8 @@ describe('getOverview — 总览快照', () => {
 
   // 定级收在权限服务这一侧：前端不再自算，只渲染 + 叠 override。所以 payload 里必须真的
   // 带上算好的 minLevel——漏了前端只会显示 `默认undefined`，而 payload 形状没有任何类型
-  // 或测试守着（actions 返回的是 Record<string, unknown>）。
+  // 或测试守着（动作返回的是 unknown）。
   it('每条 operation 都带后端算好的 minLevel（前端据此渲染，不得自算）', async () => {
-    const { ctx } = makeCtx();
     const cmds = [
       { name: 'pub', pluginName: 'p', visibility: undefined, risk: undefined, expect: 0 },
       { name: 'res', pluginName: 'p', visibility: 'restricted' as const, risk: undefined, expect: 2 },
@@ -99,20 +156,15 @@ describe('getOverview — 总览快照', () => {
     ];
     // commands 与 tools 两半都要验：payload 是两个独立的 map，只补一半的话同一个病换到
     // tools 上照样上线（前端对 tools 同样会显示「默认undefined」）。
-    const shape = (c: (typeof cmds)[number]) => ({
-      name: c.name,
-      pluginName: c.pluginName,
-      visibility: c.visibility,
-      risk: c.risk,
+    const { call } = await boot({
+      operations: cmds.map(c => ({
+        name: c.name,
+        pluginName: c.pluginName,
+        visibility: c.visibility,
+        risk: c.risk,
+      })),
     });
-    const withBoth = {
-      ...ctx,
-      getService: (n: string) =>
-        n === 'commands' || n === 'tools'
-          ? { getAll: () => cmds.map(shape) }
-          : (ctx as unknown as { getService(n: string): unknown }).getService(n),
-    } as unknown as Context;
-    const ov = (await actions.getOverview(withBoth, {})) as {
+    const ov = (await call('getOverview')) as {
       commands: Array<{ name: string; minLevel?: number }>;
       tools: Array<{ name: string; minLevel?: number }>;
     };
@@ -125,17 +177,17 @@ describe('getOverview — 总览快照', () => {
 
 describe('deleteUser — 删除记录', () => {
   it('deleteUser 删除整条记录', async () => {
-    const { ctx, manager } = makeCtx();
+    const { manager, call } = await boot();
     manager.setUserLevel({ platform: 'onebot', userId: 'x' }, 2);
-    await actions.deleteUser(ctx, { platform: 'onebot', userId: 'x' });
+    await call('deleteUser', { platform: 'onebot', userId: 'x' });
     expect(manager.listUsers().find(u => u.userId === 'x')).toBeUndefined();
   });
 
   it('非 owner 调用被拒（删封禁记录等于自我解封）', async () => {
-    const { ctx, manager } = makeCtx();
+    const { manager, call } = await boot();
     manager.setUserLevel({ platform: 'onebot', userId: 'bob' }, -5);
     await expect(
-      actions.deleteUser(ctx, { platform: 'onebot', userId: 'bob' }, { platform: 'onebot', userId: 'bob' }),
+      call('deleteUser', { platform: 'onebot', userId: 'bob' }, { platform: 'onebot', userId: 'bob' }),
     ).rejects.toThrow(/只有 owner/);
     expect(manager.listUsers().find(u => u.userId === 'bob')?.level, '封禁记录不该被非 owner 删掉').toBe(-5);
   });
@@ -144,42 +196,42 @@ describe('deleteUser — 删除记录', () => {
 // 三个「改全局闸」的动作与兄弟处理器同一形状：caller 在场且非 owner 即拒。
 describe('setRestrictedPolicy / revokeTemporaryGrant / setConfig — 仅 owner 可达', () => {
   it('setRestrictedPolicy：非 owner 调用被拒，策略未落配置', async () => {
-    const { ctx } = makeCtx();
+    const { call, config } = await boot();
     await expect(
-      actions.setRestrictedPolicy(ctx, { policy: { allow: ['*'] } }, { platform: 'onebot', userId: 'bob' }),
+      call('setRestrictedPolicy', { policy: { allow: ['*'] } }, { platform: 'onebot', userId: 'bob' }),
     ).rejects.toThrow(/只有 owner/);
-    expect(ctx.config.get('restrictedPolicy'), '非 owner 不该开出受限能力白名单').toBeUndefined();
+    expect(config.get('restrictedPolicy'), '非 owner 不该开出受限能力白名单').toBeUndefined();
   });
 
   it('revokeTemporaryGrant：非 owner 调用被拒', async () => {
-    const { ctx } = makeCtx();
-    await expect(
-      actions.revokeTemporaryGrant(ctx, { id: 'g1' }, { platform: 'onebot', userId: 'bob' }),
-    ).rejects.toThrow(/只有 owner/);
+    const { call } = await boot();
+    await expect(call('revokeTemporaryGrant', { id: 'g1' }, { platform: 'onebot', userId: 'bob' })).rejects.toThrow(
+      /只有 owner/,
+    );
   });
 
   it('setConfig：非 owner 调用被拒，硬禁清单未被改写', async () => {
-    const { ctx } = makeCtx({ deniedCapabilities: ['tool:shell.exec'] });
-    await expect(
-      actions.setConfig(ctx, { deniedCapabilities: [] }, { platform: 'onebot', userId: 'bob' }),
-    ).rejects.toThrow(/只有 owner/);
-    expect(ctx.config.get('deniedCapabilities'), '非 owner 不该拆掉硬禁总闸').toEqual(['tool:shell.exec']);
+    const { call, config } = await boot({ config: { deniedCapabilities: ['tool:shell.exec'] } });
+    await expect(call('setConfig', { deniedCapabilities: [] }, { platform: 'onebot', userId: 'bob' })).rejects.toThrow(
+      /只有 owner/,
+    );
+    expect(config.get('deniedCapabilities'), '非 owner 不该拆掉硬禁总闸').toEqual(['tool:shell.exec']);
   });
 
   it('owner 调用照常放行（闸不误伤 owner）', async () => {
-    const { ctx } = makeCtx();
+    const { call, config } = await boot();
     const owner = { platform: 'webui', userId: 'console' };
-    await actions.setRestrictedPolicy(ctx, { policy: { allow: ['tool:x'] } }, owner);
-    expect((ctx.config.get('restrictedPolicy') as { allow: string[] }).allow).toEqual(['tool:x']);
-    await actions.setConfig(ctx, { deniedCapabilities: ['tool:y'] }, owner);
-    expect(ctx.config.get('deniedCapabilities')).toEqual(['tool:y']);
-    await expect(actions.revokeTemporaryGrant(ctx, { id: 'nope' }, owner)).resolves.toMatchObject({ ok: false });
+    await call('setRestrictedPolicy', { policy: { allow: ['tool:x'] } }, owner);
+    expect((config.get('restrictedPolicy') as { allow: string[] }).allow).toEqual(['tool:x']);
+    await call('setConfig', { deniedCapabilities: ['tool:y'] }, owner);
+    expect(config.get('deniedCapabilities')).toEqual(['tool:y']);
+    await expect(call('revokeTemporaryGrant', { id: 'nope' }, owner)).resolves.toMatchObject({ ok: false });
   });
 });
 
 describe('setAuthorityOverride — 抬门槛须撤销旧授予', () => {
   it('抬高最低等级后，该能力上的会话授予立即失效', async () => {
-    const { ctx, manager } = makeCtx();
+    const { manager, call } = await boot();
     manager.setUserLevel({ platform: 'onebot', userId: 'alice' }, 2);
     manager.setConfirmHandler('*', async () => ({ allowed: true, grant: { scope: 'session', durationSeconds: 600 } }));
     const grantReq = {
@@ -195,7 +247,7 @@ describe('setAuthorityOverride — 抬门槛须撤销旧授予', () => {
     expect(manager.isPreApproved(grantReq)).toBe(true);
 
     // owner 在权限页把门槛抬到 5（典型处置：不封人只抬门槛）
-    await actions.setAuthorityOverride(ctx, { name: 'tool:shell.exec', level: 5 });
+    await call('setAuthorityOverride', { name: 'tool:shell.exec', level: 5 });
 
     expect(
       manager.isPreApproved(grantReq),
@@ -206,53 +258,53 @@ describe('setAuthorityOverride — 抬门槛须撤销旧授予', () => {
 
 describe('setAuthorityOverride — owner 调整单操作最低等级', () => {
   it('写入 config.authorityOverrides 任意整数；非整数删除条目', async () => {
-    const { ctx } = makeCtx();
-    await actions.setAuthorityOverride(ctx, { name: 'tool:weather', level: 5 });
-    expect((ctx.config.get('authorityOverrides') as Record<string, number>)['tool:weather']).toBe(5);
-    await actions.setAuthorityOverride(ctx, { name: 'tool:weather', level: null });
-    expect((ctx.config.get('authorityOverrides') as Record<string, number>)['tool:weather']).toBeUndefined();
+    const { call, config } = await boot();
+    await call('setAuthorityOverride', { name: 'tool:weather', level: 5 });
+    expect((config.get('authorityOverrides') as Record<string, number>)['tool:weather']).toBe(5);
+    await call('setAuthorityOverride', { name: 'tool:weather', level: null });
+    expect((config.get('authorityOverrides') as Record<string, number>)['tool:weather']).toBeUndefined();
   });
 
   it('非 owner 调用被拒', async () => {
-    const { ctx } = makeCtx();
+    const { call } = await boot();
     await expect(
-      actions.setAuthorityOverride(ctx, { name: 'tool:x', level: 2 }, { platform: 'onebot', userId: 'bob' }),
+      call('setAuthorityOverride', { name: 'tool:x', level: 2 }, { platform: 'onebot', userId: 'bob' }),
     ).rejects.toThrow(/只有 owner/);
   });
 });
 
 describe('setConfirmOverride — owner 调整单操作确认要求', () => {
   it('写入 session/always/off；非法值删除条目', async () => {
-    const { ctx } = makeCtx();
-    await actions.setConfirmOverride(ctx, { name: 'tool:shell.exec', confirm: 'always' });
-    expect((ctx.config.get('confirmOverrides') as Record<string, string>)['tool:shell.exec']).toBe('always');
-    await actions.setConfirmOverride(ctx, { name: 'tool:shell.exec', confirm: 'off' });
-    expect((ctx.config.get('confirmOverrides') as Record<string, string>)['tool:shell.exec']).toBe('off');
-    await actions.setConfirmOverride(ctx, { name: 'tool:shell.exec', confirm: 'nonsense' });
-    expect((ctx.config.get('confirmOverrides') as Record<string, string>)['tool:shell.exec']).toBeUndefined();
+    const { call, config } = await boot();
+    await call('setConfirmOverride', { name: 'tool:shell.exec', confirm: 'always' });
+    expect((config.get('confirmOverrides') as Record<string, string>)['tool:shell.exec']).toBe('always');
+    await call('setConfirmOverride', { name: 'tool:shell.exec', confirm: 'off' });
+    expect((config.get('confirmOverrides') as Record<string, string>)['tool:shell.exec']).toBe('off');
+    await call('setConfirmOverride', { name: 'tool:shell.exec', confirm: 'nonsense' });
+    expect((config.get('confirmOverrides') as Record<string, string>)['tool:shell.exec']).toBeUndefined();
   });
 
   it('非 owner 调用被拒', async () => {
-    const { ctx } = makeCtx();
+    const { call } = await boot();
     await expect(
-      actions.setConfirmOverride(ctx, { name: 'tool:x', confirm: 'always' }, { platform: 'onebot', userId: 'bob' }),
+      call('setConfirmOverride', { name: 'tool:x', confirm: 'always' }, { platform: 'onebot', userId: 'bob' }),
     ).rejects.toThrow(/只有 owner/);
   });
 });
 
 describe('setAutoConfirm — owner 切 auto 确认模式', () => {
   it('-1 写一直；0 写关；N 写未来截止', async () => {
-    const { ctx } = makeCtx();
-    await actions.setAutoConfirm(ctx, { minutes: -1 });
-    expect(ctx.config.get('autoConfirmUntil')).toBe(-1);
-    await actions.setAutoConfirm(ctx, { minutes: 0 });
-    expect(ctx.config.get('autoConfirmUntil')).toBe(0);
-    await actions.setAutoConfirm(ctx, { minutes: 30 });
-    expect(ctx.config.get('autoConfirmUntil') as number).toBeGreaterThan(Date.now());
+    const { call, config } = await boot();
+    await call('setAutoConfirm', { minutes: -1 });
+    expect(config.get('autoConfirmUntil')).toBe(-1);
+    await call('setAutoConfirm', { minutes: 0 });
+    expect(config.get('autoConfirmUntil')).toBe(0);
+    await call('setAutoConfirm', { minutes: 30 });
+    expect(config.get('autoConfirmUntil') as number).toBeGreaterThan(Date.now());
   });
   it('非 owner 调用被拒', async () => {
-    const { ctx } = makeCtx();
-    await expect(actions.setAutoConfirm(ctx, { minutes: 30 }, { platform: 'onebot', userId: 'bob' })).rejects.toThrow(
+    const { call } = await boot();
+    await expect(call('setAutoConfirm', { minutes: 30 }, { platform: 'onebot', userId: 'bob' })).rejects.toThrow(
       /只有 owner/,
     );
   });

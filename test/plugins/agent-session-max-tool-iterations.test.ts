@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { AgentService } from '../../packages/api-agent/src/index.js';
 import type { ChatResponse } from '../../packages/api-llm/src/index.js';
 import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
-import { useToolService } from '../../packages/api-tools/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as agentModule from '../../packages/plugin-agent/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import * as messageArchiveModule from '../../packages/plugin-message-archive/src/index.js';
-import * as sessionManagerModule from '../../packages/plugin-session-manager/src/index.js';
-import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import agentPlugin from '../../packages/plugin-agent/src/index.js';
+import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
+import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
+import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
@@ -34,13 +34,13 @@ async function boot(): Promise<{ app: App; executed: () => number; reset: () => 
     toolCalls: [{ id: 'c1', type: 'function', function: { name: 'probe', arguments: '{}' } }],
   };
   await app.ctx.useModule(createMockLLMPlugin({ responses: [toolCall] }));
-  await app.ctx.useModule(toolsModule as never, {});
-  await app.ctx.useModule(memoryInMemoryModule as never);
-  await app.ctx.useModule(messageArchiveModule as never, { debugLogs: false });
-  await app.ctx.useModule(sessionManagerModule as never, {});
-  await app.ctx.useModule(agentModule as never, AGENT_CONFIG);
+  await app.ctx.useModule(toolsPlugin, {});
+  await app.ctx.useModule(memoryInMemoryPlugin);
+  await app.ctx.useModule(messageArchivePlugin, { debugLogs: false });
+  await app.ctx.useModule(sessionManagerPlugin, {});
+  await app.ctx.useModule(agentPlugin, AGENT_CONFIG);
   let n = 0;
-  useToolService(app.ctx).register({
+  app.bind({ tools }).tools.register({
     definition: {
       type: 'function',
       function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },

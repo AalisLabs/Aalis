@@ -1,23 +1,34 @@
 import { stdin as input, stdout as output } from 'node:process';
 import * as readline from 'node:readline';
-import type { PersonaService } from '@aalis/api-persona';
-import type { PlatformAdapter, PlatformConnection } from '@aalis/api-platform';
-import { getPlatformAdapters } from '@aalis/api-platform';
-import type { AppService, Context, LogEntry } from '@aalis/core';
-import { defineService } from '@aalis/core';
+import { persona } from '@aalis/api-persona';
+import { getPlatformAdapters, type PlatformAdapter, type PlatformConnection, platform } from '@aalis/api-platform';
+import { createStorageGateway, storage } from '@aalis/api-storage';
+import {
+  appService,
+  type BoundOf,
+  config,
+  definePlugin,
+  defineService,
+  events,
+  hostConfig,
+  type LogEntry,
+  LogHub,
+  lifecycle,
+  logger,
+  optional,
+  provide,
+  services,
+} from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { StreamChunkMessage } from '@aalis/schema-message';
 import chalk from 'chalk';
 import cliTruncate from 'cli-truncate';
 import stringWidth from 'string-width';
+import { ChatBuffer } from './chat-buffer.js';
+import { readLogFileTail } from './log-file.js';
 import type { CLIService } from './types.js';
 
 export type { CLIService } from './types.js';
-
-import { createStorageGateway } from '@aalis/api-storage';
-import { LogHub } from '@aalis/core';
-import { ChatBuffer } from './chat-buffer.js';
-import { readLogFileTail } from './log-file.js';
 
 // terminal:claimed / terminal:released 是 CLI（独占终端 UI）与宿主
 // console-sink 之间的协调契约：本插件发射，runtime/console-sink.ts 监听
@@ -29,17 +40,21 @@ declare module '@aalis/core' {
   }
 }
 
+// ----- 服务类型注册（declaration merging）-----
+declare module '@aalis/core' {
+  interface ServiceTypeMap {
+    cli: CLIService;
+  }
+}
+
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+export const cli = defineService<CLIService>('cli');
+
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-cli';
-export const displayName = 'CLI 终端';
-export const subsystem = 'platform';
-export const inject = {
-  optional: ['llm', 'commands'],
-};
-export const provides = ['cli', 'platform'];
+const name = '@aalis/plugin-cli';
 
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   sessionId: {
     type: 'string',
     label: '默认会话 ID',
@@ -92,7 +107,42 @@ interface CLIConfig {
   maxLogEntries: number;
 }
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
+// ===== 插件入口 =====
+
+// platform 既被本插件提供又被状态页枚举，只能是可选依赖：required 会让激活等一个由自己提供的服务。
+const uses = {
+  events,
+  logger,
+  lifecycle,
+  config,
+  provide,
+  services,
+  hostConfig: optional(hostConfig),
+  platform: optional(platform),
+  app: optional(appService),
+  storage: optional(storage),
+  persona: optional(persona),
+};
+type Caps = BoundOf<typeof uses>;
+
+/** TUI 实际用到的能力：界面层不碰配置解析、服务发布与存储 */
+type TuiCaps = Pick<
+  Caps,
+  'events' | 'logger' | 'lifecycle' | 'services' | 'hostConfig' | 'platform' | 'persona' | 'app'
+>;
+
+export default definePlugin({
+  name,
+  displayName: 'CLI 终端',
+  subsystem: 'platform',
+  configSchema,
+  provides: [cli, platform],
+  uses,
+  apply: startCli,
+});
+
+function startCli(caps: Caps): void {
+  const { config, events, logger } = caps;
   const cliConfig: CLIConfig = {
     prompt: (config.prompt as string) ?? defaultConfig.prompt,
     sessionId: (config.sessionId as string) ?? defaultConfig.sessionId,
@@ -117,51 +167,51 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     },
     async sendMessage(_sessionId: string, content: string): Promise<void> {
       if (tui) tui.pushAssistant(content);
-      else ctx.logger.info(`[cli] ${content}`);
+      else logger.info(`[cli] ${content}`);
     },
   };
 
-  ctx.provide('platform', adapter);
+  caps.provide(platform, adapter);
 
   const cliService: CLIService = {
     getSessionId: () => sessionId,
     isRunning: () => tui?.isRunning() ?? false,
   };
-  ctx.provide('cli', cliService);
+  caps.provide(cli, cliService);
 
-  ctx.on('outbound:message', msg => {
+  events.on('outbound:message', msg => {
     if (msg.sessionId !== sessionId) return;
     // 同一轮已流式输出时，agent 的整条回复是重复；系统/指令消息不是流式正文，照常显示
     if (msg.source === 'agent' && tui?.consumeStreamedSend()) return;
     adapter.sendMessage(msg.sessionId, msg.content);
   });
 
-  ctx.on('outbound:stream', chunk => {
+  events.on('outbound:stream', chunk => {
     if (chunk.sessionId !== sessionId) return;
     tui?.applyStreamChunk(chunk);
   });
 
-  // 临时缓冲：plugin apply 早于 app:started，但晚于 bootstrap-buffer.dispose()；
+  // 临时缓冲：插件装配早于 app:started，但晚于 bootstrap-buffer.dispose()；
   // 我们订阅一个 onEntry 把这段窗口的实时 entry 留住，并在 app:started 时合并
-  // data/latest.log 尾部（覆盖 plugin apply 之前的早期 boot 日志）。
+  // data/latest.log 尾部（覆盖装配之前的早期 boot 日志）。
   const liveBuffer: LogEntry[] = [];
   let liveBufferActive = true;
   const stopLiveBuffer = LogHub.default.onEntry(entry => {
     if (liveBufferActive) liveBuffer.push(entry);
   });
 
-  ctx.on('app:started', async () => {
+  events.on('app:started', async () => {
     // 非交互终端（日志重定向 / 容器 / systemd）：不接管终端、不画界面，控制台日志照常走 stdout；
     // 服务仍在线（平台枚举、子命令分发不受影响），出站消息退化为日志（见 sendMessage）。
     if (!output.isTTY || !input.isTTY) {
       liveBufferActive = false;
       stopLiveBuffer();
-      ctx.logger.info('stdin/stdout 非 TTY，CLI 界面未启动');
+      logger.info('stdin/stdout 非 TTY，CLI 界面未启动');
       return;
     }
     let initial: LogEntry[] = [];
     try {
-      initial = await readLogFileTail(createStorageGateway(ctx), 2000);
+      initial = await readLogFileTail(createStorageGateway(caps.storage), 2000);
     } catch {
       // 文件未就绪可忽略——只是无早期历史
     }
@@ -182,7 +232,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     liveBufferActive = false;
     stopLiveBuffer();
 
-    tui = new CliTui(ctx, cliConfig, sessionId, merged);
+    tui = new CliTui(caps, cliConfig, sessionId, merged);
     tui.start();
   });
 }
@@ -222,13 +272,13 @@ class CliTui {
   private readonly restoreOnExit = () => restoreTerminalState();
 
   constructor(
-    private ctx: Context,
+    private caps: TuiCaps,
     private config: CLIConfig,
     private sessionId: string,
     initialEntries: LogEntry[] = [],
   ) {
     this.view = config.startupView === 'last' ? config.lastView : config.startupView;
-    // 启动期日志由 apply() 通过尾读 data/latest.log + 实时 buffer 合并后注入，
+    // 启动期日志由插件入口通过尾读 data/latest.log + 实时 buffer 合并后注入，
     // 之后通过 LogHub.onEntry 实时累积；按 seq 单调，下方 onEntry 用 lastSeq 去重避免与 initial 重复。
     this.logLines = initialEntries.slice();
   }
@@ -243,7 +293,7 @@ class CliTui {
 
     // 宣告"我接管终端"——任何写 stdout 的订阅者（runtime/console-sink 等）
     // 自行响应该事件停止写入，CLI 不直接干预日志系统。
-    this.ctx.emit('terminal:claimed', 'cli').catch(() => {});
+    this.caps.events.emit('terminal:claimed', 'cli').catch(() => {});
     // 1049h: 进入备用屏 / 25l: 隐藏光标 / 1007h: alternate scroll——支持它的终端会把
     // 滚轮翻译成方向键，落到我们的键盘滚动路径上。不开启 SGR 鼠标上报（1000h/1006h）：
     // 终端保持原生的文本选择/复制，程序不接管任何鼠标事件。
@@ -268,8 +318,7 @@ class CliTui {
       if (this.view === 'logs') this.queueRender();
     });
 
-    const persona = this.ctx.getService<PersonaService>('persona');
-    const assistantName = persona?.getPersonaName() ?? 'Aalis';
+    const assistantName = this.caps.persona.current?.getPersonaName() ?? 'Aalis';
     this.chat.append([
       chalk.gray(this.formatCont()) + chalk.gray(`欢迎使用 ${assistantName}。按 ${chalk.cyan('Ctrl+G')} 查看快捷键。`),
     ]);
@@ -281,7 +330,7 @@ class CliTui {
     input.on('keypress', this.handleKeypress);
     output.on('resize', this.queueRender);
 
-    this.ctx.onDispose(() => this.stop());
+    this.caps.lifecycle.onDispose(() => this.stop());
     this.render();
   }
 
@@ -296,7 +345,7 @@ class CliTui {
     process.off('exit', this.restoreOnExit);
     restoreTerminalState();
     // 归还终端——sink 等订阅者可自行恢复
-    this.ctx.emit('terminal:released', 'cli').catch(() => {});
+    this.caps.events.emit('terminal:released', 'cli').catch(() => {});
   }
 
   pushAssistant(content: string): void {
@@ -346,7 +395,7 @@ class CliTui {
 
   /** 所有标签对齐到同一列宽，确保 │ 竖线垂直对齐 */
   private labelCol(): number {
-    const persona = this.ctx.getService<PersonaService>('persona')?.getPersonaName() ?? 'Aalis';
+    const persona = this.caps.persona.current?.getPersonaName() ?? 'Aalis';
     return Math.max(
       visibleLen(`✦ ${persona}`), // assistant
       visibleLen(`❯ ${this.config.prompt}`), // user
@@ -368,7 +417,7 @@ class CliTui {
   }
 
   private formatAssistantBlock(content: string): string[] {
-    const persona = this.ctx.getService<PersonaService>('persona')?.getPersonaName() ?? 'Aalis';
+    const persona = this.caps.persona.current?.getPersonaName() ?? 'Aalis';
     const firstHead = this.formatHead(chalk.green(`✦ ${persona}`));
     const contHead = this.formatCont();
     return content.split('\n').map((line, i) => (i === 0 ? firstHead : contHead) + line);
@@ -531,10 +580,10 @@ class CliTui {
     // 指令解析已统一到全局 inbound:command 相位（plugin-commands）。
     // 适配器不再内联解析：未注册命令被放行为普通消息进入 agent，命中命令
     // 由该相位执行并经 outbound:message 回送渲染到 TUI，与 onebot/webui 一致。
-    // shutdown/restart 的 TUI 清理由 ctx.onDispose(() => this.stop()) 兜底。
+    // shutdown/restart 的 TUI 清理由 lifecycle.onDispose(() => this.stop()) 兜底。
     // userId 'console'：本地终端身份（物理访问 = 运维者本人），命中 authority 的
     // cli:console owner 快速通道；缺省 userId 会被当成匿名回退 defaultAuthority。
-    await this.ctx.emit('inbound:message', {
+    await this.caps.events.emit('inbound:message', {
       content: text,
       sessionId: this.sessionId,
       platform: 'cli',
@@ -575,13 +624,11 @@ class CliTui {
 
   private persistLastView(view: CLIView): void {
     if (view === 'help') return;
-    const pluginConfig = this.ctx.config.getPluginConfig(name);
-    this.ctx.config.setPluginConfig(name, { ...pluginConfig, lastView: view });
+    const host = this.caps.hostConfig.require();
+    const pluginConfig = host.getPluginConfig(name);
+    host.setPluginConfig(name, { ...pluginConfig, lastView: view });
     // 尽力而为：最后视图丢了只是下次回到默认视图，不值得让渲染路径变 async
-    this.ctx
-      .getService<AppService>('app')
-      ?.saveConfig()
-      .catch(err => this.ctx.logger.warn('记录最后视图失败:', err));
+    this.caps.app.current?.saveConfig().catch(err => this.caps.logger.warn('记录最后视图失败:', err));
   }
 
   private queueRender = (): void => {
@@ -625,7 +672,7 @@ class CliTui {
   }
 
   private renderHeader(width: number): string {
-    const persona = this.ctx.getService<PersonaService>('persona')?.getPersonaName() ?? 'default';
+    const persona = this.caps.persona.current?.getPersonaName() ?? 'default';
     const left = ` ${chalk.bold.magenta('●')} ${chalk.bold('Aalis')} ${chalk.gray('·')} ${chalk.cyan(persona)} `;
     const tabs = (['chat', 'logs', 'status', 'help'] as CLIView[])
       .map(v => {
@@ -762,10 +809,10 @@ class CliTui {
   }
 
   private getStatusViewLines(): string[] {
-    const services = this.ctx.getServiceNames();
-    const platform = getPlatformAdapters(this.ctx).find(a => a.platform === 'cli');
-    const connections = platform?.getConnections?.() ?? [];
-    const persona = this.ctx.getService<PersonaService>('persona')?.getPersonaName() ?? '-';
+    const serviceNames = this.caps.services.names();
+    const adapter = getPlatformAdapters(this.caps.platform).find(a => a.platform === 'cli');
+    const connections = adapter?.getConnections?.() ?? [];
+    const persona = this.caps.persona.current?.getPersonaName() ?? '-';
     const sec = (t: string) => chalk.bold.cyan(`▎ ${t}`);
     const kv = (k: string, v: string) => `    ${chalk.gray(k.padEnd(14))} ${v}`;
     const out: string[] = [];
@@ -774,8 +821,8 @@ class CliTui {
     out.push(kv('cli session', this.sessionId));
     out.push(kv('log buffer', `${this.logLines.length} 条`));
     out.push('');
-    out.push(sec(`服务 (${services.length})`));
-    for (const s of services) out.push(`    ${chalk.green('●')} ${s}`);
+    out.push(sec(`服务 (${serviceNames.length})`));
+    for (const s of serviceNames) out.push(`    ${chalk.green('●')} ${s}`);
     out.push('');
     out.push(sec(`平台连接 (${connections.length})`));
     if (connections.length === 0) out.push(`    ${chalk.gray('— 无')}`);
@@ -912,7 +959,7 @@ const LEVEL_TAG: Record<LogEntry['level'], string> = {
 };
 
 /**
- * 兜底恢复终端状态：进程在 TUI 启动后异常退出时，Context dispose 可能来不及执行。
+ * 兜底恢复终端状态：进程在 TUI 启动后异常退出时，清理链可能来不及执行。
  * 这里关闭鼠标上报、恢复光标、退出备用屏，并关闭 raw mode。
  */
 function restoreTerminalState(): void {
@@ -1004,20 +1051,10 @@ function clearLine(s: string, width: number): string {
 function sanitizeForSingleLine(s: string): string {
   return (
     s
-      .replace(/\r\n|\r|\n/g, ' \u21b5 ')
+      .replace(/\r\n|\r|\n/g, ' ↵ ')
       .replace(/\t/g, '    ')
       // 保留 ESC（颜色），剔除其它 C0 控制字符
       // biome-ignore lint/suspicious/noControlCharactersInRegex: 需要按字面匹配 C0 控制字符以清洗终端输入
       .replace(/[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F]/g, '')
   );
 }
-
-// ----- 服务类型注册（declaration merging）-----
-declare module '@aalis/core' {
-  interface ServiceTypeMap {
-    cli: import('./types.js').CLIService;
-  }
-}
-
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
-export const cli = defineService<import('./types.js').CLIService>('cli');

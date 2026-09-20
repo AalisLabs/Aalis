@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import type { EmbeddingService } from '../../packages/api-embedding/src/index.js';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import type { VectorSearchResult, VectorStoreService } from '../../packages/api-vectorstore/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
-import * as memoryVectorModule from '../../packages/plugin-memory-vector/src/index.js';
+import { type EmbeddingService, embedding } from '../../packages/api-embedding/src/index.js';
+import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
+import {
+  type VectorSearchResult,
+  type VectorStoreService,
+  vectorstore,
+} from '../../packages/api-vectorstore/src/index.js';
+import { App, contributions, logger, provide } from '../../packages/core/src/index.js';
+import {
+  assemblePromptContributions,
+  type PromptAssemblyCaps,
+} from '../../packages/plugin-agent/src/prompt-assembly.js';
+import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -51,21 +59,24 @@ function makeRangeMemory(messages: Message[]): MemoryService {
 
 async function setup(opts: { memory?: MemoryService } = {}) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  app.ctx.provide('embedding', makeEmbedder());
-  const memoryHandle = opts.memory ? app.ctx.provide('memory', opts.memory) : undefined;
-  app.ctx.provide(
-    'vectorstore',
+  // 宿主侧的根绑定：既用来摆桩服务，也是下面组装 agent:prompt 贡献要的那两样能力
+  const host = app.bind({ provide, contributions, logger });
+  host.provide(embedding, makeEmbedder());
+  const memoryHandle = opts.memory ? host.provide(memory, opts.memory) : undefined;
+  host.provide(
+    vectorstore,
     makeStore([{ score: 0.9, metadata: { sessionId: 's-old', timestamp: BASE_TS, content: '命中本身' } }]),
   );
-  app.ctx.provide('tools', { register: () => () => {}, registerGroup: () => () => {} } as never);
-  await app.ctx.useModule(memoryVectorModule, {
+  host.provide(tools, { register: () => () => {}, registerGroup: () => () => {} } as never);
+  await app.plugin(memoryVector, {
     search: { topK: 5, timeWeight: 0, userPriorityBoost: 1, perItemMaxChars: 0, minScore: 0 },
     contextExpand: { window: 2, crossSession: true },
     indexing: { concurrency: 1, maxQueueSize: 10 },
     crossSessionMode: 'all',
     recallRoles: 'all',
   });
-  return { app, memoryHandle };
+  await app.plugins.idle();
+  return { app, host, memoryHandle };
 }
 
 function baseMessages(): Message[] {
@@ -75,43 +86,43 @@ function baseMessages(): Message[] {
   ];
 }
 
-async function injectedText(app: App): Promise<string> {
+async function injectedText(caps: PromptAssemblyCaps): Promise<string> {
   const messages = baseMessages();
-  await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+  await assemblePromptContributions(caps, { messages, sessionId: 's-cur' });
   const block = messages.find(m => String(m.metadata?.injector ?? '').endsWith('/memory-vector'));
   return String(block?.content ?? '');
 }
 
 describe('plugin-memory-vector: memory 惰查', () => {
   it('memory provider 晚于本插件注册：扩窗立即可用（能力在调用点现算）', async () => {
-    const { app } = await setup();
-    app.ctx.provide(
-      'memory',
+    const { app, host } = await setup();
+    host.provide(
+      memory,
       makeRangeMemory([
         { role: 'user', content: '命中本身', timestamp: BASE_TS },
         { role: 'user', content: '后注册的邻居', timestamp: BASE_TS + 1000 },
       ]),
     );
 
-    expect(await injectedText(app)).toContain('后注册的邻居');
+    expect(await injectedText(host)).toContain('后注册的邻居');
     await app.stop();
   });
 
   it('memory provider 换实例（bounce）后：扩窗读新实例，不落在已失效的旧引用上', async () => {
     // 旧 provider 在 apply 时就在场（apply 期快照会正好命中它）
-    const { app, memoryHandle } = await setup({
+    const { app, host, memoryHandle } = await setup({
       memory: makeRangeMemory([
         { role: 'user', content: '命中本身', timestamp: BASE_TS },
         { role: 'user', content: '旧实例的邻居', timestamp: BASE_TS + 1000 },
       ]),
     });
-    expect(await injectedText(app)).toContain('旧实例的邻居');
+    expect(await injectedText(host)).toContain('旧实例的邻居');
 
     // bounce：撤掉旧 provider，换上新实例
     memoryHandle?.();
     await new Promise(r => setTimeout(r, 0));
-    app.ctx.provide(
-      'memory',
+    host.provide(
+      memory,
       makeRangeMemory([
         { role: 'user', content: '命中本身', timestamp: BASE_TS },
         { role: 'user', content: '新实例的邻居', timestamp: BASE_TS + 1000 },
@@ -119,7 +130,7 @@ describe('plugin-memory-vector: memory 惰查', () => {
     );
     await new Promise(r => setTimeout(r, 0));
 
-    const text = await injectedText(app);
+    const text = await injectedText(host);
     expect(text).toContain('新实例的邻居');
     expect(text).not.toContain('旧实例的邻居');
     await app.stop();

@@ -31,7 +31,7 @@ declare module '@aalis/core' {
 
 // ===== 插件入口 =====
 
-const uses = { tools, events, config, memory: optional(memory), webui: optional(webuiServer) };
+const uses = { tools: optional(tools), events, config, memory: optional(memory), webui: optional(webuiServer) };
 type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({

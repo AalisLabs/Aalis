@@ -10,7 +10,6 @@
 // ============================================================
 
 import type { ModelRef } from '@aalis/api-llm';
-import type { Context } from '@aalis/core';
 import { defineService } from '@aalis/core';
 import type { IncomingMessage, MessageAttachment } from '@aalis/schema-message';
 
@@ -41,12 +40,12 @@ export interface MediaProcessor {
   /** 优先级（数值大者优先；同 cap 多 processor 时由 MediaService 仲裁；默认 0） */
   priority?: number;
   /** 描述/识别（用于 vision / document.image / video.passthrough） */
-  describe?(input: DescribeInput, ctx: Context): Promise<DescribeResult>;
+  describe?(input: DescribeInput): Promise<DescribeResult>;
   /**
    * 音频→文本（用于 audio cap）。返回的 text 应能让下游 LLM
    * “听懂”该音频：语音输原文转写；音乐/环境音输描述；听不清也要说出听到什么。
    */
-  transcribe?(input: TranscribeInput, ctx: Context): Promise<TranscribeResult>;
+  transcribe?(input: TranscribeInput): Promise<TranscribeResult>;
 }
 
 export interface DescribeInput {

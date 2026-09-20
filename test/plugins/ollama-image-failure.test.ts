@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { LLMModel } from '../../packages/api-llm/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as ollama from '../../packages/plugin-llm-ollama/src/index.js';
+import { type LLMModel, llm } from '../../packages/api-llm/src/index.js';
+import { media } from '../../packages/api-media/src/index.js';
+import { processService } from '../../packages/api-process/src/index.js';
+import { storage } from '../../packages/api-storage/src/index.js';
+import { App, logger, provide, services } from '../../packages/core/src/index.js';
+import ollama from '../../packages/plugin-llm-ollama/src/index.js';
+import mediaPlugin from '../../packages/plugin-media/src/index.js';
+import { scanLLMProcessors } from '../../packages/plugin-media/src/llm-adapter.js';
+import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 图片拿不到时的两种语义，由调用方经 requireImages 声明。
@@ -24,9 +30,9 @@ const WAV_1B = 'data:audio/wav;base64,UklGRg==';
 
 async function makeModel(): Promise<LLMModel> {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(ollama, { baseUrl: 'http://127.0.0.1:11434', customModels: 'testvision' });
+  await app.plugin(ollama, { baseUrl: 'http://127.0.0.1:11434', customModels: 'testvision' });
   await app.plugins.idle();
-  const entries = app.ctx.getAllServices<LLMModel>('llm');
+  const entries = app.bind({ llm }).llm.all();
   const model = entries.find(e => e.instance.id.includes('testvision'))?.instance ?? entries[0]?.instance;
   if (!model) throw new Error('未注册出 llm model entry');
   return model;
@@ -124,10 +130,10 @@ describe('Ollama 图片获取失败的两种语义', () => {
 // ════════════════════════════════════════════════════════════
 describe('media 视觉识别的接线', () => {
   it('describe 调用向 model 声明了 requireImages', async () => {
-    const { scanLLMProcessors } = await import('../../packages/plugin-media/src/llm-adapter.js');
     let seen: Record<string, unknown> | undefined;
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    app.ctx.provide('llm', {
+    const host = app.bind({ provide, llm, logger });
+    host.provide(llm, {
       id: 'fake/vision',
       capabilities: ['vision'],
       chat: async (req: Record<string, unknown>) => {
@@ -135,10 +141,12 @@ describe('media 视觉识别的接线', () => {
         return { content: '一只猫' };
       },
     } as never);
-    const vision = scanLLMProcessors(app.ctx).find(p => p.capabilities.includes('vision' as never));
+    const vision = scanLLMProcessors({ llm: host.llm, logger: host.logger }).find(p =>
+      p.capabilities.includes('vision' as never),
+    );
     if (!vision?.describe) throw new Error('未扫描出带 describe 的 vision processor');
     // data URL 直接内联，不触网
-    await vision.describe({ attachments: [{ data: PNG_1PX, mimeType: 'image/png' }] } as never, app.ctx);
+    await vision.describe({ attachments: [{ data: PNG_1PX, mimeType: 'image/png' }] } as never);
     expect(seen?.requireImages).toBe(true);
   });
 });
@@ -150,23 +158,24 @@ describe('media 视觉识别的接线', () => {
 // ════════════════════════════════════════════════════════════
 describe('识别失败的如实上报', () => {
   it('失败写进描述位，且 successCount 不增', async () => {
-    const media = await import('../../packages/plugin-media/src/index.js');
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    app.ctx.provide('llm', {
+    const host = app.bind({ provide, services });
+    host.provide(llm, {
       id: 'fake/vision',
       capabilities: ['vision'],
       chat: async () => {
         throw new Error('图片全部获取失败（共 1 张），拒绝降级为纯文本请求');
       },
     } as never);
-    await app.ctx.useModule(media, {});
+    // media 的 required 依赖：本用例只走 data URL 内联路径，两个网关都不会被调到
+    host.provide(processService, {} as never);
+    host.provide(storage, {} as never);
+    await app.plugin(mediaPlugin, {});
     await app.plugins.idle();
 
-    const svc = app.ctx.getService<{
-      processMessage: (m: unknown) => Promise<{ successCount: number; total: number }>;
-    }>('media');
+    const svc = host.services.get(media);
     const msg = { sessionId: 's', attachments: [{ kind: 'image', data: PNG_1PX, mimeType: 'image/png' }] };
-    const report = await svc!.processMessage(msg);
+    const report = await svc!.processMessage(msg as unknown as IncomingMessage);
 
     expect(report.total).toBe(1);
     expect(report.successCount).toBe(0);

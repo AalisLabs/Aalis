@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { StorageService, StorageWatchEvent } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as storageLocalModule from '../../packages/plugin-storage-local/src/index.js';
+import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // watch 文件 URI 分支：曾直接 fs.watch 文件本身——回调给的 filename 是文件自己的名字，
@@ -31,7 +31,7 @@ describe('storage-local watch 文件 URI', () => {
     mkdirSync(join(base, 'data', 'notes'), { recursive: true });
     writeFileSync(join(base, 'data', 'notes', 'a.txt'), 'v0');
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocalModule as never, {
+    await app.ctx.useModule(storageLocal, {
       roots: [
         {
           name: 'data',

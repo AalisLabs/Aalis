@@ -1,11 +1,12 @@
-import { App } from '@aalis/core';
+import { App, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
-import * as sessionManagerModule from '../../packages/plugin-session-manager/src/index.js';
+import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
+import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 
-// 背景：archiveSession action 用 `this.archiveSession(...)` 递归，而 webui-server 是把函数从
-// actions 对象里取出来单独调用的（this === undefined）——有子会话时必抛 TypeError，父会话也没归档。
-// 契约：递归归档不依赖 this，action 脱离对象调用照样把整棵子树连父一起归档。
+// 背景：archiveSession 曾用 `this.archiveSession(...)` 递归，而 webui-server 是把处理函数
+// 取出来单独调用的（没有 receiver）——有子会话时必抛 TypeError，父会话也没归档。
+// 契约：递归归档不依赖 this，处理函数脱离登记它的对象调用，照样把整棵子树连父一起归档。
 
 function fakeMemory() {
   const meta = new Map<string, Record<string, unknown>>();
@@ -25,26 +26,36 @@ function fakeMemory() {
 async function setup() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
   app.ctx.provide('memory', fakeMemory() as never);
-  await app.ctx.useModule(sessionManagerModule, {});
+  // 桩 webui-server：页面动作登记到这里，测试按 method 取处理函数
+  const actions = new Map<string, WebuiActionHandler>();
+  const host = app.bind({ provide });
+  host.provide(webuiServer, {
+    registerPage: () => () => {},
+    registerAction(method: string, handler: WebuiActionHandler) {
+      actions.set(method, handler);
+      return () => void actions.delete(method);
+    },
+  } as never);
+  await app.ctx.useModule(sessionManagerPlugin, {});
   await app.plugins.idle();
   const sm = app.ctx.getService<SessionManagerService>('session-manager');
   if (!sm) throw new Error('session-manager 服务未注册');
-  return { app, sm };
+  return { app, sm, actions };
 }
 
-describe('archiveSession action：脱离 actions 对象调用也能递归归档', () => {
-  it('取出函数单独调用（this === undefined）时，父 + 子 + 孙全部归档', async () => {
-    const { app, sm } = await setup();
+describe('archiveSession 页面动作：脱离登记它的对象调用也能递归归档', () => {
+  it('取出处理函数单独调用时，父 + 子 + 孙全部归档', async () => {
+    const { app, sm, actions } = await setup();
     await sm.ensureSession('parent', { name: '父会话' });
     const child = await sm.createChildSession('parent', { name: '子任务' });
     const grandchild = await sm.createChildSession(child.id, { name: '孙任务' });
 
     // 与 webui-server 的取法一致：只拿函数，不带 receiver
-    const archiveSession = sessionManagerModule.actions?.archiveSession;
-    expect(archiveSession, 'archiveSession action 应存在').toBeTypeOf('function');
-    const detached = archiveSession as (ctx: unknown, args: Record<string, unknown>) => Promise<unknown>;
+    const archiveSession = actions.get('archiveSession');
+    expect(archiveSession, 'archiveSession 页面动作应已登记').toBeTypeOf('function');
+    const detached = archiveSession as WebuiActionHandler;
 
-    await expect(detached(app.ctx, { id: 'parent' })).resolves.toEqual({ success: true });
+    await expect(detached({ id: 'parent' })).resolves.toEqual({ success: true });
 
     expect(sm.getSession('parent')?.status, '父会话应被归档').toBe('archived');
     expect(sm.getSession(child.id)?.status, '子会话应被归档').toBe('archived');

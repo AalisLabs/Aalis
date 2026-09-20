@@ -7,31 +7,50 @@ import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { AgentService } from '@aalis/api-agent';
-import type { AuthorityService } from '@aalis/api-authority';
-import type { CommandService } from '@aalis/api-commands';
+import { agent } from '@aalis/api-agent';
+import { authority } from '@aalis/api-authority';
+import { commands } from '@aalis/api-commands';
 import type {} from '@aalis/api-doctor'; // declaration merging：doctor:updated 事件
-import type { LLMModel, ModelInfo } from '@aalis/api-llm';
-import { listLLMModels } from '@aalis/api-llm';
-import type {} from '@aalis/api-memory'; // declaration merging：history:changed 事件
-import type { PersonaService } from '@aalis/api-persona';
+import type { ModelInfo } from '@aalis/api-llm';
+import { listLLMModels, llm } from '@aalis/api-llm';
+import { memory } from '@aalis/api-memory';
+import { persona } from '@aalis/api-persona';
 import {
   aggregatePlatformDetails,
   getPlatformAdapters,
   getPlatformNames,
   type PlatformAdapter,
   type PlatformConnection,
+  platform,
 } from '@aalis/api-platform';
-import { createProcessGateway } from '@aalis/api-process';
-import type { ConfirmChannel, SessionConfirmService } from '@aalis/api-session-confirm';
+import { createProcessGateway, processService } from '@aalis/api-process';
+import { type ConfirmChannel, sessionConfirm } from '@aalis/api-session-confirm';
 import type {} from '@aalis/api-session-manager';
 import type { StorageService } from '@aalis/api-storage';
-import { createStorageGateway, readTailLines } from '@aalis/api-storage';
-import type { ToolExecuteMessage, ToolService } from '@aalis/api-tools';
+import { createStorageGateway, readTailLines, storage } from '@aalis/api-storage';
+import { type ToolExecuteMessage, tools } from '@aalis/api-tools';
 import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui'; // declaration merging WebuiPage.content
-import { DEFAULT_SUBSYSTEM_METADATA } from '@aalis/api-webui';
-import type { AppService, Context, LogEntry, PluginManagerService } from '@aalis/core';
-import { LogHub, parseLogLine } from '@aalis/core';
+import { DEFAULT_SUBSYSTEM_METADATA, webuiClient, webuiServer } from '@aalis/api-webui';
+import {
+  appService,
+  type BoundOf,
+  config,
+  definePlugin,
+  defineService,
+  events,
+  hostConfig,
+  type LogEntry,
+  LogHub,
+  lifecycle,
+  logger,
+  optional,
+  parseLogLine,
+  pluginsService,
+  provide,
+  type ServiceView,
+  services,
+} from '@aalis/core';
+import type { PackageManagerService } from '@aalis/plugin-package-manager';
 import type {} from '@aalis/plugin-todo-list'; // declaration merging：todo:updated 事件
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { OutgoingMessage, StreamChunkMessage } from '@aalis/schema-message';
@@ -60,17 +79,7 @@ function descSummary(d?: string): string | undefined {
 
 // ===== 插件元数据 =====
 
-export const name = '@aalis/plugin-webui-server';
-export const displayName = 'WebUI 服务端';
-export const subsystem = 'platform';
-export const provides = ['webui-server', 'platform'];
-export const inject = {
-  // storage 改为 optional：避免 plugin-storage-local bounce 时级联重启 webui-server
-  // （若 required，存储服务暂时消失会让 webui-server 进入 pending，导致 registeredPages
-  // 被清空，其他插件的 sidebar 页面在 webui-server 重新激活后无法恢复）。
-  // storage gateway 的各操作已有 try-catch，暂时不可用时仅个别文件操作失败，不影响主功能。
-  optional: ['storage', 'authority', 'commands', 'platform', 'process', 'session-confirm'],
-};
+const name = '@aalis/plugin-webui-server';
 
 const webuiPages: WebuiPage[] = [
   { key: 'dashboard', label: '仪表盘', icon: 'dashboard', order: 10, renderer: 'dashboard' },
@@ -81,7 +90,7 @@ const webuiPages: WebuiPage[] = [
   { key: 'logs', label: '日志', icon: 'logs', order: 60, renderer: 'logs' },
 ];
 
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   port: { type: 'number', label: '端口', default: 3000, description: 'Web 管理界面的 HTTP 端口' },
   host: { type: 'string', label: '监听地址', default: '127.0.0.1', description: '绑定的 IP 地址，0.0.0.0 可对外访问' },
   fileRoot: {
@@ -305,7 +314,7 @@ const LOCAL_SCAN_DIRS = [resolve(process.cwd(), 'packages'), resolve(process.cwd
  * 快照算进错的上下文窗口。前缀不认识时才落回 `'webui'`——CLI 的 `cli-default` 这类不带
  * 前缀的会话，以及 webui 自己的会话，都归在这一档。
  *
- * 纯函数：平台名集合由调用方从 `getPlatformNames(ctx)` 取（adapter 可热插拔，每次现取）。
+ * 纯函数：平台名集合由调用方从 `getPlatformNames(platform)` 取（adapter 可热插拔，每次现取）。
  */
 export function resolveSessionPlatform(sessionId: string, known: ReadonlySet<string>): string {
   const idx = sessionId.indexOf(':');
@@ -314,7 +323,54 @@ export function resolveSessionPlatform(sessionId: string, known: ReadonlySet<str
   return known.has(prefix) ? prefix : 'webui';
 }
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
+/**
+ * 管理面按运行期名字操作服务：服务名来自 URL 参数或 `services.names()` 的枚举结果，
+ * 此处没有编译期描述符可依凭。动态查询面只有单值的 `getByName` 是按名的，枚举提供者与
+ * 读写偏好都要描述符，故按名现造一个同名描述符当传参载体——它只用来携带服务名。
+ */
+const byName = (serviceName: string) => defineService<unknown>(serviceName);
+
+// storage 等一律 optional：webui 是管理面，任何被管对象缺席都只该让对应页面降级，不该把
+// 整个控制台拖进 pending。storage 尤其不能 required——plugin-storage-local bounce 会让它
+// 暂时消失，webui-server 跟着重启就清空 registeredPages，其他插件的侧边栏页面再也回不来。
+const uses = {
+  events,
+  logger,
+  lifecycle,
+  config,
+  provide,
+  services,
+  hostConfig: optional(hostConfig),
+  app: optional(appService),
+  plugins: optional(pluginsService),
+  storage: optional(storage),
+  authority: optional(authority),
+  commands: optional(commands),
+  // platform 既被本插件提供又被平台页枚举：required 会让激活等一个由自己提供的服务
+  platform: optional(platform),
+  process: optional(processService),
+  sessionConfirm: optional(sessionConfirm),
+  tools: optional(tools),
+  llm: optional(llm),
+  persona: optional(persona),
+  agent: optional(agent),
+  memory: optional(memory),
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name,
+  displayName: 'WebUI 服务端',
+  subsystem: 'platform',
+  configSchema,
+  provides: [webuiServer, platform],
+  uses,
+  apply: startWebuiServer,
+});
+
+async function startWebuiServer(caps: Caps): Promise<void> {
+  const { events, logger, lifecycle, provide, services } = caps;
+  const config = caps.config;
   const uiConfig: WebUIConfig = {
     port: (config.port as number) ?? 3000,
     host: (config.host as string) ?? '127.0.0.1',
@@ -332,7 +388,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   };
 
   // 创建 storage gateway；所有文件读写（token、access、文件管理）都走这里
-  const storage: StorageService = createStorageGateway(ctx);
+  const storage: StorageService = createStorageGateway(caps.storage);
 
   // ---- Token 解析 ----
   // - ephemeral：每次启动随机生成（旧行为）
@@ -358,7 +414,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       try {
         await storage.writeFile(tokenFileUri, fresh);
       } catch (err) {
-        ctx.logger.warn(`持久化 token 失败，本次仍可使用但重启会再生成: ${(err as Error).message}`);
+        logger.warn(`持久化 token 失败，本次仍可使用但重启会再生成: ${(err as Error).message}`);
       }
       return fresh;
     }
@@ -383,13 +439,13 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       await storage.writeFile(accessFileUri, `${lines.join('\n')}\n`);
       return true;
     } catch (err) {
-      ctx.logger.warn(`写入访问文件失败: ${(err as Error).message}`);
+      logger.warn(`写入访问文件失败: ${(err as Error).message}`);
       return false;
     }
   }
 
   const authToken = await resolveAuthToken();
-  const auth = createAuthSystem(authToken, ctx.logger.child('auth'));
+  const auth = createAuthSystem(authToken, logger.child('auth'));
 
   const expressApp = express();
   expressApp.use(express.json({ limit: '10mb' }));
@@ -412,8 +468,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 半开连接回收：清理只挂 'close' 时，睡眠/断网的客户端永远等不到事件，
   // 日志广播持续往死连接的发送缓冲堆数据。详见 ws-heartbeat.ts。
   const heartbeat = createWsHeartbeat<WebSocket>({
-    onStale: ws => ctx.logger.debug(`WebUI 客户端心跳超时，回收半开连接 (bufferedAmount=${ws.bufferedAmount})`),
-    onError: (_ws, err) => ctx.logger.warn(`WebUI 客户端连接错误: ${err.message}`),
+    onStale: ws => logger.debug(`WebUI 客户端心跳超时，回收半开连接 (bufferedAmount=${ws.bufferedAmount})`),
+    onError: (_ws, err) => logger.warn(`WebUI 客户端连接错误: ${err.message}`),
   });
 
   // 流式生成缓冲区：记录每个 session 正在生成中的累积内容，用于刷新后恢复。
@@ -454,10 +510,6 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // Token 用量缓存：记录每个 session 最近一次的 token 用量，用于刷新/切换会话后立即展示
   const tokenUsageCache = new Map<string, WSOutgoing>();
 
-  // 获取核心服务（通过服务注册获取）
-  const getApp = (): AppService | undefined => ctx.getService<AppService>('app');
-  const getPluginMgr = (): PluginManagerService | undefined => ctx.getService<PluginManagerService>('plugins');
-
   // 前端静态文件托管：前端包不是插件（无 apply，纯静态资源），托管权在本插件——
   // app:ready 时由 client-discovery 按 `aalis.client` 标记发现候选，本插件把每个候选注册成
   // 一条 webui-client 服务 provider，再由服务解析（偏好 > 优先级 > 注册顺序）定出活跃前端。
@@ -467,10 +519,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   function mountStaticDir(dir: string): void {
     if (existsSync(dir)) {
       staticMiddleware = express.static(dir);
-      ctx.logger.info(`前端静态目录: ${dir}`);
+      logger.info(`前端静态目录: ${dir}`);
     } else {
       staticMiddleware = null;
-      ctx.logger.warn(`前端目录不存在: ${dir}`);
+      logger.warn(`前端目录不存在: ${dir}`);
     }
   }
 
@@ -486,7 +538,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   const clientProviderDisposers = new Map<string, () => void>();
   /** 当前活跃前端目录 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 注册顺序）。 */
   function currentClientDir(): string | undefined {
-    return ctx.getService<{ getClientDir(): string }>('webui-client')?.getClientDir?.();
+    return services.get(webuiClient)?.getClientDir?.();
   }
   /**
    * 切换 webui-client 服务偏好后调用：重挂当前活跃前端 + 广播 'reload'——所有客户端进入
@@ -516,21 +568,22 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 获取系统状态
   expressApp.get('/api/status', gate(), (_req, res) => {
-    const persona = ctx.getService<PersonaService>('persona');
-    // 判断上传能力
-    const hasMedia = ctx.getService('media') !== undefined;
-    const llmHasVision = listLLMModels(ctx).some(e => e.instance.capabilities.includes('vision'));
-    const hasFileReader = ctx.getService('file-reader') !== undefined;
+    const personaSvc = caps.persona.current;
+    // 判断上传能力。media / file-reader / cli 在本插件里只做在场探测，为一个布尔值反向依赖
+    // 它们的包不值当（file-reader 还是插件包），故按名动态查——动态查到的不算声明依赖。
+    const hasMedia = services.getByName('media') !== undefined;
+    const llmHasVision = listLLMModels(caps.llm).some(e => e.instance.capabilities.includes('vision'));
+    const hasFileReader = services.getByName('file-reader') !== undefined;
 
     res.json({
-      name: persona?.getPersonaName() ?? ctx.config.get('name'),
+      name: personaSvc?.getPersonaName() ?? caps.hostConfig.require().get('name'),
       services: {
-        'webui-server': ctx.getService('webui-server') !== undefined,
-        cli: ctx.getService('cli') !== undefined,
-        llm: ctx.getService('llm') !== undefined,
-        agent: ctx.getService('agent') !== undefined,
-        memory: ctx.getService('memory') !== undefined,
-        persona: ctx.getService('persona') !== undefined,
+        'webui-server': services.get(webuiServer) !== undefined,
+        cli: services.getByName('cli') !== undefined,
+        llm: caps.llm.current !== undefined,
+        agent: caps.agent.current !== undefined,
+        memory: caps.memory.current !== undefined,
+        persona: personaSvc !== undefined,
       },
       /** 上传能力：客户端据此决定显示哪些上传按钮 */
       uploadCapabilities: {
@@ -539,19 +592,12 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         /** 是否支持文件上传（file-reader 可用） */
         file: hasFileReader,
       },
-      tools:
-        ctx
-          .getService<ToolService>('tools')
-          ?.getAll()
-          .map(t => t.name) ?? [],
-      commands: ctx
-        .getService<CommandService>('commands')
-        ?.getAll()
-        .map(c => ({
-          name: c.name,
-          description: descSummary(c.description),
-          visibility: c.visibility,
-        })),
+      tools: caps.tools.current?.getAll().map(t => t.name) ?? [],
+      commands: caps.commands.current?.getAll().map(c => ({
+        name: c.name,
+        description: descSummary(c.description),
+        visibility: c.visibility,
+      })),
     });
   });
 
@@ -577,16 +623,31 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   };
   // 页面动作登记表：插件经 webui-server 的绑定接口登记，路由层按「插件 id + 方法名」查
   const registeredActions = new Map<string, Map<string, WebuiActionHandler>>();
-  registerPluginRoutes(expressApp, ctx, getApp, getPluginMgr, auth.identify, gate, (plugin, method) =>
-    registeredActions.get(plugin)?.get(method),
+  registerPluginRoutes(
+    expressApp,
+    {
+      app: caps.app,
+      plugins: caps.plugins,
+      hostConfig: caps.hostConfig,
+      tools: caps.tools,
+      commands: caps.commands,
+      webui: () => services.get(webuiServer),
+    },
+    auth.identify,
+    gate,
+    (plugin, method) => registeredActions.get(plugin)?.get(method),
   );
   // 市场「已装」判定、依赖图、前端候选发现共用这一份扫描目录（pnpm 工作区下 require.resolve
   // 从仓库根解析不到工作区包，只能扫盘）。每请求懒扫，量小。
   const localScanDirs = LOCAL_SCAN_DIRS;
   registerMarketplaceRoutes(
     expressApp,
-    ctx,
-    getPluginMgr,
+    {
+      logger,
+      plugins: caps.plugins,
+      // package-manager 由插件提供，本包不反向依赖那个插件包：按名动态查，缺席时装卸路由回 503
+      packageManager: () => services.getByName('package-manager') as PackageManagerService | undefined,
+    },
     gate,
     uiConfig.marketplaceRegistry,
     () => collectLocalPackageDeps(localScanDirs, fsScanEnv),
@@ -631,7 +692,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 获取服务列表（含提供者信息）
   expressApp.get('/api/services', gate(), async (_req, res) => {
-    const pluginMgr = getPluginMgr();
+    const pluginMgr = caps.plugins.current;
     const pluginStatus = pluginMgr ? pluginMgr.getStatus() : [];
     const displayNameMap = new Map<string, string>();
     for (const p of pluginStatus) {
@@ -643,8 +704,8 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     // root context 即内核自身（app / plugins 两个服务由它 provide）——显示包名，别把内部 id 'root' 裸露给用户
     displayNameMap.set('root', '@aalis/core');
 
-    const serviceNames = ctx.getServiceNames();
-    const services: Record<
+    const serviceNames = services.names();
+    const detail: Record<
       string,
       {
         providers: Array<{
@@ -658,20 +719,20 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     > = {};
 
     for (const svcName of serviceNames) {
-      // getAllServices 已按「偏好 > 优先级 > 注册顺序」排序，附带 priority 字段
-      const entries = ctx.getAllServices(svcName);
-      services[svcName] = {
+      // 枚举已按「偏好 > 优先级 > 注册顺序」排序，附带 priority 字段
+      const entries = services.all(byName(svcName));
+      detail[svcName] = {
         providers: entries.map(e => ({
           contextId: e.contextId,
           displayName: displayNameMap.get(e.contextId),
           label: e.label,
           priority: e.priority,
         })),
-        preferred: ctx.getPreferredService(svcName) ?? null,
+        preferred: services.preferred(byName(svcName)) ?? null,
       };
     }
 
-    res.json({ services });
+    res.json({ services: detail });
   });
 
   /**
@@ -686,27 +747,29 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       return;
     }
     // 校验 entry 存在
-    const entries = ctx.getAllServices(svcName);
+    const entries = services.all(byName(svcName));
     if (!entries.some(e => e.contextId === contextId)) {
       res.status(404).json({ ok: false, error: `service "${svcName}" has no provider with contextId "${contextId}"` });
       return;
     }
-    ctx.preferService(svcName, contextId);
-    ctx.config.setServicePreference(svcName, contextId);
+    const host = caps.hostConfig.require();
+    services.prefer(byName(svcName), contextId);
+    host.setServicePreference(svcName, contextId);
     // 切换前端：webui-client 是「前端」服务，偏好变更需重挂静态目录 + 通知客户端刷新。
     // 重挂与偏好同属内存态，必须在等落盘之前一起生效：save 拒绝时才不会留下「解析选 B、静态挂 A」。
     if (svcName === 'webui-client') remountActiveClient();
-    await ctx.config.save();
+    await host.save();
     res.json({ ok: true });
   });
 
   /** 清除服务偏好 */
   expressApp.delete('/api/services/:name/prefer', gate(), async (req, res) => {
     const svcName = String(req.params.name);
-    ctx.unpreferService(svcName);
-    ctx.config.removeServicePreference(svcName);
+    const host = caps.hostConfig.require();
+    services.unprefer(byName(svcName));
+    host.removeServicePreference(svcName);
     if (svcName === 'webui-client') remountActiveClient();
-    await ctx.config.save();
+    await host.save();
     res.json({ ok: true });
   });
 
@@ -716,13 +779,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 获取所有平台适配器及其连接状态
   expressApp.get('/api/platforms', gate(), (_req, res) => {
-    res.json({ platforms: aggregatePlatformDetails(ctx) });
+    res.json({ platforms: aggregatePlatformDetails(caps.platform) });
   });
 
   // 获取已注册的工具分组（含元数据 + 各组工具数量 + 贡献插件列表）
   expressApp.get('/api/tool-groups', gate(), (_req, res) => {
-    const groups = ctx.getService<ToolService>('tools')?.getGroups() ?? [];
-    const allTools = ctx.getService<ToolService>('tools')?.getAll() ?? [];
+    const toolService = caps.tools.current;
+    const groups = toolService?.getGroups() ?? [];
+    const allTools = toolService?.getAll() ?? [];
     const knownNames = new Set(groups.map(g => g.name));
     const result = groups.map(g => {
       const toolsInGroup = allTools.filter(t => t.groups?.includes(g.name));
@@ -751,7 +815,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
   // 获取服务分组（manifest 驱动：每个插件自己声明 subsystem，本路由仅聚合）
   expressApp.get('/api/service-groups', gate(), (_req, res) => {
-    const pluginMgr = getPluginMgr();
+    const pluginMgr = caps.plugins.current;
     const pluginStatus = pluginMgr ? pluginMgr.getStatus() : [];
     // 按插件 subsystem 归组（未声明 → 'external'）。subsystem 是 WebUI 展示概念、
     // 由 @aalis/api-webui 声明合并到 PluginModule，core 状态契约不含——从 module 直接读。
@@ -773,15 +837,15 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const servicesClaimed = new Set<string>();
     const groups = sorted.map(({ id, label }) => {
       const plugins = groupsMap.get(id)!;
-      const services = [...new Set(plugins.flatMap(p => p.provides))].filter(s => {
+      const owned = [...new Set(plugins.flatMap(p => p.provides))].filter(s => {
         if (servicesClaimed.has(s)) return false;
         servicesClaimed.add(s);
         return true;
       });
-      return { id, label, plugins, services };
+      return { id, label, plugins, services: owned };
     });
     // 系统内建服务（app、plugins 等由 core 直接 provide，不属于任何插件）
-    const systemServices = ctx.getServiceNames().filter(n => !servicesClaimed.has(n));
+    const systemServices = services.names().filter(n => !servicesClaimed.has(n));
     if (systemServices.length > 0) {
       const sysLabel = meta.get('system')?.label ?? '系统';
       groups.unshift({ id: 'system', label: sysLabel, plugins: [], services: systemServices });
@@ -792,7 +856,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 获取所有 LLM 模型（枚举所有注册的 per-model entry）
   expressApp.get('/api/llm-models', gate(), async (_req, res) => {
     try {
-      const entries = ctx.getAllServices<LLMModel>('llm');
+      const entries = caps.llm.all();
       const models: ModelInfo[] = entries.map(e => ({
         id: e.instance.id,
         capabilities: [...e.instance.capabilities],
@@ -808,7 +872,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // LLM providers + per-provider models（供 schema type='llm-ref' 联动 select 使用）
   expressApp.get('/api/llm-providers', gate(), async (_req, res) => {
     try {
-      const entries = ctx.getAllServices<LLMModel>('llm');
+      const entries = caps.llm.all();
       type ProvAgg = {
         contextId: string;
         label?: string;
@@ -853,7 +917,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       return;
     }
     try {
-      const llmEntries = ctx.getAllServices<LLMModel>('llm');
+      const llmEntries = caps.llm.all();
       const target = llmEntries.find(e => e.contextId === contextId && typeof e.instance.refresh === 'function');
       if (!target) {
         res.status(404).json({
@@ -874,14 +938,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
     // 特殊处理 platform：通过 helper 获取已注册的平台名称
     if (serviceName === 'platform') {
-      res.json({ models: getPlatformNames(ctx) });
+      res.json({ models: getPlatformNames(caps.platform) });
       return;
     }
 
     // 特殊处理 gateway-scopes：基于已注册 adapter.sessionTypes 真实声明生成
     // platform×sessionType 的笛卡尔积。无声明的 adapter 视为单会话（不展开 sessionType）。
     if (serviceName === 'gateway-scopes') {
-      const adapters = getPlatformAdapters(ctx);
+      const adapters = getPlatformAdapters(caps.platform);
       const platformTypes = new Map<string, readonly string[]>();
       const allTypes = new Set<string>();
       for (const a of adapters) {
@@ -909,7 +973,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
     // 特殊处理 toolGroups：优先从工具分组注册表获取，回退到扫描工具
     if (serviceName === 'toolGroups') {
-      const groups = ctx.getService<ToolService>('tools')?.getGroups() ?? [];
+      const groups = caps.tools.current?.getGroups() ?? [];
       // '*' = 全部分组（plugin-tools 的分组过滤认它），与会话范围选项的「* （全部平台）」同一写法
       if (groups.length > 0) {
         res.json({
@@ -926,9 +990,9 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         });
       } else {
         // 回退：从已注册工具中提取分组名称
-        const tools = ctx.getService<ToolService>('tools')?.getAll() ?? [];
+        const allTools = caps.tools.current?.getAll() ?? [];
         const groupSet = new Set<string>();
-        for (const t of tools) {
+        for (const t of allTools) {
           t.groups?.forEach((g: string) => {
             groupSet.add(g);
           });
@@ -941,7 +1005,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     // LLM 走 per-model entry 枚举（每个 entry 已对应一个具体 model，不再依赖 provider.listModels）
     if (serviceName === 'llm') {
       try {
-        const entries = ctx.getAllServices<LLMModel>('llm');
+        const entries = caps.llm.all();
         const aggregated = entries.map(e => ({
           value: `${e.contextId}::${e.instance.id}`,
           model: e.instance.id,
@@ -956,14 +1020,16 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       return;
     }
 
-    const service = ctx.getService<{ listModels?(): Promise<unknown[]> }>(serviceName);
+    const service = services.getByName(serviceName) as { listModels?(): Promise<unknown[]> } | undefined;
     if (!service || typeof service.listModels !== 'function') {
       res.json({ models: [] });
       return;
     }
     try {
       // 聚合所有提供者的模型列表（embedding 等服务仍走 listModels()）。
-      const allProviders = ctx.getAllServices<{ listModels?(): Promise<unknown[]> }>(serviceName);
+      const allProviders = services.all(byName(serviceName)) as Array<
+        ServiceView<{ listModels?(): Promise<unknown[]> }>
+      >;
       const aggregated: Array<{
         value: string;
         model: string;
@@ -1005,7 +1071,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 协调器逻辑（待确认/超时/解析/文案）由 session-confirm 服务统一实现；WebUI 只注入自己的 WS 投递，
   // 并保留 type:'confirm'（前端「确认模式」信号，抑制富客户端的「打字即打断」）。回复在 WS-onmessage 调 feed（下方）。
   let confirmChannel: ConfirmChannel | undefined;
-  ctx.whenService<SessionConfirmService>('session-confirm', confirmSvc => {
+  caps.sessionConfirm.follow(confirmSvc => {
     const channel = confirmSvc.createChannel((request, text) => {
       const payload: WSOutgoing = { type: 'confirm', content: text, sessionId: request.sessionId };
       const json = JSON.stringify(payload);
@@ -1015,11 +1081,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         if (ws.readyState === WebSocket.OPEN) ws.send(json);
       }
     });
-    // 挂到 authority 上要跟着它的胜者走（bounce 后重挂），所以嵌套一层 whenService；
-    // 外层 cleanup 即内层订阅的 dispose：session-confirm 换胜者或本插件 dispose 时一并注销
+    // 挂到 authority 上要跟着它的胜者走（bounce 后重挂），所以嵌套一层跟随；
+    // 外层 cleanup 即内层订阅的退订：session-confirm 换胜者或本插件拆卸时一并注销
     confirmChannel = channel;
-    const offAuthority = ctx.whenService<AuthorityService>('authority', authority =>
-      authority.setConfirmHandler('webui', channel.handler),
+    const offAuthority = caps.authority.follow(authoritySvc =>
+      authoritySvc.setConfirmHandler('webui', channel.handler),
     );
     // cleanup：摘 handler、dispose 旧通道（在飞确认按取消结算，不留到 60s 超时）、清引用
     return () => {
@@ -1030,16 +1096,24 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // ---------- 文件管理 API ----------
-  registerFileRoutes(expressApp, ctx, { storage, fileRoot: uiConfig.fileRoot }, gate);
-  registerUploadedFilesRoutes(expressApp, ctx, { storage }, gate);
-  registerProxyRoutes(expressApp, ctx, gate);
+  registerFileRoutes(expressApp, { storage, fileRoot: uiConfig.fileRoot }, gate);
+  registerUploadedFilesRoutes(
+    expressApp,
+    {
+      storage,
+      logger,
+      fileIndex: () => services.getByName('file-reader') as { deleteFile?(id: string): Promise<boolean> } | undefined,
+    },
+    gate,
+  );
+  registerProxyRoutes(expressApp, logger, gate);
 
   // ---------- WebSocket ----------
 
   wss.on('connection', (ws, req) => {
     // 连接建立时解析一次调用者身份（cookie 在升级请求里；verifyClient 已保证已认证）
     const wsIdentity = auth.identify(req) ?? { platform: 'webui', userId: 'console' };
-    ctx.logger.debug(`WebUI 客户端已连接: ${wsIdentity.platform}:${wsIdentity.userId}`);
+    logger.debug(`WebUI 客户端已连接: ${wsIdentity.platform}:${wsIdentity.userId}`);
     allClients.add(ws);
     heartbeat.track(ws);
 
@@ -1047,7 +1121,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       try {
         const parseResult = WSIncomingSchema.safeParse(JSON.parse(data.toString()));
         if (!parseResult.success) {
-          ctx.logger.warn(
+          logger.warn(
             `WebUI 收到协议违规消息: ${parseResult.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
           );
           return;
@@ -1099,10 +1173,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
             ws.send(JSON.stringify(cachedUsage));
           } else {
             // 无缓存（服务重启后），请求 agent 重新计算
-            ctx
+            events
               .emit('token:request', {
                 sessionId: sid,
-                platform: resolveSessionPlatform(sid, new Set(getPlatformNames(ctx))),
+                platform: resolveSessionPlatform(sid, new Set(getPlatformNames(caps.platform))),
               })
               .catch(() => {});
           }
@@ -1117,23 +1191,23 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
 
         if (msg.type === 'abort') {
           const sessionId = msg.sessionId || 'webui-default';
-          const agent = ctx.getService<AgentService>('agent');
-          if (agent?.abort) agent.abort(sessionId);
+          const agentSvc = caps.agent.current;
+          if (agentSvc?.abort) agentSvc.abort(sessionId);
           return;
         }
 
         if (msg.type === 'compress') {
           const sessionId = msg.sessionId || 'webui-default';
-          ctx.logger.info(`收到手动压缩请求: session=${sessionId}`);
+          logger.info(`收到手动压缩请求: session=${sessionId}`);
           // 触发压缩事件（memory-summary 监听此事件，并发出 session:compressing 通知）
-          ctx
+          events
             .emit('session:compress', { sessionId, reason: 'manual' })
             .then(() => {
               // 压缩完成后重新计算 token 用量并推送给客户端
-              ctx
+              events
                 .emit('token:request', {
                   sessionId,
-                  platform: resolveSessionPlatform(sessionId, new Set(getPlatformNames(ctx))),
+                  platform: resolveSessionPlatform(sessionId, new Set(getPlatformNames(caps.platform))),
                 })
                 .catch(() => {});
             })
@@ -1162,7 +1236,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
         // 适配器不再内联解析命令——未注册的命令会被该相位放行为普通消息进入
         // agent，命中的命令由该相位执行并经 outbound:message 回送，与 onebot
         // 平台行为完全一致。客户端只通过 attachments 发送多模态内容。
-        await ctx.emit('inbound:message', {
+        await events.emit('inbound:message', {
           content: trimmed,
           sessionId,
           platform: wsIdentity.platform,
@@ -1171,7 +1245,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
           ...(msg.attachments && msg.attachments.length > 0 ? { attachments: msg.attachments } : {}),
         });
       } catch (err) {
-        ctx.logger.warn('WebUI 消息处理失败:', err);
+        logger.warn('WebUI 消息处理失败:', err);
       }
     });
 
@@ -1198,7 +1272,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // 插件状态级联变更后，广播通知所有前端刷新
-  ctx.on('plugins:changed', () => {
+  events.on('plugins:changed', () => {
     const payload: WSOutgoing = { type: 'state_changed' };
     const json = JSON.stringify(payload);
     for (const ws of allClients) {
@@ -1209,7 +1283,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // 重启通知：广播给所有客户端。WS 报文的 type 是前端协议，与 core 事件名无关，保持 'restarting'。
-  ctx.on('app:restarting', () => {
+  events.on('app:restarting', () => {
     const payload: WSOutgoing = { type: 'restarting' };
     const json = JSON.stringify(payload);
     for (const ws of allClients) {
@@ -1230,9 +1304,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   };
   // Todo 列表变更：推送给订阅了该会话的客户端
-  ctx.on('todo:updated', (...args: unknown[]) => {
-    const sessionId = args[0] as string;
-    const items = args[1] as unknown[];
+  events.on('todo:updated', (sessionId, items) => {
     const sockets = sessions.get(sessionId);
     if (!sockets) return;
     const payload: WSOutgoing = { type: 'todo_updated', sessionId, todoItems: items };
@@ -1244,10 +1316,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     }
   });
 
-  ctx.on('session:created', broadcastSessionsChanged);
-  ctx.on('session:updated', broadcastSessionsChanged);
-  ctx.on('session:deleted', broadcastSessionsChanged);
-  ctx.on('session:completed', broadcastSessionsChanged);
+  events.on('session:created', broadcastSessionsChanged);
+  events.on('session:updated', broadcastSessionsChanged);
+  events.on('session:deleted', broadcastSessionsChanged);
+  events.on('session:completed', broadcastSessionsChanged);
 
   // 动态页面刷新通知：插件可通过广播 'page_refresh' 让前端无感刷新对应页面数据
   // 当前已知发射方：plugin-doctor（'doctor:updated'）。新增同类需求时按相同模式订阅即可。
@@ -1258,12 +1330,11 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       if (ws.readyState === WebSocket.OPEN) ws.send(json);
     }
   };
-  ctx.on('doctor:updated', () => broadcastPageRefresh('@aalis/plugin-doctor'));
+  events.on('doctor:updated', () => broadcastPageRefresh('@aalis/plugin-doctor'));
 
   // 会话历史变更（如 checkpoint 回滚整轮对话）：推送给订阅该会话的客户端，让前端重新拉取历史
-  ctx.on('history:changed', (...args: unknown[]) => {
-    const data = args[0] as { sessionId?: string };
-    const sessionId = data?.sessionId;
+  events.on('history:changed', change => {
+    const sessionId = change?.sessionId;
     if (!sessionId) return;
     const sockets = sessions.get(sessionId);
     if (!sockets) return;
@@ -1277,11 +1348,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // 压缩状态通知：memory-summary 发出 session:compressing 事件，广播给订阅该会话的客户端
-  ctx.on('session:compressing', (...args: unknown[]) => {
-    const data = args[0] as { sessionId: string; status: string };
-    const sockets = sessions.get(data.sessionId);
+  events.on('session:compressing', info => {
+    const sockets = sessions.get(info.sessionId);
     if (!sockets) return;
-    const payload: WSOutgoing = { type: 'compressing', sessionId: data.sessionId, content: data.status };
+    const payload: WSOutgoing = { type: 'compressing', sessionId: info.sessionId, content: info.status };
     const json = JSON.stringify(payload);
     for (const ws of sockets) {
       if (ws.readyState === WebSocket.OPEN) {
@@ -1295,7 +1365,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   // 不再驱动 webui。这样多人同时使用时，他人新建/切换会话不会把你的窗口切走。
 
   // 监听 AI 回复
-  ctx.on('outbound:message', (msg: OutgoingMessage) => {
+  events.on('outbound:message', (msg: OutgoingMessage) => {
     // 生成完成，延迟清理缓冲区（给客户端重连拉取历史留出时间窗口）
     const buf = streamBuffers.get(msg.sessionId);
     if (buf) {
@@ -1340,7 +1410,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // 监听流式增量推送
-  ctx.on('outbound:stream', (chunk: StreamChunkMessage) => {
+  events.on('outbound:stream', (chunk: StreamChunkMessage) => {
     // 累积到缓冲区
     if (!chunk.done) {
       let buf = streamBuffers.get(chunk.sessionId);
@@ -1415,7 +1485,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // 监听工具调用事件
-  ctx.on('tool:execute', (info: ToolExecuteMessage) => {
+  events.on('tool:execute', (info: ToolExecuteMessage) => {
     // 缓存工具调用到 segments
     let buf = streamBuffers.get(info.sessionId);
     if (!buf) {
@@ -1459,30 +1529,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   });
 
   // 监听 token 使用量统计事件
-  ctx.on('token:usage', (...args: unknown[]) => {
-    const usage = args[0] as {
-      sessionId: string;
-      platform: string;
-      contextWindow: number;
-      maxTokens: number;
-      tokenBudget: number;
-      used: number;
-      usageRatio: number;
-      breakdown: {
-        system: number;
-        persona: number;
-        memorySummary: number;
-        memoryVector: number;
-        skills: number;
-        platform: number;
-        subtask: number;
-        systemOther: number;
-        history: number;
-        toolResults: number;
-        toolDefs: number;
-        reservedForReply: number;
-      };
-    };
+  events.on('token:usage', usage => {
     const sockets = sessions.get(usage.sessionId);
     if (!sockets) return;
 
@@ -1587,7 +1634,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       clientProviderDisposers.delete(stale.id);
       clientCandidates.splice(i, 1);
       removed++;
-      ctx.logger.info(`前端已消失，摘除候选: ${stale.label} (${stale.dir})`);
+      logger.info(`前端已消失，摘除候选: ${stale.label} (${stale.dir})`);
     }
     // 摘掉 provider 只改了「服务解析结果」，**真正服务 HTTP 的是 clientDist / staticMiddleware**，
     // 它们在 app:ready 时绑定、之后只由 remountActiveClient 更新。不重挂的话，被摘掉的正好是当前
@@ -1601,30 +1648,31 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     );
     clientCandidates.push(...fresh);
     // 把每个新发现的前端注册为 webui-client 服务的一个 provider（带 label，供「服务」页下拉切换）。
-    // 外部插件在 apply 里主动 provide('webui-client') 的也已在服务池中（注册更早 → 默认胜出，仍可被偏好切换）。
+    // 外部插件在 apply 里主动提供 webui-client 的也已在服务池中（注册更早 → 默认胜出，仍可被偏好切换）。
+    //
+    // entryId 取前端**包名本身**而非本插件 id 的子粒度：它是服务页展示的 contextId，也是
+    // servicePreferences['webui-client'] 里持久化的键——换个写法，用户存量的前端偏好就认不回来了。
     for (const candidate of fresh) {
       clientProviderDisposers.set(
         candidate.id,
-        ctx
-          .fork(candidate.id)
-          .provide('webui-client', { getClientDir: () => candidate.dir }, { label: candidate.label }),
+        provide(webuiClient, { getClientDir: () => candidate.dir }, { label: candidate.label, entryId: candidate.id }),
       );
-      ctx.logger.info(`发现前端: ${candidate.label} (${candidate.dir})`);
+      logger.info(`发现前端: ${candidate.label} (${candidate.dir})`);
     }
     return fresh.length;
   }
 
   // 启动服务器
-  ctx.on('app:ready', () => {
+  events.on('app:ready', () => {
     discoverAndProvideClients();
     // 活跃前端 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 注册顺序）；零前端则 404。
     const activeDir = currentClientDir();
     if (activeDir) {
       clientDist = activeDir;
       mountStaticDir(activeDir);
-      ctx.logger.info(`活跃前端: ${activeDir}`);
+      logger.info(`活跃前端: ${activeDir}`);
     } else {
-      ctx.logger.warn('未发现任何前端（webui-client provider）；前端路由将 404，请安装一个 aalis.client 包');
+      logger.warn('未发现任何前端（webui-client provider）；前端路由将 404，请安装一个 aalis.client 包');
     }
 
     // 监听失败（典型 EADDRINUSE：3000 被别的 dev server 占了）是 bind 之后**异步 emit** 的，
@@ -1637,9 +1685,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     // wss）并排在最前；EventEmitter 按注册顺序调用，它 emit 到无监听器的 wss 上会同步抛出、
     // 中断 emit 循环，后注册在 server 上的 handler 因此永远轮不到。
     wss.on('error', (err: Error) => {
-      ctx.logger.error(
-        `WebUI 监听 ${uiConfig.host}:${uiConfig.port} 失败: ${err.message}；WebUI 不可用，其余功能照常运行`,
-      );
+      logger.error(`WebUI 监听 ${uiConfig.host}:${uiConfig.port} 失败: ${err.message}；WebUI 不可用，其余功能照常运行`);
     });
     server.listen(uiConfig.port, uiConfig.host, () => {
       // 通配绑定地址（0.0.0.0 / ::）是"听在哪"，不是"从哪访问"——直接拼进 URL 会让
@@ -1648,10 +1694,10 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       const displayHost = uiConfig.host === '0.0.0.0' || uiConfig.host === '::' ? '127.0.0.1' : uiConfig.host;
       const url = `http://${displayHost}:${uiConfig.port}/`;
       const accessUrl = `${url}?token=${authToken}`;
-      ctx.logger.info(`WebUI 已启动: ${url}`);
+      logger.info(`WebUI 已启动: ${url}`);
       // 多前端时提示恢复页 URL：万一切到无切换 UI 的前端被卡住，可在此切回（详见 client-switch-page.ts）。
       if (clientCandidates.length > 1) {
-        ctx.logger.info(`检测到多个前端；若卡在某前端无切换入口，可访问恢复页切回: ${url}__clients`);
+        logger.info(`检测到多个前端；若卡在某前端无切换入口，可访问恢复页切回: ${url}__clients`);
       }
       const tokenHint =
         uiConfig.tokenMode === 'ephemeral'
@@ -1661,14 +1707,14 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
             : 'token 已持久化到 storage data:/webui/token，重启沿用';
       // 不把 token 打进日志（会落 latest.log / 被 /api/logs 回放 / 贴日志求助时外泄）。
       // 仅打不带 token 的 URL，完整一键登录链接见 access.txt（该文件应 0o600，见 token 落盘）。
-      ctx.logger.info(`首次访问 URL（${tokenHint}）: ${url} —— 完整一键登录链接见 ${accessFileUri}`);
+      logger.info(`首次访问 URL（${tokenHint}）: ${url} —— 完整一键登录链接见 ${accessFileUri}`);
       void (async () => {
         // 先把文件写出来，再解析它的绝对路径：resolveLocalPath 走 realpath，文件尚未落盘会抛
         // ENOENT 被吞掉，于是「绝对路径」退化成原样重复一遍 URI——偏偏首启（新用户唯一需要
         // 这行的时刻）必然命中，二次启动因文件已在反而正常。两者原先都是 void，谁先到看调度。
         if (!(await writeAccessFile(url, authToken))) {
           // 写失败上面已 warn 过；再打一条「已写入」只会让人去找一个不存在的文件
-          ctx.logger.warn(`访问凭据未能写入 ${accessFileUri}；请用 WebUI 登录页手工粘贴 token`);
+          logger.warn(`访问凭据未能写入 ${accessFileUri}；请用 WebUI 登录页手工粘贴 token`);
           return;
         }
         let absHint = accessFileUri;
@@ -1677,22 +1723,22 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
             absHint = await storage.resolveLocalPath(accessFileUri, 'read');
           }
         } catch (err) {
-          ctx.logger.debug(`解析访问凭据文件绝对路径失败: ${(err as Error).message}`);
+          logger.debug(`解析访问凭据文件绝对路径失败: ${(err as Error).message}`);
         }
-        ctx.logger.info(`访问凭据已写入: ${accessFileUri}（绝对路径: ${absHint}）`);
+        logger.info(`访问凭据已写入: ${accessFileUri}（绝对路径: ${absHint}）`);
       })();
-      if (uiConfig.autoOpen) openBrowser(accessUrl, createProcessGateway(ctx));
+      if (uiConfig.autoOpen) openBrowser(accessUrl, createProcessGateway(caps.process));
     });
   });
 
-  ctx.onDispose(() => {
+  lifecycle.onDispose(() => {
     confirmChannel?.dispose(); // 清 WebUI 确认通道里挂起的待确认（安全拒），避免 Promise 永挂
     heartbeat.dispose();
     removeLogListener();
     // 先把已建立的连接收口再关服务端：ws 的 close() 在 {server} 模式下只摘监听器、对
     // this.clients 一个都不动，server.close() 也只停止 accept。不主动关的话，旧 socket 上
-    // 注册的 message 闭包在插件卸载后仍然活着，照常 ctx.emit('inbound:message')——而
-    // Context.emit 不设关闭守卫（同文件 on/provide/fork 都有）。
+    // 注册的 message 闭包在插件卸载后仍然活着，照常发 'inbound:message'——而事件发射
+    // 不设关闭守卫（订阅与发布两侧不对称）。
     // 发 1001 触发前端既有的 onclose 重连路径，bounce 之后自动接回新实例。
     for (const ws of allClients) {
       try {
@@ -1741,7 +1787,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     },
   };
 
-  ctx.provide('platform', adapter);
+  provide(platform, adapter);
 
   // === 注册 WebUI 服务 ===
   const registeredPages = new Map<string, Array<WebuiPage & { pluginName: string }>>();
@@ -1759,7 +1805,7 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     setClientDir(dir: string): void {
       clientDist = dir;
       mountStaticDir(dir);
-      ctx.logger.info(`前端已切换: ${dir}`);
+      logger.info(`前端已切换: ${dir}`);
     },
     registerPage(page, contextId) {
       const list = registeredPages.get(contextId) ?? [];
@@ -1795,5 +1841,5 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
       registeredPages.delete(contextId);
     },
   };
-  ctx.provide('webui-server', webuiService);
+  provide(webuiServer, webuiService);
 }

@@ -47,6 +47,8 @@
   "aalis": {
     "service": {
       "optional": [
+        "tools",
+        "webui-server",
         "process",
         "storage"
       ]

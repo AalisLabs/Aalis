@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 
 function makeApp() {
@@ -20,8 +20,7 @@ describe('plugin-memory-inmemory', () => {
   let mem: MemoryService;
   beforeEach(async () => {
     env = makeApp();
-    // biome-ignore lint/suspicious/noExplicitAny: src 与 dist 的 PluginModule 类型路径不同，运行时结构等价
-    await env.app.ctx.useModule(memoryInMemoryModule as any);
+    await env.app.ctx.useModule(memoryInMemory);
     const m = env.app.ctx.getService<MemoryService>('memory');
     if (!m) throw new Error('memory service missing');
     mem = m;
@@ -140,8 +139,7 @@ describe('plugin-memory-inmemory: metadata 契约', () => {
   let mem: MemoryService;
   beforeEach(async () => {
     env = makeApp();
-    // biome-ignore lint/suspicious/noExplicitAny: src 与 dist 的 PluginModule 类型路径不同，运行时结构等价
-    await env.app.ctx.useModule(memoryInMemoryModule as any);
+    await env.app.ctx.useModule(memoryInMemory);
     const m = env.app.ctx.getService<MemoryService>('memory');
     if (!m) throw new Error('memory service missing');
     mem = m;
@@ -195,8 +193,7 @@ describe('plugin-memory-inmemory: 与另两家后端的语义对齐', () => {
   let mem: MemoryService;
   beforeEach(async () => {
     env = makeApp();
-    // biome-ignore lint/suspicious/noExplicitAny: src 与 dist 的 PluginModule 类型路径不同，运行时结构等价
-    await env.app.ctx.useModule(memoryInMemoryModule as any);
+    await env.app.ctx.useModule(memoryInMemory);
     const m = env.app.ctx.getService<MemoryService>('memory');
     if (!m) throw new Error('memory service missing');
     mem = m;

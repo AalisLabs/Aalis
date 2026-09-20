@@ -32,11 +32,11 @@
     "@aalis/api-commands": "workspace:>=0.5.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.9.0 <1.0.0",
     "@aalis/api-gateway": "workspace:>=0.5.0 <1.0.0",
+    "@aalis/api-memory": "workspace:>=0.5.1 <1.0.0",
     "@aalis/api-storage": "workspace:>=0.5.5 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
-    "@aalis/api-memory": "workspace:*",
     "@aalis/api-tools": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
@@ -48,6 +48,13 @@
     "service": {
       "required": [
         "gateway"
+      ],
+      "optional": [
+        "commands",
+        "storage",
+        "memory",
+        "authority",
+        "app"
       ],
       "provides": [
         "commands"

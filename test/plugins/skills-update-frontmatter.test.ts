@@ -2,11 +2,10 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { App } from '../../packages/core/src/index.js';
-import type { SkillsService } from '../../packages/plugin-skills/src/index.js';
-import * as skillsModule from '../../packages/plugin-skills/src/index.js';
-import * as storageLocalModule from '../../packages/plugin-storage-local/src/index.js';
-import * as toolsModule from '../../packages/plugin-tools/src/index.js';
+import { App, services } from '../../packages/core/src/index.js';
+import skillsPlugin, { type SkillsService, skills } from '../../packages/plugin-skills/src/index.js';
+import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // skill_update 的 frontmatter 合并次序：新值必须压过旧值。
@@ -37,7 +36,7 @@ describe('skills updateSkill frontmatter 合并（真 fs）', () => {
     writeFileSync(join(base, 'skills', 'zz-demo', 'SKILL.md'), SKILL_MD);
 
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocalModule as never, {
+    await app.plugins.register(storageLocal, {
       roots: [
         {
           name: 'data',
@@ -51,9 +50,10 @@ describe('skills updateSkill frontmatter 合并（真 fs）', () => {
         },
       ],
     });
-    await app.ctx.useModule(toolsModule as never, {});
-    await app.ctx.useModule(skillsModule as never, { skillsUri: 'data:/skills' });
-    svc = app.ctx.getService<SkillsService>('skills')!;
+    await app.plugins.register(toolsPlugin, {});
+    await app.plugins.register(skillsPlugin, { skillsUri: 'data:/skills' });
+    await app.plugins.idle();
+    svc = app.bind({ services }).services.get(skills)!;
     await svc.rescan();
   });
 

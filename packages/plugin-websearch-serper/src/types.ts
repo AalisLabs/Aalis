@@ -1,12 +1,10 @@
 // ----- 网络搜索服务接口 -----
 //
-// 由 plugin-websearch-serper 等插件实现。Agent 或其他插件可通过
-// `ctx.getService<WebSearchService>('web-search')` 获得该服务来执行搜索，
-// 而无需关心具体后端（Serper / DuckDuckGo / Bing 等）。
+// 由 plugin-websearch-serper 等插件实现。消费方在 uses 里声明本包导出的 `webSearch`
+// 描述符，即可拿到按激活绑定的调用接口，而无需关心具体后端（Serper / DuckDuckGo / Bing 等）。
 //
-// 多个搜索后端可同时注册，框架按 priority 选择默认实现；
-// 若需指定特定后端（如只使用带新闻能力的后端），可通过 capability 过滤：
-//   `ctx.getService<WebSearchService>('web-search', ['news'])`
+// 多个搜索后端可同时注册：`webSearch.current` 取当前胜者（偏好 > 优先级 > 注册顺序），
+// 要在多个后端间挑选（如只用带新闻能力的）就用 `webSearch.all()` 自行筛。
 
 /** 单条搜索结果 */
 export interface WebSearchResult {

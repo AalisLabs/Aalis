@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import { RelationService } from '../../packages/plugin-user-relation/src/service.js';
 import { RelationStore } from '../../packages/plugin-user-relation/src/store.js';
 
 async function setup() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(memoryInMemoryModule);
+  await app.ctx.useModule(memoryInMemory);
   const mem = app.ctx.getService<MemoryService>('memory');
   if (!mem) throw new Error('no memory');
   return new RelationService(new RelationStore(mem));

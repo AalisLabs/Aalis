@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { EmbeddingService } from '../../packages/api-embedding/src/index.js';
-import type { VectorSearchResult, VectorStoreService } from '../../packages/api-vectorstore/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as memoryVectorModule from '../../packages/plugin-memory-vector/src/index.js';
+import { embedding } from '../../packages/api-embedding/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
+import { type VectorSearchResult, vectorstore } from '../../packages/api-vectorstore/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
+import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // memory_recall 的 scope 只能收紧、不能放宽（工具描述里的承诺）。
@@ -11,6 +12,8 @@ import * as memoryVectorModule from '../../packages/plugin-memory-vector/src/ind
 // ════════════════════════════════════════════════════════════
 
 const BASE_TS = Date.UTC(2026, 0, 1, 12, 0, 0);
+
+type ToolHandler = (args: Record<string, unknown>, ctx: unknown) => Promise<string>;
 
 function hits(): VectorSearchResult[] {
   return [
@@ -27,13 +30,14 @@ function hits(): VectorSearchResult[] {
 
 async function setup(crossSessionMode: string) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  app.ctx.provide('embedding', {
+  const host = app.bind({ provide });
+  host.provide(embedding, {
     async embed(): Promise<number[]> {
       return [0.1, 0.2, 0.3];
     },
-  } as EmbeddingService);
+  });
   const all = hits();
-  app.ctx.provide('vectorstore', {
+  host.provide(vectorstore, {
     async add(): Promise<void> {},
     async search(_q: number[], topK: number): Promise<VectorSearchResult[]> {
       return all.slice(0, topK);
@@ -43,26 +47,27 @@ async function setup(crossSessionMode: string) {
     },
     async clear(): Promise<void> {},
     async save(): Promise<void> {},
-  } as VectorStoreService);
-  const toolHandlers = new Map<string, (args: Record<string, unknown>, ctx: unknown) => Promise<string>>();
-  app.ctx.provide('tools', {
-    register: (tool: { definition: { function: { name: string } }; handler: never }) => {
+  });
+  const toolHandlers = new Map<string, ToolHandler>();
+  host.provide(tools, {
+    register: (tool: { definition: { function: { name: string } }; handler: ToolHandler }) => {
       toolHandlers.set(tool.definition.function.name, tool.handler);
       return () => {};
     },
     registerGroup: () => () => {},
   } as never);
-  await app.ctx.useModule(memoryVectorModule, {
+  await app.plugins.register(memoryVector, {
     search: { topK: 5, timeWeight: 0, userPriorityBoost: 1, perItemMaxChars: 0, minScore: 0 },
     contextExpand: { window: 0, crossSession: true },
     indexing: { concurrency: 1, maxQueueSize: 10 },
     crossSessionMode,
     recallRoles: 'all',
   });
+  await app.plugins.idle();
   return { app, recall: toolHandlers.get('memory_recall')! };
 }
 
-async function recallTexts(recall: (a: Record<string, unknown>, c: unknown) => Promise<string>, scope?: string) {
+async function recallTexts(recall: ToolHandler, scope?: string) {
   const out = JSON.parse(await recall({ query: '记忆', ...(scope ? { scope } : {}) }, { sessionId: 'onebot:g1' }));
   return (out.results ?? []).map((r: { text: string }) => r.text).join('\n');
 }

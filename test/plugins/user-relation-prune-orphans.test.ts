@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import type { EvidenceRef } from '../../packages/plugin-user-relation/src/index.js';
 import { RelationService, RelationStore } from '../../packages/plugin-user-relation/src/index.js';
 
@@ -13,8 +13,7 @@ import { RelationService, RelationStore } from '../../packages/plugin-user-relat
 
 async function makeService() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  // biome-ignore lint/suspicious/noExplicitAny: src 与 dist 的 PluginModule 类型路径不同，运行时结构等价
-  await app.ctx.useModule(memoryInMemoryModule as any);
+  await app.ctx.useModule(memoryInMemory);
   const mem = app.ctx.getService<MemoryService>('memory');
   if (!mem) throw new Error('memory service missing');
   const store = new RelationStore(mem);

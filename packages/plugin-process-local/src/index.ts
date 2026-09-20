@@ -5,13 +5,10 @@
 import { type ChildProcess, spawn as nodeSpawn } from 'node:child_process';
 import { readFile as fsReadFile, stat as fsStat } from 'node:fs/promises';
 import type { ExecResult, ProcessService, SpawnHandle, SpawnOptions, TempDirHandle } from '@aalis/api-process';
-import { makeTempDirViaStorage } from '@aalis/api-process';
+import { makeTempDirViaStorage, processService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
-import { createStorageGateway } from '@aalis/api-storage';
-import type { Context } from '@aalis/core';
-
-export const name = '@aalis/plugin-process-local';
-export const provides = ['process'];
+import { createStorageGateway, storage } from '@aalis/api-storage';
+import { definePlugin, events, logger, optional, provide } from '@aalis/core';
 
 /** wait() 默认累计缓冲上限（stdout+stderr 合计）：10MB，足够正常输出，又防失控输出 OOM。 */
 const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024;
@@ -242,13 +239,17 @@ export class LocalProcessService implements ProcessService {
   }
 }
 
-export async function apply(ctx: Context): Promise<void> {
-  const logger = ctx.logger.child('process-local');
-  const storage = createStorageGateway(ctx);
-  const service = new LocalProcessService(storage);
-  ctx.provide('process', service);
-  // detached 让子进程脱离宿主进程组，终端 Ctrl+C 不再直达它们——停机时在此补杀。
-  // 挂 app:stopping 而非插件 dispose：本插件被 bounce 时，别的插件正在跑的子进程（ffmpeg 等）不该陪葬。
-  ctx.on('app:stopping', () => service.killAll());
-  logger.info('process-local 就绪');
-}
+export default definePlugin({
+  name: '@aalis/plugin-process-local',
+  provides: [processService],
+  // storage 只被 makeTempDir 用到，缺席时其余方法照常可用：声明为可选，不拦激活。
+  uses: { provide, events, logger, storage: optional(storage) },
+  apply(caps) {
+    const service = new LocalProcessService(createStorageGateway(caps.storage));
+    caps.provide(processService, service);
+    // detached 让子进程脱离宿主进程组，终端 Ctrl+C 不再直达它们——停机时在此补杀。
+    // 挂 app:stopping 而非插件 dispose：本插件被 bounce 时，别的插件正在跑的子进程（ffmpeg 等）不该陪葬。
+    caps.events.on('app:stopping', () => service.killAll());
+    caps.logger.info('process-local 就绪');
+  },
+});

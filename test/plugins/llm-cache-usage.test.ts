@@ -1,8 +1,8 @@
-import { App } from '@aalis/core';
+import { App, type PluginModule, services } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { LLMModel } from '../../packages/api-llm/src/index.js';
-import * as deepseekModule from '../../packages/plugin-llm-deepseek/src/index.js';
-import * as openaiModule from '../../packages/plugin-llm-openai/src/index.js';
+import { llm } from '../../packages/api-llm/src/index.js';
+import deepseekPlugin from '../../packages/plugin-llm-deepseek/src/index.js';
+import openaiPlugin from '../../packages/plugin-llm-openai/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 前缀缓存命中量的上报（打真实适配器，非重抄映射）
@@ -37,18 +37,14 @@ function stubFetch(modelId: string, usage: Record<string, unknown>): void {
   }) as typeof fetch;
 }
 
-async function chatWith(
-  module: typeof deepseekModule | typeof openaiModule,
-  modelId: string,
-  usage: Record<string, unknown>,
-) {
+async function chatWith(plugin: PluginModule, modelId: string, usage: Record<string, unknown>) {
   stubFetch(modelId, usage);
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(module as never, { apiKey: 'test-key' });
+  await app.plugins.register(plugin, { apiKey: 'test-key' });
   await app.plugins.idle();
-  const llm = app.ctx.getService<LLMModel>('llm');
-  if (!llm) throw new Error('llm entry 未注册');
-  const res = await llm.chat({ messages: [{ role: 'user', content: '在吗' }] });
+  const model = app.bind({ services }).services.get(llm);
+  if (!model) throw new Error('llm entry 未注册');
+  const res = await model.chat({ messages: [{ role: 'user', content: '在吗' }] });
   await app.stop();
   return res;
 }
@@ -57,7 +53,7 @@ describe('baseUrl 完整前缀语义：最终请求 URL 形状', () => {
   // 锚定「插件只拼端点名、不再自拼 /v1」：旧桩用 includes('/models') 对新旧语义都绿，
   // 本批的核心破坏性变更此前处于零回归覆盖状态（2026-08-24 审计）。
   it('DeepSeek 默认端点（官方无版本段）→ /chat/completions 且无 /v1', async () => {
-    await chatWith(deepseekModule, 'deepseek-chat', { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 });
+    await chatWith(deepseekPlugin, 'deepseek-chat', { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 });
     expect(fetchedUrls).toContain('https://api.deepseek.com/chat/completions');
     expect(
       fetchedUrls.some(u => u.includes('/v1')),
@@ -66,7 +62,7 @@ describe('baseUrl 完整前缀语义：最终请求 URL 形状', () => {
   });
 
   it('OpenAI 默认端点（含 /v1 版本段）→ /v1/chat/completions 且无双 /v1', async () => {
-    await chatWith(openaiModule, 'gpt-4o', { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 });
+    await chatWith(openaiPlugin, 'gpt-4o', { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 });
     expect(fetchedUrls).toContain('https://api.openai.com/v1/chat/completions');
     expect(
       fetchedUrls.some(u => u.includes('/v1/v1')),
@@ -77,7 +73,7 @@ describe('baseUrl 完整前缀语义：最终请求 URL 形状', () => {
 
 describe('前缀缓存命中量上报', () => {
   it('DeepSeek: prompt_cache_hit_tokens 被带进 usage.cachedPromptTokens', async () => {
-    const res = await chatWith(deepseekModule, 'deepseek-chat', {
+    const res = await chatWith(deepseekPlugin, 'deepseek-chat', {
       prompt_tokens: 41708,
       completion_tokens: 140,
       total_tokens: 41848,
@@ -89,7 +85,7 @@ describe('前缀缓存命中量上报', () => {
   });
 
   it('OpenAI: prompt_tokens_details.cached_tokens 被带进 usage.cachedPromptTokens', async () => {
-    const res = await chatWith(openaiModule, 'gpt-4o', {
+    const res = await chatWith(openaiPlugin, 'gpt-4o', {
       prompt_tokens: 10000,
       completion_tokens: 50,
       total_tokens: 10050,
@@ -99,14 +95,14 @@ describe('前缀缓存命中量上报', () => {
   });
 
   it('provider 未上报时保持 undefined（"不可知" ≠ "0 命中"）', async () => {
-    const ds = await chatWith(deepseekModule, 'deepseek-chat', {
+    const ds = await chatWith(deepseekPlugin, 'deepseek-chat', {
       prompt_tokens: 100,
       completion_tokens: 10,
       total_tokens: 110,
     });
     expect(ds.usage?.cachedPromptTokens).toBeUndefined();
     // 代理端点常整段省略 prompt_tokens_details
-    const oa = await chatWith(openaiModule, 'gpt-4o', {
+    const oa = await chatWith(openaiPlugin, 'gpt-4o', {
       prompt_tokens: 100,
       completion_tokens: 10,
       total_tokens: 110,
@@ -130,13 +126,13 @@ describe('前缀缓存命中量上报', () => {
     }) as typeof fetch;
 
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(openaiModule as never, { apiKey: 'test-key' });
+    await app.plugins.register(openaiPlugin, { apiKey: 'test-key' });
     await app.plugins.idle();
-    const llm = app.ctx.getService<LLMModel>('llm');
-    if (!llm?.chatStream) throw new Error('chatStream 不可用');
+    const model = app.bind({ services }).services.get(llm);
+    if (!model?.chatStream) throw new Error('chatStream 不可用');
 
     let cached: number | undefined;
-    for await (const chunk of llm.chatStream({ messages: [{ role: 'user', content: '在吗' }] })) {
+    for await (const chunk of model.chatStream({ messages: [{ role: 'user', content: '在吗' }] })) {
       if (chunk.usage?.cachedPromptTokens != null) cached = chunk.usage.cachedPromptTokens;
     }
     expect(cached, 'usage 收尾帧被 delta 守卫吞掉了').toBe(8192);
@@ -144,7 +140,7 @@ describe('前缀缓存命中量上报', () => {
   });
 
   it('明确 0 命中与不可知可区分', async () => {
-    const res = await chatWith(deepseekModule, 'deepseek-chat', {
+    const res = await chatWith(deepseekPlugin, 'deepseek-chat', {
       prompt_tokens: 100,
       completion_tokens: 10,
       total_tokens: 110,

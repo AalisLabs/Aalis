@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { Context, PluginManagerService, PluginStatusEntry } from '@aalis/core';
+import type { Logger, PluginManagerService, PluginStatusEntry, ServiceRef } from '@aalis/core';
 import type { PackageManagerService } from '@aalis/plugin-package-manager';
 import { classifyDepSpec, type DepOrigin, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 import type express from 'express';
@@ -101,9 +101,9 @@ interface PluginManifest {
  * 市场组件类别。'plugin'=可装卸功能；'api'=服务契约（只读）；'schema'=数据格式规范（只读）；
  * 'interface'=前端界面（可换）；'util'=工具库（被插件 import）
  *
- * 'api' 与 'schema' 的界线：`-api` 必然 declare 一个 `ServiceTypeMap` 成员（有服务可
- * `ctx.getService`）；`schema-*` 只定义跨服务流动的数据形状（`Message` / `ConfigSchema`），
- * 无对应服务、不可能有第二实现。
+ * 'api' 与 'schema' 的界线：`-api` 必然 declare 一个 `ServiceTypeMap` 成员（有对应服务可查）；
+ * `schema-*` 只定义跨服务流动的数据形状（`Message` / `ConfigSchema`），无对应服务、
+ * 不可能有第二实现。
  */
 type PackageCategory = 'plugin' | 'api' | 'schema' | 'interface' | 'util';
 
@@ -447,11 +447,21 @@ export function buildSearchUrl(q: string, keyword: string, registryBase: string 
   return `${base}/-/v1/search?text=${encodeURIComponent(text)}&size=100`;
 }
 
+/** 市场路由用到的能力 */
+export interface MarketplaceRoutesCaps {
+  logger: Logger;
+  plugins: Pick<ServiceRef<PluginManagerService>, 'current'>;
+  /**
+   * 取当前 package-manager 提供者。它由插件提供，而本包不反向依赖那个插件包，故按名现取：
+   * 缺席时装/卸/更新三条路由回 503，市场列表仍可浏览。
+   */
+  packageManager(): PackageManagerService | undefined;
+}
+
 /** 注册插件市场 REST 路由 */
 export function registerMarketplaceRoutes(
   expressApp: express.Express,
-  ctx: Context,
-  getPluginMgr: () => PluginManagerService | undefined,
+  caps: MarketplaceRoutesCaps,
   gate: RouteGate,
   registryBase: string = DEFAULT_REGISTRY,
   /** 本地包扫描：`name → 依赖名[]`（含 monorepo 工作区包）。keys 补 require.resolve 在 pnpm 工作区的盲区；values 供依赖图。 */
@@ -469,7 +479,7 @@ export function registerMarketplaceRoutes(
   // 不阻塞 WebUI（管理读档，与 /api/plugins 同级）。
   expressApp.get('/api/marketplace', gate(), async (req, res) => {
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-    const status = getPluginMgr()?.getStatus() ?? [];
+    const status = caps.plugins.current?.getStatus() ?? [];
     // 已装判定独立于 getStatus（后者只含已加载运行时插件，漏掉带 marker 不加载的 api/前端/核心）。
     // 同一次解析顺带取出本地版本：卡片上的 version 是 npm latest，只有拿到本地 resolved
     // 才能判「可更新」（版本序由服务端算进 updatable 下发，前端不自算）。
@@ -509,7 +519,7 @@ export function registerMarketplaceRoutes(
     if (okResults.length === 0) {
       const reason = settled.find(s => s.status === 'rejected') as PromiseRejectedResult | undefined;
       const msg = reason?.reason instanceof Error ? reason.reason.message : String(reason?.reason ?? '未知错误');
-      ctx.logger.debug(`market: npm registry 检索失败: ${msg}`);
+      caps.logger.debug(`market: npm registry 检索失败: ${msg}`);
       // 降级：只列本地已装。名单取自本地扫描 + 运行时已加载插件（后者覆盖扫描目录之外的部署）。
       const names = new Set([...localPkgs.keys(), ...status.map(p => p.name)]);
       for (const n of names) localOf(n);
@@ -599,7 +609,7 @@ export function registerMarketplaceRoutes(
     }
     // 图算法只认 name→依赖名[]，不该知道版本；在此把扫描结果投影成它要的形状。
     const depMap = new Map([...getLocalPackages()].map(([n, e]) => [n, e.deps] as const));
-    const status = getPluginMgr()?.getStatus() ?? [];
+    const status = caps.plugins.current?.getStatus() ?? [];
     const svcOf = new Map(
       status.map(p => [p.name, { provides: p.provides ?? [], requires: p.requiredServices ?? [] }]),
     );
@@ -655,7 +665,7 @@ export function registerMarketplaceRoutes(
       res.status(400).json({ error: 'name 字段必须是字符串' });
       return;
     }
-    const pkgMgr = ctx.getService<PackageManagerService>('package-manager');
+    const pkgMgr = caps.packageManager();
     if (!pkgMgr) {
       res.status(503).json({ error: 'package-manager 服务未启用，无法安装插件' });
       return;
@@ -680,7 +690,7 @@ export function registerMarketplaceRoutes(
       res.status(400).json({ error: 'name 字段必须是字符串' });
       return;
     }
-    const status = getPluginMgr()?.getStatus() ?? [];
+    const status = caps.plugins.current?.getStatus() ?? [];
     const dependents = findServiceDependents(name, status);
     if (dependents.length > 0) {
       res.status(409).json({
@@ -688,7 +698,7 @@ export function registerMarketplaceRoutes(
       });
       return;
     }
-    const pkgMgr = ctx.getService<PackageManagerService>('package-manager');
+    const pkgMgr = caps.packageManager();
     if (!pkgMgr) {
       res.status(503).json({ error: 'package-manager 服务未启用，无法卸载插件' });
       return;
@@ -719,7 +729,7 @@ export function registerMarketplaceRoutes(
       name: typeof (t as { name?: unknown })?.name === 'string' ? (t as { name: string }).name : '',
       version: typeof (t as { version?: unknown })?.version === 'string' ? (t as { version: string }).version : '',
     }));
-    const pkgMgr = ctx.getService<PackageManagerService>('package-manager');
+    const pkgMgr = caps.packageManager();
     if (!pkgMgr) {
       res.status(503).json({ error: 'package-manager 服务未启用，无法更新' });
       return;

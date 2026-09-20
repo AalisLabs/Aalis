@@ -1,25 +1,33 @@
 import { describe, expect, it } from 'vitest';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
+import { App, contributions, logger } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import { registerRelationContribution } from '../../packages/plugin-user-relation/src/middleware.js';
 import { RelationService } from '../../packages/plugin-user-relation/src/service.js';
 import { RelationStore } from '../../packages/plugin-user-relation/src/store.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 
+/**
+ * 登记贡献（middleware）与收集贡献（组装器）共用宿主根激活绑定的 contributions + logger，
+ * 注入块的 injector 全局键因此冠同一个激活 id；memory 只为给 RelationStore 一个后端。
+ */
 async function setup() {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(memoryInMemoryModule);
-  const mem = app.ctx.getService<MemoryService>('memory');
+  const host = app.bind({ contributions, logger, memory });
+  await app.plugins.register(memoryInMemory, {});
+  await app.plugins.idle();
+  const mem = host.memory.current;
   if (!mem) throw new Error('no memory');
   const service = new RelationService(new RelationStore(mem));
-  return { app, service };
+  return { host, service };
 }
+
+type Host = Awaited<ReturnType<typeof setup>>['host'];
 
 /** 让 middleware 跑一次：返回最终 messages 数组 */
 async function runMiddleware(
-  app: App,
+  host: Host,
   service: RelationService,
   opts: {
     userId?: string;
@@ -30,7 +38,7 @@ async function runMiddleware(
     maxDepth?: number;
   },
 ): Promise<Message[]> {
-  registerRelationContribution(app.ctx, service, {
+  registerRelationContribution(host, service, {
     enabled: true,
     maxDepth: opts.maxDepth ?? 1,
     maxBreadth: 5,
@@ -54,22 +62,22 @@ async function runMiddleware(
     platform: opts.platform,
     triggerType: opts.triggerType,
   };
-  await assemblePromptContributions(app.ctx, data);
+  await assemblePromptContributions(host, data);
   return data.messages;
 }
 
 describe('plugin-user-relation: middleware', () => {
   it('无 userId / platform → 不注入', async () => {
-    const { app, service } = await setup();
-    const messages = await runMiddleware(app, service, { triggerType: 'direct' });
+    const { host, service } = await setup();
+    const messages = await runMiddleware(host, service, { triggerType: 'direct' });
     expect(messages.some(m => String(m.metadata?.injector ?? '').endsWith('/user-relation'))).toBe(false);
   });
 
   it('triggerType=interval → 不注入（focus 不在该用户）', async () => {
-    const { app, service } = await setup();
+    const { host, service } = await setup();
     await service.observePerson('onebot', 'u1', 'Alice');
     await service.createEvent({ title: '事件', evidence: [] });
-    const messages = await runMiddleware(app, service, {
+    const messages = await runMiddleware(host, service, {
       userId: 'u1',
       platform: 'onebot',
       triggerType: 'interval',
@@ -78,7 +86,7 @@ describe('plugin-user-relation: middleware', () => {
   });
 
   it('用户在关系图中有事件 → 注入摘要 system 块', async () => {
-    const { app, service } = await setup();
+    const { host, service } = await setup();
     await service.observePerson('onebot', 'u1', 'Alice');
     const ev = await service.createEvent({ title: '讨论直播', summary: 'A 提议直播', evidence: [] });
     await service.addPersonEventEdge({
@@ -87,7 +95,7 @@ describe('plugin-user-relation: middleware', () => {
       role: 'initiator',
       sentiment: 'positive',
     });
-    const messages = await runMiddleware(app, service, {
+    const messages = await runMiddleware(host, service, {
       userId: 'u1',
       platform: 'onebot',
       triggerType: 'direct',
@@ -100,7 +108,7 @@ describe('plugin-user-relation: middleware', () => {
   });
 
   it('用户有人-人关系 → 注入关系列表', async () => {
-    const { app, service } = await setup();
+    const { host, service } = await setup();
     await service.observePerson('onebot', 'u1', 'Alice');
     await service.observePerson('onebot', 'u2', 'Bob');
     await service.addPersonPersonEdge({
@@ -108,7 +116,7 @@ describe('plugin-user-relation: middleware', () => {
       toPersonId: 'onebot:u2',
       relationType: 'friend',
     });
-    const messages = await runMiddleware(app, service, {
+    const messages = await runMiddleware(host, service, {
       userId: 'u1',
       platform: 'onebot',
       triggerType: 'immediate',
@@ -121,11 +129,11 @@ describe('plugin-user-relation: middleware', () => {
   });
 
   it('groupOnly=true 且 messages 无 group 标记 → 不注入', async () => {
-    const { app, service } = await setup();
+    const { host, service } = await setup();
     await service.observePerson('onebot', 'u1', 'Alice');
     const ev = await service.createEvent({ title: 'x', evidence: [] });
     await service.addPersonEventEdge({ fromPersonId: 'onebot:u1', toEventId: ev.id, role: 'participant' });
-    const messages = await runMiddleware(app, service, {
+    const messages = await runMiddleware(host, service, {
       userId: 'u1',
       platform: 'onebot',
       triggerType: 'direct',
@@ -139,7 +147,7 @@ describe('plugin-user-relation: middleware', () => {
   });
 
   it('实体别名 → 注入显示「（别名: …）」', async () => {
-    const { app, service } = await setup();
+    const { host, service } = await setup();
     await service.observePerson('onebot', 'u1', 'Alice');
     const ent = await service.createEntity({
       entityKind: 'work',
@@ -154,7 +162,7 @@ describe('plugin-user-relation: middleware', () => {
       // 且 'interested-in' 不在 PersonEntityRole 取值里；于是必填的 role 实际是 undefined。
       role: 'enthusiast',
     });
-    const messages = await runMiddleware(app, service, {
+    const messages = await runMiddleware(host, service, {
       userId: 'u1',
       platform: 'onebot',
       triggerType: 'direct',
@@ -166,7 +174,7 @@ describe('plugin-user-relation: middleware', () => {
   });
 
   it('event part-of global hub → 注入「所属跨会话话题」', async () => {
-    const { app, service } = await setup();
+    const { host, service } = await setup();
     await service.observePerson('onebot', 'u1', 'Alice');
     const child = await service.createEvent({ title: '群1 聊直播', evidence: [] });
     const hub = await service.createEvent({
@@ -180,7 +188,7 @@ describe('plugin-user-relation: middleware', () => {
       toEventId: hub.id,
       relationType: 'part-of',
     });
-    const messages = await runMiddleware(app, service, {
+    const messages = await runMiddleware(host, service, {
       userId: 'u1',
       platform: 'onebot',
       triggerType: 'direct',
@@ -193,7 +201,7 @@ describe('plugin-user-relation: middleware', () => {
   });
 
   it('共现伙伴附「共同关注」实体', async () => {
-    const { app, service } = await setup();
+    const { host, service } = await setup();
     await service.observePerson('onebot', 'u1', 'Alice');
     await service.observePerson('onebot', 'u2', 'Bob');
     const ent = await service.createEntity({ entityKind: 'work', name: '文明6', evidence: [] });
@@ -216,7 +224,7 @@ describe('plugin-user-relation: middleware', () => {
       await service.addPersonEventEdge({ fromPersonId: 'onebot:u2', toEventId: ev.id, role: 'participant' });
     }
 
-    const messages = await runMiddleware(app, service, {
+    const messages = await runMiddleware(host, service, {
       userId: 'u1',
       platform: 'onebot',
       triggerType: 'direct',

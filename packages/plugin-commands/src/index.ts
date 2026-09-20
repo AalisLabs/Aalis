@@ -1,27 +1,26 @@
-import type { AuthorityService } from '@aalis/api-authority';
-import type { CommandArgv } from '@aalis/api-commands';
-import { useCommandService } from '@aalis/api-commands';
-import type { GatewayService } from '@aalis/api-gateway';
-import { INBOUND_PHASE } from '@aalis/api-gateway';
-import type { MemoryService } from '@aalis/api-memory';
-import { createStorageGateway, type StorageService } from '@aalis/api-storage';
+import { authority } from '@aalis/api-authority';
+import { type CommandArgv, commands as commandsService } from '@aalis/api-commands';
+import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
+import { memory } from '@aalis/api-memory';
+import { createStorageGateway, type StorageService, storage } from '@aalis/api-storage';
 import type { ToolService } from '@aalis/api-tools';
-import type { AppService, Context } from '@aalis/core';
+import {
+  appService,
+  type BoundOf,
+  config,
+  definePlugin,
+  events,
+  hooks,
+  logger,
+  optional,
+  provide,
+  services,
+} from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { CommandRegistry } from './commands.js';
 import { renderDetail, renderOverview } from './help.js';
 
-// ===== 插件元数据 =====
-
-export const name = '@aalis/plugin-commands';
-export const displayName = '内置指令';
-export const subsystem = 'core';
-export const provides = ['commands'];
-export const inject = {
-  required: ['gateway'],
-};
-
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   commandPrefix: {
     type: 'string',
     label: '指令前缀',
@@ -29,8 +28,6 @@ export const configSchema: ConfigSchema = {
     description: '指令触发前缀，设为空字符串可使用纯关键词触发',
   },
 };
-
-// ===== 插件入口 =====
 
 /**
  * 删除目录及内部所有内容，返回顶层子项数（用于"清了 N 张/N 个会话"提示）。
@@ -111,18 +108,64 @@ function renderClearTypeList(): string {
   ].join('\n');
 }
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
+// ===== 插件入口 =====
+
+const uses = {
+  /**
+   * commands 由本插件自己提供，只能声明成 optional：写 required 会把激活闸架在自己的
+   * 产出上，永远等不到。绑定接口给的是「指令声明自动归属本次激活」的注册门面，
+   * 指向容器里的当前胜者（别的插件提供了更高优先级的注册表时就是那一个）。
+   */
+  commands: optional(commandsService),
+  gateway,
+  storage: optional(storage),
+  memory: optional(memory),
+  authority: optional(authority),
+  app: optional(appService),
+  events,
+  hooks,
+  logger,
+  config,
+  provide,
+  services,
+};
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-commands',
+  displayName: '内置指令',
+  subsystem: 'core',
+  configSchema,
+  provides: [commandsService],
+  uses,
+  apply: registerCommands,
+});
+
+function registerCommands({
+  commands,
+  gateway,
+  storage,
+  memory,
+  authority,
+  app,
+  events,
+  hooks,
+  logger,
+  config,
+  provide,
+  services,
+}: Caps): void {
   // 创建指令注册表并注册为服务
-  const commands = new CommandRegistry(ctx.logger);
-  const storage = createStorageGateway(ctx);
+  const registry = new CommandRegistry(logger);
+  const storageGateway = createStorageGateway(storage);
 
   // 可见性的运行时覆盖（authorityOverrides）现归 authority 配置，不在指令注册表加载。
 
   // 配置指令系统
-  commands.prefix = (config.commandPrefix as string) ?? '/';
+  registry.prefix = (config.commandPrefix as string) ?? '/';
 
   // 注册服务
-  ctx.provide('commands', commands);
+  provide(commandsService, registry);
 
   // ===== 统一 memory:clear 中间件：附件缓存清理（图片/视频/语音/文件）=====
   //
@@ -132,7 +175,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   // （四类必须齐清，漏掉任一类即留下残留文件）。
   //
   // types 语义：未指定=清全部附件；指定则只清命中的种类（如 /clear -t video）。
-  ctx.middleware(
+  hooks.middleware(
     'memory:clear',
     async (
       data: {
@@ -148,7 +191,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
         if (data.types && !data.types.includes(k.type)) continue;
         try {
           if (data.scope === 'all') {
-            const removed = await removeDirCounted(storage, `data:/${k.dir}`);
+            const removed = await removeDirCounted(storageGateway, `data:/${k.dir}`);
             data.results.push({
               source: `${k.type}-cache`,
               success: true,
@@ -158,7 +201,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
                   : `${k.label}缓存目录不存在，无需清空`,
             });
           } else if (safeSessionId) {
-            const removed = await removeDirCounted(storage, `data:/${k.dir}/${safeSessionId}`);
+            const removed = await removeDirCounted(storageGateway, `data:/${k.dir}/${safeSessionId}`);
             data.results.push({
               source: `${k.type}-cache`,
               success: true,
@@ -203,24 +246,24 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
   const TRUSTED_SOURCE_EXACT = new Set(['scheduler']);
   const isTrustedSystemSource = (source: string | undefined): boolean => !!source && TRUSTED_SOURCE_EXACT.has(source);
 
-  ctx.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
+  hooks.middleware(INBOUND_PHASE.COMMAND, async (data, next) => {
     const { message } = data;
     // 内部触发（idle-trigger 等无 userId）不参与命令解析
     if (!message.content) return next();
 
-    const parsed = commands.parseCommand(message.content);
+    const parsed = registry.parseCommand(message.content);
     if (!parsed) return next();
 
     // 解析到 "<prefix>foo" 但没有任何插件注册过该指令 → 当作普通消息处理
     // （归档、trigger、agent 等下游相位继续工作），避免对错字/打字噪音回显"未知指令"。
-    if (!commands.hasMatch(parsed.name, parsed.args)) return next();
+    if (!registry.hasMatch(parsed.name, parsed.args)) return next();
 
     const isSystemTrigger = isTrustedSystemSource(message.source);
 
     try {
       // 优先用 actor（系统触发器注入的代理身份），fallback 到消息原始身份。
-      // 与 agent 工具调用路径（plugin-agent resolveToolCallContext）同语义。
-      const result = await commands.execute(parsed.name, {
+      // 与 agent 工具调用路径解析调用者身份同语义。
+      const result = await registry.execute(parsed.name, {
         sessionId: message.sessionId,
         platform: message.actor?.platform ?? message.platform,
         userId: message.actor?.userId ?? message.userId,
@@ -234,95 +277,90 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
           // 系统触发器（scheduler/workflow）的 sessionId 通常是 internal 虚拟 session，
           // 走 outbound 也无人接收；直接写日志便于排查。
           const preview = result.length > 500 ? `${result.slice(0, 500)}…` : result;
-          ctx.logger.info(`[${message.source}] ${parsed.raw} → session=${message.sessionId} 结果:\n${preview}`);
+          logger.info(`[${message.source}] ${parsed.raw} → session=${message.sessionId} 结果:\n${preview}`);
         } else {
-          const gateway = ctx.getService<GatewayService>('gateway');
+          // required 依赖在调度收敛前可能短暂缺席，故保留事件兜底
+          const gatewayService = gateway.current;
           const reply = {
             content: result,
             sessionId: message.sessionId,
             platform: message.platform,
             source: 'command' as const,
           };
-          if (gateway) {
-            await gateway.dispatchOutbound(reply);
+          if (gatewayService) {
+            await gatewayService.dispatchOutbound(reply);
           } else {
-            await ctx.emit('outbound:message', reply);
+            await events.emit('outbound:message', reply);
           }
         }
       }
     } catch (err) {
-      ctx.logger.warn(`指令执行失败: ${err}`);
+      logger.warn(`指令执行失败: ${err}`);
     }
     // 命令命中：不调用 next() —— 整个入站管道立即停止（不再进入 flow/trigger/dispatch）
   });
 
   // ===== 内置指令 =====
 
-  useCommandService(ctx)
-    .command('help [name:text]', '显示指令列表；带指令名看用法详情')
-    .action(async (_argv, name) => {
-      const all = commands.getAll();
-      // 无参 → 概览（只列顶层，子指令折成计数）
-      if (!name) {
-        const childCount = (top: string): number =>
-          all.filter(c => c.name.startsWith(`${top}.`) && !c.name.slice(top.length + 1).includes('.')).length;
-        return renderOverview(all, commands.prefix, childCount);
-      }
-      // 有参 → 详情。接受空格与点两种写法：`help session set` ≡ `help session.set`
-      const path = String(name)
-        .trim()
-        .split(/[\s.]+/)
-        .filter(Boolean);
-      const cmd = commands.getNode(path);
-      if (!cmd) return `没有指令 ${path.join(' ')}。敲 ${commands.prefix}help 看可用指令。`;
-      const prefixDot = `${cmd.name}.`;
-      const children = all.filter(c => c.name.startsWith(prefixDot) && !c.name.slice(prefixDot.length).includes('.'));
-      return renderDetail(cmd, children, commands.prefix);
-    });
+  commands.command('help [name:text]', '显示指令列表；带指令名看用法详情').action(async (_argv, name) => {
+    const all = registry.getAll();
+    // 无参 → 概览（只列顶层，子指令折成计数）
+    if (!name) {
+      const childCount = (top: string): number =>
+        all.filter(c => c.name.startsWith(`${top}.`) && !c.name.slice(top.length + 1).includes('.')).length;
+      return renderOverview(all, registry.prefix, childCount);
+    }
+    // 有参 → 详情。接受空格与点两种写法：`help session set` ≡ `help session.set`
+    const path = String(name)
+      .trim()
+      .split(/[\s.]+/)
+      .filter(Boolean);
+    const cmd = registry.getNode(path);
+    if (!cmd) return `没有指令 ${path.join(' ')}。敲 ${registry.prefix}help 看可用指令。`;
+    const prefixDot = `${cmd.name}.`;
+    const children = all.filter(c => c.name.startsWith(prefixDot) && !c.name.slice(prefixDot.length).includes('.'));
+    return renderDetail(cmd, children, registry.prefix);
+  });
 
-  useCommandService(ctx)
-    .command('status', '显示系统状态')
-    .action(async () => {
-      const lines = ['**系统状态：**', ''];
-      const checks = [
-        ['WebUI Server', ctx.getService('webui-server') !== undefined],
-        ['CLI', ctx.getService('cli') !== undefined],
-        ['LLM 服务', ctx.getService('llm') !== undefined],
-        ['Agent', ctx.getService('agent') !== undefined],
-        ['记忆服务', ctx.getService('memory') !== undefined],
-        ['人格服务', ctx.getService('persona') !== undefined],
-        ['Embedding', ctx.getService('embedding') !== undefined],
-        ['向量库', ctx.getService('vectorstore') !== undefined],
-      ] as const;
-      for (const [label, ok] of checks) {
-        lines.push(`- ${label}: ${ok ? '✅ 可用' : '❌ 不可用'}`);
-      }
-      const tools = ctx.getService<ToolService>('tools');
-      lines.push(`- 已注册工具: ${tools ? tools.getAll().length : 0} 个`);
-      lines.push(`- 已注册指令: ${commands.getAll().length} 个`);
-      return lines.join('\n');
-    });
+  commands.command('status', '显示系统状态').action(async () => {
+    const lines = ['**系统状态：**', ''];
+    // 按名枚举：这张表回答的只是"在不在"，其中大半个子系统本插件并不依赖，
+    // 按名动态查不产生依赖边，也就不会把它们拖进本插件的激活闸与关停顺序。
+    const checks = [
+      ['WebUI Server', services.getByName('webui-server') !== undefined],
+      ['CLI', services.getByName('cli') !== undefined],
+      ['LLM 服务', services.getByName('llm') !== undefined],
+      ['Agent', services.getByName('agent') !== undefined],
+      ['记忆服务', services.getByName('memory') !== undefined],
+      ['人格服务', services.getByName('persona') !== undefined],
+      ['Embedding', services.getByName('embedding') !== undefined],
+      ['向量库', services.getByName('vectorstore') !== undefined],
+    ] as const;
+    for (const [label, ok] of checks) {
+      lines.push(`- ${label}: ${ok ? '✅ 可用' : '❌ 不可用'}`);
+    }
+    const toolService = services.getByName('tools') as ToolService | undefined;
+    lines.push(`- 已注册工具: ${toolService ? toolService.getAll().length : 0} 个`);
+    lines.push(`- 已注册指令: ${registry.getAll().length} 个`);
+    return lines.join('\n');
+  });
 
-  useCommandService(ctx)
-    .command('shutdown', '关闭应用', { visibility: 'restricted' })
-    .action(async () => {
-      const app = ctx.getService<AppService>('app');
-      if (!app) return '无法访问应用服务';
-      setTimeout(async () => {
-        await app.stop();
-        process.exit(0);
-      }, 500);
-      return '正在关闭应用…';
-    });
+  commands.command('shutdown', '关闭应用', { visibility: 'restricted' }).action(async () => {
+    const host = app.current;
+    if (!host) return '无法访问应用服务';
+    setTimeout(async () => {
+      await host.stop();
+      process.exit(0);
+    }, 500);
+    return '正在关闭应用…';
+  });
 
-  useCommandService(ctx)
-    .command('restart', '重启应用', { visibility: 'restricted' })
-    .action(async () => {
-      const app = ctx.getService<AppService>('app');
-      if (!app) return '无法访问应用服务';
-      app.restart();
-      return '正在重启应用…';
-    });
+  commands.command('restart', '重启应用', { visibility: 'restricted' }).action(async () => {
+    const host = app.current;
+    if (!host) return '无法访问应用服务';
+    host.restart();
+    return '正在重启应用…';
+  });
 
   // ===== /clear —— 清空记忆 =====
   // 默认清当前会话；全局清理通过显式危险子指令 /clear all 进入，避免把高危语义藏在普通选项里。
@@ -340,20 +378,20 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       results: [] as Array<{ source: string; success: boolean; message: string }>,
     };
 
-    await ctx.runHook('memory:clear', clearData, async () => {
-      const memory = ctx.getService<MemoryService>('memory');
-      if (!memory) {
+    await hooks.run('memory:clear', clearData, async () => {
+      const memoryService = memory.current;
+      if (!memoryService) {
         clearData.results.push({ source: 'memory', success: false, message: '记忆服务不可用' });
         return;
       }
 
       if (!types || types.includes('context')) {
         try {
-          if (isGlobal && memory.clearAll) {
-            await memory.clearAll();
+          if (isGlobal && memoryService.clearAll) {
+            await memoryService.clearAll();
             clearData.results.push({ source: 'memory', success: true, message: '所有消息历史和归档已清空' });
           } else {
-            await memory.clearSession(cmdCtx.sessionId);
+            await memoryService.clearSession(cmdCtx.sessionId);
             clearData.results.push({ source: 'memory', success: true, message: '当前会话消息历史已清空' });
           }
         } catch (err) {
@@ -363,8 +401,8 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
       }
 
       // 图片缓存与 vectorstore/persona/user-profile 等子系统的清理
-      // 现在统一由各自的 memory:clear middleware 处理（见 apply() 末尾的
-      // image-cache middleware）。runClear 仅负责调度 hook 与处理 memory 主体。
+      // 统一由各自的 memory:clear middleware 处理（见上面的附件缓存 middleware）。
+      // runClear 仅负责调度 hook 与处理 memory 主体。
     });
 
     if (clearData.results.length === 0) return '无可清除的记忆模块。';
@@ -387,7 +425,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     }
     // 共享会话设防：静态声明只能给出与会话归属无关的策略，这一档必须在运行期判。
     if (argv.session.sessionType && argv.session.sessionType !== 'private') {
-      const auth = ctx.getService<AuthorityService>('authority');
+      const auth = authority.current;
       const isOwner = auth?.isOwner(argv.session.platform, argv.session.userId) ?? false;
       const level =
         auth?.listUsers().find(u => u.platform === argv.session.platform && u.userId === argv.session.userId)?.level ??
@@ -401,7 +439,7 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
 
   const clearTypeOptDesc = `清理类型，可重复或用逗号分隔。可用: all, ${CLEAR_TYPES.map(t => t.id).join(', ')}`;
 
-  useCommandService(ctx)
+  commands
     // 清空**当前会话**的记忆。风险随会话归属而变，静态声明取「最松的安全默认」：
     // confirm:'session' 但不抬等级——私聊里会话是用户自己的，清自己的记忆属自助行为，
     // 要 2 级等于剥夺；确认则挡住提示词注入触发的误清（需真人点一下）。
@@ -417,11 +455,9 @@ export function apply(ctx: Context, config: Record<string, unknown>): void {
     .example('/clear all --type all')
     .action(async argv => runClearFromOptions(argv, 'session'));
 
-  useCommandService(ctx)
-    .command('clear.list', '列出可清理类型')
-    .action(async () => renderClearTypeList());
+  commands.command('clear.list', '列出可清理类型').action(async () => renderClearTypeList());
 
-  useCommandService(ctx)
+  commands
     // 全局清空，比 /clear 更重：同样 dangerous（等级 2 + 二次确认）。
     // 原先只写 visibility:'restricted' 拿到了等级 2 但漏了 confirm。
     .command('clear.all', '【危险】按 --type 清空全部会话；未指定类型时清空全部类型', {

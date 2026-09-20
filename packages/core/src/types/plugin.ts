@@ -22,7 +22,6 @@ export interface InjectDeclaration {
  * 插件元数据的扩展点：core 对这里的字段零感知，只原样带在插件定义上。配置表单（configSchema）由
  * @aalis/schema-config、WebUI 展示与分组由 @aalis/api-webui 经 declaration merging 挂进来。
  */
-// biome-ignore lint/suspicious/noEmptyInterface: 扩展点，由契约包 declaration merging 填充
 export interface PluginMeta {}
 
 export interface PluginModule extends PluginMeta {

@@ -3,9 +3,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { Context, Logger } from '@aalis/core';
+import type { Logger, ServiceRef } from '@aalis/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
+import type { AdapterCaps } from '../../packages/plugin-media/src/llm-adapter.js';
 import { scanLLMProcessors } from '../../packages/plugin-media/src/llm-adapter.js';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import { safeDownloadToTemp } from '../../packages/plugin-media/src/safe-fetch.js';
@@ -56,8 +57,8 @@ function realRuntime(baseDir: string): void {
   });
 }
 
-/** 一个只有 audio 能力的假 LLM entry：记下收到的 audios，回一句转写结果 */
-function audioLLMCtx(): { ctx: Context; audios: () => string[] } {
+/** 一个只有 audio 能力的假 LLM 提供者：记下收到的 audios，回一句转写结果 */
+function audioLLMCaps(): { caps: AdapterCaps; audios: () => string[] } {
   let seen: string[] = [];
   const instance: LLMModel = {
     id: 'fake-audio',
@@ -68,13 +69,13 @@ function audioLLMCtx(): { ctx: Context; audios: () => string[] } {
     },
   } as unknown as LLMModel;
   const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
-  return {
-    ctx: {
-      logger,
-      getAllServices: () => [{ contextId: 'p/fake-audio', instance }],
-    } as unknown as Context,
-    audios: () => seen,
+  const llm: ServiceRef<LLMModel> = {
+    current: instance,
+    require: () => instance,
+    all: () => [{ contextId: 'p/fake-audio', instance, priority: 0 }],
+    follow: () => () => {},
   };
+  return { caps: { llm, logger }, audios: () => seen };
 }
 
 beforeAll(async () => {
@@ -115,10 +116,10 @@ describe('safeDownloadToTemp', () => {
 
 describe('audio 附件 → LLM 转写', () => {
   it('http 音频（无扩展名 URL）能转写：uri 随下载结果一起回来，不再必抛', async () => {
-    const { ctx, audios } = audioLLMCtx();
-    const proc = scanLLMProcessors(ctx).find(p => p.transcribe);
+    const { caps, audios } = audioLLMCaps();
+    const proc = scanLLMProcessors(caps).find(p => p.transcribe);
     if (!proc?.transcribe) throw new Error('未包出 audio processor');
-    const r = await proc.transcribe({ attachment: { kind: 'audio', data: `http://127.0.0.1:${port}/download` } }, ctx);
+    const r = await proc.transcribe({ attachment: { kind: 'audio', data: `http://127.0.0.1:${port}/download` } });
     expect(r.text).toBe('转写文本');
     expect(audios()[0]).toBe(`data:audio/mpeg;base64,${MP3.toString('base64')}`);
   });
@@ -126,10 +127,10 @@ describe('audio 附件 → LLM 转写', () => {
   it('file:// 音频走 proc.readExternalFile 回落（没落进 storage 根不是死路）', async () => {
     const local = join(base, 'local-voice.mp3');
     await writeFile(local, MP3);
-    const { ctx, audios } = audioLLMCtx();
-    const proc = scanLLMProcessors(ctx).find(p => p.transcribe);
+    const { caps, audios } = audioLLMCaps();
+    const proc = scanLLMProcessors(caps).find(p => p.transcribe);
     if (!proc?.transcribe) throw new Error('未包出 audio processor');
-    const r = await proc.transcribe({ attachment: { kind: 'audio', data: `file://${local}` } }, ctx);
+    const r = await proc.transcribe({ attachment: { kind: 'audio', data: `file://${local}` } });
     expect(r.text).toBe('转写文本');
     expect(audios()[0]).toBe(`data:audio/mpeg;base64,${MP3.toString('base64')}`);
   });

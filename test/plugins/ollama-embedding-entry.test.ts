@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import { App } from '../../packages/core/src/index.js';
-import * as ollama from '../../packages/plugin-llm-ollama/src/index.js';
+import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // /api/show 说了话就是权威：探测成功但映射不出对话能力（embedding 专用模型报
@@ -32,7 +32,7 @@ function stubOllama(caps: Record<string, string[] | null>): void {
 async function registeredIds(caps: Record<string, string[] | null>, config: Record<string, unknown> = {}) {
   stubOllama(caps);
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  await app.ctx.useModule(ollama as never, { baseUrl: 'http://127.0.0.1:11434', ...config });
+  await app.ctx.useModule(ollama, { baseUrl: 'http://127.0.0.1:11434', ...config });
   await app.plugins.idle();
   const entries = app.ctx.getAllServices<LLMModel>('llm').map(e => e.instance.id);
   await app.stop();

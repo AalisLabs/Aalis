@@ -13,17 +13,12 @@
 // 落后超过 MAX_CATCHUP_MINUTES 分钟时只回补最近这几分钟，其余分钟明确跳过并 warn 一次
 // ——合盖一夜醒来不该把几百分钟的任务一次性全轰出去。
 //
-// 由 scheduler / workflow 等上层插件 inject.required 后调用 subscribe()。
+// 由 scheduler / workflow 等上层插件在 uses 里声明 cronEngine 后调用 subscribe()。
 // ============================================================
 
-import type { CronEngine, CronSubscribeOptions, ValidateResult } from '@aalis/api-cron-engine';
-import type { Context } from '@aalis/core';
+import { type CronEngine, type CronSubscribeOptions, cronEngine, type ValidateResult } from '@aalis/api-cron-engine';
+import { type BoundOf, definePlugin, lifecycle, logger, provide } from '@aalis/core';
 import { matchesCron, normalizeCronExpr, validateCronExpr } from '@aalis/util-cron';
-
-export const name = '@aalis/plugin-cron-engine';
-export const displayName = 'Cron 调度引擎';
-export const subsystem = 'scheduler';
-export const provides = ['cron-engine'];
 
 interface CronSubscription {
   id: number;
@@ -46,14 +41,25 @@ function floorToMinute(ms: number): number {
   return ms - (ms % MINUTE_MS);
 }
 
-export function apply(ctx: Context): void {
-  const logger = ctx.logger;
+const uses = { provide, logger, lifecycle };
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-cron-engine',
+  displayName: 'Cron 调度引擎',
+  subsystem: 'scheduler',
+  provides: [cronEngine],
+  uses,
+  apply(caps) {
+    startEngine(caps);
+  },
+});
+
+function startEngine({ provide, logger, lifecycle }: Caps): void {
   const cronSubs = new Map<number, CronSubscription>();
   const intervalSubs = new Map<number, IntervalSubscription>();
   let nextId = 1;
   let tickTimer: ReturnType<typeof setTimeout> | null = null;
-  /** 已 dispose：卸载后仍被握着的陈旧服务引用再 subscribe 时，不得再建任何定时器（tick 循环与 interval 都算） */
-  let stopped = false;
   /** 已求值过的最后一个整分钟（epoch ms）；0 = 主循环还没跑过任何一分钟 */
   let lastTickMinute = 0;
 
@@ -65,7 +71,8 @@ export function apply(ctx: Context): void {
 
   /** 把下一轮 tick 排到下一个整分钟边界（多 20ms 余量，避免边界前一毫秒醒来空转一轮） */
   function scheduleNextTick(): void {
-    if (stopped) return;
+    // 关闭一开始就不再排：清理段清掉的定时器不会被后续一轮重新排出来
+    if (lifecycle.closed) return;
     if (tickTimer) return;
     const now = Date.now();
     tickTimer = setTimeout(cronTick, floorToMinute(now) + MINUTE_MS - now + 20);
@@ -118,7 +125,7 @@ export function apply(ctx: Context): void {
       if (!v.ok) throw new Error(v.reason);
       // 卸载后仍被握着的陈旧服务引用：cron 与 interval 两条通道一律不再建定时器
       // （interval 分支建出的 setInterval 没有任何东西会再清它，会越过卸载一直活着）
-      if (stopped) {
+      if (lifecycle.closed) {
         logger.warn('cron-engine 已卸载，忽略迟到的 subscribe');
         return () => {};
       }
@@ -184,10 +191,9 @@ export function apply(ctx: Context): void {
     },
   };
 
-  ctx.provide('cron-engine', service);
+  provide(cronEngine, service);
 
-  ctx.onDispose(() => {
-    stopped = true;
+  lifecycle.onDispose(() => {
     if (tickTimer) clearTimeout(tickTimer);
     tickTimer = null;
     for (const s of intervalSubs.values()) clearInterval(s.timer);

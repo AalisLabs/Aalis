@@ -1,24 +1,29 @@
-import { createProcessGateway, type ExecResult, type ProcessService } from '@aalis/api-process';
-import type { AppService, Context, PluginManagerService } from '@aalis/core';
-import { defineService } from '@aalis/core';
+import { createProcessGateway, type ExecResult, type ProcessService, processService } from '@aalis/api-process';
+// subsystem 这项展示元数据由 api-webui 经 declaration merging 挂到 PluginMeta 上；
+// 不把它带进本包的编译单元，独立构建时插件定义对象上的 subsystem 会被当成多余属性拒收。
+import type {} from '@aalis/api-webui';
+import {
+  type AppService,
+  appService,
+  type BoundOf,
+  config,
+  definePlugin,
+  defineService,
+  hostConfig,
+  logger,
+  optional,
+  pluginsService,
+  provide,
+  services,
+} from '@aalis/core';
 import { classifyDepSpec, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
-
-// ===== 插件元数据 =====
-
-export const name = '@aalis/plugin-package-manager';
-export const displayName = '包管理器';
-export const subsystem = 'system';
-export const provides = ['package-manager'];
-export const inject = {
-  required: ['process'],
-};
 
 // ===== 服务接口 =====
 
 /**
  * 包管理服务：在项目根 `dependencies` 里装卸插件。
  *
- * 通过 `ctx.getService<PackageManagerService>('package-manager')` 消费。
+ * 消费方在 uses 里声明本包导出的 {@link packageManager} 描述符。
  *
  * 根 `dependencies` 是加载器**唯一**的发现来源，所以装卸都落在那里——不再有「解包到
  * packages/ 目录」那条路径（它按 `pnpm-workspace.yaml` 猜部署形态，而那个文件与真正
@@ -151,7 +156,7 @@ const PKG_SPEC_RE = /^(@[a-z0-9][a-z0-9\-_.]*\/)?[a-z0-9][a-z0-9\-_.]*(@[a-z0-9]
 /**
  * 校验单个包 spec，合法返回 `undefined`、非法返回可读理由。
  *
- * 放在**服务层**：本服务经 `ctx.provide` 公开，任何插件都能绕过 HTTP 路由直接调用。
+ * 放在**服务层**：本服务对外公开，任何插件都能绕过 HTTP 路由直接调用。
  * 这与 `buildUpdateSpecs` 是同一条纪律——路由只做「是不是字符串」的形状检查，安全校验
  * 收在所有调用方的必经之路上。**argv 面只有这一份实现**（两份正则漂移是本仓栽过的坑）；
  * URL 路径段另有一份不含版本段的（webui-server 的 depgraph 端点，见那里的注释）——
@@ -164,19 +169,44 @@ export function validatePackageSpec(spec: unknown): string | undefined {
   return undefined;
 }
 
-function createService(ctx: Context, config: Record<string, unknown>): PackageManagerService {
-  const log = ctx.logger;
-  const proc = createProcessGateway(ctx);
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+
+export const packageManager = defineService<PackageManagerService>('package-manager');
+
+/**
+ * 撤销通道另外两端的服务。这里只问「当前提供者是谁」（读 contextId），不消费它们的契约类型，
+ * 故就地造描述符——服务身份是描述符的 name，与契约包导出的那份指向同一服务。
+ */
+const webuiClient = defineService<unknown>('webui-client');
+const webuiServer = defineService<unknown>('webui-server');
+
+// ===== 插件入口 =====
+
+const uses = {
+  proc: processService,
+  logger,
+  config,
+  provide,
+  services,
+  app: optional(appService),
+  plugins: optional(pluginsService),
+  hostConfig: optional(hostConfig),
+};
+type Caps = BoundOf<typeof uses>;
+
+function createService(caps: Caps): PackageManagerService {
+  const log = caps.logger;
+  const proc = createProcessGateway(caps.proc);
 
   function getApp(): AppService {
-    const app = ctx.getService<AppService>('app');
+    const app = caps.app.current;
     if (!app) throw new Error('app 服务不可用，无法执行包管理操作');
     return app;
   }
 
   /** 把配置里的相对/绝对路径归一成绝对路径；未配置则用 fallback。 */
   function resolveConfigured(key: 'projectRoot', fallback: string): string {
-    const override = (config as Record<string, unknown>)[key];
+    const override = caps.config[key];
     if (typeof override === 'string' && override.length > 0) {
       return override.startsWith('/') ? override : `${process.cwd()}/${override.replace(/^\.?\/+/, '')}`;
     }
@@ -209,11 +239,7 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
     // 判据取运行时注册表而非 rescan 返回值（理由见 PackageManagerDeps.isPluginRegistered）。
     // plugins 服务缺席时保守返回 false——宁可让「声明为插件却没加载」的诊断多报一次，
     // 也不要在真没装上时谎报成功。
-    isPluginRegistered: name =>
-      ctx
-        .getService<{ getStatus(): Array<{ name: string }> }>('plugins')
-        ?.getStatus()
-        .some(p => p.name === name) ?? false,
+    isPluginRegistered: name => caps.plugins.current?.getStatus().some(p => p.name === name) ?? false,
     // 重启并交付回滚凭据。core 只透传 rollback（不解释形状），由 runtime 的重启策略
     // 在「新实例 ready 前夭折」时消费——触发者与执行者同为父进程，全程内存不落盘。
     //
@@ -224,39 +250,39 @@ function createService(ctx: Context, config: Record<string, unknown>): PackageMa
     // 彻底卸载：dispose 上下文并从注册表移除（plugins 服务缺席则 no-op）。
     // 区别于 disable（仅置禁用态，仍滞留在插件列表里）。
     // 撤销通道 = 市场页能用所依赖的三样：页面本身 / 托管它的服务端 / 装卸能力本身。
-    // 取每个服务当前生效的 provider（`getAllServices` 首个即是），contextId 就是包名
-    // （插件以包名做 ctx.id，webui-server 也用包名做前端候选的 fork id）。
+    // 取每个服务当前生效的 provider（`services.all` 的首个即是），contextId 就是包名
+    // （插件以包名做实例 id，webui-server 也用包名做前端候选的实例 id）。
     // 服务缺席时该项自然不在列表里——不启用 WebUI 的部署不受影响。
     // contextId 直接就是包名，**不要**再切分：包名带 scope（`@aalis/plugin-webui-client`）时
     // `split('/')[0]` 会把它截成 `@aalis`，与下游 `lifeline.includes(pluginName)` 永不相等，
-    // 整道闸对全部 scoped 包恒不触发（实测三个目标全放行）。这三个服务都以 `ctx.fork(包名)`
-    // 或插件自身 ctx 注册，contextId 不含 entryId 后缀；真出现多实例后缀要靠 module 声明
-    // `reusable`，而这三个都没有，故也不需要为此加解析。
+    // 整道闸对全部 scoped 包恒不触发（实测三个目标全放行）。这三个服务都由以包名为实例 id 的
+    // 激活注册，contextId 不含 entryId 后缀；真出现多实例后缀要靠模块声明 `reusable`，
+    // 而这三个都没有，故也不需要为此加解析。
     recoveryChannelProviders: () => [
       ...new Set(
-        ['webui-client', 'webui-server', 'package-manager'].flatMap(n => {
-          const id = ctx.getAllServices(n)[0]?.contextId;
+        [webuiClient, webuiServer, packageManager].flatMap(descriptor => {
+          const id = caps.services.all(descriptor)[0]?.contextId;
           return id ? [id] : [];
         }),
       ),
     ],
 
     unloadPlugin: async name => {
-      const pm = ctx.getService<PluginManagerService>('plugins');
-      if (pm) await pm.unload(name);
+      await caps.plugins.current?.unload(name);
     },
     // 卸载后清残留配置：删 plugins.<name> 配置块 + 从 disabledPlugins 移除
     // （否则重装会被"上次禁用"标记带成已禁用状态），并持久化。
     cleanupConfig: name => {
-      ctx.config.removePluginConfig(name);
-      ctx.config.setPluginEnabled(name, true);
+      const hostCfg = caps.hostConfig.require();
+      hostCfg.removePluginConfig(name);
+      hostCfg.setPluginEnabled(name, true);
       // cleanupConfig 契约返 void；落盘失败只 warn，内存态已清、下次保存会带上
-      ctx.config.save().catch(err => ctx.logger.warn(`${name}: 卸载后配置清理落盘失败:`, err));
+      hostCfg.save().catch(err => log.warn(`${name}: 卸载后配置清理落盘失败:`, err));
     },
   });
 }
 
-/** install/uninstall 的显式依赖（从 ctx/网关解耦，便于集成测试） */
+/** install/uninstall 的显式依赖（从能力/网关解耦，便于集成测试） */
 export interface PackageManagerDeps {
   proc: ProcessService;
   log: { info(msg: string): void; error(msg: string): void };
@@ -429,10 +455,10 @@ export function findUnmetPeers(output: string, targetNames: readonly string[]): 
 }
 
 /**
- * 包管理核心：install/uninstall 的纯依赖实现（不碰 ctx/网关，可单测）。
+ * 包管理核心：install/uninstall 的纯依赖实现（不碰能力/网关，可单测）。
  * 所有文件操作走 process 网关（子进程：npm/tar/mkdir/rm/test），目标是真实
  * `<cwd>/packages`——不经 storage 沙盒（沙盒根是 workspace，够不到 packages）。
- * ctx 组装层见 createService。
+ * 能力组装层见 createService。
  */
 export function createPackageManager(deps: PackageManagerDeps): PackageManagerService {
   const { proc, log } = deps;
@@ -446,7 +472,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    * `createNodeModulesPluginLoader` **只遍历根依赖的键、从不扫 node_modules 目录**，
    * 于是那个包永远不会被加载：装成功了，重启后插件不见了，用户无从判断。
    *
-   * 锁必须在**服务层**：本服务经 `ctx.provide` 公开，任何插件都能绕过 HTTP 路由直接调，
+   * 锁必须在**服务层**：本服务对外公开，任何插件都能绕过 HTTP 路由直接调，
    * 加在路由或前端都不算数。
    */
   let inflight: string | null = null;
@@ -628,7 +654,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       return { ok: false, message: '根依赖含 workspace: 协议，拒绝在此运行 npm install' };
     }
     // 只允许更新「根依赖里以 semver 范围声明」的包。闸放在服务层而非 HTTP 路由——
-    // 本服务经 ctx.provide 公开，任何插件都能绕过路由直接调用（理由见 isRegistryDep）。
+    // 本服务对外公开，任何插件都能绕过路由直接调用（理由见 isRegistryDep）。
     const rootDependencies = (rootPkg?.dependencies ?? {}) as Record<string, string>;
     const notUpdatable = targets.filter(t => !isRegistryDep(rootDependencies[t.name]));
     if (notUpdatable.length > 0) {
@@ -656,7 +682,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     }
 
     // ── 降级守卫 ──
-    // 闸放在服务层而非 HTTP 路由：本服务经 ctx.provide 公开，任何插件都能绕过路由直接调用。
+    // 闸放在服务层而非 HTTP 路由：本服务对外公开，任何插件都能绕过路由直接调用。
     // 拒绝而非放行的理由：registry 的 dist-tags.latest 可以**低于**本地已装版本（发布事故后
     // `npm dist-tag add pkg@旧版 latest` 回滚，或用户曾装过预发布版），此时「更新」会静默降级；
     // 读不到已装版本同样拒——无从判断方向就不动，用户可显式卸载重装。
@@ -779,7 +805,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
   /**
    * 卸载：两道服务层闸 + npm uninstall。
    *
-   * 闸放服务层而非 HTTP 路由——本服务经 `ctx.provide` 公开，任何插件都能绕过路由直接调
+   * 闸放服务层而非 HTTP 路由——本服务对外公开，任何插件都能绕过路由直接调
    * （与 `buildUpdateSpecs`、`isRegistryDep` 同一理由）。前端早就有正确策略
    * （只给 plugin/interface 卡片渲染卸载按钮），但那只是客户端校验，服务端不设防。
    */
@@ -833,8 +859,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // 并提供 HTTP 面）、`package-manager`（装卸能力本身）。少任何一样，用户就只能开 shell。
     //
     // 判据是**「谁在提供我此刻依赖的服务」而不是包名**——第三方换个实现照样受保护，
-    // 而 `getAllServices` 的首个条目即当前生效者（偏好 > 优先级 > 注册顺序），
-    // webui-server 与 package-manager 都是用包名做 ctx.id 的插件。
+    // 而 `services.all` 的首个条目即当前生效者（偏好 > 优先级 > 注册顺序），
+    // webui-server 与 package-manager 都是用包名做实例 id 的插件。
     //
     // 只拦「当前生效的那个」：想换实现的正常路径是「装新的 → 切过去 → 再卸旧的」，
     // 那时它已不是提供者，本闸自然放行。
@@ -877,11 +903,16 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
   }
 }
 
-export function apply(ctx: Context, config: Record<string, unknown>): void {
-  ctx.provide('package-manager', createService(ctx, config), {
-    label: 'package-manager',
-  });
-}
+export default definePlugin({
+  name: '@aalis/plugin-package-manager',
+  displayName: '包管理器',
+  subsystem: 'system',
+  provides: [packageManager],
+  uses,
+  apply(caps) {
+    caps.provide(packageManager, createService(caps), { label: 'package-manager' });
+  },
+});
 
 // ----- 服务类型注册（declaration merging）-----
 declare module '@aalis/core' {
@@ -889,6 +920,3 @@ declare module '@aalis/core' {
     'package-manager': PackageManagerService;
   }
 }
-
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
-export const packageManager = defineService<PackageManagerService>('package-manager');

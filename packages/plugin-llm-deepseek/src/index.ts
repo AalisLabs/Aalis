@@ -1,15 +1,15 @@
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMCapability, LLMModel } from '@aalis/api-llm';
-import { LLMCapabilities } from '@aalis/api-llm';
+import { LLMCapabilities, llm } from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import type { Context } from '@aalis/core';
+import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message, ToolCall } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole, WellKnownKinds } from '@aalis/schema-message';
 import { stripLeakedSpecialTokens } from '@aalis/util-text-normalize';
 import { parseDsmlToolCalls } from './dsml-parser.js';
 
-// ===== 插件元数据 =====
+// ===== 错误解析 =====
 
 /** 已知的内容审查错误关键词 */
 const CONTENT_FILTER_PATTERNS = [
@@ -29,13 +29,9 @@ function parseApiError(provider: string, status: number, body: string): string {
   return `${provider} API 错误 (${status}): ${body}`;
 }
 
-export const name = '@aalis/plugin-llm-deepseek';
-export const displayName = 'DeepSeek';
-export const subsystem = 'llm';
-export const provides = ['llm'];
-export const reusable = true;
+// ===== 配置 schema =====
 
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   apiKey: { type: 'string', label: 'API Key', required: true, secret: true, description: 'DeepSeek API 密钥' },
   baseUrl: {
     type: 'string',
@@ -232,7 +228,7 @@ class DeepSeekClient {
   private forceJsonOutput: boolean;
   private logger;
 
-  constructor(config: DeepSeekConfig, logger: Context['logger']) {
+  constructor(config: DeepSeekConfig, logger: Logger) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl.replace(/\/+$/, '');
     // schema 中 timeout 单位为「秒」，存储为毫秒；0 视为不限制 → 用一个非常大的值
@@ -763,7 +759,7 @@ function resolveCapabilities(model: string, userOverride?: unknown, providerCaps
   return [...out];
 }
 
-// ===== 插件入口 =====
+// ===== 配置解析 =====
 
 /** 解析自定义模型列表：支持逗号分隔和换行分隔 */
 function parseCustomModels(raw: unknown): string[] {
@@ -826,7 +822,23 @@ class DeepSeekModelHandle implements LLMModel {
   }
 }
 
-export async function apply(ctx: Context, config: Record<string, unknown>): Promise<void> {
+// ===== 插件定义 =====
+
+const uses = { config, logger, lifecycle, provide };
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-llm-deepseek',
+  displayName: 'DeepSeek',
+  subsystem: 'llm',
+  configSchema,
+  reusable: true,
+  provides: [llm],
+  uses,
+  apply: registerModels,
+});
+
+async function registerModels({ config, logger, lifecycle, provide }: Caps): Promise<void> {
   const deepseekConfig: DeepSeekConfig = {
     apiKey: (config.apiKey as string) ?? '',
     baseUrl: (config.baseUrl as string) ?? 'https://api.deepseek.com',
@@ -850,20 +862,20 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
   }
 
   const thinkingMode = (config.thinkingMode as string) ?? 'auto';
-  const client = new DeepSeekClient(deepseekConfig, ctx.logger);
+  const client = new DeepSeekClient(deepseekConfig, logger);
 
   // 探测远端 + 合并自定义模型
   const remoteIds = await client.fetchRemoteModelIds();
   const remoteSet = new Set(remoteIds);
   for (const cm of deepseekConfig.customModels) {
     if (remoteSet.has(cm)) {
-      ctx.logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
+      logger.warn(`自定义模型 "${cm}" 与自动发现的模型重复，请在配置中去重`);
     }
   }
   const allModelIds = [...remoteIds, ...deepseekConfig.customModels.filter(id => !remoteSet.has(id))];
 
   if (allModelIds.length === 0) {
-    ctx.logger.warn(`已连接: ${deepseekConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
+    logger.warn(`已连接: ${deepseekConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
     return;
   }
 
@@ -889,19 +901,19 @@ export async function apply(ctx: Context, config: Record<string, unknown>): Prom
     const handle = new DeepSeekModelHandle(
       client,
       modelId,
-      ctx.id,
+      lifecycle.id,
       deepseekConfig.contextLength,
       deepseekConfig.maxTokens,
       enableThinking,
       capabilities,
     );
-    ctx.provide('llm', handle, {
+    provide(llm, handle, {
       label: `${baseLabel} / ${modelId}${enableThinking ? ' (thinking)' : ''}`,
-      entryId: `${ctx.id}/${modelId}`,
+      entryId: `${lifecycle.id}/${modelId}`,
     });
   }
 
-  ctx.logger.info(
+  logger.info(
     `已连接: ${deepseekConfig.baseUrl}，注册 ${allModelIds.length} 个 model entry (thinkingMode=${thinkingMode})`,
   );
 }

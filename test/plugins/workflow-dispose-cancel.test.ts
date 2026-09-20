@@ -2,18 +2,18 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { useToolService } from '../../packages/api-tools/src/index.js';
-import type { WorkflowRun, WorkflowService } from '../../packages/api-workflow/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as cronEngineModule from '../../packages/plugin-cron-engine/src/index.js';
-import * as storageLocalModule from '../../packages/plugin-storage-local/src/index.js';
-import * as toolsModule from '../../packages/plugin-tools/src/index.js';
-import * as workflowModule from '../../packages/plugin-workflow/src/index.js';
+import { tools as toolsService } from '../../packages/api-tools/src/index.js';
+import { type WorkflowRun, workflow } from '../../packages/api-workflow/src/index.js';
+import { App, services } from '../../packages/core/src/index.js';
+import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
+import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
+import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // 拆卸时在飞 run 必须真被取消：onDispose 只 cancelTokens.clear() 的话，
-// 在飞 run 手里握的是自己的 token 引用——清表清不到它，于是它会用已 dispose
-// 的 ctx 跑完剩余节点、emit 事件，并把结果写回旧 RunStore 的历史快照。
+// 在飞 run 手里握的是自己的 token 引用——清表清不到它，于是它会在已关闭的激活上
+// 跑完剩余节点、emit 事件，并把结果写回旧 RunStore 的历史快照。
 // 驱动面全部走公开面：真 fs storage + 真 tools + app.plugins.unload（生产卸载路径）。
 // ════════════════════════════════════════════════════════════
 
@@ -34,7 +34,7 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
 
   it('unload 后被阻塞的首节点放行：下游节点 skipped、run 记 cancelled', async () => {
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocalModule as never, {
+    await app.ctx.useModule(storageLocalPlugin, {
       roots: ['data', 'workspace'].map(name => ({
         name,
         path: join(base, name),
@@ -46,8 +46,8 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
         deletable: true,
       })),
     });
-    await app.ctx.useModule(toolsModule as never, {});
-    await app.ctx.useModule(cronEngineModule as never, {});
+    await app.ctx.useModule(toolsPlugin, {});
+    await app.ctx.useModule(cronEnginePlugin, {});
 
     // gate：卡住第一个节点，直到测试放行；downstream：只记录"我被跑了"
     let gateEntered!: () => void;
@@ -59,7 +59,8 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
       release = r;
     });
     let downstreamRuns = 0;
-    const tools = useToolService(app.ctx);
+    // 宿主侧登记测试工具：与插件同一套描述符装配，登记归属根激活
+    const { tools } = app.bind({ tools: toolsService });
     tools.register({
       definition: {
         type: 'function',
@@ -83,9 +84,10 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
     });
 
     // 经 app.plugin 注册（而非 ctx.useModule）才进插件注册表，unload 才拿得到它
-    await app.plugin(workflowModule as never, { enableTools: false });
+    await app.plugin(workflowPlugin, { enableTools: false });
     await app.plugins.idle();
-    const svc = app.ctx.getService<WorkflowService>('workflow')!;
+    const host = app.bind({ services });
+    const svc = host.services.get(workflow)!;
     await svc.defineWorkflow(
       {
         id: 'zz-dispose',

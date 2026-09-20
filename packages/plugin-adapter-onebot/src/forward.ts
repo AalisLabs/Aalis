@@ -11,7 +11,7 @@
  * - 完整原文仍保留在缓存与 memory metadata 中，agent 想看细节时通过
  *   onebot_get_forward_msg 工具 / 缓存命中拿回。
  *
- * 本模块仅做"纯逻辑"，不直接依赖 Context；适配器通过依赖注入提供
+ * 本模块仅做"纯逻辑"，不碰任何服务；适配器通过依赖注入提供
  * fetchForward / resolveMedia / summarize 三个能力函数。
  */
 

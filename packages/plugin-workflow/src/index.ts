@@ -6,14 +6,14 @@
 // 定义存 workspace/workflows/*.yaml。
 // ============================================================
 
-import { createStorageGateway } from '@aalis/api-storage';
-import type { ToolService } from '@aalis/api-tools';
-import { useToolService } from '@aalis/api-tools';
-// 引入 api-webui 的副作用以激活 PluginModule.extends/subsystem 类型增广
-import type { WebuiPage } from '@aalis/api-webui';
-import { useWebuiService } from '@aalis/api-webui';
+import { cronEngine } from '@aalis/api-cron-engine';
+import { createStorageGateway, storage } from '@aalis/api-storage';
+import { type BoundTools, tools } from '@aalis/api-tools';
+import type { BoundWebui, WebuiPage } from '@aalis/api-webui';
+import { webuiServer } from '@aalis/api-webui';
 import type { NodeRunInfo, WorkflowRun, WorkflowService } from '@aalis/api-workflow';
-import type { Context, PluginModule } from '@aalis/core';
+import { workflow } from '@aalis/api-workflow';
+import { type BoundOf, config, definePlugin, events, hooks, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { parse, stringify } from 'yaml';
 
@@ -21,23 +21,6 @@ import { runDag, validateGraph } from './engine.js';
 import { normalizeDef, WorkflowLoader } from './loader.js';
 import { RunStore } from './persistence.js';
 import { TriggerManager } from './triggers.js';
-
-// ─── 元数据 ───
-
-export const name = '@aalis/plugin-workflow';
-export const displayName = '工作流';
-export const subsystem = 'workflow';
-
-export const provides = ['workflow'];
-
-export const inject = {
-  required: ['cron-engine'],
-  optional: ['tools', 'storage', 'webui'],
-};
-
-export const extends_ = {
-  events: ['workflow:run:start', 'workflow:run:done', 'workflow:run:error', 'workflow:node:done', 'trigger:fired'],
-};
 
 // ─── 配置 ───
 
@@ -48,7 +31,7 @@ interface WorkflowConfig {
   enableTools: boolean;
 }
 
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   defsDir: {
     type: 'string',
     label: '工作流定义目录',
@@ -152,7 +135,7 @@ const webuiPages: WebuiPage[] = [
   },
 ];
 
-// ─── 工具函数（与 actions 共享） ───
+// ─── 工具函数（与页面动作共享） ───
 
 function triggerSummary(t: { type: string; expr?: string; seconds?: number; runAt?: string; event?: string }): string {
   switch (t.type) {
@@ -189,30 +172,31 @@ function fmtDuration(ms: number): string {
   return `${m}m${s}s`;
 }
 
-export const actions: PluginModule['actions'] = {
-  async workflowStats(ctx) {
-    const svc = ctx.getService<WorkflowService>('workflow');
-    if (!svc) return { value: 0, hint: 'workflow 服务未就绪' };
-    const defs = svc.listWorkflows();
+/**
+ * 页面动作：处理函数是闭包，直接用本次激活构造的 WorkflowService，
+ * 不再按名回查容器（查到的可能是别人提供的同名服务）。
+ */
+function registerWebuiActions(webui: BoundWebui, service: WorkflowService): void {
+  webui.registerAction('workflowStats', async () => {
+    const defs = service.listWorkflows();
     const enabled = defs.filter(d => d.enabled !== false).length;
-    const runs = svc.listRuns(200);
+    const runs = service.listRuns(200);
     const last24h = runs.filter(r => Date.now() - r.startedAt < 86_400_000);
     const failed24h = last24h.filter(r => r.status === 'failed' || r.status === 'cancelled').length;
     return {
       value: defs.length,
       hint: `启用 ${enabled} · 24h 运行 ${last24h.length} · 失败 ${failed24h}`,
     };
-  },
-  async listWorkflowsTable(ctx) {
-    const svc = ctx.getService<WorkflowService>('workflow');
-    if (!svc) return [];
-    const runs = svc.listRuns(200);
+  });
+
+  webui.registerAction('listWorkflowsTable', async () => {
+    const runs = service.listRuns(200);
     const lastByWf = new Map<string, number>();
     for (const r of runs) {
       const prev = lastByWf.get(r.workflowId) ?? 0;
       if (r.startedAt > prev) lastByWf.set(r.workflowId, r.startedAt);
     }
-    return svc.listWorkflows().map(d => ({
+    return service.listWorkflows().map(d => ({
       id: d.id,
       name: d.name ?? d.id,
       trigger: triggerSummary(d.trigger),
@@ -221,11 +205,10 @@ export const actions: PluginModule['actions'] = {
       description: d.description ?? '',
       lastRun: lastByWf.get(d.id) ?? 0,
     }));
-  },
-  async listRunsTable(ctx) {
-    const svc = ctx.getService<WorkflowService>('workflow');
-    if (!svc) return [];
-    return svc.listRuns(50).map(r => {
+  });
+
+  webui.registerAction('listRunsTable', async () => {
+    return service.listRuns(50).map(r => {
       const dur = (r.finishedAt ?? Date.now()) - r.startedAt;
       const statusIcon =
         r.status === 'success' ? '✅' : r.status === 'failed' ? '❌' : r.status === 'cancelled' ? '⏹' : '⏳';
@@ -239,12 +222,11 @@ export const actions: PluginModule['actions'] = {
         error: r.error ?? '',
       };
     });
-  },
-  async triggerWorkflow(ctx, args) {
-    const svc = ctx.getService<WorkflowService>('workflow');
-    if (!svc) return { ok: false, error: 'workflow 服务未就绪' };
+  });
+
+  webui.registerAction('triggerWorkflow', async args => {
     try {
-      const run = await svc.runWorkflow(String(args.id), {}, 'manual:webui');
+      const run = await service.runWorkflow(String(args.id), {}, 'manual:webui');
       return {
         ok: true,
         runId: run.runId,
@@ -255,36 +237,33 @@ export const actions: PluginModule['actions'] = {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
-  },
-  async toggleWorkflow(ctx, args) {
-    const svc = ctx.getService<WorkflowService>('workflow');
-    if (!svc) return { ok: false, error: 'workflow 服务未就绪' };
-    const def = svc.getWorkflow(String(args.id));
+  });
+
+  webui.registerAction('toggleWorkflow', async args => {
+    const def = service.getWorkflow(String(args.id));
     if (!def) return { ok: false, error: '工作流不存在' };
     const next = { ...def, enabled: def.enabled === false };
     try {
-      await svc.defineWorkflow(next, { persist: true });
+      await service.defineWorkflow(next, { persist: true });
       return { ok: true, enabled: next.enabled };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
-  },
-  async getWorkflowYaml(ctx, args) {
-    const svc = ctx.getService<WorkflowService>('workflow');
-    if (!svc) return { error: 'workflow 服务未就绪' };
-    const def = svc.getWorkflow(String(args.id));
+  });
+
+  webui.registerAction('getWorkflowYaml', async args => {
+    const def = service.getWorkflow(String(args.id));
     if (!def) return { error: '工作流不存在' };
     return { id: def.id, yaml: stringify(def) };
-  },
-  async removeWorkflow(ctx, args) {
-    const svc = ctx.getService<WorkflowService>('workflow');
-    if (!svc) return { ok: false, error: 'workflow 服务未就绪' };
-    const ok = await svc.removeWorkflow(String(args.id));
+  });
+
+  webui.registerAction('removeWorkflow', async args => {
+    const ok = await service.removeWorkflow(String(args.id));
     return { ok, message: ok ? '已删除' : '不存在' };
-  },
-  async newWorkflowDraft() {
-    return {
-      yaml: `id: my-workflow
+  });
+
+  webui.registerAction('newWorkflowDraft', async () => ({
+    yaml: `id: my-workflow
 name: 示例工作流
 description: 描述这个工作流的作用
 trigger:
@@ -298,12 +277,10 @@ nodes:
     platform: internal
     content: "{{vars.greeting}}, world!"
 `,
-      persist: true,
-    };
-  },
-  async upsertWorkflowYaml(ctx, args) {
-    const svc = ctx.getService<WorkflowService>('workflow');
-    if (!svc) return { ok: false, error: 'workflow 服务未就绪' };
+    persist: true,
+  }));
+
+  webui.registerAction('upsertWorkflowYaml', async args => {
     const yamlText = String(args.yaml ?? '').trim();
     if (!yamlText) return { ok: false, error: 'yaml 不能为空' };
     let raw: unknown;
@@ -315,13 +292,13 @@ nodes:
     const def = normalizeDef(raw, `wf-${Date.now()}`);
     if (!def) return { ok: false, error: '定义不合法：缺少 trigger 或 nodes' };
     try {
-      await svc.defineWorkflow(def, { persist: args.persist !== false });
+      await service.defineWorkflow(def, { persist: args.persist !== false });
       return { ok: true, id: def.id, nodes: def.nodes.length };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
-  },
-};
+  });
+}
 
 function toUri(input: string, fallback: string): string {
   const s = String(input ?? '').trim();
@@ -341,25 +318,57 @@ function resolveConfig(raw: Record<string, unknown>): WorkflowConfig {
   };
 }
 
-// ─── apply ───
+// ─── 插件入口 ───
 
-export async function apply(ctx: Context, rawConfig: Record<string, unknown>): Promise<void> {
-  const config = resolveConfig(rawConfig);
-  const logger = ctx.logger.child('workflow');
-  const storage = createStorageGateway(ctx);
+const uses = {
+  /** cron / interval 触发器共享的整分钟 tick 与表达式解析 */
+  cronEngine,
+  /** 定义（*.yaml）与运行历史的持久化出口 */
+  storage: optional(storage),
+  /** tool 节点的执行入口，兼 AI 工具面的登记口 */
+  tools: optional(tools),
+  /** 工作流页与页面动作的登记口；无 WebUI 时引擎照常运行 */
+  webui: optional(webuiServer),
+  events,
+  /** agent 节点经 'agent:turn:after' 捕获本轮回复 */
+  hooks,
+  lifecycle,
+  logger,
+  config,
+  provide,
+};
+type Caps = BoundOf<typeof uses>;
 
-  const loader = new WorkflowLoader(storage, config.defsDir, logger);
+export default definePlugin({
+  name: '@aalis/plugin-workflow',
+  displayName: '工作流',
+  subsystem: 'workflow',
+  extends: {
+    events: ['workflow:run:start', 'workflow:run:done', 'workflow:run:error', 'workflow:node:done', 'trigger:fired'],
+  },
+  configSchema,
+  provides: [workflow],
+  uses,
+  apply: run,
+});
+
+async function run(caps: Caps): Promise<void> {
+  const { events, hooks, lifecycle, provide, tools, webui } = caps;
+  const config = resolveConfig(caps.config);
+  const logger = caps.logger.child('workflow');
+  const storageGateway = createStorageGateway(caps.storage);
+
+  const loader = new WorkflowLoader(storageGateway, config.defsDir, logger);
   const scanned = await loader.loadAll();
 
-  const runStore = new RunStore(storage, config.runsFile, config.maxRuns, logger);
+  const runStore = new RunStore(storageGateway, config.runsFile, config.maxRuns, logger);
   await runStore.init();
 
   const cancelTokens = new Map<string, { cancelled: boolean }>();
 
   // ── 触发管理器：内部 cron/interval/event 监听 ──
   const triggers = new TriggerManager(
-    ctx,
-    logger,
+    { cronEngine: caps.cronEngine, events, logger },
     (workflowId, source, payload) => {
       // 异步触发，不阻塞触发源；event 触发的 payload（{args}）作为 vars 注入，{{vars.X}} 才读得到
       runById(workflowId, payload ?? {}, source).catch(err => {
@@ -376,7 +385,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
   for (const def of loader.list()) triggers.register(def);
 
   // ── 订阅外部 trigger:fired（来自 scheduler / 其他触发源）──
-  ctx.on('trigger:fired', info => {
+  events.on('trigger:fired', info => {
     if (!info?.workflowId) return;
     runById(info.workflowId, info.payload ?? {}, info.source ?? `trigger:${info.type}`).catch(err => {
       logger.error(`trigger:fired workflow=${info.workflowId} 执行失败: ${err instanceof Error ? err.message : err}`);
@@ -409,12 +418,14 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       nodes: def.nodes.map(n => ({ id: n.id, type: n.type, status: 'pending' })),
     };
     runStore.add(run);
-    await ctx.emit('workflow:run:start', run);
+    await events.emit('workflow:run:start', run);
     logger.info(`run=${runId} 启动 (trigger=${triggerSource})`);
 
     try {
       const result = await runDag({
-        ctx,
+        tools,
+        events,
+        hooks,
         logger,
         def,
         runId,
@@ -434,7 +445,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
         onNodeDone: (info: NodeRunInfo) => {
           const idx = run.nodes.findIndex(n => n.id === info.id);
           if (idx >= 0) run.nodes[idx] = info;
-          ctx.emit('workflow:node:done', { runId, node: info }).catch(() => {});
+          events.emit('workflow:node:done', { runId, node: info }).catch(() => {});
         },
       });
       run.status = result.status;
@@ -443,10 +454,10 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       run.finishedAt = Date.now();
       runStore.update(run);
       if (result.status === 'success') {
-        await ctx.emit('workflow:run:done', run);
+        await events.emit('workflow:run:done', run);
         logger.info(`run=${runId} 完成 (${run.finishedAt - run.startedAt}ms)`);
       } else {
-        await ctx.emit('workflow:run:error', run);
+        await events.emit('workflow:run:error', run);
         logger.warn(`run=${runId} ${result.status}: ${result.error ?? ''}`);
       }
     } catch (err) {
@@ -454,7 +465,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
       run.error = err instanceof Error ? err.message : String(err);
       run.finishedAt = Date.now();
       runStore.update(run);
-      await ctx.emit('workflow:run:error', run);
+      await events.emit('workflow:run:error', run);
       logger.error(`run=${runId} 异常: ${run.error}`);
     } finally {
       cancelTokens.delete(runId);
@@ -504,22 +515,22 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
     },
   };
 
-  ctx.provide('workflow', service);
+  provide(workflow, service);
 
   // ── AI 工具 ──
-  if (config.enableTools && ctx.getService<ToolService>('tools')) {
-    registerTools(ctx, service);
+  if (config.enableTools && tools.current) {
+    registerTools(tools, service);
   }
 
   // ── WebUI ──
-  const webui = useWebuiService(ctx);
   for (const page of webuiPages) webui.registerPage(page);
+  registerWebuiActions(webui, service);
 
   // ── 清理 ──
-  ctx.onDispose(async () => {
+  lifecycle.onDispose(async () => {
     triggers.dispose();
-    // 先置 cancelled 再清表：只 clear 的话在飞 run 仍持有自己的 token 引用，会继续用已 dispose 的
-    // ctx 跑完剩余节点、emit 事件，并把结果写回旧 RunStore 的历史快照
+    // 先置 cancelled 再清表：只 clear 的话在飞 run 仍持有自己的 token 引用，会继续跑完剩余
+    // 节点、发事件，并把结果写回旧 RunStore 的历史快照
     for (const t of cancelTokens.values()) t.cancelled = true;
     cancelTokens.clear();
     // 等排队中的运行历史 / once 记账写完再结束拆卸：否则 app.stop() 返回后仍有落盘在飞
@@ -531,8 +542,7 @@ export async function apply(ctx: Context, rawConfig: Record<string, unknown>): P
 
 // ─── AI 工具注册 ───
 
-function registerTools(ctx: Context, service: WorkflowService): void {
-  const tools = useToolService(ctx);
+function registerTools(tools: BoundTools, service: WorkflowService): void {
   tools.registerGroup({ name: 'workflow', label: '工作流', description: '定义、运行、查询自主工作流（DAG）' });
 
   tools.register({

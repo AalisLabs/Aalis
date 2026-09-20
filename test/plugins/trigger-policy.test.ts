@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Context } from '../../packages/core/src/index.js';
+import type { PersonaService } from '../../packages/api-persona/src/index.js';
 import {
   defaultTriggerPolicyConfig,
   isScopeEnabled,
@@ -11,14 +11,11 @@ import {
   checkMuteKeyword,
   checkNameMention,
   getBotNames,
+  type PersonaRef,
 } from '../../packages/plugin-trigger-policy/src/detector.js';
 
-const fakeCtx = (services: Record<string, unknown> = {}): Context =>
-  ({
-    getService(name: string) {
-      return services[name];
-    },
-  }) as unknown as Context;
+/** 名字检测只读 persona 的当前提供者：给出 current 即可，不必伪造整个绑定接口 */
+const personaRef = (service?: PersonaService): PersonaRef => ({ current: service });
 
 describe('trigger-policy config', () => {
   it('resolve 默认值', () => {
@@ -95,50 +92,50 @@ describe('checkNameMention', () => {
 describe('getBotNames', () => {
   it('无 persona 服务时返回 cfg.triggerNames', () => {
     const cfg = { ...defaultTriggerPolicyConfig, triggerNames: ['a', 'b'] };
-    expect(getBotNames(fakeCtx(), cfg)).toEqual(['a', 'b']);
+    expect(getBotNames(personaRef(), cfg)).toEqual(['a', 'b']);
   });
   it('有 persona 服务时合并 + 去重', () => {
     const cfg = { ...defaultTriggerPolicyConfig, triggerNames: ['a'] };
-    const persona = {
+    const persona: PersonaService = {
+      getSystemPrompt: () => '',
       getPersonaName: () => 'aalis',
       getNickNames: () => ['a', 'amy'],
     };
-    expect(getBotNames(fakeCtx({ persona }), cfg)).toEqual(['a', 'aalis', 'amy']);
+    expect(getBotNames(personaRef(persona), cfg)).toEqual(['a', 'aalis', 'amy']);
   });
 });
 
 describe('checkImmediateTrigger', () => {
   it('triggerOnAt 关闭时不响应 @', () => {
     const cfg = { ...defaultTriggerPolicyConfig, triggerOnAt: false, triggerNames: [] };
-    expect(checkImmediateTrigger(fakeCtx(), cfg, '@aalis hi')).toBe(false);
+    expect(checkImmediateTrigger(personaRef(), cfg, '@aalis hi')).toBe(false);
   });
   it('triggerOnAt 开启但仅纯文本 @ 时不命中（由名字检测兜底）', () => {
     const cfg = { ...defaultTriggerPolicyConfig, triggerOnAt: true, triggerNames: [] };
-    expect(checkImmediateTrigger(fakeCtx(), cfg, '@aalis hi')).toBe(false);
+    expect(checkImmediateTrigger(personaRef(), cfg, '@aalis hi')).toBe(false);
   });
   it('triggerOnAt 开启且为 <at self> 时命中', () => {
     const cfg = { ...defaultTriggerPolicyConfig, triggerOnAt: true, triggerNames: [] };
-    expect(checkImmediateTrigger(fakeCtx(), cfg, '<at self id="1">bot</at> hi')).toBe(true);
+    expect(checkImmediateTrigger(personaRef(), cfg, '<at self id="1">bot</at> hi')).toBe(true);
   });
   it('名字匹配也命中', () => {
     const cfg = { ...defaultTriggerPolicyConfig, triggerOnAt: false, triggerNames: ['aalis'] };
-    expect(checkImmediateTrigger(fakeCtx(), cfg, 'aalis 你好')).toBe(true);
+    expect(checkImmediateTrigger(personaRef(), cfg, 'aalis 你好')).toBe(true);
   });
 });
 
 describe('checkMuteKeyword', () => {
   it('cfg 关键词命中', () => {
     const cfg = { ...defaultTriggerPolicyConfig, muteKeywords: ['闭嘴'] };
-    expect(checkMuteKeyword(fakeCtx(), cfg, '你给我闭嘴')).toBe(true);
+    expect(checkMuteKeyword(cfg, '你给我闭嘴')).toBe(true);
   });
-  it('persona 提供的 mute 关键词不再生效（统一收回 trigger-policy 配置，避免单例 PersonaService 跨平台泄漏）', () => {
+  it('只认 cfg 下发的关键词：persona 等别处的词不命中（避免单例 PersonaService 跨平台泄漏）', () => {
     const cfg = { ...defaultTriggerPolicyConfig, muteKeywords: [] };
-    const persona = { getMuteKeywords: () => ['stop'] };
-    expect(checkMuteKeyword(fakeCtx({ persona }), cfg, 'please stop')).toBe(false);
+    expect(checkMuteKeyword(cfg, 'please stop')).toBe(false);
   });
   it('全部不命中', () => {
     const cfg = { ...defaultTriggerPolicyConfig, muteKeywords: ['x'] };
-    expect(checkMuteKeyword(fakeCtx(), cfg, 'hello world')).toBe(false);
+    expect(checkMuteKeyword(cfg, 'hello world')).toBe(false);
   });
 });
 
@@ -146,15 +143,17 @@ describe('checkMuteKeyword', () => {
 // decide()：poke 直触发与 triggerOnPoke 开关（走真实插件装配）
 // ════════════════════════════════════════════════════════════
 
-import { App } from '@aalis/core';
-import * as triggerPolicyModule from '../../packages/plugin-trigger-policy/src/index.js';
+import { App, provide, services } from '@aalis/core';
+import { gateway } from '../../packages/api-gateway/src/index.js';
+import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
 import type { TriggerPolicyService } from '../../packages/plugin-trigger-policy/src/types.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 
 async function setupPolicy(config: Record<string, unknown> = {}) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  app.ctx.provide('gateway', {} as never); // 满足 required 依赖；decide 本身不经过 gateway
-  await app.ctx.useModule(triggerPolicyModule, config);
+  const host = app.bind({ provide, services });
+  host.provide(gateway, {} as never); // 满足 required 依赖；decide 本身不经过 gateway
+  await app.plugins.register(triggerPolicyPlugin, config);
   await app.plugins.idle();
   const svc = app.ctx.getService<TriggerPolicyService>('trigger-policy');
   if (!svc) throw new Error('trigger-policy 服务未注册');

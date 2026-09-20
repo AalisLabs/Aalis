@@ -8,7 +8,7 @@
  * - 每个 server 在 config.servers 里独立一项（id / command / args / env）
  * - 工具名加前缀 `mcp_<server-id>_<tool-name>` 避免与本地工具冲突
  * - 每个 server 注册一个工具分组 `mcp:<server-id>`
- * - dispose 时关闭所有 client 连接（通过 ctx.onDispose）
+ * - 激活关闭时断开所有 client 连接（lifecycle.onDispose）
  * - 安全级别由 config 中按 server 配置（默认 safe）；高危 server 应显式设为 dangerous
  */
 
@@ -50,12 +50,7 @@ interface ServerSpec {
   visibility?: McpServerTier;
 }
 
-interface Config {
-  servers: ServerSpec[];
-}
-
-export const name = '@aalis/plugin-mcp-client';
-export const subsystem = 'tools';
+const PLUGIN_NAME = '@aalis/plugin-mcp-client';
 
 /** 桥接函数用到的能力：测试只需给这两样，不必伪造整个运行时 */
 interface BridgeCaps {
@@ -282,7 +277,7 @@ function registerSelfServiceTools(caps: Caps): void {
       }
       servers[idx] = { ...before, enabled };
 
-      const ok = await pm.updateConfig(name, { ...current, servers });
+      const ok = await pm.updateConfig(PLUGIN_NAME, { ...current, servers });
       if (!ok) return `失败：updateConfig 返回 false`;
       await app.saveConfig();
       return `已将 server "${id}" 设置为 enabled=${enabled}，插件会 bounce 后生效`;
@@ -466,8 +461,9 @@ function formatToolResult(result: unknown, source: string): string {
 }
 
 export default definePlugin({
-  name,
+  name: PLUGIN_NAME,
   displayName: 'MCP 客户端',
+  subsystem: 'tools',
   uses: {
     tools: toolsService,
     logger: loggerService,

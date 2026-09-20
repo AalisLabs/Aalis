@@ -3,17 +3,16 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { StorageRootInfo, StorageService } from '../../packages/api-storage/src/index.js';
-import type { VectorStoreService } from '../../packages/api-vectorstore/src/index.js';
-import type { Context } from '../../packages/core/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as vectorstoreFlat from '../../packages/plugin-vectorstore-flat/src/index.js';
+import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
+import { type VectorStoreService, vectorstore } from '../../packages/api-vectorstore/src/index.js';
+import { App, type BoundOf, definePlugin, lifecycle, provide, services } from '../../packages/core/src/index.js';
+import vectorstoreFlat from '../../packages/plugin-vectorstore-flat/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // flat 向量库的两处落地问题：
 //   1. dispose 时 void store.save() 不等落盘 → 停机返回时最后一批向量还没写完；
 //   2. init 的 JSON.parse 不校验是数组 → 文件被写成合法 JSON 对象时 size/search 崩。
-//   3. storage 是必需依赖却没声明 inject.required → 停机拓扑里没有「flat 先于 storage 关」
+//   3. storage 是必需依赖却没声明成 required → 停机拓扑里没有「flat 先于 storage 关」
 //      这条边，storage 后注册时会先关，落盘写到一个已关停的 storage 上。
 //
 // storage 侧用真 fs（写到临时目录），但服务挂在 app 根 ctx 上而非插件：
@@ -50,15 +49,20 @@ function makeStorage(dir: () => string, state: { closed: boolean } = { closed: f
   } as unknown as StorageService;
 }
 
+/** 宿主侧用的能力：提供桩服务、查激活后的 vectorstore */
+const hostUses = { provide, services };
+
 describe('plugin-vectorstore-flat 落盘与损坏容错（真 fs）', () => {
   let dir: string;
   let app: App;
+  let host: BoundOf<typeof hostUses>;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'aalis-flat-'));
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    app.ctx.provide(
-      'storage',
+    host = app.bind(hostUses);
+    host.provide(
+      storage,
       makeStorage(() => dir),
     );
   });
@@ -70,7 +74,7 @@ describe('plugin-vectorstore-flat 落盘与损坏容错（真 fs）', () => {
 
   async function loadFlat(): Promise<VectorStoreService> {
     await app.ctx.useModule(vectorstoreFlat, { path: 'ws:/vectorstore' });
-    const store = app.ctx.getService<VectorStoreService>('vectorstore');
+    const store = host.services.get(vectorstore);
     if (!store) throw new Error('vectorstore 服务未就绪');
     return store;
   }
@@ -103,10 +107,12 @@ describe('plugin-vectorstore-flat 落盘与损坏容错（真 fs）', () => {
 describe('plugin-vectorstore-flat 的 storage 依赖（拓扑序）', () => {
   let dir: string;
   let app: App;
+  let host: BoundOf<typeof hostUses>;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'aalis-flat-topo-'));
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    host = app.bind(hostUses);
   });
 
   afterEach(async () => {
@@ -116,29 +122,30 @@ describe('plugin-vectorstore-flat 的 storage 依赖（拓扑序）', () => {
 
   it('storage 后于 flat 注册：flat 仍等 storage 就绪才激活，停机时先关 flat、落盘成功', async () => {
     const state = { closed: false };
-    const storagePlugin = {
+    const storagePlugin = definePlugin({
       name: 'test-storage-provider',
-      provides: ['storage'],
-      apply(ctx: Context) {
-        ctx.provide(
-          'storage',
+      provides: [storage],
+      uses: { provide, lifecycle },
+      apply(caps) {
+        caps.provide(
+          storage,
           makeStorage(() => dir, state),
         );
-        ctx.onDispose(() => {
+        caps.lifecycle.onDispose(() => {
           state.closed = true;
         }, 'test-storage:close');
       },
-    };
+    });
 
     // 注册序刻意「消费者先、提供者后」：没有 required 边时停机会按注册序反向关，
     // 即先关 storage 再关 flat，落盘写到已关停的 storage 上。
-    await app.plugins.register(vectorstoreFlat as never, { path: 'ws:/vectorstore' });
-    expect(app.ctx.getService('vectorstore'), 'storage 缺位时 flat 不该激活').toBeUndefined();
+    await app.plugins.register(vectorstoreFlat, { path: 'ws:/vectorstore' });
+    expect(host.services.get(vectorstore), 'storage 缺位时 flat 不该激活').toBeUndefined();
 
-    await app.plugins.register(storagePlugin as never);
+    await app.plugins.register(storagePlugin);
     await app.plugins.idle();
 
-    const store = app.ctx.getService<VectorStoreService>('vectorstore');
+    const store = host.services.get(vectorstore);
     expect(store, 'storage 就绪后 flat 应被激活').toBeDefined();
     await store!.add([1, 0, 0], { id: 'topo' });
 

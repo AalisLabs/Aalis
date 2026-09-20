@@ -1,7 +1,7 @@
-import { App, type LogEntry, LogHub } from '@aalis/core';
+import { App, type LogEntry, LogHub, services } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CronEngine } from '../../packages/api-cron-engine/src/index.js';
-import * as cronEngineModule from '../../packages/plugin-cron-engine/src/index.js';
+import { type CronEngine, cronEngine } from '../../packages/api-cron-engine/src/index.js';
+import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // cron-engine 主循环：整分钟边界重排 + 回补
@@ -42,8 +42,9 @@ async function withEngine(startWall: number, fn: (h: Harness) => Promise<void> |
     if (e.level === 'warn') warns.push(e.message);
   });
   const app = new App({ config: { name: 'T', logLevel: 'warn', plugins: {} }, logHub: hub });
-  await app.ctx.useModule(cronEngineModule as never, {});
+  await app.ctx.useModule(cronEnginePlugin, {});
   await app.start();
+  const host = app.bind({ services });
   let wall = startWall;
   // 只假定时器 API：Date 留给下面的 spy 单独控制（setInterval 也假，@every 通道才数得出定时器）
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
@@ -54,7 +55,7 @@ async function withEngine(startWall: number, fn: (h: Harness) => Promise<void> |
   try {
     await fn({
       app,
-      engine: app.ctx.getService<CronEngine>('cron-engine') as CronEngine,
+      engine: host.services.get(cronEngine) as CronEngine,
       setWall,
       fireTickAt(ms) {
         setWall(ms);

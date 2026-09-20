@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { EmbeddingRequestOptions, EmbeddingService } from '../../packages/api-embedding/src/index.js';
-import type { MemoryService } from '../../packages/api-memory/src/index.js';
-import type { MessageArchiveService } from '../../packages/api-message-archive/src/index.js';
+import { embedding } from '../../packages/api-embedding/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
+import { messageArchive } from '../../packages/api-message-archive/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
 import type { VectorSearchResult, VectorStoreService } from '../../packages/api-vectorstore/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { vectorstore } from '../../packages/api-vectorstore/src/index.js';
+import { App, contributions, events, logger, provide, services } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
-import * as memoryInMemoryModule from '../../packages/plugin-memory-inmemory/src/index.js';
-import * as memoryVectorModule from '../../packages/plugin-memory-vector/src/index.js';
-import * as messageArchiveModule from '../../packages/plugin-message-archive/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
+import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
+import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
 
 // 直接从 core 源码路径导入，agent-api 对 '@aalis/core' 的 declaration merging 不在
@@ -106,16 +109,19 @@ interface SetupOptions {
 
 async function setup(opts: SetupOptions = {}) {
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-  if (opts.withMemory) await app.ctx.useModule(memoryInMemoryModule);
-  if (opts.withArchive) await app.ctx.useModule(messageArchiveModule, { debugLogs: false });
+  const host = app.bind({ provide, services, events });
+  /** 组装器只要「枚举贡献」与「记日志」两样能力，从根激活绑定即可 */
+  const assembly = app.bind({ contributions, logger });
+  if (opts.withMemory) await app.ctx.useModule(memoryInMemory);
+  if (opts.withArchive) await app.ctx.useModule(messageArchivePlugin, { debugLogs: false });
 
   const embedder = makeEmbedder(opts.embedImpl);
   const store = makeStore(opts.hits ?? [], { searchThrows: opts.searchThrows });
-  app.ctx.provide('embedding', embedder.service);
-  app.ctx.provide('vectorstore', store.service);
+  host.provide(embedding, embedder.service);
+  host.provide(vectorstore, store.service);
   // 假 tools 服务：捕获 memory_recall 注册（该管线与被动注入零共享，需独立钉住）
-  const toolHandlers = new Map<string, (args: Record<string, unknown>, ctx: unknown) => Promise<string>>();
-  app.ctx.provide('tools', {
+  const toolHandlers = new Map<string, (args: Record<string, unknown>, callCtx: unknown) => Promise<string>>();
+  host.provide(tools, {
     register: (tool: { definition: { function: { name: string } }; handler: never }) => {
       toolHandlers.set(tool.definition.function.name, tool.handler);
       return () => {};
@@ -123,7 +129,7 @@ async function setup(opts: SetupOptions = {}) {
     registerGroup: () => () => {},
   } as never);
 
-  await app.ctx.useModule(memoryVectorModule, {
+  await app.ctx.useModule(memoryVector, {
     // timeWeight=0：排名只看语义分，杜绝「当前时间」渗进断言
     search: { topK: 5, timeWeight: 0, userPriorityBoost: 2, perItemMaxChars: 0, minScore: 0, ...opts.search },
     contextExpand: { window: 0, crossSession: true, ...opts.contextExpand },
@@ -132,7 +138,7 @@ async function setup(opts: SetupOptions = {}) {
     recallRoles: opts.recallRoles ?? 'all',
   });
 
-  return { app, embedder, store, toolHandlers };
+  return { app, host, assembly, embedder, store, toolHandlers };
 }
 
 function baseMessages(userText = '还记得我上次说的吗'): Message[] {
@@ -149,7 +155,7 @@ function injectedBlock(messages: Message[]): Message | undefined {
 describe('plugin-memory-vector: agent:prompt 贡献', () => {
   it('prompt 超时会传递 signal 给查询 embedding，取消后不再 search', async () => {
     let observedAbort = false;
-    const { app, store } = await setup({
+    const { assembly, store } = await setup({
       hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: '旧记忆' })],
       embedImpl: (_text, options) =>
         new Promise<number[]>((_resolve, reject) => {
@@ -165,7 +171,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     });
     const messages = baseMessages();
 
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' }, { buildTimeoutMs: 30 });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' }, { buildTimeoutMs: 30 });
 
     expect(observedAbort, 'memory-vector 必须把 prompt build 的 signal 透传给 embedding').toBe(true);
     expect(store.calls.search, '取消后不得继续检索或扩窗').toBe(0);
@@ -173,11 +179,11 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   });
 
   it('dryRun=true → 不注入，且不触发 embedding / 检索', async () => {
-    const { app, embedder, store } = await setup({
+    const { assembly, embedder, store } = await setup({
       hits: [hit(0.9, { sessionId: 's-a', timestamp: BASE_TS, content: '我最喜欢吃火锅' })],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur', dryRun: true });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur', dryRun: true });
 
     expect(messages).toHaveLength(2);
     expect(injectedBlock(messages)).toBeUndefined();
@@ -186,11 +192,11 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   });
 
   it('无 user 消息 → 不注入，且不触发 embedding', async () => {
-    const { app, embedder, store } = await setup({
+    const { assembly, embedder, store } = await setup({
       hits: [hit(0.9, { sessionId: 's-a', timestamp: BASE_TS, content: '我最喜欢吃火锅' })],
     });
     const messages: Message[] = [{ role: 'system', content: '人设' }];
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
 
     expect(messages).toHaveLength(1);
     expect(embedder.calls).toHaveLength(0);
@@ -198,9 +204,9 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   });
 
   it('向量库为空（size=0）→ 不注入，且不触发 embedding', async () => {
-    const { app, embedder, store } = await setup({ hits: [] });
+    const { assembly, embedder, store } = await setup({ hits: [] });
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
 
     expect(messages).toHaveLength(2);
     expect(injectedBlock(messages)).toBeUndefined();
@@ -209,7 +215,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   });
 
   it('检索命中 → turn-context 锚位注入渲染后的记忆条目（按时间升序）', async () => {
-    const { app, embedder, store } = await setup({
+    const { app, assembly, embedder, store } = await setup({
       hits: [
         hit(0.88, {
           sessionId: 'onebot:g1',
@@ -244,7 +250,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       { role: 'assistant', content: '旧答' },
       { role: 'user', content: '(刚刚) 还记得我上次说的吗' },
     ];
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 'onebot:g1', platform: 'onebot' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 'onebot:g1', platform: 'onebot' });
 
     expect(messages).toHaveLength(6);
     // turn-context 锚位落在历史**之后**、最后一条 user 之前——这是缓存命中的
@@ -275,21 +281,21 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   });
 
   it('候选池放大：store.search 收到的 topK = min(配置 topK*4, size)', async () => {
-    const { app, store } = await setup({
+    const { assembly, store } = await setup({
       search: { topK: 1 },
       hits: Array.from({ length: 6 }, (_, i) =>
         hit(0.9 - i * 0.1, { sessionId: 's-a', timestamp: BASE_TS + i * 1000, content: `候选记忆${i}` }),
       ),
     });
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
 
     // topK=1、库中 6 条 → 候选池取 1*4=4
     expect(store.lastTopK).toBe(4);
   });
 
   it('minScore 阈值过滤低分命中', async () => {
-    const { app } = await setup({
+    const { assembly } = await setup({
       search: { minScore: 0.5 },
       hits: [
         hit(0.9, { sessionId: 's-a', timestamp: BASE_TS, content: '高分记忆内容' }),
@@ -297,7 +303,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       ],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
 
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('高分记忆内容');
@@ -305,19 +311,19 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   });
 
   it('全部命中低于 minScore → 不注入', async () => {
-    const { app } = await setup({
+    const { assembly } = await setup({
       search: { minScore: 0.95 },
       hits: [hit(0.3, { sessionId: 's-a', timestamp: BASE_TS, content: '够不着阈值' })],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
 
     expect(messages).toHaveLength(2);
     expect(injectedBlock(messages)).toBeUndefined();
   });
 
   it('store.search 抛错 → 本贡献缺席，不影响同轮其它贡献物化', async () => {
-    const { app } = await setup({
+    const { app, assembly } = await setup({
       searchThrows: true,
       hits: [hit(0.9, { sessionId: 's-a', timestamp: BASE_TS, content: '拿不到的记忆' })],
     });
@@ -328,7 +334,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     } as never);
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
 
     expect(injectedBlock(messages)).toBeUndefined();
     expect(messages.some(m => String(m.content) === 'PROBE-OK')).toBe(true);
@@ -336,14 +342,14 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   });
 
   it('命中内容与当轮对话重复 → 该条被去重，其余照常呈现', async () => {
-    const { app } = await setup({
+    const { assembly } = await setup({
       hits: [
         hit(0.9, { sessionId: 's-a', timestamp: BASE_TS, content: '完全一样的一句话' }),
         hit(0.8, { sessionId: 's-a', timestamp: BASE_TS + 1000, content: '另一段旧记忆' }),
       ],
     });
     const messages = baseMessages('完全一样的一句话');
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
 
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('另一段旧记忆');
@@ -351,7 +357,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   });
 
   it('crossSessionMode=isolated → 只保留当前会话的命中', async () => {
-    const { app } = await setup({
+    const { assembly } = await setup({
       crossSessionMode: 'isolated',
       hits: [
         hit(0.9, { sessionId: 'onebot:g1', timestamp: BASE_TS, content: '本会话旧消息' }),
@@ -359,7 +365,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       ],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 'onebot:g1', platform: 'onebot' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 'onebot:g1', platform: 'onebot' });
 
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('本会话旧消息');
@@ -367,7 +373,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   });
 
   it('crossSessionMode=platform → metadata.platform 或 sessionId 前缀命中同平台均保留，异平台被滤除', async () => {
-    const { app } = await setup({
+    const { assembly } = await setup({
       crossSessionMode: 'platform',
       hits: [
         // (a) sessionId 前缀不匹配（legacy-a），仅靠 metadata.platform 命中
@@ -379,7 +385,7 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
       ],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 'onebot:g1', platform: 'onebot' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 'onebot:g1', platform: 'onebot' });
 
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('平台字段命中的记忆');
@@ -388,23 +394,23 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   });
 
   it('contextExpand: memory 支持范围查询时，命中点带出前后各 N 条邻居', async () => {
-    const { app } = await setup({
+    const { host, assembly } = await setup({
       withMemory: true,
       contextExpand: { window: 1 },
       hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: 'PIVOT-Q', userId: 'u1' })],
     });
 
-    const memory = app.ctx.getService<MemoryService>('memory');
-    if (!memory) throw new Error('no memory');
+    const mem = host.services.get(memory);
+    if (!mem) throw new Error('no memory');
     // 存入归档真形态（含 [昵称(ID)]: 前缀）；向量 metadata.content 仍是裸文本——
     // 两条路径的文本从此可区分，若 messageKey 退化为含 content 的 key，双入将被抓到
-    await memory.saveMessage('s-old', { role: 'assistant', content: 'PREV-A', timestamp: BASE_TS - 60_000 });
-    await memory.saveMessage('s-old', { role: 'user', content: '[Alice(u1)]: PIVOT-Q', timestamp: BASE_TS });
-    await memory.saveMessage('s-old', { role: 'assistant', content: 'NEXT-A', timestamp: BASE_TS + 60_000 });
-    await memory.saveMessage('s-old', { role: 'user', content: 'FAR-Q', timestamp: BASE_TS + 120_000 });
+    await mem.saveMessage('s-old', { role: 'assistant', content: 'PREV-A', timestamp: BASE_TS - 60_000 });
+    await mem.saveMessage('s-old', { role: 'user', content: '[Alice(u1)]: PIVOT-Q', timestamp: BASE_TS });
+    await mem.saveMessage('s-old', { role: 'assistant', content: 'NEXT-A', timestamp: BASE_TS + 60_000 });
+    await mem.saveMessage('s-old', { role: 'user', content: 'FAR-Q', timestamp: BASE_TS + 120_000 });
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
 
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('PREV-A');
@@ -423,13 +429,13 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   });
 
   it('角色标注只在片段含非 user 角色时出现；纯 user 片段渲染不变', async () => {
-    const { app } = await setup({
+    const { assembly } = await setup({
       hits: [
         hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: '纯用户记忆', userId: 'u1', nickname: 'Alice' }),
       ],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('纯用户记忆');
     expect(block).toContain('Alice(u1)');
@@ -438,23 +444,23 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   });
 
   it('contextExpand: tool/notice 邻居分别标注为 Tool/Notice，不冒充人形发言', async () => {
-    const { app } = await setup({
+    const { host, assembly } = await setup({
       withMemory: true,
       contextExpand: { window: 2 },
       hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: 'PIVOT-Q', userId: 'u1' })],
     });
-    const memory = app.ctx.getService<MemoryService>('memory');
-    if (!memory) throw new Error('no memory');
-    await memory.saveMessage('s-old', {
+    const mem = host.services.get(memory);
+    if (!mem) throw new Error('no memory');
+    await mem.saveMessage('s-old', {
       role: 'tool',
       content: '{"ok":true,"data":"工具输出"}',
       timestamp: BASE_TS - 60_000,
     });
-    await memory.saveMessage('s-old', { role: 'user', content: 'PIVOT-Q', timestamp: BASE_TS });
-    await memory.saveMessage('s-old', { role: 'notice', content: '[系统通知] 某某事件', timestamp: BASE_TS + 60_000 });
+    await mem.saveMessage('s-old', { role: 'user', content: 'PIVOT-Q', timestamp: BASE_TS });
+    await mem.saveMessage('s-old', { role: 'notice', content: '[系统通知] 某某事件', timestamp: BASE_TS + 60_000 });
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
     const block = String(injectedBlock(messages)?.content ?? '');
     // 锚定完整标签形态（含 @ 前缀）：裸词 'Notice'/'Tool' 会被标题行说明句满足，
     // 对 renderMessage 是否真有该分支零敏感（2026-08-27 审计变异实测）。
@@ -464,10 +470,10 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   });
 
   it('索引侧：triggerType=proactive 的伪 incoming（委派/工作流派发的 AI 文本）不入向量库', async () => {
-    const { app, store } = await setup({});
+    const { host, store } = await setup({});
     // 事件键经 declaration merging 声明，测试从源码路径导入拿不到增广——
     // 以宽签名断言 emit（同文件 POINT 常量的 never 技法对双参 emit 会把实参也打成 never）
-    const emitLoose = app.ctx.emit.bind(app.ctx) as (event: string, data: unknown) => Promise<void>;
+    const emitLoose = host.events.emit.bind(host.events) as (event: string, data: unknown) => Promise<void>;
     const emitArchived = (incoming: Record<string, unknown>) =>
       emitLoose('inbound:message:archived', {
         sessionId: incoming.sessionId,
@@ -498,14 +504,14 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   });
 
   it('存量委派 META 命中在检索期整体剔除（不注入、不占位）', async () => {
-    const { app } = await setup({
+    const { assembly } = await setup({
       hits: [
         hit(0.95, { sessionId: 's-old', timestamp: BASE_TS, content: '[跨会话委派 META]\n· 来源会话：xx\n任务文本' }),
         hit(0.8, { sessionId: 's-old', timestamp: BASE_TS + 1, content: '真实记忆', userId: 'u1' }),
       ],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('真实记忆');
     expect(block).not.toContain('跨会话委派 META');
@@ -514,29 +520,29 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
   it('兜底路径不给已按真实角色收录的 (sid,ts) 造 user 拷贝——同一逻辑消息只注入一份', async () => {
     // 事故形态（2026-08-27 审计 blocker）：向量命中的 pivot 在 SQLite 里是 notice 角色，
     // 扩窗以 [Notice] 收录后，兜底路径曾因 messageKey 含 role 而再造一份匿名 user 行。
-    const { app } = await setup({
+    const { host, assembly } = await setup({
       withMemory: true,
       contextExpand: { window: 1 },
       hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: 'X事件文本' })],
     });
-    const memory = app.ctx.getService<MemoryService>('memory');
-    if (!memory) throw new Error('no memory');
-    await memory.saveMessage('s-old', { role: 'notice', content: 'X事件文本', timestamp: BASE_TS });
+    const mem = host.services.get(memory);
+    if (!mem) throw new Error('no memory');
+    await mem.saveMessage('s-old', { role: 'notice', content: 'X事件文本', timestamp: BASE_TS });
 
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
     const block = String(injectedBlock(messages)?.content ?? '');
     expect((block.match(/X事件文本/g) ?? []).length).toBe(1);
     expect(block).toContain('[Notice @');
   });
 
   it('重复组装不重复注入（全局键幂等）', async () => {
-    const { app, embedder } = await setup({
+    const { assembly, embedder } = await setup({
       hits: [hit(0.9, { sessionId: 's-a', timestamp: BASE_TS, content: '只该出现一次的记忆' })],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
 
     expect(messages.filter(m => String(m.metadata?.injector ?? '').endsWith('/memory-vector'))).toHaveLength(1);
     expect(embedder.calls).toHaveLength(1);
@@ -547,8 +553,8 @@ describe('索引文本 = 归档文本', () => {
   it('图片消息：embed 与兜底 content 取归档文本（含识别描述），不取 incoming 占位符', async () => {
     // 断链形态（2026-09 核实）：lancedb 中 15995 条裸 [图片] 占位符 vs 20 条带描述——
     // 索引侧 embed 的是 incoming.content，plugin-media 识别出的描述只进了归档，从未进向量空间。
-    const { app, store, embedder } = await setup({});
-    const emitLoose = app.ctx.emit.bind(app.ctx) as (event: string, data: unknown) => Promise<void>;
+    const { host, store, embedder } = await setup({});
+    const emitLoose = host.events.emit.bind(host.events) as (event: string, data: unknown) => Promise<void>;
     const archivedText = '[小明(u1)]: 看这个\n[图片 | ref:abc123]\n[图片描述] 一只橘猫趴在键盘上';
     await emitLoose('inbound:message:archived', {
       sessionId: 's1',
@@ -575,8 +581,8 @@ describe('索引文本长度上限', () => {
   it('文件正文整段烘进归档的超长消息：按上限截断后仍入库（而非整条静默索引失败），且不切坏 emoji', async () => {
     // 对抗审计（2026-09）：改取归档文本后，file-reader 烘进的 `--- 文件内容 ---` 块可达数万字，
     // embedder 超限抛错 → 只留一条 warn，消息从此不可召回。
-    const { app, store, embedder } = await setup({});
-    const emitLoose = app.ctx.emit.bind(app.ctx) as (event: string, data: unknown) => Promise<void>;
+    const { host, store, embedder } = await setup({});
+    const emitLoose = host.events.emit.bind(host.events) as (event: string, data: unknown) => Promise<void>;
     const body = `[u1]: 看下这个配置\n--- 文件内容 ---\n${'配置行；'.repeat(3000)}`;
     // 让上限边界恰好落在一个代理对中间：前 3999 个 UTF-16 单元后接一个 emoji
     const boundaryBody = `${'x'.repeat(3999)}😀${'y'.repeat(50)}`;
@@ -603,8 +609,8 @@ describe('索引文本长度上限', () => {
 
 describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
   it('索引侧：assistant 落库事件入库带 role=assistant，user 入库带 role=user', async () => {
-    const { app, store } = await setup({});
-    const emitLoose = app.ctx.emit.bind(app.ctx) as (event: string, data: unknown) => Promise<void>;
+    const { host, store } = await setup({});
+    const emitLoose = host.events.emit.bind(host.events) as (event: string, data: unknown) => Promise<void>;
     await emitLoose('inbound:message:archived', {
       sessionId: 's1',
       incoming: { content: '对方的话', sessionId: 's1', platform: 'onebot', userId: 'u1' },
@@ -632,8 +638,8 @@ describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
   });
 
   it('发射端全链：archive.saveMessage(assistant) 真的触发向量入库；tool 角色不发事件', async () => {
-    const { app, store } = await setup({ withMemory: true, withArchive: true });
-    const archive = app.ctx.getService<MessageArchiveService>('message-archive');
+    const { host, store } = await setup({ withMemory: true, withArchive: true });
+    const archive = host.services.get(messageArchive);
     if (!archive) throw new Error('no archive');
     // 顺序关键：不该发事件的先存（若发射门失守，它们会先于合法条目入库，全等断言即红）
     await archive.saveMessage('s1', { role: 'tool', content: '{"x":1}', timestamp: BASE_TS });
@@ -655,7 +661,7 @@ describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
   });
 
   it('others-only：assistant 命中被过滤；无 role 的存量旧向量按对方保留', async () => {
-    const { app } = await setup({
+    const { assembly } = await setup({
       recallRoles: 'others-only',
       hits: [
         hit(0.95, { sessionId: 's-old', timestamp: BASE_TS, content: '我自己说过的话', role: 'assistant' }),
@@ -663,7 +669,7 @@ describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
       ],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('旧数据无角色');
     expect(block).not.toContain('我自己说过的话');
@@ -704,7 +710,7 @@ describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
 
   it('扩窗未命中兜底（消息表已老化）：assistant 命中仍按 metadata.role 标注，不落匿名人形', async () => {
     // memory 在场但为空 → pivot 定位失败 → 走「向量 metadata 兜底插入」分支（M3b 路径）
-    const { app } = await setup({
+    const { assembly } = await setup({
       withMemory: true,
       contextExpand: { window: 2 },
       hits: [
@@ -718,14 +724,14 @@ describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
       ],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('老化后的自我发言');
     expect(block).toContain('[Assistant·你自己(Aalis) @');
   });
 
   it('默认 all：assistant 命中注入且带 Assistant·你自己 标注与标题自指说明', async () => {
-    const { app } = await setup({
+    const { assembly } = await setup({
       hits: [
         hit(0.95, {
           sessionId: 's-old',
@@ -737,7 +743,7 @@ describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
       ],
     });
     const messages = baseMessages();
-    await assemblePromptContributions(app.ctx, { messages, sessionId: 's-cur' });
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
     const block = String(injectedBlock(messages)?.content ?? '');
     expect(block).toContain('我承诺过明天提醒');
     expect(block).toContain('[Assistant·你自己(Aalis) @');

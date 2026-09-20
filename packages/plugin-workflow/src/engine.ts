@@ -4,7 +4,7 @@
 
 // 副作用引入：激活 api-agent 对 core HookContextMap 的 'agent:turn:after' 增广
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
-import type { ToolCallContext, ToolService } from '@aalis/api-tools';
+import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
 import { asToolExecutionResult } from '@aalis/api-tools';
 import type {
   AgentNodeSpec,
@@ -15,10 +15,21 @@ import type {
   WaitNodeSpec,
   WorkflowDef,
 } from '@aalis/api-workflow';
-import type { Context, Logger } from '@aalis/core';
+import type { Events, Hooks, Logger } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 const MAX_OUTPUT_PREVIEW = 1000;
+
+/**
+ * 执行一次 DAG 用到的能力：tool 节点调工具、send-message / agent 节点派发消息、
+ * agent 节点经钩子捕获本轮回复。引擎不持有插件激活本身，只收这几样。
+ */
+export interface EngineCaps {
+  tools: BoundTools;
+  events: Events;
+  hooks: Hooks;
+  logger: Logger;
+}
 
 // ─── 模板插值 ────────────────────────────────────────
 
@@ -131,9 +142,7 @@ export function validateGraph(def: WorkflowDef): string | null {
 
 // ─── 节点执行器 ────────────────────────────────────────
 
-interface ExecCtx {
-  ctx: Context;
-  logger: Logger;
+interface ExecCtx extends EngineCaps {
   workflowId: string;
   runId: string;
   vars: Record<string, unknown>;
@@ -142,11 +151,11 @@ interface ExecCtx {
 }
 
 async function execTool(node: ToolNodeSpec, ec: ExecCtx): Promise<string> {
-  const tools = ec.ctx.getService<ToolService>('tools');
-  if (!tools) throw new Error("'tools' 服务不可用");
+  const service = ec.tools.current;
+  if (!service) throw new Error("'tools' 服务不可用");
   const args = (interpolateValue(node.args ?? {}, ec.vars, ec.outputs) ?? {}) as Record<string, unknown>;
   // 工作流节点产出是文本：工具交给主模型看的图（images）没有消费者，只取 content
-  return asToolExecutionResult(await tools.execute(node.tool, args, ec.toolCallContext)).content;
+  return asToolExecutionResult(await service.execute(node.tool, args, ec.toolCallContext)).content;
 }
 
 async function execSendMessage(node: SendMessageNodeSpec, ec: ExecCtx): Promise<string> {
@@ -162,7 +171,7 @@ async function execSendMessage(node: SendMessageNodeSpec, ec: ExecCtx): Promise<
   // 授权身份透传：与 tool 节点同源（run 级调用者），目标会话按调用者等级执行；
   // 无调用者（cron/event 触发）保持匿名。
   if (ec.toolCallContext.actor) message.actor = ec.toolCallContext.actor;
-  await ec.ctx.emit('inbound:message', message);
+  await ec.events.emit('inbound:message', message);
   return `sent to ${sessionId}@${platform} (${content.length} chars)`;
 }
 
@@ -203,7 +212,7 @@ async function execAgent(node: AgentNodeSpec, ec: ExecCtx): Promise<string> {
     resolveWait = resolve;
   });
   // 注册必须在 emit 之前，避免目标 agent 同步回复时错过监听窗口。
-  const dispose = ec.ctx.middleware('agent:turn:after', async (data, next) => {
+  const dispose = ec.hooks.middleware('agent:turn:after', async (data, next) => {
     await next();
     if (captured) return;
     if (data.sessionId !== sessionId) return;
@@ -226,7 +235,7 @@ async function execAgent(node: AgentNodeSpec, ec: ExecCtx): Promise<string> {
 
   const timeoutHandle = setTimeout(() => resolveWait?.(), timeoutMs);
   try {
-    await ec.ctx.emit('inbound:message', incoming);
+    await ec.events.emit('inbound:message', incoming);
     await waitPromise;
   } finally {
     clearTimeout(timeoutHandle);
@@ -261,9 +270,7 @@ async function executeNode(node: NodeSpec, ec: ExecCtx): Promise<string> {
 
 // ─── DAG 主调度 ────────────────────────────────────────
 
-interface RunOptions {
-  ctx: Context;
-  logger: Logger;
+interface RunOptions extends EngineCaps {
   def: WorkflowDef;
   runId: string;
   triggerSource: string;
@@ -285,7 +292,7 @@ export async function runDag(opts: RunOptions): Promise<{
   outputs: Record<string, unknown>;
   error?: string;
 }> {
-  const { def, vars, ctx, logger, runId, toolCallContext, cancelToken, onNodeDone } = opts;
+  const { def, vars, tools, events, hooks, logger, runId, toolCallContext, cancelToken, onNodeDone } = opts;
   const outputs: Record<string, unknown> = {};
 
   const nodeMap = new Map(def.nodes.map(n => [n.id, n]));
@@ -314,7 +321,7 @@ export async function runDag(opts: RunOptions): Promise<{
     }
     info.status = 'running';
     info.startedAt = Date.now();
-    const ec: ExecCtx = { ctx, logger, workflowId: def.id, runId, vars, outputs, toolCallContext };
+    const ec: ExecCtx = { tools, events, hooks, logger, workflowId: def.id, runId, vars, outputs, toolCallContext };
     try {
       const result = await executeNode(node, ec);
       info.status = 'success';

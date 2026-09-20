@@ -2,10 +2,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createStorageGateway } from '../../packages/api-storage/src/index.js';
-import { App } from '../../packages/core/src/index.js';
-import * as imageSender from '../../packages/plugin-image-sender/src/index.js';
-import * as storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
+import { App, provide } from '../../packages/core/src/index.js';
+import imageSenderPlugin from '../../packages/plugin-image-sender/src/index.js';
+import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // send_attachment 的 storage_uri 归一化——「图明明在却报找不到」回归。
@@ -28,7 +28,15 @@ describe('send_attachment storage_uri 归一化', () => {
     // 落一张真图（内容随意，只验证路径解析）
     writeFileSync(join(base, 'data', 'images', 'onebot_x_group_1', 'abcd1234.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0]));
     app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    await app.ctx.useModule(storageLocal as unknown as Parameters<typeof app.ctx.useModule>[0], {
+    handlers = {};
+    app.bind({ provide }).provide(tools, {
+      register: (t: { definition: { function: { name: string } }; handler: (typeof handlers)[string] }) => {
+        handlers[t.definition.function.name] = t.handler;
+        return () => {};
+      },
+      registerGroup: () => () => {},
+    } as never);
+    await app.plugins.register(storageLocalPlugin, {
       roots: [
         {
           name: 'data',
@@ -42,16 +50,8 @@ describe('send_attachment storage_uri 归一化', () => {
         },
       ],
     });
-    handlers = {};
-    app.ctx.provide('tools', {
-      register: (t: { definition: { function: { name: string } }; handler: (typeof handlers)[string] }) => {
-        handlers[t.definition.function.name] = t.handler;
-        return () => {};
-      },
-      registerGroup: () => {},
-    } as never);
-    imageSender.apply(app.ctx);
-    createStorageGateway(app.ctx); // 确保 gateway 就绪
+    await app.plugins.register(imageSenderPlugin, {});
+    await app.plugins.idle();
   });
 
   afterEach(async () => {

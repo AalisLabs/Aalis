@@ -1,31 +1,31 @@
-import type { AgentService } from '@aalis/api-agent';
+import { type AgentService, agent } from '@aalis/api-agent';
 import type { GatewayService, InboundPhaseData } from '@aalis/api-gateway';
-import { INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/api-gateway';
-import type { Context } from '@aalis/core';
+import { gateway, INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/api-gateway';
+import { type BoundOf, definePlugin, events, hooks, logger, optional, provide } from '@aalis/core';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
-
-// ----- 元数据 -----
-
-export const name = '@aalis/plugin-gateway';
-export const displayName = '消息流网关';
-export const subsystem = 'core';
-export const provides = ['gateway'];
-
-// gateway 不强依赖 agent —— 没有 agent 时仍可处理出站、运行钩子链。
-export const inject = {
-  optional: ['agent'],
-};
 
 // ----- 入口 -----
 
-export function apply(ctx: Context): void {
-  const logger = ctx.logger.child('gateway');
+// gateway 不强依赖 agent —— 没有 agent 时仍可处理出站、运行钩子链。
+const uses = { events, hooks, logger, provide, agent: optional(agent) };
+type Caps = BoundOf<typeof uses>;
+
+export default definePlugin({
+  name: '@aalis/plugin-gateway',
+  displayName: '消息流网关',
+  subsystem: 'core',
+  provides: [gateway],
+  uses,
+  apply: runGateway,
+});
+
+function runGateway({ events, hooks, logger, provide, agent }: Caps): void {
   logger.info(`消息网关已启动 (入站相位: ${INBOUND_PHASE_ORDER.join(' → ')}, 出站: outbound:dispatch)`);
 
-  /** 调用 agent 处理消息；agent 不可用时给出兜底回复（沿用旧 core 行为）。 */
-  async function defaultDispatch(message: IncomingMessage, agent: AgentService | undefined): Promise<void> {
-    if (agent) {
-      await agent.handleMessage(message);
+  /** 调用 agent 处理消息；agent 不可用时给出兜底回复。 */
+  async function defaultDispatch(message: IncomingMessage, agentService: AgentService | undefined): Promise<void> {
+    if (agentService) {
+      await agentService.handleMessage(message);
       return;
     }
     logger.warn('Agent 服务不可用，消息将不会被处理');
@@ -49,8 +49,8 @@ export function apply(ctx: Context): void {
    * 任一中前三相位被 swallow 即视为"消息已被中间件处理"，不进入 dispatch。
    */
   async function processInbound(message: IncomingMessage): Promise<void> {
-    const agent = ctx.getService<AgentService>('agent');
-    const data: InboundPhaseData = { message, metadata: {}, agent };
+    // 每条消息重新取当前胜者：agent 换人后下一条消息即跟上
+    const data: InboundPhaseData = { message, metadata: {}, agent: agent.current };
 
     try {
       // 前置相位 = INBOUND_PHASE_ORDER 中除终相 DISPATCH 外的全部（单一真相：新增相位只改 gateway-api）。
@@ -58,8 +58,8 @@ export function apply(ctx: Context): void {
       const preDispatch = INBOUND_PHASE_ORDER.filter(p => p !== INBOUND_PHASE.DISPATCH);
       for (const phase of preDispatch) {
         const t0 = performance.now();
-        const reachedEnd = await ctx.runHook(phase, data);
-        ctx.emit('gateway:phase:done', {
+        const reachedEnd = await hooks.run(phase, data);
+        events.emit('gateway:phase:done', {
           phase,
           reachedEnd,
           durationMs: performance.now() - t0,
@@ -76,10 +76,10 @@ export function apply(ctx: Context): void {
 
       // 终相：dispatch —— 默认动作为调用 agent
       const t0 = performance.now();
-      const reachedEnd = await ctx.runHook(INBOUND_PHASE.DISPATCH, data, async () => {
+      const reachedEnd = await hooks.run(INBOUND_PHASE.DISPATCH, data, async () => {
         await defaultDispatch(data.message, data.agent);
       });
-      ctx.emit('gateway:phase:done', {
+      events.emit('gateway:phase:done', {
         phase: INBOUND_PHASE.DISPATCH,
         reachedEnd,
         durationMs: performance.now() - t0,
@@ -95,17 +95,16 @@ export function apply(ctx: Context): void {
   async function dispatchOutbound(message: OutgoingMessage): Promise<void> {
     const data = { message, metadata: {} as Record<string, unknown> };
     try {
-      await ctx.runHook('outbound:dispatch', data, async () => {
-        await ctx.emit('outbound:message', data.message);
+      await hooks.run('outbound:dispatch', data, async () => {
+        await events.emit('outbound:message', data.message);
       });
     } catch (err) {
       logger.warn(`outbound:dispatch 处理异常: ${err}`);
     }
   }
 
-  // 监听 inbound:message —— 替代 core/app.ts 中已被移除的默认路由。
-  // ctx.on 返回的 dispose 已自动挂到子上下文的 disposables，插件卸载时会清理。
-  ctx.on('inbound:message', msg => {
+  // 入站入口：core 不做默认路由，消息全部由这里消费；退订随这次激活撤回。
+  events.on('inbound:message', msg => {
     void processInbound(msg);
   });
 
@@ -119,5 +118,5 @@ export function apply(ctx: Context): void {
     },
   };
 
-  ctx.provide('gateway', service);
+  provide(gateway, service);
 }

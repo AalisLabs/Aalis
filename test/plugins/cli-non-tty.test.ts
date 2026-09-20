@@ -1,7 +1,7 @@
 import { App, type LogEntry, LogHub } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PlatformAdapter } from '../../packages/api-platform/src/index.js';
-import * as cliModule from '../../packages/plugin-cli/src/index.js';
+import cliPlugin from '../../packages/plugin-cli/src/index.js';
 
 // stdin / stdout 不是 TTY（日志重定向、容器、systemd）时 CLI 不得接管终端：
 // 不写备用屏序列、不宣告 terminal:claimed（否则 runtime 的控制台日志会停写 stdout），
@@ -34,7 +34,7 @@ describe('plugin-cli 非 TTY', () => {
     const claimed = vi.fn();
     app.ctx.on('terminal:claimed', claimed);
     try {
-      await app.ctx.useModule(cliModule as never, {});
+      await app.ctx.useModule(cliPlugin, {});
       await app.start();
 
       expect(writes.join('')).not.toContain(ALT_SCREEN);

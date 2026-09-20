@@ -10,6 +10,7 @@
 
 import type { ExecResult } from '@aalis/api-process';
 import type { Context } from '@aalis/core';
+import { defineService } from '@aalis/core';
 
 /**
  * 子进程沙箱策略。由调用方（code_runner）按运行时已解析的工作目录/临时目录构造，
@@ -66,6 +67,9 @@ declare module '@aalis/core' {
     'code-sandbox': CodeSandboxService;
   }
 }
+
+/** `code-sandbox` 是普通调用型服务：绑定接口是 ServiceRef，每次读当前胜者。 */
+export const codeSandbox = defineService<CodeSandboxService>('code-sandbox');
 
 /** 取 code-sandbox 服务（未就绪/未安装实现时为 undefined）。 */
 export function useCodeSandbox(ctx: Context): CodeSandboxService | undefined {

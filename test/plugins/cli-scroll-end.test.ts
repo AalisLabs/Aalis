@@ -1,6 +1,6 @@
 import { App } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import * as cliModule from '../../packages/plugin-cli/src/index.js';
+import cliPlugin from '../../packages/plugin-cli/src/index.js';
 
 // Help 页自己宣传「Home/End 滚动 Logs / Status / Help」，但 handleScrollKey 只认
 // home（End 只在 logs 页的 handleLogsKey 里实现过）——按 End 无任何反应，是个假按键。
@@ -57,7 +57,7 @@ async function framesAroundKey(keyName: string, prelude: string[] = []): Promise
   });
   const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
   try {
-    await app.ctx.useModule(cliModule as never, { startupView: 'help' });
+    await app.ctx.useModule(cliPlugin, { startupView: 'help' });
     await app.start();
     await settle();
     const lastFrame = () => {

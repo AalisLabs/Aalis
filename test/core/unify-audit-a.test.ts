@@ -137,7 +137,9 @@ describe('关停编排', () => {
               w.saved.push(data);
             },
           });
-          lifecycle.onDispose(() => void (closed = true));
+          lifecycle.onDispose(() => {
+            closed = true;
+          });
         },
       });
       const agent = definePlugin({
