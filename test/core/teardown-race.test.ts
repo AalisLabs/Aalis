@@ -1,5 +1,6 @@
-import { App, type PluginModule } from '@aalis/core';
+import { App, definePlugin, defineService, lifecycle, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
+import { rootActivation } from '../../packages/core/src/orchestration/app.js';
 
 // ════════════════════════════════════════════════════════════
 // 拆卸路径的并发正确性
@@ -7,15 +8,19 @@ import { describe, expect, it } from 'vitest';
 // disposed 在清理开始前置位，若仅凭它早退，后来者会拿到"已完成"的假象而
 // 清理其实没落；停机若撞上在飞 recompute，shutdown 请求被单飞排队后立即返回，
 // 拓扑逆序编排整个落空 → 消费者的落盘写进已关闭的提供者。
+// App.stop 先 await idle 再 stopAll，把这一窗口堵上；本文件仍用 bounce 在飞
+// 去撞停机，钉住消费者落盘先于提供者关闭。
 // ════════════════════════════════════════════════════════════
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+const store = defineService<{ write: () => void }>('__t:tr-store');
 
 describe('Context 并发拆卸', () => {
   it('并发 disposeAsync：后来者 join 在飞拆卸，返回时清理已真正完成', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const log: string[] = [];
-    const child = app.ctx.fork('slow-child');
+    const child = rootActivation(app).fork('slow-child');
     child.onDispose(async () => {
       log.push('flush-start');
       await sleep(40);
@@ -34,7 +39,7 @@ describe('Context 并发拆卸', () => {
   it('父级联撞上半拆的子 ctx：父的 disposeAsync 等到子清理落地', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const log: string[] = [];
-    const parent = app.ctx.fork('parent');
+    const parent = rootActivation(app).fork('parent');
     const child = parent.fork('parent/child');
     child.onDispose(async () => {
       await sleep(40);
@@ -51,7 +56,7 @@ describe('Context 并发拆卸', () => {
   it('join 在飞拆卸时受本次调用者的 timeoutMs 约束（在飞方用更松的上限也不拖垮停机）', async () => {
     // disposeTimeoutMs 配短：末尾 app.stop 同样要等这个永不 resolve 的清理项
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, disposeTimeoutMs: 100 });
-    const child = app.ctx.fork('never-settles');
+    const child = rootActivation(app).fork('never-settles');
     child.onDispose(() => new Promise<void>(() => {})); // 永不 resolve
 
     void child.disposeAsync(); // 先以「不设限」启动在飞拆卸
@@ -67,7 +72,7 @@ describe('Context 并发拆卸', () => {
   it('拆卸完成后再次 disposeAsync 立即返回（幂等，不重跑清理）', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     let runs = 0;
-    const child = app.ctx.fork('idempotent');
+    const child = rootActivation(app).fork('idempotent');
     child.onDispose(async () => {
       runs++;
       await sleep(10);
@@ -85,35 +90,40 @@ describe('App.stop 撞上在飞 recompute', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const order: string[] = [];
 
-    const provider: PluginModule = {
-      name: 'prov',
-      provides: ['store'],
-      apply(ctx) {
-        ctx.provide('store', { write: () => order.push('write') });
-        ctx.onDispose(() => {
-          order.push('provider-closed');
-        });
-      },
-    };
-    const consumer: PluginModule = {
-      name: 'cons',
-      inject: { required: ['store'] },
-      apply(ctx) {
-        ctx.onDispose(async () => {
-          await sleep(10);
-          // 落盘：此刻提供者必须还活着
-          const store = ctx.getService<{ write: () => void }>('store');
-          order.push(store ? 'consumer-flushed' : 'consumer-flush-FAILED');
-        });
-      },
-    };
+    await app.plugin(
+      definePlugin({
+        name: 'prov',
+        uses: { provide, lifecycle },
+        provides: [store],
+        apply({ provide: pub, lifecycle }) {
+          pub(store, { write: () => order.push('write') });
+          lifecycle.onDispose(() => {
+            order.push('provider-closed');
+          });
+        },
+      }),
+    );
+    await app.plugin(
+      definePlugin({
+        name: 'cons',
+        uses: { store, lifecycle },
+        apply({ store: storeRef, lifecycle }) {
+          lifecycle.onDispose(async () => {
+            await sleep(10);
+            // 落盘：此刻提供者必须还活着（声明依赖在清理段仍可调用）
+            const impl = storeRef.current;
+            order.push(impl ? 'consumer-flushed' : 'consumer-flush-FAILED');
+            impl?.write();
+          });
+        },
+      }),
+    );
     // 被 bounce 的第三个插件，制造在飞 recompute
-    const noisy: PluginModule = { name: 'noisy', apply() {} };
-
-    await app.plugin(provider);
-    await app.plugin(consumer);
-    await app.plugin(noisy);
-    await app.start();
+    await app.plugin(definePlugin({ name: 'noisy', apply() {} }));
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('prov')?.state).toBe('active');
+    expect(app.plugins.getPlugin('cons')?.state).toBe('active');
+    expect(app.plugins.getPlugin('noisy')?.state).toBe('active');
 
     // 不 await：让 bounce 处于在飞状态时发起停机
     void app.plugins.bounce('noisy', { config: { n: 2 } });
