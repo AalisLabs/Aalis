@@ -6,19 +6,18 @@
 
 ## 概述
 
-`MemoryService` 是 Agent 的"长期记忆"——保存每轮 Message、按 sessionId 检索历史、提供结构化元数据 K/V 存储。多实现并存：通常 inmemory + sqlite 用作不同语义存储（短时/持久），vector 用作语义检索。
+`MemoryService` 是 Agent 的"长期记忆"——保存每轮 Message、按 sessionId 检索历史、提供结构化元数据 K/V 存储。多实现并存：通常 inmemory + sqlite 用作不同语义存储（短时/持久），vector 用作语义检索。描述符 `memory` 是普通调用型 `ServiceRef<MemoryService>`。
 
 ## 核心方法
 
 ```ts
 interface MemoryService {
-  // 历史
   saveMessage(sessionId: string, message: Message): Promise<void>;
   getHistory(sessionId: string, limit?: number): Promise<Message[]>;
   clearSession(sessionId: string): Promise<void>;
   clearAll?(): Promise<void>;
-  trimHistory?(sessionId: string, keepRecent: number): Promise<number>;   // 归档旧消息
-  getFullHistory?(sessionId: string, limit?: number): Promise<Message[]>; // 含已归档
+  trimHistory?(sessionId: string, keepRecent: number): Promise<number>;
+  getFullHistory?(sessionId: string, limit?: number): Promise<Message[]>;
   getMessagesBySessionRange?(
     sessionId: string,
     fromTs: number,
@@ -26,15 +25,12 @@ interface MemoryService {
     roles?: Array<Message['role']>,
   ): Promise<Message[]>;
 
-  // 结构化元数据（namespace 隔离，key 唯一）
   saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void>;
   getMetadata(namespace: string, key: string): Promise<Record<string, unknown> | undefined>;
   listMetadata(namespace: string): Promise<MetadataEntry[]>;
   deleteMetadata(namespace: string, key: string): Promise<void>;
-  /** 批量提交（put/del 混排）。原子性按后端分档，见契约注释。 */
   commitMetadata(ops: readonly MetadataOp[]): Promise<void>;
 
-  // 编辑
   updateMessageContent?(sessionId: string, oldText: string, newText: string, recentLimit?: number): Promise<number>;
   deleteMessagesByTimestamps?(sessionId: string, timestamps: number[]): Promise<number>;
 }
@@ -49,12 +45,21 @@ content-update    支持 updateMessageContent
 message-delete    支持 deleteMessagesByTimestamps
 ```
 
-依赖声明：
+消费方：
 
 ```ts
-export const inject = {
-  required: ['memory'],
-};
+import { memory } from '@aalis/api-memory';
+import { definePlugin } from '@aalis/core';
+
+export default definePlugin({
+  name: '@acme/plugin-example-memory',
+  uses: { memory },
+  apply({ memory }) {
+    const svc = memory.current;
+    if (!svc) return;
+    void svc.getHistory('session-1', 20);
+  },
+});
 ```
 
 ## 钩子（HookContextMap）
@@ -62,14 +67,14 @@ export const inject = {
 ```ts
 'memory:clear': {
   scope: 'session' | 'all';
-  types?: string[];                     // 指定清除的子系统
+  types?: string[];
   sessionId?: string;
   results: Array<{ source; success; message }>;
   rollbacks: Array<{ source; fn: () => Promise<void> }>;
 }
 ```
 
-`plugin-memory-summary / plugin-memory-vector` 等通过订阅此钩子统一参与"清空对话"操作。
+`plugin-memory-summary` / `plugin-memory-vector` 等通过订阅此钩子统一参与"清空对话"操作。
 
 ## 实现者
 
@@ -81,5 +86,5 @@ export const inject = {
 
 ## 相关
 
-- 协议层 `Message` 在 `@aalis/core`
+- 协议层 `Message` 在 `@aalis/schema-message`
 - 向量检索见 [api-vectorstore](./api-vectorstore.md)

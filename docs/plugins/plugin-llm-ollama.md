@@ -10,9 +10,18 @@ Ollama 本地模型 LLM 服务提供者，通过 Ollama REST API 连接本地运
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-llm-ollama'
-meta.provides = ['llm']
-meta.inject = { optional: ['process'] }
+export default definePlugin({
+  name: '@aalis/plugin-llm-ollama',
+  provides: [llm],
+  uses: {
+    config,
+    logger,
+    lifecycle,
+    provide,
+    proc: optional(processService),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 每个发现的模型单独注册为一条 `llm` 服务条目，能力按模型解析，优先级从高到低：`modelCapabilities` 覆盖、Ollama `/api/show` 探测结果、内置模型家族表、`providerCapabilities` 兜底。

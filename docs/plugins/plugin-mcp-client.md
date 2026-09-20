@@ -12,9 +12,20 @@
 ## 插件声明
 
 ```ts
-name = '@aalis/plugin-mcp-client'
-inject = { required: ['tools'] }
+export default definePlugin({
+  name: '@aalis/plugin-mcp-client',
+  uses: {
+    tools,
+    logger,
+    lifecycle,
+    config,
+    plugins: optional(pluginsService),
+    app: optional(appService),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
+
 
 ## 配置
 
@@ -46,7 +57,7 @@ plugins:
 - 工具名映射为 `mcp_<server-id>_<tool-name>`：`[a-zA-Z0-9_-]` 以外的字符替换为 `_`，连续下划线合并为一个，超过 64 字符截断（OpenAI 工具名限制）。
 - 工具分组：`mcp:<server-id>` —— 可在 platform 配置中按需启用/禁用。
 - `inputSchema` 顶层非 `type: 'object'` 时自动包装为 `{ input: schema }`。
-- 每个 server 连接成功后，经 `ctx.onDispose` 注册 `client.close()`；插件 dispose 时关闭所有已连接的 server，关闭时抛出的错误被忽略，仅记 debug 日志。
+- 每个 server 连接成功后，经 `lifecycle.onDispose` 注册 `client.close()`；插件关闭时断开所有已连接的 server，关闭时抛出的错误被忽略，仅记 debug 日志。
 - 远端工具的返回文本经 `wrapUntrustedContent` 套上不可信内容边界；返回 `isError` 时不套边界，加 `MCP 工具返回错误:` 前缀返回。
 - 插件另外注册 `mcp:_meta` 分组下的两个自服务工具：`mcp_list_servers`（public，只读列出已配置 server 的 id / command / enabled / visibility）和 `mcp_set_server_enabled`（restricted，切换已有条目的 `enabled` 并持久化，插件经 bounce 后生效）。不提供新增 server 的工具；未配置任何有效 server 时只注册这两个。
 
@@ -59,7 +70,7 @@ plugins:
 ## 依赖
 
 - `@modelcontextprotocol/sdk` ^1.0.4
-- inject.required: `tools`
+- `uses.tools`：required，描述符来自 `@aalis/api-tools`
 
 ## 已知限制
 

@@ -10,12 +10,26 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-session-manager'
-meta.provides = ['session-manager']
-meta.inject = {
-  required: ['memory'],
-  optional: ['agent', 'platform', 'persona', 'llm'],
-}
+export default definePlugin({
+  name: '@aalis/plugin-session-manager',
+  provides: [sessionManager],
+  uses: {
+    memory,
+    agent: optional(agent),
+    llm: optional(llm),
+    persona: optional(persona),
+    platform: optional(platform),
+    tools: optional(tools),
+    webui: optional(webuiServer),
+    events,
+    hooks,
+    lifecycle,
+    logger,
+    config,
+    provide,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

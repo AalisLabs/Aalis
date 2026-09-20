@@ -10,10 +10,20 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-storage-local'
-meta.provides = ['storage']
-meta.inject = { optional: ['doctor'] }
-meta.subsystem = 'storage'
+export default definePlugin({
+  name: '@aalis/plugin-storage-local',
+  subsystem: 'storage',
+  provides: [storage],
+  uses: {
+    provide,
+    services,
+    logger,
+    lifecycle,
+    config,
+    doctor: optional(doctor),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

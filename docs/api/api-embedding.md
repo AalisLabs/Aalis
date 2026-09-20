@@ -6,15 +6,13 @@
 
 ## 概述
 
-最小化的 Embedding 服务契约：把一段文本转成 `number[]` 向量。被 vector memory / 语义搜索 / RAG 等场景消费。
+最小化的 Embedding 服务契约：把一段文本转成 `number[]` 向量。被 vector memory / 语义搜索 / RAG 等场景消费。描述符 `embedding` 是普通调用型 `ServiceRef<EmbeddingService>`。
 
 ## 服务接口
 
 ```ts
 interface EmbeddingService {
-  /** 将文本转为向量 */
   embed(text: string, options?: { signal?: AbortSignal }): Promise<number[]>;
-  /** 列出远端可用模型（用于前端下拉框） */
   listModels?(): Promise<string[]>;
 }
 ```
@@ -25,21 +23,26 @@ interface EmbeddingService {
 ## 获取方式
 
 ```ts
-const embedding = ctx.getService<EmbeddingService>('embedding');
-if (!embedding) return; // 未启用任何 embedding 插件时不可用
-const vec = await embedding.embed('the quick brown fox');
+import { embedding } from '@aalis/api-embedding';
+import { definePlugin } from '@aalis/core';
+
+export default definePlugin({
+  name: '@acme/plugin-example-embedding',
+  uses: { embedding },
+  apply({ embedding }) {
+    const svc = embedding.current;
+    if (!svc) return;
+    void svc.embed('the quick brown fox');
+  },
+});
 ```
 
-依赖声明：
-
-```ts
-export const inject = { required: ['embedding'] };
-```
+`embedding.current` 每次读取重新解析当前胜者。不要把返回值存进字段：提供者换人后旧引用失效（有失效逻辑则抛，无则静默成功）；关停边不保护缓存引用。
 
 ## 注意事项
 
 - 向量维度由具体 provider 决定（如 OpenAI text-embedding-3-small = 1536；ollama nomic-embed-text = 768）。**消费方应避免假设维度**——`plugin-memory-vector` 会在初始化时 probe 一次并存为元数据。
-- 多个 embedding 实现互斥：同一时间只能有一个绑定到 `embedding` 服务名（通过 contextId 区分多实例）。
+- 多个 embedding 实现互斥：同一时间只有一个胜者绑定到 `embedding` 服务名（通过 instanceId / 偏好区分多实例）。
 
 ## 实现者
 

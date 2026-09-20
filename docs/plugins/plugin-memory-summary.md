@@ -10,8 +10,21 @@ LLM 驱动的对话摘要插件：会话历史达到阈值或上下文使用率�
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-memory-summary'
-meta.inject = { required: ['memory', 'llm'], optional: ['message-archive'] }
+export default definePlugin({
+  name: '@aalis/plugin-memory-summary',
+  uses: {
+    memory,
+    llm,
+    messageArchive: optional(messageArchive),
+    config,
+    logger,
+    events,
+    hooks,
+    contributions,
+    lifecycle,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

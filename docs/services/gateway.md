@@ -4,9 +4,9 @@
 
 `gateway` 是 Aalis 的**消息流编排中枢**：把平台适配器（OneBot / WebUI / CLI 等）和 agent 之间的入站 / 出站消息路由统一收口到一条带相位的管道里。
 
-- 服务注册名：`gateway` —— 即 `ctx.getService<GatewayService>('gateway')` 里的字符串。
+- 服务注册名：`gateway` —— 即 `gateway.current` 里的字符串。
 - 契约包：`@aalis/api-gateway`（`packages/api-gateway/src/index.ts`）。
-- 默认实现包：`@aalis/plugin-gateway`（`packages/plugin-gateway/src/index.ts`，`provides = ['gateway']`）。
+- 默认实现包：`@aalis/plugin-gateway`（`packages/plugin-gateway/src/index.ts`，`provides: [gateway]`）。
 
 它做两件事：
 
@@ -32,7 +32,7 @@ export interface GatewayService {
 }
 ```
 
-服务类型经 declaration merging 注册到 core：`ServiceTypeMap.gateway = GatewayService`（`packages/api-gateway/src/index.ts`）。
+服务类型经 declaration merging 注册到 core：`服务描述符.gateway = GatewayService`（`packages/api-gateway/src/index.ts`）。
 
 ### 2.2 入站相位常量与相位数据
 
@@ -88,21 +88,21 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
 
 ## 3. 谁提供 / 谁消费
 
-**提供方（唯一）**：`@aalis/plugin-gateway`（`packages/plugin-gateway/src/index.ts`，`ctx.provide('gateway', service)`）。`inject.optional = ['agent']` —— 没有 agent 时仍可处理出站、运行钩子链，dispatch 兜底给一条系统提示。
+**提供方（唯一）**：`@aalis/plugin-gateway`（`packages/plugin-gateway/src/index.ts`，`provide(gateway, service)`）。`uses optional = ['agent']` —— 没有 agent 时仍可处理出站、运行钩子链，dispatch 兜底给一条系统提示。
 
 **消费方分两类：**
 
-- **直接调服务（`getService('gateway')`）** —— 主要是 agent 自己回话，外加主动注入消息的系统侧触发器：
-  - `packages/plugin-agent/src/index.ts`：**主出站流** —— agent 生成回复后 `gateway.dispatchOutbound(message)` 把出站消息交给 gateway 运行出站钩子链（缺失时回退 `ctx.emit('outbound:message', message)`，中间件链被跳过）。
-  - `packages/plugin-flow-control/src/idle-scheduler.ts`：idle 触发，`gateway.ingressMessage(msg)`，缺失时回退 `ctx.emit('inbound:message', msg)`。
+- **直接调服务（`gateway.current`）** —— 主要是 agent 自己回话，外加主动注入消息的系统侧触发器：
+  - `packages/plugin-agent/src/index.ts`：**主出站流** —— agent 生成回复后 `gateway.dispatchOutbound(message)` 把出站消息交给 gateway 运行出站钩子链（缺失时回退 `events.emit('outbound:message', message)`，中间件链被跳过）。
+  - `packages/plugin-flow-control/src/idle-scheduler.ts`：idle 触发，`gateway.ingressMessage(msg)`，缺失时回退 `events.emit('inbound:message', msg)`。
   - `packages/plugin-session-confirm/src/index.ts`：取 gateway 走出站总线投递确认提示。
-- **注册到相位 hook（不直接持有服务，靠 `inject.required: ['gateway']` 声明顺序依赖）** —— 各中间件占据一个语义相位：
+- **注册到相位 hook（不直接持有服务，靠 `uses required: ['gateway']` 声明顺序依赖）** —— 各中间件占据一个语义相位：
   - `plugin-session-confirm` → `INBOUND_PHASE.CONFIRM`（`packages/plugin-session-confirm/src/index.ts`）
   - `plugin-commands` → `INBOUND_PHASE.COMMAND`（`packages/plugin-commands/src/index.ts`）
   - `plugin-flow-control` → `INBOUND_PHASE.FLOW`
   - `plugin-trigger-policy` → `INBOUND_PHASE.TRIGGER`
 
-**平台适配器既不直接调服务、也不注册相位**：它只往事件总线发 `inbound:message`、监听 `outbound:message`。例如 `@aalis/plugin-adapter-onebot`（`provides = ['platform']`，`packages/plugin-adapter-onebot/src/index.ts`）在多处 `ctx.emit('inbound:message', {...})`，并 `ctx.on('outbound:message', ...)` 发送。这种「适配器只与事件总线交互，gateway 接管编排」是有意的解耦：适配器**不需要** `inject` gateway，加载顺序也无所谓（事件是后期绑定的）。
+**平台适配器既不直接调服务、也不注册相位**：它只往事件总线发 `inbound:message`、监听 `outbound:message`。例如 `@aalis/plugin-adapter-onebot`（`provides: [platform]`，`packages/plugin-adapter-onebot/src/index.ts`）在多处 `events.emit('inbound:message', {...})`，并 `events.on('outbound:message', ...)` 发送。这种「适配器只与事件总线交互，gateway 接管编排」是有意的解耦：适配器**不需要**把 `gateway` 写进 `uses`，加载顺序也无所谓（事件是后期绑定的）。
 
 ## 4. 写一个 provider（替换 gateway 实现 —— 少见）
 
@@ -110,7 +110,7 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
 
 **最小必须实现**：`ingressMessage` 与 `dispatchOutbound` 两个方法 + 监听 `inbound:message` 把消息送入 `ingressMessage`。**可选但强烈建议**：保留相位调度与 `gateway:phase:done` 遥测，否则现有 `plugin-commands` / `plugin-flow-control` 等相位插件会失效。
 
-`package.json` 的 `aalis.service` 与源码 `provides` / `inject` **双源必须同步**（参考默认实现 `packages/plugin-gateway/package.json` 的 `aalis.service.provides: ['gateway']` + `optional: ['agent']`）：
+`package.json` 的 `aalis.service` 与源码 `provides` / `uses` **双源必须同步**（参考默认实现 `packages/plugin-gateway/package.json` 的 `aalis.service.provides: ['gateway']` + `optional: ['agent']`）：
 
 ```jsonc
 // package.json
@@ -128,68 +128,72 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
 可编译最小骨架（与默认实现同构，仅留主干）：
 
 ```ts
-import type { Context } from '@aalis/core';
+import { definePlugin } from '@aalis/core';
 import type { AgentService } from '@aalis/api-agent';
 import type { GatewayService, InboundPhaseData } from '@aalis/api-gateway';
 import { INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/api-gateway';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
 
-export const name = '@aalis/plugin-gateway';
-export const provides = ['gateway'];
-export const inject = { optional: ['agent'] };
-
-export function apply(ctx: Context): void {
+export default definePlugin({
+  name: '@aalis/plugin-gateway',
+  provides: [gateway],
+  uses: { provide, events, hooks, agent: optional(agent) },
+  apply({ provide, events, hooks, agent }) {
   async function dispatchOutbound(message: OutgoingMessage): Promise<void> {
     const data = { message, metadata: {} as Record<string, unknown> };
-    await ctx.runHook('outbound:dispatch', data, async () => {
-      await ctx.emit('outbound:message', data.message);
+    await hooks.run('outbound:dispatch', data, async () => {
+      await events.emit('outbound:message', data.message);
     });
   }
 
   async function processInbound(message: IncomingMessage): Promise<void> {
     // 每次入站重新取 agent —— provider bounce 后旧引用会失效，禁止缓存。
-    const agent = ctx.getService<AgentService>('agent');
-    const data: InboundPhaseData = { message, metadata: {}, agent };
+    const agentSvc = agent.current;
+    const data: InboundPhaseData = { message, metadata: {}, agent: agentSvc };
 
     // 前置相位 = 顺序里除终相 DISPATCH 外全部；新增相位只改 gateway-api，这里零改动。
     for (const phase of INBOUND_PHASE_ORDER.filter(p => p !== INBOUND_PHASE.DISPATCH)) {
-      const reachedEnd = await ctx.runHook(phase, data);
+      const reachedEnd = await hooks.run(phase, data);
       if (!reachedEnd) return; // 被 swallow，停止后续调度，不触达 agent
     }
 
     // 终相 dispatch：默认动作调用 agent
-    await ctx.runHook(INBOUND_PHASE.DISPATCH, data, async () => {
+    await hooks.run(INBOUND_PHASE.DISPATCH, data, async () => {
       if (data.agent) await data.agent.handleMessage(data.message);
     });
   }
 
-  ctx.on('inbound:message', msg => { void processInbound(msg); });
+  events.on('inbound:message', msg => { void processInbound(msg); });
 
   const service: GatewayService = {
     ingressMessage: msg => processInbound(msg),   // 直接走内部路径，避免事件递归歧义
     dispatchOutbound,
   };
-  ctx.provide('gateway', service);
-}
+  provide(gateway, service);
+},
+});
 ```
 
-> `ctx.provide` 无需传 priority —— gateway 一般是单提供方。同名竞争时的胜者规则是 `preference > priority > 注册顺序`（无能力匹配，0.5.0 已移除）；细节见 `concepts/service-model.md`。
+> `provide` 无需传 priority —— gateway 一般是单提供方。同名竞争时的胜者规则是 `preference > priority > 注册顺序`（无能力匹配，0.5.0 已移除）；细节见 `concepts/service-model.md`。
 
 ## 5. 写一个平台适配器（最常见）
 
-平台适配器是「适配器如何插入」的答案。它不实现 `gateway`，也不 `inject` 它，只 `provides = ['platform']`，与事件总线交互：
+平台适配器是「适配器如何插入」的答案。它不实现 `gateway`，也不把 gateway 写进 `uses`，只 `provides: [platform]`，与事件总线交互：
 
-- **入站**：把平台原始消息映射成 `IncomingMessage`，`ctx.emit('inbound:message', msg)`。gateway 会自动接管相位链；适配器**不要**自己做命令/流控/触发判定（这些是相位插件的职责，参考 `packages/plugin-adapter-onebot/src/index.ts` 注释「适配器不再做流控/触发判定」）。
-- **出站**：`ctx.on('outbound:message', msg)`，按 `msg.sessionId` 前缀（如 `'onebot:'`）认领属于自己平台的消息再发送（`packages/plugin-adapter-onebot/src/index.ts`）。
+- **入站**：把平台原始消息映射成 `IncomingMessage`，`events.emit('inbound:message', msg)`。gateway 会自动接管相位链；适配器**不要**自己做命令/流控/触发判定（这些是相位插件的职责，参考 `packages/plugin-adapter-onebot/src/index.ts` 注释「适配器不再做流控/触发判定」）。
+- **出站**：`events.on('outbound:message', msg)`，按 `msg.sessionId` 前缀（如 `'onebot:'`）认领属于自己平台的消息再发送（`packages/plugin-adapter-onebot/src/index.ts`）。
 
 ```ts
-export const provides = ['platform'];
-// 注意：不 inject 'gateway' —— 事件是后期绑定，与加载顺序无关。
+import { definePlugin } from '@aalis/core';
+// 注意：不把 `gateway` 写进 `uses` —— 事件是后期绑定，与加载顺序无关。
 
-export function apply(ctx: Context): void {
+export default definePlugin({
+  name: '@acme/plugin-example',
+  provides: [platform],
+  apply({ provide, events, hooks, lifecycle, logger, config }) {
   // 入站：原始消息 → IncomingMessage → 事件总线（gateway 接管编排）
   platformClient.onMessage(raw => {
-    ctx.emit('inbound:message', {
+    events.emit('inbound:message', {
       content: raw.text,
       sessionId: `myplat:${raw.chatId}`, // 用平台前缀，便于出站时按前缀认领
       platform: 'myplat',
@@ -200,25 +204,26 @@ export function apply(ctx: Context): void {
   });
 
   // 出站：只认领自己平台的消息
-  ctx.on('outbound:message', async msg => {
+  events.on('outbound:message', async msg => {
     if (!msg.sessionId.startsWith('myplat:')) return;
     await platformClient.send(msg.sessionId.slice('myplat:'.length), msg.content);
   });
-}
+},
+});
 ```
 
-> 想从系统侧（非用户消息）主动喂入一条消息（idle / 定时 / 自检），优先 `getService<GatewayService>('gateway')?.ingressMessage(msg)`，缺失时回退 `ctx.emit('inbound:message', msg)`（参考 idle-scheduler 的写法）。两者都会走完整入站相位链。
+> 想从系统侧（非用户消息）主动喂入一条消息（idle / 定时 / 自检），优先 `gateway.current?.ingressMessage(msg)`，缺失时回退 `events.emit('inbound:message', msg)`（参考 idle-scheduler 的写法）。两者都会走完整入站相位链。
 
 ## 6. 标准消费方式
 
-- **lazy getService，每次用时重新取，不缓存**：`const gw = ctx.getService<GatewayService>('gateway')`。provider bounce（卸载/重载）会让旧引用失效；缓存到模块/闭包变量是 bug。详见 `concepts/lazy-service-access.md`。
-- **gateway 视为可选依赖时给出回退**：idle-scheduler 的范式是 `gateway ? gateway.ingressMessage(msg) : ctx.emit('inbound:message', msg)`（`packages/plugin-flow-control/src/idle-scheduler.ts`）。若你的相位插件**必须**有 gateway 才有意义，则在 manifest 写 `inject.required: ['gateway']`（如 session-confirm，`packages/plugin-session-confirm/src/index.ts`），让 core 保证加载顺序。
-- **注册相位 = 用 `ctx.middleware(INBOUND_PHASE.X, (data, next) => ...)`**：洋葱模型，`await next()` 放行进入后续相位；**不调用 `next()`** 即「我已处理」，整条入站管道立即停止、不触达 agent（`packages/plugin-commands/src/index.ts`）。相位内多个 handler 按注册顺序执行，无需优先级数字。`ctx.middleware` 签名见 `packages/core/src/context/context.ts`。
+- **惰性读取 `.current`，每次用时重新取，不缓存**：`const gw = gateway.current`。provider bounce（卸载/重载）会让旧引用失效；缓存到模块/闭包变量是 bug。详见 `concepts/lazy-service-access.md`。
+- **gateway 视为可选依赖时给出回退**：idle-scheduler 的范式是 `gateway ? gateway.ingressMessage(msg) : events.emit('inbound:message', msg)`（`packages/plugin-flow-control/src/idle-scheduler.ts`）。若你的相位插件**必须**有 gateway 才有意义，则在 manifest 写 `uses required: ['gateway']`（如 session-confirm，`packages/plugin-session-confirm/src/index.ts`），让 core 保证加载顺序。
+- **注册相位 = 用 `hooks.middleware(INBOUND_PHASE.X, (data, next) => ...)`**：洋葱模型，`await next()` 放行进入后续相位；**不调用 `next()`** 即「我已处理」，整条入站管道立即停止、不触达 agent（`packages/plugin-commands/src/index.ts`）。相位内多个 handler 按注册顺序执行，无需优先级数字。`hooks.middleware` 签名见 `packages/core/src/context/context.ts`。
 - **错误边界**：默认实现把 `processInbound` / `dispatchOutbound` 整体 try/catch 并降级为 `logger.warn`（`packages/plugin-gateway/src/index.ts`）—— 单条消息出错不拖垮总线。你的相位 handler 也应自行兜底，别让异常冒泡出相位链。
 
 ## 7. 能力 / 风险 → 影响
 
-- **出站统一收口**：业务层**不应**再直接 `ctx.emit('outbound:message', msg)`，而应 `dispatchOutbound()`，以便所有出站消息都经过 `outbound:dispatch` 钩子链做脱敏 / 限速 / 审计（`packages/api-gateway/src/index.ts`）。直接 emit 会绕过这些守卫。适配器**监听** `outbound:message` 仍是合法的（它是链尾的最终发送指令）。
+- **出站统一收口**：业务层**不应**再直接 `events.emit('outbound:message', msg)`，而应 `dispatchOutbound()`，以便所有出站消息都经过 `outbound:dispatch` 钩子链做脱敏 / 限速 / 审计（`packages/api-gateway/src/index.ts`）。直接 emit 会绕过这些守卫。适配器**监听** `outbound:message` 仍是合法的（它是链尾的最终发送指令）。
 - **CONFIRM 相位与在途生成的 abort**：`inbound:confirm` 刻意排在最前。会话内待确认回复（Y/YS/否）命中即被吞掉、不进入后续相位，从而**不触发** `agent.handleMessage` 对在途生成的 abort —— 确认回送得以成立（`packages/api-gateway/src/index.ts`、`packages/plugin-session-confirm/src/index.ts`）。若你新增相位插在 CONFIRM 之前并 swallow 消息，会破坏这一语义。人在回路确认机制本身见 `concepts/security-model.md` 与 `plugins/plugin-authority.md`。
 - **授权身份用 `actor` 而非 `userId`**：系统侧触发器（scheduler / idle / proactive 委派）投递的 `IncomingMessage` 应填 `actor: { platform, userId }`，表示「AI 代谁执行」；agent 构造工具调用上下文时优先用 `actor` 查权限等级，避免提权（`packages/schema-message/src/index.ts`）。`actor` 不能由 LLM 在工具入参里自由指定。
 - **跨会话 / 并发隔离**：`IncomingMessage.source` 用于并发隔离 —— 同一 `sessionId` 不同 `source` 互不打断（`packages/schema-message/src/index.ts`）。适配器 / 触发器填对 `source` 才能让 agent 正确做打断决策。
@@ -235,7 +240,7 @@ export function apply(ctx: Context): void {
 
 - 服务模型 / 同名竞争 / DI 选择规则：`concepts/service-model.md`、`core/service.md`
 - 懒取服务、provider bounce：`concepts/lazy-service-access.md`
-- 双源 manifest（`package.json aalis.service` vs `provides`/`inject`）：`concepts/manifest-metadata.md`
+- 双源 manifest（`package.json aalis.service` vs `provides`/`uses`）：`concepts/manifest-metadata.md`
 - 消息载体类型与端到端流水线：`concepts/message-llm-pipeline.md`（`IncomingMessage` / `OutgoingMessage` 在 `@aalis/schema-message`）
 - 确认 / 人在回路 / 授权：`concepts/security-model.md`、`plugins/plugin-authority.md`
 - 相位 hook / 洋葱中间件机制：`core/events.md`、`packages/core/src/primitives/hooks.ts`、`packages/core/src/context/context.ts`

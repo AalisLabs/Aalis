@@ -10,11 +10,29 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-user-relation'
-meta.displayName = '人物关系图'
-meta.subsystem = 'memory'
-meta.provides = ['user-relation']
-meta.inject = { required: ['memory'], optional: ['llm', 'webui-server', 'agent', 'tools', 'embedding'] }
+export default definePlugin({
+  name: '@aalis/plugin-user-relation',
+  displayName: '人物关系图',
+  subsystem: 'memory',
+  provides: [userRelation],
+  uses: {
+    memory,
+    logger,
+    config,
+    events,
+    hooks,
+    contributions,
+    provide,
+    llm: optional(llm),
+    platform: optional(platform),
+    tools: optional(tools),
+    commands: optional(commands),
+    webui: optional(webuiServer),
+    embedding: optional(embedding),
+    agent: optional(agent),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 存储结构

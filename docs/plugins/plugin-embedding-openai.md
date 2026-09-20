@@ -10,9 +10,16 @@ OpenAI 兼容 API 的 `EmbeddingService` 实现。
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-embedding-openai'
-meta.provides = ['embedding']
-meta.inject = {} // 无依赖
+export default definePlugin({
+  name: '@aalis/plugin-embedding-openai',
+  provides: [embedding],
+  uses: {
+    config,
+    logger,
+    provide,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

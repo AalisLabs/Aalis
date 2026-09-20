@@ -12,10 +12,19 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-todo-list'
-meta.displayName = '任务计划'
-meta.subsystem = 'scheduler'
-meta.inject = {}
+export default definePlugin({
+  name: '@aalis/plugin-todo-list',
+  displayName: '任务计划',
+  subsystem: 'scheduler',
+  uses: {
+    tools: optional(tools),
+    events,
+    config,
+    memory: optional(memory),
+    webui: optional(webuiServer),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

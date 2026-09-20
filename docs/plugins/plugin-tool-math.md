@@ -10,9 +10,17 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-tool-math'
-meta.displayName = '数学工具'
-meta.subsystem = 'tools'
+export default definePlugin({
+  name: '@aalis/plugin-tool-math',
+  displayName: '数学工具',
+  subsystem: 'tools',
+  apply(caps) { /* 见源码 */ },
+  uses: {
+    tools: optional(tools),
+    config,
+    logger,
+  },
+});
 ```
 
 ## 配置

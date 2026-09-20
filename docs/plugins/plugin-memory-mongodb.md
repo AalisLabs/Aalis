@@ -10,9 +10,17 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-memory-mongodb'
-meta.provides = ['memory']
-meta.inject = {} // 无依赖
+export default definePlugin({
+  name: '@aalis/plugin-memory-mongodb',
+  provides: [memory],
+  apply(caps) { /* 见源码 */ },
+  uses: {
+    logger,
+    config,
+    lifecycle,
+    provide,
+  },
+});
 ```
 
 ## 配置

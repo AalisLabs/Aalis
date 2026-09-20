@@ -10,10 +10,17 @@ OpenAI 兼容接口的 LLM 提供者：为每个可用模型实现一个 `LLMMod
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-llm-openai'
-meta.provides = ['llm']
-meta.reusable = true // 可多实例
-// 未声明 inject（无服务依赖）
+export default definePlugin({
+  name: '@aalis/plugin-llm-openai',
+  provides: [llm],
+  uses: {
+    config,
+    logger,
+    lifecycle,
+    provide,
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

@@ -9,14 +9,19 @@ DeepSeek API 的 LLM 提供者：为每个可用模型实现一个 `LLMModel`（
 
 ## 插件声明
 
-```typescript
-export const name = '@aalis/plugin-llm-deepseek';
-export const displayName = 'DeepSeek';
-export const subsystem = 'llm';
-export const provides = ['llm'];
-export const reusable = true;
-// 不导出 inject：无服务依赖
+```ts
+definePlugin({
+  name: '@aalis/plugin-llm-deepseek',
+  displayName: 'DeepSeek',
+  subsystem: 'llm',
+  reusable: true,
+  provides: [llm],
+  uses: { provide, lifecycle, logger, config },
+  apply: registerModels,
+})
 ```
+
+无其它服务依赖。每个模型 `provide(llm, handle, { entryId: \`${lifecycle.id}/${modelId}\`, label })`。
 
 ## 配置
 

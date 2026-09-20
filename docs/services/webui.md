@@ -2,18 +2,18 @@
 
 ## 1. 定位
 
-WebUI 是 Aalis 的 **Web 管理后台**：启动一个 HTTP 服务器，提供 REST API（插件管理 / 配置 / 权限 / 文件 / 市场）+ WebSocket（消息流、日志推送、受限操作确认），并托管前端静态文件。第三方插件通过它**注册侧边栏页面 / 声明式面板 / 配置表单**，也可整体替换前端或替换整个服务实现。
+WebUI 是 Aalis 的 **Web 管理后台**：启动一个 HTTP 服务器，提供 REST API（插件管理 / 配置 / 权限 / 文件 / 市场）+ WebSocket（消息流、日志推送、受限操作确认），并托管前端静态文件。第三方插件通过它**登记侧边栏页面 / 声明式面板 / 配置表单**，也可整体替换前端或替换整个服务实现。
 
-注意服务注册名（DI key）有**两个**，而非单个 `'webui'`：
+注意服务注册名（描述符 `name`）有**两个**，而非单个 `'webui'`：
 
-- `'webui-server'` —— 后端服务，契约 `WebUIService`。`ctx.getService<WebUIService>('webui-server')`，或经 helper `useWebuiService(ctx)`（见 `packages/api-webui/src/index.ts`）。
-- `'webui-client'` —— 前端「忒修斯之船」provider，契约 `WebuiClientProvider`。一个目录 + 一个 `getClientDir()`，由 webui-server 自动发现并挂载（见 `packages/api-webui/src/index.ts`、`packages/plugin-webui-server/src/index.ts`）。
+- `'webui-server'` —— 后端服务，契约 `WebUIService`。描述符 `webuiServer`，绑定接口 `BoundWebui`（`packages/api-webui/src/index.ts`）。
+- `'webui-client'` —— 前端「忒修斯之船」provider，契约 `WebuiClientProvider`。描述符 `webuiClient`，绑定接口是普通 `ServiceRef`。
 
-契约包：`@aalis/api-webui`（`packages/api-webui/src/index.ts`），**MIT**。它既导出 runtime 服务契约（两个 interface），也导出大量**纯类型**（声明式页面组件 `WebuiComponent`、页面骨架 `WebuiPage`）和**通过 declaration merging 注入的字段**（向 core 的 `PluginModule` 注入 `actions/subsystem/extends`，向 `@aalis/schema-config` 的 `SchemaField` 注入 `secret/dynamicOptions/allowCustom`）。
+契约包：`@aalis/api-webui`（`packages/api-webui/src/index.ts`），**MIT**。它导出运行时服务契约、声明式页面组件类型、以及向 `PluginMeta` 注入的 `extends`、向 `@aalis/schema-config` 的 `SchemaField` 注入的 `secret/dynamicOptions/allowCustom`。
 
 参考实现 `@aalis/plugin-webui-server` 与前端 `@aalis/plugin-webui-client` 均为 **AGPL-3.0-only**（与契约包许可不同，见第 6 节 AGPL 说明）。
 
-> 关键认知：`webui-api` 大半是**契约 + 类型 + 一个 helper**。真正要 `ctx.provide(...)` 的只有 `webui-server` / `webui-client` 两个服务；`WebuiPage` 不是静态 module 字段，而是运行时经 `useWebuiService(ctx).registerPage()` 注册（`packages/api-webui/src/index.ts`）。
+页面与页面动作不是静态模块字段：在 `apply` 里经 `webui.registerPage` / `webui.registerAction` 登记，随本次激活撤回。
 
 ## 2. 契约
 
@@ -23,36 +23,49 @@ WebUI 是 Aalis 的 **Web 管理后台**：启动一个 HTTP 服务器，提供 
 export interface WebUIService {
   getPort(): number;
   getHost(): string;
-  setClientDir?(dir: string): void;                                   // 可选——运行时替换前端目录
-  registerPage(page: WebuiPage, contextId: string): () => void;       // 返回 dispose
-  getPages(): Array<WebuiPage & { pluginName: string }>;              // 含插件归属
-  unregisterByPlugin(contextId: string): void;                        // Context 拆卸时批量清
+  setClientDir?(dir: string): void;
+  registerPage(page: WebuiPage, contextId: string): () => void;
+  getPages(): Array<WebuiPage & { pluginName: string }>;
+  registerAction(method: string, handler: WebuiActionHandler, contextId: string): () => void;
+}
+
+export type WebuiActionHandler = (args: Record<string, unknown>, caller?: UserIdentity) => Promise<unknown>;
+```
+
+### 绑定接口 `BoundWebui`
+
+```ts
+export interface BoundWebui extends ServiceRef<WebUIService> {
+  registerPage(page: WebuiPage): () => void;
+  registerAction(method: string, handler: WebuiActionHandler): () => void;
 }
 ```
 
-### 前端 provider `WebuiClientProvider`（`packages/api-webui/src/index.ts`）
+`registerPage` / `registerAction` 走 `registrar`：同键替换、提供者换人整体重挂、关闭后拒收。插件不要自己传 `contextId`。调用型查询走 `webui.current`（每次读取重新解析）。
+
+### 前端 provider `WebuiClientProvider`
 
 ```ts
 export interface WebuiClientProvider {
-  getClientDir(): string;   // 返回含 index.html 的静态目录绝对路径
-  label?: string;           // 多前端切换时的展示名
+  getClientDir(): string;
+  label?: string;
 }
 ```
 
-### 页面骨架 `WebuiPage`（`packages/api-webui/src/index.ts`）
+### 页面骨架 `WebuiPage`
 
 ```ts
 export interface WebuiPage {
-  key: string;                 // 唯一标识，对应前端路由/tab key
-  label: string;               // 显示名
-  icon?: string;               // 命名标识 或 内联 SVG（见第 6 节 XSS 风险）
-  order?: number;              // 排序权重，默认 99
-  renderer?: string;           // 自定义渲染器标识（非声明式 content 场景）
-  content?: WebuiComponent[];  // 声明式页面内容；不提供则用客户端内置页面
+  key: string;
+  label: string;
+  icon?: string;
+  order?: number;
+  renderer?: string;
+  content?: WebuiComponent[];
 }
 ```
 
-### 声明式组件 `WebuiComponent`（`packages/api-webui/src/index.ts`）
+### 声明式组件 `WebuiComponent`
 
 8 种联合：`stat` / `table` / `form` / `actions` / `info` / `markdown` / `tabs` / `graph`。每种组件的 `source` 字段都是一个**字符串方法名**，前端按它调 `POST /api/page-action/:plugin/:method`（见第 5 节）取数据。
 
@@ -60,61 +73,32 @@ export interface WebuiPage {
 - `WebuiTableComponent` 支持 `columns/actions/refresh/searchable`。
 - `WebuiGraphComponent` 基于 Cytoscape，非关系图场景**必须**声明 `nodeKinds/edgeKinds`，否则冒用人物关系图内置三类图例。
 
-### declaration merging 注入 core 与 schema-config（`packages/api-webui/src/index.ts`）
+`POST /api/page-action/:plugin/:method` 在身份闸放行后调用已登记的 handler，并把 `caller` 作为第二参传入（`packages/plugin-webui-server/src/routes/plugins.ts`）。单 owner 终态下该路由要求 owner 身份。
+
+action 的业务失败**返回** `{ ok: false, error: '原因' }`，HTTP 仍是 200——路由只把 handler 的抛错转成 5xx；前端 form / actions / table 三种组件都据此显示原因，返回其它任何值（含 `undefined`）视为成功；table 的非 danger / confirm 操作若返回不带 `ok` 的普通对象，会被当作详情弹窗内容展示，只想刷新表格就返回 `undefined` 或 `{ ok: true }`。
+
+### SchemaField 注入
 
 ```ts
-declare module '@aalis/core' {
-  interface PluginModule {
-    subsystem?: string;                                              // 仅 WebUI 分组展示，core 不读
-    extends?: ExtendDeclaration;                                     // 声明扩展事件/钩子，仅展示
-    actions?: Record<string,
-      (ctx: Context, args: Record<string, unknown>,
-       caller?: UserIdentity) => Promise<unknown>>;                  // RPC 动作表，host 路由调用
-  }
-}
-
 declare module '@aalis/schema-config' {
   interface SchemaField {
-    secret?: boolean;          // 敏感字段，前端遮蔽显示
-    dynamicOptions?: string;   // select/multiselect 动态选项来源服务名（前端调该服务 listModels()）
-    allowCustom?: boolean;     // multiselect 允许手动输入自定义值
+    secret?: boolean;
+    dynamicOptions?: string;
+    allowCustom?: boolean;
   }
 }
 ```
 
-> `actions` 是 WebUI 体系的真正业务入口：core 完全不感知此字段，由 host（webui-server）路由层 `POST /api/page-action/:plugin/:method` 在权限闸放行后，以**插件自身的 `entry.context`** 调用 handler，并把解析出的 `caller` 身份作为第三参传入（`packages/plugin-webui-server/src/routes/plugins.ts`）。
->
-> action 的业务失败**返回** `{ ok: false, error: '原因' }`，HTTP 仍是 200——路由只把 handler 的抛错转成 5xx；前端 form / actions / table 三种组件都据此显示原因，返回其它任何值（含 `undefined`）视为成功；table 的非 danger / confirm 操作若返回不带 `ok` 的普通对象，会被当作详情弹窗内容展示，只想刷新表格就返回 `undefined` 或 `{ ok: true }`。
-
-### helper `useWebuiService` 与 `ScopedWebuiService`（`packages/api-webui/src/index.ts`）
-
-```ts
-export function useWebuiService(ctx: Context): ScopedWebuiService {
-  const contextId = ctx.id || 'unknown';
-  return {
-    registerPage(page) {
-      // 委托 ctx.whenService('webui-server', ...)：每次 webui-server 重新 provide
-      // （bounce/replace）都会重新 registerPage，让页面自动重挂；旧 cleanup 在 provider 下线时释放。
-      return ctx.whenService<WebUIService>('webui-server', svc => svc.registerPage(page, contextId));
-    },
-    get raw() { return ctx.getService<WebUIService>('webui-server'); },
-  };
-}
-```
-
-### 其它导出（纯类型 / 数据）
-
-- `ExtendDeclaration`：`events/hooks/mixins` 元数据。
-- `SubsystemMetadata` + `DEFAULT_SUBSYSTEM_METADATA`：子系统展示目录（中文 label / 排序），唯一消费者是 webui-server 的 `/api/service-groups`；未命中表时前端回退「id 原样展示，order=9999」。
+`subsystem` 写在 `definePlugin({ subsystem })`（`PluginDefinition` 字段，core 不读）。`extends` 经本包 declaration merging 挂到 `PluginMeta`。
 
 ## 3. 谁提供 / 谁消费
 
 **提供方**
 
-- `@aalis/plugin-webui-server` —— 唯一参考实现。`provides = ['webui-server', 'platform']`（`packages/plugin-webui-server/src/index.ts`），服务实例在 `:1587-1616` 构造并 `ctx.provide('webui-server', webuiService)`。它同时是一个 `platform` adapter（WebUI 当聊天界面，`:1541-1575`）。
-- `@aalis/plugin-webui-client` —— 默认前端（React SPA）。**不是被加载的插件**，而是带 `aalis.client: true` 标记 + `dist/index.html` 的纯静态包，被 webui-server 在 `app:ready` 时自动发现并注册成 `webui-client` 的一个 provider（`packages/plugin-webui-server/src/index.ts`）。`@aalis/plugin-webui-client-example` 是替换前端的最小示例。
+- `@aalis/plugin-webui-server` —— 参考实现。`provides: [webuiServer, platform]`（`packages/plugin-webui-server/src/index.ts`），`provide(webuiServer, impl)`。它同时是一个 `platform` adapter（WebUI 当聊天界面）。`sessionConfirm` 等为 optional。
+- `@aalis/plugin-webui-client` —— 默认前端（React SPA）。**不是被加载的插件**，而是带 `aalis.client: true` 标记 + `dist/index.html` 的纯静态包，被 webui-server 在 `app:ready` 时自动发现并登记成 `webui-client` 的一个 provider（可用 `onBehalfOf` 让偏好认前端包名；代登记不计入代理人 `provides`）。
 
-**消费方**（全部经 `useWebuiService(ctx).registerPage(...)` 注册侧边栏页面）：
+**消费方**（经 `webui.registerPage` / `registerAction`）：
 
 | 插件 | 注册点 |
 | --- | --- |
@@ -126,41 +110,24 @@ export function useWebuiService(ctx: Context): ScopedWebuiService {
 | `plugin-tool-browser` | `packages/plugin-tool-browser/src/index.ts` |
 | `plugin-user-relation` | `packages/plugin-user-relation/src/index.ts`（用 `graph` 组件画关系图） |
 | `plugin-workflow` | `packages/plugin-workflow/src/index.ts` |
+| `plugin-todo-list` | `packages/plugin-todo-list/src/index.ts` |
 
-脚手架 `create-aalis-plugin` 在勾选 webui 特性时也生成 `useWebuiService(ctx)` 调用（`packages/create-aalis-plugin/src/cli.ts`）。
-
-> webui-server 内部读取页面用 `ctx.getService<WebUIService>('webui-server').getPages()`（`packages/plugin-webui-server/src/routes/plugins.ts`）——即「自己取自己」，因为页面注册在服务实例的内存 Map 里。
+webui-server 内部读页面用当前服务实例上的 `getPages()`——页面登记在该实例的内存 Map 里。
 
 ## 4. 写一个 provider
 
-绝大多数第三方作者**不替换 webui-server**，只是**注册页面 / 声明 actions**。下面分两类。
+绝大多数第三方作者**不替换 webui-server**，只是**登记页面与页面动作**。
 
-### 4a. 消费 WebUI：注册一个声明式页面（最常见）
-
-最小骨架（可编译，省略 import 细节）：
+### 4a. 消费 WebUI：登记一个声明式页面（最常见）
 
 ```ts
-import type { Context } from '@aalis/core';
-import { useWebuiService, type WebuiPage } from '@aalis/api-webui';
-
-// 子系统归属（可选，仅分组展示）；任意字符串都行，命中 DEFAULT_SUBSYSTEM_METADATA 用其中文 label
-export const subsystem = 'tools';
-
-// RPC 动作表：声明式组件的 source/save/method 都指向这里的 key
-export const actions = {
-  // 第三参 caller 是 webui-server 路由层解析出的调用者；忽略即向后兼容
-  async stats(_ctx: Context, _args: Record<string, unknown>) {
-    return { total: 42 };
-  },
-  async refresh(_ctx: Context, args: Record<string, unknown>) {
-    return { ok: true, echo: args };
-  },
-};
+import { type WebuiPage, webuiServer } from '@aalis/api-webui';
+import { definePlugin, optional } from '@aalis/core';
 
 const page: WebuiPage = {
   key: 'my-plugin',
   label: '我的插件',
-  icon: 'tools',            // 用命名标识，别塞不可信内联 SVG（见第 6 节）
+  icon: 'tools',
   order: 80,
   content: [
     { type: 'stat', label: '条目数', source: 'stats' },
@@ -168,31 +135,37 @@ const page: WebuiPage = {
   ],
 };
 
-export function apply(ctx: Context): void {
-  // 不要缓存返回值；whenService 已处理 provider bounce 后的自动重挂
-  useWebuiService(ctx).registerPage(page);
-}
+export default definePlugin({
+  name: '@acme/plugin-my-webui',
+  subsystem: 'tools',
+  uses: { webui: optional(webuiServer) },
+  apply({ webui }) {
+    webui.registerPage(page);
+    webui.registerAction('stats', async () => ({ total: 42 }));
+    webui.registerAction('refresh', async args => ({ ok: true, echo: args }));
+  },
+});
 ```
 
-**manifest 双源**：`actions/subsystem` 经 declaration merging 注入，无需在 `package.json aalis.service` 里声明。但既然你 `import` 了 `@aalis/api-webui` 的 helper，运行时其实只依赖 `webui-server` 服务的存在——`useWebuiService` 内部用 `whenService`，**webui-server 缺失时静默不挂、就绪后自动补挂**，所以你**不必**把 `webui-server` 写进 `inject`。若你确实想声明可选依赖，保持 `export const inject` 与 `package.json aalis.service` 两处一致（见 `docs/concepts/manifest-metadata.md`）。
+`webui-server` 缺失时登记排队、就绪后挂上，页面不显示。不必把 `webuiServer` 标成 required，除非还要读 `getPort` / `getPages`。
+
+不要把 `webui.current` 存进字段：提供者换人后旧引用失效（有失效逻辑则抛，无则静默成功）；关停边不保护缓存引用。登记门面本身会随提供者换人重挂。
 
 ### 4b. 替换前端（`webui-client`）
 
-两条接入（`packages/api-webui/src/index.ts`）：
-
-- **纯静态包**：`package.json` 标 `aalis.client: true` + 提供 `dist/index.html`，被 webui-server 自动发现挂载，**无需 `apply`**（runtime 不把它当插件加载）。多前端共存时各成一个 `webui-client` provider，活跃者由「服务偏好」`servicePreferences['webui-client']` 在 WebUI「服务」页切换；卡住可访问 `/__clients` 逃生页切回（`packages/plugin-webui-server/src/index.ts`）。
-- **主动覆盖**：插件 `apply` 里 `ctx.provide('webui-client', { getClientDir: () => myDir, label: '我的前端' })`。注册更早 → 默认胜出，仍可被偏好切换。
+- **纯静态包**：`package.json` 标 `aalis.client: true` + 提供 `dist/index.html`，被 webui-server 自动发现挂载，**无需 `apply`**。多前端共存时各成一个 `webui-client` provider，活跃者由「服务偏好」在 WebUI「服务」页切换；卡住可访问 `/__clients` 逃生页切回。
+- **主动覆盖**：插件 `apply` 里 `provide(webuiClient, { getClientDir: () => myDir, label: '我的前端' })`。`onBehalfOf` 代登记归属被代者，不计入代理人 `provides`。
 
 ### 4c. 替换整个后端（`webui-server`）
 
-罕见。核心要求此服务必须运行（`packages/api-webui/src/index.ts`）。实现全部 `WebUIService` 必须方法（`registerPage` 必须真正维护页面表，否则所有插件页面丢失），用更高的 priority（数字越大越优先）或服务偏好压过默认实现。注册：`ctx.provide('webui-server', impl)`，并在 `package.json aalis.service.provides` 与 `export const provides` 双源写 `'webui-server'`（参考 `packages/plugin-webui-server/package.json` 的 `aalis.service` 块）。同名服务胜出规则见 `docs/concepts/service-model.md`：偏好 > priority > 注册顺序。
+罕见。核心要求此服务必须运行。实现全部 `WebUIService` 必须方法（`registerPage` / `registerAction` 必须真正维护表），用更高的 priority 或 `services.prefer` 压过默认实现。`definePlugin({ provides: [webuiServer], uses: { provide }, apply({ provide }) { provide(webuiServer, impl); } })`。同名胜出规则见 `docs/concepts/service-model.md`：偏好 > priority > 注册顺序。
 
 ## 5. 标准消费方式
 
-- **lazy 取用**：始终经 `useWebuiService(ctx)` 而非缓存 `getService` 结果。webui-server 在存储插件 bounce 时**不会**级联重启（它把 `storage/authority/...` 都标成 `optional`，`packages/plugin-webui-server/src/index.ts`），但它自身仍可能被替换/重挂；`whenService` 保证页面自动重挂。见 `docs/concepts/lazy-service-access.md`。
-- **服务缺失 / 可选依赖**：`raw` getter 在 webui-server 未就绪时返回 `undefined`；不要假定它一定在。注册页面用 `registerPage` 即可——它内部用 `whenService`，webui 没装也不报错，只是页面不显示。
-- **错误边界**：`actions` handler 抛错会被路由层 catch 成 `500 {error}`（`packages/plugin-webui-server/src/routes/plugins.ts`），前端展示错误。handler 内别吞致命异常但要给出可读 message。
-- **动态选项**：表单字段标 `dynamicOptions: '<serviceName>'`，前端经 webui-server `/api/.../models` 路由聚合调该服务的 `listModels()`（`packages/plugin-webui-server/src/index.ts`；`llm` 走 per-model entry 枚举，embedding 等仍走 `listModels()`）。前端消费见 `packages/plugin-webui-client/src/components/SchemaForm.tsx`。
+- **登记**：始终经 `BoundWebui.registerPage` / `registerAction`，不要绕过门面直接调 `WebUIService.registerPage(..., contextId)`——否则提供者换人时不会自动重挂，激活撤回也不会按条目退订。
+- **服务缺失**：`webui.current` 在未就绪时为 `undefined`。登记用门面即可。
+- **错误边界**：action handler 抛错会被路由层 catch 成 `500 {error}`，前端展示错误。
+- **动态选项**：表单字段标 `dynamicOptions: '<serviceName>'`，前端经 webui-server 聚合调该服务的 `listModels()`（`llm` 走 per-model entry 枚举）。
 
 ## 6. 能力 / 风险 → 影响
 
@@ -200,35 +173,30 @@ export function apply(ctx: Context): void {
 
 单 owner 终态下「持 token ⟺ `webui:console` ⟺ owner」。`createRouteGate`（`packages/plugin-webui-server/src/gate.ts`）只做身份解析：解析得到放行，否则 403。多账户 / 能力委托已剥离，**没有 per-route 档位裁决**。
 
-- 你的 `actions` handler 拿到的 `caller` 即 owner 身份（`packages/plugin-webui-server/src/routes/plugins.ts`）。涉及敏感操作（如改他人档位）时应在 handler 内自检 `caller`，不要假设路由层替你做了细粒度授权。
-- 受限操作的**交互式确认**走 `session-confirm` 协调器：webui-server 只注入自己的 WS 投递（`type:'confirm'`），按 `request.sessionId` 定向推送（`packages/plugin-webui-server/src/index.ts`）。鉴权双轴（level + confirm）见 `docs/plugins/plugin-authority.md`、`docs/concepts/security-model.md`。
+- 你的 action handler 拿到的 `caller` 即 owner 身份。涉及敏感操作时应在 handler 内自检 `caller`，不要假设路由层替你做了细粒度授权。
+- 受限操作的**交互式确认**走 `session-confirm` 协调器：webui-server 只注入自己的 WS 投递（`type:'confirm'`），按 `request.sessionId` 定向推送。鉴权双轴见 `docs/plugins/plugin-authority.md`、`docs/concepts/security-model.md`。
 
 ### SSRF：图片代理走 safeFetch
 
-`/api/proxy/image` 用 `@aalis/util-network-guard` 的 `safeFetch`（`packages/plugin-webui-server/src/routes/proxy.ts`）。该函数**逐跳 `redirect:'manual'` + 每跳重新校验协议与 host**（`packages/util-network-guard/src/index.ts`），并强制 `content-type: image/*`、20MB 上限、15s 超时、`x-content-type-options: nosniff` + `content-security-policy: sandbox`（防 `image/svg+xml` 反射型 XSS）。任何 egress 都应走 `safeFetch`，别直接 `fetch` 用户给的 URL。详见 `docs/services/gateway.md` 与 `docs/concepts/security-model.md`。
-
-> 早期审计所述「image proxy 只校验初始 host」在当前实现中已**不成立**：每跳都重新校验。
+`/api/proxy/image` 用 `@aalis/util-network-guard` 的 `safeFetch`（`packages/plugin-webui-server/src/routes/proxy.ts`）。该函数**逐跳 `redirect:'manual'` + 每跳重新校验协议与 host**，并强制 `content-type: image/*`、20MB 上限、15s 超时、`x-content-type-options: nosniff` + `content-security-policy: sandbox`。任何 egress 都应走 `safeFetch`，别直接 `fetch` 用户给的 URL。
 
 ### 存储不是沙盒
 
-webui-server 的文件管理页基于 storage 根（默认 `workspace`，`fileRoot` 配置），用 `'<root>:/path'` 文法（`packages/plugin-webui-server/src/index.ts`）。storage 限定可达根但**不是沙盒**，参考实现的各文件路由都在 owner 闸之后。文法见 `docs/concepts/storage-uri-grammar.md`、`docs/services/storage.md`。
+webui-server 的文件管理页基于 storage 根（默认 `workspace`，`fileRoot` 配置），用 `'<root>:/path'` 文法。storage 限定可达根但**不是沙盒**。文法见 `docs/concepts/storage-uri-grammar.md`、`docs/services/storage.md`。
 
 ### 跨会话隔离
 
-WS 推送按 `sessionId` 分桶（`sessions: Map<sessionId, Set<ws>>`），`subscribe_session` 注册（`packages/plugin-webui-server/src/index.ts`）。确认消息已按 `request.sessionId` 定向（仅在该会话无 socket 时回退广播，`:957-958`）。
-
-> 早期审计所述「`pendingConfirm` 全局布尔忽略 sessionId」在当前实现中已**不成立**：确认协调逻辑已下沉到 `session-confirm` 服务，并按 `request.sessionId` 路由。
+WS 推送按 `sessionId` 分桶，`subscribe_session` 注册。确认消息按 `request.sessionId` 定向（仅在该会话无 socket 时回退广播）。
 
 ## 7. 注意事项与边界情形
 
-- **插件 icon → 内联 SVG XSS（真实存留）**：默认前端 `resolveIcon` 在 `WebuiPage.icon` 以 `<svg` 开头时，直接 `dangerouslySetInnerHTML` 渲染（`packages/plugin-webui-client/src/App.tsx`）。`icon` 来自第三方插件声明，**一个恶意市场插件可借此注入脚本**（SVG 内 `<script>` / 事件属性）。规避：你写的插件 `icon` 一律用**命名标识**（如 `'tools'`），别从不可信源透传内联 SVG；替换前端时应对 icon 做 DOMPurify 净化或拒绝内联 SVG。
-- **Mermaid（已收口）**：聊天 markdown 里的 Mermaid 图用 `securityLevel: 'strict'`（启用内置 DOMPurify、禁 click/callback，`packages/plugin-webui-client/src/components/MermaidBlock.tsx`），随后 `dangerouslySetInnerHTML` 注入净化后的 SVG（`:107-108`）。早期审计提到的 `securityLevel:'loose'` 已改为 `strict`，不再是 XSS 入口。
-- **manifest 双源轻微漂移**：`package.json aalis.service.optional` 含 `session-confirm`，而 `export const inject.optional`（`packages/plugin-webui-server/src/index.ts`）未列 `session-confirm`。功能上无碍（`whenService` 处理），但属双源不同步，写自己的插件时务必两处一致。
-- **页面表是 webui-server 实例内存态**：webui-server 被替换/重启会清空 `registeredPages`；这正是 `useWebuiService` 用 `whenService` 自动重挂的原因——别绕过 helper 直接 `getService().registerPage()`，否则重挂逻辑丢失。
-- **`renderer` 自定义渲染器**：内置 renderer（dashboard/marketplace/...）由默认前端 `App.tsx` 写死 switch。第三方插件声明 `renderer: 'xxx'` 而前端无对应 case 时 `renderCustomPage` 返回 `null`，前端回退为「此客户端不支持渲染器」提示。第三方页面应优先用声明式 `content`，`renderer` 仅在你同时控制前端时使用。
+- **插件 icon → 内联 SVG XSS（真实存留）**：默认前端 `resolveIcon` 在 `WebuiPage.icon` 以 `<svg` 开头时，直接 `dangerouslySetInnerHTML` 渲染（`packages/plugin-webui-client/src/App.tsx`）。`icon` 来自第三方插件声明，**一个恶意市场插件可借此注入脚本**。规避：你写的插件 `icon` 一律用**命名标识**（如 `'tools'`），别从不可信源透传内联 SVG。
+- **Mermaid**：聊天 markdown 里的 Mermaid 图用 `securityLevel: 'strict'`（`packages/plugin-webui-client/src/components/MermaidBlock.tsx`）。
+- **页面表是 webui-server 实例内存态**：webui-server 被替换会清空 `registeredPages`；这正是绑定门面用 `registrar` 自动重挂的原因。
+- **`renderer` 自定义渲染器**：内置 renderer 由默认前端写死 switch。第三方页面应优先用声明式 `content`。
 
 ## 8. 交叉链接
 
-- 概念：[`docs/concepts/service-model.md`](../concepts/service-model.md)（DI 按名、priority/偏好胜出）、[`docs/concepts/lazy-service-access.md`](../concepts/lazy-service-access.md)（`whenService`/不缓存）、[`docs/concepts/manifest-metadata.md`](../concepts/manifest-metadata.md)（provides/inject 双源）、[`docs/concepts/security-model.md`](../concepts/security-model.md)、[`docs/concepts/storage-uri-grammar.md`](../concepts/storage-uri-grammar.md)、[`docs/concepts/message-llm-pipeline.md`](../concepts/message-llm-pipeline.md)。
-- 核心：[`docs/plugins/plugin-authority.md`](../plugins/plugin-authority.md)（level + confirm 双轴、owner=∞）、[`docs/core/service.md`](../core/service.md)、[`docs/core/context.md`](../core/context.md)、[`docs/core/config.md`](../core/config.md)（`ConfigSchema` / `SchemaField`）、[`docs/core/plugin.md`](../core/plugin.md)（`PluginModule`）。
-- 相关服务：[`docs/services/platform.md`](./platform.md)（webui-server 同时是 platform adapter）、[`docs/services/gateway.md`](./gateway.md)（safeFetch / SSRF）、[`docs/services/storage.md`](./storage.md)（文件管理根）、[`docs/services/llm.md`](./llm.md) 与 [`docs/services/embedding.md`](./embedding.md)（dynamicOptions 的 listModels 来源）。
+- 概念：[`docs/concepts/service-model.md`](../concepts/service-model.md)、[`docs/concepts/lazy-service-access.md`](../concepts/lazy-service-access.md)、[`docs/concepts/manifest-metadata.md`](../concepts/manifest-metadata.md)、[`docs/concepts/security-model.md`](../concepts/security-model.md)、[`docs/concepts/storage-uri-grammar.md`](../concepts/storage-uri-grammar.md)。
+- 核心：[`docs/plugins/plugin-authority.md`](../plugins/plugin-authority.md)、[`docs/core/service.md`](../core/service.md)、[`docs/core/context.md`](../core/context.md)、[`docs/core/config.md`](../core/config.md)、[`docs/core/plugin.md`](../core/plugin.md)。
+- 相关服务：[`docs/services/platform.md`](./platform.md)、[`docs/services/gateway.md`](./gateway.md)、[`docs/services/storage.md`](./storage.md)、[`docs/services/llm.md`](./llm.md)、[`docs/services/embedding.md`](./embedding.md)。

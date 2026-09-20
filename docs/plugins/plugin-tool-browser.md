@@ -10,10 +10,21 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-tool-browser'
-meta.displayName = '浏览器工具'
-meta.subsystem = 'tools'
-meta.inject = { optional: ['process', 'storage'] }
+export default definePlugin({
+  name: '@aalis/plugin-tool-browser',
+  displayName: '浏览器工具',
+  subsystem: 'tools',
+  uses: {
+    config,
+    logger,
+    lifecycle,
+    tools: optional(tools),
+    webui: optional(webuiServer),
+    proc: optional(processService),
+    storage: optional(storage),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置

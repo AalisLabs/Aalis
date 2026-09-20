@@ -10,9 +10,18 @@
 ## 插件声明
 
 ```typescript
-meta.name = '@aalis/plugin-websearch-serper'
-meta.provides = ['web-search']
-meta.inject = { optional: ['llm'] }
+export default definePlugin({
+  name: '@aalis/plugin-websearch-serper',
+  provides: [webSearch],
+  uses: {
+    tools: optional(tools),
+    logger,
+    config,
+    provide,
+    llm: optional(llm),
+  },
+  apply(caps) { /* 见源码 */ },
+});
 ```
 
 ## 配置
