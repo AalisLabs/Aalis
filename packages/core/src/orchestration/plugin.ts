@@ -7,6 +7,7 @@ import { optionalNames, requiredNames } from '../context/binding.js';
 import type { Context } from '../context/context.js';
 import { assertValidInstanceId, type PluginDefinition, validateDefinition } from '../context/definition.js';
 import type { Logger } from '../context/logger.js';
+import { cloneConfigObject } from '../context/safe-keys.js';
 
 import {
   type ActivationDeps,
@@ -351,8 +352,10 @@ export class PluginManager implements PluginManagerService {
 
     const newConfig = opts?.config;
     if (newConfig) {
-      entry.config = newConfig;
-      this.rootCtx.config.setPluginConfig(instanceId, newConfig);
+      // 入参可能是调用方还要继续用的活对象（WebUI PUT / config-sync 浅铺开的 payload）。
+      // entry 与 ConfigManager 各持一份拷贝：插件经内置 config 就地改嵌套不得写穿快照。
+      entry.config = cloneConfigObject(newConfig);
+      this.rootCtx.config.setPluginConfig(instanceId, cloneConfigObject(newConfig));
     }
 
     // dispose 段守卫（与 disable / unload 对齐）：dispose 触发的反应式

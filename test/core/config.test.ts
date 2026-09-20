@@ -1,7 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { App, ConfigManager, config, definePlugin } from '../../packages/core/src/index.js';
+import { type AalisConfig, App, ConfigManager, config, definePlugin } from '../../packages/core/src/index.js';
 import { type TempConfigHandle, tempConfig } from '../fixtures/app.js';
+
+/** JSON / YAML 把 `__proto__` 解成自有键，对象字面量做不到。 */
+function poisonedSnapshot(): AalisConfig {
+  return JSON.parse('{"name":"T","logLevel":"error","plugins":{},"__proto__":{"pollutedA6v":"yes"}}') as AalisConfig;
+}
+
+function expectUnpoisoned(snap: object): void {
+  expect(Object.getPrototypeOf(snap)).toBe(Object.prototype);
+  expect(Object.hasOwn(snap, '__proto__')).toBe(false);
+  expect((snap as { pollutedA6v?: unknown }).pollutedA6v).toBeUndefined();
+  expect(({} as { pollutedA6v?: unknown }).pollutedA6v).toBeUndefined();
+}
 
 describe('ConfigManager (内存快照模式)', () => {
   it('未传入字段时使用默认值', () => {
@@ -43,6 +55,29 @@ describe('ConfigManager (内存快照模式)', () => {
     expect(cfg.get('name')).toBe('Two');
   });
 
+  it('reloadFrom 喂 JSON __proto__ 不得改快照原型', () => {
+    const cfg = new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} });
+    cfg.reloadFrom(poisonedSnapshot());
+    expectUnpoisoned(cfg.getAll());
+    expect(cfg.get('pollutedA6v' as never)).toBeUndefined();
+  });
+
+  it('构造期外来 JSON 的 __proto__ 不得改快照原型', () => {
+    const cfg = new ConfigManager(poisonedSnapshot());
+    expectUnpoisoned(cfg.getAll());
+  });
+
+  it('constructor / prototype 与 __proto__ 同一闸，不写入快照', () => {
+    const input = JSON.parse(
+      '{"name":"T","logLevel":"error","plugins":{},"constructor":{"prototype":{"polluted":"yes"}},"prototype":{"x":1}}',
+    ) as AalisConfig;
+    const snap = new ConfigManager(input).getAll();
+    expect(Object.getPrototypeOf(snap)).toBe(Object.prototype);
+    expect(Object.hasOwn(snap, 'constructor')).toBe(false);
+    expect(Object.hasOwn(snap, 'prototype')).toBe(false);
+    expect(snap.constructor).toBe(Object);
+  });
+
   it('getConfigDir 返回 host 注入的 dataDir', () => {
     const cfg = new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} }, { dataDir: '/tmp/foo' });
     expect(cfg.getConfigDir()).toBe('/tmp/foo');
@@ -80,6 +115,17 @@ describe('FsYamlConfigProvider (集成)', () => {
     const written = readFileSync(cfg.path, 'utf-8');
     expect(written).toMatch(/name: Y/);
     expect(written).toContain('sk-literal');
+  });
+
+  it('YAML 解析出的 __proto__ 自有键经 ConfigManager 不得改原型', () => {
+    cfg = tempConfig('name: T\nlogLevel: error\nplugins: {}\n__proto__:\n  pollutedA6v: yes\n');
+    expect(
+      Object.getOwnPropertyNames(cfg.config).includes('__proto__'),
+      '本用例前提：YAML 把 __proto__ 解成自有键，与 JSON.parse 同类',
+    ).toBe(true);
+    const mgr = new ConfigManager(cfg.config);
+    expectUnpoisoned(mgr.getAll());
+    expect(mgr.get('pollutedA6v' as never)).toBeUndefined();
   });
 });
 
@@ -131,11 +177,12 @@ describe('注册期配置合并（app.plugin：defaults ← 配置文件 ← 代
 
   it('数组与非纯对象是原子值：整体覆盖，不逐元素合并', async () => {
     const seen: { config?: Record<string, unknown> } = {};
+    const stamp = new Date('2021-01-01');
     const app = new App({
       config: {
         name: 'T',
         logLevel: 'error',
-        plugins: { np: { hosts: ['b', 'c'], stamp: new Date('2021-01-01') } },
+        plugins: { np: { hosts: ['b', 'c'], stamp } },
       },
       pluginDefaults: () => defaults(),
     });
@@ -143,9 +190,9 @@ describe('注册期配置合并（app.plugin：defaults ← 配置文件 ← 代
     await app.plugins.idle();
     expect(app.plugins.getPlugin('np')?.state).toBe('active');
     expect(seen.config?.hosts).toEqual(['b', 'c']);
-    // Date 不是纯对象：整体覆盖且原型保持，不被递归成 {} 形状的普通对象
+    // Date 不是纯对象：整体覆盖且原型保持，不被递归成 {} 形状的普通对象；原子值按引用透传
+    expect(seen.config?.stamp).toBe(stamp);
     expect(seen.config?.stamp).toBeInstanceOf(Date);
-    expect((seen.config?.stamp as Date).toISOString()).toBe(new Date('2021-01-01').toISOString());
     await app.stop();
   });
 
@@ -180,6 +227,151 @@ describe('注册期配置合并（app.plugin：defaults ← 配置文件 ← 代
     expect(app.config.getPluginConfig('np')).toEqual({ server: { port: 9000 } });
     await app.stop();
   });
+
+  it('插件改数组不得写穿 ConfigManager 的文件快照', async () => {
+    const seen: { config?: Record<string, unknown> } = {};
+    const app = new App({
+      config: { name: 'T', logLevel: 'error', plugins: { np: { hosts: ['file'] } } },
+      pluginDefaults: () => ({ hosts: ['default'] }),
+    });
+    await app.plugin(nestedPlugin(seen));
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('np')?.state).toBe('active');
+    (seen.config as { hosts: string[] }).hosts.push('mutated-by-plugin');
+    expect(app.config.getPluginConfig('np').hosts, '数组合并应交出新数组，不能把文件快照当活引用').toEqual(['file']);
+    expect(seen.config?.hosts).toEqual(['file', 'mutated-by-plugin']);
+    await app.stop();
+  });
+
+  it('未覆盖的嵌套纯对象与宿主 defaults 不共享引用', async () => {
+    const sharedDefaults = { server: { host: '127.0.0.1', port: 8080 }, flag: true };
+    const seen: { config?: Record<string, unknown> } = {};
+    const app = new App({
+      config: { name: 'T', logLevel: 'error', plugins: { np: { flag: false } } },
+      pluginDefaults: () => sharedDefaults,
+    });
+    await app.plugin(nestedPlugin(seen));
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('np')?.state).toBe('active');
+    (seen.config as { server: { host: string } }).server.host = 'mutated';
+    expect(sharedDefaults.server.host, 'defaults 可能是宿主复用的常量').toBe('127.0.0.1');
+    await app.stop();
+  });
+
+  it('数组元素若为纯对象也拷贝：就地改 jobs[i] 不得写进配置快照', async () => {
+    const jobs = [{ name: 'once', enabled: true, cron: '@every 30s' }];
+    const app = new App({
+      config: { name: 'T', logLevel: 'error', plugins: { sched: { jobs } } },
+    });
+    await app.plugin(
+      definePlugin({
+        name: 'sched',
+        uses: { config },
+        apply({ config: pluginConfig }) {
+          const list = (pluginConfig as { jobs: Array<{ enabled: boolean; cron?: string; interval?: number }> }).jobs;
+          const job = list[0];
+          job.enabled = false;
+          job.interval = 30;
+          job.cron = undefined;
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('sched')?.state).toBe('active');
+    const stored = app.config.getPluginConfig('sched').jobs as Array<{ enabled: boolean; cron?: string }>;
+    expect(stored[0].enabled, '静态任务就地改 enabled 不应隔空写进配置快照').toBe(true);
+    expect(stored[0].cron).toBe('@every 30s');
+    await app.stop();
+  });
+
+  it('constructor / prototype 键不进插件配置（与 __proto__ 同一闸）', async () => {
+    const seen: { config?: Record<string, unknown> } = {};
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    await app.plugin(nestedPlugin(seen), JSON.parse('{"constructor":{"polluted":1},"prototype":{"x":1},"ok":true}'));
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('np')?.state).toBe('active');
+    expect(seen.config?.ok).toBe(true);
+    expect(Object.hasOwn(seen.config as object, 'constructor')).toBe(false);
+    expect(Object.hasOwn(seen.config as object, 'prototype')).toBe(false);
+    await app.stop();
+  });
+});
+
+describe('bounce / updateConfig 入参拷贝', () => {
+  it('await updateConfig 之后改 payload，ConfigManager 与 entry.config 不得跟着变', async () => {
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    await app.plugin(
+      definePlugin({
+        name: 'p',
+        uses: { config },
+        apply() {},
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('p')?.state).toBe('active');
+    const payload = { v: 2, nested: { k: 1 } };
+    await app.plugins.updateConfig('p', payload);
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('p')?.state).toBe('active');
+    payload.v = 4;
+    payload.nested.k = 99;
+    expect(app.config.getPluginConfig('p')).toEqual({ v: 2, nested: { k: 1 } });
+    expect(app.plugins.getPlugin('p')?.config).toEqual({ v: 2, nested: { k: 1 } });
+    await app.stop();
+  });
+
+  it('bounce 入参里未铺开的嵌套也要拷：改旧 current.extra 不得写穿新快照', async () => {
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    await app.plugin(
+      definePlugin({
+        name: 'mcp',
+        uses: { config },
+        apply() {},
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('mcp')?.state).toBe('active');
+    await app.plugins.updateConfig('mcp', {
+      extra: { token: 'secret' },
+      servers: [{ id: 'a', enabled: true }],
+    });
+    await app.plugins.idle();
+    const current = app.plugins.getPlugin('mcp')?.config as {
+      extra: { token: string };
+      servers: Array<Record<string, unknown>>;
+    };
+    const servers = [...current.servers];
+    servers[0] = { ...servers[0], enabled: false };
+    const payload = { ...current, servers };
+    await app.plugins.updateConfig('mcp', payload);
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('mcp')?.state).toBe('active');
+    current.extra.token = 'leaked';
+    expect((app.config.getPluginConfig('mcp') as { extra: { token: string } }).extra.token).toBe('secret');
+    await app.stop();
+  });
+
+  it('bounce 后经内置 config 就地改嵌套，ConfigManager 快照不变', async () => {
+    let seen: { nested?: { k: number } } | undefined;
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    await app.plugin(
+      definePlugin({
+        name: 'p',
+        uses: { config },
+        apply({ config: pluginConfig }) {
+          seen = pluginConfig as { nested?: { k: number } };
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('p')?.state).toBe('active');
+    await app.plugins.updateConfig('p', { nested: { k: 1 } });
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('p')?.state).toBe('active');
+    (seen as { nested: { k: number } }).nested.k = 7;
+    expect(app.config.getPluginConfig('p')).toEqual({ nested: { k: 1 } });
+    await app.stop();
+  });
 });
 
 describe('ConfigManager.watch', () => {
@@ -206,6 +398,22 @@ describe('ConfigManager.watch', () => {
     off();
     expect(stopped).toBe(1);
     expect(() => cm.watch(() => {})).not.toThrow();
+  });
+
+  it('provider.watch 推送的快照走同一闸，JSON __proto__ 不得改原型', () => {
+    let push!: (next: AalisConfig) => void;
+    const cm = new ConfigManager(base, {
+      provider: {
+        watch: onChange => {
+          push = onChange;
+          return () => {};
+        },
+      },
+    });
+    cm.watch(() => {});
+    push(poisonedSnapshot());
+    expectUnpoisoned(cm.getAll());
+    expect(cm.get('pollutedA6v' as never)).toBeUndefined();
   });
 
   it('单订阅者：已有订阅时再 watch 抛错，不静默顶替', () => {
