@@ -46,4 +46,40 @@ describe('defaultsFrom 派生规则', () => {
     };
     expect(defaultsFrom(schema)).toEqual({ n: 0, b: false, s: '', l: [] });
   });
+
+  it('array / object default 返回拷贝，改派生结果不写脏 schema', () => {
+    const hosts = ['localhost'];
+    const job = { k: 'v' };
+    const extra = { host: '127.0.0.1' };
+    const schema: ConfigSchema = {
+      hosts: { type: 'multiselect', label: 'H', default: hosts },
+      list: { type: 'array', label: 'L', items: { k: { type: 'string', label: 'K' } }, default: [job] },
+      extra: { type: 'textarea', label: 'E', default: extra },
+    };
+    const derived = defaultsFrom(schema) as {
+      hosts: string[];
+      list: Array<{ k: string }>;
+      extra: { host: string };
+    };
+    derived.hosts.push('injected');
+    derived.list[0].k = 'mutated';
+    derived.list.push({ k: 'x' });
+    derived.extra.host = 'mutated';
+    expect(hosts).toEqual(['localhost']);
+    expect(job).toEqual({ k: 'v' });
+    expect(extra).toEqual({ host: '127.0.0.1' });
+    expect(defaultsFrom(schema)).toEqual({
+      hosts: ['localhost'],
+      list: [{ k: 'v' }],
+      extra: { host: '127.0.0.1' },
+    });
+  });
+
+  it('非纯对象 default 保引用（Date 不被拆成普通对象）', () => {
+    const stamp = new Date('2020-01-01');
+    const schema: ConfigSchema = {
+      stamp: { type: 'string', label: 'S', default: stamp },
+    };
+    expect(defaultsFrom(schema).stamp).toBe(stamp);
+  });
 });

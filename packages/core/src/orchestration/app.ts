@@ -10,6 +10,7 @@ import { type AalisConfig, ConfigManager, type ConfigProvider } from '../context
 import { Context } from '../context/context.js';
 import type { PluginDefinition } from '../context/definition.js';
 import { DefaultLogger, type Logger, LogHub, type LogLevel } from '../context/logger.js';
+import { cloneConfigObject, cloneConfigValue, isPlainConfigObject, isUnsafeConfigKey } from '../context/safe-keys.js';
 
 import { PluginManager, parseInstanceId } from './plugin.js';
 import type { PluginLoader, RestartStrategy } from './providers.js';
@@ -457,22 +458,18 @@ export class App {
  *
  * 全程返回新对象、不改写入参：`defaults` 可能是宿主复用的常量，`fileConfig`
  * 是 ConfigManager 持有的活对象，合并写回去就是隔空篡改配置。
+ * 纯对象递归拷贝，数组拷一层（元素若为纯对象也拷）；原子值按引用透传，
+ * 调用方不得依赖其不可变。危险键（`__proto__` / `constructor` / `prototype`）跳过。
  */
 function mergeConfigLayers(base: Record<string, unknown>, override: Record<string, unknown>): Record<string, unknown> {
-  const result: Record<string, unknown> = { ...base };
+  const result = cloneConfigObject(base);
   for (const [key, value] of Object.entries(override)) {
-    // `__proto__` 跳过：逐键赋值会触发原型 setter，把整个配置对象的原型换成外来对象
-    // （对象字面量里它是原型语法糖，但 JSON.parse 出来的配置文件带的是自有键，会走到这里）。
-    // 配置层不承载原型语义，这个键在配置里没有合法含义。
-    if (key === '__proto__') continue;
+    if (isUnsafeConfigKey(key)) continue;
     const prev = result[key];
-    result[key] = isPlainObject(prev) && isPlainObject(value) ? mergeConfigLayers(prev, value) : value;
+    result[key] =
+      isPlainConfigObject(prev) && isPlainConfigObject(value)
+        ? mergeConfigLayers(prev, value)
+        : cloneConfigValue(value);
   }
   return result;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
 }
