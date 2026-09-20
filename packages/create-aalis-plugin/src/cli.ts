@@ -358,7 +358,10 @@ configSchema，配置原样透传给 apply。
 
 ## 扩展点
 
-${a.features.tool ? '- ✓ 注册 AI 工具（`useToolService`）\n' : ''}${a.features.command ? '- ✓ 注册斜杠命令（`useCommandService`）\n' : ''}${a.features.webui ? '- ✓ WebUI 页面（`useWebuiService`）\n' : ''}
+入口是 \`export default definePlugin({ uses, apply })\`。用到的服务经描述符导入后写进
+\`uses\`（本模板与 \`src/index.ts\` 一致：\`tools\` / \`commands\` / \`webuiServer\`）。
+
+${a.features.tool ? '- ✓ 注册 AI 工具（`uses: { tools }`，从 `@aalis/api-tools` 导入描述符）\n' : ''}${a.features.command ? '- ✓ 注册斜杠命令（`uses: { commands }`，从 `@aalis/api-commands` 导入描述符）\n' : ''}${a.features.webui ? '- ✓ WebUI 页面（`uses: { webuiServer }`，从 `@aalis/api-webui` 导入描述符）\n' : ''}
 请打开 \`src/index.ts\` 按需修改。
 `;
 }
