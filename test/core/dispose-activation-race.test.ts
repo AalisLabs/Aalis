@@ -1,15 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { Context } from '../../packages/core/src/context/context.js';
 import {
+  App,
   ConfigManager,
-  Context,
   ContributionRegistry,
   DefaultLogger,
+  definePlugin,
+  defineService,
   EventBus,
   HookRegistry,
+  lifecycle,
+  provide,
   ServiceContainer,
 } from '../../packages/core/src/index.js';
-import { activatePlugin } from '../../packages/core/src/orchestration/plugin-activation.js';
-import type { PluginEntry } from '../../packages/core/src/types/plugin.js';
+import { activatePlugin, type PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
 
 // ============================================================
 // disposeAsync 的时序承诺：「返回时异步清理已真正完成」。
@@ -23,11 +27,20 @@ import type { PluginEntry } from '../../packages/core/src/types/plugin.js';
 // 可达面：PluginManager 的 unload / disable / bounce 会主动走进
 // 本窗口（先改 entry.state 让激活收尾让位，再对在飞 ctx disposeAsync——那三条
 // 路径的行为锚在 test/core/admin-during-activation.test.ts）；本文件守的是
-// disposeAsync 这个公开契约本身（宿主直调）与 useModule 的沙盒子 ctx 级联。
+// disposeAsync 这个内部契约本身（宿主直调）与 lifecycle.module 的子激活级联。
 //
 // 时序不靠 sleep 赌：闸门不开 apply 就不落定，「拆卸发起时 apply 必定
 // 在飞」是结构保证，不受 CI 负载影响。唯一按时间断言的是超时兜底那条。
 // ============================================================
+
+const contexts: Context[] = [];
+const apps: App[] = [];
+afterEach(async () => {
+  for (const ctx of contexts.splice(0)) {
+    if (!ctx.disposed) await ctx.disposeAsync().catch(() => {});
+  }
+  for (const app of apps.splice(0)) await app.stop().catch(() => {});
+});
 
 function makeContext(id = 'root'): Context {
   const events = new EventBus();
@@ -36,7 +49,9 @@ function makeContext(id = 'root'): Context {
   const contributions = new ContributionRegistry();
   const logger = new DefaultLogger('test');
   const config = new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} });
-  return new Context({ id, events, services, hooks, contributions, logger, config });
+  const ctx = new Context({ id, events, services, hooks, contributions, logger, config });
+  contexts.push(ctx);
+  return ctx;
 }
 
 function deferred(): { promise: Promise<void>; open: () => void } {
@@ -161,32 +176,46 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
     await applying;
   });
 
-  it('useModule 建的沙盒子 ctx 同样受保护（与 activatePlugin 同源）', async () => {
-    const root = makeContext();
-    const parent = root.fork('parent');
+  it('lifecycle.module 建的子激活同样受保护（与 activatePlugin 同源）', async () => {
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    apps.push(app);
     const acquire = deferred();
     let released = false;
-
-    // **不能 await useModule**：await 完 apply 就跑完了、disposer 早已在链上，
-    // 那样测的是普通路径、对本改动零判别力。要造的是「子 ctx 的 apply 还在飞
-    // 时父级联拆卸」。
-    const pending = parent.useModule({
+    let pending!: Promise<unknown>;
+    // 子定义必须在 apply 之外：apply 解构出的 lifecycle 会挡住描述符导入
+    const sandbox = definePlugin({
       name: 'sandbox',
-      async apply(child) {
+      uses: { lifecycle },
+      async apply({ lifecycle }) {
         await acquire.promise;
-        child.onDispose(async () => {
+        lifecycle.onDispose(async () => {
           await sleep(0);
           released = true;
         });
       },
     });
 
-    const disposing = parent.disposeAsync();
+    await app.plugin(
+      definePlugin({
+        name: 'parent',
+        uses: { lifecycle },
+        apply({ lifecycle }) {
+          // **不能 await module**：await 完 apply 就跑完了、disposer 早已在链上，
+          // 那样测的是普通路径、对本改动零判别力。要造的是「子激活的 apply 还在飞
+          // 时父级联拆卸」。
+          pending = lifecycle.module(sandbox);
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('parent')?.state).toBe('active');
+
+    const disposing = app.plugins.unload('parent');
     acquire.open();
     await disposing;
 
     expect(released).toBe(true);
-    await pending.catch(() => {}); // 父已拆，useModule 可能以任意方式收尾
+    await pending.catch(() => {});
   });
 
   it('级联：父 ctx 的 disposeAsync 会等到子 ctx 的初始化落定', async () => {
@@ -209,7 +238,7 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
   // 钉住 plugin-activation.ts 里那行登记——否则删掉它整个 test/core 仍然全绿，
   // 它随时会被当成死代码清掉。
   //
-  // 直接拿 entry.context 拆卸而不经 PluginManager：管理入口如今会主动走进
+  // 直接拿内部记录的 context 拆卸而不经 PluginManager：管理入口如今会主动走进
   // 这个窗口（先改 state 让位、再 disposeAsync，锚在 admin-during-activation），
   // 本条钉的是更底层的「宿主直调」路径——不借任何编排、裸拆在飞 ctx。
   it('经 activatePlugin 激活的 ctx，其 apply 在飞时被拆卸也等得到 disposer', async () => {
@@ -217,22 +246,23 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
     const acquire = deferred();
     let flushed = false;
 
-    const entry: PluginEntry = {
-      module: {
+    const entry: PluginRecord = {
+      definition: definePlugin({
         name: 'race-mod',
-        async apply(ctx) {
+        uses: { lifecycle },
+        async apply({ lifecycle }) {
           await acquire.promise;
-          ctx.onDispose(async () => {
+          lifecycle.onDispose(async () => {
             await sleep(0);
             flushed = true;
           });
         },
-      },
+      }),
       instanceId: 'race-mod',
       config: {},
       state: 'pending',
-      requiredDeps: [],
-      optionalDeps: [],
+      required: [],
+      optional: [],
     };
 
     const activating = activatePlugin(entry, {
@@ -240,12 +270,12 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
       logger: new DefaultLogger('test'),
     });
 
-    // activatePlugin 在 apply 之前就把 ctx 挂上 entry，此刻 apply 正卡在闸门里
+    // activatePlugin 在 apply 之前就把 ctx 挂上内部记录，此刻 apply 正卡在闸门里
     expect(entry.state).toBe('activating');
     const ctx = entry.context;
     expect(ctx).toBeDefined();
 
-    const disposing = (ctx as Context).disposeAsync(1000);
+    const disposing = ctx!.disposeAsync(1000);
     acquire.open();
     await disposing;
 
@@ -274,6 +304,7 @@ describe('清理超时/抛错时点名', () => {
       logger: { warn: sink, debug: sink, info: sink, error: sink } as never,
       config: new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} }),
     });
+    contexts.push(ctx);
     return { ctx, lines };
   }
 
@@ -297,6 +328,7 @@ describe('清理超时/抛错时点名', () => {
       logger: { warn: tag('warn'), debug: tag('debug'), info: tag('info'), error: tag('error') } as never,
       config: new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} }),
     });
+    contexts.push(ctx);
     ctx.onDispose(() => {
       throw new Error('boom');
     }, 'mongo-client');
@@ -320,21 +352,23 @@ describe('拆卸窗口内的 provides 校验归因', () => {
   it('apply 在飞时被拆卸且声明了 provides：error 如实归因为「激活期间 Context 已被拆卸」', async () => {
     const root = makeContext();
     const acquire = deferred();
+    const db = defineService('__t:dar-db');
 
-    const entry: PluginEntry = {
-      module: {
+    const entry: PluginRecord = {
+      definition: definePlugin({
         name: 'prov-mod',
-        provides: ['db'],
-        async apply(ctx) {
+        uses: { provide },
+        provides: [db],
+        async apply({ provide: pub }) {
           await acquire.promise;
-          ctx.provide('db', {});
+          pub(db, {});
         },
-      },
+      }),
       instanceId: 'prov-mod',
       config: {},
       state: 'pending',
-      requiredDeps: [],
-      optionalDeps: [],
+      required: [],
+      optional: [],
     };
 
     const activating = activatePlugin(entry, {
@@ -343,7 +377,7 @@ describe('拆卸窗口内的 provides 校验归因', () => {
     });
 
     const ctx = entry.context;
-    const disposing = (ctx as Context).disposeAsync(1000);
+    const disposing = ctx!.disposeAsync(1000);
     acquire.open();
     await disposing;
     await activating;
