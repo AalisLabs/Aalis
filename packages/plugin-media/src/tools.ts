@@ -62,7 +62,7 @@ function findImageDescriptionTokens(messages: Message[], imageRef: string): stri
 }
 
 /** 工具登记用到的能力：登记门面 tools，以及 update_image_description 回写历史的 memory */
-export interface ToolsCaps {
+interface ToolsCaps {
   tools: BoundTools;
   memory: ServiceRef<MemoryService>;
 }

@@ -15,12 +15,21 @@ importers:
         specifier: workspace:*
         version: link:packages/runtime
     devDependencies:
+      '@aalis/api-gateway':
+        specifier: workspace:*
+        version: link:packages/api-gateway
+      '@aalis/api-process':
+        specifier: workspace:*
+        version: link:packages/api-process
       '@aalis/api-storage':
         specifier: workspace:*
         version: link:packages/api-storage
       '@aalis/api-tools':
         specifier: workspace:*
         version: link:packages/api-tools
+      '@aalis/api-webui':
+        specifier: workspace:*
+        version: link:packages/api-webui
       '@aalis/schema-message':
         specifier: workspace:*
         version: link:packages/schema-message

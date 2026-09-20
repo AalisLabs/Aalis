@@ -448,7 +448,7 @@ export function buildSearchUrl(q: string, keyword: string, registryBase: string 
 }
 
 /** 市场路由用到的能力 */
-export interface MarketplaceRoutesCaps {
+interface MarketplaceRoutesCaps {
   logger: Logger;
   plugins: Pick<ServiceRef<PluginManagerService>, 'current'>;
   /**
