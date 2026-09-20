@@ -1,18 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { agent as agentService, type PromptContributionView } from '../../packages/api-agent/src/index.js';
 import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
-import { App, contributions, definePlugin, events } from '../../packages/core/src/index.js';
+import { memory } from '../../packages/api-memory/src/index.js';
+import { App, contributions, definePlugin, events, hooks, lifecycle, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
-// plugin-agent 此前零 onDispose：activeControllers 是实例私有的，bounce 后新实例看不见旧实例的
-// 在飞回合，而拆卸链不等任何回合——旧回合在已拆卸的激活上跑完并投递（人设/模型都是
-// bounce 前的），用户在它结束前再发一条，两个实例并发答同一会话。
-// 修法：拆卸即 abortAll，走已有的 AbortError 收尾（只发 stream done，不投递）。
-// 观测点：只卸 agent 这一个插件，App 根激活活着收出站事件。
+// 拆卸（bounce / unload / stop）必须中止在飞回合，走已有 AbortError 收尾
+// （outbound:stream done + turn:after outcome=aborted，不把半截回复当完成投递）。
+// 关停收尾放 onDrain：此刻监听与 memory 仍在，且 drain 会等回合 Promise 落定；
+// onDispose 再 abortAll 作兜底。只卸 agent 时，根激活还活着，用来收出站事件。
 // ════════════════════════════════════════════════════════════
 
 const AGENT_CONFIG = {
@@ -156,5 +156,78 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
     expect(outbound.filter(x => x === 'stream:done')).toHaveLength(2);
 
     await app.stop();
+  });
+
+  it('app.stop() 等到在飞回合 aborted 收尾，且收尾时 memory 仍可用', async () => {
+    const order: string[] = [];
+    let memoryProviderOpen = true;
+    let memoryOpenAtAbort = false;
+    let turnDone = false;
+
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    await app.plugin(createMockLLMPlugin({ latencyMs: 200, responses: [{ content: 'should-not-land' }] }));
+    await app.plugin(memoryInMemoryPlugin);
+    await app.plugin(messageArchivePlugin, { debugLogs: false });
+    await app.plugins.idle();
+    // 覆盖胜者以便观测「memory 提供者」自己的 onDispose；存储仍交给 inmemory。
+    const inner = app.bind({ memory }).memory.require();
+    await app.plugin(
+      definePlugin({
+        name: 'zz-memory-dispose-tap',
+        uses: { provide, lifecycle },
+        provides: [memory],
+        apply({ provide, lifecycle }) {
+          provide(memory, inner, { priority: 1000 });
+          lifecycle.onDispose(() => {
+            memoryProviderOpen = false;
+            order.push('memory:onDispose');
+          });
+        },
+      }),
+    );
+    await app.plugin(agentPlugin, AGENT_CONFIG);
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin(agentPlugin.name)?.state, 'agent 未激活则整条断言恒真').toBe('active');
+    expect(app.plugins.getPlugin('zz-memory-dispose-tap')?.state).toBe('active');
+
+    const host = app.bind({ events, hooks, agent: agentService, memory });
+    host.hooks.middleware('agent:turn:after', async (data, next) => {
+      await next();
+      if (data.outcome !== 'aborted') return;
+      memoryOpenAtAbort = memoryProviderOpen;
+      try {
+        await host.memory.require().getHistory(data.sessionId, 50);
+      } catch {
+        memoryOpenAtAbort = false;
+      }
+      order.push('turn:aborted');
+    });
+
+    const sessionId = 'test:stop-abort';
+    const turn = host.agent
+      .require()
+      .handleMessage({
+        content: 'in-flight',
+        sessionId,
+        platform: 'test',
+        userId: 'u1',
+        sessionType: 'private',
+      })
+      .then(() => {
+        turnDone = true;
+      });
+
+    await new Promise(r => setTimeout(r, 40));
+    await app.stop();
+    expect(turnDone, 'stop() 应等到回合 AbortError 收尾，而不是只 abort 信号').toBe(true);
+    await turn;
+
+    expect(memoryOpenAtAbort, 'aborted 收尾必须发生在 memory 提供者仍可用时').toBe(true);
+    expect(order, 'memory 提供者的 onDispose 必须晚于回合 aborted 收尾').toEqual(['turn:aborted', 'memory:onDispose']);
+    const hist = await inner.getHistory(sessionId, 50);
+    expect(
+      hist.some(m => m.role === 'assistant' && String(m.content).includes('should-not-land')),
+      '中止路径不得把未完成的助手回复当完成写入',
+    ).toBe(false);
   });
 });
