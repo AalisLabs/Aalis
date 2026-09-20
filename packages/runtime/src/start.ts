@@ -37,7 +37,11 @@ export interface StartAalisOptions {
   projectDir?: string;
   /** 插件加载器，默认 createNodeModulesPluginLoader(projectDir)；monorepo 传 createFsPluginLoader() 扫 packages/ */
   pluginLoader?: PluginLoader;
-  /** 彩色 stdout 日志，默认 true（独立部署即有日志）；webui-only/嵌入式可传 false */
+  /**
+   * 彩色控制台日志，默认 true（独立部署即有全量级别）。webui-only/嵌入式/测试夹具可传 false：
+   * 此时仍把 warn/error 打到 stderr（「装了没反应」与双副本「必须是单副本」必须出声），
+   * 不写 info/debug、不占 stdout。
+   */
   consoleSink?: boolean;
   /**
    * 文件日志：true→data/latest.log，string→自定义路径，false→关。默认 true（webui/cli 尾读此文件）。
@@ -91,9 +95,10 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   const subcommandMode = subcommands.length > 0;
   // console sink 在 App 之前装：此时无 ctx，sink 处于「无条件写」状态以打印早期启动日志，
   // 待 App 起来再 bindEvents 接管 terminal:claimed/released。子命令模式日志走 stderr，stdout 只留命令结果。
-  const consoleHandle: ConsoleSinkHandle | undefined = consoleSink
+  // consoleSink: false 仍装 stderr + minLevel warn：双副本判定是 error，不能只剩下游「commands 服务不可用」。
+  const consoleHandle: ConsoleSinkHandle = consoleSink
     ? installConsoleSink(subcommandMode ? { target: 'stderr' } : {})
-    : undefined;
+    : installConsoleSink({ target: 'stderr', minLevel: 'warn' });
 
   // 子命令进程不写文件日志：setupFileLogger 会截断 latest.log，而守护进程可能正在写它（webui 历史日志
   // 以该文件为单一数据源）。
@@ -147,7 +152,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   // 宿主的根绑定：事件订阅与服务查询都经它，随 App 停止撤回
   const host = app.bind({ events, services });
   // 不变量①：App 构造完成后再让 sink 监听终端归属事件——此前没有事件总线可订阅。
-  consoleHandle?.bindEvents(host.events);
+  consoleHandle.bindEvents(host.events);
 
   await app.autoLoadPlugins();
 
