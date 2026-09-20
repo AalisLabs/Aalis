@@ -3,7 +3,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { App, type PluginModule, provide } from '@aalis/core';
+import { App, type PluginDefinition, provide } from '@aalis/core';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { type ASRService, asr } from '../../packages/api-asr/src/index.js';
 import { processService } from '../../packages/api-process/src/index.js';
@@ -35,7 +35,7 @@ afterEach(async () => {
 
 /** 装载插件并捞出它 provide 的 asr 服务；process / storage 用本用例的真 fs 桩 */
 async function bootAsr(
-  plugin: PluginModule,
+  plugin: PluginDefinition,
   config: Record<string, unknown>,
   services: { process: Record<string, unknown>; storage: Record<string, unknown> },
 ): Promise<ASRService> {

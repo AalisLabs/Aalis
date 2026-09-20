@@ -3,7 +3,7 @@ import { agent } from '../../packages/api-agent/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { App, events, type PluginModule } from '../../packages/core/src/index.js';
+import { App, events, type PluginDefinition } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
@@ -34,7 +34,7 @@ const AGENT_CONFIG = {
  * 装一个插件并确认它真的激活了。激活闸会把缺 required 依赖的插件静静留在 pending 且不报错，
  * 不核一下的话「插件根本没跑」会伪装成用例通过。
  */
-async function use(app: App, module: PluginModule, config?: Record<string, unknown>): Promise<void> {
+async function use(app: App, module: PluginDefinition, config?: Record<string, unknown>): Promise<void> {
   await app.plugin(module, config);
   await app.plugins.idle();
   const state = app.plugins.getPlugin(module.name)?.state;
@@ -42,7 +42,7 @@ async function use(app: App, module: PluginModule, config?: Record<string, unkno
 }
 
 /** 本组用例共用的一栈：mock LLM + 工具注册表 + 记忆 + 归档 + agent */
-async function bootAgentStack(app: App, llmPlugin: PluginModule, withTools: boolean): Promise<void> {
+async function bootAgentStack(app: App, llmPlugin: PluginDefinition, withTools: boolean): Promise<void> {
   await use(app, llmPlugin);
   if (withTools) await use(app, toolsPlugin, {});
   await use(app, memoryInMemoryPlugin);
