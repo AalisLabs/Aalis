@@ -19,7 +19,7 @@ Aalis 提供两个互不相干的脚手架，先确认你需要哪个：
 
 心智模型：
 - **项目** = 一份 `aalis.config.yaml` + 一行 `startAalis()` + 若干装进 `node_modules` 的 `@aalis/plugin-*`。运行时从项目 `package.json` 的依赖里发现并加载这些插件（`node-modules-loader.ts`）。
-- **插件** = 一个导出 `name` + `apply(ctx, config)` 的 npm 包（`create-aalis-plugin` 生成 `src/index.ts`），被某个项目装进去后由 core 加载。
+- **插件** = 一个默认导出 `definePlugin({ name, uses, apply })` 产物的 npm 包（`create-aalis-plugin` 生成 `src/index.ts`），被某个项目装进去后由 core 加载。
 
 两个脚手架遵循同一条外部兼容约定：**生成的依赖版本写 `"latest"`（或解析到的 `^<最新版>`），绝不写 `workspace:`**——脚手架产物不在本 monorepo 内，`workspace:` 协议在外部装不上（`create-aalis/cli.ts`、`create-aalis-plugin/cli.ts`）。
 
@@ -186,9 +186,9 @@ pnpm build
 |---|---|---|
 | 包名 | `aalis-plugin-sample` | 合法 npm 包名，支持 `@scope/my-plugin`；目录名取最后一段（`shortName`，`cli.ts`） |
 | 显示名（中文标签） | 由包名推导 | 去掉 `plugin-` 前缀、连字符转空格、首字母大写（`defaultDisplayName`，`cli.ts`） |
-| 注册 AI 工具？ | **是** | 生成 `useToolService` 工具示例 |
-| 注册斜杠命令？ | 否 | 生成 `useCommandService` 命令示例 |
-| 提供 WebUI 页面？ | 否 | 生成 `useWebuiService` 页面 + `actions` 示例 |
+| 注册 AI 工具？ | **是** | 生成 `uses: { tools: optional(tools) }` 与 `tools.register` 示例 |
+| 注册斜杠命令？ | 否 | 生成 `uses: { commands: optional(commands) }` 与 `commands.command` 示例 |
+| 提供 WebUI 页面？ | 否 | 生成 `uses: { webui: optional(webuiServer) }` 与 `registerPage` / `registerAction` 示例 |
 
 `--yes` / `-y` 跳过全部，取上表默认（即只生成 tool 扩展点，`cli.ts`）。yes/no 输入兼容 `y/yes/true/1` 与 `n/no/false/0`（`parseYesNo`，`cli.ts`）。
 
@@ -198,7 +198,7 @@ pnpm build
 my-plugin/
 ├── package.json        # name / keywords:["aalis-plugin"] / peerDep core / 按选项的 *-api 依赖
 ├── tsconfig.json       # 自包含 compilerOptions（不 extends monorepo base，独立目录也能 tsc）
-├── src/index.ts        # PluginModule：name / displayName / inject={} / apply()
+├── src/index.ts        # export default definePlugin({ name, displayName, uses, apply })
 └── README.md           # 启用方式 + 已选扩展点清单
 ```
 
@@ -214,80 +214,82 @@ my-plugin/
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": ["dist"],                      // 发布包只含编译产物
-  "dependencies": { "@aalis/api-tools": "latest" },  // 仅当选了对应扩展点
-  "peerDependencies": { "@aalis/core": ">=0.2.0 <1.0.0" },  // 宽松区间，兼容任何 0.x 宿主
-  "devDependencies": { "@aalis/core": "latest", "typescript": "^5.7.0", "@types/node": "^22.0.0" }
-  // 有服务依赖/提供时在此补 aalis.service（注释占位，见下）
+  "dependencies": { "@aalis/api-tools": "latest" },  // 选了对应扩展点才写入（描述符是值导入）
+  "peerDependencies": { "@aalis/core": ">=0.17.0 <1.0.0" },
+  "devDependencies": { "@aalis/core": "latest", "typescript": "^5.7.0", "@types/node": "^22.0.0" },
+  "aalis": { "service": { "optional": ["tools"] } }  // 与 uses 里 optional(tools) 对齐；未勾选扩展点则整块省略
 }
 ```
 
 - **`keywords: ["aalis-plugin"]` 是加载硬门**：两个加载器都只认这个关键词来判定「这是不是可加载插件」（`isLoadablePlugin`，`node-modules-loader.ts`）。漏了它，插件永远不被发现。
-- **`@aalis/core` 走 peerDependency**，区间 `>=0.2.0 <1.0.0`：接受任何 0.x 宿主，插件不必随 core 次版本升级重发（别用 `^0.x` caret 把自己锁死，也别用裸 `*`）。**注意 1.0 之前 core 的公开面可能在次版本被删**（0.7.0 / 0.9.0 都删过），用了新 API 就把下限抬到对应版本；稳定性承诺自 1.0 起生效，见 `docs/design/core-contract.md`。
-- **选了哪个扩展点，才把对应 `*-api` 进 `dependencies`**：tool→`@aalis/api-tools`、command→`@aalis/api-commands`、webui→`@aalis/api-webui`，统一写 `"latest"`（`cli.ts`）。
-- **不带 `aalis` 字段**：示例插件无服务依赖，模板只留一行注释提示往哪写（`cli.ts`）。一旦你 `ctx.provide(...)` 或在 `inject` 加依赖，要**同步**补 `aalis.service.{provides,required,optional}`，否则市场「装前披露」会缺项——这两套元数据的对账纪律见 [concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。
+- **`@aalis/core` 走 peerDependency**，区间 `>=0.17.0 <1.0.0`：`definePlugin` / 服务描述符首次成为公开面的版本。插件不必随其后的 core 次版本升级重发（别用 `^0.x` caret 把自己锁死，也别用裸 `*`）。**注意 1.0 之前 core 的公开面可能在次版本被删**，用了更新的 API 就把下限再抬；稳定性承诺自 1.0 起生效，见 `docs/design/core-contract.md`。
+- **选了哪个扩展点，才把对应 `*-api` 进 `dependencies`**：tool→`@aalis/api-tools`、command→`@aalis/api-commands`、webui→`@aalis/api-webui`，统一写 `"latest"`（`cli.ts`）。描述符是值导入，不能只放 `devDependencies`。
+- **勾选了扩展点才写 `aalis.service`**：与 `uses` 里 `optional(...)` 的服务名对齐（tool → `optional: ["tools"]`，command → `commands`，webui → `webui-server`）。一旦你增加 `provides` 或把某依赖改成 required，要**同步** `package.json` 的 `aalis.service`，否则市场「装前披露」会缺项——对账纪律见 [concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。
 
 ### 生成的 `src/index.ts` 形状
 
-入口导出一组 `PluginModule` 字段（`renderIndexTs`，`cli.ts`）。核心元数据：
+入口必须默认导出 `definePlugin` 的产物（`renderIndexTs`，`cli.ts`）。`--yes`（只勾选 tool）生成的原文形状：
 
 ```ts
-export const name = 'my-plugin';
-export const displayName = 'My Plugin';
-export const inject = {};          // 空依赖声明；有 required/optional 服务时在此填
+import { tools } from '@aalis/api-tools';
+import { definePlugin, logger, optional } from '@aalis/core';
 
-export function apply(ctx: Context, _config: Record<string, unknown>): void {
-  const logger = ctx.logger.child('my-plugin');
-  logger.info('插件已加载');
-  // ...扩展点
-}
-```
+export default definePlugin({
+  name: 'my-plugin',
+  displayName: 'My Plugin',
+  uses: { logger, tools: optional(tools) },
+  apply({ logger, tools }) {
+    logger.info('插件已加载');
 
-> `export const inject = {}` 是一个**显式空依赖声明**——没有依赖也写出来，提示你「有依赖往这填」。`inject` 的语义（`required` 参与拓扑排序、`optional` 不参与）见 [concepts/manifest-metadata.md](../concepts/manifest-metadata.md) 与 [concepts/lazy-service-access.md](../concepts/lazy-service-access.md)。
-
-选了 tool 时生成的工具模板（`cli.ts`）——注意这个**确切形状**：
-
-```ts
-import { useToolService } from '@aalis/api-tools';
-
-useToolService(ctx).register({
-  definition: {
-    type: 'function',
-    function: {
-      name: 'hello',
-      description: '示例工具：返回问候语',
-      parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
-    },
-  },
-  // handler 返回 string 即纯文本结果；需要把图交给主模型时返回 { content, images }
-  async handler(args) {
-    return `你好, ${(args as { name: string }).name}!`;
+    tools.register({
+      definition: {
+        type: 'function',
+        function: {
+          name: 'hello',
+          description: '示例工具：返回问候语',
+          parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+        },
+      },
+      async handler(args) {
+        return `你好, ${(args as { name: string }).name}!`;
+      },
+    });
   },
 });
 ```
 
-模板已按正确形状固定，注意两点：
-- 工具声明用 OpenAI 函数调用协议的嵌套形状 `{ type: 'function', function: { name, description, parameters } }`（`ToolDefinition`，`api-tools/src/index.ts`），不是平铺的 `{ name, description }`。
-- `handler` 的返回类型是 `Promise<string | ToolExecutionResult>`（`RegisteredTool.handler`，`api-tools/src/index.ts`）——返回字符串即纯文本结果；需要把图片交给主模型亲眼看时返回 `{ content, images }`。
+没有默认注入：`uses` 写了什么，`apply` 就只能碰到什么。`optional(tools)` 缺席不拦激活，登记会在 tools 到场或换人时由描述符的 registrar 重挂。
 
-选了 command / webui 时分别追加 `useCommandService(ctx).command(...).action(...)` 与 `useWebuiService(ctx).registerPage(...)` 示例（`cli.ts`）。这些注册 helper 都来自各自的 `*-api` 包，**不**来自 core——这也是为什么对应 `*-api` 要进 `dependencies`。各扩展点的 helper 一览见 [第三方插件开发者指南](./third-party-plugin.md) 第 5 节。
+工具声明用 OpenAI 函数调用协议的嵌套形状 `{ type: 'function', function: { name, description, parameters } }`（`ToolDefinition`，`packages/api-tools/src/index.ts`），不是平铺的 `{ name, description }`。`handler` 返回 `Promise<string | ToolExecutionResult>`——字符串即纯文本；需要把图片交给主模型时返回 `{ content, images }`。
+
+选了 command 时追加 `import { commands } from '@aalis/api-commands'`、`uses` 里 `commands: optional(commands)`，以及 `commands.command('hello', '示例命令').action(async () => '你好')`。选了 webui 时追加 `webuiServer`、`registerPage` 与 `registerAction`（页面动作不再是静态 `actions` 字段）。描述符来自各自的 `*-api` 包，**不**来自 core。各扩展点一览见 [第三方插件开发者指南](./third-party-plugin.md) 第 5 节。
+
+脚手架同时生成 README，其中写明入口是 `export default definePlugin({ uses, apply })`，扩展点与 `src/index.ts` 的 `uses` 一致。
 
 ---
 
 ## 从脚手架到能用的插件
 
-`create-aalis-plugin` 生成的骨架只是一个能加载、仅打印日志的空壳。让它真正发挥作用需要两步：
+`create-aalis-plugin` 生成的骨架能加载、会打印日志，并按选项登记工具/命令/页面。让别的插件能用你这个能力需要两步。
 
 ### 1. 提供一个服务
 
-骨架默认只**消费**（注册工具/命令）。要让别的插件能用你这个能力，在 `apply` 里 `ctx.provide(name, instance, options?)`，并**同步**把 `provides` 写进运行时导出 + `package.json` 的 `aalis.service`：
+在 `uses` 里声明 `provide` 与依赖的描述符，`provides` 写描述符数组，并同步 `package.json` 的 `aalis.service`：
 
 ```ts
-export const provides = ['my-service'];        // 源 A：运行时导出（core 读，参与拓扑）
-export const inject = { required: ['storage'] };
+import { storage } from '@aalis/api-storage';
+import { definePlugin, defineService, provide } from '@aalis/core';
 
-export function apply(ctx: Context) {
-  ctx.provide('my-service', new MyService(), { label: 'my-service' });
-}
+const myService = defineService<MyService>('my-service');
+
+export default definePlugin({
+  name: 'my-plugin',
+  uses: { provide, storage },
+  provides: [myService],
+  apply({ provide }) {
+    provide(myService, new MyService(), { label: 'my-service' });
+  },
+});
 ```
 
 ```jsonc
@@ -295,33 +297,39 @@ export function apply(ctx: Context) {
 "aalis": { "service": { "provides": ["my-service"], "required": ["storage"] } }
 ```
 
-> 这两套元数据**不自动对账**，必须手写一致，否则市场「装前/装后」披露漂移。完整规则、真实漂移案例、推荐的 CI 对账见 [concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。服务的注册/选优/per-entry 多实例语义见 [concepts/service-model.md](../concepts/service-model.md) 与 [concepts/lazy-service-access.md](../concepts/lazy-service-access.md)。
+> 这两套元数据**不自动对账**，必须手写一致。完整规则与第一方守卫见 [concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。服务的注册/选优/per-entry 见 [concepts/service-model.md](../concepts/service-model.md) 与 [concepts/lazy-service-access.md](../concepts/lazy-service-access.md)。
 
 ### 2. 加配置
 
-需要 API key / 地址等参数时，导出 `configSchema`（WebUI 据此自动渲染表单），在 `apply` 里读已校验过的 `config`：
+需要 API key / 地址等参数时，把 `configSchema` 写在 `definePlugin` 上（WebUI 据此自动渲染表单），并 `uses: { config }`：
 
 ```ts
+import { config, definePlugin } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import type {} from '@aalis/api-webui'; // declaration merging：secret 等表单属性
+import type {} from '@aalis/api-webui';
 
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   apiKey: { type: 'string', label: 'API Key', required: true, secret: true },
 };
 
-export function apply(ctx: Context, config: Record<string, unknown>) {
-  // config 已含 schema 派生默认值（顶层合并）
-}
+export default definePlugin({
+  name: 'my-plugin',
+  configSchema,
+  uses: { config },
+  apply({ config }) {
+    // config 已含 schema 派生默认值
+  },
+});
 ```
 
-配置 schema 的字段归属（`secret` 等渲染属性来自 webui-api 而非 core）见 [第三方插件开发者指南](./third-party-plugin.md) 第 3 节。
+配置 schema 的字段归属（`secret` 等渲染属性来自 api-webui 而非 core）见 [第三方插件开发者指南](./third-party-plugin.md) 第 3 节。
 
 ### 3. 本地验证 → 发布
 
 - **本地运行**：在 Aalis 项目目录里 `npm install ../my-plugin`（写进 `dependencies` 即被 node_modules 加载器发现）。**插件默认启用**——`plugins` 段只放配置，启停看顶层 `disabledPlugins` 数组，没有 `enabled` 开关。放进 monorepo `packages/` 只对自行接了 `createFsPluginLoader` 的自托管仓库有效，脚手架生成的项目不走那条路。
 - **发布**：`npm publish --access public`。用户 `npm install my-plugin` 后，因 `keywords` 含 `aalis-plugin` 即被自动发现加载（`node-modules-loader.ts`）。
 
-完整的「从零到发布」最短路径（消费/提供服务、生命周期 disposable、类型从哪个包 import、参考实现清单）见 [第三方插件开发者指南](./third-party-plugin.md)。
+完整的「从零到发布」最短路径见 [第三方插件开发者指南](./third-party-plugin.md)。
 
 ---
 
@@ -329,7 +337,7 @@ export function apply(ctx: Context, config: Record<string, unknown>) {
 
 - 启动之后怎么用（要哪些 key / 零 key 走 Ollama / CLI 与 WebUI 两个入口 / 发第一条消息）：[guide/first-run.md](./first-run.md)
 - 插件包的完整契约与发布流程：[guide/third-party-plugin.md](./third-party-plugin.md)
-- 两套元数据源（运行时导出 vs `package.json` aalis.service）与对账纪律：[concepts/manifest-metadata.md](../concepts/manifest-metadata.md)
-- 服务模型（provide / getService / 选优 / per-entry）：[concepts/service-model.md](../concepts/service-model.md)
-- 为什么不能缓存服务引用、何时用 `whenService`：[concepts/lazy-service-access.md](../concepts/lazy-service-access.md)
+- 两套元数据源（`definePlugin` 的 provides/uses vs `package.json` aalis.service）与对账纪律：[concepts/manifest-metadata.md](../concepts/manifest-metadata.md)
+- 服务模型（描述符 / `ServiceRef` / `services.prefer` / per-entry）：[concepts/service-model.md](../concepts/service-model.md)
+- 为什么不能缓存 `current`、何时用 `follow`：[concepts/lazy-service-access.md](../concepts/lazy-service-access.md)
 - 插件作者的安全责任边界：[concepts/security-model.md](../concepts/security-model.md)
