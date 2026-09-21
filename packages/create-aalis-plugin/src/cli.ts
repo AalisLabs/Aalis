@@ -248,30 +248,66 @@ function renderTsconfig(): string {
   )}\n`;
 }
 
+/** 用户勾选 → uses 键 / 描述符。README 与 index 共用，避免一边列了未勾选的能力。 */
+interface CapabilityUse {
+  usesKey: string;
+  descriptor: string;
+  importLine: string;
+  param: string;
+  bullet: string;
+}
+
+function selectedCapabilityUses(features: Answers['features']): CapabilityUse[] {
+  const out: CapabilityUse[] = [];
+  if (features.tool) {
+    out.push({
+      usesKey: 'tools',
+      descriptor: 'optional(tools)',
+      importLine: `import { tools } from '@aalis/api-tools';`,
+      param: 'tools',
+      bullet: '- ✓ 注册 AI 工具（`uses: { tools: optional(tools) }`，从 `@aalis/api-tools` 导入描述符）',
+    });
+  }
+  if (features.command) {
+    out.push({
+      usesKey: 'commands',
+      descriptor: 'optional(commands)',
+      importLine: `import { commands } from '@aalis/api-commands';`,
+      param: 'commands',
+      bullet: '- ✓ 注册斜杠命令（`uses: { commands: optional(commands) }`，从 `@aalis/api-commands` 导入描述符）',
+    });
+  }
+  if (features.webui) {
+    out.push({
+      usesKey: 'webui',
+      descriptor: 'optional(webuiServer)',
+      importLine: `import { type WebuiPage, webuiServer } from '@aalis/api-webui';`,
+      param: 'webui',
+      bullet: '- ✓ WebUI 页面（`uses: { webui: optional(webuiServer) }`，从 `@aalis/api-webui` 导入描述符）',
+    });
+  }
+  return out;
+}
+
+function usesObjectLiteral(features: Answers['features']): string {
+  const caps = selectedCapabilityUses(features);
+  const parts = ['logger', ...caps.map(c => `${c.usesKey}: ${c.descriptor}`)];
+  return `{ ${parts.join(', ')} }`;
+}
+
 export function renderIndexTs(a: Answers): string {
   // uses 里声明了什么，apply 就只能碰到什么：没有默认注入
+  const caps = selectedCapabilityUses(a.features);
   const coreImports = ['definePlugin', 'logger'];
-  const uses = ['logger'];
-  const imports: string[] = [];
-  if (a.features.tool) {
-    imports.push(`import { tools } from '@aalis/api-tools';`);
-    uses.push('tools: optional(tools)');
-  }
-  if (a.features.command) {
-    imports.push(`import { commands } from '@aalis/api-commands';`);
-    uses.push('commands: optional(commands)');
-  }
-  if (a.features.webui) {
-    imports.push(`import { type WebuiPage, webuiServer } from '@aalis/api-webui';`);
-    uses.push('webui: optional(webuiServer)');
-  }
-  if (uses.length > 1) coreImports.push('optional');
-  imports.push(`import { ${coreImports.sort().join(', ')} } from '@aalis/core';`);
+  if (caps.length > 0) coreImports.push('optional');
+  const imports: string[] = [
+    ...caps.map(c => c.importLine),
+    `import { ${coreImports.sort().join(', ')} } from '@aalis/core';`,
+  ];
 
-  const params = ['logger'];
+  const params = ['logger', ...caps.map(c => c.param)];
   const body: string[] = [];
   if (a.features.tool) {
-    params.push('tools');
     body.push(`    // 注册 AI 可调用的工具。登记随这次激活撤回；tools 服务晚上线或换人时自动重挂
     tools.register({
       // 能力档位：不声明 = public（任意等级 0 用户可经自然语言驱动）。
@@ -292,12 +328,10 @@ export function renderIndexTs(a: Answers): string {
     });`);
   }
   if (a.features.command) {
-    params.push('commands');
     body.push(`    // 注册斜杠命令
     commands.command('hello', '示例命令').action(async () => '你好');`);
   }
   if (a.features.webui) {
-    params.push('webui');
     body.push(`    // 注册 WebUI 页面与它的页面动作（处理函数是闭包，直接用 apply 里的能力）
     for (const page of webuiPages) webui.registerPage(page);
     webui.registerAction('getInfo', async () => ({ 提示: '这是 ${a.displayName} 插件的示例信息面板。' }));`);
@@ -329,7 +363,7 @@ export default definePlugin({
   name: '${a.packageName}',
   displayName: '${a.displayName}',
   // 用到的全部能力。可选依赖包一层 optional()：缺席不拦激活，到场后自动接上
-  uses: { ${uses.join(', ')} },
+  uses: ${usesObjectLiteral(a.features)},
   apply({ ${params.join(', ')} }) {
     logger.info('插件已加载');
 ${body.length ? `\n${body.join('\n\n')}\n` : ''}  },
@@ -337,7 +371,10 @@ ${body.length ? `\n${body.join('\n\n')}\n` : ''}  },
 `;
 }
 
-function renderReadme(a: Answers): string {
+export function renderReadme(a: Answers): string {
+  const caps = selectedCapabilityUses(a.features);
+  const usesLine = `uses: ${usesObjectLiteral(a.features)}`;
+  const bullets = caps.map(c => c.bullet).join('\n');
   return `# ${a.packageName}
 
 ${a.displayName} —— 由 \`create-aalis-plugin\` 生成的 Aalis 插件骨架。
@@ -353,15 +390,16 @@ npm install ${a.packageName}
 发现机制依赖 package.json 的 \`"keywords": ["aalis-plugin"]\`（脚手架已带，勿删）。
 插件默认启用；停用是把包名加入 \`aalis.config.yaml\` 顶层的 \`disabledPlugins\` 数组。
 插件配置写在 \`plugins."${a.packageName}"\` 段；没有 \`enabled\` 开关。若你为插件声明了
-\`configSchema\`，键与字段以其为准（schema 外字段启动时会被裁剪）；本模板未声明
-configSchema，配置原样透传给 apply。
+\`configSchema\`，键与字段以其为准（schema 外字段启动时会被裁剪）。
 
 ## 扩展点
 
 入口是 \`export default definePlugin({ uses, apply })\`。用到的服务经描述符导入后写进
-\`uses\`（本模板与 \`src/index.ts\` 一致：\`tools\` / \`commands\` / \`webuiServer\`）。
+\`uses\`（本模板与 \`src/index.ts\` 同源）：
 
-${a.features.tool ? '- ✓ 注册 AI 工具（`uses: { tools }`，从 `@aalis/api-tools` 导入描述符）\n' : ''}${a.features.command ? '- ✓ 注册斜杠命令（`uses: { commands }`，从 `@aalis/api-commands` 导入描述符）\n' : ''}${a.features.webui ? '- ✓ WebUI 页面（`uses: { webuiServer }`，从 `@aalis/api-webui` 导入描述符）\n' : ''}
+\`${usesLine}\`
+
+${bullets ? `${bullets}\n` : ''}
 请打开 \`src/index.ts\` 按需修改。
 `;
 }

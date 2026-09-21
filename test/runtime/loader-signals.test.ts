@@ -2,9 +2,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DefaultLogger, type Logger, LogHub } from '../../packages/core/src/index.js';
+import { DefaultLogger, type Logger, LogHub, pluginDefinitionOf } from '../../packages/core/src/index.js';
 import { installConsoleSink } from '../../packages/runtime/src/console-sink.js';
-import { createNodeModulesPluginLoader, pluginDefinitionOf } from '../../packages/runtime/src/node-modules-loader.js';
+import { createNodeModulesPluginLoader, loadPluginDefinition } from '../../packages/runtime/src/node-modules-loader.js';
 
 // ════════════════════════════════════════════════════════════
 // 加载链信号：「装了没反应」死门族的告警锚。
@@ -105,8 +105,9 @@ describe('加载链信号', () => {
   });
 
   it('pluginDefinitionOf：仅具名导出、无 default → warn 出声并跳过', async () => {
+    expect(pluginDefinitionOf({ name: 'plugin-named', apply() {} })).toBeNull();
     const { logger, warns: local } = capturingLogger();
-    expect(pluginDefinitionOf({ name: 'plugin-named', apply() {} }, 'plugin-named', logger)).toBeNull();
+    expect(loadPluginDefinition({ name: 'plugin-named', apply() {} }, 'plugin-named', logger)).toBeNull();
     expect(local.some(w => w.includes('plugin-named') && w.includes('没有默认导出插件定义'))).toBe(true);
 
     const loader = createNodeModulesPluginLoader(proj);
@@ -119,10 +120,13 @@ describe('加载链信号', () => {
   it('pluginDefinitionOf：default 是函数或非定义对象 → warn 出声并跳过', async () => {
     const { logger, warns: local } = capturingLogger();
     function fnPlugin() {}
-    expect(pluginDefinitionOf({ default: fnPlugin }, 'plugin-fn', logger)).toBeNull();
+    expect(pluginDefinitionOf({ default: fnPlugin })).toBeNull();
+    expect(loadPluginDefinition({ default: fnPlugin }, 'plugin-fn', logger)).toBeNull();
     class ClsPlugin {}
-    expect(pluginDefinitionOf({ default: ClsPlugin }, 'plugin-cls', logger)).toBeNull();
-    expect(pluginDefinitionOf({ default: { foo: 1 } }, 'plugin-plain', logger)).toBeNull();
+    expect(pluginDefinitionOf({ default: ClsPlugin })).toBeNull();
+    expect(loadPluginDefinition({ default: ClsPlugin }, 'plugin-cls', logger)).toBeNull();
+    expect(pluginDefinitionOf({ default: { foo: 1 } })).toBeNull();
+    expect(loadPluginDefinition({ default: { foo: 1 } }, 'plugin-plain', logger)).toBeNull();
     expect(local.some(w => w.includes('plugin-fn') && w.includes('没有默认导出插件定义'))).toBe(true);
     expect(local.some(w => w.includes('plugin-cls') && w.includes('没有默认导出插件定义'))).toBe(true);
     expect(local.some(w => w.includes('plugin-plain') && w.includes('没有默认导出插件定义'))).toBe(true);
@@ -144,8 +148,11 @@ describe('加载链信号', () => {
 
   it('pluginDefinitionOf：定义 name 与包名不一致 → warn 点名（配置键/热扫描/卸载以定义 name 为准）', async () => {
     const { logger, warns: local } = capturingLogger();
-    const def = pluginDefinitionOf({ default: { name: 'other-name', apply() {} } }, 'plugin-mismatch', logger);
+    const def = pluginDefinitionOf({ default: { name: 'other-name', apply() {} } });
     expect(def?.name).toBe('other-name');
+    expect(loadPluginDefinition({ default: { name: 'other-name', apply() {} } }, 'plugin-mismatch', logger)?.name).toBe(
+      'other-name',
+    );
     expect(local.some(w => w.includes('plugin-mismatch') && w.includes('定义 name'))).toBe(true);
 
     const loader = createNodeModulesPluginLoader(proj);

@@ -58,7 +58,7 @@ export {
 // ----- 配置、日志 -----
 export { type AalisConfig, ConfigManager, type ConfigManagerOptions, type ConfigProvider } from './context/config.js';
 // ----- 插件定义 -----
-export { definePlugin, type PluginDefinition, type PluginMeta } from './context/definition.js';
+export { definePlugin, type PluginDefinition, type PluginMeta, pluginDefinitionOf } from './context/definition.js';
 export {
   DefaultLogger,
   formatLogLine,
