@@ -1,7 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { optionalNames, requiredNames, type Uses } from '../../packages/core/src/context/binding.js';
 import {
   config,
   contributions,
@@ -11,7 +10,8 @@ import {
   logger,
   provide,
   services,
-} from '../../packages/core/src/context/builtins.js';
+} from '../../packages/core/src/composition/core-services.js';
+import { optionalNames, requiredNames, type Uses } from '../../packages/core/src/composition/descriptors.js';
 import type { PluginDefinition } from '../../packages/core/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -57,7 +57,9 @@ describe('manifest 双源对账', () => {
       .map(d => d.name)
       .sort();
     expect([...CORE_SERVICE_NAMES].sort()).toEqual(fromModule);
-    expect(requiredNames({ config, contributions, events, hooks, lifecycle, logger, provide, services }).sort()).toEqual(fromModule);
+    expect(
+      requiredNames({ config, contributions, events, hooks, lifecycle, logger, provide, services }).sort(),
+    ).toEqual(fromModule);
   });
 
   it('全部 aalis-plugin 包的 aalis.service 与 default 定义的 provides/uses 一致', async () => {

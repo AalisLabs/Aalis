@@ -47,7 +47,7 @@ export interface TranscribeResult {
 
 接口经 declaration merging 登记到 `服务描述符`（`index.ts`），所以 `asr.current` 在装了本契约包的工程里能自动推断为 `ASRService | undefined`——无可用后端时即为 `undefined`。
 
-> 契约包头部注释（`index.ts`）写的 `('asr', ['audio'])`「按偏好 > 优先级 > capability 解析」是**过时措辞**：0.5.0 已删除内核的「服务能力选择层」，`(name)` 只接受名字一个参数（`packages/core/src/context/context.ts`），仲裁只看「偏好 > 优先级 > 注册顺序」。详见 `docs/concepts/service-model.md`。
+> 契约包头部注释（`index.ts`）写的 `('asr', ['audio'])`「按偏好 > 优先级 > capability 解析」是**过时措辞**：0.5.0 已删除内核的「服务能力选择层」，容器 `get(name)` 按名字解析（`packages/core/src/primitives/services.ts`），仲裁只看「偏好 > 优先级 > 注册顺序」。详见 `docs/concepts/service-model.md`。
 
 ---
 
@@ -131,7 +131,7 @@ export default definePlugin({
 
 ### 注册要点
 
-- `provide(name, instance, { priority, label, entryId })`（签名 `packages/core/src/context/context.ts`）。同名多 provider 共存，胜者按「偏好 > 优先级 > 注册顺序」（`docs/concepts/service-model.md`、`docs/core/service.md`）。
+- `provide(descriptor, instance, { priority, label, entryId })`（签名 `packages/core/src/composition/core-services.ts`）。同名多 provider 共存，胜者按「偏好 > 优先级 > 注册顺序」（`docs/concepts/service-model.md`、`docs/core/service.md`）。
 - **priority**：普通数字，越大越优先，含义自行记载。参考实现用 50（云）/ 80（本地，质量更高默认更优先），并把 priority 暴露为可配置项让用户重排。
 - **缺必填配置要抛错，不要静默 `return`**：因为声明了 `provides:['asr']` 却没 `provide`，core 激活后校验会把插件标记为 error（`docs/concepts/manifest-metadata.md` §`provides` / `plugin-activation.ts`），错误信息很难懂。参考实现的做法是抛清晰中文错误（`plugin-asr-openai/src/index.ts`、`plugin-asr-whisper-cpp/src/index.ts`）。
 - 若你想被 media 的 `audio.prefer` 精确选中，注意 media 生成的 processor 名是 `asr:${contextId}`，可在 `provide` 时传 `label` 让 WebUI 列表更可读（media 在 `displayName` 里用了它，`service.ts`）。
@@ -177,7 +177,7 @@ export default definePlugin({
 });
 ```
 
-`.current` 返回的是**当时点的裸实例**，provider 发生换跳（热插拔 / 偏好切换）不会跟随（`packages/core/src/context/context.ts`）。所以每次用都重新读取 `.current`，不要缓存到类字段。详见 `docs/concepts/lazy-service-access.md`。
+`.current` 返回的是**当时点的裸实例**，provider 发生换跳（热插拔 / 偏好切换）不会跟随（`packages/core/src/composition/descriptors.ts`）。所以每次用都重新读取 `.current`，不要缓存到类字段。详见 `docs/concepts/lazy-service-access.md`。
 
 ### asr 是可选依赖，缺失要降级
 

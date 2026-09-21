@@ -1,7 +1,7 @@
 import type { EventBus } from '../primitives/events.js';
 import type { ServiceContainer } from '../primitives/services.js';
 
-import type { Resources } from './resources.js';
+import type { Resources } from '../infrastructure/resources.js';
 
 /** 只观察胜者变化；资源交接、异步撤回全部由 binding 管理。 */
 export function watchService<P>(

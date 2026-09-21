@@ -11,6 +11,7 @@ import {
   lifecycle,
   optional,
   provide,
+  ServiceContainer,
   serviceFactory,
   services,
 } from '../../packages/core/src/index.js';
@@ -313,5 +314,33 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
     await app.plugins.idle();
     expect(app.plugins.getPlugin('broken-consumer')?.state).toBe('error');
     expect(released).toEqual(['broken-consumer']);
+  });
+  it('宿主默认登记失败会撤回已经登记的部分，并保留调用方已有条目', () => {
+    const container = new ServiceContainer();
+    const original = { marker: true };
+    container.register('config', original, 'external');
+    expect(
+      () =>
+        new App({ config: { name: 'conflict', logLevel: 'error', plugins: {} }, logger: silent, services: container }),
+    ).toThrow('独占');
+    expect(container.getServiceNames()).toEqual(['config']);
+    expect(container.get('config')).toBe(original);
+  });
+
+  it('递归工厂明确拒绝并清掉构造占位，下一次查询可以重新构造', () => {
+    const app = makeApp();
+    const desc = defineService<{ ready: boolean }>('recursive-factory');
+    const caps = app.bind({ provide, services });
+    let recursive = true;
+    caps.provide(
+      desc,
+      serviceFactory(() => {
+        if (recursive) caps.services.get(desc);
+        return { ready: true };
+      }),
+    );
+    expect(() => caps.services.get(desc)).toThrow('循环构造');
+    recursive = false;
+    expect(caps.services.get(desc)).toEqual({ ready: true });
   });
 });

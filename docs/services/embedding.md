@@ -157,10 +157,10 @@ export default definePlugin({
 
 ### priority / entryId / label
 
-`provide(name, instance, { priority?, label?, entryId? })`（`packages/core/src/context/context.ts`）：
+`provide(descriptor, instance, { priority?, label?, entryId? })`（`packages/core/src/composition/core-services.ts`）：
 
 - `priority`：默认 `0`。同名服务竞争时，winner = **preference > priority > 注册顺序**；要默认压过普通后端取更高值（如 `50`）。普通第三方提供者保持 `0` 即可，让用户在 WebUI 里用 preference 选。
-- `entryId`：默认本次激活 id，**必须以本次激活 id 为前缀（`/` 分隔）**，否则卸载时无法连带注销（`context.ts`）。一个插件想登记多个 embedding 实例（如多端点）时用 `${lifecycle.id}/${sub}`。
+- `entryId`：默认本次激活 id，**须以本次激活 id 为前缀（`/` 分隔）**，用于逻辑身份校验（`packages/core/src/composition/provide-validation.ts`）；卸载清理按激活身份归属，不依赖字符串前缀。一个插件想登记多个 embedding 实例（如多端点）时用 `${lifecycle.id}/${sub}`。
 - `label`：人类可读名，WebUI 选择器和 `getAllServices` 里展示（两个参考实现都用 `\`OpenAI / ${model}\`` 这种形态）。
 
 详见 [service-model](../concepts/service-model.md) 与 [core/service](../core/service.md)。

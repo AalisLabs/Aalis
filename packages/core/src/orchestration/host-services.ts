@@ -7,8 +7,8 @@
 
 import type { AppService, PluginManagerService } from '../types/app.js';
 
-import { defineService } from '../context/binding.js';
-import type { ConfigManager } from '../context/config.js';
+import { defineService } from '../composition/descriptors.js';
+import type { ConfigManager } from '../infrastructure/config.js';
 
 export const appService = defineService<AppService>('app');
 export const pluginsService = defineService<PluginManagerService>('plugins');

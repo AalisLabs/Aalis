@@ -9,7 +9,7 @@
 
 import type { ServiceContainer } from '../primitives/services.js';
 
-import type { Logger } from './logger.js';
+import type { Logger } from '../infrastructure/logger.js';
 
 /**
  * provide() 的 dev-mode 校验集合：

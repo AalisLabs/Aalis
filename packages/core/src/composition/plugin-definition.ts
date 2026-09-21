@@ -6,8 +6,8 @@
 // 写入这次激活的配置 → 按 uses 装配绑定接口 → 调 apply。
 // ============================================================
 
-import { type BoundOf, isOptional, type ServiceDescriptor, type Uses } from './binding.js';
-import { isPlainConfigObject, isUnsafeConfigKey } from './safe-keys.js';
+import { type BoundOf, isOptional, type ServiceDescriptor, type Uses } from './descriptors.js';
+import { isPlainConfigObject, isUnsafeConfigKey } from '../infrastructure/config-values.js';
 
 /**
  * 插件元数据的扩展点：core 对这里的字段零感知，只原样带在插件定义上。配置表单（configSchema）由

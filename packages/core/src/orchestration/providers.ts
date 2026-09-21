@@ -13,10 +13,10 @@
 //   - opaque metadata：descriptor.source 等字段是 loader 自己理解的字符串；core 不解释。
 //
 // 本文件放后两件。`ConfigProvider` 只依赖 `AalisConfig`，与它服务的 `ConfigManager`
-// 同处 `context/config.ts`——放在那里 context 层就不必向上引用。
+// 同处 `infrastructure/config.ts`——放在那里基础设施层就不必向上引用。
 // ============================================================
 
-import type { PluginDefinition } from '../context/definition.js';
+import type { PluginDefinition } from '../composition/plugin-definition.js';
 
 // ----- 插件加载器 -----
 

@@ -27,9 +27,8 @@
 
 import { reportQuietly } from '../kernel/disposable-chain.js';
 
-import type { Logger } from '../context/logger.js';
-
 import type { Activation } from './activation.js';
+import type { Logger } from '../infrastructure/logger.js';
 
 type Kind = 'drain' | 'close';
 interface Stage {

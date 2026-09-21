@@ -5,7 +5,7 @@
 //   - types/events.ts        AalisEvents（事件名 → 参数元组）
 //   - types/hooks.ts         HookContextMap（钩子名 → 中间件上下文）+ Middleware 签名
 //   - types/contributions.ts ContributionPointMap（贡献点名 → spec 类型）
-// 服务没有类型表：类型随服务描述符走（见 context/binding.ts）。
+// 服务没有类型表：类型随服务描述符走（见 composition/descriptors.ts）。
 // 另：types/app.ts（App 服务接口）、types/plugin.ts（插件注册表词汇）。
 //
 // 业务/领域类型一律由 @aalis/api-* 与 @aalis/schema-* 包导出，core 不认识任何业务类型。

@@ -1,4 +1,4 @@
-import { assertSafePluginId, cloneConfigObject, isUnsafeConfigKey } from './safe-keys.js';
+import { assertSafePluginId, cloneConfigObject, isUnsafeConfigKey } from './config-values.js';
 
 /**
  * Aalis 应用配置（基础设施字段）

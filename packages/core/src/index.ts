@@ -23,19 +23,13 @@ export { EventBus } from './primitives/events.js';
 export { HookRegistry } from './primitives/hooks.js';
 export { ServiceContainer, type ServiceInfo, type ServiceView } from './primitives/services.js';
 
-// ----- 服务描述符与按激活绑定 -----
-export {
-  type BindingPort,
-  type BoundOf,
-  defineService,
-  optional,
-  type ProviderOf,
-  type Registrar,
-  type ServiceDescriptor,
-  type ServiceRef,
-  serviceRef,
-  type Uses,
-} from './context/binding.js';
+// ----- 编排层：应用骨架与插件管理 -----
+export { App, type AppOptions, createApp } from './orchestration/app.js';
+export { appService, hostConfig, pluginsService } from './orchestration/host-services.js';
+export { type PluginEntry, PluginManager, type PluginState, parseInstanceId } from './orchestration/plugin.js';
+// 宿主 SPI：插件加载器与重启策略（ConfigProvider 随 ConfigManager 在上一节）
+export type { PluginDescriptor, PluginLoader, RestartStrategy } from './orchestration/providers.js';
+
 export {
   type Contributions,
   config,
@@ -54,21 +48,37 @@ export {
   type ServiceKey,
   type Services,
   services,
-} from './context/builtins.js';
-// ----- 配置、日志 -----
-export { type AalisConfig, ConfigManager, type ConfigManagerOptions, type ConfigProvider } from './context/config.js';
+} from './composition/core-services.js';
+// ----- 服务描述符与按激活绑定 -----
+export {
+  type BindingPort,
+  type BoundOf,
+  defineService,
+  optional,
+  type ProviderOf,
+  type Registrar,
+  type ServiceDescriptor,
+  type ServiceRef,
+  serviceRef,
+  type Uses,
+} from './composition/descriptors.js';
 // ----- 插件定义 -----
-export { definePlugin, type PluginDefinition, type PluginMeta, pluginDefinitionOf } from './context/definition.js';
+export {
+  definePlugin,
+  type PluginDefinition,
+  type PluginMeta,
+  pluginDefinitionOf,
+} from './composition/plugin-definition.js';
+export { type ServiceFactory, type ServiceScope, serviceFactory } from './composition/service-factory.js';
+// ----- 配置、日志 -----
+export {
+  type AalisConfig,
+  ConfigManager,
+  type ConfigManagerOptions,
+  type ConfigProvider,
+} from './infrastructure/config.js';
 export {
   DefaultLogger,
   type Logger,
   LogHub,
-} from './context/logger.js';
-export { type ServiceFactory, type ServiceScope, serviceFactory } from './context/service-factory.js';
-
-// ----- 编排层：应用骨架与插件管理 -----
-export { App, type AppOptions, createApp } from './orchestration/app.js';
-export { appService, hostConfig, pluginsService } from './orchestration/host-services.js';
-export { type PluginEntry, PluginManager, type PluginState, parseInstanceId } from './orchestration/plugin.js';
-// 宿主 SPI：插件加载器与重启策略（ConfigProvider 随 ConfigManager 在上一节）
-export type { PluginDescriptor, PluginLoader, RestartStrategy } from './orchestration/providers.js';
+} from './infrastructure/logger.js';
