@@ -85,7 +85,7 @@ export class UserStore {
   }
 
   async load(): Promise<void> {
-    // 重读即重判：storage 重新上线（whenService 重挂）或重启后 load 成功即恢复落盘；
+    // 重读即重判：storage 重新上线（follow 重挂）或重启后 load 成功即恢复落盘；
     // 同一进程内不会自动重读——没有新的 load，这一程就一直拒写。
     this.loadFailed = false;
     let raw: string;

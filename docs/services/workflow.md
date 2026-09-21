@@ -165,27 +165,37 @@ DI 靠包清单 + 代码导出**双源**声明（见 [manifest-metadata](../conc
 }
 ```
 
-`src/index.ts` 导出（`packages/plugin-workflow/src/index.ts`）：
-```ts
-export const subsystem = 'workflow';
-provides: [workflow];
-uses: { cronEngine, tools: optional(tools), storage: optional(storage), webui: optional(webui) };
-```
+`src/index.ts` 入口是 `export default definePlugin({ name, subsystem: 'workflow', provides: [workflow], uses: { cronEngine, tools: optional(tools), storage: optional(storage), webui: optional(webuiServer), events, hooks, lifecycle, logger, config, provide }, apply })`（`packages/plugin-workflow/src/index.ts`）。不要再写具名 `export const subsystem`。
 
 ### 最小可编译骨架
 
 ```ts
-import { definePlugin } from '@aalis/core';
+import { cronEngine } from '@aalis/api-cron-engine';
+import { storage } from '@aalis/api-storage';
+import { tools } from '@aalis/api-tools';
+import { webuiServer } from '@aalis/api-webui';
 import type { WorkflowDef, WorkflowRun, WorkflowService } from '@aalis/api-workflow';
+import { workflow } from '@aalis/api-workflow';
+import { definePlugin, optional, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@yourscope/plugin-workflow-foo',
   subsystem: 'workflow',
   provides: [workflow],
-  uses: { cronEngine, tools: optional(tools), storage: optional(storage), webui: optional(webui) },
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  const defs = new Map<string, WorkflowDef>();
-  const runs: WorkflowRun[] = [];
+  uses: {
+    provide,
+    cronEngine,
+    tools: optional(tools),
+    storage: optional(storage),
+    webui: optional(webuiServer),
+  },
+  apply({ provide, cronEngine, tools, storage, webui }) {
+    void cronEngine;
+    void tools;
+    void storage;
+    void webui;
+    const defs = new Map<string, WorkflowDef>();
+    const runs: WorkflowRun[] = [];
 
   const service: WorkflowService = {
     listWorkflows: () => [...defs.values()],
@@ -225,8 +235,8 @@ export default definePlugin({
     },
   };
 
-  provide(workflow, service);
-},
+    provide(workflow, service);
+  },
 });
 ```
 

@@ -108,44 +108,65 @@ uses: { gateway, messageArchive: optional(messageArchive) };
 最小骨架（可编译，省略算法细节）：
 
 ```ts
-import { definePlugin } from '@aalis/core';
-import { INBOUND_PHASE } from '@aalis/api-gateway';
+import { flowControl } from '@aalis/api-flow-control';
 import type { FlowControlService } from '@aalis/api-flow-control';
+import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
+import { messageArchive } from '@aalis/api-message-archive';
+import { definePlugin, hooks, optional, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@aalis/plugin-my-flow-control',
   provides: [flowControl],
-  uses: { gateway, messageArchive: optional(messageArchive) },
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  const service: FlowControlService = {
-    ensureState(/* ... */) {/* 初始化 per-session 状态 */},
-    getStateSnapshot(/* ... */) { return undefined; },
-    recordIncoming(/* ... */) {/* 累加计数/评分 */},
-    recordTriggered(/* ... */) {/* 重置计数 */},
-    recordReply(/* ... */) {/* 设冷却 + 记限速 + 重排 idle */},
-    isCoolingDown() { return false; },
-    isMuted() { return false; },
-    isRateLimited() { return false; },
-    setMuted(/* ... */) {/* 自禁言 */},
-    getThreshold() { return 0; },
-    rescheduleIdle(/* ... */) {/* 重排 idle 定时 */},
-  };
+  uses: {
+    provide,
+    hooks,
+    gateway,
+    messageArchive: optional(messageArchive),
+  },
+  apply({ provide, hooks, gateway, messageArchive }) {
+    void gateway;
+    void messageArchive;
+    const service: FlowControlService = {
+      ensureState(_sessionId, _platform, _sessionType, _targetId) {},
+      getStateSnapshot(_sessionId) {
+        return undefined;
+      },
+      recordIncoming(_sessionId, _platform, _userId, _sessionType, _targetId) {},
+      recordTriggered(_sessionId) {},
+      recordReply(_sessionId, _platform) {},
+      isCoolingDown(_sessionId) {
+        return false;
+      },
+      isMuted(_sessionId) {
+        return false;
+      },
+      isRateLimited(_sessionId) {
+        return false;
+      },
+      setMuted(_sessionId, _durationSec, _platform) {},
+      getThreshold(_sessionId) {
+        return 0;
+      },
+      rescheduleIdle(_sessionId, _platform) {},
+    };
 
-  // priority 留默认(0=Backend)即可，无人会跟 flow-control 抢名
-  provide(flowControl, service);
+    provide(flowControl, service);
 
-  // 关键：占据入站「前置闸门」相位，禁言/冷却/限速直接 swallow（不调 next）
-  hooks.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
-    const { message } = data;
-    if (message.source === 'idle-trigger') return next(); // 内部注入不再过流控
-    service.ensureState(message.sessionId, message.platform, message.sessionType);
-    service.recordIncoming(message.sessionId, message.platform, message.userId, message.sessionType);
-    if (service.isMuted(message.sessionId) || service.isCoolingDown(message.sessionId) || service.isRateLimited(message.sessionId)) {
-      return; // swallow：不调 next() = 不进入 trigger/dispatch
-    }
-    await next();
-  });
-},
+    hooks.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
+      const { message } = data;
+      if (message.source === 'idle-trigger') return next();
+      service.ensureState(message.sessionId, message.platform, message.sessionType);
+      service.recordIncoming(message.sessionId, message.platform, message.userId, message.sessionType);
+      if (
+        service.isMuted(message.sessionId) ||
+        service.isCoolingDown(message.sessionId) ||
+        service.isRateLimited(message.sessionId)
+      ) {
+        return;
+      }
+      await next();
+    });
+  },
 });
 ```
 
