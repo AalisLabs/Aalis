@@ -1998,9 +1998,9 @@ type InternalAgent = {
 function run(caps: Caps): void {
   const agentImpl = new DefaultAgent(caps);
   caps.provide(agentService, agentImpl);
-  // 收尾段中止在飞回合并等 AbortError 落定。关停顺序由 core 按实际绑定编排：
-  // optional 互用的两方只保证彼此 drain 期间存活，不保证对方 close 之后钩子还在。
-  // 会话收口由 session-manager 自己的 onDrain 落盘，不依赖本插件钩子仍在。
+  // 收尾段中止在飞回合并等 AbortError 落定。
+  // 第一方栈由 core 关停编排（optional 环成员先全部 drain）与 agent:turn:after 收口；
+  // session-manager 的 onDrain 兜的是未装 agent 或钩子未挂上的路径。
   // 超时沿用 core 对 onDrain 的 disposeTimeoutMs，不另加配置键。
   caps.lifecycle.onDrain(() => agentImpl.abortInflightAndSettle(), '中止在飞回合');
   // 清理段再 abort 一次：drain 超时或未走到收尾时的兜底，表空则空操作。

@@ -108,7 +108,15 @@ export default definePlugin({
   provides: [llm],
   uses: { provide, lifecycle, logger },
   apply({ provide, lifecycle }) {
-    const handle = { id: 'demo', providerId: lifecycle.id, contextLength: 8192, capabilities: ['chat'] } as LLMModel;
+    const handle: LLMModel = {
+      id: 'demo',
+      providerId: lifecycle.id,
+      contextLength: 8192,
+      capabilities: ['chat'],
+      async chat() {
+        return { content: '' };
+      },
+    };
     provide(llm, handle, { entryId: `${lifecycle.id}/demo`, label: 'demo' });
   },
 });
