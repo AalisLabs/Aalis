@@ -159,14 +159,43 @@ export function serviceRef<P>(port: BindingPort<P>, extra?: object): ServiceRef<
     },
     require() {
       const provider = port.current();
-      if (provider === undefined)
-        throw new Error(`服务 "${port.name}" 不可用（"${port.id}" 声明的依赖当前没有提供者）`);
+      if (provider === undefined) throw new ServiceUnavailableError(port);
       return provider;
     },
     all: () => port.all(),
     follow: attach => port.follow(attach),
   };
   return extra ? Object.assign(ref, extra) : ref;
+}
+
+// 只认框架为本次激活装配的 required 端口，optional / 动态查询 / 自造端口不借用重试资格。
+const requiredOrigins = new WeakMap<object, { resources: Resources; name: string }>();
+
+class ServiceUnavailableError extends Error {
+  readonly #origin: { resources: Resources; name: string } | undefined;
+
+  constructor(port: BindingPort<unknown>) {
+    super(`服务 "${port.name}" 不可用（"${port.id}" 声明的依赖当前没有提供者）`);
+    this.#origin = requiredOrigins.get(port);
+  }
+
+  static belongsTo(error: unknown, resources: Resources, required: readonly string[]): boolean {
+    return (
+      error instanceof ServiceUnavailableError &&
+      #origin in error &&
+      error.#origin?.resources === resources &&
+      required.includes(error.#origin.name)
+    );
+  }
+}
+
+/** @internal 初始化失败归因：来源身份随激活变化，重抛上一轮错误不能触发下一轮重试。 */
+export function isRequiredServiceUnavailable(
+  error: unknown,
+  resources: Resources,
+  required: readonly string[],
+): boolean {
+  return ServiceUnavailableError.belongsTo(error, resources, required);
 }
 
 /** 内置能力的标记：绑的是激活自身，不参与激活闸，也不产生依赖边 */
@@ -199,7 +228,7 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
 }
 
 /** @internal 为一次激活造某个服务的资源口 */
-export function createPort<P>(scope: BindingScope, name: string): BindingPort<P> {
+export function createPort<P>(scope: BindingScope, name: string, required = false): BindingPort<P> {
   /** 调一条撤回：同步抛错就地隔离；异步结果交给激活的在飞账，关闭等到它、拒绝被接住 */
   const withdraw = (off: () => unknown, what: string): PromiseLike<unknown> | undefined =>
     scope.resources.run(() => {
@@ -456,6 +485,7 @@ export function createPort<P>(scope: BindingScope, name: string): BindingPort<P>
       };
     },
   };
+  if (required) requiredOrigins.set(port, { resources: scope.resources, name });
   return port;
 }
 
