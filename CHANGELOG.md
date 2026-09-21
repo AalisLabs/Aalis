@@ -10,6 +10,14 @@
 
 ## 未发布（core 0.16.0 → 0.17.0）
 
+### 本批收敛
+
+- Core 删除旧 `Context` 类及中转门面：能力工厂直接接注册表与 `Resources`，`Activation` 只保存身份、资源和依赖关系，装配及子模块挂载由 `ActivationHost` 承担。服务观察只报告胜者变化，异步交接统一在绑定与资源层处理。
+- `App.stop()` 在屏障与清理期间被再次调用，也返回同一个完整关闭 Promise；不再用全局事件阶段判断调用者、提前兑现外部调用。监听器或清理回调不能 await / 返回自己的停机 Promise。本批不新增 `apply` / 屏障超时，既有 `disposeTimeoutMs` 不构成全局停机时限。
+- `registrar` 同键登记在同步重入、撤回与关闭交错时仍按条目身份归属，过期登记取得的清理句柄会撤回，不留卸载后仍可执行的条目；关闭等待已发起的异步撤回。
+- runtime 在加载定义后、首次交给 Core 注册前完成默认值回填与未知字段裁剪，主实例与配置中的复用实例共用此路径，避免首次 `apply` 配置与保存配置不一致。schema 政策留在宿主。
+- Agent 缺少 message-archive 时，首次实际写入告警、每次激活最多一次；对话继续，服务恢复后后续消息恢复归档，不补写缺席期间的消息。minimal 模板包含归档插件；归档职责不进入 Core。
+
 ### 版本与必须同批升级的包
 
 **升级**：core 0.17.0 把插件入口从公开激活记录改成定义对象与按激活绑定的能力。旧版插件（具名 `export const name` / `inject` / `provides`、`export default function`、`apply(ctx, config)`）配新 runtime **不会被加载**——`pluginDefinitionOf` 记 warn 后跳过；新插件配旧 core 没有 `definePlugin`。契约包删除全部 `useXxxService(ctx)` helper，描述符改为运行时值导出。下列 **89** 个包必须同批升级（自身即 core，或 core peer 已抬到 `>=0.17.0 <1.0.0`）：
@@ -139,9 +147,9 @@ export default definePlugin({
 
 关停按激活为单位，每个激活拆成收尾（`lifecycle.onDrain`：此刻本激活的监听、登记与声明的依赖都还在）与撤回加清理（`lifecycle.onDispose`：对外登记已撤回）。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。边只来自框架管理的关系：声明的依赖（含子模块、含尚未访问的 optional）在编排那一刻解析到的胜者，以及存活的托管绑定与尚未落地的撤回。经 `services` 动态查到的服务不产生边；调用方缓存的裸引用也不追踪。
 
-普通依赖（别的插件、兄弟模块）：消费者整个 close 完，提供者才 drain。父使用自己子树的服务：父 drain 先于子 close，父 `onDrain` 期间子树仍活着。后代使用祖先的服务：不往排序图加边——归属树已保证子 close 先于祖先 close，drain 在 close 之前，故子 drain 时祖先仍活着。环内 optional 边构成的强连通分量（≥2 个激活）卡住时一次放行分量内全部 drain，再 close——drain 期间对方仍活着，双方 `onDrain` 都能 `require()`；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭，但不享有整 App 关停那一层「根绑定与全部插件同计划」的交接保证。
+普通依赖（别的插件、兄弟模块）：消费者整个 close 完，提供者才 drain。父使用自己子树的服务：父 drain 先于提供者子节点 close，父 `onDrain` 期间该节点尚未关闭，但可能已执行 drain。后代使用祖先的服务：不往排序图加边——归属树保证子 close 先于祖先 close，因此子 drain 时祖先尚未关闭，也可能已执行 drain。环内 optional 边构成的强连通分量（≥2 个激活）卡住时一次放行分量内全部 drain，再 close；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。框架保证编排顺序与等待，不保证插件在 drain 中已主动撤回或关闭的实现仍可用。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭，但不享有整 App 关停那一层「根绑定与全部插件同计划」的交接保证。
 
-`App.stop()` 单飞：重入返回同一 Promise。现序：停配置 watch → `beginShutdown()`（置停机态并冻计划）→ `plugins.idle()`（排干在飞重算）→ 发出 `app:stopping`（屏障，等监听器）→ 再 `idle()` → 执行已冻计划的 drain / close → 清 sticky → 根激活 `disposeAsync`。已静置时仍须先冻闸，否则 `idle()` 让出的微任务里 bounce 会留下 pending 幽灵。`app:stopping` 只在全局停机触发一次，bounce / unload / disable 不发；知会（告别语、状态条）可以挂它，资源清理走 `onDrain` / `onDispose`。发出时停机计划已冻：窗口内 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成，拆卸由停机计划执行）；`register` / `bounce` 返回 false（与定义或实例 id 校验失败同属政策挡下的 false 口径；`register` 不落账）。监听器里再调 `stop()` 立即返回已兑现 Promise 并 warn（不是 in-flight 那同一个 Promise，避免与 emit 屏障死锁）；不要当成停机已完成。外部并发的第二次 `stop()` 仍等到本次收尾。监听器里对已冻激活 `provide` 记 warn 后忽略、不抛；`lifecycle.module` 抛「已 dispose」。停机完成后：对新定义 `register` 返回 false 且不落账；对已 disposed 实例的 `enable` / `updateConfig` / `bounce` 返回 false；`idle()` 落定。
+`App.stop()` 单飞：重入返回同一 Promise。现序：停配置 watch → `beginShutdown()`（置停机态并冻计划）→ `plugins.idle()`（排干在飞重算）→ 发出 `app:stopping`（屏障，等监听器）→ 再 `idle()` → 执行已冻计划的 drain / close → 清 sticky → 根激活 `disposeAsync`。已静置时仍须先冻闸，否则 `idle()` 让出的微任务里 bounce 会留下 pending 幽灵。`app:stopping` 只在全局停机触发一次，bounce / unload / disable 不发；知会（告别语、状态条）可以挂它，资源清理走 `onDrain` / `onDispose`。发出时停机计划已冻：窗口内 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成，拆卸由停机计划执行）；`register` / `bounce` 返回 false（与定义或实例 id 校验失败同属政策挡下的 false 口径；`register` 不落账）。每次调用 `stop()` 都得到完整停机的同一 Promise；监听器与清理回调不得 await 或返回它，以免等待自身。监听器里对已冻激活 `provide` 记 warn 后忽略、不抛；`lifecycle.module` 抛「已 dispose」。停机完成后：对新定义 `register` 返回 false 且不落账；对已 disposed 实例的 `enable` / `updateConfig` / `bounce` 返回 false；`idle()` 落定。
 
 **迁移**：数据交接（flush、abort 在飞工作并等待收尾）放 `onDrain`；拆连接、摘登记放 `onDispose`，不要假定此时依赖仍在。不要用 `events.on('app:stopping', …)` 当清理通道。
 

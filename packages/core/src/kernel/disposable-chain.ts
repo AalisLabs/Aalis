@@ -28,7 +28,7 @@ function describe(label?: string, index?: number): string {
 /**
  * 一次性清理器链
  *
- * 用途：Context 及其他需要累积「注册 → 卸载」副作用的场景，提供：
+ * 用途：需要累积「注册 → 卸载」副作用的宿主，提供：
  * - `push(fn, label?, phase?)` 追加清理函数（label 仅进诊断日志；phase 见 {@link DisposePhase}，默认 cleanup）
  * - `remove(fn)` 精确移除单个清理函数（不执行）
  * - `dispose()` 同步按段逆序调用所有清理函数并清空；期间任一抛错不影响其他
@@ -79,7 +79,7 @@ export class DisposableChain {
 
   /**
    * 同步路径不等待异步返回值，但拒绝必须有人接：本链是资源内核，宿主可以不经
-   * Context 直接使用，逃逸的拒绝会成为宿主进程的 unhandledRejection。
+   * 插件框架直接使用，逃逸的拒绝会成为宿主进程的 unhandledRejection。
    */
   private settle(ret: unknown, who: string): void {
     if (ret && typeof (ret as PromiseLike<unknown>).then === 'function') {
@@ -121,7 +121,7 @@ export class DisposableChain {
    * 置位 taken、快照并清空 items——两个 dispose 入口共用，避免逻辑漂移。
    *
    * 先清空再迭代快照：dispose 期间 disposer 常回调 remove(自身)（provide /
-   * whenService / subscribe 的自移除语义）。若在迭代中 splice 活动数组，索引
+   * 订阅句柄的自移除语义）。若在迭代中 splice 活动数组，索引
    * 会错位、长度缩短，导致取到 undefined 而抛 "is not a function"。清空在前
    * 则这些 remove 作用于空数组、安全 no-op（返回 false，符合各自移除点注释
    * 的预期），快照索引也始终稳定。
@@ -215,7 +215,7 @@ export class DisposableChain {
  * 环境无关性记账：`setTimeout`/`clearTimeout` 是所有 JS 运行时（浏览器/Node/
  * Deno/Worker）的共有全局，非 `node:` 专属，不引入环境假设。
  *
- * 仅供 core 内部（DisposableChain 逐项等待、Context join 在飞拆卸）复用，
+ * 仅供 core 内部（DisposableChain 逐项等待、激活合流等待在飞拆卸）复用，
  *   不从包根导出。
  * @internal
  */
@@ -252,7 +252,7 @@ export async function awaitWithTimeout(
  * （logger 的 sink 可能是 stdout / 文件 / WebUI），它自身失败不得中断清理或拆卸，也不得逃逸成
  * unhandledRejection——这里是防泄漏的最后一道防线，连报告都失败时只能静默。
  *
- * 供 core 内部（清理链、事件总线、Context 拆卸路径）复用，不从包根导出。
+ * 供 core 内部（清理链、事件总线、激活拆卸路径）复用，不从包根导出。
  * @internal
  */
 export function reportQuietly(call: () => unknown): void {

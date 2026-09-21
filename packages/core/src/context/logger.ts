@@ -104,7 +104,7 @@ export interface Logger {
   info(message: string, ...args: unknown[]): void;
   warn(message: string, ...args: unknown[]): void;
   error(message: string, ...args: unknown[]): void;
-  /** 派生带子作用域的 Logger（Context fork 时由 core 调用） */
+  /** 派生带子作用域的 Logger（创建子激活时由 ActivationHost 调用） */
   child(scope: string): Logger;
 }
 

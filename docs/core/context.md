@@ -70,7 +70,7 @@ export default definePlugin({
 - **内置能力**（`events` / `logger` / `config` / `lifecycle` / `provide` / `services` / `hooks` / `contributions`）：绑的是这次激活自身的运行基础设施，不经容器解析、不可被 `provide` 替换，也不参与激活闸。不声明它们不影响框架对这次激活的管理（登记归属、撤回与关闭照常）；只是 `apply` 拿不到对应接口。
 - 声明即计入关停编排（required 与 optional，访问与否无关）。
 
-`optional()` 用模块私有品牌标记：assemble 只认 `optional()` 盖过的包装，描述符自有 `optional` 字段不算。
+`optional()` 用模块私有品牌标记：装配时只认 `optional()` 盖过的包装，描述符自有 `optional` 字段不算。
 
 ## 内置能力
 
@@ -119,7 +119,7 @@ export default definePlugin({
 - `entryId`：一个激活登记多条时的子粒度 id，须以本激活 id 为前缀（`${id}/${子粒度}`）
 - `onBehalfOf`：代为登记。条目的逻辑身份取被代者 id（偏好、服务页、`provides` 校验的 `hasByContext` 都认这个 id），清理仍归本激活。代登记**不计入代理人的 `provides`**：若把代登记的服务写进本清单，会以「声明 provides 但未实际注册」进入 `error`。与 `entryId` 二选一。
 
-dev 模式下，实际注册了但未写入 `provides` 的服务会 warn：下游依赖排序找不到该 provider。生产宿主应显式传入 `AppOptions.devMode: false`。
+dev 模式下，实际注册了但未写入 `provides` 的服务会 warn：启动拓扑使用声明清单，遗漏会影响排序；关停依赖则按实际提供者身份建立。生产宿主应显式传入 `AppOptions.devMode: false`。
 
 ## ServiceRef
 
@@ -206,12 +206,14 @@ lifecycle.onDispose(async () => {
 承诺按依赖形状分三种，不是一条无条件规则：
 
 1. 普通依赖（required 与 optional 胜者：别的插件、兄弟模块）：消费者整个 close 完，提供者才 drain。
-2. 父使用自己子树的服务：父 drain 先于子 close；父 `onDrain` 期间子树仍活着。到父 close 时子已按归属关闭。
-3. 后代使用祖先的服务：不往排序图加边。归属树已保证子 close 先于祖先 close，drain 在 close 之前，故子 drain 时祖先仍活着。祖先若同时用这棵子树（第 2 种），第 2 种边把祖先 drain 插在子 close 之前，两笔收尾都能用到对方。因此父子互用不再形成二元环。
+2. 父使用自己子树的服务：父 drain 先于提供者子节点的 close；父 `onDrain` 期间该子节点尚未关闭，但可能已执行 drain。到父 close 时子节点已按归属关闭。
+3. 后代使用祖先的服务：不额外增加依赖边。归属树保证子 close 先于祖先 close，因此子 drain 时祖先尚未关闭；这不保证祖先还没执行 drain。祖先也依赖该子树时，按第 2 条安排祖先 drain，避免把父子互用变成两个 drain 互相等待。
 
-环：optional 边构成的强连通分量先让成员全部 drain，再任一 close（不告警；drain 期间双方都能 `require()`）；环里只剩 required 边仍无解才告警并强行放行。环外与归属约束不松。单独卸载提供者不在整次 `App.stop()` 计划里，不享有上述交接。
+环：optional 边构成的强连通分量先让成员全部 drain，再任一 close（不告警）；环里只剩 required 边仍无解才告警并强行放行。环外与归属约束不松。单独卸载提供者不在整次 `App.stop()` 计划里，不享有上述交接。这里保证的是框架的调用顺序与等待：插件若在 drain 中自行撤回服务或关闭连接，框架无法维持该实现可用；业务交接仍须返回可等待的 Promise，并处理失败。
 
 单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 注入（默认 5000；0=不设限）：超时放弃该项、继续后续清理并 warn 点名。超时只是停止等待，不代表资源已释放。
+
+本次没有为插件 `apply` 或 `app:*` 屏障监听器新增超时。`disposeTimeoutMs` 不保证整个 `register()` / `stop()` 有统一上限：尚未进入清理阶段时，永不落定的初始化或屏障监听器仍可能阻止流程推进。
 
 ### `lifecycle.module(definition, config?)`
 
@@ -231,6 +233,17 @@ lifecycle.onDispose(async () => {
 
 插件拿的是自己激活的绑定，不复用 `app.bind` 的那一份。
 
-## 内部激活记录
+## 内部职责
 
-`Context` 不再从包根导出，也不是插件契约。运行时内部仍用激活记录（`packages/core/src/context/context.ts`）承接归属、清理链与容器门面；插件与宿主经描述符拿到的是按激活绑定的能力。内部结构无 semver 承诺，不要从深路径 import，也不要把激活记录当成稳定 API。
+旧 `Context` 类已拆解，内置能力不会再转发到 `Context.on` / `provide` 等集中门面。现在各部分直接承担自己的职责：
+
+| 部分 | 职责 |
+|---|---|
+| `kernel/Lifecycle`、`DisposableChain` | 父子资源寿命、分段清理、逆序执行与异步等待，不认识服务或插件 |
+| `context/Resources` | 一次激活的清理登记、在飞撤回与同步获取操作记账；关闭相位等待这些工作落定 |
+| `orchestration/Activation` | 内部身份、配置视图、资源记录、子激活和依赖边；不提供四原语操作门面 |
+| `orchestration/ActivationHost` | 创建激活、按 `uses` 装配能力、挂载子模块、连接原语撤回与关闭阶段 |
+| `context/builtins` 与能力工厂 | 直接连接实际注册表和本次激活的资源记录，生成 `events` / `provide` 等接口 |
+| `context/service-watch` 与 `binding` | 前者只观察服务胜者变化；后者负责 `follow` 交接、`registrar` 登记与逐条撤回 |
+
+插件只使用 `apply` 收到的能力，宿主通过 `app.bind` 装配根激活的能力。上表中的内部类与深路径均不属于稳定公开 API。

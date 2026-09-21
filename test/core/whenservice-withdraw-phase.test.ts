@@ -6,7 +6,6 @@ declare module '@aalis/core' {
 }
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { assemble } from '../../packages/core/src/context/binding.js';
 import {
   App,
   definePlugin,
@@ -18,7 +17,7 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
-import { rootActivation } from '../../packages/core/src/orchestration/app.js';
+import { activationHost, rootActivation } from '../../packages/core/src/orchestration/app.js';
 
 // ════════════════════════════════════════════════════════════
 // follow 的 cleanup 是对外绑定的撤回：拆卸时先于全部 onDispose 执行，
@@ -218,20 +217,30 @@ describe('follow cleanup 走撤回段', () => {
     expect(attached).toEqual(['old']);
   });
 
-  it('手动退订仍从链上自移除，撤回段不滞留闭包', () => {
+  it('同一资源口复用一条撤回登记，手动退订的跟随者不再挂载', () => {
     const { app, host } = makeApp();
     host.provide(svcDesc, {});
-    const ctx = rootActivation(app).fork('p');
-    const ref = assemble(ctx, { x: optional(svcDesc) }).x;
-    const base = ctx.disposableCount;
-    const off = ref.follow(() => () => {});
-    const afterFollow = ctx.disposableCount;
+    const activation = activationHost(app).create(rootActivation(app), 'p');
+    const ref = activationHost(app).bind(activation, { x: optional(svcDesc) }).x;
+    const base = activation.resources.lifecycle.disposables.size;
+    let attached = 0;
+    let cleaned = 0;
+    const attach = () => {
+      attached++;
+      return () => {
+        cleaned++;
+      };
+    };
+    const off = ref.follow(attach);
+    const afterFollow = activation.resources.lifecycle.disposables.size;
     expect(afterFollow).toBeGreaterThan(base);
     off();
     // 资源口的订阅仍在，但同步退订不得另留 follower 的链上条目
-    expect(ctx.disposableCount).toBe(afterFollow);
-    const off2 = ref.follow(() => () => {});
+    expect(activation.resources.lifecycle.disposables.size).toBe(afterFollow);
+    const off2 = ref.follow(attach);
     off2();
-    expect(ctx.disposableCount, '同一口复用订阅，二次跟随不叠加条目').toBe(afterFollow);
+    expect(activation.resources.lifecycle.disposables.size, '同一口复用订阅，二次跟随不叠加条目').toBe(afterFollow);
+    host.provide(svcDesc, {}, { priority: 9, entryId: 'root/new' });
+    expect({ attached, cleaned }, '已退订的跟随者不得响应后续胜者变化').toEqual({ attached: 2, cleaned: 2 });
   });
 });

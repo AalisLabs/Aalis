@@ -149,7 +149,7 @@ describe('disable 撞上 activating 窗口', () => {
     expect(host.services.get(gatedSvc)).toBeUndefined();
     expect(trace).toContain('disposed');
     // enable 依赖的不变量：disabled 态激活记录必已清（否则重激活被闸永跳）
-    expect(recordOf(app, 'gated')?.context).toBeUndefined();
+    expect(recordOf(app, 'gated')?.activation).toBeUndefined();
   });
 });
 
@@ -264,7 +264,7 @@ describe('error 终态的不变量：激活记录已清', () => {
     );
     await app.plugins.idle();
     expect(app.plugins.getPlugin('boom')?.state).toBe('error');
-    expect(recordOf(app, 'boom')?.context).toBeUndefined();
+    expect(recordOf(app, 'boom')?.activation).toBeUndefined();
     // 复活路径畅通的鉴别性断言：enable 后第二次激活确实发生（apply 计数 +1）。
     // 若激活记录未清，激活会被「旧 ctx 未清」闸永久跳过，attempts 停在 1。
     const ok = await app.plugins.enable('boom');

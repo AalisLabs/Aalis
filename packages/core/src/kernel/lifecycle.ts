@@ -18,7 +18,7 @@ interface LifecycleOptions {
  */
 export class Lifecycle {
   readonly disposables: DisposableChain;
-  /** 收尾段：子节点关闭之后、宿主撤回对外资源之前执行——此时对外登记与依赖都还在。 */
+  /** 收尾段：默认在子节点关闭后、宿主撤回前执行；编排者可用 drain() 提前执行。 */
   readonly draining: DisposableChain;
   private readonly children = new Set<Lifecycle>();
   private parent?: Lifecycle;
@@ -133,7 +133,7 @@ export class Lifecycle {
       );
     }
 
-    // 父节点在关闭子节点期间仍持有清理链；顺序与原 Context 级联一致。
+    // 父节点在关闭子节点期间仍持有清理链，以接住子节点收尾时登记的清理。
     for (const child of [...this.children]) {
       if (wait) await child.disposeAsync(timeoutMs);
       else child.dispose();

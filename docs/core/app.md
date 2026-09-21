@@ -43,7 +43,7 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 
 - 将 `config`（快照或现成 `ConfigManager`）规范为 `ConfigManager`
 - 初始化 events / services / hooks / contributions / logger 及根激活（注入或自建）
-- 创建 `PluginManager`，并在根激活上 `provide('app' / 'plugins' / 'host-config')`
+- 创建 `ActivationHost` 与 `PluginManager`，通过根激活的 `provide` 能力发布 `appService` / `pluginsService` / `hostConfig` 描述符对应的服务
 - 应用配置中已有的服务偏好
 
 ## 关键属性
@@ -87,13 +87,15 @@ const { logger: log, events: bus } = app.bind({ logger, events });
 1. `config.unwatch()` 停止监听配置变更
 2. `plugins.beginShutdown()`：置停机态并冻计划（之后 `register` / `bounce` 拒绝；对本树的 `disposeAsync` 汇入该计划）。已静置时仍须先冻闸——`idle()` 会让出一轮微任务，同轮排队的 bounce 否则会在置位前过闸、留下 pending 幽灵
 3. `plugins.idle()`：排干在飞的 bounce / unload recompute
-4. 发出 `app:stopping`（知会用；清理一律走 `lifecycle.onDrain` / `onDispose`）。监听器全部返回后才继续。监听器里再调 `stop()`：warn 一次并立即返回已兑现的 Promise（请勿 await——会与 emit 屏障互等）。外部并发的第二次 `stop()` 仍等到本次收尾
+4. 发出 `app:stopping`（知会用；清理一律走 `lifecycle.onDrain` / `onDispose`）。监听器全部返回后才继续。期间再次调用 `stop()` 仍返回完整停机的同一 Promise，不提前兑现
 5. 再 `plugins.idle()`
 6. `plugins.stopAll()`：执行已冻计划的 drain / close
 7. 清空 sticky 缓存（`app:ready` / `app:started`）
 8. `disposeAsync` 根激活（等待异步清理）
 
-单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 控制。边规则见 [插件定义与能力](context.md)。
+监听器与清理回调不能 `await app.stop()`，也不能直接返回该 Promise：停机正等待这些回调返回，二者会互等。需要请求停机时可以调用 `void app.stop()`；完整停机完成由外部宿主等待。
+
+单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 控制，不是整个停机流程的总期限。本次没有为 `apply` 或屏障监听器新增超时；它们永不落定时，`register()` / `stop()` 仍可能等待不返回。边规则见 [插件定义与能力](context.md)。
 
 ### `app.plugin(definition, config?, instanceId?)`
 

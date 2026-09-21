@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type BoundTools, tools } from '../../packages/api-tools/src/index.js';
-import { assemble } from '../../packages/core/src/context/binding.js';
 import {
   App,
   definePlugin,
@@ -10,7 +9,7 @@ import {
   provide,
   ServiceContainer,
 } from '../../packages/core/src/index.js';
-import { rootActivation } from '../../packages/core/src/orchestration/app.js';
+import { activationHost, rootActivation } from '../../packages/core/src/orchestration/app.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 
 const tick = () => new Promise<void>(r => setImmediate(r));
@@ -100,8 +99,8 @@ describe('registrar：重入替换后续键不留孤儿', () => {
     const reg = new ToolRegistry(silentLogger());
     const box: { bound?: BoundTools } = {};
     const orig = reg.register.bind(reg);
-    reg.register = (tool, ctx) => {
-      const off = orig(tool, ctx);
+    reg.register = (tool, activation) => {
+      const off = orig(tool, activation);
       if (tool.definition.function.name === 'alpha' && box.bound) {
         box.bound.register({ definition: toolDef('zulu'), handler: async () => 'from-reenter' });
       }
@@ -153,8 +152,8 @@ describe('registrar：重入替换后续键不留孤儿', () => {
     const box: { bound?: BoundTools } = {};
     const wrap = (reg: ToolRegistry) => {
       const orig = reg.register.bind(reg);
-      reg.register = (tool, ctx) => {
-        const off = orig(tool, ctx);
+      reg.register = (tool, activation) => {
+        const off = orig(tool, activation);
         if (tool.definition.function.name === 'alpha' && box.bound) {
           box.bound.register({ definition: toolDef('zulu'), handler: async () => 'reenter' });
         }
@@ -223,8 +222,8 @@ describe('registrar：重入替换后续键不留孤儿', () => {
     const a = uniqueHub('A');
     const b = uniqueHub('B');
     host(slots, a, { priority: 1, entryId: 'root/a' });
-    const ctx = rootActivation(app).fork('c');
-    const bound = assemble(ctx, { slots }).slots;
+    const activation = activationHost(app).create(rootActivation(app), 'c');
+    const bound = activationHost(app).bind(activation, { slots }).slots;
     bound.add({ key: 't', body: 'v1' });
     expect(a.leftover()).toEqual(['t=v1']);
     bound.add({ key: 't', body: 'v2' });
@@ -233,7 +232,7 @@ describe('registrar：重入替换后续键不留孤儿', () => {
     await tick();
     expect(a.leftover(), '旧提供者上的当前登记随换人撤回').toEqual([]);
     expect(b.leftover(), '新提供者只挂最新条目').toEqual(['t=v2']);
-    await ctx.disposeAsync();
+    await activation.disposeAsync();
     expect(a.leftover()).toEqual([]);
     expect(b.leftover()).toEqual([]);
   });
@@ -248,8 +247,8 @@ describe('follow：只认函数 cleanup，thenable 拒绝被接住', () => {
     process.on('unhandledRejection', onEscape);
     try {
       host(d, { tag: 'a' }, { entryId: 'root/a' });
-      const ctx = rootActivation(app).fork('c');
-      const ref = assemble(ctx, { ref: d }).ref;
+      const activation = activationHost(app).create(rootActivation(app), 'c');
+      const ref = activationHost(app).bind(activation, { ref: d }).ref;
       // attach 必须同步返回 cleanup；这里故意喂 async，钉运行期接住拒绝
       // @ts-expect-error 期望 TS 拒绝 async attach
       ref.follow(async () => {
@@ -257,7 +256,7 @@ describe('follow：只认函数 cleanup，thenable 拒绝被接住', () => {
         throw new Error('async attach boom');
       });
       await sleep(20);
-      await ctx.disposeAsync();
+      await activation.disposeAsync();
       await sleep(20);
     } finally {
       process.off('unhandledRejection', onEscape);
@@ -275,13 +274,13 @@ describe('follow：只认函数 cleanup，thenable 拒绝被接住', () => {
     process.on('unhandledRejection', onEscape);
     try {
       host(d, { tag: 'a' }, { entryId: 'root/a' });
-      const ctx = rootActivation(app).fork('c');
-      const ref = assemble(ctx, { ref: d }).ref;
+      const activation = activationHost(app).create(rootActivation(app), 'c');
+      const ref = activationHost(app).bind(activation, { ref: d }).ref;
       // FollowCleanup 不含 Promise；运行期仍须接住 JS 绕过
       // @ts-expect-error 期望 TS 拒绝返回 Promise
       ref.follow(() => Promise.reject(new Error('sync-return-reject')));
       await sleep(15);
-      await ctx.disposeAsync();
+      await activation.disposeAsync();
       await sleep(15);
     } finally {
       process.off('unhandledRejection', onEscape);
@@ -297,13 +296,13 @@ describe('follow：只认函数 cleanup，thenable 拒绝被接住', () => {
     const { app, host, warnings } = world();
     const d = defineService<{ tag: string }>('zz-bind-number-cleanup');
     host(d, { tag: 'a' }, { entryId: 'root/a' });
-    const ctx = rootActivation(app).fork('c');
-    const ref = assemble(ctx, { ref: d }).ref;
+    const activation = activationHost(app).create(rootActivation(app), 'c');
+    const ref = activationHost(app).bind(activation, { ref: d }).ref;
     // @ts-expect-error 非函数返回值不得当 cleanup
     ref.follow(() => 1);
     host(d, { tag: 'b' }, { entryId: 'root/b', priority: 2 });
     await tick();
-    await ctx.disposeAsync();
+    await activation.disposeAsync();
     expect(
       warnings.some(w => w.includes('is not a function')),
       `warnings=${warnings.join(' | ')}`,
@@ -314,11 +313,11 @@ describe('follow：只认函数 cleanup，thenable 拒绝被接住', () => {
     const { app, host, warnings } = world();
     const d = defineService<{ tag: string }>('zz-bind-object-cleanup');
     host(d, { tag: 'a' }, { entryId: 'root/a' });
-    const ctx = rootActivation(app).fork('c');
-    const ref = assemble(ctx, { ref: d }).ref;
+    const activation = activationHost(app).create(rootActivation(app), 'c');
+    const ref = activationHost(app).bind(activation, { ref: d }).ref;
     // @ts-expect-error 对象不得当 cleanup
     ref.follow(() => ({ close() {} }));
-    await ctx.disposeAsync();
+    await activation.disposeAsync();
     expect(
       warnings.some(w => w.includes('is not a function')),
       `warnings=${warnings.join(' | ')}`,

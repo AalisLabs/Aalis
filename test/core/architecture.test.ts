@@ -15,7 +15,7 @@ import { describe, expect, it } from 'vitest';
 // - kernel/：资源生命周期与清理链，只认自己，不引用类型词汇、四原语、Context 或编排层
 // - primitives/：四原语注册表，只认 kernel 与类型词汇，不认识 Context、Logger、Config
 //   （需要上报的诊断经注入的回调送出）
-// - context/：Context 门面及其配置、日志、服务接线辅助，不依赖编排层
+// - context/：能力描述符、绑定、资源账、配置与日志，不依赖编排层
 // - orchestration/：把下层机制编排成插件生命周期与应用骨架，含宿主 SPI（插件加载器、重启策略）
 // src 根只留 barrel（index）。
 //
@@ -39,15 +39,15 @@ const ROOT_FILES = ['index.ts'];
 /** types/ 里下层不得引用的文件：编排层词汇，以及会把它们一并带出的 barrel；其余为基础词汇 */
 const UPPER_TYPES = new Set(['types/app.ts', 'types/plugin.ts', 'types/index.ts']);
 
-/** 一处 `.emit(` / `.emitQuietly(` 调用 */
+/** 一处事件 `.emit(` / `.notify(` 调用（旧 emitQuietly 也识别并拒绝） */
 interface EmitCall {
-  method: 'emit' | 'emitQuietly';
+  method: 'emit' | 'emitQuietly' | 'notify';
   /** 字面量事件名；不是字面量则为 null */
   event: string | null;
   /** 发射方在监听器之后才推进：`await x.emit()`，或 `x.emit().then()` 接续 */
   sequenced: boolean;
-  /** 所在类方法名；不在方法体内为 undefined */
-  within?: string;
+  /** 通过 AST 确认的两个动态转发形状；只在指定文件放行 */
+  forwarding?: 'builtin' | 'notification';
   line: number;
 }
 
@@ -74,12 +74,18 @@ function emitMethod(callee: ts.LeftHandSideExpression): EmitCall['method'] | nul
     : ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)
       ? callee.argumentExpression.text
       : null;
-  return name === 'emit' || name === 'emitQuietly' ? name : null;
+  return name === 'emit' || name === 'emitQuietly' || name === 'notify' ? name : null;
 }
 
 function parse(file: string): Parsed {
   const hit = parsed.get(file);
   if (hit) return hit;
+  const out = parseSource(file, readFileSync(file, 'utf-8'));
+  parsed.set(file, out);
+  return out;
+}
+
+function parseSource(file: string, source: string): Parsed {
   const out: Parsed = {
     specifiers: [],
     computedImports: 0,
@@ -88,8 +94,7 @@ function parse(file: string): Parsed {
     eventKeys: [],
     emits: [],
   };
-  parsed.set(file, out);
-  const sf = ts.createSourceFile(file, readFileSync(file, 'utf-8'), ts.ScriptTarget.Latest, true);
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
   const visit = (node: ts.Node): void => {
     if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
       if (ts.isStringLiteralLike(node.moduleSpecifier)) out.specifiers.push(node.moduleSpecifier.text);
@@ -117,14 +122,59 @@ function parse(file: string): Parsed {
       if (method) {
         const arg = node.arguments[0];
         let scope: ts.Node | undefined = node.parent;
-        while (scope && !ts.isMethodDeclaration(scope)) scope = scope.parent;
+        while (scope && !ts.isFunctionDeclaration(scope) && !ts.isMethodDeclaration(scope)) scope = scope.parent;
+        const directArgs =
+          node.arguments.length === 2 &&
+          ts.isIdentifier(node.arguments[0]) &&
+          node.arguments[0].text === 'event' &&
+          ts.isSpreadElement(node.arguments[1]) &&
+          ts.isIdentifier(node.arguments[1].expression) &&
+          node.arguments[1].expression.text === 'args';
+        const arrow = ts.isArrowFunction(node.parent) ? node.parent : undefined;
+        const builtinForward =
+          directArgs &&
+          node.expression.getText(sf) === 'bus.emit' &&
+          arrow?.body === node &&
+          !arrow.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword) &&
+          ts.isPropertyAssignment(arrow.parent) &&
+          arrow.parent.name.getText(sf) === 'emit';
+        // notify 可以先 Promise.resolve 接住宿主总线返回值；只认这一层精确包裹。
+        const promise =
+          ts.isCallExpression(node.parent) &&
+          node.parent.expression.getText(sf) === 'Promise.resolve' &&
+          node.parent.arguments.length === 1 &&
+          node.parent.arguments[0] === node
+            ? node.parent
+            : node;
+        const caught =
+          ts.isPropertyAccessExpression(promise.parent) &&
+          promise.parent.name.text === 'catch' &&
+          ts.isCallExpression(promise.parent.parent) &&
+          promise.parent.parent.expression === promise.parent &&
+          promise.parent.parent.arguments.length > 0
+            ? promise.parent.parent
+            : undefined;
+        const notificationForward =
+          directArgs &&
+          node.expression.getText(sf) === 'runtime.events.emit' &&
+          scope &&
+          ts.isFunctionDeclaration(scope) &&
+          scope.name?.text === 'notify' &&
+          caught;
+        // 括号不能绕过 await / then 的顺序约束。
+        let value: ts.Node = caught ?? promise;
+        while (ts.isParenthesizedExpression(value.parent) || ts.isAsExpression(value.parent)) value = value.parent;
+        const sequenced =
+          ts.isAwaitExpression(value.parent) ||
+          (ts.isPropertyAccessExpression(value.parent) && value.parent.name.text === 'then') ||
+          (ts.isElementAccessExpression(value.parent) &&
+            ts.isStringLiteralLike(value.parent.argumentExpression) &&
+            value.parent.argumentExpression.text === 'then');
         out.emits.push({
           method,
           event: arg && ts.isStringLiteralLike(arg) ? arg.text : null,
-          sequenced:
-            ts.isAwaitExpression(node.parent) ||
-            (ts.isPropertyAccessExpression(node.parent) && node.parent.name.text === 'then'),
-          within: scope && ts.isIdentifier(scope.name) ? scope.name.text : undefined,
+          sequenced,
+          forwarding: builtinForward ? 'builtin' : notificationForward ? 'notification' : undefined,
           line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1,
         });
       }
@@ -300,83 +350,103 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
 });
 
 /**
- * core 发内置事件只有两个出口，按 AalisEvents 分好的两节（见 types/events.ts）：屏障由 App 的生命周期方法
- * `await ctx.emit()`（restart 里是 `.then()` 接续，同样在监听器之后才推进），通知一律 `ctx.emitQuietly()`。
- * 节由前缀判定：`app:*` 是屏障，其余是通知——没有手工名单。
- *
- * 守的是一类真死锁：通知全部发在同步段或 PluginManager 的 recompute flight / 挂起段内，段内等监听器
- * 与 `plugins.idle()` 互等——`plugin:loaded` 此前正是 await，监听器里 `await plugins.idle()` 必挂。
- *
- * 判据是语法树里的**直接调用形式**，不做"这行在不在段内"的可达性分析：
- *   1. 字面量事件名的 `.emit('x')`：x 是屏障事件、只出现在 orchestration/app.ts、且 await 或 .then 接续；
- *   2. 事件名不是字面量的 `.emit(...)`：只许两处转发——
- *      Context 门面自己的 emit / emitQuietly 方法体转发给总线（门面文件不整体豁免，在 context.ts 别处写
- *      `void this.#events.emit('plugin:loaded', …)` 同样被抓）；
- *      以及 `context/builtins.ts` 内置 events 对激活 `ctx.emit` 的直接转发——该文件 `.emit(` 只许 1 处，
- *      且不得 await，形态必须是 `(event, ...args) => ctx.emit(event, ...args)`；
- *   3. `.emitQuietly('x')`：x 是字面量且不是屏障事件。
- * AalisEvents 里声明的 `app:*` 键集合与 app.ts 实际发出的集合必须相等：声明了不发、发了没声明、名单漂移都红。
+ * 内置屏障由 App 等待；通知经 ActivationHost 的 notify 转发，调用方不等待。
+ * 两个动态 emit 转发只在确切函数/箭头形状上放行，文件或目录本身不豁免。
  */
-describe('内置事件只有两个出口：屏障 await ctx.emit()，通知 ctx.emitQuietly()', () => {
-  const isBarrier = (event: string): boolean => event.startsWith('app:');
-  const BARRIER_FILE = 'orchestration/app.ts';
-  const FACADE = 'context/context.ts';
-  const BUILTIN_EVENTS = 'context/builtins.ts';
-  const BUILTIN_FORWARD = /^\s*emit:\s*\(event,\s*\.\.\.args\)\s*=>\s*ctx\.emit\(event,\s*\.\.\.args\),?\s*$/;
+const BARRIER_FILE = 'orchestration/app.ts';
+const NOTIFICATION_FILE = 'orchestration/activation-host.ts';
+const BUILTIN_EVENTS = 'context/builtins.ts';
+const isBarrier = (event: string): boolean => event.startsWith('app:');
 
-  it('每个发射点都落在两个出口之一，且 app:* 的声明集合与 App 实际发出的一致', () => {
+function eventViolations(rel: string, calls: EmitCall[]): string[] {
+  const offenders: string[] = [];
+  for (const { method, event, sequenced, forwarding, line } of calls) {
+    const at = `${rel}:${line}`;
+    if (method === 'emitQuietly') {
+      offenders.push(`${at} 旧 emitQuietly 已删除；通知须用 runtime.notify`);
+    } else if (method === 'notify') {
+      if (event === null) offenders.push(`${at} notify 的事件名须是字面量`);
+      else if (isBarrier(event)) offenders.push(`${at} notify 不得发屏障事件 '${event}'`);
+      if (sequenced) offenders.push(`${at} 通知不得 await 或 then 接续`);
+    } else if (event === null) {
+      const allowed =
+        (rel === BUILTIN_EVENTS && forwarding === 'builtin') ||
+        (rel === NOTIFICATION_FILE && forwarding === 'notification');
+      if (!allowed || sequenced) offenders.push(`${at} 动态 emit 须是内置 events 直转总线或 notify 内接住拒绝的转发`);
+    } else if (!isBarrier(event)) {
+      offenders.push(`${at} 通知事件 '${event}' 须走 runtime.notify`);
+    } else if (rel !== BARRIER_FILE) {
+      offenders.push(`${at} 屏障事件 '${event}' 只由 App 的生命周期方法发`);
+    } else if (!sequenced) {
+      offenders.push(`${at} 屏障事件 '${event}' 必须 await 或 then 接续`);
+    }
+  }
+  return offenders;
+}
+
+describe('内置事件出口：App 等待屏障，通知不阻塞状态机', () => {
+  it('每个发射点遵循事件相位，两个动态转发唯一，app:* 声明与实际发出集合一致', () => {
     const offenders: string[] = [];
     const declaredBarriers = new Set<string>();
     const emittedBarriers = new Set<string>();
-    const builtinEmits: Array<{ at: string; event: string | null; sequenced: boolean; line: number }> = [];
+    const forwards = { builtin: 0, notification: 0 };
     for (const file of walk(SRC_DIR)) {
       const rel = relToSrc(file);
       const { emits, eventKeys } = parse(file);
       for (const key of eventKeys) if (isBarrier(key)) declaredBarriers.add(key);
-      for (const { method, event, sequenced, within, line } of emits) {
-        const at = `${rel}:${line}`;
-        if (rel === BUILTIN_EVENTS && method === 'emit') {
-          builtinEmits.push({ at, event, sequenced, line });
-        }
-        if (method === 'emitQuietly') {
-          if (event === null) offenders.push(`${at} emitQuietly 的事件名须是字面量`);
-          else if (isBarrier(event)) offenders.push(`${at} 用 emitQuietly 发了屏障事件 '${event}'`);
-        } else if (event === null) {
-          const facadeForward = rel === FACADE && (within === 'emit' || within === 'emitQuietly');
-          const builtinEventsForward = rel === BUILTIN_EVENTS && !sequenced;
-          if (!facadeForward && !builtinEventsForward) {
-            offenders.push(
-              `${at} 事件名不是字面量的 .emit( 只许是门面转发总线，或 builtins 内置 events 转发到 ctx.emit`,
-            );
-          }
-        } else if (!isBarrier(event)) {
-          offenders.push(`${at} 通知事件 '${event}' 须走 emitQuietly`);
-        } else if (rel !== BARRIER_FILE) {
-          offenders.push(`${at} 屏障事件 '${event}' 只由 App 的生命周期方法发`);
-        } else if (!sequenced) {
-          offenders.push(`${at} 屏障事件 '${event}' 的 emit 必须 await（或 .then 接续）`);
-        } else {
-          emittedBarriers.add(event);
-        }
+      offenders.push(...eventViolations(rel, emits));
+      for (const call of emits) {
+        if (call.method !== 'emit') continue;
+        if (call.event && isBarrier(call.event)) emittedBarriers.add(call.event);
+        if (call.forwarding) forwards[call.forwarding]++;
       }
     }
-    if (builtinEmits.length !== 1) {
-      offenders.push(
-        `${BUILTIN_EVENTS} 的 .emit( 须恰好 1 处（内置 events 转发到 ctx.emit），实际 ${builtinEmits.length} 处` +
-          (builtinEmits.length > 0 ? `：${builtinEmits.map(e => e.at).join(', ')}` : ''),
-      );
-    } else {
-      const hit = builtinEmits[0];
-      const srcLine = readFileSync(join(SRC_DIR, BUILTIN_EVENTS), 'utf-8').split('\n')[hit.line - 1] ?? '';
-      if (hit.sequenced || /\bawait\b/.test(srcLine)) {
-        offenders.push(`${hit.at} 内置 events 转发不得 await`);
-      }
-      if (hit.event !== null || !BUILTIN_FORWARD.test(srcLine)) {
-        offenders.push(`${hit.at} 形态必须是直接转发到激活的 ctx.emit：(event, ...args) => ctx.emit(event, ...args)`);
-      }
-    }
-    expect(offenders, '事件归节见 types/events.ts 的两节 JSDoc；换节是行为契约变更，要进 CHANGELOG').toEqual([]);
-    expect(declaredBarriers.size, 'AalisEvents 里没有 app:* 事件——守卫在空转').toBeGreaterThan(0);
-    expect(emittedBarriers, 'AalisEvents 声明的 app:* 集合与 App 实际发出的不一致').toEqual(declaredBarriers);
+    expect(offenders, '事件归节见 types/events.ts；换节是行为契约变更').toEqual([]);
+    expect(forwards).toEqual({ builtin: 1, notification: 1 });
+    expect(declaredBarriers.size, '未登记屏障事件——守卫在空转').toBeGreaterThan(0);
+    expect(emittedBarriers).toEqual(declaredBarriers);
+  });
+
+  it.each([
+    [BARRIER_FILE, "await host.runtime.notify('plugin:loaded', 'p')"],
+    [BARRIER_FILE, "host.runtime.notify('app:stopping')"],
+    [BARRIER_FILE, "this.events.emit('app:stopping')"],
+    [NOTIFICATION_FILE, "void runtime.events.emit('plugin:loaded', 'p')"],
+    [NOTIFICATION_FILE, 'function other() { return runtime.events.emit(event, ...args).catch(() => {}); }'],
+    [NOTIFICATION_FILE, 'function notify() { return runtime.events.emit(event, ...args); }'],
+    [NOTIFICATION_FILE, 'function notify() { Promise.resolve(runtime.events.emit(event, ...args)); }'],
+    [NOTIFICATION_FILE, 'function other() { Promise.resolve(runtime.events.emit(event, ...args)).catch(report); }'],
+    [
+      NOTIFICATION_FILE,
+      'async function notify() { await Promise.resolve(runtime.events.emit(event, ...args)).catch(report); }',
+    ],
+    [BUILTIN_EVENTS, 'const extra = { emit: async (event, ...args) => await bus.emit(event, ...args) };'],
+    ['context/binding.ts', 'const extra = { emit: (event, ...args) => bus.emit(event, ...args) };'],
+    [NOTIFICATION_FILE, "async function stop() { await (runtime['notify']('plugin:loaded', 'p')); }"],
+  ])('变异被拒绝：%s — %s', (rel, source) => {
+    expect(eventViolations(rel, parseSource(rel, source).emits).length).toBeGreaterThan(0);
+  });
+
+  it('合法动态转发可格式化为多行，守卫按语法结构识别', () => {
+    const builtin = `const cap = { emit: (event, ...args) =>
+      bus.emit(event, ...args) };`;
+    const notify = `function notify(runtime, logger) { return (event, ...args) => {
+      runtime.events.emit(event, ...args).catch(error => logger.warn(error));
+    }; }`;
+    expect(eventViolations(BUILTIN_EVENTS, parseSource(BUILTIN_EVENTS, builtin).emits)).toEqual([]);
+    expect(eventViolations(NOTIFICATION_FILE, parseSource(NOTIFICATION_FILE, notify).emits)).toEqual([]);
+    const wrapped = `function notify(runtime, logger) { return (event, ...args) => {
+      try { Promise.resolve(runtime.events.emit(event, ...args)).catch(report); } catch (error) { report(error); }
+    }; }`;
+    expect(eventViolations(NOTIFICATION_FILE, parseSource(NOTIFICATION_FILE, wrapped).emits)).toEqual([]);
+  });
+
+  it('下层绕经内部激活导入仍被拒绝（含 type-only 与动态 import）', () => {
+    const file = join(SRC_DIR, 'context', 'binding.ts');
+    const source =
+      "import type { Activation } from '../orchestration/activation.js'; void import('../orchestration/activation-host.js');";
+    const imports = parseSource(file, source).specifiers;
+    expect(imports).toHaveLength(2);
+    for (const spec of imports) expect(violation('context', resolveTarget(file, spec)!)).not.toBeNull();
   });
 });

@@ -19,9 +19,9 @@ interface EventEntry {
  * 也可以使用任意字符串 key 注册/触发自定义事件（运行时安全）。
  */
 export class EventBus {
-  // 事件名 → 登记集合。每次 on 一条登记：同一函数被两个 Context（或同一 Context 两次）登记
+  // 事件名 → 登记集合。每次 on 一条登记：同一函数被两个激活（或同一激活两次）登记
   // 互不相干，各自退订、各自清理——按函数去重会让后登记者顶掉先登记者的归属，先登记者的退订
-  // 再删掉后登记者。归属是注册方 Context 本次激活的 symbol，让拆卸的注销段能与
+  // 再删掉后登记者。归属是注册方本次激活的 symbol，让拆卸的注销段能与
   // hooks/services/contributions 同点整体切断（unregisterByOwner）；直接使用总线的无主
   // handler（owner=undefined）不受切断影响，由调用方自管。
   private handlers = new Map<string, Set<EventEntry>>();
@@ -32,8 +32,8 @@ export class EventBus {
    * EventBus 自身不依赖 Logger（保持环境无关）；宿主（App）在构造后
    * 注入一个指向自己 logger 的上报器。未设置时错误被静默丢弃——
    * 但无论是否设置，单个 handler 抛错都**不会**中断同事件的其余 handler，
-   * 也不会使 emit reject。第三参点名注册者的逻辑身份（owner symbol 的 description，Context 门面
-   * 注册时即 ctx.id；不经门面、无 owner 的登记为 undefined），与 HookRegistry.onStall 同口径。
+   * 也不会使 emit reject。第三参点名注册者的逻辑身份（owner symbol 的 description，events 能力
+   * 注册时即激活 id；不经门面、无 owner 的登记为 undefined），与 HookRegistry.onStall 同口径。
    */
   onHandlerError?: (event: string, error: unknown, contextId?: string) => void;
 
@@ -74,7 +74,7 @@ export class EventBus {
    * 若该事件已被标记为 sticky 且历史上 emit 过，则在下一个微任务里
    * 立即用缓存的参数调用 handler 一次（保证语义同步：调用方注册完返回后
    * 再触发，避免 handler 内部的 await 影响调用方流程）。
-   * @param owner 清理归属（Context 门面传入）；省略则不被拆卸自动清理，用返回的 dispose 自管。
+   * @param owner 清理归属（events 能力传入）；省略则不被拆卸自动清理，用返回的 dispose 自管。
    */
   on<E extends string & keyof AalisEvents>(
     event: E,
@@ -117,7 +117,7 @@ export class EventBus {
   }
 
   /**
-   * 整体移除某 ctx 归属的全部监听——Context 拆卸的注销段调用，
+   * 整体移除某激活归属的全部监听——ActivationHost 接入拆卸的注销段调用，
    * 与 hooks/contributions 同点切断（半拆状态不外露：异步排空窗口内本插件
    * 的 handler 不得再响应事件）。链上残留的退订闭包迟到执行时靠 off 的
    * 身份卫保持无害。

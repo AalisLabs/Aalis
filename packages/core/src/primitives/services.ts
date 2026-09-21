@@ -1,6 +1,6 @@
 // ----- 服务系统数据契约（与容器实现同文件，同 contributions.ts 的 Spec/Handle 惯例） -----
 
-/** getAll / getAllServices 的元素：ServiceEntry 的投影，刻意不含清理归属 owner。 */
+/** ServiceContainer.getAll / ServiceRef.all 的元素：ServiceEntry 的投影，不含清理归属 owner。 */
 export interface ServiceView<T = unknown> {
   instance: T;
   contextId: string;
@@ -18,9 +18,9 @@ interface ServiceEntry {
   priority: number;
   contextId: string;
   /**
-   * 清理归属：注册它的 Context 在本次激活的身份。与 `contextId`（逻辑身份，供
-   * 路由 / 显示 / 偏好 / 前缀查询）分开——同名 Context 各有各的 owner，一方拆卸不清另一方。
-   * 不经 Context 门面直接注册的条目无 owner，不被拆卸自动清理，由调用方用返回值自管。
+   * 清理归属：注册方本次激活的身份。与 `contextId`（逻辑身份，供
+   * 路由 / 显示 / 偏好 / 前缀查询）分开——同名激活各有各的 owner，一方拆卸不清另一方。
+   * 直接注册而未传 owner 的条目不被拆卸自动清理，由调用方用返回值自管。
    * @internal
    */
   owner?: symbol;
@@ -34,7 +34,7 @@ interface ServiceEntry {
  * 设计要点：
  * - 同一个服务名可以有多个提供者（按 priority + 偏好解析）
  * - 服务选择走「偏好 > 优先级 > 注册顺序」；领域级筛选（如按 LLM 模型能力）由各 -api 自理，不在内核 DI
- * - 经 Context 门面注册的条目带清理归属 owner，插件卸载时按它批量清理（unregisterByOwner）；
+ * - 经 provide 能力注册的条目带清理归属 owner，插件卸载时按它批量清理（unregisterByOwner）；
  *   contextId 只是逻辑身份（路由 / 显示 / 偏好 / 前缀查询），不参与清理
  */
 export class ServiceContainer {
@@ -46,7 +46,7 @@ export class ServiceContainer {
    * 注册一个服务实例。容器只按名字存取，不认识类型——实现是否满足契约由服务描述符在
    * `provide(descriptor, impl)` 处约束。
    *
-   * @param owner 清理归属（Context 门面传入）；省略则该条目不被拆卸自动清理，用返回的退订闭包自管。
+   * @param owner 清理归属（provide 能力传入）；省略则该条目不被拆卸自动清理，用返回的退订闭包自管。
    * @returns 退订闭包；返回这次是否真的摘掉了条目——同一条目退订两次、或已被 unregisterByOwner
    *   清走时为 false，门面据此决定要不要发 `service:unregistered`。
    */
@@ -138,9 +138,9 @@ export class ServiceContainer {
   }
 
   /**
-   * 按清理归属移除该 Context 本次激活注册的所有 entry，返回被移除的服务名列表。
+   * 按清理归属移除本次激活注册的所有 entry，返回被移除的服务名列表。
    *
-   * 按 owner 而非 contextId：同名 Context（手工 fork 重名、拆卸在飞时同名新激活）各有各的
+   * 按 owner 而非 contextId：同名激活（内部构造重名、拆卸在飞时同名新激活）各有各的
    * owner，互不误清。per-entry 子 entry（`id/sub`）与主 entry 同 owner，一并清掉——
    * 不再依赖 id 前缀约定，前缀只留给 {@link hasByContext} 这类逻辑身份查询。
    */
@@ -193,8 +193,8 @@ export class ServiceContainer {
    * 哪怕它的 priority 数值低于其它 entry。
    *
    * @returns true 表示偏好已记录（即使目标 entry 当下尚未注册也会接受——一旦注册即生效）
-   * 公开 API 走 `ctx.preferService()`（额外 emit service:preference-changed
-   *   触发 whenService 重挂）；本方法仅供 Context 内部转发，插件勿直接调用。
+   * 插件经 `services.prefer()` 调用（额外发出 service:preference-changed 触发绑定更新）；
+   * 直接调用容器不会通知绑定层。
    * @internal
    */
   prefer(name: string, contextId: string): boolean {
@@ -204,7 +204,7 @@ export class ServiceContainer {
 
   /**
    * 清除某服务的偏好（恢复 priority + 注册顺序解析）
-   * 公开 API 走 `ctx.unpreferService()`；本方法仅供 Context 内部转发。
+   * 插件经 `services.unprefer()` 调用；直接调用容器不会通知绑定层。
    * @internal
    */
   unprefer(name: string): boolean {
@@ -213,7 +213,7 @@ export class ServiceContainer {
 
   /**
    * 读取某服务当前的偏好 contextId（无偏好返回 undefined）
-   * 公开 API 走 `ctx.getPreferredService()`；本方法仅供 Context 内部转发。
+   * 插件经 `services.preferred()` 读取。
    * @internal
    */
   getPreferred(name: string): string | undefined {
