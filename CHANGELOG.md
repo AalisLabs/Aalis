@@ -165,7 +165,7 @@ export default definePlugin({
 
 ### 加载器与双副本（@aalis/runtime / @aalis/core）
 
-两加载器共用 `pluginDefinitionOf`：只认 default 导出的定义对象（带非空 `name` 与 `apply` 函数）。具名导出、函数 / 类 default、普通对象缺字段，一律 warn「入口须 `export default definePlugin({ … })`」并跳过。定义 `name` 与包名不一致另 warn 一次，仍加载，但配置键以定义名为准。
+`@aalis/core` 公开面从包根导出 `pluginDefinitionOf`（加载器与市场共用判定）：只认 default 导出的定义对象（带非空 `name` 与 `apply` 函数）。具名导出、函数 / 类 default、普通对象缺字段，一律 warn「入口须 `export default definePlugin({ … })`」并跳过。定义 `name` 与包名不一致另 warn 一次，仍加载，但配置键以定义名为准。
 
 `@aalis/core` 必须是单副本 peer。装了两份时，内置描述符仍能被认出，随后在装配处抛「必须是单副本」；该 error 默认可见（`consoleSink: false` 仍有 minLevel=`warn` 的 stderr sink）。
 
@@ -177,7 +177,7 @@ export default definePlugin({
 
 市场装卸以加载器解析的**定义 name**为准（可与 npm 包名不同）。卸载在 `npm uninstall` 之前按定义 name 枚举注册表里全部 instanceId（主实例 + `name:suffix`），逐个 `unload` 并清理配置块与禁用标记。
 
-PUT `/api/plugins/:name/config` 按 `configSchema` 裁掉未知键并 warn。`:name` 非法时（含 `#`、危险键）core 抛错，路由返回 400 并透出原文。GET `/api/plugins` 列表仍回传配置原文，包括标了 `schema.secret` 的字段——本版未做列表遮蔽。
+PUT `/api/plugins/:name/config` 按 `configSchema` 裁掉未知键并 warn。裁剪与 runtime 共用 `@aalis/schema-config` 导出的 `removeExtraFields`。`:name` 非法时（含 `#`、危险键）core 抛错，路由返回 400 并透出原文。GET `/api/plugins` 列表对 `schema.secret` 字段回传掩码 `••••••`，编辑器 `GET /api/plugins/:name/config` 保持原文；列表不可作为配置备份。
 
 ### session-manager 关停收口（@aalis/plugin-session-manager）
 

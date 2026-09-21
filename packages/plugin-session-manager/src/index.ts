@@ -703,7 +703,8 @@ class SessionManager implements SessionManagerService {
    * 关停打断在飞回合与那条路径同义，沿用同一状态，不新造值。
    * waiting / completed / error / archived 不是在飞，原样保留。
    *
-   * 必须在 onDrain 做完：agent↔SM 是 optional 互用，不能指望 agent 钩子还在。
+   * 第一方栈由 core 关停编排（optional 环成员先全部 drain）与 `agent:turn:after` 收口；
+   * 此处兜的是未装 agent 或钩子未挂上的路径。
    * persist 也在这里立刻刷，不走 1s debounce——onDispose 的 shutdown 仍会再刷一次。
    */
   async settleActiveOnDrain(): Promise<void> {
@@ -945,9 +946,8 @@ const uses = {
   memory,
   /**
    * 本插件不调用 agent 的方法；声明它是为了 agent:* 钩子的键类型。
-   * 关停顺序由 core 按实际绑定编排：optional 互用的两方只保证彼此 drain 期间存活，
-   * 不保证对方 close 之后钩子还在。在飞会话由本插件 onDrain 自行收口落盘，
-   * 不依赖 agent 中间件先于自己消失。
+   * 第一方栈由 core 关停编排（optional 环成员先全部 drain）与 `agent:turn:after` 收口；
+   * 此处 onDrain 兜的是未装 agent 或钩子未挂上的路径。
    */
   agent: optional(agent),
   /** 自动标题的模型来源；没有 LLM 时退回用户消息首段 */
@@ -1066,7 +1066,9 @@ async function run(caps: Caps): Promise<void> {
       .finally(() => titleGenerating.delete(sessionId));
   });
 
-  // 关停收尾：仍 active 的会话在 onDrain 收口并落盘（不依赖 agent 钩子还在）。
+  // 关停收尾：仍 active 的会话在 onDrain 收口并落盘。
+  // 第一方栈由 core 关停编排（optional 环成员先全部 drain）与 agent:turn:after 收口；
+  // 此处兜的是未装 agent 或钩子未挂上的路径。
   // 持久化仍走 onDispose：覆盖 bounce / unload / updateConfig 等全部拆卸路径
   // （只在全局停机触发的话，热重载即丢会话元数据）。
   // 异步收尾由编排层的 disposeAsync 等待完成；app.stop() 的拓扑逆序保证此时 memory 提供者

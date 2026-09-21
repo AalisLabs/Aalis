@@ -108,4 +108,16 @@ describe('CHANGELOG 未发布节的发布声明', () => {
     expect(n, '应扫到 schema-config 消费方').toBeGreaterThan(0);
     expect(bad).toEqual([]);
   });
+
+  it('@aalis/core 包根导出 pluginDefinitionOf', () => {
+    const src = readIndex('core');
+    expect(src, 'packages/core/src/index.ts 须存在').toBeTruthy();
+    expect(/export \{[^}]*pluginDefinitionOf/.test(src ?? ''), src).toBe(true);
+  });
+
+  it('@aalis/schema-config 导出 removeExtraFields', () => {
+    const src = readIndex('schema-config');
+    expect(src, 'packages/schema-config/src/index.ts 须存在').toBeTruthy();
+    expect(/export function removeExtraFields/.test(src ?? ''), src).toBe(true);
+  });
 });
