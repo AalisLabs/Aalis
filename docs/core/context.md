@@ -209,7 +209,7 @@ lifecycle.onDispose(async () => {
 2. 父使用自己子树的服务：父 drain 先于子 close；父 `onDrain` 期间子树仍活着。到父 close 时子已按归属关闭。
 3. 后代使用祖先的服务：不往排序图加边。归属树已保证子 close 先于祖先 close，drain 在 close 之前，故子 drain 时祖先仍活着。祖先若同时用这棵子树（第 2 种），第 2 种边把祖先 drain 插在子 close 之前，两笔收尾都能用到对方。因此父子互用不再形成二元环。
 
-环：optional 边按自然次序让步（不告警）；环里只剩 required 边仍无解才告警并强行放行。环外与归属约束不松。单独卸载提供者不在整次 `App.stop()` 计划里，不享有上述交接。
+环：optional 边构成的强连通分量先让成员全部 drain，再任一 close（不告警；drain 期间双方都能 `require()`）；环里只剩 required 边仍无解才告警并强行放行。环外与归属约束不松。单独卸载提供者不在整次 `App.stop()` 计划里，不享有上述交接。
 
 单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 注入（默认 5000；0=不设限）：超时放弃该项、继续后续清理并 warn 点名。超时只是停止等待，不代表资源已释放。
 

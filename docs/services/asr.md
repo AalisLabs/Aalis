@@ -96,33 +96,36 @@ private asrProcessors(): MediaProcessor[] {
 最小必须实现：一个返回 `{ text }` 的 `transcribe`，加 `provides`/`apply`。`segments`/`language`/`meta` 全可选。
 
 ```ts
-import { definePlugin } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { asr } from '@aalis/api-asr';
 import type { ASRService, TranscribeInput, TranscribeResult } from '@aalis/api-asr';
-import { safeFetch } from '@aalis/util-network-guard';
-
-provides: [asr];                 // 源 A：拓扑权威，apply 内必须真的注册同名服务
-export const configSchema: ConfigSchema = {
-  priority: { type: 'number', label: '优先级 (越大越优先)', default: 50 },
-};
+import { processService } from '@aalis/api-process';
+import { storage } from '@aalis/api-storage';
+import { config, definePlugin, logger, optional, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@aalis/plugin-asr-mybackend',
   reusable: true,
-  uses: { process: optional(process), storage: optional(storage) },
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  const cfg = { priority: 50, ...(raw as { priority?: number }) };
-
-  const asr: ASRService = {
-    async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
-      // input.attachment.data 形态见 §4「物化附件」；远程下载必须走 safeFetch
-      const text = await myTranscribe(input.attachment.data, input.language);
-      return { text };
-    },
-  };
-
-  provide(asr, asr, { priority: cfg.priority });
-},
+  provides: [asr],
+  uses: {
+    provide,
+    logger,
+    config,
+    process: optional(processService),
+    storage: optional(storage),
+  },
+  apply({ provide, logger, config, process, storage }) {
+    const priority = (config.priority as number | undefined) ?? 50;
+    const impl: ASRService = {
+      async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
+        void process.current;
+        void storage.current;
+        // input.attachment.data 形态见 §4「物化附件」；远程下载必须走 safeFetch
+        return { text: String(input.language ?? '') };
+      },
+    };
+    provide(asr, impl, { priority });
+    logger.info('asr provider ready');
+  },
 });
 ```
 

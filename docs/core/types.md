@@ -104,7 +104,10 @@ function defineService<P>(name: string): ServiceDescriptor<P, ServiceRef<P>>;
 function defineService<P, B>(name: string, bind: (port: BindingPort<P>) => B): ServiceDescriptor<P, B>;
 function optional<P, B>(descriptor: ServiceDescriptor<P, B>): OptionalUse<P, B>;
 function serviceRef<P>(port: BindingPort<P>): ServiceRef<P>;
+function serviceRef<P, E extends object>(port: BindingPort<P>, extra: E): ServiceRef<P> & E;
 ```
+
+既登记又被调用的服务，把登记方法作为第二参传入：`serviceRef(port, { registerX })`。不要对象展开——`current` 是 getter，展开会求值成一次性快照。
 
 `ProviderOf<D>` / `BoundOf<U>` / `Uses` 是推导载体。详见 [service.md](service.md)、[hub-services.md](../design/hub-services.md)。
 

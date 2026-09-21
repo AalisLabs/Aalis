@@ -186,11 +186,20 @@ uses: { commands: optional(commands), tools: optional(tools) }; // 反向注入�
 ### 4.4 可编译最小骨架
 
 ```ts
-import { definePlugin } from '@aalis/core';
+import { authority } from '@aalis/api-authority';
 import type {
-  AuthorityService, AuthorizeRequest, AccessRequest, AccessConfirmHandler,
-  TemporaryGrant, AuthorityUserEntry, UserIdentity, ExecutionGuardContext,
+  AccessConfirmHandler,
+  AccessRequest,
+  AuthorityService,
+  AuthorityUserEntry,
+  AuthorizeRequest,
+  ExecutionGuardContext,
+  TemporaryGrant,
+  UserIdentity,
 } from '@aalis/api-authority';
+import { commands } from '@aalis/api-commands';
+import { tools } from '@aalis/api-tools';
+import { definePlugin, optional, provide } from '@aalis/core';
 
 class MyAuthority implements AuthorityService {
   private handlers = new Map<string, AccessConfirmHandler>();
@@ -213,6 +222,7 @@ class MyAuthority implements AuthorityService {
   setUserLevel(_t: UserIdentity, _l: number) {}
   removeUser(_p: string, _u: string) {}
   listTemporaryGrants(): TemporaryGrant[] { return []; }
+  revokeGrantsOfCapability(_capability: string) { return 0; }
   revokeTemporaryGrant(_id: string) { return false; }
   listUsers(): AuthorityUserEntry[] { return []; }
   save() {}

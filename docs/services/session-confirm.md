@@ -112,16 +112,13 @@ export type CapabilityConfirm = 'session' | 'always';
 ### 注册（provide + 双源同步）
 
 ```ts
-import { definePlugin } from '@aalis/core';
-// packages/<your-plugin>/src/index.ts
-import type {
-  AccessConfirmHandler,
-  AccessDecision,
-  AccessRequest,
-} from '@aalis/api-authority';
+import { authority } from '@aalis/api-authority';
+import type { AccessConfirmHandler, AccessDecision, AccessRequest } from '@aalis/api-authority';
+import { gateway } from '@aalis/api-gateway';
+import { sessionConfirm } from '@aalis/api-session-confirm';
 import type { ConfirmChannel, SessionConfirmService } from '@aalis/api-session-confirm';
+import { definePlugin, optional, provide } from '@aalis/core';
 
-provides: [sessionConfirm];           // ← 双源之一：导出 provides
 function createChannel(deliver: (request: AccessRequest, text: string) => void): ConfirmChannel {
   const pending = new Map<string, {
     request: AccessRequest;
@@ -134,12 +131,12 @@ function createChannel(deliver: (request: AccessRequest, text: string) => void):
     new Promise(resolve => {
       const timer = setTimeout(() => {
         pending.delete(request.sessionId);
-        deliver(request, '⏰ 操作确认已超时，已自动取消。');
+        deliver(request, '操作确认已超时，已自动取消。');
         resolve(false);                                  // 超时默认拒（无人在场即安全失败）
       }, 60_000);
       timer.unref?.();                                   // 待确认定时器不阻止进程优雅退出
       pending.set(request.sessionId, { request, resolve, timer, userId: request.userId });
-      deliver(request, `⚠️ ${request.name} 是高危操作。回复 Y 允许；其他取消。`);
+      deliver(request, `${request.name} 是高危操作。回复 Y 允许；其他取消。`);
     });
 
   const feed = (sessionId: string, replyText: string, replyUserId?: string): boolean => {
@@ -166,12 +163,14 @@ function createChannel(deliver: (request: AccessRequest, text: string) => void):
 
 export default definePlugin({
   name: '@aalis/plugin-my-session-confirm',
-  uses: { gateway, authority: optional(authority) },
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  const service: SessionConfirmService = { createChannel };
-  provide(sessionConfirm, service);
-  // …（若也要自用 bus 通道覆盖会话型平台，参照默认实现 §3）
-},
+  provides: [sessionConfirm],
+  uses: { provide, gateway, authority: optional(authority) },
+  apply({ provide, gateway, authority }) {
+    void gateway;
+    void authority;
+    const service: SessionConfirmService = { createChannel };
+    provide(sessionConfirm, service);
+  },
 });
 ```
 

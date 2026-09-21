@@ -139,15 +139,17 @@ export default definePlugin({
 
 关停按激活为单位，每个激活拆成收尾（`lifecycle.onDrain`：此刻本激活的监听、登记与声明的依赖都还在）与撤回加清理（`lifecycle.onDispose`：对外登记已撤回）。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。边只来自框架管理的关系：声明的依赖（含子模块、含尚未访问的 optional）在编排那一刻解析到的胜者，以及存活的托管绑定与尚未落地的撤回。经 `services` 动态查到的服务不产生边；调用方缓存的裸引用也不追踪。
 
-普通依赖（别的插件、兄弟模块）：消费者整个 close 完，提供者才 drain。父使用自己子树的服务：父 drain 先于子 close，父 `onDrain` 期间子树仍活着。后代使用祖先的服务：不往排序图加边——归属树已保证子 close 先于祖先 close，drain 在 close 之前，故子 drain 时祖先仍活着。环内 optional 可让步；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭，但不享有整 App 关停那一层「根绑定与全部插件同计划」的交接保证。
+普通依赖（别的插件、兄弟模块）：消费者整个 close 完，提供者才 drain。父使用自己子树的服务：父 drain 先于子 close，父 `onDrain` 期间子树仍活着。后代使用祖先的服务：不往排序图加边——归属树已保证子 close 先于祖先 close，drain 在 close 之前，故子 drain 时祖先仍活着。环内 optional 边构成的强连通分量（≥2 个激活）卡住时一次放行分量内全部 drain，再 close——drain 期间对方仍活着，双方 `onDrain` 都能 `require()`；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭，但不享有整 App 关停那一层「根绑定与全部插件同计划」的交接保证。
 
-`App.stop()` 现序：停配置 watch → `plugins.idle()`（排干在飞重算）→ 冻结新增绑定并进入停机态 → 发出 `app:stopping`（屏障，等监听器）→ 再 `idle()` → 执行已冻计划的 drain / close → 清 sticky → 根激活 `disposeAsync`。`app:stopping` 只在全局停机触发一次，bounce / unload / disable 不发；知会（告别语、状态条）可以挂它，资源清理走 `onDrain` / `onDispose`。发出时停机计划已冻：窗口内 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成，拆卸由停机计划执行）；`register` / `bounce` 返回 false（与定义或实例 id 校验失败同属政策挡下的 false 口径；`register` 不落账）。监听器里对已冻激活 `provide` 记 warn 后忽略、不抛；`lifecycle.module` 抛「已 dispose」。停机完成后：对新定义 `register` 返回 false 且不落账；对已 disposed 实例的 `enable` / `updateConfig` / `bounce` 返回 false；`idle()` 落定。
+`App.stop()` 单飞：重入返回同一 Promise。现序：停配置 watch → `beginShutdown()`（置停机态并冻计划）→ `plugins.idle()`（排干在飞重算）→ 发出 `app:stopping`（屏障，等监听器）→ 再 `idle()` → 执行已冻计划的 drain / close → 清 sticky → 根激活 `disposeAsync`。已静置时仍须先冻闸，否则 `idle()` 让出的微任务里 bounce 会留下 pending 幽灵。`app:stopping` 只在全局停机触发一次，bounce / unload / disable 不发；知会（告别语、状态条）可以挂它，资源清理走 `onDrain` / `onDispose`。发出时停机计划已冻：窗口内 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成，拆卸由停机计划执行）；`register` / `bounce` 返回 false（与定义或实例 id 校验失败同属政策挡下的 false 口径；`register` 不落账）。监听器里再调 `stop()` 立即返回已兑现 Promise 并 warn（不是 in-flight 那同一个 Promise，避免与 emit 屏障死锁）；不要当成停机已完成。外部并发的第二次 `stop()` 仍等到本次收尾。监听器里对已冻激活 `provide` 记 warn 后忽略、不抛；`lifecycle.module` 抛「已 dispose」。停机完成后：对新定义 `register` 返回 false 且不落账；对已 disposed 实例的 `enable` / `updateConfig` / `bounce` 返回 false；`idle()` 落定。
 
 **迁移**：数据交接（flush、abort 在飞工作并等待收尾）放 `onDrain`；拆连接、摘登记放 `onDispose`，不要假定此时依赖仍在。不要用 `events.on('app:stopping', …)` 当清理通道。
 
 ### 定义与登记校验（@aalis/core）
 
-缺 `name`、空串、含 `#`、或 `name` 带 `:suffix`：`definePlugin` 抛错；手写对象绕过它时 `register` / `app.plugin` 返回 `false` 并 warn，不落账。显式 `instanceId` 同样须非空、不含 `#`，但允许 `name:suffix`（多实例）。`uses` 里不是描述符的项，定义期抛、登记期 `false`。
+缺 `name`、空串、仅空白、含 `#`、`name` 带 `:suffix`、或 `name` / `instanceId` 为危险键 `__proto__` / `constructor` / `prototype`：`definePlugin` 抛错；手写对象绕过它时 `register` / `app.plugin` 返回 `false` 并 warn，不落账。显式 `instanceId` 同样须非空、不含 `#`，但允许 `name:suffix`（多实例）。`uses` 必须是纯对象（不能是数组或原始值）；值不是描述符的项，定义期抛、登记期 `false`。`apply` 必须是函数：定义期抛，手写 `register` 返回 false 且不落账。`provides` 元素必须是描述符。
+
+`provide` 拒空实现（`null` / `undefined`）与非有限 `priority`（`NaN` / `Infinity` / 非数字）；`ServiceContainer.register` 同一套闸。按插件 id 取放配置时，危险键抛 `插件 id 不合法: ${id}`。
 
 `provides` 声明了但激活后未按本次 `instanceId` 登记 → 本次激活进入 `error`。`provide(..., { onBehalfOf })` 的条目逻辑身份取被代者，清理仍归本激活；代登记**不计入**代理人的 `provides`，写进去会按「未提供」报错。
 
@@ -168,6 +170,18 @@ export default definePlugin({
 `@aalis/core` 必须是单副本 peer。装了两份时，内置描述符仍能被认出，随后在装配处抛「必须是单副本」；该 error 默认可见（`consoleSink: false` 仍有 minLevel=`warn` 的 stderr sink）。
 
 **迁移**：入口改 default 定义。确认依赖树里 `@aalis/core` 只有一份（peer `>=0.17.0 <1.0.0`，禁 caret）。
+
+### 热扫描、市场卸载与 WebUI 配置（@aalis/core / @aalis/plugin-package-manager / @aalis/plugin-webui-server）
+
+`rescanPlugins` 与 `autoLoadPlugins` 共用配置键里的 `name:suffix` 多实例登记。返回值仍只含新发现的主描述符名，不含 `:suffix`。
+
+市场装卸以加载器解析的**定义 name**为准（可与 npm 包名不同）。卸载在 `npm uninstall` 之前按定义 name 枚举注册表里全部 instanceId（主实例 + `name:suffix`），逐个 `unload` 并清理配置块与禁用标记。
+
+PUT `/api/plugins/:name/config` 按 `configSchema` 裁掉未知键并 warn。`:name` 非法时（含 `#`、危险键）core 抛错，路由返回 400 并透出原文。GET `/api/plugins` 列表仍回传配置原文，包括标了 `schema.secret` 的字段——本版未做列表遮蔽。
+
+### session-manager 关停收口（@aalis/plugin-session-manager）
+
+`lifecycle.onDrain` 把仍为 `active` 的会话收口为 `completed` 并立即落盘；`waiting` / 已终态不动。不依赖 agent 钩子。`onDispose` 仍 `shutdown()` 再刷一次。
 
 ### `ServiceContainer.getEntries` 删除（@aalis/core）
 

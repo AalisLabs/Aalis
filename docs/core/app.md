@@ -7,9 +7,11 @@
 ## 构造函数
 
 ```typescript
-const app = new App(options: AppOptions);
-// 推荐：
-const app = createApp(options: AppOptions);
+import { App, createApp } from '@aalis/core';
+
+const options = { config: { name: 'demo', logLevel: 'info', plugins: {} } };
+const app = new App(options);
+const app2 = createApp(options);
 ```
 
 core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自身不读取任何 YAML 文件。
@@ -80,10 +82,12 @@ const { logger: log, events: bus } = app.bind({ logger, events });
 
 ### `app.stop()`
 
+单飞：重入返回同一 Promise。现序：
+
 1. `config.unwatch()` 停止监听配置变更
-2. `plugins.idle()`：等在飞的 bounce / unload recompute 排干后再冻；否则 freeze 会 markClosing，尚未 fork 完的激活会撞上「已 dispose」
-3. `plugins.beginShutdown()`：置停机态，并把根激活整棵树冻进一张计划（之后 `register` 拒绝；对本树的 `disposeAsync` 汇入该计划）
-4. 发出 `app:stopping`（知会用；清理一律走 `lifecycle.onDrain` / `onDispose`）。监听器全部返回后才继续
+2. `plugins.beginShutdown()`：置停机态并冻计划（之后 `register` / `bounce` 拒绝；对本树的 `disposeAsync` 汇入该计划）。已静置时仍须先冻闸——`idle()` 会让出一轮微任务，同轮排队的 bounce 否则会在置位前过闸、留下 pending 幽灵
+3. `plugins.idle()`：排干在飞的 bounce / unload recompute
+4. 发出 `app:stopping`（知会用；清理一律走 `lifecycle.onDrain` / `onDispose`）。监听器全部返回后才继续。监听器里再调 `stop()`：warn 一次并立即返回已兑现的 Promise（请勿 await——会与 emit 屏障互等）。外部并发的第二次 `stop()` 仍等到本次收尾
 5. 再 `plugins.idle()`
 6. `plugins.stopAll()`：执行已冻计划的 drain / close
 7. 清空 sticky 缓存（`app:ready` / `app:started`）
@@ -105,9 +109,10 @@ resolve 语义 = 注册落账 + 尽力即时激活。有在飞 recompute 或手�
 
 ### `app.rescanPlugins()`
 
-重新扫描插件源，加载新发现的插件（已注册的跳过），返回新加载的插件名列表。优先调用
+重新扫描插件源，加载新发现的插件（已注册的跳过），返回新加载的插件名列表。与
+`autoLoadPlugins` 共用配置键里的 `name:suffix` 多实例登记。优先调用
 `pluginLoader.reload(desc)` 做热重载，未实现时退化为 `load(desc)`；未注入 loader 时返回 `[]`。
-刻意不等静置（HTTP 热路径）。
+刻意不等静置（HTTP 热路径）。返回值只含新发现的主描述符名，不含 `:suffix`。
 
 ### `app.saveConfig()`
 

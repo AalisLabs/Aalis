@@ -7,7 +7,7 @@
 > LLM 拿着用户给的 URL 把内网元数据接口打穿。安全在 Aalis 不是某一个插件的功能，而是一组贯穿
 > 全栈的不变量——你的插件要么帮助维持这些不变量，要么就会成为破坏它们的那一环。
 
-相关概念：[权限两轴（authority）](../plugins/plugin-authority.md) · [存储不是沙箱](#存储不是沙箱storage-不confine-子进程) ·
+相关概念：[权限两轴（authority）](../plugins/plugin-authority.md) · [存储不是沙箱](#5-存储不是沙箱storage-不-confine-子进程) ·
 forward-ref [services/authority](../services/authority.md)（裁决服务全量 API）。
 
 ---

@@ -159,21 +159,29 @@ doctor 作为可选依赖，要让 PluginManager 在 doctor 上下线时正确�
 provider 必须实现完整的 `DoctorService` 四个方法。最小骨架：
 
 ```ts
-import { definePlugin } from '@aalis/core';
+import { doctor } from '@aalis/api-doctor';
 import type { CheckResult, CheckSpec, DoctorReport, DoctorService } from '@aalis/api-doctor';
+import { definePlugin, events, provide } from '@aalis/core';
 
 class CustomDoctor implements DoctorService {
   private last?: DoctorReport;
   private readonly specs = new Map<string, CheckSpec>();
-  constructor() {}
 
   registerCheck(spec: CheckSpec): () => void {
-    this.specs.set(spec.id, spec);                       // 同 id 覆盖
-    return () => { if (this.specs.get(spec.id) === spec) this.specs.delete(spec.id); };
+    this.specs.set(spec.id, spec);
+    return () => {
+      if (this.specs.get(spec.id) === spec) this.specs.delete(spec.id);
+    };
   }
-  getLastReport(): DoctorReport | undefined { return this.last; }
+  getLastReport(): DoctorReport | undefined {
+    return this.last;
+  }
   listChecks() {
-    return [...this.specs.values()].map(s => ({ id: s.id, category: s.category, pluginName: s.pluginName }));
+    return [...this.specs.values()].map(s => ({
+      id: s.id,
+      category: s.category,
+      pluginName: s.pluginName,
+    }));
   }
   async runChecks(): Promise<DoctorReport> {
     const checks: CheckResult[] = [];
@@ -182,12 +190,22 @@ class CustomDoctor implements DoctorService {
         const r = await spec.run();
         checks.push(...(Array.isArray(r) ? r : [r]));
       } catch (err) {
-        // 必须吞掉单条异常，否则一个坏 check 拖垮整份报告
-        checks.push({ id: spec.id, category: spec.category, level: 'error',
-          message: `检查项 ${spec.id} 抛出异常`, detail: err instanceof Error ? err.message : String(err) });
+        checks.push({
+          id: spec.id,
+          category: spec.category,
+          level: 'error',
+          message: `检查项 ${spec.id} 抛出异常`,
+          detail: err instanceof Error ? err.message : String(err),
+        });
       }
     }
-    const summary = checks.reduce((a, c) => (a[c.level]++, a), { ok: 0, warn: 0, error: 0 });
+    const summary = checks.reduce(
+      (a, c) => {
+        a[c.level]++;
+        return a;
+      },
+      { ok: 0, warn: 0, error: 0 },
+    );
     this.last = { generatedAt: new Date().toISOString(), summary, checks };
     return this.last;
   }
@@ -196,9 +214,12 @@ class CustomDoctor implements DoctorService {
 export default definePlugin({
   name: '@aalis/plugin-doctor-custom',
   provides: [doctor],
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  provide(doctor, new CustomDoctor());
-},
+  uses: { provide, events },
+  apply({ provide, events }) {
+    const impl = new CustomDoctor();
+    provide(doctor, impl);
+    void events;
+  },
 });
 ```
 

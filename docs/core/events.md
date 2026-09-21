@@ -45,7 +45,7 @@ core 自持的只有下面十一个基础设施事件（源码 `packages/core/sr
 | `app:ready` | — | 启动第一相位（sticky） |
 | `app:started` | — | 启动第二相位：全部 `app:ready` 监听器完成之后（sticky）；CLI / TUI 在此接管终端 |
 | `app:restarting` | — | `restart()` 先发本事件，监听器全部完成后才把控制交给宿主的 `RestartStrategy` |
-| `app:stopping` | — | `stop()` 在冻结新增绑定并进入停机态（`beginShutdown`）之后发出；监听器全部返回后才执行停机计划 |
+| `app:stopping` | — | `stop()` 先 `beginShutdown()` 再 `idle()` 之后发出；监听器全部返回后才执行停机计划。监听器内再调 `stop()` 立即返回已兑现 Promise 并 warn，不要 await |
 
 **通知**（`service:*` / `plugin:*` / `plugins:changed`）：发射方不等监听器。发射点要么是同步的注册 / 拆卸收尾，
 要么在 `PluginManager` 的 recompute flight 或挂起段内——那里等监听器会与 `plugins.idle()` 互等死锁。
@@ -63,7 +63,7 @@ core 自持的只有下面十一个基础设施事件（源码 `packages/core/sr
 `app:ready` 与 `app:started` 是两个相位，不是同一里程碑的两个名字：`start()` 串行 await，`app:started` 严格晚于
 全部 `app:ready` 监听器完成。
 
-`app:stopping` 用于知会（打印告别语、切状态条），不是清理通道——清理副作用一律走 `lifecycle.onDrain` / `lifecycle.onDispose`，它们覆盖 bounce / unload / 停机全部路径。总线上没有 `dispose` 事件。本事件发出时停机计划已冻：窗口内 `unload` / `disable` 汇入该计划后立即返回；`register` / `bounce` 返回 false。
+`app:stopping` 用于知会（打印告别语、切状态条），不是清理通道——清理副作用一律走 `lifecycle.onDrain` / `lifecycle.onDispose`，它们覆盖 bounce / unload / 停机全部路径。总线上没有 `dispose` 事件。本事件发出时停机计划已冻：窗口内 `unload` / `disable` 汇入该计划后立即返回 true；`register` / `bounce` 返回 false。监听器里再 `await stop()` 拿不到收尾完成——该调用返回已兑现的 Promise 并 warn，真正的 drain / close 在本屏障结束之后。
 
 ### 扩展自定义事件
 

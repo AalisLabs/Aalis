@@ -157,30 +157,29 @@ PR 默认目标分支：`dev`。`master` 由 `dev` 通过 release PR 合并。
 
 ## 7. 编写插件
 
-新插件 = 一个 `@aalis/plugin-<name>` 包，至少包含：
+新插件 = 一个 `@aalis/plugin-<name>` 包，入口必须是 `export default definePlugin({ … })`：
 
 ```ts
-// src/index.ts
-import type { App, Context, Plugin } from '@aalis/core';
+import { definePlugin, defineService, logger, provide } from '@aalis/core';
 
-export const name = 'my-plugin';
-export const dependencies = ['llm'];          // inject.required
-export const optionalDependencies = ['memory']; // inject.optional
+const myService = defineService<{ ping(): string }>('my-service');
 
-export function apply(ctx: Context, config: MyConfig) {
-  ctx.logger.info('my-plugin 已加载');
-  ctx.provide('my-service', new MyService(ctx, config), {
-    capabilities: ['feature-a', 'feature-b'],
-  });
-}
+export default definePlugin({
+  name: '@aalis/plugin-example',
+  uses: { logger, provide },
+  provides: [myService],
+  apply({ logger, provide }) {
+    logger.info('my-plugin 已加载');
+    provide(myService, { ping: () => 'ok' });
+  },
+});
 ```
 
-- 任何在 `ctx` 上注册的副作用（`on`/`provide`/`middleware`/`whenService`）都会
-  在该 `ctx` dispose 时自动清理，无需手动维护清理列表。
-- 不要把状态挂在 `globalThis`、模块级单例或不可清理的 `setInterval`，
-  请用 `ctx.disposables`（通过 `whenService` / `on` 返回值自动入链）。
+- 没有默认注入：`uses` 写了什么，`apply` 就只能碰到什么。内置能力（`provide` / `logger` / `events` / `config` / `lifecycle` / `hooks` / `contributions` / `services` / `hostConfig`）同样须声明。
+- 经这次激活登记的副作用（事件、服务、钩子、`follow` 返回的 cleanup、`onDrain` / `onDispose`）在该激活关闭后撤回，不必另维护清理列表。
+- 不要把状态挂在 `globalThis`、模块级单例或不可清理的 `setInterval`。
 
-详见 [docs/architecture.md](docs/architecture.md) 与 [docs/plugins/](docs/plugins/)。
+详见 [docs/architecture.md](docs/architecture.md) 与 [docs/plugin-author-guide.md](docs/plugin-author-guide.md)。
 
 ## 8. 反馈
 

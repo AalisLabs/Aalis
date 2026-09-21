@@ -1,7 +1,7 @@
 # bounded-map（有界 Map）
 
 > 受众：编写 / 维护 Aalis 第三方插件的开发者。
-> 这是一个 **util 包**——纯函数、零服务、不涉及 `ctx`、不进 DI 容器。你在 `package.json` 里**依赖**它，然后直接 `import` 使用。不要去 `ctx.getService('bounded-map')`（它不在容器里）。util 包的统一约定见 [清单元数据 → util 关键词](../concepts/manifest-metadata.md)。
+> 这是一个 **util 包**——纯函数、零服务、不进 DI 容器。你在 `package.json` 里**依赖**它，然后直接 `import` 使用。不要按服务名去容器里取它。util 包的统一约定见 [清单元数据 → util 关键词](../concepts/manifest-metadata.md)。
 
 ## 1. 概述
 

@@ -91,7 +91,7 @@ interface Services {
 
 `prefer(key, contextId)` 把该服务的胜者钉到指定逻辑身份，无视 priority。偏好可在目标 entry 注册前提前设置。切换偏好发出 `service:preference-changed`，驱动 `follow` 订阅者按胜者变化重挂。也可在 WebUI 的 Services 页设置；配置项为 `servicePreferences`。
 
-跨多 entry 按会话持久化选择，推荐走请求维度的 hint（把选择存在用户 profile），而不是容器维度的偏好——`prefer` 是全局、进程级单例，不适合 per-user。参见 [plugin-author-guide §13](../plugin-author-guide.md#13-用户偏好放哪里-per-user-不进-servicecontainer)。
+跨多 entry 按会话持久化选择，推荐走请求维度的 hint（把选择存在用户 profile），而不是容器维度的偏好——`prefer` 是全局、进程级单例，不适合 per-user。参见 [plugin-author-guide §13](../plugin-author-guide.md#13-用户偏好放哪里-per-user-不进容器)。
 
 ## ServiceContainer
 

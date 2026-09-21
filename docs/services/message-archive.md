@@ -78,41 +78,45 @@ manifest 双源必须同步写（`package.json` `aalis.service` 与源码 `expor
 可编译最小骨架：
 
 ```ts
-import { definePlugin } from '@aalis/core';
+import { memory } from '@aalis/api-memory';
 import type { MemoryService } from '@aalis/api-memory';
-import type { IncomingMessage, Message } from '@aalis/schema-message';
+import { messageArchive } from '@aalis/api-message-archive';
 import type { MessageArchiveService } from '@aalis/api-message-archive';
-
-uses: { memory };          // 与 package.json 双源同步
+import { definePlugin, events, logger, provide } from '@aalis/core';
+import type { IncomingMessage, Message } from '@aalis/schema-message';
 
 export default definePlugin({
   name: '@aalis/plugin-my-archive',
   provides: [messageArchive],
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  // 懒查：provider 重载后裸引用会失效，禁止在 apply 时缓存（见 §5）
-  const getMemory = (): MemoryService => {
-    const m = memory.current;
-    if (!m) throw new Error('message-archive 需要 memory 服务');
-    return m;
-  };
+  uses: { provide, events, logger, memory },
+  apply({ provide, events, logger, memory }) {
+    const getMemory = (): MemoryService => {
+      const m = memory.current;
+      if (!m) throw new Error('message-archive 需要 memory 服务');
+      return m;
+    };
 
-  const service: MessageArchiveService = {
-    async saveMessage(sessionId, message) {
-      await getMemory().saveMessage(sessionId, message);
-    },
-    async archiveIncoming(incoming: IncomingMessage) {
-      const content = incoming.content;                  // 你自己的烘焙逻辑放这
-      const message: Message = { role: 'user', content, timestamp: Date.now() };
-      await getMemory().saveMessage(incoming.sessionId, message);
-      // 落库后必须发事件，否则 user-profile 等后台消费者收不到
-      events.emit('inbound:message:archived', { sessionId: incoming.sessionId, incoming, archivedMessage: message })
-        .catch(err => logger.debug(`inbound:message:archived 分发失败: ${err}`));
-      return { message, content };
-    },
-  };
+    const service: MessageArchiveService = {
+      async saveMessage(sessionId, message) {
+        await getMemory().saveMessage(sessionId, message);
+      },
+      async archiveIncoming(incoming: IncomingMessage) {
+        const content = incoming.content;
+        const message: Message = { role: 'user', content, timestamp: Date.now() };
+        await getMemory().saveMessage(incoming.sessionId, message);
+        events
+          .emit('inbound:message:archived', {
+            sessionId: incoming.sessionId,
+            incoming,
+            archivedMessage: message,
+          })
+          .catch(err => logger.debug(`inbound:message:archived 分发失败: ${err}`));
+        return { message, content };
+      },
+    };
 
-  provide(messageArchive, service);
-},
+    provide(messageArchive, service);
+  },
 });
 ```
 

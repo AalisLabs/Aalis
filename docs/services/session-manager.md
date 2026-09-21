@@ -129,62 +129,156 @@ interface SessionInfo {
 **配置补丁是三态，不是二态**：键不出现 = 不改；键为 `null` = 删除该键、恢复继承；键为 `false` = **显式覆盖**，不等于未设置。参考实现里 `normalizeSessionConfigPatch` 把 `null` 转成 `undefined` 再交给 `updateSession` 删键，而 `stripUndefined` 只剔 `undefined` 与 `null`——因此显式 `false` 会一路压过继承来的 `true`（`plugin-session-manager/src/index.ts`）。WebUI 会话配置页的两个开关只写显式 `true` / `false` 两档：点一下就落成显式值，页面不提供回到「未设置」的入口，恢复继承要把该键从会话配置里清掉（补丁置 `null`）。
 
 ```ts
-import { definePlugin } from '@aalis/core';
-// my-session-manager/src/index.ts —— 可编译最小骨架
+import { llm } from '@aalis/api-llm';
+import { memory } from '@aalis/api-memory';
+import { persona } from '@aalis/api-persona';
+import { sessionManager } from '@aalis/api-session-manager';
 import type {
-  PlatformProfile, SessionConfig, SessionInfo, SessionManagerService, SessionTreeNode,
+  PlatformProfile,
+  SessionConfig,
+  SessionInfo,
+  SessionManagerService,
+  SessionTreeNode,
 } from '@aalis/api-session-manager';
-
-provides: [sessionManager];   // ← 与 package.json aalis.service.provides 同步
+import { type Events, definePlugin, events, logger, optional, provide } from '@aalis/core';
 
 class MySessionManager implements SessionManagerService {
   private sessions = new Map<string, SessionInfo>();
   private profiles = new Map<string, PlatformProfile>();
-  constructor() {}
+  events!: Events;
 
-  async createSession(opts = {}): Promise<SessionInfo> {
+  async createSession(opts: Partial<Omit<SessionInfo, 'id' | 'children' | 'createdAt' | 'updatedAt'>> = {}): Promise<SessionInfo> {
     const now = Date.now();
-    const id = opts.parentId ? `${opts.parentId}::${crypto.randomUUID().slice(0, 8)}`
-                             : `session-${crypto.randomUUID().slice(0, 8)}`;
+    const id = opts.parentId
+      ? `${opts.parentId}::${crypto.randomUUID().slice(0, 8)}`
+      : `session-${crypto.randomUUID().slice(0, 8)}`;
     const s: SessionInfo = {
-      id, name: opts.name ?? id, parentId: opts.parentId, children: [],
-      status: opts.status ?? 'active', config: opts.config ?? {},
-      createdAt: now, updatedAt: now, createdBy: opts.createdBy ?? 'user',
-      // 顶层 inputContext 是子任务指令的权威来源——必须落到顶层字段
-      inputContext: opts.inputContext ?? (opts.metadata?.inputContext as string | undefined),
+      id,
+      name: opts.name ?? id,
+      parentId: opts.parentId,
+      children: [],
+      status: opts.status ?? 'active',
+      config: opts.config ?? {},
+      createdAt: now,
+      updatedAt: now,
+      createdBy: opts.createdBy ?? 'user',
+      inputContext: opts.inputContext,
       metadata: opts.metadata,
     };
     this.sessions.set(id, s);
     if (s.parentId) this.sessions.get(s.parentId)?.children.push(id);
-    await this.events.emit('session:created', s);   // 发出生命周期事件
+    await this.events.emit('session:created', s);
     return s;
   }
-
+  getSession(id: string) {
+    return this.sessions.get(id);
+  }
+  listSessions() {
+    return [...this.sessions.values()];
+  }
+  async updateSession(id: string, updates: Partial<Pick<SessionInfo, 'name' | 'config' | 'status' | 'metadata'>>) {
+    const s = this.sessions.get(id);
+    if (!s) throw new Error(`session ${id} 不存在`);
+    Object.assign(s, updates, { updatedAt: Date.now() });
+    await this.events.emit('session:updated', s);
+    return s;
+  }
+  async ensureSession(id: string, patch?: Partial<Pick<SessionInfo, 'name' | 'config' | 'status' | 'metadata' | 'createdBy'>>) {
+    const existing = this.sessions.get(id);
+    if (existing) return this.updateSession(id, patch ?? {});
+    const now = Date.now();
+    const s: SessionInfo = {
+      id,
+      name: patch?.name ?? id,
+      children: [],
+      status: patch?.status ?? 'active',
+      config: patch?.config ?? {},
+      createdAt: now,
+      updatedAt: now,
+      createdBy: patch?.createdBy ?? 'user',
+      metadata: patch?.metadata,
+    };
+    this.sessions.set(id, s);
+    await this.events.emit('session:created', s);
+    return s;
+  }
+  async deleteSession(id: string) {
+    this.sessions.delete(id);
+    await this.events.emit('session:deleted', id);
+  }
+  async createChildSession(parentId: string, opts?: Partial<Omit<SessionInfo, 'id' | 'parentId' | 'children' | 'createdAt' | 'updatedAt'>>) {
+    return this.createSession({ ...opts, parentId });
+  }
+  getChildren(parentId: string) {
+    return this.listSessions().filter(s => s.parentId === parentId);
+  }
+  getTree(rootId?: string): SessionTreeNode[] {
+    const toNode = (s: SessionInfo): SessionTreeNode => ({
+      session: s,
+      children: this.getChildren(s.id).map(toNode),
+    });
+    if (rootId) {
+      const root = this.getSession(rootId);
+      return root ? [toNode(root)] : [];
+    }
+    return this.listSessions()
+      .filter(s => !s.parentId)
+      .map(toNode);
+  }
+  async completeSession(id: string, result?: string) {
+    const s = await this.updateSession(id, { status: 'completed' });
+    s.result = result;
+    await this.events.emit('session:completed', s);
+  }
   resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'> {
     const out: Record<string, unknown> = {};
-    if (platform) Object.assign(out, this.profiles.get(platform) ?? {});      // 3 平台 profile
+    if (platform) Object.assign(out, this.profiles.get(platform) ?? {});
     const s = this.sessions.get(sessionId);
-    if (s?.parentId) Object.assign(out, this.sessions.get(s.parentId)?.config.sessionDefaults ?? {}); // 2
-    if (s) Object.assign(out, s.config);                                       // 1 会话自身（最高）
-    delete out.sessionDefaults;                                                // 必删
+    if (s?.parentId) Object.assign(out, this.sessions.get(s.parentId)?.config.sessionDefaults ?? {});
+    if (s) Object.assign(out, s.config);
+    delete out.sessionDefaults;
     return out;
   }
-  // getSession / listSessions / updateSession / createChildSession /
-  // completeSession / getPlatformProfiles ... 同理实现
+  resolveInheritedDefaults(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'> {
+    const out: Record<string, unknown> = {};
+    if (platform) Object.assign(out, this.profiles.get(platform) ?? {});
+    const s = this.sessions.get(sessionId);
+    if (s?.parentId) Object.assign(out, this.sessions.get(s.parentId)?.config.sessionDefaults ?? {});
+    delete out.sessionDefaults;
+    return out;
+  }
+  getPlatformProfiles(): Record<string, PlatformProfile> {
+    return Object.fromEntries(this.profiles);
+  }
+  getDefaults(): Omit<SessionConfig, 'sessionDefaults'> {
+    return {};
+  }
+  async generateTitle(sessionId: string, userMessage?: string) {
+    void sessionId;
+    void userMessage;
+    return undefined;
+  }
+  async updateSessionTitle(sessionId: string, title: string) {
+    const s = this.sessions.get(sessionId);
+    if (s) s.title = title;
+  }
 }
 
 export default definePlugin({
   name: '@me/plugin-session-manager',
-  uses: { memory, llm: optional(llm), persona: optional(persona) },
-  apply({ provide, events, hooks, lifecycle, logger, memory }) {
-  if (memory.current === undefined) { logger.error('需要 memory 服务'); return; }
-  const mgr = new MySessionManager();
-  provide(sessionManager, mgr, {
-    label: '会话管理',
-    // 若要压过参考实现：priority 高于默认 0，或让 owner 用 preferService 选你
-    priority: 50,
-  });
-},
+  provides: [sessionManager],
+  uses: { provide, events, logger, memory, llm: optional(llm), persona: optional(persona) },
+  apply({ provide, events, logger, memory, llm, persona }) {
+    void llm;
+    void persona;
+    if (memory.current === undefined) {
+      logger.error('需要 memory 服务');
+      return;
+    }
+    const mgr = new MySessionManager();
+    mgr.events = events;
+    provide(sessionManager, mgr, { label: '会话管理', priority: 50 });
+  },
 });
 ```
 
@@ -288,7 +382,7 @@ LLM 选择、persona、工具分组、是否结构化输出全部从这里来。
 
 ### 7.3 持久化是延迟刷盘 + 拆卸落盘
 
-写操作走 `markDirty()` → 1s 防抖刷盘；插件拆卸时（停机 / bounce / unload / 配置更新）经 `lifecycle.onDispose(() => manager.shutdown())` 强制落盘（`shutdown()` 幂等：清定时器 + 置 dirty + `persist()`）（`plugin-session-manager/src/index.ts`）。session-manager 对 memory 是普通依赖：关停以激活为单位分 drain / close，消费者整个 close 完提供者才 drain，因此 **`onDispose` 落盘期间 memory 仍在**。该保证只在双方同进一张计划时成立（`App.stop()` 先冻结再发 `app:stopping` 再执行计划）；单独卸载 / 禁用 memory 没有交接保证，`shutdown()` 会失败（丢最后一个防抖窗口的元数据）。依赖交接应放 `onDrain`——本插件落盘用的是自己的依赖而不是交出自己提供的服务，放在 `onDispose` 与「消费者 close 期间依赖仍可用」一致。崩溃（非正常退出）可能丢失最后 ~1s 的会话元数据变更。重写 provider 时若要更强一致性，请在关键写操作后同步落盘。
+写操作走 `markDirty()` → 1s 防抖刷盘。`App.stop()` / bounce / unload 时：`lifecycle.onDrain` 调用 `settleActiveOnDrain()`，把仍为 `active` 的会话收口为 `completed` 并立刻落盘（`waiting` / 已终态不动；不依赖 agent 钩子）。随后 `lifecycle.onDispose(() => manager.shutdown())` 再刷一次（`shutdown()` 幂等：清定时器 + 置 dirty + `persist()`）（`plugin-session-manager/src/index.ts`）。session-manager 对 memory 是普通依赖：关停以激活为单位分 drain / close，消费者整个 close 完提供者才 drain，因此 drain / `onDispose` 落盘期间 memory 仍在。该保证只在双方同进一张计划时成立（`App.stop()` 先冻结再发 `app:stopping` 再执行计划）；单独卸载 / 禁用 memory 没有交接保证，落盘会失败（丢最后一个防抖窗口的元数据）。崩溃（非正常退出）可能丢失最后 ~1s 的会话元数据变更。重写 provider 时若要更强一致性，请在关键写操作后同步落盘。
 
 ## 8. 交叉链接
 
