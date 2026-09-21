@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type ProcessService, processService } from '../../packages/api-process/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { assemble } from '../../packages/core/src/context/binding.js';
 import {
   App,
   config,
@@ -15,7 +14,7 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
-import { rootActivation } from '../../packages/core/src/orchestration/app.js';
+import { activationHost, rootActivation } from '../../packages/core/src/orchestration/app.js';
 import type { PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 
@@ -199,10 +198,10 @@ describe('资源身份：同名不同激活互不清扫', () => {
     const { app, host } = world();
     const instance = makeHub();
     host.provide(hub, instance);
-    const left = rootActivation(app).fork('dup');
-    const right = rootActivation(app).fork('dup');
-    assemble(left, { hub }).hub.register({ name: 'from-left' });
-    assemble(right, { hub }).hub.register({ name: 'from-right' });
+    const left = activationHost(app).create(rootActivation(app), 'dup');
+    const right = activationHost(app).create(rootActivation(app), 'dup');
+    activationHost(app).bind(left, { hub }).hub.register({ name: 'from-left' });
+    activationHost(app).bind(right, { hub }).hub.register({ name: 'from-right' });
     expect(instance.list()).toEqual(['from-left', 'from-right']);
     await left.disposeAsync();
     expect(instance.list(), '撤回按这次激活的句柄，不按 id 字符串').toEqual(['from-right']);
@@ -256,8 +255,8 @@ describe('子模块：重新绑定与父子关闭', () => {
     expect(instance.list(), '关子不动父的登记').toEqual(['parent-item']);
 
     // 再挂一个子，然后关父：级联。公开条目没有激活记录，挂载口是父激活的 lifecycle.module
-    const parentCtx = (app.plugins.getPlugin('parent') as PluginRecord).context!;
-    await assemble(parentCtx, { lifecycle }).lifecycle.module(child);
+    const parentActivation = (app.plugins.getPlugin('parent') as PluginRecord).activation!;
+    await activationHost(app).bind(parentActivation, { lifecycle }).lifecycle.module(child);
     expect(instance.list()).toEqual(['child-item', 'parent-item']);
     await app.plugins.unload('parent');
     expect(instance.list()).toEqual([]);
@@ -446,8 +445,8 @@ describe('失败回滚', () => {
     const { app, host } = world();
     const instance = makeHub();
     host.provide(hub, instance);
-    const ctx = rootActivation(app).fork('p');
-    const bound = assemble(ctx, { hub }).hub;
+    const activation = activationHost(app).create(rootActivation(app), 'p');
+    const bound = activationHost(app).bind(activation, { hub }).hub;
     expect(() => bound.register({ name: 'bad', failOnRegister: true })).toThrow('拒绝登记');
     const second = makeHub('second');
     host.provide(hub, second, { priority: 9, entryId: 'root/second' });
@@ -494,14 +493,14 @@ describe('关闭契约', () => {
     const { app, host } = world();
     const instance = makeHub();
     host.provide(hub, instance);
-    const ctx = rootActivation(app).fork('p');
-    const bound = assemble(ctx, { hub }).hub;
+    const activation = activationHost(app).create(rootActivation(app), 'p');
+    const bound = activationHost(app).bind(activation, { hub }).hub;
     const off = bound.register({ name: 'manual', off: 'slow' });
     bound.register({ name: 'replaced', off: 'slow' });
     bound.register({ name: 'replaced' }); // 同键替换：旧登记的慢撤回在飞
     off();
     expect(instance.settled).toEqual([]);
-    await ctx.disposeAsync();
+    await activation.disposeAsync();
     expect(instance.settled.sort()).toEqual(['manual', 'replaced']);
     expect(instance.list()).toEqual([]);
   });
@@ -545,14 +544,14 @@ describe('关闭契约', () => {
     const { app, host } = world();
     const instance = makeHub();
     host.provide(hub, instance);
-    const ctx = rootActivation(app).fork('p');
-    const bound = assemble(ctx, { hub }).hub;
+    const activation = activationHost(app).create(rootActivation(app), 'p');
+    const bound = activationHost(app).bind(activation, { hub }).hub;
     const oldOff = bound.register({ name: 'x' });
     bound.register({ name: 'x' });
     oldOff();
     expect(instance.list()).toEqual(['x']);
-    await Promise.all([ctx.disposeAsync(), ctx.disposeAsync()]);
-    ctx.dispose();
+    await Promise.all([activation.disposeAsync(), activation.disposeAsync()]);
+    activation.dispose();
     expect(instance.list()).toEqual([]);
   });
 });

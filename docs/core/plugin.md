@@ -46,7 +46,7 @@ register(definition, config?, instanceId?)
   ├─ 创建 PluginEntry（状态 = pending 或配置禁用则为 disabled）
   ├─ 从 uses 抽出 required / optional
   └─ recompute('changed')
-        required 已满足 → 激活（fork 内部激活、mountDefinition、校验 provides）
+        required 已满足 → 激活（ActivationHost.create → mount：装配能力并调用 apply → 校验 provides）
         否则保持 pending，等待 service:registered
 ```
 
@@ -76,7 +76,7 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 `computeTargetState`：`disabled` / `disposed` / `error` 是显式态，recompute 不动它们；required 不满足 → `pending`；其余 → `active`。optional 依赖的上下线不改变目标态：绑定接口每次查询解析当前值，有状态的接线经 `follow` 跟随提供者换人，不靠重启插件。
 
-`softReload()` 是 `recompute('changed')` 的薄壳；`stopAll()` 是 `recompute('shutdown')` 的薄壳。`App.stop()` 单飞：先 `beginShutdown()`（置停机态并冻计划）再 `idle()`，然后发 `app:stopping`，最后 `stopAll()` 执行 drain / close。停机进行中 `register` / `bounce` 返回 false；`unload` / `disable` 汇入已冻计划后立即返回 true。`app:stopping` 监听器内再调 `stop()` 立即返回已兑现 Promise 并 warn，不要当成停机已完成。
+`softReload()` 是 `recompute('changed')` 的薄壳；`stopAll()` 是 `recompute('shutdown')` 的薄壳。`App.stop()` 单飞：先 `beginShutdown()`（置停机态并冻计划）再 `idle()`，然后发 `app:stopping`，最后 `stopAll()` 执行 drain / close。停机进行中 `register` / `bounce` 返回 false；`unload` / `disable` 汇入已冻计划后立即返回 true。每次 `stop()` 都返回完整停机的同一 Promise；`app:stopping` 监听器与清理回调不能 await 或返回它，以免等待自身。
 
 停机时全部 active 插件与宿主的根激活进同一张关停计划（无依赖关系时后注册的先关）。每个激活 drain 后 close；边规则见 [插件定义与能力](context.md)。单插件 `unload` / `disable` / `bounce` 只拆该插件及其子树，不享有整次 `App.stop()` 的交接保证；其下游在下一轮 recompute 才按目标态降级。
 
