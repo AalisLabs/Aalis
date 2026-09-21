@@ -23,9 +23,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 //
 // 为什么只对 test/ 的诊断失败：`include: ["test"]` 只列举测试文件，但测试 import 的包源码
 // 会被**牵连**进同一个 program，被迫接受这里的 compilerOptions —— 而各包 lib 本就不同
-// （plugin-tool-browser 声明 DOM 因为它在 page.evaluate 里用 document；plugin-adapter-onebot
-// 不声明，而 DOM 下 `BufferSource` 是另一个类型，Node 的 Buffer 不满足它）。单一配置**天然**
-// 满足不了两者。这些包各自的正确性由 `pnpm -r build` 按它们自己的 tsconfig 保证，已有闸。
+// （例如浏览器页面脚本需要 DOM，而 Node 插件可以不声明它）。共享配置不替代各包的编译边界。这些包各自的正确性由 `pnpm -r build` 按它们自己的 tsconfig 保证，已有闸。
 // 源码在这里只是依赖，不是检查对象——但**过滤不等于不看**，它们仍打印出来。
 //
 // 曾经的错误做法：为了让这道闸变绿去改生产源码（给 crypto.subtle.digest 的入参加
