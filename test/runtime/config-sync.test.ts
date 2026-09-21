@@ -141,7 +141,7 @@ describe('syncPluginDefaults 政策', () => {
 });
 
 describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () => {
-  it('watch 推送的快照在热重载时按 trimUnknownFields 裁剪 schema 外字段', async () => {
+  it('watch 推送的快照裁剪 schema 外字段并 bounce：apply 重跑且内置 config 拿到新值', async () => {
     let pushSnapshot: ((next: Record<string, unknown>) => void) | undefined;
     const app = new App({
       config: { name: 'T', logLevel: 'error', plugins: { p1: { known: 1 } } },
@@ -153,17 +153,39 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
         },
       },
     });
-    await app.plugin(p1Module);
+    let applies = 0;
+    let seen: Readonly<Record<string, unknown>> | undefined;
+    const mod = definePlugin({
+      name: 'p1',
+      configSchema: { known: { type: 'number', label: 'K', default: 0 } },
+      uses: { config },
+      apply({ config: cfg }) {
+        applies++;
+        seen = cfg;
+      },
+    });
+    await app.plugin(mod);
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('p1')?.state).toBe('active');
+    expect(applies).toBe(1);
+    expect(seen).toEqual({ known: 1 });
+
     await app.start();
     installConfigHotReload(app);
 
     // 模拟外部把 schema 外字段写进配置文件
     pushSnapshot?.({ name: 'T', logLevel: 'error', plugins: { p1: { known: 2, sneaky: true } } });
-    // 热重载是异步链（watch 回调 → handleConfigChanged → bounce）
-    await new Promise(r => setTimeout(r, 20));
+    // watch 回调同步进入 handleConfigChanged；bounce 在首个 await 前已抬 suspendDepth，idle 等到重建落定
+    await app.plugins.idle();
 
-    // 政策默认裁剪：sneaky 不应留在内存态
+    // 政策默认裁剪：sneaky 不应留在内存态（syncPluginDefaults 已写 ConfigManager）
     expect(configOf(app).getPluginConfig('p1')).toEqual({ known: 2 });
+    // 只钉 ConfigManager 会假绿：去掉 updateConfig 后同步政策仍会 setPluginConfig。
+    // apply 次数与内置 config（即这次激活的 entry.config）才证明插件被重建且拿到新值。
+    expect(applies).toBe(2);
+    expect(seen).toEqual({ known: 2 });
+    expect(app.plugins.getPlugin('p1')?.config).toEqual({ known: 2 });
+    expect(app.plugins.getPlugin('p1')?.state).toBe('active');
     await app.stop();
   });
 });
