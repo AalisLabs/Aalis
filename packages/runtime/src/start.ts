@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { App, events, type PluginLoader, services } from '@aalis/core';
 import { defaultsFrom } from '@aalis/schema-config';
 import { installBootstrapBuffer } from './bootstrap-buffer.js';
-import { type ConfigSyncOptions, installConfigHotReload, syncPluginDefaults } from './config-sync.js';
+import { type ConfigSyncOptions, installConfigHotReload, withPluginConfigSync } from './config-sync.js';
 import { type ConsoleSinkHandle, installConsoleSink } from './console-sink.js';
 import { appendCrashLog, DEFAULT_LOG_FILE, type FileLoggerHandle, setupFileLogger } from './file-logger.js';
 import { createNodeModulesPluginLoader } from './node-modules-loader.js';
@@ -130,11 +130,16 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
 
   // ── 组装 App：从 YAML 加载配置、按 loader 加载插件、用 spawn 重启 ──
   const { config, provider, dataDir } = createFsYamlConfigProvider(opts.configPath);
+  const configLoader = withPluginConfigSync(
+    opts.pluginLoader ?? createNodeModulesPluginLoader(opts.projectDir),
+    () => app,
+    opts.configSync,
+  );
   const app = new App({
     config,
     configProvider: provider,
     dataDir,
-    pluginLoader: opts.pluginLoader ?? createNodeModulesPluginLoader(opts.projectDir),
+    pluginLoader: configLoader.loader,
     // 默认值从 configSchema 派生（唯一声明来源）；core 不认识配置词汇，只调这个函数。
     pluginDefaults: m => defaultsFrom(m.configSchema),
     // 子命令进程没有重启能力，不注入策略：`app.restart()` 按 core 语义抛「不可用」，指令层折成失败文案。
@@ -154,12 +159,13 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   // 不变量①：App 构造完成后再让 sink 监听终端归属事件——此前没有事件总线可订阅。
   consoleHandle.bindEvents(host.events);
 
-  await app.autoLoadPlugins();
-
-  // 配置同步政策：defaultConfig 回填 + 按 schema 裁剪未知字段，有变化则落盘。
-  const synced = syncPluginDefaults(app, opts.configSync);
-  for (const id of synced) app.logger.debug(`同步插件配置: ${id}`);
-  if (synced.length > 0) app.logger.info('已将插件配置同步到配置文件');
+  try {
+    // 每个定义交给 Core 前已经规范化；首次 apply 与配置快照用同一份字段。
+    await app.autoLoadPlugins();
+  } finally {
+    // 即使后续加载失败，也保存本批已完成的规范化；不启动第二轮 bounce。
+    configLoader.finishInitialLoad();
+  }
 
   // ── 不变量②：子命令短路在 app.start 之前 ──
   // `aalis <name> [args...]` 等价于聊天里 `/<name> args...`：命中则执行返回串，未命中则报错，
