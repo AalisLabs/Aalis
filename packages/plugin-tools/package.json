@@ -43,6 +43,10 @@
     "service": {
       "provides": [
         "tools"
+      ],
+      "required": [
+        "logger",
+        "provide"
       ]
     }
   }

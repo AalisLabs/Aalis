@@ -50,6 +50,9 @@
   "aalis": {
     "service": {
       "required": [
+        "config",
+        "lifecycle",
+        "logger",
         "storage",
         "tools"
       ],

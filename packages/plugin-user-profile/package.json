@@ -51,8 +51,14 @@
   "aalis": {
     "service": {
       "required": [
+        "config",
+        "contributions",
+        "events",
+        "hooks",
+        "llm",
+        "logger",
         "memory",
-        "llm"
+        "services"
       ],
       "optional": [
         "user-relation",

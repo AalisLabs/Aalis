@@ -48,8 +48,14 @@
   "aalis": {
     "service": {
       "required": [
-        "vectorstore",
-        "embedding"
+        "config",
+        "contributions",
+        "embedding",
+        "events",
+        "hooks",
+        "logger",
+        "provide",
+        "vectorstore"
       ],
       "optional": [
         "memory",

@@ -42,7 +42,9 @@
   "aalis": {
     "service": {
       "required": [
-        "process"
+        "logger",
+        "process",
+        "provide"
       ],
       "provides": [
         "code-sandbox"

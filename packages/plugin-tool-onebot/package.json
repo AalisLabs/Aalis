@@ -51,6 +51,12 @@
         "storage",
         "media",
         "session-history"
+      ],
+      "required": [
+        "config",
+        "events",
+        "lifecycle",
+        "logger"
       ]
     }
   }

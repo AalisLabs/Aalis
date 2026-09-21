@@ -47,8 +47,13 @@
   "aalis": {
     "service": {
       "required": [
-        "tools",
-        "cron-engine"
+        "config",
+        "cron-engine",
+        "events",
+        "lifecycle",
+        "logger",
+        "provide",
+        "tools"
       ],
       "optional": [
         "storage",

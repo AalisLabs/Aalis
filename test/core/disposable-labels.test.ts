@@ -40,18 +40,20 @@ describe('门面注册自动标签', () => {
 
   it('onDispose 作者标签保留，未命名项以 undefined 占位', () => {
     const ctx = makeFixture('p');
+    const baseline = ctx.activation.resources.lifecycle.disposables.labels();
     ctx.caps.lifecycle.onDispose(() => {}, 'mongo-client');
     ctx.caps.lifecycle.onDispose(() => {});
-    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual(['mongo-client', undefined]);
+    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual([...baseline, 'mongo-client', undefined]);
     ctx.activation.dispose();
   });
 
   it('手动退订自摘：名单同步缩短（自移除语义不回归）', () => {
     const ctx = makeFixture('p');
+    const baseline = ctx.activation.resources.lifecycle.disposables.labels();
     const off = ctx.caps.events.on(EVT, () => {});
-    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual(['on:__t:evt']);
+    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual([...baseline, 'on:__t:evt']);
     off();
-    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual([]);
+    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual(baseline);
     ctx.activation.dispose();
   });
 
@@ -79,6 +81,7 @@ describe('贡献登记表枚举', () => {
   });
   it('onDispose 同一函数登记两次：撤销精确到本次登记，余下条目的逆序不翻转', () => {
     const ctx = makeFixture('dup');
+    const baseline = ctx.activation.resources.lifecycle.disposables.labels();
     const log: string[] = [];
     const fn = () => {
       log.push('fn');
@@ -90,7 +93,7 @@ describe('贡献登记表枚举', () => {
     const off = ctx.caps.lifecycle.onDispose(fn, 'second');
     off();
     off(); // 幂等
-    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual(['first', 'mid']);
+    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual([...baseline, 'first', 'mid']);
     ctx.activation.dispose();
     // 链按引用首匹配移除：若撤销错项（删掉 first），余下 [mid, second] 逆序执行就成了 fn→mid
     expect(log).toEqual(['mid', 'fn']);

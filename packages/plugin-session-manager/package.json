@@ -50,7 +50,13 @@
   "aalis": {
     "service": {
       "required": [
-        "memory"
+        "config",
+        "events",
+        "hooks",
+        "lifecycle",
+        "logger",
+        "memory",
+        "provide"
       ],
       "optional": [
         "agent",

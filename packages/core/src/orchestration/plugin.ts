@@ -3,7 +3,7 @@ import { type PluginEntry, type PluginState, parseInstanceId } from '../types/pl
 
 import { reportQuietly } from '../kernel/disposable-chain.js';
 
-import { isBuiltin, isOptional, optionalNames, requiredNames, type Uses } from '../context/binding.js';
+import { isOptional, optionalNames, requiredNames, type Uses } from '../context/binding.js';
 import { events } from '../context/builtins.js';
 import type { ConfigManager } from '../context/config.js';
 import { assertValidInstanceId, type PluginDefinition, validateDefinition } from '../context/definition.js';
@@ -341,7 +341,7 @@ export class PluginManager implements PluginManagerService {
           return {
             key,
             service: descriptor.name,
-            kind: isBuiltin(descriptor) ? 'builtin' : optional ? 'optional' : 'required',
+            kind: optional ? 'optional' : 'required',
           };
         },
       ),

@@ -21,7 +21,7 @@ export type {
 export { type ContributionHandle, ContributionRegistry, type ContributionSpec } from './primitives/contributions.js';
 export { EventBus } from './primitives/events.js';
 export { HookRegistry } from './primitives/hooks.js';
-export { ServiceContainer, type ServiceView } from './primitives/services.js';
+export { ServiceContainer, type ServiceInfo, type ServiceView } from './primitives/services.js';
 
 // ----- 服务描述符与按激活绑定 -----
 export {
@@ -64,6 +64,7 @@ export {
   type Logger,
   LogHub,
 } from './context/logger.js';
+export { type ServiceFactory, type ServiceScope, serviceFactory } from './context/service-factory.js';
 
 // ----- 编排层：应用骨架与插件管理 -----
 export { App, type AppOptions, createApp } from './orchestration/app.js';

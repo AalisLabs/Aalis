@@ -271,7 +271,7 @@ function createService(caps: Caps): PackageManagerService {
     recoveryChannelProviders: () => [
       ...new Set(
         ['webui-client', 'webui-server', packageManager.name].flatMap(service => {
-          const id = caps.services.all(service)[0]?.contextId;
+          const id = caps.services.inspect(service)[0]?.contextId;
           return id ? [id] : [];
         }),
       ),

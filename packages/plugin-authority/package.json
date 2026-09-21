@@ -57,6 +57,11 @@
       ],
       "provides": [
         "authority"
+      ],
+      "required": [
+        "lifecycle",
+        "logger",
+        "provide"
       ]
     }
   }

@@ -1,10 +1,9 @@
 // ============================================================
 // builtins.ts — 核心内置能力的描述符
 //
-// 与第三方能力统一的是声明与装配入口：插件在 uses 里写描述符，apply 拿到按激活绑定的接口；
-// 没有默认注入，用到什么写什么。来源与替换规则仍不同——内置能力绑的是这次激活自身的运行
-// 基础设施（事件总线、容器、清理链），不经容器解析、不可被 provide 替换，也不参与激活闸。
-// 不声明 lifecycle / logger 不影响框架对这次激活的管理：登记归属、撤回与关闭都照常。
+// 所有服务都在容器中登记，并经描述符 bind 装配。默认服务使用公开的 serviceFactory，
+// 按消费者激活生成门面；exclusive 是所有提供者都能使用的登记策略，不是描述符特权。
+// 不声明 lifecycle / logger 不影响框架对本次激活的资源管理。
 // ============================================================
 
 import type { ContributionPointMap } from '../types/contributions.js';
@@ -12,12 +11,13 @@ import type { AalisEvents } from '../types/events.js';
 import type { HookContextMap, MiddlewareFn } from '../types/hooks.js';
 
 import type { ContributionHandle, ContributionSpec } from '../primitives/contributions.js';
-import type { ServiceView } from '../primitives/services.js';
+import type { ServiceInfo, ServiceView } from '../primitives/services.js';
 
-import type { ProviderOf, ServiceDescriptor } from './binding.js';
-import { builtinService, type CapabilityScope } from './capabilities.js';
+import { defineService, type ProviderOf, type ServiceDescriptor } from './binding.js';
+import type { CapabilityRuntime } from './capabilities.js';
 import type { PluginDefinition } from './definition.js';
 import type { Logger } from './logger.js';
+import { type ServiceFactory, type ServiceScope, serviceFactory } from './service-factory.js';
 import { validateProvide } from './service-helpers.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
@@ -25,6 +25,8 @@ type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<vo
 /** `provide` 的登记选项 */
 export interface ProvideOptions {
   priority?: number;
+  /** Reject other providers of this name while this registration exists. */
+  exclusive?: boolean;
   /** 展示名（服务页下拉等） */
   label?: string;
   /** 一个激活登记多条时的子粒度 id，须以本激活 id 为前缀（`${id}/${子粒度}`） */
@@ -48,8 +50,8 @@ export interface ModuleHandle {
   disposeAsync(timeoutMs?: number): Promise<void>;
 }
 
-function accepts(scope: CapabilityScope, operation: string): boolean {
-  if (!scope.resources.lifecycle.disposed) return true;
+function accepts(scope: ServiceScope, operation: string): boolean {
+  if (!scope.closed) return true;
   scope.logger.warn(`激活 "${scope.id}" 已 dispose，忽略 ${operation}`);
   return false;
 }
@@ -61,11 +63,10 @@ export interface Events {
   emit<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): Promise<void>;
 }
 
-export const events = builtinService<Events>('events', (scope, { events: bus }) => ({
+export const events = defineService<Events, Events>('events', port => port.require());
+const createEvents = factory<Events>(events, (scope, { events: bus }) => ({
   on: (event, handler) =>
-    accepts(scope, `on("${event}")`)
-      ? scope.resources.trackDisposable(bus.on(event, handler, scope.owner), `on:${event}`)
-      : () => {},
+    accepts(scope, `on("${event}")`) ? scope.track(bus.on(event, handler, scope.identity), `on:${event}`) : () => {},
   emit: (event, ...args) => bus.emit(event, ...args),
 }));
 
@@ -83,10 +84,11 @@ export interface Hooks {
   ): Promise<boolean>;
 }
 
-export const hooks = builtinService<Hooks>('hooks', (scope, { hooks: registry }) => ({
+export const hooks = defineService<Hooks, Hooks>('hooks', port => port.require());
+const createHooks = factory<Hooks>(hooks, (scope, { hooks: registry }) => ({
   middleware: (hook, fn) =>
     accepts(scope, `middleware("${hook}")`)
-      ? scope.resources.trackDisposable(registry.register(hook, fn, scope.id, scope.owner), `middleware:${hook}`)
+      ? scope.track(registry.register(hook, fn, scope.id, scope.identity), `middleware:${hook}`)
       : () => {},
   run: (hook, data, defaultAction, opts) => registry.run(hook, data, defaultAction, opts),
 }));
@@ -105,15 +107,16 @@ export interface Contributions {
   ): ReadonlyArray<ContributionHandle<ContributionPointMap[K] & ContributionSpec>>;
 }
 
-export const contributions = builtinService<Contributions>('contributions', (scope, { contributions: registry }) => {
+export const contributions = defineService<Contributions, Contributions>('contributions', port => port.require());
+const createContributions = factory<Contributions>(contributions, (scope, { contributions: registry }) => {
   const entries = new Map<string, () => void>();
   return {
     contribute(point, spec) {
       if (!accepts(scope, `contribute("${point}")`)) return () => {};
       const key = `${point}\u0000${(spec as ContributionSpec).id}`;
       entries.get(key)?.();
-      const rawOff = registry.register(point, spec, scope.id, scope.owner);
-      const off = scope.resources.trackDisposable(
+      const rawOff = registry.register(point, spec, scope.id, scope.identity);
+      const off = scope.track(
         () => {
           if (entries.get(key) === off) entries.delete(key);
           rawOff();
@@ -153,22 +156,28 @@ export interface LifecycleCap {
   module(definition: PluginDefinition, config?: Record<string, unknown>): Promise<ModuleHandle>;
 }
 
-export const lifecycle = builtinService<LifecycleCap>('lifecycle', scope => ({
+export const lifecycle = defineService<LifecycleCap, LifecycleCap>('lifecycle', port => port.require());
+const createLifecycle = factory<LifecycleCap>(lifecycle, scope => ({
   id: scope.id,
   get closed() {
-    return scope.resources.lifecycle.disposed;
+    return scope.closed;
   },
-  onDrain: (fn, label) => scope.resources.onDrain(fn, label),
-  onDispose: (fn, label) => scope.resources.onDispose(fn, label),
+  onDrain: (fn, label) => scope.onDrain(fn, label),
+  onDispose: (fn, label) => scope.onDispose(fn, label),
   module: (definition, config) => scope.module(definition, config),
 }));
 
 // ----- logger / config -----
 
-export const logger = builtinService<Logger>('logger', scope => scope.logger);
+export const logger = defineService<Logger, Logger>('logger', port => port.require());
+const createLogger = factory<Logger>(logger, scope => scope.logger);
 
 /** 插件自己的配置视图（只读）。宿主级的配置管理是另一项能力，不默认发给插件。 */
-export const config = builtinService<Readonly<Record<string, unknown>>>('config', scope => scope.config);
+export const config = defineService<Readonly<Record<string, unknown>>, Readonly<Record<string, unknown>>>(
+  'config',
+  port => port.require(),
+);
+const createConfig = factory<Readonly<Record<string, unknown>>>(config, scope => scope.config);
 
 // ----- services（提供与动态查找）-----
 
@@ -183,11 +192,12 @@ type AnyDescriptor = ServiceDescriptor<any, any>;
  */
 export type Provide = <D extends AnyDescriptor>(
   descriptor: D,
-  implementation: ProviderOf<D>,
+  implementation: ProviderOf<D> | ServiceFactory<ProviderOf<D>>,
   options?: ProvideOptions,
 ) => () => void;
 
-export const provide = builtinService<Provide>('provide', (scope, runtime) => (descriptor, implementation, options) => {
+export const provide = defineService<Provide, Provide>('provide', port => port.require());
+const createProvide = factory<Provide>(provide, (scope, runtime) => (descriptor, implementation, options) => {
   const name = descriptor.name;
   if (!accepts(scope, `provide("${name}")`)) return () => {};
   if (implementation === null || implementation === undefined) throw new Error('provide 的实现不能为空');
@@ -200,8 +210,8 @@ export const provide = builtinService<Provide>('provide', (scope, runtime) => (d
       { ctxId: scope.id, name, entryId, explicitEntryId: options?.entryId !== undefined },
       { services: runtime.services, logger: scope.logger },
     );
-  const off = runtime.services.register(name, implementation, entryId, scope.owner, options);
-  const dispose = scope.resources.trackDisposable(
+  const off = runtime.services.register(name, implementation, entryId, scope.identity, options);
+  const dispose = scope.track(
     () => {
       if (off()) runtime.notify('service:unregistered', name);
     },
@@ -227,16 +237,24 @@ export interface Services {
   all<K extends ServiceKey>(key: K): ServiceView<KeyedProvider<K>>[];
   /** 当前已注册的全部服务名 */
   names(): string[];
+  /** Provider metadata only; does not construct activation-scoped instances. */
+  inspect(key: ServiceKey): ServiceInfo[];
   /** 某服务当前的偏好提供者（contextId）；无偏好为 undefined */
   preferred(key: ServiceKey): string | undefined;
   prefer(key: ServiceKey, contextId: string): boolean;
   unprefer(key: ServiceKey): boolean;
 }
 
-export const services = builtinService<Services>('services', (_scope, runtime) => ({
-  get: key => runtime.services.get(keyName(key)),
-  all: key => runtime.services.getAll(keyName(key)),
+export const services = defineService<Services, Services>('services', port => port.require());
+const createServices = factory<Services>(services, (scope, runtime, resolve) => ({
+  get: <K extends ServiceKey>(key: K) =>
+    resolve(scope, keyName(key), runtime.services.get(keyName(key))) as KeyedProvider<K> | undefined,
+  all: <K extends ServiceKey>(key: K) =>
+    runtime.services
+      .getAll(keyName(key))
+      .map(entry => ({ ...entry, instance: resolve(scope, keyName(key), entry.instance) as KeyedProvider<K> })),
   names: () => runtime.services.getServiceNames(),
+  inspect: key => runtime.services.inspect(keyName(key)),
   preferred: key => runtime.services.getPreferred(keyName(key)),
   prefer: (key, contextId) => {
     const ok = runtime.services.prefer(keyName(key), contextId);
@@ -249,3 +267,42 @@ export const services = builtinService<Services>('services', (_scope, runtime) =
     return ok;
   },
 }));
+
+type Resolve = (scope: ServiceScope, name: string, provider: unknown) => unknown;
+function factory<T>(
+  descriptor: ServiceDescriptor<T, unknown>,
+  create: (scope: ServiceScope, runtime: CapabilityRuntime, resolve: Resolve) => T,
+) {
+  return { name: descriptor.name, create };
+}
+
+/** Bootstrap registration uses the same container and factory protocol as third-party services. */
+export function registerCoreServices(runtime: CapabilityRuntime, owner: symbol, resolve: Resolve): void {
+  const factories = [
+    createEvents,
+    createHooks,
+    createContributions,
+    createLifecycle,
+    createLogger,
+    createConfig,
+    createProvide,
+    createServices,
+  ];
+  const registered: Array<() => boolean> = [];
+  try {
+    for (const entry of factories) {
+      registered.push(
+        runtime.services.register(
+          entry.name,
+          serviceFactory<unknown>(scope => entry.create(scope, runtime, resolve)),
+          'root',
+          owner,
+          { exclusive: true },
+        ),
+      );
+    }
+  } catch (error) {
+    for (const off of registered.reverse()) off();
+    throw error;
+  }
+}

@@ -45,7 +45,11 @@
   "aalis": {
     "service": {
       "required": [
-        "memory"
+        "config",
+        "events",
+        "logger",
+        "memory",
+        "provide"
       ],
       "optional": [
         "media"

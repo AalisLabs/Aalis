@@ -44,6 +44,11 @@
     "service": {
       "provides": [
         "memory"
+      ],
+      "required": [
+        "config",
+        "logger",
+        "provide"
       ]
     }
   }

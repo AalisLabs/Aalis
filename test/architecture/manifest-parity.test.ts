@@ -21,17 +21,17 @@ import type { PluginDefinition } from '../../packages/core/src/index.js';
 //
 // 对账源是 definePlugin 的产物：provides 取描述符 .name；uses 经
 // core 自己的 requiredNames / optionalNames 展开（optional() 包装
-// 与内置能力排除都走同一套归一化，不在测试里猜结构）。
+// 也走同一套归一化，不在测试里猜结构）。
 // ════════════════════════════════════════════════════════════
 
 const PACKAGES = join(__dirname, '../../packages');
 
 /**
- * 内置能力不算服务依赖：与 builtins.ts 导出的描述符集合对齐。
+ * 核心默认服务与 builtins.ts 导出的描述符集合对齐，和第三方共同参与依赖声明。
  * 增删内置能力必须同步更新本清单。host-config / app / plugins 是
  * 宿主管理面的普通服务，不在此列。
  */
-const BUILTIN_CAPABILITY_NAMES = [
+const CORE_SERVICE_NAMES = [
   'config',
   'contributions',
   'events',
@@ -52,11 +52,12 @@ function isDefinition(value: unknown): value is PluginDefinition {
 }
 
 describe('manifest 双源对账', () => {
-  it('排除集合与 builtins.ts 描述符 name 一致', () => {
+  it('核心服务均进入与第三方相同的 required / optional 提取', () => {
     const fromModule = [config, contributions, events, hooks, lifecycle, logger, provide, services]
       .map(d => d.name)
       .sort();
-    expect([...BUILTIN_CAPABILITY_NAMES].sort()).toEqual(fromModule);
+    expect([...CORE_SERVICE_NAMES].sort()).toEqual(fromModule);
+    expect(requiredNames({ config, contributions, events, hooks, lifecycle, logger, provide, services }).sort()).toEqual(fromModule);
   });
 
   it('全部 aalis-plugin 包的 aalis.service 与 default 定义的 provides/uses 一致', async () => {

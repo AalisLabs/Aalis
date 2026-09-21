@@ -49,7 +49,10 @@
         "asr"
       ],
       "required": [
+        "config",
+        "logger",
         "process",
+        "provide",
         "storage"
       ]
     }
