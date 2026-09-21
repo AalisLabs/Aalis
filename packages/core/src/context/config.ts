@@ -1,4 +1,4 @@
-import { isUnsafeConfigKey } from './safe-keys.js';
+import { assertSafePluginId, cloneConfigObject, isUnsafeConfigKey } from './safe-keys.js';
 
 /**
  * Aalis 应用配置（基础设施字段）
@@ -116,7 +116,10 @@ export class ConfigManager {
   }
 
   getPluginConfig<T extends Record<string, unknown> = Record<string, unknown>>(instanceId: string): T {
-    return (this.config.plugins[instanceId] ?? {}) as T;
+    assertSafePluginId(instanceId);
+    const plugins = this.config.plugins;
+    if (!Object.hasOwn(plugins, instanceId)) return {} as T;
+    return plugins[instanceId] as T;
   }
 
   /**
@@ -136,18 +139,23 @@ export class ConfigManager {
   }
 
   setPluginConfig(instanceId: string, config: Record<string, unknown>): void {
+    assertSafePluginId(instanceId);
     this.config.plugins[instanceId] = config;
   }
 
   removePluginConfig(instanceId: string): void {
+    assertSafePluginId(instanceId);
+    if (!Object.hasOwn(this.config.plugins, instanceId)) return;
     delete this.config.plugins[instanceId];
   }
 
   isPluginDisabled(instanceId: string): boolean {
+    assertSafePluginId(instanceId);
     return (this.config.disabledPlugins ?? []).includes(instanceId);
   }
 
   setPluginEnabled(instanceId: string, enabled: boolean): void {
+    assertSafePluginId(instanceId);
     if (!this.config.disabledPlugins) {
       this.config.disabledPlugins = [];
     }
@@ -160,17 +168,19 @@ export class ConfigManager {
   }
 
   getServicePreferences(): Record<string, string> {
-    return (this.config.servicePreferences ?? {}) as Record<string, string>;
+    return this.config.servicePreferences ?? {};
   }
 
   setServicePreference(name: string, contextId: string): void {
+    if (isUnsafeConfigKey(name)) return;
     if (!this.config.servicePreferences) this.config.servicePreferences = {};
-    (this.config.servicePreferences as Record<string, string>)[name] = contextId;
+    this.config.servicePreferences[name] = contextId;
   }
 
   removeServicePreference(name: string): void {
-    if (!this.config.servicePreferences) return;
-    delete (this.config.servicePreferences as Record<string, string>)[name];
+    if (!this.config.servicePreferences || isUnsafeConfigKey(name)) return;
+    if (!Object.hasOwn(this.config.servicePreferences, name)) return;
+    delete this.config.servicePreferences[name];
   }
 
   /**
@@ -227,16 +237,35 @@ export class ConfigManager {
 
 // ----- helpers -----
 
+function copyOwnSafeStringDict(input: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+  for (const key of Object.keys(input)) {
+    if (isUnsafeConfigKey(key) || !Object.hasOwn(input, key)) continue;
+    const val = (input as Record<string, unknown>)[key];
+    if (typeof val === 'string') out[key] = val;
+  }
+  return out;
+}
+
 function mergeDefaultsConfig(input: AalisConfig | Partial<AalisConfig>): AalisConfig {
   const merged: AalisConfig = {
     name: (input.name as string) ?? DEFAULT_CONFIG.name,
     logLevel: (input.logLevel as string) ?? DEFAULT_CONFIG.logLevel,
-    plugins: (input.plugins as Record<string, Record<string, unknown>>) ?? {},
+    // 键与值都过闸：JSON 解出的 plugins.__proto__ / 插件配置里的 __proto__ 都不能当自有键留下
+    plugins: cloneConfigObject((input.plugins ?? {}) as Record<string, unknown>) as Record<
+      string,
+      Record<string, unknown>
+    >,
     disabledPlugins: (input.disabledPlugins as string[]) ?? [],
   };
   for (const [key, value] of Object.entries(input)) {
     if (key === 'name' || key === 'logLevel' || key === 'plugins' || key === 'disabledPlugins') continue;
     if (isUnsafeConfigKey(key)) continue;
+    if (key === 'servicePreferences') {
+      merged.servicePreferences = copyOwnSafeStringDict(value);
+      continue;
+    }
     merged[key] = value;
   }
   return merged;
