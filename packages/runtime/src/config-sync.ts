@@ -10,7 +10,7 @@
 // ============================================================
 
 import type { App } from '@aalis/core';
-import { defaultsFrom, validateConfig } from '@aalis/schema-config';
+import { defaultsFrom, removeExtraFields, validateConfig } from '@aalis/schema-config';
 
 export interface ConfigSyncOptions {
   /**
@@ -133,48 +133,6 @@ function deepMergeDefaults(
       !Array.isArray(result[key])
     ) {
       result[key] = deepMergeDefaults(defaultValue as Record<string, unknown>, result[key] as Record<string, unknown>);
-    }
-  }
-  return result;
-}
-
-/**
- * 移除多余字段。configSchema 是插件配置的**唯一声明来源**（默认值也从它派生），
- * 所以它的键集就是完整的白名单：不在 schema 里的字段，要么是用户手写的错别字，
- * 要么是已废弃的旧字段，裁掉即归位。无 schema 的插件不裁（见调用方守卫）。
- */
-function removeExtraFields(
-  config: Record<string, unknown>,
-  schema: Record<string, unknown>,
-  removed?: string[],
-  prefix = '',
-): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(config)) {
-    if (!(key in schema)) {
-      // 被裁的键必须留痕——静默裁剪会让「字段被吃掉」与「用户没配」不可分辨，
-      // tool-browser 的 allowedHosts 正是这样潜伏多年（用户照注释配了、启动即被抹、无人知晓）。
-      removed?.push(prefix + key);
-      continue;
-    }
-    const schemaDef = schema[key] as Record<string, unknown>;
-    if (schemaDef.type === 'array') {
-      result[key] = value;
-    } else if (
-      schemaDef.fields &&
-      typeof schemaDef.fields === 'object' &&
-      value !== null &&
-      typeof value === 'object' &&
-      !Array.isArray(value)
-    ) {
-      result[key] = removeExtraFields(
-        value as Record<string, unknown>,
-        schemaDef.fields as Record<string, unknown>,
-        removed,
-        `${prefix + key}.`,
-      );
-    } else {
-      result[key] = value;
     }
   }
   return result;

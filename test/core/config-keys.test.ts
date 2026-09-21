@@ -3,7 +3,7 @@
  * JSON 解出的 plugins 子树要过同一闸并拷贝；register 入参与 ConfigManager 不得别名。
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { App, ConfigManager, config, definePlugin } from '../../packages/core/src/index.js';
+import { App, ConfigManager, config, definePlugin, type PluginDefinition } from '../../packages/core/src/index.js';
 
 const UNSAFE_IDS = ['__proto__', 'constructor', 'prototype'] as const;
 
@@ -54,13 +54,18 @@ describe('ConfigManager：插件 id 走危险键闸', () => {
     }
   });
 
-  it('app.plugin 以 __proto__ 为 name 时不得改 plugins 原型', async () => {
+  it('definePlugin 以 __proto__ 为 name 时定义期即抛，文案含危险键', () => {
+    expect(() => definePlugin({ name: '__proto__', apply() {} })).toThrow(/危险键/);
+  });
+
+  it('手写定义对象直接 register(__proto__) 返回 false，不得改 plugins 原型、ConfigManager 无该键', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     apps.push(app);
-    await expect(app.plugin(definePlugin({ name: '__proto__', apply() {} }))).rejects.toThrow(
-      new Error('插件 id 不合法: __proto__'),
-    );
+    const handwritten = { name: '__proto__', apply() {} } as PluginDefinition;
+    expect(await app.plugins.register(handwritten)).toBe(false);
     expect(Object.getPrototypeOf(app.config.getAll().plugins)).toBe(Object.prototype);
+    expect(Object.hasOwn(app.config.getAll().plugins, '__proto__')).toBe(false);
+    expect(app.plugins.getPlugin('__proto__')).toBeUndefined();
   });
 });
 

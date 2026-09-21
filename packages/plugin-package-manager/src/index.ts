@@ -13,6 +13,7 @@ import {
   hostConfig,
   logger,
   optional,
+  pluginDefinitionOf,
   pluginsService,
   provide,
   services,
@@ -143,31 +144,13 @@ export function declaresPlugin(pkgJson: Record<string, unknown> | undefined): bo
   return Array.isArray(kw) && kw.includes('aalis-plugin');
 }
 
-/**
- * 与 runtime `pluginDefinitionOf` 同一抽取：入口 default 须是带非空 name 与 apply 的定义对象。
- * runtime 包根未再导出该函数，插件不能依赖宿主；抽取口径必须与加载器一致。
- */
-function definitionNameOf(ns: unknown): string | undefined {
-  const candidate = (ns as { default?: { name?: unknown; apply?: unknown } } | null)?.default;
-  if (
-    typeof candidate !== 'object' ||
-    candidate === null ||
-    typeof candidate.name !== 'string' ||
-    candidate.name === '' ||
-    typeof candidate.apply !== 'function'
-  ) {
-    return undefined;
-  }
-  return candidate.name;
-}
-
 /** 从项目 node_modules 解析已装包入口并取出定义 name；解析失败返回 undefined。 */
 async function resolveInstalledDefinitionName(root: string, pkgName: string): Promise<string | undefined> {
   try {
     const req = createRequire(`${root}/package.json`);
     const entry = req.resolve(pkgName);
     const ns: unknown = await import(new URL(`file://${entry}`).href);
-    return definitionNameOf(ns);
+    return pluginDefinitionOf(ns)?.name;
   } catch {
     return undefined;
   }
@@ -341,7 +324,7 @@ export interface PackageManagerDeps {
   /** 卸载后清理残留配置（删配置块 + 解除禁用标记 + 持久化）。可选：缺省则不清理。 */
   cleanupConfig?(name: string): void;
   /**
-   * 解析已装 npm 包的插件定义 name（与加载器 `pluginDefinitionOf` 同一口径：入口 default.name）。
+   * 解析已装 npm 包的插件定义 name（与 `@aalis/core` 的 `pluginDefinitionOf` 同一口径：入口 default.name）。
    * 解析不到则返回 undefined，调用方回退到包名。name≠包名时由 createPackageManager warn。
    */
   resolveDefinitionName?(pkgName: string): Promise<string | undefined>;
@@ -566,7 +549,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     }
   }
 
-  /** 加载器口径的定义 name；解析不到则回退包名。name≠包名时 warn（与 pluginDefinitionOf 同文案）。 */
+  /** 加载器口径的定义 name；解析不到则回退包名。name≠包名时 warn（与 core `pluginDefinitionOf` 加载包装同文案）。 */
   async function definitionNameFor(pkgName: string): Promise<string> {
     const resolved = await deps.resolveDefinitionName?.(pkgName);
     const defName = typeof resolved === 'string' && resolved.length > 0 ? resolved : pkgName;
