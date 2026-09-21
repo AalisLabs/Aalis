@@ -14,18 +14,11 @@ import type { HookContextMap, MiddlewareFn } from '../types/hooks.js';
 import type { ContributionHandle, ContributionSpec } from '../primitives/contributions.js';
 import type { ServiceView } from '../primitives/services.js';
 
-import {
-  activationOf,
-  type BindingPort,
-  defineService,
-  markBuiltin,
-  type ProviderOf,
-  requiredNames,
-  type ServiceDescriptor,
-} from './binding.js';
-import type { Context } from './context.js';
-import { activationConfigOf, mountDefinition, type PluginDefinition, validateDefinition } from './definition.js';
+import type { ProviderOf, ServiceDescriptor } from './binding.js';
+import { builtinService, type CapabilityScope } from './capabilities.js';
+import type { PluginDefinition } from './definition.js';
 import type { Logger } from './logger.js';
+import { validateProvide } from './services-helpers.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
@@ -47,16 +40,18 @@ export interface ProvideOptions {
  * `lifecycle.module` 返回的句柄——与激活自身的生命周期面同形，一个心智模型。
  */
 export interface ModuleHandle {
-  /** 沙盒子 ctx 的实际 id：同名重复挂载时已唯一化（`parent#name`、`parent#name~2`…） */
+  /** 子激活的实际 id：同名重复挂载时已唯一化（`parent#name`、`parent#name~2`…） */
   readonly id: string;
-  /** 同步请求关闭：同步清理当场执行，异步清理不等待；名字随同步段释放（与 `ctx.dispose()` 同语义） */
+  /** 同步请求关闭：同步清理当场执行，异步清理不等待；名字随同步段释放 */
   dispose(): void;
-  /** 关闭并等待全部异步清理完成；名字在此之后才释放（与 `ctx.disposeAsync()` 同语义） */
+  /** 关闭并等待全部异步清理完成；名字在此之后才释放 */
   disposeAsync(timeoutMs?: number): Promise<void>;
 }
 
-function builtinService<B>(name: string, bind: (ctx: Context) => B): ServiceDescriptor<never, B> {
-  return markBuiltin(defineService<never, B>(name, (port: BindingPort<never>) => bind(activationOf(port))));
+function accepts(scope: CapabilityScope, operation: string): boolean {
+  if (!scope.resources.lifecycle.disposed) return true;
+  scope.logger.warn(`激活 "${scope.id}" 已 dispose，忽略 ${operation}`);
+  return false;
 }
 
 // ----- events -----
@@ -66,9 +61,12 @@ export interface Events {
   emit<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): Promise<void>;
 }
 
-export const events = builtinService<Events>('events', ctx => ({
-  on: (event, handler) => ctx.on(event, handler),
-  emit: (event, ...args) => ctx.emit(event, ...args),
+export const events = builtinService<Events>('events', (scope, { events: bus }) => ({
+  on: (event, handler) =>
+    accepts(scope, `on("${event}")`)
+      ? scope.resources.trackDisposable(bus.on(event, handler, scope.owner), `on:${event}`)
+      : () => {},
+  emit: (event, ...args) => bus.emit(event, ...args),
 }));
 
 // ----- hooks -----
@@ -85,9 +83,12 @@ export interface Hooks {
   ): Promise<boolean>;
 }
 
-export const hooks = builtinService<Hooks>('hooks', ctx => ({
-  middleware: (hook, fn) => ctx.middleware(hook, fn),
-  run: (hook, data, defaultAction, opts) => ctx.runHook(hook, data, defaultAction, opts),
+export const hooks = builtinService<Hooks>('hooks', (scope, { hooks: registry }) => ({
+  middleware: (hook, fn) =>
+    accepts(scope, `middleware("${hook}")`)
+      ? scope.resources.trackDisposable(registry.register(hook, fn, scope.id, scope.owner), `middleware:${hook}`)
+      : () => {},
+  run: (hook, data, defaultAction, opts) => registry.run(hook, data, defaultAction, opts),
 }));
 
 // ----- contributions -----
@@ -104,10 +105,27 @@ export interface Contributions {
   ): ReadonlyArray<ContributionHandle<ContributionPointMap[K] & ContributionSpec>>;
 }
 
-export const contributions = builtinService<Contributions>('contributions', ctx => ({
-  contribute: (point, spec) => ctx.contribute(point, spec),
-  collect: point => ctx.collect(point),
-}));
+export const contributions = builtinService<Contributions>('contributions', (scope, { contributions: registry }) => {
+  const entries = new Map<string, () => void>();
+  return {
+    contribute(point, spec) {
+      if (!accepts(scope, `contribute("${point}")`)) return () => {};
+      const key = `${point}\u0000${(spec as ContributionSpec).id}`;
+      entries.get(key)?.();
+      const rawOff = registry.register(point, spec, scope.id, scope.owner);
+      const off = scope.resources.trackDisposable(
+        () => {
+          if (entries.get(key) === off) entries.delete(key);
+          rawOff();
+        },
+        `contribute:${point}:${(spec as ContributionSpec).id}`,
+      );
+      entries.set(key, off);
+      return off;
+    },
+    collect: point => registry.collect(point),
+  };
+});
 
 // ----- lifecycle -----
 
@@ -117,11 +135,12 @@ export interface LifecycleCap {
   /** 这次激活已开始关闭 */
   readonly closed: boolean;
   /**
-   * 登记收尾（最先执行）：此刻本激活的监听、登记与依赖都还在，用于停接新活、把在手的数据
-   * 交给下层并等它确认。关停时消费者先于它绑定过的提供者关闭，所以这里调下层是安全的。
+   * 登记收尾：在本激活撤回登记之前执行，用于停接新活、把在手数据交给下层并等待确认。
+   * 依赖可用性取决于关停图：普通消费者先关，父子与循环依赖采用各自的阶段顺序；
+   * 不保护动态查询、缓存裸引用或提供者主动提前释放的资源。
    */
   onDrain(fn: () => void | Promise<void>, label?: string): () => void;
-  /** 登记清理（清理段）：此时本激活的全部对外登记已撤回；声明的依赖仍可调用 */
+  /** 登记清理（清理段）：本激活的对外登记已撤回；依赖可能已不可用，交接应放在 onDrain */
   onDispose(fn: () => void | Promise<void>, label?: string): () => void;
   /**
    * 挂一个子模块：独立身份与生命周期，能力按子激活重新绑定，随父关闭。子模块不进调度器：
@@ -131,29 +150,22 @@ export interface LifecycleCap {
   module(definition: PluginDefinition, config?: Record<string, unknown>): Promise<ModuleHandle>;
 }
 
-export const lifecycle = builtinService<LifecycleCap>('lifecycle', ctx => ({
-  id: ctx.id,
+export const lifecycle = builtinService<LifecycleCap>('lifecycle', scope => ({
+  id: scope.id,
   get closed() {
-    return ctx.disposed;
+    return scope.resources.lifecycle.disposed;
   },
-  onDrain: (fn, label) => ctx.onDrain(fn, label),
-  onDispose: (fn, label) => ctx.onDispose(fn, label),
-  module: async (definition, config = {}) => {
-    validateDefinition(definition);
-    const missing = requiredNames(definition.uses ?? {}).filter(name => ctx.getService(name) === undefined);
-    if (missing.length > 0) {
-      throw new Error(`子模块 "${definition.name}" 缺少 required 服务 [${missing.join(', ')}]，未挂载`);
-    }
-    return ctx.useModule(definition.name, child => mountDefinition(child, definition, config));
-  },
+  onDrain: (fn, label) => scope.resources.onDrain(fn, label),
+  onDispose: (fn, label) => scope.resources.onDispose(fn, label),
+  module: (definition, config) => scope.module(definition, config),
 }));
 
 // ----- logger / config -----
 
-export const logger = builtinService<Logger>('logger', ctx => ctx.logger);
+export const logger = builtinService<Logger>('logger', scope => scope.logger);
 
 /** 插件自己的配置视图（只读）。宿主级的配置管理是另一项能力，不默认发给插件。 */
-export const config = builtinService<Readonly<Record<string, unknown>>>('config', activationConfigOf);
+export const config = builtinService<Readonly<Record<string, unknown>>>('config', scope => scope.config);
 
 // ----- services（提供与动态查找）-----
 
@@ -172,10 +184,30 @@ export type Provide = <D extends AnyDescriptor>(
   options?: ProvideOptions,
 ) => () => void;
 
-export const provide = builtinService<Provide>(
-  'provide',
-  ctx => (descriptor, implementation, options) => ctx.provide(descriptor.name, implementation as never, options),
-);
+export const provide = builtinService<Provide>('provide', (scope, runtime) => (descriptor, implementation, options) => {
+  const name = descriptor.name;
+  if (!accepts(scope, `provide("${name}")`)) return () => {};
+  if (implementation === null || implementation === undefined) throw new Error('provide 的实现不能为空');
+  if (options?.priority !== undefined && !Number.isFinite(options.priority)) {
+    throw new Error(`provide 的 priority 必须是有限数字（收到 ${String(options.priority)}）`);
+  }
+  const entryId = options?.onBehalfOf ?? options?.entryId ?? scope.id;
+  if (runtime.devMode && options?.onBehalfOf === undefined)
+    validateProvide(
+      { ctxId: scope.id, name, entryId, explicitEntryId: options?.entryId !== undefined },
+      { services: runtime.services, logger: scope.logger },
+    );
+  const off = runtime.services.register(name, implementation, entryId, scope.owner, options);
+  const dispose = scope.resources.trackDisposable(
+    () => {
+      if (off()) runtime.notify('service:unregistered', name);
+    },
+    `provide:${options?.onBehalfOf ?? options?.entryId ?? name}`,
+  );
+  runtime.notify('service:registered', name);
+  scope.logger.debug(`服务已注册: ${name}`);
+  return dispose;
+});
 
 /** 动态查询的键：有描述符就用描述符（带类型），只有运行期字符串（URL、配置里的服务名）就用名字 */
 export type ServiceKey = AnyDescriptor | string;
@@ -198,11 +230,19 @@ export interface Services {
   unprefer(key: ServiceKey): boolean;
 }
 
-export const services = builtinService<Services>('services', ctx => ({
-  get: key => ctx.getService(keyName(key)),
-  all: key => ctx.getAllServices(keyName(key)),
-  names: () => ctx.getServiceNames(),
-  preferred: key => ctx.getPreferredService(keyName(key)),
-  prefer: (key, contextId) => ctx.preferService(keyName(key), contextId),
-  unprefer: key => ctx.unpreferService(keyName(key)),
+export const services = builtinService<Services>('services', (_scope, runtime) => ({
+  get: key => runtime.services.get(keyName(key)),
+  all: key => runtime.services.getAll(keyName(key)),
+  names: () => runtime.services.getServiceNames(),
+  preferred: key => runtime.services.getPreferred(keyName(key)),
+  prefer: (key, contextId) => {
+    const ok = runtime.services.prefer(keyName(key), contextId);
+    if (ok) runtime.notify('service:preference-changed', keyName(key));
+    return ok;
+  },
+  unprefer: key => {
+    const ok = runtime.services.unprefer(keyName(key));
+    if (ok) runtime.notify('service:preference-changed', keyName(key));
+    return ok;
+  },
 }));

@@ -1,7 +1,7 @@
 // ============================================================
 // binding.ts — 服务描述符、按激活绑定、资源口
 //
-// 一个服务有两张面：共享的提供者（容器里的实例，全 App 一份）与按激活绑定的调用接口
+// 一个服务有两张面：共享的提供者（容器中的实现，可有多个提供者）与按激活绑定的调用接口
 // （每次插件激活一份，登记自动归属这次激活）。描述符把两者连起来：契约包导出描述符，
 // 消费方在 uses 里声明它，装配时由描述符自带的 bind 为这次激活造接口。
 //
@@ -11,10 +11,12 @@
 
 import { reportQuietly } from '../kernel/disposable-chain.js';
 
-import type { ServiceView } from '../primitives/services.js';
+import type { EventBus } from '../primitives/events.js';
+import type { ServiceContainer, ServiceView } from '../primitives/services.js';
 
-import type { Context } from './context.js';
 import type { Logger } from './logger.js';
+import type { Resources } from './resources.js';
+import { watchService } from './service-watch.js';
 
 /**
  * 跟随回调的返回：不需要清理就什么都不返回，需要就返回清理函数。用 void 而非 undefined，
@@ -168,7 +170,7 @@ export function serviceRef<P>(port: BindingPort<P>, extra?: object): ServiceRef<
 }
 
 /** 内置能力的标记：绑的是激活自身，不参与激活闸，也不产生依赖边 */
-// 全局 symbol：装了两份 core 时另一份副本的内置描述符仍被认出，随后在 activationOf 处明确报错，
+// 全局 symbol：装了两份 core 时另一份副本的内置描述符仍被认出，随后在内置能力装配处明确报错，
 // 而不是被当成普通服务名永远等不到提供者
 const BUILTIN = Symbol.for('aalis.builtin-capability');
 
@@ -178,18 +180,18 @@ export function markBuiltin<D extends object>(descriptor: D): D {
 }
 
 /** @internal */
-function isBuiltin(descriptor: object): boolean {
+export function isBuiltin(descriptor: object): boolean {
   return (descriptor as { [BUILTIN]?: boolean })[BUILTIN] === true;
 }
 
-// 核心内置描述符需要激活记录本身（事件总线的归属、配置视图）；对能力作者公开的资源口不含它。
-const activations = new WeakMap<object, Context>();
-
-/** @internal 仅 core 内置描述符使用 */
-export function activationOf(port: BindingPort<unknown>): Context {
-  const ctx = activations.get(port);
-  if (!ctx) throw new Error('资源口不属于本 core 副本的任何激活（@aalis/core 必须是单副本 peer 依赖）');
-  return ctx;
+/** 绑定只需要资源账与服务读取，不持有整个激活或插件管理器。 */
+interface BindingScope {
+  readonly id: string;
+  readonly logger: Logger;
+  readonly resources: Resources;
+  readonly services: ServiceContainer;
+  readonly events: EventBus;
+  retainBinding(name: string): () => void;
 }
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {
@@ -197,20 +199,21 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
 }
 
 /** @internal 为一次激活造某个服务的资源口 */
-export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
+export function createPort<P>(scope: BindingScope, name: string): BindingPort<P> {
   /** 调一条撤回：同步抛错就地隔离；异步结果交给激活的在飞账，关闭等到它、拒绝被接住 */
-  const withdraw = (off: () => unknown, what: string): PromiseLike<unknown> | undefined => {
-    let result: unknown;
-    try {
-      result = off();
-    } catch (err) {
-      reportQuietly(() => ctx.logger.warn(`${what} 撤回抛错（已忽略）:`, err));
-      return undefined;
-    }
-    if (!isThenable(result)) return undefined;
-    ctx.holdInflight(result, what);
-    return result;
-  };
+  const withdraw = (off: () => unknown, what: string): PromiseLike<unknown> | undefined =>
+    scope.resources.run(() => {
+      try {
+        const result = off();
+        if (!isThenable(result)) return undefined;
+        const pending = Promise.resolve(result);
+        scope.resources.holdInflight(pending, what);
+        return pending;
+      } catch (err) {
+        reportQuietly(() => scope.logger.warn(`${what} 撤回抛错（已忽略）:`, err));
+        return undefined;
+      }
+    });
 
   // 一个资源口一条提供者订阅；每个跟随者自己一台小状态机
   interface Follower {
@@ -228,83 +231,84 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
     cancelled: boolean;
   }
   const followers: Follower[] = [];
-  let live: P | undefined;
   let subscribed = false;
 
+  const desiredProvider = (follower: Follower): P | undefined =>
+    follower.cancelled || scope.resources.lifecycle.disposed ? undefined : scope.services.get<P>(name);
+
   /** 让一个跟随者向「当前应挂的实例」收敛；任何状态变化后都调它 */
-  const pump = (follower: Follower): void => {
-    if (follower.busy || follower.attaching) return;
-    const desired = follower.cancelled || ctx.disposed ? undefined : live;
-    if (follower.attached !== undefined && follower.attached !== desired) {
-      const cleanup = follower.cleanup;
-      const releaseEdge = follower.releaseEdge;
-      follower.attached = undefined;
-      follower.cleanup = undefined;
-      follower.releaseEdge = undefined;
-      const pending = cleanup ? withdraw(cleanup, name) : undefined;
-      if (!pending) {
-        releaseEdge?.();
-      } else {
-        // 落定（完成或被拒——被拒不代表资源已释放，只是不再等）之后释放依赖边
-        const settled = Promise.resolve(pending).then(
-          () => undefined,
-          () => undefined,
-        );
-        if (follower.overlap) {
-          settled.then(() => releaseEdge?.());
+  const pump = (follower: Follower): void =>
+    scope.resources.run(() => {
+      if (follower.busy || follower.attaching) return;
+      let desired = desiredProvider(follower);
+      if (follower.attached !== undefined && follower.attached !== desired) {
+        const cleanup = follower.cleanup;
+        const releaseEdge = follower.releaseEdge;
+        follower.attached = undefined;
+        follower.cleanup = undefined;
+        follower.releaseEdge = undefined;
+        const pending = cleanup ? withdraw(cleanup, name) : undefined;
+        if (!pending) {
+          releaseEdge?.();
         } else {
-          follower.busy = true;
-          settled.then(() => {
-            releaseEdge?.();
-            follower.busy = false;
-            pump(follower);
-          });
-          return;
-        }
-      }
-    }
-    if (follower.attached === undefined && desired !== undefined) {
-      follower.attached = desired;
-      follower.releaseEdge = ctx.retainBinding(name);
-      follower.attaching = true;
-      try {
-        const ret: unknown = follower.attach(desired);
-        if (typeof ret === 'function') {
-          follower.cleanup = ret as () => unknown;
-        } else if (isThenable(ret)) {
-          // attach 同步契约：不 await 取 cleanup；接住拒绝以免逃成 unhandledRejection
-          reportQuietly(() =>
-            ctx.logger.warn(
-              `${name} 跟随回调返回了 thenable（attach 应同步返回 cleanup 函数；该 Promise 已被接住，拒绝不会逃逸）`,
-            ),
+          // 落定（完成或被拒——被拒不代表资源已释放，只是不再等）之后释放依赖边
+          const settled = Promise.resolve(pending).then(
+            () => undefined,
+            () => undefined,
           );
-          ret.then(undefined, () => undefined);
+          if (follower.overlap) {
+            settled.then(() => releaseEdge?.());
+          } else {
+            follower.busy = true;
+            settled.then(() => {
+              releaseEdge?.();
+              follower.busy = false;
+              pump(follower);
+            });
+            return;
+          }
         }
-      } catch (err) {
-        reportQuietly(() => ctx.logger.warn(`${name} 跟随回调抛错（订阅保持，等下次提供者变更）:`, err));
-      } finally {
-        follower.attaching = false;
       }
-      // 回调里取消了自己、或挂载途中又换了人：刚拿到的清理器不能丢，立刻按新目标收敛
-      if (follower.cancelled || follower.attached !== live) pump(follower);
-    }
-  };
+      // 旧清理可以同步改偏好、退订或关闭；不能拿回调之前的胜者继续挂载。
+      desired = desiredProvider(follower);
+      if (follower.attached === undefined && desired !== undefined) {
+        follower.attached = desired;
+        follower.releaseEdge = scope.retainBinding(name);
+        follower.attaching = true;
+        try {
+          const ret: unknown = follower.attach(desired);
+          if (typeof ret === 'function') {
+            follower.cleanup = ret as () => unknown;
+          } else if (isThenable(ret)) {
+            // attach 同步契约：不 await 取 cleanup；接住拒绝以免逃成 unhandledRejection
+            reportQuietly(() =>
+              scope.logger.warn(
+                `${name} 跟随回调返回了 thenable（attach 应同步返回 cleanup 函数；该 Promise 已被接住，拒绝不会逃逸）`,
+              ),
+            );
+            ret.then(undefined, () => undefined);
+          }
+        } catch (err) {
+          reportQuietly(() => scope.logger.warn(`${name} 跟随回调抛错（订阅保持，等下次提供者变更）:`, err));
+        } finally {
+          follower.attaching = false;
+        }
+        // 回调里取消了自己、或挂载途中又换了人：刚拿到的清理器不能丢，立刻按新目标收敛
+        if (follower.cancelled || scope.resources.lifecycle.disposed || follower.attached !== desiredProvider(follower))
+          pump(follower);
+      }
+    });
 
   const subscribe = (): void => {
     subscribed = true;
-    ctx.whenService<P>(name, provider => {
-      live = provider;
+    watchService<P>(scope.services, scope.events, scope.resources, name, () => {
       for (const follower of [...followers]) pump(follower);
-      return () => {
-        live = undefined;
-        for (const follower of [...followers]) pump(follower);
-      };
     });
   };
 
   const follow = (attach: Follower['attach'], overlap: boolean): (() => void) => {
-    if (ctx.disposed) {
-      ctx.logger.warn(`"${ctx.id}" 已关闭，忽略对 ${name} 的跟随`);
+    if (scope.resources.lifecycle.disposed) {
+      scope.logger.warn(`"${scope.id}" 已关闭，忽略对 ${name} 的跟随`);
       return () => {};
     }
     const follower: Follower = { attach, overlap, busy: false, attaching: false, cancelled: false };
@@ -322,13 +326,13 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
 
   const port: BindingPort<P> = {
     name,
-    id: ctx.id,
-    logger: ctx.logger,
+    id: scope.id,
+    logger: scope.logger,
     get closed() {
-      return ctx.disposed;
+      return scope.resources.lifecycle.disposed;
     },
-    current: () => ctx.getService<P>(name),
-    all: () => ctx.getAllServices<P>(name),
+    current: () => scope.services.get<P>(name),
+    all: () => scope.services.getAll<P>(name),
     follow: attach => follow(attach, false),
     track(off, label) {
       const what = label ?? name;
@@ -343,10 +347,10 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
         }
         return result;
       };
-      const dispose = ctx.trackWithdrawal(run, what);
+      const dispose = scope.resources.trackWithdrawal(run, what);
       return () => {
         if (started) return;
-        ctx.untrackWithdrawal(dispose);
+        scope.resources.untrackWithdrawal(dispose);
         run();
       };
     },
@@ -361,16 +365,29 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
       const entries = new Map<string, Entry>();
       let provider: P | undefined;
 
-      const attachOne = (target: P, entry: Entry, key: string): void => {
-        // register 回调里重入 add 的条目已经就地登记过了：再挂一次会把它的句柄覆盖掉、永不撤回
-        if (entry.off !== undefined) return;
-        try {
-          entry.off = options.register(target, entry.item);
-        } catch (err) {
-          // 单条失败不拖垮同批：条目留在账上，下次提供者变更时重试
-          reportQuietly(() => ctx.logger.warn(`${name} 登记 "${key}" 失败（保留待重试）:`, err));
-        }
-      };
+      const attachOne = (target: P, entry: Entry, key: string): void =>
+        scope.resources.run(() => {
+          if (
+            entries.get(key) !== entry ||
+            entry.off !== undefined ||
+            provider !== target ||
+            scope.resources.lifecycle.disposed
+          )
+            return;
+          const off = options.register(target, entry.item);
+          // register 也能替换当前键、切换提供者或关闭激活。回调返回时重新核验所有权，
+          // 失效登记就地撤回；不得覆盖重入调用已接住的句柄。
+          if (
+            entries.get(key) === entry &&
+            provider === target &&
+            !scope.resources.lifecycle.disposed &&
+            entry.off === undefined
+          ) {
+            entry.off = off;
+          } else {
+            withdraw(off, `${name} "${key}"`);
+          }
+        });
 
       // 账本创建即跟随：同口多账本的重挂次序 = 创建次序（如分组先于工具），不取决于谁先被登记。
       // 被动注册表换人时立即重挂（旧条目的撤回在后台落定、关闭会等）——走内部的 overlap 路径
@@ -380,7 +397,13 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
         // 快照里的旧 Entry 再挂一次就是账外孤儿。新 Entry 已就地登记则 attachOne 跳过。
         for (const key of [...entries.keys()]) {
           const entry = entries.get(key);
-          if (entry) attachOne(target, entry, key);
+          if (!entry) continue;
+          try {
+            attachOne(target, entry, key);
+          } catch (err) {
+            // 单条失败不拖垮同批：当前条目留在账上，下次提供者变更时重试
+            reportQuietly(() => scope.logger.warn(`${name} 登记 "${key}" 失败（保留待重试）:`, err));
+          }
         }
         return () => {
           provider = undefined;
@@ -399,28 +422,29 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
       return {
         add(item: Item) {
           const key = options.key(item);
-          if (ctx.disposed) {
-            ctx.logger.warn(`"${ctx.id}" 已关闭，忽略 ${name} 登记 "${key}"`);
+          if (scope.resources.lifecycle.disposed) {
+            scope.logger.warn(`"${scope.id}" 已关闭，忽略 ${name} 登记 "${key}"`);
             return () => {};
           }
           const previous = entries.get(key);
+          const entry: Entry = { item };
+          // 先占位再执行任何用户回调：旧 off 或新 register 的重入替换都必须成为最新条目。
+          entries.set(key, entry);
           if (previous?.off) {
             const off = previous.off;
             previous.off = undefined;
             withdraw(off, `${name} "${key}"`);
           }
-          const entry: Entry = { item };
           // 提供者在场即登记；register 抛错原样抛给调用方，账上不留半条——同键替换失败时
           // 旧登记已撤，旧条目一并出账，不会在下次换提供者时复活
           if (provider !== undefined) {
             try {
-              entry.off = options.register(provider, item);
+              attachOne(provider, entry, key);
             } catch (err) {
-              entries.delete(key);
+              if (entries.get(key) === entry) entries.delete(key);
               throw err;
             }
           }
-          entries.set(key, entry);
           return () => {
             if (entries.get(key) !== entry) return;
             entries.delete(key);
@@ -432,23 +456,7 @@ export function createPort<P>(ctx: Context, name: string): BindingPort<P> {
       };
     },
   };
-  activations.set(port, ctx);
   return port;
-}
-
-/**
- * @internal 按声明表为一次激活装配绑定接口。任一 bind 抛错即整体失败：调用方拆掉这次激活，
- * 已装配部分经撤回段回滚。
- */
-export function assemble<U extends Uses>(ctx: Context, uses: U): BoundOf<U> {
-  const bound: Record<string, unknown> = {};
-  for (const [key, use] of Object.entries(uses)) {
-    const descriptor = unwrapDescriptor(use);
-    bound[key] = descriptor.bind(createPort(ctx, descriptor.name));
-  }
-  // 声明即计入关停编排（required 与 optional，访问与否无关）；内置能力绑的是激活自身，不成边
-  ctx.declareDependencies(requiredNames(uses), optionalNames(uses));
-  return bound as BoundOf<U>;
 }
 
 /** 声明表里的依赖服务名。内置能力绑的是激活自身，不是依赖：不进激活闸，也不成关停边 */

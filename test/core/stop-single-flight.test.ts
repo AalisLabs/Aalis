@@ -97,11 +97,12 @@ describe('App.stop() 单飞与停机窗口', () => {
     });
   });
 
-  it('app:stopping 里再 await stop()：不得无界重入，深度为 1 且落定', async () => {
+  it('app:stopping 里再次请求 stop()：共享完成对象且不重复发事件', async () => {
     const { app, lines } = capturingApp();
     apps.push(app);
     const log: string[] = [];
     let stoppingDepth = 0;
+    let nested: Promise<void> | undefined;
     await app.plugin(
       definePlugin({
         name: 'p',
@@ -114,14 +115,15 @@ describe('App.stop() 单飞与停机窗口', () => {
     );
     await app.plugins.idle();
     expect(app.plugins.getPlugin('p')?.state).toBe('active');
-    app.bind({ events }).events.on('app:stopping', async () => {
+    app.bind({ events }).events.on('app:stopping', () => {
       stoppingDepth++;
       log.push(`stopping#${stoppingDepth}`);
       // 深度护栏：未修时无界重入会把 worker 打到 OOM；有护栏才能把「深度≠1」写成红断言
       if (stoppingDepth > 8) return;
-      await app.stop();
-      log.push(`nested-returned#${stoppingDepth}`);
+      // 不能 await 或返回这个 Promise：停机本身还要等待当前监听器返回。
+      nested = app.stop();
     });
+    const stopping = app.stop();
     const outcome = await stopWithin(app, 3000);
     expect(
       { outcome, stoppingDepth, disposed: app.plugins.getPlugin('p')?.state },
@@ -129,10 +131,87 @@ describe('App.stop() 单飞与停机窗口', () => {
     ).toEqual(expect.objectContaining({ outcome: 'ok', stoppingDepth: 1, disposed: 'disposed' }));
     expect(log).toContain('drain');
     expect(log).toContain('dispose');
-    expect(
-      lines.filter(x => !x.startsWith('debug:') && !x.startsWith('info:') && x.includes('stop')).length,
-      `派发 app:stopping 期间重入应 warn 一次；lines=${lines.join(' | ')}`,
-    ).toBeGreaterThanOrEqual(1);
+    expect(nested).toBe(stopping);
+  });
+
+  it('屏障期间的外部 stop() 不提前完成，继续等监听器与异步清理真正落定', async () => {
+    const { app } = capturingApp();
+    apps.push(app);
+    const eventEntered = deferred();
+    const eventGate = deferred();
+    const cleanupEntered = deferred();
+    const cleanupGate = deferred();
+    const saved: string[] = [];
+    await app.plugin(
+      definePlugin({
+        name: 'writer',
+        uses: { lifecycle },
+        apply({ lifecycle }) {
+          lifecycle.onDispose(async () => {
+            cleanupEntered.resolve();
+            await cleanupGate.promise;
+            saved.push('last-message');
+          });
+        },
+      }),
+    );
+    app.bind({ events }).events.on('app:stopping', async () => {
+      eventEntered.resolve();
+      await eventGate.promise;
+    });
+    const first = app.stop();
+    let secondDone = false;
+    try {
+      await eventEntered.promise;
+      const second = app.stop();
+      second.then(() => {
+        secondDone = true;
+      });
+      await Promise.resolve();
+      expect(secondDone).toBe(false);
+      expect(second).toBe(first);
+      expect(saved).toEqual([]);
+
+      eventGate.resolve();
+      await cleanupEntered.promise;
+      expect(secondDone).toBe(false);
+      expect(saved).toEqual([]);
+      expect(app.stop()).toBe(first);
+
+      cleanupGate.resolve();
+      await second;
+      expect(secondDone).toBe(true);
+      expect(saved).toEqual(['last-message']);
+      expect(app.plugins.getPlugin('writer')?.state).toBe('disposed');
+    } finally {
+      eventGate.resolve();
+      cleanupGate.resolve();
+      await first;
+    }
+  });
+
+  it('同步日志回调中的 stop() 也汇入同一关闭，不重复启动停机', async () => {
+    const { logger } = capturingLogger();
+    let app: App;
+    let nested: Promise<void> | undefined;
+    let calls = 0;
+    logger.info = message => {
+      if (message !== '正在停止...') return;
+      calls++;
+      // 错误实现重新进入 runStop 时只记录，不再次递归，以免击穿 worker 栈。
+      if (calls === 1) nested = app.stop();
+    };
+    app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+    apps.push(app);
+    let stoppingEmits = 0;
+    app.bind({ events }).events.on('app:stopping', () => {
+      stoppingEmits++;
+    });
+    const stopping = app.stop();
+    await stopping;
+    expect(nested).toBe(stopping);
+    expect(calls).toBe(1);
+    expect(stoppingEmits).toBe(1);
   });
 
   it('stop 完成后再次 stop()：立即落定', async () => {

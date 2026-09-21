@@ -115,8 +115,8 @@ core 源码按目录分四层，自下而上，每层只许 import 本层与更�
 
 - **资源内核** `kernel/`（`lifecycle.ts`、`disposable-chain.ts`）：父子归属、清理链、可等待关闭与逐项超时、错误隔离与上报。只认自己，不依赖类型词汇、四原语、激活记录或编排。
 - **四原语** `primitives/`（events、hooks、services、contributions）：定义插件之间协作方式的四个注册表。只认 kernel 与类型词汇，不认识激活记录、Logger、Config；需要上报的诊断经注入的回调送出（`onHandlerError`、`onStall`）。
-- **激活与定义** `context/`（binding、builtins、definition、close-plan、context、config、logger）：服务描述符与按激活绑定、内置能力、插件定义、关停编排、配置与日志。激活记录类留在 `context/context.ts`，不从包根导出——插件拿到的是绑定接口，不是激活本身。不 import 编排层。
-- **编排层** `orchestration/`（app、plugin、plugin-activation、plugin-topology、host-services、providers）：把下层机制编排成插件生命周期与应用骨架，含宿主 SPI（插件加载器、重启策略）与宿主服务描述符。
+- **能力与定义** `context/`（binding、service-watch、capabilities、builtins、resources、definition、config、logger）：服务描述符、能力工厂、胜者观察与绑定交接、资源登记、插件定义、配置与日志。不 import 编排层，也不持有旧 Context 大类。
+- **编排层** `orchestration/`（app、activation、activation-host、close-plan、plugin、plugin-activation、plugin-topology、host-services、providers）：由小型激活记录保存身份、资源与依赖边，由 ActivationHost 创建激活并装配能力；App / PluginManager / close-plan 负责启动、调度与关停，另含宿主 SPI 和管理服务描述符。
 
 src 根只留 barrel（`index.ts`）。配置持久化的宿主 SPI（`ConfigProvider`）只依赖 `AalisConfig`，与 `ConfigManager` 同处 `context/config.ts`。`types/` 按种类存放类型词汇：`app.ts`、`plugin.ts` 属编排层词汇，`index.ts` barrel 会把它们一并带出，下层三者都不得引用；其余基础词汇文件只许互相引用。
 
@@ -127,21 +127,23 @@ src 根只留 barrel（`index.ts`）。配置持久化的宿主 SPI（`ConfigPro
 | primitives | kernel | 值：events / hooks 上报诊断用的 `reportQuietly` |
 | primitives | 基础词汇 | 纯类型 |
 | context | kernel | 值：`Lifecycle`、`reportQuietly` |
-| context | primitives、基础词汇 | 纯类型——四原语的实例由编排层构造后注入，Context 不 `new` 它们 |
+| context | primitives、基础词汇 | 纯类型——四原语实例由编排层构造后传给能力工厂与绑定接口 |
 | orchestration | context、primitives、kernel | 值：App 构造根激活与四个注册表，上报走 kernel 的 `reportQuietly` |
 | `types/app.ts`、`types/plugin.ts` | context、primitives、基础词汇 | 纯类型 |
 
-kernel 与基础词汇文件不依赖任何东西。
+kernel 只引用本层模块；基础词汇文件只相互引用，不引用更高层。
 
 文件内的 import 与包根 index.ts 的导出按同一层序自下而上排列：types → kernel → primitives → context → orchestration → 同层兄弟，组间空行；由 biome 对 `packages/core/src/**` 的 organizeImports 分组配置守。同一模块既导值又导类型时写成一条语句、类型加内联 `type` 修饰符；全是类型的模块用 `export type {}`。
 
 文件前言与分节：带前言的文件用 60 个 `=` 的 `//` 横幅夹住前言（首行「文件名 — 一句话」），无前言的文件不补；文件内分节一律一行 `// ----- 节名 -----`。JSDoc 描述在前、`@internal` 等标签收尾（单行式也展开成多行）；不用警示符号，告诫写成陈述句。
 
-私有成员的写法：激活记录类一律 ECMAScript `#` 私有（运行时对插件不可见，`test/core/purity.test.ts` 用实例自有属性快照守）；其余类用 TypeScript `private` 裸名；都不带 `_` 前缀（biome 对 `packages/core/src/**` 的 `useNamingConvention` 守）。
+内部激活记录不通过插件能力或公开管理条目暴露；插件拿到的是窄能力对象，第三方 binder 拿到的是 BindingPort。`#` 私有字段与 TypeScript `private` 按内部封装需要使用，均不带 `_` 前缀。公开面与分层分别由 purity / architecture 测试约束。
 
 诊断与错误的写法（文字规矩，无机器守——正则守卫经变异证明会被折行调用与含引号的英文骗过）：错误对象一律作 logger 的附加参数
 （`logger.error('xxx 失败:', err)`），不内插进消息——内插只剩 message、丢 stack，logger 写入前会把换行转义成单行。宿主 SPI
 （插件加载器、重启策略、配置 provider）的失败一律 `error` 级。kernel 抛出的错误信息用中文、带 `Lifecycle:` 前缀、不带节点 id
 （kernel 不认识激活记录；这两条抛错是收养关系写错的编程错误，不是运行时故障，抛给调用方即止）。
 
-不拆 kernel 包：包是发布单位不是模块化单位；维持可拆的依赖方向，出现不依赖 core 的真实使用者时再议。资源内核不从包根导出，其不变量：子节点级联序（先关全部子节点 → 撤回对外注册 → 自身清理链按段逆序 → 收尾）；关闭后登记立即执行（与 TC39 `DisposableStack` 抛错相反，用来接住初始化或子节点关闭期间迟到的资源）；超时只是停止等待，不代表资源已释放；每个 Lifecycle 至多跟踪一次初始化（调用方保证，再次调用会覆盖前一次）。
+不拆 kernel 包：包是发布单位不是模块化单位；维持可拆的依赖方向，出现不依赖 core 的真实使用者时再议。资源内核不从包根导出。单独关闭的级联序是子节点关闭 → 本节点 drain → 撤回对外注册 → 清理链分段排空 → afterCleanup；编排层可提前调用 drain，再按依赖图安排 close，内核不解释依赖。关闭后迟到清理仍执行，用来接住初始化或子节点关闭期间取得的资源；超时只是停止等待，不代表资源已释放；每个 Lifecycle 至多跟踪一次初始化（调用方保证，再次调用会覆盖前一次）。
+
+没有为插件 apply 或 app 生命周期屏障新增超时；`disposeTimeoutMs` 约束清理等待，不是整个 register / stop 的总期限。若流程尚在等待永不落定的 apply 或屏障监听器，仍可能无法进入清理阶段。

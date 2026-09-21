@@ -21,11 +21,11 @@ interface HookEntry<T> {
  * 显式表达；相位内部的 handler 应顺序无关，或由相位拥有方约定。
  *
  * 插件面与 events / services 同一门面纪律（方法窄面，对象不外露）：
- * 注册 handler 只经 `ctx.middleware(hook, fn)`（闭包 ctx.id 作 contextId、本次激活的
+ * 注册 handler 经 `hooks.middleware(hook, fn)`（绑定激活的 id 作 contextId、本次激活的
  * owner 作清理归属，并登记 dispose 链，插件卸载时被 `unregisterByOwner` 清扫；裸 `register`
- * 不带 owner 的条目不被拆卸自动清理，用返回的退订闭包自管）；驱动钩子链经 `ctx.runHook(hook, data,
+ * 不带 owner 的条目不被拆卸自动清理，用返回的退订闭包自管）；驱动钩子链经 `hooks.run(hook, data,
  * defaultAction)`。完整注册表仅 App（组合根，接 onStall 到 logger）与
- * Context 内部持有。
+ * 能力运行基础设施持有，不交给插件。
  *
  * Handler 可以：
  * - 修改 data 对象（引用传递）
@@ -49,7 +49,7 @@ export class HookRegistry {
   /**
    * 注册 handler，返回 dispose 函数。
    * 同一钩子键内的多个 handler 按注册顺序执行。
-   * @param owner 清理归属（Context 门面传入）；省略则不被拆卸自动清理，用返回的 dispose 自管。
+   * @param owner 清理归属（hooks 能力传入）；省略则不被拆卸自动清理，用返回的 dispose 自管。
    */
   register<K extends string & keyof HookContextMap>(
     hook: K,
@@ -128,7 +128,7 @@ export class HookRegistry {
   }
 
   /**
-   * 按清理归属移除该 Context 本次激活注册的所有中间件（同名 Context 互不误清）。
+   * 按清理归属移除本次激活注册的所有中间件（同名激活互不误清）。
    */
   unregisterByOwner(owner: symbol): void {
     for (const [hook, list] of this.hooks) {
