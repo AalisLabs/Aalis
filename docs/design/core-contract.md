@@ -48,7 +48,7 @@
 - 激活 = 提供者先于消费者（required 依赖拓扑）。关闭按每个激活的 drain 与 close 两阶段编排。普通依赖：消费者整个 close 完，提供者才 drain。父使用自己子树的服务：父 drain 先于子 close。后代使用祖先的服务：不往排序图加边，由归属树保证子 close 先于祖先 close。环内 optional 边构成的强连通分量（≥2 个激活）先让成员全部 drain，再任一 close——drain 期间对方仍活着，双方 `onDrain` 都能 `require()`；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭，但不享有整 App 关停那一层「根绑定与全部插件同计划」的交接保证。动态查询与调用方缓存的裸引用不产生边。
 - `app:stopping` 是屏障知会，不是清理通道；只在 `App.stop()` 全局停机时发一次，bounce / unload / disable 不发。清理走 `onDrain` / `onDispose`。`App.stop()` 顺序：`beginShutdown()`（冻结新增绑定并进入停机态）→ `idle()`（排干在飞重算）→ 发出 `app:stopping` → 关停计划。监听器全部返回后才执行停机计划。窗口内 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成）；`register` / `bounce` 返回 false（与定义或实例 id 校验失败同属政策挡下的 false 口径）。已冻激活上 `provide` 记 warn 后忽略、不抛；`lifecycle.module` 抛「已 dispose」。停机完成后：对新定义 `register` 返回 false 且不落账；对已 disposed 实例的 `enable` / `updateConfig` / `bounce` 返回 false；`idle()` 落定。
 - 提供者换人（多提供者其一退出、偏好切换、更高优先级上线）不改变插件的目标状态，经 `service:registered` / `service:unregistered` / `service:preference-changed` 可观察。要跟随换人用 `follow`，不要指望消费者被级联重启。
-- required 依赖缺失 → 顶层插件停在 pending（不阻塞、不轮询）；依赖就绪自动激活。
+- required 依赖缺失 → 顶层插件停在 pending（不阻塞、不轮询）；依赖就绪自动激活。初始化期间本次 required 绑定的 `require()` 原样抛出不可用错误时，先回滚资源再回到 pending；optional、自造/包装异常及其他激活的错误不适用。持续失稳的自动尝试在单次重算任务内有界，点名后暂缓，不影响其他插件与管理操作。
 
 ## 三、明确不承诺（实现自由区）
 
@@ -128,6 +128,7 @@ src 根只留 barrel（`index.ts`）。配置持久化的宿主 SPI（`ConfigPro
 | primitives | 基础词汇 | 纯类型 |
 | context | kernel | 值：`Lifecycle`、`reportQuietly` |
 | context | primitives、基础词汇 | 纯类型——四原语实例由编排层构造后传给能力工厂与绑定接口 |
+| context、orchestration | `@aalis/schema-log` | 仅纯类型：`LogEntry` / `LogLevel`；日志文件编解码由宿主使用，Core 不值导入 |
 | orchestration | context、primitives、kernel | 值：App 构造根激活与四个注册表，上报走 kernel 的 `reportQuietly` |
 | `types/app.ts`、`types/plugin.ts` | context、primitives、基础词汇 | 纯类型 |
 

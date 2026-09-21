@@ -20,7 +20,7 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 
 ## 宿主层 vs 核心层（Bootstrap 边界）
 
-`@aalis/core` 在物理上是**环境无关**的内存运行时：`package.json` 零运行时依赖，源码不 import 任何 `node:fs` / `node:path` / `node:os` / `node:child_process`，不调用 `process.cwd()` / `process.argv` / `console.*`，也不读 `process.env`（`devMode` 由宿主显式注入）。这意味着同一份 core 理论上可跑在浏览器、Worker、Deno 等任何 JS 运行时。
+`@aalis/core` 在物理上是**环境无关**的内存运行时：运行时代码不加载外部包（`@aalis/schema-log` 仅用于日志类型声明），源码不 import 任何 `node:fs` / `node:path` / `node:os` / `node:child_process`，不调用 `process.cwd()` / `process.argv` / `console.*`，也不读 `process.env`（`devMode` 由宿主显式注入）。这意味着同一份 core 理论上可跑在浏览器、Worker、Deno 等任何 JS 运行时。
 
 > 业务插件同样受约束：直接 import `node:fs` / `node:child_process` / `node:os` / `node:http(s)` 被 biome 拦截，必须改走 `@aalis/api-storage` / `@aalis/api-process`。完整白名单与豁免理由见 [node-usage-policy](architecture/node-usage-policy.md)。
 
@@ -31,7 +31,6 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 | `config` / `configProvider` | `AalisConfig` / `ConfigProvider` | `createFsYamlConfigProvider()` | 配置读 / 写 / `fs.watch` 热重载 |
 | `pluginLoader` | `PluginLoader` | `createFsPluginLoader()` | 扫描 `packages/` + dynamic import |
 | `restartStrategy` | `RestartStrategy` | `createProcessRespawnStrategy()` | `child_process.spawn` 重启进程 |
-| `dataDir` | `string` | 由 yaml provider 决定 | 数据目录绝对路径 |
 | `devMode` | `boolean` | `process.env.NODE_ENV !== 'production'` | dev 校验开关 |
 
 另外 `@aalis/runtime` 的 `startAalis` 还负责 stdout/stderr console-sink、文件日志、终端状态恢复、子命令分发、SIGINT 优雅退出 —— 这些都是**纯宿主关切**，core 完全不知情。

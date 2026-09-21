@@ -35,17 +35,6 @@ function loadablePluginDirs(): string[] {
     .sort();
 }
 
-/**
- * 跳过名单：只放**在 node 测试环境里跑不起来**的，不放「忘了加」的。
- * 每条都要写清为什么——否则它会变成第二个静默漏测的通道。
- */
-const SKIP: Record<string, string> = {
-  'plugin-vectorstore-lancedb': '原生 lance 绑定，CI 镜像不一定可用',
-  // 曾有一条 'plugin-webui-client': '纯前端 React 包' —— 那是**死条目**：它的 keywords 是
-  // `aalis-interface`，压根不进 loadablePluginDirs()，"跳过"从未发生。下面的守卫只查目录
-  // 存在性，抓不出这类失效，故此记一笔：加 SKIP 前先确认该目录真的会被扫到。
-};
-
 describe('全插件 smoke import 契约', () => {
   const dirs = loadablePluginDirs();
 
@@ -53,17 +42,7 @@ describe('全插件 smoke import 契约', () => {
     expect(dirs.length).toBeGreaterThan(50);
   });
 
-  it('跳过名单里的每一项都仍然存在（删包后要一并清理，否则名单会掩盖真实缺失）', () => {
-    const stale = Object.keys(SKIP).filter(d => !existsSync(join(PACKAGES, d, 'package.json')));
-    expect(stale, `跳过名单里的包已不存在: ${stale.join('、')}`).toEqual([]);
-  });
-
   for (const dir of dirs) {
-    const reason = SKIP[dir];
-    if (reason) {
-      it.skip(`${dir} 导出 name + apply（跳过：${reason}）`, () => {});
-      continue;
-    }
     it(`${dir} 导出 name + apply`, async () => {
       const { default: plugin } = await import(`../../packages/${dir}/src/index.ts`);
       expect(typeof plugin?.name).toBe('string');

@@ -30,7 +30,7 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 | `startAalis(opts?)` | **一行启动**：读 `aalis.config.yaml` → 从 `node_modules` 加载已装 @aalis 插件 → 组装 `App` → 启动 + 挂 SIGINT/SIGTERM 优雅退出 + 进程级重生。返回 `App`。 |
 | `createNodeModulesPluginLoader(projectDir?)` | **独立部署**插件加载器：读项目 `package.json` 的 `dependencies`+`optionalDependencies`，按 `isLoadablePlugin`（**唯一标准：`keywords` 含 `aalis-plugin`**；契约 `aalis-api`/前端 `aalis-interface`/核心 `aalis-core`/工具链 `aalis-runtime`/工具库 `aalis-util` 因不带该词自然排除，无名前缀/service/subsystem 回退、无 marker 排除）发现并动态 import。 |
 | `createFsPluginLoader` | **monorepo 自托管**加载器：扫 `<cwd>/packages`，复用同一 `aalis-plugin` 纯关键词正向门。 |
-| `createFsYamlConfigProvider(configPath?)` | 文件系统 + YAML 配置 provider（返回 `{config, provider, dataDir}`）。 |
+| `createFsYamlConfigProvider(configPath?)` | 文件系统 + YAML 配置 provider（返回 `{config, provider}`）。 |
 | `createProcessRespawnStrategy()` | 进程级重启策略（`app.restart()` → 子进程重生）。 |
 
 `startAalis` 的 `opts`：`configPath`（默认 `cwd/aalis.config.yaml`）、`projectDir`（默认
@@ -71,7 +71,7 @@ mcp-server）绑定失败并打一条 error 后降级；config-sync 可能按 sc
 
 ## 怎么为别的环境写宿主
 
-core 的 `App` 构造接收宿主契约：`{ configProvider, pluginLoader, restartStrategy, config, dataDir,
+core 的 `App` 构造接收宿主契约：`{ configProvider, pluginLoader, restartStrategy, config,
 devMode }`。要支持 Deno / 浏览器 / 嵌入环境，就用该环境的 API 实现这三样契约
 （例：Deno 用 import map、无 node_modules；浏览器无 `fs`/`process`，配置走 fetch/IndexedDB、
 「重启」改为重建实例），再写一个等价的 `startXxx`。**core 与各插件契约不变**——这正是把

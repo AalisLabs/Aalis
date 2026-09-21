@@ -1,6 +1,7 @@
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { formatLogLine, LogHub } from '@aalis/core';
+import { LogHub } from '@aalis/core';
+import { formatLogLine } from '@aalis/schema-log';
 import { getBootstrapBuffer } from './bootstrap-buffer.js';
 
 /** 默认日志文件路径。webui-server 等下游目前各自硬编码同一相对路径。 */

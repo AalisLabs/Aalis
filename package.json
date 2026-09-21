@@ -57,7 +57,8 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^2.1.9",
-    "yaml": "^2.7.0"
+    "yaml": "^2.7.0",
+    "@aalis/schema-log": "workspace:*"
   },
   "dependencies": {
     "@aalis/core": "workspace:*",

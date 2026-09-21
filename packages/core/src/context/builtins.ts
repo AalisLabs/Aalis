@@ -138,6 +138,8 @@ export interface LifecycleCap {
    * 登记收尾：在本激活撤回登记之前执行，用于停接新活、把在手数据交给下层并等待确认。
    * 依赖可用性取决于关停图：普通消费者先关，父子与循环依赖采用各自的阶段顺序；
    * 不保护动态查询、缓存裸引用或提供者主动提前释放的资源。
+   * 回调不得 await 或返回同一关闭计划中后续阶段的完成 Promise：例如父 onDrain 等待
+   * 排在它之后的子模块 disposeAsync() 会互等。计划外调用者仍可等待关闭完成。
    */
   onDrain(fn: () => void | Promise<void>, label?: string): () => void;
   /** 登记清理（清理段）：本激活的对外登记已撤回；依赖可能已不可用，交接应放在 onDrain */
@@ -146,6 +148,7 @@ export interface LifecycleCap {
    * 挂一个子模块：独立身份与生命周期，能力按子激活重新绑定，随父关闭。子模块不进调度器：
    * 挂载时缺 required 服务即拒绝（抛错，apply 不执行）；挂载之后不再设闸——提供者离场时
    * 登记排队、引用可能为空，由父模块决定是否关掉它。
+   * 已加入关闭计划的模块仍按该计划关闭；外部调用 disposeAsync() 等待实际完成，不抢跑。
    */
   module(definition: PluginDefinition, config?: Record<string, unknown>): Promise<ModuleHandle>;
 }

@@ -52,14 +52,12 @@ const RUNTIME_EXPORTS = [
   'definePlugin',
   'defineService',
   'events',
-  'formatLogLine',
   'hooks',
   'hostConfig',
   'lifecycle',
   'logger',
   'optional',
   'parseInstanceId',
-  'parseLogLine',
   'pluginDefinitionOf',
   'pluginsService',
   'provide',
@@ -69,6 +67,10 @@ const RUNTIME_EXPORTS = [
 
 /** 已删机制或内部实现，不得从包根出现 */
 const FORBIDDEN_ROOT_EXPORTS = [
+  'formatLogLine',
+  'parseLogLine',
+  'LogEntry',
+  'LogLevel',
   'Context',
   'Activation',
   'ActivationHost',
@@ -149,6 +151,8 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
   it('类型面不得从包根导入已删标识（去掉这些 import 后探针能编过）', () => {
     const header = `import { App } from '@aalis/core';\nvoid App;\n`;
     const forbidden = `import type {
+  LogEntry,
+  LogLevel,
   Context,
   Activation,
   ActivationHost,
@@ -161,7 +165,7 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
   PluginModule,
   ServiceTypeMap,
 } from '@aalis/core';
-import { requiresBounceOnDepChange, unwrapPluginModule, useModule } from '@aalis/core';
+import { formatLogLine, parseLogLine, requiresBounceOnDepChange, unwrapPluginModule, useModule } from '@aalis/core';
 `;
     const good = runTscProbe(header);
     expect(good, `合法探针应能编过，实际：${good.join('\n') || '（零错误）'}`).toEqual([]);

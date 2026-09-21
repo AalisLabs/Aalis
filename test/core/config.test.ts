@@ -78,11 +78,6 @@ describe('ConfigManager (内存快照模式)', () => {
     expect(snap.constructor).toBe(Object);
   });
 
-  it('getConfigDir 返回 host 注入的 dataDir', () => {
-    const cfg = new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} }, { dataDir: '/tmp/foo' });
-    expect(cfg.getConfigDir()).toBe('/tmp/foo');
-  });
-
   it('未注入 provider 时 save() 是 no-op', () => {
     const cfg = new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} });
     // 不抛错即可——纯内存模式 save 没有持久化目标
@@ -102,14 +97,14 @@ describe('FsYamlConfigProvider (集成)', () => {
 
   it('从 YAML 加载配置树', () => {
     cfg = tempConfig('name: MyApp\nlogLevel: debug\nplugins:\n  myplug:\n    apikey: literal-secret\n');
-    const mgr = new ConfigManager(cfg.config, { provider: cfg.provider, dataDir: cfg.dataDir });
+    const mgr = new ConfigManager(cfg.config, { provider: cfg.provider });
     expect(mgr.get('name')).toBe('MyApp');
     expect(mgr.getPluginConfig('myplug').apikey, '值原样加载，不做任何替换').toBe('literal-secret');
   });
 
   it('save() 原样写回字符串值（密钥直接住在 config 里，不得被改写）', () => {
     cfg = tempConfig('name: X\nlogLevel: info\nplugins:\n  myplug:\n    token: sk-literal\n');
-    const mgr = new ConfigManager(cfg.config, { provider: cfg.provider, dataDir: cfg.dataDir });
+    const mgr = new ConfigManager(cfg.config, { provider: cfg.provider });
     mgr.set('name', 'Y');
     mgr.save();
     const written = readFileSync(cfg.path, 'utf-8');
