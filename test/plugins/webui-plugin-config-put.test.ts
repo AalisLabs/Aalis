@@ -1,7 +1,7 @@
 import type { AalisConfig, AppService, ConfigManager, Logger, PluginManagerService, ServiceRef } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { afterEach, describe, expect, it } from 'vitest';
-import { assertValidInstanceId } from '../../packages/core/src/context/definition.js';
+import { assertValidInstanceId } from '../../packages/core/src/composition/plugin-definition.js';
 import { App, appService, config, definePlugin, hostConfig, pluginsService } from '../../packages/core/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 

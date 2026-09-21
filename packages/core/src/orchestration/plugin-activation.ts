@@ -14,12 +14,11 @@ import type { PluginEntry, PluginState } from '../types/plugin.js';
 
 import type { ServiceContainer } from '../primitives/services.js';
 
-import { isRequiredServiceUnavailable } from '../context/binding.js';
-import type { Logger } from '../context/logger.js';
-
 import type { Activation } from './activation.js';
 import type { ActivationHost } from './activation-host.js';
 import { closeActivations } from './close-plan.js';
+import { isRequiredServiceUnavailable } from '../composition/binding.js';
+import type { Logger } from '../infrastructure/logger.js';
 
 /** 注册表内部的记录：公开的 {@link PluginEntry} 加上这次激活（不进公开类型） */
 export interface PluginRecord extends PluginEntry {

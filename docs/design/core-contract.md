@@ -6,7 +6,7 @@
 
 ## 一、四原语行为不变量
 
-插件在 `definePlugin({ uses })` 里声明描述符，`apply` 拿到按这次激活绑定的接口。没有默认注入。内置能力（`events` / `hooks` / `contributions` / `lifecycle` / `logger` / `config` / `provide` / `services`）绑的是这次激活自身的基础设施，不可被 `provide` 替换，也不参与激活闸。
+插件在 `definePlugin({ uses })` 里声明描述符，`apply` 拿到按这次激活绑定的接口。没有默认注入。Core 默认登记的八项基础服务（`events` / `hooks` / `contributions` / `lifecycle` / `logger` / `config` / `provide` / `services`）与第三方共用容器、描述符、`bind` 和 required / optional 规则；它们通过公开的 `serviceFactory` 按消费者创建接口，以通用 `exclusive` 登记策略拒绝同名第二提供者。
 
 **events（`events.on` / `events.emit`）——广播**
 - 监听器错误互相隔离：单个 handler 抛错（同步或异步）不影响其余 handler，也不使 `emit` reject。
@@ -16,11 +16,12 @@
 
 **services（`provide` / `ServiceRef` / `services`）——供需**
 - 解析顺序恒为 **偏好 > 优先级 > 注册顺序**，所有读口（`current` / `require()` / `all()` / `services.get` / `services.all`）一致。
-- 同名多提供者并存；胜者变更经 `service:registered` / `service:unregistered` / `service:preference-changed` 事件可观察。
-- `current` / `require()` 返回**当时点的提供者本身**，从不阻塞、从不 await；不是自动转发所有调用的代理。把引用存起来须自行承担它失效。`require()` 在 required 依赖丢失到调度收敛之间也可能短暂抛错。
-- `all()` 每次调用重新枚举。长期缓存的非默认提供者不受关停依赖边保护：提供者有失效逻辑则调用会抛，没有则可能静默成功。
+- 非独占服务允许同名多提供者并存；独占登记与任何已有条目冲突，其存在期间也拒绝第二条登记。胜者变更经 `service:registered` / `service:unregistered` / `service:preference-changed` 事件可观察。
+- `current` / `require()` 返回**当时点解析的实例**（共享登记对象或本消费者的工厂实例），不等待服务上线、不 await；不是自动转发所有调用的代理。把引用存起来须自行承担它失效。`require()` 在 required 依赖丢失到调度收敛之间也可能短暂抛错。
+- `all()` 每次调用重新枚举并解析全部工厂，包括非胜者。手动缓存共享实例不建立关停边；工厂实例持有其实际提供者边至消费者关闭。缓存不自动转发，也不保护主动提前卸载的提供者。
 - `follow(attach)`：胜者不变则不动；胜者换人时先跑上次返回的清理，等其 Promise 落定之后才用新实例再挂；下线与关闭时清理。`attach` 必须同步——需要清理就返回函数，不需要就不返回；thenable 会被接住并 warn，不会当 cleanup。拒绝被隔离并报告，但不证明旧资源已释放。
-- `services.get` / `services.all` 是动态查询：不产生依赖边，不参与激活闸，关停期可能拿空。需要等待、重绑与关停顺序就把描述符写进 `uses`。
+- `services.get` / `services.all` 是动态查询：不增加声明、不参与激活闸、不自动跟随，关停期可能拿空。查询共享实例不建立依赖边；实际创建工厂实例时为其托管寿命持有提供者边。需要声明等待与跟随就把描述符写进 `uses`。
+- `services.inspect` / `ServiceContainer.inspect` 只投影登记元数据，不返回实例、不执行工厂。原始 `ServiceContainer.get/getAll` 读取登记值，工厂包装不是消费实例。
 - `provide(descriptor, impl, options?)` 是唯一发布入口。`options.onBehalfOf` 的条目逻辑身份取被代者，清理仍归本激活；代登记不计入代理人的 `provides`。
 
 **hooks（`hooks.middleware` / `hooks.run`）——流程干预**
@@ -45,10 +46,18 @@
 - 清理链分撤回段（`follow` 返回的 cleanup、registrar 撤回、四原语退订）与清理段（`onDispose`）：撤回段整体先于清理段，段内相对注册**逆序**执行；单个清理器抛错不影响其余。
 - `onDrain` 在撤回之前执行：此刻本激活的监听、登记与声明的依赖都还在，用于停接新活、把在手的数据交给下层并等待确认。`onDispose` 在对外登记已撤回之后执行；依赖可能已不可用。异步清理在 `disposeAsync` 路径被等待（带 `disposeTimeoutMs` 护栏）；超时只是停止等待，不代表资源已释放。
 - 子模块经 `lifecycle.module(definition, config?)` 挂载：独立身份与生命周期，能力按子激活重新绑定，随父关闭，不进调度器。挂载时缺 required 服务即拒绝（抛错，`apply` 不执行）；挂上之后没有独立持续激活闸，不能把它与顶层插件调度等同。
-- 激活 = 提供者先于消费者（required 依赖拓扑）。关闭按每个激活的 drain 与 close 两阶段编排。普通依赖：消费者整个 close 完，提供者才 drain。父使用自己子树的服务：父 drain 先于子 close。后代使用祖先的服务：不往排序图加边，由归属树保证子 close 先于祖先 close。环内 optional 边构成的强连通分量（≥2 个激活）先让成员全部 drain，再任一 close——drain 期间对方仍活着，双方 `onDrain` 都能 `require()`；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭，但不享有整 App 关停那一层「根绑定与全部插件同计划」的交接保证。动态查询与调用方缓存的裸引用不产生边。
+- 激活 = 提供者先于消费者（required 依赖拓扑）。关闭按每个激活的 drain 与 close 两阶段编排。普通依赖：消费者整个 close 完，提供者才 drain。父使用自己子树的服务：父 drain 先于子 close。后代使用祖先的服务：不往排序图加边，由归属树保证子 close 先于祖先 close。环内 optional 边构成的强连通分量（≥2 个激活）先让成员全部 drain，再任一 close——drain 期间对方仍活着，双方 `onDrain` 都能 `require()`；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭，但不享有整 App 关停那一层「根绑定与全部插件同计划」的交接保证。动态查询共享实例与手动缓存的裸引用不产生边；已创建的工厂实例持有准确提供者边至消费者关闭，失败工厂的边留到回滚落定。
 - `app:stopping` 是屏障知会，不是清理通道；只在 `App.stop()` 全局停机时发一次，bounce / unload / disable 不发。清理走 `onDrain` / `onDispose`。`App.stop()` 顺序：`beginShutdown()`（冻结新增绑定并进入停机态）→ `idle()`（排干在飞重算）→ 发出 `app:stopping` → 关停计划。监听器全部返回后才执行停机计划。窗口内 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成）；`register` / `bounce` 返回 false（与定义或实例 id 校验失败同属政策挡下的 false 口径）。已冻激活上 `provide` 记 warn 后忽略、不抛；`lifecycle.module` 抛「已 dispose」。停机完成后：对新定义 `register` 返回 false 且不落账；对已 disposed 实例的 `enable` / `updateConfig` / `bounce` 返回 false；`idle()` 落定。
 - 提供者换人（多提供者其一退出、偏好切换、更高优先级上线）不改变插件的目标状态，经 `service:registered` / `service:unregistered` / `service:preference-changed` 可观察。要跟随换人用 `follow`，不要指望消费者被级联重启。
 - required 依赖缺失 → 顶层插件停在 pending（不阻塞、不轮询）；依赖就绪自动激活。初始化期间本次 required 绑定的 `require()` 原样抛出不可用错误时，先回滚资源再回到 pending；optional、自造/包装异常及其他激活的错误不适用。持续失稳的自动尝试在单次重算任务内有界，点名后暂缓，不影响其他插件与管理操作。
+
+### 服务工厂的资源寿命
+
+- `serviceFactory(scope => instance)` 同步返回非空、非 thenable 实例；一次提供者登记在每个消费者激活中成功创建一次。缓存按实际激活身份与登记身份区分，不按显示 id；构造循环明确报错。
+- `ServiceScope` 只提供消费者的身份、日志、配置与资源接口，不公开容器、注册表或内部激活记录。工厂经 `track` / `onDrain` / `onDispose` / `module` 取得的资源归消费者，提供者切换不提前清理这些资源。
+- 构造失败回滚该次取得的资源：撤回 `track`，执行未取消的 `onDispose`，取消 `onDrain`，收回已发起的子模块。异步回滚纳入消费者的关闭等待；失败 scope 的迟到清理仍执行。工厂返回 Promise 属于契约错误，运行期拒收并接住其拒绝。
+- 成功实例及其提供者边保持到消费者关闭；需要随胜者每次交接的资源仍走 `follow`。这些边遵守既有父子、成环与单独卸载边界，不保证业务保存成功或被主动关闭的提供者仍可用。
+- 同版本 Core 副本的描述符、optional 包装、工厂与 required 不可用错误可互通；不承诺不同版本的协议互通或任意 Core 类实例跨副本互换。
 
 ## 三、明确不承诺（实现自由区）
 
@@ -79,7 +88,7 @@
 
 | 层 | 成员 | 承诺 |
 |---|---|---|
-| stable | `definePlugin` / `defineService` / `optional` / `serviceRef`、`ServiceRef` 的 `current` / `require()` / `all()` / `follow()`、内置能力描述符（`events` / `logger` / `config` / `lifecycle` / `provide` / `services` / `hooks` / `contributions`）、宿主描述符（`appService` / `pluginsService` / `hostConfig`）、`App.plugin` / `App.bind` / `App.config` / `App.plugins`、`createApp` / `AppOptions` providers、`ConfigManager` 快照读写、`PluginManagerService` 接口的全部成员（接口即清单，不在此另抄一份） | 1.x 内不破坏 |
+| stable | `definePlugin` / `defineService` / `optional` / `serviceRef` / `serviceFactory`、`ServiceRef` 的 `current` / `require()` / `all()` / `follow()`、基础服务描述符（`events` / `logger` / `config` / `lifecycle` / `provide` / `services` / `hooks` / `contributions`）、宿主描述符（`appService` / `pluginsService` / `hostConfig`）、`App.plugin` / `App.bind` / `App.config` / `App.plugins`、`createApp` / `AppOptions` providers、`ConfigManager` 快照读写、`PluginManagerService` 接口的全部成员（接口即清单，不在此另抄一份） | 1.x 内不破坏 |
 | experimental | 四个注册表类（`EventBus` / `HookRegistry` / `ServiceContainer` / `ContributionRegistry`）的直接持有面：签名随原语统一工作调整，0.13 / 0.14 各改过一轮 | 1.x 内可变，变更走 minor |
 | internal | `@internal` 标注成员、私有方法、激活记录类、`DisposableChain` 等未从包根导出者 | 无承诺 |
 
@@ -111,37 +120,33 @@ API，就把下限抬到那个版本（如 0.13.0 这批的 runtime / plugin-cli
 
 ## 八、内部分层（非承诺面，改动须守）
 
-core 源码按目录分四层，自下而上，每层只许 import 本层与更低层；依赖方向由 `test/core/architecture.test.ts` 机器守（按解析后的真实路径判层，只查直接 import 说明符）：
+core 源码按职责分目录，依赖方向由 `test/core/architecture.test.ts` 守卫；目录边界与公开包边界无关：
 
-- **资源内核** `kernel/`（`lifecycle.ts`、`disposable-chain.ts`）：父子归属、清理链、可等待关闭与逐项超时、错误隔离与上报。只认自己，不依赖类型词汇、四原语、激活记录或编排。
-- **四原语** `primitives/`（events、hooks、services、contributions）：定义插件之间协作方式的四个注册表。只认 kernel 与类型词汇，不认识激活记录、Logger、Config；需要上报的诊断经注入的回调送出（`onHandlerError`、`onStall`）。
-- **能力与定义** `context/`（binding、service-watch、capabilities、builtins、resources、definition、config、logger）：服务描述符、能力工厂、胜者观察与绑定交接、资源登记、插件定义、配置与日志。不 import 编排层，也不持有旧 Context 大类。
-- **编排层** `orchestration/`（app、activation、activation-host、close-plan、plugin、plugin-activation、plugin-topology、host-services、providers）：由小型激活记录保存身份、资源与依赖边，由 ActivationHost 创建激活并装配能力；App / PluginManager / close-plan 负责启动、调度与关停，另含宿主 SPI 和管理服务描述符。
+- **资源内核** `kernel/`（`lifecycle.ts`、`disposable-chain.ts`）：父子归属、清理链、可等待关闭与逐项超时、错误隔离与上报。只引用本层，不认识服务、配置或激活记录。
+- **协作原语** `primitives/`（events、hooks、services、contributions）：四个注册表及登记元数据。依赖 kernel 与基础类型，不认识激活记录、Logger 或 Config；诊断经回调送出。
+- **基础设施** `infrastructure/`（resources、config、config-values、logger）：资源账本、配置与安全值处理、日志通道。依赖 kernel、primitives 与基础类型，不负责服务装配和插件调度。
+- **服务装配** `composition/`：`descriptors` 保存服务描述符、类型推导与依赖提取；`binding` 保存资源口、不可用错误与 `follow` / `registrar`；`service-factory` 定义公开工厂协议，`core-services` 登记默认基础服务；其余包含 runtime 接线、service-watch、provide-validation 与 plugin-definition。依赖基础设施、原语和 kernel，不 import 编排层。
+- **插件编排** `orchestration/`（app、activation、activation-host、close-plan、plugin、plugin-activation、plugin-topology、host-services、providers）：创建激活、解析与缓存工厂实例、启动、调度、关停，以及宿主 SPI 和管理服务描述符。
 
-src 根只留 barrel（`index.ts`）。配置持久化的宿主 SPI（`ConfigProvider`）只依赖 `AalisConfig`，与 `ConfigManager` 同处 `context/config.ts`。`types/` 按种类存放类型词汇：`app.ts`、`plugin.ts` 属编排层词汇，`index.ts` barrel 会把它们一并带出，下层三者都不得引用；其余基础词汇文件只许互相引用。
-
-层间依赖的性质（运行时值依赖与纯类型依赖分开看）：
+src 根只留 `index.ts`。配置持久化 SPI `ConfigProvider` 只依赖 `AalisConfig`，与 `ConfigManager` 同处 `infrastructure/config.ts`。`types/` 按种类存放词汇；`types/app.ts`、`types/plugin.ts` 属编排契约，类型 barrel 会带出它们，下层不得经 barrel 反向引用。基础词汇文件只相互引用。
 
 | 从 | 到 | 性质 |
 |---|---|---|
-| primitives | kernel | 值：events / hooks 上报诊断用的 `reportQuietly` |
-| primitives | 基础词汇 | 纯类型 |
-| context | kernel | 值：`Lifecycle`、`reportQuietly` |
-| context | primitives、基础词汇 | 纯类型——四原语实例由编排层构造后传给能力工厂与绑定接口 |
-| context、orchestration | `@aalis/schema-log` | 仅纯类型：`LogEntry` / `LogLevel`；日志文件编解码由宿主使用，Core 不值导入 |
-| orchestration | context、primitives、kernel | 值：App 构造根激活与四个注册表，上报走 kernel 的 `reportQuietly` |
-| `types/app.ts`、`types/plugin.ts` | context、primitives、基础词汇 | 纯类型 |
+| primitives | kernel、基础词汇 | 诊断函数的值依赖与基础类型 |
+| infrastructure | kernel、基础词汇 | 资源内核的值依赖与基础类型 |
+| composition | infrastructure、primitives、kernel、基础词汇 | 绑定、工厂与默认服务的实现和类型 |
+| infrastructure、composition、orchestration | `@aalis/schema-log` | 仅纯类型；日志文件编解码由宿主使用，Core 不值导入 |
+| orchestration | composition、infrastructure、primitives、kernel | 应用装配与调度 |
+| `types/app.ts`、`types/plugin.ts` | composition、infrastructure、primitives、基础词汇 | 纯类型 |
 
-kernel 只引用本层模块；基础词汇文件只相互引用，不引用更高层。
-
-文件内的 import 与包根 index.ts 的导出按同一层序自下而上排列：types → kernel → primitives → context → orchestration → 同层兄弟，组间空行；由 biome 对 `packages/core/src/**` 的 organizeImports 分组配置守。同一模块既导值又导类型时写成一条语句、类型加内联 `type` 修饰符；全是类型的模块用 `export type {}`。
+文件内 import 与包根导出按分层组织，Biome 的 organizeImports 分组与目录保持一致。同一模块既导值又导类型时使用内联 `type`；全部为类型时使用 `export type {}`。
 
 文件前言与分节：带前言的文件用 60 个 `=` 的 `//` 横幅夹住前言（首行「文件名 — 一句话」），无前言的文件不补；文件内分节一律一行 `// ----- 节名 -----`。JSDoc 描述在前、`@internal` 等标签收尾（单行式也展开成多行）；不用警示符号，告诫写成陈述句。
 
-内部激活记录不通过插件能力或公开管理条目暴露；插件拿到的是窄能力对象，第三方 binder 拿到的是 BindingPort。`#` 私有字段与 TypeScript `private` 按内部封装需要使用，均不带 `_` 前缀。公开面与分层分别由 purity / architecture 测试约束。
+插件能力与公开管理条目类型不包含内部激活记录；`getPlugin()` 目前返回现场条目，管理面仍须只读，不把类型隐藏当作运行时隔离。插件拿到的是窄能力对象，第三方 binder 拿到的是 BindingPort，工厂拿到的是 ServiceScope。`#` 私有字段与 TypeScript `private` 按内部封装需要使用，均不带 `_` 前缀。公开面与分层分别由 purity / architecture 测试约束。
 
 诊断与错误的写法（文字规矩，无机器守——正则守卫经变异证明会被折行调用与含引号的英文骗过）：错误对象一律作 logger 的附加参数
-（`logger.error('xxx 失败:', err)`），不内插进消息——内插只剩 message、丢 stack，logger 写入前会把换行转义成单行。宿主 SPI
+（`logger.error('xxx 失败:', err)`），不内插进消息——内插只剩 message、丢 stack；日志行编码与转义由宿主负责。宿主 SPI
 （插件加载器、重启策略、配置 provider）的失败一律 `error` 级。kernel 抛出的错误信息用中文、带 `Lifecycle:` 前缀、不带节点 id
 （kernel 不认识激活记录；这两条抛错是收养关系写错的编程错误，不是运行时故障，抛给调用方即止）。
 

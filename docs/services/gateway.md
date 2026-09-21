@@ -209,7 +209,7 @@ export default definePlugin({
 
 - **惰性读取 `.current`，每次用时重新取，不缓存**：`const gw = gateway.current`。provider bounce（卸载/重载）会让旧引用失效；缓存到模块/闭包变量是 bug。详见 `concepts/lazy-service-access.md`。
 - **gateway 视为可选依赖时给出回退**：idle-scheduler 的范式是 `gateway ? gateway.ingressMessage(msg) : events.emit('inbound:message', msg)`（`packages/plugin-flow-control/src/idle-scheduler.ts`）。若你的相位插件**必须**有 gateway 才有意义，则在 manifest 写 `uses required: ['gateway']`（如 session-confirm，`packages/plugin-session-confirm/src/index.ts`），让 core 保证加载顺序。
-- **注册相位 = 用 `hooks.middleware(INBOUND_PHASE.X, (data, next) => ...)`**：洋葱模型，`await next()` 放行进入后续相位；**不调用 `next()`** 即「我已处理」，整条入站管道立即停止、不触达 agent（`packages/plugin-commands/src/index.ts`）。相位内多个 handler 按注册顺序执行，无需优先级数字。`hooks.middleware` 签名见 `packages/core/src/context/context.ts`。
+- **注册相位 = 用 `hooks.middleware(INBOUND_PHASE.X, (data, next) => ...)`**：洋葱模型，`await next()` 放行进入后续相位；**不调用 `next()`** 即「我已处理」，整条入站管道立即停止、不触达 agent（`packages/plugin-commands/src/index.ts`）。相位内多个 handler 按注册顺序执行，无需优先级数字。`hooks.middleware` 签名见 `packages/core/src/composition/core-services.ts`。
 - **错误边界**：默认实现把 `processInbound` / `dispatchOutbound` 整体 try/catch 并降级为 `logger.warn`（`packages/plugin-gateway/src/index.ts`）—— 单条消息出错不拖垮总线。你的相位 handler 也应自行兜底，别让异常冒泡出相位链。
 
 ## 7. 能力 / 风险 → 影响
@@ -234,5 +234,5 @@ export default definePlugin({
 - 双源 manifest（`package.json aalis.service` vs `provides`/`uses`）：`concepts/manifest-metadata.md`
 - 消息载体类型与端到端流水线：`concepts/message-llm-pipeline.md`（`IncomingMessage` / `OutgoingMessage` 在 `@aalis/schema-message`）
 - 确认 / 人在回路 / 授权：`concepts/security-model.md`、`plugins/plugin-authority.md`
-- 相位 hook / 洋葱中间件机制：`core/events.md`、`packages/core/src/primitives/hooks.ts`、`packages/core/src/context/context.ts`
+- 相位 hook / 洋葱中间件机制：`core/events.md`、`packages/core/src/primitives/hooks.ts`、`packages/core/src/composition/core-services.ts`
 - 存储 URI 文法（适配器附件落盘相关）：`concepts/storage-uri-grammar.md`

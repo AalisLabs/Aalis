@@ -3,13 +3,6 @@ import { type PluginEntry, type PluginState, parseInstanceId } from '../types/pl
 
 import { reportQuietly } from '../kernel/disposable-chain.js';
 
-import { isOptional, optionalNames, requiredNames, type Uses } from '../context/binding.js';
-import { events } from '../context/builtins.js';
-import type { ConfigManager } from '../context/config.js';
-import { assertValidInstanceId, type PluginDefinition, validateDefinition } from '../context/definition.js';
-import type { Logger } from '../context/logger.js';
-import { cloneConfigObject } from '../context/safe-keys.js';
-
 import type { Activation } from './activation.js';
 import type { ActivationHost } from './activation-host.js';
 import { freezeActivations } from './close-plan.js';
@@ -22,6 +15,12 @@ import {
   retireEntry,
 } from './plugin-activation.js';
 import { topoSortByDeps } from './plugin-topology.js';
+import { events } from '../composition/core-services.js';
+import { isOptional, optionalNames, requiredNames, type Uses } from '../composition/descriptors.js';
+import { assertValidInstanceId, type PluginDefinition, validateDefinition } from '../composition/plugin-definition.js';
+import type { ConfigManager } from '../infrastructure/config.js';
+import { cloneConfigObject } from '../infrastructure/config-values.js';
+import type { Logger } from '../infrastructure/logger.js';
 
 export type { PluginEntry, PluginState };
 export { parseInstanceId };

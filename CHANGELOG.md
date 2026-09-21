@@ -10,11 +10,21 @@
 
 ## 未发布（core 0.16.0 → 0.17.0）
 
+### 服务统一与工厂（@aalis/core）
+
+- 八项默认基础服务与第三方服务共用同一容器、描述符与绑定路径，删除 builtin 品牌和装配分路。所有 `uses` 按 required / optional 归类并参与同一激活规则；基础服务在加载插件前已登记，仍须显式声明使用。
+- 新增 `serviceFactory(scope => instance)`：同步按消费者激活与提供者登记创建并缓存实例；scope 的资源归消费者。成功工厂实例保留准确提供者边至消费者关闭，失败构造回滚资源并等待异步撤回后释放边。Promise 返回值被拒收，拒绝被观察；同版本 Core 副本的服务协议可互通。
+- `services.get/all` 解析当前消费者的工厂实例，`all` 也会创建非胜者；新增 `services.inspect` / `ServiceContainer.inspect`，只读登记元数据。WebUI 服务页使用 inspect，展示基础服务、共享/按激活实例策略和独占状态，不因查看列表创建实例。
+- `provide(..., { exclusive: true })` 是通用独占登记策略；Core 基础服务也使用它防止同名第二提供者。该策略不等于永久驻留，退订后可重新登记。
+- 内部目录调整为 `kernel` / `primitives` / `infrastructure` / `composition` / `orchestration`，描述符与绑定状态机分文件。深路径不属于公开 API，导入统一走 `@aalis/core`。
+
+**迁移**：管理页只枚举登记时改用 `inspect`；宿主需要消费实例时用 `app.bind`，不能将 `app.services.get/getAll` 返回的原始工厂包装当作实例。工厂和动态查询的完整边界见 [服务文档](docs/core/service.md)。
+
 ### 完整服务声明展示与内部精简
 
-- `PluginStatusEntry.uses` 返回全部显式声明的快照，保留参数别名、服务名及内置/必需/可选类别；`requiredServices` / `optionalServices` 继续描述参与外部依赖管理的服务，不改变激活规则。
+- `PluginStatusEntry.uses` 返回全部显式声明的快照，保留参数别名、服务名及必需/可选类别；`requiredServices` / `optionalServices` 包含 Core 基础服务，不再有独立 builtin 类别。
 - WebUI 插件详情显示上述全部声明，无配置项的插件也可展开。工具/命令的敏感标签仍单独展示；通过 `services` 动态查询的服务不属于静态声明清单。
-- Core 移除仅用于白盒测试的 Host 映射和读取入口，测试观察移入测试夹具；移除生命周期中已由完成对象覆盖的重复状态。内部 `services-helpers.ts` 更名为 `service-helpers.ts`。
+- Core 移除仅用于白盒测试的 Host 映射和读取入口，测试观察移入测试夹具；移除生命周期中已由完成对象覆盖的重复状态。发布校验按职责归入 `composition/provide-validation.ts`。
 
 ### 清理宿主契约与初始化恢复
 
@@ -27,7 +37,7 @@
 
 ### 本批收敛
 
-- Core 删除旧 `Context` 类及中转门面：能力工厂直接接注册表与 `Resources`，`Activation` 只保存身份、资源和依赖关系，装配及子模块挂载由 `ActivationHost` 承担。服务观察只报告胜者变化，异步交接统一在绑定与资源层处理。
+- Core 删除旧 `Context` 类及中转门面：默认服务工厂连接原语注册表与消费者的 `ServiceScope`，`Activation` 只保存身份、资源和依赖关系，装配及子模块挂载由 `ActivationHost` 承担。服务观察只报告胜者变化，异步交接统一在绑定与资源层处理。
 - `App.stop()` 在屏障与清理期间被再次调用，也返回同一个完整关闭 Promise；不再用全局事件阶段判断调用者、提前兑现外部调用。监听器或清理回调不能 await / 返回自己的停机 Promise。本批不新增 `apply` / 屏障超时，既有 `disposeTimeoutMs` 不构成全局停机时限。
 - `registrar` 同键登记在同步重入、撤回与关闭交错时仍按条目身份归属，过期登记取得的清理句柄会撤回，不留卸载后仍可执行的条目；关闭等待已发起的异步撤回。
 - runtime 在加载定义后、首次交给 Core 注册前完成默认值回填与未知字段裁剪，主实例与配置中的复用实例共用此路径，避免首次 `apply` 配置与保存配置不一致。schema 政策留在宿主。
@@ -84,9 +94,9 @@ export default definePlugin({
 | `ctx.middleware` / `ctx.runHook` | `hooks.middleware` / `hooks.run` |
 | `ctx.contribute` / `ctx.collect` | `contributions.contribute` / `contributions.collect` |
 | 整份宿主配置 | `hostConfig`（普通宿主服务，须显式 `uses`） |
-| 动态按名取服务 | `services.get` / `services.all`（不产生依赖边） |
+| 动态按名取服务 | `services.get` / `services.all`（不增加声明依赖；创建工厂实例时持有其寿命边） |
 
-`current` / `require()` 返回**当时点的提供者本身**，不是自动转发的代理；把引用存起来须自行承担它失效。`require()` 在 required 依赖丢失到调度收敛之间也可能短暂抛错。`all()` 每次调用重新枚举；长期缓存的非默认提供者（例如 `all()[1]`）不在关停编排的依赖边上——提供者自己有失效逻辑则调用会抛，没有则可能静默成功。
+`current` / `require()` 返回**当时点解析的实例**（共享实例或当前消费者的工厂实例），不是自动转发的代理；把引用存起来须自行承担它失效。`require()` 在 required 依赖丢失到调度收敛之间也可能短暂抛错。`all()` 每次调用重新枚举；手动缓存非默认共享实例（例如 `all()[1]`）不建立关停边；工厂实例则持有其准确提供者边至消费者关闭。缓存不自动转发，也不保护被主动卸载的提供者。
 
 `follow(attach)`：在场即调 `attach`；换人时先跑上次返回的清理，等它的 Promise 落定之后才用新实例再挂；下线与关闭时清理。`attach` 必须同步：需要清理就返回函数，不需要就不返回。返回 thenable 会被接住并 warn，不会当 cleanup 用。拒绝被隔离并报告，但不证明旧资源已释放。
 
@@ -110,7 +120,7 @@ export default definePlugin({
 });
 ```
 
-`services.get` 是动态查询：不参与激活闸，不享有重绑与关停顺序保证，关停期可能拿空。需要这些保证就把描述符写进 `uses`。
+`services.get` 是动态查询：不参与激活闸、不自动跟随，关停期可能拿空。共享实例查询不产生依赖边；实际创建工厂实例时持有其提供者边。需要声明等待与跟随就把描述符写进 `uses`。
 
 子模块：
 
@@ -160,7 +170,7 @@ export default definePlugin({
 
 ### 关停编排与 `app:stopping`（@aalis/core）
 
-关停按激活为单位，每个激活拆成收尾（`lifecycle.onDrain`：此刻本激活的监听、登记与声明的依赖都还在）与撤回加清理（`lifecycle.onDispose`：对外登记已撤回）。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。边只来自框架管理的关系：声明的依赖（含子模块、含尚未访问的 optional）在编排那一刻解析到的胜者，以及存活的托管绑定与尚未落地的撤回。经 `services` 动态查到的服务不产生边；调用方缓存的裸引用也不追踪。
+关停按激活为单位，每个激活拆成收尾（`lifecycle.onDrain`：此刻本激活的监听、登记与声明的依赖都还在）与撤回加清理（`lifecycle.onDispose`：对外登记已撤回）。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。边只来自框架管理的关系：声明的依赖（含子模块、含尚未访问的 optional）在编排那一刻解析到的胜者，以及存活的托管绑定、已创建的工厂实例与尚未落地的撤回。经 `services` 动态查询共享实例不产生边，调用方缓存的裸引用不追踪；动态查询创建的工厂实例按托管寿命持有其实际提供者边。
 
 普通依赖（别的插件、兄弟模块）：消费者整个 close 完，提供者才 drain。父使用自己子树的服务：父 drain 先于提供者子节点 close，父 `onDrain` 期间该节点尚未关闭，但可能已执行 drain。后代使用祖先的服务：不往排序图加边——归属树保证子 close 先于祖先 close，因此子 drain 时祖先尚未关闭，也可能已执行 drain。环内 optional 边构成的强连通分量（≥2 个激活）卡住时一次放行分量内全部 drain，再 close；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。框架保证编排顺序与等待，不保证插件在 drain 中已主动撤回或关闭的实现仍可用。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭，但不享有整 App 关停那一层「根绑定与全部插件同计划」的交接保证。
 
@@ -190,9 +200,9 @@ export default definePlugin({
 
 `@aalis/core` 公开面从包根导出 `pluginDefinitionOf`（加载器与市场共用判定）：只认 default 导出的定义对象（带非空 `name` 与 `apply` 函数）。具名导出、函数 / 类 default、普通对象缺字段，一律 warn「入口须 `export default definePlugin({ … })`」并跳过。定义 `name` 与包名不一致另 warn 一次，仍加载，但配置键以定义名为准。
 
-`@aalis/core` 必须是单副本 peer。装了两份时，内置描述符仍能被认出，随后在装配处抛「必须是单副本」；该 error 默认可见（`consoleSink: false` 仍有 minLevel=`warn` 的 stderr sink）。
+同版本 `@aalis/core` 副本的描述符、optional 包装、工厂与 required 不可用错误可以互通；不再因基础服务描述符来自另一份副本而拒绝装配。不据此承诺不同版本兼容，也不承诺所有 Core 类实例可以跨副本互换。
 
-**迁移**：入口改 default 定义。确认依赖树里 `@aalis/core` 只有一份（peer `>=0.17.0 <1.0.0`，禁 caret）。
+**迁移**：入口改 default 定义。继续使用 peer `>=0.17.0 <1.0.0` 并尽量去重，禁 caret；跨副本支持不替代版本约束。
 
 ### 热扫描、市场卸载与 WebUI 配置（@aalis/core / @aalis/plugin-package-manager / @aalis/plugin-webui-server）
 
@@ -211,7 +221,7 @@ PUT `/api/plugins/:name/config` 按 `configSchema` 裁掉未知键并 warn。裁
 它把容器内部的条目对象原样交出（只拷贝外层数组），调用方能改 `priority` / `contextId` / 清理归属 `owner` 绕过容器不变量；
 `ServiceEntry` 类型随之不再从包根导出。
 
-**迁移**：改用 `ServiceContainer.getAll(name)`，或声明 `services` 后 `services.all(name)`，或在 `uses` 里声明该服务后 `x.all()`。元素是 `ServiceView` 投影（`instance` / `contextId` / `priority` / `label`），顺序相同。
+**迁移**：改用 `ServiceContainer.getAll(name)`，或声明 `services` 后 `services.all(name)`，或在 `uses` 里声明该服务后 `x.all()`。元素是 `ServiceView` 投影（`instance` / `contextId` / `priority` / `label`），顺序相同。原始容器保留工厂包装，后两种消费入口解析实例；只看元数据请改用 `inspect`。
 
 ## 2026-09-20（core 0.16.0 minor；patch：api-tools 0.8.4 / plugin-agent 0.13.6）
 

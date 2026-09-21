@@ -2,10 +2,9 @@ import { awaitWithTimeout, reportQuietly } from '../kernel/disposable-chain.js';
 
 import type { ServiceContainer } from '../primitives/services.js';
 
-import type { Logger } from '../context/logger.js';
-import type { Resources } from '../context/resources.js';
-
 import { closeActivations } from './close-plan.js';
+import type { Logger } from '../infrastructure/logger.js';
+import type { Resources } from '../infrastructure/resources.js';
 
 /** 内部激活记录：身份、资源寿命与依赖边。不提供事件、服务、配置管理等能力门面。 */
 export class Activation {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Logger } from '../../packages/core/src/context/logger.js';
-import { Resources } from '../../packages/core/src/context/resources.js';
+import type { Logger } from '../../packages/core/src/infrastructure/logger.js';
+import { Resources } from '../../packages/core/src/infrastructure/resources.js';
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 function deferred() {

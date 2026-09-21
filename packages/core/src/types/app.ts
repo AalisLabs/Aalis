@@ -1,8 +1,7 @@
 // ----- App 服务接口 -----
 
-import type { PluginDefinition } from '../context/definition.js';
-
 import type { PluginEntry, PluginState } from './plugin.js';
+import type { PluginDefinition } from '../composition/plugin-definition.js';
 
 /**
  * App 生命周期 + 配置 + 市场 接口
