@@ -94,7 +94,8 @@ export function registerPluginRoutes(
         displayName: p.displayName,
         state: p.state,
         provides: p.provides ?? [],
-        // 能力披露：该插件「要调用哪些子系统」（inject 依赖）+「是否含 restricted 工具/指令」，供安装后知情查看。
+        // 完整能力声明含内置能力与 apply 别名；外部依赖闸与工具/指令可见性仍是各自独立的事实。
+        uses: p.uses,
         requiredServices: p.requiredServices ?? [],
         optionalServices: p.optionalServices ?? [],
         capabilities: [...(capsByPlugin.get(p.instanceId) ?? [])],

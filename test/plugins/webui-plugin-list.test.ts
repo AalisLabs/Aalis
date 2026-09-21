@@ -3,7 +3,20 @@ import type { ToolService } from '@aalis/api-tools';
 import type { WebUIService } from '@aalis/api-webui';
 import type { AppService, ConfigManager, PluginManagerService, ServiceRef } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
-import { App, config, definePlugin, defineService, provide } from '../../packages/core/src/index.js';
+import {
+  App,
+  config,
+  contributions,
+  definePlugin,
+  defineService,
+  events,
+  hooks,
+  lifecycle,
+  logger,
+  optional,
+  provide,
+  services,
+} from '../../packages/core/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 
 // GET /api/plugins 与 /api/pages 必须按 instanceId 归属工具 / 指令 / displayName。
@@ -108,6 +121,84 @@ function mountPluginRoutes(
 }
 
 describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
+  it('披露全部 uses：八种内置能力、参数别名与可选外部服务，不混入激活闸或敏感标签', async () => {
+    const app = silentApp();
+    // 同名的普通服务仍是外部依赖；不能用八个名字的白名单判断内置身份。
+    const externalEvents = defineService<object>('events');
+    const def = definePlugin({
+      name: 'declared-capabilities',
+      uses: {
+        bus: events,
+        hooks,
+        contributions,
+        lifecycle,
+        log: logger,
+        config,
+        provide,
+        services,
+        optionalEvents: optional(externalEvents),
+      },
+      apply() {},
+    });
+    await app.plugin(def);
+    const { invoke } = mountPluginRoutes(app);
+    const out = await invoke('GET /api/plugins');
+    const row = (out.body as { plugins: Array<Record<string, unknown>> }).plugins[0];
+    expect(row.state).toBe('active');
+    expect(row.uses).toEqual([
+      { key: 'bus', service: 'events', kind: 'builtin' },
+      { key: 'hooks', service: 'hooks', kind: 'builtin' },
+      { key: 'contributions', service: 'contributions', kind: 'builtin' },
+      { key: 'lifecycle', service: 'lifecycle', kind: 'builtin' },
+      { key: 'log', service: 'logger', kind: 'builtin' },
+      { key: 'config', service: 'config', kind: 'builtin' },
+      { key: 'provide', service: 'provide', kind: 'builtin' },
+      { key: 'services', service: 'services', kind: 'builtin' },
+      { key: 'optionalEvents', service: 'events', kind: 'optional' },
+    ]);
+    expect(row.requiredServices).toEqual([]);
+    expect(row.optionalServices).toEqual(['events']);
+    expect(row.capabilities).toEqual([]);
+    // 返回的是声明快照，修改投影不能反向改写插件定义。
+    app.plugins.getStatus()[0].uses[0].service = 'changed';
+    expect(app.plugins.getStatus()[0].uses[0].service).toBe('events');
+  });
+
+  it('required 缺席的 pending 插件也披露声明；零声明返回空列表', async () => {
+    const app = silentApp();
+    const needed = defineService<object>('needed');
+    const extra = defineService<object>('extra');
+    await app.plugin(
+      definePlugin({
+        name: 'waiting',
+        uses: { db: needed, cache: optional(extra), log: optional(logger) },
+        apply() {},
+      }),
+    );
+    await app.plugin(definePlugin({ name: 'empty', apply() {} }));
+    const { invoke } = mountPluginRoutes(app);
+    const rows = async () =>
+      ((await invoke('GET /api/plugins')).body as { plugins: Array<Record<string, unknown>> }).plugins;
+    const before = await rows();
+    expect(before.find(p => p.name === 'waiting')).toMatchObject({
+      state: 'pending',
+      requiredServices: ['needed'],
+      optionalServices: ['extra'],
+      uses: [
+        { key: 'db', service: 'needed', kind: 'required' },
+        { key: 'cache', service: 'extra', kind: 'optional' },
+        { key: 'log', service: 'logger', kind: 'builtin' },
+      ],
+    });
+    expect(before.find(p => p.name === 'empty')?.uses).toEqual([]);
+    app.bind({ provide }).provide(needed, {});
+    await app.plugins.idle();
+    expect((await rows()).find(p => p.name === 'waiting')).toMatchObject({
+      state: 'active',
+      uses: before.find(p => p.name === 'waiting')?.uses,
+    });
+  });
+
   it('GET /api/plugins 的 tools/commands/capabilities 必须按 instanceId 索引，不能用 definition.name', async () => {
     const def = reusableDef();
     const app = silentApp();
