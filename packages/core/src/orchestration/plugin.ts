@@ -207,6 +207,14 @@ export class PluginManager implements PluginManagerService {
     const entry = this.plugins.get(instanceId);
     if (!entry) return this.refuse('unload', instanceId, '不在注册表');
 
+    if (this.shuttingDown) {
+      // 停机中 unload 必须在 disposed-join 之前：retireBatch 会先把条目标 disposed，
+      // 若走 join #closing，drain 里再 unload 会与计划互等。汇入后立即 true。
+      if (entry.context) void entry.context.disposeAsync(this.disposeTimeoutMs);
+      this.logger.debug(`unload: 插件 "${instanceId}" 停机中已汇入停机计划`);
+      return true;
+    }
+
     // 'disposed' 单向化的 unload 侧：已有卸载在途（或停机遗留终态）时不再二次
     // retire/emit——join 其拆卸（disposeAsync 幂等）后只确保注册表摘除。删除必须
     // 带恒等卫：并发首个 unload 完成后同 id 可能已重新注册，按名盲删会把无辜的
@@ -215,13 +223,6 @@ export class PluginManager implements PluginManagerService {
       const inflight = entry.context;
       if (inflight) await inflight.disposeAsync(this.disposeTimeoutMs);
       if (this.plugins.get(instanceId) === entry) this.plugins.delete(instanceId);
-      return true;
-    }
-
-    if (this.shuttingDown) {
-      // 已冻进停机计划：不在这里 await 拆卸，以免 app:stopping 监听器与计划互等
-      if (entry.context) void entry.context.disposeAsync(this.disposeTimeoutMs);
-      this.logger.debug(`unload: 插件 "${instanceId}" 停机中已汇入停机计划`);
       return true;
     }
 

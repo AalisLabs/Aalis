@@ -255,7 +255,7 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
     expect(w.log.indexOf('close:host-plugin')).toBeLessThan(w.log.indexOf('close:memory'));
   });
 
-  it('optional 依赖成环：后挂的先整个关完（期间对方仍在），不告警，停机不悬挂', async () => {
+  it('optional 依赖成环：成员全部 drain 完再任一 close，不告警，停机不悬挂', async () => {
     const w = world();
     const app = makeApp(w);
     const ping = defineService<{ hit(): void }>('zz-ping');
@@ -285,8 +285,13 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
     await app.plugins.idle();
     await app.stop();
     expect(w.warnings.filter(x => x.includes('成环'))).toEqual([]);
-    // b 后挂：它的交接发生在 a 还活着的时候；a 收尾时 b 已经不在——optional 的契约允许
-    expect(w.log).toEqual(['ping<-b', 'close:b', 'drain:a pong=gone', 'close:a']);
+    // 互为 optional 的双方 drain 期间彼此仍活着；任一方 close 不得插在对方 drain 之前
+    expect(w.log.includes('ping<-b'), `log=${w.log.join('>')}`).toBe(true);
+    expect(w.log.includes('drain:a pong=alive'), `log=${w.log.join('>')}`).toBe(true);
+    expect(w.log.includes('drain:a pong=gone')).toBe(false);
+    const lastHandoff = Math.max(w.log.indexOf('ping<-b'), w.log.indexOf('drain:a pong=alive'));
+    expect(lastHandoff).toBeLessThan(w.log.indexOf('close:a'));
+    expect(lastHandoff).toBeLessThan(w.log.indexOf('close:b'));
   });
 
   it('required 依赖成环（胜者换人造成）：点名告警并按确定顺序关闭，停机不悬挂', async () => {
