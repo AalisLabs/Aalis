@@ -11,7 +11,6 @@ import {
   defineService,
   events,
   hostConfig,
-  type LogEntry,
   LogHub,
   lifecycle,
   logger,
@@ -20,6 +19,7 @@ import {
   services,
 } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
+import type { LogEntry } from '@aalis/schema-log';
 import type { StreamChunkMessage } from '@aalis/schema-message';
 import chalk from 'chalk';
 import cliTruncate from 'cli-truncate';

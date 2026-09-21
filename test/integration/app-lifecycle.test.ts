@@ -71,7 +71,6 @@ describe('App 生命周期', () => {
       const app = new App({
         config: cfg.config,
         configProvider: cfg.provider,
-        dataDir: cfg.dataDir,
       });
       const config = app.bind({ hostConfig }).hostConfig.require();
       config.setPluginConfig('@aalis/plugin-test', { foo: 'bar', n: 42 });

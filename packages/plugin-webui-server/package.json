@@ -45,7 +45,8 @@
     "@aalis/util-network-guard": "workspace:>=0.5.1 <1.0.0",
     "express": "^5.1.0",
     "ws": "^8.18.0",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "@aalis/schema-log": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

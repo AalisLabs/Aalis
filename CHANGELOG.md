@@ -10,6 +10,15 @@
 
 ## 未发布（core 0.16.0 → 0.17.0）
 
+### 清理宿主契约与初始化恢复
+
+- 初始化期间本次 required 绑定的 `require()` 原样抛出服务不可用错误时，撤回该次资源后回到 `pending`，依赖已恢复时也不会漏掉重新激活。optional、普通业务异常、伪造/包装错误和其他激活的错误仍进入 `error`。自动尝试在同一次重算任务内按插件限额，持续失稳会点名暂缓；不会通过排队的服务通知反复重置限额。
+
+- 新增 `@aalis/schema-log` 0.1.0，统一 `LogEntry` / `LogLevel` 与 `formatLogLine` / `parseLogLine`。这些导出从 Core 移除，runtime、CLI、WebUI 改从 schema 包导入；日志通道与 Logger 留在 Core。Core 仅引用该包的类型，编译后的 JavaScript 不加载它。发布时须包含新包。
+- 新写日志采用 `@aalis/log:1 ` 前缀的单行 JSON，完整保留反斜杠、换行与分隔符；读取兼容旧分隔格式，支持同一文件内混合记录。旧文件中已经丢失的转义信息无法恢复。
+- 删除未被生产代码使用的 `AppOptions.dataDir`、`ConfigManagerOptions.dataDir`、`ConfigManager.getConfigDir()` 与 `createFsYamlConfigProvider()` 返回值的 `dataDir`；宿主文件监听仍使用自己的实际目录。
+- 父模块的 `onDrain` 负责业务交接，不能等待同一关停计划中排在它之后的子关闭；外部调用者仍可等待完整关闭。本次未增加超时或改变关闭句柄语义。
+
 ### 本批收敛
 
 - Core 删除旧 `Context` 类及中转门面：能力工厂直接接注册表与 `Resources`，`Activation` 只保存身份、资源和依赖关系，装配及子模块挂载由 `ActivationHost` 承担。服务观察只报告胜者变化，异步交接统一在绑定与资源层处理。

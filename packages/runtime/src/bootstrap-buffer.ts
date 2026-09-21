@@ -1,4 +1,5 @@
-import { type LogEntry, LogHub } from '@aalis/core';
+import { LogHub } from '@aalis/core';
+import type { LogEntry } from '@aalis/schema-log';
 
 /**
  * 启动期 bootstrap buffer：在任何 sink（file/console）装好之前订阅 LogHub，

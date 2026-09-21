@@ -1,5 +1,6 @@
 import type { Events } from '@aalis/core';
-import { type LogEntry, LogHub, type LogLevel } from '@aalis/core';
+import { LogHub } from '@aalis/core';
+import type { LogEntry, LogLevel } from '@aalis/schema-log';
 import chalk from 'chalk';
 import { getBootstrapBuffer } from './bootstrap-buffer.js';
 

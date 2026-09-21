@@ -211,6 +211,8 @@ lifecycle.onDispose(async () => {
 
 环：optional 边构成的强连通分量先让成员全部 drain，再任一 close（不告警）；环里只剩 required 边仍无解才告警并强行放行。环外与归属约束不松。单独卸载提供者不在整次 `App.stop()` 计划里，不享有上述交接。这里保证的是框架的调用顺序与等待：插件若在 drain 中自行撤回服务或关闭连接，框架无法维持该实现可用；业务交接仍须返回可等待的 Promise，并处理失败。
 
+关闭回调不能等待同一计划中排在自身之后的阶段。例如父 `onDrain` 中 `await child.disposeAsync()`（或返回这个 Promise），而计划要求父 drain 完成后才关闭该子模块，两者就会互等。父 drain 应等待数据交接本身完成，再由计划继续关闭子模块。计划外的调用者仍可 `await child.disposeAsync()` 或 `await app.stop()` 等实际关闭完成；重复请求加入已有关闭，不改变计划顺序，也不会提前兑现。
+
 单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 注入（默认 5000；0=不设限）：超时放弃该项、继续后续清理并 warn 点名。超时只是停止等待，不代表资源已释放。
 
 本次没有为插件 `apply` 或 `app:*` 屏障监听器新增超时。`disposeTimeoutMs` 不保证整个 `register()` / `stop()` 有统一上限：尚未进入清理阶段时，永不落定的初始化或屏障监听器仍可能阻止流程推进。

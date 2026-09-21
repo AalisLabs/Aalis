@@ -34,7 +34,8 @@
     "@aalis/api-storage": "workspace:>=0.6.0 <1.0.0",
     "chalk": "^5.4.0",
     "cli-truncate": "^6.0.0",
-    "string-width": "^8.2.0"
+    "string-width": "^8.2.0",
+    "@aalis/schema-log": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

@@ -1,4 +1,5 @@
-import { App, type LogEntry, LogHub, services } from '@aalis/core';
+import { App, LogHub, services } from '@aalis/core';
+import type { LogEntry } from '@aalis/schema-log';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type CronEngine, cronEngine } from '../../packages/api-cron-engine/src/index.js';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';

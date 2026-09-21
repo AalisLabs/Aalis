@@ -1,6 +1,7 @@
 import { storage } from '@aalis/api-storage';
 import { type WebuiActionHandler, webuiServer } from '@aalis/api-webui';
-import { App, type LogEntry, LogHub, provide, services } from '@aalis/core';
+import { App, LogHub, provide, services } from '@aalis/core';
+import type { LogEntry } from '@aalis/schema-log';
 import { describe, expect, it } from 'vitest';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import schedulerPlugin, { type SchedulerService, scheduler } from '../../packages/plugin-scheduler/src/index.js';

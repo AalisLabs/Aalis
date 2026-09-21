@@ -43,14 +43,7 @@ export interface ChatMessage {
   timestamp: number;
 }
 
-export interface LogEntry {
-  /** 后端进程内单调递增序号；前端用作 React key 与分页 cursor。 */
-  seq: number;
-  timestamp: string;
-  level: string;
-  scope: string;
-  message: string;
-}
+export type { LogEntry } from '@aalis/schema-log';
 
 export interface CommandInfo {
   name: string;

@@ -1,4 +1,5 @@
-import { App, events, type LogEntry, LogHub } from '@aalis/core';
+import { App, events, LogHub } from '@aalis/core';
+import type { LogEntry } from '@aalis/schema-log';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { platform } from '../../packages/api-platform/src/index.js';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
