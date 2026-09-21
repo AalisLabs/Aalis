@@ -102,23 +102,6 @@ export interface AppOptions {
   version?: string;
 }
 
-const hosts = new WeakMap<App, ActivationHost>();
-
-/**
- * @internal core 自己的白盒测试取根激活用。不从包根导出，无 semver 承诺；
- * 宿主与插件经 `app.bind(uses)` 取能力。
- */
-export function activationHost(app: App): ActivationHost {
-  const host = hosts.get(app);
-  if (!host) throw new Error('未知的 App 实例');
-  return host;
-}
-
-/** @internal 仅供 Core 契约测试观察资源寿命。 */
-export function rootActivation(app: App): Activation {
-  return activationHost(app).root;
-}
-
 /**
  * 创建 App 实例的工厂函数。
  *
@@ -214,7 +197,6 @@ export class App {
 
     // 3. 插件管理器
     this.plugins = new PluginManager(this.#host, config, this.logger, this.disposeTimeoutMs);
-    hosts.set(this, this.#host);
 
     // 4. 注册核心服务
     caps.provide(defineService<App>('app'), this);

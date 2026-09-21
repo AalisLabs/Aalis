@@ -23,7 +23,6 @@ export class Lifecycle {
   private readonly children = new Set<Lifecycle>();
   private parent?: Lifecycle;
   private closing = false;
-  private tearingDown = false;
   private drained?: Promise<void>;
   private completion?: Promise<void>;
   private initialization?: Promise<void>;
@@ -123,8 +122,6 @@ export class Lifecycle {
   }
 
   private async teardown(wait: boolean, timeoutMs?: number): Promise<void> {
-    if (this.tearingDown) return;
-    this.tearingDown = true;
     this.closing = true;
 
     if (wait && this.initialization) {

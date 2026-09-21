@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  App,
+  type App,
   definePlugin,
   defineService,
   type Logger,
@@ -9,7 +9,7 @@ import {
   type ServiceRef,
   services,
 } from '../../packages/core/src/index.js';
-import { activationHost, rootActivation } from '../../packages/core/src/orchestration/app.js';
+import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 interface Provider {
   id: string;
@@ -31,7 +31,7 @@ function makeWorld() {
     error: () => {},
     child: () => logger,
   };
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+  const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
   apps.push(app);
   const host = app.bind({ provide, services });
   for (const id of ['a', 'b', 'c']) host.provide(svc, { id }, { entryId: `root/${id}` });

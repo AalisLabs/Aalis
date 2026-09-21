@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { BindingPort } from '../../packages/core/src/index.js';
-import { App, definePlugin, defineService, type Logger, lifecycle, provide } from '../../packages/core/src/index.js';
-import { activationHost, rootActivation } from '../../packages/core/src/orchestration/app.js';
+import {
+  type App,
+  definePlugin,
+  defineService,
+  type Logger,
+  lifecycle,
+  provide,
+} from '../../packages/core/src/index.js';
+import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // 独立评审（REVIEW-eebaf214）复现出的反例，逐条钉住修正后的契约。
@@ -47,7 +54,7 @@ afterEach(async () => {
 });
 function world() {
   const logger: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => logger };
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+  const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
   apps.push(app);
   return { app, host: { provide: app.bind({ provide }).provide } };
 }
