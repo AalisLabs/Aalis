@@ -71,7 +71,7 @@ npm start -- status
    | 档 | 装什么 |
    |---|---|
    | `bare` | 只装 `@aalis/core` + `@aalis/runtime`（完全自定义起点） |
-   | `minimal` | 最简对话闭包：网关 + 指令 + agent + 权限 + 确认通道 + 会话 + 跨会话历史 + 本地存储/进程（`MINIMAL_BASE`，`cli.ts`） |
+   | `minimal` | 最简对话闭包：网关 + 指令 + agent + 权限 + 确认通道 + 会话 + 消息归档 + 跨会话历史 + 本地存储/进程（`MINIMAL_BASE`，`cli.ts`） |
    | `standard` | minimal + 常用全家桶：WebUI / 人设 / 向量记忆 / 工具 / 调度 / 技能 / MCP / 联网搜索（Serper，需 key）…（`STANDARD_EXTRA`，`cli.ts`） |
    | `full` | 实时查 npm 全装所有官方插件（可能需手动取舍，`cli.ts`） |
 

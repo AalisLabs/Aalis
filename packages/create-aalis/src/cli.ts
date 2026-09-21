@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 type Tier = 'bare' | 'minimal' | 'standard' | 'full';
 
 // 基础设施 + agent 套件：minimal 起步的自洽依赖闭包（网关路由 → 指令/agent →
-// 会话 → 权限 + 确认通道 → 跨会话历史）。缺 session-confirm 时，CLI / WebUI / OneBot
+// 会话 → 权限 + 确认通道 → 消息归档 + 跨会话历史）。缺 session-confirm 时，CLI / WebUI / OneBot
 // 等平台上任何声明 confirm 的工具都只能"需确认后执行"而执行不了，故它是 authority 的配套。
 // 同类适配器不在此列，由 GROUPS 交互选择补入。
 const MINIMAL_BASE = [
@@ -41,11 +41,12 @@ const MINIMAL_BASE = [
   '@aalis/plugin-authority',
   '@aalis/plugin-session-confirm',
   '@aalis/plugin-session-manager',
+  '@aalis/plugin-message-archive',
   '@aalis/plugin-memory-history',
 ];
 
 // standard 在 minimal 之上增加的常用能力（管理界面 / 人设 / 记忆增强 / 常用工具 /
-// 调度套件 / 技能 / 归档 / 会话增强 / 诊断）。同类适配器仍由 GROUPS 选择。
+// 调度套件 / 技能 / 会话增强 / 诊断）。同类适配器仍由 GROUPS 选择。
 const STANDARD_EXTRA = [
   '@aalis/plugin-webui-server',
   '@aalis/plugin-persona',
@@ -64,7 +65,6 @@ const STANDARD_EXTRA = [
   '@aalis/plugin-todo-list',
   '@aalis/plugin-checkpoint',
   '@aalis/plugin-skills',
-  '@aalis/plugin-message-archive',
   '@aalis/plugin-subtask',
   '@aalis/plugin-tool-session',
   '@aalis/plugin-doctor',
