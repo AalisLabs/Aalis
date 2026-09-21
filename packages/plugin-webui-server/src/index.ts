@@ -624,6 +624,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       tools: caps.tools,
       commands: caps.commands,
       webui: () => services.get(webuiServer),
+      logger,
     },
     auth.identify,
     gate,
