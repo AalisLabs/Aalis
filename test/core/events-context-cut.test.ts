@@ -1,13 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Context } from '../../packages/core/src/context/context.js';
-import {
-  ConfigManager,
-  ContributionRegistry,
-  DefaultLogger,
-  EventBus,
-  HookRegistry,
-  ServiceContainer,
-} from '../../packages/core/src/index.js';
+import { bindActivationFixture, createActivationFixture } from '../helpers/activation.js';
 
 // ════════════════════════════════════════════════════════════
 // events 的 contextId 归属与同点切断：拆卸的注销段整体移除本 ctx 的全部
@@ -19,16 +11,9 @@ import {
 // ════════════════════════════════════════════════════════════
 
 function makeWorld() {
-  const deps = {
-    events: new EventBus(),
-    services: new ServiceContainer(),
-    hooks: new HookRegistry(),
-    contributions: new ContributionRegistry(),
-    logger: new DefaultLogger('test'),
-    config: new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} }),
-  };
-  const make = (id: string) => new Context({ id, ...deps });
-  return { make, events: deps.events };
+  const world = createActivationFixture();
+  const make = (id: string) => bindActivationFixture(world.host, world.host.create(world.activation, id));
+  return { make, events: world.events };
 }
 
 describe('events 按 ctx 切断', () => {
@@ -38,7 +23,7 @@ describe('events 按 ctx 切断', () => {
     const peer = make('peer');
 
     let hits = 0;
-    dying.on('plugin:loaded', () => {
+    dying.caps.events.on('plugin:loaded', () => {
       hits++;
     });
     let release!: () => void;
@@ -49,21 +34,21 @@ describe('events 按 ctx 切断', () => {
     const drainEnteredP = new Promise<void>(r => {
       drainEntered = r;
     });
-    dying.onDispose(async () => {
+    dying.caps.lifecycle.onDispose(async () => {
       drainEntered();
       await gate;
     }, 'slow-res');
 
-    const teardown = dying.disposeAsync(5000);
+    const teardown = dying.activation.disposeAsync(5000);
     await drainEnteredP; // 已过注销段、正卡在链排空里
-    await peer.emit('plugin:loaded', 'x');
+    await peer.caps.events.emit('plugin:loaded', 'x');
     expect(hits).toBe(0);
 
     release();
     await teardown;
-    await peer.emit('plugin:loaded', 'y');
+    await peer.caps.events.emit('plugin:loaded', 'y');
     expect(hits).toBe(0);
-    peer.dispose();
+    peer.activation.dispose();
   });
 
   it('off 身份卫：切断后迟到的退订闭包不误删他人重建的同名事件表', async () => {
@@ -71,7 +56,7 @@ describe('events 按 ctx 切断', () => {
     const a = make('a');
     const b = make('b');
 
-    a.on('plugin:loaded', () => {});
+    a.caps.events.on('plugin:loaded', () => {});
     let release!: () => void;
     let drainEntered!: () => void;
     const gate = new Promise<void>(r => {
@@ -81,24 +66,24 @@ describe('events 按 ctx 切断', () => {
       drainEntered = r;
     });
     // 后注册的 gated onDispose 在链上先排空——a 的 on 退订闭包在它之后迟到执行
-    a.onDispose(async () => {
+    a.caps.lifecycle.onDispose(async () => {
       drainEntered();
       await gate;
     }, 'gate');
 
-    const teardown = a.disposeAsync(5000);
+    const teardown = a.activation.disposeAsync(5000);
     await drainEnteredP;
     // 窗口内 b 重建同名事件表
     let bHits = 0;
-    b.on('plugin:loaded', () => {
+    b.caps.events.on('plugin:loaded', () => {
       bHits++;
     });
     release();
     await teardown; // a 的迟到 off 在此执行——身份卫必须放过 b 的新表
 
-    await b.emit('plugin:loaded', 'x');
+    await b.caps.events.emit('plugin:loaded', 'x');
     expect(bHits).toBe(1);
-    b.dispose();
+    b.activation.dispose();
   });
 
   it('无主 handler（直接用总线）不受任何 ctx 切断影响', async () => {
@@ -111,12 +96,12 @@ describe('events 按 ctx 切断', () => {
         raw++;
       }) as never,
     );
-    ctx.on('plugin:loaded', () => {});
-    ctx.dispose();
+    ctx.caps.events.on('plugin:loaded', () => {});
+    ctx.activation.dispose();
 
     const peer = make('peer');
-    await peer.emit('plugin:loaded', 'x');
+    await peer.caps.events.emit('plugin:loaded', 'x');
     expect(raw).toBe(1);
-    peer.dispose();
+    peer.activation.dispose();
   });
 });

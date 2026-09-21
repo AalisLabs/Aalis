@@ -27,12 +27,13 @@
 
 import { reportQuietly } from '../kernel/disposable-chain.js';
 
-import type { Context } from './context.js';
-import type { Logger } from './logger.js';
+import type { Logger } from '../context/logger.js';
+
+import type { Activation } from './activation.js';
 
 type Kind = 'drain' | 'close';
 interface Stage {
-  ctx: Context;
+  ctx: Activation;
   kind: Kind;
   /** 无约束时的自然次序：子先于父、同层后挂的先关、同一激活先收尾后关闭 */
   index: number;
@@ -51,9 +52,9 @@ function link(earlier: Stage, later: Stage, hard: boolean): void {
  * 截止点：本轮涉及的激活停止新增绑定、登记「正由本计划关闭」。
  * 真正的 drain/close 仍由 {@link closeActivations} 执行。已在别的计划里的节点跳过。
  */
-export function freezeActivations(roots: Context[]): Map<Context, () => void> {
-  const settle = new Map<Context, () => void>();
-  const freeze = (ctx: Context): void => {
+export function freezeActivations(roots: Activation[]): Map<Activation, () => void> {
+  const settle = new Map<Activation, () => void>();
+  const freeze = (ctx: Activation): void => {
     if (settle.has(ctx)) return;
     const done = ctx.joinPlan();
     if (!done) return; // 已在别的计划里：由那边负责关它
@@ -71,10 +72,10 @@ export function freezeActivations(roots: Context[]): Map<Context, () => void> {
  * `settle` 传入时复用已冻的计划（停机：先冻再发 `app:stopping`，监听器里的 dispose 汇入同一张图）。
  */
 export async function closeActivations(
-  roots: Context[],
+  roots: Activation[],
   timeoutMs: number | undefined,
   logger: Logger,
-  settle?: Map<Context, () => void>,
+  settle?: Map<Activation, () => void>,
 ): Promise<void> {
   const owned = settle ?? freezeActivations(roots);
   const mine = roots.filter(root => owned.has(root));
@@ -82,7 +83,10 @@ export async function closeActivations(
     for (const stage of planClose(mine, logger)) {
       // 单阶段失败不拖垮同批：与清理链「单项失败继续后续」同一政策
       try {
-        const pending = stage.kind === 'drain' ? stage.ctx.drainStage(timeoutMs) : stage.ctx.closeStage(timeoutMs);
+        const pending =
+          stage.kind === 'drain'
+            ? stage.ctx.resources.lifecycle.drain(timeoutMs)
+            : stage.ctx.resources.lifecycle.disposeAsync(timeoutMs);
         if (pending) await pending;
       } catch (err) {
         reportQuietly(() =>
@@ -98,14 +102,14 @@ export async function closeActivations(
   await Promise.all(roots.filter(root => !owned.has(root)).map(root => root.disposeAsync(timeoutMs)));
 }
 
-function planClose(roots: Context[], logger: Logger): Stage[] {
-  const drainOf = new Map<Context, Stage>();
-  const closeOf = new Map<Context, Stage>();
-  const parentOf = new Map<Context, Context>();
-  const providersOf = new Map<Context, Map<Context, boolean>>();
+function planClose(roots: Activation[], logger: Logger): Stage[] {
+  const drainOf = new Map<Activation, Stage>();
+  const closeOf = new Map<Activation, Stage>();
+  const parentOf = new Map<Activation, Activation>();
+  const providersOf = new Map<Activation, Map<Activation, boolean>>();
   const stages: Stage[] = [];
 
-  const visit = (ctx: Context): void => {
+  const visit = (ctx: Activation): void => {
     if (drainOf.has(ctx)) return;
     const info = ctx.closeInfo();
     providersOf.set(ctx, info.providers);
@@ -124,7 +128,7 @@ function planClose(roots: Context[], logger: Logger): Stage[] {
   };
   for (const root of roots) visit(root);
 
-  const isAncestor = (ancestor: Context, ctx: Context): boolean => {
+  const isAncestor = (ancestor: Activation, ctx: Activation): boolean => {
     for (let at = parentOf.get(ctx); at; at = parentOf.get(at)) if (at === ancestor) return true;
     return false;
   };

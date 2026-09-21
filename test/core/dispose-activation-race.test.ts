@@ -1,19 +1,16 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { Context } from '../../packages/core/src/context/context.js';
 import {
   App,
-  ConfigManager,
-  ContributionRegistry,
   DefaultLogger,
   definePlugin,
   defineService,
-  EventBus,
-  HookRegistry,
+  type Logger,
   lifecycle,
   provide,
-  ServiceContainer,
 } from '../../packages/core/src/index.js';
+import type { Activation } from '../../packages/core/src/orchestration/activation.js';
 import { activatePlugin, type PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
+import { createActivationFixture } from '../helpers/activation.js';
 
 // ============================================================
 // disposeAsync 的时序承诺：「返回时异步清理已真正完成」。
@@ -33,25 +30,19 @@ import { activatePlugin, type PluginRecord } from '../../packages/core/src/orche
 // 在飞」是结构保证，不受 CI 负载影响。唯一按时间断言的是超时兜底那条。
 // ============================================================
 
-const contexts: Context[] = [];
+const activations: Activation[] = [];
 const apps: App[] = [];
 afterEach(async () => {
-  for (const ctx of contexts.splice(0)) {
-    if (!ctx.disposed) await ctx.disposeAsync().catch(() => {});
+  for (const ctx of activations.splice(0)) {
+    if (!ctx.resources.lifecycle.disposed) await ctx.disposeAsync().catch(() => {});
   }
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
 
-function makeContext(id = 'root'): Context {
-  const events = new EventBus();
-  const services = new ServiceContainer();
-  const hooks = new HookRegistry();
-  const contributions = new ContributionRegistry();
-  const logger = new DefaultLogger('test');
-  const config = new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} });
-  const ctx = new Context({ id, events, services, hooks, contributions, logger, config });
-  contexts.push(ctx);
-  return ctx;
+function makeActivation(id = 'root') {
+  const fixture = createActivationFixture({ id });
+  activations.push(fixture.activation);
+  return fixture;
 }
 
 function deferred(): { promise: Promise<void>; open: () => void } {
@@ -71,24 +62,24 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
  *
  * @param track 是否把 apply 登记给 ctx（模拟 activatePlugin 的行为）
  */
-function startPlugin(ctx: Context, track: boolean) {
+function startPlugin(ctx: Activation, track: boolean) {
   const acquire = deferred();
   const state = { released: false };
   const applying = (async () => {
     await acquire.promise; // 模拟 await client.connect()
-    ctx.onDispose(async () => {
+    ctx.resources.onDispose(async () => {
       await sleep(0); // 模拟异步关闭 / 落盘：跨一个宏任务
       state.released = true;
     });
   })();
-  if (track) ctx.trackActivation(applying);
+  if (track) ctx.resources.lifecycle.trackInitialization(applying);
   return { applying, state, acquire };
 }
 
 describe('disposeAsync 与初始化在飞的竞态', () => {
   it('登记 apply 后，disposeAsync 返回时异步清理已真正完成', async () => {
-    const root = makeContext();
-    const ctx = root.fork('p');
+    const { host, activation: root } = makeActivation();
+    const ctx = host.create(root, 'p');
     const { applying, state, acquire } = startPlugin(ctx, true);
 
     // 闸门未开 → apply 必定卡在获取里，此刻发起拆卸
@@ -103,8 +94,8 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
   });
 
   it('变异守卫：不登记 apply 时该承诺确实落空（证明上一条不是假绿）', async () => {
-    const root = makeContext();
-    const ctx = root.fork('p');
+    const { host, activation: root } = makeActivation();
+    const ctx = host.create(root, 'p');
     const { applying, state, acquire } = startPlugin(ctx, false);
 
     // 未登记 = 改动前的行为：拆卸不等 apply，链是空的、直接排空返回。
@@ -122,8 +113,8 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
   });
 
   it('apply 迟迟不落定时，timeoutMs 兜底放行，不拖死停机', async () => {
-    const root = makeContext();
-    const ctx = root.fork('p');
+    const { host, activation: root } = makeActivation();
+    const ctx = host.create(root, 'p');
     const { state, acquire } = startPlugin(ctx, true);
 
     const t0 = Date.now();
@@ -138,18 +129,18 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
   });
 
   it('apply 抛错也算落定，不把拆卸卡住', async () => {
-    const root = makeContext();
-    const ctx = root.fork('p');
+    const { host, activation: root } = makeActivation();
+    const ctx = host.create(root, 'p');
     const acquire = deferred();
     let released = false;
     const applying = (async () => {
       await acquire.promise;
-      ctx.onDispose(async () => {
+      ctx.resources.onDispose(async () => {
         released = true;
       });
       throw new Error('apply 失败');
     })();
-    ctx.trackActivation(applying);
+    ctx.resources.lifecycle.trackInitialization(applying);
     applying.catch(() => {}); // 调用方自行处理失败（activatePlugin 的 catch）
 
     const disposing = ctx.disposeAsync(1000);
@@ -160,10 +151,10 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
   });
 
   it('同步 dispose() 不等 apply —— 其「首个 await 前同步执行完」的语义不变', async () => {
-    const root = makeContext();
-    const ctx = root.fork('p');
+    const { host, activation: root } = makeActivation();
+    const ctx = host.create(root, 'p');
     let syncDisposerRan = false;
-    ctx.onDispose(() => {
+    ctx.resources.onDispose(() => {
       syncDisposerRan = true;
     });
     const { applying, acquire } = startPlugin(ctx, true);
@@ -219,9 +210,9 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
   });
 
   it('级联：父 ctx 的 disposeAsync 会等到子 ctx 的初始化落定', async () => {
-    const root = makeContext();
-    const parent = root.fork('parent');
-    const child = parent.fork('child');
+    const { host, activation: root } = makeActivation();
+    const parent = host.create(root, 'parent');
+    const child = host.create(parent, 'child');
     const { applying, state, acquire } = startPlugin(child, true);
 
     const disposing = parent.disposeAsync();
@@ -234,15 +225,15 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
 
   // ----- activatePlugin 的接线 -----
   //
-  // 上面几条都手调 trackActivation 模拟激活路径。这条经真实的 activatePlugin，
+  // 上面几条都手调 trackInitialization 模拟激活路径。这条经真实的 activatePlugin，
   // 钉住 plugin-activation.ts 里那行登记——否则删掉它整个 test/core 仍然全绿，
   // 它随时会被当成死代码清掉。
   //
-  // 直接拿内部记录的 context 拆卸而不经 PluginManager：管理入口如今会主动走进
+  // 直接拿内部记录的 activation 拆卸而不经 PluginManager：管理入口如今会主动走进
   // 这个窗口（先改 state 让位、再 disposeAsync，锚在 admin-during-activation），
   // 本条钉的是更底层的「宿主直调」路径——不借任何编排、裸拆在飞 ctx。
   it('经 activatePlugin 激活的 ctx，其 apply 在飞时被拆卸也等得到 disposer', async () => {
-    const root = makeContext();
+    const { host } = makeActivation();
     const acquire = deferred();
     let flushed = false;
 
@@ -266,13 +257,13 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
     };
 
     const activating = activatePlugin(entry, {
-      rootCtx: root,
+      host,
       logger: new DefaultLogger('test'),
     });
 
-    // activatePlugin 在 apply 之前就把 ctx 挂上内部记录，此刻 apply 正卡在闸门里
+    // activatePlugin 在 apply 之前就把 activation 挂上内部记录，此刻 apply 正卡在闸门里
     expect(entry.state).toBe('activating');
-    const ctx = entry.context;
+    const ctx = entry.activation;
     expect(ctx).toBeDefined();
 
     const disposing = ctx!.disposeAsync(1000);
@@ -292,25 +283,18 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
 // ════════════════════════════════════════════════════════════
 describe('清理超时/抛错时点名', () => {
   /** 造一个日志可截获的 ctx —— 诊断输出走 logger，不走返回值 */
-  function ctxWithLogSink(): { ctx: Context; lines: string[] } {
+  function ctxWithLogSink(): { ctx: Activation; lines: string[] } {
     const lines: string[] = [];
     const sink = (m: unknown, e?: unknown) => lines.push(`${String(m)} ${e instanceof Error ? e.message : ''}`);
-    const ctx = new Context({
-      id: 'p',
-      events: new EventBus(),
-      services: new ServiceContainer(),
-      hooks: new HookRegistry(),
-      contributions: new ContributionRegistry(),
-      logger: { warn: sink, debug: sink, info: sink, error: sink } as never,
-      config: new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} }),
-    });
-    contexts.push(ctx);
+    const logger: Logger = { warn: sink, debug: sink, info: sink, error: sink, child: () => logger };
+    const { activation: ctx } = createActivationFixture({ id: 'p', logger });
+    activations.push(ctx);
     return { ctx, lines };
   }
 
   it('有 label 时点 label', async () => {
     const { ctx, lines } = ctxWithLogSink();
-    ctx.onDispose(() => new Promise(() => {}), 'lancedb-table');
+    ctx.resources.onDispose(() => new Promise(() => {}), 'lancedb-table');
     await ctx.disposeAsync(20);
     expect(lines.join('\n')).toMatch(/\[lancedb-table\]/);
   });
@@ -319,17 +303,16 @@ describe('清理超时/抛错时点名', () => {
     const lines: string[] = [];
     const tag = (lv: string) => (m: unknown, e?: unknown) =>
       lines.push(`${lv}|${String(m)} ${e instanceof Error ? e.message : ''}`);
-    const ctx = new Context({
-      id: 'p',
-      events: new EventBus(),
-      services: new ServiceContainer(),
-      hooks: new HookRegistry(),
-      contributions: new ContributionRegistry(),
-      logger: { warn: tag('warn'), debug: tag('debug'), info: tag('info'), error: tag('error') } as never,
-      config: new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} }),
-    });
-    contexts.push(ctx);
-    ctx.onDispose(() => {
+    const logger: Logger = {
+      warn: tag('warn'),
+      debug: tag('debug'),
+      info: tag('info'),
+      error: tag('error'),
+      child: () => logger,
+    };
+    const { activation: ctx } = createActivationFixture({ id: 'p', logger });
+    activations.push(ctx);
+    ctx.resources.onDispose(() => {
       throw new Error('boom');
     }, 'mongo-client');
     ctx.dispose();
@@ -338,7 +321,7 @@ describe('清理超时/抛错时点名', () => {
 
   it('清理抛错时也点名，不是一句无主的「已忽略」', () => {
     const { ctx, lines } = ctxWithLogSink();
-    ctx.onDispose(() => {
+    ctx.resources.onDispose(() => {
       throw new Error('boom');
     }, 'mongo-client');
     ctx.dispose();
@@ -349,8 +332,8 @@ describe('清理超时/抛错时点名', () => {
 describe('拆卸窗口内的 provides 校验归因', () => {
   // provide 的 post-dispose 守卫会吞掉拆卸窗口里的注册——那是框架层竞态，
   // 不是作者的声明错误。此测锚死如实归因（曾报「声明 provides 但未实际注册」的假罪名）。
-  it('apply 在飞时被拆卸且声明了 provides：error 如实归因为「激活期间 Context 已被拆卸」', async () => {
-    const root = makeContext();
+  it('apply 在飞时被拆卸且声明了 provides：error 如实归因为「激活期间资源已被拆卸」', async () => {
+    const { host } = makeActivation();
     const acquire = deferred();
     const db = defineService('__t:dar-db');
 
@@ -372,18 +355,18 @@ describe('拆卸窗口内的 provides 校验归因', () => {
     };
 
     const activating = activatePlugin(entry, {
-      rootCtx: root,
+      host,
       logger: new DefaultLogger('test'),
     });
 
-    const ctx = entry.context;
+    const ctx = entry.activation;
     const disposing = ctx!.disposeAsync(1000);
     acquire.open();
     await disposing;
     await activating;
 
     expect(entry.state).toBe('error');
-    expect(entry.error).toContain('激活期间 Context 已被拆卸');
+    expect(entry.error).toContain('激活期间资源已被拆卸');
     expect(entry.error).not.toContain('未实际注册');
   });
 });

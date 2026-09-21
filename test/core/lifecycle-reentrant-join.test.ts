@@ -1,25 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { Context } from '../../packages/core/src/context/context.js';
-import {
-  ConfigManager,
-  ContributionRegistry,
-  DefaultLogger,
-  EventBus,
-  HookRegistry,
-  ServiceContainer,
-} from '../../packages/core/src/index.js';
+import { createActivationFixture } from '../helpers/activation.js';
 
 describe('同步重入的异步关闭观察者', () => {
   it('清理回调仅观察关闭完成时，重入调用也等待剩余异步清理', async () => {
-    const ctx = new Context({
-      id: 'reentrant-close',
-      events: new EventBus(),
-      services: new ServiceContainer(),
-      hooks: new HookRegistry(),
-      contributions: new ContributionRegistry(),
-      logger: new DefaultLogger('test'),
-      config: new ConfigManager({ name: 'test', logLevel: 'error', plugins: {} }),
-    });
+    const { activation } = createActivationFixture({ id: 'reentrant-close' });
     let release!: () => void;
     const gate = new Promise<void>(resolve => {
       release = resolve;
@@ -29,20 +13,20 @@ describe('同步重入的异步关闭观察者', () => {
     let completed = false;
     let observer: Promise<void> | undefined;
 
-    ctx.onDispose(async () => {
+    activation.resources.onDispose(async () => {
       trace.push('cleanup:start');
       await gate;
       trace.push('cleanup:end');
     });
-    ctx.onDispose(() => {
+    activation.resources.onDispose(() => {
       // 只登记完成观察者，不返回或 await 此 Promise，避免清理等待自身。
-      observer = ctx.disposeAsync().then(() => {
+      observer = activation.disposeAsync().then(() => {
         observed = true;
         trace.push('observer:done');
       });
     });
 
-    const closing = ctx.disposeAsync().then(() => {
+    const closing = activation.disposeAsync().then(() => {
       completed = true;
     });
     try {

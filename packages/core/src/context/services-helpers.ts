@@ -1,8 +1,8 @@
 // ============================================================
-// services-helpers.ts — Context 的服务子系统辅助
+// services-helpers.ts — provide 能力的服务登记校验
 //
-// 从 context.ts 拆出来的纯函数，消除 Context 类自身对"如何包装/校验服务"的细节
-// 知识，留下 Context 作为编排者：路由参数 → 调 helper → 登记 disposable。
+// 内置 provide 能力传入逻辑身份、登记选项与所需的查询/日志接口。
+// 资源归属和清理登记由该能力与 Resources 负责，此处不持有激活记录。
 //
 // 这里不持有任何状态，副作用（查表/警告）都通过参数传入的 services/logger 反映出去。
 // ============================================================
@@ -33,7 +33,7 @@ export function validateProvide(
     logger.warn(
       `服务 "${name}" 的 entryId "${entryId}" 不以 "${ctxId}/" 为前缀。` +
         `脱离前缀后 hasByContext 命不中：module.provides 一致性校验将视其为未注册，按 provider/model 的模型引用也找不到它。` +
-        `推荐格式：\`\${ctx.id}/\${子粒度标识}\`。`,
+        `推荐格式：\`\${lifecycle.id}/\${子粒度标识}\`。`,
     );
   }
 

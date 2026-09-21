@@ -16,7 +16,7 @@ import { assertSafePluginId, cloneConfigObject, isUnsafeConfigKey } from './safe
  * ```
  *
  * `[key: string]: unknown` 兜底允许第三方插件即便不做 declaration merging
- * 也能通过 `ctx.config.get('myField')` 读到 unknown，避免 core 知晓任何业务字段。
+ * 也能通过宿主的 `app.config.get('myField')` 读到 unknown，避免 core 知晓任何业务字段。
  */
 export interface AalisConfig {
   name: string;
@@ -26,7 +26,7 @@ export interface AalisConfig {
   disabledPlugins?: string[];
   /**
    * 服务偏好：serviceName → preferred contextId。
-   * 详见 ServiceContainer.prefer / Context.preferService。语义：偏好 > 优先级 > 注册顺序。
+   * 插件经 `services.prefer` 设置偏好。语义：偏好 > 优先级 > 注册顺序。
    */
   servicePreferences?: Record<string, string>;
   // 第三方业务字段兜底：plugin 可通过 declaration merging 提供具体类型

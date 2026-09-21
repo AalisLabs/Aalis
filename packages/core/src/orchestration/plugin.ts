@@ -4,12 +4,15 @@ import { type PluginEntry, type PluginState, parseInstanceId } from '../types/pl
 import { reportQuietly } from '../kernel/disposable-chain.js';
 
 import { optionalNames, requiredNames } from '../context/binding.js';
-import { freezeActivations } from '../context/close-plan.js';
-import type { Context } from '../context/context.js';
+import { events } from '../context/builtins.js';
+import type { ConfigManager } from '../context/config.js';
 import { assertValidInstanceId, type PluginDefinition, validateDefinition } from '../context/definition.js';
 import type { Logger } from '../context/logger.js';
 import { cloneConfigObject } from '../context/safe-keys.js';
 
+import type { Activation } from './activation.js';
+import type { ActivationHost } from './activation-host.js';
+import { freezeActivations } from './close-plan.js';
 import {
   type ActivationDeps,
   activatePlugin,
@@ -38,7 +41,6 @@ type RecomputeKind = 'changed' | 'shutdown';
  */
 export class PluginManager implements PluginManagerService {
   private plugins = new Map<string, PluginRecord>();
-  private rootCtx: Context;
   private logger: Logger;
   /** 交给编排层自由函数（activatePlugin / retireEntry / retireBatch）的宿主注入件，构造一次 */
   private readonly deps: ActivationDeps;
@@ -46,7 +48,7 @@ export class PluginManager implements PluginManagerService {
   private reloading = false;
   /**
    * 手动 dispose 段计数器：disable / unload / bounce 在「dispose 旧
-   * ctx → 改 entry.state」这段不可分割的状态变更期间 +1。期间 dispose 触发的
+   * 激活 → 改 entry.state」这段不可分割的状态变更期间 +1。期间 dispose 触发的
    * service:unregistered 反应式 recompute 会被**排队**（而非立即跑——那会看到
    * 半成品状态，比如把正在禁用的插件重新激活），由这些方法收尾的 softReload 统一消化。
    *
@@ -71,7 +73,7 @@ export class PluginManager implements PluginManagerService {
    */
   private shuttingDown = false;
   /** 停机计划的完成信号：beginShutdown 冻树时填，stopAll 执行该计划 */
-  private shutdownSettle?: Map<Context, () => void>;
+  private shutdownSettle?: Map<Activation, () => void>;
 
   /** 是否正在关机——供插件 dispose hook 短路用 */
   isShuttingDown(): boolean {
@@ -85,7 +87,7 @@ export class PluginManager implements PluginManagerService {
   beginShutdown(): void {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
-    this.shutdownSettle = freezeActivations([this.rootCtx]);
+    this.shutdownSettle = freezeActivations([this.host.root]);
   }
 
   /** idle() 的等待者——在 recompute flight 排干（无在飞、无排队、无挂起段）时统一放行 */
@@ -117,19 +119,20 @@ export class PluginManager implements PluginManagerService {
   }
 
   constructor(
-    rootCtx: Context,
+    private readonly host: ActivationHost,
+    private readonly config: ConfigManager,
     logger: Logger,
     /** 单个异步清理项的等待上限（毫秒；0=不设限），由 App 从 AppOptions 注入 */
     private readonly disposeTimeoutMs?: number,
   ) {
-    this.rootCtx = rootCtx;
     this.logger = logger.child('plugins');
-    this.deps = { rootCtx, logger: this.logger, disposeTimeoutMs };
+    this.deps = { host, logger: this.logger, disposeTimeoutMs };
 
     // 监听服务注册/注销，路由到统一 recompute()。
     // 单飞/挂起/关机的取舍都在 recompute 内部处理（在飞期间排队，关机后跳过）。
+    const boundEvents = host.bind(host.root, { events }).events;
     for (const event of ['service:registered', 'service:unregistered'] as const) {
-      rootCtx.on(event, name => {
+      boundEvents.on(event, name => {
         this.recompute().catch(err => reportQuietly(() => this.logger.error(`recompute(${event}:${name}) 报错:`, err)));
       });
     }
@@ -174,7 +177,7 @@ export class PluginManager implements PluginManagerService {
     }
 
     // 检查是否被配置禁用（按 instanceId 检查）
-    const isDisabled = this.rootCtx.config.isPluginDisabled(id);
+    const isDisabled = this.config.isPluginDisabled(id);
 
     const entry: PluginRecord = {
       definition,
@@ -210,7 +213,7 @@ export class PluginManager implements PluginManagerService {
     if (this.shuttingDown) {
       // 停机中 unload 必须在 disposed-join 之前：retireBatch 会先把条目标 disposed，
       // 若走 join #closing，drain 里再 unload 会与计划互等。汇入后立即 true。
-      if (entry.context) void entry.context.disposeAsync(this.disposeTimeoutMs);
+      if (entry.activation) void entry.activation.disposeAsync(this.disposeTimeoutMs);
       this.logger.debug(`unload: 插件 "${instanceId}" 停机中已汇入停机计划`);
       return true;
     }
@@ -220,7 +223,7 @@ export class PluginManager implements PluginManagerService {
     // 带恒等卫：并发首个 unload 完成后同 id 可能已重新注册，按名盲删会把无辜的
     // 新 entry 扫出注册表，留下注册表外的活实例。
     if (entry.state === 'disposed') {
-      const inflight = entry.context;
+      const inflight = entry.activation;
       if (inflight) await inflight.disposeAsync(this.disposeTimeoutMs);
       if (this.plugins.get(instanceId) === entry) this.plugins.delete(instanceId);
       return true;
@@ -231,7 +234,7 @@ export class PluginManager implements PluginManagerService {
     this.suspendDepth++;
     try {
       // delete 必须留在拆卸**之后**：注册表是 register/rescan 的查重闸
-      // （plugins.has(id)），提前摘除会让同 id 在旧 ctx 排空期间重新注册，
+      // （plugins.has(id)），提前摘除会让同 id 在旧激活 排空期间重新注册，
       // 新旧实例同 instanceId 并存——同名服务重复 provide、偏好按 contextId 二义。
       await this.retire(entry, 'disposed');
       if (this.plugins.get(instanceId) === entry) this.plugins.delete(instanceId);
@@ -267,12 +270,12 @@ export class PluginManager implements PluginManagerService {
     // 'disposed' 对管理路径单向（见 bounce 内注释）
     if (entry.state === 'disposed') return this.refuse('enable', instanceId, '处于 disposed 终态');
     if (entry.state !== 'disabled' && entry.state !== 'error') return true; // 已经启用
-    // 依赖不变量：disabled/error 态的 entry 必然 context 已清（disable 与激活失败
+    // 依赖不变量：disabled/error 态的 entry 必然 activation 已清（disable 与激活失败
     // 都经 retireEntry 清引用；锚在 admin-during-activation 测试）——否则此处转
-    // pending 后会被激活侧的「旧 ctx 未清」闸永久跳过。
+    // pending 后会被激活侧的「旧激活 未清」闸永久跳过。
     entry.state = 'pending';
     entry.error = undefined;
-    this.rootCtx.config.setPluginEnabled(instanceId, true);
+    this.config.setPluginEnabled(instanceId, true);
     this.logger.info(`插件已启用: ${instanceId}`);
     await this.softReload();
     return true;
@@ -295,7 +298,7 @@ export class PluginManager implements PluginManagerService {
     if (entry.state === 'disabled') return true; // 已经禁用
 
     if (this.shuttingDown) {
-      if (entry.context) void entry.context.disposeAsync(this.disposeTimeoutMs);
+      if (entry.activation) void entry.activation.disposeAsync(this.disposeTimeoutMs);
       this.logger.debug(`disable: 插件 "${instanceId}" 停机中已汇入停机计划`);
       return true;
     }
@@ -303,7 +306,7 @@ export class PluginManager implements PluginManagerService {
     // dispose 段守卫：期间反应式 recompute 排队到收尾的 softReload
     this.suspendDepth++;
     try {
-      this.rootCtx.config.setPluginEnabled(instanceId, false);
+      this.config.setPluginEnabled(instanceId, false);
       await this.retire(entry, 'disabled');
       this.logger.info(`插件已禁用: ${instanceId}`);
     } finally {
@@ -369,7 +372,7 @@ export class PluginManager implements PluginManagerService {
       return false;
     }
     // 'disposed' 对管理路径单向（含卸载在途与停机后的遗留终态两种情形）：
-    // unload 写入终态与从注册表摘除之间隔着 retire 的微任务（即使无 ctx 可拆，
+    // unload 写入终态与从注册表摘除之间隔着 retire 的微任务（即使无激活可拆，
     // await 也让出）——此窗口内把它覆写回 'pending' 会重新武装 entry，激活出
     // 一个注册表外的永生孤儿实例；停机后覆写则会把插件误写进持久化禁用清单。
     if (entry.state === 'disposed') return this.refuse('bounce', instanceId, '处于 disposed 终态');
@@ -385,7 +388,7 @@ export class PluginManager implements PluginManagerService {
       // 入参可能是调用方还要继续用的活对象（WebUI PUT / config-sync 浅铺开的 payload）。
       // entry 与 ConfigManager 各持一份拷贝：插件经内置 config 就地改嵌套不得写穿快照。
       entry.config = cloneConfigObject(newConfig);
-      this.rootCtx.config.setPluginConfig(instanceId, cloneConfigObject(newConfig));
+      this.config.setPluginConfig(instanceId, cloneConfigObject(newConfig));
     }
 
     // dispose 段守卫（与 disable / unload 对齐）：dispose 触发的反应式
@@ -406,7 +409,7 @@ export class PluginManager implements PluginManagerService {
 
   /**
    * 全局停机：全部 active 插件与宿主的根激活进同一张关停计划——消费者先于它依赖的提供者关闭，
-   * 下游的收尾还能把数据交给下层（见 context/close-plan.ts）。
+   * 下游的收尾还能把数据交给下层（见 orchestration/close-plan.ts）。
    *
    * 停机置位后服务上下线不再触发反应式重算，本方法是关机时唯一的拆卸编排者。
    */
@@ -471,10 +474,10 @@ export class PluginManager implements PluginManagerService {
   private async recomputeOnce(kind: RecomputeKind): Promise<void> {
     // 停机：全部插件激活与宿主的根激活进同一张计划（无依赖关系时后注册的先关）
     if (kind === 'shutdown') {
-      const active = [...this.plugins.values()].filter(entry => entry.state === 'active').reverse();
-      await retireBatch(active, 'disposed', this.deps, {
+      const live = [...this.plugins.values()].filter(entry => entry.activation !== undefined).reverse();
+      await retireBatch(live, 'disposed', this.deps, {
         emitUnloaded: false,
-        planRoot: this.rootCtx,
+        planRoot: this.host.root,
         settle: this.shutdownSettle,
       });
       return;
@@ -503,8 +506,8 @@ export class PluginManager implements PluginManagerService {
       const retiring: PluginRecord[] = [];
       for (const entry of [...order].reverse()) {
         if (entry.state !== 'active') continue;
-        if (computeTargetState(entry, this.rootCtx) === 'active') continue;
-        const unmet = entry.required.find(name => this.rootCtx.getService(name) === undefined);
+        if (computeTargetState(entry, this.host.runtime.services) === 'active') continue;
+        const unmet = entry.required.find(name => this.host.runtime.services.get(name) === undefined);
         this.logger.info(`依赖 "${unmet}" 不可用，停用插件: ${entry.instanceId}`);
         retiring.push(entry);
         lastRoundFlips.push(entry.instanceId);
@@ -517,9 +520,9 @@ export class PluginManager implements PluginManagerService {
       // Phase B: 正向遍历，激活目标 active 的 pending entry
       for (const entry of order) {
         // 停机已在排队：不再启动新的实例
-        if (this.queued === 'shutdown') break converge;
+        if (this.shuttingDown || this.queued === 'shutdown') break converge;
         if (entry.state !== 'pending') continue;
-        if (computeTargetState(entry, this.rootCtx) !== 'active') continue;
+        if (computeTargetState(entry, this.host.runtime.services) !== 'active') continue;
         await activatePlugin(entry, this.deps);
         if ((entry.state as PluginState) === 'active') {
           changed = true;
@@ -538,6 +541,6 @@ export class PluginManager implements PluginManagerService {
       );
     }
 
-    this.rootCtx.emitQuietly('plugins:changed');
+    this.host.runtime.notify('plugins:changed');
   }
 }

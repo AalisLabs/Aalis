@@ -6,8 +6,7 @@
 // 写入这次激活的配置 → 按 uses 装配绑定接口 → 调 apply。
 // ============================================================
 
-import { assemble, type BoundOf, isOptional, type ServiceDescriptor, type Uses } from './binding.js';
-import type { Context } from './context.js';
+import { type BoundOf, isOptional, type ServiceDescriptor, type Uses } from './binding.js';
 import { isPlainConfigObject, isUnsafeConfigKey } from './safe-keys.js';
 
 /**
@@ -150,23 +149,4 @@ export function pluginDefinitionOf(mod: unknown): PluginDefinition | null {
     return null;
   }
   return candidate as PluginDefinition;
-}
-
-const activationConfig = new WeakMap<Context, Readonly<Record<string, unknown>>>();
-
-/** @internal 这次激活的插件配置（内置能力 config 的数据源） */
-export function activationConfigOf(ctx: Context): Readonly<Record<string, unknown>> {
-  return activationConfig.get(ctx) ?? {};
-}
-
-/**
- * @internal 在一次激活上挂载定义。任一 bind 抛错即整体失败：调用方拆掉这次激活，已装配部分经撤回段回滚。
- */
-export function mountDefinition(
-  ctx: Context,
-  definition: PluginDefinition,
-  config: Record<string, unknown>,
-): void | Promise<void> {
-  activationConfig.set(ctx, config);
-  return definition.apply(assemble(ctx, definition.uses ?? {}));
 }

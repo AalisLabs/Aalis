@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { assemble } from '../../packages/core/src/context/binding.js';
 import {
   App,
   definePlugin,
@@ -10,7 +9,7 @@ import {
   type ServiceRef,
   services,
 } from '../../packages/core/src/index.js';
-import { rootActivation } from '../../packages/core/src/orchestration/app.js';
+import { activationHost, rootActivation } from '../../packages/core/src/orchestration/app.js';
 
 interface Provider {
   id: string;
@@ -134,18 +133,18 @@ describe('follow 重入时的资源归属', () => {
   it('首挂回调同步销毁激活：停止跟随，并立即清理回调随后返回的资源', async () => {
     const { app, host, trace, live, released, attach } = makeWorld();
     // 公开的 lifecycle 没有同步 dispose：要在 attach 同栈关掉这次激活，只能拿内部激活记录
-    const ctx = rootActivation(app).fork('watcher');
-    const ref = assemble(ctx, { x: optional(svc) }).x;
+    const activation = activationHost(app).create(rootActivation(app), 'watcher');
+    const ref = activationHost(app).bind(activation, { x: optional(svc) }).x;
     const off = ref.follow(provider => {
       const cleanup = attach(provider);
-      ctx.dispose();
+      activation.dispose();
       host.services.prefer(svc, 'root/b');
       return cleanup;
     });
 
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1']);
     expect([...live]).toEqual([]);
-    expect(ctx.disposableCount).toBe(0);
+    expect(activation.resources.lifecycle.disposables.size).toBe(0);
     off();
     host.services.prefer(svc, 'root/c');
     expect(released).toEqual(['a:1']);

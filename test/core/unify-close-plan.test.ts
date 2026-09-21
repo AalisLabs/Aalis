@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it } from 'vitest';
-import { assemble, createPort } from '../../packages/core/src/context/binding.js';
+import type { BindingPort } from '../../packages/core/src/index.js';
 import {
   App,
   definePlugin,
@@ -10,7 +10,7 @@ import {
   optional,
   provide,
 } from '../../packages/core/src/index.js';
-import { rootActivation } from '../../packages/core/src/orchestration/app.js';
+import { activationHost, rootActivation } from '../../packages/core/src/orchestration/app.js';
 
 // ════════════════════════════════════════════════════════════
 // 关停编排与重入清理的契约测试。来源：第二轮独立复核（REVIEW-fcac1dc0）的全部反例，
@@ -457,8 +457,8 @@ describe('重入清理', () => {
     const w = world();
     const d = defineService<{ tag: string }>('zz-cp-reentrant');
     w.host(d, { tag: 'a' }, { entryId: 'root/a' });
-    const ctx = rootActivation(w.app).fork('consumer');
-    const ref = assemble(ctx, { ref: d }).ref;
+    const activation = activationHost(w.app).create(rootActivation(w.app), 'consumer');
+    const ref = activationHost(w.app).bind(activation, { ref: d }).ref;
     const live = new Set<string>();
     const off: () => void = ref.follow(p => {
       live.add(p.tag);
@@ -468,14 +468,16 @@ describe('重入清理', () => {
     w.host(d, { tag: 'b' }, { entryId: 'root/b', priority: 2 });
     await tick();
     expect([...live], '在回调里取消：刚建立的 b 立即被清理').toEqual([]);
-    await ctx.disposeAsync();
+    await activation.disposeAsync();
     expect([...live]).toEqual([]);
   });
 
   it('撤回途中调用另一个 track 句柄：关闭前登记的异步清理，关闭一定等到', async () => {
     const w = world();
-    const ctx = rootActivation(w.app).fork('consumer');
-    const port = createPort<unknown>(ctx, 'zz-cp-track');
+    const activation = activationHost(w.app).create(rootActivation(w.app), 'consumer');
+    const port = activationHost(w.app).bind(activation, {
+      port: defineService<unknown, BindingPort<unknown>>('zz-cp-track', port => port),
+    }).port;
     const gate = deferred();
     let finished = false;
     let calls = 0;
@@ -487,7 +489,7 @@ describe('重入清理', () => {
     });
     port.track(() => offA());
     let closed = false;
-    const closing = ctx.disposeAsync().then(() => {
+    const closing = activation.disposeAsync().then(() => {
       closed = true;
     });
     await tick();
@@ -499,8 +501,10 @@ describe('重入清理', () => {
 
   it('清理段里才发起的异步撤回同样被等到', async () => {
     const w = world();
-    const ctx = rootActivation(w.app).fork('consumer');
-    const port = createPort<unknown>(ctx, 'zz-cp-track2');
+    const activation = activationHost(w.app).create(rootActivation(w.app), 'consumer');
+    const port = activationHost(w.app).bind(activation, {
+      port: defineService<unknown, BindingPort<unknown>>('zz-cp-track2', port => port),
+    }).port;
     const gate = deferred();
     let finished = false;
     const off = port.track(() =>
@@ -508,9 +512,9 @@ describe('重入清理', () => {
         finished = true;
       }),
     );
-    ctx.onDispose(() => off());
+    activation.resources.onDispose(() => off());
     let closed = false;
-    const closing = ctx.disposeAsync().then(() => {
+    const closing = activation.disposeAsync().then(() => {
       closed = true;
     });
     await tick();
@@ -536,8 +540,10 @@ describe('follow 的串行交接', () => {
       },
     });
     w.host(d, make('a', true), { entryId: 'root/a' });
-    const ctx = rootActivation(w.app).fork('consumer');
-    assemble(ctx, { ref: d }).ref.follow(p => p.subscribe());
+    const activation = activationHost(w.app).create(rootActivation(w.app), 'consumer');
+    activationHost(w.app)
+      .bind(activation, { ref: d })
+      .ref.follow(p => p.subscribe());
     w.host(d, make('b', false), { entryId: 'root/b', priority: 2 });
     await tick();
     bus.emit('tick');
@@ -547,7 +553,7 @@ describe('follow 的串行交接', () => {
     seen.length = 0;
     bus.emit('tick');
     expect(seen).toEqual(['b']);
-    await ctx.disposeAsync();
+    await activation.disposeAsync();
   });
 
   it('排他资源：旧实例释放落定后新实例才申请；等待期间再换人只跟到最新的', async () => {
@@ -569,8 +575,10 @@ describe('follow 的串行交接', () => {
       },
     });
     w.host(d, make('a'), { entryId: 'root/a' });
-    const ctx = rootActivation(w.app).fork('consumer');
-    assemble(ctx, { ref: d }).ref.follow(p => p.acquire());
+    const activation = activationHost(w.app).create(rootActivation(w.app), 'consumer');
+    activationHost(w.app)
+      .bind(activation, { ref: d })
+      .ref.follow(p => p.acquire());
     w.host(d, make('b'), { entryId: 'root/b', priority: 2 });
     await tick();
     w.host(d, make('c'), { entryId: 'root/c', priority: 3 });
@@ -581,7 +589,7 @@ describe('follow 的串行交接', () => {
     expect(owner).toBe('c');
     expect(acquired, 'b 从未被挂上').toEqual(['a', 'c']);
     expect(w.warnings.filter(x => x.includes('租约'))).toEqual([]);
-    await ctx.disposeAsync();
+    await activation.disposeAsync();
     expect(owner).toBeUndefined();
   });
 
@@ -590,16 +598,18 @@ describe('follow 的串行交接', () => {
     const d = defineService<{ tag: string }>('zz-cp-reject');
     const attached: string[] = [];
     w.host(d, { tag: 'a' }, { entryId: 'root/a' });
-    const ctx = rootActivation(w.app).fork('consumer');
-    assemble(ctx, { ref: d }).ref.follow(p => {
-      attached.push(p.tag);
-      return () => (p.tag === 'a' ? Promise.reject(new Error('释放失败')) : undefined);
-    });
+    const activation = activationHost(w.app).create(rootActivation(w.app), 'consumer');
+    activationHost(w.app)
+      .bind(activation, { ref: d })
+      .ref.follow(p => {
+        attached.push(p.tag);
+        return () => (p.tag === 'a' ? Promise.reject(new Error('释放失败')) : undefined);
+      });
     w.host(d, { tag: 'b' }, { entryId: 'root/b', priority: 2 });
     await tick();
     expect(attached).toEqual(['a', 'b']);
     expect(w.warnings.some(x => x.includes('释放失败'))).toBe(true);
-    await ctx.disposeAsync();
+    await activation.disposeAsync();
   });
 
   it('截止点：旧清理阻塞 → 换提供者 → 开始关闭 → 放行旧清理 → 不再发生新挂载', async () => {
@@ -608,15 +618,17 @@ describe('follow 的串行交接', () => {
     const gate = deferred();
     const attached: string[] = [];
     w.host(d, { tag: 'a' }, { entryId: 'root/a' });
-    const ctx = rootActivation(w.app).fork('consumer');
-    assemble(ctx, { ref: d }).ref.follow(p => {
-      attached.push(p.tag);
-      return () => (p.tag === 'a' ? gate.promise : undefined);
-    });
+    const activation = activationHost(w.app).create(rootActivation(w.app), 'consumer');
+    activationHost(w.app)
+      .bind(activation, { ref: d })
+      .ref.follow(p => {
+        attached.push(p.tag);
+        return () => (p.tag === 'a' ? gate.promise : undefined);
+      });
     w.host(d, { tag: 'b' }, { entryId: 'root/b', priority: 2 });
     await tick();
     let closed = false;
-    const closing = ctx.disposeAsync().then(() => {
+    const closing = activation.disposeAsync().then(() => {
       closed = true;
     });
     await tick();
@@ -633,17 +645,19 @@ describe('follow 的串行交接', () => {
     const gate = deferred();
     const attached: string[] = [];
     w.host(d, { tag: 'a' }, { entryId: 'root/a' });
-    const ctx = rootActivation(w.app).fork('consumer');
-    const off = assemble(ctx, { ref: d }).ref.follow(p => {
-      attached.push(p.tag);
-      return () => (p.tag === 'a' ? gate.promise : undefined);
-    });
+    const activation = activationHost(w.app).create(rootActivation(w.app), 'consumer');
+    const off = activationHost(w.app)
+      .bind(activation, { ref: d })
+      .ref.follow(p => {
+        attached.push(p.tag);
+        return () => (p.tag === 'a' ? gate.promise : undefined);
+      });
     w.host(d, { tag: 'b' }, { entryId: 'root/b', priority: 2 });
     await tick();
     off();
     gate.resolve();
     await sleep(5);
     expect(attached).toEqual(['a']);
-    await ctx.disposeAsync();
+    await activation.disposeAsync();
   });
 });

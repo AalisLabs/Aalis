@@ -5,13 +5,15 @@ import { EventBus } from '../primitives/events.js';
 import { HookRegistry } from '../primitives/hooks.js';
 import { ServiceContainer } from '../primitives/services.js';
 
-import { assemble, type BoundOf, type Uses } from '../context/binding.js';
+import { type BoundOf, defineService, type Uses } from '../context/binding.js';
+import { events, provide, services } from '../context/builtins.js';
 import { type AalisConfig, ConfigManager, type ConfigProvider } from '../context/config.js';
-import { Context } from '../context/context.js';
 import type { PluginDefinition } from '../context/definition.js';
 import { DefaultLogger, type Logger, LogHub, type LogLevel } from '../context/logger.js';
 import { cloneConfigObject, cloneConfigValue, isPlainConfigObject, isUnsafeConfigKey } from '../context/safe-keys.js';
 
+import type { Activation } from './activation.js';
+import { ActivationHost, notify } from './activation-host.js';
 import { PluginManager, parseInstanceId } from './plugin.js';
 import type { PluginLoader, RestartStrategy } from './providers.js';
 
@@ -65,8 +67,8 @@ export interface AppOptions {
   /**
    * 单个异步清理项（onDispose 返回的 promise）的等待上限（毫秒），默认 5000。
    * 用于插件 unload / bounce / 停机路径的 disposeAsync——网络类关闭（数据库/
-   * 浏览器/MCP 连接）卡死时放弃等待该项、继续后续清理并 warn 点名，保证
-   * 停机始终能走完。传 0 表示不设限。
+   * 浏览器/MCP 连接）卡死时放弃等待该项、继续后续清理并 warn 点名。该值不是整个停机的期限：
+   * apply 与屏障事件没有新增超时，仍可能阻塞管理流程。传 0 表示不设限。
    */
   disposeTimeoutMs?: number;
   /**
@@ -101,16 +103,21 @@ export interface AppOptions {
   version?: string;
 }
 
-const roots = new WeakMap<App, Context>();
+const hosts = new WeakMap<App, ActivationHost>();
 
 /**
  * @internal core 自己的白盒测试取根激活用。不从包根导出，无 semver 承诺；
  * 宿主与插件经 `app.bind(uses)` 取能力。
  */
-export function rootActivation(app: App): Context {
-  const root = roots.get(app);
-  if (!root) throw new Error('未知的 App 实例');
-  return root;
+export function activationHost(app: App): ActivationHost {
+  const host = hosts.get(app);
+  if (!host) throw new Error('未知的 App 实例');
+  return host;
+}
+
+/** @internal 仅供 Core 契约测试观察资源寿命。 */
+export function rootActivation(app: App): Activation {
+  return activationHost(app).root;
 }
 
 /**
@@ -137,7 +144,8 @@ export function createApp(options: AppOptions): App {
  */
 export class App {
   /** 根激活：宿主绑定（{@link bind}）与核心服务的归属，全部插件激活的父。不对外——宿主经 bind 取能力 */
-  readonly #root: Context;
+  readonly #root: Activation;
+  readonly #host: ActivationHost;
   readonly plugins: PluginManager;
   readonly logger: Logger;
   /** 整份配置的读写、落盘与外部变更监听（插件侧的同一对象经 `hostConfig` 描述符声明获取） */
@@ -154,9 +162,6 @@ export class App {
   private readonly disposeTimeoutMs: number;
   /** 停机单飞：重入返回同一 Promise；完成后仍保留，再调 stop() 立即落定 */
   private stopping?: Promise<void>;
-  /** 正在派发 app:stopping：此间再调 stop() 不得 await 自身 */
-  private emittingStopping = false;
-  private nestedStopWarned = false;
 
   constructor(options: AppOptions) {
     // 1. 配置：接受快照或已构造的 ConfigManager
@@ -197,34 +202,35 @@ export class App {
     this.disposeTimeoutMs = options.disposeTimeoutMs ?? 5000;
 
     // 2. 根激活
-    this.#root = new Context({
-      id: 'root',
+    const runtime = {
       events: this.events,
       services: this.services,
       hooks: this.hooks,
       contributions: this.contributions,
-      logger: this.logger,
-      config,
       devMode: options.devMode ?? true,
-    });
+      notify: notify(this, this.logger),
+    };
+    this.#host = new ActivationHost(runtime, this.logger);
+    this.#root = this.#host.root;
+    const caps = this.#host.bind(this.#root, { events, provide, services });
 
     // 3. 插件管理器
-    this.plugins = new PluginManager(this.#root, this.logger, this.disposeTimeoutMs);
-    roots.set(this, this.#root);
+    this.plugins = new PluginManager(this.#host, config, this.logger, this.disposeTimeoutMs);
+    hosts.set(this, this.#host);
 
     // 4. 注册核心服务
-    this.#root.provide('app', this);
-    this.#root.provide('plugins', this.plugins);
-    this.#root.provide('host-config', config);
+    caps.provide(defineService<App>('app'), this);
+    caps.provide(defineService<PluginManager>('plugins'), this.plugins);
+    caps.provide(defineService<ConfigManager>('host-config'), config);
 
     // 5. 应用启动时已存在的服务偏好
     const initialPrefs = config.getServicePreferences();
     for (const [svcName, ctxId] of Object.entries(initialPrefs)) {
-      this.#root.preferService(svcName, ctxId);
+      caps.services.prefer(svcName, ctxId);
     }
 
     // 6. 服务偏好诊断日志
-    this.#root.on('service:registered', svcName => {
+    caps.events.on('service:registered', svcName => {
       const pref = config.getServicePreferences()[svcName];
       if (pref) {
         this.logger.debug(`服务 "${svcName}" 注册时存在用户偏好: ${pref}`);
@@ -241,7 +247,7 @@ export class App {
    * 插件拿的是自己激活的绑定，不复用这里的。
    */
   bind<U extends Uses>(uses: U): BoundOf<U> {
-    return assemble(this.#root, uses);
+    return this.#host.bind(this.#root, uses);
   }
 
   /**
@@ -414,13 +420,13 @@ export class App {
    */
   async start(): Promise<void> {
     this.logger.info('正在启动...');
-    await this.#root.emit('app:starting');
+    await this.events.emit('app:starting');
 
     // 注：消息路由由 @aalis/plugin-gateway 承担。
-    await this.#root.emit('app:ready');
+    await this.events.emit('app:ready');
 
     this.logger.info('启动完成');
-    await this.#root.emit('app:started');
+    await this.events.emit('app:started');
   }
 
   /**
@@ -440,7 +446,7 @@ export class App {
     // "快速重启"路径不调 stop()，此时新一轮启动期间的早期订阅者会收到上一轮
     // 的 sticky 信号。stop() 内部会再清一次，重复调用无副作用。
     this.events.clearSticky();
-    this.#root
+    this.events
       .emit('app:restarting')
       .then(() => strategy.restart({ stop: () => this.stop(), rollback: opts?.rollback }))
       .catch(err => reportQuietly(() => this.logger.error('restart 失败:', err)));
@@ -453,22 +459,20 @@ export class App {
    * 然后发 `app:stopping`，最后 stopAll。已静置时 `idle()` 仍让出一轮微任务——必须先冻闸，
    * 否则同轮排队的 bounce 会在置位前过闸、停机后留下 pending 幽灵。
    *
-   * 在 `app:stopping` 监听器里再调 `stop()`：warn 一次并立即返回（请勿 await——会与
-   * emit 屏障互等）。外部并发的第二次 `stop()` 汇入本次停机，等到收尾完。
+   * 每次调用都返回完整停机的同一 Promise，包括屏障监听器与清理期间的调用。
+   * `app:stopping` 监听器与清理回调不得 await 或返回该 Promise，否则会等待自身。
    */
   stop(): Promise<void> {
-    if (this.stopping) {
-      if (this.emittingStopping) {
-        if (!this.nestedStopWarned) {
-          this.nestedStopWarned = true;
-          this.logger.warn('stop() 在派发 app:stopping 期间被再次调用：已汇入本次停机，请勿在该监听器里 await stop()');
-        }
-        // 不等自身：监听器若 await 同一 in-flight Promise，会与 emit 屏障死锁
-        return Promise.resolve();
-      }
-      return this.stopping;
-    }
-    this.stopping = this.runStop();
+    if (this.stopping) return this.stopping;
+    let resolve!: () => void;
+    let reject!: (reason: unknown) => void;
+    // 在调用宿主 logger / unwatch 前发布完成对象，同步重入也只能加入本次停机。
+    this.stopping = new Promise<void>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    // 同步启动：不能延后一轮微任务，否则 bounce 可能抢在 beginShutdown 前过闸。
+    void this.runStop().then(resolve, reject);
     return this.stopping;
   }
 
@@ -477,12 +481,7 @@ export class App {
     this.config.unwatch();
     this.plugins.beginShutdown();
     await this.plugins.idle();
-    this.emittingStopping = true;
-    try {
-      await this.#root.emit('app:stopping');
-    } finally {
-      this.emittingStopping = false;
-    }
+    await this.events.emit('app:stopping');
     await this.plugins.idle();
     // 全部 active 插件与根激活进同一张关停计划——beginShutdown 已冻，这里执行 drain/close。
     await this.plugins.stopAll();

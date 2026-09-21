@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { App, EventBus } from '../../packages/core/src/index.js';
-import { rootActivation } from '../../packages/core/src/orchestration/app.js';
+import { App, EventBus, events } from '../../packages/core/src/index.js';
+import { activationHost } from '../../packages/core/src/orchestration/app.js';
 
 describe('EventBus', () => {
   it('on/emit 按注册顺序串行调用', async () => {
@@ -61,15 +61,16 @@ describe('EventBus per-handler 隔离（#8.1）', () => {
     expect((reported[1][1] as Error).message).toBe('boom-b');
   });
 
-  it('经 Context 门面注册的监听器抛错，上报的注册者身份就是 ctx.id', async () => {
+  it('经 events 能力注册的监听器抛错，上报的注册者身份就是 ctx.id', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const who: Array<string | undefined> = [];
     app.events.onHandlerError = (_event, _err, contextId) => who.push(contextId);
-    const root = rootActivation(app);
-    root.fork('plugin-x').on('plugin:loaded', () => {
+    const host = activationHost(app);
+    const child = host.create(host.root, 'plugin-x');
+    host.bind(child, { events }).events.on('plugin:loaded', () => {
       throw new Error('x');
     });
-    await root.emit('plugin:loaded', 'p');
+    await app.bind({ events }).events.emit('plugin:loaded', 'p');
     expect(who).toEqual(['plugin-x']);
     await app.stop();
   });

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
-import { createPort } from '../../packages/core/src/context/binding.js';
+import type { BindingPort } from '../../packages/core/src/index.js';
 import {
   App,
   definePlugin,
@@ -14,7 +14,7 @@ import {
   optional,
   provide,
 } from '../../packages/core/src/index.js';
-import { rootActivation } from '../../packages/core/src/orchestration/app.js';
+import { activationHost, rootActivation } from '../../packages/core/src/orchestration/app.js';
 
 // ════════════════════════════════════════════════════════════
 // 段 A 对抗审计（39 个代理，探针在 Aalis-local-only/…/audit-a-*）确认的契约违例，逐条转成回归测试。
@@ -292,25 +292,27 @@ describe('等待业务交出来的 Promise', () => {
 
   it('收尾段里才登记的 onDrain：同样被等到', async () => {
     const w = world();
-    const ctx = rootActivation(w.app).fork('p');
+    const activation = activationHost(w.app).create(rootActivation(w.app), 'p');
     let finished = false;
-    ctx.onDrain(() => {
-      ctx.onDrain(async () => {
+    activation.resources.onDrain(() => {
+      activation.resources.onDrain(async () => {
         await sleep(20);
         finished = true;
       });
     });
-    await ctx.disposeAsync();
+    await activation.disposeAsync();
     expect(finished).toBe(true);
   });
 
   it('在飞清理永不落定：超时点名一次、随即出账，后续各段不再重复计时', async () => {
     const w = world();
-    const ctx = rootActivation(w.app).fork('p');
-    const port = createPort<unknown>(ctx, 'zz-aa-stuck');
+    const activation = activationHost(w.app).create(rootActivation(w.app), 'p');
+    const port = activationHost(w.app).bind(activation, {
+      port: defineService<unknown, BindingPort<unknown>>('zz-aa-stuck', port => port),
+    }).port;
     port.track(() => new Promise<void>(() => {}), 'zz-aa-stuck-handle')();
     const started = Date.now();
-    await ctx.disposeAsync(60);
+    await activation.disposeAsync(60);
     const elapsed = Date.now() - started;
     expect(elapsed, `耗时 ${elapsed}ms`).toBeLessThan(150);
     const named = w.warnings.filter(x => x.includes('zz-aa-stuck-handle') && x.includes('60ms'));
@@ -383,7 +385,7 @@ describe('调度与类型面', () => {
 
   it('来自另一份 core 副本的内置能力描述符：明确报错进 error，不静默停在 pending', async () => {
     // 只给 barrel 加查询串不够：子图仍解析到同一份 binding.ts，WeakMap 共用，插件会假绿成 active。
-    // 拷整棵 core src 到 os.tmpdir() 再动态导入，相对路径都落在副本里，activationOf 才是第二份。
+    // 拷整棵 core src 到 os.tmpdir() 再动态导入，相对路径都落在副本里，bindBuiltin 才是第二份。
     type CoreNs = typeof import('../../packages/core/src/index.js');
     const srcRoot = fileURLToPath(new URL('../../packages/core/src', import.meta.url));
     const dir = mkdtempSync(join(tmpdir(), 'aalis-core-copy-'));
@@ -409,8 +411,8 @@ describe('调度与类型面', () => {
     expect(status?.state).toBe('error');
     expect(status?.error).toContain('单副本');
     expect(
-      stacks.some(s => s.includes('activationOf')),
-      `报错必须来自 activationOf，实际堆栈：${stacks.join('\n---\n') || '(空)'}`,
+      stacks.some(s => s.includes('bindBuiltin')),
+      `报错必须来自 bindBuiltin，实际堆栈：${stacks.join('\n---\n') || '(空)'}`,
     ).toBe(true);
   });
 

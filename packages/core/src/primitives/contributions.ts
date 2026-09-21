@@ -4,21 +4,20 @@ import type { ContributionPointMap } from '../types/contributions.js';
  * 贡献 spec 的内核契约：只要求一个 id。
  *
  * id 是**局部名**（如 'context'、'group-hint'），注册时由门面自动冠以
- * `${ctx.id}/` 前缀成为全局键（见 {@link ContributionHandle.key}）——
+ * `${lifecycle.id}/` 前缀成为全局键（见 {@link ContributionHandle.key}）——
  * **spec.id 侧**的抢注/顶替由此杜绝，无需归属权校验（与 provide 的
  * entryId 前缀约定同源，但由构造保证而非 warn）。
  *
- * 边界如实声明：该保证以 ctx.id 为信任锚。`ctx.useModule(module)` 在 fork 前
- * 已对 childId（`${父id}#${模块名}`）做 `~n` 后缀唯一化；直接 `ctx.fork(id)`
- * 则不保证唯一——重复 ctx.id 会使两方共用同一命名空间、后注册者替换先注册者。
- * 这是 Context 模型的信任边界（provide / middleware 的 contextId 归属同理
- * 暴露），如需硬化应在 fork 层统一处理，而非各原语自设门禁。
+ * 该命名空间以逻辑 id 区分。`lifecycle.module(definition)` 创建子激活时对
+ * `${父id}#${模块名}` 做 `~n` 后缀唯一化；内部 ActivationHost.create 可构造同名激活，
+ * 两者会共用贡献命名空间、后注册者替换先注册者。清理归属仍按各自 owner 区分，
+ * 旧激活的迟到清理不能误删新占位；命名空间与资源身份不是同一个概念。
  */
 export interface ContributionSpec {
   /**
-   * 局部幂等键：同一 ctx 内同 id 重复注册 = 替换。
+   * 局部幂等键：同一激活内同 id 重复注册 = 替换。
    *
-   * 必须**非空且不含 `/`**（`/` 是全局键的分隔符，含它可构造出跨 ctx 的
+   * 必须**非空且不含 `/`**（`/` 是全局键的分隔符，含它可构造出跨激活的
    * 键碰撞），违者注册期抛 `TypeError`。
    */
   id: string;
@@ -54,9 +53,9 @@ interface ContributionEntry {
  * 重复注册也无法影响排位。
  *
  * 插件面与 events / services / hooks 同一门面纪律（方法窄面，对象不外露）：
- * 注册经 `ctx.contribute(point, spec)`（冠 ctx.id 前缀 + 挂 dispose 链），
- * 枚举经 `ctx.collect(point)`（驱动公开——任何插件都可拥有自己的贡献点）。
- * 完整注册表仅 App（组合根）与 Context 内部持有。
+ * 注册经 `contributions.contribute(point, spec)`（冠激活 id 前缀 + 挂资源清理链），
+ * 枚举经 `contributions.collect(point)`（驱动公开——任何插件都可拥有自己的贡献点）。
+ * 完整注册表由 App（组合根）与能力运行基础设施持有，不交给插件。
  *
  * 按贡献点键精化 spec 类型（经 types/contributions.ts 的 ContributionPointMap
  * declaration merging）是**注册表自己的契约**，与 events / hooks 同构：谁定义
@@ -74,7 +73,7 @@ export class ContributionRegistry {
    *
    * 全局键 = `${contextId}/${spec.id}`；同键重复注册为替换（幂等），
    * 旧注册的 dispose 函数在替换后失效（不会误删新注册）。
-   * @param owner 清理归属（Context 门面传入）；省略则不被拆卸自动清理，用返回的 dispose 自管。
+   * @param owner 清理归属（contributions 能力传入）；省略则不被拆卸自动清理，用返回的 dispose 自管。
    */
   register<K extends string & keyof ContributionPointMap>(
     point: K,
@@ -130,8 +129,8 @@ export class ContributionRegistry {
   }
 
   /**
-   * 按清理归属移除该 Context 本次激活的全部贡献（插件卸载清扫）。同键被同名新 Context
-   * 替换后，旧 Context 的迟到清理不会删掉新占位——owner 不同。
+   * 按清理归属移除本次激活的全部贡献（插件卸载清扫）。同键被同名新激活
+   * 替换后，旧激活的迟到清理不会删掉新占位——owner 不同。
    */
   unregisterByOwner(owner: symbol): void {
     for (const [point, byKey] of this.points) {
