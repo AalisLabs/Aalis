@@ -19,6 +19,16 @@ export function isUnsafeConfigKey(key: string): boolean {
   return UNSAFE_KEYS.has(key);
 }
 
+/**
+ * 插件 id 不得当 `plugins` / 禁用名单的对象键——那三条会落到原型链。
+ * ConfigManager 按 id 取放的入口共用这一抛错，文案给 WebUI 映射 400。
+ */
+export function assertSafePluginId(id: string): void {
+  if (isUnsafeConfigKey(id)) {
+    throw new Error(`插件 id 不合法: ${id}`);
+  }
+}
+
 export function isPlainConfigObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const proto = Object.getPrototypeOf(value);
