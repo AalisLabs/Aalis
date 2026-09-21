@@ -42,7 +42,8 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 
 - 将 `config`（快照或现成 `ConfigManager`）规范为 `ConfigManager`
 - 初始化 events / services / hooks / contributions / logger 及根激活（注入或自建）
-- 创建 `ActivationHost` 与 `PluginManager`，通过根激活的 `provide` 能力发布 `appService` / `pluginsService` / `hostConfig` 描述符对应的服务
+- 创建 `ActivationHost`，在同一容器中登记八项独占基础服务工厂，再为根激活绑定接口；自举登记不依赖尚未创建的 `provide`
+- 创建 `PluginManager`，通过根激活的 `provide` 发布 `appService` / `pluginsService` / `hostConfig` 的共享实例
 - 应用配置中已有的服务偏好
 
 ## 关键属性
@@ -57,7 +58,7 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 | `hooks` | `HookRegistry` | 钩子注册表 |
 | `contributions` | `ContributionRegistry` | 贡献点注册表 |
 
-根激活不对外。宿主经 `bind` 取能力；插件经自己激活上的 `uses` 取能力。
+根激活不对外。宿主经 `bind` 取能力；插件经自己激活上的 `uses` 取能力。`app.services.get/getAll` 读取原始登记值，工厂条目不是消费实例；查看元数据用 `app.services.inspect`，消费实例用 `app.bind`。
 
 ## 核心方法
 

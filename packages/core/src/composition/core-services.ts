@@ -1,5 +1,5 @@
 // ============================================================
-// builtins.ts — 核心内置能力的描述符
+// core-services.ts — 宿主默认服务的描述符与提供者
 //
 // 所有服务都在容器中登记，并经描述符 bind 装配。默认服务使用公开的 serviceFactory，
 // 按消费者激活生成门面；exclusive 是所有提供者都能使用的登记策略，不是描述符特权。
@@ -13,12 +13,12 @@ import type { HookContextMap, MiddlewareFn } from '../types/hooks.js';
 import type { ContributionHandle, ContributionSpec } from '../primitives/contributions.js';
 import type { ServiceInfo, ServiceView } from '../primitives/services.js';
 
-import { defineService, type ProviderOf, type ServiceDescriptor } from './binding.js';
-import type { CapabilityRuntime } from './capabilities.js';
-import type { PluginDefinition } from './definition.js';
-import type { Logger } from './logger.js';
+import { defineService, type ProviderOf, type ServiceDescriptor } from './descriptors.js';
+import type { PluginDefinition } from './plugin-definition.js';
+import { validateProvide } from './provide-validation.js';
+import type { ServiceRuntime } from './runtime.js';
 import { type ServiceFactory, type ServiceScope, serviceFactory } from './service-factory.js';
-import { validateProvide } from './service-helpers.js';
+import type { Logger } from '../infrastructure/logger.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
@@ -271,13 +271,13 @@ const createServices = factory<Services>(services, (scope, runtime, resolve) => 
 type Resolve = (scope: ServiceScope, name: string, provider: unknown) => unknown;
 function factory<T>(
   descriptor: ServiceDescriptor<T, unknown>,
-  create: (scope: ServiceScope, runtime: CapabilityRuntime, resolve: Resolve) => T,
+  create: (scope: ServiceScope, runtime: ServiceRuntime, resolve: Resolve) => T,
 ) {
   return { name: descriptor.name, create };
 }
 
 /** Bootstrap registration uses the same container and factory protocol as third-party services. */
-export function registerCoreServices(runtime: CapabilityRuntime, owner: symbol, resolve: Resolve): void {
+export function registerCoreServices(runtime: ServiceRuntime, owner: symbol, resolve: Resolve): void {
   const factories = [
     createEvents,
     createHooks,

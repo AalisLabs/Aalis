@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type ToolService, tools } from '../../packages/api-tools/src/index.js';
-import { assertValidInstanceId } from '../../packages/core/src/context/definition.js';
+import { assertValidInstanceId } from '../../packages/core/src/composition/plugin-definition.js';
 import {
   App,
   definePlugin,

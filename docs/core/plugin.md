@@ -22,7 +22,7 @@ interface PluginEntry {
 }
 ```
 
-公开条目不含内部激活记录。`required` / `optional` 是服务名数组，在注册时从 `uses` 抽出（内置能力不成依赖）。
+公开条目不含内部激活记录。`required` / `optional` 是服务名数组，在注册时从 `uses` 抽出（包含 Core 基础服务）。
 
 `parseInstanceId(instanceId)`：`@scope/plugin-name:suffix` → `{ moduleName, suffix }`；无 suffix 时 `suffix` 为 `undefined`。从 `/` 之后切开，不把 scope 里的字符当成后缀。
 

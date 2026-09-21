@@ -130,7 +130,7 @@ export default definePlugin({
 });
 ```
 
-注册选项（`provide(name, instance, { priority?, label?, entryId? })`，`packages/core/src/context/context.ts`）：
+注册选项（`provide(descriptor, instance, { priority?, label?, entryId? })`，`packages/core/src/composition/core-services.ts`）：
 
 - **priority**：普通数字，越大越优先。platform 通常用默认 `0`。
 - **entryId**：单插件多连接想拆成多 entry 时用 `'${lifecycle.id}/${sub}'`（per-entry provide，见 [service-model](../concepts/service-model.md)）；单 adapter 内自管多连接（如 OneBot 的 `states[]`）则不需要。

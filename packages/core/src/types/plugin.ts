@@ -3,7 +3,7 @@
 // 与运行时实现 (PluginManager) 分离，避免下游消费者只为类型而拉入 class。
 // 实现详见 ../orchestration/plugin.ts。
 
-import type { PluginDefinition } from '../context/definition.js';
+import type { PluginDefinition } from '../composition/plugin-definition.js';
 
 // ----- 插件状态 -----
 

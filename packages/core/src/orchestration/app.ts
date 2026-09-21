@@ -5,18 +5,22 @@ import { EventBus } from '../primitives/events.js';
 import { HookRegistry } from '../primitives/hooks.js';
 import { ServiceContainer } from '../primitives/services.js';
 
-import { type BoundOf, defineService, type Uses } from '../context/binding.js';
-import { events, provide, services } from '../context/builtins.js';
-import { type AalisConfig, ConfigManager, type ConfigProvider } from '../context/config.js';
-import type { PluginDefinition } from '../context/definition.js';
-import { DefaultLogger, type Logger, LogHub } from '../context/logger.js';
-import { cloneConfigObject, cloneConfigValue, isPlainConfigObject, isUnsafeConfigKey } from '../context/safe-keys.js';
-
 import type { Activation } from './activation.js';
 import { ActivationHost, notify } from './activation-host.js';
 import { PluginManager, parseInstanceId } from './plugin.js';
 import type { PluginLoader, RestartStrategy } from './providers.js';
 import type { LogLevel } from '@aalis/schema-log';
+import { events, provide, services } from '../composition/core-services.js';
+import { type BoundOf, defineService, type Uses } from '../composition/descriptors.js';
+import type { PluginDefinition } from '../composition/plugin-definition.js';
+import { type AalisConfig, ConfigManager, type ConfigProvider } from '../infrastructure/config.js';
+import {
+  cloneConfigObject,
+  cloneConfigValue,
+  isPlainConfigObject,
+  isUnsafeConfigKey,
+} from '../infrastructure/config-values.js';
+import { DefaultLogger, type Logger, LogHub } from '../infrastructure/logger.js';
 
 // ----- 应用配置选项 -----
 
