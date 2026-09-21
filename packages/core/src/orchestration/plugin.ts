@@ -179,7 +179,7 @@ export class PluginManager implements PluginManagerService {
     const entry: PluginRecord = {
       definition,
       instanceId: id,
-      config,
+      config: cloneConfigObject(config),
       state: isDisabled ? 'disabled' : 'pending',
       required: requiredNames(definition.uses ?? {}),
       optional: optionalNames(definition.uses ?? {}),
