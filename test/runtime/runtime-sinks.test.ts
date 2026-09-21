@@ -1,7 +1,8 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DefaultLogger, parseLogLine } from '@aalis/core';
+import { DefaultLogger } from '@aalis/core';
+import { parseLogLine } from '@aalis/schema-log';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   __resetBootstrapBufferForTests,
@@ -142,10 +143,13 @@ describe('runtime file-logger', () => {
       await new Promise(r => setImmediate(r));
       await handle.flush();
       const content = readFileSync(logFile, 'utf-8');
-      expect(content).toContain('later-msg');
-      expect(content).toContain('another');
-      expect(content).toContain('|warn|');
-      expect(content).toContain('|info|');
+      const entries = content.split('\n').filter(Boolean).map(parseLogLine);
+      expect(entries).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ scope: 'flog', level: 'warn', message: 'later-msg' }),
+          expect.objectContaining({ scope: 'flog', level: 'info', message: 'another' }),
+        ]),
+      );
     } finally {
       await handle.dispose();
     }
@@ -174,7 +178,7 @@ describe('runtime file-logger', () => {
     const content = readFileSync(file, 'utf-8');
     expect(content).toContain('test-crash');
     expect(content).toContain('crashy');
-    expect(content).toContain('|error|');
+    expect(parseLogLine(content.trimEnd())?.level).toBe('error');
   });
 
   it('appendCrashLog 处理非 Error 值', async () => {
@@ -183,10 +187,16 @@ describe('runtime file-logger', () => {
     await appendCrashLog('o-crash', { code: 42 }, file);
     const content = readFileSync(file, 'utf-8');
     expect(content).toContain('plain-string');
-    expect(content).toContain('"code":42');
+    expect(
+      content
+        .split('\n')
+        .filter(Boolean)
+        .map(parseLogLine)
+        .some(entry => entry?.message.includes('"code":42')),
+    ).toBe(true);
   });
 
-  it('文件行格式包含递增 seq 前缀，可被 parseLogLine 反解', async () => {
+  it('文件记录包含递增 seq，可被 parseLogLine 反解', async () => {
     const handle = await setupFileLogger(logFile);
     try {
       new DefaultLogger('flog').info('alpha');

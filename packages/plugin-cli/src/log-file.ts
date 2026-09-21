@@ -7,7 +7,7 @@
 // storage 起来之前，是 bootstrap 期的合法 raw-fs 例外，不在此处管辖。
 
 import { readTailLines, type StorageService } from '@aalis/api-storage';
-import { type LogEntry, parseLogLine } from '@aalis/core';
+import { type LogEntry, parseLogLine } from '@aalis/schema-log';
 
 /** 日志单一数据源的 storage URI（logs 根默认落在 data/ 下，与写入方 data/latest.log 对偶）。 */
 const LOG_FILE_URI = 'logs:/latest.log';

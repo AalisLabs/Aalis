@@ -36,6 +36,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:*
         version: link:packages/schema-config
+      '@aalis/schema-log':
+        specifier: workspace:*
+        version: link:packages/schema-log
       '@aalis/schema-message':
         specifier: workspace:*
         version: link:packages/schema-message
@@ -470,6 +473,10 @@ importers:
         version: 5.9.3
 
   packages/core:
+    dependencies:
+      '@aalis/schema-log':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-log
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -753,6 +760,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-log':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-log
       chalk:
         specifier: ^5.4.0
         version: 5.6.2
@@ -2364,6 +2374,9 @@ importers:
         specifier: ^6.0.0
         version: 6.0.0
     devDependencies:
+      '@aalis/schema-log':
+        specifier: workspace:*
+        version: link:../schema-log
       '@aalis/util-text-normalize':
         specifier: workspace:*
         version: link:../util-text-normalize
@@ -2426,6 +2439,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-log':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-log
       '@aalis/util-dep-spec':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../util-dep-spec
@@ -2518,6 +2534,9 @@ importers:
       '@aalis/schema-config':
         specifier: workspace:>=0.12.0 <1.0.0
         version: link:../schema-config
+      '@aalis/schema-log':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../schema-log
       chalk:
         specifier: ^5.4.0
         version: 5.6.2
@@ -2543,6 +2562,12 @@ importers:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/schema-log:
+    devDependencies:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

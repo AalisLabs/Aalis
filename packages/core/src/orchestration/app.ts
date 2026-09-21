@@ -9,13 +9,14 @@ import { type BoundOf, defineService, type Uses } from '../context/binding.js';
 import { events, provide, services } from '../context/builtins.js';
 import { type AalisConfig, ConfigManager, type ConfigProvider } from '../context/config.js';
 import type { PluginDefinition } from '../context/definition.js';
-import { DefaultLogger, type Logger, LogHub, type LogLevel } from '../context/logger.js';
+import { DefaultLogger, type Logger, LogHub } from '../context/logger.js';
 import { cloneConfigObject, cloneConfigValue, isPlainConfigObject, isUnsafeConfigKey } from '../context/safe-keys.js';
 
 import type { Activation } from './activation.js';
 import { ActivationHost, notify } from './activation-host.js';
 import { PluginManager, parseInstanceId } from './plugin.js';
 import type { PluginLoader, RestartStrategy } from './providers.js';
+import type { LogLevel } from '@aalis/schema-log';
 
 // ----- 应用配置选项 -----
 
@@ -42,8 +43,6 @@ export interface AppOptions {
   config: AalisConfig | ConfigManager;
   /** 配置持久化与外部变更监听；缺省=只读内存模式 */
   configProvider?: ConfigProvider;
-  /** 业务数据目录（plugin 用作相对路径基准） */
-  dataDir?: string;
   /** 插件加载器；缺省=不自动加载任何插件（必须通过 `app.plugin(mod)` 手动注册） */
   pluginLoader?: PluginLoader;
   /**
@@ -170,7 +169,6 @@ export class App {
         ? options.config
         : new ConfigManager(options.config, {
             provider: options.configProvider,
-            dataDir: options.dataDir,
           });
 
     this.config = config;

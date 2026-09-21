@@ -74,11 +74,6 @@ export interface ConfigProvider {
 export interface ConfigManagerOptions {
   /** 持久化与外部变更监听由 provider 提供；省略则进入纯内存模式（save() 静默） */
   provider?: ConfigProvider;
-  /**
-   * 业务数据目录（plugin 用于解析相对路径，如 sqlite db、persona 文件等）。
-   * core 自己不读写它；语义由宿主与插件约定。默认 `'.'`。
-   */
-  dataDir?: string;
 }
 
 /**
@@ -101,14 +96,12 @@ export interface ConfigManagerOptions {
 export class ConfigManager {
   private config: AalisConfig;
   private readonly provider?: ConfigProvider;
-  private readonly dataDir: string;
   private unwatchFn: (() => void) | null = null;
   private onChangeCallback: (() => void) | null = null;
 
   constructor(initial: AalisConfig, options?: ConfigManagerOptions) {
     this.config = mergeDefaultsConfig(initial);
     this.provider = options?.provider;
-    this.dataDir = options?.dataDir ?? '.';
   }
 
   get<K extends keyof AalisConfig>(key: K): AalisConfig[K] {
@@ -120,14 +113,6 @@ export class ConfigManager {
     const plugins = this.config.plugins;
     if (!Object.hasOwn(plugins, instanceId)) return {} as T;
     return plugins[instanceId] as T;
-  }
-
-  /**
-   * 业务数据目录——plugin 用于解析相对路径。
-   * 命名沿用历史接口（`getConfigDir`），语义上是"宿主指定的数据根目录"。
-   */
-  getConfigDir(): string {
-    return this.dataDir;
   }
 
   getAll(): Readonly<AalisConfig> {
