@@ -90,53 +90,61 @@ export type ValidateResult =
 最小必须实现 = 接口三个方法 `subscribe / validate / nextFireTime`。可选 = `timeZone` 支持（不支持时建议忽略该参数并按本地时区评估，行为退化但不报错）。可直接复用契约包的纯函数完成校验与匹配，骨架如下：
 
 ```ts
-import { definePlugin } from '@aalis/core';
+import { cronEngine } from '@aalis/api-cron-engine';
 import type { CronEngine, CronSubscribeOptions } from '@aalis/api-cron-engine';
+import { definePlugin, lifecycle, provide } from '@aalis/core';
 import { matchesCron, normalizeCronExpr, validateCronExpr } from '@aalis/util-cron';
-
-provides: [cronEngine];          // ← 双源之一
 
 export default definePlugin({
   name: 'my-cron-backend',
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  const logger = logger;
-  const cronSubs = new Map<number, { normalized: string; handler: () => void | Promise<void>; tz?: string }>();
-  let nextId = 1;
+  provides: [cronEngine],
+  uses: { provide, lifecycle },
+  apply({ provide, lifecycle }) {
+    const cronSubs = new Map<
+      number,
+      { normalized: string; handler: () => void | Promise<void>; tz?: string }
+    >();
+    let nextId = 1;
 
-  const service: CronEngine = {
-    subscribe(expr, handler, options?: CronSubscribeOptions) {
-      const v = validateCronExpr(expr);
-      if (!v.ok) throw new Error(v.reason);          // 失败抛 Error，与契约一致
-      const id = nextId++;
-      if (v.kind === 'interval') {
-        const timer = setInterval(() => void handler(), (v.intervalSeconds ?? 0) * 1000);
-        return () => clearInterval(timer);
-      }
-      const tz = options?.timeZone?.trim() || undefined;
-      cronSubs.set(id, { normalized: normalizeCronExpr(expr)!, handler, tz });
-      // …把 id 挂到你的整分钟 tick；handler 异常须 try/catch，不得让一个订阅者拖垮其余
-      return () => { cronSubs.delete(id); };
-    },
-    validate(expr) {
-      return validateCronExpr(expr);
-    },
-    nextFireTime(expr, from = new Date(), lookaheadMinutes = 366 * 24 * 60, options) {
-      const v = validateCronExpr(expr);
-      if (!v.ok) return null;
-      if (v.kind === 'interval') return from.getTime() + (v.intervalSeconds ?? 0) * 1000;
-      const tz = options?.timeZone?.trim() || undefined;
-      const start = new Date(from); start.setSeconds(0, 0); start.setMinutes(start.getMinutes() + 1);
-      for (let i = 0; i < lookaheadMinutes; i++) {
-        const c = new Date(start.getTime() + i * 60_000);
-        if (matchesCron(v.normalized, c, tz)) return c.getTime();
-      }
-      return null;
-    },
-  };
+    const service: CronEngine = {
+      subscribe(expr, handler, options?: CronSubscribeOptions) {
+        const v = validateCronExpr(expr);
+        if (!v.ok) throw new Error(v.reason);
+        const id = nextId++;
+        if (v.kind === 'interval') {
+          const timer = setInterval(() => void handler(), (v.intervalSeconds ?? 0) * 1000);
+          return () => clearInterval(timer);
+        }
+        const tz = options?.timeZone?.trim() || undefined;
+        cronSubs.set(id, { normalized: normalizeCronExpr(expr) ?? expr, handler, tz });
+        return () => {
+          cronSubs.delete(id);
+        };
+      },
+      validate(expr) {
+        return validateCronExpr(expr);
+      },
+      nextFireTime(expr, from = new Date(), lookaheadMinutes = 366 * 24 * 60, options) {
+        const v = validateCronExpr(expr);
+        if (!v.ok) return null;
+        if (v.kind === 'interval') return from.getTime() + (v.intervalSeconds ?? 0) * 1000;
+        const tz = options?.timeZone?.trim() || undefined;
+        const start = new Date(from);
+        start.setSeconds(0, 0);
+        start.setMinutes(start.getMinutes() + 1);
+        for (let i = 0; i < lookaheadMinutes; i++) {
+          const c = new Date(start.getTime() + i * 60_000);
+          if (matchesCron(v.normalized, c, tz)) return c.getTime();
+        }
+        return null;
+      },
+    };
 
-  provide(cronEngine, service);
-  lifecycle.onDispose(() => { /* 清掉所有 timer 与订阅，见参考实现的 onDispose */ });
-},
+    provide(cronEngine, service);
+    lifecycle.onDispose(() => {
+      cronSubs.clear();
+    });
+  },
 });
 ```
 

@@ -12,7 +12,7 @@
 | 跨会话历史读取 + 平台访问规则 | `session-history` | 契约 `@aalis/api-tool-session`；实现 `@aalis/plugin-tool-session` | 有 `-api` 契约 + 运行时服务 |
 | 上传文件登记（per-session 文件态） | `file-reader` | 实现 `@aalis/plugin-file-reader`（**无独立 `-api` 包**，接口住在实现包里） | 仅运行时服务，无独立契约包 |
 
-下面分两节讲。两者都遵循「`sessionId` 是会话隔离边界」这一共同约束，见 [§6 会话隔离](#6-会话隔离--访问控制provider--consumer-必守)。
+下面分两节讲。两者都遵循「`sessionId` 是会话隔离边界」这一共同约束，见 [§6 会话隔离](#6-会话隔离-访问控制provider-consumer-必守)。
 
 ---
 
@@ -79,38 +79,48 @@ provide(sessionHistory, historyService, { label: '会话历史读取' });
 通常你不需要重写 `session-history`——更常见的是**给已有 provider 注入平台访问规则**（见 A.5）。若确要替换实现（例如对接非 memory 的历史后端），最小骨架：
 
 ```ts
-import { definePlugin } from '@aalis/core';
+import { sessionHistory } from '@aalis/api-tool-session';
 import type { SessionHistoryService } from '@aalis/api-tool-session';
-import '@aalis/api-tool-session'; // 触发 服务描述符 declaration merge
+import { definePlugin, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@you/plugin-my-history',
   provides: [sessionHistory],
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  const checkers: import('@aalis/api-tool-session').AccessChecker[] = [];
-  const svc: SessionHistoryService = {
-    registerAccessChecker(checker) {
-      checkers.push(checker);
-      return () => {
-        const i = checkers.indexOf(checker);
-        if (i >= 0) checkers.splice(i, 1);
-      };
-    },
-    async getHistory(options, callCtx) {
-      const target = String(options.sessionId ?? '').trim();
-      if (!target) return { error: 'sessionId 不能为空' };
-      // 1. 必须自己跑 access-checker 链（any-deny 短路）——这是契约承诺的「无绕过」
-      const platform = target.split(':')[0] ?? '';
-      for (const c of checkers.filter(c => c.platform === platform)) {
-        const v = c.check({ currentSessionId: callCtx.sessionId, targetSessionId: target, callCtx });
-        if (v?.decision === 'deny') return { error: v.reason ?? '访问被拒绝' };
-      }
-      // 2. 读取你的后端，整形成 messages: Array<Record<string, unknown>>
-      return { ok: true, sessionId: target, count: 0, limit: options.limit ?? 20, includeArchived: false, messages: [] };
-    },
-  };
-  provide(sessionHistory, svc, { label: '我的历史读取' });
-},
+  uses: { provide },
+  apply({ provide }) {
+    const checkers: import('@aalis/api-tool-session').AccessChecker[] = [];
+    const svc: SessionHistoryService = {
+      registerAccessChecker(checker) {
+        checkers.push(checker);
+        return () => {
+          const i = checkers.indexOf(checker);
+          if (i >= 0) checkers.splice(i, 1);
+        };
+      },
+      async getHistory(options, callCtx) {
+        const target = String(options.sessionId ?? '').trim();
+        if (!target) return { error: 'sessionId 不能为空' };
+        const platform = target.split(':')[0] ?? '';
+        for (const c of checkers.filter(ch => ch.platform === platform)) {
+          const v = c.check({
+            currentSessionId: callCtx.sessionId,
+            targetSessionId: target,
+            callCtx,
+          });
+          if (v?.decision === 'deny') return { error: v.reason ?? '访问被拒绝' };
+        }
+        return {
+          ok: true,
+          sessionId: target,
+          count: 0,
+          limit: options.limit ?? 20,
+          includeArchived: false,
+          messages: [],
+        };
+      },
+    };
+    provide(sessionHistory, svc, { label: '我的历史读取' });
+  },
 });
 ```
 

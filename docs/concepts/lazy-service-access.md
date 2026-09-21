@@ -149,7 +149,7 @@ export default definePlugin({
 - 父使用自己子树的服务：父 drain 先于子 close；父收尾时子树仍活着。到父 close 时子已按归属关闭。
 - 后代使用祖先服务：不往排序图加边。归属树保证子 close 先于祖先 close，故子 drain 时祖先仍活着。祖先若同时用这棵子树，第 2 种边把祖先 drain 插在子 close 之前，两笔收尾都能用到对方。
 
-环：optional 边按自然次序让步（不告警）；只剩 required 边仍无解才告警并强行放行。
+环：optional 边构成的强连通分量（≥2 个激活）先让成员全部 drain，再任一 close（不告警；drain 期间双方都能 `require()`）；环里只剩 required 边仍无解才告警并强行放行。
 
 `App.stop()` 先排干在飞重算，冻结新增绑定并进入停机态，再发屏障事件 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。停机期间 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成）；`register` / `bounce` 返回 false。
 

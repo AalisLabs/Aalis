@@ -5,7 +5,7 @@
 - **服务注册名**：描述符 `storage`（`name: 'storage'`），绑定接口是 `ServiceRef<StorageService>`。
 - **契约包**：`@aalis/api-storage`（`packages/api-storage/src/index.ts`）。
 - **参考实现**：`@aalis/plugin-storage-local`（`packages/plugin-storage-local/src/index.ts`）。
-- **它不是沙箱**：见 [§6](#6-能力风险--影响安全边界)。
+- **它不是沙箱**：见 [§6](#6-能力风险-影响安全边界)。
 
 > 建议先阅读 URI 文法：[docs/concepts/storage-uri-grammar.md](../concepts/storage-uri-grammar.md)。本文聚焦如何实现 storage provider 以及如何消费该服务。
 
@@ -126,7 +126,7 @@ import {
 import { definePlugin, lifecycle, provide } from '@aalis/core';
 
 class MyRoot implements StorageService {
-  constructor(private readonly root: StorageRootInfo) {}
+  root!: StorageRootInfo;
   listRoots() {
     return [this.root];
   }
@@ -163,7 +163,9 @@ export default definePlugin({
       writable: true,
       deletable: false,
     };
-    provide(storage, new MyRoot(root), { entryId: `${lifecycle.id}/${root.name}`, label: root.label });
+    const svc = new MyRoot();
+    svc.root = root;
+    provide(storage, svc, { entryId: `${lifecycle.id}/${root.name}`, label: root.label });
   },
 });
 ```

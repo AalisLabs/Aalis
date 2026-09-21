@@ -100,7 +100,7 @@ import { createStorageGateway, storage } from '@aalis/api-storage';
 import { definePlugin, provide } from '@aalis/core';
 
 class RemoteProcessService implements ProcessService {
-  constructor(private readonly files: ReturnType<typeof createStorageGateway>) {}
+  files!: ReturnType<typeof createStorageGateway>;
   spawn(_cmd: string, _args: readonly string[], _opts?: SpawnOptions): SpawnHandle {
     throw new Error('未实现');
   }
@@ -120,7 +120,9 @@ export default definePlugin({
   provides: [processService],
   uses: { provide, storage },
   apply({ provide, storage }) {
-    provide(processService, new RemoteProcessService(createStorageGateway(storage)), {
+    const svc = new RemoteProcessService();
+    svc.files = createStorageGateway(storage);
+    provide(processService, svc, {
       priority: 50,
       label: 'Process / remote',
     });

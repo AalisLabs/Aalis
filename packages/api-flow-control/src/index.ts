@@ -1,9 +1,10 @@
 // ============================================================
 // @aalis/api-flow-control — 流控服务契约
 //
-// 仅包含纯类型，无运行时依赖。下游消费者（平台 adapter、trigger-policy
-// 等）应当依赖本包而非 plugin-flow-control 具体实现，以避免对实现包的
-// 硬耦合：实现包可被替换、可被禁用。
+// 导出运行时描述符 `flowControl`（defineService）与类型。下游消费者
+// （平台 adapter、trigger-policy 等）应当 `import { flowControl } from
+// '@aalis/api-flow-control'` 写入 uses，而不是依赖 plugin-flow-control
+// 具体实现：实现包可被替换、可被禁用。
 //
 // FlowControlService 负责管理每会话的"流控状态"：
 //   - 计数器/活跃指数（间隔触发依据）
@@ -11,8 +12,7 @@
 //   - 限速窗口（防 DDoS）
 //   - 闲置触发调度
 //
-// 服务名约定: 'flow-control'
-//   ctx.getService<FlowControlService>('flow-control')
+// 服务名：'flow-control'
 // ============================================================
 
 // 触发 @aalis/core 模块解析，使文件末尾的 declare module 增强生效
@@ -73,9 +73,6 @@ export interface FlowControlService {
   rescheduleIdle(sessionId: string, platform: string): void;
 }
 
-// ----- 服务类型注册（declaration merging）-----
-// 与其他 api 包一致：服务名 → 接口类型的绑定随本 api 包提供，
-// 下游消费者只需 import 本包即可获得 ctx.getService('flow-control') 的类型，
-// 无需依赖具体实现包 plugin-flow-control。
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+// 下游把 `flowControl` 写入 uses；类型随描述符走，不必依赖实现包。
 export const flowControl = defineService<FlowControlService>('flow-control');

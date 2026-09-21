@@ -128,10 +128,11 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
 可编译最小骨架（与默认实现同构，仅留主干）：
 
 ```ts
-import { definePlugin } from '@aalis/core';
+import { agent } from '@aalis/api-agent';
 import type { AgentService } from '@aalis/api-agent';
+import { gateway, INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/api-gateway';
 import type { GatewayService, InboundPhaseData } from '@aalis/api-gateway';
-import { INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/api-gateway';
+import { definePlugin, events, hooks, optional, provide } from '@aalis/core';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
 
 export default definePlugin({
@@ -139,38 +140,35 @@ export default definePlugin({
   provides: [gateway],
   uses: { provide, events, hooks, agent: optional(agent) },
   apply({ provide, events, hooks, agent }) {
-  async function dispatchOutbound(message: OutgoingMessage): Promise<void> {
-    const data = { message, metadata: {} as Record<string, unknown> };
-    await hooks.run('outbound:dispatch', data, async () => {
-      await events.emit('outbound:message', data.message);
-    });
-  }
-
-  async function processInbound(message: IncomingMessage): Promise<void> {
-    // 每次入站重新取 agent —— provider bounce 后旧引用会失效，禁止缓存。
-    const agentSvc = agent.current;
-    const data: InboundPhaseData = { message, metadata: {}, agent: agentSvc };
-
-    // 前置相位 = 顺序里除终相 DISPATCH 外全部；新增相位只改 gateway-api，这里零改动。
-    for (const phase of INBOUND_PHASE_ORDER.filter(p => p !== INBOUND_PHASE.DISPATCH)) {
-      const reachedEnd = await hooks.run(phase, data);
-      if (!reachedEnd) return; // 被 swallow，停止后续调度，不触达 agent
+    async function dispatchOutbound(message: OutgoingMessage): Promise<void> {
+      const data = { message, metadata: {} as Record<string, unknown> };
+      await hooks.run('outbound:dispatch', data, async () => {
+        await events.emit('outbound:message', data.message);
+      });
     }
 
-    // 终相 dispatch：默认动作调用 agent
-    await hooks.run(INBOUND_PHASE.DISPATCH, data, async () => {
-      if (data.agent) await data.agent.handleMessage(data.message);
+    async function processInbound(message: IncomingMessage): Promise<void> {
+      const agentSvc: AgentService | undefined = agent.current;
+      const data: InboundPhaseData = { message, metadata: {}, agent: agentSvc };
+      for (const phase of INBOUND_PHASE_ORDER.filter(p => p !== INBOUND_PHASE.DISPATCH)) {
+        const reachedEnd = await hooks.run(phase, data);
+        if (!reachedEnd) return;
+      }
+      await hooks.run(INBOUND_PHASE.DISPATCH, data, async () => {
+        if (data.agent) await data.agent.handleMessage(data.message);
+      });
+    }
+
+    events.on('inbound:message', msg => {
+      void processInbound(msg);
     });
-  }
 
-  events.on('inbound:message', msg => { void processInbound(msg); });
-
-  const service: GatewayService = {
-    ingressMessage: msg => processInbound(msg),   // 直接走内部路径，避免事件递归歧义
-    dispatchOutbound,
-  };
-  provide(gateway, service);
-},
+    const service: GatewayService = {
+      ingressMessage: msg => processInbound(msg),
+      dispatchOutbound,
+    };
+    provide(gateway, service);
+  },
 });
 ```
 
@@ -184,31 +182,24 @@ export default definePlugin({
 - **出站**：`events.on('outbound:message', msg)`，按 `msg.sessionId` 前缀（如 `'onebot:'`）认领属于自己平台的消息再发送（`packages/plugin-adapter-onebot/src/index.ts`）。
 
 ```ts
-import { definePlugin } from '@aalis/core';
-// 注意：不把 `gateway` 写进 `uses` —— 事件是后期绑定，与加载顺序无关。
+import { platform } from '@aalis/api-platform';
+import { definePlugin, events, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@acme/plugin-example',
   provides: [platform],
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  // 入站：原始消息 → IncomingMessage → 事件总线（gateway 接管编排）
-  platformClient.onMessage(raw => {
-    events.emit('inbound:message', {
-      content: raw.text,
-      sessionId: `myplat:${raw.chatId}`, // 用平台前缀，便于出站时按前缀认领
+  uses: { provide, events },
+  apply({ provide, events }) {
+    provide(platform, {
+      adapterName: 'MyPlat',
       platform: 'myplat',
-      userId: raw.senderId,
-      sessionType: raw.isGroup ? 'group' : 'private',
-      // triggerType / actor / senderRole / replyTo … 按需填，见 @aalis/schema-message 的 IncomingMessage
+      getConnections: () => [],
+      async sendMessage() {},
     });
-  });
-
-  // 出站：只认领自己平台的消息
-  events.on('outbound:message', async msg => {
-    if (!msg.sessionId.startsWith('myplat:')) return;
-    await platformClient.send(msg.sessionId.slice('myplat:'.length), msg.content);
-  });
-},
+    events.on('outbound:message', async msg => {
+      if (!msg.sessionId.startsWith('myplat:')) return;
+    });
+  },
 });
 ```
 
