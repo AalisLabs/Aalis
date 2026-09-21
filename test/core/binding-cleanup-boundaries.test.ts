@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   type AalisEvents,
-  App,
   definePlugin,
   defineService,
   EventBus,
@@ -9,8 +8,8 @@ import {
   lifecycle,
   provide,
 } from '../../packages/core/src/index.js';
-import { rootActivation } from '../../packages/core/src/orchestration/app.js';
 import { createActivationFixture } from '../helpers/activation.js';
+import { createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
@@ -148,7 +147,11 @@ describe('binding cleanup boundaries', () => {
       error: (...args) => void warnings.push(args),
       child: () => logger,
     };
-    const app = new App({ config: { name: 'notify-test', logLevel: 'error', plugins: {} }, events: bus, logger });
+    const app = createInspectableApp({
+      config: { name: 'notify-test', logLevel: 'error', plugins: {} },
+      events: bus,
+      logger,
+    });
     const service = defineService('notification-cleanup');
     const definition = definePlugin({
       name: 'worker',

@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import type { BindingPort } from '../../packages/core/src/index.js';
 import {
-  App,
+  type App,
   definePlugin,
   defineService,
   type Logger,
@@ -14,7 +14,7 @@ import {
   optional,
   provide,
 } from '../../packages/core/src/index.js';
-import { activationHost, rootActivation } from '../../packages/core/src/orchestration/app.js';
+import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // 关停编排、等待 Promise、归属表与调度中复现过的契约违例，逐条转成回归测试。
@@ -50,7 +50,7 @@ function world(options?: { disposeTimeoutMs?: number; logger?: Logger }) {
     error: (...a: unknown[]) => void warnings.push(a.map(String).join(' ')),
     child: () => logger,
   };
-  const app = new App({
+  const app = createInspectableApp({
     config: { name: 'T', logLevel: 'error', plugins: {} },
     logger,
     disposeTimeoutMs: options?.disposeTimeoutMs,

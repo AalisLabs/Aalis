@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { App, defineService } from '../../packages/core/src/index.js';
-import { activationHost } from '../../packages/core/src/orchestration/app.js';
+import { type App, defineService } from '../../packages/core/src/index.js';
 import { bindActivationFixture } from '../helpers/activation.js';
+import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // 两个 fork 可以用同一字符串 id：id 是逻辑身份（路由 / 显示 / 贡献键 / 偏好 / 前缀查询），
@@ -18,7 +18,7 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
 const mkApp = () => {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} } });
   apps.push(app);
   return app;
 };
