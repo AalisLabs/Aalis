@@ -89,10 +89,19 @@ export function instantiateService(
         return () => {};
       }
       if (!rollback) return resources.onDispose(fn, label);
-      const cancel = resources.onDispose(fn, label);
+      let started = false;
+      let result: void | Promise<void>;
+      const once = () => {
+        if (!started) {
+          started = true;
+          result = fn();
+        }
+        return result;
+      };
+      const cancel = resources.onDispose(once, label);
       const undo = () => {
         cancel();
-        return fn();
+        return once();
       };
       rollback?.add(undo);
       return () => {

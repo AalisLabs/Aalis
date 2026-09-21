@@ -49,6 +49,53 @@ afterEach(async () => {
 });
 
 describe('服务工厂构造与资源回滚', () => {
+  it.each([false, true])('构造失败与消费者重入关闭共享一次 onDispose，异步关闭=%s', async waiting => {
+    const { app } = world();
+    const target = defineService<object>('reentrant-factory-close');
+    const gate = deferred();
+    let read!: () => unknown;
+    let closed = 0;
+    let delivered = 0;
+    let closing: Promise<void> | undefined;
+    const child = await app.bind({ lifecycle }).lifecycle.module(
+      definePlugin({
+        name: 'factory-consumer',
+        uses: { services },
+        apply({ services }) {
+          read = () => services.get(target);
+        },
+      }),
+    );
+    app.bind({ provide }).provide(
+      target,
+      serviceFactory(scope => {
+        scope.onDispose(() => {
+          closed++;
+          return gate.promise.then(() => {
+            delivered++;
+          });
+        });
+        if (waiting) closing = child.disposeAsync();
+        else child.dispose();
+        throw new Error('factory failed during close');
+      }),
+    );
+
+    expect(() => read()).toThrow('factory failed during close');
+    let finished = false;
+    void closing?.then(() => {
+      finished = true;
+    });
+    await tick();
+    expect(closed).toBe(1);
+    expect(delivered).toBe(0);
+    if (waiting) expect(finished).toBe(false);
+    gate.resolve();
+    await closing;
+    await tick();
+    expect({ closed, delivered }).toEqual({ closed: 1, delivered: 1 });
+  });
+
   it('失败构造每次立即回滚，已取消的清理不执行，收尾回调只取消', async () => {
     const { app } = world();
     const host = app.bind({ provide, services });
