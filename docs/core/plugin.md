@@ -50,7 +50,7 @@ register(definition, config?, instanceId?)
         否则保持 pending，等待 service:registered
 ```
 
-激活成功发 `plugin:loaded`（通知，不等监听器）。激活失败转入 `error`，不发 `plugin:unloaded`（从未 loaded）。
+激活成功发 `plugin:loaded`（通知，不等监听器）。若本次激活的 required 绑定在 `apply` 中通过 `require()` 原样抛出服务不可用错误，Core 会先撤回本次资源，再回到 `pending` 等待或重新观察依赖。optional 绑定、其他激活传来的错误、包装后的新异常与普通业务错误仍进入 `error`；不按错误文本或“此刻恰好缺服务”猜测原因。失败激活不发 `plugin:unloaded`（从未 loaded）。
 
 子模块由 `lifecycle.module` 挂载，不进本管理器，见 [插件定义与能力](context.md)。
 

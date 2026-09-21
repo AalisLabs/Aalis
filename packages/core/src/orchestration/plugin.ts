@@ -458,11 +458,14 @@ export class PluginManager implements PluginManagerService {
     }
 
     this.reloading = true;
+    // 只约束 required 缺失触发的自动重试。按 entry 记整个 flight 的余量，queued / softReload
+    // 不能给同一失败者补满预算；暂停它不妨碍其他插件或管理状态收敛。flight 结束即释放。
+    const retryBudget = new Map<PluginRecord, number>();
     try {
       while (this.queued) {
         const current = this.queued;
         this.queued = null;
-        await this.recomputeOnce(current);
+        await this.recomputeOnce(current, retryBudget);
       }
     } finally {
       this.reloading = false;
@@ -471,7 +474,7 @@ export class PluginManager implements PluginManagerService {
   }
 
   /** 单次完整重算：fixed-point 状态转移 + （非关机）plugins:changed 通知 */
-  private async recomputeOnce(kind: RecomputeKind): Promise<void> {
+  private async recomputeOnce(kind: RecomputeKind, retryBudget: Map<PluginRecord, number>): Promise<void> {
     // 停机：全部插件激活与宿主的根激活进同一张计划（无依赖关系时后注册的先关）
     if (kind === 'shutdown') {
       const live = [...this.plugins.values()].filter(entry => entry.activation !== undefined).reverse();
@@ -485,11 +488,10 @@ export class PluginManager implements PluginManagerService {
 
     let changed = true;
     let rounds = 0;
-    // 收敛上限从图规模推导，不是调优旋钮。目标态 =「required 依赖齐则 active，否则 pending」，是服务
-    // 可用集的单调函数；依赖图无环（静态 required 环由 topoSortByDeps 检出，且只致停滞不致振荡），故拆除波与
-    // 激活波各自单调推进，单个插件在一次 recomputeOnce 里至多先被拆、再被激活——总翻转 ≤2N ⇒ 轮数 ≤2N，
-    // +8 只为小 N 垫底。真振荡（激活条件互相矛盾）翻转无界，必越过任何线性界——上限把"无限挂死"换成
-    // "有界放弃 + 点名"。每轮现算而非入口冻结：注册期 recompute 排队立即返回，后续 app.plugin() 会在本
+    // 普通依赖级联的拆除波、激活波按图规模取 2N+8 轮（+8 为小图垫底），不暴露调优旋钮。
+    // 初始化期间 required 再次消失不属于单调级联：它的自动重试另用整段 flight 的 entry 预算，
+    // 防止 queued 补跑不断重置本函数的轮数。这里仍保留普通状态振荡的点名上限。
+    // 每轮现算而非入口冻结：注册期 recompute 排队立即返回，后续 app.plugin() 会在本
     // recomputeOnce 在飞时追加 entry（每轮快照重取），上限须随图同步增长，否则合法的增量注册流会被按
     // 旧规模误判为振荡。
     const maxRounds = (): number => this.plugins.size * 2 + 8;
@@ -522,18 +524,29 @@ export class PluginManager implements PluginManagerService {
         // 停机已在排队：不再启动新的实例
         if (this.shuttingDown || this.queued === 'shutdown') break converge;
         if (entry.state !== 'pending') continue;
+        if (retryBudget.get(entry) === 0) continue;
         if (computeTargetState(entry, this.host.runtime.services) !== 'active') continue;
-        await activatePlugin(entry, this.deps);
-        if ((entry.state as PluginState) === 'active') {
+        const result = await activatePlugin(entry, this.deps);
+        if (result === 'retry') {
+          // 首次失败按当时图规模取额；后续新增插件也不能让失稳 entry 不断扩额。
+          const remaining = (retryBudget.get(entry) ?? maxRounds()) - 1;
+          retryBudget.set(entry, remaining);
+          if (remaining === 0) {
+            this.logger.warn(`插件 "${entry.instanceId}" required 依赖重试未收敛，本轮暂缓自动激活，保持 pending`);
+            continue;
+          }
+          changed = true;
+          lastRoundFlips.push(entry.instanceId);
+        } else if ((entry.state as PluginState) === 'active') {
           changed = true;
           lastRoundFlips.push(entry.instanceId);
         }
       }
     }
 
-    if (rounds >= maxRounds()) {
-      // 静态 required 环由 topoSortByDeps 检出并另行告警；能撞到这里的只有
-      // 状态振荡（插件间激活条件互相矛盾，状态在轮次间来回翻）。点名末轮
+    if (changed && rounds >= maxRounds()) {
+      // 静态 required 环由 topoSortByDeps 检出并另行告警；到这里仍在翻转的
+      // 状态变化已超出本轮收敛上限。点名末轮
       // 仍在翻转的插件——矛盾对必在其中。
       this.logger.warn(
         `recompute ${rounds} 轮未收敛（上限 ${maxRounds()} = 2×插件数+8），` +

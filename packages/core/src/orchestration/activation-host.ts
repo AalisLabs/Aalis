@@ -99,7 +99,7 @@ export class ActivationHost {
           if (!cache.has(descriptor)) cache.set(descriptor, bindBuiltin(descriptor, scope, this.runtime));
           caps[key] = cache.get(descriptor);
         } else {
-          caps[key] = descriptor.bind(createPort(binding, descriptor.name));
+          caps[key] = descriptor.bind(createPort(binding, descriptor.name, !isOptional(use)));
         }
       }
       return caps as BoundOf<U>;
