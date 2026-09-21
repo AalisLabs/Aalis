@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
 
 // ════════════════════════════════════════════════════════════
 // startAalis 子命令模式 — 真实子进程 e2e
@@ -37,7 +38,8 @@ function run(cwd: string, argv: string[], env: Record<string, string> = {}, time
   return new Promise((resolveRun, reject) => {
     // detached：让 tsx 包装脚本自成进程组。`.bin/tsx` 会再起一个真正跑夹具的 node 子进程，超时时
     // 只杀包装层会留下孤儿守护进程（变异验证时实测），必须按进程组整体 SIGKILL。
-    const child = spawn(tsxBin, [fixture, ...argv], {
+    // 与进程内测试同一源码映射，避免 runtime 源码搭配陈旧的 core dist。
+    const child = spawn(tsxBin, ['--tsconfig', join(repoRoot, 'tsconfig.test.json'), fixture, ...argv], {
       cwd,
       env: { ...process.env, ...env },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -89,15 +91,6 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     return dir;
   };
 
-  beforeAll(() => {
-    // 夹具走 runtime 源码，但源码 import 的 @aalis/core 在 tsx 下解析到 dist——必须先构建，
-    // 否则整组用例会以 import 失败的形式红掉，这里给出直白的原因。
-    for (const pkg of ['core', 'schema-config']) {
-      const entry = join(repoRoot, 'packages', pkg, 'dist', 'index.js');
-      if (!existsSync(entry)) throw new Error(`缺少 ${entry}：本组 e2e 依赖已构建的 dist，请先 pnpm build`);
-    }
-  });
-
   afterEach(() => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
@@ -110,6 +103,23 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(r.stdout).toContain('probe ok a b');
     expect(readLog(dir)).toBe(SENTINEL);
     expect(readGen(dir)).toBe('1');
+  });
+
+  it('真实启动入口在首次 apply 前完成裁剪和默认值合并，并保存同一份配置', async () => {
+    const dir = project();
+    writeFileSync(
+      join(dir, 'aalis.config.yaml'),
+      'name: e2e\nlogLevel: info\nplugins:\n  e2e-probe:\n    known: 2\n    unknown: true\n    nested:\n      typo: 1\n',
+    );
+    const r = await run(dir, ['probe']);
+    expect(r.code).toBe(0);
+    expect(r.signal).toBeNull();
+    const expected = { known: 2, nested: { filled: 9 } };
+    expect(JSON.parse(readFileSync(join(dir, 'first-config.json'), 'utf8'))).toEqual(expected);
+    const stored = parse(readFileSync(join(dir, 'aalis.config.yaml'), 'utf8'));
+    expect(stored.plugins['e2e-probe']).toEqual(expected);
+    expect(r.stderr).toContain('unknown');
+    expect(r.stderr).toContain('nested.typo');
   });
 
   it('未命中：报错 exit 2，不进守护进程，不碰 data/latest.log', async () => {

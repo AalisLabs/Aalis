@@ -36,6 +36,12 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 `startAalis` 的 `opts`：`configPath`（默认 `cwd/aalis.config.yaml`）、`projectDir`（默认
 `process.cwd()`）、`pluginLoader`、`consoleSink` / `fileLog` / `terminalRestore`（默认开）、`subcommands`。
 
+`startAalis` 在加载器导入定义后、Core 注册之前同步插件配置：从 `configSchema` 补齐默认值，
+默认裁剪未知字段，再让首次 `apply` 读取该配置。主实例与已配置的复用实例使用同一规则；
+`configSync.trimUnknownFields: false` 可保留未知字段。首次加载批次合并为一次保存，后续市场
+重扫描也在激活前同步并保存。配置热重载复用相同规则，通过 `updateConfig` 重建有变更的插件。
+直接组装 `App` 的宿主仍自行决定配置政策；Core 不解释 schema，也不替运行中的实例改配置。
+
 子命令分发是默认行为：argv 非空即子命令模式——`node index.mjs <name> [args]` 等价于聊天里的
 `/<name> args`，在 `app.start()` 之前短路执行并退出；首项不是已注册命令时报错退出（exit 2）。两种情况
 都不会启动守护进程（打错的命令名若照常起守护，就是与运行中实例并存的第二个实例）。argv 为空才进守护进程。

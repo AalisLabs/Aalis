@@ -1,6 +1,10 @@
-import { App, config, definePlugin, hostConfig } from '@aalis/core';
+import { App, config, definePlugin, hostConfig, type PluginDefinition, type PluginLoader } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import { installConfigHotReload, syncPluginDefaults } from '../../packages/runtime/src/config-sync.js';
+import {
+  installConfigHotReload,
+  syncPluginDefaults,
+  withPluginConfigSync,
+} from '../../packages/runtime/src/config-sync.js';
 import { defaultsFrom } from '../../packages/schema-config/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -20,6 +24,158 @@ const p1Module = definePlugin({
   name: 'p1',
   configSchema: { known: { type: 'number', label: 'K', default: 0 } },
   apply() {},
+});
+
+describe('加载前配置同步', () => {
+  function fixture(trimUnknownFields = true, reload = true) {
+    const definitions: PluginDefinition[] = [];
+    const seen: Record<string, unknown>[] = [];
+    const saved: unknown[] = [];
+    const loader: PluginLoader = {
+      discover: async () => definitions.map(d => ({ name: d.name, source: d.name })),
+      load: async d => definitions.find(def => def.name === d.name) ?? null,
+    };
+    if (reload) loader.reload = loader.load;
+    const prepared = withPluginConfigSync(loader, () => app, { trimUnknownFields });
+    const app = new App({
+      config: { name: 'T', logLevel: 'error', plugins: {} },
+      configProvider: {
+        save: snapshot => {
+          saved.push(structuredClone(snapshot));
+        },
+      },
+      pluginLoader: prepared.loader,
+      pluginDefaults: d => defaultsFrom(d.configSchema),
+    });
+    function add(name: string) {
+      definitions.push(
+        definePlugin({
+          name,
+          reusable: true,
+          configSchema: {
+            known: { type: 'number', label: 'K', default: 1 },
+            nested: { label: 'N', fields: { filled: { type: 'number', label: 'F', default: 7 } } },
+          },
+          uses: { config },
+          apply({ config: value }) {
+            seen.push(structuredClone(value));
+          },
+        }),
+      );
+      app.config.setPluginConfig(name, { known: 2, unknown: true, nested: { typo: 'x' } });
+      app.config.setPluginConfig(`${name}:other`, { known: 3, unknown: true });
+    }
+    return { app, prepared, loader, add, seen, saved };
+  }
+
+  it('首次 apply、实例记录与持久化一致，主实例和后缀实例均只激活一次；首批只保存一次', async () => {
+    const f = fixture();
+    f.add('one');
+    f.add('two');
+    await f.app.autoLoadPlugins();
+    expect(f.saved).toHaveLength(0);
+    f.prepared.finishInitialLoad();
+    f.prepared.finishInitialLoad();
+    expect(f.seen).toHaveLength(4);
+    expect(f.seen).toEqual(
+      expect.arrayContaining([
+        { known: 2, nested: { filled: 7 } },
+        { known: 3, nested: { filled: 7 } },
+      ]),
+    );
+    for (const { instanceId } of f.app.plugins.getStatus()) {
+      expect(f.app.plugins.getPlugin(instanceId)?.config).toEqual(f.app.config.getPluginConfig(instanceId));
+    }
+    expect(f.saved).toHaveLength(1);
+    expect(f.saved[0]).toMatchObject({
+      plugins: {
+        one: { known: 2, nested: { filled: 7 } },
+        'one:other': { known: 3, nested: { filled: 7 } },
+      },
+    });
+    await f.app.stop();
+  });
+
+  it('trimUnknownFields=false 在首次 apply 保留额外字段，同时补齐嵌套默认值', async () => {
+    const f = fixture(false);
+    f.add('one');
+    await f.app.autoLoadPlugins();
+    f.prepared.finishInitialLoad();
+    expect(f.seen[0]).toEqual({ known: 2, unknown: true, nested: { typo: 'x', filled: 7 } });
+    expect(f.seen[1]).toEqual({ known: 3, unknown: true, nested: { filled: 7 } });
+    await f.app.stop();
+  });
+
+  it('某个定义导入失败不重复激活已加载实例，批次结束仍保存已完成的规范化', async () => {
+    const f = fixture();
+    f.add('one');
+    f.add('broken');
+    const load = f.loader.load;
+    f.loader.load = async d => {
+      if (d.name === 'broken') throw new Error('broken module');
+      return load(d);
+    };
+    await f.app.autoLoadPlugins();
+    f.prepared.finishInitialLoad();
+    expect(f.app.plugins.getPlugin('broken')).toBeUndefined();
+    expect(f.seen).toHaveLength(2);
+    expect(f.saved).toHaveLength(1);
+    expect(f.saved[0]).toMatchObject({
+      plugins: {
+        one: { known: 2, nested: { filled: 7 } },
+        broken: { known: 2, unknown: true, nested: { typo: 'x' } },
+      },
+    });
+    await f.app.stop();
+  });
+
+  it('异步落盘失败被记录，不重试整批或撤销已激活实例', async () => {
+    let writes = 0;
+    const prepared = withPluginConfigSync(
+      {
+        discover: async () => [{ name: p1Module.name, source: 'memory' }],
+        load: async () => p1Module,
+      },
+      () => app,
+    );
+    const app = new App({
+      config: { name: 'T', logLevel: 'error', plugins: { p1: { known: 1, unknown: true } } },
+      pluginLoader: prepared.loader,
+      configProvider: {
+        save: () => {
+          writes++;
+          return Promise.reject(new Error('read only'));
+        },
+      },
+    });
+    const warns = captureWarnsOf(app);
+    await app.autoLoadPlugins();
+    prepared.finishInitialLoad();
+    prepared.finishInitialLoad();
+    await Promise.resolve();
+    expect(writes).toBe(1);
+    expect(warns.filter(w => w.includes('配置同步落盘失败'))).toHaveLength(1);
+    expect(app.plugins.getPlugin('p1')?.state).toBe('active');
+    expect(app.plugins.getPlugin('p1')?.config).toEqual({ known: 1 });
+    await app.stop();
+  });
+
+  it.each([true, false])('启动后 rescan 在首次 apply 前同步新定义和复用实例（reload=%s）', async reload => {
+    const f = fixture(true, reload);
+    await f.app.autoLoadPlugins();
+    f.prepared.finishInitialLoad();
+    expect(f.saved).toHaveLength(0);
+    f.add('later');
+    await f.app.rescanPlugins();
+    await f.app.plugins.idle();
+    expect(f.seen).toEqual([
+      { known: 2, nested: { filled: 7 } },
+      { known: 3, nested: { filled: 7 } },
+    ]);
+    expect(f.saved).toHaveLength(1);
+    expect(f.saved[0]).toMatchObject({ plugins: { later: { known: 2, nested: { filled: 7 } } } });
+    await f.app.stop();
+  });
 });
 
 describe('syncPluginDefaults 政策', () => {
