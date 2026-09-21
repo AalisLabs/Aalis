@@ -43,6 +43,9 @@
   "aalis": {
     "service": {
       "required": [
+        "config",
+        "lifecycle",
+        "logger",
         "tools"
       ]
     }

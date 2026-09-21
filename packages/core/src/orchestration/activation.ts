@@ -24,8 +24,8 @@ export class Activation {
     private readonly owners: Map<symbol, Activation>,
   ) {}
 
-  retainBinding(name: string): () => void {
-    const owner = this.services.ownerOf(name);
+  retainBinding(name: string, instance?: unknown): () => void {
+    const owner = this.services.ownerOf(name, instance);
     if (owner === undefined) return () => {};
     const kind = this.declared.get(name) ? 1 : 0;
     const counts = this.bindings.get(owner) ?? [0, 0];

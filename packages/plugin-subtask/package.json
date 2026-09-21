@@ -49,6 +49,12 @@
         "tools",
         "session-manager",
         "message-archive"
+      ],
+      "required": [
+        "config",
+        "events",
+        "hooks",
+        "logger"
       ]
     }
   }

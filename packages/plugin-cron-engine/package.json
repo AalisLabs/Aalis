@@ -43,6 +43,11 @@
     "service": {
       "provides": [
         "cron-engine"
+      ],
+      "required": [
+        "lifecycle",
+        "logger",
+        "provide"
       ]
     }
   }

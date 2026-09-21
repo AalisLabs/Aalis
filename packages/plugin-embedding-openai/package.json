@@ -40,6 +40,11 @@
     "service": {
       "provides": [
         "embedding"
+      ],
+      "required": [
+        "config",
+        "logger",
+        "provide"
       ]
     }
   },

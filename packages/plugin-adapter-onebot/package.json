@@ -56,8 +56,14 @@
   "aalis": {
     "service": {
       "required": [
-        "storage",
-        "process"
+        "config",
+        "contributions",
+        "events",
+        "lifecycle",
+        "logger",
+        "process",
+        "provide",
+        "storage"
       ],
       "optional": [
         "flow-control",

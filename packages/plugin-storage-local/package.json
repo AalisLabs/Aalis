@@ -47,6 +47,13 @@
       ],
       "provides": [
         "storage"
+      ],
+      "required": [
+        "config",
+        "lifecycle",
+        "logger",
+        "provide",
+        "services"
       ]
     }
   }

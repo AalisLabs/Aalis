@@ -47,8 +47,14 @@
   "aalis": {
     "service": {
       "required": [
-        "memory",
-        "llm"
+        "config",
+        "contributions",
+        "events",
+        "hooks",
+        "lifecycle",
+        "llm",
+        "logger",
+        "memory"
       ],
       "optional": [
         "message-archive"

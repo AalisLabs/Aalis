@@ -144,6 +144,7 @@ describe('ContributionRegistry / contributions 能力', () => {
 
   it('退订即摘登记表条目：反复 contribute+off 不无界增长', () => {
     const ctx = makeFixture('plugin-a');
+    const baseline = ctx.activation.resources.lifecycle.disposables.size;
     const withdrawn: ReturnType<typeof vi.fn>[] = [];
     const register = ctx.contributions.register.bind(ctx.contributions);
     vi.spyOn(ctx.contributions, 'register').mockImplementation((...args) => {
@@ -161,6 +162,6 @@ describe('ContributionRegistry / contributions 能力', () => {
     }
     expect(previous.every(off => off.mock.calls.length === 1)).toBe(true);
     expect(ctx.caps.contributions.collect(POINT)).toHaveLength(0);
-    expect(ctx.activation.resources.lifecycle.disposables.size, 'dispose 链不应滞留已退订的贡献闭包').toBe(0);
+    expect(ctx.activation.resources.lifecycle.disposables.size, 'dispose 链不应滞留已退订的贡献闭包').toBe(baseline);
   });
 });

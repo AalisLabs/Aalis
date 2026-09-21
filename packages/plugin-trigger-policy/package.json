@@ -47,7 +47,11 @@
   "aalis": {
     "service": {
       "required": [
-        "gateway"
+        "config",
+        "gateway",
+        "hooks",
+        "logger",
+        "provide"
       ],
       "optional": [
         "flow-control",
