@@ -137,6 +137,9 @@ class DefaultAgent implements AgentService {
   /** 同一 lane 的入站消息归档串行化，避免连续消息读取历史时漏掉前一条输入。 */
   private archiveQueues = new Map<string, Promise<void>>();
 
+  /** 每次激活只在实际写入缺少归档时告警一次，不因插件加载顺序误报。 */
+  private archiveUnavailableWarned = false;
+
   /**
    * 节流日志状态：记录每个 session 上次 token:usage 日志的"轮次"与 ratio 桶。
    * - 跨过 0.5/0.7/0.85 三个阈值必输出
@@ -1772,11 +1775,20 @@ class DefaultAgent implements AgentService {
     return result;
   }
 
-  /**
-   * 保存消息到记忆服务
-   */
-  private async saveToMemory(sessionId: string, message: Message): Promise<void> {
+  private getArchiveForWrite() {
     const archive = this.caps.messageArchive.current;
+    if (!archive && !this.archiveUnavailableWarned) {
+      this.archiveUnavailableWarned = true;
+      this.logger.warn(
+        'message-archive 服务不可用，缺席期间的新消息不会写入记忆，对话继续。请加载 @aalis/plugin-message-archive 及其 memory 依赖。',
+      );
+    }
+    return archive;
+  }
+
+  /** 保存消息到记忆服务 */
+  private async saveToMemory(sessionId: string, message: Message): Promise<void> {
+    const archive = this.getArchiveForWrite();
     if (archive) {
       try {
         await archive.saveMessage(sessionId, message);
@@ -1888,7 +1900,7 @@ class DefaultAgent implements AgentService {
   private async archiveIncomingMessage(incoming: IncomingMessage): Promise<Message | undefined> {
     // 跳过非真实用户输入：闲聊主动触发是系统提示，不应作为 user 消息写入历史
     if (incoming.source === 'idle-trigger') return undefined;
-    const archive = this.caps.messageArchive.current;
+    const archive = this.getArchiveForWrite();
     if (!archive) return undefined;
     try {
       const result = await archive.archiveIncoming(incoming);
