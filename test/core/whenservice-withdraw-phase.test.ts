@@ -7,7 +7,7 @@ declare module '@aalis/core' {
 
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  App,
+  type App,
   definePlugin,
   defineService,
   events,
@@ -17,7 +17,7 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
-import { activationHost, rootActivation } from '../../packages/core/src/orchestration/app.js';
+import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // follow 的 cleanup 是对外绑定的撤回：拆卸时先于全部 onDispose 执行，
@@ -57,7 +57,7 @@ afterEach(async () => {
 
 function makeApp() {
   const logger: Logger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => logger };
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+  const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
   apps.push(app);
   return { app, host: app.bind({ provide, events }) };
 }
