@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
-import {
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { App, definePlugin, defineService, lifecycle, provide, services } from '../../packages/core/src/index.js';
+import packageManagerPlugin, {
   buildUpdateSpecs,
   createPackageManager,
   declaresPlugin,
@@ -10,6 +14,7 @@ import {
   packageManager,
   stripVersion,
 } from '../../packages/plugin-package-manager/src/index.js';
+import { createNodeModulesPluginLoader } from '../../packages/runtime/src/node-modules-loader.js';
 
 // 从被测模块的依赖契约推导类型，避免测试直接 import api 包（knip unlisted-dep）
 type ProcessService = PackageManagerDeps['proc'];
@@ -49,6 +54,10 @@ function makeHarness(
     /** 原样返回的文本文件（优先于 json）；用于快照类断言。 */
     text?: Record<string, string>;
     restarts?: Array<{ reason: string; restore: Array<{ path: string; content: string }> }>;
+    /** 收集 log.warn；就位/卸载在 name≠包名时必须出声。 */
+    warns?: string[];
+    resolveDefinitionName?: (pkgName: string) => Promise<string | undefined>;
+    listPluginInstanceIds?: (definitionName: string) => string[];
   } = {},
 ): Harness {
   const execCalls: Array<{ cmd: string; args: string[] }> = [];
@@ -83,7 +92,13 @@ function makeHarness(
 
   const deps: PackageManagerDeps = {
     proc,
-    log: { info: () => {}, error: () => {} },
+    log: {
+      info: () => {},
+      error: () => {},
+      warn: (msg: string) => {
+        opts.warns?.push(msg);
+      },
+    },
     projectRoot: () => ROOT,
     readText: async abs => {
       if (opts.text && abs in opts.text) return opts.text[abs];
@@ -98,6 +113,8 @@ function makeHarness(
     restartApp: vi.fn(r => {
       opts.restarts?.push(r);
     }),
+    resolveDefinitionName: opts.resolveDefinitionName,
+    listPluginInstanceIds: opts.listPluginInstanceIds,
   };
   return { deps, execCalls, deleted };
 }
@@ -247,6 +264,25 @@ describe('install（只有一条路径：写根依赖）', () => {
     const r = await createPackageManager(h.deps).install('@scope/foo');
     expect(r.ok).toBe(false);
     expect(r.message).toContain('npm');
+  });
+
+  it('定义 name 与包名不同、但定义已落账 → 安装成功，并 warn', async () => {
+    const warns: string[] = [];
+    const h = makeHarness({
+      registered: ['other-name'],
+      resolveDefinitionName: async () => 'other-name',
+      warns,
+      json: {
+        [rootPkg]: {},
+        [`${ROOT}/node_modules/plugin-mismatch/package.json`]: { keywords: ['aalis-plugin'] },
+      },
+    });
+    const r = await createPackageManager(h.deps).install('plugin-mismatch');
+    expect(r.ok, r.message).toBe(true);
+    expect(r.message).toContain('plugin-mismatch');
+    expect(
+      warns.some(w => w.includes('plugin-mismatch') && w.includes('other-name') && w.includes('定义的 name')),
+    ).toBe(true);
   });
 });
 
@@ -588,6 +624,40 @@ describe('uninstall', () => {
     expect(h.deps.cleanupConfig).toHaveBeenCalledWith('@scope/foo');
   });
 
+  it('卸载按定义 name 枚举全部 instanceId（主 + name:suffix），逐个 unload + cleanupConfig', async () => {
+    const h = harness(['aalis', 'aalis-plugin']);
+    h.deps.listPluginInstanceIds = name =>
+      name === '@scope/foo' ? ['@scope/foo', '@scope/foo:one', '@scope/foo:two'] : [];
+    const r = await createPackageManager(h.deps).uninstall('@scope/foo');
+    expect(r.ok, r.message).toBe(true);
+    expect(h.deps.unloadPlugin).toHaveBeenCalledTimes(3);
+    expect(h.deps.unloadPlugin).toHaveBeenCalledWith('@scope/foo');
+    expect(h.deps.unloadPlugin).toHaveBeenCalledWith('@scope/foo:one');
+    expect(h.deps.unloadPlugin).toHaveBeenCalledWith('@scope/foo:two');
+    expect(h.deps.cleanupConfig).toHaveBeenCalledTimes(3);
+    expect(h.deps.cleanupConfig).toHaveBeenCalledWith('@scope/foo:one');
+    expect(h.deps.cleanupConfig).toHaveBeenCalledWith('@scope/foo:two');
+  });
+
+  it('按包名卸载时以加载器解析的定义 name 为准，摘掉已落账实例', async () => {
+    const h = makeHarness({
+      text: {
+        [rootPkgPath]: JSON.stringify({ dependencies: { 'plugin-mismatch': '^1.0.0' } }),
+        [`${ROOT}/node_modules/plugin-mismatch/package.json`]: JSON.stringify({
+          name: 'plugin-mismatch',
+          keywords: ['aalis-plugin'],
+        }),
+      },
+      resolveDefinitionName: async () => 'other-name',
+      listPluginInstanceIds: name => (name === 'other-name' ? ['other-name'] : []),
+    });
+    const r = await createPackageManager(h.deps).uninstall('plugin-mismatch');
+    expect(r.ok, r.message).toBe(true);
+    expect(h.deps.unloadPlugin).toHaveBeenCalledWith('other-name');
+    expect(h.deps.cleanupConfig).toHaveBeenCalledWith('other-name');
+    expect(h.deps.unloadPlugin).not.toHaveBeenCalledWith('plugin-mismatch');
+  });
+
   it('前端界面包可卸——只要它不承载当前的撤销通道', async () => {
     const h = harness(['aalis', 'aalis-interface']);
     h.deps.recoveryChannelProviders = () => ['@scope/other-ui'];
@@ -772,6 +842,198 @@ describe('自锁闸：生产接线算出的撤销通道名单', () => {
       expect(r.message).not.toContain('正在承载市场/管理界面本身');
     } finally {
       await app.stop();
+    }
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 就位判据 / 卸载枚举：生产接线（createService）
+//
+// 上面 createPackageManager 的用例自注入 deps，打不中 createService。
+// 审计实测：isPluginRegistered 恒 true、unload 只对包名各打一次，全文件仍绿。
+// 下列经 App 真装载 package-manager，钉加载器解析的定义 name 与全部 instanceId。
+// ════════════════════════════════════════════════════════════
+
+const productionApps: App[] = [];
+afterEach(async () => {
+  for (const app of productionApps.splice(0)) await app.stop().catch(() => {});
+});
+
+function mockProcess(files: Record<string, string>) {
+  return {
+    readExternalFile: async (abs: string) => {
+      const text = files[abs];
+      if (text === undefined) throw new Error(`ENOENT ${abs}`);
+      return new TextEncoder().encode(text);
+    },
+    execFile: async () => ({ stdout: '', stderr: '', code: 0 }),
+    makeTempDir: async () => ({ path: '/tmp/fake-pm', cleanup: async () => undefined }),
+  };
+}
+
+describe('生产接线：装卸以定义 name 为准，卸载清理全部实例', () => {
+  it('卸载包名后，所有 instanceId / 配置块 / 禁用标记都必须离开', async () => {
+    const TARGET = 'audit-pm-reuser';
+    const PAGE = '/abs-pm-reuser';
+    const tag = defineService<{ id: string }>('audit-pm-tag');
+    const app = new App({ config: { name: 'PM', logLevel: 'error', plugins: {} } });
+    productionApps.push(app);
+    const host = app.bind({ provide, services });
+
+    const def = definePlugin({
+      name: TARGET,
+      reusable: true,
+      provides: [tag],
+      uses: { provide, lifecycle },
+      apply(caps) {
+        caps.provide(tag, { id: caps.lifecycle.id });
+      },
+    });
+    await app.plugin(def, { slot: 'main' });
+    await app.plugins.register(def, { slot: 'one' }, `${TARGET}:one`);
+    await app.plugins.register(def, { slot: 'two' }, `${TARGET}:two`);
+    await app.plugins.idle();
+
+    app.config.setPluginConfig(TARGET, { slot: 'main' });
+    app.config.setPluginConfig(`${TARGET}:one`, { slot: 'one' });
+    app.config.setPluginConfig(`${TARGET}:two`, { slot: 'two' });
+    app.config.setPluginEnabled(`${TARGET}:one`, false);
+
+    host.provide(
+      defineService<object>('process'),
+      mockProcess({
+        [`${PAGE}/package.json`]: JSON.stringify({ dependencies: { [TARGET]: '^1.0.0' } }),
+        [`${PAGE}/node_modules/${TARGET}/package.json`]: JSON.stringify({
+          name: TARGET,
+          keywords: ['aalis', 'aalis-plugin'],
+        }),
+      }),
+    );
+
+    await app.plugins.register(packageManagerPlugin, { projectRoot: PAGE });
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('@aalis/plugin-package-manager')?.state).toBe('active');
+    const svc = host.services.get(packageManager);
+    if (!svc) throw new Error('package-manager 未就绪');
+
+    expect(app.plugins.getStatus().filter(p => p.name === TARGET)).toHaveLength(3);
+
+    const r = await svc.uninstall(TARGET);
+    expect(r.ok, r.message).toBe(true);
+    await app.plugins.idle();
+
+    expect(
+      app.plugins
+        .getStatus()
+        .filter(p => p.name === TARGET)
+        .map(p => p.instanceId),
+      '注册表不得留下 name:suffix 幽灵实例',
+    ).toEqual([]);
+    expect(app.config.getPluginConfig(TARGET), '主实例配置应清').toEqual({});
+    expect(app.config.getPluginConfig(`${TARGET}:one`), '后缀实例配置应清').toEqual({});
+    expect(app.config.getPluginConfig(`${TARGET}:two`)).toEqual({});
+    expect(app.config.isPluginDisabled(`${TARGET}:one`), '后缀禁用标记应随包卸掉').toBe(false);
+    expect(host.services.get(tag), '枢纽上该包提供的服务应全部消失').toBeUndefined();
+  });
+
+  it('包名与 definition.name 不同：rescan 已落账则安装成功', async () => {
+    const proj = mkdtempSync(join(tmpdir(), 'aalis-pm-mismatch-'));
+    try {
+      const pkg = 'audit-pm-mismatch';
+      writeFileSync(
+        join(proj, 'package.json'),
+        JSON.stringify({ name: 'host', private: true, dependencies: { [pkg]: '1.0.0' } }),
+      );
+      const dir = join(proj, 'node_modules', pkg);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, 'package.json'),
+        JSON.stringify({ name: pkg, version: '1.0.0', main: 'index.mjs', keywords: ['aalis-plugin'] }),
+      );
+      writeFileSync(join(dir, 'index.mjs'), 'export default { name: "other-name", apply() {} };\n');
+
+      const app = new App({
+        config: { name: 'PM', logLevel: 'error', plugins: {} },
+        pluginLoader: createNodeModulesPluginLoader(proj),
+      });
+      productionApps.push(app);
+      const host = app.bind({ provide, services });
+      host.provide(defineService<object>('process'), {
+        readExternalFile: async (abs: string) => {
+          try {
+            return readFileSync(abs);
+          } catch {
+            throw new Error(`ENOENT ${abs}`);
+          }
+        },
+        execFile: async () => ({ stdout: '', stderr: '', code: 0 }),
+        makeTempDir: async () => ({ path: '/tmp/fake-pm', cleanup: async () => undefined }),
+      });
+
+      await app.plugins.register(packageManagerPlugin, { projectRoot: proj });
+      await app.plugins.idle();
+      expect(app.plugins.getPlugin('@aalis/plugin-package-manager')?.state).toBe('active');
+      const svc = host.services.get(packageManager);
+      if (!svc) throw new Error('package-manager 未就绪');
+
+      const r = await svc.install(pkg);
+      await app.plugins.idle();
+      expect(app.plugins.getPlugin('other-name')?.state, '定义 name 已落账').toBe('active');
+      expect(r.ok, `市场就位判据应对齐运行时身份，实际 message=${r.message}`).toBe(true);
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  });
+
+  it('按包名 uninstall 必须摘掉以定义 name 落账的实例', async () => {
+    const proj = mkdtempSync(join(tmpdir(), 'aalis-pm-unmismatch-'));
+    try {
+      const pkg = 'plugin-mismatch';
+      writeFileSync(
+        join(proj, 'package.json'),
+        JSON.stringify({ name: 'host', private: true, dependencies: { [pkg]: '^1.0.0' } }),
+      );
+      const dir = join(proj, 'node_modules', pkg);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, 'package.json'),
+        JSON.stringify({ name: pkg, version: '1.0.0', main: 'index.mjs', keywords: ['aalis-plugin'] }),
+      );
+      writeFileSync(join(dir, 'index.mjs'), 'export default { name: "other-name", apply() {} };\n');
+
+      const app = new App({
+        config: { name: 'PM', logLevel: 'error', plugins: {} },
+        pluginLoader: createNodeModulesPluginLoader(proj),
+      });
+      productionApps.push(app);
+      const host = app.bind({ provide, services });
+      host.provide(defineService<object>('process'), {
+        readExternalFile: async (abs: string) => {
+          try {
+            return readFileSync(abs);
+          } catch {
+            throw new Error(`ENOENT ${abs}`);
+          }
+        },
+        execFile: async () => ({ stdout: '', stderr: '', code: 0 }),
+        makeTempDir: async () => ({ path: '/tmp/fake-pm', cleanup: async () => undefined }),
+      });
+
+      await app.rescanPlugins();
+      await app.plugins.idle();
+      expect(app.plugins.getPlugin('other-name')).toBeDefined();
+
+      await app.plugins.register(packageManagerPlugin, { projectRoot: proj });
+      await app.plugins.idle();
+      const svc = host.services.get(packageManager);
+      if (!svc) throw new Error('package-manager 未就绪');
+
+      const un = await svc.uninstall(pkg);
+      expect(un.ok, un.message).toBe(true);
+      await app.plugins.idle();
+      expect(app.plugins.getPlugin('other-name'), '按包名卸载必须摘掉以定义 name 落账的实例').toBeUndefined();
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
     }
   });
 });
