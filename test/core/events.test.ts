@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { App, EventBus, events } from '../../packages/core/src/index.js';
-import { activationHost } from '../../packages/core/src/orchestration/app.js';
+import { EventBus, events } from '../../packages/core/src/index.js';
+import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
 describe('EventBus', () => {
   it('on/emit 按注册顺序串行调用', async () => {
@@ -62,7 +62,7 @@ describe('EventBus per-handler 隔离（#8.1）', () => {
   });
 
   it('经 events 能力注册的监听器抛错，上报的注册者身份就是 ctx.id', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const who: Array<string | undefined> = [];
     app.events.onHandlerError = (_event, _err, contextId) => who.push(contextId);
     const host = activationHost(app);

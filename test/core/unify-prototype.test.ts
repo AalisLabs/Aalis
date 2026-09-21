@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { type ProcessService, processService } from '../../packages/api-process/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import {
-  App,
+  type App,
   config,
   definePlugin,
   defineService,
@@ -14,9 +14,9 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
-import { activationHost, rootActivation } from '../../packages/core/src/orchestration/app.js';
 import type { PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // 统一服务架构纵向原型：插件不接收 Context，声明描述符、拿按激活绑定的接口。
@@ -106,7 +106,7 @@ function world() {
     error: () => {},
     child: () => logger,
   };
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+  const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
   apps.push(app);
   return { app, warnings, host: app.bind({ provide, services }) };
 }

@@ -1,6 +1,6 @@
-import { App, definePlugin, defineService, lifecycle, provide } from '@aalis/core';
+import { definePlugin, defineService, lifecycle, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
-import { activationHost, rootActivation } from '../../packages/core/src/orchestration/app.js';
+import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // 拆卸路径的并发正确性
@@ -18,7 +18,7 @@ const store = defineService<{ write: () => void }>('__t:tr-store');
 
 describe('Activation 并发拆卸', () => {
   it('并发 disposeAsync：后来者 join 在飞拆卸，返回时清理已真正完成', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const log: string[] = [];
     const child = activationHost(app).create(rootActivation(app), 'slow-child');
     child.resources.onDispose(async () => {
@@ -37,7 +37,7 @@ describe('Activation 并发拆卸', () => {
   });
 
   it('父级联撞上半拆的子 ctx：父的 disposeAsync 等到子清理落地', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const log: string[] = [];
     const parent = activationHost(app).create(rootActivation(app), 'parent');
     const child = activationHost(app).create(parent, 'parent/child');
@@ -55,7 +55,7 @@ describe('Activation 并发拆卸', () => {
 
   it('join 在飞拆卸时受本次调用者的 timeoutMs 约束（在飞方用更松的上限也不拖垮停机）', async () => {
     // disposeTimeoutMs 配短：末尾 app.stop 同样要等这个永不 resolve 的清理项
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, disposeTimeoutMs: 100 });
+    const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} }, disposeTimeoutMs: 100 });
     const child = activationHost(app).create(rootActivation(app), 'never-settles');
     child.resources.onDispose(() => new Promise<void>(() => {})); // 永不 resolve
 
@@ -70,7 +70,7 @@ describe('Activation 并发拆卸', () => {
   });
 
   it('拆卸完成后再次 disposeAsync 立即返回（幂等，不重跑清理）', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     let runs = 0;
     const child = activationHost(app).create(rootActivation(app), 'idempotent');
     child.resources.onDispose(async () => {
@@ -87,7 +87,7 @@ describe('Activation 并发拆卸', () => {
 
 describe('App.stop 撞上在飞 recompute', () => {
   it('bounce 在飞时停机，仍保持拓扑逆序：消费者落盘先于提供者关闭', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     const order: string[] = [];
 
     await app.plugin(

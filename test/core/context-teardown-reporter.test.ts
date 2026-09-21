@@ -1,7 +1,7 @@
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
-import { App, definePlugin, lifecycle } from '../../packages/core/src/index.js';
-import { activationHost, rootActivation } from '../../packages/core/src/orchestration/app.js';
+import { type App, definePlugin, lifecycle } from '../../packages/core/src/index.js';
+import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // 拆卸路径上的诊断上报由宿主 logger 承担，其 sink 可能抛错（stdout EPIPE、磁盘满、WebUI 推送异常）。
@@ -24,7 +24,10 @@ afterEach(async () => {
 });
 
 const mkApp = (marker: string) => {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger: throwingLogger(marker) });
+  const app = createInspectableApp({
+    config: { name: 'T', logLevel: 'error', plugins: {} },
+    logger: throwingLogger(marker),
+  });
   apps.push(app);
   return app;
 };

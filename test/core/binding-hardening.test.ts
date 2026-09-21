@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type BoundTools, tools } from '../../packages/api-tools/src/index.js';
 import {
-  App,
+  type App,
   definePlugin,
   defineService,
   type Logger,
@@ -9,8 +9,8 @@ import {
   provide,
   ServiceContainer,
 } from '../../packages/core/src/index.js';
-import { activationHost, rootActivation } from '../../packages/core/src/orchestration/app.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 const tick = () => new Promise<void>(r => setImmediate(r));
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -40,7 +40,7 @@ function world() {
     error: (...a: unknown[]) => void warnings.push(a.map(String).join(' ')),
     child: () => logger,
   };
-  const app = new App({
+  const app = createInspectableApp({
     config: { name: 'H', logLevel: 'error', plugins: {} },
     logger,
   });

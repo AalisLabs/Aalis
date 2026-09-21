@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { BindingPort } from '../../packages/core/src/index.js';
 import {
-  App,
+  type App,
   definePlugin,
   defineService,
   type Logger,
@@ -10,7 +10,7 @@ import {
   optional,
   provide,
 } from '../../packages/core/src/index.js';
-import { activationHost, rootActivation } from '../../packages/core/src/orchestration/app.js';
+import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // 关停编排与重入清理的契约测试。来源：第二轮独立复核（REVIEW-fcac1dc0）的全部反例，
@@ -50,7 +50,7 @@ function world() {
     error: (...a: unknown[]) => void warnings.push(a.map(String).join(' ')),
     child: () => logger,
   };
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+  const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
   apps.push(app);
   return { app, log, saved, warnings, host: app.bind({ provide }).provide };
 }
