@@ -14,6 +14,7 @@ import type { PluginEntry, PluginState } from '../types/plugin.js';
 
 import type { ServiceContainer } from '../primitives/services.js';
 
+import { isRequiredServiceUnavailable } from '../context/binding.js';
 import type { Logger } from '../context/logger.js';
 
 import type { Activation } from './activation.js';
@@ -122,10 +123,11 @@ export function computeTargetState(entry: PluginRecord, services: ServiceContain
 /**
  * 尝试激活一个 pending 插件：依赖检查 → 建激活 → 挂载定义 → provides 校验。
  *
- * 失败时把 entry 转为 error 态（带 message），激活已 dispose，外层 recompute 不会重试。
+ * 本次 required 引用缺席：清理失败激活后回到 pending，并让重算继续观察可能已恢复的依赖。
+ * 其余失败转为 error 态（带 message），外层 recompute 不会重试。
  * 调用方需保证 entry.state === 'pending' 才调用本函数（否则直接 return）。
  */
-export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps): Promise<void> {
+export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps): Promise<'retry' | undefined> {
   const { host, logger } = deps;
   const services = host.runtime.services;
   if (entry.state !== 'pending') return;
@@ -207,6 +209,12 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     if (entry.state !== 'activating') {
       logger.debug(`插件 "${entry.instanceId}" 激活中止且已被管理操作接管（现态 ${entry.state}）:`, err);
       return;
+    }
+    if (isRequiredServiceUnavailable(err, activation.resources, entry.required)) {
+      logger.debug(`插件 "${entry.instanceId}" 初始化期间 required 服务不可用，清理后等待依赖恢复`);
+      entry.error = undefined;
+      await retireEntry(entry, 'pending', deps, { emitUnloaded: false });
+      return 'retry';
     }
     logger.error(`插件 "${entry.instanceId}" 激活失败:`, err);
     // retireEntry 先写 'error' 再等清理——并发观察者（getStatus / 早退返回的
