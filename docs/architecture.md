@@ -4,7 +4,7 @@
 
 ## 设计哲学
 
-Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设施（事件、服务容器、中间件管道、插件生命周期），所有功能——LLM 调用、消息存储、对话编排、平台接入——由可插拔插件提供。核心的任何行为均可被插件拦截、修改或完全替换。
+Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设施（事件、服务容器、中间件管道、插件生命周期），所有功能——LLM 调用、消息存储、对话编排、平台接入——由可插拔插件提供。可替换的是服务提供者；内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services` / `hooks` / `contributions`）不可经 `provide` 替换。
 
 插件的交界面是 `definePlugin({ name, uses, provides, apply(caps) })`：能力经描述符显式声明，按激活绑定。没有默认注入。业务服务接口由对应的 `@aalis/api-*` 包以描述符导出，core 不持有任何业务接口。详见 [api 包架构](design/api-packages.md)。
 
