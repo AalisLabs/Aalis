@@ -16,9 +16,9 @@
 // 依赖交接放 onDrain；onDispose 阶段依赖可能已不可用。
 // 资源内核只提供「分阶段关闭」，不认识服务；依赖政策全在这里。
 //
-// 依赖成环时：optional 依赖的契约本就是「缺席也能工作」，环里的 optional 边按自然次序让步，
-// 不告警——互为 optional 依赖在插件之间是常态。环里只剩 required 边仍无解才告警并强行放行。
-// 归属约束与环外的约束一条不松。
+// 依赖成环时：optional 边构成的强连通分量（≥2 个激活）先让成员全部 drain，再任一 close——
+// drain 期间对方仍活着，双方 onDrain 都能 require。不告警（互为 optional 是常态）。
+// 环里只剩 required 边仍无解才告警并强行放行。归属约束与环外的约束一条不松。
 //
 // 边只来自框架自己管理的关系：每个激活声明的依赖（含子模块的、含尚未访问的 optional）在编排
 // 那一刻解析到的胜者，以及存活的托管绑定与尚未落地的撤回。不追踪调用方缓存的裸引用，
@@ -174,13 +174,26 @@ function planClose(roots: Context[], logger: Logger): Stage[] {
     // 源分量之外没有未放行的前驱，故只被软约束挡着的阶段放行后不违反任何硬约束
     const yielding = cycle.filter(stage => ![...stage.after].some(([prev, hard]) => hard && remaining.has(prev)));
     if (yielding.length > 0) {
+      const drainYielding = yielding.filter(stage => stage.kind === 'drain');
+      if (drainYielding.length > 0) {
+        reportQuietly(() => logger.debug(`关停顺序：optional 依赖成环 [${names}]，环内成员先全部收尾再撤回`));
+        for (const stage of drainYielding) {
+          if (!remaining.has(stage)) continue;
+          blockers.set(stage, 0);
+          release(stage);
+        }
+        continue;
+      }
       reportQuietly(() => logger.debug(`关停顺序：optional 依赖成环 [${names}]，环内按自然次序让步`));
-    } else {
-      reportQuietly(() =>
-        logger.warn(`关停顺序：required 依赖成环 [${names}]，环内无法保证都先于各自的提供者，其余顺序不受影响`),
-      );
+      const forced = yielding[0];
+      blockers.set(forced, 0);
+      release(forced);
+      continue;
     }
-    const forced = (yielding.length > 0 ? yielding : cycle)[0];
+    reportQuietly(() =>
+      logger.warn(`关停顺序：required 依赖成环 [${names}]，环内无法保证都先于各自的提供者，其余顺序不受影响`),
+    );
+    const forced = cycle[0];
     blockers.set(forced, 0);
     release(forced);
   }
