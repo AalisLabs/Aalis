@@ -39,6 +39,8 @@ export interface PluginStatusEntry {
   provides?: string[];
   core?: boolean;
   reusable?: boolean;
+  /** 完整 uses 声明的快照；内置能力随激活绑定，不参与依赖等待，key 保留 apply 参数名。 */
+  uses: Array<{ key: string; service: string; kind: 'builtin' | 'required' | 'optional' }>;
   /** 参与激活闸的依赖服务名（uses 里未包 optional 的外部服务；能力披露用：该插件「要调用哪些子系统」） */
   requiredServices?: string[];
   /** 不参与激活闸的依赖服务名（uses 里包了 optional 的） */

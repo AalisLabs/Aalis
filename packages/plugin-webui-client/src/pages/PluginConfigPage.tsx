@@ -397,7 +397,8 @@ export function PluginConfigPage({
         const isSub = isSubInstance(p);
         const suffix = isSub ? iid.slice(p.name.length + 1) : undefined;
         const hasExtends = p.extends && (p.extends.events?.length || p.extends.hooks?.length);
-        const hasDetail = hasExtends || (p.config && Object.keys(p.config).length > 0) || !!p.configSchema;
+        const hasDetail = hasExtends || p.uses.length > 0 || (p.capabilities?.length ?? 0) > 0 ||
+          (p.config && Object.keys(p.config).length > 0) || !!p.configSchema;
         const hasSchema = !!p.configSchema;
         return (
           <div className={`plugin-card ${p.state === 'disabled' ? 'disabled' : ''} ${p.state === 'error' ? 'errored' : ''}`} key={iid} style={{ position: 'relative' }}>
@@ -475,20 +476,21 @@ export function PluginConfigPage({
               </div>
             )}
 
-            {/* 能力披露：该插件依赖哪些子系统 + 触达哪些敏感能力（安装后知情查看） */}
+            {/* 全部声明的能力与依赖；工具/指令的敏感标记另行展示。 */}
             {isOpen &&
-              ((p.requiredServices?.length ?? 0) > 0 ||
-                (p.optionalServices?.length ?? 0) > 0 ||
+              (p.uses.length > 0 ||
                 (p.capabilities?.length ?? 0) > 0) && (
-                <div className="plugin-card-caps">
-                  {(p.requiredServices ?? []).map(s => (
-                    <span className="cap-chip dep-required" key={`req-${s}`} title="必需依赖的服务">
-                      需 {s}
-                    </span>
-                  ))}
-                  {(p.optionalServices ?? []).map(s => (
-                    <span className="cap-chip dep-optional" key={`opt-${s}`} title="可选依赖的服务">
-                      可选 {s}
+                <div className="plugin-card-caps" title="列出显式声明的能力与依赖；动态查询到的服务不在此清单中">
+                  {p.uses.map(use => (
+                    <span
+                      className={`cap-chip dep-${use.kind}`}
+                      key={use.key}
+                      title={use.kind === 'builtin'
+                        ? '内置基础设施，随插件激活绑定，不等待外部提供者'
+                        : use.kind === 'required' ? '必需依赖，服务就绪后插件才能激活' : '可选依赖，服务缺席不阻止插件激活'}
+                    >
+                      {use.kind === 'builtin' ? '内置' : use.kind === 'required' ? '必需' : '可选'}{' '}
+                      {use.key === use.service ? use.service : `${use.key} → ${use.service}`}
                     </span>
                   ))}
                   {(p.capabilities ?? []).map(c => (

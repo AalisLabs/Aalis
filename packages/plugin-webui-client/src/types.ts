@@ -81,6 +81,8 @@ export interface PluginInfo {
   core: boolean;
   reusable: boolean;
   extends?: ExtendDeclaration;
+  /** 完整声明的能力；key 是插件的参数名，builtin 不参与外部服务的依赖等待。 */
+  uses: Array<{ key: string; service: string; kind: 'builtin' | 'required' | 'optional' }>;
   /** 能力披露：该插件依赖的必需/可选服务（要调用哪些子系统） */
   requiredServices?: string[];
   optionalServices?: string[];

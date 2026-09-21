@@ -8,6 +8,8 @@
 
 定义 WebUI 后台服务接口、声明式页面组件 schema、按激活绑定的登记门面。插件不需要懂 HTTP/React，只需在 `apply` 里 `uses` 声明 `webuiServer`，调用 `webui.registerPage` / `webui.registerAction`。webui-server 负责渲染并暴露 REST + WebSocket。页面动作随本次激活撤回；同名动作为替换。
 
+`GET /api/plugins` 的 `uses` 列出每个插件完整声明的能力与依赖（含参数别名），详情页分别标为内置、必需、可选。内置项随激活绑定，不作为普通提供者出现在 `/api/services`，也不参与依赖等待。`requiredServices` / `optionalServices` 仍仅指外部依赖；`capabilities` 仍是工具和指令的敏感可见性标记。动态查询获得的服务不在静态声明列表中。
+
 ## 服务接口
 
 ```ts
