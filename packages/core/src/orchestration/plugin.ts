@@ -3,7 +3,7 @@ import { type PluginEntry, type PluginState, parseInstanceId } from '../types/pl
 
 import { reportQuietly } from '../kernel/disposable-chain.js';
 
-import { optionalNames, requiredNames } from '../context/binding.js';
+import { isBuiltin, isOptional, optionalNames, requiredNames, type Uses } from '../context/binding.js';
 import { events } from '../context/builtins.js';
 import type { ConfigManager } from '../context/config.js';
 import { assertValidInstanceId, type PluginDefinition, validateDefinition } from '../context/definition.js';
@@ -334,6 +334,17 @@ export class PluginManager implements PluginManagerService {
       provides: entry.definition.provides?.map(descriptor => descriptor.name),
       core: entry.definition.core,
       reusable: entry.definition.reusable,
+      uses: Object.entries<Uses[string]>(entry.definition.uses ?? {}).map(
+        ([key, use]): PluginStatusEntry['uses'][number] => {
+          const optional = isOptional(use);
+          const descriptor = optional ? use.optional : use;
+          return {
+            key,
+            service: descriptor.name,
+            kind: isBuiltin(descriptor) ? 'builtin' : optional ? 'optional' : 'required',
+          };
+        },
+      ),
       requiredServices: entry.required.length > 0 ? entry.required : undefined,
       optionalServices: entry.optional.length > 0 ? entry.optional : undefined,
       error: entry.error,
