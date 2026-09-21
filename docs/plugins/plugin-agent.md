@@ -101,6 +101,8 @@ definePlugin({
 6. **保存**: 用户消息在回合开始时经 message-archive 归档；每轮工具调用组（assistant + tool）与最终助手回复经 message-archive 的 `saveMessage` 写入；空回复不保存
 7. **发送**: 经 gateway 服务的 `dispatchOutbound` 分发（经过出站中间件链）；gateway 缺失时回退为直接发出 `outbound:message` 事件
 
+`message-archive` 是可选服务。缺席时对话仍可运行、已有历史仍可读取，但新消息不会写入记忆；Agent 在首次实际需要写入时告警，每次激活最多一次。归档服务恢复后，后续消息自动恢复归档，缺席期间的消息不补写。`create-aalis` 的 minimal 及更完整的模板均包含归档插件。
+
 ## 上下文裁剪算法
 
 估算 token 超过预算（上下文长度 × `trimThresholdRatio` − 最大输出 token − 512，下限 1024）时，`trimMessages()` 按下表各阶段依次裁剪，任一阶段后回到预算内即停止。
