@@ -80,8 +80,9 @@ export interface VectorStoreService {
 可编译最小骨架：
 
 ```ts
-import { definePlugin } from '@aalis/core';
+import { vectorstore } from '@aalis/api-vectorstore';
 import type { VectorSearchResult, VectorStoreService } from '@aalis/api-vectorstore';
+import { definePlugin, lifecycle, provide } from '@aalis/core';
 
 class MyVectorStore implements VectorStoreService {
   private rows: Array<{ vector: number[]; metadata: Record<string, unknown> }> = [];
@@ -91,28 +92,36 @@ class MyVectorStore implements VectorStoreService {
   }
 
   async search(queryVector: number[], topK: number): Promise<VectorSearchResult[]> {
-    // 务必返回「余弦相似度」语义的 score（见 §6），否则跨后端阈值不可比
     const scored = this.rows.map(r => ({ score: cosine(queryVector, r.vector), metadata: r.metadata }));
     scored.sort((a, b) => b.score - a.score);
     return scored.slice(0, Math.min(topK, scored.length));
   }
 
-  async size(): Promise<number> { return this.rows.length; }
-  async clear(): Promise<void> { this.rows = []; }
-  // 可选：实现「全部键匹配才删」语义并返回删除数
+  async size(): Promise<number> {
+    return this.rows.length;
+  }
+  async clear(): Promise<void> {
+    this.rows = [];
+  }
   async deleteByFilter(filter: Record<string, unknown>): Promise<number> {
-    if (Object.keys(filter).length === 0) return 0; // 空过滤器不清全库（内置实现同此保护）
+    if (Object.keys(filter).length === 0) return 0;
     const before = this.rows.length;
     this.rows = this.rows.filter(r => Object.entries(filter).some(([k, v]) => r.metadata[k] !== v));
     return before - this.rows.length;
   }
-  async save(): Promise<void> { /* 落盘；如后端自动持久化则 no-op */ }
+  async save(): Promise<void> {}
 }
 
 function cosine(a: number[], b: number[]): number {
-  if (a.length !== b.length) return Number.NEGATIVE_INFINITY; // 维度不匹配：见 §6/§7
-  let dot = 0, na = 0, nb = 0;
-  for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+  if (a.length !== b.length) return Number.NEGATIVE_INFINITY;
+  let dot = 0,
+    na = 0,
+    nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
   const denom = Math.sqrt(na) * Math.sqrt(nb);
   return denom === 0 ? 0 : dot / denom;
 }
@@ -120,11 +129,12 @@ function cosine(a: number[], b: number[]): number {
 export default definePlugin({
   name: '@aalis/plugin-vectorstore-mine',
   provides: [vectorstore],
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  const store = new MyVectorStore();
-  provide(vectorstore, store);          // 默认 priority=0；想优先于已有后端用 { priority: 10 } 之类
-  lifecycle.onDispose(() => void store.save());      // dispose 兜底落盘
-},
+  uses: { provide, lifecycle },
+  apply({ provide, lifecycle }) {
+    const store = new MyVectorStore();
+    provide(vectorstore, store);
+    lifecycle.onDispose(() => void store.save());
+  },
 });
 ```
 
@@ -136,31 +146,24 @@ export default definePlugin({
 ## 5. 消费者标准写法
 
 ```ts
-import { definePlugin } from '@aalis/core';
-uses: { vectorstore }; // 或放 optional 软依赖
-import '@aalis/api-vectorstore';              // 触发类型增强
+import { vectorstore } from '@aalis/api-vectorstore';
+import { definePlugin, logger } from '@aalis/core';
 
 export default definePlugin({
   name: '@acme/plugin-example',
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  // 不要缓存句柄：provider 可能因热替换 bounce 失效——每次用都重取（见 docs/concepts/lazy-service-access.md）
-  const store = () => vectorstore.current;
-
-  // 软依赖：缺失时优雅降级
-  const s = store();
-  if (!s) { logger.warn('无 vectorstore，语义检索关闭'); return; }
-
-  await s.add(vec, { sessionId, timestamp: Date.now() });
-  await s.save();                                    // 写后显式持久化
-
-  const topK = 5;
-  // 先取宽候选再过阈值，避免阈值把 topK 提前耗光（memory-vector 取 topK*4 候选，:486/:752）
-  const candidates = await s.search(queryVec, Math.min(topK * 4, await s.size()));
-  const hits = candidates.filter(c => c.score >= minScore);
-
-  // deleteByFilter 是可选方法，调用前判存在
-  if (s.deleteByFilter) await s.deleteByFilter({ sessionId });
-},
+  uses: { vectorstore, logger },
+  async apply({ vectorstore, logger }) {
+    const s = vectorstore.current;
+    if (!s) {
+      logger.warn('无 vectorstore，语义检索关闭');
+      return;
+    }
+    await s.add([0], { sessionId: 's', timestamp: Date.now() });
+    await s.save();
+    const topK = 5;
+    const candidates = await s.search([0], Math.min(topK * 4, await s.size()));
+    void candidates;
+  },
 });
 ```
 

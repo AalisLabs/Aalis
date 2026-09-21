@@ -97,21 +97,18 @@ DI 靠包清单 + 代码导出**双源**声明（见 [manifest-metadata](../conc
 }
 ```
 
-`src/index.ts` 导出：
-```ts
-provides: [embedding];
-export const subsystem = 'embedding'; // 同子系统的提供者在 WebUI 里归组
-export const reusable = true;          // 允许同插件多实例（多账号/多端点）
-```
+`src/index.ts` 入口是 `export default definePlugin({ name, subsystem: 'embedding', reusable: true, provides: [embedding], uses: { config, logger, provide }, apply })`（`packages/plugin-embedding-openai/src/index.ts`）。同子系统归组靠定义上的 `subsystem`，多实例靠 `reusable`；不要再写具名 `export const subsystem`。
 
 ### 最小可编译骨架
 
 ```ts
-import { definePlugin } from '@aalis/core';
+import { embedding } from '@aalis/api-embedding';
 import type { EmbeddingService } from '@aalis/api-embedding';
+import { config, definePlugin, logger, provide } from '@aalis/core';
 
 class FooEmbedding implements EmbeddingService {
-  constructor(private endpoint: string, private model: string) {}
+  endpoint = 'http://localhost:9000';
+  model = 'foo-embed-v1';
 
   async embed(text: string): Promise<number[]> {
     const res = await fetch(`${this.endpoint}/embed`, {
@@ -124,7 +121,6 @@ class FooEmbedding implements EmbeddingService {
     return data.vector;
   }
 
-  // 可选：仅供 WebUI dynamicOptions 下拉
   async listModels(): Promise<string[]> {
     try {
       const res = await fetch(`${this.endpoint}/models`);
@@ -141,21 +137,21 @@ export default definePlugin({
   subsystem: 'embedding',
   reusable: true,
   provides: [embedding],
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  const endpoint = (config.endpoint as string) ?? 'http://localhost:9000';
-  const model = (config.model as string) ?? 'foo-embed-v1';
-  const service = new FooEmbedding(endpoint, model);
-
-  try {
-    await service.embed('ping');
-    logger.info(`Foo Embedding 已就绪: ${model} @ ${endpoint}`);
-  } catch (err) {
-    logger.warn(`Foo Embedding 连通性检查失败，服务仍将注册: ${String(err)}`);
-  }
-
-  // entryId 默认等于本次激活 id；多实例/分子项时用 `${lifecycle.id}/${sub}` 前缀
-  provide(embedding, service, { label: `Foo / ${model}` });
-},
+  uses: { provide, logger, config },
+  async apply({ provide, logger, config }) {
+    const endpoint = (config.endpoint as string) ?? 'http://localhost:9000';
+    const model = (config.model as string) ?? 'foo-embed-v1';
+    const service = new FooEmbedding();
+    service.endpoint = endpoint;
+    service.model = model;
+    try {
+      await service.embed('ping');
+      logger.info(`Foo Embedding 已就绪: ${model} @ ${endpoint}`);
+    } catch (err) {
+      logger.warn(`Foo Embedding 连通性检查失败，服务仍将注册: ${String(err)}`);
+    }
+    provide(embedding, service, { label: `Foo / ${model}` });
+  },
 });
 ```
 

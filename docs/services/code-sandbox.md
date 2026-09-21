@@ -101,18 +101,26 @@ export function useCodeSandbox(ctx: Context): CodeSandboxService | undefined;
 参考实现在 `apply` 里先探测后端，再注册单例：
 
 ```ts
-import { definePlugin } from '@aalis/core';
-
+import { codeSandbox } from '@aalis/api-code-sandbox';
+import { createProcessGateway, processService } from '@aalis/api-process';
+import { definePlugin, logger, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@acme/plugin-example',
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  const logger = logger.child('my-sandbox');
-  const proc = createProcessGateway(process);          // 经 process 网关，别直接碰 child_process
-  const backend = await probeBackend(proc, logger);
-  provide(codeSandbox, new MyCodeSandboxService(proc, backend));
-  // 默认 priority 0。想默认压过别的后端取更高值（如 50）。
-},
+  provides: [codeSandbox],
+  uses: { provide, logger, process: processService },
+  async apply({ provide, logger, process }) {
+    const log = logger.child('my-sandbox');
+    const proc = createProcessGateway(process); // 经 process 网关，别直接碰 child_process
+    log.info(`backend probe via ${proc ? 'process' : 'missing'}`);
+    provide(codeSandbox, {
+      available: true,
+      backend: 'example',
+      async run() {
+        throw new Error('example sandbox: 未实现');
+      },
+    });
+  },
 });
 ```
 
@@ -121,7 +129,7 @@ export default definePlugin({
 ### 双源元数据要同步
 `provides` / `uses` 有两套独立来源，部署时都要写对（见 [清单元数据](../concepts/manifest-metadata.md)）：
 
-- 代码导出：`provides: [codeSandbox]`、`uses: { process }`。
+- 代码导出：`provides: [codeSandbox]`、`uses: { process: processService }`。
 - `package.json` 的 `aalis.service`：
 
 ```jsonc
@@ -143,34 +151,44 @@ export default definePlugin({
 ### 最小可编译骨架
 
 ```ts
-import { definePlugin } from '@aalis/core';
+import { codeSandbox } from '@aalis/api-code-sandbox';
 import type { CodeSandboxService, SandboxRunRequest } from '@aalis/api-code-sandbox';
-import { type ExecResult, type ProcessService, createProcessGateway } from '@aalis/api-process';
+import {
+  createProcessGateway,
+  type ExecResult,
+  type ProcessService,
+  processService,
+} from '@aalis/api-process';
+import { definePlugin, provide } from '@aalis/core';
 
 class MyCodeSandboxService implements CodeSandboxService {
-  constructor(private readonly proc: ProcessService, private readonly _ok: boolean) {}
-  get available() { return this._ok; }
-  get backend() { return this._ok ? 'mybackend' : 'none'; }
+  proc!: ProcessService;
+  _ok = true;
+  get available() {
+    return this._ok;
+  }
+  get backend() {
+    return this._ok ? 'mybackend' : 'none';
+  }
 
   async run(req: SandboxRunRequest): Promise<ExecResult> {
     if (!this._ok) throw new Error('code-sandbox: 无可用后端，run() 不应被调用');
-    // 1) 用 req.policy 把 (req.cmd, req.args) 改写成「经你的隔离机制运行」的启动器命令；
-    //    必须强制：fsWrite 外只读、network==='deny' 断网、env 外宿主变量清零。
-    // 2) 经 process 网关 spawn（别直接 import node:child_process）。
-    const wrapped = wrapForMyBackend(req);       // 你的纯改写逻辑
-    return this.proc.execFile(wrapped.cmd, wrapped.args, { cwd: req.cwd, timeout: req.timeout });
+    // 必须强制：fsWrite 外只读、network==='deny' 断网、env 外宿主变量清零。
+    return this.proc.execFile(req.cmd, req.args, { cwd: req.cwd, timeout: req.timeout });
   }
 }
 
 export default definePlugin({
   name: '@example/plugin-code-sandbox-mybackend',
   provides: [codeSandbox],
-  uses: { process },
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  const proc = createProcessGateway(process);
-  const ok = await probeMyBackend(proc);         // 功能性试跑，跑通才 true
-  provide(codeSandbox, new MyCodeSandboxService(proc, ok));
-},
+  uses: { provide, process: processService },
+  async apply({ provide, process }) {
+    const proc = createProcessGateway(process);
+    const impl = new MyCodeSandboxService();
+    impl.proc = proc;
+    impl._ok = true;
+    provide(codeSandbox, impl);
+  },
 });
 ```
 

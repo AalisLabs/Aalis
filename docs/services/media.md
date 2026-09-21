@@ -5,7 +5,7 @@
 - **服务注册名**：`media.current`（字符串键 `media`，`服务描述符.media`）。
 - **契约包**：`@aalis/api-media`。契约除了服务本身，还导出底层的 `MediaProcessor` 抽象。你写「非 LLM 的媒体 backend」时实现 `MediaProcessor` 再 `registerProcessor`；写「服务消费」时只用 `MediaService`。
 - **参考实现**：`@aalis/plugin-media`，声明 `provides=['media']`，通过 `provide(media, svc)` 提供，实现类是 `MediaServiceImpl`。
-- **它不是沙箱**：媒体的下载与落盘走 `safeFetch`（SSRF 守卫）加 `storage`，但 storage 本身不是隔离边界，详见 [§6](#6-能力风险--影响)。
+- **它不是沙箱**：媒体的下载与落盘走 `safeFetch`（SSRF 守卫）加 `storage`，但 storage 本身不是隔离边界，详见 [§6](#6-能力-风险-影响)。
 
 这里有两层概念需要分清。`MediaService` 是一个真实可调用的服务实例，是有运行时的服务契约。`MediaProcessor` 则是给 backend 作者实现的「插件内子契约」——它不是独立的 DI 服务，而是注册进 `media` 服务内部池子的一个处理器对象。
 
@@ -65,7 +65,7 @@ export interface MediaProcessor {
 - `'video.passthrough'`：原生视频 LLM 直通。
 - `'document.image'`：文档内嵌图的 OCR/理解。
 
-注意 `MediaCapability` 与 LLM 的 `Capability` 语义不同：前者描述「处理动作」，后者描述「模型能力」。两者不在同一个 DI capability 体系里，详见 [§6](#6-能力风险--影响)。
+注意 `MediaCapability` 与 LLM 的 `Capability` 语义不同：前者描述「处理动作」，后者描述「模型能力」。两者不在同一个 DI capability 体系里，详见 [§6](#6-能力-风险-影响)。
 
 ### 输入/输出类型
 
@@ -74,7 +74,7 @@ export interface MediaProcessor {
 - **`DescribeResult`**：`descriptions`（`mode=single` 时与 `attachments` 等长；`mode=combined` 时是单元素），加上 `meta?:{processor,model?,tokens?}`。
 - **`TranscribeInput`**：单条 `attachment`，加上 `language?`（ISO 639-1）/ `withTimestamps?` / `context?`（仅对 LLM-as-audio 有意义，传统 Whisper 忽略）。
 - **`TranscribeResult`**：`text` / `segments?` / `language?` / `meta?:{processor,model?}`。
-- **服务层 opts**：`DescribeImageOptions`（含 `detailLevel` 档位，详见 [§6](#6-能力风险--影响)）、`DescribeVideoOptions`、`DescribeOptions`/`TranscribeOptions`（含 `prefer`，强制选定 processor）、`BuildContextOptions`。
+- **服务层 opts**：`DescribeImageOptions`（含 `detailLevel` 档位，详见 [§6](#6-能力-风险-影响)）、`DescribeVideoOptions`、`DescribeOptions`/`TranscribeOptions`（含 `prefer`，强制选定 processor）、`BuildContextOptions`。
 - **`MediaProcessReport`**：`{ total, successCount, items[] }`，`items` 与 `msg.attachments` 等长，每条含 `{kind,cap?,processor?,description?,error?}`。
 
 ### 事件（declaration merging）
@@ -132,56 +132,54 @@ export interface MediaProcessor {
 ### 4b. 注册一个 `MediaProcessor`（非 LLM backend 骨架）
 
 ```ts
-import { definePlugin } from '@aalis/core';
-import type { DescribeInput, DescribeResult, MediaService } from '@aalis/api-media';
-
-uses: { media }; // media 是硬依赖时写 required
+import { media } from '@aalis/api-media';
+import type { DescribeInput, DescribeResult } from '@aalis/api-media';
+import { definePlugin, lifecycle } from '@aalis/core';
 
 export default definePlugin({
   name: '@aalis/plugin-my-ocr',
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  const media = media.current;
-  if (!media) return; // 防御：media 未就绪
+  uses: { media, lifecycle },
+  apply({ media, lifecycle }) {
+    const svc = media.current;
+    if (!svc) return;
 
-  const dispose = media.registerProcessor({
-    name: 'my-ocr:default',               // 建议 <provider>:<kind>
-    capabilities: ['vision'],             // 或 ['document.image']
-    displayName: '自建 OCR',
-    priority: 10,                          // > 0 优先于默认 LLM(priority=0)
-    async describe(input: DescribeInput): Promise<DescribeResult> {
-      // input.mode 'single' → 与 attachments 等长；'combined' → 单元素
-      // 尊重 input.basePrompt（完整覆盖）/ input.hint（追加约束）/ input.context（仅参考）
-      const out = await Promise.all(input.attachments.map(a => runOcr(a)));
-      return { descriptions: out, meta: { processor: 'my-ocr:default' } };
-    },
-  });
-  lifecycle.onDispose(dispose); // 必须：bounce/reload 时把自己从 media 池摘掉
-},
+    const dispose = svc.registerProcessor({
+      name: 'my-ocr:default',
+      capabilities: ['vision'],
+      displayName: '自建 OCR',
+      priority: 10,
+      async describe(input: DescribeInput): Promise<DescribeResult> {
+        return {
+          descriptions: input.attachments.map(() => ''),
+          meta: { processor: 'my-ocr:default' },
+        };
+      },
+    });
+    lifecycle.onDispose(dispose);
+  },
 });
 ```
 
 ### 4c. 写一个 `asr` provider（音频 backend 首选骨架）
 
 ```ts
-import { definePlugin } from '@aalis/core';
+import { asr } from '@aalis/api-asr';
 import type { ASRService } from '@aalis/api-asr';
-
-           // 与 whisper-cpp/openai 一致归到 media 子系统
+import { definePlugin, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@aalis/plugin-asr-xxx',
   subsystem: 'media',
   provides: [asr],
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  const impl: ASRService = {
-    async transcribe(input) {
-      // input.attachment.data 可能是 storage URI / http(s) / data-URI（见 §6）
-      const text = await callBackend(input.attachment, input.language);
-      return { text, language: input.language, meta: { model: 'whisper-xxx' } };
-    },
-  };
-  provide(asr, impl, { priority: 0 }); // 多 asr provider 由核心按偏好>优先级仲裁
-},
+  uses: { provide },
+  apply({ provide }) {
+    const impl: ASRService = {
+      async transcribe(input) {
+        return { text: '', language: input.language, meta: { model: 'whisper-xxx' } };
+      },
+    };
+    provide(asr, impl, { priority: 0 });
+  },
 });
 ```
 
@@ -216,7 +214,7 @@ async function handle(ctx: Context, url: string) {
 
 几个要点：
 
-- **惰性取服务**：`plugin-message-archive`、`plugin-image-sender`、`plugin-file-reader` 都是每次读取 `.current` 再加 `if (!media?.xxx)` 守卫，对照见 [§2](#2-谁提供--谁消费)。
+- **惰性取服务**：`plugin-message-archive`、`plugin-image-sender`、`plugin-file-reader` 都是每次读取 `.current` 再加 `if (!media?.xxx)` 守卫，对照见 [§2](#2-谁提供-谁消费)。
 - **只复用缓存、不触发识别**：对引用消息里的图，OneBot 适配器只调 `lookupDescription(url)`，未命中就保持 `[图片]` 占位，不会主动消耗 vision token。
 - **错误边界**：`describe`/`transcribe`/`describeImage`/`describeVideo` 内部都做了 try/catch，失败返回 `undefined` 或空串而非抛错。调用方按「空 = 降级」处理即可。
 - **顺序识别更稳**：本地视觉模型多为单实例串行，`plugin-image-sender` 显式逐张识别而非并发，避免它们互相排队又同时超时。

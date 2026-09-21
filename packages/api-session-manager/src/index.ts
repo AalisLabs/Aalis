@@ -1,9 +1,9 @@
-// ----- 会话管理服务接口（types + capability 声明 + 事件 augmentation）-----
+// ----- 会话管理服务接口（types + 描述符 + 事件 augmentation）-----
 //
-// 该包是 plugin-session-manager 的"类型 + 能力声明"边界。
-// 仅需要类型（如 ctx.getService<SessionManagerService>()）或仅需要
-// 触发 session:* 事件 augmentation 的下游插件应当依赖本包，而不是 impl 包，
-// 以避免不必要的工作区依赖与编译循环风险。
+// 该包是 plugin-session-manager 的契约边界：类型、运行时描述符
+// `sessionManager`，以及 session:* 事件 augmentation。
+// 下游应 `import { sessionManager } from '@aalis/api-session-manager'`
+// 写入 uses；不要依赖 impl 包，以免工作区依赖与编译循环。
 
 // 锚定 @aalis/core，使下方 declare module 的 AalisEvents 增强生效。
 import type {} from '@aalis/core';

@@ -93,49 +93,40 @@ export interface PlatformAdapter {
 ### 注册（`provide`）
 
 ```ts
-import { definePlugin } from '@aalis/core';
-// package.json —— 安装前披露源（B 源）必须与运行时一致
-// {
-//   "aalis": { "service": { "provides": ["platform"], "optional": ["flow-control"] } },
-//   "keywords": ["aalis", "aalis-plugin"]
-// }
-
+import { flowControl } from '@aalis/api-flow-control';
+import { platform } from '@aalis/api-platform';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/api-platform';
-import type { IncomingMessage } from '@aalis/schema-message';
-
-// 运行时 DI 源（A 源）—— 与 package.json aalis.service 双源同步
+import { definePlugin, events, optional, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@your-scope/plugin-adapter-foo',
   subsystem: 'platform',
   provides: [platform],
-  uses: { flowControl: optional(flowControl) },
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  let online = false;
+  uses: { provide, events, flowControl: optional(flowControl) },
+  apply({ provide, events, flowControl }) {
+    void flowControl;
+    void events;
+    let online = false;
 
-  const adapter: PlatformAdapter = {
-    adapterName: 'Foo',
-    platform: 'foo',
-    sessionTypes: ['private', 'group'],
+    const adapter: PlatformAdapter = {
+      adapterName: 'Foo',
+      platform: 'foo',
+      sessionTypes: ['private', 'group'],
 
-    getConnections(): PlatformConnection[] {
-      return [{ id: 'foo:bot', platform: 'foo', status: online ? 'online' : 'offline' }];
-    },
-    // sessionId 形如 'foo:<chatId>'，前缀兜底已够；若不是这种形态则必须实现 canHandle
-    canHandle(sid) { return sid.startsWith('foo:'); },
-    getSelfIdentity() { return { platform: 'foo', selfId: 'bot-123', nickname: 'FooBot' }; },
-    async sendMessage(sessionId, content) {
-      // …调用平台 SDK 把 content 发到 sessionId…
-    },
-  };
+      getConnections(): PlatformConnection[] {
+        return [{ id: 'foo:bot', platform: 'foo', status: online ? 'online' : 'offline' }];
+      },
+      canHandle(sid) {
+        return sid.startsWith('foo:');
+      },
+      getSelfIdentity() {
+        return { platform: 'foo', selfId: 'bot-123', nickname: 'FooBot' };
+      },
+      async sendMessage(_sessionId, _content) {},
+    };
 
-  provide(platform, adapter);
-  // 缺省 priority=0，多 adapter 并存——不要为「抢胜者」抬 priority，
-  // 因为 platform 是按名/按 sessionId 路由的多实例服务，胜者语义在这里基本无意义。
-
-  // 入站：收到平台消息 → 归一为 IncomingMessage → emit
-  // events.emit('inbound:message', { content, sessionId: 'foo:<chatId>', platform: 'foo', ... } as IncomingMessage);
-},
+    provide(platform, adapter);
+  },
 });
 ```
 

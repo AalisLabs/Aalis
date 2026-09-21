@@ -6,7 +6,7 @@ memory 是会话记忆与持久化层。它把对话消息（`Message`）按 `se
 
 agent 构建 LLM 上下文、checkpoint 回滚、summary 压缩等所有依赖「记住对话」的功能，都建立在它之上。
 
-- 服务注册名：`memory.current`（对应 `服务描述符.memory = MemoryService`）
+- 服务注册名：`memory`（描述符 `memory`，绑定接口上读 `memory.current`）
 - 契约包：`@aalis/api-memory`
 - 参考实现：`@aalis/plugin-memory-sqlite`（默认推荐）、`@aalis/plugin-memory-inmemory`（fallback）、`@aalis/plugin-memory-mongodb`
 
@@ -83,7 +83,7 @@ deleteMessagesByTimestamps?(sessionId, timestamps): Promise<number>; // 按时�
 
 | 包 | priority | 说明 |
 |---|---|---|
-| `plugin-memory-sqlite` | `10` | 默认持久化，`uses required=['storage']`，全量实现所有可选方法 |
+| `plugin-memory-sqlite` | `10` | 默认持久化，`uses: { storage }`，全量实现所有可选方法 |
 | `plugin-memory-inmemory` | `-100` | 进程内 fallback，不持久化，同样全量实现可选方法 |
 | `plugin-memory-mongodb` | `5` | MongoDB 后端 |
 
@@ -91,7 +91,7 @@ DI 按名选出 winner：preference > priority > 注册顺序（见 `docs/concep
 
 ### 消费方（典型读写点）
 
-- **`plugin-message-archive`**（写入唯一入口）：`saveMessage` 经它封装，是消息进库的标准路径。它声明 `uses required=['memory']`。
+- **`plugin-message-archive`**（写入唯一入口）：`saveMessage` 经它封装，是消息进库的标准路径。它声明 `uses: { memory }`。
 - **`plugin-agent`**（构建 LLM 上下文）：调用 `memory.getHistory(sessionId, historyLimit)` 拉历史，拼进 messages。
 - **`plugin-checkpoint`**（回滚）：通过惰性查询 Proxy 持有 memory，调用 `deleteMessagesByTimestamps`，并 emit `memory:messages-deleted` / `history:changed`。
 - **`plugin-memory-summary`**（压缩）：用 `getHistory(..., 200)` + `trimHistory` 裁剪，摘要本体存进 `saveMetadata` / `getMetadata`（namespace 为 `SUMMARY_NAMESPACE`）。
@@ -115,10 +115,7 @@ DI 按名选出 winner：preference > priority > 注册顺序（见 `docs/concep
 `provides` / `uses` 既要在源码导出，也要写进 `package.json` 的 `aalis.service`（见 `docs/concepts/manifest-metadata.md`）。sqlite 的两处：
 
 源码：
-```ts
-provides: [memory];
-uses: { storage };
-```
+源码（`packages/plugin-memory-sqlite/src/index.ts`）：`export default definePlugin({ provides: [memory], uses: { provide, storage, … } })`。
 `package.json` `aalis.service`：
 ```json
 { "service": { "provides": ["memory"], "required": ["storage"] } }
@@ -127,15 +124,15 @@ uses: { storage };
 ### 可编译最小骨架
 
 ```ts
-import { definePlugin } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
-import type { MemoryService } from '@aalis/api-memory';
+import { memory } from '@aalis/api-memory';
+import type { MemoryService, MetadataEntry, MetadataOp } from '@aalis/api-memory';
+import { definePlugin, provide } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
-
-// 若依赖 storage 落盘：uses: { storage };
 
 class MyMemoryService implements MemoryService {
   private store = new Map<string, Message[]>();
+  private meta = new Map<string, Map<string, { data: Record<string, unknown>; updatedAt: number }>>();
+
   async saveMessage(sessionId: string, message: Message): Promise<void> {
     const arr = this.store.get(sessionId) ?? [];
     arr.push(message);
@@ -143,22 +140,44 @@ class MyMemoryService implements MemoryService {
   }
   async getHistory(sessionId: string, limit = 50): Promise<Message[]> {
     const arr = this.store.get(sessionId) ?? [];
-    // 契约：仅未归档、按 timestamp 升序、取最近 limit 条
     return arr.slice(-limit);
   }
   async clearSession(sessionId: string): Promise<void> {
     this.store.delete(sessionId);
   }
-  // 可选方法按需补全（trimHistory / getRecentMessagesAcrossSessions / *Metadata ...）
+  async saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void> {
+    const ns = this.meta.get(namespace) ?? new Map();
+    ns.set(key, { data, updatedAt: Date.now() });
+    this.meta.set(namespace, ns);
+  }
+  async getMetadata(namespace: string, key: string): Promise<Record<string, unknown> | undefined> {
+    return this.meta.get(namespace)?.get(key)?.data;
+  }
+  async listMetadata(namespace: string): Promise<MetadataEntry[]> {
+    return [...(this.meta.get(namespace)?.entries() ?? [])].map(([key, v]) => ({
+      key,
+      data: v.data,
+      updatedAt: v.updatedAt,
+    }));
+  }
+  async deleteMetadata(namespace: string, key: string): Promise<void> {
+    this.meta.get(namespace)?.delete(key);
+  }
+  async commitMetadata(ops: readonly MetadataOp[]): Promise<void> {
+    for (const op of ops) {
+      if (op.op === 'put') await this.saveMetadata(op.namespace, op.key, op.data);
+      else await this.deleteMetadata(op.namespace, op.key);
+    }
+  }
 }
 
 export default definePlugin({
   name: '@aalis/plugin-memory-myimpl',
   provides: [memory],
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  // priority 决定与 sqlite(10)/inmemory(-100) 的竞争结果
-  provide(memory, new MyMemoryService(), { priority: 10 });
-},
+  uses: { provide },
+  apply({ provide }) {
+    provide(memory, new MyMemoryService(), { priority: 10 });
+  },
 });
 ```
 
@@ -166,25 +185,31 @@ export default definePlugin({
 
 ## 5. 标准消费方式
 
-**永远惰性查询，不要缓存实例。** memory provider 可能被 bounce 或热重载，缓存下来的裸引用会失效：`ServiceRegistry.get` 返回的是裸引用，若在 `apply` 时把它缓存下来，memory provider 重载后这个引用就会失效。详见 `docs/concepts/lazy-service-access.md`。
+**永远惰性查询，不要缓存实例。** memory provider 可能被 bounce 或热重载，缓存下来的裸引用会失效。详见 `docs/concepts/lazy-service-access.md`。
 
 ```ts
-import type { MemoryService } from '@aalis/api-memory';
+import { memory } from '@aalis/api-memory';
+import { definePlugin, logger, optional } from '@aalis/core';
 
-const memory = memory.current;
-if (!memory) return; // memory 是可选依赖时：缺失则降级，不抛异常
-try {
-  const history = await memory.getHistory(sessionId, 50);
-  // ...
-} catch (err) {
-  logger.warn('获取历史消息失败:', err); // agent 的处理方式：捕获后以空历史继续
-}
+export default definePlugin({
+  name: '@acme/plugin-memory-consumer',
+  uses: { memory: optional(memory), logger },
+  async apply({ memory, logger }) {
+    const svc = memory.current;
+    if (!svc) return;
+    try {
+      await svc.getHistory('session-id', 50);
+    } catch (err) {
+      logger.warn('获取历史消息失败:', err);
+    }
+  },
+});
 ```
 
-- **硬依赖**：声明 `uses required=['memory']`（如 message-archive），缺失时框架不会加载你的插件；运行期仍建议 `if (!m) throw`。
-- **可选依赖**：直接读 `.current` + null 守卫降级（agent 采用这种方式）。
-- **可选方法守卫**：调用可选方法前先判断存在性 —— `if (memory.trimHistory) await memory.trimHistory(...)`。
-- **跨 provider 重载安全**：需要长期持有引用时，用惰性查询 Proxy（checkpoint 采用这种方式）。
+- **硬依赖**：声明 `uses: { memory }`（如 message-archive），缺失时框架不会激活你的插件；运行期仍建议 `if (!m) throw`。
+- **可选依赖**：`optional(memory)` + `memory.current` 空守卫降级（agent 采用这种方式）。
+- **可选方法守卫**：调用可选方法前先判断存在性 —— `if (svc.trimHistory) await svc.trimHistory(...)`。
+- **跨 provider 重载安全**：需要长期持有引用时，用 `memory.follow(attach)`，不要缓存 `.current`。
 
 ## 6. 能力 / 风险 → 影响
 

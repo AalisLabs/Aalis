@@ -76,7 +76,7 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 `computeTargetState`：`disabled` / `disposed` / `error` 是显式态，recompute 不动它们；required 不满足 → `pending`；其余 → `active`。optional 依赖的上下线不改变目标态：绑定接口每次查询解析当前值，有状态的接线经 `follow` 跟随提供者换人，不靠重启插件。
 
-`softReload()` 是 `recompute('changed')` 的薄壳；`stopAll()` 是 `recompute('shutdown')` 的薄壳。`App.stop()` 在 `stopAll()` 之前先 `beginShutdown()`：置停机态并把根激活整棵树冻进该计划，真正的 drain / close 由 `stopAll()` 执行。
+`softReload()` 是 `recompute('changed')` 的薄壳；`stopAll()` 是 `recompute('shutdown')` 的薄壳。`App.stop()` 单飞：先 `beginShutdown()`（置停机态并冻计划）再 `idle()`，然后发 `app:stopping`，最后 `stopAll()` 执行 drain / close。停机进行中 `register` / `bounce` 返回 false；`unload` / `disable` 汇入已冻计划后立即返回 true。`app:stopping` 监听器内再调 `stop()` 立即返回已兑现 Promise 并 warn，不要当成停机已完成。
 
 停机时全部 active 插件与宿主的根激活进同一张关停计划（无依赖关系时后注册的先关）。每个激活 drain 后 close；边规则见 [插件定义与能力](context.md)。单插件 `unload` / `disable` / `bounce` 只拆该插件及其子树，不享有整次 `App.stop()` 的交接保证；其下游在下一轮 recompute 才按目标态降级。
 
@@ -84,7 +84,7 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 六个管理动作（`register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig`）一律返回 `Promise<boolean>`：
 
-**false** = 主体不在注册表，或本次动作被状态 / 政策规则挡下（重名、未声明 `reusable` 的多实例、core 插件禁用、`disposed` 单向终态、`disabled` 态 bounce、**定义或实例 id 校验失败**、停机中的 `register` / `bounce`）。
+**false** = 主体不在注册表，或本次动作被状态 / 政策规则挡下（重名、未声明 `reusable` 的多实例、core 插件禁用、`disposed` 单向终态、`disabled` 态 bounce、**定义或实例 id 校验失败**（含空白、危险键 `__proto__` / `constructor` / `prototype`）、停机中的 `register` / `bounce`）。
 
 **true** = 其余，含主体已在目标态的幂等情形。停机进行中，`unload` / `disable` 汇入停机计划后立即返回 true——不等待拆卸完成，拆卸由停机计划执行（在 `app:stopping` 监听器里等待会与屏障事件死锁）。
 

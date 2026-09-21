@@ -97,12 +97,7 @@ interface ChatModelRequest {
 
 provider 既要在源码导出 `provides`，又要在 `package.json` 写 `aalis.service.provides`（见 [manifest 元数据](../concepts/manifest-metadata.md)）：
 
-源码（`packages/plugin-llm-deepseek/src/index.ts`）：
-```ts
-export const subsystem = 'llm';
-provides: [llm];
-export const reusable = true; // LLM provider 通常允许多实例（不同 baseUrl/账号）
-```
+源码入口是 `export default definePlugin({ name, subsystem: 'llm', reusable: true, provides: [llm], uses: { config, logger, lifecycle, provide }, apply })`（`packages/plugin-llm-deepseek/src/index.ts`）。多实例靠 `reusable`，归组靠 `subsystem`；不要再写具名 `export const subsystem`。
 
 `package.json`（`packages/plugin-llm-deepseek/package.json`）：
 ```json
@@ -115,47 +110,39 @@ export const reusable = true; // LLM provider 通常允许多实例（不同 bas
 参考 `packages/plugin-llm-deepseek/src/index.ts`：
 
 ```ts
-import { definePlugin } from '@aalis/core';
+import { llm } from '@aalis/api-llm';
+import type { ChatModelRequest, ChatResponse, LLMCapability, LLMModel } from '@aalis/api-llm';
+import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
+import { prepareLLMMessages } from '@aalis/schema-message';
+
 class MyModelHandle implements LLMModel {
-  constructor(
-    private client: MyClient,
-    readonly id: string,
-    readonly providerId: string,
-    readonly contextLength: number,
-    readonly maxOutputTokens: number,
-    readonly capabilities: readonly LLMCapability[],
-  ) {}
+  id = 'demo';
+  providerId = '';
+  contextLength = 8192;
+  maxOutputTokens = 2048;
+  capabilities: readonly LLMCapability[] = [];
 
   async chat(request: ChatModelRequest): Promise<ChatResponse> {
-    // 出口必须先 prepareLLMMessages（见 §6）
-    const messages = prepareLLMMessages(request.messages).map(m => this.toAPIMessage(m));
-    const body = {
-      model: this.id,
-      messages,
-      max_tokens: request.maxTokens ?? this.client.maxTokens, // 尊重调用方 maxTokens！
-      temperature: request.temperature ?? this.client.temperature,
-      ...(request.tools?.length ? { tools: request.tools.map(toAPITool) } : {}),
-    };
-    // … fetch；非流式同样要 prepareLLMMessages …
+    const messages = prepareLLMMessages(request.messages);
+    void messages;
+    return { content: '' };
   }
-
-  // 不实现 chatStream → 该 model 无 streaming 能力
-  async *chatStream(request: ChatModelRequest): AsyncIterable<ChatStreamChunk> { /* SSE 解析 → yield chunk */ }
 }
 
 export default definePlugin({
   name: '@acme/plugin-example',
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  const client = new MyClient(config, logger);
-  const modelIds = await client.fetchRemoteModelIds(); // + 合并 customModels
-  for (const modelId of modelIds) {
-    const handle = new MyModelHandle(client, modelId, lifecycle.id, contextLength, maxOutputTokens, resolveCaps(modelId));
+  provides: [llm],
+  uses: { provide, logger, lifecycle, config },
+  async apply({ provide, logger, lifecycle, config }) {
+    void config;
+    const handle = new MyModelHandle();
+    handle.providerId = lifecycle.id;
     provide(llm, handle, {
-      entryId: `${lifecycle.id}/${modelId}`,         // 关键：per-entry id，resolveLLMModel 按它精确查找
-      label: `MyProvider / ${modelId}`,         // webui 下拉显示
+      entryId: `${lifecycle.id}/${handle.id}`,
+      label: `MyProvider / ${handle.id}`,
     });
-  }
-},
+    logger.info('llm model registered');
+  },
 });
 ```
 

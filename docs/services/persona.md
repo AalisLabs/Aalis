@@ -122,20 +122,20 @@ manifest 的两个来源必须同步：除了运行时的 `provides: [persona]`�
 ### 4.3 最小可编译骨架
 
 ```ts
-import { definePlugin } from '@aalis/core';
-// src/index.ts
-import type { PersonaService, OutputFormat, PersonaSessionOptions } from '@aalis/api-persona';
+import { persona } from '@aalis/api-persona';
+import type { OutputFormat, PersonaService, PersonaSessionOptions } from '@aalis/api-persona';
+import { platform } from '@aalis/api-platform';
+import { config, definePlugin, optional, provide } from '@aalis/core';
 
-provides: [persona];          // 运行时源
 class MyPersona implements PersonaService {
-  constructor(private prompt: string, private nameStr: string) {}
+  prompt = '请友好地交流。';
+  nameStr = 'Aalis';
   getSystemPrompt(_options?: PersonaSessionOptions): string {
-    return this.prompt;                        // 这里可拼时间 / 会话环境 / outputFormat 指令
+    return this.prompt;
   }
   getPersonaName(): string {
     return this.nameStr;
   }
-  // 想做结构化输出再实现，并自行挂 agent:reply:before 解析 —— 见 §4.1
   getOutputFormat(_options?: PersonaSessionOptions): OutputFormat | undefined {
     return undefined;
   }
@@ -143,11 +143,15 @@ class MyPersona implements PersonaService {
 
 export default definePlugin({
   name: '@aalis/plugin-my-persona',
-  uses: { platform: optional(platform) },
-  apply({ provide, events, hooks, lifecycle, logger, config }) {
-  const svc = new MyPersona((config.prompt as string) ?? '请友好地交流。', (config.name as string) ?? 'Aalis');
-  provide(persona, svc);
-},
+  provides: [persona],
+  uses: { provide, config, platform: optional(platform) },
+  apply({ provide, config, platform }) {
+    void platform;
+    const svc = new MyPersona();
+    svc.prompt = (config.prompt as string) ?? '请友好地交流。';
+    svc.nameStr = (config.name as string) ?? 'Aalis';
+    provide(persona, svc);
+  },
 });
 ```
 
