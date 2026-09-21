@@ -52,8 +52,8 @@ interface EmitCall {
 }
 
 interface Parsed {
-  /** 全部字面量模块说明符（取 cooked 值，转义写法骗不过） */
-  specifiers: string[];
+  /** 逐条记录字面量依赖与是否纯类型，避免同包的类型导入掩盖另一条值导入。 */
+  specifiers: Array<{ spec: string; typeOnly: boolean }>;
   /** 说明符不是字面量的动态 import 个数——路径是算出来的，静态看不见它指向哪 */
   computedImports: number;
   /** `declare module 'x'` 的 x */
@@ -96,17 +96,40 @@ function parseSource(file: string, source: string): Parsed {
   };
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
   const visit = (node: ts.Node): void => {
-    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
-      if (ts.isStringLiteralLike(node.moduleSpecifier)) out.specifiers.push(node.moduleSpecifier.text);
+    if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
+      const clause = node.importClause;
+      const bindings = clause?.namedBindings;
+      const typeOnly =
+        clause?.isTypeOnly === true ||
+        (!clause?.name &&
+          bindings !== undefined &&
+          ts.isNamedImports(bindings) &&
+          bindings.elements.length > 0 &&
+          bindings.elements.every(element => element.isTypeOnly));
+      out.specifiers.push({ spec: node.moduleSpecifier.text, typeOnly });
+    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier)) {
+      const clause = node.exportClause;
+      const typeOnly =
+        node.isTypeOnly ||
+        (clause !== undefined &&
+          ts.isNamedExports(clause) &&
+          clause.elements.length > 0 &&
+          clause.elements.every(element => element.isTypeOnly));
+      out.specifiers.push({ spec: node.moduleSpecifier.text, typeOnly });
     } else if (ts.isExternalModuleReference(node)) {
-      if (ts.isStringLiteralLike(node.expression)) out.specifiers.push(node.expression.text);
+      if (ts.isStringLiteralLike(node.expression)) {
+        out.specifiers.push({
+          spec: node.expression.text,
+          typeOnly: ts.isImportEqualsDeclaration(node.parent) && node.parent.isTypeOnly,
+        });
+      }
     } else if (ts.isImportTypeNode(node)) {
       if (ts.isLiteralTypeNode(node.argument) && ts.isStringLiteralLike(node.argument.literal)) {
-        out.specifiers.push(node.argument.literal.text);
+        out.specifiers.push({ spec: node.argument.literal.text, typeOnly: true });
       }
     } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
       const arg = node.arguments[0];
-      if (arg && ts.isStringLiteralLike(arg)) out.specifiers.push(arg.text);
+      if (arg && ts.isStringLiteralLike(arg)) out.specifiers.push({ spec: arg.text, typeOnly: false });
       else out.computedImports++;
     } else if (ts.isModuleDeclaration(node) && ts.isStringLiteral(node.name)) {
       out.ambientModules.push(node.name.text);
@@ -223,6 +246,20 @@ function violation(layer: Layer, target: string): string | null {
   return `${layer}/ 不得引用 ${target}`;
 }
 
+/** Core 运行时代码不加载外部包；日志数据契约只允许能力与编排层纯类型引用。 */
+function externalReferenceViolations(file: string, source: Parsed): string[] {
+  const rel = relToSrc(file);
+  const layer = rel.split('/')[0];
+  const offenders: string[] = [];
+  for (const { spec, typeOnly } of source.specifiers) {
+    if (resolveTarget(file, spec) !== null) continue;
+    if (spec === '@aalis/schema-log' && typeOnly && (layer === 'context' || layer === 'orchestration')) continue;
+    offenders.push(`${rel} → ${spec}`);
+  }
+  if (source.computedImports > 0) offenders.push(`${rel} → ${source.computedImports} 处非字面量动态 import`);
+  return offenders;
+}
+
 describe('core 内部分层（目录即层，依赖只许向下）', () => {
   it('src 根目录只有 barrel 与已登记的目录（新目录必须归层，防口径漂移）', () => {
     const entries = readdirSync(SRC_DIR, { withFileTypes: true });
@@ -238,7 +275,7 @@ describe('core 内部分层（目录即层，依赖只许向下）', () => {
       expect(files.length, `${layer}/ 为空——守卫在空转`).toBeGreaterThan(0);
       const violations: string[] = [];
       for (const file of files) {
-        for (const spec of parse(file).specifiers) {
+        for (const { spec } of parse(file).specifiers) {
           const target = resolveTarget(file, spec);
           const reason = target === null ? null : violation(layer, target);
           if (reason) violations.push(`${relToSrc(file)} → ${spec}：${reason}`);
@@ -253,7 +290,7 @@ describe('core 内部分层（目录即层，依赖只许向下）', () => {
     expect(files.length, '基础词汇文件为空——守卫在空转').toBeGreaterThan(0);
     const violations: string[] = [];
     for (const file of files) {
-      for (const spec of parse(file).specifiers) {
+      for (const { spec } of parse(file).specifiers) {
         const target = resolveTarget(file, spec);
         if (target === null) continue;
         const ok = target.startsWith('types/') && !UPPER_TYPES.has(target) && isSourceFile(target);
@@ -296,22 +333,23 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
 
   // ── core 洁癖：零运行时依赖 / 环境无关 / 扩展点为空 ──
 
-  it('core 零运行时依赖（dependencies 必须为空）', () => {
+  it('core 仅安装日志声明所需的 schema-log，无其他外部依赖', () => {
     const pkg = JSON.parse(readFileSync(join(SRC_DIR, '../package.json'), 'utf-8')) as {
       dependencies?: Record<string, string>;
       optionalDependencies?: Record<string, string>;
     };
-    // peerDependencies 不在此列：core 被插件 peer 依赖是正向的，且不产生安装体积。
-    // optionalDependencies 在此列：它同样会被 npm 装进用户的 node_modules。
+    // 公开 .d.ts 引用 schema-log：消费者需安装它，因此不能只列 devDependency。
+    // 运行时不能加载它由下面的逐条 AST 守卫保证；其余依赖仍由宿主注入。
     expect(
-      [...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.optionalDependencies ?? {})],
-      'core 必须零运行时依赖——环境专有件由宿主经 AppOptions 注入，不由 core 自取',
-    ).toEqual([]);
+      Object.keys(pkg.dependencies ?? {}),
+      'core 只声明日志数据契约依赖——环境专有件由宿主经 AppOptions 注入',
+    ).toEqual(['@aalis/schema-log']);
+    expect(Object.keys(pkg.optionalDependencies ?? {})).toEqual([]);
   });
 
-  it('core 源码只写相对说明符，且不用算出来的路径 import', () => {
-    // core 零依赖、环境无关、不认识领域词汇，所以任何非相对说明符都不该出现：`@aalis/*` 是领域词汇倒灌，
-    // `node:*` 破坏环境无关，其它包名（含 type-only）会让发布出去的 .d.ts 依赖一个没声明的包，
+  it('core 外部引用仅有指定层的 schema-log 类型，不得加载外部模块', () => {
+    // 日志数据是独立基础契约；其余 `@aalis/*` 仍是领域词汇倒灌，
+    // `node:*` 破坏环境无关，其它包名（含 type-only）会让发布出去的 .d.ts 引用未声明的包，
     // `#别名` 则绕开按路径判层。不能只靠 biome：它的 noRestrictedImports 名单只有 8 个模块名，
     // 而**上一次真实事故**注入的 `node:events` 与 `node:path` 都不在名单里——build / test / biome / knip
     // 四道门当时全绿。这里整类拦，不维护名单。
@@ -319,13 +357,43 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
     // PluginLoader 负责，core 自己没有按路径加载任何东西的理由。
     const offenders: string[] = [];
     for (const file of walk(SRC_DIR)) {
-      const { specifiers, computedImports } = parse(file);
-      for (const spec of specifiers) {
-        if (resolveTarget(file, spec) === null) offenders.push(`${relToSrc(file)} → ${spec}`);
-      }
-      if (computedImports > 0) offenders.push(`${relToSrc(file)} → ${computedImports} 处非字面量动态 import`);
+      offenders.push(...externalReferenceViolations(file, parse(file)));
     }
-    expect(offenders, 'core 必须零依赖、环境无关——环境专有件由宿主 @aalis/runtime 经 AppOptions 注入').toEqual([]);
+    expect(offenders, 'core 运行时环境无关；schema-log 仅作能力与编排层的类型依赖').toEqual([]);
+  });
+
+  it('schema-log 类型引用只放行能力与编排层，其余层和包根仍拒绝', () => {
+    const source = `import type { LogEntry } from '@aalis/schema-log';
+      import { type LogLevel } from '@aalis/schema-log';
+      type Entry = import('@aalis/schema-log').LogEntry;`;
+    for (const path of ['context/logger.ts', 'orchestration/app.ts']) {
+      const file = join(SRC_DIR, path);
+      expect(externalReferenceViolations(file, parseSource(file, source)), path).toEqual([]);
+    }
+    for (const path of ['kernel/lifecycle.ts', 'primitives/events.ts', 'types/events.ts', 'index.ts']) {
+      const file = join(SRC_DIR, path);
+      expect(externalReferenceViolations(file, parseSource(file, source)), path).toHaveLength(3);
+    }
+  });
+
+  it('类型例外不能放过混合值导入、动态加载、转导出或其他外部包', () => {
+    const file = join(SRC_DIR, 'context/logger.ts');
+    for (const source of [
+      "import { formatLogLine } from '@aalis/schema-log';",
+      "import { type LogEntry, parseLogLine } from '@aalis/schema-log';",
+      "import type { LogEntry } from '@aalis/schema-log'; import { parseLogLine } from '@aalis/schema-log';",
+      "import '@aalis/schema-log';",
+      "import {} from '@aalis/schema-log';",
+      "void import('@aalis/schema-log');",
+      "const path = '@aalis/schema-log'; void import(path);",
+      "export { parseLogLine } from '@aalis/schema-log';",
+      "export * from '@aalis/schema-log';",
+      "import codec = require('@aalis/schema-log');",
+      "import type { LogEntry } from '@aalis/schema-other';",
+      "import type { Stats } from 'node:fs';",
+    ]) {
+      expect(externalReferenceViolations(file, parseSource(file, source)), source).toHaveLength(1);
+    }
   });
 
   it('扩展点接口在 core 内只登记基础词汇层能完整表达的 core 自持条目', () => {
@@ -447,6 +515,6 @@ describe('内置事件出口：App 等待屏障，通知不阻塞状态机', () 
       "import type { Activation } from '../orchestration/activation.js'; void import('../orchestration/activation-host.js');";
     const imports = parseSource(file, source).specifiers;
     expect(imports).toHaveLength(2);
-    for (const spec of imports) expect(violation('context', resolveTarget(file, spec)!)).not.toBeNull();
+    for (const { spec } of imports) expect(violation('context', resolveTarget(file, spec)!)).not.toBeNull();
   });
 });

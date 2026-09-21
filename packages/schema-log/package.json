@@ -1,11 +1,11 @@
 {
-  "name": "@aalis/core",
-  "version": "0.17.0",
+  "name": "@aalis/schema-log",
+  "version": "0.1.0",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/AalisLabs/Aalis.git",
-    "directory": "packages/core"
+    "directory": "packages/schema-log"
   },
   "author": "Ace Nyan <ace@acenyan.com>",
   "bugs": {
@@ -13,9 +13,6 @@
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
   "type": "module",
-  "aalis": {
-    "core": true
-  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -25,15 +22,15 @@
     "build": "tsc",
     "dev": "tsc --watch"
   },
-  "dependencies": {
-    "@aalis/schema-log": "workspace:>=0.1.0 <1.0.0"
-  },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "typescript": "^5.7.0"
+  },
+  "aalis": {
+    "types": true
   },
   "keywords": [
     "aalis",
-    "aalis-core"
-  ]
+    "aalis-schema"
+  ],
+  "description": "日志记录类型与日志行编解码的共享契约"
 }

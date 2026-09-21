@@ -24,7 +24,6 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 |---|---|---|
 | `config` | `AalisConfig \| ConfigManager` | **必填**。配置快照（如 `{ name, logLevel, plugins }`），或已构造的 `ConfigManager` |
 | `configProvider` | `ConfigProvider` | 配置持久化与外部变更监听；缺省=只读内存模式 |
-| `dataDir` | `string` | 业务数据目录（plugin 用作相对路径基准） |
 | `pluginLoader` | `PluginLoader` | 插件加载器；缺省=`autoLoadPlugins()` 为 no-op，须手动 `app.plugin(definition)` |
 | `pluginDefaults` | `(definition) => Record<string, unknown>` | 插件默认配置的派生器；缺省=无默认值。core 不解释 `configSchema`，由宿主注入（runtime 用 `defaultsFrom(d.configSchema)`） |
 | `restartStrategy` | `RestartStrategy` | 重启策略；缺省=`restart()` 抛错 |

@@ -38,12 +38,10 @@ import {
   definePlugin,
   events,
   hostConfig,
-  type LogEntry,
   LogHub,
   lifecycle,
   logger,
   optional,
-  parseLogLine,
   pluginsService,
   provide,
   type ServiceView,
@@ -52,6 +50,7 @@ import {
 import type { PackageManagerService } from '@aalis/plugin-package-manager';
 import type {} from '@aalis/plugin-todo-list'; // declaration merging：todo:updated 事件
 import type { ConfigSchema } from '@aalis/schema-config';
+import { type LogEntry, parseLogLine } from '@aalis/schema-log';
 import type { OutgoingMessage, StreamChunkMessage } from '@aalis/schema-message';
 import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -261,7 +260,7 @@ interface WSOutgoing {
 }
 
 // ===== 日志文件读取（与 @aalis/runtime 的 file-logger 格式对偶）=====
-// 行格式契约（format ↔ parse）由 @aalis/core 的 parseLogLine 唯一持有，此处只负责
+// 行格式契约（format ↔ parse）由 @aalis/schema-log 的 parseLogLine 唯一持有，此处只负责
 // 读取「持久化日志单一数据源」并按 cursor 尾读分页。
 //
 // 路径（宿主目录布局）是「环境知识」，归 storage 的 logs 根所有；本插件只用 storage

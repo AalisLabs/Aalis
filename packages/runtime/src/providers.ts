@@ -73,8 +73,6 @@ interface FsYamlConfigProviderResult {
   config: AalisConfig;
   /** Provider 实例（用于 `new App({ configProvider })`） */
   provider: ConfigProvider;
-  /** 配置文件所在目录（用于 `new App({ dataDir })`） */
-  dataDir: string;
 }
 
 /**
@@ -85,7 +83,7 @@ interface FsYamlConfigProviderResult {
  * - `watch()` 监听**配置文件所在目录**（按文件名过滤）+ 300ms debounce，
  *   并通过与 `rawYaml` 的内容比对去重，避免自激
  *
- * 调用时一次性返回 config 快照、provider 和 dataDir 三件套，方便 src/index.ts 组装。
+ * 返回 config 快照与 provider，供宿主组装 App。
  */
 export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigProviderResult {
   const absPath = configPath ? resolve(configPath) : resolve(process.cwd(), DEFAULT_CONFIG_FILE);
@@ -231,7 +229,7 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
     },
   };
 
-  return { config: initialConfig, provider, dataDir };
+  return { config: initialConfig, provider };
 }
 
 // ============================================================

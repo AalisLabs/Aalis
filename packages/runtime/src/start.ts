@@ -129,7 +129,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   bootstrap.dispose();
 
   // ── 组装 App：从 YAML 加载配置、按 loader 加载插件、用 spawn 重启 ──
-  const { config, provider, dataDir } = createFsYamlConfigProvider(opts.configPath);
+  const { config, provider } = createFsYamlConfigProvider(opts.configPath);
   const configLoader = withPluginConfigSync(
     opts.pluginLoader ?? createNodeModulesPluginLoader(opts.projectDir),
     () => app,
@@ -138,7 +138,6 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   const app = new App({
     config,
     configProvider: provider,
-    dataDir,
     pluginLoader: configLoader.loader,
     // 默认值从 configSchema 派生（唯一声明来源）；core 不认识配置词汇，只调这个函数。
     pluginDefaults: m => defaultsFrom(m.configSchema),

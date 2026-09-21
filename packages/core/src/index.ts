@@ -61,12 +61,8 @@ export { type AalisConfig, ConfigManager, type ConfigManagerOptions, type Config
 export { definePlugin, type PluginDefinition, type PluginMeta, pluginDefinitionOf } from './context/definition.js';
 export {
   DefaultLogger,
-  formatLogLine,
-  type LogEntry,
   type Logger,
   LogHub,
-  type LogLevel,
-  parseLogLine,
 } from './context/logger.js';
 
 // ----- 编排层：应用骨架与插件管理 -----
