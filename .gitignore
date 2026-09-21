@@ -15,6 +15,7 @@ workspace/
 .vscode/
 .idea/
 .claude/
+.cursor/
 CLAUDE.md
 AGENTS.md
 *.log
