@@ -44,7 +44,7 @@ function safeSessionDir(sessionId: string): string {
  */
 async function cacheAttachmentBuffer(
   storage: StorageService,
-  buf: Buffer,
+  buf: Buffer<ArrayBuffer>,
   kind: AttachmentKind,
   sessionId: string,
   ext: string,
@@ -64,7 +64,7 @@ async function cacheAttachmentBuffer(
  * 流式读取响应体并限额：Content-Length 头超限即拒；流式累计超 maxBytes 即 abort 返回 null。
  * 避免无 Content-Length 时全量缓冲撑爆内存（体积上限留在下载消费方，不塞进只做校验的 util-network-guard）。
  */
-export async function readBodyCapped(res: Response, maxBytes: number): Promise<Buffer | null> {
+export async function readBodyCapped(res: Response, maxBytes: number): Promise<Buffer<ArrayBuffer> | null> {
   const len = Number(res.headers.get('content-length'));
   if (Number.isFinite(len) && len > maxBytes) return null;
   if (!res.body) {
@@ -96,7 +96,7 @@ async function loadAttachmentBuffer(
   proc: ProcessService,
   source: string,
   maxBytes = Number.POSITIVE_INFINITY,
-): Promise<Buffer | null> {
+): Promise<Buffer<ArrayBuffer> | null> {
   try {
     // storage URI 优先：data:/ 也是 storage（根名 data），不能被下面的 data: 分支误当 data-URI。
     if (isStorageUri(source)) {
@@ -195,9 +195,9 @@ function detectExtensionFromBuffer(buf: Buffer, fallback = 'bin'): string {
 async function transcodeAudioBufferToWav(
   proc: ProcessService,
   storage: StorageService,
-  input: Buffer,
+  input: Buffer<ArrayBuffer>,
   inputExt: string,
-): Promise<Buffer | null> {
+): Promise<Buffer<ArrayBuffer> | null> {
   const tmp = await proc.makeTempDir('onebot-audio');
   try {
     const ext = inputExt.replace(/^\.+/, '') || 'bin';

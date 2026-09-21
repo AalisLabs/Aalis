@@ -23,5 +23,5 @@
     "baseUrl": ".",
     "paths": { "@aalis/*": ["packages/*/src/index.ts"] }
   },
-  "include": ["test"]
+  "include": ["test", "packages/plugin-webui-client/src/vite-env.d.ts"]
 }
