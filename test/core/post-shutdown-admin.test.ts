@@ -21,7 +21,17 @@ interface Store {
   save(data: string): void;
 }
 
-function capturingApp(): { app: App; warnings: string[] } {
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>(r => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+function capturingApp(opts?: { disposeTimeoutMs?: number }): { app: App; warnings: string[] } {
   const warnings: string[] = [];
   const logger: Logger = {
     debug: (...a: unknown[]) => void warnings.push(`debug:${a.map(String).join(' ')}`),
@@ -30,7 +40,11 @@ function capturingApp(): { app: App; warnings: string[] } {
     error: (...a: unknown[]) => void warnings.push(`error:${a.map(String).join(' ')}`),
     child: () => logger,
   };
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+  const app = new App({
+    config: { name: 'T', logLevel: 'error', plugins: {} },
+    logger,
+    disposeTimeoutMs: opts?.disposeTimeoutMs,
+  });
   apps.push(app);
   return { app, warnings };
 }
@@ -73,6 +87,7 @@ async function stoppedWithDisposed(name: string): Promise<{ app: App; warnings: 
 async function storeAndWriter(
   app: App,
   storeName: string,
+  onWriterDrain?: () => void | Promise<void>,
 ): Promise<{ saved: string[]; log: string[]; store: ReturnType<typeof defineService<Store>> }> {
   const saved: string[] = [];
   const log: string[] = [];
@@ -102,7 +117,8 @@ async function storeAndWriter(
       name: 'writer',
       uses: { store, lifecycle },
       apply({ store, lifecycle }) {
-        lifecycle.onDrain(() => {
+        lifecycle.onDrain(async () => {
+          if (onWriterDrain) await onWriterDrain();
           store.require().save('writer:last');
           log.push('writer-drain');
         });
@@ -386,5 +402,41 @@ describe('app:stopping 窗口', () => {
       warnings.some(x => x.includes('已 dispose') && x.includes('provide')),
       warnings.join(' | '),
     ).toBe(true);
+  });
+});
+
+describe('停机中 unload 快路径', () => {
+  it('stopAll 进行中外部 await unload 再放 drainHold：交接仍在、unload 立即 true、不撞 disposeTimeout', async () => {
+    // retireBatch 先把条目标 disposed。若 unload 先 join #closing，会与仍持 hold 的
+    // 消费者 drain 互等：writer:last 丢，撞 disposeTimeoutMs。shuttingDown 快路径须在
+    // disposed-join 之前，立即 true，void disposeAsync 只汇入计划。
+    const { app, warnings } = capturingApp({ disposeTimeoutMs: 800 });
+    const hold = deferred();
+    const entered = deferred();
+    const saved = (
+      await storeAndWriter(app, 'psa-unload-hold', async () => {
+        entered.resolve();
+        await hold.promise;
+      })
+    ).saved;
+
+    const stopping = app.stop();
+    await entered.promise;
+    expect(app.plugins.getPlugin('store')?.state, 'retireBatch 在 closeActivations 之前就把条目标 disposed').toBe(
+      'disposed',
+    );
+
+    const t0 = Date.now();
+    const unloaded = await app.plugins.unload('store');
+    const unloadMs = Date.now() - t0;
+    hold.resolve();
+    const outcome = await Promise.race([stopping.then(() => 'ok' as const), sleep(4000).then(() => 'hung' as const)]);
+
+    expect({ outcome, unloaded, saved }).toEqual({ outcome: 'ok', unloaded: true, saved: ['writer:last'] });
+    expect(unloadMs, `unload 应立即返回，实际 ${unloadMs}ms`).toBeLessThan(400);
+    expect(
+      warnings.filter(x => x.includes('超过 800ms') || x.includes('等待在飞拆卸超过')),
+      warnings.join(' | '),
+    ).toEqual([]);
   });
 });
