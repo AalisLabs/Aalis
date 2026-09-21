@@ -69,7 +69,7 @@ interface PluginEntry {
 function parseInstanceId(instanceId: string): { moduleName: string; suffix?: string };
 ```
 
-公开条目不含内部激活记录。状态摘要 `PluginStatusEntry` 另含 `provides` / `core` / `reusable` / `requiredServices` / `optionalServices`；配置详情经 `getPlugin(instanceId)` 从 `entry.config` / `entry.definition` 读取。
+公开类型不声明内部激活记录；`getPlugin()` 当前返回现场条目，管理面应只读，状态与配置变更须经管理 API。状态摘要 `PluginStatusEntry` 另含 `provides` / `core` / `reusable` / `requiredServices` / `optionalServices`；`uses` 是完整声明的快照，每项为 `{ key, service, kind: 'builtin' | 'required' | 'optional' }`，保留参数别名，零声明为 `[]`。内置能力不计入外部依赖闸；`requiredServices` / `optionalServices` 的含义不变。配置详情经 `getPlugin(instanceId)` 从 `entry.config` / `entry.definition` 读取。
 
 ---
 
