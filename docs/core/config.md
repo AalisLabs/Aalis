@@ -5,9 +5,9 @@
 回交给宿主；默认值回填与按 `configSchema` 裁剪未知字段属宿主政策，在 `@aalis/runtime`。下文出现的
 `aalis.config.yaml` 是 runtime 宿主的落盘形态，不是 core 的概念。
 
-插件侧：自己的配置视图是内置能力 `config`（`uses: { config }`，只读对象）；整份配置的读写与落盘是宿主服务 `hostConfig`，须显式写进 `uses`。宿主入口是 `app.config`。
+插件侧：自己的配置视图是按消费者创建的基础服务 `config`（`uses: { config }`，只读对象）；整份配置的读写与落盘是宿主服务 `hostConfig`，须显式写进 `uses`。宿主入口是 `app.config`。
 
-**源码**: `packages/core/src/context/config.ts`
+**源码**: `packages/core/src/infrastructure/config.ts`
 
 ## AalisConfig 结构
 

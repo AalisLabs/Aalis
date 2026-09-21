@@ -2,7 +2,7 @@
 
 插件与框架的交界面是一份**定义对象**和一次激活上**按声明装配的能力**，不是一份公开的执行上下文。
 
-**源码**: `packages/core/src/context/definition.ts`、`packages/core/src/context/binding.ts`、`packages/core/src/context/builtins.ts`
+**源码**: `packages/core/src/composition/plugin-definition.ts`、`packages/core/src/composition/descriptors.ts`、`packages/core/src/composition/binding.ts`、`packages/core/src/composition/core-services.ts`
 
 ## 定义对象
 
@@ -42,7 +42,7 @@ export default definePlugin({
 
 ## uses 与装配
 
-声明即装配：写了什么，插件就只能碰到什么。内置能力与第三方服务用同一套入口——都是描述符，放进 `uses`，`apply` 拿到按这次激活绑定的接口。
+声明即装配：写了什么，插件就只能碰到什么。Core 基础服务与第三方服务共用容器与装配路径——都是描述符，放进 `uses`，由各自的 `bind` 生成接口。
 
 ```typescript
 import { definePlugin, optional, events, logger, provide } from '@aalis/core';
@@ -65,14 +65,14 @@ export default definePlugin({
 });
 ```
 
-- **required**（未包 `optional` 的外部服务）：参与激活闸。缺席则顶层插件 `pending`，恢复后重新激活。
+- **required**（未包 `optional` 的服务）：参与激活闸。缺席则顶层插件 `pending`，恢复后重新激活。
 - **optional**：不参与激活闸；绑定接口与 required 完全相同，只是激活闸这一条不同。
-- **内置能力**（`events` / `logger` / `config` / `lifecycle` / `provide` / `services` / `hooks` / `contributions`）：绑的是这次激活自身的运行基础设施，不经容器解析、不可被 `provide` 替换，也不参与激活闸。不声明它们不影响框架对这次激活的管理（登记归属、撤回与关闭照常）；只是 `apply` 拿不到对应接口。
+- **Core 基础服务**（`events` / `logger` / `config` / `lifecycle` / `provide` / `services` / `hooks` / `contributions`）：启动时在同一容器中以 `serviceFactory` 和 `exclusive` 登记，按消费者激活生成接口，声明同样计入 required / optional。它们在加载插件前已经可用；不声明也不影响框架管理资源，只是 `apply` 拿不到对应接口。
 - 声明即计入关停编排（required 与 optional，访问与否无关）。
 
-`optional()` 用模块私有品牌标记：装配时只认 `optional()` 盖过的包装，描述符自有 `optional` 字段不算。
+`optional()` 使用同版本 Core 副本可识别的包装标记；描述符自有 `optional` 字段不算。
 
-## 内置能力
+## Core 默认登记的服务
 
 | 描述符 | 绑定接口 | 作用 |
 |---|---|---|
@@ -85,7 +85,7 @@ export default definePlugin({
 | `provide` | `Provide` | 唯一的服务发布入口 |
 | `services` | `Services` | 动态查询与偏好。查到的不是声明依赖 |
 
-宿主管理面另有三个**普通服务**（不是内置能力），管理类插件必须写进 `uses` 才拿得到：
+宿主管理面另有三个共享实例服务，同样通过 `uses` 声明：
 
 | 描述符 | 服务名 | 说明 |
 |---|---|---|
@@ -113,9 +113,10 @@ export default definePlugin({
 });
 ```
 
-实现按描述符的提供者类型约束。返回退订，随这次激活撤回。选项：
+实现按描述符的提供者类型约束。可直接提供共享实例，也可提供 `serviceFactory(scope => instance)`，为每个消费者激活创建实例；见 [服务工厂](service.md#按消费者创建实例)。返回退订，登记随提供方激活撤回。选项：
 
 - `priority` / `label`：解析序与展示
+- `exclusive`：独占这个服务名；与已有登记冲突、或该条目存在期间添加其他提供者，都会抛错。Core 基础服务与第三方使用同一规则
 - `entryId`：一个激活登记多条时的子粒度 id，须以本激活 id 为前缀（`${id}/${子粒度}`）
 - `onBehalfOf`：代为登记。条目的逻辑身份取被代者 id（偏好、服务页、`provides` 校验的 `hasByContext` 都认这个 id），清理仍归本激活。代登记**不计入代理人的 `provides`**：若把代登记的服务写进本清单，会以「声明 provides 但未实际注册」进入 `error`。与 `entryId` 二选一。
 
@@ -136,9 +137,9 @@ interface ServiceRef<P> {
 
 解析顺序：**偏好 > 优先级 > 注册顺序**。`current` / `require` / `all` 每次查询重新解析。
 
-契约是「每次查询解析当前值」：`current` / `require` 返回的是**提供者本身**，不是自动转发所有调用的代理。调用方把它存起来就得自己承担它失效。
+契约是「每次查询解析当前值」：`current` / `require` 返回的是**本次解析的实例**（共享实例，或当前消费者的工厂实例），不是自动转发所有调用的代理。调用方把它存起来就得自己承担它失效。
 
-- 长期缓存 `current` 或 `all()[i]`：提供者换人后，旧引用是否仍可用取决于该实现有没有失效逻辑——有则后续调用抛错，无则可能静默成功。关停编排**不**保护这些缓存引用。
+- 长期缓存 `current` 或 `all()[i]`：提供者换人后，旧引用是否仍可用取决于该实现有没有失效逻辑——有则后续调用抛错，无则可能静默成功。手动缓存共享实例不建立关停边；已创建的工厂实例保留其提供者边至消费者关闭，但仍不保证被主动卸载的提供者可用。
 - `require()` 在 required 依赖丢失到调度收敛之间也可能短暂抛错。
 - 要用提供者建立长期状态（SDK 句柄、订阅）走 `follow`。
 
@@ -176,7 +177,7 @@ apply({ services }) {
 }
 ```
 
-查到的服务**不是声明依赖**：不参与激活闸，不享有重绑与关停顺序保证，关停期可能拿空。需要这些保证就写进 `uses`。单独卸载提供者不享有整个 App 关停的交接保证。
+查到的服务**不是声明依赖**：不参与激活闸，不自动重绑，关停期可能拿空。共享实例的动态查询不产生依赖边；查询若创建了工厂实例，则为其托管寿命保留实际提供者边。需要声明等待与跟随就写进 `uses`。`services.inspect(key)` 只读元数据，不创建实例，适合服务列表。单独卸载提供者不享有整个 App 关停的交接保证。
 
 ## 生命周期
 
@@ -201,7 +202,7 @@ lifecycle.onDispose(async () => {
 
 不要用 `events.on('app:stopping', …)` 做资源清理——那只在 app 全局停机时触发一次，不会在 bounce / unload 时触发。该事件定位是知会，不是清理通道。见 [events.md](events.md)。
 
-关停编排以激活为单位，分收尾（drain）与关闭（close）两阶段。边只来自框架管理的关系：声明的依赖（含子模块、含尚未访问的 optional）在编排那一刻解析到的胜者，以及存活的托管绑定与尚未落地的撤回。不追踪调用方缓存的裸引用；经 `services` 动态查到的服务不产生边。
+关停编排以激活为单位，分收尾（drain）与关闭（close）两阶段。边只来自框架管理的关系：声明的依赖（含子模块、含尚未访问的 optional）在编排那一刻解析到的胜者，以及存活的托管绑定、已创建的工厂实例与尚未落地的撤回。不追踪调用方缓存的共享裸引用；动态查询创建的工厂实例也按托管寿命产生边。
 
 承诺按依赖形状分三种，不是一条无条件规则：
 
@@ -237,15 +238,16 @@ lifecycle.onDispose(async () => {
 
 ## 内部职责
 
-旧 `Context` 类已拆解，内置能力不会再转发到 `Context.on` / `provide` 等集中门面。现在各部分直接承担自己的职责：
+旧 `Context` 类已拆解。服务装配、资源管理与插件编排按职责组织，所有服务共用描述符、容器和绑定路径：
 
 | 部分 | 职责 |
 |---|---|
 | `kernel/Lifecycle`、`DisposableChain` | 父子资源寿命、分段清理、逆序执行与异步等待，不认识服务或插件 |
-| `context/Resources` | 一次激活的清理登记、在飞撤回与同步获取操作记账；关闭相位等待这些工作落定 |
+| `infrastructure/Resources` | 一次激活的清理登记、在飞撤回与同步获取操作记账；关闭相位等待这些工作落定 |
 | `orchestration/Activation` | 内部身份、配置视图、资源记录、子激活和依赖边；不提供四原语操作门面 |
 | `orchestration/ActivationHost` | 创建激活、按 `uses` 装配能力、挂载子模块、连接原语撤回与关闭阶段 |
-| `context/builtins` 与能力工厂 | 直接连接实际注册表和本次激活的资源记录，生成 `events` / `provide` 等接口 |
-| `context/service-watch` 与 `binding` | 前者只观察服务胜者变化；后者负责 `follow` 交接、`registrar` 登记与逐条撤回 |
+| `composition/core-services` | 登记默认基础服务，通过公开工厂协议为各消费者生成 `events` / `provide` 等接口 |
+| `composition/descriptors`、`service-factory`、`plugin-definition` | 服务与插件定义、类型推导，以及工厂资源口 |
+| `composition/service-watch` 与 `composition/binding` | 前者只观察服务胜者变化；后者负责 `follow` 交接、`registrar` 登记与逐条撤回 |
 
 插件只使用 `apply` 收到的能力，宿主通过 `app.bind` 装配根激活的能力。上表中的内部类与深路径均不属于稳定公开 API。

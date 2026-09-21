@@ -2,15 +2,15 @@ import { reportQuietly } from '../kernel/disposable-chain.js';
 
 import { isScopedProvider } from '../primitives/services.js';
 
-import { type BoundOf, createPort, isOptional, optionalNames, requiredNames, type Uses } from '../context/binding.js';
-import { type ModuleHandle, registerCoreServices } from '../context/builtins.js';
-import type { CapabilityRuntime } from '../context/capabilities.js';
-import { type PluginDefinition, validateDefinition } from '../context/definition.js';
-import type { Logger } from '../context/logger.js';
-import { Resources } from '../context/resources.js';
-import type { ServiceScope } from '../context/service-factory.js';
-
 import { Activation } from './activation.js';
+import { createPort } from '../composition/binding.js';
+import { type ModuleHandle, registerCoreServices } from '../composition/core-services.js';
+import { type BoundOf, isOptional, optionalNames, requiredNames, type Uses } from '../composition/descriptors.js';
+import { type PluginDefinition, validateDefinition } from '../composition/plugin-definition.js';
+import type { ServiceRuntime } from '../composition/runtime.js';
+import { instantiateService } from '../composition/service-factory.js';
+import type { Logger } from '../infrastructure/logger.js';
+import { Resources } from '../infrastructure/resources.js';
 
 const CREATING = Symbol('creating-service');
 
@@ -21,7 +21,7 @@ export class ActivationHost {
   private readonly instances = new WeakMap<Activation, WeakMap<object, unknown>>();
 
   constructor(
-    readonly runtime: CapabilityRuntime,
+    readonly runtime: ServiceRuntime,
     logger: Logger,
   ) {
     this.root = this.create(undefined, 'root', {}, logger);
@@ -114,106 +114,23 @@ export class ActivationHost {
     }
     const resources = activation.resources;
     if (resources.lifecycle.disposed) throw new Error(`激活 "${activation.id}" 已关闭，不能创建服务 "${name}"`);
-    // Only live during construction; successful factories use the existing consumer resource ledger.
-    let rollback: Set<() => unknown> | undefined = new Set();
-    let failed = false;
-    const release = activation.retainBinding(name, provider);
-    const cancelRelease = resources.onDispose(release, `factory:${name}`);
-    const scope: ServiceScope = {
-      id: activation.id,
-      identity: activation.owner,
-      logger: activation.logger,
-      config: activation.config,
-      get closed() {
-        return failed || resources.lifecycle.disposed;
-      },
-      track(off, label) {
-        if (!rollback && !failed) return resources.track(off, label);
-        let result: unknown;
-        const dispose = resources.track(() => (result = off()), label);
-        const undo = () => {
-          dispose();
-          // Resources.track already reports rejection; preserve waiting without reporting it twice.
-          return result && typeof (result as PromiseLike<unknown>).then === 'function'
-            ? Promise.resolve(result).then(
-                () => undefined,
-                () => undefined,
-              )
-            : undefined;
-        };
-        if (failed) dispose();
-        else rollback?.add(undo);
-        return () => {
-          rollback?.delete(undo);
-          dispose();
-        };
-      },
-      onDrain(fn, label) {
-        if (failed) return () => {};
-        if (!rollback) return resources.onDrain(fn, label);
-        const cancel = resources.onDrain(fn, label);
-        rollback?.add(cancel);
-        return () => {
-          rollback?.delete(cancel);
-          cancel();
-        };
-      },
-      onDispose(fn, label) {
-        if (failed) {
-          resources.track(fn, label)();
-          return () => {};
-        }
-        if (!rollback) return resources.onDispose(fn, label);
-        const cancel = resources.onDispose(fn, label);
-        const undo = () => {
-          cancel();
-          return fn();
-        };
-        rollback?.add(undo);
-        return () => {
-          rollback?.delete(undo);
-          cancel();
-        };
-      },
-      module: (definition, config) => {
-        if (failed) return Promise.reject(new Error(`服务工厂 "${name}" 已失败，不能挂载子模块`));
-        const mounting = this.module(activation, definition, config);
-        rollback?.add(() => mounting.then(handle => handle.disposeAsync()));
-        return mounting;
-      },
-    };
     cache.set(provider, CREATING);
     try {
-      const instance = resources.run(() => provider.create(scope));
-      if (instance === undefined || instance === null) throw new Error(`服务工厂 "${name}" 的实现不能为空`);
-      if (typeof (instance as PromiseLike<unknown>).then === 'function') {
-        Promise.resolve(instance).catch(error =>
-          reportQuietly(() => activation.logger.warn(`异步服务工厂 "${name}" 拒绝:`, error)),
-        );
-        throw new Error(`服务工厂 "${name}" 必须同步返回实例`);
-      }
-      rollback = undefined;
+      const instance = instantiateService(name, provider, {
+        resources,
+        release: activation.retainBinding(name, provider),
+        scope: {
+          id: activation.id,
+          identity: activation.owner,
+          logger: activation.logger,
+          config: activation.config,
+          module: (definition, config) => this.module(activation, definition, config),
+        },
+      });
       cache.set(provider, instance);
       return instance;
     } catch (error) {
-      failed = true;
       cache.delete(provider);
-      cancelRelease();
-      const pending: Promise<unknown>[] = [];
-      for (const undo of [...rollback!].reverse()) {
-        const report = (error: unknown) =>
-          reportQuietly(() => activation.logger.warn(`服务工厂 "${name}" 回滚失败:`, error));
-        try {
-          const result = resources.run(undo);
-          if (result && typeof (result as PromiseLike<unknown>).then === 'function')
-            pending.push(Promise.resolve(result).catch(report));
-        } catch (error) {
-          report(error);
-        }
-      }
-      rollback = undefined;
-      if (pending.length) resources.holdInflight(Promise.allSettled(pending).then(release), `factory:${name}:rollback`);
-      else release();
       throw error;
     }
   }
@@ -248,7 +165,7 @@ export class ActivationHost {
 }
 
 /** Core 的通知型事件单一出口；屏障仍由 App 显式 await。 */
-export function notify(runtime: Pick<CapabilityRuntime, 'events'>, logger: Logger): CapabilityRuntime['notify'] {
+export function notify(runtime: Pick<ServiceRuntime, 'events'>, logger: Logger): ServiceRuntime['notify'] {
   return (event, ...args) => {
     const report = (error: unknown) => reportQuietly(() => logger.warn(`emit ${event} 失败:`, error));
     try {

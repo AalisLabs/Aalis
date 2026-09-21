@@ -1,13 +1,13 @@
 # 核心（@aalis/core）
 
-`@aalis/core` 是 Aalis 的极简内核：**零运行时依赖、环境无关**，只提供插件系统与四个原语。领域功能一律由 `-api` 契约包 + 插件实现。插件拿到的是按激活绑定的能力，不是一份公开的执行上下文。
+`@aalis/core` 是环境无关的插件底座，提供资源寿命、四种协作原语与服务装配；运行时 JavaScript 不加载依赖包。领域功能一律由 `-api` 契约包 + 插件实现。插件拿到的是按激活绑定的能力，不是一份公开的执行上下文。
 
 ## 按顺序读
 
 | 篇目 | 讲什么 |
 |---|---|
 | [App — 应用容器](./app.md) | 进程入口、`plugin` / `bind`、生命周期 |
-| [插件定义与能力](./context.md) | `definePlugin`、`uses` / `provide`、内置能力、`ServiceRef`、`follow`、`lifecycle.module` |
+| [插件定义与能力](./context.md) | `definePlugin`、`uses` / `provide`、基础服务、`ServiceRef`、`follow`、`lifecycle.module` |
 | [Plugin — 插件管理](./plugin.md) | `PluginEntry`、状态机、`recompute`（`changed` \| `shutdown`）、六动作 `Promise<boolean>` 口径 |
 | [Service — 服务](./service.md) | 描述符、按名仲裁、`services.prefer` |
 | [Events — 事件](./events.md) | 事件与中间件（洋葱模型）、钩子相位 |

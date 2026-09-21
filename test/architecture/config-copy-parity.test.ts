@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cloneConfigObject as cloneFromCore } from '../../packages/core/src/context/safe-keys.js';
+import { cloneConfigObject as cloneFromCore } from '../../packages/core/src/infrastructure/config-values.js';
 import { cloneConfigObject as cloneFromSchema } from '../../packages/schema-config/src/index.js';
 
 /**

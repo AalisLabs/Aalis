@@ -110,7 +110,7 @@ EventBus 事件签名表。`events.on(name, handler)` 在编译期靠它做事�
 应用根配置的字段表。core 只声明**自身管理的字段**（`name` / `logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`），
 业务字段由 `-api` 包通过 declaration merging 注入。
 
-**位置**：`packages/core/src/context/config.ts`（`interface AalisConfig`）。表单描述 `CORE_CONFIG_SCHEMA` 在
+**位置**：`packages/core/src/infrastructure/config.ts`（`interface AalisConfig`）。表单描述 `CORE_CONFIG_SCHEMA` 在
 `packages/schema-config/src/index.ts`，那是宿主侧的渲染词汇，与本接口是两件事。
 
 **扩展者**：

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
-import { optionalNames, requiredNames } from '../../packages/core/src/context/binding.js';
+import { optionalNames, requiredNames } from '../../packages/core/src/composition/descriptors.js';
 import * as core from '../../packages/core/src/index.js';
 import { renderIndexTs, renderPackageJson, renderReadme } from '../../packages/create-aalis-plugin/src/cli.js';
 

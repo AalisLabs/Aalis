@@ -15,7 +15,8 @@ import { describe, expect, it } from 'vitest';
 // - kernel/：资源生命周期与清理链，只认自己，不引用类型词汇、四原语、Context 或编排层
 // - primitives/：四原语注册表，只认 kernel 与类型词汇，不认识 Context、Logger、Config
 //   （需要上报的诊断经注入的回调送出）
-// - context/：能力描述符、绑定、资源账、配置与日志，不依赖编排层
+// - infrastructure/：配置、日志与资源账，只依赖资源内核、原语与基础词汇
+// - composition/：服务描述符、绑定与工厂、默认服务和插件定义，不依赖编排层
 // - orchestration/：把下层机制编排成插件生命周期与应用骨架，含宿主 SPI（插件加载器、重启策略）
 // src 根只留 barrel（index）。
 //
@@ -30,7 +31,7 @@ import { describe, expect, it } from 'vitest';
 const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../packages/core/src');
 
 /** 分层目录，自下而上 */
-const LAYERS = ['kernel', 'primitives', 'context', 'orchestration'] as const;
+const LAYERS = ['kernel', 'primitives', 'infrastructure', 'composition', 'orchestration'] as const;
 type Layer = (typeof LAYERS)[number];
 
 /** src 根目录只许 barrel */
@@ -215,7 +216,7 @@ function walk(dir: string): string[] {
   });
 }
 
-/** 绝对路径 → 相对 src 的 posix 路径（'context/context.ts'） */
+/** 绝对路径 → 相对 src 的 posix 路径（'composition/binding.ts'） */
 function relToSrc(abs: string): string {
   return relative(SRC_DIR, abs).split(sep).join('/');
 }
@@ -253,7 +254,7 @@ function externalReferenceViolations(file: string, source: Parsed): string[] {
   const offenders: string[] = [];
   for (const { spec, typeOnly } of source.specifiers) {
     if (resolveTarget(file, spec) !== null) continue;
-    if (spec === '@aalis/schema-log' && typeOnly && (layer === 'context' || layer === 'orchestration')) continue;
+    if (spec === '@aalis/schema-log' && typeOnly && (layer === 'infrastructure' || layer === 'orchestration')) continue;
     offenders.push(`${rel} → ${spec}`);
   }
   if (source.computedImports > 0) offenders.push(`${rel} → ${source.computedImports} 处非字面量动态 import`);
@@ -311,7 +312,7 @@ describe('core 内部分层（目录即层，依赖只许向下）', () => {
  * `ctx.getService('storage')` 悄悄退回 `unknown`。build / test / biome / knip 四道门全绿。
  *
  * ⚠️ 递归扫**整个 core/src**，不是只扫 types/。第一版只扫 types/ 一层，实测把同一段挪进
- * `orchestration/app.ts` 或 `context/context.ts` 就 100% 复发而守卫一声不吭——而 `app.ts`（编排层、
+ * `orchestration/app.ts` 或 `composition/binding.ts` 就 100% 复发而守卫一声不吭——而 `app.ts`（编排层、
  * 天然会写 App 相关声明）恰恰是最像会重犯的地方。
  *
  * 本条守的是**说明符形式**（相对路径会把接口绑成第二个 symbol），与「扩展点是否为空」
@@ -366,7 +367,7 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
     const source = `import type { LogEntry } from '@aalis/schema-log';
       import { type LogLevel } from '@aalis/schema-log';
       type Entry = import('@aalis/schema-log').LogEntry;`;
-    for (const path of ['context/logger.ts', 'orchestration/app.ts']) {
+    for (const path of ['infrastructure/logger.ts', 'orchestration/app.ts']) {
       const file = join(SRC_DIR, path);
       expect(externalReferenceViolations(file, parseSource(file, source)), path).toEqual([]);
     }
@@ -377,7 +378,7 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
   });
 
   it('类型例外不能放过混合值导入、动态加载、转导出或其他外部包', () => {
-    const file = join(SRC_DIR, 'context/logger.ts');
+    const file = join(SRC_DIR, 'infrastructure/logger.ts');
     for (const source of [
       "import { formatLogLine } from '@aalis/schema-log';",
       "import { type LogEntry, parseLogLine } from '@aalis/schema-log';",
@@ -423,7 +424,7 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
  */
 const BARRIER_FILE = 'orchestration/app.ts';
 const NOTIFICATION_FILE = 'orchestration/activation-host.ts';
-const BUILTIN_EVENTS = 'context/builtins.ts';
+const BUILTIN_EVENTS = 'composition/core-services.ts';
 const isBarrier = (event: string): boolean => event.startsWith('app:');
 
 function eventViolations(rel: string, calls: EmitCall[]): string[] {
@@ -489,7 +490,7 @@ describe('内置事件出口：App 等待屏障，通知不阻塞状态机', () 
       'async function notify() { await Promise.resolve(runtime.events.emit(event, ...args)).catch(report); }',
     ],
     [BUILTIN_EVENTS, 'const extra = { emit: async (event, ...args) => await bus.emit(event, ...args) };'],
-    ['context/binding.ts', 'const extra = { emit: (event, ...args) => bus.emit(event, ...args) };'],
+    ['composition/binding.ts', 'const extra = { emit: (event, ...args) => bus.emit(event, ...args) };'],
     [NOTIFICATION_FILE, "async function stop() { await (runtime['notify']('plugin:loaded', 'p')); }"],
   ])('变异被拒绝：%s — %s', (rel, source) => {
     expect(eventViolations(rel, parseSource(rel, source).emits).length).toBeGreaterThan(0);
@@ -510,11 +511,11 @@ describe('内置事件出口：App 等待屏障，通知不阻塞状态机', () 
   });
 
   it('下层绕经内部激活导入仍被拒绝（含 type-only 与动态 import）', () => {
-    const file = join(SRC_DIR, 'context', 'binding.ts');
+    const file = join(SRC_DIR, 'composition', 'binding.ts');
     const source =
       "import type { Activation } from '../orchestration/activation.js'; void import('../orchestration/activation-host.js');";
     const imports = parseSource(file, source).specifiers;
     expect(imports).toHaveLength(2);
-    for (const { spec } of imports) expect(violation('context', resolveTarget(file, spec)!)).not.toBeNull();
+    for (const { spec } of imports) expect(violation('composition', resolveTarget(file, spec)!)).not.toBeNull();
   });
 });
