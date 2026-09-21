@@ -3,11 +3,15 @@ import type { UserIdentity } from '@aalis/api-authority';
 import type { CommandService } from '@aalis/api-commands';
 import type { ToolService } from '@aalis/api-tools';
 import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui';
-import type { AppService, ConfigManager, PluginManagerService, ServiceRef } from '@aalis/core';
+import type { AppService, ConfigManager, Logger, PluginManagerService, ServiceRef } from '@aalis/core';
 import { parseInstanceId } from '@aalis/core';
 import { CORE_CONFIG_SCHEMA, defaultsFrom, validateConfig } from '@aalis/schema-config';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 /** 插件管理 + 全局配置路由用到的能力 */
 interface PluginRoutesCaps {
@@ -22,6 +26,8 @@ interface PluginRoutesCaps {
    * 写死引用就绕过了解析——第三方若以更高优先级接管 webui-server，页面列表该跟着走。
    */
   webui(): WebUIService | undefined;
+  /** 裁剪 schema 外字段时点名 warn；测试可不传 */
+  logger?: Logger;
 }
 
 /** 注册插件管理 + 全局配置相关 REST 路由 */
@@ -44,8 +50,9 @@ export function registerPluginRoutes(
       res.json({ plugins: [] });
       return;
     }
-    // 反向索引：pluginName -> tools / commands（名字列表 + 聚合敏感能力）。
-    // 方便 UI 搜索框命中工具名/指令名时定位到注册插件；能力披露用聚合 capability。
+    // 反向索引：instanceId -> tools / commands（名字列表 + 聚合敏感能力）。
+    // 生产登记的 pluginName 就是 contextId（= instanceId）；按 definition.name 索引
+    // 会让 name:suffix 误挂主实例的工具。能力披露用聚合 capability。
     const toolsByPlugin = new Map<string, string[]>();
     const capsByPlugin = new Map<string, Set<string>>();
     const addCaps = (plugin: string, visibility?: string) => {
@@ -79,9 +86,9 @@ export function registerPluginRoutes(
       // 能力披露：该插件「要调用哪些子系统」（inject 依赖）+「是否含 restricted 工具/指令」，供安装后知情查看。
       requiredServices: p.requiredServices ?? [],
       optionalServices: p.optionalServices ?? [],
-      capabilities: [...(capsByPlugin.get(p.name) ?? [])],
-      tools: toolsByPlugin.get(p.name) ?? [],
-      commands: commandsByPlugin.get(p.name) ?? [],
+      capabilities: [...(capsByPlugin.get(p.instanceId) ?? [])],
+      tools: toolsByPlugin.get(p.instanceId) ?? [],
+      commands: commandsByPlugin.get(p.instanceId) ?? [],
       core: p.core ?? false,
       reusable: p.reusable ?? false,
       // extends / config / configSchema / defaultConfig 非内核状态摘要字段
@@ -111,7 +118,7 @@ export function registerPluginRoutes(
     }
 
     const displayNameByPlugin = new Map<string, string | undefined>();
-    for (const p of pm.getStatus()) displayNameByPlugin.set(p.name, p.displayName);
+    for (const p of pm.getStatus()) displayNameByPlugin.set(p.instanceId, p.displayName);
 
     const pages: (WebuiPage & { plugin: string; pluginDisplayName?: string })[] = [];
     for (const page of webuiSvc.getPages()) {
@@ -228,8 +235,12 @@ export function registerPluginRoutes(
   // 获取单个插件的原始配置（未脱敏，给编辑器用）
   expressApp.get('/api/plugins/:name/config', gate(), (req, res) => {
     const pluginName = req.params.name;
-    const pluginConfig = hostConfig().getPluginConfig(pluginName);
-    res.json({ name: pluginName, config: pluginConfig });
+    try {
+      const pluginConfig = hostConfig().getPluginConfig(pluginName);
+      res.json({ name: pluginName, config: pluginConfig });
+    } catch (err) {
+      res.status(400).json({ error: errorMessage(err) });
+    }
   });
 
   // 更新插件配置
@@ -258,8 +269,24 @@ export function registerPluginRoutes(
     // llm-openai、serper、onebot 皆是）。用裸 defaults 打底时，请求里没带 apiKey 就等于
     // merged 里根本没有这个键，整体替换后用户的密钥从内存态与 yaml 一起消失。
     // 叠上已存值后语义才是真正的部分更新：没提交的字段保持原样，要清空得显式传空串。
-    const stored = { ...defaults, ...hostConfig().getPluginConfig(pluginName) };
-    const merged = { ...stored, ...(newConfig as Record<string, unknown>) };
+    let stored: Record<string, unknown>;
+    let merged: Record<string, unknown>;
+    try {
+      stored = { ...defaults, ...hostConfig().getPluginConfig(pluginName) };
+      merged = { ...stored, ...(newConfig as Record<string, unknown>) };
+      // 与 runtime config-sync 同一政策：有 schema 就裁掉未知键并 warn，避免 WebUI 把
+      // 手滑字段写进 stored，而 YAML watch 路径却会裁掉——两边政策必须一致。
+      if (schema && Object.keys(schema).length > 0) {
+        const removed: string[] = [];
+        merged = removeExtraFields(merged, schema as Record<string, unknown>, removed);
+        if (removed.length > 0) {
+          caps.logger?.warn(`配置同步：${pluginName} 裁掉 schema 外字段 [${removed.join(', ')}]`);
+        }
+      }
+    } catch (err) {
+      res.status(400).json({ error: errorMessage(err) });
+      return;
+    }
 
     // 保存前校验，拦新不追旧：只拒绝本次编辑**新引入**的 invalid（配错了）。
     // 存量问题放行——否则带着历史脏值（或 schema 表达不了的多态字段，如 mcp-client
@@ -279,17 +306,27 @@ export function registerPluginRoutes(
       return;
     }
 
-    const success = await pm.updateConfig(pluginName, merged);
+    let success: boolean;
+    try {
+      success = await pm.updateConfig(pluginName, merged);
+    } catch (err) {
+      res.status(400).json({ error: errorMessage(err) });
+      return;
+    }
     if (success) {
       await app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 配置已更新` });
     } else {
       // 插件被禁用时这里也会走到，但「不存在」会把用户引向错误方向——区分「禁用」与「真不存在」并给出下一步。
-      const disabled = hostConfig().isPluginDisabled(pluginName);
-      if (disabled) {
-        res.status(409).json({ error: `插件 ${pluginName} 已禁用，配置未写入——先启用插件再修改配置` });
-      } else {
-        res.status(404).json({ error: `插件 ${pluginName} 不存在` });
+      try {
+        const disabled = hostConfig().isPluginDisabled(pluginName);
+        if (disabled) {
+          res.status(409).json({ error: `插件 ${pluginName} 已禁用，配置未写入——先启用插件再修改配置` });
+        } else {
+          res.status(404).json({ error: `插件 ${pluginName} 不存在` });
+        }
+      } catch (err) {
+        res.status(400).json({ error: errorMessage(err) });
       }
     }
   });
@@ -303,7 +340,13 @@ export function registerPluginRoutes(
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
-    const success = await pm.enable(pluginName);
+    let success: boolean;
+    try {
+      success = await pm.enable(pluginName);
+    } catch (err) {
+      res.status(400).json({ error: errorMessage(err) });
+      return;
+    }
     if (success) {
       await app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 已启用` });
@@ -321,7 +364,13 @@ export function registerPluginRoutes(
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
-    const success = await pm.disable(pluginName);
+    let success: boolean;
+    try {
+      success = await pm.disable(pluginName);
+    } catch (err) {
+      res.status(400).json({ error: errorMessage(err) });
+      return;
+    }
     if (success) {
       await app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 已禁用` });
@@ -386,8 +435,13 @@ export function registerPluginRoutes(
       return;
     }
     const mergedConfig = { ...defaultsFrom(sourceModule.configSchema), ...(config as Record<string, unknown>) };
-    hostConfig().setPluginConfig(instanceId, mergedConfig);
-    await pm.register(sourceModule, mergedConfig, instanceId);
+    try {
+      hostConfig().setPluginConfig(instanceId, mergedConfig);
+      await pm.register(sourceModule, mergedConfig, instanceId);
+    } catch (err) {
+      res.status(400).json({ error: errorMessage(err) });
+      return;
+    }
     await app.saveConfig();
     res.json({ ok: true, instanceId, message: `已创建实例 ${instanceId}` });
   });
@@ -407,8 +461,13 @@ export function registerPluginRoutes(
       res.status(400).json({ error: `无法删除（实例不存在或不允许删除主实例）` });
       return;
     }
-    await pm.unload(instanceId);
-    hostConfig().removePluginConfig(instanceId);
+    try {
+      await pm.unload(instanceId);
+      hostConfig().removePluginConfig(instanceId);
+    } catch (err) {
+      res.status(400).json({ error: errorMessage(err) });
+      return;
+    }
     await app.saveConfig();
     res.json({ ok: true, message: `已删除实例 ${instanceId}` });
   });
@@ -429,4 +488,43 @@ export function registerPluginRoutes(
       res.status(500).json({ error: msg });
     }
   });
+}
+
+/**
+ * 按 configSchema 裁未知键。实现与 `@aalis/runtime` 的 config-sync 私有同名函数对齐
+ * （webui-server 不能依赖 runtime；该函数也尚未抽到 `@aalis/schema-config`）。
+ */
+function removeExtraFields(
+  config: Record<string, unknown>,
+  schema: Record<string, unknown>,
+  removed?: string[],
+  prefix = '',
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(config)) {
+    if (!(key in schema)) {
+      removed?.push(prefix + key);
+      continue;
+    }
+    const schemaDef = schema[key] as Record<string, unknown>;
+    if (schemaDef.type === 'array') {
+      result[key] = value;
+    } else if (
+      schemaDef.fields &&
+      typeof schemaDef.fields === 'object' &&
+      value !== null &&
+      typeof value === 'object' &&
+      !Array.isArray(value)
+    ) {
+      result[key] = removeExtraFields(
+        value as Record<string, unknown>,
+        schemaDef.fields as Record<string, unknown>,
+        removed,
+        `${prefix + key}.`,
+      );
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
 }
