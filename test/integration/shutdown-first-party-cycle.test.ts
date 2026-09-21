@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { App, type Logger } from '../../packages/core/src/index.js';
+import { agent as agentService } from '../../packages/api-agent/src/index.js';
+import { sessionManager } from '../../packages/api-session-manager/src/index.js';
+import { App, hooks, type Logger } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
@@ -9,7 +11,7 @@ import sessionManagerPlugin from '../../packages/plugin-session-manager/src/inde
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // 第一方插件之间互为 optional 依赖是常态（agent 用 session-manager 解析会话配置，session-manager 用
-// agent 中止回合）。optional 的契约本来就是「缺席也能工作」，这种环按自然次序让步即可，
+// agent 中止回合）。optional 环成员全部 drain 完再任一 close，drain 期间对方仍活着；
 // 不该在每次正常关停时告警——告警留给环里全是 required 边、确实无从保证的情形。
 
 function recordingLogger(lines: string[]): Logger {
@@ -42,5 +44,47 @@ describe('标准第一方组合的关停', () => {
     await app.stop();
 
     expect(lines.filter(line => line.includes('依赖成环'))).toEqual([]);
+  });
+
+  it('在飞回合 aborted 收尾时 session-manager 仍在，SM 关闭时 agent 已 abort', async () => {
+    const lines: string[] = [];
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger: recordingLogger(lines) });
+    await app.plugin(createMockLLMPlugin({ latencyMs: 180, responses: [{ content: 'should-not-land' }] }));
+    await app.plugin(memoryInMemoryPlugin);
+    await app.plugin(messageArchivePlugin, { debugLogs: false });
+    await app.plugin(gatewayPlugin, {});
+    await app.plugin(commandsPlugin, {});
+    // 不利序：agent 先于 SM。旧 optional 让步会让后挂的 SM 整颗先关，abort 收尾时中间件已没。
+    await app.plugin(agentPlugin, { systemPrompt: 'test bot', preferredModel: '' });
+    await app.plugin(sessionManagerPlugin, {});
+    await app.plugins.idle();
+    for (const id of ['@aalis/plugin-agent', '@aalis/plugin-session-manager']) {
+      expect(app.plugins.getPlugin(id)?.state, id).toBe('active');
+    }
+
+    const host = app.bind({ hooks, agent: agentService, sessionManager });
+    const order: string[] = [];
+    let smLiveAtAbort = false;
+    host.hooks.middleware('agent:turn:after', async (data, next) => {
+      await next();
+      if (data.outcome !== 'aborted') return;
+      smLiveAtAbort = host.sessionManager.current !== undefined;
+      order.push(smLiveAtAbort ? 'abort:sm-live' : 'abort:sm-dead');
+    });
+
+    const turn = host.agent.require().handleMessage({
+      content: 'in-flight',
+      sessionId: 'fp:stop-abort',
+      platform: 'test',
+      userId: 'u1',
+      sessionType: 'private',
+    });
+    await new Promise<void>(r => setTimeout(r, 40));
+    await app.stop();
+    await turn;
+
+    expect(lines.filter(line => line.includes('依赖成环'))).toEqual([]);
+    expect(order, 'stop 应等到 agent abort 收尾').toContain('abort:sm-live');
+    expect(smLiveAtAbort, 'agent onDrain abort 时 SM 中间件/服务仍在（optional 环先全 drain 再 close）').toBe(true);
   });
 });

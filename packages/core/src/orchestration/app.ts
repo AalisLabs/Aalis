@@ -152,6 +152,11 @@ export class App {
   private pluginDefaults?: (definition: PluginDefinition) => Record<string, unknown>;
   private readonly restartStrategy?: RestartStrategy;
   private readonly disposeTimeoutMs: number;
+  /** 停机单飞：重入返回同一 Promise；完成后仍保留，再调 stop() 立即落定 */
+  private stopping?: Promise<void>;
+  /** 正在派发 app:stopping：此间再调 stop() 不得 await 自身 */
+  private emittingStopping = false;
+  private nestedStopWarned = false;
 
   constructor(options: AppOptions) {
     // 1. 配置：接受快照或已构造的 ConfigManager
@@ -302,22 +307,7 @@ export class App {
       }
     }
 
-    // 扫描配置中的多实例条目（name:suffix 格式）
-    const pluginConfigs = this.config.get('plugins') ?? {};
-    for (const configKey of Object.keys(pluginConfigs)) {
-      const { moduleName, suffix } = parseInstanceId(configKey);
-      if (!suffix) continue;
-      const mod = loadedModules.get(moduleName);
-      if (!mod) {
-        this.logger.warn(`多实例配置 "${configKey}" 对应的模块 "${moduleName}" 未找到，跳过`);
-        continue;
-      }
-      try {
-        await this.plugin(mod, undefined, configKey);
-      } catch (err) {
-        this.logger.error(`加载多实例插件 "${configKey}" 失败:`, err);
-      }
-    }
+    await this.registerConfiguredInstances(loadedModules);
 
     // 配置同步政策（默认值回填 / schema 裁剪）属宿主层，由宿主在本方法之后自行执行。
 
@@ -343,10 +333,14 @@ export class App {
     if (!this.pluginLoader) return [];
     const discovered = await this.pluginLoader.discover();
     const loaded: string[] = [];
+    const loadedModules = new Map<string, PluginDefinition>();
 
     for (const desc of discovered) {
-      // 跳过已注册的
-      if (this.plugins.getPlugin(desc.name)) continue;
+      const already = this.plugins.getPlugin(desc.name);
+      if (already) {
+        loadedModules.set(already.definition.name, already.definition);
+        continue;
+      }
 
       try {
         const mod = this.pluginLoader.reload
@@ -356,8 +350,9 @@ export class App {
           this.logger.debug(`跳过非插件模块: ${desc.name}`);
           continue;
         }
+        loadedModules.set(mod.name, mod);
         // 按 desc.name 查重只能挡住同名描述符；模块自报的 name 与 desc.name 不同且已注册时，
-        // register 会拒绝——那不算热加载，不能报进名单。
+        // register 会拒绝——那不算热加载，不能报进名单。定义仍留给后缀实例循环用。
         if (!(await this.plugin(mod))) continue;
         loaded.push(desc.name);
         this.logger.info(`热加载插件: ${desc.name}`);
@@ -366,7 +361,31 @@ export class App {
       }
     }
 
+    await this.registerConfiguredInstances(loadedModules);
     return loaded;
+  }
+
+  /**
+   * 配置键里的 `name:suffix` 多实例：模块已在 loadedModules 时登记。已在注册表的跳过。
+   * autoLoad 与 rescan 共用，热激活不得比引导少收后缀实例。
+   */
+  private async registerConfiguredInstances(loadedModules: Map<string, PluginDefinition>): Promise<void> {
+    const pluginConfigs = this.config.get('plugins') ?? {};
+    for (const configKey of Object.keys(pluginConfigs)) {
+      const { moduleName, suffix } = parseInstanceId(configKey);
+      if (!suffix) continue;
+      if (this.plugins.getPlugin(configKey)) continue;
+      const mod = loadedModules.get(moduleName);
+      if (!mod) {
+        this.logger.warn(`多实例配置 "${configKey}" 对应的模块 "${moduleName}" 未找到，跳过`);
+        continue;
+      }
+      try {
+        await this.plugin(mod, undefined, configKey);
+      } catch (err) {
+        this.logger.error(`加载多实例插件 "${configKey}" 失败:`, err);
+      }
+    }
   }
 
   /**
@@ -428,16 +447,42 @@ export class App {
   }
 
   /**
-   * 停止应用
+   * 停止应用。单飞：重入返回同一 Promise。
+   *
+   * 先 `beginShutdown()` 置 shuttingDown（新 bounce/register 被拒），再 `idle()` 排干在飞者，
+   * 然后发 `app:stopping`，最后 stopAll。已静置时 `idle()` 仍让出一轮微任务——必须先冻闸，
+   * 否则同轮排队的 bounce 会在置位前过闸、停机后留下 pending 幽灵。
+   *
+   * 在 `app:stopping` 监听器里再调 `stop()`：warn 一次并立即返回（请勿 await——会与
+   * emit 屏障互等）。外部并发的第二次 `stop()` 汇入本次停机，等到收尾完。
    */
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
+    if (this.stopping) {
+      if (this.emittingStopping) {
+        if (!this.nestedStopWarned) {
+          this.nestedStopWarned = true;
+          this.logger.warn('stop() 在派发 app:stopping 期间被再次调用：已汇入本次停机，请勿在该监听器里 await stop()');
+        }
+        // 不等自身：监听器若 await 同一 in-flight Promise，会与 emit 屏障死锁
+        return Promise.resolve();
+      }
+      return this.stopping;
+    }
+    this.stopping = this.runStop();
+    return this.stopping;
+  }
+
+  private async runStop(): Promise<void> {
     this.logger.info('正在停止...');
     this.config.unwatch();
-    // 先等状态机静置：在飞 bounce/unload 的 recompute 排干后再冻。
-    // 否则 freeze 会 markClosing，尚未 fork 完的激活会撞上「已 dispose」。
-    await this.plugins.idle();
     this.plugins.beginShutdown();
-    await this.#root.emit('app:stopping');
+    await this.plugins.idle();
+    this.emittingStopping = true;
+    try {
+      await this.#root.emit('app:stopping');
+    } finally {
+      this.emittingStopping = false;
+    }
     await this.plugins.idle();
     // 全部 active 插件与根激活进同一张关停计划——beginShutdown 已冻，这里执行 drain/close。
     await this.plugins.stopAll();
