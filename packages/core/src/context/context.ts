@@ -279,6 +279,12 @@ export class Context {
       this.logger.warn(`Context "${this.id}" 已 dispose，忽略 provide("${name}")`);
       return () => {};
     }
+    if (instance === null || instance === undefined) {
+      throw new Error('provide 的实现不能为空');
+    }
+    if (options?.priority !== undefined && !Number.isFinite(options.priority)) {
+      throw new Error(`provide 的 priority 必须是有限数字（收到 ${String(options.priority)}）`);
+    }
     const entryId = options?.onBehalfOf ?? options?.entryId ?? this.id;
 
     // 代为登记是有意取别人的逻辑身份，前缀劝告不适用

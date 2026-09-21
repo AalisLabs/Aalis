@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type BoundTools, tools } from '../../packages/api-tools/src/index.js';
 import { assemble } from '../../packages/core/src/context/binding.js';
-import { App, definePlugin, defineService, type Logger, optional, provide } from '../../packages/core/src/index.js';
+import {
+  App,
+  definePlugin,
+  defineService,
+  type Logger,
+  optional,
+  provide,
+  ServiceContainer,
+} from '../../packages/core/src/index.js';
 import { rootActivation } from '../../packages/core/src/orchestration/app.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 
@@ -380,5 +388,93 @@ describe('optional：品牌标记，自有 optional 字段不能绕过激活闸'
     await app.plugins.idle();
     expect(ran).toBe(true);
     expect(app.plugins.getPlugin('c')?.state).toBe('active');
+  });
+});
+
+describe('provide：空实现与非有限 priority 拒绝', () => {
+  it('provide(null) 抛，提供者 error、消费者不得 active', async () => {
+    const ping = defineService<{ ping(): string }>('zz-bind-null');
+    const { app, host } = world();
+    expect(() => host(ping, null as never)).toThrow('provide 的实现不能为空');
+
+    await app.plugin(
+      definePlugin({
+        name: 'null-prov',
+        provides: [ping],
+        uses: { provide },
+        apply({ provide }) {
+          provide(ping, null as never);
+        },
+      }),
+    );
+    let required: unknown = 'unset';
+    await app.plugin(
+      definePlugin({
+        name: 'null-cons',
+        uses: { ping },
+        apply({ ping }) {
+          required = ping.require();
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('null-prov')?.state).toBe('error');
+    expect(app.plugins.getPlugin('null-prov')?.error).toMatch(/provide 的实现不能为空/);
+    expect(required).toBe('unset');
+    expect(app.plugins.getPlugin('null-cons')?.state).not.toBe('active');
+  });
+
+  it('provide(undefined) 抛，不得提供者 active 而消费者永久 pending', async () => {
+    const ping = defineService<{ ping(): string }>('zz-bind-undef');
+    const { app, host } = world();
+    expect(() => host(ping, undefined as never)).toThrow('provide 的实现不能为空');
+
+    await app.plugin(
+      definePlugin({
+        name: 'undef-prov',
+        provides: [ping],
+        uses: { provide },
+        apply({ provide }) {
+          provide(ping, undefined as never);
+        },
+      }),
+    );
+    await app.plugin(definePlugin({ name: 'undef-cons', uses: { ping }, apply() {} }));
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('undef-prov')?.state).toBe('error');
+    expect(app.plugins.getPlugin('undef-prov')?.error).toMatch(/provide 的实现不能为空/);
+    expect(app.plugins.getPlugin('undef-cons')?.state).toBe('pending');
+  });
+
+  it('priority 非有限数字抛；随后有限 10 仍可登记', () => {
+    const { app, host } = world();
+    const kv = defineService<{ get(): number }>('zz-bind-prio');
+    expect(() => host(kv, { get: () => 2 }, { priority: 'high' as never, entryId: 'root/b' })).toThrow(
+      'provide 的 priority 必须是有限数字（收到 high）',
+    );
+    expect(() => host(kv, { get: () => 2 }, { priority: Number.NaN, entryId: 'root/n' })).toThrow(
+      'provide 的 priority 必须是有限数字（收到 NaN）',
+    );
+    expect(() => host(kv, { get: () => 2 }, { priority: Number.POSITIVE_INFINITY, entryId: 'root/i' })).toThrow(
+      'provide 的 priority 必须是有限数字（收到 Infinity）',
+    );
+    host(kv, { get: () => 1 }, { priority: 10, entryId: 'root/a' });
+    expect(app.services.get<{ get(): number }>('zz-bind-prio')?.get()).toBe(1);
+  });
+
+  it('ServiceContainer.register 同样拒空实现与非有限 priority', () => {
+    const c = new ServiceContainer();
+    expect(() => c.register('x', null, 'id')).toThrow('provide 的实现不能为空');
+    expect(() => c.register('x', undefined, 'id')).toThrow('provide 的实现不能为空');
+    expect(() => c.register('x', { v: 1 }, 'id', undefined, { priority: Number.NaN })).toThrow(
+      'provide 的 priority 必须是有限数字（收到 NaN）',
+    );
+  });
+});
+
+describe('defineService：name 须 trim 后非空', () => {
+  it('空串与空白拒绝', () => {
+    expect(() => defineService('')).toThrow('服务 name 不能为空');
+    expect(() => defineService('   ')).toThrow('服务 name 不能为空');
   });
 });
