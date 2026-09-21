@@ -55,6 +55,13 @@
       ],
       "provides": [
         "session-history"
+      ],
+      "required": [
+        "config",
+        "events",
+        "hooks",
+        "logger",
+        "provide"
       ]
     }
   }

@@ -51,6 +51,11 @@
         "webui-server",
         "process",
         "storage"
+      ],
+      "required": [
+        "config",
+        "lifecycle",
+        "logger"
       ]
     }
   }

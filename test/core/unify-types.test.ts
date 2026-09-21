@@ -102,9 +102,9 @@ describe('uses → apply 的类型推导', () => {
     await app.plugin(plugin);
     await app.plugins.idle();
     const entry = app.plugins.getPlugin('typed');
-    // 登记时已写入依赖表；内置能力（provide / logger）不进激活闸。
+    // 登记时已写入依赖表；全部服务（含 provide / logger）都进同一激活闸。
     // 本用例不提供 zz-kv / tools，插件保持 pending——钉的是条目上的服务名数组，不是 apply 是否跑过。
-    expect(entry?.required, '内置能力不参与激活闸').toEqual(['zz-kv', 'tools']);
+    expect(entry?.required, '所有服务统一参与激活闸').toEqual(['zz-kv', 'tools', 'provide', 'logger']);
     expect(entry?.optional).toEqual(['zz-kv', 'zz-hybrid']);
     expect(entry?.state).toBe('pending');
 

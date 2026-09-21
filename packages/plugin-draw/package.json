@@ -48,6 +48,11 @@
         "tools",
         "storage",
         "process"
+      ],
+      "required": [
+        "config",
+        "lifecycle",
+        "logger"
       ]
     }
   }

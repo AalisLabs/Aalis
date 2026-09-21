@@ -46,6 +46,11 @@
       ],
       "provides": [
         "process"
+      ],
+      "required": [
+        "events",
+        "logger",
+        "provide"
       ]
     }
   }

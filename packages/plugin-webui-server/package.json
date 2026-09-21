@@ -84,6 +84,14 @@
       "provides": [
         "webui-server",
         "platform"
+      ],
+      "required": [
+        "config",
+        "events",
+        "lifecycle",
+        "logger",
+        "provide",
+        "services"
       ]
     }
   }

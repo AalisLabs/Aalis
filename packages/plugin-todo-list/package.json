@@ -48,6 +48,10 @@
         "memory",
         "tools",
         "webui-server"
+      ],
+      "required": [
+        "config",
+        "events"
       ]
     }
   }

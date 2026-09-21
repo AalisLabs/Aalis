@@ -186,7 +186,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   // （实例：embedding-openai 缺 key → memory-vector 永远不激活，向量记忆整个不工作）。
   for (const p of app.plugins.getStatus()) {
     if (p.state !== 'pending') continue;
-    const unmet = (p.requiredServices ?? []).filter(svc => host.services.get(svc) === undefined);
+    const unmet = (p.requiredServices ?? []).filter(svc => host.services.inspect(svc).length === 0);
     if (unmet.length > 0) {
       app.logger.warn(`插件 "${p.instanceId}" 依赖未满足，未激活（缺少服务: ${unmet.join('、')}）`);
     }

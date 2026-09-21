@@ -45,6 +45,12 @@
   "aalis": {
     "service": {
       "required": [
+        "config",
+        "events",
+        "hooks",
+        "lifecycle",
+        "logger",
+        "provide",
         "storage"
       ],
       "optional": [

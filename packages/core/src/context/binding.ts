@@ -65,6 +65,8 @@ export interface BindingPort<P> {
   readonly closed: boolean;
   /** 当前胜者 */
   current(): P | undefined;
+  /** Resolve or throw an error attributed to this host and activation. */
+  require(): P;
   /** 全部提供者（偏好 > 优先级 > 注册顺序） */
   all(): ServiceView<P>[];
   /**
@@ -92,7 +94,7 @@ export interface ServiceDescriptor<P, B = ServiceRef<P>> {
 }
 
 /** 模块私有品牌：assemble 只认 optional() 盖过的包装，描述符自有 `optional` 字段不算 */
-const OPTIONAL = Symbol('aalis.optional-use');
+const OPTIONAL = Symbol.for('aalis.optional-use');
 
 export interface OptionalUse<P, B> {
   readonly optional: ServiceDescriptor<P, B>;
@@ -157,11 +159,7 @@ export function serviceRef<P>(port: BindingPort<P>, extra?: object): ServiceRef<
     get current() {
       return port.current();
     },
-    require() {
-      const provider = port.current();
-      if (provider === undefined) throw new ServiceUnavailableError(port);
-      return provider;
-    },
+    require: () => port.require(),
     all: () => port.all(),
     follow: attach => port.follow(attach),
   };
@@ -169,14 +167,12 @@ export function serviceRef<P>(port: BindingPort<P>, extra?: object): ServiceRef<
 }
 
 // 只认框架为本次激活装配的 required 端口，optional / 动态查询 / 自造端口不借用重试资格。
-const requiredOrigins = new WeakMap<object, { resources: Resources; name: string }>();
-
 class ServiceUnavailableError extends Error {
   readonly #origin: { resources: Resources; name: string } | undefined;
 
-  constructor(port: BindingPort<unknown>) {
-    super(`服务 "${port.name}" 不可用（"${port.id}" 声明的依赖当前没有提供者）`);
-    this.#origin = requiredOrigins.get(port);
+  constructor(scope: BindingScope, name: string, required: boolean) {
+    super(`服务 "${name}" 不可用（"${scope.id}" 声明的依赖当前没有提供者）`);
+    this.#origin = required ? { resources: scope.resources, name } : undefined;
   }
 
   static belongsTo(error: unknown, resources: Resources, required: readonly string[]): boolean {
@@ -198,27 +194,12 @@ export function isRequiredServiceUnavailable(
   return ServiceUnavailableError.belongsTo(error, resources, required);
 }
 
-/** 内置能力的标记：绑的是激活自身，不参与激活闸，也不产生依赖边 */
-// 全局 symbol：装了两份 core 时另一份副本的内置描述符仍被认出，随后在内置能力装配处明确报错，
-// 而不是被当成普通服务名永远等不到提供者
-const BUILTIN = Symbol.for('aalis.builtin-capability');
-
-/** @internal */
-export function markBuiltin<D extends object>(descriptor: D): D {
-  return Object.assign(descriptor, { [BUILTIN]: true });
-}
-
-/** @internal */
-export function isBuiltin(descriptor: object): boolean {
-  return (descriptor as { [BUILTIN]?: boolean })[BUILTIN] === true;
-}
-
 /** 绑定只需要资源账与服务读取，不持有整个激活或插件管理器。 */
 interface BindingScope {
   readonly id: string;
   readonly logger: Logger;
   readonly resources: Resources;
-  readonly services: ServiceContainer;
+  readonly services: Pick<ServiceContainer, 'get' | 'getAll'>;
   readonly events: EventBus;
   retainBinding(name: string): () => void;
 }
@@ -229,20 +210,7 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
 
 /** @internal 为一次激活造某个服务的资源口 */
 export function createPort<P>(scope: BindingScope, name: string, required = false): BindingPort<P> {
-  /** 调一条撤回：同步抛错就地隔离；异步结果交给激活的在飞账，关闭等到它、拒绝被接住 */
-  const withdraw = (off: () => unknown, what: string): PromiseLike<unknown> | undefined =>
-    scope.resources.run(() => {
-      try {
-        const result = off();
-        if (!isThenable(result)) return undefined;
-        const pending = Promise.resolve(result);
-        scope.resources.holdInflight(pending, what);
-        return pending;
-      } catch (err) {
-        reportQuietly(() => scope.logger.warn(`${what} 撤回抛错（已忽略）:`, err));
-        return undefined;
-      }
-    });
+  const withdraw = (off: () => unknown, what: string) => scope.resources.withdraw(off, what);
 
   // 一个资源口一条提供者订阅；每个跟随者自己一台小状态机
   interface Follower {
@@ -361,28 +329,14 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
       return scope.resources.lifecycle.disposed;
     },
     current: () => scope.services.get<P>(name),
+    require() {
+      const provider = scope.services.get<P>(name);
+      if (provider === undefined) throw new ServiceUnavailableError(scope, name, required);
+      return provider;
+    },
     all: () => scope.services.getAll<P>(name),
     follow: attach => follow(attach, false),
-    track(off, label) {
-      const what = label ?? name;
-      // 一次性且结果记忆：无论由手动退订、另一个句柄、还是清理链先调到，发起的都是同一笔清理，
-      // 清理链上的这一项返回同一个 Promise——关闭前登记的清理，关闭一定等到它
-      let started = false;
-      let result: PromiseLike<unknown> | undefined;
-      const run = (): PromiseLike<unknown> | undefined => {
-        if (!started) {
-          started = true;
-          result = withdraw(off, what);
-        }
-        return result;
-      };
-      const dispose = scope.resources.trackWithdrawal(run, what);
-      return () => {
-        if (started) return;
-        scope.resources.untrackWithdrawal(dispose);
-        run();
-      };
-    },
+    track: (off, label) => scope.resources.track(off, label ?? name),
     registrar<Item>(options: {
       key(item: Item): string;
       register(provider: P, item: Item): () => unknown;
@@ -485,16 +439,14 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
       };
     },
   };
-  if (required) requiredOrigins.set(port, { resources: scope.resources, name });
   return port;
 }
 
-/** 声明表里的依赖服务名。内置能力绑的是激活自身，不是依赖：不进激活闸，也不成关停边 */
+/** 声明表里的依赖服务名。所有服务共用激活闸与关停边 */
 function dependencyNames(uses: Uses, wantOptional: boolean): string[] {
   return Object.values(uses)
     .filter(use => isOptional(use) === wantOptional)
     .map(use => unwrapDescriptor(use))
-    .filter(descriptor => !isBuiltin(descriptor))
     .map(descriptor => descriptor.name);
 }
 

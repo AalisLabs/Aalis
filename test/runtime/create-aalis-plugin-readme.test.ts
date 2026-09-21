@@ -1,5 +1,11 @@
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { renderIndexTs, renderReadme } from '../../packages/create-aalis-plugin/src/cli.js';
+import { commands } from '../../packages/api-commands/src/index.js';
+import { tools } from '../../packages/api-tools/src/index.js';
+import { webuiServer } from '../../packages/api-webui/src/index.js';
+import { optionalNames, requiredNames } from '../../packages/core/src/context/binding.js';
+import * as core from '../../packages/core/src/index.js';
+import { renderIndexTs, renderPackageJson, renderReadme } from '../../packages/create-aalis-plugin/src/cli.js';
 
 // README 与 index 必须同源：uses 键集合一致，未勾选的能力不得出现在 README。
 
@@ -28,6 +34,32 @@ const COMBOS = [
 ] as const;
 
 describe('create-aalis-plugin README 与 index 同源', () => {
+  it('全部八种功能组合：生成清单与实际定义依赖对账，空功能也声明 logger', () => {
+    const imports: Record<string, unknown> = {
+      '@aalis/core': core,
+      '@aalis/api-tools': { tools },
+      '@aalis/api-commands': { commands },
+      '@aalis/api-webui': { webuiServer },
+    };
+    for (let mask = 0; mask < 8; mask++) {
+      const a = answers({ tool: Boolean(mask & 1), command: Boolean(mask & 2), webui: Boolean(mask & 4) });
+      const source = ts.transpileModule(renderIndexTs(a), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      }).outputText;
+      const exports: { default?: core.PluginDefinition } = {};
+      // 执行脚手架自己的模块定义（不执行 apply），使用真实契约描述符验证生成清单。
+      new Function('require', 'exports', source)((name: string) => {
+        if (!(name in imports)) throw new Error(`模板新增依赖未纳入测试: ${name}`);
+        return imports[name];
+      }, exports);
+      expect(exports.default).toBeDefined();
+      const declared = JSON.parse(renderPackageJson(a)).aalis.service;
+      expect(declared.required).toEqual(['logger']);
+      expect(declared.required).toEqual(requiredNames(exports.default!.uses ?? {}));
+      expect(declared.optional ?? []).toEqual(optionalNames(exports.default!.uses ?? {}));
+    }
+  });
+
   it('每种勾选组合：README 列出的 uses 键 == index 的 uses 键', () => {
     for (const features of COMBOS) {
       const a = answers(features);

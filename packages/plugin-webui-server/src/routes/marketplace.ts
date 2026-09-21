@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { Logger, PluginManagerService, PluginStatusEntry, ServiceRef } from '@aalis/core';
+import type { Logger, PluginManagerService, PluginStatusEntry, ServiceRef, Services } from '@aalis/core';
 import type { PackageManagerService } from '@aalis/plugin-package-manager';
 import { classifyDepSpec, type DepOrigin, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 import type express from 'express';
@@ -451,6 +451,8 @@ export function buildSearchUrl(q: string, keyword: string, registryBase: string 
 interface MarketplaceRoutesCaps {
   logger: Logger;
   plugins: Pick<ServiceRef<PluginManagerService>, 'current'>;
+  /** 实际提供者元数据，包含根激活提供的服务；不得为展示实例化服务工厂。 */
+  services: Pick<Services, 'inspect'>;
   /**
    * 取当前 package-manager 提供者。它由插件提供，而本包不反向依赖那个插件包，故按名现取：
    * 缺席时装/卸/更新三条路由回 503，市场列表仍可浏览。
@@ -642,11 +644,14 @@ export function registerMarketplaceRoutes(
     });
     const upstream = annotate(buildDependencyChain(name, upstreamMap, 'upstream', { isRelevant }));
     const downstream = annotate(buildDependencyChain(name, depMap, 'downstream'));
-    // 根的服务需求 + 提供者解析（已装范围内；未装提供者无法解析——见 docs，留空）。
-    const required = (svcOf.get(name)?.requires ?? rootServices?.requires ?? []).map(svc => ({
-      service: svc,
-      providedBy: status.find(p => p.name !== name && (p.provides ?? []).includes(svc))?.name ?? null,
-    }));
+    // 实际服务表包含根服务与按激活工厂；只读元数据，按当前偏好选出的提供者展示。
+    const required = (svcOf.get(name)?.requires ?? rootServices?.requires ?? []).map(svc => {
+      const provider = caps.services.inspect(svc)[0];
+      return {
+        service: svc,
+        providedBy: provider?.contextId === 'root' ? '@aalis/core' : (provider?.contextId ?? null),
+      };
+    });
     res.json({
       upstream,
       downstream,

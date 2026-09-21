@@ -43,7 +43,11 @@
   "aalis": {
     "service": {
       "required": [
-        "process"
+        "config",
+        "logger",
+        "process",
+        "provide",
+        "services"
       ],
       "optional": [
         "app",

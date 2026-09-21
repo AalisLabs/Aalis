@@ -70,6 +70,16 @@
       ],
       "provides": [
         "agent"
+      ],
+      "required": [
+        "config",
+        "contributions",
+        "events",
+        "hooks",
+        "lifecycle",
+        "logger",
+        "provide",
+        "services"
       ]
     }
   }

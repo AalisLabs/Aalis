@@ -27,8 +27,8 @@ import { ServiceCard } from '../../packages/plugin-webui-client/src/components/S
 /** 两个提供者 + 已有偏好：下拉切换与「恢复默认」按钮都在 */
 const multi: ServiceInfo = {
   providers: [
-    { contextId: 'plugin-llm-openai', priority: 10 },
-    { contextId: 'plugin-llm-ollama', priority: 5 },
+    { contextId: 'plugin-llm-openai', priority: 10, scope: 'shared', exclusive: false },
+    { contextId: 'plugin-llm-ollama', priority: 5, scope: 'shared', exclusive: false },
   ],
   preferred: 'plugin-llm-openai',
 };
@@ -43,6 +43,23 @@ afterEach(() => {
 });
 
 describe('服务偏好切换失败', () => {
+  it('独占的按激活服务只展示提供者，没有可切换的选择器', () => {
+    render(
+      <ServiceCard
+        name="events"
+        info={{
+          providers: [
+            { contextId: 'root', displayName: '@aalis/core', priority: 0, scope: 'activation', exclusive: true },
+          ],
+          preferred: null,
+        }}
+      />,
+    );
+    expect(screen.getByText('@aalis/core')).toBeTruthy();
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(apiCalls).toEqual([]);
+  });
+
   it('setPrefer 抛错时出声告知，不静默', async () => {
     apiFail = new Error('上下文 plugin-llm-ollama 未提供 llm');
     const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});

@@ -47,6 +47,12 @@
       ],
       "provides": [
         "gateway"
+      ],
+      "required": [
+        "events",
+        "hooks",
+        "logger",
+        "provide"
       ]
     }
   }

@@ -1,3 +1,16 @@
+/** A provider factory is stored in the same registry as shared instances. */
+const FACTORY = Symbol.for('aalis.service-factory');
+export interface ScopedProvider<T, S> {
+  readonly [FACTORY]: true;
+  create(scope: S): T;
+}
+export function scopedProvider<T, S>(create: (scope: S) => T): ScopedProvider<T, S> {
+  return { [FACTORY]: true, create };
+}
+export function isScopedProvider(value: unknown): value is ScopedProvider<unknown, unknown> {
+  return typeof value === 'object' && value !== null && (value as ScopedProvider<unknown, unknown>)[FACTORY] === true;
+}
+
 // ----- 服务系统数据契约（与容器实现同文件，同 contributions.ts 的 Spec/Handle 惯例） -----
 
 /** ServiceContainer.getAll / ServiceRef.all 的元素：ServiceEntry 的投影，不含清理归属 owner。 */
@@ -8,8 +21,17 @@ export interface ServiceView<T = unknown> {
   label?: string;
 }
 
+export interface ServiceInfo {
+  contextId: string;
+  priority: number;
+  label?: string;
+  scope: 'shared' | 'activation';
+  exclusive: boolean;
+}
+
 interface ServiceEntry {
   instance: unknown;
+  exclusive?: boolean;
   /**
    * 数字越大越优先；同值先注册者胜（稳定降序）。解析序恒为
    * 「偏好 > 优先级 > 注册顺序」——优先级是静态默认序，偏好是用户显式覆盖。
@@ -55,7 +77,7 @@ export class ServiceContainer {
     instance: unknown,
     contextId: string,
     owner?: symbol,
-    options?: { priority?: number; label?: string },
+    options?: { priority?: number; label?: string; exclusive?: boolean },
   ): () => boolean {
     // 空实现会骗过 require() 的缺席判断；非有限 priority 让 sort 比较器返回 NaN，先登记者盖过后来的有限值
     if (instance === null || instance === undefined) {
@@ -65,11 +87,21 @@ export class ServiceContainer {
       throw new Error(`provide 的 priority 必须是有限数字（收到 ${String(options.priority)}）`);
     }
     let list = this.entries.get(name);
+    if (list?.length && (options?.exclusive || list.some(entry => entry.exclusive))) {
+      throw new Error(`服务 "${name}" 为独占登记，不能添加另一个提供者`);
+    }
     if (!list) {
       list = [];
       this.entries.set(name, list);
     }
-    const entry: ServiceEntry = { instance, priority: options?.priority ?? 0, contextId, owner, label: options?.label };
+    const entry: ServiceEntry = {
+      instance: isScopedProvider(instance) ? scopedProvider(instance.create) : instance,
+      exclusive: options?.exclusive,
+      priority: options?.priority ?? 0,
+      contextId,
+      owner,
+      label: options?.label,
+    };
     list.push(entry);
     // 按优先级降序排列（稳定排序：同优先级先注册者在前）
     list.sort((a, b) => b.priority - a.priority);
@@ -168,8 +200,23 @@ export class ServiceContainer {
    * 当前胜者的清理归属（关停编排用它认「这个服务现在由哪次激活提供」，不从 contextId 字符串猜）。
    * @internal
    */
-  ownerOf(name: string): symbol | undefined {
-    return this.resolveEntries(name)[0]?.owner;
+  ownerOf(name: string, instance?: unknown): symbol | undefined {
+    return (
+      instance === undefined
+        ? this.resolveEntries(name)[0]
+        : this.entries.get(name)?.find(entry => entry.instance === instance)
+    )?.owner;
+  }
+
+  /** Enumerate provider metadata without constructing activation-scoped instances. */
+  inspect(name: string): ServiceInfo[] {
+    return this.resolveEntries(name).map(entry => ({
+      contextId: entry.contextId,
+      priority: entry.priority,
+      label: entry.label,
+      scope: isScopedProvider(entry.instance) ? 'activation' : 'shared',
+      exclusive: entry.exclusive ?? false,
+    }));
   }
 
   /**
@@ -198,6 +245,8 @@ export class ServiceContainer {
    * @internal
    */
   prefer(name: string, contextId: string): boolean {
+    const exclusive = this.entries.get(name)?.find(entry => entry.exclusive);
+    if (exclusive && exclusive.contextId !== contextId) return false;
     this.preferences.set(name, contextId);
     return true;
   }
