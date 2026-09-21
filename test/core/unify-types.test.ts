@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type ToolService, tools } from '../../packages/api-tools/src/index.js';
+import { assertValidInstanceId } from '../../packages/core/src/context/definition.js';
 import {
   App,
   definePlugin,
   defineService,
   logger,
   optional,
+  type PluginDefinition,
   provide,
   type ServiceRef,
 } from '../../packages/core/src/index.js';
@@ -163,5 +165,56 @@ describe('定义对象的 name', () => {
 
     // 作用域包名含 '/'；parseInstanceId 只把 '/' 之后的 ':' 当成 suffix——这是合法 name
     expect(definePlugin({ name: '@scope/plugin', apply() {} }).name).toBe('@scope/plugin');
+  });
+
+  it('空白 name（trim 后空）与空串同类拒绝', () => {
+    expect(() => definePlugin({ name: '   ', apply() {} })).toThrow('插件定义缺少合法 name（须为非空字符串）');
+    expect(() => definePlugin({ name: '\t\n', apply() {} })).toThrow('插件定义缺少合法 name（须为非空字符串）');
+  });
+
+  it('name 不能是 __proto__ / constructor / prototype', () => {
+    for (const name of ['__proto__', 'constructor', 'prototype']) {
+      expect(() => definePlugin({ name, apply() {} }), name).toThrow(
+        `插件 "${name}" 的 name 不能使用危险键（__proto__ / constructor / prototype）`,
+      );
+    }
+    expect(() => assertValidInstanceId('__proto__')).toThrow(
+      'instanceId "__proto__" 不能使用危险键（__proto__ / constructor / prototype）',
+    );
+  });
+});
+
+describe('定义对象的 uses / apply / provides', () => {
+  const asDef = (value: unknown) => value as PluginDefinition;
+  const apps: App[] = [];
+  afterEach(async () => {
+    for (const app of apps.splice(0)) await app.stop().catch(() => {});
+  });
+
+  it('uses 为数字、布尔或数组在定义期拒绝', () => {
+    expect(() => definePlugin(asDef({ name: 'u-num', uses: 5, apply() {} }))).toThrow(
+      '插件 "u-num" 的 uses 必须是纯对象（不能是数组或原始值）',
+    );
+    expect(() => definePlugin(asDef({ name: 'u-bool', uses: true, apply() {} }))).toThrow(
+      '插件 "u-bool" 的 uses 必须是纯对象（不能是数组或原始值）',
+    );
+    expect(() => definePlugin(asDef({ name: 'u-arr', uses: [], apply() {} }))).toThrow(
+      '插件 "u-arr" 的 uses 必须是纯对象（不能是数组或原始值）',
+    );
+  });
+
+  it('apply 非函数：definePlugin 抛；手写 register 返回 false 且不落账', async () => {
+    expect(() => definePlugin(asDef({ name: 'no-apply' }))).toThrow('插件 "no-apply" 的 apply 必须是函数');
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    apps.push(app);
+    expect(await app.plugins.register(asDef({ name: 'no-apply' }))).toBe(false);
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('no-apply')).toBeUndefined();
+  });
+
+  it('provides 元素非描述符：文案含原值', () => {
+    expect(() => definePlugin(asDef({ name: 'prov-str', provides: ['zz-s5-kv'], apply() {} }))).toThrow(
+      '插件 "prov-str" 的 provides 含有不是描述符的元素（zz-s5-kv）',
+    );
   });
 });
