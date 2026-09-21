@@ -11,7 +11,7 @@
 // 测试据 gen.txt 断言只有一代。
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { definePlugin, lifecycle, provide, services } from '@aalis/core';
+import { config, definePlugin, lifecycle, provide, services } from '@aalis/core';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { startAalis } from '../../packages/runtime/src/start.js';
 
@@ -26,8 +26,13 @@ const slowMs = Number(process.env.AALIS_E2E_SLOW_MS ?? '0');
 const plugin = definePlugin({
   name: 'e2e-probe',
   provides: [commands],
-  uses: { provide, lifecycle, services },
-  apply({ provide, lifecycle, services }) {
+  configSchema: {
+    known: { type: 'number', label: 'K', default: 7 },
+    nested: { label: 'N', fields: { filled: { type: 'number', label: 'F', default: 9 } } },
+  },
+  uses: { provide, lifecycle, services, config },
+  apply({ provide, lifecycle, services, config }) {
+    writeFileSync(resolve(process.cwd(), 'first-config.json'), JSON.stringify(config));
     provide(commands, {
       has: (name: string) => name === 'probe' || name === 'restart',
       async execute(name: string, input: { args: string[] }) {

@@ -9,7 +9,7 @@
 // 宿主将没有自动配置同步与热重载——需要时用公开 API 自行编排。
 // ============================================================
 
-import type { App } from '@aalis/core';
+import { type App, type PluginDefinition, type PluginLoader, parseInstanceId } from '@aalis/core';
 import { defaultsFrom, removeExtraFields, validateConfig } from '@aalis/schema-config';
 
 export interface ConfigSyncOptions {
@@ -30,46 +30,57 @@ export interface ConfigSyncOptions {
  * （core 的状态摘要不携带配置详情）。
  */
 export function syncPluginDefaults(app: App, opts?: ConfigSyncOptions): string[] {
-  const trim = opts?.trimUnknownFields ?? true;
-  const config = app.config;
   const changed: string[] = [];
   for (const status of app.plugins.getStatus()) {
     const entry = app.plugins.getPlugin(status.instanceId);
     if (!entry) continue;
-    const schema = entry.definition.configSchema;
-    const defaults = defaultsFrom(schema);
-    const fileConfig = config.getPluginConfig(status.instanceId);
-
-    let merged = deepMergeDefaults(defaults, fileConfig);
-    if (trim && schema && Object.keys(schema).length > 0) {
-      const removed: string[] = [];
-      merged = removeExtraFields(merged, schema, removed);
-      if (removed.length > 0) {
-        app.logger.warn(`配置同步：${status.instanceId} 裁掉 schema 外字段 [${removed.join(', ')}]`);
-      }
-    }
-
-    // 结构校验只告警不拒载：存量脏值不该打死在跑的实例，但必须出声——
-    // 静默的坏配置曾让压缩机制无声死亡一天半（summaryLLM 旧格式 ref）。
-    // 禁用插件跳过：其配置是休眠数据，"必填缺失"等问题在启用后自然浮现。
-    if (status.state !== 'disabled') {
-      const problems = validateConfig(schema, merged);
-      if (problems.length > 0) {
-        app.logger.warn(
-          `配置校验：${status.instanceId} 有 ${problems.length} 处问题（仅告警，不影响加载）：` +
-            problems.map(p => `${p.path}: ${p.message}`).join('；'),
-        );
-      }
-    }
-
-    if (JSON.stringify(merged) !== JSON.stringify(fileConfig)) {
-      config.setPluginConfig(status.instanceId, merged);
-      changed.push(status.instanceId);
-    }
+    if (syncPluginConfig(app, entry.definition, status.instanceId, opts)) changed.push(status.instanceId);
   }
-  // 尽力而为：同步失败不该拦住启动/热重载；同步 provider 的抛错仍同步冒出，这里只接异步拒绝。
-  if (changed.length > 0) config.save().catch(err => app.logger.warn('配置同步落盘失败:', err));
+  if (changed.length > 0) saveSyncedConfig(app);
   return changed;
+}
+
+/**
+ * 宿主加载政策：导入定义后、交给 Core 注册前规范化主实例与已配置的复用实例。
+ * 首次加载批次只落盘一次；随后市场 rescan 的 load/reload 也走同一政策。
+ * getApp 延迟取值，因为加载器在 App 构造时注入，而 load 在构造完成后才执行。
+ */
+export function withPluginConfigSync(loader: PluginLoader, getApp: () => App, opts?: ConfigSyncOptions) {
+  let initialLoad = true;
+  let initialChanged = false;
+  const prepare = async (loaded: Promise<PluginDefinition | null>): Promise<PluginDefinition | null> => {
+    const definition = await loaded;
+    if (!definition) return null;
+    const app = getApp();
+    const ids = [definition.name];
+    if (definition.reusable) {
+      for (const id of Object.keys(app.config.get('plugins'))) {
+        const { moduleName, suffix } = parseInstanceId(id);
+        if (suffix && moduleName === definition.name) ids.push(id);
+      }
+    }
+    let changed = false;
+    for (const id of ids) {
+      if (!syncPluginConfig(app, definition, id, opts)) continue;
+      app.logger.debug(`同步插件配置: ${id}`);
+      changed = true;
+    }
+    if (initialLoad) initialChanged ||= changed;
+    else if (changed) saveSyncedConfig(app);
+    return definition;
+  };
+  return {
+    loader: {
+      discover: () => loader.discover(),
+      load: descriptor => prepare(loader.load(descriptor)),
+      ...(loader.reload ? { reload: descriptor => prepare(loader.reload!(descriptor)) } : {}),
+    } satisfies PluginLoader,
+    finishInitialLoad() {
+      initialLoad = false;
+      if (initialChanged) saveSyncedConfig(getApp());
+      initialChanged = false;
+    },
+  };
 }
 
 /**
@@ -88,9 +99,7 @@ export async function handleConfigChanged(app: App, opts?: ConfigSyncOptions): P
     for (const status of app.plugins.getStatus()) {
       const entry = app.plugins.getPlugin(status.instanceId);
       if (!entry) continue;
-      const defaults = defaultsFrom(entry.definition.configSchema);
-      const fileConfig = app.config.getPluginConfig(status.instanceId);
-      const newConfig = { ...defaults, ...fileConfig };
+      const newConfig = app.config.getPluginConfig(status.instanceId);
       if (JSON.stringify(newConfig) !== JSON.stringify(entry.config)) {
         app.logger.info(`插件 ${status.instanceId} 配置已变更，正在重新加载...`);
         await app.plugins.updateConfig(status.instanceId, newConfig);
@@ -111,6 +120,34 @@ export function installConfigHotReload(app: App, opts?: ConfigSyncOptions): void
 }
 
 // ---- helpers ----
+
+function syncPluginConfig(app: App, definition: PluginDefinition, id: string, opts?: ConfigSyncOptions): boolean {
+  const schema = definition.configSchema;
+  const fileConfig = app.config.getPluginConfig(id);
+  let merged = deepMergeDefaults(defaultsFrom(schema), fileConfig);
+  if ((opts?.trimUnknownFields ?? true) && schema && Object.keys(schema).length > 0) {
+    const removed: string[] = [];
+    merged = removeExtraFields(merged, schema, removed);
+    if (removed.length > 0) app.logger.warn(`配置同步：${id} 裁掉 schema 外字段 [${removed.join(', ')}]`);
+  }
+  // 脏值只告警不拒载；禁用实例的休眠配置不产生必填缺失噪音。
+  if (!app.config.isPluginDisabled(id)) {
+    const problems = validateConfig(schema, merged);
+    if (problems.length > 0) {
+      app.logger.warn(
+        `配置校验：${id} 有 ${problems.length} 处问题（仅告警，不影响加载）：` +
+          problems.map(p => `${p.path}: ${p.message}`).join('；'),
+      );
+    }
+  }
+  if (JSON.stringify(merged) === JSON.stringify(fileConfig)) return false;
+  app.config.setPluginConfig(id, merged);
+  return true;
+}
+
+function saveSyncedConfig(app: App): void {
+  app.config.save().catch(err => app.logger.warn('配置同步落盘失败:', err));
+}
 
 /**
  * 深度合并默认值：只填充缺失的键，不覆盖已有值。
