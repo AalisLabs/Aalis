@@ -5,7 +5,13 @@ import type { ToolService } from '@aalis/api-tools';
 import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui';
 import type { AppService, ConfigManager, Logger, PluginManagerService, ServiceRef } from '@aalis/core';
 import { parseInstanceId } from '@aalis/core';
-import { CORE_CONFIG_SCHEMA, defaultsFrom, validateConfig } from '@aalis/schema-config';
+import {
+  CORE_CONFIG_SCHEMA,
+  cloneConfigObject,
+  defaultsFrom,
+  removeExtraFields,
+  validateConfig,
+} from '@aalis/schema-config';
 import type express from 'express';
 import type { RouteGate } from '../gate.js';
 
@@ -77,28 +83,34 @@ export function registerPluginRoutes(
       commandsByPlugin.set(owner, list);
       addCaps(owner, c.visibility);
     }
-    const plugins = pm.getStatus().map(p => ({
-      name: p.name,
-      instanceId: p.instanceId,
-      displayName: p.displayName,
-      state: p.state,
-      provides: p.provides ?? [],
-      // 能力披露：该插件「要调用哪些子系统」（inject 依赖）+「是否含 restricted 工具/指令」，供安装后知情查看。
-      requiredServices: p.requiredServices ?? [],
-      optionalServices: p.optionalServices ?? [],
-      capabilities: [...(capsByPlugin.get(p.instanceId) ?? [])],
-      tools: toolsByPlugin.get(p.instanceId) ?? [],
-      commands: commandsByPlugin.get(p.instanceId) ?? [],
-      core: p.core ?? false,
-      reusable: p.reusable ?? false,
-      // extends / config / configSchema / defaultConfig 非内核状态摘要字段
-      // （getStatus 只含内核事实）：从 entry.config / entry.definition 补齐给前端。
-      extends: pm.getPlugin(p.instanceId)?.definition?.extends,
-      config: pm.getPlugin(p.instanceId)?.config ?? {},
-      configSchema: pm.getPlugin(p.instanceId)?.definition?.configSchema,
-      defaultConfig: defaultsFrom(pm.getPlugin(p.instanceId)?.definition?.configSchema),
-      error: p.error,
-    }));
+    const plugins = pm.getStatus().map(p => {
+      const entry = pm.getPlugin(p.instanceId);
+      const schema = entry?.definition?.configSchema as Record<string, unknown> | undefined;
+      // 列表给概览用：schema.secret 字段换成固定掩码。编辑器走 GET /api/plugins/:name/config，那条不脱敏。
+      const config = maskSecretFields(cloneConfigObject((entry?.config ?? {}) as Record<string, unknown>), schema);
+      return {
+        name: p.name,
+        instanceId: p.instanceId,
+        displayName: p.displayName,
+        state: p.state,
+        provides: p.provides ?? [],
+        // 能力披露：该插件「要调用哪些子系统」（inject 依赖）+「是否含 restricted 工具/指令」，供安装后知情查看。
+        requiredServices: p.requiredServices ?? [],
+        optionalServices: p.optionalServices ?? [],
+        capabilities: [...(capsByPlugin.get(p.instanceId) ?? [])],
+        tools: toolsByPlugin.get(p.instanceId) ?? [],
+        commands: commandsByPlugin.get(p.instanceId) ?? [],
+        core: p.core ?? false,
+        reusable: p.reusable ?? false,
+        // extends / config / configSchema / defaultConfig 非内核状态摘要字段
+        // （getStatus 只含内核事实）：从 entry.config / entry.definition 补齐给前端。
+        extends: entry?.definition?.extends,
+        config,
+        configSchema: entry?.definition?.configSchema,
+        defaultConfig: defaultsFrom(entry?.definition?.configSchema),
+        error: p.error,
+      };
+    });
     res.json({ plugins });
   });
 
@@ -232,7 +244,8 @@ export function registerPluginRoutes(
     }
   });
 
-  // 获取单个插件的原始配置（未脱敏，给编辑器用）
+  // 获取单个插件的原始配置（未脱敏，给编辑器回写用）。
+  // 列表 GET /api/plugins 已把 schema.secret 换成固定掩码；本接口必须是原文，否则保存会把掩码写回。
   expressApp.get('/api/plugins/:name/config', gate(), (req, res) => {
     const pluginName = req.params.name;
     try {
@@ -490,41 +503,43 @@ export function registerPluginRoutes(
   });
 }
 
+/** 列表 payload 用的固定掩码。与 PUT 响应「不回显密钥」同一政策：概览面看不到明文。 */
+const SECRET_MASK = '••••••';
+
 /**
- * 按 configSchema 裁未知键。实现与 `@aalis/runtime` 的 config-sync 私有同名函数对齐
- * （webui-server 不能依赖 runtime；该函数也尚未抽到 `@aalis/schema-config`）。
+ * 把 schema.secret === true 的字段换成固定掩码。入参须已是拷贝——就地改，避免写穿现场 config。
+ * 分组递归；数组元素若是对象则按 items 再走一遍。缺席的键不补掩码。
  */
-function removeExtraFields(
+function maskSecretFields(
   config: Record<string, unknown>,
-  schema: Record<string, unknown>,
-  removed?: string[],
-  prefix = '',
+  schema: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(config)) {
-    if (!(key in schema)) {
-      removed?.push(prefix + key);
+  if (!schema) return config;
+  for (const [key, raw] of Object.entries(schema)) {
+    if (!raw || typeof raw !== 'object') continue;
+    const def = raw as Record<string, unknown>;
+    if (def.secret === true) {
+      if (Object.hasOwn(config, key)) config[key] = SECRET_MASK;
       continue;
     }
-    const schemaDef = schema[key] as Record<string, unknown>;
-    if (schemaDef.type === 'array') {
-      result[key] = value;
-    } else if (
-      schemaDef.fields &&
-      typeof schemaDef.fields === 'object' &&
-      value !== null &&
-      typeof value === 'object' &&
-      !Array.isArray(value)
+    const nested = config[key];
+    if (
+      def.fields &&
+      typeof def.fields === 'object' &&
+      nested &&
+      typeof nested === 'object' &&
+      !Array.isArray(nested)
     ) {
-      result[key] = removeExtraFields(
-        value as Record<string, unknown>,
-        schemaDef.fields as Record<string, unknown>,
-        removed,
-        `${prefix + key}.`,
-      );
-    } else {
-      result[key] = value;
+      maskSecretFields(nested as Record<string, unknown>, def.fields as Record<string, unknown>);
+      continue;
+    }
+    if (def.type === 'array' && Array.isArray(nested) && def.items && typeof def.items === 'object') {
+      for (const item of nested) {
+        if (item && typeof item === 'object' && !Array.isArray(item)) {
+          maskSecretFields(item as Record<string, unknown>, def.items as Record<string, unknown>);
+        }
+      }
     }
   }
-  return result;
+  return config;
 }

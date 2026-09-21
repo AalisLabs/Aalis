@@ -131,6 +131,27 @@ export function definePlugin<U extends Uses = {}>(definition: PluginDefinition<U
   return definition;
 }
 
+/**
+ * 从已导入的模块取出插件定义：入口的 default 须是 definePlugin 的产物（带非空 name 与 apply 的对象）。
+ * 对不上返回 null。加载器与包管理都走这里——「是不是插件 / 名字是什么」只有这一份判定。
+ *
+ * default 为函数或类不算：它们天然继承 Function.prototype.apply，只查 `.apply` 会把
+ * `export default function` 误当插件，随后被调用的是 Function.prototype.apply——插件体空跑却被标记已激活。
+ */
+export function pluginDefinitionOf(mod: unknown): PluginDefinition | null {
+  const candidate = (mod as { default?: unknown } | null)?.default as Partial<PluginDefinition> | null | undefined;
+  if (
+    typeof candidate !== 'object' ||
+    candidate === null ||
+    typeof candidate.name !== 'string' ||
+    candidate.name === '' ||
+    typeof candidate.apply !== 'function'
+  ) {
+    return null;
+  }
+  return candidate as PluginDefinition;
+}
+
 const activationConfig = new WeakMap<Context, Readonly<Record<string, unknown>>>();
 
 /** @internal 这次激活的插件配置（内置能力 config 的数据源） */
