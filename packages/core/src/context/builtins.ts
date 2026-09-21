@@ -18,7 +18,7 @@ import type { ProviderOf, ServiceDescriptor } from './binding.js';
 import { builtinService, type CapabilityScope } from './capabilities.js';
 import type { PluginDefinition } from './definition.js';
 import type { Logger } from './logger.js';
-import { validateProvide } from './services-helpers.js';
+import { validateProvide } from './service-helpers.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
