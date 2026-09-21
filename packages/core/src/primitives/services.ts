@@ -57,6 +57,13 @@ export class ServiceContainer {
     owner?: symbol,
     options?: { priority?: number; label?: string },
   ): () => boolean {
+    // 空实现会骗过 require() 的缺席判断；非有限 priority 让 sort 比较器返回 NaN，先登记者盖过后来的有限值
+    if (instance === null || instance === undefined) {
+      throw new Error('provide 的实现不能为空');
+    }
+    if (options?.priority !== undefined && !Number.isFinite(options.priority)) {
+      throw new Error(`provide 的 priority 必须是有限数字（收到 ${String(options.priority)}）`);
+    }
     let list = this.entries.get(name);
     if (!list) {
       list = [];
