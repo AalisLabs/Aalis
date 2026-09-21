@@ -59,6 +59,7 @@ const RUNTIME_EXPORTS = [
   'optional',
   'parseInstanceId',
   'parseLogLine',
+  'pluginDefinitionOf',
   'pluginsService',
   'provide',
   'serviceRef',

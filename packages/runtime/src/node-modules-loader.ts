@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Logger, PluginDefinition, PluginDescriptor, PluginLoader } from '@aalis/core';
-import { DefaultLogger } from '@aalis/core';
+import { DefaultLogger, pluginDefinitionOf } from '@aalis/core';
 
 // ============================================================
 // NodeModulesPluginLoader —— 从 node_modules 解析并加载插件
@@ -39,32 +39,21 @@ export function isLoadablePlugin(meta: Record<string, unknown>): boolean {
 }
 
 /**
- * 从已导入的模块取出插件定义：入口的 default 导出须是 definePlugin 的产物（带 name 与 apply 的对象）。
- * 不是就告警并返回 null——「装了没反应」必须出声。两加载器共用。
- *
- * default 为函数或类不算：它们天然继承 Function.prototype.apply，只查 .apply 会把
- * `export default function` 误当插件，随后被调用的是 Function.prototype.apply——插件体空跑却被标记已激活。
+ * 从已导入模块取出定义，并按加载器政策出声：形状不对必须 warn；定义 name 与包名不一致也必须点名。
+ * 判定本身在 `@aalis/core` 的 `pluginDefinitionOf`；两加载器共用本包装，告警文案只有这一份。
  */
-export function pluginDefinitionOf(ns: unknown, pkgName: string, logger: Logger): PluginDefinition | null {
-  const candidate = (ns as { default?: unknown } | null)?.default as Partial<PluginDefinition> | null | undefined;
-  if (
-    typeof candidate !== 'object' ||
-    candidate === null ||
-    typeof candidate.name !== 'string' ||
-    candidate.name === '' ||
-    typeof candidate.apply !== 'function'
-  ) {
+export function loadPluginDefinition(ns: unknown, pkgName: string, logger: Logger): PluginDefinition | null {
+  const def = pluginDefinitionOf(ns);
+  if (!def) {
     logger.warn(
       `插件 "${pkgName}" 的入口没有默认导出插件定义，将被跳过——入口须 \`export default definePlugin({ … })\``,
     );
     return null;
   }
-  if (candidate.name !== pkgName) {
-    logger.warn(
-      `插件包 "${pkgName}" 的定义 name 为 "${candidate.name}"——配置键/热扫描/卸载均以定义的 name 为准，二者应一致`,
-    );
+  if (def.name !== pkgName) {
+    logger.warn(`插件包 "${pkgName}" 的定义 name 为 "${def.name}"——配置键/热扫描/卸载均以定义的 name 为准，二者应一致`);
   }
-  return candidate as PluginDefinition;
+  return def;
 }
 
 /**
@@ -140,7 +129,7 @@ export function createNodeModulesPluginLoader(projectDir: string = process.cwd()
     },
 
     async load(desc): Promise<PluginDefinition | null> {
-      return pluginDefinitionOf(await import(pathToFileURL(desc.source).href), desc.name, logger);
+      return loadPluginDefinition(await import(pathToFileURL(desc.source).href), desc.name, logger);
     },
 
     async reload(desc): Promise<PluginDefinition | null> {
@@ -150,7 +139,7 @@ export function createNodeModulesPluginLoader(projectDir: string = process.cwd()
       } catch {
         /* stat 失败时用空 key，让 import 自己报错 */
       }
-      return pluginDefinitionOf(await import(pathToFileURL(desc.source).href + cacheKey), desc.name, logger);
+      return loadPluginDefinition(await import(pathToFileURL(desc.source).href + cacheKey), desc.name, logger);
     },
   };
 }

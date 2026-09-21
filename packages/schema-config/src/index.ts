@@ -2,9 +2,10 @@
 // @aalis/schema-config — 配置 Schema 词汇契约 + 词汇的中立解释
 //
 // 类型部分描述"配置如何呈现为表单"（label / options / textarea …）；
-// 函数部分是对这套词汇的**中立解释**：默认值派生（defaultsFrom）与只读
-// 结构校验（validateConfig）。两者都不属于 @aalis/core——core 只把
-// `PluginMeta.configSchema` 当作 opaque 数据透传，不解释任何字段。
+// 函数部分是对这套词汇的**中立解释**：默认值派生（defaultsFrom）、只读
+// 结构校验（validateConfig）、按 schema 键集裁未知字段（removeExtraFields）。
+// 三者都不属于 @aalis/core——core 只把 `PluginMeta.configSchema` 当作
+// opaque 数据透传，不解释任何字段。
 //
 // 消费方：
 // - 插件：在 `definePlugin({ configSchema })` 的定义对象里声明
@@ -162,7 +163,7 @@ const NEUTRAL_FIELD_TYPES: ReadonlySet<string> = new Set([
  * 按 ConfigSchema 对配置做只读结构校验，返回问题清单（空数组 = 无问题）。
  *
  * 定位与边界：
- * - **只读**：不转换、不回填、不裁剪——那些是 defaultsFrom 与宿主政策的职责。
+ * - **只读**：不转换、不回填、不裁剪——回填是 defaultsFrom，裁剪是 removeExtraFields。
  *   校验器出错的最大代价必须始终是"少一条警告"，因此它绝不参与配置取值链路。
  * - **只解释中立词汇**：type/required 之外的语义（含宿主经 declaration merging
  *   注入的呈现属性，如 secret/allowCustom）一概不解读。
@@ -184,6 +185,49 @@ export function validateConfig(schema: ConfigSchema | undefined, config: Record<
   const issues: SchemaIssue[] = [];
   validateFields(schema ?? {}, config, '', issues);
   return issues;
+}
+
+/**
+ * 按 schema 键集裁掉未知字段。configSchema 是插件配置的**唯一声明来源**（默认值也从它派生），
+ * 所以它的键集就是完整的白名单：不在 schema 里的字段，要么是用户手写的错别字，
+ * 要么是已废弃的旧字段，裁掉即归位。无 schema 的插件不裁（见调用方守卫）。
+ *
+ * 被裁的键写入 `removed`（带点号前缀）——静默裁剪会让「字段被吃掉」与「用户没配」不可分辨。
+ * `type: 'array'` 的值整段保留（数组元素结构由 validateConfig 解释，不在这里拆）。
+ */
+export function removeExtraFields(
+  config: Record<string, unknown>,
+  schema: Record<string, unknown>,
+  removed?: string[],
+  prefix = '',
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(config)) {
+    if (!(key in schema)) {
+      removed?.push(prefix + key);
+      continue;
+    }
+    const schemaDef = schema[key] as Record<string, unknown>;
+    if (schemaDef.type === 'array') {
+      result[key] = value;
+    } else if (
+      schemaDef.fields &&
+      typeof schemaDef.fields === 'object' &&
+      value !== null &&
+      typeof value === 'object' &&
+      !Array.isArray(value)
+    ) {
+      result[key] = removeExtraFields(
+        value as Record<string, unknown>,
+        schemaDef.fields as Record<string, unknown>,
+        removed,
+        `${prefix + key}.`,
+      );
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
 }
 
 function validateFields(
