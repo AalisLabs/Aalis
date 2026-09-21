@@ -8,6 +8,7 @@
 
 import { assemble, type BoundOf, isOptional, type ServiceDescriptor, type Uses } from './binding.js';
 import type { Context } from './context.js';
+import { isPlainConfigObject, isUnsafeConfigKey } from './safe-keys.js';
 
 /**
  * 插件元数据的扩展点：core 对这里的字段零感知，只原样带在插件定义上。配置表单（configSchema）由
@@ -19,7 +20,8 @@ export interface PluginMeta {}
 export interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
   /**
    * 插件名，与 package.json 的 name 一致；单实例时即实例 id。
-   * 须为非空字符串，且不含 instanceId 的 `:suffix`（parseInstanceId 从 '/' 之后切开）与子模块的 `#`。
+   * 须为 trim 后非空的字符串，不能是 `__proto__` / `constructor` / `prototype`，
+   * 且不含 instanceId 的 `:suffix`（parseInstanceId 从 '/' 之后切开）与子模块的 `#`。
    */
   name: string;
   displayName?: string;
@@ -51,13 +53,21 @@ export interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
 }
 
 /**
- * id 形状的公共闸：非空字符串，且不含 `#`（子模块 id 是 `父id#模块名`）。
+ * id 形状的公共闸：trim 后非空，不是配置层危险键（`__proto__` / `constructor` / `prototype`），
+ * 且不含 `#`（子模块 id 是 `父id#模块名`）。
  * `definition.name` 额外禁止 `:suffix`；`register` 第三参 instanceId 允许 `name:suffix`。
  */
 function assertValidId(id: unknown, kind: 'name' | 'instanceId'): asserts id is string {
-  if (typeof id !== 'string' || id === '') {
+  if (typeof id !== 'string' || id.trim() === '') {
     throw new Error(
       kind === 'name' ? '插件定义缺少合法 name（须为非空字符串）' : '插件缺少合法 instanceId（须为非空字符串）',
+    );
+  }
+  if (isUnsafeConfigKey(id) || isUnsafeConfigKey(id.trim())) {
+    throw new Error(
+      kind === 'name'
+        ? `插件 "${id}" 的 name 不能使用危险键（__proto__ / constructor / prototype）`
+        : `instanceId "${id}" 不能使用危险键（__proto__ / constructor / prototype）`,
     );
   }
   if (id.includes('#')) {
@@ -85,13 +95,28 @@ function assertValidPluginName(name: unknown): asserts name is string {
   }
 }
 
-/** 校验一份定义：name 合法，且 uses 每一项都是描述符（或 optional 包着的描述符） */
+function isServiceDescriptor(value: unknown): boolean {
+  return typeof (value as { bind?: unknown } | null)?.bind === 'function';
+}
+
+/** 校验一份定义：name 合法，uses 为纯对象且每一项都是描述符，apply 是函数，provides 元素都是描述符 */
 export function validateDefinition(definition: PluginDefinition): void {
   assertValidPluginName(definition.name);
+  if (definition.uses !== undefined && !isPlainConfigObject(definition.uses)) {
+    throw new Error(`插件 "${definition.name}" 的 uses 必须是纯对象（不能是数组或原始值）`);
+  }
   for (const [key, use] of Object.entries(definition.uses ?? {})) {
     const descriptor = isOptional(use) ? use.optional : use;
-    if (typeof (descriptor as { bind?: unknown } | null)?.bind !== 'function') {
+    if (!isServiceDescriptor(descriptor)) {
       throw new Error(`插件 "${definition.name}" 的 uses.${key} 不是服务描述符（应为 defineService 的结果）`);
+    }
+  }
+  if (typeof definition.apply !== 'function') {
+    throw new Error(`插件 "${definition.name}" 的 apply 必须是函数`);
+  }
+  for (const item of definition.provides ?? []) {
+    if (!isServiceDescriptor(item)) {
+      throw new Error(`插件 "${definition.name}" 的 provides 含有不是描述符的元素（${String(item)}）`);
     }
   }
 }

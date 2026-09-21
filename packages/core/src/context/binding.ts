@@ -121,6 +121,9 @@ export type ProviderOf<D> = D extends ServiceDescriptor<infer P, any> ? P : neve
 export function defineService<P>(name: string): ServiceDescriptor<P, ServiceRef<P>>;
 export function defineService<P, B>(name: string, bind: (port: BindingPort<P>) => B): ServiceDescriptor<P, B>;
 export function defineService<P, B>(name: string, bind?: (port: BindingPort<P>) => B): ServiceDescriptor<P, B> {
+  if (typeof name !== 'string' || name.trim() === '') {
+    throw new Error('服务 name 不能为空');
+  }
   return { name, bind: bind ?? (serviceRef as unknown as (port: BindingPort<P>) => B) };
 }
 
