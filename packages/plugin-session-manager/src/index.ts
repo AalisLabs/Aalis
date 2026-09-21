@@ -696,6 +696,32 @@ class SessionManager implements SessionManagerService {
     }
   }
 
+  /**
+   * 关停收尾：仍 `active` 的会话立即收口并落盘。
+   *
+   * 枚举没有 interrupted：回合结束（含用户停止 / abort）既有收口就是 `completed`，
+   * 关停打断在飞回合与那条路径同义，沿用同一状态，不新造值。
+   * waiting / completed / error / archived 不是在飞，原样保留。
+   *
+   * 必须在 onDrain 做完：agent↔SM 是 optional 互用，不能指望 agent 钩子还在。
+   * persist 也在这里立刻刷，不走 1s debounce——onDispose 的 shutdown 仍会再刷一次。
+   */
+  async settleActiveOnDrain(): Promise<void> {
+    let closed = 0;
+    for (const session of this.sessions.values()) {
+      if (session.status !== 'active') continue;
+      session.status = 'completed';
+      session.updatedAt = Date.now();
+      closed++;
+    }
+    if (closed > 0) this.dirty = true;
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
+    await this.persist();
+  }
+
   /** 强制持久化并清理定时器 */
   async shutdown(): Promise<void> {
     if (this.persistTimer) {
@@ -918,8 +944,10 @@ const uses = {
   /** 会话档案与消息历史的唯一落点：没有 memory 就没有会话管理 */
   memory,
   /**
-   * 本插件不调用 agent 的方法，声明它是为了 agent:* 钩子：键类型由这条导入带来，
-   * 依赖声明让本插件排在 agent 之前退场，回合还在跑时终态收口的中间件不会先消失。
+   * 本插件不调用 agent 的方法；声明它是为了 agent:* 钩子的键类型。
+   * 关停顺序由 core 按实际绑定编排：optional 互用的两方只保证彼此 drain 期间存活，
+   * 不保证对方 close 之后钩子还在。在飞会话由本插件 onDrain 自行收口落盘，
+   * 不依赖 agent 中间件先于自己消失。
    */
   agent: optional(agent),
   /** 自动标题的模型来源；没有 LLM 时退回用户消息首段 */
@@ -1038,10 +1066,12 @@ async function run(caps: Caps): Promise<void> {
       .finally(() => titleGenerating.delete(sessionId));
   });
 
-  // 持久化走 onDispose：覆盖停机与 bounce / unload / updateConfig 等全部
-  // 拆卸路径（只在全局停机触发的话，热重载即丢会话元数据）。
+  // 关停收尾：仍 active 的会话在 onDrain 收口并落盘（不依赖 agent 钩子还在）。
+  // 持久化仍走 onDispose：覆盖 bounce / unload / updateConfig 等全部拆卸路径
+  // （只在全局停机触发的话，热重载即丢会话元数据）。
   // 异步收尾由编排层的 disposeAsync 等待完成；app.stop() 的拓扑逆序保证此时 memory 提供者
   // 尚未关闭，单独热重载/禁用 memory 提供者时无此保证。shutdown() 幂等：清 timer + 置 dirty + 落盘。
+  lifecycle.onDrain(() => manager.settleActiveOnDrain(), '收口在飞会话');
   lifecycle.onDispose(() => manager.shutdown());
 
   logger.info('会话管理服务已启用');
