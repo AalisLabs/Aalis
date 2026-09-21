@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { createProcessGateway, type ExecResult, type ProcessService, processService } from '@aalis/api-process';
 // subsystem 这项展示元数据由 api-webui 经 declaration merging 挂到 PluginMeta 上；
 // 不把它带进本包的编译单元，独立构建时插件定义对象上的 subsystem 会被当成多余属性拒收。
@@ -143,6 +144,36 @@ export function declaresPlugin(pkgJson: Record<string, unknown> | undefined): bo
 }
 
 /**
+ * 与 runtime `pluginDefinitionOf` 同一抽取：入口 default 须是带非空 name 与 apply 的定义对象。
+ * runtime 包根未再导出该函数，插件不能依赖宿主；抽取口径必须与加载器一致。
+ */
+function definitionNameOf(ns: unknown): string | undefined {
+  const candidate = (ns as { default?: { name?: unknown; apply?: unknown } } | null)?.default;
+  if (
+    typeof candidate !== 'object' ||
+    candidate === null ||
+    typeof candidate.name !== 'string' ||
+    candidate.name === '' ||
+    typeof candidate.apply !== 'function'
+  ) {
+    return undefined;
+  }
+  return candidate.name;
+}
+
+/** 从项目 node_modules 解析已装包入口并取出定义 name；解析失败返回 undefined。 */
+async function resolveInstalledDefinitionName(root: string, pkgName: string): Promise<string | undefined> {
+  try {
+    const req = createRequire(`${root}/package.json`);
+    const entry = req.resolve(pkgName);
+    const ns: unknown = await import(new URL(`file://${entry}`).href);
+    return definitionNameOf(ns);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * 合法 npm 包 spec：包名（可选 scope）+ 可选 `@version` 后缀。
  *
  * 名段与版本段的首字符**都**必须是字母数字。该值最终作为一个 argv 传给 npm，而 npm 会：
@@ -233,6 +264,9 @@ function createService(caps: Caps): PackageManagerService {
     // plugins 服务缺席时保守返回 false——宁可让「声明为插件却没加载」的诊断多报一次，
     // 也不要在真没装上时谎报成功。
     isPluginRegistered: name => caps.plugins.current?.getStatus().some(p => p.name === name) ?? false,
+    resolveDefinitionName: pkgName => resolveInstalledDefinitionName(projectRoot(), pkgName),
+    listPluginInstanceIds: definitionName =>
+      (caps.plugins.current?.getStatus() ?? []).filter(p => p.name === definitionName).map(p => p.instanceId),
     // 重启并交付回滚凭据。core 只透传 rollback（不解释形状），由 runtime 的重启策略
     // 在「新实例 ready 前夭折」时消费——触发者与执行者同为父进程，全程内存不落盘。
     //
@@ -278,7 +312,7 @@ function createService(caps: Caps): PackageManagerService {
 /** install/uninstall 的显式依赖（从能力/网关解耦，便于集成测试） */
 export interface PackageManagerDeps {
   proc: ProcessService;
-  log: { info(msg: string): void; error(msg: string): void };
+  log: { info(msg: string): void; error(msg: string): void; warn?(msg: string): void };
   /** 项目根绝对路径（= `<cwd>`）：形态探测、根 package.json 读取、npm 的 cwd。 */
   projectRoot(): string;
   /** 读文本文件；不存在或读失败返回 undefined。注入以便单测。 */
@@ -292,6 +326,9 @@ export interface PackageManagerDeps {
    * 加载的**全部**插件」，与本次目标无对应关系。用它会在两个场景下给出错误结论：
    * 重装已注册插件时恒返回空（误报失败）；两个安装并发时先跑完的那个会把对方的战果
    * 一并算作自己的（谎报），后跑的则拿到空数组（误报失败）。
+   *
+   * 传入的是**定义 name**（经 {@link PackageManagerDeps.resolveDefinitionName} 解析），
+   * 不是 npm 包名——二者可以不同。
    */
   isPluginRegistered(name: string): boolean;
   /** 彻底卸载插件（dispose + 从注册表移除）。plugins 服务缺席则 no-op。 */
@@ -303,6 +340,16 @@ export interface PackageManagerDeps {
   recoveryChannelProviders?(): string[];
   /** 卸载后清理残留配置（删配置块 + 解除禁用标记 + 持久化）。可选：缺省则不清理。 */
   cleanupConfig?(name: string): void;
+  /**
+   * 解析已装 npm 包的插件定义 name（与加载器 `pluginDefinitionOf` 同一口径：入口 default.name）。
+   * 解析不到则返回 undefined，调用方回退到包名。name≠包名时由 createPackageManager warn。
+   */
+  resolveDefinitionName?(pkgName: string): Promise<string | undefined>;
+  /**
+   * 按定义 name 列出注册表里全部 instanceId（主实例 + `name:suffix`）。
+   * 缺省则只对传入的定义 name 做一次 unload / cleanup。
+   */
+  listPluginInstanceIds?(definitionName: string): string[];
   /** 重启进程并交付回滚凭据（新实例起不来时由重启策略消费）。缺省则 update 不可用。 */
   restartApp?(rollback: {
     reason: string;
@@ -519,9 +566,29 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     }
   }
 
+  /** 加载器口径的定义 name；解析不到则回退包名。name≠包名时 warn（与 pluginDefinitionOf 同文案）。 */
+  async function definitionNameFor(pkgName: string): Promise<string> {
+    const resolved = await deps.resolveDefinitionName?.(pkgName);
+    const defName = typeof resolved === 'string' && resolved.length > 0 ? resolved : pkgName;
+    if (defName !== pkgName) {
+      deps.log.warn?.(
+        `插件包 "${pkgName}" 的定义 name 为 "${defName}"——配置键/热扫描/卸载均以定义的 name 为准，二者应一致`,
+      );
+    }
+    return defName;
+  }
+
+  /** 注册表里该定义的全部 instanceId；没有枚举函数时只卸定义 name 本身。 */
+  function instanceIdsFor(defName: string): string[] {
+    const listed = deps.listPluginInstanceIds?.(defName) ?? [];
+    const ids = [...new Set(listed.filter(id => id.length > 0))];
+    return ids.length > 0 ? ids : [defName];
+  }
+
   /**
    * 装完的统一判定：rescan 出新插件即成功；没出新插件时按目标是否**声明自己是插件**分流。
    * 「声明了插件却没被发现」正是那条静默假成功——必须报失败，否则用户看到 ok 却什么也没装上。
+   * 就位查的是加载器解析出的定义 name，不是 npm 包名。
    */
   async function settleInstall(
     npmPkg: string,
@@ -531,7 +598,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     const target = stripVersion(npmPkg);
     // rescan 只当副作用用（让加载器发现新包），**不看返回值**——判据是目标自身是否就位。
     await deps.rescanPlugins();
-    if (deps.isPluginRegistered(target)) return { ok: true, message: `已安装并加载: ${target}` };
+    const defName = await definitionNameFor(target);
+    if (deps.isPluginRegistered(defName)) return { ok: true, message: `已安装并加载: ${target}` };
     const meta = await readJson(installedPkgJsonPath);
     if (declaresPlugin(meta)) {
       return { ok: false, message: `已装到 ${where}，但它声明为插件却未被加载——请检查其 keywords 与入口导出` };
@@ -884,10 +952,16 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       return { ok: false, message: `${pluginName} 不是经市场安装的：${why[origin] ?? '来源不明'}。` };
     }
 
+    // 先解析定义 name 并枚举实例：npm uninstall 会拆掉 node_modules，之后就读不到入口了。
+    const defName = await definitionNameFor(pluginName);
+    const instanceIds = instanceIdsFor(defName);
+
     try {
       await execProc(proc, 'npm', ['uninstall', pluginName, '--no-audit', '--no-fund'], root, INSTALL_TIMEOUT_MS);
-      await deps.unloadPlugin(pluginName); // 从运行时注册表彻底移除（dispose + delete），幂等
-      deps.cleanupConfig?.(pluginName); // 清残留配置
+      for (const id of instanceIds) {
+        await deps.unloadPlugin(id); // 从运行时注册表彻底移除（dispose + delete），幂等
+        deps.cleanupConfig?.(id); // 清残留配置（含禁用标记）
+      }
       log.info(`${pluginName}: 已从根依赖与 node_modules 移除`);
       return { ok: true, message: `插件 ${pluginName} 已卸载（已从根依赖与 node_modules 移除）` };
     } catch (err) {
