@@ -51,6 +51,11 @@
       "optional": [
         "process",
         "storage"
+      ],
+      "required": [
+        "config",
+        "logger",
+        "provide"
       ]
     }
   }

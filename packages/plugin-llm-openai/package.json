@@ -46,6 +46,12 @@
     "service": {
       "provides": [
         "llm"
+      ],
+      "required": [
+        "config",
+        "lifecycle",
+        "logger",
+        "provide"
       ]
     }
   }

@@ -49,6 +49,11 @@
       ],
       "provides": [
         "doctor"
+      ],
+      "required": [
+        "events",
+        "logger",
+        "provide"
       ]
     }
   }

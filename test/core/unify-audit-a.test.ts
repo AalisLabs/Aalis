@@ -383,37 +383,50 @@ describe('调度与类型面', () => {
     expect(settled).toBe('settled');
   });
 
-  it('来自另一份 core 副本的内置能力描述符：明确报错进 error，不静默停在 pending', async () => {
-    // 只给 barrel 加查询串不够：子图仍解析到同一份 binding.ts，WeakMap 共用，插件会假绿成 active。
-    // 拷整棵 core src 到 os.tmpdir() 再动态导入，相对路径都落在副本里，bindBuiltin 才是第二份。
+  it('同版本 core 副本的描述符、optional 和缺失错误均由当前宿主正确处理', async () => {
     type CoreNs = typeof import('../../packages/core/src/index.js');
     const srcRoot = fileURLToPath(new URL('../../packages/core/src', import.meta.url));
     const dir = mkdtempSync(join(tmpdir(), 'aalis-core-copy-'));
     coreCopies.push(dir);
     cpSync(srcRoot, dir, { recursive: true });
-    const stacks: string[] = [];
-    const logger: Logger = {
-      debug() {},
-      info() {},
-      warn() {},
-      error(...a: unknown[]) {
-        for (const x of a) {
-          if (x instanceof Error) stacks.push(x.stack ?? x.message);
-        }
-      },
-      child: () => logger,
-    };
     const A = (await import(`${pathToFileURL(join(dir, 'index.ts')).href}?copy=2`)) as CoreNs;
-    const w = world({ logger });
-    await w.app.plugin(A.definePlugin({ name: 'mixed', uses: { logger: A.logger }, apply() {} }));
+    const w = world();
+    let logs = 0;
+    await w.app.plugin(
+      A.definePlugin({
+        name: 'mixed',
+        uses: { logger: A.logger, optional: A.optional(A.defineService('not-present')) },
+        apply({ logger, optional }) {
+          logger.info('copy');
+          logs++;
+          expect(optional.current).toBeUndefined();
+        },
+      }),
+    );
+    expect(w.app.plugins.getPlugin('mixed')?.state).toBe('active');
+    expect(logs).toBe(1);
+
+    const desc = A.defineService<{ value: number }>('copy-required');
+    const { provide: publish } = w.app.bind({ provide });
+    let remove = publish(desc, { value: 1 });
+    let tries = 0;
+    let value = 0;
+    await w.app.plugin(
+      A.definePlugin({
+        name: 'copy-consumer',
+        uses: { dep: desc },
+        apply({ dep }) {
+          if (++tries === 1) remove();
+          value = dep.require().value;
+        },
+      }),
+    );
     await w.app.plugins.idle();
-    const status = w.app.plugins.getStatus().find(s => s.instanceId === 'mixed');
-    expect(status?.state).toBe('error');
-    expect(status?.error).toContain('单副本');
-    expect(
-      stacks.some(s => s.includes('bindBuiltin')),
-      `报错必须来自 bindBuiltin，实际堆栈：${stacks.join('\n---\n') || '(空)'}`,
-    ).toBe(true);
+    expect(w.app.plugins.getPlugin('copy-consumer')?.state).toBe('pending');
+    remove = publish(desc, { value: 2 });
+    await w.app.plugins.idle();
+    expect(w.app.plugins.getPlugin('copy-consumer')?.state).toBe('active');
+    expect(value).toBe(2);
   });
 
   it('包根导出的 ModuleHandle 就是 lifecycle.module() 的返回类型，带子激活 id', async () => {

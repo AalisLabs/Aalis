@@ -43,6 +43,12 @@
       ],
       "provides": [
         "embedding"
+      ],
+      "required": [
+        "config",
+        "lifecycle",
+        "logger",
+        "provide"
       ]
     }
   },

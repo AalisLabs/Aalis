@@ -121,10 +121,11 @@ function mountPluginRoutes(
 }
 
 describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
-  it('披露全部 uses：八种内置能力、参数别名与可选外部服务，不混入激活闸或敏感标签', async () => {
+  it('披露全部 uses：核心服务也参与依赖闸，保留参数别名与可选声明，不混入敏感标签', async () => {
     const app = silentApp();
-    // 同名的普通服务仍是外部依赖；不能用八个名字的白名单判断内置身份。
-    const externalEvents = defineService<object>('events');
+    // 同名描述符解析同一提供者；是否可选取决于 uses 声明，不取决于描述符来自哪里。
+    const sameEvents = defineService<object>('events');
+    let sameInstance = false;
     const def = definePlugin({
       name: 'declared-capabilities',
       uses: {
@@ -136,27 +137,39 @@ describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
         config,
         provide,
         services,
-        optionalEvents: optional(externalEvents),
+        optionalEvents: optional(sameEvents),
       },
-      apply() {},
+      apply({ bus, optionalEvents }) {
+        sameInstance = optionalEvents.require() === bus;
+      },
     });
     await app.plugin(def);
     const { invoke } = mountPluginRoutes(app);
     const out = await invoke('GET /api/plugins');
     const row = (out.body as { plugins: Array<Record<string, unknown>> }).plugins[0];
     expect(row.state).toBe('active');
+    expect(sameInstance).toBe(true);
     expect(row.uses).toEqual([
-      { key: 'bus', service: 'events', kind: 'builtin' },
-      { key: 'hooks', service: 'hooks', kind: 'builtin' },
-      { key: 'contributions', service: 'contributions', kind: 'builtin' },
-      { key: 'lifecycle', service: 'lifecycle', kind: 'builtin' },
-      { key: 'log', service: 'logger', kind: 'builtin' },
-      { key: 'config', service: 'config', kind: 'builtin' },
-      { key: 'provide', service: 'provide', kind: 'builtin' },
-      { key: 'services', service: 'services', kind: 'builtin' },
+      { key: 'bus', service: 'events', kind: 'required' },
+      { key: 'hooks', service: 'hooks', kind: 'required' },
+      { key: 'contributions', service: 'contributions', kind: 'required' },
+      { key: 'lifecycle', service: 'lifecycle', kind: 'required' },
+      { key: 'log', service: 'logger', kind: 'required' },
+      { key: 'config', service: 'config', kind: 'required' },
+      { key: 'provide', service: 'provide', kind: 'required' },
+      { key: 'services', service: 'services', kind: 'required' },
       { key: 'optionalEvents', service: 'events', kind: 'optional' },
     ]);
-    expect(row.requiredServices).toEqual([]);
+    expect(row.requiredServices).toEqual([
+      'events',
+      'hooks',
+      'contributions',
+      'lifecycle',
+      'logger',
+      'config',
+      'provide',
+      'services',
+    ]);
     expect(row.optionalServices).toEqual(['events']);
     expect(row.capabilities).toEqual([]);
     // 返回的是声明快照，修改投影不能反向改写插件定义。
@@ -183,11 +196,11 @@ describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
     expect(before.find(p => p.name === 'waiting')).toMatchObject({
       state: 'pending',
       requiredServices: ['needed'],
-      optionalServices: ['extra'],
+      optionalServices: ['extra', 'logger'],
       uses: [
         { key: 'db', service: 'needed', kind: 'required' },
         { key: 'cache', service: 'extra', kind: 'optional' },
-        { key: 'log', service: 'logger', kind: 'builtin' },
+        { key: 'log', service: 'logger', kind: 'optional' },
       ],
     });
     expect(before.find(p => p.name === 'empty')?.uses).toEqual([]);

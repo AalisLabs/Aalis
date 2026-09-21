@@ -48,6 +48,10 @@
         "vectorstore"
       ],
       "required": [
+        "config",
+        "lifecycle",
+        "logger",
+        "provide",
         "storage"
       ]
     }

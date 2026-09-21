@@ -38,7 +38,7 @@ describe('Resources', () => {
     resources.onDispose(same)();
     resources.onDrain(() => void calls.push('drain'));
     resources.trackWithdrawal(() => calls.push('withdraw'));
-    const off = resources.trackDisposable(() => void calls.push('manual'), 'manual');
+    const off = resources.track(() => void calls.push('manual'), 'manual');
     off();
     expect(resources.lifecycle.disposables.labels()).not.toContain('manual');
     await resources.lifecycle.disposeAsync();
@@ -129,7 +129,7 @@ describe('Resources', () => {
     const { resources } = world();
     let withdrawn = 0;
     const off = resources.trackWithdrawal(() => withdrawn++);
-    resources.untrackWithdrawal(off);
+    resources.lifecycle.disposables.remove(off);
     await resources.lifecycle.disposeAsync();
     expect(withdrawn).toBe(0);
     resources.onDispose(() => {

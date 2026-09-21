@@ -50,6 +50,11 @@
       ],
       "provides": [
         "web-search"
+      ],
+      "required": [
+        "config",
+        "logger",
+        "provide"
       ]
     }
   }

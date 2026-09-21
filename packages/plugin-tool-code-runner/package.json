@@ -45,8 +45,10 @@
   "aalis": {
     "service": {
       "required": [
-        "storage",
-        "process"
+        "config",
+        "logger",
+        "process",
+        "storage"
       ],
       "optional": [
         "code-sandbox",

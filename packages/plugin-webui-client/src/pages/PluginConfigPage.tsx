@@ -485,11 +485,9 @@ export function PluginConfigPage({
                     <span
                       className={`cap-chip dep-${use.kind}`}
                       key={use.key}
-                      title={use.kind === 'builtin'
-                        ? '内置基础设施，随插件激活绑定，不等待外部提供者'
-                        : use.kind === 'required' ? '必需依赖，服务就绪后插件才能激活' : '可选依赖，服务缺席不阻止插件激活'}
+                      title={use.kind === 'required' ? '必需依赖，服务就绪后插件才能激活' : '可选依赖，服务缺席不阻止插件激活'}
                     >
-                      {use.kind === 'builtin' ? '内置' : use.kind === 'required' ? '必需' : '可选'}{' '}
+                      {use.kind === 'required' ? '必需' : '可选'}{' '}
                       {use.key === use.service ? use.service : `${use.key} → ${use.service}`}
                     </span>
                   ))}

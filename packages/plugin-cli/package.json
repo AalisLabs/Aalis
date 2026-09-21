@@ -58,6 +58,14 @@
       "provides": [
         "cli",
         "platform"
+      ],
+      "required": [
+        "config",
+        "events",
+        "lifecycle",
+        "logger",
+        "provide",
+        "services"
       ]
     }
   }

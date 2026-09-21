@@ -46,6 +46,11 @@
     "service": {
       "optional": [
         "tools"
+      ],
+      "required": [
+        "config",
+        "hooks",
+        "logger"
       ]
     }
   }

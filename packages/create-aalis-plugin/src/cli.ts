@@ -172,7 +172,7 @@ async function generate(dir: string, a: Answers): Promise<void> {
   await writeFile(resolve(dir, 'README.md'), renderReadme(a));
 }
 
-function renderPackageJson(a: Answers): string {
+export function renderPackageJson(a: Answers): string {
   // 运行时依赖：服务描述符是值导入，用到的 api 包进 dependencies；@aalis/core
   // 是宿主必有的核心，走 peerDependencies + devDep。
   // 注意：这里写进的是【生成给外部作者项目】的字面版本，不能用 workspace:（脚手架产物不在
@@ -219,7 +219,7 @@ function renderPackageJson(a: Answers): string {
     },
     // 市场据此做安装前能力披露，须与 definePlugin 的 uses / provides 保持一致：
     // { service: { required: ['llm'], optional: ['memory'], provides: ['my-service'] } }
-    ...(optionalServices.length ? { aalis: { service: { optional: optionalServices } } } : {}),
+    aalis: { service: { required: ['logger'], ...(optionalServices.length ? { optional: optionalServices } : {}) } },
   };
   return `${JSON.stringify(json, null, 2)}\n`;
 }

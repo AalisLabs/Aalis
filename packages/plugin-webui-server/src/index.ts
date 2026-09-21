@@ -637,6 +637,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     {
       logger,
       plugins: caps.plugins,
+      services,
       // package-manager 由插件提供，本包不反向依赖那个插件包：按名动态查，缺席时装卸路由回 503
       packageManager: () => services.get('package-manager') as PackageManagerService | undefined,
     },
@@ -693,7 +694,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         displayNameMap.set(p.instanceId, p.displayName);
       }
     }
-    // root context 即内核自身（app / plugins 两个服务由它 provide）——显示包名，别把内部 id 'root' 裸露给用户
+    // 根激活提供核心服务——显示包名，别把内部 id 'root' 裸露给用户。
     displayNameMap.set('root', '@aalis/core');
 
     const serviceNames = services.names();
@@ -705,6 +706,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
           displayName?: string;
           label?: string;
           priority: number;
+          scope: 'shared' | 'activation';
+          exclusive: boolean;
         }>;
         preferred: string | null;
       }
@@ -712,13 +715,16 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
     for (const svcName of serviceNames) {
       // 枚举已按「偏好 > 优先级 > 注册顺序」排序，附带 priority 字段
-      const entries = services.all(svcName);
+      // 展示元数据不能创建按激活实例，否则打开服务页就会获得未声明能力或启动资源。
+      const entries = services.inspect(svcName);
       detail[svcName] = {
         providers: entries.map(e => ({
           contextId: e.contextId,
           displayName: displayNameMap.get(e.contextId),
           label: e.label,
           priority: e.priority,
+          scope: e.scope,
+          exclusive: e.exclusive,
         })),
         preferred: services.preferred(svcName) ?? null,
       };
@@ -739,13 +745,16 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       return;
     }
     // 校验 entry 存在
-    const entries = services.all(svcName);
+    const entries = services.inspect(svcName);
     if (!entries.some(e => e.contextId === contextId)) {
       res.status(404).json({ ok: false, error: `service "${svcName}" has no provider with contextId "${contextId}"` });
       return;
     }
     const host = caps.hostConfig.require();
-    services.prefer(svcName, contextId);
+    if (!services.prefer(svcName, contextId)) {
+      res.status(409).json({ ok: false, error: `service "${svcName}" rejected provider preference "${contextId}"` });
+      return;
+    }
     host.setServicePreference(svcName, contextId);
     // 切换前端：webui-client 是「前端」服务，偏好变更需重挂静态目录 + 通知客户端刷新。
     // 重挂与偏好同属内存态，必须在等落盘之前一起生效：save 拒绝时才不会留下「解析选 B、静态挂 A」。

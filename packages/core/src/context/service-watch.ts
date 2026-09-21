@@ -5,7 +5,7 @@ import type { Resources } from './resources.js';
 
 /** 只观察胜者变化；资源交接、异步撤回全部由 binding 管理。 */
 export function watchService<P>(
-  services: ServiceContainer,
+  services: Pick<ServiceContainer, 'get'>,
   events: EventBus,
   resources: Resources,
   name: string,

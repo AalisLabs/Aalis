@@ -87,14 +87,39 @@ export class Resources {
     }
   }
 
-  /** Synchronous primitive disposer, removed from the chain on manual withdrawal. */
-  trackDisposable(off: () => void, label?: string): () => void {
-    const dispose = (): void => {
-      this.lifecycle.disposables.remove(dispose);
-      off();
+  /** 一次性撤回；手动开始的异步清理也纳入这次激活的关闭。 */
+  track(off: () => unknown, label = 'resource'): () => void {
+    let started = false;
+    let result: PromiseLike<unknown> | undefined;
+    const run = (): PromiseLike<unknown> | undefined => {
+      if (!started) {
+        started = true;
+        result = this.withdraw(off, label);
+      }
+      return result;
     };
-    this.lifecycle.disposables.push(dispose, label);
-    return dispose;
+    const dispose = this.trackWithdrawal(run, label);
+    return () => {
+      if (started) return;
+      this.lifecycle.disposables.remove(dispose);
+      run();
+    };
+  }
+
+  /** 清理异常就地隔离；异步拒绝被观察，并在相位边界等待。 */
+  withdraw(off: () => unknown, label: string): PromiseLike<unknown> | undefined {
+    return this.run(() => {
+      try {
+        const result = off();
+        if (typeof (result as PromiseLike<unknown> | undefined)?.then !== 'function') return undefined;
+        const pending = Promise.resolve(result);
+        this.holdInflight(pending, label);
+        return pending;
+      } catch (error) {
+        reportQuietly(() => this.logger.warn(`${label} 撤回抛错（已忽略）:`, error));
+        return undefined;
+      }
+    });
   }
 
   /** Binding withdrawal belongs before user cleanup. Its return value is passed through to Lifecycle. */
@@ -105,10 +130,6 @@ export class Resources {
     };
     this.lifecycle.disposables.push(dispose, label, 'withdraw');
     return dispose;
-  }
-
-  untrackWithdrawal(dispose: () => unknown): void {
-    this.lifecycle.disposables.remove(dispose);
   }
 
   onDispose(fn: () => void | Promise<void>, label?: string): () => void {

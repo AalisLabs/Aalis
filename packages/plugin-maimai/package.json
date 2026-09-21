@@ -48,6 +48,10 @@
         "commands",
         "memory",
         "tools"
+      ],
+      "required": [
+        "config",
+        "logger"
       ]
     }
   }

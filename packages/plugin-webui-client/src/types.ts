@@ -81,8 +81,8 @@ export interface PluginInfo {
   core: boolean;
   reusable: boolean;
   extends?: ExtendDeclaration;
-  /** 完整声明的能力；key 是插件的参数名，builtin 不参与外部服务的依赖等待。 */
-  uses: Array<{ key: string; service: string; kind: 'builtin' | 'required' | 'optional' }>;
+  /** 完整声明的服务；key 是插件的参数名，kind 表明是否参与激活等待。 */
+  uses: Array<{ key: string; service: string; kind: 'required' | 'optional' }>;
   /** 能力披露：该插件依赖的必需/可选服务（要调用哪些子系统） */
   requiredServices?: string[];
   optionalServices?: string[];
@@ -158,6 +158,10 @@ export interface ServiceProviderInfo {
   label?: string;
   /** provide() 时声明的 priority 数值；越大越优先 */
   priority: number;
+  /** 提供者实例由全部消费者共享，或为每个激活单独创建。 */
+  scope: 'shared' | 'activation';
+  /** 独占登记只有一个提供者，不支持偏好切换。 */
+  exclusive: boolean;
 }
 
 export interface ServiceInfo {

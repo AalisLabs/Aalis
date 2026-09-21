@@ -53,6 +53,11 @@
         "persona",
         "storage",
         "process"
+      ],
+      "required": [
+        "config",
+        "lifecycle",
+        "logger"
       ]
     }
   }

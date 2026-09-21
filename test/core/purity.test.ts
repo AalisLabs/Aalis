@@ -61,6 +61,7 @@ const RUNTIME_EXPORTS = [
   'pluginDefinitionOf',
   'pluginsService',
   'provide',
+  'serviceFactory',
   'serviceRef',
   'services',
 ];
