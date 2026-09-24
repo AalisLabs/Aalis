@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DefaultLogger, type Logger, LogHub, pluginDefinitionOf } from '../../packages/core/src/index.js';
+import { App, type Logger, LogHub, pluginDefinitionOf } from '../../packages/core/src/index.js';
 import { installConsoleSink } from '../../packages/runtime/src/console-sink.js';
 import { createNodeModulesPluginLoader, loadPluginDefinition } from '../../packages/runtime/src/node-modules-loader.js';
 
@@ -162,25 +162,107 @@ describe('加载链信号', () => {
   });
 });
 
-// 双副本判定在 core 以 error 入 LogHub；consoleSink: false 时以前没有任何 sink，
-// 默认 stderr 只剩下游「commands 服务不可用」。warn+ 打 stderr 后这条与「装了没反应」同级可见。
-describe('双副本判定默认可见', () => {
-  it('error 文案含「必须是单副本」，minLevel=warn 的 stderr sink 看得到（不依赖 consoleSink: true）', () => {
+// 两份 @aalis/core：加载器在 import 之前核对插件解析到的 core 是否宿主那份，不是就拒载该插件，
+// 由 App 逐插件记 error、其余插件照常加载。宿主那份经 hostCoreDir 注入，不依赖仓库真实布局。
+describe('两份 @aalis/core', () => {
+  let base: string;
+  let proj: string;
+  let hostCore: string;
+  let theirCore: string;
+
+  /** 在 dir 下手写一份 node_modules/@aalis/core：检测只看目录布局，有 package.json 即可 */
+  function writeCore(dir: string, version: string): string {
+    const coreDir = join(dir, 'node_modules', '@aalis', 'core');
+    mkdirSync(coreDir, { recursive: true });
+    writeFileSync(join(coreDir, 'package.json'), JSON.stringify({ name: '@aalis/core', version }));
+    return realpathSync(coreDir);
+  }
+
+  const pluginMeta = { main: 'index.mjs', keywords: ['aalis-plugin'] };
+
+  beforeEach(() => {
+    base = realpathSync(mkdtempSync(join(tmpdir(), 'aalis-two-core-')));
+    proj = join(base, 'proj');
+    mkdirSync(proj);
+    hostCore = writeCore(proj, '0.0.1-host');
+    const nm = join(proj, 'node_modules');
+    // 同一份：不带嵌套副本，上溯到项目那份（入口不 import core，能真正加载）
+    writePkg(nm, 'plugin-same', pluginMeta, 'export default { name: "plugin-same", apply() {} };\n');
+    // 同一份：嵌套副本是指向项目那份的符号链接（realpath 相同）
+    writePkg(nm, 'plugin-linked-core', pluginMeta, 'export default { name: "plugin-linked-core", apply() {} };\n');
+    mkdirSync(join(nm, 'plugin-linked-core', 'node_modules', '@aalis'), { recursive: true });
+    symlinkSync(hostCore, join(nm, 'plugin-linked-core', 'node_modules', '@aalis', 'core'));
+    // 另一份：本地插件目录以符号链接装进项目，目录里自带一份 core（devDependencies 装的）。
+    // 入口 import 的 core 没有入口文件，import 必失败——检测若未在 import 之前拦下，错误文案对不上。
+    writePkg(
+      base,
+      'my-plugin',
+      { ...pluginMeta, name: 'plugin-dup' },
+      "import { definePlugin } from '@aalis/core';\nexport default definePlugin({ name: 'plugin-dup', apply() {} });\n",
+    );
+    theirCore = writeCore(join(base, 'my-plugin'), '0.0.2-plugin');
+    symlinkSync(join(base, 'my-plugin'), join(nm, 'plugin-dup'));
+    writeFileSync(
+      join(proj, 'package.json'),
+      JSON.stringify({
+        name: 'proj',
+        dependencies: { 'plugin-same': '1.0.0', 'plugin-linked-core': '1.0.0', 'plugin-dup': 'file:../my-plugin' },
+      }),
+    );
+  });
+
+  afterEach(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it('插件解析到另一份 core：load / reload 在 import 之前拒绝，错误写明两份的路径与版本', async () => {
+    const loader = createNodeModulesPluginLoader(proj, { hostCoreDir: hostCore });
+    const desc = (await loader.discover()).find(d => d.name === 'plugin-dup');
+    if (!desc) throw new Error('plugin-dup 未被发现');
+    for (const attempt of [loader.load(desc), loader.reload?.(desc)]) {
+      const message = await Promise.resolve(attempt).then(
+        () => '未拒绝',
+        (e: Error) => e.message,
+      );
+      expect(message).toContain('插件 "plugin-dup" 解析到另一份 @aalis/core');
+      for (const part of [theirCore, '0.0.2-plugin', hostCore, '0.0.1-host']) expect(message).toContain(part);
+    }
+  });
+
+  it('插件解析到同一份 core（上溯到宿主那份 / 嵌套副本是指向它的符号链接）：照常加载', async () => {
+    const loader = createNodeModulesPluginLoader(proj, { hostCoreDir: hostCore });
+    const found = await loader.discover();
+    for (const name of ['plugin-same', 'plugin-linked-core']) {
+      const desc = found.find(d => d.name === name);
+      if (!desc) throw new Error(`${name} 未被发现`);
+      expect((await loader.load(desc))?.name).toBe(name);
+    }
+  });
+
+  // consoleSink: false 时宿主仍装 minLevel=warn 的 stderr sink：拒载是 error，必须打到 stderr，
+  // 不能只剩下游「某服务不可用」。
+  it('App 记下的拒载 error 经 minLevel=warn 的 stderr sink 可见，其余插件照常加载', async () => {
     const errCaptured: string[] = [];
     const originalError = console.error;
     console.error = (...args: unknown[]) => {
       errCaptured.push(args.map(String).join(' '));
     };
     const handle = installConsoleSink({ target: 'stderr', minLevel: 'warn' });
+    const app = new App({
+      config: { name: 'T', logLevel: 'info', plugins: {} },
+      pluginLoader: createNodeModulesPluginLoader(proj, { hostCoreDir: hostCore }),
+    });
     try {
-      const logger = new DefaultLogger('aalis:plugins');
-      logger.info('无法执行子命令「probe」：commands 服务不可用（未安装 @aalis/plugin-commands？）');
-      logger.error('资源口不属于本 core 副本的任何激活（@aalis/core 必须是单副本 peer 依赖）');
-      const hit = errCaptured.find(line => line.includes('必须是单副本'));
-      expect(hit).toBeDefined();
+      await app.autoLoadPlugins();
+      const hit = errCaptured.find(line => line.includes('另一份 @aalis/core'));
       expect(hit).toContain('ERROR');
-      expect(errCaptured.some(line => line.includes('commands 服务不可用'))).toBe(false);
+      expect(hit).toContain('加载插件 "plugin-dup" 失败');
+      expect(app.plugins.getPlugin('plugin-dup')).toBeUndefined();
+      expect(app.plugins.getPlugin('plugin-same')).toBeDefined();
+      expect(app.plugins.getPlugin('plugin-linked-core')).toBeDefined();
+      expect(errCaptured.some(line => line.includes('INFO'))).toBe(false);
     } finally {
+      await app.stop();
       handle.dispose();
       console.error = originalError;
     }
