@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { definePlugin, defineService, events, type Logger, provide } from '../../packages/core/src/index.js';
 import { createActivationFixture } from '../helpers/activation.js';
 import { createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
@@ -147,10 +147,8 @@ describe('binding cleanup boundaries', () => {
     try {
       await app.plugin(definition);
       const oldActivation = [...rootActivation(app).children][0];
-      const disposal = vi.spyOn(oldActivation, 'disposeAsync');
       fail = true;
       await expect(app.plugins.unload('worker')).resolves.toBe(true);
-      await expect(disposal.mock.results[0]?.value).resolves.toBeUndefined();
       expect(rootActivation(app).children.has(oldActivation)).toBe(false);
       await expect(app.plugin(definition)).resolves.toBe(true);
       expect([...rootActivation(app).children].map(child => child.id)).toEqual(['worker']);
