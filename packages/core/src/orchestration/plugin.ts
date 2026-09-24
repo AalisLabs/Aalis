@@ -586,11 +586,11 @@ export class PluginManager implements PluginManagerService {
 
     if (changed && rounds >= maxRounds()) {
       // 静态 required 环由 topoSortByDeps 检出并另行告警；到这里仍在翻转的
-      // 状态变化已超出本轮收敛上限。点名末轮
-      // 仍在翻转的插件——矛盾对必在其中。
+      // 状态变化已超出本轮收敛上限。点名末轮仍在翻转的插件——矛盾对必在其中。
+      // 每处 changed = true 都登记了翻转者，走到这里名单必不为空。
       this.logger.warn(
         `recompute ${rounds} 轮未收敛（上限 ${maxRounds()} = 2×插件数+8），` +
-          `疑似插件间状态振荡。最后一轮仍在翻转: ${lastRoundFlips.join(', ') || '(无记录)'}`,
+          `疑似插件间状态振荡。最后一轮仍在翻转: ${lastRoundFlips.join(', ')}`,
       );
     }
 
