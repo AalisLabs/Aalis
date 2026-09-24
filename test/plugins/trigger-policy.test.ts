@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { PersonaService } from '../../packages/api-persona/src/index.js';
 import {
   defaultTriggerPolicyConfig,
-  isScopeEnabled,
   resolveTriggerPolicyConfig,
 } from '../../packages/plugin-trigger-policy/src/config.js';
 import {
@@ -37,20 +36,6 @@ describe('trigger-policy config', () => {
   it('intervalMode 非法值回退', () => {
     const c = resolveTriggerPolicyConfig({ intervalMode: 'bogus' as unknown });
     expect(c.intervalMode).toBe(defaultTriggerPolicyConfig.intervalMode);
-  });
-});
-
-describe('isScopeEnabled (trigger-policy)', () => {
-  const make = (scopes: string[]) => ({ ...defaultTriggerPolicyConfig, scopes });
-  it('全通配', () => {
-    expect(isScopeEnabled(make(['*']), 'p', 't')).toBe(true);
-  });
-  it('platform 单边通配', () => {
-    expect(isScopeEnabled(make(['onebot:*']), 'onebot', 'group')).toBe(true);
-    expect(isScopeEnabled(make(['onebot:*']), 'cli', 'group')).toBe(false);
-  });
-  it('空名单 = false', () => {
-    expect(isScopeEnabled(make([]), 'p', 't')).toBe(false);
   });
 });
 

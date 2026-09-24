@@ -1,5 +1,5 @@
 import { type FlowControlService, type FlowSessionStateSnapshot, flowControl } from '@aalis/api-flow-control';
-import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
+import { extractTargetId, gateway, INBOUND_PHASE, isScopeEnabled, resolveEffectiveConfig } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
 import { createStorageGateway, isStorageNotFound, storage } from '@aalis/api-storage';
@@ -7,13 +7,7 @@ import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { OutgoingMessage } from '@aalis/schema-message';
-import {
-  defaultFlowControlConfig,
-  type FlowControlConfig,
-  isScopeEnabled,
-  resolveEffectiveConfig,
-  resolveFlowControlConfig,
-} from './config.js';
+import { defaultFlowControlConfig, type FlowControlConfig, resolveFlowControlConfig } from './config.js';
 import { clearSessionIdle, type IdleCaps, PlatformIdleScheduler, scheduleSessionIdle } from './idle-scheduler.js';
 import {
   applyScoreDecay,
@@ -262,13 +256,6 @@ async function run(caps: Caps): Promise<void> {
 
   // storage 已在线时 follow 是同步首挂：把读取等完再让 apply 返回；storage 晚上线时无从等待，仍异步
   if (loading) await loading;
-
-  /** 从 IncomingMessage 派生 per-scope override 用的 targetId（群=groupId / 私=userId / 其他=空） */
-  function extractTargetId(message: import('@aalis/schema-message').IncomingMessage): string {
-    if (message.sessionType === 'group') return message.groupId ?? '';
-    if (message.sessionType === 'private') return message.userId ?? '';
-    return '';
-  }
 
   function getOrCreate(sessionId: string, platform: string, sessionType = '', targetId = ''): MutableFlowSessionState {
     let s = states.get(sessionId);

@@ -1,5 +1,5 @@
 import { flowControl } from '@aalis/api-flow-control';
-import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
+import { extractTargetId, gateway, INBOUND_PHASE, isScopeEnabled, resolveEffectiveConfig } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
@@ -11,13 +11,7 @@ import type { TriggerDecision, TriggerPolicyService } from './types.js';
 
 export type { TriggerDecision, TriggerKind, TriggerPolicyService } from './types.js';
 
-import {
-  defaultTriggerPolicyConfig,
-  isScopeEnabled,
-  resolveEffectiveConfig,
-  resolveTriggerPolicyConfig,
-  type TriggerPolicyConfig,
-} from './config.js';
+import { defaultTriggerPolicyConfig, resolveTriggerPolicyConfig, type TriggerPolicyConfig } from './config.js';
 import { checkImmediateTrigger, checkMuteKeyword, getBotNames } from './detector.js';
 
 // ----- 元数据 -----
@@ -117,13 +111,6 @@ export default definePlugin({
 function run(caps: Caps): void {
   const { logger, hooks, provide, persona, flowControl, messageArchive } = caps;
   const cfg = resolveTriggerPolicyConfig(caps.config);
-
-  /** 从 IncomingMessage 派生 per-scope override 用的 targetId（群=groupId / 私=userId / 其他=空） */
-  function extractTargetId(message: IncomingMessage): string {
-    if (message.sessionType === 'group') return message.groupId ?? '';
-    if (message.sessionType === 'private') return message.userId ?? '';
-    return '';
-  }
 
   /** 把"被策略吞掉"的入站消息归档（与 flow-control 的 shadow 归档对齐） */
   async function shadowArchive(message: IncomingMessage): Promise<void> {

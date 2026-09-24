@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  defaultFlowControlConfig,
-  isScopeEnabled,
-  resolveFlowControlConfig,
-} from '../../packages/plugin-flow-control/src/config.js';
+import { defaultFlowControlConfig, resolveFlowControlConfig } from '../../packages/plugin-flow-control/src/config.js';
 import {
   applyScoreDecay,
   calculateScoreIncrement,
@@ -33,35 +29,6 @@ describe('flow-control config', () => {
   it('idleTriggerScope 非法值回退默认', () => {
     const c = resolveFlowControlConfig({ idleTriggerScope: 'bogus' as unknown });
     expect(c.idleTriggerScope).toBe(defaultFlowControlConfig.idleTriggerScope);
-  });
-});
-
-describe('isScopeEnabled', () => {
-  const cfg = (scopes: string[]) => ({ ...defaultFlowControlConfig, scopes });
-
-  it('精确匹配', () => {
-    expect(isScopeEnabled(cfg(['onebot:group']), 'onebot', 'group')).toBe(true);
-    expect(isScopeEnabled(cfg(['onebot:group']), 'onebot', 'private')).toBe(false);
-  });
-
-  it('platform 通配', () => {
-    expect(isScopeEnabled(cfg(['*:group']), 'onebot', 'group')).toBe(true);
-    expect(isScopeEnabled(cfg(['*:group']), 'cli', 'group')).toBe(true);
-    expect(isScopeEnabled(cfg(['*:group']), 'cli', 'private')).toBe(false);
-  });
-
-  it('sessionType 通配', () => {
-    expect(isScopeEnabled(cfg(['onebot:*']), 'onebot', 'group')).toBe(true);
-    expect(isScopeEnabled(cfg(['onebot:*']), 'onebot', 'private')).toBe(true);
-    expect(isScopeEnabled(cfg(['onebot:*']), 'cli', 'group')).toBe(false);
-  });
-
-  it('全通配', () => {
-    expect(isScopeEnabled(cfg(['*']), 'anything', 'thing')).toBe(true);
-  });
-
-  it('空 scopes 不命中', () => {
-    expect(isScopeEnabled(cfg([]), 'onebot', 'group')).toBe(false);
   });
 });
 
