@@ -667,9 +667,6 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../util-network-guard
     devDependencies:
-      '@aalis/api-webui':
-        specifier: workspace:*
-        version: link:../api-webui
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -1071,9 +1068,6 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../schema-message
     devDependencies:
-      '@aalis/api-webui':
-        specifier: workspace:*
-        version: link:../api-webui
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -1288,9 +1282,6 @@ importers:
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../util-network-guard
     devDependencies:
-      '@aalis/api-webui':
-        specifier: workspace:*
-        version: link:../api-webui
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -1577,9 +1568,6 @@ importers:
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../util-dep-spec
     devDependencies:
-      '@aalis/api-webui':
-        specifier: workspace:*
-        version: link:../api-webui
       '@aalis/core':
         specifier: workspace:*
         version: link:../core

@@ -388,7 +388,7 @@ export function registerPluginRoutes(
       await app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 已禁用` });
     } else {
-      res.status(400).json({ error: `核心插件不能被禁用` });
+      res.status(404).json({ error: `插件 ${pluginName} 不在注册表或已处于终态，无法禁用` });
     }
   });
 
