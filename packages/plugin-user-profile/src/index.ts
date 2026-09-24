@@ -1,4 +1,5 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import { authority, DEFAULT_AUTHORITY } from '@aalis/api-authority';
 import { commands } from '@aalis/api-commands';
 import { llm, resolveLLMModel } from '@aalis/api-llm';
 import { memory } from '@aalis/api-memory';
@@ -14,7 +15,6 @@ import {
   hooks,
   logger,
   optional,
-  services,
 } from '@aalis/core';
 import type { RelationService } from '@aalis/plugin-user-relation';
 import type { ConfigSchema } from '@aalis/schema-config';
@@ -448,7 +448,7 @@ const uses = {
   contributions,
   config,
   logger,
-  services,
+  authority: optional(authority),
   tools: optional(tools),
   commands: optional(commands),
   persona: optional(persona),
@@ -473,7 +473,7 @@ function registerUserProfile({
   contributions,
   config,
   logger,
-  services,
+  authority,
   tools,
   commands,
   persona,
@@ -1556,13 +1556,13 @@ function registerUserProfile({
     if (!cfg.enableInstructions) return;
     if (cfg.instructionExtractEveryNMessages <= 0) return;
     if (instructionExtractionInflight) return;
-    // 指令只采信有权下指令的人，门槛是发言人的**数字权限等级**；authority 契约没有暴露读等级的
-    // 方法，只能按运行期形状探测。探测不到就跳过 LLM 自动提取（/instruct 命令通道不受影响）。
-    const guard = services.get('authority') as
-      | { getAuthority?: (platform: string, userId?: string) => number }
-      | undefined;
-    const authorityFn = guard?.getAuthority?.bind(guard);
-    if (!authorityFn) return;
+    // 指令只采信有权下指令的人，门槛是发言人的数字权限等级（owner 视为无穷大）
+    const auth = authority.current;
+    if (!auth) return;
+    const authorityFn = (platform: string, userId?: string): number =>
+      auth.isOwner(platform, userId)
+        ? Number.POSITIVE_INFINITY
+        : (auth.listUsers().find(u => u.platform === platform && u.userId === userId)?.level ?? DEFAULT_AUTHORITY);
 
     instructionExtractionInflight = true;
     try {

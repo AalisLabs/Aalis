@@ -503,7 +503,7 @@ const webuiPages: WebuiPage[] = [
 
 function start(caps: Caps): void {
   const config = caps.config;
-  const store = new RelationStore(caps.memory.require());
+  const store = new RelationStore(() => caps.memory.require());
   const service = new RelationService(store, caps.logger, caps.embedding);
 
   caps.provide(userRelation, service);

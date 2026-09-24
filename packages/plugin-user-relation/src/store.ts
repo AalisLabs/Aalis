@@ -93,17 +93,21 @@ interface MergeRejectRecord {
 }
 
 export class RelationStore {
-  constructor(private readonly memory: MemoryService) {}
+  /**
+   * `memory` 每次调用都解析当前提供者，不缓存实例：memory 可有多个提供者，
+   * 胜者被重启或换人后，存下来的旧实例已关闭，关系图读写会一直打到它上面。
+   */
+  constructor(private readonly memory: () => MemoryService) {}
 
   // ----- Person -----
 
   async getPerson(platform: string, userId: string): Promise<PersonNode | undefined> {
-    const data = await this.memory.getMetadata(RELATION_NAMESPACE, personKey(platform, userId));
+    const data = await this.memory().getMetadata(RELATION_NAMESPACE, personKey(platform, userId));
     return data as PersonNode | undefined;
   }
 
   async upsertPerson(node: PersonNode): Promise<void> {
-    await this.memory.saveMetadata(
+    await this.memory().saveMetadata(
       RELATION_NAMESPACE,
       personKey(node.platform, node.userId),
       node as unknown as Record<string, unknown>,
@@ -111,65 +115,69 @@ export class RelationStore {
   }
 
   async deletePerson(platform: string, userId: string): Promise<void> {
-    await this.memory.deleteMetadata(RELATION_NAMESPACE, personKey(platform, userId));
+    await this.memory().deleteMetadata(RELATION_NAMESPACE, personKey(platform, userId));
   }
 
   // ----- Event -----
 
   async getEvent(eventId: string): Promise<EventNode | undefined> {
-    const data = await this.memory.getMetadata(RELATION_NAMESPACE, eventKey(eventId));
+    const data = await this.memory().getMetadata(RELATION_NAMESPACE, eventKey(eventId));
     return data ? (stripInlineVector(data) as unknown as EventNode) : undefined;
   }
 
   async upsertEvent(node: EventNode): Promise<void> {
-    await this.memory.saveMetadata(RELATION_NAMESPACE, eventKey(node.id), node as unknown as Record<string, unknown>);
+    await this.memory().saveMetadata(RELATION_NAMESPACE, eventKey(node.id), node as unknown as Record<string, unknown>);
   }
 
   async deleteEvent(eventId: string): Promise<void> {
-    await this.memory.deleteMetadata(RELATION_NAMESPACE, eventKey(eventId));
-    await this.memory.deleteMetadata(RELATION_VECTOR_NAMESPACE, vectorKey('event', eventId));
+    await this.memory().deleteMetadata(RELATION_NAMESPACE, eventKey(eventId));
+    await this.memory().deleteMetadata(RELATION_VECTOR_NAMESPACE, vectorKey('event', eventId));
   }
 
   // ----- Entity -----
 
   async getEntity(entityId: string): Promise<EntityNode | undefined> {
-    const data = await this.memory.getMetadata(RELATION_NAMESPACE, entityKey(entityId));
+    const data = await this.memory().getMetadata(RELATION_NAMESPACE, entityKey(entityId));
     return data ? (stripInlineVector(data) as unknown as EntityNode) : undefined;
   }
 
   async upsertEntity(node: EntityNode): Promise<void> {
-    await this.memory.saveMetadata(RELATION_NAMESPACE, entityKey(node.id), node as unknown as Record<string, unknown>);
+    await this.memory().saveMetadata(
+      RELATION_NAMESPACE,
+      entityKey(node.id),
+      node as unknown as Record<string, unknown>,
+    );
   }
 
   async deleteEntity(entityId: string): Promise<void> {
-    await this.memory.deleteMetadata(RELATION_NAMESPACE, entityKey(entityId));
-    await this.memory.deleteMetadata(RELATION_VECTOR_NAMESPACE, vectorKey('entity', entityId));
+    await this.memory().deleteMetadata(RELATION_NAMESPACE, entityKey(entityId));
+    await this.memory().deleteMetadata(RELATION_VECTOR_NAMESPACE, vectorKey('entity', entityId));
   }
 
   // ----- Edge -----
 
   async getEdge(edgeId: string): Promise<RelationEdge | undefined> {
-    const data = await this.memory.getMetadata(RELATION_NAMESPACE, edgeKey(edgeId));
+    const data = await this.memory().getMetadata(RELATION_NAMESPACE, edgeKey(edgeId));
     return data as RelationEdge | undefined;
   }
 
   async upsertEdge(edge: RelationEdge): Promise<void> {
-    await this.memory.saveMetadata(RELATION_NAMESPACE, edgeKey(edge.id), edge as unknown as Record<string, unknown>);
+    await this.memory().saveMetadata(RELATION_NAMESPACE, edgeKey(edge.id), edge as unknown as Record<string, unknown>);
   }
 
   async deleteEdge(edgeId: string): Promise<void> {
-    await this.memory.deleteMetadata(RELATION_NAMESPACE, edgeKey(edgeId));
+    await this.memory().deleteMetadata(RELATION_NAMESPACE, edgeKey(edgeId));
   }
 
   // ----- MergeReject 缓存（consolidate LLM 否决合并的持久化去重） -----
 
   async getMergeReject(aId: string, bId: string): Promise<MergeRejectRecord | undefined> {
-    const data = await this.memory.getMetadata(RELATION_NAMESPACE, mergeRejectKey(aId, bId));
+    const data = await this.memory().getMetadata(RELATION_NAMESPACE, mergeRejectKey(aId, bId));
     return data as MergeRejectRecord | undefined;
   }
 
   async saveMergeReject(record: MergeRejectRecord): Promise<void> {
-    await this.memory.saveMetadata(
+    await this.memory().saveMetadata(
       RELATION_NAMESPACE,
       mergeRejectKey(record.aId, record.bId),
       record as unknown as Record<string, unknown>,
@@ -177,18 +185,18 @@ export class RelationStore {
   }
 
   async deleteMergeReject(aId: string, bId: string): Promise<void> {
-    await this.memory.deleteMetadata(RELATION_NAMESPACE, mergeRejectKey(aId, bId));
+    await this.memory().deleteMetadata(RELATION_NAMESPACE, mergeRejectKey(aId, bId));
   }
 
   /** 当某个节点被合并/删除时，清理所有涉及它的 MergeReject 缓存（旧 id 不再有效）。 */
   async deleteMergeRejectsByNode(nodeId: string): Promise<number> {
-    const entries = await this.memory.listMetadata(RELATION_NAMESPACE);
+    const entries = await this.memory().listMetadata(RELATION_NAMESPACE);
     let deleted = 0;
     for (const { key, data } of entries) {
       if (!key.startsWith(MERGE_REJECT_PREFIX)) continue;
       const r = data as unknown as MergeRejectRecord;
       if (r.aId === nodeId || r.bId === nodeId) {
-        await this.memory.deleteMetadata(RELATION_NAMESPACE, key);
+        await this.memory().deleteMetadata(RELATION_NAMESPACE, key);
         deleted++;
       }
     }
@@ -198,7 +206,7 @@ export class RelationStore {
   // ----- 全量加载（webui / 注入用） -----
 
   async loadAll(): Promise<RelationGraphSnapshot> {
-    const entries = await this.memory.listMetadata(RELATION_NAMESPACE);
+    const entries = await this.memory().listMetadata(RELATION_NAMESPACE);
     const persons: PersonNode[] = [];
     const events: EventNode[] = [];
     const entities: EntityNode[] = [];
@@ -222,9 +230,9 @@ export class RelationStore {
    * mongodb 只保证按序执行遇错即停。不够原子时的兜底是幂等——再清一次即可，图本来就是要清空的。
    */
   async clearAll(): Promise<number> {
-    const entries = await this.memory.listMetadata(RELATION_NAMESPACE);
-    const vecEntries = await this.memory.listMetadata(RELATION_VECTOR_NAMESPACE);
-    await this.memory.commitMetadata([
+    const entries = await this.memory().listMetadata(RELATION_NAMESPACE);
+    const vecEntries = await this.memory().listMetadata(RELATION_VECTOR_NAMESPACE);
+    await this.memory().commitMetadata([
       ...entries.map(e => ({ op: 'del' as const, namespace: RELATION_NAMESPACE, key: e.key })),
       ...vecEntries.map(e => ({ op: 'del' as const, namespace: RELATION_VECTOR_NAMESPACE, key: e.key })),
     ]);
@@ -299,7 +307,7 @@ export class RelationStore {
    * 靠这道校验把错配收敛成一次重算，而不是引入 consolidate 全局锁（过度工程）。
    */
   async getVector(kind: 'entity' | 'event', nodeId: string, expectedHash?: string): Promise<number[] | undefined> {
-    const data = await this.memory.getMetadata(RELATION_VECTOR_NAMESPACE, vectorKey(kind, nodeId));
+    const data = await this.memory().getMetadata(RELATION_VECTOR_NAMESPACE, vectorKey(kind, nodeId));
     const doc = data as { v?: unknown; h?: unknown } | undefined;
     if (!doc || !Array.isArray(doc.v) || doc.v.length === 0) return undefined;
     if (expectedHash !== undefined && doc.h !== expectedHash) return undefined;
@@ -307,7 +315,7 @@ export class RelationStore {
   }
 
   async upsertVector(kind: 'entity' | 'event', nodeId: string, vector: number[], hash?: string): Promise<void> {
-    await this.memory.saveMetadata(RELATION_VECTOR_NAMESPACE, vectorKey(kind, nodeId), { v: vector, h: hash });
+    await this.memory().saveMetadata(RELATION_VECTOR_NAMESPACE, vectorKey(kind, nodeId), { v: vector, h: hash });
   }
 }
 

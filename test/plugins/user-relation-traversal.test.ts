@@ -22,7 +22,8 @@ async function setup() {
   // 激活闸下「没激活」不报错，核一下状态，别让空存储伪装成绿
   const state = app.plugins.getPlugin(memoryInMemory.name)?.state;
   if (state !== 'active') throw new Error(`memory-inmemory 插件未激活（state=${state}）`);
-  return new RelationService(new RelationStore(app.bind({ memory }).memory.require()));
+  const ref = app.bind({ memory }).memory;
+  return new RelationService(new RelationStore(() => ref.require()));
 }
 
 describe('plugin-user-relation: 多层遍历', () => {
