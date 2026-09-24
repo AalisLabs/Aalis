@@ -163,7 +163,7 @@ describe('定义对象的 name', () => {
       }),
     ).toThrow('#');
 
-    // 作用域包名含 '/'；parseInstanceId 只把 '/' 之后的 ':' 当成 suffix——这是合法 name
+    // 作用域包名含 '/'，不含 ':'——这是合法 name
     expect(definePlugin({ name: '@scope/plugin', apply() {} }).name).toBe('@scope/plugin');
   });
 

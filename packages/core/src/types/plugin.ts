@@ -26,15 +26,11 @@ export interface PluginEntry {
 /**
  * 解析插件实例 ID
  *
- * 格式：`@scope/plugin-name:suffix` → { moduleName: '@scope/plugin-name', suffix: 'suffix' }
- * 无 suffix 时返回 { moduleName, suffix: undefined }
+ * 格式：`@scope/plugin-name:suffix` 或 `plugin-name:suffix` → { moduleName, suffix }；无 suffix 时 suffix 为 undefined。
+ * 模块名是 npm 包名，不含 ':'，所以第一个 ':' 就是后缀的起点，后缀里可以再出现 '/' 或 ':'。
  */
 export function parseInstanceId(instanceId: string): { moduleName: string; suffix?: string } {
-  // 从右侧找最后一个冒号，但跳过 scope 中的冒号
-  // 格式: @scope/name:suffix 或 name:suffix
-  const slashIdx = instanceId.indexOf('/');
-  const searchFrom = slashIdx >= 0 ? slashIdx + 1 : 0;
-  const colonIdx = instanceId.indexOf(':', searchFrom);
+  const colonIdx = instanceId.indexOf(':');
   if (colonIdx < 0) return { moduleName: instanceId };
   return {
     moduleName: instanceId.slice(0, colonIdx),
