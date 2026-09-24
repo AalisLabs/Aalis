@@ -1,4 +1,4 @@
-import type { AppService, ConfigManager, PluginManagerService, ServiceRef } from '@aalis/core';
+import type { AppService, HostConfig, PluginManagerService, ServiceRef } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 
@@ -52,7 +52,7 @@ function setup(opts: { saveConfig?: () => Promise<void> } = {}) {
         restart: () => calls.push('restart'),
       }),
       plugins: ref<PluginManagerService>({}),
-      hostConfig: ref<ConfigManager>(hostConfig),
+      hostConfig: ref<HostConfig>(hostConfig),
       tools: { current: undefined },
       commands: { current: undefined },
       webui: () => undefined,

@@ -1,4 +1,4 @@
-import type { AalisConfig, AppService, ConfigManager, Logger, PluginManagerService, ServiceRef } from '@aalis/core';
+import type { AalisConfig, AppService, HostConfig, Logger, PluginManagerService, ServiceRef } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { afterEach, describe, expect, it } from 'vitest';
 import { assertValidInstanceId } from '../../packages/core/src/composition/plugin-definition.js';
@@ -42,7 +42,7 @@ function silentApp(opts?: { config?: AalisConfig; logger?: Logger }): App {
 function attachRoutes(opts: {
   app: AppService;
   plugins: PluginManagerService;
-  hostConfig: ConfigManager;
+  hostConfig: HostConfig;
   logger?: Logger;
 }): {
   putPlugin: (name: string, body: unknown) => Promise<{ status: number; body?: unknown }>;
@@ -229,13 +229,12 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
 
 describe('GET/PUT /api/plugins/:name/config 非法 id', () => {
   it(':name 含 # 时 core 抛 Error，路由返回 400 并透出 message', async () => {
-    // `#` 是现 HEAD 定义闸已拒的形状（子模块分隔符）。F2-config-keys 会让
-    // ConfigManager 按插件 id 取放时自行抛错；在那之前用同一道闸包一层，
+    // `#` 是定义闸已拒的形状（保留字符）。在窄面外用同一道闸包一层，
     // 钉的是路由「core 抛 Error → 400 + message」而不是自己猜非法规则。
     const app = silentApp();
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
     const inner = bound.hostConfig.require();
-    const gated: ConfigManager = Object.create(inner) as ConfigManager;
+    const gated: HostConfig = Object.create(inner) as HostConfig;
     gated.getPluginConfig = (id: string) => {
       assertValidInstanceId(id);
       return inner.getPluginConfig(id);

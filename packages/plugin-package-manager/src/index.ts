@@ -287,7 +287,7 @@ function createService(caps: Caps): PackageManagerService {
       hostCfg.removePluginConfig(name);
       hostCfg.setPluginEnabled(name, true);
       // cleanupConfig 契约返 void；落盘失败只 warn，内存态已清、下次保存会带上
-      hostCfg.save().catch(err => log.warn(`${name}: 卸载后配置清理落盘失败:`, err));
+      caps.app.current?.saveConfig().catch(err => log.warn(`${name}: 卸载后配置清理落盘失败:`, err));
     },
   });
 }

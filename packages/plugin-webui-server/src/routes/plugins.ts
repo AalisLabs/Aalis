@@ -3,7 +3,7 @@ import type { UserIdentity } from '@aalis/api-authority';
 import type { CommandService } from '@aalis/api-commands';
 import type { ToolService } from '@aalis/api-tools';
 import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui';
-import type { AppService, ConfigManager, Logger, PluginManagerService, ServiceRef } from '@aalis/core';
+import type { AppService, HostConfig, Logger, PluginManagerService, ServiceRef } from '@aalis/core';
 import { parseInstanceId } from '@aalis/core';
 import {
   CORE_CONFIG_SCHEMA,
@@ -24,7 +24,7 @@ interface PluginRoutesCaps {
   app: ServiceRef<AppService>;
   plugins: ServiceRef<PluginManagerService>;
   /** 整份配置的读写与落盘（宿主管理面） */
-  hostConfig: ServiceRef<ConfigManager>;
+  hostConfig: ServiceRef<HostConfig>;
   tools: Pick<ServiceRef<ToolService>, 'current'>;
   commands: Pick<ServiceRef<CommandService>, 'current'>;
   /**
@@ -46,7 +46,7 @@ export function registerPluginRoutes(
 ): void {
   const getApp = (): AppService | undefined => caps.app.current;
   const getPluginMgr = (): PluginManagerService | undefined => caps.plugins.current;
-  const hostConfig = (): ConfigManager => caps.hostConfig.require();
+  const hostConfig = (): HostConfig => caps.hostConfig.require();
 
   // 获取插件列表及状态
   expressApp.get('/api/plugins', gate(), (_req, res) => {
