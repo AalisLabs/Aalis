@@ -200,7 +200,7 @@ interface AalisEvents {
 
 表单词汇（`ConfigSchema` / `SchemaField` / …）在 `@aalis/schema-config`。能力词汇（`CapabilityVisibility` 等）在 `@aalis/api-authority`。
 
-日志接口与通道：`Logger` / `LogHub` / `DefaultLogger`。日志记录类型 `LogEntry` / `LogLevel` 与行编解码 `formatLogLine` / `parseLogLine` 由 `@aalis/schema-log` 提供。
+日志接口与通道：`Logger` / `LogHub` / `DefaultLogger`，日志记录类型 `LogEntry` / `LogLevel`。行编解码 `formatLogLine` / `parseLogLine` 由 `@aalis/schema-log` 提供，它以 peer 依赖引用 Core 的记录类型。
 
 ---
 

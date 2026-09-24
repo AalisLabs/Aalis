@@ -23,7 +23,11 @@
     "dev": "tsc --watch"
   },
   "devDependencies": {
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "@aalis/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@aalis/core": ">=0.17.0 <1.0.0"
   },
   "aalis": {
     "types": true

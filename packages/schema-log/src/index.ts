@@ -1,17 +1,8 @@
-// 日志记录与持久化行格式的共享契约；不依赖 Core，不执行 I/O。
+// 日志行编解码的共享契约：记录类型来自 Core，本包只做纯字符串变换，不执行 I/O。
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+import type { LogEntry, LogLevel } from '@aalis/core';
 
-export interface LogEntry {
-  /** 进程内单调递增的稳定序号（每个 LogHub 实例独立计数）。用作下游 React/UI key 与分页 cursor。 */
-  seq: number;
-  /** 本地时区 ISO-8601 时间戳（如 `2026-05-27T09:09:16.028+01:00`）。
-   *  保留完整日期与偏移，便于人读与机器解析；sink 按需截取显示。 */
-  timestamp: string;
-  level: LogLevel;
-  scope: string;
-  message: string;
-}
+export type { LogEntry, LogLevel };
 
 // ----- 单行日志序列化契约（format ↔ parse 对偶） -----
 //
