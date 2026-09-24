@@ -58,7 +58,7 @@ describe('plugin-embedding-ollama: 新旧 API 探测', () => {
   });
 
   async function load(baseUrl: string): Promise<EmbeddingService> {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
     await app.plugins.register(embeddingOllama, { baseUrl, model: 'm', timeoutMs: 2000, retries: 0 });
     await app.plugins.idle();

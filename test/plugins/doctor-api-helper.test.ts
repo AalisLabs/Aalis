@@ -107,7 +107,7 @@ const spec = (id: string, extra?: Partial<CheckSpec>): CheckSpec => ({
 let app: App;
 
 beforeEach(() => {
-  app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  app = new App({ name: 'T', logLevel: 'error' });
 });
 
 afterEach(async () => {

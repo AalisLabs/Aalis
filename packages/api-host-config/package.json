@@ -1,0 +1,41 @@
+{
+  "name": "@aalis/api-host-config",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
+    "directory": "packages/api-host-config"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/AalisLabs/Aalis/issues"
+  },
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "aalis": {
+    "types": true
+  },
+  "peerDependencies": {
+    "@aalis/core": ">=0.17.0 <1.0.0"
+  },
+  "keywords": [
+    "aalis",
+    "aalis-api"
+  ],
+  "description": "宿主配置文档契约：host-config 服务描述符与配置文档类型（AalisConfig，供各域 declaration merging）"
+}

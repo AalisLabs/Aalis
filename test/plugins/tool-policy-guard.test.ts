@@ -24,7 +24,7 @@ interface RegisteredTool {
 }
 
 async function registeredTools(plugin: PluginDefinition): Promise<RegisteredTool[]> {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.register(plugin, {});
   await app.plugins.idle();

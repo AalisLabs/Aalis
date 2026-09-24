@@ -649,7 +649,8 @@ export function registerMarketplaceRoutes(
       const provider = caps.services.inspect(svc)[0];
       return {
         service: svc,
-        providedBy: provider?.contextId === 'root' ? '@aalis/core' : (provider?.contextId ?? null),
+        // 根激活归宿主：core 的内置服务与宿主登记的 host-config / plugin-source 都在这里
+        providedBy: provider?.contextId === 'root' ? '宿主' : (provider?.contextId ?? null),
       };
     });
     res.json({

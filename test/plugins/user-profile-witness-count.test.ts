@@ -15,7 +15,7 @@ import userProfile from '../../packages/plugin-user-profile/src/index.js';
 const PROFILE_NS = 'user:profile';
 
 async function setup(config: Record<string, unknown>) {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide, events, memory: memoryService });
   host.provide(llm, { chat: async () => ({ content: '' }) } as never);
   await app.plugins.register(memoryInMemory, {});

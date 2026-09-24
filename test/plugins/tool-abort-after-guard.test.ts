@@ -9,7 +9,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 // ════════════════════════════════════════════════════════════
 
 async function setup() {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.idle();
   let executed = 0;

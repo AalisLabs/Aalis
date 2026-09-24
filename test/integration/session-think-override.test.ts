@@ -21,7 +21,7 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 // ════════════════════════════════════════════════════════════
 
 async function loadStack(recorder: ChatModelRequest[]) {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   await app.plugin(createMockLLMPlugin({ responses: [{ content: 'ok' }], recorder }));
   await app.plugin(memoryInMemoryPlugin);
   await app.plugin(messageArchivePlugin, { debugLogs: false });

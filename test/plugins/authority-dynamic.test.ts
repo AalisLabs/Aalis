@@ -1,6 +1,7 @@
-import type { ConfigManager, Logger } from '@aalis/core';
+import type { Logger } from '@aalis/core';
 import { describe, expect, it, vi } from 'vitest';
 import type { AccessRequest } from '../../packages/api-authority/src/index.js';
+import type { HostConfig } from '../../packages/api-host-config/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 
 // ════════════════════════════════════════════════════════════
@@ -18,7 +19,7 @@ function makeLogger(): Logger {
 }
 
 function makeManager(cfg: Record<string, unknown> = {}): AuthorityManager {
-  const config = { get: (k: string) => cfg[k] } as unknown as ConfigManager;
+  const config = { get: (k: string) => cfg[k] } as unknown as HostConfig;
   const storage = {} as ConstructorParameters<typeof AuthorityManager>[2];
   return new AuthorityManager(config, makeLogger(), storage);
 }

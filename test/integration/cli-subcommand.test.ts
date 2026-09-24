@@ -15,7 +15,7 @@ import { tryDispatchSubcommand } from '../../packages/runtime/src/subcommand.js'
  */
 describe('tryDispatchSubcommand', () => {
   it('未注册 commands 服务时报错并返回 2', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const errors: string[] = [];
     try {
       const result = await tryDispatchSubcommand(
@@ -34,7 +34,7 @@ describe('tryDispatchSubcommand', () => {
   });
 
   it('命令名未注册时报错（含命令名）并返回 2，不调用 execute', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const errors: string[] = [];
     let executed = false;
     try {
@@ -63,7 +63,7 @@ describe('tryDispatchSubcommand', () => {
   });
 
   it('命中已注册命令：调用 execute、打印结果、返回 0', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const captured: string[] = [];
     const errors: string[] = [];
     let executedWith: { name: string; args: string[]; raw: string } | undefined;
@@ -92,7 +92,7 @@ describe('tryDispatchSubcommand', () => {
   });
 
   it('execute 返回 undefined 时不打印、仍返回 0', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const captured: string[] = [];
     try {
       const host = app.bind({ provide, services });

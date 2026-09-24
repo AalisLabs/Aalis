@@ -1,9 +1,12 @@
-import type { AalisConfig, AppService, HostConfig, Logger, PluginManagerService, ServiceRef } from '@aalis/core';
+import type { AppService, Logger, PluginManagerService, ServiceRef } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { afterEach, describe, expect, it } from 'vitest';
+import { type AalisConfig, type HostConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
 import { assertValidInstanceId } from '../../packages/core/src/composition/plugin-definition.js';
-import { App, appService, config, definePlugin, hostConfig, pluginsService } from '../../packages/core/src/index.js';
+import { type App, appService, config, definePlugin, pluginsService } from '../../packages/core/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
+import type { ConfigStore } from '../../packages/runtime/src/config-store.js';
+import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 
 // PUT /api/plugins/:name/config 必须与 YAML watch 同一政策：按 configSchema 裁未知键。
 // :name 非法时 core 抛 Error，路由映射为 400 并透出 message（不把管理面输入变成 500）。
@@ -30,13 +33,10 @@ function silentLogger(): Logger {
   return l;
 }
 
-function silentApp(opts?: { config?: AalisConfig; logger?: Logger }): App {
-  const app = new App({
-    config: opts?.config ?? { name: 'T', logLevel: 'error', plugins: {} },
-    logger: opts?.logger ?? silentLogger(),
-  });
-  apps.push(app);
-  return app;
+function silentApp(opts?: { config?: Partial<AalisConfig>; logger?: Logger }): { app: App; store: ConfigStore } {
+  const hosted = hostedApp(opts?.config, { logger: opts?.logger ?? silentLogger() });
+  apps.push(hosted.app);
+  return hosted;
 }
 
 function attachRoutes(opts: {
@@ -122,11 +122,9 @@ const SCHEMA: ConfigSchema = {
 };
 
 describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
-  it('叠加 stored、PUT 响应不回显密钥、bounce 后 config 是新的且与 ConfigManager 不别名', async () => {
-    const app = silentApp({
+  it('叠加 stored、PUT 响应不回显密钥、bounce 后 config 是新的且与配置文档不别名', async () => {
+    const { app, store } = silentApp({
       config: {
-        name: 'T',
-        logLevel: 'error',
         plugins: {
           target: {
             apiKey: 'sk-REAL-SECRET',
@@ -137,7 +135,9 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
       },
     });
     let seen: Record<string, unknown> | undefined;
-    await app.plugin(
+    await registerFromDoc(
+      app,
+      store,
       definePlugin({
         name: 'target',
         configSchema: SCHEMA,
@@ -172,12 +172,12 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
       timeoutMs: 60000,
     });
 
-    const fromMgr = app.config.getPluginConfig('target') as { timeoutMs: number };
-    expect(fromMgr).not.toBe(seen);
-    expect(fromMgr).not.toBe(app.plugins.getPlugin('target')?.config);
+    const fromDoc = store.getPluginConfig('target') as { timeoutMs: number };
+    expect(fromDoc).not.toBe(seen);
+    expect(fromDoc).not.toBe(app.plugins.getPlugin('target')?.config);
     (seen as { timeoutMs: number }).timeoutMs = 1;
-    expect(fromMgr.timeoutMs, '就地改插件 config 不得写穿 ConfigManager').toBe(60000);
-    expect(app.config.getPluginConfig('target').timeoutMs).toBe(60000);
+    expect(fromDoc.timeoutMs, '就地改插件 config 不得写穿配置文档').toBe(60000);
+    expect(store.getPluginConfig('target').timeoutMs).toBe(60000);
   });
 
   it('PUT 未知键不进 stored / 现场 config，并 warn 点名（与 config-sync 同一政策）', async () => {
@@ -186,15 +186,15 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
     logger.warn = (msg: string, ...rest: unknown[]) => {
       warnings.push([msg, ...rest].map(String).join(' '));
     };
-    const app = silentApp({
+    const { app, store } = silentApp({
       logger,
       config: {
-        name: 'T',
-        logLevel: 'error',
         plugins: { target: { apiKey: 'sk-REAL-SECRET', timeoutMs: 30000 } },
       },
     });
-    await app.plugin(
+    await registerFromDoc(
+      app,
+      store,
       definePlugin({
         name: 'target',
         configSchema: SCHEMA,
@@ -216,11 +216,11 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
     expect(unknown.status).toBe(200);
     await app.plugins.idle();
     expect(
-      (app.config.getPluginConfig('target') as { sneaky?: unknown }).sneaky,
+      (store.getPluginConfig('target') as { sneaky?: unknown }).sneaky,
       'PUT 未知键应裁掉（与 config-sync 同一政策）',
     ).toBeUndefined();
     expect((app.plugins.getPlugin('target')?.config as { sneaky?: unknown }).sneaky).toBeUndefined();
-    expect(app.config.getPluginConfig('target').timeoutMs).toBe(70000);
+    expect(store.getPluginConfig('target').timeoutMs).toBe(70000);
     const hit = warnings.find(w => w.includes('裁掉 schema 外字段'));
     expect(hit, '裁剪必须点名，不能静默').toBeTruthy();
     expect(hit).toContain('sneaky');
@@ -232,7 +232,7 @@ describe('GET/PUT /api/plugins/:name/config 非法 id', () => {
   it(':name 含 # 时 core 抛 Error，路由返回 400 并透出 message', async () => {
     // `#` 是定义闸已拒的形状（保留字符）。在窄面外用同一道闸包一层，
     // 钉的是路由「core 抛 Error → 400 + message」而不是自己猜非法规则。
-    const app = silentApp();
+    const { app } = silentApp();
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
     const inner = bound.hostConfig.require();
     const gated: HostConfig = Object.create(inner) as HostConfig;
@@ -269,7 +269,7 @@ describe('GET/PUT /api/plugins/:name/config 非法 id', () => {
   });
 
   it('GET/PUT /api/plugins/__proto__/config 返回 400 且 message 含 插件 id 不合法: __proto__', async () => {
-    const app = silentApp();
+    const { app } = silentApp();
     const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
     const api = attachRoutes({
       app: bound.app.require(),

@@ -40,7 +40,8 @@ function world() {
     child: () => logger,
   };
   const app = createInspectableApp({
-    config: { name: 'T', plugins: {}, logLevel: 'error' },
+    name: 'T',
+    logLevel: 'error',
     logger,
     disposeTimeoutMs: 0,
   });

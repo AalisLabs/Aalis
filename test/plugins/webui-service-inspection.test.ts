@@ -4,6 +4,7 @@ import { expect, it, vi } from 'vitest';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { defineService, type Logger, provide } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
+import { createConfigStore, installHostConfig } from '../../packages/runtime/src/config-store.js';
 import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
 it('服务目录与偏好校验：核心服务可见，偏好只认已登记的提供者', async () => {
@@ -20,7 +21,10 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
       return this;
     },
   };
-  const app = createInspectableApp({ config: { name: 'inspect-test', logLevel: 'error', plugins: {} }, logger: quiet });
+  // 与 startAalis 同一装配：文档 → App → installHostConfig（host-config 由宿主登记在根上）
+  const store = createConfigStore({ name: 'inspect-test', logLevel: 'error', plugins: {} });
+  const app = createInspectableApp({ name: 'inspect-test', logLevel: 'error', logger: quiet });
+  installHostConfig(app, store);
   const token = 'service-inspection-test';
   const headers = { Cookie: `aalis_webui_token=${token}`, 'Content-Type': 'application/json' };
   const fakeStorage = {
@@ -81,7 +85,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
       body: JSON.stringify({ contextId: 'probe-b' }),
     });
     expect(preferred.status).toBe(200);
-    expect(app.config.getServicePreferences()['inspection-probe']).toBe('probe-b');
+    expect(store.getServicePreferences()['inspection-probe']).toBe('probe-b');
 
     const currentGraph = await fetch(`${base}/api/marketplace/depgraph?name=${encodeURIComponent(webuiServer.name)}`, {
       headers,
@@ -93,7 +97,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
     expect(current.services.required).toEqual(
       ['events', 'logger', 'lifecycle', 'config', 'provide', 'services'].map(service => ({
         service,
-        providedBy: '@aalis/core',
+        providedBy: '宿主',
       })),
     );
 
@@ -132,7 +136,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
       expect(remoteGraph.status).toBe(200);
       const remote = (await remoteGraph.json()) as typeof current;
       expect(remote.services.required).toEqual([
-        ...defaults.map(service => ({ service, providedBy: '@aalis/core' })),
+        ...defaults.map(service => ({ service, providedBy: '宿主' })),
         { service: 'inspection-probe', providedBy: 'probe-b' },
         { service: 'missing', providedBy: null },
       ]);
@@ -148,7 +152,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
     });
     refuse.mockRestore();
     expect(rejected.status).toBe(409);
-    expect(app.config.getServicePreferences()['inspection-probe'], '容器拒绝时不能落盘假偏好').toBe('probe-b');
+    expect(store.getServicePreferences()['inspection-probe'], '容器拒绝时不能落盘假偏好').toBe('probe-b');
 
     const wrong = await fetch(`${base}/api/services/events/prefer`, {
       method: 'POST',
@@ -156,7 +160,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
       body: JSON.stringify({ contextId: 'unregistered-provider' }),
     });
     expect(wrong.status).toBe(404);
-    expect(app.config.getServicePreferences().events).toBeUndefined();
+    expect(store.getServicePreferences().events).toBeUndefined();
   } finally {
     await app.stop();
   }

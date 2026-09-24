@@ -73,7 +73,7 @@ async function withScheduler(
   const off = hub.onEntry((e: LogEntry) => {
     if (e.level === 'warn') warns.push(e.message);
   });
-  const app = new App({ config: { name: 'T', logLevel: 'warn', plugins: {} }, logHub: hub });
+  const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
   const host = app.bind({ provide, services });
   const store = memoryStorage();
   if (persisted) store.files.set('data:/scheduler-jobs.json', JSON.stringify(persisted));

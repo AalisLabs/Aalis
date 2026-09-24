@@ -195,7 +195,7 @@ describe('legacy vision.mode 映射（config-sync 在 apply 前裁 schema 外键
 
   /** 真实装配 media 插件，注册假 vision processor，喂一张独一无二的图（描述缓存是模块级的） */
   async function callsUnder(vision: Record<string, unknown>, uri: string): Promise<number> {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ provide, services });
     host.provide(processService, {} as never);
     host.provide(storage, {} as never);
@@ -238,7 +238,7 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     uri: string,
     extraArgs: Record<string, unknown> = {},
   ) {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     // 工具经宿主根激活的绑定门面登记，落进 plugin-tools 的真实注册表
     const host = app.bind({ services, tools, memory });
     await app.plugin(toolsPlugin);

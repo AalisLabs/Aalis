@@ -55,7 +55,7 @@ async function framesAroundKey(keyName: string, prelude: string[] = []): Promise
     writes.push(String(chunk));
     return true;
   });
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   try {
     await app.plugin(cliPlugin, { startupView: 'help' });
     await app.plugins.idle();

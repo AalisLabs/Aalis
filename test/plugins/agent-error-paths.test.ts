@@ -52,7 +52,7 @@ async function bootAgentStack(app: App, llmPlugin: PluginDefinition, withTools: 
 
 describe('agent 错误路径：流结束标记与坏工具参数', () => {
   it('普通异常分支先发 outbound:stream done 再发 [错误] 消息', async () => {
-    const app = new App({ config: { name: 'E2E', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'E2E', logLevel: 'error' });
     await bootAgentStack(app, createMockLLMPlugin({ throwOnce: new Error('模型炸了') }), false);
     const host = app.bind({ events, agent });
 
@@ -77,7 +77,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
   });
 
   it('坏 JSON 参数：跳过执行，tool 结果带原 tool_call_id 并把错误交给模型下一轮', async () => {
-    const app = new App({ config: { name: 'E2E', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'E2E', logLevel: 'error' });
     const recorder: ChatModelRequest[] = [];
     const badCall: ChatResponse = {
       content: null,
@@ -128,7 +128,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
   });
 
   it('arguments 为空串的无参工具照常执行（空串不是坏 JSON）', async () => {
-    const app = new App({ config: { name: 'E2E', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'E2E', logLevel: 'error' });
     const emptyCall: ChatResponse = {
       content: null,
       toolCalls: [{ id: 'call-empty', type: 'function', function: { name: 'probe', arguments: '' } }],
@@ -161,7 +161,7 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
   });
 
   it('工具调用上下文带回合中止信号：agent.abort 后工具看到 signal.aborted', async () => {
-    const app = new App({ config: { name: 'E2E', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'E2E', logLevel: 'error' });
     const call: ChatResponse = {
       content: null,
       toolCalls: [{ id: 'call-sig', type: 'function', function: { name: 'probe', arguments: '{}' } }],

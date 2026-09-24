@@ -111,7 +111,7 @@ describe('ContributionRegistry / contributions 能力', () => {
   });
 
   it('reusable 同一定义多实例：贡献按实例 id 分命名空间，互不顶替、卸载其一不误清另一个', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const root = app.bind({ contributions });
     const definition = definePlugin({
       name: 'dyn',

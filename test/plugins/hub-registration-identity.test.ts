@@ -93,7 +93,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
   });
 
   async function world() {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger: silentLogger() });
+    const app = new App({ name: 'T', logLevel: 'error', logger: silentLogger() });
     apps.push(app);
     const host = app.bind({ provide });
     const reg = new ToolRegistry(silentLogger());
@@ -201,7 +201,8 @@ describe('tools 绑定：同名替换与整体重挂', () => {
   function warningWorld() {
     const warnings: string[] = [];
     const app = new App({
-      config: { name: 'T', logLevel: 'error', plugins: {} },
+      name: 'T',
+      logLevel: 'error',
       logger: {
         ...silentLogger(),
         warn: (m: unknown) => warnings.push(String(m)),
@@ -323,7 +324,7 @@ describe('webui-server 页面退订按条目身份', () => {
   });
 
   it('同 key 重注册后，旧退订闭包不摘掉新登记', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger: silentLogger() });
+    const app = new App({ name: 'T', logLevel: 'error', logger: silentLogger() });
     apps.push(app);
     await app.plugins.register(webuiServerPlugin, {
       port: await freePort(),
@@ -355,7 +356,7 @@ describe('webui-server 页面退订按条目身份', () => {
 
 describe('agent 预处理器退订按条目身份', () => {
   it('同名替换后，旧退订闭包只摘自己的中间件，不删新登记的账目', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger: silentLogger() });
+    const app = new App({ name: 'T', logLevel: 'error', logger: silentLogger() });
     await app.plugins.register(agentPlugin, {});
     await app.plugins.idle();
     const host = app.bind({ services, hooks });

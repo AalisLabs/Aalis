@@ -34,7 +34,7 @@ function fakeLLM(): LLMModel {
 
 async function setup(config: Record<string, unknown>) {
   lastInput.text = '';
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide, services, events, hooks });
   await app.plugin(memoryInMemory);
   host.provide(llm, fakeLLM());

@@ -35,7 +35,7 @@ function stubFetch(bodies: Record<string, unknown>[]): void {
 async function setup(config: Record<string, unknown>) {
   const bodies: Record<string, unknown>[] = [];
   stubFetch(bodies);
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   await app.plugin(openaiPlugin, { apiKey: 'test-key', ...config });
   await app.plugins.idle();
   const host = app.bind({ services });

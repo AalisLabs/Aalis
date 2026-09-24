@@ -155,7 +155,7 @@ describe('chat 出口接线', () => {
       );
     }) as typeof fetch;
 
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     await app.plugin(deepseek, { apiKey: 'test-key' });
     await app.plugins.idle();
     const model = app.bind({ services }).services.get(llm);

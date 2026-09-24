@@ -50,7 +50,7 @@ describe('plugin-cli 非 chat 视图的聊天区新消息提示', () => {
       writes.push(String(chunk));
       return true;
     });
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const lastFrame = () => {
       const all = writes.join('');
       const idx = all.lastIndexOf(FRAME_SPLIT);

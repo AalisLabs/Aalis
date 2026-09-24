@@ -4,13 +4,14 @@
 //   - syncPluginDefaults：schema 派生默认值回填 + 按 configSchema 裁剪未知字段
 //   - handleConfigChanged / installConfigHotReload：配置外部变更的 diff + bounce 编排
 //
-// 这些是**政策**（要不要裁剪、怎么合并、何时 bounce），core 只持有机制
-// （配置快照 get/set、watch 透传、updateConfig）。不接本模块的嵌入式
-// 宿主将没有自动配置同步与热重载——需要时用公开 API 自行编排。
+// 这些是**政策**（要不要裁剪、怎么合并、何时 bounce）。配置文档在 config-store，core 只持有
+// 运行态与 updateConfig 机制。不接本模块的嵌入式宿主将没有自动配置同步与热重载——需要时用
+// 公开 API 自行编排。
 // ============================================================
 
-import { type App, type PluginDefinition, parseInstanceId } from '@aalis/core';
+import { type App, events, type PluginDefinition, parseInstanceId } from '@aalis/core';
 import { defaultsFrom, removeExtraFields, validateConfig } from '@aalis/schema-config';
+import type { ConfigStore } from './config-store.js';
 import type { PluginLoader } from './plugin-discovery.js';
 
 export interface ConfigSyncOptions {
@@ -26,48 +27,47 @@ export interface ConfigSyncOptions {
  * 将各插件 schema 派生默认值中缺失的字段合并到配置；同时按 configSchema
  * 移除多余字段。返回发生变更的插件 instanceId 列表。
  *
- * 副作用：对每个变化条目 setPluginConfig；若有变化最终调用 save()。
+ * 副作用：对每个变化条目 setPluginConfig；若有变化最终落盘。
  * 插件的 configSchema 经 `getPlugin(instanceId).definition` 读取
  * （core 的状态摘要不携带配置详情）。
  */
-export function syncPluginDefaults(app: App, opts?: ConfigSyncOptions): string[] {
+export function syncPluginDefaults(app: App, store: ConfigStore, opts?: ConfigSyncOptions): string[] {
   const changed: string[] = [];
   for (const status of app.plugins.getStatus()) {
     const entry = app.plugins.getPlugin(status.instanceId);
     if (!entry) continue;
-    if (syncPluginConfig(app, entry.definition, status.instanceId, opts)) changed.push(status.instanceId);
+    if (syncPluginConfig(app, store, entry.definition, status.instanceId, opts)) changed.push(status.instanceId);
   }
-  if (changed.length > 0) saveSyncedConfig(app);
+  if (changed.length > 0) saveSyncedConfig(app, store);
   return changed;
 }
 
 /**
  * 宿主加载政策：导入定义后、交给 Core 注册前规范化主实例与已配置的复用实例。
  * 首次加载批次只落盘一次；随后市场 rescan 的 load/reload 也走同一政策。
- * getApp 延迟取值：本包装在 App 之前建好，load 只在 App 构造完成后由发现驱动调用。
+ * 发现驱动随后按文档取每个实例的配置交给 core，首次 apply 拿到的就是规范化后的这一份。
  */
-export function withPluginConfigSync(loader: PluginLoader, getApp: () => App, opts?: ConfigSyncOptions) {
+export function withPluginConfigSync(loader: PluginLoader, app: App, store: ConfigStore, opts?: ConfigSyncOptions) {
   let initialLoad = true;
   let initialChanged = false;
   const prepare = async (loaded: Promise<PluginDefinition | null>): Promise<PluginDefinition | null> => {
     const definition = await loaded;
     if (!definition) return null;
-    const app = getApp();
     const ids = [definition.name];
     if (definition.reusable) {
-      for (const id of Object.keys(app.config.get('plugins'))) {
+      for (const id of Object.keys(store.get('plugins'))) {
         const { moduleName, suffix } = parseInstanceId(id);
         if (suffix && moduleName === definition.name) ids.push(id);
       }
     }
     let changed = false;
     for (const id of ids) {
-      if (!syncPluginConfig(app, definition, id, opts)) continue;
+      if (!syncPluginConfig(app, store, definition, id, opts)) continue;
       app.logger.debug(`同步插件配置: ${id}`);
       changed = true;
     }
     if (initialLoad) initialChanged ||= changed;
-    else if (changed) saveSyncedConfig(app);
+    else if (changed) saveSyncedConfig(app, store);
     return definition;
   };
   return {
@@ -78,7 +78,7 @@ export function withPluginConfigSync(loader: PluginLoader, getApp: () => App, op
     } satisfies PluginLoader,
     finishInitialLoad() {
       initialLoad = false;
-      if (initialChanged) saveSyncedConfig(getApp());
+      if (initialChanged) saveSyncedConfig(app, store);
       initialChanged = false;
     },
   };
@@ -88,19 +88,19 @@ export function withPluginConfigSync(loader: PluginLoader, getApp: () => App, op
  * 配置外部变更时的处理：先按启动路径同一政策同步，再重新计算各插件配置
  * 并热重载差异（updateConfig → bounce）。
  */
-export async function handleConfigChanged(app: App, opts?: ConfigSyncOptions): Promise<void> {
+export async function handleConfigChanged(app: App, store: ConfigStore, opts?: ConfigSyncOptions): Promise<void> {
   app.logger.info('检测到配置变更，正在热重载...');
   try {
     // 与启动路径同一政策先同步一遍（补 schema 派生默认值缺失字段 + 裁剪 schema 外字段）
     // ——否则热重载读入的原始快照会绕过政策，内存态与启动态在字段清理上不一致。
-    const synced = syncPluginDefaults(app, opts);
+    const synced = syncPluginDefaults(app, store, opts);
     for (const id of synced) app.logger.debug(`热重载配置同步: ${id}`);
 
     // 每次 updateConfig 收尾的重算都会发 plugins:changed，这里不必再补发
     for (const status of app.plugins.getStatus()) {
       const entry = app.plugins.getPlugin(status.instanceId);
       if (!entry) continue;
-      const newConfig = app.config.getPluginConfig(status.instanceId);
+      const newConfig = store.getPluginConfig(status.instanceId);
       if (JSON.stringify(newConfig) !== JSON.stringify(entry.config)) {
         app.logger.info(`插件 ${status.instanceId} 配置已变更，正在重新加载...`);
         await app.plugins.updateConfig(status.instanceId, newConfig);
@@ -113,18 +113,25 @@ export async function handleConfigChanged(app: App, opts?: ConfigSyncOptions): P
 }
 
 /**
- * 接管配置外部变更监听（provider 不支持 watch 时为 no-op）。
+ * 接管配置外部变更监听（provider 不支持 watch 时为 no-op），停机开始时停止监听。
  * startAalis 默认调用；嵌入式宿主可自行选择是否接。
  */
-export function installConfigHotReload(app: App, opts?: ConfigSyncOptions): void {
-  app.config.watch(() => void handleConfigChanged(app, opts));
+export function installConfigHotReload(app: App, store: ConfigStore, opts?: ConfigSyncOptions): void {
+  store.watch(() => void handleConfigChanged(app, store, opts));
+  app.bind({ events }).events.on('app:stopping', () => store.unwatch());
 }
 
 // ---- helpers ----
 
-function syncPluginConfig(app: App, definition: PluginDefinition, id: string, opts?: ConfigSyncOptions): boolean {
+function syncPluginConfig(
+  app: App,
+  store: ConfigStore,
+  definition: PluginDefinition,
+  id: string,
+  opts?: ConfigSyncOptions,
+): boolean {
   const schema = definition.configSchema;
-  const fileConfig = app.config.getPluginConfig(id);
+  const fileConfig = store.getPluginConfig(id);
   let merged = deepMergeDefaults(defaultsFrom(schema), fileConfig);
   if ((opts?.trimUnknownFields ?? true) && schema && Object.keys(schema).length > 0) {
     const removed: string[] = [];
@@ -132,7 +139,7 @@ function syncPluginConfig(app: App, definition: PluginDefinition, id: string, op
     if (removed.length > 0) app.logger.warn(`配置同步：${id} 裁掉 schema 外字段 [${removed.join(', ')}]`);
   }
   // 脏值只告警不拒载；禁用实例的休眠配置不产生必填缺失噪音。
-  if (!app.config.isPluginDisabled(id)) {
+  if (!store.isPluginDisabled(id)) {
     const problems = validateConfig(schema, merged);
     if (problems.length > 0) {
       app.logger.warn(
@@ -142,12 +149,12 @@ function syncPluginConfig(app: App, definition: PluginDefinition, id: string, op
     }
   }
   if (JSON.stringify(merged) === JSON.stringify(fileConfig)) return false;
-  app.config.setPluginConfig(id, merged);
+  store.setPluginConfig(id, merged);
   return true;
 }
 
-function saveSyncedConfig(app: App): void {
-  app.config.save().catch(err => app.logger.warn('配置同步落盘失败:', err));
+function saveSyncedConfig(app: App, store: ConfigStore): void {
+  store.persist().catch(err => app.logger.warn('配置同步落盘失败:', err));
 }
 
 /**

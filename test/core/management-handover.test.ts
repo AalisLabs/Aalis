@@ -31,7 +31,8 @@ function capturing(disposeTimeoutMs?: number) {
     child: () => logger,
   };
   const app = new App({
-    config: { name: 't', logLevel: 'error', plugins: {} },
+    name: 't',
+    logLevel: 'error',
     devMode: false,
     logger,
     disposeTimeoutMs,
@@ -41,7 +42,7 @@ function capturing(disposeTimeoutMs?: number) {
 }
 
 function world(disposeTimeoutMs?: number) {
-  const app = new App({ config: { name: 't', logLevel: 'error', plugins: {} }, devMode: false, disposeTimeoutMs });
+  const app = new App({ name: 't', logLevel: 'error', devMode: false, disposeTimeoutMs });
   apps.push(app);
   return app;
 }

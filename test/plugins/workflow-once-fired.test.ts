@@ -41,7 +41,7 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
   let calls: number;
 
   const boot = async (): Promise<{ app: App; svc: WorkflowService }> => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
     await app.plugin(storageLocalPlugin, {
       roots: ['data', 'workspace'].map(name => ({

@@ -8,7 +8,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 // 调用方（agent / mcp-server / workflow）不必再区分。
 
 async function withTools(fn: (svc: ToolService) => Promise<void>): Promise<void> {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.idle();
   const { tools } = app.bind({ tools: toolsService });

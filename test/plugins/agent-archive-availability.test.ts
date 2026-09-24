@@ -19,7 +19,7 @@ async function boot() {
   hub.onEntry(entry => {
     if (entry.level === 'warn' && entry.message.includes('message-archive')) warnings.push(entry.message);
   });
-  const app = new App({ logHub: hub, config: { name: 'archive-test', logLevel: 'warn', plugins: {} } });
+  const app = new App({ logHub: hub, name: 'archive-test', logLevel: 'warn' });
   apps.push(app);
   await app.plugin(memoryPlugin);
   await app.plugin(createMockLLMPlugin({ responses: [{ content: '已回复' }] }));

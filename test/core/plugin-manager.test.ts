@@ -27,7 +27,7 @@ afterEach(async () => {
 });
 
 function makeApp(): { app: App; state: ScratchState } {
-  const app = new App({ config: { name: 'TestApp', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'TestApp', logLevel: 'error' });
   apps.push(app);
   return { app, state: { applied: [], disposed: [] } };
 }
@@ -399,7 +399,7 @@ describe('异步 dispose 编排（bounce/unload 等待落盘）', () => {
   const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
   it('bounce：异步 onDispose flush 完成先于重激活', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
     const timeline: string[] = [];
     let flushed = false;
@@ -425,7 +425,7 @@ describe('异步 dispose 编排（bounce/unload 等待落盘）', () => {
   });
 
   it('unload：等待异步清理完成后才宣告卸载', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
     let persisted = false;
     await app.plugin(
@@ -447,7 +447,7 @@ describe('异步 dispose 编排（bounce/unload 等待落盘）', () => {
   });
 
   it('stop：根激活的异步清理在 stop() 返回前完成', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
     let rootCleaned = false;
     app.bind({ lifecycle }).lifecycle.onDispose(async () => {

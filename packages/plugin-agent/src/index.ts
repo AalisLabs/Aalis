@@ -2020,7 +2020,7 @@ function run(caps: Caps): void {
   const agent = agentImpl as unknown as InternalAgent;
 
   // 全局默认 LLM：通过 ServicePreference 锁定 llm 服务的首选 entry。
-  // 偏好持久化由 core 配置层负责（servicePreferences 字段）；这里只是开机时按 agent
+  // 偏好的持久化在宿主配置文档（servicePreferences 字段，WebUI 切换时写入）；这里只是开机时按 agent
   // 自己的 cfg.defaultLLM 覆写一次，便于纯文件配置流（无 webui 干预）也能生效。
   const defaultLLM = caps.config.defaultLLM as { provider?: string; model?: string } | undefined;
   if (defaultLLM?.provider && defaultLLM?.model) {

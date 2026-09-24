@@ -44,7 +44,8 @@ function world() {
     child: () => logger,
   };
   const app = createInspectableApp({
-    config: { name: 'H', logLevel: 'error', plugins: {} },
+    name: 'H',
+    logLevel: 'error',
     logger,
   });
   apps.push(app);

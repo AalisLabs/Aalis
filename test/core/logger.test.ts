@@ -142,7 +142,8 @@ describe('AppOptions.logger 注入（Logger 接口化）', () => {
     hub.onEntry(e => hubEntries.push(e));
 
     const app = new App({
-      config: { name: 'InjectTest', logLevel: 'debug', plugins: {} },
+      name: 'InjectTest',
+      logLevel: 'debug',
       logger: make('custom'),
       logHub: hub,
     });

@@ -25,7 +25,7 @@ afterEach(async () => {
 
 /** 真实 App 装载插件；tools 由宿主提供桩实现以捕获注册的 handler，事件走真实总线 */
 async function setup(): Promise<{ handlers: Map<string, Handler>; emitted: IncomingMessage[] }> {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   booted.push(app);
   const host = app.bind({ provide, events });
 

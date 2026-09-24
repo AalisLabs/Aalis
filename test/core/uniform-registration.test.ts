@@ -26,7 +26,7 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
 function world() {
-  const app = new App({ config: { name: 't', logLevel: 'error', plugins: {} }, devMode: false });
+  const app = new App({ name: 't', logLevel: 'error', devMode: false });
   apps.push(app);
   return app;
 }
@@ -39,7 +39,7 @@ describe('内置服务与第三方同一种登记', () => {
   it('八项都由根激活独占登记，第三方不能顶替，服务页看到的元数据与宿主服务同形', () => {
     const app = world();
     const host = app.bind({ provide, services });
-    for (const name of [...BUILTINS, 'app', 'plugins', 'host-config']) {
+    for (const name of [...BUILTINS, 'app', 'plugins']) {
       expect(host.services.inspect(name), name).toEqual([
         expect.objectContaining({ contextId: 'root', exclusive: true }),
       ]);

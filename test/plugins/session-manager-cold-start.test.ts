@@ -37,7 +37,7 @@ describe('session-manager 落盘只删显式删除的会话', () => {
   it('先从空后备加载、首选后端随后上线：首选后端里原有的会话不被当孤儿删掉', async () => {
     const fallback = fakeMemory();
     const preferred = fakeMemory({ 'old-1': oldSession });
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ provide, sessionManager });
     host.provide(memory, fallback as never, { priority: -100 });
     await app.plugin(sessionManagerPlugin, {});
@@ -53,7 +53,7 @@ describe('session-manager 落盘只删显式删除的会话', () => {
 
   it('显式删除的会话仍从后端删掉', async () => {
     const store = fakeMemory({ keep: { ...oldSession, id: 'keep' }, drop: { ...oldSession, id: 'drop' } });
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ provide, sessionManager });
     host.provide(memory, store as never);
     await app.plugin(sessionManagerPlugin, {});
@@ -79,7 +79,7 @@ describe('冷启动整批登记：首选后端首轮即可见', () => {
           provide(memory, impl as never, { priority });
         },
       });
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ sessionManager });
     await app.plugins.idle();
     await app.pluginAll([

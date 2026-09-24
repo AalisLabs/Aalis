@@ -26,7 +26,7 @@ function world() {
     error: (...args) => void warnings.push(args),
     child: () => logger,
   };
-  const app = createInspectableApp({ config: { name: 'registrar-test', logLevel: 'error', plugins: {} }, logger });
+  const app = createInspectableApp({ name: 'registrar-test', logLevel: 'error', logger });
   apps.push(app);
   return { app, warnings, publish: app.bind({ provide }).provide };
 }

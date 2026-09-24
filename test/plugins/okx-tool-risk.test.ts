@@ -48,7 +48,7 @@ interface Captured {
 /** 装载插件（全开关打开），用桩 tools 提供者收下它注册的每个工具及其档位字段 */
 async function captureRegistrations(): Promise<Captured[]> {
   const captured: Captured[] = [];
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide });
   host.provide(tools, {
     register(tool: Omit<RegisteredTool, 'pluginName'>) {

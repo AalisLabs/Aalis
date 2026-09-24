@@ -10,7 +10,7 @@ import { App, definePlugin, events, lifecycle } from '../../packages/core/src/in
 // ════════════════════════════════════════════════════════════
 
 function silentApp(): App {
-  return new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  return new App({ name: 'T', logLevel: 'error' });
 }
 
 /** 挂起的操作在限时内落定则 true——死锁不该表现成用例超时，而是明确的断言失败 */
@@ -110,7 +110,8 @@ describe('内置事件：屏障节等监听器', () => {
       handed = r;
     });
     const app = new App({
-      config: { name: 'T', logLevel: 'error', plugins: {} },
+      name: 'T',
+      logLevel: 'error',
       restartStrategy: {
         restart() {
           order.push('strategy');

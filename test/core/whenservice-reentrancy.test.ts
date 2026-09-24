@@ -31,7 +31,7 @@ function makeWorld() {
     error: () => {},
     child: () => logger,
   };
-  const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+  const app = createInspectableApp({ name: 'T', logLevel: 'error', logger });
   apps.push(app);
   const host = app.bind({ provide, services });
   for (const id of ['a', 'b', 'c']) host.provide(svc, { id }, { entryId: `root/${id}` });

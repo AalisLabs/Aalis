@@ -26,7 +26,7 @@ const IMG = 'data:image/png;base64,iVBORw0KGgo=';
 const SESSION = 'test:tool-images';
 
 async function runTurn() {
-  const app = new App({ config: { name: 'E2E', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'E2E', logLevel: 'error' });
   const host = app.bind({
     tools,
     hooks,

@@ -60,7 +60,7 @@ function bindHost(app: App) {
 }
 
 async function setup(llmContent: string) {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = bindHost(app);
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();
@@ -260,7 +260,7 @@ describe('plugin-user-relation: extractor', () => {
       capabilities: ['chat'],
       chat: () => new Promise<ChatResponse>(r => setTimeout(() => r({ content: '{}' }), 30)),
     } as unknown as LLMModel;
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const host = bindHost(app);
     await app.plugins.register(memoryInMemory, {});
     await app.plugins.idle();

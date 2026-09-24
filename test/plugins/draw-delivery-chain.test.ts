@@ -40,7 +40,7 @@ describe('绘图产物 → OneBot 出站编码全链', () => {
   beforeEach(async () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-draw-chain-'));
     for (const d of ['data', 'tmp']) mkdirSync(join(base, d), { recursive: true });
-    app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    app = new App({ name: 'T', logLevel: 'error' });
     await app.plugin(storageLocal, {
       roots: [
         {

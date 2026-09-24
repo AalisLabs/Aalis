@@ -39,7 +39,7 @@ function summarizedCount(): number {
 /** 装好两个插件、挂上桩 LLM（默认是会正常出摘要的那个），返回这次 App 的 memory 与宿主门面 */
 async function setup(config: Record<string, unknown>, model: LLMModel = fakeLLM()) {
   lastSummaryInput.text = '';
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide, services, hooks, events });
   await app.plugin(memoryInMemory);
   host.provide(llm, model);

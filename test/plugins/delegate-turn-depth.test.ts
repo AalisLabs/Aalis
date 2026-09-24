@@ -38,7 +38,7 @@ const makeIncoming = (msg: Partial<IncomingMessage> & { sessionId: string }): In
 });
 
 async function setup(): Promise<Harness> {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   booted.push(app);
   const host = app.bind({ provide, events, hooks });
 

@@ -28,7 +28,7 @@ function recordingLogger(lines: string[]): Logger {
 describe('标准第一方组合的关停', () => {
   it('互为 optional 依赖的插件正常关停，不报依赖成环', async () => {
     const lines: string[] = [];
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger: recordingLogger(lines) });
+    const app = new App({ name: 'T', logLevel: 'error', logger: recordingLogger(lines) });
     await app.plugin(createMockLLMPlugin({ responses: [{ content: 'ok' }] }));
     await app.plugin(memoryInMemoryPlugin);
     await app.plugin(messageArchivePlugin, { debugLogs: false });
@@ -48,7 +48,7 @@ describe('标准第一方组合的关停', () => {
 
   it('在飞回合 aborted 收尾时 session-manager 仍在，SM 关闭时 agent 已 abort', async () => {
     const lines: string[] = [];
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger: recordingLogger(lines) });
+    const app = new App({ name: 'T', logLevel: 'error', logger: recordingLogger(lines) });
     await app.plugin(createMockLLMPlugin({ latencyMs: 180, responses: [{ content: 'should-not-land' }] }));
     await app.plugin(memoryInMemoryPlugin);
     await app.plugin(messageArchivePlugin, { debugLogs: false });

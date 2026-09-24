@@ -4,7 +4,7 @@ import { App, definePlugin, defineService, lifecycle, provide, services } from '
 // 停机只靠关停计划（根激活 → 全部插件激活）关掉每一个插件，不依赖资源层的任何父子级联。
 describe('App.stop 关掉全部插件', () => {
   it('无依赖、有依赖、二级依赖的插件在 stop 后都已清理，服务从容器消失，条目进入 disposed', async () => {
-    const app = new App({ config: { name: 'stop-all', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'stop-all', logLevel: 'error' });
     const A = defineService<{ v: number }>('t:stop-all:a');
     const B = defineService<{ v: number }>('t:stop-all:b');
     const closed: string[] = [];

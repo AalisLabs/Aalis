@@ -29,7 +29,7 @@ function hits(): VectorSearchResult[] {
 }
 
 async function setup(crossSessionMode: string) {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide });
   host.provide(embedding, {
     async embed(): Promise<number[]> {

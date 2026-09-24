@@ -93,7 +93,7 @@ describe('process-local 子进程生命周期', () => {
 
   it.skipIf(!posix)('宿主停机：登记在册的存活子进程被杀', async () => {
     const marker = mark('dispose');
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     await app.plugin(processLocal);
     await app.plugins.idle();
     const host = app.bind({ services });

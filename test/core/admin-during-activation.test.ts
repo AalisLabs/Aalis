@@ -46,7 +46,7 @@ function recordOf(app: App, id: string): PluginRecord | undefined {
 
 function makeWorld() {
   const trace: string[] = [];
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   const host = app.bind({ events, services, hooks });
   host.events.on('plugin:loaded', (id: string) => {

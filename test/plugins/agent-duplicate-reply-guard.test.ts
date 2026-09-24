@@ -61,7 +61,7 @@ describe('agent 重复回复守卫（outputFormat 人设 · 真 fs 角色卡）'
 
   const boot = async (clientSide: boolean): Promise<{ sent: OutgoingMessage[]; sessionId: string }> => {
     writeFileSync(join(base, 'personas', 'zz-fmt.yaml'), cardYaml(clientSide));
-    app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    app = new App({ name: 'T', logLevel: 'error' });
     await app.plugin(storageLocalPlugin, {
       roots: [
         {

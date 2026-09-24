@@ -62,7 +62,7 @@ beforeAll(async () => {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   port = (server.address() as { port: number }).port;
 
-  app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  app = new App({ name: 'T', logLevel: 'error' });
   await app.plugins.register(storageLocal, {
     roots: [
       {

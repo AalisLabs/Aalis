@@ -20,7 +20,7 @@ async function setup(): Promise<{
   handlers: Map<string, Handler>;
   inbound: IncomingMessage[];
 }> {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide, services, events });
   const handlers = new Map<string, Handler>();
   host.provide(tools, {

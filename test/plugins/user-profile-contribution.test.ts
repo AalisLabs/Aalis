@@ -28,7 +28,7 @@ function makeFact(id: string, text: string, category?: string, updatedAt = TS) {
 }
 
 async function setup(config: Record<string, unknown> = {}) {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   // 组装器只要两样能力：agent:prompt 的枚举与日志；provide / memory 供本测试自己种数据。
   const host = app.bind({ provide, contributions, logger, memory: memoryService });
   // user-profile 的 uses 含 required 的 llm；build 路径不会触达它，

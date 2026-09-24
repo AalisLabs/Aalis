@@ -12,7 +12,7 @@ const p1svc = defineService<Record<string, never>>('p1svc');
 const p2svc = defineService<Record<string, never>>('p2svc');
 
 function tempApp() {
-  const app = new App({ config: { name: 'ER', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'ER', logLevel: 'error' });
   return {
     app,
     cleanup: async () => {

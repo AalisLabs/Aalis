@@ -35,7 +35,8 @@ describe('排队的服务下线变化', () => {
   beforeEach(async () => {
     releases = [];
     app = new App({
-      config: { name: 'queued-services', logLevel: 'error', plugins: {} },
+      name: 'queued-services',
+      logLevel: 'error',
       logHub: new LogHub(),
     });
     host = app.bind({ provide, services, events });

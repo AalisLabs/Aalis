@@ -1,22 +1,24 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
+import type { HostConfig } from '../../packages/api-host-config/src/index.js';
 import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
-import { App, type ConfigManager, type Logger, provide } from '../../packages/core/src/index.js';
+import { type App, type Logger, provide } from '../../packages/core/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
+import { hostedApp } from '../fixtures/app.js';
 
 // users.json 落盘：save() 只把写挂到 saveChain 上就同步返回。拆卸路径必须 await flushed()，
 // 否则 CLI 子命令退出与 bounce 会丢掉封禁/等级。plugin-authority 在 lifecycle.onDispose 里
 // 先 save() 再 await flushed()，停机才能等到在飞写入。
 
-function mkConfig(): ConfigManager {
+function mkConfig(): HostConfig {
   const store: Record<string, unknown> = { owners: [] };
   return {
     get: (k: string) => store[k],
     set: (k: string, v: unknown) => {
       store[k] = v;
     },
-  } as unknown as ConfigManager;
+  } as unknown as HostConfig;
 }
 function mkLogger(): Logger {
   const l = { child: () => l, debug() {}, info() {}, warn() {}, error() {} };
@@ -87,7 +89,7 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
 
   it('装配真实 plugin-authority 后 app.stop 等到 onDispose 落盘', async () => {
     const done = { written: false } as { written: boolean; uri?: string };
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const { app } = hostedApp();
     apps.push(app);
     const host = app.bind({ provide, authority });
     host.provide(storage, pluginSlowStorage(done));

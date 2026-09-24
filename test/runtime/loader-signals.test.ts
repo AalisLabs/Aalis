@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { pluginDefinitionOf } from '../../packages/api-plugin-source/src/index.js';
 import { App, type Logger, LogHub } from '../../packages/core/src/index.js';
+import { createConfigStore } from '../../packages/runtime/src/config-store.js';
 import { installConsoleSink } from '../../packages/runtime/src/console-sink.js';
 import { createNodeModulesPluginLoader, loadPluginDefinition } from '../../packages/runtime/src/node-modules-loader.js';
 import { createPluginDiscovery } from '../../packages/runtime/src/plugin-discovery.js';
@@ -250,9 +251,13 @@ describe('两份 @aalis/core', () => {
       errCaptured.push(args.map(String).join(' '));
     };
     const handle = installConsoleSink({ target: 'stderr', minLevel: 'warn' });
-    const app = new App({ config: { name: 'T', logLevel: 'info', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'info' });
     try {
-      await createPluginDiscovery(app, createNodeModulesPluginLoader(proj, { hostCoreDir: hostCore })).loadAll();
+      await createPluginDiscovery(
+        app,
+        createNodeModulesPluginLoader(proj, { hostCoreDir: hostCore }),
+        createConfigStore({}),
+      ).loadAll();
       const hit = errCaptured.find(line => line.includes('另一份 @aalis/core'));
       expect(hit).toContain('ERROR');
       expect(hit).toContain('加载插件 "plugin-dup" 失败');

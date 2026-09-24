@@ -21,7 +21,7 @@ const mkLogger = () => {
 
 /** 注册一条指令，随后让 commands 提供者下线，返回旧注册表里剩下的节点名。 */
 async function namesAfterProviderDown(declaration: string): Promise<string[]> {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide });
   const registry = new CommandRegistry(mkLogger() as never);
   const handle = host.provide(commands, registry);

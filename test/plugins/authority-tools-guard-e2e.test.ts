@@ -1,10 +1,10 @@
-import { App } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { type AccessConfirmHandler, authority } from '../../packages/api-authority/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
+import { hostedApp } from '../fixtures/app.js';
 
 // ════════════════════════════════════════════════════════════
 // authority 执行守卫 —— tools 侧端到端
@@ -25,7 +25,7 @@ import { selfInitiatedActor } from '../../packages/schema-message/src/index.js';
 
 async function makeApp(appConfig: Record<string, unknown> = {}) {
   // authority 读的是顶层宿主配置（restrictedPolicy / owners / confirmOverrides 等），不是插件入参
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {}, ...appConfig } as never });
+  const { app } = hostedApp(appConfig);
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.register(authorityPlugin, {});
   await app.plugins.idle();
