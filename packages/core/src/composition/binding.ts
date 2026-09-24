@@ -75,7 +75,7 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
   let subscribed = false;
 
   const desiredProvider = (follower: Follower): P | undefined =>
-    follower.cancelled || scope.resources.lifecycle.disposed ? undefined : scope.services.get<P>(name);
+    follower.cancelled || scope.resources.disposed ? undefined : scope.services.get<P>(name);
 
   /** 让一个跟随者向「当前应挂的实例」收敛；任何状态变化后都调它 */
   const pump = (follower: Follower): void =>
@@ -135,7 +135,7 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
           follower.attaching = false;
         }
         // 回调里取消了自己、或挂载途中又换了人：刚拿到的清理器不能丢，立刻按新目标收敛
-        if (follower.cancelled || scope.resources.lifecycle.disposed || follower.attached !== desiredProvider(follower))
+        if (follower.cancelled || scope.resources.disposed || follower.attached !== desiredProvider(follower))
           pump(follower);
       }
     });
@@ -148,7 +148,7 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
   };
 
   const follow = (attach: Follower['attach'], overlap: boolean): (() => void) => {
-    if (scope.resources.lifecycle.disposed) {
+    if (scope.resources.disposed) {
       scope.logger.warn(`"${scope.id}" 已关闭，忽略对 ${name} 的跟随`);
       return () => {};
     }
@@ -171,7 +171,7 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
     identity: scope.owner,
     logger: scope.logger,
     get closed() {
-      return scope.resources.lifecycle.disposed;
+      return scope.resources.disposed;
     },
     current: () => scope.services.get<P>(name),
     require() {
@@ -195,12 +195,7 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
 
       const attachOne = (target: P, entry: Entry, key: string): void =>
         scope.resources.run(() => {
-          if (
-            entries.get(key) !== entry ||
-            entry.off !== undefined ||
-            provider !== target ||
-            scope.resources.lifecycle.disposed
-          )
+          if (entries.get(key) !== entry || entry.off !== undefined || provider !== target || scope.resources.disposed)
             return;
           const off = options.register(target, entry.item);
           // register 也能替换当前键、切换提供者或关闭激活。回调返回时重新核验所有权，
@@ -208,7 +203,7 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
           if (
             entries.get(key) === entry &&
             provider === target &&
-            !scope.resources.lifecycle.disposed &&
+            !scope.resources.disposed &&
             entry.off === undefined
           ) {
             entry.off = off;
@@ -250,7 +245,7 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
       return {
         add(item: Item) {
           const key = options.key(item);
-          if (scope.resources.lifecycle.disposed) {
+          if (scope.resources.disposed) {
             scope.logger.warn(`"${scope.id}" 已关闭，忽略 ${name} 登记 "${key}"`);
             return () => {};
           }

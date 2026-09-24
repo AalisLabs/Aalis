@@ -208,7 +208,7 @@ describe('follow cleanup 走撤回段', () => {
     host.provide(svcDesc, {});
     const activation = activationHost(app).create(rootActivation(app), 'p');
     const ref = activationHost(app).bind(activation, { x: optional(svcDesc) }).x;
-    const base = activation.resources.lifecycle.disposables.size;
+    const base = activation.resources.disposables.size;
     let attached = 0;
     let cleaned = 0;
     const attach = () => {
@@ -218,14 +218,14 @@ describe('follow cleanup 走撤回段', () => {
       };
     };
     const off = ref.follow(attach);
-    const afterFollow = activation.resources.lifecycle.disposables.size;
+    const afterFollow = activation.resources.disposables.size;
     expect(afterFollow).toBeGreaterThan(base);
     off();
     // 资源口的订阅仍在，但同步退订不得另留 follower 的链上条目
-    expect(activation.resources.lifecycle.disposables.size).toBe(afterFollow);
+    expect(activation.resources.disposables.size).toBe(afterFollow);
     const off2 = ref.follow(attach);
     off2();
-    expect(activation.resources.lifecycle.disposables.size, '同一口复用订阅，二次跟随不叠加条目').toBe(afterFollow);
+    expect(activation.resources.disposables.size, '同一口复用订阅，二次跟随不叠加条目').toBe(afterFollow);
     host.provide(svcDesc, {}, { priority: 9, entryId: 'root/new' });
     expect({ attached, cleaned }, '已退订的跟随者不得响应后续胜者变化').toEqual({ attached: 2, cleaned: 2 });
   });

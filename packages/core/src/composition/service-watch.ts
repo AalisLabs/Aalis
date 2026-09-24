@@ -11,17 +11,17 @@ export function watchService<P>(
   name: string,
   changed: (provider: P | undefined) => void,
 ): void {
-  if (resources.lifecycle.disposed) return;
+  if (resources.disposed) return;
   let current: P | undefined;
   let syncing = false;
   let closed = false;
   const sync = (): void => {
-    if (syncing || closed || resources.lifecycle.disposed) return;
+    if (syncing || closed || resources.disposed) return;
     syncing = true;
     try {
       for (;;) {
         const next = services.get<P>(name);
-        if (next === current || closed || resources.lifecycle.disposed) break;
+        if (next === current || closed || resources.disposed) break;
         current = next;
         changed(next);
       }

@@ -32,7 +32,7 @@ import { createActivationFixture } from '../helpers/activation.js';
 const activations: Activation[] = [];
 afterEach(async () => {
   for (const ctx of activations.splice(0)) {
-    if (!ctx.resources.lifecycle.disposed) await ctx.disposeAsync().catch(() => {});
+    if (!ctx.resources.disposed) await ctx.disposeAsync().catch(() => {});
   }
 });
 
@@ -69,7 +69,7 @@ function startPlugin(ctx: Activation, track: boolean) {
       state.released = true;
     });
   })();
-  if (track) ctx.resources.lifecycle.trackInitialization(applying);
+  if (track) ctx.resources.trackInitialization(applying);
   return { applying, state, acquire };
 }
 
@@ -137,7 +137,7 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
       });
       throw new Error('apply 失败');
     })();
-    ctx.resources.lifecycle.trackInitialization(applying);
+    ctx.resources.trackInitialization(applying);
     applying.catch(() => {}); // 调用方自行处理失败（activatePlugin 的 catch）
 
     const disposing = ctx.disposeAsync(1000);

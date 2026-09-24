@@ -46,7 +46,7 @@ export interface ActivationDeps {
  * - 先写终态：拆卸 await 期间并发管理操作的写入必须是后写者（管理意图胜）；
  *   同时给 activatePlugin 的接管检查提供让位信号。
  * - 判据用 entry.activation 而非 state：'activating' 的在飞激活同样要拆，
- *   disposeAsync 会先等 apply 落定（Lifecycle.trackInitialization）。
+ *   disposeAsync 会先等 apply 落定（Resources.trackInitialization）。
  * - dispose 统一 try/catch：拆卸抛出不得让 entry.activation 悬置（否则
  *   重激活闸永挂、插件静默不可激活）。
  * - 清引用带恒等卫：并发路径若已 join 同一次拆卸并清过引用，不重复置空。
@@ -150,14 +150,14 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
   entry.activation = activation;
 
   try {
-    // 登记后再 await，让拆卸路径能先等 apply 落定（见 Lifecycle.trackInitialization）
+    // 登记后再 await，让拆卸路径能先等 apply 落定（见 Resources.trackInitialization）
     const applying = Promise.resolve(host.mount(activation, entry.definition));
-    activation.resources.lifecycle.trackInitialization(applying);
+    activation.resources.trackInitialization(applying);
     await applying;
 
     // 根已冻进停机计划：App 正等当前 recompute 落定后才执行该计划。
     // 此处不能转入 retireEntry 再 join 计划，否则有限 apply 也会与 stop 互等。
-    if (host.root.resources.lifecycle.disposed) return;
+    if (host.root.resources.disposed) return;
 
     // 接管检查（CAS 式）：unload / disable / bounce 撞上在飞 apply 时
     // 会先把 state 改离 'activating' 再 disposeAsync（等的正是上面这个 applying）。
@@ -172,7 +172,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     // 激活期间资源被拆卸（宿主直调 disposeAsync 撞上在飞 apply，state 未被改走）：
     // provide 已被 post-dispose 守卫吞掉，provides 校验必然失败——但那是框架层
     // 竞态，不是作者的声明错误，必须如实归因，不能报「声明了但未注册」的假罪名。
-    if (activation.resources.lifecycle.disposed) {
+    if (activation.resources.disposed) {
       throw new Error('激活期间资源已被拆卸，插件未完成注册');
     }
     const provides = entry.definition.provides?.map(descriptor => descriptor.name) ?? [];
@@ -202,7 +202,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     // apply 拒绝也不能夺回停机已接管的拆卸责任；资源由同一计划回滚。
-    if (host.root.resources.lifecycle.disposed) return;
+    if (host.root.resources.disposed) return;
     // 接管让位同上：管理路径已持有终态与激活的拆卸责任，此处再写 error /
     // 二次 dispose 会踩掉 disposed / disabled / pending 终态。
     if (entry.state !== 'activating') {
