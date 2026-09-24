@@ -25,10 +25,8 @@
  * 两节的调用形式由 `test/core/architecture.test.ts` 按语法树守；第三方增广的事件由其发射方自定。
  */
 export interface AalisEvents {
-  // 业务消息事件（inbound:message / inbound:message:archived / outbound:message / outbound:stream）
-  // 已通过 declaration merging 由 @aalis/schema-message 注入（cleanup-8）。
-  // 业务工具事件（tool:execute）已通过 declaration merging 由 @aalis/api-tools 注入（cleanup-8）。
-  // gateway:phase:done 由 @aalis/api-gateway 注入（cleanup-7）。
+  // 业务事件由各契约包经 declaration merging 注入：消息事件在 @aalis/schema-message，
+  // 工具事件在 @aalis/api-tools，网关相位事件在 @aalis/api-gateway。
   /** 通知：某服务多了一个提供者（`provide(descriptor, implementation)`） */
   'service:registered': [name: string];
   /** 通知：某服务少了一个提供者（退订闭包或激活拆卸） */

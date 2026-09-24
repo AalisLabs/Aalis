@@ -27,8 +27,9 @@ describe('宿主服务只交出契约方法', () => {
     const app = world();
     const { appService: svc } = app.bind({ appService });
     expect(keysOf(svc.require())).toEqual(['rescanPlugins', 'restart', 'saveConfig', 'stop']);
-    expect((svc.require() as unknown as App).services).toBeUndefined();
-    expect((svc.require() as unknown as App).bind).toBeUndefined();
+    const raw = svc.require() as unknown as Record<string, unknown>;
+    expect(raw.services).toBeUndefined();
+    expect(raw.bind).toBeUndefined();
   });
 
   it('plugins：契约方法齐全、无停机开关；getPlugin 返回不含激活记录的快照', async () => {

@@ -49,7 +49,7 @@ export class PluginManager implements PluginManagerService {
    * 手动 dispose 段计数器：disable / unload / bounce 在「dispose 旧
    * 激活 → 改 entry.state」这段不可分割的状态变更期间 +1。期间 dispose 触发的
    * service:unregistered 反应式 recompute 会被**排队**（而非立即跑——那会看到
-   * 半成品状态，比如把正在禁用的插件重新激活），由这些方法收尾的 softReload 统一消化。
+   * 半成品状态，比如把正在禁用的插件重新激活），由这些方法收尾的 recompute 统一消化。
    *
    * 用计数器而非布尔：dispose hook 内可能同步级联调用 disable/unload（级联
    * 禁用），嵌套时内层的 finally 若复位布尔会过早解除外层的挂起态——计数器确保
@@ -73,11 +73,8 @@ export class PluginManager implements PluginManagerService {
   private shuttingDown = false;
   /** 停机计划的完成信号：beginShutdown 冻树时填，stopAll 执行该计划 */
   private shutdownSettle?: Map<Activation, () => void>;
-
-  /** 是否正在关机——供插件 dispose hook 短路用 */
-  isShuttingDown(): boolean {
-    return this.shuttingDown;
-  }
+  /** 激活序缓存：只随注册表增删失效（依赖声明与 provides 每条不变） */
+  private order?: PluginRecord[];
 
   /**
    * 停机截止点：置 shuttingDown，并把根激活整棵树冻进一张计划。
@@ -190,6 +187,7 @@ export class PluginManager implements PluginManagerService {
     };
 
     this.plugins.set(id, entry);
+    this.order = undefined;
 
     if (isDisabled) {
       this.logger.info(`插件已注册(禁用): ${id}`);
@@ -226,26 +224,32 @@ export class PluginManager implements PluginManagerService {
     if (entry.state === 'disposed') {
       const inflight = entry.activation;
       if (inflight) await inflight.disposeAsync(this.disposeTimeoutMs);
-      if (this.plugins.get(instanceId) === entry) this.plugins.delete(instanceId);
+      if (this.plugins.get(instanceId) === entry) {
+        this.plugins.delete(instanceId);
+        this.order = undefined;
+      }
       return true;
     }
 
     // dispose 段守卫（与 disable 对齐）：dispose 触发的反应式 recompute
-    // 排队到收尾的 softReload，避免在 entry 半卸载态下重算。
+    // 排队到收尾的 recompute，避免在 entry 半卸载态下重算。
     this.suspendDepth++;
     try {
       // delete 必须留在拆卸**之后**：注册表是 register/rescan 的查重闸
       // （plugins.has(id)），提前摘除会让同 id 在旧激活 排空期间重新注册，
       // 新旧实例同 instanceId 并存——同名服务重复 provide、偏好按 contextId 二义。
       await this.retire(entry, 'disposed');
-      if (this.plugins.get(instanceId) === entry) this.plugins.delete(instanceId);
+      if (this.plugins.get(instanceId) === entry) {
+        this.plugins.delete(instanceId);
+        this.order = undefined;
+      }
       this.logger.info(`插件已卸载: ${instanceId}`);
     } finally {
       this.suspendDepth--;
     }
 
     // 级联重算：依赖被卸载插件所提供服务的下游需要转 pending
-    await this.softReload();
+    await this.recompute();
     return true;
   }
 
@@ -302,21 +306,16 @@ export class PluginManager implements PluginManagerService {
     entry.error = undefined;
     this.config.setPluginEnabled(instanceId, true);
     this.logger.info(`插件已启用: ${instanceId}`);
-    await this.softReload();
+    await this.recompute();
     return true;
   }
 
   /**
-   * 禁用一个活跃的插件（core 插件不能禁用）
+   * 禁用一个活跃的插件
    */
   async disable(instanceId: string): Promise<boolean> {
     const entry = this.plugins.get(instanceId);
     if (!entry) return this.refuse('disable', instanceId, '不在注册表');
-
-    if (entry.definition.core) {
-      this.logger.warn(`核心插件 "${instanceId}" 不能被禁用`);
-      return false;
-    }
 
     // 'disposed' 对管理路径单向（见 bounce 内注释）
     if (entry.state === 'disposed') return this.refuse('disable', instanceId, '处于 disposed 终态');
@@ -328,7 +327,7 @@ export class PluginManager implements PluginManagerService {
       return true;
     }
 
-    // dispose 段守卫：期间反应式 recompute 排队到收尾的 softReload
+    // dispose 段守卫：期间反应式 recompute 排队到收尾的 recompute
     this.suspendDepth++;
     try {
       this.config.setPluginEnabled(instanceId, false);
@@ -338,7 +337,7 @@ export class PluginManager implements PluginManagerService {
       this.suspendDepth--;
     }
 
-    await this.softReload();
+    await this.recompute();
     return true;
   }
 
@@ -357,7 +356,6 @@ export class PluginManager implements PluginManagerService {
       displayName: entry.definition.displayName,
       state: entry.state,
       provides: entry.definition.provides?.map(descriptor => descriptor.name),
-      core: entry.definition.core,
       reusable: entry.definition.reusable,
       uses: Object.entries<Uses[string]>(entry.definition.uses ?? {}).map(
         ([key, use]): PluginStatusEntry['uses'][number] => {
@@ -414,12 +412,6 @@ export class PluginManager implements PluginManagerService {
     // 一个注册表外的永生孤儿实例；停机后覆写则会把插件误写进持久化禁用清单。
     if (entry.state === 'disposed') return this.refuse('bounce', instanceId, '处于 disposed 终态');
     if (this.shuttingDown) return this.refuse('bounce', instanceId, '停机中不重建');
-    // 旧调用方（JS 无类型约束）传 module 期望换码：拒绝而非静默跑旧代码，否则调用方以为换成功了。
-    if (opts && 'module' in opts) {
-      this.logger.warn(`bounce: 插件 "${instanceId}" 不再支持 module 热替换，改走 unload + register`);
-      return false;
-    }
-
     const newConfig = opts?.config;
     if (newConfig) {
       // 入参可能是调用方还要继续用的活对象（WebUI PUT / config-sync 浅铺开的 payload）。
@@ -437,12 +429,11 @@ export class PluginManager implements PluginManagerService {
     } finally {
       this.suspendDepth--;
     }
-    await this.softReload();
+    await this.recompute();
     return true;
   }
 
-  // 多实例的配置文件编排属管理面（消费者基于公开的 register / unload / config API 组合实现）；
-  // 内核只保留多实例机制本身（register 带 instanceId + reusable 校验）。
+  // 多实例机制是 register 带 instanceId + reusable 校验；配置键 `name:suffix` 的自动登记在 App（autoLoad / rescan）。
 
   /**
    * 全局停机：全部 active 插件与宿主的根激活进同一张关停计划——消费者先于它依赖的提供者关闭，
@@ -452,11 +443,6 @@ export class PluginManager implements PluginManagerService {
    */
   async stopAll(): Promise<void> {
     await this.recompute('shutdown');
-  }
-
-  /** 软重载：管理动作（启停、重载、卸载）收尾时请求一次重算 */
-  async softReload(): Promise<void> {
-    await this.recompute();
   }
 
   // ----- 单一状态转移入口 -----
@@ -477,7 +463,7 @@ export class PluginManager implements PluginManagerService {
       // 关机已置位时非关机请求无意义；但若队列里躺着一个被挂起的 shutdown
       // （stop() 与手动 dispose 段竞态），借这次调用把它接过来跑完。
       if (this.queued !== 'shutdown') {
-        // 早退也要结算 idle 等待者：管理段收尾的 softReload 走到这里时状态机已静置，
+        // 早退也要结算 idle 等待者：管理段收尾的 recompute 走到这里时状态机已静置，
         // 不结算的话此前压进来的 idle() 永不落定（结算自己会核对三条静置守卫）
         this.settleIdleWaiters();
         return;
@@ -487,7 +473,7 @@ export class PluginManager implements PluginManagerService {
     if (this.queued === null || kind === 'shutdown') this.queued = kind;
 
     // 单飞 + 排队（修 lost wakeup）：在飞期间/手动 dispose 段的请求合并排队，
-    // 由在飞 run 收尾时补跑或 dispose 段收尾的 softReload 消化。注意这里必须
+    // 由在飞 run 收尾时补跑或 dispose 段收尾的 recompute 消化。注意这里必须
     // 立即返回而不能把在飞 promise 交还调用方——若调用方恰在某插件 apply()
     // 内同步调用（在飞 run 正 await 它），等待在飞 promise 会自我死锁。
     if (this.reloading || this.suspended) {
@@ -495,7 +481,7 @@ export class PluginManager implements PluginManagerService {
     }
 
     this.reloading = true;
-    // 只约束 required 缺失触发的自动重试。按 entry 记整个 flight 的余量，queued / softReload
+    // 只约束 required 缺失触发的自动重试。按 entry 记整个 flight 的余量，queued / 管理段收尾的重算
     // 不能给同一失败者补满预算；暂停它不妨碍其他插件或管理状态收敛。flight 结束即释放。
     const retryBudget = new Map<PluginRecord, number>();
     try {
@@ -539,7 +525,8 @@ export class PluginManager implements PluginManagerService {
       rounds++;
       lastRoundFlips = [];
 
-      const order = topoSortByDeps([...this.plugins.values()], this.logger);
+      this.order ??= topoSortByDeps([...this.plugins.values()], this.logger);
+      const order = this.order;
 
       // Phase A: 本轮目标不再是 active 的，成批关闭——它们之间的次序由关停编排按实际依赖定
       const retiring: PluginRecord[] = [];

@@ -17,7 +17,7 @@ interface HookEntry<T> {
  * `inbound:command` / `inbound:flow` / `agent:llm:before`），handler
  * 在事件内部按 **注册顺序** 串行执行洋葱模型 (Koa-style next)。
  *
- * 不再使用数字 priority：相位之间的次序由调度方（plugin-gateway 等）
+ * 不用数字 priority：相位之间的次序由调度方（如网关插件）
  * 显式表达；相位内部的 handler 应顺序无关，或由相位拥有方约定。
  *
  * 插件面与 events / services 同一门面纪律（方法窄面，对象不外露）：
@@ -86,7 +86,7 @@ export class HookRegistry {
    *
    * 返回 `true` 表示链路完整走完（执行了 defaultAction，或本就没有 handler）；
    * 返回 `false` 表示被某个 handler swallow。
-   * 调度方（如 plugin-gateway 多相位调度）可据此决定是否进入后续相位。
+   * 多相位的调度方可据此决定是否进入后续相位。
    *
    * @param hook - 钩子键（命名生命周期事件）
    * @param data - 传递给 handler 的数据对象（会被 handler 修改）

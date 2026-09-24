@@ -1,5 +1,5 @@
 // ============================================================
-// definition.ts — 插件定义与挂载
+// plugin-definition.ts — 插件定义与挂载
 //
 // 插件是一份定义：名字、用到的能力（uses）、提供的服务、元数据，以及拿到绑定接口后的 apply。
 // 调度器挂载时：写入这次激活的配置 → 按 uses 装配绑定接口 → 调 apply。
@@ -40,8 +40,6 @@ export interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
    */
   // biome-ignore lint/suspicious/noExplicitAny: 描述符泛型只作推导载体
   provides?: ServiceDescriptor<any, any>[];
-  /** 核心插件不能被用户禁用 */
-  core?: boolean;
   /**
    * 允许同一份定义以不同配置多次注册（`name:suffix`），每个实例有独立的激活、配置与 id。
    * 默认 false：同一份定义只能注册一次。适合多实例的有 LLM / embedding / 平台适配器、存储后端等。

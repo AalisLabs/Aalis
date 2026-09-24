@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HookRegistry } from '../../packages/core/src/index.js';
+import { HookRegistry } from '../../packages/core/src/primitives/hooks.js';
 
 describe('HookRegistry', () => {
   it('handler 顺序执行（洋葱模型）+ defaultAction 在最后', async () => {

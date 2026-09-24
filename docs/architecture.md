@@ -246,7 +246,7 @@ PluginManager 只有一个外部可见的状态变更入口：`recompute(kind)`�
 
 | kind | 触发场景 |
 |---|---|
-| `changed` | `service:registered` / `service:unregistered`、enable / disable / updateConfig / bounce、`softReload()` |
+| `changed` | `service:registered` / `service:unregistered`、enable / disable / updateConfig / bounce |
 | `shutdown` | `App.stop()` 经 `stopAll()` |
 
 optional 上下线与胜者替换不改变目标态，不级联 bounce。有状态接线走 `ServiceRef.follow`。

@@ -41,7 +41,7 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 
 - 契约包导出描述符（**值导入**，进 `dependencies`，不是 type-only）。类型与绑定实现随描述符走，不需要一张全局服务名 → 类型表。
 - 服务身份是描述符的 `name`。契约包装了两份也指向同一服务。
-- 进程里只能有一份 `@aalis/core`：另一份副本造的描述符、`optional` 包装在定义校验与 `provide` 处一律拒绝，错误写明「来自另一份 @aalis/core」；宿主 runtime 在 import 插件前也会核对包目录并只拒载该插件。插件以 peerDependencies 引用 core，排查见 [第三方插件开发者指南](../guide/third-party-plugin.md)。
+- 进程里只能有一份 `@aalis/core`：另一份副本造的描述符、`optional` 包装在定义校验与 `provide` 处一律拒绝，错误写明「来自另一份 @aalis/core」；宿主 runtime 在 import 插件前也会核对包目录并只拒载该插件。插件以 peerDependencies 引用 core，排查见 [第三方插件开发者指南](../guide/third-party-plugin.md#7-装了两份-aaliscore)。
 - `provide(descriptor, impl)` 按描述符约束实现类型。
 - Core 默认登记的八项基础服务与第三方服务共用容器、描述符和 `bind`；`uses` 中的 required / optional 规则也相同。基础服务以 `exclusive` 登记，防止同名接口指向另一套实现；这项登记策略第三方同样可以使用。
 - 领域能力（LLM 的 `vision`、storage 的 `local-path`）挂在服务实例 / model handle 的元数据上，由各 `-api` 的 helper 筛选，不进内核 DI。
@@ -116,10 +116,10 @@ interface Services {
 
 ## ServiceContainer
 
-宿主经 `AppOptions.services` 注入替身、或管控类代码经 `app.services` 巡视时用。插件不直接持有容器：注册走 `provide(descriptor, impl)`，消费走 `uses` 后的 `ServiceRef` 或 `services.get`。
+容器不外露：注册走 `provide(descriptor, impl)`，消费走 `uses` 后的 `ServiceRef` 或 `services.get`，宿主同样经 `app.bind` 取这两项。
 
 容器按名字存取，不认识类型——实现是否满足契约由描述符在 `provide` 处约束。`register` 的 `owner` 是清理归属（激活门面自动传入）；省略则该 entry 不被拆卸自动清理，调用方用返回的退订闭包自管。`unregisterByOwner` 按 owner 而非 contextId 批量清理，同名激活互不误清。
 
-`app.services.get(name)` / `getAll(name)` 返回登记进容器的对象本身。内置八项登记的是提供者函数，宿主要用它们的接口须经 `app.bind`，如 `app.bind({ events }).events`；只看登记元数据用 `app.services.inspect(name)`。
+宿主要用内置八项的接口经 `app.bind`，如 `app.bind({ events }).events`；动态查询与登记元数据经 `app.bind({ services })`。
 
 `hasByContext(name, contextId)` 的「拥有」语义同时匹配 `contextId === ownerId` 和以 `ownerId + '/'` 为前缀的 per-entry 子 entry（如 `@aalis/plugin-llm-ollama:main/llama3`）。
