@@ -158,8 +158,6 @@ export interface ServiceProviderInfo {
   label?: string;
   /** provide() 时声明的 priority 数值；越大越优先 */
   priority: number;
-  /** 提供者实例由全部消费者共享，或为每个激活单独创建。 */
-  scope: 'shared' | 'activation';
   /** 独占登记只有一个提供者，不支持偏好切换。 */
   exclusive: boolean;
 }

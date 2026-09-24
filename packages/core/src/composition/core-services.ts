@@ -1,9 +1,10 @@
 // ============================================================
-// core-services.ts — 宿主默认服务的描述符与提供者
+// core-services.ts — 内置八项服务的描述符与提供者
 //
-// 所有服务都在容器中登记，并经描述符 bind 装配。默认服务使用公开的 serviceFactory，
-// 按消费者激活生成门面；exclusive 是所有提供者都能使用的登记策略，不是描述符特权。
-// 不声明 lifecycle / logger 不影响框架对本次激活的资源管理。
+// 与契约包的服务同一种做法：提供者由根激活经 provide 登记（独占），描述符的 bind 只用公开的资源口。
+// 八项的提供者形状相同：以调用方的 port.identity 为参，交回这次激活的门面；提供者先核对该身份属于
+// 在 uses 里声明过本服务的激活——动态查询拿到提供者，也只能以自己的身份、在已声明时使用。
+// 原语登记按身份归属，由拆卸的同栈切断统一撤回；手动退订直接撤原语登记，不另记清理链。
 // ============================================================
 
 import type { ContributionPointMap } from '../types/contributions.js';
@@ -16,15 +17,15 @@ import type { ServiceInfo, ServiceView } from '../primitives/services.js';
 import { defineService, type ProviderOf, type ServiceDescriptor } from './descriptors.js';
 import { validateProvide } from './provide-validation.js';
 import type { ServiceRuntime } from './runtime.js';
-import { type ServiceFactory, type ServiceScope, serviceFactory } from './service-factory.js';
 import type { Logger } from '../infrastructure/logger.js';
+import type { Resources } from '../infrastructure/resources.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
 /** `provide` 的登记选项 */
 export interface ProvideOptions {
   priority?: number;
-  /** Reject other providers of this name while this registration exists. */
+  /** 独占：本条登记存续期间拒绝同名的其他提供者 */
   exclusive?: boolean;
   /** 展示名（服务页下拉等） */
   label?: string;
@@ -37,10 +38,18 @@ export interface ProvideOptions {
   onBehalfOf?: string;
 }
 
-function accepts(scope: ServiceScope, operation: string): boolean {
-  if (!scope.closed) return true;
-  scope.logger.warn(`激活 "${scope.id}" 已 dispose，忽略 ${operation}`);
-  return false;
+/** 提供者按身份认出的调用方激活（结构上即激活记录的这几项） */
+interface CoreCaller {
+  readonly id: string;
+  readonly owner: symbol;
+  readonly logger: Logger;
+  readonly config: Readonly<Record<string, unknown>>;
+  readonly resources: Resources;
+}
+
+/** 内置服务的描述符：提供者是「身份 → 门面」，bind 以本资源口的身份取门面 */
+function builtin<B>(name: string): ServiceDescriptor<(identity: symbol) => B, B> {
+  return defineService<(identity: symbol) => B, B>(name, port => port.require()(port.identity));
 }
 
 // ----- events -----
@@ -49,13 +58,7 @@ export interface Events {
   on<E extends string & keyof AalisEvents>(event: E, handler: EventHandler<AalisEvents[E]>): () => void;
   emit<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): Promise<void>;
 }
-
-export const events = defineService<Events, Events>('events', port => port.require());
-const createEvents = factory<Events>(events, (scope, { events: bus }) => ({
-  on: (event, handler) =>
-    accepts(scope, `on("${event}")`) ? scope.track(bus.on(event, handler, scope.identity), `on:${event}`) : () => {},
-  emit: (event, ...args) => bus.emit(event, ...args),
-}));
+export const events = builtin<Events>('events');
 
 // ----- hooks -----
 
@@ -70,15 +73,7 @@ export interface Hooks {
     opts?: { warnOnStall?: boolean },
   ): Promise<boolean>;
 }
-
-export const hooks = defineService<Hooks, Hooks>('hooks', port => port.require());
-const createHooks = factory<Hooks>(hooks, (scope, { hooks: registry }) => ({
-  middleware: (hook, fn) =>
-    accepts(scope, `middleware("${hook}")`)
-      ? scope.track(registry.register(hook, fn, scope.id, scope.identity), `middleware:${hook}`)
-      : () => {},
-  run: (hook, data, defaultAction, opts) => registry.run(hook, data, defaultAction, opts),
-}));
+export const hooks = builtin<Hooks>('hooks');
 
 // ----- contributions -----
 
@@ -93,29 +88,7 @@ export interface Contributions {
     point: K,
   ): ReadonlyArray<ContributionHandle<ContributionPointMap[K] & ContributionSpec>>;
 }
-
-export const contributions = defineService<Contributions, Contributions>('contributions', port => port.require());
-const createContributions = factory<Contributions>(contributions, (scope, { contributions: registry }) => {
-  const entries = new Map<string, () => void>();
-  return {
-    contribute(point, spec) {
-      if (!accepts(scope, `contribute("${point}")`)) return () => {};
-      const key = `${point}\u0000${(spec as ContributionSpec).id}`;
-      entries.get(key)?.();
-      const rawOff = registry.register(point, spec, scope.id, scope.identity);
-      const off = scope.track(
-        () => {
-          if (entries.get(key) === off) entries.delete(key);
-          rawOff();
-        },
-        `contribute:${point}:${(spec as ContributionSpec).id}`,
-      );
-      entries.set(key, off);
-      return off;
-    },
-    collect: point => registry.collect(point),
-  };
-});
+export const contributions = builtin<Contributions>('contributions');
 
 // ----- lifecycle -----
 
@@ -134,30 +107,16 @@ export interface LifecycleCap {
   /** 登记清理（清理段）：本激活的对外登记已撤回；依赖可能已不可用，交接应放在 onDrain */
   onDispose(fn: () => void | Promise<void>, label?: string): () => void;
 }
-
-export const lifecycle = defineService<LifecycleCap, LifecycleCap>('lifecycle', port => port.require());
-const createLifecycle = factory<LifecycleCap>(lifecycle, scope => ({
-  id: scope.id,
-  get closed() {
-    return scope.closed;
-  },
-  onDrain: (fn, label) => scope.onDrain(fn, label),
-  onDispose: (fn, label) => scope.onDispose(fn, label),
-}));
+export const lifecycle = builtin<LifecycleCap>('lifecycle');
 
 // ----- logger / config -----
 
-export const logger = defineService<Logger, Logger>('logger', port => port.require());
-const createLogger = factory<Logger>(logger, scope => scope.logger);
+export const logger = builtin<Logger>('logger');
 
 /** 插件自己的配置视图（只读）。宿主级的配置管理是另一项能力，不默认发给插件。 */
-export const config = defineService<Readonly<Record<string, unknown>>, Readonly<Record<string, unknown>>>(
-  'config',
-  port => port.require(),
-);
-const createConfig = factory<Readonly<Record<string, unknown>>>(config, scope => scope.config);
+export const config = builtin<Readonly<Record<string, unknown>>>('config');
 
-// ----- services（提供与动态查找）-----
+// ----- provide / services（发布与动态查找）-----
 
 // biome-ignore lint/suspicious/noExplicitAny: 描述符泛型只作推导载体
 type AnyDescriptor = ServiceDescriptor<any, any>;
@@ -170,35 +129,10 @@ type AnyDescriptor = ServiceDescriptor<any, any>;
  */
 export type Provide = <D extends AnyDescriptor>(
   descriptor: D,
-  implementation: ProviderOf<D> | ServiceFactory<ProviderOf<D>>,
+  implementation: ProviderOf<D>,
   options?: ProvideOptions,
 ) => () => void;
-
-export const provide = defineService<Provide, Provide>('provide', port => port.require());
-const createProvide = factory<Provide>(provide, (scope, runtime) => (descriptor, implementation, options) => {
-  const name = descriptor.name;
-  if (!accepts(scope, `provide("${name}")`)) return () => {};
-  if (implementation === null || implementation === undefined) throw new Error('provide 的实现不能为空');
-  if (options?.priority !== undefined && !Number.isFinite(options.priority)) {
-    throw new Error(`provide 的 priority 必须是有限数字（收到 ${String(options.priority)}）`);
-  }
-  const entryId = options?.onBehalfOf ?? options?.entryId ?? scope.id;
-  if (runtime.devMode && options?.onBehalfOf === undefined)
-    validateProvide(
-      { ctxId: scope.id, name, entryId, explicitEntryId: options?.entryId !== undefined },
-      { services: runtime.services, logger: scope.logger },
-    );
-  const off = runtime.services.register(name, implementation, entryId, scope.identity, options);
-  const dispose = scope.track(
-    () => {
-      if (off()) runtime.notify('service:unregistered', name);
-    },
-    `provide:${options?.onBehalfOf ?? options?.entryId ?? name}`,
-  );
-  runtime.notify('service:registered', name);
-  scope.logger.debug(`服务已注册: ${name}`);
-  return dispose;
-});
+export const provide = builtin<Provide>('provide');
 
 /** 动态查询的键：有描述符就用描述符（带类型），只有运行期字符串（URL、配置里的服务名）就用名字 */
 export type ServiceKey = AnyDescriptor | string;
@@ -215,72 +149,94 @@ export interface Services {
   all<K extends ServiceKey>(key: K): ServiceView<KeyedProvider<K>>[];
   /** 当前已注册的全部服务名 */
   names(): string[];
-  /** Provider metadata only; does not construct activation-scoped instances. */
+  /** 只读登记元数据（不含实例） */
   inspect(key: ServiceKey): ServiceInfo[];
   /** 某服务当前的偏好提供者（contextId）；无偏好为 undefined */
   preferred(key: ServiceKey): string | undefined;
   prefer(key: ServiceKey, contextId: string): boolean;
   unprefer(key: ServiceKey): boolean;
 }
+export const services = builtin<Services>('services');
 
-export const services = defineService<Services, Services>('services', port => port.require());
-const createServices = factory<Services>(services, (scope, runtime, resolve) => ({
-  get: <K extends ServiceKey>(key: K) =>
-    resolve(scope, keyName(key), runtime.services.get(keyName(key))) as KeyedProvider<K> | undefined,
-  all: <K extends ServiceKey>(key: K) =>
-    runtime.services
-      .getAll(keyName(key))
-      .map(entry => ({ ...entry, instance: resolve(scope, keyName(key), entry.instance) as KeyedProvider<K> })),
-  names: () => runtime.services.getServiceNames(),
-  inspect: key => runtime.services.inspect(keyName(key)),
-  preferred: key => runtime.services.getPreferred(keyName(key)),
-  prefer: (key, contextId) => {
-    const ok = runtime.services.prefer(keyName(key), contextId);
-    if (ok) runtime.notify('service:preference-changed', keyName(key));
-    return ok;
-  },
-  unprefer: key => {
-    const ok = runtime.services.unprefer(keyName(key));
-    if (ok) runtime.notify('service:preference-changed', keyName(key));
-    return ok;
-  },
-}));
+// ----- 提供者 -----
 
-type Resolve = (scope: ServiceScope, name: string, provider: unknown) => unknown;
-function factory<T>(
-  descriptor: ServiceDescriptor<T, unknown>,
-  create: (scope: ServiceScope, runtime: ServiceRuntime, resolve: Resolve) => T,
-) {
-  return { name: descriptor.name, create };
-}
-
-/** Bootstrap registration uses the same container and factory protocol as third-party services. */
-export function registerCoreServices(runtime: ServiceRuntime, owner: symbol, resolve: Resolve): void {
-  const factories = [
-    createEvents,
-    createHooks,
-    createContributions,
-    createLifecycle,
-    createLogger,
-    createConfig,
-    createProvide,
-    createServices,
-  ];
-  const registered: Array<() => boolean> = [];
-  try {
-    for (const entry of factories) {
-      registered.push(
-        runtime.services.register(
-          entry.name,
-          serviceFactory<unknown>(scope => entry.create(scope, runtime, resolve)),
-          'root',
-          owner,
-          { exclusive: true },
-        ),
+/**
+ * 八项内置服务的提供者：`provide` 单列（宿主须先直接登记它来自举），其余七项由根激活经 provide 登记。
+ * `caller` 按身份认出调用方激活，并核对它在 uses 里声明过该服务（否则抛错）。
+ */
+export function coreProviders(
+  runtime: ServiceRuntime,
+  caller: (identity: symbol, name: string) => CoreCaller,
+): { provide: (identity: symbol) => Provide; rest: Array<[AnyDescriptor, (identity: symbol) => unknown]> } {
+  const entry = <B>(descriptor: ServiceDescriptor<(identity: symbol) => B, B>, view: (c: CoreCaller) => B) =>
+    [descriptor, (identity: symbol) => view(caller(identity, descriptor.name))] as [AnyDescriptor, (i: symbol) => B];
+  const accepts = (c: CoreCaller, operation: string): boolean => {
+    if (!c.resources.lifecycle.disposed) return true;
+    c.logger.warn(`激活 "${c.id}" 已 dispose，忽略 ${operation}`);
+    return false;
+  };
+  const { events: bus, hooks: hookRegistry, contributions: registry, services: container } = runtime;
+  const shared: Services = {
+    get: <K extends ServiceKey>(key: K) => container.get<KeyedProvider<K>>(keyName(key)),
+    all: <K extends ServiceKey>(key: K) => container.getAll<KeyedProvider<K>>(keyName(key)),
+    names: () => container.getServiceNames(),
+    inspect: key => container.inspect(keyName(key)),
+    preferred: key => container.getPreferred(keyName(key)),
+    prefer: (key, contextId) => {
+      const ok = container.prefer(keyName(key), contextId);
+      if (ok) runtime.notify('service:preference-changed', keyName(key));
+      return ok;
+    },
+    unprefer: key => {
+      const ok = container.unprefer(keyName(key));
+      if (ok) runtime.notify('service:preference-changed', keyName(key));
+      return ok;
+    },
+  };
+  const [, provideFor] = entry<Provide>(provide, c => (descriptor, implementation, options) => {
+    const name = descriptor.name;
+    if (!accepts(c, `provide("${name}")`)) return () => {};
+    const entryId = options?.onBehalfOf ?? options?.entryId ?? c.id;
+    if (runtime.devMode && options?.onBehalfOf === undefined)
+      validateProvide(
+        { ctxId: c.id, name, entryId, explicitEntryId: options?.entryId !== undefined },
+        { services: container, logger: c.logger },
       );
-    }
-  } catch (error) {
-    for (const off of registered.reverse()) off();
-    throw error;
-  }
+    const off = container.register(name, implementation, entryId, c.owner, options);
+    runtime.notify('service:registered', name);
+    c.logger.debug(`服务已注册: ${name}`);
+    return () => {
+      if (off()) runtime.notify('service:unregistered', name);
+    };
+  });
+  return {
+    provide: provideFor,
+    rest: [
+      entry<Events>(events, c => ({
+        on: (event, handler) => (accepts(c, `on("${event}")`) ? bus.on(event, handler, c.owner) : () => {}),
+        emit: (event, ...args) => bus.emit(event, ...args),
+      })),
+      entry<Hooks>(hooks, c => ({
+        middleware: (hook, fn) =>
+          accepts(c, `middleware("${hook}")`) ? hookRegistry.register(hook, fn, c.id, c.owner) : () => {},
+        run: (hook, data, defaultAction, opts) => hookRegistry.run(hook, data, defaultAction, opts),
+      })),
+      entry<Contributions>(contributions, c => ({
+        contribute: (point, spec) =>
+          accepts(c, `contribute("${point}")`) ? registry.register(point, spec, c.id, c.owner) : () => {},
+        collect: point => registry.collect(point),
+      })),
+      entry<LifecycleCap>(lifecycle, c => ({
+        id: c.id,
+        get closed() {
+          return c.resources.lifecycle.disposed;
+        },
+        onDrain: (fn, label) => c.resources.onDrain(fn, label),
+        onDispose: (fn, label) => c.resources.onDispose(fn, label),
+      })),
+      entry<Logger>(logger, c => c.logger),
+      entry<Readonly<Record<string, unknown>>>(config, c => c.config),
+      entry<Services>(services, () => shared),
+    ],
+  };
 }

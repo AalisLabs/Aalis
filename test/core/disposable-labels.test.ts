@@ -3,12 +3,19 @@ import { defineService } from '../../packages/core/src/index.js';
 import { createActivationFixture } from '../helpers/activation.js';
 
 // ════════════════════════════════════════════════════════════
-// 清理项点名：按激活绑定的能力注册自动打标签（`前缀:名字`）。
+// 清理项点名：进清理链的条目带标签（跟随为 `watch:服务名`，onDispose 用作者标签）。
 // 把「卸载后还剩几个」升级为「剩的是谁」；不做嵌套树（无 effect 原语）。
-// 测试键沿用 hooks/contributions 测试同一惯例：as never 绕过空接口键约束。
+// 四原语（监听 / 中间件 / 贡献 / 服务登记）按身份归属、激活关闭时整体切断，不进清理链。
+// hooks/contributions 测试键沿用同一惯例：as never 绕过空接口键约束；事件键经 declaration merging 登记。
 // ════════════════════════════════════════════════════════════
 
-const EVT = '__t:evt' as never;
+declare module '@aalis/core' {
+  interface AalisEvents {
+    '__t:evt': [];
+  }
+}
+
+const EVT = '__t:evt';
 const HOOK = '__t:hook2' as never;
 const POINT = '__t:point2' as never;
 
@@ -16,11 +23,17 @@ function makeFixture(id = 'root') {
   return createActivationFixture({ id });
 }
 
-describe('门面注册自动标签', () => {
-  it('五个门面各按前缀点名；provide 显式 entryId 时用 entryId', async () => {
+describe('清理链点名', () => {
+  it('四原语登记不进清理链、激活关闭时一并撤回（含显式 entryId 的服务登记）；跟随按 watch:服务名 点名', async () => {
     const ctx = makeFixture('p');
-    ctx.caps.events.on(EVT, () => {});
+    const baseline = ctx.activation.resources.lifecycle.disposables.labels();
+    let heard = 0;
+    let passed = 0;
+    ctx.caps.events.on(EVT, () => {
+      heard++;
+    });
     ctx.caps.hooks.middleware(HOOK, async (_d, next) => {
+      passed++;
       await next();
     });
     ctx.caps.contributions.contribute(POINT, { id: 'me' } as never);
@@ -28,14 +41,21 @@ describe('门面注册自动标签', () => {
     ctx.caps.provide(defineService('llm'), {} as never, { entryId: 'p/model-a' });
     ctx.host.bind(ctx.activation, { ref: defineService('later') }).ref.follow(() => {});
 
-    const labels = ctx.activation.resources.lifecycle.disposables.labels();
-    expect(labels).toContain('on:__t:evt');
-    expect(labels).toContain('middleware:__t:hook2');
-    expect(labels).toContain('contribute:__t:point2:me');
-    expect(labels).toContain('provide:svc');
-    expect(labels).toContain('provide:p/model-a');
-    expect(labels).toContain('watch:later');
+    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual([...baseline, 'watch:later']);
+    await ctx.events.emit(EVT);
+    await ctx.hooks.run(HOOK, {} as never);
+    expect([heard, passed]).toEqual([1, 1]);
+    expect(ctx.contributions.collect(POINT).map(entry => entry.key)).toEqual(['p/me']);
+    expect(ctx.services.get('svc')).toEqual({});
+    expect(ctx.services.inspect('llm')).toEqual([expect.objectContaining({ contextId: 'p/model-a' })]);
+
     await ctx.activation.disposeAsync();
+    await ctx.events.emit(EVT);
+    await ctx.hooks.run(HOOK, {} as never);
+    expect([heard, passed]).toEqual([1, 1]);
+    expect(ctx.contributions.collect(POINT)).toEqual([]);
+    expect(ctx.services.get('svc')).toBeUndefined();
+    expect(ctx.services.inspect('llm')).toEqual([]);
   });
 
   it('onDispose 作者标签保留，未命名项以 undefined 占位', async () => {
@@ -47,12 +67,18 @@ describe('门面注册自动标签', () => {
     await ctx.activation.disposeAsync();
   });
 
-  it('手动退订自摘：名单同步缩短（自移除语义不回归）', async () => {
+  it('手动退订：清理链始终不留条目，退订即同步撤回监听', async () => {
     const ctx = makeFixture('p');
     const baseline = ctx.activation.resources.lifecycle.disposables.labels();
-    const off = ctx.caps.events.on(EVT, () => {});
-    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual([...baseline, 'on:__t:evt']);
+    let heard = 0;
+    const off = ctx.caps.events.on(EVT, () => {
+      heard++;
+    });
+    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual(baseline);
+    await ctx.events.emit(EVT);
     off();
+    await ctx.events.emit(EVT);
+    expect(heard).toBe(1);
     expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual(baseline);
     await ctx.activation.disposeAsync();
   });

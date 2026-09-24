@@ -7,10 +7,11 @@ import { ServiceContainer } from '../primitives/services.js';
 
 import type { Activation } from './activation.js';
 import { ActivationHost, notify } from './activation-host.js';
+import { appService, hostConfig, pluginsService } from './host-services.js';
 import { PluginManager, parseInstanceId } from './plugin.js';
 import type { PluginLoader, RestartStrategy } from './providers.js';
 import { events, provide, services } from '../composition/core-services.js';
-import { type BoundOf, defineService, type Uses } from '../composition/descriptors.js';
+import type { BoundOf, Uses } from '../composition/descriptors.js';
 import type { PluginDefinition } from '../composition/plugin-definition.js';
 import { type AalisConfig, ConfigManager, type ConfigProvider } from '../infrastructure/config.js';
 import {
@@ -201,10 +202,10 @@ export class App {
     // 3. 插件管理器
     this.plugins = new PluginManager(this.#host, config, this.logger, this.disposeTimeoutMs);
 
-    // 4. 注册核心服务
-    caps.provide(defineService<App>('app'), this);
-    caps.provide(defineService<PluginManager>('plugins'), this.plugins);
-    caps.provide(defineService<ConfigManager>('host-config'), config);
+    // 4. 宿主服务：与内置八项同一登记规则（根激活、独占）
+    caps.provide(appService, this, { exclusive: true });
+    caps.provide(pluginsService, this.plugins, { exclusive: true });
+    caps.provide(hostConfig, config, { exclusive: true });
 
     // 5. 应用启动时已存在的服务偏好
     const initialPrefs = config.getServicePreferences();

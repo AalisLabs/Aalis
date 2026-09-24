@@ -1,16 +1,3 @@
-/** A provider factory is stored in the same registry as shared instances. */
-const FACTORY = Symbol.for('aalis.service-factory');
-export interface ScopedProvider<T, S> {
-  readonly [FACTORY]: true;
-  create(scope: S): T;
-}
-export function scopedProvider<T, S>(create: (scope: S) => T): ScopedProvider<T, S> {
-  return { [FACTORY]: true, create };
-}
-export function isScopedProvider(value: unknown): value is ScopedProvider<unknown, unknown> {
-  return typeof value === 'object' && value !== null && (value as ScopedProvider<unknown, unknown>)[FACTORY] === true;
-}
-
 // ----- 服务系统数据契约（与容器实现同文件，同 contributions.ts 的 Spec/Handle 惯例） -----
 
 /** ServiceContainer.getAll / ServiceRef.all 的元素：ServiceEntry 的投影，不含清理归属 owner。 */
@@ -25,7 +12,6 @@ export interface ServiceInfo {
   contextId: string;
   priority: number;
   label?: string;
-  scope: 'shared' | 'activation';
   exclusive: boolean;
 }
 
@@ -95,7 +81,7 @@ export class ServiceContainer {
       this.entries.set(name, list);
     }
     const entry: ServiceEntry = {
-      instance: isScopedProvider(instance) ? scopedProvider(instance.create) : instance,
+      instance,
       exclusive: options?.exclusive,
       priority: options?.priority ?? 0,
       contextId,
@@ -200,21 +186,16 @@ export class ServiceContainer {
    * 当前胜者的清理归属（关停编排用它认「这个服务现在由哪次激活提供」，不从 contextId 字符串猜）。
    * @internal
    */
-  ownerOf(name: string, instance?: unknown): symbol | undefined {
-    return (
-      instance === undefined
-        ? this.resolveEntries(name)[0]
-        : this.entries.get(name)?.find(entry => entry.instance === instance)
-    )?.owner;
+  ownerOf(name: string): symbol | undefined {
+    return this.resolveEntries(name)[0]?.owner;
   }
 
-  /** Enumerate provider metadata without constructing activation-scoped instances. */
+  /** 只读登记元数据（不含实例）：展示与诊断用 */
   inspect(name: string): ServiceInfo[] {
     return this.resolveEntries(name).map(entry => ({
       contextId: entry.contextId,
       priority: entry.priority,
       label: entry.label,
-      scope: isScopedProvider(entry.instance) ? 'activation' : 'shared',
       exclusive: entry.exclusive ?? false,
     }));
   }

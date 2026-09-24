@@ -80,13 +80,17 @@ describe('ContributionRegistry / contributions 能力', () => {
     expect(makeFixture().caps.contributions.collect('__t:nothing' as never)).toEqual([]);
   });
 
-  it('同键反复重注册不在 dispose 链上累积闭包（替换时摘旧登记）', () => {
+  it('同键反复重注册不在 dispose 链上累积闭包（替换时摘旧登记）', async () => {
     const ctx = makeFixture('plugin-a');
     const before = ctx.activation.resources.lifecycle.disposables.size;
     for (let i = 0; i < 50; i++) ctx.caps.contributions.contribute(POINT, { id: 'k', payload: `v${i}` } as never);
-    expect(ctx.caps.contributions.collect(POINT)).toHaveLength(1);
-    // 每轮替换都摘掉上一次的登记，链长恒定（否则 50 个旧闭包滞留、旧 build 无法 GC）
-    expect(ctx.activation.resources.lifecycle.disposables.size - before).toBe(1);
+    // 登记表只剩最后一次：每轮替换由原语按同键顶掉上一次的登记
+    expect(ctx.caps.contributions.collect(POINT).map(e => (e.spec as Spec).payload)).toEqual(['v49']);
+    // 贡献不进清理链，链长不变（否则 50 个旧闭包滞留、旧 build 无法 GC）
+    expect(ctx.activation.resources.lifecycle.disposables.size).toBe(before);
+    // 不进链的那份登记仍随激活关闭整体切断
+    await ctx.activation.disposeAsync();
+    expect(ctx.caps.contributions.collect(POINT)).toHaveLength(0);
   });
 
   it('collect 按引用给出 spec：不拷贝、不改写 id，class 实例的原型方法完好', () => {

@@ -11,8 +11,6 @@ import {
   lifecycle,
   optional,
   provide,
-  ServiceContainer,
-  serviceFactory,
   services,
 } from '../../packages/core/src/index.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
@@ -41,10 +39,13 @@ function deferred() {
   return { promise, resolve };
 }
 
+/** 只为测试造的描述符：把资源口的身份交给 apply，供以调用者自身身份调用内置提供者 */
+const me = defineService<unknown, symbol>('__t:unified-me', port => port.identity);
+
 describe('统一服务：第一方和第三方经过相同的容器与消费者解析', () => {
-  it('启动即枚举全部基础服务；枚举名字和底层投影不会执行工厂', () => {
+  it('启动即枚举全部基础服务', () => {
     const app = makeApp();
-    const host = app.bind({ provide, services });
+    const host = app.bind({ services });
     expect(host.services.names().sort()).toEqual(
       [
         'events',
@@ -60,35 +61,31 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
         'host-config',
       ].sort(),
     );
-    let created = 0;
-    const lazy = defineService<{ value: number }>('__t:lazy-factory');
-    host.provide(
-      lazy,
-      serviceFactory(() => ({ value: ++created })),
-    );
-
-    expect(host.services.names()).toContain(lazy.name);
-    expect(app.services.getServiceNames()).toContain(lazy.name);
-    expect(app.services.getAll(lazy.name)).toHaveLength(1);
-    expect(created).toBe(0);
-    expect(host.services.get(lazy)).toEqual({ value: 1 });
-    expect(host.services.all(lazy)[0]?.instance).toBe(host.services.get(lazy));
-    expect(created).toBe(1);
   });
 
-  it('动态查询 config 和 lifecycle 解析调用者自身，与显式声明取得同一对象', async () => {
+  it('动态查询 config 和 lifecycle 得到提供者，凭调用者自身身份解析出与显式声明一致的视图', async () => {
     const app = makeApp();
-    const seen = new Map<string, { config: Readonly<Record<string, unknown>>; lifecycle: LifecycleCap }>();
+    const seen = new Map<
+      string,
+      { config: Readonly<Record<string, unknown>>; lifecycle: LifecycleCap; viaLookup: LifecycleCap }
+    >();
     for (const name of ['left', 'right']) {
       await app.plugin(
         definePlugin({
           name,
-          uses: { config, lifecycle, services },
-          apply({ config: ownConfig, lifecycle: ownLifecycle, services: lookup }) {
-            expect(lookup.get(config)).toBe(ownConfig);
-            expect(lookup.get('config')).toBe(ownConfig);
-            expect(lookup.all(lifecycle)[0]?.instance).toBe(ownLifecycle);
-            seen.set(name, { config: ownConfig, lifecycle: ownLifecycle });
+          uses: { config, lifecycle, services, me: optional(me) },
+          apply({ config: ownConfig, lifecycle: ownLifecycle, services: lookup, me }) {
+            const configProvider = lookup.get(config);
+            if (!configProvider) throw new Error('config 提供者缺席');
+            expect(lookup.get('config')).toBe(configProvider);
+            expect(configProvider(me)).toBe(ownConfig);
+            expect(() => configProvider(Symbol(name))).toThrow('只能由在 uses 里声明了它的激活取用');
+            const lifecycleProvider = lookup.all(lifecycle)[0]?.instance;
+            if (!lifecycleProvider) throw new Error('lifecycle 提供者缺席');
+            const viaLookup = lifecycleProvider(me);
+            expect(viaLookup.id).toBe(ownLifecycle.id);
+            expect(viaLookup.closed).toBe(false);
+            seen.set(name, { config: ownConfig, lifecycle: ownLifecycle, viaLookup });
           },
         }),
         { name },
@@ -103,79 +100,17 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
     expect(seen.get('left')?.lifecycle).not.toBe(seen.get('right')?.lifecycle);
     await app.plugins.unload('left');
     expect(seen.get('left')?.lifecycle.closed).toBe(true);
+    expect(seen.get('left')?.viaLookup.closed).toBe(true);
     expect(seen.get('right')?.lifecycle.closed).toBe(false);
+    expect(seen.get('right')?.viaLookup.closed).toBe(false);
   });
 
-  it('第三方工厂按激活缓存，同名描述符、别名和动态查询复用实例，资源随消费者撤回', async () => {
-    const app = makeApp();
-    interface Personal {
-      id: string;
-      identity: symbol;
-    }
-    const personal = defineService<Personal>('__t:personal');
-    const secondContract = defineService<Personal>(personal.name);
-    const created: Personal[] = [];
-    const released: symbol[] = [];
-    app.bind({ provide }).provide(
-      personal,
-      serviceFactory(scope => {
-        const instance = { id: scope.id, identity: scope.identity };
-        created.push(instance);
-        scope.track(() => void released.push(scope.identity));
-        return instance;
-      }),
-    );
-    for (const name of ['first', 'second']) {
-      await app.plugin(
-        definePlugin({
-          name,
-          uses: { one: personal, two: secondContract, services },
-          apply({ one, two, services: lookup }) {
-            expect(one.require()).toBe(two.require());
-            expect(one.all()[0]?.instance).toBe(one.require());
-            expect(lookup.get(secondContract)).toBe(one.require());
-            expect(one.require().id).toBe(name);
-          },
-        }),
-      );
-    }
-    await app.plugins.idle();
-    expect(created.map(instance => instance.id)).toEqual(['first', 'second']);
-    expect(created[0]?.identity).not.toBe(created[1]?.identity);
-    await app.plugins.unload('first');
-    expect(released).toEqual([created[0]?.identity]);
-    await app.plugins.unload('second');
-    expect(released).toEqual(created.map(instance => instance.identity));
-  });
-
-  it('同一个 factory 对象重复发布，每次登记独立建实例；撤回后重新发布不会复用旧缓存', () => {
-    const app = makeApp();
-    const host = app.bind({ provide, services });
-    const counter = defineService<{ serial: number }>('__t:counter');
-    let serial = 0;
-    const factory = serviceFactory(() => ({ serial: ++serial }));
-    const offFirst = host.provide(counter, factory, { entryId: 'root/first' });
-    host.provide(counter, factory, { entryId: 'root/second' });
-    const initial = host.services.all(counter);
-    expect(initial.map(entry => entry.instance.serial)).toEqual([1, 2]);
-    expect(initial[0]?.instance).not.toBe(initial[1]?.instance);
-    offFirst();
-    host.provide(counter, factory, { entryId: 'root/first' });
-    const next = host.services.all(counter);
-    expect(next.map(entry => entry.instance.serial)).toEqual([2, 3]);
-    expect(next[0]?.instance).toBe(initial[1]?.instance);
-  });
-
-  it('follow 换工厂时等待旧清理，只挂最新提供者，并保留消费者身份', async () => {
+  it('follow 换提供者时等待旧清理，只挂最新提供者', async () => {
     const app = makeApp();
     const host = app.bind({ provide });
-    const version = defineService<{ tag: string; consumer: string }>('__t:factory-version');
+    const version = defineService<{ tag: string }>('__t:follow-version');
     const publish = (tag: string, priority: number) =>
-      host.provide(
-        version,
-        serviceFactory(scope => ({ tag, consumer: scope.id })),
-        { priority, entryId: `root/${tag}` },
-      );
+      host.provide(version, { tag }, { priority, entryId: `root/${tag}` });
     publish('old', 0);
     const cleanupStarted = deferred();
     const release = deferred();
@@ -187,7 +122,7 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
         uses: { version: optional(version) },
         apply({ version }) {
           version.follow(instance => {
-            attached.push(`${instance.tag}:${instance.consumer}`);
+            attached.push(instance.tag);
             return async () => {
               if (instance.tag === 'old') {
                 cleanupStarted.resolve();
@@ -204,10 +139,10 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
       await cleanupStarted.promise;
       publish('latest', 2);
       await app.plugins.idle();
-      expect(attached).toEqual(['old:follower']);
+      expect(attached).toEqual(['old']);
       expect(cleaned).toEqual([]);
       release.resolve();
-      await expect.poll(() => attached).toEqual(['old:follower', 'latest:follower']);
+      await expect.poll(() => attached).toEqual(['old', 'latest']);
       expect(cleaned).toEqual(['old']);
       await app.plugins.unload('follower');
       expect(cleaned).toEqual(['old', 'latest']);
@@ -233,7 +168,7 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
     expect(() => host.provide(unique, { value: 2 })).toThrow(/独占/);
     const off = host.provide(ordinary, { value: 1 });
     expect(() => host.provide(ordinary, { value: 2 }, { exclusive: true })).toThrow(/独占/);
-    expect(() => host.provide(events, { on: () => () => {}, emit: async () => {} })).toThrow(/独占/);
+    expect(() => host.provide(events, () => ({ on: () => () => {}, emit: async () => {} }))).toThrow(/独占/);
     expect(host.services.all(unique)).toHaveLength(1);
     await app.plugins.unload('exclusive-provider');
     host.provide(unique, { value: 3 }, { exclusive: true });
@@ -248,14 +183,12 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
     const host = app.bind({ provide, events });
     const registry = new ToolRegistry(silent);
     host.provide(tools, registry);
-    const cleanupEmitter = defineService<object>('__t:cleanup-emitter');
-    host.provide(
-      cleanupEmitter,
-      serviceFactory(scope => {
-        scope.track(() => host.events.emit('__t:unified-services'));
-        return {};
-      }),
+    // 绑定口交给消费者一个开关：调用时在消费者的清理链上挂一条撤回，撤回时向根发射测试事件
+    const cleanupEmitter = defineService<object, () => void>(
+      '__t:cleanup-emitter',
+      port => () => void port.track(() => host.events.emit('__t:unified-services')),
     );
+    host.provide(cleanupEmitter, {});
     let ownHits = 0;
     let rootHits = 0;
     host.events.on('__t:unified-services', () => {
@@ -269,7 +202,7 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
           events.on('__t:unified-services', () => {
             ownHits++;
           });
-          cleanupEmitter.require();
+          cleanupEmitter();
           events.on('__t:unified-services', () => {
             ownHits++;
           });
@@ -289,58 +222,5 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
     await app.plugins.unload('tool-consumer');
     expect(registry.getAll()).toEqual([]);
     expect([ownHits, rootHits]).toEqual([2, 2]);
-  });
-
-  it('工厂抛错使消费者激活失败，工厂已交出的清理仍会执行', async () => {
-    const app = makeApp();
-    const broken = defineService<object>('__t:broken-factory');
-    const released: string[] = [];
-    app.bind({ provide }).provide(
-      broken,
-      serviceFactory(scope => {
-        scope.track(() => void released.push(scope.id));
-        throw new Error('factory failed');
-      }),
-    );
-    await app.plugin(
-      definePlugin({
-        name: 'broken-consumer',
-        uses: { broken },
-        apply({ broken }) {
-          broken.require();
-        },
-      }),
-    );
-    await app.plugins.idle();
-    expect(app.plugins.getPlugin('broken-consumer')?.state).toBe('error');
-    expect(released).toEqual(['broken-consumer']);
-  });
-  it('宿主默认登记失败会撤回已经登记的部分，并保留调用方已有条目', () => {
-    const container = new ServiceContainer();
-    const original = { marker: true };
-    container.register('config', original, 'external');
-    expect(
-      () =>
-        new App({ config: { name: 'conflict', logLevel: 'error', plugins: {} }, logger: silent, services: container }),
-    ).toThrow('独占');
-    expect(container.getServiceNames()).toEqual(['config']);
-    expect(container.get('config')).toBe(original);
-  });
-
-  it('递归工厂明确拒绝并清掉构造占位，下一次查询可以重新构造', () => {
-    const app = makeApp();
-    const desc = defineService<{ ready: boolean }>('recursive-factory');
-    const caps = app.bind({ provide, services });
-    let recursive = true;
-    caps.provide(
-      desc,
-      serviceFactory(() => {
-        if (recursive) caps.services.get(desc);
-        return { ready: true };
-      }),
-    );
-    expect(() => caps.services.get(desc)).toThrow('循环构造');
-    recursive = false;
-    expect(caps.services.get(desc)).toEqual({ ready: true });
   });
 });

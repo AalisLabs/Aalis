@@ -39,6 +39,8 @@ export function isRequiredServiceUnavailable(
 /** 绑定只需要资源账与服务读取，不持有整个激活或插件管理器。 */
 interface BindingScope {
   readonly id: string;
+  /** 清理归属：原语登记与关停边认它，不是逻辑 id */
+  readonly owner: symbol;
   readonly logger: Logger;
   readonly resources: Resources;
   readonly services: Pick<ServiceContainer, 'get' | 'getAll'>;
@@ -166,6 +168,7 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
   const port: BindingPort<P> = {
     name,
     id: scope.id,
+    identity: scope.owner,
     logger: scope.logger,
     get closed() {
       return scope.resources.lifecycle.disposed;

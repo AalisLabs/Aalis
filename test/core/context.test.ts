@@ -467,14 +467,16 @@ describe('disposable 闭包自移除（审计 HIGH #1/#2）', () => {
     return new Promise(r => setTimeout(r, 0));
   }
 
-  it('provide: 手动 dispose 后闭包从 disposable 链移除（不滞留持有 entry）', () => {
+  it('provide: 登记不进 disposable 链，手动 dispose 由原语自己撤回（不滞留持有 entry）', () => {
     const ctx = makeFixture();
     const base = ctx.activation.resources.lifecycle.disposables.size;
-    const dispose = ctx.caps.provide(defineService('svc'), { v: 1 });
-    expect(ctx.activation.resources.lifecycle.disposables.size).toBe(base + 1);
+    const impl = { v: 1 };
+    const dispose = ctx.caps.provide(defineService('svc'), impl);
+    expect(ctx.caps.services.get('svc')).toBe(impl);
+    expect(ctx.activation.resources.lifecycle.disposables.size).toBe(base); // 登记只记在原语账上，链不增长
     dispose();
-    expect(ctx.activation.resources.lifecycle.disposables.size).toBe(base); // 自移除：闭包不再滞留
-    expect(ctx.caps.services.get('svc')).toBeUndefined();
+    expect(ctx.activation.resources.lifecycle.disposables.size).toBe(base);
+    expect(ctx.caps.services.get('svc')).toBeUndefined(); // 原语自己的 off 已撤回条目
   });
 
   it('follow: 反复订阅退订复用观察器，旧回调不复活，关闭后观察器也撤回', async () => {
@@ -587,8 +589,7 @@ describe('Activation.disposeAsync 不变量', () => {
       await next();
     });
     ctx.caps.contributions.contribute('agent:prompt' as never, { id: 'blk' } as never);
-    // 须在 gate 之前登记：链逆序串行，gate 先挡住，provide 的 dispose 闭包在窗口内不会跑——
-    // 窗口内 svc 消失只能是 beforeCleanup 的 unregisterByOwner 干的，钉住 provide 带 owner
+    // provide 不进清理链：窗口内 svc 消失只能是 beforeCleanup 的 unregisterByOwner 干的，钉住 provide 带 owner
     ctx.caps.provide(defineService('svc'), { alive: true });
     ctx.caps.lifecycle.onDispose(() => gate); // 人为拉长 flush 窗口
 
