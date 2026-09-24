@@ -4,6 +4,7 @@
 
 // 副作用引入：激活 api-agent 对 core HookContextMap 的 'agent:turn:after' 增广
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import type { Hooks } from '@aalis/api-hooks';
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
 import { asToolExecutionResult } from '@aalis/api-tools';
 import type {
@@ -15,7 +16,7 @@ import type {
   WaitNodeSpec,
   WorkflowDef,
 } from '@aalis/api-workflow';
-import type { Events, Hooks, Logger } from '@aalis/core';
+import type { Events, Logger } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
 
 const MAX_OUTPUT_PREVIEW = 1000;

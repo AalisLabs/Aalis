@@ -22,7 +22,7 @@ export class EventBus {
   // 事件名 → 登记集合。每次 on 一条登记：同一函数被两个激活（或同一激活两次）登记
   // 互不相干，各自退订、各自清理——按函数去重会让后登记者顶掉先登记者的归属，先登记者的退订
   // 再删掉后登记者。归属是注册方本次激活的 symbol，让拆卸的注销段能与
-  // hooks/services/contributions 同点整体切断（unregisterByOwner）；直接使用总线的无主
+  // services 同点整体切断（unregisterByOwner）；直接使用总线的无主
   // handler（owner=undefined）不受切断影响，由调用方自管。
   private handlers = new Map<string, Set<EventEntry>>();
 
@@ -33,7 +33,7 @@ export class EventBus {
    * 注入一个指向自己 logger 的上报器。未设置时错误被静默丢弃——
    * 但无论是否设置，单个 handler 抛错都**不会**中断同事件的其余 handler，
    * 也不会使 emit reject。第三参点名注册者的逻辑身份（owner symbol 的 description，events 能力
-   * 注册时即激活 id；不经门面、无 owner 的登记为 undefined），与 HookRegistry.onStall 同口径。
+   * 注册时即激活 id；不经门面、无 owner 的登记为 undefined）。
    */
   onHandlerError?: (event: string, error: unknown, contextId?: string) => void;
 
@@ -114,7 +114,7 @@ export class EventBus {
 
   /**
    * 整体移除某激活归属的全部监听——ActivationHost 接入拆卸的注销段调用，
-   * 与 hooks/contributions 同点切断（半拆状态不外露：异步排空窗口内本插件
+   * 与 services 及登记账本同点切断（半拆状态不外露：异步排空窗口内本插件
    * 的 handler 不得再响应事件）。链上残留的退订闭包迟到执行时靠 off 的
    * 身份卫保持无害。
    * @internal

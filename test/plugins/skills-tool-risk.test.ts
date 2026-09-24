@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, provide, services } from '../../packages/core/src/index.js';
 import skillsPlugin from '../../packages/plugin-skills/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // skills 工具权限档定格。
@@ -25,6 +26,7 @@ interface Captured {
 async function collectTools(): Promise<Captured[]> {
   const captured: Captured[] = [];
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ provide, services });
   host.provide(tools, {
     register(tool: Captured & { definition: { function: { name: string } } }) {
@@ -40,6 +42,8 @@ async function collectTools(): Promise<Captured[]> {
   } as never);
   await app.plugins.register(skillsPlugin, {});
   await app.plugins.idle();
+  // 没激活时什么都登记不了，下面「不被顺手改动」这类断言会空转变绿
+  if (app.plugins.getPlugin(skillsPlugin.name)?.state !== 'active') throw new Error('skills 未激活');
   await app.stop();
   return captured;
 }

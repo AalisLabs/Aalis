@@ -1,17 +1,14 @@
 // ============================================================
-// core-services.ts — 内置八项服务的描述符与提供者
+// core-services.ts — 内置六项服务的描述符与提供者
 //
 // 与契约包的服务同一种做法：提供者由根激活经 provide 登记（独占），描述符的 bind 只用公开的资源口。
-// 八项的提供者形状相同：以调用方的 port.identity 为参，交回这次激活的门面；提供者先核对该身份属于
+// 六项的提供者形状相同：以调用方的 port.identity 为参，交回这次激活的门面；提供者先核对该身份属于
 // 在 uses 里声明过本服务的激活——动态查询拿到提供者，也只能以自己的身份、在已声明时使用。
 // 原语登记按身份归属，由拆卸的同栈切断统一撤回；手动退订直接撤原语登记，不另记清理链。
 // ============================================================
 
-import type { ContributionPointMap } from '../types/contributions.js';
 import type { AalisEvents } from '../types/events.js';
-import type { HookContextMap, MiddlewareFn } from '../types/hooks.js';
 
-import type { ContributionHandle, ContributionSpec } from '../primitives/contributions.js';
 import type { ServiceInfo, ServiceView } from '../primitives/services.js';
 
 import { assertOwnCopy, defineService, type ProviderOf, type ServiceDescriptor } from './descriptors.js';
@@ -59,36 +56,6 @@ export interface Events {
   emit<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): Promise<void>;
 }
 export const events = builtin<Events>('events');
-
-// ----- hooks -----
-
-export interface Hooks {
-  /** 注册中间件（洋葱模型，按注册顺序）；返回退订，随这次激活撤回 */
-  middleware<K extends string & keyof HookContextMap>(hook: K, fn: MiddlewareFn<HookContextMap[K]>): () => void;
-  /** 驱动一条钩子链；返回 false 表示被某个中间件截停 */
-  run<K extends string & keyof HookContextMap>(
-    hook: K,
-    data: HookContextMap[K],
-    defaultAction?: () => Promise<void>,
-    opts?: { warnOnStall?: boolean },
-  ): Promise<boolean>;
-}
-export const hooks = builtin<Hooks>('hooks');
-
-// ----- contributions -----
-
-export interface Contributions {
-  /** 向贡献点交付一份 spec（局部 id 自动冠本激活的前缀，同 id 重复交付为替换）；返回退订 */
-  contribute<K extends string & keyof ContributionPointMap>(
-    point: K,
-    spec: ContributionPointMap[K] & ContributionSpec,
-  ): () => void;
-  /** 收集某贡献点的全部交付（快照，顺序是全局键的纯函数） */
-  collect<K extends string & keyof ContributionPointMap>(
-    point: K,
-  ): ReadonlyArray<ContributionHandle<ContributionPointMap[K] & ContributionSpec>>;
-}
-export const contributions = builtin<Contributions>('contributions');
 
 // ----- lifecycle -----
 
@@ -161,7 +128,7 @@ export const services = builtin<Services>('services');
 // ----- 提供者 -----
 
 /**
- * 八项内置服务的提供者：`provide` 单列（宿主须先直接登记它来自举），其余七项由根激活经 provide 登记。
+ * 六项内置服务的提供者：`provide` 单列（宿主须先直接登记它来自举），其余五项由根激活经 provide 登记。
  * `caller` 按身份认出调用方激活，并核对它在 uses 里声明过该服务（否则抛错）。
  */
 export function coreProviders(
@@ -175,7 +142,7 @@ export function coreProviders(
     c.logger.warn(`激活 "${c.id}" 已 dispose，忽略 ${operation}`);
     return false;
   };
-  const { events: bus, hooks: hookRegistry, contributions: registry, services: container } = runtime;
+  const { events: bus, services: container } = runtime;
   const shared: Services = {
     get: <K extends ServiceKey>(key: K) => container.get<KeyedProvider<K>>(keyName(key)),
     all: <K extends ServiceKey>(key: K) => container.getAll<KeyedProvider<K>>(keyName(key)),
@@ -216,16 +183,6 @@ export function coreProviders(
       entry<Events>(events, c => ({
         on: (event, handler) => (accepts(c, `on("${event}")`) ? bus.on(event, handler, c.owner) : () => {}),
         emit: (event, ...args) => bus.emit(event, ...args),
-      })),
-      entry<Hooks>(hooks, c => ({
-        middleware: (hook, fn) =>
-          accepts(c, `middleware("${hook}")`) ? hookRegistry.register(hook, fn, c.id, c.owner) : () => {},
-        run: (hook, data, defaultAction, opts) => hookRegistry.run(hook, data, defaultAction, opts),
-      })),
-      entry<Contributions>(contributions, c => ({
-        contribute: (point, spec) =>
-          accepts(c, `contribute("${point}")`) ? registry.register(point, spec, c.id, c.owner) : () => {},
-        collect: point => registry.collect(point),
       })),
       entry<LifecycleCap>(lifecycle, c => ({
         id: c.id,

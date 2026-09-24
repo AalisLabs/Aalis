@@ -1,7 +1,8 @@
 import { type AgentService, agent } from '@aalis/api-agent';
 import type { GatewayService, InboundPhaseData } from '@aalis/api-gateway';
 import { gateway, INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/api-gateway';
-import { type BoundOf, definePlugin, events, hooks, logger, optional, provide } from '@aalis/core';
+import { hooks } from '@aalis/api-hooks';
+import { type BoundOf, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
 
 // ----- 入口 -----

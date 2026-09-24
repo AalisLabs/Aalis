@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // 关停时 session-manager 必须自己把仍 active 的会话收口并立即落盘。
 // 不能指望 agent:turn:after 还在：agent↔SM 是 optional 互用，core 只保证彼此 drain
@@ -29,6 +30,7 @@ describe('关停：active 会话自行收口落盘', () => {
   it('stop() 时 active 会话被收口落盘，waiting 不动', async () => {
     const store = fakeMemory();
     const app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
     const host = app.bind({ provide, sessionManager });
     host.provide(memory, store as never);
     await app.plugin(sessionManagerPlugin, {});

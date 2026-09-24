@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { defineService } from '../../packages/core/src/index.js';
-import { createActivationFixture } from '../helpers/activation.js';
+import { bindActivationFixture, createActivationFixture } from '../helpers/activation.js';
+import { HubRegistry, hub } from '../helpers/hub.js';
 
 // ════════════════════════════════════════════════════════════
 // 清理项点名：进清理链的条目带标签（跟随为 `watch:服务名`，onDispose 用作者标签）。
 // 把「卸载后还剩几个」升级为「剩的是谁」；不做嵌套树（无 effect 原语）。
-// 四原语（监听 / 中间件 / 贡献 / 服务登记）按身份归属、激活关闭时整体切断，不进清理链。
-// hooks/contributions 测试键沿用同一惯例：as never 绕过空接口键约束；事件键经 declaration merging 登记。
+// 事件监听、服务登记与账本登记（资源口 registrar，样本是测试枢纽 hub）按身份归属、激活关闭时整体切断，不进清理链。
+// 事件键经 declaration merging 登记。
 // ════════════════════════════════════════════════════════════
 
 declare module '@aalis/core' {
@@ -16,44 +17,40 @@ declare module '@aalis/core' {
 }
 
 const EVT = '__t:evt';
-const HOOK = '__t:hook2' as never;
-const POINT = '__t:point2' as never;
 
 function makeFixture(id = 'root') {
   return createActivationFixture({ id });
 }
 
 describe('清理链点名', () => {
-  it('四原语登记不进清理链、激活关闭时一并撤回（含显式 entryId 的服务登记）；跟随按 watch:服务名 点名', async () => {
+  it('监听、服务与账本登记不进清理链、激活关闭时一并撤回（含显式 entryId 的服务登记）；跟随按 watch:服务名 点名', async () => {
     const ctx = makeFixture('p');
+    const registry = new HubRegistry();
+    bindActivationFixture(ctx.host, ctx.host.root).caps.provide(hub, registry);
+    // 账本创建即跟随提供者（那条跟随按 watch:__t:hub 进链），基线取在绑定之后：之后的逐条登记不再加链
+    const { hub: ledger } = ctx.host.bind(ctx.activation, { hub });
     const baseline = ctx.activation.resources.disposables.labels();
+    expect(baseline).toEqual(['watch:__t:hub']);
     let heard = 0;
-    let passed = 0;
     ctx.caps.events.on(EVT, () => {
       heard++;
     });
-    ctx.caps.hooks.middleware(HOOK, async (_d, next) => {
-      passed++;
-      await next();
-    });
-    ctx.caps.contributions.contribute(POINT, { id: 'me' } as never);
+    ledger.add('me', 'v');
     ctx.caps.provide(defineService('svc'), {});
     ctx.caps.provide(defineService('llm'), {} as never, { entryId: 'p/model-a' });
     ctx.host.bind(ctx.activation, { ref: defineService('later') }).ref.follow(() => {});
 
     expect(ctx.activation.resources.disposables.labels()).toEqual([...baseline, 'watch:later']);
     await ctx.events.emit(EVT);
-    await ctx.hooks.run(HOOK, {} as never);
-    expect([heard, passed]).toEqual([1, 1]);
-    expect(ctx.contributions.collect(POINT).map(entry => entry.key)).toEqual(['p/me']);
+    expect(heard).toBe(1);
+    expect(registry.list()).toEqual(['p/me=v']);
     expect(ctx.services.get('svc')).toEqual({});
     expect(ctx.services.inspect('llm')).toEqual([expect.objectContaining({ contextId: 'p/model-a' })]);
 
     await ctx.activation.disposeAsync();
     await ctx.events.emit(EVT);
-    await ctx.hooks.run(HOOK, {} as never);
-    expect([heard, passed]).toEqual([1, 1]);
-    expect(ctx.contributions.collect(POINT)).toEqual([]);
+    expect(heard).toBe(1);
+    expect(registry.list()).toEqual([]);
     expect(ctx.services.get('svc')).toBeUndefined();
     expect(ctx.services.inspect('llm')).toEqual([]);
   });
@@ -90,19 +87,7 @@ describe('清理链点名', () => {
     expect(ctx.activation.resources.disposables.size).toBe(ctx.activation.resources.disposables.labels().length);
     await ctx.activation.disposeAsync();
   });
-});
 
-describe('贡献登记表枚举', () => {
-  it('注册/注销对称，point 与 id 拆分正确（含 id 内含空格等字符）', async () => {
-    const ctx = makeFixture('p');
-    const off = ctx.caps.contributions.contribute(POINT, { id: 'a b' } as never);
-    expect(ctx.caps.contributions.collect(POINT).map(entry => [entry.key, (entry.spec as { id: string }).id])).toEqual([
-      ['p/a b', 'a b'],
-    ]);
-    off();
-    expect(ctx.caps.contributions.collect(POINT)).toEqual([]);
-    await ctx.activation.disposeAsync();
-  });
   it('onDispose 同一函数登记两次：撤销精确到本次登记，余下条目的逆序不翻转', async () => {
     const ctx = makeFixture('dup');
     const baseline = ctx.activation.resources.disposables.labels();

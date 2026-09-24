@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // 背景：平台派生会话（cli-default、OneBot 的 `onebot:bot:group:x`）从不经 createSession 预建，
 // createChildSession 原本对未建档的父直接抛「父会话不存在」，create_subtask 在这些平台必败。
@@ -26,6 +27,7 @@ function fakeMemory() {
 
 async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ provide, sessionManager });
   host.provide(memory, fakeMemory() as never);
   await app.plugin(sessionManagerPlugin, {});

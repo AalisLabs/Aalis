@@ -2,9 +2,7 @@ import type { PluginManagerService } from '../types/app.js';
 
 import { reportQuietly } from '../kernel/disposable-chain.js';
 
-import { ContributionRegistry } from '../primitives/contributions.js';
 import { EventBus } from '../primitives/events.js';
-import { HookRegistry } from '../primitives/hooks.js';
 import { ServiceContainer } from '../primitives/services.js';
 
 import type { Activation } from './activation.js';
@@ -89,7 +87,7 @@ export function createApp(options: AppOptions): App {
 /**
  * Aalis 应用主容器
  *
- * core 的"内核"——只持有内存中的抽象（events / services / hooks / plugins 与各实例的运行配置），
+ * core 的"内核"——只持有内存中的抽象（events / services / plugins 与各实例的运行配置），
  * 不接触任何外部 I/O。宿主需要的环境能力经 `AppOptions` 注入。
  */
 export class App {
@@ -100,7 +98,7 @@ export class App {
   readonly plugins: PluginManagerService;
   readonly #plugins: PluginManager;
   readonly logger: Logger;
-  /** 屏障事件（app:*）由 App 自己发；四原语注册表不外露，插件与宿主都经描述符取用 */
+  /** 屏障事件（app:*）由 App 自己发；原语注册表不外露，插件与宿主都经描述符取用 */
   readonly #events: EventBus;
 
   private readonly restartStrategy?: RestartStrategy;
@@ -118,8 +116,6 @@ export class App {
     this.#events.markSticky('app:ready');
     this.#events.markSticky('app:started');
     const container = new ServiceContainer();
-    const hookRegistry = new HookRegistry();
-    const contributionRegistry = new ContributionRegistry();
     this.logger =
       options.logger ??
       new DefaultLogger('aalis', options.logLevel ?? 'info', options.logHub ?? LogHub.default, options.now);
@@ -127,9 +123,6 @@ export class App {
     this.#events.onHandlerError = (event, err, contextId) => {
       this.logger.warn(`事件 "${event}" 的监听器抛错（已隔离${contextId ? `，来自 ${contextId}` : ''}）:`, err);
     };
-    // 广播型钩子相位的"卡链"上报同理（handler 忘调 next 会静默吞掉下游注入）。
-    hookRegistry.onStall = (hook, contextId, skipped) =>
-      this.logger.warn(`钩子 ${hook}: handler(来自 ${contextId}) 未调用 next()，其后 ${skipped} 个 handler 被跳过`);
     this.restartStrategy = options.restartStrategy;
     this.disposeTimeoutMs = options.disposeTimeoutMs ?? 5000;
 
@@ -137,8 +130,6 @@ export class App {
     const runtime = {
       events: this.#events,
       services: container,
-      hooks: hookRegistry,
-      contributions: contributionRegistry,
       devMode: options.devMode ?? true,
       notify: notify({ events: this.#events }, this.logger),
     };
@@ -150,7 +141,7 @@ export class App {
     this.#plugins = new PluginManager(this.#host, this.logger, this.disposeTimeoutMs);
     this.plugins = this.#plugins;
 
-    // 3. 宿主服务：与内置八项同一登记规则（根激活、独占），只交出契约列出的方法
+    // 3. 宿主服务：与内置六项同一登记规则（根激活、独占），只交出契约列出的方法
     caps.provide(appService, narrow(this, ['stop', 'restart']), { exclusive: true });
     caps.provide(
       pluginsService,

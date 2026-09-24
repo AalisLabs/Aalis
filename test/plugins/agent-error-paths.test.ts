@@ -9,6 +9,7 @@ import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/inde
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { OutgoingMessage, StreamChunkMessage } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
@@ -41,8 +42,9 @@ async function use(app: App, module: PluginDefinition, config?: Record<string, u
   if (state !== 'active') throw new Error(`插件 ${module.name} 未激活（state=${state}）`);
 }
 
-/** 本组用例共用的一栈：mock LLM + 工具注册表 + 记忆 + 归档 + agent */
+/** 本组用例共用的一栈：钩子与贡献点提供者 + mock LLM + 工具注册表 + 记忆 + 归档 + agent */
 async function bootAgentStack(app: App, llmPlugin: PluginDefinition, withTools: boolean): Promise<void> {
+  await registerHubs(app);
   await use(app, llmPlugin);
   if (withTools) await use(app, toolsPlugin, {});
   await use(app, memoryInMemoryPlugin);

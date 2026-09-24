@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type App, defineService } from '../../packages/core/src/index.js';
 import { bindActivationFixture } from '../helpers/activation.js';
+import { HubRegistry, hub } from '../helpers/hub.js';
 import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
@@ -9,9 +10,6 @@ import { activationHost, createInspectableApp } from '../helpers/inspectable-app
 // 也不得被迟到的清理误删。公开入口不会造出同 id 的两次激活，本文件经 ActivationHost.create
 // 钉内部结构。
 // ════════════════════════════════════════════════════════════
-
-const HOOK = '__t:owner-hook' as never;
-const POINT = '__t:owner-point' as never;
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -37,12 +35,16 @@ describe('清理身份与逻辑身份分离', () => {
     expect(root.caps.services.get(defineService<{ who: string }>('svc'))?.who).toBe('R');
   });
 
-  it('同名 fork：拆左不清右（监听 / 中间件 / 贡献）', async () => {
+  it('同名 fork：拆左不清右（监听 / 账本登记）', async () => {
     const app = mkApp();
     const host = activationHost(app);
     const root = bindActivationFixture(host, host.root);
+    const registry = new HubRegistry();
+    root.caps.provide(hub, registry);
     const left = bindActivationFixture(root.host, root.host.create(root.activation, 'dup'));
     const right = bindActivationFixture(root.host, root.host.create(root.activation, 'dup'));
+    const leftHub = root.host.bind(left.activation, { hub }).hub;
+    const rightHub = root.host.bind(right.activation, { hub }).hub;
     const seen: string[] = [];
     // 事件用真名（同 events-context-cut 的先例）：自造名会让 emit 的 rest 参数推成 never
     left.caps.events.on('plugin:loaded', () => {
@@ -51,28 +53,17 @@ describe('清理身份与逻辑身份分离', () => {
     right.caps.events.on('plugin:loaded', () => {
       seen.push('R-evt');
     });
-    left.caps.hooks.middleware(HOOK, async (_d, next) => {
-      seen.push('L-mw');
-      await next();
-    });
-    right.caps.hooks.middleware(HOOK, async (_d, next) => {
-      seen.push('R-mw');
-      await next();
-    });
-    left.caps.contributions.contribute(POINT, { id: 'x' } as never);
-    right.caps.contributions.contribute(POINT, { id: 'y' } as never);
-    // 同键替换：同名兄弟贡献同一 id，后注册者顶替先注册者；左侧的迟到清理不得删掉右侧的新占位
-    left.caps.contributions.contribute(POINT, { id: 'shared', who: 'L' } as never);
-    const rShared = { id: 'shared', who: 'R' };
-    right.caps.contributions.contribute(POINT, rShared as never);
+    leftHub.add('x', 'L');
+    rightHub.add('y', 'R');
+    // 同键替换：同名兄弟登记同一局部键（全局键同为 dup/shared），后登记者顶替先登记者；左侧的迟到撤回不得删掉右侧的新占位
+    leftHub.add('shared', 'L');
+    rightHub.add('shared', 'R');
 
     await left.activation.disposeAsync();
 
     await root.caps.events.emit('plugin:loaded', 'x');
-    await root.caps.hooks.run(HOOK, {} as never);
-    expect(seen).toEqual(['R-evt', 'R-mw']);
-    // 全局键码元序 'dup/shared' < 'dup/y'
-    expect(root.caps.contributions.collect(POINT).map(h => h.spec)).toEqual([rShared, { id: 'y' }]);
+    expect(seen).toEqual(['R-evt']);
+    expect(registry.list()).toEqual(['dup/y=R', 'dup/shared=R']);
   });
 
   it('迟到清理不碰同名新激活：旧 ctx 拆卸在飞时新 ctx 的注册完好', async () => {

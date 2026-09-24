@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { contributions } from '../../packages/api-contributions/src/index.js';
 import { type MemoryService, memory as memoryService } from '../../packages/api-memory/src/index.js';
-import { App, contributions, logger, services } from '../../packages/core/src/index.js';
+import { App, logger, services } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryHistory from '../../packages/plugin-memory-history/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 /**
  * 宿主侧装好 memory 后端。host 是根激活的绑定门面：`collect` 看到的是全局贡献，
@@ -12,6 +14,7 @@ import type { Message } from '../../packages/schema-message/src/index.js';
  */
 async function boot() {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ services, contributions, logger });
   await app.plugin(memoryInMemory);
   await app.plugins.idle();

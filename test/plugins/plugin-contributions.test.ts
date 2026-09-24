@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { App, contributions, definePlugin } from '../../packages/core/src/index.js';
-import { bindActivationFixture, createActivationFixture } from '../helpers/activation.js';
+import { contributions } from '../../packages/api-contributions/src/index.js';
+import { App, definePlugin } from '../../packages/core/src/index.js';
+import type { Activation } from '../../packages/core/src/orchestration/activation.js';
+import { Registry } from '../../packages/plugin-contributions/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
+import { createActivationFixture } from '../helpers/activation.js';
+
+// plugin-contributions 的登记表经 contributions 门面（账本）使用：全局键、同键替换、随激活撤回。
 
 // 测试用贡献点键。ContributionPointMap 是空接口（由 -api 包 merging 填充），
 // 测试里与 hooks 测试同一惯例：用 as never 绕过键约束，运行时行为不受影响。
@@ -8,15 +14,30 @@ const POINT = '__t:point' as never;
 
 type Spec = { id: string; payload?: string };
 
-function makeFixture(id = 'root') {
-  return createActivationFixture({ id });
+/** 根上登记 plugin-contributions 的登记表；at(id) 建一个子激活并绑定它的 contributions 门面 */
+function world() {
+  const root = createActivationFixture();
+  const registry = new Registry();
+  root.caps.provide(contributions, registry);
+  const bind = (activation: Activation) => ({
+    activation,
+    registry,
+    caps: root.host.bind(activation, { contributions }),
+  });
+  return { ...bind(root.activation), at: (id: string) => bind(root.host.create(root.activation, id)) };
 }
 
-describe('ContributionRegistry / contributions 能力', () => {
+/** 单个子激活 id 的夹具（'root' 即根自身） */
+function makeFixture(id = 'root') {
+  const w = world();
+  return id === 'root' ? w : w.at(id);
+}
+
+describe('plugin-contributions 登记表 / contributions 门面', () => {
   it('注册顺序无关：collect 按全局键码元序，逐字节确定', () => {
-    const root = makeFixture();
-    const b = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-b'));
-    const a = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-a'));
+    const root = world();
+    const b = root.at('plugin-b');
+    const a = root.at('plugin-a');
     // 故意乱序注册
     b.caps.contributions.contribute(POINT, { id: 'z' } as never);
     a.caps.contributions.contribute(POINT, { id: 'y' } as never);
@@ -40,9 +61,9 @@ describe('ContributionRegistry / contributions 能力', () => {
   });
 
   it('不同 ctx 的同名局部 id 互不干扰（全局键含 ctx.id 前缀，抢注不可能）', () => {
-    const root = makeFixture();
-    const a = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-a'));
-    const b = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-b'));
+    const root = world();
+    const a = root.at('plugin-a');
+    const b = root.at('plugin-b');
     a.caps.contributions.contribute(POINT, { id: 'same', payload: 'from-a' } as never);
     b.caps.contributions.contribute(POINT, { id: 'same', payload: 'from-b' } as never);
     const specs = root.caps.contributions.collect(POINT).map(e => e.spec as Spec);
@@ -56,9 +77,9 @@ describe('ContributionRegistry / contributions 能力', () => {
   });
 
   it('ctx dispose 清扫本 ctx 的全部贡献，不动兄弟 ctx 的', async () => {
-    const root = makeFixture();
-    const a = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-a'));
-    const b = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-b'));
+    const root = world();
+    const a = root.at('plugin-a');
+    const b = root.at('plugin-b');
     a.caps.contributions.contribute(POINT, { id: 'x' } as never);
     b.caps.contributions.contribute(POINT, { id: 'y' } as never);
     await a.activation.disposeAsync();
@@ -82,8 +103,10 @@ describe('ContributionRegistry / contributions 能力', () => {
 
   it('同键反复重注册不在 dispose 链上累积闭包（替换时摘旧登记）', async () => {
     const ctx = makeFixture('plugin-a');
+    // 首次登记挂上一条跟随提供者的清理（账本随提供者换人重挂），基线取在它之后
+    ctx.caps.contributions.contribute(POINT, { id: 'k', payload: 'v0' } as never);
     const before = ctx.activation.resources.disposables.size;
-    for (let i = 0; i < 50; i++) ctx.caps.contributions.contribute(POINT, { id: 'k', payload: `v${i}` } as never);
+    for (let i = 1; i < 50; i++) ctx.caps.contributions.contribute(POINT, { id: 'k', payload: `v${i}` } as never);
     // 登记表只剩最后一次：每轮替换由原语按同键顶掉上一次的登记
     expect(ctx.caps.contributions.collect(POINT).map(e => (e.spec as Spec).payload)).toEqual(['v49']);
     // 贡献不进清理链，链长不变（否则 50 个旧闭包滞留、旧 build 无法 GC）
@@ -112,6 +135,7 @@ describe('ContributionRegistry / contributions 能力', () => {
 
   it('reusable 同一定义多实例：贡献按实例 id 分命名空间，互不顶替、卸载其一不误清另一个', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
     const root = app.bind({ contributions });
     const definition = definePlugin({
       name: 'dyn',
@@ -134,13 +158,13 @@ describe('ContributionRegistry / contributions 能力', () => {
   });
 
   it('dispose 后的 contribute 被拒，不得顶替同 id 活实例的贡献', async () => {
-    const root = makeFixture();
-    const dead = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-a'));
+    const root = world();
+    const dead = root.at('plugin-a');
     dead.caps.contributions.contribute(POINT, { id: 'blk', payload: 'old' } as never);
     await dead.activation.disposeAsync();
 
     // bounce 后的新实例（同 ctx.id → 同全局键）
-    const alive = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-a'));
+    const alive = root.at('plugin-a');
     alive.caps.contributions.contribute(POINT, { id: 'blk', payload: 'new' } as never);
 
     // 死 ctx 的迟到注册若被接受，会顶掉活实例的条目并被立即执行的 disposer 连带删除
@@ -153,10 +177,11 @@ describe('ContributionRegistry / contributions 能力', () => {
 
   it('退订即摘登记表条目：反复 contribute+off 不无界增长', () => {
     const ctx = makeFixture('plugin-a');
+    ctx.caps.contributions.contribute(POINT, { id: 'warm' } as never)();
     const baseline = ctx.activation.resources.disposables.size;
     const withdrawn: ReturnType<typeof vi.fn>[] = [];
-    const register = ctx.contributions.register.bind(ctx.contributions);
-    vi.spyOn(ctx.contributions, 'register').mockImplementation((...args) => {
+    const register = ctx.registry.register.bind(ctx.registry);
+    vi.spyOn(ctx.registry, 'register').mockImplementation((...args) => {
       const off = vi.fn(register(...args));
       withdrawn.push(off);
       return off;

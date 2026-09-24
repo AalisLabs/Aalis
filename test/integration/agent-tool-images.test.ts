@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { agent as agentService } from '../../packages/api-agent/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { memory as memoryService } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
-import { App, hooks } from '../../packages/core/src/index.js';
+import { App } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
@@ -27,6 +29,7 @@ const SESSION = 'test:tool-images';
 
 async function runTurn() {
   const app = new App({ name: 'E2E', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({
     tools,
     hooks,

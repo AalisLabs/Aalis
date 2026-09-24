@@ -21,7 +21,7 @@ import { activationHost, createInspectableApp, rootActivation } from '../helpers
 
 // ════════════════════════════════════════════════════════════
 // follow 的 cleanup 是对外绑定的撤回：拆卸时先于全部 onDispose 执行，
-// 且此时四原语登记已切断。这让「半拆状态不外露」对经枢纽服务登记的条目同样成立——
+// 且此时原语登记与账本登记已切断。这让「半拆状态不外露」对经枢纽服务登记的条目同样成立——
 // 用户清理跑的时候，枢纽已经不会再把活派给这次激活。
 // 契约只约束排空快照内的次序；排空期间的迟到登记仍立即执行（链的既有语义，不被分段改变）。
 // ════════════════════════════════════════════════════════════
@@ -173,7 +173,7 @@ describe('follow cleanup 走撤回段', () => {
     });
     // 根用子插件的服务：根收尾 → 子关闭（摘掉提供者）→ 根撤回
     await app.stop();
-    expect(ownVisibleAtCleanup, 'cleanup 若在子插件关闭期间被 service:unregistered 引爆，四原语尚未切断').toBe(false);
+    expect(ownVisibleAtCleanup, 'cleanup 若在子插件关闭期间被 service:unregistered 引爆，原语登记尚未切断').toBe(false);
   });
 
   it('拆卸窗口内提供者重新上线：关闭中的激活不再挂新实例', async () => {

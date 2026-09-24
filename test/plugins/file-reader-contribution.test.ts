@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { type AgentService, agent, type PreprocessorFn } from '../../packages/api-agent/src/index.js';
+import { contributions } from '../../packages/api-contributions/src/index.js';
 import {
   type StorageEntry,
   type StorageListResult,
@@ -8,7 +9,7 @@ import {
   type StorageStat,
   storage,
 } from '../../packages/api-storage/src/index.js';
-import { App, contributions, definePlugin, events, logger, provide, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, events, logger, provide, services } from '../../packages/core/src/index.js';
 import {
   assemblePromptContributions,
   type PromptAssemblyCaps,
@@ -19,6 +20,7 @@ import fileReaderPlugin, {
   fileReader,
 } from '../../packages/plugin-file-reader/src/index.js';
 import type { IncomingMessage, Message } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-file-reader 的 agent:prompt 贡献（局部 id = file-reader-history，
@@ -133,6 +135,7 @@ interface Fixture {
 
 async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ provide, services, events, contributions, logger });
   const store = createMemoryStorage();
   host.provide(storage, store);

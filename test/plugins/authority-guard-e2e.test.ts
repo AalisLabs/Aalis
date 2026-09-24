@@ -5,6 +5,7 @@ import { gateway } from '../../packages/api-gateway/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // authority 执行守卫 —— 端到端（装上去之后真的拦不拦）
@@ -25,6 +26,7 @@ import { hostedApp } from '../fixtures/app.js';
 
 async function makeApp() {
   const { app } = hostedApp();
+  await registerHubs(app);
   // 宿主侧按根激活取绑定接口：探针指令的登记与真实插件走同一条门面
   const host = app.bind({ provide, commands: commandsService });
   // plugin-commands 把 gateway 声明为 required（指令结果经它出站）。本测直接调 execute，

@@ -3,8 +3,8 @@ import { bindActivationFixture, createActivationFixture } from '../helpers/activ
 
 // ════════════════════════════════════════════════════════════
 // events 的 contextId 归属与同点切断：拆卸的注销段整体移除本 ctx 的全部
-// 事件监听（与 hooks/contributions 同点），异步排空窗口内本插件的 handler
-// 不再响应事件——「半拆状态不外露」对四原语一体成立。
+// 事件监听（与服务登记、登记账本同点），异步排空窗口内本插件的 handler
+// 不再响应事件——「半拆状态不外露」对原语与账本登记一体成立。
 //
 // off 身份卫：链上残留的退订闭包在切断后迟到执行，不得误删他人重建的
 // 同名事件表。

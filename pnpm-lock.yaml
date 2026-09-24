@@ -102,6 +102,12 @@ importers:
 
   packages/api-agent:
     dependencies:
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-contributions
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-llm':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-llm
@@ -186,6 +192,18 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/api-contributions:
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/api-cron-engine:
     dependencies:
       '@aalis/util-cron':
@@ -243,9 +261,24 @@ importers:
       '@aalis/api-agent':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-agent
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/schema-message':
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../schema-message
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-hooks:
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -312,6 +345,9 @@ importers:
 
   packages/api-memory:
     dependencies:
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/schema-message':
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../schema-message
@@ -529,6 +565,9 @@ importers:
 
   packages/plugin-adapter-onebot:
     dependencies:
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-contributions
       '@aalis/api-flow-control':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-flow-control
@@ -596,9 +635,15 @@ importers:
       '@aalis/api-commands':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-commands
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-contributions
       '@aalis/api-gateway':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-gateway
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-llm':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-llm
@@ -744,6 +789,9 @@ importers:
 
   packages/plugin-checkpoint:
     dependencies:
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-memory':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-memory
@@ -843,6 +891,9 @@ importers:
       '@aalis/api-gateway':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-gateway
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-memory':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-memory
@@ -856,6 +907,22 @@ importers:
       '@aalis/api-tools':
         specifier: workspace:*
         version: link:../api-tools
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-contributions:
+    dependencies:
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-contributions
+    devDependencies:
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -987,6 +1054,12 @@ importers:
       '@aalis/api-agent':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-agent
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-contributions
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-media':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-media
@@ -1033,6 +1106,9 @@ importers:
       '@aalis/api-gateway':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-gateway
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-message-archive':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-message-archive
@@ -1067,6 +1143,9 @@ importers:
       '@aalis/api-gateway':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-gateway
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -1074,6 +1153,22 @@ importers:
       '@aalis/schema-message':
         specifier: workspace:*
         version: link:../schema-message
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-hooks:
+    dependencies:
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -1285,6 +1380,9 @@ importers:
       '@aalis/api-asr':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-asr
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-host-config':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-host-config
@@ -1334,6 +1432,9 @@ importers:
 
   packages/plugin-memory-history:
     dependencies:
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-contributions
       '@aalis/api-memory':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-memory
@@ -1437,6 +1538,12 @@ importers:
 
   packages/plugin-memory-summary:
     dependencies:
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-contributions
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-llm':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-llm
@@ -1471,9 +1578,15 @@ importers:
 
   packages/plugin-memory-vector:
     dependencies:
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-contributions
       '@aalis/api-embedding':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-embedding
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-memory':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-memory
@@ -1626,6 +1739,9 @@ importers:
 
   packages/plugin-persona:
     dependencies:
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-persona':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-persona
@@ -1750,6 +1866,9 @@ importers:
       '@aalis/api-gateway':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-gateway
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-session-confirm':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-session-confirm
@@ -1769,6 +1888,9 @@ importers:
       '@aalis/api-agent':
         specifier: workspace:>=0.8.0 <1.0.0
         version: link:../api-agent
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-llm':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-llm
@@ -1809,6 +1931,12 @@ importers:
 
   packages/plugin-skills:
     dependencies:
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-contributions
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-persona':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-persona
@@ -1865,6 +1993,9 @@ importers:
 
   packages/plugin-subtask:
     dependencies:
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-message-archive':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-message-archive
@@ -2039,6 +2170,9 @@ importers:
 
   packages/plugin-tool-search:
     dependencies:
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-tools':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-tools
@@ -2067,6 +2201,9 @@ importers:
 
   packages/plugin-tool-session:
     dependencies:
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-memory':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-memory
@@ -2166,6 +2303,9 @@ importers:
       '@aalis/api-gateway':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-gateway
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-message-archive':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-message-archive
@@ -2200,6 +2340,12 @@ importers:
       '@aalis/api-commands':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-commands
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-contributions
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-llm':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-llm
@@ -2246,9 +2392,15 @@ importers:
       '@aalis/api-commands':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-commands
+      '@aalis/api-contributions':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-contributions
       '@aalis/api-embedding':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-embedding
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-llm':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-llm
@@ -2533,6 +2685,9 @@ importers:
       '@aalis/api-cron-engine':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-cron-engine
+      '@aalis/api-hooks':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-hooks
       '@aalis/api-storage':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-storage

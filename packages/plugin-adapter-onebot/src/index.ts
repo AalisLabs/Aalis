@@ -1,4 +1,5 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import { contributions } from '@aalis/api-contributions';
 import { flowControl } from '@aalis/api-flow-control';
 import { llm } from '@aalis/api-llm';
 import { media } from '@aalis/api-media';
@@ -8,17 +9,7 @@ import { type PlatformAdapter, type PlatformConnection, platform } from '@aalis/
 import { createProcessGateway, processService } from '@aalis/api-process';
 import { createStorageGateway, storage } from '@aalis/api-storage';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
-import {
-  type BoundOf,
-  config,
-  contributions,
-  definePlugin,
-  events,
-  lifecycle,
-  logger,
-  optional,
-  provide,
-} from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import {
   AttachmentRefKind,

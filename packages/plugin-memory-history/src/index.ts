@@ -19,9 +19,10 @@
  */
 
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import { contributions } from '@aalis/api-contributions';
 import { memory, type RecentMessageRecord } from '@aalis/api-memory';
 import { tools } from '@aalis/api-tools';
-import { config, contributions, definePlugin, logger, optional } from '@aalis/core';
+import { config, definePlugin, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 
 // ===== 配置 schema =====

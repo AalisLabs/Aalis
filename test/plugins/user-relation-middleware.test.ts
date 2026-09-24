@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { contributions } from '../../packages/api-contributions/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { App, contributions, logger } from '../../packages/core/src/index.js';
+import { App, logger } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import { registerRelationContribution } from '../../packages/plugin-user-relation/src/middleware.js';
 import { RelationService } from '../../packages/plugin-user-relation/src/service.js';
 import { RelationStore } from '../../packages/plugin-user-relation/src/store.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 /**
  * 登记贡献（middleware）与收集贡献（组装器）共用宿主根激活绑定的 contributions + logger，
@@ -14,6 +16,7 @@ import type { Message } from '../../packages/schema-message/src/index.js';
  */
 async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ contributions, logger, memory });
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();

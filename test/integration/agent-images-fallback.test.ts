@@ -9,6 +9,7 @@ import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
@@ -31,6 +32,7 @@ const HTTP_URL = 'https://example.invalid/pic.jpg';
 
 async function loadStack(recorder: ChatModelRequest[], opts: { media?: boolean; storage?: boolean } = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ provide, agent: agentService });
   await app.plugin(createMockLLMPlugin({ responses: [{ content: 'ok' }], recorder }));
   if (opts.storage !== false) {

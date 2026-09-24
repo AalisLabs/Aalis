@@ -12,7 +12,8 @@
  */
 
 import type { PromptContributionView } from '@aalis/api-agent';
-import type { Contributions, Logger } from '@aalis/core';
+import type { Contributions } from '@aalis/api-contributions';
+import type { Logger } from '@aalis/core';
 import type { RelationService } from './service.js';
 import type {
   EntityNode,

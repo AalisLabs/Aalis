@@ -1,26 +1,7 @@
-import { bindActivationFixture, createActivationFixture } from '../helpers/activation.js';
-
-declare module '@aalis/core' {
-  interface HookContextMap {
-    '__t:hook': { probe?: string };
-  }
-}
-
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  App,
-  definePlugin,
-  defineService,
-  hooks,
-  type Logger,
-  provide,
-  services,
-} from '../../packages/core/src/index.js';
-
-// 本测试用一个合成钩子名验证 middleware 的分叉/隔离语义。名字不能凭空写——
-// `HookContextMap` 是 core 的空接口扩展点，未登记的名字在类型上就不该被接受
-// （那正是它的价值）。这里走**真实的 declaration merging** 把它登记进去，
-// 顺带把「第三方能不能自己扩钩子」这条契约一并测到。
+import { App, definePlugin, defineService, type Logger, provide, services } from '../../packages/core/src/index.js';
+import { bindActivationFixture, createActivationFixture } from '../helpers/activation.js';
+import { HubRegistry, hub } from '../helpers/hub.js';
 
 function makeFixture(id = 'root') {
   return createActivationFixture({ id });
@@ -40,103 +21,6 @@ async function expectActive(app: App, id: string) {
   await app.plugins.idle();
   expect(app.plugins.getPlugin(id)?.state).toBe('active');
 }
-
-describe('hooks.middleware / run：插件登记随卸载清扫', () => {
-  it('middleware 注册的 handler 参与 run，插件卸载后自动清扫', async () => {
-    const app = makeApp();
-    const calls: string[] = [];
-    await app.plugin(
-      definePlugin({
-        name: 'plugin-a',
-        uses: { hooks },
-        apply({ hooks }) {
-          hooks.middleware('__t:hook', async (_data, next) => {
-            calls.push('a');
-            await next();
-          });
-        },
-      }),
-    );
-    await expectActive(app, 'plugin-a');
-
-    const host = app.bind({ hooks });
-    await host.hooks.run('__t:hook', {});
-    expect(calls).toEqual(['a']);
-
-    await app.plugins.unload('plugin-a');
-    await host.hooks.run('__t:hook', {});
-    expect(calls).toEqual(['a']);
-  });
-
-  it('卸载只清扫本插件的 middleware，不动兄弟插件的', async () => {
-    const app = makeApp();
-    const calls: string[] = [];
-    await app.plugin(
-      definePlugin({
-        name: 'plugin-a',
-        uses: { hooks },
-        apply({ hooks }) {
-          hooks.middleware('__t:hook', async (_d, next) => {
-            calls.push('a');
-            await next();
-          });
-        },
-      }),
-    );
-    await app.plugin(
-      definePlugin({
-        name: 'plugin-b',
-        uses: { hooks },
-        apply({ hooks }) {
-          hooks.middleware('__t:hook', async (_d, next) => {
-            calls.push('b');
-            await next();
-          });
-        },
-      }),
-    );
-    await expectActive(app, 'plugin-a');
-    await expectActive(app, 'plugin-b');
-
-    await app.plugins.unload('plugin-a');
-    await app.bind({ hooks }).hooks.run('__t:hook', {});
-    expect(calls).toEqual(['b']);
-  });
-
-  it('middleware 返回的 dispose 函数可手动解除', async () => {
-    const app = makeApp();
-    const calls: number[] = [];
-    let off!: () => void;
-    await app.plugin(
-      definePlugin({
-        name: 'plugin-a',
-        uses: { hooks },
-        apply({ hooks }) {
-          off = hooks.middleware('__t:hook', async (_d, next) => {
-            calls.push(1);
-            await next();
-          });
-        },
-      }),
-    );
-    await expectActive(app, 'plugin-a');
-    const host = app.bind({ hooks });
-    await host.hooks.run('__t:hook', {});
-    off();
-    await host.hooks.run('__t:hook', {});
-    expect(calls).toEqual([1]);
-  });
-
-  it('注册表对象不外露：插件只能使用 hooks.run / middleware', () => {
-    const ctx = makeFixture();
-    // 与 events / services 同一门面纪律：插件在运行时就拿不到 HookRegistry
-    // （公开的是按激活绑定的 hooks 能力；激活记录上没有 hooks 字段可绕过归属）。
-    expect('hooks' in ctx.activation).toBe(false);
-    expect(ctx.caps.hooks).not.toBe(ctx.hooks);
-    expect('register' in ctx.caps.hooks).toBe(false);
-    expect(typeof ctx.caps.hooks.run).toBe('function');
-  });
-});
 
 describe('provide / services.get', () => {
   const greeter = defineService<{ greet: () => string }>('__greeter');
@@ -576,29 +460,25 @@ describe('Activation.disposeAsync 不变量', () => {
     expect(seen.filter(n => n === '__t:svc2')).toHaveLength(1);
   });
 
-  it('异步 flush 窗口内：服务已不可取、中间件已不响应、贡献已不可收集（注销先于清理链）', async () => {
+  it('异步 flush 窗口内：服务已不可取、账本登记已不可见（注销先于清理链）', async () => {
     const root = makeFixture();
+    root.caps.provide(hub, new HubRegistry());
     const ctx = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-a'));
     let release!: () => void;
     const gate = new Promise<void>(r => {
       release = r;
     });
-    const calls: string[] = [];
-    ctx.caps.hooks.middleware('__t:hook', async (_d, next) => {
-      calls.push('mw');
-      await next();
-    });
-    ctx.caps.contributions.contribute('agent:prompt' as never, { id: 'blk' } as never);
+    root.host.bind(ctx.activation, { hub }).hub.add('blk', 'v');
+    const { hub: observer } = root.host.bind(root.activation, { hub });
+    expect(observer.list()).toEqual(['plugin-a/blk=v']);
     // provide 不进清理链：窗口内 svc 消失只能是 beforeCleanup 的 unregisterByOwner 干的，钉住 provide 带 owner
     ctx.caps.provide(defineService('svc'), { alive: true });
     ctx.caps.lifecycle.onDispose(() => gate); // 人为拉长 flush 窗口
 
     const done = ctx.activation.disposeAsync();
     await Promise.resolve(); // 进入等待窗口
-    // 窗口内：钩子与贡献都已注销
-    await root.caps.hooks.run('__t:hook', {});
-    expect(calls).toEqual([]);
-    expect(root.caps.contributions.collect('agent:prompt' as never)).toHaveLength(0);
+    // 窗口内：账本登记与服务都已撤回
+    expect(observer.list()).toEqual([]);
     expect(root.caps.services.get('svc')).toBeUndefined();
     release();
     await done;

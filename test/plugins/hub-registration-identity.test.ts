@@ -3,12 +3,12 @@ import type { AddressInfo } from 'node:net';
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { agent } from '../../packages/api-agent/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type BoundTools, tools, withToolGroups } from '../../packages/api-tools/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import {
   App,
   definePlugin,
-  hooks,
   type LifecycleCap,
   lifecycle,
   optional,
@@ -18,11 +18,12 @@ import {
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 枢纽服务的退订闭包必须按「这一次登记」比对，而不是按 name + contextId：
 // 同一登记者用同名重注册后，旧闭包仍然成立的判据会把新登记一起删掉。
-// core 四个注册表按条目引用退订；这里钉住 tools / 工具分组 / webui 页面 / agent 预处理器四处同一口径。
+// 枢纽登记表一律按条目引用退订；这里钉住 tools / 工具分组 / webui 页面 / agent 预处理器四处同一口径。
 // ════════════════════════════════════════════════════════════
 
 function silentLogger(): Logger {
@@ -357,6 +358,7 @@ describe('webui-server 页面退订按条目身份', () => {
 describe('agent 预处理器退订按条目身份', () => {
   it('同名替换后，旧退订闭包只摘自己的中间件，不删新登记的账目', async () => {
     const app = new App({ name: 'T', logLevel: 'error', logger: silentLogger() });
+    await registerHubs(app);
     await app.plugins.register(agentPlugin, {});
     await app.plugins.idle();
     const host = app.bind({ services, hooks });

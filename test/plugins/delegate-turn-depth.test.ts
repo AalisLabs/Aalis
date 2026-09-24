@@ -1,8 +1,10 @@
 import type { IncomingMessage } from '@aalis/schema-message';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
-import { App, events, hooks, provide } from '../../packages/core/src/index.js';
+import { App, events, provide } from '../../packages/core/src/index.js';
 import sessionTools from '../../packages/plugin-tool-session/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // delegate_to_session 的防雪崩：深度随消息走，不按会话计时。
@@ -40,6 +42,7 @@ const makeIncoming = (msg: Partial<IncomingMessage> & { sessionId: string }): In
 async function setup(): Promise<Harness> {
   const app = new App({ name: 'T', logLevel: 'error' });
   booted.push(app);
+  await registerHubs(app);
   const host = app.bind({ provide, events, hooks });
 
   const handlers = new Map<string, Handler>();

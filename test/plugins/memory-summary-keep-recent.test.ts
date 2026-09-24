@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
-import { App, events, hooks, provide, services } from '../../packages/core/src/index.js';
+import { App, events, provide, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // keepRecent=0 曾让"避免裁剪点落在 tool call 组中间"的循环索引越界
@@ -27,6 +29,7 @@ function fakeLLM(): LLMModel {
 
 async function setup(config: Record<string, unknown>) {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ provide, services, events, hooks });
   await app.plugin(memoryInMemory);
   host.provide(llm, fakeLLM());

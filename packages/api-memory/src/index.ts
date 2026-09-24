@@ -1,4 +1,5 @@
 // ----- 记忆服务接口 -----
+import type {} from '@aalis/api-hooks'; // declaration merging 锚点（下方 HookContextMap 增强）
 import type {} from '@aalis/core';
 import { defineService } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
@@ -178,7 +179,7 @@ export interface MemoryService {
   deleteMessagesByTimestamps?(sessionId: string, timestamps: number[]): Promise<number>;
 }
 
-declare module '@aalis/core' {
+declare module '@aalis/api-hooks' {
   interface HookContextMap {
     /** 记忆清除钩子（统一编排） */
     'memory:clear': {

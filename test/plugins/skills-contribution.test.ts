@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PromptAnchor } from '../../packages/api-agent/src/index.js';
+import { contributions } from '../../packages/api-contributions/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import {
   type StorageEntry,
   type StorageRootInfo,
@@ -7,13 +9,14 @@ import {
   type StorageStat,
   storage,
 } from '../../packages/api-storage/src/index.js';
-import { App, contributions, definePlugin, hooks, logger, provide, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, logger, provide, services } from '../../packages/core/src/index.js';
 import {
   assemblePromptContributions,
   type PromptAssemblyCaps,
 } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import skillsPlugin, { skills } from '../../packages/plugin-skills/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-skills 的 agent:prompt 贡献（discovery / activation 两类块）：
@@ -127,6 +130,7 @@ function createMemoryStorage(): MemoryStorage {
 
 async function setup(config: Record<string, unknown> = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ provide, services, contributions, logger, hooks });
   const store = createMemoryStorage();
   host.provide(storage, store);

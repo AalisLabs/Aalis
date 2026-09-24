@@ -2,10 +2,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type PersonaService, persona } from '../../packages/api-persona/src/index.js';
-import { App, type BoundOf, hooks, services } from '../../packages/core/src/index.js';
+import { App, type BoundOf, services } from '../../packages/core/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 角色卡的 outputFormatRetries 必须真的传到重试闸：asCard 曾漏抄这个键，
@@ -23,6 +25,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
 
   const boot = async (personaName: string): Promise<PersonaService> => {
     app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
     // storage 先装：persona 的 storage 是可选依赖，缺席时它照样激活，只是一张卡都读不到
     await app.plugin(storageLocal, {
       roots: [

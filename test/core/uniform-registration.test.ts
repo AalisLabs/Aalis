@@ -18,7 +18,7 @@ declare module '@aalis/core' {
   }
 }
 
-// 内置八项与第三方服务同一种登记：根激活经 provide 独占登记，提供者是「身份 → 门面」，
+// 内置六项与第三方服务同一种登记：根激活经 provide 独占登记，提供者是「身份 → 门面」，
 // 只认在 uses 里声明过本服务的激活。原语登记按身份归属，拆卸时同栈整体切断。
 
 const apps: App[] = [];
@@ -33,10 +33,10 @@ function world() {
 /** 只为测试造的描述符：把资源口的身份交给 apply，模拟拿到凭据的调用方 */
 const me = defineService<unknown, symbol>('t:uniform:me', port => port.identity);
 
-const BUILTINS = ['events', 'hooks', 'contributions', 'lifecycle', 'logger', 'config', 'provide', 'services'];
+const BUILTINS = ['events', 'lifecycle', 'logger', 'config', 'provide', 'services'];
 
 describe('内置服务与第三方同一种登记', () => {
-  it('八项都由根激活独占登记，第三方不能顶替，服务页看到的元数据与宿主服务同形', () => {
+  it('六项都由根激活独占登记，第三方不能顶替，服务页看到的元数据与宿主服务同形', () => {
     const app = world();
     const host = app.bind({ provide, services });
     for (const name of [...BUILTINS, 'app', 'plugins']) {
@@ -101,8 +101,8 @@ describe('内置服务与第三方同一种登记', () => {
   });
 });
 
-describe('四原语按身份整体切断，不逐条记清理链', () => {
-  it('本激活的跟随清理与 onDispose 运行时，自己的监听、中间件与服务登记已不可见', async () => {
+describe('原语登记按身份整体切断，不逐条记清理链', () => {
+  it('本激活的跟随清理与 onDispose 运行时，自己的监听与服务登记已不可见', async () => {
     const app = world();
     const S = defineService<{ v: number }>('t:uniform:s');
     const Mine = defineService<{ v: number }>('t:uniform:mine');
