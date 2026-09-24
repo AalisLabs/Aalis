@@ -182,9 +182,6 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
     id: scope.id,
     identity: scope.owner,
     logger: scope.logger,
-    get closed() {
-      return scope.resources.disposed;
-    },
     current: () => scope.services.get<P>(name),
     require() {
       const provider = scope.services.get<P>(name);
