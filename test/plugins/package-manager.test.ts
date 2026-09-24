@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { pluginSource } from '../../packages/api-plugin-source/src/index.js';
-import { App, definePlugin, defineService, lifecycle, provide, services } from '../../packages/core/src/index.js';
+import { type App, definePlugin, defineService, lifecycle, provide, services } from '../../packages/core/src/index.js';
 import packageManagerPlugin, {
   buildUpdateSpecs,
   createPackageManager,
@@ -17,6 +17,7 @@ import packageManagerPlugin, {
 } from '../../packages/plugin-package-manager/src/index.js';
 import { createNodeModulesPluginLoader } from '../../packages/runtime/src/node-modules-loader.js';
 import { createPluginDiscovery } from '../../packages/runtime/src/plugin-discovery.js';
+import { hostedApp } from '../fixtures/app.js';
 
 // 从被测模块的依赖契约推导类型，避免测试直接 import api 包（knip unlisted-dep）
 type ProcessService = PackageManagerDeps['proc'];
@@ -776,7 +777,7 @@ describe('自锁闸：生产接线算出的撤销通道名单', () => {
   async function bootWithChannels() {
     const { App, definePlugin, defineService, provide, services } = await import('../../packages/core/src/index.js');
     const packageManagerPlugin = (await import('../../packages/plugin-package-manager/src/index.js')).default;
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
 
     /** 提供单个服务的桩插件：实例 id = 包名，于是 contextId 也是包名（与真实加载器一致）。 */
     const stubPlugin = (pkg: string, service: string) => {
@@ -878,7 +879,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
     const TARGET = 'audit-pm-reuser';
     const PAGE = '/abs-pm-reuser';
     const tag = defineService<{ id: string }>('audit-pm-tag');
-    const app = new App({ config: { name: 'PM', logLevel: 'error', plugins: {} } });
+    const { app, store } = hostedApp({ name: 'PM' });
     productionApps.push(app);
     const host = app.bind({ provide, services });
 
@@ -896,10 +897,10 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
     await app.plugins.register(def, { slot: 'two' }, `${TARGET}:two`);
     await app.plugins.idle();
 
-    app.config.setPluginConfig(TARGET, { slot: 'main' });
-    app.config.setPluginConfig(`${TARGET}:one`, { slot: 'one' });
-    app.config.setPluginConfig(`${TARGET}:two`, { slot: 'two' });
-    app.config.setPluginEnabled(`${TARGET}:one`, false);
+    store.setPluginConfig(TARGET, { slot: 'main' });
+    store.setPluginConfig(`${TARGET}:one`, { slot: 'one' });
+    store.setPluginConfig(`${TARGET}:two`, { slot: 'two' });
+    store.setPluginEnabled(`${TARGET}:one`, false);
 
     host.provide(
       defineService<object>('process'),
@@ -931,10 +932,10 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
         .map(p => p.instanceId),
       '注册表不得留下 name:suffix 幽灵实例',
     ).toEqual([]);
-    expect(app.config.getPluginConfig(TARGET), '主实例配置应清').toEqual({});
-    expect(app.config.getPluginConfig(`${TARGET}:one`), '后缀实例配置应清').toEqual({});
-    expect(app.config.getPluginConfig(`${TARGET}:two`)).toEqual({});
-    expect(app.config.isPluginDisabled(`${TARGET}:one`), '后缀禁用标记应随包卸掉').toBe(false);
+    expect(store.getPluginConfig(TARGET), '主实例配置应清').toEqual({});
+    expect(store.getPluginConfig(`${TARGET}:one`), '后缀实例配置应清').toEqual({});
+    expect(store.getPluginConfig(`${TARGET}:two`)).toEqual({});
+    expect(store.isPluginDisabled(`${TARGET}:one`), '后缀禁用标记应随包卸掉').toBe(false);
     expect(host.services.get(tag), '枢纽上该包提供的服务应全部消失').toBeUndefined();
   });
 
@@ -954,10 +955,10 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       );
       writeFileSync(join(dir, 'index.mjs'), 'export default { name: "other-name", apply() {} };\n');
 
-      const app = new App({ config: { name: 'PM', logLevel: 'error', plugins: {} } });
+      const { app, store } = hostedApp({ name: 'PM' });
       productionApps.push(app);
       const host = app.bind({ provide, services });
-      const discovery = createPluginDiscovery(app, createNodeModulesPluginLoader(proj));
+      const discovery = createPluginDiscovery(app, createNodeModulesPluginLoader(proj), store);
       host.provide(pluginSource, { rescan: () => discovery.rescan() });
       host.provide(defineService<object>('process'), {
         readExternalFile: async (abs: string) => {
@@ -1002,10 +1003,10 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       );
       writeFileSync(join(dir, 'index.mjs'), 'export default { name: "other-name", apply() {} };\n');
 
-      const app = new App({ config: { name: 'PM', logLevel: 'error', plugins: {} } });
+      const { app, store } = hostedApp({ name: 'PM' });
       productionApps.push(app);
       const host = app.bind({ provide, services });
-      const discovery = createPluginDiscovery(app, createNodeModulesPluginLoader(proj));
+      const discovery = createPluginDiscovery(app, createNodeModulesPluginLoader(proj), store);
       host.provide(pluginSource, { rescan: () => discovery.rescan() });
       host.provide(defineService<object>('process'), {
         readExternalFile: async (abs: string) => {

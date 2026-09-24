@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { AccessRequest } from '../../packages/api-authority/src/index.js';
+import type { HostConfig } from '../../packages/api-host-config/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
-import type { ConfigManager, Logger } from '../../packages/core/src/index.js';
+import type { Logger } from '../../packages/core/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 
 // ════════════════════════════════════════════════════════════
@@ -25,14 +26,14 @@ import { AuthorityManager } from '../../packages/plugin-authority/src/authority-
 // ════════════════════════════════════════════════════════════
 
 type Cfg = Record<string, unknown>;
-function mkConfig(cfg: Cfg = {}): ConfigManager {
+function mkConfig(cfg: Cfg = {}): HostConfig {
   const store: Cfg = { ...cfg };
   return {
     get: (k: string) => store[k],
     set: (k: string, v: unknown) => {
       store[k] = v;
     },
-  } as unknown as ConfigManager;
+  } as unknown as HostConfig;
 }
 function mkLogger(): Logger {
   const l = { child: () => l, debug() {}, info() {}, warn() {}, error() {} };

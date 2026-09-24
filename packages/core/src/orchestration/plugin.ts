@@ -17,12 +17,19 @@ import { topoSortByDeps } from './plugin-topology.js';
 import { events } from '../composition/core-services.js';
 import { ForeignCoreError, isOptional, optionalNames, requiredNames, type Uses } from '../composition/descriptors.js';
 import { assertValidInstanceId, type PluginDefinition, validateDefinition } from '../composition/plugin-definition.js';
-import type { ConfigManager } from '../infrastructure/config.js';
 import { cloneConfigObject } from '../infrastructure/config-values.js';
 import type { Logger } from '../infrastructure/logger.js';
 
 export type { PluginEntry, PluginState };
 export { parseInstanceId };
+
+/** 一条登记：定义、实例配置（原样生效）、实例 id、是否以禁用态登记。字段含义同 {@link PluginManager.register} */
+export interface PluginRegistration {
+  definition: PluginDefinition;
+  config?: Record<string, unknown>;
+  instanceId?: string;
+  disabled?: boolean;
+}
 
 /** 一次重算的种类：普通状态变化（服务上下线、注册、启停、重载）合并处理；停机覆盖整批 */
 type RecomputeKind = 'changed' | 'shutdown';
@@ -115,7 +122,6 @@ export class PluginManager implements PluginManagerService {
 
   constructor(
     private readonly host: ActivationHost,
-    private readonly config: ConfigManager,
     logger: Logger,
     /** 单个异步清理项的等待上限（毫秒；0=不设限），由 App 从 AppOptions 注入 */
     private readonly disposeTimeoutMs?: number,
@@ -137,17 +143,19 @@ export class PluginManager implements PluginManagerService {
    * 注册并尝试加载一个插件
    *
    * @param definition 插件定义（definePlugin 的产物）
-   * @param config    插件配置
+   * @param config    实例配置，原样生效（入参会被拷贝，调用方之后改它不影响实例）
    * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 definition.name）
+   * @param options.disabled 以禁用态登记，不激活；之后经 enable 启用
    * @returns 口径见 {@link PluginManagerService}：false = 重名、未声明 reusable 却要多实例、或定义 / 实例 id 校验失败
    *   （缺 / 空 / 非法 name、uses 非描述符、非法 instanceId；各记一笔 warn）；true = 已落账（含注册为 disabled 态），激活是否已发生另看 idle()
    */
   async register(
     definition: PluginDefinition,
-    config: Record<string, unknown> = {},
+    config?: Record<string, unknown>,
     instanceId?: string,
+    options?: { disabled?: boolean },
   ): Promise<boolean> {
-    const [registered] = await this.registerAll([{ definition, config, instanceId }]);
+    const [registered] = await this.registerAll([{ definition, config, instanceId, disabled: options?.disabled }]);
     return registered;
   }
 
@@ -156,11 +164,9 @@ export class PluginManager implements PluginManagerService {
    * 依赖方因此在同一次重算里排在它 required 服务的全部提供者之后激活。
    * 返回值与 items 逐项对应，口径同 {@link register}。
    */
-  async registerAll(
-    items: ReadonlyArray<{ definition: PluginDefinition; config?: Record<string, unknown>; instanceId?: string }>,
-  ): Promise<boolean[]> {
-    const admitted = items.map(({ definition, config, instanceId }) =>
-      this.admit(definition, config ?? {}, instanceId),
+  async registerAll(items: ReadonlyArray<PluginRegistration>): Promise<boolean[]> {
+    const admitted = items.map(({ definition, config, instanceId, disabled }) =>
+      this.admit(definition, config ?? {}, instanceId, disabled === true),
     );
     // 走统一 recompute：依赖满足则被拓扑正序激活，否则保持 pending。只落账了禁用条目时不必重算
     if (admitted.includes('pending')) await this.recompute();
@@ -171,7 +177,8 @@ export class PluginManager implements PluginManagerService {
   private admit(
     definition: PluginDefinition,
     config: Record<string, unknown>,
-    instanceId?: string,
+    instanceId: string | undefined,
+    disabled: boolean,
   ): 'pending' | 'disabled' | false {
     // 手写的定义对象（没经 definePlugin）在这里补上同一道校验。失败不抛——六个管理动作统一 Promise<boolean>
     try {
@@ -199,8 +206,7 @@ export class PluginManager implements PluginManagerService {
       return false;
     }
 
-    // 检查是否被配置禁用（按 instanceId 检查）
-    const state = this.config.isPluginDisabled(id) ? 'disabled' : 'pending';
+    const state = disabled ? 'disabled' : 'pending';
 
     this.plugins.set(id, {
       definition,

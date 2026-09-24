@@ -29,7 +29,7 @@ const UNREACHABLE = 'http://127.0.0.1:1/nope.png';
 const WAV_1B = 'data:audio/wav;base64,UklGRg==';
 
 async function makeModel(): Promise<LLMModel> {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   await app.plugin(ollama, { baseUrl: 'http://127.0.0.1:11434', customModels: 'testvision' });
   await app.plugins.idle();
   const entries = app.bind({ llm }).llm.all();
@@ -131,7 +131,7 @@ describe('Ollama 图片获取失败的两种语义', () => {
 describe('media 视觉识别的接线', () => {
   it('describe 调用向 model 声明了 requireImages', async () => {
     let seen: Record<string, unknown> | undefined;
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ provide, llm, logger });
     host.provide(llm, {
       id: 'fake/vision',
@@ -158,7 +158,7 @@ describe('media 视觉识别的接线', () => {
 // ════════════════════════════════════════════════════════════
 describe('识别失败的如实上报', () => {
   it('失败写进描述位，且 successCount 不增', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ provide, services });
     host.provide(llm, {
       id: 'fake/vision',

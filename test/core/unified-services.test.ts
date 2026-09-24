@@ -27,7 +27,7 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop();
 });
 function makeApp() {
-  const app = new App({ config: { name: 'unified', logLevel: 'error', plugins: {} }, logger: silent });
+  const app = new App({ name: 'unified', logLevel: 'error', logger: silent });
   apps.push(app);
   return app;
 }
@@ -58,7 +58,6 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
         'services',
         'app',
         'plugins',
-        'host-config',
       ].sort(),
     );
   });

@@ -14,6 +14,7 @@
 
 import { agent } from '@aalis/api-agent';
 import { asr } from '@aalis/api-asr';
+import { hostConfig } from '@aalis/api-host-config';
 import { llm } from '@aalis/api-llm';
 import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
@@ -21,19 +22,7 @@ import { createProcessGateway, processService } from '@aalis/api-process';
 import { sessionManager } from '@aalis/api-session-manager';
 import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
-import {
-  appService,
-  type BoundOf,
-  config,
-  definePlugin,
-  events,
-  hooks,
-  hostConfig,
-  lifecycle,
-  logger,
-  optional,
-  provide,
-} from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, hooks, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { flushDescriptionCache, loadDescriptionCache } from './cache.js';
 import { DEFAULT_AUDIO_PROMPT, DEFAULT_VISION_BATCH_PROMPT, DEFAULT_VISION_PROMPT } from './llm-adapter.js';
@@ -335,7 +324,6 @@ const uses = {
   memory: optional(memory),
   sessionManager: optional(sessionManager),
   hostConfig: optional(hostConfig),
-  app: optional(appService),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -357,7 +345,8 @@ function run(caps: Caps): void {
   if (legacyVisionMode(legacyMode)) {
     // 一次性迁移：按旧语义把结果写进新键并删掉旧键，落盘（config-sync 每次启动都物化默认值，
     // 存量部署里这个键一定有值；不迁移的话新键永远是死键，WebUI 也清不掉旧键）。
-    caps.hostConfig.require().setPluginConfig(name, {
+    const doc = caps.hostConfig.current;
+    doc?.setPluginConfig(name, {
       ...raw,
       vision: {
         ...visionWithoutMode,
@@ -366,7 +355,7 @@ function run(caps: Caps): void {
       },
     });
     // 尽力而为：内存态已迁移，落盘失败下次启动 config-sync 会再物化；不让激活因磁盘错误失败
-    caps.app.current?.saveConfig().catch(err => logger.warn('vision 配置迁移落盘失败:', err));
+    doc?.save().catch(err => logger.warn('vision 配置迁移落盘失败:', err));
     logger.warn(
       `vision.mode="${String(legacyMode)}" 已弃用：已按旧语义迁移为 recognizeOnArrival=${cfg.vision.recognizeOnArrival}、` +
         `delivery=${cfg.vision.delivery} 并写回配置文件，旧键已移除。`,

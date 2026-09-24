@@ -1,8 +1,8 @@
 import { createRequire } from 'node:module';
 import { pluginSource } from '@aalis/api-plugin-source';
-import { App, events, provide, services } from '@aalis/core';
-import { defaultsFrom } from '@aalis/schema-config';
+import { App, events, type LogLevel, provide, services } from '@aalis/core';
 import { installBootstrapBuffer } from './bootstrap-buffer.js';
+import { createConfigStore, installHostConfig } from './config-store.js';
 import { type ConfigSyncOptions, installConfigHotReload, withPluginConfigSync } from './config-sync.js';
 import { type ConsoleSinkHandle, installConsoleSink } from './console-sink.js';
 import { appendCrashLog, DEFAULT_LOG_FILE, type FileLoggerHandle, setupFileLogger } from './file-logger.js';
@@ -130,18 +130,12 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   // sink 全部装好；bootstrap buffer 完成使命，解除订阅并释放内存。
   bootstrap.dispose();
 
-  // ── 组装 App：从 YAML 加载配置、按 loader 加载插件、用 spawn 重启 ──
+  // ── 组装 App：YAML 配置文档、按 loader 发现插件、用 spawn 重启 ──
   const { config, provider } = createFsYamlConfigProvider(opts.configPath);
-  const configLoader = withPluginConfigSync(
-    opts.pluginLoader ?? createNodeModulesPluginLoader(opts.projectDir),
-    () => app,
-    opts.configSync,
-  );
+  const store = createConfigStore(config, provider);
   const app = new App({
-    config,
-    configProvider: provider,
-    // 默认值从 configSchema 派生（唯一声明来源）；core 不认识配置词汇，只调这个函数。
-    pluginDefaults: m => defaultsFrom(m.configSchema),
+    name: store.get('name'),
+    logLevel: store.get('logLevel') as LogLevel,
     // 子命令进程没有重启能力，不注入策略：`app.restart()` 按 core 语义抛「不可用」，指令层折成失败文案。
     // 注入的话，`restart` 子命令在 app.stop 超过策略 500ms 等待时会 spawn 一个 argv 仍带 restart 的
     // detached 子进程，新进程再命中 restart……无限连环（实测 5 代，Ctrl+C 打不到）。
@@ -154,9 +148,18 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     version: readCoreVersion(),
   });
 
+  // 配置文档先于任何插件接上：文档里的服务偏好要在全部提供者上线前生效
+  installHostConfig(app, store);
+  // 默认值从 configSchema 派生（唯一声明来源），导入定义后、登记前深合并进文档；登记时原样交给 core
+  const configLoader = withPluginConfigSync(
+    opts.pluginLoader ?? createNodeModulesPluginLoader(opts.projectDir),
+    app,
+    store,
+    opts.configSync,
+  );
   // 宿主的根绑定：事件订阅、服务查询与宿主服务登记都经它，随 App 停止撤回
   const host = app.bind({ events, provide, services });
-  const discovery = createPluginDiscovery(app, configLoader.loader);
+  const discovery = createPluginDiscovery(app, configLoader.loader, store);
   host.provide(pluginSource, { rescan: () => discovery.rescan() }, { exclusive: true });
   // 不变量①：App 构造完成后再让 sink 监听终端归属事件——此前没有事件总线可订阅。
   consoleHandle.bindEvents(host.events);
@@ -211,7 +214,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   process.channel?.unref();
 
   // 配置外部变更热重载（provider 不支持 watch 时为 no-op）。
-  installConfigHotReload(app, opts.configSync);
+  installConfigHotReload(app, store, opts.configSync);
   let stopping = false;
   const shutdown = async () => {
     if (stopping) return;

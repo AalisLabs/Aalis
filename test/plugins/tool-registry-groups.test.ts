@@ -11,7 +11,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 async function withRegistry(
   fn: (names: (f?: { groups?: string[] }) => string[], summaries: (f?: { groups?: string[] }) => string[]) => void,
 ): Promise<void> {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.idle();
   const { tools } = app.bind({ tools: toolsService });

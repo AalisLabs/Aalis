@@ -45,7 +45,7 @@ afterEach(async () => {
 });
 
 async function makeStore() {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   await app.plugin(memoryInMemory);
   await app.plugins.idle();

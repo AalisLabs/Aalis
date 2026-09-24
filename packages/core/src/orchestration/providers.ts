@@ -2,11 +2,8 @@
 // providers.ts — `@aalis/core` 注入点（host providers）
 //
 // 把"怎么重启"这件 I/O 相关的事抽成接口，由宿主（@aalis/runtime 或外部嵌入者）实现并注入。
-// 插件从哪里来不在 core：宿主把定义好的插件经 `app.plugin` / `app.pluginAll` 交进来。
-// core 本身不 import 任何 `node:*` / `yaml`，可在浏览器、单文件二进制、嵌入式集成等场景里运行。
-//
-// `ConfigProvider` 只依赖 `AalisConfig`，与它服务的 `ConfigManager`
-// 同处 `infrastructure/config.ts`——放在那里基础设施层就不必向上引用。
+// 插件从哪里来、配置存在哪里都不在 core：宿主把定义好的插件连同配置经 `app.plugin` / `app.pluginAll`
+// 交进来。core 本身不 import 任何 `node:*` / `yaml`，可在浏览器、单文件二进制、嵌入式集成等场景里运行。
 // ============================================================
 
 // ----- 重启策略 -----

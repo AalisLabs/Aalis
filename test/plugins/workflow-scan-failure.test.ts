@@ -45,7 +45,7 @@ function fakeStorage(listError: string) {
 /** 启动一次 workflow 插件再停掉（dispose 等落盘），返回 runsFile 里的 once 记账 */
 async function bootOnce(listError: string): Promise<Record<string, number>> {
   const store = fakeStorage(listError);
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   // 宿主侧提供桩 storage：只实现本用例走到的那几个方法
   app.bind({ provide }).provide(storage, store.service as never);
   await app.plugin(cronEnginePlugin, {});

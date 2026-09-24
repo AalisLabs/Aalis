@@ -121,7 +121,7 @@ describe('plugin-embedding-ollama: 健康状况对用户可见', () => {
   });
 
   async function boot(fake: Fake, model = 'nomic-embed-text', over: Record<string, unknown> = {}) {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
     const doctor = makeDoctor();
     const host = app.bind({ provide, services });

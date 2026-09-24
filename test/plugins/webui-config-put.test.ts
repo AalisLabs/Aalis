@@ -1,5 +1,6 @@
-import type { AppService, HostConfig, PluginManagerService, ServiceRef } from '@aalis/core';
+import type { AppService, PluginManagerService, ServiceRef } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
+import type { HostConfig } from '../../packages/api-host-config/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 
 // PUT /api/config 只应用 CORE_CONFIG_SCHEMA 的键（name / logLevel）。其余顶层键一律不应用，但真有改动的
@@ -14,7 +15,7 @@ function ref<T>(instance: unknown): ServiceRef<T> {
   return { current: instance as T, require: () => instance as T, all: () => [], follow: () => () => {} };
 }
 
-function setup(opts: { saveConfig?: () => Promise<void> } = {}) {
+function setup(opts: { save?: () => Promise<void> } = {}) {
   const store: Record<string, unknown> = {
     name: 'Aalis',
     logLevel: 'info',
@@ -38,19 +39,17 @@ function setup(opts: { saveConfig?: () => Promise<void> } = {}) {
       store[k] = v;
     },
     getAll: () => ({ ...store }),
+    save:
+      opts.save ??
+      (() => {
+        calls.push('save');
+        return Promise.resolve();
+      }),
   };
   registerPluginRoutes(
     app as never,
     {
-      app: ref<AppService>({
-        saveConfig:
-          opts.saveConfig ??
-          (() => {
-            calls.push('save');
-            return Promise.resolve();
-          }),
-        restart: () => calls.push('restart'),
-      }),
+      app: ref<AppService>({ restart: () => calls.push('restart') }),
       source: { current: undefined },
       plugins: ref<PluginManagerService>({}),
       hostConfig: ref<HostConfig>(hostConfig),
@@ -161,9 +160,9 @@ describe('PUT /api/config 值校验', () => {
     expect(store.name).toBe('Aalis');
     expect(calls).toEqual([]);
   });
-  it('saveConfig 拒绝 → 500 且不重启（返回时已落盘的契约在消费侧兑现）', async () => {
+  it('save 拒绝 → 500 且不重启（返回时已落盘的契约在消费侧兑现）', async () => {
     const { calls, put } = setup({
-      saveConfig: async () => {
+      save: async () => {
         throw new Error('disk full');
       },
     });

@@ -30,7 +30,7 @@ const REL_REF = 'data/images/onebot_t_group_1/0123456789abcdef.png';
 const HTTP_URL = 'https://example.invalid/pic.jpg';
 
 async function loadStack(recorder: ChatModelRequest[], opts: { media?: boolean; storage?: boolean } = {}) {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide, agent: agentService });
   await app.plugin(createMockLLMPlugin({ responses: [{ content: 'ok' }], recorder }));
   if (opts.storage !== false) {

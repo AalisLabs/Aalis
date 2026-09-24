@@ -1,19 +1,22 @@
-import type { AalisConfig, Logger } from '@aalis/core';
+import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
+import { type AalisConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
 import {
   App,
   appService,
   definePlugin,
-  hostConfig,
   optional,
   type PluginDefinition,
   pluginsService,
 } from '../../packages/core/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
+import { type ConfigProvider, createConfigStore } from '../../packages/runtime/src/config-store.js';
+import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 
 // 管理动作只改运行态；WebUI 的启停与改配置路由在动作成功后自己写配置文档并落盘。
 // 这里用真实 App 与真实路由：按落盘的文档重建 App，状态要与重启前一致。
 // 路由挂在一个插件的激活上（与 webui-server 同样经 uses 取服务），也覆盖经自己的路由禁用自己。
+// 登记一律按文档取配置与禁用标记（与 runtime 发现驱动的登记同一口径），core 不读文档。
 
 type Handler = (req: unknown, res: unknown, next: () => Promise<void>) => unknown;
 type Reply = { status: number; body?: unknown };
@@ -30,17 +33,20 @@ const target = definePlugin({
   apply() {},
 });
 
-function world(config: AalisConfig) {
+/** `provideDoc: false`：宿主持有文档、照它登记，但不把它作为 host-config 交给插件 */
+function world(config: Partial<AalisConfig>, { provideDoc = true } = {}) {
   const saved: AalisConfig[] = [];
-  const app = new App({
-    config,
-    logger: silent,
-    configProvider: {
-      save: snapshot => {
-        saved.push(structuredClone(snapshot));
-      },
+  const provider: ConfigProvider = {
+    save: snapshot => {
+      saved.push(structuredClone(snapshot));
     },
-  });
+  };
+  const { app, store } = provideDoc
+    ? hostedApp(config, { logger: silent, provider })
+    : {
+        app: new App({ name: 'T', logLevel: 'error', logger: silent }),
+        store: createConfigStore({ name: 'T', logLevel: 'error', plugins: {}, ...config }, provider),
+      };
   apps.push(app);
   const routes = new Map<string, Handler[]>();
   const expressApp = new Proxy(
@@ -96,9 +102,16 @@ function world(config: AalisConfig) {
   };
   return {
     app,
+    store,
     saved,
     async boot(...definitions: PluginDefinition[]) {
-      await app.pluginAll([panel, ...definitions].map(definition => ({ definition })));
+      await app.pluginAll(
+        [panel, ...definitions].map(definition => ({
+          definition,
+          config: store.getPluginConfig(definition.name),
+          disabled: store.isPluginDisabled(definition.name),
+        })),
+      );
       await app.plugins.idle();
     },
     enable: (name: string) => call('POST /api/plugins/:name/enable', name),
@@ -111,9 +124,9 @@ function world(config: AalisConfig) {
 async function restartFrom(saved: AalisConfig[], definition: PluginDefinition) {
   const snapshot = saved.at(-1);
   if (!snapshot) throw new Error('从未落盘');
-  const app = new App({ config: structuredClone(snapshot), logger: silent });
+  const { app, store } = hostedApp(structuredClone(snapshot), { logger: silent });
   apps.push(app);
-  await app.plugin(definition);
+  await registerFromDoc(app, store, definition);
   await app.plugins.idle();
   return app.plugins.getPlugin(definition.name);
 }
@@ -125,20 +138,20 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
 
     expect((await w.disable('target')).status).toBe(200);
     expect(w.app.plugins.getPlugin('target')?.state).toBe('disabled');
-    expect(w.app.config.isPluginDisabled('target')).toBe(true);
+    expect(w.store.isPluginDisabled('target')).toBe(true);
     expect(w.saved).toHaveLength(1);
     expect((await restartFrom(w.saved, target))?.state).toBe('disabled');
 
     expect((await w.enable('target')).status).toBe(200);
     await w.app.plugins.idle();
-    expect(w.app.config.isPluginDisabled('target')).toBe(false);
+    expect(w.store.isPluginDisabled('target')).toBe(false);
     expect(w.saved).toHaveLength(2);
     expect((await restartFrom(w.saved, target))?.state).toBe('active');
 
     expect((await w.put('target', { v: 5 })).status).toBe(200);
     await w.app.plugins.idle();
     expect(w.app.plugins.getPlugin('target')?.config).toEqual({ v: 5 });
-    expect(w.app.config.getPluginConfig('target')).toEqual({ v: 5 });
+    expect(w.store.getPluginConfig('target')).toEqual({ v: 5 });
     expect(w.saved).toHaveLength(3);
     expect((await restartFrom(w.saved, target))?.config).toEqual({ v: 5 });
   });
@@ -148,11 +161,11 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     await w.boot(target);
     // 直接调管理动作禁用：只改运行态，文档里仍是启用
     expect(await w.app.plugins.disable('target')).toBe(true);
-    expect(w.app.config.isPluginDisabled('target')).toBe(false);
+    expect(w.store.isPluginDisabled('target')).toBe(false);
 
     const reply = await w.put('target', { v: 9 });
     expect(reply.status).toBe(409);
-    expect(w.app.config.getPluginConfig('target')).toEqual({ v: 1 });
+    expect(w.store.getPluginConfig('target')).toEqual({ v: 1 });
     expect(w.saved).toHaveLength(0);
   });
 
@@ -162,7 +175,20 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
 
     expect((await w.disable('console')).status).toBe(200);
     expect(w.app.plugins.getPlugin('console')?.state).toBe('disabled');
-    expect(w.app.config.isPluginDisabled('console')).toBe(true);
+    expect(w.store.isPluginDisabled('console')).toBe(true);
     expect(w.saved).toHaveLength(1);
+  });
+
+  it('宿主没提供 host-config：启停与改配置路由 503，运行态与文档都不动', async () => {
+    const w = world({ plugins: { target: { v: 1 } } }, { provideDoc: false });
+    await w.boot(target);
+    expect(w.app.plugins.getPlugin('target')?.state).toBe('active');
+
+    expect((await w.disable('target')).status).toBe(503);
+    expect(w.app.plugins.getPlugin('target')?.state, '缺文档时不得先动运行态').toBe('active');
+    expect((await w.put('target', { v: 5 })).status).toBe(503);
+    expect(w.app.plugins.getPlugin('target')?.config).toEqual({ v: 1 });
+    expect(w.store.isPluginDisabled('target')).toBe(false);
+    expect(w.saved).toHaveLength(0);
   });
 });

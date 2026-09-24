@@ -1,10 +1,11 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { UserIdentity } from '@aalis/api-authority';
 import type { CommandService } from '@aalis/api-commands';
+import type { HostConfig } from '@aalis/api-host-config';
 import type { PluginSourceService } from '@aalis/api-plugin-source';
 import type { ToolService } from '@aalis/api-tools';
 import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui';
-import type { AppService, HostConfig, Logger, PluginManagerService, ServiceRef } from '@aalis/core';
+import type { AppService, Logger, PluginManagerService, ServiceRef } from '@aalis/core';
 import { parseInstanceId } from '@aalis/core';
 import {
   CORE_CONFIG_SCHEMA,
@@ -26,8 +27,8 @@ interface PluginRoutesCaps {
   plugins: ServiceRef<PluginManagerService>;
   /** 宿主的插件来源；打包宿主不提供，扫描路由随之报不可用 */
   source: Pick<ServiceRef<PluginSourceService>, 'current'>;
-  /** 整份配置的读写与落盘（宿主管理面） */
-  hostConfig: ServiceRef<HostConfig>;
+  /** 配置文档的读写与落盘（宿主提供；缺席时读写文档的路由返回 503） */
+  hostConfig: Pick<ServiceRef<HostConfig>, 'current'>;
   tools: Pick<ServiceRef<ToolService>, 'current'>;
   commands: Pick<ServiceRef<CommandService>, 'current'>;
   /**
@@ -49,7 +50,12 @@ export function registerPluginRoutes(
 ): void {
   const getApp = (): AppService | undefined => caps.app.current;
   const getPluginMgr = (): PluginManagerService | undefined => caps.plugins.current;
-  const hostConfig = (): HostConfig => caps.hostConfig.require();
+  /** 配置文档由宿主提供；没有时读写文档的路由一律 503，与扫描、市场路由的缺席口径一致 */
+  const docOr503 = (res: express.Response): HostConfig | undefined => {
+    const doc = caps.hostConfig.current;
+    if (!doc) res.status(503).json({ error: '宿主未提供配置文档（host-config），无法读写配置' });
+    return doc;
+  };
 
   // 获取插件列表及状态
   expressApp.get('/api/plugins', gate(), (_req, res) => {
@@ -187,8 +193,9 @@ export function registerPluginRoutes(
 
   // 获取当前全局配置
   expressApp.get('/api/config', gate(), (_req, res) => {
-    const allConfig = hostConfig().getAll();
-    res.json({ ...allConfig, _schema: CORE_CONFIG_SCHEMA });
+    const doc = docOr503(res);
+    if (!doc) return;
+    res.json({ ...doc.getAll(), _schema: CORE_CONFIG_SCHEMA });
   });
 
   // 更新全局配置字段
@@ -200,17 +207,18 @@ export function registerPluginRoutes(
     }
 
     const app = getApp();
-    const pm = getPluginMgr();
-    if (!app || !pm) {
+    if (!app) {
       res.status(500).json({ error: 'App 不可用' });
       return;
     }
+    const doc = docOr503(res);
+    if (!doc) return;
 
     // 可改的只有 CORE_CONFIG_SCHEMA 的键。内置前端（buildDraftFromSchema）会把 GET 到的整份配置连同
     // _schema 原样回传，其中 plugins 等还可能是过期快照（插件配置页保存后不刷新全局 config），
     // 所以不能按键报错：其余键一律不应用，但把真有改动的点名回给调用方——不静默吞掉却回复「已保存」。
     const allowed = Object.keys(CORE_CONFIG_SCHEMA);
-    const current = hostConfig().getAll() as Record<string, unknown>;
+    const current = doc.getAll() as Record<string, unknown>;
     const differs = (k: string) => !isDeepStrictEqual(updates[k], current[k]);
     const ignored = Object.keys(updates).filter(k => k !== '_schema' && !allowed.includes(k) && differs(k));
     const changed = allowed.filter(k => k in updates && differs(k));
@@ -228,13 +236,13 @@ export function registerPluginRoutes(
       res.status(400).json({ error: invalid.join('; ') });
       return;
     }
-    for (const key of changed) hostConfig().set(key, updates[key]);
+    for (const key of changed) doc.set(key, updates[key]);
     // name / logLevel 都要重启才生效；值没变就不重启
     const restartNeeded = changed.length > 0;
     const note = ignored.length > 0 ? `（已忽略不可修改的字段: ${ignored.join(', ')}）` : '';
 
     try {
-      await app.saveConfig();
+      await doc.save();
       if (restartNeeded) {
         res.json({ ok: true, message: `全局配置已更新，正在重启应用以生效…${note}`, restart: true, ignored });
         app.restart();
@@ -251,8 +259,10 @@ export function registerPluginRoutes(
   // 列表 GET /api/plugins 已把 schema.secret 换成固定掩码；本接口必须是原文，否则保存会把掩码写回。
   expressApp.get('/api/plugins/:name/config', gate(), (req, res) => {
     const pluginName = req.params.name;
+    const doc = docOr503(res);
+    if (!doc) return;
     try {
-      const pluginConfig = hostConfig().getPluginConfig(pluginName);
+      const pluginConfig = doc.getPluginConfig(pluginName);
       res.json({ name: pluginName, config: pluginConfig });
     } catch (err) {
       res.status(400).json({ error: errorMessage(err) });
@@ -268,12 +278,13 @@ export function registerPluginRoutes(
       return;
     }
 
-    const app = getApp();
     const pm = getPluginMgr();
-    if (!app || !pm) {
-      res.status(500).json({ error: 'App 不可用' });
+    if (!pm) {
+      res.status(500).json({ error: '插件管理服务不可用' });
       return;
     }
+    const doc = docOr503(res);
+    if (!doc) return;
 
     // 补默认值再交给 updateConfig：后者是**整体替换**语义（core 的 orchestration/plugin.ts 里
     // entry.config = newConfig 直接顶掉）。不补的话，PUT 一个部分对象就会把未列出的
@@ -288,7 +299,7 @@ export function registerPluginRoutes(
     let stored: Record<string, unknown>;
     let merged: Record<string, unknown>;
     try {
-      stored = { ...defaults, ...hostConfig().getPluginConfig(pluginName) };
+      stored = { ...defaults, ...doc.getPluginConfig(pluginName) };
       merged = { ...stored, ...(newConfig as Record<string, unknown>) };
       // 与 runtime config-sync 同一政策：有 schema 就裁掉未知键并 warn，避免 WebUI 把
       // 手滑字段写进 stored，而 YAML watch 路径却会裁掉——两边政策必须一致。
@@ -331,8 +342,8 @@ export function registerPluginRoutes(
     }
     if (success) {
       // 管理动作只改运行态；跨重启保留要本路由写文档并落盘
-      hostConfig().setPluginConfig(pluginName, merged);
-      await app.saveConfig();
+      doc.setPluginConfig(pluginName, merged);
+      await doc.save();
       res.json({ ok: true, message: `插件 ${pluginName} 配置已更新` });
     } else if (pm.getPlugin(pluginName)?.state === 'disabled') {
       // 插件被禁用时这里也会走到，但「不存在」会把用户引向错误方向——区分「禁用」与「真不存在」并给出下一步。
@@ -345,12 +356,13 @@ export function registerPluginRoutes(
   // 启用插件
   expressApp.post('/api/plugins/:name/enable', gate(), async (req, res) => {
     const pluginName = req.params.name;
-    const app = getApp();
     const pm = getPluginMgr();
-    if (!app || !pm) {
-      res.status(500).json({ error: 'App 不可用' });
+    if (!pm) {
+      res.status(500).json({ error: '插件管理服务不可用' });
       return;
     }
+    const doc = docOr503(res);
+    if (!doc) return;
     let success: boolean;
     try {
       success = await pm.enable(pluginName);
@@ -359,8 +371,8 @@ export function registerPluginRoutes(
       return;
     }
     if (success) {
-      hostConfig().setPluginEnabled(pluginName, true);
-      await app.saveConfig();
+      doc.setPluginEnabled(pluginName, true);
+      await doc.save();
       res.json({ ok: true, message: `插件 ${pluginName} 已启用` });
     } else {
       res.status(404).json({ error: `插件 ${pluginName} 不存在` });
@@ -370,12 +382,13 @@ export function registerPluginRoutes(
   // 禁用插件
   expressApp.post('/api/plugins/:name/disable', gate(), async (req, res) => {
     const pluginName = req.params.name;
-    const app = getApp();
     const pm = getPluginMgr();
-    if (!app || !pm) {
-      res.status(500).json({ error: 'App 不可用' });
+    if (!pm) {
+      res.status(500).json({ error: '插件管理服务不可用' });
       return;
     }
+    const doc = docOr503(res);
+    if (!doc) return;
     let success: boolean;
     try {
       success = await pm.disable(pluginName);
@@ -384,8 +397,8 @@ export function registerPluginRoutes(
       return;
     }
     if (success) {
-      hostConfig().setPluginEnabled(pluginName, false);
-      await app.saveConfig();
+      doc.setPluginEnabled(pluginName, false);
+      await doc.save();
       res.json({ ok: true, message: `插件 ${pluginName} 已禁用` });
     } else {
       res.status(404).json({ error: `插件 ${pluginName} 不在注册表或已处于终态，无法禁用` });
@@ -421,12 +434,13 @@ export function registerPluginRoutes(
       res.status(400).json({ error: 'suffix 只能包含字母、数字、下划线和连字符' });
       return;
     }
-    const app = getApp();
     const pm = getPluginMgr();
-    if (!app || !pm) {
-      res.status(500).json({ error: 'App 不可用' });
+    if (!pm) {
+      res.status(500).json({ error: '插件管理服务不可用' });
       return;
     }
+    const doc = docOr503(res);
+    if (!doc) return;
     // 实例创建编排（配置文件编排属管理面,内核只出 register 机制）：
     // 查同名 module → reusable/查重校验 → 合并默认配置写入 → register 激活。
     const sourceModule = pm
@@ -448,25 +462,27 @@ export function registerPluginRoutes(
     }
     const mergedConfig = { ...defaultsFrom(sourceModule.configSchema), ...(config as Record<string, unknown>) };
     try {
-      hostConfig().setPluginConfig(instanceId, mergedConfig);
-      await pm.register(sourceModule, mergedConfig, instanceId);
+      doc.setPluginConfig(instanceId, mergedConfig);
+      // 文档里残留的禁用标记照旧生效：以禁用态登记
+      await pm.register(sourceModule, mergedConfig, instanceId, { disabled: doc.isPluginDisabled(instanceId) });
     } catch (err) {
       res.status(400).json({ error: errorMessage(err) });
       return;
     }
-    await app.saveConfig();
+    await doc.save();
     res.json({ ok: true, instanceId, message: `已创建实例 ${instanceId}` });
   });
 
   // 删除插件多实例
   expressApp.delete('/api/plugins/:instanceId/instance', gate(), async (req, res) => {
     const instanceId = req.params.instanceId;
-    const app = getApp();
     const pm = getPluginMgr();
-    if (!app || !pm) {
-      res.status(500).json({ error: 'App 不可用' });
+    if (!pm) {
+      res.status(500).json({ error: '插件管理服务不可用' });
       return;
     }
+    const doc = docOr503(res);
+    if (!doc) return;
     // 实例删除编排：主实例保护 → unload（内部含级联重算）→ 移除配置条目。
     const { suffix } = parseInstanceId(instanceId);
     if (!suffix || !pm.getPlugin(instanceId)) {
@@ -475,25 +491,21 @@ export function registerPluginRoutes(
     }
     try {
       await pm.unload(instanceId);
-      hostConfig().removePluginConfig(instanceId);
+      doc.removePluginConfig(instanceId);
     } catch (err) {
       res.status(400).json({ error: errorMessage(err) });
       return;
     }
-    await app.saveConfig();
+    await doc.save();
     res.json({ ok: true, message: `已删除实例 ${instanceId}` });
   });
 
   // 保存配置到磁盘
   expressApp.post('/api/config/save', gate(), async (_req, res) => {
-    const app = getApp();
-    const pm = getPluginMgr();
-    if (!app || !pm) {
-      res.status(500).json({ error: 'App 不可用' });
-      return;
-    }
+    const doc = docOr503(res);
+    if (!doc) return;
     try {
-      await app.saveConfig();
+      await doc.save();
       res.json({ ok: true, message: '配置已保存到磁盘' });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

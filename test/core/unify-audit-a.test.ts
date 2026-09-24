@@ -50,7 +50,8 @@ function world(options?: { disposeTimeoutMs?: number; logger?: Logger }) {
     child: () => logger,
   };
   const app = createInspectableApp({
-    config: { name: 'T', logLevel: 'error', plugins: {} },
+    name: 'T',
+    logLevel: 'error',
     logger,
     disposeTimeoutMs: options?.disposeTimeoutMs,
   });

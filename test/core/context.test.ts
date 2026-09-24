@@ -32,7 +32,7 @@ afterEach(async () => {
 });
 function makeApp() {
   const logger: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => logger };
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+  const app = new App({ name: 'T', logLevel: 'error', logger });
   apps.push(app);
   return app;
 }

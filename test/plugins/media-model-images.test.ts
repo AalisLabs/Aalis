@@ -95,7 +95,7 @@ describe('transformModelImages：裸路径 ref 不得流向 provider', () => {
 
 describe('agent:llm:before 中间件：describe 模式也必须过形态闸', () => {
   it('describe 模式下末条 user 的裸路径 ref 不会原样送到 provider（现场 400 的那条路径）', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ provide, hooks });
     // media 把 process / storage 声明为 required：不放桩它就停在 pending，中间件根本没挂上。
     host.provide(processService, {} as never);

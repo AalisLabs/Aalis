@@ -47,7 +47,7 @@ afterEach(async () => {
 });
 function world() {
   const logger: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => logger };
-  const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+  const app = createInspectableApp({ name: 'T', logLevel: 'error', logger });
   apps.push(app);
   return { app, host: { provide: app.bind({ provide }).provide } };
 }

@@ -1,11 +1,12 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { App, provide } from '@aalis/core';
+import { provide } from '@aalis/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
+import { hostedApp } from '../fixtures/app.js';
 
 // ════════════════════════════════════════════════════════════
 // authority apply 的 ready 闸 —— storage 已在线时，apply 返回即等级表已载入
@@ -52,7 +53,7 @@ afterEach(async () => {
 
 describe('authority：storage 已在线时 apply 等完等级表加载', () => {
   it('装载返回即可读到 users.json 里的封禁记录（未调 idle）', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const { app } = hostedApp();
     const host = app.bind({ provide, authority });
     host.provide(storage, fsStorage() as never);
     // provide 触发的反应式 recompute 还在飞时，装载请求会排队、在激活发生前就返回。

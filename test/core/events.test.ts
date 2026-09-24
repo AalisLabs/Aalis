@@ -71,7 +71,7 @@ describe('EventBus per-handler 隔离（#8.1）', () => {
       error() {},
       child: () => logger,
     };
-    const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+    const app = createInspectableApp({ name: 'T', logLevel: 'error', logger });
     const host = activationHost(app);
     const child = host.create(host.root, 'plugin-x');
     host.bind(child, { events }).events.on('plugin:loaded', () => {

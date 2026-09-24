@@ -15,7 +15,7 @@ import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 const apps: App[] = [];
 
 async function makeModel(): Promise<LLMModel> {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   await app.plugin(ollama, { baseUrl: 'http://127.0.0.1:11434', customModels: 'teststream' });
   await app.plugins.idle();

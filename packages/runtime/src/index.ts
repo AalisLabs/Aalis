@@ -5,16 +5,20 @@
 //   - createNodeModulesPluginLoader：纯 npm 独立部署（从 node_modules 解析插件）
 //   - createFsPluginLoader：monorepo 自托管（扫描 packages/ 目录）
 //   - createPluginDiscovery：把加载器发现的插件整批交给 core，并提供热扫描（plugin-source 服务的实现）
+//   - createConfigStore / installHostConfig：配置文档与 host-config 服务（core 只持运行态）
+//   - withPluginConfigSync：导入定义后、登记前把 schema 派生默认值深合并进文档
 //   - createFsYamlConfigProvider / createProcessRespawnStrategy：YAML 配置 + 进程级重启
 //   - startAalis：组装以上 + 宿主件为实例并启动（带 options 开关，默认独立部署）
 //   - install*/setup*/tryDispatchSubcommand：宿主件，供高级 opt-in 组装
 
 export { getBootstrapBuffer, installBootstrapBuffer } from './bootstrap-buffer.js';
+export { type ConfigProvider, type ConfigStore, createConfigStore, installHostConfig } from './config-store.js';
 export {
   type ConfigSyncOptions,
   handleConfigChanged,
   installConfigHotReload,
   syncPluginDefaults,
+  withPluginConfigSync,
 } from './config-sync.js';
 export { type ConsoleSinkHandle, installConsoleSink } from './console-sink.js';
 export { appendCrashLog, DEFAULT_LOG_FILE, type FileLoggerHandle, setupFileLogger } from './file-logger.js';

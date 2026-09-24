@@ -9,19 +9,12 @@ import { ServiceContainer } from '../primitives/services.js';
 
 import type { Activation } from './activation.js';
 import { ActivationHost, notify } from './activation-host.js';
-import { appService, HOST_CONFIG_KEYS, hostConfig, narrow, pluginsService } from './host-services.js';
-import { PluginManager } from './plugin.js';
+import { appService, narrow, pluginsService } from './host-services.js';
+import { PluginManager, type PluginRegistration } from './plugin.js';
 import type { RestartStrategy } from './providers.js';
 import { events, provide, services } from '../composition/core-services.js';
 import type { BoundOf, Uses } from '../composition/descriptors.js';
 import type { PluginDefinition } from '../composition/plugin-definition.js';
-import { type AalisConfig, ConfigManager, type ConfigProvider } from '../infrastructure/config.js';
-import {
-  cloneConfigObject,
-  cloneConfigValue,
-  isPlainConfigObject,
-  isUnsafeConfigKey,
-} from '../infrastructure/config-values.js';
 import { DefaultLogger, type Logger, LogHub, type LogLevel } from '../infrastructure/logger.js';
 
 // ----- 应用配置选项 -----
@@ -29,28 +22,15 @@ import { DefaultLogger, type Logger, LogHub, type LogLevel } from '../infrastruc
 /**
  * App 构造选项
  *
- * core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——这些通过 provider 注入：
- * - `config`：当前配置快照（必填；由宿主从任意来源加载好传进来）
- * - `configProvider`：可选，提供 save() / watch() 能力；省略则配置只读
- * - `restartStrategy`：可选，提供重启实现；省略则 `restart()` 抛错
+ * core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念，也不持有配置文档：插件从哪里来、
+ * 配置存在哪里都是宿主的事，core 只接收注册时交来的插件定义、配置与禁用标记。
+ * 选项全部可省：`restartStrategy` 省略则 `restart()` 抛错。
  */
 export interface AppOptions {
-  /**
-   * 配置快照——必填。
-   * 测试可直接传字面量 `{ name: 'X', logLevel: 'error', plugins: {} }`；
-   * 生产入口由宿主从文件/URL/远端加载后传入。
-   */
-  config: AalisConfig;
-  /** 配置持久化与外部变更监听；缺省=只读内存模式 */
-  configProvider?: ConfigProvider;
-  /**
-   * 插件默认配置的派生器；缺省=无默认值（注册时只用文件配置与传入配置）。
-   *
-   * 配置声明是宿主词汇（configSchema，见 @aalis/schema-config），core 不解释——
-   * 宿主注入「从声明里派生默认值」的函数，core 只在注册合并时调用。
-   * runtime 注入的是 `d => defaultsFrom(d.configSchema)`。
-   */
-  pluginDefaults?: (definition: PluginDefinition) => Record<string, unknown>;
+  /** 应用名，只用于启动横幅；缺省 'Aalis' */
+  name?: string;
+  /** 默认 Logger 的级别；缺省 'info'。注入了 `logger` 时不用 */
+  logLevel?: LogLevel;
   /** 重启策略；缺省=`restart()` 抛错 */
   restartStrategy?: RestartStrategy;
   /**
@@ -96,11 +76,11 @@ export interface AppOptions {
  * 创建 App 实例的工厂函数。
  *
  * @example
- * // 浏览器/嵌入式：内存配置，插件由宿主直接交给 core
- * const app = createApp({ config: { name: 'embedded', logLevel: 'info', plugins: {} } });
- * await app.pluginAll([{ definition: memoryPlugin }, { definition: agentPlugin }]);
+ * // 浏览器/嵌入式：插件与各自的配置由宿主直接交给 core
+ * const app = createApp({ name: 'embedded' });
+ * await app.pluginAll([{ definition: memoryPlugin, config: { maxItems: 100 } }, { definition: agentPlugin }]);
  *
- * // Node 宿主由 @aalis/runtime 提供插件发现、fs/yaml/spawn 实现
+ * // Node 宿主由 @aalis/runtime 提供插件发现、配置文档与 fs/yaml/spawn 实现
  */
 export function createApp(options: AppOptions): App {
   return new App(options);
@@ -109,8 +89,8 @@ export function createApp(options: AppOptions): App {
 /**
  * Aalis 应用主容器
  *
- * core 的"内核"——只持有内存中的抽象（events / services / hooks / config / plugins），
- * 不接触任何外部 I/O。所有 I/O 通过 `AppOptions` 注入的 provider 完成。
+ * core 的"内核"——只持有内存中的抽象（events / services / hooks / plugins 与各实例的运行配置），
+ * 不接触任何外部 I/O。宿主需要的环境能力经 `AppOptions` 注入。
  */
 export class App {
   /** 根激活：宿主绑定（{@link bind}）与核心服务的归属，全部插件激活的父。不对外——宿主经 bind 取能力 */
@@ -120,21 +100,15 @@ export class App {
   readonly plugins: PluginManagerService;
   readonly #plugins: PluginManager;
   readonly logger: Logger;
-  /** 整份配置的读写、落盘与外部变更监听（插件侧经 `hostConfig` 拿到的是只含读写方法的窄面） */
-  readonly config: ConfigManager;
   /** 屏障事件（app:*）由 App 自己发；四原语注册表不外露，插件与宿主都经描述符取用 */
   readonly #events: EventBus;
 
-  private pluginDefaults?: (definition: PluginDefinition) => Record<string, unknown>;
   private readonly restartStrategy?: RestartStrategy;
   private readonly disposeTimeoutMs: number;
   /** 停机单飞：重入返回同一 Promise；完成后仍保留，再调 stop() 立即落定 */
   private stopping?: Promise<void>;
 
   constructor(options: AppOptions) {
-    // 1. 配置
-    const config = new ConfigManager(options.config, { provider: options.configProvider });
-    this.config = config;
     this.#events = new EventBus();
     // 'app:ready' / 'app:started' 是"应用启动完成"里程碑：app.start() 仅 emit
     // 一次，但插件配置热重载会触发 bounce → 新插件实例的
@@ -148,7 +122,7 @@ export class App {
     const contributionRegistry = new ContributionRegistry();
     this.logger =
       options.logger ??
-      new DefaultLogger('aalis', config.get('logLevel') as LogLevel, options.logHub ?? LogHub.default, options.now);
+      new DefaultLogger('aalis', options.logLevel ?? 'info', options.logHub ?? LogHub.default, options.now);
     // EventBus 保持环境无关不持有 Logger，handler 错误经此回调上报。
     this.#events.onHandlerError = (event, err, contextId) => {
       this.logger.warn(`事件 "${event}" 的监听器抛错（已隔离${contextId ? `，来自 ${contextId}` : ''}）:`, err);
@@ -156,11 +130,10 @@ export class App {
     // 广播型钩子相位的"卡链"上报同理（handler 忘调 next 会静默吞掉下游注入）。
     hookRegistry.onStall = (hook, contextId, skipped) =>
       this.logger.warn(`钩子 ${hook}: handler(来自 ${contextId}) 未调用 next()，其后 ${skipped} 个 handler 被跳过`);
-    this.pluginDefaults = options.pluginDefaults;
     this.restartStrategy = options.restartStrategy;
     this.disposeTimeoutMs = options.disposeTimeoutMs ?? 5000;
 
-    // 2. 根激活
+    // 1. 根激活
     const runtime = {
       events: this.#events,
       services: container,
@@ -173,12 +146,12 @@ export class App {
     this.#root = this.#host.root;
     const caps = this.#host.bind(this.#root, { events, provide, services });
 
-    // 3. 插件管理器
-    this.#plugins = new PluginManager(this.#host, config, this.logger, this.disposeTimeoutMs);
+    // 2. 插件管理器
+    this.#plugins = new PluginManager(this.#host, this.logger, this.disposeTimeoutMs);
     this.plugins = this.#plugins;
 
-    // 4. 宿主服务：与内置八项同一登记规则（根激活、独占），只交出契约列出的方法
-    caps.provide(appService, narrow(this, ['stop', 'restart', 'saveConfig']), { exclusive: true });
+    // 3. 宿主服务：与内置八项同一登记规则（根激活、独占），只交出契约列出的方法
+    caps.provide(appService, narrow(this, ['stop', 'restart']), { exclusive: true });
     caps.provide(
       pluginsService,
       {
@@ -202,25 +175,10 @@ export class App {
       },
       { exclusive: true },
     );
-    caps.provide(hostConfig, narrow(config, HOST_CONFIG_KEYS), { exclusive: true });
-
-    // 5. 应用启动时已存在的服务偏好
-    const initialPrefs = config.getServicePreferences();
-    for (const [svcName, ctxId] of Object.entries(initialPrefs)) {
-      caps.services.prefer(svcName, ctxId);
-    }
-
-    // 6. 服务偏好诊断日志
-    caps.events.on('service:registered', svcName => {
-      const pref = config.getServicePreferences()[svcName];
-      if (pref) {
-        this.logger.debug(`服务 "${svcName}" 注册时存在用户偏好: ${pref}`);
-      }
-    });
 
     // 版本由宿主注入（core 不自读 package.json）；未注入时省略版本段。
     const versionSeg = options.version ? ` Core ${options.version}` : ' Core';
-    this.logger.info(`Aalis${versionSeg} - ${config.get('name')}`);
+    this.logger.info(`Aalis${versionSeg} - ${options.name ?? 'Aalis'}`);
   }
 
   /**
@@ -236,75 +194,39 @@ export class App {
    *
    * **resolve 语义 = 注册落账 + 尽力即时激活**：完全静置时激活在返回前同步收敛；
    * 有在飞 recompute（反应式级联/另一插件正在激活）**或挂起段在途**
-   * （unload/disable/bounce 的拆卸窗口、另一批登记）时，本次请求排队并入其收尾，
+   * （unload/disable/bounce 的拆卸窗口）时，本次请求排队并入其收尾，
    * resolve 时激活可能尚未发生（排队不丢失——单飞排队见 recompute）。需要
    * 「激活已落定」的确定时机，调用后 `await app.plugins.idle()`（不得在插件
    * apply/onDispose 内这样做——自等死锁，见 idle）。
    *
    * @param definition 插件定义（definePlugin 的产物）
-   * @param config     插件配置（覆盖文件配置）
+   * @param config     实例配置，原样生效：core 不合并默认值，也不读配置文档（那是宿主的事）
    * @param instanceId 实例 ID（多实例时为 `name:suffix`，留空则使用 definition.name）
+   * @param options.disabled 以禁用态登记（宿主按配置文档的禁用名单传入）
    * @returns 同 `plugins.register`：false = 重名或未声明 reusable 的多实例，已记 warn
    */
-  async plugin(definition: PluginDefinition, config?: Record<string, unknown>, instanceId?: string): Promise<boolean> {
-    const [registered] = await this.pluginAll([{ definition, config, instanceId }]);
-    return registered;
+  plugin(
+    definition: PluginDefinition,
+    config?: Record<string, unknown>,
+    instanceId?: string,
+    options?: { disabled?: boolean },
+  ): Promise<boolean> {
+    return this.#plugins.register(definition, config, instanceId, options);
   }
 
   /**
    * 批量注册：全部落账后只重算一次。依赖方因此在同一次重算里按拓扑序排在它 required 服务的
    * 全部提供者之后激活，不会先挂到先登记的后备提供者上——宿主冷启动与热扫描都走这里。
-   * resolve 语义同 {@link plugin}；返回值与 items 逐项对应。
-   *
-   * 合并优先级: 宿主派生的默认配置 ← 配置文件 ← 代码传入，**逐层深合并**：
-   * 同一路径上双方都是纯对象则递归，否则后者整体覆盖（数组与非纯对象是原子值）。
-   * 与宿主层（runtime/config-sync.ts）落盘回填默认值时的合并语义一致——顶层浅合并会让
-   * 配置文件里只写了半块的嵌套组（只写 server.port）把派生默认值整块顶掉，
-   * 插件首次 apply 就拿到缺 server.host 的配置。
+   * 条目各字段同 {@link plugin} 的参数；resolve 语义同 {@link plugin}，返回值与 items 逐项对应。
    */
-  async pluginAll(
-    items: ReadonlyArray<{ definition: PluginDefinition; config?: Record<string, unknown>; instanceId?: string }>,
-  ): Promise<boolean[]> {
-    // 逐项合并：一项的默认值派生或配置读取抛错只让该项记 false，不拖累整批
-    const prepared = items.map(({ definition, config, instanceId }) => {
-      try {
-        const id = instanceId ?? definition.name;
-        const defaults = this.pluginDefaults?.(definition) ?? {};
-        const merged = mergeConfigLayers(mergeConfigLayers(defaults, this.config.getPluginConfig(id)), config ?? {});
-        return { definition, config: merged, instanceId: id };
-      } catch (err) {
-        this.logger.error(`插件 "${instanceId ?? definition?.name}" 的配置合并失败，未注册:`, err);
-        return undefined;
-      }
-    });
-    const registered = await this.#plugins.registerAll(prepared.filter(item => item !== undefined));
-    let next = 0;
-    return prepared.map(item => item !== undefined && registered[next++]);
-  }
-
-  /**
-   * 保存当前配置（委托给 configProvider；无 provider 时立即完成）。返回的 Promise 兑现时保存已完成，
-   * provider 失败以拒绝传出——调用方应 await，见 AppService 契约。
-   *
-   * 失败在这里记一笔并标记为已处理：不 await 也不 catch 的调用方（0.13.0 之前发布的插件如此）
-   * 不会因一次落盘失败变成未处理拒绝、被宿主当致命错误退出；await 的调用方照常拿到拒绝。
-   */
-  saveConfig(): Promise<void> {
-    const done = this.persistConfig();
-    done.catch(err => reportQuietly(() => this.logger.error('配置保存失败:', err)));
-    return done;
-  }
-
-  private async persistConfig(): Promise<void> {
-    await this.config.save();
-    this.logger.info('配置已保存');
+  pluginAll(items: ReadonlyArray<PluginRegistration>): Promise<boolean[]> {
+    return this.#plugins.registerAll(items);
   }
 
   /**
    * 启动应用
    *
-   * 配置外部变更的热重载编排（diff + bounce）属宿主政策：
-   * 宿主自行 `app.config.watch(cb)` 接管。
+   * 配置外部变更的热重载编排（diff + bounce）属宿主政策，由宿主自行接管。
    */
   async start(): Promise<void> {
     this.logger.info('正在启动...');
@@ -354,7 +276,7 @@ export class App {
     if (this.stopping) return this.stopping;
     let resolve!: () => void;
     let reject!: (reason: unknown) => void;
-    // 在调用宿主 logger / unwatch 前发布完成对象，同步重入也只能加入本次停机。
+    // 在调用宿主 logger 前发布完成对象，同步重入也只能加入本次停机。
     this.stopping = new Promise<void>((res, rej) => {
       resolve = res;
       reject = rej;
@@ -366,7 +288,6 @@ export class App {
 
   private async runStop(): Promise<void> {
     this.logger.info('正在停止...');
-    this.config.unwatch();
     this.#plugins.beginShutdown();
     await this.#plugins.idle();
     await this.#events.emit('app:stopping');
@@ -380,27 +301,4 @@ export class App {
     await this.#root.disposeAsync(this.disposeTimeoutMs);
     this.logger.info('已停止');
   }
-}
-
-/**
- * 配置层的逐层深合并：同一键上 base 与 override 都是纯对象时递归合并，
- * 否则 override 的值整体覆盖。数组与非纯对象（Date / Map / 类实例）当作
- * 原子值，只覆盖不逐元素合并。
- *
- * 全程返回新对象、不改写入参：`defaults` 可能是宿主复用的常量，`fileConfig`
- * 是 ConfigManager 持有的活对象，合并写回去就是隔空篡改配置。
- * 纯对象递归拷贝，数组拷一层（元素若为纯对象也拷）；原子值按引用透传，
- * 调用方不得依赖其不可变。危险键（`__proto__` / `constructor` / `prototype`）跳过。
- */
-function mergeConfigLayers(base: Record<string, unknown>, override: Record<string, unknown>): Record<string, unknown> {
-  const result = cloneConfigObject(base);
-  for (const [key, value] of Object.entries(override)) {
-    if (isUnsafeConfigKey(key)) continue;
-    const prev = result[key];
-    result[key] =
-      isPlainConfigObject(prev) && isPlainConfigObject(value)
-        ? mergeConfigLayers(prev, value)
-        : cloneConfigValue(value);
-  }
-  return result;
 }

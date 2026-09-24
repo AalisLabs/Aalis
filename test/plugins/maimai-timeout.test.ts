@@ -28,7 +28,7 @@ describe('plugin-maimai: 查分器请求必须带超时', () => {
   });
 
   async function setup(timeoutMs?: number): Promise<ToolService> {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
     await app.plugins.register(toolsPlugin, {});
     await app.plugins.register(maimaiPlugin, {

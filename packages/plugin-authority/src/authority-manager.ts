@@ -8,8 +8,9 @@ import type {
   TemporaryGrant,
   UserIdentity,
 } from '@aalis/api-authority';
+import type { HostConfig } from '@aalis/api-host-config';
 import type { StorageService } from '@aalis/api-storage';
-import type { HostConfig, Logger } from '@aalis/core';
+import type { Logger } from '@aalis/core';
 import { DEFAULT_AUTHORITY, matchAnyCap, OWNER_RANK, resolveAccess, resolveMinLevel } from './authority-model.js';
 import { UserStore } from './user-store.js';
 

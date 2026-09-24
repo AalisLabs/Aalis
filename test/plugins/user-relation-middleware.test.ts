@@ -13,7 +13,7 @@ import type { Message } from '../../packages/schema-message/src/index.js';
  * 注入块的 injector 全局键因此冠同一个激活 id；memory 只为给 RelationStore 一个后端。
  */
 async function setup() {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ contributions, logger, memory });
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.idle();

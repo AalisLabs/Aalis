@@ -35,7 +35,8 @@
     "chalk": "^5.4.0",
     "cli-truncate": "^6.0.0",
     "string-width": "^8.2.0",
-    "@aalis/schema-log": "workspace:>=0.1.0 <1.0.0"
+    "@aalis/schema-log": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-host-config": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -52,7 +53,6 @@
         "platform",
         "persona",
         "storage",
-        "app",
         "host-config"
       ],
       "provides": [

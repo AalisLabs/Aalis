@@ -27,7 +27,7 @@ describe('storage.move (真 fs)', () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-move-'));
     ws = join(base, 'ws'); // 绝对根路径（root.path 相对 cwd 解析，故用绝对避免污染项目）
     mkdirSync(ws, { recursive: true });
-    app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    app = new App({ name: 'T', logLevel: 'error' });
     await app.plugin(storageLocal, {
       roots: [
         {

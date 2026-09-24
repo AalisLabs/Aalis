@@ -58,7 +58,7 @@ function makeRangeMemory(messages: Message[]): MemoryService {
 }
 
 async function setup(opts: { memory?: MemoryService } = {}) {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   // 宿主侧的根绑定：既用来摆桩服务，也是下面组装 agent:prompt 贡献要的那两样能力
   const host = app.bind({ provide, contributions, logger });
   host.provide(embedding, makeEmbedder());

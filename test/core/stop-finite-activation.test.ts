@@ -27,7 +27,7 @@ describe('有限 apply 与停机接管', () => {
     'reject',
   ] as const)('apply %s 后让位给停机计划，资源清理完成且后续 pending 不再启动', async result => {
     const logger: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => logger };
-    const app = new App({ config: { name: 'T', plugins: {}, logLevel: 'error' }, logger, disposeTimeoutMs: 0 });
+    const app = new App({ name: 'T', logLevel: 'error', logger, disposeTimeoutMs: 0 });
     const gate = deferred();
     const entered = deferred();
     const owned = defineService<{ live: Set<string> }>('finite-activation-owned');

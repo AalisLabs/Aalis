@@ -41,7 +41,7 @@ function gatedModule(
 describe('register 的 resolve 语义（故意钉死的排队早退）', () => {
   it('在飞 recompute 期间 register：resolve 时 pending，idle 后 active', async () => {
     const trace: string[] = [];
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const g = gatedModule('slow', trace);
     const registering = app.plugin(g.module);
     await g.entered; // recompute run 在飞（正 await slow 的 apply）

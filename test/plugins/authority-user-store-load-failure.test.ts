@@ -2,22 +2,23 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { HostConfig } from '../../packages/api-host-config/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
-import type { ConfigManager, Logger } from '../../packages/core/src/index.js';
+import type { Logger } from '../../packages/core/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 
 // 背景：users.json 读/解析失败时只记一行日志、不留失败标记，而 save() 写的是**全量快照**——
 // 坏文件 load 之后任何一次等级改动都会把原有封禁/等级记录静默覆盖成「只剩新记录」。
 // 契约：区分「文件不存在」（全新，照写）与「文件在但读不出/解析不了」（拒写，保原文件）。
 
-function mkConfig(): ConfigManager {
+function mkConfig(): HostConfig {
   const store: Record<string, unknown> = {};
   return {
     get: (k: string) => store[k],
     set: (k: string, v: unknown) => {
       store[k] = v;
     },
-  } as unknown as ConfigManager;
+  } as unknown as HostConfig;
 }
 function mkLogger(): Logger {
   const l = { child: () => l, debug() {}, info() {}, warn() {}, error() {} };

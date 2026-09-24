@@ -1,3 +1,4 @@
+import type { HostConfig } from '@aalis/api-host-config';
 import type { PluginSourceService } from '@aalis/api-plugin-source';
 import { type App, type PluginDefinition, parseInstanceId } from '@aalis/core';
 
@@ -5,8 +6,9 @@ import { type App, type PluginDefinition, parseInstanceId } from '@aalis/core';
 // plugin-discovery —— 插件发现与自动加载（宿主层）
 //
 // core 只接收定义好的插件（app.plugin / app.pluginAll）。「插件从哪里来」由加载器回答，
-// 「发现到的怎么交给 core」在这里：先把本轮发现的定义全部导入，再整批交给 core——整批落账后
-// 只重算一次，依赖方在同一次重算里排在全部提供者之后激活，不会先挂到先登记的后备提供者上。
+// 「发现到的怎么交给 core」在这里：先把本轮发现的定义全部导入，再连同配置文档里各实例的配置与
+// 禁用标记整批交给 core——整批落账后只重算一次，依赖方在同一次重算里排在全部提供者之后激活，
+// 不会先挂到先登记的后备提供者上。
 // 本模块自身不碰 node:*，但 runtime 包入口会引入 node 模块；非 Node 宿主要自备这层驱动。
 // ============================================================
 
@@ -43,18 +45,29 @@ export interface PluginDiscovery extends PluginSourceService {
 
 type Registration = Parameters<App['pluginAll']>[0][number];
 
-export function createPluginDiscovery(app: App, loader: PluginLoader): PluginDiscovery {
+/**
+ * @param doc 配置文档：登记时按实例 id 取配置与禁用标记，并从中枚举 `name:suffix` 实例。
+ *   配置原样交给 core，默认值回填由加载器一侧的政策（withPluginConfigSync）先写进文档。
+ */
+export function createPluginDiscovery(app: App, loader: PluginLoader, doc: Omit<HostConfig, 'save'>): PluginDiscovery {
   const log = app.logger;
 
-  /** 导入一批描述符；单个失败只记该条，不拖累其余 */
+  const registration = (definition: PluginDefinition, instanceId = definition.name): Registration => ({
+    definition,
+    instanceId,
+    config: doc.getPluginConfig(instanceId),
+    disabled: doc.isPluginDisabled(instanceId),
+  });
+
+  /** 导入一批描述符并备好各自的登记项；单个失败（含 id 撞上危险键、文档拒取）只记该条，不拖累其余 */
   async function importAll(descriptors: PluginDescriptor[], fresh: boolean) {
-    const loaded: Array<{ desc: PluginDescriptor; definition: PluginDefinition }> = [];
+    const loaded: Array<{ desc: PluginDescriptor; item: Registration }> = [];
     for (const desc of descriptors) {
       try {
         // 加载器已按入口约定判定（pluginDefinitionOf），不是插件返回 null；定义本身的校验在注册时做
         const definition = fresh && loader.reload ? await loader.reload(desc) : await loader.load(desc);
         if (!definition) continue;
-        loaded.push({ desc, definition });
+        loaded.push({ desc, item: registration(definition) });
       } catch (err) {
         log.error(`加载插件 "${desc.name}" 失败:`, err);
       }
@@ -65,11 +78,11 @@ export function createPluginDiscovery(app: App, loader: PluginLoader): PluginDis
   /** 配置键里的 `name:suffix` 实例：模块在 known 里才登记，已在注册表的跳过。冷启动与热扫描共用，热扫描不得少收 */
   function configuredInstances(known: Map<string, PluginDefinition>): Registration[] {
     const items: Registration[] = [];
-    for (const configKey of Object.keys(app.config.get('plugins') ?? {})) {
+    for (const configKey of Object.keys(doc.get('plugins') ?? {})) {
       const { moduleName, suffix } = parseInstanceId(configKey);
       if (!suffix || app.plugins.getPlugin(configKey)) continue;
       const definition = known.get(moduleName);
-      if (definition) items.push({ definition, instanceId: configKey });
+      if (definition) items.push(registration(definition, configKey));
       else log.warn(`多实例配置 "${configKey}" 对应的模块 "${moduleName}" 未找到，跳过`);
     }
     return items;
@@ -80,8 +93,8 @@ export function createPluginDiscovery(app: App, loader: PluginLoader): PluginDis
       const discovered = await loader.discover();
       log.info(`发现 ${discovered.length} 个插件`);
       const loaded = await importAll(discovered, false);
-      const known = new Map(loaded.map(({ definition }) => [definition.name, definition]));
-      await app.pluginAll([...loaded.map(({ definition }) => ({ definition })), ...configuredInstances(known)]);
+      const known = new Map(loaded.map(({ item }) => [item.definition.name, item.definition]));
+      await app.pluginAll([...loaded.map(({ item }) => item), ...configuredInstances(known)]);
       // app:ready / app:started 的发出时机依赖「返回即全部收敛」；引导路径不在任何 apply 内，无自等死锁面。
       await app.plugins.idle();
     },
@@ -95,13 +108,11 @@ export function createPluginDiscovery(app: App, loader: PluginLoader): PluginDis
         else fresh.push(desc);
       }
       const loaded = await importAll(fresh, true);
-      for (const { definition } of loaded) known.set(definition.name, definition);
-      const results = await app.pluginAll([
-        ...loaded.map(({ definition }) => ({ definition })),
-        ...configuredInstances(known),
-      ]);
+      for (const { item } of loaded) known.set(item.definition.name, item.definition);
+      const results = await app.pluginAll([...loaded.map(({ item }) => item), ...configuredInstances(known)]);
       // 模块自报的 name 与描述符不同且已注册时 register 会拒绝——那不算热加载，不报进名单。
-      const names = loaded.filter((_, i) => results[i]).map(({ desc }) => desc.name);
+      // 报的是登记进注册表的主实例名（定义名），不是加载器给的描述符名（通常是包名，二者可以不同）。
+      const names = loaded.filter((_, i) => results[i]).map(({ item }) => item.definition.name);
       for (const name of names) log.info(`热加载插件: ${name}`);
       return names;
     },

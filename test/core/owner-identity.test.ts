@@ -18,7 +18,7 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
 const mkApp = () => {
-  const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = createInspectableApp({ name: 'T', logLevel: 'error' });
   apps.push(app);
   return app;
 };

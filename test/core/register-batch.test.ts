@@ -1,12 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  App,
-  definePlugin,
-  defineService,
-  type Logger,
-  pluginsService,
-  provide,
-} from '../../packages/core/src/index.js';
+import { App, definePlugin, defineService, pluginsService, provide } from '../../packages/core/src/index.js';
 
 // pluginAll：整批落账后只重算一次。依赖方排在它 required 服务的全部提供者之后激活；
 // 返回值逐项对应；apply 里再登记别的插件照常排队自愈。
@@ -16,7 +9,7 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
 function world(): App {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   return app;
 }
@@ -93,32 +86,21 @@ describe('pluginAll', () => {
     expect(app.plugins.getPlugin('ok')?.state).toBe('active');
   });
 
-  it('单项的配置合并抛错只拒该项并记错，其余照常落账', async () => {
-    const errors: string[] = [];
-    const logger: Logger = {
-      debug() {},
-      info() {},
-      warn() {},
-      error: (message: string) => void errors.push(message),
-      child: () => logger,
-    };
-    const app = new App({
-      config: { name: 'T', logLevel: 'error', plugins: {} },
-      logger,
-      pluginDefaults: definition => {
-        if (definition.name === 'bad') throw new Error('defaults boom');
-        return {};
-      },
-    });
-    apps.push(app);
-    const results = await app.pluginAll([
-      { definition: definePlugin({ name: 'bad', apply() {} }) },
-      { definition: definePlugin({ name: 'good', apply() {} }) },
+  it('disabled 条目以禁用态落账、不激活；只含禁用条目的批不触发重算也照常返回', async () => {
+    const app = world();
+    const applied: string[] = [];
+    const def = (name: string) => definePlugin({ name, apply: () => void applied.push(name) });
+    expect(await app.pluginAll([{ definition: def('off'), disabled: true }])).toEqual([true]);
+    expect(app.plugins.getPlugin('off')?.state).toBe('disabled');
+    expect(await app.pluginAll([{ definition: def('on') }, { definition: def('off2'), disabled: true }])).toEqual([
+      true,
+      true,
     ]);
-    expect(results).toEqual([false, true]);
-    expect(app.plugins.getPlugin('bad')).toBeUndefined();
-    expect(app.plugins.getPlugin('good')?.state).toBe('active');
-    expect(errors).toContain('插件 "bad" 的配置合并失败，未注册:');
+    await app.plugins.idle();
+    expect(applied).toEqual(['on']);
+    expect(await app.plugins.enable('off')).toBe(true);
+    await app.plugins.idle();
+    expect(applied).toEqual(['on', 'off']);
   });
 
   it('批内插件在 apply 里登记别的插件：排队并入同一次重算收尾', async () => {

@@ -42,7 +42,7 @@ const uses = { agent, sessionManager, tools };
 type Host = BoundOf<typeof uses>;
 
 async function boot(): Promise<{ app: App; host: Host; executed: () => number; reset: () => void }> {
-  const app = new App({ config: { name: 'E2E', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'E2E', logLevel: 'error' });
   const toolCall: ChatResponse = {
     content: null,
     toolCalls: [{ id: 'c1', type: 'function', function: { name: 'probe', arguments: '{}' } }],

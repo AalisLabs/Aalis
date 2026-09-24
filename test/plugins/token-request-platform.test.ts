@@ -41,7 +41,7 @@ function requireActive(...names: string[]): void {
 }
 
 async function boot() {
-  app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  app = new App({ name: 'T', logLevel: 'error' });
   const mockLLM = createMockLLMPlugin({});
   await app.plugin(mockLLM);
   await app.plugins.register(memoryInMemory, {});

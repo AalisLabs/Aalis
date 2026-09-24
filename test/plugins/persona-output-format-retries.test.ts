@@ -22,7 +22,7 @@ describe('persona 角色卡 outputFormatRetries（真 fs + 真钩子）', () => 
   let host: BoundOf<typeof hostUses>;
 
   const boot = async (personaName: string): Promise<PersonaService> => {
-    app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    app = new App({ name: 'T', logLevel: 'error' });
     // storage 先装：persona 的 storage 是可选依赖，缺席时它照样激活，只是一张卡都读不到
     await app.plugin(storageLocal, {
       roots: [

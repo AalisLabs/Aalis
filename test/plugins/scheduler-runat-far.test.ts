@@ -43,7 +43,7 @@ afterEach(() => {
 
 describe('scheduler 一次性任务的远期 runAt', () => {
   it('runAt = +30 天：推进 25 天不执行，到点执行一次并删除', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ provide, services, events });
     host.provide(storage, memoryStorage() as never);
     host.provide(cronEngine, cronEngineStub as never);

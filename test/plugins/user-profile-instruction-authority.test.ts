@@ -30,7 +30,7 @@ afterEach(async () => {
 });
 
 async function setup(opts: { withAuthority: boolean; config?: Record<string, unknown> }) {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   const host = app.bind({ provide, events, memory: memoryService });
   const requests: ChatModelRequest[] = [];

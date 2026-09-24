@@ -7,7 +7,7 @@ import { App, definePlugin, LogHub, lifecycle, type PluginDefinition } from '../
 // register / unload 与 App.plugin 的转发。
 
 function silentApp(): App {
-  return new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  return new App({ name: 'T', logLevel: 'error' });
 }
 
 const plugin = (name: string, extra: Partial<Pick<PluginDefinition, 'reusable'>> = {}): PluginDefinition =>
@@ -24,8 +24,8 @@ describe('register 的返回值', () => {
   });
 
   it('注册为 disabled 态也是落账（true）', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {}, disabledPlugins: ['p'] } });
-    expect(await app.plugins.register(plugin('p'))).toBe(true);
+    const app = new App({ name: 'T', logLevel: 'error' });
+    expect(await app.plugins.register(plugin('p'), undefined, undefined, { disabled: true })).toBe(true);
     expect(app.plugins.getPlugin('p')?.state).toBe('disabled');
     await app.stop();
   });
@@ -41,7 +41,7 @@ describe('register 的返回值', () => {
     const hub = new LogHub();
     const lines: string[] = [];
     hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
-    const app = new App({ config: { name: 'T', logLevel: 'warn', plugins: {} }, logHub: hub });
+    const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
 
     // 手写对象绕过 definePlugin：类型上缺 name，运行期必须拒落账
     expect(await app.plugins.register({ apply() {} } as unknown as PluginDefinition)).toBe(false);
@@ -70,7 +70,7 @@ describe('register 的返回值', () => {
     const hub = new LogHub();
     const lines: string[] = [];
     hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
-    const app = new App({ config: { name: 'T', logLevel: 'warn', plugins: {} }, logHub: hub });
+    const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
     const reusable = plugin('q', { reusable: true });
 
     expect(await app.plugins.register(reusable, {}, '')).toBe(false);
@@ -92,7 +92,7 @@ describe('register 的返回值', () => {
     const hub = new LogHub();
     const lines: string[] = [];
     hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
-    const app = new App({ config: { name: 'T', logLevel: 'warn', plugins: {} }, logHub: hub });
+    const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
 
     expect(
       await app.plugins.register({
@@ -147,7 +147,7 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
     const hub = new LogHub();
     const lines: string[] = [];
     hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
-    const app = new App({ config: { name: 'T', logLevel: 'debug', plugins: {} }, logHub: hub });
+    const app = new App({ name: 'T', logLevel: 'debug', logHub: hub });
     expect(await app.plugins.enable('nobody')).toBe(false);
     expect(await app.plugins.disable('nobody')).toBe(false);
     expect(await app.plugins.bounce('nobody')).toBe(false);

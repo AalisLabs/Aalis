@@ -32,7 +32,7 @@ interface Harness {
 }
 
 async function boot(): Promise<Harness> {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   booted.push(app);
   const host = app.bind({ contributions, logger });
   return {

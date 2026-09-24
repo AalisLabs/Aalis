@@ -75,7 +75,7 @@ describe('DrawEngine 动画（真浏览器 + 真 ffmpeg）', () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-draw-anim-'));
     mkdirSync(join(base, 'ws'), { recursive: true });
     mkdirSync(join(base, 'tmp'), { recursive: true });
-    app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    app = new App({ name: 'T', logLevel: 'error' });
     await app.plugin(storageLocal, {
       roots: [
         {
@@ -157,7 +157,7 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
     mkdirSync(join(base2, 'ws'), { recursive: true });
     mkdirSync(join(base2, 'tmp'), { recursive: true });
     mkdirSync(join(base2, 'data'), { recursive: true });
-    const app2 = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app2 = new App({ name: 'T', logLevel: 'error' });
     try {
       await app2.plugin(storageLocal, {
         roots: [
@@ -219,7 +219,7 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
   it('降级引导：结果 message 引导直接发送，不把自检设为默认路径（延迟根因治理）', async () => {
     const base4 = mkdtempSync(join(tmpdir(), 'aalis-draw-msg-'));
     for (const d of ['data', 'tmp']) mkdirSync(join(base4, d), { recursive: true });
-    const app4 = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app4 = new App({ name: 'T', logLevel: 'error' });
     try {
       await app4.plugin(storageLocal, {
         roots: [
@@ -273,7 +273,7 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
   it('source 超字节上限：handler 拒绝、不触发渲染（删掉检查→此锚红）', async () => {
     const base3 = mkdtempSync(join(tmpdir(), 'aalis-draw-cap-'));
     for (const d of ['data', 'tmp']) mkdirSync(join(base3, d), { recursive: true });
-    const app3 = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app3 = new App({ name: 'T', logLevel: 'error' });
     try {
       await app3.plugin(storageLocal, {
         roots: [

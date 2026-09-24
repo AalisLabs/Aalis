@@ -15,7 +15,7 @@ import { createState, type MutableFlowSessionState } from '../../packages/plugin
 // 一直把闲置消息注进已停的插件。契约：stop() 之后任何重排都是空操作。
 
 function setup() {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   // 调度器要的三样能力由宿主侧绑定给出；无 gateway 提供者时它回落到直接发入站事件
   const caps = app.bind({ logger, events, gateway });
   const seen: IncomingMessage[] = [];
@@ -142,7 +142,7 @@ describe('PlatformIdleScheduler：stop() 之后不再重排', () => {
   });
 
   it('tick 飞行中 stop() 后不再重排（无僵尸定时器）', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const caps = app.bind({ logger, events, gateway });
     let release!: () => void;
     const inFlight = new Promise<void>(r => {

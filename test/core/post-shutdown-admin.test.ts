@@ -41,7 +41,8 @@ function capturingApp(opts?: { disposeTimeoutMs?: number }): { app: App; warning
     child: () => logger,
   };
   const app = new App({
-    config: { name: 'T', logLevel: 'error', plugins: {} },
+    name: 'T',
+    logLevel: 'error',
     logger,
     disposeTimeoutMs: opts?.disposeTimeoutMs,
   });

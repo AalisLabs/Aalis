@@ -1,21 +1,12 @@
 import type { CapabilityConfirm, ExecutionGuardContext, UserIdentity } from '@aalis/api-authority';
 import { authority as authorityService, capabilityMinLevel } from '@aalis/api-authority';
 import { commands as commandsService } from '@aalis/api-commands';
+import { type HostConfig, hostConfig } from '@aalis/api-host-config';
 import { getPlatformNames, platform as platformService } from '@aalis/api-platform';
 import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
 import { tools as toolsService } from '@aalis/api-tools';
 import { type WebuiPage, webuiServer } from '@aalis/api-webui';
-import {
-  appService,
-  type BoundOf,
-  definePlugin,
-  type HostConfig,
-  hostConfig,
-  lifecycle,
-  logger,
-  optional,
-  provide,
-} from '@aalis/core';
+import { type BoundOf, definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 import { setNetworkPolicy } from '@aalis/util-network-guard';
 import { AuthorityManager } from './authority-manager.js';
 import { autoConfirmActive, DEFAULT_AUTHORITY, shouldSkipConfirm } from './authority-model.js';
@@ -31,9 +22,9 @@ const webuiPages: WebuiPage[] = [
 // ===== 插件入口 =====
 
 // 裁决要读整份宿主配置（owners / deniedCapabilities / confirmOverrides…），缺了它权限系统无从裁决，
-// 故 apply 里 require()、缺席即抛；但它由 App 根提供、没有任何插件 provide 它，写进激活闸
+// 故 apply 里 require()、缺席即抛；但它由宿主在根上提供、没有任何插件 provide 它，写进激活闸
 // 只会让依赖图上挂一条永远解析不到提供者的告警。被守卫、被管理的那几项
-// （commands / tools / webui / storage / platform / app）缺席时只是少一条接线，不该拦住权限服务本身上线。
+// （commands / tools / webui / storage / platform）缺席时只是少一条接线，不该拦住权限服务本身上线。
 const uses = {
   provide,
   hostConfig: optional(hostConfig),
@@ -44,7 +35,6 @@ const uses = {
   tools: optional(toolsService),
   storage: optional(storageService),
   platform: optional(platformService),
-  app: optional(appService),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -58,14 +48,14 @@ export default definePlugin({
 });
 
 async function run(caps: Caps): Promise<void> {
-  const { app, commands, lifecycle, logger, platform, storage, tools, webui } = caps;
+  const { commands, lifecycle, logger, platform, storage, tools, webui } = caps;
   const config = caps.hostConfig.require();
 
   for (const page of webuiPages) webui.registerPage(page);
 
   const manager = new AuthorityManager(config, logger, createStorageGateway(storage));
   caps.provide(authorityService, manager);
-  registerAdminActions({ webui, commands, tools, platform, app, config, manager });
+  registerAdminActions({ webui, commands, tools, platform, config, manager });
 
   // 用户等级存于 data:/users.json，读取依赖 storage 服务。storage provider 可能晚于本插件
   // 上线（在 init 阶段直接 readFile 会失败且被静默吞 → 重启后等级不回载），故等 storage 就绪
@@ -233,7 +223,7 @@ async function run(caps: Caps): Promise<void> {
       const a = arg === undefined ? undefined : String(arg).trim().toLowerCase();
       const setUntil = async (u: number) => {
         config.set('autoConfirmUntil', u);
-        await app.current?.saveConfig();
+        await config.save();
       };
       if (a === undefined) {
         const u = (config.get('autoConfirmUntil') as number) ?? 0;
@@ -265,12 +255,12 @@ function asStringList(v: unknown, label: string): string[] | undefined {
 }
 
 /** 页面动作用到的能力：几个服务引用 + 这次激活自己的 manager 与宿主配置 */
-type AdminDeps = Pick<Caps, 'webui' | 'commands' | 'tools' | 'platform' | 'app'> & {
+type AdminDeps = Pick<Caps, 'webui' | 'commands' | 'tools' | 'platform'> & {
   config: HostConfig;
   manager: AuthorityManager;
 };
 
-function registerAdminActions({ webui, commands, tools, platform, app, config, manager }: AdminDeps): void {
+function registerAdminActions({ webui, commands, tools, platform, config, manager }: AdminDeps): void {
   /** 权限概览：用户等级 + owner + 操作门槛/确认 + 临时放行 + 受限/禁用清单 */
   webui.registerAction('getOverview', async () => {
     const users = manager.listUsers();
@@ -357,10 +347,8 @@ function registerAdminActions({ webui, commands, tools, platform, app, config, m
     const owners = args.owners;
     if (!Array.isArray(owners)) throw new Error('owners 必须是数组');
     if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理 owner 列表');
-    const host = app.current;
-    if (!host) throw new Error('App 不可用');
     config.set('owners', owners);
-    await host.saveConfig();
+    await config.save();
     return { message: 'Owner 列表已更新' };
   });
 
@@ -369,12 +357,10 @@ function registerAdminActions({ webui, commands, tools, platform, app, config, m
     const policy = args.policy as Record<string, unknown>;
     if (!policy || typeof policy !== 'object') throw new Error('policy 必须是对象');
     if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    const host = app.current;
-    if (!host) throw new Error('App 不可用');
     config.set('restrictedPolicy', policy);
     if (Array.isArray(policy.allow) && policy.allow.length > 0) manager.markPolicyEnabled();
-    // 内存态先整体落定再等落盘：saveConfig 拒绝会从这里抛出，其后的语句不再执行
-    await host.saveConfig();
+    // 内存态先整体落定再等落盘：save 拒绝会从这里抛出，其后的语句不再执行
+    await config.save();
     return { message: '临时放行策略已更新' };
   });
 
@@ -392,17 +378,15 @@ function registerAdminActions({ webui, commands, tools, platform, app, config, m
     const { name, level } = args;
     if (!name || typeof name !== 'string') throw new Error('name 必填');
     if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    const host = app.current;
-    if (!host) throw new Error('App 不可用');
     const overrides = { ...((config.get('authorityOverrides') ?? {}) as Record<string, number>) };
     if (typeof level === 'number' && Number.isInteger(level)) overrides[name] = level;
     else delete overrides[name];
     config.set('authorityOverrides', overrides);
     // 门槛变了就撤掉该能力上的旧会话授予：否则 authorize 已按新门槛拒绝，守卫的救援闸
     // 仍会靠旧授予放行，而救援命中直接 return null、连 confirm 轴（含 always）一并跳过。
-    // 撤销与门槛更新必须在同一同步段完成，再等落盘：saveConfig 拒绝会从 await 抛出。
+    // 撤销与门槛更新必须在同一同步段完成，再等落盘：save 拒绝会从 await 抛出。
     const revoked = manager.revokeGrantsOfCapability(name);
-    await host.saveConfig();
+    await config.save();
     return {
       message: `操作 ${name} 最低等级已更新${revoked > 0 ? `（已撤销 ${revoked} 条相关会话授予）` : ''}`,
     };
@@ -413,37 +397,31 @@ function registerAdminActions({ webui, commands, tools, platform, app, config, m
     const { name, confirm } = args;
     if (!name || typeof name !== 'string') throw new Error('name 必填');
     if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    const host = app.current;
-    if (!host) throw new Error('App 不可用');
     const overrides = { ...((config.get('confirmOverrides') ?? {}) as Record<string, CapabilityConfirm | 'off'>) };
     if (confirm === 'session' || confirm === 'always' || confirm === 'off') overrides[name] = confirm;
     else delete overrides[name];
     config.set('confirmOverrides', overrides);
-    await host.saveConfig();
+    await config.save();
     return { message: `操作 ${name} 确认要求已更新` };
   });
 
   /** owner 切换 auto 确认模式。minutes: -1=一直 / 0=关 / N=N 分钟。仅 owner 可达。 */
   webui.registerAction('setAutoConfirm', async (args, caller) => {
     if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    const host = app.current;
-    if (!host) throw new Error('App 不可用');
     const m = args.minutes;
     if (typeof m !== 'number' || !Number.isInteger(m)) throw new Error('minutes 必须是整数（-1 一直 / 0 关 / N 分钟）');
     const until = m === -1 ? -1 : m <= 0 ? 0 : Date.now() + m * 60000;
     config.set('autoConfirmUntil', until);
-    await host.saveConfig();
+    await config.save();
     return { message: until === -1 ? '自动确认：一直' : until === 0 ? '自动确认：关' : `自动确认：${m} 分钟`, until };
   });
 
   /** 更新禁用能力清单（仅 owner 可达：这是压过一切的硬禁总闸） */
   webui.registerAction('setConfig', async (args, caller) => {
     if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
-    const host = app.current;
-    if (!host) throw new Error('App 不可用');
     const denied = asStringList(args.deniedCapabilities, 'deniedCapabilities');
     if (denied) config.set('deniedCapabilities', denied);
-    await host.saveConfig();
+    await config.save();
     return { message: '权限配置已更新' };
   });
 }

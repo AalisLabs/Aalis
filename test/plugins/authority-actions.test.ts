@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type AuthorityService, authority, type UserIdentity } from '../../packages/api-authority/src/index.js';
 import { type CommandBuilder, type CommandService, commands } from '../../packages/api-commands/src/index.js';
+import { hostConfig } from '../../packages/api-host-config/src/index.js';
 import { storage } from '../../packages/api-storage/src/index.js';
 import { type ToolService, tools } from '../../packages/api-tools/src/index.js';
 import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
-import { App, hostConfig, provide, services } from '../../packages/core/src/index.js';
+import { type App, provide, services } from '../../packages/core/src/index.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
+import { hostedApp } from '../fixtures/app.js';
 
 // ════════════════════════════════════════════════════════════
 // authority 页面动作 — WebUI surface（数字等级单轴）
@@ -64,7 +66,7 @@ interface BootOptions {
 }
 
 async function boot(opts: BootOptions = {}) {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {}, ...opts.config } });
+  const { app } = hostedApp(opts.config);
   running.push(app);
   const host = app.bind({ provide, services, hostConfig });
   const registered = new Map<string, WebuiActionHandler>();

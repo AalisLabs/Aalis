@@ -37,7 +37,6 @@ const BANNED_TOKENS = [
 /** 包根运行时导出定格：与 packages/core/src/index.ts 的值导出对齐，不从 index 自动派生 */
 const RUNTIME_EXPORTS = [
   'App',
-  'ConfigManager',
   'DefaultLogger',
   'LogHub',
   'appService',
@@ -48,7 +47,6 @@ const RUNTIME_EXPORTS = [
   'defineService',
   'events',
   'hooks',
-  'hostConfig',
   'lifecycle',
   'logger',
   'optional',
@@ -86,6 +84,16 @@ const FORBIDDEN_ROOT_EXPORTS = [
   'requiresBounceOnDepChange',
   'unwrapPluginModule',
   'useModule',
+  // 0.18：插件发现与配置文档外迁到宿主（@aalis/runtime、@aalis/api-plugin-source、@aalis/api-host-config）
+  'PluginLoader',
+  'PluginDescriptor',
+  'pluginDefinitionOf',
+  'ConfigManager',
+  'ConfigManagerOptions',
+  'ConfigProvider',
+  'AalisConfig',
+  'HostConfig',
+  'hostConfig',
 ] as const;
 
 function* walkTs(dir: string): Generator<string> {
@@ -166,8 +174,14 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
   InjectDeclaration,
   PluginModule,
   ServiceTypeMap,
+  PluginLoader,
+  PluginDescriptor,
+  ConfigManagerOptions,
+  ConfigProvider,
+  AalisConfig,
+  HostConfig,
 } from '@aalis/core';
-import { ContributionRegistry, EventBus, formatLogLine, HookRegistry, parseLogLine, PluginManager, requiresBounceOnDepChange, ServiceContainer, serviceFactory, unwrapPluginModule, useModule } from '@aalis/core';
+import { ContributionRegistry, EventBus, formatLogLine, HookRegistry, parseLogLine, PluginManager, requiresBounceOnDepChange, ServiceContainer, serviceFactory, unwrapPluginModule, useModule, pluginDefinitionOf, ConfigManager, hostConfig } from '@aalis/core';
 `;
     const good = runTscProbe(header);
     expect(good, `合法探针应能编过，实际：${good.join('\n') || '（零错误）'}`).toEqual([]);

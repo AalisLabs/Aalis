@@ -110,7 +110,8 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
   it('首启（文件此前不存在）也给出真绝对路径，而不是把 URI 重复一遍', async () => {
     const lines: string[] = [];
     const app = new App({
-      config: { name: 'T', logLevel: 'debug', plugins: {} },
+      name: 'T',
+      logLevel: 'debug',
       logger: makeCapturingLogger(lines),
     });
     apps.push(app);
@@ -147,7 +148,8 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
     const port = await freePort();
     const token = 'test-fixed-token-placeholder';
     const app = new App({
-      config: { name: 'T', logLevel: 'error', plugins: {} },
+      name: 'T',
+      logLevel: 'error',
       logger: makeCapturingLogger([]),
     });
     apps.push(app);
@@ -200,7 +202,8 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
   it('写入失败时不宣称「已写入」，而是指路手工登录', async () => {
     const lines: string[] = [];
     const app = new App({
-      config: { name: 'T', logLevel: 'debug', plugins: {} },
+      name: 'T',
+      logLevel: 'debug',
       logger: makeCapturingLogger(lines),
     });
     apps.push(app);

@@ -12,15 +12,12 @@
  * - 安全级别由 config 中按 server 配置（默认 safe）；高危 server 应显式设为 dangerous
  */
 
+import { type HostConfig, hostConfig as hostConfigService } from '@aalis/api-host-config';
 import type { BoundTools, ToolDefinition } from '@aalis/api-tools';
 import { tools as toolsService, wrapUntrustedContent } from '@aalis/api-tools';
 import {
-  type AppService,
-  appService,
   config as configService,
   definePlugin,
-  type HostConfig,
-  hostConfig as hostConfigService,
   type LifecycleCap,
   type Logger,
   lifecycle as lifecycleService,
@@ -64,7 +61,6 @@ interface Caps extends BridgeCaps {
   lifecycle: LifecycleCap;
   config: Readonly<Record<string, unknown>>;
   plugins: ServiceRef<PluginManagerService>;
-  app: ServiceRef<AppService>;
   hostConfig: ServiceRef<HostConfig>;
 }
 
@@ -264,9 +260,8 @@ function registerSelfServiceTools(caps: Caps): void {
 
       // 缺任一服务就不动运行态：改了却存不下，重启后会悄悄回退
       const pm = caps.plugins.current;
-      const app = caps.app.current;
       const doc = caps.hostConfig.current;
-      if (!pm || !app || !doc) return '失败：app/plugins/host-config 服务不可用';
+      if (!pm || !doc) return '失败：plugins/host-config 服务不可用';
 
       const current = caps.config as { servers?: unknown[] };
       const servers = Array.isArray(current.servers) ? [...current.servers] : [];
@@ -287,7 +282,7 @@ function registerSelfServiceTools(caps: Caps): void {
       if (!ok) return `失败：updateConfig 返回 false`;
       // 管理动作只改运行态；跨重启保留要自己写文档并落盘
       doc.setPluginConfig(PLUGIN_NAME, next);
-      await app.saveConfig();
+      await doc.save();
       return `已将 server "${id}" 设置为 enabled=${enabled}，插件会 bounce 后生效`;
     },
   });
@@ -478,7 +473,6 @@ export default definePlugin({
     lifecycle: lifecycleService,
     config: configService,
     plugins: optional(pluginsService),
-    app: optional(appService),
     hostConfig: optional(hostConfigService),
   },
   apply: run,

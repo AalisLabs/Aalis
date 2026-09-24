@@ -37,7 +37,7 @@ function makeCommandService(recorded: Array<{ name: string; description?: string
 }
 
 async function boot() {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide, services });
   const recordedCommands: Array<{ name: string; description?: string }> = [];
   host.provide(webuiServer, {

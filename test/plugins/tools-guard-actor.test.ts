@@ -4,6 +4,7 @@ import { tools as toolsService } from '../../packages/api-tools/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import authority from '../../packages/plugin-authority/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { hostedApp } from '../fixtures/app.js';
 
 // ════════════════════════════════════════════════════════════
 // actor 的守卫侧接线（tools → guard → authority）——与
@@ -17,7 +18,7 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 
 describe('tools 守卫的 actor 接线', () => {
   it('plugin-tools 透传 actor 给守卫，platform 保持会话值', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     await app.plugins.register(toolsPlugin, {});
     await app.plugins.idle();
     const { tools } = app.bind({ tools: toolsService });
@@ -51,7 +52,8 @@ describe('tools 守卫的 actor 接线', () => {
 
   it('authority 等级裁决按 actor：物理匿名 + owner actor 可执行 sensitive 工具，无 actor 则不能', async () => {
     const run = async (actor?: { platform: string; userId: string }): Promise<boolean> => {
-      const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+      // authority 裁决要读配置文档（owners 等），宿主经 host-config 提供
+      const { app } = hostedApp();
       await app.plugins.register(toolsPlugin, {});
       await app.plugins.register(authority, {});
       await app.plugins.idle();
