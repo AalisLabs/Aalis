@@ -175,7 +175,7 @@ export default definePlugin({
 });
 ```
 
-- 没有默认注入：`uses` 写了什么，`apply` 就只能碰到什么。内置能力（`provide` / `logger` / `events` / `config` / `lifecycle` / `hooks` / `contributions` / `services` / `hostConfig`）同样须声明。
+- 没有默认注入：`uses` 写了什么，`apply` 就只能碰到什么。core 的六项内置能力（`provide` / `logger` / `events` / `config` / `lifecycle` / `services`）同样须声明；钩子、贡献点与配置文档分别来自 `@aalis/api-hooks`、`@aalis/api-contributions` 与 `@aalis/api-host-config`，也经 `uses` 声明。
 - 经这次激活登记的副作用（事件、服务、钩子、`follow` 返回的 cleanup、`onDrain` / `onDispose`）在该激活关闭后撤回，不必另维护清理列表。
 - 不要把状态挂在 `globalThis`、模块级单例或不可清理的 `setInterval`。
 

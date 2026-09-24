@@ -61,7 +61,8 @@ export function createConfigStore(initial: Partial<AalisConfig>, provider?: Conf
     },
     setPluginConfig(instanceId, next) {
       assertSafePluginId(instanceId);
-      config.plugins[instanceId] = next;
+      // 值也过闸：外来对象（WebUI 请求体、工具参数）里 JSON 解出的 __proto__ 等键不进文档，调用方之后改它也写不穿
+      config.plugins[instanceId] = cloneConfigObject(next);
     },
     removePluginConfig(instanceId) {
       assertSafePluginId(instanceId);
@@ -88,8 +89,10 @@ export function createConfigStore(initial: Partial<AalisConfig>, provider?: Conf
       if (!config.servicePreferences || isUnsafeConfigKey(name)) return;
       delete config.servicePreferences[name];
     },
-    // 非 async：同步 provider 的抛错仍同步冒出；异步 provider 的拒绝经返回值传出
-    persist: () => (provider?.save ? Promise.resolve(provider.save(config)) : Promise.resolve()),
+    // async：同步 provider 的抛错也以拒绝传出，调用方统一经 Promise 接住
+    persist: async () => {
+      await provider?.save?.(config);
+    },
     watch(onChange) {
       if (onChangeCallback) throw new Error('配置变更只支持一个订阅者，先 unwatch 再订阅');
       onChangeCallback = onChange;
@@ -120,8 +123,7 @@ export function installHostConfig(app: App, store: ConfigStore): void {
     hostConfig,
     {
       ...doc,
-      // async 包一层：同步 provider 的抛错也以拒绝传出。失败在这里记一笔并标记已处理，
-      // 不 await 的调用方不会因一次落盘失败变成未处理拒绝、被宿主当致命错误退出
+      // 失败在这里记一笔并标记已处理：不 await 的调用方不会因一次落盘失败变成未处理拒绝、被宿主当致命错误退出
       save: () => {
         const done = (async () => {
           await persist();
