@@ -1,4 +1,5 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import { flowControl } from '@aalis/api-flow-control';
 import { hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
 import { persona } from '@aalis/api-persona';
@@ -148,7 +149,7 @@ const configSchema: ConfigSchema = {
     label: '启用跨会话委派 (delegate_to_session / list_known_sessions)',
     default: true,
     description:
-      '允许 agent 列出其他活跃会话并向其派发任务（如私聊→群聊、跨平台委派）。受 proactive-depth 与平台限速保护。',
+      '允许 agent 列出其他活跃会话并向其派发任务（如私聊→群聊、跨平台委派）。受 proactive-depth 与流控禁言/限速保护。',
   },
   crossSessionDefaultTimeoutSec: {
     type: 'number',
@@ -168,11 +169,16 @@ const uses = {
   memory: optional(memory),
   platform: optional(platform),
   persona: optional(persona),
+  // 委派闸门：目标会话禁言中或限速已满即拒绝；缺席时不设闸
+  flowControl: optional(flowControl),
 };
 type Caps = BoundOf<typeof uses>;
 type HistoryCaps = Pick<Caps, 'memory' | 'logger'>;
 type HistoryToolCaps = Pick<Caps, 'tools' | 'logger'>;
-type CrossSessionCaps = Pick<Caps, 'tools' | 'logger' | 'events' | 'hooks' | 'memory' | 'platform' | 'persona'>;
+type CrossSessionCaps = Pick<
+  Caps,
+  'tools' | 'logger' | 'events' | 'hooks' | 'memory' | 'platform' | 'persona' | 'flowControl'
+>;
 
 interface PluginConfig {
   enabled: boolean;
@@ -551,7 +557,7 @@ function trackProactiveTurnDepth(hooks: Caps['hooks'], turnProactiveDepth: Map<s
 }
 
 function registerCrossSessionTools(caps: CrossSessionCaps, cfg: PluginConfig): void {
-  const { tools, logger, events, hooks, memory, platform, persona } = caps;
+  const { tools, logger, events, hooks, memory, platform, persona, flowControl } = caps;
 
   /**
    * sessionId → 该会话当前回合的入站消息所带 proactiveDepth（非委派回合不在表内）。
@@ -707,7 +713,7 @@ function registerCrossSessionTools(caps: CrossSessionCaps, cfg: PluginConfig): v
           '- 防雪崩：委派消息驱动的那一个回合内禁止再委派（A→B 允许，B 处理这条委派时不能再 delegate）；',
           '  回合结束即解除，该会话之后由下一条不带 proactiveDepth 的入站消息',
           '  （真人消息、idle/interval 自动触发都算）驱动的回合不受影响。',
-          '- 平台限速：平台 adapter 可声明 checkAndRecordProactiveSend 做主动发送频率限制，超额会被拒绝。',
+          '- 流控约束：目标会话受流控禁言与限速约束，禁言期内或限速窗口已满时委派会被拒绝。',
           '- 自委派被禁止：target_session_id 不能等于当前 sessionId。',
           '',
           '【wait_for_result】',
@@ -780,23 +786,17 @@ function registerCrossSessionTools(caps: CrossSessionCaps, cfg: PluginConfig): v
       }
       const targetDepth = currentDepth + 1;
 
-      // 解析目标平台，应用可选限速闸门
-      let platformName: string | undefined;
-      try {
-        const adapter = await resolvePlatformBySession(platform, targetSessionId, logger);
-        if (adapter) {
-          platformName = adapter.platform;
-          const gate = adapter.checkAndRecordProactiveSend;
-          if (typeof gate === 'function') {
-            const verdict = gate.call(adapter, targetSessionId);
-            if (!verdict.allowed) {
-              return JSON.stringify({ error: `委派被平台限速拦截：${verdict.reason ?? '超出限速阈值'}` });
-            }
-          }
-        }
-      } catch (err) {
-        logger.warn(`[delegate] 解析目标平台失败 (${targetSessionId}): ${err}`);
+      // 流控硬闸：只检不记。限速按目标会话的真实回复计（flow-control 监听 outbound:message），
+      // 派发到回复落地之间对同一目标的突发委派不占槽，可能越过限速。
+      const flow = flowControl.current;
+      if (flow?.isMuted(targetSessionId)) {
+        return JSON.stringify({ error: '委派被拒：目标会话处于禁言期' });
       }
+      if (flow?.isRateLimited(targetSessionId)) {
+        return JSON.stringify({ error: '委派被拒：目标会话已达流控限速上限' });
+      }
+
+      const platformName = (await resolvePlatformBySession(platform, targetSessionId, logger))?.platform;
 
       // ===== 注入 META 提示（提醒型，不挡派发） =====
       const now = Date.now();
