@@ -4,7 +4,6 @@ import type { EventBus } from '../primitives/events.js';
 import type { ServiceContainer } from '../primitives/services.js';
 
 import type { BindingPort, FollowCleanup, Registrar } from './descriptors.js';
-import { watchService } from './service-watch.js';
 import type { Logger } from '../infrastructure/logger.js';
 import type { Resources } from '../infrastructure/resources.js';
 
@@ -140,11 +139,22 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
       }
     });
 
+  const pumpAll = (): void => {
+    for (const follower of [...followers]) pump(follower);
+  };
+
+  // 胜者可能变化时让全部跟随者收敛（pump 自己去重）。拆卸窗口内的服务事件不引爆清理，由撤回段统一收
   const subscribe = (): void => {
     subscribed = true;
-    watchService<P>(scope.services, scope.events, scope.resources, name, () => {
-      for (const follower of [...followers]) pump(follower);
-    });
+    const offs = (['service:registered', 'service:unregistered', 'service:preference-changed'] as const).map(event =>
+      scope.events.on(event, service => {
+        if (service === name && !scope.resources.disposed) pumpAll();
+      }),
+    );
+    scope.resources.trackWithdrawal(() => {
+      for (const off of offs) off();
+      pumpAll();
+    }, `watch:${name}`);
   };
 
   const follow = (attach: Follower['attach'], overlap: boolean): (() => void) => {
@@ -155,7 +165,7 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
     const follower: Follower = { attach, overlap, busy: false, attaching: false, cancelled: false };
     followers.push(follower);
     if (!subscribed) subscribe();
-    else pump(follower);
+    pump(follower);
     return () => {
       if (follower.cancelled) return;
       follower.cancelled = true;
