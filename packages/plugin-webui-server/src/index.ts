@@ -706,7 +706,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
           displayName?: string;
           label?: string;
           priority: number;
-          scope: 'shared' | 'activation';
           exclusive: boolean;
         }>;
         preferred: string | null;
@@ -714,8 +713,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     > = {};
 
     for (const svcName of serviceNames) {
-      // 枚举已按「偏好 > 优先级 > 注册顺序」排序，附带 priority 字段
-      // 展示元数据不能创建按激活实例，否则打开服务页就会获得未声明能力或启动资源。
+      // 枚举已按「偏好 > 优先级 > 注册顺序」排序，附带 priority 字段；只取登记元数据，不取实例
       const entries = services.inspect(svcName);
       detail[svcName] = {
         providers: entries.map(e => ({
@@ -723,7 +721,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
           displayName: displayNameMap.get(e.contextId),
           label: e.label,
           priority: e.priority,
-          scope: e.scope,
           exclusive: e.exclusive,
         })),
         preferred: services.preferred(svcName) ?? null,

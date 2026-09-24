@@ -61,7 +61,6 @@ const RUNTIME_EXPORTS = [
   'pluginDefinitionOf',
   'pluginsService',
   'provide',
-  'serviceFactory',
   'serviceRef',
   'services',
 ];
@@ -71,6 +70,9 @@ const FORBIDDEN_ROOT_EXPORTS = [
   'formatLogLine',
   'parseLogLine',
   'ModuleHandle',
+  'serviceFactory',
+  'ServiceFactory',
+  'ServiceScope',
   'Context',
   'Activation',
   'ActivationHost',
@@ -152,6 +154,8 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
     const header = `import { App } from '@aalis/core';\nvoid App;\n`;
     const forbidden = `import type {
   ModuleHandle,
+  ServiceFactory,
+  ServiceScope,
   Context,
   Activation,
   ActivationHost,
@@ -164,7 +168,7 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
   PluginModule,
   ServiceTypeMap,
 } from '@aalis/core';
-import { formatLogLine, parseLogLine, requiresBounceOnDepChange, unwrapPluginModule, useModule } from '@aalis/core';
+import { formatLogLine, parseLogLine, requiresBounceOnDepChange, serviceFactory, unwrapPluginModule, useModule } from '@aalis/core';
 `;
     const good = runTscProbe(header);
     expect(good, `合法探针应能编过，实际：${good.join('\n') || '（零错误）'}`).toEqual([]);
