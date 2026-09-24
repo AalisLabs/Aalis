@@ -144,7 +144,10 @@ async function main(): Promise<void> {
     console.log(`  cd ${shortName(packageName)}`);
     console.log('  pnpm install');
     console.log('  pnpm build');
-    console.log('\n要让 Aalis 加载它：在你的 Aalis 项目目录里执行 `npm install <本目录路径>`，');
+    console.log('\n要让 Aalis 加载它：在你的 Aalis 项目目录里执行 `npm install --install-links <本目录路径>`，');
+    console.log('并在该项目的 .npmrc 写 `install-links=true`（否则下次普通 npm install 会改回符号链接）；');
+    console.log('pnpm 项目用 `pnpm add file:<本目录路径>`。不能装成符号链接：本目录 devDependencies 里的 @aalis/core');
+    console.log('会成为进程里的第二份，插件会被拒绝加载。');
     console.log('装进 dependencies 即被自动发现并加载（插件默认启用；停用是把包名写进 disabledPlugins）。');
   } finally {
     rl.close();
