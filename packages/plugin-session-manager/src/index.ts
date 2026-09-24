@@ -172,12 +172,18 @@ class SessionManager implements SessionManagerService {
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private dirty = false;
   /**
-   * 本进程显式删除、尚未落盘的会话（墓碑）。persist 只删这些键，不按「后端有、内存无」清扫：
-   * 会话表只在激活时从当时的 memory 胜者读一次，运行中胜者换成另一个后端（新装或启用首选后端）后，
-   * 按差集清扫会把新胜者里原有的会话当孤儿删掉。每条墓碑带令牌，提交成功后只清掉提交时那一版，
-   * 提交期间再删的保留到下一次。
+   * 本进程显式删除、尚未落盘的会话（墓碑）。persist 写全量快照，但只删这些键，不按「后端有、内存无」清扫：
+   * 后端里还可能有本进程没读到的会话，按差集清扫会把它们当孤儿删掉。每条墓碑带令牌，提交成功后只清掉
+   * 提交时那一版，提交期间再删的保留到下一次。换后端时墓碑随旧表一起作废。
    */
   private deleted = new Map<string, symbol>();
+  /**
+   * 会话表所在的 memory 实例：跟随 memory 胜者。换人时先把旧表的未落盘变更写回旧实例，再从新实例读表整体替换
+   * （换后端即换库，不跨后端合并）。新表加载完成前仍指向旧实例，落盘不会把旧表写进新后端。
+   */
+  private store: MemoryService | undefined;
+  /** 最近一次挂接的加载；apply 等它完成再对外提供服务 */
+  loading: Promise<void> = Promise.resolve();
   /** 平台 → 默认 SessionConfig 模板 */
   private platformProfiles = new Map<string, PlatformProfile>();
   /** 全局默认配置（platform profile 之下的最低层 fallback） */
@@ -188,9 +194,8 @@ class SessionManager implements SessionManagerService {
   }
 
   /**
-   * memory provider 每次惰性查询：ServiceRef.current 返回的是提供者本身，
-   * 缓存到 field 在 provider 重载后会失效。每次调用重新解析让 provider 切换
-   * 后自然跟随，无需级联 bounce 本插件。
+   * 消息历史类操作（清空、读历史）用当前胜者：新消息写在当前胜者里。每次惰性查询，provider 切换后自然跟随。
+   * 会话表另经 {@link store} 跟随，见 {@link attach}。
    */
   private get memory(): MemoryService {
     const m = this.caps.memory.current;
@@ -198,20 +203,38 @@ class SessionManager implements SessionManagerService {
     return m;
   }
 
-  /** 从 memory 元数据加载持久化会话列表 */
-  async load(): Promise<void> {
-    try {
-      const entries = await this.memory.listMetadata(METADATA_NAMESPACE);
-      for (const { key, data } of entries) {
-        const info = data as unknown as SessionInfo;
-        if (info && info.id === key) {
-          this.sessions.set(key, info);
-        }
+  /**
+   * memory 胜者的 follow 挂接：从这个实例读会话表并整体替换内存里的这份。
+   * 返回的清理在换人或关闭时执行：等本次加载落定，再把未落盘的变更写回这个实例。
+   */
+  attach(instance: MemoryService): () => Promise<void> {
+    this.loading = this.load(instance);
+    return async () => {
+      await this.loading;
+      if (this.persistTimer) {
+        clearTimeout(this.persistTimer);
+        this.persistTimer = null;
       }
-      this.caps.logger.info(`已加载 ${this.sessions.size} 个会话`);
+      await this.persist().catch(err => this.caps.logger.warn('换后端前落盘会话失败:', err));
+    };
+  }
+
+  /** 从 memory 元数据加载持久化会话列表，加载完成后以它为会话表与落盘目标 */
+  private async load(instance: MemoryService): Promise<void> {
+    const sessions = new Map<string, SessionInfo>();
+    try {
+      for (const { key, data } of await instance.listMetadata(METADATA_NAMESPACE)) {
+        const info = data as unknown as SessionInfo;
+        if (info && info.id === key) sessions.set(key, info);
+      }
     } catch (err) {
       this.caps.logger.warn('加载会话数据失败:', err);
     }
+    this.sessions = sessions;
+    this.deleted.clear();
+    this.dirty = false;
+    this.store = instance;
+    this.caps.logger.info(`已加载 ${sessions.size} 个会话`);
   }
 
   /** 标记需要持久化并延迟刷盘 */
@@ -237,7 +260,8 @@ class SessionManager implements SessionManagerService {
    * 墓碑保留，下一次 markDirty 会把完整状态重写一遍，前一次的半成品被整体覆盖。
    */
   async persist(): Promise<void> {
-    if (!this.dirty) return;
+    const target = this.store;
+    if (!this.dirty || !target) return;
     this.dirty = false;
 
     const ops: MetadataOp[] = [...this.sessions].map(([id, info]) => ({
@@ -251,9 +275,8 @@ class SessionManager implements SessionManagerService {
       if (!this.sessions.has(key)) ops.push({ op: 'del', namespace: METADATA_NAMESPACE, key });
     }
     try {
-      // **取 memory 必须在 try 内**：provider 换人的窗口里 `this.memory` getter 会抛，而 dirty 已在
-      // 上面置 false —— 落在外面就等于「这批变更丢了且永不重试」，正是本方法要消灭的那个病。
-      await this.memory.commitMetadata(ops);
+      // 写入目标取落盘开始时的会话表所在实例：换人窗口里当前胜者可能已是新后端，旧表不能写过去
+      await target.commitMetadata(ops);
       for (const [key, token] of tombstones) if (this.deleted.get(key) === token) this.deleted.delete(key);
     } catch (err) {
       this.dirty = true; // 失败要能重试，否则这批变更永远落不了盘
@@ -999,8 +1022,9 @@ async function run(caps: Caps): Promise<void> {
 
   const manager = new SessionManager(caps);
 
-  // 从持久化存储加载
-  await manager.load();
+  // 会话表跟随 memory 胜者：首次挂接即加载；运行中胜者换人时先写回旧后端再读新后端
+  memory.follow(instance => manager.attach(instance));
+  await manager.loading;
 
   // 加载平台 profiles
   manager.loadPlatformProfiles(caps.config.platformProfiles);
