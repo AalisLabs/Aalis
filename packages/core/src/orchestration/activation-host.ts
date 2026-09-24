@@ -4,9 +4,9 @@ import { isScopedProvider } from '../primitives/services.js';
 
 import { Activation } from './activation.js';
 import { createPort } from '../composition/binding.js';
-import { type ModuleHandle, registerCoreServices } from '../composition/core-services.js';
+import { registerCoreServices } from '../composition/core-services.js';
 import { type BoundOf, isOptional, optionalNames, requiredNames, type Uses } from '../composition/descriptors.js';
-import { type PluginDefinition, validateDefinition } from '../composition/plugin-definition.js';
+import type { PluginDefinition } from '../composition/plugin-definition.js';
 import type { ServiceRuntime } from '../composition/runtime.js';
 import { instantiateService } from '../composition/service-factory.js';
 import type { Logger } from '../infrastructure/logger.js';
@@ -60,10 +60,7 @@ export class ActivationHost {
     });
     const activation = new Activation(id, owner, logger, config, resources, runtime.services, this.owners);
     this.owners.set(owner, activation);
-    if (parent) {
-      parent.children.add(activation);
-      parent.resources.lifecycle.adopt(resources.lifecycle);
-    }
+    parent?.children.add(activation);
     return activation;
   }
 
@@ -124,7 +121,6 @@ export class ActivationHost {
           identity: activation.owner,
           logger: activation.logger,
           config: activation.config,
-          module: (definition, config) => this.module(activation, definition, config),
         },
       });
       cache.set(provider, instance);
@@ -137,30 +133,6 @@ export class ActivationHost {
 
   mount(activation: Activation, definition: PluginDefinition): void | Promise<void> {
     return definition.apply(this.bind(activation, definition.uses ?? {}));
-  }
-
-  async module(
-    parent: Activation,
-    definition: PluginDefinition,
-    config: Record<string, unknown> = {},
-  ): Promise<ModuleHandle> {
-    validateDefinition(definition);
-    const missing = requiredNames(definition.uses ?? {}).filter(name => this.runtime.services.get(name) === undefined);
-    if (missing.length)
-      throw new Error(`子模块 "${definition.name}" 缺少 required 服务 [${missing.join(', ')}]，未挂载`);
-    const base = `${parent.id}#${definition.name}`;
-    let id = base;
-    for (let n = 2; [...parent.children].some(child => child.id === id); n++) id = `${base}~${n}`;
-    const child = this.create(parent, id, config);
-    try {
-      const applying = Promise.resolve(this.mount(child, definition));
-      child.resources.lifecycle.trackInitialization(applying);
-      await applying;
-    } catch (error) {
-      await child.disposeAsync();
-      throw error;
-    }
-    return { id, dispose: () => child.dispose(), disposeAsync: timeout => child.disposeAsync(timeout) };
   }
 }
 

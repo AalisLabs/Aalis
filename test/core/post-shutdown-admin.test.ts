@@ -246,55 +246,6 @@ describe('app:stopping 窗口', () => {
     expect(saved, `log=${log.join('>')}`).toEqual(['writer:last']);
   });
 
-  it('监听器里 unload 带子女的提供者家族：旁路消费者 onDrain 仍能 require', async () => {
-    const { app } = capturingApp();
-    const saved: string[] = [];
-    const store = defineService<Store>('psa-stop-fam');
-    const inner = definePlugin({
-      name: 'inner-store',
-      uses: { provide, lifecycle },
-      provides: [store],
-      apply({ provide, lifecycle }) {
-        let closed = false;
-        provide(store, {
-          save(data) {
-            if (closed) throw new Error('inner 已关闭');
-            saved.push(data);
-          },
-        });
-        lifecycle.onDispose(() => {
-          closed = true;
-        });
-      },
-    });
-    await app.plugin(
-      definePlugin({
-        name: 'family',
-        uses: { lifecycle },
-        async apply({ lifecycle }) {
-          await lifecycle.module(inner);
-        },
-      }),
-    );
-    await app.plugin(
-      definePlugin({
-        name: 'writer',
-        uses: { store, lifecycle },
-        apply({ store, lifecycle }) {
-          lifecycle.onDrain(() => store.require().save('writer:last'));
-        },
-      }),
-    );
-    await app.plugins.idle();
-    expect(app.plugins.getPlugin('family')?.state).toBe('active');
-    const { events: bus } = app.bind({ events });
-    bus.on('app:stopping', async () => {
-      await app.plugins.unload('family');
-    });
-    expect(await stopWithin(app)).toBe('ok');
-    expect(saved).toEqual(['writer:last']);
-  });
-
   it('监听器里 bounce 提供者：返回 false、不重建，停机计划仍关掉原实例', async () => {
     const { app, warnings } = capturingApp();
     const saved: string[] = [];

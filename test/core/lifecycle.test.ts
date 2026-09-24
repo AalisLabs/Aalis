@@ -10,57 +10,55 @@ function gate() {
 }
 
 describe('独立资源生命周期', () => {
-  it('先等初始化和子节点，再撤回可见资源，逆序等待清理后收尾', async () => {
+  it('先等初始化和收尾段，再撤回可见资源，逆序等待清理后收尾', async () => {
     const acquired = gate();
-    const childClosing = gate();
-    const childStarted = gate();
+    const drainClosing = gate();
+    const drainStarted = gate();
     const trace: string[] = [];
-    const parent = new Lifecycle({
+    const life = new Lifecycle({
       beforeCleanup: () => trace.push('withdraw'),
       afterCleanup: () => trace.push('finished'),
     });
-    const child = new Lifecycle();
-    parent.adopt(child);
-    parent.disposables.push(() => trace.push('first'));
-    child.disposables.push(async () => {
-      trace.push('child:start');
-      childStarted.open();
-      await childClosing.promise;
-      trace.push('child:end');
+    life.disposables.push(() => trace.push('first'));
+    life.draining.push(async () => {
+      trace.push('drain:start');
+      drainStarted.open();
+      await drainClosing.promise;
+      trace.push('drain:end');
     });
-    parent.trackInitialization(
+    life.trackInitialization(
       acquired.promise.then(() => {
         trace.push('initialized');
-        parent.disposables.push(() => trace.push('late'));
+        life.disposables.push(() => trace.push('late'));
       }),
     );
 
     let finished = false;
-    const closing = parent.disposeAsync().then(() => {
+    const closing = life.disposeAsync().then(() => {
       finished = true;
     });
-    expect(parent.disposed).toBe(true);
-    expect(parent.disposables.disposed).toBe(false);
+    expect(life.disposed).toBe(true);
+    expect(life.disposables.disposed).toBe(false);
     expect(trace).toEqual([]);
     acquired.open();
-    await childStarted.promise;
+    await drainStarted.promise;
     expect(finished).toBe(false);
-    parent.disposables.push(() => trace.push('during-child'));
-    childClosing.open();
+    life.disposables.push(() => trace.push('during-drain'));
+    drainClosing.open();
     await closing;
     expect(trace).toEqual([
       'initialized',
-      'child:start',
-      'child:end',
+      'drain:start',
+      'drain:end',
       'withdraw',
-      'during-child',
+      'during-drain',
       'late',
       'first',
       'finished',
     ]);
   });
 
-  it('同步关闭同栈完成同步工作，后续异步关闭不升级为等待已启动的异步清理', async () => {
+  it('异步关闭与调用同栈发起首个清理回调，收尾等异步清理落定', async () => {
     const released = gate();
     const trace: string[] = [];
     const life = new Lifecycle({ afterCleanup: () => trace.push('finished') });
@@ -69,13 +67,11 @@ describe('独立资源生命周期', () => {
       await released.promise;
       trace.push('end');
     });
-    life.dispose();
-    expect(trace).toEqual(['start', 'finished']);
-    await life.disposeAsync();
-    expect(trace).toEqual(['start', 'finished']);
+    const closing = life.disposeAsync();
+    expect(trace).toEqual(['start']);
     released.open();
-    await released.promise;
-    expect(trace).toEqual(['start', 'finished', 'end']);
+    await closing;
+    expect(trace).toEqual(['start', 'end', 'finished']);
   });
 
   it('一个等待者超时不结束原关闭，也不放行其他等待者', async () => {
@@ -102,35 +98,19 @@ describe('独立资源生命周期', () => {
     }
   });
 
-  it('清理失败隔离，子节点按加入顺序关闭且不会再次清理已关闭的子节点', async () => {
+  it('清理失败隔离，已关闭的生命周期不会再次清理', async () => {
     const trace: string[] = [];
     const warn = vi.fn();
-    const parent = new Lifecycle();
+    const life = new Lifecycle({}, { warn });
     for (const name of ['a', 'b', 'c']) {
-      const child = new Lifecycle({}, { warn });
-      parent.adopt(child);
-      child.disposables.push(() => trace.push(name));
-      child.disposables.push(async () => {
+      life.disposables.push(() => trace.push(name));
+      life.disposables.push(async () => {
         throw new Error(name);
       });
-      if (name === 'b') await child.disposeAsync();
     }
-    await parent.disposeAsync();
-    expect(trace).toEqual(['b', 'a', 'c']);
+    await life.disposeAsync();
+    await life.disposeAsync();
+    expect(trace).toEqual(['c', 'b', 'a']);
     expect(warn).toHaveBeenCalledTimes(3);
-  });
-
-  it('所有权保持单父节点无环，关闭后不能再收养资源节点', () => {
-    const root = new Lifecycle();
-    const child = new Lifecycle();
-    const other = new Lifecycle();
-    root.adopt(child);
-    expect(() => other.adopt(child)).toThrow();
-    expect(() => child.adopt(root)).toThrow();
-    expect(() => root.adopt(root)).toThrow();
-    root.dispose();
-    expect(() => root.adopt(other)).toThrow();
-    expect(() => other.adopt(child)).toThrow();
-    other.dispose();
   });
 });

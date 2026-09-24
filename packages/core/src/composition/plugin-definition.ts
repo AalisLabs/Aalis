@@ -2,8 +2,7 @@
 // definition.ts — 插件定义与挂载
 //
 // 插件是一份定义：名字、用到的能力（uses）、提供的服务、元数据，以及拿到绑定接口后的 apply。
-// 调度器挂顶层插件、lifecycle.module 挂子模块，走的是同一个 mountDefinition：
-// 写入这次激活的配置 → 按 uses 装配绑定接口 → 调 apply。
+// 调度器挂载时：写入这次激活的配置 → 按 uses 装配绑定接口 → 调 apply。
 // ============================================================
 
 import { type BoundOf, isOptional, type ServiceDescriptor, type Uses } from './descriptors.js';
@@ -20,7 +19,7 @@ export interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
   /**
    * 插件名，与 package.json 的 name 一致；单实例时即实例 id。
    * 须为 trim 后非空的字符串，不能是 `__proto__` / `constructor` / `prototype`，
-   * 且不含 instanceId 的 `:suffix`（parseInstanceId 从 '/' 之后切开）与子模块的 `#`。
+   * 且不含 instanceId 的 `:suffix`（parseInstanceId 从 '/' 之后切开）与保留字符 `#`。
    */
   name: string;
   displayName?: string;
@@ -53,7 +52,7 @@ export interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
 
 /**
  * id 形状的公共闸：trim 后非空，不是配置层危险键（`__proto__` / `constructor` / `prototype`），
- * 且不含 `#`（子模块 id 是 `父id#模块名`）。
+ * 且不含保留字符 `#`。
  * `definition.name` 额外禁止 `:suffix`；`register` 第三参 instanceId 允许 `name:suffix`。
  */
 function assertValidId(id: unknown, kind: 'name' | 'instanceId'): asserts id is string {
@@ -71,9 +70,7 @@ function assertValidId(id: unknown, kind: 'name' | 'instanceId'): asserts id is 
   }
   if (id.includes('#')) {
     throw new Error(
-      kind === 'name'
-        ? `插件 "${id}" 的 name 不能包含 "#"——"#" 是子模块 id 的分隔符（父id#模块名）`
-        : `instanceId "${id}" 不能包含 "#"——"#" 是子模块 id 的分隔符（父id#模块名）`,
+      kind === 'name' ? `插件 "${id}" 的 name 不能包含保留字符 "#"` : `instanceId "${id}" 不能包含保留字符 "#"`,
     );
   }
 }

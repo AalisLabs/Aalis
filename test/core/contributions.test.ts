@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { contributions, definePlugin } from '../../packages/core/src/index.js';
+import { App, contributions, definePlugin } from '../../packages/core/src/index.js';
 import { bindActivationFixture, createActivationFixture } from '../helpers/activation.js';
 
 // 测试用贡献点键。ContributionPointMap 是空接口（由 -api 包 merging 填充），
@@ -55,13 +55,13 @@ describe('ContributionRegistry / contributions 能力', () => {
     expect(() => ctx.caps.contributions.contribute(POINT, { id: 'b/c' } as never)).toThrow(TypeError);
   });
 
-  it('ctx dispose 清扫本 ctx 的全部贡献，不动兄弟 ctx 的', () => {
+  it('ctx dispose 清扫本 ctx 的全部贡献，不动兄弟 ctx 的', async () => {
     const root = makeFixture();
     const a = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-a'));
     const b = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-b'));
     a.caps.contributions.contribute(POINT, { id: 'x' } as never);
     b.caps.contributions.contribute(POINT, { id: 'y' } as never);
-    a.activation.dispose();
+    await a.activation.disposeAsync();
     const keys = root.caps.contributions.collect(POINT).map(e => e.key);
     expect(keys).toEqual(['plugin-b/y']);
   });
@@ -106,29 +106,34 @@ describe('ContributionRegistry / contributions 能力', () => {
     expect((entry.spec as Spec).id).toBe('cls'); // 局部 id 未被改写为全局键
   });
 
-  it('lifecycle.module 同名重复挂载：ctx.id 唯一化，贡献互不顶替、dispose 不误清兄弟', async () => {
-    const root = makeFixture();
+  it('reusable 同一定义多实例：贡献按实例 id 分命名空间，互不顶替、卸载其一不误清另一个', async () => {
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const root = app.bind({ contributions });
     const definition = definePlugin({
       name: 'dyn',
+      reusable: true,
       uses: { contributions },
       apply({ contributions }) {
         contributions.contribute(POINT, { id: 'blk' } as never);
       },
     });
-    const off1 = await root.caps.lifecycle.module(definition);
-    await root.caps.lifecycle.module(definition);
-    expect(root.caps.contributions.collect(POINT)).toHaveLength(2); // 后挂载者不顶替先挂载者
+    await app.plugin(definition);
+    await app.plugins.register(definition, {}, 'dyn:2');
+    await app.plugins.idle();
+    // 后注册的实例不顶替先注册者
+    expect(root.contributions.collect(POINT).map(e => e.key)).toEqual(['dyn/blk', 'dyn:2/blk']);
 
-    off1.dispose();
-    // 卸载其一不连带清掉另一个仍在役沙盒的贡献
-    expect(root.caps.contributions.collect(POINT)).toHaveLength(1);
+    await app.plugins.unload('dyn');
+    // 卸载其一不连带清掉另一个仍在役实例的贡献
+    expect(root.contributions.collect(POINT).map(e => e.key)).toEqual(['dyn:2/blk']);
+    await app.stop();
   });
 
-  it('dispose 后的 contribute 被拒，不得顶替同 id 活实例的贡献', () => {
+  it('dispose 后的 contribute 被拒，不得顶替同 id 活实例的贡献', async () => {
     const root = makeFixture();
     const dead = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-a'));
     dead.caps.contributions.contribute(POINT, { id: 'blk', payload: 'old' } as never);
-    dead.activation.dispose();
+    await dead.activation.disposeAsync();
 
     // bounce 后的新实例（同 ctx.id → 同全局键）
     const alive = bindActivationFixture(root.host, root.host.create(root.activation, 'plugin-a'));

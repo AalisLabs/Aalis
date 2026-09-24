@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  App,
   DefaultLogger,
   definePlugin,
   defineService,
@@ -24,19 +23,17 @@ import { createActivationFixture } from '../helpers/activation.js';
 // 可达面：PluginManager 的 unload / disable / bounce 会主动走进
 // 本窗口（先改 entry.state 让激活收尾让位，再对在飞 ctx disposeAsync——那三条
 // 路径的行为锚在 test/core/admin-during-activation.test.ts）；本文件守的是
-// disposeAsync 这个内部契约本身（宿主直调）与 lifecycle.module 的子激活级联。
+// disposeAsync 这个内部契约本身（宿主直调）与父激活对子激活的级联。
 //
 // 时序不靠 sleep 赌：闸门不开 apply 就不落定，「拆卸发起时 apply 必定
 // 在飞」是结构保证，不受 CI 负载影响。唯一按时间断言的是超时兜底那条。
 // ============================================================
 
 const activations: Activation[] = [];
-const apps: App[] = [];
 afterEach(async () => {
   for (const ctx of activations.splice(0)) {
     if (!ctx.resources.lifecycle.disposed) await ctx.disposeAsync().catch(() => {});
   }
-  for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
 
 function makeActivation(id = 'root') {
@@ -150,65 +147,6 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
     expect(released).toBe(true);
   });
 
-  it('同步 dispose() 不等 apply —— 其「首个 await 前同步执行完」的语义不变', async () => {
-    const { host, activation: root } = makeActivation();
-    const ctx = host.create(root, 'p');
-    let syncDisposerRan = false;
-    ctx.resources.onDispose(() => {
-      syncDisposerRan = true;
-    });
-    const { applying, acquire } = startPlugin(ctx, true);
-
-    ctx.dispose();
-    // 同步路径必须当场跑完已登记的同步 disposer，不因 apply 在飞而推迟
-    expect(syncDisposerRan).toBe(true);
-
-    acquire.open();
-    await applying;
-  });
-
-  it('lifecycle.module 建的子激活同样受保护（与 activatePlugin 同源）', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    apps.push(app);
-    const acquire = deferred();
-    let released = false;
-    let pending!: Promise<unknown>;
-    // 子定义必须在 apply 之外：apply 解构出的 lifecycle 会挡住描述符导入
-    const sandbox = definePlugin({
-      name: 'sandbox',
-      uses: { lifecycle },
-      async apply({ lifecycle }) {
-        await acquire.promise;
-        lifecycle.onDispose(async () => {
-          await sleep(0);
-          released = true;
-        });
-      },
-    });
-
-    await app.plugin(
-      definePlugin({
-        name: 'parent',
-        uses: { lifecycle },
-        apply({ lifecycle }) {
-          // **不能 await module**：await 完 apply 就跑完了、disposer 早已在链上，
-          // 那样测的是普通路径、对本改动零判别力。要造的是「子激活的 apply 还在飞
-          // 时父级联拆卸」。
-          pending = lifecycle.module(sandbox);
-        },
-      }),
-    );
-    await app.plugins.idle();
-    expect(app.plugins.getPlugin('parent')?.state).toBe('active');
-
-    const disposing = app.plugins.unload('parent');
-    acquire.open();
-    await disposing;
-
-    expect(released).toBe(true);
-    await pending.catch(() => {});
-  });
-
   it('级联：父 ctx 的 disposeAsync 会等到子 ctx 的初始化落定', async () => {
     const { host, activation: root } = makeActivation();
     const parent = host.create(root, 'parent');
@@ -299,7 +237,7 @@ describe('清理超时/抛错时点名', () => {
     expect(lines.join('\n')).toMatch(/\[lancedb-table\]/);
   });
 
-  it('清理抛错记 warn 级——默认日志级别下必须可见（泄漏头号成因不许静音）', () => {
+  it('清理抛错记 warn 级——默认日志级别下必须可见（泄漏头号成因不许静音）', async () => {
     const lines: string[] = [];
     const tag = (lv: string) => (m: unknown, e?: unknown) =>
       lines.push(`${lv}|${String(m)} ${e instanceof Error ? e.message : ''}`);
@@ -315,16 +253,16 @@ describe('清理超时/抛错时点名', () => {
     ctx.resources.onDispose(() => {
       throw new Error('boom');
     }, 'mongo-client');
-    ctx.dispose();
+    await ctx.disposeAsync();
     expect(lines.find(l => l.includes('boom'))).toMatch(/^warn\|/);
   });
 
-  it('清理抛错时也点名，不是一句无主的「已忽略」', () => {
+  it('清理抛错时也点名，不是一句无主的「已忽略」', async () => {
     const { ctx, lines } = ctxWithLogSink();
     ctx.resources.onDispose(() => {
       throw new Error('boom');
     }, 'mongo-client');
-    ctx.dispose();
+    await ctx.disposeAsync();
     expect(lines.join('\n')).toMatch(/\[mongo-client\].*boom|boom.*\[mongo-client\]/);
   });
 });

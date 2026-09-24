@@ -130,14 +130,16 @@ describe('follow 重入时的资源归属', () => {
     expect([...live]).toEqual([]);
   });
 
-  it('首挂回调同步销毁激活：停止跟随，并立即清理回调随后返回的资源', async () => {
+  it('首挂回调同栈关闭激活：停止跟随，并立即清理回调随后返回的资源', async () => {
     const { app, host, trace, live, released, attach } = makeWorld();
-    // 公开的 lifecycle 没有同步 dispose：要在 attach 同栈关掉这次激活，只能拿内部激活记录
+    // 公开的 lifecycle 没有关闭入口：要在 attach 同栈发起关闭，只能拿内部激活记录。
+    // disposeAsync 同栈置关闭位并发起清理，以下同步断言即落在关闭发起之后、完成之前
     const activation = activationHost(app).create(rootActivation(app), 'watcher');
     const ref = activationHost(app).bind(activation, { x: optional(svc) }).x;
+    let closing!: Promise<void>;
     const off = ref.follow(provider => {
       const cleanup = attach(provider);
-      activation.dispose();
+      closing = activation.disposeAsync();
       host.services.prefer(svc, 'root/b');
       return cleanup;
     });
@@ -148,6 +150,7 @@ describe('follow 重入时的资源归属', () => {
     off();
     host.services.prefer(svc, 'root/c');
     expect(released).toEqual(['a:1']);
+    await closing;
   });
 
   it('重挂回调退订：本次回调的 cleanup 不会遗失，也不会再挂后续胜者', async () => {

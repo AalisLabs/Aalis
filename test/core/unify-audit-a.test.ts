@@ -10,7 +10,6 @@ import {
   defineService,
   type Logger,
   lifecycle,
-  type ModuleHandle,
   optional,
   provide,
 } from '../../packages/core/src/index.js';
@@ -84,36 +83,6 @@ const sinkPlugin = (w: World, descriptor: ReturnType<typeof defineService<Sink>>
   });
 
 describe('关停编排', () => {
-  it('跨层组合（子用祖先的服务 + 祖先用孙模块的服务）：业务依赖无环，两笔交接都成立，不报成环', async () => {
-    const w = world();
-    const psvc = defineService<Sink>('zz-aa-psvc');
-    const gsvc = defineService<Sink>('zz-aa-gsvc');
-    const g = sinkPlugin(w, gsvc, 'g');
-    const a = definePlugin({
-      name: 'a',
-      uses: { psvc, lifecycle },
-      async apply({ psvc, lifecycle }) {
-        await lifecycle.module(g);
-        lifecycle.onDrain(() => psvc.require().save('a-last'));
-      },
-    });
-    await w.app.plugin(
-      definePlugin({
-        name: 'p',
-        uses: { gsvc: optional(gsvc), provide, lifecycle },
-        async apply({ gsvc, provide, lifecycle }) {
-          provide(psvc, { save: data => void w.saved.push(`p:${data}`) });
-          await lifecycle.module(a);
-          lifecycle.onDrain(() => gsvc.require().save('p-last'));
-        },
-      }),
-    );
-    await w.app.plugins.idle();
-    await w.app.stop();
-    expect(w.saved.sort()).toEqual(['g:p-last', 'p:a-last']);
-    expect(w.warnings.filter(x => x.includes('成环'))).toEqual([]);
-  });
-
   it('宿主根激活进同一张计划：宿主的收尾够得到插件提供的服务', async () => {
     const w = world();
     const store = defineService<Sink>('zz-aa-store');
@@ -260,36 +229,6 @@ describe('关停编排', () => {
 });
 
 describe('等待业务交出来的 Promise', () => {
-  it('子模块挂载失败的回滚：apply 抛错前登记的异步清理落定之后，module() 才抛出', async () => {
-    const w = world();
-    let cleaned = false;
-    const child = definePlugin({
-      name: 'child',
-      uses: { lifecycle },
-      apply({ lifecycle }) {
-        lifecycle.onDispose(async () => {
-          await sleep(20);
-          cleaned = true;
-        });
-        throw new Error('mount failed');
-      },
-    });
-    let cleanedWhenRejected: boolean | undefined;
-    await w.app.plugin(
-      definePlugin({
-        name: 'parent',
-        uses: { lifecycle },
-        async apply({ lifecycle }) {
-          await lifecycle.module(child).catch(() => {
-            cleanedWhenRejected = cleaned;
-          });
-        },
-      }),
-    );
-    await w.app.plugins.idle();
-    expect(cleanedWhenRejected).toBe(true);
-  });
-
   it('收尾段里才登记的 onDrain：同样被等到', async () => {
     const w = world();
     const activation = activationHost(w.app).create(rootActivation(w.app), 'p');
@@ -427,21 +366,5 @@ describe('调度与类型面', () => {
     await w.app.plugins.idle();
     expect(w.app.plugins.getPlugin('copy-consumer')?.state).toBe('active');
     expect(value).toBe(2);
-  });
-
-  it('包根导出的 ModuleHandle 就是 lifecycle.module() 的返回类型，带子激活 id', async () => {
-    const w = world();
-    let handle: ModuleHandle | undefined;
-    await w.app.plugin(
-      definePlugin({
-        name: 'host-plugin',
-        uses: { lifecycle },
-        async apply({ lifecycle }) {
-          handle = await lifecycle.module(definePlugin({ name: 'kid', apply() {} }));
-        },
-      }),
-    );
-    await w.app.plugins.idle();
-    expect(handle?.id).toBe('host-plugin#kid');
   });
 });
