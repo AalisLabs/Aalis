@@ -326,7 +326,7 @@ export default definePlugin({
 
 ### 3. 本地验证 → 发布
 
-- **本地运行**：在 Aalis 项目目录里 `npm install ../my-plugin`（写进 `dependencies` 即被 node_modules 加载器发现）。**插件默认启用**——`plugins` 段只放配置，启停看顶层 `disabledPlugins` 数组，没有 `enabled` 开关。放进 monorepo `packages/` 只对自行接了 `createFsPluginLoader` 的自托管仓库有效，脚手架生成的项目不走那条路。
+- **本地运行**：在 Aalis 项目目录里执行 `npm install --install-links ../my-plugin`，并在该项目的 `.npmrc` 写 `install-links=true`（否则下一次普通 `npm install` 会改回符号链接）；pnpm 项目用 `pnpm add file:../my-plugin`。不能装成符号链接：插件目录 devDependencies 里的 `@aalis/core` 会成为进程里的第二份，插件被拒绝加载，见 [装了两份 @aalis/core](./third-party-plugin.md#7-装了两份-aaliscore)。拷贝安装不随源码同步，改动并重新构建后需再次安装。写进 `dependencies` 即被 node_modules 加载器发现。**插件默认启用**——`plugins` 段只放配置，启停看顶层 `disabledPlugins` 数组，没有 `enabled` 开关。放进 monorepo `packages/` 只对自行接了 `createFsPluginLoader` 的自托管仓库有效，脚手架生成的项目不走那条路。
 - **发布**：`npm publish --access public`。用户 `npm install my-plugin` 后，因 `keywords` 含 `aalis-plugin` 即被自动发现加载（`node-modules-loader.ts`）。
 
 完整的「从零到发布」最短路径见 [第三方插件开发者指南](./third-party-plugin.md)。
