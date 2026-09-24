@@ -45,7 +45,8 @@ interface BindingScope {
   readonly resources: Resources;
   readonly services: Pick<ServiceContainer, 'get' | 'getAll'>;
   readonly events: EventBus;
-  retainBinding(name: string): () => void;
+  /** 登记跟随边：提供者撤回时经 pump 就地驱动交接；释放时带上撤回的落定 */
+  retainBinding(name: string, pump: () => void): (settling?: Promise<void>) => void;
 }
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {
@@ -64,7 +65,7 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
     attached?: P;
     cleanup?: () => unknown;
     /** 依赖边：挂上时登记，该次挂载的撤回落定后释放 */
-    releaseEdge?: () => void;
+    releaseEdge?: (settling?: Promise<void>) => void;
     /** 串行交接：旧清理的 Promise 尚未落定 */
     busy: boolean;
     /** attach 回调正在执行：期间的退订 / 换人只记状态，等回调返回（拿到它的清理器）后再收敛 */
@@ -77,11 +78,10 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
   const desiredProvider = (follower: Follower): P | undefined =>
     follower.cancelled || scope.resources.disposed ? undefined : scope.services.get<P>(name);
 
-  /** 让一个跟随者向「当前应挂的实例」收敛；任何状态变化后都调它。返回本次发起的旧清理的落定，供下线通知等交接 */
-  const pump = (follower: Follower): Promise<void> | undefined =>
+  /** 让一个跟随者向「当前应挂的实例」收敛；任何状态变化后都调它 */
+  const pump = (follower: Follower): void =>
     scope.resources.run(() => {
       if (follower.busy || follower.attaching) return;
-      let handover: Promise<void> | undefined;
       let desired = desiredProvider(follower);
       if (follower.attached !== undefined && follower.attached !== desired) {
         const cleanup = follower.cleanup;
@@ -93,33 +93,28 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
         follower.busy = true;
         const pending = cleanup ? withdraw(cleanup, name) : undefined;
         follower.busy = false;
-        if (!pending) {
-          releaseEdge?.();
-        } else {
-          // 落定（完成或被拒——被拒不代表资源已释放，只是不再等）之后释放依赖边
-          const settled = Promise.resolve(pending).then(
-            () => undefined,
-            () => undefined,
-          );
-          if (follower.overlap) {
-            settled.then(() => releaseEdge?.());
-            handover = settled;
-          } else {
-            follower.busy = true;
-            settled.then(() => {
-              releaseEdge?.();
-              follower.busy = false;
-              pump(follower);
-            });
-            return settled;
-          }
+        // 落定（完成或被拒——被拒不代表资源已释放，只是不再等）之后释放依赖边；提供者撤回段等它
+        const settled = pending
+          ? Promise.resolve(pending).then(
+              () => undefined,
+              () => undefined,
+            )
+          : undefined;
+        releaseEdge?.(settled);
+        if (settled && !follower.overlap) {
+          follower.busy = true;
+          settled.then(() => {
+            follower.busy = false;
+            pump(follower);
+          });
+          return;
         }
       }
       // 旧清理可以同步改偏好、退订或关闭；不能拿回调之前的胜者继续挂载。
       desired = desiredProvider(follower);
       if (follower.attached === undefined && desired !== undefined) {
         follower.attached = desired;
-        follower.releaseEdge = scope.retainBinding(name);
+        follower.releaseEdge = scope.retainBinding(name, () => pump(follower));
         follower.attaching = true;
         try {
           const ret: unknown = follower.attach(desired);
@@ -143,14 +138,12 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
         if (follower.cancelled || scope.resources.disposed || follower.attached !== desiredProvider(follower))
           pump(follower);
       }
-      return handover;
     });
 
   const subscribe = (): void => {
     subscribed = true;
     watchService<P>(scope.services, scope.events, scope.resources, name, () => {
-      const pending = [...followers].map(follower => pump(follower)).filter(p => p !== undefined);
-      return pending.length === 0 ? undefined : Promise.all(pending);
+      for (const follower of [...followers]) pump(follower);
     });
   };
 
