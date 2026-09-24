@@ -28,10 +28,9 @@ interface ServiceEntry {
   /**
    * 清理归属：注册方本次激活的身份。与 `contextId`（逻辑身份，供
    * 路由 / 显示 / 偏好 / 前缀查询）分开——同名激活各有各的 owner，一方拆卸不清另一方。
-   * 直接注册而未传 owner 的条目不被拆卸自动清理，由调用方用返回值自管。
    * @internal
    */
-  owner?: symbol;
+  owner: symbol;
   /** 可选的展示标签（如 "OpenAI / gpt-4o"） */
   label?: string;
 }
@@ -54,7 +53,7 @@ export class ServiceContainer {
    * 注册一个服务实例。容器只按名字存取，不认识类型——实现是否满足契约由服务描述符在
    * `provide(descriptor, impl)` 处约束。
    *
-   * @param owner 清理归属（provide 能力传入）；省略则该条目不被拆卸自动清理，用返回的退订闭包自管。
+   * @param owner 清理归属（注册方这次激活的身份），拆卸时按它整体摘除。
    * @returns 退订闭包；返回这次是否真的摘掉了条目——同一条目退订两次、或已被 unregisterByOwner
    *   清走时为 false，门面据此决定要不要发 `service:unregistered`。
    */
@@ -62,7 +61,7 @@ export class ServiceContainer {
     name: string,
     instance: unknown,
     contextId: string,
-    owner?: symbol,
+    owner: symbol,
     options?: { priority?: number; label?: string; exclusive?: boolean },
   ): () => boolean {
     // 空实现会骗过 require() 的缺席判断；非有限 priority 让 sort 比较器返回 NaN，先登记者盖过后来的有限值

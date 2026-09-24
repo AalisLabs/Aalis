@@ -9,8 +9,8 @@ import { freezeActivations } from './close-plan.js';
 import {
   type ActivationDeps,
   activatePlugin,
-  computeTargetState,
   type PluginRecord,
+  requiredSatisfied,
   retireBatch,
 } from './plugin-activation.js';
 import { topoSortByDeps } from './plugin-topology.js';
@@ -528,7 +528,7 @@ export class PluginManager implements PluginManagerService {
       const retiring: PluginRecord[] = [];
       for (const entry of [...order].reverse()) {
         if (entry.state !== 'active') continue;
-        if (computeTargetState(entry, this.host.runtime.services) === 'active') continue;
+        if (requiredSatisfied(entry, this.host.runtime.services)) continue;
         const unmet = entry.required.find(name => this.host.runtime.services.get(name) === undefined);
         this.logger.info(`依赖 "${unmet}" 不可用，停用插件: ${entry.instanceId}`);
         retiring.push(entry);
@@ -545,7 +545,7 @@ export class PluginManager implements PluginManagerService {
         if (this.shuttingDown || this.queued === 'shutdown') break converge;
         if (entry.state !== 'pending') continue;
         if (retryBudget.get(entry) === 0) continue;
-        if (computeTargetState(entry, this.host.runtime.services) !== 'active') continue;
+        if (!requiredSatisfied(entry, this.host.runtime.services)) continue;
         const result = await activatePlugin(entry, this.deps);
         if (result === 'retry') {
           // 首次失败按当时图规模取额；后续新增插件也不能让失稳 entry 不断扩额。

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { ServiceContainer } from '../../packages/core/src/primitives/services.js';
 
+const OWNER = Symbol('owner');
+
 // ════════════════════════════════════════════════════════════
 // `get()` 与「偏好 > 优先级 > 注册顺序」的一致性
 //
@@ -75,7 +77,7 @@ const CASES: Case[] = [
 
 function build(c: Case): ServiceContainer {
   const sc = new ServiceContainer();
-  for (const e of c.entries) sc.register('svc', { tag: e.ctxId }, e.ctxId, undefined, { priority: e.priority });
+  for (const e of c.entries) sc.register('svc', { tag: e.ctxId }, e.ctxId, OWNER, { priority: e.priority });
   if (c.preference) sc.prefer('svc', c.preference);
   return sc;
 }

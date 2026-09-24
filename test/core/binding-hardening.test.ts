@@ -13,6 +13,8 @@ import { ServiceContainer } from '../../packages/core/src/primitives/services.js
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
+const OWNER = Symbol('owner');
+
 const tick = () => new Promise<void>(r => setImmediate(r));
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
@@ -464,9 +466,9 @@ describe('provide：空实现与非有限 priority 拒绝', () => {
 
   it('ServiceContainer.register 同样拒空实现与非有限 priority', () => {
     const c = new ServiceContainer();
-    expect(() => c.register('x', null, 'id')).toThrow('provide 的实现不能为空');
-    expect(() => c.register('x', undefined, 'id')).toThrow('provide 的实现不能为空');
-    expect(() => c.register('x', { v: 1 }, 'id', undefined, { priority: Number.NaN })).toThrow(
+    expect(() => c.register('x', null, 'id', OWNER)).toThrow('provide 的实现不能为空');
+    expect(() => c.register('x', undefined, 'id', OWNER)).toThrow('provide 的实现不能为空');
+    expect(() => c.register('x', { v: 1 }, 'id', OWNER, { priority: Number.NaN })).toThrow(
       'provide 的 priority 必须是有限数字（收到 NaN）',
     );
   });
