@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { pluginSource } from '../../packages/api-plugin-source/src/index.js';
 import { App, definePlugin, defineService, lifecycle, provide, services } from '../../packages/core/src/index.js';
 import packageManagerPlugin, {
   buildUpdateSpecs,
@@ -15,6 +16,7 @@ import packageManagerPlugin, {
   stripVersion,
 } from '../../packages/plugin-package-manager/src/index.js';
 import { createNodeModulesPluginLoader } from '../../packages/runtime/src/node-modules-loader.js';
+import { createPluginDiscovery } from '../../packages/runtime/src/plugin-discovery.js';
 
 // 从被测模块的依赖契约推导类型，避免测试直接 import api 包（knip unlisted-dep）
 type ProcessService = PackageManagerDeps['proc'];
@@ -952,12 +954,11 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       );
       writeFileSync(join(dir, 'index.mjs'), 'export default { name: "other-name", apply() {} };\n');
 
-      const app = new App({
-        config: { name: 'PM', logLevel: 'error', plugins: {} },
-        pluginLoader: createNodeModulesPluginLoader(proj),
-      });
+      const app = new App({ config: { name: 'PM', logLevel: 'error', plugins: {} } });
       productionApps.push(app);
       const host = app.bind({ provide, services });
+      const discovery = createPluginDiscovery(app, createNodeModulesPluginLoader(proj));
+      host.provide(pluginSource, { rescan: () => discovery.rescan() });
       host.provide(defineService<object>('process'), {
         readExternalFile: async (abs: string) => {
           try {
@@ -1001,12 +1002,11 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
       );
       writeFileSync(join(dir, 'index.mjs'), 'export default { name: "other-name", apply() {} };\n');
 
-      const app = new App({
-        config: { name: 'PM', logLevel: 'error', plugins: {} },
-        pluginLoader: createNodeModulesPluginLoader(proj),
-      });
+      const app = new App({ config: { name: 'PM', logLevel: 'error', plugins: {} } });
       productionApps.push(app);
       const host = app.bind({ provide, services });
+      const discovery = createPluginDiscovery(app, createNodeModulesPluginLoader(proj));
+      host.provide(pluginSource, { rescan: () => discovery.rescan() });
       host.provide(defineService<object>('process'), {
         readExternalFile: async (abs: string) => {
           try {
@@ -1019,7 +1019,7 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
         makeTempDir: async () => ({ path: '/tmp/fake-pm', cleanup: async () => undefined }),
       });
 
-      await app.rescanPlugins();
+      await discovery.rescan();
       await app.plugins.idle();
       expect(app.plugins.getPlugin('other-name')).toBeDefined();
 

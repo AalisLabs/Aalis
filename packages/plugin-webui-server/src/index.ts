@@ -23,6 +23,7 @@ import {
   type PlatformConnection,
   platform,
 } from '@aalis/api-platform';
+import { pluginSource } from '@aalis/api-plugin-source';
 import { createProcessGateway, processService } from '@aalis/api-process';
 import { type ConfirmChannel, sessionConfirm } from '@aalis/api-session-confirm';
 import type {} from '@aalis/api-session-manager';
@@ -334,6 +335,7 @@ const uses = {
   hostConfig: optional(hostConfig),
   app: optional(appService),
   plugins: optional(pluginsService),
+  source: optional(pluginSource),
   storage: optional(storage),
   authority: optional(authority),
   commands: optional(commands),
@@ -619,6 +621,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     {
       app: caps.app,
       plugins: caps.plugins,
+      source: caps.source,
       hostConfig: caps.hostConfig,
       tools: caps.tools,
       commands: caps.commands,

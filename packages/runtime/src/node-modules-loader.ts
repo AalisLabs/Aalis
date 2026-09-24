@@ -3,8 +3,10 @@ import { stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { Logger, PluginDefinition, PluginDescriptor, PluginLoader } from '@aalis/core';
-import { DefaultLogger, pluginDefinitionOf } from '@aalis/core';
+import { pluginDefinitionOf } from '@aalis/api-plugin-source';
+import type { Logger, PluginDefinition } from '@aalis/core';
+import { DefaultLogger } from '@aalis/core';
+import type { PluginDescriptor, PluginLoader } from './plugin-discovery.js';
 
 // ============================================================
 // NodeModulesPluginLoader —— 从 node_modules 解析并加载插件
@@ -40,7 +42,7 @@ export function isLoadablePlugin(meta: Record<string, unknown>): boolean {
 
 /**
  * 从已导入模块取出定义，并按加载器政策出声：形状不对必须 warn；定义 name 与包名不一致也必须点名。
- * 判定本身在 `@aalis/core` 的 `pluginDefinitionOf`；两加载器共用本包装，告警文案只有这一份。
+ * 判定本身在 `@aalis/api-plugin-source` 的 `pluginDefinitionOf`；两加载器共用本包装，告警文案只有这一份。
  */
 export function loadPluginDefinition(ns: unknown, pkgName: string, logger: Logger): PluginDefinition | null {
   const def = pluginDefinitionOf(ns);

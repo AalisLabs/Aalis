@@ -12,7 +12,7 @@ import type { Logger } from '../infrastructure/logger.js';
  * 按"提供者 → 消费者"方向的拓扑排序（Kahn），结果正序即激活顺序。
  * required 依赖方排在该服务的每个声明提供者之后，apply 时看到的是最终胜者（重启首选提供者后
  * 不挂到后备上）。首个声明的提供者是硬边（依赖方自己就是首个声明者时不加）；其余提供者若传递地依赖这个依赖方，
- * 不加那条边，不制造伪环。
+ * 不加那条边，不制造伪环。同时就绪的插件按登记序取，冷启动与提供者重启后的重新激活走同一个确定次序。
  *
  * 仅 required 依赖参与建图：optional 的语义是"如果存在则消费"，缺席照样激活，
  * 不应制造排序约束——否则插件之间互为 optional 会产生伪环并退化到声明序。
@@ -65,8 +65,12 @@ export function topoSortByDeps(entries: PluginRecord[], logger: Logger): PluginR
   for (const [id, deg] of inDegree) {
     if (deg === 0) queue.push(id);
   }
+  const rank = new Map(entries.map((e, i) => [e.instanceId, i]));
   while (queue.length) {
-    const id = queue.shift()!;
+    // 就绪者里取登记序最早的（而非先就绪的）：激活次序只由依赖与登记序决定
+    let at = 0;
+    for (let i = 1; i < queue.length; i++) if (rank.get(queue[i])! < rank.get(queue[at])!) at = i;
+    const [id] = queue.splice(at, 1);
     result.push(entryById.get(id)!);
     for (const dep of dependents.get(id)!) {
       inDegree.set(dep, inDegree.get(dep)! - 1);

@@ -67,7 +67,7 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 每轮（非 shutdown）：
 
-1. 按 required 依赖正序（提供者 → 消费者）拓扑排序。仅 required 参与建图；optional 缺席照样激活，不制造排序约束。
+1. 按 required 依赖正序（提供者 → 消费者）拓扑排序，同时就绪者按登记序。仅 required 参与建图；optional 缺席照样激活，不制造排序约束。
 2. **Phase A**：把目标不再是 `active` 的成批关闭。它们之间的次序由关停编排按实际绑定决定，不是注册序。
 3. **Phase B**：正向遍历，激活目标 `active` 且依赖满足的 pending entry（提供者先起、消费者后起）。
 4. 本轮有变动则继续下一轮，直到稳定或达到上限（`2×插件数 + 8`）。非停机时发 `plugins:changed`。

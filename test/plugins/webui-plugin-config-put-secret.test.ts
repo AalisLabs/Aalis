@@ -53,6 +53,7 @@ function setup() {
     app as never,
     {
       app: ref<AppService>({ saveConfig: () => {}, restart: () => {} }),
+      source: { current: undefined },
       plugins: ref<PluginManagerService>({
         getPlugin: () => ({
           definition: { configSchema: SCHEMA },

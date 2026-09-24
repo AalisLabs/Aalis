@@ -4,6 +4,7 @@
 // （日志 sink / 终端复原 / 子命令分发）。core 只产生 LogEntry，染色/TTY/文件落盘全在本层。
 //   - createNodeModulesPluginLoader：纯 npm 独立部署（从 node_modules 解析插件）
 //   - createFsPluginLoader：monorepo 自托管（扫描 packages/ 目录）
+//   - createPluginDiscovery：把加载器发现的插件整批交给 core，并提供热扫描（plugin-source 服务的实现）
 //   - createFsYamlConfigProvider / createProcessRespawnStrategy：YAML 配置 + 进程级重启
 //   - startAalis：组装以上 + 宿主件为实例并启动（带 options 开关，默认独立部署）
 //   - install*/setup*/tryDispatchSubcommand：宿主件，供高级 opt-in 组装
@@ -18,6 +19,12 @@ export {
 export { type ConsoleSinkHandle, installConsoleSink } from './console-sink.js';
 export { appendCrashLog, DEFAULT_LOG_FILE, type FileLoggerHandle, setupFileLogger } from './file-logger.js';
 export { createNodeModulesPluginLoader } from './node-modules-loader.js';
+export {
+  createPluginDiscovery,
+  type PluginDescriptor,
+  type PluginDiscovery,
+  type PluginLoader,
+} from './plugin-discovery.js';
 export {
   buildRespawnCommand,
   createFsPluginLoader,
