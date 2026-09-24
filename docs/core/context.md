@@ -34,7 +34,6 @@ export default definePlugin({
 | `displayName` / `subsystem` | 展示元数据。core 不读、不校验 `subsystem` 取值 |
 | `uses` | 用到的全部能力。键是 `apply` 的参数名，值是描述符；可选依赖包一层 `optional()`。没有默认注入 |
 | `provides` | 本插件提供的服务描述符列表。激活后按本次激活的 instanceId 校验确已 `provide`；未提供则本次激活进入 `error` |
-| `core` | 核心插件，不能被用户禁用 |
 | `reusable` | 允许同一份定义以 `name:suffix` 多次注册；默认 false |
 | `apply(caps)` | 拿到绑定接口后的装配。可返回 Promise |
 
