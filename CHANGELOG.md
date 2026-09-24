@@ -25,7 +25,7 @@
 ### 收回内部对象、删除死接口（@aalis/core）
 
 - `AppOptions` 不再接受注入 events / services / hooks / contributions 注册表，`config` 只接受快照。包根不再导出 `EventBus` / `HookRegistry` / `ServiceContainer` / `ContributionRegistry` / `PluginManager`；`App` 上的四个注册表字段收回，`app.plugins` 的类型是 `PluginManagerService`。
-- 删除 `PluginDefinition.core`（「核心插件不能被禁用」）、`PluginManager.isShuttingDown` / `softReload`、`ConfigManager.reloadFrom`，以及 `bounce` 对 `module` 选项的拒绝分支。
+- 删除 `PluginDefinition.core`（「核心插件不能被禁用」）、`PluginManager.isShuttingDown` / `softReload`、`ConfigManager.reloadFrom`、`BindingPort.closed`（无使用方；插件判断本次激活是否已关闭用 `lifecycle.closed`），以及 `bounce` 对 `module` 选项的拒绝分支。
 
 **迁移**：宿主查询服务经 `app.bind({ services })`；要禁止某插件被禁用的宿主在管理面自行拦截。
 
