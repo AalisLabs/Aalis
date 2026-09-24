@@ -130,7 +130,6 @@ export class ConfigManager {
 
   removePluginConfig(instanceId: string): void {
     assertSafePluginId(instanceId);
-    if (!Object.hasOwn(this.config.plugins, instanceId)) return;
     delete this.config.plugins[instanceId];
   }
 
@@ -164,7 +163,6 @@ export class ConfigManager {
 
   removeServicePreference(name: string): void {
     if (!this.config.servicePreferences || isUnsafeConfigKey(name)) return;
-    if (!Object.hasOwn(this.config.servicePreferences, name)) return;
     delete this.config.servicePreferences[name];
   }
 
@@ -212,7 +210,7 @@ function copyOwnSafeStringDict(input: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
   for (const key of Object.keys(input)) {
-    if (isUnsafeConfigKey(key) || !Object.hasOwn(input, key)) continue;
+    if (isUnsafeConfigKey(key)) continue;
     const val = (input as Record<string, unknown>)[key];
     if (typeof val === 'string') out[key] = val;
   }
