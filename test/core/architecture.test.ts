@@ -517,3 +517,85 @@ describe('内置事件出口：App 等待屏障，通知不阻塞状态机', () 
     for (const { spec } of imports) expect(violation('composition', resolveTarget(file, spec)!)).not.toBeNull();
   });
 });
+
+// ── core 体量上限 ──
+//
+// 去掉注释与空行后的代码行数。上限是本轮精简实施后的实测值加少量余量；抬高上限的提交必须写明对应哪条用户
+// 决定，不能顺手抬。口径与仓库外的 count-code-lines-fixed.cjs 相同：逐字符状态机去注释（识别字符串、
+// 模板串含嵌套 ${}），再数非空行。
+const CORE_CODE_LINE_CEILING = 3000;
+
+/** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
+function stripComments(src: string): string {
+  let out = '';
+  let i = 0;
+  const stack: Array<'`' | '{'> = [];
+  while (i < src.length) {
+    const c = src[i];
+    const d = src[i + 1];
+    const top = stack[stack.length - 1];
+    if (top === '`') {
+      if (c === '\\') {
+        out += c + d;
+        i += 2;
+      } else if (c === '`') {
+        stack.pop();
+        out += c;
+        i++;
+      } else if (c === '$' && d === '{') {
+        stack.push('{');
+        out += '${';
+        i += 2;
+      } else {
+        out += c;
+        i++;
+      }
+      continue;
+    }
+    if (c === '/' && d === '/') {
+      while (i < src.length && src[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && d === '*') {
+      const j = src.indexOf('*/', i + 2);
+      out += src.slice(i, j + 2).replace(/[^\n]/g, '');
+      i = j + 2;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      out += c;
+      i++;
+      while (i < src.length && src[i] !== c) {
+        if (src[i] === '\\') {
+          out += src[i] + src[i + 1];
+          i += 2;
+        } else {
+          out += src[i];
+          i++;
+        }
+      }
+      out += c;
+      i++;
+      continue;
+    }
+    if (c === '`') stack.push('`');
+    else if (c === '{' && stack.length) stack.push('{');
+    else if (c === '}' && top === '{') stack.pop();
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+describe('core 体量上限', () => {
+  it(`packages/core/src 去注释后的代码行不超过 ${CORE_CODE_LINE_CEILING}`, () => {
+    let total = 0;
+    for (const file of walk(SRC_DIR)) {
+      total += stripComments(readFileSync(file, 'utf-8'))
+        .split('\n')
+        .filter(line => line.trim() !== '').length;
+    }
+    expect(total, '抬高上限须在同一提交里写明对应哪条用户决定').toBeLessThanOrEqual(CORE_CODE_LINE_CEILING);
+    expect(total, '上限应贴着实测值：低于上限太多说明该收紧').toBeGreaterThan(CORE_CODE_LINE_CEILING - 200);
+  });
+});
