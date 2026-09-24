@@ -77,19 +77,20 @@ export async function retireEntry(
  * 插件必须走这里而不是逐个 retireEntry，否则它们之间的关闭次序只剩注册序。
  * entries 的给定次序是无依赖关系时的关闭次序。
  *
+ * @param targetState 整批的目标态，或按条目给（管理动作的主体另有终态，同批下游转 pending）
  * @param planRoot 停机时传根激活：宿主的根绑定（app.bind）与全部插件进同一张计划，
  *   宿主的收尾因此排在它用到的插件关闭之前。
  * @param settle 已冻的计划（`App.stop` 在 `app:stopping` 之前 freeze）；缺省由 closeActivations 现冻。
  */
 export async function retireBatch(
   entries: PluginRecord[],
-  targetState: 'pending' | 'disposed',
+  targetState: PluginState | ((entry: PluginRecord) => PluginState),
   deps: ActivationDeps,
   opts?: { emitUnloaded?: boolean; planRoot?: Activation; settle?: Map<Activation, () => void> },
 ): Promise<void> {
   const closing: Array<{ entry: PluginRecord; activation: Activation }> = [];
   for (const entry of entries) {
-    entry.state = targetState;
+    entry.state = typeof targetState === 'function' ? targetState(entry) : targetState;
     if (entry.activation) closing.push({ entry, activation: entry.activation });
   }
   try {

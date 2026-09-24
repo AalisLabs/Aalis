@@ -62,7 +62,7 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 │   App · definePlugin / defineService · PluginManager          │
 │   EventBus · ServiceContainer · HookRegistry · ConfigManager   │
 │   Logger · 内置能力描述符                                      │
-│   Lifecycle · DisposableChain（资源内核，不导出）              │
+│   DisposableChain（资源内核，不导出）                         │
 │   扩展点：AalisEvents / HookContextMap / ContributionPointMap  │
 │   （业务接口均在 api-*，类型随描述符走）                       │
 └──────────────────────────────────────────────────────────────┘
@@ -260,7 +260,7 @@ optional 上下线与胜者替换不改变目标态，不级联 bounce。有状�
 
 如本轮有变动则进入下一轮，直到稳定或达到轮次上限（`maxRounds = 2×插件数 + 8`）。
 
-整体停机（`app.stop()`）单飞：先冻闸并进入停机态，再 `idle()`，再发 `app:stopping`，等监听器完成后执行停机计划。每次调用都返回完整停机的同一 Promise；监听器与清理回调不能 await 或返回它，以免等待自身。全部 active 插件与根激活进同一张计划：每个激活 drain 后 close。optional 依赖成环时，分量内成员先全部 drain，再任一 close。边规则见 [插件定义与能力](core/context.md)。单插件 unload / disable / bounce 只拆该插件，不享有整次停机的交接保证。动态 `services.get` 不产生依赖边，关停期间可能取到空。
+整体停机（`app.stop()`）单飞：先冻闸并进入停机态，再 `idle()`，再发 `app:stopping`，等监听器完成后执行停机计划。每次调用都返回完整停机的同一 Promise；监听器与清理回调不能 await 或返回它，以免等待自身。全部 active 插件与根激活进同一张计划：每个激活 drain 后 close。optional 依赖成环时，分量内成员先全部 drain，再任一 close。边规则见 [插件定义与能力](core/context.md)。单插件 unload / disable / bounce 同样先关正在用它的 required 下游（传递闭包），下游收尾时提供者仍在。动态 `services.get` 不产生依赖边，关停期间可能取到空。
 
 ### 隔离粒度
 
