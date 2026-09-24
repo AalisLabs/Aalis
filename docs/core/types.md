@@ -69,7 +69,7 @@ interface PluginEntry {
 function parseInstanceId(instanceId: string): { moduleName: string; suffix?: string };
 ```
 
-公开类型不声明内部激活记录；`getPlugin()` 当前返回现场条目，管理面应只读，状态与配置变更须经管理 API。状态摘要 `PluginStatusEntry` 另含 `provides` / `core` / `reusable` / `requiredServices` / `optionalServices`；`uses` 是完整声明的快照，每项为 `{ key, service, kind: 'required' | 'optional' }`，保留参数别名，零声明为 `[]`。Core 基础服务也计入对应依赖列表，不再另设 builtin 类别。配置详情经 `getPlugin(instanceId)` 从 `entry.config` / `entry.definition` 读取。
+公开类型不声明内部激活记录；经 `pluginsService` 拿到的 `getPlugin()` 是快照，宿主侧 `app.plugins.getPlugin()` 返回现场条目、应只读，状态与配置变更须经管理 API。状态摘要 `PluginStatusEntry` 另含 `provides` / `core` / `reusable` / `requiredServices` / `optionalServices`；`uses` 是完整声明的快照，每项为 `{ key, service, kind: 'required' | 'optional' }`，保留参数别名，零声明为 `[]`。Core 基础服务也计入对应依赖列表，不再另设 builtin 类别。配置详情经 `getPlugin(instanceId)` 从 `entry.config` / `entry.definition` 读取。
 
 ---
 
@@ -95,7 +95,7 @@ interface ServiceView<T = unknown> {
   label?: string;
 }
 
-interface BindingPort<P> { /* name, id, logger, closed, current, require, all, follow, track, registrar */ }
+interface BindingPort<P> { /* name, id, identity, logger, closed, current, require, all, follow, track, registrar */ }
 interface Registrar<Item> {
   add(item: Item): () => void;
 }
@@ -111,9 +111,9 @@ function serviceRef<P, E extends object>(port: BindingPort<P>, extra: E): Servic
 
 `ProviderOf<D>` / `BoundOf<U>` / `Uses` 是推导载体。详见 [service.md](service.md)、[hub-services.md](../design/hub-services.md)。
 
-`serviceFactory` 返回 `ServiceFactory<T>`，回调同步创建 T，不能返回 Promise。回调的 `ServiceScope` 提供消费者的 `id` / `identity` / `logger` / `config` / `closed`，以及 `track` / `onDrain` / `onDispose`。完整寿命与回滚契约见 [服务工厂](service.md#按消费者创建实例)。
+`BindingPort.identity` 是这次激活的不透明资源身份（`symbol`），也是以这次激活名义调用提供者的凭据，见 [资源身份](service.md#资源身份)。
 
-`ServiceInfo` 是无实例的登记元数据：`contextId`、`priority`、可选 `label`、`scope: 'shared' | 'activation'`、`exclusive: boolean`。由 `services.inspect(key)` 与 `ServiceContainer.inspect(name)` 返回；查询不会执行工厂。
+`ServiceInfo` 是无实例的登记元数据：`contextId`、`priority`、可选 `label`、`exclusive: boolean`。由 `services.inspect(key)` 与 `ServiceContainer.inspect(name)` 返回。
 
 ---
 
@@ -121,7 +121,7 @@ function serviceRef<P, E extends object>(port: BindingPort<P>, extra: E): Servic
 
 值导出（插件放进 `uses`）：`events`、`hooks`、`contributions`、`lifecycle`、`logger`、`config`、`provide`、`services`。
 
-宿主共享实例服务：`appService`、`pluginsService`、`hostConfig`。上面八项由同步工厂按消费者激活创建；两类共用同一套服务协议，都须显式 `uses`。
+宿主服务：`appService`、`pluginsService`、`hostConfig`。两类都由根激活经 `provide` 独占登记，共用同一套服务协议，都须显式 `uses`；上面八项的提供者按调用方激活交出接口，见 [内置服务的登记](service.md#内置服务的登记)。
 
 ```typescript
 interface LifecycleCap {
@@ -141,7 +141,7 @@ interface ProvideOptions {
 
 type Provide = <D extends ServiceDescriptor<any, any>>(
   descriptor: D,
-  implementation: ProviderOf<D> | ServiceFactory<ProviderOf<D>>,
+  implementation: ProviderOf<D>,
   options?: ProvideOptions,
 ) => () => void;
 ```
