@@ -105,12 +105,10 @@ export class Resources {
   }
 
   async #teardown(timeoutMs?: number): Promise<void> {
-    this.#closing = true;
-    if (this.#initialization) await awaitWithTimeout(this.#initialization, timeoutMs, this.#timeout('等待初始化落定'));
+    // 收尾段（等初始化、排空收尾链）已由编排者提前执行时只等它，不再等第二遍初始化。
     // 没有收尾项时不得多让出一拍：撤回一向与 disposeAsync() 同栈发起；没有待等的下游交接时，清理的首个回调也同栈
-    if (this.#drained) await this.#drained;
-    else if (this.draining.size > 0) await this.draining.disposeAsync(timeoutMs);
-    else this.draining.dispose();
+    const drained = this.drain(timeoutMs);
+    if (drained) await drained;
     this.hooks.beforeCleanup?.();
     const handover = this.hooks.afterWithdraw?.();
     if (handover) await awaitWithTimeout(handover, timeoutMs, this.#timeout('等待下游交接'));
