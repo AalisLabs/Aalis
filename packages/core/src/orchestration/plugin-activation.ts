@@ -102,24 +102,16 @@ export function computeTargetState(entry: PluginRecord, services: ServiceContain
  *
  * 本次 required 引用缺席：清理失败激活后回到 pending，并让重算继续观察可能已恢复的依赖。
  * 其余失败转为 error 态（带 message），外层 recompute 不会重试。
- * 调用方需保证 entry.state === 'pending' 才调用本函数（否则直接 return）。
+ * 前置条件（唯一调用方 recomputeOnce 的 Phase B 在同一拍里已判定）：entry 为 pending，required 依赖都有提供者。
  */
 export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps): Promise<'retry' | undefined> {
   const { host, logger } = deps;
   const services = host.runtime.services;
-  if (entry.state !== 'pending') return;
 
   // 旧激活仍在拆卸中（bounce 先置 'pending'、后异步拆旧激活，拆完才清
   // entry.activation）：此刻重新激活会让新旧实例同 instanceId 并存——同名服务重复
   // provide、偏好按 contextId 二义。跳过本轮，等管理路径收尾后的 recompute 重新调度。
   if (entry.activation) return;
-
-  for (const name of entry.required) {
-    if (services.get(name) === undefined) {
-      logger.debug(`插件 "${entry.instanceId}" 等待服务: ${name}`);
-      return;
-    }
-  }
 
   // 先标记为 activating，防止 service:registered 事件导致重入
   entry.state = 'activating';
