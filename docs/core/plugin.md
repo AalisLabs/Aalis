@@ -72,7 +72,7 @@ type RecomputeKind = 'changed' | 'shutdown';
 3. **Phase B**：正向遍历，激活目标 `active` 且依赖满足的 pending entry（提供者先起、消费者后起）。
 4. 本轮有变动则继续下一轮，直到稳定或达到上限（`2×插件数 + 8`）。非停机时发 `plugins:changed`。
 
-`computeTargetState`：`disabled` / `disposed` / `error` 是显式态，recompute 不动它们；required 不满足 → `pending`；其余 → `active`。optional 依赖的上下线不改变目标态：绑定接口每次查询解析当前值，有状态的接线经 `follow` 跟随提供者换人，不靠重启插件。
+`disabled` / `disposed` / `error` 是显式态，recompute 不动它们；active / pending 条目的目标态只看 required 依赖此刻是否都有提供者（`requiredSatisfied`）：不满足 → `pending`，满足 → `active`。optional 依赖的上下线不改变目标态：绑定接口每次查询解析当前值，有状态的接线经 `follow` 跟随提供者换人，不靠重启插件。
 
 管理动作收尾时调用 `recompute('changed')`；`stopAll()` 是 `recompute('shutdown')` 的薄壳。`App.stop()` 单飞：先 `beginShutdown()`（置停机态并冻计划）再 `idle()`，然后发 `app:stopping`，最后 `stopAll()` 执行 drain / close。停机进行中 `register` / `bounce` 返回 false；`unload` / `disable` 汇入已冻计划后立即返回 true。每次 `stop()` 都返回完整停机的同一 Promise；`app:stopping` 监听器与清理回调不能 await 或返回它，以免等待自身。
 
