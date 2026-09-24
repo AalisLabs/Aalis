@@ -23,8 +23,15 @@ export class Resources {
   constructor(
     private readonly id: string,
     private readonly logger: Logger,
-    /** beforeCleanup：收尾之后、清理链之前撤回宿主对外暴露的资源；afterCleanup：清理链之后收尾。均同步。 */
-    private readonly hooks: { beforeCleanup?: () => void; afterCleanup?: () => void } = {},
+    /**
+     * beforeCleanup：收尾之后、清理链之前撤回宿主对外暴露的资源（同步）；afterWithdraw：撤回之后、清理链
+     * 之前等下游对已撤回资源的交接落定（返回待等的 Promise，没有则 undefined）；afterCleanup：清理链之后收尾（同步）。
+     */
+    private readonly hooks: {
+      beforeCleanup?: () => void;
+      afterWithdraw?: () => Promise<unknown> | undefined;
+      afterCleanup?: () => void;
+    } = {},
   ) {
     const settle = (timeoutMs?: number) =>
       this.#operations === 0 && this.#inflight.size === 0 ? undefined : this.#settle(timeoutMs);
@@ -105,6 +112,8 @@ export class Resources {
     else if (this.draining.size > 0) await this.draining.disposeAsync(timeoutMs);
     else this.draining.dispose();
     this.hooks.beforeCleanup?.();
+    const handover = this.hooks.afterWithdraw?.();
+    if (handover) await awaitWithTimeout(handover, timeoutMs, this.#timeout('等待下游交接'));
     await this.disposables.disposeAsync(timeoutMs);
     this.hooks.afterCleanup?.();
   }

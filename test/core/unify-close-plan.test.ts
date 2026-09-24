@@ -285,7 +285,7 @@ describe('关停编排：归属树与服务依赖共同决定顺序', () => {
 });
 
 describe('各关闭入口共用同一套编排', () => {
-  it('单独卸载提供者：不享有全应用停机的交接保证——消费者随后才停用，它的收尾已够不到该提供者', async () => {
+  it('单独卸载提供者：正在用它的消费者先收尾，收尾时提供者仍在；随后消费者转 pending', async () => {
     const w = world();
     let seenInDrain: string | undefined;
     await w.app.plugin(storageDef(w));
@@ -304,7 +304,7 @@ describe('各关闭入口共用同一套编排', () => {
     await w.app.plugins.unload('storage');
     await w.app.plugins.idle();
     expect(w.app.plugins.getStatus().find(s => s.instanceId === 'consumer')?.state).toBe('pending');
-    expect(seenInDrain, '要保住交接，就先停消费者或走 app.stop()').toBe('gone');
+    expect(seenInDrain, '管理动作与整机停机同一套交接保证').toBe('alive');
   });
 });
 

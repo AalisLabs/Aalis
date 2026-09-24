@@ -77,10 +77,11 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
   const desiredProvider = (follower: Follower): P | undefined =>
     follower.cancelled || scope.resources.disposed ? undefined : scope.services.get<P>(name);
 
-  /** 让一个跟随者向「当前应挂的实例」收敛；任何状态变化后都调它 */
-  const pump = (follower: Follower): void =>
+  /** 让一个跟随者向「当前应挂的实例」收敛；任何状态变化后都调它。返回本次发起的旧清理的落定，供下线通知等交接 */
+  const pump = (follower: Follower): Promise<void> | undefined =>
     scope.resources.run(() => {
       if (follower.busy || follower.attaching) return;
+      let handover: Promise<void> | undefined;
       let desired = desiredProvider(follower);
       if (follower.attached !== undefined && follower.attached !== desired) {
         const cleanup = follower.cleanup;
@@ -88,7 +89,10 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
         follower.attached = undefined;
         follower.cleanup = undefined;
         follower.releaseEdge = undefined;
+        // 旧清理同步段内的重入 pump 让步：它可能同步改胜者，新实例须等本次收敛决定
+        follower.busy = true;
         const pending = cleanup ? withdraw(cleanup, name) : undefined;
+        follower.busy = false;
         if (!pending) {
           releaseEdge?.();
         } else {
@@ -99,6 +103,7 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
           );
           if (follower.overlap) {
             settled.then(() => releaseEdge?.());
+            handover = settled;
           } else {
             follower.busy = true;
             settled.then(() => {
@@ -106,7 +111,7 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
               follower.busy = false;
               pump(follower);
             });
-            return;
+            return settled;
           }
         }
       }
@@ -138,12 +143,14 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
         if (follower.cancelled || scope.resources.disposed || follower.attached !== desiredProvider(follower))
           pump(follower);
       }
+      return handover;
     });
 
   const subscribe = (): void => {
     subscribed = true;
     watchService<P>(scope.services, scope.events, scope.resources, name, () => {
-      for (const follower of [...followers]) pump(follower);
+      const pending = [...followers].map(follower => pump(follower)).filter(p => p !== undefined);
+      return pending.length === 0 ? undefined : Promise.all(pending);
     });
   };
 

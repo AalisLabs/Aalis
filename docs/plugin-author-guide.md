@@ -162,7 +162,7 @@ lifecycle.onDispose(() => {
 
 ### 边界：在清理回调里访问其它服务
 
-依赖交接放 `lifecycle.onDrain`（依赖仍可用）。`onDispose` 只释放自己的资源，**不能**假定 `x.current` 还在：拿不到就跳过，不要把只能在 dispose 时落盘的数据攒到最后（每次写点后就保存）。单独卸载提供者（非整机停机）不享有交接保证；其 required 消费者随后才降级。动态 `services.get` 不产生依赖边，关停期间可能取到空。
+依赖交接放 `lifecycle.onDrain`（依赖仍可用）。`onDispose` 只释放自己的资源，**不能**假定 `x.current` 还在：拿不到就跳过，不要把只能在 dispose 时落盘的数据攒到最后（每次写点后就保存）。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者先收尾再关，收尾时提供者仍在；随后消费者转 pending（bounce 后重新激活）。动态 `services.get` 不产生依赖边，关停期间可能取到空。
 
 `App.stop()` 先冻结新增绑定并进入停机态，再发 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。停机期间 `unload` / `disable` 汇入计划后立即返回 true（不等拆卸完成）；`register` / `bounce` 返回 false。
 

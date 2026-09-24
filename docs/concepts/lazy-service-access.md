@@ -129,7 +129,7 @@ export default definePlugin({
 
 `services.get` / `services.all` 是管理、展示面用的动态查询：查到的服务**不是**声明依赖，不参与激活闸，不享有重绑与关停顺序保证。需要这些保证就写进 `uses`。关停期动态查询可能拿空，这是预期（例如 webui 在 file-reader 已关后按名查删除接口会得到 `undefined`，改走自己的 storage）。
 
-单独卸载提供者不享有整个 App 关停的交接保证。
+单独 unload / disable / bounce 提供者时，正在用它的 required 依赖方并入同批先收尾，交接同样成立。
 
 ## 注意事项
 
@@ -153,7 +153,7 @@ export default definePlugin({
 
 `App.stop()` 先排干在飞重算，冻结新增绑定并进入停机态，再发屏障事件 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。停机期间 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成）；`register` / `bounce` 返回 false。
 
-单独卸载提供者不享有上述交接保证。动态 `services.get` 不产生依赖边，关停期间可能取到空。缓存的 `all()[i]` 引用不受关停边保护。
+单独 unload / disable / bounce 提供者时上述交接同样成立（下游先收尾、先关，提供者之后）。动态 `services.get` 不产生依赖边，关停期间可能取到空。缓存的 `all()[i]` 引用不受关停边保护。
 
 ## 一页速查
 
