@@ -2,7 +2,7 @@
 // plugin-activation.ts — 插件激活路径辅助
 //
 // 从 plugin.ts 拆出的"如何把单个 entry 推进到 active 态"逻辑：
-//   - computeTargetState：单个 entry 此刻的目标态
+//   - requiredSatisfied：单个 entry 的 required 依赖此刻是否都有提供者
 //   - activatePlugin：建激活 → 挂载定义 → 校验 provides → 标记 active/error
 //
 // 这些都需要 PluginManager 的状态（host / logger），
@@ -83,18 +83,12 @@ export async function retireBatch(
 }
 
 /**
- * 计算单个 entry 此刻的目标状态（停机不经这里：那是整批单向关闭）。
- *
- * - disabled / disposed / error 是显式态，recompute 不动它们
- * - required 依赖不满足 → pending
- * - 其余 → active。optional 依赖的上下线不改变目标态：绑定接口每次查询解析当前值，
- *   有状态的接线经 follow 跟随提供者换人，不靠重启插件
+ * required 依赖此刻是否都有提供者：recompute 对 active / pending 条目的唯一判据（显式态不经这里，
+ * 停机也不经这里）。optional 依赖的上下线不改变目标态：绑定接口每次查询解析当前值，
+ * 有状态的接线经 follow 跟随提供者换人，不靠重启插件。
  */
-export function computeTargetState(entry: PluginRecord, services: ServiceContainer): PluginState {
-  if (entry.state === 'disabled' || entry.state === 'disposed' || entry.state === 'error') {
-    return entry.state;
-  }
-  return entry.required.some(name => services.get(name) === undefined) ? 'pending' : 'active';
+export function requiredSatisfied(entry: PluginRecord, services: ServiceContainer): boolean {
+  return entry.required.every(name => services.get(name) !== undefined);
 }
 
 /**

@@ -1,18 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { ServiceContainer } from '../../packages/core/src/primitives/services.js';
 
+const OWNER = Symbol('owner');
+
 describe('ServiceContainer', () => {
   it('注册并查询单个服务', () => {
     const c = new ServiceContainer();
-    c.register('__t:llm', { name: 'openai' }, 'plugin-llm-openai');
+    c.register('__t:llm', { name: 'openai' }, 'plugin-llm-openai', OWNER);
     const svc = c.get<{ name: string }>('__t:llm');
     expect(svc?.name).toBe('openai');
   });
 
   it('getAll 返回所有提供者', () => {
     const c = new ServiceContainer();
-    c.register('__t:llm', { name: 'openai' }, 'plugin-llm-openai');
-    c.register('__t:llm', { name: 'deepseek' }, 'plugin-llm-deepseek');
+    c.register('__t:llm', { name: 'openai' }, 'plugin-llm-openai', OWNER);
+    c.register('__t:llm', { name: 'deepseek' }, 'plugin-llm-deepseek', OWNER);
     const all = c.getAll('__t:llm');
     expect(all).toHaveLength(2);
   });
@@ -59,7 +61,7 @@ describe('ServiceContainer', () => {
 
   it('无 owner 的条目不被 unregisterByOwner 触及（绕过门面者用返回值自管）', () => {
     const c = new ServiceContainer();
-    const off = c.register('svc', { g: 0 }, 'dup');
+    const off = c.register('svc', { g: 0 }, 'dup', OWNER);
     c.unregisterByOwner(Symbol('dup'));
     expect(c.getAll('svc')).toHaveLength(1);
     expect(off(), '退订闭包报告真的摘掉了').toBe(true);
@@ -69,8 +71,8 @@ describe('ServiceContainer', () => {
 
   it('多提供者按 priority + 注册顺序解析（偏好之外）', () => {
     const c = new ServiceContainer();
-    c.register('__t:llm', { name: 'low' }, 'p1');
-    c.register('__t:llm', { name: 'high' }, 'p2', undefined, { priority: 50 });
+    c.register('__t:llm', { name: 'low' }, 'p1', OWNER);
+    c.register('__t:llm', { name: 'high' }, 'p2', OWNER, { priority: 50 });
     expect(c.get<{ name: string }>('__t:llm')?.name).toBe('high');
   });
 });
@@ -90,7 +92,7 @@ describe('ServiceContainer unregisterByOwner', () => {
 describe('ServiceContainer 枚举口', () => {
   it('getAll 返回投影快照：改动返回值（数组与元素）都不影响容器', () => {
     const c = new ServiceContainer();
-    c.register('__t:llm', { v: 1 }, 'plugin-a', undefined, { priority: 5 });
+    c.register('__t:llm', { v: 1 }, 'plugin-a', OWNER, { priority: 5 });
     const views = c.getAll('__t:llm');
     views[0]!.priority = 999;
     views[0]!.contextId = 'hijacked';

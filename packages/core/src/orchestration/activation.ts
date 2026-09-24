@@ -42,8 +42,8 @@ export class Activation {
 
   /** 登记一条跟随边；释放时带上撤回的落定，边留到落定为止 */
   retainBinding(name: string, pump: () => void): (settling?: Promise<void>) => void {
-    const owner = this.services.ownerOf(name);
-    if (owner === undefined) return () => {};
+    // 只在 pump 解析到提供者之后调用：条目存在，owner 必有
+    const owner = this.services.ownerOf(name)!;
     const provider = this.owners.get(owner);
     const edge: Edge = {
       from: this,
@@ -57,10 +57,8 @@ export class Activation {
     };
     this.outbound.add(edge);
     provider?.inbound.add(edge);
-    let released = false;
+    // 每次挂载只释放一次（binding 取出 releaseEdge 即清空）；drop 本身幂等
     return settling => {
-      if (released) return;
-      released = true;
       if (!settling) return edge.drop();
       edge.settling = settling;
       settling.then(edge.drop);

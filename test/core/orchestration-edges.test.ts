@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  App,
+  type App,
   definePlugin,
   defineService,
   type Logger,
@@ -8,6 +8,7 @@ import {
   type PluginDefinition,
   provide,
 } from '../../packages/core/src/index.js';
+import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // 编排层的边缘路径：required 真环的兜底排序、关停计划里缠绕的 required 环、重算振荡的点名告警、
@@ -32,7 +33,7 @@ function world() {
     error: record('error'),
     child: () => logger,
   };
-  const app = new App({ config: { name: 'T', logLevel: 'debug', plugins: {} }, logger });
+  const app = createInspectableApp({ config: { name: 'T', logLevel: 'debug', plugins: {} }, logger });
   apps.push(app);
   const at = (level: 'debug' | 'info' | 'warn' | 'error') =>
     lines.filter(line => line.level === level).map(line => line.text);
@@ -323,5 +324,52 @@ describe('非 Error 抛出值的文案', () => {
     expect(status?.state).toBe('error');
     expect(status?.error).toBe('404');
     expect(w.at('error')).toContain('插件 "odd-apply" 激活失败: 404');
+  });
+});
+
+describe('保留的安全网：故障注入', () => {
+  it('关停计划里某个激活的阶段抛错：逐阶段记 error 点名，其余激活照常关闭、计划完成（故障激活自身的清理不保证）', async () => {
+    const { app, at } = world();
+    const disposed: string[] = [];
+    for (const name of ['a', 'b']) {
+      await app.plugin(
+        definePlugin({
+          name,
+          uses: { lifecycle },
+          apply({ lifecycle }) {
+            lifecycle.onDispose(() => void disposed.push(name));
+          },
+        }),
+      );
+    }
+    await app.plugins.idle();
+    const a = [...rootActivation(app).children].find(child => child.id === 'a')!;
+    a.resources.drain = () => {
+      throw new Error('注入的收尾故障');
+    };
+    await app.stop();
+    expect(at('error').filter(text => text.startsWith('关停 "a" 的'))).toEqual([
+      expect.stringContaining('关停 "a" 的收尾阶段抛错'),
+      expect.stringContaining('关停 "a" 的关闭阶段抛错'),
+    ]);
+    expect(disposed).toEqual(['b']);
+  });
+
+  it('拆卸编排整体抛错：记「拆卸抛错」，条目仍清掉激活引用、卸载照常完成', async () => {
+    const { app, at } = world();
+    await app.plugin(definePlugin({ name: 'solo', apply() {} }));
+    await app.plugins.idle();
+    const solo = [...rootActivation(app).children].find(child => child.id === 'solo')!;
+    solo.closeInfo = () => {
+      throw new Error('注入的编排故障');
+    };
+    expect(await app.plugins.unload('solo')).toBe(true);
+    expect(at('error').filter(text => text.includes('拆卸抛错'))).toHaveLength(1);
+    expect(app.plugins.getPlugin('solo')).toBeUndefined();
+  });
+
+  it('不传 logger 直接建根激活：给出明确报错', () => {
+    const { app } = world();
+    expect(() => activationHost(app).create(undefined, 'orphan')).toThrow('根激活需要 logger');
   });
 });

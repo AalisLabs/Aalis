@@ -42,7 +42,6 @@ interface Stage {
 }
 
 function link(earlier: Stage, later: Stage, hard: boolean): void {
-  if (earlier === later) return;
   earlier.before.add(later);
   later.after.set(earlier, hard || later.after.get(earlier) === true);
 }
@@ -54,7 +53,6 @@ function link(earlier: Stage, later: Stage, hard: boolean): void {
 export function freezeActivations(roots: Activation[]): Map<Activation, () => void> {
   const settle = new Map<Activation, () => void>();
   const freeze = (ctx: Activation): void => {
-    if (settle.has(ctx)) return;
     const done = ctx.joinPlan();
     if (!done) return; // 已在别的计划里：由那边负责关它
     settle.set(ctx, done);
@@ -107,10 +105,9 @@ function planClose(roots: Activation[], logger: Logger): Stage[] {
   const stages: Stage[] = [];
 
   const visit = (ctx: Activation): void => {
-    if (drainOf.has(ctx)) return;
     const info = ctx.closeInfo();
     providersOf.set(ctx, info.providers);
-    // 先占位再下探子树：自然次序是「子全部在前」，但占位保证成环的树形输入也能终止
+    // 先建本激活的两个阶段再下探子树；编号在子树之后分配，自然次序是「子全部在前」
     const drain: Stage = { ctx, kind: 'drain', index: -1, after: new Map(), before: new Set() };
     const close: Stage = { ctx, kind: 'close', index: -1, after: new Map(), before: new Set() };
     drainOf.set(ctx, drain);
@@ -172,23 +169,17 @@ function planClose(roots: Activation[], logger: Logger): Stage[] {
     // 按自然次序排：点名的顺序就是环内实际的关闭次序，与图的遍历次序无关
     const cycle = sourceCycle(remaining).sort((x, y) => x.index - y.index);
     const names = [...new Set(cycle.map(stage => stage.ctx.id))].join(', ');
-    // 源分量之外没有未放行的前驱，故只被软约束挡着的阶段放行后不违反任何硬约束
-    const yielding = cycle.filter(stage => ![...stage.after].some(([prev, hard]) => hard && remaining.has(prev)));
+    // 源分量之外没有未放行的前驱，故只被软约束挡着的收尾阶段放行后不违反任何硬约束。
+    // 关闭阶段的软前驱只可能是祖先的收尾；激活树只有根与插件两层，根的收尾没有前驱、卡住之前必已放行
+    const yielding = cycle.filter(
+      stage => stage.kind === 'drain' && ![...stage.after].some(([prev, hard]) => hard && remaining.has(prev)),
+    );
     if (yielding.length > 0) {
-      const drainYielding = yielding.filter(stage => stage.kind === 'drain');
-      if (drainYielding.length > 0) {
-        reportQuietly(() => logger.debug(`关停顺序：optional 依赖成环 [${names}]，环内成员先全部收尾再撤回`));
-        for (const stage of drainYielding) {
-          if (!remaining.has(stage)) continue;
-          blockers.set(stage, 0);
-          release(stage);
-        }
-        continue;
+      reportQuietly(() => logger.debug(`关停顺序：optional 依赖成环 [${names}]，环内成员先全部收尾再撤回`));
+      for (const stage of yielding) {
+        blockers.set(stage, 0);
+        release(stage);
       }
-      reportQuietly(() => logger.debug(`关停顺序：optional 依赖成环 [${names}]，环内按自然次序让步`));
-      const forced = yielding[0];
-      blockers.set(forced, 0);
-      release(forced);
       continue;
     }
     reportQuietly(() =>
@@ -245,7 +236,6 @@ function sourceCycle(remaining: Set<Stage>): Stage[] {
 
   const hasOutsideBlocker = (component: Stage[], id: number): boolean =>
     component.some(stage => [...stage.after.keys()].some(prev => remaining.has(prev) && componentOf.get(prev) !== id));
-  const source = components.findIndex((component, id) => component.length > 1 && !hasOutsideBlocker(component, id));
-  // 卡住时必有一个不被外部阻塞的多节点分量；找不到就退回第一个多节点分量（防御）
-  return components[source >= 0 ? source : components.findIndex(c => c.length > 1)] ?? [...remaining];
+  // 卡住时必有一个不被外部阻塞的多节点分量（link 不连自环，单节点分量不会卡住）
+  return components.find((component, id) => component.length > 1 && !hasOutsideBlocker(component, id))!;
 }
