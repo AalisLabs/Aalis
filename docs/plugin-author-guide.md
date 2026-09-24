@@ -361,7 +361,7 @@ Aalis 市场走**纯 npm 路线**，无自建服务器、无静态索引——�
 2. **依赖正确归类**（决定发布后能否被正确安装——脚手架已产出正确形态）：
    - `@aalis/core` → **`peerDependencies: ">=0.17.0 <1.0.0"`**（用了哪版 API 就把下限写到哪版）
      + `devDependencies: "latest"`（外部项目）或 workspace 协议（本仓开发期编译）。**不要用 caret**（`^0.17.0` 只匹配 `0.17.x`）。
-     进程里只能装一份 core，插件解析到另一份即被拒绝加载，见 [装了两份 @aalis/core](guide/third-party-plugin.md#7-装了两份-aaliscore)。
+     进程里只能装一份 core，插件解析到另一份即被拒绝加载，见 [装了两份 @aalis/core](guide/third-party-plugin.md#two-cores)。
      > **注意**：这条宽松 peer 只针对 `@aalis/core` 本身。你依赖的 `@aalis/api-*`
      > 契约包**不在稳定性承诺内**——0.x 期间仍可能改签名。消费它们的插件要关注 CHANGELOG。
    - 仅 `import type` 的 api 包 → **`devDependencies`**（编译期擦除）。
