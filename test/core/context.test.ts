@@ -250,7 +250,7 @@ describe('ServiceRef.follow', () => {
     expect(callCount).toBe(0);
   });
 
-  it('ctx.activation.dispose 触发上次 cleanup', async () => {
+  it('ctx.activation.disposeAsync 触发上次 cleanup', async () => {
     const ctx = makeFixture();
     let cleaned = false;
     ctx.caps.provide(defineService('__hub'), { v: 1 });
@@ -258,7 +258,7 @@ describe('ServiceRef.follow', () => {
       cleaned = true;
     });
     await Promise.resolve();
-    await ctx.activation.dispose();
+    await ctx.activation.disposeAsync();
     expect(cleaned).toBe(true);
   });
 });
@@ -269,7 +269,7 @@ describe('Activation ownership / dispose', () => {
     ctx.caps.provide(defineService('__shared'), { v: 1 });
     const child = bindActivationFixture(ctx.host, ctx.host.create(ctx.activation, 'child'));
     expect(child.caps.services.get('__shared')).toEqual({ v: 1 });
-    await child.activation.dispose();
+    await child.activation.disposeAsync();
     // fork 后 dispose 不会清父级服务
     expect(ctx.caps.services.get('__shared')).toEqual({ v: 1 });
   });
@@ -496,7 +496,7 @@ describe('disposable 闭包自移除（审计 HIGH #1/#2）', () => {
     ctx.caps.provide(svc, { v: 1 });
     await tick();
     expect(calls).toBe(0);
-    ctx.activation.dispose();
+    await ctx.activation.disposeAsync();
     expect(ctx.activation.resources.lifecycle.disposables.size).toBe(0);
   });
 
@@ -517,7 +517,7 @@ describe('disposable 闭包自移除（审计 HIGH #1/#2）', () => {
   });
 });
 
-describe('Activation.disposeAsync / dispose 同步不变量', () => {
+describe('Activation.disposeAsync 不变量', () => {
   const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
   it('disposeAsync 真正等待异步 onDispose 完成', async () => {
@@ -531,25 +531,26 @@ describe('Activation.disposeAsync / dispose 同步不变量', () => {
     expect(flushed).toBe(true);
   });
 
-  it('dispose() 在同一同步栈内完成（以同步副作用断言，不用微任务）', () => {
+  it('disposeAsync() 与调用同栈发起首个清理回调（以同步副作用断言，不用微任务）', async () => {
     const ctx = makeFixture('plugin-a');
     const order: string[] = [];
     ctx.caps.lifecycle.onDispose(() => {
       order.push('cleanup');
     });
-    ctx.activation.dispose();
+    const done = ctx.activation.disposeAsync();
     order.push('after-return');
-    // 同步清理在 dispose() 返回前已执行完毕——wait=false 分支零 await 命中
+    // 无收尾项、无初始化待等时不多让出一拍：同步清理在 disposeAsync() 返回前已执行
     expect(order).toEqual(['cleanup', 'after-return']);
     expect(ctx.activation.resources.lifecycle.disposed).toBe(true);
+    await done;
   });
 
-  it('dispose() 内清理抛错不外泄（同步路径不产生未处理拒绝）', () => {
+  it('disposeAsync() 内清理抛错不外泄（不同步抛出，也不拒绝）', async () => {
     const ctx = makeFixture('plugin-a');
     ctx.caps.lifecycle.onDispose(() => {
       throw new Error('sync boom');
     });
-    expect(() => ctx.activation.dispose()).not.toThrow();
+    await expect(ctx.activation.disposeAsync()).resolves.toBeUndefined();
   });
 
   it('provide 的退订闭包调两次只广播一次 service:unregistered；拆卸已清走的条目不再广播', async () => {

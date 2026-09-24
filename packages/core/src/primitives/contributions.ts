@@ -8,8 +8,7 @@ import type { ContributionPointMap } from '../types/contributions.js';
  * **spec.id 侧**的抢注/顶替由此杜绝，无需归属权校验（与 provide 的
  * entryId 前缀约定同源，但由构造保证而非 warn）。
  *
- * 该命名空间以逻辑 id 区分。`lifecycle.module(definition)` 创建子激活时对
- * `${父id}#${模块名}` 做 `~n` 后缀唯一化；内部 ActivationHost.create 可构造同名激活，
+ * 该命名空间以逻辑 id 区分。内部 ActivationHost.create 可构造同名激活（拆卸在飞时的同名新激活），
  * 两者会共用贡献命名空间、后注册者替换先注册者。清理归属仍按各自 owner 区分，
  * 旧激活的迟到清理不能误删新占位；命名空间与资源身份不是同一个概念。
  */

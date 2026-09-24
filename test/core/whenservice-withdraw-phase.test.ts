@@ -150,70 +150,56 @@ describe('follow cleanup 走撤回段', () => {
     expect(order).toEqual(['withdraw', 'late', 'cleanup:early']);
   });
 
-  it('拆卸窗口内的服务事件不引爆 cleanup：子级联摘掉提供者时，父的 cleanup 仍等到自己的撤回段', async () => {
-    const { app } = makeApp();
-    let ownVisibleAtCleanup: boolean | undefined;
+  it('拆卸窗口内的服务事件不引爆 cleanup：子插件关闭摘掉提供者时，根的 cleanup 仍等到自己的撤回段', async () => {
+    const { app, host } = makeApp();
+    host.provide(ownDesc, {});
     await app.plugin(
       definePlugin({
-        name: 'parent',
-        uses: { provide, lifecycle, dep: optional(depDesc), services },
-        provides: [ownDesc],
-        apply({ provide: pub, lifecycle, dep, services: svc }) {
-          pub(ownDesc, {});
-          void lifecycle.module(
-            definePlugin({
-              name: 'child',
-              uses: { provide },
-              provides: [depDesc],
-              apply({ provide: childPub }) {
-                childPub(depDesc, { id: 'child' });
-              },
-            }),
-          );
-          dep.follow(() => () => {
-            // 撤回段跑在 beforeCleanup 之后：本激活自己 provide 的服务此刻应已下线
-            ownVisibleAtCleanup = svc.get(ownDesc) !== undefined;
-          });
+        name: 'child',
+        uses: { provide },
+        provides: [depDesc],
+        apply({ provide: childPub }) {
+          childPub(depDesc, { id: 'child' });
         },
       }),
     );
     await app.plugins.idle();
-    expect(app.plugins.getPlugin('parent')?.state).toBe('active');
-    await app.plugins.unload('parent');
-    expect(ownVisibleAtCleanup, 'cleanup 若在子级联期间被 service:unregistered 引爆，四原语尚未切断').toBe(false);
+    expect(app.plugins.getPlugin('child')?.state).toBe('active');
+    const root = app.bind({ dep: optional(depDesc), services });
+    let ownVisibleAtCleanup: boolean | undefined;
+    root.dep.follow(() => () => {
+      // 撤回段跑在 beforeCleanup 之后：根自己 provide 的服务此刻应已下线
+      ownVisibleAtCleanup = root.services.get(ownDesc) !== undefined;
+    });
+    // 根用子插件的服务：根收尾 → 子关闭（摘掉提供者）→ 根撤回
+    await app.stop();
+    expect(ownVisibleAtCleanup, 'cleanup 若在子插件关闭期间被 service:unregistered 引爆，四原语尚未切断').toBe(false);
   });
 
   it('拆卸窗口内提供者重新上线：关闭中的激活不再挂新实例', async () => {
     const { app, host } = makeApp();
     const offDep = host.provide(depDesc, { id: 'old' });
     const attached: string[] = [];
-    // 子定义必须在 apply 之外：apply 解构出的 lifecycle 会挡住描述符导入
-    const child = definePlugin({
-      name: 'child',
-      uses: { lifecycle },
-      apply({ lifecycle }) {
-        lifecycle.onDispose(async () => {
-          offDep();
-          host.provide(depDesc, { id: 'new' });
-          await new Promise(r => setTimeout(r, 10));
-        });
-      },
-    });
     await app.plugin(
       definePlugin({
-        name: 'parent',
+        name: 'p',
         uses: { lifecycle, dep: optional(depDesc) },
         apply({ lifecycle, dep }) {
           dep.follow(svc => {
             attached.push(svc.id);
           });
-          void lifecycle.module(child);
+          // 收尾段：本激活已进入关闭，跟随订阅尚未撤回
+          lifecycle.onDrain(async () => {
+            offDep();
+            host.provide(depDesc, { id: 'new' });
+            await new Promise(r => setTimeout(r, 10));
+          });
         },
       }),
     );
     await app.plugins.idle();
-    expect(app.plugins.getPlugin('parent')?.state).toBe('active');
-    await app.plugins.unload('parent');
+    expect(app.plugins.getPlugin('p')?.state).toBe('active');
+    await app.plugins.unload('p');
     expect(attached).toEqual(['old']);
   });
 

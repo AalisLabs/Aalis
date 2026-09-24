@@ -41,7 +41,6 @@ export {
   type LifecycleCap,
   lifecycle,
   logger,
-  type ModuleHandle,
   type Provide,
   type ProvideOptions,
   provide,

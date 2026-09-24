@@ -70,6 +70,7 @@ const RUNTIME_EXPORTS = [
 const FORBIDDEN_ROOT_EXPORTS = [
   'formatLogLine',
   'parseLogLine',
+  'ModuleHandle',
   'Context',
   'Activation',
   'ActivationHost',
@@ -150,6 +151,7 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
   it('类型面不得从包根导入已删标识（去掉这些 import 后探针能编过）', () => {
     const header = `import { App } from '@aalis/core';\nvoid App;\n`;
     const forbidden = `import type {
+  ModuleHandle,
   Context,
   Activation,
   ActivationHost,
@@ -230,7 +232,7 @@ export const state = entry.state;
 
 /** 激活记录只保存身份、资源与依赖边，不重新长成通用能力门面。 */
 function activationViolations(source: string): string[] {
-  const allowedMethods = new Set(['retainBinding', 'closeInfo', 'joinPlan', 'dispose', 'disposeAsync']);
+  const allowedMethods = new Set(['retainBinding', 'closeInfo', 'joinPlan', 'disposeAsync']);
   const allowedFields = new Set(['children', 'declared', 'bindings', 'closing']);
   const violations: string[] = [];
   const file = ts.createSourceFile('activation.ts', source, ts.ScriptTarget.Latest, true);

@@ -82,103 +82,43 @@ const storageDef = (w: World, name = 'storage', options?: { entryId?: string; pr
   });
 
 describe('关停编排：归属树与服务依赖共同决定顺序', () => {
-  it('子模块声明的 optional 依赖即使从未访问过、提供者后上线，也计入：收尾时存得进去', async () => {
-    const w = world();
-    const child = definePlugin({
-      name: 'child',
-      uses: { storage: optional(storage), lifecycle },
-      apply({ storage, lifecycle }) {
-        lifecycle.onDrain(() => storage.require().save('child:last')); // 第一次访问就在收尾里
-      },
-    });
-    await w.app.plugin(
-      definePlugin({
-        name: 'parent',
-        uses: { lifecycle },
-        apply: ({ lifecycle }) => lifecycle.module(child).then(() => {}),
-      }),
-    );
-    await w.app.plugins.idle();
-    await w.app.plugin(storageDef(w)); // 提供者后上线
-    await w.app.plugins.idle();
-    await w.app.stop();
-    expect(w.saved).toEqual(['storage:child:last']);
-  });
-
-  it('兄弟子模块：消费者子模块先收尾关闭，提供服务的兄弟后关（不按挂载先后）', async () => {
-    const w = world();
-    const consumer = definePlugin({
-      name: 'consumer-child',
-      uses: { storage, lifecycle },
-      apply({ storage, lifecycle }) {
-        lifecycle.onDrain(() => storage.require().save('sibling:last'));
-      },
-    });
-    await w.app.plugin(
-      definePlugin({
-        name: 'parent',
-        uses: { lifecycle },
-        async apply({ lifecycle }) {
-          await lifecycle.module(storageDef(w, 'storage-child')); // 先挂提供者，required 的消费者才挂得上
-          await lifecycle.module(consumer);
-        },
-      }),
-    );
-    await w.app.plugins.idle();
-    await w.app.stop();
-    expect(w.saved).toEqual(['storage-child:sibling:last']);
-  });
-
-  it('父激活用自己子模块的服务：父的收尾先于该子模块关闭；到父的清理段它已关（成文的限制）', async () => {
+  it('根激活用插件的服务：根的收尾先于该插件关闭；到根的清理段它已关（成文的限制）', async () => {
     const w = world();
     let inDispose: string | undefined;
-    await w.app.plugin(
-      definePlugin({
-        name: 'parent',
-        uses: { lifecycle, storage: optional(storage) },
-        async apply({ lifecycle, storage }) {
-          await lifecycle.module(storageDef(w, 'storage-child'));
-          lifecycle.onDrain(() => storage.require().save('parent:last'));
-          lifecycle.onDispose(() => {
-            inDispose = storage.current === undefined ? 'gone' : 'alive';
-          });
-        },
-      }),
-    );
+    const root = w.app.bind({ storage: optional(storage), lifecycle });
+    await w.app.plugin(storageDef(w));
+    root.lifecycle.onDrain(() => root.storage.require().save('root:last'));
+    root.lifecycle.onDispose(() => {
+      inDispose = root.storage.current === undefined ? 'gone' : 'alive';
+    });
     await w.app.plugins.idle();
     await w.app.stop();
-    expect(w.saved).toEqual(['storage-child:parent:last']);
-    expect(inDispose, '父的清理段不能再用自己子模块的服务').toBe('gone');
+    expect(w.saved).toEqual(['storage:root:last']);
+    expect(inDispose, '根的清理段不能再用插件的服务').toBe('gone');
   });
 
-  it('子模块用父提供的服务：子先收尾关闭（把数据交给父），父随后收尾', async () => {
+  it('插件用根提供的服务：插件先收尾关闭（把数据交给根），根随后收尾', async () => {
     const w = world();
     const sink = defineService<{ push(data: string): void }>('zz-cp-sink');
-    const child = definePlugin({
-      name: 'session',
-      uses: { sink, lifecycle },
-      apply({ sink, lifecycle }) {
-        lifecycle.onDrain(() => sink.require().push('session-state'));
-      },
-    });
     await w.app.plugin(storageDef(w));
+    const root = w.app.bind({ storage, provide, lifecycle });
+    const buffer: string[] = [];
+    root.provide(sink, { push: data => void buffer.push(data) });
+    root.lifecycle.onDrain(() => {
+      for (const data of buffer.splice(0)) root.storage.require().save(data);
+    });
     await w.app.plugin(
       definePlugin({
-        name: 'agent',
-        uses: { storage, provide, lifecycle },
-        async apply({ storage, provide, lifecycle }) {
-          const buffer: string[] = [];
-          provide(sink, { push: data => void buffer.push(data) });
-          await lifecycle.module(child);
-          lifecycle.onDrain(() => {
-            for (const data of buffer.splice(0)) storage.require().save(data);
-          });
+        name: 'session',
+        uses: { sink, lifecycle },
+        apply({ sink, lifecycle }) {
+          lifecycle.onDrain(() => sink.require().push('session-state'));
         },
       }),
     );
     await w.app.plugins.idle();
     await w.app.stop();
-    expect(w.saved, '子的最后状态经父落到了下层').toEqual(['storage:session-state']);
+    expect(w.saved, '插件的最后状态经根落到了下层').toEqual(['storage:session-state']);
   });
 
   it('换过提供者：已落定的旧绑定不留边，不造假环', async () => {
@@ -345,90 +285,6 @@ describe('关停编排：归属树与服务依赖共同决定顺序', () => {
 });
 
 describe('各关闭入口共用同一套编排', () => {
-  // 子定义放在 apply 之外：apply 里解构出来的 lifecycle 是绑定好的能力，会遮住同名的描述符导入
-  const consumerChild = definePlugin({
-    name: 'consumer-child',
-    uses: { storage, lifecycle },
-    apply({ storage, lifecycle }) {
-      lifecycle.onDrain(() => storage.require().save('handoff'));
-    },
-  });
-  const family = (w: World) =>
-    definePlugin({
-      name: 'family',
-      uses: { lifecycle },
-      async apply({ lifecycle }) {
-        await lifecycle.module(storageDef(w, 'storage-child'));
-        await lifecycle.module(consumerChild);
-      },
-    });
-
-  it('单插件卸载', async () => {
-    const w = world();
-    await w.app.plugin(family(w));
-    await w.app.plugins.idle();
-    await w.app.plugins.unload('family');
-    expect(w.saved, w.warnings.join(' | ')).toEqual(['storage-child:handoff']);
-  });
-
-  it('子模块手动关闭：它自己的子树同样按依赖编排', async () => {
-    const w = world();
-    let handle!: { disposeAsync(): Promise<void> };
-    await w.app.plugin(
-      definePlugin({
-        name: 'outer',
-        uses: { lifecycle },
-        async apply({ lifecycle }) {
-          handle = await lifecycle.module(family(w));
-        },
-      }),
-    );
-    await w.app.plugins.idle();
-    await handle.disposeAsync();
-    expect(w.saved).toEqual(['storage-child:handoff']);
-    expect(w.app.plugins.getStatus().find(s => s.instanceId === 'outer')?.state).toBe('active');
-  });
-
-  it('required 依赖消失导致的停用', async () => {
-    const w = world();
-    const gatekeeper = defineService<object>('zz-cp-gate');
-    await w.app.plugin(
-      definePlugin({ name: 'gate', uses: { provide }, apply: ({ provide }) => void provide(gatekeeper, {}) }),
-    );
-    await w.app.plugin(
-      definePlugin({
-        name: 'dependent',
-        uses: { gatekeeper, lifecycle },
-        async apply({ lifecycle }) {
-          await lifecycle.module(family(w));
-        },
-      }),
-    );
-    await w.app.plugins.idle();
-    await w.app.plugins.disable('gate');
-    await w.app.plugins.idle();
-    expect(w.app.plugins.getStatus().find(s => s.instanceId === 'dependent')?.state).toBe('pending');
-    expect(w.saved).toEqual(['storage-child:handoff']);
-  });
-
-  it('激活失败后的回滚：已挂的子模块按依赖关闭，什么都不留', async () => {
-    const w = world();
-    await w.app.plugin(
-      definePlugin({
-        name: 'broken',
-        uses: { lifecycle },
-        async apply({ lifecycle }) {
-          await lifecycle.module(family(w));
-          throw new Error('apply 末尾失败');
-        },
-      }),
-    );
-    await w.app.plugins.idle();
-    expect(w.app.plugins.getStatus().find(s => s.instanceId === 'broken')?.state).toBe('error');
-    expect(w.saved).toEqual(['storage-child:handoff']);
-    expect(w.log).toEqual(['close:storage-child']);
-  });
-
   it('单独卸载提供者：不享有全应用停机的交接保证——消费者随后才停用，它的收尾已够不到该提供者', async () => {
     const w = world();
     let seenInDrain: string | undefined;

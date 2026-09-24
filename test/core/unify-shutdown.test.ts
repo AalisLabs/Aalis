@@ -224,37 +224,6 @@ describe('关停数据链：消费者先收尾、下层后关闭', () => {
     expect(w.persisted.sort()).toEqual(['memory-new:last-words', 'memory-new:via-new', 'memory-old:via-old']);
   });
 
-  it('子模块的依赖算在所属插件上：父插件没声明 memory，仍先于 memory 关闭', async () => {
-    const w = world();
-    const app = makeApp(w);
-    const session = definePlugin({
-      name: 'session',
-      uses: { memory, lifecycle },
-      apply({ memory, lifecycle }) {
-        lifecycle.onDrain(async () => {
-          await memory.require().save('session-state');
-        });
-      },
-    });
-    await app.plugin(storagePlugin(w));
-    await app.plugin(memoryPlugin(w));
-    await app.plugins.idle();
-    await app.plugin(
-      definePlugin({
-        name: 'host-plugin',
-        uses: { lifecycle },
-        async apply({ lifecycle }) {
-          await lifecycle.module(session);
-          lifecycle.onDispose(() => void w.log.push('close:host-plugin'));
-        },
-      }),
-    );
-    await app.plugins.idle();
-    await app.stop();
-    expect(w.persisted).toEqual(['memory:session-state']);
-    expect(w.log.indexOf('close:host-plugin')).toBeLessThan(w.log.indexOf('close:memory'));
-  });
-
   it('optional 依赖成环：成员全部 drain 完再任一 close，不告警，停机不悬挂', async () => {
     const w = world();
     const app = makeApp(w);

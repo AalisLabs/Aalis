@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { definePlugin, defineService } from '../../packages/core/src/index.js';
+import { defineService } from '../../packages/core/src/index.js';
 import { bindActivationFixture, createActivationFixture } from '../helpers/activation.js';
 
 // ════════════════════════════════════════════════════════════
 // post-dispose 注册政策：实际能力与窄激活记录的行为契约。
 // - 订阅类（events/hooks/contributions/provide/ServiceRef.follow）：warn + no-op
-// - 构造类（host.create/lifecycle.module）：抛错
+// - 构造类（host.create）：抛错
 // - onDispose 特例：warn 后仍就地执行（握着资源，no-op 即泄漏）
-// 本文件是该政策的全量行为锚：8 个入口逐一钉死，含幽灵副作用断言与活路径回归。
+// 本文件是该政策的全量行为锚：7 个入口逐一钉死，含幽灵副作用断言与活路径回归。
 // ════════════════════════════════════════════════════════════
 
 const EVT = '__t:pd-evt' as never;
@@ -30,16 +30,12 @@ function makeWorld() {
   return { make, lines, events: world.events, services: world.services, hooks: world.hooks };
 }
 
-function makeFixture(id = 'root') {
-  return createActivationFixture({ id });
-}
-
 describe('订阅类 post-dispose：warn + no-op', () => {
   it('on：返回可安全调用的 noop；handler 不进总线（事件发出也不触发）；warn 点名事件', async () => {
     const { make, lines, events } = makeWorld();
     const observer = make('observer');
     const dead = make('dead');
-    dead.activation.dispose();
+    await dead.activation.disposeAsync();
 
     const onSpy = vi.spyOn(events, 'on');
     let called = 0;
@@ -53,14 +49,14 @@ describe('订阅类 post-dispose：warn + no-op', () => {
     expect(off).toBeTypeOf('function');
     expect(() => off()).not.toThrow();
     expect(lines.find(l => l.includes('忽略 on("plugin:loaded")'))).toMatch(/^warn\|/);
-    observer.activation.dispose();
+    await observer.activation.disposeAsync();
   });
 
   it('middleware：runHook 不经过迟到注册的 handler；warn 点名钩子', async () => {
     const { make, lines, hooks } = makeWorld();
     const runner = make('runner');
     const dead = make('dead');
-    dead.activation.dispose();
+    await dead.activation.disposeAsync();
 
     const regSpy = vi.spyOn(hooks, 'register');
     let called = 0;
@@ -73,14 +69,14 @@ describe('订阅类 post-dispose：warn + no-op', () => {
     expect(called).toBe(0);
     expect(() => off()).not.toThrow();
     expect(lines.find(l => l.includes('忽略 middleware("__t:pd-hook")'))).toMatch(/^warn\|/);
-    runner.activation.dispose();
+    await runner.activation.disposeAsync();
   });
 
   it('provide：不产生幽灵服务，也不向活总线发 service:registered/unregistered', async () => {
     const { make, lines } = makeWorld();
     const observer = make('observer');
     const dead = make('dead');
-    dead.activation.dispose();
+    await dead.activation.disposeAsync();
 
     const seen: string[] = [];
     observer.caps.events.on(
@@ -103,16 +99,16 @@ describe('订阅类 post-dispose：warn + no-op', () => {
     expect(observer.caps.services.get('ghost-svc')).toBeUndefined();
     expect(() => off()).not.toThrow();
     expect(lines.find(l => l.includes('忽略 provide("ghost-svc")'))).toMatch(/^warn\|/);
-    observer.activation.dispose();
+    await observer.activation.disposeAsync();
   });
 
-  it('follow：服务已在场也不执行回调（此前会真跑一次再被清理）', () => {
+  it('follow：服务已在场也不执行回调（此前会真跑一次再被清理）', async () => {
     const { make, lines } = makeWorld();
     const provider = make('provider');
     provider.caps.provide(defineService('ready-svc'), { v: 1 });
     const dead = make('dead');
     const { ref } = dead.host.bind(dead.activation, { ref: defineService('ready-svc') });
-    dead.activation.dispose();
+    await dead.activation.disposeAsync();
 
     let called = 0;
     const off = ref.follow(() => {
@@ -121,26 +117,26 @@ describe('订阅类 post-dispose：warn + no-op', () => {
     expect(called).toBe(0);
     expect(() => off()).not.toThrow();
     expect(lines.find(l => l.includes('忽略对 ready-svc 的跟随'))).toMatch(/^warn\|/);
-    provider.activation.dispose();
+    await provider.activation.disposeAsync();
   });
 
-  it('contribute（既有守卫，纳入同一政策锚）：warn + no-op，collect 不见条目', () => {
+  it('contribute（既有守卫，纳入同一政策锚）：warn + no-op，collect 不见条目', async () => {
     const { make, lines } = makeWorld();
     const collector = make('collector');
     const dead = make('dead');
-    dead.activation.dispose();
+    await dead.activation.disposeAsync();
 
     const off = dead.caps.contributions.contribute(POINT, { id: 'late' } as never);
     expect(collector.caps.contributions.collect(POINT)).toEqual([]);
     expect(() => off()).not.toThrow();
     expect(lines.find(l => l.includes('忽略 contribute'))).toMatch(/^warn\|/);
-    collector.activation.dispose();
+    await collector.activation.disposeAsync();
   });
 
-  it('订阅类 no-op 不污染账本：资源清理链与贡献登记全零增长', () => {
-    const ctx = makeFixture();
+  it('订阅类 no-op 不污染账本：资源清理链与贡献登记全零增长', async () => {
+    const ctx = createActivationFixture();
     const { ref } = ctx.host.bind(ctx.activation, { ref: defineService('y') });
-    ctx.activation.dispose();
+    await ctx.activation.disposeAsync();
     ctx.caps.events.on(EVT, () => {});
     ctx.caps.hooks.middleware(HOOK, async (_d, n) => n());
     ctx.caps.provide(defineService('x'), {});
@@ -153,27 +149,21 @@ describe('订阅类 post-dispose：warn + no-op', () => {
 });
 
 describe('构造类 post-dispose：抛错', () => {
-  it('create：抛错且不残留孤儿子激活（此前会塞进 _children 永不排空）', () => {
-    const ctx = makeFixture('parent');
-    ctx.activation.dispose();
+  it('create：抛错且不残留孤儿子激活（此前会塞进 _children 永不排空）', async () => {
+    const ctx = createActivationFixture();
+    await ctx.activation.disposeAsync();
     expect(() => bindActivationFixture(ctx.host, ctx.host.create(ctx.activation, 'orphan'))).toThrowError(
       /无法创建子激活 "orphan"/,
     );
     expect(ctx.activation.children.size).toBe(0);
   });
-
-  it('lifecycle.module：抛错（既有行为，纳入同一政策锚）', async () => {
-    const ctx = makeFixture('parent');
-    ctx.activation.dispose();
-    await expect(ctx.caps.lifecycle.module(definePlugin({ name: 'm', apply() {} }))).rejects.toThrow(/无法创建子激活/);
-  });
 });
 
 describe('onDispose 特例：warn 后仍就地执行（资源必须释放）', () => {
-  it('迟到的清理函数立即执行且 warn 点名', () => {
+  it('迟到的清理函数立即执行且 warn 点名', async () => {
     const { make, lines } = makeWorld();
     const ctx = make('p');
-    ctx.activation.dispose();
+    await ctx.activation.disposeAsync();
     let released = false;
     ctx.caps.lifecycle.onDispose(() => {
       released = true;
@@ -214,18 +204,18 @@ describe('活路径回归：守卫对未 dispose 的 ctx 零影响', () => {
     expect(peer.caps.services.get('alive-svc')).toEqual({ v: 1 });
     expect(peer.caps.contributions.collect(POINT)).toHaveLength(1);
 
-    ctx.activation.dispose();
+    await ctx.activation.disposeAsync();
     expect(calls).toContain('cleanup');
     expect(peer.caps.services.get('alive-svc')).toBeUndefined();
     expect(peer.caps.contributions.collect(POINT)).toEqual([]);
-    peer.activation.dispose();
+    await peer.activation.disposeAsync();
   });
 
-  it('create 在活激活上照常可用', () => {
-    const ctx = makeFixture('parent');
+  it('create 在活激活上照常可用', async () => {
+    const ctx = createActivationFixture();
     const child = bindActivationFixture(ctx.host, ctx.host.create(ctx.activation, 'kid'));
     expect(child.activation.id).toBe('kid');
-    ctx.activation.dispose();
+    await ctx.activation.disposeAsync();
   });
 });
 
