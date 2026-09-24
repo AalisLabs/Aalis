@@ -12,12 +12,32 @@ import {
 
 // 关停顺序覆盖管理动作：unload / disable / bounce 提供者时，正在用它的 required 依赖方先收尾再关，
 // 提供者之后；判据是依赖方此刻解析到的胜者属于要走的激活，所以空档里不切到后备。
-// 提供者清理之前，挂在它上面的跟随者就地交接，落定后提供者才关；交接不经事件投递。
+// 提供者清理之前，挂在它上面、尚未进关闭计划的跟随者就地交接，落定后提供者才关；交接不经事件投递。
 
 const apps: App[] = [];
 afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
+/** 收集 warn / error 的宿主：断言某条告警不出现 */
+function capturing(disposeTimeoutMs?: number) {
+  const warnings: string[] = [];
+  const logger: Logger = {
+    debug() {},
+    info() {},
+    warn: (...a: unknown[]) => void warnings.push(a.map(String).join(' ')),
+    error: (...a: unknown[]) => void warnings.push(a.map(String).join(' ')),
+    child: () => logger,
+  };
+  const app = new App({
+    config: { name: 't', logLevel: 'error', plugins: {} },
+    devMode: false,
+    logger,
+    disposeTimeoutMs,
+  });
+  apps.push(app);
+  return { app, warnings };
+}
+
 function world(disposeTimeoutMs?: number) {
   const app = new App({ config: { name: 't', logLevel: 'error', plugins: {} }, devMode: false, disposeTimeoutMs });
   apps.push(app);
@@ -128,16 +148,7 @@ describe('管理动作下依赖方先收尾、提供者后关', () => {
   });
 
   it('其余提供者传递依赖依赖方时不加排序边：不制造伪环，全部激活', async () => {
-    const warnings: string[] = [];
-    const logger: Logger = {
-      debug() {},
-      info() {},
-      warn: (...a: unknown[]) => void warnings.push(a.map(String).join(' ')),
-      error: (...a: unknown[]) => void warnings.push(a.map(String).join(' ')),
-      child: () => logger,
-    };
-    const app = new App({ config: { name: 't', logLevel: 'error', plugins: {} }, devMode: false, logger });
-    apps.push(app);
+    const { app, warnings } = capturing();
     const N = defineService<object>('t:handover:n');
     await app.plugin(memPlugin([], 'mem'));
     await app.plugin(
@@ -390,5 +401,83 @@ describe('交接不经事件投递：慢跟随者不拖住别人，通知不等�
     expect(outcome).toBe('done');
     await app.plugins.idle();
     expect(log).toEqual(['p dispose', 'waiter settled']);
+  });
+});
+
+describe('跟随者已放弃等待的撤回不再拖住提供者，包装型提供者不制造伪环', () => {
+  const S = defineService<{ name: string }>('t:handover:hung');
+  const never = () => new Promise<void>(() => {});
+  const provider = (name: string) =>
+    definePlugin({
+      name,
+      provides: [S],
+      uses: { provide },
+      apply({ provide }) {
+        provide(S, { name });
+      },
+    });
+  const handoverTimeouts = (warnings: string[]) =>
+    warnings.filter(w => w.includes('Resources "p"') && w.includes('下游交接'));
+
+  it('required 下游的跟随清理挂住：它自己关闭时已按超时放弃，提供者不再等第二轮', async () => {
+    const { app, warnings } = capturing(30);
+    await app.plugin(provider('p'));
+    await app.plugin(
+      definePlugin({
+        name: 'd',
+        uses: { s: S },
+        apply({ s }) {
+          s.follow(() => never);
+        },
+      }),
+    );
+    await app.plugins.idle();
+    await app.plugins.unload('p');
+    expect(warnings.some(w => w.includes('Resources "d"'))).toBe(true);
+    expect(handoverTimeouts(warnings)).toEqual([]);
+  });
+
+  it('跟随者 bounce 时清理挂住：遗留的边不拖累之后卸载提供者', async () => {
+    const { app, warnings } = capturing(30);
+    let hang = true;
+    await app.plugin(provider('p'));
+    await app.plugin(
+      definePlugin({
+        name: 'f',
+        uses: { s: optional(S) },
+        apply({ s }) {
+          s.follow(() => () => (hang ? never() : undefined));
+        },
+      }),
+    );
+    await app.plugins.idle();
+    await app.plugins.bounce('f');
+    await app.plugins.idle();
+    hang = false;
+    await app.plugins.unload('p');
+    expect(handoverTimeouts(warnings)).toEqual([]);
+  });
+
+  it('两个包装型提供者（provides 且 required 同一服务）先于底座注册：没有依赖环告警，全部激活', async () => {
+    const { app, warnings } = capturing();
+    const wrapper = (name: string) =>
+      definePlugin({
+        name,
+        provides: [S],
+        uses: { s: S, provide },
+        apply({ s, provide }) {
+          provide(S, { name: `${name}(${s.require().name})` }, { priority: 10 });
+        },
+      });
+    await app.plugin(wrapper('w1'));
+    await app.plugin(wrapper('w2'));
+    await app.plugin(provider('base'));
+    await app.plugins.idle();
+    expect(app.plugins.getStatus().map(s => `${s.instanceId}:${s.state}`)).toEqual([
+      'w1:active',
+      'w2:active',
+      'base:active',
+    ]);
+    expect(warnings.filter(w => w.includes('依赖环'))).toEqual([]);
   });
 });
