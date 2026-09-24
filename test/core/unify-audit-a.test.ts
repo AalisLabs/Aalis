@@ -322,49 +322,26 @@ describe('调度与类型面', () => {
     expect(settled).toBe('settled');
   });
 
-  it('同版本 core 副本的描述符、optional 和缺失错误均由当前宿主正确处理', async () => {
+  it('另一份 core 造的描述符与 optional 包装：注册时按 error 点名拒绝，定义与发布时直接抛错', async () => {
     type CoreNs = typeof import('../../packages/core/src/index.js');
     const srcRoot = fileURLToPath(new URL('../../packages/core/src', import.meta.url));
     const dir = mkdtempSync(join(tmpdir(), 'aalis-core-copy-'));
     coreCopies.push(dir);
     cpSync(srcRoot, dir, { recursive: true });
-    const A = (await import(`${pathToFileURL(join(dir, 'index.ts')).href}?copy=2`)) as CoreNs;
+    const B = (await import(`${pathToFileURL(join(dir, 'index.ts')).href}?copy=2`)) as CoreNs;
     const w = world();
-    let logs = 0;
-    await w.app.plugin(
-      A.definePlugin({
-        name: 'mixed',
-        uses: { logger: A.logger, optional: A.optional(A.defineService('not-present')) },
-        apply({ logger, optional }) {
-          logger.info('copy');
-          logs++;
-          expect(optional.current).toBeUndefined();
-        },
-      }),
-    );
-    expect(w.app.plugins.getPlugin('mixed')?.state).toBe('active');
-    expect(logs).toBe(1);
-
-    const desc = A.defineService<{ value: number }>('copy-required');
+    // 另一份 core 的 definePlugin 只认自己的章，能造出定义；交到宿主注册时被拒
+    expect(await w.app.plugin(B.definePlugin({ name: 'mixed', uses: { logger: B.logger }, apply() {} }))).toBe(false);
+    expect(
+      await w.app.plugin(
+        B.definePlugin({ name: 'mixed-opt', uses: { x: B.optional(B.defineService('x')) }, apply() {} }),
+      ),
+    ).toBe(false);
+    expect(w.warnings.filter(l => l.includes('另一份 @aalis/core'))).toHaveLength(2);
+    expect(w.app.plugins.getStatus()).toEqual([]);
+    // 本份 core 的 definePlugin 在定义时就拒绝另一份的描述符；发布另一份的描述符同样拒绝
+    expect(() => definePlugin({ name: 'ours', uses: { logger: B.logger }, apply() {} })).toThrow('另一份 @aalis/core');
     const { provide: publish } = w.app.bind({ provide });
-    let remove = publish(desc, { value: 1 });
-    let tries = 0;
-    let value = 0;
-    await w.app.plugin(
-      A.definePlugin({
-        name: 'copy-consumer',
-        uses: { dep: desc },
-        apply({ dep }) {
-          if (++tries === 1) remove();
-          value = dep.require().value;
-        },
-      }),
-    );
-    await w.app.plugins.idle();
-    expect(w.app.plugins.getPlugin('copy-consumer')?.state).toBe('pending');
-    remove = publish(desc, { value: 2 });
-    await w.app.plugins.idle();
-    expect(w.app.plugins.getPlugin('copy-consumer')?.state).toBe('active');
-    expect(value).toBe(2);
+    expect(() => publish(B.defineService('copy-svc'), {})).toThrow('另一份 @aalis/core');
   });
 });

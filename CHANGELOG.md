@@ -184,7 +184,7 @@ export default definePlugin({
 
 `@aalis/core` 公开面从包根导出 `pluginDefinitionOf`（加载器与市场共用判定）：只认 default 导出的定义对象（带非空 `name` 与 `apply` 函数）。具名导出、函数 / 类 default、普通对象缺字段，一律 warn「入口须 `export default definePlugin({ … })`」并跳过。定义 `name` 与包名不一致另 warn 一次，仍加载，但配置键以定义名为准。
 
-同版本 `@aalis/core` 副本的描述符、optional 包装与 required 不可用错误可以互通；不再因基础服务描述符来自另一份副本而拒绝装配。不据此承诺不同版本兼容，也不承诺所有 Core 类实例可以跨副本互换。
+进程里只能有一份 `@aalis/core`：另一份副本造的描述符、optional 包装在 `definePlugin` / `register` / `provide` 处一律拒绝，注册期按 error 记「来自另一份 @aalis/core」；runtime 的两个加载器在 import 插件前核对它解析到的 core 包目录，不是宿主那份就只拒载该插件并写明两条路径与修法。本地目录安装改用 `npm install --install-links` 或 `pnpm add file:`。
 
 **迁移**：入口改 default 定义。继续使用 peer `>=0.17.0 <1.0.0` 并尽量去重，禁 caret；跨副本支持不替代版本约束。
 

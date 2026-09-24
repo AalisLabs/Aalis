@@ -24,7 +24,7 @@
 - `services.inspect` / `ServiceContainer.inspect` 只投影登记元数据，不返回实例。`services.get` / `services.all` 与 `ServiceContainer.get` / `getAll` 返回登记进容器的对象本身。
 - `provide(descriptor, impl, options?)` 是唯一发布入口。`options.onBehalfOf` 的条目逻辑身份取被代者，清理仍归本激活；代登记不计入代理人的 `provides`。
 - 资源口的 `identity` 是这次激活的不透明资源身份，也是凭据：交给谁，谁就能以这次激活的名义调用认它的提供者。提供者据它把登记归到这次激活。
-- 同版本 Core 副本的描述符、optional 包装与 required 不可用错误可互通；不承诺不同版本的协议互通或任意 Core 类实例跨副本互换。
+- 进程里只能有一份 `@aalis/core`：另一份副本造的描述符、`optional` 包装在定义校验与 `provide` 处一律拒绝（注册期按 error 记），宿主 runtime 在 import 插件前也会按包目录核对并拒载该插件。
 
 **hooks（`hooks.middleware` / `hooks.run`）——流程干预**
 - 同一钩子键内按注册顺序执行洋葱模型；不调 `next()` 即合法截停（`hooks.run` 返回 `false`）。

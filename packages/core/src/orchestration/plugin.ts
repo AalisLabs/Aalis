@@ -16,7 +16,7 @@ import {
 } from './plugin-activation.js';
 import { topoSortByDeps } from './plugin-topology.js';
 import { events } from '../composition/core-services.js';
-import { isOptional, optionalNames, requiredNames, type Uses } from '../composition/descriptors.js';
+import { ForeignCoreError, isOptional, optionalNames, requiredNames, type Uses } from '../composition/descriptors.js';
 import { assertValidInstanceId, type PluginDefinition, validateDefinition } from '../composition/plugin-definition.js';
 import type { ConfigManager } from '../infrastructure/config.js';
 import { cloneConfigObject } from '../infrastructure/config-values.js';
@@ -157,7 +157,9 @@ export class PluginManager implements PluginManagerService {
       if (instanceId !== undefined) assertValidInstanceId(instanceId);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`插件定义校验失败，拒绝注册: ${reason}`);
+      // 另一份 core 造的定义是安装问题，不是作者的声明错误：按 error 记，其余仍是 warn
+      if (err instanceof ForeignCoreError) this.logger.error(`插件定义校验失败，拒绝注册: ${reason}`);
+      else this.logger.warn(`插件定义校验失败，拒绝注册: ${reason}`);
       return false;
     }
 

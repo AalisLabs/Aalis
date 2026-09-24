@@ -93,8 +93,31 @@ export interface ServiceDescriptor<P, B = ServiceRef<P>> {
   bind(port: BindingPort<P>): B;
 }
 
-/** 模块私有品牌：assemble 只认 optional() 盖过的包装，描述符自有 `optional` 字段不算 */
-const OPTIONAL = Symbol.for('aalis.optional-use');
+/** 模块私有品牌：装配只认 optional() 盖过的包装，描述符自有 `optional` 字段不算 */
+const OPTIONAL = Symbol('aalis.optional-use');
+/**
+ * 本副本身份。进程里装了两份 core 时，另一份造的描述符、optional 包装带的是它的身份；跨副本只共用这一个
+ * 检测键（值各自私有），据此在定义校验与发布处拒绝混装——两份 core 会让日志中枢等进程级身份静默分裂。
+ */
+const MINTED = Symbol.for('aalis.core.minted');
+const THIS_COPY = Symbol('aalis.core.copy');
+
+/** @internal 来自另一份 @aalis/core 的对象：安装问题，注册期按 error 记 */
+export class ForeignCoreError extends Error {}
+
+function mint<T extends object>(value: T): T {
+  return Object.defineProperty(value, MINTED, { value: THIS_COPY });
+}
+
+/** @internal 另一份 core 造的对象一律拒绝；没盖章的手写对象按形状放行 */
+export function assertOwnCopy(value: unknown, what: string): void {
+  const stamp = (value as { [MINTED]?: unknown } | null)?.[MINTED];
+  if (stamp !== undefined && stamp !== THIS_COPY) {
+    throw new ForeignCoreError(
+      `${what}来自另一份 @aalis/core：进程里装了两份 core，只能装一份（插件以 peerDependencies 引用 core；排查见 docs/guide/third-party-plugin.md「装了两份 @aalis/core」）`,
+    );
+  }
+}
 
 export interface OptionalUse<P, B> {
   readonly optional: ServiceDescriptor<P, B>;
@@ -128,12 +151,12 @@ export function defineService<P, B>(name: string, bind?: (port: BindingPort<P>) 
   if (typeof name !== 'string' || name.trim() === '') {
     throw new Error('服务 name 不能为空');
   }
-  return { name, bind: bind ?? (serviceRef as unknown as (port: BindingPort<P>) => B) };
+  return mint({ name, bind: bind ?? (serviceRef as unknown as (port: BindingPort<P>) => B) });
 }
 
 /** 可选依赖：只是不参与激活闸；绑定接口与 required 完全相同。 */
 export function optional<P, B>(descriptor: ServiceDescriptor<P, B>): OptionalUse<P, B> {
-  return { optional: descriptor, [OPTIONAL]: true };
+  return mint({ optional: descriptor, [OPTIONAL]: true });
 }
 
 /** @internal 是否为 optional() 包装。不看自有 `optional` 字段。 */
