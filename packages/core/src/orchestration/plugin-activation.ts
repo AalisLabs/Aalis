@@ -37,44 +37,21 @@ export interface ActivationDeps {
 }
 
 /**
- * 拆卸方的唯一形状：先写终态 → 带超时拆激活 → 清引用 → 发 plugin:unloaded。
+ * 拆卸方的唯一形状：先写终态 → 带超时拆激活 → 清引用 → 发 plugin:unloaded。单条也走这里。
  *
  * 这四步的**顺序**是并发正确性的承重墙：漏一步或抄错顺序就是覆写竞态。约定只有一条：
- * 「拆卸不许手写，调本函数或 {@link retireBatch}」——由 test/architecture/state-write-sites.test.ts
- * 的写入点定格测试机器守。
+ * 「拆卸不许手写，调本函数」——由 test/architecture/state-write-sites.test.ts 的写入点定格测试机器守。
  *
  * - 先写终态：拆卸 await 期间并发管理操作的写入必须是后写者（管理意图胜）；
  *   同时给 activatePlugin 的接管检查提供让位信号。
  * - 判据用 entry.activation 而非 state：'activating' 的在飞激活同样要拆，
- *   disposeAsync 会先等 apply 落定（Resources.trackInitialization）。
- * - dispose 统一 try/catch：拆卸抛出不得让 entry.activation 悬置（否则
+ *   关闭会先等 apply 落定（Resources.trackInitialization）。
+ * - 拆激活统一 try/catch：拆卸抛出不得让 entry.activation 悬置（否则
  *   重激活闸永挂、插件静默不可激活）。
  * - 清引用带恒等卫：并发路径若已 join 同一次拆卸并清过引用，不重复置空。
- */
-export async function retireEntry(
-  entry: PluginRecord,
-  targetState: PluginState,
-  deps: ActivationDeps,
-  opts?: { emitUnloaded?: boolean },
-): Promise<void> {
-  entry.state = targetState;
-  const activation = entry.activation;
-  if (!activation) return;
-  try {
-    await activation.disposeAsync(deps.disposeTimeoutMs);
-  } catch (err) {
-    deps.logger.error(`插件 "${entry.instanceId}" dispose 抛错:`, err);
-  }
-  if (entry.activation === activation) entry.activation = undefined;
-  if (opts?.emitUnloaded !== false) {
-    deps.host.runtime.notify('plugin:unloaded', entry.instanceId);
-  }
-}
-
-/**
- * 成批拆卸：与 {@link retireEntry} 同一四步，只是「拆激活」对整批激活统一编排——
- * 消费者先于它依赖的提供者关闭，归属树与服务依赖一起决定顺序（见 close-plan.ts）。同一轮里要停的
- * 插件必须走这里而不是逐个 retireEntry，否则它们之间的关闭次序只剩注册序。
+ *
+ * 「拆激活」对整批统一编排：消费者先于它依赖的提供者关闭，归属树与服务依赖一起决定顺序
+ * （见 close-plan.ts）。同一轮里要停的插件必须一起传入，否则它们之间的关闭次序只剩注册序。
  * entries 的给定次序是无依赖关系时的关闭次序。
  *
  * @param targetState 整批的目标态，或按条目给（管理动作的主体另有终态，同批下游转 pending）
@@ -97,7 +74,7 @@ export async function retireBatch(
     const roots = opts?.planRoot ? [opts.planRoot] : closing.map(item => item.activation);
     await closeActivations(roots, deps.disposeTimeoutMs, deps.logger, opts?.settle);
   } catch (err) {
-    deps.logger.error('成批拆卸抛错:', err);
+    deps.logger.error('拆卸抛错:', err);
   }
   for (const { entry, activation } of closing) {
     if (entry.activation === activation) entry.activation = undefined;
@@ -157,7 +134,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     await applying;
 
     // 根已冻进停机计划：App 正等当前 recompute 落定后才执行该计划。
-    // 此处不能转入 retireEntry 再 join 计划，否则有限 apply 也会与 stop 互等。
+    // 此处不能转入 retireBatch 再 join 计划，否则有限 apply 也会与 stop 互等。
     if (host.root.resources.disposed) return;
 
     // 接管检查（CAS 式）：unload / disable / bounce 撞上在飞 apply 时
@@ -213,15 +190,15 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     if (isRequiredServiceUnavailable(err, activation.resources, entry.required)) {
       logger.debug(`插件 "${entry.instanceId}" 初始化期间 required 服务不可用，清理后等待依赖恢复`);
       entry.error = undefined;
-      await retireEntry(entry, 'pending', deps, { emitUnloaded: false });
+      await retireBatch([entry], 'pending', deps, { emitUnloaded: false });
       return 'retry';
     }
     logger.error(`插件 "${entry.instanceId}" 激活失败:`, err);
-    // retireEntry 先写 'error' 再等清理——并发观察者（getStatus / 早退返回的
+    // retireBatch 先写 'error' 再等清理——并发观察者（getStatus / 早退返回的
     // 调用方）依赖状态机即时转移，异步清理不该拖延 'error' 的可见时点。
     // 不发 unloaded：本插件从未 loaded 过，配对事件无从谈起。
     entry.error = message;
-    await retireEntry(entry, 'error', deps, { emitUnloaded: false });
+    await retireBatch([entry], 'error', deps, { emitUnloaded: false });
     return;
   }
 
