@@ -523,6 +523,21 @@ describe('内置事件出口：App 等待屏障，通知不阻塞状态机', () 
   });
 });
 
+// ── 覆盖率门禁不能靠跳过统计达成 ──
+//
+// vitest.core-coverage.config.ts 把 core 的四项覆盖率阈值定为 100。覆盖不到的分支只能补测试或删掉，
+// 不能用 ignore 注释把它从分母里拿走。
+describe('core 源码不含覆盖率 ignore 注释', () => {
+  it('packages/core/src 下没有 v8 / c8 / istanbul 的 ignore 注释', () => {
+    const offenders: string[] = [];
+    for (const file of walk(SRC_DIR)) {
+      const source = readFileSync(file, 'utf-8');
+      if (/\b(?:v8|c8|istanbul)\s+ignore\b/.test(source)) offenders.push(relToSrc(file));
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
 // ── core 体量上限 ──
 //
 // 去掉注释与空行后的代码行数。上限是本轮精简实施后的实测值加少量余量；抬高上限的提交必须写明对应哪条用户
