@@ -240,6 +240,6 @@ lifecycle.onDispose(async () => {
 | `orchestration/ActivationHost` | 创建激活、经根激活登记内置服务、按 `uses` 装配能力；关闭时按归属同栈切断本激活的原语登记 |
 | `composition/core-services` | 内置八项的描述符与提供者：提供者按调用方身份交出这次激活的 `events` / `provide` 等接口 |
 | `composition/descriptors`、`plugin-definition` | 服务与插件定义、类型推导，以及资源口契约 |
-| `composition/service-watch` 与 `composition/binding` | 前者只观察服务胜者变化；后者负责 `follow` 交接、`registrar` 登记与逐条撤回 |
+| `composition/binding` | 资源口：观察服务胜者变化，负责 `follow` 交接、`registrar` 登记与逐条撤回 |
 
 插件只使用 `apply` 收到的能力，宿主通过 `app.bind` 装配根激活的能力。上表中的内部类与深路径均不属于稳定公开 API。
