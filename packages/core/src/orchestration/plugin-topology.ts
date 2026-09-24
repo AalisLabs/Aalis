@@ -11,7 +11,8 @@ import type { Logger } from '../infrastructure/logger.js';
 /**
  * 按"提供者 → 消费者"方向的拓扑排序（Kahn），结果正序即激活顺序。
  * required 依赖方排在该服务的每个声明提供者之后，apply 时看到的是最终胜者（重启首选提供者后
- * 不挂到后备上）。首个声明的提供者是硬边；其余提供者若传递地依赖这个依赖方，不加那条边，不制造伪环。
+ * 不挂到后备上）。首个声明的提供者是硬边（依赖方自己就是首个声明者时不加）；其余提供者若传递地依赖这个依赖方，
+ * 不加那条边，不制造伪环。
  *
  * 仅 required 依赖参与建图：optional 的语义是"如果存在则消费"，缺席照样激活，
  * 不应制造排序约束——否则插件之间互为 optional 会产生伪环并退化到声明序。
@@ -36,8 +37,9 @@ export function topoSortByDeps(entries: PluginRecord[], logger: Logger): PluginR
   const edges: Array<[providerId: string, dependent: string, hard: boolean]> = [];
   for (const e of entries) {
     for (const service of e.required) {
-      const ids = (providersOf.get(service) ?? []).filter(id => id !== e.instanceId);
-      for (const [i, providerId] of ids.entries()) edges.push([providerId, e.instanceId, i === 0]);
+      for (const [i, providerId] of (providersOf.get(service) ?? []).entries()) {
+        if (providerId !== e.instanceId) edges.push([providerId, e.instanceId, i === 0]);
+      }
     }
   }
   const reaches = (from: string, to: string): boolean => {
