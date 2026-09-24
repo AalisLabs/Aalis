@@ -76,7 +76,7 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 `softReload()` 是 `recompute('changed')` 的薄壳；`stopAll()` 是 `recompute('shutdown')` 的薄壳。`App.stop()` 单飞：先 `beginShutdown()`（置停机态并冻计划）再 `idle()`，然后发 `app:stopping`，最后 `stopAll()` 执行 drain / close。停机进行中 `register` / `bounce` 返回 false；`unload` / `disable` 汇入已冻计划后立即返回 true。每次 `stop()` 都返回完整停机的同一 Promise；`app:stopping` 监听器与清理回调不能 await 或返回它，以免等待自身。
 
-停机时全部 active 插件与宿主的根激活进同一张关停计划（无依赖关系时后注册的先关）。每个激活 drain 后 close；边规则见 [插件定义与能力](context.md)。单插件 `unload` / `disable` / `bounce` 只拆该插件，不享有整次 `App.stop()` 的交接保证；其下游在下一轮 recompute 才按目标态降级。
+停机时全部 active 插件与宿主的根激活进同一张关停计划（无依赖关系时后注册的先关）。每个激活 drain 后 close；边规则见 [插件定义与能力](context.md)。单插件 `unload` / `disable` / `bounce` 与整机停机同一套交接保证：正在用它所提供服务的 required 下游（传递闭包）并入同一批，先收尾、先关，提供者之后；判据是下游此刻解析到的胜者属于要走的激活，空档里不切到后备。下游之后转 pending，`bounce` 时随提供者按拓扑序重新激活。
 
 ## 管理动作口径
 
@@ -106,7 +106,7 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 增量重载：可选写回配置 → 拆掉当前激活 → 转 `pending` → 重算后重新激活。即 **retire + 重算**。
 
-- 下游不跟着重启：消费者经绑定接口每次解析当前提供者，有状态的接线由 `follow` 在提供者换人时交接。
+- 正在用本插件所提供服务的 required 下游随之重启（先收尾、先关，本插件重新激活后按拓扑序重新激活）；optional 依赖经 `follow` 在换人时交接。
 - 不换代码：跑的仍是注册时的那份定义。要换代码走 `unload` + `register`。
 - `disabled`、`disposed`、停机进行中拒绝 bounce。传 `opts.module` 期望换码会 warn 并返回 false。
 - `error` 态会被重置为 pending 重试。

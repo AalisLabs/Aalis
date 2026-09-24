@@ -24,7 +24,7 @@ export default definePlugin({
 });
 ```
 
-向量全部存在 storage 上的 `vectors.json` 里，没有 storage 既读不出也写不进，故 storage 是必需依赖。关停以激活为单位分 drain / close：本插件对 storage 是普通依赖，消费者整个 close 完提供者才 drain，因此 `onDispose` 里 `await store.save()` 时 storage 仍在。该保证只在双方同进一张计划时成立（`App.stop()`）；单独禁用或热重载 storage 时没有交接保证。落盘由调用方调用 `save()` 触发（见 api-vectorstore 契约），dispose 时的保存是兜底冲刷。
+向量全部存在 storage 上的 `vectors.json` 里，没有 storage 既读不出也写不进，故 storage 是必需依赖。关停以激活为单位分 drain / close：本插件对 storage 是普通依赖，消费者整个 close 完提供者才 drain，因此 `onDispose` 里 `await store.save()` 时 storage 仍在。单独禁用或热重载 storage 时本插件作为正在用它的 required 下游并入同一批先关，保存同样成立。落盘由调用方调用 `save()` 触发（见 api-vectorstore 契约），dispose 时的保存是兜底冲刷。
 
 ## 配置
 

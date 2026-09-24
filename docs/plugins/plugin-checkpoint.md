@@ -48,4 +48,4 @@ definePlugin({
 
 ## 拆卸顺序
 
-`storage` 声明为 required，不只是因为快照要经它落盘，更是为了关停次序。关停以激活为单位分 drain / close：checkpoint 对 storage 是普通依赖，消费者整个 close 完提供者才 drain，因此 `lifecycle.onDispose` 里的 `flushAll()` 仍能调 `storage.writeFile`。该保证只在双方同进一张计划时成立（`App.stop()`）；单独禁用或热重载 storage 时没有交接保证，`flushAll` 会落空（回合 blob 在写点已落盘，丢的只是在飞回合的 manifest）。依赖交接放 `onDrain`；本插件冲刷用的是自己的依赖，放在 `onDispose` 与「消费者 close 期间依赖仍可用」一致。
+`storage` 声明为 required，不只是因为快照要经它落盘，更是为了关停次序。关停以激活为单位分 drain / close：checkpoint 对 storage 是普通依赖，消费者整个 close 完提供者才 drain，因此 `lifecycle.onDispose` 里的 `flushAll()` 仍能调 `storage.writeFile`。单独禁用或热重载 storage 时本插件作为正在用它的 required 下游并入同一批先关，`flushAll` 同样能落盘。依赖交接放 `onDrain`；本插件冲刷用的是自己的依赖，放在 `onDispose` 与「消费者 close 期间依赖仍可用」一致。

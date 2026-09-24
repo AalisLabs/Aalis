@@ -191,7 +191,7 @@ process 本身**没有内核级鉴权门**——风险控制落在**调用它的
 
 本地实现在 POSIX 下**对所有子进程都设 `detached`**，目的是让子进程自成进程组组长，超时与 `kill()` 才能打到孙进程。
 
-`App.stop()` 先冻结激活，再发 `app:stopping`（知会，不驱动 drain/close），再执行关停计划。本地实现把补杀挂在 `events.on('app:stopping', () => service.killAll())` 上——**不是** `lifecycle.onDispose`：bounce 本插件时，别的插件正在跑的子进程（ffmpeg 等）不该陪葬。未显式 `detached: true` 的进程组在登记表里，停机知会时对仍有成员的组补 `SIGKILL`，维持「Aalis 退出，工具子进程一起退出」；显式 `detached: true` 的 fire-and-forget 不登记。停机期 unload / disable 汇入计划后立即返回 true，register / bounce 返回 false。单独卸载本提供者没有交接保证（子进程仍只挂在被拆掉的那份实例上）。
+`App.stop()` 先冻结激活，再发 `app:stopping`（知会，不驱动 drain/close），再执行关停计划。本地实现把补杀挂在 `events.on('app:stopping', () => service.killAll())` 上——**不是** `lifecycle.onDispose`：bounce 本插件时，别的插件正在跑的子进程（ffmpeg 等）不该陪葬。未显式 `detached: true` 的进程组在登记表里，停机知会时对仍有成员的组补 `SIGKILL`，维持「Aalis 退出，工具子进程一起退出」；显式 `detached: true` 的 fire-and-forget 不登记。停机期 unload / disable 汇入计划后立即返回 true，register / bounce 返回 false。单独卸载本提供者时，正在用它的 required 下游先收尾再关；子进程仍只挂在被拆掉的那份实例上。
 
 ---
 

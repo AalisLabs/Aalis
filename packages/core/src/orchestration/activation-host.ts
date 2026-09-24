@@ -49,9 +49,15 @@ export class ActivationHost {
         runtime.contributions.unregisterByOwner(owner);
         runtime.events.unregisterByOwner(owner);
       },
-      afterCleanup: () => {
-        for (const name of removed) runtime.notify('service:unregistered', name);
+      // 下线通知排在提供者自己的清理之前：跟随者据此撤回，提供者关闭前交接完
+      afterWithdraw: () => {
+        const names = removed;
         removed = [];
+        return names.length === 0
+          ? undefined
+          : Promise.all(names.map(name => runtime.notify('service:unregistered', name)));
+      },
+      afterCleanup: () => {
         this.owners.delete(owner);
         parent?.children.delete(activation);
       },
@@ -95,9 +101,10 @@ export function notify(runtime: Pick<ServiceRuntime, 'events'>, logger: Logger):
   return (event, ...args) => {
     const report = (error: unknown) => reportQuietly(() => logger.warn(`emit ${event} 失败:`, error));
     try {
-      Promise.resolve(runtime.events.emit(event, ...args)).catch(report);
+      return Promise.resolve(runtime.events.emit(event, ...args)).catch(report);
     } catch (error) {
       report(error);
+      return Promise.resolve();
     }
   };
 }

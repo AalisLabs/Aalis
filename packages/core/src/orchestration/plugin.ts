@@ -256,8 +256,32 @@ export class PluginManager implements PluginManagerService {
     return false;
   }
 
-  private retire(entry: PluginRecord, target: PluginState, opts?: { emitUnloaded?: boolean }): Promise<void> {
-    return retireEntry(entry, target, this.deps, opts);
+  /**
+   * 管理动作的拆卸：依赖方正在用的提供者要走，依赖方先收尾再关，提供者之后。判据是活插件某个 required
+   * 服务此刻解析到的胜者归本批要关的激活所有（传递闭包）；空档里不切到后备提供者——依赖方对着旧实例
+   * 收尾，提供者重启后再回到首选。unload / disable / bounce 三者同一路径。
+   */
+  private retire(entry: PluginRecord, target: PluginState): Promise<void> {
+    const services = this.host.runtime.services;
+    const batch = [entry];
+    const leaving = new Set<symbol>();
+    if (entry.activation) leaving.add(entry.activation.owner);
+    const stranded = (name: string): boolean => {
+      const owner = services.ownerOf(name);
+      return owner !== undefined && leaving.has(owner);
+    };
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const other of this.plugins.values()) {
+        if (other.state !== 'active' || !other.activation || batch.includes(other)) continue;
+        if (!other.required.some(stranded)) continue;
+        batch.push(other);
+        leaving.add(other.activation.owner);
+        grew = true;
+      }
+    }
+    if (batch.length === 1) return retireEntry(entry, target, this.deps);
+    return retireBatch(batch, item => (item === entry ? target : 'pending'), this.deps);
   }
 
   /**
@@ -369,8 +393,9 @@ export class PluginManager implements PluginManagerService {
    * 增量重载单个插件（核心入口）：持久化新 config（如有）→ 拆掉当前激活 → 转 pending → 重算后重新激活。
    * `error` 态插件会被重置为 pending 重试。
    *
-   * 下游不跟着重启：消费者经绑定接口每次解析当前提供者，有状态的接线由 follow 在提供者换人时交接。
-   * 不换代码：跑的仍是注册时的那份定义。要换代码走 `unload` + `register`。
+   * 正在用本插件所提供服务的 required 下游随之重启：先于本插件收尾、关闭，本插件重新激活后按拓扑序
+   * 重新激活；optional 依赖经 follow 在换人时交接。不换代码：跑的仍是注册时的那份定义。要换代码走
+   * `unload` + `register`。
    *
    * @returns false 表示找不到 entry、处于 disabled 态或 'disposed' 终态，或停机进行中（拒绝重建）。
    */

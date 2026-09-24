@@ -124,7 +124,7 @@ export default definePlugin({
 
 **服务缺失**：`agent` 全 optional 依赖。`llm` 缺失会回一条 `[系统]` 前缀诊断消息；`memory` 缺失则无历史；`gateway` 缺失则 fallback 到 `events.emit('outbound:message')`（**跳过审计/脱敏/限速/authority 中间件链，仅限测试/嵌入式**）。
 
-**关停**：以激活为单位分 drain / close 两阶段。默认实现在 `lifecycle.onDrain` 里先 `abortInflightAndSettle()`（与 WebUI「停止生成」同语义），再等在飞回合 Promise——收尾段 memory / 钩子还在，中止后的交接写得进去；`onDispose` 再 `abortAll()` 一次，给 drain 超时或未走到收尾兜底。依赖交接放 `onDrain`：根激活若用插件的服务，根 drain 先于插件 close，到根的 `onDispose` 时插件可能已关。llm / memory / gateway 等是普通依赖，消费者整个 close 完提供者才 drain，故本插件 `onDispose` 期间那些依赖仍在。单独卸载某个提供者没有交接保证。超时沿用 core 对 `onDrain` 的 `disposeTimeoutMs`，不另加配置键（`packages/plugin-agent/src/index.ts`）。
+**关停**：以激活为单位分 drain / close 两阶段。默认实现在 `lifecycle.onDrain` 里先 `abortInflightAndSettle()`（与 WebUI「停止生成」同语义），再等在飞回合 Promise——收尾段 memory / 钩子还在，中止后的交接写得进去；`onDispose` 再 `abortAll()` 一次，给 drain 超时或未走到收尾兜底。依赖交接放 `onDrain`：根激活若用插件的服务，根 drain 先于插件 close，到根的 `onDispose` 时插件可能已关。llm / memory / gateway 等是普通依赖，消费者整个 close 完提供者才 drain，故本插件 `onDispose` 期间那些依赖仍在。单独 unload / disable / bounce 某个提供者时，本插件若正在用它也会先收尾再关。超时沿用 core 对 `onDrain` 的 `disposeTimeoutMs`，不另加配置键（`packages/plugin-agent/src/index.ts`）。
 
 ## 6. 能力 / 风险 → 影响
 
