@@ -247,14 +247,12 @@ function violation(layer: Layer, target: string): string | null {
   return `${layer}/ 不得引用 ${target}`;
 }
 
-/** Core 运行时代码不加载外部包；日志数据契约只允许能力与编排层纯类型引用。 */
+/** Core 运行时代码不加载外部包，类型引用也不例外：发布出去的 .d.ts 不得引用未声明的包。 */
 function externalReferenceViolations(file: string, source: Parsed): string[] {
   const rel = relToSrc(file);
-  const layer = rel.split('/')[0];
   const offenders: string[] = [];
-  for (const { spec, typeOnly } of source.specifiers) {
+  for (const { spec } of source.specifiers) {
     if (resolveTarget(file, spec) !== null) continue;
-    if (spec === '@aalis/schema-log' && typeOnly && (layer === 'infrastructure' || layer === 'orchestration')) continue;
     offenders.push(`${rel} → ${spec}`);
   }
   if (source.computedImports > 0) offenders.push(`${rel} → ${source.computedImports} 处非字面量动态 import`);
@@ -334,24 +332,20 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
 
   // ── core 洁癖：零运行时依赖 / 环境无关 / 扩展点为空 ──
 
-  it('core 仅安装日志声明所需的 schema-log，无其他外部依赖', () => {
+  it('core 零运行时依赖', () => {
     const pkg = JSON.parse(readFileSync(join(SRC_DIR, '../package.json'), 'utf-8')) as {
       dependencies?: Record<string, string>;
       optionalDependencies?: Record<string, string>;
     };
-    // 公开 .d.ts 引用 schema-log：消费者需安装它，因此不能只列 devDependency。
-    // 运行时不能加载它由下面的逐条 AST 守卫保证；其余依赖仍由宿主注入。
-    expect(
-      Object.keys(pkg.dependencies ?? {}),
-      'core 只声明日志数据契约依赖——环境专有件由宿主经 AppOptions 注入',
-    ).toEqual(['@aalis/schema-log']);
+    expect(Object.keys(pkg.dependencies ?? {}), 'core 不得声明运行时依赖——环境专有件由宿主经 AppOptions 注入').toEqual(
+      [],
+    );
     expect(Object.keys(pkg.optionalDependencies ?? {})).toEqual([]);
   });
 
-  it('core 外部引用仅有指定层的 schema-log 类型，不得加载外部模块', () => {
-    // 日志数据是独立基础契约；其余 `@aalis/*` 仍是领域词汇倒灌，
-    // `node:*` 破坏环境无关，其它包名（含 type-only）会让发布出去的 .d.ts 引用未声明的包，
-    // `#别名` 则绕开按路径判层。不能只靠 biome：它的 noRestrictedImports 名单只有 8 个模块名，
+  it('core 不得引用外部模块', () => {
+    // `@aalis/*` 是领域词汇倒灌，`node:*` 破坏环境无关，其它包名（含 type-only）会让发布出去的 .d.ts
+    // 引用未声明的包，`#别名` 则绕开按路径判层。不能只靠 biome：它的 noRestrictedImports 名单只有 8 个模块名，
     // 而**上一次真实事故**注入的 `node:events` 与 `node:path` 都不在名单里——build / test / biome / knip
     // 四道门当时全绿。这里整类拦，不维护名单。
     // 路径是算出来的动态 import（变量、带插值的模板串）静态看不见指向，同样不许：插件从哪里来由宿主的
@@ -360,24 +354,27 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
     for (const file of walk(SRC_DIR)) {
       offenders.push(...externalReferenceViolations(file, parse(file)));
     }
-    expect(offenders, 'core 运行时环境无关；schema-log 仅作能力与编排层的类型依赖').toEqual([]);
+    expect(offenders, 'core 运行时环境无关，日志类型在 core 内定义').toEqual([]);
   });
 
-  it('schema-log 类型引用只放行能力与编排层，其余层和包根仍拒绝', () => {
+  it('任何层都拒绝外部包引用，含纯类型导入', () => {
     const source = `import type { LogEntry } from '@aalis/schema-log';
       import { type LogLevel } from '@aalis/schema-log';
       type Entry = import('@aalis/schema-log').LogEntry;`;
-    for (const path of ['infrastructure/logger.ts', 'orchestration/app.ts']) {
-      const file = join(SRC_DIR, path);
-      expect(externalReferenceViolations(file, parseSource(file, source)), path).toEqual([]);
-    }
-    for (const path of ['kernel/lifecycle.ts', 'primitives/events.ts', 'types/events.ts', 'index.ts']) {
+    for (const path of [
+      'infrastructure/logger.ts',
+      'orchestration/app.ts',
+      'kernel/lifecycle.ts',
+      'primitives/events.ts',
+      'types/events.ts',
+      'index.ts',
+    ]) {
       const file = join(SRC_DIR, path);
       expect(externalReferenceViolations(file, parseSource(file, source)), path).toHaveLength(3);
     }
   });
 
-  it('类型例外不能放过混合值导入、动态加载、转导出或其他外部包', () => {
+  it('混合值导入、动态加载、转导出与其他外部包一律拒绝', () => {
     const file = join(SRC_DIR, 'infrastructure/logger.ts');
     for (const source of [
       "import { formatLogLine } from '@aalis/schema-log';",
@@ -393,7 +390,8 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
       "import type { LogEntry } from '@aalis/schema-other';",
       "import type { Stats } from 'node:fs';",
     ]) {
-      expect(externalReferenceViolations(file, parseSource(file, source)), source).toHaveLength(1);
+      const expected = source.split('@aalis/schema-log').length - 1 > 1 ? 2 : 1;
+      expect(externalReferenceViolations(file, parseSource(file, source)), source).toHaveLength(expected);
     }
   });
 

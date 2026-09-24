@@ -135,7 +135,6 @@ src 根只留 `index.ts`。配置持久化 SPI `ConfigProvider` 只依赖 `Aalis
 | primitives | kernel、基础词汇 | 诊断函数的值依赖与基础类型 |
 | infrastructure | kernel、基础词汇 | 资源内核的值依赖与基础类型 |
 | composition | infrastructure、primitives、kernel、基础词汇 | 绑定、工厂与默认服务的实现和类型 |
-| infrastructure、composition、orchestration | `@aalis/schema-log` | 仅纯类型；日志文件编解码由宿主使用，Core 不值导入 |
 | orchestration | composition、infrastructure、primitives、kernel | 应用装配与调度 |
 | `types/app.ts`、`types/plugin.ts` | composition、infrastructure、primitives、基础词汇 | 纯类型 |
 
