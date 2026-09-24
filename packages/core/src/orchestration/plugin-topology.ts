@@ -37,7 +37,7 @@ export function topoSortByDeps(entries: PluginRecord[], logger: Logger): PluginR
   for (const e of entries) {
     for (const service of e.required) {
       const ids = (providersOf.get(service) ?? []).filter(id => id !== e.instanceId);
-      ids.forEach((providerId, i) => edges.push([providerId, e.instanceId, i === 0]));
+      for (const [i, providerId] of ids.entries()) edges.push([providerId, e.instanceId, i === 0]);
     }
   }
   const reaches = (from: string, to: string): boolean => {
