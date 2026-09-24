@@ -6,7 +6,7 @@ Aalis 的插件运行底座：显式服务声明、按激活绑定、资源清�
 
 插件通过 `definePlugin({ uses, apply })` 声明使用的服务。事件、钩子、贡献点、配置、日志、生命周期、发布与查询入口，和第三方服务共用容器与描述符协议；没有默认注入。
 
-服务可提供共享实例，也可用 `serviceFactory` 为每个消费者激活创建实例。资源随消费者清理，服务替换通过 `ServiceRef.follow` 交接；关闭根据资源归属与服务依赖分阶段执行。
+提供者登记进容器的是实现对象本身，描述符的 `bind` 为每个消费者激活造调用接口。资源随消费者清理，服务替换通过 `ServiceRef.follow` 交接；关闭根据资源归属与服务依赖分阶段执行。
 
 ## 安装
 
@@ -28,7 +28,7 @@ export default definePlugin({
 });
 ```
 
-监听登记属于这次激活，卸载时自动撤回。参见 [插件定义与生命周期](../../docs/core/context.md)、[服务与工厂](../../docs/core/service.md) 和 [第三方插件指南](../../docs/guide/third-party-plugin.md)。
+监听登记属于这次激活，卸载时自动撤回。参见 [插件定义与生命周期](../../docs/core/context.md)、[服务](../../docs/core/service.md) 和 [第三方插件指南](../../docs/guide/third-party-plugin.md)。
 
 ## 许可
 

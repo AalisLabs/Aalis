@@ -42,7 +42,7 @@ export default definePlugin({
 > 构建产物，否则入口解析失败同样不加载。
 >
 > `@aalis/core` 用 **peerDependency** 引用：core 在一个进程里只能装一份，写进 `dependencies` 时只要范围与宿主的
-> core 不相容，包管理器就会给插件另装一份，插件随即在加载时被拒绝（见 [第 7 节](#7-装了两份-aaliscore)）。范围用 **`>=0.17.0 <1.0.0`**：
+> core 不相容，包管理器就会给插件另装一份，插件随即在加载时被拒绝（见 [第 7 节](#two-cores)）。范围用 **`>=0.17.0 <1.0.0`**：
 > 这是 `definePlugin` / 服务描述符首次成为公开面的版本。**1.0 之前 core 的公开面可能在次版本被删**，
 > 用了更新的 API 就把下限再抬。别用 `^0.x` caret（只匹配单个次版本会把插件锁死）；也别用裸 `*`。
 
@@ -203,7 +203,7 @@ apply({ lifecycle }) {
 
 `@aalis/core` 导出通用 IoC 类型与内置描述符（`definePlugin` / `ServiceRef` / `events` / `logger` / …）。所有 **LLM / agent / 工具** 领域类型与描述符都在 `@aalis/api-*` 里。
 
-判定规则：**运行时值导入进 `dependencies`，纯类型导入进 `devDependencies`**。描述符是值——`import { tools } from '@aalis/api-tools'` 必须进 `dependencies`，不能只放 devDep。`@aalis/core` 恒为 peerDependency（区间 `>=x <1.0.0`，禁 caret），并同时列入 devDependencies 供本地编译；进程里只能有一份 core，插件解析到另一份即被拒载，见 [第 7 节](#7-装了两份-aaliscore)。`dependencies` 里的 `@aalis` 包版本同写 `>=当前版本 <1.0.0` 区间——区间可被包管理器去重到与宿主同一份安装，避免同名契约装出两份（两份 `declare module` 相撞成 TS2717，被 skipLibCheck 静默吞掉）。
+判定规则：**运行时值导入进 `dependencies`，纯类型导入进 `devDependencies`**。描述符是值——`import { tools } from '@aalis/api-tools'` 必须进 `dependencies`，不能只放 devDep。`@aalis/core` 恒为 peerDependency（区间 `>=x <1.0.0`，禁 caret），并同时列入 devDependencies 供本地编译；进程里只能有一份 core，插件解析到另一份即被拒载，见 [第 7 节](#two-cores)。`dependencies` 里的 `@aalis` 包版本同写 `>=当前版本 <1.0.0` 区间——区间可被包管理器去重到与宿主同一份安装，避免同名契约装出两份（两份 `declare module` 相撞成 TS2717，被 skipLibCheck 静默吞掉）。
 
 > 脚手架生成的依赖用 `latest`（硬编码版本会过时，workspace: 协议在外部装不上）——那只是
 > 首次安装的引导值，发布前请按上述规则收紧为区间。
@@ -236,6 +236,7 @@ plugins:
 
 或在 WebUI 的「插件市场」里点击安装。
 
+<a id="two-cores"></a>
 ## 7. 装了两份 @aalis/core
 
 `@aalis/core` 在一个进程里只能有一份。npm 与 pnpm 都允许依赖树中存在同名包的多份安装；两份 core 同处一个进程时，日志中枢等进程级身份会静默分裂。因此 Aalis 在加载与注册两处核对 core 的身份，发现另一份即拒绝相关插件，其余插件照常加载。
@@ -286,7 +287,7 @@ npm 还须在宿主项目的 `.npmrc` 写 `install-links=true`，否则下一次
 
 #### 插件把 `@aalis/core` 写进了 `dependencies`
 
-插件作者应把它移到 `peerDependencies`（`>=x <1.0.0`，禁 caret），并同时列入 `devDependencies` 供本地编译（见第 1 节）。修正版发布之前，用户可以在宿主项目根 `package.json` 用 `overrides` 把插件那份指向宿主的 core。npm 的覆盖值须与根 `dependencies` 中 `@aalis/core` 的范围字面完全相同（npm 不认 `$@aalis/core` 引用写法）：
+插件作者应把它移到 `peerDependencies`（`>=x <1.0.0`，禁 caret），并同时列入 `devDependencies` 供本地编译（见第 1 节）。修正版发布之前，用户可以在宿主项目根 `package.json` 用 `overrides` 把插件那份指向宿主的 core。npm 的覆盖值须与根 `dependencies` 中 `@aalis/core` 的范围字面完全相同：
 
 ```json
 {
@@ -307,7 +308,7 @@ pnpm 可以直接引用根依赖的范围：
 
 #### 插件的 peer 范围不含宿主的 core 版本
 
-由其它包间接带进来的插件在 `peerDependencies` 里用了 `^0.x` caret，或者 core 升级（包括经插件市场更新）后旧插件的范围不再覆盖新版本，npm 会在该插件下嵌套安装一份满足其范围的 core。插件作者应把范围改为 `>=x <1.0.0`；用户侧可升级插件，或同样用上面的 `overrides` 临时处理。
+插件在根依赖里、其 peer 范围不含宿主的 core 版本时（例如用了 `^0.x` caret，或 core 升级后旧插件的范围不再覆盖新版本），npm 不会装出第二份：普通安装报 ERESOLVE；显式执行 `npm install @aalis/core@<新版本>` 只告警并保留一份，`npm ls` 把它标为 `invalid`，插件运行在它未声明兼容的 core 上。只有由其它包间接带进来、自身对 core 用了窄 peer 范围的包，npm 才会在它下面嵌套一份满足其范围的 core。插件作者应把范围改为 `>=x <1.0.0`；用户侧可升级插件，或同样用上面的字面值 `overrides` 临时处理。
 
 #### 安装时用了 `--legacy-peer-deps` 或 `--force`
 

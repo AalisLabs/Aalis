@@ -10,9 +10,9 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 
 `@aalis/core` 对外暴露：
 
-- 运行时基础设施：`App` / `definePlugin` / `defineService` / `EventBus` / `ServiceContainer` / `HookRegistry` / `ConfigManager` / `Logger` / `PluginManager`，以及内置能力描述符（`events` / `hooks` / `contributions` / `lifecycle` / `logger` / `config` / `provide` / `services`）
+- 运行时基础设施：`App` / `definePlugin` / `defineService` / `ConfigManager` / `Logger`，以及内置能力描述符（`events` / `hooks` / `contributions` / `lifecycle` / `logger` / `config` / `provide` / `services`）
 - 三张扩展点表：`AalisEvents` / `HookContextMap` / `ContributionPointMap`（由 `@aalis/api-*` 经 declaration merging 注入业务键）。服务类型随描述符走，没有服务名类型表
-- 宿主入口：`app.plugin` / `app.bind` / `app.config` / `app.plugins` 与四张底层注册表
+- 宿主入口：`app.plugin` / `app.bind` / `app.config` / `app.plugins`
 - `AalisConfig` 仅声明基础字段（`name` / `logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`）加 `[key: string]: unknown` 兜底；业务字段（owners / deniedCapabilities / authorityOverrides / confirmOverrides 等）由对应 api-* 通过 declaration merging 注入，core 不知晓其语义
 - `ConfigManager` 是纯内存配置中枢：自身不读写文件，`save()` 把整份配置快照原样委托给宿主注入的 `ConfigProvider.save()`（无 provider 时静默忽略），对所有顶层字段一视同仁、不含任何业务特例（合并默认值时 `mergeDefaultsConfig()` 也是先填 core 已知字段、再透传其余）
 
