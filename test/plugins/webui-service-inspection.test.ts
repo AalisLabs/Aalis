@@ -71,17 +71,25 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
         }
       >;
     };
-    for (const name of ['events', 'lifecycle', 'logger', 'config', 'provide', 'services']) {
+    // 根激活归宿主：core 内置六项、宿主两项与宿主登记的 host-config 都标「宿主」，与市场依赖图同一标签
+    for (const name of [
+      'events',
+      'lifecycle',
+      'logger',
+      'config',
+      'provide',
+      'services',
+      'app',
+      'plugins',
+      'host-config',
+    ]) {
       expect(body.services[name].providers).toEqual([
         expect.objectContaining({
           contextId: 'root',
-          displayName: '@aalis/core',
+          displayName: '宿主',
           exclusive: true,
         }),
       ]);
-    }
-    for (const name of ['app', 'plugins', 'host-config']) {
-      expect(body.services[name].providers).toEqual([expect.objectContaining({ contextId: 'root', exclusive: true })]);
     }
     // 插件提供的服务按插件身份展示，显示名取插件的 displayName
     for (const [name, contextId] of HUB_PROVIDERS) {
