@@ -61,8 +61,6 @@ export interface BindingPort<P> {
    */
   readonly identity: symbol;
   readonly logger: Logger;
-  /** 这次激活已开始关闭 */
-  readonly closed: boolean;
   /** 当前胜者 */
   current(): P | undefined;
   /** Resolve or throw an error attributed to this host and activation. */
