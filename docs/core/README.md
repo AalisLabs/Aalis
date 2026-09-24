@@ -7,7 +7,7 @@
 | 篇目 | 讲什么 |
 |---|---|
 | [App — 应用容器](./app.md) | 进程入口、`plugin` / `bind`、生命周期 |
-| [插件定义与能力](./context.md) | `definePlugin`、`uses` / `provide`、基础服务、`ServiceRef`、`follow`、`lifecycle.module` |
+| [插件定义与能力](./context.md) | `definePlugin`、`uses` / `provide`、基础服务、`ServiceRef`、`follow` |
 | [Plugin — 插件管理](./plugin.md) | `PluginEntry`、状态机、`recompute`（`changed` \| `shutdown`）、六动作 `Promise<boolean>` 口径 |
 | [Service — 服务](./service.md) | 描述符、按名仲裁、`services.prefer` |
 | [Events — 事件](./events.md) | 事件与中间件（洋葱模型）、钩子相位 |
