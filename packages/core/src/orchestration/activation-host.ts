@@ -1,34 +1,33 @@
 import { reportQuietly } from '../kernel/disposable-chain.js';
 
-import { isScopedProvider } from '../primitives/services.js';
-
 import { Activation } from './activation.js';
 import { createPort } from '../composition/binding.js';
-import { registerCoreServices } from '../composition/core-services.js';
+import { coreProviders, provide } from '../composition/core-services.js';
 import { type BoundOf, isOptional, optionalNames, requiredNames, type Uses } from '../composition/descriptors.js';
 import type { PluginDefinition } from '../composition/plugin-definition.js';
 import type { ServiceRuntime } from '../composition/runtime.js';
-import { instantiateService } from '../composition/service-factory.js';
 import type { Logger } from '../infrastructure/logger.js';
 import { Resources } from '../infrastructure/resources.js';
-
-const CREATING = Symbol('creating-service');
 
 /** 装配与挂载协调器。能力实现留在各描述符，资源清理留在 Resources。 */
 export class ActivationHost {
   readonly root: Activation;
   private readonly owners = new Map<symbol, Activation>();
-  private readonly instances = new WeakMap<Activation, WeakMap<object, unknown>>();
 
   constructor(
     readonly runtime: ServiceRuntime,
     logger: Logger,
   ) {
     this.root = this.create(undefined, 'root', {}, logger);
-    registerCoreServices(runtime, this.root.owner, (scope, name, provider) => {
-      const activation = this.owners.get(scope.identity);
-      return activation ? this.resolve(activation, name, provider) : undefined;
+    const providers = coreProviders(runtime, (identity, name) => {
+      const activation = this.owners.get(identity);
+      if (!activation?.declared.has(name)) throw new Error(`内置服务 "${name}" 只能由在 uses 里声明了它的激活取用`);
+      return activation;
     });
+    // 自举：provide 的提供者须先在容器里，根才能经 uses 取到 provide；其余七项与第三方服务同走 provide
+    runtime.services.register(provide.name, providers.provide, 'root', this.root.owner, { exclusive: true });
+    const root = this.bind(this.root, { provide });
+    for (const [descriptor, provider] of providers.rest) root.provide(descriptor, provider, { exclusive: true });
   }
 
   create(
@@ -55,7 +54,6 @@ export class ActivationHost {
         removed = [];
         this.owners.delete(owner);
         parent?.children.delete(activation);
-        this.instances.delete(activation);
       },
     });
     const activation = new Activation(id, owner, logger, config, resources, runtime.services, this.owners);
@@ -70,9 +68,10 @@ export class ActivationHost {
     for (const name of requiredNames(uses)) activation.declared.set(name, true);
     const binding = {
       id: activation.id,
+      owner: activation.owner,
       logger: activation.logger,
       resources: activation.resources,
-      services: this.resolver(activation),
+      services: this.runtime.services,
       events: this.runtime.events,
       retainBinding: (name: string) => activation.retainBinding(name),
     };
@@ -84,51 +83,6 @@ export class ActivationHost {
       }
       return caps as BoundOf<U>;
     });
-  }
-
-  private resolver(activation: Activation) {
-    return {
-      get: <T>(name: string): T | undefined =>
-        this.resolve(activation, name, this.runtime.services.get(name)) as T | undefined,
-      getAll: <T>(name: string) =>
-        this.runtime.services
-          .getAll(name)
-          .map(entry => ({ ...entry, instance: this.resolve(activation, name, entry.instance) as T })),
-    };
-  }
-
-  private resolve(activation: Activation, name: string, provider: unknown): unknown {
-    if (!isScopedProvider(provider)) return provider;
-    let cache = this.instances.get(activation);
-    if (!cache) {
-      cache = new WeakMap();
-      this.instances.set(activation, cache);
-    }
-    if (cache.has(provider)) {
-      const value = cache.get(provider);
-      if (value === CREATING) throw new Error(`服务工厂 "${name}" 循环构造`);
-      return value;
-    }
-    const resources = activation.resources;
-    if (resources.lifecycle.disposed) throw new Error(`激活 "${activation.id}" 已关闭，不能创建服务 "${name}"`);
-    cache.set(provider, CREATING);
-    try {
-      const instance = instantiateService(name, provider, {
-        resources,
-        release: activation.retainBinding(name, provider),
-        scope: {
-          id: activation.id,
-          identity: activation.owner,
-          logger: activation.logger,
-          config: activation.config,
-        },
-      });
-      cache.set(provider, instance);
-      return instance;
-    } catch (error) {
-      cache.delete(provider);
-      throw error;
-    }
   }
 
   mount(activation: Activation, definition: PluginDefinition): void | Promise<void> {

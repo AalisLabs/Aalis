@@ -27,8 +27,8 @@ import { ServiceCard } from '../../packages/plugin-webui-client/src/components/S
 /** 两个提供者 + 已有偏好：下拉切换与「恢复默认」按钮都在 */
 const multi: ServiceInfo = {
   providers: [
-    { contextId: 'plugin-llm-openai', priority: 10, scope: 'shared', exclusive: false },
-    { contextId: 'plugin-llm-ollama', priority: 5, scope: 'shared', exclusive: false },
+    { contextId: 'plugin-llm-openai', priority: 10, exclusive: false },
+    { contextId: 'plugin-llm-ollama', priority: 5, exclusive: false },
   ],
   preferred: 'plugin-llm-openai',
 };
@@ -48,9 +48,7 @@ describe('服务偏好切换失败', () => {
       <ServiceCard
         name="events"
         info={{
-          providers: [
-            { contextId: 'root', displayName: '@aalis/core', priority: 0, scope: 'activation', exclusive: true },
-          ],
+          providers: [{ contextId: 'root', displayName: '@aalis/core', priority: 0, exclusive: true }],
           preferred: null,
         }}
       />,

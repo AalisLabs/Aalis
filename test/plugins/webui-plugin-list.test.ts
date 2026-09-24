@@ -125,7 +125,7 @@ describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
     const app = silentApp();
     // 同名描述符解析同一提供者；是否可选取决于 uses 声明，不取决于描述符来自哪里。
     const sameEvents = defineService<object>('events');
-    let sameInstance = false;
+    let sameProvider = false;
     const def = definePlugin({
       name: 'declared-capabilities',
       uses: {
@@ -139,8 +139,8 @@ describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
         services,
         optionalEvents: optional(sameEvents),
       },
-      apply({ bus, optionalEvents }) {
-        sameInstance = optionalEvents.require() === bus;
+      apply({ optionalEvents, services }) {
+        sameProvider = optionalEvents.require() === services.get(events);
       },
     });
     await app.plugin(def);
@@ -148,7 +148,7 @@ describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
     const out = await invoke('GET /api/plugins');
     const row = (out.body as { plugins: Array<Record<string, unknown>> }).plugins[0];
     expect(row.state).toBe('active');
-    expect(sameInstance).toBe(true);
+    expect(sameProvider).toBe(true);
     expect(row.uses).toEqual([
       { key: 'bus', service: 'events', kind: 'required' },
       { key: 'hooks', service: 'hooks', kind: 'required' },
