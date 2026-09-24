@@ -5,9 +5,9 @@ import { sessionManager } from '../../packages/api-session-manager/src/index.js'
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { HUB_PLUGINS, registerHubs } from '../fixtures/hubs.js';
 
-// 会话表只在激活时从当时的 memory 胜者读一次。运行中胜者换成另一个后端（新装或启用首选后端）后，
-// 落盘只能删本进程显式删除过的会话，不能把新胜者里原有的会话当孤儿删掉；冷启动整批登记时
-// 会话管理排在全部 memory 提供者之后激活，首轮就从首选后端加载。
+// 会话表跟随 memory 胜者：运行中胜者换成另一个后端（新装或启用首选后端）时，先把旧表的未落盘变更写回
+// 旧后端，再从新后端读表整体替换（换后端即换库，不跨后端合并）。落盘只删本进程显式删除过的会话，
+// 不按差集清扫。冷启动整批登记时会话管理排在全部 memory 提供者之后激活，首轮就从首选后端加载。
 
 function fakeMemory(initial: Record<string, Record<string, unknown>> = {}) {
   const meta = new Map(Object.entries(initial));
@@ -34,8 +34,8 @@ const oldSession = {
   updatedAt: 1,
 };
 
-describe('session-manager 落盘只删显式删除的会话', () => {
-  it('先从空后备加载、首选后端随后上线：首选后端里原有的会话不被当孤儿删掉', async () => {
+describe('session-manager 会话表跟随 memory 胜者', () => {
+  it('先从空后备加载、首选后端随后上线：换成首选后端的会话表，原有会话可见且不被删', async () => {
     const fallback = fakeMemory();
     const preferred = fakeMemory({ 'old-1': oldSession });
     const app = new App({ name: 'T', logLevel: 'error' });
@@ -46,11 +46,38 @@ describe('session-manager 落盘只删显式删除的会话', () => {
     await app.plugins.idle();
     host.provide(memory, preferred as never, { priority: 10 });
     await app.plugins.idle();
+    await expect.poll(() => host.sessionManager.require().getSession('old-1')?.name).toBe('上次运行的会话');
 
     await host.sessionManager.require().ensureSession('new-1', { name: '新会话', status: 'waiting' });
     await app.stop();
 
     expect([...preferred.meta.keys()].sort()).toEqual(['new-1', 'old-1']);
+    expect([...fallback.meta.keys()], '旧表不写进新后端，新表也不写回旧后端').toEqual([]);
+  });
+
+  it('换人时先把旧表的未落盘变更写回旧后端，再以新后端的表为准', async () => {
+    const fallback = fakeMemory();
+    const preferred = fakeMemory({ 'old-1': oldSession });
+    const app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
+    const host = app.bind({ provide, sessionManager });
+    host.provide(memory, fallback as never, { priority: -100 });
+    await app.plugin(sessionManagerPlugin, {});
+    await app.plugins.idle();
+    const sm = () => host.sessionManager.require();
+    // 在后备上建一个会话，赶在 1 秒防抖落盘之前换后端
+    await sm().ensureSession('draft', { name: '后备上的会话', status: 'waiting' });
+    expect(fallback.meta.has('draft')).toBe(false);
+
+    host.provide(memory, preferred as never, { priority: 10 });
+    await app.plugins.idle();
+    await expect.poll(() => sm().getSession('old-1')?.name).toBe('上次运行的会话');
+
+    expect(fallback.meta.has('draft'), '换人前未落盘的变更写回了旧后端').toBe(true);
+    expect(sm().getSession('draft'), '新后端的表里没有旧后端的会话').toBeUndefined();
+    expect(preferred.meta.has('draft')).toBe(false);
+    await app.stop();
+    expect([...preferred.meta.keys()]).toEqual(['old-1']);
   });
 
   it('显式删除的会话仍从后端删掉', async () => {
