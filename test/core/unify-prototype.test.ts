@@ -14,7 +14,6 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
-import type { PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
@@ -228,38 +227,19 @@ describe('资源身份：同名不同激活互不清扫', () => {
   });
 });
 
-describe('子模块：重新绑定与父子关闭', () => {
-  it('子模块的登记归子激活；单独关子只撤子的；关父级联关子', async () => {
-    const { app } = world();
+describe('父子关闭：根与插件', () => {
+  it('插件的登记归插件激活；单独卸插件只撤插件的，根绑定的登记不动', async () => {
+    const { app, host } = world();
     const instance = makeHub();
-    await app.plugin(hubProvider(instance));
-    const child = definePlugin({
-      name: 'child',
-      uses: { hub },
-      apply: ({ hub }) => void hub.register({ name: 'child-item' }),
-    });
-    let handles: Array<{ disposeAsync(): Promise<void> }> = [];
+    host.provide(hub, instance);
+    app.bind({ hub }).hub.register({ name: 'parent-item' });
     await app.plugin(
-      definePlugin({
-        name: 'parent',
-        uses: { hub, lifecycle },
-        async apply({ hub, lifecycle }) {
-          hub.register({ name: 'parent-item' });
-          handles = [await lifecycle.module(child)];
-        },
-      }),
+      definePlugin({ name: 'child', uses: { hub }, apply: ({ hub }) => void hub.register({ name: 'child-item' }) }),
     );
     await app.plugins.idle();
     expect(instance.list()).toEqual(['child-item', 'parent-item']);
-    await handles[0]!.disposeAsync();
+    await app.plugins.unload('child');
     expect(instance.list(), '关子不动父的登记').toEqual(['parent-item']);
-
-    // 再挂一个子，然后关父：级联。公开条目没有激活记录，挂载口是父激活的 lifecycle.module
-    const parentActivation = (app.plugins.getPlugin('parent') as PluginRecord).activation!;
-    await activationHost(app).bind(parentActivation, { lifecycle }).lifecycle.module(child);
-    expect(instance.list()).toEqual(['child-item', 'parent-item']);
-    await app.plugins.unload('parent');
-    expect(instance.list()).toEqual([]);
   });
 });
 
@@ -551,7 +531,7 @@ describe('关闭契约', () => {
     oldOff();
     expect(instance.list()).toEqual(['x']);
     await Promise.all([activation.disposeAsync(), activation.disposeAsync()]);
-    activation.dispose();
+    await activation.disposeAsync();
     expect(instance.list()).toEqual([]);
   });
 });

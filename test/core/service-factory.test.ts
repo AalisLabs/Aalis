@@ -5,7 +5,6 @@ import {
   defineService,
   type Logger,
   lifecycle,
-  type ModuleHandle,
   optional,
   provide,
   serviceFactory,
@@ -49,15 +48,15 @@ afterEach(async () => {
 });
 
 describe('服务工厂构造与资源回滚', () => {
-  it.each([false, true])('构造失败与消费者重入关闭共享一次 onDispose，异步关闭=%s', async waiting => {
+  it('构造失败与消费者重入关闭共享一次 onDispose', async () => {
     const { app } = world();
     const target = defineService<object>('reentrant-factory-close');
     const gate = deferred();
     let read!: () => unknown;
     let closed = 0;
     let delivered = 0;
-    let closing: Promise<void> | undefined;
-    const child = await app.bind({ lifecycle }).lifecycle.module(
+    let closing!: Promise<boolean>;
+    await app.plugin(
       definePlugin({
         name: 'factory-consumer',
         uses: { services },
@@ -75,21 +74,20 @@ describe('服务工厂构造与资源回滚', () => {
             delivered++;
           });
         });
-        if (waiting) closing = child.disposeAsync();
-        else child.dispose();
+        closing = app.plugins.unload('factory-consumer');
         throw new Error('factory failed during close');
       }),
     );
 
     expect(() => read()).toThrow('factory failed during close');
     let finished = false;
-    void closing?.then(() => {
+    void closing.then(() => {
       finished = true;
     });
     await tick();
     expect(closed).toBe(1);
     expect(delivered).toBe(0);
-    if (waiting) expect(finished).toBe(false);
+    expect(finished).toBe(false);
     gate.resolve();
     await closing;
     await tick();
@@ -157,45 +155,6 @@ describe('服务工厂构造与资源回滚', () => {
     expect(warnings.some(message => message.includes('late factory rejection'))).toBe(true);
     await app.stop();
     expect({ tracked, disposed }).toEqual({ tracked: 1, disposed: 1 });
-  });
-
-  it.each([false, true])('失败工厂的迟到子模块被关闭一次，停机重叠=%s', async stopping => {
-    const { app } = world();
-    const host = app.bind({ provide, services });
-    const descriptor = defineService<object>('module-factory');
-    const gate = deferred();
-    const childClosed = deferred();
-    let cleanupCount = 0;
-    let mounting: Promise<ModuleHandle> | undefined;
-    host.provide(
-      descriptor,
-      serviceFactory(scope => {
-        mounting = scope.module(
-          definePlugin({
-            name: 'child',
-            uses: { lifecycle },
-            async apply({ lifecycle }) {
-              lifecycle.onDispose(() => {
-                cleanupCount++;
-                childClosed.resolve();
-              });
-              await gate.promise;
-            },
-          }),
-        );
-        throw new Error('setup failed');
-      }),
-    );
-
-    expect(() => host.services.get(descriptor)).toThrow('setup failed');
-    expect(mounting).toBeDefined();
-    const stopped = stopping ? app.stop() : undefined;
-    gate.resolve();
-    await mounting;
-    await childClosed.promise;
-    if (stopped) await stopped;
-    else await app.stop();
-    expect(cleanupCount).toBe(1);
   });
 
   it('失败构造的异步 track 回滚被关闭等待，交接时旧提供者仍可用', async () => {

@@ -1,11 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   type AalisEvents,
   definePlugin,
   defineService,
   EventBus,
   type Logger,
-  lifecycle,
   provide,
 } from '../../packages/core/src/index.js';
 import { createActivationFixture } from '../helpers/activation.js';
@@ -126,7 +125,7 @@ describe('binding cleanup boundaries', () => {
   it.each([
     'sync',
     'async',
-  ] as const)('%s notification failure does not strand a closed module identity', async failure => {
+  ] as const)('%s notification failure does not strand a closed plugin identity', async failure => {
     class ThrowingBus extends EventBus {
       fail = false;
       override emit<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): Promise<void> {
@@ -161,15 +160,16 @@ describe('binding cleanup boundaries', () => {
         provide(service, {});
       },
     });
-    const cap = app.bind({ lifecycle }).lifecycle;
     try {
-      const first = await cap.module(definition);
+      await app.plugin(definition);
       const oldActivation = [...rootActivation(app).children][0];
+      const disposal = vi.spyOn(oldActivation, 'disposeAsync');
       bus.fail = true;
-      await expect(first.disposeAsync()).resolves.toBeUndefined();
+      await expect(app.plugins.unload('worker')).resolves.toBe(true);
+      await expect(disposal.mock.results[0]?.value).resolves.toBeUndefined();
       expect(rootActivation(app).children.has(oldActivation)).toBe(false);
-      const second = await cap.module(definition);
-      expect(second.id).toBe('root#worker');
+      await expect(app.plugin(definition)).resolves.toBe(true);
+      expect([...rootActivation(app).children].map(child => child.id)).toEqual(['worker']);
       expect(warnings.flat().map(String).join(' ')).toContain(`${failure} notification failure`);
     } finally {
       bus.fail = false;

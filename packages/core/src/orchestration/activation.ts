@@ -60,10 +60,6 @@ export class Activation {
     return done;
   }
 
-  dispose(): void {
-    this.resources.lifecycle.dispose();
-  }
-
   disposeAsync(timeoutMs?: number): Promise<void> {
     if (this.closing)
       return awaitWithTimeout(this.closing, timeoutMs, limit =>
