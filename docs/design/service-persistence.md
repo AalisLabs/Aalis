@@ -10,7 +10,7 @@
   归属的插件被重新 apply，其内存态会重建为空。
 - **磁盘 / DB 态（persistent）**：通过 storage 服务、SQLite / MongoDB / 文件
   落盘，重建后会从磁盘读回。
-- **bounce-safe**：服务所属插件被 `App.reloadPlugin` 重新激活后，对外可见的
+- **bounce-safe**：服务所属插件被 `app.plugins.bounce` 重新激活后，对外可见的
   状态能在合理时间内恢复（要么数据从磁盘 / 上游回流，要么内存重建后下游会
   自然重新填充）。
 
@@ -41,9 +41,9 @@
 
 ## 重载注意事项
 
-下游依赖**不**随 provider bounce 级联重启。消费者经 `ServiceRef` 每次查询解析当前提供者；有状态接线（SDK 句柄、订阅）用 `follow` 跟随重建。登记型能力（工具、页面、命令）由描述符的 `registrar` 在提供者换人时整体重挂。
+provider bounce 时，此刻 required 解析到它的 active 下游（传递闭包）随之重启：并入同一批先收尾、先关，provider 重新激活后按拓扑序重新激活；有后备提供者时同样重启，不在空档里切到后备。其余下游不重启：消费者经 `ServiceRef` 每次查询解析当前提供者；有状态接线（SDK 句柄、订阅）用 `follow` 跟随重建。登记型能力（工具、页面、命令）由描述符的 `registrar` 在提供者换人时整体重挂。
 
-1. **bounce 只拆被点名的插件**：`bounce(target)` 拆掉 target 的激活，其 provided 服务从容器移除。下游目标态不变（optional 上下线不改变目标态；required 整个落空才会转 pending）。下游下次读 `current` / `require` 拿到新胜者；`follow` / `registrar` 负责交接。
+1. **bounce 连带重启 required 下游**：`bounce(target)` 拆掉 target 的激活，其 provided 服务从容器移除；此刻 required 解析到 target 的 active 下游同批重启，其进程内态随重启丢失。其余下游目标态不变（optional 上下线不改变目标态），下次读 `current` / `require` 拿到新胜者；`follow` / `registrar` 负责交接。
 
 2. **避免 bounce 持有外部连接的插件**：上表中标注 "重建即可用" 的插件可以
    安全 bounce；标注 "进程池 / 浏览器会话" 的服务 bounce 会断开外部资源，

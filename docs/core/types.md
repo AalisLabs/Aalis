@@ -113,7 +113,7 @@ function serviceRef<P, E extends object>(port: BindingPort<P>, extra: E): Servic
 
 `BindingPort.identity` 是这次激活的不透明资源身份（`symbol`），也是以这次激活名义调用提供者的凭据，见 [资源身份](service.md#资源身份)。
 
-`ServiceInfo` 是无实例的登记元数据：`contextId`、`priority`、可选 `label`、`exclusive: boolean`。由 `services.inspect(key)` 与 `ServiceContainer.inspect(name)` 返回。
+`ServiceInfo` 是无实例的登记元数据：`contextId`、`priority`、可选 `label`、`exclusive: boolean`。由 `services.inspect(key)` 返回。
 
 ---
 
@@ -199,6 +199,6 @@ interface AalisEvents {
 
 ## 编排与宿主 SPI
 
-`App` / `AppOptions` / `createApp`；`PluginManager` / `PluginEntry` / `PluginState` / `parseInstanceId`；`PluginLoader` / `PluginDescriptor` / `RestartStrategy`。
+`App` / `AppOptions` / `createApp`；`PluginEntry` / `PluginState` / `parseInstanceId`；`PluginLoader` / `PluginDescriptor` / `RestartStrategy`。
 
-四原语注册表类：`EventBus` / `ServiceContainer` / `HookRegistry` / `ContributionRegistry`。贡献点的 `ContributionSpec` / `ContributionHandle` 见 [contributions.md](contributions.md)。
+贡献点的 `ContributionSpec` / `ContributionHandle` 见 [contributions.md](contributions.md)。

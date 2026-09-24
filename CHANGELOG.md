@@ -16,11 +16,11 @@
 - 八项基础服务由根激活经 `provide` 独占登记，与第三方服务同一种登记（校验、`service:registered` 通知、独占、归属），只有 `provide` 自身直接登记一次来自举；宿主三项 `app` / `plugins` / `host-config` 同样由根激活独占登记。基础服务在容器里的提供者是「激活身份 → 这次激活的接口」，只认在 `uses` 里声明了该服务的激活：经 `services.get` 动态查到的是提供者函数，以未声明者的身份调用即抛错。
 - `BindingPort` 新增 `identity`：这次激活的不透明资源身份。它是凭据，交给谁，谁就能以这次激活的名义调用认它的提供者；提供者据它把登记归到这次激活，第三方契约包也可据此提供按调用方区分的服务。
 - 经 `events.on` / `hooks.middleware` / `contributions.contribute` / `provide` 的登记不再逐条记进激活的清理链：返回的退订就是原语自己的撤回（同步、幂等，只撤自己那一条）；激活关闭时先按归属同栈整体切断这些登记，再排空清理链（`follow` 清理、`track`、`registrar` 撤回与 `onDispose`）。
-- `services.get/all` 返回登记进容器的对象本身；新增 `services.inspect` / `ServiceContainer.inspect`，只读登记元数据（`contextId` / `priority` / `label` / `exclusive`，不含实例）。WebUI 服务页使用 inspect，展示基础服务与独占状态。
+- `services.get/all` 返回登记进容器的对象本身；新增 `services.inspect`，只读登记元数据（`contextId` / `priority` / `label` / `exclusive`，不含实例）。WebUI 服务页使用 inspect，展示基础服务。
 - `provide(..., { exclusive: true })` 是通用独占登记策略；Core 基础服务也使用它防止同名第二提供者。该策略不等于永久驻留，退订后可重新登记。
 - 内部目录调整为 `kernel` / `primitives` / `infrastructure` / `composition` / `orchestration`，描述符与绑定状态机分文件。深路径不属于公开 API，导入统一走 `@aalis/core`。
 
-**迁移**：管理页只枚举登记时改用 `inspect`。`app.services.get/getAll` 对基础服务返回的是提供者函数而不是接口，宿主要用基础服务经 `app.bind`。动态查询的完整边界见 [服务文档](docs/core/service.md)。
+**迁移**：管理页只枚举登记时改用 `inspect`。经 `services.get/all` 动态查到的基础服务是提供者函数而不是接口，宿主要用基础服务经 `app.bind` 声明。动态查询的完整边界见 [服务文档](docs/core/service.md)。
 
 ### 收回内部对象、删除死接口（@aalis/core）
 
@@ -151,19 +151,21 @@ export default definePlugin({
 
 ### 调度与宿主入口（@aalis/core）
 
-级联 bounce 开关与 `evictDownstreamConsumers` 删除。提供者换人不再一律重启消费者；有状态接线走 `follow`。管理器的手动 `bounce(instanceId, { config? })` 仍在：拆掉当前激活 → pending → 重算后重新激活，不换代码。仍传 `module` 的调用记 warn 并返回 `false`。
+级联 bounce 开关与 `evictDownstreamConsumers` 删除。非管理动作引起的提供者换人（提供者自行撤回登记、偏好切换、更高优先级上线）不重启消费者；有状态接线走 `follow`；管理动作拆掉当前胜者见下一段。管理器的手动 `bounce(instanceId, { config? })` 仍在：拆掉当前激活 → pending → 重算后重新激活，不换代码。
+
+管理动作重启 required 依赖方：`unload` / `disable` / `bounce`（`updateConfig` 即 `bounce`）一个提供者时，此刻 required 解析到它（胜者归要走的激活所有）的 active 依赖方按传递闭包并入同一批，先收尾、先关，之后转 pending 再重新激活；有后备提供者时同样重启，不在空档里切到后备。0.16 只级联声明了 `requiresBounceOnDepChange` 的下游。required 依赖方排在该服务的全部声明提供者之后激活（首个之外的提供者若传递地依赖该依赖方则不排，避免伪环），`bounce` 后挂回首选提供者。
 
 内部重算只分 `'changed' | 'shutdown'` 两档，不从包根导出。`PluginEntry.module` 改为 `definition`；`requiredDeps` / `optionalDeps` 改为 `required` / `optional`（服务名数组）。公开的 `PluginEntry` 类型不含内部激活字段。激活记录类不再从包根导出；`app.ctx` 删除。
 
-宿主入口：`app.plugin(definition, config?, instanceId?)`、`app.bind(uses)`、`app.config`、`app.plugins`，以及四张底层注册表（`app.events` / `app.services` / `app.hooks` / `app.contributions`）。管理类插件经 `appService` / `pluginsService` / `hostConfig` 描述符声明获取，不要直接 import `App` 类当运行时依赖。
+宿主入口：`app.plugin(definition, config?, instanceId?)`、`app.bind(uses)`、`app.config`、`app.plugins`。管理类插件经 `appService` / `pluginsService` / `hostConfig` 描述符声明获取，不要直接 import `App` 类当运行时依赖。
 
-**迁移**：`app.plugin(mod)` 的 `mod` 改为 `definePlugin` 的产物。`app.ctx.getService(...)` 改为 `app.bind({ services }).services.get(...)` 或给那段宿主代码写 `uses`。读插件条目用 `entry.definition`，不要 `entry.module`。依赖列表用 `entry.required` / `entry.optional`。
+**迁移**：`app.plugin(mod)` 的 `mod` 改为 `definePlugin` 的产物。`app.ctx.getService(...)` 改为 `app.bind({ services }).services.get(...)` 或给那段宿主代码写 `uses`。读插件条目用 `entry.definition`，不要 `entry.module`。依赖列表用 `entry.required` / `entry.optional`。required 依赖方的内存态要能承受提供者被 `unload` / `disable` / `bounce` 时随之发生的重启。
 
 ### 关停编排与 `app:stopping`（@aalis/core）
 
 关停按激活为单位，每个激活拆成收尾（`lifecycle.onDrain`：此刻本激活的监听、登记与声明的依赖都还在）与撤回加清理（`lifecycle.onDispose`：对外登记已撤回）。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。边只来自框架管理的关系：声明的依赖（含尚未访问的 optional）在编排那一刻解析到的胜者，以及存活的托管绑定与尚未落地的撤回。经 `services` 动态查询不产生边，调用方缓存的裸引用不追踪。
 
-普通依赖（别的插件）：消费者整个 close 完，提供者才 drain。根激活使用插件的服务：根 drain 先于该插件 close，根 `onDrain` 期间该插件尚未关闭，但可能已执行 drain。插件使用根激活登记的服务（基础服务、宿主服务与 `app.bind({ provide })` 的发布）：不往排序图加边——归属保证插件 close 先于根 close，因此插件 drain 时根尚未关闭，也可能已执行 drain。环内 optional 边构成的强连通分量（≥2 个激活）卡住时一次放行分量内全部 drain，再 close；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。框架保证编排顺序与等待，不保证插件在 drain 中已主动撤回或关闭的实现仍可用。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭，但不享有整 App 关停那一层「根绑定与全部插件同计划」的交接保证。
+普通依赖（别的插件）：消费者整个 close 完，提供者才 drain。根激活使用插件的服务：根 drain 先于该插件 close，根 `onDrain` 期间该插件尚未关闭，但可能已执行 drain。插件使用根激活登记的服务（基础服务、宿主服务与 `app.bind({ provide })` 的发布）：不往排序图加边——归属保证插件 close 先于根 close，因此插件 drain 时根尚未关闭，也可能已执行 drain。环内 optional 边构成的强连通分量（≥2 个激活）卡住时一次放行分量内全部 drain，再 close；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。框架保证编排顺序与等待，不保证插件在 drain 中已主动撤回或关闭的实现仍可用。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭：此刻 required 解析到该插件的 active 下游（传递闭包）并入同一批，先收尾、先关；提供者清理之前，挂在它所提供服务上的 `follow` / `registrar` 跟随者由撤回段就地驱动交接，旧清理落定后提供者才清理。
 
 `App.stop()` 单飞：重入返回同一 Promise。现序：停配置 watch → `beginShutdown()`（置停机态并冻计划）→ `plugins.idle()`（排干在飞重算）→ 发出 `app:stopping`（屏障，等监听器）→ 再 `idle()` → 执行已冻计划的 drain / close → 清 sticky → 根激活 `disposeAsync`。已静置时仍须先冻闸，否则 `idle()` 让出的微任务里 bounce 会留下 pending 幽灵。`app:stopping` 只在全局停机触发一次，bounce / unload / disable 不发；知会（告别语、状态条）可以挂它，资源清理走 `onDrain` / `onDispose`。发出时停机计划已冻：窗口内 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成，拆卸由停机计划执行）；`register` / `bounce` 返回 false（与定义或实例 id 校验失败同属政策挡下的 false 口径；`register` 不落账）。每次调用 `stop()` 都得到完整停机的同一 Promise；监听器与清理回调不得 await 或返回它，以免等待自身。监听器里对已冻激活 `provide` 记 warn 后忽略、不抛。停机完成后：对新定义 `register` 返回 false 且不落账；对已 disposed 实例的 `enable` / `updateConfig` / `bounce` 返回 false；`idle()` 落定。
 
@@ -173,7 +175,7 @@ export default definePlugin({
 
 缺 `name`、空串、仅空白、含 `#`、`name` 带 `:suffix`、或 `name` / `instanceId` 为危险键 `__proto__` / `constructor` / `prototype`：`definePlugin` 抛错；手写对象绕过它时 `register` / `app.plugin` 返回 `false` 并 warn，不落账。显式 `instanceId` 同样须非空、不含 `#`，但允许 `name:suffix`（多实例）。`uses` 必须是纯对象（不能是数组或原始值）；值不是描述符的项，定义期抛、登记期 `false`。`apply` 必须是函数：定义期抛，手写 `register` 返回 false 且不落账。`provides` 元素必须是描述符。
 
-`provide` 拒空实现（`null` / `undefined`）与非有限 `priority`（`NaN` / `Infinity` / 非数字）；`ServiceContainer.register` 同一套闸。按插件 id 取放配置时，危险键抛 `插件 id 不合法: ${id}`。
+`provide` 拒空实现（`null` / `undefined`）与非有限 `priority`（`NaN` / `Infinity` / 非数字）。按插件 id 取放配置时，危险键抛 `插件 id 不合法: ${id}`。
 
 `provides` 声明了但激活后未按本次 `instanceId` 登记 → 本次激活进入 `error`。`provide(..., { onBehalfOf })` 的条目逻辑身份取被代者，清理仍归本激活；代登记**不计入**代理人的 `provides`，写进去会按「未提供」报错。
 
@@ -212,7 +214,7 @@ PUT `/api/plugins/:name/config` 按 `configSchema` 裁掉未知键并 warn。裁
 它把容器内部的条目对象原样交出（只拷贝外层数组），调用方能改 `priority` / `contextId` / 清理归属 `owner` 绕过容器不变量；
 `ServiceEntry` 类型随之不再从包根导出。
 
-**迁移**：改用 `ServiceContainer.getAll(name)`，或声明 `services` 后 `services.all(name)`，或在 `uses` 里声明该服务后 `x.all()`。元素是 `ServiceView` 投影（`instance` / `contextId` / `priority` / `label`），顺序相同。只看元数据请改用 `inspect`。
+**迁移**：声明 `services` 后改用 `services.all(name)`，或在 `uses` 里声明该服务后 `x.all()`。元素是 `ServiceView` 投影（`instance` / `contextId` / `priority` / `label`），顺序相同。只看元数据请改用 `inspect`。
 
 ## 2026-09-20（core 0.16.0 minor；patch：api-tools 0.8.4 / plugin-agent 0.13.6）
 
