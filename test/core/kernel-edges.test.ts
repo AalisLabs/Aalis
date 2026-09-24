@@ -253,13 +253,14 @@ describe('DefaultLogger 附加参数与时间戳渲染', () => {
 });
 
 describe('parseInstanceId', () => {
-  it('只把 "/" 之后的 ":" 当实例后缀：与插件 name 的校验同一切分规则', () => {
+  it('第一个 ":" 起是实例后缀，带不带 scope 同一规则，后缀里可以有 "/"；插件 name 含 ":" 即视为带后缀', () => {
     expect(parseInstanceId('@scope/plugin:main')).toEqual({ moduleName: '@scope/plugin', suffix: 'main' });
     expect(parseInstanceId('@scope/plugin')).toEqual({ moduleName: '@scope/plugin' });
-    // definePlugin 接受 "/" 之前带 ":" 的 name；它作 instanceId 时必须整体还原成模块名
-    const name = definePlugin({ name: 'odd:scope/plugin', apply() {} }).name;
-    expect(parseInstanceId(name)).toEqual({ moduleName: 'odd:scope/plugin' });
-    expect(parseInstanceId(`${name}:alt`)).toEqual({ moduleName: 'odd:scope/plugin', suffix: 'alt' });
+    expect(parseInstanceId('@scope/plugin:a/b')).toEqual({ moduleName: '@scope/plugin', suffix: 'a/b' });
+    expect(parseInstanceId('plain:a/b')).toEqual({ moduleName: 'plain', suffix: 'a/b' });
+    expect(parseInstanceId('plain')).toEqual({ moduleName: 'plain' });
+    // 模块名是 npm 包名，不含 ':'；name 里出现 ':' 一律当作带了实例后缀
+    expect(() => definePlugin({ name: 'odd:scope/plugin', apply() {} })).toThrow(/实例后缀/);
   });
 });
 

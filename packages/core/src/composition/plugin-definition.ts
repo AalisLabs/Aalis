@@ -19,7 +19,7 @@ export interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
   /**
    * 插件名，与 package.json 的 name 一致；单实例时即实例 id。
    * 须为 trim 后非空的字符串，不能是 `__proto__` / `constructor` / `prototype`，
-   * 且不含 instanceId 的 `:suffix`（parseInstanceId 从 '/' 之后切开）与保留字符 `#`。
+   * 且不含 instanceId 的 `:suffix`（parseInstanceId 以第一个 ':' 切开）与保留字符 `#`。
    */
   name: string;
   displayName?: string;
@@ -80,11 +80,10 @@ export function assertValidInstanceId(id: unknown): asserts id is string {
 
 function assertValidPluginName(name: unknown): asserts name is string {
   assertValidId(name, 'name');
-  const slashIdx = name.indexOf('/');
-  const searchFrom = slashIdx >= 0 ? slashIdx + 1 : 0;
-  if (name.includes(':', searchFrom)) {
+  // parseInstanceId 以第一个 ':' 切出实例后缀，所以「带后缀」即「含 ':'」
+  if (name.includes(':')) {
     throw new Error(
-      `插件 "${name}" 的 name 不能带实例后缀——":suffix" 只用于 instanceId（parseInstanceId 从 '/' 之后切开），不进定义 name`,
+      `插件 "${name}" 的 name 不能带实例后缀——":suffix" 只用于 instanceId（parseInstanceId 以第一个 ':' 切开），不进定义 name`,
     );
   }
 }
