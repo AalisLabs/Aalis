@@ -154,11 +154,37 @@ describe('加载前配置同步', () => {
     await createPluginDiscovery(app, prepared.loader, store).loadAll();
     prepared.finishInitialLoad();
     prepared.finishInitialLoad();
-    await Promise.resolve();
+    // 落盘是异步的，拒绝在后续微任务里才到：等一个宏任务再看告警
+    await new Promise(r => setTimeout(r, 0));
     expect(writes).toBe(1);
     expect(warns.filter(w => w.includes('配置同步落盘失败'))).toHaveLength(1);
     expect(app.plugins.getPlugin('p1')?.state).toBe('active');
     expect(app.plugins.getPlugin('p1')?.config).toEqual({ known: 1 });
+    await app.stop();
+  });
+
+  it('同步 provider 落盘抛错（如只读配置）：首批收尾不抛，记一笔 warn，已激活实例不受影响', async () => {
+    const { app, store } = hostedApp(
+      { plugins: { p1: { known: 1, unknown: true } } },
+      {
+        provider: {
+          save: () => {
+            throw new Error('EROFS');
+          },
+        },
+      },
+    );
+    const prepared = withPluginConfigSync(
+      { discover: async () => [{ name: p1Module.name, source: 'memory' }], load: async () => p1Module },
+      app,
+      store,
+    );
+    const warns = captureWarnsOf(app);
+    await createPluginDiscovery(app, prepared.loader, store).loadAll();
+    expect(() => prepared.finishInitialLoad()).not.toThrow();
+    await new Promise(r => setTimeout(r, 0));
+    expect(warns.filter(w => w.includes('配置同步落盘失败'))).toHaveLength(1);
+    expect(app.plugins.getPlugin('p1')?.state).toBe('active');
     await app.stop();
   });
 
@@ -330,7 +356,61 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
     await app.stop();
   });
 
-  it('停机开始时停止监听外部变更：provider 的退订被调用，此后推送不再触发重载', async () => {
+  it('外部新增已登记模块的后缀实例：热重载先按政策补默认值，随后热扫描登记时首次 apply 即带默认值', async () => {
+    let push: ((next: Record<string, unknown>) => void) | undefined;
+    const { app, store } = hostedApp(
+      {},
+      {
+        provider: {
+          save: () => {},
+          watch: cb => {
+            push = cb as (next: Record<string, unknown>) => void;
+            return () => {};
+          },
+        },
+      },
+    );
+    const seen: Record<string, unknown>[] = [];
+    const multi = definePlugin({
+      name: 'multi',
+      reusable: true,
+      configSchema: {
+        port: { type: 'number', label: 'P', default: 8080 },
+        server: { label: 'S', fields: { host: { type: 'string', label: 'H', default: 'localhost' } } },
+      },
+      uses: { config },
+      apply({ config: value }) {
+        seen.push(structuredClone(value));
+      },
+    });
+    const prepared = withPluginConfigSync(
+      { discover: async () => [{ name: 'multi', source: 'memory' }], load: async () => multi },
+      app,
+      store,
+    );
+    const discovery = createPluginDiscovery(app, prepared.loader, store);
+    await discovery.loadAll();
+    prepared.finishInitialLoad();
+    installConfigHotReload(app, store);
+
+    // 模拟外部编辑：给已登记的 reusable 模块加一个只写了半块嵌套组的实例
+    push?.({
+      name: 'T',
+      logLevel: 'error',
+      plugins: { multi: store.getPluginConfig('multi'), 'multi:b': { server: {} } },
+    });
+    await app.plugins.idle();
+    const expected = { port: 8080, server: { host: 'localhost' } };
+    expect(store.getPluginConfig('multi:b')).toEqual(expected);
+
+    await discovery.rescan();
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('multi:b')?.config).toEqual(expected);
+    expect(seen.at(-1)).toEqual(expected);
+    await app.stop();
+  });
+
+  it('app:stopping 时（在飞动作排干后）停止监听外部变更：provider 的退订被调用，此后推送不再触发重载', async () => {
     let stops = 0;
     let push: (() => void) | undefined;
     const { app, store } = hostedApp(

@@ -27,6 +27,9 @@ export interface ConfigSyncOptions {
  * 将各插件 schema 派生默认值中缺失的字段合并到配置；同时按 configSchema
  * 移除多余字段。返回发生变更的插件 instanceId 列表。
  *
+ * 覆盖已登记的实例，以及文档里新出现、尚未登记的 `name:suffix` 实例（模块已登记且 reusable 时）：
+ * 后者由热扫描按文档登记，先在这里规范化，首次 apply 拿到的就是带默认值的这一份。
+ *
  * 副作用：对每个变化条目 setPluginConfig；若有变化最终落盘。
  * 插件的 configSchema 经 `getPlugin(instanceId).definition` 读取
  * （core 的状态摘要不携带配置详情）。
@@ -37,6 +40,12 @@ export function syncPluginDefaults(app: App, store: ConfigStore, opts?: ConfigSy
     const entry = app.plugins.getPlugin(status.instanceId);
     if (!entry) continue;
     if (syncPluginConfig(app, store, entry.definition, status.instanceId, opts)) changed.push(status.instanceId);
+  }
+  for (const id of Object.keys(store.get('plugins'))) {
+    const { moduleName, suffix } = parseInstanceId(id);
+    if (!suffix || app.plugins.getPlugin(id)) continue;
+    const definition = app.plugins.getPlugin(moduleName)?.definition;
+    if (definition?.reusable && syncPluginConfig(app, store, definition, id, opts)) changed.push(id);
   }
   if (changed.length > 0) saveSyncedConfig(app, store);
   return changed;
@@ -113,7 +122,7 @@ export async function handleConfigChanged(app: App, store: ConfigStore, opts?: C
 }
 
 /**
- * 接管配置外部变更监听（provider 不支持 watch 时为 no-op），停机开始时停止监听。
+ * 接管配置外部变更监听（provider 不支持 watch 时为 no-op），在 app:stopping（在飞动作排干后）停止监听。
  * startAalis 默认调用；嵌入式宿主可自行选择是否接。
  */
 export function installConfigHotReload(app: App, store: ConfigStore, opts?: ConfigSyncOptions): void {

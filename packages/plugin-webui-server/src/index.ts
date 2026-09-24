@@ -697,8 +697,9 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         displayNameMap.set(p.instanceId, p.displayName);
       }
     }
-    // 根激活提供核心服务——显示包名，别把内部 id 'root' 裸露给用户。
-    displayNameMap.set('root', '@aalis/core');
+    // 根激活归宿主：core 的内置服务与宿主登记的 host-config / plugin-source 都在这里（与市场依赖图同一标签）。
+    // 别把内部 id 'root' 裸露给用户。
+    displayNameMap.set('root', '宿主');
 
     const serviceNames = services.names();
     const detail: Record<
