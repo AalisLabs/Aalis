@@ -27,7 +27,7 @@ interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
 function definePlugin<U extends Uses>(definition: PluginDefinition<U>): PluginDefinition<U>;
 ```
 
-`name` 须为非空字符串，不含 `#`（子模块 id 分隔符），也不含 `:suffix`（只用于 instanceId）。
+`name` 须为非空字符串，不含保留字符 `#`，也不含 `:suffix`（只用于 instanceId）。
 
 ### PluginMeta 增强
 
@@ -111,7 +111,7 @@ function serviceRef<P, E extends object>(port: BindingPort<P>, extra: E): Servic
 
 `ProviderOf<D>` / `BoundOf<U>` / `Uses` 是推导载体。详见 [service.md](service.md)、[hub-services.md](../design/hub-services.md)。
 
-`serviceFactory` 返回 `ServiceFactory<T>`，回调同步创建 T，不能返回 Promise。回调的 `ServiceScope` 提供消费者的 `id` / `identity` / `logger` / `config` / `closed`，以及 `track` / `onDrain` / `onDispose` / `module`。完整寿命与回滚契约见 [服务工厂](service.md#按消费者创建实例)。
+`serviceFactory` 返回 `ServiceFactory<T>`，回调同步创建 T，不能返回 Promise。回调的 `ServiceScope` 提供消费者的 `id` / `identity` / `logger` / `config` / `closed`，以及 `track` / `onDrain` / `onDispose`。完整寿命与回滚契约见 [服务工厂](service.md#按消费者创建实例)。
 
 `ServiceInfo` 是无实例的登记元数据：`contextId`、`priority`、可选 `label`、`scope: 'shared' | 'activation'`、`exclusive: boolean`。由 `services.inspect(key)` 与 `ServiceContainer.inspect(name)` 返回；查询不会执行工厂。
 
@@ -129,13 +129,6 @@ interface LifecycleCap {
   readonly closed: boolean;
   onDrain(fn: () => void | Promise<void>, label?: string): () => void;
   onDispose(fn: () => void | Promise<void>, label?: string): () => void;
-  module(definition: PluginDefinition, config?: Record<string, unknown>): Promise<ModuleHandle>;
-}
-
-interface ModuleHandle {
-  readonly id: string;
-  dispose(): void;
-  disposeAsync(timeoutMs?: number): Promise<void>;
 }
 
 interface ProvideOptions {

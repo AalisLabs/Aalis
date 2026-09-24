@@ -24,7 +24,7 @@ export default definePlugin({
 
 `definePlugin` 在模块加载时校验声明表（`name` 合法、`uses` 每一项都是描述符或 `optional()` 包装）并原样返回，好让 `apply` 的参数类型从 `uses` 推导出来。加载器只接受 **default 导出的定义对象**。
 
-`name` 须为非空字符串，且不含子模块分隔符 `#`、也不含实例后缀 `:suffix`（`:suffix` 只用于 `register` 的 instanceId）。空白（trim 后空）与 `__proto__` / `constructor` / `prototype` 同样拒绝；`instanceId` 同规则（允许 `name:suffix`）。手写、未经 `definePlugin` 的对象在 `register` 还会再过同一道闸：校验失败返回 `false` 并 warn，不抛错。定义期 `definePlugin` 抛错；登记期不抛、返回 `false`。
+`name` 须为非空字符串，且不含保留字符 `#`、也不含实例后缀 `:suffix`（`:suffix` 只用于 `register` 的 instanceId）。空白（trim 后空）与 `__proto__` / `constructor` / `prototype` 同样拒绝；`instanceId` 同规则（允许 `name:suffix`）。手写、未经 `definePlugin` 的对象在 `register` 还会再过同一道闸：校验失败返回 `false` 并 warn，不抛错。定义期 `definePlugin` 抛错；登记期不抛、返回 `false`。
 
 字段：
 
@@ -79,7 +79,7 @@ export default definePlugin({
 | `events` | `Events` | `on` / `emit`，监听随这次激活撤回 |
 | `hooks` | `Hooks` | `middleware` / `run` |
 | `contributions` | `Contributions` | `contribute` / `collect` |
-| `lifecycle` | `LifecycleCap` | `id`、`closed`、`onDrain`、`onDispose`、`module` |
+| `lifecycle` | `LifecycleCap` | `id`、`closed`、`onDrain`、`onDispose` |
 | `logger` | `Logger` | 这次激活的日志器 |
 | `config` | 只读对象 | 这次激活的插件配置视图。整份宿主配置是另一项能力，见下方 `hostConfig` |
 | `provide` | `Provide` | 唯一的服务发布入口 |
@@ -181,7 +181,7 @@ apply({ services }) {
 
 ## 生命周期
 
-`lifecycle.id` 是这次激活的实例 id（多实例为 `name:suffix`，子模块为 `父id#模块名`）：日志、展示、路由用的逻辑名，不是资源身份。归属用不透明激活身份，不从 id / `entryId` 字符串前缀猜。
+`lifecycle.id` 是这次激活的实例 id（多实例为 `name:suffix`）：日志、展示、路由用的逻辑名，不是资源身份。归属用不透明激活身份，不从 id / `entryId` 字符串前缀猜。
 
 ### `onDrain` / `onDispose`
 
@@ -202,29 +202,21 @@ lifecycle.onDispose(async () => {
 
 不要用 `events.on('app:stopping', …)` 做资源清理——那只在 app 全局停机时触发一次，不会在 bounce / unload 时触发。该事件定位是知会，不是清理通道。见 [events.md](events.md)。
 
-关停编排以激活为单位，分收尾（drain）与关闭（close）两阶段。边只来自框架管理的关系：声明的依赖（含子模块、含尚未访问的 optional）在编排那一刻解析到的胜者，以及存活的托管绑定、已创建的工厂实例与尚未落地的撤回。不追踪调用方缓存的共享裸引用；动态查询创建的工厂实例也按托管寿命产生边。
+关停编排以激活为单位，分收尾（drain）与关闭（close）两阶段。边只来自框架管理的关系：声明的依赖（含尚未访问的 optional）在编排那一刻解析到的胜者，以及存活的托管绑定、已创建的工厂实例与尚未落地的撤回。不追踪调用方缓存的共享裸引用；动态查询创建的工厂实例也按托管寿命产生边。
 
 承诺按依赖形状分三种，不是一条无条件规则：
 
-1. 普通依赖（required 与 optional 胜者：别的插件、兄弟模块）：消费者整个 close 完，提供者才 drain。
-2. 父使用自己子树的服务：父 drain 先于提供者子节点的 close；父 `onDrain` 期间该子节点尚未关闭，但可能已执行 drain。到父 close 时子节点已按归属关闭。
-3. 后代使用祖先的服务：不额外增加依赖边。归属树保证子 close 先于祖先 close，因此子 drain 时祖先尚未关闭；这不保证祖先还没执行 drain。祖先也依赖该子树时，按第 2 条安排祖先 drain，避免把父子互用变成两个 drain 互相等待。
+1. 普通依赖（required 与 optional 胜者，即别的插件）：消费者整个 close 完，提供者才 drain。
+2. 根激活使用插件的服务（宿主经 `app.bind` 取用）：根 drain 先于该插件的 close；根 `onDrain` 期间该插件尚未关闭，但可能已执行 drain。到根 close 时插件已按归属关闭。
+3. 插件使用根激活登记的服务（基础服务、宿主服务，以及宿主经 `app.bind({ provide })` 发布的服务）：不额外增加依赖边。归属保证插件 close 先于根 close，因此插件 drain 时根尚未关闭；这不保证根还没执行 drain。根也依赖该插件时，按第 2 条安排根 drain，避免把互用变成两个 drain 互相等待。
 
 环：optional 边构成的强连通分量先让成员全部 drain，再任一 close（不告警）；环里只剩 required 边仍无解才告警并强行放行。环外与归属约束不松。单独卸载提供者不在整次 `App.stop()` 计划里，不享有上述交接。这里保证的是框架的调用顺序与等待：插件若在 drain 中自行撤回服务或关闭连接，框架无法维持该实现可用；业务交接仍须返回可等待的 Promise，并处理失败。
 
-关闭回调不能等待同一计划中排在自身之后的阶段。例如父 `onDrain` 中 `await child.disposeAsync()`（或返回这个 Promise），而计划要求父 drain 完成后才关闭该子模块，两者就会互等。父 drain 应等待数据交接本身完成，再由计划继续关闭子模块。计划外的调用者仍可 `await child.disposeAsync()` 或 `await app.stop()` 等实际关闭完成；重复请求加入已有关闭，不改变计划顺序，也不会提前兑现。
+关闭回调不能等待同一计划中排在自身之后的阶段。例如在 `onDrain` 中 `await app.stop()`（或返回这个 Promise）：停机要等这次收尾完成，收尾又在等停机完成，两者就会互等。收尾应等待数据交接本身完成，再由计划继续执行后续阶段。计划外的调用者仍可 `await app.stop()` 等实际关闭完成；重复请求加入已有关闭，不改变计划顺序，也不会提前兑现。
 
 单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 注入（默认 5000；0=不设限）：超时放弃该项、继续后续清理并 warn 点名。超时只是停止等待，不代表资源已释放。
 
 本次没有为插件 `apply` 或 `app:*` 屏障监听器新增超时。`disposeTimeoutMs` 不保证整个 `register()` / `stop()` 有统一上限：尚未进入清理阶段时，永不落定的初始化或屏障监听器仍可能阻止流程推进。
-
-### `lifecycle.module(definition, config?)`
-
-挂一个子模块：独立身份与生命周期，能力按子激活重新绑定，随父关闭。子模块不进调度器。
-
-- 挂载时缺 required 服务即拒绝（抛错，`apply` 不执行）。
-- 挂载之后不再设闸：提供者离场时登记排队、引用可能为空，由父模块决定是否关掉它。不能说子模块与顶层插件调度完全相同。
-- 返回 `ModuleHandle`：`id`（同名重复挂载时已唯一化：`parent#name`、`parent#name~2`…）、`dispose()`（同步请求关闭，异步清理不等待）、`disposeAsync(timeoutMs?)`（等待全部异步清理；名字在此之后才释放）。
 
 ## 宿主入口
 
@@ -242,10 +234,10 @@ lifecycle.onDispose(async () => {
 
 | 部分 | 职责 |
 |---|---|
-| `kernel/Lifecycle`、`DisposableChain` | 父子资源寿命、分段清理、逆序执行与异步等待，不认识服务或插件 |
+| `kernel/Lifecycle`、`DisposableChain` | 资源寿命、分段清理、逆序执行与异步等待，不认识服务或插件 |
 | `infrastructure/Resources` | 一次激活的清理登记、在飞撤回与同步获取操作记账；关闭相位等待这些工作落定 |
 | `orchestration/Activation` | 内部身份、配置视图、资源记录、子激活和依赖边；不提供四原语操作门面 |
-| `orchestration/ActivationHost` | 创建激活、按 `uses` 装配能力、挂载子模块、连接原语撤回与关闭阶段 |
+| `orchestration/ActivationHost` | 创建激活、按 `uses` 装配能力、连接原语撤回与关闭阶段 |
 | `composition/core-services` | 登记默认基础服务，通过公开工厂协议为各消费者生成 `events` / `provide` 等接口 |
 | `composition/descriptors`、`service-factory`、`plugin-definition` | 服务与插件定义、类型推导，以及工厂资源口 |
 | `composition/service-watch` 与 `composition/binding` | 前者只观察服务胜者变化；后者负责 `follow` 交接、`registrar` 登记与逐条撤回 |
