@@ -244,10 +244,6 @@ describe('GET/PUT /api/plugins/:name/config 非法 id', () => {
       assertValidInstanceId(id);
       inner.setPluginConfig(id, cfg);
     };
-    gated.isPluginDisabled = (id: string) => {
-      assertValidInstanceId(id);
-      return inner.isPluginDisabled(id);
-    };
     const api = attachRoutes({
       app: bound.app.require(),
       plugins: bound.plugins.require(),

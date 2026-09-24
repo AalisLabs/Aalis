@@ -318,7 +318,6 @@ export class PluginManager implements PluginManagerService {
     // pending 后会被激活侧的「旧激活 未清」闸永久跳过。
     entry.state = 'pending';
     entry.error = undefined;
-    this.config.setPluginEnabled(instanceId, true);
     this.logger.info(`插件已启用: ${instanceId}`);
     await this.recompute();
     return true;
@@ -343,7 +342,6 @@ export class PluginManager implements PluginManagerService {
     // dispose 段守卫：期间反应式 recompute 排队到收尾的 recompute
     this.suspendDepth++;
     try {
-      this.config.setPluginEnabled(instanceId, false);
       await this.retire(entry, 'disabled');
       this.logger.info(`插件已禁用: ${instanceId}`);
     } finally {
@@ -403,7 +401,7 @@ export class PluginManager implements PluginManagerService {
   }
 
   /**
-   * 增量重载单个插件（核心入口）：持久化新 config（如有）→ 拆掉当前激活 → 转 pending → 重算后重新激活。
+   * 增量重载单个插件（核心入口）：换上新 config（如有）→ 拆掉当前激活 → 转 pending → 重算后重新激活。
    * `error` 态插件会被重置为 pending 重试。
    *
    * 正在用本插件所提供服务的 required 下游随之重启：先于本插件收尾、关闭，本插件重新激活后按拓扑序
@@ -422,15 +420,14 @@ export class PluginManager implements PluginManagerService {
     // 'disposed' 对管理路径单向（含卸载在途与停机后的遗留终态两种情形）：
     // unload 写入终态与从注册表摘除之间隔着 retire 的微任务（即使无激活可拆，
     // await 也让出）——此窗口内把它覆写回 'pending' 会重新武装 entry，激活出
-    // 一个注册表外的永生孤儿实例；停机后覆写则会把插件误写进持久化禁用清单。
+    // 一个注册表外的永生孤儿实例；停机后的遗留终态同理不得复活。
     if (entry.state === 'disposed') return this.refuse('bounce', instanceId, '处于 disposed 终态');
     if (this.shuttingDown) return this.refuse('bounce', instanceId, '停机中不重建');
     const newConfig = opts?.config;
     if (newConfig) {
       // 入参可能是调用方还要继续用的活对象（WebUI PUT / config-sync 浅铺开的 payload）。
-      // entry 与 ConfigManager 各持一份拷贝：插件经内置 config 就地改嵌套不得写穿快照。
+      // entry 持有自己的拷贝：插件经内置 config 就地改嵌套不得写穿调用方的对象。
       entry.config = cloneConfigObject(newConfig);
-      this.config.setPluginConfig(instanceId, cloneConfigObject(newConfig));
     }
 
     // dispose 段守卫（与 disable / unload 对齐）：dispose 触发的反应式

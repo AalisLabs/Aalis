@@ -32,6 +32,7 @@ function setup() {
     timeoutMs: 30000,
   };
   let received: Record<string, unknown> | undefined;
+  let persisted: Record<string, unknown> | undefined;
   const routes = new Map<string, Handler[]>();
   const app = new Proxy(
     {},
@@ -47,7 +48,9 @@ function setup() {
     set: () => {},
     getAll: () => ({}),
     getPluginConfig: () => ({ ...pluginConfig }),
-    isPluginDisabled: () => false,
+    setPluginConfig: (_n: string, cfg: Record<string, unknown>) => {
+      persisted = cfg;
+    },
   };
   registerPluginRoutes(
     app as never,
@@ -96,12 +99,12 @@ function setup() {
     await next();
     return out;
   };
-  return { put, got: () => received };
+  return { put, got: () => received, persisted: () => persisted };
 }
 
 describe('PUT 插件配置：部分更新不得抹掉无 default 的密钥', () => {
   it('请求只改 timeoutMs 时，已存的 apiKey 必须原样保留', async () => {
-    const { put, got } = setup();
+    const { put, got, persisted } = setup();
     const out = await put({ timeoutMs: 60000 });
 
     expect(out.status).toBe(200);
@@ -111,6 +114,7 @@ describe('PUT 插件配置：部分更新不得抹掉无 default 的密钥', () 
       '裸 defaults 打底时该键整条消失——updateConfig 是整体替换，密钥就此从内存与 yaml 一起没了',
     ).toBe('sk-REAL-SECRET');
     expect(got()?.trap, '打底必须读 definition.configSchema，不得读 module').toBeUndefined();
+    expect(persisted(), '管理动作不写文档，路由写进文档的与交给运行态的是同一份').toEqual(got());
   });
 
   it('显式传空串仍可清空（部分更新不等于改不掉）', async () => {
