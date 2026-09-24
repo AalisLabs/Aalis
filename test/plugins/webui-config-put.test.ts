@@ -51,6 +51,7 @@ function setup(opts: { saveConfig?: () => Promise<void> } = {}) {
           }),
         restart: () => calls.push('restart'),
       }),
+      source: { current: undefined },
       plugins: ref<PluginManagerService>({}),
       hostConfig: ref<HostConfig>(hostConfig),
       tools: { current: undefined },

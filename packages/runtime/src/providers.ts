@@ -14,14 +14,7 @@ import {
 import { readdir, stat } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type {
-  AalisConfig,
-  ConfigProvider,
-  PluginDefinition,
-  PluginDescriptor,
-  PluginLoader,
-  RestartStrategy,
-} from '@aalis/core';
+import type { AalisConfig, ConfigProvider, PluginDefinition, RestartStrategy } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import {
@@ -31,6 +24,7 @@ import {
   loadPluginDefinition,
   warnLikelyPluginMissingKeyword,
 } from './node-modules-loader.js';
+import type { PluginDescriptor, PluginLoader } from './plugin-discovery.js';
 import { disarmTerminalStateRestorer } from './terminal.js';
 
 // ============================================================

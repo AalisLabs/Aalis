@@ -10,8 +10,8 @@ import { ServiceContainer } from '../primitives/services.js';
 import type { Activation } from './activation.js';
 import { ActivationHost, notify } from './activation-host.js';
 import { appService, HOST_CONFIG_KEYS, hostConfig, narrow, pluginsService } from './host-services.js';
-import { PluginManager, parseInstanceId } from './plugin.js';
-import type { PluginLoader, RestartStrategy } from './providers.js';
+import { PluginManager } from './plugin.js';
+import type { RestartStrategy } from './providers.js';
 import { events, provide, services } from '../composition/core-services.js';
 import type { BoundOf, Uses } from '../composition/descriptors.js';
 import type { PluginDefinition } from '../composition/plugin-definition.js';
@@ -32,7 +32,6 @@ import { DefaultLogger, type Logger, LogHub, type LogLevel } from '../infrastruc
  * core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——这些通过 provider 注入：
  * - `config`：当前配置快照（必填；由宿主从任意来源加载好传进来）
  * - `configProvider`：可选，提供 save() / watch() 能力；省略则配置只读
- * - `pluginLoader`：可选，提供插件发现+导入；省略则 `autoLoadPlugins()` 为 no-op
  * - `restartStrategy`：可选，提供重启实现；省略则 `restart()` 抛错
  */
 export interface AppOptions {
@@ -44,8 +43,6 @@ export interface AppOptions {
   config: AalisConfig;
   /** 配置持久化与外部变更监听；缺省=只读内存模式 */
   configProvider?: ConfigProvider;
-  /** 插件加载器；缺省=不自动加载任何插件（必须通过 `app.plugin(mod)` 手动注册） */
-  pluginLoader?: PluginLoader;
   /**
    * 插件默认配置的派生器；缺省=无默认值（注册时只用文件配置与传入配置）。
    *
@@ -99,13 +96,11 @@ export interface AppOptions {
  * 创建 App 实例的工厂函数。
  *
  * @example
- * // 浏览器/嵌入式：内存配置 + 内存插件加载
- * const app = createApp({
- *   config: { name: 'embedded', logLevel: 'info', plugins: {} },
- *   pluginLoader: bundledLoader([memoryPlugin, agentPlugin]),
- * });
+ * // 浏览器/嵌入式：内存配置，插件由宿主直接交给 core
+ * const app = createApp({ config: { name: 'embedded', logLevel: 'info', plugins: {} } });
+ * await app.pluginAll([{ definition: memoryPlugin }, { definition: agentPlugin }]);
  *
- * // Node 宿主由 @aalis/runtime 提供 fs/yaml/spawn 实现
+ * // Node 宿主由 @aalis/runtime 提供插件发现、fs/yaml/spawn 实现
  */
 export function createApp(options: AppOptions): App {
   return new App(options);
@@ -130,7 +125,6 @@ export class App {
   /** 屏障事件（app:*）由 App 自己发；四原语注册表不外露，插件与宿主都经描述符取用 */
   readonly #events: EventBus;
 
-  private readonly pluginLoader?: PluginLoader;
   private pluginDefaults?: (definition: PluginDefinition) => Record<string, unknown>;
   private readonly restartStrategy?: RestartStrategy;
   private readonly disposeTimeoutMs: number;
@@ -162,7 +156,6 @@ export class App {
     // 广播型钩子相位的"卡链"上报同理（handler 忘调 next 会静默吞掉下游注入）。
     hookRegistry.onStall = (hook, contextId, skipped) =>
       this.logger.warn(`钩子 ${hook}: handler(来自 ${contextId}) 未调用 next()，其后 ${skipped} 个 handler 被跳过`);
-    this.pluginLoader = options.pluginLoader;
     this.pluginDefaults = options.pluginDefaults;
     this.restartStrategy = options.restartStrategy;
     this.disposeTimeoutMs = options.disposeTimeoutMs ?? 5000;
@@ -185,7 +178,7 @@ export class App {
     this.plugins = this.#plugins;
 
     // 4. 宿主服务：与内置八项同一登记规则（根激活、独占），只交出契约列出的方法
-    caps.provide(appService, narrow(this, ['stop', 'restart', 'saveConfig', 'rescanPlugins']), { exclusive: true });
+    caps.provide(appService, narrow(this, ['stop', 'restart', 'saveConfig']), { exclusive: true });
     caps.provide(
       pluginsService,
       {
@@ -242,8 +235,8 @@ export class App {
    * 注册插件
    *
    * **resolve 语义 = 注册落账 + 尽力即时激活**：完全静置时激活在返回前同步收敛；
-   * 有在飞 recompute（反应式级联/另一插件正在激活）**或手动 dispose 段在途**
-   * （unload/disable/bounce 的挂起窗口）时，本次请求排队并入其收尾，
+   * 有在飞 recompute（反应式级联/另一插件正在激活）**或挂起段在途**
+   * （unload/disable/bounce 的拆卸窗口、另一批登记）时，本次请求排队并入其收尾，
    * resolve 时激活可能尚未发生（排队不丢失——单飞排队见 recompute）。需要
    * 「激活已落定」的确定时机，调用后 `await app.plugins.idle()`（不得在插件
    * apply/onDispose 内这样做——自等死锁，见 idle）。
@@ -254,132 +247,39 @@ export class App {
    * @returns 同 `plugins.register`：false = 重名或未声明 reusable 的多实例，已记 warn
    */
   async plugin(definition: PluginDefinition, config?: Record<string, unknown>, instanceId?: string): Promise<boolean> {
-    const id = instanceId ?? definition.name;
-    // 合并优先级: 宿主派生的默认配置 ← 配置文件 ← 代码传入，**逐层深合并**：
-    // 同一路径上双方都是纯对象则递归，否则后者整体覆盖（数组与非纯对象是原子值）。
-    // 与宿主层（runtime/config-sync.ts）落盘回填默认值时的合并语义一致——顶层浅合并会让
-    // 配置文件里只写了半块的嵌套组（只写 server.port）把派生默认值整块顶掉，
-    // 插件首次 apply 就拿到缺 server.host 的配置。
-    const defaults = this.pluginDefaults?.(definition) ?? {};
-    const fileConfig = this.config.getPluginConfig(id);
-    const mergedConfig = mergeConfigLayers(mergeConfigLayers(defaults, fileConfig), config ?? {});
-    return this.plugins.register(definition, mergedConfig, id);
+    const [registered] = await this.pluginAll([{ definition, config, instanceId }]);
+    return registered;
   }
 
   /**
-   * 通过 `pluginLoader` 自动加载所有发现的插件。
-   * 未注入 loader 时为 no-op，调用方需自行 `app.plugin(definition)` 手动注册。
-   */
-  async autoLoadPlugins(): Promise<void> {
-    if (!this.pluginLoader) {
-      this.logger.debug('未注入 pluginLoader，跳过自动加载');
-      return;
-    }
-
-    const discovered = await this.pluginLoader.discover();
-    this.logger.info(`发现 ${discovered.length} 个插件`);
-
-    // 按模块名索引（用于多实例查找）
-    const loadedModules = new Map<string, PluginDefinition>();
-
-    // 加载并立即注册激活（导入插件模块没有顶层副作用，单次遍历即可）
-    for (const desc of discovered) {
-      try {
-        const mod = await this.pluginLoader.load(desc);
-        if (!mod || typeof mod.apply !== 'function' || !mod.name) {
-          this.logger.debug(`跳过非插件模块: ${desc.name}（缺少 name 或 apply）`);
-          continue;
-        }
-        loadedModules.set(mod.name, mod);
-        try {
-          await this.plugin(mod);
-        } catch (err) {
-          this.logger.error(`注册插件 "${mod.name}" 失败:`, err);
-        }
-      } catch (err) {
-        this.logger.error(`加载插件 "${desc.name}" 失败:`, err);
-      }
-    }
-
-    await this.registerConfiguredInstances(loadedModules);
-
-    // 配置同步政策（默认值回填 / schema 裁剪）属宿主层，由宿主在本方法之后自行执行。
-
-    // 引导期收敛保证的结构化落点：register 的 recompute 在有在飞 run 时排队早退
-    // （见 plugin() JSDoc），此前「本方法返回即全部收敛」靠调用点 await 交错偶然
-    // 成立——app:ready / app:started 的发出时机依赖这条保证，必须等静置而非碰运气。
-    // 引导路径不在任何 apply 内，无 idle 自等死锁面。
-    await this.plugins.idle();
-  }
-
-  /**
-   * 重新扫描插件源，加载新发现的插件（已注册的跳过）。
-   * 返回新加载的插件名列表。
+   * 批量注册：全部落账后只重算一次。依赖方因此在同一次重算里按拓扑序排在它 required 服务的
+   * 全部提供者之后激活，不会先挂到先登记的后备提供者上——宿主冷启动与热扫描都走这里。
+   * resolve 语义同 {@link plugin}；返回值与 items 逐项对应。
    *
-   * 优先调用 `pluginLoader.reload(desc)` 实现热重载（loader 可做缓存失效）；
-   * 未实现 reload 时退化到普通 `load(desc)`。
-   *
-   * resolve 语义同 `plugin()`（注册落账+尽力即时激活）。**刻意不等静置**：本方法
-   * 挂在 HTTP 热路径上，等静置会把请求延迟耦合到无关插件的慢 apply；市场的
-   * 就位判据本就只看注册表在场（见 package-manager 的 isPluginRegistered）。
+   * 合并优先级: 宿主派生的默认配置 ← 配置文件 ← 代码传入，**逐层深合并**：
+   * 同一路径上双方都是纯对象则递归，否则后者整体覆盖（数组与非纯对象是原子值）。
+   * 与宿主层（runtime/config-sync.ts）落盘回填默认值时的合并语义一致——顶层浅合并会让
+   * 配置文件里只写了半块的嵌套组（只写 server.port）把派生默认值整块顶掉，
+   * 插件首次 apply 就拿到缺 server.host 的配置。
    */
-  async rescanPlugins(): Promise<string[]> {
-    if (!this.pluginLoader) return [];
-    const discovered = await this.pluginLoader.discover();
-    const loaded: string[] = [];
-    const loadedModules = new Map<string, PluginDefinition>();
-
-    for (const desc of discovered) {
-      const already = this.plugins.getPlugin(desc.name);
-      if (already) {
-        loadedModules.set(already.definition.name, already.definition);
-        continue;
-      }
-
+  async pluginAll(
+    items: ReadonlyArray<{ definition: PluginDefinition; config?: Record<string, unknown>; instanceId?: string }>,
+  ): Promise<boolean[]> {
+    // 逐项合并：一项的默认值派生或配置读取抛错只让该项记 false，不拖累整批
+    const prepared = items.map(({ definition, config, instanceId }) => {
       try {
-        const mod = this.pluginLoader.reload
-          ? await this.pluginLoader.reload(desc)
-          : await this.pluginLoader.load(desc);
-        if (!mod || typeof mod.apply !== 'function' || !mod.name) {
-          this.logger.debug(`跳过非插件模块: ${desc.name}`);
-          continue;
-        }
-        loadedModules.set(mod.name, mod);
-        // 按 desc.name 查重只能挡住同名描述符；模块自报的 name 与 desc.name 不同且已注册时，
-        // register 会拒绝——那不算热加载，不能报进名单。定义仍留给后缀实例循环用。
-        if (!(await this.plugin(mod))) continue;
-        loaded.push(desc.name);
-        this.logger.info(`热加载插件: ${desc.name}`);
+        const id = instanceId ?? definition.name;
+        const defaults = this.pluginDefaults?.(definition) ?? {};
+        const merged = mergeConfigLayers(mergeConfigLayers(defaults, this.config.getPluginConfig(id)), config ?? {});
+        return { definition, config: merged, instanceId: id };
       } catch (err) {
-        this.logger.error(`热加载插件 "${desc.name}" 失败:`, err);
+        this.logger.error(`插件 "${instanceId ?? definition?.name}" 的配置合并失败，未注册:`, err);
+        return undefined;
       }
-    }
-
-    await this.registerConfiguredInstances(loadedModules);
-    return loaded;
-  }
-
-  /**
-   * 配置键里的 `name:suffix` 多实例：模块已在 loadedModules 时登记。已在注册表的跳过。
-   * autoLoad 与 rescan 共用，热激活不得比引导少收后缀实例。
-   */
-  private async registerConfiguredInstances(loadedModules: Map<string, PluginDefinition>): Promise<void> {
-    const pluginConfigs = this.config.get('plugins') ?? {};
-    for (const configKey of Object.keys(pluginConfigs)) {
-      const { moduleName, suffix } = parseInstanceId(configKey);
-      if (!suffix) continue;
-      if (this.plugins.getPlugin(configKey)) continue;
-      const mod = loadedModules.get(moduleName);
-      if (!mod) {
-        this.logger.warn(`多实例配置 "${configKey}" 对应的模块 "${moduleName}" 未找到，跳过`);
-        continue;
-      }
-      try {
-        await this.plugin(mod, undefined, configKey);
-      } catch (err) {
-        this.logger.error(`加载多实例插件 "${configKey}" 失败:`, err);
-      }
-    }
+    });
+    const registered = await this.#plugins.registerAll(prepared.filter(item => item !== undefined));
+    let next = 0;
+    return prepared.map(item => item !== undefined && registered[next++]);
   }
 
   /**

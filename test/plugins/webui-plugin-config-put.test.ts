@@ -63,6 +63,7 @@ function attachRoutes(opts: {
     expressApp as never,
     {
       app: refStub(opts.app),
+      source: { current: undefined },
       plugins: refStub(opts.plugins),
       hostConfig: refStub(opts.hostConfig),
       tools: { current: undefined },
