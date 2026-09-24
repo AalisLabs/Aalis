@@ -17,7 +17,7 @@ function silentApp(): App {
   return new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
 }
 
-const plugin = (name: string, extra: Partial<Pick<PluginDefinition, 'reusable' | 'core'>> = {}): PluginDefinition =>
+const plugin = (name: string, extra: Partial<Pick<PluginDefinition, 'reusable'>> = {}): PluginDefinition =>
   definePlugin({ name, apply() {}, ...extra });
 
 describe('register 的返回值', () => {
@@ -182,39 +182,12 @@ describe('enable / disable / bounce 的 false 分支（口径句里点名的「�
     await app.stop();
   });
 
-  it('被规则挡下：disabled 态 bounce 为 false，core 插件 disable 为 false', async () => {
+  it('被规则挡下：disabled 态 bounce 为 false', async () => {
     const app = silentApp();
     await app.plugins.register(plugin('p'));
-    await app.plugins.register(plugin('c', { core: true }));
     await app.plugins.idle();
     expect(await app.plugins.disable('p')).toBe(true);
     expect(await app.plugins.bounce('p'), 'disabled 态 bounce').toBe(false);
-    expect(await app.plugins.disable('c'), 'core 插件不能禁用').toBe(false);
-    await app.stop();
-  });
-
-  it('已删除的 module 热替换：旧调用传 module 记 warn 并返回 false，插件不被重启', async () => {
-    const hub = new LogHub();
-    const lines: string[] = [];
-    hub.onEntry(e => lines.push(`${e.level}:${e.message}`));
-    const app = new App({ config: { name: 'T', logLevel: 'warn', plugins: {} }, logHub: hub });
-    let applied = 0;
-    await app.plugins.register(
-      definePlugin({
-        name: 'p',
-        apply() {
-          applied++;
-        },
-      }),
-    );
-    await app.plugins.idle();
-    expect(app.plugins.getPlugin('p')?.state).toBe('active');
-    // 类型面已无 module 字段，这里模拟无类型约束的 JavaScript 调用方
-    const legacy = { module: plugin('p') } as unknown as { config?: Record<string, unknown> };
-    expect(await app.plugins.bounce('p', legacy)).toBe(false);
-    await app.plugins.idle();
-    expect(applied, '拒绝即不重启：apply 只跑过注册那一次').toBe(1);
-    expect(lines.some(l => l.startsWith('warn:') && l.includes('不再支持 module 热替换'))).toBe(true);
     await app.stop();
   });
 

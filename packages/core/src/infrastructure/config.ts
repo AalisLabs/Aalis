@@ -184,20 +184,6 @@ export class ConfigManager {
   }
 
   /**
-   * 重新加载配置——把外部传入的快照写回内部状态。
-   *
-   * 历史上这是"从磁盘 re-read"的入口；现在交由 provider 决定何时
-   * 通过 `watch(onChange)` 把新快照推过来；本方法仅供 watch 回调使用。
-   *
-   * 注意：本方法（与 watch 回调）不应用任何字段政策（默认回填/裁剪）——
-   * 政策归宿主（@aalis/runtime 的 config-sync），机制与政策分层。
-   */
-  reloadFrom(next: AalisConfig): AalisConfig {
-    this.config = mergeDefaultsConfig(next);
-    return this.config;
-  }
-
-  /**
    * 订阅配置外部变更，返回退订闭包（与 core 其余订阅口同形）。委托给 provider；无 provider 时为 no-op。
    * 单订阅者：已有订阅时再调即抛错，而不是静默顶替。
    */

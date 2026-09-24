@@ -101,7 +101,6 @@ export function registerPluginRoutes(
         capabilities: [...(capsByPlugin.get(p.instanceId) ?? [])],
         tools: toolsByPlugin.get(p.instanceId) ?? [],
         commands: commandsByPlugin.get(p.instanceId) ?? [],
-        core: p.core ?? false,
         reusable: p.reusable ?? false,
         // extends / config / configSchema / defaultConfig 非内核状态摘要字段
         // （getStatus 只含内核事实）：从 entry.config / entry.definition 补齐给前端。

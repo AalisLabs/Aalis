@@ -34,7 +34,7 @@ export interface ServiceRef<P> {
   all(): ServiceView<P>[];
   /**
    * 跟随提供者建立有状态资源：在场即调 attach，换人时先跑上次返回的清理再用新实例调，
-   * 下线与关闭时清理。清理可以是异步的，关闭会等它落地。取代整插件重启式的依赖更新。
+   * 下线与关闭时清理。清理可以是异步的，关闭会等它落地。
    * attach 本身必须同步，见 {@link FollowCleanup}。
    */
   follow(attach: (provider: P) => FollowCleanup): () => void;

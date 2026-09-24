@@ -22,6 +22,13 @@
 
 **迁移**：管理页只枚举登记时改用 `inspect`。`app.services.get/getAll` 对基础服务返回的是提供者函数而不是接口，宿主要用基础服务经 `app.bind`。动态查询的完整边界见 [服务文档](docs/core/service.md)。
 
+### 收回内部对象、删除死接口（@aalis/core）
+
+- `AppOptions` 不再接受注入 events / services / hooks / contributions 注册表，`config` 只接受快照。包根不再导出 `EventBus` / `HookRegistry` / `ServiceContainer` / `ContributionRegistry` / `PluginManager`；`App` 上的四个注册表字段收回，`app.plugins` 的类型是 `PluginManagerService`。
+- 删除 `PluginDefinition.core`（「核心插件不能被禁用」）、`PluginManager.isShuttingDown` / `softReload`、`ConfigManager.reloadFrom`，以及 `bounce` 对 `module` 选项的拒绝分支。
+
+**迁移**：宿主查询服务经 `app.bind({ services })`；要禁止某插件被禁用的宿主在管理面自行拦截。
+
 ### 宿主三服务只交出契约方法（@aalis/core）
 
 - `app` / `plugins` / `host-config` 在容器里只放契约列出的方法：App / PluginManager / ConfigManager 本体不再外露。`hostConfig` 描述符的类型改为 `HostConfig`（`get` / `getAll` / `set`、插件配置读写与启停、服务偏好），不含 `watch` / `unwatch` / `save`；经 `pluginsService` 拿到的 `getPlugin()` 返回不含内部激活记录的快照。
