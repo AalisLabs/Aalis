@@ -118,7 +118,7 @@ core 源码按职责分目录，依赖方向由 `test/core/architecture.test.ts`
 - **资源内核** `kernel/`（`disposable-chain.ts`）：清理链、分段逆序排空与逐项超时、错误隔离与上报。只引用本层，不认识服务、配置或激活记录。
 - **协作原语** `primitives/`（events、hooks、services、contributions）：四个注册表及登记元数据。依赖 kernel 与基础类型，不认识激活记录、Logger 或 Config；诊断经回调送出。
 - **基础设施** `infrastructure/`（resources、config、config-values、logger）：一次激活的资源账与关闭过程（收尾段、初始化等待、完成信号、在飞撤回）、配置与安全值处理、日志通道。依赖 kernel、primitives 与基础类型，不负责服务装配和插件调度。
-- **服务装配** `composition/`：`descriptors` 保存服务描述符、类型推导与依赖提取；`binding` 保存资源口、不可用错误与 `follow` / `registrar`；`core-services` 定义内置八项的描述符与提供者；其余包含 runtime 接线、service-watch、provide-validation 与 plugin-definition。依赖基础设施、原语和 kernel，不 import 编排层。
+- **服务装配** `composition/`：`descriptors` 保存服务描述符、类型推导与依赖提取；`binding` 保存资源口、不可用错误与 `follow` / `registrar`；`core-services` 定义内置八项的描述符与提供者；其余包含 runtime 接线、provide-validation 与 plugin-definition。依赖基础设施、原语和 kernel，不 import 编排层。
 - **插件编排** `orchestration/`（app、activation、activation-host、close-plan、plugin、plugin-activation、plugin-topology、host-services、providers）：创建激活、经根激活登记内置服务、启动、调度、关停，以及宿主 SPI 和管理服务描述符。
 
 src 根只留 `index.ts`。配置持久化 SPI `ConfigProvider` 只依赖 `AalisConfig`，与 `ConfigManager` 同处 `infrastructure/config.ts`。`types/` 按种类存放词汇；`types/app.ts`、`types/plugin.ts` 属编排契约，类型 barrel 会带出它们，下层不得经 barrel 反向引用。基础词汇文件只相互引用。
