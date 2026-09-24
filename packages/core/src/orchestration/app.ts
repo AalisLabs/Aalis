@@ -7,7 +7,7 @@ import { ServiceContainer } from '../primitives/services.js';
 
 import type { Activation } from './activation.js';
 import { ActivationHost, notify } from './activation-host.js';
-import { appService, hostConfig, pluginsService } from './host-services.js';
+import { appService, HOST_CONFIG_KEYS, hostConfig, narrow, pluginsService } from './host-services.js';
 import { PluginManager, parseInstanceId } from './plugin.js';
 import type { PluginLoader, RestartStrategy } from './providers.js';
 import { events, provide, services } from '../composition/core-services.js';
@@ -202,10 +202,32 @@ export class App {
     // 3. 插件管理器
     this.plugins = new PluginManager(this.#host, config, this.logger, this.disposeTimeoutMs);
 
-    // 4. 宿主服务：与内置八项同一登记规则（根激活、独占）
-    caps.provide(appService, this, { exclusive: true });
-    caps.provide(pluginsService, this.plugins, { exclusive: true });
-    caps.provide(hostConfig, config, { exclusive: true });
+    // 4. 宿主服务：与内置八项同一登记规则（根激活、独占），只交出契约列出的方法
+    caps.provide(appService, narrow(this, ['stop', 'restart', 'saveConfig', 'rescanPlugins']), { exclusive: true });
+    caps.provide(
+      pluginsService,
+      {
+        ...narrow(this.plugins, [
+          'getStatus',
+          'bounce',
+          'updateConfig',
+          'enable',
+          'disable',
+          'unload',
+          'register',
+          'idle',
+        ]),
+        // 交给插件的是快照：只有公开字段，内部激活记录不外露
+        getPlugin: instanceId => {
+          const entry = this.plugins.getPlugin(instanceId);
+          if (!entry) return undefined;
+          const { definition, config, state, error, required, optional } = entry;
+          return { definition, instanceId: entry.instanceId, config, state, error, required, optional };
+        },
+      },
+      { exclusive: true },
+    );
+    caps.provide(hostConfig, narrow(config, HOST_CONFIG_KEYS), { exclusive: true });
 
     // 5. 应用启动时已存在的服务偏好
     const initialPrefs = config.getServicePreferences();
