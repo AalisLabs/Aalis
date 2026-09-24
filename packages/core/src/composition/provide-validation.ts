@@ -1,5 +1,5 @@
 // ============================================================
-// service-helpers.ts — provide 能力的服务登记校验
+// provide-validation.ts — provide 的登记校验
 //
 // 内置 provide 能力传入逻辑身份、登记选项与所需的查询/日志接口。
 // 资源归属和清理登记由该能力与 Resources 负责，此处不持有激活记录。
@@ -32,7 +32,7 @@ export function validateProvide(
   if (explicitEntryId && entryId !== ctxId && !entryId.startsWith(`${ctxId}/`)) {
     logger.warn(
       `服务 "${name}" 的 entryId "${entryId}" 不以 "${ctxId}/" 为前缀。` +
-        `脱离前缀后 hasByContext 命不中：module.provides 一致性校验将视其为未注册，按 provider/model 的模型引用也找不到它。` +
+        `脱离前缀后 hasByContext 命不中：定义的 provides 校验将视其为未注册，按 provider/model 的模型引用也找不到它。` +
         `推荐格式：\`\${lifecycle.id}/\${子粒度标识}\`。`,
     );
   }
@@ -41,7 +41,7 @@ export function validateProvide(
     logger.warn(
       `服务 "${name}" 已被当前上下文 "${ctxId}" provide 过一次。容器允许多 entry，` +
         `但下游按 contextId 路由时仅能命中首个，后续注册将静默失效。` +
-        `如需多实例（如多套 API key），请在插件 module 上声明 reusable=true，` +
+        `如需多实例（如多套 API key），请在插件定义上声明 reusable=true，` +
         `然后在 config 中用 "<name>:<suffix>" 形式注册多份。` +
         `若是有意拆出多个子粒度 entry（如 per-model LLM），请传入 options.entryId。`,
     );

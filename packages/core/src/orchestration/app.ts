@@ -1,3 +1,5 @@
+import type { PluginManagerService } from '../types/app.js';
+
 import { reportQuietly } from '../kernel/disposable-chain.js';
 
 import { ContributionRegistry } from '../primitives/contributions.js';
@@ -32,19 +34,14 @@ import { DefaultLogger, type Logger, LogHub, type LogLevel } from '../infrastruc
  * - `configProvider`：可选，提供 save() / watch() 能力；省略则配置只读
  * - `pluginLoader`：可选，提供插件发现+导入；省略则 `autoLoadPlugins()` 为 no-op
  * - `restartStrategy`：可选，提供重启实现；省略则 `restart()` 抛错
- *
- * 所有内核子系统（events / services / hooks / config）均可注入自定义实例，
- * 用于沙盒/测试/多实例场景。
  */
 export interface AppOptions {
   /**
    * 配置快照——必填。
    * 测试可直接传字面量 `{ name: 'X', logLevel: 'error', plugins: {} }`；
    * 生产入口由宿主从文件/URL/远端加载后传入。
-   *
-   * 也接受已构造好的 `ConfigManager`（沙盒共享、scope 等场景）。
    */
-  config: AalisConfig | ConfigManager;
+  config: AalisConfig;
   /** 配置持久化与外部变更监听；缺省=只读内存模式 */
   configProvider?: ConfigProvider;
   /** 插件加载器；缺省=不自动加载任何插件（必须通过 `app.plugin(mod)` 手动注册） */
@@ -59,14 +56,6 @@ export interface AppOptions {
   pluginDefaults?: (definition: PluginDefinition) => Record<string, unknown>;
   /** 重启策略；缺省=`restart()` 抛错 */
   restartStrategy?: RestartStrategy;
-  /** 注入自定义事件总线 */
-  events?: EventBus;
-  /** 注入自定义服务容器 */
-  services?: ServiceContainer;
-  /** 注入自定义钩子注册表 */
-  hooks?: HookRegistry;
-  /** 注入自定义贡献点注册表 */
-  contributions?: ContributionRegistry;
   /**
    * 单个异步清理项（onDispose 返回的 promise）的等待上限（毫秒），默认 5000。
    * 用于插件 unload / bounce / 停机路径的 disposeAsync——网络类关闭（数据库/
@@ -132,15 +121,14 @@ export class App {
   /** 根激活：宿主绑定（{@link bind}）与核心服务的归属，全部插件激活的父。不对外——宿主经 bind 取能力 */
   readonly #root: Activation;
   readonly #host: ActivationHost;
-  readonly plugins: PluginManager;
+  /** 插件管理面（契约类型）；停机编排用的内部方法经 #plugins */
+  readonly plugins: PluginManagerService;
+  readonly #plugins: PluginManager;
   readonly logger: Logger;
-  /** 整份配置的读写、落盘与外部变更监听（插件侧的同一对象经 `hostConfig` 描述符声明获取） */
+  /** 整份配置的读写、落盘与外部变更监听（插件侧经 `hostConfig` 拿到的是只含读写方法的窄面） */
   readonly config: ConfigManager;
-
-  readonly events: EventBus;
-  readonly services: ServiceContainer;
-  readonly hooks: HookRegistry;
-  readonly contributions: ContributionRegistry;
+  /** 屏障事件（app:*）由 App 自己发；四原语注册表不外露，插件与宿主都经描述符取用 */
+  readonly #events: EventBus;
 
   private readonly pluginLoader?: PluginLoader;
   private pluginDefaults?: (definition: PluginDefinition) => Record<string, unknown>;
@@ -150,36 +138,29 @@ export class App {
   private stopping?: Promise<void>;
 
   constructor(options: AppOptions) {
-    // 1. 配置：接受快照或已构造的 ConfigManager
-    const config =
-      options.config instanceof ConfigManager
-        ? options.config
-        : new ConfigManager(options.config, {
-            provider: options.configProvider,
-          });
-
+    // 1. 配置
+    const config = new ConfigManager(options.config, { provider: options.configProvider });
     this.config = config;
-    this.events = options.events ?? new EventBus();
+    this.#events = new EventBus();
     // 'app:ready' / 'app:started' 是"应用启动完成"里程碑：app.start() 仅 emit
     // 一次，但插件配置热重载会触发 bounce → 新插件实例的
     // events.on('app:ready'/'app:started', ...) 必须也能拿到通知，否则 adapter /
     // CLI TUI 等"在启动后才建立"的逻辑在 bounce 后就永远不会重新执行。
     // 标记为 sticky 后，bounce 出来的新实例注册 listener 时立即被微任务补发一次。
-    this.events.markSticky('app:ready');
-    this.events.markSticky('app:started');
-    this.services = options.services ?? new ServiceContainer();
-    this.hooks = options.hooks ?? new HookRegistry();
-    this.contributions = options.contributions ?? new ContributionRegistry();
+    this.#events.markSticky('app:ready');
+    this.#events.markSticky('app:started');
+    const container = new ServiceContainer();
+    const hookRegistry = new HookRegistry();
+    const contributionRegistry = new ContributionRegistry();
     this.logger =
       options.logger ??
       new DefaultLogger('aalis', config.get('logLevel') as LogLevel, options.logHub ?? LogHub.default, options.now);
     // EventBus 保持环境无关不持有 Logger，handler 错误经此回调上报。
-    // 外部注入的 bus 若已自带上报器则尊重之（??=）。
-    this.events.onHandlerError ??= (event, err, contextId) => {
+    this.#events.onHandlerError = (event, err, contextId) => {
       this.logger.warn(`事件 "${event}" 的监听器抛错（已隔离${contextId ? `，来自 ${contextId}` : ''}）:`, err);
     };
     // 广播型钩子相位的"卡链"上报同理（handler 忘调 next 会静默吞掉下游注入）。
-    this.hooks.onStall ??= (hook, contextId, skipped) =>
+    hookRegistry.onStall = (hook, contextId, skipped) =>
       this.logger.warn(`钩子 ${hook}: handler(来自 ${contextId}) 未调用 next()，其后 ${skipped} 个 handler 被跳过`);
     this.pluginLoader = options.pluginLoader;
     this.pluginDefaults = options.pluginDefaults;
@@ -188,19 +169,20 @@ export class App {
 
     // 2. 根激活
     const runtime = {
-      events: this.events,
-      services: this.services,
-      hooks: this.hooks,
-      contributions: this.contributions,
+      events: this.#events,
+      services: container,
+      hooks: hookRegistry,
+      contributions: contributionRegistry,
       devMode: options.devMode ?? true,
-      notify: notify(this, this.logger),
+      notify: notify({ events: this.#events }, this.logger),
     };
     this.#host = new ActivationHost(runtime, this.logger);
     this.#root = this.#host.root;
     const caps = this.#host.bind(this.#root, { events, provide, services });
 
     // 3. 插件管理器
-    this.plugins = new PluginManager(this.#host, config, this.logger, this.disposeTimeoutMs);
+    this.#plugins = new PluginManager(this.#host, config, this.logger, this.disposeTimeoutMs);
+    this.plugins = this.#plugins;
 
     // 4. 宿主服务：与内置八项同一登记规则（根激活、独占），只交出契约列出的方法
     caps.provide(appService, narrow(this, ['stop', 'restart', 'saveConfig', 'rescanPlugins']), { exclusive: true });
@@ -426,13 +408,13 @@ export class App {
    */
   async start(): Promise<void> {
     this.logger.info('正在启动...');
-    await this.events.emit('app:starting');
+    await this.#events.emit('app:starting');
 
-    // 注：消息路由由 @aalis/plugin-gateway 承担。
-    await this.events.emit('app:ready');
+    // 注：消息路由由网关插件承担，不在 core。
+    await this.#events.emit('app:ready');
 
     this.logger.info('启动完成');
-    await this.events.emit('app:started');
+    await this.#events.emit('app:started');
   }
 
   /**
@@ -451,8 +433,8 @@ export class App {
     // 防御性清掉全部 sticky 缓存（'app:ready' + 'app:started'）：strategy 可能走
     // "快速重启"路径不调 stop()，此时新一轮启动期间的早期订阅者会收到上一轮
     // 的 sticky 信号。stop() 内部会再清一次，重复调用无副作用。
-    this.events.clearSticky();
-    this.events
+    this.#events.clearSticky();
+    this.#events
       .emit('app:restarting')
       .then(() => strategy.restart({ stop: () => this.stop(), rollback: opts?.rollback }))
       .catch(err => reportQuietly(() => this.logger.error('restart 失败:', err)));
@@ -485,15 +467,15 @@ export class App {
   private async runStop(): Promise<void> {
     this.logger.info('正在停止...');
     this.config.unwatch();
-    this.plugins.beginShutdown();
-    await this.plugins.idle();
-    await this.events.emit('app:stopping');
-    await this.plugins.idle();
+    this.#plugins.beginShutdown();
+    await this.#plugins.idle();
+    await this.#events.emit('app:stopping');
+    await this.#plugins.idle();
     // 全部 active 插件与根激活进同一张关停计划——beginShutdown 已冻，这里执行 drain/close。
-    await this.plugins.stopAll();
+    await this.#plugins.stopAll();
     // 清掉全部 sticky 缓存（'app:ready' + 'app:started'），防止后续 restart
     // 复用过时的"已启动"标记
-    this.events.clearSticky();
+    this.#events.clearSticky();
     // 等待根激活的异步清理真正完成再宣告停止
     await this.#root.disposeAsync(this.disposeTimeoutMs);
     this.logger.info('已停止');

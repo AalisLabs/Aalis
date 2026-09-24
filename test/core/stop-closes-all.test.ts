@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { App, definePlugin, defineService, lifecycle, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, defineService, lifecycle, provide, services } from '../../packages/core/src/index.js';
 
 // 停机只靠关停计划（根激活 → 全部插件激活）关掉每一个插件，不依赖资源层的任何父子级联。
 describe('App.stop 关掉全部插件', () => {
@@ -24,9 +24,10 @@ describe('App.stop 关掉全部插件', () => {
     await app.plugin(mk('c', undefined, { b: B }));
     await app.plugins.idle();
     expect(app.plugins.getStatus().map(p => p.state)).toEqual(['active', 'active', 'active', 'active']);
+    const lookup = app.bind({ services }).services;
     await app.stop();
     expect([...closed].sort()).toEqual(['a', 'b', 'c', 'solo']);
-    expect(app.services.getServiceNames().filter(n => n.startsWith('t:stop-all'))).toEqual([]);
+    expect(lookup.names().filter(n => n.startsWith('t:stop-all'))).toEqual([]);
     expect(app.plugins.getStatus().map(p => p.state)).toEqual(['disposed', 'disposed', 'disposed', 'disposed']);
   });
 });

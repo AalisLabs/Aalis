@@ -53,7 +53,6 @@ config.set('logLevel', 'debug')                // 修改内存快照（不自动
 config.setPluginConfig(instanceId, {...})      // 修改插件配置
 config.setPluginEnabled(instanceId, true)      // 启用/禁用插件
 config.setServicePreference('llm', ctxId)      // 设置服务偏好
-config.reloadFrom(next)                        // 用外部快照覆盖内部状态（provider watch 回调用）
 ```
 
 持久化走 `app.saveConfig()`（`AppService` 契约，返回 `Promise<void>`：兑现时保存已完成，provider 失败以拒绝传出）。

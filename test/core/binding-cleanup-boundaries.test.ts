@@ -1,12 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  type AalisEvents,
-  definePlugin,
-  defineService,
-  EventBus,
-  type Logger,
-  provide,
-} from '../../packages/core/src/index.js';
+import { definePlugin, defineService, events, type Logger, provide } from '../../packages/core/src/index.js';
 import { createActivationFixture } from '../helpers/activation.js';
 import { createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
@@ -125,19 +118,7 @@ describe('binding cleanup boundaries', () => {
   it.each([
     'sync',
     'async',
-  ] as const)('%s notification failure does not strand a closed plugin identity', async failure => {
-    class ThrowingBus extends EventBus {
-      fail = false;
-      override emit<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): Promise<void> {
-        if (this.fail && event === 'service:unregistered') {
-          const error = new Error(`${failure} notification failure`);
-          if (failure === 'sync') throw error;
-          return Promise.reject(error);
-        }
-        return super.emit(event, ...args);
-      }
-    }
-    const bus = new ThrowingBus();
+  ] as const)('%s listener failure on service:unregistered does not strand a closed plugin identity', async failure => {
     const warnings: unknown[][] = [];
     const logger: Logger = {
       debug() {},
@@ -146,11 +127,7 @@ describe('binding cleanup boundaries', () => {
       error: (...args) => void warnings.push(args),
       child: () => logger,
     };
-    const app = createInspectableApp({
-      config: { name: 'notify-test', logLevel: 'error', plugins: {} },
-      events: bus,
-      logger,
-    });
+    const app = createInspectableApp({ config: { name: 'notify-test', logLevel: 'error', plugins: {} }, logger });
     const service = defineService('notification-cleanup');
     const definition = definePlugin({
       name: 'worker',
@@ -160,11 +137,18 @@ describe('binding cleanup boundaries', () => {
         provide(service, {});
       },
     });
+    let fail = false;
+    app.bind({ events }).events.on('service:unregistered', () => {
+      if (!fail) return;
+      const error = new Error(`${failure} notification failure`);
+      if (failure === 'sync') throw error;
+      return Promise.reject(error);
+    });
     try {
       await app.plugin(definition);
       const oldActivation = [...rootActivation(app).children][0];
       const disposal = vi.spyOn(oldActivation, 'disposeAsync');
-      bus.fail = true;
+      fail = true;
       await expect(app.plugins.unload('worker')).resolves.toBe(true);
       await expect(disposal.mock.results[0]?.value).resolves.toBeUndefined();
       expect(rootActivation(app).children.has(oldActivation)).toBe(false);
@@ -172,7 +156,7 @@ describe('binding cleanup boundaries', () => {
       expect([...rootActivation(app).children].map(child => child.id)).toEqual(['worker']);
       expect(warnings.flat().map(String).join(' ')).toContain(`${failure} notification failure`);
     } finally {
-      bus.fail = false;
+      fail = false;
       await app.stop();
     }
   });

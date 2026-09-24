@@ -2,8 +2,9 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, it, vi } from 'vitest';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
-import { App, defineService, type Logger, provide } from '../../packages/core/src/index.js';
+import { defineService, type Logger, provide } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
+import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
 it('服务目录与偏好校验：核心服务可见，偏好只认已登记的提供者', async () => {
   const probe = createServer();
@@ -19,7 +20,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
       return this;
     },
   };
-  const app = new App({ config: { name: 'inspect-test', logLevel: 'error', plugins: {} }, logger: quiet });
+  const app = createInspectableApp({ config: { name: 'inspect-test', logLevel: 'error', plugins: {} }, logger: quiet });
   const token = 'service-inspection-test';
   const headers = { Cookie: `aalis_webui_token=${token}`, 'Content-Type': 'application/json' };
   const fakeStorage = {
@@ -139,7 +140,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
       registry.mockRestore();
     }
 
-    const refuse = vi.spyOn(app.services, 'prefer').mockReturnValueOnce(false);
+    const refuse = vi.spyOn(activationHost(app).runtime.services, 'prefer').mockReturnValueOnce(false);
     const rejected = await fetch(`${base}/api/services/inspection-probe/prefer`, {
       method: 'POST',
       headers,

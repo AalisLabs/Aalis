@@ -38,13 +38,8 @@ const BANNED_TOKENS = [
 const RUNTIME_EXPORTS = [
   'App',
   'ConfigManager',
-  'ContributionRegistry',
   'DefaultLogger',
-  'EventBus',
-  'HookRegistry',
   'LogHub',
-  'PluginManager',
-  'ServiceContainer',
   'appService',
   'config',
   'contributions',
@@ -70,6 +65,11 @@ const FORBIDDEN_ROOT_EXPORTS = [
   'formatLogLine',
   'parseLogLine',
   'ModuleHandle',
+  'EventBus',
+  'HookRegistry',
+  'ServiceContainer',
+  'ContributionRegistry',
+  'PluginManager',
   'serviceFactory',
   'ServiceFactory',
   'ServiceScope',
@@ -168,7 +168,7 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
   PluginModule,
   ServiceTypeMap,
 } from '@aalis/core';
-import { formatLogLine, parseLogLine, requiresBounceOnDepChange, serviceFactory, unwrapPluginModule, useModule } from '@aalis/core';
+import { ContributionRegistry, EventBus, formatLogLine, HookRegistry, parseLogLine, PluginManager, requiresBounceOnDepChange, ServiceContainer, serviceFactory, unwrapPluginModule, useModule } from '@aalis/core';
 `;
     const good = runTscProbe(header);
     expect(good, `合法探针应能编过，实际：${good.join('\n') || '（零错误）'}`).toEqual([]);

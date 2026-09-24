@@ -134,7 +134,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
 
   // 旧激活仍在拆卸中（bounce 先置 'pending'、后异步拆旧激活，拆完才清
   // entry.activation）：此刻重新激活会让新旧实例同 instanceId 并存——同名服务重复
-  // provide、偏好按 contextId 二义。跳过本轮，等管理路径收尾后的 softReload 重新调度。
+  // provide、偏好按 contextId 二义。跳过本轮，等管理路径收尾后的 recompute 重新调度。
   if (entry.activation) return;
 
   for (const name of entry.required) {

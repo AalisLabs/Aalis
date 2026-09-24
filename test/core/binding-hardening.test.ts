@@ -7,8 +7,9 @@ import {
   type Logger,
   optional,
   provide,
-  ServiceContainer,
+  services,
 } from '../../packages/core/src/index.js';
+import { ServiceContainer } from '../../packages/core/src/primitives/services.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
@@ -458,7 +459,7 @@ describe('provide：空实现与非有限 priority 拒绝', () => {
       'provide 的 priority 必须是有限数字（收到 Infinity）',
     );
     host(kv, { get: () => 1 }, { priority: 10, entryId: 'root/a' });
-    expect(app.services.get<{ get(): number }>('zz-bind-prio')?.get()).toBe(1);
+    expect((app.bind({ services }).services.get('zz-bind-prio') as { get(): number } | undefined)?.get()).toBe(1);
   });
 
   it('ServiceContainer.register 同样拒空实现与非有限 priority', () => {

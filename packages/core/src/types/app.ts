@@ -36,7 +36,6 @@ export interface PluginStatusEntry {
   displayName?: string;
   state: PluginState;
   provides?: string[];
-  core?: boolean;
   reusable?: boolean;
   /** 完整 uses 声明的快照；所有服务统一参与依赖解析，key 保留 apply 参数名。 */
   uses: Array<{ key: string; service: string; kind: 'required' | 'optional' }>;
@@ -55,7 +54,7 @@ export interface PluginStatusEntry {
  * 管理类插件在 uses 里声明 `pluginsService` 获取。内部由 core 的 PluginManager 提供，消费方不应直接 import App 类。
  *
  * 管理动作（register / unload / enable / disable / bounce / updateConfig）的返回值同一口径：
- * **false = 主体不在注册表，或本次动作被状态 / 政策规则挡下**（重名、未声明 reusable 的多实例、core 插件禁用、
+ * **false = 主体不在注册表，或本次动作被状态 / 政策规则挡下**（重名、未声明 reusable 的多实例、
  * 'disposed' 单向终态、disabled 态 bounce、定义或实例 id 校验失败）；**true = 其余，含主体已在目标态的幂等情形**。
  * 每个 false 分支都已记一笔日志（政策挡下 warn，主体不存在与 'disposed' 在途 debug），调用方不必重复。
  * true 只说明请求已受理，不说明激活已落定——那看 `idle()`。
