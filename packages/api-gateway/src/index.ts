@@ -145,5 +145,93 @@ export const INBOUND_PHASE_ORDER = [
 
 export type InboundPhase = (typeof INBOUND_PHASE_ORDER)[number];
 
+// ----- 会话作用域匹配 -----
+//
+// 按会话作用域生效的相位插件（flow-control / trigger-policy 等）共用的纯函数。
+// 作用域字符串写作 `platform:sessionType[:targetId]`，每段可写 `*` 或省略（均为通配）。
+// 插件配置约定两个字段：`scopes`（生效名单）与 `overrides`（分作用域覆盖，每项带 `scope`
+// 与要覆盖的字段）；写一条 override 即视为启用该作用域。
+
+interface ScopePattern {
+  platform: string;
+  sessionType: string;
+  targetId: string;
+}
+
+function parseScope(scope: string): ScopePattern {
+  const parts = (scope || '').split(':');
+  return { platform: parts[0] || '*', sessionType: parts[1] || '*', targetId: parts[2] || '*' };
+}
+
+function matchScope(pat: ScopePattern, platform: string, sessionType: string, targetId: string): boolean {
+  return (
+    (pat.platform === '*' || pat.platform === platform) &&
+    (pat.sessionType === '*' || pat.sessionType === sessionType) &&
+    (pat.targetId === '*' || pat.targetId === targetId)
+  );
+}
+
+/** 具体度：targetId > sessionType > platform > 通配 */
+function scopeSpecificity(pat: ScopePattern): number {
+  return (pat.platform !== '*' ? 4 : 0) + (pat.sessionType !== '*' ? 2 : 0) + (pat.targetId !== '*' ? 1 : 0);
+}
+
+/** 入站消息在作用域里的 targetId：群聊取 groupId，私聊取 userId，其他为空串。 */
+export function extractTargetId(message: Pick<IncomingMessage, 'sessionType' | 'groupId' | 'userId'>): string {
+  if (message.sessionType === 'group') return message.groupId ?? '';
+  if (message.sessionType === 'private') return message.userId ?? '';
+  return '';
+}
+
+/** `(platform, sessionType, targetId)` 是否命中 `scopes` 或任一 `overrides[].scope`。 */
+export function isScopeEnabled(
+  cfg: { scopes: readonly string[]; overrides: readonly { scope: string }[] },
+  platform: string | undefined,
+  sessionType: string | undefined,
+  targetId?: string,
+): boolean {
+  const p = platform ?? '';
+  const t = sessionType ?? '';
+  const tid = targetId ?? '';
+  return (
+    cfg.scopes.some(s => matchScope(parseScope(s), p, t, tid)) ||
+    cfg.overrides.some(o => matchScope(parseScope(o.scope), p, t, tid))
+  );
+}
+
+/**
+ * 取 `overrides` 中命中且最具体的一项，按键叠加到 `base` 之上（跳过 `scope` 与值为 `undefined`
+ * 的键）；无命中时原样返回 `base`。具体度相同时取先出现的一项。
+ */
+export function resolveEffectiveConfig<T extends { overrides: readonly { scope: string }[] }>(
+  base: T,
+  platform: string | undefined,
+  sessionType: string | undefined,
+  targetId?: string,
+): T {
+  if (base.overrides.length === 0) return base;
+  const p = platform ?? '';
+  const t = sessionType ?? '';
+  const tid = targetId ?? '';
+  let best: { scope: string } | undefined;
+  let bestSpec = -1;
+  for (const o of base.overrides) {
+    const pat = parseScope(o.scope);
+    if (!matchScope(pat, p, t, tid)) continue;
+    const spec = scopeSpecificity(pat);
+    if (spec > bestSpec) {
+      best = o;
+      bestSpec = spec;
+    }
+  }
+  if (!best) return base;
+  const merged: Record<string, unknown> = { ...base };
+  for (const [k, v] of Object.entries(best)) {
+    if (k === 'scope' || v === undefined) continue;
+    merged[k] = v;
+  }
+  return merged as T;
+}
+
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const gateway = defineService<GatewayService>('gateway');
