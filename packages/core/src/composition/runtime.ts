@@ -11,5 +11,6 @@ export interface ServiceRuntime {
   readonly hooks: HookRegistry;
   readonly contributions: ContributionRegistry;
   readonly devMode: boolean;
-  notify<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): void;
+  /** 不抛不拒；返回投递落定，调用方按需等待（下线通知据此等跟随者交接） */
+  notify<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): Promise<void>;
 }
