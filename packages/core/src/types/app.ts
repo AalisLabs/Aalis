@@ -56,6 +56,9 @@ export interface PluginStatusEntry {
  * 每个 false 分支都已记一笔日志（政策挡下 warn，主体不存在与 'disposed' 在途 debug），调用方不必重复。
  * true 只说明请求已受理，不说明激活已落定——那看 `idle()`。
  * 停机进行中，unload / disable 汇入停机计划后立即返回 true（不等待拆卸完成，拆卸由停机计划执行）；register / bounce 返回 false。
+ *
+ * 管理动作只改运行态，不写配置文档。要跨重启保留（启停、新配置），调用方在动作成功后经 host-config
+ * 写文档并落盘。
  */
 export interface PluginManagerService {
   /** 获取所有已注册插件的状态 */
@@ -63,7 +66,7 @@ export interface PluginManagerService {
   /** 获取单个插件条目 */
   getPlugin(instanceId: string): PluginEntry | undefined;
   /**
-   * 增量重载单个插件：拆掉当前激活 → 转 pending → 重算后重新激活。`opts.config` 同时写回配置。
+   * 增量重载单个插件：拆掉当前激活 → 转 pending → 重算后重新激活。`opts.config` 换成新的运行配置。
    * 插件要重启自己就调它。不换代码——要换代码走 `unload` + `register`。
    */
   bounce(instanceId: string, opts?: { config?: Record<string, unknown> }): Promise<boolean>;

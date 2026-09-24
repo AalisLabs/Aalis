@@ -50,6 +50,7 @@
       ],
       "optional": [
         "app",
+        "host-config",
         "plugins"
       ]
     }
