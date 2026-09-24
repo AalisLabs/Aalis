@@ -6,21 +6,28 @@ import { closeActivations } from './close-plan.js';
 import type { Logger } from '../infrastructure/logger.js';
 import type { Resources } from '../infrastructure/resources.js';
 
-/** 挂在某激活所提供服务上的一条跟随边 */
-interface InboundEdge {
+/** 一条跟随边：消费方的一次托管绑定挂在提供方的服务上，两端共用同一个对象 */
+interface Edge {
   readonly from: Activation;
+  /** 提供方身份 */
+  readonly owner: symbol;
+  readonly required: boolean;
   /** 让该跟随者向当前胜者收敛 */
   readonly pump: () => void;
   /** 撤回已发起、尚未落定 */
   settling?: Promise<void>;
+  /** 从两端摘除（幂等） */
+  readonly drop: () => void;
 }
 
 /** 内部激活记录：身份、资源寿命与依赖边。不提供事件、服务、配置管理等能力门面。 */
 export class Activation {
   readonly children = new Set<Activation>();
   readonly declared = new Map<string, boolean>();
-  private readonly bindings = new Map<symbol, [optional: number, required: number]>();
-  private readonly inbound = new Set<InboundEdge>();
+  /** 本激活挂出去的边：关停排序据此认提供者，撤回落定前一直在 */
+  private readonly outbound = new Set<Edge>();
+  /** 挂在本激活所提供服务上的边：撤回段据此先让它们交接 */
+  private readonly inbound = new Set<Edge>();
   private closing?: Promise<void>;
 
   constructor(
@@ -37,26 +44,32 @@ export class Activation {
   retainBinding(name: string, pump: () => void): (settling?: Promise<void>) => void {
     const owner = this.services.ownerOf(name);
     if (owner === undefined) return () => {};
-    const kind = this.declared.get(name) ? 1 : 0;
-    const counts = this.bindings.get(owner) ?? [0, 0];
-    counts[kind]++;
-    this.bindings.set(owner, counts);
     const provider = this.owners.get(owner);
-    const edge: InboundEdge = { from: this, pump };
-    provider?.inbound.add(edge);
-    const release = (): void => {
-      provider?.inbound.delete(edge);
-      counts[kind]--;
-      if (counts[0] === 0 && counts[1] === 0) this.bindings.delete(owner);
+    const edge: Edge = {
+      from: this,
+      owner,
+      required: this.declared.get(name) === true,
+      pump,
+      drop: () => {
+        this.outbound.delete(edge);
+        provider?.inbound.delete(edge);
+      },
     };
+    this.outbound.add(edge);
+    provider?.inbound.add(edge);
     let released = false;
     return settling => {
       if (released) return;
       released = true;
-      if (!settling) return release();
+      if (!settling) return edge.drop();
       edge.settling = settling;
-      settling.then(release);
+      settling.then(edge.drop);
     };
+  }
+
+  /** 本激活已关完：撤回仍未落定的边不再让提供者等——自己的撤回段已按超时放弃过 */
+  dropOutbound(): void {
+    for (const edge of [...this.outbound]) edge.drop();
   }
 
   /**
@@ -79,7 +92,7 @@ export class Activation {
       if (provider && provider !== this) providers.set(provider, required || providers.get(provider) === true);
     };
     for (const [name, required] of this.declared) depend(this.services.ownerOf(name), required);
-    for (const [owner, counts] of this.bindings) depend(owner, counts[1] > 0);
+    for (const edge of this.outbound) depend(edge.owner, edge.required);
     return { children: [...this.children], providers };
   }
 
