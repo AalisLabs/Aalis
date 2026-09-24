@@ -71,7 +71,7 @@ function buildSaveYaml(config: AalisConfig): string {
 }
 
 interface FsYamlConfigProviderResult {
-  /** 当前快照（用于 `new App({ config })`） */
+  /** 当前快照（交给 `createConfigStore(config, provider)` 作初始文档） */
   config: AalisConfig;
   /** Provider 实例（交给 `createConfigStore(config, provider)`） */
   provider: ConfigProvider;

@@ -129,6 +129,33 @@ describe('配置文档（内存态）', () => {
   it('未注入 provider 时 persist() 立即完成', async () => {
     await expect(emptyStore().persist()).resolves.toBeUndefined();
   });
+
+  it('persist()：同步 provider 抛错也以拒绝传出，不在调用点同步抛', async () => {
+    const store = createConfigStore(
+      {},
+      {
+        save: () => {
+          throw new Error('EROFS');
+        },
+      },
+    );
+    let pending: Promise<void> | undefined;
+    expect(() => {
+      pending = store.persist();
+    }).not.toThrow();
+    await expect(pending).rejects.toThrow('EROFS');
+  });
+
+  it('setPluginConfig 写入的值也过闸并拷贝：JSON 解出的 __proto__ / constructor 不进文档，调用方之后改它写不穿', () => {
+    const store = emptyStore();
+    const input = JSON.parse('{"a":1,"nested":{"k":1},"__proto__":{"polluted":true},"constructor":{"x":1}}');
+    store.setPluginConfig('p', input);
+    const stored = store.getPluginConfig('p') as Record<string, unknown>;
+    expect(Object.keys(stored).sort()).toEqual(['a', 'nested']);
+    expect(Object.getPrototypeOf(stored)).toBe(Object.prototype);
+    input.nested.k = 9;
+    expect(stored.nested).toEqual({ k: 1 });
+  });
 });
 
 describe('FsYamlConfigProvider（集成）', () => {
