@@ -68,8 +68,8 @@ export function topoSortByDeps(entries: PluginRecord[], logger: Logger): PluginR
   while (queue.length) {
     const id = queue.shift()!;
     result.push(entryById.get(id)!);
-    for (const dep of dependents.get(id) ?? []) {
-      inDegree.set(dep, (inDegree.get(dep) ?? 0) - 1);
+    for (const dep of dependents.get(id)!) {
+      inDegree.set(dep, inDegree.get(dep)! - 1);
       if (inDegree.get(dep) === 0) queue.push(dep);
     }
   }
