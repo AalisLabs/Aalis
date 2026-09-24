@@ -4,7 +4,6 @@ import {
   definePlugin,
   defineService,
   type Logger,
-  lifecycle,
   optional,
   provide,
   type ServiceRef,
@@ -161,35 +160,5 @@ describe('follow 异步 cleanup', () => {
     off();
     await sleep(40);
     await app.plugins.unload('watcher');
-  });
-
-  it('同步 dispose 不等待，但拒绝同样被接住', async () => {
-    const { app, warnings, host } = makeApp();
-    host.provide(svc, {});
-    const { state, cleanup } = slowCleanup(10, 'sync path');
-    let handle!: { dispose(): void };
-    await app.plugin(
-      definePlugin({
-        name: 'parent',
-        uses: { lifecycle },
-        async apply({ lifecycle }) {
-          handle = await lifecycle.module(
-            definePlugin({
-              name: 'w',
-              uses: { x: optional(svc) },
-              apply({ x }) {
-                x.follow(() => cleanup);
-              },
-            }),
-          );
-        },
-      }),
-    );
-    await app.plugins.idle();
-    expect(app.plugins.getPlugin('parent')?.state).toBe('active');
-    handle.dispose();
-    expect(state.finished).toBe(false);
-    await sleep(30);
-    expect(warnings.some(w => w.includes('撤回拒绝'))).toBe(true);
   });
 });

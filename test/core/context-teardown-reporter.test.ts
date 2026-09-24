@@ -1,13 +1,13 @@
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
-import { type App, definePlugin, lifecycle } from '../../packages/core/src/index.js';
+import type { App } from '../../packages/core/src/index.js';
 import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
 // 拆卸路径上的诊断上报由宿主 logger 承担，其 sink 可能抛错（stdout EPIPE、磁盘满、WebUI 推送异常）。
 // 清理链已兜（disposable-chain 的 report），Resources 传给 Lifecycle 的回调里的裸 logger 调用同型：
 // onTimeout 抛错会让整个 teardown 拒绝、清理链一项不跑。本文件用「只对特定文案抛错」的 logger
-// 钉住：超时上报失败不得跳过清理；子模块 disposeAsync 收尾后名字释放，父激活仍可拆。
+// 钉住：超时上报失败不得跳过清理。
 // ════════════════════════════════════════════════════════════
 
 function throwingLogger(marker: string): Logger {
@@ -43,16 +43,5 @@ describe('Activation 拆卸路径：宿主 logger 抛错不中断拆卸', () => 
     });
     await expect(child.disposeAsync(20)).resolves.toBeUndefined();
     expect(cleaned, '超时上报抛错不得跳过清理链').toBe(true);
-  });
-
-  it('子模块 disposeAsync 之后名字释放，父激活仍可拆', async () => {
-    const app = mkApp('sink boom');
-    const root = app.bind({ lifecycle }).lifecycle;
-    const h = await root.module(definePlugin({ name: 'm', apply() {} }));
-    await expect(h.disposeAsync()).resolves.toBeUndefined();
-    const again = await root.module(definePlugin({ name: 'm', apply() {} }));
-    expect(again.id, '收尾完成后名字已释放').toBe('root#m');
-    apps.splice(apps.lastIndexOf(app), 1);
-    await expect(app.stop()).resolves.toBeUndefined();
   });
 });

@@ -48,7 +48,7 @@ describe('events 按 ctx 切断', () => {
     await teardown;
     await peer.caps.events.emit('plugin:loaded', 'y');
     expect(hits).toBe(0);
-    peer.activation.dispose();
+    await peer.activation.disposeAsync();
   });
 
   it('off 身份卫：切断后迟到的退订闭包不误删他人重建的同名事件表', async () => {
@@ -83,7 +83,7 @@ describe('events 按 ctx 切断', () => {
 
     await b.caps.events.emit('plugin:loaded', 'x');
     expect(bHits).toBe(1);
-    b.activation.dispose();
+    await b.activation.disposeAsync();
   });
 
   it('无主 handler（直接用总线）不受任何 ctx 切断影响', async () => {
@@ -97,11 +97,11 @@ describe('events 按 ctx 切断', () => {
       }) as never,
     );
     ctx.caps.events.on('plugin:loaded', () => {});
-    ctx.activation.dispose();
+    await ctx.activation.disposeAsync();
 
     const peer = make('peer');
     await peer.caps.events.emit('plugin:loaded', 'x');
     expect(raw).toBe(1);
-    peer.activation.dispose();
+    await peer.activation.disposeAsync();
   });
 });

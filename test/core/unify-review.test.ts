@@ -1,13 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { BindingPort } from '../../packages/core/src/index.js';
-import {
-  type App,
-  definePlugin,
-  defineService,
-  type Logger,
-  lifecycle,
-  provide,
-} from '../../packages/core/src/index.js';
+import { type App, definePlugin, defineService, type Logger, provide } from '../../packages/core/src/index.js';
 import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
@@ -149,36 +142,6 @@ describe('评审 3：port.track 与 registrar 同一清理契约', () => {
       process.off('unhandledRejection', onEscape);
     }
     expect(escaped).toEqual([]);
-  });
-});
-
-describe('评审 5：子模块的 required 声明', () => {
-  it('挂载时缺 required 即拒绝，apply 不执行；父插件不受影响', async () => {
-    const { app } = world();
-    let childRan = false;
-    const child = definePlugin({
-      name: 'child',
-      uses: { hub },
-      apply() {
-        childRan = true;
-      },
-    });
-    let mountError: unknown;
-    await app.plugin(
-      definePlugin({
-        name: 'parent',
-        uses: { lifecycle },
-        async apply({ lifecycle }) {
-          await lifecycle.module(child).catch(err => {
-            mountError = err;
-          });
-        },
-      }),
-    );
-    await app.plugins.idle();
-    expect(childRan).toBe(false);
-    expect(String(mountError)).toContain('zz-review-hub');
-    expect(app.plugins.getStatus().find(s => s.instanceId === 'parent')?.state).toBe('active');
   });
 });
 

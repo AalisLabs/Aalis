@@ -29,7 +29,6 @@ export class Resources {
                 : `Resources "${id}": 等待在飞拆卸超过 ${timeoutMs}ms，放弃等待`,
             ),
           ),
-        onError: error => reportQuietly(() => logger.error('dispose 收尾异常:', error)),
       },
       logger,
     );

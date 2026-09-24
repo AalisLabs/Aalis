@@ -24,7 +24,7 @@ const mkApp = () => {
 };
 
 describe('清理身份与逻辑身份分离', () => {
-  it('同名 fork：拆左不清右（服务）', () => {
+  it('同名 fork：拆左不清右（服务）', async () => {
     const app = mkApp();
     const host = activationHost(app);
     const root = bindActivationFixture(host, host.root);
@@ -32,7 +32,7 @@ describe('清理身份与逻辑身份分离', () => {
     const right = bindActivationFixture(root.host, root.host.create(root.activation, 'dup'));
     left.caps.provide(defineService('svc'), { who: 'L' });
     right.caps.provide(defineService('svc'), { who: 'R' });
-    left.activation.dispose();
+    await left.activation.disposeAsync();
     expect(root.caps.services.all('svc')).toHaveLength(1);
     expect(root.caps.services.get(defineService<{ who: string }>('svc'))?.who).toBe('R');
   });
@@ -66,7 +66,7 @@ describe('清理身份与逻辑身份分离', () => {
     const rShared = { id: 'shared', who: 'R' };
     right.caps.contributions.contribute(POINT, rShared as never);
 
-    left.activation.dispose();
+    await left.activation.disposeAsync();
 
     await root.caps.events.emit('plugin:loaded', 'x');
     await root.caps.hooks.run(HOOK, {} as never);
@@ -103,7 +103,7 @@ describe('清理身份与逻辑身份分离', () => {
     ).toBe(2);
   });
 
-  it('经门面 provide 带 entryId 的 per-entry 子条目也盖 owner，随 dispose 一起清', () => {
+  it('经门面 provide 带 entryId 的 per-entry 子条目也盖 owner，随 dispose 一起清', async () => {
     const app = mkApp();
     const host = activationHost(app);
     const root = bindActivationFixture(host, host.root);
@@ -111,7 +111,7 @@ describe('清理身份与逻辑身份分离', () => {
     p.caps.provide(defineService('llm'), { m: 'a' } as never, { entryId: 'prov/a' });
     p.caps.provide(defineService('llm'), { m: 'b' } as never, { entryId: 'prov/b' });
     expect(root.caps.services.all('llm')).toHaveLength(2);
-    p.activation.dispose();
+    await p.activation.disposeAsync();
     expect(root.caps.services.all('llm')).toHaveLength(0);
   });
 });
@@ -135,11 +135,11 @@ describe('监听登记按次计身份：同一函数对象不因共享而互相�
     await root.caps.events.emit('plugin:loaded', 'p');
     expect(calls, '退订只移除自己那条').toEqual(['hit', 'hit']);
 
-    left.activation.dispose();
+    await left.activation.disposeAsync();
     await root.caps.events.emit('plugin:loaded', 'p');
     expect(calls, '左拆卸后右的登记仍在').toEqual(['hit', 'hit', 'hit']);
 
-    right.activation.dispose();
+    await right.activation.disposeAsync();
     await root.caps.events.emit('plugin:loaded', 'p');
     expect(calls, '右拆卸后才真正没人听').toEqual(['hit', 'hit', 'hit']);
   });

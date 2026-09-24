@@ -14,7 +14,6 @@ import type { ContributionHandle, ContributionSpec } from '../primitives/contrib
 import type { ServiceInfo, ServiceView } from '../primitives/services.js';
 
 import { defineService, type ProviderOf, type ServiceDescriptor } from './descriptors.js';
-import type { PluginDefinition } from './plugin-definition.js';
 import { validateProvide } from './provide-validation.js';
 import type { ServiceRuntime } from './runtime.js';
 import { type ServiceFactory, type ServiceScope, serviceFactory } from './service-factory.js';
@@ -36,18 +35,6 @@ export interface ProvideOptions {
    * 替扫描到的静态前端包登记，偏好与展示认的是前端包名。清理仍归本激活。与 entryId 二选一。
    */
   onBehalfOf?: string;
-}
-
-/**
- * `lifecycle.module` 返回的句柄——与激活自身的生命周期面同形，一个心智模型。
- */
-export interface ModuleHandle {
-  /** 子激活的实际 id：同名重复挂载时已唯一化（`parent#name`、`parent#name~2`…） */
-  readonly id: string;
-  /** 同步请求关闭：同步清理当场执行，异步清理不等待；名字随同步段释放 */
-  dispose(): void;
-  /** 关闭并等待全部异步清理完成；名字在此之后才释放 */
-  disposeAsync(timeoutMs?: number): Promise<void>;
 }
 
 function accepts(scope: ServiceScope, operation: string): boolean {
@@ -133,27 +120,19 @@ const createContributions = factory<Contributions>(contributions, (scope, { cont
 // ----- lifecycle -----
 
 export interface LifecycleCap {
-  /** 这次激活的实例 id（多实例为 `name:suffix`，子模块为 `父id#模块名`）：日志、展示、路由用的逻辑名 */
+  /** 这次激活的实例 id（多实例为 `name:suffix`）：日志、展示、路由用的逻辑名 */
   readonly id: string;
   /** 这次激活已开始关闭 */
   readonly closed: boolean;
   /**
    * 登记收尾：在本激活撤回登记之前执行，用于停接新活、把在手数据交给下层并等待确认。
-   * 依赖可用性取决于关停图：普通消费者先关，父子与循环依赖采用各自的阶段顺序；
+   * 依赖可用性取决于关停图：普通消费者先关，宿主根与循环依赖采用各自的阶段顺序；
    * 不保护动态查询、缓存裸引用或提供者主动提前释放的资源。
-   * 回调不得 await 或返回同一关闭计划中后续阶段的完成 Promise：例如父 onDrain 等待
-   * 排在它之后的子模块 disposeAsync() 会互等。计划外调用者仍可等待关闭完成。
+   * 回调不得 await 或返回同一关闭计划中后续阶段的完成 Promise（会互等）；计划外调用者仍可等待关闭完成。
    */
   onDrain(fn: () => void | Promise<void>, label?: string): () => void;
   /** 登记清理（清理段）：本激活的对外登记已撤回；依赖可能已不可用，交接应放在 onDrain */
   onDispose(fn: () => void | Promise<void>, label?: string): () => void;
-  /**
-   * 挂一个子模块：独立身份与生命周期，能力按子激活重新绑定，随父关闭。子模块不进调度器：
-   * 挂载时缺 required 服务即拒绝（抛错，apply 不执行）；挂载之后不再设闸——提供者离场时
-   * 登记排队、引用可能为空，由父模块决定是否关掉它。
-   * 已加入关闭计划的模块仍按该计划关闭；外部调用 disposeAsync() 等待实际完成，不抢跑。
-   */
-  module(definition: PluginDefinition, config?: Record<string, unknown>): Promise<ModuleHandle>;
 }
 
 export const lifecycle = defineService<LifecycleCap, LifecycleCap>('lifecycle', port => port.require());
@@ -164,7 +143,6 @@ const createLifecycle = factory<LifecycleCap>(lifecycle, scope => ({
   },
   onDrain: (fn, label) => scope.onDrain(fn, label),
   onDispose: (fn, label) => scope.onDispose(fn, label),
-  module: (definition, config) => scope.module(definition, config),
 }));
 
 // ----- logger / config -----

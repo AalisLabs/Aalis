@@ -1,5 +1,5 @@
 // ============================================================
-// index.ts — types 子模块统一导出
+// index.ts — types 目录统一导出
 //
 // 三个原语各有一个扩展点文件（declaration merging 靶子 + 域词汇）：
 //   - types/events.ts        AalisEvents（事件名 → 参数元组）

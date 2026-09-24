@@ -2,8 +2,6 @@ import { reportQuietly } from '../kernel/disposable-chain.js';
 
 import { type ScopedProvider, scopedProvider } from '../primitives/services.js';
 
-import type { ModuleHandle } from './core-services.js';
-import type { PluginDefinition } from './plugin-definition.js';
 import type { Logger } from '../infrastructure/logger.js';
 import type { Resources } from '../infrastructure/resources.js';
 
@@ -18,7 +16,6 @@ export interface ServiceScope {
   track(off: () => unknown, label?: string): () => void;
   onDrain(fn: () => void | Promise<void>, label?: string): () => void;
   onDispose(fn: () => void | Promise<void>, label?: string): () => void;
-  module(definition: PluginDefinition, config?: Record<string, unknown>): Promise<ModuleHandle>;
 }
 export type ServiceFactory<T> = ScopedProvider<T, ServiceScope>;
 
@@ -34,7 +31,7 @@ export function instantiateService(
   name: string,
   provider: ScopedProvider<unknown, unknown>,
   context: {
-    scope: Pick<ServiceScope, 'id' | 'identity' | 'logger' | 'config' | 'module'>;
+    scope: Pick<ServiceScope, 'id' | 'identity' | 'logger' | 'config'>;
     resources: Resources;
     release: () => void;
   },
@@ -108,12 +105,6 @@ export function instantiateService(
         rollback?.delete(undo);
         cancel();
       };
-    },
-    module: (definition, config) => {
-      if (failed) return Promise.reject(new Error(`服务工厂 "${name}" 已失败，不能挂载子模块`));
-      const mounting = base.module(definition, config);
-      rollback?.add(() => mounting.then(handle => handle.disposeAsync()));
-      return mounting;
     },
   };
   try {

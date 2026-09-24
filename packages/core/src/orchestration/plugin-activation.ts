@@ -72,7 +72,7 @@ export async function retireEntry(
 }
 
 /**
- * 成批拆卸：与 {@link retireEntry} 同一四步，只是「拆激活」对整批激活（连同各自的子模块）统一编排——
+ * 成批拆卸：与 {@link retireEntry} 同一四步，只是「拆激活」对整批激活统一编排——
  * 消费者先于它依赖的提供者关闭，归属树与服务依赖一起决定顺序（见 close-plan.ts）。同一轮里要停的
  * 插件必须走这里而不是逐个 retireEntry，否则它们之间的关闭次序只剩注册序。
  * entries 的给定次序是无依赖关系时的关闭次序。
