@@ -2,9 +2,11 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { App, type Logger, LogHub, pluginDefinitionOf } from '../../packages/core/src/index.js';
+import { pluginDefinitionOf } from '../../packages/api-plugin-source/src/index.js';
+import { App, type Logger, LogHub } from '../../packages/core/src/index.js';
 import { installConsoleSink } from '../../packages/runtime/src/console-sink.js';
 import { createNodeModulesPluginLoader, loadPluginDefinition } from '../../packages/runtime/src/node-modules-loader.js';
+import { createPluginDiscovery } from '../../packages/runtime/src/plugin-discovery.js';
 
 // ════════════════════════════════════════════════════════════
 // 加载链信号：「装了没反应」死门族的告警锚。
@@ -248,12 +250,9 @@ describe('两份 @aalis/core', () => {
       errCaptured.push(args.map(String).join(' '));
     };
     const handle = installConsoleSink({ target: 'stderr', minLevel: 'warn' });
-    const app = new App({
-      config: { name: 'T', logLevel: 'info', plugins: {} },
-      pluginLoader: createNodeModulesPluginLoader(proj, { hostCoreDir: hostCore }),
-    });
+    const app = new App({ config: { name: 'T', logLevel: 'info', plugins: {} } });
     try {
-      await app.autoLoadPlugins();
+      await createPluginDiscovery(app, createNodeModulesPluginLoader(proj, { hostCoreDir: hostCore })).loadAll();
       const hit = errCaptured.find(line => line.includes('另一份 @aalis/core'));
       expect(hit).toContain('ERROR');
       expect(hit).toContain('加载插件 "plugin-dup" 失败');

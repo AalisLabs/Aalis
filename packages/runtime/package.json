@@ -31,7 +31,8 @@
     "chalk": "^5.4.0",
     "yaml": "^2.7.0",
     "@aalis/schema-config": "workspace:>=0.12.0 <1.0.0",
-    "@aalis/schema-log": "workspace:>=0.1.0 <1.0.0"
+    "@aalis/schema-log": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-plugin-source": "workspace:>=0.1.0 <1.0.0"
   },
   "peerDependencies": {
     "@aalis/core": ">=0.17.0 <1.0.0"

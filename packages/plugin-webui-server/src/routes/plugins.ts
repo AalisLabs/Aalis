@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { UserIdentity } from '@aalis/api-authority';
 import type { CommandService } from '@aalis/api-commands';
+import type { PluginSourceService } from '@aalis/api-plugin-source';
 import type { ToolService } from '@aalis/api-tools';
 import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui';
 import type { AppService, HostConfig, Logger, PluginManagerService, ServiceRef } from '@aalis/core';
@@ -23,6 +24,8 @@ function errorMessage(err: unknown): string {
 interface PluginRoutesCaps {
   app: ServiceRef<AppService>;
   plugins: ServiceRef<PluginManagerService>;
+  /** 宿主的插件来源；打包宿主不提供，扫描路由随之报不可用 */
+  source: Pick<ServiceRef<PluginSourceService>, 'current'>;
   /** 整份配置的读写与落盘（宿主管理面） */
   hostConfig: ServiceRef<HostConfig>;
   tools: Pick<ServiceRef<ToolService>, 'current'>;
@@ -394,14 +397,13 @@ export function registerPluginRoutes(
 
   // 重新扫描 packages/ 并加载新插件
   expressApp.post('/api/plugins/scan', gate(), async (_req, res) => {
-    const app = getApp();
-    const pm = getPluginMgr();
-    if (!app || !pm) {
-      res.status(500).json({ error: 'App 不可用' });
+    const source = caps.source.current;
+    if (!source) {
+      res.status(503).json({ error: '宿主未提供插件来源，无法扫描' });
       return;
     }
     try {
-      const loaded = await app.rescanPlugins();
+      const loaded = await source.rescan();
       res.json({ ok: true, loaded, message: loaded.length > 0 ? `新加载 ${loaded.length} 个插件` : '无新插件' });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { App, definePlugin, type PluginDefinition, type PluginDescriptor } from '../../packages/core/src/index.js';
+import { App, definePlugin, type PluginDefinition } from '../../packages/core/src/index.js';
 
 // register 的 resolve 语义定格 + 引导期收敛保证。
 //
@@ -9,9 +9,7 @@ import { App, definePlugin, type PluginDefinition, type PluginDescriptor } from 
 // 未来想改成「resolve=激活完成」是契约变更，必须先让这里红、有意识地过刀
 // （register 内部等静置判不必要——in-apply 调用转死锁 + 安装延迟
 // 与无关慢 apply 耦合 + 第一方消费面零依赖）。
-//
-// autoLoadPlugins 则相反：末尾等静置，「返回即全部收敛」是结构保证——
-// ready / app:started 的发出时机依赖它。
+// 宿主冷启动「返回即全部收敛」与热扫描「不等静置」的锚在 test/runtime/plugin-discovery.test.ts。
 
 function gatedModule(
   name: string,
@@ -57,67 +55,6 @@ describe('register 的 resolve 语义（故意钉死的排队早退）', () => {
     await app.plugins.idle();
     expect(app.plugins.getPlugin('fast')?.state).toBe('active');
     expect(app.plugins.getPlugin('slow')?.state).toBe('active');
-    await app.stop();
-  });
-});
-
-describe('rescanPlugins 刻意不等静置（HTTP 热路径契约锚）', () => {
-  it('在飞 run 占着单飞时 rescan 仍立即 resolve（新插件此刻 pending，事后自愈）', async () => {
-    const trace: string[] = [];
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    const g = gatedModule('occupier', trace);
-    const occupying = app.plugin(g.module);
-    await g.entered;
-
-    (app as unknown as { pluginLoader: unknown }).pluginLoader = {
-      async discover(): Promise<PluginDescriptor[]> {
-        return [{ name: 'scanned', source: 'stub', metadata: {} }];
-      },
-      async load(): Promise<PluginDefinition | null> {
-        return definePlugin({ name: 'scanned', apply() {} });
-      },
-    };
-    // 兜底释放：若变异让 rescan 内部等静置，它会等到这里才 resolve→下方断言转红而非挂死
-    const timer = setTimeout(() => g.release(), 200);
-    const loaded = await app.rescanPlugins();
-    expect(loaded).toEqual(['scanned']);
-    expect(app.plugins.getPlugin('scanned')?.state).toBe('pending'); // 未等静置的证据
-
-    clearTimeout(timer);
-    g.release();
-    await occupying;
-    await app.plugins.idle();
-    expect(app.plugins.getPlugin('scanned')?.state).toBe('active');
-    await app.stop();
-  });
-});
-
-describe('autoLoadPlugins 的引导期收敛保证（结构化而非碰运气）', () => {
-  it('返回时全部发现的插件已收敛，即使 register 曾撞上在飞 run 排队', async () => {
-    const trace: string[] = [];
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-
-    const g = gatedModule('occupier', trace);
-    const occupying = app.plugin(g.module);
-    await g.entered;
-
-    const mods = new Map<string, PluginDefinition>([['booted', definePlugin({ name: 'booted', apply() {} })]]);
-    (app as unknown as { pluginLoader: unknown }).pluginLoader = {
-      async discover(): Promise<PluginDescriptor[]> {
-        return [{ name: 'booted', source: 'stub', metadata: {} }];
-      },
-      async load(desc: PluginDescriptor): Promise<PluginDefinition | null> {
-        return mods.get(desc.name) ?? null;
-      },
-    };
-    const autoloading = app.autoLoadPlugins();
-    // 在 resolve 的瞬间捕获状态——保证是「返回时已收敛」而非「之后某刻收敛」：
-    // 变异版（删末尾 idle）会在占位者还卡着时就 resolve，此处捕获到 pending 即红。
-    const stateAtResolve = autoloading.then(() => app.plugins.getPlugin('booted')?.state);
-    await new Promise(r => setTimeout(r, 10));
-    g.release();
-    expect(await stateAtResolve).toBe('active');
-    await occupying;
     await app.stop();
   });
 });

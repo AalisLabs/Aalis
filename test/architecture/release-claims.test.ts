@@ -5,8 +5,8 @@ import { describe, expect, it } from 'vitest';
 
 const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages');
 const CORE_PEER = '>=0.17.0 <1.0.0';
-/** 有 core peer 的包（不含 core / create-aalis-plugin / plugin-webui-client）：25 api + 61 插件 + runtime + schema-config + schema-log。 */
-const CORE_PEER_COUNT = 89;
+/** 有 core peer 的包（不含 core / create-aalis-plugin / plugin-webui-client）：26 api + 61 插件 + runtime + schema-config + schema-log。 */
+const CORE_PEER_COUNT = 90;
 
 interface Manifest {
   name?: string;
@@ -42,7 +42,7 @@ function gte(a: [number, number, number], b: [number, number, number]): boolean 
 }
 
 describe('CHANGELOG 未发布节的发布声明', () => {
-  it('有 @aalis/core peer 的 89 个包区间都是 >=0.17.0 <1.0.0', () => {
+  it('有 @aalis/core peer 的 90 个包区间都是 >=0.17.0 <1.0.0', () => {
     const hits: Array<{ dir: string; spec: string }> = [];
     for (const dir of dirs()) {
       const spec = readManifest(dir).peerDependencies?.['@aalis/core'];
@@ -54,7 +54,7 @@ describe('CHANGELOG 未发布节的发布声明', () => {
         .filter(h => h.spec === CORE_PEER)
         .map(h => h.dir)
         .sort(),
-      'raised core peer 包数应对齐 89（25 api + 61 插件 + runtime + schema-config + schema-log）',
+      'raised core peer 包数应对齐 90（26 api + 61 插件 + runtime + schema-config + schema-log）',
     ).toHaveLength(CORE_PEER_COUNT);
     const outliers = hits.filter(h => h.spec !== CORE_PEER).map(h => `${h.dir} = ${h.spec}`);
     expect(outliers, '仅 schema-message 仍是旧 peer（type-only，未抬）').toEqual(['schema-message = >=0.2.0 <1.0.0']);
@@ -107,12 +107,6 @@ describe('CHANGELOG 未发布节的发布声明', () => {
     }
     expect(n, '应扫到 schema-config 消费方').toBeGreaterThan(0);
     expect(bad).toEqual([]);
-  });
-
-  it('@aalis/core 包根导出 pluginDefinitionOf', () => {
-    const src = readIndex('core');
-    expect(src, 'packages/core/src/index.ts 须存在').toBeTruthy();
-    expect(/export \{[^}]*pluginDefinitionOf/.test(src ?? ''), src).toBe(true);
   });
 
   it('@aalis/schema-config 导出 removeExtraFields', () => {

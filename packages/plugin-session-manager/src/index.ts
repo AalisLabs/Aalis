@@ -172,8 +172,9 @@ class SessionManager implements SessionManagerService {
   private dirty = false;
   /**
    * 本进程显式删除、尚未落盘的会话（墓碑）。persist 只删这些键，不按「后端有、内存无」清扫：
-   * 冷启动时若先从空的后备 memory 加载，之后首选后端成为胜者，按差集清扫会把首选后端里原有的会话
-   * 当孤儿删掉。每条墓碑带令牌，提交成功后只清掉提交时那一版，提交期间再删的保留到下一次。
+   * 会话表只在激活时从当时的 memory 胜者读一次，运行中胜者换成另一个后端（新装或启用首选后端）后，
+   * 按差集清扫会把新胜者里原有的会话当孤儿删掉。每条墓碑带令牌，提交成功后只清掉提交时那一版，
+   * 提交期间再删的保留到下一次。
    */
   private deleted = new Map<string, symbol>();
   /** 平台 → 默认 SessionConfig 模板 */

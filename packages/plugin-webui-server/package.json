@@ -46,7 +46,8 @@
     "express": "^5.1.0",
     "ws": "^8.18.0",
     "zod": "^3.25.76",
-    "@aalis/schema-log": "workspace:>=0.1.0 <1.0.0"
+    "@aalis/schema-log": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-plugin-source": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -79,7 +80,8 @@
         "llm",
         "persona",
         "agent",
-        "memory"
+        "memory",
+        "plugin-source"
       ],
       "provides": [
         "webui-server",

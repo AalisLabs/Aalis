@@ -4,7 +4,7 @@ import type { PluginEntry, PluginState } from './plugin.js';
 import type { PluginDefinition } from '../composition/plugin-definition.js';
 
 /**
- * App 生命周期 + 配置 + 市场 接口
+ * App 生命周期 + 配置 接口
  *
  * 管理类插件在 uses 里声明 `appService` 获取，用于触发应用级操作，无需直接导入 App 类。
  */
@@ -24,9 +24,6 @@ export interface AppService {
    * 不保证并发保存的先后与外部编辑的合并——那是宿主 provider 的契约，不在此承诺。
    */
   saveConfig(): Promise<void>;
-
-  /** 重新扫描 packages/ 目录，返回新发现并加载的插件名列表 */
-  rescanPlugins(): Promise<string[]>;
 }
 
 /** PluginManager 暴露给插件消费的接口 */
