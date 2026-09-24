@@ -4,6 +4,7 @@ import {
   definePlugin,
   defineService,
   events,
+  type Logger,
   lifecycle,
   optional,
   provide,
@@ -82,6 +83,90 @@ describe('管理动作下依赖方先收尾、提供者后关', () => {
     expect(state).toBe('active');
     expect(applies).toBe(2);
     expect(seen).toEqual(['mem', 'mem']);
+  });
+
+  it('bounce 首选提供者：后备先注册、首选有晚解析的 required 依赖时，依赖方重启后仍挂回首选', async () => {
+    const app = world();
+    const log: string[] = [];
+    const seen: string[] = [];
+    const STORE = defineService<object>('t:handover:store');
+    await app.plugin(memPlugin(log, 'mem2'));
+    await app.plugin(
+      definePlugin({
+        name: 'consumer',
+        uses: { m: M },
+        apply({ m }) {
+          seen.push(m.require().gen);
+        },
+      }),
+    );
+    await app.plugin(
+      definePlugin({
+        name: 'store',
+        provides: [STORE],
+        uses: { provide },
+        apply({ provide }) {
+          provide(STORE, {});
+        },
+      }),
+    );
+    await app.plugin(
+      definePlugin({
+        name: 'mem',
+        provides: [M],
+        uses: { provide, store: STORE },
+        apply({ provide }) {
+          provide(M, { gen: 'mem' }, { priority: 10 });
+        },
+      }),
+    );
+    await app.plugins.idle();
+    await app.plugins.bounce('mem');
+    await app.plugins.idle();
+    // 第一段是逐个注册即激活的启动行为；重启时依赖方排在该服务的全部提供者之后
+    expect(seen).toEqual(['mem2', 'mem']);
+  });
+
+  it('其余提供者传递依赖依赖方时不加排序边：不制造伪环，全部激活', async () => {
+    const warnings: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn: (...a: unknown[]) => void warnings.push(a.map(String).join(' ')),
+      error: (...a: unknown[]) => void warnings.push(a.map(String).join(' ')),
+      child: () => logger,
+    };
+    const app = new App({ config: { name: 't', logLevel: 'error', plugins: {} }, devMode: false, logger });
+    apps.push(app);
+    const N = defineService<object>('t:handover:n');
+    await app.plugin(memPlugin([], 'mem'));
+    await app.plugin(
+      definePlugin({
+        name: 'consumer',
+        provides: [N],
+        uses: { m: M, provide },
+        apply({ provide }) {
+          provide(N, {});
+        },
+      }),
+    );
+    await app.plugin(
+      definePlugin({
+        name: 'mem2',
+        provides: [M],
+        uses: { provide, n: N },
+        apply({ provide }) {
+          provide(M, { gen: 'mem2' });
+        },
+      }),
+    );
+    await app.plugins.idle();
+    expect(app.plugins.getStatus().map(s => `${s.instanceId}:${s.state}`)).toEqual([
+      'mem:active',
+      'consumer:active',
+      'mem2:active',
+    ]);
+    expect(warnings.filter(w => w.includes('依赖环'))).toEqual([]);
   });
 
   it('要走的不是依赖方正在用的提供者：依赖方不动', async () => {
