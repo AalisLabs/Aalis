@@ -1273,25 +1273,6 @@ function runAdapter(caps: Caps): void {
     },
 
     /**
-     * 非标准扩展：主动发送消息前的限速校验 + 计数。
-     *
-     * 委托 plugin-flow-control 的 isRateLimited / recordReply。
-     * 若 flow-control 未加载或会话不存在，默认放行（不限速）。
-     */
-    checkAndRecordProactiveSend(sessionId: string): { allowed: boolean; reason?: string } {
-      const flow = flowControl.current;
-      if (!flow) return { allowed: true };
-      if (flow.isRateLimited(sessionId)) {
-        return {
-          allowed: false,
-          reason: '已达限速上限（由 flow-control 决定）',
-        };
-      }
-      flow.recordReply(sessionId, 'onebot');
-      return { allowed: true };
-    },
-
-    /**
      * 非标准扩展：返回当前进程内已知"自身被禁言"的群快照。
      * 数据来自适配器自身的 selfMuted（由 group_ban notice 与 shut_up_timestamp 恢复维护）。
      */
