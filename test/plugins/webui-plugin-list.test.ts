@@ -1,7 +1,7 @@
 import type { CommandService } from '@aalis/api-commands';
 import type { ToolService } from '@aalis/api-tools';
 import type { WebUIService } from '@aalis/api-webui';
-import type { AppService, ConfigManager, PluginManagerService, ServiceRef } from '@aalis/core';
+import type { AppService, HostConfig, PluginManagerService, ServiceRef } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   App,
@@ -81,7 +81,7 @@ function mountPluginRoutes(
     {
       app: ref<AppService>({ saveConfig: () => app.saveConfig(), restart: () => {} }),
       plugins: ref<PluginManagerService>(app.plugins),
-      hostConfig: ref<ConfigManager>(app.config),
+      hostConfig: ref<HostConfig>(app.config),
       tools: { current: extras.tools as ToolService | undefined },
       commands: { current: extras.commands as CommandService | undefined },
       webui: () =>

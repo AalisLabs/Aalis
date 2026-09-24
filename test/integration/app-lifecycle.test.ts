@@ -65,16 +65,16 @@ describe('App 生命周期', () => {
     expect(hostB.hostConfig.require().get('name')).toBe('B');
   });
 
-  it('config.setPluginConfig + save 把更改写回 yaml', () => {
+  it('hostConfig.setPluginConfig + app.saveConfig 把更改写回 yaml', async () => {
     const cfg = tempConfig('name: T\nlogLevel: error\nplugins: {}\n');
     try {
       const app = new App({
         config: cfg.config,
         configProvider: cfg.provider,
       });
-      const config = app.bind({ hostConfig }).hostConfig.require();
-      config.setPluginConfig('@aalis/plugin-test', { foo: 'bar', n: 42 });
-      config.save();
+      const host = app.bind({ hostConfig, appService });
+      host.hostConfig.require().setPluginConfig('@aalis/plugin-test', { foo: 'bar', n: 42 });
+      await host.appService.require().saveConfig();
       const yaml = readFileSync(cfg.path, 'utf-8');
       expect(yaml).toContain('@aalis/plugin-test');
       expect(yaml).toContain('foo');
@@ -89,6 +89,6 @@ describe('App 生命周期', () => {
     const host = app.bind({ appService, pluginsService });
     expect(host.appService.current).toBeDefined();
     expect(host.pluginsService.current).toBeDefined();
-    expect(host.pluginsService.current).toEqual(app.plugins);
+    expect(host.pluginsService.current?.getStatus()).toEqual(app.plugins.getStatus());
   });
 });

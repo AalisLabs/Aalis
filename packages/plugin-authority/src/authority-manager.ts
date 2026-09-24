@@ -9,7 +9,7 @@ import type {
   UserIdentity,
 } from '@aalis/api-authority';
 import type { StorageService } from '@aalis/api-storage';
-import type { ConfigManager, Logger } from '@aalis/core';
+import type { HostConfig, Logger } from '@aalis/core';
 import { DEFAULT_AUTHORITY, matchAnyCap, OWNER_RANK, resolveAccess, resolveMinLevel } from './authority-model.js';
 import { UserStore } from './user-store.js';
 
@@ -31,7 +31,7 @@ export class AuthorityManager implements AuthorityService {
   private policyEnabledAt: number | null = null;
 
   constructor(
-    private readonly config: ConfigManager,
+    private readonly config: HostConfig,
     private readonly logger: Logger,
     storage: StorageService,
   ) {

@@ -8,8 +8,8 @@ import { type WebuiPage, webuiServer } from '@aalis/api-webui';
 import {
   appService,
   type BoundOf,
-  type ConfigManager,
   definePlugin,
+  type HostConfig,
   hostConfig,
   lifecycle,
   logger,
@@ -266,7 +266,7 @@ function asStringList(v: unknown, label: string): string[] | undefined {
 
 /** 页面动作用到的能力：几个服务引用 + 这次激活自己的 manager 与宿主配置 */
 type AdminDeps = Pick<Caps, 'webui' | 'commands' | 'tools' | 'platform' | 'app'> & {
-  config: ConfigManager;
+  config: HostConfig;
   manager: AuthorityManager;
 };
 
