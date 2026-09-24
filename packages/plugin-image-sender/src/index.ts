@@ -17,8 +17,6 @@ import { memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
 import { createStorageGateway, type StorageService, storage, toStorageUri } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
-// subsystem 这项展示元数据由 api-webui 经 declaration merging 挂到 PluginMeta 上
-import type {} from '@aalis/api-webui';
 import { type BoundOf, definePlugin, events, logger, optional } from '@aalis/core';
 import {
   AttachmentRefKind,
