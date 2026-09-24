@@ -49,7 +49,7 @@ export class EventBus {
    * 当前标记为 sticky 的事件：'app:ready'、'app:started'。
    *
    * - 注册：`markSticky(event)` 由 App 在构造时调用
-   * - 清除：`clearSticky(event)` 由 App.restart()/stop() 在复用实例时调用，
+   * - 清除：`clearSticky()` 由 App.restart()/stop() 在复用实例时调用，清空全部缓存参数，
    *   避免下一轮启动时被旧的 sticky 参数误触发
    */
   // biome-ignore lint/suspicious/noExplicitAny: 同上
@@ -60,12 +60,8 @@ export class EventBus {
     this.stickyEvents.add(event);
   }
 
-  clearSticky(event?: string): void {
-    if (event) {
-      this.stickyArgs.delete(event);
-    } else {
-      this.stickyArgs.clear();
-    }
+  clearSticky(): void {
+    this.stickyArgs.clear();
   }
 
   /**
