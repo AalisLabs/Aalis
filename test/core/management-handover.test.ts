@@ -1,16 +1,24 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { App, definePlugin, defineService, lifecycle, optional, provide } from '../../packages/core/src/index.js';
+import {
+  App,
+  definePlugin,
+  defineService,
+  events,
+  lifecycle,
+  optional,
+  provide,
+} from '../../packages/core/src/index.js';
 
 // 关停顺序覆盖管理动作：unload / disable / bounce 提供者时，正在用它的 required 依赖方先收尾再关，
 // 提供者之后；判据是依赖方此刻解析到的胜者属于要走的激活，所以空档里不切到后备。
-// 下线通知在提供者清理之前发出，跟随者交接落定后提供者才关。
+// 提供者清理之前，挂在它上面的跟随者就地交接，落定后提供者才关；交接不经事件投递。
 
 const apps: App[] = [];
 afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
-function world() {
-  const app = new App({ config: { name: 't', logLevel: 'error', plugins: {} }, devMode: false });
+function world(disposeTimeoutMs?: number) {
+  const app = new App({ config: { name: 't', logLevel: 'error', plugins: {} }, devMode: false, disposeTimeoutMs });
   apps.push(app);
   return app;
 }
@@ -139,7 +147,7 @@ describe('管理动作下依赖方先收尾、提供者后关', () => {
   });
 });
 
-describe('下线通知在提供者清理之前，跟随者交接落定后提供者才关', () => {
+describe('提供者清理之前，跟随者交接落定', () => {
   it('optional 跟随者的异步清理在提供者 onDispose 之前完成，清理期间提供者仍活着', async () => {
     const app = world();
     const S = defineService<{ alive: boolean }>('t:handover:s');
@@ -177,5 +185,125 @@ describe('下线通知在提供者清理之前，跟随者交接落定后提供�
     await app.plugins.unload('p');
     expect(log).toEqual(['cleanup start alive=true', 'cleanup end alive=true', 'p dispose']);
     expect(app.plugins.getPlugin('follower')?.state).toBe('active');
+  });
+});
+
+describe('交接不经事件投递：慢跟随者不拖住别人，通知不等监听器', () => {
+  const S = defineService<{ name: string; alive: boolean }>('t:handover:shared');
+  const never = () => new Promise<void>(() => {});
+
+  function provider(log: string[], name: string, priority = 0) {
+    return definePlugin({
+      name,
+      provides: [S],
+      uses: { provide, lifecycle },
+      apply({ provide, lifecycle }) {
+        const instance = { name, alive: true };
+        provide(S, instance, { priority });
+        lifecycle.onDispose(() => {
+          instance.alive = false;
+          log.push(`${name} dispose`);
+        });
+      },
+    });
+  }
+
+  function follower(log: string[], name: string, cleanup: () => void | Promise<void>) {
+    return definePlugin({
+      name,
+      uses: { s: optional(S) },
+      apply({ s }) {
+        s.follow(instance => {
+          log.push(`${name} attach ${instance.name}`);
+          return () => {
+            log.push(`${name} cleanup ${instance.name} alive=${instance.alive}`);
+            return cleanup();
+          };
+        });
+      },
+    });
+  }
+
+  it.each([
+    'unload',
+    'disable',
+  ] as const)('%s 提供者：前一个跟随者的清理挂住，后一个仍在提供者 onDispose 之前清理，后登记的下线监听照常收到', async action => {
+    const app = world(50);
+    const log: string[] = [];
+    await app.plugin(provider(log, 'p'));
+    await app.plugin(follower(log, 'slow', never));
+    await app.plugin(follower(log, 'fast', () => {}));
+    await app.plugin(
+      definePlugin({
+        name: 'listener',
+        uses: { events },
+        apply({ events }) {
+          events.on('service:unregistered', name => {
+            if (name === S.name) log.push('listener got unregistered');
+          });
+        },
+      }),
+    );
+    await app.plugins.idle();
+    await app.plugins[action]('p');
+    await app.plugins.idle();
+    const fast = log.indexOf('fast cleanup p alive=true');
+    expect(fast).toBeGreaterThan(-1);
+    expect(fast).toBeLessThan(log.indexOf('p dispose'));
+    expect(log).toContain('listener got unregistered');
+  });
+
+  it('注册更高优先级的提供者：前一个跟随者的清理挂住，后一个仍换到新胜者', async () => {
+    const app = world(50);
+    const log: string[] = [];
+    await app.plugin(provider(log, 'p1'));
+    await app.plugin(follower(log, 'slow', never));
+    await app.plugin(follower(log, 'fast', () => {}));
+    await app.plugins.idle();
+    await app.plugin(provider(log, 'p2', 10));
+    await app.plugins.idle();
+    expect(log).toContain('fast attach p2');
+  });
+
+  it('跟随者已在切走途中（旧清理在飞）时卸载旧提供者：提供者等这次清理落定才关', async () => {
+    const app = world();
+    const log: string[] = [];
+    await app.plugin(provider(log, 'p1'));
+    await app.plugin(
+      follower(log, 'f', () => new Promise<void>(r => setTimeout(r, 20)).then(() => void log.push('f cleanup end'))),
+    );
+    await app.plugins.idle();
+    await app.plugin(provider(log, 'p2', 10));
+    await app.plugins.idle();
+    expect(log).toContain('f cleanup p1 alive=true');
+    await app.plugins.unload('p1');
+    expect(log.indexOf('f cleanup end')).toBeGreaterThan(-1);
+    expect(log.indexOf('f cleanup end')).toBeLessThan(log.indexOf('p1 dispose'));
+  });
+
+  it('下线监听里 await plugins.idle() 不与撤回互等', async () => {
+    const app = world(0);
+    const log: string[] = [];
+    await app.plugin(provider(log, 'p'));
+    await app.plugin(
+      definePlugin({
+        name: 'waiter',
+        uses: { events },
+        apply({ events }) {
+          events.on('service:unregistered', async () => {
+            await app.plugins.idle();
+            log.push('waiter settled');
+          });
+        },
+      }),
+    );
+    await app.plugins.idle();
+    const outcome = await Promise.race([
+      app.plugins.unload('p').then(() => 'done'),
+      new Promise(resolve => setTimeout(() => resolve('stuck'), 300)),
+    ]);
+    expect(outcome).toBe('done');
+    await app.plugins.idle();
+    expect(log).toEqual(['p dispose', 'waiter settled']);
   });
 });
