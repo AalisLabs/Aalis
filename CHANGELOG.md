@@ -8,7 +8,7 @@
 
 ---
 
-## 未发布（core 0.16.0 → 0.17.0）
+## 2026-09-25（core 0.17.0 minor；89 包同批升级，另有 create-aalis 0.5.7 / create-aalis-plugin 0.10.0 / plugin-webui-client 0.12.6 / 新包 schema-log 0.1.0）
 
 ### 服务统一（@aalis/core）
 
@@ -68,7 +68,7 @@
 - `@aalis/runtime` 0.13.0（加载器）
 - `@aalis/schema-config` 0.12.0（`PluginMeta.configSchema`；53 个消费方 dependencies 下限同步抬到 `>=0.12.0`）
 
-脚手架 `create-aalis-plugin` 0.10.0 与前端 `@aalis/plugin-webui-client` 0.12.6 同批发版，无 core peer，不计入上面 89。`plugin-todo-list` 把 `@aalis/api-memory` / `@aalis/api-webui` 从 `devDependencies` 归位到 `dependencies`（值导入描述符）；`@aalis/api-session-manager` 仍是 type-only，留在 `devDependencies`。api-* 互依里的 type-only 导入不抬下限。脚手架项目里 `@aalis/core` 若仍是 caret 区间，请显式装 `0.17.0` 与上列 peer 已抬的包，再 `npm update`；不要用 `--legacy-peer-deps` 绕过。
+脚手架 `create-aalis-plugin` 0.10.0、`create-aalis` 0.5.7（minimal 档加入 message-archive）与前端 `@aalis/plugin-webui-client` 0.12.6 同批发版，无 core peer，不计入上面 89。`plugin-todo-list` 把 `@aalis/api-memory` / `@aalis/api-webui` 从 `devDependencies` 归位到 `dependencies`（值导入描述符）；`@aalis/api-session-manager` 仍是 type-only，留在 `devDependencies`。api-* 互依里的 type-only 导入不抬下限。脚手架项目里 `@aalis/core` 若仍是 caret 区间，请显式装 `0.17.0` 与上列 peer 已抬的包，再 `npm update`；不要用 `--legacy-peer-deps` 绕过。
 
 ### 插件形状：`definePlugin`（@aalis/core / @aalis/runtime）
 
