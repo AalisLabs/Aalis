@@ -8,6 +8,8 @@ import {
   lifecycle,
   optional,
   provide,
+  type ServiceRef,
+  serviceRef,
 } from '../../packages/core/src/index.js';
 
 // 关停顺序覆盖管理动作：unload / disable / bounce 提供者时，正在用它的 required 依赖方先收尾再关，
@@ -479,5 +481,70 @@ describe('跟随者已放弃等待的撤回不再拖住提供者，包装型提�
       'base:active',
     ]);
     expect(warnings.filter(w => w.includes('依赖环'))).toEqual([]);
+  });
+});
+
+describe('登记账本条目与原语同一拍撤掉，不等下游交接', () => {
+  it('提供者等慢跟随者交接期间：它登记到枢纽服务的条目与钩子、监听一起已撤', async () => {
+    interface Hub {
+      add(name: string): () => void;
+    }
+    interface BoundHub extends ServiceRef<Hub> {
+      register(name: string): () => void;
+    }
+    const hub = defineService<Hub, BoundHub>('t:handover:hub', port => {
+      const entries = port.registrar<string>({ key: n => n, register: (p, n) => p.add(n) });
+      return serviceRef(port, { register: (n: string) => entries.add(n) });
+    });
+    const Q = defineService<object>('t:handover:q');
+    const app = world();
+    const names = new Set<string>();
+    await app.plugin(
+      definePlugin({
+        name: 'hub',
+        provides: [hub],
+        uses: { provide },
+        apply({ provide }) {
+          provide(hub, {
+            add: n => {
+              names.add(n);
+              return () => void names.delete(n);
+            },
+          });
+        },
+      }),
+    );
+    let heard = 0;
+    await app.plugin(
+      definePlugin({
+        name: 'p',
+        provides: [Q],
+        uses: { h: hub, events, provide },
+        apply({ h, events, provide }) {
+          provide(Q, {});
+          h.register('tool-p');
+          events.on('service:registered', () => void heard++);
+        },
+      }),
+    );
+    let releaseFollower!: () => void;
+    await app.plugin(
+      definePlugin({
+        name: 'f',
+        uses: { q: optional(Q) },
+        apply({ q }) {
+          q.follow(() => () => new Promise<void>(r => (releaseFollower = r)));
+        },
+      }),
+    );
+    await app.plugins.idle();
+    const unloading = app.plugins.unload('p');
+    await new Promise(r => setTimeout(r, 5));
+    heard = 0;
+    app.bind({ provide }).provide(defineService<object>('t:handover:probe'), {});
+    const during = { hubEntry: names.has('tool-p'), heard };
+    releaseFollower();
+    await unloading;
+    expect(during).toEqual({ hubEntry: false, heard: 0 });
   });
 });
