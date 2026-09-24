@@ -756,7 +756,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // 切换前端：webui-client 是「前端」服务，偏好变更需重挂静态目录 + 通知客户端刷新。
     // 重挂与偏好同属内存态，必须在等落盘之前一起生效：save 拒绝时才不会留下「解析选 B、静态挂 A」。
     if (svcName === 'webui-client') remountActiveClient();
-    await host.save();
+    await caps.app.require().saveConfig();
     res.json({ ok: true });
   });
 
@@ -767,7 +767,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     services.unprefer(svcName);
     host.removeServicePreference(svcName);
     if (svcName === 'webui-client') remountActiveClient();
-    await host.save();
+    await caps.app.require().saveConfig();
     res.json({ ok: true });
   });
 
