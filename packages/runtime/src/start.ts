@@ -39,7 +39,7 @@ export interface StartAalisOptions {
   pluginLoader?: PluginLoader;
   /**
    * 彩色控制台日志，默认 true（独立部署即有全量级别）。webui-only/嵌入式/测试夹具可传 false：
-   * 此时仍把 warn/error 打到 stderr（「装了没反应」与双副本「必须是单副本」必须出声），
+   * 此时仍把 warn/error 打到 stderr（「装了没反应」与插件解析到「另一份 @aalis/core」被拒载必须出声），
    * 不写 info/debug、不占 stdout。
    */
   consoleSink?: boolean;
@@ -95,7 +95,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   const subcommandMode = subcommands.length > 0;
   // console sink 在 App 之前装：此时无 ctx，sink 处于「无条件写」状态以打印早期启动日志，
   // 待 App 起来再 bindEvents 接管 terminal:claimed/released。子命令模式日志走 stderr，stdout 只留命令结果。
-  // consoleSink: false 仍装 stderr + minLevel warn：双副本判定是 error，不能只剩下游「commands 服务不可用」。
+  // consoleSink: false 仍装 stderr + minLevel warn：加载器拒载「另一份 @aalis/core」的插件记 error，不能只剩下游「commands 服务不可用」。
   const consoleHandle: ConsoleSinkHandle = consoleSink
     ? installConsoleSink(subcommandMode ? { target: 'stderr' } : {})
     : installConsoleSink({ target: 'stderr', minLevel: 'warn' });

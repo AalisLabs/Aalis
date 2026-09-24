@@ -24,7 +24,13 @@ import type {
 } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { isLoadablePlugin, loadPluginDefinition, warnLikelyPluginMissingKeyword } from './node-modules-loader.js';
+import {
+  assertSameCore,
+  HOST_CORE_DIR,
+  isLoadablePlugin,
+  loadPluginDefinition,
+  warnLikelyPluginMissingKeyword,
+} from './node-modules-loader.js';
 import { disarmTerminalStateRestorer } from './terminal.js';
 
 // ============================================================
@@ -240,7 +246,7 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
  * 创建一个基于 packages 目录扫描的 PluginLoader。
  *
  * - `discover()`：读 dir 下每个子目录的 package.json，按 aalis-plugin 关键词收录可加载插件
- * - `load()`：用 `pathToFileURL(entry).href` 动态 import
+ * - `load()`：先经 assertSameCore 核对 core 是宿主那份，再用 `pathToFileURL(entry).href` 动态 import
  * - `reload()`：用入口文件 mtime 作为 import URL 的 query 强制 ESM 缓存失效
  */
 export function createFsPluginLoader(packagesDir?: string): PluginLoader {
@@ -285,10 +291,12 @@ export function createFsPluginLoader(packagesDir?: string): PluginLoader {
     },
 
     async load(desc): Promise<PluginDefinition | null> {
+      assertSameCore(HOST_CORE_DIR, desc.metadata?.dir, desc.name);
       return loadPluginDefinition(await import(pathToFileURL(desc.source).href), desc.name, loaderLogger);
     },
 
     async reload(desc): Promise<PluginDefinition | null> {
+      assertSameCore(HOST_CORE_DIR, desc.metadata?.dir, desc.name);
       let cacheKey = '';
       try {
         cacheKey = `?t=${(await stat(desc.source)).mtimeMs}`;

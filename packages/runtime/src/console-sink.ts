@@ -99,8 +99,8 @@ export interface ConsoleSinkHandle {
  * 与 CLI/TUI 等"独占终端 UI"的协调通过事件 `terminal:claimed/released` 完成，
  * sink 自己根据事件决定是否写 stdout——UI 不直接干预 sink。
  *
- * `minLevel` 缺省 debug（全量）。`consoleSink: false` 的宿主传 `warn`，让双副本
- * 「必须是单副本」与「装了没反应」仍打到 stderr，info/debug 保持安静。
+ * `minLevel` 缺省 debug（全量）。`consoleSink: false` 的宿主传 `warn`，让加载器拒载
+ * 「另一份 @aalis/core」的插件与「装了没反应」仍打到 stderr，info/debug 保持安静。
  */
 export function installConsoleSink(
   opts: { target?: 'stdout' | 'stderr'; minLevel?: LogLevel } = {},
