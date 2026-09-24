@@ -146,8 +146,8 @@ export default definePlugin({
 编排按依赖形状分三种，不是一条无条件规则：
 
 - 普通依赖（required，以及 optional 当时解析到的胜者）：消费者整个 close 完，提供者才 drain。
-- 父使用自己子树的服务：父 drain 先于子 close；父收尾时子树仍活着。到父 close 时子已按归属关闭。
-- 后代使用祖先服务：不往排序图加边。归属树保证子 close 先于祖先 close，故子 drain 时祖先仍活着。祖先若同时用这棵子树，第 2 种边把祖先 drain 插在子 close 之前，两笔收尾都能用到对方。
+- 根激活用插件的服务（宿主经 `app.bind` 绑定）：根 drain 先于该插件 close；根收尾时插件仍活着。到根 close 时插件已按归属关闭。
+- 插件用根激活登记的服务：不往排序图加边。归属树保证插件 close 先于根 close，故插件 drain 时根仍活着。根若同时用这个插件的服务，上一条把根 drain 插在插件 close 之前，两笔收尾都能用到对方。
 
 环：optional 边构成的强连通分量（≥2 个激活）先让成员全部 drain，再任一 close（不告警；drain 期间双方都能 `require()`）；环里只剩 required 边仍无解才告警并强行放行。
 

@@ -264,7 +264,6 @@ optional 上下线与胜者替换不改变目标态，不级联 bounce。有状�
 
 ### 隔离粒度
 
-- **子模块** — `lifecycle.module(definition, cfg)`：独立身份与生命周期，能力按子激活重新绑定，随父关闭。不进 PluginManager。挂载时缺 required 即拒绝；挂载后没有独立持续激活闸。
 - **完全隔离** — 需要独立事件总线、独立日志通道时，应直接 `createApp({ events, services, hooks, ... })` 创建新的 `App` 实例。`Logger` 可注入独立 `LogHub` 隔离日志缓冲。
 - 按会话/租户**差异化配置**不需要激活隔离——用键控解析（参考 session-manager 的 `resolveConfig(sessionId)` 模式）。
 - `ServiceRef.follow(attach)`：在场即调 attach，换人时先跑上次返回的清理再用新实例调，下线与关闭时清理。attach 必须同步返回函数 cleanup（或不需要清理时不返回）；thenable 会被接住并 warn。这是消费枢纽型服务、建立有状态资源的入口（参见 [docs/core/context.md](core/context.md)）。

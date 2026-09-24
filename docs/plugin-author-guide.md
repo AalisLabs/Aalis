@@ -154,7 +154,7 @@ lifecycle.onDispose(() => {
 
 收尾段：此刻本激活的监听、登记与声明的依赖都还在，用于停接新活、把在手的数据交给下层并等它确认。**依赖交接放这里**；`onDispose` 阶段依赖可能已不可用。
 
-关停以激活为单位，分 drain 与 close。普通依赖（required，以及 optional 当时的胜者）：消费者整个 close 完，提供者才 drain，所以整机停机时这里调下层是安全的。父使用子树服务：父 drain 先于子 close，交接仍放父 `onDrain`。后代使用祖先服务：不加排序边，归属树保证子 close 先于祖先 close。环：optional 让步；required 环告警并强行放行。
+关停以激活为单位，分 drain 与 close。普通依赖（required，以及 optional 当时的胜者）：消费者整个 close 完，提供者才 drain，所以整机停机时这里调下层是安全的。宿主根激活使用插件服务：根 drain 先于该插件 close，交接仍放根的 `onDrain`。插件使用根激活登记的服务（基础服务、宿主服务）：不加排序边，归属保证插件 close 先于根 close。环：optional 让步；required 环告警并强行放行。
 
 ### 不要放入
 
@@ -209,13 +209,13 @@ it('required 依赖到场后激活', async () => {
 
 ---
 
-## 8. 何时子模块、何时新 App
+## 8. 何时多实例插件、何时新 App
 
 | 隔离需求 | 用法 |
 |---|---|
 | 一个独立插件实例（默认）| `app.plugin(definition, cfg)` |
 | 按会话/租户差异化配置或服务 | **键控解析**：按 key 查表（参考 session-manager 的 `resolveConfig(sessionId)`），不需要上下文隔离 |
-| 同一激活下的附属生命周期 | `lifecycle.module(childDefinition, cfg)`：独立身份，能力按子激活重新绑定，随父关闭；**不进调度器**。挂载时缺 required 即拒绝；挂载后没有独立持续激活闸 |
+| 同一份定义跑多套独立配置 | 定义声明 `reusable: true`，再以 `app.plugin(definition, cfg, 'name:suffix')` 注册（插件内经 `plugins.register` 同签名）；每个实例是独立的顶层激活，由调度器管理。约束见第 4 节 |
 | 完全独立的事件总线 / 日志通道 / 服务容器 | `createApp({ events, services, hooks, ... })` 新建 App |
 
 宿主取根激活绑定用 `app.bind(uses)`，与插件同一套描述符；登记归属根激活、随 App 停止撤回。插件拿的是自己激活的绑定，不复用这里的。
@@ -337,8 +337,9 @@ declare module '@aalis/core' {
 | 0.16 | 0.17 |
 | --- | --- |
 | 具名 `name` / 依赖表 / 提供表（字符串）+ 函数 `apply`；配置为第二参 | `export default definePlugin({ name, uses, provides, apply(caps) })`；配置经 `uses: { config }` |
-| 第一参 Context：`on`/`emit`、`logger`、`onDispose`、`provide(name, impl)`、按名取服务、跟随订阅、`useModule`、`middleware`/`runHook`、`contribute`/`collect` | `uses` 里写描述符后解构：`events`、`logger`、`lifecycle`（`onDispose` / `onDrain` / `module`）、`provide(desc, impl)`、`x.current` / `require()` / `all()` / `follow`、`hooks`、`contributions` |
+| 第一参 Context：`on`/`emit`、`logger`、`onDispose`、`provide(name, impl)`、按名取服务、跟随订阅、`middleware`/`runHook`、`contribute`/`collect` | `uses` 里写描述符后解构：`events`、`logger`、`lifecycle`（`onDispose` / `onDrain`）、`provide(desc, impl)`、`x.current` / `require()` / `all()` / `follow`、`hooks`、`contributions` |
 | 整份宿主配置默认可取 | `hostConfig` 须显式 uses（普通宿主服务） |
+| `useModule` 子上下文 | 删除。改用顶层插件：定义声明 `reusable`，以 `name:suffix` 注册多实例 |
 | 契约包 `useXxxService` helper | 描述符值导入进 `uses` 与 `dependencies`；apply 里用绑定门面（`tools.register`、`commands.command`、`webui.registerPage` / `registerAction`、`agent.registerPreprocessor`） |
 | 网关 helper 第一参为 Context | `createStorageGateway` / `createProcessGateway` / `resolveLLMModel` 第一参为 `ServiceRef` |
 | 依赖变更时整插件级联重启开关 | 删除。调用型每次读 `current`；有状态资源用 `follow`；登记型由 registrar 随换人重挂 |

@@ -73,11 +73,11 @@ export default definePlugin({
 });
 ```
 
-`scope` 是工厂的消费者资源口：`id` / 不透明 `identity`、消费者 `logger` / `config`、`closed`，以及 `track` / `onDrain` / `onDispose` / `module`。它不暴露激活记录、容器或原语注册表，也不是传给插件 `apply` 的入口。
+`scope` 是工厂的消费者资源口：`id` / 不透明 `identity`、消费者 `logger` / `config`、`closed`，以及 `track` / `onDrain` / `onDispose`。它不暴露激活记录、容器或原语注册表，也不是传给插件 `apply` 的入口。
 
 - 工厂必须同步返回非空、非 thenable 的实例。异步工厂被类型检查和运行期拒收；返回 Promise 的拒绝仍被接住并报告。
 - 经 scope 登记的资源属于消费者。成功实例对应的提供者边保留到消费者关闭；切换胜者不会提前清理旧实例的资源。需要每次切换都交接的资源应在 `follow` 的 attach 中取得、由返回清理函数释放。`follow` 串行的是这两步，不保证工厂构造延后，也不会在切换时释放工厂自己的资源。
-- 构造失败会回滚该次登记：撤回 `track`，执行未取消的 `onDispose`，取消 `onDrain`，收回已发起的子模块挂载。异步回滚被消费者关闭等待，完成后释放该次工厂边；失败 scope 的迟到清理也会执行。
+- 构造失败会回滚该次登记：撤回 `track`，执行未取消的 `onDispose`，取消 `onDrain`。异步回滚被消费者关闭等待，完成后释放该次工厂边；失败 scope 的迟到清理也会执行。
 - 缓存不自动转发调用，也不取消提供者主动卸载、依赖成环或清理超时等边界。工厂资源的交接同样服从 [关停契约](context.md#生命周期)。
 - 同版本 Core 副本之间的描述符、`optional` 包装、工厂与 required 不可用错误可互通；不据此承诺不同版本或任意 Core 类实例可混用。依赖仍应使用 peer 并尽量去重。
 

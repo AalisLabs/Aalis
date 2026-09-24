@@ -33,11 +33,11 @@
 - 新增 `@aalis/schema-log` 0.1.0，统一 `formatLogLine` / `parseLogLine`（从 Core 移除，runtime、CLI、WebUI 改从 schema 包导入）。日志记录类型 `LogEntry` / `LogLevel` 与日志通道、Logger 留在 Core；schema-log 以 peer 依赖引用 Core 的类型，Core 保持零依赖。发布时须包含新包。
 - 新写日志采用 `@aalis/log:1 ` 前缀的单行 JSON，完整保留反斜杠、换行与分隔符；读取兼容旧分隔格式，支持同一文件内混合记录。旧文件中已经丢失的转义信息无法恢复。
 - 删除未被生产代码使用的 `AppOptions.dataDir`、`ConfigManagerOptions.dataDir`、`ConfigManager.getConfigDir()` 与 `createFsYamlConfigProvider()` 返回值的 `dataDir`；宿主文件监听仍使用自己的实际目录。
-- 父模块的 `onDrain` 负责业务交接，不能等待同一关停计划中排在它之后的子关闭；外部调用者仍可等待完整关闭。本次未增加超时或改变关闭句柄语义。
+- `onDrain` 负责业务交接，不能等待同一关停计划中排在它之后的阶段（会互等）；外部调用者仍可等待完整关闭。本次未增加超时。
 
 ### 本批收敛
 
-- Core 删除旧 `Context` 类及中转门面：默认服务工厂连接原语注册表与消费者的 `ServiceScope`，`Activation` 只保存身份、资源和依赖关系，装配及子模块挂载由 `ActivationHost` 承担。服务观察只报告胜者变化，异步交接统一在绑定与资源层处理。
+- Core 删除旧 `Context` 类及中转门面：默认服务工厂连接原语注册表与消费者的 `ServiceScope`，`Activation` 只保存身份、资源和依赖关系，装配由 `ActivationHost` 承担。服务观察只报告胜者变化，异步交接统一在绑定与资源层处理。
 - `App.stop()` 在屏障与清理期间被再次调用，也返回同一个完整关闭 Promise；不再用全局事件阶段判断调用者、提前兑现外部调用。监听器或清理回调不能 await / 返回自己的停机 Promise。本批不新增 `apply` / 屏障超时，既有 `disposeTimeoutMs` 不构成全局停机时限。
 - `registrar` 同键登记在同步重入、撤回与关闭交错时仍按条目身份归属，过期登记取得的清理句柄会撤回，不留卸载后仍可执行的条目；关闭等待已发起的异步撤回。
 - runtime 在加载定义后、首次交给 Core 注册前完成默认值回填与未知字段裁剪，主实例与配置中的复用实例共用此路径，避免首次 `apply` 配置与保存配置不一致。schema 政策留在宿主。
@@ -57,7 +57,7 @@
 
 ### 插件形状：`definePlugin`（@aalis/core / @aalis/runtime）
 
-入口必须是 `export default definePlugin({ name, uses, provides, apply })`。`name` 须为非空字符串，且不含 instanceId 的 `:suffix` 与子模块的 `#`。`uses` 的值是描述符（或 `optional(描述符)`），没有默认注入——写了什么，`apply` 就只能碰到什么。`provides` 是描述符数组，激活后按本次 `instanceId` 校验确已登记。
+入口必须是 `export default definePlugin({ name, uses, provides, apply })`。`name` 须为非空字符串，且不含 instanceId 的 `:suffix` 与保留字符 `#`。`uses` 的值是描述符（或 `optional(描述符)`），没有默认注入——写了什么，`apply` 就只能碰到什么。`provides` 是描述符数组，激活后按本次 `instanceId` 校验确已登记。
 
 ```ts
 import { definePlugin, defineService, logger, provide } from '@aalis/core';
@@ -90,7 +90,7 @@ export default definePlugin({
 | `ctx.provide(name, impl)` | `provide(descriptor, impl, options?)` |
 | `ctx.getService` / `ctx.getAllServices` | `uses` 后 `x.current` / `x.require()` / `x.all()` |
 | `ctx.whenService(name, attach)` | `x.follow(attach)` |
-| `ctx.useModule` | `lifecycle.module(def, cfg)` |
+| `ctx.useModule` | 已删除；改用顶层插件（`plugins.register` + `reusable` 多实例） |
 | `ctx.middleware` / `ctx.runHook` | `hooks.middleware` / `hooks.run` |
 | `ctx.contribute` / `ctx.collect` | `contributions.contribute` / `contributions.collect` |
 | 整份宿主配置 | `hostConfig`（普通宿主服务，须显式 `uses`） |
@@ -122,30 +122,6 @@ export default definePlugin({
 
 `services.get` 是动态查询：不参与激活闸、不自动跟随，关停期可能拿空。共享实例查询不产生依赖边；实际创建工厂实例时持有其提供者边。需要声明等待与跟随就把描述符写进 `uses`。
 
-子模块：
-
-```ts
-import { definePlugin, lifecycle, logger } from '@aalis/core';
-
-const child = definePlugin({
-  name: 'child',
-  uses: { logger },
-  apply({ logger }) {
-    logger.info('child');
-  },
-});
-
-export default definePlugin({
-  name: '@scope/plugin-parent',
-  uses: { lifecycle },
-  async apply({ lifecycle }) {
-    await lifecycle.module(child, { extra: true });
-  },
-});
-```
-
-挂载时缺 required 服务即拒绝（抛错，`apply` 不执行）；挂上之后没有独立持续激活闸，提供者离场时登记排队、引用可能为空，由父模块决定是否关掉它。子模块不进 `PluginManager`。
-
 **迁移**：按上表改名即可。`whenService` 的 cleanup 语义由 `follow` 接过（含异步清理被关闭等待）。宿主要读整份配置，在 `uses` 里声明 `hostConfig`，不要假定会默认注入。
 
 ### 服务契约（各 `@aalis/api-*`）
@@ -170,11 +146,11 @@ export default definePlugin({
 
 ### 关停编排与 `app:stopping`（@aalis/core）
 
-关停按激活为单位，每个激活拆成收尾（`lifecycle.onDrain`：此刻本激活的监听、登记与声明的依赖都还在）与撤回加清理（`lifecycle.onDispose`：对外登记已撤回）。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。边只来自框架管理的关系：声明的依赖（含子模块、含尚未访问的 optional）在编排那一刻解析到的胜者，以及存活的托管绑定、已创建的工厂实例与尚未落地的撤回。经 `services` 动态查询共享实例不产生边，调用方缓存的裸引用不追踪；动态查询创建的工厂实例按托管寿命持有其实际提供者边。
+关停按激活为单位，每个激活拆成收尾（`lifecycle.onDrain`：此刻本激活的监听、登记与声明的依赖都还在）与撤回加清理（`lifecycle.onDispose`：对外登记已撤回）。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。边只来自框架管理的关系：声明的依赖（含尚未访问的 optional）在编排那一刻解析到的胜者，以及存活的托管绑定、已创建的工厂实例与尚未落地的撤回。经 `services` 动态查询共享实例不产生边，调用方缓存的裸引用不追踪；动态查询创建的工厂实例按托管寿命持有其实际提供者边。
 
-普通依赖（别的插件、兄弟模块）：消费者整个 close 完，提供者才 drain。父使用自己子树的服务：父 drain 先于提供者子节点 close，父 `onDrain` 期间该节点尚未关闭，但可能已执行 drain。后代使用祖先的服务：不往排序图加边——归属树保证子 close 先于祖先 close，因此子 drain 时祖先尚未关闭，也可能已执行 drain。环内 optional 边构成的强连通分量（≥2 个激活）卡住时一次放行分量内全部 drain，再 close；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。框架保证编排顺序与等待，不保证插件在 drain 中已主动撤回或关闭的实现仍可用。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭，但不享有整 App 关停那一层「根绑定与全部插件同计划」的交接保证。
+普通依赖（别的插件）：消费者整个 close 完，提供者才 drain。根激活使用插件的服务：根 drain 先于该插件 close，根 `onDrain` 期间该插件尚未关闭，但可能已执行 drain。插件使用根激活登记的服务（基础服务、宿主服务与 `app.bind({ provide })` 的发布）：不往排序图加边——归属保证插件 close 先于根 close，因此插件 drain 时根尚未关闭，也可能已执行 drain。环内 optional 边构成的强连通分量（≥2 个激活）卡住时一次放行分量内全部 drain，再 close；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。框架保证编排顺序与等待，不保证插件在 drain 中已主动撤回或关闭的实现仍可用。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭，但不享有整 App 关停那一层「根绑定与全部插件同计划」的交接保证。
 
-`App.stop()` 单飞：重入返回同一 Promise。现序：停配置 watch → `beginShutdown()`（置停机态并冻计划）→ `plugins.idle()`（排干在飞重算）→ 发出 `app:stopping`（屏障，等监听器）→ 再 `idle()` → 执行已冻计划的 drain / close → 清 sticky → 根激活 `disposeAsync`。已静置时仍须先冻闸，否则 `idle()` 让出的微任务里 bounce 会留下 pending 幽灵。`app:stopping` 只在全局停机触发一次，bounce / unload / disable 不发；知会（告别语、状态条）可以挂它，资源清理走 `onDrain` / `onDispose`。发出时停机计划已冻：窗口内 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成，拆卸由停机计划执行）；`register` / `bounce` 返回 false（与定义或实例 id 校验失败同属政策挡下的 false 口径；`register` 不落账）。每次调用 `stop()` 都得到完整停机的同一 Promise；监听器与清理回调不得 await 或返回它，以免等待自身。监听器里对已冻激活 `provide` 记 warn 后忽略、不抛；`lifecycle.module` 抛「已 dispose」。停机完成后：对新定义 `register` 返回 false 且不落账；对已 disposed 实例的 `enable` / `updateConfig` / `bounce` 返回 false；`idle()` 落定。
+`App.stop()` 单飞：重入返回同一 Promise。现序：停配置 watch → `beginShutdown()`（置停机态并冻计划）→ `plugins.idle()`（排干在飞重算）→ 发出 `app:stopping`（屏障，等监听器）→ 再 `idle()` → 执行已冻计划的 drain / close → 清 sticky → 根激活 `disposeAsync`。已静置时仍须先冻闸，否则 `idle()` 让出的微任务里 bounce 会留下 pending 幽灵。`app:stopping` 只在全局停机触发一次，bounce / unload / disable 不发；知会（告别语、状态条）可以挂它，资源清理走 `onDrain` / `onDispose`。发出时停机计划已冻：窗口内 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成，拆卸由停机计划执行）；`register` / `bounce` 返回 false（与定义或实例 id 校验失败同属政策挡下的 false 口径；`register` 不落账）。每次调用 `stop()` 都得到完整停机的同一 Promise；监听器与清理回调不得 await 或返回它，以免等待自身。监听器里对已冻激活 `provide` 记 warn 后忽略、不抛。停机完成后：对新定义 `register` 返回 false 且不落账；对已 disposed 实例的 `enable` / `updateConfig` / `bounce` 返回 false；`idle()` 落定。
 
 **迁移**：数据交接（flush、abort 在飞工作并等待收尾）放 `onDrain`；拆连接、摘登记放 `onDispose`，不要假定此时依赖仍在。不要用 `events.on('app:stopping', …)` 当清理通道。
 

@@ -32,8 +32,7 @@
 **contributions（`contributions.contribute` / `contributions.collect`）——汇集**
 - 全局键 = `${lifecycle.id}/${局部id}`，由门面自动冠前缀：**spec.id 侧**构造上无法顶替他人条目
   （局部 id 禁空、禁含 `/`，注册期抛错）。该保证以这次激活的逻辑 id 为命名空间——
-  调度器保证顶层 `instanceId` 不重复；`lifecycle.module` 同名重复挂载会加 `~n` 后缀；
-  仍出现重复 id 的两方共用同一命名空间。
+  调度器保证 `instanceId` 不重复；仍出现重复 id 的两方共用同一命名空间。
 - 已关闭的激活上 `contribute` 被拒（warn + no-op），不影响同 id 的活实例。
 - 同一激活内同局部 id 重复注册 = 替换（幂等）。
 - `collect` 返回快照，排序是全局键的纯函数——同集合任意机器、任意重启，枚举顺序逐字节相同。
@@ -42,20 +41,19 @@
 ## 二、生命周期不变量
 
 - 经这次激活的能力门面登记的一切副作用（事件监听、服务、钩子、贡献、`onDrain` / `onDispose`、`follow` / `track` / `registrar`），
-  在该激活关闭后**必然消失**——包括子模块级联与寄存在枢纽服务里、按激活身份清扫的条目。
+  在该激活关闭后**必然消失**——包括寄存在枢纽服务里、按激活身份清扫的条目。
 - 清理链分撤回段（`follow` 返回的 cleanup、registrar 撤回、四原语退订）与清理段（`onDispose`）：撤回段整体先于清理段，段内相对注册**逆序**执行；单个清理器抛错不影响其余。
 - `onDrain` 在撤回之前执行：此刻本激活的监听、登记与声明的依赖都还在，用于停接新活、把在手的数据交给下层并等待确认。`onDispose` 在对外登记已撤回之后执行；依赖可能已不可用。异步清理在 `disposeAsync` 路径被等待（带 `disposeTimeoutMs` 护栏）；超时只是停止等待，不代表资源已释放。
-- 子模块经 `lifecycle.module(definition, config?)` 挂载：独立身份与生命周期，能力按子激活重新绑定，随父关闭，不进调度器。挂载时缺 required 服务即拒绝（抛错，`apply` 不执行）；挂上之后没有独立持续激活闸，不能把它与顶层插件调度等同。
-- 激活 = 提供者先于消费者（required 依赖拓扑）。关闭按每个激活的 drain 与 close 两阶段编排。普通依赖：消费者整个 close 完，提供者才 drain。父使用自己子树的服务：父 drain 先于子 close。后代使用祖先的服务：不往排序图加边，由归属树保证子 close 先于祖先 close。环内 optional 边构成的强连通分量（≥2 个激活）先让成员全部 drain，再任一 close——drain 期间对方仍活着，双方 `onDrain` 都能 `require()`；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭，但不享有整 App 关停那一层「根绑定与全部插件同计划」的交接保证。动态查询共享实例与手动缓存的裸引用不产生边；已创建的工厂实例持有准确提供者边至消费者关闭，失败工厂的边留到回滚落定。
-- `app:stopping` 是屏障知会，不是清理通道；只在 `App.stop()` 全局停机时发一次，bounce / unload / disable 不发。清理走 `onDrain` / `onDispose`。`App.stop()` 顺序：`beginShutdown()`（冻结新增绑定并进入停机态）→ `idle()`（排干在飞重算）→ 发出 `app:stopping` → 关停计划。监听器全部返回后才执行停机计划。窗口内 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成）；`register` / `bounce` 返回 false（与定义或实例 id 校验失败同属政策挡下的 false 口径）。已冻激活上 `provide` 记 warn 后忽略、不抛；`lifecycle.module` 抛「已 dispose」。停机完成后：对新定义 `register` 返回 false 且不落账；对已 disposed 实例的 `enable` / `updateConfig` / `bounce` 返回 false；`idle()` 落定。
+- 激活 = 提供者先于消费者（required 依赖拓扑）。关闭按每个激活的 drain 与 close 两阶段编排。普通依赖：消费者整个 close 完，提供者才 drain。根激活使用插件的服务：根 drain 先于该插件 close。插件使用根激活登记的服务：不往排序图加边，由归属保证插件 close 先于根 close。环内 optional 边构成的强连通分量（≥2 个激活）先让成员全部 drain，再任一 close——drain 期间对方仍活着，双方 `onDrain` 都能 `require()`；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭，但不享有整 App 关停那一层「根绑定与全部插件同计划」的交接保证。动态查询共享实例与手动缓存的裸引用不产生边；已创建的工厂实例持有准确提供者边至消费者关闭，失败工厂的边留到回滚落定。
+- `app:stopping` 是屏障知会，不是清理通道；只在 `App.stop()` 全局停机时发一次，bounce / unload / disable 不发。清理走 `onDrain` / `onDispose`。`App.stop()` 顺序：`beginShutdown()`（冻结新增绑定并进入停机态）→ `idle()`（排干在飞重算）→ 发出 `app:stopping` → 关停计划。监听器全部返回后才执行停机计划。窗口内 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成）；`register` / `bounce` 返回 false（与定义或实例 id 校验失败同属政策挡下的 false 口径）。已冻激活上 `provide` 记 warn 后忽略、不抛。停机完成后：对新定义 `register` 返回 false 且不落账；对已 disposed 实例的 `enable` / `updateConfig` / `bounce` 返回 false；`idle()` 落定。
 - 提供者换人（多提供者其一退出、偏好切换、更高优先级上线）不改变插件的目标状态，经 `service:registered` / `service:unregistered` / `service:preference-changed` 可观察。要跟随换人用 `follow`，不要指望消费者被级联重启。
 - required 依赖缺失 → 顶层插件停在 pending（不阻塞、不轮询）；依赖就绪自动激活。初始化期间本次 required 绑定的 `require()` 原样抛出不可用错误时，先回滚资源再回到 pending；optional、自造/包装异常及其他激活的错误不适用。持续失稳的自动尝试在单次重算任务内有界，点名后暂缓，不影响其他插件与管理操作。
 
 ### 服务工厂的资源寿命
 
 - `serviceFactory(scope => instance)` 同步返回非空、非 thenable 实例；一次提供者登记在每个消费者激活中成功创建一次。缓存按实际激活身份与登记身份区分，不按显示 id；构造循环明确报错。
-- `ServiceScope` 只提供消费者的身份、日志、配置与资源接口，不公开容器、注册表或内部激活记录。工厂经 `track` / `onDrain` / `onDispose` / `module` 取得的资源归消费者，提供者切换不提前清理这些资源。
-- 构造失败回滚该次取得的资源：撤回 `track`，执行未取消的 `onDispose`，取消 `onDrain`，收回已发起的子模块。异步回滚纳入消费者的关闭等待；失败 scope 的迟到清理仍执行。工厂返回 Promise 属于契约错误，运行期拒收并接住其拒绝。
+- `ServiceScope` 只提供消费者的身份、日志、配置与资源接口，不公开容器、注册表或内部激活记录。工厂经 `track` / `onDrain` / `onDispose` 取得的资源归消费者，提供者切换不提前清理这些资源。
+- 构造失败回滚该次取得的资源：撤回 `track`，执行未取消的 `onDispose`，取消 `onDrain`。异步回滚纳入消费者的关闭等待；失败 scope 的迟到清理仍执行。工厂返回 Promise 属于契约错误，运行期拒收并接住其拒绝。
 - 成功实例及其提供者边保持到消费者关闭；需要随胜者每次交接的资源仍走 `follow`。这些边遵守既有父子、成环与单独卸载边界，不保证业务保存成功或被主动关闭的提供者仍可用。
 - 同版本 Core 副本的描述符、optional 包装、工厂与 required 不可用错误可互通；不承诺不同版本的协议互通或任意 Core 类实例跨副本互换。
 
@@ -103,7 +101,7 @@
 | 0.12.0 | `ServicePriority` / `ServicePriorityValue`（0.11.0 仍从包根导出，服务优先级改为裸数字后移除） |
 | 0.13.0 | 四个注册表的 `unregisterByContext`（换为 `unregisterByOwner(owner: symbol)`）；另有三处改形而非删除：`saveConfig()` 返回 `Promise<void>`、`useModule()` 返回 `ModuleHandle`、`EventBus.on` 第三参由 `string` 改为 `symbol` |
 | 0.14.0 | `ServiceContainer.unregisterEntry`（`register` 改为返回退订闭包）；改形：`ServiceContainer.register(name, instance, contextId, owner?, options?)` 与 `HookRegistry.register` 的 `contextId` 必填；`ContributionRegistry` 的注册与读取动词按 `ContributionPointMap` 约束键；`ServiceContainer` 的服务名保持开放，约束落在载荷 `ServiceOf<K>` 与 `get` / `getAll` 的按键重载上；事件键 `ready` / `restarting`（改名 `app:ready` / `app:restarting`，屏障统一 `app:` 前缀）；`PluginManagerService.enablePlugin` / `disablePlugin` / `updatePluginConfig`（改名 `enable` / `disable` / `updateConfig`；类上的 `bouncePlugin` 改 `bounce`）；改形：`PluginManagerService.register` / `unload` 由 `Promise<void>` 改 `Promise<boolean>`（六个管理动作同一口径）；行为：`plugin:loaded` 不再等监听器 |
-| 0.17.0 | **删除**：包根激活记录类与 `App` 上的公开激活入口、插件模块形状（具名 `name` / `inject` / `provides` 与函数 default）、全局服务类型表与 `ServiceOf`、级联 bounce 开关与 `evictDownstreamConsumers`、契约包 `useXxxService` helper、`ServiceContainer.getEntries` 与包根 `ServiceEntry`。**改形**：`apply` 入参改为 `uses` 装配出的绑定接口；四原语与配置 / 日志 / 生命周期改为显式能力描述符；按名取服务改为 `ServiceRef` 的 `current` / `require()` / `all()`，有状态跟随改为 `follow`；子模块口改为 `lifecycle.module`；`PluginEntry` 的定义字段改为 `definition`，依赖字段改为服务名数组 `required` / `optional`，公开类型不含内部激活字段；重算只分 `changed` 与 `shutdown` 两档（不从包根导出）；`schema-config` 把配置表单声明挂到 `PluginMeta.configSchema`；`hostConfig` 为须显式声明的普通宿主服务 |
+| 0.17.0 | **删除**：包根激活记录类与 `App` 上的公开激活入口、插件模块形状（具名 `name` / `inject` / `provides` 与函数 default）、全局服务类型表与 `ServiceOf`、级联 bounce 开关与 `evictDownstreamConsumers`、契约包 `useXxxService` helper、`ServiceContainer.getEntries` 与包根 `ServiceEntry`、子模块机制（`useModule` / `ModuleHandle`，含同步 `dispose()`）。**改形**：`apply` 入参改为 `uses` 装配出的绑定接口；四原语与配置 / 日志 / 生命周期改为显式能力描述符；按名取服务改为 `ServiceRef` 的 `current` / `require()` / `all()`，有状态跟随改为 `follow`；`PluginEntry` 的定义字段改为 `definition`，依赖字段改为服务名数组 `required` / `optional`，公开类型不含内部激活字段；重算只分 `changed` 与 `shutdown` 两档（不从包根导出）；`schema-config` 把配置表单声明挂到 `PluginMeta.configSchema`；`hostConfig` 为须显式声明的普通宿主服务 |
 
 因此插件生态里常见的 `peerDependencies: { "@aalis/core": ">=0.2.0 <1.0.0" }` **不是**"core 保证
 0.x 内兼容"的推论——它只是"没用到新 API 的插件不必随次版本重发"的便利区间。用了某个版本才有的
@@ -122,7 +120,7 @@ API，就把下限抬到那个版本（如 0.13.0 这批的 runtime / plugin-cli
 
 core 源码按职责分目录，依赖方向由 `test/core/architecture.test.ts` 守卫；目录边界与公开包边界无关：
 
-- **资源内核** `kernel/`（`lifecycle.ts`、`disposable-chain.ts`）：父子归属、清理链、可等待关闭与逐项超时、错误隔离与上报。只引用本层，不认识服务、配置或激活记录。
+- **资源内核** `kernel/`（`lifecycle.ts`、`disposable-chain.ts`）：清理链、可等待关闭与逐项超时、错误隔离与上报。只引用本层，不认识服务、配置或激活记录。
 - **协作原语** `primitives/`（events、hooks、services、contributions）：四个注册表及登记元数据。依赖 kernel 与基础类型，不认识激活记录、Logger 或 Config；诊断经回调送出。
 - **基础设施** `infrastructure/`（resources、config、config-values、logger）：资源账本、配置与安全值处理、日志通道。依赖 kernel、primitives 与基础类型，不负责服务装配和插件调度。
 - **服务装配** `composition/`：`descriptors` 保存服务描述符、类型推导与依赖提取；`binding` 保存资源口、不可用错误与 `follow` / `registrar`；`service-factory` 定义公开工厂协议，`core-services` 登记默认基础服务；其余包含 runtime 接线、service-watch、provide-validation 与 plugin-definition。依赖基础设施、原语和 kernel，不 import 编排层。
@@ -146,9 +144,8 @@ src 根只留 `index.ts`。配置持久化 SPI `ConfigProvider` 只依赖 `Aalis
 
 诊断与错误的写法（文字规矩，无机器守——正则守卫经变异证明会被折行调用与含引号的英文骗过）：错误对象一律作 logger 的附加参数
 （`logger.error('xxx 失败:', err)`），不内插进消息——内插只剩 message、丢 stack；日志行编码与转义由宿主负责。宿主 SPI
-（插件加载器、重启策略、配置 provider）的失败一律 `error` 级。kernel 抛出的错误信息用中文、带 `Lifecycle:` 前缀、不带节点 id
-（kernel 不认识激活记录；这两条抛错是收养关系写错的编程错误，不是运行时故障，抛给调用方即止）。
+（插件加载器、重启策略、配置 provider）的失败一律 `error` 级。
 
-不拆 kernel 包：包是发布单位不是模块化单位；维持可拆的依赖方向，出现不依赖 core 的真实使用者时再议。资源内核不从包根导出。单独关闭的级联序是子节点关闭 → 本节点 drain → 撤回对外注册 → 清理链分段排空 → afterCleanup；编排层可提前调用 drain，再按依赖图安排 close，内核不解释依赖。关闭后迟到清理仍执行，用来接住初始化或子节点关闭期间取得的资源；超时只是停止等待，不代表资源已释放；每个 Lifecycle 至多跟踪一次初始化（调用方保证，再次调用会覆盖前一次）。
+不拆 kernel 包：包是发布单位不是模块化单位；维持可拆的依赖方向，出现不依赖 core 的真实使用者时再议。资源内核不从包根导出。单独关闭的顺序是 drain → 撤回对外注册 → 清理链分段排空 → afterCleanup；编排层可提前调用 drain，再按依赖图安排 close，内核不解释依赖。关闭后迟到清理仍执行，用来接住初始化期间取得的资源；超时只是停止等待，不代表资源已释放；每个 Lifecycle 至多跟踪一次初始化（调用方保证，再次调用会覆盖前一次）。
 
 没有为插件 apply 或 app 生命周期屏障新增超时；`disposeTimeoutMs` 约束清理等待，不是整个 register / stop 的总期限。若流程尚在等待永不落定的 apply 或屏障监听器，仍可能无法进入清理阶段。
