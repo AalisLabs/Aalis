@@ -1,11 +1,12 @@
-import { App, provide } from '@aalis/core';
+import { App, definePlugin, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 
-// 冷启动时 session-manager 可能先从空的后备 memory 加载（例如内存后端先于 sqlite 就位），
-// 之后首选后端成为胜者。落盘只能删本进程显式删除过的会话，不能把首选后端里原有的会话当孤儿删掉。
+// 会话表只在激活时从当时的 memory 胜者读一次。运行中胜者换成另一个后端（新装或启用首选后端）后，
+// 落盘只能删本进程显式删除过的会话，不能把新胜者里原有的会话当孤儿删掉；冷启动整批登记时
+// 会话管理排在全部 memory 提供者之后激活，首轮就从首选后端加载。
 
 function fakeMemory(initial: Record<string, Record<string, unknown>> = {}) {
   const meta = new Map(Object.entries(initial));
@@ -62,5 +63,32 @@ describe('session-manager 落盘只删显式删除的会话', () => {
     await app.stop();
 
     expect([...store.meta.keys()]).toEqual(['keep']);
+  });
+});
+
+describe('冷启动整批登记：首选后端首轮即可见', () => {
+  it('后备先于首选被发现：pluginAll 让会话管理从首选后端加载，原有会话首轮就在列表里', async () => {
+    const fallback = fakeMemory();
+    const preferred = fakeMemory({ 'old-1': oldSession });
+    const backend = (name: string, impl: unknown, priority: number) =>
+      definePlugin({
+        name,
+        uses: { provide },
+        provides: [memory],
+        apply: ({ provide }) => {
+          provide(memory, impl as never, { priority });
+        },
+      });
+    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const host = app.bind({ sessionManager });
+    await app.plugins.idle();
+    await app.pluginAll([
+      { definition: backend('zz-fallback', fallback, -100) },
+      { definition: sessionManagerPlugin, config: {} },
+      { definition: backend('zz-preferred', preferred, 10) },
+    ]);
+    await app.plugins.idle();
+    expect(host.sessionManager.require().getSession('old-1')?.name).toBe('上次运行的会话');
+    await app.stop();
   });
 });

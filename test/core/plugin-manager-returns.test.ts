@@ -1,17 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import {
-  App,
-  definePlugin,
-  LogHub,
-  lifecycle,
-  type PluginDefinition,
-  type PluginDescriptor,
-} from '../../packages/core/src/index.js';
+import { App, definePlugin, LogHub, lifecycle, type PluginDefinition } from '../../packages/core/src/index.js';
 
 // 管理动作返回值的统一口径（PluginManagerService 的 JSDoc）：
 //   false = 主体不在注册表，或本次动作被状态 / 政策规则挡下；true = 其余，含幂等。
 // 六个动作里 enable / disable / updateConfig / bounce 早已如此，本文件钉住
-// register / unload 与 App.plugin / rescanPlugins 的转发。
+// register / unload 与 App.plugin 的转发。
 
 function silentApp(): App {
   return new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
@@ -145,26 +138,6 @@ describe('unload 的返回值', () => {
     release();
     expect(await Promise.all([first, second])).toEqual([true, true]);
     expect(app.plugins.getPlugin('p')).toBeUndefined();
-    await app.stop();
-  });
-});
-
-describe('rescanPlugins 只报真正落账的插件', () => {
-  it('描述符名与模块自报名不同、而自报名已注册时，不计入热加载名单', async () => {
-    const app = silentApp();
-    await app.plugin(plugin('real'));
-    (app as unknown as { pluginLoader: unknown }).pluginLoader = {
-      async discover(): Promise<PluginDescriptor[]> {
-        return [
-          { name: 'alias-of-real', source: 'stub', metadata: {} },
-          { name: 'fresh', source: 'stub', metadata: {} },
-        ];
-      },
-      async load(desc: PluginDescriptor): Promise<PluginDefinition> {
-        return plugin(desc.name === 'alias-of-real' ? 'real' : desc.name);
-      },
-    };
-    expect(await app.rescanPlugins()).toEqual(['fresh']);
     await app.stop();
   });
 });

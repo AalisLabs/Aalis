@@ -9,8 +9,9 @@
 // 宿主将没有自动配置同步与热重载——需要时用公开 API 自行编排。
 // ============================================================
 
-import { type App, type PluginDefinition, type PluginLoader, parseInstanceId } from '@aalis/core';
+import { type App, type PluginDefinition, parseInstanceId } from '@aalis/core';
 import { defaultsFrom, removeExtraFields, validateConfig } from '@aalis/schema-config';
+import type { PluginLoader } from './plugin-discovery.js';
 
 export interface ConfigSyncOptions {
   /**
@@ -43,7 +44,7 @@ export function syncPluginDefaults(app: App, opts?: ConfigSyncOptions): string[]
 /**
  * 宿主加载政策：导入定义后、交给 Core 注册前规范化主实例与已配置的复用实例。
  * 首次加载批次只落盘一次；随后市场 rescan 的 load/reload 也走同一政策。
- * getApp 延迟取值，因为加载器在 App 构造时注入，而 load 在构造完成后才执行。
+ * getApp 延迟取值：本包装在 App 之前建好，load 只在 App 构造完成后由发现驱动调用。
  */
 export function withPluginConfigSync(loader: PluginLoader, getApp: () => App, opts?: ConfigSyncOptions) {
   let initialLoad = true;

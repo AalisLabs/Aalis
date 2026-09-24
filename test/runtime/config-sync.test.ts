@@ -1,10 +1,11 @@
-import { App, config, definePlugin, hostConfig, type PluginDefinition, type PluginLoader } from '@aalis/core';
+import { App, config, definePlugin, hostConfig, type PluginDefinition } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import {
   installConfigHotReload,
   syncPluginDefaults,
   withPluginConfigSync,
 } from '../../packages/runtime/src/config-sync.js';
+import { createPluginDiscovery, type PluginLoader } from '../../packages/runtime/src/plugin-discovery.js';
 import { defaultsFrom } from '../../packages/schema-config/src/index.js';
 
 // ════════════════════════════════════════════════════════════
@@ -44,9 +45,9 @@ describe('加载前配置同步', () => {
           saved.push(structuredClone(snapshot));
         },
       },
-      pluginLoader: prepared.loader,
       pluginDefaults: d => defaultsFrom(d.configSchema),
     });
+    const discovery = createPluginDiscovery(app, prepared.loader);
     function add(name: string) {
       definitions.push(
         definePlugin({
@@ -65,14 +66,14 @@ describe('加载前配置同步', () => {
       app.config.setPluginConfig(name, { known: 2, unknown: true, nested: { typo: 'x' } });
       app.config.setPluginConfig(`${name}:other`, { known: 3, unknown: true });
     }
-    return { app, prepared, loader, add, seen, saved };
+    return { app, discovery, prepared, loader, add, seen, saved };
   }
 
   it('首次 apply、实例记录与持久化一致，主实例和后缀实例均只激活一次；首批只保存一次', async () => {
     const f = fixture();
     f.add('one');
     f.add('two');
-    await f.app.autoLoadPlugins();
+    await f.discovery.loadAll();
     expect(f.saved).toHaveLength(0);
     f.prepared.finishInitialLoad();
     f.prepared.finishInitialLoad();
@@ -99,7 +100,7 @@ describe('加载前配置同步', () => {
   it('trimUnknownFields=false 在首次 apply 保留额外字段，同时补齐嵌套默认值', async () => {
     const f = fixture(false);
     f.add('one');
-    await f.app.autoLoadPlugins();
+    await f.discovery.loadAll();
     f.prepared.finishInitialLoad();
     expect(f.seen[0]).toEqual({ known: 2, unknown: true, nested: { typo: 'x', filled: 7 } });
     expect(f.seen[1]).toEqual({ known: 3, unknown: true, nested: { filled: 7 } });
@@ -115,7 +116,7 @@ describe('加载前配置同步', () => {
       if (d.name === 'broken') throw new Error('broken module');
       return load(d);
     };
-    await f.app.autoLoadPlugins();
+    await f.discovery.loadAll();
     f.prepared.finishInitialLoad();
     expect(f.app.plugins.getPlugin('broken')).toBeUndefined();
     expect(f.seen).toHaveLength(2);
@@ -140,7 +141,6 @@ describe('加载前配置同步', () => {
     );
     const app = new App({
       config: { name: 'T', logLevel: 'error', plugins: { p1: { known: 1, unknown: true } } },
-      pluginLoader: prepared.loader,
       configProvider: {
         save: () => {
           writes++;
@@ -149,7 +149,7 @@ describe('加载前配置同步', () => {
       },
     });
     const warns = captureWarnsOf(app);
-    await app.autoLoadPlugins();
+    await createPluginDiscovery(app, prepared.loader).loadAll();
     prepared.finishInitialLoad();
     prepared.finishInitialLoad();
     await Promise.resolve();
@@ -162,11 +162,11 @@ describe('加载前配置同步', () => {
 
   it.each([true, false])('启动后 rescan 在首次 apply 前同步新定义和复用实例（reload=%s）', async reload => {
     const f = fixture(true, reload);
-    await f.app.autoLoadPlugins();
+    await f.discovery.loadAll();
     f.prepared.finishInitialLoad();
     expect(f.saved).toHaveLength(0);
     f.add('later');
-    await f.app.rescanPlugins();
+    await f.discovery.rescan();
     await f.app.plugins.idle();
     expect(f.seen).toEqual([
       { known: 2, nested: { filled: 7 } },

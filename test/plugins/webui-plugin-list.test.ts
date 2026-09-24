@@ -80,6 +80,7 @@ function mountPluginRoutes(
     expressApp as never,
     {
       app: ref<AppService>({ saveConfig: () => app.saveConfig(), restart: () => {} }),
+      source: { current: undefined },
       plugins: ref<PluginManagerService>(app.plugins),
       hostConfig: ref<HostConfig>(app.config),
       tools: { current: extras.tools as ToolService | undefined },

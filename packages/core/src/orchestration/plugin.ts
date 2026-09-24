@@ -147,6 +147,32 @@ export class PluginManager implements PluginManagerService {
     config: Record<string, unknown> = {},
     instanceId?: string,
   ): Promise<boolean> {
+    const [registered] = await this.registerAll([{ definition, config, instanceId }]);
+    return registered;
+  }
+
+  /**
+   * 批量注册：整批同步落账后只重算一次。落账之间没有 await，在飞的重算看不到半批，
+   * 依赖方因此在同一次重算里排在它 required 服务的全部提供者之后激活。
+   * 返回值与 items 逐项对应，口径同 {@link register}。
+   */
+  async registerAll(
+    items: ReadonlyArray<{ definition: PluginDefinition; config?: Record<string, unknown>; instanceId?: string }>,
+  ): Promise<boolean[]> {
+    const admitted = items.map(({ definition, config, instanceId }) =>
+      this.admit(definition, config ?? {}, instanceId),
+    );
+    // 走统一 recompute：依赖满足则被拓扑正序激活，否则保持 pending。只落账了禁用条目时不必重算
+    if (admitted.includes('pending')) await this.recompute();
+    return admitted.map(state => state !== false);
+  }
+
+  /** 校验并落账一条（同步）。返回落账时的状态；被拒返回 false，拒因已记一笔 */
+  private admit(
+    definition: PluginDefinition,
+    config: Record<string, unknown>,
+    instanceId?: string,
+  ): 'pending' | 'disabled' | false {
     // 手写的定义对象（没经 definePlugin）在这里补上同一道校验。失败不抛——六个管理动作统一 Promise<boolean>
     try {
       validateDefinition(definition);
@@ -174,28 +200,19 @@ export class PluginManager implements PluginManagerService {
     }
 
     // 检查是否被配置禁用（按 instanceId 检查）
-    const isDisabled = this.config.isPluginDisabled(id);
+    const state = this.config.isPluginDisabled(id) ? 'disabled' : 'pending';
 
-    const entry: PluginRecord = {
+    this.plugins.set(id, {
       definition,
       instanceId: id,
       config: cloneConfigObject(config),
-      state: isDisabled ? 'disabled' : 'pending',
+      state,
       required: requiredNames(definition.uses ?? {}),
       optional: optionalNames(definition.uses ?? {}),
-    };
-
-    this.plugins.set(id, entry);
+    });
     this.order = undefined;
-
-    if (isDisabled) {
-      this.logger.info(`插件已注册(禁用): ${id}`);
-    } else {
-      this.logger.info(`插件已注册: ${id}`);
-      // 走统一 recompute：依赖满足则被拓扑正序激活，否则保持 pending
-      await this.recompute();
-    }
-    return true;
+    this.logger.info(state === 'disabled' ? `插件已注册(禁用): ${id}` : `插件已注册: ${id}`);
+    return state;
   }
 
   /**
@@ -233,7 +250,7 @@ export class PluginManager implements PluginManagerService {
     // 排队到收尾的 recompute，避免在 entry 半卸载态下重算。
     this.suspendDepth++;
     try {
-      // delete 必须留在拆卸**之后**：注册表是 register/rescan 的查重闸
+      // delete 必须留在拆卸**之后**：注册表是 register 与宿主热扫描的查重闸
       // （plugins.has(id)），提前摘除会让同 id 在旧激活 排空期间重新注册，
       // 新旧实例同 instanceId 并存——同名服务重复 provide、偏好按 contextId 二义。
       await this.retire(entry, 'disposed');
@@ -429,7 +446,7 @@ export class PluginManager implements PluginManagerService {
     return true;
   }
 
-  // 多实例机制是 register 带 instanceId + reusable 校验；配置键 `name:suffix` 的自动登记在 App（autoLoad / rescan）。
+  // 多实例机制是 register 带 instanceId + reusable 校验；配置键 `name:suffix` 的自动登记在宿主。
 
   /**
    * 全局停机：全部 active 插件与宿主的根激活进同一张关停计划——消费者先于它依赖的提供者关闭，

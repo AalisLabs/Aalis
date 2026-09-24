@@ -1,11 +1,13 @@
 import { createRequire } from 'node:module';
-import { App, events, type PluginLoader, services } from '@aalis/core';
+import { pluginSource } from '@aalis/api-plugin-source';
+import { App, events, provide, services } from '@aalis/core';
 import { defaultsFrom } from '@aalis/schema-config';
 import { installBootstrapBuffer } from './bootstrap-buffer.js';
 import { type ConfigSyncOptions, installConfigHotReload, withPluginConfigSync } from './config-sync.js';
 import { type ConsoleSinkHandle, installConsoleSink } from './console-sink.js';
 import { appendCrashLog, DEFAULT_LOG_FILE, type FileLoggerHandle, setupFileLogger } from './file-logger.js';
 import { createNodeModulesPluginLoader } from './node-modules-loader.js';
+import { createPluginDiscovery, type PluginLoader } from './plugin-discovery.js';
 import { createFsYamlConfigProvider, createProcessRespawnStrategy, READY_MESSAGE } from './providers.js';
 import { tryDispatchSubcommand } from './subcommand.js';
 import { installTerminalStateRestorer } from './terminal.js';
@@ -138,7 +140,6 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   const app = new App({
     config,
     configProvider: provider,
-    pluginLoader: configLoader.loader,
     // 默认值从 configSchema 派生（唯一声明来源）；core 不认识配置词汇，只调这个函数。
     pluginDefaults: m => defaultsFrom(m.configSchema),
     // 子命令进程没有重启能力，不注入策略：`app.restart()` 按 core 语义抛「不可用」，指令层折成失败文案。
@@ -153,14 +154,16 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     version: readCoreVersion(),
   });
 
-  // 宿主的根绑定：事件订阅与服务查询都经它，随 App 停止撤回
-  const host = app.bind({ events, services });
+  // 宿主的根绑定：事件订阅、服务查询与宿主服务登记都经它，随 App 停止撤回
+  const host = app.bind({ events, provide, services });
+  const discovery = createPluginDiscovery(app, configLoader.loader);
+  host.provide(pluginSource, { rescan: () => discovery.rescan() }, { exclusive: true });
   // 不变量①：App 构造完成后再让 sink 监听终端归属事件——此前没有事件总线可订阅。
   consoleHandle.bindEvents(host.events);
 
   try {
     // 每个定义交给 Core 前已经规范化；首次 apply 与配置快照用同一份字段。
-    await app.autoLoadPlugins();
+    await discovery.loadAll();
   } finally {
     // 即使后续加载失败，也保存本批已完成的规范化；不启动第二轮 bounce。
     configLoader.finishInitialLoad();

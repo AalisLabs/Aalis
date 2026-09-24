@@ -1,52 +1,13 @@
 // ============================================================
 // providers.ts — `@aalis/core` 注入点（host providers）
 //
-// 把"配置从哪里来 / 插件从哪里来 / 怎么重启"这三件 I/O 相关的事抽成接口，
-// 由宿主（@aalis/runtime 或外部嵌入者）实现并注入。core 本身不再 import 任何
-// `node:fs` / `node:path` / `node:url` / `node:child_process` / `yaml`，
-// 可在浏览器、单文件二进制、嵌入式集成等场景里运行。
+// 把"怎么重启"这件 I/O 相关的事抽成接口，由宿主（@aalis/runtime 或外部嵌入者）实现并注入。
+// 插件从哪里来不在 core：宿主把定义好的插件经 `app.plugin` / `app.pluginAll` 交进来。
+// core 本身不 import 任何 `node:*` / `yaml`，可在浏览器、单文件二进制、嵌入式集成等场景里运行。
 //
-// 设计原则：
-//   - 同步优先：能同步就同步（fs sync 读 yaml 完全可接受）；异步留给真异步源
-//     （HTTP、远程配置中心等）。
-//   - 可选能力：`save` / `watch` / `reload` 都标记为可选；只读宿主可以不提供。
-//   - opaque metadata：descriptor.source 等字段是 loader 自己理解的字符串；core 不解释。
-//
-// 本文件放后两件。`ConfigProvider` 只依赖 `AalisConfig`，与它服务的 `ConfigManager`
+// `ConfigProvider` 只依赖 `AalisConfig`，与它服务的 `ConfigManager`
 // 同处 `infrastructure/config.ts`——放在那里基础设施层就不必向上引用。
 // ============================================================
-
-import type { PluginDefinition } from '../composition/plugin-definition.js';
-
-// ----- 插件加载器 -----
-
-/**
- * 已发现但尚未导入的插件条目。`source` 是 loader 自己理解的字符串
- * （fs loader 用绝对路径，URL loader 用 URL，内存 loader 用 module 别名）。
- * core 仅用它在 `reload()` 调用时回传——不解释含义。
- */
-export interface PluginDescriptor {
-  /** 插件名，与定义的 `name` 一致；core 用此匹配多实例配置 */
-  name: string;
-  /** 给 loader 自己用的不透明定位串 */
-  source: string;
-  /** loader 可挂任意辅助元数据（cache key、版本号、manifest 等） */
-  metadata?: Record<string, unknown>;
-}
-
-/**
- * 插件加载器：负责"插件从哪里来"。
- *
- * - `discover()` 列出当前可用的插件条目
- * - `load(descriptor)` 把条目导入成插件定义（模块默认导出的 definePlugin 产物）；不是插件返回 null
- * - `reload(descriptor)` 可选——支持热重载（fs loader 用 mtime 做 cache buster）
- */
-export interface PluginLoader {
-  discover(): Promise<PluginDescriptor[]>;
-  load(descriptor: PluginDescriptor): Promise<PluginDefinition | null>;
-  /** 热重载——不提供时 `App.rescanPlugins()` 会退化为 `load()` */
-  reload?(descriptor: PluginDescriptor): Promise<PluginDefinition | null>;
-}
 
 // ----- 重启策略 -----
 

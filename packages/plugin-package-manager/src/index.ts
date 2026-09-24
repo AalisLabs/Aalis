@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { pluginDefinitionOf, pluginSource } from '@aalis/api-plugin-source';
 import { createProcessGateway, type ExecResult, type ProcessService, processService } from '@aalis/api-process';
 import {
   type AppService,
@@ -10,7 +11,6 @@ import {
   hostConfig,
   logger,
   optional,
-  pluginDefinitionOf,
   pluginsService,
   provide,
   services,
@@ -195,6 +195,7 @@ const uses = {
   app: optional(appService),
   plugins: optional(pluginsService),
   hostConfig: optional(hostConfig),
+  source: optional(pluginSource),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -239,7 +240,8 @@ function createService(caps: Caps): PackageManagerService {
         return undefined;
       }
     },
-    rescanPlugins: () => getApp().rescanPlugins(),
+    // 宿主不提供插件来源（打包宿主）时视同没有新插件：装好的包按「未就位、需重启」分流
+    rescanPlugins: async () => (await caps.source.current?.rescan()) ?? [],
     // 判据取运行时注册表而非 rescan 返回值（理由见 PackageManagerDeps.isPluginRegistered）。
     // plugins 服务缺席时保守返回 false——宁可让「声明为插件却没加载」的诊断多报一次，
     // 也不要在真没装上时谎报成功。
@@ -302,7 +304,7 @@ export interface PackageManagerDeps {
    * 目标插件此刻是否已在运行时注册表里。
    *
    * 这是判定「本次安装是否就位」的**唯一正确判据**。不能用 `rescanPlugins()` 的返回值：
-   * 它是全局副作用的产物——core 的 rescan 对已注册插件直接跳过，返回的是「本次扫描新
+   * 它是全局副作用的产物——宿主的 rescan 对已注册插件直接跳过，返回的是「本次扫描新
    * 加载的**全部**插件」，与本次目标无对应关系。用它会在两个场景下给出错误结论：
    * 重装已注册插件时恒返回空（误报失败）；两个安装并发时先跑完的那个会把对方的战果
    * 一并算作自己的（谎报），后跑的则拿到空数组（误报失败）。
@@ -321,7 +323,7 @@ export interface PackageManagerDeps {
   /** 卸载后清理残留配置（删配置块 + 解除禁用标记 + 持久化）。可选：缺省则不清理。 */
   cleanupConfig?(name: string): void;
   /**
-   * 解析已装 npm 包的插件定义 name（与 `@aalis/core` 的 `pluginDefinitionOf` 同一口径：入口 default.name）。
+   * 解析已装 npm 包的插件定义 name（与 `@aalis/api-plugin-source` 的 `pluginDefinitionOf` 同一口径：入口 default.name）。
    * 解析不到则返回 undefined，调用方回退到包名。name≠包名时由 createPackageManager warn。
    */
   resolveDefinitionName?(pkgName: string): Promise<string | undefined>;
@@ -546,7 +548,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     }
   }
 
-  /** 加载器口径的定义 name；解析不到则回退包名。name≠包名时 warn（与 core `pluginDefinitionOf` 加载包装同文案）。 */
+  /** 加载器口径的定义 name；解析不到则回退包名。name≠包名时 warn（与 runtime 加载包装同文案）。 */
   async function definitionNameFor(pkgName: string): Promise<string> {
     const resolved = await deps.resolveDefinitionName?.(pkgName);
     const defName = typeof resolved === 'string' && resolved.length > 0 ? resolved : pkgName;
