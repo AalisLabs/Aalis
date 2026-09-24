@@ -13,6 +13,7 @@
 // 不加载 gateway 则 `inbound:message` 无人消费、消息静默丢弃，按必需件对待。
 
 import type { AgentService } from '@aalis/api-agent';
+import type {} from '@aalis/api-hooks'; // declaration merging 锚点（下方 HookContextMap 增强）
 import { defineService } from '@aalis/core';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
 
@@ -31,7 +32,7 @@ export interface InboundPhaseData {
 
 // ----- Gateway 域钩子声明 -----
 
-declare module '@aalis/core' {
+declare module '@aalis/api-hooks' {
   interface HookContextMap {
     'inbound:confirm': InboundPhaseData;
     'inbound:command': InboundPhaseData;
@@ -47,6 +48,11 @@ declare module '@aalis/core' {
       metadata: Record<string, unknown>;
     };
   }
+}
+
+// ----- Gateway 域事件声明 -----
+
+declare module '@aalis/core' {
   interface AalisEvents {
     /**
      * Gateway 某个入站相位执行完毕（无论是否被 swallow）。

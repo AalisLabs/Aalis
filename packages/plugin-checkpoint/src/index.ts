@@ -1,4 +1,5 @@
 import type {} from '@aalis/api-agent'; // 加载 agent:* 钩子的 HookContextMap augmentation
+import { hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
 import { createStorageGateway, storage } from '@aalis/api-storage';
 import { webuiServer } from '@aalis/api-webui';
@@ -8,7 +9,6 @@ import {
   definePlugin,
   defineService,
   events,
-  hooks,
   lifecycle,
   logger,
   optional,

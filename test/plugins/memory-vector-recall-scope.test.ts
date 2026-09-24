@@ -4,6 +4,7 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { type VectorSearchResult, vectorstore } from '../../packages/api-vectorstore/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // memory_recall 的 scope 只能收紧、不能放宽（工具描述里的承诺）。
@@ -30,6 +31,7 @@ function hits(): VectorSearchResult[] {
 
 async function setup(crossSessionMode: string) {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ provide });
   host.provide(embedding, {
     async embed(): Promise<number[]> {

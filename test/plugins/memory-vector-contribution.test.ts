@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { contributions } from '../../packages/api-contributions/src/index.js';
 import type { EmbeddingRequestOptions, EmbeddingService } from '../../packages/api-embedding/src/index.js';
 import { embedding } from '../../packages/api-embedding/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
@@ -6,14 +7,15 @@ import { messageArchive } from '../../packages/api-message-archive/src/index.js'
 import { tools } from '../../packages/api-tools/src/index.js';
 import type { VectorSearchResult, VectorStoreService } from '../../packages/api-vectorstore/src/index.js';
 import { vectorstore } from '../../packages/api-vectorstore/src/index.js';
-import { App, contributions, definePlugin, events, logger, provide, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, events, logger, provide, services } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
-// 直接从 core 源码路径导入，agent-api 对 '@aalis/core' 的 declaration merging 不在
+// 从源码路径导入，api-agent 对 '@aalis/api-contributions' 的 declaration merging 不在
 // 该路径生效——vitest 不做类型检查，用 never 断言绕过贡献点键约束（同 prompt-assembly.test.ts）。
 const POINT = 'agent:prompt' as never;
 
@@ -117,6 +119,7 @@ afterEach(async () => {
 async function setup(opts: SetupOptions = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
+  await registerHubs(app);
   const host = app.bind({ provide, services, events });
   /** 组装器只要「枚举贡献」与「记日志」两样能力，从根激活绑定即可 */
   const assembly = app.bind({ contributions, logger });

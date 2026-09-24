@@ -40,7 +40,8 @@
     "@aalis/schema-message": "workspace:>=0.6.0 <1.0.0",
     "@aalis/util-network-guard": "workspace:>=0.5.1 <1.0.0",
     "@aalis/util-text-normalize": "workspace:>=0.5.1 <1.0.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "@aalis/api-contributions": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

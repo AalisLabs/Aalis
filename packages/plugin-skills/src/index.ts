@@ -1,5 +1,7 @@
 import { Buffer } from 'node:buffer';
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import { contributions } from '@aalis/api-contributions';
+import { hooks } from '@aalis/api-hooks';
 import { persona } from '@aalis/api-persona';
 import { createStorageGateway, type StorageService, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
@@ -7,11 +9,9 @@ import { type WebuiPage, webuiServer } from '@aalis/api-webui';
 import {
   type BoundOf,
   config,
-  contributions,
   definePlugin,
   defineService,
   events,
-  hooks,
   lifecycle,
   logger,
   optional,

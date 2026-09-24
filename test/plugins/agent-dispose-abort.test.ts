@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { agent as agentService, type PromptContributionView } from '../../packages/api-agent/src/index.js';
+import { contributions } from '../../packages/api-contributions/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { App, contributions, definePlugin, events, hooks, lifecycle, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, events, lifecycle, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
@@ -28,6 +31,7 @@ const AGENT_CONFIG = {
 describe('plugin-agent 拆卸时中止在飞回合', () => {
   it('拆卸后在飞回合以 aborted 收尾，而不是在已拆卸的激活上跑完投递', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
     // 每个 chunk 前等 300ms：给拆卸留出「回合在飞」的窗口
     await app.plugin(createMockLLMPlugin({ latencyMs: 300, responses: [{ content: '回复内容' }] }));
     await app.plugin(memoryInMemoryPlugin);
@@ -66,6 +70,7 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
 
   it('手动 abort 会中止正在构建的 prompt 贡献，且不会开始 LLM 或投递消息', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
     const recorder: ChatModelRequest[] = [];
 
     let enteredResolve!: () => void;
@@ -165,6 +170,7 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
     let turnDone = false;
 
     const app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
     await app.plugin(createMockLLMPlugin({ latencyMs: 200, responses: [{ content: 'should-not-land' }] }));
     await app.plugin(memoryInMemoryPlugin);
     await app.plugin(messageArchivePlugin, { debugLogs: false });

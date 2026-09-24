@@ -1,9 +1,3 @@
-declare module '@aalis/core' {
-  interface HookContextMap {
-    '__t:ada-hook': Record<string, never>;
-  }
-}
-
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   App,
@@ -11,13 +5,13 @@ import {
   definePlugin,
   defineService,
   events,
-  hooks,
   lifecycle,
   type PluginDefinition,
   provide,
   services,
 } from '../../packages/core/src/index.js';
 import type { PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
+import { HubRegistry, hub } from '../helpers/hub.js';
 
 // 管理操作撞上 activating 窗口（apply 在飞）的行为锚。
 //
@@ -48,7 +42,9 @@ function makeWorld() {
   const trace: string[] = [];
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
-  const host = app.bind({ events, services, hooks });
+  // 测试枢纽由根提供：插件在 apply 里登记，拆卸后登记表里不得留下幽灵条目
+  app.bind({ provide }).provide(hub, new HubRegistry());
+  const host = app.bind({ events, services, hub });
   host.events.on('plugin:loaded', (id: string) => {
     trace.push(`loaded:${id}`);
   });
@@ -58,7 +54,7 @@ function makeWorld() {
   return { app, host, trace };
 }
 
-/** apply 进门解析 entered、卡在 gate 上；期间注册服务/中间件/onDispose。 */
+/** apply 进门解析 entered、卡在 gate 上；期间注册服务/枢纽登记/onDispose。 */
 function makeGatedPlugin(
   trace: string[],
   opts: { failAfterGate?: boolean } = {},
@@ -74,14 +70,11 @@ function makeGatedPlugin(
   const definition = definePlugin({
     name: 'gated',
     provides: [gatedSvc],
-    uses: { provide, hooks, lifecycle, config },
-    async apply({ provide, hooks, lifecycle, config }) {
+    uses: { provide, hub, lifecycle, config },
+    async apply({ provide, hub, lifecycle, config }) {
       trace.push(`apply:${JSON.stringify(config)}`);
       provide(gatedSvc, { alive: true });
-      hooks.middleware('__t:ada-hook', async (_d, next) => {
-        trace.push('middleware-hit');
-        await next();
-      });
+      hub.add('mw', 'live');
       lifecycle.onDispose(() => {
         trace.push('disposed');
       }, 'gated:res');
@@ -94,13 +87,14 @@ function makeGatedPlugin(
 }
 
 describe('unload 撞上 activating 窗口', () => {
-  it('在飞 ctx 被完整拆卸：无服务残留、无幽灵中间件、发 unloaded 不发 loaded', async () => {
+  it('在飞 ctx 被完整拆卸：无服务残留、无幽灵登记、发 unloaded 不发 loaded', async () => {
     const { app, host, trace } = makeWorld();
     const { definition, entered, release } = makeGatedPlugin(trace);
     const registering = app.plugin(definition);
     await entered;
 
     expect(app.plugins.getPlugin('gated')?.state).toBe('activating');
+    expect(host.hub.list()).toEqual(['gated/mw=live']);
     const unloading = app.plugins.unload('gated');
     release();
     await Promise.all([registering, unloading]);
@@ -111,9 +105,7 @@ describe('unload 撞上 activating 窗口', () => {
     expect(trace).toContain('disposed');
     expect(trace).toContain('unloaded:gated');
     expect(trace).not.toContain('loaded:gated');
-
-    await host.hooks.run('__t:ada-hook', {});
-    expect(trace).not.toContain('middleware-hit');
+    expect(host.hub.list()).toEqual([]);
   });
 
   it('apply 在窗口内抛错也不残留：接管让位，无 error 终态写入', async () => {

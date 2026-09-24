@@ -11,6 +11,7 @@ import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import workflowPlugin from '../../packages/plugin-workflow/src/index.js';
 import { type TriggerCaps, TriggerManager } from '../../packages/plugin-workflow/src/triggers.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // once 触发器一生只触发一次：firedAt 与运行历史同落 runsFile，
@@ -43,6 +44,7 @@ describe('workflow once 触发器只触发一次（真 fs 持久化）', () => {
   const boot = async (): Promise<{ app: App; svc: WorkflowService }> => {
     const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
+    await registerHubs(app);
     await app.plugin(storageLocalPlugin, {
       roots: ['data', 'workspace'].map(name => ({
         name,

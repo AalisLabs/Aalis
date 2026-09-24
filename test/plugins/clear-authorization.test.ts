@@ -5,6 +5,7 @@ import { type BoundCommands, commands as commandsService } from '../../packages/
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // /clear 的分场景授权
@@ -33,6 +34,7 @@ function fakeAuthority(levels: Record<string, number>, owners: string[] = []): A
 
 async function setup(levels: Record<string, number>, owners: string[] = []) {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ provide, commands: commandsService });
   await app.plugins.register(memoryInMemory, {});
   host.provide(authority, fakeAuthority(levels, owners));

@@ -1,4 +1,5 @@
 import { agent } from '@aalis/api-agent';
+import { hooks } from '@aalis/api-hooks';
 import { listLLMModels, llm, resolveLLMModel } from '@aalis/api-llm';
 import { type MemoryService, type MetadataOp, memory } from '@aalis/api-memory';
 import { persona } from '@aalis/api-persona';
@@ -13,7 +14,7 @@ import {
 } from '@aalis/api-session-manager';
 import { tools } from '@aalis/api-tools';
 import { type WebuiPage, webuiServer } from '@aalis/api-webui';
-import { type BoundOf, config, definePlugin, events, hooks, lifecycle, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 

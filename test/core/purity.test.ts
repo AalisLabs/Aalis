@@ -41,12 +41,10 @@ const RUNTIME_EXPORTS = [
   'LogHub',
   'appService',
   'config',
-  'contributions',
   'createApp',
   'definePlugin',
   'defineService',
   'events',
-  'hooks',
   'lifecycle',
   'logger',
   'optional',
@@ -94,6 +92,17 @@ const FORBIDDEN_ROOT_EXPORTS = [
   'AalisConfig',
   'HostConfig',
   'hostConfig',
+  // 0.18：钩子与贡献点拆为契约包 + 插件（@aalis/api-hooks、@aalis/api-contributions）
+  'hooks',
+  'contributions',
+  'Hooks',
+  'Contributions',
+  'HookContextMap',
+  'ContributionPointMap',
+  'MiddlewareFn',
+  'MiddlewareNext',
+  'ContributionSpec',
+  'ContributionHandle',
 ] as const;
 
 function* walkTs(dir: string): Generator<string> {
@@ -180,8 +189,16 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
   ConfigProvider,
   AalisConfig,
   HostConfig,
+  Hooks,
+  Contributions,
+  HookContextMap,
+  ContributionPointMap,
+  MiddlewareFn,
+  MiddlewareNext,
+  ContributionSpec,
+  ContributionHandle,
 } from '@aalis/core';
-import { ContributionRegistry, EventBus, formatLogLine, HookRegistry, parseLogLine, PluginManager, requiresBounceOnDepChange, ServiceContainer, serviceFactory, unwrapPluginModule, useModule, pluginDefinitionOf, ConfigManager, hostConfig } from '@aalis/core';
+import { ContributionRegistry, EventBus, formatLogLine, HookRegistry, parseLogLine, PluginManager, requiresBounceOnDepChange, ServiceContainer, serviceFactory, unwrapPluginModule, useModule, pluginDefinitionOf, ConfigManager, hostConfig, hooks, contributions } from '@aalis/core';
 `;
     const good = runTscProbe(header);
     expect(good, `合法探针应能编过，实际：${good.join('\n') || '（零错误）'}`).toEqual([]);
@@ -286,7 +303,7 @@ function activationViolations(source: string): string[] {
     }
     if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
       const path = node.moduleSpecifier.text;
-      if (/\/(?:builtins|capabilities|config|definition|activation-host|events|hooks|contributions)\.js$/.test(path)) {
+      if (/\/(?:builtins|capabilities|config|definition|activation-host|events)\.js$/.test(path)) {
         violations.push(`Activation 不得依赖能力实现或装配器 ${path}`);
       }
     }
@@ -298,7 +315,7 @@ function activationViolations(source: string): string[] {
 }
 
 describe('内部激活记录保持窄职责，旧 Context 不得回归', () => {
-  it('Activation 不导入或实现四原语门面，只读取服务归属用于依赖边', () => {
+  it('Activation 不导入或实现原语门面，只读取服务归属用于依赖边', () => {
     const source = readFileSync(join(SRC_DIR, 'orchestration/activation.ts'), 'utf8');
     expect(activationViolations(source)).toEqual([]);
   });

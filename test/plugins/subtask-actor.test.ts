@@ -4,6 +4,7 @@ import { tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide, services } from '../../packages/core/src/index.js';
 import subtask from '../../packages/plugin-subtask/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // create_subtask 的授权身份透传（schema-message actor 契约）。
@@ -21,6 +22,7 @@ async function setup(): Promise<{
   inbound: IncomingMessage[];
 }> {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ provide, services, events });
   const handlers = new Map<string, Handler>();
   host.provide(tools, {

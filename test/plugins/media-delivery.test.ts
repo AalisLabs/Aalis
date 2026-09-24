@@ -19,6 +19,7 @@ import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import { registerMediaTools } from '../../packages/plugin-media/src/tools.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 /** analyze_image 直通分支的远端下载桩：只替换 safeDownloadToTemp，其余走原实现 */
 const download = vi.hoisted(() => ({
@@ -196,6 +197,7 @@ describe('legacy vision.mode 映射（config-sync 在 apply 前裁 schema 外键
   /** 真实装配 media 插件，注册假 vision processor，喂一张独一无二的图（描述缓存是模块级的） */
   async function callsUnder(vision: Record<string, unknown>, uri: string): Promise<number> {
     const app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
     const host = app.bind({ provide, services });
     host.provide(processService, {} as never);
     host.provide(storage, {} as never);
