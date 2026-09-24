@@ -330,20 +330,15 @@ export function registerPluginRoutes(
       return;
     }
     if (success) {
+      // 管理动作只改运行态；跨重启保留要本路由写文档并落盘
+      hostConfig().setPluginConfig(pluginName, merged);
       await app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 配置已更新` });
-    } else {
+    } else if (pm.getPlugin(pluginName)?.state === 'disabled') {
       // 插件被禁用时这里也会走到，但「不存在」会把用户引向错误方向——区分「禁用」与「真不存在」并给出下一步。
-      try {
-        const disabled = hostConfig().isPluginDisabled(pluginName);
-        if (disabled) {
-          res.status(409).json({ error: `插件 ${pluginName} 已禁用，配置未写入——先启用插件再修改配置` });
-        } else {
-          res.status(404).json({ error: `插件 ${pluginName} 不存在` });
-        }
-      } catch (err) {
-        res.status(400).json({ error: errorMessage(err) });
-      }
+      res.status(409).json({ error: `插件 ${pluginName} 已禁用，配置未写入——先启用插件再修改配置` });
+    } else {
+      res.status(404).json({ error: `插件 ${pluginName} 不存在` });
     }
   });
 
@@ -364,6 +359,7 @@ export function registerPluginRoutes(
       return;
     }
     if (success) {
+      hostConfig().setPluginEnabled(pluginName, true);
       await app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 已启用` });
     } else {
@@ -388,6 +384,7 @@ export function registerPluginRoutes(
       return;
     }
     if (success) {
+      hostConfig().setPluginEnabled(pluginName, false);
       await app.saveConfig();
       res.json({ ok: true, message: `插件 ${pluginName} 已禁用` });
     } else {

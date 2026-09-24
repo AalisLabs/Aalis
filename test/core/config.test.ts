@@ -308,7 +308,7 @@ describe('注册期配置合并（app.plugin：defaults ← 配置文件 ← 代
 });
 
 describe('bounce / updateConfig 入参拷贝', () => {
-  it('await updateConfig 之后改 payload，ConfigManager 与 entry.config 不得跟着变', async () => {
+  it('await updateConfig 之后改 payload，entry.config 不得跟着变', async () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     await app.plugin(
       definePlugin({
@@ -325,7 +325,6 @@ describe('bounce / updateConfig 入参拷贝', () => {
     expect(app.plugins.getPlugin('p')?.state).toBe('active');
     payload.v = 4;
     payload.nested.k = 99;
-    expect(app.config.getPluginConfig('p')).toEqual({ v: 2, nested: { k: 1 } });
     expect(app.plugins.getPlugin('p')?.config).toEqual({ v: 2, nested: { k: 1 } });
     await app.stop();
   });
@@ -357,11 +356,11 @@ describe('bounce / updateConfig 入参拷贝', () => {
     await app.plugins.idle();
     expect(app.plugins.getPlugin('mcp')?.state).toBe('active');
     current.extra.token = 'leaked';
-    expect((app.config.getPluginConfig('mcp') as { extra: { token: string } }).extra.token).toBe('secret');
+    expect((app.plugins.getPlugin('mcp')?.config as { extra: { token: string } }).extra.token).toBe('secret');
     await app.stop();
   });
 
-  it('bounce 后经内置 config 就地改嵌套，ConfigManager 快照不变', async () => {
+  it('bounce 后经内置 config 就地改嵌套，调用方传入的对象不变', async () => {
     let seen: { nested?: { k: number } } | undefined;
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     await app.plugin(
@@ -375,11 +374,43 @@ describe('bounce / updateConfig 入参拷贝', () => {
     );
     await app.plugins.idle();
     expect(app.plugins.getPlugin('p')?.state).toBe('active');
-    await app.plugins.updateConfig('p', { nested: { k: 1 } });
+    const payload = { nested: { k: 1 } };
+    await app.plugins.updateConfig('p', payload);
     await app.plugins.idle();
     expect(app.plugins.getPlugin('p')?.state).toBe('active');
     (seen as { nested: { k: number } }).nested.k = 7;
-    expect(app.config.getPluginConfig('p')).toEqual({ nested: { k: 1 } });
+    expect(payload).toEqual({ nested: { k: 1 } });
+    await app.stop();
+  });
+});
+
+describe('管理动作只改运行态，不写配置文档', () => {
+  it('disable / enable / updateConfig 之后配置文档与落盘次数都不变', async () => {
+    let saves = 0;
+    const app = new App({
+      config: { name: 'T', logLevel: 'error', plugins: { p: { v: 1 } } },
+      configProvider: {
+        save: () => {
+          saves++;
+        },
+      },
+    });
+    await app.plugin(definePlugin({ name: 'p', uses: { config }, apply() {} }));
+    await app.plugins.idle();
+    const before = structuredClone(app.config.getAll());
+
+    expect(await app.plugins.disable('p')).toBe(true);
+    expect(app.plugins.getPlugin('p')?.state).toBe('disabled');
+    expect(app.config.isPluginDisabled('p')).toBe(false);
+
+    expect(await app.plugins.enable('p')).toBe(true);
+    await app.plugins.idle();
+    expect(await app.plugins.updateConfig('p', { v: 2 })).toBe(true);
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('p')?.config).toEqual({ v: 2 });
+
+    expect(app.config.getAll()).toEqual(before);
+    expect(saves).toBe(0);
     await app.stop();
   });
 });
