@@ -64,8 +64,8 @@ export class PluginManager implements PluginManagerService {
    */
   private queued: RecomputeKind | null = null;
   /**
-   * 全局关机标志。app.stop() 在 dispose 前置位，所有反应式级联（service:registered/
-   * unregistered → checkPending/Active）都会因此跳过——避免「正在关机还去 bounce
+   * 全局关机标志。app.stop() 在 dispose 前置位，service:registered / unregistered 触发的
+   * 反应式重算都会因此跳过——避免「正在关机还去 bounce
    * 一个永远不会被重新激活的插件」这种无意义噪声，也避免下游插件 dispose 中
    * 试图 register 命令 / 监听服务等动作触发误重入。
    */

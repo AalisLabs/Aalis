@@ -125,7 +125,7 @@ export class ServiceContainer {
    * 获取当前胜者实例（偏好 > 优先级 > 注册顺序）。
    *
    * 不走 `resolveEntries`：那里在设了偏好时要 `find` + `filter` + spread 出一条全新的重排
-   * 数组，而这里只取首个、其余全丢。`getService` 是全仓最频繁的读（三百余处调用点），
+   * 数组，而这里只取首个、其余全丢。每次 `current` / `require()` 都走到这里，是最频繁的读，
    * 且「锁定默认 LLM」这类偏好在真实部署里是常态，那条被算出来又被丢掉的尾巴不划算。
    *
    * 语义与 `resolveEntries` 保持一致：偏好项存在则取它，否则取 `list[0]` ——
