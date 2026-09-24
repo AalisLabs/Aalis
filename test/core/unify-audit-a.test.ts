@@ -329,7 +329,16 @@ describe('调度与类型面', () => {
     coreCopies.push(dir);
     cpSync(srcRoot, dir, { recursive: true });
     const B = (await import(`${pathToFileURL(join(dir, 'index.ts')).href}?copy=2`)) as CoreNs;
-    const w = world();
+    const errors: string[] = [];
+    const warns: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn: (...a: unknown[]) => void warns.push(a.map(String).join(' ')),
+      error: (...a: unknown[]) => void errors.push(a.map(String).join(' ')),
+      child: () => logger,
+    };
+    const w = world({ logger });
     // 另一份 core 的 definePlugin 只认自己的章，能造出定义；交到宿主注册时被拒
     expect(await w.app.plugin(B.definePlugin({ name: 'mixed', uses: { logger: B.logger }, apply() {} }))).toBe(false);
     expect(
@@ -337,7 +346,8 @@ describe('调度与类型面', () => {
         B.definePlugin({ name: 'mixed-opt', uses: { x: B.optional(B.defineService('x')) }, apply() {} }),
       ),
     ).toBe(false);
-    expect(w.warnings.filter(l => l.includes('另一份 @aalis/core'))).toHaveLength(2);
+    expect(errors.filter(l => l.includes('另一份 @aalis/core'))).toHaveLength(2);
+    expect(warns.filter(l => l.includes('另一份 @aalis/core'))).toEqual([]);
     expect(w.app.plugins.getStatus()).toEqual([]);
     // 本份 core 的 definePlugin 在定义时就拒绝另一份的描述符；发布另一份的描述符同样拒绝
     expect(() => definePlugin({ name: 'ours', uses: { logger: B.logger }, apply() {} })).toThrow('另一份 @aalis/core');
