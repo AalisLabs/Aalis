@@ -83,9 +83,7 @@ export async function closeActivations(
       // 单阶段失败不拖垮同批：与清理链「单项失败继续后续」同一政策
       try {
         const pending =
-          stage.kind === 'drain'
-            ? stage.ctx.resources.lifecycle.drain(timeoutMs)
-            : stage.ctx.resources.lifecycle.disposeAsync(timeoutMs);
+          stage.kind === 'drain' ? stage.ctx.resources.drain(timeoutMs) : stage.ctx.resources.disposeAsync(timeoutMs);
         if (pending) await pending;
       } catch (err) {
         reportQuietly(() =>

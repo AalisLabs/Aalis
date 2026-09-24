@@ -469,13 +469,13 @@ describe('disposable 闭包自移除（审计 HIGH #1/#2）', () => {
 
   it('provide: 登记不进 disposable 链，手动 dispose 由原语自己撤回（不滞留持有 entry）', () => {
     const ctx = makeFixture();
-    const base = ctx.activation.resources.lifecycle.disposables.size;
+    const base = ctx.activation.resources.disposables.size;
     const impl = { v: 1 };
     const dispose = ctx.caps.provide(defineService('svc'), impl);
     expect(ctx.caps.services.get('svc')).toBe(impl);
-    expect(ctx.activation.resources.lifecycle.disposables.size).toBe(base); // 登记只记在原语账上，链不增长
+    expect(ctx.activation.resources.disposables.size).toBe(base); // 登记只记在原语账上，链不增长
     dispose();
-    expect(ctx.activation.resources.lifecycle.disposables.size).toBe(base);
+    expect(ctx.activation.resources.disposables.size).toBe(base);
     expect(ctx.caps.services.get('svc')).toBeUndefined(); // 原语自己的 off 已撤回条目
   });
 
@@ -488,18 +488,18 @@ describe('disposable 闭包自移除（审计 HIGH #1/#2）', () => {
       calls++;
     });
     first();
-    const watching = ctx.activation.resources.lifecycle.disposables.size;
+    const watching = ctx.activation.resources.disposables.size;
     for (let i = 0; i < 200; i++) {
       ref.follow(() => {
         calls++;
       })();
     }
-    expect(ctx.activation.resources.lifecycle.disposables.size).toBe(watching);
+    expect(ctx.activation.resources.disposables.size).toBe(watching);
     ctx.caps.provide(svc, { v: 1 });
     await tick();
     expect(calls).toBe(0);
     await ctx.activation.disposeAsync();
-    expect(ctx.activation.resources.lifecycle.disposables.size).toBe(0);
+    expect(ctx.activation.resources.disposables.size).toBe(0);
   });
 
   it('follow: attach 执行期间同步触发自身退订时，新 cleanup 立即执行（不泄漏）', async () => {
@@ -543,7 +543,7 @@ describe('Activation.disposeAsync 不变量', () => {
     order.push('after-return');
     // 无收尾项、无初始化待等时不多让出一拍：同步清理在 disposeAsync() 返回前已执行
     expect(order).toEqual(['cleanup', 'after-return']);
-    expect(ctx.activation.resources.lifecycle.disposed).toBe(true);
+    expect(ctx.activation.resources.disposed).toBe(true);
     await done;
   });
 

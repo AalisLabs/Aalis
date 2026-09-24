@@ -146,7 +146,7 @@ describe('follow 重入时的资源归属', () => {
 
     expect(trace).toEqual(['attach:a:1', 'cleanup:a:1']);
     expect([...live]).toEqual([]);
-    expect(activation.resources.lifecycle.disposables.size).toBe(0);
+    expect(activation.resources.disposables.size).toBe(0);
     off();
     host.services.prefer(svc, 'root/c');
     expect(released).toEqual(['a:1']);
