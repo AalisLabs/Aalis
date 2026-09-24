@@ -107,7 +107,7 @@ export class Resources {
   async #teardown(timeoutMs?: number): Promise<void> {
     this.#closing = true;
     if (this.#initialization) await awaitWithTimeout(this.#initialization, timeoutMs, this.#timeout('等待初始化落定'));
-    // 没有收尾项时不得多让出一拍：撤回与清理的首个回调一向与 disposeAsync() 同栈发起
+    // 没有收尾项时不得多让出一拍：撤回一向与 disposeAsync() 同栈发起；没有待等的下游交接时，清理的首个回调也同栈
     if (this.#drained) await this.#drained;
     else if (this.draining.size > 0) await this.draining.disposeAsync(timeoutMs);
     else this.draining.dispose();

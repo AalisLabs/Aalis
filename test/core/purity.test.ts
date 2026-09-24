@@ -236,8 +236,8 @@ export const state = entry.state;
 
 /** 激活记录只保存身份、资源与依赖边，不重新长成通用能力门面。 */
 function activationViolations(source: string): string[] {
-  const allowedMethods = new Set(['retainBinding', 'closeInfo', 'joinPlan', 'disposeAsync']);
-  const allowedFields = new Set(['children', 'declared', 'bindings', 'closing']);
+  const allowedMethods = new Set(['retainBinding', 'handover', 'closeInfo', 'joinPlan', 'disposeAsync']);
+  const allowedFields = new Set(['children', 'declared', 'bindings', 'inbound', 'closing']);
   const violations: string[] = [];
   const file = ts.createSourceFile('activation.ts', source, ts.ScriptTarget.Latest, true);
   let found = false;

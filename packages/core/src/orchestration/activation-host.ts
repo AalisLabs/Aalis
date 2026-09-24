@@ -40,23 +40,17 @@ export class ActivationHost {
     if (!logger) throw new Error('根激活需要 logger');
     const owner = Symbol(id);
     const runtime = this.runtime;
-    let removed: string[] = [];
     const resources = new Resources(id, logger, {
       beforeCleanup: () => {
         // 原语切断保持同栈，不能逐条 await 时让一半监听仍然对外可用。
-        removed = runtime.services.unregisterByOwner(owner);
+        const removed = runtime.services.unregisterByOwner(owner);
         runtime.hooks.unregisterByOwner(owner);
         runtime.contributions.unregisterByOwner(owner);
         runtime.events.unregisterByOwner(owner);
+        for (const name of removed) runtime.notify('service:unregistered', name);
       },
-      // 下线通知排在提供者自己的清理之前：跟随者据此撤回，提供者关闭前交接完
-      afterWithdraw: () => {
-        const names = removed;
-        removed = [];
-        return names.length === 0
-          ? undefined
-          : Promise.all(names.map(name => runtime.notify('service:unregistered', name)));
-      },
+      // 提供者自己的清理之前：挂在它上面的跟随者就地交接，落定后提供者才关
+      afterWithdraw: (): Promise<unknown> | undefined => activation.handover(),
       afterCleanup: () => {
         this.owners.delete(owner);
         parent?.children.delete(activation);
@@ -79,7 +73,7 @@ export class ActivationHost {
       resources: activation.resources,
       services: this.runtime.services,
       events: this.runtime.events,
-      retainBinding: (name: string) => activation.retainBinding(name),
+      retainBinding: (name: string, pump: () => void) => activation.retainBinding(name, pump),
     };
     const caps: Record<string, unknown> = {};
     return activation.resources.run(() => {
@@ -101,10 +95,9 @@ export function notify(runtime: Pick<ServiceRuntime, 'events'>, logger: Logger):
   return (event, ...args) => {
     const report = (error: unknown) => reportQuietly(() => logger.warn(`emit ${event} 失败:`, error));
     try {
-      return Promise.resolve(runtime.events.emit(event, ...args)).catch(report);
+      Promise.resolve(runtime.events.emit(event, ...args)).catch(report);
     } catch (error) {
       report(error);
-      return Promise.resolve();
     }
   };
 }
