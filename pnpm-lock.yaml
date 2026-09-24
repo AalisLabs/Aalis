@@ -473,10 +473,6 @@ importers:
         version: 5.9.3
 
   packages/core:
-    dependencies:
-      '@aalis/schema-log':
-        specifier: workspace:>=0.1.0 <1.0.0
-        version: link:../schema-log
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -2568,6 +2564,9 @@ importers:
 
   packages/schema-log:
     devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

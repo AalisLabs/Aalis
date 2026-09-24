@@ -79,6 +79,8 @@ export {
 } from './infrastructure/config.js';
 export {
   DefaultLogger,
+  type LogEntry,
   type Logger,
   LogHub,
+  type LogLevel,
 } from './infrastructure/logger.js';
