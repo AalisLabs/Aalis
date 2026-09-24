@@ -52,14 +52,13 @@ interface ContributionEntry {
  * 重复注册也无法影响排位。
  *
  * 插件面与 events / services / hooks 同一门面纪律（方法窄面，对象不外露）：
- * 注册经 `contributions.contribute(point, spec)`（冠激活 id 前缀 + 挂资源清理链），
+ * 注册经 `contributions.contribute(point, spec)`（冠激活 id 前缀，按归属在激活撤回时整体切断），
  * 枚举经 `contributions.collect(point)`（驱动公开——任何插件都可拥有自己的贡献点）。
  * 完整注册表由 App（组合根）与能力运行基础设施持有，不交给插件。
  *
  * 按贡献点键精化 spec 类型（经 types/contributions.ts 的 ContributionPointMap
  * declaration merging）是**注册表自己的契约**，与 events / hooks 同构：谁定义
- * 写入口，谁声明写入口的类型。于是绕开门面、直接持有注册表（包根导出、app.contributions）
- * 的写入也受同一约束；门面为保住推断仍自带同形签名。
+ * 写入口，谁声明写入口的类型。于是 core 内部直接持有注册表的写入也受同一约束；门面为保住推断仍自带同形签名。
  * 运行时仍只认 {@link ContributionSpec}（除 id 合法性外不看 spec 一眼），
  * 精化纯在编译期——注册表"永不执行插件代码"不受影响。
  */
