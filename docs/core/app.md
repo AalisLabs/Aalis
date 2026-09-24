@@ -42,8 +42,8 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 
 - 将 `config`（快照或现成 `ConfigManager`）规范为 `ConfigManager`
 - 初始化 events / services / hooks / contributions / logger 及根激活（注入或自建）
-- 创建 `ActivationHost`，在同一容器中登记八项独占基础服务工厂，再为根激活绑定接口；自举登记不依赖尚未创建的 `provide`
-- 创建 `PluginManager`，通过根激活的 `provide` 发布 `appService` / `pluginsService` / `hostConfig` 的共享实例
+- 创建 `ActivationHost`：直接登记 `provide` 的提供者来自举，再由根激活经 `provide` 独占登记其余七项基础服务
+- 创建 `PluginManager`，由根激活经 `provide` 独占登记 `appService` / `pluginsService` / `hostConfig`：容器里放的只是契约列出的方法（窄面），App / PluginManager / ConfigManager 本体不外露；经 `pluginsService` 拿到的 `getPlugin` 是不含内部激活记录的快照
 - 应用配置中已有的服务偏好
 
 ## 关键属性
@@ -51,14 +51,14 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 | 属性 | 类型 | 说明 |
 |---|---|---|
 | `plugins` | `PluginManager` | 插件管理器 |
-| `config` | `ConfigManager` | 整份配置的读写、落盘与外部变更监听（插件侧同一对象经 `hostConfig` 描述符声明获取） |
+| `config` | `ConfigManager` | 整份配置的读写、落盘与外部变更监听（插件侧经 `hostConfig` 拿到的是只含读写方法的窄面 `HostConfig`，落盘走 `appService.saveConfig`） |
 | `logger` | `Logger` | 日志器 |
 | `events` | `EventBus` | 事件总线 |
 | `services` | `ServiceContainer` | 服务容器 |
 | `hooks` | `HookRegistry` | 钩子注册表 |
 | `contributions` | `ContributionRegistry` | 贡献点注册表 |
 
-根激活不对外。宿主经 `bind` 取能力；插件经自己激活上的 `uses` 取能力。`app.services.get/getAll` 读取原始登记值，工厂条目不是消费实例；查看元数据用 `app.services.inspect`，消费实例用 `app.bind`。
+根激活不对外。宿主经 `bind` 取能力；插件经自己激活上的 `uses` 取能力。`app.services.get/getAll` 返回登记进容器的对象本身；内置八项登记的是提供者函数，宿主要用其接口经 `app.bind`。查看元数据用 `app.services.inspect`。
 
 ## 核心方法
 
