@@ -107,14 +107,14 @@ export default definePlugin({
 | 项 | 四原语（`events.on` / `provide` / `hooks.middleware` / `contributions.contribute`） | 枢纽登记（经 `BindingPort.registrar`） | 钉住的测试 |
 |---|---|---|---|
 | 撤回时机 | 用户清理开始前，由 core 按归属整体摘除 | 清理链撤回段：先于全部 `onDispose`，且此时四原语已切断 | `test/core/whenservice-withdraw-phase.test.ts`、`test/core/binding-hardening.test.ts` |
-| 撤回钥匙 | owner 标识，core 自己发、自己收；同 id 的两次激活互不误清 | 条目引用（退订闭包）；逻辑 id 只给枢纽自己的展示 / `pluginName` | `test/core/owner-identity.test.ts`、`test/plugins/hub-registration-identity.test.ts` |
+| 撤回钥匙 | 这次激活的资源身份：core 发、经资源口的 `identity` 交给 binder、拆卸时自己收；同 id 的两次激活互不误清 | 条目引用（退订闭包）；逻辑 id 只给枢纽自己的展示 / `pluginName` | `test/core/owner-identity.test.ts`、`test/plugins/hub-registration-identity.test.ts` |
 | 异步撤回 | 无，同步摘除 | cleanup 可返回 promise；关闭等它落地（含手动退订、换人启动的在飞项），拒绝记 warn | `test/core/whenservice-async-cleanup.test.ts` |
 | 关闭后登记 | warn + no-op | `registrar.add` / `follow` 同口径 | `test/core/post-dispose-policy.test.ts`、`test/plugins/hub-registration-identity.test.ts` |
 | 同键重复 | `contribute` 替换；`on` / `middleware` 并存；`provide` 同名多提供者并存 | 由能力自定并写进契约包：工具与分组替换（helper 与枢纽两层）；命令按激活分层；页面并存 | `test/core/contributions.test.ts`、`test/plugins/hub-registration-identity.test.ts` |
 | 提供者换人 | 不适用 | `registrar`：立即在新提供者重挂，旧撤回可重叠；`follow`：先跑上次 cleanup、等落定再用新实例 | `test/core/binding-hardening.test.ts` |
 | 退订闭包幂等 | 是 | 是 | 同上 |
 
-差异都来自"登记本在谁手里"：四原语的登记本在 core，钥匙可以是插件写不出的内部标识；枢纽的登记本在服务，注册那一侧是 `svc.register(x, port.id)`，展示用同一把逻辑 id。同键政策不统一是刻意的：工具按名唯一，页面天然可以并存，命令要支持覆盖后复位。
+差异都来自"登记本在谁手里"：四原语的登记本在 core，钥匙是这次激活的资源身份（插件写不出，只能从资源口的 `identity` 拿）；枢纽的登记本在服务，注册那一侧是 `svc.register(x, port.id)`，展示用同一把逻辑 id。同键政策不统一是刻意的：工具按名唯一，页面天然可以并存，命令要支持覆盖后复位。
 
 ## 不承诺的边界
 

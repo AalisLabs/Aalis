@@ -8,7 +8,7 @@
 
 ## 描述符
 
-一个服务有两张面：容器中的提供者登记，与消费方通过描述符得到的绑定接口。登记可以是共享实例，也可以是 `serviceFactory` 工厂；工厂按消费者激活创建实例。描述符的 `bind` 把解析后的实例与资源口连成调用接口。
+一个服务有两张面：容器中的提供者登记，与消费方通过描述符得到的绑定接口。容器保存 `provide` 交进来的实现对象本身；描述符的 `bind` 用资源口为消费方的这次激活造调用接口。
 
 ```typescript
 import { defineService, type BindingPort, serviceRef, type ServiceRef } from '@aalis/core';
@@ -41,45 +41,24 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 
 - 契约包导出描述符（**值导入**，进 `dependencies`，不是 type-only）。类型与绑定实现随描述符走，不需要一张全局服务名 → 类型表。
 - 服务身份是描述符的 `name`。契约包装了两份也指向同一服务。
+- 同版本 Core 副本之间的描述符、`optional` 包装与 required 不可用错误可互通；不据此承诺不同版本或任意 Core 类实例可混用。依赖仍应使用 peer 并尽量去重。
 - `provide(descriptor, impl)` 按描述符约束实现类型。
 - Core 默认登记的八项基础服务与第三方服务共用容器、描述符和 `bind`；`uses` 中的 required / optional 规则也相同。基础服务以 `exclusive` 登记，防止同名接口指向另一套实现；这项登记策略第三方同样可以使用。
 - 领域能力（LLM 的 `vision`、storage 的 `local-path`）挂在服务实例 / model handle 的元数据上，由各 `-api` 的 helper 筛选，不进内核 DI。
 
 第三方登记契约（`BindingPort` / `Registrar`）见 [枢纽服务](../design/hub-services.md)。
 
-## 按消费者创建实例
+## 内置服务的登记
 
-`serviceFactory(scope => instance)` 是公开的同步工厂。一次登记在每个消费者激活中成功创建一次，后续查询复用；同名但身份不同的激活分别创建。重新登记是新的条目，会创建新实例。
+八项内置服务（`events` / `hooks` / `contributions` / `lifecycle` / `logger` / `config` / `provide` / `services`）与第三方服务走同一条登记路径：加载插件前，根激活经 `provide` 以 `exclusive` 登记它们，同样经过 `provide` 的校验、发出 `service:registered`、归属根激活。唯一的例外是 `provide` 自身：根激活要先取得 `provide` 才能登记其余七项，因此 `provide` 的提供者由 `ActivationHost` 直接写入容器一次来自举。宿主三项（`app` / `plugins` / `host-config`）同样由根激活经 `provide` 独占登记。
 
-以下插件提供一个按消费者隔离的计数器。消费者从契约包导入同一个 `counter` 描述符，在 `uses: { counter }` 后调用 `counter.require().next()`。
+内置服务在容器中的提供者是函数 `(identity: symbol) => 门面`：传入一次激活的身份，返回属于这次激活的接口，经这个接口登记的监听、中间件、贡献与服务都归这次激活。内置描述符的 `bind` 是 `port => port.require()(port.identity)`，只用公开的资源口。提供者先核对该身份属于在 `uses` 里声明过本服务的激活，否则抛错「内置服务 "x" 只能由在 uses 里声明了它的激活取用」。不声明就拿不到门面：经 `services.get(events)` 动态查到的只是提供者函数，未声明 `events` 的激活无法用它取得接口。
 
-```typescript
-import { definePlugin, defineService, provide, serviceFactory } from '@aalis/core';
+## 资源身份
 
-export const counter = defineService<{ next(): number }>('counter');
+资源口的 `identity` 是这次激活的不透明资源身份（`symbol`）。`id` 是日志、展示、路由用的逻辑名；归属与核对用 `identity`，不从 `id` 字符串推断。
 
-export default definePlugin({
-  name: '@scope/plugin-counter',
-  uses: { provide },
-  provides: [counter],
-  apply({ provide }) {
-    provide(counter, serviceFactory(scope => {
-      let value = 0;
-      const period = setInterval(() => scope.logger.debug(`${scope.id}: ${value}`), 60_000);
-      scope.track(() => clearInterval(period), 'counter-timer');
-      return { next: () => ++value };
-    }));
-  },
-});
-```
-
-`scope` 是工厂的消费者资源口：`id` / 不透明 `identity`、消费者 `logger` / `config`、`closed`，以及 `track` / `onDrain` / `onDispose`。它不暴露激活记录、容器或原语注册表，也不是传给插件 `apply` 的入口。
-
-- 工厂必须同步返回非空、非 thenable 的实例。异步工厂被类型检查和运行期拒收；返回 Promise 的拒绝仍被接住并报告。
-- 经 scope 登记的资源属于消费者。成功实例对应的提供者边保留到消费者关闭；切换胜者不会提前清理旧实例的资源。需要每次切换都交接的资源应在 `follow` 的 attach 中取得、由返回清理函数释放。`follow` 串行的是这两步，不保证工厂构造延后，也不会在切换时释放工厂自己的资源。
-- 构造失败会回滚该次登记：撤回 `track`，执行未取消的 `onDispose`，取消 `onDrain`。异步回滚被消费者关闭等待，完成后释放该次工厂边；失败 scope 的迟到清理也会执行。
-- 缓存不自动转发调用，也不取消提供者主动卸载、依赖成环或清理超时等边界。工厂资源的交接同样服从 [关停契约](context.md#生命周期)。
-- 同版本 Core 副本之间的描述符、`optional` 包装、工厂与 required 不可用错误可互通；不据此承诺不同版本或任意 Core 类实例可混用。依赖仍应使用 peer 并尽量去重。
+`identity` 是凭据：交给谁，谁就能以这次激活的名义调用认它的提供者。提供者据它把登记归到这次激活。内置服务按这种方式为每个调用方交出门面；第三方契约包也可以同样提供按调用方区分的服务：提供者登记为 `(identity) => 接口`，描述符的 `bind` 以 `port.identity` 取用，提供者按身份保存的状态由 `bind` 经 `port.track` 登记撤回、随这次激活关闭释放。binder 不应把 `identity` 转交给这次激活以外的代码。
 
 ## 解析顺序
 
@@ -102,13 +81,13 @@ interface ServiceView<T = unknown> {
 
 `all()` / `services.all(key)` 返回该投影的数组快照，顺序同样遵循「偏好 > 优先级 > 注册顺序」。
 
-这两个消费入口会为当前消费者解析工厂；`all()` 会解析每个提供者，包括非胜者。只查看登记信息应使用 `services.inspect(key)`：返回 `contextId` / `priority` / `label`、`scope: 'shared' | 'activation'` 与 `exclusive`，不含实例，不运行工厂。WebUI 服务列表使用这一元数据入口。
+`instance` 是登记进容器的对象本身。只查看登记信息应使用 `services.inspect(key)`：返回 `contextId` / `priority` / `label` 与 `exclusive`，不含实例。WebUI 服务列表使用这一元数据入口。
 
 ## 行为边界
 
-- `current` / `require` 返回本次解析的实例：共享服务直接返回登记对象，工厂返回属于当前消费者的实例。缓存不是自动转发代理。
-- 手动缓存共享服务的 `all()[i]` 不产生关停边。已创建的工厂实例则保留其准确提供者的边，包括非胜者，直到消费者关闭。
-- `services.get` / `services.all` 不增加声明、不参与激活闸，也不自动跟随。动态查询共享实例不产生边；如果查询实际创建了工厂实例，其托管寿命会建立提供者边。关停期仍可能拿空；需要声明等待与跟随的，写进 `uses` 并使用 `follow`。
+- `current` / `require` 返回本次解析到的登记对象。缓存不是自动转发代理。
+- 手动缓存的 `all()[i]` 不产生关停边。
+- `services.get` / `services.all` 不增加声明、不参与激活闸、不自动跟随，也不产生关停边。关停期仍可能拿空；需要声明等待与跟随的，写进 `uses` 并使用 `follow`。
 - 顶层 required 缺席会 `pending`，恢复重新激活；胜者替换不一律重启消费者。
 
 ## `services`：动态查询与偏好
@@ -129,6 +108,8 @@ interface Services {
 
 有描述符就用描述符（带类型）；只有运行期字符串（URL、配置里的服务名）就用名字，类型由调用方收窄。
 
+动态查内置服务拿到的是提供者函数，不是门面：它只接受在 `uses` 里声明了该服务的激活身份，以其他身份调用即抛错。要用内置服务，在 `uses` 里声明它。
+
 `prefer(key, contextId)` 把该服务的胜者钉到指定逻辑身份，无视 priority。偏好可在目标 entry 注册前提前设置。切换偏好发出 `service:preference-changed`，驱动 `follow` 订阅者按胜者变化重挂。也可在 WebUI 的 Services 页设置；配置项为 `servicePreferences`。
 
 跨多 entry 按会话持久化选择，推荐走请求维度的 hint（把选择存在用户 profile），而不是容器维度的偏好——`prefer` 是全局、进程级单例，不适合 per-user。参见 [plugin-author-guide §13](../plugin-author-guide.md#13-用户偏好放哪里-per-user-不进容器)。
@@ -139,6 +120,6 @@ interface Services {
 
 容器按名字存取，不认识类型——实现是否满足契约由描述符在 `provide` 处约束。`register` 的 `owner` 是清理归属（激活门面自动传入）；省略则该 entry 不被拆卸自动清理，调用方用返回的退订闭包自管。`unregisterByOwner` 按 owner 而非 contextId 批量清理，同名激活互不误清。
 
-`app.services.get(name)` / `getAll(name)` 返回原始登记值，工厂条目返回工厂包装，**不是消费实例**。宿主要消费服务，用 `app.bind({ services }).services.get(descriptor)` 或 `app.bind({ target: descriptor })`；要巡视登记，用 `app.services.inspect(name)`，它不会创建实例。
+`app.services.get(name)` / `getAll(name)` 返回登记进容器的对象本身。内置八项登记的是提供者函数，宿主要用它们的接口须经 `app.bind`，如 `app.bind({ events }).events`；只看登记元数据用 `app.services.inspect(name)`。
 
 `hasByContext(name, contextId)` 的「拥有」语义同时匹配 `contextId === ownerId` 和以 `ownerId + '/'` 为前缀的 per-entry 子 entry（如 `@aalis/plugin-llm-ollama:main/llama3`）。
