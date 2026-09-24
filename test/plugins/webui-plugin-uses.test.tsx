@@ -12,7 +12,6 @@ it('没有配置的插件也能展开全部声明，核心与第三方服务统�
     instanceId: 'declaration-only',
     state: 'pending',
     provides: [],
-    core: false,
     reusable: false,
     config: {},
     uses: [

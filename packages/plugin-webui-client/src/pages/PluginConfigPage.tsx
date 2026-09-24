@@ -52,7 +52,6 @@ export function PluginConfigPage({
   };
 
   const handleToggle = async (plugin: PluginInfo) => {
-    if (plugin.core) return;
     markBusy(plugin.instanceId);
     const action = plugin.state === 'disabled' ? 'enable' : 'disable';
     try {
@@ -349,8 +348,7 @@ export function PluginConfigPage({
         for (const p of filtered) {
           const n = p.name; // 用模块名分类，而非 instanceId
           const cat =
-            p.core ? '系统'
-            : /^(@aalis\/)?plugin-(openai|deepseek|ollama)$/.test(n) ? 'LLM 模型'
+            /^(@aalis\/)?plugin-(openai|deepseek|ollama)$/.test(n) ? 'LLM 模型'
             : /^(@aalis\/)?plugin-agent/.test(n) || /^(@aalis\/)?plugin-persona$/.test(n) ? '智能体'
             : /^(@aalis\/)?plugin-memory-/.test(n) ? '存储'
             : /^(@aalis\/)?plugin-embedding-/.test(n) ? '嵌入模型'
@@ -419,7 +417,6 @@ export function PluginConfigPage({
                 <span className={`badge ${stateBadge[p.state] ?? 'pending'}`}>
                   {stateLabel[p.state] ?? p.state}
                 </span>
-                {p.core && <span className="badge core-badge">核心</span>}
                 {p.reusable && !isSub && <span className="badge" style={{ background: '#7c5cfc', color: '#fff', fontSize: 10 }}>多实例</span>}
                 {p.provides.length > 0 && (
                   <span className="plugin-provides-inline">
@@ -437,12 +434,12 @@ export function PluginConfigPage({
                 {p.reusable && !isSub && (
                   <button className="btn btn-sm" style={{ fontSize: 11 }} onClick={() => { setNewInstanceTarget(newInstanceTarget === p.name ? null : p.name); setNewInstanceSuffix(''); }}>+ 实例</button>
                 )}
-                <label className={`toggle-switch ${p.core ? 'core-locked' : ''}`}>
+                <label className="toggle-switch">
                   <input
                     type="checkbox"
                     checked={p.state !== 'disabled'}
                     onChange={() => handleToggle(p)}
-                    disabled={p.core || isBusy(iid)}
+                    disabled={isBusy(iid)}
                   />
                   <span className="toggle-slider" />
                 </label>

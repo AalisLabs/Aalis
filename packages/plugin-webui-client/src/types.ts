@@ -78,7 +78,6 @@ export interface PluginInfo {
   tools?: string[];
   /** 该插件注册的指令完整名（含分组路径，例如 "plugins.refresh"）。 */
   commands?: string[];
-  core: boolean;
   reusable: boolean;
   extends?: ExtendDeclaration;
   /** 完整声明的服务；key 是插件的参数名，kind 表明是否参与激活等待。 */
