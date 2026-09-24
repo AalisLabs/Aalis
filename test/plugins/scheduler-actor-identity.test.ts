@@ -68,7 +68,7 @@ async function actorOfTriggeredJob(
   jobName = 'j',
   storageSeed?: Record<string, string>,
 ): Promise<{ actor: Actor; emitted: boolean }> {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide, services, events });
   host.provide(storage, memoryStorage(storageSeed).service as never);
   await app.plugins.register(toolsPlugin, {});

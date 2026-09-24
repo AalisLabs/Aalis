@@ -9,12 +9,13 @@ import { type StorageRootInfo, type StorageService, storage } from '../../packag
 import { webuiClient } from '../../packages/api-webui/src/index.js';
 import { App, definePlugin, provide } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
+import { hostedApp } from '../fixtures/app.js';
 
 // ════════════════════════════════════════════════════════════
 // 切换前端偏好的处理器要做三件事：改服务偏好、写配置、重挂静态目录。前两件与第三件同属
 // 内存态，必须在等落盘之前一起生效。若重挂排在 await save 之后，保存拒绝时会留下
 // 「服务解析已选 B、HTTP 静态目录仍挂 A」的不一致，且处理器退出后无人修复。
-// 本文件真起 webui-server，用拒绝的 configProvider 钉住「重挂不依赖落盘成功」。
+// 本文件真起 webui-server，用拒绝落盘的配置文档 provider 钉住「重挂不依赖落盘成功」。
 // ════════════════════════════════════════════════════════════
 
 async function freePort(): Promise<number> {
@@ -95,21 +96,13 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   });
 
-  it('保存拒绝：POST/DELETE prefer 都以错误返回，但静态目录已同步跟上', async () => {
+  /** 在给定 App 上装两份前端与真 webui-server，返回请求工具；A 为启动时挂载的前端 */
+  async function boot(app: App) {
     const dirA = clientDir('CLIENT-A');
     const dirB = clientDir('CLIENT-B');
     dirs.push(dirA, dirB);
     const port = await freePort();
     const token = 'test-fixed-token-placeholder';
-    const app = new App({
-      config: { name: 'T', logLevel: 'error', plugins: {} },
-      logger: silentLogger(),
-      configProvider: {
-        save: async () => {
-          throw new Error('disk full');
-        },
-      },
-    });
     apps.push(app);
     const host = app.bind({ provide, webuiClient });
     host.provide(storage, makeFakeStorage());
@@ -143,19 +136,49 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
       }
     }
     expect(first, '前置：启动后挂的是先注册的 A').toContain('CLIENT-A');
+    const prefer = () =>
+      fetch(`${base}/api/services/webui-client/prefer`, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ contextId: 'clientB' }),
+      });
+    const unprefer = () => fetch(`${base}/api/services/webui-client/prefer`, { method: 'DELETE', headers });
+    return { host, dirA, dirB, home, prefer, unprefer };
+  }
 
-    const res = await fetch(`${base}/api/services/webui-client/prefer`, {
-      method: 'POST',
-      headers: { ...headers, 'content-type': 'application/json' },
-      body: JSON.stringify({ contextId: 'clientB' }),
-    });
+  it('保存拒绝：POST/DELETE prefer 都以错误返回，但静态目录已同步跟上', async () => {
+    const { app } = hostedApp(
+      {},
+      {
+        logger: silentLogger(),
+        provider: {
+          save: async () => {
+            throw new Error('disk full');
+          },
+        },
+      },
+    );
+    const { host, dirB, home, prefer, unprefer } = await boot(app);
+
+    const res = await prefer();
     expect(res.ok, '落盘失败必须以错误响应传出，不能报 200').toBe(false);
     expect(host.webuiClient.current?.getClientDir(), '服务解析已选 B').toBe(dirB);
     expect(await home(), '偏好已指向 B，静态目录必须同步切到 B').toContain('CLIENT-B');
 
     // 清除偏好走同一条不变量：解析回落到 A，静态目录也必须同步回落，哪怕落盘仍然拒绝
-    const del = await fetch(`${base}/api/services/webui-client/prefer`, { method: 'DELETE', headers });
+    const del = await unprefer();
     expect(del.ok, '清除偏好同样在落盘失败时以错误响应传出').toBe(false);
     expect(await home(), '偏好已清除，静态目录必须一起退回 A').toContain('CLIENT-A');
+  });
+
+  it('宿主没提供配置文档：POST/DELETE prefer 都回 503，偏好与静态目录都不动', async () => {
+    const { host, dirA, home, prefer, unprefer } = await boot(
+      new App({ name: 'T', logLevel: 'error', logger: silentLogger() }),
+    );
+    const res = await prefer();
+    expect(res.status).toBe(503);
+    expect(host.webuiClient.current?.getClientDir(), '改了却存不下：运行态不动').toBe(dirA);
+    expect(await home()).toContain('CLIENT-A');
+    expect((await unprefer()).status).toBe(503);
   });
 });

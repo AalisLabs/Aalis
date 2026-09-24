@@ -6,7 +6,7 @@ import type { Message } from '../../packages/schema-message/src/index.js';
 
 /** 每个用例一份干净的 App：装上 in-memory 后端，取出它提供的 memory 服务 */
 async function boot(): Promise<{ app: App; mem: MemoryService }> {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   await app.plugin(memoryInMemory);
   await app.plugins.idle();
   if (app.plugins.getPlugin(memoryInMemory.name)?.state !== 'active') {

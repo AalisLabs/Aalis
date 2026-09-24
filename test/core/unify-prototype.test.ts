@@ -105,7 +105,7 @@ function world() {
     error: () => {},
     child: () => logger,
   };
-  const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+  const app = createInspectableApp({ name: 'T', logLevel: 'error', logger });
   apps.push(app);
   return { app, warnings, host: app.bind({ provide, services }) };
 }

@@ -132,7 +132,7 @@ interface Fixture {
 }
 
 async function setup(config: Record<string, unknown> = {}): Promise<Fixture> {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide, services, events, contributions, logger });
   const store = createMemoryStorage();
   host.provide(storage, store);

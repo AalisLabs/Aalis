@@ -25,7 +25,8 @@ afterEach(async () => {
 
 const mkApp = (marker: string) => {
   const app = createInspectableApp({
-    config: { name: 'T', logLevel: 'error', plugins: {} },
+    name: 'T',
+    logLevel: 'error',
     logger: throwingLogger(marker),
   });
   apps.push(app);

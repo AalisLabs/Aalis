@@ -522,7 +522,7 @@ describe('内置事件出口：App 等待屏障，通知不阻塞状态机', () 
 //
 // 去掉注释与空行后的代码行数。上限是精简后的实测值加少量余量；抬高上限的提交要写明理由，不能顺手抬。
 // 计数方法：逐字符状态机去注释（识别字符串、模板串含嵌套 ${}），再数非空行。
-const CORE_CODE_LINE_CEILING = 2900;
+const CORE_CODE_LINE_CEILING = 2700;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

@@ -161,7 +161,8 @@ definePlugin({
 
     const { logger, warns } = capturingLogger();
     const app = new App({
-      config: { name: 'T', logLevel: 'error', plugins: {} },
+      name: 'T',
+      logLevel: 'error',
       logger,
       devMode: true,
     });

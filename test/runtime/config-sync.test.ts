@@ -1,4 +1,4 @@
-import { App, config, definePlugin, hostConfig, type PluginDefinition } from '@aalis/core';
+import { type App, config, definePlugin, type PluginDefinition } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import {
   installConfigHotReload,
@@ -6,7 +6,7 @@ import {
   withPluginConfigSync,
 } from '../../packages/runtime/src/config-sync.js';
 import { createPluginDiscovery, type PluginLoader } from '../../packages/runtime/src/plugin-discovery.js';
-import { defaultsFrom } from '../../packages/schema-config/src/index.js';
+import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 
 // ════════════════════════════════════════════════════════════
 // 配置同步政策 + 热重载编排（宿主层）
@@ -14,12 +14,10 @@ import { defaultsFrom } from '../../packages/schema-config/src/index.js';
 // core 只持有配置快照机制,政策与编排全在 runtime 的 config-sync。
 // ════════════════════════════════════════════════════════════
 
-function makeApp(pluginsConfig: Record<string, Record<string, unknown>>) {
-  return new App({ config: { name: 'T', logLevel: 'error', plugins: pluginsConfig } });
+/** 带配置文档的 App：store 就是宿主持有的那份文档（插件经 host-config 看到的也是它） */
+function makeApp(pluginsConfig: Record<string, Record<string, unknown>>, disabledPlugins?: string[]) {
+  return hostedApp({ plugins: pluginsConfig, disabledPlugins });
 }
-
-/** 整份配置的读写面：宿主经描述符绑到根激活，与插件声明 hostConfig 拿到的是同一个管理器 */
-const configOf = (app: App) => app.bind({ hostConfig }).hostConfig.require();
 
 const p1Module = definePlugin({
   name: 'p1',
@@ -37,17 +35,18 @@ describe('加载前配置同步', () => {
       load: async d => definitions.find(def => def.name === d.name) ?? null,
     };
     if (reload) loader.reload = loader.load;
-    const prepared = withPluginConfigSync(loader, () => app, { trimUnknownFields });
-    const app = new App({
-      config: { name: 'T', logLevel: 'error', plugins: {} },
-      configProvider: {
-        save: snapshot => {
-          saved.push(structuredClone(snapshot));
+    const { app, store } = hostedApp(
+      {},
+      {
+        provider: {
+          save: snapshot => {
+            saved.push(structuredClone(snapshot));
+          },
         },
       },
-      pluginDefaults: d => defaultsFrom(d.configSchema),
-    });
-    const discovery = createPluginDiscovery(app, prepared.loader);
+    );
+    const prepared = withPluginConfigSync(loader, app, store, { trimUnknownFields });
+    const discovery = createPluginDiscovery(app, prepared.loader, store);
     function add(name: string) {
       definitions.push(
         definePlugin({
@@ -63,10 +62,10 @@ describe('加载前配置同步', () => {
           },
         }),
       );
-      app.config.setPluginConfig(name, { known: 2, unknown: true, nested: { typo: 'x' } });
-      app.config.setPluginConfig(`${name}:other`, { known: 3, unknown: true });
+      store.setPluginConfig(name, { known: 2, unknown: true, nested: { typo: 'x' } });
+      store.setPluginConfig(`${name}:other`, { known: 3, unknown: true });
     }
-    return { app, discovery, prepared, loader, add, seen, saved };
+    return { app, store, discovery, prepared, loader, add, seen, saved };
   }
 
   it('首次 apply、实例记录与持久化一致，主实例和后缀实例均只激活一次；首批只保存一次', async () => {
@@ -85,7 +84,7 @@ describe('加载前配置同步', () => {
       ]),
     );
     for (const { instanceId } of f.app.plugins.getStatus()) {
-      expect(f.app.plugins.getPlugin(instanceId)?.config).toEqual(f.app.config.getPluginConfig(instanceId));
+      expect(f.app.plugins.getPlugin(instanceId)?.config).toEqual(f.store.getPluginConfig(instanceId));
     }
     expect(f.saved).toHaveLength(1);
     expect(f.saved[0]).toMatchObject({
@@ -132,24 +131,27 @@ describe('加载前配置同步', () => {
 
   it('异步落盘失败被记录，不重试整批或撤销已激活实例', async () => {
     let writes = 0;
+    const { app, store } = hostedApp(
+      { plugins: { p1: { known: 1, unknown: true } } },
+      {
+        provider: {
+          save: () => {
+            writes++;
+            return Promise.reject(new Error('read only'));
+          },
+        },
+      },
+    );
     const prepared = withPluginConfigSync(
       {
         discover: async () => [{ name: p1Module.name, source: 'memory' }],
         load: async () => p1Module,
       },
-      () => app,
+      app,
+      store,
     );
-    const app = new App({
-      config: { name: 'T', logLevel: 'error', plugins: { p1: { known: 1, unknown: true } } },
-      configProvider: {
-        save: () => {
-          writes++;
-          return Promise.reject(new Error('read only'));
-        },
-      },
-    });
     const warns = captureWarnsOf(app);
-    await createPluginDiscovery(app, prepared.loader).loadAll();
+    await createPluginDiscovery(app, prepared.loader, store).loadAll();
     prepared.finishInitialLoad();
     prepared.finishInitialLoad();
     await Promise.resolve();
@@ -180,25 +182,25 @@ describe('加载前配置同步', () => {
 
 describe('syncPluginDefaults 政策', () => {
   it('默认（trimUnknownFields=true）：按 schema 裁剪未知字段', async () => {
-    const app = makeApp({ p1: { known: 1, unknown: 'x' } });
+    const { app, store } = makeApp({ p1: { known: 1, unknown: 'x' } });
     await app.plugin(p1Module);
-    syncPluginDefaults(app);
-    expect(configOf(app).getPluginConfig('p1')).toEqual({ known: 1 });
+    syncPluginDefaults(app, store);
+    expect(store.getPluginConfig('p1')).toEqual({ known: 1 });
     await app.stop();
   });
 
   it('trimUnknownFields=false：保留 schema 外字段', async () => {
-    const app = makeApp({ p1: { known: 1, unknown: 'x' } });
+    const { app, store } = makeApp({ p1: { known: 1, unknown: 'x' } });
     await app.plugin(p1Module);
-    syncPluginDefaults(app, { trimUnknownFields: false });
-    expect(configOf(app).getPluginConfig('p1')).toEqual({ known: 1, unknown: 'x' });
+    syncPluginDefaults(app, store, { trimUnknownFields: false });
+    expect(store.getPluginConfig('p1')).toEqual({ known: 1, unknown: 'x' });
     await app.stop();
   });
 
   // configSchema 是唯一声明来源：默认值从 field.default 派生（defaultsFrom），
   // 白名单就是 schema 的键集。以下覆盖用户点名的三条底线行为。
   it('schema 派生默认值回填缺失字段（深合并，已有值不覆盖）', async () => {
-    const app = makeApp({ p2: { b: 2 } });
+    const { app, store } = makeApp({ p2: { b: 2 } });
     const mod = definePlugin({
       name: 'p2',
       configSchema: {
@@ -208,8 +210,8 @@ describe('syncPluginDefaults 政策', () => {
       apply() {},
     });
     await app.plugin(mod);
-    syncPluginDefaults(app);
-    expect(configOf(app).getPluginConfig('p2')).toEqual({ a: 1, b: 2 });
+    syncPluginDefaults(app, store);
+    expect(store.getPluginConfig('p2')).toEqual({ a: 1, b: 2 });
     await app.stop();
   });
 
@@ -227,11 +229,11 @@ describe('syncPluginDefaults 政策', () => {
       },
       apply() {},
     });
-    const app = makeApp({ p5: { nested: { shown: 9, typo: 8 } } });
+    const { app, store } = makeApp({ p5: { nested: { shown: 9, typo: 8 } } });
     await app.plugin(mod);
-    syncPluginDefaults(app);
+    syncPluginDefaults(app, store);
     // missing 从 schema 默认值深回填；typo 不在 schema 里被裁掉
-    expect(configOf(app).getPluginConfig('p5')).toEqual({ nested: { shown: 9, missing: 7 } });
+    expect(store.getPluginConfig('p5')).toEqual({ nested: { shown: 9, missing: 7 } });
     await app.stop();
   });
 
@@ -244,7 +246,7 @@ describe('syncPluginDefaults 政策', () => {
       },
       apply() {},
     });
-    const app = makeApp({ p7: { keep: 1, junk: 'x', g: { in: 2, deepJunk: 'y' } } });
+    const { app, store } = makeApp({ p7: { keep: 1, junk: 'x', g: { in: 2, deepJunk: 'y' } } });
     const warned: string[] = [];
     const origWarn = app.logger.warn.bind(app.logger);
     app.logger.warn = (msg: string, ...rest: unknown[]) => {
@@ -252,7 +254,7 @@ describe('syncPluginDefaults 政策', () => {
       origWarn(msg, ...rest);
     };
     await app.plugin(mod);
-    syncPluginDefaults(app);
+    syncPluginDefaults(app, store);
     const hit = warned.find(w => w.includes('裁掉 schema 外字段'));
     // 静默裁剪会让「字段被吃掉」与「用户没配」不可分辨——必须点名
     expect(hit).toContain('junk');
@@ -269,29 +271,10 @@ describe('syncPluginDefaults 政策', () => {
       },
       apply() {},
     });
-    const app = makeApp({ p4: { startupView: 'last', lastView: 'logs' } });
+    const { app, store } = makeApp({ p4: { startupView: 'last', lastView: 'logs' } });
     await app.plugin(mod);
-    syncPluginDefaults(app);
-    expect(configOf(app).getPluginConfig('p4').lastView).toBe('logs');
-    await app.stop();
-  });
-
-  it('注册期注入：App 带 pluginDefaults 时 apply 直接收到派生默认值（首启即正确，不等落盘）', async () => {
-    let seen: Record<string, unknown> | undefined;
-    const mod = definePlugin({
-      name: 'p6',
-      configSchema: { flag: { type: 'boolean', label: 'F', default: true } },
-      uses: { config },
-      apply(caps) {
-        seen = caps.config;
-      },
-    });
-    const app = new App({
-      config: { name: 'T', logLevel: 'error', plugins: {} },
-      pluginDefaults: m => defaultsFrom(m.configSchema),
-    });
-    await app.plugin(mod);
-    expect(seen).toEqual({ flag: true });
+    syncPluginDefaults(app, store);
+    expect(store.getPluginConfig('p4').lastView).toBe('logs');
     await app.stop();
   });
 });
@@ -299,16 +282,18 @@ describe('syncPluginDefaults 政策', () => {
 describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () => {
   it('watch 推送的快照裁剪 schema 外字段并 bounce：apply 重跑且内置 config 拿到新值', async () => {
     let pushSnapshot: ((next: Record<string, unknown>) => void) | undefined;
-    const app = new App({
-      config: { name: 'T', logLevel: 'error', plugins: { p1: { known: 1 } } },
-      configProvider: {
-        save: () => {},
-        watch: cb => {
-          pushSnapshot = cb as (next: Record<string, unknown>) => void;
-          return () => {};
+    const { app, store } = hostedApp(
+      { plugins: { p1: { known: 1 } } },
+      {
+        provider: {
+          save: () => {},
+          watch: cb => {
+            pushSnapshot = cb as (next: Record<string, unknown>) => void;
+            return () => {};
+          },
         },
       },
-    });
+    );
     let applies = 0;
     let seen: Readonly<Record<string, unknown>> | undefined;
     const mod = definePlugin({
@@ -320,29 +305,53 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
         seen = cfg;
       },
     });
-    await app.plugin(mod);
+    await registerFromDoc(app, store, mod);
     await app.plugins.idle();
     expect(app.plugins.getPlugin('p1')?.state).toBe('active');
     expect(applies).toBe(1);
     expect(seen).toEqual({ known: 1 });
 
     await app.start();
-    installConfigHotReload(app);
+    installConfigHotReload(app, store);
 
     // 模拟外部把 schema 外字段写进配置文件
     pushSnapshot?.({ name: 'T', logLevel: 'error', plugins: { p1: { known: 2, sneaky: true } } });
     // watch 回调同步进入 handleConfigChanged；bounce 在首个 await 前已抬 suspendDepth，idle 等到重建落定
     await app.plugins.idle();
 
-    // 政策默认裁剪：sneaky 不应留在内存态（syncPluginDefaults 已写 ConfigManager）
-    expect(configOf(app).getPluginConfig('p1')).toEqual({ known: 2 });
-    // 只钉 ConfigManager 会假绿：去掉 updateConfig 后同步政策仍会 setPluginConfig。
+    // 政策默认裁剪：sneaky 不应留在文档里（syncPluginDefaults 已写回文档）
+    expect(store.getPluginConfig('p1')).toEqual({ known: 2 });
+    // 只钉文档会假绿：去掉 updateConfig 后同步政策仍会 setPluginConfig。
     // apply 次数与内置 config（即这次激活的 entry.config）才证明插件被重建且拿到新值。
     expect(applies).toBe(2);
     expect(seen).toEqual({ known: 2 });
     expect(app.plugins.getPlugin('p1')?.config).toEqual({ known: 2 });
     expect(app.plugins.getPlugin('p1')?.state).toBe('active');
     await app.stop();
+  });
+
+  it('停机开始时停止监听外部变更：provider 的退订被调用，此后推送不再触发重载', async () => {
+    let stops = 0;
+    let push: (() => void) | undefined;
+    const { app, store } = hostedApp(
+      {},
+      {
+        provider: {
+          watch: cb => {
+            push = () => cb({ name: 'T', logLevel: 'error', plugins: {} });
+            return () => {
+              stops++;
+            };
+          },
+        },
+      },
+    );
+    installConfigHotReload(app, store);
+    expect(push).toBeDefined();
+    await app.stop();
+    expect(stops).toBe(1);
+    // 已退订：store 不再持有订阅者，可以重新订阅
+    expect(() => store.watch(() => {})).not.toThrow();
   });
 });
 
@@ -367,24 +376,24 @@ describe('配置结构校验（validateConfig 接线：只告警不拒载）', (
   });
 
   it('坏值 warn 点名（path + 期望），配置原样保留、插件不受影响', async () => {
-    const app = makeApp({ pv: { port: 'abc' } });
+    const { app, store } = makeApp({ pv: { port: 'abc' } });
     const warned = captureWarnsOf(app);
     await app.plugin(badMod);
-    syncPluginDefaults(app);
+    syncPluginDefaults(app, store);
     const hit = warned.find(w => w.includes('配置校验'));
     expect(hit).toContain('pv');
     expect(hit).toContain('port: 期望有限数值，得到 string');
     // 只告警不改值：坏值原样保留（校验器绝不参与取值链路）
-    expect(configOf(app).getPluginConfig('pv').port).toBe('abc');
+    expect(store.getPluginConfig('pv').port).toBe('abc');
     expect(app.plugins.getStatus().find(s => s.instanceId === 'pv')?.state).toBe('active');
     await app.stop();
   });
 
   it('合法配置零告警（默认值合并后校验，缺省字段不误报）', async () => {
-    const app = makeApp({ pv: {} });
+    const { app, store } = makeApp({ pv: {} });
     const warned = captureWarnsOf(app);
     await app.plugin(badMod);
-    syncPluginDefaults(app);
+    syncPluginDefaults(app, store);
     expect(warned.find(w => w.includes('配置校验'))).toBeUndefined();
     await app.stop();
   });
@@ -395,12 +404,10 @@ describe('配置结构校验（validateConfig 接线：只告警不拒载）', (
       configSchema: { apiKey: { type: 'string', label: 'K', required: true } },
       apply() {},
     });
-    const app = new App({
-      config: { name: 'T', logLevel: 'error', plugins: { pd: {} }, disabledPlugins: ['pd'] },
-    });
+    const { app, store } = makeApp({ pd: {} }, ['pd']);
     const warned = captureWarnsOf(app);
-    await app.plugin(mod);
-    syncPluginDefaults(app);
+    await registerFromDoc(app, store, mod);
+    syncPluginDefaults(app, store);
     expect(warned.find(w => w.includes('配置校验'))).toBeUndefined();
     await app.stop();
   });
@@ -410,10 +417,10 @@ describe('配置结构校验（validateConfig 接线：只告警不拒载）', (
       configSchema: { apiKey: { type: 'string', label: 'K', required: true } },
       apply() {},
     });
-    const app = makeApp({ pm: {} });
+    const { app, store } = makeApp({ pm: {} });
     const warned = captureWarnsOf(app);
     await app.plugin(mod);
-    syncPluginDefaults(app);
+    syncPluginDefaults(app, store);
     expect(warned.find(w => w.includes('配置校验'))).toContain('apiKey: 必填字段缺失');
     await app.stop();
   });

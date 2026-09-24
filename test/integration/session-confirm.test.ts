@@ -14,7 +14,7 @@ import sessionConfirmPlugin from '../../packages/plugin-session-confirm/src/inde
 const tick = () => new Promise(r => setTimeout(r, 0));
 
 async function setup() {
-  const app = new App({ config: { name: 'SC', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'SC', logLevel: 'error' });
   let starHandler: AccessConfirmHandler | undefined;
   const stubAuthority = {
     setConfirmHandler: (platform: string, h: AccessConfirmHandler) => {

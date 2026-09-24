@@ -25,7 +25,7 @@ describe('storage.delete 删根守卫 (真 fs)', () => {
     ws = join(base, 'ws');
     mkdirSync(join(ws, 'sub'), { recursive: true });
     writeFileSync(join(ws, 'keep.txt'), 'survivor');
-    app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    app = new App({ name: 'T', logLevel: 'error' });
     await app.plugin(storageLocal, {
       roots: [
         {

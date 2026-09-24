@@ -14,9 +14,11 @@ import {
 import { readdir, stat } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { AalisConfig, ConfigProvider, PluginDefinition, RestartStrategy } from '@aalis/core';
+import type { AalisConfig } from '@aalis/api-host-config';
+import type { PluginDefinition, RestartStrategy } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import type { ConfigProvider } from './config-store.js';
 import {
   assertSameCore,
   HOST_CORE_DIR,
@@ -71,7 +73,7 @@ function buildSaveYaml(config: AalisConfig): string {
 interface FsYamlConfigProviderResult {
   /** 当前快照（用于 `new App({ config })`） */
   config: AalisConfig;
-  /** Provider 实例（用于 `new App({ configProvider })`） */
+  /** Provider 实例（交给 `createConfigStore(config, provider)`） */
   provider: ConfigProvider;
 }
 

@@ -44,7 +44,7 @@ describe('persona 坏角色卡的告警与守卫（真 fs）', () => {
 
   const bootPersona = async (personaName: string): Promise<PersonaService> => {
     logs = [];
-    app = new App({ config: { name: 'T', logLevel: 'debug', plugins: {} }, logger: recordingLogger(logs) });
+    app = new App({ name: 'T', logLevel: 'debug', logger: recordingLogger(logs) });
     // storage 先装：persona 的 storage 是可选依赖，缺席时它照样激活，只是一张卡都读不到
     await app.plugin(storageLocal, {
       roots: [

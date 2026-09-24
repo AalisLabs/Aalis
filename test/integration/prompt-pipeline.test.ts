@@ -166,7 +166,7 @@ const ACTIVE_IDS = [
 ];
 
 async function loadStack(replies: ProbeReply[]): Promise<Stack> {
-  const app = new App({ config: { name: 'PP', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'PP', logLevel: 'error' });
   const host = app.bind({ events, memory, agent });
   const recorder: Message[][] = [];
   const views: PromptContributionView[] = [];

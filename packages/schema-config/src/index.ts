@@ -112,9 +112,8 @@ export const CORE_CONFIG_SCHEMA: ConfigSchema = {
  * 从 ConfigSchema 派生默认配置。
  *
  * ConfigSchema 是插件配置的**唯一声明来源**：每个字段的 `default` 就是运行时默认值，
- * 不存在第二份手抄的默认值对象。宿主在注册插件前用本函数派生出默认配置
- * （经 `AppOptions.pluginDefaults` 注入 core），配置回填、恢复默认、WebUI 展示
- * 也都从这里取——一份实现，处处一致。
+ * 不存在第二份手抄的默认值对象。宿主在注册插件前用本函数派生出默认配置并深合并进配置文档，
+ * 配置回填、恢复默认、WebUI 展示也都从这里取——一份实现，处处一致。
  *
  * 派生规则：
  * - SchemaField / SchemaArray：取 `default`（没写 default 的字段不产出键，
@@ -341,11 +340,12 @@ function describeType(value: unknown): string {
   return typeof value;
 }
 
-// 与 packages/core/src/context/safe-keys.ts 同一规则（本包零运行时依赖，不能 import core）。
+// 与 packages/core/src/infrastructure/config-values.ts 同一规则（本包零运行时依赖，不能 import core）。
 // 防漂移：test/architecture/config-copy-parity.test.ts
 const UNSAFE_CONFIG_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
-function isUnsafeConfigKey(key: string): boolean {
+/** 配置层无合法含义、落到原型链的键（`__proto__` / `constructor` / `prototype`）；宿主的配置文档按它拦 */
+export function isUnsafeConfigKey(key: string): boolean {
   return UNSAFE_CONFIG_KEYS.has(key);
 }
 

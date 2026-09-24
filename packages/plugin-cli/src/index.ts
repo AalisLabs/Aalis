@@ -1,16 +1,15 @@
 import { stdin as input, stdout as output } from 'node:process';
 import * as readline from 'node:readline';
+import { hostConfig } from '@aalis/api-host-config';
 import { persona } from '@aalis/api-persona';
 import { getPlatformAdapters, type PlatformAdapter, type PlatformConnection, platform } from '@aalis/api-platform';
 import { createStorageGateway, storage } from '@aalis/api-storage';
 import {
-  appService,
   type BoundOf,
   config,
   definePlugin,
   defineService,
   events,
-  hostConfig,
   LogHub,
   lifecycle,
   logger,
@@ -112,17 +111,13 @@ const uses = {
   services,
   hostConfig: optional(hostConfig),
   platform: optional(platform),
-  app: optional(appService),
   storage: optional(storage),
   persona: optional(persona),
 };
 type Caps = BoundOf<typeof uses>;
 
 /** TUI 实际用到的能力：界面层不碰配置解析、服务发布与存储 */
-type TuiCaps = Pick<
-  Caps,
-  'events' | 'logger' | 'lifecycle' | 'services' | 'hostConfig' | 'platform' | 'persona' | 'app'
->;
+type TuiCaps = Pick<Caps, 'events' | 'logger' | 'lifecycle' | 'services' | 'hostConfig' | 'platform' | 'persona'>;
 
 export default definePlugin({
   name,
@@ -617,11 +612,13 @@ class CliTui {
 
   private persistLastView(view: CLIView): void {
     if (view === 'help') return;
-    const host = this.caps.hostConfig.require();
+    // 宿主没提供配置文档时不记：下次启动回到默认视图
+    const host = this.caps.hostConfig.current;
+    if (!host) return;
     const pluginConfig = host.getPluginConfig(name);
     host.setPluginConfig(name, { ...pluginConfig, lastView: view });
     // 尽力而为：最后视图丢了只是下次回到默认视图，不值得让渲染路径变 async
-    this.caps.app.current?.saveConfig().catch(err => this.caps.logger.warn('记录最后视图失败:', err));
+    host.save().catch(err => this.caps.logger.warn('记录最后视图失败:', err));
   }
 
   private queueRender = (): void => {

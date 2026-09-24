@@ -25,7 +25,7 @@ function makeWorld() {
     error: () => {},
     child: () => logger,
   };
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+  const app = new App({ name: 'T', logLevel: 'error', logger });
   apps.push(app);
   return { app, host: app.bind({ provide }), lines };
 }

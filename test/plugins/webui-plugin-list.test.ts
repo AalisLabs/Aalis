@@ -1,10 +1,11 @@
 import type { CommandService } from '@aalis/api-commands';
 import type { ToolService } from '@aalis/api-tools';
 import type { WebUIService } from '@aalis/api-webui';
-import type { AppService, HostConfig, PluginManagerService, ServiceRef } from '@aalis/core';
+import type { AppService, PluginManagerService, ServiceRef } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
+import { hostConfig } from '../../packages/api-host-config/src/index.js';
 import {
-  App,
+  type App,
   config,
   contributions,
   definePlugin,
@@ -18,6 +19,7 @@ import {
   services,
 } from '../../packages/core/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
+import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 
 // GET /api/plugins 与 /api/pages 必须按 instanceId 归属工具 / 指令 / displayName。
 // 生产里 tools.register 的 pluginName 就是 contextId（= instanceId）；按 definition.name
@@ -50,9 +52,7 @@ function reusableDef(name = 'probe-pkg') {
 }
 
 function silentApp(): App {
-  const app = new App({
-    config: { name: 'T', logLevel: 'error', plugins: {} },
-  });
+  const { app } = hostedApp();
   apps.push(app);
   return app;
 }
@@ -79,10 +79,10 @@ function mountPluginRoutes(
   registerPluginRoutes(
     expressApp as never,
     {
-      app: ref<AppService>({ saveConfig: () => app.saveConfig(), restart: () => {} }),
+      app: ref<AppService>({ restart: () => {} }),
       source: { current: undefined },
       plugins: ref<PluginManagerService>(app.plugins),
-      hostConfig: ref<HostConfig>(app.config),
+      hostConfig: app.bind({ hostConfig }).hostConfig,
       tools: { current: extras.tools as ToolService | undefined },
       commands: { current: extras.commands as CommandService | undefined },
       webui: () =>
@@ -282,15 +282,11 @@ describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
       uses: { config },
       apply() {},
     });
-    const app = new App({
-      config: {
-        name: 'T',
-        logLevel: 'error',
-        plugins: { 'secret-probe': { apiKey: 'sk-REAL-SECRET', timeoutMs: 30 } },
-      },
+    const { app, store } = hostedApp({
+      plugins: { 'secret-probe': { apiKey: 'sk-REAL-SECRET', timeoutMs: 30 } },
     });
     apps.push(app);
-    await app.plugin(def);
+    await registerFromDoc(app, store, def);
     await app.plugins.idle();
     expect(app.plugins.getPlugin('secret-probe')?.state).toBe('active');
 

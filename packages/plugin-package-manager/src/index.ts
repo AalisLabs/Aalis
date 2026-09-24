@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { hostConfig } from '@aalis/api-host-config';
 import { pluginDefinitionOf, pluginSource } from '@aalis/api-plugin-source';
 import { createProcessGateway, type ExecResult, type ProcessService, processService } from '@aalis/api-process';
 import {
@@ -8,7 +9,6 @@ import {
   config,
   definePlugin,
   defineService,
-  hostConfig,
   logger,
   optional,
   pluginsService,
@@ -240,7 +240,7 @@ function createService(caps: Caps): PackageManagerService {
         return undefined;
       }
     },
-    // 宿主不提供插件来源（打包宿主）时视同没有新插件：装好的包按「未就位、需重启」分流
+    // 宿主不提供插件来源（打包宿主）时视同本次没有新插件；随后仍按注册表判定，声明为插件的包会报「未被加载」
     rescanPlugins: async () => (await caps.source.current?.rescan()) ?? [],
     // 判据取运行时注册表而非 rescan 返回值（理由见 PackageManagerDeps.isPluginRegistered）。
     // plugins 服务缺席时保守返回 false——宁可让「声明为插件却没加载」的诊断多报一次，
@@ -280,13 +280,14 @@ function createService(caps: Caps): PackageManagerService {
       await caps.plugins.current?.unload(name);
     },
     // 卸载后清残留配置：删 plugins.<name> 配置块 + 从 disabledPlugins 移除
-    // （否则重装会被"上次禁用"标记带成已禁用状态），并持久化。
+    // （否则重装会被"上次禁用"标记带成已禁用状态），并持久化。宿主没提供配置文档时无可清理。
     cleanupConfig: name => {
-      const hostCfg = caps.hostConfig.require();
-      hostCfg.removePluginConfig(name);
-      hostCfg.setPluginEnabled(name, true);
+      const doc = caps.hostConfig.current;
+      if (!doc) return;
+      doc.removePluginConfig(name);
+      doc.setPluginEnabled(name, true);
       // cleanupConfig 契约返 void；落盘失败只 warn，内存态已清、下次保存会带上
-      caps.app.current?.saveConfig().catch(err => log.warn(`${name}: 卸载后配置清理落盘失败:`, err));
+      doc.save().catch(err => log.warn(`${name}: 卸载后配置清理落盘失败:`, err));
     },
   });
 }

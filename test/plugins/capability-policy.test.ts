@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { resolveCapabilityPolicy, riskDefaults } from '../../packages/api-authority/src/index.js';
+import type { HostConfig } from '../../packages/api-host-config/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
-import type { ConfigManager, Logger } from '../../packages/core/src/index.js';
+import type { Logger } from '../../packages/core/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 
 // ════════════════════════════════════════════════════════════
 // 能力两轴正交模型：轴 A 授权(visibility) × 轴 B 确认(confirm) + risk 糖 + 自动判危
 // ════════════════════════════════════════════════════════════
 
-function mkConfig(cfg: Record<string, unknown> = {}): ConfigManager {
+function mkConfig(cfg: Record<string, unknown> = {}): HostConfig {
   const store = { ...cfg };
-  return { get: (k: string) => store[k], set: (k: string, v: unknown) => (store[k] = v) } as unknown as ConfigManager;
+  return { get: (k: string) => store[k], set: (k: string, v: unknown) => (store[k] = v) } as unknown as HostConfig;
 }
 function mkLogger(): Logger {
   const l = { child: () => l, debug() {}, info() {}, warn() {}, error() {} };

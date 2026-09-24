@@ -23,9 +23,9 @@ export type { ServiceInfo, ServiceView } from './primitives/services.js';
 
 // ----- 编排层：应用骨架与插件管理 -----
 export { App, type AppOptions, createApp } from './orchestration/app.js';
-export { appService, type HostConfig, hostConfig, pluginsService } from './orchestration/host-services.js';
+export { appService, pluginsService } from './orchestration/host-services.js';
 export { type PluginEntry, type PluginState, parseInstanceId } from './orchestration/plugin.js';
-// 宿主 SPI：重启策略（ConfigProvider 随 ConfigManager 在上一节）
+// 宿主 SPI：重启策略
 export type { RestartStrategy } from './orchestration/providers.js';
 
 export {
@@ -65,13 +65,7 @@ export {
   type PluginDefinition,
   type PluginMeta,
 } from './composition/plugin-definition.js';
-// ----- 配置、日志 -----
-export {
-  type AalisConfig,
-  ConfigManager,
-  type ConfigManagerOptions,
-  type ConfigProvider,
-} from './infrastructure/config.js';
+// ----- 日志 -----
 export {
   DefaultLogger,
   type LogEntry,

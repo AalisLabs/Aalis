@@ -35,7 +35,7 @@ describe('storage-local watch 文件 URI', () => {
     base = mkdtempSync(join(tmpdir(), 'aalis-watch-'));
     mkdirSync(join(base, 'data', 'notes'), { recursive: true });
     writeFileSync(join(base, 'data', 'notes', 'a.txt'), 'v0');
-    app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    app = new App({ name: 'T', logLevel: 'error' });
     await app.plugin(storageLocal, {
       roots: [
         {

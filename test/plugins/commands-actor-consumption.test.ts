@@ -22,7 +22,7 @@ interface Captured {
 }
 
 async function runInbound(message: Record<string, unknown>): Promise<Captured> {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   await app.plugin(gatewayPlugin);
   await app.plugin(commandsPlugin);
   await app.plugins.idle();

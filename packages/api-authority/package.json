@@ -22,6 +22,9 @@
     "build": "tsc",
     "dev": "tsc --watch"
   },
+  "dependencies": {
+    "@aalis/api-host-config": "workspace:>=0.1.0 <1.0.0"
+  },
   "devDependencies": {
     "@aalis/core": "workspace:*",
     "@types/node": "^22.0.0",

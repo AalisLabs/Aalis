@@ -37,7 +37,7 @@ function recordingLogger(): Logger & { records: LogRecord[]; messages(level: Lev
   return logger;
 }
 
-const baseConfig = (name = 'T'): AppOptions['config'] => ({ name, logLevel: 'error', plugins: {} });
+const base = (name = 'T'): Pick<AppOptions, 'name' | 'logLevel'> => ({ name, logLevel: 'error' });
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -49,12 +49,11 @@ function track<T extends App>(app: T): T {
 }
 
 describe('createApp 工厂', () => {
-  it('返回按传入选项构造的 App：配置、注入的 logger 与版本号都生效', async () => {
+  it('返回按传入选项构造的 App：名称、注入的 logger 与版本号都生效', async () => {
     const log = recordingLogger();
-    const app = track(createApp({ config: baseConfig('Factory'), logger: log, version: '0.0.0-test' }));
+    const app = track(createApp({ ...base('Factory'), logger: log, version: '0.0.0-test' }));
 
     expect(app).toBeInstanceOf(App);
-    expect(app.config.get('name')).toBe('Factory');
     expect(app.logger).toBe(log);
     expect(log.messages('info')[0]).toBe('Aalis Core 0.0.0-test - Factory');
 
@@ -72,21 +71,27 @@ describe('createApp 工厂', () => {
 describe('启动横幅', () => {
   it('宿主注入 version：横幅带「Core <版本>」段', () => {
     const log = recordingLogger();
-    track(new App({ config: baseConfig('Banner'), logger: log, version: '1.2.3' }));
+    track(new App({ ...base('Banner'), logger: log, version: '1.2.3' }));
     expect(log.messages('info')).toEqual(['Aalis Core 1.2.3 - Banner']);
   });
 
   it('未注入 version：横幅省略版本段，只留「Core」', () => {
     const log = recordingLogger();
-    track(new App({ config: baseConfig('Banner'), logger: log }));
+    track(new App({ ...base('Banner'), logger: log }));
     expect(log.messages('info')).toEqual(['Aalis Core - Banner']);
+  });
+
+  it('未注入 name：横幅用默认名 Aalis', () => {
+    const log = recordingLogger();
+    track(new App({ logger: log }));
+    expect(log.messages('info')).toEqual(['Aalis Core - Aalis']);
   });
 });
 
 describe('事件监听器抛错的告警', () => {
   it('经 events 能力登记的监听器：告警点名来源插件实例 id，错误对象原样附上，其余监听器照跑', async () => {
     const log = recordingLogger();
-    const app = track(new App({ config: baseConfig(), logger: log }));
+    const app = track(new App({ ...base(), logger: log }));
     const boom = new Error('boom');
     const reached: string[] = [];
     await app.plugin(
@@ -113,7 +118,7 @@ describe('事件监听器抛错的告警', () => {
 
   it('无归属的监听器（直接挂在总线上、不经 events 能力）：告警不带来源段', async () => {
     const log = recordingLogger();
-    const app = track(createInspectableApp({ config: baseConfig(), logger: log }));
+    const app = track(createInspectableApp({ ...base(), logger: log }));
     const boom = new Error('ownerless');
     // 公开面拿不到总线；core 内部确有不带 owner 的订阅（binding 的提供者跟随），这里白盒复现同一形状
     activationHost(app).runtime.events.on('app:starting', () => {
@@ -131,7 +136,7 @@ describe('事件监听器抛错的告警', () => {
 describe('App.restart', () => {
   it('未注入 restartStrategy：同步抛「不可用」，不发 app:restarting、不停机', async () => {
     const log = recordingLogger();
-    const app = track(new App({ config: baseConfig(), logger: log }));
+    const app = track(new App({ ...base(), logger: log }));
     const { events: bus } = app.bind({ events });
     const seen: string[] = [];
     bus.on('app:restarting', () => void seen.push('restarting'));
@@ -154,7 +159,7 @@ describe('App.restart', () => {
     });
     const app = track(
       new App({
-        config: baseConfig(),
+        ...base(),
         logger: log,
         restartStrategy: {
           restart(opts) {

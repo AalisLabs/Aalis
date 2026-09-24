@@ -4,7 +4,7 @@
 // 把"音频 → 文本"抽象为核心 `asr` 服务：whisper.cpp / 云 ASR / LLM-as-audio
 // 都以 `provide(asr, impl, { priority })` 注册为多 provider，消费方声明 `asr`
 // 描述符后由核心按「偏好 > 优先级 > 注册顺序」解析出当前胜者。
-// 用哪个 provider 经核心 servicePreferences（WebUI「服务」页下拉框）切换——
+// 用哪个 provider 经服务偏好（WebUI「服务」页下拉框）切换——
 // 多个 whisper / whisper+云ASR / LLM-as-audio 在同一下拉框里平等可选。
 //
 // 依赖：仅 @aalis/core 与 @aalis/schema-message。

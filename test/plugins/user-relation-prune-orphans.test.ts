@@ -12,7 +12,7 @@ import { RelationService, RelationStore } from '../../packages/plugin-user-relat
 // ════════════════════════════════════════════════════════════
 
 async function makeService() {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   await app.plugin(memoryInMemory);
   await app.plugins.idle();
   // 激活闸下「没激活」不报错，核一下状态，别让空存储伪装成绿

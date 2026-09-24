@@ -139,6 +139,10 @@ importers:
         version: 5.9.3
 
   packages/api-authority:
+    dependencies:
+      '@aalis/api-host-config':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-config
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -242,6 +246,18 @@ importers:
       '@aalis/schema-message':
         specifier: workspace:>=0.5.1 <1.0.0
         version: link:../schema-message
+    devDependencies:
+      '@aalis/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/api-host-config:
     devDependencies:
       '@aalis/core':
         specifier: workspace:*
@@ -697,6 +713,9 @@ importers:
       '@aalis/api-commands':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-commands
+      '@aalis/api-host-config':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-config
       '@aalis/api-platform':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-platform
@@ -753,6 +772,9 @@ importers:
 
   packages/plugin-cli:
     dependencies:
+      '@aalis/api-host-config':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-config
       '@aalis/api-persona':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-persona
@@ -1210,6 +1232,9 @@ importers:
 
   packages/plugin-mcp-client:
     dependencies:
+      '@aalis/api-host-config':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-config
       '@aalis/api-tools':
         specifier: workspace:>=0.9.0 <1.0.0
         version: link:../api-tools
@@ -1260,6 +1285,9 @@ importers:
       '@aalis/api-asr':
         specifier: workspace:>=0.10.0 <1.0.0
         version: link:../api-asr
+      '@aalis/api-host-config':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-config
       '@aalis/api-llm':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-llm
@@ -1573,6 +1601,9 @@ importers:
 
   packages/plugin-package-manager:
     dependencies:
+      '@aalis/api-host-config':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-config
       '@aalis/api-plugin-source':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-plugin-source
@@ -2411,6 +2442,9 @@ importers:
       '@aalis/api-commands':
         specifier: workspace:>=0.6.0 <1.0.0
         version: link:../api-commands
+      '@aalis/api-host-config':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-config
       '@aalis/api-llm':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-llm
@@ -2536,6 +2570,9 @@ importers:
 
   packages/runtime:
     dependencies:
+      '@aalis/api-host-config':
+        specifier: workspace:>=0.1.0 <1.0.0
+        version: link:../api-host-config
       '@aalis/api-plugin-source':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-plugin-source

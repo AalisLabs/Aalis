@@ -17,7 +17,7 @@ interface Call {
 }
 
 function makeApp(calls: Call[]) {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   // 宿主侧按根激活取绑定接口：桩服务与真实插件经同一条发布门面进容器
   const host = app.bind({ provide, asr });
   host.provide(processService, {

@@ -41,7 +41,7 @@ describe('workflow 拆卸取消在飞 run（真 fs + 真卸载）', () => {
   });
 
   it('unload 后被阻塞的首节点放行：下游节点 skipped、run 记 cancelled', async () => {
-    app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    app = new App({ name: 'T', logLevel: 'error' });
     await app.plugin(storageLocalPlugin, {
       roots: ['data', 'workspace'].map(name => ({
         name,

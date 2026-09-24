@@ -11,7 +11,7 @@ import { defineService } from '@aalis/core';
 // 任何需要「执行前权限校验」的服务（plugin-tools / plugin-commands 等）从本包导入
 // ExecutionGuard / ExecutionGuardContext；消费权限服务的插件导入 AuthorityService。
 
-import type {} from '@aalis/core'; // declaration merging 锚点（下方 AalisConfig 增强）
+import type {} from '@aalis/api-host-config'; // declaration merging 锚点（下方 AalisConfig 增强）
 
 /** 细粒度能力标识，如 tool:file.write、command:shutdown */
 export type CapabilityId = string;
@@ -314,9 +314,9 @@ export interface AuthorityService {
 // AalisConfig declaration merging —— authority 域业务字段
 // ============================================================
 //
-// core 只声明基础设施字段；authority 域业务字段经 declaration merging 注入，
-// 让 core 不知晓任何权限语义。
-declare module '@aalis/core' {
+// 配置文档契约只声明宿主层字段；authority 域业务字段经 declaration merging 注入，
+// 让文档契约不知晓任何权限语义。
+declare module '@aalis/api-host-config' {
   interface AalisConfig {
     /** owner 列表（owner = `*`，拥有一切） */
     owners?: UserIdentity[];
