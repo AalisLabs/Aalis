@@ -360,7 +360,7 @@ describe('停机中 unload 快路径', () => {
   it('stopAll 进行中外部 await unload 再放 drainHold：交接仍在、unload 立即 true、不撞 disposeTimeout', async () => {
     // retireBatch 先把条目标 disposed。若 unload 先 join #closing，会与仍持 hold 的
     // 消费者 drain 互等：writer:last 丢，撞 disposeTimeoutMs。shuttingDown 快路径须在
-    // disposed-join 之前，立即 true，void disposeAsync 只汇入计划。
+    // disposed-join 之前，立即 true；beginShutdown 已把整棵树冻进计划，不再发起 disposeAsync。
     const { app, warnings } = capturingApp({ disposeTimeoutMs: 800 });
     const hold = deferred();
     const entered = deferred();

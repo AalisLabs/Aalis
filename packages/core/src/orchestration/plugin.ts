@@ -210,8 +210,7 @@ export class PluginManager implements PluginManagerService {
 
     if (this.shuttingDown) {
       // 停机中 unload 必须在 disposed-join 之前：retireBatch 会先把条目标 disposed，
-      // 若走 join #closing，drain 里再 unload 会与计划互等。汇入后立即 true。
-      if (entry.activation) void entry.activation.disposeAsync(this.disposeTimeoutMs);
+      // 若走 join #closing，drain 里再 unload 会与计划互等。beginShutdown 已把整棵树冻进停机计划，这里直接 true。
       this.logger.debug(`unload: 插件 "${instanceId}" 停机中已汇入停机计划`);
       return true;
     }
@@ -320,7 +319,6 @@ export class PluginManager implements PluginManagerService {
     if (entry.state === 'disabled') return true; // 已经禁用
 
     if (this.shuttingDown) {
-      if (entry.activation) void entry.activation.disposeAsync(this.disposeTimeoutMs);
       this.logger.debug(`disable: 插件 "${instanceId}" 停机中已汇入停机计划`);
       return true;
     }
