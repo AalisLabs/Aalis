@@ -68,7 +68,6 @@ export {
   type PluginMeta,
   pluginDefinitionOf,
 } from './composition/plugin-definition.js';
-export { type ServiceFactory, type ServiceScope, serviceFactory } from './composition/service-factory.js';
 // ----- 配置、日志 -----
 export {
   type AalisConfig,

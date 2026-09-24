@@ -55,6 +55,11 @@ export interface BindingPort<P> {
   readonly name: string;
   /** 实例 id：日志、展示、路由用的逻辑名，不是资源身份 */
   readonly id: string;
+  /**
+   * 这次激活的资源身份（不透明）。提供者据它把登记归到这次激活、核对调用方；
+   * 它是凭据：交给谁，谁就能以这次激活的名义调用认它的提供者。
+   */
+  readonly identity: symbol;
   readonly logger: Logger;
   /** 这次激活已开始关闭 */
   readonly closed: boolean;
