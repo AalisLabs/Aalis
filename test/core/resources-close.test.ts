@@ -16,6 +16,16 @@ function stubLogger(warn = vi.fn()): Logger {
 }
 
 describe('Resources 的关闭过程', () => {
+  it('收尾段已等过初始化并超时放弃：关闭不再等第二遍', async () => {
+    const warn = vi.fn();
+    const life = new Resources('t', stubLogger(warn));
+    life.trackInitialization(new Promise(() => {}));
+    await life.drain(20);
+    await life.disposeAsync(20);
+    expect(warn.mock.calls.filter(([message]) => String(message).includes('等待初始化落定'))).toHaveLength(1);
+    expect(life.disposables.disposed).toBe(true);
+  });
+
   it('先等初始化和收尾段，再撤回可见资源，逆序等待清理后收尾', async () => {
     const acquired = gate();
     const drainClosing = gate();
