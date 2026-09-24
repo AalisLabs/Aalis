@@ -15,7 +15,6 @@ import type { ProcessService } from '@aalis/api-process';
 import { createProcessGateway, processService } from '@aalis/api-process';
 import type { StorageService } from '@aalis/api-storage';
 import { createStorageGateway, isStorageUri, storage as storageService } from '@aalis/api-storage';
-import type {} from '@aalis/api-webui'; // declaration merging：PluginMeta 的 subsystem 字段由本包挂上
 import { config, definePlugin, logger, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { safeFetch } from '@aalis/util-network-guard';

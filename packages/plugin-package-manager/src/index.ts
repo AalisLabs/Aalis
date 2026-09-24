@@ -1,8 +1,5 @@
 import { createRequire } from 'node:module';
 import { createProcessGateway, type ExecResult, type ProcessService, processService } from '@aalis/api-process';
-// subsystem 这项展示元数据由 api-webui 经 declaration merging 挂到 PluginMeta 上；
-// 不把它带进本包的编译单元，独立构建时插件定义对象上的 subsystem 会被当成多余属性拒收。
-import type {} from '@aalis/api-webui';
 import {
   type AppService,
   appService,

@@ -21,7 +21,6 @@ import { createProcessGateway, processService } from '@aalis/api-process';
 import { sessionManager } from '@aalis/api-session-manager';
 import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
-import type {} from '@aalis/api-webui'; // declaration merging：PluginMeta 的 subsystem 字段由本包挂上
 import {
   appService,
   type BoundOf,

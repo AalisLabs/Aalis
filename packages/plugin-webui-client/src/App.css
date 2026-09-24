@@ -2799,12 +2799,6 @@ a.marketplace-card-name:hover {
   opacity: 0.85;
 }
 
-.core-badge {
-  background: rgba(124, 111, 247, 0.15);
-  color: var(--primary);
-  font-size: 0.65rem;
-}
-
 .plugin-card-provides {
   padding: 0 14px 8px;
 }
@@ -2921,11 +2915,6 @@ a.marketplace-card-name:hover {
   width: 36px;
   height: 20px;
   flex-shrink: 0;
-}
-
-.toggle-switch.core-locked {
-  opacity: 0.4;
-  pointer-events: none;
 }
 
 .toggle-switch input {
