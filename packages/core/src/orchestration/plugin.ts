@@ -12,7 +12,6 @@ import {
   computeTargetState,
   type PluginRecord,
   retireBatch,
-  retireEntry,
 } from './plugin-activation.js';
 import { topoSortByDeps } from './plugin-topology.js';
 import { events } from '../composition/core-services.js';
@@ -41,7 +40,7 @@ type RecomputeKind = 'changed' | 'shutdown';
 export class PluginManager implements PluginManagerService {
   private plugins = new Map<string, PluginRecord>();
   private logger: Logger;
-  /** 交给编排层自由函数（activatePlugin / retireEntry / retireBatch）的宿主注入件，构造一次 */
+  /** 交给编排层自由函数（activatePlugin / retireBatch）的宿主注入件，构造一次 */
   private readonly deps: ActivationDeps;
   /** recompute 单飞标志：true 表示一次 recompute（含排队补跑）正在进行 */
   private reloading = false;
@@ -286,7 +285,6 @@ export class PluginManager implements PluginManagerService {
         grew = true;
       }
     }
-    if (batch.length === 1) return retireEntry(entry, target, this.deps);
     return retireBatch(batch, item => (item === entry ? target : 'pending'), this.deps);
   }
 
@@ -300,7 +298,7 @@ export class PluginManager implements PluginManagerService {
     if (entry.state === 'disposed') return this.refuse('enable', instanceId, '处于 disposed 终态');
     if (entry.state !== 'disabled' && entry.state !== 'error') return true; // 已经启用
     // 依赖不变量：disabled/error 态的 entry 必然 activation 已清（disable 与激活失败
-    // 都经 retireEntry 清引用；锚在 admin-during-activation 测试）——否则此处转
+    // 都经 retireBatch 清引用；锚在 admin-during-activation 测试）——否则此处转
     // pending 后会被激活侧的「旧激活 未清」闸永久跳过。
     entry.state = 'pending';
     entry.error = undefined;

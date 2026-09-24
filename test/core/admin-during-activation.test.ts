@@ -23,7 +23,7 @@ import type { PluginRecord } from '../../packages/core/src/orchestration/plugin-
 //
 // 拆卸方一律「先写目标态、再对在飞 ctx disposeAsync」——管理意图是后写者，
 // 激活收尾以「state 仍为 activating」为继续条件（接管即让位）。
-// bounce = retireEntry(pending) + 重算；required 下游看容器现态，optional 不级联重启。
+// bounce = retireBatch(pending) + 重算；required 下游看容器现态，optional 不级联重启。
 //
 // 新旧实例不同期由两道闸分担：同一 entry 靠「激活记录未清不重新激活」
 // （bounce 路径，白盒读 PluginRecord.context），同 id 重装靠注册表查重
