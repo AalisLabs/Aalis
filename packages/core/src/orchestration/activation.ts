@@ -52,7 +52,7 @@ export class Activation {
 
   joinPlan(): (() => void) | undefined {
     if (this.closing) return undefined;
-    this.resources.lifecycle.markClosing();
+    this.resources.markClosing();
     let done!: () => void;
     this.closing = new Promise<void>(resolve => {
       done = resolve;
@@ -65,7 +65,7 @@ export class Activation {
       return awaitWithTimeout(this.closing, timeoutMs, limit =>
         reportQuietly(() => this.logger.warn(`激活 "${this.id}": 等待在飞拆卸超过 ${limit}ms，放弃等待`)),
       );
-    if (this.children.size === 0) return this.resources.lifecycle.disposeAsync(timeoutMs);
+    if (this.children.size === 0) return this.resources.disposeAsync(timeoutMs);
     return closeActivations([this], timeoutMs, this.logger);
   }
 }

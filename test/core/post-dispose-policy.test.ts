@@ -142,9 +142,9 @@ describe('订阅类 post-dispose：warn + no-op', () => {
     ctx.caps.provide(defineService('x'), {});
     ref.follow(() => {});
     ctx.caps.contributions.contribute(POINT, { id: 'z' } as never);
-    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual([]);
+    expect(ctx.activation.resources.disposables.labels()).toEqual([]);
     expect(ctx.caps.contributions.collect(POINT)).toEqual([]);
-    expect(ctx.activation.resources.lifecycle.disposables.size).toBe(0);
+    expect(ctx.activation.resources.disposables.size).toBe(0);
   });
 });
 
@@ -234,7 +234,7 @@ describe('拆卸进行中（activation 在飞窗口）：onDispose 两分支判�
         released = true;
       }, 'late-conn');
     })();
-    ctx.activation.resources.lifecycle.trackInitialization(applying);
+    ctx.activation.resources.trackInitialization(applying);
 
     const teardown = ctx.activation.disposeAsync(1000);
     release();

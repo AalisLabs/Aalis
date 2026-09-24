@@ -171,7 +171,7 @@ export function coreProviders(
   const entry = <B>(descriptor: ServiceDescriptor<(identity: symbol) => B, B>, view: (c: CoreCaller) => B) =>
     [descriptor, (identity: symbol) => view(caller(identity, descriptor.name))] as [AnyDescriptor, (i: symbol) => B];
   const accepts = (c: CoreCaller, operation: string): boolean => {
-    if (!c.resources.lifecycle.disposed) return true;
+    if (!c.resources.disposed) return true;
     c.logger.warn(`激活 "${c.id}" 已 dispose，忽略 ${operation}`);
     return false;
   };
@@ -229,7 +229,7 @@ export function coreProviders(
       entry<LifecycleCap>(lifecycle, c => ({
         id: c.id,
         get closed() {
-          return c.resources.lifecycle.disposed;
+          return c.resources.disposed;
         },
         onDrain: (fn, label) => c.resources.onDrain(fn, label),
         onDispose: (fn, label) => c.resources.onDispose(fn, label),
