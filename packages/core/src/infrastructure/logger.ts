@@ -1,4 +1,15 @@
-import type { LogEntry, LogLevel } from '@aalis/schema-log';
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+export interface LogEntry {
+  /** 进程内单调递增的稳定序号（每个 LogHub 实例独立计数）。用作下游 React/UI key 与分页 cursor。 */
+  seq: number;
+  /** 本地时区 ISO-8601 时间戳（如 `2026-05-27T09:09:16.028+01:00`）。
+   *  保留完整日期与偏移，便于人读与机器解析；sink 按需截取显示。 */
+  timestamp: string;
+  level: LogLevel;
+  scope: string;
+  message: string;
+}
 
 const LEVEL_PRIORITY: Record<LogLevel, number> = {
   debug: 0,

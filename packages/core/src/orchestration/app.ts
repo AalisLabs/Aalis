@@ -9,7 +9,6 @@ import type { Activation } from './activation.js';
 import { ActivationHost, notify } from './activation-host.js';
 import { PluginManager, parseInstanceId } from './plugin.js';
 import type { PluginLoader, RestartStrategy } from './providers.js';
-import type { LogLevel } from '@aalis/schema-log';
 import { events, provide, services } from '../composition/core-services.js';
 import { type BoundOf, defineService, type Uses } from '../composition/descriptors.js';
 import type { PluginDefinition } from '../composition/plugin-definition.js';
@@ -20,7 +19,7 @@ import {
   isPlainConfigObject,
   isUnsafeConfigKey,
 } from '../infrastructure/config-values.js';
-import { DefaultLogger, type Logger, LogHub } from '../infrastructure/logger.js';
+import { DefaultLogger, type Logger, LogHub, type LogLevel } from '../infrastructure/logger.js';
 
 // ----- 应用配置选项 -----
 

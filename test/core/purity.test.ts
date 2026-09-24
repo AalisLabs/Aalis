@@ -70,8 +70,6 @@ const RUNTIME_EXPORTS = [
 const FORBIDDEN_ROOT_EXPORTS = [
   'formatLogLine',
   'parseLogLine',
-  'LogEntry',
-  'LogLevel',
   'Context',
   'Activation',
   'ActivationHost',
@@ -152,8 +150,6 @@ describe('core 公开面快照（增删必须是有意识的决定）', () => {
   it('类型面不得从包根导入已删标识（去掉这些 import 后探针能编过）', () => {
     const header = `import { App } from '@aalis/core';\nvoid App;\n`;
     const forbidden = `import type {
-  LogEntry,
-  LogLevel,
   Context,
   Activation,
   ActivationHost,
@@ -179,6 +175,15 @@ import { formatLogLine, parseLogLine, requiresBounceOnDepChange, unwrapPluginMod
         `${name} 应无法从包根导入，实际：${errs.join('\n')}`,
       ).toBe(true);
     }
+  });
+
+  it('类型面可以从包根导入 LogEntry / LogLevel', () => {
+    const errs = runTscProbe(`import type { LogEntry, LogLevel } from '@aalis/core';
+const level: LogLevel = 'info';
+const entry: LogEntry = { seq: 0, timestamp: 't', level, scope: 's', message: 'm' };
+void entry;
+`);
+    expect(errs, `LogEntry / LogLevel 应可从 @aalis/core 导入，实际：${errs.join('\n') || '（零错误）'}`).toEqual([]);
   });
 
   it.each(['context', 'activation'])('公开 PluginEntry 类型不含 %s 字段', field => {
