@@ -40,8 +40,8 @@ describe('Resources', () => {
     resources.trackWithdrawal(() => calls.push('withdraw'));
     const off = resources.track(() => void calls.push('manual'), 'manual');
     off();
-    expect(resources.lifecycle.disposables.labels()).not.toContain('manual');
-    await resources.lifecycle.disposeAsync();
+    expect(resources.disposables.labels()).not.toContain('manual');
+    await resources.disposeAsync();
     expect(calls).toEqual(['manual', 'drain', 'before', 'withdraw', 'middle', 'same', 'after']);
   });
 
@@ -53,14 +53,14 @@ describe('Resources', () => {
     resources.run(() => {
       // This is the synchronous provider register callback. The caller receives off only after it returns.
       const register = () => {
-        closing = resources.lifecycle.disposeAsync();
+        closing = resources.disposeAsync();
         return () => {
           withdrew = true;
           return cleanup.promise;
         };
       };
       const off = register();
-      if (resources.lifecycle.disposed) resources.holdInflight(off(), 'late registration');
+      if (resources.disposed) resources.holdInflight(off(), 'late registration');
     });
     let closed = false;
     const observed = closing.then(() => {
@@ -81,7 +81,7 @@ describe('Resources', () => {
     expect(() =>
       resources.run(() => {
         resources.run(() => {
-          closing = resources.lifecycle.disposeAsync();
+          closing = resources.disposeAsync();
         });
         resources.holdInflight(cleanup.promise, 'rollback');
         throw new Error('acquire failed');
@@ -106,7 +106,7 @@ describe('Resources', () => {
       'first',
     );
     let closed = false;
-    const closing = resources.lifecycle.disposeAsync().then(() => {
+    const closing = resources.disposeAsync().then(() => {
       closed = true;
     });
     first.resolve();
@@ -120,7 +120,7 @@ describe('Resources', () => {
   it('preserves the existing explicit cleanup timeout and reports an in-flight task only once', async () => {
     const { resources, warnings } = world();
     resources.holdInflight(new Promise<void>(() => {}), 'stuck cleanup');
-    await resources.lifecycle.disposeAsync(5);
+    await resources.disposeAsync(5);
     expect(warnings).toHaveLength(1);
     expect(warnings.flat().map(String).join(' ')).toContain('stuck cleanup');
   });
@@ -129,8 +129,8 @@ describe('Resources', () => {
     const { resources } = world();
     let withdrawn = 0;
     const off = resources.trackWithdrawal(() => withdrawn++);
-    resources.lifecycle.disposables.remove(off);
-    await resources.lifecycle.disposeAsync();
+    resources.disposables.remove(off);
+    await resources.disposeAsync();
     expect(withdrawn).toBe(0);
     resources.onDispose(() => {
       withdrawn++;

@@ -364,7 +364,7 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
     for (const path of [
       'infrastructure/logger.ts',
       'orchestration/app.ts',
-      'kernel/lifecycle.ts',
+      'kernel/disposable-chain.ts',
       'primitives/events.ts',
       'types/events.ts',
       'index.ts',

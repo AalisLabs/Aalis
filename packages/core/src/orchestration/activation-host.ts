@@ -36,7 +36,7 @@ export class ActivationHost {
     config: Record<string, unknown> = {},
     logger = parent?.logger.child(id),
   ): Activation {
-    if (parent?.resources.lifecycle.disposed) throw new Error(`激活 "${parent.id}" 已 dispose，无法创建子激活 "${id}"`);
+    if (parent?.resources.disposed) throw new Error(`激活 "${parent.id}" 已 dispose，无法创建子激活 "${id}"`);
     if (!logger) throw new Error('根激活需要 logger');
     const owner = Symbol(id);
     const runtime = this.runtime;

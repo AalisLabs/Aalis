@@ -26,7 +26,7 @@ function makeFixture(id = 'root') {
 describe('清理链点名', () => {
   it('四原语登记不进清理链、激活关闭时一并撤回（含显式 entryId 的服务登记）；跟随按 watch:服务名 点名', async () => {
     const ctx = makeFixture('p');
-    const baseline = ctx.activation.resources.lifecycle.disposables.labels();
+    const baseline = ctx.activation.resources.disposables.labels();
     let heard = 0;
     let passed = 0;
     ctx.caps.events.on(EVT, () => {
@@ -41,7 +41,7 @@ describe('清理链点名', () => {
     ctx.caps.provide(defineService('llm'), {} as never, { entryId: 'p/model-a' });
     ctx.host.bind(ctx.activation, { ref: defineService('later') }).ref.follow(() => {});
 
-    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual([...baseline, 'watch:later']);
+    expect(ctx.activation.resources.disposables.labels()).toEqual([...baseline, 'watch:later']);
     await ctx.events.emit(EVT);
     await ctx.hooks.run(HOOK, {} as never);
     expect([heard, passed]).toEqual([1, 1]);
@@ -60,26 +60,26 @@ describe('清理链点名', () => {
 
   it('onDispose 作者标签保留，未命名项以 undefined 占位', async () => {
     const ctx = makeFixture('p');
-    const baseline = ctx.activation.resources.lifecycle.disposables.labels();
+    const baseline = ctx.activation.resources.disposables.labels();
     ctx.caps.lifecycle.onDispose(() => {}, 'mongo-client');
     ctx.caps.lifecycle.onDispose(() => {});
-    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual([...baseline, 'mongo-client', undefined]);
+    expect(ctx.activation.resources.disposables.labels()).toEqual([...baseline, 'mongo-client', undefined]);
     await ctx.activation.disposeAsync();
   });
 
   it('手动退订：清理链始终不留条目，退订即同步撤回监听', async () => {
     const ctx = makeFixture('p');
-    const baseline = ctx.activation.resources.lifecycle.disposables.labels();
+    const baseline = ctx.activation.resources.disposables.labels();
     let heard = 0;
     const off = ctx.caps.events.on(EVT, () => {
       heard++;
     });
-    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual(baseline);
+    expect(ctx.activation.resources.disposables.labels()).toEqual(baseline);
     await ctx.events.emit(EVT);
     off();
     await ctx.events.emit(EVT);
     expect(heard).toBe(1);
-    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual(baseline);
+    expect(ctx.activation.resources.disposables.labels()).toEqual(baseline);
     await ctx.activation.disposeAsync();
   });
 
@@ -87,9 +87,7 @@ describe('清理链点名', () => {
     const ctx = makeFixture('p');
     ctx.caps.provide(defineService('a'), {});
     ctx.caps.lifecycle.onDispose(() => {}, 'x');
-    expect(ctx.activation.resources.lifecycle.disposables.size).toBe(
-      ctx.activation.resources.lifecycle.disposables.labels().length,
-    );
+    expect(ctx.activation.resources.disposables.size).toBe(ctx.activation.resources.disposables.labels().length);
     await ctx.activation.disposeAsync();
   });
 });
@@ -107,7 +105,7 @@ describe('贡献登记表枚举', () => {
   });
   it('onDispose 同一函数登记两次：撤销精确到本次登记，余下条目的逆序不翻转', async () => {
     const ctx = makeFixture('dup');
-    const baseline = ctx.activation.resources.lifecycle.disposables.labels();
+    const baseline = ctx.activation.resources.disposables.labels();
     const log: string[] = [];
     const fn = () => {
       log.push('fn');
@@ -119,7 +117,7 @@ describe('贡献登记表枚举', () => {
     const off = ctx.caps.lifecycle.onDispose(fn, 'second');
     off();
     off(); // 幂等
-    expect(ctx.activation.resources.lifecycle.disposables.labels()).toEqual([...baseline, 'first', 'mid']);
+    expect(ctx.activation.resources.disposables.labels()).toEqual([...baseline, 'first', 'mid']);
     await ctx.activation.disposeAsync();
     // 链按引用首匹配移除：若撤销错项（删掉 first），余下 [mid, second] 逆序执行就成了 fn→mid
     expect(log).toEqual(['mid', 'fn']);
