@@ -47,18 +47,7 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
     const app = makeApp();
     const host = app.bind({ services });
     expect(host.services.names().sort()).toEqual(
-      [
-        'events',
-        'hooks',
-        'contributions',
-        'lifecycle',
-        'logger',
-        'config',
-        'provide',
-        'services',
-        'app',
-        'plugins',
-      ].sort(),
+      ['events', 'lifecycle', 'logger', 'config', 'provide', 'services', 'app', 'plugins'].sort(),
     );
   });
 

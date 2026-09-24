@@ -5,6 +5,7 @@ import agent from '../../packages/plugin-agent/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchive from '../../packages/plugin-message-archive/src/index.js';
 import { resolveSessionPlatform } from '../../packages/plugin-webui-server/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
@@ -42,6 +43,7 @@ function requireActive(...names: string[]): void {
 
 async function boot() {
   app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   const mockLLM = createMockLLMPlugin({});
   await app.plugin(mockLLM);
   await app.plugins.register(memoryInMemory, {});

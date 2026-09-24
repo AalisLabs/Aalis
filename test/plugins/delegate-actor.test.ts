@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
 import { App, events, provide } from '../../packages/core/src/index.js';
 import sessionTools from '../../packages/plugin-tool-session/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // delegate_to_session 的授权身份透传（schema-message actor 契约）。
@@ -26,6 +27,7 @@ afterEach(async () => {
 /** 真实 App 装载插件；tools 由宿主提供桩实现以捕获注册的 handler，事件走真实总线 */
 async function setup(): Promise<{ handlers: Map<string, Handler>; emitted: IncomingMessage[] }> {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   booted.push(app);
   const host = app.bind({ provide, events });
 

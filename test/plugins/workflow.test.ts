@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { Hooks } from '../../packages/api-hooks/src/index.js';
 import type { BoundTools, ToolService } from '../../packages/api-tools/src/index.js';
 import type { WorkflowDef } from '../../packages/api-workflow/src/index.js';
-import type { Events, Hooks, Logger } from '../../packages/core/src/index.js';
+import type { Events, Logger } from '../../packages/core/src/index.js';
 import type { EngineCaps } from '../../packages/plugin-workflow/src/engine.js';
 import { runDag, validateGraph } from '../../packages/plugin-workflow/src/engine.js';
 import { stubBoundTools } from '../fixtures/bound-tools.js';

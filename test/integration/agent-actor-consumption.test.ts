@@ -8,6 +8,7 @@ import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/inde
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
@@ -25,6 +26,7 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 async function runTurn(incoming: IncomingMessage): Promise<ToolCallContext | undefined> {
   const app = new App({ name: 'E2E', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ tools, agent: agentService });
   const toolCallResponse: ChatResponse = {
     content: null,

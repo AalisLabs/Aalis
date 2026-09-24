@@ -1,18 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 import { defineService } from '../../packages/core/src/index.js';
 import { bindActivationFixture, createActivationFixture } from '../helpers/activation.js';
+import { HubRegistry, hub } from '../helpers/hub.js';
 
 // ════════════════════════════════════════════════════════════
 // post-dispose 注册政策：实际能力与窄激活记录的行为契约。
-// - 订阅类（events/hooks/contributions/provide/ServiceRef.follow）：warn + no-op
+// - 订阅类（events/provide/ServiceRef.follow/资源口 registrar 账本）：warn + no-op
 // - 构造类（host.create）：抛错
 // - onDispose 特例：warn 后仍就地执行（握着资源，no-op 即泄漏）
-// 本文件是该政策的全量行为锚：7 个入口逐一钉死，含幽灵副作用断言与活路径回归。
+// 本文件是该政策的全量行为锚：6 个入口逐一钉死，含幽灵副作用断言与活路径回归。
+// 账本以测试枢纽 hub 为样本（hooks / contributions / tools 等契约包枢纽同一做法）。
 // ════════════════════════════════════════════════════════════
 
 const EVT = '__t:pd-evt' as never;
-const HOOK = '__t:pd-hook' as never;
-const POINT = '__t:pd-point' as never;
 
 function makeWorld() {
   const lines: string[] = [];
@@ -26,8 +26,14 @@ function makeWorld() {
     child: () => logger,
   } as never;
   const world = createActivationFixture({ logger });
-  const make = (id: string) => bindActivationFixture(world.host, world.host.create(world.activation, id));
-  return { make, lines, events: world.events, services: world.services, hooks: world.hooks };
+  // 枢纽提供者挂在根上：子激活关闭后登记表仍在场可读，迟到登记若落进去看得见
+  const registry = new HubRegistry();
+  world.caps.provide(hub, registry);
+  const make = (id: string) => {
+    const activation = world.host.create(world.activation, id);
+    return { ...bindActivationFixture(world.host, activation), hub: world.host.bind(activation, { hub }).hub };
+  };
+  return { make, lines, events: world.events, services: world.services, registry };
 }
 
 describe('订阅类 post-dispose：warn + no-op', () => {
@@ -52,24 +58,21 @@ describe('订阅类 post-dispose：warn + no-op', () => {
     await observer.activation.disposeAsync();
   });
 
-  it('middleware：runHook 不经过迟到注册的 handler；warn 点名钩子', async () => {
-    const { make, lines, hooks } = makeWorld();
-    const runner = make('runner');
+  it('账本登记（registrar）：迟到的 add 不进登记表；warn 点名服务与键', async () => {
+    const { make, lines, registry } = makeWorld();
+    const observer = make('observer');
     const dead = make('dead');
     await dead.activation.disposeAsync();
 
-    const regSpy = vi.spyOn(hooks, 'register');
-    let called = 0;
-    const off = dead.caps.hooks.middleware(HOOK, async (_d, next) => {
-      called++;
-      await next();
-    });
+    const regSpy = vi.spyOn(registry, 'register');
+    const off = dead.hub.add('late', 'v');
+    // 迟到登记不得到达登记表；warn 是关闭守卫生效的直接证据
     expect(regSpy).not.toHaveBeenCalled();
-    await runner.caps.hooks.run(HOOK, {} as never);
-    expect(called).toBe(0);
+    expect(observer.hub.list()).toEqual([]);
+    expect(off).toBeTypeOf('function');
     expect(() => off()).not.toThrow();
-    expect(lines.find(l => l.includes('忽略 middleware("__t:pd-hook")'))).toMatch(/^warn\|/);
-    await runner.activation.disposeAsync();
+    expect(lines.find(l => l.includes('"dead" 已关闭，忽略 __t:hub 登记 "late"'))).toMatch(/^warn\|/);
+    await observer.activation.disposeAsync();
   });
 
   it('provide：不产生幽灵服务，也不向活总线发 service:registered/unregistered', async () => {
@@ -120,30 +123,17 @@ describe('订阅类 post-dispose：warn + no-op', () => {
     await provider.activation.disposeAsync();
   });
 
-  it('contribute（既有守卫，纳入同一政策锚）：warn + no-op，collect 不见条目', async () => {
-    const { make, lines } = makeWorld();
-    const collector = make('collector');
-    const dead = make('dead');
-    await dead.activation.disposeAsync();
-
-    const off = dead.caps.contributions.contribute(POINT, { id: 'late' } as never);
-    expect(collector.caps.contributions.collect(POINT)).toEqual([]);
-    expect(() => off()).not.toThrow();
-    expect(lines.find(l => l.includes('忽略 contribute'))).toMatch(/^warn\|/);
-    await collector.activation.disposeAsync();
-  });
-
-  it('订阅类 no-op 不污染账本：资源清理链与贡献登记全零增长', async () => {
-    const ctx = createActivationFixture();
+  it('订阅类 no-op 不污染账本：资源清理链与枢纽登记表全零增长', async () => {
+    const { make, registry } = makeWorld();
+    const ctx = make('p');
     const { ref } = ctx.host.bind(ctx.activation, { ref: defineService('y') });
     await ctx.activation.disposeAsync();
     ctx.caps.events.on(EVT, () => {});
-    ctx.caps.hooks.middleware(HOOK, async (_d, n) => n());
+    ctx.hub.add('z', 'v');
     ctx.caps.provide(defineService('x'), {});
     ref.follow(() => {});
-    ctx.caps.contributions.contribute(POINT, { id: 'z' } as never);
     expect(ctx.activation.resources.disposables.labels()).toEqual([]);
-    expect(ctx.caps.contributions.collect(POINT)).toEqual([]);
+    expect(registry.list()).toEqual([]);
     expect(ctx.activation.resources.disposables.size).toBe(0);
   });
 });
@@ -174,7 +164,7 @@ describe('onDispose 特例：warn 后仍就地执行（资源必须释放）', (
 });
 
 describe('活路径回归：守卫对未 dispose 的 ctx 零影响', () => {
-  it('五个订阅入口 + onDispose 正常注册、正常触发、dispose 正常清理', async () => {
+  it('四个订阅入口 + onDispose 正常注册、正常触发、dispose 正常清理', async () => {
     const { make } = makeWorld();
     const ctx = make('alive');
     const peer = make('peer');
@@ -183,31 +173,25 @@ describe('活路径回归：守卫对未 dispose 的 ctx 零影响', () => {
     ctx.caps.events.on('plugin:loaded', () => {
       calls.push('on');
     });
-    ctx.caps.hooks.middleware(HOOK, async (_d, next) => {
-      calls.push('mw');
-      await next();
-    });
+    ctx.hub.add('a', 'v');
     ctx.caps.provide(defineService('alive-svc'), { v: 1 });
     ctx.host.bind(ctx.activation, { ref: defineService('alive-svc') }).ref.follow(() => {
       calls.push('when');
     });
-    ctx.caps.contributions.contribute(POINT, { id: 'a' } as never);
     ctx.caps.lifecycle.onDispose(() => {
       calls.push('cleanup');
     });
 
     await peer.caps.events.emit('plugin:loaded', 'x');
-    await peer.caps.hooks.run(HOOK, {} as never);
     expect(calls).toContain('on');
-    expect(calls).toContain('mw');
     expect(calls).toContain('when');
     expect(peer.caps.services.get('alive-svc')).toEqual({ v: 1 });
-    expect(peer.caps.contributions.collect(POINT)).toHaveLength(1);
+    expect(peer.hub.list()).toEqual(['alive/a=v']);
 
     await ctx.activation.disposeAsync();
     expect(calls).toContain('cleanup');
     expect(peer.caps.services.get('alive-svc')).toBeUndefined();
-    expect(peer.caps.contributions.collect(POINT)).toEqual([]);
+    expect(peer.hub.list()).toEqual([]);
     await peer.activation.disposeAsync();
   });
 

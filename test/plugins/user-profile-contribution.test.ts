@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { contributions } from '../../packages/api-contributions/src/index.js';
 import { llm } from '../../packages/api-llm/src/index.js';
 import { type MemoryService, memory as memoryService } from '../../packages/api-memory/src/index.js';
-import { App, contributions, logger, provide } from '../../packages/core/src/index.js';
+import { App, logger, provide } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import userProfile from '../../packages/plugin-user-profile/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // plugin-user-profile 的 agent:prompt 贡献 build（anchor='identity'，多块返回）
@@ -29,6 +31,7 @@ function makeFact(id: string, text: string, category?: string, updatedAt = TS) {
 
 async function setup(config: Record<string, unknown> = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   // 组装器只要两样能力：agent:prompt 的枚举与日志；provide / memory 供本测试自己种数据。
   const host = app.bind({ provide, contributions, logger, memory: memoryService });
   // user-profile 的 uses 含 required 的 llm；build 路径不会触达它，
@@ -53,6 +56,8 @@ async function setup(config: Record<string, unknown> = {}) {
   };
   await app.plugins.register(userProfile, config);
   await app.plugins.idle();
+  // 没激活时不登记贡献，「不注入」类断言会空转变绿
+  if (app.plugins.getPlugin(userProfile.name)?.state !== 'active') throw new Error('user-profile 未激活');
   return { host, memory, reads };
 }
 

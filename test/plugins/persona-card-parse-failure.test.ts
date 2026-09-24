@@ -6,6 +6,7 @@ import { type PersonaService, persona } from '../../packages/api-persona/src/ind
 import { App, type Logger, services } from '../../packages/core/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 坏角色卡不能静默：YAML 解析失败曾被 catch 吞成 undefined，与"文件不存在"
@@ -45,6 +46,7 @@ describe('persona 坏角色卡的告警与守卫（真 fs）', () => {
   const bootPersona = async (personaName: string): Promise<PersonaService> => {
     logs = [];
     app = new App({ name: 'T', logLevel: 'debug', logger: recordingLogger(logs) });
+    await registerHubs(app);
     // storage 先装：persona 的 storage 是可选依赖，缺席时它照样激活，只是一张卡都读不到
     await app.plugin(storageLocal, {
       roots: [

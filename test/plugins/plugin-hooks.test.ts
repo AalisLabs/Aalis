@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { HookRegistry } from '../../packages/core/src/primitives/hooks.js';
+import { Registry as HookRegistry } from '../../packages/plugin-hooks/src/index.js';
+
+// plugin-hooks 的登记表：洋葱链、截停、登记序、运行中变更与卡链上报。归属与撤回在绑定门面的账本，不在本表。
+
+/** 登记序：生产里由 hooks 门面分配，这里按调用次序递增 */
+let seq = 0;
 
 describe('HookRegistry', () => {
   it('handler 顺序执行（洋葱模型）+ defaultAction 在最后', async () => {
@@ -14,6 +19,7 @@ describe('HookRegistry', () => {
         order.push('a-after');
       },
       'ctx-test',
+      ++seq,
     );
     reg.register(
       'inbound:command',
@@ -23,6 +29,7 @@ describe('HookRegistry', () => {
         order.push('b-after');
       },
       'ctx-test',
+      ++seq,
     );
 
     // biome-ignore lint/suspicious/noExplicitAny: test
@@ -44,6 +51,7 @@ describe('HookRegistry', () => {
         // 不调 next
       },
       'ctx-test',
+      ++seq,
     );
     reg.register(
       'inbound:command',
@@ -51,6 +59,7 @@ describe('HookRegistry', () => {
         order.push('b');
       },
       'ctx-test',
+      ++seq,
     );
     // biome-ignore lint/suspicious/noExplicitAny: test
     const reached = await reg.run('inbound:command', {} as any, async () => {
@@ -71,34 +80,6 @@ describe('HookRegistry', () => {
     expect(reached).toBe(true);
   });
 
-  it('unregisterByOwner 移除指定归属的 handler', async () => {
-    const reg = new HookRegistry();
-    const order: string[] = [];
-    const p1 = Symbol('plugin-1');
-    reg.register(
-      'inbound:command',
-      async (_d, n) => {
-        order.push('p1');
-        await n();
-      },
-      'plugin-1',
-      p1,
-    );
-    reg.register(
-      'inbound:command',
-      async (_d, n) => {
-        order.push('p2');
-        await n();
-      },
-      'plugin-2',
-      Symbol('plugin-2'),
-    );
-    reg.unregisterByOwner(p1);
-    // biome-ignore lint/suspicious/noExplicitAny: test
-    await reg.run('inbound:command', {} as any);
-    expect(order).toEqual(['p2']);
-  });
-
   it('register 返回的 dispose 精确移除该 handler', async () => {
     const reg = new HookRegistry();
     const order: string[] = [];
@@ -109,6 +90,7 @@ describe('HookRegistry', () => {
         await n();
       },
       'ctx-test',
+      ++seq,
     );
     off();
     // biome-ignore lint/suspicious/noExplicitAny: test
@@ -130,6 +112,7 @@ describe('HookRegistry 运行中变更（#8.4）', () => {
         await n();
       },
       'ctx-test',
+      ++seq,
     );
     reg.register(
       'inbound:command',
@@ -138,6 +121,7 @@ describe('HookRegistry 运行中变更（#8.4）', () => {
         await n();
       },
       'ctx-test',
+      ++seq,
     );
     // biome-ignore lint/suspicious/noExplicitAny: test
     const reached = await reg.run('inbound:command', {} as any, async () => {
@@ -165,6 +149,7 @@ describe('HookRegistry 运行中变更（#8.4）', () => {
         await n();
       },
       'ctx-test',
+      ++seq,
     );
     offLater = reg.register(
       'inbound:command',
@@ -173,6 +158,7 @@ describe('HookRegistry 运行中变更（#8.4）', () => {
         await n();
       },
       'ctx-test',
+      ++seq,
     );
     reg.register(
       'inbound:command',
@@ -181,6 +167,7 @@ describe('HookRegistry 运行中变更（#8.4）', () => {
         await n();
       },
       'ctx-test',
+      ++seq,
     );
     // biome-ignore lint/suspicious/noExplicitAny: test
     const reached = await reg.run('inbound:command', {} as any);
@@ -188,19 +175,20 @@ describe('HookRegistry 运行中变更（#8.4）', () => {
     expect(reached).toBe(true);
   });
 
-  it('unregisterByOwner 之后旧 dispose 闭包仍能精确移除（不再 no-op 泄漏）', async () => {
+  it('链清空、同一钩子再登记后，旧退订仍只撤自己那一条', async () => {
     const reg = new HookRegistry();
     const order: string[] = [];
-    const a = Symbol('ctx-a');
-    reg.register(
+    const offA = reg.register(
       'inbound:command',
       async (_d, n) => {
         order.push('a');
         await n();
       },
       'ctx-a',
-      a,
+      ++seq,
     );
+    offA();
+    // 链清空后表项被删，再登记会新建数组；退订闭包必须重查活容器，不能捕获旧数组
     const offB = reg.register(
       'inbound:command',
       async (_d, n) => {
@@ -208,16 +196,24 @@ describe('HookRegistry 运行中变更（#8.4）', () => {
         await n();
       },
       'ctx-b',
-      Symbol('ctx-b'),
+      ++seq,
     );
-    // 旧实现的 unregisterByOwner 整体换数组，offB 捕获旧数组后会变 no-op；现在原地删，此例守的是退订闭包重查活容器
-    reg.unregisterByOwner(a);
+    reg.register(
+      'inbound:command',
+      async (_d, n) => {
+        order.push('c');
+        await n();
+      },
+      'ctx-c',
+      ++seq,
+    );
+    offA();
     offB();
     // biome-ignore lint/suspicious/noExplicitAny: test
     const reached = await reg.run('inbound:command', {} as any, async () => {
       order.push('default');
     });
-    expect(order).toEqual(['default']);
+    expect(order).toEqual(['c', 'default']);
     expect(reached).toBe(true);
   });
 });
@@ -228,53 +224,43 @@ describe('HookRegistry 卡链上报', () => {
   };
 
   it('warnOnStall 时点名卡链者与被跳过的数量', async () => {
-    const reg = new HookRegistry();
     const calls: unknown[][] = [];
-    reg.onStall = (...args) => calls.push(args);
-    reg.register('inbound:command', stalled, 'ctx-a', Symbol('a'));
-    reg.register('inbound:command', async (_d, n) => n(), 'ctx-b', Symbol('b'));
+    const reg = new HookRegistry((...args) => void calls.push(args));
+    reg.register('inbound:command', stalled, 'ctx-a', ++seq);
+    reg.register('inbound:command', async (_d, n) => n(), 'ctx-b', ++seq);
     await reg.run('inbound:command', {} as never, undefined, { warnOnStall: true });
     expect(calls).toEqual([['inbound:command', 'ctx-a', 1]]);
   });
 
   it('onStall 自身抛错不打断 run：诊断回调不得否决业务流程', async () => {
-    const reg = new HookRegistry();
-    reg.onStall = () => {
+    const reg = new HookRegistry(() => {
       throw new Error('sink broken');
-    };
-    reg.register('inbound:command', stalled, 'ctx-a', Symbol('a'));
-    reg.register('inbound:command', async (_d, n) => n(), 'ctx-b', Symbol('b'));
+    });
+    reg.register('inbound:command', stalled, 'ctx-a', ++seq);
+    reg.register('inbound:command', async (_d, n) => n(), 'ctx-b', ++seq);
     await expect(reg.run('inbound:command', {} as never, undefined, { warnOnStall: true })).resolves.toBe(false);
   });
 });
 
-describe('HookRegistry unregisterByOwner', () => {
-  it('同一 owner 在同一钩子上相邻的多条登记全部清掉', async () => {
+describe('HookRegistry 登记序', () => {
+  it('按登记序插入而非按到达次序：乱序到达的登记还原成登记序', async () => {
     const reg = new HookRegistry();
-    const a = Symbol('a');
-    const hits: string[] = [];
-    for (const tag of ['a1', 'a2', 'a3']) {
+    const trail: string[] = [];
+    const add = (tag: string, at: number) =>
       reg.register(
         'inbound:command',
         async (_d, n) => {
-          hits.push(tag);
+          trail.push(tag);
           await n();
         },
-        'ctx-a',
-        a,
+        `ctx-${tag}`,
+        at,
       );
-    }
-    reg.register(
-      'inbound:command',
-      async (_d, n) => {
-        hits.push('b');
-        await n();
-      },
-      'ctx-b',
-      Symbol('b'),
-    );
-    reg.unregisterByOwner(a);
+    add('c', 30);
+    add('a', 10);
+    add('d', 40);
+    add('b', 20);
     await reg.run('inbound:command', {} as never);
-    expect(hits).toEqual(['b']);
+    expect(trail).toEqual(['a', 'b', 'c', 'd']);
   });
 });

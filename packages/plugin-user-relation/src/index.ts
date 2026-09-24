@@ -18,24 +18,15 @@
 
 import { agent } from '@aalis/api-agent';
 import { commands } from '@aalis/api-commands';
+import { contributions } from '@aalis/api-contributions';
 import { embedding } from '@aalis/api-embedding';
+import { hooks } from '@aalis/api-hooks';
 import { llm } from '@aalis/api-llm';
 import { memory } from '@aalis/api-memory';
 import { platform } from '@aalis/api-platform';
 import { tools } from '@aalis/api-tools';
 import { type WebuiPage, webuiServer } from '@aalis/api-webui';
-import {
-  type BoundOf,
-  config,
-  contributions,
-  definePlugin,
-  defineService,
-  events,
-  hooks,
-  logger,
-  optional,
-  provide,
-} from '@aalis/core';
+import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { registerRelationActions } from './actions.js';
 import { registerRelationCommands } from './commands.js';

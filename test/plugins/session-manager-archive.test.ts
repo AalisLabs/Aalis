@@ -4,6 +4,7 @@ import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // 背景：archiveSession 曾用 `this.archiveSession(...)` 递归，而 webui-server 是把处理函数
 // 取出来单独调用的（没有 receiver）——有子会话时必抛 TypeError，父会话也没归档。
@@ -26,6 +27,7 @@ function fakeMemory() {
 
 async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   // 桩 webui-server：页面动作登记到这里，测试按 method 取处理函数
   const actions = new Map<string, WebuiActionHandler>();
   const host = app.bind({ provide, sessionManager });

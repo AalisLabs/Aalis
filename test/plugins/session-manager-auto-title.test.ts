@@ -4,6 +4,7 @@ import { llm } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type SessionManagerService, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // 背景（C11）：自动标题监听在「会话不存在」时只打一条 warn 就返回，而平台派生会话
 // （cli-default、OneBot 会话 id）从不经 createSession 预建 —— 于是 CLI 会话永远没有标题，
@@ -27,6 +28,7 @@ function fakeMemory() {
 
 async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ provide, events, sessionManager });
   host.provide(memory, fakeMemory() as never);
   const llmCalls = { chats: 0 };

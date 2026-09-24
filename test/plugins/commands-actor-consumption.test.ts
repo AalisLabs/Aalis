@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { commands as commandsDescriptor, type ExecutionInput } from '../../packages/api-commands/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // commands 的 inbound 相位：actor 消费端 + 受信系统源判定
@@ -23,6 +24,7 @@ interface Captured {
 
 async function runInbound(message: Record<string, unknown>): Promise<Captured> {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   await app.plugin(gatewayPlugin);
   await app.plugin(commandsPlugin);
   await app.plugins.idle();

@@ -1,6 +1,7 @@
 import { authority } from '@aalis/api-authority';
 import { type CommandArgv, commands as commandsService } from '@aalis/api-commands';
 import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
+import { hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
 import { createStorageGateway, type StorageService, storage } from '@aalis/api-storage';
 import type { ToolService } from '@aalis/api-tools';
@@ -10,7 +11,6 @@ import {
   config,
   definePlugin,
   events,
-  hooks,
   logger,
   optional,
   provide,

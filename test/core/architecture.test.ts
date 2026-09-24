@@ -12,8 +12,8 @@ import { describe, expect, it } from 'vitest';
 // 由本测试设防，使"理论上可拆"始终成立（满足特定条件时可重新评估）。
 //
 // 分层即目录，自下而上，每层只许 import 本层与更低层：
-// - kernel/：资源生命周期与清理链，只认自己，不引用类型词汇、四原语、Context 或编排层
-// - primitives/：四原语注册表，只认 kernel 与类型词汇，不认识 Context、Logger、Config
+// - kernel/：资源生命周期与清理链，只认自己，不引用类型词汇、原语、Context 或编排层
+// - primitives/：原语注册表（事件总线与服务容器），只认 kernel 与类型词汇，不认识 Context、Logger、Config
 //   （需要上报的诊断经注入的回调送出）
 // - infrastructure/：配置、日志与资源账，只依赖资源内核、原语与基础词汇
 // - composition/：服务描述符、绑定与工厂、默认服务和插件定义，不依赖编排层
@@ -395,23 +395,28 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
     }
   });
 
-  it('扩展点接口在 core 内只登记基础词汇层能完整表达的 core 自持条目', () => {
-    // 同一条规则覆盖四张表：事件的载荷是字符串，core 自持的内置事件全部登记（AalisEvents 从不为空）；
-    // services 的 core 自持条目 app / plugins 里，plugins 的契约引用编排层词汇（PluginEntry 等），
-    // 基础词汇文件不得向上引用，成对登不了就一个不登；hooks / contributions 没有 core 自持条目。
-    const EMPTY_POINTS = ['ServiceTypeMap', 'HookContextMap', 'ContributionPointMap'];
+  it('core 只剩 AalisEvents 一张扩展点且登记了内置事件；钩子与贡献点的扩展点在各自契约包里保持为空', () => {
+    // 事件的载荷是字符串，core 自持的内置事件全部登记（AalisEvents 从不为空）。服务类型随描述符走；
+    // 钩子与贡献点的扩展点随契约包（@aalis/api-hooks / @aalis/api-contributions）走，契约包只声明空接口，
+    // 条目由领域 -api 包增广注入。
+    const MOVED_OUT = /\binterface\s+(ServiceTypeMap|HookContextMap|ContributionPointMap)\b/;
     const offenders: string[] = [];
     let eventsRegistered = false;
     for (const file of walk(SRC_DIR)) {
-      const { nonEmptyInterfaces } = parse(file);
-      if (nonEmptyInterfaces.has('AalisEvents')) eventsRegistered = true;
-      for (const name of EMPTY_POINTS) {
-        if (nonEmptyInterfaces.has(name)) offenders.push(`${relToSrc(file)} → ${name} 有条目或继承了别的接口`);
-      }
+      if (parse(file).nonEmptyInterfaces.has('AalisEvents')) eventsRegistered = true;
+      const hit = readFileSync(file, 'utf-8').match(MOVED_OUT);
+      if (hit) offenders.push(`${relToSrc(file)} → core 不再承载 ${hit[1]}`);
     }
-    expect(offenders, 'services / hooks / contributions 的扩展点在 core 内必须为空——条目由 -api 包增广注入').toEqual(
-      [],
-    );
+    for (const [pkg, name] of [
+      ['api-hooks', 'HookContextMap'],
+      ['api-contributions', 'ContributionPointMap'],
+    ]) {
+      const file = join(SRC_DIR, `../../${pkg}/src/index.ts`);
+      if (!readFileSync(file, 'utf-8').includes(`export interface ${name} {}`))
+        offenders.push(`${pkg} 未声明空的 ${name}`);
+      if (parse(file).nonEmptyInterfaces.has(name)) offenders.push(`${pkg} → ${name} 有条目或继承了别的接口`);
+    }
+    expect(offenders, '钩子与贡献点的扩展点只在契约包里声明为空接口，条目由 -api 包增广注入').toEqual([]);
     expect(eventsRegistered, 'AalisEvents 必须登记 core 自持的内置事件').toBe(true);
   });
 });
@@ -523,7 +528,7 @@ describe('内置事件出口：App 等待屏障，通知不阻塞状态机', () 
 // 去掉注释与空行后的代码行数。上限是本轮精简实施后的实测值加少量余量；抬高上限的提交必须写明对应哪条用户
 // 决定，不能顺手抬。口径与仓库外的 count-code-lines-fixed.cjs 相同：逐字符状态机去注释（识别字符串、
 // 模板串含嵌套 ${}），再数非空行。
-const CORE_CODE_LINE_CEILING = 2700;
+const CORE_CODE_LINE_CEILING = 2500;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {

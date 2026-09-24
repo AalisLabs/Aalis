@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { contributions } from '../../packages/api-contributions/src/index.js';
 import { type EmbeddingService, embedding } from '../../packages/api-embedding/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
@@ -7,13 +8,14 @@ import {
   type VectorStoreService,
   vectorstore,
 } from '../../packages/api-vectorstore/src/index.js';
-import { App, contributions, logger, provide } from '../../packages/core/src/index.js';
+import { App, logger, provide } from '../../packages/core/src/index.js';
 import {
   assemblePromptContributions,
   type PromptAssemblyCaps,
 } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // memory 是 memory-vector 的 optional 依赖，provider 重载不级联 bounce 本插件。
@@ -59,6 +61,7 @@ function makeRangeMemory(messages: Message[]): MemoryService {
 
 async function setup(opts: { memory?: MemoryService } = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   // 宿主侧的根绑定：既用来摆桩服务，也是下面组装 agent:prompt 贡献要的那两样能力
   const host = app.bind({ provide, contributions, logger });
   host.provide(embedding, makeEmbedder());

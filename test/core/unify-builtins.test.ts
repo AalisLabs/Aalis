@@ -1,10 +1,4 @@
 declare module '@aalis/core' {
-  interface HookContextMap {
-    '__t:unify-hook': { trail: string[] };
-  }
-  interface ContributionPointMap {
-    '__t:unify-point': { id: string; label: string };
-  }
   interface PluginMeta {
     /** 测试用元数据字段：经 declaration merging 挂到插件定义上 */
     __tMeta?: { tag: string };
@@ -15,17 +9,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   App,
   config,
-  contributions,
   definePlugin,
   defineService,
-  hooks,
   type Logger,
   optional,
   provide,
   services,
 } from '../../packages/core/src/index.js';
 
-// 内置能力 hooks / contributions、插件元数据随定义携带、插件自己的配置视图。
+// 内置能力（config / services / provide）、插件元数据随定义携带、插件自己的配置视图。
 
 const apps: App[] = [];
 afterEach(async () => {
@@ -39,47 +31,6 @@ function makeApp() {
 }
 
 describe('内置能力', () => {
-  it('hooks：中间件随激活撤回；run 驱动整条链', async () => {
-    const app = makeApp();
-    await app.plugin(
-      definePlugin({
-        name: 'mw',
-        uses: { hooks },
-        apply({ hooks }) {
-          hooks.middleware('__t:unify-hook', async (data, next) => {
-            data.trail.push('mw');
-            await next();
-          });
-        },
-      }),
-    );
-    await app.plugins.idle();
-    const host = app.bind({ hooks });
-    const first = { trail: [] as string[] };
-    expect(await host.hooks.run('__t:unify-hook', first)).toBe(true);
-    expect(first.trail).toEqual(['mw']);
-    await app.plugins.unload('mw');
-    const second = { trail: [] as string[] };
-    await host.hooks.run('__t:unify-hook', second);
-    expect(second.trail).toEqual([]);
-  });
-
-  it('contributions：交付随激活撤回；collect 取快照', async () => {
-    const app = makeApp();
-    await app.plugin(
-      definePlugin({
-        name: 'giver',
-        uses: { contributions },
-        apply: ({ contributions }) => void contributions.contribute('__t:unify-point', { id: 'a', label: 'A' }),
-      }),
-    );
-    await app.plugins.idle();
-    const host = app.bind({ contributions });
-    expect(host.contributions.collect('__t:unify-point').map(h => h.spec.label)).toEqual(['A']);
-    await app.plugins.unload('giver');
-    expect(host.contributions.collect('__t:unify-point')).toEqual([]);
-  });
-
   it('config 是插件自己的配置视图：登记时交来的那一份', async () => {
     const app = makeApp();
     let own: unknown;

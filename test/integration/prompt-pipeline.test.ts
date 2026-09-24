@@ -1,15 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { type AgentService, agent, type PromptContributionView } from '../../packages/api-agent/src/index.js';
+import { contributions } from '../../packages/api-contributions/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMModel } from '../../packages/api-llm/src/index.js';
 import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
-import { App, contributions, definePlugin, events, hooks, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, events, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryHistoryPlugin from '../../packages/plugin-memory-history/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummaryPlugin from '../../packages/plugin-memory-summary/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import type { IncomingMessage, Message, OutgoingMessage, ToolCall } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 /**
  * 提示词管线端到端集成测试
@@ -30,7 +33,7 @@ import type { IncomingMessage, Message, OutgoingMessage, ToolCall } from '../../
  * - plugin-agent：被测主管线
  */
 
-// 测试从 core 源码路径导入，agent-api 对 '@aalis/core' 的 declaration merging
+// 测试从源码路径导入，api-agent 对 '@aalis/api-contributions' 的 declaration merging
 // 不在此路径生效——vitest 不做类型检查，用 never 断言绕过键约束（与
 // test/plugins/prompt-assembly.test.ts 同一惯例）。
 const POINT = 'agent:prompt' as never;
@@ -167,6 +170,7 @@ const ACTIVE_IDS = [
 
 async function loadStack(replies: ProbeReply[]): Promise<Stack> {
   const app = new App({ name: 'PP', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ events, memory, agent });
   const recorder: Message[][] = [];
   const views: PromptContributionView[] = [];

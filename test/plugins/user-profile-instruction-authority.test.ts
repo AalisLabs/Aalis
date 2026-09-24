@@ -5,6 +5,7 @@ import { memory as memoryService } from '../../packages/api-memory/src/index.js'
 import { App, events, provide } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import userProfile from '../../packages/plugin-user-profile/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 指令自动提取的发言人门槛：按 authority 读发言人等级，owner 视为无穷大，
@@ -32,6 +33,7 @@ afterEach(async () => {
 async function setup(opts: { withAuthority: boolean; config?: Record<string, unknown> }) {
   const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
+  await registerHubs(app);
   const host = app.bind({ provide, events, memory: memoryService });
   const requests: ChatModelRequest[] = [];
   const chat = vi.fn(async (req: ChatModelRequest) => {

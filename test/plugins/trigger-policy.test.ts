@@ -143,13 +143,16 @@ describe('checkMuteKeyword', () => {
 // decide()：poke 直触发与 triggerOnPoke 开关（走真实插件装配）
 // ════════════════════════════════════════════════════════════
 
-import { App, type Hooks, hooks, provide } from '@aalis/core';
+import { App, provide } from '@aalis/core';
 import { gateway } from '../../packages/api-gateway/src/index.js';
+import { type Hooks, hooks } from '../../packages/api-hooks/src/index.js';
 import triggerPolicyPlugin, { triggerPolicy } from '../../packages/plugin-trigger-policy/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 async function setupPolicy(config: Record<string, unknown> = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ provide, hooks, triggerPolicy });
   host.provide(gateway, {} as never); // 满足 required 依赖；decide 本身不经过 gateway
   await app.plugins.register(triggerPolicyPlugin, config);

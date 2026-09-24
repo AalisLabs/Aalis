@@ -1,10 +1,12 @@
-import { App, events, hooks, provide, services } from '@aalis/core';
+import { App, events, provide, services } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 自动压缩的触发条件
@@ -40,6 +42,7 @@ function summarizedCount(): number {
 async function setup(config: Record<string, unknown>, model: LLMModel = fakeLLM()) {
   lastSummaryInput.text = '';
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ provide, services, hooks, events });
   await app.plugin(memoryInMemory);
   host.provide(llm, model);

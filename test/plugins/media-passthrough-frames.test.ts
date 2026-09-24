@@ -1,8 +1,10 @@
 import { processService } from '@aalis/api-process';
 import { storage } from '@aalis/api-storage';
-import { App, hooks, type Logger, provide, type ServiceRef } from '@aalis/core';
+import { App, type Logger, provide, type ServiceRef } from '@aalis/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 两种交付形态的出口变换（transformModelImages + agent:llm:before 中间件）：
@@ -152,6 +154,7 @@ describe('agent:llm:before 中间件接线', () => {
   /** 装一份真 media：process / storage 是它的 required 依赖，不放桩它停在 pending、中间件不挂 */
   async function bootMedia(delivery: string) {
     const app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
     const host = app.bind({ provide, hooks });
     host.provide(processService, {} as never);
     host.provide(storage, {} as never);

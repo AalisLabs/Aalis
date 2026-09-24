@@ -2,15 +2,17 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { type Hooks, hooks as hooksCap } from '../../packages/api-hooks/src/index.js';
 import {
   createStorageGateway,
   type StorageService,
   storage as storageService,
 } from '../../packages/api-storage/src/index.js';
-import { App, type Hooks, hooks as hooksCap } from '../../packages/core/src/index.js';
+import { App } from '../../packages/core/src/index.js';
 import checkpointPlugin, { checkpoint } from '../../packages/plugin-checkpoint/src/index.js';
 import type { CheckpointServiceImpl } from '../../packages/plugin-checkpoint/src/service.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // checkpoint × storage-local 真 fs 集成：回滚承诺必须与磁盘实况一致。
@@ -37,6 +39,7 @@ describe('checkpoint × storage (真 fs)', () => {
     ws = join(base, 'ws');
     mkdirSync(ws, { recursive: true });
     app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
     await app.plugins.register(storageLocalPlugin, {
       roots: [
         { name: 'ws', path: ws, kind: 'workspace', browsable: true, readable: true, writable: true, deletable: true },

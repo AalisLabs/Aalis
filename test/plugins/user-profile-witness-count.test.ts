@@ -4,6 +4,7 @@ import { type MemoryService, memory as memoryService } from '../../packages/api-
 import { App, type Events, events, provide } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import userProfile from '../../packages/plugin-user-profile/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // inbound:message:archived 上的 witness 路径是 interactionCount / lastInteractionAt
@@ -16,6 +17,7 @@ const PROFILE_NS = 'user:profile';
 
 async function setup(config: Record<string, unknown>) {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ provide, events, memory: memoryService });
   host.provide(llm, { chat: async () => ({ content: '' }) } as never);
   await app.plugins.register(memoryInMemory, {});

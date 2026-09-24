@@ -8,6 +8,7 @@ import ollama from '../../packages/plugin-llm-ollama/src/index.js';
 import mediaPlugin from '../../packages/plugin-media/src/index.js';
 import { scanLLMProcessors } from '../../packages/plugin-media/src/llm-adapter.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 图片拿不到时的两种语义，由调用方经 requireImages 声明。
@@ -159,6 +160,7 @@ describe('media 视觉识别的接线', () => {
 describe('识别失败的如实上报', () => {
   it('失败写进描述位，且 successCount 不增', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
     const host = app.bind({ provide, services });
     host.provide(llm, {
       id: 'fake/vision',

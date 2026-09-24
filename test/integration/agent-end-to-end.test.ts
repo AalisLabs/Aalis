@@ -12,6 +12,7 @@ import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/
 import { llm as llmService } from '../../packages/api-llm/src/index.js';
 import { memory as memoryService } from '../../packages/api-memory/src/index.js';
 import type { IncomingMessage, OutgoingMessage } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 /**
@@ -23,6 +24,7 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 async function loadStack(opts: { responses: ChatResponse[]; recorder?: ChatModelRequest[] }) {
   const app = new App({ name: 'E2E', logLevel: 'error' });
+  await registerHubs(app);
   const host = app.bind({ events, agent: agentService, memory: memoryService, llm: llmService });
 
   const outbound: OutgoingMessage[] = [];
