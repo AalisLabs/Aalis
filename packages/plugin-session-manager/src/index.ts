@@ -170,6 +170,12 @@ class SessionManager implements SessionManagerService {
   private caps: ManagerCaps;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private dirty = false;
+  /**
+   * 本进程显式删除、尚未落盘的会话（墓碑）。persist 只删这些键，不按「后端有、内存无」清扫：
+   * 冷启动时若先从空的后备 memory 加载，之后首选后端成为胜者，按差集清扫会把首选后端里原有的会话
+   * 当孤儿删掉。每条墓碑带令牌，提交成功后只清掉提交时那一版，提交期间再删的保留到下一次。
+   */
+  private deleted = new Map<string, symbol>();
   /** 平台 → 默认 SessionConfig 模板 */
   private platformProfiles = new Map<string, PlatformProfile>();
   /** 全局默认配置（platform profile 之下的最低层 fallback） */
@@ -225,8 +231,8 @@ class SessionManager implements SessionManagerService {
    *
    * 整批提交的**原子性按后端分档**（见 api-memory 契约）：sqlite/inmemory 真事务，
    * mongodb 只保证按序执行遇错即停，仍可能停在半新半旧。本场景对此免疫，靠的不是原子性
-   * 而是**幂等 + 可重试**：每次写的是全量快照（不是增量），失败时 dirty 复位，下一次
-   * markDirty 会把完整状态重写一遍并重扫孤儿，前一次的半成品被整体覆盖。
+   * 而是**幂等 + 可重试**：每次写的是全量快照（不是增量），删除只针对墓碑；失败时 dirty 复位、
+   * 墓碑保留，下一次 markDirty 会把完整状态重写一遍，前一次的半成品被整体覆盖。
    */
   async persist(): Promise<void> {
     if (!this.dirty) return;
@@ -238,15 +244,15 @@ class SessionManager implements SessionManagerService {
       key: id,
       data: info as unknown as Record<string, unknown>,
     }));
+    const tombstones = [...this.deleted];
+    for (const [key] of tombstones) {
+      if (!this.sessions.has(key)) ops.push({ op: 'del', namespace: METADATA_NAMESPACE, key });
+    }
     try {
-      // 清理孤儿：元数据里有、内存里没有的记录，与上面的写入同批提交。
-      // **这一句必须在 try 内**：它同样会抛（provider 换人的窗口里 `this.memory` getter 就会），
-      // 而 dirty 已在上面置 false —— 落在外面就等于「这批变更丢了且永不重试」，正是本方法
-      // 要消灭的那个病。
-      for (const { key } of await this.memory.listMetadata(METADATA_NAMESPACE)) {
-        if (!this.sessions.has(key)) ops.push({ op: 'del', namespace: METADATA_NAMESPACE, key });
-      }
+      // **取 memory 必须在 try 内**：provider 换人的窗口里 `this.memory` getter 会抛，而 dirty 已在
+      // 上面置 false —— 落在外面就等于「这批变更丢了且永不重试」，正是本方法要消灭的那个病。
       await this.memory.commitMetadata(ops);
+      for (const [key, token] of tombstones) if (this.deleted.get(key) === token) this.deleted.delete(key);
     } catch (err) {
       this.dirty = true; // 失败要能重试，否则这批变更永远落不了盘
       throw err;
@@ -396,6 +402,7 @@ class SessionManager implements SessionManagerService {
     }
 
     this.sessions.delete(id);
+    this.deleted.set(id, Symbol(id));
 
     await this.clearDeletedSessionData(id);
 
