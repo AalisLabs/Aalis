@@ -66,7 +66,7 @@ async function setup(llmContent: string) {
   await app.plugins.idle();
   const mem = host.memory.current;
   if (!mem) throw new Error('no memory');
-  const store = new RelationStore(mem);
+  const store = new RelationStore(() => mem);
   const service = new RelationService(store);
   // 注册若干 mock platform adapter，让 `getPlatformNames(platform)` 在测试里也有
   // 真实集合（{onebot, test}），从而触发 extractor 的 persona-agnostic 平台白名单
@@ -266,7 +266,7 @@ describe('plugin-user-relation: extractor', () => {
     await app.plugins.idle();
     const mem = host.memory.current;
     if (!mem) throw new Error('no memory');
-    const service = new RelationService(new RelationStore(mem));
+    const service = new RelationService(new RelationStore(() => mem));
     host.provide(llm, slowLLM, { entryId: 'slow/x' });
     const extractor = new RelationExtractor(host, service, {
       ...EXTRACTOR_DEFAULTS,

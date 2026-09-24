@@ -29,6 +29,7 @@
     "eval:behavior": "node evals/profile-behavior-eval.mjs"
   },
   "dependencies": {
+    "@aalis/api-authority": "workspace:>=0.9.0 <1.0.0",
     "@aalis/api-commands": "workspace:>=0.6.0 <1.0.0",
     "@aalis/schema-config": "workspace:>=0.12.0 <1.0.0",
     "@aalis/api-llm": "workspace:>=0.11.0 <1.0.0",
@@ -57,10 +58,10 @@
         "hooks",
         "llm",
         "logger",
-        "memory",
-        "services"
+        "memory"
       ],
       "optional": [
+        "authority",
         "user-relation",
         "tools",
         "commands",
