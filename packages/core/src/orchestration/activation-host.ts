@@ -52,6 +52,7 @@ export class ActivationHost {
       // 提供者自己的清理之前：挂在它上面的跟随者就地交接，落定后提供者才关
       afterWithdraw: (): Promise<unknown> | undefined => activation.handover(),
       afterCleanup: () => {
+        activation.dropOutbound();
         this.owners.delete(owner);
         parent?.children.delete(activation);
       },
