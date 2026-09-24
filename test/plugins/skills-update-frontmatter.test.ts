@@ -6,6 +6,7 @@ import { App, services } from '../../packages/core/src/index.js';
 import skillsPlugin, { type SkillsService, skills } from '../../packages/plugin-skills/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // skill_update 的 frontmatter 合并次序：新值必须压过旧值。
@@ -36,6 +37,7 @@ describe('skills updateSkill frontmatter 合并（真 fs）', () => {
     writeFileSync(join(base, 'skills', 'zz-demo', 'SKILL.md'), SKILL_MD);
 
     app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
     await app.plugins.register(storageLocal, {
       roots: [
         {

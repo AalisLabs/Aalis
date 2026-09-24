@@ -12,7 +12,8 @@
 // ============================================================
 
 import type { PromptAnchor, PromptContribution, PromptContributionView } from '@aalis/api-agent';
-import type { Contributions, Logger } from '@aalis/core';
+import type { Contributions } from '@aalis/api-contributions';
+import type { Logger } from '@aalis/core';
 import { type Message, WellKnownKinds } from '@aalis/schema-message';
 
 /** 锚位排布次序（同一轮组装内生效；语义见 agent-api 的 PromptAnchor 文档） */

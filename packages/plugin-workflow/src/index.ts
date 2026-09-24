@@ -7,13 +7,14 @@
 // ============================================================
 
 import { cronEngine } from '@aalis/api-cron-engine';
+import { hooks } from '@aalis/api-hooks';
 import { createStorageGateway, storage } from '@aalis/api-storage';
 import { type BoundTools, tools } from '@aalis/api-tools';
 import type { BoundWebui, WebuiPage } from '@aalis/api-webui';
 import { webuiServer } from '@aalis/api-webui';
 import type { NodeRunInfo, WorkflowRun, WorkflowService } from '@aalis/api-workflow';
 import { workflow } from '@aalis/api-workflow';
-import { type BoundOf, config, definePlugin, events, hooks, lifecycle, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { parse, stringify } from 'yaml';
 

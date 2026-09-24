@@ -5,7 +5,6 @@ import {
   definePlugin,
   defineService,
   events,
-  hooks,
   type Logger,
   LogHub,
   lifecycle,
@@ -17,6 +16,7 @@ import { Resources } from '../../packages/core/src/infrastructure/resources.js';
 // DisposableChain 不从包根导出（内部实现细节）；直接从源文件导入测试。
 import { DisposableChain } from '../../packages/core/src/kernel/disposable-chain.js';
 import { EventBus } from '../../packages/core/src/primitives/events.js';
+import { HubRegistry, hub } from '../helpers/hub.js';
 import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
@@ -145,37 +145,27 @@ describe('EventBus sticky 补发', () => {
   });
 });
 
-describe('HookRegistry 旧退订句柄', () => {
-  const HOOK = '__t:kernel-edges-hook' as never;
-
-  it('插件在 onDispose 里自行退订中间件：拆卸时钩子键已被整体清走，旧句柄无害返回、不产生告警', async () => {
+describe('账本登记的旧退订句柄', () => {
+  it('插件在 onDispose 里自行退订账本登记：拆卸时条目已同栈撤回，旧句柄无害返回、不产生告警', async () => {
     const { app, warnings } = world();
-    const seen: string[] = [];
+    const registry = new HubRegistry();
+    app.bind({ provide }).provide(hub, registry);
     await app.plugin(
       definePlugin({
         name: 'self-unsubscribe',
-        uses: { hooks, lifecycle },
-        apply({ hooks, lifecycle }) {
-          lifecycle.onDispose(
-            hooks.middleware(HOOK, async (_data, next) => {
-              seen.push('plugin');
-              await next();
-            }),
-          );
+        uses: { hub, lifecycle },
+        apply({ hub, lifecycle }) {
+          lifecycle.onDispose(hub.add('k', 'v'));
         },
       }),
     );
-    const host = app.bind({ hooks });
-    await host.hooks.run(HOOK, {} as never);
-    expect(seen).toEqual(['plugin']);
+    await app.plugins.idle();
+    expect(registry.list()).toEqual(['self-unsubscribe/k=v']);
 
     await app.plugins.unload('self-unsubscribe');
 
-    expect(warnings, '按归属清走后再执行的退订闭包不得抛错').toEqual([]);
-    seen.length = 0;
-    const reached = await host.hooks.run(HOOK, {} as never, async () => void seen.push('default'));
-    expect(reached).toBe(true);
-    expect(seen).toEqual(['default']);
+    expect(warnings, '同栈撤回后再执行的退订闭包不得抛错或告警').toEqual([]);
+    expect(registry.list()).toEqual([]);
   });
 });
 

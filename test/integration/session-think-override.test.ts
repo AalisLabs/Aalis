@@ -11,6 +11,7 @@ import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/inde
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
@@ -22,6 +23,7 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 async function loadStack(recorder: ChatModelRequest[]) {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   await app.plugin(createMockLLMPlugin({ responses: [{ content: 'ok' }], recorder }));
   await app.plugin(memoryInMemoryPlugin);
   await app.plugin(messageArchivePlugin, { debugLogs: false });

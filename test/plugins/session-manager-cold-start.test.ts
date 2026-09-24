@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import { HUB_PLUGINS, registerHubs } from '../fixtures/hubs.js';
 
 // 会话表只在激活时从当时的 memory 胜者读一次。运行中胜者换成另一个后端（新装或启用首选后端）后，
 // 落盘只能删本进程显式删除过的会话，不能把新胜者里原有的会话当孤儿删掉；冷启动整批登记时
@@ -38,6 +39,7 @@ describe('session-manager 落盘只删显式删除的会话', () => {
     const fallback = fakeMemory();
     const preferred = fakeMemory({ 'old-1': oldSession });
     const app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
     const host = app.bind({ provide, sessionManager });
     host.provide(memory, fallback as never, { priority: -100 });
     await app.plugin(sessionManagerPlugin, {});
@@ -54,6 +56,7 @@ describe('session-manager 落盘只删显式删除的会话', () => {
   it('显式删除的会话仍从后端删掉', async () => {
     const store = fakeMemory({ keep: { ...oldSession, id: 'keep' }, drop: { ...oldSession, id: 'drop' } });
     const app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
     const host = app.bind({ provide, sessionManager });
     host.provide(memory, store as never);
     await app.plugin(sessionManagerPlugin, {});
@@ -83,6 +86,7 @@ describe('冷启动整批登记：首选后端首轮即可见', () => {
     const host = app.bind({ sessionManager });
     await app.plugins.idle();
     await app.pluginAll([
+      ...HUB_PLUGINS.map(definition => ({ definition })),
       { definition: backend('zz-fallback', fallback, -100) },
       { definition: sessionManagerPlugin, config: {} },
       { definition: backend('zz-preferred', preferred, 10) },

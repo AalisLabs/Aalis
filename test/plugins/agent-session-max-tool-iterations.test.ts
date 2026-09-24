@@ -9,6 +9,7 @@ import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/inde
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // ════════════════════════════════════════════════════════════
@@ -43,6 +44,7 @@ type Host = BoundOf<typeof uses>;
 
 async function boot(): Promise<{ app: App; host: Host; executed: () => number; reset: () => void }> {
   const app = new App({ name: 'E2E', logLevel: 'error' });
+  await registerHubs(app);
   const toolCall: ChatResponse = {
     content: null,
     toolCalls: [{ id: 'c1', type: 'function', function: { name: 'probe', arguments: '{}' } }],

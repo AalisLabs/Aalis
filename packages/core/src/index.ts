@@ -1,7 +1,7 @@
 // ============================================================
 // index.ts — @aalis/core 包根导出，按内部分层分节（见 docs/design/core-contract.md 第八节）：
-//   自下而上：类型词汇与扩展点 → 四原语注册表 → 服务描述符、内置能力与插件定义 → 编排层（含宿主 SPI）。
-// 资源内核（kernel/）、四原语注册表、激活记录与 PluginManager 类不导出：插件与宿主拿到的是按激活绑定的能力，不是内部对象。
+//   自下而上：类型词汇与扩展点 → 原语注册表 → 服务描述符、内置能力与插件定义 → 编排层（含宿主 SPI）。
+// 资源内核（kernel/）、原语注册表、激活记录与 PluginManager 类不导出：插件与宿主拿到的是按激活绑定的能力，不是内部对象。
 // 领域词汇（消息、工具、LLM 等）一律在各 @aalis/api-* 包，服务类型随描述符走，core 不认识任何业务类型。
 // ============================================================
 
@@ -9,16 +9,11 @@
 export type {
   AalisEvents,
   AppService,
-  ContributionPointMap,
-  HookContextMap,
-  MiddlewareFn,
-  MiddlewareNext,
   PluginManagerService,
   PluginStatusEntry,
 } from './types/index.js';
 
-// ----- 四原语的数据契约（注册表本身不外露，登记一律经描述符与资源口） -----
-export type { ContributionHandle, ContributionSpec } from './primitives/contributions.js';
+// ----- 原语的数据契约（注册表本身不外露，登记一律经描述符与资源口） -----
 export type { ServiceInfo, ServiceView } from './primitives/services.js';
 
 // ----- 编排层：应用骨架与插件管理 -----
@@ -29,13 +24,9 @@ export { type PluginEntry, type PluginState, parseInstanceId } from './orchestra
 export type { RestartStrategy } from './orchestration/providers.js';
 
 export {
-  type Contributions,
   config,
-  contributions,
   type Events,
   events,
-  type Hooks,
-  hooks,
   type LifecycleCap,
   lifecycle,
   logger,

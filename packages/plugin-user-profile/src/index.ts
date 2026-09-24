@@ -1,21 +1,13 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { authority, DEFAULT_AUTHORITY } from '@aalis/api-authority';
 import { commands } from '@aalis/api-commands';
+import { contributions } from '@aalis/api-contributions';
+import { hooks } from '@aalis/api-hooks';
 import { llm, resolveLLMModel } from '@aalis/api-llm';
 import { memory } from '@aalis/api-memory';
 import { persona } from '@aalis/api-persona';
 import { tools } from '@aalis/api-tools';
-import {
-  type BoundOf,
-  config,
-  contributions,
-  definePlugin,
-  defineService,
-  events,
-  hooks,
-  logger,
-  optional,
-} from '@aalis/core';
+import { type BoundOf, config, definePlugin, defineService, events, logger, optional } from '@aalis/core';
 import type { RelationService } from '@aalis/plugin-user-relation';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';

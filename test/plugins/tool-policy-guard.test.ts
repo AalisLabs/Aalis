@@ -4,6 +4,7 @@ import { tools as toolsService } from '../../packages/api-tools/src/index.js';
 import subtask from '../../packages/plugin-subtask/src/index.js';
 import browser from '../../packages/plugin-tool-browser/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 工具能力策略守卫
@@ -25,9 +26,12 @@ interface RegisteredTool {
 
 async function registeredTools(plugin: PluginDefinition): Promise<RegisteredTool[]> {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.register(plugin, {});
   await app.plugins.idle();
+  // 没激活时工具表为空，「只读工具保持 public」这类断言会空转变绿
+  if (app.plugins.getPlugin(plugin.name)?.state !== 'active') throw new Error(`${plugin.name} 未激活`);
   const { tools } = app.bind({ tools: toolsService });
   const all: RegisteredTool[] = tools.current?.getAll() ?? [];
   await app.stop();

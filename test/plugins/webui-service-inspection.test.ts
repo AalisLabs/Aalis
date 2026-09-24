@@ -5,7 +5,14 @@ import { type StorageService, storage } from '../../packages/api-storage/src/ind
 import { defineService, type Logger, provide } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { createConfigStore, installHostConfig } from '../../packages/runtime/src/config-store.js';
+import { HUB_PLUGINS, registerHubs } from '../fixtures/hubs.js';
 import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
+
+/** 出核的两个服务及其默认提供者插件：服务目录与依赖图里按插件身份出现，而非「宿主」 */
+const HUB_PROVIDERS = [
+  ['hooks', '@aalis/plugin-hooks'],
+  ['contributions', '@aalis/plugin-contributions'],
+] as const;
 
 it('服务目录与偏好校验：核心服务可见，偏好只认已登记的提供者', async () => {
   const probe = createServer();
@@ -25,6 +32,8 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
   const store = createConfigStore({ name: 'inspect-test', logLevel: 'error', plugins: {} });
   const app = createInspectableApp({ name: 'inspect-test', logLevel: 'error', logger: quiet });
   installHostConfig(app, store);
+  // hooks / contributions 已出核：与宿主一样由两个默认提供者插件登记
+  await registerHubs(app);
   const token = 'service-inspection-test';
   const headers = { Cookie: `aalis_webui_token=${token}`, 'Content-Type': 'application/json' };
   const fakeStorage = {
@@ -62,7 +71,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
         }
       >;
     };
-    for (const name of ['events', 'hooks', 'contributions', 'lifecycle', 'logger', 'config', 'provide', 'services']) {
+    for (const name of ['events', 'lifecycle', 'logger', 'config', 'provide', 'services']) {
       expect(body.services[name].providers).toEqual([
         expect.objectContaining({
           contextId: 'root',
@@ -73,6 +82,16 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
     }
     for (const name of ['app', 'plugins', 'host-config']) {
       expect(body.services[name].providers).toEqual([expect.objectContaining({ contextId: 'root', exclusive: true })]);
+    }
+    // 插件提供的服务按插件身份展示，显示名取插件的 displayName
+    for (const [name, contextId] of HUB_PROVIDERS) {
+      expect(body.services[name].providers).toEqual([
+        expect.objectContaining({
+          contextId,
+          displayName: HUB_PLUGINS.find(plugin => plugin.name === contextId)?.displayName,
+          exclusive: false,
+        }),
+      ]);
     }
     expect(body.services['inspection-probe'].providers).toEqual([
       expect.objectContaining({ contextId: 'probe-a', exclusive: false }),
@@ -103,8 +122,6 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
 
     const defaults = [
       'events',
-      'hooks',
-      'contributions',
       'lifecycle',
       'logger',
       'config',
@@ -114,6 +131,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
       'plugins',
       'host-config',
     ];
+    const remoteRequired = [...defaults, ...HUB_PROVIDERS.map(([service]) => service), 'inspection-probe', 'missing'];
     const originalFetch = globalThis.fetch;
     const registry = vi.spyOn(globalThis, 'fetch').mockImplementation((url, init) => {
       if (String(url) === 'https://registry.example.invalid/uninstalled-inspection-probe') {
@@ -121,7 +139,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
           new Response(
             JSON.stringify({
               'dist-tags': { latest: '1.0.0' },
-              versions: { '1.0.0': { aalis: { service: { required: [...defaults, 'inspection-probe', 'missing'] } } } },
+              versions: { '1.0.0': { aalis: { service: { required: remoteRequired } } } },
             }),
             { status: 200, headers: { 'Content-Type': 'application/json' } },
           ),
@@ -137,6 +155,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
       const remote = (await remoteGraph.json()) as typeof current;
       expect(remote.services.required).toEqual([
         ...defaults.map(service => ({ service, providedBy: '宿主' })),
+        ...HUB_PROVIDERS.map(([service, providedBy]) => ({ service, providedBy })),
         { service: 'inspection-probe', providedBy: 'probe-b' },
         { service: 'missing', providedBy: null },
       ]);

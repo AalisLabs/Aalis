@@ -1,15 +1,17 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { contributions } from '../../packages/api-contributions/src/index.js';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
-import { App, contributions, definePlugin, logger, provide, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, logger, provide, services } from '../../packages/core/src/index.js';
 import { assemblePromptContributions } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
-// 测试直接从 core 源码路径导入，agent-api 对 '@aalis/core' 的 declaration
-// merging 不在此路径生效——vitest 不做类型检查，用 never 断言绕过键约束。
+// 测试从源码路径导入，api-agent 对 '@aalis/api-contributions' 的 declaration merging
+// 不在此路径生效，用 never 断言绕过键约束。
 const POINT = 'agent:prompt' as never;
 
 /** 摘要落库的 namespace（与插件内 SummaryStore 约定一致，经 memory 服务公开面种入） */
@@ -46,6 +48,7 @@ afterEach(async () => {
  */
 async function setup(opts: { contextLength?: number; config?: Record<string, unknown> } = {}) {
   const app = new App({ name: 'T', logLevel: 'error' });
+  await registerHubs(app);
   started.push(app);
   const host = app.bind({ provide, services });
   /** 组装器只要「枚举贡献」与「记日志」两样能力，从根激活绑定即可 */

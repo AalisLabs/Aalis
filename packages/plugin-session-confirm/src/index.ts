@@ -12,8 +12,9 @@
 
 import { type AccessConfirmHandler, type AccessDecision, type AccessRequest, authority } from '@aalis/api-authority';
 import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
+import { hooks } from '@aalis/api-hooks';
 import { type ConfirmChannel, type SessionConfirmService, sessionConfirm } from '@aalis/api-session-confirm';
-import { definePlugin, hooks, lifecycle, logger, optional, provide } from '@aalis/core';
+import { definePlugin, lifecycle, logger, optional, provide } from '@aalis/core';
 
 /** 确认等待超时（毫秒）；超时默认拒（无人在场即安全失败）。 */
 const CONFIRM_TIMEOUT_MS = 60_000;

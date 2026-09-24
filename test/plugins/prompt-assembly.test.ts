@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PromptContributionView } from '../../packages/api-agent/src/index.js';
-import { App, contributions, definePlugin, logger } from '../../packages/core/src/index.js';
+import { contributions } from '../../packages/api-contributions/src/index.js';
+import { App, definePlugin, logger } from '../../packages/core/src/index.js';
 import {
   assemblePromptContributions,
   type PromptAssemblyCaps,
 } from '../../packages/plugin-agent/src/prompt-assembly.js';
 import type { Message } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
-// 测试直接从 core 源码路径导入，agent-api 对 '@aalis/core' 的 declaration
+// 测试从源码路径导入，api-agent 对 '@aalis/api-contributions' 的 declaration
 // merging 不在此路径生效——vitest 不做类型检查，用 never 断言绕过键约束。
 const POINT = 'agent:prompt' as never;
 
@@ -34,6 +36,7 @@ interface Harness {
 async function boot(): Promise<Harness> {
   const app = new App({ name: 'T', logLevel: 'error' });
   booted.push(app);
+  await registerHubs(app);
   const host = app.bind({ contributions, logger });
   return {
     caps: { contributions: { collect: point => host.contributions.collect(point) }, logger: host.logger },

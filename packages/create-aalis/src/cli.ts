@@ -28,8 +28,11 @@ type Tier = 'bare' | 'minimal' | 'standard' | 'full';
 // 基础设施 + agent 套件：minimal 起步的自洽依赖闭包（网关路由 → 指令/agent →
 // 会话 → 权限 + 确认通道 → 消息归档 + 跨会话历史）。缺 session-confirm 时，CLI / WebUI / OneBot
 // 等平台上任何声明 confirm 的工具都只能"需确认后执行"而执行不了，故它是 authority 的配套。
-// 同类适配器不在此列，由 GROUPS 交互选择补入。
-const MINIMAL_BASE = [
+// 同类适配器不在此列，由 GROUPS 交互选择补入。钩子与贡献点由插件提供（core 不内置），
+// gateway / agent / 指令等都 required 它们，缺了整个机器人挂起，故排在最前。
+export const MINIMAL_BASE = [
+  '@aalis/plugin-hooks',
+  '@aalis/plugin-contributions',
   '@aalis/plugin-storage-local',
   '@aalis/plugin-process-local',
   '@aalis/plugin-gateway',
@@ -47,7 +50,7 @@ const MINIMAL_BASE = [
 
 // standard 在 minimal 之上增加的常用能力（管理界面 / 人设 / 记忆增强 / 常用工具 /
 // 调度套件 / 技能 / 会话增强 / 诊断）。同类适配器仍由 GROUPS 选择。
-const STANDARD_EXTRA = [
+export const STANDARD_EXTRA = [
   '@aalis/plugin-webui-server',
   '@aalis/plugin-persona',
   '@aalis/plugin-memory-vector',
@@ -80,7 +83,7 @@ interface AdapterGroup {
   tiers: Tier[];
 }
 
-const GROUPS: AdapterGroup[] = [
+export const GROUPS: AdapterGroup[] = [
   {
     key: 'llm',
     label: 'LLM 提供者（对话模型，可多选）',

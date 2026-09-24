@@ -33,7 +33,9 @@
     "@aalis/api-memory": "workspace:>=0.6.0 <1.0.0",
     "@aalis/api-message-archive": "workspace:>=0.6.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.5.1 <1.0.0",
-    "@aalis/util-text-normalize": "workspace:>=0.5.1 <1.0.0"
+    "@aalis/util-text-normalize": "workspace:>=0.5.1 <1.0.0",
+    "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-contributions": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

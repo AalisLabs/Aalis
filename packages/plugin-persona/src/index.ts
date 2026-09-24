@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import { hooks as hooksCap } from '@aalis/api-hooks';
 import type {} from '@aalis/api-memory'; // 本包唯一的 declaration merging 激活点（memory:clear 钩子）——删掉会丢键类型，不可删
 import {
   type OutputFormat,
@@ -17,7 +18,6 @@ import {
   config as configCap,
   definePlugin,
   events as eventsCap,
-  hooks as hooksCap,
   lifecycle as lifecycleCap,
   logger as loggerCap,
   optional,

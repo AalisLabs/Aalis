@@ -1,0 +1,52 @@
+{
+  "name": "@aalis/plugin-hooks",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
+    "directory": "packages/plugin-hooks"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/AalisLabs/Aalis/issues"
+  },
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
+  "description": "钩子登记表：hooks 服务的默认提供者",
+  "type": "module",
+  "keywords": [
+    "aalis",
+    "aalis-plugin"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": ">=0.18.0 <1.0.0"
+  },
+  "aalis": {
+    "service": {
+      "provides": [
+        "hooks"
+      ],
+      "required": [
+        "logger",
+        "provide"
+      ]
+    }
+  }
+}

@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { agent as agentService } from '../../packages/api-agent/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
-import { App, hooks, type Logger } from '../../packages/core/src/index.js';
+import { App, type Logger } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import commandsPlugin from '../../packages/plugin-commands/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 // 第一方插件之间互为 optional 依赖是常态（agent 用 session-manager 解析会话配置，session-manager 用
@@ -29,6 +31,7 @@ describe('标准第一方组合的关停', () => {
   it('互为 optional 依赖的插件正常关停，不报依赖成环', async () => {
     const lines: string[] = [];
     const app = new App({ name: 'T', logLevel: 'error', logger: recordingLogger(lines) });
+    await registerHubs(app);
     await app.plugin(createMockLLMPlugin({ responses: [{ content: 'ok' }] }));
     await app.plugin(memoryInMemoryPlugin);
     await app.plugin(messageArchivePlugin, { debugLogs: false });
@@ -49,6 +52,7 @@ describe('标准第一方组合的关停', () => {
   it('在飞回合 aborted 收尾时 session-manager 仍在，SM 关闭时 agent 已 abort', async () => {
     const lines: string[] = [];
     const app = new App({ name: 'T', logLevel: 'error', logger: recordingLogger(lines) });
+    await registerHubs(app);
     await app.plugin(createMockLLMPlugin({ latencyMs: 180, responses: [{ content: 'should-not-land' }] }));
     await app.plugin(memoryInMemoryPlugin);
     await app.plugin(messageArchivePlugin, { debugLogs: false });

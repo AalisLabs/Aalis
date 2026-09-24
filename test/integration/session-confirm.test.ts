@@ -3,6 +3,7 @@ import { type AccessConfirmHandler, type AccessRequest, authority } from '../../
 import { App, events, provide } from '../../packages/core/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
 import sessionConfirmPlugin from '../../packages/plugin-session-confirm/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // ════════════════════════════════════════════════════════════
 // 端到端：统一会话确认环路（轴 B 的交互通道）
@@ -15,6 +16,7 @@ const tick = () => new Promise(r => setTimeout(r, 0));
 
 async function setup() {
   const app = new App({ name: 'SC', logLevel: 'error' });
+  await registerHubs(app);
   let starHandler: AccessConfirmHandler | undefined;
   const stubAuthority = {
     setConfirmHandler: (platform: string, h: AccessConfirmHandler) => {

@@ -32,7 +32,8 @@
     "@aalis/api-flow-control": "workspace:>=0.6.0 <1.0.0",
     "@aalis/api-gateway": "workspace:>=0.6.0 <1.0.0",
     "@aalis/api-message-archive": "workspace:>=0.6.0 <1.0.0",
-    "@aalis/api-storage": "workspace:>=0.6.0 <1.0.0"
+    "@aalis/api-storage": "workspace:>=0.6.0 <1.0.0",
+    "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

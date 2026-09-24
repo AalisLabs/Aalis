@@ -7,7 +7,9 @@ import {
   type PreprocessorInfo,
 } from '@aalis/api-agent';
 import { commands as commandsService } from '@aalis/api-commands';
+import { contributions } from '@aalis/api-contributions';
 import { gateway as gatewayService } from '@aalis/api-gateway';
+import { hooks } from '@aalis/api-hooks';
 import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@aalis/api-llm';
 import { listLLMModels, llm as llmService, resolveLLMModel } from '@aalis/api-llm';
 import { media as mediaService } from '@aalis/api-media';
@@ -26,10 +28,8 @@ import {
 import {
   type BoundOf,
   config as configCap,
-  contributions,
   definePlugin,
   events,
-  hooks,
   type Logger,
   lifecycle,
   logger as loggerCap,

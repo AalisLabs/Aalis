@@ -6,6 +6,8 @@
 // 第三方插件若要 augment HookContextMap 的 agent:* 键，需要把本包加入
 // 依赖（或 import 一次 side-effect）以确保 TS 编译期看到 augmentation。
 
+import type {} from '@aalis/api-contributions'; // declaration merging 锚点（下方 ContributionPointMap 增强）
+import type {} from '@aalis/api-hooks'; // declaration merging 锚点（下方 HookContextMap 增强）
 import type { ChatResponse } from '@aalis/api-llm';
 import type { ToolCallContext, ToolDefinition } from '@aalis/api-tools';
 import type { ServiceRef } from '@aalis/core';
@@ -75,9 +77,9 @@ export interface AgentService {
   getPluginGroups?(): PluginGroupInfo[];
 }
 
-// ----- Agent 域钩子声明（通过 declaration merging 注入 core 的 HookContextMap）-----
+// ----- Agent 域钩子声明（通过 declaration merging 注入 @aalis/api-hooks 的 HookContextMap）-----
 
-declare module '@aalis/core' {
+declare module '@aalis/api-hooks' {
   interface HookContextMap {
     'agent:input:before': { message: IncomingMessage; metadata: Record<string, unknown> };
     /**
@@ -216,7 +218,7 @@ export interface PromptContribution {
   build(view: PromptContributionView): string | readonly string[] | null | Promise<string | readonly string[] | null>;
 }
 
-declare module '@aalis/core' {
+declare module '@aalis/api-contributions' {
   interface ContributionPointMap {
     'agent:prompt': PromptContribution;
   }

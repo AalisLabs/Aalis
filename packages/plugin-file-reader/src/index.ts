@@ -1,5 +1,7 @@
 import path from 'node:path';
 import { agent } from '@aalis/api-agent';
+import { contributions } from '@aalis/api-contributions';
+import { hooks } from '@aalis/api-hooks';
 import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
 import type {} from '@aalis/api-session-manager'; // declaration merging：session:deleted 事件
@@ -8,11 +10,9 @@ import { type ToolCallContext, tools, withToolGroups } from '@aalis/api-tools';
 import {
   type BoundOf,
   config,
-  contributions,
   definePlugin,
   defineService,
   events,
-  hooks,
   lifecycle,
   logger,
   optional,

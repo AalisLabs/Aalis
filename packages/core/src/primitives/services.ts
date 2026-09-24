@@ -1,4 +1,4 @@
-// ----- 服务系统数据契约（与容器实现同文件，同 contributions.ts 的 Spec/Handle 惯例） -----
+// ----- 服务系统数据契约（与容器实现同文件） -----
 
 /** ServiceContainer.getAll / ServiceRef.all 的元素：ServiceEntry 的投影，不含清理归属 owner。 */
 export interface ServiceView<T = unknown> {

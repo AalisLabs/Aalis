@@ -3,15 +3,15 @@ import type { ToolService } from '@aalis/api-tools';
 import type { WebUIService } from '@aalis/api-webui';
 import type { AppService, PluginManagerService, ServiceRef } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
+import { contributions } from '../../packages/api-contributions/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
 import {
   type App,
   config,
-  contributions,
   definePlugin,
   defineService,
   events,
-  hooks,
   lifecycle,
   logger,
   optional,
@@ -20,6 +20,7 @@ import {
 } from '../../packages/core/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
+import { registerHubs } from '../fixtures/hubs.js';
 
 // GET /api/plugins 与 /api/pages 必须按 instanceId 归属工具 / 指令 / displayName。
 // 生产里 tools.register 的 pluginName 就是 contextId（= instanceId）；按 definition.name
@@ -124,6 +125,8 @@ function mountPluginRoutes(
 describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
   it('披露全部 uses：核心服务也参与依赖闸，保留参数别名与可选声明，不混入敏感标签', async () => {
     const app = silentApp();
+    // hooks / contributions 由提供者插件给出：先登记它们，探针才能激活；行按名字取，列表里还有这两个提供者
+    await registerHubs(app);
     // 同名描述符解析同一提供者；是否可选取决于 uses 声明，不取决于描述符来自哪里。
     const sameEvents = defineService<object>('events');
     let sameProvider = false;
@@ -147,10 +150,12 @@ describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
     await app.plugin(def);
     const { invoke } = mountPluginRoutes(app);
     const out = await invoke('GET /api/plugins');
-    const row = (out.body as { plugins: Array<Record<string, unknown>> }).plugins[0];
-    expect(row.state).toBe('active');
+    const row = (out.body as { plugins: Array<Record<string, unknown>> }).plugins.find(
+      p => p.name === 'declared-capabilities',
+    );
+    expect(row?.state).toBe('active');
     expect(sameProvider).toBe(true);
-    expect(row.uses).toEqual([
+    expect(row?.uses).toEqual([
       { key: 'bus', service: 'events', kind: 'required' },
       { key: 'hooks', service: 'hooks', kind: 'required' },
       { key: 'contributions', service: 'contributions', kind: 'required' },
@@ -161,7 +166,7 @@ describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
       { key: 'services', service: 'services', kind: 'required' },
       { key: 'optionalEvents', service: 'events', kind: 'optional' },
     ]);
-    expect(row.requiredServices).toEqual([
+    expect(row?.requiredServices).toEqual([
       'events',
       'hooks',
       'contributions',
@@ -171,11 +176,13 @@ describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
       'provide',
       'services',
     ]);
-    expect(row.optionalServices).toEqual(['events']);
-    expect(row.capabilities).toEqual([]);
+    expect(row?.optionalServices).toEqual(['events']);
+    expect(row?.capabilities).toEqual([]);
     // 返回的是声明快照，修改投影不能反向改写插件定义。
-    app.plugins.getStatus()[0].uses[0].service = 'changed';
-    expect(app.plugins.getStatus()[0].uses[0].service).toBe('events');
+    const statusOf = () => app.plugins.getStatus().find(s => s.name === 'declared-capabilities');
+    const snapshot = statusOf();
+    if (snapshot) snapshot.uses[0].service = 'changed';
+    expect(statusOf()?.uses[0].service).toBe('events');
   });
 
   it('required 缺席的 pending 插件也披露声明；零声明返回空列表', async () => {

@@ -6,6 +6,7 @@ import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import archivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 
 const apps: App[] = [];
@@ -21,6 +22,7 @@ async function boot() {
   });
   const app = new App({ logHub: hub, name: 'archive-test', logLevel: 'warn' });
   apps.push(app);
+  await registerHubs(app);
   await app.plugin(memoryPlugin);
   await app.plugin(createMockLLMPlugin({ responses: [{ content: '已回复' }] }));
   await app.plugin(agentPlugin);

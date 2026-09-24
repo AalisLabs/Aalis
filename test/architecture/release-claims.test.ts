@@ -57,7 +57,14 @@ describe('CHANGELOG 未发布节的发布声明', () => {
       'raised core peer 包数应对齐 91（27 api + 61 插件 + runtime + schema-config + schema-log）',
     ).toHaveLength(CORE_PEER_COUNT);
     const outliers = hits.filter(h => h.spec !== CORE_PEER).map(h => `${h.dir} = ${h.spec}`);
-    expect(outliers, '仅 schema-message 仍是旧 peer（type-only，未抬）').toEqual(['schema-message = >=0.2.0 <1.0.0']);
+    // 0.18 新增的钩子 / 贡献点四包依赖 0.18 的 core（core 不再内置同名服务），peer 起点即 0.18；发布步骤统一抬下限时改写本条
+    expect(outliers.sort(), '仅 schema-message 仍是旧 peer（type-only，未抬）与 0.18 新增的四包').toEqual([
+      'api-contributions = >=0.18.0 <1.0.0',
+      'api-hooks = >=0.18.0 <1.0.0',
+      'plugin-contributions = >=0.18.0 <1.0.0',
+      'plugin-hooks = >=0.18.0 <1.0.0',
+      'schema-message = >=0.2.0 <1.0.0',
+    ]);
   });
 
   it('契约包 src/index.ts 不再导出 useXxxService helper', () => {
