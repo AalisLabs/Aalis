@@ -51,7 +51,7 @@ describe('plugin-mcp-server: 畸形 Host 不得打死进程', () => {
 
   it('空 Host 头：正常应答，且不产生未处理拒绝', async () => {
     const port = await freePort();
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     apps.push(app);
     const host = app.bind({ provide });
     host.provide(tools, {

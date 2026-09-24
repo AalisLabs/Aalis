@@ -67,7 +67,7 @@ function makeApp(w: World, disposeTimeoutMs?: number) {
     error: (...a: unknown[]) => void w.warnings.push(a.map(String).join(' ')),
     child: () => logger,
   };
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger, disposeTimeoutMs });
+  const app = new App({ name: 'T', logLevel: 'error', logger, disposeTimeoutMs });
   apps.push(app);
   return app;
 }

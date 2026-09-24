@@ -32,7 +32,7 @@ function fakeAuthority(levels: Record<string, number>, owners: string[] = []): A
 }
 
 async function setup(levels: Record<string, number>, owners: string[] = []) {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide, commands: commandsService });
   await app.plugins.register(memoryInMemory, {});
   host.provide(authority, fakeAuthority(levels, owners));

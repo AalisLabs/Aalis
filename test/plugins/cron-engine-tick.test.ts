@@ -42,7 +42,7 @@ async function withEngine(startWall: number, fn: (h: Harness) => Promise<void> |
   const off = hub.onEntry((e: LogEntry) => {
     if (e.level === 'warn') warns.push(e.message);
   });
-  const app = new App({ config: { name: 'T', logLevel: 'warn', plugins: {} }, logHub: hub });
+  const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
   await app.plugin(cronEnginePlugin, {});
   await app.plugins.idle();
   if (app.plugins.getPlugin(cronEnginePlugin.name)?.state !== 'active')

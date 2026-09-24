@@ -25,7 +25,7 @@ function fakeMemory() {
 }
 
 async function setup() {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   // 桩 webui-server：页面动作登记到这里，测试按 method 取处理函数
   const actions = new Map<string, WebuiActionHandler>();
   const host = app.bind({ provide, sessionManager });

@@ -14,7 +14,7 @@ import todoList from '../../packages/plugin-todo-list/src/index.js';
 type ToolHandler = (args: Record<string, unknown>, ctx: unknown) => Promise<string>;
 
 async function boot() {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   await app.plugins.register(memoryInMemory, {});
   const host = app.bind({ provide, services });
   const handlers = new Map<string, ToolHandler>();

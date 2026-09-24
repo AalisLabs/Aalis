@@ -151,7 +151,7 @@ describe('transformModelImages 交付形态真值表', () => {
 describe('agent:llm:before 中间件接线', () => {
   /** 装一份真 media：process / storage 是它的 required 依赖，不放桩它停在 pending、中间件不挂 */
   async function bootMedia(delivery: string) {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ provide, hooks });
     host.provide(processService, {} as never);
     host.provide(storage, {} as never);

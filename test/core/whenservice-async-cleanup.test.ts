@@ -35,7 +35,7 @@ function makeApp(disposeTimeoutMs?: number) {
     error: () => {},
     child: () => logger,
   };
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger, disposeTimeoutMs });
+  const app = new App({ name: 'T', logLevel: 'error', logger, disposeTimeoutMs });
   apps.push(app);
   return { app, warnings, host: app.bind({ provide }) };
 }
@@ -151,7 +151,7 @@ describe('follow 异步 cleanup', () => {
       if (String(message).includes('撤回拒绝')) throw new Error('sink boom');
     };
     const logger = { debug() {}, info() {}, warn: boom, error: boom, child: () => logger } as unknown as Logger;
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
+    const app = new App({ name: 'T', logLevel: 'error', logger });
     apps.push(app);
     const host = app.bind({ provide });
     host.provide(svc, {});

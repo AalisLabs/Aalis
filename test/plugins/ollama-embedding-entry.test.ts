@@ -31,7 +31,7 @@ function stubOllama(caps: Record<string, string[] | null>): void {
 
 async function registeredIds(caps: Record<string, string[] | null>, config: Record<string, unknown> = {}) {
   stubOllama(caps);
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ llm });
   await app.plugin(ollama, { baseUrl: 'http://127.0.0.1:11434', ...config });
   await app.plugins.idle();

@@ -115,7 +115,7 @@ afterEach(async () => {
 });
 
 async function setup(opts: SetupOptions = {}) {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   apps.push(app);
   const host = app.bind({ provide, services, events });
   /** 组装器只要「枚举贡献」与「记日志」两样能力，从根激活绑定即可 */

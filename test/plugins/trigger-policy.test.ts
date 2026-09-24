@@ -149,7 +149,7 @@ import triggerPolicyPlugin, { triggerPolicy } from '../../packages/plugin-trigge
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 
 async function setupPolicy(config: Record<string, unknown> = {}) {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide, hooks, triggerPolicy });
   host.provide(gateway, {} as never); // 满足 required 依赖；decide 本身不经过 gateway
   await app.plugins.register(triggerPolicyPlugin, config);

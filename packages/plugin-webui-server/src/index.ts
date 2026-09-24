@@ -11,6 +11,7 @@ import { agent } from '@aalis/api-agent';
 import { authority } from '@aalis/api-authority';
 import { commands } from '@aalis/api-commands';
 import type {} from '@aalis/api-doctor'; // declaration merging：doctor:updated 事件
+import { hostConfig } from '@aalis/api-host-config';
 import type { ModelInfo } from '@aalis/api-llm';
 import { listLLMModels, llm } from '@aalis/api-llm';
 import { memory } from '@aalis/api-memory';
@@ -38,7 +39,6 @@ import {
   config,
   definePlugin,
   events,
-  hostConfig,
   LogHub,
   lifecycle,
   logger,
@@ -569,7 +569,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     const hasFileReader = services.get('file-reader') !== undefined;
 
     res.json({
-      name: personaSvc?.getPersonaName() ?? caps.hostConfig.require().get('name'),
+      name: personaSvc?.getPersonaName() ?? caps.hostConfig.current?.get('name') ?? 'Aalis',
       services: {
         'webui-server': services.get(webuiServer) !== undefined,
         cli: services.get('cli') !== undefined,
@@ -750,7 +750,12 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       res.status(404).json({ ok: false, error: `service "${svcName}" has no provider with contextId "${contextId}"` });
       return;
     }
-    const host = caps.hostConfig.require();
+    // 偏好要跨重启保留就得写进文档：宿主没提供文档时不动运行态
+    const host = caps.hostConfig.current;
+    if (!host) {
+      res.status(503).json({ ok: false, error: '宿主未提供配置文档（host-config），无法保存偏好' });
+      return;
+    }
     if (!services.prefer(svcName, contextId)) {
       res.status(409).json({ ok: false, error: `service "${svcName}" rejected provider preference "${contextId}"` });
       return;
@@ -759,18 +764,22 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     // 切换前端：webui-client 是「前端」服务，偏好变更需重挂静态目录 + 通知客户端刷新。
     // 重挂与偏好同属内存态，必须在等落盘之前一起生效：save 拒绝时才不会留下「解析选 B、静态挂 A」。
     if (svcName === 'webui-client') remountActiveClient();
-    await caps.app.require().saveConfig();
+    await host.save();
     res.json({ ok: true });
   });
 
   /** 清除服务偏好 */
   expressApp.delete('/api/services/:name/prefer', gate(), async (req, res) => {
     const svcName = String(req.params.name);
-    const host = caps.hostConfig.require();
+    const host = caps.hostConfig.current;
+    if (!host) {
+      res.status(503).json({ ok: false, error: '宿主未提供配置文档（host-config），无法保存偏好' });
+      return;
+    }
     services.unprefer(svcName);
     host.removeServicePreference(svcName);
     if (svcName === 'webui-client') remountActiveClient();
-    await caps.app.require().saveConfig();
+    await host.save();
     res.json({ ok: true });
   });
 

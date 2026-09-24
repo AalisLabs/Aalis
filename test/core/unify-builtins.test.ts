@@ -19,22 +19,21 @@ import {
   definePlugin,
   defineService,
   hooks,
-  hostConfig,
   type Logger,
   optional,
   provide,
   services,
 } from '../../packages/core/src/index.js';
 
-// 内置能力 hooks / contributions、插件元数据随定义携带、宿主配置管理面（显式声明才可见）。
+// 内置能力 hooks / contributions、插件元数据随定义携带、插件自己的配置视图。
 
 const apps: App[] = [];
 afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
-function makeApp(plugins: Record<string, Record<string, unknown>> = {}) {
+function makeApp() {
   const logger: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => logger };
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins }, logger });
+  const app = new App({ name: 'T', logLevel: 'error', logger });
   apps.push(app);
   return app;
 }
@@ -81,24 +80,21 @@ describe('内置能力', () => {
     expect(host.contributions.collect('__t:unify-point')).toEqual([]);
   });
 
-  it('config 是插件自己的配置视图；整份配置的读写走显式声明的 hostConfig', async () => {
-    const app = makeApp({ reader: { greeting: 'hi' } });
+  it('config 是插件自己的配置视图：登记时交来的那一份', async () => {
+    const app = makeApp();
     let own: unknown;
-    let whole: unknown;
     await app.plugin(
       definePlugin({
         name: 'reader',
-        uses: { config, hostConfig },
-        apply({ config, hostConfig }) {
+        uses: { config },
+        apply({ config }) {
           own = config;
-          whole = hostConfig.require().getPluginConfig('reader');
         },
       }),
       { greeting: 'hi' },
     );
     await app.plugins.idle();
     expect(own).toEqual({ greeting: 'hi' });
-    expect(whole).toEqual({ greeting: 'hi' });
   });
 
   it('services：描述符与名字是同一把键——查询、枚举、偏好都认两种写法', async () => {
@@ -139,7 +135,7 @@ describe('内置能力', () => {
       error() {},
       child: () => logger,
     };
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger, devMode: true });
+    const app = new App({ name: 'T', logLevel: 'error', logger, devMode: true });
     apps.push(app);
     await app.plugin(
       definePlugin({

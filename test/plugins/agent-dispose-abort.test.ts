@@ -27,7 +27,7 @@ const AGENT_CONFIG = {
 
 describe('plugin-agent 拆卸时中止在飞回合', () => {
   it('拆卸后在飞回合以 aborted 收尾，而不是在已拆卸的激活上跑完投递', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     // 每个 chunk 前等 300ms：给拆卸留出「回合在飞」的窗口
     await app.plugin(createMockLLMPlugin({ latencyMs: 300, responses: [{ content: '回复内容' }] }));
     await app.plugin(memoryInMemoryPlugin);
@@ -65,7 +65,7 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
   });
 
   it('手动 abort 会中止正在构建的 prompt 贡献，且不会开始 LLM 或投递消息', async () => {
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     const recorder: ChatModelRequest[] = [];
 
     let enteredResolve!: () => void;
@@ -164,7 +164,7 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
     let memoryOpenAtAbort = false;
     let turnDone = false;
 
-    const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    const app = new App({ name: 'T', logLevel: 'error' });
     await app.plugin(createMockLLMPlugin({ latencyMs: 200, responses: [{ content: 'should-not-land' }] }));
     await app.plugin(memoryInMemoryPlugin);
     await app.plugin(messageArchivePlugin, { debugLogs: false });

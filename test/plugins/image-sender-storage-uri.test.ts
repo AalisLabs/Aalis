@@ -28,7 +28,7 @@ describe('send_attachment storage_uri 归一化', () => {
     mkdirSync(join(base, 'data', 'images', 'onebot_x_group_1'), { recursive: true });
     // 落一张真图（内容随意，只验证路径解析）
     writeFileSync(join(base, 'data', 'images', 'onebot_x_group_1', 'abcd1234.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0]));
-    app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    app = new App({ name: 'T', logLevel: 'error' });
     handlers = {};
     const host = app.bind({ provide, events });
     hostEvents = host.events;

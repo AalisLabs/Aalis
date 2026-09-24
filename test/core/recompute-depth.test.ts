@@ -16,7 +16,7 @@ describe('recompute 深级联收敛（maxRounds 推导式上限）', () => {
     hub.onEntry(e => {
       if (e.level === 'warn') warns.push(e.message);
     });
-    const app = new App({ config: { name: 'T', logLevel: 'warn', plugins: {} }, logHub: hub });
+    const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
 
     const DEPTH = 24; // 2N+8 必须盖住这条链；固定小数上限会把合法深链误判为振荡
     const descs = Array.from({ length: DEPTH + 1 }, (_, i) => defineService<{ level: number }>(`rd-svc-${i}`));

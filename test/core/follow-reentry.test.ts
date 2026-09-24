@@ -8,7 +8,7 @@ afterEach(async () => {
 
 describe('follow 串行交接在旧清理同步改胜者时仍成立', () => {
   it('旧清理的 Promise 落定前不挂新实例；落定后挂的是清理里改过的胜者', async () => {
-    const app = new App({ config: { name: 't', logLevel: 'error', plugins: {} }, devMode: false });
+    const app = new App({ name: 't', logLevel: 'error', devMode: false });
     apps.push(app);
     const S = defineService<{ name: string }>('t:reentry:s');
     const host = app.bind({ provide, services });

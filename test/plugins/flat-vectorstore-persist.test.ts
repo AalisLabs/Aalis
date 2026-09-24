@@ -59,7 +59,7 @@ describe('plugin-vectorstore-flat 落盘与损坏容错（真 fs）', () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'aalis-flat-'));
-    app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    app = new App({ name: 'T', logLevel: 'error' });
     host = app.bind(hostUses);
     host.provide(
       storage,
@@ -112,7 +112,7 @@ describe('plugin-vectorstore-flat 的 storage 依赖（拓扑序）', () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'aalis-flat-topo-'));
-    app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+    app = new App({ name: 'T', logLevel: 'error' });
     host = app.bind(hostUses);
   });
 

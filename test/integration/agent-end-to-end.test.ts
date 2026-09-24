@@ -22,7 +22,7 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
  */
 
 async function loadStack(opts: { responses: ChatResponse[]; recorder?: ChatModelRequest[] }) {
-  const app = new App({ config: { name: 'E2E', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'E2E', logLevel: 'error' });
   const host = app.bind({ events, agent: agentService, memory: memoryService, llm: llmService });
 
   const outbound: OutgoingMessage[] = [];

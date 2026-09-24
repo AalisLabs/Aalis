@@ -26,7 +26,7 @@ function fakeMemory() {
 }
 
 async function setup() {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide, events, sessionManager });
   host.provide(memory, fakeMemory() as never);
   const llmCalls = { chats: 0 };

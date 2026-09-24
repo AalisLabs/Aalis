@@ -11,7 +11,7 @@ import type { Message } from '../../packages/schema-message/src/index.js';
  * 与 agent 组装器在生产里拿到的同一份视图。
  */
 async function boot() {
-  const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ services, contributions, logger });
   await app.plugin(memoryInMemory);
   await app.plugins.idle();

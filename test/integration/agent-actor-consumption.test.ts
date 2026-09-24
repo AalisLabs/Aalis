@@ -24,7 +24,7 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 // ════════════════════════════════════════════════════════════
 
 async function runTurn(incoming: IncomingMessage): Promise<ToolCallContext | undefined> {
-  const app = new App({ config: { name: 'E2E', logLevel: 'error', plugins: {} } });
+  const app = new App({ name: 'E2E', logLevel: 'error' });
   const host = app.bind({ tools, agent: agentService });
   const toolCallResponse: ChatResponse = {
     content: null,
