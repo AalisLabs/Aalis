@@ -164,6 +164,8 @@ export function createPort<P>(scope: BindingScope, name: string, required = fals
     }
     const follower: Follower = { attach, overlap, busy: false, attaching: false, cancelled: false };
     followers.push(follower);
+    // 登记账本的条目是本激活对外可见的能力，关闭时与原语同一拍撤掉，不等下游交接
+    if (overlap) scope.resources.onCut(() => pump(follower));
     if (!subscribed) subscribe();
     pump(follower);
     return () => {

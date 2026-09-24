@@ -15,7 +15,7 @@
 - 八项默认基础服务与第三方服务共用同一容器、描述符与绑定路径，删除 builtin 品牌和装配分路。所有 `uses` 按 required / optional 归类并参与同一激活规则；基础服务在加载插件前已登记，仍须显式声明使用。
 - 八项基础服务由根激活经 `provide` 独占登记，与第三方服务同一种登记（校验、`service:registered` 通知、独占、归属），只有 `provide` 自身直接登记一次来自举；宿主三项 `app` / `plugins` / `host-config` 同样由根激活独占登记。基础服务在容器里的提供者是「激活身份 → 这次激活的接口」，只认在 `uses` 里声明了该服务的激活：经 `services.get` 动态查到的是提供者函数，以未声明者的身份调用即抛错。
 - `BindingPort` 新增 `identity`：这次激活的不透明资源身份。它是凭据，交给谁，谁就能以这次激活的名义调用认它的提供者；提供者据它把登记归到这次激活，第三方契约包也可据此提供按调用方区分的服务。
-- 经 `events.on` / `hooks.middleware` / `contributions.contribute` / `provide` 的登记不再逐条记进激活的清理链：返回的退订就是原语自己的撤回（同步、幂等，只撤自己那一条）；激活关闭时先按归属同栈整体切断这些登记，再排空清理链（`follow` 清理、`track`、`registrar` 撤回与 `onDispose`）。
+- 经 `events.on` / `hooks.middleware` / `contributions.contribute` / `provide` 的登记不再逐条记进激活的清理链：返回的退订就是原语自己的撤回（同步、幂等，只撤自己那一条）；激活关闭时先按归属同栈整体切断这些登记，同一拍撤掉经 `registrar` 登记到枢纽服务的条目（不等下游交接），再排空清理链（`follow` 清理、`track` 与 `onDispose`）。
 - `services.get/all` 返回登记进容器的对象本身；新增 `services.inspect`，只读登记元数据（`contextId` / `priority` / `label` / `exclusive`，不含实例）。WebUI 服务页使用 inspect，展示基础服务。
 - `provide(..., { exclusive: true })` 是通用独占登记策略；Core 基础服务也使用它防止同名第二提供者。该策略不等于永久驻留，退订后可重新登记。
 - 内部目录调整为 `kernel` / `primitives` / `infrastructure` / `composition` / `orchestration`，描述符与绑定状态机分文件。深路径不属于公开 API，导入统一走 `@aalis/core`。

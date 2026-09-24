@@ -19,6 +19,7 @@ export class Resources {
   #drained?: Promise<void>;
   #completion?: Promise<void>;
   #initialization?: Promise<void>;
+  readonly #cuts = new Set<() => void>();
 
   constructor(
     private readonly id: string,
@@ -61,6 +62,14 @@ export class Resources {
     settled.then(() => {
       if (this.#initialization === settled) this.#initialization = undefined;
     });
+  }
+
+  /**
+   * 登记一个切断项：与 beforeCleanup 同栈、在等下游交接之前同步执行，用于撤掉本激活登记到别处、
+   * 对外可见的条目。异步部分由执行方自行记账，本段不等。
+   */
+  onCut(cut: () => void): void {
+    this.#cuts.add(cut);
   }
 
   /** 只置关闭位：此后不再接新登记；收尾、撤回与清理由后续调用执行。 */
@@ -110,6 +119,7 @@ export class Resources {
     const drained = this.drain(timeoutMs);
     if (drained) await drained;
     this.hooks.beforeCleanup?.();
+    for (const cut of this.#cuts) cut();
     const handover = this.hooks.afterWithdraw?.();
     if (handover) await awaitWithTimeout(handover, timeoutMs, this.#timeout('等待下游交接'));
     await this.disposables.disposeAsync(timeoutMs);
