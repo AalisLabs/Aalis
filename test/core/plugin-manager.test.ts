@@ -11,6 +11,7 @@ import {
   provide,
   type ServiceRef,
 } from '../../packages/core/src/index.js';
+import type { PluginManager } from '../../packages/core/src/orchestration/plugin.js';
 
 // activating 窗口里的管理动作（unload / disable / bounce / updateConfig 撞上在飞 apply）
 // 由 admin-during-activation.test.ts 守；本文件钉调度稳态路径。
@@ -34,7 +35,7 @@ function makeApp(): { app: App; state: ScratchState } {
 function makePlugin(
   name: string,
   state: ScratchState,
-  overrides: Partial<Pick<PluginDefinition, 'core' | 'reusable'>> = {},
+  overrides: Partial<Pick<PluginDefinition, 'reusable'>> = {},
 ): PluginDefinition {
   return definePlugin({
     name,
@@ -111,16 +112,6 @@ describe('App plugin lifecycle', () => {
     await app.plugins.enable('p');
     await app.plugins.idle();
     expect(app.plugins.getPlugin('p')?.state).toBe('active');
-  });
-
-  it('core 插件不能被禁用', async () => {
-    const { app, state } = makeApp();
-    await app.plugin(makePlugin('core-plug', state, { core: true }));
-    await app.plugins.idle();
-    expect(app.plugins.getPlugin('core-plug')?.state).toBe('active');
-    const ok = await app.plugins.disable('core-plug');
-    expect(ok).toBe(false);
-    expect(app.plugins.getPlugin('core-plug')?.state).toBe('active');
   });
 
   it('apply 抛错 → state=error，错误信息记录到 entry.error', async () => {
@@ -291,9 +282,9 @@ describe('App plugin lifecycle', () => {
     await app.plugins.idle();
     expect(app.plugins.getPlugin('cons-B')?.state).toBe('active');
 
-    await app.plugins.stopAll();
+    await (app.plugins as PluginManager).stopAll();
     expect(order).toEqual(['cons-B.dispose', 'svc-A.dispose']);
-    expect(app.plugins.isShuttingDown()).toBe(true);
+    expect(await app.plugins.bounce('svc-A'), '停机后拒绝重建').toBe(false);
   });
 
   it('stopAll: 关机标志屏蔽 service:unregistered 反应式重算', async () => {
@@ -327,7 +318,7 @@ describe('App plugin lifecycle', () => {
     await app.plugins.idle();
     expect(app.plugins.getPlugin('c-svc')?.state).toBe('active');
 
-    await app.plugins.stopAll();
+    await (app.plugins as PluginManager).stopAll();
     // optional 消费者不应在停机期间被反应式拆一次再被停机计划拆一次
     expect(log.filter(e => e === 'c-svc.dispose')).toHaveLength(1);
     expect(log.indexOf('c-svc.dispose')).toBeLessThan(log.indexOf('p-svc.dispose'));

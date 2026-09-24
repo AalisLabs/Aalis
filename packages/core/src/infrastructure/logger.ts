@@ -142,20 +142,6 @@ export class DefaultLogger implements Logger {
 }
 
 /**
- * 把 logger.xxx(message, ...args) 里的 args 元素渲染成字符串。
- *
- * 设计目标：**零运行时依赖**——只用 ECMAScript 标准原语，Node/Deno/Bun/Browser
- * 都能跑。需要 `util.inspect` 级别的深度对象渲染时，由外层 sink 自行处理
- * （sink 可订阅 LogHub 后用宿主 API 二次格式化）。
- *
- * - `Error` / 任何带 `stack` 的对象：尽量打印 stack；否则退化为 name + message
- * - `string`：原样
- * - `null` / `undefined` / 原始值：`String(v)`
- * - 普通对象 / 数组：尝试 `JSON.stringify`，遇到循环引用或不可序列化值时退化
- *   为 `String(v)`（一般得到 `[object Object]`，但至少不会抛）
- */
-
-/**
  * 把 `Date` 渲染成本地时区 ISO-8601（带显式偏移），如：
  *   `2026-05-27T09:09:16.028+01:00` / `2026-05-27T00:09:16.028Z`（UTC）
  *
@@ -176,6 +162,19 @@ function formatLocalIso(d: Date): string {
   );
 }
 
+/**
+ * 把 logger.xxx(message, ...args) 里的 args 元素渲染成字符串。
+ *
+ * 设计目标：**零运行时依赖**——只用 ECMAScript 标准原语，Node/Deno/Bun/Browser
+ * 都能跑。需要 `util.inspect` 级别的深度对象渲染时，由外层 sink 自行处理
+ * （sink 可订阅 LogHub 后用宿主 API 二次格式化）。
+ *
+ * - `Error` / 任何带 `stack` 的对象：尽量打印 stack；否则退化为 name + message
+ * - `string`：原样
+ * - `null` / `undefined` / 原始值：`String(v)`
+ * - 普通对象 / 数组：尝试 `JSON.stringify`，遇到循环引用或不可序列化值时退化
+ *   为 `String(v)`（一般得到 `[object Object]`，但至少不会抛）
+ */
 function stringifyArg(value: unknown): string {
   if (typeof value === 'string') return value;
   if (value === null || value === undefined) return String(value);

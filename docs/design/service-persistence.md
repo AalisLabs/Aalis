@@ -67,5 +67,4 @@ await plugins.require().bounce('@aalis/plugin-foo');
 await plugins.require().updateConfig(instanceId, newConfig);
 ```
 
-全局收敛（`recompute` / `softReload`）由 `PluginManager` 内部驱动，不在 `PluginManagerService` 接口上；宿主持有
-`app.plugins` 时可直接调用。管理类插件在 `uses` 里声明 `pluginsService`。
+全局收敛（`recompute`）由 `PluginManager` 内部驱动，不在 `PluginManagerService` 接口上；`app.plugins` 对外也只是这个接口。管理类插件在 `uses` 里声明 `pluginsService`。

@@ -13,6 +13,7 @@ import {
   type Services,
   services,
 } from '../../packages/core/src/index.js';
+import type { PluginManager } from '../../packages/core/src/orchestration/plugin.js';
 
 function deferred() {
   let resolve!: () => void;
@@ -147,7 +148,7 @@ describe('排队的服务下线变化', () => {
     const busy = await pause(phase);
 
     remove();
-    await app.plugins.softReload();
+    await (app.plugins as PluginManager).recompute();
     expect(state.applies).toBe(1);
 
     busy.release();
@@ -202,7 +203,7 @@ describe('排队的服务下线变化', () => {
     await host.events.emit('service:unregistered', svcA.name);
     await host.events.emit('service:unregistered', svcB.name);
     host.provide(svcNever, {});
-    await app.plugins.softReload();
+    await (app.plugins as PluginManager).recompute();
     busy.release();
     await busy.done;
     await app.plugins.idle();
@@ -311,9 +312,9 @@ describe('排队的服务下线变化', () => {
     const busy = await pause(phase);
 
     remove();
-    await app.plugins.stopAll();
-    await app.plugins.softReload();
-    expect(app.plugins.isShuttingDown()).toBe(true);
+    await (app.plugins as PluginManager).stopAll();
+    await (app.plugins as PluginManager).recompute();
+    expect(await app.plugins.bounce('consumer'), '停机后拒绝重建').toBe(false);
     busy.release();
     await busy.done;
     await app.plugins.idle();

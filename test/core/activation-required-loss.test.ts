@@ -1,15 +1,17 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  App,
+  type App,
   definePlugin,
   defineService,
-  EventBus,
   type Logger,
   lifecycle,
   optional,
   provide,
+  services,
 } from '../../packages/core/src/index.js';
+import type { PluginManager } from '../../packages/core/src/orchestration/plugin.js';
 import type { PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
+import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 const dependency = defineService<{ value: number }>('activation-required-loss');
 // apply 解构的绑定会遮住描述符；恢复提供者仍使用契约描述符。
@@ -27,7 +29,7 @@ function deferred() {
   releases.push(resolve);
   return { promise, resolve };
 }
-function world(eventBus?: EventBus) {
+function world() {
   const errors: unknown[] = [];
   const warnings: string[] = [];
   const logger: Logger = {
@@ -37,14 +39,13 @@ function world(eventBus?: EventBus) {
     error: (...args) => void errors.push(...args),
     child: () => logger,
   };
-  const app = new App({
+  const app = createInspectableApp({
     config: { name: 'T', plugins: {}, logLevel: 'error' },
     logger,
-    events: eventBus,
     disposeTimeoutMs: 0,
   });
   apps.push(app);
-  const host = app.bind({ provide });
+  const host = app.bind({ provide, services });
   return { app, host, errors, warnings, logger };
 }
 function record(app: App) {
@@ -93,7 +94,7 @@ describe('初始化期间 required 依赖消失', () => {
     off();
     applyGate.resolve();
     await cleanupEntered.promise;
-    expect(app.services.get(owned.name), '登记先撤回，不能暴露失败激活').toBeUndefined();
+    expect(host.services.get(owned.name), '登记先撤回，不能暴露失败激活').toBeUndefined();
     expect([...live], '资源清理正在等待真实完成').toEqual([1]);
     cleanupGate.resolve();
     await registering;
@@ -108,21 +109,16 @@ describe('初始化期间 required 依赖消失', () => {
     await app.plugins.idle();
     expect(record(app).state).toBe('active');
     expect(applies).toBe(2);
-    expect(app.services.get(owned.name)).toEqual({ attempt: 2 });
+    expect(host.services.get(owned.name)).toEqual({ attempt: 2 });
     await app.stop();
     expect(cleaned).toEqual([1, 2]);
     expect([...live]).toEqual([]);
   });
 
-  it.each([false, true])('catch 前已恢复仍回滚后重激活，不依赖变化通知来补重试（通知延迟=%s）', async delayed => {
-    const notificationGate = deferred();
-    const bus = new EventBus();
-    if (delayed) {
-      // 宿主先注册的异步旁观者可延迟 PluginManager 收到变化，重试不能依赖另一条通知补唤醒。
-      bus.on('service:registered', () => notificationGate.promise);
-      bus.on('service:unregistered', () => notificationGate.promise);
-    }
-    const { app, host } = world(bus);
+  it.each([false, true])('catch 前已恢复仍回滚后重激活，不依赖变化通知来补重试（通知切断=%s）', async muted => {
+    const { app, host } = world();
+    // 切断根激活的全部监听（含 PluginManager 对服务上下线的订阅）：重试不能依赖另一条通知补唤醒
+    if (muted) activationHost(app).runtime.events.unregisterByOwner(rootActivation(app).owner);
     let off = host.provide(dependency, { value: 1 });
     const trace: string[] = [];
     let applies = 0;
@@ -151,7 +147,6 @@ describe('初始化期间 required 依赖消失', () => {
     expect(record(app).state).toBe('active');
     expect(applies).toBe(2);
     expect(trace).toEqual(['apply:1', 'cleanup:1', 'apply:2']);
-    notificationGate.resolve();
   });
 
   it('依赖在异步回滚期间恢复，也必须等旧资源清理完成才重新激活', async () => {
@@ -268,7 +263,7 @@ describe('初始化期间 required 依赖消失', () => {
 
   it.each([
     'ordinary',
-    'softReload',
+    'recompute',
     'register',
   ] as const)('持续制造真实缺失也须有界，%s 不能重置同一 flight 的自动重试预算', async mode => {
     const { app, host, warnings } = world();
@@ -286,7 +281,7 @@ describe('初始化期间 required 依赖消失', () => {
           if (stable) return void dependency.require();
           // 错误实现也只能跑到保险丝，不能让测试挂死或占满微任务队列。
           if (attempts === 31) throw new Error('测试保险丝：自动重试未被收敛预算拦住');
-          if (mode === 'softReload') await app.plugins.softReload();
+          if (mode === 'recompute') await (app.plugins as PluginManager).recompute();
           if (mode === 'register') {
             await app.plugin(definePlugin({ name: `helper-${attempts}`, apply: () => void helpers++ }));
           }
@@ -311,7 +306,7 @@ describe('初始化期间 required 依赖消失', () => {
 
     stable = true;
     const previous = attempts;
-    await app.plugins.softReload();
+    await (app.plugins as PluginManager).recompute();
     await app.plugins.idle();
     expect(record(app).state).toBe('active');
     expect(attempts).toBe(previous + 1);

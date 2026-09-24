@@ -23,9 +23,6 @@ describe('App 生命周期', () => {
   it('createApp 仅靠最小配置可构造', () => {
     const app = new App({ config: { name: 'T', logLevel: 'error', plugins: {} } });
     expect(app.plugins).toBeDefined();
-    expect(app.events).toBeDefined();
-    expect(app.services).toBeDefined();
-    expect(app.hooks).toBeDefined();
     // 根激活可装配能力，宿主管理面（整份配置的读写口）在场
     expect(app.bind({ hostConfig }).hostConfig.current).toBeDefined();
   });
@@ -55,7 +52,6 @@ describe('App 生命周期', () => {
   it('两个并存 App 实例互不干扰（service 隔离）', () => {
     const appA = new App({ config: { name: 'A', logLevel: 'error', plugins: {} } });
     const appB = new App({ config: { name: 'B', logLevel: 'error', plugins: {} } });
-    expect(appA.services).not.toBe(appB.services);
     const hostA = appA.bind({ provide, shared, hostConfig });
     const hostB = appB.bind({ shared, hostConfig });
     hostA.provide(shared, { v: 1 });

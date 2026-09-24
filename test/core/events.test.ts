@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { EventBus, events } from '../../packages/core/src/index.js';
+import { events, type Logger } from '../../packages/core/src/index.js';
+import { EventBus } from '../../packages/core/src/primitives/events.js';
 import { activationHost, createInspectableApp } from '../helpers/inspectable-app.js';
 
 describe('EventBus', () => {
@@ -62,16 +63,22 @@ describe('EventBus per-handler 隔离（#8.1）', () => {
   });
 
   it('经 events 能力注册的监听器抛错，上报的注册者身份就是 ctx.id', async () => {
-    const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} } });
-    const who: Array<string | undefined> = [];
-    app.events.onHandlerError = (_event, _err, contextId) => who.push(contextId);
+    const warnings: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn: (...args) => void warnings.push(args.map(String).join(' ')),
+      error() {},
+      child: () => logger,
+    };
+    const app = createInspectableApp({ config: { name: 'T', logLevel: 'error', plugins: {} }, logger });
     const host = activationHost(app);
     const child = host.create(host.root, 'plugin-x');
     host.bind(child, { events }).events.on('plugin:loaded', () => {
       throw new Error('x');
     });
     await app.bind({ events }).events.emit('plugin:loaded', 'p');
-    expect(who).toEqual(['plugin-x']);
+    expect(warnings.filter(w => w.includes('来自 plugin-x'))).toHaveLength(1);
     await app.stop();
   });
 

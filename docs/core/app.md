@@ -27,10 +27,6 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 | `pluginLoader` | `PluginLoader` | 插件加载器；缺省=`autoLoadPlugins()` 为 no-op，须手动 `app.plugin(definition)` |
 | `pluginDefaults` | `(definition) => Record<string, unknown>` | 插件默认配置的派生器；缺省=无默认值。core 不解释 `configSchema`，由宿主注入（runtime 用 `defaultsFrom(d.configSchema)`） |
 | `restartStrategy` | `RestartStrategy` | 重启策略；缺省=`restart()` 抛错 |
-| `events` | `EventBus` | 自定义事件总线 |
-| `services` | `ServiceContainer` | 自定义服务容器 |
-| `hooks` | `HookRegistry` | 自定义钩子注册表 |
-| `contributions` | `ContributionRegistry` | 自定义贡献点注册表 |
 | `logHub` | `LogHub` | 自定义日志通道；缺省=`LogHub.default`（进程级共享） |
 | `logger` | `Logger` | 自定义 Logger 实现；缺省=`DefaultLogger`（写入 logHub） |
 | `devMode` | `boolean` | 传给根激活，决定 `provide` 与激活路径是否跑一致性校验；默认 `true` |
@@ -40,8 +36,8 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 
 构造时：
 
-- 将 `config`（快照或现成 `ConfigManager`）规范为 `ConfigManager`
-- 初始化 events / services / hooks / contributions / logger 及根激活（注入或自建）
+- 用 `config` 快照构造 `ConfigManager`
+- 初始化四原语注册表、logger 及根激活
 - 创建 `ActivationHost`：直接登记 `provide` 的提供者来自举，再由根激活经 `provide` 独占登记其余七项基础服务
 - 创建 `PluginManager`，由根激活经 `provide` 独占登记 `appService` / `pluginsService` / `hostConfig`：容器里放的只是契约列出的方法（窄面），App / PluginManager / ConfigManager 本体不外露；经 `pluginsService` 拿到的 `getPlugin` 是不含内部激活记录的快照
 - 应用配置中已有的服务偏好
@@ -50,15 +46,11 @@ core 不感知"文件系统 / 进程 / 终端"等任何 I/O 概念——core 自
 
 | 属性 | 类型 | 说明 |
 |---|---|---|
-| `plugins` | `PluginManager` | 插件管理器 |
+| `plugins` | `PluginManagerService` | 插件管理面（与插件经 `pluginsService` 拿到的同一契约） |
 | `config` | `ConfigManager` | 整份配置的读写、落盘与外部变更监听（插件侧经 `hostConfig` 拿到的是只含读写方法的窄面 `HostConfig`，落盘走 `appService.saveConfig`） |
 | `logger` | `Logger` | 日志器 |
-| `events` | `EventBus` | 事件总线 |
-| `services` | `ServiceContainer` | 服务容器 |
-| `hooks` | `HookRegistry` | 钩子注册表 |
-| `contributions` | `ContributionRegistry` | 贡献点注册表 |
 
-根激活不对外。宿主经 `bind` 取能力；插件经自己激活上的 `uses` 取能力。`app.services.get/getAll` 返回登记进容器的对象本身；内置八项登记的是提供者函数，宿主要用其接口经 `app.bind`。查看元数据用 `app.services.inspect`。
+根激活不对外。宿主经 `bind` 取能力；插件经自己激活上的 `uses` 取能力。四原语注册表不外露：宿主查询服务、看元数据经 `app.bind({ services })`，消费服务经 `app.bind({ x: descriptor })`。
 
 ## 核心方法
 

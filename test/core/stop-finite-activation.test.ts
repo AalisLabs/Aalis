@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { App, definePlugin, defineService, type Logger, lifecycle, provide } from '../../packages/core/src/index.js';
+import {
+  App,
+  definePlugin,
+  defineService,
+  type Logger,
+  lifecycle,
+  provide,
+  services,
+} from '../../packages/core/src/index.js';
 import type { PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
 
 function deferred() {
@@ -56,7 +64,8 @@ describe('有限 apply 与停机接管', () => {
     );
     expect(app.plugins.getPlugin('finite')?.state).toBe('activating');
     expect(app.plugins.getPlugin('next')?.state).toBe('pending');
-    expect(app.services.get(owned.name)).toBeDefined();
+    const lookup = app.bind({ services }).services;
+    expect(lookup.get(owned.name)).toBeDefined();
     const stopping = app.stop().then(() => {
       stopCompleted = true;
     });
@@ -72,7 +81,7 @@ describe('有限 apply 与停机接管', () => {
       await registering;
       expect(cleanups).toBe(1);
       expect([...live]).toEqual([]);
-      expect(app.services.get(owned.name)).toBeUndefined();
+      expect(lookup.get(owned.name)).toBeUndefined();
       expect(pendingRan).toBe(false);
       const entry = app.plugins.getPlugin('finite') as PluginRecord;
       expect(entry.state).toBe('disposed');

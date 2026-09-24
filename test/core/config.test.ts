@@ -48,16 +48,31 @@ describe('ConfigManager (内存快照模式)', () => {
     expect(cfg.getServicePreferences().llm).toBeUndefined();
   });
 
-  it('reloadFrom 用新的快照替换当前状态', () => {
-    const cfg = new ConfigManager({ name: 'One', logLevel: 'info', plugins: {} });
+  /** provider 经 watch 推送新快照的接线 */
+  function watched(initial: AalisConfig) {
+    let push!: (next: AalisConfig) => void;
+    const cfg = new ConfigManager(initial, {
+      provider: {
+        watch(onChange) {
+          push = onChange;
+          return () => {};
+        },
+      },
+    });
+    cfg.watch(() => {});
+    return { cfg, push: (next: AalisConfig) => push(next) };
+  }
+
+  it('provider 推送新快照即替换当前状态', () => {
+    const { cfg, push } = watched({ name: 'One', logLevel: 'info', plugins: {} });
     expect(cfg.get('name')).toBe('One');
-    cfg.reloadFrom({ name: 'Two', logLevel: 'info', plugins: {} });
+    push({ name: 'Two', logLevel: 'info', plugins: {} });
     expect(cfg.get('name')).toBe('Two');
   });
 
-  it('reloadFrom 喂 JSON __proto__ 不得改快照原型', () => {
-    const cfg = new ConfigManager({ name: 'T', logLevel: 'error', plugins: {} });
-    cfg.reloadFrom(poisonedSnapshot());
+  it('推送的 JSON 带 __proto__ 不得改快照原型', () => {
+    const { cfg, push } = watched({ name: 'T', logLevel: 'error', plugins: {} });
+    push(poisonedSnapshot());
     expectUnpoisoned(cfg.getAll());
     expect(cfg.get('pollutedA6v' as never)).toBeUndefined();
   });
