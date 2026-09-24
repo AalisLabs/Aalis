@@ -125,11 +125,11 @@ caps.provide(storage, scoped, {
 
 ## 5. 生命周期：激活闸、bounce、关停
 
-顶层插件：required 缺席会 pending，恢复后重新激活；胜者替换不一律重启消费者。子模块（`lifecycle.module`）挂载时缺 required 即拒绝（抛错，apply 不执行）；挂载之后没有独立持续激活闸——提供者离场时登记排队、引用可能为空，由父模块决定是否关掉它。不能说子模块与顶层插件调度完全相同。
+顶层插件：required 缺席会 pending，恢复后重新激活；胜者替换不一律重启消费者。
 
 `bounce(instanceId, opts?)`：拆掉当前激活 → 转 pending → 重算后重新激活。`updateConfig` 是 `bounce(instanceId, { config })` 的薄壳。true 只说明请求已受理，激活是否落定看 `idle()`。停机进行中 `bounce` / `register` 返回 false。
 
-关停以激活为单位，分收尾（drain）与关闭（close）两阶段。普通依赖（required，以及 optional 当时的胜者）：消费者整个 close 完，提供者才 drain。父使用子树服务：父 drain 先于子 close。后代使用祖先服务：不加排序边，归属树保证子 close 先于祖先 close。环：optional 让步；required 环告警并强行放行。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。
+关停以激活为单位，分收尾（drain）与关闭（close）两阶段。普通依赖（required，以及 optional 当时的胜者）：消费者整个 close 完，提供者才 drain。宿主根激活使用插件服务：根 drain 先于该插件 close。插件使用根激活登记的服务：不加排序边，归属保证插件 close 先于根 close。环：optional 让步；required 环告警并强行放行。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。
 
 `App.stop()` 先排干在飞重算，冻结新增绑定并进入停机态，再发 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。停机期间 `unload` / `disable` 汇入计划后立即返回 true（不等拆卸完成）。单独卸载提供者不享有交接保证。动态 `services.get` 不产生依赖边，关停期间可能取到空。缓存的 `all()[i]` 引用不受关停边保护。
 
@@ -150,8 +150,6 @@ caps.provide(storage, scoped, {
 ## 7. 隔离：键控解析或新 App
 
 按会话 / 租户做差异化配置，用键控解析（session-manager 的 `resolveConfig(sessionId)` 模式）。需要真正隔离的事件总线 / 日志通道 / 服务容器，用独立的 `App` 实例（`createApp({ events, services, hooks, … })`）。同租户内多用户偏好不要写进容器的 `prefer`——那是进程级 default，见 [插件作者指南](../plugin-author-guide.md) 第 13 节。
-
-子模块（`lifecycle.module`）是同一 App 内的独立激活：独立身份与生命周期，能力按子激活重新绑定，随父关闭，**不进调度器**。
 
 ---
 

@@ -52,8 +52,6 @@ register(definition, config?, instanceId?)
 
 激活成功发 `plugin:loaded`（通知，不等监听器）。若本次激活的 required 绑定在 `apply` 中通过 `require()` 原样抛出服务不可用错误，Core 会先撤回本次资源，再回到 `pending` 等待或重新观察依赖。optional 绑定、其他激活传来的错误、包装后的新异常与普通业务错误仍进入 `error`；不按错误文本或“此刻恰好缺服务”猜测原因。失败激活不发 `plugin:unloaded`（从未 loaded）。
 
-子模块由 `lifecycle.module` 挂载，不进本管理器，见 [插件定义与能力](context.md)。
-
 ## 统一状态机：`recompute(kind)`
 
 PluginManager 只有一个状态变更入口。种类只有两种：
@@ -78,7 +76,7 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 `softReload()` 是 `recompute('changed')` 的薄壳；`stopAll()` 是 `recompute('shutdown')` 的薄壳。`App.stop()` 单飞：先 `beginShutdown()`（置停机态并冻计划）再 `idle()`，然后发 `app:stopping`，最后 `stopAll()` 执行 drain / close。停机进行中 `register` / `bounce` 返回 false；`unload` / `disable` 汇入已冻计划后立即返回 true。每次 `stop()` 都返回完整停机的同一 Promise；`app:stopping` 监听器与清理回调不能 await 或返回它，以免等待自身。
 
-停机时全部 active 插件与宿主的根激活进同一张关停计划（无依赖关系时后注册的先关）。每个激活 drain 后 close；边规则见 [插件定义与能力](context.md)。单插件 `unload` / `disable` / `bounce` 只拆该插件及其子树，不享有整次 `App.stop()` 的交接保证；其下游在下一轮 recompute 才按目标态降级。
+停机时全部 active 插件与宿主的根激活进同一张关停计划（无依赖关系时后注册的先关）。每个激活 drain 后 close；边规则见 [插件定义与能力](context.md)。单插件 `unload` / `disable` / `bounce` 只拆该插件，不享有整次 `App.stop()` 的交接保证；其下游在下一轮 recompute 才按目标态降级。
 
 ## 管理动作口径
 
