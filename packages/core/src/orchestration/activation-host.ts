@@ -93,12 +93,8 @@ export class ActivationHost {
 
 /** Core 的通知型事件单一出口；屏障仍由 App 显式 await。 */
 export function notify(runtime: Pick<ServiceRuntime, 'events'>, logger: Logger): ServiceRuntime['notify'] {
+  // EventBus.emit 逐个接住监听器错误、上报也不外抛，既不同步抛出也不拒绝；.catch 是通知出口的统一形状（架构守卫要求），不等待。
   return (event, ...args) => {
-    const report = (error: unknown) => reportQuietly(() => logger.warn(`emit ${event} 失败:`, error));
-    try {
-      Promise.resolve(runtime.events.emit(event, ...args)).catch(report);
-    } catch (error) {
-      report(error);
-    }
+    runtime.events.emit(event, ...args).catch(error => reportQuietly(() => logger.warn(`emit ${event} 失败:`, error)));
   };
 }
