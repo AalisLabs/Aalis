@@ -5,7 +5,7 @@
 // 调度器挂载时：写入这次激活的配置 → 按 uses 装配绑定接口 → 调 apply。
 // ============================================================
 
-import { type BoundOf, isOptional, type ServiceDescriptor, type Uses } from './descriptors.js';
+import { assertOwnCopy, type BoundOf, isOptional, type ServiceDescriptor, type Uses } from './descriptors.js';
 import { isPlainConfigObject, isUnsafeConfigKey } from '../infrastructure/config-values.js';
 
 /**
@@ -102,7 +102,9 @@ export function validateDefinition(definition: PluginDefinition): void {
     throw new Error(`插件 "${definition.name}" 的 uses 必须是纯对象（不能是数组或原始值）`);
   }
   for (const [key, use] of Object.entries(definition.uses ?? {})) {
+    assertOwnCopy(use, `插件 "${definition.name}" 的 uses.${key} `);
     const descriptor = isOptional(use) ? use.optional : use;
+    assertOwnCopy(descriptor, `插件 "${definition.name}" 的 uses.${key} `);
     if (!isServiceDescriptor(descriptor)) {
       throw new Error(`插件 "${definition.name}" 的 uses.${key} 不是服务描述符（应为 defineService 的结果）`);
     }
@@ -111,6 +113,7 @@ export function validateDefinition(definition: PluginDefinition): void {
     throw new Error(`插件 "${definition.name}" 的 apply 必须是函数`);
   }
   for (const item of definition.provides ?? []) {
+    assertOwnCopy(item, `插件 "${definition.name}" 的 provides 元素`);
     if (!isServiceDescriptor(item)) {
       throw new Error(`插件 "${definition.name}" 的 provides 含有不是描述符的元素（${String(item)}）`);
     }

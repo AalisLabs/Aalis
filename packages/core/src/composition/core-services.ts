@@ -14,7 +14,7 @@ import type { HookContextMap, MiddlewareFn } from '../types/hooks.js';
 import type { ContributionHandle, ContributionSpec } from '../primitives/contributions.js';
 import type { ServiceInfo, ServiceView } from '../primitives/services.js';
 
-import { defineService, type ProviderOf, type ServiceDescriptor } from './descriptors.js';
+import { assertOwnCopy, defineService, type ProviderOf, type ServiceDescriptor } from './descriptors.js';
 import { validateProvide } from './provide-validation.js';
 import type { ServiceRuntime } from './runtime.js';
 import type { Logger } from '../infrastructure/logger.js';
@@ -196,6 +196,7 @@ export function coreProviders(
   const [, provideFor] = entry<Provide>(provide, c => (descriptor, implementation, options) => {
     const name = descriptor.name;
     if (!accepts(c, `provide("${name}")`)) return () => {};
+    assertOwnCopy(descriptor, 'provide 的描述符');
     const entryId = options?.onBehalfOf ?? options?.entryId ?? c.id;
     if (runtime.devMode && options?.onBehalfOf === undefined)
       validateProvide(
