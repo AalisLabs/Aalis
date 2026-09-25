@@ -3,9 +3,7 @@
 //
 // 通过 @aalis/api-storage 写入 storage URI（默认 data:/workflow-runs.json）。
 // 仍维持 write-on-end 整体重写策略；写入串行化避免覆盖。
-// 文件形状：{ runs: [...], onceFired: { <workflowId>: <firedAt> } }；
-// 旧版的顶层数组仍能读（按 runs 处理），写回时统一升级为对象。
-// 反向不成立：降级到旧构建会丢运行历史与 once 记账（0.x 不保证降级）。
+// 文件形状：{ runs: [...], onceFired: { <workflowId>: <firedAt> } }。
 // ============================================================
 
 import type { StorageService } from '@aalis/api-storage';
@@ -39,9 +37,7 @@ export class RunStore {
     try {
       const raw = await this.storage.readFile(this.fileUri, 'utf-8');
       const data = JSON.parse(String(raw));
-      if (Array.isArray(data)) {
-        this.runs = data as WorkflowRun[]; // 旧格式：顶层就是 runs 数组
-      } else if (data && typeof data === 'object') {
+      if (data && typeof data === 'object') {
         const d = data as { runs?: unknown; onceFired?: unknown };
         if (Array.isArray(d.runs)) this.runs = d.runs as WorkflowRun[];
         if (d.onceFired && typeof d.onceFired === 'object') {

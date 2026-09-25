@@ -11,7 +11,6 @@ import { setNetworkPolicy } from '@aalis/util-network-guard';
 import { AuthorityManager } from './authority-manager.js';
 import { autoConfirmActive, DEFAULT_AUTHORITY, shouldSkipConfirm } from './authority-model.js';
 
-export type { AuthorityService } from '@aalis/api-authority';
 export { AuthorityManager } from './authority-manager.js';
 
 // 权限管理页（自定义 renderer 在 webui-client）。单 owner 终态无委托树，故无委托关系图。
