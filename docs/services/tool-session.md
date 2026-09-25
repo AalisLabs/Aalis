@@ -134,23 +134,20 @@ export default definePlugin({
 **注入平台访问规则**（OneBot 的范式，`plugin-tool-onebot/src/index.ts`）：
 
 ```ts
-events.on('app:ready', () => {
-  const history = sessionHistory.current;
-  if (!history?.registerAccessChecker) {
-    logger.debug('session-history 不可用，跳过规则注册');
-    return; // 可选依赖：缺失就跳过，不报错
-  }
-  const dispose = history.registerAccessChecker({
+// 规则登记在提供者实例上：跟随提供者挂载，提供者重启、晚到或换人时自动重挂（见 A.7 常见错误①）
+sessionHistory.follow(history =>
+  history.registerAccessChecker({
     platform: 'onebot',
     check({ currentSessionId, targetSessionId }) {
       // 只对 onebot:* 目标表态；其它返回 undefined
       // deny → 立即拒；allow/undefined → 交给后续 checker / 默认放行
       return /* ...你的细粒度规则... */ undefined;
     },
-  });
-  lifecycle.onDispose(dispose); // ← 见 A.7 常见错误①
-});
+  }),
+);
 ```
+
+`registerAccessChecker` 返回的注销函数作为跟随的清理：提供者离场或本插件关闭时撤回。`sessionHistory` 缺席时回调不执行，可选依赖无需额外判断。
 
 **直接读取历史**（平台专属工具的范式，`plugin-tool-onebot/src/index.ts`）：每次现取，不要缓存实例（provider bounce 会失效，见 [惰性服务访问](../concepts/lazy-service-access.md)）：
 
@@ -170,7 +167,7 @@ const result = await history.getHistory({ sessionId, limit }, callCtx);
 
 ## A.7 注意事项与边界情形
 
-- **常见错误①（OneBot 已修复，新接入者沿用此写法）**：总线上**不存在 `'dispose'` 事件**。早期写法 `events.on('dispose', disposeChecker)` 永不触发，导致插件 bounce 后 access-checker 泄漏。正确写法是 `lifecycle.onDispose(dispose)`（`plugin-tool-onebot/src/index.ts` 有明确注释）。
+- **常见错误①**：只在 `app:ready` 里对 `sessionHistory.current` 注册一次。规则存在提供者实例的局部状态里，tool-session 重启（改配置、市场更新、依赖重启连带）或晚于本插件上线时，新实例上没有这条规则，细粒度限制静默失效。应按 A.5 用 `follow` 跟随提供者注册（OneBot 曾有此问题，已修复）。
 - **时间区间模式**：给 `sinceTs`/`untilTs` 任一即进入区间检索；此模式恒含归档记录，结果 `includeArchived` 字段会回显实际生效值（`plugin-tool-session/src/index.ts`）。后端无原生区间查询（`memory.getMessagesBySessionRange` 缺失）时退回扫描 `RANGE_FALLBACK_SCAN=5000` 条客户端过滤，极早窗口可能不全；窗口内超 `limit` 时置 `truncated: true` 而非静默丢弃。
 - `getHistory` 强依赖 `memory` 服务：缺失直接返回 `{ error: 'memory 服务不可用' }`（`index.ts`）。所以参考实现把 `memory` 列为 `optional`（运行期检测）而非 `required`。
 
