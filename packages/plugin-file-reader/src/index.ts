@@ -199,6 +199,15 @@ export async function computeFileId(sessionId: string, buffer: Buffer): Promise<
   return hex.slice(0, 16);
 }
 
+/**
+ * 文件名里的控制字符（含 \r \n \t）与 Unicode 行、段分隔符一律换成空格。
+ * 文件名会拼进附件描述和 system 块里的文件清单，这些文本按行排版：名字里带换行，就能把文字
+ * 排到文件块之外冒充用户原话，甚至伪造出一段格式完整的文件块。
+ */
+function sanitizeFileName(name: string): string {
+  return name.replace(/[\p{Cc}\u2028\u2029]/gu, ' ');
+}
+
 // ===== 插件入口 =====
 
 const uses = {
@@ -286,7 +295,9 @@ async function run(caps: Caps): Promise<void> {
     try {
       const buf = await storage.readFile(uri);
       const text = typeof buf === 'string' ? buf : buf.toString('utf-8');
-      return JSON.parse(text) as FileMeta;
+      const meta = JSON.parse(text) as FileMeta;
+      // 旧版本写下的 meta 里名字未经净化，读回时补上
+      return { ...meta, name: sanitizeFileName(meta.name) };
     } catch (err) {
       logger.debug(`加载 meta 失败 ${uri}:`, err);
       return null;
@@ -631,7 +642,8 @@ async function run(caps: Caps): Promise<void> {
       const fileId = args.fileId as string;
       const maxLength = (args.maxLength as number | undefined) ?? toolDefaultMaxLength;
       const entry = index.get(fileId);
-      // 跨会话越权防护：fileId 是内容寻址(sha256 前16hex)、可预测，必须校验归属本会话；
+      // 跨会话越权防护：fileId 按会话加盐（见 computeFileId），但会话 ID 可猜，知道文件内容
+      // 就能算出他人会话里的 fileId，仍然可预测，必须校验归属本会话；
       // 非本会话（或不存在）一律走兜底 / 当作不存在，不泄漏他人会话文件的存在性与内容。
       if (!entry || entry.sessionId !== callCtx.sessionId) {
         // 死链兜底：查 memory 是否有该 fileId 的旧 tool result（按本会话历史，天然隔离）
@@ -732,7 +744,7 @@ async function run(caps: Caps): Promise<void> {
     for (let i = 0; i < msg.attachments.length; i++) {
       const att = msg.attachments[i];
       if (att.kind !== 'file') continue;
-      const fileName = att.name ?? `file-${i}`;
+      const fileName = sanitizeFileName(att.name ?? `file-${i}`);
       try {
         // 幂等：data 字段是 aalis-file:// 引用 ⇒ 此前已处理；绝不再走 dataUrlToBuffer，
         // 否则会抛 "Invalid data URL" 把上次成功生成的描述覆盖成「处理失败」。

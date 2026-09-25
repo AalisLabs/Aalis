@@ -123,7 +123,8 @@ export class RelationService {
   // （embedding hash / summary / PageRank），把死节点整个写回（复活）。僵尸节点使
   // consolidate 每轮重判同一批对、反复铸 part-of 边（2026-08「表情包星形」事故）。
   // 凡「以快照旧拷贝为基底 spread + 补丁」的节点回写一律走这两个写口：
-  //   1. 落笔前单点核实节点在库中仍存活，死了就跳过——「删了就是删了」由此机器保证；
+  //   1. 落笔前单点核实节点在库中仍存活，死了就跳过——同 pass 内「删了就是删了」由此机器保证
+  //      （核实与写入是两次 await，其它并发路径的删除若落在其间仍会复活）；
   //   2. 以**库中活文档**为基底套补丁（而非旧拷贝）——否则回写还会用陈旧字段
   //      压掉并发合并刚并入的 aliases 等新状态。
   // 豁免路径：facade 新建/强化、renameNode 等「先单点读活文档再改写」的读改写路径；
@@ -407,7 +408,7 @@ export class RelationService {
    *
    * **静默改 kind / 改 name 已被禁用**（详见 patch 字段注释），LLM 反复输出"重名异 kind"
    * 时不会把已有节点偷偷翻转身份，只会留下 audit 日志。如确需 rename/换 kind，请走
-   * rename-watcher / consolidate verify / 显式 merge 工具。
+   * renameNode / changeEntityKind（agent 工具 user_relation_rename_node / user_relation_change_entity_kind）。
    */
   async reinforceEntity(
     entityId: string,
@@ -421,8 +422,8 @@ export class RelationService {
       summary?: string;
       /**
        * 仅作 audit 比对；reinforceEntity **不会**通过此字段改 kind。
-       * topic/work/place/thing 是底层分类，改 kind 等于换实体，必须走 consolidate verify
-       * 或显式管理工具。
+       * topic/work/place/thing 是底层分类，改 kind 等于换实体，必须显式调用 changeEntityKind
+       * （agent 工具 user_relation_change_entity_kind）。
        */
       entityKind?: EntityNode['entityKind'];
       evidence?: EvidenceRef[];
@@ -436,7 +437,7 @@ export class RelationService {
       this._audit(
         `[user-relation] reinforceEntity 忽略 entityKind 改动：entity=${entityId} name="${existing.name}" ` +
           `existing.kind="${existing.entityKind}" 收到 patch.kind="${patch.entityKind}"；kind 静默翻转已被禁止，` +
-          `请走 consolidate verify 或 merge tools`,
+          `改 kind 请走 changeEntityKind（工具 user_relation_change_entity_kind）`,
       );
     }
 
@@ -450,7 +451,8 @@ export class RelationService {
         } else {
           this._audit(
             `[user-relation] reinforceEntity 忽略 name 改动：entity=${entityId} kind="${existing.entityKind}" ` +
-              `existing.name="${existing.name}" 收到 patch.name="${trimmedPatch}"；rename 请走 rename-watcher / merge tools`,
+              `existing.name="${existing.name}" 收到 patch.name="${trimmedPatch}"；` +
+              `改名请走 renameNode（工具 user_relation_rename_node）`,
           );
         }
       }
@@ -1046,7 +1048,8 @@ export class RelationService {
   /**
    * 清空整个关系图，返回删除的记录条数（节点 + 边 + 合并否决缓存）。
    *
-   * 走 store 的批量原子提交，全程只读一次全图。逐节点级联删是等价的但代价差三个量级：
+   * 走 store 的单次批量提交（原子性按后端分档，见 RelationStore.clearAll），全程只读一次全图。
+   * 逐节点级联删是等价的但代价差三个量级：
    * 每次级联付 2 次全图读，实测生产图 1066 个节点即 2132 次 × 中位 177ms ≈ 6 分钟。
    */
   clearAll(): Promise<number> {
@@ -2354,6 +2357,10 @@ export class RelationService {
             reason: `name/aliases 完全等价于 "${norm}"`,
           });
           if (opts.autoLink) {
+            // 落笔核实况：本 pass 前面的对可能已把 a 或 b 真合并删掉（同 norm 组 ≥3 成员，或成员已在另一同名组被吸收）；
+            // 快照旧拷贝不能再拿去核验、铸 is-alias-of 边（端点已死即成悬空边），这一对直接跳过。
+            // 死者的 name/aliases 已随真合并并入其 canonical，组内存活成员之间的对照常合并。
+            if (!(await this.store.getEntity(a.id)) || !(await this.store.getEntity(b.id))) continue;
             // (A) LLM 语义核验：仅当传入了 llm 才执行；未启用则按算法直通
             let shouldMerge = true;
             // hierarchy 守门：若 a/b 之间已存在**有证据**的 part-of/contains 边
@@ -2481,7 +2488,8 @@ export class RelationService {
     //        把其它成员逐个 mergeAlias 到 canonical
     //   动机："判一对合一对"时 snapshot 不刷新会出现悬空合并 / 漏传递闭包。
     //         本范式让决策与应用分离，所有 LLM 判定基于同一份 snapshot，行为可预测。
-    //   未启用 LLM 时跳过本段（保持原算法的零误合并保证）。
+    //   未启用 LLM 时跳过本段（不引入宽召回的额外误合并；注意严格等价段本身不分 entityKind，
+    //   同名不同类仍会被合并）。
     if (opts.autoLink && llmModel && opts.llm) {
       const entitiesByKind = new Map<string, EntityNode[]>();
       for (const e of snapshot.entities) {
@@ -3345,7 +3353,8 @@ export class RelationService {
    *
    * sessionScope 隔离：
    *  - 同 scope 池内才比对（含「都 'global'」、「同 sessionId」）；
-   *  - 跨 scope 永不比对
+   *  - 跨 scope 不进相似度/LLM 比对；唯一的跨 scope 合并路径是非 dryRun 时先做的同名预合并：
+   *    与某 global 事件 normalizeName 相同的会话级事件不经 LLM 直接并入该 global hub
    *
    * Lazy embed：当 EventNode.embeddingHash !== embeddingHashFor(computeEventEmbeddingHash(title, summary), modelId) 时，
    *  实时调 embedding.embed() 并写回（持久化），下次 consolidate 复用。

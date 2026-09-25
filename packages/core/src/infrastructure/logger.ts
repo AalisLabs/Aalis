@@ -162,8 +162,11 @@ function formatLocalIso(d: Date): string {
   );
 }
 
+/** 附加参数渲染过程本身抛错时的固定占位串 */
+const UNRENDERABLE_ARG = '[无法渲染的参数]';
+
 /**
- * 把 logger.xxx(message, ...args) 里的 args 元素渲染成字符串。
+ * 把 logger.xxx(message, ...args) 里的 args 元素渲染成字符串。**绝不抛。**
  *
  * 设计目标：**零运行时依赖**——只用 ECMAScript 标准原语，Node/Deno/Bun/Browser
  * 都能跑。需要 `util.inspect` 级别的深度对象渲染时，由外层 sink 自行处理
@@ -173,9 +176,27 @@ function formatLocalIso(d: Date): string {
  * - `string`：原样
  * - `null` / `undefined` / 原始值：`String(v)`
  * - 普通对象 / 数组：尝试 `JSON.stringify`，遇到循环引用或不可序列化值时退化
- *   为 `String(v)`（一般得到 `[object Object]`，但至少不会抛）
+ *   为 `String(v)`（一般得到 `[object Object]`）；null 原型对象等无法转原始值的对象
+ *   `String(v)` 也会抛，再退回 `Object.prototype.toString`
+ *
+ * 绝不抛：日志调用常在 catch 与拆卸路径里，渲染参数时抛错会盖掉本来要记的错误。
+ * `instanceof`、读 `stack`、`JSON.stringify`、转原始值都会执行对象自己的代码（getter、
+ * `toJSON`、Proxy 陷阱；已撤销的 Proxy 几乎任何操作都抛），任何一步抛错都返回 {@link UNRENDERABLE_ARG}。
+ * 渲染结果不一定是字符串（`stack` 可被赋成任意值，`toJSON` 返回 `undefined` 时 `JSON.stringify`
+ * 也返回 `undefined`），在同一个 try 里用 `String()` 规整，否则调用方拼接时才转换、抛在兜底之外；
+ * 规整本身抛错（如 null 原型对象）同样返回占位串。
  */
 function stringifyArg(value: unknown): string {
+  try {
+    const rendered: unknown = renderArg(value);
+    return typeof rendered === 'string' ? rendered : String(rendered);
+  } catch {
+    return UNRENDERABLE_ARG;
+  }
+}
+
+/** {@link stringifyArg} 的渲染本体：各步都可能执行对象自己的代码而抛错，也可能返回非字符串，均由 stringifyArg 兜住 */
+function renderArg(value: unknown): string {
   if (typeof value === 'string') return value;
   if (value === null || value === undefined) return String(value);
   if (value instanceof Error) {
@@ -190,7 +211,11 @@ function stringifyArg(value: unknown): string {
     try {
       return JSON.stringify(value);
     } catch {
-      return String(value);
+      try {
+        return String(value);
+      } catch {
+        return Object.prototype.toString.call(value);
+      }
     }
   }
   return String(value);

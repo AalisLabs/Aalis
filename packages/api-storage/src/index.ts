@@ -179,7 +179,7 @@ export interface StorageRootConflict {
   name: string;
   /** 当前实际生效的根（按枚举顺序首个） */
   selected: AggregatedStorageRoot;
-  /** 被遮蔽、不会被 URI 路由到的同名根 */
+  /** 被遮蔽的同名根：不带能力要求的调用（如 stat）不会路由到它，但排在前面的根缺少所需能力（如只读根上的写）时，按能力过滤的调用仍会落到它上面 */
   shadowed: AggregatedStorageRoot[];
   /** 所有候选根，按 entry 顺序从高到低排列 */
   providers: Array<AggregatedStorageRoot & { selected: boolean }>;
@@ -439,15 +439,17 @@ export function createStorageGateway(
   };
   const dispatch = (uri: string, caps?: readonly StorageCapability[]): StorageService => {
     const target = resolveStorageByPath(source, uri, caps);
-    if (!target) {
-      const known = knownRootsList();
-      throw new Error(
-        `未知存储根: ${parseUriRoot(uri)}（已注册根: ${known.join(', ') || '(无)'}` +
-          (caps ? `, 需能力 [${caps.join(',')}]` : '') +
-          ')',
-      );
+    if (target) return target.instance;
+    const rootName = parseUriRoot(uri);
+    // 根已注册、只是没有满足所需能力的提供者：按枚举顺序首个同名根点明缺哪项，别报成「未知」
+    for (const entry of getStorageEntries(source)) {
+      const root = safeListRoots(entry).find(r => r.name === rootName);
+      if (!root) continue;
+      const missing = (caps ?? []).filter(c => !rootSatisfies(root, entry.instance, [c]));
+      throw new Error(`存储根 ${rootName} 不支持 ${missing.join(', ')}`);
     }
-    return target.instance;
+    const known = knownRootsList();
+    throw new Error(`未知存储根: ${rootName}（已注册根: ${known.join(', ') || '(无)'}）`);
   };
 
   return {
@@ -479,19 +481,11 @@ export function createStorageGateway(
     resolveLocalPath: (uri, access) => {
       const caps: StorageCapability[] =
         access === 'write' ? ['write', 'local-path'] : access === 'delete' ? ['delete', 'local-path'] : ['local-path'];
-      const target = dispatch(uri, caps);
-      if (!target.resolveLocalPath) {
-        throw new Error(`存储根 ${parseUriRoot(uri)} 不支持 local-path（远程协议或纯虚拟根）`);
-      }
-      return target.resolveLocalPath(uri, access);
+      // dispatch 已按 local-path 能力（方法存在性）过滤，路由到的提供者必有此方法
+      return dispatch(uri, caps).resolveLocalPath!(uri, access);
     },
-    watch: (uri, listener) => {
-      const target = dispatch(uri, ['watch']);
-      if (!target.watch) {
-        throw new Error(`存储根 ${parseUriRoot(uri)} 不支持 watch（远程协议或纯虚拟根）`);
-      }
-      return target.watch(uri, listener);
-    },
+    // 同上：dispatch 已按 watch 能力过滤
+    watch: (uri, listener) => dispatch(uri, ['watch']).watch!(uri, listener),
   };
 }
 

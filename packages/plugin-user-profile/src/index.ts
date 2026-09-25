@@ -588,18 +588,27 @@ function registerUserProfile({
     return list;
   }
 
-  /** mem 由调用方传入：一次操作只认开头取到的实例，理由见 {@link loadProfile} */
+  /**
+   * 读取指令档案（不存在返回空档案）。读失败原样抛出，理由同 {@link loadProfile}；
+   * 只读渲染走 {@link loadInstructionsLenient}。
+   * mem 由调用方传入：一次操作只认开头取到的实例，理由见 {@link loadProfile}
+   */
   async function loadInstructions(mem: MemoryService | undefined): Promise<InstructionDoc> {
     const empty: InstructionDoc = { instructions: [], updatedAt: 0 };
     if (!mem) return empty;
+    const doc = await mem.getMetadata(INSTRUCTIONS_NS, getInstructionsKey());
+    if (!doc) return empty;
+    const instructions = Array.isArray(doc.instructions) ? parseInstructionArray(doc.instructions as unknown[]) : [];
+    return { instructions, updatedAt: typeof doc.updatedAt === 'number' ? doc.updatedAt : 0 };
+  }
+
+  /** 只读渲染用：读失败按空档案处理，只记 debug（结果不会被写回） */
+  async function loadInstructionsLenient(mem: MemoryService | undefined): Promise<InstructionDoc> {
     try {
-      const doc = await mem.getMetadata(INSTRUCTIONS_NS, getInstructionsKey());
-      if (!doc) return empty;
-      const instructions = Array.isArray(doc.instructions) ? parseInstructionArray(doc.instructions as unknown[]) : [];
-      return { instructions, updatedAt: typeof doc.updatedAt === 'number' ? doc.updatedAt : 0 };
+      return await loadInstructions(mem);
     } catch (err) {
       logger.debug(`加载指令档案失败: ${err instanceof Error ? err.message : String(err)}`);
-      return empty;
+      return { instructions: [], updatedAt: 0 };
     }
   }
 
@@ -746,25 +755,34 @@ function registerUserProfile({
   }
 
   /**
-   * 读取一个用户的现有档案（不存在返回 undefined）。
+   * 读取一个用户的现有档案（getMetadata 返回空才算不存在，返回 undefined）。
    *
-   * 四个档案 / 指令读写函数都由调用方传入 mem，一次操作（读 → 调 LLM → 重读 → 覆盖写）全程只认
+   * 读失败原样抛出：先读后改再写的一方（关系分、事实提取、自反思、定点删事实）据此中止本次写入。
+   * 若把「读不出」当成「不存在」，调用方会用默认值覆盖写回，一次瞬时读错就清空整份档案。
+   * 只读渲染走 {@link loadProfileLenient}。
+   *
+   * 档案与指令的读写函数都由调用方传入 mem，一次操作（读 → 调 LLM → 重读 → 覆盖写）全程只认
    * 开头取到的实例：memory 胜者可能在 LLM 调用期间换人而本插件不重启，每步现取胜者会把 A 上
    * 合并出的整张表覆盖写进 B，B 原有的条目被删。
    */
   async function loadProfile(mem: MemoryService | undefined, userKey: string): Promise<UserProfile | undefined> {
     if (!mem) return undefined;
+    const doc = await mem.getMetadata(PROFILE_NS, userKey);
+    if (!doc) return undefined;
+    const facts = Array.isArray(doc.facts) ? parseFactArray(doc.facts as unknown[]) : [];
+    return {
+      facts,
+      relationScore: typeof doc.relationScore === 'number' ? Math.min(100, Math.max(0, doc.relationScore)) : 0,
+      interactionCount: typeof doc.interactionCount === 'number' ? Math.max(0, Math.floor(doc.interactionCount)) : 0,
+      lastInteractionAt: typeof doc.lastInteractionAt === 'number' ? doc.lastInteractionAt : undefined,
+      updatedAt: typeof doc.updatedAt === 'number' ? doc.updatedAt : 0,
+    };
+  }
+
+  /** 只读渲染用：读失败按「暂无档案」处理，只记 debug（结果不会被写回） */
+  async function loadProfileLenient(mem: MemoryService | undefined, userKey: string): Promise<UserProfile | undefined> {
     try {
-      const doc = await mem.getMetadata(PROFILE_NS, userKey);
-      if (!doc) return undefined;
-      const facts = Array.isArray(doc.facts) ? parseFactArray(doc.facts as unknown[]) : [];
-      return {
-        facts,
-        relationScore: typeof doc.relationScore === 'number' ? Math.min(100, Math.max(0, doc.relationScore)) : 0,
-        interactionCount: typeof doc.interactionCount === 'number' ? Math.max(0, Math.floor(doc.interactionCount)) : 0,
-        lastInteractionAt: typeof doc.lastInteractionAt === 'number' ? doc.lastInteractionAt : undefined,
-        updatedAt: typeof doc.updatedAt === 'number' ? doc.updatedAt : 0,
-      };
+      return await loadProfile(mem, userKey);
     } catch (err) {
       logger.debug(`加载用户档案失败 (${userKey}): ${err instanceof Error ? err.message : String(err)}`);
       return undefined;
@@ -1684,7 +1702,7 @@ function registerUserProfile({
 
       // 0a. 第三方行为指令（最高优先级）：作为不可违逆的行为约束放在 selfFacts 之前
       if (cfg.enableInstructions) {
-        const insDoc = await loadInstructions(mem);
+        const insDoc = await loadInstructionsLenient(mem);
         if (insDoc.instructions.length > 0) {
           const body = renderInstructionsBlock(insDoc.instructions);
           const insBlock =
@@ -1702,7 +1720,7 @@ function registerUserProfile({
 
       // 0. Aalis 自档案：永远尝试注入到最前段，作为人格延续锚点
       if (cfg.enableSelfProfile) {
-        const selfProfile = await loadProfile(mem, getSelfKey());
+        const selfProfile = await loadProfileLenient(mem, getSelfKey());
         const activeSelfFacts = selfProfile?.facts.filter(isFactActive) ?? [];
         if (activeSelfFacts.length > 0) {
           const body = renderProfileBlock(activeSelfFacts, 'Aalis', false);
@@ -1719,7 +1737,7 @@ function registerUserProfile({
       // 1. 主发言者完整档案：仅在确实有人在「和 Aalis 对话」时注入
       if (hasPrimarySpeaker && data.userId) {
         const userKey = userKeyOf(data.platform, data.userId);
-        const profile = await loadProfile(mem, userKey);
+        const profile = await loadProfileLenient(mem, userKey);
         if (profile?.facts.some(isFactActive)) {
           const body = renderProfileBlock(profile.facts, data.userId, false);
           const relationLine = renderRelationLine(profile);
@@ -1811,7 +1829,7 @@ function registerUserProfile({
         if (others.size > 0) {
           const snippets: string[] = [];
           for (const [key, info] of others) {
-            const profile = await loadProfile(mem, key);
+            const profile = await loadProfileLenient(mem, key);
             if (!profile?.facts.some(isFactActive)) continue;
             const label = info.nickname ? `${info.nickname}（${info.userId}）` : info.userId;
             const relationLine = renderRelationLine(profile);
@@ -1946,7 +1964,7 @@ function registerUserProfile({
           error: '需提供 user_key 或 (platform + user_id) 或 self=true。',
         });
       }
-      const profile = await loadProfile(memory.current, userKey);
+      const profile = await loadProfileLenient(memory.current, userKey);
       if (!profile || profile.facts.length === 0) {
         return JSON.stringify({ ok: true, userKey, found: false, message: '该用户暂无档案数据。' });
       }
@@ -1978,7 +1996,7 @@ function registerUserProfile({
     const userId = argv.session.userId;
     if (!userId) return '当前会话未识别用户身份，无法查看档案。';
     const userKey = userKeyOf(argv.session.platform, userId);
-    const profile = await loadProfile(memory.current, userKey);
+    const profile = await loadProfileLenient(memory.current, userKey);
     if (!profile || profile.facts.length === 0) {
       return `📭 暂无档案数据 (${userKey})`;
     }
@@ -2017,27 +2035,31 @@ function registerUserProfile({
       const factId = String(factIdArg ?? '');
       const userKey = target.includes(':') ? target : userKeyOf(argv.session.platform, target);
       const mem = memory.current;
-      const profile = await loadProfile(mem, userKey);
-      if (!profile || profile.facts.length === 0) return `📭 无档案数据 (${userKey})`;
-      const hit = profile.facts.find(f => f.id === factId);
-      if (!hit) {
-        const listing = profile.facts
-          .slice(0, 20)
-          .map(f => `  [${f.id}] ${f.text.slice(0, 50)}`)
-          .join('\n');
-        return `未找到事实 [${factId}]。${userKey} 现有 ${profile.facts.length} 条：\n${listing}`;
+      try {
+        const profile = await loadProfile(mem, userKey);
+        if (!profile || profile.facts.length === 0) return `📭 无档案数据 (${userKey})`;
+        const hit = profile.facts.find(f => f.id === factId);
+        if (!hit) {
+          const listing = profile.facts
+            .slice(0, 20)
+            .map(f => `  [${f.id}] ${f.text.slice(0, 50)}`)
+            .join('\n');
+          return `未找到事实 [${factId}]。${userKey} 现有 ${profile.facts.length} 条：\n${listing}`;
+        }
+        await saveProfile(mem, userKey, {
+          ...profile,
+          facts: profile.facts.filter(f => f.id !== factId),
+          updatedAt: Date.now(),
+        });
+        return `✅ 已删除 ${userKey} 的事实 [${factId}]：${hit.text.slice(0, 60)}`;
+      } catch (err) {
+        return `❌ 删除失败：${err instanceof Error ? err.message : String(err)}`;
       }
-      await saveProfile(mem, userKey, {
-        ...profile,
-        facts: profile.facts.filter(f => f.id !== factId),
-        updatedAt: Date.now(),
-      });
-      return `✅ 已删除 ${userKey} 的事实 [${factId}]：${hit.text.slice(0, 60)}`;
     });
 
   commands.command('profile.self', '查看 Aalis 的自档案（跨会话的内心状态）').action(async () => {
     const selfKey = getSelfKey();
-    const profile = await loadProfile(memory.current, selfKey);
+    const profile = await loadProfileLenient(memory.current, selfKey);
     if (!profile || profile.facts.length === 0) {
       return `🌱 ${getCurrentPersonaName()} 还没有积累任何自反思事实。（key=${selfKey}）`;
     }
@@ -2080,7 +2102,7 @@ function registerUserProfile({
   commands.command('instruct', '查看当前 persona 的第三方行为指令').action(async () => {
     if (!cfg.enableInstructions) return '🚫 第三方行为指令功能未启用。';
     const personaName = getCurrentPersonaName();
-    const doc = await loadInstructions(memory.current);
+    const doc = await loadInstructionsLenient(memory.current);
     if (doc.instructions.length === 0) {
       return `📭 ${personaName} 当前没有任何第三方行为指令。`;
     }
@@ -2105,24 +2127,28 @@ function registerUserProfile({
       const sourceUserKey = userId ? userKeyOf(argv.session.platform, userId) : undefined;
       const sourceUserName = userId ?? '匿名';
       const mem = memory.current;
-      const doc = await loadInstructions(mem);
-      const merged = mergeInstructions(
-        doc.instructions,
-        [
-          {
-            text: body,
-            severity: 'should',
-            sourceUserKey,
-            sourceUserName,
-            sourceChannel: 'command',
-          },
-        ],
-        [],
-        [],
-      );
-      await saveInstructions(mem, { instructions: merged, updatedAt: Date.now() });
-      const added = merged.find(m => m.text === clipInstructionText(body));
-      return `✅ 已添加行为指令${added ? `（id=${added.id}）` : ''}：${clipInstructionText(body)}`;
+      try {
+        const doc = await loadInstructions(mem);
+        const merged = mergeInstructions(
+          doc.instructions,
+          [
+            {
+              text: body,
+              severity: 'should',
+              sourceUserKey,
+              sourceUserName,
+              sourceChannel: 'command',
+            },
+          ],
+          [],
+          [],
+        );
+        await saveInstructions(mem, { instructions: merged, updatedAt: Date.now() });
+        const added = merged.find(m => m.text === clipInstructionText(body));
+        return `✅ 已添加行为指令${added ? `（id=${added.id}）` : ''}：${clipInstructionText(body)}`;
+      } catch (err) {
+        return `❌ 添加失败：${err instanceof Error ? err.message : String(err)}`;
+      }
     });
 
   commands
@@ -2132,12 +2158,16 @@ function registerUserProfile({
       const targetId = typeof id === 'string' ? id.trim() : '';
       if (!targetId) return '❌ 需要提供指令 id。';
       const mem = memory.current;
-      const doc = await loadInstructions(mem);
-      const target = doc.instructions.find(i => i.id === targetId);
-      if (!target) return `❌ 未找到 id=${targetId} 的指令。`;
-      const merged = mergeInstructions(doc.instructions, [], [], [targetId]);
-      await saveInstructions(mem, { instructions: merged, updatedAt: Date.now() });
-      return `✅ 已删除指令（id=${targetId}）：${target.text}`;
+      try {
+        const doc = await loadInstructions(mem);
+        const target = doc.instructions.find(i => i.id === targetId);
+        if (!target) return `❌ 未找到 id=${targetId} 的指令。`;
+        const merged = mergeInstructions(doc.instructions, [], [], [targetId]);
+        await saveInstructions(mem, { instructions: merged, updatedAt: Date.now() });
+        return `✅ 已删除指令（id=${targetId}）：${target.text}`;
+      } catch (err) {
+        return `❌ 删除失败：${err instanceof Error ? err.message : String(err)}`;
+      }
     });
 
   commands
@@ -2149,7 +2179,7 @@ function registerUserProfile({
       const mem = memory.current;
       if (!mem) return '记忆服务不支持指令删除。';
       try {
-        const before = (await loadInstructions(mem)).instructions.length;
+        const before = (await loadInstructionsLenient(mem)).instructions.length;
         await mem.deleteMetadata(INSTRUCTIONS_NS, getInstructionsKey());
         return `✅ ${getCurrentPersonaName()} 的第三方行为指令已清空（删除 ${before} 条）。`;
       } catch (err) {

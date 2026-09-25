@@ -63,7 +63,7 @@ export default definePlugin({
 | 几何计算 | `math_geometry` | 面积/体积/距离/角度 |
 | 单位转换 | `math_unit_convert` | 长度/质量/温度/时间等单位互转 |
 | 金融计算 | `math_financial` | 复利/单利/贷款月供（等额本息、等额本金）/现值/终值/NPV/IRR/ROI/CAGR/盈亏平衡/折旧 |
-| 微积分 | `math_calculus` | 数值导数（1–2 阶）/数值定积分（Simpson 法）/方程求根（牛顿法、二分法）/数列极限近似 |
+| 微积分 | `math_calculus` | 数值导数（1–2 阶）/数值定积分（Simpson 法）/方程求根（牛顿法、二分法）/数列极限近似。积分分段数最多 1000000；单次调用计算超过 2 秒即中止并返回错误 |
 | 方程求解 | `math_equation` | 一元一次/二次/三次方程、线性方程组（高斯消元）、比例式 |
 | 进制转换 | `math_base_convert` | 2–36 任意进制互转、位运算（AND/OR/XOR/NOT/SHL/SHR）、IEEE 754 浮点数分析 |
 | 符号代数 | `math_symbolic` | 符号求导/化简/有理化/展开/LaTeX 输出，基于 mathjs |

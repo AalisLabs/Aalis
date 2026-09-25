@@ -98,4 +98,22 @@ describe('persona 合成回合的会话类型推断', () => {
       expect(prompt, `${platform} / ${sessionId}`).not.toContain('会话类型');
     }
   });
+
+  it('子任务会话（`<父会话 id>::<uuid>`，带父会话 platform、无 sessionType）：不推断，不出群号与身份判定', async () => {
+    await boot();
+    for (const parentId of ['onebot:10000:group:20001', 'onebot:10000:private:30001']) {
+      const sessionId = `${parentId}::abcd1234`;
+      // 形状同 plugin-subtask 派发的子任务消息
+      const { prompt } = await volatileFor({
+        content: 'x',
+        sessionId,
+        platform: 'onebot',
+        userId: `parent:${parentId}`,
+      });
+      expect(prompt, sessionId).toContain('# 当前会话环境');
+      expect(prompt, sessionId).not.toContain('会话类型');
+      expect(prompt, sessionId).not.toContain('群号');
+      expect(prompt, sessionId).not.toContain('身份判定');
+    }
+  });
 });

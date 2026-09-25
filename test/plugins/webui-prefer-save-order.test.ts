@@ -152,13 +152,15 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
     const { host, dirB, home, prefer, unprefer } = await boot(app);
 
     const res = await prefer();
-    expect(res.ok, '落盘失败必须以错误响应传出，不能报 200').toBe(false);
+    expect(res.status, '落盘失败必须以错误响应传出，不能报 200').toBe(409);
+    expect(await res.json(), '以 JSON 说明改动已在运行态生效、未写入文件').toMatchObject({ applied: true });
     expect(host.webuiClient.current?.getClientDir(), '服务解析已选 B').toBe(dirB);
     expect(await home(), '偏好已指向 B，静态目录必须同步切到 B').toContain('CLIENT-B');
 
     // 清除偏好走同一条不变量：解析回落到 A，静态目录也必须同步回落，哪怕落盘仍然拒绝
     const del = await unprefer();
-    expect(del.ok, '清除偏好同样在落盘失败时以错误响应传出').toBe(false);
+    expect(del.status, '清除偏好同样在落盘失败时以错误响应传出').toBe(409);
+    expect(await del.json()).toMatchObject({ applied: true });
     expect(await home(), '偏好已清除，静态目录必须一起退回 A').toContain('CLIENT-A');
   });
 

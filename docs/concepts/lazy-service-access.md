@@ -153,7 +153,7 @@ export default definePlugin({
 
 环：optional 边构成的强连通分量（≥2 个激活）先让成员全部 drain，再任一 close（不告警；drain 期间双方都能 `require()`）；环里只剩 required 边仍无解才告警并强行放行。
 
-`App.stop()` 先排干在飞重算，冻结新增绑定并进入停机态，再发屏障事件 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。停机期间 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成）；`register` / `bounce` 返回 false。
+`App.stop()` 先排干在飞重算，冻结新增绑定并进入停机态，再发屏障事件 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。停机期间 `unload` 汇入该计划后立即返回 true（不等拆卸完成）；`disable` 在停机拆卸开始后对已标 `disposed` 的条目返回 false，其余同 `unload`；`register` / `bounce` 返回 false。
 
 单独 unload / disable / bounce 提供者时上述交接同样成立（下游先收尾、先关，提供者之后）。动态 `services.get` 不产生依赖边，关停期间可能取到空。缓存的 `all()[i]` 引用不受关停边保护。
 

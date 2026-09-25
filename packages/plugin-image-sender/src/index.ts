@@ -4,8 +4,8 @@
 // 工具：
 //   1. preview_image    —— 在选图前用 vision 看清候选图（搜索结果标题常误导）
 //   2. send_attachment  —— 统一的出站附件接口：把 image/audio/video 发出去；
-//                          同步描述并入档，让"AI 之前发过的图/视频"能被
-//                          memory_recall 召回
+//                          由出站归档监听器在后台描述并入档，让"AI 之前
+//                          发过的图/视频"能被 memory_recall 召回
 //
 // send_attachment 来源：url / storage_uri / history_ref（不接受裸本地路径）
 // 此插件不直接调用平台 API，而是 emit `outbound:message`（含 attachments[]）；
