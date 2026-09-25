@@ -116,7 +116,7 @@ describe('checkpoint × storage (真 fs)', () => {
     writeFileSync(join(ws, 'a.txt'), 'hello');
 
     const turnId = await runTurn('s2', async () => {
-      await storage.move?.('ws:/a.txt', 'ws:/sub/b.txt');
+      await storage.move('ws:/a.txt', 'ws:/sub/b.txt');
     });
     expect(existsSync(join(ws, 'sub', 'b.txt'))).toBe(true);
     expect(existsSync(join(ws, 'a.txt'))).toBe(false);
@@ -147,7 +147,7 @@ describe('checkpoint × storage (真 fs)', () => {
     writeFileSync(join(ws, 'tree', 'x.txt'), 'inside');
 
     const turnId = await runTurn('s4', async () => {
-      await storage.move?.('ws:/tree', 'ws:/archive/tree');
+      await storage.move('ws:/tree', 'ws:/archive/tree');
     });
     expect(existsSync(join(ws, 'archive', 'tree', 'x.txt'))).toBe(true);
 
@@ -161,7 +161,7 @@ describe('checkpoint × storage (真 fs)', () => {
     writeFileSync(join(ws, 'a.txt'), 'orig');
 
     const turnId = await runTurn('s6', async () => {
-      await storage.move?.('ws:/a.txt', 'ws:/b.txt');
+      await storage.move('ws:/a.txt', 'ws:/b.txt');
       await storage.writeFile('ws:/b.txt', 'changed'); // 同回合内再改目标
     });
     expect(readFileSync(join(ws, 'b.txt'), 'utf-8')).toBe('changed');
@@ -176,7 +176,7 @@ describe('checkpoint × storage (真 fs)', () => {
   it('本回合新建后又移走：回滚两端都不留文件', async () => {
     const turnId = await runTurn('s10', async () => {
       await storage.writeFile('ws:/n.txt', 'new'); // write-new
-      await storage.move?.('ws:/n.txt', 'ws:/dst/n.txt'); // 同回合内再移走同一 uri
+      await storage.move('ws:/n.txt', 'ws:/dst/n.txt'); // 同回合内再移走同一 uri
     });
     expect(existsSync(join(ws, 'dst', 'n.txt'))).toBe(true);
 
@@ -211,7 +211,7 @@ describe('checkpoint × storage (真 fs)', () => {
 
     const turnId = await runTurn('s11', async () => {
       await storage.writeFile('ws:/o.txt', 'changed');
-      await storage.move?.('ws:/o.txt', 'ws:/dst/o.txt');
+      await storage.move('ws:/o.txt', 'ws:/dst/o.txt');
     });
     expect(readFileSync(join(ws, 'dst', 'o.txt'), 'utf-8')).toBe('changed');
 
@@ -230,7 +230,7 @@ describe('checkpoint × storage (真 fs)', () => {
     writeFileSync(join(ws, 'c.txt'), 'body-c');
 
     const turnId = await runTurn('s7', async () => {
-      await storage.move?.('ws:/c.txt', 'ws:/moved/c.txt');
+      await storage.move('ws:/c.txt', 'ws:/moved/c.txt');
     });
 
     const first = await svc.rollback('s7', turnId);
@@ -247,7 +247,7 @@ describe('checkpoint × storage (真 fs)', () => {
     writeFileSync(join(ws, 'p.txt'), 'body-p');
 
     const turnId = await runTurn('s9', async () => {
-      await storage.move?.('ws:/p.txt', 'ws:/moved/p.txt');
+      await storage.move('ws:/p.txt', 'ws:/moved/p.txt');
     });
 
     // 假后端：不给 move（强制走「写回源端 + 删目标」回落），删目标抛 EACCES——非 ENOENT，不该被豁免

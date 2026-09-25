@@ -1214,7 +1214,7 @@ function run(caps: Caps): void {
       await storage.stat(skillsUri);
     } catch {
       try {
-        await storage.mkdir?.(skillsUri);
+        await storage.mkdir(skillsUri);
       } catch {
         /* 建不了就照旧：下面的监听会给出失败原因 */
       }

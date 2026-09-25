@@ -43,8 +43,6 @@ interface PersonaIdentity {
   senderTitle?: string;
 }
 
-export type { OutputFormat, OutputFormatField, PersonaService, PersonaSessionOptions } from '@aalis/api-persona';
-
 // ===== 插件元数据 =====
 
 const configSchema: ConfigSchema = {
@@ -633,7 +631,7 @@ async function run(caps: Caps): Promise<void> {
       await storage.stat(personasDir);
     } catch {
       try {
-        await storage.mkdir?.(personasDir);
+        await storage.mkdir(personasDir);
       } catch {
         /* 建不了就照旧：下面的监听会给出失败原因 */
       }

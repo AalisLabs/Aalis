@@ -202,15 +202,6 @@ export function wrapUntrustedContent(content: string, source: string): string {
   );
 }
 
-/**
- * 把 `ToolService.execute` 的返回值归一为 {@link ToolExecutionResult}。
- * 0.8.0 起 execute 返回对象；此前返回字符串。插件间只有契约版本约束、没有实现包版本约束，
- * 调用方经它读结果，配旧实现（返回字符串）也不会把 `.content` 读成 undefined。
- */
-export function asToolExecutionResult(result: string | ToolExecutionResult): ToolExecutionResult {
-  return typeof result === 'string' ? { content: result } : result;
-}
-
 // ===== AalisEvents 扩展（declaration merging） =====
 
 declare module '@aalis/core' {

@@ -25,8 +25,8 @@ export interface StorageService {
   createReadStream(uri: string): Promise<StorageReadStreamResult>;
   writeFile(uri: string, data: string | Buffer): Promise<void>;
   rename(uri: string, newName: string): Promise<string>;
-  move?(fromUri: string, toUri: string): Promise<string>;
-  mkdir?(uri: string): Promise<string>;
+  move(fromUri: string, toUri: string): Promise<string>;
+  mkdir(uri: string): Promise<string>;
   delete(uri: string): Promise<void>;
   resolveLocalPath?(uri: string, access?: 'read' | 'write' | 'delete'): Promise<string>;
   watch?(uri: string, listener: StorageWatchListener): StorageUnwatch;
@@ -93,7 +93,7 @@ export interface StorageRootInfo {
 
 | 必须 | 可选 |
 | --- | --- |
-| `listRoots` `list` `stat` `readFile` `createReadStream` `writeFile` `rename` `delete` | `resolveLocalPath`、`watch`、`move` / `mkdir` / `readFileRange` |
+| `listRoots` `list` `stat` `readFile` `createReadStream` `writeFile` `rename` `move` `mkdir` `delete` | `resolveLocalPath`、`watch`、`readFileRange` |
 
 不实现可选方法时，`createStorageGateway` 会在调用方抛出明确报错，不会静默。
 
@@ -145,6 +145,12 @@ class MyRoot implements StorageService {
   async writeFile(_uri: string, _data: string | Buffer): Promise<void> {}
   async rename(uri: string, _newName: string): Promise<string> {
     return uri;
+  }
+  async move(_fromUri: string, _toUri: string): Promise<string> {
+    throw new Error('todo');
+  }
+  async mkdir(_uri: string): Promise<string> {
+    throw new Error('todo');
   }
   async delete(_uri: string): Promise<void> {}
 }
@@ -234,7 +240,7 @@ root 的 `readable/writable/deletable` 就是该根的访问策略。这与 auth
 ## 7. 边界与注意事项
 
 1. **`browsable` 当前是部分生效的 hint**：`plugin-webui-server` 的文件页**只显示其 `fileRoot` 配置指向的那一个根**。
-2. **rename 仅同目录改名**。同根跨目录移动改用可选的 `move`。
+2. **rename 仅同目录改名**。同根跨目录移动改用 `move`。
 3. **同名 root 静默遮蔽**：用 `getStorageRootConflicts(storage)` 暴露。
 4. **watch 去抖 + 平台降级**：事件统一为 `change`。消费者不应假定「一次写 = 一次事件」。
 5. **checkpoint 写前快照耦合**：自定义后端若希望兼容 checkpoint 回滚，需复刻 `beforeMutate` 钩子。checkpoint 按根的 `kind` 决定是否记账：`data` / `tmp` / `pluginData` / `logs` 不记账。

@@ -121,6 +121,12 @@ function createMemoryStorage(): MemoryStorage {
     async rename() {
       throw new Error('未实现');
     },
+    async move() {
+      throw new Error('未实现');
+    },
+    async mkdir() {
+      throw new Error('未实现');
+    },
     async createReadStream() {
       throw new Error('未实现');
     },

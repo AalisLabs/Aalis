@@ -785,8 +785,6 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
-        const move = storage.move?.bind(storage);
-        if (!move) return jsonError(new Error('当前存储不支持移动操作（storage.move 未实现）'));
         const fromUri = toStorageUri(args.from as string, config, callCtx.sessionId);
         const toUri = toStorageUri(args.to as string, config, callCtx.sessionId);
         // 与其余 file_* 工具同门槛：两端都必须落在 allowedRoots 内（审计抓的漏配——
@@ -794,7 +792,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
         ensureRootAllowed(fromUri, config);
         ensureRootAllowed(toUri, config);
         return await withFileLock([fromUri, toUri], async () => {
-          const result = await move(fromUri, toUri);
+          const result = await storage.move(fromUri, toUri);
           return JSON.stringify({ from: fromUri, to: result, message: '移动成功' });
         });
       } catch (err) {
@@ -828,7 +826,6 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
     handler: async (args, callCtx) => {
       try {
         const storage = requireStorage(config);
-        if (!storage.mkdir) return jsonError(new Error('当前存储不支持创建目录（storage.mkdir 未实现）'));
         const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const result = await storage.mkdir(uri);

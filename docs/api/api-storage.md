@@ -46,6 +46,8 @@ interface StorageService {
   createReadStream(uri: string): Promise<StorageReadStreamResult>;
   writeFile(uri: string, data: string | Buffer): Promise<void>;
   rename(uri: string, newName: string): Promise<string>;
+  move(fromUri: string, toUri: string): Promise<string>;
+  mkdir(uri: string): Promise<string>;
   delete(uri: string): Promise<void>;
   resolveLocalPath?(uri: string, access?: 'read' | 'write' | 'delete'): Promise<string>;
 }

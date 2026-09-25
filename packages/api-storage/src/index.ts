@@ -102,15 +102,15 @@ export interface StorageService {
    * 移动/重命名到任意目标 URI（可跨目录，须同存储根）。自动创建目标父目录，
    * 目标已存在则拒绝（不覆盖）。底层 fs.rename——原子、零拷贝，大文件也瞬间完成。
    * 与 `rename`（仅同目录改名、拒绝路径分隔符）的区别：`move` 接受完整目标路径。
-   * 可选：老存储实现可不提供，消费方（file_move 工具）会检查存在性后降级报错。
+   * 不支持移动的根实现为抛错。
    */
-  move?(fromUri: string, toUri: string): Promise<string>;
+  move(fromUri: string, toUri: string): Promise<string>;
   /**
    * 创建目录（递归，自动建所有缺失的父目录；已存在则幂等无操作）。约束在存储根内
    * （拒宿主绝对路径 / `..` 逃逸）。返回创建的目录 URI。
-   * 可选：老存储实现可不提供，消费方（file_mkdir 工具）会检查存在性后降级报错。
+   * 不支持创建目录的根实现为抛错。
    */
-  mkdir?(uri: string): Promise<string>;
+  mkdir(uri: string): Promise<string>;
   delete(uri: string): Promise<void>;
   /**
    * 把 storage URI 解析为本机绝对路径，给必须使用本地路径的子进程（shell、code-runner）用。
@@ -450,16 +450,8 @@ export function createStorageGateway(source: ServiceRef<StorageService>): Storag
     createReadStream: uri => dispatch(uri, ['read']).createReadStream(uri),
     writeFile: (uri, data) => dispatch(uri, ['write']).writeFile(uri, data),
     rename: (uri, newName) => dispatch(uri, ['write']).rename(uri, newName),
-    move: (fromUri, toUri) => {
-      const provider = dispatch(fromUri, ['write']);
-      if (!provider.move) throw new Error(`存储根 ${parseUriRoot(fromUri)} 不支持移动操作`);
-      return provider.move(fromUri, toUri);
-    },
-    mkdir: uri => {
-      const provider = dispatch(uri, ['write']);
-      if (!provider.mkdir) throw new Error(`存储根 ${parseUriRoot(uri)} 不支持创建目录`);
-      return provider.mkdir(uri);
-    },
+    move: (fromUri, toUri) => dispatch(fromUri, ['write']).move(fromUri, toUri),
+    mkdir: uri => dispatch(uri, ['write']).mkdir(uri),
     delete: uri => dispatch(uri, ['delete']).delete(uri),
     resolveLocalPath: (uri, access) => {
       const caps: StorageCapability[] =
