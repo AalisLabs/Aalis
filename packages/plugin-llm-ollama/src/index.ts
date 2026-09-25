@@ -4,7 +4,7 @@ import { createProcessGateway, type ProcessService, processService } from '@aali
 import type { ToolDefinition } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import type { Message } from '@aalis/schema-message';
+import type { Message, ToolCall } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
 import { safeFetch } from '@aalis/util-network-guard';
 
@@ -150,6 +150,23 @@ interface OllamaChatResponse {
   total_duration?: number;
   prompt_eval_count?: number;
   eval_count?: number;
+}
+
+/**
+ * Ollama 原生 tool_calls → ToolCall。Ollama 不给调用 id，由这里现造；非流式、流式终帧与
+ * 流意外结束三条路径共用，id 统一带时间戳——下游按 id 配对调用与结果（tool-search、
+ * memory-summary 的工具名映射），跨回合撞 id 会把工具名或结果配错。无调用时返回 undefined。
+ */
+function finalizeToolCalls(calls: OllamaToolCall[] | undefined): ToolCall[] | undefined {
+  if (!calls || calls.length === 0) return undefined;
+  return calls.map((tc, i) => ({
+    id: `call_ollama_${Date.now()}_${i}`,
+    type: 'function' as const,
+    function: {
+      name: tc.function.name,
+      arguments: JSON.stringify(tc.function.arguments),
+    },
+  }));
 }
 
 // ===== <think> 标签解析辅助 =====
@@ -337,16 +354,8 @@ class OllamaClient {
       reasoningContent: allReasoning || null,
     };
 
-    if (data.message.tool_calls && data.message.tool_calls.length > 0) {
-      result.toolCalls = data.message.tool_calls.map((tc, i) => ({
-        id: `call_ollama_${Date.now()}_${i}`,
-        type: 'function' as const,
-        function: {
-          name: tc.function.name,
-          arguments: JSON.stringify(tc.function.arguments),
-        },
-      }));
-    }
+    const toolCalls = finalizeToolCalls(data.message.tool_calls);
+    if (toolCalls) result.toolCalls = toolCalls;
 
     if (data.prompt_eval_count != null || data.eval_count != null) {
       const promptTokens = data.prompt_eval_count ?? 0;
@@ -480,17 +489,8 @@ class OllamaClient {
 
               // 最后一个 chunk
               const chunk: ChatStreamChunk = { done: true };
-
-              if (toolCallBuffers.length > 0) {
-                chunk.toolCalls = toolCallBuffers.map((tc, i) => ({
-                  id: `call_ollama_${Date.now()}_${i}`,
-                  type: 'function' as const,
-                  function: {
-                    name: tc.function.name,
-                    arguments: JSON.stringify(tc.function.arguments),
-                  },
-                }));
-              }
+              const toolCalls = finalizeToolCalls(toolCallBuffers);
+              if (toolCalls) chunk.toolCalls = toolCalls;
 
               if (data.prompt_eval_count != null || data.eval_count != null) {
                 const promptTokens = data.prompt_eval_count ?? 0;
@@ -580,16 +580,8 @@ class OllamaClient {
 
     // 流意外结束时补发 done
     const finalChunk: ChatStreamChunk = { done: true };
-    if (toolCallBuffers.length > 0) {
-      finalChunk.toolCalls = toolCallBuffers.map((tc, i) => ({
-        id: `call_${i}`,
-        type: 'function' as const,
-        function: {
-          name: tc.function.name,
-          arguments: JSON.stringify(tc.function.arguments),
-        },
-      }));
-    }
+    const toolCalls = finalizeToolCalls(toolCallBuffers);
+    if (toolCalls) finalChunk.toolCalls = toolCalls;
     yield finalChunk;
   }
 

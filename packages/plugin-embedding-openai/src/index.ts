@@ -31,6 +31,7 @@ const configSchema: ConfigSchema = {
 // ===== 服务实现 =====
 
 class OpenAIEmbeddingService implements EmbeddingService {
+  readonly modelId: string;
   private baseUrl: string;
   private model: string;
   private apiKey: string;
@@ -39,6 +40,7 @@ class OpenAIEmbeddingService implements EmbeddingService {
   constructor(baseUrl: string, model: string, apiKey: string, timeoutMs = 30000) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.model = model;
+    this.modelId = `openai:${model}`;
     this.apiKey = apiKey;
     this.timeoutMs = Math.max(1000, timeoutMs);
   }

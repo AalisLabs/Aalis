@@ -143,10 +143,6 @@ export function isLoadablePlugin(meta: Record<string, unknown>): boolean {
 
 插件也可以在 `apply` 里 `provide(webuiClient, impl)` 主动覆盖自动发现。
 
-### `aalis.util: true`：未被读取的装饰性字段
-
-工具库包的 `package.json` 里可能有 `aalis: { util: true }`，但没有任何代码读取 `aalis.util`。市场把一个包归为 `util` 类，靠的是 `keywords` 含 `'aalis-util'`。不要把任何行为挂在 `aalis.util` 上。
-
 ---
 
 ## 注意事项与边界情形
@@ -155,7 +151,7 @@ export function isLoadablePlugin(meta: Record<string, unknown>): boolean {
 2. **`provides` 必须等于本次激活实际登记的服务名。** 少声明会导致 dev warn、或拓扑排不到你；多声明（含误把 `onBehalfOf` 代登记算进自己）会在激活后校验失败。
 3. **市场读的是 npm packument 的 latest 版本**，不是你本地工作区——`aalis.service` 改了之后要发版才会在市场生效。
 4. **`keywords: ["aalis-plugin"]` 是加载硬门。** 漏了它，插件永远不被发现。
-5. **`aalis.client` 被读取、`aalis.util` 不被读取。** 前者控制前端发现，后者是装饰性字段。
+5. **`aalis` 字段只有 `service` 与 `client` 两个键会被读取。** 前者供市场披露，后者控制前端发现。包类型只看 `keywords`，`aalis` 下的其它键没有代码读取，不要把行为挂在上面。
 6. **`extends` 写在 `definePlugin` 对象上**（`PluginMeta` 字段），不要另导出带下划线的具名绑定；消费端读 `definition.extends`。
 
 ---

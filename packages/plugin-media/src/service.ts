@@ -277,7 +277,6 @@ export class MediaServiceImpl implements MediaService {
       const r = await proc.transcribe({
         attachment,
         language: opts.language ?? this.cfg.audio.language,
-        withTimestamps: opts.withTimestamps,
         context: opts.context,
       });
       return r.text;

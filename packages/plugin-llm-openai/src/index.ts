@@ -514,11 +514,18 @@ class OpenAIClient {
 
 const { Chat, ToolCalling, Streaming, Vision, Thinking } = LLMCapabilities;
 
+// resolveCapabilities 的前缀匹配按表序取第一个命中，更具体的前缀必须排在更短的前缀之前
+// （gpt-4.1 在 gpt-4 之前，否则 gpt-4.1-mini 会命中 gpt-4、丢掉 Vision）。
+// 表里的 Vision 影响 media 的视觉路由、vision.delivery=auto 的交付判定，以及 media 缺席时
+// WebUI（/api/status）是否显示图片上传按钮；漏标只是退回识别模型转文字，误标会把原图直通给
+// 不收图的模型，故只收确认全系支持看图的族。
 const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
   'gpt-4o': [Chat, ToolCalling, Streaming, Vision],
   'gpt-4o-mini': [Chat, ToolCalling, Streaming, Vision],
+  'gpt-4.1': [Chat, ToolCalling, Streaming, Vision],
   'gpt-4-turbo': [Chat, ToolCalling, Streaming],
   'gpt-4': [Chat, ToolCalling, Streaming],
+  'gpt-5': [Chat, ToolCalling, Streaming, Vision, Thinking],
   'gpt-3.5-turbo': [Chat, ToolCalling, Streaming],
   o1: [Chat, Thinking],
   'o1-mini': [Chat, Thinking],
@@ -534,6 +541,13 @@ const MODEL_CAPABILITIES: Record<string, LLMCapability[]> = {
   'gemini-pro': [Chat, ToolCalling, Streaming, Vision],
   'gemini-flash': [Chat, ToolCalling, Streaming, Vision],
   'gemini-exp': [Chat, ToolCalling, Streaming, Vision],
+  // 通义千问与智谱的视觉族（DashScope / 智谱开放平台的兼容端点）。只声明看图，工具调用各型号不一，不标
+  'qwen-vl': [Chat, Streaming, Vision],
+  'qwen2.5-vl': [Chat, Streaming, Vision],
+  'qwen3-vl': [Chat, Streaming, Vision],
+  'glm-4v': [Chat, Streaming, Vision],
+  'glm-4.1v': [Chat, Streaming, Vision],
+  'glm-4.5v': [Chat, Streaming, Vision],
 };
 
 const DEFAULT_CAPABILITIES: LLMCapability[] = [Chat];
@@ -576,6 +590,10 @@ function parseCustomModels(raw: unknown): string[] {
 /**
  * 解析用户能力覆盖配置（textarea）。格式：每行 `<modelId>: cap1,cap2,...`。
  * 返回 Map，供 resolveCapabilities() 作为 userOverride（覆盖而非叠加）。
+ *
+ * 按**最后一个**冒号切分：兼容端点的模型 id 可能自带冒号（Ollama /v1 的 `qwen3:8b`、
+ * OpenRouter 的 `xxx:free`、OpenAI 微调模型 `ft:gpt-4o-mini:org::id`），按首个冒号切会把 id
+ * 截断、能力段变成 `8b: chat`，这行覆盖永远不命中。能力名本身不含冒号，故末位冒号即分隔符。
  */
 function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
   const out = new Map<string, LLMCapability[]>();
@@ -583,7 +601,7 @@ function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
-    const colonIdx = trimmed.indexOf(':');
+    const colonIdx = trimmed.lastIndexOf(':');
     if (colonIdx < 0) continue;
     const modelId = trimmed.slice(0, colonIdx).trim();
     const caps = trimmed

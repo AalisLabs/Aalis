@@ -86,7 +86,7 @@ export class Resources {
     if (this.#drained) return this.#drained;
     this.#closing = true;
     if (!this.#initialization && this.draining.size === 0) {
-      this.draining.dispose();
+      this.draining.seal();
       return undefined;
     }
     this.#drained = (async () => {

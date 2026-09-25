@@ -209,10 +209,13 @@ function tokenize(expr: string): Token[] {
 // ===== 递归下降解析器 =====
 class Parser {
   private tokens: Token[];
+  /** 变量表：标识符先查这里，再查常量表 */
+  private vars: ReadonlyMap<string, number>;
   private pos = 0;
 
-  constructor(tokens: Token[]) {
+  constructor(tokens: Token[], vars: ReadonlyMap<string, number> = new Map()) {
     this.tokens = tokens;
+    this.vars = vars;
   }
 
   private peek(): Token {
@@ -316,7 +319,9 @@ class Parser {
         return this.callFunction(name, args);
       }
 
-      // 常量
+      // 变量优先于常量
+      const bound = this.vars.get(name);
+      if (bound !== undefined) return bound;
       if (name in CONSTANTS) return CONSTANTS[name];
       throw new Error(`未知标识符: '${name}'`);
     }
@@ -355,21 +360,31 @@ class Parser {
 
 // ===== 公共 API =====
 
-export function safeEval(expression: string): number {
+/**
+ * 把含变量的表达式编译为求值函数，实参按 varNames 的顺序代入。
+ * 空串与长度检查作用在原式上，词法分析只做一次；每次调用在同一组 token 上重新求值。
+ */
+export function compileExpression(expression: string, varNames: readonly string[]): (...values: number[]) => number {
   if (!expression?.trim()) throw new Error('表达式为空');
   if (expression.length > 1000) throw new Error('表达式过长（最大 1000 字符）');
 
   const tokens = tokenize(expression);
-  const parser = new Parser(tokens);
-  const result = parser.parseExpr();
+  return (...values) => {
+    const parser = new Parser(tokens, new Map(varNames.map((name, i) => [name, values[i]])));
+    const result = parser.parseExpr();
 
-  // 确保整个表达式已消费
-  const remaining = parser.current();
-  if (remaining && remaining.type !== 'eof') {
-    throw new Error(`表达式末尾有多余内容: '${remaining.value}'`);
-  }
+    // 确保整个表达式已消费
+    const remaining = parser.current();
+    if (remaining && remaining.type !== 'eof') {
+      throw new Error(`表达式末尾有多余内容: '${remaining.value}'`);
+    }
 
-  return result;
+    return result;
+  };
+}
+
+export function safeEval(expression: string): number {
+  return compileExpression(expression, [])();
 }
 
 /** 获取所有支持的函数/常量列表 */

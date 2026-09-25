@@ -338,9 +338,6 @@ declare module '@aalis/core' {
   }
 }
 
-// 防止 "未使用导入" 警告（Message 在 declaration merging 中引用）
-export type _MessageRef = Message;
-
 // ============================================================
 // LLM 出口工具：自定义 role → WellKnownRole 转译
 // ============================================================
@@ -363,6 +360,18 @@ export const WellKnownKinds = {
 } as const;
 
 export type WellKnownKind = (typeof WellKnownKinds)[keyof typeof WellKnownKinds];
+
+/**
+ * 跨插件约定的 `Message.metadata` 键。metadata 是开放字典，本表只登记由一方写入、另一方读取的键。
+ *
+ * - `VisibleContent`：assistant 消息的可见正文（字符串）。回复经结构化输出（persona 的 outputFormat）
+ *   时，`content` 存整串 JSON 信封（保持历史 few-shot 的格式），用户实际看到的是其中的回复字段。
+ *   agent 落库时把解码后的正文写进这个键，只在它与 `content` 不同时写入；缺省即 `content` 本身就是
+ *   可见正文。检索、摘要等按语义消费历史的一方应优先读它，读不到再退回 `content`。
+ */
+export const WellKnownMetadataKeys = {
+  VisibleContent: 'visibleContent',
+} as const;
 
 /**
  * 平台无关的 well-known `noticeType` 值。

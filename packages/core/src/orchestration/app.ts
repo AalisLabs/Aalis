@@ -10,7 +10,7 @@ import { ActivationHost, notify } from './activation-host.js';
 import { appService, narrow, pluginsService } from './host-services.js';
 import { PluginManager, type PluginRegistration } from './plugin.js';
 import type { RestartStrategy } from './providers.js';
-import { events, provide, services } from '../composition/core-services.js';
+import { provide } from '../composition/core-services.js';
 import type { BoundOf, Uses } from '../composition/descriptors.js';
 import type { PluginDefinition } from '../composition/plugin-definition.js';
 import { DefaultLogger, type Logger, LogHub, type LogLevel } from '../infrastructure/logger.js';
@@ -135,7 +135,7 @@ export class App {
     };
     this.#host = new ActivationHost(runtime, this.logger);
     this.#root = this.#host.root;
-    const caps = this.#host.bind(this.#root, { events, provide, services });
+    const caps = this.#host.bind(this.#root, { provide });
 
     // 2. 插件管理器
     this.#plugins = new PluginManager(this.#host, this.logger, this.disposeTimeoutMs);

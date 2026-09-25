@@ -3,7 +3,7 @@ import { type CommandArgv, commands as commandsService } from '@aalis/api-comman
 import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
 import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
-import { createStorageGateway, type StorageService, storage } from '@aalis/api-storage';
+import { createStorageGateway, isStorageNotFound, type StorageService, storage } from '@aalis/api-storage';
 import type { ToolService } from '@aalis/api-tools';
 import {
   appService,
@@ -41,8 +41,7 @@ async function removeDirCounted(storage: StorageService, dirUri: string): Promis
     await storage.delete(dirUri);
     return list.entries.length;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (/ENOENT|not found|不存在/i.test(msg)) return -1;
+    if (isStorageNotFound(err)) return -1;
     throw err;
   }
 }

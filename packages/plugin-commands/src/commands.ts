@@ -1,5 +1,5 @@
 import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
-import { capabilityMinLevel, riskDefaults } from '@aalis/api-authority';
+import { capabilityMinLevel, DEFAULT_AUTHORITY, riskDefaults } from '@aalis/api-authority';
 import type {
   Command,
   CommandArgv,
@@ -428,6 +428,10 @@ export class CommandRegistry implements CommandService {
         skipConfirm: input.skipConfirm,
       });
       if (rejection) return rejection;
+    } else if (cmd.confirm || capabilityMinLevel({ risk: cmd.risk, visibility: cmd.visibility }) > DEFAULT_AUTHORITY) {
+      // 没有守卫（未装权限插件）时 fail-closed，口径与 plugin-tools 相同：等同人人都是默认等级、
+      // 没有确认通道。需要更高等级或需要确认的指令一律拒绝，默认等级可用且无需确认的照常执行。
+      return `指令 ${this.prefix}${cmd.name} 需要权限校验或确认，但未安装权限插件 @aalis/plugin-authority，已拒绝执行`;
     }
 
     try {
@@ -725,7 +729,6 @@ function parseOptionSyntax(name: string, syntax: string, opts?: OptionRegisterOp
   const aliases: string[] = [];
   let type: OptionValueType = 'boolean';
   let valueName: string | undefined;
-  let takesValue = false;
   let valueOptional = false;
 
   if (trimmed) {
@@ -750,7 +753,6 @@ function parseOptionSyntax(name: string, syntax: string, opts?: OptionRegisterOp
           throw new Error(`未知选项值类型: "${declared}"`);
         }
         type = declared as OptionValueType;
-        takesValue = true;
         if (m[1] === '<' ? m[4] !== '>' : m[4] !== ']') {
           throw new Error(`选项值括号不匹配: "${p}"`);
         }
@@ -763,7 +765,6 @@ function parseOptionSyntax(name: string, syntax: string, opts?: OptionRegisterOp
     aliases,
     type,
     valueName,
-    takesValue,
     valueOptional,
     description: opts?.description,
     default: opts?.default,

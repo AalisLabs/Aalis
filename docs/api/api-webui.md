@@ -16,7 +16,6 @@
 interface WebUIService {
   getPort(): number;
   getHost(): string;
-  setClientDir?(dir: string): void;
   registerPage(page: WebuiPage, contextId: string): () => void;
   getPages(): Array<WebuiPage & { pluginName: string }>;
   registerAction(method: string, handler: WebuiActionHandler, contextId: string): () => void;
@@ -147,7 +146,7 @@ interface WebuiPage {
 `WebuiClientProvider`：`getClientDir()` 返回含 `index.html` 的静态目录。两条接入：
 
 - **纯静态包**：`package.json` 标 `aalis.client: true` + 含 `dist/index.html`，被 webui-server 自动发现挂载（无需 `apply`）。
-- **主动覆盖**：插件 `apply` 里 `provide(webuiClient, impl)`。`onBehalfOf` 代登记归属被代者身份，不计入代理人 `provides`。
+- **主动覆盖**：插件 `apply` 里 `provide(webuiClient, impl, { label })`，展示名优先取提供方插件的 `displayName`，没有时取 provide 的 `label` 选项。`onBehalfOf` 代登记归属被代者身份，不计入代理人 `provides`。
 
 ## 实现者
 

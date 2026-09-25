@@ -116,7 +116,7 @@ parseUriRoot('not-a-uri');          // throws: 存储 URI 不合法
 ### `toStorageUri(input, fallbackRoot = 'data'): string` — 归一
 
 `index.ts`。把用户在配置里填的路径/裸名归一成合法 URI。**契约级文法**，
-memory / vectorstore / checkpoint / scheduler / persona 等全体后端消费者复用它。三条规则：
+memory / vectorstore / persona 等后端消费者复用它。三条规则：
 
 | 输入 | 输出 | 说明 |
 |---|---|---|
@@ -133,7 +133,7 @@ toStorageUri('persona', 'data');    // 'data:/persona'
 ```
 
 输入还会先 `trim()` 并剥掉前导 `./` 和 `/`（`index.ts` 的 `replace(/^\.?\/+/, '')`）。
-真实用法：`plugin-checkpoint/src/service.ts` 的 `toStorageUri(s) : 'data:/checkpoints'`、
+真实用法：`plugin-memory-sqlite/src/index.ts` 的 `toStorageUri(s) : 'data:/aalis.db'`、
 `plugin-persona/src/index.ts` 的 `toStorageUri(personasDirRaw)`。
 
 > **单段裸名归一的设计动机**（`index.ts`）：如果把单段裸名当**根名**处理（→ `name:/`），

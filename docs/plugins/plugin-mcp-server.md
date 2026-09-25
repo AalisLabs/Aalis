@@ -37,7 +37,7 @@ plugins:
   "@aalis/plugin-mcp-server":
     port: 7861
     bind: 127.0.0.1
-    toolGroups:               # 白名单分组（空数组 = 全部允许）
+    toolGroups:               # 白名单分组（空数组或 ['*'] = 全部允许）
       - search
       - system
     allowRestricted: false    # restricted（受限）工具一律拒绝
@@ -47,7 +47,7 @@ plugins:
 |---|---|---|---|
 | `port` | number | `7861` | 监听端口：必须 1-65535；非法值会报错不启动。要暂停服务请在「插件列表」里禁用本插件。 |
 | `bind` | string | `'127.0.0.1'` | 监听地址 |
-| `toolGroups` | array | `[]` | 允许的工具分组（空=全部，受受限开关约束）：空列表 = 暴露所有分组的工具（仍受 allowRestricted 约束）。 |
+| `toolGroups` | multiselect | `[]` | 允许的工具分组（空=全部，受受限开关约束）：分组名的字符串数组；空列表或 `['*']` = 暴露所有分组的工具（仍受 allowRestricted 约束）。非数组或含非字符串元素（包括旧版 WebUI 存下的 `[{ name }]`）时记录错误且不启动。 |
 | `allowRestricted` | boolean | `false` | 允许暴露 restricted（受限）工具 |
 
 ## 安全边界

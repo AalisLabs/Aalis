@@ -4,7 +4,6 @@
  * 动作处理函数是 apply 的闭包，直接用本次激活构造的 RelationService。
  * 返回值用于声明式 WebUI 组件渲染：
  * - listXxx → table 表格 source
- * - getStats → stat 组件 source
  * - getXxx  → 详情对话框 source
  * - 其余    → 操作类按钮
  */
@@ -521,40 +520,6 @@ export function registerRelationActions(webui: BoundWebui, service: RelationServ
     return { error: `未知 kind: ${kind}` };
   });
 
-  // ───── stat / info ─────
-  webui.registerAction('getStats', async () => {
-    const snap = await service.loadAll();
-    const pe = snap.edges.filter(e => e.kind === 'person-event').length;
-    const pp = snap.edges.filter(e => e.kind === 'person-person').length;
-    const pent = snap.edges.filter(e => e.kind === 'person-entity').length;
-    const ee = snap.edges.filter(e => e.kind === 'event-event').length;
-    const eent = snap.edges.filter(e => e.kind === 'event-entity').length;
-    const entent = snap.edges.filter(e => e.kind === 'entity-entity').length;
-    return {
-      value: snap.persons.length,
-      detail: `人物 ${snap.persons.length} / 事件 ${snap.events.length} / 实体 ${snap.entities.length} / 人-事 ${pe} / 人-人 ${pp} / 人-实体 ${pent} / 事-事 ${ee} / 事-实体 ${eent} / 实体-实体 ${entent}`,
-    };
-  });
-
-  // ───── 详情 ─────
-  webui.registerAction('getPerson', async args => {
-    const id = String(args.id ?? '');
-    const [platform = '', userId = ''] = id.split(':');
-    if (!platform || !userId) return { error: '无效 personId' };
-    const nb = await service.getNeighborhood(id);
-    return {
-      person: nb.person,
-      events: nb.events,
-      edges: nb.edges,
-    };
-  });
-
-  webui.registerAction('getEvent', async args => {
-    const e = await service.getEvent(String(args.id ?? ''));
-    if (!e) return { error: '事件不存在' };
-    return e;
-  });
-
   // ───── 操作类 ─────
   webui.registerAction('deletePerson', async args => {
     const id = String(args.id ?? '');
@@ -573,69 +538,6 @@ export function registerRelationActions(webui: BoundWebui, service: RelationServ
     await service.deleteEntity(String(args.id ?? ''));
     return { ok: true };
   });
-
-  webui.registerAction('deleteEdge', async args => {
-    await service.deleteEdge(String(args.id ?? ''));
-    return { ok: true };
-  });
-
-  webui.registerAction('triggerExtraction', async args => {
-    const sessionId = String(args.sessionId ?? '').trim();
-    if (!sessionId) return { error: '请输入 sessionId' };
-    return service.triggerExtraction(sessionId);
-  });
-
-  // ───── 多层查询（webui view + 调试用，参数走 view.* 范畴的默认值/上限由 index.ts 注入） ─────
-  webui.registerAction('expandPerson', async args => {
-    const personId = String(args.personId ?? args.id ?? '').trim();
-    if (!personId.includes(':')) return { error: 'personId 格式应为 platform:userId' };
-    const maxDepth = numArg(args.maxDepth, 2);
-    const maxBreadth = numArg(args.maxBreadth, 10);
-    const sub = await service.traverseSubgraph({
-      startNodeIds: [personId],
-      maxDepth,
-      maxBreadth,
-    });
-    return {
-      personId,
-      maxDepth,
-      maxBreadth,
-      stats: {
-        persons: sub.persons.length,
-        events: sub.events.length,
-        edges: sub.edges.length,
-      },
-      persons: sub.persons,
-      events: sub.events,
-      edges: sub.edges,
-    };
-  });
-
-  webui.registerAction('findPath', async args => {
-    const from = String(args.fromPersonId ?? args.from ?? '').trim();
-    const to = String(args.toPersonId ?? args.to ?? '').trim();
-    if (!from.includes(':') || !to.includes(':')) return { error: 'person id 格式应为 platform:userId' };
-    const maxDepth = numArg(args.maxDepth, 3);
-    const path = await service.findPath(from, to, maxDepth);
-    if (!path) return { found: false, from, to, maxDepth };
-    return {
-      found: true,
-      length: path.edges.length,
-      nodes: path.nodes,
-      edges: path.edges,
-    };
-  });
-
-  webui.registerAction('searchEvents', async args => {
-    const keyword = typeof args.keyword === 'string' ? args.keyword : undefined;
-    const days = numArgOptional(args.days);
-    const limit = numArg(args.limit, 20);
-    const events = await service.searchEvents({ keyword, days, limit });
-    return {
-      count: events.length,
-      events,
-    };
-  });
 }
 
 function numArg(v: unknown, fallback: number): number {
@@ -645,13 +547,4 @@ function numArg(v: unknown, fallback: number): number {
     if (Number.isFinite(n)) return n;
   }
   return fallback;
-}
-
-function numArgOptional(v: unknown): number | undefined {
-  if (typeof v === 'number' && Number.isFinite(v)) return v;
-  if (typeof v === 'string' && v.trim() !== '') {
-    const n = Number(v);
-    if (Number.isFinite(n)) return n;
-  }
-  return undefined;
 }

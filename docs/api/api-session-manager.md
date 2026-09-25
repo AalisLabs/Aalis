@@ -16,7 +16,7 @@ interface SessionConfig {
   enabledToolGroups?: string[]; // 启用的工具分组；'*' = 全部分组。会话未设置时继承平台档，最终为空则只给无分组的通用工具
   persona?: string;            // 人格文件名（不含 .yaml）
   think?: boolean;             // 会话级 thinking 覆盖（/session.set -t；未设置=继承 provider 全局）
-  systemPromptExtra?: string;
+  systemPromptExtra?: string;   // 额外系统提示，由 persona 追加在人设提示之后（未装 persona 不生效）
   maxToolIterations?: number;   // 覆盖 agent 全局值（正整数；非正整数视为未设置）
   disableOutputFormat?: boolean;
   clientSideJsonRendering?: boolean;

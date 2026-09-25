@@ -218,7 +218,7 @@ flow-control 不直接接触 authority/SSRF/沙盒，但它是**对外可见行�
 
 - **scope 隔离不能泄漏**。`scopes`/`overrides` 用 `platform:sessionType[:targetId]` 三段通配匹配（`packages/plugin-flow-control/src/config.ts`，默认 `*:group`）。`trigger-policy` 在做 mute 关键词检查**之前**必须先判 scope，否则「QQ 群的 mute 关键词会泄漏到 WebUI/私聊等不在 scope 内的会话」（`packages/plugin-trigger-policy/src/index.ts` 明文警告）。自写 provider/consumer 时保持这个先 scope 后行为的顺序。
 - **idle 主动触发是「AI 替你开口」**。`scheduleSessionIdle` / `PlatformIdleScheduler` 到点会合成一条 `source:'idle-trigger', triggerType:'idle'` 的 `IncomingMessage` 注入 gateway（`packages/plugin-flow-control/src/idle-scheduler.ts`）。这类消息**绕过流控前置闸门**（`index.ts` `if (message.source === 'idle-trigger') return next()`）并被 agent 当系统提示而非用户消息（`plugin-agent/src/index.ts` 跳过归档）。provider 注入 idle 时务必打上 `source:'idle-trigger'`，否则会被自己的闸门再过一遍或被错误归档成用户发言。
-- **禁言态是跨重启的用户意图，要持久化**。参考实现只持久化 `mutedUntil` 一个字段到 `data:/flow-control-mutes.json`（`index.ts`），其余短期态重启重建无碍。换 provider 时若不持久化，重启会导致「被禁言的群立刻被解除静默」。存储用 `data:` root（`'<root>:/path'` 文法，见 [concepts/storage-uri-grammar](../concepts/storage-uri-grammar.md)），注意 storage 不是沙盒。
+- **禁言态是跨重启的用户意图，要持久化**。参考实现只持久化 `mutedUntil` 一个字段到 `data:/flow-control-mutes.json`（`index.ts`），其余短期态重启重建无碍。该文件读不懂（不存在以外的读取错误、解析失败、顶层不是对象）时，本次运行不再整表回写，禁言改动只在内存生效，storage 换人重读时重新判定。换 provider 时若不持久化，重启会导致「被禁言的群立刻被解除静默」。存储用 `data:` root（`'<root>:/path'` 文法，见 [concepts/storage-uri-grammar](../concepts/storage-uri-grammar.md)），注意 storage 不是沙盒。
 - **限速是防刷屏/被平台风控的护栏**。adapter 的「主动发送」路径在发前查 `isRateLimited` 并 `recordReply`（`adapter-onebot/src/index.ts`）。自写主动发送通道的 provider 应接同一闸门，避免绕过限速直发被平台封号。
 
 ## 7. 注意事项与边界情形

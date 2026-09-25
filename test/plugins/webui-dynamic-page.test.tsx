@@ -12,6 +12,8 @@ import type { WebuiPageDef } from '../../packages/plugin-webui-client/src/types.
 const calls: Array<{ method: string; args: Record<string, unknown> }> = [];
 /** method → 返回值（或抛出的错误） */
 let replies: Record<string, unknown> = {};
+/** 经 api() 请求过的路径（动态选项等） */
+const apiPaths: string[] = [];
 
 vi.mock('../../packages/plugin-webui-client/src/api', () => ({
   pageAction: vi.fn(async (_plugin: string, method: string, args: Record<string, unknown> = {}) => {
@@ -20,7 +22,13 @@ vi.mock('../../packages/plugin-webui-client/src/api', () => ({
     if (r instanceof Error) throw r;
     return r;
   }),
-  api: vi.fn(async () => ({})),
+  api: vi.fn(async (path: string) => {
+    apiPaths.push(path);
+    if (path.startsWith('/api/models/')) {
+      return { models: [], providers: [{ value: 'p/m1', model: 'm1', provider: 'p', contextId: 'p' }] };
+    }
+    return {};
+  }),
   errText: (err: unknown, fallback = '请求失败') => (err instanceof Error && err.message ? err.message : fallback),
   proxiedMediaUrl: (s: string) => s,
 }));
@@ -74,6 +82,7 @@ const tablePage: WebuiPageDef = {
 
 beforeEach(() => {
   calls.length = 0;
+  apiPaths.length = 0;
   replies = {};
 });
 afterEach(() => {
@@ -105,6 +114,29 @@ describe('DynamicPage 表单保存', () => {
     render(<DynamicPage page={formPage} />);
     fireEvent.click(await screen.findByText('保存'));
     await waitFor(() => expect(screen.getByText('处理器 createJob 不存在')).toBeTruthy());
+  });
+});
+
+describe('DynamicPage 表单动态选项', () => {
+  const dynFormPage: WebuiPageDef = {
+    key: 'pick',
+    label: '选择模型',
+    plugin: 'plugin-third',
+    content: [
+      {
+        type: 'form',
+        source: 'getForm',
+        save: 'saveForm',
+        schema: { model: { type: 'select', label: '模型', dynamicOptions: 'svc/x' } },
+      },
+    ],
+  };
+
+  it('选项拉到后立即显示（不必等别的状态变化），服务名做 URL 编码', async () => {
+    replies = { getForm: { model: '' } };
+    render(<DynamicPage page={dynFormPage} />);
+    await waitFor(() => expect(screen.getByRole('option', { name: 'p / m1' })).toBeTruthy());
+    expect(apiPaths).toContain('/api/models/svc%2Fx');
   });
 });
 

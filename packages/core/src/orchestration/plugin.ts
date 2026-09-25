@@ -561,8 +561,8 @@ export class PluginManager implements PluginManagerService {
 
       // Phase B: 正向遍历，激活目标 active 的 pending entry
       for (const entry of order) {
-        // 停机已在排队：不再启动新的实例
-        if (this.shuttingDown || this.queued === 'shutdown') break converge;
+        // 已进入停机：不再启动新的实例
+        if (this.shuttingDown) break converge;
         if (entry.state !== 'pending') continue;
         if (retryBudget.get(entry) === 0) continue;
         if (!requiredSatisfied(entry, this.host.runtime.services)) continue;

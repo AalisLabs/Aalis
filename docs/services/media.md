@@ -30,7 +30,7 @@ export interface MediaService {
   processMessage(msg: IncomingMessage): Promise<MediaProcessReport>;             // 把每条附件描述写进 msg._attachmentDescriptions
 
   // ----- 单图/单视频主动识别 + 描述缓存 -----
-  describeImage(imageUrl: string, opts?: DescribeImageOptions): Promise<string>; // 带 30 天缓存；失败返回空串
+  describeImage(imageUrl: string, opts?: DescribeImageOptions): Promise<string>; // 带 30 天缓存；识别出错时抛出
   describeVideo(videoUrl: string, opts?: DescribeVideoOptions): Promise<string>; // 抽帧+可选音轨；失败返回空串
   lookupDescription(imageUrl: string): string | null;                            // 只查缓存不触发识别
   rememberDescription(imageUrl: string, description: string): void;
@@ -74,7 +74,7 @@ export interface MediaProcessor {
 - **`DescribeResult`**：`descriptions`（`mode=single` 时与 `attachments` 等长；`mode=combined` 时是单元素），加上 `meta?:{processor,model?,tokens?}`。
 - **`TranscribeInput`**：单条 `attachment`，加上 `language?`（ISO 639-1）/ `withTimestamps?` / `context?`（仅对 LLM-as-audio 有意义，传统 Whisper 忽略）。
 - **`TranscribeResult`**：`text` / `segments?` / `language?` / `meta?:{processor,model?}`。
-- **服务层 opts**：`DescribeImageOptions`（含 `detailLevel` 档位，详见 [§6](#6-能力-风险-影响)）、`DescribeVideoOptions`、`DescribeOptions`/`TranscribeOptions`（含 `prefer`，强制选定 processor）、`BuildContextOptions`。
+- **服务层 opts**：`DescribeImageOptions`（含 `detailLevel` 档位，详见 [§6](#6-能力-风险-影响)）、`DescribeVideoOptions`（`hint` / `localPath`）、`DescribeOptions`（含 `prefer`，强制选定 processor）、`TranscribeOptions`（`language`；音频 processor 由配置 `audio.prefer` 选定）、`BuildContextOptions`。
 - **`MediaProcessReport`**：`{ total, successCount, items[] }`，`items` 与 `msg.attachments` 等长，每条含 `{kind,cap?,processor?,description?,error?}`。
 
 ### 事件（declaration merging）
@@ -199,24 +199,34 @@ export default definePlugin({
 ## 5. 标准消费写法
 
 ```ts
-uses: { media: optional(media) };  // media 是可选增强时
+import { media } from '@aalis/api-media';
+import { definePlugin, optional } from '@aalis/core';
 
-async function handle(url: string) {   // 在 apply 内，media 为 uses 里的 ServiceRef
-  const svc = media.current;        // 每次用都重新取，不要缓存
-  if (!svc?.describeImage) {                   // 服务缺失 / 方法缺失双重保护
-    return '未启用 media 服务';
-  }
-  // describeImage 失败返回空串（不抛），按空串降级即可
-  const desc = await svc.describeImage(url, { detailLevel: 'casual', hint: '挑出有猫的图' });
-  return desc || '（识别失败）';
-}
+export default definePlugin({
+  name: '@aalis/plugin-my-feature',
+  uses: { media: optional(media) },  // media 是可选增强时
+  apply({ media }) {
+    async function describe(url: string): Promise<string> {
+      const svc = media.current;       // 每次用都重新取，不要缓存
+      if (!svc?.describeImage) return '未启用 media 服务';  // 服务缺失 / 方法缺失双重保护
+      try {
+        // 无可用识别器或结果为空时返回空串；识别出错时抛出
+        const desc = await svc.describeImage(url, { detailLevel: 'casual', hint: '挑出有猫的图' });
+        return desc || '（识别失败）';
+      } catch {
+        return '（识别失败）';
+      }
+    }
+    // …把 describe 接到工具或命令上
+  },
+});
 ```
 
 几个要点：
 
 - **惰性取服务**：`plugin-message-archive`、`plugin-image-sender`、`plugin-file-reader` 都是每次读取 `.current` 再加 `if (!media?.xxx)` 守卫，对照见 [§2](#2-谁提供-谁消费)。
 - **只复用缓存、不触发识别**：对引用消息里的图，OneBot 适配器只调 `lookupDescription(url)`，未命中就保持 `[图片]` 占位，不会主动消耗 vision token。
-- **错误边界**：`describe`/`transcribe`/`describeImage`/`describeVideo` 内部都做了 try/catch，失败返回 `undefined` 或空串而非抛错。调用方按「空 = 降级」处理即可。
+- **错误边界**：`describe`/`transcribe`/`describeVideo` 内部做了 try/catch，失败返回 `undefined` 或空串而非抛错，调用方按「空 = 降级」处理即可。`describeImage` 不同：没有可用的 vision processor、识别结果为空，或动图取不到、抽不出帧时返回空串；识别过程出错（识别模型调用失败、静态图取不到等）时直接抛出，调用方需自行 try/catch。
 - **顺序识别更稳**：本地视觉模型多为单实例串行，`plugin-image-sender` 显式逐张识别而非并发，避免它们互相排队又同时超时。
 
 ---

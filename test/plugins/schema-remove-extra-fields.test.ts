@@ -24,6 +24,13 @@ describe('removeExtraFields', () => {
     expect(removed.sort()).toEqual(['g.deepJunk', 'keep']);
   });
 
+  it('map 字段的值整体保留，不按键裁剪', () => {
+    const removed: string[] = [];
+    const out = removeExtraFields({ env: { TOKEN: 'x', OTHER: 'y' } }, { env: { type: 'map', label: 'E' } }, removed);
+    expect(out).toEqual({ env: { TOKEN: 'x', OTHER: 'y' } });
+    expect(removed).toEqual([]);
+  });
+
   it('type 为 array 的值整段保留，不拆元素', () => {
     const removed: string[] = [];
     const schema = { hosts: { type: 'array', label: 'H', items: { k: { type: 'string', label: 'K' } } } };

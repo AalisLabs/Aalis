@@ -29,8 +29,5 @@
   "keywords": [
     "aalis",
     "aalis-util"
-  ],
-  "aalis": {
-    "util": true
-  }
+  ]
 }

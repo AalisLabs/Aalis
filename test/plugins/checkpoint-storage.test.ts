@@ -338,3 +338,25 @@ describe('checkpoint × storage (真 fs)', () => {
     }
   });
 });
+
+// ════════════════════════════════════════════════════════════
+// rootDir 只接受 storage URI：旧的相对路径写法（data/checkpoints）不再被归一，直接拒绝激活，
+// 否则回合内每次写 blob 都抛「URI 不合法」，连带让那次存储写入失败。未设或留空仍用默认值。
+// ════════════════════════════════════════════════════════════
+describe('checkpoint rootDir 配置', () => {
+  it('storage URI 原样采用；未设、留空或非字符串用默认值', () => {
+    expect(resolveConfig({ rootDir: 'ws:/cp' }).rootUri).toBe('ws:/cp');
+    expect(resolveConfig({ rootDir: '  data:/cp  ' }).rootUri).toBe('data:/cp');
+    expect(resolveConfig({}).rootUri).toBe('data:/checkpoints');
+    expect(resolveConfig({ rootDir: '   ' }).rootUri).toBe('data:/checkpoints');
+    expect(resolveConfig({ rootDir: 42 }).rootUri).toBe('data:/checkpoints');
+  });
+
+  it.each([
+    'data/checkpoints',
+    'checkpoints',
+    './data/checkpoints',
+  ])('非 URI 写法（%s）报错，文案给出正确写法', input => {
+    expect(() => resolveConfig({ rootDir: input })).toThrow(/rootDir=.*不是 storage URI.*data:\/checkpoints/);
+  });
+});

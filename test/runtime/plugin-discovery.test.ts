@@ -110,6 +110,56 @@ describe('冷启动：先全部登记、再统一激活', () => {
     expect(app.plugins.getPlugin('rs-scan')?.state).toBe('active');
     expect(app.plugins.getPlugin('rs-scan:work')?.state).toBe('active');
   });
+
+  it('找不到插件的单实例配置段逐段告警一次；已发现（含导入失败、描述符名与定义名不同）、已登记与多实例键不报', async () => {
+    const warns: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn: (message: string) => void warns.push(message),
+      error() {},
+      child: () => logger,
+    };
+    const { app, discovery } = world(
+      {
+        plugins: {
+          present: {},
+          'present:work': {},
+          broken: {},
+          'def-name': {},
+          'pre-registered': {},
+          'gone-plugin': { apiKey: 'sk-PLACEHOLDER' },
+          'gone-plugin:x': {},
+        },
+      },
+      logger,
+    );
+    await app.plugin(definePlugin({ name: 'pre-registered', apply() {} }));
+    const loader: PluginLoader = {
+      async discover() {
+        return [
+          { name: 'present', source: 'stub' },
+          { name: 'broken', source: 'stub' },
+          // 描述符名（包名）与定义名不同：配置键按定义名写
+          { name: 'pkg-alias', source: 'stub' },
+        ];
+      },
+      async load(desc) {
+        if (desc.name === 'broken') throw new Error('import failed');
+        if (desc.name === 'pkg-alias') return definePlugin({ name: 'def-name', apply() {} });
+        return definePlugin({ name: desc.name, reusable: true, apply() {} });
+      },
+    };
+    await discovery(loader).loadAll();
+    const orphan = warns.filter(w => w.startsWith('配置段'));
+    expect(orphan).toHaveLength(1);
+    expect(orphan[0]).toContain('"gone-plugin"');
+    expect(orphan[0]).toContain('可能含密钥');
+    expect(orphan[0]).not.toContain('sk-PLACEHOLDER');
+    // 多实例键归实例登记报：合法实例不报，孤儿实例只报一次
+    expect(warns.some(w => w.includes('present:work'))).toBe(false);
+    expect(warns.filter(w => w.includes('gone-plugin:x'))).toHaveLength(1);
+  });
 });
 
 describe('热扫描', () => {

@@ -61,3 +61,23 @@ describe('resolveConfig 静态任务字段透传', () => {
     expect(cfg.jobs[0].actorUserId).toBeUndefined();
   });
 });
+
+// ════════════════════════════════════════════════════════════
+// persistPath 只接受 storage URI：旧的相对路径写法（data/scheduler-jobs.json）不再被归一，直接拒绝激活，
+// 否则读写都抛「URI 不合法」，动态任务静默不加载、新建的只在内存里。未设或留空仍用默认值。
+// ════════════════════════════════════════════════════════════
+describe('resolveConfig persistPath', () => {
+  it('storage URI 原样采用；未设、留空或非字符串用默认值', () => {
+    expect(resolveConfig({ persistPath: 'data:/jobs/a.json' }).persistPath).toBe('data:/jobs/a.json');
+    expect(resolveConfig({ persistPath: ' data:/a.json ' }).persistPath).toBe('data:/a.json');
+    expect(resolveConfig({}).persistPath).toBe('data:/scheduler-jobs.json');
+    expect(resolveConfig({ persistPath: '' }).persistPath).toBe('data:/scheduler-jobs.json');
+    expect(resolveConfig({ persistPath: 7 }).persistPath).toBe('data:/scheduler-jobs.json');
+  });
+
+  it.each(['data/scheduler-jobs.json', 'scheduler-jobs.json'])('非 URI 写法（%s）报错，文案给出正确写法', input => {
+    expect(() => resolveConfig({ persistPath: input })).toThrow(
+      /persistPath=.*不是 storage URI.*data:\/scheduler-jobs\.json/,
+    );
+  });
+});

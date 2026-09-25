@@ -43,3 +43,4 @@ export default definePlugin({
 - **SSE 流式**: `chatStream()` 解析 SSE 事件流，累积 tool_calls delta
 - **动态模型列表**: 启动时请求 `/models` 发现模型，与 `customModels` 合并（重复项会告警）后逐个注册；模型句柄上的 `refresh()` 会重新发现，并增删已注册的条目。未发现任何模型时不注册条目
 - **兼容性**: 修改 `baseUrl` 可对接 Ollama、vLLM、LocalAI 等兼容服务——须写到完整前缀（如 `http://localhost:11434/v1`）。注意 plugin-llm-ollama 自身的 `baseUrl` 语义不同：填服务器根地址（默认 `http://localhost:11434`），由插件自行拼接 `/api/chat` 等路径
+- **能力推断**: 模型能力按内置家族表的模型名前缀推断，带 `vision` 的有 gpt-4o、gpt-4.1、gpt-5、Gemini、通义千问视觉族（qwen-vl、qwen2.5-vl、qwen3-vl）与智谱视觉族（glm-4v、glm-4.1v、glm-4.5v），表外模型只推断为 `chat`（另并上 `providerCapabilities` 声明的适配器默认能力）。`vision` 决定 media 能否选它做识别模型，以及 `vision.delivery=auto` 时是否向它直通原图。推断不准时用 `modelCapabilities` 逐模型覆盖；每行按**最后一个**冒号切分模型 id 与能力段，带冒号的 id（如经 Ollama `/v1` 接入的 `qwen3:8b`）照原样写即可

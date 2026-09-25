@@ -489,20 +489,6 @@ describe('plugin-user-relation: 多层遍历', () => {
       await expect(svc.correctEdge({ edgeId: e.id, action: 'remove', reason: '错误' })).rejects.toThrow(/≥ 0\.5/);
     });
 
-    it('force=true 跳过阶梯保护', async () => {
-      const svc = await setup();
-      await svc.observePerson('onebot', 'a');
-      await svc.observePerson('onebot', 'b');
-      const e = await svc.addPersonPersonEdge({
-        fromPersonId: 'onebot:a',
-        toPersonId: 'onebot:b',
-        relationType: 'friend',
-        weight: 0.9,
-      });
-      const r = await svc.correctEdge({ edgeId: e.id, action: 'remove', reason: '系统纠错', force: true });
-      expect(r.action).toBe('removed');
-    });
-
     it('remove 后 store 中边被物理删除（无脏数据）', async () => {
       const svc = await setup();
       await svc.observePerson('onebot', 'a');

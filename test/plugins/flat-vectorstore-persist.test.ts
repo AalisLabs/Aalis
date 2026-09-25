@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { type VectorStoreService, vectorstore } from '../../packages/api-vectorstore/src/index.js';
 import { App, type BoundOf, definePlugin, lifecycle, provide, services } from '../../packages/core/src/index.js';
-import vectorstoreFlat from '../../packages/plugin-vectorstore-flat/src/index.js';
+import vectorstoreFlat, { FlatVectorStore } from '../../packages/plugin-vectorstore-flat/src/index.js';
 
 // ════════════════════════════════════════════════════════════
 // flat 向量库的两处落地问题：
@@ -93,15 +93,69 @@ describe('plugin-vectorstore-flat 落盘与损坏容错（真 fs）', () => {
     expect(parsed[0].metadata.id).toBe('a');
   });
 
-  it('数据文件是合法 JSON 但非数组：按空库处理，size/search 不崩', async () => {
-    writeFileSync(join(dir, 'vectors.json'), '{"entries":{"a":1}}');
+  it('数据文件是合法 JSON 但非数组：按空库处理，size/search 不崩；新增只在内存，停机不覆盖原文件', async () => {
+    const seeded = '{"entries":{"a":1}}';
+    writeFileSync(join(dir, 'vectors.json'), seeded);
     const store = await loadFlat();
 
     expect(await store.size()).toBe(0);
     expect(await store.search([1, 0, 0], 3)).toEqual([]);
-    // 仍可正常写入
     await store.add([0, 1, 0], { id: 'b' });
     expect(await store.size()).toBe(1);
+
+    await app.stop();
+    expect(readFileSync(join(dir, 'vectors.json'), 'utf-8')).toBe(seeded);
+  });
+
+  it('数据文件损坏（截断 JSON）：add + save + 停机都不覆盖原文件', async () => {
+    const broken = '[{"vector":[1,0';
+    writeFileSync(join(dir, 'vectors.json'), broken);
+    const store = await loadFlat();
+    await store.add([1, 0, 0], { id: 'c' });
+    await store.save();
+
+    await app.stop();
+    expect(readFileSync(join(dir, 'vectors.json'), 'utf-8')).toBe(broken);
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 读不懂就不回写：vectors.json 是整库快照，一次 EACCES 或坏文件曾让下一次 save 把整库换成
+// 只含本次新增的内容。只有「文件不存在」算冷启动；其它失败本次运行拒写，clear 也不例外。
+// ════════════════════════════════════════════════════════════
+describe('FlatVectorStore 读失败拒写', () => {
+  const storeWith = (read: () => Promise<string>) => {
+    let writes = 0;
+    const storage = {
+      readFile: read,
+      writeFile: async () => {
+        writes++;
+      },
+    } as unknown as StorageService;
+    return { store: new FlatVectorStore(storage, 'ws:/vectorstore/vectors.json'), writes: () => writes };
+  };
+  const coded = (code: string, message: string) => Object.assign(new Error(message), { code });
+
+  it('非 ENOENT 的读失败（EACCES，文案含 not found）：add / save / clear 都不写', async () => {
+    const { store, writes } = storeWith(async () => {
+      throw coded('EACCES', 'EACCES: credentials not found');
+    });
+    await store.init();
+    await store.add([1, 0, 0], { id: 'a' });
+    await store.save();
+    await store.clear();
+    expect(writes()).toBe(0);
+    expect(await store.size()).toBe(0);
+  });
+
+  it('文件不存在（code ENOENT）：冷启动，照常写', async () => {
+    const { store, writes } = storeWith(async () => {
+      throw coded('ENOENT', '文件缺失');
+    });
+    await store.init();
+    await store.add([1, 0, 0], { id: 'a' });
+    await store.save();
+    expect(writes()).toBe(1);
   });
 });
 

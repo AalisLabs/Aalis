@@ -234,8 +234,8 @@ $$
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `extractionEnabled` | boolean | `true` | 允许从对话中提取新关系（写入总开关）：**写入总开关**：关闭后插件停止生成任何新关系节点/边；但 middleware 仍读取并注入旧关系、actions 仍可查/删。若只想停掉"自动触发"，请用 triggerEveryNMessages=0 而非关此项。彻底卸载请整体停用该插件。 |
-| `triggerEveryNMessages` | number | `20` | 自动触发阈值（每 N 条消息）：**仅控制"自动触发"**：每会话累计 N 条入站消息后自动跑一次 LLM 提取。0=不自动触发。 |
+| `extractionEnabled` | boolean | `true` | 允许从对话中提取新关系（写入总开关）：**写入总开关**：关闭后插件停止生成任何新关系节点/边；但 middleware 仍读取并注入旧关系、actions 仍可查/删。彻底卸载请整体停用该插件。 |
+| `triggerEveryNMessages` | number | `20` | 自动触发阈值（每 N 条消息）：每会话累计 N 条入站消息后自动跑一次 LLM 提取。0=关闭自动提取。 |
 | `readWindowSize` | number | `30` | 提取读取窗口大小：每次提取时回读的最近消息数。建议略大于触发阈值（如阈值 20、窗口 30），让相邻批次窗口重叠 10 条左右、便于 LLM 跨批次稳定识别同一事件与关系 |
 | `mode` | select | `'incremental'` | 提取模式：incremental: 固定窗口；all-new: 一次性读所有累积（注意 context 上限） |
 | `allNewMaxMessages` | number | `200` | all-new 模式下的最大消息数：仅 mode=all-new 时生效；硬上限以防 context 溢出 |
@@ -260,7 +260,7 @@ $$
 | `pagerankDamping` | number | `0.85` | PageRank 阻尼系数：淘汰打分用。常用 0.85。 |
 | `pagerankIterations` | number | `20` | PageRank 最大迭代次数：20 通常够用；图较大、邻接稠密可调到 30~50。 |
 | `pagerankEpsilon` | number | `0.0001` | PageRank 收敛阈值：L1 误差小于该值即提前停止迭代。 |
-| `communityAlgorithm` | select | `'louvain'` | 社群发现默认算法：evictByQuota 之后顺手跑的社群发现算法。louvain=经典快、硬划分；leiden=Louvain + 内部连通性 refinement；slpa=Speaker-Listener Label Propagation，原生重叠社区（跨群人物能获得多个社群隶属度）。agent 调 community_* 工具时可临时指定 algorithm 参数覆盖此默认。 |
+| `communityAlgorithm` | select | `'louvain'` | 社群发现默认算法：evictByQuota 之后顺手跑的社群发现算法（写入节点社群缓存，community_peers / community_bridge 读它），也是 community_overview 不传 algorithm 时的默认算法。louvain=经典快、硬划分；leiden=Louvain + 内部连通性 refinement；slpa=Speaker-Listener Label Propagation，原生重叠社区（跨群人物能获得多个社群隶属度）。agent 调 community_overview 时可临时指定 algorithm 参数覆盖此默认。 |
 | `evictHysteresisPct` | number | `0.2` | 淘汰滞回 (0~1)：count &gt; quota·(1+该值) 才触发淘汰；设为 0.2 时，quota=500 在 600 触发。用以避免"写一条删一条"。 |
 | `evictTargetPct` | number | `0.8` | 淘汰回落目标 (0~1)：触发后裁到 floor(quota·该值)；配合 hysteresisPct=0.2 与该值=0.8，单次裁 ~40% quota（quota=500 → 一次裁 ~200 条）。 |
 | `weightDecayHalfLifeDays` | number | `180` | Weight 时间衰减半衰期（天）：淘汰/排序时把 weight 按半衰期折算：effW = raw × max(0.5^(天数/halfLife), floor)。让长期不被强化的"老高 weight"自动让出保护名额。0 = 关闭衰减。 |

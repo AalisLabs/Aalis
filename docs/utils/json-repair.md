@@ -11,7 +11,7 @@
 
 LLM 被要求输出 JSON 时，实际输出常有格式问题：包了 ` ```json ` 代码块、前后夹了一段自然语言解释、字符串里写了没转义的英文引号、被 `max_tokens` 截断少了结尾的 `}`、尾部多了逗号。直接 `JSON.parse` 会抛出异常。
 
-`@aalis/util-json-repair` 把这些修复策略集中到一处，按「由轻到重」依次尝试，直到 `JSON.parse` 成功或全部用尽（`index.ts`）。它是一个**纯函数工具库**（`aalis-util` keyword，不经服务容器、不参与 DI，见 `package.json` 的 `"aalis": { "util": true }`）——插件在 `package.json` 里依赖它、直接 `import` 函数即可。
+`@aalis/util-json-repair` 把这些修复策略集中到一处，按「由轻到重」依次尝试，直到 `JSON.parse` 成功或全部用尽（`index.ts`）。它是一个**纯函数工具库**（`package.json` 的 `keywords` 含 `aalis-util`，不经服务容器、不参与 DI）——插件在 `package.json` 里依赖它、直接 `import` 函数即可。
 
 > **最重要的边界**：本库只解析**顶层 JSON 对象** `{...}`。顶层是 JSON **数组** `[...]` 的输出会被判为失败（返回 `null`）。详见 §5。
 
@@ -134,4 +134,4 @@ const reply = typeof parsed.response === 'string' ? parsed.response : '';
 
 - [消息 → LLM 管线](../concepts/message-llm-pipeline.md) —— 模型 `content` 从哪来、`Message`/`ContentSegment` 形态；本库消费的就是这里产出的字符串内容。
 - [服务模型](../concepts/service-model.md) —— util 与 service 的区别：util 是零服务纯函数库（直接 import），不经 DI。
-- [Manifest 元数据](../concepts/manifest-metadata.md) —— `aalis-util` keyword / `aalis.util` 标记的语义。
+- [Manifest 元数据](../concepts/manifest-metadata.md) —— `aalis-util` 关键词的语义。

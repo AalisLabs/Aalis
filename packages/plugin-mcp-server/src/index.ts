@@ -14,6 +14,7 @@
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { type ToolCallContext, type ToolService, tools as toolsService } from '@aalis/api-tools';
+import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import {
   type BoundOf,
   config as configService,
@@ -49,19 +50,13 @@ const configSchema: ConfigSchema = {
   } as ConfigSchema[string],
   bind: { type: 'string', label: '监听地址', default: '127.0.0.1' } as ConfigSchema[string],
   toolGroups: {
-    type: 'array',
+    type: 'multiselect',
     label: '允许的工具分组（空=全部，受受限开关约束）',
-    description: "空列表或单个 '*' = 暴露所有分组的工具（仍受 allowRestricted 约束）。",
-    items: {
-      name: {
-        type: 'string',
-        label: '分组名',
-        description: '如 mcp:godot / file / system。',
-        required: true,
-      },
-    },
+    description: "空列表或 ['*'] = 暴露所有分组的工具（仍受 allowRestricted 约束）。",
+    dynamicOptions: 'toolGroups',
+    allowCustom: true,
     default: [],
-  } as ConfigSchema[string],
+  },
   allowRestricted: {
     type: 'boolean',
     label: '允许暴露 restricted（受限）工具',
@@ -78,23 +73,25 @@ const uses = {
 type Caps = BoundOf<typeof uses>;
 
 async function run({ tools, logger, lifecycle, config: rawConfig }: Caps): Promise<void> {
-  const raw = rawConfig as unknown as Config;
+  const config = rawConfig as unknown as Config;
 
-  if (!Number.isInteger(raw.port) || raw.port <= 0 || raw.port > 65535) {
+  if (!Number.isInteger(config.port) || config.port <= 0 || config.port > 65535) {
     logger.error(
-      `plugin-mcp-server 端口非法：port=${raw.port}。请设置 1-65535 之间的整数；要停服务请在插件列表里禁用本插件。`,
+      `plugin-mcp-server 端口非法：port=${config.port}。请设置 1-65535 之间的整数；要停服务请在插件列表里禁用本插件。`,
     );
     return;
   }
 
-  // 兼容两种 toolGroups 形态：string[]（yaml 手写）/ Array<{name:string}>（WebUI 数组项）。
-  // 配置视图是只读的，归一化结果放进本次激活自己的副本。
-  const config: Config = {
-    ...raw,
-    toolGroups: (raw.toolGroups as unknown as Array<string | { name?: unknown }>)
-      .map(g => (typeof g === 'string' ? g : typeof g?.name === 'string' ? g.name : ''))
-      .filter(Boolean),
-  };
+  // 空数组 = 全部暴露，所以任何认不出的形态都不能退化成空数组（那是 fail-open）：
+  // 非数组、含非字符串元素（包括旧版 WebUI 存下的 [{ name }]）一律报错不启动。
+  const toolGroups: unknown = config.toolGroups;
+  if (!Array.isArray(toolGroups) || toolGroups.some(g => typeof g !== 'string')) {
+    logger.error(
+      `plugin-mcp-server toolGroups 非法：必须是分组名的字符串数组（如 ['search', 'system']；全部暴露写 [] 或 ['*']），` +
+        `当前值 ${JSON.stringify(toolGroups)}。旧版 WebUI 存下的 [{ name: ... }] 请改写为字符串数组。`,
+    );
+    return;
+  }
 
   // SSE 同时只支持一个活跃连接（标准约束）；新连接挤掉旧的
   let currentTransport: SSEServerTransport | undefined;
