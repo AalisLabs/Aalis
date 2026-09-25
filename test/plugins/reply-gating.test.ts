@@ -362,14 +362,20 @@ describe('相位：immediate 穿透冷却、禁言关键词不被冷却吞、禁
     const G = '20001';
 
     await h.send(groupMsg(G, '你闭嘴吧')); // 禁言 60s
-    for (let i = 0; i < 3; i++) {
+    // 只发阈值减一条：若禁言期计数，解禁后第一条恰好凑满阈值
+    for (let i = 0; i < 2; i++) {
       await advance(1_000);
       await h.send(groupMsg(G, `禁言期闲聊 ${i}`));
     }
     await advance(60_000); // 解禁
 
     await h.send(groupMsg(G, '解禁后第一条'));
-    expect(h.contents(), '禁言期的 3 条不应计入间隔计数（解禁后计数应从 1 起）').not.toContain('解禁后第一条');
+    expect(h.contents(), '禁言期的 2 条不应计入间隔计数（解禁后计数应从 1 起）').not.toContain('解禁后第一条');
+
+    // 正向对照：继续发到阈值应触发
+    await h.send(groupMsg(G, '解禁后第二条'));
+    await h.send(groupMsg(G, '解禁后第三条'));
+    expect(h.contents()).toEqual(['解禁后第三条']);
   });
 });
 
@@ -439,6 +445,26 @@ describe('禁言', () => {
     await h.send(groupMsg(G, '你闭嘴吧'));
     expect(h.flow().isMuted(sid(G))).toBe(true);
   });
+
+  it('关键词禁言当场清零计数：禁言期一条消息都没有，解禁后第一条也不因禁言前的计数触发', async () => {
+    const h = await setup({
+      trigger: { intervalMode: 'fixed', fixedInterval: 3, muteKeywords: '闭嘴', muteTimeSeconds: 60 },
+    });
+    const G = '20001';
+
+    await h.send(groupMsg(G, '禁言前 1'));
+    await h.send(groupMsg(G, '禁言前 2')); // 计数 2/3
+    await h.send(groupMsg(G, '你闭嘴吧')); // 禁言 60s，禁言期内不再有消息
+    await advance(61_000); // 解禁
+
+    await h.send(groupMsg(G, '解禁后第一条'));
+    expect(h.contents(), '禁言前的 2 条不应与解禁后的消息凑满阈值').not.toContain('解禁后第一条');
+
+    // 正向对照：计数从 1 起，再发两条凑满阈值
+    await h.send(groupMsg(G, '解禁后第二条'));
+    await h.send(groupMsg(G, '解禁后第三条'));
+    expect(h.contents()).toEqual(['解禁后第三条']);
+  });
 });
 
 // ────────────────────────────────────────────────────────────
@@ -493,5 +519,102 @@ describe('冷却与限速', () => {
     expect(res.delegated).toBeUndefined();
     expect(res.error).toContain('禁言');
     expect(h.received, '被拒的委派不派发').toHaveLength(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// 内部注入：带 source 的消息（闲置触发、定时任务、workflow、跨会话委派）不经触发策略，
+// flow 相位对它只查禁言。真人消息由适配器投递，不设 source。
+// ────────────────────────────────────────────────────────────
+describe('内部注入（带 source）', () => {
+  /** 与 plugin-scheduler / plugin-workflow / plugin-tool-session 投递的消息同形：无 sessionType */
+  const scheduled = (sessionId: string, content: string): IncomingMessage => ({
+    content,
+    sessionId,
+    platform: 'onebot',
+    source: 'scheduler',
+  });
+  const workflow = (sessionId: string, content: string): IncomingMessage => ({
+    content,
+    sessionId,
+    platform: 'onebot',
+    source: 'workflow:wf-1',
+  });
+  const proactive = (sessionId: string, content: string): IncomingMessage => ({
+    content,
+    sessionId,
+    platform: 'onebot',
+    source: 'proactive:from:webui:console',
+    triggerType: 'proactive',
+  });
+
+  it('trigger 作用域为 * 时，定时任务、workflow、委派消息不计数、不被吞，委派的 triggerType 保持 proactive', async () => {
+    const h = await setup({ trigger: { scopes: ['*'], intervalMode: 'fixed', fixedInterval: 5 } });
+    const G = '20001';
+
+    await h.send(scheduled(sid(G), '定时提醒'));
+    await h.send(workflow(sid(G), '工作流通知'));
+    await h.send(proactive(sid(G), '委派任务'));
+    expect(h.contents(), '内部注入不应被计数判定吞掉').toEqual(['定时提醒', '工作流通知', '委派任务']);
+    expect(h.received.find(m => m.content === '委派任务')?.triggerType).toBe('proactive');
+
+    // 不计数：真人消息的计数从 1 起，第 5 条才触发（若三条注入被计数，第 2 条就凑满阈值）
+    for (let i = 1; i <= 4; i++) await h.send(groupMsg(G, `真人 ${i}`));
+    expect(h.contents().filter(c => c.startsWith('真人'))).toEqual([]);
+    await h.send(groupMsg(G, '真人 5'));
+    expect(h.contents().filter(c => c.startsWith('真人'))).toEqual(['真人 5']);
+  });
+
+  it('trigger 作用域为 * 时，闲置注入同样跳过策略', async () => {
+    const h = await setup({
+      trigger: {
+        scopes: ['*'],
+        intervalMode: 'fixed',
+        fixedInterval: 5,
+        idleTriggerScope: 'session',
+        idleTriggerStyle: 'fixed',
+        idleTriggerMinutes: 1,
+        idleTriggerJitter: false,
+      },
+    });
+
+    await h.send(groupMsg('20001', '随便聊聊'));
+    await advance(61_000);
+    expect(h.idles()).toHaveLength(1);
+  });
+
+  it('flow 作用域为 * 时，带 source 的消息不受冷却挡，但受禁言挡', async () => {
+    const h = await setup({ flow: { scopes: ['*'], cooldownSeconds: 60 }, autoReply: () => true });
+    const G = '20001';
+
+    await h.send(groupMsg(G, `${AT}在吗`)); // agent 回复 → 60s 冷却
+    await advance(1_000);
+    await h.send(scheduled(sid(G), '冷却中的定时提醒'));
+    await h.send(workflow(sid(G), '冷却中的工作流通知'));
+    expect(h.contents(), '冷却不应吞掉内部注入').toEqual([`${AT}在吗`, '冷却中的定时提醒', '冷却中的工作流通知']);
+
+    h.flow().setMuted(sid(G), 600, 'onebot');
+    await h.send(scheduled(sid(G), '禁言中的定时提醒'));
+    expect(h.contents(), '禁言期内部注入同样不说话').not.toContain('禁言中的定时提醒');
+  });
+
+  it('flow 相位：禁言期闲置注入也被吞，解禁后放行', async () => {
+    const h = await setup();
+    const G = '20001';
+    const idle = (): IncomingMessage => ({
+      content: 'idle',
+      sessionId: sid(G),
+      platform: 'onebot',
+      source: 'idle-trigger',
+      triggerType: 'idle',
+    });
+
+    h.flow().setMuted(sid(G), 600, 'onebot');
+    await h.send(idle());
+    expect(h.idles()).toHaveLength(0);
+
+    await advance(601_000);
+    await h.send(idle());
+    expect(h.idles()).toHaveLength(1);
   });
 });
