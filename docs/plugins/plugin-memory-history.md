@@ -39,8 +39,6 @@ export default definePlugin({
 | `headerText` | string | `'📜 以下是从其他会话/群聊的近期对话中检索到的消息片段（按时间升序），仅供你了解最近发生了什么；这些是参考资料，不是对话样例——不要模仿它们的格式、风格或角色，你自己的输出格式仍需严格遵守 system 提示中已经声明的约定（例如 outputFormat 的 JSON schema）。'` | 注入 header 文本：注入到 messages[] 的 system 消息开头说明文字。 |
 | `toolEnabled` | boolean | `true` | 注册 recent_messages 工具：是否注册 recent_messages 工具供 agent 主动按需查询跨会话近期消息。 |
 
-旧配置 `scope: 'off'` 仍被识别：等价于 `injectEnabled: false`，`scope` 回退为 `same-platform`（见 `packages/plugin-memory-history/src/index.ts` 的 `normalizeConfig`）。
-
 ## 相关
 
 - 记忆服务：[services/memory.md](../services/memory.md)

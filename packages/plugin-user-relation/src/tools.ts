@@ -824,7 +824,7 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
       const scored = filtered.map(e => {
         const ageDays = Math.max(0, (now - e.lastReinforcedAt) / 86400_000);
         const recency = 0.5 ** (ageDays / 14); // 14 天半衰
-        const heat = (e.weight ?? 0.5) * (1 + Math.log1p(e.evidence.length)) * recency;
+        const heat = e.weight * (1 + Math.log1p(e.evidence.length)) * recency;
         return { e, heat };
       });
       scored.sort((a, b) => b.heat - a.heat);
@@ -1635,10 +1635,10 @@ async function validateNodeId(service: RelationService, id: string, paramName = 
   return JSON.stringify({ error: `节点 "${id}" 不存在`, hint });
 }
 
-/** 事件 sessionScope 与调用者传入 scope 是否匹配。`scope` 未传 = 不过滤；event 无 sessionScope 视为 'global'。 */
-function inScope(scope: string | undefined, evScope: string | undefined): boolean {
+/** 事件 sessionScope 与调用者传入 scope 是否匹配。`scope` 未传 = 不过滤。 */
+function inScope(scope: string | undefined, evScope: string): boolean {
   if (!scope) return true;
-  return (evScope ?? 'global') === scope;
+  return evScope === scope;
 }
 
 /** 取边上所有事件节点引用 id（用于按 event 集合过滤边）。 */
@@ -1677,7 +1677,7 @@ function serializeSubgraph(sub: {
       id: e.id,
       title: e.title,
       category: e.category,
-      sessionScope: e.sessionScope ?? 'global',
+      sessionScope: e.sessionScope,
       summary: e.summary,
       lastReinforcedAt: e.lastReinforcedAt,
     })),
@@ -1716,7 +1716,7 @@ function serializeNode(n: PersonNode | EventNode | EntityNode) {
   if ('entityKind' in n) {
     return { kind: 'entity', id: n.id, entityKind: n.entityKind, name: n.name };
   }
-  return { kind: 'event', id: n.id, title: n.title, category: n.category, sessionScope: n.sessionScope ?? 'global' };
+  return { kind: 'event', id: n.id, title: n.title, category: n.category, sessionScope: n.sessionScope };
 }
 
 function serializeEdge(e: RelationEdge) {
@@ -1809,7 +1809,7 @@ function serializeEventForSearch(e: EventNode) {
     id: e.id,
     title: e.title,
     category: e.category,
-    sessionScope: e.sessionScope ?? 'global',
+    sessionScope: e.sessionScope,
     summary: e.summary,
     lastReinforcedAt: e.lastReinforcedAt,
     evidenceCount: e.evidence.length,
