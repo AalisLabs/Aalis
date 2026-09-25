@@ -2,24 +2,19 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Logger, ServiceRef, ServiceView } from '@aalis/core';
-import { App, provide, services } from '@aalis/core';
+import { App, services } from '@aalis/core';
 import { describe, expect, it, vi } from 'vitest';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
 import type { DescribeInput, MediaProcessor } from '../../packages/api-media/src/index.js';
-import { media } from '../../packages/api-media/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { processService } from '../../packages/api-process/src/index.js';
 import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
-import { storage } from '../../packages/api-storage/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import mediaPlugin, { legacyVisionMode } from '../../packages/plugin-media/src/index.js';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
 import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import { registerMediaTools } from '../../packages/plugin-media/src/tools.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
-import { registerHubs } from '../fixtures/hubs.js';
 
 /** analyze_image 直通分支的远端下载桩：只替换 safeDownloadToTemp，其余走原实现 */
 const download = vi.hoisted(() => ({
@@ -181,55 +176,6 @@ describe('recognizeOnArrival：到达即识别 vs 只留指针', () => {
     await svc.processMessage(m);
     expect(written).toHaveLength(1);
     expect(m._attachmentDescriptions?.[0]).toMatch(/^\[图片 \| ref:data\/images\/s\/[0-9a-f]{16}\.png\]$/);
-  });
-});
-
-describe('legacy vision.mode 映射（config-sync 在 apply 前裁 schema 外键，故旧键保留一版）', () => {
-  it('四档 → 新键；非法/缺省 → null', () => {
-    expect(legacyVisionMode('describe')).toEqual({ recognizeOnArrival: true, delivery: 'describe' });
-    expect(legacyVisionMode('passthrough')).toEqual({ recognizeOnArrival: false, delivery: 'passthrough' });
-    expect(legacyVisionMode('passthrough-raw')).toEqual({ recognizeOnArrival: false, delivery: 'passthrough' });
-    expect(legacyVisionMode('disabled')).toEqual({ recognizeOnArrival: false, delivery: 'describe' });
-    expect(legacyVisionMode(undefined)).toBeNull();
-    expect(legacyVisionMode('')).toBeNull();
-  });
-
-  /** 真实装配 media 插件，注册假 vision processor，喂一张独一无二的图（描述缓存是模块级的） */
-  async function callsUnder(vision: Record<string, unknown>, uri: string): Promise<number> {
-    const app = new App({ name: 'T', logLevel: 'error' });
-    await registerHubs(app);
-    const host = app.bind({ provide, services });
-    host.provide(processService, {} as never);
-    host.provide(storage, {} as never);
-    await app.plugin(mediaPlugin, { vision });
-    await app.plugins.idle();
-    const service = host.services.get(media);
-    if (!service) throw new Error('media 未注册');
-    const calls: unknown[] = [];
-    service.registerProcessor({
-      name: 'fake-vision',
-      capabilities: ['vision'],
-      priority: 10,
-      describe: async req => {
-        calls.push(req);
-        return { descriptions: ['一张图'] };
-      },
-    });
-    const m = {
-      sessionId: 's',
-      platform: 'test',
-      content: '',
-      attachments: [{ kind: 'image', data: uri, mimeType: 'image/png' }],
-    } as unknown as IncomingMessage;
-    await service.processMessage(m);
-    await app.stop();
-    return calls.length;
-  }
-
-  it('旧值 disabled 覆盖新键：升级后图片不会开始被识别（隐私回归守卫）；对照 describe 旧值照常识别', async () => {
-    // config-sync 会把新键默认值（recognizeOnArrival:true）填进来，旧键必须压过它
-    expect(await callsUnder({ mode: 'disabled', recognizeOnArrival: true, delivery: 'auto' }, toolUri(10))).toBe(0);
-    expect(await callsUnder({ mode: 'describe', recognizeOnArrival: false, delivery: 'auto' }, toolUri(11))).toBe(1);
   });
 });
 

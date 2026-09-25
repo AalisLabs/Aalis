@@ -62,7 +62,6 @@ async function loadSenderProfileSummary(
     const rawFacts = Array.isArray(doc.facts) ? (doc.facts as unknown[]) : [];
     const texts = rawFacts
       .map(item => {
-        if (typeof item === 'string') return item.trim();
         if (item && typeof item === 'object') {
           const t = (item as Record<string, unknown>).text;
           return typeof t === 'string' ? t.trim() : '';
