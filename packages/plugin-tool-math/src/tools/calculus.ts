@@ -1,6 +1,15 @@
 import type { BoundTools } from '@aalis/api-tools';
 import { compileExpression } from '../lib/expression.js';
 
+/** 积分分段数上限：与同包 primes_in_range 的范围上限一致，远超 Simpson 法实际所需 */
+const MAX_INTEGRAL_N = 1_000_000;
+/**
+ * 单次调用的求值总时长预算。各算法的循环全程同步、不让出事件循环；单次求值有上界
+ * （原式 1000 字符、comb/perm 各封顶 10^5 次迭代），但乘上积分分段数或牛顿迭代次数就可以
+ * 长到把整个进程卡住，只封顶 n 拦不住昂贵的表达式。
+ */
+const TIME_BUDGET_MS = 2000;
+
 export function registerCalculusTools(tools: BoundTools): void {
   tools.register({
     definition: {
@@ -21,7 +30,7 @@ export function registerCalculusTools(tools: BoundTools): void {
             x: { type: 'number', description: '求导数 / 求根初始猜测点' },
             a: { type: 'number', description: '积分下限 / 二分法左端点' },
             b: { type: 'number', description: '积分上限 / 二分法右端点' },
-            n: { type: 'number', description: '积分分段数 (默认 1000) / 数列项数 (默认 100)' },
+            n: { type: 'number', description: '积分分段数 (默认 1000，最大 1000000) / 数列项数 (默认 100)' },
             method: { type: 'string', description: '求根方法: newton(默认) / bisection' },
             order: { type: 'number', description: '导数阶数 (1 或 2，默认 1)' },
           },
@@ -33,7 +42,17 @@ export function registerCalculusTools(tools: BoundTools): void {
       try {
         const op = String(args.operation);
         const expr = String(args.expression);
-        const evalFn = compileExpression(expr, ['x']);
+        const compiled = compileExpression(expr, ['x']);
+        // 每次求值前查一次总时长，超出即抛错，由下方 catch 转成 error 返回。
+        // 只有积分的求值次数随 n 增长，其余操作的次数固定，提示里不提 n
+        const deadline = Date.now() + TIME_BUDGET_MS;
+        const timeoutHint = op === 'integral' ? '请简化表达式或减小 n' : '请简化表达式';
+        const evalFn = (x: number): number => {
+          if (Date.now() > deadline) {
+            throw new Error(`计算超时（超过 ${TIME_BUDGET_MS / 1000} 秒），${timeoutHint}`);
+          }
+          return compiled(x);
+        };
 
         switch (op) {
           case 'derivative': {
@@ -60,6 +79,9 @@ export function registerCalculusTools(tools: BoundTools): void {
             const n = Math.round(Number(args.n ?? 1000));
             if (n < 2 || n % 2 !== 0) {
               return JSON.stringify({ error: 'n 必须为 ≥2 的偶数' });
+            }
+            if (n > MAX_INTEGRAL_N) {
+              return JSON.stringify({ error: `积分分段数过大（最大 ${MAX_INTEGRAL_N}）` });
             }
             // Simpson 1/3 法则
             const h = (b - a) / n;

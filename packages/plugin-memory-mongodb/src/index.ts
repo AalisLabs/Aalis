@@ -86,7 +86,8 @@ interface MetadataDocument {
   updatedAt: Date;
 }
 
-class MongoMemoryService implements MemoryService {
+/** @internal 只为测试导出：以替身集合直接构造（经 apply 会连真实的 mongod），不是公开 API */
+export class MongoMemoryService implements MemoryService {
   private collection: Collection<MessageDocument>;
   private meta: Collection<MetadataDocument>;
   private readonly rangeQueryLimit: number;

@@ -650,7 +650,8 @@ function start(caps: Caps): void {
       return;
     }
     try {
-      // 经 store 而非直接拿 memory 删：clearAll 走 commitMetadata 一次批量原子提交，
+      // 经 store 而非直接拿 memory 删：clearAll 走 commitMetadata 一次批量提交
+      // （原子性按后端分档，见 store.clearAll），
       // 逐条删会在中途失败时留下半张图。
       const cleared = await store.clearAll();
       caps.logger.info(`[user-relation] 关系图已清空 (${cleared} 条)`);

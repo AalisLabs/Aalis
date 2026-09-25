@@ -63,7 +63,8 @@ function NumberInput({ value, onChange, className }: { value: unknown; onChange:
 
 // ===== list / map：多行文本编辑 =====
 // list 每行一项（空白行忽略）；map 每行一条 KEY=VALUE（按第一个 = 切分，键去首尾空白，值原样，
-// 缺 = 或键为空的行不保存）。旧版存下的字符串值原样显示，一经编辑即按行解析。
+// 缺 = 或键为空的行不保存）。旧版存下的空串在草稿里即按 [] / {}（见 buildDraftFromSchema）；
+// 其余字符串值原样显示，一经编辑即按行解析。
 
 function formatList(value: unknown): string {
   if (Array.isArray(value)) return value.map(String).join('\n');
@@ -91,8 +92,20 @@ function parseMap(text: string): Record<string, string> {
   return out;
 }
 
+// 数字、布尔按 String(x) 显示，编辑后规整为字符串（与 mcp-client 读 args / env 时的 String(x) 容错一致），
+// 算作能逐行表达；其余非字符串值原样参与比较
+function scalarsAsText(value: object): unknown {
+  const asText = (x: unknown) => (typeof x === 'number' || typeof x === 'boolean' ? String(x) : x);
+  return Array.isArray(value)
+    ? value.map(asText)
+    : Object.fromEntries(Object.entries(value).map(([k, v]) => [k, asText(v)]));
+}
+
 // 编辑期保留原文（本地状态），每次输入解析后向外 onChange；只有外部值与原文的解析结果不同
 // （恢复默认、重新加载）时才用外部值重写原文——否则回车产生的空行会在解析后被吃掉。
+// 每次编辑都重新解析整段文本：数组 / 映射里有逐行文本表达不了的内容（项或值含换行、list 的空白项、
+// null、嵌套的数组或对象等，即「格式化再解析」回不到原值）时，任何一次编辑都会连带改写没动过的行，
+// 所以这类值只读展示。
 function LinesInput({
   value,
   onChange,
@@ -111,6 +124,15 @@ function LinesInput({
   useEffect(() => {
     if (JSON.stringify(parse(text)) !== JSON.stringify(value)) setText(format(value));
   }, [value]);
+
+  if (value !== null && typeof value === 'object' && JSON.stringify(parse(format(value))) !== JSON.stringify(scalarsAsText(value))) {
+    return (
+      <div>
+        <textarea className="config-edit-input config-textarea" value={JSON.stringify(value, null, 2)} readOnly rows={3} />
+        <span className="config-edit-hint">含换行、空白项或非标量等无法逐行表达的值，请在配置文件中修改</span>
+      </div>
+    );
+  }
 
   return (
     <textarea
@@ -168,6 +190,11 @@ export function isSchemaArray(entry: SchemaField | SchemaGroup | SchemaArray): e
   return 'type' in entry && (entry as SchemaArray).type === 'array';
 }
 
+// 旧版 WebUI 给 list / map 存下的空串：含义只能是「空」，草稿里按 [] / {}，原样保存即写回合法形态
+function isLegacyEmpty(field: SchemaField, value: unknown): boolean {
+  return value === '' && (field.type === 'list' || field.type === 'map');
+}
+
 // 字段未配置且无 default 时的表单初值。number 无 default 不预填（undefined=留空走服务端默认）：
 // 预填 0 会撞 min 约束，预填 min 则把「用户没填」静默写成 min、压过插件运行时兜底——与「未填≠预填」政策一致。
 function emptyFieldValue(type: SchemaFieldType): unknown {
@@ -191,14 +218,26 @@ export function buildDraftFromSchema(schema: ConfigSchema, config: Record<string
   for (const [key, entry] of Object.entries(schema)) {
     if (isSchemaArray(entry)) {
       const existing = config[key];
-      draft[key] = Array.isArray(existing) ? existing : (entry.default ?? []);
+      const items = Object.entries(entry.items ?? {});
+      draft[key] = Array.isArray(existing)
+        ? existing.map(item => {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+            const out = { ...(item as Record<string, unknown>) };
+            for (const [fk, field] of items) if (isLegacyEmpty(field, out[fk])) out[fk] = emptyFieldValue(field.type);
+            return out;
+          })
+        : (entry.default ?? []);
     } else if (isSchemaField(entry)) {
-      draft[key] = config[key] ?? entry.default ?? emptyFieldValue(entry.type);
+      draft[key] = isLegacyEmpty(entry, config[key])
+        ? emptyFieldValue(entry.type)
+        : (config[key] ?? entry.default ?? emptyFieldValue(entry.type));
     } else {
       const group: Record<string, unknown> = {};
       const src = (config[key] ?? {}) as Record<string, unknown>;
       for (const [fk, field] of Object.entries(entry.fields)) {
-        group[fk] = src[fk] ?? field.default ?? emptyFieldValue(field.type);
+        group[fk] = isLegacyEmpty(field, src[fk])
+          ? emptyFieldValue(field.type)
+          : (src[fk] ?? field.default ?? emptyFieldValue(field.type));
       }
       draft[key] = group;
     }

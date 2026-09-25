@@ -81,6 +81,115 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
     expect(data.users['onebot:banned'].level, '原有封禁记录仍在').toBe(-5);
   });
 
+  it('重读在飞期间沿用上次的拒写判定：插进来的 save 不覆盖读不懂的原文件', async () => {
+    const file = join(dir, 'users.json');
+    const legacy = JSON.stringify({ version: 4, users: { 'onebot:bad': { level: -1 } } });
+    await writeFile(file, legacy);
+    let gate: Promise<void> | undefined;
+    let writes = 0;
+    const slowReload = {
+      readFile: async () => {
+        if (gate) await gate;
+        return readFile(file, 'utf-8');
+      },
+      writeFile: async (_uri: string, data: string) => {
+        writes++;
+        await writeFile(file, data);
+      },
+    } as unknown as StorageService;
+
+    const m = new AuthorityManager(mkConfig(), silentLogger(), slowReload);
+    await m.init(); // 非 v5 → 拒写
+    // storage 重新上线时 follow 对同一个 manager 再跑一次 init；读还没回来时插进一次等级改动
+    let release = () => {};
+    gate = new Promise<void>(r => {
+      release = () => r();
+    });
+    const reloading = m.init();
+    m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
+    m.save();
+    expect(m.persistBlocked, '重读没读完就把拒写判定清掉了').toBe(true);
+    release();
+    await reloading;
+    await m.flushed();
+
+    expect(writes, '重读在飞时不得按「未失败」放行写入').toBe(0);
+    expect(await readFile(file, 'utf-8')).toBe(legacy);
+  });
+
+  it('两次 load 重叠：先读完的那次不解除推迟，最后一次读完才补落盘', async () => {
+    const file = join(dir, 'users.json');
+    await writeFile(file, JSON.stringify({ version: 5, users: { 'onebot:banned': { level: -5 } } }));
+    const gates: Array<() => void> = [];
+    let writes = 0;
+    const gated = {
+      readFile: async () => {
+        await new Promise<void>(r => gates.push(r));
+        return readFile(file, 'utf-8');
+      },
+      writeFile: async (_uri: string, data: string) => {
+        writes++;
+        await writeFile(file, data);
+      },
+    } as unknown as StorageService;
+
+    const m = new AuthorityManager(mkConfig(), silentLogger(), gated);
+    const first = m.init();
+    const second = m.init(); // storage 换人时 follow 再挂一次，前一次还没读完
+    m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
+    m.save();
+    gates[0]();
+    await first;
+    expect(writes, '还有一次 load 在读，不得写盘').toBe(0);
+    gates[1]();
+    await second;
+    await m.flushed();
+
+    expect(writes).toBe(1);
+    const data = JSON.parse(await readFile(file, 'utf-8'));
+    expect(data.users['onebot:banned'].level).toBe(-5);
+    expect(data.users['onebot:newbie'].level).toBe(3);
+  });
+
+  it('读取抛出转不成字符串的值：load 照样解除推迟、按读不懂拒写，flushed 能落定', async () => {
+    const file = join(dir, 'users.json');
+    const original = '{"version":5,"users":{"onebot:banned":{"level":-5}}}';
+    await writeFile(file, original);
+    let writes = 0;
+    const errors: string[] = [];
+    const logger = {
+      child: () => logger,
+      debug() {},
+      info() {},
+      warn() {},
+      error: (msg: string) => errors.push(msg),
+    } as unknown as Logger;
+    const weird = {
+      readFile: async () => {
+        throw Object.create(null); // 兜底里的 String(err) 会再抛，readUsersFile 整体 reject
+      },
+      writeFile: async (_uri: string, data: string) => {
+        writes++;
+        await writeFile(file, data);
+      },
+    } as unknown as StorageService;
+
+    const m = new AuthorityManager(mkConfig(), logger, weird);
+    await expect(m.init(), '意外异常应交还调用方').rejects.toThrow();
+    expect(m.persistBlocked, '文件状态不明，应按读不懂拒写').toBe(true);
+    m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
+    m.save();
+    // 同步断言在前：推迟没解除时 save 会无声早退，接下来的 flushed 会在微任务里原地打转、连定时器都跑不到
+    expect(
+      errors.some(e => e.includes('拒绝写入')),
+      'save 应当场拒写并记 error，而不是被推迟',
+    ).toBe(true);
+    await m.flushed();
+
+    expect(writes).toBe(0);
+    expect(await readFile(file, 'utf-8')).toBe(original);
+  });
+
   it('errno 为 ENOENT 但文案不含关键词：仍按全新安装照常写入', async () => {
     const file = join(dir, 'users.json');
     const enoentish = {

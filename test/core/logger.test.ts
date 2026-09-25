@@ -172,4 +172,80 @@ describe('附加参数渲染（core 记错误一律把错误对象作附加参�
     // 鸭子分支把 stack 原样打出；退化到 JSON.stringify 会变成 {"stack":"…\\n…"}，换行成字面量
     expect(messages[1]).toMatch(/跨 realm: FakeError: far\n\s+at somewhere$/);
   });
+
+  it('JSON.stringify 失败后 String(v) 也抛的对象（null 原型带循环引用 / BigInt）不让日志调用抛出', () => {
+    const hub = new LogHub();
+    const messages: string[] = [];
+    hub.onEntry(e => messages.push(e.message));
+    const log = new DefaultLogger('t', 'debug', hub);
+    const cyclic: Record<string, unknown> = Object.create(null);
+    cyclic.self = cyclic;
+    const withBigInt: Record<string, unknown> = Object.create(null);
+    withBigInt.n = 1n;
+    const plainCyclic: Record<string, unknown> = {};
+    plainCyclic.self = plainCyclic;
+    expect(() => log.warn('循环:', cyclic)).not.toThrow();
+    expect(() => log.warn('大整数:', withBigInt)).not.toThrow();
+    log.warn('普通循环:', plainCyclic);
+    expect(messages).toEqual(['循环: [object Object]', '大整数: [object Object]', '普通循环: [object Object]']);
+  });
+
+  it('渲染本身会抛的参数（已撤销的 Proxy、stack getter 抛错、getPrototypeOf 陷阱抛错）输出固定占位串，日志调用不抛', () => {
+    const hub = new LogHub();
+    const messages: string[] = [];
+    hub.onEntry(e => messages.push(e.message));
+    const log = new DefaultLogger('t', 'debug', hub);
+    const revocable = Proxy.revocable({}, {});
+    revocable.revoke();
+    const badStack = {
+      get stack(): string {
+        throw new Error('stack getter');
+      },
+    };
+    const badProto = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error('getPrototypeOf trap');
+        },
+      },
+    );
+    expect(() => log.error('撤销:', revocable.proxy)).not.toThrow();
+    expect(() => log.error('stack:', badStack)).not.toThrow();
+    expect(() => log.error('原型:', badProto, '其余参数照常')).not.toThrow();
+    expect(messages).toEqual([
+      '撤销: [无法渲染的参数]',
+      'stack: [无法渲染的参数]',
+      '原型: [无法渲染的参数] 其余参数照常',
+    ]);
+  });
+
+  it('渲染结果不是字符串（stack 被赋成非字符串、toJSON 返回 undefined）时在兜底内规整，日志调用不抛', () => {
+    const hub = new LogHub();
+    const messages: string[] = [];
+    hub.onEntry(e => messages.push(e.message));
+    const log = new DefaultLogger('t', 'debug', hub);
+    const symbolStack = new Error('x');
+    (symbolStack as { stack?: unknown }).stack = Symbol('s');
+    const nullProtoStack = new Error('x');
+    (nullProtoStack as { stack?: unknown }).stack = Object.create(null);
+    // 鸭子分支：类型检查时读到字符串，取值时第二次读到 null 原型对象
+    let reads = 0;
+    const flipStack = {
+      get stack(): unknown {
+        reads += 1;
+        return reads === 1 ? 'at x' : Object.create(null);
+      },
+    };
+    expect(() => log.error('Symbol:', symbolStack)).not.toThrow();
+    expect(() => log.error('null 原型:', nullProtoStack)).not.toThrow();
+    expect(() => log.error('二次读取:', flipStack)).not.toThrow();
+    log.error('toJSON:', { toJSON: () => undefined });
+    expect(messages).toEqual([
+      'Symbol: Symbol(s)',
+      'null 原型: [无法渲染的参数]',
+      '二次读取: [无法渲染的参数]',
+      'toJSON: undefined',
+    ]);
+  });
 });

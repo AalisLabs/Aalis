@@ -155,7 +155,8 @@ await gateway.readFile('workspace:/a.txt');        // 路由到提供 workspace 
 ```
 
 URI 即标识 + 路由 key，调用方无需关心哪个根由哪个后端提供。根不存在时抛
-「未知存储根: X（已注册根: ...）」（`index.ts`）。
+「未知存储根: X（已注册根: ...）」；根已注册、但没有提供者满足调用所需能力（如只读根上的写）时抛
+「存储根 X 不支持 write」一类的错误，点明缺少的能力（`index.ts`）。
 
 ---
 
@@ -227,12 +228,13 @@ const cwd = await storage.resolveLocalPath('workspace:/proj', 'read');
 5. **未知根抛错**。gateway dispatch 找不到根名对应 entry 时抛「未知存储根」（`index.ts`）。
    `toStorageUri` 的单段裸名归到 `data` 根，正是为了避免把裸名当根名后必然命中这个错误。
 
-6. **同名根冲突**：多个后端各自声明同名根时，gateway 按 entry 枚举顺序取首个，其余被遮蔽。
+6. **同名根冲突**：多个后端各自声明同名根时，gateway 按 entry 枚举顺序优先取首个，不带能力要求的调用（如 `stat`）
+   只会路由到它；但首个缺少调用所需能力（如只读根上的写）时，按能力过滤的调用仍会落到排在后面、被遮蔽的同名根上。
    用 `getStorageRootConflicts(storage)`（`index.ts`）做 doctor / 启动日志诊断。
 
-7. **`resolveLocalPath` / `watch` 可能不存在**：远程协议或纯虚拟根的后端可能不实现这两个可选方法
-   （`index.ts`、`index.ts`）；gateway 会抛「不支持 local-path/watch」（`index.ts`）。
-   调用前判存在性，不要假定所有根都能落地到本地路径。
+7. **不是所有根都支持 `resolveLocalPath` / `watch`**：远程协议或纯虚拟根的后端可能不实现这两个可选方法
+   （`index.ts`、`index.ts`）。gateway 上这两个方法恒存在，目标根不支持时由调用本身抛错（`index.ts`），
+   需用 try/catch 处理，不要假定所有根都能落地到本地路径；只有直接持有单个根的提供者实例时，才需要判断方法是否存在。
 
 8. **路径分隔符**：URI 路径统一用 `/`；后端在归一时会把 `\\` 转成 `/`（`plugin-storage-local` 的 `toUri`，`index.ts`）。
 

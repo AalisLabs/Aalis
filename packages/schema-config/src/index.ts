@@ -277,7 +277,8 @@ function validateFields(
     }
 
     if (value === undefined || value === null) {
-      // 声明了 default 的字段永远不算缺失：顶层/分组的默认值在调用点已合并（此判恒假），
+      // 声明了 default 的字段永远不算缺失：顶层/分组的默认值多已在调用点合并，但合并不覆盖
+      // 显式 null（YAML 裸键），这类值照样走到这里，
       // 数组元素的默认值不参与任何合并（defaultsFrom 把 SchemaArray 当叶子），
       // 全靠这里放行——否则 required+default 的 item 字段会误报（scheduler jobs[].platform 型）。
       if (entry.required && !('default' in entry)) issues.push({ path, message: '必填字段缺失', kind: 'missing' });

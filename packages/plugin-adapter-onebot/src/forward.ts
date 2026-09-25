@@ -83,8 +83,8 @@ const MEDIA_LABEL: Record<ForwardMediaTask['kind'], { placeholder: string; prefi
 
 /**
  * 剥除 NUL：媒体 token 用 NUL 做哨兵，所有进入行文本的外部字符串（CQ 串、text 段、
- * at/face/share/未知段、昵称）都必须过这道——剥掉后消息内容无法伪造/搬运 token
- * （NUL 经 JSON \u0000 转义可达，非理论面）。
+ * at/face/share/未知段、昵称、发送者 id、forward 段 id、系统行里的转发 id）都必须过这道——
+ * 剥掉后消息内容无法伪造/搬运 token（NUL 经 JSON \u0000 转义可达，非理论面）。
  */
 function stripNul(s: string): string {
   return s.includes('\u0000') ? s.split('\u0000').join('') : s;
@@ -125,10 +125,12 @@ function renderNodeContent(content: unknown, collect: MediaCollector): string {
         break;
       case 'reply':
         break;
-      case 'forward':
+      case 'forward': {
         // 嵌套占位符，递归展开会在外层处理；这里先放标记，外层 expand 用 inline content 优先
-        parts.push(data.id ? `<<<NESTED_FORWARD:${String(data.id)}>>>` : '[合并转发]');
+        const fid = data.id ? stripNul(String(data.id)) : '';
+        parts.push(fid ? `<<<NESTED_FORWARD:${fid}>>>` : '[合并转发]');
         break;
+      }
       case 'record':
         parts.push(collect('audio', (data.url || data.file) as string | undefined));
         break;
@@ -180,7 +182,7 @@ function extractNodeMeta(item: unknown): NodeMeta {
     String(data.nickname ?? sender?.nickname ?? data.name ?? data.user_id ?? sender?.user_id ?? '匿名'),
   );
   const userIdRaw = data.user_id ?? data.uin ?? sender?.user_id;
-  const userId = userIdRaw != null ? String(userIdRaw) : undefined;
+  const userId = userIdRaw != null ? stripNul(String(userIdRaw)) : undefined;
   const content = data.content ?? node.content ?? data.message ?? node.message;
 
   // 收集本节点内 forward 段自带的 inline content
@@ -191,7 +193,7 @@ function extractNodeMeta(item: unknown): NodeMeta {
       const s = seg as OneBotMessageSegment;
       const nested = getInlineNodes(s);
       if (nested) {
-        const fid = s.data?.id != null ? String(s.data.id) : '';
+        const fid = s.data?.id != null ? stripNul(String(s.data.id)) : '';
         if (fid) inlineNested.set(fid, nested);
       }
     }
@@ -235,7 +237,12 @@ export async function expandForward(
   async function walk(id: string, nodesInput: unknown[] | null, depth: number): Promise<void> {
     if (depth > opts.maxDepth) {
       truncatedDepth = true;
-      lines.push({ depth, index: 0, nickname: '系统', text: `[嵌套合并转发 id=${id} 已超过深度上限，未展开]` });
+      lines.push({
+        depth,
+        index: 0,
+        nickname: '系统',
+        text: `[嵌套合并转发 id=${stripNul(id)} 已超过深度上限，未展开]`,
+      });
       return;
     }
 
@@ -243,12 +250,12 @@ export async function expandForward(
     if (!nodes || nodes.length === 0) {
       const data = await opts.fetchForward(id);
       if (!data) {
-        lines.push({ depth, index: 0, nickname: '系统', text: `[嵌套合并转发 id=${id} 拉取失败]` });
+        lines.push({ depth, index: 0, nickname: '系统', text: `[嵌套合并转发 id=${stripNul(id)} 拉取失败]` });
         return;
       }
       nodes = getForwardNodes(data);
       if (nodes.length === 0) {
-        lines.push({ depth, index: 0, nickname: '系统', text: `[嵌套合并转发 id=${id} 内容为空]` });
+        lines.push({ depth, index: 0, nickname: '系统', text: `[嵌套合并转发 id=${stripNul(id)} 内容为空]` });
         return;
       }
     }

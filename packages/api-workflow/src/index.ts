@@ -148,7 +148,7 @@ export interface WorkflowService {
   listWorkflows(): WorkflowDef[];
   /** 按 id 获取定义 */
   getWorkflow(id: string): WorkflowDef | undefined;
-  /** 注册/覆盖一个工作流定义；persist=true 时同步写入 workspace/workflows/<id>.yaml */
+  /** 注册/覆盖一个工作流定义；persist 不为 false 时（缺省即写）同步写入 workspace/workflows/<id>.yaml */
   defineWorkflow(def: WorkflowDef, opts?: { persist?: boolean }): Promise<void>;
   /** 删除工作流（若 persist 文件存在则删除） */
   removeWorkflow(id: string): Promise<boolean>;

@@ -2,7 +2,7 @@
 // config-sync —— 插件配置同步政策 + 配置热重载编排（宿主政策层）
 //
 //   - syncPluginDefaults：schema 派生默认值回填 + 按 configSchema 裁剪未知字段
-//   - handleConfigChanged / installConfigHotReload：配置外部变更的 diff + bounce 编排
+//   - handleConfigChanged / installConfigHotReload：配置外部变更的 diff + bounce 编排（文件里已删掉的后缀实例随之卸载）
 //
 // 这些是**政策**（要不要裁剪、怎么合并、何时 bounce）。配置文档在 config-store，core 只持有
 // 运行态与 updateConfig 机制。不接本模块的嵌入式宿主将没有自动配置同步与热重载——需要时用
@@ -94,12 +94,22 @@ export function withPluginConfigSync(loader: PluginLoader, app: App, store: Conf
 }
 
 /**
- * 配置外部变更时的处理：先按启动路径同一政策同步，再重新计算各插件配置
- * 并热重载差异（updateConfig → bounce）。
+ * 配置外部变更时的处理：先卸载文件里已没有配置段的 `name:suffix` 实例，再按启动路径同一政策同步，
+ * 最后重新计算各插件配置并热重载差异（updateConfig → bounce）。
  */
 export async function handleConfigChanged(app: App, store: ConfigStore, opts?: ConfigSyncOptions): Promise<void> {
   app.logger.info('检测到配置变更，正在热重载...');
   try {
+    // 后缀实例由配置段定义，冷启动只登记文件里有的；重载同样以文件为准，没有配置段的就卸载。
+    // 留着不管的话，下面的同步会把它当成缺配置的实例：运行态配置被换成默认值（无默认值时是 {}），
+    // 默认值还会作为一个新配置段写回文件。
+    const plugins = store.get('plugins');
+    for (const status of app.plugins.getStatus()) {
+      if (!parseInstanceId(status.instanceId).suffix || Object.hasOwn(plugins, status.instanceId)) continue;
+      app.logger.info(`实例 ${status.instanceId} 已不在配置文件中，正在卸载...`);
+      await app.plugins.unload(status.instanceId);
+    }
+
     // 与启动路径同一政策先同步一遍（补 schema 派生默认值缺失字段 + 裁剪 schema 外字段）
     // ——否则热重载读入的原始快照会绕过政策，内存态与启动态在字段清理上不一致。
     const synced = syncPluginDefaults(app, store, opts);

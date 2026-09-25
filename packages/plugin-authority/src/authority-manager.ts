@@ -360,4 +360,9 @@ export class AuthorityManager implements AuthorityService {
   save(): void {
     this.store.save();
   }
+
+  /** users.json 加载失败而拒写（实现层状态，不在契约里）：管理动作据此在回执里注明改动未落盘 */
+  get persistBlocked(): boolean {
+    return this.store.persistBlocked;
+  }
 }

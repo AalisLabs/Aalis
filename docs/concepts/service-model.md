@@ -131,7 +131,7 @@ caps.provide(storage, scoped, {
 
 关停以激活为单位，分收尾（drain）与关闭（close）两阶段。普通依赖（required，以及 optional 当时的胜者）：消费者整个 close 完，提供者才 drain。宿主根激活使用插件服务：根 drain 先于该插件 close。插件使用根激活登记的服务：不加排序边，归属保证插件 close 先于根 close。环：optional 让步；required 环告警并强行放行。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。
 
-`App.stop()` 先排干在飞重算，冻结新增绑定并进入停机态，再发 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。停机期间 `unload` / `disable` 汇入计划后立即返回 true（不等拆卸完成）。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者并入同批先收尾再关，收尾时提供者仍在；空档里不切到后备提供者。动态 `services.get` 不产生依赖边，关停期间可能取到空。缓存的 `all()[i]` 引用不受关停边保护。
+`App.stop()` 先排干在飞重算，冻结新增绑定并进入停机态，再发 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。停机期间 `unload` 汇入计划后立即返回 true（不等拆卸完成）；`disable` 在停机拆卸开始后对已标 `disposed` 的条目返回 false，其余同 `unload`。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者并入同批先收尾再关，收尾时提供者仍在；空档里不切到后备提供者。动态 `services.get` 不产生依赖边，关停期间可能取到空。缓存的 `all()[i]` 引用不受关停边保护。
 
 插件 dispose 时，容器按清理归属撤回本激活登记的全部服务。登记型 hub（工具 / 命令）由描述符的 registrar 在提供者侧按激活身份退订。
 

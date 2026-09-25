@@ -1,5 +1,5 @@
 import { Clock, Crown, SlidersHorizontal, User, Wrench } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { pageAction } from '../api';
 import {
   type ConfirmOverride,
@@ -129,9 +129,13 @@ export function AuthorityPage() {
   const [data, setData] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
+  // 停留时长按字数算（短提示 2200ms），带附注的长回执也读得完；新提示顶掉旧提示时连计时一起换，
+  // 免得旧计时把新提示提前清掉
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flash = (m: string) => {
     setMessage(m);
-    setTimeout(() => setMessage(''), 2200);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setMessage(''), Math.max(2200, m.length * 100));
   };
 
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['users', 'ops']));
@@ -170,12 +174,16 @@ export function AuthorityPage() {
     refresh();
   }, [refresh]);
 
-  /** 调 action：失败 flash 错误，成功 flash 提示并刷新。 */
+  /**
+   * 调 action：失败 flash 错误；成功时 flash 服务端返回的 message（可能带附注，如 users.json 拒写时
+   * 「仅本次运行生效」），没有才用本地 okMsg，然后刷新。
+   */
   const act = useCallback(
     async (method: string, args: Record<string, unknown>, okMsg?: string) => {
       try {
-        await pageAction(PLUGIN, method, args);
-        if (okMsg) flash(okMsg);
+        const res = await pageAction<{ message?: unknown } | undefined>(PLUGIN, method, args);
+        const shown = typeof res?.message === 'string' ? res.message : okMsg;
+        if (shown) flash(shown);
         await refresh();
       } catch (e) {
         flash(errMsg(e));

@@ -49,7 +49,9 @@ export interface PluginStatusEntry {
  * 'disposed' 单向终态、disabled 态 bounce、定义或实例 id 校验失败）；**true = 其余，含主体已在目标态的幂等情形**。
  * 每个 false 分支都已记一笔日志（政策挡下 warn，主体不存在与 'disposed' 在途 debug），调用方不必重复。
  * true 只说明请求已受理，不说明激活已落定——那看 `idle()`。
- * 停机进行中，unload / disable 汇入停机计划后立即返回 true（不等待拆卸完成，拆卸由停机计划执行）；register / bounce 返回 false。
+ * 停机进行中，unload 汇入停机计划后立即返回 true（不等待拆卸完成，拆卸由停机计划执行）；disable 先判 'disposed'
+ * 终态再判停机——停机拆卸开始时已把有激活的条目标成 'disposed'，此后对它们 disable 返回 false，其余情形同 unload
+ * 返回 true；register / bounce 返回 false。
  *
  * 管理动作只改运行态，不写配置文档。要跨重启保留（启停、新配置），调用方在动作成功后经 host-config
  * 写文档并落盘。
