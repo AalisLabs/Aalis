@@ -21,6 +21,11 @@ export class RunStore {
   /** once 触发记账：workflowId → 首次触发时刻（ms）。与运行历史同文件，重启后读回即不再触发 */
   private onceFired: Record<string, number> = {};
   private writeChain: Promise<void> = Promise.resolve();
+  /**
+   * init 读失败且不是「文件不存在」（storage 不在场、读错误、解析失败）：写的是整份快照，
+   * 此后一律拒写，否则第一次运行就用空的 once 记账覆盖文件，下次启动过期 once 全部重放。
+   */
+  private loadFailed = false;
 
   constructor(storage: StorageService, fileUri: string, maxRuns: number, logger: Logger) {
     this.storage = storage;
@@ -29,7 +34,7 @@ export class RunStore {
     this.logger = logger;
   }
 
-  /** 初始化时从存储加载历史；ENOENT 等情况视为空。 */
+  /** 初始化时从存储加载历史；文件不存在视为空，其它失败本次运行拒写。 */
   async init(): Promise<void> {
     try {
       const raw = await this.storage.readFile(this.fileUri, 'utf-8');
@@ -48,7 +53,8 @@ export class RunStore {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!/ENOENT|not found|不存在/i.test(msg)) {
-        this.logger.warn(`加载运行历史失败: ${err}`);
+        this.loadFailed = true;
+        this.logger.warn(`加载运行历史失败，本次运行不再写入该文件: ${err}`);
       }
     }
   }
@@ -59,6 +65,7 @@ export class RunStore {
   }
 
   private flush(): void {
+    if (this.loadFailed) return; // init 时已 warn 过
     const payload = JSON.stringify({ runs: this.runs, onceFired: this.onceFired }, null, 2);
     this.writeChain = this.writeChain
       .then(() => this.storage.writeFile(this.fileUri, payload))
