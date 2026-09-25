@@ -59,6 +59,45 @@ describe('默认 Logger', () => {
   });
 });
 
+describe('provide 的登记日志', () => {
+  it('同一激活登记多个条目时带上条目 id；按激活身份登记的一条保持原样', async () => {
+    const hub = new LogHub();
+    const registered: string[] = [];
+    hub.onEntry(entry => {
+      if (entry.level === 'debug' && entry.message.startsWith('服务已注册')) registered.push(entry.message);
+    });
+    const app = track(new App({ name: 'T', logLevel: 'debug', logHub: hub }));
+    const svc = defineService<{ id: string }>('__t:surface-log');
+    await app.pluginAll([
+      {
+        definition: definePlugin({
+          name: 'multi',
+          uses: { provide },
+          provides: [svc],
+          apply({ provide }) {
+            provide(svc, { id: 'a' }, { entryId: 'multi/a' });
+            provide(svc, { id: 'b' }, { entryId: 'multi/b' });
+          },
+        }),
+      },
+      {
+        definition: definePlugin({
+          name: 'single',
+          uses: { provide },
+          provides: [svc],
+          apply: ({ provide }) => void provide(svc, { id: 'single' }),
+        }),
+      },
+    ]);
+    await app.plugins.idle();
+    expect(registered.filter(m => m.includes('__t:surface-log'))).toEqual([
+      '服务已注册: __t:surface-log（multi/a）',
+      '服务已注册: __t:surface-log（multi/b）',
+      '服务已注册: __t:surface-log',
+    ]);
+  });
+});
+
 describe('插件管理服务的快照', () => {
   it('getPlugin 查不到的实例返回 undefined，不抛', () => {
     const app = track(new App({ name: 'T', logLevel: 'error' }));
