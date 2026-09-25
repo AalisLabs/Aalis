@@ -4,8 +4,8 @@ import { registerUploadedFilesRoutes } from '../../packages/plugin-webui-server/
 // ════════════════════════════════════════════════════════════
 // WebUI「已上传的文件」路由与 plugin-file-reader 共用同一套落盘布局，却各自拼路径：
 // file-reader 把会话目录名里的冒号替换成下划线后，路由若仍按原样 sessionId 拼，含冒号会话
-// （onebot:*、带 parentId 的子会话）的列表为空、下载/删除 404。契约：读侧两种目录名都试，
-// 数据文件跟着 meta 实际所在目录走。用假 express + 内存 storage 直接驱动路由处理器。
+// （onebot:*、带 parentId 的子会话）的列表为空、下载/删除 404。契约：路由与 file-reader 用同一套
+// 替换拼会话目录名。用假 express + 内存 storage 直接驱动路由处理器。
 // ════════════════════════════════════════════════════════════
 
 type Handler = (req: unknown, res: unknown) => Promise<void> | void;
@@ -94,56 +94,42 @@ function setup() {
 }
 
 const SESSION = 'onebot:1:group:2';
-const NEW_ID = 'aaaaaaaaaaaaaaaa';
-const OLD_ID = 'bbbbbbbbbbbbbbbb';
+const FILE_ID = 'aaaaaaaaaaaaaaaa';
 const meta = (id: string, name: string) =>
   JSON.stringify({ id, name, mimeType: 'text/plain', size: 3, sessionId: SESSION, uploadedAt: 1 });
 
 function seed(files: Map<string, string>) {
-  // 新布局（替换后的目录名）与老布局（原样 sessionId）并存
-  files.set(`pluginData:/file-reader/onebot_1_group_2/${NEW_ID}.txt`, 'NEW');
-  files.set(`pluginData:/file-reader/onebot_1_group_2/${NEW_ID}.meta.json`, meta(NEW_ID, 'new.txt'));
-  files.set(`pluginData:/file-reader/${SESSION}/${OLD_ID}.txt`, 'OLD');
-  files.set(`pluginData:/file-reader/${SESSION}/${OLD_ID}.meta.json`, meta(OLD_ID, 'old.txt'));
+  files.set(`pluginData:/file-reader/onebot_1_group_2/${FILE_ID}.txt`, 'DATA');
+  files.set(`pluginData:/file-reader/onebot_1_group_2/${FILE_ID}.meta.json`, meta(FILE_ID, 'a.txt'));
 }
 
 describe('webui-server 上传文件路由与 file-reader 目录名对齐', () => {
-  it('列表：含冒号会话两种目录名下的文件都列出', async () => {
+  it('列表：含冒号会话按替换后的目录名列出', async () => {
     const { files, call } = setup();
     seed(files);
     const out = await call('GET /api/uploaded-files', { query: { sessionId: SESSION } });
     expect(out.status).toBe(200);
-    expect((out.body as { files: Array<{ name: string }> }).files.map(f => f.name).sort()).toEqual([
-      'new.txt',
-      'old.txt',
-    ]);
+    expect((out.body as { files: Array<{ name: string }> }).files.map(f => f.name)).toEqual(['a.txt']);
   });
 
-  it('下载：数据文件跟着 meta 实际所在目录走', async () => {
+  it('下载：数据文件与 meta 同在替换后的目录', async () => {
     const { files, call } = setup();
     seed(files);
     expect(
-      (await call('GET /api/uploaded-files/download', { query: { sessionId: SESSION, fileId: NEW_ID } })).piped,
-    ).toBe('NEW');
-    expect(
-      (await call('GET /api/uploaded-files/download', { query: { sessionId: SESSION, fileId: OLD_ID } })).piped,
-    ).toBe('OLD');
+      (await call('GET /api/uploaded-files/download', { query: { sessionId: SESSION, fileId: FILE_ID } })).piped,
+    ).toBe('DATA');
     expect(
       (await call('GET /api/uploaded-files/download', { query: { sessionId: SESSION, fileId: 'cccccccccccccccc' } }))
         .status,
     ).toBe(404);
   });
 
-  it('删除：删的是文件实际所在目录里的数据与 meta，另一布局不受影响', async () => {
+  it('删除：删掉替换后目录里的数据与 meta', async () => {
     const { files, call } = setup();
     seed(files);
-    const out = await call('POST /api/uploaded-files/delete', { body: { sessionId: SESSION, fileId: OLD_ID } });
+    const out = await call('POST /api/uploaded-files/delete', { body: { sessionId: SESSION, fileId: FILE_ID } });
     expect(out.status).toBe(200);
-    expect(out.body).toEqual({ ok: true, name: 'old.txt', id: OLD_ID });
-    expect([...files.keys()].filter(k => k.includes(OLD_ID))).toEqual([]);
-    expect([...files.keys()].filter(k => k.includes(NEW_ID))).toHaveLength(2);
-    const again = await call('POST /api/uploaded-files/delete', { body: { sessionId: SESSION, fileId: NEW_ID } });
-    expect(again.status).toBe(200);
+    expect(out.body).toEqual({ ok: true, name: 'a.txt', id: FILE_ID });
     expect(files.size).toBe(0);
   });
 });

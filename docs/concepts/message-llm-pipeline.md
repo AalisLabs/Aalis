@@ -161,7 +161,7 @@ parseAttachmentRefs(text): AttachmentRef[]
 这套格式有三条必须遵守的约束：
 
 - 输出必须 byte-for-byte 兼容历史格式，数据库里已有的字符串不会被重写。
-- parser 不消耗 `desc` 中的转义，因此写入的 `desc` 不得含 `]`、`|` 或换行。这由 `formatAttachmentRef` 在写入时净化保证（换行折成空格、`|` → `丨`、`]` → `］`），调用方无需自己处理；视觉模型输出带表格或多行时，不净化会让整条占位符在 `parseAttachmentRefs` 侧再也匹配不到。两个读侧刻意不一致：`buildAttachmentRefMatcher` 的 `desc` 字符类更宽，只排除 `]` 与换行、允许裸 `|`——后缀 ` | ref:<ref>]` 已足够锚定整条占位符，收严则会让存量 `desc` 带裸 `|` 的占位符再也被 `update_image_description` 改不动。
+- parser 不消耗 `desc` 中的转义，因此写入的 `desc` 不得含 `]`、`|` 或换行。这由 `formatAttachmentRef` 在写入时净化保证（换行折成空格、`|` → `丨`、`]` → `］`），调用方无需自己处理；视觉模型输出带表格或多行时，不净化会让整条占位符在 `parseAttachmentRefs` 侧再也匹配不到。
 - `ref` 内不允许出现 `]` 或换行——这一条由**调用方**保证：`formatAttachmentRef` 只净化 `desc`，`ref` 原样写出。带 `]` 的 ref 会让 `parseAttachmentRefs` 在第一个 `]` 处截断（拿到半截 ref，随后据此构造的 matcher 只替换前半段、留下残渣）；带换行的 ref 会让 `parseAttachmentRefs` 整条匹配不到。`buildAttachmentRefMatcher` 本身把 ref 转义成字面量，不受影响。
 
 ::: warning 不要手写这套字符串
