@@ -134,12 +134,11 @@ describe('plugin-memory-history', () => {
     expect(messages[0].content).not.toContain('SELF');
   });
 
-  it('injectEnabled=false: 不注入（兼容旧 scope=off）', async () => {
+  it('injectEnabled=false: 不注入', async () => {
     const { app, host, memory } = await boot();
     await saveAcross(memory, [{ sessionId: 's-a', platform: 'onebot', content: 'X', ts: Date.now() - 1000 }]);
 
-    // 同时传旧字段 scope:'off' 验证向后兼容
-    await app.plugin(memoryHistory, { scope: 'off' });
+    await app.plugin(memoryHistory, { injectEnabled: false });
     await app.plugins.idle();
     const messages: Message[] = [{ role: 'user', content: 'now' }];
     await assemblePromptContributions(host, {

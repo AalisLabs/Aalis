@@ -129,7 +129,10 @@ describe('plugin-user-profile: 一次提取只认开头取到的 memory 实例',
       history: [{ role: 'user', content: '我喜欢猫', metadata: { userId: 'u1', platform: 'onebot' } }],
       seed: label => [
         `${PROFILE_NS}/onebot:u1`,
-        { facts: [{ id: 'f1', text: `${label}上的事实`, updatedAt: 1 }], relationScore: label === 'A' ? 10 : 90 },
+        {
+          facts: [{ id: 'f1', text: `${label}上的事实`, temporality: 'permanent', observedAt: 1, updatedAt: 1 }],
+          relationScore: label === 'A' ? 10 : 90,
+        },
       ],
       reply: { add: [{ text: '喜欢猫', category: '兴趣爱好', temporality: 'permanent', sourceQuote: '我喜欢猫' }] },
       speaker: 'u1',
@@ -156,7 +159,10 @@ describe('plugin-user-profile: 一次提取只认开头取到的 memory 实例',
       ],
       seed: label => [
         `${PROFILE_NS}/__self__:Aalis`,
-        { facts: [{ id: 'f1', text: `${label}上的事实`, updatedAt: 1 }], relationScore: label === 'A' ? 10 : 90 },
+        {
+          facts: [{ id: 'f1', text: `${label}上的事实`, temporality: 'permanent', observedAt: 1, updatedAt: 1 }],
+          relationScore: label === 'A' ? 10 : 90,
+        },
       ],
       reply: { add: [{ text: '喜欢猫', category: '兴趣爱好', temporality: 'permanent' }] },
       speaker: 'u1',

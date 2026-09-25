@@ -146,6 +146,9 @@ describe('user-relation _ensureHierarchyEdge（重复铸边回归）', () => {
       aliases,
       firstSeenAt: Date.now(),
       lastReinforcedAt: Date.now(),
+      lastMentionedAt: Date.now(),
+      mentionCount: 1,
+      weight: 0.5,
       evidence: [ev()],
     });
     const x = mkEntity([]);

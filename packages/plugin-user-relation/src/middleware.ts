@@ -141,9 +141,7 @@ async function buildBlock(
       const prev = roleByEventId.get(e.toEventId);
       if (!prev || e.lastReinforcedAt > prev.lastReinforcedAt) roleByEventId.set(e.toEventId, e);
     }
-    const sortedEvents = [...selfEvents]
-      .sort((a, b) => (b.lastMentionedAt ?? b.lastReinforcedAt) - (a.lastMentionedAt ?? a.lastReinforcedAt))
-      .slice(0, cfg.maxEvents);
+    const sortedEvents = [...selfEvents].sort((a, b) => b.lastMentionedAt - a.lastMentionedAt).slice(0, cfg.maxEvents);
 
     lines.push('## 近期参与的事件');
     for (const ev of sortedEvents) {
@@ -267,17 +265,11 @@ async function buildBlock(
     const snap = graph;
     const hotEvents =
       cfg.maxGlobalHotEvents > 0
-        ? [...snap.events]
-            .filter(e => typeof e.lastMentionedAt === 'number')
-            .sort((a, b) => (b.lastMentionedAt ?? 0) - (a.lastMentionedAt ?? 0))
-            .slice(0, cfg.maxGlobalHotEvents)
+        ? [...snap.events].sort((a, b) => b.lastMentionedAt - a.lastMentionedAt).slice(0, cfg.maxGlobalHotEvents)
         : [];
     const hotEntities =
       cfg.maxGlobalHotEntities > 0
-        ? [...snap.entities]
-            .filter(e => typeof e.lastMentionedAt === 'number')
-            .sort((a, b) => (b.lastMentionedAt ?? 0) - (a.lastMentionedAt ?? 0))
-            .slice(0, cfg.maxGlobalHotEntities)
+        ? [...snap.entities].sort((a, b) => b.lastMentionedAt - a.lastMentionedAt).slice(0, cfg.maxGlobalHotEntities)
         : [];
     if (hotEvents.length > 0 || hotEntities.length > 0) {
       lines.push('');
