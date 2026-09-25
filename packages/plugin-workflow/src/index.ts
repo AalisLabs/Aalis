@@ -519,7 +519,8 @@ async function run(caps: Caps): Promise<void> {
   provide(workflow, service);
 
   // ── AI 工具 ──
-  if (config.enableTools && tools.current) {
+  // tools 晚上线也无妨：登记口在提供者缺席时先挂账，上线后自动补挂
+  if (config.enableTools) {
     registerTools(tools, service);
   }
 

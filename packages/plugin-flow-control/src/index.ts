@@ -149,7 +149,7 @@ const uses = {
   config,
   provide,
   gateway,
-  // 持久化禁言状态用；缺席时 loadMuteState / saveMuteState 各自兜住错误，流控照常跑
+  // 持久化禁言状态用；缺席时写失败只记 warn、流控照常跑；上线（含晚于本插件）时由 follow 读回
   storage: optional(storage),
   messageArchive: optional(messageArchive),
 };
@@ -193,10 +193,15 @@ async function run(caps: Caps): Promise<void> {
       for (const [sessionId, entry] of Object.entries(data)) {
         const mutedUntil = Number(entry?.mutedUntil ?? 0);
         if (!mutedUntil || mutedUntil <= now) continue;
-        const platform = String(entry?.platform ?? '');
-        const s = createState(platform);
-        s.mutedUntil = mutedUntil;
-        states.set(sessionId, s);
+        // storage 晚上线时读回之前可能已有消息或 setMuted 建了状态：合并而非替换，禁言取较晚的到期时刻
+        const existing = states.get(sessionId);
+        if (existing) {
+          existing.mutedUntil = Math.max(existing.mutedUntil, mutedUntil);
+        } else {
+          const s = createState(String(entry?.platform ?? ''));
+          s.mutedUntil = mutedUntil;
+          states.set(sessionId, s);
+        }
         restored++;
       }
       if (restored > 0) logger.info(`[flow] 已恢复 ${restored} 个未过期的禁言状态`);
@@ -205,22 +210,34 @@ async function run(caps: Caps): Promise<void> {
     }
   }
 
+  // storage 在场即读禁言表：optional 依赖不参与激活拓扑，storage-local 可能晚于本插件上线，
+  // 只在 apply 里读一次会读成空表。follow 对「已在线」的服务也会立即触发，故任意加载序都成立。
+  // 读一次即完，storage 换人时没有要拆的东西，故不返回清理
+  let loading: Promise<void> | undefined;
+  caps.storage.follow(() => {
+    loading = loadMuteState();
+  });
+
   let saveChain: Promise<void> = Promise.resolve();
   function saveMuteState(): void {
-    const now = Date.now();
-    const out: Record<string, { platform: string; mutedUntil: number }> = {};
-    for (const [sessionId, s] of states.entries()) {
-      if (s.mutedUntil > now) out[sessionId] = { platform: s.platform ?? '', mutedUntil: s.mutedUntil };
-    }
-    const payload = JSON.stringify(out, null, 2);
     saveChain = saveChain
-      .then(() => storage.writeFile(muteStateUri, payload))
+      .then(async () => {
+        // 写的是整表：禁言表还在读时先等它并进内存，否则这次写会冲掉磁盘上的其它会话
+        if (loading) await loading;
+        const now = Date.now();
+        const out: Record<string, { platform: string; mutedUntil: number }> = {};
+        for (const [sessionId, s] of states.entries()) {
+          if (s.mutedUntil > now) out[sessionId] = { platform: s.platform ?? '', mutedUntil: s.mutedUntil };
+        }
+        await storage.writeFile(muteStateUri, JSON.stringify(out, null, 2));
+      })
       .catch(err => {
         logger.warn(`[flow] 持久化禁言状态失败: ${err}`);
       });
   }
 
-  await loadMuteState();
+  // storage 已在线时 follow 是同步首挂：把读取等完再让 apply 返回；storage 晚上线时无从等待，仍异步
+  if (loading) await loading;
 
   /** 从 IncomingMessage 派生 per-scope override 用的 targetId（群=groupId / 私=userId / 其他=空） */
   function extractTargetId(message: import('@aalis/schema-message').IncomingMessage): string {
@@ -385,6 +402,8 @@ async function run(caps: Caps): Promise<void> {
 
     const s = states.get(message.sessionId)!;
 
+    // 禁言表可能还在读（storage 晚上线时 follow 补读）：读完再判禁言
+    if (loading) await loading;
     if (service.isMuted(message.sessionId)) {
       // 禁言期不重置 idle timer：避免在禁言结束后被立即唤醒重复触发。
       logStatus(message.sessionId, s, '禁言中 → 吞噬');
@@ -440,10 +459,12 @@ async function run(caps: Caps): Promise<void> {
   }, SWEEP_INTERVAL_MS);
   if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
 
-  lifecycle.onDispose(() => {
+  lifecycle.onDispose(async () => {
     clearInterval(sweepTimer);
     platformIdle.stop();
     for (const s of states.values()) clearSessionIdle(s);
+    // 整表快照在写链里才取：先等排队的写落完再清表，否则清空后的空表会被写回磁盘
+    await saveChain;
     states.clear();
   });
 }
