@@ -10,7 +10,7 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
-import { createConfigStore } from '../../packages/runtime/src/config-store.js';
+import { ConfigSaveRefusedError, createConfigStore } from '../../packages/runtime/src/config-store.js';
 import { hostedApp, registerFromDoc, type TempConfigHandle, tempConfig } from '../fixtures/app.js';
 
 // ════════════════════════════════════════════════════════════
@@ -325,14 +325,15 @@ describe('watch', () => {
 describe('host-config 的 save 契约（installHostConfig 交给插件的那一份）', () => {
   function capture() {
     const errors: unknown[][] = [];
+    const warns: unknown[][] = [];
     const logger: Logger = {
       debug() {},
       info() {},
-      warn() {},
+      warn: (...args: unknown[]) => void warns.push(args),
       error: (...args: unknown[]) => void errors.push(args),
       child: () => logger,
     };
-    return { errors, logger };
+    return { errors, warns, logger };
   }
   const docOf = (app: App) => app.bind({ hostConfig }).hostConfig.require();
 
@@ -369,6 +370,31 @@ describe('host-config 的 save 契约（installHostConfig 交给插件的那一�
       ),
     );
     await expect(docOf(app).save()).rejects.toThrow('disk full');
+  });
+
+  it('provider 拒写（盘上有尚未生效的外部修改）：只记一行告警、不带栈，调用方仍拿到拒绝', async () => {
+    const { errors, warns, logger } = capture();
+    const { app } = track(
+      hostedApp(
+        {},
+        {
+          logger,
+          provider: {
+            save: () => {
+              throw new ConfigSaveRefusedError(
+                '配置文件有尚未生效的外部修改，为免覆盖已拒绝本次保存（/x/aalis.config.yaml）',
+              );
+            },
+          },
+        },
+      ),
+    );
+    await expect(docOf(app).save()).rejects.toBeInstanceOf(ConfigSaveRefusedError);
+    await new Promise(r => setTimeout(r, 0));
+    expect(errors).toEqual([]);
+    expect(warns).toEqual([
+      ['配置未保存：配置文件有尚未生效的外部修改，为免覆盖已拒绝本次保存（/x/aalis.config.yaml）'],
+    ]);
   });
 
   it('无 provider（内存模式）→ 立即完成', async () => {

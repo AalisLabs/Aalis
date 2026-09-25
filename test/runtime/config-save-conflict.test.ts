@@ -4,9 +4,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
 import { LogHub } from '../../packages/core/src/index.js';
-import { createConfigStore } from '../../packages/runtime/src/config-store.js';
+import { ConfigSaveRefusedError, createConfigStore } from '../../packages/runtime/src/config-store.js';
 import { createFsYamlConfigProvider } from '../../packages/runtime/src/providers.js';
-import { settle, sleep, waitFor } from '../helpers/fs-watch.js';
+import { quiet, settle, sleep, waitFor } from '../helpers/fs-watch.js';
 
 // ════════════════════════════════════════════════════════════
 // 配置落盘的读-改-写竞态：save 此前不看盘上实况，整份覆写进程内的旧文档，
@@ -99,6 +99,26 @@ describe('save 写前比对磁盘实况', () => {
     await sleep(900);
     expect(() => saveOf(provider)({ name: 'T', logLevel: 'info', plugins: {} })).toThrow(/外部修改/);
     expect(readFileSync(path, 'utf-8')).toBe(draft);
+  });
+
+  it('拒写之后把文件原样改回：这次变更照样投递，宿主据此按文件对账；对账后恢复去重', async () => {
+    writeFileSync(path, A);
+    const { provider } = createFsYamlConfigProvider(path);
+    const seen: AalisConfig[] = [];
+    stop = provider.watch?.(c => seen.push(c));
+    await settle();
+
+    writeFileSync(path, `${A}  broken: [\n`);
+    await quiet(); // 解析失败，本次变更被搁置
+    // 调用方的文档已改（logLevel: debug），落盘被拒：文档从此领先于文件
+    expect(() => saveOf(provider)({ name: 'T', logLevel: 'debug', plugins: {} })).toThrow(ConfigSaveRefusedError);
+    writeFileSync(path, A); // 原样恢复：内容与最后生效的那份逐字节相同
+    expect(await waitFor(() => seen.length >= 1), '原样恢复被当成空变更跳过，文档与运行态不会回到文件').toBe(true);
+    expect(seen[0].logLevel).toBe('info');
+
+    writeFileSync(path, A);
+    await quiet();
+    expect(seen, '对账之后同内容的事件照常去重').toHaveLength(1);
   });
 
   it('两个进程（两个 provider）写同一文件：先写者成功，后写者拒写', () => {

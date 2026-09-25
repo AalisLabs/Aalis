@@ -100,7 +100,7 @@ WebUI 的启停与改配置路由、mcp-client 的自服务开关按这种方式
 ## Node 宿主的做法（@aalis/runtime）
 
 - `createConfigStore(initial, provider)`：文档的内存态、危险键闸与落盘委托。`ConfigProvider` 负责持久化（`save`）与外部变更监听（`watch`），`createFsYamlConfigProvider` 是读写 YAML 的实现。
-- `createFsYamlConfigProvider` 保存前比对盘上内容：文件里有尚未生效的外部修改（手改尚未热重载、改坏未能解析、另一个进程写过）时拒绝本次保存、不覆盖，错误只带文件路径；监听武装后立即对账一次，武装前的手改随之生效；平台不支持文件监听时记一条告警，此后手改需重启才生效。
+- `createFsYamlConfigProvider` 保存前比对盘上内容：文件里有尚未生效的外部修改（手改尚未热重载、改坏未能解析、另一个进程写过）时拒绝本次保存、不覆盖，错误只带文件路径，宿主记一条告警。拒绝之后调用方的文档已领先于文件，下一次文件变更即使内容与上次生效的那份相同也照常热重载，按文件重新对账；监听武装后立即对账一次，武装前的手改随之生效；平台不支持文件监听时记一条告警，此后手改需重启才生效。
 - `installHostConfig(app, store)`：把文档以 `host-config` 服务独占登记在根激活上，并经 `services.prefer` 应用文档里的服务偏好。须在登记任何插件之前调用，偏好才先于全部提供者生效。
 - 插件发现驱动 `createPluginDiscovery(app, loader, doc)` 登记插件时，按实例 id 从文档取配置与禁用标记，交给 `app.pluginAll`（见 [App](app.md)）。冷启动时，`plugins` 下找不到对应插件的配置段（多为直接 `npm uninstall` 后的残留）逐段告警一次，提示已卸载的可删除该段（其中可能含密钥）；文档本身不改。
 - `withPluginConfigSync(loader, app, store, opts)`：导入定义后、登记前，把 `configSchema` 派生的默认值深合并进文档，并按 schema 裁剪未知字段（`configSync.trimUnknownFields=false` 可保留）。首次 apply 拿到的就是规范化后的配置。

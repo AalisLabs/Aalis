@@ -128,14 +128,16 @@ describe('PUT /api/config 值校验', () => {
     expect(store.name).toBe('Aalis');
     expect(calls).toEqual([]);
   });
-  it('save 拒绝 → 500 且不重启（返回时已落盘的契约在消费侧兑现）', async () => {
-    const { calls, put } = setup({
+  it('save 拒绝 → 409、撤回文档里的改动且不重启（返回时已落盘的契约在消费侧兑现）', async () => {
+    const { store, calls, put } = setup({
       save: async () => {
         throw new Error('disk full');
       },
     });
     const out = await put({ logLevel: 'debug' });
-    expect(out.status).toBe(500);
+    expect(out.status).toBe(409);
+    expect((out.body as { error: string }).error).toBe('未写入配置文件（disk full），本次修改已撤回');
+    expect(store.logLevel).toBe('info');
     expect(calls).not.toContain('restart');
   });
 });
