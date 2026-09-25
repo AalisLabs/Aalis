@@ -245,9 +245,9 @@ interface Fact {
   /** 事实分类，可空 */
   category?: FactCategory;
   /** 事实时效：temporary 会随时间淡出 prompt；permanent 长期有效 */
-  temporality?: FactTemporality;
+  temporality: FactTemporality;
   /** 首次学习到该事实的时间戳 */
-  observedAt?: number;
+  observedAt: number;
   /** LLM 提取出的自然语言时间线索，如“最近”“上周”“2026年4月” */
   timeHint?: string;
   /** 最近一次写入或更新的时间戳 */
@@ -716,44 +716,46 @@ function registerUserProfile({
     return s.length > 0 ? s.slice(0, 40) : undefined;
   }
 
-  /** 解析 metadata 中的事实数组（兼容旧格式 string[]，自动迁移） */
+  /** 解析 metadata 中的事实数组；缺正文、id、时效或时间戳的条目跳过 */
   function parseFactArray(raw: unknown[]): Fact[] {
     const usedIds = new Set<string>();
     const facts: Fact[] = [];
     for (const item of raw) {
-      if (typeof item === 'string' && item.trim()) {
-        const id = genFactId(usedIds);
-        usedIds.add(id);
-        facts.push({ id, text: item.trim(), temporality: 'permanent', updatedAt: 0 });
-      } else if (item && typeof item === 'object') {
-        const obj = item as Record<string, unknown>;
-        const text = typeof obj.text === 'string' ? obj.text.trim() : '';
-        if (!text) continue;
-        let id = typeof obj.id === 'string' && obj.id.trim() ? obj.id.trim() : genFactId(usedIds);
-        while (usedIds.has(id)) id = genFactId(usedIds);
-        usedIds.add(id);
-        const cat =
-          typeof obj.category === 'string' && (KNOWN_CATEGORIES as string[]).includes(obj.category)
-            ? (obj.category as FactCategory)
-            : undefined;
-        const updatedAt = typeof obj.updatedAt === 'number' ? obj.updatedAt : 0;
-        const observedAt = typeof obj.observedAt === 'number' ? obj.observedAt : updatedAt || undefined;
-        facts.push({
-          id,
-          text,
-          category: cat,
-          temporality: normalizeTemporality(obj.temporality, cat),
-          observedAt,
-          timeHint: normalizeTextField(obj.timeHint),
-          updatedAt,
-        });
+      if (!item || typeof item !== 'object') continue;
+      const obj = item as Record<string, unknown>;
+      const text = typeof obj.text === 'string' ? obj.text.trim() : '';
+      if (
+        !text ||
+        typeof obj.id !== 'string' ||
+        !obj.id.trim() ||
+        (obj.temporality !== 'permanent' && obj.temporality !== 'temporary') ||
+        typeof obj.observedAt !== 'number' ||
+        typeof obj.updatedAt !== 'number'
+      ) {
+        continue;
       }
+      let id = obj.id.trim();
+      while (usedIds.has(id)) id = genFactId(usedIds);
+      usedIds.add(id);
+      const cat =
+        typeof obj.category === 'string' && (KNOWN_CATEGORIES as string[]).includes(obj.category)
+          ? (obj.category as FactCategory)
+          : undefined;
+      facts.push({
+        id,
+        text,
+        category: cat,
+        temporality: obj.temporality,
+        observedAt: obj.observedAt,
+        timeHint: normalizeTextField(obj.timeHint),
+        updatedAt: obj.updatedAt,
+      });
     }
     return facts;
   }
 
   /**
-   * 读取一个用户的现有档案（不存在返回 undefined）。兼容旧格式 string[]，自动迁移。
+   * 读取一个用户的现有档案（不存在返回 undefined）。
    *
    * 四个档案 / 指令读写函数都由调用方传入 mem，一次操作（读 → 调 LLM → 重读 → 覆盖写）全程只认
    * 开头取到的实例：memory 胜者可能在 LLM 调用期间换人而本插件不重启，每步现取胜者会把 A 上
@@ -1091,8 +1093,8 @@ function registerUserProfile({
           id: u.id,
           text,
           category: u.category ?? old.category,
-          temporality: u.temporality ?? old.temporality ?? normalizeTemporality(undefined, u.category ?? old.category),
-          observedAt: old.observedAt ?? now,
+          temporality: u.temporality ?? old.temporality,
+          observedAt: old.observedAt,
           timeHint: u.timeHint ?? old.timeHint,
           updatedAt: now,
         });
@@ -1679,19 +1681,16 @@ function registerUserProfile({
   function isFactActive(fact: Fact): boolean {
     if (fact.temporality !== 'temporary') return true;
     if (cfg.temporaryFactMaxAgeDays <= 0) return true;
-    const base = fact.updatedAt || fact.observedAt || 0;
-    if (!base) return true;
-    return Date.now() - base <= cfg.temporaryFactMaxAgeDays * 86_400_000;
+    return Date.now() - fact.updatedAt <= cfg.temporaryFactMaxAgeDays * 86_400_000;
   }
 
   function renderFactLine(fact: Fact, includeMeta: boolean): string {
     if (!includeMeta) return `- ${fact.text}`;
     const meta: string[] = [];
     if (fact.timeHint) meta.push(`时间线索：${fact.timeHint}`);
-    const observed = fact.observedAt || fact.updatedAt;
-    if (observed) meta.push(`记录于：${new Date(observed).toLocaleDateString('zh-CN')}`);
+    meta.push(`记录于：${new Date(fact.observedAt).toLocaleDateString('zh-CN')}`);
     if (fact.temporality === 'temporary') meta.push('临时状态');
-    return meta.length > 0 ? `- ${fact.text}（${meta.join('；')}）` : `- ${fact.text}`;
+    return `- ${fact.text}（${meta.join('；')}）`;
   }
 
   /** 将一个用户的 Fact[] 渲染为分组文本块 */

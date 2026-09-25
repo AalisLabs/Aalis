@@ -69,12 +69,14 @@ export class SQLiteMemoryService implements MemoryService {
         role TEXT NOT NULL,
         kind TEXT,
         content TEXT,
+        reasoningContent TEXT,
         toolCalls TEXT,
         toolCallId TEXT,
         name TEXT,
         timestamp INTEGER NOT NULL,
         archived INTEGER NOT NULL DEFAULT 0,
         metadata TEXT,
+        segments TEXT,
         createdAt TEXT NOT NULL DEFAULT (datetime('now','subsec'))
       );
       CREATE INDEX IF NOT EXISTS idx_messages_session
@@ -90,28 +92,6 @@ export class SQLiteMemoryService implements MemoryService {
         PRIMARY KEY (namespace, key)
       );
     `);
-
-    // 迁移：为旧数据库添加 archived 列
-    const columns = this.db.pragma('table_info(messages)') as Array<{ name: string }>;
-    if (!columns.some(c => c.name === 'archived')) {
-      this.db.exec('ALTER TABLE messages ADD COLUMN archived INTEGER NOT NULL DEFAULT 0');
-    }
-    // 迁移：为旧数据库添加 reasoningContent 列
-    if (!columns.some(c => c.name === 'reasoningContent')) {
-      this.db.exec('ALTER TABLE messages ADD COLUMN reasoningContent TEXT');
-    }
-    // 迁移：为旧数据库添加 metadata 列
-    if (!columns.some(c => c.name === 'metadata')) {
-      this.db.exec('ALTER TABLE messages ADD COLUMN metadata TEXT');
-    }
-    // 迁移：为旧数据库添加 segments 列（存放统一时间线 JSON）
-    if (!columns.some(c => c.name === 'segments')) {
-      this.db.exec('ALTER TABLE messages ADD COLUMN segments TEXT');
-    }
-    // 迁移：为旧数据库添加 kind 列（Message.kind 统一子分类）
-    if (!columns.some(c => c.name === 'kind')) {
-      this.db.exec('ALTER TABLE messages ADD COLUMN kind TEXT');
-    }
   }
 
   private static parseMetadata(raw: string | null): Record<string, unknown> | undefined {

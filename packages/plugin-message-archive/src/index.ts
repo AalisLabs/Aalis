@@ -7,12 +7,6 @@ import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 import { getMessageName, getSenderLabel, prefixSender, WellKnownKinds } from '@aalis/schema-message';
 
-export type {
-  ArchiveIncomingResult,
-  ArchiveNoticeOptions,
-  MessageArchiveService,
-} from '@aalis/api-message-archive';
-
 const configSchema: ConfigSchema = {
   debugLogs: {
     type: 'boolean',

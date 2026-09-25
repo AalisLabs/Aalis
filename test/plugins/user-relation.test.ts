@@ -539,6 +539,9 @@ describe('plugin-user-relation: pickCanonicalByMergeScore', () => {
     name: id,
     firstSeenAt: 0,
     lastReinforcedAt: 0,
+    lastMentionedAt: 0,
+    mentionCount: 1,
+    weight: 0.5,
     evidence: Array.from({ length: evidenceCount }, () => ev({})),
   });
 

@@ -54,9 +54,9 @@ export interface PersonNode {
   /** 最近一次被强化（提到 / 参与事件）时间 */
   lastSeenAt: number;
   /** 最近一次在对话中被提及的时间（含本人发言）。用于「最近发烫」排序 */
-  lastMentionedAt?: number;
+  lastMentionedAt: number;
   /** 总共被提及次数（每次 extractor 命中该节点 +1） */
-  mentionCount?: number;
+  mentionCount: number;
   /**
    * 最近一次 evictByQuota 计算出的全图 PageRank 分数。
    * 个性化向量按 kind 偏置（人>物>事），反映该节点在关系网中的结构性重要性。
@@ -104,9 +104,8 @@ export interface EventNode {
    * - 同 title + 同 scope → 强化（同一件事）
    * - 同 title + 不同 scope → 独立节点（避免「约定下周活动」跨群串线）
    * - 'global' 哨兵 = LLM 主动声明的跨会话事件（如双十一、全网热点），与其它 scope 严格隔离；跨会话合并请走 mergeNodes 工具
-   * - undefined 仅出现在老数据上，运行时按 'global' 兜底处理
    */
-  sessionScope?: string;
+  sessionScope: string;
   /** 别名 / 历史 title，rename 时原 title 自动落到此处供检索 */
   aliases?: string[];
   /** 一两句话的事件摘要 */
@@ -120,17 +119,16 @@ export interface EventNode {
    * 多次发生 / 重复提及时累计的发生时间戳列表（首次创建时为 [firstSeenAt]）。
    * 严格按 title 去重后，每次合并会追加一个时间戳，保留时间维度。
    */
-  occurrences?: number[];
+  occurrences: number[];
   /**
    * 节点合并强度 0~1。每次按 title 合并时 += 0.3（clamp 到 1.0），用于淘汰排序。
-   * 老节点未设置则视为 0.5。**语义 = 被强化次数累计，不是"重要性"**；
-   * 真正的结构性重要性看 `lastPageRank`。
+   * **语义 = 被强化次数累计，不是"重要性"**；真正的结构性重要性看 `lastPageRank`。
    */
-  weight?: number;
+  weight: number;
   /** 最近一次在对话窗口中被提及的时间 */
-  lastMentionedAt?: number;
+  lastMentionedAt: number;
   /** 总共被提及次数 */
-  mentionCount?: number;
+  mentionCount: number;
   /** rename 审计：每次改名追加一条 */
   nameHistory?: NodeNameAudit[];
   /** 最近一次 evictByQuota 计算出的 PageRank 分数（结构性重要性）。 */
@@ -178,7 +176,7 @@ export interface EntityNode {
    * 节点合并强度 0~1。每次按 (kind, name) 合并时 += 0.3（clamp 到 1.0），用于淘汰排序。
    * **语义 = 被强化次数累计，不是"重要性"**；真正的结构性重要性看 `lastPageRank`。
    */
-  weight?: number;
+  weight: number;
   /** 最近一次 evictByQuota 计算出的 PageRank 分数（结构性重要性）。 */
   lastPageRank?: number;
   lastPageRankAt?: number;
@@ -188,9 +186,9 @@ export interface EntityNode {
   /** 完整的社群隶属度列表（支持重叠）；louvain/leiden 永远单元素，slpa 可多元素。 */
   communityMemberships?: CommunityMembership[];
   /** 最近一次在对话窗口中被提及的时间 */
-  lastMentionedAt?: number;
+  lastMentionedAt: number;
   /** 总共被提及次数 */
-  mentionCount?: number;
+  mentionCount: number;
   /** rename 审计：每次改名追加一条 */
   nameHistory?: NodeNameAudit[];
   /** sha1(entityKind + '\n' + name + '\n' + (summary ?? '')) 截前 16 字节 hex；任一变更后值变 → 触发重 embed。 */

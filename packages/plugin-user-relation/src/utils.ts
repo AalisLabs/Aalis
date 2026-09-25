@@ -354,17 +354,11 @@ export interface WeightDecayCfg {
  * - halfLifeDays<=0：直接返回 raw（向后兼容）
  * - 使用 max(factor, floor)：衰减不会无限趋近 0，保留长期关系底色
  */
-export function effectiveWeight(
-  raw: number | undefined,
-  lastReinforcedAt: number,
-  now: number,
-  cfg: WeightDecayCfg,
-): number {
-  const w = raw ?? 0;
-  if (cfg.halfLifeDays <= 0) return w;
+export function effectiveWeight(raw: number, lastReinforcedAt: number, now: number, cfg: WeightDecayCfg): number {
+  if (cfg.halfLifeDays <= 0) return raw;
   const days = Math.max(0, (now - lastReinforcedAt) / 86400000);
   const factor = Math.max(cfg.floor, 0.5 ** (days / cfg.halfLifeDays));
-  return clamp01(w * factor);
+  return clamp01(raw * factor);
 }
 
 /** 单实体保留最近 N 条 evidence（按 extractedAt DESC 截断 + 同 key 去重）
