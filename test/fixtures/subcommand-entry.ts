@@ -13,6 +13,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config, definePlugin, lifecycle, provide, services } from '@aalis/core';
 import { commands } from '../../packages/api-commands/src/index.js';
+import { hostConfig } from '../../packages/api-host-config/src/index.js';
 import { pluginSource } from '../../packages/api-plugin-source/src/index.js';
 import { startAalis } from '../../packages/runtime/src/start.js';
 
@@ -70,9 +71,18 @@ const app = await startAalis({
   ...(mode === 'daemon' ? { subcommands: [] } : {}),
 });
 // 守护路径：startAalis 已挂好 SIGTERM 处理器，自发一次走优雅退出（app.stop → flush → exit 0）。
-// 退出前经宿主提供的插件来源重扫一次，记下返回的新登记名单（插件都已注册，应为空）。
+// 退出前经宿主提供的插件来源重扫一次，记下返回的新登记名单（插件都已注册，应为空）；
+// 再记下宿主装配的配置文档：host-config 是否在根上、文档里的服务偏好是否已应用。
 if (mode === 'daemon') {
-  const rescanned = await app.bind({ services }).services.get(pluginSource)?.rescan();
+  const host = app.bind({ services }).services;
+  const rescanned = await host.get(pluginSource)?.rescan();
   writeFileSync(resolve(process.cwd(), 'rescan.json'), JSON.stringify(rescanned ?? null));
+  writeFileSync(
+    resolve(process.cwd(), 'host.json'),
+    JSON.stringify({
+      probeConfig: host.get(hostConfig)?.getPluginConfig('e2e-probe') ?? null,
+      preferred: host.preferred(commands) ?? null,
+    }),
+  );
   process.kill(process.pid, 'SIGTERM');
 }
