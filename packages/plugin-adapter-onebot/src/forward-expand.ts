@@ -60,7 +60,7 @@ export interface ForwardConfig {
 }
 
 /**
- * 展开器要用到的能力。逐项传入而非整包转交：这里只碰日志与五个服务引用，
+ * 展开器要用到的能力。逐项传入而非整包转交：这里只碰日志、四个服务引用与 storage 网关，
  * 服务引用每次调用重新解析当前提供者（展开发生在消息到达时，提供者可能已换人）。
  */
 export interface ForwardExpanderDeps<TState> {
@@ -71,7 +71,12 @@ export interface ForwardExpanderDeps<TState> {
   media: ServiceRef<MediaService>;
   /** 摘要模型（缺席时不生成摘要） */
   llm: ServiceRef<LLMModel>;
-  storage: ServiceRef<StorageService>;
+  /**
+   * storage 网关（createStorageGateway），按 URI 路由到对应根：媒体落盘写 data 根、音频转码写 tmp 根。
+   * 不能传胜者——storage 按根逐条提供，胜者只是其中一个根（多根时通常是 workspace），写不了 data:/。
+   * 缺对应根时网关抛错，落盘回退原始 src。
+   */
+  storage: StorageService;
   processService: ServiceRef<ProcessService>;
   forwardCfg: ForwardConfig;
   /** 单附件落盘字节上限（与入站附件缓存同源） */
@@ -340,10 +345,17 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     // 全身 try：任何单点异常（含服务解析）都只降级本项为原始 src，绝不让整批 Promise.all 崩掉
     const download = createConcurrencyLimited(async (task: ForwardMediaTask): Promise<string> => {
       try {
-        const store = storage.current;
         const proc = processService.current;
-        if (!store || !proc) return task.src;
-        const local = await cacheOneAttachment(store, proc, task.kind, task.src, sessionId, attachmentMaxBytes, logger);
+        if (!proc) return task.src;
+        const local = await cacheOneAttachment(
+          storage,
+          proc,
+          task.kind,
+          task.src,
+          sessionId,
+          attachmentMaxBytes,
+          logger,
+        );
         // 落盘成功即登记「原始 URL → 落盘 ref」描述缓存别名：识别阶段按落盘 ref 写入的
         // 描述，此后经原始 URL（引用消息手里只有它）也查得到。
         if (local) rememberLandedAlias(mediaSvc, task.kind, task.src, local);
