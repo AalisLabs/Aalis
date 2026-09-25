@@ -143,8 +143,12 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(readLog(dir)).toBe(SENTINEL);
   }, 20_000);
 
-  it('对照·守护路径：显式 subcommands: [] 压过非空 argv，照常写文件日志，宿主提供插件来源，SIGTERM 优雅退出', async () => {
+  it('对照·守护路径：显式 subcommands: [] 压过非空 argv，照常写文件日志，宿主提供插件来源与配置文档，SIGTERM 优雅退出', async () => {
     const dir = project();
+    writeFileSync(
+      join(dir, 'aalis.config.yaml'),
+      'name: e2e\nlogLevel: info\nplugins:\n  e2e-probe:\n    known: 3\nservicePreferences:\n  commands: e2e-probe\n',
+    );
     // argv 非空但宿主显式传了 []：不分发、进守护——空 argv 与 [] 重合时测不出这条优先级
     const r = await run(dir, ['probe'], { AALIS_E2E_MODE: 'daemon' });
     expect(r.signal).toBeNull();
@@ -155,5 +159,10 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(log).toContain('已停止');
     // 宿主在根上提供了 plugin-source：重扫可调，插件都已注册，新登记名单为空
     expect(JSON.parse(readFileSync(join(dir, 'rescan.json'), 'utf8'))).toEqual([]);
+    // 宿主在根上提供了 host-config（插件读到的是规范化后的文档），并应用了文档里的服务偏好
+    expect(JSON.parse(readFileSync(join(dir, 'host.json'), 'utf8'))).toEqual({
+      probeConfig: { known: 3, nested: { filled: 9 } },
+      preferred: 'e2e-probe',
+    });
   });
 });
