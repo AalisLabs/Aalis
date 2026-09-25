@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createStorageGateway } from '../../packages/api-storage/src/index.js';
 import type { Logger, ServiceRef } from '../../packages/core/src/index.js';
 import { createForwardExpander, type ForwardConfig } from '../../packages/plugin-adapter-onebot/src/forward-expand.js';
 
@@ -48,7 +49,7 @@ function setup() {
     memory: absentRef(),
     media: absentRef(),
     llm: absentRef(),
-    storage: absentRef(),
+    storage: createStorageGateway(absentRef()),
     processService: absentRef(),
     forwardCfg: CFG,
     attachmentMaxBytes: 1024 * 1024,

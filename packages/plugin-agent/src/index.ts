@@ -18,7 +18,7 @@ import { messageArchive as messageArchiveService } from '@aalis/api-message-arch
 import { type PersonaSessionOptions, persona as personaService } from '@aalis/api-persona';
 import { getPlatformSelfIdentity, platform as platformService } from '@aalis/api-platform';
 import { type SessionConfig, sessionManager as sessionManagerService } from '@aalis/api-session-manager';
-import { storage as storageService } from '@aalis/api-storage';
+import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
 import {
   asToolExecutionResult,
   type ToolCallContext,
@@ -1514,8 +1514,9 @@ class DefaultAgent implements AgentService {
     const t = data.trim();
     const rel = t.match(/^data\/((?:images|videos|audios|files)\/.+)$/);
     if (!rel) return t;
-    const storage = this.caps.storage.current;
-    if (!storage) return null;
+    // 经网关按 URI 路由：storage 按根逐条提供，胜者只是其中一个根（多根时通常是 workspace），
+    // 读不了 data:/。缺 data 根（含 storage 整体缺席）时网关抛错，落到下面的 catch
+    const storage = createStorageGateway(this.caps.storage);
     try {
       const raw = (await storage.readFile(`data:/${rel[1]}`)) as Uint8Array;
       // mime 优先取附件自带的 mimeType；缺省按 basename 扩展名推断（适配器落盘只产
