@@ -23,7 +23,7 @@ export function stripRkey(url: string): string {
 
 /**
  * 附件落盘成功后登记「原始来源 → 落盘 ref」别名：原始 URL 一条，剥 rkey 后的键若不同再一条。
- * media 未装或实现较老（可选方法缺席）即跳过。
+ * media 未装即跳过。
  *
  * 只登记 http(s) 来源：base64 data URI 做键会把整段（可达数 MB）钉进别名表，而那条路径由
  * plugin-media 自己在落盘处登记。音频走转写、不进描述缓存，登记只会白占别名表一格。
@@ -34,12 +34,10 @@ export function rememberLandedAlias(
   source: string | undefined,
   landedRef: string,
 ): void {
-  if (kind === 'audio' || !source || !/^https?:\/\//.test(source)) return;
-  const remember = media?.rememberDescriptionAlias;
-  if (!remember) return;
-  remember.call(media, source, landedRef);
+  if (!media || kind === 'audio' || !source || !/^https?:\/\//.test(source)) return;
+  media.rememberDescriptionAlias(source, landedRef);
   const stripped = stripRkey(source);
-  if (stripped !== source) remember.call(media, stripped, landedRef);
+  if (stripped !== source) media.rememberDescriptionAlias(stripped, landedRef);
 }
 
 /** 按原始 URL 查描述：先原串，再剥 rkey 后的键（rkey 轮换后 get_msg 给的是另一条串）。 */

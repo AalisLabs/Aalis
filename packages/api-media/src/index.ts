@@ -158,9 +158,8 @@ export interface MediaService {
    * 此后 lookupDescription / rememberDescription 传**原始来源**即可命中落盘 ref
    * 那条内容哈希键——OneBot 引用消息只拿得到原始 URL 时也不必重认。别名按来源串相等命中；
    * QQ 直链的 rkey 会轮换，由适配器在登记与查询两侧剥掉后再登记/再查一次（见 plugin-adapter-onebot）。
-   * 可选方法：老实现缺席时调用方跳过即可（`media.rememberDescriptionAlias?.(…)`）。
    */
-  rememberDescriptionAlias?(source: string, landedRef: string): void;
+  rememberDescriptionAlias(source: string, landedRef: string): void;
 
   /**
    * 为含图消息构造视觉识别上下文（当前消息 + 引用消息 + 最近历史）。

@@ -15,7 +15,6 @@
 import { agent } from '@aalis/api-agent';
 import { asr } from '@aalis/api-asr';
 import { hooks } from '@aalis/api-hooks';
-import { hostConfig } from '@aalis/api-host-config';
 import { llm } from '@aalis/api-llm';
 import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
@@ -50,21 +49,6 @@ const configSchema: ConfigSchema = {
         description:
           '开启：图片到达即识别，描述进档案与向量库（可被召回），未触发回复的消息也留下记忆。' +
           '关闭：档案只留图片指针，主模型需要时再经 analyze_image 按需查看；此时图片内容不可被检索召回。',
-      },
-      mode: {
-        type: 'select',
-        label: '处理模式（已弃用）',
-        options: [
-          { label: '（未设置，使用下方新键）', value: '' },
-          { label: '由副模型转文本', value: 'describe' },
-          { label: '直通', value: 'passthrough' },
-          { label: '原样直通', value: 'passthrough-raw' },
-          { label: '禁用', value: 'disabled' },
-        ],
-        description:
-          '旧四档已由下方「接触到图片立即识别」与「主模型看图方式」取代。启动时若本键仍有值，按旧语义' +
-          '（describe→识别+转文字；passthrough/passthrough-raw→不识别+直通；disabled→不识别+转文字）一次性迁移到' +
-          '新键并移除本键，日志提示一次；留空即可。',
       },
       delivery: {
         type: 'select',
@@ -240,36 +224,15 @@ const configSchema: ConfigSchema = {
   },
 };
 
-/**
- * 已弃用的 vision.mode 四档 → 新键。返回 null 表示没有旧值。apply 时若旧键仍有值，按此映射
- * 一次性写入新键并把旧键从配置里删掉（写回文件），之后只看新键。
- */
-export function legacyVisionMode(
-  mode: unknown,
-): { recognizeOnArrival: boolean; delivery: 'passthrough' | 'describe' } | null {
-  switch (mode) {
-    case 'describe':
-      return { recognizeOnArrival: true, delivery: 'describe' };
-    case 'passthrough':
-    case 'passthrough-raw':
-      return { recognizeOnArrival: false, delivery: 'passthrough' };
-    case 'disabled':
-      return { recognizeOnArrival: false, delivery: 'describe' };
-    default:
-      return null;
-  }
-}
-
 function resolveCfg(raw: Readonly<Record<string, unknown>>): MediaConfigResolved {
   const vision = (raw.vision ?? {}) as Record<string, unknown>;
   const audio = (raw.audio ?? {}) as Record<string, unknown>;
   const video = (raw.video ?? {}) as Record<string, unknown>;
   const delivery = vision.delivery;
-  const legacy = legacyVisionMode(vision.mode);
   return {
     vision: {
-      recognizeOnArrival: legacy ? legacy.recognizeOnArrival : vision.recognizeOnArrival !== false,
-      delivery: legacy ? legacy.delivery : delivery === 'passthrough' || delivery === 'describe' ? delivery : 'auto',
+      recognizeOnArrival: vision.recognizeOnArrival !== false,
+      delivery: delivery === 'passthrough' || delivery === 'describe' ? delivery : 'auto',
       prefer: (vision.prefer as MediaConfigResolved['vision']['prefer']) || undefined,
       maxTokens: (vision.maxTokens as number) ?? 300,
       think: vision.think === true,
@@ -324,7 +287,6 @@ const uses = {
   tools: optional(tools),
   memory: optional(memory),
   sessionManager: optional(sessionManager),
-  hostConfig: optional(hostConfig),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -342,26 +304,6 @@ function run(caps: Caps): void {
   const raw = caps.config;
   const cfg = resolveCfg(raw);
   const logger = caps.logger;
-  const { mode: legacyMode, ...visionWithoutMode } = (raw.vision ?? {}) as Record<string, unknown>;
-  if (legacyVisionMode(legacyMode)) {
-    // 一次性迁移：按旧语义把结果写进新键并删掉旧键，落盘（config-sync 每次启动都物化默认值，
-    // 存量部署里这个键一定有值；不迁移的话新键永远是死键，WebUI 也清不掉旧键）。
-    const doc = caps.hostConfig.current;
-    doc?.setPluginConfig(name, {
-      ...raw,
-      vision: {
-        ...visionWithoutMode,
-        recognizeOnArrival: cfg.vision.recognizeOnArrival,
-        delivery: cfg.vision.delivery,
-      },
-    });
-    // 尽力而为：内存态已迁移，落盘失败下次启动 config-sync 会再物化；不让激活因磁盘错误失败
-    doc?.save().catch(err => logger.warn('vision 配置迁移落盘失败:', err));
-    logger.warn(
-      `vision.mode="${String(legacyMode)}" 已弃用：已按旧语义迁移为 recognizeOnArrival=${cfg.vision.recognizeOnArrival}、` +
-        `delivery=${cfg.vision.delivery} 并写回配置文件，旧键已移除。`,
-    );
-  }
   setMediaRuntime({ proc: createProcessGateway(caps.proc), storage: createStorageGateway(caps.storage) });
   const svc = new MediaServiceImpl(caps, cfg);
 
