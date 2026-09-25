@@ -13,7 +13,7 @@
  * - config.bind 默认 127.0.0.1（仅本机访问）
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { asToolExecutionResult, type ToolCallContext, type ToolService, tools as toolsService } from '@aalis/api-tools';
+import { type ToolCallContext, type ToolService, tools as toolsService } from '@aalis/api-tools';
 import {
   type BoundOf,
   config as configService,
@@ -252,7 +252,7 @@ export function buildMcpServer(tools: ToolService, config: Config): McpServer {
     };
 
     try {
-      const result = asToolExecutionResult(await tools.execute(toolName, args, callCtx));
+      const result = await tools.execute(toolName, args, callCtx);
       // MCP 侧只透传文本：工具交给主模型看的图（images）是 agent 回合内的载荷，不在此暴露
       return { content: [{ type: 'text', text: result.content }] };
     } catch (err) {

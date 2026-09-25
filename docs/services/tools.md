@@ -89,7 +89,7 @@ function withToolGroups(bound: BoundTools, groups: string[]): BoundTools;
 
 `register` / `registerGroup` 走 `registrar`。查询与执行走 `tools.current` / `tools.require()`。`withToolGroups` 只覆盖 `register`，不要对象展开 `BoundTools`（会把 `current` 求成快照）。
 
-事件：`AalisEvents['tool:execute']`。本包纯契约：SSRF 判定在 `@aalis/util-network-guard`；路径解析在 `@aalis/api-storage`。另导出 `wrapUntrustedContent` / `asToolExecutionResult`。
+事件：`AalisEvents['tool:execute']`。本包纯契约：SSRF 判定在 `@aalis/util-network-guard`；路径解析在 `@aalis/api-storage`。另导出 `wrapUntrustedContent`。
 
 ## 3. 谁提供 / 谁消费
 
