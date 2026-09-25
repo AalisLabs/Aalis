@@ -134,7 +134,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
     );
   });
 
-  it('版本为 v5 但 users 结构非法：按解析失败拒写，不当成旧版本净化', async () => {
+  it('版本为 v5 但 users 结构非法：按解析失败拒写', async () => {
     const file = join(dir, 'users.json');
     const broken = '{"version":5,"users":"onebot:banned"}';
     await writeFile(file, broken);
@@ -146,6 +146,29 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
     await new Promise(r => setTimeout(r, 20));
 
     expect(await readFile(file, 'utf-8'), 'v5 坏结构不该被新快照覆盖').toBe(broken);
+  });
+
+  it('非 v5（旧的 v4 档位模型）：不丢弃、不覆写，记 error 并拒写', async () => {
+    const file = join(dir, 'users.json');
+    const legacy = JSON.stringify({ version: 4, users: { 'onebot:banned': { tier: 'blocked' } } });
+    await writeFile(file, legacy);
+    const errors: string[] = [];
+    const logger = {
+      child: () => logger,
+      debug() {},
+      info() {},
+      warn() {},
+      error: (msg: string) => errors.push(msg),
+    } as unknown as Logger;
+
+    const m = new AuthorityManager(mkConfig(), logger, fsStorage());
+    await m.init();
+    m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
+    m.save();
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(await readFile(file, 'utf-8'), 'v4 文件不该被新快照覆盖').toBe(legacy);
+    expect(errors.some(e => e.includes('users.json') && e.includes('v5'))).toBe(true);
   });
 
   it('文件不存在（ENOENT）仍照常写入：拒写闸不误伤全新安装', async () => {

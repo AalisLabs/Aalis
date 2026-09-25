@@ -1,4 +1,4 @@
-import { flowControl } from '@aalis/api-flow-control';
+import { type FlowControlService, type FlowSessionStateSnapshot, flowControl } from '@aalis/api-flow-control';
 import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
@@ -7,10 +7,6 @@ import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { OutgoingMessage } from '@aalis/schema-message';
-import type { FlowControlService, FlowSessionStateSnapshot } from './types.js';
-
-export type { FlowControlService, FlowSessionStateSnapshot } from './types.js';
-
 import {
   defaultFlowControlConfig,
   type FlowControlConfig,

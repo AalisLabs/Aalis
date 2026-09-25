@@ -260,8 +260,6 @@ async function run(caps: Caps): Promise<void> {
   const index = new Map<string, FileEntry>();
 
   // 会话目录名：sessionId 含 `:`（onebot:<self>:group:<gid>），Windows 文件名不收冒号，与附件落盘同一套替换。
-  // 老版本按原样 sessionId 建过目录（POSIX 下合法）：restoreIndex 按实际所在目录恢复、deleteSessionFiles 两种
-  // 目录名都清；只有索引缺失时的 probe 回退只探新目录名（可达性极低，判跳）。
   function sessionDirName(sessionId: string): string {
     return sessionId.replace(/[:/\\]/g, '_');
   }
@@ -511,10 +509,8 @@ async function run(caps: Caps): Promise<void> {
   async function deleteSessionFiles(sessionId: string): Promise<number> {
     const targets = [...index.values()].filter(e => e.sessionId === sessionId);
     for (const e of targets) await deleteFile(e.id);
-    // 顺带把目录删掉（连同未入索引的残留；失败忽略）：新旧两种目录名都试
-    for (const dir of new Set([sessionDirName(sessionId), sessionId])) {
-      await storage.delete(`${ROOT_URI}/${dir}`).catch(() => undefined);
-    }
+    // 顺带把目录删掉（连同未入索引的残留；失败忽略）
+    await storage.delete(`${ROOT_URI}/${sessionDirName(sessionId)}`).catch(() => undefined);
     return targets.length;
   }
 

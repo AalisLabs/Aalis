@@ -10,7 +10,7 @@
 拓扑分层执行，同层并行；任一节点失败整个 run 标记 `failed`。节点可声明 `out` 把字符串结果
 存入 `outputs` 命名空间，供下游节点用 `{{outputs.<out>}}` 插值。
 
-定义存 `workspace:/workflows/*.yaml`（用户/AI 资产），运行实例存 `data:/workflow-runs.json`（同一文件里还记 `once` 触发器的 `firedAt`，形状 `{ runs, onceFired }`；旧版的顶层数组仍能读入）。
+定义存 `workspace:/workflows/*.yaml`（用户/AI 资产），运行实例存 `data:/workflow-runs.json`（同一文件里还记 `once` 触发器的 `firedAt`，形状 `{ runs, onceFired }`）。
 
 ## 插件声明
 
