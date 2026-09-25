@@ -16,7 +16,8 @@ export interface TriggerSessionState {
   lastTriggerTime: number;
   /** bot 最近一次开口：agent 真实回复或 idle 注入的时刻 */
   lastBotActivityAt: number;
-  userInteractions: Map<string, { count: number; lastTime: number }>;
+  /** 每个用户在本会话的入站条数（评分权重用） */
+  userInteractions: Map<string, number>;
   idleTimer: ReturnType<typeof setTimeout> | null;
   idleBackoff: number;
 }
@@ -66,9 +67,9 @@ export function calculateScoreIncrement(state: TriggerSessionState, cfg: Trigger
   const base = 1.0 / Math.max(1, cfg.fixedInterval);
   let userWeight = 1.0;
   if (userId) {
-    const interaction = state.userInteractions.get(userId);
-    if (interaction) {
-      userWeight = 1.0 + 0.5 * Math.min(interaction.count / 10, 1.0);
+    const count = state.userInteractions.get(userId);
+    if (count) {
+      userWeight = 1.0 + 0.5 * Math.min(count / 10, 1.0);
     }
   }
   return base * userWeight;

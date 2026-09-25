@@ -215,20 +215,6 @@ function run(caps: Caps): void {
     }
   }
 
-  function getOrCreate(
-    sessionId: string,
-    platform: string,
-    sessionType: string,
-    targetId: string,
-  ): TriggerSessionState {
-    let s = states.get(sessionId);
-    if (!s) {
-      s = createState(platform, sessionType, targetId);
-      states.set(sessionId, s);
-    }
-    return s;
-  }
-
   /** 计数与活跃指数清零（禁言与判定放行时） */
   function resetCounters(s: TriggerSessionState | undefined): void {
     if (!s) return;
@@ -246,13 +232,9 @@ function run(caps: Caps): void {
 
   /** 记一条真人入站：评分衰减、计数、评分增量、用户交互 */
   function recordIncoming(s: TriggerSessionState, e: TriggerPolicyConfig, userId: string | undefined): void {
-    const now = Date.now();
     applyScoreDecay(s, e);
-    if (userId) {
-      const prev = s.userInteractions.get(userId) ?? { count: 0, lastTime: 0 };
-      s.userInteractions.set(userId, { count: prev.count + 1, lastTime: now });
-    }
-    s.lastMessageTime = now;
+    if (userId) s.userInteractions.set(userId, (s.userInteractions.get(userId) ?? 0) + 1);
+    s.lastMessageTime = Date.now();
     s.messageCount++;
     s.activityScore += calculateScoreIncrement(s, e, userId);
   }
@@ -335,7 +317,11 @@ function run(caps: Caps): void {
       return; // swallow
     }
 
-    const s = getOrCreate(sessionId, message.platform, message.sessionType ?? '', tid);
+    let s = states.get(sessionId);
+    if (!s) {
+      s = createState(message.platform, message.sessionType, tid);
+      states.set(sessionId, s);
+    }
     recordIncoming(s, e, message.userId);
     // 真人活动：闲置退避复位，并从现在起重排 session 档 idle
     s.idleBackoff = 1;
