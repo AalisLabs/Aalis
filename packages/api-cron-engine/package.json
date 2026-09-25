@@ -1,6 +1,6 @@
 {
   "name": "@aalis/api-cron-engine",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -28,13 +28,13 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.17.0 <1.0.0"
+    "@aalis/core": ">=0.18.0 <1.0.0"
   },
   "keywords": [
     "aalis",
     "aalis-api"
   ],
   "dependencies": {
-    "@aalis/util-cron": "workspace:>=0.1.0 <1.0.0"
+    "@aalis/util-cron": "workspace:>=0.1.3 <1.0.0"
   }
 }

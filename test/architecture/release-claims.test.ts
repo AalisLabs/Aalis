@@ -4,9 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '../../packages');
-const CORE_PEER = '>=0.17.0 <1.0.0';
-/** 有 core peer 的包（不含 core / create-aalis-plugin / plugin-webui-client）：27 api + 61 插件 + runtime + schema-config + schema-log。 */
-const CORE_PEER_COUNT = 91;
+const CORE_PEER = '>=0.18.0 <1.0.0';
+/** 本批随 core 0.18 发布、带 core peer 的包：28 api + 59 插件 + runtime + schema-config + schema-log。 */
+const CORE_PEER_COUNT = 90;
 
 interface Manifest {
   name?: string;
@@ -42,7 +42,7 @@ function gte(a: [number, number, number], b: [number, number, number]): boolean 
 }
 
 describe('CHANGELOG 未发布节的发布声明', () => {
-  it('有 @aalis/core peer 的 91 个包区间都是 >=0.17.0 <1.0.0', () => {
+  it('本批发布的 90 个带 @aalis/core peer 的包区间都是 >=0.18.0 <1.0.0', () => {
     const hits: Array<{ dir: string; spec: string }> = [];
     for (const dir of dirs()) {
       const spec = readManifest(dir).peerDependencies?.['@aalis/core'];
@@ -54,15 +54,16 @@ describe('CHANGELOG 未发布节的发布声明', () => {
         .filter(h => h.spec === CORE_PEER)
         .map(h => h.dir)
         .sort(),
-      'raised core peer 包数应对齐 91（27 api + 61 插件 + runtime + schema-config + schema-log）',
+      'raised core peer 包数应对齐 90（28 api + 59 插件 + runtime + schema-config + schema-log）',
     ).toHaveLength(CORE_PEER_COUNT);
     const outliers = hits.filter(h => h.spec !== CORE_PEER).map(h => `${h.dir} = ${h.spec}`);
-    // 0.18 新增的钩子 / 贡献点四包依赖 0.18 的 core（core 不再内置同名服务），peer 起点即 0.18；发布步骤统一抬下限时改写本条
-    expect(outliers.sort(), '仅 schema-message 仍是旧 peer（type-only，未抬）与 0.18 新增的四包').toEqual([
-      'api-contributions = >=0.18.0 <1.0.0',
-      'api-hooks = >=0.18.0 <1.0.0',
-      'plugin-contributions = >=0.18.0 <1.0.0',
-      'plugin-hooks = >=0.18.0 <1.0.0',
+    // schema-message 的 core peer 只为类型声明，不抬；五个包本批没有改动、不重发，保持已发布的 >=0.17.0
+    expect(outliers.sort(), '仅 schema-message（type-only）与本批未改动的五个包不在新区间').toEqual([
+      'api-code-sandbox = >=0.17.0 <1.0.0',
+      'plugin-code-sandbox-os = >=0.17.0 <1.0.0',
+      'plugin-maimai = >=0.17.0 <1.0.0',
+      'plugin-process-local = >=0.17.0 <1.0.0',
+      'plugin-tool-code-runner = >=0.17.0 <1.0.0',
       'schema-message = >=0.2.0 <1.0.0',
     ]);
   });

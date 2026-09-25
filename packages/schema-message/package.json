@@ -1,6 +1,6 @@
 {
   "name": "@aalis/schema-message",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -23,7 +23,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/util-text-normalize": "workspace:>=0.5.1 <1.0.0"
+    "@aalis/util-text-normalize": "workspace:>=0.5.2 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

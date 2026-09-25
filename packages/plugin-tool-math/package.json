@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-tool-math",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -28,8 +28,8 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/schema-config": "workspace:>=0.12.0 <1.0.0",
-    "@aalis/api-tools": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.13.0 <1.0.0",
+    "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0",
     "mathjs": "^14.9.1"
   },
   "devDependencies": {
@@ -38,7 +38,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.17.0 <1.0.0"
+    "@aalis/core": ">=0.18.0 <1.0.0"
   },
   "aalis": {
     "service": {

@@ -1,6 +1,6 @@
 {
   "name": "@aalis/api-session-manager",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -28,7 +28,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.17.0 <1.0.0"
+    "@aalis/core": ">=0.18.0 <1.0.0"
   },
   "keywords": [
     "aalis",

@@ -28,7 +28,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.17.0 <1.0.0"
+    "@aalis/core": ">=0.18.0 <1.0.0"
   },
   "keywords": [
     "aalis",

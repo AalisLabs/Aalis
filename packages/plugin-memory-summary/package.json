@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-memory-summary",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -28,12 +28,12 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/schema-config": "workspace:>=0.12.0 <1.0.0",
-    "@aalis/api-llm": "workspace:>=0.11.0 <1.0.0",
-    "@aalis/api-memory": "workspace:>=0.6.0 <1.0.0",
-    "@aalis/api-message-archive": "workspace:>=0.6.0 <1.0.0",
-    "@aalis/schema-message": "workspace:>=0.5.1 <1.0.0",
-    "@aalis/util-text-normalize": "workspace:>=0.5.1 <1.0.0",
+    "@aalis/schema-config": "workspace:>=0.13.0 <1.0.0",
+    "@aalis/api-llm": "workspace:>=0.12.0 <1.0.0",
+    "@aalis/api-memory": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/api-message-archive": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/schema-message": "workspace:>=0.9.0 <1.0.0",
+    "@aalis/util-text-normalize": "workspace:>=0.5.2 <1.0.0",
     "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-contributions": "workspace:>=0.1.0 <1.0.0"
   },
@@ -44,7 +44,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.17.0 <1.0.0"
+    "@aalis/core": ">=0.18.0 <1.0.0"
   },
   "aalis": {
     "service": {
