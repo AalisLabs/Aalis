@@ -41,7 +41,6 @@
     "@aalis/api-tools": "workspace:>=0.9.0 <1.0.0",
     "@aalis/util-bounded-map": "workspace:>=0.6.0 <1.0.0",
     "@aalis/util-network-guard": "workspace:>=0.5.1 <1.0.0",
-    "@aalis/api-host-config": "workspace:>=0.1.0 <1.0.0",
     "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
@@ -67,7 +66,6 @@
       "optional": [
         "agent",
         "asr",
-        "host-config",
         "llm",
         "memory",
         "session-manager",

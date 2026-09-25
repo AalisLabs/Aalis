@@ -3,7 +3,6 @@ import type { BoundTools } from '@aalis/api-tools';
 import {
   AlignmentType,
   BorderStyle,
-  convertInchesToTwip,
   Document,
   Footer,
   Header,
@@ -235,7 +234,7 @@ export function registerDocxTools(
         description:
           '向 Word 文档添加段落。支持富文本（粗体、斜体、颜色等）。\n' +
           '【换行】text 或 runs[].text 中的 \\n 会自动转为软换行（同段落内的换行）。多个段落请多次调用本工具。\n' +
-          '【排版】未传 alignment/indent/spacing 时，会自动应用 doc_create 的 preset 或 doc_set_style 设置的默认值。' +
+          '【排版】未传 alignment/firstLineIndentChars/spacing 时，会自动应用 doc_create 的 preset 或 doc_set_style 设置的默认值。' +
           '中文正文建议：firstLineIndentChars=2（首行缩进 2 字符）、lineHeight=1.5（1.5 倍行距）、段后 6pt。',
         parameters: {
           type: 'object',
@@ -272,14 +271,12 @@ export function registerDocxTools(
               type: 'number',
               description: '行距倍数（1.0=单倍，1.5=1.5 倍，2.0=双倍）。覆盖全局默认。',
             },
-            indent: { type: 'number', description: '首行缩进（磅，已废弃，建议改用 firstLineIndentChars）' },
             spacing: {
               type: 'object',
-              description: '段落间距与行距（磅），覆盖全局默认。',
+              description: '段落间距（磅），覆盖全局默认。',
               properties: {
                 before: { type: 'number', description: '段前距（磅）' },
                 after: { type: 'number', description: '段后距（磅，中文正文常用 6）' },
-                line: { type: 'number', description: '行距倍数（与顶层 lineHeight 等价）' },
               },
             },
           },
@@ -323,29 +320,18 @@ export function registerDocxTools(
       // 计算行距 / 首行缩进 / 段距：调用时显式参数 > paragraphDefaults > 不设置
       const paraDef = state.styles.paragraphDefaults;
       const spacing = (args.spacing ?? {}) as Record<string, number>;
-      const effLineHeight =
-        typeof args.lineHeight === 'number'
-          ? Number(args.lineHeight)
-          : typeof spacing.line === 'number'
-            ? Number(spacing.line)
-            : paraDef.lineHeight;
+      const effLineHeight = typeof args.lineHeight === 'number' ? Number(args.lineHeight) : paraDef.lineHeight;
       const effSpaceBefore = typeof spacing.before === 'number' ? Number(spacing.before) : paraDef.spaceBefore;
       const effSpaceAfter = typeof spacing.after === 'number' ? Number(spacing.after) : paraDef.spaceAfter;
       const effFirstLineChars =
         typeof args.firstLineIndentChars === 'number'
           ? Number(args.firstLineIndentChars)
-          : args.indent
-            ? undefined
-            : paraDef.firstLineIndentChars;
+          : paraDef.firstLineIndentChars;
 
       // 首行缩进：字符数 × 字号磅值 = 磅；转 twip（1 磅 = 20 twip）
       const baseFontSize = state.styles.defaultFontSize ?? 12;
       const firstLineTwip =
-        effFirstLineChars && effFirstLineChars > 0
-          ? Math.round(effFirstLineChars * baseFontSize * 20)
-          : args.indent
-            ? convertInchesToTwip(Number(args.indent) / 72)
-            : undefined;
+        effFirstLineChars && effFirstLineChars > 0 ? Math.round(effFirstLineChars * baseFontSize * 20) : undefined;
 
       // docx 的 spacing.line 单位是二十分之一磅；1.0 倍行距对应字号 × 20。这里以 240（12pt 单倍）为基准乘以倍数。
       const lineTwip = effLineHeight ? Math.round(effLineHeight * 240) : undefined;

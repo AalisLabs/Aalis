@@ -28,7 +28,6 @@ export default definePlugin({
     tools: optional(tools),
     memory: optional(memory),
     sessionManager: optional(sessionManager),
-    hostConfig: optional(hostConfig),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -41,7 +40,6 @@ export default definePlugin({
 | `vision` | object | — | 图像识别 |
 | `vision.prefer` | llm-ref | — | 识别模型：把图片转成文字描述的模型。留空则自动选择优先级最高的 vision LLM。 |
 | `vision.recognizeOnArrival` | boolean | `true` | 接触到图片立即识别：开启：图片到达即识别，描述进档案与向量库（可被召回），未触发回复的消息也留下记忆。关闭：档案只留图片指针，主模型需要时再经 analyze_image 按需查看；此时图片内容不可被检索召回。 |
-| `vision.mode` | select | — | 处理模式（已弃用）：旧四档已由下方「接触到图片立即识别」与「主模型看图方式」取代。启动时若本键仍有值，按旧语义（describe→识别+转文字；passthrough/passthrough-raw→不识别+直通；disabled→不识别+转文字）一次性迁移到新键并移除本键，日志提示一次；留空即可。 |
 | `vision.delivery` | select | `'auto'` | 主模型看图方式：决定当轮附件与 analyze_image 的交付形态。 |
 | `vision.maxTokens` | number | `300` | 描述最大 token |
 | `vision.think` | boolean | `false` | 启用思考链 (thinking)：启用后识别质量可能提升但 token 成本上升；关闭且后端为 Ollama 时会传 reasoning_effort=none。 |

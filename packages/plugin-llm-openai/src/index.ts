@@ -661,14 +661,6 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
     thinkingParam: config.thinkingParam === true,
   };
 
-  // 一次性迁移（baseUrl 改「完整前缀」语义）：config-sync 在每次启动把 schema 默认值
-  // 物化进配置文件，所以「未配置 baseUrl」的存量部署实际都带着旧默认值——精确命中时
-  // 就地升级为新默认并提示；自定义端点（聚合网关等）无法代改，见 CHANGELOG 迁移说明。
-  if (openaiConfig.baseUrl === 'https://api.openai.com') {
-    logger.warn('baseUrl 语义已改为完整前缀（插件不再自动拼 /v1）：旧默认值已自动升级为 https://api.openai.com/v1');
-    openaiConfig.baseUrl = 'https://api.openai.com/v1';
-  }
-
   // 官方端点判定按 URL host（前缀字符串匹配会误伤 api.openai.com.cn 等镜像域名）
   const isOfficialOpenAI = (() => {
     try {

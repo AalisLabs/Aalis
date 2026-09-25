@@ -92,7 +92,6 @@ async function disablePersistently(id: string): Promise<boolean> {
 | plugin-authority | 读 owners 等裁决字段；WebUI 权限页与 `/auto` 指令改动后落盘 | 激活失败（`apply` 内 `require()`） |
 | plugin-webui-server | 全局配置、插件配置、启停、实例增删与服务偏好路由 | 读写文档的路由与服务偏好路由返回 503 |
 | plugin-cli | 记录最后视图 `lastView` | 不记录，下次启动回到默认视图 |
-| plugin-media | `vision.mode` 旧键的一次性迁移落盘 | 不写回文档，本次运行仍按旧键换算 |
 | plugin-mcp-client | `mcp_set_server_enabled` 落盘 | 工具返回失败，不改运行态 |
 | plugin-package-manager | 卸载后清理配置块与禁用标记 | 不清理 |
 

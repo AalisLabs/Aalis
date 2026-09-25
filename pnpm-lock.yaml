@@ -1383,9 +1383,6 @@ importers:
       '@aalis/api-hooks':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-hooks
-      '@aalis/api-host-config':
-        specifier: workspace:>=0.1.0 <1.0.0
-        version: link:../api-host-config
       '@aalis/api-llm':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-llm
