@@ -1,3 +1,6 @@
+import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { type Hooks, hooks } from '../../packages/api-hooks/src/index.js';
@@ -15,7 +18,10 @@ import { registerHubs } from '../fixtures/hubs.js';
 //     新提供者按它排链，链序与换人前相同。
 //   - 已知现状：换人时正在执行的链会跳过已移走的 handler，截停者被跳过时默认动作照样执行。旧登记表分不清
 //     「插件关了」与「搬去了新提供者」，两种修法各有代价；触发需运行中上线第二个钩子提供者，首方没有这种部署。
-//     在这里显式钉住，改动时必须是有意识的。
+//   - 已知现状：胜者在容器里同步换人，各消费者的账本经 service:registered 逐个重挂，跨若干微任务。这段窗口里
+//     新发起的 run 落在还不完整的新表上，截停者可能缺席。根治要 core 在通知前同步驱动重挂，另行拍板。
+//     以上两条在这里显式钉住，改动时必须是有意识的。
+//   - 登记序由进程内全部 api-hooks 副本共用的计数器分配：契约包装了两份时，链序仍是登记序。
 // ════════════════════════════════════════════════════════════
 
 const H = '__t:switch' as never;
@@ -269,5 +275,85 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
     );
     await app.plugins.idle();
     expect(host.contributions.collect(POINT).map(h => h.key)).toEqual(before);
+  });
+
+  it('已知现状：换人到各账本重挂完成前新发起的链落在不完整的新表上，截停者可能缺席；重挂完成后恢复截停', async () => {
+    const app = world();
+    await registerHubs(app);
+    await app.pluginAll(
+      [
+        definePlugin({
+          name: 'a',
+          uses: { hooks },
+          apply: ({ hooks }) => void hooks.middleware(H, async (_d, next) => next()),
+        }),
+        definePlugin({
+          name: 'guard',
+          uses: { hooks },
+          apply: ({ hooks }) => void hooks.middleware(H, async () => {}),
+        }),
+      ].map(definition => ({ definition })),
+    );
+    await app.plugins.idle();
+    const host = app.bind({ hooks, provide });
+    expect(await host.hooks.run(H, {} as never), '对照：换人前被截停').toBe(false);
+
+    let defaulted = false;
+    host.provide(hooks, new HookTable(), { priority: 10, entryId: 'root/alt-hooks' });
+    // 与 provide 同一拍发起：新表上还没有 guard 的登记
+    const inWindow = await host.hooks.run(H, {} as never, async () => {
+      defaulted = true;
+    });
+    expect(inWindow).toBe(true);
+    expect(defaulted).toBe(true);
+
+    await app.plugins.idle();
+    await new Promise(r => setTimeout(r, 0));
+    expect(await host.hooks.run(H, {} as never), '各账本重挂完成后恢复截停').toBe(false);
+  });
+});
+
+describe('登记序跨契约包副本', () => {
+  it('进程里装了两份 api-hooks：后登记的仍排在后面（计数器全进程共用）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aalis-api-hooks-copy-'));
+    try {
+      // 第二个模块实例：同一份源码换个路径导入，与第一份共用同一份 core
+      copyFileSync(join(import.meta.dirname, '../../packages/api-hooks/src/index.ts'), join(dir, 'index.ts'));
+      const second = (await import(join(dir, 'index.ts'))) as { hooks: typeof hooks };
+      expect(second.hooks).not.toBe(hooks);
+
+      const trail: string[] = [];
+      const app = world();
+      await registerHubs(app);
+      const early = ['p1', 'p2', 'p3'].map(name =>
+        definePlugin({
+          name,
+          uses: { hooks },
+          apply: ({ hooks }) =>
+            void hooks.middleware(H, async (_d, next) => {
+              trail.push(name);
+              await next();
+            }),
+        }),
+      );
+      await app.pluginAll(early.map(definition => ({ definition })));
+      await app.plugins.idle();
+      await app.plugin(
+        definePlugin({
+          name: 'later',
+          uses: { hooks: second.hooks },
+          apply: ({ hooks: other }) =>
+            void other.middleware(H, async (_d, next) => {
+              trail.push('later');
+              await next();
+            }),
+        }),
+      );
+      await app.plugins.idle();
+      await app.bind({ hooks }).hooks.run(H, {} as never);
+      expect(trail).toEqual(['p1', 'p2', 'p3', 'later']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
