@@ -147,7 +147,9 @@ type AccessConfirmHandler = (request: AccessRequest) => Promise<boolean | Access
 - WebUI action：`action:<plugin>:<method>`（page-action 路由自动产出）
 - WebUI REST：`webui:<area>:<op>`（webui-server gate.ts 产出）
 
-## 配置字段（declaration merging 注入 `AalisConfig`）
+## 配置字段（declaration merging 注入 `@aalis/api-host-config` 的 `AalisConfig`）
+
+以下字段位于配置文档顶层，由宿主经 `host-config` 服务提供读写。
 
 - `owners?: UserIdentity[]` —— owner 列表（owner = ∞，拥有一切）
 - `deniedCapabilities?: string[]` —— 全局硬禁用（glob；命中即拒，连 owner 都压过）

@@ -1,10 +1,10 @@
 # 核心类型定义
 
-`@aalis/core` 导出的是运行时基础设施与三张扩展点表。业务服务接口、消息、工具、命令等一律在 `@aalis/api-*` / `@aalis/schema-*`，类型随服务描述符走，core 不持有领域词汇。
+`@aalis/core` 导出的是运行时基础设施与事件扩展点 `AalisEvents`。业务服务接口、消息、工具、命令等一律在 `@aalis/api-*` / `@aalis/schema-*`，类型随服务描述符走，core 不持有领域词汇。
 
 **源码**: `packages/core/src/index.ts`（值导出定格见 `test/core/purity.test.ts`）；类型按分层散在 `types/`、`composition/`、`infrastructure/`、`orchestration/`。
 
-领域接口请到对应契约包查阅，文档入口：[api 包](../api/) 与 [服务](../services/)。
+领域接口请到对应契约包查阅，文档入口：[api 包](../api/README.md) 与 [服务](../services/README.md)。
 
 ---
 
@@ -19,7 +19,6 @@ interface PluginDefinition<U extends Uses = {}> extends PluginMeta {
   subsystem?: string;
   uses?: U;
   provides?: ServiceDescriptor<any, any>[];
-  core?: boolean;
   reusable?: boolean;
   apply(caps: BoundOf<U>): void | Promise<void>;
 }
@@ -69,7 +68,7 @@ interface PluginEntry {
 function parseInstanceId(instanceId: string): { moduleName: string; suffix?: string };
 ```
 
-公开类型不声明内部激活记录；经 `pluginsService` 拿到的 `getPlugin()` 是快照，宿主侧 `app.plugins.getPlugin()` 返回现场条目、应只读，状态与配置变更须经管理 API。状态摘要 `PluginStatusEntry` 另含 `provides` / `core` / `reusable` / `requiredServices` / `optionalServices`；`uses` 是完整声明的快照，每项为 `{ key, service, kind: 'required' | 'optional' }`，保留参数别名，零声明为 `[]`。Core 基础服务也计入对应依赖列表，不再另设 builtin 类别。配置详情经 `getPlugin(instanceId)` 从 `entry.config` / `entry.definition` 读取。
+公开类型不声明内部激活记录；经 `pluginsService` 拿到的 `getPlugin()` 是快照，宿主侧 `app.plugins.getPlugin()` 返回现场条目、应只读，状态与配置变更须经管理 API。状态摘要 `PluginStatusEntry` 另含 `provides` / `reusable` / `requiredServices` / `optionalServices`；`uses` 是完整声明的快照，每项为 `{ key, service, kind: 'required' | 'optional' }`，保留参数别名，零声明为 `[]`。Core 基础服务也计入对应依赖列表，不再另设 builtin 类别。配置详情经 `getPlugin(instanceId)` 从 `entry.config` / `entry.definition` 读取。
 
 ---
 
@@ -119,9 +118,9 @@ function serviceRef<P, E extends object>(port: BindingPort<P>, extra: E): Servic
 
 ## 基础服务与宿主服务
 
-值导出（插件放进 `uses`）：`events`、`hooks`、`contributions`、`lifecycle`、`logger`、`config`、`provide`、`services`。
+值导出（插件放进 `uses`）：`events`、`lifecycle`、`logger`、`config`、`provide`、`services`。`hooks` / `contributions` 不在 core，从 `@aalis/api-hooks` / `@aalis/api-contributions` 导入。
 
-宿主服务：`appService`、`pluginsService`、`hostConfig`。两类都由根激活经 `provide` 独占登记，共用同一套服务协议，都须显式 `uses`；上面八项的提供者按调用方激活交出接口，见 [内置服务的登记](service.md#内置服务的登记)。
+宿主服务：`appService`、`pluginsService`。两类都由根激活经 `provide` 独占登记，共用同一套服务协议，都须显式 `uses`；上面六项的提供者按调用方激活交出接口，见 [内置服务的登记](service.md#内置服务的登记)。配置文档的 `hostConfig` 在 `@aalis/api-host-config`，由宿主提供。
 
 ```typescript
 interface LifecycleCap {
@@ -152,18 +151,13 @@ type Provide = <D extends ServiceDescriptor<any, any>>(
 
 ## 扩展点
 
-core 保留三张空扩展点接口（另：`AalisEvents` 自持基础设施事件，从来不空）。服务没有类型表——类型随描述符走。
+core 的扩展点只有 `AalisEvents`（core 自持基础设施事件，从来不空）。服务没有类型表——类型随描述符走。钩子与贡献点的扩展点随各自的契约包，增广目标分别是 `declare module '@aalis/api-hooks'` 与 `declare module '@aalis/api-contributions'`。
 
-| 扩展点 | 含义 | 谁注入 |
-|---|---|---|
-| `AalisEvents` | 事件名 → 参数元组 | core 自持 `service:*` / `plugin:*` / `app:*`；业务事件由 `-api` 注入 |
-| `HookContextMap` | 钩子名 → 中间件上下文 | core 内字面为空；`api-agent` / `api-gateway` / `api-memory` 等注入 |
-| `ContributionPointMap` | 贡献点名 → spec（须含 `id: string`） | 如 `api-agent` 的 `agent:prompt` |
-
-```typescript
-type MiddlewareNext = () => Promise<void>;
-type MiddlewareFn<T> = (data: T, next: MiddlewareNext) => Promise<void>;
-```
+| 扩展点 | 所在包 | 含义 | 谁注入 |
+|---|---|---|---|
+| `AalisEvents` | `@aalis/core` | 事件名 → 参数元组 | core 自持 `service:*` / `plugin:*` / `app:*`；业务事件由 `-api` 注入 |
+| `HookContextMap` | `@aalis/api-hooks` | 钩子名 → 中间件上下文 | 契约包内字面为空；`api-agent` / `api-gateway` / `api-memory` 等注入 |
+| `ContributionPointMap` | `@aalis/api-contributions` | 贡献点名 → spec（须含 `id: string`） | 如 `api-agent` 的 `agent:prompt` |
 
 事件目录以 [events.md](events.md) 为准。谁注入了哪一族业务事件 / 钩子 / 贡献点，见 [扩展点索引](../extensions/index.md)。
 
@@ -189,7 +183,7 @@ interface AalisEvents {
 
 ## 配置与日志
 
-`AalisConfig` 仅声明基础字段（`name` / `logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`）加索引兜底；业务字段由对应 `-api` 注入。`ConfigManager` / `ConfigProvider` 见 [config.md](config.md)。
+core 不持配置文档，也不导出配置类型；插件自己的配置视图是内置服务 `config`（`Readonly<Record<string, unknown>>`）。配置文档类型 `AalisConfig` 与读写面 `HostConfig` 在 `@aalis/api-host-config`，runtime 的 `ConfigStore` / `ConfigProvider` 见 [运行态与配置文档](config.md)。
 
 表单词汇（`ConfigSchema` / `SchemaField` / …）在 `@aalis/schema-config`。能力词汇（`CapabilityVisibility` 等）在 `@aalis/api-authority`。
 
@@ -199,6 +193,6 @@ interface AalisEvents {
 
 ## 编排与宿主 SPI
 
-`App` / `AppOptions` / `createApp`；`PluginEntry` / `PluginState` / `parseInstanceId`；`PluginLoader` / `PluginDescriptor` / `RestartStrategy`。
+`App` / `AppOptions` / `createApp`；`PluginEntry` / `PluginState` / `parseInstanceId`；`RestartStrategy`。插件加载器 `PluginLoader` / `PluginDescriptor` 在 `@aalis/runtime`，插件包入口判定 `pluginDefinitionOf` 在 `@aalis/api-plugin-source`。
 
-贡献点的 `ContributionSpec` / `ContributionHandle` 见 [contributions.md](contributions.md)。
+钩子的 `Hooks` / `MiddlewareFn` / `MiddlewareNext` 与贡献点的 `Contributions` / `ContributionSpec` / `ContributionHandle` 见 [api-hooks](../api/api-hooks.md)、[api-contributions](../api/api-contributions.md)。

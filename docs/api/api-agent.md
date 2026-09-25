@@ -54,15 +54,16 @@ type PreprocessorFn = (message: IncomingMessage, next: () => Promise<void>) => P
 | `agent:reply:before` | 发出回复之前 | `{ content, archiveContent?, sessionId, ... }` |
 | `agent:turn:after` | 一轮处理完成 | `{ message, reply, outcome, sessionId, metadata }` |
 
-钩子用 `hooks.middleware` 注册。要让 TS 看到这些键，需把 `@aalis/api-agent` 加进依赖（值导入或 side-effect import）。
+这些键经 declaration merging 注入 `@aalis/api-hooks` 的 `HookContextMap`。钩子用 `hooks.middleware` 注册，`hooks` 描述符来自 `@aalis/api-hooks`（见 [api-hooks](./api-hooks.md)）。要让 TS 看到这些键，需把 `@aalis/api-agent` 加进依赖（值导入或 side-effect import）。
 
-提示词注入不在这条链上：摘要、语义记忆、档案、技能等走 `agent:prompt` 贡献点（`contributions.contribute('agent:prompt', spec)`），由 plugin-agent 的组装器在 `agent:llm:before` **之前**统一物化。
+提示词注入不在这条链上：摘要、语义记忆、档案、技能等走 `agent:prompt` 贡献点（`contributions.contribute('agent:prompt', spec)`，契约见 [api-contributions](./api-contributions.md)），由 plugin-agent 的组装器在 `agent:llm:before` **之前**统一物化。
 
 ## 典型用法
 
 ```ts
 import { agent } from '@aalis/api-agent';
-import { definePlugin, hooks, optional } from '@aalis/core';
+import { hooks } from '@aalis/api-hooks';
+import { definePlugin, optional } from '@aalis/core';
 
 export default definePlugin({
   name: '@acme/plugin-example-agent',
