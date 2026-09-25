@@ -30,7 +30,6 @@ export function createState(platform: string, sessionType = '', targetId = ''): 
 }
 
 export function rateLimitUsedNow(state: MutableFlowSessionState, cfg: FlowControlConfig): number {
-  if (cfg.rateLimitWindow <= 0) return 0;
   const windowStart = Date.now() - cfg.rateLimitWindow * 1000;
   return state.replyTimestamps.filter(t => t > windowStart).length;
 }
