@@ -76,6 +76,31 @@ describe('plugin-contributions 登记表 / contributions 门面', () => {
     expect(() => ctx.caps.contributions.contribute(POINT, { id: 'b/c' } as never)).toThrow(TypeError);
   });
 
+  it('没有提供者时门面照样在登记期校验 id；提供者自身也校验（不信任门面）', () => {
+    const root = createActivationFixture();
+    const caps = root.host.bind(root.activation, { contributions });
+    expect(() => caps.contributions.contribute(POINT, { id: '' } as never)).toThrow(TypeError);
+    expect(() => caps.contributions.contribute(POINT, { id: 'a/b' } as never)).toThrow(TypeError);
+    expect(() => new Registry().register(POINT, { id: 'a/b' }, 'ctx')).toThrow(TypeError);
+  });
+
+  it('登记表同键替换后，旧退订不删新条目', () => {
+    const registry = new Registry();
+    const off1 = registry.register(POINT, { id: 'k', payload: 'v1' } as never, 'ctx');
+    registry.register(POINT, { id: 'k', payload: 'v2' } as never, 'ctx');
+    off1();
+    expect(registry.collect(POINT).map(e => (e.spec as Spec).payload)).toEqual(['v2']);
+  });
+
+  it('同一激活在两个贡献点交付同一局部 id：两边各一条，互不顶替', () => {
+    const ctx = makeFixture('plugin-a');
+    const other = '__t:point-2' as never;
+    ctx.caps.contributions.contribute(POINT, { id: 'x' } as never);
+    ctx.caps.contributions.contribute(other, { id: 'x' } as never);
+    expect(ctx.caps.contributions.collect(POINT).map(e => e.key)).toEqual(['plugin-a/x']);
+    expect(ctx.caps.contributions.collect(other).map(e => e.key)).toEqual(['plugin-a/x']);
+  });
+
   it('ctx dispose 清扫本 ctx 的全部贡献，不动兄弟 ctx 的', async () => {
     const root = world();
     const a = root.at('plugin-a');

@@ -7,7 +7,9 @@ declare module '@aalis/api-hooks' {
 import { afterEach, describe, expect, it } from 'vitest';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { App, definePlugin, type Logger, services } from '../../packages/core/src/index.js';
+import { Registry as HookTable } from '../../packages/plugin-hooks/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { createActivationFixture } from '../helpers/activation.js';
 
 // ════════════════════════════════════════════════════════════
 // hooks 门面随插件激活的登记与撤回：经真实 App + plugin-hooks 驱动。
@@ -97,6 +99,28 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
     expect(data.trail).toEqual(['a1', 'a2']);
   });
 
+  it('跨插件按登记顺序：a 先登记 a1、a2，b 后登记 b1，链为 a1、a2、b1（登记序全进程一个计数器，不按门面各自计数）', async () => {
+    const app = await makeApp();
+    const multi = (name: string, tags: string[]) =>
+      definePlugin({
+        name,
+        uses: { hooks },
+        apply({ hooks }) {
+          for (const tag of tags) {
+            hooks.middleware('__t:lifecycle-hook', async (data, next) => {
+              data.trail.push(tag);
+              await next();
+            });
+          }
+        },
+      });
+    await app.pluginAll([{ definition: multi('plugin-a', ['a1', 'a2']) }, { definition: multi('plugin-b', ['b1']) }]);
+    await expectActive(app, 'plugin-b');
+    const data = { trail: [] as string[] };
+    await app.bind({ hooks }).hooks.run('__t:lifecycle-hook', data);
+    expect(data.trail).toEqual(['a1', 'a2', 'b1']);
+  });
+
   it('middleware 返回的退订可手动解除', async () => {
     const app = await makeApp();
     let off!: () => void;
@@ -130,5 +154,31 @@ describe('hooks 门面：插件登记随卸载清扫', () => {
     expect('register' in host.hooks).toBe(false);
     expect(typeof host.hooks.run).toBe('function');
     expect(typeof host.hooks.middleware).toBe('function');
+  });
+
+  it('middleware 不进清理链：登记与退订都不改变链长，登记随激活关闭整体切断', async () => {
+    const root = createActivationFixture();
+    root.caps.provide(hooks, new HookTable());
+    const child = root.host.create(root.activation, 'plugin-a');
+    const caps = root.host.bind(child, { hooks });
+    const trace = async () => {
+      const data = { trail: [] as string[] };
+      await root.host.bind(root.activation, { hooks }).hooks.run('__t:lifecycle-hook', data);
+      return data.trail;
+    };
+    const push = (tag: string) =>
+      caps.hooks.middleware('__t:lifecycle-hook', async (data, next) => {
+        data.trail.push(tag);
+        await next();
+      });
+    // 首次登记挂上一条跟随提供者的清理（账本随提供者换人重挂），基线取在它之后
+    push('warm')();
+    const before = child.resources.disposables.labels();
+    for (let i = 0; i < 5; i++) push(`kept-${i}`);
+    for (let i = 0; i < 5; i++) push(`gone-${i}`)();
+    expect(child.resources.disposables.labels()).toEqual(before);
+    expect(await trace()).toEqual(['kept-0', 'kept-1', 'kept-2', 'kept-3', 'kept-4']);
+    await child.disposeAsync();
+    expect(await trace()).toEqual([]);
   });
 });
