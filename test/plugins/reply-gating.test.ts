@@ -740,6 +740,22 @@ describe('内部注入（带 source）', () => {
     expect(h.contents(), '禁言期内部注入同样不说话').not.toContain('禁言中的定时提醒');
   });
 
+  it('flow 作用域为 * 时，带 source 的消息仍受限速挡', async () => {
+    const h = await setup({
+      flow: { scopes: ['*'], cooldownSeconds: 0, rateLimitWindow: 60, rateLimitMaxReplies: 1 },
+      autoReply: () => true,
+    });
+    const G = '20001';
+
+    await h.send(workflow(sid(G), '窗口内第一条')); // 放行并回复 → 占满 1 个名额
+    await h.send(workflow(sid(G), '窗口内第二条'));
+    expect(h.contents(), '限速窗口已满时内部注入被挡').toEqual(['窗口内第一条']);
+
+    await advance(61_000);
+    await h.send(workflow(sid(G), '窗口过后'));
+    expect(h.contents()).toContain('窗口过后');
+  });
+
   it('flow 相位：禁言期闲置注入也被吞，解禁后放行', async () => {
     const h = await setup();
     const G = '20001';
@@ -889,8 +905,9 @@ describe('闲置触发', () => {
   it('插件停用时清掉 session 档定时器', async () => {
     const h = await setup({ trigger: sessionIdle('fixed') });
 
+    const baseline = vi.getTimerCount(); // 两插件各有一个每日清扫定时器
     await h.send(groupMsg('20001', '随便聊聊'));
-    expect(vi.getTimerCount(), '已排上 idle 定时器').toBeGreaterThan(0);
+    expect(vi.getTimerCount(), '已排上 idle 定时器').toBe(baseline + 1);
     await h.app.stop();
     expect(vi.getTimerCount()).toBe(0);
   });
