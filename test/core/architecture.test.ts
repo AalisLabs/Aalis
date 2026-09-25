@@ -15,9 +15,9 @@ import { describe, expect, it } from 'vitest';
 // - kernel/：资源生命周期与清理链，只认自己，不引用类型词汇、原语、Context 或编排层
 // - primitives/：原语注册表（事件总线与服务容器），只认 kernel 与类型词汇，不认识 Context、Logger、Config
 //   （需要上报的诊断经注入的回调送出）
-// - infrastructure/：配置、日志与资源账，只依赖资源内核、原语与基础词汇
+// - infrastructure/：配置值拷贝、日志与资源账，只依赖资源内核、原语与基础词汇
 // - composition/：服务描述符、绑定与工厂、默认服务和插件定义，不依赖编排层
-// - orchestration/：把下层机制编排成插件生命周期与应用骨架，含宿主 SPI（插件加载器、重启策略）
+// - orchestration/：把下层机制编排成插件生命周期与应用骨架，含宿主 SPI（重启策略）
 // src 根只留 barrel（index）。
 //
 // 检查的是源文件**直接** import 说明符，由 TypeScript 语法树取出（import / export-from / 副作用 import /

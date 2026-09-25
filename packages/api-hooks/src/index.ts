@@ -37,7 +37,7 @@ export interface RunOptions {
  */
 export interface HookRegistry {
   /**
-   * 按 order 升序插入该钩子链。order 是门面在登记时分配的登记序（进程内单调递增），换提供者重挂时原样带过来，
+   * 按 order 升序插入该钩子链。order 是门面在登记时分配的登记序（进程内全部 api-hooks 副本共用一个计数器，单调递增），换提供者重挂时原样带过来，
    * 提供者据它还原原来的交错次序。contextId 供卡链告警点名。返回退订（幂等，只撤这一条）
    */
   register(hook: string, fn: MiddlewareFn<unknown>, contextId: string, order: number): () => void;
@@ -58,8 +58,14 @@ export interface Hooks {
   ): Promise<boolean>;
 }
 
-/** 登记序：本模块内全部 hooks 门面共用一个计数器，登记即取号 */
-let nextOrder = 0;
+/**
+ * 登记序计数器：进程内全部 api-hooks 副本共用一个（经全局符号表取同一个对象），登记即取号。
+ * 契约包可能装了两份，各自从 0 计数的话序号不可比，提供者按序排链就会把后登记的排到前面。
+ */
+const ORDER = Symbol.for('@aalis/api-hooks.order');
+const shared = globalThis as Record<symbol, { n: number } | undefined>;
+shared[ORDER] ??= { n: 0 };
+const orderCounter = shared[ORDER];
 
 export const hooks = defineService<HookRegistry, Hooks>('hooks', port => {
   // 每次登记一个独立账目：同一激活可在同一钩子上挂多个 handler，没有「同键替换」。登记序全局唯一，
@@ -69,7 +75,7 @@ export const hooks = defineService<HookRegistry, Hooks>('hooks', port => {
     register: (registry, { hook, fn, order }) => registry.register(hook, fn, port.id, order),
   });
   return {
-    middleware: (hook, fn) => ledger.add({ hook, fn: fn as MiddlewareFn<unknown>, order: ++nextOrder }),
+    middleware: (hook, fn) => ledger.add({ hook, fn: fn as MiddlewareFn<unknown>, order: ++orderCounter.n }),
     // async：没有提供者时以被拒的 Promise 传出，不在调用点同步抛（与提供者 run 的异步口径一致）
     run: async (hook, data, defaultAction, opts) => port.require().run(hook, data, defaultAction, opts),
   };

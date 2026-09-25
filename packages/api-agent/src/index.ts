@@ -141,7 +141,7 @@ declare module '@aalis/api-hooks' {
   }
 }
 
-// ----- agent:prompt 贡献点（通过 declaration merging 注入 core 的 ContributionPointMap）-----
+// ----- agent:prompt 贡献点（通过 declaration merging 注入 @aalis/api-contributions 的 ContributionPointMap）-----
 
 /**
  * 提示词锚位——组装器的槽位词汇表（封闭联合，新增锚位是纯增量的类型变更）：
