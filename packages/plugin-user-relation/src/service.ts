@@ -187,7 +187,7 @@ export class RelationService {
           displayName: displayName ?? existing.displayName,
           lastSeenAt: now,
           lastMentionedAt: now,
-          mentionCount: (existing.mentionCount ?? 0) + 1,
+          mentionCount: existing.mentionCount + 1,
         }
       : {
           id: RelationService.personId(platform, userId),
@@ -258,10 +258,22 @@ export class RelationService {
    * （追加 evidence、累加权重 += 0.3、occurrences 追加当前时间戳），返回旧节点。
    * 这样保证「同一件事被反复提及」不会产生重复 event，但通过 occurrences[] 保留时间维度。
    */
-  async createEvent(input: Omit<EventNode, 'id' | 'firstSeenAt' | 'lastReinforcedAt'>): Promise<EventNode> {
+  async createEvent(
+    input: Omit<
+      EventNode,
+      | 'id'
+      | 'firstSeenAt'
+      | 'lastReinforcedAt'
+      | 'sessionScope'
+      | 'occurrences'
+      | 'weight'
+      | 'lastMentionedAt'
+      | 'mentionCount'
+    > & { sessionScope?: string },
+  ): Promise<EventNode> {
     const now = Date.now();
     // sessionScope 优先取显式传入；其次从 evidence[0].sessionId 推断；最终兜底 'global'。
-    // 'global' 哨兵表示「显式跨会话事件」，与"老数据 undefined"区分开（后者表示来源不明）。
+    // 'global' 哨兵表示「显式跨会话事件」。
     // 若调用方真的没法给出 scope（如批处理脚本），落 'global' 并 audit warn 以便排查。
     let scope = input.sessionScope ?? input.evidence?.[0]?.sessionId;
     if (scope === undefined) {
@@ -274,14 +286,12 @@ export class RelationService {
         ...dup,
         summary: input.summary ?? dup.summary,
         category: input.category ?? dup.category,
-        // 只在原节点 scope 为空（老数据）时才回填新 scope，避免覆盖已有隔离。
-        sessionScope: dup.sessionScope ?? scope,
         lastReinforcedAt: now,
         lastMentionedAt: now,
-        mentionCount: (dup.mentionCount ?? 0) + 1,
+        mentionCount: dup.mentionCount + 1,
         evidence: trimEvidence([...(input.evidence ?? []), ...dup.evidence]),
-        occurrences: [...(dup.occurrences ?? [dup.firstSeenAt]), now],
-        weight: clamp01((dup.weight ?? 0.5) + 0.3),
+        occurrences: [...dup.occurrences, now],
+        weight: clamp01(dup.weight + 0.3),
       };
       await this.store.upsertEvent(merged);
       return merged;
@@ -308,8 +318,7 @@ export class RelationService {
    * 按 normalized title 精确匹配（不区分大小写、压缩空白）查找已有事件。
    * 用于 createEvent 入口去重。
    *
-   * 若传入 scope：遵循「同名 + 同 scope 才是同事件」原则；只接受
-   *   (a) 两者 scope 相同，或 (b) 旧节点 scope 为 undefined（老数据通配）。
+   * 若传入 scope：遵循「同名 + 同 scope 才是同事件」原则，只接受两者 scope 相同。
    * 不传 scope：只看 title，保留老行为（供手动调用 / 测试 / 迁移）。
    */
   async findEventByTitle(title: string, scope?: string): Promise<EventNode | undefined> {
@@ -319,8 +328,7 @@ export class RelationService {
     return snap.events.find(e => {
       if (normalizeName(e.title) !== target) return false;
       if (scope === undefined) return true;
-      // 新数据需严格隔离；旧节点 scope=undefined 视为通配。
-      return e.sessionScope === undefined || e.sessionScope === scope;
+      return e.sessionScope === scope;
     });
   }
 
@@ -328,7 +336,7 @@ export class RelationService {
    * 强化已有事件：追加 evidence、更新 lastReinforcedAt，可选更新 summary/title/category。
    *
    * 跨 sessionScope 软护栏：如果新 evidence 全部来自与 existing.sessionScope 不同的会话，
-   * 且 existing 既不是 'global' 也不是未限定 scope，则记录审计但**继续执行**（warn 不阻断）。
+   * 且 existing 不是 'global'，则记录审计但**继续执行**（warn 不阻断）。
    * 与 addEventEventEdge 的 is-alias-of 跨 scope 硬阻断对应——reinforce 走 warn，
    * 因为它在不少正常路径（如 entity 共现、is-alias-of 后回写）也会自然跨 scope 触发。
    */
@@ -340,7 +348,7 @@ export class RelationService {
     if (!existing) return undefined;
 
     const existingScope = existing.sessionScope;
-    const isScopedEvent = existingScope && existingScope !== 'global';
+    const isScopedEvent = existingScope !== 'global';
     if (isScopedEvent && patch.evidence && patch.evidence.length > 0) {
       const newSessionIds = new Set(patch.evidence.map(e => e.sessionId).filter((s): s is string => Boolean(s)));
       const allCross = newSessionIds.size > 0 && !newSessionIds.has(existingScope);
@@ -386,7 +394,9 @@ export class RelationService {
    * 新建实体。严格按 (entityKind, normalized name) 去重：若已存在同 kind 同名实体，
    * **强制合并**到旧节点（追加 evidence、合并 aliases、累加权重 += 0.3），返回旧节点。
    */
-  async createEntity(input: Omit<EntityNode, 'id' | 'firstSeenAt' | 'lastReinforcedAt'>): Promise<EntityNode> {
+  async createEntity(
+    input: Omit<EntityNode, 'id' | 'firstSeenAt' | 'lastReinforcedAt' | 'weight' | 'lastMentionedAt' | 'mentionCount'>,
+  ): Promise<EntityNode> {
     const now = Date.now();
     const dup = await this.findEntityByKindAndName(input.entityKind, input.name);
     if (dup) {
@@ -396,9 +406,9 @@ export class RelationService {
         summary: input.summary ?? dup.summary,
         lastReinforcedAt: now,
         lastMentionedAt: now,
-        mentionCount: (dup.mentionCount ?? 0) + 1,
+        mentionCount: dup.mentionCount + 1,
         evidence: trimEvidence([...(input.evidence ?? []), ...dup.evidence]),
-        weight: clamp01((dup.weight ?? 0.5) + 0.3),
+        weight: clamp01(dup.weight + 0.3),
       };
       await this.store.upsertEntity(merged);
       return merged;
@@ -1315,16 +1325,14 @@ export class RelationService {
     let edges = 0;
     const EPS = 1e-6;
     for (const ev of snap.events) {
-      const raw = ev.weight ?? 0.5;
-      const newW = effectiveWeight(raw, ev.lastReinforcedAt, now, decay);
-      if (Math.abs(newW - raw) < EPS) continue;
+      const newW = effectiveWeight(ev.weight, ev.lastReinforcedAt, now, decay);
+      if (Math.abs(newW - ev.weight) < EPS) continue;
       await this.store.upsertEvent({ ...ev, weight: newW, lastReinforcedAt: now });
       events++;
     }
     for (const en of snap.entities) {
-      const raw = en.weight ?? 0.5;
-      const newW = effectiveWeight(raw, en.lastReinforcedAt, now, decay);
-      if (Math.abs(newW - raw) < EPS) continue;
+      const newW = effectiveWeight(en.weight, en.lastReinforcedAt, now, decay);
+      if (Math.abs(newW - en.weight) < EPS) continue;
       await this.store.upsertEntity({ ...en, weight: newW, lastReinforcedAt: now });
       entities++;
     }
@@ -1463,19 +1471,18 @@ export class RelationService {
       // 让 ageScore 进一步抬高、更早进入淘汰候选；新被强化过的节点 effW 接近 raw，被保护。
       // evidence count 作为软加权：证据越多越不易淘汰，但不是硬豁免。
       const evBoost = 1 + Math.log1p(n.evidence?.length ?? 0);
-      const w = Math.max(effectiveWeight(n.weight ?? 0.5, n.lastReinforcedAt, now, decayCfg), 0.05);
+      const w = Math.max(effectiveWeight(n.weight, n.lastReinforcedAt, now, decayCfg), 0.05);
       const p = Math.max(pr.get(n.id) ?? 0, 1e-6);
       return (now - n.lastReinforcedAt) / (w * p * evBoost);
     };
 
-    // Person 的 ageScore：无 weight/evidence，依靠 mentionCount / lastSeenAt / PR。
+    // Person 的 ageScore：无 weight/evidence，依靠 mentionCount / lastMentionedAt / PR。
     // PR 种子权 person seed=2 会让人在排序里自然偏位保护，但不豁免。
     const personAgeScore = (p: PersonNode): number => {
-      const lastActive = p.lastMentionedAt ?? p.lastSeenAt;
-      // mentionCount 起到"软 weight"作用；未被提及过的人仅留一个底值。
-      const mc = Math.max(p.mentionCount ?? 0, 1);
+      // mentionCount 起到"软 weight"作用；下限 1 防除零。
+      const mc = Math.max(p.mentionCount, 1);
       const pr0 = Math.max(pr.get(p.id) ?? 0, 1e-6);
-      return (now - lastActive) / (mc * pr0);
+      return (now - p.lastMentionedAt) / (mc * pr0);
     };
 
     // ─── 裸 event 加权：无 part-of 实体锚 且 其参与人之间无 person-person 边 → 优先淘汰
@@ -2271,8 +2278,8 @@ export class RelationService {
       const hay = `${p.displayName ?? ''} ${p.userId} ${p.id}`.toLowerCase();
       return hay.includes(kw);
     });
-    // 排序：按 lastMentionedAt 降序；缺失则按 lastSeenAt 兜底
-    res.sort((a, b) => (b.lastMentionedAt ?? b.lastSeenAt ?? 0) - (a.lastMentionedAt ?? a.lastSeenAt ?? 0));
+    // 排序：按 lastMentionedAt 降序
+    res.sort((a, b) => b.lastMentionedAt - a.lastMentionedAt);
     const limit = opts.limit && opts.limit > 0 ? opts.limit : 20;
     return res.slice(0, limit);
   }
@@ -3585,9 +3592,6 @@ export class RelationService {
     const snapshot = await this.store.loadAll();
     const events = snapshot.events;
 
-    // 按 sessionScope 分组：undefined → 'global'（与硬护栏 L537 兼容）
-    const scopeOf = (e: EventNode): string => e.sessionScope ?? 'global';
-
     // 跨 scope 同名预合并（不需 LLM）：global hub event 与其他 pool 中 normalizeName 完全相同的
     // session-scoped event 直接合并（保留 global 为 canonical）。修复两个问题：
     //   (1) LLM 在会话内外重复创建同名事件（会话版 + global hub 版并存）
@@ -3595,7 +3599,7 @@ export class RelationService {
     // 仅在 非 dryRun 且 events 可能出现 cross-scope 同名时走这条路径。
     let crossScopeMerged = 0;
     if (!opts.dryRun) {
-      const globalEvents = events.filter(e => scopeOf(e) === 'global');
+      const globalEvents = events.filter(e => e.sessionScope === 'global');
       if (globalEvents.length > 0) {
         const globalByTitle = new Map<string, EventNode>();
         for (const g of globalEvents) {
@@ -3604,7 +3608,7 @@ export class RelationService {
         }
         if (globalByTitle.size > 0) {
           for (const ev of events) {
-            if (scopeOf(ev) === 'global') continue;
+            if (ev.sessionScope === 'global') continue;
             const norm = normalizeName(ev.title);
             if (!norm) continue;
             const hub = globalByTitle.get(norm);
@@ -3619,7 +3623,7 @@ export class RelationService {
               if (r.aliasDeleted) {
                 crossScopeMerged++;
                 logger?.info(
-                  `[user-relation] consolidate cross-scope 同名合并：${ev.id}(scope=${scopeOf(ev)}) → ${hub.id}(global) "${hub.title}"`,
+                  `[user-relation] consolidate cross-scope 同名合并：${ev.id}(scope=${ev.sessionScope}) → ${hub.id}(global) "${hub.title}"`,
                 );
               }
             } catch (err) {
@@ -3639,7 +3643,7 @@ export class RelationService {
 
     const pools = new Map<string, EventNode[]>();
     for (const ev of workingEvents) {
-      const s = scopeOf(ev);
+      const s = ev.sessionScope;
       if (!pools.has(s)) pools.set(s, []);
       pools.get(s)!.push(ev);
     }
@@ -4324,7 +4328,7 @@ export class RelationService {
     if (opts.kind === 'event') {
       const node = await this.store.getEvent(opts.id);
       if (!node) throw new Error(`deleteNode: event ${opts.id} 不存在`);
-      this._assertNodeDeletable(node.weight ?? 0.5, node.evidence?.length ?? 0, node.title);
+      this._assertNodeDeletable(node.weight, node.evidence?.length ?? 0, node.title);
       const { deletedEdges } = await this.store.deleteEventCascade(opts.id);
       this._audit(
         `[user-relation][AUDIT] deleteNode event id=${opts.id} title="${node.title}" by=${by} reason="${reason}" edges=${deletedEdges}`,
@@ -4333,7 +4337,7 @@ export class RelationService {
     }
     const node = await this.store.getEntity(opts.id);
     if (!node) throw new Error(`deleteNode: entity ${opts.id} 不存在`);
-    this._assertNodeDeletable(node.weight ?? 0.5, node.evidence?.length ?? 0, node.name);
+    this._assertNodeDeletable(node.weight, node.evidence?.length ?? 0, node.name);
     const { deletedEdges } = await this.store.deleteEntityCascade(opts.id);
     this._audit(
       `[user-relation][AUDIT] deleteNode entity id=${opts.id} name="${node.name}" by=${by} reason="${reason}" edges=${deletedEdges}`,
@@ -5097,9 +5101,9 @@ export class RelationService {
    * - 每个节点的**分组归属**始终按"主社群"（memberships[0].id，即 SLPA 下 weight 最高的 label）；
    *   保持 topMembers/Topics/Events 语义清晰，避免一个节点在多社群重复出现稀释 LLM 注意力。
    * - `topN`：每个社群展示的成员/话题/事件条数。默认动态：log2 自适应。传 0 = 不限。
-   * - `bridges`：跨社群联系最广的 top-K person。`crossCommunityDegree` = 邻居中不在该 person 自身**任一**社群
-   *   隶属里的"外社群"个数（SLPA 下自然把跨群人物的多归属考虑进去）；`communityWeights` 给出按"外社群"分组的
-   *   邻居边权累计（边越重 / 邻居越多 → weight 越大），供 LLM 判断该桥梁人物的跨群强度分布。
+   * - `bridges`：跨社群联系最广的 top-K person。`communityWeights` 给出按"外社群"（邻居所属、但不在该 person
+   *   自身**任一**社群隶属里的社群，SLPA 下自然把跨群人物的多归属考虑进去）分组的邻居边权累计
+   *   （边越重 / 邻居越多 → weight 越大），供 LLM 判断该桥梁人物的跨群强度分布。
    *
    * Q（modularity）值粗判：Q > 0.3 = 圈子分明；0.1 ~ 0.3 = 一般；< 0.1 = 接近随机划分。
    * SLPA 下 Q 用"主社群"作为硬划分近似计算，仅作参考——重叠社区没有标准 modularity 定义。
@@ -5141,7 +5145,7 @@ export class RelationService {
       size: number;
       topMembers: Array<{ id: string; displayName: string; pagerank: number }>;
       topTopics: Array<{ id: string; name: string; pagerank: number }>;
-      topEvents: Array<{ id: string; title: string; weight: number; sessionScope?: string }>;
+      topEvents: Array<{ id: string; title: string; weight: number; sessionScope: string }>;
     }>;
     bridges: Array<{
       id: string;
@@ -5150,11 +5154,9 @@ export class RelationService {
       communityId: string;
       /** SLPA 下该 person 的全部社群隶属度（按 weight 降序）；louvain/leiden 永远单元素 */
       communityMemberships: CommunityMembership[];
-      /** 邻居中不在自身任一社群隶属里的"外社群"个数（向下兼容老消费方） */
-      crossCommunityDegree: number;
       /**
        * 按"外社群"分组的邻居边权累计（按 weight 降序）。weight = ∑(邻居边权 × 邻居在该外社群的隶属度)。
-       * 用这个字段判断桥梁人物在每个跨群方向上的强度分布；degree 只告诉数量，weights 告诉力度。
+       * 用这个字段判断桥梁人物在每个跨群方向上的强度分布。
        */
       communityWeights: Array<{ communityId: string; weight: number }>;
     }>;
@@ -5257,7 +5259,7 @@ export class RelationService {
       const topics = (entitiesByCom.get(cid) ?? [])
         .slice()
         .sort((a, b) => (b.lastPageRank ?? 0) - (a.lastPageRank ?? 0));
-      const events = (eventsByCom.get(cid) ?? []).slice().sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
+      const events = (eventsByCom.get(cid) ?? []).slice().sort((a, b) => b.weight - a.weight);
       const comTotal = members.length + topics.length + events.length;
       const perComTopN = useAdaptive ? adaptiveTopN(comTotal) : fixedCap;
       return {
@@ -5276,8 +5278,8 @@ export class RelationService {
         topEvents: events.slice(0, perComTopN).map(ev => ({
           id: ev.id,
           title: ev.title ?? ev.id,
-          weight: Number((ev.weight ?? 0).toFixed(4)),
-          ...(ev.sessionScope ? { sessionScope: ev.sessionScope } : {}),
+          weight: Number(ev.weight.toFixed(4)),
+          sessionScope: ev.sessionScope,
         })),
       };
     });
@@ -5351,7 +5353,6 @@ export class RelationService {
       displayName: string;
       communityId: string;
       communityMemberships: CommunityMembership[];
-      crossCommunityDegree: number;
       communityWeights: Array<{ communityId: string; weight: number }>;
     }> = [];
     for (const [pid, nbrs] of personNbrs) {
@@ -5380,7 +5381,6 @@ export class RelationService {
         displayName: p.displayName ?? pid,
         communityId: myList[0].id,
         communityMemberships: myList,
-        crossCommunityDegree: communityWeights.length,
         communityWeights,
       });
     }

@@ -43,21 +43,6 @@ describe('user-relation: event sessionScope 隔离', () => {
     expect(a.id).toBe(b.id);
   });
 
-  it('老数据（无 scope）兼容：与任何 scope 都视为同事件', async () => {
-    const { service, store } = await makeService();
-    const a = await service.createEvent({ title: 'legacy 事件', evidence: [ev({ sessionId: 'group:1' })] });
-    // 模拟老数据：抹掉 sessionScope
-    const raw = await store.getEvent(a.id);
-    if (raw) {
-      delete (raw as { sessionScope?: string }).sessionScope;
-      await store.upsertEvent(raw);
-    }
-    const b = await service.createEvent({ title: 'legacy 事件', evidence: [ev({ sessionId: 'group:2' })] });
-    expect(b.id).toBe(a.id);
-    // 回填了新 scope
-    expect(b.sessionScope).toBe('group:2');
-  });
-
   it("显式 sessionScope='global' 跨 session 合并", async () => {
     const { service } = await makeService();
     const a = await service.createEvent({

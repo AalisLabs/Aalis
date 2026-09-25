@@ -126,14 +126,9 @@ interface QueryOptions {
 }
 
 function normalizeConfig(raw: Readonly<Record<string, unknown>>): HistoryConfig {
-  // 向后兼容：旧配置 scope='off' = 关闭被动注入 + scope 回退为 same-platform
-  const scopeRaw = (raw.scope as string) ?? 'same-platform';
-  const legacyOff = scopeRaw === 'off';
-  const scope: HistoryScope = scopeRaw === 'cross-platform' ? 'cross-platform' : 'same-platform';
-  const injectEnabled = legacyOff ? false : raw.injectEnabled !== false;
   return {
-    injectEnabled,
-    scope,
+    injectEnabled: raw.injectEnabled !== false,
+    scope: raw.scope === 'cross-platform' ? 'cross-platform' : 'same-platform',
     limit: Math.max(1, Number(raw.limit ?? 30)),
     maxAgeMinutes: Math.max(0, Number(raw.maxAgeMinutes ?? 180)),
     perSessionLimit: Math.max(0, Number(raw.perSessionLimit ?? 5)),

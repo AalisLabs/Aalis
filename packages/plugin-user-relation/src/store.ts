@@ -75,13 +75,10 @@ interface MergeRejectRecord {
   aId: string;
   /** 排序后的较大 id */
   bId: string;
-  /**
-   * 决策时 a 节点的 evidence 数量。当前值改变 → 节点产生了新关系/新提及 → 缓存失效需重判。
-   * 老数据无此字段时回退为"必失效"（一次性影响，下次写入即恢复）。
-   */
-  aEvidenceCount?: number;
+  /** 决策时 a 节点的 evidence 数量。当前值改变 → 节点产生了新关系/新提及 → 缓存失效需重判。 */
+  aEvidenceCount: number;
   /** 决策时 b 节点的 evidence 数量；与 aEvidenceCount 同语义。 */
-  bEvidenceCount?: number;
+  bEvidenceCount: number;
   /** LLM 给出的理由 */
   reason: string;
   /** 决策时间戳 */
