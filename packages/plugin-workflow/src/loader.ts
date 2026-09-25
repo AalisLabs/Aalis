@@ -4,7 +4,7 @@
 // 通过 @aalis/api-storage 访问目录与文件（默认 workspace:/workflows）。
 // ============================================================
 
-import type { StorageService } from '@aalis/api-storage';
+import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import type { WorkflowDef } from '@aalis/api-workflow';
 import type { Logger } from '@aalis/core';
 import { parse, stringify } from 'yaml';
@@ -63,8 +63,7 @@ export class WorkflowLoader {
       const listed = await this.storage.list(this.dirUri);
       entries = listed.entries.filter(e => !e.isDirectory && /\.(ya?ml)$/i.test(e.name));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (/ENOENT|not found|不存在/i.test(msg)) return true;
+      if (isStorageNotFound(err)) return true;
       this.logger.warn(`扫描目录失败: ${err}`);
       return false;
     }
@@ -106,8 +105,7 @@ export class WorkflowLoader {
     try {
       await this.storage.delete(uri);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!/ENOENT|not found|不存在/i.test(msg)) {
+      if (!isStorageNotFound(err)) {
         this.logger.warn(`删除 workflow 文件 ${id}.yaml 失败: ${err}`);
       }
     }

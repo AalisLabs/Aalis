@@ -51,6 +51,10 @@ plugins:
 |---|---|---|---|
 | `servers` | array | `[]` | MCP 服务器列表：通过 stdio 连接的 MCP 服务器。每条目至少需要 id 与 command；安全级别按需调整。 |
 
+条目里的 `args` 是字符串数组（schema 类型 `list`，每项一个参数，可含空格），`env` 是 `KEY: VALUE` 映射（schema 类型 `map`）。旧版 WebUI 把两者存成多行文本；遇到字符串（含空串）或其它形态时，该 server 记录警告且不启动，需按上面的示例改写。
+
+旧版 WebUI 建的条目常带 `args: ''` / `env: ''`，请删除该键或改为 `[]` / `{}`。改写多行文本时按旧版的解析规则拆分：`args` 先按行、再按空白切分，如 `args: "-y @scope/pkg"` 应改为 `["-y", "@scope/pkg"]`；`env` 每行一条 `KEY=VALUE`，忽略 `#` 开头的注释行，值去首尾空白。
+
 ## 行为
 
 - 每个 server 是一个独立子进程，stdio 传输。

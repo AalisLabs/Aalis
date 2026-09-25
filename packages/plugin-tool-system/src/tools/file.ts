@@ -13,7 +13,7 @@
 
 import { basename } from 'node:path';
 import type { StorageService } from '@aalis/api-storage';
-import { parseUriRoot, resolveAgainstCwd } from '@aalis/api-storage';
+import { isStorageNotFound, parseUriRoot, resolveAgainstCwd } from '@aalis/api-storage';
 import type { BoundTools } from '@aalis/api-tools';
 import type { CwdState } from './cwd-state.js';
 
@@ -91,18 +91,6 @@ async function readText(storage: StorageService, uri: string): Promise<string> {
 
 function jsonError(err: unknown): string {
   return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
-}
-
-/**
- * 是否「文件不存在」错误。
- *
- * 只有这一类才允许被当成「新建」；权限、瞬时 IO 等其余错误必须原样上报——
- * 把它们也当成「不存在」会让读—改—写把原文静默截断成只剩新增部分。
- * storage 后端不保证透传 errno，故 code 与消息两条都认。
- */
-function isNotFoundError(err: unknown): boolean {
-  if (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'ENOENT') return true;
-  return /ENOENT|不存在|not found/i.test(err instanceof Error ? err.message : String(err));
 }
 
 function escapeRegExp(input: string): string {
@@ -937,7 +925,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
           try {
             existing = await readText(storage, uri);
           } catch (err) {
-            if (!isNotFoundError(err)) return jsonError(err);
+            if (!isStorageNotFound(err)) return jsonError(err);
             existing = '';
           }
           const content = existing + appendContent;

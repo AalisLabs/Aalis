@@ -5,7 +5,7 @@
 
 ## 概述
 
-基于 Ollama HTTP API 的 `EmbeddingService` 实现，默认连接本地 `http://localhost:11434`，以 `embedding` 服务注册，标签为 `Ollama / <model>`。
+基于 Ollama HTTP API 的 `EmbeddingService` 实现，默认连接本地 `http://localhost:11434`，以 `embedding` 服务注册，标签为 `Ollama / <model>`，向量空间标识 `modelId` 为 `ollama:<model>`。
 
 ## 插件声明
 

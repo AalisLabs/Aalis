@@ -24,6 +24,7 @@ import type { Logger, ServiceRef } from '@aalis/core';
 import { getKnownPlatformsLower, isPlaceholderSelfPersonId } from './extractor.js';
 import type { RelationService } from './service.js';
 import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js';
+import { findOrphans } from './utils.js';
 
 /** /relation 指令用到的能力 */
 interface CommandsCaps {
@@ -104,23 +105,22 @@ export function registerRelationCommands(
 
   // ---- orphans (list) ----
   cmds.command('relation.orphans', '列出图中所有孤立点（不被任何边引用）').action(async () => {
-    const snap = await service.loadAll();
-    const { orphanPersons, orphanEvents, orphanEntities } = collectOrphans(snap);
-    if (orphanPersons.length + orphanEvents.length + orphanEntities.length === 0) {
+    const { persons, events, entities } = findOrphans(await service.loadAll());
+    if (persons.length + events.length + entities.length === 0) {
       return '✓ 无孤立点。';
     }
     const lines: string[] = ['# 孤立点'];
-    if (orphanPersons.length) {
-      lines.push(`## 人物 (${orphanPersons.length})`);
-      for (const p of orphanPersons) lines.push(`- ${p.id}  ${p.displayName ?? ''}`);
+    if (persons.length) {
+      lines.push(`## 人物 (${persons.length})`);
+      for (const p of persons) lines.push(`- ${p.id}  ${p.displayName ?? ''}`);
     }
-    if (orphanEvents.length) {
-      lines.push(`## 事件 (${orphanEvents.length})`);
-      for (const e of orphanEvents) lines.push(`- ${e.id}  ${e.title}`);
+    if (events.length) {
+      lines.push(`## 事件 (${events.length})`);
+      for (const e of events) lines.push(`- ${e.id}  ${e.title}`);
     }
-    if (orphanEntities.length) {
-      lines.push(`## 实体 (${orphanEntities.length})`);
-      for (const e of orphanEntities) lines.push(`- ${e.id}  [${e.entityKind}] ${e.name}`);
+    if (entities.length) {
+      lines.push(`## 实体 (${entities.length})`);
+      for (const e of entities) lines.push(`- ${e.id}  [${e.entityKind}] ${e.name}`);
     }
     return lines.join('\n');
   });
@@ -172,22 +172,9 @@ export function registerRelationCommands(
     });
 
   cmds.command('relation.cleanup.orphans', '一键清理所有孤立点', { visibility: 'restricted' }).action(async () => {
-    const snap = await service.loadAll();
-    const { orphanPersons, orphanEvents, orphanEntities } = collectOrphans(snap);
-    let deleted = 0;
-    for (const p of orphanPersons) {
-      await service.deletePerson(p.platform, p.userId);
-      deleted++;
-    }
-    for (const e of orphanEvents) {
-      await service.deleteEvent(e.id);
-      deleted++;
-    }
-    for (const e of orphanEntities) {
-      await service.deleteEntity(e.id);
-      deleted++;
-    }
-    return `✓ 已清理 ${deleted} 个孤立点（人物 ${orphanPersons.length} / 事件 ${orphanEvents.length} / 实体 ${orphanEntities.length}）`;
+    const r = await service.pruneOrphans();
+    const deleted = r.deletedPersons + r.deletedEvents + r.deletedEntities;
+    return `✓ 已清理 ${deleted} 个孤立点（人物 ${r.deletedPersons} / 事件 ${r.deletedEvents} / 实体 ${r.deletedEntities}），悬空边 ${r.deletedDanglingEdges} 条`;
   });
 
   // ---- cleanup fake-self ----
@@ -325,9 +312,9 @@ export function registerRelationCommands(
     };
   }
 
-  // ---- consolidate（整理：别名候选 / 自动 part-of / 旧账去重） ----
+  // ---- consolidate（整理：别名候选 / 旧账去重） ----
   cmds
-    .command('relation.consolidate', '整理关系图：扫描别名候选、自动 part-of、规范化 PersonEventEdge', {
+    .command('relation.consolidate', '整理关系图：扫描别名候选、规范化 PersonEventEdge', {
       visibility: 'restricted',
     })
     .option('auto-link', '--auto-link', { description: '将高置信别名候选自动建为 is-alias-of 边' })
@@ -347,7 +334,6 @@ export function registerRelationCommands(
         const lines = [
           '关系图整理完成：',
           `- 别名候选：${r.aliasCandidates.length} 对（auto-link=${autoLink ? 'on' : 'off'}，已建 ${r.aliasEdgesCreated} 条 is-alias-of 边）`,
-          `- 自动 part-of：新增 ${r.partOfEdgesCreated} 条 event-entity[part-of] 边`,
           `- EventEntityEdge 去重：${r.eventEdgesNormalized} 组重整`,
           `- 实体层级候选：${r.entityHierarchyCandidates} 对，新增 ${r.entityHierarchyEdgesCreated} 条 entity-entity[part-of] 边`,
           `- 侧向父候选：${r.lateralParentCandidates} 簇，新建父实体 ${r.lateralParentsCreated} 个，新增 ${r.lateralEdgesCreated} 条侧向 part-of 边`,
@@ -554,7 +540,7 @@ export function registerRelationCommands(
           `[1/2] 整理：人物 ${s0.persons.length}→${s1.persons.length}，事件 ${s0.events.length}→${s1.events.length}，` +
           `实体 ${s0.entities.length}→${s1.entities.length}，边 ${s0.edges.length}→${s1.edges.length}；` +
           `别名 ${cr.aliasCandidates.length} 候选/${cr.aliasEdgesCreated} 边，` +
-          `part-of 新增 ${cr.partOfEdgesCreated}，事件边重整 ${cr.eventEdgesNormalized}，` +
+          `事件边重整 ${cr.eventEdgesNormalized}，` +
           `层级 ${cr.entityHierarchyCandidates} 候选/${cr.entityHierarchyEdgesCreated} 边，` +
           `侧向父 ${cr.lateralParentCandidates} 簇/新建 ${cr.lateralParentsCreated}/边 ${cr.lateralEdgesCreated}` +
           (useLlm
@@ -588,37 +574,6 @@ export function registerRelationCommands(
 }
 
 // ───── helpers ─────
-
-function collectOrphans(snap: {
-  persons: PersonNode[];
-  events: EventNode[];
-  entities: EntityNode[];
-  edges: RelationEdge[];
-}): { orphanPersons: PersonNode[]; orphanEvents: EventNode[]; orphanEntities: EntityNode[] } {
-  const refPerson = new Set<string>();
-  const refEvent = new Set<string>();
-  const refEntity = new Set<string>();
-  for (const e of snap.edges) {
-    if (e.kind === 'person-event') {
-      refPerson.add(e.fromPersonId);
-      refEvent.add(e.toEventId);
-    } else if (e.kind === 'person-person') {
-      refPerson.add(e.fromPersonId);
-      refPerson.add(e.toPersonId);
-    } else if (e.kind === 'person-entity') {
-      refPerson.add(e.fromPersonId);
-      refEntity.add(e.toEntityId);
-    } else if (e.kind === 'event-event') {
-      refEvent.add(e.fromEventId);
-      refEvent.add(e.toEventId);
-    }
-  }
-  return {
-    orphanPersons: snap.persons.filter(p => !refPerson.has(p.id)),
-    orphanEvents: snap.events.filter(e => !refEvent.has(e.id)),
-    orphanEntities: snap.entities.filter(e => !refEntity.has(e.id)),
-  };
-}
 
 function formatPerson(p: PersonNode, events: EventNode[], entities: EntityNode[], edges: RelationEdge[]): string {
   const lines = [`# Person ${p.id}`, `displayName: ${p.displayName ?? '—'}`];

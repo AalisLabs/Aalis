@@ -36,6 +36,10 @@ export interface SchemaFieldTypes {
   select: true;
   multiselect: true;
   textarea: true;
+  /** 有序字符串列表（`string[]`）：保序、允许重复；与 multiselect 的集合语义不同 */
+  list: true;
+  /** 字符串映射（`Record<string, string>`），如环境变量表 */
+  map: true;
 }
 
 export type SchemaFieldType = keyof SchemaFieldTypes & string;
@@ -156,6 +160,8 @@ const NEUTRAL_FIELD_TYPES: ReadonlySet<string> = new Set([
   'select',
   'multiselect',
   'textarea',
+  'list',
+  'map',
 ]);
 
 /**
@@ -172,6 +178,8 @@ const NEUTRAL_FIELD_TYPES: ReadonlySet<string> = new Set([
  * - **约束键**：number 强制 min/max（含边界）与 integer，string/textarea 强制
  *   pattern（模式非法则跳过该检查）；step 是纯 UI 提示不校验。约束只在类型
  *   检查通过后评估——类型都不对时报类型错，不叠报约束错。
+ * - **list / map**：list 须为数组且每个元素是 string（保序、重复合法）；map 须为
+ *   对象且每个值是 string，逐值报错的路径形如 `env.KEY`。
  * - **宽容缺失**：undefined 与 null（YAML 裸键）视为"未配置"，仅在 required 且
  *   未声明 default 时报缺——顶层/分组的默认值在调用点已合并，数组元素的默认值
  *   不参与合并（defaultsFrom 把 SchemaArray 当叶子），靠 default 声明本身放行。
@@ -327,6 +335,36 @@ function validateFields(
               });
             }
           });
+        }
+        break;
+      case 'list':
+        if (!Array.isArray(value)) {
+          issues.push({ path, message: `期望数组，得到 ${describeType(value)}`, kind: 'invalid' });
+        } else {
+          value.forEach((item, i) => {
+            if (typeof item !== 'string') {
+              issues.push({
+                path: `${path}[${i}]`,
+                message: `期望 string 元素，得到 ${describeType(item)}`,
+                kind: 'invalid',
+              });
+            }
+          });
+        }
+        break;
+      case 'map':
+        if (typeof value !== 'object' || Array.isArray(value)) {
+          issues.push({ path, message: `期望对象（映射），得到 ${describeType(value)}`, kind: 'invalid' });
+        } else {
+          for (const [k, v] of Object.entries(value)) {
+            if (typeof v !== 'string') {
+              issues.push({
+                path: `${path}.${k}`,
+                message: `期望 string 值，得到 ${describeType(v)}`,
+                kind: 'invalid',
+              });
+            }
+          }
         }
         break;
     }

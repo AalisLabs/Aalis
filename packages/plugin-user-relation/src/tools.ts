@@ -58,6 +58,8 @@ interface ToolsConfig {
   /** find_path 默认/硬上限最大深度 */
   findPathDefaultMaxDepth: number;
   findPathHardMaxDepth: number;
+  /** community_overview 不传 algorithm 时的默认算法（与淘汰后写入社群缓存的算法同源） */
+  communityAlgorithm: 'louvain' | 'leiden' | 'slpa';
   debug: boolean;
 }
 
@@ -989,7 +991,7 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
           '【全局】社群发现概览：把所有人按"圈子"分组，列出每个社群的核心成员/话题/事件，并标出"桥梁人"。',
           '典型场景："这群里有几个圈子"、"哪几个人是连接不同圈子的桥梁"、"X 这个 session 里都聊什么"。',
           '参数说明：',
-          '- algorithm：可选 "louvain" / "leiden" / "slpa"。不传则用插件默认（一般 louvain）。',
+          '- algorithm：可选 "louvain" / "leiden" / "slpa"。不传则用插件配置的默认算法（communityAlgorithm，默认 louvain）。',
           '  · louvain = 经典快速、硬划分（每人恰好属于一个社群）。',
           '  · leiden = 简化版 Leiden（同硬划分，但保证社群内部连通，稍慢质量略高）；当 louvain 把两群没交集的人塞一起时换它重跑。',
           '  · slpa = Speaker-Listener Label Propagation，原生**重叠社区**算法；一个人可同时属于多个社群（如同时混在 c2 和 c4），bridges 返回的 communityMemberships 字段会展示其多归属。',
@@ -1039,7 +1041,7 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
       const algorithm =
         args.algorithm === 'leiden' || args.algorithm === 'louvain' || args.algorithm === 'slpa'
           ? (args.algorithm as 'louvain' | 'leiden' | 'slpa')
-          : undefined;
+          : cfg.communityAlgorithm;
       const sessionScope =
         typeof args.session_scope === 'string' && args.session_scope.trim().length > 0
           ? String(args.session_scope).trim()

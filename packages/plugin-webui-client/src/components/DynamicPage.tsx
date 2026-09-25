@@ -291,7 +291,7 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
-  const modelCache = useRef<Record<string, Array<{ label: string; value: string }>>>({});
+  const [modelCache, setModelCache] = useState<Record<string, Array<{ label: string; value: string }>>>({});
   const [llmProviders, setLLMProviders] = useState<LLMProviderEntry[] | undefined>(undefined);
 
   useEffect(() => {
@@ -319,14 +319,14 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
     api<{
       models: string[];
       providers?: Array<{ value: string; model: string; provider: string; contextId: string }>;
-    }>(`/api/models/${service}`)
+    }>(`/api/models/${encodeURIComponent(service)}`)
       .then(r => {
         const items = (r.providers && r.providers.length > 0)
           ? r.providers.map(p => ({ label: `${p.provider} / ${p.model}`, value: p.value }))
           : (r.models ?? []).map(m => ({ label: m, value: m }));
-        modelCache.current = { ...modelCache.current, [service]: items };
+        setModelCache(prev => ({ ...prev, [service]: items }));
       })
-      .catch(() => {});
+      .catch(() => setModelCache(prev => ({ ...prev, [service]: [] })));
   };
 
   const handleFetchLLMProviders = () => {
@@ -345,7 +345,7 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
         schema={comp.schema}
         draft={draft}
         onChange={setDraft}
-        modelCache={modelCache.current}
+        modelCache={modelCache}
         onFetchModels={handleFetchModels}
         llmProviders={llmProviders}
         onFetchLLMProviders={handleFetchLLMProviders}

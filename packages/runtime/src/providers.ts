@@ -79,9 +79,9 @@ interface FsYamlConfigProviderResult {
  * 创建一个基于 YAML 文件的 ConfigProvider。
  *
  * - 同步读取 + 解析（值原样加载，不做任何替换——`${VAR}` 插值已随 `.env` 机制删除）
- * - `save()` 同步写回
+ * - `save()` 同步写回；写前比对盘上内容，有尚未生效的外部修改时拒写（错误只带路径）
  * - `watch()` 监听**配置文件所在目录**（按文件名过滤）+ 300ms debounce，
- *   并通过与 `rawYaml` 的内容比对去重，避免自激
+ *   并通过与 `rawYaml` 的内容比对去重，避免自激；武装后立即对账一次
  *
  * 返回 config 快照与 provider，供宿主组装 App。
  */
@@ -140,6 +140,18 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
 
   const provider: ConfigProvider = {
     save(config) {
+      // 写前比对磁盘实况：盘上内容必须仍是本进程最后读入或写出的那份。不是，就有尚未生效的
+      // 外部修改（去抖窗口内、监听未武装、解析失败被搁置、另一个进程写过）——整份覆写会把它
+      // 静默吃掉，所以拒写，让调用方收到拒绝。文件不存在时没有可保护的内容，照写。
+      let onDisk: string | null = null;
+      try {
+        onDisk = readFileSync(absPath, 'utf-8');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      }
+      if (onDisk !== null && onDisk !== rawYaml) {
+        throw new Error(`配置文件有尚未生效的外部修改，为免覆盖已拒绝本次保存（${absPath}）`);
+      }
       const yaml = buildSaveYaml(config);
       // 原子写：先写临时文件再 rename（同目录同分区，rename 原子覆盖）。
       // 直接 writeFileSync 是 O_CREAT|O_TRUNC——写中断（磁盘写满 / 进程被杀）时截断已经发生、
@@ -166,14 +178,7 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
       if (!existsSync(dataDir)) return () => {};
       const fileName = basename(absPath);
       try {
-        // **必须监听目录，不能监听文件本身。** fs.watch 绑的是那一刻的 inode，而编辑器
-        // 保存普遍是「写临时文件 → rename 覆盖」——rename 之后同名文件已是新 inode，
-        // 绑在旧 inode 上的 watcher 从此永不触发，且无异常、无日志、无返回值。
-        // save() 同样是「写临时文件 → rename」（见上），自写回也会换 inode——守文件在
-        // 第一次保存后就失聪；守目录则人改与自写回两种来源都接得住。
-        watcher = fsWatch(dataDir, (_event, filename) => {
-          // filename 平台不保证非空；为空时不敢过滤，交给下面的内容比对兜底。
-          if (filename && basename(filename.toString()) !== fileName) return;
+        const schedule = () => {
           if (debounceTimer) clearTimeout(debounceTimer);
           debounceTimer = setTimeout(() => {
             debounceTimer = null;
@@ -213,9 +218,24 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
               logger.warn(`配置变更处理器抛错：${err instanceof Error ? err.message : String(err)}`);
             }
           }, 300);
+        };
+        // **必须监听目录，不能监听文件本身。** fs.watch 绑的是那一刻的 inode，而编辑器
+        // 保存普遍是「写临时文件 → rename 覆盖」——rename 之后同名文件已是新 inode，
+        // 绑在旧 inode 上的 watcher 从此永不触发，且无异常、无日志、无返回值。
+        // save() 同样是「写临时文件 → rename」（见上），自写回也会换 inode——守文件在
+        // 第一次保存后就失聪；守目录则人改与自写回两种来源都接得住。
+        watcher = fsWatch(dataDir, (_event, filename) => {
+          // filename 平台不保证非空；为空时不敢过滤，交给下面的内容比对兜底。
+          if (filename && basename(filename.toString()) !== fileName) return;
+          schedule();
         });
-      } catch {
-        /* 平台不支持 watch */
+        // 武装即对账一次：武装前（启动期）的外部修改不会再有事件，不补就既不生效、又让 save 一直拒写。
+        schedule();
+      } catch (err) {
+        // 平台或挂载不支持 watch：外部修改从此不会自动生效，save 也会因盘上内容已变而拒写。
+        logger.warn(
+          `无法监听配置文件变更（${err instanceof Error ? err.message : String(err)}）：手动修改后需重启才生效，重启前的进程保存会被拒绝`,
+        );
       }
 
       return () => {

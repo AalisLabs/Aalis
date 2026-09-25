@@ -11,8 +11,6 @@ import { setNetworkPolicy } from '@aalis/util-network-guard';
 import { AuthorityManager } from './authority-manager.js';
 import { autoConfirmActive, DEFAULT_AUTHORITY, shouldSkipConfirm } from './authority-model.js';
 
-export { AuthorityManager } from './authority-manager.js';
-
 // 权限管理页（自定义 renderer 在 webui-client）。单 owner 终态无委托树，故无委托关系图。
 const webuiPages: WebuiPage[] = [
   { key: 'authority', label: '权限管理', icon: 'authority', order: 50, renderer: 'authority' },
@@ -145,7 +143,7 @@ async function run(caps: Caps): Promise<void> {
 
   // 注入到 commands / tools（follow 在 provider 上线/重启时各调一次）。
   // 不给清理：守卫是提供者身上的一格状态，提供者换人时随旧实例一起消失；而契约里没有
-  // 「摘掉守卫」的口，真要摘也是把闸开成 fail-open。
+  // 「摘掉守卫」的口；真要摘，tools / commands 会退回无守卫的 fail-closed（需要更高等级或确认的一律拒绝）。
   commands.follow(svc => {
     svc.setExecutionGuard(guard);
     logger.debug('权限守卫已注入: commands');

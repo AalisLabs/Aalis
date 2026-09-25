@@ -88,12 +88,26 @@ export function createPluginDiscovery(app: App, loader: PluginLoader, doc: Omit<
     return items;
   }
 
+  /**
+   * 单实例配置段找不到对应插件（多为直接 `npm uninstall` 后残留）：冷启动时逐段告警一次。
+   * 发现到却导入失败的已有加载错误，不重复报；多实例键由 {@link configuredInstances} 报。
+   */
+  function warnOrphanedConfig(known: Map<string, PluginDefinition>, discovered: PluginDescriptor[]): void {
+    const attempted = new Set(discovered.map(d => d.name));
+    for (const configKey of Object.keys(doc.get('plugins') ?? {})) {
+      if (parseInstanceId(configKey).suffix) continue;
+      if (known.has(configKey) || attempted.has(configKey) || app.plugins.getPlugin(configKey)) continue;
+      log.warn(`配置段 "${configKey}" 对应的插件未找到，已忽略；若已卸载可删除该段（其中可能含密钥）`);
+    }
+  }
+
   return {
     async loadAll() {
       const discovered = await loader.discover();
       log.info(`发现 ${discovered.length} 个插件`);
       const loaded = await importAll(discovered, false);
       const known = new Map(loaded.map(({ item }) => [item.definition.name, item.definition]));
+      warnOrphanedConfig(known, discovered);
       await app.pluginAll([...loaded.map(({ item }) => item), ...configuredInstances(known)]);
       // app:ready / app:started 的发出时机依赖「返回即全部收敛」；引导路径不在任何 apply 内，无自等死锁面。
       await app.plugins.idle();

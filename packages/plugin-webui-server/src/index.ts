@@ -14,7 +14,7 @@ import type {} from '@aalis/api-doctor'; // declaration merging：doctor:updated
 import { hostConfig } from '@aalis/api-host-config';
 import type { ModelInfo } from '@aalis/api-llm';
 import { listLLMModels, llm } from '@aalis/api-llm';
-import { memory } from '@aalis/api-memory';
+import type {} from '@aalis/api-memory'; // declaration merging：session:compress / session:compressing / history:changed 事件
 import { persona } from '@aalis/api-persona';
 import {
   aggregatePlatformDetails,
@@ -156,8 +156,6 @@ interface WebUIConfig {
 
 // 入站消息类型 + 校验 schema 见 ./protocol.ts（zod 强校验）
 import { type WSIncoming, WSIncomingSchema } from './protocol.js';
-
-export { type WSIncoming, WSIncomingSchema } from './protocol.js';
 
 interface WSOutgoing {
   type:
@@ -344,7 +342,6 @@ const uses = {
   llm: optional(llm),
   persona: optional(persona),
   agent: optional(agent),
-  memory: optional(memory),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -568,7 +565,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 获取系统状态
   expressApp.get('/api/status', gate(), (_req, res) => {
     const personaSvc = caps.persona.current;
-    // 判断上传能力。media / file-reader / cli 在本插件里只做在场探测，为一个布尔值反向依赖
+    // 判断上传能力。media / file-reader 在本插件里只做在场探测，为一个布尔值反向依赖
     // 它们的包不值当（file-reader 还是插件包），故按名动态查——动态查到的不算声明依赖。
     const hasMedia = services.get('media') !== undefined;
     const llmHasVision = listLLMModels(caps.llm).some(e => e.instance.capabilities.includes('vision'));
@@ -576,14 +573,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
     res.json({
       name: personaSvc?.getPersonaName() ?? caps.hostConfig.current?.get('name') ?? 'Aalis',
-      services: {
-        'webui-server': services.get(webuiServer) !== undefined,
-        cli: services.get('cli') !== undefined,
-        llm: caps.llm.current !== undefined,
-        agent: caps.agent.current !== undefined,
-        memory: caps.memory.current !== undefined,
-        persona: personaSvc !== undefined,
-      },
       /** 上传能力：客户端据此决定显示哪些上传按钮 */
       uploadCapabilities: {
         /** 是否支持图片上传（media 可用 或 LLM 声明了 vision） */
@@ -656,17 +645,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     () => discoverAndProvideClients(),
   );
 
-  // 获取历史日志：从 data/latest.log 读尾部 N 条（lazy load）。
+  // 历史日志从 data/latest.log 读（lazy load）。
   // 单进程内 LogHub 不再缓存 buffer——历史以文件为单一数据源。
-  expressApp.get('/api/logs', gate(), async (_req, res) => {
-    try {
-      const entries = await readLogFileTail(storage, 200);
-      res.json(entries);
-    } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
-    }
-  });
-
   // 尾部 N 条（首屏 / 显式刷新）
   expressApp.get('/api/logs/tail', gate(), async (req, res) => {
     const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 5000);
@@ -1719,7 +1699,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
           : uiConfig.tokenMode === 'fixed'
             ? 'token 来自配置 fixedToken，固定不变'
             : 'token 已持久化到 storage data:/webui/token，重启沿用';
-      // 不把 token 打进日志（会落 latest.log / 被 /api/logs 回放 / 贴日志求助时外泄）。
+      // 不把 token 打进日志（会落 latest.log / 被 /api/logs/* 回放 / 贴日志求助时外泄）。
       // 仅打不带 token 的 URL，完整一键登录链接见 access.txt（该文件应 0o600，见 token 落盘）。
       logger.info(`首次访问 URL（${tokenHint}）: ${url} —— 完整一键登录链接见 ${accessFileUri}`);
       void (async () => {
@@ -1816,11 +1796,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   const webuiService: WebUIService = {
     getPort: () => uiConfig.port,
     getHost: () => uiConfig.host,
-    setClientDir(dir: string): void {
-      clientDist = dir;
-      mountStaticDir(dir);
-      logger.info(`前端已切换: ${dir}`);
-    },
     registerPage(page, contextId) {
       const list = registeredPages.get(contextId) ?? [];
       const entry = { ...page, pluginName: contextId };

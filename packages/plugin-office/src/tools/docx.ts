@@ -12,6 +12,7 @@ import {
   LevelFormat,
   Packer,
   PageBreak,
+  PageNumber,
   Paragraph,
   Table,
   TableCell,
@@ -679,6 +680,11 @@ export function registerDocxTools(
       if (meta.footerText || meta.showPageNumber) {
         const footerChildren: TextRun[] = [];
         if (meta.footerText) footerChildren.push(new TextRun({ text: String(meta.footerText), size: 18 }));
+        // 页码是 Word 域，打开时按所在页渲染；与页脚文字同处一行时用分隔符隔开
+        if (meta.showPageNumber) {
+          if (meta.footerText) footerChildren.push(new TextRun({ text: ' | ', size: 18 }));
+          footerChildren.push(new TextRun({ children: [PageNumber.CURRENT], size: 18 }));
+        }
         footers.default = new Footer({
           children: [
             new Paragraph({

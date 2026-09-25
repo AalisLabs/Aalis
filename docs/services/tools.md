@@ -164,7 +164,7 @@ const result =
 
 ## 7. 注意事项
 
-- **守卫缺失 = fail-open（放行）**：若 `plugin-authority` 未加载，所有 `restricted`/`confirm` 工具直接执行。敏感工具应在 handler 内再做一层自检。
+- **守卫缺失 = fail-closed（拒绝）**：若 `plugin-authority` 未加载，参考实现等同所有人都是默认等级、没有确认通道——需要更高等级（restricted 或 risk 为 sensitive / dangerous）或声明了 `confirm` 的工具一律拒绝并提示缺少权限插件，默认等级可用且无需确认的工具照常执行。
 - **`http_download`** 现为 `restricted + confirm:'session'`。新写下载/上传类工具照此挂闸。
 - **`file_read` 的 `allowedRoots`** 默认 `['workspace', 'tmp']`，配置可设 `["*"]`。
 - **重名即覆盖**。应选用带前缀的工具名。

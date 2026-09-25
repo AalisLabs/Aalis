@@ -74,7 +74,7 @@ const configSchema: ConfigSchema = {
 
 // ===== 配置类型 =====
 
-export interface ToolsBasicConfig {
+interface ToolsBasicConfig {
   workingDirectory: string;
   shell: { enabled: boolean; defaultTimeout: number; maxTimeout: number; maxOutputSize: number };
   file: {

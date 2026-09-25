@@ -32,7 +32,7 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `outputDir` | string | `'workspace:/'` | 输出目录：文档保存目录（storage URI，如 workspace:/ 或 data:/docs），也兼容裸名「workspace」/「data」。 |
+| `outputDir` | string | `'workspace:/'` | 输出目录：文档保存目录（storage URI，如 workspace:/ 或 data:/docs）。不是 storage URI 时插件拒绝激活。 |
 | `docx` | object | — | Word 文档 |
 | `docx.enabled` | boolean | `true` | 启用 Word 工具 |
 | `xlsx` | object | — | Excel 工作簿 |

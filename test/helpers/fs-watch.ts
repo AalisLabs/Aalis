@@ -21,8 +21,9 @@ export const quiet = (): Promise<void> => sleep(DEBOUNCE_MS + 500);
 /**
  * 等 fs.watch 真正武装完毕。macOS 的 FSEvents 后端建流是异步的，arm 之后立刻写
  * 有可能被漏掉——不等这一下，「没触发」既可能是缺陷也可能是竞态，测试就没有判别力了。
+ * 同时等武装即对账的那一轮去抖走完，免得它与紧随其后的写入交错成两次投递。
  */
-export const settle = (): Promise<void> => sleep(250);
+export const settle = (): Promise<void> => sleep(DEBOUNCE_MS + 150);
 
 /** 原子替换——编辑器/`sed -i`/`vim` 默认保存的做法，会换掉 inode。 */
 export function atomicWrite(path: string, content: string): void {

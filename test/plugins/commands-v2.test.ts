@@ -119,6 +119,8 @@ describe('commands v2 — 链式 builder', () => {
 
   it('dot-path 子命令最长前缀解析 + 自动分组', async () => {
     const r = new CommandRegistry(makeLogger());
+    // 测的是解析而非鉴权：放行守卫代替 plugin-authority（没有守卫时 restricted 指令一律被拒）
+    r.setExecutionGuard(async () => null);
     r.command('profile.clear', '清除自己档案').action(async () => 'cleared');
     r.command('profile.clear.nuke', '清空所有', { visibility: 'restricted' }).action(async () => 'nuked');
     // profile 自动成为分组节点

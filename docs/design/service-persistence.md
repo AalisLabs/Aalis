@@ -60,6 +60,16 @@ provider bounce 时，此刻 required 解析到它的 active 下游（传递闭�
 5. **integration / e2e 推荐在 bounce 后等 `plugins.idle()`**：直接调用 bounce
    之后立即 assert 服务可用会读到拆卸中间态。`plugins:changed` 在非关机 recompute 收敛时发出，同样可用。
 
+## 整份快照的加载失败
+
+激活时整份读入、之后整份回写的插件（scheduler 动态任务、workflow 运行历史与 once 记账、flow-control 禁言表、authority 用户等级、vectorstore-flat 向量库），加载结果只分三种：
+
+- **不存在**：`@aalis/api-storage` 的 `isStorageNotFound(err)` 为真，按全新处理，照常写入。
+- **读取成功**：读取、解析、结构校验都通过，照常写入。
+- **读不懂**：其余一切情况，包括其它读取错误（含网关的「未知存储根」）、解析失败、合法 JSON 但结构不对。本次运行拒绝整份写入并告警，改动只在内存生效，原文件保持原样；重新读取（storage 换人时经 `follow` 重读，或重启）时重新判定。
+
+实现上：读取与解析分两段，解析报错不进入「不存在」判据；结构不对抛错归入「读不懂」，不当空处理；写入闸放在串行写链里，等进行中的读取完成后再判；从记账派生的行为（workflow 的 once）在「读不懂」时不据空状态执行。
+
 ## 增量重载的 API 速查
 
 ```ts

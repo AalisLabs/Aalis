@@ -53,6 +53,8 @@ export default definePlugin({
 
 单条指令的等级与确认可在 plugin-authority 配置中按能力键 `command:<点路径>`（如 `command:clear.all`）覆盖，见 plugin-authority 文档。
 
+权限守卫由 plugin-authority 注入。未安装 plugin-authority 时指令系统按 fail-closed 处理：等同所有人都是默认等级、没有确认通道，需要更高等级（restricted 或 risk 为 sensitive / dangerous）或声明了 confirm 的指令一律拒绝并提示缺少权限插件，其余指令照常执行。上表中除 `/help`、`/status` 外的指令因此都不可用（`/clear list` 沿点路径继承 `/clear` 的 confirm）。
+
 ## 选项解析形式
 
 执行时按命中节点声明解析选项：

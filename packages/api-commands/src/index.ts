@@ -61,8 +61,6 @@ export interface OptionSpec {
   type: OptionValueType;
   /** 占位符名（用于 help 输出），如 'page' */
   valueName?: string;
-  /** 是否需要取值 */
-  takesValue: boolean;
   /** 值可选时（[val:type] 语法），flag 存在但无值给 true */
   valueOptional: boolean;
   description?: string;

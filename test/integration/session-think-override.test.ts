@@ -45,7 +45,10 @@ async function loadStack(recorder: ChatModelRequest[]) {
     if (state !== 'active') throw new Error(`插件 ${id} 未激活（state=${state}）`);
   }
   const host = app.bind({ agent: agentService, sessionManager: sessionManagerService, commands: commandsService });
-  return { app, agent: host.agent.require(), sm: host.sessionManager.require(), commands: host.commands.require() };
+  const commands = host.commands.require();
+  // /session.* 声明了 risk:'sensitive'，没有守卫时会被拒：放行守卫代替 plugin-authority（本文件测的不是鉴权）
+  commands.setExecutionGuard(async () => null);
+  return { app, agent: host.agent.require(), sm: host.sessionManager.require(), commands };
 }
 
 const incoming = (sessionId: string): IncomingMessage => ({

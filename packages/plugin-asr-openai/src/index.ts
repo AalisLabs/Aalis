@@ -79,6 +79,40 @@ function guessAudioExt(source: string, contentType?: string | null): string {
   return byMime[sub] ?? byMime[fromPath] ?? 'wav';
 }
 
+/** 远程音频下载与 plugin-media 同口径：20 MiB 上限，连接加读完响应体共 15 秒。 */
+const DOWNLOAD_MAX_BYTES = 20 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 15_000;
+
+/**
+ * 下载远程音频。safeFetch 只管 SSRF 与重定向，不带超时也不限体积；入站语音 URL 由外部平台给出，
+ * 对端不应答会挂住整轮语音回合，超大响应会整个读进内存。超时信号覆盖连接与读取响应体；
+ * 体积按流式累计判定——不用 arrayBuffer()，无 Content-Length 的响应要全部读完才看得到大小。
+ */
+async function downloadAudio(url: string): Promise<{ bytes: Buffer; contentType: string | null }> {
+  const resp = await safeFetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+  if (!resp.ok) throw new Error(`下载失败 ${resp.status}`);
+  const declared = Number(resp.headers.get('content-length'));
+  if (declared > DOWNLOAD_MAX_BYTES) {
+    await resp.body?.cancel().catch(() => {});
+    throw new Error(`音频过大 (${declared} > ${DOWNLOAD_MAX_BYTES})`);
+  }
+  if (!resp.body) throw new Error('下载失败：上游无响应体');
+  const reader = resp.body.getReader();
+  const chunks: Buffer[] = [];
+  let received = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > DOWNLOAD_MAX_BYTES) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`音频过大 (流式累计 > ${DOWNLOAD_MAX_BYTES})`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return { bytes: Buffer.concat(chunks), contentType: resp.headers.get('content-type') };
+}
+
 async function attachmentToBlob(
   data: string,
   proc: ProcessService,
@@ -100,13 +134,10 @@ async function attachmentToBlob(
     return { blob: new Blob([bytes as unknown as ArrayBuffer]), filename: `audio.${guessAudioExt(path)}` };
   }
   if (data.startsWith('http://') || data.startsWith('https://')) {
-    const resp = await safeFetch(data);
-    if (!resp.ok) throw new Error(`下载失败 ${resp.status}`);
-    const ab = await resp.arrayBuffer();
-    const ctype = resp.headers.get('content-type');
+    const { bytes, contentType } = await downloadAudio(data);
     return {
-      blob: new Blob([ab], { type: ctype ?? 'application/octet-stream' }),
-      filename: `audio.${guessAudioExt(data, ctype)}`,
+      blob: new Blob([bytes as unknown as ArrayBuffer], { type: contentType ?? 'application/octet-stream' }),
+      filename: `audio.${guessAudioExt(data, contentType)}`,
     };
   }
   // storage URI（scheme:/...）或历史裸相对路径（data/... → data:/...）→ 经 storage 读取

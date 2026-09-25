@@ -1,5 +1,5 @@
 import { cronEngine } from '@aalis/api-cron-engine';
-import { createStorageGateway, storage, toStorageUri } from '@aalis/api-storage';
+import { createStorageGateway, isStorageNotFound, isStorageUri, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import type { WebuiPage } from '@aalis/api-webui';
 import { webuiServer } from '@aalis/api-webui';
@@ -199,8 +199,7 @@ const configSchema: ConfigSchema = {
     type: 'string',
     label: '动态任务存储路径',
     default: 'data:/scheduler-jobs.json',
-    description:
-      '通过 AI 或 WebUI 创建的任务会持久化到此 storage URI，重启后自动加载。也兼容旧格式 “data/scheduler-jobs.json”。',
+    description: '通过 AI 或 WebUI 创建的任务会持久化到此 storage URI，重启后自动加载。',
   },
 };
 
@@ -328,9 +327,9 @@ async function run(caps: Caps): Promise<void> {
   // ── 持久化读写 （经 storage 抽象，默认 data:/scheduler-jobs.json） ──
 
   const storageGateway = createStorageGateway(storage);
-  const persistUri = toStorageUri(config.persistPath);
+  const persistUri = config.persistPath;
   /**
-   * 激活时那次读失败了、又不是「文件不存在」（storage 不在场、读错误、解析失败）：写的是整表，
+   * 激活时那次读失败了、又不是「文件不存在」（storage 不在场、读错误、解析失败、结构不对）：写的是整表，
    * 此后一律拒写，否则下一次增删改就把原有动态任务冲掉。只在激活时读一次，storage 迟到也不重读。
    */
   let loadFailed = false;
@@ -342,13 +341,13 @@ async function run(caps: Caps): Promise<void> {
         raw = (await storageGateway.readFile(persistUri, 'utf-8')) as string;
       } catch (err) {
         // 只有「文件不存在」算全新；网关的「未知存储根」等其它失败不能当成空表
-        const code = (err as NodeJS.ErrnoException)?.code;
-        const msg = err instanceof Error ? err.message : String(err);
-        if (code === 'ENOENT' || (code === undefined && /ENOENT|not found|不存在/i.test(msg))) return [];
+        if (isStorageNotFound(err)) return [];
         throw err;
       }
       const data = JSON.parse(raw);
-      if (!Array.isArray(data)) return [];
+      if (!Array.isArray(data)) {
+        throw new Error(`持久化任务文件不是数组（得到 ${data === null ? 'null' : typeof data}）`);
+      }
       // biome-ignore lint/suspicious/noExplicitAny: 从 JSON 文件反序列化的原始字段，手动校验转型
       return data.map((j: any) => {
         const hasActor =
@@ -1137,8 +1136,20 @@ export function resolveConfig(raw: Record<string, unknown>): SchedulerConfig {
       content: String(j.content ?? ''),
       enabled: j.enabled !== false,
     })),
-    persistPath: String(raw.persistPath ?? 'data:/scheduler-jobs.json'),
+    persistPath: resolvePersistPath(raw.persistPath),
   };
+}
+
+/** persistPath 只接受 storage URI；未设、留空或非字符串用默认值，其它写法（如相对路径 data/scheduler-jobs.json）拒绝激活。 */
+function resolvePersistPath(input: unknown): string {
+  const s = typeof input === 'string' ? input.trim() : '';
+  if (!s) return 'data:/scheduler-jobs.json';
+  if (!isStorageUri(s)) {
+    throw new Error(
+      `plugin-scheduler 配置错误: persistPath="${s}" 不是 storage URI，请写成 <根名>:/<路径>（如 data:/scheduler-jobs.json），或删掉该键使用默认值`,
+    );
+  }
+  return s;
 }
 
 // ----- 事件类型（declaration merging）-----

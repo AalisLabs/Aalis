@@ -43,8 +43,6 @@ export interface CheckSpec {
   id: string;
   /** 检查分类，影响表格分组与默认排序 */
   category: CheckCategory;
-  /** 可选标签：仅用于日志/调试显示 */
-  label?: string;
   /** 来源插件名，自动由 DoctorService 注入；外部传入也可 */
   pluginName?: string;
   /** 执行函数：返回 1~N 条结果（一个 spec 可输出多条相关 check）。要用到的能力由注册方闭包带入 */

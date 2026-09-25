@@ -26,9 +26,6 @@
     "typescript": "^5.7.0",
     "@aalis/core": "workspace:*"
   },
-  "aalis": {
-    "types": true
-  },
   "keywords": [
     "aalis",
     "aalis-schema"

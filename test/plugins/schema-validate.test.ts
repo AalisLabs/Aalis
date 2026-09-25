@@ -58,6 +58,32 @@ describe('validateConfig select / multiselect', () => {
   });
 });
 
+describe('validateConfig list / map', () => {
+  it('list：需为数组、元素需为 string；保序与重复项不查', () => {
+    const schema: ConfigSchema = { args: field('list') };
+    expect(validateConfig(schema, { args: ['-e', 'A', '-e', 'A', '/p with space', ''] })).toEqual([]);
+    expect(validateConfig(schema, { args: '-y pkg' })).toEqual([
+      { path: 'args', message: '期望数组，得到 string', kind: 'invalid' },
+    ]);
+    expect(validateConfig(schema, { args: ['ok', 3] })).toEqual([
+      { path: 'args[1]', message: '期望 string 元素，得到 number', kind: 'invalid' },
+    ]);
+  });
+
+  it('map：需为对象、每个值需为 string，逐值带点号路径', () => {
+    const schema: ConfigSchema = { env: field('map') };
+    expect(validateConfig(schema, { env: { TOKEN: 'x', EMPTY: '' } })).toEqual([]);
+    expect(validateConfig(schema, { env: {} })).toEqual([]);
+    expect(validateConfig(schema, { env: 'KEY=VALUE' })).toEqual([
+      { path: 'env', message: '期望对象（映射），得到 string', kind: 'invalid' },
+    ]);
+    expect(validateConfig(schema, { env: ['KEY=VALUE'] })[0].message).toBe('期望对象（映射），得到 array');
+    expect(validateConfig(schema, { env: { PORT: 8080, OK: 'y' } })).toEqual([
+      { path: 'env.PORT', message: '期望 string 值，得到 number', kind: 'invalid' },
+    ]);
+  });
+});
+
 describe('validateConfig required 与缺失语义', () => {
   it('undefined 与 null（YAML 裸键）视为未配置：required 报缺，非 required 跳过', () => {
     const schema: ConfigSchema = { req: field('string', { required: true }), opt: field('number') };

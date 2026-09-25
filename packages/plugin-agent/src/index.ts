@@ -40,7 +40,13 @@ import {
 } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { ContentSegment, IncomingMessage, Message, OutgoingMessage, ToolCall } from '@aalis/schema-message';
-import { CONTROL_KINDS, getMessageName, getSenderLabel, WellKnownKinds } from '@aalis/schema-message';
+import {
+  CONTROL_KINDS,
+  getMessageName,
+  getSenderLabel,
+  WellKnownKinds,
+  WellKnownMetadataKeys,
+} from '@aalis/schema-message';
 import { normalizeAssistantContent, stripLeakedSpecialTokens, truncateChars } from '@aalis/util-text-normalize';
 import {
   buildFocusGuidance,
@@ -51,6 +57,7 @@ import {
   formatTimeLabel,
   INPUT_CONVENTIONS,
   isSameMessage,
+  toPersonaOptions,
 } from './helpers.js';
 import { assemblePromptContributions, VOLATILE_INJECTOR } from './prompt-assembly.js';
 
@@ -576,9 +583,7 @@ class DefaultAgent implements AgentService {
       // 默认 provider 全局窗口与会话实际 model 不一致的偏差（Bug F 结构性修复）。
       const maxTokens = getModelMaxOutput(llm);
       const contextLength = llm.contextLength;
-      // 预留 token 预算 = 上下文长度 × trimThresholdRatio - 最大输出 token - 安全余量
-      // trimThresholdRatio < 1 可提前触发裁剪，默认 1.0 = 用满扣除输出预留后的可用窗口
-      const tokenBudget = Math.max(1024, Math.floor(contextLength * this.trimThresholdRatio) - maxTokens - 512);
+      const tokenBudget = this.computeTokenBudget(contextLength, maxTokens);
 
       // 本回合经工具循环写入 memory 的 (assistant+toolCalls + tool 结果) 消息时间戳。
       // 只用于中止日志里的条数：中止时这些已完成的工具调用记录保留不回滚（见下方 catch 分支）。
@@ -599,13 +604,7 @@ class DefaultAgent implements AgentService {
             : this.maxToolIterations;
 
         // 构建 persona 会话选项（从 resolved config 中提取，传给 persona 服务）
-        const personaOpts: PersonaSessionOptions | undefined = resolved
-          ? {
-              persona: resolved.persona,
-              disableOutputFormat: resolved.disableOutputFormat,
-              clientSideJsonRendering: resolved.clientSideJsonRendering,
-            }
-          : undefined;
+        const personaOpts = toPersonaOptions(resolved);
 
         // 会话级 thinking 覆盖（/session.set -t on|off）：未设置则不带 think 字段，
         // 由各 provider 按自己的全局配置决定（ollama thinking / deepseek thinkingMode）。
@@ -1005,14 +1004,15 @@ class DefaultAgent implements AgentService {
         // 重试循环：当 hook（如 persona 的 outputFormat 解析）报告 retryRequested 时，
         // 把失败的 assistant 输出 + 系统反馈追加到消息列表，重新请求 LLM；最多按 maxRetries 次。
         // maxRetries 由 hook 端写入（plugin-persona 从 outputFormat.retries 读取，默认 1）。
+        // 上游吐空流同样会被判不合格：此时没有可回放的失败输出，只追加系统反馈再请求一次。
         const maxRetries = Math.max(0, responseData.maxRetries ?? 0);
         let attempt = 0;
-        while (responseData.retryRequested && attempt < maxRetries && rawLlmContent.length > 0) {
+        while (responseData.retryRequested && attempt < maxRetries) {
           attempt++;
           this.logger.debug(
             `agent:reply:before 请求重试 (attempt=${attempt}/${maxRetries}, session=${incoming.sessionId}): ${responseData.retryFeedback ?? '(无反馈)'}`,
           );
-          llmBeforeData.messages.push({ role: 'assistant', content: rawLlmContent });
+          if (rawLlmContent.length > 0) llmBeforeData.messages.push({ role: 'assistant', content: rawLlmContent });
           llmBeforeData.messages.push({
             role: 'system',
             content:
@@ -1040,6 +1040,7 @@ class DefaultAgent implements AgentService {
           // 用新输出再次跑 hook；hook 端根据 attempt 决定继续重试或走兜底（静默丢弃）
           responseData.content = rawLlmContent;
           responseData.archiveContent = undefined;
+          responseData.visibleContent = undefined;
           responseData.retryRequested = false;
           responseData.retryFeedback = undefined;
           responseData.attempt = attempt;
@@ -1058,6 +1059,7 @@ class DefaultAgent implements AgentService {
 
         replyContent = responseData.content;
         const archiveContent = responseData.archiveContent ?? rawLlmContent;
+        const visibleContent = responseData.visibleContent ?? replyContent;
 
         // 重复检测：如果回复与最近一条 assistant 消息完全相同，视为模型"卡壳"，静默跳过。
         // 比的是 archiveContent（与落库同源口径）——启用 outputFormat 时历史里存的是整串 JSON，
@@ -1100,6 +1102,10 @@ class DefaultAgent implements AgentService {
             ...(assistantMetadata ?? {}),
             modelInfo: turnModelInfo,
           };
+          // 落库的是信封（如 outputFormat 的整串 JSON）时，另带解码后的可见正文，供检索、摘要等按语义读历史的一方用
+          if (visibleContent !== archiveContent) {
+            finalAssistantMetadata[WellKnownMetadataKeys.VisibleContent] = visibleContent;
+          }
 
           // 保存最终 assistant 回复：优先存 persona 修复/规范化后的 JSON，保持格式完整，
           // 避免坏 JSON 或解码后纯文本污染历史 few-shot 示例导致模型不再遵守 outputFormat
@@ -1361,6 +1367,15 @@ class DefaultAgent implements AgentService {
     messages.push(userMessage);
 
     return messages;
+  }
+
+  /**
+   * 裁剪预算 = 上下文长度 × trimThresholdRatio − 最大输出 token − 512 安全余量（下限 1024）。
+   * trimThresholdRatio < 1 可提前触发裁剪，默认 1.0 = 用满扣除输出预留后的可用窗口。
+   * 真实回合与 token:request 快照共用，两处的预算口径因此一致。
+   */
+  private computeTokenBudget(contextLength: number, maxTokens: number): number {
+    return Math.max(1024, Math.floor(contextLength * this.trimThresholdRatio) - maxTokens - 512);
   }
 
   /**
@@ -2014,6 +2029,7 @@ type InternalAgent = {
   historyLimit: number;
   promptBuildTimeoutMs: number;
   resolveLLM(platform?: string, sessionId?: string): Promise<LLMModelEntry | undefined>;
+  computeTokenBudget(contextLength: number, maxTokens: number): number;
   buildSystemPrompt(personaOpts?: PersonaSessionOptions): string;
   emitTokenUsage(
     sessionId: string,
@@ -2276,14 +2292,18 @@ function run(caps: Caps): void {
 
       const contextLength = llm.contextLength;
       const maxTokens = getModelMaxOutput(llm);
-      const tokenBudget = Math.max(1024, contextLength - maxTokens - 512);
+      const tokenBudget = agent.computeTokenBudget(contextLength, maxTokens);
+
+      // 与真实回合同一份会话解析：人设覆盖、结构化输出开关、额外提示都影响系统提示长度
+      const sm = caps.sessionManager.current;
+      const sessionResolved = sm ? sm.resolveConfig(data.sessionId, platform) : undefined;
 
       // 获取历史消息并构建基础消息列表
       const memory = caps.memory.current;
       const messages: Message[] = [];
 
       // 系统提示
-      const systemPrompt = agent.buildSystemPrompt();
+      const systemPrompt = agent.buildSystemPrompt(toPersonaOptions(sessionResolved));
       messages.push({ role: 'system', content: systemPrompt, metadata: { injector: 'persona' } });
 
       // 历史消息
@@ -2294,8 +2314,6 @@ function run(caps: Caps): void {
 
       // 与真实回合同序：先组装 agent:prompt 贡献（摘要/向量记忆/档案等物化为 system 块），
       // 再跑 agent:llm:before（工具搜索层过滤等拦截职责），使快照贴近实际送入 LLM 的形态
-      const sm = caps.sessionManager.current;
-      const sessionResolved = sm ? sm.resolveConfig(data.sessionId, platform) : undefined;
       const enabledGroups = sessionResolved?.enabledToolGroups?.length ? sessionResolved.enabledToolGroups : undefined;
       const tools = caps.tools.current?.getDefinitions(enabledGroups ? { groups: enabledGroups } : undefined) ?? [];
 

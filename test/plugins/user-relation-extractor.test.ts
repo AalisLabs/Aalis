@@ -59,6 +59,11 @@ function bindHost(app: App) {
   return app.bind({ provide, events, logger, memory, llm, platform });
 }
 
+/** 直驱一轮提取（私有方法；插件不提供手动触发入口，生产上只由消息计数触发） */
+function extractNow(extractor: RelationExtractor, sessionId: string): Promise<void> {
+  return (extractor as unknown as { extractSession(sid: string): Promise<void> }).extractSession(sessionId);
+}
+
 async function setup(llmContent: string) {
   const app = new App({ name: 'T', logLevel: 'error' });
   const host = bindHost(app);
@@ -98,7 +103,6 @@ async function setup(llmContent: string) {
     debug: false,
   });
   extractor.start();
-  service.setTriggerExtractionHandler(sid => extractor.triggerNow(sid));
   return { app, host, mem, service, extractor, calls, fail };
 }
 
@@ -155,8 +159,7 @@ describe('plugin-user-relation: extractor', () => {
     const { mem, service, extractor, calls } = await setup(llmJson);
     await mem.saveMessage('sess1', mkUserMsg('m1', 'a', '我们安排一下本周直播', 'Alice'));
     await mem.saveMessage('sess1', mkUserMsg('m2', 'b', '好啊，我也来', 'Bob'));
-    const res = await extractor.triggerNow('sess1');
-    expect(res.status).toBe('ok');
+    await extractNow(extractor, 'sess1');
     expect(calls).toHaveLength(1);
 
     const snap = await service.loadAll();
@@ -205,7 +208,7 @@ describe('plugin-user-relation: extractor', () => {
       });
       extractor.start();
       reads = 0;
-      await extractor.triggerNow('sess-count');
+      await extractNow(extractor, 'sess-count');
       // 精确值而非上界：这条断言的全部意义就在次数上，松一格就测不出回归
       //（实测合并=1、拆开=2，写 <=2 两种情形都会过——第一版就踩了这个假绿）。
       // 日后若确有必要多读一次，请连同理由一起改这个数字，别放宽成不等式。
@@ -229,7 +232,7 @@ describe('plugin-user-relation: extractor', () => {
     });
     const { mem, service, extractor } = await setup(llmJson);
     await mem.saveMessage('sess1', mkUserMsg('m1', 'a', 'hello'));
-    await extractor.triggerNow('sess1');
+    await extractNow(extractor, 'sess1');
     const snap = await service.loadAll();
     expect(snap.events).toHaveLength(1);
     expect(snap.events[0].evidence).toHaveLength(0);
@@ -248,17 +251,21 @@ describe('plugin-user-relation: extractor', () => {
     });
     const { mem, service, extractor } = await setup(llmJson);
     await mem.saveMessage('sess1', mkUserMsg('m1', 'a', '完全无关的内容'));
-    await extractor.triggerNow('sess1');
+    await extractNow(extractor, 'sess1');
     const snap = await service.loadAll();
     expect(snap.events[0].evidence).toHaveLength(0);
   });
 
-  it('inFlight 防并发：同 session 第二次调用立即 skipped', async () => {
+  it('inFlight 防并发：同 session 第二次调用立即返回，不重复调 LLM', async () => {
     // 用慢 LLM 让首次调用还在飞
+    let chatCalls = 0;
     const slowLLM: LLMModel = {
       id: 'slow',
       capabilities: ['chat'],
-      chat: () => new Promise<ChatResponse>(r => setTimeout(() => r({ content: '{}' }), 30)),
+      chat: () => {
+        chatCalls++;
+        return new Promise<ChatResponse>(r => setTimeout(() => r({ content: '{}' }), 30));
+      },
     } as unknown as LLMModel;
     const app = new App({ name: 'T', logLevel: 'error' });
     const host = bindHost(app);
@@ -283,17 +290,16 @@ describe('plugin-user-relation: extractor', () => {
     });
     extractor.start();
     await mem.saveMessage('sess1', mkUserMsg('m1', 'a', 'hi'));
-    const p1 = extractor.triggerNow('sess1');
-    const p2 = await extractor.triggerNow('sess1');
-    expect(p2.status).toBe('skipped');
+    const p1 = extractNow(extractor, 'sess1');
+    await extractNow(extractor, 'sess1');
     await p1;
+    expect(chatCalls).toBe(1);
   });
 
   it('messageId 缺失的消息不触发提取（窗口内无可提取消息）', async () => {
     const { mem, service, extractor, calls } = await setup('{}');
     await mem.saveMessage('sess1', { role: 'user', content: 'no metadata' });
-    const res = await extractor.triggerNow('sess1');
-    expect(res.status).toBe('ok');
+    await extractNow(extractor, 'sess1');
     expect(calls).toHaveLength(0); // 无可提取消息，未调 LLM
     const snap = await service.loadAll();
     expect(snap.persons).toHaveLength(0);
@@ -302,8 +308,7 @@ describe('plugin-user-relation: extractor', () => {
   it('LLM 返回非 JSON → 静默跳过', async () => {
     const { mem, service, extractor } = await setup('我不会输出 JSON');
     await mem.saveMessage('sess1', mkUserMsg('m1', 'a', 'hi'));
-    const res = await extractor.triggerNow('sess1');
-    expect(res.status).toBe('ok');
+    await extractNow(extractor, 'sess1');
     const snap = await service.loadAll();
     expect(snap.persons).toHaveLength(0);
   });
@@ -389,27 +394,6 @@ describe('plugin-user-relation: extractor', () => {
     expect(calls).toHaveLength(8);
   });
 
-  it('手动 triggerNow 不受退避门限制，成功即清除退避', async () => {
-    const { host, mem, extractor, calls, fail } = await setup(EMPTY_EXTRACTION);
-    await mem.saveMessage('sb2', mkUserMsg('m1', 'a', 'hi'));
-    const advance = async () => {
-      for (let i = 0; i < 3; i++) host.events.emit('inbound:message:archived', { sessionId: 'sb2' } as never);
-      await new Promise(r => setTimeout(r, 15));
-    };
-
-    fail.remaining = Number.POSITIVE_INFINITY;
-    await advance(); // 自动触发失败 → penalty=2，下一触发点本应被跳过
-    expect(calls).toHaveLength(1);
-
-    fail.remaining = 0;
-    const res = await extractor.triggerNow('sb2'); // 手动触发绕过退避门
-    expect(res.status).toBe('ok');
-    expect(calls).toHaveLength(2);
-    // 手动成功已清除退避：下一个自动触发点正常执行（若未清除会被 skip 吞掉）
-    await advance();
-    expect(calls).toHaveLength(3);
-  });
-
   it('senderNeighborhoodEdgeLimit>0：把已知发言人的 1 跳邻居子图注入到 LLM prompt', async () => {
     // 先用一轮提取把 alice→三角洲(entity) 关系写进去
     const seedJson = JSON.stringify({
@@ -440,8 +424,7 @@ describe('plugin-user-relation: extractor', () => {
     (extractor as unknown as { cfg: { senderNeighborhoodEdgeLimit: number } }).cfg.senderNeighborhoodEdgeLimit = 5;
 
     await mem.saveMessage('sN', mkUserMsg('s1', 'alice', '我喜欢三角洲', 'Alice'));
-    let res = await extractor.triggerNow('sN');
-    expect(res.status).toBe('ok');
+    await extractNow(extractor, 'sN');
     const snapAfterSeed = await service.loadAll();
     expect(snapAfterSeed.entities.some(e => e.name === '三角洲')).toBe(true);
 
@@ -456,8 +439,7 @@ describe('plugin-user-relation: extractor', () => {
 
     // 第二轮：再 alice 发一条新消息，触发 neighbor 注入
     await mem.saveMessage('sN', mkUserMsg('s2', 'alice', '今晚开黑', 'Alice'));
-    res = await extractor.triggerNow('sN');
-    expect(res.status).toBe('ok');
+    await extractNow(extractor, 'sN');
 
     const lastCall = calls.at(-1);
     expect(lastCall).toBeDefined();
@@ -511,8 +493,7 @@ describe('plugin-user-relation: extractor', () => {
     });
     const { mem, service, extractor } = await setup(llmJson);
     await mem.saveMessage('sess1', mkUserMsg('m1', 'a', '我玩三角洲', 'Alice'));
-    const res = await extractor.triggerNow('sess1');
-    expect(res.status).toBe('ok');
+    await extractNow(extractor, 'sess1');
 
     const snap = await service.loadAll();
     // aalis:aalis 不应入库
@@ -579,8 +560,7 @@ describe('plugin-user-relation: extractor', () => {
     });
     const { mem, service, extractor } = await setup(llmJson);
     await mem.saveMessage('sess1', mkUserMsg('m1', 'a', '测试', 'Alice'));
-    const res = await extractor.triggerNow('sess1');
-    expect(res.status).toBe('ok');
+    await extractNow(extractor, 'sess1');
 
     const snap = await service.loadAll();
     const personIds = snap.persons.map(p => p.id).sort();
@@ -629,8 +609,7 @@ describe('plugin-user-relation: extractor', () => {
       crossSessionMaxAgeMinutes: 0,
     });
 
-    const res = await xExtractor.triggerNow('sessB');
-    expect(res.status).toBe('ok');
+    await extractNow(xExtractor, 'sessB');
     expect(calls).toHaveLength(1);
 
     const userMsg = calls[0].messages.find(m => m.role === 'user');

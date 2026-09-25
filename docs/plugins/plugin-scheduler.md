@@ -35,7 +35,7 @@ export default definePlugin({
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `jobs` | array | `[]` | 计划任务列表：配置定时/周期性任务，让 AI 主动执行计划。 |
-| `persistPath` | string | `'data:/scheduler-jobs.json'` | 动态任务存储路径：通过 AI 或 WebUI 创建的任务会持久化到此 storage URI，重启后自动加载。也兼容旧格式 “data/scheduler-jobs.json”。 |
+| `persistPath` | string | `'data:/scheduler-jobs.json'` | 动态任务存储路径：通过 AI 或 WebUI 创建的任务会持久化到此 storage URI，重启后自动加载。 |
 
 ## 注册工具
 
@@ -60,7 +60,7 @@ export default definePlugin({
 
 ## 工作方式
 
-1. 任务有三个来源：配置项 `jobs`（静态任务）、WebUI「计划任务」页，以及 AI 调用的 `scheduler_create_job` 工具。后两者创建的是动态任务，会持久化到 `persistPath`。
+1. 任务有三个来源：配置项 `jobs`（静态任务）、WebUI「计划任务」页，以及 AI 调用的 `scheduler_create_job` 工具。后两者创建的是动态任务，会持久化到 `persistPath`（只接受 storage URI，写成相对路径等其它形态时拒绝激活）。激活时读不懂该文件（不存在以外的读取错误、解析失败、内容不是数组）则本次运行不再写入它，动态任务的增删改只在内存生效，原文件保持原样；文件不存在按全新处理。
 2. cron 任务订阅 cron-engine 服务的共享 tick（可按 `timeZone` 求值）；interval 任务用固定间隔定时器；runAt 任务到点执行一次，之后动态任务被删除，静态任务被停用。
 3. `cron` / `interval` / `runAt` / `delaySeconds` 是四种互不相容的定时语义，**恰好填一个**：一个都不填报「必须填写其中之一」，填了两个以上报「互斥，只能填一个」，不会静默取其中之一。WebUI 表单与 `scheduler_create_job` 工具两条路径同一条判据。
 4. 「暂停」只对周期任务（`cron` / `interval`）有效：一次性任务一旦被暂停，到点的定时器直接跳过且不会重排，任务会永久卡住。因此**一次性任务不能暂停，只能删除重建**：运行时入口一律拒绝——创建时 `paused` 与 `runAt` / `delaySeconds` 同填直接报错，事后调 `pauseJob`（AI 工具 / WebUI 按钮）返回失败。存量持久化文件里带 `paused` 的一次性任务，启动时告警并按未暂停处理（要停掉它请改 `enabled` 或删除任务）。

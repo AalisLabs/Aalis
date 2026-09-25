@@ -21,9 +21,10 @@ import { stubBoundTools } from '../fixtures/bound-tools.js';
 
 /**
  * 真 fs 后端的 storage：只实现 file_* 用到的方法。
- * unreadable / ioFailing 里的 URI 模拟读失败的两类非 ENOENT 错误（不可读的根 / 瞬时 IO 错）。
+ * unreadable / ioFailing 里的 URI 模拟读失败的两类非 ENOENT 错误（不可读的根 / 瞬时 IO 错）；
+ * deniedNotFound 里的 URI 抛带 EACCES code、文案却含 not found 的错误（提供者措辞撞上判据文案）。
  */
-function fsStorage(base: string, unreadable: Set<string>, ioFailing: Set<string>) {
+function fsStorage(base: string, unreadable: Set<string>, ioFailing: Set<string>, deniedNotFound: Set<string>) {
   const toPath = (uri: string) => join(base, uri.replace(/^workspace:\//, ''));
   return {
     listRoots: () => [{ name: 'workspace', readable: true, writable: true }],
@@ -34,6 +35,9 @@ function fsStorage(base: string, unreadable: Set<string>, ioFailing: Set<string>
     readFile: async (uri: string, encoding?: string) => {
       if (unreadable.has(uri)) throw new Error(`EACCES: permission denied, open '${uri}'`);
       if (ioFailing.has(uri)) throw new Error(`EIO: i/o error, read '${uri}'`);
+      if (deniedNotFound.has(uri)) {
+        throw Object.assign(new Error(`access denied: credentials not found for '${uri}'`), { code: 'EACCES' });
+      }
       const buf = await readFile(toPath(uri));
       return encoding ? buf.toString('utf-8') : buf;
     },
@@ -66,12 +70,14 @@ function fsStorage(base: string, unreadable: Set<string>, ioFailing: Set<string>
 let base: string;
 let unreadable: Set<string>;
 let ioFailing: Set<string>;
+let deniedNotFound: Set<string>;
 let call: (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
 beforeEach(() => {
   base = mkdtempSync(join(tmpdir(), 'aalis-file-safety-'));
   unreadable = new Set<string>();
   ioFailing = new Set<string>();
+  deniedNotFound = new Set<string>();
   const tools: Record<string, Omit<RegisteredTool, 'pluginName'>> = {};
   const svc = stubBoundTools({
     onRegister: t => {
@@ -83,7 +89,7 @@ beforeEach(() => {
     maxSearchBytes: 1048576,
     maxWriteSize: 10485760,
     allowedRoots: ['workspace'],
-    storage: fsStorage(base, unreadable, ioFailing) as never,
+    storage: fsStorage(base, unreadable, ioFailing, deniedNotFound) as never,
     cwdState: new CwdState('workspace:/'),
   } as never);
   call = async (name, args) => JSON.parse((await tools[name].handler(args, { sessionId: 's1' } as never)) as string);
@@ -178,6 +184,15 @@ describe('file_append：读原文失败不当空串', () => {
     expect(r.error).toMatch(/EIO/);
     expect(r.message).toBeUndefined();
     expect(diskText('d.md')).toBe('k1\nk2\nk3\n');
+  });
+
+  it('读原文报错带非 ENOENT 的 code、文案却含 not found → 报错，不当成新建', async () => {
+    writeFileSync(join(base, 'e.md'), 'm1\nm2\n');
+    deniedNotFound.add('workspace:/e.md');
+    const r = await call('file_append', { path: 'workspace:/e.md', content: 'm3\n' });
+    expect(r.error).toMatch(/access denied/);
+    expect(r.message).toBeUndefined();
+    expect(diskText('e.md')).toBe('m1\nm2\n');
   });
 
   it('文件不存在 → 仍按创建处理', async () => {

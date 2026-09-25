@@ -2,7 +2,7 @@ import { type FlowControlService, type FlowSessionStateSnapshot, flowControl } f
 import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
-import { createStorageGateway, storage } from '@aalis/api-storage';
+import { createStorageGateway, isStorageNotFound, storage } from '@aalis/api-storage';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
@@ -145,7 +145,7 @@ const uses = {
   config,
   provide,
   gateway,
-  // 持久化禁言状态用；缺席时写失败只记 warn、流控照常跑；上线（含晚于本插件）时由 follow 读回
+  // 持久化禁言状态用；缺席时写失败只记 warn、流控照常跑；上线（含晚于本插件）时由 follow 读回，读不懂则本次运行拒写
   storage: optional(storage),
   messageArchive: optional(messageArchive),
 };
@@ -173,17 +173,28 @@ async function run(caps: Caps): Promise<void> {
   // 重启后重建无危；但 mutedUntil 可能是小时级的「用户意图」，丢失会导致重启后静默解除。
   const storage = createStorageGateway(caps.storage);
   const muteStateUri = 'data:/flow-control-mutes.json';
+  /**
+   * 禁言表读不懂（不是「文件不存在」的读失败、解析失败、结构不对）：写的是整表，此后拒写，
+   * 否则下一次 setMuted 就把原有禁言冲掉。每次读（storage 换人时 follow 重读）都重新判定。
+   */
+  let loadFailed = false;
 
   async function loadMuteState(): Promise<void> {
+    loadFailed = false;
+    let raw: string;
     try {
-      let raw: string;
-      try {
-        raw = (await storage.readFile(muteStateUri, 'utf-8')) as string;
-      } catch {
-        return;
-      }
+      raw = (await storage.readFile(muteStateUri, 'utf-8')) as string;
+    } catch (err) {
+      if (isStorageNotFound(err)) return;
+      loadFailed = true;
+      logger.warn(`[flow] 读取禁言表失败，本次运行不再写入该文件: ${err}`);
+      return;
+    }
+    try {
       const data = JSON.parse(raw) as Record<string, { platform?: string; mutedUntil?: number }>;
-      if (!data || typeof data !== 'object') return;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw new Error('禁言表顶层不是 JSON 对象');
+      }
       const now = Date.now();
       let restored = 0;
       for (const [sessionId, entry] of Object.entries(data)) {
@@ -202,7 +213,8 @@ async function run(caps: Caps): Promise<void> {
       }
       if (restored > 0) logger.info(`[flow] 已恢复 ${restored} 个未过期的禁言状态`);
     } catch (err) {
-      logger.warn(`[flow] 加载禁言状态失败: ${err}`);
+      loadFailed = true;
+      logger.warn(`[flow] 解析禁言表失败，本次运行不再写入该文件: ${err}`);
     }
   }
 
@@ -220,6 +232,10 @@ async function run(caps: Caps): Promise<void> {
       .then(async () => {
         // 写的是整表：禁言表还在读时先等它并进内存，否则这次写会冲掉磁盘上的其它会话
         if (loading) await loading;
+        if (loadFailed) {
+          logger.warn('[flow] 禁言表加载失败，跳过写入以免覆盖（本次改动仅在内存生效）');
+          return;
+        }
         const now = Date.now();
         const out: Record<string, { platform: string; mutedUntil: number }> = {};
         for (const [sessionId, s] of states.entries()) {

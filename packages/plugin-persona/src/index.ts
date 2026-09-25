@@ -42,6 +42,19 @@ interface PersonaIdentity {
   senderTitle?: string;
 }
 
+/**
+ * 合成回合（scheduler / workflow / delegate / idle）不经适配器，消息上没有 sessionType：按
+ * `<platform>:<self>:<type>:<target>` 约定从 sessionId 推断（与下方取群号同一约定），只认前缀等于
+ * platform 的 id。只用于提示词、不回写消息——写回会把合成回合拖进 flow-control / trigger-policy
+ * 的 `*:group` 闸，定时群消息会被吞掉。
+ */
+function inferSessionType(platform: string, sessionId: string): PersonaIdentity['sessionType'] {
+  const parts = sessionId.split(':');
+  if (parts.length < 4 || parts[0] !== platform) return undefined;
+  const t = parts[2];
+  return t === 'group' || t === 'private' || t === 'channel' ? t : undefined;
+}
+
 // ===== 插件元数据 =====
 
 const configSchema: ConfigSchema = {
@@ -243,6 +256,10 @@ class PersonaServiceImpl implements PersonaService {
       prompt += `性格特点: ${effectiveCard.traits.join('、')}\n\n`;
     }
     prompt += effectiveCard.prompt;
+
+    // 会话级额外提示：接在人设之后、格式说明之前，格式说明仍是整段的收尾
+    const extra = options?.systemPromptExtra?.trim();
+    if (extra) prompt += `\n\n${extra}`;
 
     // 追加结构化输出指令 — 尊重调用方传入的 disableOutputFormat
     const effectiveFormat = options?.disableOutputFormat ? undefined : this.getCardOutputFormat(effectiveCard);
@@ -470,12 +487,7 @@ async function run(caps: Caps): Promise<void> {
 
   const storage = createStorageGateway(caps.storage);
 
-  // 候选目录：用户配置 + configDir/personas（若存在 configDir 根，则用 configDir 根；否则跳过）。
-  // 每次用时现取根列表：storage 是可选依赖、不参与拓扑，本插件可能先于存储提供者激活，
-  // 激活时拍的快照会一直漏掉 configDir。
   const personasDir = toStorageUri(personasDirRaw);
-  const searchUris = (): string[] =>
-    storage.listRoots().some(r => r.name === 'configDir') ? [personasDir, 'configDir:/personas'] : [personasDir];
 
   /** 读到了但解析不出卡的标记——与"文件不存在"区分开，避免坏卡被当成没有卡 */
   const INVALID = 'invalid' as const;
@@ -528,41 +540,37 @@ async function run(caps: Caps): Promise<void> {
 
   async function findCard(name: string): Promise<{ card: PersonaCard; uri: string } | typeof INVALID | undefined> {
     let sawInvalid = false;
-    for (const dir of searchUris()) {
-      for (const ext of ['.yaml', '.yml']) {
-        const uri = joinUri(dir, `${name}${ext}`);
-        const card = await tryLoadCardFromUri(uri);
-        if (card === INVALID) {
-          sawInvalid = true;
-          continue;
-        }
-        if (card) return { card, uri };
+    for (const ext of ['.yaml', '.yml']) {
+      const uri = joinUri(personasDir, `${name}${ext}`);
+      const card = await tryLoadCardFromUri(uri);
+      if (card === INVALID) {
+        sawInvalid = true;
+        continue;
       }
+      if (card) return { card, uri };
     }
     return sawInvalid ? INVALID : undefined;
   }
 
-  /** 扫描所有 personas 目录，预填 cache。 */
+  /** 扫描人设目录，预填 cache。 */
   async function scanAll(svc: PersonaServiceImpl): Promise<Set<string>> {
     const seenNames = new Set<string>();
-    for (const dir of searchUris()) {
-      let result: Awaited<ReturnType<StorageService['list']>>;
-      try {
-        result = await storage.list(dir);
-      } catch {
-        continue;
-      }
-      for (const entry of result.entries) {
-        if (entry.isDirectory) continue;
-        const m = /^(.+)\.ya?ml$/i.exec(entry.name);
-        if (!m) continue;
-        const cardName = m[1];
-        if (seenNames.has(cardName)) continue;
-        const card = await tryLoadCardFromUri(entry.uri);
-        if (card && card !== INVALID) {
-          svc.setCardCacheEntry(cardName, card);
-          seenNames.add(cardName);
-        }
+    let result: Awaited<ReturnType<StorageService['list']>>;
+    try {
+      result = await storage.list(personasDir);
+    } catch {
+      return seenNames;
+    }
+    for (const entry of result.entries) {
+      if (entry.isDirectory) continue;
+      const m = /^(.+)\.ya?ml$/i.exec(entry.name);
+      if (!m) continue;
+      const cardName = m[1];
+      if (seenNames.has(cardName)) continue;
+      const card = await tryLoadCardFromUri(entry.uri);
+      if (card && card !== INVALID) {
+        svc.setCardCacheEntry(cardName, card);
+        seenNames.add(cardName);
       }
     }
     return seenNames;
@@ -607,7 +615,7 @@ async function run(caps: Caps): Promise<void> {
     }
   }
 
-  // 跟随 storage：在场即补建主目录、挂监听、全量扫描；提供者换代（重启 / 改配置 / 晚上线）时重挂。
+  // 跟随 storage：在场即补建人设目录、挂监听、全量扫描；提供者换代（重启 / 改配置 / 晚上线）时重挂。
   // 换代时 follow 先跑上次返回的清理，关掉挂在旧提供者上的监听。
   // 首挂放在 sticky 的 app:ready 里并等它扫完，保持「start() 返回时主卡已按存储加载」；此刻 storage 不在场则等它上线再挂。
   events.on('app:ready', async () => {
@@ -616,7 +624,7 @@ async function run(caps: Caps): Promise<void> {
       const offs: Array<() => void> = [];
       let cancelled = false;
       const task = (async () => {
-        // 首启主目录尚不存在时 watch 会 ENOENT：先补建（只建本插件的主目录，configDir 等外部根不代建）。
+        // 首启人设目录尚不存在时 watch 会 ENOENT：先补建。
         // 与监听分开：只读根 / 符号链接目录上 mkdir 会抛，不能连带放弃对已存在目录的监听。
         try {
           await storage.stat(personasDir);
@@ -629,13 +637,11 @@ async function run(caps: Caps): Promise<void> {
         }
         if (cancelled) return;
         // 先挂监听再扫描：扫描期间的改动不会漏掉
-        for (const dir of searchUris()) {
-          try {
-            const off = storage.watch?.(dir, () => void refresh(`目录变化已重新加载（${dir}）`));
-            if (off) offs.push(off);
-          } catch (err) {
-            logger.warn(`persona 目录监听失败（${dir}）：${err}`);
-          }
+        try {
+          const off = storage.watch?.(personasDir, () => void refresh(`目录变化已重新加载（${personasDir}）`));
+          if (off) offs.push(off);
+        } catch (err) {
+          logger.warn(`persona 目录监听失败（${personasDir}）：${err}`);
         }
         await refresh('扫描完成');
       })();
@@ -678,7 +684,7 @@ async function run(caps: Caps): Promise<void> {
     const identity: PersonaIdentity = {
       sessionId: data.message.sessionId,
       platform: data.message.platform,
-      sessionType: data.message.sessionType,
+      sessionType: data.message.sessionType ?? inferSessionType(data.message.platform, data.message.sessionId),
       selfId: selfIdentity?.selfId,
       selfNickname: selfIdentity?.nickname,
       userId: data.message.userId,
@@ -836,6 +842,8 @@ async function run(caps: Caps): Promise<void> {
         }
 
         data.archiveContent = JSON.stringify(parsed);
+        // 可见正文单独交给 agent 落库：客户端渲染模式下 content 仍是整串 JSON
+        data.visibleContent = reply;
 
         // 客户端渲染模式：保留完整 JSON 给前端，不提取回复字段
         if (!clientRendered) {

@@ -39,7 +39,7 @@ export default definePlugin({
 
 ## 角色卡格式
 
-人设以 YAML 文件定义，文件名（不含 `.yaml` / `.yml` 后缀）即 `persona` 配置值。插件先查 `personasDir`；存储中存在 `configDir` 根时，再查 `configDir:/personas`。找不到指定人设时使用内置默认角色。插件监听上述目录（需存储支持 watch），文件变化后自动重新加载；存储提供者重启、改配置或晚于启动上线时自动重挂监听并重新扫描。
+人设以 YAML 文件定义，放在 `personasDir` 下，文件名（不含 `.yaml` / `.yml` 后缀）即 `persona` 配置值。找不到指定人设时使用内置默认角色。插件监听该目录（需存储支持 watch），文件变化后自动重新加载；存储提供者重启、改配置或晚于启动上线时自动重挂监听并重新扫描。
 
 ```yaml
 name: Alice
@@ -76,15 +76,15 @@ outputFormat:
 当角色卡定义了 `outputFormat` 时：
 
 1. 在 system prompt 中追加 JSON 格式要求，指示 LLM 以特定 JSON 结构回复
-2. 按 `replyField`（标记 `reply: true` 的字段）提取回复；若该字段缺失，先按 `response` / `reply` / `content` / `answer` / `text` / `msg` 别名回退，再退到唯一的字符串字段。角色卡设置 `clientSideJsonRendering: true`（或会话配置如此覆盖）时不提取回复字段，保留原始 JSON 由客户端渲染
+2. 按 `replyField`（标记 `reply: true` 的字段）提取回复；若该字段缺失，先按 `response` / `reply` / `content` / `answer` / `text` / `msg` 别名回退，再退到唯一的字符串字段。角色卡设置 `clientSideJsonRendering: true`（或会话配置如此覆盖）时不提取回复字段，保留原始 JSON 由客户端渲染。历史里存的是规范化后的整串 JSON，解码出的回复另作为可见正文随 assistant 消息的 metadata 落库
 3. 所有声明字段都必须出现且类型正确，否则要求模型重试（次数由 `outputFormatRetries` 定，缺省 1 次，`0` 表示不重试）；重试用尽则丢弃本次回复
 4. 启用 `statePersistence` 时，非回复字段作为会话状态保存，下一轮注入提示
 5. 当回复字段为空字符串时跳过发送
 
 ## API
 
-- `getSystemPrompt(options?)`: 返回静态人设提示（名称、描述、性格、prompt 及 outputFormat 格式说明），同一张卡下逐轮不变
-- `getVolatilePrompt(options?)`: 返回逐轮变化的上下文，包括当前时间（`timeInjection`，时区取 `timeZone`）、当前会话环境、上一轮状态（`statePersistence`）；调用方应把它放在历史消息之后、当前用户消息之前
+- `getSystemPrompt(options?)`: 返回静态人设提示（名称、描述、性格、prompt、会话级额外提示 `systemPromptExtra` 及 outputFormat 格式说明），同一张卡下逐轮不变
+- `getVolatilePrompt(options?)`: 返回逐轮变化的上下文，包括当前时间（`timeInjection`，时区取 `timeZone`）、当前会话环境、上一轮状态（`statePersistence`）；调用方应把它放在历史消息之后、当前用户消息之前。定时、编排、委派等合成回合的消息不带会话类型时，按 sessionId 的 `<platform>:<self>:<type>:<target>` 约定推断
 - `getPersonaName()`: 返回角色名称
 - `getOutputFormat(options?)`: 返回生效角色卡的结构化输出定义；角色卡没有 outputFormat、没有字段标记 `reply: true`，或会话设置了 `disableOutputFormat` 时返回 undefined
 - `isClientSideJsonRendering(options?)`: 返回是否由客户端渲染 JSON；会话选项优先于角色卡设置

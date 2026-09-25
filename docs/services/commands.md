@@ -146,8 +146,8 @@ handler 内对外抓取须走 `safeFetch`；文件读写走 storage URI。storag
 
 ## 6. 边界与注意事项
 
-1. **ExecutionGuard 是 fail-open**：`plugin-authority` 未加载时全部 `restricted` 命令无闸放行。
-2. **follow 重挂期间存在窗口**：守卫注入与命令执行独立；provider 换人瞬间理论上无守卫。
+1. **没有守卫时 fail-closed**：`plugin-authority` 未加载时，等同所有人都是默认等级、没有确认通道——需要更高等级（restricted 或 risk 为 sensitive / dangerous）或声明了 `confirm` 的命令一律拒绝并提示缺少权限插件，其余照常执行。
+2. **follow 重挂期间存在窗口**：守卫注入与命令执行独立；provider 换人瞬间新实例尚未注入守卫，这段时间内需要鉴权或确认的命令按上一条被拒。
 3. **同名命令静默覆盖**。第三方应加领域前缀。
 4. **位置参数都是 `unknown`**。
 5. **`text` 类型贪婪**，必须放在最后。
