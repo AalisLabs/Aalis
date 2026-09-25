@@ -10,7 +10,7 @@
 - 契约包：`@aalis/api-agent`（`packages/api-agent/src/index.ts`）
 - 默认实现：`@aalis/plugin-agent`（`packages/plugin-agent/src/index.ts`，类 `DefaultAgent`）
 
-`agent` 是「编排者」而非「能力」：它本身不持有 LLM/记忆/工具，而是经 `uses` 组合 `llm` / `memory` / `persona` / `tools` / `message-archive` / `session-manager` / `gateway`，全部 optional（缺哪个就降级，见 §6/§7）。
+`agent` 是「编排者」而非「能力」：它本身不持有 LLM/记忆/工具，而是经 `uses` 组合 `llm` / `memory` / `persona` / `tools` / `message-archive` / `session-manager` / `gateway`，全部 optional（缺哪个就降级，见 §6/§7）。钩子与贡献点是 required 服务 `hooks` / `contributions`，由 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 提供，缺少时默认实现停在 pending。
 
 ## 2. 契约
 
@@ -35,7 +35,7 @@ export interface BoundAgent extends ServiceRef<AgentService> {
 - 对话调用走 `agent.current` / `agent.require()`。`current` 每次读取重新解析当前胜者。
 - `TokenUsageEvent` / `TokenUsageBreakdown`：每次 LLM 调用后通过 `token:usage` 事件 emit 的 12 桶 prompt 预算快照。
 
-`agent:*` 钩子（declaration merging 注入 `HookContextMap`）——这是 agent 服务最重要的扩展面：
+`agent:*` 钩子（declaration merging 注入 `@aalis/api-hooks` 的 `HookContextMap`）——这是 agent 服务最重要的扩展面：
 
 | 钩子 | 触发时机 | data 关键字段 |
 |---|---|---|
@@ -47,9 +47,9 @@ export interface BoundAgent extends ServiceRef<AgentService> {
 | `agent:reply:before` | 定稿前，回复校验/修复 | `{ content, sessionId, …; retryRequested?, retryFeedback?, attempt?, maxRetries? }` |
 | `agent:turn:after` | 回合终态（四条路径都发） | `{ message, reply, outcome, sessionId, metadata }`。`outcome ∈ 'replied'｜'silent'｜'aborted'｜'error'` |
 
-钩子用 `hooks.middleware` 注册。要让 TS 看到这些键，需把 `@aalis/api-agent` 加进依赖。
+钩子用 `hooks.middleware` 注册，`hooks` 描述符来自 `@aalis/api-hooks`（见 [api-hooks](../api/api-hooks.md)）。要让 TS 看到这些键，需把 `@aalis/api-agent` 加进依赖。
 
-> **提示词注入不在这条链上**：摘要、语义记忆、用户档案、关系图、技能正文、平台提示等走 `agent:prompt` 贡献点（`contributions.contribute`），由 plugin-agent 的组装器在 `agent:llm:before` **之前**统一物化。往提示词加内容请用贡献点，本钩子留给改写/截停语义。
+> **提示词注入不在这条链上**：摘要、语义记忆、用户档案、关系图、技能正文、平台提示等走 `agent:prompt` 贡献点（`contributions.contribute`，契约见 [api-contributions](../api/api-contributions.md)），由 plugin-agent 的组装器在 `agent:llm:before` **之前**统一物化。往提示词加内容请用贡献点，本钩子留给改写/截停语义。
 
 ## 3. 谁提供 / 谁消费
 
@@ -154,5 +154,5 @@ export default definePlugin({
 - [concepts/manifest-metadata](../concepts/manifest-metadata.md)
 - [concepts/security-model](../concepts/security-model.md)
 - [plugins/plugin-authority](../plugins/plugin-authority.md) / [plugins/plugin-tools](../plugins/plugin-tools.md)
-- [core/events](../core/events.md)
+- [core/events](../core/events.md)、[api/api-hooks](../api/api-hooks.md)、[api/api-contributions](../api/api-contributions.md)
 - [services/llm](./llm.md)、[services/memory](./memory.md)、[services/message-archive](./message-archive.md)、[services/gateway](./gateway.md)

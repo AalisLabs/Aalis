@@ -70,7 +70,7 @@ deleteMessagesByTimestamps?(sessionId, timestamps): Promise<number>; // 按时�
 
 ### 2.4 配套的钩子与事件契约（同包声明）
 
-`api-memory` 还通过 declaration merging 向 `@aalis/core` 注入以下钩子与事件：
+`api-memory` 还通过 declaration merging 注入以下钩子与事件（钩子注入 `@aalis/api-hooks` 的 `HookContextMap`，事件注入 `@aalis/core` 的 `AalisEvents`）：
 
 - Hook `'memory:clear'`：统一编排各子系统的记忆清除，`scope: 'session'|'all'`，中间件把各子系统结果填进 `results[]`。persona 等插件靠监听此钩子参与清除，**不是**直接调 memory 服务。
 - Event `'memory:messages-deleted'`：消息被按时间戳删除后广播，下游存储（如向量库）据此同步清理。

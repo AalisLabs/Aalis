@@ -6,7 +6,7 @@
 
 ## 插件定义
 
-插件是 `definePlugin` 的产物（`PluginDefinition`），由加载器以 default 导出接入。形状与能力见 [插件定义与能力](context.md)。
+插件是 `definePlugin` 的产物（`PluginDefinition`），由宿主的加载器以 default 导出接入（入口判定 `pluginDefinitionOf` 在 `@aalis/api-plugin-source`）。形状与能力见 [插件定义与能力](context.md)。
 
 注册表里的一条实例（管理面经 `plugins.getPlugin` 读到的形状）是 `PluginEntry`：
 
@@ -24,7 +24,7 @@ interface PluginEntry {
 
 公开条目不含内部激活记录。`required` / `optional` 是服务名数组，在注册时从 `uses` 抽出（包含 Core 基础服务）。
 
-`parseInstanceId(instanceId)`：`@scope/plugin-name:suffix` → `{ moduleName, suffix }`；无 suffix 时 `suffix` 为 `undefined`。从 `/` 之后切开，不把 scope 里的字符当成后缀。
+`parseInstanceId(instanceId)`：`@scope/plugin-name:suffix` 或 `plugin-name:suffix` → `{ moduleName, suffix }`；无 suffix 时 `suffix` 为 `undefined`。模块名是 npm 包名、不含 `:`，因此以第一个 `:` 切开，带不带 scope 同一规则；后缀里可以再出现 `/` 或 `:`。
 
 ## 插件状态
 
@@ -40,15 +40,17 @@ interface PluginEntry {
 ## 生命周期流程
 
 ```
-register(definition, config?, instanceId?)
+register(definition, config?, instanceId?, { disabled? })
   │
   ├─ 校验 definition / instanceId（失败 → false）
-  ├─ 创建 PluginEntry（状态 = pending 或配置禁用则为 disabled）
+  ├─ 创建 PluginEntry（状态 = pending；以 { disabled: true } 登记则为 disabled），配置拷贝后原样挂上
   ├─ 从 uses 抽出 required / optional
-  └─ recompute('changed')
+  └─ recompute('changed')（只登记了禁用条目时不重算）
         required 已满足 → 激活（ActivationHost.create → mount：装配能力并调用 apply → 校验 provides）
         否则保持 pending，等待 service:registered
 ```
+
+`app.pluginAll(items)` 是同一流程的批量形式：整批同步落账后只 recompute 一次，依赖方因此在同一次重算里排在它 required 服务的全部提供者之后激活。
 
 激活成功发 `plugin:loaded`（通知，不等监听器）。若本次激活的 required 绑定在 `apply` 中通过 `require()` 原样抛出服务不可用错误，Core 会先撤回本次资源，再回到 `pending` 等待或重新观察依赖。optional 绑定、其他激活传来的错误、包装后的新异常与普通业务错误仍进入 `error`；不按错误文本或“此刻恰好缺服务”猜测原因。失败激活不发 `plugin:unloaded`（从未 loaded）。
 
@@ -82,17 +84,19 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 六个管理动作（`register` / `unload` / `enable` / `disable` / `bounce` / `updateConfig`）一律返回 `Promise<boolean>`：
 
-**false** = 主体不在注册表，或本次动作被状态 / 政策规则挡下（重名、未声明 `reusable` 的多实例、core 插件禁用、`disposed` 单向终态、`disabled` 态 bounce、**定义或实例 id 校验失败**（含空白、危险键 `__proto__` / `constructor` / `prototype`）、停机中的 `register` / `bounce`）。
+**false** = 主体不在注册表，或本次动作被状态 / 政策规则挡下（重名、未声明 `reusable` 的多实例、`disposed` 单向终态、`disabled` 态 bounce、**定义或实例 id 校验失败**（含空白、危险键 `__proto__` / `constructor` / `prototype`）、停机中的 `register` / `bounce`）。
 
 **true** = 其余，含主体已在目标态的幂等情形。停机进行中，`unload` / `disable` 汇入停机计划后立即返回 true——不等待拆卸完成，拆卸由停机计划执行（在 `app:stopping` 监听器里等待会与屏障事件死锁）。
 
 每个 false 分支都已记一笔日志（政策挡下 warn，主体不存在与 `disposed` 在途 debug）。true 只说明请求已受理，不说明激活已落定——那看 `idle()`。`enable` / `updateConfig` 对已 `disposed` 的插件返回 false 不变。
 
+管理动作只改运行态（实例配置、禁用态），不写配置文档。要跨重启保留，调用方在动作成功后经 host-config 写文档并 `save()`，见 [运行态与配置文档](config.md)。
+
 `idle()` 等待状态机静置（无在飞 recompute、无排队、无手动 dispose 段）。变更 API 在已有 flight 在飞时排队并立即返回。**不得在插件 `apply` / `onDispose` 内调用**——flight 正等着你返回，互等死锁。
 
-### `register(definition, config?, instanceId?)`
+### `register(definition, config?, instanceId?, options?)`
 
-注册并尝试激活。手写的定义对象（没经 `definePlugin`）在这里补上同一道校验。缺 / 空 / 非法 `name`、`uses` 非描述符、非法 `instanceId`（空、含 `#`）各记一笔 warn 并返回 false。停机中拒绝新登记。
+注册并尝试激活。`config` 原样生效（core 不合并默认值、不读配置文档）；`options.disabled` 为 `true` 时以禁用态登记、不激活。手写的定义对象（没经 `definePlugin`）在这里补上同一道校验。缺 / 空 / 非法 `name`、`uses` 非描述符、非法 `instanceId`（空、含 `#`）各记一笔 warn 并返回 false。停机中拒绝新登记。
 
 ### `unload(instanceId)`
 
@@ -100,20 +104,20 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 ### `enable(instanceId)` / `disable(instanceId)`
 
-启用 / 禁用。core 插件不可禁用。`error` 态可经 `enable` 转 `pending` 重试。停机中 `disable` 汇入已冻计划后立即返回 true。
+启用 / 禁用。`error` 态可经 `enable` 转 `pending` 重试。停机中 `disable` 汇入已冻计划后立即返回 true。
 
 ### `bounce(instanceId, opts?: { config? })`
 
-增量重载：可选写回配置 → 拆掉当前激活 → 转 `pending` → 重算后重新激活。即 **retire + 重算**。
+增量重载：可选换上新的运行配置 → 拆掉当前激活 → 转 `pending` → 重算后重新激活。即 **retire + 重算**。
 
 - 正在用本插件所提供服务的 required 下游随之重启（先收尾、先关，本插件重新激活后按拓扑序重新激活）；optional 依赖经 `follow` 在换人时交接。
 - 不换代码：跑的仍是注册时的那份定义。要换代码走 `unload` + `register`。
-- `disabled`、`disposed`、停机进行中拒绝 bounce。传 `opts.module` 期望换码会 warn 并返回 false。
+- `disabled`、`disposed`、停机进行中拒绝 bounce。
 - `error` 态会被重置为 pending 重试。
 
 ### `updateConfig(instanceId, config)`
 
-`bounce(instanceId, { config })` 的薄壳。入参会拷贝后再挂到 entry 与 ConfigManager，避免插件经内置 `config` 就地改嵌套写穿快照。
+`bounce(instanceId, { config })` 的薄壳。入参拷贝后再挂到 entry，插件经内置 `config` 就地改嵌套不会写穿调用方的对象。
 
 ## 反应式监听
 

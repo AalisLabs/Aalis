@@ -39,6 +39,8 @@ definePlugin({
 })
 ```
 
+`hooks` 与 `contributions` 是 required 服务，分别由 [`@aalis/plugin-hooks`](./plugin-hooks.md) 与 [`@aalis/plugin-contributions`](./plugin-contributions.md) 提供；缺少任一时本插件停在 pending。
+
 ## 配置
 
 | 字段 | 类型 | 默认值 | 说明 |
@@ -135,7 +137,7 @@ definePlugin({
 
 ## 扩展点
 
-其他插件可通过 `agent:*` 中间件钩子拦截或修改各阶段，通过 `agent:prompt` 贡献点向提示词注入内容，也可以用 `registerPreprocessor` 注册输入预处理器，都无需修改 Agent 代码。详见 [events.md](../core/events.md)。
+其他插件可通过 `agent:*` 中间件钩子拦截或修改各阶段，通过 `agent:prompt` 贡献点向提示词注入内容，也可以用 `registerPreprocessor` 注册输入预处理器，都无需修改 Agent 代码。钩子键与预处理器见 [api-agent](../api/api-agent.md)，钩子机制见 [api-hooks](../api/api-hooks.md)，贡献点见 [api-contributions](../api/api-contributions.md)。
 
 ## Token 预算追踪与日志
 

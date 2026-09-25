@@ -5,7 +5,7 @@
 访问控制服务：在任何敏感操作的边界回答「这个身份此刻能不能执行这个能力」。它把**数字等级单轴授权**（轴 A）与**人确认 / HITL**（轴 B）两套正交机制，统一收敛到一个 `authorize()` 闸 + 一套临时委托 / 确认回调里。
 
 - 服务注册名：`'authority'`（`authority.current`）。
-- 契约包：`@aalis/api-authority`（接口 + 类型 + `riskDefaults` / `resolveCapabilityPolicy` 纯函数 + `AalisConfig` 的 declaration merging）。
+- 契约包：`@aalis/api-authority`（接口 + 类型 + `riskDefaults` / `resolveCapabilityPolicy` 纯函数 + 对 `@aalis/api-host-config` 的 `AalisConfig` 的 declaration merging）。
 - 参考实现包：`@aalis/plugin-authority`（`provides: [authority]`，见 `packages/plugin-authority/src/index.ts`）。
 
 > 注意：契约文件顶部的 `packages/api-authority/src/index.ts` 注释仍残留旧「纯能力委托模型」措辞，但**接口本体与参考实现已是数字等级单轴模型**（`level` / `setUserLevel` / `authorityOverrides` / `minLevel`）。以接口签名与 `authority-model.ts` 的裁决逻辑为准，详见第 7 节。
@@ -116,7 +116,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 
 ### 2.4 配置字段（declaration merging 注入 `AalisConfig`）
 
-`packages/api-authority/src/index.ts` 把 authority 域业务字段注入 core 的 `AalisConfig`（core 本身不知道任何权限语义）：
+`packages/api-authority/src/index.ts` 把 authority 域业务字段注入 `@aalis/api-host-config` 的 `AalisConfig`（配置文档契约本身不知道任何权限语义）。这些字段位于配置文档顶层，参考实现经 `host-config` 服务读取，改动后以 `save()` 落盘：
 
 | 字段 | 含义 |
 |---|---|

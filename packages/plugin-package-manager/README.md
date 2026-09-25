@@ -13,9 +13,9 @@ pnpm add @aalis/plugin-package-manager
 `definePlugin` 默认导出：
 
 - provides：`packageManager`（服务名 `package-manager`；描述符由本包导出）
-- uses：`proc`（`process`）、`logger`、`config`、`provide`、`services`；可选 `app`、`plugins`、`hostConfig`
+- uses：`proc`（`process`）、`logger`、`config`、`provide`、`services`；可选 `app`、`plugins`、`hostConfig`（`host-config`）、`source`（`plugin-source`）
 
-装卸落在项目根 `dependencies`，随后 `rescan` 让加载器发现。
+装卸落在项目根 `dependencies`，随后经宿主的 `plugin-source` 服务 `rescan()` 让加载器发现；宿主不提供插件来源时视同本次没有新插件。卸载后经 `host-config` 清理配置块与禁用标记，宿主未提供配置文档时不清理。
 
 ## 文档
 

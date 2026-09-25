@@ -161,7 +161,7 @@ export default definePlugin({
   configSchema,
   uses: { config },
   apply({ config }) {
-    // config 已含 schema 派生默认值（宿主经 pluginDefaults 注入；注册期纯对象/数组会拷贝）
+    // config 已含 schema 派生默认值（宿主在登记前把默认值深合并进配置；core 登记时拷贝纯对象/数组）
   },
 });
 ```
@@ -201,7 +201,7 @@ apply({ lifecycle }) {
 
 ## 5.1 类型从哪里 import；依赖怎么归类
 
-`@aalis/core` 导出通用 IoC 类型与内置描述符（`definePlugin` / `ServiceRef` / `events` / `logger` / …）。所有 **LLM / agent / 工具** 领域类型与描述符都在 `@aalis/api-*` 里。
+`@aalis/core` 导出通用 IoC 类型与内置描述符（`definePlugin` / `ServiceRef` / `events` / `logger` / …）。所有 **LLM / agent / 工具** 领域类型与描述符都在 `@aalis/api-*` 里；钩子与贡献点也不在 core，`hooks` / `contributions` 分别从 `@aalis/api-hooks` / `@aalis/api-contributions` 导入。
 
 判定规则：**运行时值导入进 `dependencies`，纯类型导入进 `devDependencies`**。描述符是值——`import { tools } from '@aalis/api-tools'` 必须进 `dependencies`，不能只放 devDep。`@aalis/core` 恒为 peerDependency（区间 `>=x <1.0.0`，禁 caret），并同时列入 devDependencies 供本地编译；进程里只能有一份 core，插件解析到另一份即被拒载，见 [第 7 节](#two-cores)。`dependencies` 里的 `@aalis` 包版本同写 `>=当前版本 <1.0.0` 区间——区间可被包管理器去重到与宿主同一份安装，避免同名契约装出两份（两份 `declare module` 相撞成 TS2717，被 skipLibCheck 静默吞掉）。
 
@@ -335,4 +335,5 @@ pnpm 可以直接引用根依赖的范围：
 - [架构总览](../architecture.md)
 - [api 包设计](../design/api-packages.md)
 - [枢纽服务：第三方能力的登记契约](../design/hub-services.md)
-- [从 0.16 迁移对照](../plugin-author-guide.md#从-016-迁移)
+- [从 0.17 迁移对照](../plugin-author-guide.md#从-0-17-迁移)
+- [从 0.16 迁移对照](../plugin-author-guide.md#从-0-16-迁移)

@@ -2,11 +2,13 @@
 
 本文是 `@aalis/core` 对插件生态的**行为承诺**。1.0 起，下列不变量在任何 1.x 版本中不变；
 未列入承诺的一切（内部实现、算法、数据结构、日志文案）随时可换。守卫：
-`test/core/purity.test.ts`（词汇禁令 + 公开面快照）、`test/core/architecture.test.ts`（内部分层）。
+`test/core/purity.test.ts`（词汇禁令 + 公开面快照）、`test/core/architecture.test.ts`（内部分层）；
+`pnpm run coverage:core`（只跑 `test/core`、只统计 `packages/core/src`，行、语句、函数、分支四项阈值均为 100%，
+preflight 执行；core 源码禁用 v8 / c8 / istanbul 的 ignore 注释，由 architecture 测试守）。
 
-## 一、四原语行为不变量
+## 一、原语行为不变量
 
-插件在 `definePlugin({ uses })` 里声明描述符，`apply` 拿到按这次激活绑定的接口。没有默认注入。Core 默认登记的八项基础服务（`events` / `hooks` / `contributions` / `lifecycle` / `logger` / `config` / `provide` / `services`）与第三方共用容器、描述符、`bind` 和 required / optional 规则；它们由根激活经 `provide` 以通用 `exclusive` 登记策略登记（只有 `provide` 自身直接登记一次来自举），拒绝同名第二提供者；提供者只向在 `uses` 里声明了该服务的激活交出属于该激活的接口。
+插件在 `definePlugin({ uses })` 里声明描述符，`apply` 拿到按这次激活绑定的接口。没有默认注入。core 的原语只有两种：事件与服务。Core 默认登记的六项基础服务（`events` / `lifecycle` / `logger` / `config` / `provide` / `services`）与第三方共用容器、描述符、`bind` 和 required / optional 规则；它们由根激活经 `provide` 以通用 `exclusive` 登记策略登记（只有 `provide` 自身直接登记一次来自举），拒绝同名第二提供者；提供者只向在 `uses` 里声明了该服务的激活交出属于该激活的接口。
 
 **events（`events.on` / `events.emit`）——广播**
 - 监听器错误互相隔离：单个 handler 抛错（同步或异步）不影响其余 handler，也不使 `emit` reject。
@@ -26,26 +28,14 @@
 - 资源口的 `identity` 是这次激活的不透明资源身份，也是凭据：交给谁，谁就能以这次激活的名义调用认它的提供者。提供者据它把登记归到这次激活。
 - 进程里只能有一份 `@aalis/core`：另一份副本造的描述符、`optional` 包装在定义校验与 `provide` 处一律拒绝（注册期按 error 记），宿主 runtime 在 import 插件前也会按包目录核对并拒载该插件。
 
-**hooks（`hooks.middleware` / `hooks.run`）——流程干预**
-- 同一钩子键内按注册顺序执行洋葱模型；不调 `next()` 即合法截停（`hooks.run` 返回 `false`）。
-- handler 抛错中断整链并上溯给 `hooks.run` 调用方（拦截者失败 = 流程该停）。
-- 任何插件可驱动自己定义的钩子链；注册与执行权对称公开。
-
-**contributions（`contributions.contribute` / `contributions.collect`）——汇集**
-- 全局键 = `${lifecycle.id}/${局部id}`，由门面自动冠前缀：**spec.id 侧**构造上无法顶替他人条目
-  （局部 id 禁空、禁含 `/`，注册期抛错）。该保证以这次激活的逻辑 id 为命名空间——
-  调度器保证 `instanceId` 不重复；仍出现重复 id 的两方共用同一命名空间。
-- 已关闭的激活上 `contribute` 被拒（warn + no-op），不影响同 id 的活实例。
-- 同一激活内同局部 id 重复注册 = 替换（幂等）。
-- `collect` 返回快照，排序是全局键的纯函数——同集合任意机器、任意重启，枚举顺序逐字节相同。
-- 内核**从不执行**贡献 spec 中的任何插件代码；执行策略（并行/隔离/超时）全归收集方。
+**钩子与贡献点不是 core 原语**：它们是普通服务，契约在 `@aalis/api-hooks` / `@aalis/api-contributions`，默认提供者是 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`（非独占）。登记经描述符的 `registrar`，撤回遵守下文生命周期不变量；各自的行为约定随契约包，见 [api-hooks](../api/api-hooks.md)、[api-contributions](../api/api-contributions.md)。
 
 ## 二、生命周期不变量
 
-- 经这次激活的能力门面登记的一切副作用（事件监听、服务、钩子、贡献、`onDrain` / `onDispose`、`follow` / `track` / `registrar`），
+- 经这次激活的能力门面登记的一切副作用（事件监听、服务、`onDrain` / `onDispose`、`follow` / `track` / `registrar`，含经 `registrar` 登记的钩子与贡献），
   在该激活关闭后**必然消失**——包括寄存在枢纽服务里、按激活身份清扫的条目。
-- 经门面登记的四原语条目（事件监听、服务、钩子、贡献）按归属记在各自的注册表里，不逐条进清理链：退订即原语撤回这一条（同步、幂等，只撤自己那一条：条目已被同键替换时旧退订无动作）；关闭时在排空清理链之前按归属同栈整体切断。
-- 经 `registrar` 登记到枢纽服务的条目是本激活对外可见的能力，与四原语同一拍撤回，不等下游交接；异步部分由撤回段收口等待。清理链分撤回段（`follow` 返回的 cleanup、`track`）与清理段（`onDispose`）：撤回段整体先于清理段，段内相对注册**逆序**执行；单个清理器抛错不影响其余。
+- 经门面登记的原语条目（事件监听、服务）按归属记在各自的注册表里，不逐条进清理链：退订即原语撤回这一条（同步、幂等，只撤自己那一条：条目已被同键替换时旧退订无动作）；关闭时在排空清理链之前按归属同栈整体切断。
+- 经 `registrar` 登记到枢纽服务的条目是本激活对外可见的能力，与原语同一拍撤回，不等下游交接；异步部分由撤回段收口等待。清理链分撤回段（`follow` 返回的 cleanup、`track`）与清理段（`onDispose`）：撤回段整体先于清理段，段内相对注册**逆序**执行；单个清理器抛错不影响其余。
 - `onDrain` 在撤回之前执行：此刻本激活的监听、登记与声明的依赖都还在，用于停接新活、把在手的数据交给下层并等待确认。`onDispose` 在对外登记已撤回之后执行；依赖可能已不可用。异步清理在 `disposeAsync` 路径被等待（带 `disposeTimeoutMs` 护栏）；超时只是停止等待，不代表资源已释放。
 - 激活 = 提供者先于消费者（required 依赖拓扑）。关闭按每个激活的 drain 与 close 两阶段编排。普通依赖：消费者整个 close 完，提供者才 drain。根激活使用插件的服务：根 drain 先于该插件 close。插件使用根激活登记的服务：不往排序图加边，由归属保证插件 close 先于根 close。环内 optional 边构成的强连通分量（≥2 个激活）先让成员全部 drain，再任一 close——drain 期间对方仍活着，双方 `onDrain` 都能 `require()`；无法解除的 required 环告警后强行放行。归属约束与环外约束一条不松。依赖交接放 `onDrain`；`onDispose` 阶段依赖可能已不可用。`App.stop()` 把全部 active 插件与根激活放进同一张计划。单独 `unload` / `disable` / `bounce` 走同一套分阶段关闭：正在用该插件所提供服务的 required 下游（传递闭包）并入同一批，先收尾、先关；判据是下游此刻解析到的胜者属于要走的激活，空档里不切到后备。这项同批保证只覆盖动作发起时处于 active 的 required 下游；以下情形与本次管理动作彼此不排序：并发的另一个管理动作里已在收尾的下游，在飞重算里正在激活或在管理动作期间才激活的下游，管理动作进行中发生的停机。提供者清理之前，挂在它所提供服务上、尚未进关闭计划的 `follow` / `registrar` 跟随者由撤回段就地驱动交接，旧清理落定后提供者才清理；交接不经事件投递，下线通知照常不等监听器，一个跟随者的清理挂住不拖住别的跟随者。已进关闭计划的跟随者（同批下游、停机计划或别的计划里的）不由提供者驱动，旧清理在各自的撤回段执行，可能晚于提供者的 `onDispose`（根激活用插件服务时的停机、optional 环、管理动作的主体反向跟随它的 required 下游）；这类跟随者要在依赖仍可用时交接，放在 `onDrain`。动态查询与手动缓存的裸引用不产生边。
 - `app:stopping` 是屏障知会，不是清理通道；只在 `App.stop()` 全局停机时发一次，bounce / unload / disable 不发。清理走 `onDrain` / `onDispose`。`App.stop()` 顺序：`beginShutdown()`（冻结新增绑定并进入停机态）→ `idle()`（排干在飞重算）→ 发出 `app:stopping` → 关停计划。监听器全部返回后才执行停机计划。窗口内 `unload` / `disable` 汇入该计划后立即返回 true（不等拆卸完成）；`register` / `bounce` 返回 false（与定义或实例 id 校验失败同属政策挡下的 false 口径）。已冻激活上 `provide` 记 warn 后忽略、不抛。停机完成后：对新定义 `register` 返回 false 且不落账；对已 disposed 实例的 `enable` / `updateConfig` / `bounce` 返回 false；`idle()` 落定。
@@ -56,12 +46,12 @@
 
 - recompute 的算法、轮次上界数值、内部数据结构（双账本形态、注册表实现）。
 - 日志文案与级别、诊断信息格式。
-- `@internal` 标注的成员（`serviceContainer` / `disposableCount` 等）与私有方法。
+- `@internal` 标注的成员与私有方法。
 - `getStatus` 之外的枚举顺序（如 `getServiceNames` 的顺序）。
 
 ## 四、原语准入规则
 
-新增第五原语必须同时满足三条，缺一不议：
+新增 core 原语必须同时满足三条，缺一不议：
 1. **真实形状反复出现**——至少两个互不相关的领域在手工模拟同一交互形状；
 2. **现有原语只能不安全地表达**——用现有原语实现必然放弃某类保障（幂等/定序/隔离/……），
    而非仅仅"写起来啰嗦"；
@@ -72,17 +62,17 @@
 ## 五、内核负面清单（永不进入 core）
 
 消息 / 会话 / 命令 / 用户 / 人设 / 调度 / 鉴权 / 存储 / LLM / 表单与渲染词汇 /
-配置同步政策 / 多实例的配置文件编排 / 任何 `node:` API 与运行时依赖。
-领域词汇一律经空扩展点（`AalisEvents` / `HookContextMap` /
-`ContributionPointMap`）与服务描述符由 `-api` 包注入。服务类型随描述符走，不经一张全局类型表。
+插件发现与加载 / 配置文档与持久化 / 配置同步政策 / 多实例的配置文件编排 / 任何 `node:` API 与运行时依赖。
+领域词汇一律经扩展点（core 的 `AalisEvents`，以及契约包 `@aalis/api-hooks` 的 `HookContextMap`、
+`@aalis/api-contributions` 的 `ContributionPointMap`）与服务描述符由 `-api` 包注入。服务类型随描述符走，不经一张全局类型表。
 插件元数据（`PluginMeta`）由 schema-config / api-webui 等经 declaration merging 挂字段，core 对那些字段零感知。
 
 ## 六、公开面稳定性
 
 | 层 | 成员 | 承诺 |
 |---|---|---|
-| stable | `definePlugin` / `defineService` / `optional` / `serviceRef`、`ServiceRef` 的 `current` / `require()` / `all()` / `follow()`、基础服务描述符（`events` / `logger` / `config` / `lifecycle` / `provide` / `services` / `hooks` / `contributions`）、宿主描述符（`appService` / `pluginsService` / `hostConfig`）、`App.plugin` / `App.bind` / `App.config` / `App.plugins`、`createApp` / `AppOptions` providers、`ConfigManager` 快照读写、`PluginManagerService` 接口的全部成员（接口即清单，不在此另抄一份） | 1.x 内不破坏 |
-| internal | `@internal` 标注成员、私有方法、激活记录类、四个注册表类（`EventBus` / `HookRegistry` / `ServiceContainer` / `ContributionRegistry`）与 `PluginManager` 类、`DisposableChain` 等未从包根导出者 | 无承诺 |
+| stable | `definePlugin` / `defineService` / `optional` / `serviceRef`、`ServiceRef` 的 `current` / `require()` / `all()` / `follow()`、基础服务描述符（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）、宿主描述符（`appService` / `pluginsService`）、`App.plugin` / `App.pluginAll` / `App.bind` / `App.plugins`、`createApp` / `AppOptions` 的注入件（现仅 `restartStrategy`）、`PluginManagerService` 接口的全部成员（接口即清单，不在此另抄一份） | 1.x 内不破坏 |
+| internal | `@internal` 标注成员、私有方法、激活记录类、两个注册表类（`EventBus` / `ServiceContainer`）与 `PluginManager` 类、`DisposableChain` 等未从包根导出者 | 无承诺 |
 
 ## 七、1.0 之前的实况（避免误读上表）
 
@@ -96,6 +86,7 @@
 | 0.13.0 | 四个注册表的 `unregisterByContext`（换为 `unregisterByOwner(owner: symbol)`）；另有三处改形而非删除：`saveConfig()` 返回 `Promise<void>`、`useModule()` 返回 `ModuleHandle`、`EventBus.on` 第三参由 `string` 改为 `symbol` |
 | 0.14.0 | `ServiceContainer.unregisterEntry`（`register` 改为返回退订闭包）；改形：`ServiceContainer.register(name, instance, contextId, owner?, options?)` 与 `HookRegistry.register` 的 `contextId` 必填；`ContributionRegistry` 的注册与读取动词按 `ContributionPointMap` 约束键；`ServiceContainer` 的服务名保持开放，约束落在载荷 `ServiceOf<K>` 与 `get` / `getAll` 的按键重载上；事件键 `ready` / `restarting`（改名 `app:ready` / `app:restarting`，屏障统一 `app:` 前缀）；`PluginManagerService.enablePlugin` / `disablePlugin` / `updatePluginConfig`（改名 `enable` / `disable` / `updateConfig`；类上的 `bouncePlugin` 改 `bounce`）；改形：`PluginManagerService.register` / `unload` 由 `Promise<void>` 改 `Promise<boolean>`（六个管理动作同一口径）；行为：`plugin:loaded` 不再等监听器 |
 | 0.17.0 | **删除**：包根激活记录类与 `App` 上的公开激活入口、包根的四个注册表类（`EventBus` / `HookRegistry` / `ServiceContainer` / `ContributionRegistry`）与 `PluginManager`、`App` 上的四个注册表字段与 `AppOptions` 的注册表注入、插件模块形状（具名 `name` / `inject` / `provides` 与函数 default）、全局服务类型表与 `ServiceOf`、级联 bounce 开关与 `evictDownstreamConsumers`、契约包 `useXxxService` helper、`ServiceContainer.getEntries` 与包根 `ServiceEntry`、子模块机制（`useModule` / `ModuleHandle`，含同步 `dispose()`）。**改形**：`apply` 入参改为 `uses` 装配出的绑定接口；四原语与配置 / 日志 / 生命周期改为显式能力描述符；按名取服务改为 `ServiceRef` 的 `current` / `require()` / `all()`，有状态跟随改为 `follow`；`PluginEntry` 的定义字段改为 `definition`，依赖字段改为服务名数组 `required` / `optional`，公开类型不含内部激活字段；重算只分 `changed` 与 `shutdown` 两档（不从包根导出）；`schema-config` 把配置表单声明挂到 `PluginMeta.configSchema`；`hostConfig` 为须显式声明的普通宿主服务 |
+| 0.18.0 | **删除**：插件发现（`AppOptions.pluginLoader`、`App.autoLoadPlugins` / `rescanPlugins`、`AppService.rescanPlugins`、`PluginLoader` / `PluginDescriptor` 类型，移至 `@aalis/runtime`；`pluginDefinitionOf` 移至 `@aalis/api-plugin-source`）；配置文档（`ConfigManager` / `ConfigManagerOptions` / `ConfigProvider` / `AalisConfig`、`App.config`、`AppOptions.config` / `configProvider` / `pluginDefaults`、`App.saveConfig` / `AppService.saveConfig`、`hostConfig` 描述符与 `HostConfig` 类型；文档契约移至 `@aalis/api-host-config`，文档实现与 `ConfigProvider` 移至 `@aalis/runtime`）；内置服务 `hooks` / `contributions`、扩展点 `HookContextMap` / `ContributionPointMap` 与类型 `Hooks` / `Contributions` / `MiddlewareFn` / `MiddlewareNext` / `ContributionSpec` / `ContributionHandle`（移至 `@aalis/api-hooks` / `@aalis/api-contributions`，默认提供者为 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`）。**新增**：`App.pluginAll`、`AppOptions.name` / `logLevel`、`app.plugin` 与 `plugins.register` 的第 4 参 `{ disabled }`。**行为**：登记时的配置原样生效，core 不再合并默认值、不读禁用名单；管理动作只改运行态，不写配置文档；拓扑排序中同时就绪的插件按登记序激活 |
 
 因此插件生态里常见的 `peerDependencies: { "@aalis/core": ">=0.2.0 <1.0.0" }` **不是**"core 保证
 0.x 内兼容"的推论——它只是"没用到新 API 的插件不必随次版本重发"的便利区间。用了某个版本才有的
@@ -115,12 +106,12 @@ API，就把下限抬到那个版本（如 0.13.0 这批的 runtime / plugin-cli
 core 源码按职责分目录，依赖方向由 `test/core/architecture.test.ts` 守卫；目录边界与公开包边界无关：
 
 - **资源内核** `kernel/`（`disposable-chain.ts`）：清理链、分段逆序排空与逐项超时、错误隔离与上报。只引用本层，不认识服务、配置或激活记录。
-- **协作原语** `primitives/`（events、hooks、services、contributions）：四个注册表及登记元数据。依赖 kernel 与基础类型，不认识激活记录、Logger 或 Config；诊断经回调送出。
-- **基础设施** `infrastructure/`（resources、config、config-values、logger）：一次激活的资源账与关闭过程（收尾段、初始化等待、完成信号、在飞撤回）、配置与安全值处理、日志通道。依赖 kernel、primitives 与基础类型，不负责服务装配和插件调度。
-- **服务装配** `composition/`：`descriptors` 保存服务描述符、类型推导与依赖提取；`binding` 保存资源口、不可用错误与 `follow` / `registrar`；`core-services` 定义内置八项的描述符与提供者；其余包含 runtime 接线、provide-validation 与 plugin-definition。依赖基础设施、原语和 kernel，不 import 编排层。
+- **协作原语** `primitives/`（events、services）：两个注册表及登记元数据。依赖 kernel 与基础类型，不认识激活记录、Logger 或 Config；诊断经回调送出。
+- **基础设施** `infrastructure/`（resources、config-values、logger）：一次激活的资源账与关闭过程（收尾段、初始化等待、完成信号、在飞撤回）、配置值的安全处理（危险键闸与拷贝）、日志通道。依赖 kernel、primitives 与基础类型，不负责服务装配和插件调度。
+- **服务装配** `composition/`：`descriptors` 保存服务描述符、类型推导与依赖提取；`binding` 保存资源口、不可用错误与 `follow` / `registrar`；`core-services` 定义内置六项的描述符与提供者；其余包含 runtime 接线、provide-validation 与 plugin-definition。依赖基础设施、原语和 kernel，不 import 编排层。
 - **插件编排** `orchestration/`（app、activation、activation-host、close-plan、plugin、plugin-activation、plugin-topology、host-services、providers）：创建激活、经根激活登记内置服务、启动、调度、关停，以及宿主 SPI 和管理服务描述符。
 
-src 根只留 `index.ts`。配置持久化 SPI `ConfigProvider` 只依赖 `AalisConfig`，与 `ConfigManager` 同处 `infrastructure/config.ts`。`types/` 按种类存放词汇；`types/app.ts`、`types/plugin.ts` 属编排契约，类型 barrel 会带出它们，下层不得经 barrel 反向引用。基础词汇文件只相互引用。
+src 根只留 `index.ts`。`types/` 按种类存放词汇；`types/app.ts`、`types/plugin.ts` 属编排契约，类型 barrel 会带出它们，下层不得经 barrel 反向引用。基础词汇文件只相互引用。
 
 | 从 | 到 | 性质 |
 |---|---|---|
@@ -134,11 +125,11 @@ src 根只留 `index.ts`。配置持久化 SPI `ConfigProvider` 只依赖 `Aalis
 
 文件前言与分节：带前言的文件用 60 个 `=` 的 `//` 横幅夹住前言（首行「文件名 — 一句话」），无前言的文件不补；文件内分节一律一行 `// ----- 节名 -----`。JSDoc 描述在前、`@internal` 等标签收尾（单行式也展开成多行）；不用警示符号，告诫写成陈述句。
 
-插件能力与公开管理条目类型不包含内部激活记录；宿主三服务在容器里只放契约列出的方法，经 `pluginsService` 拿到的 `getPlugin()` 是快照，宿主侧 `app.plugins.getPlugin()` 返回现场条目、须只读。插件拿到的是窄能力对象，第三方 binder 拿到的是 BindingPort。`#` 私有字段与 TypeScript `private` 按内部封装需要使用，均不带 `_` 前缀。公开面与分层分别由 purity / architecture 测试约束。
+插件能力与公开管理条目类型不包含内部激活记录；宿主两服务在容器里只放契约列出的方法，经 `pluginsService` 拿到的 `getPlugin()` 是快照，宿主侧 `app.plugins.getPlugin()` 返回现场条目、须只读。插件拿到的是窄能力对象，第三方 binder 拿到的是 BindingPort。`#` 私有字段与 TypeScript `private` 按内部封装需要使用，均不带 `_` 前缀。公开面与分层分别由 purity / architecture 测试约束。
 
 诊断与错误的写法（文字规矩，无机器守——正则守卫经变异证明会被折行调用与含引号的英文骗过）：错误对象一律作 logger 的附加参数
 （`logger.error('xxx 失败:', err)`），不内插进消息——内插只剩 message、丢 stack；日志行编码与转义由宿主负责。宿主 SPI
-（插件加载器、重启策略、配置 provider）的失败一律 `error` 级。
+（重启策略）的失败一律 `error` 级。
 
 不拆 kernel 包：包是发布单位不是模块化单位；维持可拆的依赖方向，出现不依赖 core 的真实使用者时再议。资源内核不从包根导出。单独关闭的顺序是 drain → 撤回对外注册 → 清理链分段排空 → afterCleanup；编排层可提前调用 drain，再按依赖图安排 close，内核不解释依赖。关闭后迟到清理仍执行，用来接住初始化期间取得的资源；超时只是停止等待，不代表资源已释放；每个 Resources 至多跟踪一次初始化（调用方保证，再次调用会覆盖前一次）。
 

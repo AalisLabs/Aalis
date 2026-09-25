@@ -10,7 +10,7 @@ pnpm add @aalis/runtime
 
 ## 提供 / 依赖
 
-宿主组装件，不是插件，无 `provides` / `uses`。主要导出：`startAalis`、`createNodeModulesPluginLoader`、`createFsPluginLoader`、`createFsYamlConfigProvider`、`createProcessRespawnStrategy`。peer：`@aalis/core`（`>=0.17.0 <1.0.0`）。
+宿主组装件，不是插件，无 `provides` / `uses`；`startAalis` 在根上独占登记 `host-config`（`@aalis/api-host-config`）与 `plugin-source`（`@aalis/api-plugin-source`）两个服务。主要导出：`startAalis`、`createNodeModulesPluginLoader`、`createFsPluginLoader`、`createPluginDiscovery`、`createConfigStore`、`installHostConfig`、`withPluginConfigSync`、`createFsYamlConfigProvider`、`createProcessRespawnStrategy`。peer：`@aalis/core`（`>=0.17.0 <1.0.0`）。
 
 ```ts
 import { startAalis } from '@aalis/runtime';

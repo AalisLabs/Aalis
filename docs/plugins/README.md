@@ -6,6 +6,7 @@ Aalis「万物皆插件」：适配器、模型、存储、工具、前端全部
 
 ## 按功能查
 
+- **钩子与贡献点**：`hooks` 与 `contributions` 两个服务的默认提供者；gateway、agent 等多数插件依赖它们。
 - **平台适配器**：接入聊天平台（onebot…）。
 - **模型与嵌入**：LLM 对话与文本嵌入 provider（openai / deepseek / ollama）。
 - **记忆与向量存储**：会话消息持久化与向量检索（sqlite / mongodb / inmemory / lancedb / flat…）。

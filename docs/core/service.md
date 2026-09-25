@@ -43,16 +43,18 @@ export const inbox = defineService<Inbox, BoundInbox>('inbox', port => {
 - 服务身份是描述符的 `name`。契约包装了两份也指向同一服务。
 - 进程里只能有一份 `@aalis/core`：另一份副本造的描述符、`optional` 包装在定义校验与 `provide` 处一律拒绝，错误写明「来自另一份 @aalis/core」；宿主 runtime 在 import 插件前也会核对包目录并只拒载该插件。插件以 peerDependencies 引用 core，排查见 [第三方插件开发者指南](../guide/third-party-plugin.md#two-cores)。
 - `provide(descriptor, impl)` 按描述符约束实现类型。
-- Core 默认登记的八项基础服务与第三方服务共用容器、描述符和 `bind`；`uses` 中的 required / optional 规则也相同。基础服务以 `exclusive` 登记，防止同名接口指向另一套实现；这项登记策略第三方同样可以使用。
+- Core 默认登记的六项基础服务与第三方服务共用容器、描述符和 `bind`；`uses` 中的 required / optional 规则也相同。基础服务以 `exclusive` 登记，防止同名接口指向另一套实现；这项登记策略第三方同样可以使用。
 - 领域能力（LLM 的 `vision`、storage 的 `local-path`）挂在服务实例 / model handle 的元数据上，由各 `-api` 的 helper 筛选，不进内核 DI。
 
 第三方登记契约（`BindingPort` / `Registrar`）见 [枢纽服务](../design/hub-services.md)。
 
 ## 内置服务的登记
 
-八项内置服务（`events` / `hooks` / `contributions` / `lifecycle` / `logger` / `config` / `provide` / `services`）与第三方服务走同一条登记路径：加载插件前，根激活经 `provide` 以 `exclusive` 登记它们，同样经过 `provide` 的校验、发出 `service:registered`、归属根激活。唯一的例外是 `provide` 自身：根激活要先取得 `provide` 才能登记其余七项，因此 `provide` 的提供者由 `ActivationHost` 直接写入容器一次来自举。宿主三项（`app` / `plugins` / `host-config`）同样由根激活经 `provide` 独占登记。
+六项内置服务（`events` / `lifecycle` / `logger` / `config` / `provide` / `services`）与第三方服务走同一条登记路径：加载插件前，根激活经 `provide` 以 `exclusive` 登记它们，同样经过 `provide` 的校验、发出 `service:registered`、归属根激活。唯一的例外是 `provide` 自身：根激活要先取得 `provide` 才能登记其余五项，因此 `provide` 的提供者由 `ActivationHost` 直接写入容器一次来自举。宿主管理面两项（`app` / `plugins`）同样由根激活经 `provide` 独占登记。配置文档 `host-config` 与插件来源 `plugin-source` 不在 core，由宿主在根上提供（Node 宿主 `@aalis/runtime` 同样独占登记）。
 
-内置服务在容器中的提供者是函数 `(identity: symbol) => 门面`：传入一次激活的身份，返回属于这次激活的接口，经这个接口登记的监听、中间件、贡献与服务都归这次激活。内置描述符的 `bind` 是 `port => port.require()(port.identity)`，只用公开的资源口。提供者先核对该身份属于在 `uses` 里声明过本服务的激活，否则抛错「内置服务 "x" 只能由在 uses 里声明了它的激活取用」。不声明就拿不到门面：经 `services.get(events)` 动态查到的只是提供者函数，未声明 `events` 的激活无法用它取得接口。
+钩子与贡献点不是内置服务：`hooks` / `contributions` 的契约在 `@aalis/api-hooks` / `@aalis/api-contributions`，由插件 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 以普通（非独占）登记提供，见 [api-hooks](../api/api-hooks.md)、[api-contributions](../api/api-contributions.md)。
+
+内置服务在容器中的提供者是函数 `(identity: symbol) => 门面`：传入一次激活的身份，返回属于这次激活的接口，经这个接口登记的监听与服务都归这次激活。内置描述符的 `bind` 是 `port => port.require()(port.identity)`，只用公开的资源口。提供者先核对该身份属于在 `uses` 里声明过本服务的激活，否则抛错「内置服务 "x" 只能由在 uses 里声明了它的激活取用」。不声明就拿不到门面：经 `services.get(events)` 动态查到的只是提供者函数，未声明 `events` 的激活无法用它取得接口。
 
 ## 资源身份
 
@@ -118,8 +120,8 @@ interface Services {
 
 容器不外露：注册走 `provide(descriptor, impl)`，消费走 `uses` 后的 `ServiceRef` 或 `services.get`，宿主同样经 `app.bind` 取这两项。
 
-容器按名字存取，不认识类型——实现是否满足契约由描述符在 `provide` 处约束。`register` 的 `owner` 是清理归属（激活门面自动传入）；省略则该 entry 不被拆卸自动清理，调用方用返回的退订闭包自管。`unregisterByOwner` 按 owner 而非 contextId 批量清理，同名激活互不误清。
+容器按名字存取，不认识类型——实现是否满足契约由描述符在 `provide` 处约束。`register` 的 `owner` 是清理归属，必填（激活门面自动传入）。`unregisterByOwner` 按 owner 而非 contextId 批量清理，同名激活互不误清。
 
-宿主要用内置八项的接口经 `app.bind`，如 `app.bind({ events }).events`；动态查询与登记元数据经 `app.bind({ services })`。
+宿主要用内置六项的接口经 `app.bind`，如 `app.bind({ events }).events`；动态查询与登记元数据经 `app.bind({ services })`。
 
 `hasByContext(name, contextId)` 的「拥有」语义同时匹配 `contextId === ownerId` 和以 `ownerId + '/'` 为前缀的 per-entry 子 entry（如 `@aalis/plugin-llm-ollama:main/llama3`）。

@@ -11,7 +11,7 @@
 | **A. 运行时定义** | `export default definePlugin({ provides, uses, … })` | **core**（`PluginManager`） | 插件**已安装并加载进进程后** | 拓扑排序、激活门控、provides 校验 |
 | **B. 安装前披露源** | `package.json` 的 `aalis.service.{provides,required,optional}` | **webui-server 的市场路由** | 插件**还在 npm 上、尚未安装时** | 给用户看「装它会引入/需要哪些服务」 |
 
-关键事实是：**core 永远不读 `package.json`，市场永远不读运行时定义。** 作为作者，你需要把两边写成一致。本仓库用 `test/architecture/manifest-parity.test.ts` 守第一方插件：对账源是 default 导出的定义对象——`provides` 取描述符 `.name`；`uses` 经 core 的 `requiredNames` / `optionalNames` 展开（`optional()` 包装与内置能力排除走同一套归一化）。
+关键事实是：**core 永远不读 `package.json`，市场永远不读运行时定义。** 作为作者，你需要把两边写成一致。本仓库用 `test/architecture/manifest-parity.test.ts` 守第一方插件：对账源是 default 导出的定义对象——`provides` 取描述符 `.name`；`uses` 经 core 的 `requiredNames` / `optionalNames` 展开（`optional()` 包装走同一套归一化，内置能力与其余服务同样计入）。
 
 除了这两套服务元数据，`package.json` 上还有几个纯关键词或标记门：`keywords` 里的类型词（如 `aalis-plugin`）决定一个包能不能被当插件加载、在市场归到哪一类；`aalis.client` 决定它能不能被当前端发现。
 
@@ -23,9 +23,9 @@
 
 ### 加载器只认 default 定义
 
-两加载器共用 `pluginDefinitionOf`：入口的 **default 导出**须是 `definePlugin` 的产物（带非空 `name` 与函数 `apply` 的对象）。具名导出、函数 default、类 default、普通对象都会 warn 并跳过——「装了没反应」必须出声。default 为函数或类不算：它们天然继承 `Function.prototype.apply`，只查 `.apply` 会把函数误当插件。
+两加载器共用 `@aalis/api-plugin-source` 的 `pluginDefinitionOf`：入口的 **default 导出**须是 `definePlugin` 的产物（带非空 `name` 与函数 `apply` 的对象）。具名导出、函数 default、类 default、普通对象都会 warn 并跳过——「装了没反应」必须出声。default 为函数或类不算：它们天然继承 `Function.prototype.apply`，只查 `.apply` 会把函数误当插件。
 
-`App.autoLoadPlugins` 在拿到定义后再注册。定义 `name` 与包名不一致会 warn：配置键 / 热扫描 / 卸载均以定义的 `name` 为准。
+runtime 的发现驱动（`createPluginDiscovery`）拿到定义后整批交给 `app.pluginAll` 注册。定义 `name` 与包名不一致会 warn：配置键 / 热扫描 / 卸载均以定义的 `name` 为准。
 
 典型入口（以 `@aalis/plugin-tools` 为准）：
 
@@ -49,7 +49,7 @@ export default definePlugin({
 
 ### `uses`：激活闸 + 关停边
 
-未包 `optional()` 的外部服务参与激活闸：必须都已注册才会激活，且建成关停依赖边。包了 `optional()` 的不参与激活闸，缺席不拦激活，到场后绑定接口仍可用（`current` 可能为 `undefined`）。内置能力绑的是激活自身，不成边、不进闸。
+未包 `optional()` 的服务参与激活闸：必须都已注册才会激活，且建成关停依赖边。包了 `optional()` 的不参与激活闸，缺席不拦激活，到场后绑定接口仍可用（`current` 可能为 `undefined`）。内置能力与 `app` / `plugins` 由根激活提供、始终在场，激活闸恒满足，也不加关停排序边；`hooks` / `contributions` / `hostConfig` 由插件或宿主提供，与其他外部服务一样受闸约束。
 
 ### `provides`：激活后校验
 
@@ -79,7 +79,7 @@ service?: { required?: string[]; optional?: string[]; provides?: string[] };
   "keywords": ["aalis", "aalis-plugin"],
   "aalis": {
     "service": {
-      "required": ["tools", "cron-engine"],
+      "required": ["config", "cron-engine", "events", "lifecycle", "logger", "provide", "tools"],
       "optional": ["storage", "webui-server"],
       "provides": ["scheduler"]
     }
@@ -91,7 +91,7 @@ service?: { required?: string[]; optional?: string[]; provides?: string[] };
 
 > `aalis.service` 与「安装后」披露不是一回事。插件安装好之后的能力披露走 `/api/plugins`，读的是 core 状态里的运行时 `provides` / `required` / `optional`（`PluginStatusEntry` 上为服务名数组）。源 A 一旦漂移，会让「安装前 / 安装后」的披露不一致。
 
-`create-aalis-plugin` 在勾选了扩展点时会写出对应的 `aalis.service.optional`（与生成的 `uses: { tools: optional(tools), … }` 对齐）；未勾选时不带 `aalis` 字段。一旦你增加 `provides` 或改 `uses`，要同步 `package.json`。
+`create-aalis-plugin` 生成的 `aalis.service` 总有 `required: ["logger"]`（对应生成的 `uses: { logger, … }`）；勾选了扩展点时再写出对应的 `optional`（与 `uses: { tools: optional(tools), … }` 对齐）。一旦你增加 `provides` 或改 `uses`，要同步 `package.json`。
 
 ---
 
@@ -100,10 +100,8 @@ service?: { required?: string[]; optional?: string[]; provides?: string[] };
 | 源 A（`definePlugin`） | 源 B（`package.json`） |
 |---|---|
 | `provides: [scheduler]`（描述符 `.name === 'scheduler'`） | `aalis.service.provides = ["scheduler"]` |
-| `uses` 里未包 `optional()` 的外部服务 | `aalis.service.required` |
-| `uses` 里 `optional()` 包装的外部服务 | `aalis.service.optional` |
-| 内置能力（`logger` / `events` / `config` / `lifecycle` / `provide` / `services` / `hooks` / `contributions`） | **不写**进 `aalis.service` |
-| `hostConfig` / `app` / `plugins`（普通宿主服务） | 按实际 `uses` 是否 optional 写入 required/optional |
+| `uses` 里未包 `optional()` 的服务（内置能力与宿主服务同样计入） | `aalis.service.required` |
+| `uses` 里 `optional()` 包装的服务 | `aalis.service.optional` |
 
 第一方对账：`test/architecture/manifest-parity.test.ts` 对每个 `keywords` 含 `aalis-plugin` 的包 `import()` 源码入口，要求 default 是插件定义，并逐项比较上述三组名字。比对走编译后的导出（或源码入口的 default），不要用正则扫源码——嵌套数组（如工具参数 `required: ['urls']`）会假阳性。
 

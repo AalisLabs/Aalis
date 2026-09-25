@@ -9,18 +9,23 @@
 
 `@aalis/core` 零依赖、环境无关（不 import 任何 `node:*`），只做两件事。
 
-第一，把插件之间的协作方式收成四个原语。插件在 `definePlugin` 的 `uses` 里声明描述符，`apply` 拿到按本次激活绑定的能力；没有默认注入。
+第一，把插件之间的协作方式收成两个原语。插件在 `definePlugin` 的 `uses` 里声明描述符，`apply` 拿到按本次激活绑定的能力；没有默认注入。
 
 | 原语 | 描述符 / 绑定 | 语义 |
 |---|---|---|
 | 事件 | `events`：`on` / `emit` | 广播通知：无返回、错误隔离、不可拦截 |
 | 服务 | `provide(desc, impl)`；`uses` 后的 `ServiceRef`（`current` / `require()` / `all()` / `follow()`）；动态查询 `services` | IoC：同名多提供者并存，按「偏好 > 优先级 > 注册顺序」选胜者 |
-| 中间件钩子 | `hooks`：`middleware` / `run` | 有序管道：可改数据、可短路 |
-| 贡献点 | `contributions`：`contribute` / `collect` | 往共享产物交一块料，排布权归收集方 |
+
+中间件钩子与贡献点建在服务之上，由插件提供：
+
+| 能力 | 描述符 / 绑定（契约包 → 默认提供者） | 语义 |
+|---|---|---|
+| 中间件钩子 | `hooks`：`middleware` / `run`（`@aalis/api-hooks` → `@aalis/plugin-hooks`） | 有序管道：可改数据、可短路 |
+| 贡献点 | `contributions`：`contribute` / `collect`（`@aalis/api-contributions` → `@aalis/plugin-contributions`） | 往共享产物交一块料，排布权归收集方 |
 
 第二，把它们编排成反应式插件生命周期（`App` / `PluginManager`）：依赖的服务就绪即激活，required 服务下线即降级，配置变更经 `bounce` 热重载。登记随本次激活撤回。
 
-消息、会话、LLM、工具、存储、权限……全部是插件。各 `@aalis/api-*` 契约包导出运行时描述符（值导入），并用 declaration merging 把事件键、钩子键、贡献点注入 core 的扩展点（`AalisEvents` / `HookContextMap` / `ContributionPointMap`）。服务类型随描述符走，core 不认识任何业务类型。宿主 `@aalis/runtime` 负责 core 刻意不做的事：读配置文件、发现并加载插件、重启进程。
+消息、会话、LLM、工具、存储、权限……全部是插件。各 `@aalis/api-*` 契约包导出运行时描述符（值导入），并用 declaration merging 把事件键注入 core 的扩展点 `AalisEvents`，把钩子键、贡献点注入 `@aalis/api-hooks` 的 `HookContextMap` 与 `@aalis/api-contributions` 的 `ContributionPointMap`。服务类型随描述符走，core 不认识任何业务类型。宿主 `@aalis/runtime` 负责 core 刻意不做的事：读配置文件、发现并加载插件、重启进程。
 
 内核 API 见 [docs/core/](docs/core/README.md)，语义契约与稳定性条款见 [core 语义契约](docs/design/core-contract.md)。
 
@@ -32,7 +37,7 @@ pnpm monorepo，约 100 个包：
 |---|---|
 | `packages/core` | 内核 |
 | `packages/runtime` | Node 宿主：配置文件、插件发现、进程重启 |
-| `packages/api-*` | 25 个契约包，一个服务一个（`api-llm` / `api-memory` / `api-tools` …），含接口与描述符 |
+| `packages/api-*` | 29 个契约包，一个服务一个（`api-llm` / `api-memory` / `api-tools` …），含接口与描述符 |
 | `packages/plugin-*` | 60 余个插件：LLM 与 Embedding 提供者、记忆与向量存储、工具集、平台适配器（OneBot / CLI / WebUI）、调度、权限、技能等，清单见 [docs/plugins/](docs/plugins/README.md) |
 | `packages/create-aalis` / `create-aalis-plugin` | 脚手架：建机器人项目 / 建插件骨架 |
 | `docs/` | 文档站源码 |

@@ -48,6 +48,7 @@ const SUBGROUPS: Record<string, { text: string; files: string[] }[]> = {
     { text: '前端', files: ['webui'] },
   ],
   plugins: [
+    { text: '钩子与贡献点', files: ['plugin-hooks', 'plugin-contributions'] },
     { text: '平台适配器', files: ['plugin-adapter-onebot'] },
     { text: '模型与嵌入', files: ['plugin-llm-openai', 'plugin-llm-deepseek', 'plugin-llm-ollama', 'plugin-embedding-openai', 'plugin-embedding-ollama', 'plugin-asr-openai', 'plugin-asr-whisper-cpp'] },
     { text: '记忆与向量存储', files: ['plugin-memory-sqlite', 'plugin-memory-mongodb', 'plugin-memory-inmemory', 'plugin-memory-vector', 'plugin-memory-summary', 'plugin-vectorstore-lancedb', 'plugin-vectorstore-flat', 'plugin-memory-history', 'plugin-message-archive'] },
