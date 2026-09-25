@@ -106,6 +106,12 @@ function createMemoryStorage(): StorageService {
     async rename(): Promise<string> {
       throw new Error('测试桩不支持 rename');
     },
+    async move(): Promise<string> {
+      throw new Error('测试桩不支持 move');
+    },
+    async mkdir(): Promise<string> {
+      throw new Error('测试桩不支持 mkdir');
+    },
     async createReadStream(): Promise<never> {
       throw new Error('测试桩不支持 createReadStream');
     },
@@ -527,7 +533,7 @@ describe('plugin-file-reader: PDF 抽文本（unpdf）', () => {
 
 // ════════════════════════════════════════════════════════════
 // 会话目录名：sessionId 含冒号（onebot:<self>:group:<gid>）曾原样当目录名——Windows 文件名不收冒号，
-// 上传落盘直接失败。现与附件落盘同一套替换；老版本按原样建过的目录（POSIX 合法）按实际目录恢复。
+// 上传落盘直接失败。现与附件落盘同一套替换。
 // ════════════════════════════════════════════════════════════
 describe('plugin-file-reader: 会话目录名', () => {
   it('sessionId 含冒号 → 目录名替换成下划线，meta 里仍是原 sessionId', async () => {
@@ -546,44 +552,18 @@ describe('plugin-file-reader: 会话目录名', () => {
       await fx.dispose();
     }
   });
-
-  it('老版本按原样 sessionId 建的目录：重启恢复按实际目录定位，删除删的也是那里', async () => {
-    const fx = await setup();
-    const store = fx.store;
-    const sessionId = 'onebot:1:group:2';
-    const id = await computeFileId(sessionId, Buffer.from('legacy'));
-    const legacyDir = `pluginData:/file-reader/${sessionId}`;
-    await store.writeFile(`${legacyDir}/${id}.txt`, 'legacy');
-    await store.writeFile(
-      `${legacyDir}/${id}.meta.json`,
-      JSON.stringify({ id, name: 'old.txt', mimeType: 'text/plain', size: 6, sessionId, uploadedAt: Date.now() }),
-    );
-    await fx.dispose();
-    await fx.load({}); // 重新装载 → restoreIndex 扫目录
-    try {
-      const svc = fx.service();
-      expect(svc.getMeta(id)?.name).toBe('old.txt');
-      expect(await svc.deleteFile(id)).toBe(true);
-      await expect(store.stat(`${legacyDir}/${id}.txt`), '应删除实际目录里的数据文件').rejects.toThrow();
-      await expect(store.stat(`${legacyDir}/${id}.meta.json`)).rejects.toThrow();
-    } finally {
-      await fx.dispose();
-    }
-  });
 });
 
 describe('plugin-file-reader: session:deleted 清理', () => {
-  it('新旧两种目录名都清，连未入索引的残留一起', async () => {
+  it('会话目录整个删掉，连未入索引的残留一起', async () => {
     const fx = await setup();
     try {
       const sessionId = 'onebot:1:group:2';
       await fx.upload(sessionId, 'a.txt', 'hello');
       await fx.store.writeFile('pluginData:/file-reader/onebot_1_group_2/deadbeef00000000.txt', 'orphan'); // 无 meta 的残留
-      await fx.store.writeFile(`pluginData:/file-reader/${sessionId}/cafebabe00000000.txt`, 'legacy-orphan'); // 老目录残留
       await fx.emitSessionDeleted(sessionId);
       await new Promise(r => setImmediate(r));
-      await expect(fx.store.list('pluginData:/file-reader/onebot_1_group_2'), '新目录应整个删掉').rejects.toThrow();
-      await expect(fx.store.list(`pluginData:/file-reader/${sessionId}`), '老目录应整个删掉').rejects.toThrow();
+      await expect(fx.store.list('pluginData:/file-reader/onebot_1_group_2'), '会话目录应整个删掉').rejects.toThrow();
     } finally {
       await fx.dispose();
     }

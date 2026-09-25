@@ -94,7 +94,7 @@ const reply = typeof parsed.response === 'string' ? parsed.response : '';
 
 依赖声明：`plugin-persona` / `plugin-user-profile` / `plugin-user-relation` 三个插件的 `package.json` 都依赖本包。
 
-- **`@aalis/plugin-persona`** —— 保留了一个 re-export 兼容壳 `src/json-repair.ts`（老代码走相对 import，新代码应直接 import 本包）。实际用法在 `src/index.ts`：
+- **`@aalis/plugin-persona`** —— `src/index.ts` 直接 import 本包：
   - `src/index.ts` 无 `outputFormat` 时，用 `tryParseJsonObject` 自动解包模型误用 JSON 包裹的回复，逐个尝试 `response`/`reply`/`content` 等字段（`index.ts`）。
   - `src/index.ts` 有 `outputFormat` 时，`extractJsonCandidate` + `tryParseJsonObject` 结构化解析，并把 `repairsApplied` 写进 debug 日志。
 - **`@aalis/plugin-user-profile`** —— `src/index.ts` import `parseLLMJsonObject`，在 `src/index.ts` 三处解析画像抽取结果。其中 `978-1006` 是范本：首解析失败后**带显式反馈重试一次**（提示模型「第一个字符必须是 `{`」），仍失败才放弃本批次。

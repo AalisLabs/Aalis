@@ -114,7 +114,6 @@ function run(caps: Caps): void {
     },
     async (fromUri, toUri) => {
       if (storage.all().length === 0) throw new Error('storage 服务不可用');
-      if (!gateway.move) throw new Error('storage 不支持 move');
       await gateway.move(fromUri, toUri);
     },
   );
