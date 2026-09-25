@@ -30,8 +30,9 @@ describe('isStorageNotFound', () => {
     expect(isStorageNotFound('ENOENT')).toBe(true);
   });
 
-  it('没有 code 且文案不命中 → 读失败而非不存在（含网关的「未知存储根」）', () => {
-    expect(isStorageNotFound(new Error('未知存储根: data（已注册根: (无), 需能力 [read]）'))).toBe(false);
+  it('没有 code 且文案不命中 → 读失败而非不存在（含网关的「未知存储根」与「不支持」）', () => {
+    expect(isStorageNotFound(new Error('未知存储根: data（已注册根: (无)）'))).toBe(false);
+    expect(isStorageNotFound(new Error('存储根 data 不支持 read'))).toBe(false);
     expect(isStorageNotFound(new Error('EACCES: permission denied'))).toBe(false);
     expect(isStorageNotFound(null)).toBe(false);
     expect(isStorageNotFound(undefined)).toBe(false);

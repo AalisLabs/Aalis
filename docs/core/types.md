@@ -145,7 +145,7 @@ type Provide = <D extends ServiceDescriptor<any, any>>(
 ) => () => void;
 ```
 
-`AppService` / `PluginManagerService` 见 [app.md](app.md)、[plugin.md](plugin.md)。六个管理动作返回 `Promise<boolean>`：false = 主体不在注册表或被状态 / 政策挡下（含定义或实例 id 校验失败、停机中的 register / bounce）；true = 其余，含幂等。停机进行中 unload / disable 汇入停机计划后立即 true。激活是否落定看 `idle()`。
+`AppService` / `PluginManagerService` 见 [app.md](app.md)、[plugin.md](plugin.md)。六个管理动作返回 `Promise<boolean>`：false = 主体不在注册表或被状态 / 政策挡下（含定义或实例 id 校验失败、停机中的 register / bounce）；true = 其余，含幂等。停机进行中 unload 汇入停机计划后立即 true；disable 先判 `disposed` 终态，停机拆卸开始后对已标 `disposed` 的条目返回 false，其余同 unload。激活是否落定看 `idle()`。
 
 ---
 

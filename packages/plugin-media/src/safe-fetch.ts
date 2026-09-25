@@ -112,7 +112,7 @@ export async function safeDownloadToTemp(
     const uri = `${tmp.uri}/${fileName}`;
     await storage.writeFile(uri, buffer);
     // uri 必须一并返回：下游（materializeAttachment → audioToBase64）按 uri 判「是否落入
-    // storage 根」，丢掉它会让所有 http 音频附件必抛。
+    // storage 根」，丢掉它会让 http 音频附件退回 proc.readExternalFile 直读本地路径、绕开 storage。
     return { path: `${tmp.path}/${fileName}`, uri, cleanup: tmp.cleanup };
   } catch {
     await tmp.cleanup();

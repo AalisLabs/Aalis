@@ -73,6 +73,34 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
     await expect(m.flushed()).resolves.toBeUndefined();
   });
 
+  // saveChain 每一环都用 .then(ok, err) 收尾：一次写失败（磁盘满、权限）不能让链停在 rejected，
+  // 否则拆卸路径 await flushed() 会抛，此后本进程的封禁与等级改动也都不再落盘。
+  it('一次写失败不卡住落盘链：flushed() 不抛，下一次 save 照常写出最新快照', async () => {
+    const payloads: string[] = [];
+    const flaky = {
+      async readFile() {
+        throw new Error('不存在');
+      },
+      async writeFile(_uri: string, data: string) {
+        payloads.push(data);
+        if (payloads.length === 1) throw new Error('ENOSPC');
+      },
+    } as unknown as StorageService;
+    const m = new AuthorityManager(mkConfig({ owners: [] }), silentLogger(), flaky);
+    await m.init();
+    const alice = { platform: 'onebot', userId: 'alice' };
+
+    m.setUserLevel(alice, 3);
+    m.save();
+    await expect(m.flushed(), '写失败被链吸收，拆卸路径 await 它不抛').resolves.toBeUndefined();
+
+    m.setUserLevel(alice, -5);
+    m.save();
+    await m.flushed();
+    expect(payloads, '第一次写失败后链仍能续上').toHaveLength(2);
+    expect(JSON.parse(payloads[1] ?? '{}').users['onebot:alice'].level).toBe(-5);
+  });
+
   it('装配真实 plugin-authority 后 app.stop 等到 onDispose 落盘', async () => {
     const done = { written: false } as { written: boolean; uri?: string };
     const { app } = hostedApp();

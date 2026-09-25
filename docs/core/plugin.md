@@ -76,7 +76,7 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 `disabled` / `disposed` / `error` 是显式态，recompute 不动它们；active / pending 条目的目标态只看 required 依赖此刻是否都有提供者（`requiredSatisfied`）：不满足 → `pending`，满足 → `active`。optional 依赖的上下线不改变目标态：绑定接口每次查询解析当前值，有状态的接线经 `follow` 跟随提供者换人，不靠重启插件。
 
-管理动作收尾时调用 `recompute('changed')`；`stopAll()` 是 `recompute('shutdown')` 的薄壳。`App.stop()` 单飞：先 `beginShutdown()`（置停机态并冻计划）再 `idle()`，然后发 `app:stopping`，最后 `stopAll()` 执行 drain / close。停机进行中 `register` / `bounce` 返回 false；`unload` / `disable` 汇入已冻计划后立即返回 true。每次 `stop()` 都返回完整停机的同一 Promise；`app:stopping` 监听器与清理回调不能 await 或返回它，以免等待自身。
+管理动作收尾时调用 `recompute('changed')`；`stopAll()` 是 `recompute('shutdown')` 的薄壳。`App.stop()` 单飞：先 `beginShutdown()`（置停机态并冻计划）再 `idle()`，然后发 `app:stopping`，最后 `stopAll()` 执行 drain / close。停机进行中 `register` / `bounce` 返回 false；`unload` 汇入已冻计划后立即返回 true；`disable` 在停机拆卸开始后对已标 `disposed` 的条目返回 false，其余同 `unload`。每次 `stop()` 都返回完整停机的同一 Promise；`app:stopping` 监听器与清理回调不能 await 或返回它，以免等待自身。
 
 停机时全部 active 插件与宿主的根激活进同一张关停计划（无依赖关系时后注册的先关）。每个激活 drain 后 close；边规则见 [插件定义与能力](context.md)。单插件 `unload` / `disable` / `bounce` 与整机停机同一套交接保证：正在用它所提供服务的 required 下游（传递闭包）并入同一批，先收尾、先关，提供者之后；判据是下游此刻解析到的胜者属于要走的激活，空档里不切到后备。下游之后转 pending，`bounce` 时随提供者按拓扑序重新激活。这项保证只覆盖动作发起时处于 active 的 required 下游；并发的另一个管理动作里已在收尾的下游、在飞重算里正在激活或在管理动作期间才激活的下游、管理动作进行中发生的停机，与本次管理动作彼此不排序。
 
@@ -86,7 +86,7 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 **false** = 主体不在注册表，或本次动作被状态 / 政策规则挡下（重名、未声明 `reusable` 的多实例、`disposed` 单向终态、`disabled` 态 bounce、**定义或实例 id 校验失败**（含空白、危险键 `__proto__` / `constructor` / `prototype`）、停机中的 `register` / `bounce`）。
 
-**true** = 其余，含主体已在目标态的幂等情形。停机进行中，`unload` / `disable` 汇入停机计划后立即返回 true——不等待拆卸完成，拆卸由停机计划执行（在 `app:stopping` 监听器里等待会与屏障事件死锁）。
+**true** = 其余，含主体已在目标态的幂等情形。停机进行中，`unload` 汇入停机计划后立即返回 true——不等待拆卸完成，拆卸由停机计划执行（在 `app:stopping` 监听器里等待会与屏障事件死锁）。`disable` 先判 `disposed` 终态再判停机：停机拆卸开始时已把有激活的条目标成 `disposed`，此后对它们 `disable` 返回 false，其余情形同 `unload` 返回 true。
 
 每个 false 分支都已记一笔日志（政策挡下 warn，主体不存在与 `disposed` 在途 debug）。true 只说明请求已受理，不说明激活已落定——那看 `idle()`。`enable` / `updateConfig` 对已 `disposed` 的插件返回 false 不变。
 
@@ -104,7 +104,7 @@ type RecomputeKind = 'changed' | 'shutdown';
 
 ### `enable(instanceId)` / `disable(instanceId)`
 
-启用 / 禁用。`error` 态可经 `enable` 转 `pending` 重试。停机中 `disable` 汇入已冻计划后立即返回 true。
+启用 / 禁用。`error` 态可经 `enable` 转 `pending` 重试。停机中 `disable` 汇入已冻计划后立即返回 true；停机拆卸开始后，被标成 `disposed` 的条目返回 false。
 
 ### `bounce(instanceId, opts?: { config? })`
 

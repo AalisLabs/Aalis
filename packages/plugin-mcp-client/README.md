@@ -34,7 +34,7 @@ plugins:
 ## 依赖
 
 - `@modelcontextprotocol/sdk`
-- uses：`tools`（必需，api-tools / plugin-tools）；可选 `plugins`、`hostConfig`
+- uses：`tools`（api-tools / plugin-tools）、`logger`、`lifecycle`、`config`；可选 `plugins`、`hostConfig`
 
 ## 注意
 

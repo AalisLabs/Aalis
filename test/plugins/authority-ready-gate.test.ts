@@ -5,6 +5,8 @@ import { provide } from '@aalis/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
+import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
+import type { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
 
@@ -71,5 +73,67 @@ describe('authority：storage 已在线时 apply 等完等级表加载', () => {
 
     expect(banned, 'apply 返回时等级表仍是空的 —— 加载没被等待').toBeDefined();
     expect(banned?.level).toBe(-5);
+  });
+});
+
+// storage 晚于本插件上线时首载是异步的（apply 无从等待）。save 写的是全量快照：首载还没读完时
+// 插进来的一次等级改动若照常落盘，就拿「只有这条改动」的内存表覆盖掉健康的 users.json；
+// 首载随后把原记录并回内存，但 dirty 已清，磁盘上一直缺这些记录。
+describe('authority：storage 晚于本插件上线，首载在飞时的等级改动', () => {
+  it('健康的 users.json 不被残缺快照覆盖，改动在首载完成后落盘', async () => {
+    const { app } = hostedApp();
+    const host = app.bind({ provide, authority });
+    const actions = new Map<string, WebuiActionHandler>();
+    host.provide(webuiServer, {
+      registerPage: () => () => {},
+      registerAction: (method: string, handler: WebuiActionHandler) => {
+        actions.set(method, handler);
+        return () => void actions.delete(method);
+      },
+    } as never);
+    await app.plugins.idle();
+    await app.plugin(authorityPlugin, {}); // storage 缺席：apply 不等加载就返回
+    await app.plugins.idle();
+
+    // storage 随后上线，follow 触发首载；读卡在闸上
+    const disk = fsStorage();
+    let release = () => {};
+    const gate = new Promise<void>(r => {
+      release = () => r();
+    });
+    let markReading = () => {};
+    const reading = new Promise<void>(r => {
+      markReading = () => r();
+    });
+    let writes = 0;
+    host.provide(storage, {
+      listRoots: () => [ROOT],
+      readFile: async (uri: string) => {
+        markReading();
+        await gate;
+        return disk.readFile(uri);
+      },
+      writeFile: async (uri: string, data: string) => {
+        writes++;
+        await disk.writeFile(uri, data);
+      },
+    } as never);
+    await reading;
+
+    const setUserLevel = actions.get('setUserLevel');
+    if (!setUserLevel) throw new Error('页面动作 setUserLevel 未登记');
+    await setUserLevel({ platform: 'onebot', userId: 'newbie', level: 3 }, { platform: 'webui', userId: 'console' });
+    expect(writes, '首载还没读完就写了全量快照').toBe(0);
+
+    release();
+    const manager = host.authority.current as AuthorityManager | undefined;
+    if (!manager) throw new Error('authority 服务未注册');
+    await manager.flushed();
+    // 先读盘再停机：停机时的拆卸落盘会把漏掉的补写掩盖掉
+    const data = JSON.parse(await readFile(join(dir, 'users.json'), 'utf-8'));
+    await app.stop();
+
+    expect(data.users['onebot:banned']?.level, '原有封禁记录被残缺快照冲掉').toBe(-5);
+    expect(data.users['onebot:newbie']?.level, '首载期间的改动没有落盘').toBe(3);
   });
 });

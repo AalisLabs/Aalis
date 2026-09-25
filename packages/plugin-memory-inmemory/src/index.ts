@@ -137,7 +137,7 @@ class InMemoryFallbackService implements MemoryService {
   /**
    * 同步写入的内部实现。`commitMetadata` 直接调它 —— 中间不能有 `await`，否则每条 op 后面
    * 都是一个微任务让出点，并发的 listMetadata 就能读到批的中间态（实测过：5 条 put 的批，
-   * 并发读采到 1 条），而另两家后端在同样的用例下不撕裂。
+   * 并发读采到 1 条），而 sqlite（真事务）在同样的用例下不撕裂。
    */
   private putSync(namespace: string, key: string, data: Record<string, unknown>): void {
     let ns = this.metadata.get(namespace);

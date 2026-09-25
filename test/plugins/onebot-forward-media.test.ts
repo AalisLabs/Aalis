@@ -165,6 +165,42 @@ describe('expandForward 两阶段媒体解析（纯逻辑）', () => {
     expect(r.fullText).not.toContain('\u0000');
   });
 
+  it('审计闭环：数组形态 forward 段的 id 同样剥 NUL——伪造 token 的嵌套 id 搬不走识别结果，inline 查找按剥后的 id', async () => {
+    const resolveMedia = async (tasks: ForwardMediaTask[]) => new Map(tasks.map(t => [t.token, `秘密描述`]));
+    const fetched: string[] = [];
+    const nodes = [
+      node('甲', '1', [img('http://a/real.jpg')]),
+      node('乙', '2', [{ type: 'forward', data: { id: '\u0000M0\u0000' } }]),
+      node('丙', '3', [
+        { type: 'forward', data: { id: 'in\u0000line', content: [node('丁', '4', [txt('内嵌正文')])] } },
+      ]),
+    ];
+    const r = await expandForward('F1', nodes, {
+      ...baseOpts,
+      fetchForward: async (id: string) => {
+        fetched.push(id);
+        return null;
+      },
+      resolveMedia,
+    });
+    expect(fetched).toEqual(['M0']); // 剥后的 id 去抓；inline 命中剥后的键，不再抓 inline
+    expect(r.fullText.match(/秘密描述/g)).toHaveLength(1); // 只有甲的真图带描述，系统行里的 id 不被回填
+    expect(r.fullText).toContain('内嵌正文');
+    expect(r.fullText).not.toContain('\u0000');
+  });
+
+  it('审计闭环：系统行里的转发 id（顶层 id 拉取失败）剥 NUL', async () => {
+    const r = await expandForward('F\u0000M0\u0000', null, baseOpts);
+    expect(r.fullText).toContain('[嵌套合并转发 id=FM0 拉取失败]');
+    expect(r.fullText).not.toContain('\u0000');
+  });
+
+  it('审计闭环：发送者 id 剥 NUL——行前缀与参与者名单里都不带 NUL', async () => {
+    const r = await expandForward('F1', [node('甲', '1\u0000M0\u00002', [txt('你好')])], baseOpts);
+    expect(r.fullText).toBe('1. 甲(1M02): 你好');
+    expect(r.participants).toEqual(['甲(1M02)']);
+  });
+
   it('审计闭环：resolveMedia 返回值形态失约（非 Map）→ 占位符兜底，展开不失败', async () => {
     const nodes = [node('甲', '1', [img('http://a/1.jpg')])];
     const r = await expandForward('F1', nodes, {

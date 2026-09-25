@@ -1,6 +1,7 @@
 import { type App, config, definePlugin, type PluginDefinition } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import {
+  handleConfigChanged,
   installConfigHotReload,
   syncPluginDefaults,
   withPluginConfigSync,
@@ -408,6 +409,77 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
     expect(app.plugins.getPlugin('multi:b')?.config).toEqual(expected);
     expect(seen.at(-1)).toEqual(expected);
     await app.stop();
+  });
+
+  describe('文件里没有配置段的后缀实例：重载以文件为准，卸载', () => {
+    function fixture(plugins: Record<string, Record<string, unknown>>) {
+      let push: ((next: Record<string, unknown>) => void) | undefined;
+      const saved: Array<{ plugins: Record<string, unknown> }> = [];
+      const { app, store } = hostedApp(
+        { plugins },
+        {
+          provider: {
+            save: snapshot => {
+              saved.push(structuredClone(snapshot));
+            },
+            watch: cb => {
+              push = cb as (next: Record<string, unknown>) => void;
+              return () => {};
+            },
+          },
+        },
+      );
+      const multi = definePlugin({
+        name: 'multi',
+        reusable: true,
+        configSchema: {
+          port: { type: 'number', label: 'P', default: 8080 },
+          tag: { type: 'string', label: 'T' },
+        },
+        apply() {},
+      });
+      // 与 installConfigHotReload 同一接线，另外留住这次重载的 Promise，等它整段走完再断言
+      let reloading: Promise<void> = Promise.resolve();
+      store.watch(() => {
+        reloading = handleConfigChanged(app, store);
+      });
+      async function fileChanged(next: Record<string, Record<string, unknown>>) {
+        push?.({ name: 'T', logLevel: 'error', plugins: next });
+        await reloading;
+        await app.plugins.idle();
+      }
+      return { app, store, multi, saved, fileChanged };
+    }
+
+    it('WebUI 新建后未能落盘的实例：修好配置文件后热重载将其卸载，不按默认值重建，也不写回文件', async () => {
+      const f = fixture({ multi: { port: 8080 } });
+      await registerFromDoc(f.app, f.store, f.multi);
+      // 与 WebUI 建实例同一编排：先写文档再登记；随后落盘被拒，配置文件里没有这一段
+      f.store.setPluginConfig('multi:b', { port: 9000, tag: 'mine' });
+      await f.app.plugins.register(f.multi, { port: 9000, tag: 'mine' }, 'multi:b');
+      await f.app.plugins.idle();
+      expect(f.app.plugins.getPlugin('multi:b')?.state).toBe('active');
+
+      await f.fileChanged({ multi: { port: 8080 } });
+      expect(f.app.plugins.getPlugin('multi:b')).toBeUndefined();
+      expect(f.store.get('plugins')).toEqual({ multi: { port: 8080 } });
+      expect(f.saved.filter(s => Object.hasOwn(s.plugins, 'multi:b'))).toEqual([]);
+      expect(f.app.plugins.getPlugin('multi')?.state).toBe('active');
+      await f.app.stop();
+    });
+
+    it('手动删掉配置段同一处理：后缀实例卸载；主实例没有配置段则按默认值重建（与冷启动一致）', async () => {
+      const f = fixture({ multi: { port: 8081 }, 'multi:b': { port: 9000, tag: 'mine' } });
+      await registerFromDoc(f.app, f.store, f.multi);
+      await registerFromDoc(f.app, f.store, f.multi, 'multi:b');
+      await f.app.plugins.idle();
+
+      await f.fileChanged({});
+      expect(f.app.plugins.getPlugin('multi:b')).toBeUndefined();
+      expect(f.app.plugins.getPlugin('multi')?.config).toEqual({ port: 8080 });
+      expect(f.saved.at(-1)?.plugins).toEqual({ multi: { port: 8080 } });
+      await f.app.stop();
+    });
   });
 
   it('app:stopping 时（在飞动作排干后）停止监听外部变更：provider 的退订被调用，此后推送不再触发重载', async () => {

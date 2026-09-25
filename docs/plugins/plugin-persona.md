@@ -32,7 +32,7 @@ export default definePlugin({
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `persona` | select | `'default'` | 人设：人设文件名（不含后缀） |
-| `personasDir` | string | `'data/personas'` | 人设目录：存放人设文件的目录路径（相对于项目根目录） |
+| `personasDir` | string | `'data/personas'` | 人设目录：人设文件所在目录的 storage URI（如 `data:/personas`；不含 `:/` 时首段视为存储根名，单段裸名归 `data` 根） |
 | `statePersistence` | boolean | `false` | 状态持久化：启用后，角色状态（心情、当前行为等 outputFormat 字段）会在同一会话内延续并注入到下一轮提示中 |
 | `timeInjection` | boolean | `true` | 时间注入：启用后，当前时间会自动注入到系统提示中 |
 | `timeZone` | string | `''` | 时区 (IANA)：例如 Asia/Shanghai、Europe/London、America/New_York。留空使用系统本地时区。 |
@@ -84,7 +84,7 @@ outputFormat:
 ## API
 
 - `getSystemPrompt(options?)`: 返回静态人设提示（名称、描述、性格、prompt、会话级额外提示 `systemPromptExtra` 及 outputFormat 格式说明），同一张卡下逐轮不变
-- `getVolatilePrompt(options?)`: 返回逐轮变化的上下文，包括当前时间（`timeInjection`，时区取 `timeZone`）、当前会话环境、上一轮状态（`statePersistence`）；调用方应把它放在历史消息之后、当前用户消息之前。定时、编排、委派等合成回合的消息不带会话类型时，按 sessionId 的 `<platform>:<self>:<type>:<target>` 约定推断
+- `getVolatilePrompt(options?)`: 返回逐轮变化的上下文，包括当前时间（`timeInjection`，时区取 `timeZone`）、当前会话环境、上一轮状态（`statePersistence`）；调用方应把它放在历史消息之后、当前用户消息之前。定时、编排、委派等合成回合的消息不带会话类型时，按 sessionId 的 `<platform>:<self>:<type>:<target>` 约定推断；子任务会话（`<父会话 id>::<uuid>`）不推断
 - `getPersonaName()`: 返回角色名称
 - `getOutputFormat(options?)`: 返回生效角色卡的结构化输出定义；角色卡没有 outputFormat、没有字段标记 `reply: true`，或会话设置了 `disableOutputFormat` 时返回 undefined
 - `isClientSideJsonRendering(options?)`: 返回是否由客户端渲染 JSON；会话选项优先于角色卡设置

@@ -10,7 +10,7 @@ import type { BoundOf } from '@aalis/core';
 import { config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
-import { WellKnownKinds } from '@aalis/schema-message';
+import { WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 
 /**
@@ -40,6 +40,16 @@ function buildToolNameMap(messages: Message[]): Map<string, string> {
 }
 
 /**
+ * 消息的可见正文。回复经结构化输出（persona 的 outputFormat）时，content 存整串 JSON 信封，
+ * agent 把解码后的回复另写进 metadata 的 VisibleContent 键；键缺省即 content 本身。
+ * 摘要要的是「当时说了什么」，信封里的键骨架与状态字段不该进摘要输入。
+ */
+function visibleText(m: Message): string | null {
+  const visible = m.metadata?.[WellKnownMetadataKeys.VisibleContent];
+  return typeof visible === 'string' ? visible : m.content;
+}
+
+/**
  * 摘要用消息格式化：content 已含 [昵称(ID)] 前缀，故不再叠加 m.name（否则双重身份 用户[123]: [Alice(123)]:）。
  * generateSummary 与 session:compress 两条路径共用，避免格式漂移。
  *
@@ -64,10 +74,10 @@ function formatMsgForSummary(m: Message, nameByToolCallId: ReadonlyMap<string, s
           `${tc.function?.name ?? '未知工具'}(${truncateChars(tc.function?.arguments ?? '', TOOL_ENTRY_MAX_CHARS, '…')})`,
       )
       .join('、');
-    const preamble = m.content?.trim();
+    const preamble = visibleText(m)?.trim();
     return `助手: ${preamble ? `${preamble} ` : ''}调用 ${calls}`;
   }
-  return `${m.role === 'user' ? '用户' : '助手'}: ${m.content ?? '(空)'}`;
+  return `${m.role === 'user' ? '用户' : '助手'}: ${visibleText(m) ?? '(空)'}`;
 }
 
 // ===== 插件元数据 =====

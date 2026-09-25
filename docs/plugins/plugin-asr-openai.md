@@ -36,6 +36,7 @@ definePlugin({
 | `baseUrl` | string | `'https://api.openai.com/v1'` | Base URL |
 | `model` | string | `'whisper-1'` | 模型 |
 | `priority` | number | `50` | 优先级 (越大越优先) |
+| `timeoutMs` | number | `600000` | 请求超时 (ms)：整段上传+识别的上限，实际生效下限为 1000，更小的值按 1000 处理；与 http(s) 音频下载的 15 秒超时相互独立 |
 
 `apiKey` 为必填：未配置时 `apply` 直接抛错，不注册服务；不使用本插件时应在插件管理中禁用。请求地址为 `baseUrl`（去除末尾斜杠）直接拼接 `/audio/transcriptions`，插件不会自动补版本前缀，因此 `baseUrl` 应写到版本前缀为止（例如 OpenAI 官方为 `https://api.openai.com/v1`）。`priority` 作为 `provide(asr, impl, { priority })` 的优先级传入。media 选择音频后端时，`audio.prefer` 指定的处理器存在则直接采用，否则在统一音频池（含具备音频能力的 LLM）中取优先级最高者。
 

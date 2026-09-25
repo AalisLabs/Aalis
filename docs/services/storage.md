@@ -113,7 +113,7 @@ for (const root of roots) {
 ```
 
 - **`entryId: ${lifecycle.id}/${root.name}`**：同一插件可注册多个 storage entry；`storage.all()` 全部枚举，gateway 按 URI 路由。
-- **`priority`**：本服务靠「URI → root 名」精确路由，通常不设。同名 root 不会两个都生效——`createStorageGateway.listRoots` 按枚举顺序去重首个胜出，冲突由 `getStorageRootConflicts` 暴露。
+- **`priority`**：本服务靠「URI → root 名」精确路由，通常不设。同名 root 按枚举顺序首个优先：`createStorageGateway.listRoots` 去重时首个胜出，不带能力要求的调用（如 `stat`）只路由到它；但首个缺少调用所需能力（如只读根上的写）时，按能力过滤的调用仍会落到排在后面、被遮蔽的同名 root 上。冲突由 `getStorageRootConflicts` 暴露。
 
 ### 4.3 可编译的最小骨架
 
@@ -210,7 +210,7 @@ export default definePlugin({
 
 ### 5.3 错误边界
 
-路由不到 root 时抛带「已注册根列表」的 Error。调用 `resolveLocalPath`/`watch` 前可先判方法是否存在。消费者应捕获并转成对 LLM/用户友好的提示。
+root 名未注册时抛「未知存储根」并附已注册根列表；root 已注册、但没有提供者满足调用所需能力（如只读根上的写、不支持本地路径的根上的 `resolveLocalPath`）时抛「存储根 X 不支持 write」一类点明所缺能力的错误。网关上的 `resolveLocalPath` / `watch` 恒存在，目标根不支持时由调用本身抛错，需用 try/catch 处理；只有直接持有单个根的提供者实例（如 `resolveStorageEntryForRoot` 返回的 `instance`）时，才需要判断方法是否存在，或在查找时传 `local-path` / `watch` 能力过滤。消费者应捕获这些错误并转成对 LLM/用户友好的提示。
 
 ---
 

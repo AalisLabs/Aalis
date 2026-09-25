@@ -57,3 +57,37 @@ describe('math_calculus 表达式求值', () => {
     expect(empty.error).toBe('表达式为空');
   });
 });
+
+// ════════════════════════════════════════════════════════════
+// 求值循环全程同步、不让出事件循环：积分分段数封顶，单次调用另有 2 秒总时长预算。
+// 只封顶 n 不够——comb/perm 让单次求值可达毫秒级，默认参数下积分与牛顿法也能卡住进程数秒到数十秒。
+// ════════════════════════════════════════════════════════════
+describe('math_calculus 计算量上界', () => {
+  /** 1000 字符以内塞满 perm(1e9,99999)：单次求值约数毫秒 */
+  function expensiveExpression(): string {
+    const unit = 'perm(1e9,99999)+';
+    let expr = '';
+    while (expr.length + unit.length + 1 <= 1000) expr += unit;
+    return `${expr}x`;
+  }
+
+  it('积分分段数超过上限：立即返回错误，不进循环', async () => {
+    const started = Date.now();
+    const out = await calculus({ operation: 'integral', expression: 'x', a: 0, b: 1, n: 2e10 });
+    expect(out.error).toMatch(/积分分段数过大（最大 1000000）/);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  // 只有积分的求值次数随 n 增长，超时提示只在积分时建议减小 n
+  it.each([
+    ['integral', { a: 0, b: 1 }, '计算超时（超过 2 秒），请简化表达式或减小 n'],
+    ['find_root', {}, '计算超时（超过 2 秒），请简化表达式'],
+  ])('昂贵表达式 + 默认参数（%s）：约 2 秒后返回超时错误', async (operation, extra, message) => {
+    const started = Date.now();
+    const out = await calculus({ operation, expression: expensiveExpression(), ...extra });
+    const elapsed = Date.now() - started;
+    expect(out.error).toBe(message);
+    expect(elapsed).toBeGreaterThanOrEqual(2000);
+    expect(elapsed).toBeLessThan(4000);
+  });
+});

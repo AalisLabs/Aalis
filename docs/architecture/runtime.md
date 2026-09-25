@@ -35,7 +35,7 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 | `createConfigStore(initial, provider?)` | 配置文档：内存态加危险键闸，读写方法与 `HostConfig` 相同；落盘委托给 `provider.save`，外部变更经 `provider.watch` 接入。本身不碰文件。 |
 | `installHostConfig(app, store)` | 把文档作为 `host-config` 服务独占登记在根激活上，并应用文档里的服务偏好。插件拿到的 `save()` 兑现即已落盘，失败以拒绝传出并已记一笔 error。须在登记任何插件之前调用。 |
 | `withPluginConfigSync(loader, app, store, opts?)` | 加载政策：包装加载器，导入定义后、登记前把 `configSchema` 派生的默认值深合并进文档，默认裁剪 schema 外字段。返回 `{ loader, finishInitialLoad }`，首次加载批次在 `finishInitialLoad()` 时合并为一次落盘。 |
-| `syncPluginDefaults` / `handleConfigChanged` / `installConfigHotReload` | 同一政策的其余入口，参数均为 `(app, store, opts?)`：为已登记实例补默认值并裁剪；处理外部变更（差异经 `updateConfig` 重建）；接管变更监听，在 `app:stopping` 时停止。 |
+| `syncPluginDefaults` / `handleConfigChanged` / `installConfigHotReload` | 同一政策的其余入口，参数均为 `(app, store, opts?)`：为已登记实例补默认值并裁剪；处理外部变更（文件里已没有配置段的后缀实例卸载，其余差异经 `updateConfig` 重建）；接管变更监听，在 `app:stopping` 时停止。 |
 | `createProcessRespawnStrategy()` | 进程级重启策略（`app.restart()` → 子进程重生）。 |
 
 `startAalis` 的 `opts`：`configPath`（默认 `cwd/aalis.config.yaml`）、`projectDir`（默认
@@ -44,7 +44,7 @@ core 是环境无关的逻辑，runtime 是承载它的 Node 实现。要在 Den
 `startAalis` 在加载器导入定义后、Core 注册之前同步插件配置：从 `configSchema` 补齐默认值，
 默认裁剪未知字段，再让首次 `apply` 读取该配置。主实例与已配置的复用实例使用同一规则；
 `configSync.trimUnknownFields: false` 可保留未知字段。首次加载批次合并为一次保存，后续市场
-重扫描也在激活前同步并保存。配置热重载复用相同规则，通过 `updateConfig` 重建有变更的插件。
+重扫描也在激活前同步并保存。配置热重载复用相同规则，通过 `updateConfig` 重建有变更的插件，并卸载文件里已没有配置段的后缀实例。
 直接组装 `App` 的宿主仍自行决定配置政策；Core 不解释 schema，也不替运行中的实例改配置。
 
 子命令分发是默认行为：argv 非空即子命令模式——`node index.mjs <name> [args]` 等价于聊天里的

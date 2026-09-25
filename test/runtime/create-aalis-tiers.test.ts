@@ -75,6 +75,8 @@ describe('create-aalis 对话模板', () => {
       );
       const pkg = JSON.parse(await readFile(join(dir, 'my-bot', 'package.json'), 'utf-8'));
       const config = parse(await readFile(join(dir, 'my-bot', 'aalis.config.yaml'), 'utf-8'));
+      const ignored = (await readFile(join(dir, 'my-bot', '.gitignore'), 'utf-8')).split('\n');
+      expect(ignored, '密钥写在 aalis.config.yaml 里，必须忽略').toContain('aalis.config.yaml');
       for (const name of [
         '@aalis/plugin-agent',
         '@aalis/plugin-memory-sqlite',

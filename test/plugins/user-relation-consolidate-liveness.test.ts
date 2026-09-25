@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { memory } from '../../packages/api-memory/src/index.js';
-import { App } from '../../packages/core/src/index.js';
+import { App, type Logger } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import { RelationService, RelationStore } from '../../packages/plugin-user-relation/src/index.js';
 import type { EntityNode, EvidenceRef } from '../../packages/plugin-user-relation/src/types.js';
@@ -21,7 +21,7 @@ import type { EntityNode, EvidenceRef } from '../../packages/plugin-user-relatio
 //      端点死则跳过，写入经 addEntityEntityEdge 复用实时查重。
 // ════════════════════════════════════════════════════════════
 
-async function makeService() {
+async function makeService(logger?: Logger) {
   const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ memory });
   await app.plugins.register(memoryInMemory, {});
@@ -29,7 +29,7 @@ async function makeService() {
   const mem = host.memory.current;
   if (!mem) throw new Error('memory service missing');
   const store = new RelationStore(() => mem);
-  return { app, store, service: new RelationService(store) };
+  return { app, store, service: new RelationService(store, logger) };
 }
 
 const ev = (overrides: Partial<EvidenceRef> = {}): EvidenceRef => ({
@@ -210,5 +210,134 @@ describe('user-relation _ensureHierarchyEdge（重复铸边回归）', () => {
     expect(await priv._ensureHierarchyEdge(c.id, p.id, 'LLM 判定')).toBe('exists');
     const snap = await store.loadAll();
     expect(snap.edges.filter(e => e.kind === 'entity-entity').map(e => e.relationType)).toEqual(['contains']);
+  });
+});
+
+describe('user-relation consolidate 严格等价段：本 pass 已被真合并删除的成员', () => {
+  it('三个同名实体收敛为一个，挂载边全部改指存活者，且不为已被真合并删除的成员铸 is-alias-of 边', async () => {
+    const { store, service } = await makeService();
+    for (let i = 0; i < 3; i++) {
+      // 直写 store 造同名实体，绕开 createEntity 的建时去重
+      const node: EntityNode = {
+        id: globalThis.crypto.randomUUID(),
+        entityKind: 'work',
+        name: '三角洲行动',
+        aliases: [],
+        firstSeenAt: Date.now(),
+        lastReinforcedAt: Date.now(),
+        lastMentionedAt: Date.now(),
+        mentionCount: 1,
+        weight: 0.5,
+        evidence: [ev()],
+      };
+      await store.upsertEntity(node);
+      const p = await service.observePerson('qq', `1000${i}`);
+      await service.addPersonEntityEdge({
+        fromPersonId: p.id,
+        toEntityId: node.id,
+        role: 'enthusiast',
+        evidence: [ev({ messageIds: [`m${i}`] })],
+      });
+    }
+
+    await service.consolidate({ autoLink: true }); // 无 LLM：严格等价直通真合并
+
+    const after = await service.loadAll();
+    expect(after.entities).toHaveLength(1);
+    const survivorId = after.entities[0].id;
+    const personEdges = after.edges.filter(e => e.kind === 'person-entity');
+    expect(personEdges).toHaveLength(3);
+    for (const e of personEdges) expect(e.kind === 'person-entity' && e.toEntityId).toBe(survivorId);
+    // 全图零悬空：三成员组里必有「一端已在本 pass 被真合并删掉」的对，不得按快照旧拷贝给它铸 is-alias-of 边
+    const alive = new Set(after.entities.map(n => n.id));
+    for (const e of after.edges) {
+      if (e.kind !== 'entity-entity') continue;
+      expect(alive.has(e.fromEntityId)).toBe(true);
+      expect(alive.has(e.toEntityId)).toBe(true);
+    }
+  });
+
+  it('跨组吸收：成员已在另一同名组被并掉时，它在本组的对（b 端已死）不铸 is-alias-of 边', async () => {
+    const { store, service } = await makeService();
+    const mk = (id: string, name: string, aliases: string[]): EntityNode => ({
+      id,
+      entityKind: 'work',
+      name,
+      aliases,
+      firstSeenAt: Date.now(),
+      lastReinforcedAt: Date.now(),
+      lastMentionedAt: Date.now(),
+      mentionCount: 1,
+      weight: 0.5,
+      evidence: [ev()],
+    });
+    // 写入顺序决定分组顺序：先处理「甲」组 (X, Y)，Y 并入 aliases 更多的 X 后被删；
+    // 随后「乙」组 (Z, Y) 的 b 端 Y 已死
+    await store.upsertEntity(mk('e-1', '甲', ['x1', 'x2'])); // X
+    await store.upsertEntity(mk('e-2', '乙', [])); // Z
+    await store.upsertEntity(mk('e-3', '乙', ['甲'])); // Y
+
+    await service.consolidate({ autoLink: true }); // 无 LLM：严格等价直通真合并
+
+    const after = await service.loadAll();
+    expect(after.entities.map(n => n.id).sort()).toEqual(['e-1', 'e-2']);
+    const alive = new Set(after.entities.map(n => n.id));
+    for (const e of after.edges) {
+      if (e.kind !== 'entity-entity') continue;
+      expect(alive.has(e.fromEntityId)).toBe(true);
+      expect(alive.has(e.toEntityId)).toBe(true);
+    }
+  });
+
+  it('mergeAlias 遇到已删除的节点是空操作：死节点在 alias 或 canonical 位置都不改写活节点的边', async () => {
+    const { store, service } = await makeService();
+    const live = await service.createEntity({ name: '活实体', entityKind: 'thing', evidence: [ev()] });
+    const dead = await service.createEntity({ name: '已删实体', entityKind: 'thing', evidence: [ev()] });
+    const p = await service.observePerson('qq', '10000');
+    await service.addPersonEntityEdge({
+      fromPersonId: p.id,
+      toEntityId: live.id,
+      role: 'enthusiast',
+      evidence: [ev()],
+    });
+    await service.deleteEntity(dead.id);
+    const edgesBefore = (await store.loadAll()).edges;
+
+    for (const [aliasId, canonicalId] of [
+      [dead.id, live.id],
+      [live.id, dead.id],
+    ]) {
+      const r = await service.mergeAlias({ aliasId, canonicalId, kind: 'entity' });
+      expect(r.aliasDeleted).toBe(false);
+    }
+    expect((await store.loadAll()).edges).toEqual(edgesBefore);
+    expect(await store.getEntity(live.id)).toBeDefined();
+  });
+});
+
+describe('user-relation reinforceEntity 身份锁', () => {
+  it('patch.name / patch.entityKind 不改已有实体的名字与类别，只记审计；强化本身照常生效', async () => {
+    const warns: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn: (...a: unknown[]) => void warns.push(a.map(String).join(' ')),
+      error() {},
+      child: () => logger,
+    };
+    const { store, service } = await makeService(logger);
+    const e = await service.createEntity({ name: '北京', entityKind: 'work', evidence: [ev()] });
+
+    await service.reinforceEntity(e.id, { name: '上海', entityKind: 'place', evidence: [ev({ messageIds: ['m2'] })] });
+    const after = await store.getEntity(e.id);
+    expect(after?.name).toBe('北京');
+    expect(after?.entityKind).toBe('work');
+    expect(after?.evidence).toHaveLength(2);
+    expect(warns.filter(w => w.includes('忽略 entityKind'))).toHaveLength(1);
+    expect(warns.filter(w => w.includes('忽略 name'))).toHaveLength(1);
+
+    // normalizeName 后等价（去掉书名号）的写法允许替换展示名
+    await service.reinforceEntity(e.id, { name: '《北京》' });
+    expect((await store.getEntity(e.id))?.name).toBe('《北京》');
   });
 });

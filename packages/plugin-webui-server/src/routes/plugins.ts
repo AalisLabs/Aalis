@@ -21,6 +21,36 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * 落盘被拒后运行态怎样与文件对齐：插件配置与新建的实例随配置文件热重载（文件里没有配置段的后缀实例会被卸载）；
+ * 启停、实例删除与服务偏好只在重启时按文件登记
+ */
+const RECONCILE = {
+  reload: '修好配置文件后会按文件内容重载',
+  restart: '修好配置文件后，重启时以文件内容为准',
+} as const;
+
+/**
+ * 管理动作改完运行态之后落盘。落盘被拒（典型：配置文件有尚未生效的外部修改，宿主为免覆盖而拒写）时
+ * 回 409 + `applied: true` 并返回 false：改动已在运行态生效、只是没写进文件，调用方别当成「没改成」去重试。
+ */
+export async function saveAfterApply(
+  doc: Pick<HostConfig, 'save'>,
+  res: express.Response,
+  reconcile: keyof typeof RECONCILE,
+): Promise<boolean> {
+  try {
+    await doc.save();
+    return true;
+  } catch (err) {
+    res.status(409).json({
+      error: `已在运行态生效，但未写入配置文件（${errorMessage(err)}）；${RECONCILE[reconcile]}`,
+      applied: true,
+    });
+    return false;
+  }
+}
+
 /** 插件管理 + 全局配置路由用到的能力 */
 interface PluginRoutesCaps {
   app: ServiceRef<AppService>;
@@ -343,7 +373,7 @@ export function registerPluginRoutes(
     if (success) {
       // 管理动作只改运行态；跨重启保留要本路由写文档并落盘
       doc.setPluginConfig(pluginName, merged);
-      await doc.save();
+      if (!(await saveAfterApply(doc, res, 'reload'))) return;
       res.json({ ok: true, message: `插件 ${pluginName} 配置已更新` });
     } else if (pm.getPlugin(pluginName)?.state === 'disabled') {
       // 插件被禁用时这里也会走到，但「不存在」会把用户引向错误方向——区分「禁用」与「真不存在」并给出下一步。
@@ -372,7 +402,7 @@ export function registerPluginRoutes(
     }
     if (success) {
       doc.setPluginEnabled(pluginName, true);
-      await doc.save();
+      if (!(await saveAfterApply(doc, res, 'restart'))) return;
       res.json({ ok: true, message: `插件 ${pluginName} 已启用` });
     } else {
       res.status(404).json({ error: `插件 ${pluginName} 不存在` });
@@ -398,7 +428,7 @@ export function registerPluginRoutes(
     }
     if (success) {
       doc.setPluginEnabled(pluginName, false);
-      await doc.save();
+      if (!(await saveAfterApply(doc, res, 'restart'))) return;
       res.json({ ok: true, message: `插件 ${pluginName} 已禁用` });
     } else {
       res.status(404).json({ error: `插件 ${pluginName} 不在注册表或已处于终态，无法禁用` });
@@ -469,7 +499,7 @@ export function registerPluginRoutes(
       res.status(400).json({ error: errorMessage(err) });
       return;
     }
-    await doc.save();
+    if (!(await saveAfterApply(doc, res, 'reload'))) return;
     res.json({ ok: true, instanceId, message: `已创建实例 ${instanceId}` });
   });
 
@@ -496,7 +526,7 @@ export function registerPluginRoutes(
       res.status(400).json({ error: errorMessage(err) });
       return;
     }
-    await doc.save();
+    if (!(await saveAfterApply(doc, res, 'restart'))) return;
     res.json({ ok: true, message: `已删除实例 ${instanceId}` });
   });
 
