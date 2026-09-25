@@ -1052,7 +1052,7 @@ function runAdapter(caps: Caps): void {
     memory: caps.memory,
     media,
     llm: caps.llm,
-    storage: caps.storage,
+    storage,
     processService: caps.processService,
     forwardCfg,
     attachmentMaxBytes,

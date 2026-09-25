@@ -1,5 +1,8 @@
 import { Buffer } from 'node:buffer';
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { agent as agentService } from '../../packages/api-agent/src/index.js';
 import type { ChatModelRequest } from '../../packages/api-llm/src/index.js';
 import { media } from '../../packages/api-media/src/index.js';
@@ -8,6 +11,7 @@ import { App, provide } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
+import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
@@ -30,13 +34,37 @@ const PNG_DATA_URI = `data:image/png;base64,${Buffer.from(PNG_BYTES).toString('b
 const REL_REF = 'data/images/onebot_t_group_1/0123456789abcdef.png';
 const HTTP_URL = 'https://example.invalid/pic.jpg';
 
-async function loadStack(recorder: ChatModelRequest[], opts: { media?: boolean; storage?: boolean } = {}) {
+/**
+ * `storageRoots` 给出目录时改用真实 storage-local，在其下配 workspace（排第一）/data 两根；
+ * 否则按 `storage` 决定是否提供单根假 storage。
+ */
+async function loadStack(
+  recorder: ChatModelRequest[],
+  opts: { media?: boolean; storage?: boolean; storageRoots?: string } = {},
+) {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, agent: agentService });
   await app.plugin(createMockLLMPlugin({ responses: [{ content: 'ok' }], recorder }));
-  if (opts.storage !== false) {
+  if (opts.storageRoots !== undefined) {
+    const base = opts.storageRoots;
+    const root = (name: string) => ({
+      name,
+      path: join(base, name),
+      label: name,
+      kind: name,
+      browsable: false,
+      readable: true,
+      writable: true,
+      deletable: true,
+    });
+    await app.plugin(storageLocalPlugin, { roots: [root('workspace'), root('data')] });
+  } else if (opts.storage !== false) {
     const fakeStorage = {
+      // agent 经网关按根路由读取，假 storage 须声明自己服务 data 根
+      listRoots: () => [
+        { name: 'data', kind: 'data', browsable: false, readable: true, writable: false, deletable: false },
+      ],
       readFile: async (uri: string) => {
         if (uri !== 'data:/images/onebot_t_group_1/0123456789abcdef.png') throw new Error(`unexpected uri: ${uri}`);
         return PNG_BYTES;
@@ -111,5 +139,39 @@ describe('media 缺席时的 images 兜底', () => {
     const { agent } = await loadStack(recorder, { media: true });
     await agent.handleMessage(incomingWith([REL_REF]));
     expect(lastUserImages(recorder), 'media 在场时 agent 不得改写 images 形态').toEqual([REL_REF]);
+  });
+});
+
+describe('media 缺席时的 images 兜底（真实 storage-local 多根）', () => {
+  let base: string;
+  let app: App | undefined;
+
+  beforeEach(() => {
+    base = mkdtempSync(join(tmpdir(), 'aalis-agent-img-roots-'));
+    const dir = join(base, 'data', 'images', 'onebot_t_group_1');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '0123456789abcdef.png'), PNG_BYTES);
+  });
+
+  afterEach(async () => {
+    await app?.stop();
+    app = undefined;
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it('workspace 排第一：相对路径经网关读 data 根物化，不因胜者是 workspace 丢图', async () => {
+    const recorder: ChatModelRequest[] = [];
+    const stack = await loadStack(recorder, { storageRoots: base });
+    app = stack.app;
+    // 前提锚：胜者是 workspace 根。夹具若改成单根或换了顺序，本用例就测不到只拿胜者读 data:/ 的形状
+    expect(
+      app
+        .bind({ storage })
+        .storage.require()
+        .listRoots()
+        .map(r => r.name),
+    ).toEqual(['workspace']);
+    await stack.agent.handleMessage(incomingWith([REL_REF]));
+    expect(lastUserImages(recorder), 'data 根里的落盘图应物化为 data URI').toEqual([PNG_DATA_URI]);
   });
 });
