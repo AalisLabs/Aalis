@@ -172,7 +172,8 @@ export function coreProviders(
       );
     const off = container.register(name, implementation, entryId, c.owner, options);
     runtime.notify('service:registered', name);
-    c.logger.debug(`服务已注册: ${name}`);
+    // 一个激活登记多个条目（每个模型、每个存储根各一条）时带上条目 id，否则同名的登记行无从区分
+    c.logger.debug(entryId === c.id ? `服务已注册: ${name}` : `服务已注册: ${name}（${entryId}）`);
     return () => {
       if (off()) runtime.notify('service:unregistered', name);
     };
