@@ -25,8 +25,7 @@ const configSchema: ConfigSchema = {
   rootDir: {
     type: 'string',
     label: '存储目录',
-    description:
-      '存储 URI（默认 data:/checkpoints），也兼容裸名/相对路径。所有 checkpoint blob 和 manifest 写入此位置。',
+    description: '存储 URI（默认 data:/checkpoints）。所有 checkpoint blob 和 manifest 写入此位置。',
     default: 'data:/checkpoints',
   },
   maxFileSize: {

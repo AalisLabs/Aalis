@@ -400,9 +400,6 @@ export default definePlugin({
     // 解析数据库路径：storage URI → 本地路径
     const gateway = createStorageGateway(caps.storage);
     const dbUri = toUri(caps.config.path as string);
-    if (!gateway.resolveLocalPath) {
-      throw new Error('存储实现未提供 resolveLocalPath 能力，无法打开 SQLite 数据库');
-    }
     let dbPath: string;
     try {
       dbPath = await gateway.resolveLocalPath(dbUri, 'write');

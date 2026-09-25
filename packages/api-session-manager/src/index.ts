@@ -41,7 +41,7 @@ export interface SessionConfig {
    * /session.reset 复位。
    */
   think?: boolean;
-  /** 额外系统提示（追加到人格提示之后） */
+  /** 额外系统提示：由 persona 追加在人设提示之后、结构化输出格式说明之前；未装 persona 时不生效 */
   systemPromptExtra?: string;
   /** 最大工具迭代次数覆盖（正整数；非正整数视为未设置，回落 agent 全局配置） */
   maxToolIterations?: number;

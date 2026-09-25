@@ -15,8 +15,8 @@ interface EventEntry {
  * 类型安全的事件总线
  *
  * 内置事件使用 AalisEvents 接口提供类型推导。
- * 第三方插件可以通过 TS declaration merging 扩展 AalisEvents，
- * 也可以使用任意字符串 key 注册/触发自定义事件（运行时安全）。
+ * 第三方插件的事件名须先经 TS declaration merging 并入 AalisEvents（未声明的事件名编译报错）；
+ * 运行时动态生成的事件名在自己的命名空间内合并模板字面量签名（见 docs/core/events.md）。
  */
 export class EventBus {
   // 事件名 → 登记集合。每次 on 一条登记：同一函数被两个激活（或同一激活两次）登记

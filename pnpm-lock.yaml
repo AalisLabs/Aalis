@@ -1362,6 +1362,9 @@ importers:
         specifier: ^1.0.4
         version: 1.29.0(zod@4.4.3)
     devDependencies:
+      '@aalis/api-webui':
+        specifier: workspace:*
+        version: link:../api-webui
       '@aalis/core':
         specifier: workspace:*
         version: link:../core
@@ -2597,9 +2600,6 @@ importers:
       '@aalis/api-llm':
         specifier: workspace:>=0.11.0 <1.0.0
         version: link:../api-llm
-      '@aalis/api-memory':
-        specifier: workspace:>=0.6.0 <1.0.0
-        version: link:../api-memory
       '@aalis/api-persona':
         specifier: workspace:>=0.7.0 <1.0.0
         version: link:../api-persona
@@ -2649,6 +2649,9 @@ importers:
       '@aalis/api-doctor':
         specifier: workspace:*
         version: link:../api-doctor
+      '@aalis/api-memory':
+        specifier: workspace:*
+        version: link:../api-memory
       '@aalis/api-session-manager':
         specifier: workspace:*
         version: link:../api-session-manager

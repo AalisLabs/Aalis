@@ -82,6 +82,40 @@ function guessAudioExt(source: string, contentType?: string | null): string {
   return byMime[sub] ?? 'bin';
 }
 
+/** 远程音频下载与 plugin-media 同口径：20 MiB 上限，连接加读完响应体共 15 秒。 */
+const DOWNLOAD_MAX_BYTES = 20 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 15_000;
+
+/**
+ * 下载远程音频。safeFetch 只管 SSRF 与重定向，不带超时也不限体积；入站语音 URL 由外部平台给出，
+ * 对端不应答会挂住整轮语音回合，超大响应会整个读进内存。超时信号覆盖连接与读取响应体；
+ * 体积按流式累计判定——不用 arrayBuffer()，无 Content-Length 的响应要全部读完才看得到大小。
+ */
+async function downloadAudio(url: string): Promise<{ bytes: Buffer; contentType: string | null }> {
+  const resp = await safeFetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+  if (!resp.ok) throw new Error(`下载失败 ${resp.status}`);
+  const declared = Number(resp.headers.get('content-length'));
+  if (declared > DOWNLOAD_MAX_BYTES) {
+    await resp.body?.cancel().catch(() => {});
+    throw new Error(`音频过大 (${declared} > ${DOWNLOAD_MAX_BYTES})`);
+  }
+  if (!resp.body) throw new Error('下载失败：上游无响应体');
+  const reader = resp.body.getReader();
+  const chunks: Buffer[] = [];
+  let received = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > DOWNLOAD_MAX_BYTES) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`音频过大 (流式累计 > ${DOWNLOAD_MAX_BYTES})`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return { bytes: Buffer.concat(chunks), contentType: resp.headers.get('content-type') };
+}
+
 /**
  * 把附件 data 解析为本地可读路径；返回路径 + 清理函数（仅对下载/解码出的临时文件有意义）。
  * 与 plugin-media 的规范实现 ffmpeg.ts:materializeAttachment 对齐：base64 data URL、file://、
@@ -104,11 +138,10 @@ async function materializeAudio(
     return { path: data.slice('file://'.length), cleanup: async () => {} };
   }
   if (data.startsWith('http://') || data.startsWith('https://')) {
-    const resp = await safeFetch(data);
-    if (!resp.ok) throw new Error(`下载失败 ${resp.status}`);
+    const { bytes, contentType } = await downloadAudio(data);
     const tmp = await proc.makeTempDir('whisper-in');
-    const ext = guessAudioExt(data, resp.headers.get('content-type'));
-    await storage.writeFile(`${tmp.uri}/audio.${ext}`, Buffer.from(await resp.arrayBuffer()));
+    const ext = guessAudioExt(data, contentType);
+    await storage.writeFile(`${tmp.uri}/audio.${ext}`, bytes);
     return { path: `${tmp.path}/audio.${ext}`, cleanup: tmp.cleanup };
   }
   // storage URI（scheme:/...）或历史裸相对路径（data/... → data:/...），统一解析到本地路径
@@ -168,7 +201,7 @@ function buildAsrService(cfg: Cfg, proc: ProcessService, storage: StorageService
       const work = await proc.makeTempDir('whisper');
       try {
         const wavLocal = `${work.path}/audio.16k.wav`;
-        // 转码给一半预算，识别拿完整预算：两段都卡住时整体上界仍是 1.5 × timeoutMs
+        // 转码给一半预算，识别拿完整预算：两段子进程都卡住时上界是 1.5 × timeoutMs（远程下载另有 15 秒上限）
         await toWav16k(proc, src.path, wavLocal, Math.max(0, Math.floor(cfg.timeoutMs / 2)));
         const lang = input.language ?? cfg.language;
         const args = [

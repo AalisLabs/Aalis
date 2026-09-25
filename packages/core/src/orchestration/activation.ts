@@ -104,6 +104,10 @@ export class Activation {
     return done;
   }
 
+  /**
+   * 关闭本激活并等它关完。生产调用恒在 joinPlan 之后，只走第一支：等所在关闭计划落定。
+   * 未入关闭计划的两支（叶子直接拆资源、带子树时现组计划）只供测试夹具直接拆激活。
+   */
   disposeAsync(timeoutMs?: number): Promise<void> {
     if (this.closing)
       return awaitWithTimeout(this.closing, timeoutMs, limit =>

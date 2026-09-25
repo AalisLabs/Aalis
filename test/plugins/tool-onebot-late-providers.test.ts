@@ -178,3 +178,43 @@ describe('tool-onebot 在适配器缺非契约扩展时的回退文案', () => {
     expect(mutes.reason).not.toContain('版本');
   });
 });
+
+describe('tool-onebot 访问规则与专属历史工具开关解耦', () => {
+  const HISTORY_OFF = { sessionHistory: { enabled: false } };
+
+  it('sessionHistory.enabled=false：专属历史工具不注册，访问规则照常生效', async () => {
+    const { app, host, readPrivateFromGroup, onebotTools } = await setup();
+    host.provide(platform, adapter('onebot'));
+    await app.pluginAll([{ definition: sessionTools }, { definition: toolOnebot, config: HISTORY_OFF }]);
+    await app.start();
+    await app.plugins.idle();
+    // 平台在场、其它工具照常注册，只少两个专属历史工具
+    expect(onebotTools()).toContain('onebot_group_ban');
+    expect(onebotTools()).not.toContain('onebot_get_session_history');
+    expect(onebotTools()).not.toContain('onebot_resolve_session_id');
+    expect(await readPrivateFromGroup(), '关掉专属工具不能放宽通用工具的读取').toEqual(DENIED);
+  });
+
+  it('sessionHistory.enabled=false 且 allowGroupReadPrivate=true：放行（规则读 allow*，不读开关）', async () => {
+    const { app, readPrivateFromGroup } = await setup();
+    await app.pluginAll([
+      { definition: sessionTools },
+      { definition: toolOnebot, config: { sessionHistory: { enabled: false, allowGroupReadPrivate: true } } },
+    ]);
+    await app.start();
+    await app.plugins.idle();
+    expect(await readPrivateFromGroup()).toMatchObject({ ok: true, sessionId: PRIVATE });
+  });
+
+  it('sessionHistory.enabled=false 时卸载 tool-onebot：规则随之撤回', async () => {
+    const { app, readPrivateFromGroup } = await setup();
+    await app.pluginAll([{ definition: sessionTools }, { definition: toolOnebot, config: HISTORY_OFF }]);
+    await app.start();
+    await app.plugins.idle();
+    expect(await readPrivateFromGroup()).toEqual(DENIED);
+
+    expect(await app.plugins.unload(TOOL_ONEBOT)).toBe(true);
+    await app.plugins.idle();
+    expect(await readPrivateFromGroup()).toMatchObject({ ok: true, sessionId: PRIVATE });
+  });
+});

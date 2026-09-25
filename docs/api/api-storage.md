@@ -58,7 +58,7 @@ interface StorageService {
 }
 ```
 
-`readFileRange` 按字节区间 `[start, end)` 读取，供大文件窗口化访问；提供者未实现时网关抛错，调用方回退 `readFile`（`readTailLines` 已内置该回退）。`watch` 监听文件或目录（目录递归）的变化，返回取消函数；事件可能经过去抖，远程或虚拟根可能不支持。参考实现的监听器随提供者关闭而结束，需要持续监听的消费者用 `storage.follow` 在新提供者上重挂。
+目标不存在时，`readFile` 等按路径定位的方法抛出带 `code: 'ENOENT'` 的错误，其它失败不用这个 code；消费方用 `isStorageNotFound(err)` 区分「不存在」与「读不出」。`readFileRange` 按字节区间 `[start, end)` 读取，供大文件窗口化访问；提供者未实现时网关抛错，调用方回退 `readFile`（`readTailLines` 已内置该回退）。`watch` 监听文件或目录（目录递归）的变化，返回取消函数；事件可能经过去抖，远程或虚拟根可能不支持。参考实现的监听器随提供者关闭而结束，需要持续监听的消费者用 `storage.follow` 在新提供者上重挂。
 
 描述符 `storage` 是普通调用型：绑定接口是 `ServiceRef<StorageService>`。每个 entry 只负责一个根，以 `entryId = '${激活id}/${rootName}'` 名义 `provide`。上层跨 root 调度用 `createStorageGateway(storage)`（第一参是 `ServiceRef`，不是激活记录）。gateway **不**注册进容器。
 
@@ -116,8 +116,9 @@ watch         .watch()
 - `getStorageEntries(source)` — 全部注册过的 storage entry
 - `aggregateStorageRoots(source)` / `getStorageRootConflicts(source)` — 跨 entry 汇总根、识别同名冲突
 - `resolveStorageEntryForRoot(source, rootName, requiredCaps?)` / `resolveStorageByPath(source, uri, requiredCaps?)` — 按 root 名或 URI 查负责该路径的 entry
-- `createStorageGateway(source)` — 调用点按 URI 路由的临时 `StorageService`
+- `createStorageGateway(source)` — 调用点按 URI 路由的临时 `StorageService`；`resolveLocalPath` / `readFileRange` / `watch` 恒定义，根不支持时调用抛错
 - `isStorageUri` / `parseUriRoot` / `toStorageUri` / `parseStorageUri` / `resolveAgainstCwd` — 契约级路径文法
+- `isStorageNotFound(err)` — 「目标不存在」判据：有 `code` 时只认 `ENOENT`，没有 `code` 才看错误文案
 
 ## 相关
 

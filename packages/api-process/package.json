@@ -30,9 +30,6 @@
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
   },
-  "aalis": {
-    "types": true
-  },
   "peerDependencies": {
     "@aalis/core": ">=0.17.0 <1.0.0"
   },

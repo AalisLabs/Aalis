@@ -111,6 +111,8 @@ interface ExecutionGuardContext {
 type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 ```
 
+没有注入守卫时，参考实现 plugin-tools / plugin-commands 按 fail-closed 处理：等同所有人都是默认等级（`DEFAULT_AUTHORITY`）、没有确认通道。`capabilityMinLevel` 高于默认等级或声明了 `confirm` 的操作一律拒绝，其余照常执行。
+
 ### 2.4 配置字段（declaration merging 注入 `AalisConfig`）
 
 `packages/api-authority/src/index.ts` 把 authority 域业务字段注入 `@aalis/api-host-config` 的 `AalisConfig`（配置文档契约本身不知道任何权限语义）。这些字段位于配置文档顶层，参考实现经 `host-config` 服务读取，改动后以 `save()` 落盘：
@@ -318,7 +320,7 @@ authority 在 `apply` 时把 `config.network` 注入进程级 `safeFetch` 策略
 ## 7. 边界与注意事项
 
 - **`risk` 在两轴里走不同路径**：守卫把 `risk` 既透传给 `authorize`（派生 minLevel）又用 `resolveCapabilityPolicy` 展开出 `confirm`（`tools.ts`）。即 `risk:'dangerous'` 同时抬高最低等级到 2 **且**要求 session 确认；只想要其一时显式写 `visibility`/`confirm` 覆盖。
-- **守卫是反向注入，时序敏感**：authority 经 `commands.follow` / `tools.follow` 注入守卫（`packages/plugin-authority/src/index.ts`），confirm 通道经 `authority.follow` 反注（`packages/plugin-session-confirm/src/index.ts`）。任何一方未上线时另一方退化：没 authority → tools/commands 无守卫（全放行）；没 confirm 通道 → `requestAccess` 返回 false（confirm 能力全拒）。重写时保持 `follow`（provider 重启会重新触发），不要用一次性 `services.get`（无依赖边）。
+- **守卫是反向注入，时序敏感**：authority 经 `commands.follow` / `tools.follow` 注入守卫（`packages/plugin-authority/src/index.ts`），confirm 通道经 `authority.follow` 反注（`packages/plugin-session-confirm/src/index.ts`）。任何一方未上线时另一方退化：没 authority → tools/commands 无守卫，需要鉴权或确认的操作全拒；没 confirm 通道 → `requestAccess` 返回 false（confirm 能力全拒）。重写时保持 `follow`（provider 重启会重新触发），不要用一次性 `services.get`（无依赖边）。
 - **`autoConfirmUntil` / `restrictedPolicy.enabledAt` 是双状态**：`autoConfirmUntil` 持久化到 config；`policyEnabledAt` 是运行时态不持久化。重启后 `restrictedPolicy` 的 duration 计时归零（需再次触发 `markPolicyEnabled`，见 action `setRestrictedPolicy`，`src/index.ts`）。
 - **owner 判定含内置本地控制台身份**：`platform ∈ {webui, cli}` 且 `userId === 'console'` 恒为 owner（`authority-manager.ts`）。这是设计而非后门——`platform` 由适配器填写，远端用户无法伪造成 `cli`/`webui`，能填这两个平台名的只有本进程内代码（已具完全能力）。因此新增平台适配器**不得**把自身 platform 命名为 `cli` 或 `webui`；暴露新的本地 surface 时也注意别误用 `console` 这个 userId。
 - **`isPreApproved` ≠ `requestAccess`**：守卫「未授权」分支只能调 `isPreApproved`（不询问发起者），**绝不能**调 `requestAccess`（那会向发起者弹确认 = 自我提权）。这是参考实现修过的 bug，重写时务必区分（`src/index.ts` 注释）。

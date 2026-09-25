@@ -133,12 +133,6 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
       return;
     }
 
-    // 激活期间资源被拆卸（宿主直调 disposeAsync 撞上在飞 apply，state 未被改走）：
-    // provide 已被 post-dispose 守卫吞掉，provides 校验必然失败——但那是框架层
-    // 竞态，不是作者的声明错误，必须如实归因，不能报「声明了但未注册」的假罪名。
-    if (activation.resources.disposed) {
-      throw new Error('激活期间资源已被拆卸，插件未完成注册');
-    }
     const provides = entry.definition.provides?.map(descriptor => descriptor.name) ?? [];
     const missing = provides.filter(name => !services.hasByContext(name, entry.instanceId));
     if (missing.length > 0) {

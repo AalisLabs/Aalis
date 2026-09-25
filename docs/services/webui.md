@@ -23,7 +23,6 @@ WebUI 是 Aalis 的 **Web 管理后台**：启动一个 HTTP 服务器，提供 
 export interface WebUIService {
   getPort(): number;
   getHost(): string;
-  setClientDir?(dir: string): void;
   registerPage(page: WebuiPage, contextId: string): () => void;
   getPages(): Array<WebuiPage & { pluginName: string }>;
   registerAction(method: string, handler: WebuiActionHandler, contextId: string): () => void;
@@ -48,7 +47,6 @@ export interface BoundWebui extends ServiceRef<WebUIService> {
 ```ts
 export interface WebuiClientProvider {
   getClientDir(): string;
-  label?: string;
 }
 ```
 
@@ -154,7 +152,7 @@ export default definePlugin({
 ### 4b. 替换前端（`webui-client`）
 
 - **纯静态包**：`package.json` 标 `aalis.client: true` + 提供 `dist/index.html`，被 webui-server 自动发现挂载，**无需 `apply`**。多前端共存时各成一个 `webui-client` provider，活跃者由「服务偏好」在 WebUI「服务」页切换；卡住可访问 `/__clients` 逃生页切回。
-- **主动覆盖**：插件 `apply` 里 `provide(webuiClient, { getClientDir: () => myDir, label: '我的前端' })`。`onBehalfOf` 代登记归属被代者，不计入代理人 `provides`。
+- **主动覆盖**：插件 `apply` 里 `provide(webuiClient, { getClientDir: () => myDir }, { label: '我的前端' })`，展示名优先取提供方插件的 `displayName`，没有时取 provide 的 `label` 选项。`onBehalfOf` 代登记归属被代者，不计入代理人 `provides`。
 
 ### 4c. 替换整个后端（`webui-server`）
 

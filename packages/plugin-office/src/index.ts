@@ -1,5 +1,5 @@
 import { createProcessGateway, processService } from '@aalis/api-process';
-import { createStorageGateway, storage } from '@aalis/api-storage';
+import { createStorageGateway, isStorageUri, storage } from '@aalis/api-storage';
 import { tools, withToolGroups } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, lifecycle, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
@@ -13,7 +13,7 @@ const configSchema: ConfigSchema = {
   outputDir: {
     type: 'string',
     label: '输出目录',
-    description: '文档保存目录（storage URI，如 workspace:/ 或 data:/docs），也兼容裸名「workspace」/「data」。',
+    description: '文档保存目录（storage URI，如 workspace:/ 或 data:/docs）。',
     default: 'workspace:/',
   },
   docx: {
@@ -70,8 +70,11 @@ export default definePlugin({
 function registerOffice(caps: Caps): void {
   const { logger } = caps;
   const cfg = resolveConfig(caps.config);
+  if (!isStorageUri(cfg.outputDir)) {
+    throw new Error(`outputDir 必须是 storage URI（如 workspace:/ 或 data:/docs），当前为 "${cfg.outputDir}"`);
+  }
   const storage = createStorageGateway(caps.storage);
-  const outputUri = toUri(cfg.outputDir);
+  const outputUri = cfg.outputDir;
   const sessions = new DocSessionManager();
 
   caps.tools.registerGroup({
@@ -110,14 +113,6 @@ function registerOffice(caps: Caps): void {
 }
 
 // ===== 辅助函数 =====
-
-/** 兼容 裸名/相对路径 → storage URI */
-function toUri(input: string): string {
-  if (input.includes(':/')) return input;
-  const s = input.trim().replace(/^\.?\/+/, '');
-  const idx = s.indexOf('/');
-  return idx > 0 ? `${s.slice(0, idx)}:/${s.slice(idx + 1)}` : `${s}:/`;
-}
 
 function resolveConfig(config: Readonly<Record<string, unknown>>): OfficeConfig {
   const docx = config.docx as Record<string, unknown> | undefined;

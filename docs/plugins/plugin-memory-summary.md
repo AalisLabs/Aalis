@@ -42,7 +42,7 @@ export default definePlugin({
 ## 工作方式
 
 1. 每轮对话结束后（`agent:turn:after`，中止或出错的回合除外）异步检查是否需要摘要
-2. 当消息数 ≥ `threshold` 时触发摘要
+2. 当消息数 ≥ `threshold` 且多于 `keepRecent` 时触发摘要（`keepRecent` 不小于 `threshold` 时以 `keepRecent` 为准）
 3. 另外监听 `token:usage` 事件，上下文使用率达到 `autoCompressThreshold` 时发出 `session:compress`（reason=`auto`）启动后台压缩；收到 `session:compress`（reason 为 `manual` 或 `auto`）时不看 `threshold`，只要历史条数多于 `keepRecent` 就压缩，并通过 `session:compressing` 事件报告 start/done/error
 4. 读取最近 max(`threshold`, `keepRecent`+1, 200) 条历史，把除最近 `keepRecent` 条以外的 user/assistant/tool 消息连同已有摘要交给 LLM（带工具调用的 assistant 渲染为「调用 <工具名>(参数)」，tool 结果渲染为「工具结果(工具名): …」，其中工具名按 `toolCallId` 从同段历史的 assistant `toolCalls` 反查、消息自带的 `name` 只作回落，两者的参数与正文按每条 200 字硬截断），生成更新后的摘要（提示词为 `summaryPrompt`，留空则用内置提示词）
 5. 摘要写入后调用 memory 的 `trimHistory` 把较旧消息标记为归档，只保留最近 `keepRecent` 条（下限 1；裁剪点会避开 tool call 组中间）；摘要生成失败或返回空内容时降级为只裁切、不写摘要。若 `message-archive` 服务可用，额外写入一条压缩分隔事件消息

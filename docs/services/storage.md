@@ -65,13 +65,14 @@ export interface StorageRootInfo {
 
 | 函数 | 用途 |
 | --- | --- |
-| `createStorageGateway(source)` | **消费者首选**：返回一个 `StorageService`，每次方法调用按 URI 自动路由到对应 root 的 entry。不注册进容器。 |
+| `createStorageGateway(source)` | **消费者首选**：返回一个 `StorageService`，每次方法调用按 URI 自动路由到对应 root 的 entry。不注册进容器。`resolveLocalPath` / `readFileRange` / `watch` 恒定义（返回类型不带 `?`），根不支持时调用抛错。 |
 | `getStorageEntries(source)` | 枚举所有 storage entry（`source.all()`）。 |
 | `aggregateStorageRoots(source)` | 聚合全部 entry 的 root 列表（带 `providerId`/`provider`）。 |
 | `getStorageRootConflicts(source)` | 同名 root 冲突诊断。 |
 | `resolveStorageEntryForRoot(source, rootName, caps?)` / `resolveStorageByPath(source, uri, caps?)` | 按 root 名或 URI 找到负责该路径的 entry。 |
 | `isStorageUri(s)` | **权威文法判定**。 |
 | `parseUriRoot(uri)` / `toStorageUri(input, fallbackRoot='data')` / `parseStorageUri` / `resolveAgainstCwd` | 契约级路径文法。 |
+| `isStorageNotFound(err)` | 「目标不存在」判据：有 `code` 时只认 `'ENOENT'`，没有 `code` 才退回文案正则。整份读入再整份回写的消费者据它区分「全新」与「读不出」：后者应拒写，免得一次回写冲掉读不懂的原文件。 |
 
 ---
 
@@ -96,6 +97,8 @@ export interface StorageRootInfo {
 | `listRoots` `list` `stat` `readFile` `createReadStream` `writeFile` `rename` `move` `mkdir` `delete` | `resolveLocalPath`、`watch`、`readFileRange` |
 
 不实现可选方法时，`createStorageGateway` 会在调用方抛出明确报错，不会静默。
+
+目标不存在时，`readFile` / `list` / `stat` / `delete` 等按路径定位的方法抛出带 `code: 'ENOENT'` 的错误；权限不足、根不可读等其它失败不得用这个 code，否则消费者会把「读不出」当成「全新」并覆盖原文件。
 
 ### 4.2 注册：`provide` + per-root entryId
 

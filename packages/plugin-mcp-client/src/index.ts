@@ -64,7 +64,7 @@ interface Caps extends BridgeCaps {
   hostConfig: ServiceRef<HostConfig>;
 }
 
-export const configSchema: ConfigSchema = {
+const configSchema: ConfigSchema = {
   servers: {
     type: 'array',
     label: 'MCP 服务器列表',
@@ -83,16 +83,16 @@ export const configSchema: ConfigSchema = {
         required: true,
       },
       args: {
-        type: 'textarea',
+        type: 'list',
         label: '命令参数',
-        description: '每行一个参数；或用空格分隔。会按行优先解析，行内再按空格切分。',
-        default: '',
+        description: '按顺序传给命令的参数列表，每项一个参数（可含空格）。',
+        default: [],
       },
       env: {
-        type: 'textarea',
+        type: 'map',
         label: '环境变量',
-        description: '每行一个 KEY=VALUE。',
-        default: '',
+        description: '额外传给子进程的环境变量（KEY → VALUE）。',
+        default: {},
       },
       enabled: {
         type: 'boolean',
@@ -289,8 +289,10 @@ function registerSelfServiceTools(caps: Caps): void {
 }
 
 /**
- * 把来自 WebUI（textarea 字符串）/ yaml（数组对象）两种形态的 server 配置项统一成 ServerSpec。
- * 非法条目（缺 id 或 command）跳过并日志警告，避免整插件挂掉。
+ * 把一条 server 配置项统一成 ServerSpec。
+ * 非法条目（缺 id 或 command、args 不是数组、env 不是对象）跳过并日志警告，避免整插件挂掉。
+ * 旧版 WebUI 存下的 args / env 多行文本不再解析：按行、按空白切分会拆坏带空格的参数，
+ * 换成列表又会悄悄改变含义，所以要求用户改写，而不是猜。
  */
 function normalizeServerSpec(raw: unknown, index: number, logger: Logger): ServerSpec | undefined {
   if (!raw || typeof raw !== 'object') {
@@ -305,30 +307,26 @@ function normalizeServerSpec(raw: unknown, index: number, logger: Logger): Serve
     return undefined;
   }
 
-  // args: 支持 string[] | string（每行一参数 / 空格分隔）
   let args: string[] | undefined;
   if (Array.isArray(r.args)) {
     args = r.args.map(x => String(x)).filter(Boolean);
-  } else if (typeof r.args === 'string' && r.args.trim()) {
-    args = r.args
-      .split('\n')
-      .flatMap(line => line.trim().split(/\s+/))
-      .filter(Boolean);
+  } else if (r.args !== undefined && r.args !== null) {
+    logger.warn(
+      `servers[${index}]（${id}）的 args 必须是字符串数组，得到 ${typeof r.args}，该 server 不启动。` +
+        '旧版 WebUI 存下的多行文本请改写为数组，每项一个参数，例如 args: ["-y", "@scope/pkg"]',
+    );
+    return undefined;
   }
 
-  // env: 支持 Record<string,string> | string（KEY=VALUE 每行一条）
   let env: Record<string, string> | undefined;
   if (r.env && typeof r.env === 'object' && !Array.isArray(r.env)) {
     env = Object.fromEntries(Object.entries(r.env as Record<string, unknown>).map(([k, v]) => [k, String(v)]));
-  } else if (typeof r.env === 'string' && r.env.trim()) {
-    env = {};
-    for (const line of r.env.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eq = trimmed.indexOf('=');
-      if (eq <= 0) continue;
-      env[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
-    }
+  } else if (r.env !== undefined && r.env !== null) {
+    logger.warn(
+      `servers[${index}]（${id}）的 env 必须是 KEY: VALUE 映射，得到 ${Array.isArray(r.env) ? 'array' : typeof r.env}，该 server 不启动。` +
+        '旧版 WebUI 存下的 KEY=VALUE 多行文本请改写为映射，例如 env: { TOKEN: "xxx" }',
+    );
+    return undefined;
   }
 
   const visibility: McpServerTier | undefined =
@@ -475,5 +473,6 @@ export default definePlugin({
     plugins: optional(pluginsService),
     hostConfig: optional(hostConfigService),
   },
+  configSchema,
   apply: run,
 });

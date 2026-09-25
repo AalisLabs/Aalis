@@ -312,11 +312,11 @@ await events.emit('trigger:fired', {
 
 ### 触发器全部委托 cron-engine
 
-`cron` / `interval` 触发器都转成 cron-engine 的 `subscribe`（`interval` → `@every Ns`），与 scheduler 共享整分钟 tick，不再各自 `setInterval`（`triggers.ts`）。所以 `cron-engine` 是**硬依赖**（`required`）。`once` 用 `setTimeout`，触发即把 `firedAt` 记入 `runsFile`，一生只触发一次；**定义不存在时记账随之清除**——`removeWorkflow` 当场清，手删 yaml 则由启动时的 `pruneOnceFired`（扫完定义、注册触发器之前）按现存定义集补清；`event` 用 `events.on` 订阅（`triggers.ts`）。
+`cron` / `interval` 触发器都转成 cron-engine 的 `subscribe`（`interval` → `@every Ns`），与 scheduler 共享整分钟 tick，不再各自 `setInterval`（`triggers.ts`）。所以 `cron-engine` 是**硬依赖**（`required`）。`once` 用 `setTimeout`，触发即把 `firedAt` 记入 `runsFile`，一生只触发一次；`runsFile` 读不出（不存在以外的读取错误、解析失败、结构不对）时本次运行拒写该文件，也不安排任何 once（`RunStore.onceLedgerReadable`），避免拿空记账重放已触发过的一次性工作流；**定义不存在时记账随之清除**——`removeWorkflow` 当场清，手删 yaml 则由启动时的 `pruneOnceFired`（扫完定义、注册触发器之前）按现存定义集补清；`event` 用 `events.on` 订阅（`triggers.ts`）。
 
 ### storage 不是沙盒
 
-定义存 `defsDir`（默认 `workspace:/workflows`）、运行历史存 `runsFile`（默认 `data:/workflow-runs.json`），都走 storage URI（`index.ts`、`createStorageGateway`）。storage 按 root 做权限位但**不是沙盒**，见 [storage-uri-grammar](../concepts/storage-uri-grammar.md)。`send-message` / `tool` 节点能触达任意会话与已注册工具，等价于 owner 资产的执行面——把 `workflow_define` 暴露给低权限用户即等于给了编排执行能力，注意 authority 配置。
+定义存 `defsDir`（默认 `workspace:/workflows`）、运行历史存 `runsFile`（默认 `data:/workflow-runs.json`），都只接受 storage URI，写成相对路径等其它形态时拒绝激活（`index.ts`、`createStorageGateway`）。storage 按 root 做权限位但**不是沙盒**，见 [storage-uri-grammar](../concepts/storage-uri-grammar.md)。`send-message` / `tool` 节点能触达任意会话与已注册工具，等价于 owner 资产的执行面——把 `workflow_define` 暴露给低权限用户即等于给了编排执行能力，注意 authority 配置。
 
 ## 7. 边界与注意事项
 

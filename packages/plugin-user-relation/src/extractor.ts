@@ -339,7 +339,6 @@ export class RelationExtractor {
    * per-session 连续失败退避，时钟是消息流本身（组件全程无定时器，不引入挂钟）：
    * 提取抛出后跳过接下来 (penalty-1) 个触发点（即 N×penalty 条消息才重试一次），
    * penalty 逐次翻倍、封顶 MAX_BACKOFF_PENALTY；一次 LLM 往返成功即整体清除。
-   * 手动 triggerNow 不受此门限制（运维探针），但其成功同样清除退避。
    */
   private readonly backoff = new Map<string, { penalty: number; skip: number }>();
   /** 归档事件监听的退订；stop() 之后不再计数 */
@@ -384,21 +383,7 @@ export class RelationExtractor {
     this.backoff.clear();
   }
 
-  /** 手动触发某 session 的提取（用于 page-action 的"立即提取"按钮） */
-  async triggerNow(
-    sessionId: string,
-    opts?: { readScope?: ExtractorReadScope },
-  ): Promise<{ status: 'ok' | 'skipped' | 'error'; reason?: string }> {
-    if (this.inFlight.has(sessionId)) return { status: 'skipped', reason: 'in-flight' };
-    try {
-      await this.extractSession(sessionId, opts?.readScope);
-      return { status: 'ok' };
-    } catch (err) {
-      return { status: 'error', reason: stringifyErr(err) };
-    }
-  }
-
-  private async extractSession(sessionId: string, readScopeOverride?: ExtractorReadScope): Promise<void> {
+  private async extractSession(sessionId: string): Promise<void> {
     if (this.inFlight.has(sessionId)) return;
     this.inFlight.add(sessionId);
     try {
@@ -408,7 +393,7 @@ export class RelationExtractor {
         return;
       }
       const limit = this.cfg.mode === 'all-new' ? this.cfg.allNewMaxMessages : this.cfg.readWindowSize;
-      const readScope = readScopeOverride ?? this.cfg.readScope ?? 'same-session';
+      const readScope = this.cfg.readScope ?? 'same-session';
       // history: Message[] 数组（用于 LLM prompt 渲染 + validMessageIds 校验）；
       // messageIdToSessionId: messageId -> 来源 sessionId（跨会话模式下，evidence.sessionId 据此回写真实来源）
       // crossSession=true 时渲染层会自动给每条消息加 [sid] 前缀帮助 LLM 区分来源

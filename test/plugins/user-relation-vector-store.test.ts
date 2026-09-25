@@ -14,6 +14,7 @@ import type { EntityNode, EventNode } from '../../packages/plugin-user-relation/
 import {
   computeEntityEmbeddingHash,
   computeEventEmbeddingHash,
+  embeddingHashFor,
 } from '../../packages/plugin-user-relation/src/utils.js';
 
 // ════════════════════════════════════════════════════════════
@@ -205,6 +206,25 @@ describe('行为等价：consolidate 事件召回（dryRun 直驱私有路径）
     expect(calls.length, '旧 hash 向量不得被当作现行向量使用').toBe(2);
   });
 
+  it('embed 期间节点被并发删除：不写向量（死 uuid 的向量永不可回收）', async () => {
+    const { mem, store } = await makeStore();
+    const service = new RelationService(store);
+    await seedTwinEvents(mem, store, false);
+    const embedding = {
+      embed: async (text: string) => {
+        // embed 的 await 窗口内，其他会话的提取合并把 a1 删了
+        if (text.startsWith('开黑打三角洲a1')) await store.deleteEventCascade('a1');
+        return VEC;
+      },
+    };
+
+    // biome-ignore lint/suspicious/noExplicitAny: 同上
+    await (service as any)._consolidateEventDuplicates({ embedding, dryRun: true });
+    expect(await store.getEvent('a1')).toBeUndefined();
+    expect(await store.getVector('event', 'a1'), '死节点的向量一旦写入就成了孤儿文档').toBeUndefined();
+    expect(await store.getVector('event', 'b1'), '活节点照常落向量').toEqual(VEC);
+  });
+
   it('同轮内不重复打存储：每事件最多一次 getVector/embed（每轮向量缓存生效）', async () => {
     const { mem, store } = await makeStore();
     const service = new RelationService(store);
@@ -225,12 +245,13 @@ describe('行为等价：consolidate 事件召回（dryRun 直驱私有路径）
 });
 
 describe('行为等价：consolidate 实体召回（autoLink + 假 llm 驱动真实入口）', () => {
-  async function makeEntityHarness() {
+  async function makeEntityHarness(modelId?: string) {
     const { app, mem, store } = await makeStore();
     // 宿主侧绑定：桩服务经描述符发布，服务引用直接交给 RelationService
     const host = app.bind({ provide, embedding, llm });
     const embedCalls: string[] = [];
     host.provide(embedding, {
+      ...(modelId ? { modelId } : {}),
       embed: async (text: string) => {
         embedCalls.push(text);
         return VEC;
@@ -242,11 +263,12 @@ describe('行为等价：consolidate 实体召回（autoLink + 假 llm 驱动真
     return { app, mem, store, service, host, embedCalls };
   }
 
-  function seedTwinEntities(mem: MemoryService, store: RelationStore, withVectors: boolean) {
+  function seedTwinEntities(mem: MemoryService, store: RelationStore, withVectors: boolean, modelId?: string) {
     const jobs: Promise<unknown>[] = [];
     for (const id of ['x1', 'y1'] as const) {
       const name = `三角洲行动${id}`;
-      const node = rawEntity(id, { name, embeddingHash: computeEntityEmbeddingHash(name, '摘要', 'topic') });
+      const embeddingHash = embeddingHashFor(computeEntityEmbeddingHash(name, '摘要', 'topic'), modelId);
+      const node = rawEntity(id, { name, embeddingHash });
       jobs.push(mem.saveMetadata(RELATION_NAMESPACE, `entity:${id}`, node));
       if (withVectors) jobs.push(store.upsertVector('entity', id, VEC, node.embeddingHash as string));
     }
@@ -269,5 +291,81 @@ describe('行为等价：consolidate 实体召回（autoLink + 假 llm 驱动真
     const raw = (await mem.getMetadata(RELATION_NAMESPACE, 'entity:x1')) as Record<string, unknown>;
     expect(raw.embeddingVector, '重算结果不得内嵌回节点').toBeUndefined();
     expect(raw.embeddingHash).toBe(computeEntityEmbeddingHash('三角洲行动x1', '摘要', 'topic'));
+  });
+
+  it('换模型即失效：库里是模型 A 的向量，提供者换成模型 B → 两个实体都重算', async () => {
+    const { mem, store, service, host, embedCalls } = await makeEntityHarness('B');
+    await seedTwinEntities(mem, store, true, 'A');
+    await service.consolidate({ autoLink: true, llm: { models: host.llm, modelRef: {} } });
+    expect(embedCalls.length, '跨向量空间的旧向量不得被当作现行向量').toBe(2);
+    const raw = (await mem.getMetadata(RELATION_NAMESPACE, 'entity:x1')) as Record<string, unknown>;
+    expect(raw.embeddingHash).toBe(embeddingHashFor(computeEntityEmbeddingHash('三角洲行动x1', '摘要', 'topic'), 'B'));
+  });
+
+  it('同模型不重算：库里向量与提供者 modelId 一致 → 零 embed 调用', async () => {
+    const { mem, store, service, host, embedCalls } = await makeEntityHarness('A');
+    await seedTwinEntities(mem, store, true, 'A');
+    await service.consolidate({ autoLink: true, llm: { models: host.llm, modelRef: {} } });
+    expect(embedCalls).toHaveLength(0);
+  });
+});
+
+describe('换模型即失效：事件向量（modelId 并入失效键）', () => {
+  const VEC_B = Array.from({ length: 8 }, (_, i) => (8 - i) / 10);
+
+  /** 两个事件的节点 hash 与库里向量都属于 modelId（undefined = 升级前的纯文本 hash） */
+  async function seedEventsFor(mem: MemoryService, store: RelationStore, modelId: string | undefined) {
+    for (const id of ['a1', 'b1'] as const) {
+      const title = `开黑打三角洲${id}`;
+      const embeddingHash = embeddingHashFor(computeEventEmbeddingHash(title, '摘要'), modelId);
+      await mem.saveMetadata(RELATION_NAMESPACE, eventKey(id), rawEvent(id, { title, embeddingHash }));
+      await store.upsertVector('event', id, VEC, embeddingHash);
+    }
+  }
+
+  function stub(modelId: string, vec: number[]) {
+    const calls: string[] = [];
+    const embedding = {
+      modelId,
+      embed: async (text: string) => {
+        calls.push(text);
+        return vec;
+      },
+    };
+    return { embedding, calls };
+  }
+
+  it('库里是模型 A 的向量，提供者换成模型 B → 全部重算并替换', async () => {
+    const { mem, store } = await makeStore();
+    const service = new RelationService(store);
+    await seedEventsFor(mem, store, 'A');
+    const { embedding, calls } = stub('B', VEC_B);
+
+    // biome-ignore lint/suspicious/noExplicitAny: 私有方法 dryRun 直驱
+    await (service as any)._consolidateEventDuplicates({ embedding, dryRun: true });
+    expect(calls.length, '跨向量空间的旧向量不得被当作现行向量').toBe(2);
+    expect(await store.getVector('event', 'a1')).toEqual(VEC_B);
+  });
+
+  it('升级前的纯文本 hash 遇到声明了 modelId 的提供者 → 重算一次', async () => {
+    const { mem, store } = await makeStore();
+    const service = new RelationService(store);
+    await seedEventsFor(mem, store, undefined);
+    const { embedding, calls } = stub('A', VEC);
+
+    // biome-ignore lint/suspicious/noExplicitAny: 同上
+    await (service as any)._consolidateEventDuplicates({ embedding, dryRun: true });
+    expect(calls).toHaveLength(2);
+  });
+
+  it('同模型不重算：库里向量与提供者 modelId 一致 → 零 embed 调用', async () => {
+    const { mem, store } = await makeStore();
+    const service = new RelationService(store);
+    await seedEventsFor(mem, store, 'A');
+    const { embedding, calls } = stub('A', VEC);
+
+    // biome-ignore lint/suspicious/noExplicitAny: 同上
+    await (service as any)._consolidateEventDuplicates({ embedding, dryRun: true });
+    expect(calls).toHaveLength(0);
   });
 });

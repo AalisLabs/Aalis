@@ -47,7 +47,7 @@ definePlugin({
 
 ## 子进程超时
 
-ffmpeg 转码与 whisper-cli 识别都经 `ProcessService.execFile` 带 `timeout` 调用：转码分到 `timeoutMs / 2`，识别拿完整 `timeoutMs`，两段都卡住时整体上界是 `1.5 × timeoutMs`。
+ffmpeg 转码与 whisper-cli 识别都经 `ProcessService.execFile` 带 `timeout` 调用：转码分到 `timeoutMs / 2`，识别拿完整 `timeoutMs`，两段子进程都卡住时上界是 `1.5 × timeoutMs`。http(s) 音频附件的下载不受 `timeoutMs` 约束，另有固定的 15 秒超时与 20 MiB 体积上限（与 plugin-media 同口径），超时或超限直接抛错。
 
 默认值取 10 分钟而非更紧的数值：这道闸的目的是掐断**真正卡死**的子进程，不是给识别限速。CPU 上跑长语音本来就可能要几分钟，闸设得太紧会把本来能用的识别切掉——那是把一个挂死问题换成一个功能问题。
 

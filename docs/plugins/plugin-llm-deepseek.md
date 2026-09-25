@@ -47,3 +47,4 @@ definePlugin({
 - **Strict 工具调用**: 启用 `strictToolCalls` 后，每个工具定义的 `function` 字段带上 `strict: true`；关闭时沿用各工具自身声明的 `strict`
 - **SSE 流式解析**: `chatStream()` 解析 SSE 事件流，累积 tool_calls delta
 - **模型发现**: 启动时 `fetchRemoteModelIds()` 请求 `/models` 获取远端模型列表，与 `customModels` 合并后为每个模型注册一个独立的 `llm` 服务条目
+- **能力覆盖**: `modelCapabilities` 每行按**最后一个**冒号切分模型 id 与能力段，`baseUrl` 指向兼容网关时带冒号的模型 id（如 `qwen3:8b`）照原样写即可

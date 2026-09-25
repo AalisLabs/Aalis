@@ -37,6 +37,8 @@ export interface PersonaSessionOptions {
   disableOutputFormat?: boolean;
   /** 客户端渲染 JSON 覆盖 */
   clientSideJsonRendering?: boolean;
+  /** 会话级额外系统提示（SessionConfig.systemPromptExtra）：追加在人设提示之后、结构化输出格式说明之前 */
+  systemPromptExtra?: string;
 }
 
 export interface PersonaService {

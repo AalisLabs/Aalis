@@ -29,9 +29,6 @@
   "peerDependencies": {
     "@aalis/core": ">=0.17.0 <1.0.0"
   },
-  "aalis": {
-    "types": true
-  },
   "keywords": [
     "aalis",
     "aalis-schema"

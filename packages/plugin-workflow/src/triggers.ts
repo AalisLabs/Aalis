@@ -27,8 +27,10 @@ type FireFn = (workflowId: string, source: string, payload?: Record<string, unkn
  *
  * once 的语义：**一生只触发一次**——触发即记下 firedAt，此后重启进程、重新注册、
  * 重复 workflow_define 都不再触发；只有删除该 workflow 才清账（同 id 重建算新工作流）。
+ * 记账读不出时（onceLedgerReadable 为 false）无从判断是否触发过，本次运行不安排任何 once。
  */
 interface OnceLedger {
+  onceLedgerReadable(): boolean;
   onceFiredAt(workflowId: string): number | undefined;
   markOnceFired(workflowId: string): void;
 }
@@ -91,6 +93,13 @@ export class TriggerManager {
         break;
       }
       case 'once': {
+        // 记账读不出时「从未触发过」无从判断：宁可这次不触发，也不重放已触发过的一次性工作流
+        if (!this.once.onceLedgerReadable()) {
+          this.logger.warn(
+            `workflow ${def.id} 的 once 记账读取失败，本次运行不安排触发（避免重放已触发过的一次性工作流）；修复 runsFile 后重启，或用 workflow_run 手动执行`,
+          );
+          break;
+        }
         // 已有 firedAt 记账 = 这个 once 用过了，注册时直接跳过（重启/重注册都不重跑）。
         // 这道闸只是省掉一个空转 timer，正确性由 fireOnce 的记账兜。
         const firedAt = this.once.onceFiredAt(def.id);

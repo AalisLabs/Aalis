@@ -21,11 +21,6 @@ export interface WebUIService {
   getPort(): number;
   /** 获取 HTTP 服务监听地址 */
   getHost(): string;
-  /**
-   * 设置前端静态文件目录
-   * 允许外部插件在运行时替换前端
-   */
-  setClientDir?(dir: string): void;
   /** 注册一个 WebUI 页面；返回 dispose */
   registerPage(page: WebuiPage, contextId: string): () => void;
   /** 列出当前所有已注册的页面（含插件归属） */
@@ -298,13 +293,12 @@ export const DEFAULT_SUBSYSTEM_METADATA: readonly SubsystemMetadata[] = Object.f
  * webui-server 托管。第三方前端两条接入：
  * - **纯静态包**：package.json 标 `aalis.client: true` + 含 `dist/index.html`，被
  *   webui-server 自动发现挂载（无需 `apply`，runtime 不会把它当插件加载）。
- * - **主动覆盖**：插件 `apply` 里 `provide(webuiClient, impl)`，优先于自动发现。
+ * - **主动覆盖**：插件 `apply` 里 `provide(webuiClient, impl, { label })`，优先于自动发现；
+ *   多前端切换时显示的名字优先取提供方插件的 `displayName`，没有时取 provide 的 `label` 选项。
  */
 export interface WebuiClientProvider {
   /** 返回含 index.html 的前端静态目录绝对路径 */
   getClientDir(): string;
-  /** 可选展示名（多前端切换/选择时用） */
-  label?: string;
 }
 
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----

@@ -12,10 +12,13 @@
 
 ```ts
 interface EmbeddingService {
+  readonly modelId?: string;
   embed(text: string, options?: { signal?: AbortSignal }): Promise<number[]>;
   listModels?(): Promise<string[]>;
 }
 ```
+
+`modelId` 是可选的向量空间标识：`modelId` 相同的两次 `embed` 结果可以直接比较，换模型必须换值。消费方可把它并入向量缓存的失效键，从而在换模型（包括同维度换模型）后识别并重算旧向量；提供者不声明时，消费方无法区分模型。两个第一方实现分别声明为 `openai:<model>` 与 `ollama:<model>`。
 
 调用方可传入 `options.signal`，在回合取消或检索超时时终止请求。Ollama 和 OpenAI
 实现都会将它传至底层 HTTP 请求；调用方取消不触发重试，provider 自身的超时与重试策略仍然生效。

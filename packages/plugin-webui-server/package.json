@@ -32,7 +32,6 @@
     "@aalis/api-authority": "workspace:>=0.9.0 <1.0.0",
     "@aalis/api-commands": "workspace:>=0.6.0 <1.0.0",
     "@aalis/api-llm": "workspace:>=0.11.0 <1.0.0",
-    "@aalis/api-memory": "workspace:>=0.6.0 <1.0.0",
     "@aalis/api-persona": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-platform": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-process": "workspace:>=0.7.0 <1.0.0",
@@ -53,6 +52,7 @@
   "devDependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/api-doctor": "workspace:*",
+    "@aalis/api-memory": "workspace:*",
     "@aalis/schema-message": "workspace:*",
     "@aalis/plugin-package-manager": "workspace:*",
     "@aalis/api-session-manager": "workspace:*",
@@ -81,7 +81,6 @@
         "llm",
         "persona",
         "agent",
-        "memory",
         "plugin-source"
       ],
       "provides": [

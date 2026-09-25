@@ -133,7 +133,8 @@ export interface MediaService {
   // ===== 描述缓存 / 上下文构造（image-rec 合并而来）=====
 
   /**
-   * 主动描述单张图片（含动图自动多帧）。失败返回空串。
+   * 主动描述单张图片（含动图自动多帧）。没有可用的 vision processor、识别结果为空，或动图取不到、
+   * 抽不出帧时返回空串；识别过程出错（识别模型调用失败、静态图取不到等）时抛出，调用方需自行 try/catch。
    * 与 describe([att]) 不同：本方法专为 `analyze_image` 等单图工具优化，
    * 内部走描述缓存（30 天滑动 TTL；键取落盘路径里的内容哈希，非内容寻址的来源经
    * 落盘时登记的别名收敛到同一条）；可传 hint 注入用户意图（带 hint 不读写缓存）。
@@ -194,8 +195,6 @@ export interface DescribeVideoOptions {
   hint?: string;
   /** 本地缓存路径（避免重新下载） */
   localPath?: string;
-  /** 最大输出 token */
-  maxTokens?: number;
 }
 
 export interface BuildContextOptions {
@@ -212,8 +211,6 @@ export interface DescribeOptions {
 
 export interface TranscribeOptions {
   language?: string;
-  withTimestamps?: boolean;
-  prefer?: string | ModelRef;
 }
 
 export interface MediaProcessReport {

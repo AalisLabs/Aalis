@@ -1,5 +1,5 @@
 import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
-import { resolveCapabilityPolicy } from '@aalis/api-authority';
+import { capabilityMinLevel, DEFAULT_AUTHORITY, resolveCapabilityPolicy } from '@aalis/api-authority';
 import type {
   RegisteredTool,
   ToolCallContext,
@@ -198,6 +198,12 @@ export class ToolRegistry implements ToolService {
         this.logger.warn(`工具 ${toolName} 被执行守卫拦截: ${denied}`);
         return { content: JSON.stringify({ error: denied }) };
       }
+    } else if (confirm || capabilityMinLevel({ risk: tool.risk, visibility }) > DEFAULT_AUTHORITY) {
+      // 没有守卫（未装权限插件）时 fail-closed：等同人人都是默认等级、没有确认通道。
+      // 需要更高等级或需要确认的工具一律拒绝，默认等级可用且无需确认的照常执行。
+      const reason = `工具 "${toolName}" 需要权限校验或确认，但未安装权限插件 @aalis/plugin-authority，已拒绝执行`;
+      this.logger.warn(reason);
+      return { content: JSON.stringify({ error: reason }) };
     }
     // 守卫可能等过一轮人工确认：期间回合若已中止（latest-wins / 手动 abort），不替死回合执行
     if (callCtx.signal?.aborted) return { content: JSON.stringify({ error: '回合已中止，未执行' }) };

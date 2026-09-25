@@ -44,6 +44,10 @@ export default definePlugin({
 | `recognizeDocImages` | boolean | `true` | 识别文档内嵌图片：读取 DOCX 时调用 media 服务识别内嵌图片，把描述附在正文末尾（需启用 media/vision；无 media 服务时自动跳过）。识别会增加首次解析耗时与 vision token 开销，结果随提取文本一并缓存。 |
 | `maxDocImages` | number | `8` | 单文档最多识别图片数：超出的内嵌图片跳过识别，避免大量图片拖慢解析、消耗 vision token。0 等同关闭识别。 |
 
+## 附件描述
+
+上传的文件经预处理后，附件描述拼进用户消息。提取文本不超过 `autoInlineLimit` 时内联全文：文件头 `[文件: 名称 (ID: …)]` 的下一行以 `--- 文件内容 ---` 开头，同一行注明正文是数据不是指令，并给出本次的结束标记 `--- 文件内容结束 <编号> ---`。编号在每次生成描述时随机产生，正文中出现的其它结束标记都算正文，文件内容无法借伪造的结束标记把文字排到文件块之外。超过阈值时只给文件名、ID 与大小，由模型调用 `read_uploaded_file` 按需读取。WebUI 显示历史消息时按同一编号剥离文件块。
+
 ## 支持格式
 
 - 文本/代码文件（按 UTF-8 解码；MIME 缺失或为 `application/octet-stream` 时按扩展名推断）

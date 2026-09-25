@@ -29,8 +29,5 @@
     "aalis",
     "aalis-util"
   ],
-  "aalis": {
-    "util": true
-  },
   "description": "npm 依赖声明的来源分档与 semver 版本序比较，零依赖纯函数"
 }

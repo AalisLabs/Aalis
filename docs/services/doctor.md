@@ -41,7 +41,6 @@ export interface DoctorReport {
 export interface CheckSpec {
   id: string;            // 唯一 id，如 'memory.connectivity'；重复注册以最后一次为准
   category: CheckCategory;
-  label?: string;        // 仅用于日志/调试显示
   pluginName?: string;   // 来源插件名；doctor.registerCheck 会自动注入 lifecycle.id
   run(): Promise<CheckResult | CheckResult[]> | CheckResult | CheckResult[]; // 用到的能力由注册方闭包带入
 }

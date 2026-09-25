@@ -201,6 +201,7 @@ describe('once 触发器的远期 runAt 分段重排', () => {
         fired.push(id);
       },
       {
+        onceLedgerReadable: () => true,
         onceFiredAt: id => ledger.get(id),
         markOnceFired: id => {
           ledger.set(id, Date.now());

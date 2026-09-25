@@ -1,5 +1,5 @@
 import type { MemoryService } from '@aalis/api-memory';
-import { type StorageService, toStorageUri } from '@aalis/api-storage';
+import { isStorageNotFound, isStorageUri, type StorageService } from '@aalis/api-storage';
 import type { Logger, ServiceRef } from '@aalis/core';
 
 /** 不记账的根类型：多会话/多平台共享写入区（data、pluginData、logs）与回合结束前就清掉的临时目录（tmp）。 */
@@ -54,7 +54,7 @@ export interface CheckpointFileRecord {
   uri: string;
   /** write=覆盖已有, write-new=新创建, delete=删除, rename=重命名 */
   action: 'write' | 'write-new' | 'delete' | 'rename';
-  /** rename 的目标 URI（回滚时原路移回；老 manifest 无此字段） */
+  /** rename 的目标 URI（回滚时原路移回；调用方未传 toUri 时缺省） */
   toUri?: string;
   /** 原始大小（如果有快照） */
   originalSize?: number;
@@ -318,12 +318,7 @@ export class CheckpointServiceImpl implements CheckpointService {
     const uri = joinUri(this.turnDir(sessionId, turnId), 'manifest.json');
     try {
       const raw = await this.storage.readFile(uri, 'utf-8');
-      const manifest = JSON.parse(String(raw)) as TurnManifest;
-      // 存量 manifest 可能带自指条目（历史递归快照）：既不是用户改动、也不该暴露内部路径，
-      // 更不能让回滚去删自己的备份 —— 在唯一的读入口就滤掉，下游（listTurns / rollback）不必各自设防。
-      // 不记账的根（data / tmp 等，见 beforeMutate）在升级前写下的条目同样滤掉：否则老回合的回滚照样删别处落盘的文件。
-      manifest.files = (manifest.files ?? []).filter(f => !this.isOwnUri(f.uri) && !this.isUnprotectedRootUri(f.uri));
-      return manifest;
+      return JSON.parse(String(raw)) as TurnManifest;
     } catch {
       return null;
     }
@@ -353,7 +348,7 @@ export class CheckpointServiceImpl implements CheckpointService {
             await this.storage.delete(file.uri);
             result.deleted.push(file.uri);
           } catch (delErr) {
-            if (!isNotFoundError(delErr)) throw delErr;
+            if (!isStorageNotFound(delErr)) throw delErr;
           }
         } else if (file.action === 'rename' && file.toUri) {
           // 改名/移动 → 优先原路移回：目录与超限大文件也能复原，且不会在目标端留一份重复。
@@ -373,7 +368,7 @@ export class CheckpointServiceImpl implements CheckpointService {
               result.deleted.push(file.toUri);
             } catch (delErr) {
               const reason = (delErr as Error).message ?? String(delErr);
-              if (isNotFoundError(delErr)) {
+              if (isStorageNotFound(delErr)) {
                 this.logger.debug(`回滚善后：目标 ${file.toUri} 已不在，跳过删除: ${reason}`);
               } else {
                 result.errors.push({ uri: file.toUri, reason });
@@ -572,12 +567,6 @@ export class CheckpointServiceImpl implements CheckpointService {
   }
 }
 
-/** 「文件/目录已不存在」判据：优先看 errno code，再退回错误文案（storage 后端不保证带 code）。 */
-function isNotFoundError(err: unknown): boolean {
-  const e = err as { code?: string; message?: string };
-  return e?.code === 'ENOENT' || /ENOENT|不存在|not found/i.test(e?.message ?? String(err));
-}
-
 function joinUri(base: string, rel: string): string {
   const b = base.endsWith('/') ? base : `${base}/`;
   return `${b}${rel.replace(/^\/+/, '')}`;
@@ -589,7 +578,6 @@ function encodeSegment(s: string): string {
 }
 
 export function resolveConfig(raw: Record<string, unknown>): ServiceConfig {
-  const rootInput = typeof raw.rootDir === 'string' ? raw.rootDir : 'data:/checkpoints';
   const rawScopes = raw.scopes;
   const scopes: string[] = Array.isArray(rawScopes)
     ? rawScopes.filter((x): x is string => typeof x === 'string' && x.length > 0)
@@ -600,14 +588,21 @@ export function resolveConfig(raw: Record<string, unknown>): ServiceConfig {
           .filter(Boolean)
       : ['webui:*'];
   return {
-    rootUri: toUri(rootInput),
+    rootUri: resolveRootUri(raw.rootDir),
     maxFileSize: typeof raw.maxFileSize === 'number' ? Math.max(1024, raw.maxFileSize) : 10 * 1024 * 1024,
     keepSessions: typeof raw.keepSessions === 'number' ? Math.max(0, Math.floor(raw.keepSessions)) : 20,
     scopes,
   };
 }
 
-function toUri(input: string): string {
-  const s = String(input ?? '').trim();
-  return s ? toStorageUri(s) : 'data:/checkpoints';
+/** rootDir 只接受 storage URI；未设、留空或非字符串用默认值，其它写法（如相对路径 data/checkpoints）拒绝激活。 */
+function resolveRootUri(input: unknown): string {
+  const s = typeof input === 'string' ? input.trim() : '';
+  if (!s) return 'data:/checkpoints';
+  if (!isStorageUri(s)) {
+    throw new Error(
+      `plugin-checkpoint 配置错误: rootDir="${s}" 不是 storage URI，请写成 <根名>:/<路径>（如 data:/checkpoints），或删掉该键使用默认值`,
+    );
+  }
+  return s;
 }

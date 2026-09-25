@@ -221,8 +221,9 @@ function registerOkxTools({ tools: baseTools, logger, config }: Caps): void {
 
   registerMarketTools(reg, client);
   registerRubikTools(reg, client);
-  registerAccountTools(reg, client, { defaultLimit: cfg.defaultPageLimit, maxLimit: cfg.maxPageLimit });
-  registerOrderQueryTools(reg, client, { defaultLimit: cfg.defaultPageLimit, maxLimit: cfg.maxPageLimit });
+  const pageLimit = { defaultLimit: cfg.defaultPageLimit, maxLimit: cfg.maxPageLimit };
+  registerAccountTools(reg, client, pageLimit);
+  registerOrderQueryTools(reg, client, pageLimit);
   // 实盘安全闸：真实资金交易须显式确认（demo:false 时还要 confirmRealMoney:true），否则只暴露查询工具。
   // 不加逐单人工确认（保留实时/算法交易能力）——以「一次性显式确认 + 启动告警」替代。
   const tradingArmed = cfg.demo || cfg.confirmRealMoney;
@@ -233,7 +234,7 @@ function registerOkxTools({ tools: baseTools, logger, config }: Caps): void {
         : 'OKX 处于实盘(demo:false)但未设 confirmRealMoney:true，已禁用交易/策略/划转工具（仅保留查询）。',
     );
   }
-  if (cfg.enableTrading && tradingArmed) registerTradeTools(reg, client, modeLabel);
-  if (cfg.enableAlgo && tradingArmed) registerAlgoTools(reg, client, modeLabel);
-  if (cfg.enableTransfer && tradingArmed) registerTransferTools(reg, client);
+  if (cfg.enableTrading && tradingArmed) registerTradeTools(reg, client, modeLabel, pageLimit);
+  if (cfg.enableAlgo && tradingArmed) registerAlgoTools(reg, client, modeLabel, pageLimit);
+  if (cfg.enableTransfer && tradingArmed) registerTransferTools(reg, client, pageLimit);
 }

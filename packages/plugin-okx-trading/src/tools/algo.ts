@@ -1,7 +1,7 @@
 import type { OkxClient } from '../client.js';
-import { errJson, type RegFn, truncate } from './_shared.js';
+import { errJson, type PageLimitCfg, pickLimit, type RegFn, truncate } from './_shared.js';
 
-export function registerAlgoTools(reg: RegFn, client: OkxClient, modeLabel: string): void {
+export function registerAlgoTools(reg: RegFn, client: OkxClient, modeLabel: string, pageLimit: PageLimitCfg): void {
   reg({
     definition: {
       type: 'function',
@@ -123,7 +123,10 @@ export function registerAlgoTools(reg: RegFn, client: OkxClient, modeLabel: stri
             ordType: { type: 'string', description: '订单类型: conditional / oco / trigger' },
             instType: { type: 'string', description: '产品类型: SPOT / SWAP / FUTURES / OPTION' },
             instId: { type: 'string', description: '产品 ID' },
-            limit: { type: 'number', description: '条数' },
+            limit: {
+              type: 'number',
+              description: `条数，默认 ${pageLimit.defaultLimit}，最多 ${pageLimit.maxLimit}`,
+            },
           },
           required: ['ordType'],
           additionalProperties: false,
@@ -136,7 +139,7 @@ export function registerAlgoTools(reg: RegFn, client: OkxClient, modeLabel: stri
           args.ordType as string,
           args.instType as string | undefined,
           args.instId as string | undefined,
-          (args.limit as number) || 20,
+          pickLimit(args, pageLimit),
         );
         return JSON.stringify(truncate(r.data));
       } catch (e) {

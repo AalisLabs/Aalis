@@ -32,7 +32,7 @@ export interface PersonaService {
 
 只有 `getSystemPrompt()` 与 `getPersonaName()` 是必须实现的（接口里非可选），其余方法全部带 `?`。消费者对可选方法都做了存在性判断（见 §3、§5）。各方法语义如下：
 
-- `getSystemPrompt(options?)` — 渲染当前生效角色卡的静态人设：名字、描述、性格、prompt，以及 outputFormat 的 JSON 指令块。同一张卡下逐轮不变，以便命中 LLM provider 的前缀缓存。
+- `getSystemPrompt(options?)` — 渲染当前生效角色卡的静态人设：名字、描述、性格、prompt，`options.systemPromptExtra`（会话级额外提示），以及 outputFormat 的 JSON 指令块。同一张卡下逐轮不变，以便命中 LLM provider 的前缀缓存。
 - `getVolatilePrompt(options?)` — 返回易变上下文：时间注入（`timeInjection`）、会话环境（平台、群号、自身与发送者身份、群聊身份判定规则）、上一轮状态（`statePersistence`）。无内容时返回空串。调用方应把它放在历史消息之后、当前用户消息之前；逐轮变化的内容不能放进 `getSystemPrompt`，否则前缀缓存整条失效。
 - `getPersonaName()` — 返回角色卡的 `name`，用于 CLI 标题、触发昵称，以及 user-profile 的分堆 key。
 - `getOutputFormat(options?)` — 返回角色卡声明的结构化输出格式。无定义时返回 `undefined`；`options.disableOutputFormat` 为真时也返回 `undefined`。
@@ -62,6 +62,7 @@ export interface PersonaSessionOptions {
   persona?: string;             // 覆盖角色卡名称
   disableOutputFormat?: boolean;// 禁用结构化输出格式
   clientSideJsonRendering?: boolean;
+  systemPromptExtra?: string;   // 会话级额外系统提示，追加在人设提示之后、结构化输出格式说明之前
 }
 ```
 
@@ -168,9 +169,9 @@ export default definePlugin({
 
 ## 6. 能力 / 风险 → 影响
 
-**`personasDir` 是 storage 路径，经 `toStorageUri` 归一。** 参考实现取 `searchUris[0] = toStorageUri(personasDirRaw)`。`toStorageUri` 的文法是：已经是 URI（含 `:/`）的原样返回；`foo/bar` 归一为 `foo:/bar`（首段当作根名）；单段裸名 `name` 归一为 `data:/name`（默认归入 `data` 根）。读卡时走 `createStorageGateway(storage)` 网关，按 URI 路由。需要注意 storage 不是沙箱：路径授权由 storage 的 root 权限位决定，persona 能读到哪些卡取决于你授予的 root。详见 `docs/concepts/storage-uri-grammar.md` 与 `docs/services/storage.md`。
+**`personasDir` 是 storage 路径，经 `toStorageUri` 归一。** 参考实现只在 `toStorageUri(personasDirRaw)` 这一个目录下找卡。`toStorageUri` 的文法是：已经是 URI（含 `:/`）的原样返回；`foo/bar` 归一为 `foo:/bar`（首段当作根名）；单段裸名 `name` 归一为 `data:/name`（默认归入 `data` 根）。读卡时走 `createStorageGateway(storage)` 网关，按 URI 路由。需要注意 storage 不是沙箱：路径授权由 storage 的 root 权限位决定，persona 能读到哪些卡取决于你授予的 root。详见 `docs/concepts/storage-uri-grammar.md` 与 `docs/services/storage.md`。
 
-**跨会话身份隔离（防止会话间串档）。** 参考实现把当前消息的会话身份（platform、sessionId、群号、自身与发送者的角色头衔）放进 `AsyncLocalStorage`，并在 `agent:input:before` 用 `runWithIdentity()` 包住后续的异步链。这样身份能穿透 `await` 而不串，并发会话各自隔离，从而杜绝把 A 会话的发送者信息泄漏进 B 会话的 LLM 提示。
+**跨会话身份隔离（防止会话间串档）。** 参考实现把当前消息的会话身份（platform、sessionId、群号、自身与发送者的角色头衔）放进 `AsyncLocalStorage`，并在 `agent:input:before` 用 `runWithIdentity()` 包住后续的异步链。这样身份能穿透 `await` 而不串，并发会话各自隔离，从而杜绝把 A 会话的发送者信息泄漏进 B 会话的 LLM 提示。定时、编排、委派、空闲这类合成回合不经适配器，消息上没有 `sessionType`；此时按 `<platform>:<self>:<type>:<target>` 约定从 sessionId 推断会话类型（只认前缀等于 platform 的 id），推断结果只用于提示词，不写回消息。
 
 ::: warning 安全要点
 这是一处安全约束。第三方 provider 若也注入会话上下文，必须保证同等的隔离——不要用裸实例字段存储「当前会话」。
@@ -178,7 +179,7 @@ export default definePlugin({
 
 **状态持久化。** `statePersistence` 开启时，reply 钩子会把 outputFormat 的非回复字段（如 mood、state）按类型强制后存进 `sessionStates`，并在下一轮注入「你上一轮的状态」。这些状态参与 `memory:clear` 中间件：当 scope 为 session 或 all、且 type 含 `context` 或 `persona` 时会被清除。`getSessionState()` 只读内存、按 sessionId 隔离，provider 不应跨会话泄漏。
 
-**outputFormat 严格校验与重试。** 声明的所有字段必须出现且类型正确，否则抛错触发重试。重试次数来自 `OutputFormat.retries`（缺省 1），写入 `data.maxRetries` 透传给 agent 的重试循环。重试用尽后，回复会被静默丢弃，并通过 `archiveContent` 写一条系统提醒，以避免把原始 JSON 当作回复发出。
+**outputFormat 严格校验与重试。** 声明的所有字段必须出现且类型正确，否则抛错触发重试。重试次数来自 `OutputFormat.retries`（缺省 1），写入 `data.maxRetries` 透传给 agent 的重试循环。重试用尽后，回复会被静默丢弃，并通过 `archiveContent` 写一条系统提醒，以避免把原始 JSON 当作回复发出。解码成功时，钩子把回复字段写进 `data.visibleContent`：落库内容是整串 JSON，agent 据此在 assistant 消息的 metadata 里另存可见正文（键见 schema-message 的 `WellKnownMetadataKeys.VisibleContent`）。
 
 ## 7. 边界与常见错误
 

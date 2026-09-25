@@ -49,9 +49,10 @@ const configSchema: ConfigSchema = {
     fields: {
       enabled: {
         type: 'boolean',
-        label: '启用 OneBot 会话历史读取',
+        label: '启用 OneBot 专属历史工具',
         default: true,
-        description: '允许按群号/QQ 号读取对应 OneBot 会话的近期历史',
+        description:
+          '注册 onebot_resolve_session_id / onebot_get_session_history（按群号/QQ 号读取近期历史）。只管这两个工具：下面的访问规则始终生效，同样约束通用的 session_get_history。',
       },
       maxLimit: {
         type: 'number',
@@ -570,21 +571,19 @@ export default definePlugin({
       },
     };
 
-    let historyCfg: OneBotSessionHistoryConfig | undefined;
-    if (cfg.sessionHistory.enabled) {
-      const maxLimit = Math.max(1, Math.min(1000, Number(cfg.sessionHistory.maxLimit) || 100));
-      const defaultLimitRaw = Math.max(1, Math.floor(Number(cfg.sessionHistory.defaultLimit) || 20));
-      historyCfg = {
-        maxLimit,
-        defaultLimit: Math.min(defaultLimitRaw, maxLimit),
-        allowGroupReadPrivate: cfg.sessionHistory.allowGroupReadPrivate === true,
-        allowCrossSelf: cfg.sessionHistory.allowCrossSelf === true,
-        allowCrossGroup: cfg.sessionHistory.allowCrossGroup !== false,
-        allowCrossPrivate: cfg.sessionHistory.allowCrossPrivate === true,
-      };
-      // 访问规则只对 onebot 会话 id 表态，与 OneBot 平台在不在场无关：不进下面的平台闸
-      registerOneBotHistoryAccessChecker(caps, historyCfg);
-    }
+    const maxLimit = Math.max(1, Math.min(1000, Number(cfg.sessionHistory.maxLimit) || 100));
+    const defaultLimitRaw = Math.max(1, Math.floor(Number(cfg.sessionHistory.defaultLimit) || 20));
+    const historyCfg: OneBotSessionHistoryConfig = {
+      maxLimit,
+      defaultLimit: Math.min(defaultLimitRaw, maxLimit),
+      allowGroupReadPrivate: cfg.sessionHistory.allowGroupReadPrivate === true,
+      allowCrossSelf: cfg.sessionHistory.allowCrossSelf === true,
+      allowCrossGroup: cfg.sessionHistory.allowCrossGroup !== false,
+      allowCrossPrivate: cfg.sessionHistory.allowCrossPrivate === true,
+    };
+    // 访问规则始终注册：它同样约束通用的 session_get_history，不随专属工具开关撤掉（关掉工具不能反倒放宽读取）。
+    // 规则只对 onebot 会话 id 表态，与 OneBot 平台在不在场无关：不进下面的平台闸。
+    registerOneBotHistoryAccessChecker(caps, historyCfg);
 
     // 仅当 OneBot 平台可用时才注册工具。platform 是可选的多提供者服务，OneBot 适配器可能晚于
     // app:ready 上线（WebUI 启用、市场热装、启动失败后修好），且作为非胜者上线时 follow 不触发：
@@ -618,7 +617,7 @@ export default definePlugin({
       if (cfg.groupInfo.enabled) registerGroupInfoTools(caps, storage, bundle);
       if (cfg.account.enabled) registerAccountTools(caps, bundle);
       if (cfg.interaction.enabled) registerInteractionTools(caps, bundle);
-      if (historyCfg) registerSessionHistoryTools(caps, bundle, historyCfg);
+      if (cfg.sessionHistory.enabled) registerSessionHistoryTools(caps, bundle, historyCfg);
       registerRequestTools(caps, bundle);
     };
     events.on('app:ready', () => {

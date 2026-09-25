@@ -6,6 +6,26 @@
 
 零运行时依赖：对 `@aalis/core` 只有 type-only 锚点（以 peer 依赖声明）。字段类型可由其他 api 包经 declaration merging 扩展（如 `api-llm` 注入 `'llm-ref'`）。
 
+## 字段类型
+
+本包内置的中立类型，以及 `validateConfig` 对取值的检查（`undefined` / `null` 视为未配置，只在 `required` 且无 `default` 时报缺）：
+
+| type | 取值 | validateConfig 检查 |
+|---|---|---|
+| `string` / `textarea` | `string` | 类型；声明了 `pattern` 时按正则匹配 |
+| `number` | 有限数值 | 类型；`min` / `max` / `integer` |
+| `boolean` | `boolean` | 类型 |
+| `select` | `string` 或 `number` | 类型（`options` 不是取值白名单） |
+| `multiselect` | `(string \| number)[]` | 数组及元素类型；集合语义，WebUI 以勾选框编辑，不能表达重复项 |
+| `list` | `string[]` | 数组及元素类型；有序，允许重复（如命令行参数） |
+| `map` | `Record<string, string>` | 对象及每个值的类型（如环境变量表） |
+
+`list` 与 `map` 的补充约定：
+
+- **默认值**：`default` 分别写数组与对象，`defaultsFrom` 按值拷贝。runtime 的配置同步合并默认值时递归合并对象，因此顶层或分组里的 `map` 会按键补齐：默认映射中的键总会回到用户配置里，删掉也无效。需要用户可删除的预置条目时，默认值写 `{}`，由插件代码兜底。`list` 不参与合并，用户配置了就整体采用。
+- **未知字段裁剪**：`removeExtraFields` 把 `map` 当作叶子整体保留，不按键裁剪。
+- **缺省 UI**（WebUI 的 SchemaForm）：两者都渲染为多行文本框。`list` 每行一项，空白行忽略；`map` 每行一条 `KEY=VALUE`，按第一个 `=` 切分，键去掉首尾空白，值原样保留，缺少 `=` 或键为空的行不保存。项或值本身含换行时只能在配置文件中编辑。
+
 ## 消费方式：用宽区间，别用 caret
 
 仓内五十余个包这样依赖本包（与 `@aalis/core` 的 peerDep 同一风格）：

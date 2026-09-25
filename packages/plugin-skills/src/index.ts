@@ -820,8 +820,7 @@ function run(caps: Caps): void {
           assets: skill.assets,
         });
       }
-      ensureSessionSet(sessionId).add(skill.name);
-      contributeActivation(skill.name);
+      service.loadSkillForSession(sessionId, skill.name);
       return JSON.stringify({
         ok: true,
         message: `skill "${skill.name}" 已激活；详细指令将在下一次模型调用时注入上下文。`,

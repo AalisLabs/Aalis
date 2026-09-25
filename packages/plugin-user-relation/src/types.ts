@@ -139,7 +139,10 @@ export interface EventNode {
   communityIdAt?: number;
   /** 完整的社群隶属度列表（支持重叠）；louvain/leiden 永远单元素，slpa 可多元素。 */
   communityMemberships?: CommunityMembership[];
-  /** fnv1a-64 + djb2-64(title + '\n' + summary)，32 位 hex；title/summary 变更后值变 → 触发重 embed。 */
+  /**
+   * fnv1a-64 + djb2-64(title + '\n' + summary)，32 位 hex；embedding 提供者声明了 modelId 时后缀 `@<modelId>`。
+   * title/summary 变更或换模型后值变 → 触发重 embed。
+   */
   embeddingHash?: string;
 }
 
@@ -191,7 +194,10 @@ export interface EntityNode {
   mentionCount: number;
   /** rename 审计：每次改名追加一条 */
   nameHistory?: NodeNameAudit[];
-  /** fnv1a-64 + djb2-64(entityKind + '\n' + name + '\n' + (summary ?? ''))，32 位 hex；任一变更后值变 → 触发重 embed。 */
+  /**
+   * fnv1a-64 + djb2-64(entityKind + '\n' + name + '\n' + (summary ?? ''))，32 位 hex；embedding 提供者声明了
+   * modelId 时后缀 `@<modelId>`。任一文本字段变更或换模型后值变 → 触发重 embed。
+   */
   embeddingHash?: string;
 }
 

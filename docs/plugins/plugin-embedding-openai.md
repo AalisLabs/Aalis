@@ -5,7 +5,7 @@
 
 ## 概述
 
-OpenAI 兼容 API 的 `EmbeddingService` 实现。
+OpenAI 兼容 API 的 `EmbeddingService` 实现，向量空间标识 `modelId` 为 `openai:<model>`。
 
 ## 插件声明
 

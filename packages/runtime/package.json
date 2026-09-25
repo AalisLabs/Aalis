@@ -43,8 +43,5 @@
     "@aalis/api-commands": "workspace:*",
     "typescript": "^5.7.0",
     "@types/node": "^22.0.0"
-  },
-  "aalis": {
-    "tooling": true
   }
 }

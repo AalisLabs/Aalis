@@ -141,7 +141,7 @@ export default definePlugin({
 注册细节：
 
 - `provide(vectorstore, store, opts?)`。`opts.priority` 是普通数字（越大越优先，含义自行记载）；lancedb 用 `10` 表「优先于 flat 默认」。同名竞争胜者顺序：**preference > priority > 注册顺序**（DI 仅按名，无能力匹配，见 docs/concepts/service-model.md）。
-- 存储路径用 storage URI（如 `data:/vectorstore`），经 `toStorageUri()` 归一；需要本地真实路径（LanceDB 这类原生库）用 `createStorageGateway(storage).resolveLocalPath(uri, 'write')`，且要先判该方法存在（lancedb `index.ts`）。注意：vectorstore 自身不是单 owner 上下文里的「按会话隔离」资源，隔离靠消费者写进 metadata 的字段（见 §6）。
+- 存储路径用 storage URI（如 `data:/vectorstore`），经 `toStorageUri()` 归一；需要本地真实路径（LanceDB 这类原生库）用 `createStorageGateway(storage).resolveLocalPath(uri, 'write')`。注意：vectorstore 自身不是单 owner 上下文里的「按会话隔离」资源，隔离靠消费者写进 metadata 的字段（见 §6）。
 
 ## 5. 消费者标准写法
 
@@ -181,7 +181,7 @@ export default definePlugin({
 - **维度不匹配**（换了 embedding 模型却复用旧库）：
   - flat：`dotProduct` 对长度不等返回 `Number.NEGATIVE_INFINITY`，不匹配项被排到末尾并被下游 `minScore` 过滤，**不会读越界产 NaN、不会静默清空**；并一次性告警提示清库重建。注：审计早期记录的「flat dim-mismatch 产 NaN」已修复为 `-Infinity`。自研 provider 应照此处理（骨架里的 `cosine` 已对齐）。
   - lancedb：维度由表 schema 固定，写入不同维向量会由 LanceDB 自身报错。
-- **flat 并发写竞态（已加固）**：索引默认 `concurrency=10` 会并发 `save()`，裸 `writeFile` 同路径并发写可能交错损坏 JSON、致下次 `init` 解析失败而整库清空。flat 用 `saveChain` 串行化所有写，失败重标脏下次重试。自研「文件型」provider 必须同样串行化持久化。
+- **flat 并发写竞态（已加固）**：索引默认 `concurrency=10` 会并发 `save()`，裸 `writeFile` 同路径并发写可能交错损坏 JSON、致下次 `init` 解析失败、只能按空库启动。flat 用 `saveChain` 串行化所有写，失败重标脏下次重试。自研「文件型」provider 必须同样串行化持久化。
 - **flat 全量内存 + 全量重写**：所有向量常驻内存、每次 save 整库 `JSON.stringify` 落盘——大规模数据用 lancedb。
 - **lancedb 建表 single-flight**：并发首批 `add` 复用同一建表 promise，避免「table already exists」吞掉向量；`clear()` 必须同步重置 `tableInit`，否则下次 `add` 会 await 到指向已删表的旧 promise 而崩。
 - **lancedb `deleteByFilter` 走原生 SQL 删除**：把 filter 各键拼成 `metadata_json` 上的 LIKE 谓词（`metaJsonFieldPredicate`：字符串值自带引号定界、数字值靠尾随 `,`/`}` 定界，杜绝「1751 误配 17510」这类数字前缀误删），交 LanceDB `table.delete()` 原地删除，**不把整表读进 JS**（旧实现 `query().toArray()` 全表载入 + 复制重建，在大库上会 OOM 硬崩，现已改）。删除经结构性串行锁与后台压实、`clear()` 互斥；空过滤器直接返回 0、不删（防误清全库）。谓词无索引，按 LIKE 全表扫并生成新版本待压实回收，频繁按会话删仍有成本。

@@ -38,5 +38,5 @@ export default definePlugin({
 - 搜索时使用余弦相似度（归一化后等价于点积）排序取 topK
 - 支持 `add` / `search` / `clear` / `save` / `size`
 - dispose 时自动保存，并 `await` 落盘完成后才结束拆卸（普通依赖：本插件 close 完 storage 才 drain；必须 await，void 化会让停机时最后一批向量来不及落盘）
-- 数据文件损坏（解析失败）或内容不是数组时告警并按空库启动，不影响后续写入
+- 数据文件读不出（不存在以外的读取错误，如权限不足）、解析失败或内容不是数组时告警并按空库启动，本次运行不再写入 `vectors.json`（`clear` 也不写），新增向量只在内存中生效，原文件保持原样；修复或移走该文件后重启即恢复落盘。文件不存在视为冷启动，照常写入
 - 适合开发调试和小规模数据，大规模场景建议使用 plugin-vectorstore-lancedb

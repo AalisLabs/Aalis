@@ -102,6 +102,13 @@ API，就把下限抬到那个版本（如 0.13.0 这批的 runtime / plugin-cli
 用了 caret，被依赖包加一个词汇就会让所有已发布消费者拒收新版，node_modules 里出现两份副本，
 而 declaration merging 按模块副本生效，扩展点的合并面会就此裂开。
 
+**发布流程不引入 changesets**：bump 档位按源码与 npm 实况的差异逐包判定，包间依赖范围与 core peer
+下限由 `test/architecture/dep-ranges.test.ts`、`test/architecture/release-claims.test.ts` 守住。
+
+**token 统计的固定桶不作为兼容残留删除**：plugin-agent 按注入者把提示词开销归入固定桶，这些桶是
+`@aalis/api-agent` 中 `TokenUsageBreakdown` 的契约字段，也是 WebUI 的展示维度；改成通用的按注入者统计
+属于契约改形，须另行立项。
+
 ## 八、内部分层（非承诺面，改动须守）
 
 core 源码按职责分目录，依赖方向由 `test/core/architecture.test.ts` 守卫；目录边界与公开包边界无关：
@@ -133,5 +140,10 @@ src 根只留 `index.ts`。`types/` 按种类存放词汇；`types/app.ts`、`ty
 （重启策略）的失败一律 `error` 级。
 
 不拆 kernel 包：包是发布单位不是模块化单位；维持可拆的依赖方向，出现不依赖 core 的真实使用者时再议。资源内核不从包根导出。单独关闭的顺序是 drain → 撤回对外注册 → 清理链分段排空 → afterCleanup；编排层可提前调用 drain，再按依赖图安排 close，内核不解释依赖。关闭后迟到清理仍执行，用来接住初始化期间取得的资源；超时只是停止等待，不代表资源已释放；每个 Resources 至多跟踪一次初始化（调用方保证，再次调用会覆盖前一次）。
+
+不把切断提前到收尾之前（quiesce 前置）：`onDrain` 承诺收尾时本激活的监听、登记与声明的依赖都还在（见第二节），
+提前切断与之冲突；代价是关闭等在飞初始化期间，本激活已有的监听与登记仍对外生效。不把编排改成按条目的判别联合
+状态机（per-entry lane）：它要的收益——拆卸只有一个形状、状态写入点收拢并由机器守住——已由 `retireBatch` 与
+`test/architecture/state-write-sites.test.ts` 的写入点定格拿到。
 
 没有为插件 apply 或 app 生命周期屏障新增超时；`disposeTimeoutMs` 约束清理等待，不是整个 register / stop 的总期限。若流程尚在等待永不落定的 apply 或屏障监听器，仍可能无法进入清理阶段。

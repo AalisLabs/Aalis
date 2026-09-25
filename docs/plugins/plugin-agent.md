@@ -141,7 +141,7 @@ definePlugin({
 
 ## Token 预算追踪与日志
 
-首轮与每次工具迭代的 LLM 调用前（裁剪之后），Agent 估算 prompt 消耗并发出 `token:usage` 事件；收到 `token:request`（plugin-webui-server 在客户端订阅会话而无缓存用量、或手动压缩完成后发出）时，也会按当前会话生成一次快照：
+首轮与每次工具迭代的 LLM 调用前（裁剪之后），Agent 估算 prompt 消耗并发出 `token:usage` 事件；收到 `token:request`（plugin-webui-server 在客户端订阅会话而无缓存用量、或手动压缩完成后发出）时，也会按当前会话生成一次快照。快照与真实回合用同一个预算公式，系统提示也按同一份会话配置（人设覆盖、结构化输出开关、额外提示）构建：
 
 ```ts
 'token:usage': [{

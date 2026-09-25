@@ -37,6 +37,8 @@ describe('mcp-client 自服务开关落盘', () => {
     );
     apps.push(app);
     const registry = new ToolRegistry(silent);
+    // 测的是工具自身行为而非鉴权：放行守卫代替 plugin-authority（没有守卫时需要鉴权的工具一律被拒）
+    registry.setExecutionGuard(async () => null);
     app.bind({ provide }).provide(tools, registry);
     await registerFromDoc(app, store, mcpClient);
     await app.plugins.idle();
@@ -66,6 +68,7 @@ describe('mcp-client 自服务开关落盘', () => {
     apps.push(app);
     const host = app.bind({ events, provide });
     const registry = new ToolRegistry(silent);
+    registry.setExecutionGuard(async () => null);
     host.provide(tools, registry);
     const unloaded: string[] = [];
     host.events.on('plugin:unloaded', id => {

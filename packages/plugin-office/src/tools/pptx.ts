@@ -61,7 +61,7 @@ interface TemplateColors {
   text: string;
   /** 背景色 */
   background: string;
-  /** 标题色 */
+  /** 写在主色/辅色底上的文字色（母版标题与结束页文字） */
   title: string;
   /** 副标题/浅色文字 */
   subtitle: string;
@@ -99,7 +99,7 @@ function buildTemplateMasters(c: TemplateColors): PresetTemplate['masters'] {
               y: 1.2,
               w: 8.8,
               h: 1.5,
-              color: c.background,
+              color: c.title,
               fontSize: 36,
               bold: true,
               placeholder: 'title',
@@ -128,7 +128,7 @@ function buildTemplateMasters(c: TemplateColors): PresetTemplate['masters'] {
               y: 0.1,
               w: 8.8,
               h: 0.6,
-              color: c.background,
+              color: c.title,
               fontSize: 20,
               bold: true,
               placeholder: 'title',
@@ -151,7 +151,7 @@ function buildTemplateMasters(c: TemplateColors): PresetTemplate['masters'] {
               y: 2.2,
               w: 9,
               h: 1.2,
-              color: c.background,
+              color: c.title,
               fontSize: 32,
               bold: true,
               placeholder: 'title',
@@ -168,7 +168,7 @@ function buildTemplateMasters(c: TemplateColors): PresetTemplate['masters'] {
         {
           text: {
             text: 'Thank You',
-            options: { x: 0, y: 1.8, w: 10, h: 1.5, color: c.background, fontSize: 40, bold: true, align: 'center' },
+            options: { x: 0, y: 1.8, w: 10, h: 1.5, color: c.title, fontSize: 40, bold: true, align: 'center' },
           },
         },
         {
@@ -191,51 +191,32 @@ function buildTemplateMasters(c: TemplateColors): PresetTemplate['masters'] {
   ];
 }
 
+/** 由一份颜色生成预设：母版从颜色派生 */
+function preset(name: string, description: string, colors: TemplateColors): PresetTemplate {
+  return { name, description, colors, masters: buildTemplateMasters(colors) };
+}
+
 const PRESET_TEMPLATES: Record<string, PresetTemplate> = {
-  clean: {
-    name: 'clean',
-    description: '简洁白色主题。白底配蓝色标题栏，适合商务汇报、技术分享、日常演示等通用场景。',
-    colors: {
-      primary: '2B579A',
-      secondary: '1A3A6B',
-      text: '333333',
-      background: 'FFFFFF',
-      title: 'FFFFFF',
-      subtitle: 'D0D8E8',
-    },
-    masters: buildTemplateMasters({
-      primary: '2B579A',
-      secondary: '1A3A6B',
-      text: '333333',
-      background: 'FFFFFF',
-      title: 'FFFFFF',
-      subtitle: 'D0D8E8',
-    }),
-  },
-  dark: {
-    name: 'dark',
-    description: '深色科技主题。深蓝黑背景配亮色文字，适合科技产品发布、AI/数据、技术演讲等现代感场景。',
-    colors: {
-      primary: '0D1117',
-      secondary: '161B22',
-      text: 'E6EDF3',
-      background: '0D1117',
-      title: 'FFFFFF',
-      subtitle: '8B949E',
-    },
-    masters: buildTemplateMasters({
-      primary: '0D1117',
-      secondary: '161B22',
-      text: 'E6EDF3',
-      background: '0D1117',
-      title: 'FFFFFF',
-      subtitle: '8B949E',
-    }),
-  },
-  corporate: {
-    name: 'corporate',
-    description: '企业蓝色主题。经典蓝色调，沉稳专业，适合企业年报、战略规划、投资路演、正式汇报等商务场景。',
-    colors: {
+  clean: preset('clean', '简洁白色主题。白底配蓝色标题栏，适合商务汇报、技术分享、日常演示等通用场景。', {
+    primary: '2B579A',
+    secondary: '1A3A6B',
+    text: '333333',
+    background: 'FFFFFF',
+    title: 'FFFFFF',
+    subtitle: 'D0D8E8',
+  }),
+  dark: preset('dark', '深色科技主题。深蓝黑背景配亮色文字，适合科技产品发布、AI/数据、技术演讲等现代感场景。', {
+    primary: '0D1117',
+    secondary: '161B22',
+    text: 'E6EDF3',
+    background: '0D1117',
+    title: 'FFFFFF',
+    subtitle: '8B949E',
+  }),
+  corporate: preset(
+    'corporate',
+    '企业蓝色主题。经典蓝色调，沉稳专业，适合企业年报、战略规划、投资路演、正式汇报等商务场景。',
+    {
       primary: '1F4E79',
       secondary: '2E75B6',
       text: '333333',
@@ -243,75 +224,31 @@ const PRESET_TEMPLATES: Record<string, PresetTemplate> = {
       title: 'FFFFFF',
       subtitle: 'BDD7EE',
     },
-    masters: buildTemplateMasters({
-      primary: '1F4E79',
-      secondary: '2E75B6',
-      text: '333333',
-      background: 'FFFFFF',
-      title: 'FFFFFF',
-      subtitle: 'BDD7EE',
-    }),
-  },
-  minimal: {
-    name: 'minimal',
-    description: '极简主题。纯白背景，黑色文字，几乎无装饰。适合学术报告、论文答辩、内容密集型演示。',
-    colors: {
-      primary: '222222',
-      secondary: '444444',
-      text: '222222',
-      background: 'FFFFFF',
-      title: 'FFFFFF',
-      subtitle: 'AAAAAA',
-    },
-    masters: buildTemplateMasters({
-      primary: '222222',
-      secondary: '444444',
-      text: '222222',
-      background: 'FFFFFF',
-      title: 'FFFFFF',
-      subtitle: 'AAAAAA',
-    }),
-  },
-  nature: {
-    name: 'nature',
-    description: '自然绿色主题。绿色调，清新自然，适合环保、农业、健康、教育等主题的演示。',
-    colors: {
-      primary: '2D6A4F',
-      secondary: '40916C',
-      text: '333333',
-      background: 'FFFFFF',
-      title: 'FFFFFF',
-      subtitle: 'B7E4C7',
-    },
-    masters: buildTemplateMasters({
-      primary: '2D6A4F',
-      secondary: '40916C',
-      text: '333333',
-      background: 'FFFFFF',
-      title: 'FFFFFF',
-      subtitle: 'B7E4C7',
-    }),
-  },
-  warm: {
-    name: 'warm',
-    description: '暖色橙红主题。温暖活泼，适合创意展示、市场营销、品牌推广、活动策划等需要活力感的场景。',
-    colors: {
-      primary: 'C0392B',
-      secondary: 'E74C3C',
-      text: '333333',
-      background: 'FFFFFF',
-      title: 'FFFFFF',
-      subtitle: 'FADBD8',
-    },
-    masters: buildTemplateMasters({
-      primary: 'C0392B',
-      secondary: 'E74C3C',
-      text: '333333',
-      background: 'FFFFFF',
-      title: 'FFFFFF',
-      subtitle: 'FADBD8',
-    }),
-  },
+  ),
+  minimal: preset('minimal', '极简主题。纯白背景，黑色文字，几乎无装饰。适合学术报告、论文答辩、内容密集型演示。', {
+    primary: '222222',
+    secondary: '444444',
+    text: '222222',
+    background: 'FFFFFF',
+    title: 'FFFFFF',
+    subtitle: 'AAAAAA',
+  }),
+  nature: preset('nature', '自然绿色主题。绿色调，清新自然，适合环保、农业、健康、教育等主题的演示。', {
+    primary: '2D6A4F',
+    secondary: '40916C',
+    text: '333333',
+    background: 'FFFFFF',
+    title: 'FFFFFF',
+    subtitle: 'B7E4C7',
+  }),
+  warm: preset('warm', '暖色橙红主题。温暖活泼，适合创意展示、市场营销、品牌推广、活动策划等需要活力感的场景。', {
+    primary: 'C0392B',
+    secondary: 'E74C3C',
+    text: '333333',
+    background: 'FFFFFF',
+    title: 'FFFFFF',
+    subtitle: 'FADBD8',
+  }),
 };
 
 /** 把预设模板的母版注册到 pptx 实例上 */

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -208,5 +208,120 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
 
     await expect.poll(() => svc.isMuted('zz-b'), { timeout: 2000 }).toBe(true);
     expect(svc.getStateSnapshot('zz-a')?.mutedUntil, '内存里较晚的禁言被磁盘上较早的值盖掉').toBe(memoryUntil);
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // 禁言表读不懂（不是「文件不存在」的读失败、坏 JSON、结构不对）曾被当成空表，
+  // 下一次 setMuted 整表写回，原有禁言全丢——被禁言的群重启后静默解禁。
+  // 契约：只有文件不存在算全新；其它失败本次运行拒写，原文件一字不动。
+  // ════════════════════════════════════════════════════════════
+  describe('禁言表读失败不回写', () => {
+    /** 被拒的写不会有任何可等的信号：给一次本地落盘足够的时间再读 */
+    const settle = () => new Promise(r => setTimeout(r, 150));
+    const mutesPath = () => join(base, 'data', MUTES);
+    const bootStorageFirst = async () => {
+      app = new App({ name: 'T', logLevel: 'error' });
+      await registerHubs(app);
+      await app.pluginAll([storageLocal()]);
+      await app.plugins.idle();
+      await app.pluginAll([
+        { definition: gatewayPlugin, config: {} },
+        { definition: flowControlPlugin, config: {} },
+      ]);
+      await app.plugins.idle();
+    };
+
+    it.each([
+      ['截断 JSON', '{"zz-old":{"platform":"onebot","mutedUntil":9999999999999'],
+      ['null', 'null'],
+      ['数组', '[]'],
+    ])('%s：setMuted 不覆盖原文件', async (_label, seeded) => {
+      writeFileSync(mutesPath(), seeded);
+      await bootStorageFirst();
+
+      svcOf().setMuted('zz-new', 600, 'onebot');
+      await settle();
+
+      expect(readFileSync(mutesPath(), 'utf-8')).toBe(seeded);
+    });
+
+    it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+      '文件读不出（EACCES）：setMuted 不覆盖原文件',
+      async () => {
+        const seeded = JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } });
+        writeFileSync(mutesPath(), seeded);
+        chmodSync(mutesPath(), 0o000);
+        try {
+          await bootStorageFirst();
+          svcOf().setMuted('zz-new', 600, 'onebot');
+          await settle();
+        } finally {
+          chmodSync(mutesPath(), 0o644);
+        }
+        expect(readFileSync(mutesPath(), 'utf-8')).toBe(seeded);
+      },
+    );
+
+    it('storage 晚于本插件上线、文件损坏：follow 读回判为读不懂，setMuted 不覆盖原文件', async () => {
+      const broken = '{"zz-old":{"platform":"onebot"';
+      writeFileSync(mutesPath(), broken);
+
+      app = new App({ name: 'T', logLevel: 'error' });
+      await registerHubs(app);
+      await app.plugin(gatewayPlugin, {});
+      await app.plugin(flowControlPlugin, {});
+      await app.plugins.idle();
+      await app.pluginAll([storageLocal()]);
+      await app.plugins.idle();
+
+      svcOf().setMuted('zz-new', 600, 'onebot');
+      await settle();
+
+      expect(readFileSync(mutesPath(), 'utf-8')).toBe(broken);
+    });
+
+    it('读失败后 storage 换人重读成功：恢复落盘', async () => {
+      const broken = '{"zz-old":';
+      writeFileSync(mutesPath(), broken);
+      await bootStorageFirst();
+
+      svcOf().setMuted('zz-a', 600, 'onebot');
+      await settle();
+      expect(readFileSync(mutesPath(), 'utf-8')).toBe(broken);
+
+      // 修好文件后 storage 重载：follow 重读，失败标记须按这次读取重新判定
+      writeFileSync(
+        mutesPath(),
+        JSON.stringify({ 'zz-old': { platform: 'onebot', mutedUntil: Date.now() + 3600_000 } }),
+      );
+      await app.plugins.disable('@aalis/plugin-storage-local');
+      await app.plugins.enable('@aalis/plugin-storage-local');
+      await app.plugins.idle();
+
+      svcOf().setMuted('zz-b', 600, 'onebot');
+      await expect
+        .poll(() => {
+          try {
+            return Object.keys(readMutes());
+          } catch {
+            return [];
+          }
+        })
+        .toContain('zz-b');
+    });
+
+    it('文件不存在：按全新照常落盘', async () => {
+      await bootStorageFirst();
+      svcOf().setMuted('zz-new', 600, 'onebot');
+      await expect
+        .poll(() => {
+          try {
+            return Object.keys(readMutes());
+          } catch {
+            return [];
+          }
+        })
+        .toEqual(['zz-new']);
+    });
   });
 });

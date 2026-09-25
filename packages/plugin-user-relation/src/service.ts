@@ -69,7 +69,9 @@ import {
   edgeInvolvesBoth,
   edgeReferences,
   effectiveWeight,
+  embeddingHashFor,
   eventPairJaccard,
+  findOrphans,
   flipDirectedEdge,
   getEdgeOtherEnd,
   isAliasEdgeDirectionCorrect,
@@ -93,13 +95,7 @@ import {
   type WeightDecayCfg,
 } from './utils.js';
 
-export type TriggerExtractionFn = (
-  sessionId: string,
-) => Promise<{ status: 'ok' | 'skipped' | 'error'; reason?: string }>;
-
 export class RelationService {
-  /** 由 extractor 注入；actions 层通过 triggerExtraction() 调用 */
-  private triggerExtractionHandler?: TriggerExtractionFn;
   /** 最近一次 consolidate() 完成的时间戳（ms）；未运行时为 undefined */
   private _lastConsolidateAt?: number;
   /** 最近一次 consolidate() 结果的简短摘要 */
@@ -163,19 +159,6 @@ export class RelationService {
     return `${platform}:${userId}`;
   }
 
-  /** 由 extractor 在 start() 后注入 */
-  setTriggerExtractionHandler(fn: TriggerExtractionFn): void {
-    this.triggerExtractionHandler = fn;
-  }
-
-  /** 手动触发某 session 的 LLM 提取；extractor 未挂载时返回 error */
-  triggerExtraction(sessionId: string): Promise<{ status: 'ok' | 'skipped' | 'error'; reason?: string }> {
-    if (!this.triggerExtractionHandler) {
-      return Promise.resolve({ status: 'error', reason: 'extractor 未启用（请检查 enabled / 模型配置）' });
-    }
-    return this.triggerExtractionHandler(sessionId);
-  }
-
   // ----- Person -----
 
   async observePerson(platform: string, userId: string, displayName?: string): Promise<PersonNode> {
@@ -201,10 +184,6 @@ export class RelationService {
         };
     await this.store.upsertPerson(node);
     return node;
-  }
-
-  getPerson(platform: string, userId: string) {
-    return this.store.getPerson(platform, userId);
   }
 
   /**
@@ -316,20 +295,13 @@ export class RelationService {
 
   /**
    * 按 normalized title 精确匹配（不区分大小写、压缩空白）查找已有事件。
-   * 用于 createEvent 入口去重。
-   *
-   * 若传入 scope：遵循「同名 + 同 scope 才是同事件」原则，只接受两者 scope 相同。
-   * 不传 scope：只看 title，保留老行为（供手动调用 / 测试 / 迁移）。
+   * 用于 createEvent 入口去重。遵循「同名 + 同 scope 才是同事件」原则，只接受 scope 相同的事件。
    */
-  async findEventByTitle(title: string, scope?: string): Promise<EventNode | undefined> {
+  async findEventByTitle(title: string, scope: string): Promise<EventNode | undefined> {
     const target = normalizeName(title);
     if (!target) return undefined;
     const snap = await this.store.loadAll();
-    return snap.events.find(e => {
-      if (normalizeName(e.title) !== target) return false;
-      if (scope === undefined) return true;
-      return e.sessionScope === scope;
-    });
+    return snap.events.find(e => normalizeName(e.title) === target && e.sessionScope === scope);
   }
 
   /**
@@ -506,21 +478,8 @@ export class RelationService {
   }
 
   /**
-   * 按 name / aliases 精确匹配（不区分大小写）查找已有实体。
-   * 用于抽取阶段去重 —— LLM 提取出"三角洲"时优先复用已存在的同名实体。
-   */
-  async findEntityByName(name: string): Promise<EntityNode | undefined> {
-    const target = normalizeName(name);
-    if (!target) return undefined;
-    const snap = await this.store.loadAll();
-    return snap.entities.find(
-      e => normalizeName(e.name) === target || (e.aliases ?? []).some(a => normalizeName(a) === target),
-    );
-  }
-
-  /**
    * 按 (entityKind, normalized name) 精确匹配查找已有实体；用于 createEntity 入口去重。
-   * 比 findEntityByName 更严格（要求 kind 一致），避免「同名不同类」误合并（如游戏《北京》vs 地点北京）。
+   * 要求 kind 一致且只比对 name（不看 aliases），避免「同名不同类」误合并（如游戏《北京》vs 地点北京）。
    */
   async findEntityByKindAndName(kind: EntityNode['entityKind'], name: string): Promise<EntityNode | undefined> {
     const target = normalizeName(name);
@@ -601,18 +560,6 @@ export class RelationService {
     }
     await this.store.upsertEdge(merged);
     return merged;
-  }
-
-  async findPersonEntityEdge(
-    fromPersonId: string,
-    toEntityId: string,
-    role: PersonEntityEdge['role'],
-  ): Promise<PersonEntityEdge | undefined> {
-    const snapshot = await this.store.loadAll();
-    return snapshot.edges.find(
-      (e): e is PersonEntityEdge =>
-        e.kind === 'person-entity' && e.fromPersonId === fromPersonId && e.toEntityId === toEntityId && e.role === role,
-    );
   }
 
   // ----- Edge: event → event -----
@@ -1060,18 +1007,6 @@ export class RelationService {
 
   // ----- 边查询 -----
 
-  async findPersonEventEdge(
-    fromPersonId: string,
-    toEventId: string,
-    role: PersonEventEdge['role'],
-  ): Promise<PersonEventEdge | undefined> {
-    const snapshot = await this.store.loadAll();
-    return snapshot.edges.find(
-      (e): e is PersonEventEdge =>
-        e.kind === 'person-event' && e.fromPersonId === fromPersonId && e.toEventId === toEventId && e.role === role,
-    );
-  }
-
   /**
    * 查找等价的人-人边。对于对称关系 (directed=false)，(A→B, friend) 与 (B→A, friend)
    * 视为同一条边；只看其中一种方向即可命中。
@@ -1100,10 +1035,6 @@ export class RelationService {
         (e.fromPersonId === toPersonId && e.toPersonId === fromPersonId)
       );
     });
-  }
-
-  deleteEdge(edgeId: string) {
-    return this.store.deleteEdge(edgeId);
   }
 
   // ----- 图查询 -----
@@ -1160,116 +1091,24 @@ export class RelationService {
    *   孤儿的语义就是"没人指向"，无条件清。
    * - **零参数**：刻意不暴露任何 opts，避免重新引入误用。
    *
-   * 返回被删除的 id 列表，便于 caller 打日志/报告。
+   * 判定口径见 `findOrphans`（与 `/relation orphans` 共用）；先删悬空边再删孤儿节点。
    */
   async pruneOrphans(): Promise<{
     deletedPersons: number;
     deletedEvents: number;
     deletedEntities: number;
-    deletedPersonIds: string[];
-    deletedEventIds: string[];
-    deletedEntityIds: string[];
     deletedDanglingEdges: number;
   }> {
-    const snap = await this.store.loadAll();
-    // 先建节点 id 集合（用于悬空边检测）
-    const personIdSet = new Set(snap.persons.map(p => p.id));
-    const eventIdSet = new Set(snap.events.map(e => e.id));
-    const entityIdSet = new Set(snap.entities.map(e => e.id));
-    // 清理悬空边：端点指向不存在节点的边（节点被绕过 cascade 删除时可能残留）
-    // 删掉的边 id 要记下：下一段统计"被引用"必须只看存活边，否则只被悬空边引用的
-    // 节点本轮逃过孤儿判定，返回计数偏小、得再跑一次才收敛。
-    const deletedEdgeIds = new Set<string>();
-    let deletedDanglingEdges = 0;
-    for (const e of snap.edges) {
-      let dangling = false;
-      switch (e.kind) {
-        case 'person-event':
-          dangling = !personIdSet.has(e.fromPersonId) || !eventIdSet.has(e.toEventId);
-          break;
-        case 'person-entity':
-          dangling = !personIdSet.has(e.fromPersonId) || !entityIdSet.has(e.toEntityId);
-          break;
-        case 'person-person':
-          dangling = !personIdSet.has(e.fromPersonId) || !personIdSet.has(e.toPersonId);
-          break;
-        case 'event-event':
-          dangling = !eventIdSet.has(e.fromEventId) || !eventIdSet.has(e.toEventId);
-          break;
-        case 'event-entity':
-          dangling = !eventIdSet.has(e.fromEventId) || !entityIdSet.has(e.toEntityId);
-          break;
-        case 'entity-entity':
-          dangling = !entityIdSet.has(e.fromEntityId) || !entityIdSet.has(e.toEntityId);
-          break;
-      }
-      if (dangling) {
-        await this.store.deleteEdge(e.id);
-        deletedEdgeIds.add(e.id);
-        deletedDanglingEdges++;
-      }
-    }
-    const referencedPersonIds = new Set<string>();
-    const referencedEventIds = new Set<string>();
-    const referencedEntityIds = new Set<string>();
-    for (const e of snap.edges) {
-      if (deletedEdgeIds.has(e.id)) continue;
-      switch (e.kind) {
-        case 'person-event':
-          referencedPersonIds.add(e.fromPersonId);
-          referencedEventIds.add(e.toEventId);
-          break;
-        case 'person-entity':
-          referencedPersonIds.add(e.fromPersonId);
-          referencedEntityIds.add(e.toEntityId);
-          break;
-        case 'person-person':
-          referencedPersonIds.add(e.fromPersonId);
-          referencedPersonIds.add(e.toPersonId);
-          break;
-        case 'event-event':
-          referencedEventIds.add(e.fromEventId);
-          referencedEventIds.add(e.toEventId);
-          break;
-        case 'event-entity':
-          referencedEventIds.add(e.fromEventId);
-          referencedEntityIds.add(e.toEntityId);
-          break;
-        case 'entity-entity':
-          referencedEntityIds.add(e.fromEntityId);
-          referencedEntityIds.add(e.toEntityId);
-          break;
-      }
-    }
-    const deletedPersonIds: string[] = [];
-    const deletedEventIds: string[] = [];
-    const deletedEntityIds: string[] = [];
-    for (const p of snap.persons) {
-      if (!referencedPersonIds.has(p.id)) {
-        await this.store.deletePersonCascade(p.platform, p.userId);
-        deletedPersonIds.push(p.id);
-      }
-    }
-    for (const ev of snap.events) {
-      if (!referencedEventIds.has(ev.id)) {
-        await this.store.deleteEventCascade(ev.id);
-        deletedEventIds.push(ev.id);
-      }
-    }
-    for (const en of snap.entities) {
-      if (!referencedEntityIds.has(en.id)) {
-        await this.store.deleteEntityCascade(en.id);
-        deletedEntityIds.push(en.id);
-      }
-    }
+    const orphans = findOrphans(await this.store.loadAll());
+    for (const e of orphans.danglingEdges) await this.store.deleteEdge(e.id);
+    for (const p of orphans.persons) await this.store.deletePersonCascade(p.platform, p.userId);
+    for (const ev of orphans.events) await this.store.deleteEventCascade(ev.id);
+    for (const en of orphans.entities) await this.store.deleteEntityCascade(en.id);
     return {
-      deletedPersons: deletedPersonIds.length,
-      deletedEvents: deletedEventIds.length,
-      deletedEntities: deletedEntityIds.length,
-      deletedPersonIds,
-      deletedEventIds,
-      deletedEntityIds,
-      deletedDanglingEdges,
+      deletedPersons: orphans.persons.length,
+      deletedEvents: orphans.events.length,
+      deletedEntities: orphans.entities.length,
+      deletedDanglingEdges: orphans.danglingEdges.length,
     };
   }
 
@@ -1313,12 +1152,11 @@ export class RelationService {
    */
   async rewriteWeights(
     decay: WeightDecayCfg,
-    opts: { now?: number } = {},
   ): Promise<{ events: number; entities: number; edges: number; skipped: boolean }> {
     if (decay.halfLifeDays <= 0) {
       return { events: 0, entities: 0, edges: 0, skipped: true };
     }
-    const now = opts.now ?? Date.now();
+    const now = Date.now();
     const snap = await this.store.loadAll();
     let events = 0;
     let entities = 0;
@@ -1417,8 +1255,6 @@ export class RelationService {
     deletedEvents: number;
     deletedEntities: number;
     deletedEdges: number;
-    /** 孤儿阶段被删的 id 列表（前 50 个），便于日志/诊断 */
-    orphanSamples: { persons: string[]; events: string[]; entities: string[] };
   }> {
     const damping = quota.pagerankDamping ?? 0.85;
     const maxIter = quota.pagerankIterations ?? 20;
@@ -1667,11 +1503,6 @@ export class RelationService {
       deletedEvents,
       deletedEntities,
       deletedEdges,
-      orphanSamples: {
-        persons: orphanResult.deletedPersonIds.slice(0, 50),
-        events: orphanResult.deletedEventIds.slice(0, 50),
-        entities: orphanResult.deletedEntityIds.slice(0, 50),
-      },
     };
   }
 
@@ -1952,7 +1783,6 @@ export class RelationService {
     toNodeId: string,
     opts: {
       maxDepth?: number;
-      beta?: number;
       topPaths?: number;
       /** 'symmetric'（默认）= 联系紧密度；'directed' = 关注/影响传播度 */
       mode?: ScoreMode;
@@ -1993,7 +1823,7 @@ export class RelationService {
   }> {
     const mode: ScoreMode = opts.mode ?? 'symmetric';
     const maxDepth = Math.max(1, Math.min(6, opts.maxDepth ?? 4));
-    const beta = Math.max(0.05, Math.min(1, opts.beta ?? 0.5));
+    const beta = 0.5; // Katz 路径长度衰减 β
     const topK = Math.max(1, Math.min(20, opts.topPaths ?? 3));
 
     const snapshot = opts._snapshot ?? (await this.store.loadAll());
@@ -2402,12 +2232,6 @@ export class RelationService {
       skipLowScorePairs?: boolean;
       lowScoreThreshold?: number;
       /**
-       * Entity 宽召回的 embedding cos 阈值，默认 0.86。
-       * 仅在 embedding 服务可用时生效；name+summary embed 后 cos≥该值即作为额外候选。
-       * 设 0 = 关闭（依然走 substring/alias 路径）。
-       */
-      entityCosThreshold?: number;
-      /**
        * 可选的 platform 引用。传入后 consolidate 会顺带做一次「伪 person 自动清理」：
        * platform 不在 `getPlatformNames(platform)` 运行时白名单内（或 userId 命中
        * 通用占位 self/me/bot/assistant）的 person，连同级联边一起删除。
@@ -2427,7 +2251,6 @@ export class RelationService {
       reason: string;
     }>;
     aliasEdgesCreated: number;
-    partOfEdgesCreated: number;
     eventEdgesNormalized: number;
     entityHierarchyCandidates: number;
     entityHierarchyEdgesCreated: number;
@@ -2487,7 +2310,6 @@ export class RelationService {
       reason: string;
     }> = [];
     let aliasEdgesCreated = 0;
-    const partOfEdgesCreated = 0;
     let eventEdgesNormalized = 0;
     let entityHierarchyCandidates = 0;
     let entityHierarchyEdgesCreated = 0;
@@ -2670,15 +2492,19 @@ export class RelationService {
 
       // ─── Entity embedding 召回支持（lazy embed + 持久化复用）─────────────
       // 设计与 event ensureEmbedding 完全对称：当 EntityNode.embeddingHash 与
-      // computeEntityEmbeddingHash(name, summary, entityKind) 不一致或缺失时，
-      // 调 embed 服务一次，写回 store + 同步本地副本。embedding 服务缺失则全部 skip。
+      // embeddingHashFor(computeEntityEmbeddingHash(name, summary, entityKind), modelId)
+      // 不一致或缺失时，调 embed 服务一次，写回 store + 同步本地副本。embedding 服务缺失则全部 skip。
       const embedding = this.embedding?.current;
-      const entityCosThreshold = opts.entityCosThreshold ?? 0.86;
+      // Entity 宽召回的 embedding cos 阈值：name+summary embed 后 cos≥该值即作为额外候选
+      const entityCosThreshold = 0.86;
       const embedCache = new Map<string, number[] | null>();
       const ensureEntityEmbedding = async (en: EntityNode): Promise<number[] | null> => {
         if (!embedding) return null;
         if (embedCache.has(en.id)) return embedCache.get(en.id) ?? null;
-        const expectedHash = computeEntityEmbeddingHash(en.name, en.summary, en.entityKind);
+        const expectedHash = embeddingHashFor(
+          computeEntityEmbeddingHash(en.name, en.summary, en.entityKind),
+          embedding.modelId,
+        );
         // 向量存独立命名空间（loadAll 不携带、快照不驻留——OOM 事故的修复面）。
         // hash 一致才去取；取不到（历史剥离/异常）走重算自愈，多花一次 embed 而已。
         if (en.embeddingHash === expectedHash) {
@@ -3471,7 +3297,6 @@ export class RelationService {
     const consolidateResult = {
       aliasCandidates,
       aliasEdgesCreated,
-      partOfEdgesCreated,
       eventEdgesNormalized,
       entityHierarchyCandidates,
       entityHierarchyEdgesCreated,
@@ -3487,7 +3312,7 @@ export class RelationService {
     this._lastConsolidateAt = Date.now();
     this._lastConsolidateTrigger = opts.triggerSource ?? 'api';
     this._lastConsolidateResultSummary =
-      `别名候选 ${aliasCandidates.length}，建别名边 ${aliasEdgesCreated}，part-of ${partOfEdgesCreated}，` +
+      `别名候选 ${aliasCandidates.length}，建别名边 ${aliasEdgesCreated}，` +
       `事件边整理 ${eventEdgesNormalized}，实体层级候选 ${entityHierarchyCandidates}，层级边 ${entityHierarchyEdgesCreated}` +
       `，侧向父候选 ${lateralParentCandidates}，新建父 ${lateralParentsCreated}，侧向边 ${lateralEdgesCreated}` +
       (fakePersonsDeleted > 0 ? `，伪 person 清理 ${fakePersonsDeleted}（级联边 ${fakePersonEdgesDeleted}）` : '') +
@@ -3522,7 +3347,7 @@ export class RelationService {
    *  - 同 scope 池内才比对（含「都 'global'」、「同 sessionId」）；
    *  - 跨 scope 永不比对
    *
-   * Lazy embed：当 EventNode.embeddingHash !== computeEventEmbeddingHash(title, summary) 时，
+   * Lazy embed：当 EventNode.embeddingHash !== embeddingHashFor(computeEventEmbeddingHash(title, summary), modelId) 时，
    *  实时调 embedding.embed() 并写回（持久化），下次 consolidate 复用。
    */
   private async _consolidateEventDuplicates(opts: {
@@ -3628,7 +3453,7 @@ export class RelationService {
     const ensureEmbedding = async (ev: EventNode): Promise<number[] | null> => {
       if (!opts.embedding) return null;
       if (eventVecCache.has(ev.id)) return eventVecCache.get(ev.id) ?? null;
-      const expectedHash = computeEventEmbeddingHash(ev.title, ev.summary);
+      const expectedHash = embeddingHashFor(computeEventEmbeddingHash(ev.title, ev.summary), opts.embedding.modelId);
       if (ev.embeddingHash === expectedHash) {
         const stored = await this.store.getVector('event', ev.id, expectedHash);
         if (stored) {
@@ -3648,13 +3473,15 @@ export class RelationService {
           eventVecCache.set(ev.id, null);
           return null;
         }
-        // 写回持久化：向量入独立命名空间，节点只更新 hash
-        await this.store.upsertVector('event', ev.id, vec, expectedHash);
-        // 落笔核实况：ev 是 pass 快照旧拷贝，死节点不写回（防复活）、不参与召回
+        // 落笔核实况：ev 是 pass 快照旧拷贝，节点可能在 embed 期间被并发删除（其他会话的
+        // 提取合并、写工具）——死节点不写回（防复活）、不参与召回，也不写向量：向量命名
+        // 空间只有按节点 key 的级联删除，死 uuid 的向量一旦写入永不可回收。
+        // hash 先于向量落盘的窗口由自愈路径兜底（hash 命中但取不到向量 → 重算）。
         if (!(await this.writeBackEventIfLive(ev, { embeddingHash: expectedHash }))) {
           eventVecCache.set(ev.id, null);
           return null;
         }
+        await this.store.upsertVector('event', ev.id, vec, expectedHash);
         ev.embeddingHash = expectedHash;
         embeddedCount++;
         eventVecCache.set(ev.id, vec);
@@ -3903,12 +3730,7 @@ export class RelationService {
    * 但不写图，仅返回候选 + LLM 判定。
    */
   async findEventDuplicates(
-    opts: {
-      llm?: { models: ServiceRef<LLMModel>; modelRef: ModelRef; disableThinking?: boolean };
-      fusedThreshold?: number;
-      jaccardThreshold?: number;
-      structuralThreshold?: number;
-    } = {},
+    opts: { llm?: { models: ServiceRef<LLMModel>; modelRef: ModelRef; disableThinking?: boolean } } = {},
   ): Promise<{
     candidates: Array<{
       aId: string;
@@ -3935,9 +3757,6 @@ export class RelationService {
       disableThinking: opts.llm?.disableThinking ?? true,
       embedding,
       dryRun: true,
-      fusedThreshold: opts.fusedThreshold,
-      jaccardThreshold: opts.jaccardThreshold,
-      structuralThreshold: opts.structuralThreshold,
     });
     return {
       candidates: r.candidates,
@@ -4007,7 +3826,7 @@ export class RelationService {
    *
    * 设计原则（小破坏性 + 高效修正）：
    * - **阶梯保护**：weight 越高越难物理删除，避免误删强关系
-   *   - weight ≥ 0.5：只允许 weaken；想 remove 需先反复 weaken 到 < 0.5（或 force=true）
+   *   - weight ≥ 0.5：只允许 weaken；想 remove 需先反复 weaken 到 < 0.5
    *   - 0.3 ≤ weight < 0.5：可 weaken 或 remove
    *   - weight < 0.3：自由（含 strengthen 重建）
    * - **alias 边禁操作**：is-alias-of / alt-account-of 是结构性边，
@@ -4026,8 +3845,6 @@ export class RelationService {
     reason: string;
     /** 调用来源标识，默认 'llm' */
     by?: string;
-    /** true → 跳过阶梯保护（仅 manual / 系统纠错使用） */
-    force?: boolean;
   }): Promise<{
     action: 'weakened' | 'strengthened' | 'removed';
     edgeId: string;
@@ -4057,9 +3874,9 @@ export class RelationService {
 
     if (opts.action === 'remove') {
       // 阶梯保护
-      if (!opts.force && prevWeight >= 0.5) {
+      if (prevWeight >= 0.5) {
         throw new Error(
-          `correctEdge: edge.weight=${prevWeight.toFixed(2)} ≥ 0.5，禁止直接 remove。请先用 weaken 把权重降到 < 0.5（建议反复 weaken 直至 < 0.3 再 remove），或确认后传 force=true。`,
+          `correctEdge: edge.weight=${prevWeight.toFixed(2)} ≥ 0.5，禁止直接 remove。请先用 weaken 把权重降到 < 0.5（建议反复 weaken 直至 < 0.3 再 remove）。`,
         );
       }
       await this.store.deleteEdge(opts.edgeId);
@@ -4365,8 +4182,6 @@ export class RelationService {
   /**
    * 物理删除一条边（带保护门，供 agent 调用）。alias 边（is-alias-of / alt-account-of）禁删；
    * weight ≥ 0.8 或 evidence ≥ 5 拒绝（请先 correctEdge weaken）。
-   *
-   * 注：与旧 deleteEdge(edgeId)（无保护，供 consolidate 内部使用）区别开。
    */
   async deleteEdgeWithGuard(opts: {
     edgeId: string;
