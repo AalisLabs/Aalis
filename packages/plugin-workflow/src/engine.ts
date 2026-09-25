@@ -6,7 +6,6 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import type { Hooks } from '@aalis/api-hooks';
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
-import { asToolExecutionResult } from '@aalis/api-tools';
 import type {
   AgentNodeSpec,
   NodeRunInfo,
@@ -156,7 +155,7 @@ async function execTool(node: ToolNodeSpec, ec: ExecCtx): Promise<string> {
   if (!service) throw new Error("'tools' 服务不可用");
   const args = (interpolateValue(node.args ?? {}, ec.vars, ec.outputs) ?? {}) as Record<string, unknown>;
   // 工作流节点产出是文本：工具交给主模型看的图（images）没有消费者，只取 content
-  return asToolExecutionResult(await service.execute(node.tool, args, ec.toolCallContext)).content;
+  return (await service.execute(node.tool, args, ec.toolCallContext)).content;
 }
 
 async function execSendMessage(node: SendMessageNodeSpec, ec: ExecCtx): Promise<string> {

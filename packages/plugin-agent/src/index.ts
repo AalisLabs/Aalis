@@ -20,9 +20,9 @@ import { getPlatformSelfIdentity, platform as platformService } from '@aalis/api
 import { type SessionConfig, sessionManager as sessionManagerService } from '@aalis/api-session-manager';
 import { createStorageGateway, storage as storageService } from '@aalis/api-storage';
 import {
-  asToolExecutionResult,
   type ToolCallContext,
   type ToolDefinition,
+  type ToolExecutionResult,
   tools as toolsService,
 } from '@aalis/api-tools';
 import {
@@ -804,10 +804,11 @@ class DefaultAgent implements AgentService {
 
               this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${JSON.stringify(toolBeforeData.args)}`);
               const toolT0 = Date.now();
-              const executed = asToolExecutionResult(
-                await (this.caps.tools.current?.execute(toolBeforeData.name, toolBeforeData.args, toolCtx) ??
-                  Promise.resolve({ content: JSON.stringify({ error: 'tools 服务不可用' }) })),
-              );
+              const executed: ToolExecutionResult = await (this.caps.tools.current?.execute(
+                toolBeforeData.name,
+                toolBeforeData.args,
+                toolCtx,
+              ) ?? Promise.resolve({ content: JSON.stringify({ error: 'tools 服务不可用' }) }));
               let result = executed.content;
               // 工具交给主模型看的图：只随本回合的 tool 消息走（出口由 prepareLLMMessages 编码），
               // 不进钩子/事件/时间线（那些面都是文本），也不落库（见 saveToolCallGroup）。
