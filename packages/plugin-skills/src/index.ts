@@ -360,8 +360,8 @@ function run(caps: Caps): void {
   for (const page of webuiPages) webui.registerPage(page);
 
   // ── 加载所有 skill ──
-  /** key = skill.name */
-  const skillsCache = new Map<string, SkillDefinition>();
+  /** key = skill.name；重扫收尾时整体替换 */
+  let skillsCache = new Map<string, SkillDefinition>();
 
   async function loadSkillFromDir(dirUri: string): Promise<SkillDefinition | null> {
     const skillMdUri = joinUri(dirUri, 'SKILL.md');
@@ -401,8 +401,37 @@ function run(caps: Caps): void {
     }
   }
 
-  async function rescanSkills(): Promise<void> {
-    skillsCache.clear();
+  // 重扫串行化：同一时刻只跑一次；进行中再触发，只排一次尾随重扫（期间的多次触发并成这一次）。
+  // 每次扫描收尾时整体替换 skillsCache，并发的话，先开始、后收尾的那次会用读得早的旧结果盖掉新结果；
+  // 同理，扫描在飞时经服务的写入由 resyncIfScanning 排尾随重扫。
+  let scanning: Promise<void> | undefined;
+  let queued: Promise<void> | undefined;
+  function rescanSkills(): Promise<void> {
+    if (queued) return queued;
+    if (scanning) {
+      // 本次扫描失败也照排尾随重扫，queued 不能停在一个已拒绝的 Promise 上
+      const next = (): Promise<void> => {
+        queued = undefined;
+        return rescanSkills();
+      };
+      queued = scanning.then(next, next);
+      return queued;
+    }
+    scanning = scanSkillsOnce().finally(() => {
+      scanning = undefined;
+    });
+    return scanning;
+  }
+
+  // 扫描在飞时经服务写入：进行中的那次扫描可能在写之前就读过目录或文件，收尾整体替换会把这次写盖掉，
+  // 排一次尾随重扫按盘上实况重建
+  function resyncIfScanning(): void {
+    if (scanning) rescanSkills().catch(err => logger.warn(`写入后重扫 skills 失败：${err}`));
+  }
+
+  async function scanSkillsOnce(): Promise<void> {
+    // 结果先写进局部 Map：扫描期间读者看到的是上一版完整缓存，不是清空后逐个补回的半截
+    const found = new Map<string, SkillDefinition>();
     let count = 0;
     const walk = async (uri: string, depth: number): Promise<void> => {
       if (count >= config.maxSkills || depth > 4) return;
@@ -418,13 +447,11 @@ function run(caps: Caps): void {
         if (!entry.isDirectory) continue;
         const skill = await loadSkillFromDir(entry.uri);
         if (skill) {
-          if (skillsCache.has(skill.name)) {
-            logger.warn(
-              `重复 skill 名称 "${skill.name}"，跳过 ${entry.uri}（已存在于 ${skillsCache.get(skill.name)?.uri}）`,
-            );
+          if (found.has(skill.name)) {
+            logger.warn(`重复 skill 名称 "${skill.name}"，跳过 ${entry.uri}（已存在于 ${found.get(skill.name)?.uri}）`);
             continue;
           }
-          skillsCache.set(skill.name, skill);
+          found.set(skill.name, skill);
           count++;
         } else {
           // 没有 SKILL.md 的目录递归向下找
@@ -433,6 +460,9 @@ function run(caps: Caps): void {
       }
     };
     await walk(skillsUri, 0);
+    // 扫完整体替换；按名字缓存的已编译 triggers 随旧缓存一并作废（改了 triggers 的技能要重新编译）
+    skillsCache = found;
+    compiledTriggers.clear();
   }
 
   // ── 编译 triggers regex（缓存） ──
@@ -626,6 +656,7 @@ function run(caps: Caps): void {
       }
       const loaded = await loadSkillFromDir(dirUri);
       if (loaded) skillsCache.set(loaded.name, loaded);
+      resyncIfScanning();
       logger.info(
         `技能已创建: ${input.name} (${dirUri})${input.files && input.files.length > 0 ? ` + ${input.files.length} 个附属文件` : ''}`,
       );
@@ -663,6 +694,7 @@ function run(caps: Caps): void {
         skillsCache.set(reloaded.name, reloaded);
         compiledTriggers.delete(reloaded.name);
       }
+      resyncIfScanning();
       logger.info(`技能已更新: ${skillName}`);
       return true;
     },
@@ -677,6 +709,7 @@ function run(caps: Caps): void {
       skillsCache.delete(skillName);
       compiledTriggers.delete(skillName);
       for (const set of sessionLoaded.values()) set.delete(skillName);
+      resyncIfScanning();
       logger.info(`技能已删除: ${skillName}`);
       return true;
     },
@@ -686,6 +719,7 @@ function run(caps: Caps): void {
       const rel = await writeSkillFile(existing.uri, file);
       const reloaded = await loadSkillFromDir(existing.uri);
       if (reloaded) skillsCache.set(reloaded.name, reloaded);
+      resyncIfScanning();
       logger.info(`技能 ${skillName} 已写入附属文件: ${rel}`);
       return true;
     },
@@ -701,6 +735,7 @@ function run(caps: Caps): void {
       }
       const reloaded = await loadSkillFromDir(existing.uri);
       if (reloaded) skillsCache.set(reloaded.name, reloaded);
+      resyncIfScanning();
       logger.info(`技能 ${skillName} 已删除附属文件: ${rel}`);
       return true;
     },
@@ -723,7 +758,6 @@ function run(caps: Caps): void {
     },
     async rescan() {
       await rescanSkills();
-      compiledTriggers.clear();
     },
     loadSkillForSession(sessionId, skillName) {
       if (!skillsCache.has(skillName)) return false;
@@ -1197,7 +1231,8 @@ function run(caps: Caps): void {
           }
         }
         if (cancelled) return;
-        // 先挂监听再扫描：扫描期间的改动不会漏掉。去抖靠 storage 层
+        // 先挂监听再扫描：扫描期间的改动不会漏掉（由它触发的重扫排在本次扫描之后）。
+        // storage 层只按路径去抖，多次触发的合并靠 rescanSkills 的串行化
         try {
           off = storage.watch?.(skillsUri, () => void rescanAndLog('debug', '目录变化，已重新扫描'));
         } catch (err) {

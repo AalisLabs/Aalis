@@ -167,8 +167,10 @@ export interface MemoryService {
    * 因此调用方要么容忍半新半旧、要么自己具备重试能力（如 session-manager 每次写全量快照，
    * 失败后 dirty 复位、下次自愈）。
    *
-   * `data` 必须是 **JSON 可序列化**的值。三家后端都会因此抛错（sqlite/inmemory 在
-   * `JSON.stringify`、mongodb 在 BSON 序列化），且都是整批不生效。
+   * `data` 必须是 **JSON 可序列化**的值。循环引用会让三家后端都抛错（sqlite/inmemory 在
+   * `JSON.stringify`、mongodb 在 BSON 序列化），且都是整批不生效；其余违例不一定抛错，且各后端
+   * 结果不一致（sqlite/inmemory 上函数/`undefined` 被静默丢弃、Map 变成 `{}`、BigInt 抛错；
+   * mongodb 上 BigInt/Map 照存）。
    */
   commitMetadata(ops: readonly MetadataOp[]): Promise<void>;
 

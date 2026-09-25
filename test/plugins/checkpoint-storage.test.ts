@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -279,6 +279,30 @@ describe('checkpoint × storage (真 fs)', () => {
     expect(result.ok).toBe(false);
     expect(readFileSync(join(ws, 'p.txt'), 'utf-8')).toBe('body-p');
   });
+
+  // storage-local 的快照闭包只把「目录」与 ENOENT 当作「不存在」，其余读失败必须抛给 checkpoint：
+  // 压成 null 会把回合前就有、却没备份的文件记成 write-new，回滚时直接删掉。
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    '覆盖读不出的既有文件：记 write + skipped，回滚如实报失败且文件还在',
+    async () => {
+      writeFileSync(join(ws, 'secret.txt'), 'old');
+      chmodSync(join(ws, 'secret.txt'), 0o000);
+
+      const turnId = await runTurn('s13', async () => {
+        await storage.writeFile('ws:/secret.txt', 'new'); // 先写 tmp 再 rename，覆盖 0o000 文件能成功
+      });
+
+      const manifest = await svc.getManifest('s13', turnId);
+      const entry = manifest?.files.find(f => f.uri === 'ws:/secret.txt');
+      expect(entry?.action, '读不出不等于不存在，不得记成本回合新建').toBe('write');
+      expect(entry?.skipped).toBeTruthy();
+
+      const result = await svc.rollback('s13', turnId);
+      expect(result.ok).toBe(false);
+      expect(result.errors.map(e => e.uri)).toContain('ws:/secret.txt');
+      expect(existsSync(join(ws, 'secret.txt')), '回滚不得删掉回合前就有的文件').toBe(true);
+    },
+  );
 
   it('写目录：直接报错且不入账，回滚不会删掉整棵目录', async () => {
     mkdirSync(join(ws, 'd'), { recursive: true });

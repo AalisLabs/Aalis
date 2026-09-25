@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { type AuthorityService, authority, type UserIdentity } from '../../packages/api-authority/src/index.js';
-import { type CommandBuilder, type CommandService, commands } from '../../packages/api-commands/src/index.js';
+import {
+  type CommandBuilder,
+  type CommandHandler,
+  type CommandService,
+  commands,
+} from '../../packages/api-commands/src/index.js';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
-import { storage } from '../../packages/api-storage/src/index.js';
+import { type StorageRootInfo, storage } from '../../packages/api-storage/src/index.js';
 import { type ToolService, tools } from '../../packages/api-tools/src/index.js';
 import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
 import { type App, provide, services } from '../../packages/core/src/index.js';
@@ -26,18 +31,24 @@ interface OpNode {
   risk?: 'safe' | 'sensitive' | 'dangerous';
 }
 
-function fakeCommandService(nodes: OpNode[]): CommandService {
-  const builder = {} as CommandBuilder;
-  Object.assign(builder, {
-    alias: () => builder,
-    option: () => builder,
-    action: () => builder,
-    usage: () => builder,
-    example: () => builder,
-  });
+function fakeCommandService(nodes: OpNode[], handlers: Map<string, CommandHandler>): CommandService {
   return {
     prefix: '/',
-    command: () => builder,
+    // 每条指令一个 builder：按指令名（DSL 首段）截下处理器，供测试直接调用
+    command: (spec: string) => {
+      const builder = {} as CommandBuilder;
+      Object.assign(builder, {
+        alias: () => builder,
+        option: () => builder,
+        action: (handler: CommandHandler) => {
+          handlers.set(spec.split(' ')[0], handler);
+          return builder;
+        },
+        usage: () => builder,
+        example: () => builder,
+      });
+      return builder;
+    },
     unregister: () => {},
     getAll: () => nodes,
     setExecutionGuard: () => {},
@@ -63,13 +74,26 @@ interface BootOptions {
   config?: Record<string, unknown>;
   /** 给出即提供 commands / tools 桩，getAll 返回这份清单 */
   operations?: OpNode[];
+  /** 给出即作为 users.json 原文；缺省按文件不存在处理 */
+  usersJson?: string;
 }
+
+const DATA_ROOT: StorageRootInfo = {
+  name: 'data',
+  label: 'data',
+  kind: 'data',
+  browsable: true,
+  readable: true,
+  writable: true,
+  deletable: true,
+};
 
 async function boot(opts: BootOptions = {}) {
   const { app } = hostedApp(opts.config);
   running.push(app);
   const host = app.bind({ provide, services, hostConfig });
   const registered = new Map<string, WebuiActionHandler>();
+  const handlers = new Map<string, CommandHandler>();
   host.provide(webuiServer, {
     registerPage: () => () => {},
     registerAction: (method: string, handler: WebuiActionHandler) => {
@@ -77,15 +101,17 @@ async function boot(opts: BootOptions = {}) {
       return () => void registered.delete(method);
     },
   } as never);
-  // 等级表落盘用；本组用例不验持久化，读到「无文件」即空表
+  // 等级表落盘用；多数用例不验持久化，读到「无文件」即空表
   host.provide(storage, {
+    listRoots: () => [DATA_ROOT],
     readFile: async () => {
-      throw new Error('不存在');
+      if (opts.usersJson === undefined) throw new Error('不存在');
+      return opts.usersJson;
     },
     writeFile: async () => undefined,
   } as never);
   if (opts.operations) {
-    host.provide(commands, fakeCommandService(opts.operations) as never);
+    host.provide(commands, fakeCommandService(opts.operations, handlers) as never);
     host.provide(tools, fakeToolService(opts.operations) as never);
   }
 
@@ -99,7 +125,14 @@ async function boot(opts: BootOptions = {}) {
     if (!handler) throw new Error(`页面动作 "${method}" 未登记 —— 管理面缺失`);
     return handler(args, caller);
   };
-  return { app, manager, call, config: host.hostConfig.require() };
+  /** 以 owner（webui:console）身份直接调指令处理器（不经解析与守卫） */
+  const runCommand = async (name: string, ...positionals: unknown[]): Promise<unknown> => {
+    const handler = handlers.get(name);
+    if (!handler) throw new Error(`指令 "${name}" 未登记`);
+    const session = { sessionId: 's1', platform: 'webui', userId: 'console', raw: `/${name}` };
+    return handler({ session, options: {} }, ...positionals);
+  };
+  return { app, manager, call, runCommand, config: host.hostConfig.require() };
 }
 
 const canRestricted = (m: AuthorityService, platform: string, userId: string, cap: string) =>
@@ -309,5 +342,37 @@ describe('setAutoConfirm — owner 切 auto 确认模式', () => {
     await expect(call('setAutoConfirm', { minutes: 30 }, { platform: 'onebot', userId: 'bob' })).rejects.toThrow(
       /只有 owner/,
     );
+  });
+});
+
+// users.json 加载失败时整程拒写：等级改动只在内存生效，重启即失。三个等级管理入口的回执
+// 必须如实注明，否则 owner 看到的是「成功」，封禁或提权在重启后静默消失。
+describe('拒写状态下的等级管理回执', () => {
+  const NOTE = '仅本次运行生效，未写入 users.json';
+  const owner = { platform: 'webui', userId: 'console' };
+
+  it('users.json 非 v5 而拒写：/level、setUserLevel、deleteUser 的回执都注明未落盘', async () => {
+    const legacy = JSON.stringify({ version: 4, users: { 'onebot:777': { tier: 'blocked' } } });
+    const { call, runCommand } = await boot({ operations: [], usersJson: legacy });
+
+    expect(await runCommand('level', 'onebot:777', -1)).toContain(NOTE);
+    const set = (await call('setUserLevel', { platform: 'onebot', userId: '777', level: -1 }, owner)) as {
+      message: string;
+    };
+    expect(set.message).toContain(NOTE);
+    const del = (await call('deleteUser', { platform: 'onebot', userId: '777' }, owner)) as { message: string };
+    expect(del.message).toContain(NOTE);
+  });
+
+  it('users.json 正常：回执不带该附注', async () => {
+    const { call, runCommand } = await boot({ operations: [] });
+
+    expect(await runCommand('level', 'onebot:777', -1)).toBe('已设 onebot:777 等级: -1');
+    const set = (await call('setUserLevel', { platform: 'onebot', userId: '777', level: -1 }, owner)) as {
+      message: string;
+    };
+    expect(set.message).not.toContain(NOTE);
+    const del = (await call('deleteUser', { platform: 'onebot', userId: '777' }, owner)) as { message: string };
+    expect(del.message).not.toContain(NOTE);
   });
 });

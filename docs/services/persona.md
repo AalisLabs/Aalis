@@ -171,7 +171,7 @@ export default definePlugin({
 
 **`personasDir` 是 storage 路径，经 `toStorageUri` 归一。** 参考实现只在 `toStorageUri(personasDirRaw)` 这一个目录下找卡。`toStorageUri` 的文法是：已经是 URI（含 `:/`）的原样返回；`foo/bar` 归一为 `foo:/bar`（首段当作根名）；单段裸名 `name` 归一为 `data:/name`（默认归入 `data` 根）。读卡时走 `createStorageGateway(storage)` 网关，按 URI 路由。需要注意 storage 不是沙箱：路径授权由 storage 的 root 权限位决定，persona 能读到哪些卡取决于你授予的 root。详见 `docs/concepts/storage-uri-grammar.md` 与 `docs/services/storage.md`。
 
-**跨会话身份隔离（防止会话间串档）。** 参考实现把当前消息的会话身份（platform、sessionId、群号、自身与发送者的角色头衔）放进 `AsyncLocalStorage`，并在 `agent:input:before` 用 `runWithIdentity()` 包住后续的异步链。这样身份能穿透 `await` 而不串，并发会话各自隔离，从而杜绝把 A 会话的发送者信息泄漏进 B 会话的 LLM 提示。定时、编排、委派、空闲这类合成回合不经适配器，消息上没有 `sessionType`；此时按 `<platform>:<self>:<type>:<target>` 约定从 sessionId 推断会话类型（只认前缀等于 platform 的 id），推断结果只用于提示词，不写回消息。
+**跨会话身份隔离（防止会话间串档）。** 参考实现把当前消息的会话身份（platform、sessionId、群号、自身与发送者的角色头衔）放进 `AsyncLocalStorage`，并在 `agent:input:before` 用 `runWithIdentity()` 包住后续的异步链。这样身份能穿透 `await` 而不串，并发会话各自隔离，从而杜绝把 A 会话的发送者信息泄漏进 B 会话的 LLM 提示。定时、编排、委派、空闲这类合成回合不经适配器，消息上没有 `sessionType`；此时按 `<platform>:<self>:<type>:<target>` 约定从 sessionId 推断会话类型（只认前缀等于 platform 的 id；子任务会话 `<父会话 id>::<uuid>` 沿用父会话的 platform，不推断），推断结果只用于提示词，不写回消息。
 
 ::: warning 安全要点
 这是一处安全约束。第三方 provider 若也注入会话上下文，必须保证同等的隔离——不要用裸实例字段存储「当前会话」。

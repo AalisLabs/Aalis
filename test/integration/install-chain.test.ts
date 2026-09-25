@@ -364,14 +364,23 @@ describe('安装链（真实 npm）', () => {
         join(p, 'package.json'),
         JSON.stringify({ name: 'w', version: '1.0.0', private: true, dependencies: { foo: 'workspace:*' } }, null, 2),
       );
-      const pm = makePm(p);
+      // npm 一次都不该被执行：它会在 pnpm 仓库根写出 package-lock.json 与扁平 node_modules。
+      // 要数调用次数：护栏失效时，装前类型闸（npm view）或 npm 自己对 workspace: 的报错同样让安装失败，
+      // 也不会留下 node_modules，只看 ok 或产物分辨不出护栏是否生效。
+      const npmCalls: string[][] = [];
+      const pm = makePm(p, [], {
+        ...realProc,
+        execFile: (cmd: string, args: readonly string[], opts?: ExecOpts) => {
+          if (cmd === 'npm') npmCalls.push([...args]);
+          return realProc.execFile(cmd, args, opts);
+        },
+      } as PackageManagerDeps['proc']);
       expect((await pm.install('is-odd')).ok).toBe(false);
+      expect(npmCalls, '安装被护栏拦在任何 npm 调用之前').toEqual([]);
       const upd = await pm.update([{ name: 'is-odd', version: '3.0.1' }]);
       expect(upd.ok).toBe(false);
       expect(upd.message).toContain('workspace:');
-      // npm 一次都不该被执行：它会在 pnpm 仓库根写出 package-lock.json 与扁平 node_modules
-      expect(existsSync(join(p, 'node_modules'))).toBe(false);
-      expect(existsSync(join(p, 'package-lock.json'))).toBe(false);
+      expect(npmCalls).toEqual([]);
     } finally {
       rmSync(p, { recursive: true, force: true });
     }

@@ -25,17 +25,23 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
 
+const SAVE_REJECTED = '配置文件有尚未生效的外部修改，为免覆盖已拒绝本次保存';
+
 const target = definePlugin({
   name: 'target',
   configSchema: { v: { type: 'number', label: 'V', default: 0 } },
   apply() {},
 });
 
-/** `provideDoc: false`：宿主持有文档、照它登记，但不把它作为 host-config 交给插件 */
-function world(config: Partial<AalisConfig>, { provideDoc = true } = {}) {
+/**
+ * `provideDoc: false`：宿主持有文档、照它登记，但不把它作为 host-config 交给插件。
+ * `rejectSave`：落盘一律被拒（同 runtime 在配置文件有尚未生效的外部修改时拒写）。
+ */
+function world(config: Partial<AalisConfig>, { provideDoc = true, rejectSave = false } = {}) {
   const saved: AalisConfig[] = [];
   const provider: ConfigProvider = {
     save: snapshot => {
+      if (rejectSave) throw new Error(SAVE_REJECTED);
       saved.push(structuredClone(snapshot));
     },
   };
@@ -90,6 +96,13 @@ function world(config: Partial<AalisConfig>, { provideDoc = true } = {}) {
     deleteInstance: (instanceId: string) => call('DELETE /api/plugins/:instanceId/instance', { instanceId }),
   };
 }
+
+const multi = definePlugin({
+  name: 'multi',
+  reusable: true,
+  configSchema: { v: { type: 'number', label: 'V', default: 0 } },
+  apply() {},
+});
 
 /** 按最后一次落盘的文档重建 App，登记同一份定义，返回它重启后的条目 */
 async function restartFrom(saved: AalisConfig[], definition: PluginDefinition) {
@@ -164,12 +177,6 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
   });
 
   it('建实例沿用文档里残留的禁用标记并写入配置落盘，删实例移除文档键并落盘', async () => {
-    const multi = definePlugin({
-      name: 'multi',
-      reusable: true,
-      configSchema: { v: { type: 'number', label: 'V', default: 0 } },
-      apply() {},
-    });
     // 文档里残留一条实例的禁用标记（此前禁用后删掉、或手改配置留下的）
     const w = world({ name: 'T', logLevel: 'error', plugins: {}, disabledPlugins: ['multi:x'] });
     await w.boot(multi);
@@ -188,5 +195,32 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     expect(Object.hasOwn(w.store.getAll().plugins, 'multi:x')).toBe(false);
     expect(w.saved).toHaveLength(2);
     expect(Object.hasOwn(w.saved[1].plugins, 'multi:x')).toBe(false);
+  });
+
+  it('落盘被拒：启停、改配置、实例增删都回 409 + applied，说明已在运行态生效、未写入文件', async () => {
+    const w = world({ name: 'T', logLevel: 'error', plugins: { target: { v: 1 } } }, { rejectSave: true });
+    await w.boot(target, multi);
+    const expectApplied = (reply: { status: number; body?: unknown }, reconcile: string) => {
+      expect(reply.status).toBe(409);
+      expect(reply.body).toEqual({
+        error: expect.stringContaining(`已在运行态生效，但未写入配置文件（${SAVE_REJECTED}）；`),
+        applied: true,
+      });
+      expect((reply.body as { error: string }).error).toContain(reconcile);
+    };
+
+    expectApplied(await w.disable('target'), '重启时以文件内容为准');
+    expect(w.app.plugins.getPlugin('target')?.state).toBe('disabled');
+    expectApplied(await w.enable('target'), '重启时以文件内容为准');
+    await w.app.plugins.idle();
+    expect(w.app.plugins.getPlugin('target')?.state).toBe('active');
+    expectApplied(await w.put('target', { v: 5 }), '按文件内容重载');
+    await w.app.plugins.idle();
+    expect(w.app.plugins.getPlugin('target')?.config).toEqual({ v: 5 });
+    expectApplied(await w.createInstance('multi', 'x', { v: 3 }), '按文件内容重载');
+    expect(w.app.plugins.getPlugin('multi:x')).toBeDefined();
+    expectApplied(await w.deleteInstance('multi:x'), '重启时以文件内容为准');
+    expect(w.app.plugins.getPlugin('multi:x')).toBeUndefined();
+    expect(w.saved).toHaveLength(0);
   });
 });

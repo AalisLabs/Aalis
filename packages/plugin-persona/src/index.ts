@@ -45,10 +45,12 @@ interface PersonaIdentity {
 /**
  * 合成回合（scheduler / workflow / delegate / idle）不经适配器，消息上没有 sessionType：按
  * `<platform>:<self>:<type>:<target>` 约定从 sessionId 推断（与下方取群号同一约定），只认前缀等于
- * platform 的 id。只用于提示词、不回写消息——写回会把合成回合拖进 flow-control / trigger-policy
- * 的 `*:group` 闸，定时群消息会被吞掉。
+ * platform 的 id。子任务会话（`<父会话 id>::<uuid>`）不推断：它沿用父会话的 platform，按段切分会把
+ * 父会话的类型连同带后缀的假群号安到子任务头上。只用于提示词、不回写消息——写回会把合成回合拖进
+ * flow-control / trigger-policy 的 `*:group` 闸，定时群消息会被吞掉。
  */
 function inferSessionType(platform: string, sessionId: string): PersonaIdentity['sessionType'] {
+  if (sessionId.includes('::')) return undefined;
   const parts = sessionId.split(':');
   if (parts.length < 4 || parts[0] !== platform) return undefined;
   const t = parts[2];
@@ -68,7 +70,8 @@ const configSchema: ConfigSchema = {
   personasDir: {
     type: 'string',
     label: '人设目录',
-    description: '存放人设文件的目录路径（相对于项目根目录）',
+    description:
+      "人设文件所在目录的 storage URI（如 data:/personas；不含 ':/' 时首段视为存储根名，单段裸名归 data 根）",
     default: 'data/personas',
   },
   statePersistence: {
@@ -124,8 +127,8 @@ class PersonaServiceImpl implements PersonaService {
   private timeZone: string;
   /** 按名称缓存的角色卡（由启动扫描 + watch 预填；键集即 listModels 的结果） */
   private cardCache = new Map<string, PersonaCard>();
-  /** 按名称缓存的 OutputFormat */
-  private formatCache = new Map<string, OutputFormat | null>();
+  /** 按卡对象缓存的 OutputFormat：卡被重扫换成新对象后旧缓存自然失效，同名的两张卡也互不串用 */
+  private formatCache = new WeakMap<PersonaCard, OutputFormat | null>();
 
   /** 每个 session 的持久化状态 */
   private sessionStates = new Map<string, Record<string, unknown>>();
@@ -152,12 +155,10 @@ class PersonaServiceImpl implements PersonaService {
   /** 给外部调用：启动时预填 cache（代替原 sync 按需读盘） */
   setCardCacheEntry(name: string, card: PersonaCard): void {
     this.cardCache.set(name, card);
-    this.formatCache.delete(name);
   }
 
   removeCardCacheEntry(name: string): void {
     this.cardCache.delete(name);
-    this.formatCache.delete(name);
   }
 
   /** 重新加载“主角色卡”（fileName 对应的卡），供 watch 调用 */
@@ -228,12 +229,11 @@ class PersonaServiceImpl implements PersonaService {
   /** 获取指定角色卡的 OutputFormat（带缓存） */
   private getCardOutputFormat(card: PersonaCard): OutputFormat | undefined {
     if (card === this.card) return this._outputFormat;
-    const key = card.name || '??';
-    if (this.formatCache.has(key)) return this.formatCache.get(key) ?? undefined;
+    if (this.formatCache.has(card)) return this.formatCache.get(card) ?? undefined;
     const fmt = card.outputFormat
       ? PersonaServiceImpl.parseRawOutputFormat(card.outputFormat, card.outputFormatRetries)
       : undefined;
-    this.formatCache.set(key, fmt ?? null);
+    this.formatCache.set(card, fmt ?? null);
     return fmt;
   }
 
@@ -602,7 +602,7 @@ async function run(caps: Caps): Promise<void> {
   provide(persona, service);
 
   /** 全量扫描 → cache（listModels / 动态切换用），剔除已消失的卡，并按 cache 刷新主卡 */
-  async function refresh(reason: string): Promise<void> {
+  async function scanOnce(reason: string): Promise<void> {
     try {
       const known = await scanAll(service);
       for (const n of await service.listModels()) {
@@ -613,6 +613,25 @@ async function run(caps: Caps): Promise<void> {
     } catch (err) {
       logger.warn(`persona 扫描失败（${reason}）：${err}`);
     }
+  }
+
+  // 扫描串行化：同一时刻只跑一次；进行中再触发，只排一次尾随重扫（期间的多次触发并成这一次）。
+  // 并发扫描时，先列目录、后收尾的那次会按自己的旧清单剔掉另一次刚载入的卡。
+  let scanning: Promise<void> | undefined;
+  let queued: Promise<void> | undefined;
+  function refresh(reason: string): Promise<void> {
+    if (queued) return queued;
+    if (scanning) {
+      queued = scanning.then(() => {
+        queued = undefined;
+        return refresh(reason);
+      });
+      return queued;
+    }
+    scanning = scanOnce(reason).finally(() => {
+      scanning = undefined;
+    });
+    return scanning;
   }
 
   // 跟随 storage：在场即补建人设目录、挂监听、全量扫描；提供者换代（重启 / 改配置 / 晚上线）时重挂。
@@ -636,7 +655,7 @@ async function run(caps: Caps): Promise<void> {
           }
         }
         if (cancelled) return;
-        // 先挂监听再扫描：扫描期间的改动不会漏掉
+        // 先挂监听再扫描：扫描期间的改动不会漏掉（由它触发的重扫排在本次扫描之后）
         try {
           const off = storage.watch?.(personasDir, () => void refresh(`目录变化已重新加载（${personasDir}）`));
           if (off) offs.push(off);

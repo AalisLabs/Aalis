@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { agent as agentService } from '../../packages/api-agent/src/index.js';
-import type { ChatResponse } from '../../packages/api-llm/src/index.js';
+import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { type ToolCallContext, tools } from '../../packages/api-tools/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
@@ -22,9 +22,14 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 //      ——跨平台委派曾因覆盖把定时任务归属/平台档继承/记忆平台域/confirm 选路
 //      全部路由到发起者平台；
 //   3. 无 actor 时 callCtx.actor 缺省（匿名不发明身份）。
+// 同一条工具循环另钉分组闸执行面：会话没配工具分组（未装 session-manager）时
+// callCtx.enabledGroups 为 []，模型按名直调有分组的工具也不执行。
 // ════════════════════════════════════════════════════════════
 
-async function runTurn(incoming: IncomingMessage): Promise<ToolCallContext | undefined> {
+async function runTurn(
+  incoming: IncomingMessage,
+  probe: { groups?: string[]; recorder?: ChatModelRequest[] } = {},
+): Promise<ToolCallContext | undefined> {
   const app = new App({ name: 'E2E', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ tools, agent: agentService });
@@ -32,7 +37,9 @@ async function runTurn(incoming: IncomingMessage): Promise<ToolCallContext | und
     content: null,
     toolCalls: [{ id: 'call-1', type: 'function', function: { name: 'probe_ctx', arguments: '{}' } }],
   };
-  await app.plugin(createMockLLMPlugin({ responses: [toolCallResponse, { content: 'done' }] }));
+  await app.plugin(
+    createMockLLMPlugin({ responses: [toolCallResponse, { content: 'done' }], recorder: probe.recorder }),
+  );
   await app.plugin(toolsPlugin, {});
   await app.plugin(memoryInMemoryPlugin);
   await app.plugin(messageArchivePlugin, { debugLogs: false });
@@ -53,6 +60,7 @@ async function runTurn(incoming: IncomingMessage): Promise<ToolCallContext | und
       type: 'function',
       function: { name: 'probe_ctx', description: '探针', parameters: { type: 'object', properties: {} } },
     },
+    groups: probe.groups,
     handler: async (_args, callCtx) => {
       captured = callCtx;
       return 'ok';
@@ -92,5 +100,19 @@ describe('actor 消费端：agent 把 incoming.actor 折进 ToolCallContext', ()
     expect(callCtx?.actor).toBeUndefined();
     expect(callCtx?.platform).toBe('test');
     expect(callCtx?.userId).toBe('u1');
+  });
+});
+
+describe('分组闸：平台档没配分组时执行面仍按「只给无分组工具」拦', () => {
+  it('没装 session-manager（无 enabledToolGroups）时，模型按名叫出有分组的工具也不执行', async () => {
+    const recorder: ChatModelRequest[] = [];
+    const callCtx = await runTurn(
+      { content: 'hi', sessionId: 'onebot:1:group:2', platform: 'onebot', userId: 'u1', sessionType: 'group' },
+      { groups: ['system'], recorder },
+    );
+    expect(callCtx, '有分组的工具不在下发列表里，按名直调必须被执行面分组闸挡下').toBeUndefined();
+    const toolMsg = recorder[1]?.messages.find(m => m.role === 'tool');
+    expect(toolMsg, '工具回合须真的走到执行面并回灌结果').toBeDefined();
+    expect(String(toolMsg?.content)).toContain('未找到');
   });
 });

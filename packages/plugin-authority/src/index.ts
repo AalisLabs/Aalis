@@ -205,7 +205,7 @@ async function run(caps: Caps): Promise<void> {
       if (!Number.isInteger(lv)) return '等级必须是整数';
       manager.setUserLevel({ platform: t.slice(0, sep), userId: t.slice(sep + 1) }, lv);
       manager.save();
-      return `已设 ${t} 等级: ${lv}`;
+      return withPersistNote(manager, `已设 ${t} 等级: ${lv}`);
     });
 
   // /auto [分钟|off|on] — owner 临时免 dangerous 二次确认（批处理便利）。on=一直, off=关, 数字=分钟。
@@ -241,6 +241,14 @@ async function run(caps: Caps): Promise<void> {
       await setUntil(Date.now() + m * 60000);
       return `已开启自动确认 ${m} 分钟`;
     });
+}
+
+/**
+ * 等级改动回执：users.json 加载失败而拒写时，改动只在内存里生效、重启即失，
+ * 回执里要如实注明，别让 owner 以为封禁或提权已经落盘。
+ */
+function withPersistNote(manager: AuthorityManager, message: string): string {
+  return manager.persistBlocked ? `${message}；仅本次运行生效，未写入 users.json（加载失败，见日志）` : message;
 }
 
 // ===== WebUI 页面动作（数字等级单轴：用户等级 + 操作门槛 + owner 列表 + 高级）=====
@@ -326,7 +334,7 @@ function registerAdminActions({ webui, commands, tools, platform, config, manage
     if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
     manager.setUserLevel({ platform: platform as string, userId: userId as string }, level);
     manager.save();
-    return { message: `${platform}:${userId} 等级已更新为 ${level}` };
+    return { message: withPersistNote(manager, `${platform}:${userId} 等级已更新为 ${level}`) };
   });
 
   /** 删除用户记录（仅 owner 可达：删掉封禁记录等于解封） */
@@ -336,7 +344,7 @@ function registerAdminActions({ webui, commands, tools, platform, config, manage
     if (caller && !manager.isOwner(caller.platform, caller.userId)) throw new Error('只有 owner 可管理权限');
     manager.removeUser(platform as string, userId as string);
     manager.save();
-    return { message: `${platform}:${userId} 记录已删除` };
+    return { message: withPersistNote(manager, `${platform}:${userId} 记录已删除`) };
   });
 
   /** 更新 owner 列表（仅 owner 可达：防非 owner 把自己加成 owner 提权） */
