@@ -1,6 +1,6 @@
 {
   "name": "@aalis/plugin-storage-local",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -28,9 +28,9 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/schema-config": "workspace:>=0.12.0 <1.0.0",
-    "@aalis/api-doctor": "workspace:>=0.6.0 <1.0.0",
-    "@aalis/api-storage": "workspace:>=0.6.0 <1.0.0"
+    "@aalis/schema-config": "workspace:>=0.13.0 <1.0.0",
+    "@aalis/api-doctor": "workspace:>=0.7.0 <1.0.0",
+    "@aalis/api-storage": "workspace:>=0.7.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -38,7 +38,7 @@
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
-    "@aalis/core": ">=0.17.0 <1.0.0"
+    "@aalis/core": ">=0.18.0 <1.0.0"
   },
   "aalis": {
     "service": {

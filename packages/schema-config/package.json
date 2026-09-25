@@ -1,6 +1,6 @@
 {
   "name": "@aalis/schema-config",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -31,6 +31,6 @@
     "aalis-schema"
   ],
   "peerDependencies": {
-    "@aalis/core": ">=0.17.0 <1.0.0"
+    "@aalis/core": ">=0.18.0 <1.0.0"
   }
 }
