@@ -64,6 +64,8 @@ export default definePlugin({
 
 ## 钩子（HookContextMap）
 
+经 declaration merging 注入 `@aalis/api-hooks` 的 `HookContextMap`（见 [api-hooks](./api-hooks.md)）：
+
 ```ts
 'memory:clear': {
   scope: 'session' | 'all';

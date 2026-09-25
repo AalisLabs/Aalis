@@ -70,7 +70,7 @@ export default definePlugin({
 - `entryId?: string` —— 一个激活登记多条时的子粒度 id，须以本激活 id 为前缀（`${id}/${子粒度}`）
 - `onBehalfOf?: string` —— 代为登记：条目的逻辑身份取被代者 id（偏好、服务页、`provides` 校验的 `hasByContext` 都认这个 id），清理仍归本激活。与 `entryId` 二选一。代登记**不计入**代理人的 `provides`；写进去会按「声明了但未实际注册」让本次激活进入 error。
 
-内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services` / `hooks` / `contributions`）绑的是这次激活自身，不可被普通 `provide` 替换，不参与外部服务激活闸。`hostConfig` / `app` / `plugins` 是普通宿主服务，须显式写进 `uses`。
+内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）由根激活独占提供、始终在场，绑的是这次激活自身，不可被普通 `provide` 替换。`app` / `plugins` 是 core 提供的宿主服务；`hostConfig`（`@aalis/api-host-config`）由宿主提供；`hooks` / `contributions`（`@aalis/api-hooks` / `@aalis/api-contributions`）由插件提供，默认提供者是 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`。它们都须显式写进 `uses`。
 
 ### 2.2 同一激活默认只 provide 一次同名服务
 
@@ -149,7 +149,7 @@ caps.provide(storage, scoped, {
 
 ## 7. 隔离：键控解析或新 App
 
-按会话 / 租户做差异化配置，用键控解析（session-manager 的 `resolveConfig(sessionId)` 模式）。需要真正隔离的事件总线 / 日志通道 / 服务容器，用独立的 `App` 实例（`createApp({ events, services, hooks, … })`）。同租户内多用户偏好不要写进容器的 `prefer`——那是进程级 default，见 [插件作者指南](../plugin-author-guide.md) 第 13 节。
+按会话 / 租户做差异化配置，用键控解析（session-manager 的 `resolveConfig(sessionId)` 模式）。需要真正隔离的事件总线 / 日志通道 / 服务容器，用独立的 `App` 实例（`createApp(options)`：每个 `App` 自有事件总线与服务容器，日志通道另传独立的 `logHub`）。同租户内多用户偏好不要写进容器的 `prefer`——那是进程级 default，见 [插件作者指南](../plugin-author-guide.md) 第 13 节。
 
 ---
 
@@ -160,7 +160,7 @@ caps.provide(storage, scoped, {
 | **包级 manifest** | `package.json` 的 `aalis.service.{provides,required,optional}` | 市场 / 安装前的静态披露 |
 | **运行时定义** | `export default definePlugin({ provides, uses })` | core 实际据此做依赖解析与激活时序 |
 
-`provides` 写描述符数组，对账时取 `.name`。`uses` 里未包 `optional()` 的外部服务进 `required`，包了的进 `optional`；内置能力不进 `aalis.service`。对账守卫见 [清单元数据](./manifest-metadata.md)。
+`provides` 写描述符数组，对账时取 `.name`。`uses` 里未包 `optional()` 的服务进 `required`，包了的进 `optional`；内置能力与其余服务同样计入。对账守卫见 [清单元数据](./manifest-metadata.md)。
 
 ---
 

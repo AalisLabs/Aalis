@@ -66,7 +66,7 @@ export default definePlugin({
 
 - **required**（未包 `optional` 的服务）：参与激活闸。缺席则顶层插件 `pending`，恢复后重新激活。
 - **optional**：不参与激活闸；绑定接口与 required 完全相同，只是激活闸这一条不同。
-- **Core 基础服务**（`events` / `logger` / `config` / `lifecycle` / `provide` / `services` / `hooks` / `contributions`）：启动时由根激活经 `provide` 独占登记，与第三方服务同一条路径；提供者只向在 `uses` 里声明了它的激活交出属于该激活的接口，声明同样计入 required / optional。它们在加载插件前已经可用；不声明也不影响框架管理资源，只是 `apply` 拿不到对应接口。见 [内置服务的登记](service.md#内置服务的登记)。
+- **Core 基础服务**（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）：启动时由根激活经 `provide` 独占登记，与第三方服务同一条路径；提供者只向在 `uses` 里声明了它的激活交出属于该激活的接口，声明同样计入 required / optional。它们在加载插件前已经可用；不声明也不影响框架管理资源，只是 `apply` 拿不到对应接口。见 [内置服务的登记](service.md#内置服务的登记)。
 - 声明即计入关停编排（required 与 optional，访问与否无关）。
 
 `optional()` 使用同版本 Core 副本可识别的包装标记；描述符自有 `optional` 字段不算。
@@ -76,21 +76,27 @@ export default definePlugin({
 | 描述符 | 绑定接口 | 作用 |
 |---|---|---|
 | `events` | `Events` | `on` / `emit`，监听随这次激活撤回 |
-| `hooks` | `Hooks` | `middleware` / `run` |
-| `contributions` | `Contributions` | `contribute` / `collect` |
 | `lifecycle` | `LifecycleCap` | `id`、`closed`、`onDrain`、`onDispose` |
 | `logger` | `Logger` | 这次激活的日志器 |
-| `config` | 只读对象 | 这次激活的插件配置视图。整份宿主配置是另一项能力，见下方 `hostConfig` |
+| `config` | 只读对象 | 这次激活的插件配置视图。配置文档是宿主提供的另一项服务，见下方 `host-config` |
 | `provide` | `Provide` | 唯一的服务发布入口 |
 | `services` | `Services` | 动态查询与偏好。查到的不是声明依赖 |
 
-宿主管理面另有三个服务，同样由根激活独占登记、通过 `uses` 声明：
+钩子（`hooks`）与贡献点（`contributions`）不是 Core 基础服务，由插件 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 提供，描述符从 `@aalis/api-hooks` / `@aalis/api-contributions` 导入，见 [api-hooks](../api/api-hooks.md)、[api-contributions](../api/api-contributions.md)。
+
+宿主管理面另有两个服务，同样由根激活独占登记、通过 `uses` 声明：
 
 | 描述符 | 服务名 | 说明 |
 |---|---|---|
-| `appService` | `app` | 停机、重启、存配置、热扫描 |
+| `appService` | `app` | 停机、重启 |
 | `pluginsService` | `plugins` | 插件管理动作与状态 |
-| `hostConfig` | `host-config` | 整份配置的读写（窄面 `HostConfig`，不含 `watch` / `save`；落盘经 `appService.saveConfig`） |
+
+宿主还可以在根上提供自己的服务，core 不保证它们在场，插件宜以 `optional` 声明并在缺席时降级。Node 宿主 `@aalis/runtime` 的 `startAalis` 提供两项：
+
+| 描述符 | 服务名 | 契约包 | 说明 |
+|---|---|---|---|
+| `hostConfig` | `host-config` | `@aalis/api-host-config` | 配置文档的读写与 `save()`，见 [运行态与配置文档](config.md) |
+| `pluginSource` | `plugin-source` | `@aalis/api-plugin-source` | 热扫描：`rescan()` 重新发现并登记新插件 |
 
 ## provide
 
@@ -221,9 +227,9 @@ lifecycle.onDispose(async () => {
 
 宿主不拿插件那份绑定。`App` 提供：
 
-- `app.plugin(definition, config?, instanceId?)`：注册定义对象
+- `app.plugin(definition, config?, instanceId?, options?)` / `app.pluginAll(items)`：注册定义对象，配置与禁用标记由宿主传入
 - `app.bind(uses)`：按与插件同一套描述符为**根激活**装配绑定接口，登记归属根激活、随 App 停止撤回
-- `app.config` / `app.plugins` / 四张底层注册表（`events` / `services` / `hooks` / `contributions`）
+- `app.plugins` / `app.logger`
 
 插件拿的是自己激活的绑定，不复用 `app.bind` 的那一份。
 
@@ -235,9 +241,9 @@ lifecycle.onDispose(async () => {
 |---|---|
 | `kernel/DisposableChain` | 分段清理、逆序执行与异步等待，不认识服务或插件 |
 | `infrastructure/Resources` | 一次激活的资源账与关闭过程：清理登记、收尾段、初始化等待、在飞撤回与同步获取操作记账；关闭相位等待这些工作落定 |
-| `orchestration/Activation` | 内部身份、配置视图、资源记录、子激活和依赖边；不提供四原语操作门面 |
+| `orchestration/Activation` | 内部身份、配置视图、资源记录、子激活和依赖边；不提供原语操作门面 |
 | `orchestration/ActivationHost` | 创建激活、经根激活登记内置服务、按 `uses` 装配能力；关闭时按归属同栈切断本激活的原语登记 |
-| `composition/core-services` | 内置八项的描述符与提供者：提供者按调用方身份交出这次激活的 `events` / `provide` 等接口 |
+| `composition/core-services` | 内置六项的描述符与提供者：提供者按调用方身份交出这次激活的 `events` / `provide` 等接口 |
 | `composition/descriptors`、`plugin-definition` | 服务与插件定义、类型推导，以及资源口契约 |
 | `composition/binding` | 资源口：观察服务胜者变化，负责 `follow` 交接、`registrar` 登记与逐条撤回 |
 

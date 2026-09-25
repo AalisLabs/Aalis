@@ -10,7 +10,7 @@ import { defineService, type PluginDefinition } from '@aalis/core';
 
 export interface PluginSourceService {
   /**
-   * 重新发现插件，登记新出现且尚未注册的（含配置里它们的 `name:suffix` 实例）。
+   * 重新发现插件，登记新出现且尚未注册的插件，以及配置里尚未注册的 `name:suffix` 实例（所属模块早已注册的也登记）。
    * 返回本次新登记的主实例名。resolve = 落账 + 尽力即时激活，不等静置；
    * 要判断某个插件是否就位，看 plugins 服务的注册表，不看返回值。
    */

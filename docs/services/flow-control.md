@@ -111,8 +111,9 @@ uses: { gateway, messageArchive: optional(messageArchive) };
 import { flowControl } from '@aalis/api-flow-control';
 import type { FlowControlService } from '@aalis/api-flow-control';
 import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
+import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
-import { definePlugin, hooks, optional, provide } from '@aalis/core';
+import { definePlugin, optional, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@aalis/plugin-my-flow-control',

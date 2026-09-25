@@ -23,11 +23,12 @@ export default definePlugin({
     tools: optional(tools),
     storage: optional(storage),
     platform: optional(platform),
-    app: optional(appService),
   },
   apply(caps) { /* 见源码 */ },
 });
 ```
+
+裁决要读整份配置文档（`owners`、`deniedCapabilities`、`confirmOverrides` 等），`host-config` 虽以 optional 声明，`apply` 内仍 `require()`：宿主未提供配置文档时本插件激活失败。其余 optional 依赖缺席时只少对应的接线。WebUI 权限页与 `/auto` 指令改动配置后经 `host-config` 的 `save()` 落盘。
 
 ## 两轴正交模型
 

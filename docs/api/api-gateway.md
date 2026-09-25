@@ -54,7 +54,8 @@ interface GatewayService {
 
 ```ts
 import { gateway } from '@aalis/api-gateway';
-import { definePlugin, hooks } from '@aalis/core';
+import { hooks } from '@aalis/api-hooks';
+import { definePlugin } from '@aalis/core';
 
 export default definePlugin({
   name: '@acme/plugin-example-gateway',

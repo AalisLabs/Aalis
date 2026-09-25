@@ -43,9 +43,13 @@ await plugins.require().bounce(lifecycle.id);
 | 服务消失时必须停下（顶层插件转 pending） | 服务消失时可以保留主功能 |
 | 绑定接口与 optional **相同**（都是 `ServiceRef` 或自定义门面） | 只差激活闸，不差 API |
 
-没有默认注入——`uses` 写了什么，插件就只能碰到什么。内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services` / `hooks` / `contributions`）同样要声明才会出现在 `apply` 参数里；不声明 `lifecycle` / `logger` 不影响框架对这次激活的管理。
+没有默认注入——`uses` 写了什么，插件就只能碰到什么。内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）同样要声明才会出现在 `apply` 参数里；不声明 `lifecycle` / `logger` 不影响框架对这次激活的管理。
 
-`hostConfig`（整份宿主配置）、`app`、`plugins` 是普通宿主服务，须显式 uses。
+以下是普通服务，同样须显式 uses：
+
+- `app`、`plugins`：core 在根激活上提供的宿主管理面。
+- `hostConfig`（配置文档，`@aalis/api-host-config`）：由宿主提供。Node 宿主 `@aalis/runtime` 会提供，别的宿主不一定；缺席时要降级的插件写 `optional(hostConfig)`。
+- `hooks` / `contributions`（`@aalis/api-hooks` / `@aalis/api-contributions`）：由插件提供，默认提供者是 `@aalis/plugin-hooks` / `@aalis/plugin-contributions`。部署里缺了它们，依赖它们的插件停在 pending。
 
 `uses` 的值是描述符（或 `optional()` 包着的描述符），不是字符串。领域能力（LLM 的 tool-calling、storage 的 local-path）不是 core DI 的一维：用各域 `*-api` helper 按实例 / 句柄元数据过滤（见第 10 节）。
 
@@ -179,9 +183,9 @@ lifecycle.onDispose(() => {
 
 ### 配置变更如何触发 reload
 
-用户在 WebUI 点保存 → `updateConfig(instanceId, newConfig)`：
+用户在 WebUI 点保存 → WebUI 调 `updateConfig(instanceId, newConfig)`，成功后把新配置写进配置文档并 `save()`。`updateConfig` 本身只改运行态：
 
-1. 配置先拷贝再挂进 entry 与 ConfigManager
+1. 配置先拷贝再挂进 entry
 2. 如果当前 active：`disposeAsync` 你的激活（`onDrain` 然后 `onDispose`，异步清理会被等待）→ pending → `recompute('changed')` 按拓扑重激活
 3. 如果之前 error：直接 pending → recompute 重试
 
@@ -193,10 +197,14 @@ lifecycle.onDispose(() => {
 
 ```typescript
 import { createApp } from '@aalis/core';
+import contributionsPlugin from '@aalis/plugin-contributions';
+import hooksPlugin from '@aalis/plugin-hooks';
 import myPlugin from './src/index.js';
 
 it('required 依赖到场后激活', async () => {
-  const app = createApp({ config: { name: 'test', logLevel: 'error', plugins: {} } });
+  const app = createApp({ name: 'test', logLevel: 'error' });
+  // 钩子与贡献点由插件提供：插件用到它们时，测试里要一并登记两个默认提供者（部署里由宿主随其他插件整批发现登记）
+  await app.pluginAll([{ definition: hooksPlugin }, { definition: contributionsPlugin }]);
   await app.plugin(fakeDepProvider);
   await app.plugin(myPlugin, { /* config */ });
   await app.plugins.idle();
@@ -205,7 +213,7 @@ it('required 依赖到场后激活', async () => {
 });
 ```
 
-`createApp` 是同步的。`plugin()` 的 true 只说明请求已受理；需要「激活已落定」必须 `await app.plugins.idle()`。不得在插件 `apply` / `onDispose` 内调用 `idle()`（互等死锁）。不要用 `setTimeout` 代替 `idle()`。
+`createApp` 是同步的。配置经 `app.plugin(definition, config)` 传入，原样生效：core 不合并 schema 默认值。测试里登记的 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 放进 devDependencies。`plugin()` 的 true 只说明请求已受理；需要「激活已落定」必须 `await app.plugins.idle()`。不得在插件 `apply` / `onDispose` 内调用 `idle()`（互等死锁）。不要用 `setTimeout` 代替 `idle()`。
 
 ---
 
@@ -216,7 +224,7 @@ it('required 依赖到场后激活', async () => {
 | 一个独立插件实例（默认）| `app.plugin(definition, cfg)` |
 | 按会话/租户差异化配置或服务 | **键控解析**：按 key 查表（参考 session-manager 的 `resolveConfig(sessionId)`），不需要上下文隔离 |
 | 同一份定义跑多套独立配置 | 定义声明 `reusable: true`，再以 `app.plugin(definition, cfg, 'name:suffix')` 注册（插件内经 `plugins.register` 同签名）；每个实例是独立的顶层激活，由调度器管理。约束见第 4 节 |
-| 完全独立的事件总线 / 日志通道 / 服务容器 | `createApp({ events, services, hooks, ... })` 新建 App |
+| 完全独立的事件总线 / 日志通道 / 服务容器 | `createApp(options)` 新建 App；日志通道另传独立的 `logHub` |
 
 宿主取根激活绑定用 `app.bind(uses)`，与插件同一套描述符；登记归属根激活、随 App 停止撤回。插件拿的是自己激活的绑定，不复用这里的。
 
@@ -246,7 +254,7 @@ it('required 依赖到场后激活', async () => {
 
 ## 10. 领域能力——写在实例 / 句柄上，不进 core
 
-core 的 declaration-merging 扩展点是 `AalisEvents`、`HookContextMap`、`ContributionPointMap`（后两者保持空接口，由 `-api` 填；`AalisEvents` 自持基础设施事件）。服务类型随描述符走，没有「服务名 → 实例」的核心类型表可 augment。
+declaration-merging 扩展点：core 的 `AalisEvents`（自持基础设施事件），`@aalis/api-hooks` 的 `HookContextMap` 与 `@aalis/api-contributions` 的 `ContributionPointMap`（空接口，由各 `-api` 填）。服务类型随描述符走，没有「服务名 → 实例」的核心类型表可 augment。
 
 领域能力（LLM 的 tool-calling / vision、storage 的 read/write/local-path）落在**服务实例 / model-handle 的元数据**上，由各 `-api` 包导出能力枚举 + 过滤 helper：
 
@@ -323,16 +331,34 @@ declare module '@aalis/core' {
 多租户：
 
 - **不同公司**：每租户一个独立进程 + 独立 `AALIS_DATA_DIR`
-- **沙盒/测试**：`createApp({ events, services, hooks })` 完全隔离
+- **沙盒/测试**：`createApp(options)` 新建独立 App
 - **同租户内多用户**：profile + 请求级 hint
 
 不要为了多租户改服务容器。让 IoC 保持「一进程 = 一产品实例」。
 
 ---
 
+## 从 0.17 迁移
+
+下列对照只列插件作者要改的写法。完整破坏性清单与宿主侧迁移见 CHANGELOG 的 core 0.18.0 节。
+
+| 0.17 | 0.18 |
+| --- | --- |
+| `hooks` / `Hooks` / `MiddlewareFn` / `MiddlewareNext` 从 `@aalis/core` 导入 | 从 `@aalis/api-hooks` 导入，并把该包加进 `dependencies` |
+| `contributions` / `Contributions` / `ContributionSpec` / `ContributionHandle` 从 `@aalis/core` 导入 | 从 `@aalis/api-contributions` 导入，并把该包加进 `dependencies` |
+| `declare module '@aalis/core'` 增广 `HookContextMap` / `ContributionPointMap` | 分别增广 `'@aalis/api-hooks'` / `'@aalis/api-contributions'`；同一块里的 `AalisEvents` 拆出来，仍增广 `'@aalis/core'` |
+| `hostConfig` / `HostConfig` 从 `@aalis/core` 导入；`appService.saveConfig()` | 从 `@aalis/api-host-config` 导入；`hostConfig.save()`。host-config 由宿主提供，缺席要降级的写 `optional(hostConfig)` |
+| `declare module '@aalis/core'` 增广 `AalisConfig` | 增广 `'@aalis/api-host-config'` |
+| 管理动作（`plugins.enable` / `disable` / `updateConfig`）顺带写配置文档 | 只改运行态；要跨重启保留，动作成功后经 host-config 写文档并 `save()` |
+| `appService.rescanPlugins()` | `uses` 里声明 `optional(pluginSource)`（`@aalis/api-plugin-source`）后调 `rescan()` |
+| `pluginDefinitionOf` 从 `@aalis/core` 导入 | 从 `@aalis/api-plugin-source` 导入 |
+| 测试里 `createApp({ config: { … } })` | `createApp({ name, logLevel })`，配置经 `app.plugin(definition, config)` 传入；用到钩子或贡献点时先登记 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` |
+
+改用 `@aalis/api-hooks` / `@aalis/api-contributions` 的插件，core peer 下限抬到 `>=0.18.0 <1.0.0`（与这两个契约包的 peer 一致）。
+
 ## 从 0.16 迁移
 
-下列对照只列写法，不含演进叙述。完整破坏性清单见 CHANGELOG 未发布节。
+下列对照只列写法，不含演进叙述。完整破坏性清单见 CHANGELOG 的 core 0.17.0 节。
 
 | 0.16 | 0.17 |
 | --- | --- |
@@ -374,7 +400,7 @@ Aalis 市场走**纯 npm 路线**，无自建服务器、无静态索引——�
    ```json
    "aalis": { "service": { "required": ["llm"], "optional": ["memory"], "provides": ["my-service"] } }
    ```
-   与 `definePlugin` 的 `uses` / `provides` 一致（描述符 `.name`；内置能力不写）。装后市场仍会按实际定义聚合细化。
+   与 `definePlugin` 的 `uses` / `provides` 一致（描述符 `.name`；内置能力同样写）。装后市场仍会按实际定义聚合细化。
 4. **breaking change 记 changelog**：**1.0 之前 core 的公开面可能在次版本被删**。宽 peerDep 区间是为了让不用新 API 的插件不必随次版本频繁重发，不是兼容性承诺。
    稳定性承诺自 **1.0** 起生效，条款见 `docs/design/core-contract.md`。
 5. **发布**：`pnpm publish:all`（仓库根，递归拓扑序发 core→api→util→插件、跳 private、

@@ -1,16 +1,18 @@
 # Core 扩展点索引（一方扩展速查）
 
-`@aalis/core` 暴露的所有 `declare module` 扩展点，及**本仓库内**谁在 augment 什么——
+`@aalis/core` 与基础契约包暴露的 `declare module` 扩展点，及**本仓库内**谁在 augment 什么——
 便于在一方代码里查定义、查谁扩了什么。
 
-> **这不是注册门禁。** 第三方插件扩展任一扩展点，只需在你自己的包里写
-> `declare module '@aalis/core' { ... }`（见 [plugin-author-guide](../plugin-author-guide.md)），
+> **这不是注册门禁。** 第三方插件扩展任一扩展点，只需在你自己的包里对扩展点所在的模块写
+> `declare module`（事件表 `'@aalis/core'`、钩子表 `'@aalis/api-hooks'`、贡献点表 `'@aalis/api-contributions'`、
+> 配置字段 `'@aalis/api-host-config'`，见 [plugin-author-guide](../plugin-author-guide.md)），
 > 编译期即生效——**无需在本表登记**，也不会（无法）出现在本表里。扩展点的**权威定义**在各
 > `-api` 包的 `declare module` 声明；本表只收录本仓库的一方包，作发现与查阅之用，并非全集。
 查找一个事件/钩子/贡献点的真实定义，按本表「扩展者」列的包名去 `packages/<包目录>/src/index.ts` 查（一方实现；例外路径在行内标注）。
 
-> **核心原则**：core 自身只声明空的钩子/贡献点接口，所有键值由 `-api` 包通过 declaration merging 注入。
-> `AalisEvents` 自持基础设施事件，从来不空。服务类型随描述符走，不经一张核心服务名表。
+> **核心原则**：core 只保留事件表 `AalisEvents`，它自持基础设施事件，从来不空。钩子表与贡献点表是
+> `@aalis/api-hooks` / `@aalis/api-contributions` 里的空接口，键值由各 `-api` 包通过 declaration merging 注入。
+> 服务类型随描述符走，不经一张核心服务名表。
 > 这是「忒修斯之船」原则——业务概念可以全部换掉，core 永远不感知它们。
 
 ---
@@ -23,8 +25,9 @@
 > 它们挂在服务**实例 / model-handle 元数据**上，由各领域 `*-api` 的 helper（如 `resolveLLMModel`）按需筛选。
 
 一方契约包各导出一条描述符，服务名即包名去掉 `api-` 前缀（`agent` / `asr` / `authority` / `code-sandbox` / `commands` /
-`cron-engine` / `doctor` / `embedding` / `flow-control` / `gateway` / `llm` / `media` / `memory` / `message-archive` / `persona` /
-`platform` / `process` / `session-confirm` / `session-manager` / `storage` / `tools` / `vectorstore` / `workflow`），两个例外：
+`contributions` / `cron-engine` / `doctor` / `embedding` / `flow-control` / `gateway` / `hooks` / `host-config` / `llm` / `media` /
+`memory` / `message-archive` / `persona` / `platform` / `plugin-source` / `process` / `session-confirm` / `session-manager` /
+`storage` / `tools` / `vectorstore` / `workflow`），两个例外：
 `@aalis/api-tool-session` 为 `session-history`，`@aalis/api-webui` 为 `webui-server` 与 `webui-client`。
 
 没有独立契约包、在自己 `src/index.ts` 里就地 `defineService` 的插件：
@@ -42,7 +45,8 @@
 | `@aalis/plugin-user-relation` | `user-relation` |
 | `@aalis/plugin-websearch-serper` | `web-search` |
 
-宿主管理面（须显式 uses）：`app` / `plugins` / `host-config`（`packages/core/src/orchestration/host-services.ts`）。
+宿主管理面（须显式 uses）：`app` / `plugins` 由 core 在根激活上提供（`packages/core/src/orchestration/host-services.ts`）；
+`host-config` 与 `plugin-source` 由宿主提供，Node 宿主 `@aalis/runtime` 两项都提供。
 
 ---
 
@@ -76,7 +80,7 @@ EventBus 事件签名表。`events.on(name, handler)` 在编译期靠它做事�
 
 中间件钩子上下文表。`hooks.middleware(name, fn)` 在编译期靠它推 data 类型。
 
-**位置**：`packages/core/src/types/hooks.ts`（空 interface）
+**位置**：`packages/api-hooks/src/index.ts`（空 interface；增广写 `declare module '@aalis/api-hooks'`）
 
 **扩展者**：
 
@@ -95,7 +99,7 @@ EventBus 事件签名表。`events.on(name, handler)` 在编译期靠它做事�
 与 `HookContextMap` 的分工：**改写或截停既有流程 → hooks；往共享产物添自己的一块 → 贡献点**。
 贡献者拿只读视图、无短路、无排序影响力；排布与执行策略归收集方（贡献点 owner）。
 
-**位置**：`packages/core/src/types/contributions.ts`（空 interface）
+**位置**：`packages/api-contributions/src/index.ts`（空 interface；增广写 `declare module '@aalis/api-contributions'`）
 
 **扩展者**：
 
@@ -107,10 +111,10 @@ EventBus 事件签名表。`events.on(name, handler)` 在编译期靠它做事�
 
 ## 5. `AalisConfig`（配置 schema 业务字段）
 
-应用根配置的字段表。core 只声明**自身管理的字段**（`name` / `logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`），
-业务字段由 `-api` 包通过 declaration merging 注入。
+宿主配置文档的字段表。`@aalis/api-host-config` 只声明宿主层字段（`name` / `logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`），
+业务字段由 `-api` 包通过 declaration merging 注入。core 不持配置文档。
 
-**位置**：`packages/core/src/infrastructure/config.ts`（`interface AalisConfig`）。表单描述 `CORE_CONFIG_SCHEMA` 在
+**位置**：`packages/api-host-config/src/index.ts`（`interface AalisConfig`；增广写 `declare module '@aalis/api-host-config'`）。表单描述 `CORE_CONFIG_SCHEMA` 在
 `packages/schema-config/src/index.ts`，那是宿主侧的渲染词汇，与本接口是两件事。
 
 **扩展者**：
@@ -174,7 +178,7 @@ export default definePlugin({
 
 ## 7. `PluginMeta`
 
-插件定义的元数据扩展点（core 对这里的字段零感知，只原样带在定义上）。`PluginDefinition` 自持 `name` / `displayName` / `subsystem` / `uses` / `provides` / `core` / `reusable` / `apply`。
+插件定义的元数据扩展点（core 对这里的字段零感知，只原样带在定义上）。`PluginDefinition` 自持 `name` / `displayName` / `subsystem` / `uses` / `provides` / `reusable` / `apply`。
 
 **扩展者**：
 
@@ -211,8 +215,8 @@ declare module '@aalis/api-llm' {
 ## 速查：我想……
 
 - 加一个**新事件** → 在自己的 `*-api` 包内 `declare module '@aalis/core' { interface AalisEvents { ... } }`
-- 加一个**新钩子** → 同上但写 `HookContextMap`
-- 加一个**新贡献点** → 同上但写 `ContributionPointMap`（spec 须含 `id: string`）
+- 加一个**新钩子** → 在自己的 `*-api` 包内 `declare module '@aalis/api-hooks' { interface HookContextMap { ... } }`
+- 加一个**新贡献点** → 在自己的 `*-api` 包内 `declare module '@aalis/api-contributions' { interface ContributionPointMap { ... } }`（spec 须含 `id: string`）
 - 加一个**新服务** → 在 `-api` 包 `export const mySvc = defineService<MyIface>('my-svc')`（登记型再给 `bind`）。领域能力放到实例 / model-handle 元数据上，用 helper 筛选（可选 `XxxCapabilityRegistry` 见第 8 节）
 - 加一个**登记门面** → `defineService` 的 `bind` 里用 `BindingPort.registrar` / `serviceRef(port, extra)`
-- 加一个**配置字段** → 在 `*-api` 包 `declare module '@aalis/core' { interface AalisConfig { myField: ... } }`，并提供 schema 给 ConfigManager
+- 加一个**配置字段** → 在 `*-api` 包 `declare module '@aalis/api-host-config' { interface AalisConfig { myField: ... } }`

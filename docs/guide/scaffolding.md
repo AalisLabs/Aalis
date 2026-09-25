@@ -19,7 +19,7 @@ Aalis 提供两个互不相干的脚手架，先确认你需要哪个：
 
 心智模型：
 - **项目** = 一份 `aalis.config.yaml` + 一行 `startAalis()` + 若干装进 `node_modules` 的 `@aalis/plugin-*`。运行时从项目 `package.json` 的依赖里发现并加载这些插件（`node-modules-loader.ts`）。
-- **插件** = 一个默认导出 `definePlugin({ name, uses, apply })` 产物的 npm 包（`create-aalis-plugin` 生成 `src/index.ts`），被某个项目装进去后由 core 加载。
+- **插件** = 一个默认导出 `definePlugin({ name, uses, apply })` 产物的 npm 包（`create-aalis-plugin` 生成 `src/index.ts`），被某个项目装进去后由 runtime 发现、交给 core 注册。
 
 两个脚手架遵循同一条外部兼容约定：**生成的依赖版本写 `"latest"`（或解析到的 `^<最新版>`），绝不写 `workspace:`**——脚手架产物不在本 monorepo 内，`workspace:` 协议在外部装不上（`create-aalis/cli.ts`、`create-aalis-plugin/cli.ts`）。
 
@@ -71,9 +71,11 @@ npm start -- status
    | 档 | 装什么 |
    |---|---|
    | `bare` | 只装 `@aalis/core` + `@aalis/runtime`（完全自定义起点） |
-   | `minimal` | 最简对话闭包：网关 + 指令 + agent + 权限 + 确认通道 + 会话 + 消息归档 + 跨会话历史 + 本地存储/进程（`MINIMAL_BASE`，`cli.ts`） |
+   | `minimal` | 最简对话闭包：钩子 + 贡献点 + 网关 + 指令 + agent + 权限 + 确认通道 + 会话 + 消息归档 + 跨会话历史 + 本地存储/进程（`MINIMAL_BASE`，`cli.ts`） |
    | `standard` | minimal + 常用全家桶：WebUI / 人设 / 向量记忆 / 工具 / 调度 / 技能 / MCP / 联网搜索（Serper，需 key）…（`STANDARD_EXTRA`，`cli.ts`） |
    | `full` | 实时查 npm 全装所有官方插件（可能需手动取舍，`cli.ts`） |
+
+   `minimal` 起各档都包含 `@aalis/plugin-hooks` 与 `@aalis/plugin-contributions`：钩子与贡献点由这两个插件提供，网关、agent、指令等都依赖它们，缺了会停在 pending。`bare` 档不含，在其上自行加装这类插件时要一并装上。
 
 3. **同类适配器组**（仅 `minimal` / `standard`，`cli.ts`）——避免同类插件同时装入产生冲突，按组选择：
    - LLM 提供者（多选，默认 DeepSeek —— 需 key；OpenAI 需 key；**Ollama 为本机服务、不需要 key**）
@@ -217,14 +219,14 @@ my-plugin/
   "dependencies": { "@aalis/api-tools": "latest" },  // 选了对应扩展点才写入（描述符是值导入）
   "peerDependencies": { "@aalis/core": ">=0.17.0 <1.0.0" },
   "devDependencies": { "@aalis/core": "latest", "typescript": "^5.7.0", "@types/node": "^22.0.0" },
-  "aalis": { "service": { "optional": ["tools"] } }  // 与 uses 里 optional(tools) 对齐；未勾选扩展点则整块省略
+  "aalis": { "service": { "required": ["logger"], "optional": ["tools"] } }  // 与 uses 对齐：logger 为 required，optional(tools) 为 optional
 }
 ```
 
 - **`keywords: ["aalis-plugin"]` 是加载硬门**：两个加载器都只认这个关键词来判定「这是不是可加载插件」（`isLoadablePlugin`，`node-modules-loader.ts`）。漏了它，插件永远不被发现。
 - **`@aalis/core` 走 peerDependency**，区间 `>=0.17.0 <1.0.0`：`definePlugin` / 服务描述符首次成为公开面的版本。插件不必随其后的 core 次版本升级重发（别用 `^0.x` caret 把自己锁死，也别用裸 `*`）。**注意 1.0 之前 core 的公开面可能在次版本被删**，用了更新的 API 就把下限再抬；稳定性承诺自 1.0 起生效，见 `docs/design/core-contract.md`。
 - **选了哪个扩展点，才把对应 `*-api` 进 `dependencies`**：tool→`@aalis/api-tools`、command→`@aalis/api-commands`、webui→`@aalis/api-webui`，统一写 `"latest"`（`cli.ts`）。描述符是值导入，不能只放 `devDependencies`。
-- **勾选了扩展点才写 `aalis.service`**：与 `uses` 里 `optional(...)` 的服务名对齐（tool → `optional: ["tools"]`，command → `commands`，webui → `webui-server`）。一旦你增加 `provides` 或把某依赖改成 required，要**同步** `package.json` 的 `aalis.service`，否则市场「装前披露」会缺项——对账纪律见 [concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。
+- **`aalis.service` 与 `uses` 对齐**：`required` 固定含 `logger`；勾选的扩展点按 `optional(...)` 的服务名写进 `optional`（tool → `tools`，command → `commands`，webui → `webui-server`）。一旦你增加 `provides` 或把某依赖改成 required，要**同步** `package.json` 的 `aalis.service`，否则市场「装前披露」会缺项——对账纪律见 [concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。
 
 ### 生成的 `src/index.ts` 形状
 
@@ -294,7 +296,7 @@ export default definePlugin({
 
 ```jsonc
 // package.json —— 源 B：市场装前披露（webui-server 读）
-"aalis": { "service": { "provides": ["my-service"], "required": ["storage"] } }
+"aalis": { "service": { "provides": ["my-service"], "required": ["provide", "storage"] } }
 ```
 
 > 这两套元数据**不自动对账**，必须手写一致。完整规则与第一方守卫见 [concepts/manifest-metadata.md](../concepts/manifest-metadata.md)。服务的注册/选优/per-entry 见 [concepts/service-model.md](../concepts/service-model.md) 与 [concepts/lazy-service-access.md](../concepts/lazy-service-access.md)。

@@ -10,8 +10,9 @@ Aalis 的服务图是活的：服务名稳定，名字背后的实例会在运�
 
 ```typescript
 import { INBOUND_PHASE } from '@aalis/api-gateway';
+import { hooks } from '@aalis/api-hooks';
 import { storage } from '@aalis/api-storage';
-import { definePlugin, hooks } from '@aalis/core';
+import { definePlugin } from '@aalis/core';
 
 export default definePlugin({
   name: 'example-cache-ref',
@@ -31,8 +32,9 @@ export default definePlugin({
 
 ```typescript
 import { INBOUND_PHASE } from '@aalis/api-gateway';
+import { hooks } from '@aalis/api-hooks';
 import { storage } from '@aalis/api-storage';
-import { definePlugin, hooks } from '@aalis/core';
+import { definePlugin } from '@aalis/core';
 
 export default definePlugin({
   name: 'example-reread',
@@ -54,7 +56,7 @@ export default definePlugin({
 
 胜者替换**不会**一律重启消费者。下游应通过 `current` / `require()` 惰性读到新实例，或用 `follow` / 登记型门面处理有状态资源。
 
-一次 `bounce` 的流程是：写入配置 → 拆掉当前激活 → 转入 pending → 重算后重新 `apply`。销毁会把该插件登记的服务一并注销，重新激活时新实例重新 `provide`。服务名没变，实例却是全新的——这正是缓存裸引用会出事的原因。
+一次 `bounce` 的流程是：换上新的运行配置（传了 `config` 时）→ 拆掉当前激活 → 转入 pending → 重算后重新 `apply`。销毁会把该插件登记的服务一并注销，重新激活时新实例重新 `provide`。服务名没变，实例却是全新的——这正是缓存裸引用会出事的原因。
 
 改变「谁是当前胜者」的信号：
 
@@ -104,9 +106,10 @@ export default definePlugin({
 
 ```typescript
 import { INBOUND_PHASE } from '@aalis/api-gateway';
+import { hooks } from '@aalis/api-hooks';
 import { createProcessGateway, processService } from '@aalis/api-process';
 import { createStorageGateway, storage } from '@aalis/api-storage';
-import { definePlugin, hooks } from '@aalis/core';
+import { definePlugin } from '@aalis/core';
 
 export default definePlugin({
   name: 'example-gateway',

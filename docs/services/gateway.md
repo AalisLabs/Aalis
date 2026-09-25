@@ -65,7 +65,7 @@ export interface InboundPhaseData {
 }
 ```
 
-相位 hook 与出站 hook 经 declaration merging 注入 `HookContextMap`（`packages/api-gateway/src/index.ts`）：五个 `inbound:*` 相位载荷均为 `InboundPhaseData`；`outbound:dispatch` 载荷为 `{ message: OutgoingMessage; metadata: Record<string, unknown> }`。
+相位 hook 与出站 hook 经 declaration merging 注入 `@aalis/api-hooks` 的 `HookContextMap`（`packages/api-gateway/src/index.ts`）：五个 `inbound:*` 相位载荷均为 `InboundPhaseData`；`outbound:dispatch` 载荷为 `{ message: OutgoingMessage; metadata: Record<string, unknown> }`。
 
 ### 2.3 遥测事件
 
@@ -88,7 +88,7 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
 
 ## 3. 谁提供 / 谁消费
 
-**提供方（唯一）**：`@aalis/plugin-gateway`（`packages/plugin-gateway/src/index.ts`，`provide(gateway, service)`）。`uses optional = ['agent']` —— 没有 agent 时仍可处理出站、运行钩子链，dispatch 兜底给一条系统提示。
+**提供方（唯一）**：`@aalis/plugin-gateway`（`packages/plugin-gateway/src/index.ts`，`provide(gateway, service)`）。required `hooks`（由 `@aalis/plugin-hooks` 提供，缺少时本插件停在 pending）；`uses optional = ['agent']` —— 没有 agent 时仍可处理出站、运行钩子链，dispatch 兜底给一条系统提示。
 
 **消费方分两类：**
 
@@ -110,20 +110,23 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
 
 **最小必须实现**：`ingressMessage` 与 `dispatchOutbound` 两个方法 + 监听 `inbound:message` 把消息送入 `ingressMessage`。**可选但强烈建议**：保留相位调度与 `gateway:phase:done` 遥测，否则现有 `plugin-commands` / `plugin-flow-control` 等相位插件会失效。
 
-`package.json` 的 `aalis.service` 与源码 `provides` / `uses` **双源必须同步**（参考默认实现 `packages/plugin-gateway/package.json` 的 `aalis.service.provides: ['gateway']` + `optional: ['agent']`）：
+`package.json` 的 `aalis.service` 与源码 `provides` / `uses` **双源必须同步**（参考默认实现 `packages/plugin-gateway/package.json` 的 `aalis.service.provides: ['gateway']` + `required: ['events', 'hooks', 'logger', 'provide']` + `optional: ['agent']`）：
 
 ```jsonc
-// package.json
+// package.json（与下方骨架的 uses 对应）
 {
   "keywords": ["aalis", "aalis-plugin"],
   "aalis": {
     "service": {
       "provides": ["gateway"],
+      "required": ["events", "hooks", "provide"],
       "optional": ["agent"]
     }
   }
 }
 ```
+
+骨架用到的描述符来自 `@aalis/api-agent`、`@aalis/api-gateway` 与 `@aalis/api-hooks`，三者都须写进 `dependencies`。
 
 可编译最小骨架（与默认实现同构，仅留主干）：
 
@@ -132,7 +135,8 @@ import { agent } from '@aalis/api-agent';
 import type { AgentService } from '@aalis/api-agent';
 import { gateway, INBOUND_PHASE, INBOUND_PHASE_ORDER } from '@aalis/api-gateway';
 import type { GatewayService, InboundPhaseData } from '@aalis/api-gateway';
-import { definePlugin, events, hooks, optional, provide } from '@aalis/core';
+import { hooks } from '@aalis/api-hooks';
+import { definePlugin, events, optional, provide } from '@aalis/core';
 import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
 
 export default definePlugin({
@@ -209,7 +213,7 @@ export default definePlugin({
 
 - **惰性读取 `.current`，每次用时重新取，不缓存**：`const gw = gateway.current`。provider bounce（卸载/重载）会让旧引用失效；缓存到模块/闭包变量是 bug。详见 `concepts/lazy-service-access.md`。
 - **gateway 视为可选依赖时给出回退**：idle-scheduler 的范式是 `gateway ? gateway.ingressMessage(msg) : events.emit('inbound:message', msg)`（`packages/plugin-flow-control/src/idle-scheduler.ts`）。若你的相位插件**必须**有 gateway 才有意义，则在 manifest 写 `uses required: ['gateway']`（如 session-confirm，`packages/plugin-session-confirm/src/index.ts`），让 core 保证加载顺序。
-- **注册相位 = 用 `hooks.middleware(INBOUND_PHASE.X, (data, next) => ...)`**：洋葱模型，`await next()` 放行进入后续相位；**不调用 `next()`** 即「我已处理」，整条入站管道立即停止、不触达 agent（`packages/plugin-commands/src/index.ts`）。相位内多个 handler 按注册顺序执行，无需优先级数字。`hooks.middleware` 签名见 `packages/core/src/composition/core-services.ts`。
+- **注册相位 = 用 `hooks.middleware(INBOUND_PHASE.X, (data, next) => ...)`**：洋葱模型，`await next()` 放行进入后续相位；**不调用 `next()`** 即「我已处理」，整条入站管道立即停止、不触达 agent（`packages/plugin-commands/src/index.ts`）。相位内多个 handler 按注册顺序执行，无需优先级数字。`hooks.middleware` 签名见 `packages/api-hooks/src/index.ts`（`Hooks`）。
 - **错误边界**：默认实现把 `processInbound` / `dispatchOutbound` 整体 try/catch 并降级为 `logger.warn`（`packages/plugin-gateway/src/index.ts`）—— 单条消息出错不拖垮总线。你的相位 handler 也应自行兜底，别让异常冒泡出相位链。
 
 ## 7. 能力 / 风险 → 影响
@@ -234,5 +238,5 @@ export default definePlugin({
 - 双源 manifest（`package.json aalis.service` vs `provides`/`uses`）：`concepts/manifest-metadata.md`
 - 消息载体类型与端到端流水线：`concepts/message-llm-pipeline.md`（`IncomingMessage` / `OutgoingMessage` 在 `@aalis/schema-message`）
 - 确认 / 人在回路 / 授权：`concepts/security-model.md`、`plugins/plugin-authority.md`
-- 相位 hook / 洋葱中间件机制：`core/events.md`、`packages/core/src/primitives/hooks.ts`、`packages/core/src/composition/core-services.ts`
+- 相位 hook / 洋葱中间件机制：`api/api-hooks.md`、`packages/api-hooks/src/index.ts`、`packages/plugin-hooks/src/index.ts`
 - 存储 URI 文法（适配器附件落盘相关）：`concepts/storage-uri-grammar.md`
