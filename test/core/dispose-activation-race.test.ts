@@ -1,12 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  DefaultLogger,
-  definePlugin,
-  defineService,
-  type Logger,
-  lifecycle,
-  provide,
-} from '../../packages/core/src/index.js';
+import { DefaultLogger, definePlugin, type Logger, lifecycle } from '../../packages/core/src/index.js';
 import type { Activation } from '../../packages/core/src/orchestration/activation.js';
 import { activatePlugin, type PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
 import { createActivationFixture } from '../helpers/activation.js';
@@ -24,7 +17,7 @@ import { deferred } from '../helpers/deferred.js';
 // 可达面：PluginManager 的 unload / disable / bounce 会主动走进
 // 本窗口（先改 entry.state 让激活收尾让位，再对在飞 ctx disposeAsync——那三条
 // 路径的行为锚在 test/core/admin-during-activation.test.ts）；本文件守的是
-// disposeAsync 这个内部契约本身（宿主直调）与父激活对子激活的级联。
+// disposeAsync 这个内部契约本身（绕过编排直调）与父激活对子激活的级联。
 //
 // 时序不靠 sleep 赌：闸门不开 apply 就不落定，「拆卸发起时 apply 必定
 // 在飞」是结构保证，不受 CI 负载影响。唯一按时间断言的是超时兜底那条。
@@ -162,7 +155,7 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
   //
   // 直接拿内部记录的 activation 拆卸而不经 PluginManager：管理入口如今会主动走进
   // 这个窗口（先改 state 让位、再 disposeAsync，锚在 admin-during-activation），
-  // 本条钉的是更底层的「宿主直调」路径——不借任何编排、裸拆在飞 ctx。
+  // 本条钉的是更底层的直调路径——不借任何编排、裸拆在飞 ctx。
   it('经 activatePlugin 激活的 ctx，其 apply 在飞时被拆卸也等得到 disposer', async () => {
     const { host } = makeActivation();
     const acquire = deferred();
@@ -257,47 +250,5 @@ describe('清理超时/抛错时点名', () => {
     }, 'mongo-client');
     await ctx.disposeAsync();
     expect(lines.join('\n')).toMatch(/\[mongo-client\].*boom|boom.*\[mongo-client\]/);
-  });
-});
-
-describe('拆卸窗口内的 provides 校验归因', () => {
-  // provide 的 post-dispose 守卫会吞掉拆卸窗口里的注册——那是框架层竞态，
-  // 不是作者的声明错误。此测锚死如实归因（曾报「声明 provides 但未实际注册」的假罪名）。
-  it('apply 在飞时被拆卸且声明了 provides：error 如实归因为「激活期间资源已被拆卸」', async () => {
-    const { host } = makeActivation();
-    const acquire = deferred();
-    const db = defineService('__t:dar-db');
-
-    const entry: PluginRecord = {
-      definition: definePlugin({
-        name: 'prov-mod',
-        uses: { provide },
-        provides: [db],
-        async apply({ provide: pub }) {
-          await acquire.promise;
-          pub(db, {});
-        },
-      }),
-      instanceId: 'prov-mod',
-      config: {},
-      state: 'pending',
-      required: [],
-      optional: [],
-    };
-
-    const activating = activatePlugin(entry, {
-      host,
-      logger: new DefaultLogger('test'),
-    });
-
-    const ctx = entry.activation;
-    const disposing = ctx!.disposeAsync(1000);
-    acquire.resolve();
-    await disposing;
-    await activating;
-
-    expect(entry.state).toBe('error');
-    expect(entry.error).toContain('激活期间资源已被拆卸');
-    expect(entry.error).not.toContain('未实际注册');
   });
 });

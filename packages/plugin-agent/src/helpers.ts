@@ -6,6 +6,8 @@
  * - 让 index.ts 主类聚焦在编排/状态管理，而不是 token 估算细节
  * - 让纯函数可被 vitest 单独覆盖（无需搭出一次激活）
  */
+import type { PersonaSessionOptions } from '@aalis/api-persona';
+import type { SessionConfig } from '@aalis/api-session-manager';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 /**
  * 将时间戳格式化为可读的时间标签：同年 `M/D HH:mm`，跨年 `YYYY/M/D HH:mm`。
@@ -185,4 +187,20 @@ export function describeLLMFailure(
   // 就必命中。所以走到这里意味着取数与解析看到的不是同一份快照（例如两次调用之间服务被
   // 注销），**不是**「没有可用 entry」。文案要说这个，别谎称都不可用。
   return `LLM 解析失败：能力过滤后有 ${available.length} 个可用 entry，但解析时一个都没取到（服务可能正在装卸中，稍后重试）。`;
+}
+
+/**
+ * 会话解析结果 → persona 的会话选项。真实回合与 token:request 快照共用这一份构造，
+ * 快照里 persona 那一桶才会按会话实际人设与额外提示估算。无 session-manager 时给 undefined（全局默认）。
+ */
+export function toPersonaOptions(
+  resolved: Omit<SessionConfig, 'sessionDefaults'> | undefined,
+): PersonaSessionOptions | undefined {
+  if (!resolved) return undefined;
+  return {
+    persona: resolved.persona,
+    disableOutputFormat: resolved.disableOutputFormat,
+    clientSideJsonRendering: resolved.clientSideJsonRendering,
+    systemPromptExtra: resolved.systemPromptExtra,
+  };
 }

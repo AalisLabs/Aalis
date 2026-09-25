@@ -13,9 +13,6 @@
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
   "type": "module",
-  "aalis": {
-    "core": true
-  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [

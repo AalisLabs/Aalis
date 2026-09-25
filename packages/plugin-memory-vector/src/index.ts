@@ -4,11 +4,11 @@ import { embedding } from '@aalis/api-embedding';
 import { hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
 import { tools } from '@aalis/api-tools';
-import { vectorstore } from '@aalis/api-vectorstore';
+import { type VectorSearchResult, vectorstore } from '@aalis/api-vectorstore';
 import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
-import { prefixSender, WellKnownKinds } from '@aalis/schema-message';
+import { prefixSender, WellKnownKinds, WellKnownMetadataKeys } from '@aalis/schema-message';
 import { truncateChars } from '@aalis/util-text-normalize';
 
 // ===== 插件元数据 =====
@@ -118,6 +118,20 @@ const configSchema: ConfigSchema = {
 
 type CrossSessionMode = 'isolated' | 'user' | 'platform' | 'all';
 
+/** 检索的可见范围：session=仅当前会话；platform=同平台所有会话；all=全部 */
+type Visibility = 'session' | 'platform' | 'all';
+
+/** 过了准入与可见范围的命中，带时间加权与同用户加权后的终分 */
+type RankedHit = VectorSearchResult & { finalScore: number };
+
+/** 一个会话的扩窗取数结果 */
+interface PivotWindow {
+  /** 覆盖该会话全部命中点（前后各留缓冲）的消息，按时间升序 */
+  sorted: Message[];
+  /** 命中点时间戳 → 在 sorted 中的下标；消息表里找不到（已老化清理）时为 -1 */
+  idxByPivot: Map<number, number>;
+}
+
 interface VectorMemoryConfig {
   search: {
     topK: number;
@@ -202,6 +216,16 @@ function stripTimeLabel(content: string): string {
   return content.replace(/^\([^)]{1,16}\)\s+/, '');
 }
 
+/**
+ * 消息的可见正文。回复经结构化输出（persona 的 outputFormat）时，content 存整串 JSON 信封，
+ * agent 把解码后的回复另写进 metadata 的 VisibleContent 键；键缺省即 content 本身。
+ * 信封里的键骨架与当时的状态字段不该进向量空间，也不该当作「当时说的话」回流给模型。
+ */
+function visibleText(m: Message): string {
+  const visible = m.metadata?.[WellKnownMetadataKeys.VisibleContent];
+  return typeof visible === 'string' ? visible : (m.content ?? '');
+}
+
 /** 渲染一条消息为可读文本（含来源标签）。
  *
  * 角色标注（只标注、不过滤——检索与扩窗集合不变，召回率不受影响）：
@@ -234,7 +258,7 @@ function renderMessage(m: Message, max: number): string {
   const platformPrefix = platform ? `${platform}/` : '';
 
   let who: string;
-  let cleanContent = m.content ?? '';
+  let cleanContent = visibleText(m);
   if (m.role === 'assistant') {
     who = `Assistant·你自己${nickname ? `(${nickname})` : ''}`;
   } else if (m.role === 'notice') {
@@ -250,12 +274,6 @@ function renderMessage(m: Message, max: number): string {
   const tag = `[${platformPrefix}${where}${who}${who ? ' ' : ''}@ ${date}]`;
 
   return `${tag} ${truncate(cleanContent, max)}`;
-}
-
-/** 存量委派 META 噪音判据（精确形态）：曾有 proactive 委派文本入库（新增已在索引侧
- * 挡住），它们是 AI 撰写、无 userId，被语义命中会以匿名人形行回流——检索期整体剔除。 */
-function isLegacyDelegateMeta(meta: Record<string, unknown>): boolean {
-  return String(meta.content ?? '').startsWith('[跨会话委派 META]');
 }
 
 /** 给消息生成稳定 key 用于跨命中去重（sessionId + timestamp + role） */
@@ -370,12 +388,112 @@ async function run({
 
   provide(semanticMemory, { name: 'vector-memory' });
 
-  /** 候选准入（两条检索管线共用）：剔存量委派 META 噪音；others-only 档过滤 AI 自身发言。
-   * 存量旧向量无 role 字段 → 不等于 'assistant' → 按对方对待。 */
-  function candidateAdmissible(meta: Record<string, unknown>): boolean {
-    if (isLegacyDelegateMeta(meta)) return false;
-    if (cfg.recallRoles === 'others-only' && meta.role === 'assistant') return false;
-    return true;
+  // === 检索管线（被动注入与 memory_recall 共用）===
+
+  /** 候选池放大倍率：others-only 档的角色过滤发生在检索后，候选池放大一倍补偿，否则 assistant 语料
+   * 占比升高后对方消息会被挤出候选（2026-08-27 审计探针实测同语料 2→0 条） */
+  const candidateOversample = cfg.recallRoles === 'others-only' ? 8 : 4;
+
+  /** 插件配置对应的可见范围：user 档是「全库可见 + 同用户加权」，可见范围同 all */
+  const cfgVisibility: Visibility =
+    cfg.crossSessionMode === 'isolated' ? 'session' : cfg.crossSessionMode === 'platform' ? 'platform' : 'all';
+
+  /**
+   * 检索并排序：search → 准入 → minScore → 可见范围 → 时间加权 → 同用户加权 → 按终分降序。
+   * 准入：others-only 档过滤 AI 自身发言；存量旧向量无 role 字段，不等于 'assistant'，按对方对待。
+   * 同用户加权只在给出 boostUserId 时生效（crossSessionMode='user'）：作者是该用户或该用户被 @提及，
+   * 分数乘以 userPriorityBoost。
+   */
+  async function rankCandidates(
+    queryVec: number[],
+    candidateCount: number,
+    scope: { visibility: Visibility; curSessionId: string | undefined; curPlatform: string; boostUserId?: string },
+  ): Promise<RankedHit[]> {
+    const candidates = await vectorstore.require().search(queryVec, candidateCount);
+    const now = Date.now();
+    const ranked = candidates
+      .filter(c => !(cfg.recallRoles === 'others-only' && c.metadata.role === 'assistant'))
+      .filter(c => c.score >= cfg.search.minScore)
+      .filter(c => {
+        switch (scope.visibility) {
+          case 'session':
+            return c.metadata.sessionId === scope.curSessionId;
+          case 'platform':
+            return (
+              (c.metadata.platform as string) === scope.curPlatform ||
+              parsePlatform(c.metadata.sessionId as string) === scope.curPlatform
+            );
+          default:
+            return true;
+        }
+      })
+      .map(c => {
+        let score =
+          (1 - cfg.search.timeWeight) * c.score +
+          cfg.search.timeWeight * recencyScore((c.metadata.timestamp as number) ?? 0, now);
+        if (scope.boostUserId) {
+          const isAuthor = (c.metadata.userId as string) === scope.boostUserId;
+          const mentions = c.metadata.mentions as string[] | undefined;
+          const isMentioned = Array.isArray(mentions) && mentions.includes(scope.boostUserId);
+          if (isAuthor || isMentioned) {
+            score *= cfg.search.userPriorityBoost;
+          }
+        }
+        return { ...c, finalScore: score };
+      });
+    ranked.sort((a, b) => b.finalScore - a.finalScore);
+    return ranked;
+  }
+
+  /**
+   * 扩窗取数：按会话聚合命中点，每个会话用覆盖全部命中点的宽时间窗（前后各 4 小时缓冲，足以覆盖
+   * 数十条邻居的常见场景）一次范围查询，避免多次小查询；再定位每个命中点，先找同时间戳的 user 消息，
+   * 找不到再退回同时间戳的任意角色。
+   * `crossSession` 为 false 时只取当前会话的命中。memory 不在或不支持范围查询时返回空表；
+   * 单个会话查询失败只记告警、该会话缺席，中止则原样抛出。
+   */
+  async function loadPivotWindows(
+    hits: RankedHit[],
+    crossSession: boolean,
+    curSessionId: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<Map<string, PivotWindow>> {
+    const windows = new Map<string, PivotWindow>();
+    const mem = memory.current;
+    if (!mem?.getMessagesBySessionRange) return windows;
+
+    const sessionPivots = new Map<string, number[]>();
+    for (const r of hits) {
+      const sid = r.metadata.sessionId as string | undefined;
+      const ts = r.metadata.timestamp as number | undefined;
+      if (!sid || ts === undefined) continue;
+      if (!crossSession && sid !== curSessionId) continue;
+      const arr = sessionPivots.get(sid) ?? [];
+      arr.push(ts);
+      sessionPivots.set(sid, arr);
+    }
+
+    const bufferMs = 4 * 60 * 60 * 1000;
+    for (const [sid, pivots] of sessionPivots) {
+      signal?.throwIfAborted();
+      const minTs = Math.min(...pivots);
+      const maxTs = Math.max(...pivots);
+      try {
+        const all = await mem.getMessagesBySessionRange(sid, minTs - bufferMs, maxTs + bufferMs);
+        signal?.throwIfAborted();
+        const sorted = all.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+        const idxByPivot = new Map<number, number>();
+        for (const pivotTs of pivots) {
+          const userIdx = sorted.findIndex(m => (m.timestamp ?? 0) === pivotTs && m.role === 'user');
+          idxByPivot.set(pivotTs, userIdx >= 0 ? userIdx : sorted.findIndex(m => (m.timestamp ?? 0) === pivotTs));
+        }
+        windows.set(sid, { sorted, idxByPivot });
+      } catch (err) {
+        signal?.throwIfAborted();
+        logger.warn(`扩展上下文失败 (session=${sid}): ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    return windows;
   }
 
   // === 索引：入站 user 消息 + assistant 落库回复，触发即写 ===
@@ -419,7 +537,7 @@ async function run({
     // 跳过非真实用户输入：闲聊主动触发（source 判据）与 proactive 伪 incoming
     //（triggerType 判据；全仓生产者=跨会话委派 + workflow agent 节点，内容是 AI 撰写的
     // 任务与 META 文本），不应进入向量库——AI 生成文本被语义命中后会以「历史用户发言」
-    // 形态回流。存量 META 由检索侧 isLegacyDelegateMeta 剔除。
+    // 形态回流。
     if (msg.source === 'idle-trigger') return;
     if (msg.triggerType === 'proactive') return;
     // 2026-08-28 用户裁定「三条全堵」：以下伪 incoming 同为 AI/系统撰写文本，不带
@@ -475,7 +593,8 @@ async function run({
   });
 
   async function indexAssistantMessage(sessionId: string, message: Message): Promise<void> {
-    const rawText = clipForEmbed(message.content?.trim() ?? '');
+    // 向量文本 = 可见正文：落库的是结构化输出信封时取解码后的回复（见 visibleText）
+    const rawText = clipForEmbed(visibleText(message).trim());
     if (!rawText) return;
     // 防御性冗余：EventMarker 现产者全是 role:system、被发射门先挡；此处兜第三方发射者
     if (message.kind === WellKnownKinds.EventMarker) return;
@@ -593,65 +712,28 @@ async function run({
       if (!lastUserMsg?.content) return null;
 
       try {
-        const mode = cfg.crossSessionMode;
         const curSessionId = data.sessionId;
         const curPlatform = data.platform ?? (curSessionId ? parsePlatform(curSessionId) : '');
         const curUserId = data.userId ?? '';
 
-        // others-only 档过滤发生在检索后：候选池放大一倍补偿，否则 assistant 语料
-        // 占比升高后对方消息会被挤出候选（2026-08-27 审计探针实测同语料 2→0 条）
-        const oversample = cfg.recallRoles === 'others-only' ? 8 : 4;
-        const candidateCount = Math.min(cfg.search.topK * oversample, await vectorstore.require().size());
+        const candidateCount = Math.min(cfg.search.topK * candidateOversample, await vectorstore.require().size());
         data.signal?.throwIfAborted();
         if (candidateCount === 0) return null;
 
         const queryVec = await embedding.require().embed(stripTimeLabel(lastUserMsg.content), { signal: data.signal });
         data.signal?.throwIfAborted();
-        const candidates = (await vectorstore.require().search(queryVec, candidateCount)).filter(r =>
-          candidateAdmissible(r.metadata),
-        );
+        const ranked = await rankCandidates(queryVec, candidateCount, {
+          visibility: cfgVisibility,
+          curSessionId,
+          curPlatform,
+          boostUserId: cfg.crossSessionMode === 'user' ? curUserId : undefined,
+        });
         data.signal?.throwIfAborted();
-
-        // 1. 阈值过滤
-        const passThreshold = candidates.filter(c => c.score >= cfg.search.minScore);
-
-        // 2. 跨会话模式过滤
-        const filtered = passThreshold.filter(c => {
-          switch (mode) {
-            case 'isolated':
-              return c.metadata.sessionId === curSessionId;
-            case 'platform':
-              return (
-                (c.metadata.platform as string) === curPlatform ||
-                parsePlatform(c.metadata.sessionId as string) === curPlatform
-              );
-            default:
-              return true;
-          }
-        });
-
-        // 3. 时间加权 + 同用户加权（作者匹配 或 当前用户被 @提及，均享 boost）
-        const now = Date.now();
-        const ranked = filtered.map(c => {
-          let score =
-            (1 - cfg.search.timeWeight) * c.score +
-            cfg.search.timeWeight * recencyScore((c.metadata.timestamp as number) ?? 0, now);
-          if (mode === 'user' && curUserId) {
-            const isAuthor = (c.metadata.userId as string) === curUserId;
-            const mentions = c.metadata.mentions as string[] | undefined;
-            const isMentioned = Array.isArray(mentions) && mentions.includes(curUserId);
-            if (isAuthor || isMentioned) {
-              score *= cfg.search.userPriorityBoost;
-            }
-          }
-          return { ...c, finalScore: score };
-        });
-        ranked.sort((a, b) => b.finalScore - a.finalScore);
 
         const topResults = ranked.slice(0, cfg.search.topK);
         if (topResults.length === 0) return null;
 
-        // 4. 命中点 + 上下文窗口扩展（合并区间，去重）
+        // 命中点 + 上下文窗口扩展（合并区间，去重）
         const W = cfg.contextExpand.window;
         const collected = new Map<string, { sessionId: string; msg: Message }>();
         // sid|ts 占位集：messageKey 含 role，扩窗路径（真实 role，如委派落的 notice）与
@@ -660,79 +742,49 @@ async function run({
         const collectedSidTs = new Set<string>();
         const markSidTs = (sid: string, ts: number | undefined) => collectedSidTs.add(`${sid}|${ts ?? 0}`);
 
-        // 当前对话已有的内容用于去重（只比较纯文本）
-        const currentContents = new Set(data.messages.map(m => (m.content ?? '').trim()).filter(Boolean));
+        // 当前对话已有的内容用于去重（只比较纯文本）。可见正文一并收入：命中的 assistant 向量存的是
+        // 可见正文，而历史里同一条回复的 content 可能是结构化输出信封。
+        const currentContents = new Set(
+          data.messages.flatMap(m => [(m.content ?? '').trim(), visibleText(m).trim()]).filter(Boolean),
+        );
 
-        // 按 sessionId 聚合命中点的时间戳，决定每个会话需要拉取的时间窗口
-        const sessionPivots = new Map<string, number[]>();
-        for (const r of topResults) {
-          const sid = r.metadata.sessionId as string | undefined;
-          const ts = r.metadata.timestamp as number | undefined;
-          if (!sid || ts === undefined) continue;
-          if (!cfg.contextExpand.crossSession && sid !== curSessionId) {
-            // 不允许跨会话扩展时，对非当前会话只放入命中点本身（走兜底分支）
-            continue;
-          }
-          const arr = sessionPivots.get(sid) ?? [];
-          arr.push(ts);
-          sessionPivots.set(sid, arr);
-        }
-
-        // 拉取每个会话的扩展消息
-        const mem = memory.current;
-        if (W > 0 && mem?.getMessagesBySessionRange) {
-          for (const [sid, pivots] of sessionPivots) {
-            data.signal?.throwIfAborted();
-            // 用宽时间窗一次拉，再按 pivot 切片合并（避免多次小查询）
-            const minTs = Math.min(...pivots);
-            const maxTs = Math.max(...pivots);
-            // 4 小时缓冲，足以覆盖 N=数十条邻居的常见场景
-            const bufferMs = 4 * 60 * 60 * 1000;
-            try {
-              const all = await mem.getMessagesBySessionRange(sid, minTs - bufferMs, maxTs + bufferMs);
-              data.signal?.throwIfAborted();
-              const sorted = all.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-
-              // 对每个 pivot 在 sorted 中定位并取 ±W 条
-              for (const pivotTs of pivots) {
-                const pivotIdx = sorted.findIndex(m => (m.timestamp ?? 0) === pivotTs && m.role === 'user');
-                const idx = pivotIdx >= 0 ? pivotIdx : sorted.findIndex(m => (m.timestamp ?? 0) === pivotTs);
-                if (idx < 0) {
-                  // pivot 在 messages 表里找不到（消息表已老化清理），从向量 metadata 兜底插入
-                  const cand = topResults.find(r => r.metadata.sessionId === sid && r.metadata.timestamp === pivotTs);
-                  if (cand) {
-                    const fakeMsg: Message = {
-                      role: ((cand.metadata.role as Message['role']) ?? 'user') as Message['role'],
-                      content: (cand.metadata.content as string) ?? '',
-                      timestamp: pivotTs,
-                      name: cand.metadata.userId as string | undefined,
-                      metadata: cand.metadata,
-                    };
-                    const key = messageKey(sid, fakeMsg);
-                    if (!collected.has(key)) {
-                      collected.set(key, { sessionId: sid, msg: fakeMsg });
-                      markSidTs(sid, pivotTs);
-                    }
-                  }
-                  continue;
-                }
-                const start = Math.max(0, idx - W);
-                const end = Math.min(sorted.length, idx + W + 1);
-                for (let i = start; i < end; i++) {
-                  const m = sorted[i];
-                  if (!m.content) continue;
-                  if (m.kind === WellKnownKinds.EventMarker) continue;
-                  if (currentContents.has((m.content ?? '').trim())) continue;
-                  const key = messageKey(sid, m);
+        if (W > 0) {
+          const windows = await loadPivotWindows(topResults, cfg.contextExpand.crossSession, curSessionId, data.signal);
+          for (const [sid, { sorted, idxByPivot }] of windows) {
+            // 对每个 pivot 取 ±W 条
+            for (const [pivotTs, idx] of idxByPivot) {
+              if (idx < 0) {
+                // pivot 在 messages 表里找不到（消息表已老化清理），从向量 metadata 兜底插入
+                const cand = topResults.find(r => r.metadata.sessionId === sid && r.metadata.timestamp === pivotTs);
+                if (cand) {
+                  const fakeMsg: Message = {
+                    role: ((cand.metadata.role as Message['role']) ?? 'user') as Message['role'],
+                    content: (cand.metadata.content as string) ?? '',
+                    timestamp: pivotTs,
+                    name: cand.metadata.userId as string | undefined,
+                    metadata: cand.metadata,
+                  };
+                  const key = messageKey(sid, fakeMsg);
                   if (!collected.has(key)) {
-                    collected.set(key, { sessionId: sid, msg: m });
-                    markSidTs(sid, m.timestamp);
+                    collected.set(key, { sessionId: sid, msg: fakeMsg });
+                    markSidTs(sid, pivotTs);
                   }
+                }
+                continue;
+              }
+              const start = Math.max(0, idx - W);
+              const end = Math.min(sorted.length, idx + W + 1);
+              for (let i = start; i < end; i++) {
+                const m = sorted[i];
+                if (!m.content) continue;
+                if (m.kind === WellKnownKinds.EventMarker) continue;
+                if (currentContents.has((m.content ?? '').trim())) continue;
+                const key = messageKey(sid, m);
+                if (!collected.has(key)) {
+                  collected.set(key, { sessionId: sid, msg: m });
+                  markSidTs(sid, m.timestamp);
                 }
               }
-            } catch (err) {
-              data.signal?.throwIfAborted();
-              logger.warn(`扩展上下文失败 (session=${sid}): ${err instanceof Error ? err.message : String(err)}`);
             }
           }
         }
@@ -761,7 +813,7 @@ async function run({
 
         if (collected.size === 0) return null;
 
-        // 5. 按时间排序混排
+        // 按时间排序混排
         const sortedAll = [...collected.values()].sort((a, b) => (a.msg.timestamp ?? 0) - (b.msg.timestamp ?? 0));
 
         const lines = sortedAll.map(({ msg }) => renderMessage(msg, cfg.search.perItemMaxChars));
@@ -818,7 +870,7 @@ async function run({
               enum: ['session', 'platform', 'all'],
               description:
                 'session=仅当前会话；platform=同平台所有会话；all=全部。' +
-                `默认沿用插件配置（当前=${cfg.crossSessionMode}）。` +
+                `默认沿用插件配置（当前=${cfgVisibility}${cfg.crossSessionMode === 'user' ? '，当前用户本人发言或被 @ 的记录优先' : ''}）。` +
                 '为安全起见，scope 只能比插件配置更窄，不能更宽。',
             },
             contextWindow: {
@@ -846,7 +898,7 @@ async function run({
       if (!query) return JSON.stringify({ error: 'query 不能为空' });
 
       const requestedTopK = Math.min(15, Math.max(1, Number(args.topK) || cfg.search.topK));
-      const requestedScope = args.scope as 'session' | 'platform' | 'all' | undefined;
+      const requestedScope = args.scope as Visibility | undefined;
 
       // contextWindow：默认沿用插件配置；提供时校验非负整数，取 min(cfg, requested)
       let effectiveWindow = cfg.contextExpand.window;
@@ -861,14 +913,12 @@ async function run({
       const effectiveCrossSession =
         cfg.contextExpand.crossSession && (args.crossSession === undefined ? true : Boolean(args.crossSession));
 
-      // scope 收紧规则：先把 crossSessionMode 映成**可见范围**，再与请求取较窄者。
+      // scope 收紧规则：插件配置先映成**可见范围**（cfgVisibility），再与请求取较窄者。
       // 两者不能共用一张 rank 表：user 档是「全库可见 + 同用户加权」，作为加权策略它
       // 排在 platform 之前，于是「显式请求 platform」会被静默放宽回 all——与工具描述
       // 承诺的「scope 只能更窄」相反。
-      const visibilityRank: Record<'session' | 'platform' | 'all', number> = { session: 0, platform: 1, all: 2 };
-      const cfgVisibility: 'session' | 'platform' | 'all' =
-        cfg.crossSessionMode === 'isolated' ? 'session' : cfg.crossSessionMode === 'platform' ? 'platform' : 'all';
-      const effectiveScope: 'session' | 'platform' | 'all' =
+      const visibilityRank: Record<Visibility, number> = { session: 0, platform: 1, all: 2 };
+      const effectiveScope: Visibility =
         requestedScope && visibilityRank[requestedScope] < visibilityRank[cfgVisibility]
           ? requestedScope
           : cfgVisibility;
@@ -882,33 +932,14 @@ async function run({
           return JSON.stringify({ ok: true, query, results: [], message: '向量库为空' });
         }
 
-        const queryVec = await embedding.require().embed(query);
-        const toolOversample = cfg.recallRoles === 'others-only' ? 8 : 4;
-        const candidates = (
-          await vectorstore.require().search(queryVec, Math.min(requestedTopK * toolOversample, storeSize))
-        ).filter(r => candidateAdmissible(r.metadata));
-
-        const passThreshold = candidates.filter(c => c.score >= cfg.search.minScore);
-
-        const filtered = passThreshold.filter(c => {
-          if (effectiveScope === 'session') return c.metadata.sessionId === curSessionId;
-          if (effectiveScope === 'platform') {
-            return (
-              (c.metadata.platform as string) === curPlatform ||
-              parsePlatform(c.metadata.sessionId as string) === curPlatform
-            );
-          }
-          return true;
+        const queryVec = await embedding.require().embed(query, { signal: callCtx.signal });
+        // 与被动注入同一排序：user 档对调用者本人相关的命中同样加权（scope 收紧后照旧）
+        const ranked = await rankCandidates(queryVec, Math.min(requestedTopK * candidateOversample, storeSize), {
+          visibility: effectiveScope,
+          curSessionId,
+          curPlatform,
+          boostUserId: cfg.crossSessionMode === 'user' ? callCtx.userId : undefined,
         });
-
-        const now = Date.now();
-        const ranked = filtered.map(c => {
-          const score =
-            (1 - cfg.search.timeWeight) * c.score +
-            cfg.search.timeWeight * recencyScore((c.metadata.timestamp as number) ?? 0, now);
-          return { ...c, finalScore: score };
-        });
-        ranked.sort((a, b) => b.finalScore - a.finalScore);
 
         const top = ranked.slice(0, requestedTopK);
         if (top.length === 0) {
@@ -919,51 +950,26 @@ async function run({
         // 仅当 effectiveWindow > 0 且 memory 服务支持范围查询时启用
         type CtxEntry = { ts: number; role: string; text: string };
         const contextBySessionPivot = new Map<string, CtxEntry[]>(); // key = `${sid}|${ts}`
-        const mem = memory.current;
-        if (effectiveWindow > 0 && mem?.getMessagesBySessionRange) {
-          // 按 sessionId 聚合 pivots
-          const sessionPivots = new Map<string, number[]>();
-          for (const r of top) {
-            const sid = r.metadata.sessionId as string | undefined;
-            const ts = r.metadata.timestamp as number | undefined;
-            if (!sid || ts === undefined) continue;
-            if (!effectiveCrossSession && sid !== curSessionId) continue;
-            const arr = sessionPivots.get(sid) ?? [];
-            arr.push(ts);
-            sessionPivots.set(sid, arr);
-          }
-
-          for (const [sid, pivots] of sessionPivots) {
-            const minTs = Math.min(...pivots);
-            const maxTs = Math.max(...pivots);
-            const bufferMs = 4 * 60 * 60 * 1000; // 4h 缓冲，足以覆盖 W=10 邻居
-            try {
-              const all = await mem.getMessagesBySessionRange(sid, minTs - bufferMs, maxTs + bufferMs);
-              const sorted = all.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-              for (const pivotTs of pivots) {
-                const pivotIdx = sorted.findIndex(m => (m.timestamp ?? 0) === pivotTs && m.role === 'user');
-                const idx = pivotIdx >= 0 ? pivotIdx : sorted.findIndex(m => (m.timestamp ?? 0) === pivotTs);
-                if (idx < 0) continue;
-                const start = Math.max(0, idx - effectiveWindow);
-                const end = Math.min(sorted.length, idx + effectiveWindow + 1);
-                const ctxArr: CtxEntry[] = [];
-                for (let i = start; i < end; i++) {
-                  if (i === idx) continue; // 命中本身不重复
-                  const m = sorted[i];
-                  if (!m.content) continue;
-                  if (m.kind === WellKnownKinds.EventMarker) continue;
-                  ctxArr.push({
-                    ts: m.timestamp ?? 0,
-                    role: m.role,
-                    text: renderMessage(m, cfg.search.perItemMaxChars),
-                  });
-                }
-                if (ctxArr.length > 0) contextBySessionPivot.set(`${sid}|${pivotTs}`, ctxArr);
+        if (effectiveWindow > 0) {
+          const windows = await loadPivotWindows(top, effectiveCrossSession, curSessionId, callCtx.signal);
+          for (const [sid, { sorted, idxByPivot }] of windows) {
+            for (const [pivotTs, idx] of idxByPivot) {
+              if (idx < 0) continue;
+              const start = Math.max(0, idx - effectiveWindow);
+              const end = Math.min(sorted.length, idx + effectiveWindow + 1);
+              const ctxArr: CtxEntry[] = [];
+              for (let i = start; i < end; i++) {
+                if (i === idx) continue; // 命中本身不重复
+                const m = sorted[i];
+                if (!m.content) continue;
+                if (m.kind === WellKnownKinds.EventMarker) continue;
+                ctxArr.push({
+                  ts: m.timestamp ?? 0,
+                  role: m.role,
+                  text: renderMessage(m, cfg.search.perItemMaxChars),
+                });
               }
-            } catch (err) {
-              logger.warn(
-                `memory_recall 上下文扩展失败 (session=${sid}): ${err instanceof Error ? err.message : String(err)}`,
-              );
+              if (ctxArr.length > 0) contextBySessionPivot.set(`${sid}|${pivotTs}`, ctxArr);
             }
           }
         }

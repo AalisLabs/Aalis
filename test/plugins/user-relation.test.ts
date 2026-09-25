@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { memory } from '../../packages/api-memory/src/index.js';
+import type { BoundTools, RegisteredTool } from '../../packages/api-tools/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import {
@@ -11,6 +12,7 @@ import {
   RelationStore,
 } from '../../packages/plugin-user-relation/src/index.js';
 import { edgeKey, eventKey, personKey, RELATION_NAMESPACE } from '../../packages/plugin-user-relation/src/store.js';
+import { registerRelationTools } from '../../packages/plugin-user-relation/src/tools.js';
 import type { RelationGraphSnapshot } from '../../packages/plugin-user-relation/src/types.js';
 import {
   clamp01,
@@ -744,8 +746,9 @@ describe('plugin-user-relation: node dedup on create', () => {
   it('findEventByTitle / findEntityByKindAndName helpers', async () => {
     const { service } = await makeService();
     const e = await service.createEvent({ title: '里程碑事件', evidence: [] });
-    expect((await service.findEventByTitle('里程碑事件'))?.id).toBe(e.id);
-    expect(await service.findEventByTitle('不存在')).toBeUndefined();
+    // 无 sessionScope、无 evidence 的事件落 'global'
+    expect((await service.findEventByTitle('里程碑事件', 'global'))?.id).toBe(e.id);
+    expect(await service.findEventByTitle('不存在', 'global')).toBeUndefined();
 
     const ent = await service.createEntity({ name: 'X', entityKind: 'topic', evidence: [] });
     expect((await service.findEntityByKindAndName('topic', 'X'))?.id).toBe(ent.id);
@@ -1758,6 +1761,56 @@ describe('plugin-user-relation: getCommunityOverview SLPA 原生重叠社区', (
 // ============================================================
 //  event duplicate consolidation （三段式：embedding + jaccard + LLM）
 // ============================================================
+describe('plugin-user-relation: community_overview 默认算法取配置', () => {
+  /** 捕获 user_relation_* 工具的 handler，按工具名直接调用 */
+  function captureTools(): { tools: BoundTools; call(name: string, args: Record<string, unknown>): Promise<string> } {
+    const handlers = new Map<string, RegisteredTool['handler']>();
+    const tools = {
+      registerGroup: () => () => {},
+      register(tool: Omit<RegisteredTool, 'pluginName'>) {
+        handlers.set(tool.definition.function.name, tool.handler);
+        return () => {};
+      },
+    } as unknown as BoundTools;
+    return {
+      tools,
+      async call(name, args) {
+        const handler = handlers.get(name);
+        if (!handler) throw new Error(`工具未注册：${name}`);
+        return String(await handler(args, {} as never));
+      },
+    };
+  }
+
+  it('不传 algorithm 时用 communityAlgorithm 配置；显式传参仍可覆盖', async () => {
+    const { app, service } = await makeService();
+    const p1 = await service.observePerson('onebot', 'c1', 'C1');
+    const p2 = await service.observePerson('onebot', 'c2', 'C2');
+    const e = await service.createEvent({ title: '社群事件', evidence: [ev()] });
+    for (const pid of [p1.id, p2.id]) {
+      await service.addPersonEventEdge({ fromPersonId: pid, toEventId: e.id, role: 'participant', evidence: [ev()] });
+    }
+    const cap = captureTools();
+    registerRelationTools({ tools: cap.tools, logger: app.logger }, service, {
+      defaultMaxDepth: 2,
+      defaultMaxBreadth: 8,
+      hardMaxDepth: 4,
+      hardMaxBreadth: 20,
+      searchEventsDefaultLimit: 10,
+      searchEventsHardMaxLimit: 50,
+      findPathDefaultMaxDepth: 4,
+      findPathHardMaxDepth: 6,
+      communityAlgorithm: 'slpa',
+      debug: false,
+    });
+
+    const byConfig = JSON.parse(await cap.call('user_relation_community_overview', {}));
+    expect(byConfig.algorithm, '不传 algorithm 应走插件配置').toBe('slpa');
+    const explicit = JSON.parse(await cap.call('user_relation_community_overview', { algorithm: 'leiden' }));
+    expect(explicit.algorithm).toBe('leiden');
+  });
+});
+
 describe('plugin-user-relation: event duplicate utils (pure)', () => {
   it('cosineSimilarity: 相等向量=1，正交=0，长度不一致=0', () => {
     expect(cosineSimilarity([1, 2, 3], [1, 2, 3])).toBeCloseTo(1, 6);

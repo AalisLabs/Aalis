@@ -34,7 +34,6 @@ export default definePlugin({
     llm: optional(llm),
     persona: optional(persona),
     agent: optional(agent),
-    memory: optional(memory),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -110,7 +109,7 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 | 端点 | 方法 | 说明 |
 |---|---|---|
 | `/api/auth/login` · `/api/auth/logout` · `/api/auth/status` | POST · POST · GET | 登录换 cookie / 登出 / 登录状态 |
-| `/api/status` | GET | 系统状态、服务可用性、上传能力检测 |
+| `/api/status` | GET | 系统状态、上传能力检测 |
 | `/api/plugins` | GET | 插件列表（含状态、配置、Schema、错误信息） |
 | `/api/plugins/:name/config` | GET / PUT | 单插件配置读写；PUT 体为 `{ config }`，热重载该插件后写回配置文档 |
 | `/api/plugins/:name/enable` · `/api/plugins/:name/disable` | POST | 热启用 / 热禁用，写回 `disabledPlugins` |
@@ -128,7 +127,7 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 | `/api/marketplace/install` · `/api/marketplace/uninstall` | POST | 体为 `{ name }`；需 `package-manager` 服务（缺失时 503）。安装后热加载，卸载后热卸载。装卸只接受插件与前端界面包；若有其它插件依赖该包提供的服务且无其他提供者，卸载被拒绝。这些拒绝来自 `package-manager` 服务层，以 HTTP 200 返回 `{ ok: false, message }` |
 | `/api/marketplace/update` | POST | 体为 `{ targets: [{ name, version }] }`，整批更新，成功后重启进程 |
 | `/api/files*` · `/api/uploaded-files*` | GET / POST | 工作区文件管理 / 上传文件管理 |
-| `/api/logs` · `/api/logs/tail` · `/api/logs/range` | GET | 日志：最近 200 条（不接受分页参数）/ 尾部 N 条（`?limit=`，上限 5000）/ 向前翻页（`?before=<seq>&limit=`，返回 seq 小于 before 的记录） |
+| `/api/logs/tail` · `/api/logs/range` | GET | 日志：尾部 N 条（`?limit=`，默认 200，上限 5000）/ 向前翻页（`?before=<seq>&limit=`，返回 seq 小于 before 的记录） |
 | `/api/proxy/image` | GET | 图片代理 |
 
 core 的插件管理动作与 `services.prefer` 只改运行态；启停、改配置、实例增删与服务偏好要跨重启保留，由对应路由另经 `host-config` 写配置文档并落盘。宿主未提供 `host-config` 时，读写配置文档的路由（`/api/config`、`/api/config/save`、`/api/plugins/:name/config`、启停、实例增删）与服务偏好的设置 / 清除路由返回 503。

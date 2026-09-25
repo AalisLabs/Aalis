@@ -188,8 +188,8 @@ const result = await history.getHistory({ sessionId, limit }, callCtx);
 ```ts
 interface FileReaderService {
   available: boolean;                                 // 恒为 true，供消费方快速确认服务就绪
-  listFiles(sessionId?: string): FileMeta[];          // 省略 sessionId 列全部（webui 用）
-  resolveLocalPath(fileId: string): Promise<string | null>; // 下载端取本地路径
+  listFiles(sessionId?: string): FileMeta[];          // 省略 sessionId 列全部会话
+  resolveLocalPath(fileId: string): Promise<string | null>; // 本地绝对路径；文件不存在或 storage 不支持本地路径时为 null
   getMeta(fileId: string): FileMeta | null;
   deleteFile(fileId: string): Promise<boolean>;
 }

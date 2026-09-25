@@ -453,6 +453,32 @@ class DeepSeekClient {
      */
     let pendingTail = '';
 
+    /**
+     * 收尾组装 toolCalls，[DONE] 与流意外结束两处共用。DSML 泄漏 best-effort 恢复：服务端
+     * 未返回 tool_calls（解析失败）但 accContent 里有 DSML 文本时本地解析补上，让 agent 走正常
+     * 工具调用流程；解析不出完整 invoke 块时告警。branch 标明是哪条收尾路径。
+     */
+    const finalizeToolCalls = (branch: string): ToolCall[] | undefined => {
+      const toolCalls: ToolCall[] = [];
+      for (const [, tc] of [...toolCallBuffers.entries()].sort((a, b) => a[0] - b[0])) {
+        toolCalls.push({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.args } });
+      }
+      if (dsmlDetected && toolCalls.length === 0) {
+        const dsmlCalls = parseDsmlToolCalls(accContent);
+        if (dsmlCalls.length > 0) {
+          this.logger.info(
+            `DeepSeek DSML 本地解析成功${branch}，恢复 ${dsmlCalls.length} 个 tool_call：${dsmlCalls.map(c => c.function.name).join(', ')}`,
+          );
+          toolCalls.push(...dsmlCalls);
+        } else {
+          this.logger.warn(
+            `DeepSeek DSML 本地解析未识别出完整 invoke 块${branch}，accContent 长度=${accContent.length}，上游将收到空回复`,
+          );
+        }
+      }
+      return toolCalls.length > 0 ? toolCalls : undefined;
+    };
+
     if (!response.body) {
       throw new Error('DeepSeek API 返回了空的响应体，无法进行流式读取');
     }
@@ -493,26 +519,7 @@ class DeepSeekClient {
               yield { contentDelta: pendingTail };
               pendingTail = '';
             }
-            const toolCalls: ToolCall[] = [];
-            for (const [, tc] of [...toolCallBuffers.entries()].sort((a, b) => a[0] - b[0])) {
-              toolCalls.push({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.args } });
-            }
-            // DSML 泄漏 best-effort 恢复：如果服务端未返回 tool_calls（解析失败）但
-            // accContent 里有 DSML 文本，本地解析补上，让 agent 走正常工具调用流程
-            if (dsmlDetected && toolCalls.length === 0) {
-              const dsmlCalls = parseDsmlToolCalls(accContent);
-              if (dsmlCalls.length > 0) {
-                this.logger.info(
-                  `DeepSeek DSML 本地解析成功，恢复 ${dsmlCalls.length} 个 tool_call：${dsmlCalls.map(c => c.function.name).join(', ')}`,
-                );
-                toolCalls.push(...dsmlCalls);
-              } else {
-                this.logger.warn(
-                  `DeepSeek DSML 本地解析未识别出完整 invoke 块，accContent 长度=${accContent.length}，上游将收到空回复`,
-                );
-              }
-            }
-            yield { done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
+            yield { done: true, toolCalls: finalizeToolCalls('') };
             return;
           }
 
@@ -628,20 +635,7 @@ class DeepSeekClient {
       yield { contentDelta: pendingTail };
       pendingTail = '';
     }
-    const toolCalls: ToolCall[] = [];
-    for (const [, tc] of [...toolCallBuffers.entries()].sort((a, b) => a[0] - b[0])) {
-      toolCalls.push({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.args } });
-    }
-    // 同 [DONE] 分支：DSML 泄漏 best-effort 恢复
-    if (dsmlDetected && toolCalls.length === 0) {
-      const dsmlCalls = parseDsmlToolCalls(accContent);
-      if (dsmlCalls.length > 0) {
-        this.logger.info(`DeepSeek DSML 本地解析成功（流意外结束分支），恢复 ${dsmlCalls.length} 个 tool_call`);
-        toolCalls.push(...dsmlCalls);
-      }
-    }
-
-    yield { done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
+    yield { done: true, toolCalls: finalizeToolCalls('（流意外结束分支）') };
   }
 
   /**
@@ -756,14 +750,20 @@ function parseCustomModels(raw: unknown): string[] {
     .filter(Boolean);
 }
 
-/** 解析能力覆盖 textarea：每行 `<modelId>: cap1,cap2,...` */
+/**
+ * 解析能力覆盖 textarea：每行 `<modelId>: cap1,cap2,...`
+ *
+ * 按**最后一个**冒号切分：自定义 baseUrl 指向兼容网关时模型 id 可能自带冒号（如 `qwen3:8b`、
+ * `xxx:free`），按首个冒号切会把 id 截断、能力段变成 `8b: chat`，这行覆盖永远不命中。
+ * 能力名本身不含冒号，故末位冒号即分隔符。
+ */
 function parseModelCapabilities(raw: unknown): Map<string, LLMCapability[]> {
   const out = new Map<string, LLMCapability[]>();
   if (!raw || typeof raw !== 'string') return out;
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
-    const colonIdx = trimmed.indexOf(':');
+    const colonIdx = trimmed.lastIndexOf(':');
     if (colonIdx < 0) continue;
     const modelId = trimmed.slice(0, colonIdx).trim();
     const caps = trimmed

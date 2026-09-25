@@ -1,4 +1,4 @@
-import type { StorageService } from '@aalis/api-storage';
+import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import type { Logger } from '@aalis/core';
 
 // ════════════════════════════════════════════════════════════
@@ -93,10 +93,7 @@ export class UserStore {
       raw = (await this.storage.readFile(this.fileUri, 'utf-8')) as string;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // 判据优先看 errno：文案正则会被本地化/自定义 storage 的措辞绕开，把「全新安装」误判成
-      // 「读不出」（→ 整程拒写），也可能把一条带 "not found" 字样的别的错误误判成全新。
-      const code = (err as NodeJS.ErrnoException)?.code;
-      if (code === 'ENOENT' || (code === undefined && /ENOENT|not found|不存在/i.test(msg))) {
+      if (isStorageNotFound(err)) {
         // 无文件 = 全新（owners 配置 seed owner）
         this.logger.debug(`users.json 不存在，按全新开始: ${msg}`);
       } else {

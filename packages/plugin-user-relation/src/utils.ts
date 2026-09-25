@@ -9,11 +9,14 @@
 import type {
   CommunityMembership,
   EntityEntityEdge,
+  EntityNode,
   EventEntityEdge,
   EventEventEdge,
+  EventNode,
   EvidenceRef,
   PersonEntityEdge,
   PersonEventEdge,
+  PersonNode,
   PersonPersonEdge,
   RelationEdge,
   RelationGraphSnapshot,
@@ -555,6 +558,55 @@ export function edgeEndpoints(e: RelationEdge): [string, string] {
     case 'entity-entity':
       return [e.fromEntityId, e.toEntityId];
   }
+}
+
+type NodeKind = 'person' | 'event' | 'entity';
+
+/** 各 edge kind 的 [from 端, to 端] 节点类别 */
+const EDGE_ENDPOINT_KINDS: Record<RelationEdge['kind'], readonly [NodeKind, NodeKind]> = {
+  'person-event': ['person', 'event'],
+  'person-person': ['person', 'person'],
+  'person-entity': ['person', 'entity'],
+  'event-event': ['event', 'event'],
+  'event-entity': ['event', 'entity'],
+  'entity-entity': ['entity', 'entity'],
+};
+
+/**
+ * 孤儿判定（`pruneOrphans` 与 `/relation orphans` 共用同一口径）：
+ * - 悬空边：任一端点指向不存在的节点（节点被绕过级联删除时可能残留）；
+ * - 孤儿节点：不被任何存活边的端点引用，6 种 edge kind 一视同仁。只数存活边：
+ *   只被悬空边引用的节点同样是孤儿，否则清理一趟后还得再跑一次才收敛。
+ */
+export function findOrphans(snap: RelationGraphSnapshot): {
+  danglingEdges: RelationEdge[];
+  persons: PersonNode[];
+  events: EventNode[];
+  entities: EntityNode[];
+} {
+  const existing: Record<NodeKind, Set<string>> = {
+    person: new Set(snap.persons.map(p => p.id)),
+    event: new Set(snap.events.map(e => e.id)),
+    entity: new Set(snap.entities.map(e => e.id)),
+  };
+  const referenced: Record<NodeKind, Set<string>> = { person: new Set(), event: new Set(), entity: new Set() };
+  const danglingEdges: RelationEdge[] = [];
+  for (const e of snap.edges) {
+    const [fromKind, toKind] = EDGE_ENDPOINT_KINDS[e.kind];
+    const [from, to] = edgeEndpoints(e);
+    if (!existing[fromKind].has(from) || !existing[toKind].has(to)) {
+      danglingEdges.push(e);
+      continue;
+    }
+    referenced[fromKind].add(from);
+    referenced[toKind].add(to);
+  }
+  return {
+    danglingEdges,
+    persons: snap.persons.filter(p => !referenced.person.has(p.id)),
+    events: snap.events.filter(e => !referenced.event.has(e.id)),
+    entities: snap.entities.filter(e => !referenced.entity.has(e.id)),
+  };
 }
 
 export function edgeInvolvesBoth(e: RelationEdge, a: string, b: string): boolean {
@@ -1613,6 +1665,15 @@ export function computeEventEmbeddingHash(title: string, summary?: string): stri
  */
 export function computeEntityEmbeddingHash(name: string, summary?: string, entityKind?: string): string {
   return hash64x2(`${entityKind ?? ''}\n${(name || '').trim()}\n${(summary || '').trim()}`);
+}
+
+/**
+ * 节点 embeddingHash 的完整取值：文本指纹并入 embedding 提供者的 `modelId`（向量空间标识）。
+ * 换模型后值变 → 库里旧模型的向量视为缺失并重算，不会跨向量空间算余弦。
+ * 提供者不声明 `modelId` 时退化为纯文本指纹。
+ */
+export function embeddingHashFor(textHash: string, modelId: string | undefined): string {
+  return modelId ? `${textHash}@${modelId}` : textHash;
 }
 
 /**

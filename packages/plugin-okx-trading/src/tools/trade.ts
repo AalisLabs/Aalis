@@ -1,7 +1,7 @@
 import type { OkxClient } from '../client.js';
-import { errJson, type RegFn, truncate } from './_shared.js';
+import { errJson, type PageLimitCfg, pickLimit, type RegFn, truncate } from './_shared.js';
 
-export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: string): void {
+export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: string, pageLimit: PageLimitCfg): void {
   reg({
     definition: {
       type: 'function',
@@ -372,7 +372,10 @@ export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: str
           properties: {
             instType: { type: 'string', description: '产品类型: SPOT / SWAP / FUTURES / OPTION' },
             instId: { type: 'string', description: '产品 ID' },
-            limit: { type: 'number', description: '条数' },
+            limit: {
+              type: 'number',
+              description: `条数，默认 ${pageLimit.defaultLimit}，最多 ${pageLimit.maxLimit}`,
+            },
           },
           required: ['instType'],
           additionalProperties: false,
@@ -384,7 +387,7 @@ export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: str
         const r = await client.getFillsArchive(
           args.instType as string,
           args.instId as string | undefined,
-          (args.limit as number) || 20,
+          pickLimit(args, pageLimit),
         );
         return JSON.stringify(truncate(r.data));
       } catch (e) {

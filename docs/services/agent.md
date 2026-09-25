@@ -44,7 +44,7 @@ export interface BoundAgent extends ServiceRef<AgentService> {
 | `agent:llm:after` | 每次 LLM 返回后 | `{ response, messages }` |
 | `agent:tool:before` | 每个工具执行前 | `{ name, args, toolCallContext }` |
 | `agent:tool:after` | 每个工具执行后 | `{ name, result, toolCallContext }` |
-| `agent:reply:before` | 定稿前，回复校验/修复 | `{ content, sessionId, …; retryRequested?, retryFeedback?, attempt?, maxRetries? }` |
+| `agent:reply:before` | 定稿前，回复校验/修复 | `{ content, archiveContent?, visibleContent?, sessionId, …; retryRequested?, retryFeedback?, attempt?, maxRetries? }` |
 | `agent:turn:after` | 回合终态（四条路径都发） | `{ message, reply, outcome, sessionId, metadata }`。`outcome ∈ 'replied'｜'silent'｜'aborted'｜'error'` |
 
 钩子用 `hooks.middleware` 注册，`hooks` 描述符来自 `@aalis/api-hooks`（见 [api-hooks](../api/api-hooks.md)）。要让 TS 看到这些键，需把 `@aalis/api-agent` 加进依赖。
@@ -130,7 +130,9 @@ export default definePlugin({
 
 **ToolCallContext 的 actor 优先**：agent 构造工具上下文时用 `incoming.actor` 作授权身份，`platform`/`userId` 保持会话语义。默认实现还传入 `enabledGroups`、`acceptsImages: true`、以及回合 `signal`（守卫等待确认期间被 abort 的工具不再执行）。自定义 provider 必须保留 actor 语义，否则系统触发的工具会以错误身份执权。
 
-**reply:before 重试协议**：钩子可置 `retryRequested=true` + `retryFeedback` + `maxRetries`；用尽后若仍 `retryRequested` 强制把 `content` 置空。
+**reply:before 重试协议**：钩子可置 `retryRequested=true` + `retryFeedback` + `maxRetries`；用尽后若仍 `retryRequested` 强制把 `content` 置空。上游吐空流时同样按此重试，只是没有失败输出可回放，只追加反馈消息。
+
+**落库口径**：`content` 是外发内容，`archiveContent` 缺省时等于 LLM 原文、是落库内容，`visibleContent` 缺省时等于 `content`、是可见正文。可见正文与落库内容不同时（如落库的是结构化输出的整串 JSON），agent 把它写进 assistant 消息 metadata 的 `visibleContent` 键（`WellKnownMetadataKeys.VisibleContent`）。
 
 **token 预算契约**：每次 LLM 调用后 emit `token:usage`；监听 `token:request` 在客户端重连时重算快照。
 

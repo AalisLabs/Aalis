@@ -20,7 +20,13 @@ export interface EmbeddingRequestOptions {
 }
 
 export interface EmbeddingService {
-  /** 将文本转为向量；支持取消的 provider 应将 signal 传至底层请求 */
+  /**
+   * 向量空间标识：modelId 相同的两次 embed 结果可直接比较；换模型必须换值。
+   * 消费方把它并入向量缓存的失效键，换模型后即可识别并重算旧向量（含同维度换模型）。
+   * 不声明时消费方无法区分模型。
+   */
+  readonly modelId?: string;
+  /** 将文本转为向量；支持取消的 provider 应将 signal 传至底层请求。 */
   embed(text: string, options?: EmbeddingRequestOptions): Promise<number[]>;
   /** 列出远端可用模型（用于前端下拉框）*/
   listModels?(): Promise<string[]>;
@@ -32,6 +38,7 @@ export interface EmbeddingService {
 要点：
 
 - `embed(text)` 是**唯一必须实现**的方法，返回单条文本的向量。契约**未约定向量维度**——维度由具体模型决定，跨提供者 / 跨模型不可混用（见 §6）。
+- `modelId` 可选，是向量空间标识：同值即向量可比，换模型必须换值。它让消费方能在同维度换模型时识别旧向量；不声明则消费方无从区分。
 - `listModels()` 可选，**仅服务于 WebUI 配置表单的动态下拉**（`configSchema` 里 `dynamicOptions: 'embedding'`，见 §4），不参与 embed 主链路。
 - 契约**没有批量接口**（如 `embedBatch`）。消费者要批量时需自行并发调 `embed()`（参考实现的连接细节见 §3）。
 
@@ -51,11 +58,13 @@ export interface EmbeddingService {
 OpenAI 实现（`packages/plugin-embedding-openai/src/index.ts`）：
 - `embed`：取响应 `data.data[0].embedding`；失败抛 `Error`，不静默。
 - `listModels`：拉 `{baseUrl}/models`，失败返回 `[]`。
+- `modelId`：`openai:<model>`。
 - 注册：`provide(embedding, service, { label: \`OpenAI / ${model}\` })`。
 
 Ollama 实现（`packages/plugin-embedding-ollama/src/index.ts`）：
 - 自动探测新旧 API：首次 `embed` 先试 `/api/embed`，失败则缓存为旧版走 `/api/embeddings`。
 - 自带超时（`AbortController`）+ 5xx 重试（`postJson`）；`embed` 失败时同样抛 `Error`。
+- `modelId`：`ollama:<model>`。
 - 注册：`provide(embedding, service, { label: \`Ollama / ${model}\` })`。
 
 两者 `apply` 都做了启动连通性自检：调一次 `embed('ping')`，**失败只 warn 不阻塞注册**——即服务可能注册成功但实际不可用，消费者不应假设 `embed` 一定成功。
@@ -70,6 +79,7 @@ Ollama 实现（`packages/plugin-embedding-ollama/src/index.ts`）：
 **可选消费者 `@aalis/plugin-user-relation`**（实体 / 事件去重的语义召回，软依赖）：
 - 取用：`const embedding = this.caps.embedding.current`（`packages/plugin-user-relation/src/service.ts`）。
 - 缺失即降级：`if (!embedding) return null;`（`ensureEntityEmbedding`），不报错、走非语义路径。
+- 向量失效键：节点的 `embeddingHash` 由文本指纹并入 `modelId` 得出，换模型后，下一次用到向量的整理（配置了 `consolidationModel` 且开启 auto-link 的 consolidate / maintain）或 `/relation event-duplicates` 会重算旧向量。
 
 **WebUI（`@aalis/plugin-webui-server`）** 通过 `listModels` 聚合下拉：对配置里 `dynamicOptions: 'embedding'` 的字段，调 `services.all('embedding')` 遍历所有提供者，逐个 `await provider.instance.listModels()` 汇总（`packages/plugin-webui-server/src/index.ts`）。单个提供者失败不影响整体。
 
@@ -79,6 +89,7 @@ Ollama 实现（`packages/plugin-embedding-ollama/src/index.ts`）：
 
 - 必须：实现 `embed(text): Promise<number[]>`；在 `apply` 里 `provide(embedding, impl)`。
 - 可选：`listModels()`（仅为 WebUI 下拉服务，不实现也能正常 embed）。
+- 建议：声明 `modelId`（如 `foo:<model>`），让缓存向量的消费方能识别换模型。
 - 强烈建议：启动连通性自检失败时 **warn 而非 throw**（与两个参考实现一致），让插件能装上、错误暴露在第一次真实调用。
 
 ### provides / uses 双源必须同步

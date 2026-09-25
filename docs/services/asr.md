@@ -193,7 +193,7 @@ export default definePlugin({
 
 1. **base64 data URL**：`/^data:([^;]+);base64,(.+)$/`，解码即得字节。**注意必须带 `;base64,`**——否则会和 storage URI `data:/...`（根名恰好叫 `data`）混淆。
 2. **`file://` 或裸绝对路径 `/...`**：openai 走 `proc.readExternalFile(data)`（治外文件能力，避免直接 `import node:fs`，`plugin-asr-openai/src/index.ts`）；whisper-cpp 直接取 `file://` 后的本地路径喂 ffmpeg。
-3. **`http(s)://`**：**必须用 `safeFetch`（`@aalis/util-network-guard`）下载**，不要用裸 `fetch`（见 §6）。
+3. **`http(s)://`**：**必须用 `safeFetch`（`@aalis/util-network-guard`）下载**，不要用裸 `fetch`（见 §6）。`safeFetch` 只管 SSRF 与重定向，不带超时也不限体积，下载方要自己补上：两个参考实现与 plugin-media 同口径，超时 15 秒（覆盖连接与读完响应体）、体积上限 20 MiB（按流式累计判定，超限即断并抛错），不要整读 `arrayBuffer()`。
 4. **storage URI / 历史裸相对路径**：`isStorageUri(data)` 判定（`packages/api-storage/src/index.ts`）；历史格式 `data/...` 补成 `data:/...`。openai 用 `storage.readFile(uri)` 读字节；whisper-cpp 用 `storage.resolveLocalPath?.(uri, 'read')` 拿本地路径喂 ffmpeg。
 
 process/storage 经 gateway 注入：`createProcessGateway(process)` / `createStorageGateway(storage)`（`api-process/src/index.ts`、`api-storage/src/index.ts`），临时文件用 `proc.makeTempDir(prefix)`（返回 `{ path, uri, cleanup }`，`api-process/src/index.ts`），用完务必 `cleanup()`（whisper-cpp 在 `finally` 里清理，`plugin-asr-whisper-cpp/src/index.ts`）。

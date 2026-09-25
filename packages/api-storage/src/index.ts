@@ -88,6 +88,11 @@ export interface StorageService {
   listRoots(): StorageRootInfo[];
   list(uri: string): Promise<StorageListResult>;
   stat(uri: string): Promise<StorageStat>;
+  /**
+   * 读取整个文件。目标不存在时，提供者抛出带 `code: 'ENOENT'` 的错误（list / stat / delete 等
+   * 按路径定位的方法同理）；其它失败（权限、根不可读等）不得用这个 code。消费方用
+   * {@link isStorageNotFound} 区分「不存在」与「读不出」。
+   */
   readFile(uri: string, encoding?: BufferEncoding): Promise<string | Buffer>;
   /**
    * 可选：按字节区间读取文件（[start, end) 半开区间）。为大文件的窗口化访问
@@ -301,6 +306,20 @@ export function isStorageUri(s: string): boolean {
   return !RESERVED_URI_SCHEMES.has(scheme);
 }
 
+/**
+ * 判定 storage 操作抛出的错误是否表示「目标不存在」—— 契约级判据，全体消费者复用，勿各自重抄。
+ *
+ * 先看 `code`：有 code 时只认 `'ENOENT'`，文案里带 not found 的其它错误（EACCES 等）不算；
+ * 没有 code 时才退回文案正则，兼顾不透传 errno 的提供者。网关的「未知存储根」不含这些字样，
+ * 判为读失败而非不存在。
+ */
+export function isStorageNotFound(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null | undefined)?.code;
+  if (code !== undefined) return code === 'ENOENT';
+  const message = (err as { message?: unknown } | null | undefined)?.message;
+  return /ENOENT|not found|不存在/i.test(typeof message === 'string' ? message : String(err));
+}
+
 /** 从 storage URI 取根名（`data:/images/x.jpg` → `data`）。非 `<根名>:/...` 形态抛错。 */
 export function parseUriRoot(uri: string): string {
   const idx = uri.indexOf(':/');
@@ -404,8 +423,13 @@ export function resolveAgainstCwd(input: string | undefined, cwd: string): strin
  * checkpoint 等需要单一 StorageService 句柄、又想透明跨 root 调度的场景。
  *
  * 调用方无需关心当前有哪些 root 由哪个后端提供；URI 即标识 + 路由 key。
+ *
+ * 网关恒定义 resolveLocalPath / readFileRange / watch（返回类型据此收窄，调用方无需判存在）：
+ * 目标根或其提供者不支持时，由调用本身抛错。
  */
-export function createStorageGateway(source: ServiceRef<StorageService>): StorageService {
+export function createStorageGateway(
+  source: ServiceRef<StorageService>,
+): StorageService & Required<Pick<StorageService, 'resolveLocalPath' | 'readFileRange' | 'watch'>> {
   const knownRootsList = (): string[] => {
     const set = new Set<string>();
     for (const entry of getStorageEntries(source)) {

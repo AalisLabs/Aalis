@@ -53,21 +53,27 @@ export default definePlugin({
 
 1. **消息入库**: 监听 `inbound:message:archived`（入站 user 消息）与 `assistant:message:archived`
    （AI 自身落库回复）两个事件，metadata 带 `role`。入站侧 embed 归档文本（message-archive
-   已烘入引用与附件描述，非 webui/cli 平台还带发送者前缀）；assistant 侧在取得自身身份时，
+   已烘入引用与附件描述，非 webui/cli 平台还带发送者前缀）；assistant 侧 embed 可见正文
+   （落库内容是结构化输出信封时取 metadata 的 `visibleContent`，缺省为 `content`），在取得自身身份时
    embed 前经 `prefixSender` 加自身发送者前缀；
    AI/系统撰写的伪 incoming 不入库（`source: idle-trigger` / `triggerType: proactive` /
    `source: scheduler` / `source: workflow:*` / `userId: parent:*`，即闲聊主动触发、
    跨会话委派与定时/工作流/子任务派发）
 2. **语义检索**: 经 `agent:prompt` 贡献点（turn-context 锚位），组装请求时：
    - 将用户最新消息 embed 为查询向量
-   - 从 vectorstore 检索 topK×4 候选（`recallRoles: others-only` 时 ×8，补偿角色过滤损耗），按 minScore / 跨会话模式过滤后时间衰减加权重排
+   - 从 vectorstore 检索 topK×4 候选（`recallRoles: others-only` 时 ×8，补偿角色过滤损耗），按 minScore / 跨会话模式过滤后时间衰减加权重排；
+     `crossSessionMode: user` 时，当前用户本人发言或被 @ 的命中再乘 `search.userPriorityBoost`
    - 当 `contextExpand.window > 0` 且 memory 服务支持 `getMessagesBySessionRange` 时，命中点经范围查询
      扩出前后各 N 条邻居还原情景（`contextExpand.crossSession` 关闭时不扩展其他会话的命中）；
      否则只注入命中本身。结果与当前会话已有内容去重
    - 注入为独立 system 消息；assistant/notice/tool 消息按角色标注
-     （`Assistant·你自己` 等），AI 自己的历史回复不会以他人发言形态回流
+     （`Assistant·你自己` 等），AI 自己的历史回复不会以他人发言形态回流；正文优先取 metadata 的
+     `visibleContent`，缺省按 `content` 呈现（升级前落库的消息没有该键）
    - `recallRoles` 配置控制 AI 自身回复是否参与召回（`all` 默认 / `others-only`）；
      角色标注不随该开关关闭。存量未打 role 的旧向量按对方对待
+3. **主动召回**: 注册 `memory_recall` 工具，按任意 query 检索，与被动注入共用同一检索排序
+   （候选放大、角色过滤、minScore、可见范围、时间衰减、`user` 模式的同用户加权）与扩窗取数；
+   `scope` 与 `contextWindow` / `crossSession` 参数只能比插件配置更窄，不能更宽
 
 ## 依赖
 

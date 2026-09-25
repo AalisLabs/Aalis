@@ -1,7 +1,7 @@
 import type { OkxClient } from '../client.js';
-import { errJson, type RegFn, truncate } from './_shared.js';
+import { errJson, type PageLimitCfg, pickLimit, type RegFn, truncate } from './_shared.js';
 
-export function registerTransferTools(reg: RegFn, client: OkxClient): void {
+export function registerTransferTools(reg: RegFn, client: OkxClient, pageLimit: PageLimitCfg): void {
   reg({
     definition: {
       type: 'function',
@@ -66,7 +66,10 @@ export function registerTransferTools(reg: RegFn, client: OkxClient): void {
           properties: {
             ccy: { type: 'string', description: '币种' },
             type: { type: 'string', description: '账单类型' },
-            limit: { type: 'number', description: '条数' },
+            limit: {
+              type: 'number',
+              description: `条数，默认 ${pageLimit.defaultLimit}，最多 ${pageLimit.maxLimit}`,
+            },
           },
           additionalProperties: false,
         },
@@ -77,7 +80,7 @@ export function registerTransferTools(reg: RegFn, client: OkxClient): void {
         const r = await client.getAssetBills(
           args.ccy as string | undefined,
           args.type as string | undefined,
-          (args.limit as number) || 20,
+          pickLimit(args, pageLimit),
         );
         return JSON.stringify(truncate(r.data));
       } catch (e) {
@@ -120,7 +123,10 @@ export function registerTransferTools(reg: RegFn, client: OkxClient): void {
           type: 'object',
           properties: {
             ccy: { type: 'string', description: '币种' },
-            limit: { type: 'number', description: '条数' },
+            limit: {
+              type: 'number',
+              description: `条数，默认 ${pageLimit.defaultLimit}，最多 ${pageLimit.maxLimit}`,
+            },
           },
           additionalProperties: false,
         },
@@ -128,7 +134,7 @@ export function registerTransferTools(reg: RegFn, client: OkxClient): void {
     },
     handler: async args => {
       try {
-        const r = await client.getDepositHistory(args.ccy as string | undefined, (args.limit as number) || 20);
+        const r = await client.getDepositHistory(args.ccy as string | undefined, pickLimit(args, pageLimit));
         return JSON.stringify(truncate(r.data));
       } catch (e) {
         return errJson(e);
@@ -146,7 +152,10 @@ export function registerTransferTools(reg: RegFn, client: OkxClient): void {
           type: 'object',
           properties: {
             ccy: { type: 'string', description: '币种' },
-            limit: { type: 'number', description: '条数' },
+            limit: {
+              type: 'number',
+              description: `条数，默认 ${pageLimit.defaultLimit}，最多 ${pageLimit.maxLimit}`,
+            },
           },
           additionalProperties: false,
         },
@@ -154,7 +163,7 @@ export function registerTransferTools(reg: RegFn, client: OkxClient): void {
     },
     handler: async args => {
       try {
-        const r = await client.getWithdrawalHistory(args.ccy as string | undefined, (args.limit as number) || 20);
+        const r = await client.getWithdrawalHistory(args.ccy as string | undefined, pickLimit(args, pageLimit));
         return JSON.stringify(truncate(r.data));
       } catch (e) {
         return errJson(e);

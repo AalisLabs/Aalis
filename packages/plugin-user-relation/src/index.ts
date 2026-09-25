@@ -10,10 +10,9 @@
  * 触发：自有 Map<sessionId, count> 计数器，达到 triggerEveryNMessages 触发；
  * 读窗口 readWindowSize 设计上大于触发步长，制造层叠重叠让 LLM 跨批次稳定识别同一事件。
  *
- * 多层遍历参数分三场景：
+ * 多层遍历参数分两场景：
  * - injection.*：middleware 注入用，token 敏感，默认深度浅、宽度窄。
  * - digTool.*：Agent 工具调用用，允许更深；hardMax 防 Agent 一次拉满。
- * - view.*：WebUI / actions 查询用，给人看，可中等深度。
  */
 
 import { commands } from '@aalis/api-commands';
@@ -42,13 +41,13 @@ const configSchema: ConfigSchema = {
     type: 'boolean',
     label: '允许从对话中提取新关系（写入总开关）',
     description:
-      '**写入总开关**：关闭后插件停止生成任何新关系节点/边；但 middleware 仍读取并注入旧关系、actions 仍可查/删。若只想停掉"自动触发"，请用 triggerEveryNMessages=0 而非关此项。彻底卸载请整体停用该插件。',
+      '**写入总开关**：关闭后插件停止生成任何新关系节点/边；但 middleware 仍读取并注入旧关系、actions 仍可查/删。彻底卸载请整体停用该插件。',
     default: true,
   },
   triggerEveryNMessages: {
     type: 'number',
     label: '自动触发阈值（每 N 条消息）',
-    description: '**仅控制"自动触发"**：每会话累计 N 条入站消息后自动跑一次 LLM 提取。0=不自动触发。',
+    description: '每会话累计 N 条入站消息后自动跑一次 LLM 提取。0=关闭自动提取。',
     default: 20,
   },
   readWindowSize: {
@@ -221,7 +220,7 @@ const configSchema: ConfigSchema = {
     type: 'select',
     label: '社群发现默认算法',
     description:
-      'evictByQuota 之后顺手跑的社群发现算法。louvain=经典快、硬划分；leiden=Louvain + 内部连通性 refinement；slpa=Speaker-Listener Label Propagation，原生重叠社区（跨群人物能获得多个社群隶属度）。agent 调 community_* 工具时可临时指定 algorithm 参数覆盖此默认。',
+      'evictByQuota 之后顺手跑的社群发现算法（写入节点社群缓存，community_peers / community_bridge 读它），也是 community_overview 不传 algorithm 时的默认算法。louvain=经典快、硬划分；leiden=Louvain + 内部连通性 refinement；slpa=Speaker-Listener Label Propagation，原生重叠社区（跨群人物能获得多个社群隶属度）。agent 调 community_overview 时可临时指定 algorithm 参数覆盖此默认。',
     options: [
       { value: 'louvain', label: 'Louvain（默认，快，硬划分）' },
       { value: 'leiden', label: 'Leiden-lite（硬划分，保证内部连通）' },
@@ -524,7 +523,6 @@ function start(caps: Caps): void {
   };
 
   // ─── 提取（写入）─── 受 extractionEnabled 控制
-  // 注意：triggerEveryN=0 时不绕过 extractor 构造，仅 disable 自动触发。
   const extractionEnabled = config.extractionEnabled !== false;
   const triggerEveryN = numCfg(config.triggerEveryNMessages, 20);
   if (extractionEnabled) {
@@ -578,7 +576,6 @@ function start(caps: Caps): void {
       },
     );
     extractor.start();
-    service.setTriggerExtractionHandler(sessionId => extractor.triggerNow(sessionId));
   }
 
   // ─── Middleware 注入（读取）─── 受 agentInjection 控制
@@ -608,6 +605,7 @@ function start(caps: Caps): void {
       findPathHardMaxDepth: numCfg(config.findPathHardMaxDepth, 6),
       searchEventsDefaultLimit: numCfg(config.searchEventsDefaultLimit, 10),
       searchEventsHardMaxLimit: numCfg(config.searchEventsHardMaxLimit, 50),
+      communityAlgorithm: eviction.communityAlgorithm,
       debug,
     });
   }

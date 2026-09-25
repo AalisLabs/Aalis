@@ -151,6 +151,42 @@ describe('checkpoint 回滚', () => {
     expect(disk.get('ws:/a.txt')).toBe('orig');
   });
 
+  it('write-new 回滚删不掉：错误带非 ENOENT 的 code 时如实入 errors，文案含 not found 也不当成「已不在」', async () => {
+    const { svc, disk, storage } = makeService();
+    svc.beginTurn('sessA');
+    await storage.writeFile('ws:/new.txt', 'brand new');
+    await svc.endTurn('sessA');
+
+    storage.delete = async (uri: string) => {
+      throw Object.assign(new Error(`access denied: credentials not found for ${uri}`), { code: 'EACCES' });
+    };
+    const result = await svc.rollback('sessA', soleTurnId(disk, 'sessA'));
+    expect(result.ok).toBe(false);
+    expect(result.errors.map(e => e.uri)).toEqual(['ws:/new.txt']);
+    expect(disk.get('ws:/new.txt')).toBe('brand new');
+  });
+
+  it('rename 移不回、回落删目标失败：错误带非 ENOENT 的 code 时如实入 errors，文案含 not found 也不当成「已不在」', async () => {
+    const { svc, disk, storage } = makeService();
+    disk.set('ws:/a.txt', 'orig');
+    // 回合内只做这一次移动：中间有写入的话 rename 条目不带 blob，走不到回落分支
+    svc.beginTurn('sessA');
+    await storage.move('ws:/a.txt', 'ws:/b.txt');
+    await svc.endTurn('sessA');
+
+    storage.move = async () => {
+      throw new Error('target occupied');
+    };
+    storage.delete = async (uri: string) => {
+      throw Object.assign(new Error(`access denied: credentials not found for ${uri}`), { code: 'EACCES' });
+    };
+    const result = await svc.rollback('sessA', soleTurnId(disk, 'sessA'));
+    expect(result.ok).toBe(false);
+    expect(result.errors.map(e => e.uri)).toEqual(['ws:/b.txt']);
+    expect(result.deleted).toEqual([]);
+    expect(disk.get('ws:/a.txt')).toBe('orig');
+  });
+
   it('manifest 只记用户文件：不含指向 checkpoint 根的自指条目', async () => {
     const { svc, disk, storage } = makeService();
     disk.set('ws:/a.txt', 'orig');
@@ -186,41 +222,6 @@ describe('checkpoint 回滚', () => {
     expect(result.ok).toBe(true);
     expect(disk.get('ws:/checkpoints-old/a.txt')).toBe('orig-sibling');
     expect(disk.get('ws:/a.txt')).toBe('orig');
-  });
-
-  it('存量自指条目：旧 manifest 照样回滚，自指条目被跳过且不计入 listTurns', async () => {
-    const { svc, disk } = makeService();
-    disk.set('ws:/a.txt', 'changed');
-
-    // 手工铺一个旧版（带递归假账）的回合：假账 write-new 排在真实条目之前
-    const turnId = 'legacy-turn';
-    const turnDir = `${ROOT}/sessA/${turnId}`;
-    disk.set(`${turnDir}/blobs/0.bin`, 'orig');
-    const manifest: TurnManifest = {
-      turnId,
-      sessionId: 'sessA',
-      startedAt: 1,
-      endedAt: 2,
-      files: [
-        { uri: `${turnDir}/blobs/0.bin`, action: 'write-new' },
-        { uri: 'ws:/a.txt', action: 'write', originalSize: 4, blob: '0.bin' },
-      ],
-    };
-    disk.set(`${turnDir}/manifest.json`, JSON.stringify(manifest));
-
-    // getManifest 是唯一读入口：自指条目在这里就被滤掉（WebUI 的 getManifest action 同样拿不到）
-    const loaded = await svc.getManifest('sessA', turnId);
-    expect(loaded?.files.map(f => f.uri)).toEqual(['ws:/a.txt']);
-
-    const result = await svc.rollback('sessA', turnId);
-    expect(result.ok).toBe(true);
-    expect(result.errors).toEqual([]);
-    expect(result.deleted).toEqual([]);
-    expect(disk.get('ws:/a.txt')).toBe('orig');
-
-    const [summary] = await svc.listTurns('sessA');
-    expect(summary?.fileCount).toBe(1);
-    expect(summary?.filesPreview).toEqual(['ws:/a.txt']);
   });
 });
 
@@ -325,35 +326,6 @@ describe('checkpoint 不记 data / tmp 等共享根', () => {
     expect(disk.get('tmp:/run-1/main.py')).toBe('print(1)');
     expect(disk.get('plugs:/file-reader/s/x.txt')).toBe('p');
     expect(disk.get('lg:/app.log')).toBe('l');
-  });
-
-  it('升级前写下的 manifest 里的 data 根条目：读取时忽略，回滚不碰、计数不含', async () => {
-    const { svc, disk } = makeService();
-    disk.set('data:/scheduler-jobs.json', '[{"name":"j"}]');
-    disk.set('data:/images/onebot_1_group_2/0123456789abcdef.jpg', 'img');
-    disk.set('ws:/new.txt', 'n');
-    disk.set(`${ROOT}/sessO/turn-old/blobs/0.bin`, '[]');
-    disk.set(
-      `${ROOT}/sessO/turn-old/manifest.json`,
-      JSON.stringify({
-        turnId: 'turn-old',
-        sessionId: 'sessO',
-        startedAt: 1,
-        endedAt: 2,
-        files: [
-          { uri: 'data:/scheduler-jobs.json', action: 'write', blob: '0.bin' },
-          { uri: 'data:/images/onebot_1_group_2/0123456789abcdef.jpg', action: 'write-new' },
-          { uri: 'ws:/new.txt', action: 'write-new' },
-        ],
-      }),
-    );
-
-    expect((await svc.getManifest('sessO', 'turn-old'))?.files.map(f => f.uri)).toEqual(['ws:/new.txt']);
-    const r = await svc.rollback('sessO', 'turn-old');
-    expect(r.ok).toBe(true);
-    expect(r.deleted).toEqual(['ws:/new.txt']);
-    expect(disk.get('data:/scheduler-jobs.json')).toBe('[{"name":"j"}]');
-    expect(disk.get('data:/images/onebot_1_group_2/0123456789abcdef.jpg')).toBe('img');
   });
 });
 

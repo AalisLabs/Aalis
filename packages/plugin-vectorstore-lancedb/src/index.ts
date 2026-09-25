@@ -333,10 +333,6 @@ export default definePlugin({
 
     const gateway = createStorageGateway(storage);
     const dbUri = toUri(cfg.path);
-    if (!gateway.resolveLocalPath) {
-      logger.error('存储实现未提供 resolveLocalPath 能力，无法初始化 LanceDB');
-      return;
-    }
     const dbPath = await gateway.resolveLocalPath(dbUri, 'write');
     const store = new LanceDBVectorStore(dbPath, cfg.tableName, cfg.optimizeEvery, cfg.cleanupRetentionMinutes, logger);
 

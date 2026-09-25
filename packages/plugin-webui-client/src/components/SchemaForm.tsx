@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import type { ConfigSchema, SchemaField, SchemaGroup, SchemaArray } from '../types';
+import type { ConfigSchema, SchemaField, SchemaFieldType, SchemaGroup, SchemaArray } from '../types';
 
 // ===== 数字输入框（解决小数输入被截断问题） =====
 // 受控 number input 在输入 0.0x 时会被 Number() 取整覆盖，
@@ -61,6 +61,71 @@ function NumberInput({ value, onChange, className }: { value: unknown; onChange:
   );
 }
 
+// ===== list / map：多行文本编辑 =====
+// list 每行一项（空白行忽略）；map 每行一条 KEY=VALUE（按第一个 = 切分，键去首尾空白，值原样，
+// 缺 = 或键为空的行不保存）。旧版存下的字符串值原样显示，一经编辑即按行解析。
+
+function formatList(value: unknown): string {
+  if (Array.isArray(value)) return value.map(String).join('\n');
+  return typeof value === 'string' ? value : '';
+}
+
+function parseList(text: string): string[] {
+  return text.split('\n').filter(line => line.trim() !== '');
+}
+
+function formatMap(value: unknown): string {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return Object.entries(value).map(([k, v]) => `${k}=${String(v)}`).join('\n');
+  }
+  return typeof value === 'string' ? value : '';
+}
+
+function parseMap(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split('\n')) {
+    const eq = line.indexOf('=');
+    const key = eq > 0 ? line.slice(0, eq).trim() : '';
+    if (key) out[key] = line.slice(eq + 1);
+  }
+  return out;
+}
+
+// 编辑期保留原文（本地状态），每次输入解析后向外 onChange；只有外部值与原文的解析结果不同
+// （恢复默认、重新加载）时才用外部值重写原文——否则回车产生的空行会在解析后被吃掉。
+function LinesInput({
+  value,
+  onChange,
+  format,
+  parse,
+  placeholder,
+}: {
+  value: unknown;
+  onChange: (v: unknown) => void;
+  format: (v: unknown) => string;
+  parse: (text: string) => unknown;
+  placeholder: string;
+}) {
+  const [text, setText] = useState(() => format(value));
+
+  useEffect(() => {
+    if (JSON.stringify(parse(text)) !== JSON.stringify(value)) setText(format(value));
+  }, [value]);
+
+  return (
+    <textarea
+      className="config-edit-input config-textarea"
+      value={text}
+      placeholder={placeholder}
+      onChange={e => {
+        setText(e.target.value);
+        onChange(parse(e.target.value));
+      }}
+      rows={3}
+    />
+  );
+}
+
 // ===== 扁平化 / 还原嵌套对象（编辑用） =====
 
 export function flattenConfig(obj: Record<string, unknown>, prefix = ''): Record<string, string> {
@@ -103,6 +168,24 @@ export function isSchemaArray(entry: SchemaField | SchemaGroup | SchemaArray): e
   return 'type' in entry && (entry as SchemaArray).type === 'array';
 }
 
+// 字段未配置且无 default 时的表单初值。number 无 default 不预填（undefined=留空走服务端默认）：
+// 预填 0 会撞 min 约束，预填 min 则把「用户没填」静默写成 min、压过插件运行时兜底——与「未填≠预填」政策一致。
+function emptyFieldValue(type: SchemaFieldType): unknown {
+  switch (type) {
+    case 'number':
+      return undefined;
+    case 'boolean':
+      return false;
+    case 'multiselect':
+    case 'list':
+      return [];
+    case 'map':
+      return {};
+    default:
+      return '';
+  }
+}
+
 export function buildDraftFromSchema(schema: ConfigSchema, config: Record<string, unknown>): Record<string, unknown> {
   const draft: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(schema)) {
@@ -110,20 +193,12 @@ export function buildDraftFromSchema(schema: ConfigSchema, config: Record<string
       const existing = config[key];
       draft[key] = Array.isArray(existing) ? existing : (entry.default ?? []);
     } else if (isSchemaField(entry)) {
-      // number 无 default 不预填（undefined=留空走服务端默认）：预填 0 会撞 min 约束，
-      // 预填 min 则把「用户没填」静默写成 min、压过插件运行时兜底——与「未填≠预填」政策一致。
-      draft[key] =
-        config[key] ??
-        entry.default ??
-        (entry.type === 'number' ? undefined : entry.type === 'boolean' ? false : entry.type === 'multiselect' ? [] : '');
+      draft[key] = config[key] ?? entry.default ?? emptyFieldValue(entry.type);
     } else {
       const group: Record<string, unknown> = {};
       const src = (config[key] ?? {}) as Record<string, unknown>;
       for (const [fk, field] of Object.entries(entry.fields)) {
-        group[fk] =
-          src[fk] ??
-          field.default ??
-          (field.type === 'number' ? undefined : field.type === 'boolean' ? false : field.type === 'multiselect' ? [] : '');
+        group[fk] = src[fk] ?? field.default ?? emptyFieldValue(field.type);
       }
       draft[key] = group;
     }
@@ -413,6 +488,16 @@ function SchemaFormField({
     );
   }
 
+  if (field.type === 'list') {
+    return <LinesInput value={value} onChange={onChange} format={formatList} parse={parseList} placeholder="每行一项" />;
+  }
+
+  if (field.type === 'map') {
+    return (
+      <LinesInput value={value} onChange={onChange} format={formatMap} parse={parseMap} placeholder="每行一条 KEY=VALUE" />
+    );
+  }
+
   if (field.type === 'textarea') {
     return (
       <textarea
@@ -502,7 +587,12 @@ export function SchemaForm({
               if (field.default !== undefined) {
                 newItem[fk] = field.default;
               } else if (field.required) {
-                newItem[fk] = field.type === 'number' ? 0 : field.type === 'boolean' ? false : '';
+                newItem[fk] =
+                  field.type === 'number' ? 0
+                  : field.type === 'boolean' ? false
+                  : field.type === 'list' ? []
+                  : field.type === 'map' ? {}
+                  : '';
               }
               // 其他字段保持 undefined → 输入框渲染为空 → 不参与覆盖
             }

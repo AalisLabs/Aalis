@@ -73,6 +73,7 @@ function isEndpointMissing(err: unknown): boolean {
 // ===== 服务实现 =====
 
 class OllamaEmbeddingService implements EmbeddingService {
+  readonly modelId: string;
   private baseUrl: string;
   private model: string;
   private timeoutMs: number;
@@ -83,6 +84,7 @@ class OllamaEmbeddingService implements EmbeddingService {
   constructor(baseUrl: string, model: string, timeoutMs: number, retries: number) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.model = model;
+    this.modelId = `ollama:${model}`;
     this.timeoutMs = Math.max(1000, timeoutMs);
     this.retries = Math.max(0, Math.floor(retries));
   }

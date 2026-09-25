@@ -12,7 +12,7 @@ import { assemblePromptContributions } from '../../packages/plugin-agent/src/pro
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import memoryVector from '../../packages/plugin-memory-vector/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
-import type { Message } from '../../packages/schema-message/src/index.js';
+import { type Message, WellKnownMetadataKeys } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
 // 从源码路径导入，api-agent 对 '@aalis/api-contributions' 的 declaration merging 不在
@@ -87,6 +87,7 @@ function hit(
     nickname?: string;
     platform?: string;
     role?: string;
+    mentions?: string[];
   },
 ): VectorSearchResult {
   return { score, metadata: { ...meta } };
@@ -130,7 +131,7 @@ async function setup(opts: SetupOptions = {}) {
   const store = makeStore(opts.hits ?? [], { searchThrows: opts.searchThrows });
   host.provide(embedding, embedder.service);
   host.provide(vectorstore, store.service);
-  // 假 tools 服务：捕获 memory_recall 注册（该管线与被动注入零共享，需独立钉住）
+  // 假 tools 服务：捕获 memory_recall 注册（工具有自己的参数收紧与输出组装，需独立钉住）
   const toolHandlers = new Map<string, (args: Record<string, unknown>, callCtx: unknown) => Promise<string>>();
   host.provide(tools, {
     register: (tool: { definition: { function: { name: string } }; handler: never }) => {
@@ -529,20 +530,6 @@ describe('plugin-memory-vector: agent:prompt 贡献', () => {
     expect(store.added.map(m => m.content)).toEqual(['真人发言']);
   });
 
-  it('存量委派 META 命中在检索期整体剔除（不注入、不占位）', async () => {
-    const { assembly } = await setup({
-      hits: [
-        hit(0.95, { sessionId: 's-old', timestamp: BASE_TS, content: '[跨会话委派 META]\n· 来源会话：xx\n任务文本' }),
-        hit(0.8, { sessionId: 's-old', timestamp: BASE_TS + 1, content: '真实记忆', userId: 'u1' }),
-      ],
-    });
-    const messages = baseMessages();
-    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
-    const block = String(injectedBlock(messages)?.content ?? '');
-    expect(block).toContain('真实记忆');
-    expect(block).not.toContain('跨会话委派 META');
-  });
-
   it('兜底路径不给已按真实角色收录的 (sid,ts) 造 user 拷贝——同一逻辑消息只注入一份', async () => {
     // 事故形态（2026-08-27 审计 blocker）：向量命中的 pivot 在 SQLite 里是 notice 角色，
     // 扩窗以 [Notice] 收录后，兜底路径曾因 messageKey 含 role 而再造一份匿名 user 行。
@@ -701,7 +688,7 @@ describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
     expect(block).not.toContain('我自己说过的话');
   });
 
-  it('memory_recall 工具：others-only 过滤命中且 role 还原生效（该管线与被动注入零共享）', async () => {
+  it('memory_recall 工具：others-only 过滤命中且 role 还原生效', async () => {
     const { toolHandlers } = await setup({
       recallRoles: 'others-only',
       hits: [
@@ -774,5 +761,166 @@ describe('recallRoles 双模式（存储侧 + 检索侧）', () => {
     expect(block).toContain('我承诺过明天提醒');
     expect(block).toContain('[Assistant·你自己(Aalis) @');
     expect(block).toContain('标注 Assistant·你自己 的条目是你自己当时的回复');
+  });
+});
+
+describe('检索管线：被动注入与 memory_recall 共用', () => {
+  it("crossSessionMode='user'：两条路径都对当前用户本人发言与被 @ 的命中加权", async () => {
+    const { assembly, toolHandlers } = await setup({
+      crossSessionMode: 'user',
+      search: { topK: 1 },
+      hits: [
+        hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: '别人的高分记忆', userId: 'u2' }),
+        hit(0.6, { sessionId: 's-old', timestamp: BASE_TS + 1, content: '本人的记忆', userId: 'u1' }),
+        hit(0.55, {
+          sessionId: 's-old',
+          timestamp: BASE_TS + 2,
+          content: '提到本人的记忆',
+          userId: 'u3',
+          mentions: ['u1'],
+        }),
+      ],
+    });
+    // 被动注入：0.6×2 与 0.55×2 都压过 0.9，topK=1 取加权后最高的本人发言
+    const messages = baseMessages();
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur', userId: 'u1' });
+    const block = String(injectedBlock(messages)?.content ?? '');
+    expect(block).toContain('本人的记忆');
+    expect(block).not.toContain('别人的高分记忆');
+
+    // memory_recall 曾不做同用户加权：同一语料下返回的是别人的高分记忆
+    const recall = toolHandlers.get('memory_recall')!;
+    const out = JSON.parse(await recall({ query: '记忆', topK: 2 }, { sessionId: 's-cur', userId: 'u1' }));
+    const texts = (out.results ?? []).map((r: { text: string }) => r.text);
+    expect(texts).toHaveLength(2);
+    expect(texts[0]).toContain('本人的记忆');
+    expect(texts[1]).toContain('提到本人的记忆');
+  });
+
+  it('memory_recall 把调用方回合的中止信号透传给查询 embedding', async () => {
+    const seen: Array<AbortSignal | undefined> = [];
+    const { toolHandlers } = await setup({
+      hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: '旧记忆' })],
+      embedImpl: async (_text, options) => {
+        seen.push(options?.signal);
+        return FIXED_VEC;
+      },
+    });
+    const controller = new AbortController();
+    await toolHandlers.get('memory_recall')!({ query: '记忆' }, { sessionId: 's-cur', signal: controller.signal });
+    expect(seen).toEqual([controller.signal]);
+  });
+
+  it('memory_recall 的扩窗取数同样受中止信号约束：回合已中止 → 返回检索失败', async () => {
+    const { host, toolHandlers } = await setup({
+      withMemory: true,
+      contextExpand: { window: 1 },
+      hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: 'PIVOT-Q', userId: 'u1' })],
+    });
+    const mem = host.services.get(memory);
+    if (!mem) throw new Error('no memory');
+    await mem.saveMessage('s-old', { role: 'user', content: '[Alice(u1)]: PIVOT-Q', timestamp: BASE_TS });
+
+    // 假 embedder 不理会信号，中止只能在扩窗取数处生效
+    const controller = new AbortController();
+    controller.abort();
+    const out = JSON.parse(
+      await toolHandlers.get('memory_recall')!({ query: '记忆' }, { sessionId: 's-cur', signal: controller.signal }),
+    );
+    expect(out.ok).toBeUndefined();
+    expect(String(out.error)).toContain('检索失败');
+  });
+
+  it('memory_recall 的 contextWindow：命中点带出前后邻居，命中本身不重复', async () => {
+    const { host, toolHandlers } = await setup({
+      withMemory: true,
+      contextExpand: { window: 1 },
+      hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: 'PIVOT-Q', userId: 'u1' })],
+    });
+    const mem = host.services.get(memory);
+    if (!mem) throw new Error('no memory');
+    await mem.saveMessage('s-old', { role: 'assistant', content: 'PREV-A', timestamp: BASE_TS - 60_000 });
+    await mem.saveMessage('s-old', { role: 'user', content: '[Alice(u1)]: PIVOT-Q', timestamp: BASE_TS });
+    await mem.saveMessage('s-old', { role: 'assistant', content: 'NEXT-A', timestamp: BASE_TS + 60_000 });
+    await mem.saveMessage('s-old', { role: 'user', content: 'FAR-Q', timestamp: BASE_TS + 120_000 });
+
+    const out = JSON.parse(await toolHandlers.get('memory_recall')!({ query: '记忆' }, { sessionId: 's-cur' }));
+    const context = (out.results?.[0]?.context ?? []) as Array<{ role: string; text: string }>;
+    expect(context.map(c => c.role)).toEqual(['assistant', 'assistant']);
+    const joined = context.map(c => c.text).join('\n');
+    expect(joined).toContain('PREV-A');
+    expect(joined).toContain('NEXT-A');
+    expect(joined).not.toContain('PIVOT-Q');
+    expect(joined).not.toContain('FAR-Q');
+  });
+});
+
+describe('结构化输出信封：索引与渲染取可见正文', () => {
+  const ENVELOPE = '{"mood":"平静","state":"在线","message":"信封里的回复"}';
+  const VISIBLE = { [WellKnownMetadataKeys.VisibleContent]: '信封里的回复' };
+
+  it('索引侧：assistant 落库内容是信封时，embed 与兜底 content 都取可见正文', async () => {
+    const { host, store, embedder } = await setup({});
+    const emitLoose = host.events.emit.bind(host.events) as (event: string, data: unknown) => Promise<void>;
+    await emitLoose('assistant:message:archived', {
+      sessionId: 'onebot:1:group:2',
+      message: {
+        role: 'assistant',
+        content: ENVELOPE,
+        timestamp: BASE_TS,
+        metadata: { userId: 'bot1', nickname: 'Aalis', ...VISIBLE },
+      },
+    });
+    for (let i = 0; i < 50 && store.added.length === 0; i++) await new Promise(r => setTimeout(r, 20));
+    expect(embedder.calls).toEqual(['[Aalis(bot1)]: 信封里的回复']);
+    expect(store.added.map(m => m.content)).toEqual(['信封里的回复']);
+  });
+
+  it('渲染侧：扩窗带出的 assistant 邻居按可见正文呈现，不带信封的键骨架', async () => {
+    const { host, assembly } = await setup({
+      withMemory: true,
+      contextExpand: { window: 1 },
+      hits: [hit(0.9, { sessionId: 's-old', timestamp: BASE_TS, content: 'PIVOT-Q', userId: 'u1' })],
+    });
+    const mem = host.services.get(memory);
+    if (!mem) throw new Error('no memory');
+    await mem.saveMessage('s-old', { role: 'user', content: 'PIVOT-Q', timestamp: BASE_TS });
+    await mem.saveMessage('s-old', {
+      role: 'assistant',
+      content: ENVELOPE,
+      timestamp: BASE_TS + 60_000,
+      metadata: { nickname: 'Aalis', ...VISIBLE },
+    });
+
+    const messages = baseMessages();
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    const block = String(injectedBlock(messages)?.content ?? '');
+    expect(block).toContain('[Assistant·你自己(Aalis) @');
+    expect(block).toContain('信封里的回复');
+    expect(block).not.toContain('"mood"');
+  });
+
+  it('去重：命中的可见正文已在当轮历史里（历史存的是信封）→ 不重复注入', async () => {
+    const { assembly } = await setup({
+      hits: [
+        hit(0.9, {
+          sessionId: 's-a',
+          timestamp: BASE_TS,
+          content: '信封里的回复',
+          role: 'assistant',
+          nickname: 'Aalis',
+        }),
+        hit(0.8, { sessionId: 's-a', timestamp: BASE_TS + 1, content: '另一段旧记忆', userId: 'u1' }),
+      ],
+    });
+    const messages: Message[] = [
+      { role: 'system', content: '人设' },
+      { role: 'assistant', content: ENVELOPE, metadata: VISIBLE },
+      { role: 'user', content: '还记得我上次说的吗' },
+    ];
+    await assemblePromptContributions(assembly, { messages, sessionId: 's-cur' });
+    const block = String(injectedBlock(messages)?.content ?? '');
+    expect(block).toContain('另一段旧记忆');
+    expect(block).not.toContain('信封里的回复');
   });
 });

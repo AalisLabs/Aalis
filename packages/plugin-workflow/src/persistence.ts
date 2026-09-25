@@ -6,7 +6,7 @@
 // 文件形状：{ runs: [...], onceFired: { <workflowId>: <firedAt> } }。
 // ============================================================
 
-import type { StorageService } from '@aalis/api-storage';
+import { isStorageNotFound, type StorageService } from '@aalis/api-storage';
 import type { WorkflowRun } from '@aalis/api-workflow';
 import type { Logger } from '@aalis/core';
 
@@ -20,7 +20,7 @@ export class RunStore {
   private onceFired: Record<string, number> = {};
   private writeChain: Promise<void> = Promise.resolve();
   /**
-   * init 读失败且不是「文件不存在」（storage 不在场、读错误、解析失败）：写的是整份快照，
+   * init 读失败且不是「文件不存在」（storage 不在场、读错误、解析失败、结构不对）：写的是整份快照，
    * 此后一律拒写，否则第一次运行就用空的 once 记账覆盖文件，下次启动过期 once 全部重放。
    */
   private loadFailed = false;
@@ -34,25 +34,37 @@ export class RunStore {
 
   /** 初始化时从存储加载历史；文件不存在视为空，其它失败本次运行拒写。 */
   async init(): Promise<void> {
+    let raw: string | Buffer;
     try {
-      const raw = await this.storage.readFile(this.fileUri, 'utf-8');
-      const data = JSON.parse(String(raw));
-      if (data && typeof data === 'object') {
-        const d = data as { runs?: unknown; onceFired?: unknown };
-        if (Array.isArray(d.runs)) this.runs = d.runs as WorkflowRun[];
-        if (d.onceFired && typeof d.onceFired === 'object') {
-          for (const [id, at] of Object.entries(d.onceFired as Record<string, unknown>)) {
-            if (typeof at === 'number') this.onceFired[id] = at;
-          }
-        }
+      raw = await this.storage.readFile(this.fileUri, 'utf-8');
+    } catch (err) {
+      if (isStorageNotFound(err)) return;
+      this.loadFailed = true;
+      this.logger.warn(`读取运行历史失败，本次运行不再写入该文件: ${err}`);
+      return;
+    }
+    // 解析与结构校验单独一段：解析报错的文案（会带上短文件原文）不能进「不存在」判据
+    try {
+      const data = JSON.parse(String(raw)) as { runs?: unknown; onceFired?: unknown } | null;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('顶层不是 JSON 对象');
+      if (data.runs !== undefined && !Array.isArray(data.runs)) throw new Error('runs 不是数组');
+      const fired = data.onceFired;
+      if (fired !== undefined && (!fired || typeof fired !== 'object' || Array.isArray(fired))) {
+        throw new Error('onceFired 不是对象');
+      }
+      if (data.runs) this.runs = data.runs as WorkflowRun[];
+      for (const [id, at] of Object.entries((fired ?? {}) as Record<string, unknown>)) {
+        if (typeof at === 'number') this.onceFired[id] = at;
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!/ENOENT|not found|不存在/i.test(msg)) {
-        this.loadFailed = true;
-        this.logger.warn(`加载运行历史失败，本次运行不再写入该文件: ${err}`);
-      }
+      this.loadFailed = true;
+      this.logger.warn(`解析运行历史失败，本次运行不再写入该文件: ${err}`);
     }
+  }
+
+  /** once 记账是否可信：init 读失败时记账为空，据它安排 once 会重放已触发过的一次性工作流 */
+  onceLedgerReadable(): boolean {
+    return !this.loadFailed;
   }
 
   /** 等到目前为止排队的写入全部落盘（dispose 时调用：否则 app.stop() 返回后还有写入在飞）。 */

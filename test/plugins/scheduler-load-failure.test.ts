@@ -97,6 +97,22 @@ describe('scheduler 动态任务：加载失败后拒绝整表回写', () => {
     expect(readJobs()).toBe(broken);
   });
 
+  it.each([
+    '{}',
+    'null',
+    '{"jobs":[{"name":"zz-old-1"}]}',
+    '"x"',
+  ])('合法 JSON 但不是数组（%s）：addJob 不覆盖原文件', async seeded => {
+    writeFileSync(join(base, jobsFile), seeded);
+
+    await registerStorage();
+    await registerScheduler();
+    svcOf().addJob(job('zz-new'));
+    await settle();
+
+    expect(readJobs()).toBe(seeded);
+  });
+
   it('任务文件不存在：按全新照常落盘', async () => {
     await registerStorage();
     await registerScheduler();

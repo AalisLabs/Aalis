@@ -31,7 +31,7 @@ function describe(label?: string, index?: number): string {
  * 用途：需要累积「注册 → 卸载」副作用的宿主，提供：
  * - `push(fn, label?, phase?)` 追加清理函数（label 仅进诊断日志；phase 见 {@link DisposePhase}，默认 cleanup）
  * - `remove(fn)` 精确移除单个清理函数（不执行）
- * - `dispose()` 同步按段逆序调用所有清理函数并清空；期间任一抛错不影响其他
+ * - `seal()` 只标记已取走（链为空时用），此后的登记就地执行
  * - `disposeAsync(timeoutMs?)` 按段逆序**串行等待**每个清理函数（含异步返回值）
  *
  * 相比散落的 `this._disposables: (() => void)[]`，集中管理能避免
@@ -49,7 +49,7 @@ export class DisposableChain {
   /**
    * @param settlePhase 段收口：disposeAsync 每排空一段后调用，返回该段内**发起但尚未落定**的异步清理
    *   （宿主自己记账，链不认识它们；超时与点名由宿主按传入的上限自理）。链等它落定再进下一段——
-   *   不占链上条目，诊断用的条目数与标签名单不受影响。
+   *   不占链上条目，条目数与标签名单不受影响。
    */
   constructor(
     private readonly logger?: CleanupReporter,
@@ -62,8 +62,8 @@ export class DisposableChain {
   }
 
   /**
-   * 追加一个清理函数。dispose 后追加会立刻执行，与段无关；拒绝记 warn。异步返回值：链还在
-   * disposeAsync 排空途中就由当前段的收口等到，排空已结束（或走的是同步 dispose）则无人等待。
+   * 追加一个清理函数。链已取走后追加会立刻执行，与段无关；拒绝记 warn。异步返回值：链还在
+   * disposeAsync 排空途中就由当前段的收口等到，排空已结束（或链经 seal 取走）则无人等待。
    */
   push(fn: () => unknown, label?: string, phase: DisposePhase = 'cleanup'): void {
     if (this.taken) {
@@ -78,8 +78,8 @@ export class DisposableChain {
   }
 
   /**
-   * 同步路径不等待异步返回值，但拒绝必须有人接：本链是资源内核，宿主可以不经
-   * 插件框架直接使用，逃逸的拒绝会成为宿主进程的 unhandledRejection。
+   * 取走后就地执行的清理不一定有人等（见 push），但拒绝必须有人接：登记方拿不到这个返回值，
+   * 逃逸的拒绝会成为宿主进程的 unhandledRejection。
    */
   private settle(ret: unknown, who: string): void {
     if (ret && typeof (ret as PromiseLike<unknown>).then === 'function') {
@@ -95,7 +95,7 @@ export class DisposableChain {
     }
   }
 
-  /** 链序标签名单（未命名项为 undefined 占位）。诊断读口，纯读不执行。 */
+  /** 链序标签名单（未命名项为 undefined 占位）。测试读口，纯读不执行。 */
   labels(): ReadonlyArray<string | undefined> {
     return this.items.map(e => e.label);
   }
@@ -118,7 +118,7 @@ export class DisposableChain {
   }
 
   /**
-   * 置位 taken、快照并清空 items——两个 dispose 入口共用，避免逻辑漂移。
+   * 置位 taken、快照并清空 items——seal 与 disposeAsync 共用，避免逻辑漂移。
    *
    * 先清空再迭代快照：dispose 期间 disposer 常回调 remove(自身)（provide /
    * 订阅句柄的自移除语义）。若在迭代中 splice 活动数组，索引
@@ -133,24 +133,9 @@ export class DisposableChain {
     return items;
   }
 
-  /**
-   * 同步执行所有清理函数并清空：撤回段先、清理段后，段内逆序。重复调用无效果。
-   * 单个函数抛错被 swallow（经 logger 记 warn——清理失败是泄漏的头号成因，必须默认可见）；
-   * 异步返回值**不等待**但拒绝同样记 warn——需要等待落盘类清理时用 {@link disposeAsync}。
-   */
-  dispose(): void {
-    if (this.taken) return;
-    const items = this.take();
-    for (const phase of PHASES) {
-      for (let i = items.length - 1; i >= 0; i--) {
-        if (items[i].phase !== phase) continue;
-        try {
-          this.settle(items[i].fn(), describe(items[i].label, i));
-        } catch (err) {
-          this.report(`DisposableChain: dispose 抛出，已忽略${describe(items[i].label, i)}:`, err);
-        }
-      }
-    }
+  /** 只标记已取走、不执行任何清理：调用方保证此刻链为空，此后的登记就地执行。重复调用无效果。 */
+  seal(): void {
+    this.take();
   }
 
   /**

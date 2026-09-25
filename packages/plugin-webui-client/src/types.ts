@@ -51,7 +51,6 @@ export interface CommandInfo {
 
 export interface SystemStatus {
   name: string;
-  services: Record<string, boolean>;
   uploadCapabilities?: {
     image: boolean;
     file: boolean;
@@ -96,7 +95,7 @@ export interface PluginInfo {
 // 前端不依赖服务端契约包：schema 经 JSON 传输后用镜像类型接住（仅以 type-only 或纯函数方式
 // 引用 schema-log / util-text-normalize）；server 侧合并声明变更时需手动同步本镜像。
 
-export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect' | 'textarea' | 'llm-ref';
+export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect' | 'textarea' | 'list' | 'map' | 'llm-ref';
 
 export interface SchemaField {
   type: SchemaFieldType;

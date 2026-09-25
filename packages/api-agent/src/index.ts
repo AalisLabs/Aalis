@@ -96,6 +96,13 @@ declare module '@aalis/api-hooks' {
     'agent:reply:before': {
       content: string;
       archiveContent?: string;
+      /**
+       * 回复的可见正文（用户实际看到的文本）。缺省时 agent 以 `content` 为可见正文；`content` 不是
+       * 可见正文时中间件应填写，如 persona 的客户端渲染模式下 `content` 保留整串 JSON 交给前端解码。
+       * 与落库内容不同时，agent 把它写进 assistant 消息的 metadata（键为 schema-message 的
+       * `WellKnownMetadataKeys.VisibleContent`）。
+       */
+      visibleContent?: string;
       sessionId: string;
       platform?: string;
       userId?: string;

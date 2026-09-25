@@ -2,13 +2,13 @@
 // @aalis/plugin-workflow — DAG 工作流引擎
 //
 // 订阅 'trigger:fired' 事件 + 内置 cron/interval/event 触发器，
-// 按 DAG 执行节点，结果存 data/workflow-runs.json，
-// 定义存 workspace/workflows/*.yaml。
+// 按 DAG 执行节点，结果存 data:/workflow-runs.json，
+// 定义存 workspace:/workflows/*.yaml。
 // ============================================================
 
 import { cronEngine } from '@aalis/api-cron-engine';
 import { hooks } from '@aalis/api-hooks';
-import { createStorageGateway, storage } from '@aalis/api-storage';
+import { createStorageGateway, isStorageUri, storage } from '@aalis/api-storage';
 import { type BoundTools, tools } from '@aalis/api-tools';
 import type { BoundWebui, WebuiPage } from '@aalis/api-webui';
 import { webuiServer } from '@aalis/api-webui';
@@ -37,14 +37,13 @@ const configSchema: ConfigSchema = {
     type: 'string',
     label: '工作流定义目录',
     default: 'workspace:/workflows',
-    description:
-      '加载存储下的 *.yaml 定义（storage URI，也兼容旧【workspace/workflows】）；AI 通过 workflow_define 创建的定义也写入此处。',
+    description: '加载存储下的 *.yaml 定义（storage URI）；AI 通过 workflow_define 创建的定义也写入此处。',
   },
   runsFile: {
     type: 'string',
     label: '运行历史文件',
     default: 'data:/workflow-runs.json',
-    description: '保存最近 N 条运行实例（storage URI，也兼容旧【data/workflow-runs.json】）。',
+    description: '保存最近 N 条运行实例（storage URI）。',
   },
   maxRuns: {
     type: 'number',
@@ -294,19 +293,22 @@ nodes:
   });
 }
 
-function toUri(input: string, fallback: string): string {
-  const s = String(input ?? '').trim();
+/** 路径配置只接受 storage URI；未设、留空或非字符串用默认值，其它写法（如相对路径 workspace/workflows）拒绝激活。 */
+function resolveUri(key: 'defsDir' | 'runsFile', input: unknown, fallback: string): string {
+  const s = typeof input === 'string' ? input.trim() : '';
   if (!s) return fallback;
-  if (s.includes(':/')) return s;
-  const cleaned = s.replace(/^\.?\/+/, '');
-  const idx = cleaned.indexOf('/');
-  return idx > 0 ? `${cleaned.slice(0, idx)}:/${cleaned.slice(idx + 1)}` : `${cleaned}:/`;
+  if (!isStorageUri(s)) {
+    throw new Error(
+      `plugin-workflow 配置错误: ${key}="${s}" 不是 storage URI，请写成 <根名>:/<路径>（如 ${fallback}），或删掉该键使用默认值`,
+    );
+  }
+  return s;
 }
 
 function resolveConfig(raw: Record<string, unknown>): WorkflowConfig {
   return {
-    defsDir: toUri(typeof raw.defsDir === 'string' ? raw.defsDir : '', 'workspace:/workflows'),
-    runsFile: toUri(typeof raw.runsFile === 'string' ? raw.runsFile : '', 'data:/workflow-runs.json'),
+    defsDir: resolveUri('defsDir', raw.defsDir, 'workspace:/workflows'),
+    runsFile: resolveUri('runsFile', raw.runsFile, 'data:/workflow-runs.json'),
     maxRuns: typeof raw.maxRuns === 'number' && raw.maxRuns > 0 ? raw.maxRuns : 200,
     enableTools: raw.enableTools !== false,
   };
@@ -707,12 +709,3 @@ function registerTools(tools: BoundTools, service: WorkflowService): void {
     },
   });
 }
-
-// ─── 重导出 API（便于外部 import 类型）───
-export type {
-  NodeSpec,
-  TriggerSpec,
-  WorkflowDef,
-  WorkflowRun,
-  WorkflowService,
-} from '@aalis/api-workflow';

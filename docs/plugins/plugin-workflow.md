@@ -40,8 +40,8 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `defsDir` | string | `'workspace:/workflows'` | 工作流定义目录：加载存储下的 *.yaml 定义（storage URI，也兼容旧【workspace/workflows】）；AI 通过 workflow_define 创建的定义也写入此处。 |
-| `runsFile` | string | `'data:/workflow-runs.json'` | 运行历史文件：保存最近 N 条运行实例（storage URI，也兼容旧【data/workflow-runs.json】）。 |
+| `defsDir` | string | `'workspace:/workflows'` | 工作流定义目录：加载存储下的 *.yaml 定义（storage URI）；AI 通过 workflow_define 创建的定义也写入此处。 |
+| `runsFile` | string | `'data:/workflow-runs.json'` | 运行历史文件：保存最近 N 条运行实例（storage URI）。 |
 | `maxRuns` | number | `200` | 保留最近运行条数：超过则按时间裁剪最旧的；最小 10。 |
 | `enableTools` | boolean | `true` | 注册 AI 工具：开启后向 LLM 暴露 workflow_define / workflow_run 等工具。 |
 
@@ -51,7 +51,7 @@ export default definePlugin({
 |---|---|---|
 | `cron` | `expr` | 按 cron 表达式周期触发，经 `cron-engine` 服务订阅 |
 | `interval` | `seconds` | 每隔 `seconds` 秒触发（向下取整，最小 1），经 `cron-engine` 以 `@every <N>s` 订阅 |
-| `once` | `runAt` | 在指定时间触发一次，**一生只触发一次**：触发即把 `firedAt` 记入运行历史文件（`runsFile`），此后重启进程、重新注册、重复 `workflow_define` 都不再触发；**定义不存在时记账随之清除**——`workflow_remove` 清账，手动删掉 `defsDir` 里的 yaml 也会在下次启动扫描定义后补清，同 id 重建都算新工作流。`runAt` 须能被 `Date.parse` 解析；时间已过且从未触发过，则注册时立即补触发一次 |
+| `once` | `runAt` | 在指定时间触发一次，**一生只触发一次**：触发即把 `firedAt` 记入运行历史文件（`runsFile`），此后重启进程、重新注册、重复 `workflow_define` 都不再触发；**定义不存在时记账随之清除**——`workflow_remove` 清账，手动删掉 `defsDir` 里的 yaml 也会在下次启动扫描定义后补清，同 id 重建都算新工作流。`runAt` 须能被 `Date.parse` 解析；时间已过且从未触发过，则注册时立即补触发一次。运行历史文件读不出（不存在以外的读取错误、解析失败、结构不对）时无从判断是否触发过，本次运行不安排任何 once（含 `runAt` 在未来的），也不再写入该文件；修复文件后重启，或用 `workflow_run` 手动执行 |
 | `event` | `event`, `filter?` | 订阅指定事件；`filter` 的每个键须与事件第一个参数的同名顶层字段严格相等；事件参数数组以运行变量 `args` 注入 |
 | `manual` | — | 不注册触发器，仅手动运行 |
 

@@ -1,4 +1,10 @@
-import { createStorageGateway, type StorageService, storage, toStorageUri } from '@aalis/api-storage';
+import {
+  createStorageGateway,
+  isStorageNotFound,
+  type StorageService,
+  storage,
+  toStorageUri,
+} from '@aalis/api-storage';
 import { type VectorSearchResult, type VectorStoreService, vectorstore } from '@aalis/api-vectorstore';
 import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
@@ -54,6 +60,11 @@ export class FlatVectorStore implements VectorStoreService {
   private warnedDimMismatch = false;
   /** save 串行链：并发索引会并发调 save()，串行化避免裸 writeFile 同路径并发写损坏 JSON */
   private saveChain: Promise<void> = Promise.resolve();
+  /**
+   * init 读不懂数据文件（不是「文件不存在」的读失败、解析失败、不是数组）：写的是整库，此后拒写
+   * （clear 也不例外），原文件留在原位等人修；本次运行只在内存里工作。
+   */
+  private loadFailed = false;
 
   constructor(
     storage: StorageService,
@@ -66,24 +77,25 @@ export class FlatVectorStore implements VectorStoreService {
 
   /** 启动加载（由 apply 调用） */
   async init(): Promise<void> {
+    let raw: string;
     try {
-      const raw = (await this.storage.readFile(this.dataUri, 'utf-8')) as string;
+      raw = (await this.storage.readFile(this.dataUri, 'utf-8')) as string;
+    } catch (err) {
+      // 文件不存在 = 冷启动，照常落盘
+      if (isStorageNotFound(err)) return;
+      this.loadFailed = true;
+      this.logger?.warn(`读取向量数据文件失败，本次运行从空库开始且不再写入该文件: ${this.dataUri}: ${err}`);
+      return;
+    }
+    try {
       const parsed = JSON.parse(raw);
-      // 合法 JSON 但不是数组（被别的东西写过 / 手工改坏）→ 按空库处理并告警：
-      // 否则 entries 变成对象，size() 返回 undefined、search() 在 entries[0] 上抛。
-      if (!Array.isArray(parsed)) {
-        this.logger?.warn(`向量数据文件不是数组（${typeof parsed}），将从空数据开始: ${this.dataUri}`);
-        this.entries = [];
-        return;
-      }
+      // 合法 JSON 但不是数组（被别的东西写过 / 手工改坏）：同样读不懂。
+      // 不能把它当 entries 用——size() 会返回 undefined、search() 在 entries[0] 上抛。
+      if (!Array.isArray(parsed)) throw new Error(`内容不是数组（${parsed === null ? 'null' : typeof parsed}）`);
       this.entries = parsed;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // 文件不存在 = 冷启动，不警告；其他错误才警
-      if (!/ENOENT|not found|不存在/i.test(msg)) {
-        this.logger?.warn(`向量数据文件损坏，将从空数据开始: ${msg}`);
-      }
-      this.entries = [];
+      this.loadFailed = true;
+      this.logger?.warn(`向量数据文件无法解析，本次运行从空库开始且不再写入该文件: ${this.dataUri}: ${err}`);
     }
   }
 
@@ -140,7 +152,7 @@ export class FlatVectorStore implements VectorStoreService {
 
   async save(): Promise<void> {
     // 串行化：并发索引（默认 concurrency=10）会并发调 save()，裸 writeFile 同路径并发写可交错损坏 JSON
-    // → 下次 init 时 JSON.parse 失败、整库静默清空。链式确保同一时刻只有一个写在跑。
+    // → 下次 init 时 JSON.parse 失败、只能按空库启动（本次运行拒写，原文件保留）。链式确保同一时刻只有一个写在跑。
     this.saveChain = this.saveChain.then(() => this.doSave());
     return this.saveChain;
   }
@@ -158,6 +170,8 @@ export class FlatVectorStore implements VectorStoreService {
   private async doSave(): Promise<void> {
     if (!this.dirty) return;
     this.dirty = false; // 先清脏；期间新 add 会重新置脏，触发下一次链式 save
+    // init 时已 warn 过：拒写不重标脏，免得每次 save 空转重试
+    if (this.loadFailed) return;
     try {
       const data = JSON.stringify(this.entries);
       await this.storage.writeFile(this.dataUri, data);
