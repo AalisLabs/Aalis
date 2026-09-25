@@ -1,8 +1,9 @@
 import type { Logger, ServiceRef, ServiceView } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { ASRService } from '../../packages/api-asr/src/index.js';
-import type { LLMModel, ModelRef } from '../../packages/api-llm/src/index.js';
+import { type LLMModel, llm, type ModelRef } from '../../packages/api-llm/src/index.js';
 import type { MediaProcessor } from '../../packages/api-media/src/index.js';
+import { App, definePlugin, provide, services } from '../../packages/core/src/index.js';
 import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import type { MessageAttachment } from '../../packages/schema-message/src/index.js';
@@ -169,5 +170,48 @@ describe('MediaService 音频统一池（asr 桥 + 音频 LLM 一个池）', () 
     expect(typeof llmProc?.transcribe).toBe('function'); // 真 proc 带 transcribe（曾经那段「死代码」的归宿）
     // 下拉项 value = 此 name，pickProcessor 也按 name 命中 → 名字一致由同一 listProcessors 来源构造保证
     expect(s.pickProcessor('audio', llmProc?.name)?.name).toBe(llmProc?.name);
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// LLM processor 缓存跟随偏好切换：LLM processor 的 priority 恒为 0，vision.prefer 留空时
+// pickProcessor 靠稳定排序取 llm.all() 的先后（偏好 > 优先级 > 注册顺序）。缓存签名曾把条目
+// 排序后拼接，偏好一换签名不变、缓存不重建，自动选择停在旧模型上。
+// llm.all() 取自真 App 容器 + services.prefer，不手搓顺序。
+// ════════════════════════════════════════════════════════════
+
+describe('MediaService LLM processor 缓存跟随 llm 偏好切换', () => {
+  const llmProvider = (name: string) =>
+    definePlugin({
+      name,
+      provides: [llm],
+      uses: { provide },
+      apply(c) {
+        c.provide(llm, {
+          id: name,
+          providerId: name,
+          contextLength: 8192,
+          capabilities: ['vision'],
+          chat: async () => ({ content: '' }),
+        } as unknown as LLMModel);
+      },
+    });
+
+  it('偏好切到 B 后，prefer 留空的自动选择跟着换到 B', async () => {
+    const app = new App({ name: 'T', logLevel: 'error' });
+    try {
+      await app.plugin(llmProvider('zz-llm-a'));
+      await app.plugin(llmProvider('zz-llm-b'));
+      await app.plugins.idle();
+      const host = app.bind({ llm, services });
+      const s = new MediaServiceImpl(caps({ llm: host.llm }), cfg);
+      // 注册顺序 A 在前；这一次调用同时建起缓存
+      expect(s.pickProcessor('vision')?.name).toBe('llm:zz-llm-a#vision');
+      expect(host.services.prefer(llm, 'zz-llm-b')).toBe(true);
+      expect(host.llm.all()[0]?.contextId, '前提：容器已按偏好把 B 排到最前').toBe('zz-llm-b');
+      expect(s.pickProcessor('vision')?.name).toBe('llm:zz-llm-b#vision');
+    } finally {
+      await app.stop();
+    }
   });
 });

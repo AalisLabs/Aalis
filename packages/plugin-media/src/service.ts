@@ -647,13 +647,14 @@ export class MediaServiceImpl implements MediaService {
     }
   }
 
-  /** 重新扫描 LLM entries（按 entry id 列表的签名变化决定是否重建）。 */
+  /**
+   * 重新扫描 LLM entries（按 entry 列表的签名变化决定是否重建）。
+   * 签名保留 all() 的先后（偏好 > 优先级 > 注册顺序），不排序：LLM processor 的 priority 恒为 0，
+   * prefer 留空时 pickProcessor 就取这个先后，偏好切换也得让缓存重建。
+   */
   private refreshLLMProcessors(): MediaProcessor[] {
     const all = this.caps.llm.all();
-    const sig = all
-      .map(e => `${e.contextId}:${e.instance.capabilities.join(',')}`)
-      .sort()
-      .join('|');
+    const sig = all.map(e => `${e.contextId}:${e.instance.capabilities.join(',')}`).join('|');
     if (this.llmCache?.signature === sig) return this.llmCache.processors;
     const processors = scanLLMProcessors(this.caps, {
       prompt: this.cfg.vision.prompt,

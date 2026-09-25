@@ -127,7 +127,6 @@ class PersonaServiceImpl implements PersonaService {
 
   constructor(
     card: PersonaCard,
-    _searchUris: string[],
     fileName: string,
     options: { statePersistence: boolean; timeInjection: boolean; timeZone: string },
   ) {
@@ -491,10 +490,12 @@ async function run(caps: Caps): Promise<void> {
 
   const storage = createStorageGateway(caps.storage);
 
-  // 候选目录：用户配置 + configDir/personas（若存在 configDir 根，则用 configDir 根；否则跳过）
-  const searchUris: string[] = [toStorageUri(personasDirRaw)];
-  const knownRoots = new Set(storage.listRoots().map(r => r.name));
-  if (knownRoots.has('configDir')) searchUris.push('configDir:/personas');
+  // 候选目录：用户配置 + configDir/personas（若存在 configDir 根，则用 configDir 根；否则跳过）。
+  // 每次用时现取根列表：storage 是可选依赖、不参与拓扑，本插件可能先于存储提供者激活，
+  // 激活时拍的快照会一直漏掉 configDir。
+  const personasDir = toStorageUri(personasDirRaw);
+  const searchUris = (): string[] =>
+    storage.listRoots().some(r => r.name === 'configDir') ? [personasDir, 'configDir:/personas'] : [personasDir];
 
   /** 读到了但解析不出卡的标记——与"文件不存在"区分开，避免坏卡被当成没有卡 */
   const INVALID = 'invalid' as const;
@@ -548,7 +549,7 @@ async function run(caps: Caps): Promise<void> {
 
   async function findCard(name: string): Promise<{ card: PersonaCard; uri: string } | typeof INVALID | undefined> {
     let sawInvalid = false;
-    for (const dir of searchUris) {
+    for (const dir of searchUris()) {
       for (const ext of ['.yaml', '.yml']) {
         const uri = joinUri(dir, `${name}${ext}`);
         const card = await tryLoadCardFromUri(uri);
@@ -565,7 +566,7 @@ async function run(caps: Caps): Promise<void> {
   /** 扫描所有 personas 目录，预填 cache。 */
   async function scanAll(svc: PersonaServiceImpl): Promise<Set<string>> {
     const seenNames = new Set<string>();
-    for (const dir of searchUris) {
+    for (const dir of searchUris()) {
       let result: Awaited<ReturnType<StorageService['list']>>;
       try {
         result = await storage.list(dir);
@@ -606,7 +607,7 @@ async function run(caps: Caps): Promise<void> {
     }
   }
 
-  const service = new PersonaServiceImpl(card, searchUris, personaName as string, {
+  const service = new PersonaServiceImpl(card, personaName as string, {
     statePersistence,
     timeInjection,
     timeZone,
@@ -629,15 +630,15 @@ async function run(caps: Caps): Promise<void> {
     // 首启主目录尚不存在时 watch 会 ENOENT：先补建（只建本插件的主目录，configDir 等外部根不代建）。
     // 与监听分开：只读根 / 符号链接目录上 mkdir 会抛，不能连带放弃对已存在目录的监听。
     try {
-      await storage.stat(searchUris[0]);
+      await storage.stat(personasDir);
     } catch {
       try {
-        await storage.mkdir?.(searchUris[0]);
+        await storage.mkdir?.(personasDir);
       } catch {
         /* 建不了就照旧：下面的监听会给出失败原因 */
       }
     }
-    for (const dir of searchUris) {
+    for (const dir of searchUris()) {
       try {
         const unwatch = storage.watch?.(dir, async () => {
           try {
