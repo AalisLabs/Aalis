@@ -84,6 +84,16 @@ describe('resolveEffectiveConfig', () => {
     expect(resolveEffectiveConfig(c, 'cli', 'group').cooldownSeconds).toBe(20);
   });
 
+  it('具体度相同时取先出现的一项', () => {
+    const c = make([
+      { scope: '*:private', cooldownSeconds: 30 },
+      { scope: '*:private', cooldownSeconds: 40, fixedInterval: 1 },
+    ]);
+    const eff = resolveEffectiveConfig(c, 'onebot', 'private');
+    expect(eff.cooldownSeconds).toBe(30);
+    expect(eff.fixedInterval, '后一项整条不生效，不做按键合并').toBe(5);
+  });
+
   it('未匹配的 override 不影响', () => {
     const c = make([{ scope: 'onebot:private', cooldownSeconds: 99 }]);
     expect(resolveEffectiveConfig(c, 'cli', 'group')).toBe(c);
