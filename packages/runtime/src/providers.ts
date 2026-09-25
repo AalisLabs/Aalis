@@ -17,7 +17,7 @@ import type { AalisConfig } from '@aalis/api-host-config';
 import type { RestartStrategy } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import type { ConfigProvider } from './config-store.js';
+import { type ConfigProvider, ConfigSaveRefusedError } from './config-store.js';
 import {
   HOST_CORE_DIR,
   importPluginDefinition,
@@ -79,9 +79,9 @@ interface FsYamlConfigProviderResult {
  * 创建一个基于 YAML 文件的 ConfigProvider。
  *
  * - 同步读取 + 解析（值原样加载，不做任何替换——`${VAR}` 插值已随 `.env` 机制删除）
- * - `save()` 同步写回；写前比对盘上内容，有尚未生效的外部修改时拒写（错误只带路径）
+ * - `save()` 同步写回；写前比对盘上内容，有尚未生效的外部修改时拒写（抛 {@link ConfigSaveRefusedError}，只带路径）
  * - `watch()` 监听**配置文件所在目录**（按文件名过滤）+ 300ms debounce，
- *   并通过与 `rawYaml` 的内容比对去重，避免自激；武装后立即对账一次
+ *   并通过与 `rawYaml` 的内容比对去重，避免自激；拒写之后的下一次变更不去重；武装后立即对账一次
  *
  * 返回 config 快照与 provider，供宿主组装 App。
  */
@@ -90,6 +90,10 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
   const dataDir = dirname(absPath);
 
   let rawYaml: string | null = null;
+  // 拒写之后调用方手里的配置文档（常连同运行态）已领先于文件：下一次文件变更不论内容是否等于 rawYaml
+  // 都要投递，让宿主按文件重新对账。否则把文件原样改回的「修好」会被当成空变更跳过，文档与运行态从此
+  // 偏离文件，下一次成功保存还会把被拒的改动写进去。
+  let reconcilePending = false;
   let watcher: FSWatcher | null = null;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   // 走 LogHub 而非 console：file logger 只订阅 LogHub，脱终端部署下 stderr
@@ -150,7 +154,8 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
         if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
       }
       if (onDisk !== null && onDisk !== rawYaml) {
-        throw new Error(`配置文件有尚未生效的外部修改，为免覆盖已拒绝本次保存（${absPath}）`);
+        reconcilePending = true;
+        throw new ConfigSaveRefusedError(`配置文件有尚未生效的外部修改，为免覆盖已拒绝本次保存（${absPath}）`);
       }
       const yaml = buildSaveYaml(config);
       // 原子写：先写临时文件再 rename（同目录同分区，rename 原子覆盖）。
@@ -170,6 +175,7 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
       }
       renameSync(tmp, absPath);
       rawYaml = yaml;
+      reconcilePending = false;
     },
 
     watch(onChange) {
@@ -192,8 +198,8 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
               return;
             }
             // rawYaml 在装载 / save / 本回调三处维护，比对它一并挡掉自写回、目录里
-            // 无关文件的杂音、touch，以及改完又改回来的空变更。
-            if (current === rawYaml) return;
+            // 无关文件的杂音、touch，以及改完又改回来的空变更。拒写之后的这一次除外（见 reconcilePending）。
+            if (current === rawYaml && !reconcilePending) return;
             let parsed: unknown;
             try {
               parsed = parseYaml(current);
@@ -211,6 +217,7 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
               return;
             }
             rawYaml = current;
+            reconcilePending = false;
             try {
               onChange(parsed as AalisConfig);
             } catch (err) {

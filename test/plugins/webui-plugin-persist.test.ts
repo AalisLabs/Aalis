@@ -94,6 +94,7 @@ function world(config: Partial<AalisConfig>, { provideDoc = true, rejectSave = f
     createInstance: (name: string, suffix: string, config: unknown) =>
       call('POST /api/plugins/:name/instances', { name }, { suffix, config }),
     deleteInstance: (instanceId: string) => call('DELETE /api/plugins/:instanceId/instance', { instanceId }),
+    putGlobal: (updates: unknown) => call('PUT /api/config', {}, updates),
   };
 }
 
@@ -221,6 +222,16 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     expect(w.app.plugins.getPlugin('multi:x')).toBeDefined();
     expectApplied(await w.deleteInstance('multi:x'), '重启时以文件内容为准');
     expect(w.app.plugins.getPlugin('multi:x')).toBeUndefined();
+    expect(w.saved).toHaveLength(0);
+  });
+
+  it('全局配置落盘被拒：返回 409 并撤回文档里的改动，免得下一次保存把它写进文件', async () => {
+    const w = world({ name: 'T', logLevel: 'error', plugins: {} }, { rejectSave: true });
+    await w.boot();
+    const reply = await w.putGlobal({ logLevel: 'debug' });
+    expect(reply.status).toBe(409);
+    expect(reply.body).toEqual({ error: `未写入配置文件（${SAVE_REJECTED}），本次修改已撤回` });
+    expect(w.store.get('logLevel'), '被拒的改动留在文档里').toBe('error');
     expect(w.saved).toHaveLength(0);
   });
 });

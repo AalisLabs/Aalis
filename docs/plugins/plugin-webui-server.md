@@ -130,7 +130,7 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 | `/api/logs/tail` · `/api/logs/range` | GET | 日志：尾部 N 条（`?limit=`，默认 200，上限 5000）/ 向前翻页（`?before=<seq>&limit=`，返回 seq 小于 before 的记录） |
 | `/api/proxy/image` | GET | 图片代理 |
 
-core 的插件管理动作与 `services.prefer` 只改运行态；启停、改配置、实例增删与服务偏好要跨重启保留，由对应路由另经 `host-config` 写配置文档并落盘。宿主未提供 `host-config` 时，读写配置文档的路由（`/api/config`、`/api/config/save`、`/api/plugins/:name/config`、启停、实例增删）与服务偏好的设置 / 清除路由返回 503。运行态已改、随后落盘被拒（如配置文件有尚未生效的外部修改）时，启停、改插件配置、实例增删与服务偏好路由返回 409 与 `{ error, applied: true }`：改动已在运行态生效，但没有写入配置文件。修好配置文件后，插件配置随热重载回到文件里的值，新建而未写入文件的实例随热重载卸载；启停、删除实例与服务偏好在重启时以文件为准。
+core 的插件管理动作与 `services.prefer` 只改运行态；启停、改配置、实例增删与服务偏好要跨重启保留，由对应路由另经 `host-config` 写配置文档并落盘。宿主未提供 `host-config` 时，读写配置文档的路由（`/api/config`、`/api/config/save`、`/api/plugins/:name/config`、启停、实例增删）与服务偏好的设置 / 清除路由返回 503。运行态已改、随后落盘被拒（如配置文件有尚未生效的外部修改）时，启停、改插件配置、实例增删与服务偏好路由返回 409 与 `{ error, applied: true }`：改动已在运行态生效，但没有写入配置文件。修好配置文件后，插件配置随热重载回到文件里的值，新建而未写入文件的实例随热重载卸载；启停、删除实例与服务偏好在重启时以文件为准。修好文件的方式不限，原样改回也会触发这次对账。全局配置（`PUT /api/config`）落盘失败时撤回文档里的改动并返回 409：`name` / `logLevel` 本就要重启才生效，运行态没有改动。
 
 ## WebSocket
 
