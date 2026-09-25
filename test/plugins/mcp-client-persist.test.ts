@@ -2,7 +2,7 @@ import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { type App, provide } from '../../packages/core/src/index.js';
+import { App, events, provide } from '../../packages/core/src/index.js';
 import mcpClient from '../../packages/plugin-mcp-client/src/index.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
@@ -58,5 +58,29 @@ describe('mcp-client 自服务开关落盘', () => {
     await registerFromDoc(rebuilt.app, rebuilt.store, mcpClient);
     await rebuilt.app.plugins.idle();
     expect((rebuilt.app.plugins.getPlugin(NAME)?.config as Servers).servers[0].enabled).toBe(true);
+  });
+
+  it('宿主没提供 host-config：直接返回失败，运行态配置不变，也不 bounce', async () => {
+    // 不经 hostedApp：宿主不装配置文档，插件的 host-config 可选依赖为空；plugins 服务照常在场
+    const app = new App({ name: 'T', logLevel: 'error', logger: silent });
+    apps.push(app);
+    const host = app.bind({ events, provide });
+    const registry = new ToolRegistry(silent);
+    host.provide(tools, registry);
+    const unloaded: string[] = [];
+    host.events.on('plugin:unloaded', id => {
+      unloaded.push(id);
+    });
+    await app.plugin(mcpClient, { servers: [{ id: 'a', command: 'aalis-test-missing-mcp-command', enabled: false }] });
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin(NAME)?.state).toBe('active');
+
+    const out = await registry.execute('mcp_set_server_enabled', { id: 'a', enabled: true }, { sessionId: 't' });
+    expect(out.content).toMatch(/^失败：.*host-config/);
+    await app.plugins.idle();
+
+    // 改了却存不下，重启后会悄悄回退：运行态必须原样不动
+    expect((app.plugins.getPlugin(NAME)?.config as Servers).servers[0].enabled).toBe(false);
+    expect(unloaded, 'updateConfig 会 bounce 本插件，拆卸即发 plugin:unloaded').toEqual([]);
   });
 });

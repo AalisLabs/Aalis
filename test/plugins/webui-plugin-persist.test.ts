@@ -78,7 +78,7 @@ function world(config: Partial<AalisConfig>, { provideDoc = true } = {}) {
       );
     },
   });
-  const call = async (key: string, name: string, body: unknown = {}): Promise<Reply> => {
+  const call = async (key: string, params: Record<string, string>, body: unknown = {}): Promise<Reply> => {
     const handlers = routes.get(key);
     if (!handlers) throw new Error(`${key} 未注册`);
     const out: Reply = { status: 200 };
@@ -95,7 +95,7 @@ function world(config: Partial<AalisConfig>, { provideDoc = true } = {}) {
     let i = 0;
     const next = async (): Promise<void> => {
       const h = handlers[i++];
-      if (h) await h({ params: { name }, body, headers: {} }, res, next);
+      if (h) await h({ params, body, headers: {} }, res, next);
     };
     await next();
     return out;
@@ -114,9 +114,12 @@ function world(config: Partial<AalisConfig>, { provideDoc = true } = {}) {
       );
       await app.plugins.idle();
     },
-    enable: (name: string) => call('POST /api/plugins/:name/enable', name),
-    disable: (name: string) => call('POST /api/plugins/:name/disable', name),
-    put: (name: string, config: unknown) => call('PUT /api/plugins/:name/config', name, { config }),
+    enable: (name: string) => call('POST /api/plugins/:name/enable', { name }),
+    disable: (name: string) => call('POST /api/plugins/:name/disable', { name }),
+    put: (name: string, config: unknown) => call('PUT /api/plugins/:name/config', { name }, { config }),
+    createInstance: (name: string, suffix: string, config: unknown) =>
+      call('POST /api/plugins/:name/instances', { name }, { suffix, config }),
+    deleteInstance: (instanceId: string) => call('DELETE /api/plugins/:instanceId/instance', { instanceId }),
   };
 }
 
@@ -190,5 +193,32 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     expect(w.app.plugins.getPlugin('target')?.config).toEqual({ v: 1 });
     expect(w.store.isPluginDisabled('target')).toBe(false);
     expect(w.saved).toHaveLength(0);
+  });
+
+  it('建实例沿用文档里残留的禁用标记并写入配置落盘，删实例移除文档键并落盘', async () => {
+    const multi = definePlugin({
+      name: 'multi',
+      reusable: true,
+      configSchema: { v: { type: 'number', label: 'V', default: 0 } },
+      apply() {},
+    });
+    // 文档里残留一条实例的禁用标记（此前禁用后删掉、或手改配置留下的）
+    const w = world({ name: 'T', logLevel: 'error', plugins: {}, disabledPlugins: ['multi:x'] });
+    await w.boot(multi);
+
+    const created = await w.createInstance('multi', 'x', { v: 3 });
+    expect(created.status).toBe(200);
+    expect(created.body).toMatchObject({ ok: true, instanceId: 'multi:x' });
+    await w.app.plugins.idle();
+    expect(w.app.plugins.getPlugin('multi:x')?.state, '残留的禁用标记要随登记生效').toBe('disabled');
+    expect(w.store.getPluginConfig('multi:x')).toEqual({ v: 3 });
+    expect(w.saved).toHaveLength(1);
+    expect(w.saved[0].plugins['multi:x']).toEqual({ v: 3 });
+
+    expect((await w.deleteInstance('multi:x')).status).toBe(200);
+    expect(w.app.plugins.getPlugin('multi:x')).toBeUndefined();
+    expect(Object.hasOwn(w.store.getAll().plugins, 'multi:x')).toBe(false);
+    expect(w.saved).toHaveLength(2);
+    expect(Object.hasOwn(w.saved[1].plugins, 'multi:x')).toBe(false);
   });
 });
