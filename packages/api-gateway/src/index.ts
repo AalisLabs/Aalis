@@ -115,8 +115,8 @@ export interface GatewayService {
  *   COMMAND  → 指令解析与执行（由 plugin-commands 占据）
  *   TRIGGER  → 要不要开口：禁言关键词、@/戳一戳/名字直通、计数与评分判定，判定结果写入
  *              message.triggerType（由 plugin-trigger-policy 占据）
- *   FLOW     → 节流硬闸：禁言期一律吞；回复后冷却与限速只挡非 immediate 触发
- *              （由 plugin-flow-control 占据）
+ *   FLOW     → 节流硬闸：禁言期一律吞；回复后冷却与限速只挡真人消息里的非 immediate 触发，
+ *              带 source 的内部注入只受禁言约束（由 plugin-flow-control 占据）
  *   DISPATCH → 默认派发到 agent.handleMessage（plugin-gateway 提供 default action）
  *
  * 任一相位的 handler 不调用 next() 即视为"我已处理"，

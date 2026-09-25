@@ -229,6 +229,13 @@ function run(caps: Caps): void {
     return s;
   }
 
+  /** 计数与活跃指数清零（禁言与判定放行时） */
+  function resetCounters(s: TriggerSessionState | undefined): void {
+    if (!s) return;
+    s.messageCount = 0;
+    s.activityScore = 0;
+  }
+
   /** 按会话重排 session 档 idle（非 session 档时只清定时器） */
   function rescheduleIdle(sessionId: string): void {
     const s = states.get(sessionId);
@@ -297,7 +304,9 @@ function run(caps: Caps): void {
   // 交给 flow 相位做节流硬闸（immediate 穿透冷却与限速）。
   hooks.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
     const { message } = data;
-    if (message.source === 'idle-trigger') return next(); // 内部注入跳过策略
+    // 内部注入（闲置触发、定时任务、workflow、跨会话委派）都带 source，跳过策略：不计数、不改 triggerType。
+    // 真人消息由平台适配器投递，不设 source。
+    if (message.source) return next();
 
     // 不在触发策略作用域内（默认 *:group）：直接放行。
     // 必须在 mute 检查之前进行，否则 QQ 群的 mute 关键词会泄漏到 WebUI/私聊等不在 scope 内的会话。
@@ -307,24 +316,21 @@ function run(caps: Caps): void {
     const sessionId = message.sessionId;
     const flow = flowControl.current;
 
-    // 禁言期：不累计计数，已攒的计数与评分清零（关键词与平台禁言两种来源都在这里覆盖）；
+    // 禁言期：不累计计数，已攒的计数与评分清零（平台禁言只能在这里清：禁言期来消息时）；
     // 也不再识别禁言关键词，避免缩短平台禁言。放行给 flow 相位吞掉并归档。
     if (flow?.isMuted(sessionId)) {
-      const s = states.get(sessionId);
-      if (s) {
-        s.messageCount = 0;
-        s.activityScore = 0;
-      }
+      resetCounters(states.get(sessionId));
       return next();
     }
 
     const e = resolveEffectiveConfig(cfg, message.platform, message.sessionType, tid);
     const isPoke = message.noticeType === WellKnownNoticeTypes.Poke;
 
-    // 禁言关键词：设置自禁言并吞掉。poke 的 content 是合成文案，与名字检测一样不当发言评估。
+    // 禁言关键词：设置自禁言、计数与评分当场清零，吞掉本条。poke 的 content 是合成文案，与名字检测一样不当发言评估。
     if (!isPoke && checkMuteKeyword(e, message.content)) {
       logger.info(`[trigger] mute 关键词命中 → swallow + setMuted(${e.muteTimeSeconds}s): ${sessionId}`);
       flow?.setMuted(sessionId, e.muteTimeSeconds, message.platform);
+      resetCounters(states.get(sessionId));
       await shadowArchive(message);
       return; // swallow
     }
@@ -357,8 +363,7 @@ function run(caps: Caps): void {
 
     logger.debug(`[trigger] ${kind} → 触发 | session=${sessionId} | ${stateStr}`);
     // 判定放行即复位：之后若被 flow 相位的冷却/限速吞掉，这次触发作废
-    s.messageCount = 0;
-    s.activityScore = 0;
+    resetCounters(s);
     s.lastTriggerTime = Date.now();
     message.triggerType = kind;
     // interval 回合无主发言者：授权身份回填为无主体，不让「恰好撞阈值的那个人」

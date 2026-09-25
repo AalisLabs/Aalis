@@ -284,7 +284,9 @@ async function run(caps: Caps): Promise<void> {
       return; // swallow
     }
 
-    if (message.source === 'idle-trigger') return next(); // 闲置触发只受禁言约束
+    // 内部注入（带 source：闲置触发、定时任务、workflow、跨会话委派）只受禁言约束，不过冷却与限速：
+    // 定时提醒等不该被回复后冷却静默吞掉
+    if (message.source) return next();
     const targetId = extractTargetId(message);
     if (!isScopeEnabled(cfg, message.platform, message.sessionType, targetId)) return next();
 
