@@ -47,28 +47,27 @@ export default definePlugin({
 });
 
 function registerTodoList({ tools, events, memory, webui }: Caps): void {
-  /** sessionId → TodoItem[]：随这次激活存亡，插件重载或换 memory 后端后不会命中陈旧条目 */
+  /**
+   * sessionId → TodoItem[]：随这次激活存亡，插件重载后不会命中陈旧条目。
+   * 只在没有 memory 时充当存储，有 memory 时不作读缓存：memory 是 optional，胜者换人时
+   * 本插件不重启，读穿缓存会一直停在旧后端的清单上。
+   */
   const store = new Map<string, TodoItem[]>();
 
   /**
    * 持久化依赖 memory 服务，而本插件不 require 它（没有 memory 也能当纯回合内清单用）：
-   * 无 memory 时静默 no-op，todo 只存活于这次激活的缓存里。
+   * 无 memory 时静默 no-op，todo 只存活于这次激活的 store 里。
    */
   async function persistTodos(sessionId: string, items: TodoItem[]): Promise<void> {
     await memory.current?.saveMetadata(TODO_NAMESPACE, sessionId, { items });
   }
 
-  /** 从 memory 加载 todo（优先缓存） */
+  /** 有 memory 时每次读当前胜者，没有时读 store */
   async function loadTodos(sessionId: string): Promise<TodoItem[]> {
-    const cached = store.get(sessionId);
-    if (cached) return cached;
-    const data = await memory.current?.getMetadata(TODO_NAMESPACE, sessionId);
-    if (data?.items && Array.isArray(data.items)) {
-      const items = data.items as TodoItem[];
-      store.set(sessionId, items);
-      return items;
-    }
-    return [];
+    const mem = memory.current;
+    if (!mem) return store.get(sessionId) ?? [];
+    const data = await mem.getMetadata(TODO_NAMESPACE, sessionId);
+    return data?.items && Array.isArray(data.items) ? (data.items as TodoItem[]) : [];
   }
 
   // ===== 页面动作 =====
