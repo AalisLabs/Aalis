@@ -1,6 +1,6 @@
 import { gateway } from '@aalis/api-gateway';
 import { processService } from '@aalis/api-process';
-import { storage } from '@aalis/api-storage';
+import { type StorageRootInfo, storage } from '@aalis/api-storage';
 import { type RegisteredTool, tools } from '@aalis/api-tools';
 import { App, events, provide } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { agent } from '../../packages/api-agent/src/index.js';
 import { type FlowControlService, flowControl } from '../../packages/api-flow-control/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
+import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
@@ -87,6 +88,34 @@ interface SetupOptions {
   autoReply?: (msg: IncomingMessage) => boolean;
   /** 装配 tool-session（delegate_to_session）与 onebot 适配器 */
   withDelegate?: boolean;
+  /** 提供 message-archive：收集影子归档的消息 */
+  archived?: IncomingMessage[];
+  /** 提供内存 data 根存储（禁言落盘）；同一个 Map 传给下一个 App 即模拟重启 */
+  files?: Map<string, string>;
+}
+
+const DATA_ROOT: StorageRootInfo = {
+  name: 'data',
+  label: 'data',
+  kind: 'data',
+  browsable: true,
+  readable: true,
+  writable: true,
+  deletable: true,
+};
+
+function memoryStorage(files: Map<string, string>): never {
+  return {
+    listRoots: () => [DATA_ROOT],
+    async readFile(uri: string) {
+      const data = files.get(uri);
+      if (data === undefined) throw new Error(`不存在: ${uri}`);
+      return data;
+    },
+    async writeFile(uri: string, data: string) {
+      files.set(uri, String(data));
+    },
+  } as never;
 }
 
 const booted: App[] = [];
@@ -118,6 +147,16 @@ async function setup(opts: SetupOptions = {}): Promise<Harness> {
     },
   } as never);
 
+  if (opts.archived) {
+    const archived = opts.archived;
+    host.provide(messageArchive, {
+      async archiveIncoming(m: IncomingMessage) {
+        archived.push(m);
+      },
+    } as never);
+  }
+  if (opts.files) host.provide(storage, memoryStorage(opts.files));
+
   const handlers = new Map<string, ToolHandler>();
   if (opts.withDelegate) {
     host.provide(tools, {
@@ -129,7 +168,7 @@ async function setup(opts: SetupOptions = {}): Promise<Harness> {
       registerGroup: () => () => {},
     } as never);
     // onebot 适配器的两个必需依赖：本测试不连 ws、不落盘，给占位即可
-    host.provide(storage, { listRoots: () => [] } as never);
+    if (!opts.files) host.provide(storage, { listRoots: () => [] } as never);
     host.provide(processService, {} as never);
   }
 
@@ -465,6 +504,58 @@ describe('禁言', () => {
     await h.send(groupMsg(G, '解禁后第三条'));
     expect(h.contents()).toEqual(['解禁后第三条']);
   });
+
+  it('作用域外的禁言关键词不写入禁言（默认 *:group，私聊不在作用域）', async () => {
+    const h = await setup({ trigger: { muteKeywords: '闭嘴', muteTimeSeconds: 600 } });
+
+    await h.send(privateMsg('30009', '你闭嘴吧'));
+    expect(h.flow().isMuted(privateSid('30009'))).toBe(false);
+
+    // 对照：同一个词在作用域内的群聊里生效
+    await h.send(groupMsg('20001', '你闭嘴吧'));
+    expect(h.flow().isMuted(sid('20001'))).toBe(true);
+  });
+
+  it('禁言压过 immediate：预置 triggerType=immediate 的消息在禁言期同样被吞', async () => {
+    const h = await setup();
+    const U = '30009';
+
+    h.flow().setMuted(privateSid(U), 600, 'onebot');
+    await h.send({ ...privateMsg(U, '禁言期的直触发'), triggerType: 'immediate' });
+    expect(h.contents()).not.toContain('禁言期的直触发');
+
+    // 对照：解禁后同样的消息放行
+    await advance(601_000);
+    await h.send({ ...privateMsg(U, '解禁后的直触发'), triggerType: 'immediate' });
+    expect(h.contents()).toContain('解禁后的直触发');
+  });
+
+  it('setMuted(0) 解除禁言后 @ 可达（平台解禁同步）', async () => {
+    const h = await setup();
+    const G = '20001';
+
+    h.flow().setMuted(sid(G), 3600, 'onebot');
+    await h.send(groupMsg(G, `${AT}禁言中`));
+    expect(h.contents()).not.toContain(`${AT}禁言中`);
+
+    h.flow().setMuted(sid(G), 0, 'onebot');
+    await h.send(groupMsg(G, `${AT}解禁了吗`));
+    expect(h.contents()).toContain(`${AT}解禁了吗`);
+  });
+
+  it('禁言状态落盘，重启后恢复', async () => {
+    const files = new Map<string, string>();
+    const G = '20001';
+    const first = await setup({ files });
+    first.flow().setMuted(sid(G), 3600, 'onebot');
+    await flush(); // 落盘走异步串行链
+    await first.app.stop();
+
+    const second = await setup({ files });
+    expect(second.flow().isMuted(sid(G)), '重启后应恢复未过期的禁言').toBe(true);
+    await second.send(groupMsg(G, `${AT}重启后说句话`));
+    expect(second.contents()).not.toContain(`${AT}重启后说句话`);
+  });
 });
 
 // ────────────────────────────────────────────────────────────
@@ -488,6 +579,8 @@ describe('冷却与限速', () => {
     expect(h.contents()).toContain('冷却过后的第三句');
   });
 
+  // 按顶层配置生效。只经委派抵达的会话没有 sessionType / targetId，按 *:private 等写的 overrides
+  // 对它不生效——已知局限，文档注明，不在此断言。
   it('委派到无入站记录的私聊：真实回复计入限速，第 N+1 次委派被拒', async () => {
     const N = 2;
     const h = await setup({
@@ -519,6 +612,55 @@ describe('冷却与限速', () => {
     expect(res.delegated).toBeUndefined();
     expect(res.error).toContain('禁言');
     expect(h.received, '被拒的委派不派发').toHaveLength(0);
+  });
+
+  it('入站限速：非 immediate 被吞，immediate 穿透限速', async () => {
+    const h = await setup({
+      flow: { cooldownSeconds: 0, rateLimitWindow: 60, rateLimitMaxReplies: 1 },
+      trigger: { intervalMode: 'fixed', fixedInterval: 1 },
+      autoReply: () => true,
+    });
+    const G = '20001';
+
+    await h.send(groupMsg(G, '第一条')); // agent 回复，占满限速窗口
+    expect(h.contents()).toContain('第一条');
+    await advance(1_000);
+    await h.send(groupMsg(G, '限速中的普通消息'));
+    expect(h.contents(), '限速窗口内 interval 应被吞').not.toContain('限速中的普通消息');
+    await h.send(groupMsg(G, `${AT}限速中被点名`));
+    expect(h.contents(), 'immediate 应穿透限速').toContain(`${AT}限速中被点名`);
+  });
+
+  it('非 agent 出站（命令回复）不设冷却', async () => {
+    const h = await setup({ trigger: { intervalMode: 'fixed', fixedInterval: 1 } });
+    const G = '20001';
+    const gw = h.app.bind({ gateway }).gateway.require();
+
+    await gw.dispatchOutbound({ content: '命令结果', sessionId: sid(G), platform: 'onebot', source: 'command' });
+    await h.send(groupMsg(G, '命令后的普通消息'));
+    expect(h.contents()).toContain('命令后的普通消息');
+
+    // 对照：agent 回复后同样的消息被冷却吞掉
+    await h.reply(sid(G));
+    await h.send(groupMsg(G, '回复后的普通消息'));
+    expect(h.contents()).not.toContain('回复后的普通消息');
+  });
+
+  it('平台禁言建出的流控状态在首条入站后补全会话类型，按类型写的覆盖随之生效', async () => {
+    const h = await setup({
+      flow: { cooldownSeconds: 0, overrides: [{ scope: '*:group', cooldownSeconds: 30 }] },
+      trigger: { intervalMode: 'fixed', fixedInterval: 1 },
+      autoReply: () => true,
+    });
+    const G = '20001';
+
+    h.flow().setMuted(sid(G), 1, 'onebot'); // 适配器同步平台禁言：只知道 sessionId 与平台
+    await advance(2_000); // 解禁
+
+    await h.send(groupMsg(G, '解禁后第一条')); // agent 回复 → 按 *:group 覆盖记 30s 冷却
+    await advance(5_000);
+    await h.send(groupMsg(G, '冷却中的第二条'));
+    expect(h.contents(), '*:group 覆盖的 30s 冷却应生效（顶层为 0）').toEqual(['解禁后第一条']);
   });
 });
 
@@ -616,5 +758,176 @@ describe('内部注入（带 source）', () => {
     await advance(601_000);
     await h.send(idle());
     expect(h.idles()).toHaveLength(1);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// 计数与判定
+// ────────────────────────────────────────────────────────────
+describe('计数与判定', () => {
+  it('判定放行即复位计数', async () => {
+    const h = await setup({ trigger: { intervalMode: 'fixed', fixedInterval: 3 } });
+    const G = '20001';
+
+    for (let i = 1; i <= 3; i++) await h.send(groupMsg(G, `m${i}`));
+    expect(h.contents()).toEqual(['m3']);
+    await h.send(groupMsg(G, 'm4'));
+    expect(h.contents(), '触发后计数应从 0 起').toEqual(['m3']);
+  });
+
+  it('dynamic：放行后动态阈值回到上限', async () => {
+    const h = await setup({ trigger: { intervalMode: 'dynamic' } });
+    const G = '20001';
+
+    await h.send(groupMsg(G, 'd1'));
+    await h.send(groupMsg(G, 'd2')); // 0.21 + 0.22 ≥ 下限 0.3 → 放行
+    expect(h.contents()).toEqual(['d2']);
+    await h.send(groupMsg(G, 'd3'));
+    await h.send(groupMsg(G, 'd4')); // 约 0.47，低于刚放行后的阈值（接近上限 0.85）
+    expect(h.contents(), '刚放行后阈值应接近上限').toEqual(['d2']);
+  });
+
+  it('同一用户连续发言的活跃指数增量逐条抬高', async () => {
+    // 增量 = 0.2 × (1 + 0.05 × 该用户累计条数)：同一人两条 0.21 + 0.22 = 0.43，两个人各一条 0.21 + 0.21 = 0.42
+    const h = await setup({ trigger: { intervalMode: 'dynamic', activityScoreLower: 0.425 } });
+
+    await h.send(groupMsg('20001', 'A1', '30001'));
+    await h.send(groupMsg('20001', 'A2', '30001'));
+    expect(h.contents(), '同一用户第二条应跨过阈值').toEqual(['A2']);
+
+    await h.send(groupMsg('20002', 'B1', '30002'));
+    await h.send(groupMsg('20002', 'C1', '30003'));
+    expect(h.contents(), '两个人各一条不应跨过阈值').toEqual(['A2']);
+  });
+
+  it('30 天无活动的会话状态被清扫，旧计数不跨月残留', async () => {
+    const h = await setup({ trigger: { intervalMode: 'fixed', fixedInterval: 3 } });
+    const G = '20001';
+
+    await h.send(groupMsg(G, 'a1'));
+    await h.send(groupMsg(G, 'a2'));
+    await advance(32 * 24 * 60 * 60 * 1000);
+    await h.send(groupMsg(G, 'a3'));
+    expect(h.contents(), '31 天前的计数应随状态淘汰').not.toContain('a3');
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// 闲置触发（session / platform 档）
+// ────────────────────────────────────────────────────────────
+describe('闲置触发', () => {
+  const sessionIdle = (style: 'fixed' | 'exponential', extra: Record<string, unknown> = {}) => ({
+    idleTriggerScope: 'session',
+    idleTriggerStyle: style,
+    idleTriggerMinutes: 1,
+    idleTriggerMaxMinutes: 60,
+    idleTriggerJitter: false,
+    ...extra,
+  });
+
+  it('禁言期到点跳过、不翻倍退避：解禁后按基础间隔恢复', async () => {
+    const h = await setup({ trigger: sessionIdle('exponential') });
+    const G = '20001';
+
+    await h.send(groupMsg(G, '随便聊聊'));
+    h.flow().setMuted(sid(G), 600, 'onebot');
+    await advance(601_000); // 解禁
+    await advance(61_000);
+    expect(h.idles().length, '解禁后一个基础间隔内应有 idle').toBeGreaterThan(0);
+  });
+
+  it('真人消息把退避复位为 1', async () => {
+    const h = await setup({ trigger: sessionIdle('exponential') });
+    const G = '20001';
+
+    await h.send(groupMsg(G, '随便聊聊')); // t=0
+    await advance(60_500); // 第一次 idle，退避 x2
+    expect(h.idles()).toHaveLength(1);
+    await advance(40_000); // t≈100.5s
+    await h.send(groupMsg(G, '又来一条')); // 退避复位 → t≈160.5s 再次 idle
+    await advance(62_000); // t≈162.5s（未复位则要到 t≈220.5s）
+    expect(h.idles(), '真人活动后应按 x1 重排').toHaveLength(2);
+  });
+
+  it('session 档：agent 回复后从回复时刻重排', async () => {
+    const h = await setup({ trigger: sessionIdle('fixed') });
+    const G = '20001';
+
+    await h.send(groupMsg(G, '随便聊聊')); // t=0，排在 t=60s
+    await advance(30_000);
+    await h.reply(sid(G)); // t=30s，重排到 t=90s
+    await advance(40_000); // t=70s
+    expect(h.idles(), '回复后应从回复时刻重排').toHaveLength(0);
+    await advance(25_000); // t=95s
+    expect(h.idles()).toHaveLength(1);
+  });
+
+  it('exponential 退避封顶 idleTriggerMaxMinutes', async () => {
+    const h = await setup({ trigger: sessionIdle('exponential', { idleTriggerMaxMinutes: 2 }) });
+
+    await h.send(groupMsg('20001', '随便聊聊')); // idle 于 t=60s、180s、300s、420s（封顶 2 分钟）
+    await advance(7 * 60_000 + 1_000);
+    expect(h.idles()).toHaveLength(4);
+  });
+
+  it('platform 档：agent 真实回复记为活动，下一轮不选刚回复过的会话', async () => {
+    const h = await setup({
+      trigger: { idleTriggerScope: 'platform', idleTriggerStrategy: 'fixed', idleTriggerMinutes: 1 },
+    });
+    const A = '20001';
+    const B = '20002';
+
+    await h.send(groupMsg(A, '随便聊聊'));
+    await advance(10_000);
+    await h.send(groupMsg(B, '随便聊聊'));
+    await advance(20_000);
+    await h.reply(sid(A)); // t=30s：A 有 bot 活动，比 B 新
+    await advance(31_000); // t≈61s tick
+    expect(h.idles().map(m => m.sessionId)).toEqual([sid(B)]);
+  });
+
+  it('插件停用时清掉 session 档定时器', async () => {
+    const h = await setup({ trigger: sessionIdle('fixed') });
+
+    await h.send(groupMsg('20001', '随便聊聊'));
+    expect(vi.getTimerCount(), '已排上 idle 定时器').toBeGreaterThan(0);
+    await h.app.stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// 影子归档：被吞掉的真人消息进档，下次触发时作为上下文
+// ────────────────────────────────────────────────────────────
+describe('影子归档', () => {
+  it('未触发、禁言关键词、禁言期的消息都入档，禁言期消息只归档一次', async () => {
+    const archived: IncomingMessage[] = [];
+    const h = await setup({
+      trigger: { muteKeywords: '闭嘴', muteTimeSeconds: 60 },
+      archived,
+    });
+    const G = '20001';
+
+    await h.send(groupMsg(G, '未触发的一条'));
+    await h.send(groupMsg(G, '你闭嘴吧'));
+    await h.send(groupMsg(G, '禁言期'));
+    const got = archived.map(m => m.content);
+    expect(got).toEqual(['未触发的一条', '你闭嘴吧', '禁言期']);
+    expect(h.received).toHaveLength(0);
+  });
+
+  it('冷却吞掉的消息入档', async () => {
+    const archived: IncomingMessage[] = [];
+    const h = await setup({
+      flow: { cooldownSeconds: 10 },
+      trigger: { intervalMode: 'fixed', fixedInterval: 1 },
+      autoReply: () => true,
+      archived,
+    });
+
+    await h.send(groupMsg('20001', '第一条'));
+    await h.send(groupMsg('20001', '冷却中'));
+    expect(h.contents()).not.toContain('冷却中');
+    expect(archived.map(m => m.content)).toContain('冷却中');
   });
 });
