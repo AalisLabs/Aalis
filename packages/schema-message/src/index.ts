@@ -123,11 +123,7 @@ export interface Message {
 
 // ----- 入站消息 -----
 
-/**
- * 多模态附件统一载体（v2 新主字段）。
- * 取代 images[] / files[]：所有适配器（OneBot / WebUI / CLI 等）应优先填 attachments，
- * 旧的 images / files 字段保留以兼容老的预处理器与历史代码，框架内的归一化函数会双向同步。
- */
+/** 多模态附件统一载体。 */
 export interface MessageAttachment {
   /** 媒介类型 */
   kind: 'image' | 'audio' | 'video' | 'file';
