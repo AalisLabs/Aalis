@@ -329,14 +329,23 @@ async function run(caps: Caps): Promise<void> {
 
   const storageGateway = createStorageGateway(storage);
   const persistUri = toStorageUri(config.persistPath);
+  /**
+   * 激活时那次读失败了、又不是「文件不存在」（storage 不在场、读错误、解析失败）：写的是整表，
+   * 此后一律拒写，否则下一次增删改就把原有动态任务冲掉。只在激活时读一次，storage 迟到也不重读。
+   */
+  let loadFailed = false;
 
   async function loadDynamicJobs(): Promise<SchedulerJobConfig[]> {
     try {
       let raw: string;
       try {
         raw = (await storageGateway.readFile(persistUri, 'utf-8')) as string;
-      } catch {
-        return [];
+      } catch (err) {
+        // 只有「文件不存在」算全新；网关的「未知存储根」等其它失败不能当成空表
+        const code = (err as NodeJS.ErrnoException)?.code;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (code === 'ENOENT' || (code === undefined && /ENOENT|not found|不存在/i.test(msg))) return [];
+        throw err;
       }
       const data = JSON.parse(raw);
       if (!Array.isArray(data)) return [];
@@ -371,7 +380,8 @@ async function run(caps: Caps): Promise<void> {
         };
       });
     } catch (err) {
-      logger.warn(`加载持久化任务失败: ${err}`);
+      loadFailed = true;
+      logger.warn(`加载持久化任务失败，本次运行不再写入该文件: ${err}`);
       return [];
     }
   }
@@ -384,6 +394,10 @@ async function run(caps: Caps): Promise<void> {
    */
   let saveChain: Promise<void> = Promise.resolve();
   function saveDynamicJobs(): void {
+    if (loadFailed) {
+      logger.warn(`持久化任务上次加载失败，跳过写入以免覆盖原有任务（本次改动仅在内存生效）: ${persistUri}`);
+      return;
+    }
     const jobs = [...dynamicJobs.values()];
     const payload = JSON.stringify(jobs, null, 2);
     saveChain = saveChain
