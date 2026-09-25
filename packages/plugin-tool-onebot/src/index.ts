@@ -1,10 +1,15 @@
 import { media } from '@aalis/api-media';
-import { getPlatformAdapters, getPlatformNames, type PlatformAdapter, platform } from '@aalis/api-platform';
+import {
+  getPlatformAdapters,
+  getPlatformNames,
+  type PlatformAdapter,
+  platform as platformService,
+} from '@aalis/api-platform';
 import { createStorageGateway, type StorageService, storage } from '@aalis/api-storage';
 import { type AccessChecker, sessionHistory } from '@aalis/api-tool-session';
 import type { BoundTools, ToolCallContext } from '@aalis/api-tools';
 import { tools, withToolGroups } from '@aalis/api-tools';
-import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 
 // ===== 插件元数据 =====
@@ -92,13 +97,12 @@ const configSchema: ConfigSchema = {
 
 const uses = {
   tools: optional(tools),
-  platform: optional(platform),
+  platform: optional(platformService),
   storage: optional(storage),
   media: optional(media),
   sessionHistory: optional(sessionHistory),
   events,
   logger,
-  lifecycle,
   config,
 };
 type Caps = BoundOf<typeof uses>;
@@ -571,13 +575,47 @@ export default definePlugin({
       personal: withToolGroups(tools, ['onebot-personal']),
     };
 
-    // 仅当 OneBot 平台可用时才注册工具
-    // 使用 app:ready 事件确保平台已加载
-    events.on('app:ready', () => {
-      if (!getPlatformNames(platform).includes('onebot')) {
-        logger.info('未检测到 OneBot 平台，跳过 OneBot 工具注册');
-        return;
-      }
+    const cfg = {
+      groupManagement: { enabled: true, ...((config.groupManagement as Record<string, unknown>) ?? {}) },
+      groupInfo: { enabled: true, ...((config.groupInfo as Record<string, unknown>) ?? {}) },
+      account: { enabled: true, ...((config.account as Record<string, unknown>) ?? {}) },
+      interaction: { enabled: true, ...((config.interaction as Record<string, unknown>) ?? {}) },
+      sessionHistory: {
+        enabled: true,
+        maxLimit: 100,
+        defaultLimit: 20,
+        allowGroupReadPrivate: false,
+        allowCrossSelf: false,
+        allowCrossGroup: true,
+        allowCrossPrivate: false,
+        ...((config.sessionHistory as Record<string, unknown>) ?? {}),
+      },
+    };
+
+    let historyCfg: OneBotSessionHistoryConfig | undefined;
+    if (cfg.sessionHistory.enabled) {
+      const maxLimit = Math.max(1, Math.min(1000, Number(cfg.sessionHistory.maxLimit) || 100));
+      const defaultLimitRaw = Math.max(1, Math.floor(Number(cfg.sessionHistory.defaultLimit) || 20));
+      historyCfg = {
+        maxLimit,
+        defaultLimit: Math.min(defaultLimitRaw, maxLimit),
+        allowGroupReadPrivate: cfg.sessionHistory.allowGroupReadPrivate === true,
+        allowCrossSelf: cfg.sessionHistory.allowCrossSelf === true,
+        allowCrossGroup: cfg.sessionHistory.allowCrossGroup !== false,
+        allowCrossPrivate: cfg.sessionHistory.allowCrossPrivate === true,
+      };
+      // 访问规则只对 onebot 会话 id 表态，与 OneBot 平台在不在场无关：不进下面的平台闸
+      registerOneBotHistoryAccessChecker(caps, historyCfg);
+    }
+
+    // 仅当 OneBot 平台可用时才注册工具。platform 是可选的多提供者服务，OneBot 适配器可能晚于
+    // app:ready 上线（WebUI 启用、市场热装、启动失败后修好），且作为非胜者上线时 follow 不触发：
+    // 故在 app:ready 与每次 platform 提供者注册时各判一次，出现 onebot 即注册，之后不再重复。
+    // 平台离场不反注册：工具调用时找不到 OneBot 连接本就会报错。
+    let toolsRegistered = false;
+    const registerToolsOnce = (): void => {
+      if (toolsRegistered || !getPlatformNames(platform).includes('onebot')) return;
+      toolsRegistered = true;
 
       logger.info('检测到 OneBot 平台，开始注册 OneBot 工具');
 
@@ -598,42 +636,19 @@ export default definePlugin({
         description: '影响 bot 账号本身的人际关系：退群、删好友、处理好友申请、接受/拒绝入群邀请',
       });
 
-      const cfg = {
-        groupManagement: { enabled: true, ...((config.groupManagement as Record<string, unknown>) ?? {}) },
-        groupInfo: { enabled: true, ...((config.groupInfo as Record<string, unknown>) ?? {}) },
-        account: { enabled: true, ...((config.account as Record<string, unknown>) ?? {}) },
-        interaction: { enabled: true, ...((config.interaction as Record<string, unknown>) ?? {}) },
-        sessionHistory: {
-          enabled: true,
-          maxLimit: 100,
-          defaultLimit: 20,
-          allowGroupReadPrivate: false,
-          allowCrossSelf: false,
-          allowCrossGroup: true,
-          allowCrossPrivate: false,
-          ...((config.sessionHistory as Record<string, unknown>) ?? {}),
-        },
-      };
-
       if (cfg.groupManagement.enabled) registerGroupManagementTools(caps, bundle);
       if (cfg.groupInfo.enabled) registerGroupInfoTools(caps, storage, bundle);
       if (cfg.account.enabled) registerAccountTools(caps, bundle);
       if (cfg.interaction.enabled) registerInteractionTools(caps, bundle);
-      if (cfg.sessionHistory.enabled) {
-        const maxLimit = Math.max(1, Math.min(1000, Number(cfg.sessionHistory.maxLimit) || 100));
-        const defaultLimitRaw = Math.max(1, Math.floor(Number(cfg.sessionHistory.defaultLimit) || 20));
-        const historyCfg: OneBotSessionHistoryConfig = {
-          maxLimit,
-          defaultLimit: Math.min(defaultLimitRaw, maxLimit),
-          allowGroupReadPrivate: cfg.sessionHistory.allowGroupReadPrivate === true,
-          allowCrossSelf: cfg.sessionHistory.allowCrossSelf === true,
-          allowCrossGroup: cfg.sessionHistory.allowCrossGroup !== false,
-          allowCrossPrivate: cfg.sessionHistory.allowCrossPrivate === true,
-        };
-        registerSessionHistoryTools(caps, bundle, historyCfg);
-        registerOneBotHistoryAccessChecker(caps, historyCfg);
-      }
+      if (historyCfg) registerSessionHistoryTools(caps, bundle, historyCfg);
       registerRequestTools(caps, bundle);
+    };
+    events.on('app:ready', () => {
+      registerToolsOnce();
+      if (!toolsRegistered) logger.info('未检测到 OneBot 平台，暂不注册 OneBot 工具（平台上线后自动补注册）');
+    });
+    events.on('service:registered', name => {
+      if (name === platformService.name) registerToolsOnce();
     });
   },
 });
@@ -1714,8 +1729,8 @@ function registerInteractionTools(caps: ToolCaps, bundle: OneBotToolBundle): voi
 
 /** 平台专属历史工具：查历史服务 + 平台适配器解析 selfId */
 type HistoryToolCaps = Pick<Caps, 'platform' | 'logger' | 'sessionHistory'>;
-/** 访问规则注入：等 app:ready 后把规则挂到历史服务上，并登记撤回 */
-type HistoryCheckerCaps = Pick<Caps, 'events' | 'logger' | 'lifecycle' | 'sessionHistory'>;
+/** 访问规则注入：跟随历史服务提供者挂规则 */
+type HistoryCheckerCaps = Pick<Caps, 'logger' | 'sessionHistory'>;
 
 interface OneBotSessionHistoryConfig {
   maxLimit: number;
@@ -1732,52 +1747,47 @@ interface OneBotSessionHistoryConfig {
  * 调用 service 时都会走这条规则链 —— 不存在绕过路径。
  */
 function registerOneBotHistoryAccessChecker(caps: HistoryCheckerCaps, cfg: OneBotSessionHistoryConfig): void {
-  const { events, logger, lifecycle, sessionHistory } = caps;
-  events.on('app:ready', () => {
-    const historyService = sessionHistory.current;
-    if (!historyService?.registerAccessChecker) {
-      logger.debug('session-history 服务未提供 registerAccessChecker, 跳过 OneBot 访问规则注册');
-      return;
-    }
-    const checker: AccessChecker = {
-      platform: 'onebot',
-      check({ currentSessionId, targetSessionId }) {
-        const target = parseOneBotSession(targetSessionId);
-        if (!target) return undefined; // 不是合法 onebot 目标, 不表态
-        const current = parseOneBotSession(currentSessionId);
-        // 跨平台调用（current 不是 onebot）走默认放行: session-history scope 已粗筛
-        if (!current) return undefined;
+  const { logger, sessionHistory } = caps;
+  const checker: AccessChecker = {
+    platform: 'onebot',
+    check({ currentSessionId, targetSessionId }) {
+      const target = parseOneBotSession(targetSessionId);
+      if (!target) return undefined; // 不是合法 onebot 目标, 不表态
+      const current = parseOneBotSession(currentSessionId);
+      // 跨平台调用（current 不是 onebot）走默认放行: session-history scope 已粗筛
+      if (!current) return undefined;
 
-        if (current.selfId !== target.selfId && !cfg.allowCrossSelf) {
-          return { decision: 'deny', reason: '当前 OneBot 配置不允许跨机器人账号读取会话历史' };
-        }
-        if (current.detailType === 'group' && target.detailType === 'private' && !cfg.allowGroupReadPrivate) {
-          return { decision: 'deny', reason: '当前 OneBot 配置不允许从群聊读取私聊历史' };
-        }
-        if (
-          current.detailType === 'group' &&
-          target.detailType === 'group' &&
-          current.targetId !== target.targetId &&
-          !cfg.allowCrossGroup
-        ) {
-          return { decision: 'deny', reason: '当前 OneBot 配置不允许跨群读取其他群历史' };
-        }
-        if (
-          current.detailType === 'private' &&
-          target.detailType === 'private' &&
-          current.targetId !== target.targetId &&
-          !cfg.allowCrossPrivate
-        ) {
-          return { decision: 'deny', reason: '当前 OneBot 配置不允许跨私聊读取其他私聊历史' };
-        }
-        return undefined;
-      },
-    };
-    const dispose = historyService.registerAccessChecker(checker);
-    // 规则挂在 session-history 提供者身上，不随本插件的登记账本自动撤回：
-    // 必须进清理链，否则插件 bounce / 卸载后规则会留在下层泄漏。
-    lifecycle.onDispose(dispose);
+      if (current.selfId !== target.selfId && !cfg.allowCrossSelf) {
+        return { decision: 'deny', reason: '当前 OneBot 配置不允许跨机器人账号读取会话历史' };
+      }
+      if (current.detailType === 'group' && target.detailType === 'private' && !cfg.allowGroupReadPrivate) {
+        return { decision: 'deny', reason: '当前 OneBot 配置不允许从群聊读取私聊历史' };
+      }
+      if (
+        current.detailType === 'group' &&
+        target.detailType === 'group' &&
+        current.targetId !== target.targetId &&
+        !cfg.allowCrossGroup
+      ) {
+        return { decision: 'deny', reason: '当前 OneBot 配置不允许跨群读取其他群历史' };
+      }
+      if (
+        current.detailType === 'private' &&
+        target.detailType === 'private' &&
+        current.targetId !== target.targetId &&
+        !cfg.allowCrossPrivate
+      ) {
+        return { decision: 'deny', reason: '当前 OneBot 配置不允许跨私聊读取其他私聊历史' };
+      }
+      return undefined;
+    },
+  };
+  // 规则登记在 session-history 提供者实例的局部状态里：提供者重启或换人后，新实例身上没有这条规则，
+  // 须跟随提供者重挂；返回的注销作为跟随清理，本插件 bounce / 卸载时一并撤回，不在下层泄漏。
+  sessionHistory.follow(svc => {
+    const dispose = svc.registerAccessChecker(checker);
     logger.info('OneBot 会话历史访问规则已注册到 session-history');
+    return dispose;
   });
 }
 
