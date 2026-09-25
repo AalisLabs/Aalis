@@ -37,7 +37,7 @@ const configSchema: ConfigSchema = {
     type: 'array',
     label: '分作用域覆盖',
     description:
-      '每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。最具体匹配优先（targetId > sessionType > platform > 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却，其他字段继续走默认。只经出站建出状态、从未有入站的会话（如仅经委派抵达的私聊）没有会话类型与目标，按类型或目标写的覆盖对其不生效，走上方默认。',
+      '每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。最具体匹配优先（targetId > sessionType > platform > 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却，其他字段继续走默认。只经出站建出状态、从未有真人消息经过本相位的会话（如仅经委派抵达的私聊）没有会话类型与目标，按类型或目标写的覆盖对其不生效，走上方默认。',
     default: [],
     items: {
       scope: {
@@ -284,17 +284,15 @@ async function run(caps: Caps): Promise<void> {
       return; // swallow
     }
 
-    // 内部注入（带 source：闲置触发、定时任务、workflow、跨会话委派）只受禁言约束，不过冷却与限速：
-    // 定时提醒等不该被回复后冷却静默吞掉
-    if (message.source) return next();
     const targetId = extractTargetId(message);
     if (!isScopeEnabled(cfg, message.platform, message.sessionType, targetId)) return next();
 
     getOrCreate(sessionId, message.platform, message.sessionType, targetId);
 
-    // immediate（@/戳一戳/名字）穿透冷却与限速
+    // immediate（@/戳一戳/名字）穿透冷却与限速。内部注入（带 source：闲置触发、定时任务、workflow、
+    // 跨会话委派）不过冷却——定时提醒等不该被回复后冷却静默吞掉——但仍受限速约束（防刷屏护栏）。
     if (message.triggerType !== 'immediate') {
-      if (service.isCoolingDown(sessionId)) {
+      if (!message.source && service.isCoolingDown(sessionId)) {
         logger.debug(`[flow] 冷却中 → 吞噬 | session=${sessionId}`);
         await shadowArchive(message);
         return; // swallow
