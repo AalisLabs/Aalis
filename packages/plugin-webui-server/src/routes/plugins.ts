@@ -266,6 +266,7 @@ export function registerPluginRoutes(
       res.status(400).json({ error: invalid.join('; ') });
       return;
     }
+    const previous = Object.fromEntries(changed.map(k => [k, current[k]]));
     for (const key of changed) doc.set(key, updates[key]);
     // name / logLevel 都要重启才生效；值没变就不重启
     const restartNeeded = changed.length > 0;
@@ -280,8 +281,9 @@ export function registerPluginRoutes(
         res.json({ ok: true, message: `全局配置已更新并保存${note}`, ignored });
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: msg });
+      // 全局字段要重启才生效，运行态没有改动：撤回文档里的改动，免得下一次任意保存把这次被拒的修改写进文件
+      for (const key of changed) doc.set(key, previous[key]);
+      res.status(409).json({ error: `未写入配置文件（${errorMessage(err)}），本次修改已撤回` });
     }
   });
 
