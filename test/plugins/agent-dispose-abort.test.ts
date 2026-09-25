@@ -237,3 +237,115 @@ describe('plugin-agent 拆卸时中止在飞回合', () => {
     ).toBe(false);
   });
 });
+
+// ════════════════════════════════════════════════════════════
+// 提交点：流已结束、尚未落库 / 外发时被中止的回合（手动停止、latest-wins）
+// 同样走 AbortError 收尾——只发 stream done、不落库、不外发、outcome=aborted。
+// 用 agent:reply:before 上的闸把回合卡在这段窗口里。
+// ════════════════════════════════════════════════════════════
+
+describe('plugin-agent 提交点前被中止的回合不落库、不外发', () => {
+  async function bootWithReplyGate(responses: { content: string }[]) {
+    let enteredResolve!: () => void;
+    const entered = new Promise<void>(resolve => {
+      enteredResolve = resolve;
+    });
+    let releaseGate!: () => void;
+    const gate = new Promise<void>(resolve => {
+      releaseGate = resolve;
+    });
+    let gated = 0;
+    const outcomes: string[] = [];
+    const gatePlugin = definePlugin({
+      name: 'zz-reply-gate-probe',
+      uses: { hooks },
+      apply({ hooks }) {
+        // 只卡第一次进入（第一个回合）；之后的回合直接放行
+        hooks.middleware('agent:reply:before', async (_data, next) => {
+          if (gated++ === 0) {
+            enteredResolve();
+            await gate;
+          }
+          await next();
+        });
+        hooks.middleware('agent:turn:after', async (data, next) => {
+          outcomes.push(data.outcome);
+          await next();
+        });
+      },
+    });
+
+    const app = new App({ name: 'T', logLevel: 'error' });
+    await registerHubs(app);
+    await app.plugin(createMockLLMPlugin({ responses }));
+    await app.plugin(memoryInMemoryPlugin);
+    await app.plugin(messageArchivePlugin, { debugLogs: false });
+    await app.plugin(agentPlugin, AGENT_CONFIG);
+    await app.plugin(gatePlugin);
+    await app.plugins.idle();
+    for (const id of [agentPlugin.name, gatePlugin.name]) {
+      expect(app.plugins.getPlugin(id)?.state, `${id} 未激活则断言恒真`).toBe('active');
+    }
+
+    const host = app.bind({ events, agent: agentService, memory });
+    const seen: string[] = [];
+    host.events.on('outbound:stream', c => {
+      if (c.done) seen.push('stream:done');
+    });
+    host.events.on('outbound:message', m => {
+      seen.push(`message(${m.content})`);
+    });
+    const assistantHistory = async (sessionId: string) =>
+      (await host.memory.require().getHistory(sessionId, 50)).filter(m => m.role === 'assistant').map(m => m.content);
+    return { app, host, entered, release: () => releaseGate(), outcomes, seen, assistantHistory };
+  }
+
+  it('手动停止落在流结束之后：只发 stream done，历史无回复，outcome=aborted', async () => {
+    const { app, host, entered, release, outcomes, seen, assistantHistory } = await bootWithReplyGate([
+      { content: '被掐掉的回复' },
+    ]);
+    const sessionId = 'test:post-stream-abort';
+    const agent = host.agent.require();
+    const turn = agent.handleMessage({
+      content: '你好',
+      sessionId,
+      platform: 'test',
+      userId: 'u1',
+      sessionType: 'private',
+    });
+    await entered; // 流已消费完，卡在 reply:before
+    agent.abort!(sessionId);
+    release();
+    await turn;
+
+    expect(seen).toEqual(['stream:done']);
+    expect(await assistantHistory(sessionId)).toEqual([]);
+    expect(outcomes).toEqual(['aborted']);
+    await app.stop();
+  });
+
+  it('latest-wins：旧回合在收尾段被新消息掐掉，只投递并落库新回合的回复', async () => {
+    const { app, host, entered, release, seen, assistantHistory } = await bootWithReplyGate([
+      { content: '回复A' },
+      { content: '回复B' },
+    ]);
+    const sessionId = 'test:latest-wins-post-stream';
+    const agent = host.agent.require();
+    const msg = (content: string) => ({
+      content,
+      sessionId,
+      platform: 'test',
+      userId: 'u1',
+      sessionType: 'private' as const,
+    });
+    const turnA = agent.handleMessage(msg('A'));
+    await entered; // A 的流已结束
+    const turnB = agent.handleMessage(msg('B'));
+    release();
+    await Promise.all([turnA, turnB]);
+
+    expect(seen.filter(s => s.startsWith('message('))).toEqual(['message(回复B)']);
+    expect(await assistantHistory(sessionId)).toEqual(['回复B']);
+    await app.stop();
+  });
+});

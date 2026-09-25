@@ -66,6 +66,64 @@ const PLUGIN_NAME = '@aalis/plugin-storage-local';
  *     宿主机任何位置（高危，启动时会有 WARN 日志）
  */
 
+const DEFAULT_ROOTS: RootEntryConfig[] = [
+  {
+    name: 'workspace',
+    path: 'workspace',
+    label: 'Workspace',
+    kind: 'workspace',
+    browsable: true,
+    readable: true,
+    writable: true,
+    deletable: true,
+  },
+  {
+    name: 'data',
+    path: 'data',
+    label: 'Data',
+    kind: 'data',
+    browsable: false,
+    readable: true,
+    writable: true,
+    // 可删：/clear 的附件清理（data/images 等）依赖它，关掉会让开箱用户连手动清理都失败。
+    // deletable 是能力位不是权限闸——agent 侧删除面由各工具自身档位把关
+    // （file_delete=restricted+confirm+allowedRoots、skill_delete=sensitive 等，档位各异）。
+    deletable: true,
+  },
+  {
+    name: 'tmp',
+    path: 'workspace/.tmp',
+    label: '临时文件',
+    kind: 'tmp',
+    browsable: false,
+    readable: true,
+    writable: true,
+    deletable: true,
+  },
+  {
+    name: 'pluginData',
+    path: 'data/plugins',
+    label: '插件数据',
+    kind: 'pluginData',
+    browsable: false,
+    readable: true,
+    writable: true,
+    deletable: true,
+  },
+  {
+    name: 'logs',
+    path: 'data',
+    label: '日志',
+    kind: 'logs',
+    browsable: false,
+    readable: true,
+    writable: false,
+    deletable: false,
+  },
+  // 高危直通：取消注释或改 enabled 字段无意义——存在即注册。如需 host:/ 直通根，把下行加进 roots：
+  // { name: 'host', path: '/', label: '宿主机根', kind: 'host', browsable: false, readable: true, writable: false, deletable: false },
+];
+
 const configSchema: ConfigSchema = {
   roots: {
     type: 'array',
@@ -75,63 +133,7 @@ const configSchema: ConfigSchema = {
       '直接编辑这个数组：删除不要的、修改 path、加自定义根、加 host:/ 直通根。' +
       'browsable 是给 WebUI 等浏览器类组件的 hint（注意：当前 WebUI 文件页固定显示 fileRoot 配置指向的那一个根，' +
       '其它根仅作为工具/agent 寻址使用）。',
-    default: [
-      {
-        name: 'workspace',
-        path: 'workspace',
-        label: 'Workspace',
-        kind: 'workspace',
-        browsable: true,
-        readable: true,
-        writable: true,
-        deletable: true,
-      },
-      {
-        name: 'data',
-        path: 'data',
-        label: 'Data',
-        kind: 'data',
-        browsable: false,
-        readable: true,
-        writable: true,
-        // 可删：/clear 的附件清理（data/images 等）依赖它，关掉会让开箱用户连手动清理都失败。
-        // deletable 是能力位不是权限闸——agent 侧删除面由各工具自身档位把关
-        // （file_delete=restricted+confirm+allowedRoots、skill_delete=sensitive 等，档位各异）。
-        deletable: true,
-      },
-      {
-        name: 'tmp',
-        path: 'workspace/.tmp',
-        label: '临时文件',
-        kind: 'tmp',
-        browsable: false,
-        readable: true,
-        writable: true,
-        deletable: true,
-      },
-      {
-        name: 'pluginData',
-        path: 'data/plugins',
-        label: '插件数据',
-        kind: 'pluginData',
-        browsable: false,
-        readable: true,
-        writable: true,
-        deletable: true,
-      },
-      {
-        name: 'logs',
-        path: 'data',
-        label: '日志',
-        kind: 'logs',
-        browsable: false,
-        readable: true,
-        writable: false,
-        deletable: false,
-      },
-      // 高危直通：取消注释或改 enabled 字段无意义——存在即注册。如需 host:/ 直通根，把下行加进 roots：
-      // { name: 'host', path: '/', label: '宿主机根', kind: 'host', browsable: false, readable: true, writable: false, deletable: false },
-    ],
+    default: DEFAULT_ROOTS,
     items: {
       name: {
         type: 'string',
@@ -161,61 +163,6 @@ const configSchema: ConfigSchema = {
       deletable: { type: 'boolean', label: '允许删除', default: false },
     },
   },
-};
-
-const defaultConfig = {
-  roots: [
-    {
-      name: 'workspace',
-      path: 'workspace',
-      label: 'Workspace',
-      kind: 'workspace',
-      browsable: true,
-      readable: true,
-      writable: true,
-      deletable: true,
-    },
-    {
-      name: 'data',
-      path: 'data',
-      label: 'Data',
-      kind: 'data',
-      browsable: false,
-      readable: true,
-      writable: true,
-      deletable: true,
-    },
-    {
-      name: 'tmp',
-      path: 'workspace/.tmp',
-      label: '临时文件',
-      kind: 'tmp',
-      browsable: false,
-      readable: true,
-      writable: true,
-      deletable: true,
-    },
-    {
-      name: 'pluginData',
-      path: 'data/plugins',
-      label: '插件数据',
-      kind: 'pluginData',
-      browsable: false,
-      readable: true,
-      writable: true,
-      deletable: true,
-    },
-    {
-      name: 'logs',
-      path: 'data',
-      label: '日志',
-      kind: 'logs',
-      browsable: false,
-      readable: true,
-      writable: false,
-      deletable: false,
-    },
-  ] as RootEntryConfig[],
 };
 
 interface RootEntryConfig {
@@ -281,6 +228,8 @@ class ScopedStorageService implements StorageService {
     private readonly root: RootDefinition,
     private readonly logger: Logger,
     private readonly services: Services,
+    /** 本次激活的清理登记：watch 建的 fs 监听器归提供者所有，提供者关闭时一并关闭 */
+    private readonly onDispose: (fn: () => void, label?: string) => () => void,
   ) {}
 
   /**
@@ -564,7 +513,7 @@ class ScopedStorageService implements StorageService {
     const relPath = this.parseSelfUri(uri);
     this.requirePermission('readable');
     const absBase = resolve(this.root.realPath, normalizeRelPath(relPath));
-    if (!isInside(this.root.realPath, absBase) && absBase !== this.root.realPath) {
+    if (!isInside(this.root.realPath, absBase)) {
       throw new Error('路径不合法');
     }
 
@@ -634,9 +583,12 @@ class ScopedStorageService implements StorageService {
 
     watcher.on('error', e => this.logger.warn(`storage.watch 错误 ${toUri(this.root.name, baseRelToRoot)}: ${e}`));
 
-    return () => {
+    // 调用方先退订时撤销登记；已关闭的提供者上登记会就地执行，此时 offDispose 尚未赋值
+    let offDispose: (() => void) | undefined;
+    const unwatch = (): void => {
       if (closed) return;
       closed = true;
+      offDispose?.();
       for (const timer of pending.values()) clearTimeout(timer);
       pending.clear();
       try {
@@ -646,6 +598,8 @@ class ScopedStorageService implements StorageService {
       }
       this.logger.debug(`storage.watch 已停止 ${toUri(this.root.name, baseRelToRoot)}`);
     };
+    offDispose = this.onDispose(unwatch, `storage.watch ${toUri(this.root.name, baseRelToRoot)}`);
+    return unwatch;
   }
 
   // ---- 内部 ----
@@ -734,7 +688,7 @@ async function createRoot(
 ): Promise<RootDefinition> {
   const abs = resolve(process.cwd(), rootPath);
   // path 已是文件系统根（'/'）等存在的目录时不需要创建；其它情况 mkdir -p
-  if (rootPath !== '/' && rootPath !== '') {
+  if (rootPath !== '/') {
     await mkdir(abs, { recursive: true });
   }
   return {
@@ -748,12 +702,12 @@ async function createRoot(
 
 const ROOT_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 
-/** 从 raw config.roots 构造可用根。空/异常时回退到 defaultConfig.roots。 */
+/** 从 raw config.roots 构造可用根。空/异常时回退到 DEFAULT_ROOTS。 */
 async function buildRoots(rawRoots: unknown, logger: Logger): Promise<RootDefinition[]> {
   let entries: RootEntryConfig[] = Array.isArray(rawRoots) ? (rawRoots as RootEntryConfig[]).slice() : [];
   if (entries.length === 0) {
     logger.warn('storage roots 配置为空，将注册默认 5 个内置根（workspace/data/tmp/pluginData/logs）');
-    entries = (defaultConfig.roots as RootEntryConfig[]).slice();
+    entries = DEFAULT_ROOTS.slice();
   }
 
   const out: RootDefinition[] = [];
@@ -825,7 +779,7 @@ export default definePlugin({
         logger.warn(`root ${root.name} 没有任何权限位，跳过注册`);
         continue;
       }
-      const scoped = new ScopedStorageService(root, logger, caps.services);
+      const scoped = new ScopedStorageService(root, logger, caps.services, caps.lifecycle.onDispose);
       caps.provide(storage, scoped, {
         entryId: `${caps.lifecycle.id}/${root.name}`,
         label: root.label || `本地根 ${root.name}`,
@@ -838,7 +792,6 @@ export default definePlugin({
     caps.doctor.registerCheck({
       id: 'storage.roots',
       category: 'filesystem',
-      pluginName: PLUGIN_NAME,
       async run() {
         const targets = roots.filter(r => r.writable);
         if (targets.length === 0) {

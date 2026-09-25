@@ -38,9 +38,9 @@ export default definePlugin({
 | `maxFileSizeMB` | number | `20` | 最大文件大小 (MB)：允许上传的最大文件大小(MB)。超过此限制的文件将被拒绝。 |
 | `autoInlineLimit` | number | `100000` | 自动 inline 阈值（字符）：提取出的文本长度若 ≤ 此值，则直接 inline 到附件描述里（模型无需调工具即可看到全文）；否则只挂 ID，由模型按需用 read_uploaded_file 拉取。 |
 | `toolDefaultMaxLength` | number | `50000` | read_uploaded_file 默认截断：read_uploaded_file 工具未显式传 maxLength 时使用的默认截断字符数，避免把超大文档一次喂进 LLM 上下文导致爆 token。 |
-| `retentionDays` | number | `30` | 保留天数：上传文件保留的最长天数，超过即清理（按文件 mtime）。0 表示不按时间清理。 |
-| `lruMaxTotalMB` | number | `500` | 磁盘总量上限 (MB)：上传文件总目录占用超过该上限时，按 mtime 由旧到新淘汰直到回落到上限以下。0 表示不限。 |
-| `historyHintEnabled` | boolean | `true` | 在本轮无新上传时注入历史文件清单提示：开启后：仅当会话中存在历史上传文件且本轮没有新上传时，在 LLM 调用前注入一条 system 提示列出可用文件（含 ID），避免模型遗忘过往上传。本轮有新上传时跳过注入（user message 里已有 【文件: ...】 描述）以节省 token。 |
+| `retentionDays` | number | `30` | 保留天数：上传文件保留的最长天数，超过即清理（按上传时间 uploadedAt）。0 表示不按时间清理。 |
+| `lruMaxTotalMB` | number | `500` | 磁盘总量上限 (MB)：上传文件总目录占用超过该上限时，按上传时间 uploadedAt 由旧到新淘汰直到回落到上限以下。0 表示不限。 |
+| `historyHintEnabled` | boolean | `true` | 注入会话文件清单提示：开启后：会话中存在上传文件时，在 LLM 调用前注入一条 system 提示列出可用文件（含 ID），避免模型遗忘过往上传。本轮有新上传时注入本轮清单与历史清单（本轮文件单独标出），否则只注入历史清单。 |
 | `recognizeDocImages` | boolean | `true` | 识别文档内嵌图片：读取 DOCX 时调用 media 服务识别内嵌图片，把描述附在正文末尾（需启用 media/vision；无 media 服务时自动跳过）。识别会增加首次解析耗时与 vision token 开销，结果随提取文本一并缓存。 |
 | `maxDocImages` | number | `8` | 单文档最多识别图片数：超出的内嵌图片跳过识别，避免大量图片拖慢解析、消耗 vision token。0 等同关闭识别。 |
 

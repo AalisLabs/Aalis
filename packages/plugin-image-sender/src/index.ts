@@ -89,77 +89,76 @@ function registerImageSender(caps: Caps): void {
   }
 
   // ── preview_image ─────────────────────────────────────────────────────────
-  tools.register({
-    definition: {
-      type: 'function',
-      function: {
-        name: 'preview_image',
-        description:
-          '在真正发送前，先让自己"看见"候选图片的实际内容（vision 模型识别）。' +
-          '适用场景：search_images 返回了若干 URL，但标题常常误导/含糊，' +
-          '你想从中挑出最符合语境的一张再 send_attachment 发出。' +
-          '本工具不发送任何消息，只返回每张图的描述。',
-        parameters: {
-          type: 'object',
-          properties: {
-            urls: {
-              type: 'array',
-              items: { type: 'string' },
-              description: `要识别的图片 URL 列表（http/https），最多 ${PREVIEW_MAX_CANDIDATES} 张。`,
+  // 识别全靠 media：media 在场才挂，离场即撤（follow 在 media 上线 / 换人时各调一次，
+  // 返回的退订函数即清理），media 缺席的部署里 agent 看不到这个用不了的工具。
+  media.follow(service =>
+    tools.register({
+      definition: {
+        type: 'function',
+        function: {
+          name: 'preview_image',
+          description:
+            '在真正发送前，先让自己"看见"候选图片的实际内容（vision 模型识别）。' +
+            '适用场景：search_images 返回了若干 URL，但标题常常误导/含糊，' +
+            '你想从中挑出最符合语境的一张再 send_attachment 发出。' +
+            '本工具不发送任何消息，只返回每张图的描述。',
+          parameters: {
+            type: 'object',
+            properties: {
+              urls: {
+                type: 'array',
+                items: { type: 'string' },
+                description: `要识别的图片 URL 列表（http/https），最多 ${PREVIEW_MAX_CANDIDATES} 张。`,
+              },
+              hint: {
+                type: 'string',
+                description: '可选：给 vision 模型的关注点提示（例如"这张图里有猫吗"）。',
+              },
             },
-            hint: {
-              type: 'string',
-              description: '可选：给 vision 模型的关注点提示（例如"这张图里有猫吗"）。',
-            },
+            required: ['urls'],
           },
-          required: ['urls'],
         },
       },
-    },
-    handler: async args => {
-      const urls = Array.isArray(args.urls) ? (args.urls as unknown[]).map(String) : [];
-      const hint = (args.hint as string) || undefined;
-      if (urls.length === 0) return JSON.stringify({ error: 'urls 不能为空' });
-      if (urls.length > PREVIEW_MAX_CANDIDATES) {
-        return JSON.stringify({ error: `最多 ${PREVIEW_MAX_CANDIDATES} 张` });
-      }
-
-      const service = media.current;
-      if (!service?.describeImage) {
-        return JSON.stringify({ error: '未启用 media 服务，无法识别图片' });
-      }
-
-      // 顺序识别（非并发）：本地视觉模型通常单实例串行处理，并发只会让多个请求
-      // 互相排队、共同超时；逐张识别配合宽松超时，命中率远高于并发。
-      // detailLevel='casual'：preview 只为"挑图"，短 prompt 短输出即可，不需要 auto 档的详尽路由。
-      const results: Array<Record<string, unknown>> = [];
-      for (let index = 0; index < urls.length; index++) {
-        const trimmed = urls[index].trim();
-        if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
-          results.push({ index, url: trimmed, ok: false, error: 'url 必须是 http/https' });
-          continue;
+      handler: async args => {
+        const urls = Array.isArray(args.urls) ? (args.urls as unknown[]).map(String) : [];
+        const hint = (args.hint as string) || undefined;
+        if (urls.length === 0) return JSON.stringify({ error: 'urls 不能为空' });
+        if (urls.length > PREVIEW_MAX_CANDIDATES) {
+          return JSON.stringify({ error: `最多 ${PREVIEW_MAX_CANDIDATES} 张` });
         }
-        try {
-          const desc = await Promise.race([
-            service.describeImage(trimmed, { hint, detailLevel: 'casual' }),
-            new Promise<string>((_resolve, reject) =>
-              setTimeout(() => reject(new Error('vision 超时')), PREVIEW_TIMEOUT_MS),
-            ),
-          ]);
-          const description = (desc ?? '').trim();
-          results.push(
-            description
-              ? { index, url: trimmed, ok: true, description }
-              : { index, url: trimmed, ok: false, error: 'vision 返回空' },
-          );
-        } catch (err) {
-          results.push({ index, url: trimmed, ok: false, error: err instanceof Error ? err.message : String(err) });
-        }
-      }
 
-      return JSON.stringify({ ok: true, count: results.length, results });
-    },
-  });
+        // 顺序识别（非并发）：本地视觉模型通常单实例串行处理，并发只会让多个请求
+        // 互相排队、共同超时；逐张识别配合宽松超时，命中率远高于并发。
+        // detailLevel='casual'：preview 只为"挑图"，短 prompt 短输出即可，不需要 auto 档的详尽路由。
+        const results: Array<Record<string, unknown>> = [];
+        for (let index = 0; index < urls.length; index++) {
+          const trimmed = urls[index].trim();
+          if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+            results.push({ index, url: trimmed, ok: false, error: 'url 必须是 http/https' });
+            continue;
+          }
+          try {
+            const desc = await Promise.race([
+              service.describeImage(trimmed, { hint, detailLevel: 'casual' }),
+              new Promise<string>((_resolve, reject) =>
+                setTimeout(() => reject(new Error('vision 超时')), PREVIEW_TIMEOUT_MS),
+              ),
+            ]);
+            const description = (desc ?? '').trim();
+            results.push(
+              description
+                ? { index, url: trimmed, ok: true, description }
+                : { index, url: trimmed, ok: false, error: 'vision 返回空' },
+            );
+          } catch (err) {
+            results.push({ index, url: trimmed, ok: false, error: err instanceof Error ? err.message : String(err) });
+          }
+        }
+
+        return JSON.stringify({ ok: true, count: results.length, results });
+      },
+    }),
+  );
 
   // ── send_attachment ───────────────────────────────────────────────────────
   tools.register({
@@ -261,7 +260,7 @@ function registerImageSender(caps: Caps): void {
     },
   });
 
-  logger.info('[image-sender] 工具 send_attachment / preview_image 已注册');
+  logger.info('[image-sender] 工具 send_attachment 已注册（preview_image 随 media 在场注册）');
 
   // ── 出站附件归档：统一咽喉 ───────────────────────────────────────────────
   // 监听唯一出站汇聚点 outbound:message，对所有 agent 出站附件统一入档，
@@ -283,7 +282,7 @@ function registerImageSender(caps: Caps): void {
       void (async () => {
         let desc = carried;
         if (!desc && (kind === 'image' || kind === 'video') && /^https?:\/\//i.test(ref)) {
-          desc = await safeDescribeMedia({ media, logger }, kind, ref, ARCHIVE_DESCRIBE_TIMEOUT_MS);
+          desc = await safeDescribeMedia({ media, logger }, kind, ref);
         }
         await archiveOutboundAttachment({ archive, logger }, msg.sessionId, ref, desc, kind);
       })();
@@ -292,30 +291,20 @@ function registerImageSender(caps: Caps): void {
 }
 
 /** 按 kind 调用对应的 media 描述能力，超时或失败返回空串（不阻塞发送）。 */
-async function safeDescribeMedia(
-  caps: DescribeCaps,
-  kind: MediaKind,
-  data: string,
-  timeoutMs = ARCHIVE_DESCRIBE_TIMEOUT_MS,
-): Promise<string> {
-  if (kind === 'image') return safeDescribe(caps, data, timeoutMs);
-  if (kind === 'video') return safeDescribeVideo(caps, data);
-  // audio 暂无描述能力
-  return '';
+async function safeDescribeMedia(caps: DescribeCaps, kind: 'image' | 'video', data: string): Promise<string> {
+  return kind === 'image' ? safeDescribe(caps, data) : safeDescribeVideo(caps, data);
 }
 
 /** 调 media.describeImage，超时或失败返回空串（不阻塞发送）。 */
-async function safeDescribe(
-  caps: DescribeCaps,
-  imageData: string,
-  timeoutMs = ARCHIVE_DESCRIBE_TIMEOUT_MS,
-): Promise<string> {
+async function safeDescribe(caps: DescribeCaps, imageData: string): Promise<string> {
   const service = caps.media.current;
   if (!service?.describeImage) return '';
   try {
     const desc = await Promise.race([
       service.describeImage(imageData),
-      new Promise<string>((_resolve, reject) => setTimeout(() => reject(new Error('vision 超时')), timeoutMs)),
+      new Promise<string>((_resolve, reject) =>
+        setTimeout(() => reject(new Error('vision 超时')), ARCHIVE_DESCRIBE_TIMEOUT_MS),
+      ),
     ]);
     return (desc ?? '').trim();
   } catch (err) {

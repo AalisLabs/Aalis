@@ -15,10 +15,10 @@ pnpm add @aalis/api-vectorstore
 ## 使用
 
 ```ts
-import type { /* ... */ } from '@aalis/api-vectorstore';
-```
+import { vectorstore } from '@aalis/api-vectorstore';
 
-本包为 *-api 类型包；实现见对应的运行时插件。
+// uses: { vectorstore }
+```
 
 ## 许可
 

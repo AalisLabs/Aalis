@@ -21,12 +21,11 @@ import {
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { captureRoutes } from '../fixtures/webui-routes.js';
 
 // GET /api/plugins 与 /api/pages 必须按 instanceId 归属工具 / 指令 / displayName。
 // 生产里 tools.register 的 pluginName 就是 contextId（= instanceId）；按 definition.name
 // 索引会让 name:suffix 误挂主实例的工具，页面展示名变成 undefined。
-
-type Handler = (req: unknown, res: unknown, next: () => Promise<void>) => unknown;
 
 function ref<T>(instance: unknown): ServiceRef<T> {
   return { current: instance as T, require: () => instance as T, all: () => [], follow: () => () => {} };
@@ -66,19 +65,9 @@ function mountPluginRoutes(
     pages?: Array<{ key: string; label: string; pluginName: string }>;
   } = {},
 ) {
-  const routes = new Map<string, Handler[]>();
-  const expressApp = new Proxy(
-    {},
-    {
-      get:
-        (_t, method: string) =>
-        (path: string, ...handlers: Handler[]) => {
-          routes.set(`${String(method).toUpperCase()} ${path}`, handlers);
-        },
-    },
-  );
+  const { expressApp, invoke } = captureRoutes();
   registerPluginRoutes(
-    expressApp as never,
+    expressApp,
     {
       app: ref<AppService>({ restart: () => {} }),
       source: { current: undefined },
@@ -97,28 +86,6 @@ function mountPluginRoutes(
     () => (_req: unknown, _res: unknown, next: () => void) => next(),
     () => undefined,
   );
-  const invoke = async (methodPath: string, req: Record<string, unknown> = {}) => {
-    const handlers = routes.get(methodPath);
-    if (!handlers) throw new Error(`路由未注册: ${methodPath}`);
-    const out: { status: number; body?: unknown } = { status: 200 };
-    const res = {
-      status(code: number) {
-        out.status = code;
-        return res;
-      },
-      json(payload: unknown) {
-        out.body = payload;
-        return res;
-      },
-    };
-    let i = 0;
-    const next = async (): Promise<void> => {
-      const h = handlers[i++];
-      if (h) await h(req, res, next);
-    };
-    await next();
-    return out;
-  };
   return { invoke };
 }
 

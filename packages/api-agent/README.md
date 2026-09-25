@@ -15,10 +15,10 @@ pnpm add @aalis/api-agent
 ## 使用
 
 ```ts
-import type { /* ... */ } from '@aalis/api-agent';
-```
+import { agent } from '@aalis/api-agent';
 
-本包为 *-api 类型包；实现见对应的运行时插件。
+// uses: { agent }
+```
 
 ## 许可
 

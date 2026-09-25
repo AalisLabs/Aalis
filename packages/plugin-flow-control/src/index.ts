@@ -393,7 +393,6 @@ async function run(caps: Caps): Promise<void> {
     if (message.source === 'idle-trigger') return next(); // 内部注入不再过流控
 
     const targetId = extractTargetId(message);
-    service.ensureState(message.sessionId, message.platform, message.sessionType, targetId);
     service.recordIncoming(message.sessionId, message.platform, message.userId, message.sessionType, targetId);
 
     const s = states.get(message.sessionId)!;

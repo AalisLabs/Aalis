@@ -77,32 +77,18 @@ pnpm preflight     # = build + test + biome + knip
 - 由 [Biome](https://biomejs.dev) 自动管理：`pnpm format` 写格式，`pnpm lint:fix` 自动修复可修项。
 - 命名遵循驼峰 + PascalCase 类；接口与类型不加 `I` 前缀。
 - 不写废注释；只保留**讲清"为什么"**的注释。
-- 公共 API 必须导出类型。优先用 `*-api` 包持有类型而非实现包。
+- 公共 API 必须导出类型。优先用 `api-*` 契约包持有类型而非实现包。
 
 ## 4. 包结构
 
 ```
 packages/
   core/                         # IoC + 生命周期，不依赖任何插件
-  plugin-<name>-api/            # 仅类型 + Capability 声明合并，零运行时代码
-  plugin-<name>/                # 实现，import 自己 + 别人的 *-api
+  api-<name>/                   # 契约：服务描述符（defineService）+ 类型，不含实现
+  plugin-<name>/                # 实现：export default definePlugin({...})，依赖所需的 api-*
 ```
 
-类型包必须在 `package.json` 标注：
-
-```json
-{
-  "aalis": { "types": true }
-}
-```
-
-实现包必须声明 subsystem：
-
-```json
-{
-  "aalis": { "subsystem": "agent" }
-}
-```
+包类型由 `package.json` 的 `keywords` 标识：契约包打 `aalis-api`，插件打 `aalis-plugin`（完整词表见 [manifest-metadata](docs/concepts/manifest-metadata.md)）。插件的 `subsystem` 写在 `definePlugin({ subsystem })` 上，不写进 `package.json`。
 
 ## 5. 提交规范（Conventional Commits）
 
@@ -128,20 +114,20 @@ packages/
 | `style` | 仅样式 |
 | `revert` | 回退 |
 
-`scope` 一般是包名去前缀：`core`、`agent-default`、`webui-server`、`tools-system` 等。
+`scope` 一般是包名去前缀：`core`、`agent`、`webui-server`、`tool-system` 等。
 
 **示例**：
 
 ```
 fix(webui-server): /api/service-groups 把 'app' 放入「核心」
-refactor(agent-default): 拆出 messageProcessor / contextBuilder / replyDispatcher
-test(core): Context.extend / Service / Plugin lifecycle 契约
+refactor(agent): 拆出 prompt-assembly（提示词贡献组装）
+test(core): ServiceRef.follow 换代时先清理再重挂
 ```
 
 破坏性变更在 footer 加：
 
 ```
-BREAKING CHANGE: ServiceCapabilityMap 现在要求 declare module 合并
+BREAKING CHANGE: StorageService.move / mkdir 改为必填
 ```
 
 ## 6. 分支策略

@@ -22,7 +22,7 @@ export default definePlugin({
     contributions,
     config,
     logger,
-    services,
+    authority: optional(authority),
     tools: optional(tools),
     commands: optional(commands),
     persona: optional(persona),

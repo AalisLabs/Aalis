@@ -83,10 +83,10 @@ interface MergeRejectRecord {
   reason: string;
   /** 决策时间戳 */
   decidedAt: number;
-  /** 决策来源：strict-equiv（严格等价路径）/ wide-recall（宽召回路径）/ cross-kind（跨 kind 同名召回） */
-  decidedBy: 'strict-equiv' | 'wide-recall' | 'cross-kind';
-  /** 决策时节点的种类（entity / event / person），主要为调试与未来扩展用 */
-  kind: 'entity' | 'event' | 'person';
+  /** 决策来源：strict-equiv（严格等价路径）/ wide-recall（宽召回路径） */
+  decidedBy: 'strict-equiv' | 'wide-recall';
+  /** 决策时节点的种类（entity / event），主要为调试用 */
+  kind: 'entity' | 'event';
 }
 
 export class RelationStore {

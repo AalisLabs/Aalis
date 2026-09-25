@@ -42,6 +42,7 @@ import {
   RecommendedEntityEntityRelationTypes,
   RecommendedEventEntityRelationTypes,
   RecommendedEventEventRelationTypes,
+  RecommendedPersonEntityRoles,
   RecommendedPersonRelationTypes,
 } from './types.js';
 import { normalizeName } from './utils.js';
@@ -72,7 +73,7 @@ export interface ExtractorConfig {
   extractionModel?: ModelRef;
   /** 是否禁用思考模式（思考型模型上）。提取是结构化输出任务，默认禁用以避免 budget 被 reasoning 吃掉 */
   disableThinking: boolean;
-  /** 严格自证：每条 person-* 边必须有 evidence 且 evidence.messageId.sender == fromPersonId */
+  /** 严格自证：仅 person-person 边要求 evidence 中至少一条由 from 方本人发出（evidence.messageId.sender == fromPersonId） */
   strictSelfAssertion: boolean;
   /** 自动老化：每次写入完成后扫一遍并按 quota 删除（profile 风格，不开调度器）。默认 true。 */
   evictionEnabled: boolean;
@@ -109,8 +110,7 @@ export interface ExtractorConfig {
    */
   communityAlgorithm: 'louvain' | 'leiden' | 'slpa';
   /**
-   * 淘汰完成后自动运行一次 consolidate（去重/整理/层级推断）。
-   * 仅在实际发生淘汰（deletedEvents/Entities/Edges > 0）时触发。默认 true。
+   * 超配额（isOverQuota）触发淘汰前先运行一次 consolidate（去重/整理/层级推断）。默认 true。
    */
   consolidateAfterEviction: boolean;
   /** consolidation 使用的 LLM 模型（可选；为空则退化为纯算法模式） */
@@ -273,15 +273,6 @@ const VALID_ROLES: PersonEventRole[] = ['initiator', 'participant', 'witness', '
 const VALID_SENTIMENTS: Sentiment[] = ['positive', 'negative', 'neutral', 'mixed'];
 const VALID_CATEGORIES: EventCategory[] = ['discussion', 'conflict', 'collaboration', 'incident', 'milestone', 'other'];
 const VALID_ENTITY_KINDS: EntityKind[] = ['topic', 'place', 'thing', 'work'];
-const VALID_PERSON_ENTITY_ROLES: PersonEntityRole[] = [
-  'enthusiast',
-  'participant',
-  'owner',
-  'creator',
-  'critic',
-  'visitor',
-  'mentioned',
-];
 
 /**
  * 占位/伪 person 守卫：用于过滤 LLM 抽出的「不真实」person id（典型如
@@ -412,8 +403,8 @@ export class RelationExtractor {
     this.inFlight.add(sessionId);
     try {
       const memory = this.caps.memory.current;
-      if (!memory?.getHistory) {
-        if (this.cfg.debug) this.caps.logger.debug('[user-relation] memory.getHistory 不可用，跳过');
+      if (!memory) {
+        if (this.cfg.debug) this.caps.logger.debug('[user-relation] memory 不可用，跳过');
         return;
       }
       const limit = this.cfg.mode === 'all-new' ? this.cfg.allNewMaxMessages : this.cfg.readWindowSize;
@@ -953,7 +944,7 @@ export class RelationExtractor {
       const entityId = refToEntityId.get(pe.entityRefKey);
       if (!entityId) continue;
       if (!pe.personPlatform || !pe.personUserId) continue;
-      const role = VALID_PERSON_ENTITY_ROLES.includes(pe.role as PersonEntityRole)
+      const role = RecommendedPersonEntityRoles.includes(pe.role as PersonEntityRole)
         ? (pe.role as PersonEntityRole)
         : 'mentioned';
       const sentiment = VALID_SENTIMENTS.includes(pe.sentiment as Sentiment) ? (pe.sentiment as Sentiment) : undefined;

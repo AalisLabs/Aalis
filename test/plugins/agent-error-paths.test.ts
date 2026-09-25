@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { agent } from '../../packages/api-agent/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
@@ -18,7 +19,9 @@ import { createMockLLMPlugin } from '../fixtures/mock-llm.js';
 //      WebUI 的工具进度不复位，下一轮 delta 会抹掉 [错误] 行；且 done 必须排在 [错误] 消息之前，
 //      与正常收尾同序；
 //   2. 工具参数不是合法 JSON 时跳过执行（旧行为空参真跑），把错误当 tool 结果回给模型，
-//      并带对 tool_call_id（否则下一轮 tool_calls 与 tool 消息不配对，provider 直接 400）。
+//      并带对 tool_call_id（否则下一轮 tool_calls 与 tool 消息不配对，provider 直接 400）；
+//   3. 并行工具批次里单个工具的链路异常（钩子 / 守卫抛错）只算该工具失败，不连坐整组：
+//      兄弟工具已发生的副作用照常落库，回合继续。
 // ════════════════════════════════════════════════════════════
 
 const AGENT_CONFIG = {
@@ -202,5 +205,110 @@ describe('agent 错误路径：流结束标记与坏工具参数', () => {
 
     expect(seen).toBeInstanceOf(AbortSignal);
     expect(abortedInsideTool, '回合中止后工具持有的信号应已中止').toBe(true);
+  });
+});
+
+describe('agent 错误路径：并行工具批次里单点异常不连坐', () => {
+  // 同一批两个调用：side_effect 有副作用（计数），guarded 是出事的那一个
+  const batch: ChatResponse = {
+    content: null,
+    toolCalls: [
+      { id: 'call-side', type: 'function', function: { name: 'side_effect', arguments: '{}' } },
+      { id: 'call-guarded', type: 'function', function: { name: 'guarded', arguments: '{}' } },
+    ],
+  };
+
+  async function runBatch(sessionId: string, arrange: (host: ReturnType<typeof bindHost>) => void) {
+    const app = new App({ name: 'E2E', logLevel: 'error' });
+    const recorder: ChatModelRequest[] = [];
+    await bootAgentStack(app, createMockLLMPlugin({ responses: [batch, { content: '好的' }], recorder }), true);
+    const host = bindHost(app);
+
+    let sideEffects = 0;
+    host.tools.register({
+      definition: {
+        type: 'function',
+        function: { name: 'side_effect', description: '有副作用', parameters: { type: 'object', properties: {} } },
+      },
+      handler: async () => {
+        sideEffects++;
+        return { content: '{"sent":true}' };
+      },
+    });
+    host.tools.register({
+      definition: {
+        type: 'function',
+        function: { name: 'guarded', description: '出事的工具', parameters: { type: 'object', properties: {} } },
+      },
+      handler: async () => ({ content: '{"raw":"RAW-OUTPUT"}' }),
+    });
+    arrange(host);
+
+    const outbound: string[] = [];
+    host.events.on('outbound:message', (msg: OutgoingMessage) => {
+      outbound.push(msg.content);
+    });
+
+    await host.agent.require().handleMessage({
+      content: '做两件事',
+      sessionId,
+      platform: 'test',
+      userId: 'u1',
+      sessionType: 'private',
+    });
+    const history = await host.memory.require().getHistory(sessionId, 50);
+    await app.stop();
+
+    const toolMsgs = history.filter(m => m.role === 'tool');
+    const guardedResult = toolMsgs.find(m => m.toolCallId === 'call-guarded')?.content ?? '';
+    return { sideEffects, history, toolMsgs, guardedResult, recorder, outbound };
+  }
+
+  function bindHost(app: App) {
+    return app.bind({ agent, memory, tools, hooks, events });
+  }
+
+  /** 整组落库 + 下一轮请求带齐两条结果 + 回合正常收尾：三处都是连坐时会断的地方 */
+  function expectWholeGroupKept(r: Awaited<ReturnType<typeof runBatch>>): void {
+    expect(r.sideEffects, '兄弟工具照常执行').toBe(1);
+    const assistantWithCalls = r.history.filter(m => m.role === 'assistant' && m.toolCalls?.length);
+    expect(assistantWithCalls).toHaveLength(1);
+    expect(assistantWithCalls[0].toolCalls).toHaveLength(2);
+    expect(r.toolMsgs.map(m => m.toolCallId)).toEqual(['call-side', 'call-guarded']);
+    expect(r.recorder, '回合应继续请求模型').toHaveLength(2);
+    expect(r.recorder[1].messages.filter(m => m.role === 'tool')).toHaveLength(2);
+    expect(r.outbound).toEqual(['好的']);
+  }
+
+  it('agent:tool:before 抛错：该工具得到「工具调用失败」结果，整组照常落库', async () => {
+    const r = await runBatch('test:batch-before-throw', host => {
+      host.hooks.middleware('agent:tool:before', async (data, next) => {
+        if (data.name === 'guarded') throw new Error('钩子拦截');
+        await next();
+      });
+    });
+    expectWholeGroupKept(r);
+    expect(r.guardedResult).toContain('工具调用失败');
+    expect(r.guardedResult).toContain('钩子拦截');
+  });
+
+  it('agent:tool:after 抛错：结果写明「已执行」，且不回退到原始输出（fail-closed）', async () => {
+    const r = await runBatch('test:batch-after-throw', host => {
+      host.hooks.middleware('agent:tool:after', async (data, next) => {
+        if (data.name === 'guarded') throw new Error('脱敏失败');
+        await next();
+      });
+    });
+    expectWholeGroupKept(r);
+    expect(r.guardedResult).toContain('工具已执行，但结果处理失败');
+    expect(r.guardedResult, 'after 钩子失败时原始输出不得漏给模型').not.toContain('RAW-OUTPUT');
+  });
+
+  it('守卫返回拒绝文案（不抛错）：本来就只影响该工具', async () => {
+    const r = await runBatch('test:batch-guard-deny', host => {
+      host.tools.require().setExecutionGuard(async req => (req.name === 'guarded' ? '权限不足' : null));
+    });
+    expectWholeGroupKept(r);
+    expect(r.guardedResult).toContain('权限不足');
   });
 });

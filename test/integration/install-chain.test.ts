@@ -26,13 +26,20 @@ const pexec = promisify(execFile);
 // 那时 beforeAll 还没跑，条件恒为初始值，联网用例会被无声跳过（踩过一次）。
 const root = mkdtempSync(join(tmpdir(), 'aalis-install-chain-'));
 
-/** 真实 process 网关：直接 spawn，不 mock。 */
+interface ExecOpts {
+  cwd?: string;
+  timeout?: number;
+  env?: Record<string, string | undefined>;
+}
+
+/** 真实 process 网关：直接 spawn，不 mock。env 与本地实现同样叠加在 process.env 之上。 */
 const realProc = {
-  async execFile(cmd: string, args: readonly string[], opts?: { cwd?: string; timeout?: number }) {
+  async execFile(cmd: string, args: readonly string[], opts?: ExecOpts) {
     try {
       const { stdout, stderr } = await pexec(cmd, [...args], {
         cwd: opts?.cwd,
         timeout: opts?.timeout,
+        env: { ...process.env, ...opts?.env },
         maxBuffer: 32 * 1024 * 1024,
       });
       return { stdout, stderr, code: 0 };
@@ -53,9 +60,24 @@ const realProc = {
   },
 } as unknown as PackageManagerDeps['proc'];
 
-function makePm(projectRoot: string, restarts: unknown[] = []) {
+/**
+ * 装前类型闸之外全走真 npm：`npm view` 按给定 keywords 作答，其余命令照常 spawn。
+ * 本文件的安装用例要验的是 npm 把项目改成什么样，目标却是 is-odd / react-dom 这类非插件包——
+ * 真跑类型闸会在装前就拒掉它们。类型闸自身的真 npm 断言见「standalone 安装」用例开头。
+ */
+function passKindGate(keywords: string[]): PackageManagerDeps['proc'] {
+  return {
+    ...realProc,
+    execFile: (cmd: string, args: readonly string[], opts?: ExecOpts) =>
+      cmd === 'npm' && args[0] === 'view'
+        ? Promise.resolve({ stdout: JSON.stringify(keywords), stderr: '', code: 0 })
+        : realProc.execFile(cmd, args, opts),
+  } as PackageManagerDeps['proc'];
+}
+
+function makePm(projectRoot: string, restarts: unknown[] = [], proc: PackageManagerDeps['proc'] = realProc) {
   return createPackageManager({
-    proc: realProc,
+    proc,
     log: { info: () => {}, error: () => {} },
     projectRoot: () => projectRoot,
     readText: async p => {
@@ -123,7 +145,14 @@ describe('安装链（真实 npm）', () => {
   it.runIf(npmUsable)(
     'standalone 安装：写根 dependencies + node_modules，且不建 packages/ 死目录',
     async () => {
-      const r = await makePm(root).install('is-odd@3.0.0');
+      // 真 npm view 读出 is-odd 没有 Aalis 类型关键词 → 装前类型闸拒装，项目一字不动
+      const before = readFileSync(join(root, 'package.json'), 'utf-8');
+      const refused = await makePm(root).install('is-odd@3.0.0');
+      expect(refused.ok).toBe(false);
+      expect(refused.message).toContain('非插件包');
+      expect(readFileSync(join(root, 'package.json'), 'utf-8')).toBe(before);
+
+      const r = await makePm(root, [], passKindGate(['aalis', 'aalis-interface'])).install('is-odd@3.0.0');
       expect(r.ok).toBe(true);
       expect(deps(root)['is-odd']).toBeDefined();
       expect(existsSync(join(root, 'node_modules/is-odd/package.json'))).toBe(true);
@@ -204,6 +233,34 @@ describe('安装链（真实 npm）', () => {
         expect(r.ok).toBe(false);
         expect(r.conflicts?.some(c => c.includes('react-dom'))).toBe(true);
         expect(readFileSync(join(p, 'package.json'), 'utf-8')).toBe(before);
+      } finally {
+        rmSync(p, { recursive: true, force: true });
+      }
+    },
+    480_000,
+  );
+
+  it.runIf(npmUsable)(
+    '安装同样压掉 legacy-peer-deps：项目 .npmrc 开了它，peer 不满足的包仍被 ERESOLVE 拦下',
+    async () => {
+      // 环境变量压得过项目根的 .npmrc：否则 legacy-peer-deps=true 让 npm 对 peer 不满足一句不报，
+      // 照装不误（实测不压时 react-dom@19 会装在 react@18.2.0 旁边）。
+      const p = mkdtempSync(join(tmpdir(), 'aalis-legacy-install-'));
+      try {
+        writeFileSync(
+          join(p, 'package.json'),
+          JSON.stringify({ name: 'li', version: '1.0.0', private: true, dependencies: { react: '18.2.0' } }, null, 2),
+        );
+        writeFileSync(join(p, '.npmrc'), 'legacy-peer-deps=true\n');
+        await pexec('npm', ['install', '--no-audit', '--no-fund'], { cwd: p, timeout: 240_000 });
+        const before = readFileSync(join(p, 'package.json'), 'utf-8');
+        // react-dom@19.0.0 的 peer 要 react@^19.0.0
+        const r = await makePm(p, [], passKindGate(['aalis', 'aalis-plugin'])).install('react-dom@19.0.0');
+        expect(r.ok).toBe(false);
+        expect(r.message).toContain('legacy-peer-deps');
+        expect(r.message).toContain('react-dom');
+        expect(readFileSync(join(p, 'package.json'), 'utf-8')).toBe(before);
+        expect(existsSync(join(p, 'node_modules/react-dom'))).toBe(false);
       } finally {
         rmSync(p, { recursive: true, force: true });
       }

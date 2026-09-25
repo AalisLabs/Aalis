@@ -1,8 +1,6 @@
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { App, definePlugin, defineService, type Logger, provide } from '../../packages/core/src/index.js';
+import { runTscProbe } from '../helpers/tsc-probe.js';
 
 // ════════════════════════════════════════════════════════════
 // provide 按描述符约束实现类型：声明 increment(): number、注册返回
@@ -12,8 +10,6 @@ import { App, definePlugin, defineService, type Logger, provide } from '../../pa
 // 负向用例不能放进 test/（test-types 绊线要求零错），故写到临时目录、
 // spawn tsc、断言错误落点。负向探针先确认「去掉错误就能编过」，防恒真。
 // ════════════════════════════════════════════════════════════
-
-const ROOT = resolve(__dirname, '../..');
 
 const GOOD = `import { definePlugin, defineService, provide } from '@aalis/core';
 
@@ -59,35 +55,6 @@ definePlugin({
 });
 `;
 
-function runTsc(source: string): string[] {
-  // 夹具必须在仓内：tsconfig.test.json 的 rootDir 是仓根，path-mapped 进来的 core 源码要在其下，
-  // 否则 tsc 报 TS6059。node_modules 下：gitignored、biome 不扫、不在任何 include 里。
-  const dir = mkdtempSync(join(ROOT, 'node_modules', '.aalis-type-probe-'));
-  try {
-    writeFileSync(join(dir, 'fixture.ts'), source);
-    writeFileSync(
-      join(dir, 'tsconfig.json'),
-      JSON.stringify({
-        extends: join(ROOT, 'tsconfig.test.json'),
-        compilerOptions: { noEmit: true },
-        include: [join(dir, 'fixture.ts')],
-      }),
-    );
-    const res = spawnSync(
-      join(ROOT, 'node_modules/.bin/tsc'),
-      ['-p', join(dir, 'tsconfig.json'), '--pretty', 'false'],
-      {
-        cwd: ROOT,
-        encoding: 'utf-8',
-      },
-    );
-    if (res.error) throw res.error;
-    return `${res.stdout ?? ''}${res.stderr ?? ''}`.split('\n').filter(l => l.includes('error TS'));
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
-
 function badLineOf(source: string): number {
   return source.split('\n').findIndex(l => l.includes('// BAD')) + 1;
 }
@@ -115,14 +82,14 @@ function capturingLogger() {
 
 describe('provide 生产者类型约束', () => {
   it('正向：describe + 匹配的 impl → 编译通过', () => {
-    const errs = runTsc(GOOD);
+    const errs = runTscProbe(GOOD);
     expect(errs, `合法 provide(desc, impl) 必须放行，实际：${errs.join('\n') || '（零错误）'}`).toEqual([]);
   });
 
   it('负向：impl 类型不合描述符的提供者类型 → 编译失败', () => {
-    const good = runTsc(GOOD);
+    const good = runTscProbe(GOOD);
     expect(good, '去掉错误行后必须能编过，否则本探针恒真').toEqual([]);
-    const errs = runTsc(BAD_IMPL);
+    const errs = runTscProbe(BAD_IMPL);
     const line = badLineOf(BAD_IMPL);
     const atBad = errs.filter(e => e.includes(`fixture.ts(${line},`));
     expect(atBad.length, `第 ${line} 行应有类型错误，实际：${errs.join('\n') || '（零错误）'}`).toBeGreaterThan(0);
@@ -130,9 +97,9 @@ describe('provide 生产者类型约束', () => {
   });
 
   it('负向：provide 传入服务名字符串 → 编译失败', () => {
-    const good = runTsc(GOOD);
+    const good = runTscProbe(GOOD);
     expect(good, '去掉错误行后必须能编过，否则本探针恒真').toEqual([]);
-    const errs = runTsc(BAD_STRING);
+    const errs = runTscProbe(BAD_STRING);
     const line = badLineOf(BAD_STRING);
     const atBad = errs.filter(e => e.includes(`fixture.ts(${line},`));
     expect(
@@ -156,7 +123,7 @@ definePlugin({
   },
 });
 `;
-    const typeErrs = runTsc(undeclared);
+    const typeErrs = runTscProbe(undeclared);
     expect(typeErrs, `未在 provides 声明的描述符不是类型错误，实际：${typeErrs.join('\n')}`).toEqual([]);
 
     const { logger, warns } = capturingLogger();

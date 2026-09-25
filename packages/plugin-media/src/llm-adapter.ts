@@ -8,7 +8,6 @@ import { LLMCapabilities } from '@aalis/api-llm';
 import type {
   DescribeInput,
   DescribeResult,
-  MediaCapability,
   MediaProcessor,
   TranscribeInput,
   TranscribeResult,
@@ -16,6 +15,7 @@ import type {
 import type { Logger, ServiceRef } from '@aalis/core';
 import type { Message } from '@aalis/schema-message';
 import { materializeAttachment, transcodeAudioToWav } from './ffmpeg.js';
+import { getMediaRuntime } from './runtime.js';
 
 /** 包装 LLM 为 processor 用到的能力：枚举 LLM entry 的 llm，以及识别过程的 logger */
 export interface AdapterCaps {
@@ -132,7 +132,6 @@ export const DEFAULT_VISION_BATCH_PROMPT =
 // 全能音频 prompt：语音转写为原文 + 音乐/环境音描述。
 // 注意：e4b 这类小模型在 thinking enabled 时此类开放式 prompt 会消耗
 // ~600-900 completion token；要求 maxTokens 至少 1024，否则会被截断为空。
-// 详见 /memories/repo/aalis-ollama-gemma4-audio.md。
 export const DEFAULT_AUDIO_PROMPT =
   '请用中文描述这段音频的内容：' +
   '若含语音/对话则转写为原文（中文用中文写，英文保留英文）；' +
@@ -141,7 +140,7 @@ export const DEFAULT_AUDIO_PROMPT =
   '仅输出内容本身，不要 markdown 标记。';
 
 interface LlmProcessorOptions {
-  /** 自定义 prompt 覆盖默认值（单图 / audio / video.passthrough） */
+  /** 自定义 prompt 覆盖默认值（vision 单图 / audio） */
   prompt?: string;
   /** 多图批量描述专用 prompt，仅 vision 生效。留空使用 prompt（若也为空则用内置默认） */
   batchPrompt?: string;
@@ -182,18 +181,6 @@ function detectAudioFormat(buf: Buffer): string {
 }
 
 /**
- * 把 audio attachment.data 解析为 base64（去掉 data: 前缀），供 LLM provider 直接使用。
- *
- * 处理策略：
- * 1. 物化到本地文件
- * 2. 探测 magic header；mp3/wav/ogg/m4a/flac 等主流格式直接透传
- * 3. 其它格式（含 OneBot/NapCat 常见的 amr 与 raw audio）一律用 ffmpeg
- *    转码为 16kHz mono WAV，这是 Gemma 3n 等多模态 LLM 官方推荐的格式
- * 4. ffmpeg 转码失败（典型如 SILK——ffmpeg 没有 silk 解码器）才抛错
- */
-import { getMediaRuntime } from './runtime.js';
-
-/**
  * 把 image attachment.data 规范化为 `data:image/...;base64,...` 形式，
  * 供 LLM provider 直接消费。处理策略：
  * - 已经是 `data:image/...;base64,...` → 原样返回
@@ -202,7 +189,7 @@ import { getMediaRuntime } from './runtime.js';
  *   → 走 materializeAttachment 物化到 storage，读出字节后转为 data URL
  *
  * 历史上 adapter-onebot 直接把 `data/images/...` 这种"相对路径 ref"塞进
- * att.data。ollama provider 的 resolveBinary 只认 data URI / http / file:// / 绝对路径，
+ * att.data。ollama provider 的 resolveImage 只认 data URI / http / file:// / 绝对路径，
  * 这种 bare 相对路径会被原样当作 base64 送给 Ollama，触发 `illegal base64 data at input byte N`。
  * 在 media 层统一规范化为 data URL 后，所有 vision provider 都能正确解码。
  */
@@ -254,7 +241,6 @@ function fmtToMime(fmt: string): string {
  *
  * 现在统一返回 `data:audio/{mime};base64,...`：
  * - `decodeAudioForOpenAI` 能精确推断 format
- * - `stripAudioDataPrefix`（/api/chat 路径）能正确剥前缀
  * - 兼容性：Message.audios 字段就是 string[]，data URL 仍然合法
  */
 async function audioToBase64(data: string): Promise<string> {
@@ -290,27 +276,29 @@ async function audioToBase64(data: string): Promise<string> {
 /** 把单个 LLMModelEntry 包装成 MediaProcessor。 */
 function wrapLLMAsProcessor(
   entry: LLMModelEntry,
-  cap: MediaCapability,
+  cap: 'vision' | 'audio',
   logger: Logger,
   opts: LlmProcessorOptions = {},
 ): MediaProcessor {
   const llm: LLMModel = entry.instance;
-  const name = `llm:${entry.contextId}#${capShortName(cap)}`;
+  const name = `llm:${entry.contextId}#${cap}`;
   const proc: MediaProcessor = {
     name,
     capabilities: [cap],
-    displayName: `${entry.label ?? entry.contextId} (${capShortName(cap)})`,
+    displayName: `${entry.label ?? entry.contextId} (${cap})`,
     priority: 0,
     async describe(input: DescribeInput): Promise<DescribeResult> {
+      // 注：audio 不走 describe——音频识别由下方的 proc.transcribe 处理（pickProcessor('audio').transcribe）。
+      if (cap !== 'vision') throw new Error(`LLM adapter 不支持 capability=${cap}`);
       // base 优先级：调用方显式 basePrompt > wrap 时注入的 opts.prompt > 内置默认
       // 调用方需要切换 prompt（如详细/专业模板或自路由）时必须传 input.basePrompt，
       // 不要塞进 hint —— 否则会和默认 base 同时存在产生指令冲突。
       const explicitBase = input.basePrompt;
       const base =
         explicitBase ??
-        (cap === 'vision' && input.attachments.length > 1
+        (input.attachments.length > 1
           ? (opts.batchPrompt ?? opts.prompt ?? DEFAULT_VISION_BATCH_PROMPT)
-          : (opts.prompt ?? defaultPromptFor(cap, input.attachments.length)));
+          : (opts.prompt ?? DEFAULT_VISION_PROMPT));
       // 上下文仅作背景参考，必须显式防止"上下文污染描述"：模型容易把对话历史里出现、
       // 但图片中并不可见的人物/事件/情绪写进描述，导致"夸张"或事实捏造。
       const ctxBlock = input.context
@@ -321,55 +309,46 @@ function wrapLLMAsProcessor(
         : '';
       const hintBlock = input.hint ? `\n\n额外要求：${input.hint}` : '';
       const prompt = `${base}${ctxBlock}${hintBlock}`;
-      // audio 默认更大：e4b thinking enabled 时全能 prompt 消耗 ~600-900 token
-      const defaultMax = cap === 'audio' ? 1024 : 300;
-      const maxTokens = input.maxTokens ?? opts.maxTokens ?? defaultMax;
-      // audio 默认保留 thinking（识别质量更高）；其他 cap 维持原 false 行为。
-      const think = opts.think ?? cap === 'audio';
+      const maxTokens = input.maxTokens ?? opts.maxTokens ?? 300;
+      const think = opts.think ?? false;
 
-      // image / video.passthrough 走 images[] 字段
-      // 视频帧已被预处理拆为图片再调用本方法。
-      if (cap === 'vision' || cap === 'document.image' || cap === 'video.passthrough') {
-        const images = await Promise.all(input.attachments.map(a => imageToBase64DataUrl(a.data, a.mimeType)));
-        // data URL 才按 base64 估字节；http(s) 是透传给 provider 自行下载的，
-        // 拿它的字符串长度套 base64 公式会算出 0KB，与「图片确实是空的」无从区分。
-        const sizes = images.map(s => (s.startsWith('data:') ? `${Math.round((s.length * 3) / 4 / 1024)}KB` : 'URL'));
-        const messages: Message[] = [{ role: 'user', content: prompt, images }];
-        const t0 = Date.now();
-        logger.info(
-          `[${cap}.describe] 调用 ${llm.id}，${images.length} 张图 (${sizes.join('/')}), ` +
-            `prompt=${prompt.length}字, maxTokens=${maxTokens}, think=${think}`,
+      // 图片走 images[] 字段；视频帧已被预处理拆为图片再调用本方法。
+      const images = await Promise.all(input.attachments.map(a => imageToBase64DataUrl(a.data, a.mimeType)));
+      // data URL 才按 base64 估字节；http(s) 是透传给 provider 自行下载的，
+      // 拿它的字符串长度套 base64 公式会算出 0KB，与「图片确实是空的」无从区分。
+      const sizes = images.map(s => (s.startsWith('data:') ? `${Math.round((s.length * 3) / 4 / 1024)}KB` : 'URL'));
+      const messages: Message[] = [{ role: 'user', content: prompt, images }];
+      const t0 = Date.now();
+      logger.info(
+        `[${cap}.describe] 调用 ${llm.id}，${images.length} 张图 (${sizes.join('/')}), ` +
+          `prompt=${prompt.length}字, maxTokens=${maxTokens}, think=${think}`,
+      );
+      // 视觉识别里图片就是全部内容，取不到就该抛，不能让模型对着占位文字编
+      const resp = await llm.chat({ messages, maxTokens, think, requireImages: true });
+      const rawLen = resp.content?.length ?? 0;
+      const text = resp.content?.trim() ?? '';
+      const usedTokens = resp.usage?.totalTokens;
+      if (rawLen === 0) {
+        const usedPct = usedTokens && maxTokens > 0 ? Math.round((usedTokens / maxTokens) * 100) : -1;
+        logger.warn(
+          `[${cap}.describe] ${llm.id} 空响应：${Date.now() - t0}ms, 图源=[${sizes.join('/')}], ` +
+            `prompt=${prompt.length}字, tokens=${usedTokens ?? '?'}/${maxTokens}` +
+            (usedPct >= 80
+              ? `（占用 ${usedPct}%，可能是 maxTokens 不足导致 completion 被截空）`
+              : usedPct >= 0
+                ? `（占用 ${usedPct}%）`
+                : '') +
+            `, think=${think}`,
         );
-        // 视觉识别里图片就是全部内容，取不到就该抛，不能让模型对着占位文字编
-        const resp = await llm.chat({ messages, maxTokens, think, requireImages: true });
-        const rawLen = resp.content?.length ?? 0;
-        const text = resp.content?.trim() ?? '';
-        const usedTokens = resp.usage?.totalTokens;
-        if (rawLen === 0) {
-          const usedPct = usedTokens && maxTokens > 0 ? Math.round((usedTokens / maxTokens) * 100) : -1;
-          logger.warn(
-            `[${cap}.describe] ${llm.id} 空响应：${Date.now() - t0}ms, 图源=[${sizes.join('/')}], ` +
-              `prompt=${prompt.length}字, tokens=${usedTokens ?? '?'}/${maxTokens}` +
-              (usedPct >= 80
-                ? `（占用 ${usedPct}%，可能是 maxTokens 不足导致 completion 被截空）`
-                : usedPct >= 0
-                  ? `（占用 ${usedPct}%）`
-                  : '') +
-              `, think=${think}`,
-          );
-        } else {
-          logger.info(
-            `[${cap}.describe] ${llm.id} 完成 ${Date.now() - t0}ms, raw=${rawLen}字 trim=${text.length}字, tokens=${usedTokens ?? '?'}`,
-          );
-        }
-        return {
-          descriptions: input.mode === 'single' ? input.attachments.map(() => text) : [text],
-          meta: { processor: name, model: llm.id, tokens: usedTokens },
-        };
+      } else {
+        logger.info(
+          `[${cap}.describe] ${llm.id} 完成 ${Date.now() - t0}ms, raw=${rawLen}字 trim=${text.length}字, tokens=${usedTokens ?? '?'}`,
+        );
       }
-
-      // 注：audio 不走 describe——音频识别由下方的 proc.transcribe 处理（pickProcessor('audio').transcribe）。
-      throw new Error(`LLM adapter 不支持 capability=${cap}`);
+      return {
+        descriptions: input.mode === 'single' ? input.attachments.map(() => text) : [text],
+        meta: { processor: name, model: llm.id, tokens: usedTokens },
+      };
     },
   };
 
@@ -423,49 +402,26 @@ function wrapLLMAsProcessor(
   return proc;
 }
 
-function capShortName(cap: MediaCapability): string {
-  switch (cap) {
-    case 'vision':
-      return 'vision';
-    case 'audio':
-      return 'audio';
-    case 'video.passthrough':
-      return 'video';
-    case 'document.image':
-      return 'doc-img';
-  }
-}
-
-function defaultPromptFor(cap: MediaCapability, count: number): string {
-  if (cap === 'audio') return DEFAULT_AUDIO_PROMPT;
-  if (count > 1) return DEFAULT_VISION_BATCH_PROMPT;
-  return DEFAULT_VISION_PROMPT;
-}
-
 /**
  * 扫描当前全部 LLM entry，按其声明的能力返回应注册的 MediaProcessor 数组。
- * @param opts 默认应用于所有 cap 的参数，以及 per-cap 覆盖（vision/audio 可独立配 prompt/maxTokens/think）
+ * @param opts 按 cap 分开的参数（vision/audio 各自配 prompt/maxTokens/think）
  *
  * 不注册 `video.passthrough`（原生视频 LLM）与 `document.image`：service 从不按这两个 cap 选
  * processor（视频一律走「抽帧 → vision」，文件交给 file-reader），注册只会让配置面多出永不生效的键。
  */
 export function scanLLMProcessors(
   caps: AdapterCaps,
-  opts: LlmProcessorOptions & {
-    vision?: LlmProcessorOptions;
-    audio?: LlmProcessorOptions;
-  } = {},
+  opts: { vision?: LlmProcessorOptions; audio?: LlmProcessorOptions } = {},
 ): MediaProcessor[] {
-  const { vision: visionOverride, audio: audioOverride, ...defaults } = opts;
   const processors: MediaProcessor[] = [];
   for (const entry of caps.llm.all()) {
     const modelCaps = entry.instance.capabilities;
     if (modelCaps.includes(LLMCapabilities.Vision)) {
-      processors.push(wrapLLMAsProcessor(entry, 'vision', caps.logger, { ...defaults, ...visionOverride }));
+      processors.push(wrapLLMAsProcessor(entry, 'vision', caps.logger, opts.vision ?? {}));
     }
     if (modelCaps.includes(LLMCapabilities.Audio)) {
       // Gemma 3n / Gemini / GPT-4o-audio 等原生音频 LLM 单一 cap 覆盖转写 + 描述，由全能 prompt 驱动
-      processors.push(wrapLLMAsProcessor(entry, 'audio', caps.logger, { ...defaults, ...audioOverride }));
+      processors.push(wrapLLMAsProcessor(entry, 'audio', caps.logger, opts.audio ?? {}));
     }
   }
   return processors;

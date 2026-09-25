@@ -1,7 +1,6 @@
 import type { ChatModelRequest, ChatResponse, ChatStreamChunk, LLMModel } from '../../packages/api-llm/src/index.js';
 import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
 import { definePlugin, provide } from '../../packages/core/src/index.js';
-import type { ConfigSchema } from '../../packages/schema-config/src/index.js';
 
 /**
  * Mock LLM 插件（fixture）
@@ -17,7 +16,7 @@ import type { ConfigSchema } from '../../packages/schema-config/src/index.js';
  * 用法：
  *   const recorder: ChatModelRequest[] = [];
  *   const responses: ChatResponse[] = [{ content: 'hi' }];
- *   await ctx.useModule(createMockLLMPlugin({ responses, recorder }));
+ *   await app.plugin(createMockLLMPlugin({ responses, recorder }));
  */
 
 export interface MockLLMOptions {
@@ -29,28 +28,23 @@ export interface MockLLMOptions {
   latencyMs?: number;
   /** chat() 应该抛出的错误（一次性） */
   throwOnce?: Error;
-  /** 上下文长度，默认 8192。**agent 的 tokenBudget 直接吃它**，留空会让预算变 NaN。 */
-  contextLength?: number;
-  /** provider 建议的最大输出 token，默认 1024 */
-  maxOutputTokens?: number;
-  /** model id，默认 'mock-model' */
-  id?: string;
-  /** 所属 provider 的 contextId，默认 '@aalis/test-fixture-mock-llm' */
-  providerId?: string;
 }
 
 export class MockLLMService implements LLMModel {
-  private readonly opts: Required<Omit<MockLLMOptions, 'throwOnce' | 'recorder' | 'responses'>> & {
+  private readonly opts: {
+    latencyMs: number;
     throwOnce?: Error;
     recorder?: ChatModelRequest[];
     responses: ChatResponse[];
   };
   private cursor = 0;
 
-  readonly id: string;
-  readonly providerId: string;
-  readonly contextLength: number;
-  readonly maxOutputTokens: number;
+  readonly id = 'mock-model';
+  readonly providerId = '@aalis/test-fixture-mock-llm';
+  /** 上下文长度。**agent 的 tokenBudget 直接吃它**，缺了会让预算变 NaN。 */
+  readonly contextLength = 8192;
+  /** provider 建议的最大输出 token */
+  readonly maxOutputTokens = 1024;
   /** 能力元数据（与真实 provider 一致，挂在 model handle 实例上供 resolveLLMModel/listLLMModels 读取）。 */
   readonly capabilities = [LLMCapabilities.Chat, LLMCapabilities.ToolCalling, LLMCapabilities.Streaming];
 
@@ -60,15 +54,7 @@ export class MockLLMService implements LLMModel {
       recorder: options.recorder,
       latencyMs: options.latencyMs ?? 0,
       throwOnce: options.throwOnce,
-      contextLength: options.contextLength ?? 8192,
-      maxOutputTokens: options.maxOutputTokens ?? 1024,
-      id: options.id ?? 'mock-model',
-      providerId: options.providerId ?? '@aalis/test-fixture-mock-llm',
     };
-    this.id = this.opts.id;
-    this.providerId = this.opts.providerId;
-    this.contextLength = this.opts.contextLength;
-    this.maxOutputTokens = this.opts.maxOutputTokens;
   }
 
   private nextResponse(): ChatResponse {
@@ -107,11 +93,9 @@ export class MockLLMService implements LLMModel {
   }
 }
 
-export interface MockLLMPluginConfig extends MockLLMOptions {}
-
 export function createMockLLMPlugin(options: MockLLMOptions = {}) {
   const service = new MockLLMService(options);
-  const plugin = definePlugin({
+  return definePlugin({
     name: '@aalis/test-fixture-mock-llm',
     provides: [llm],
     uses: { provide },
@@ -120,8 +104,4 @@ export function createMockLLMPlugin(options: MockLLMOptions = {}) {
       provide(llm, service, { entryId: `${service.providerId}/${service.id}` });
     },
   });
-  /** service：直接访问以便断言 */
-  return Object.assign(plugin, { service });
 }
-
-export const mockLLMConfigSchema: ConfigSchema = {};

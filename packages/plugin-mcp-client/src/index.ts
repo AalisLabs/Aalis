@@ -9,7 +9,7 @@
  * - 工具名加前缀 `mcp_<server-id>_<tool-name>` 避免与本地工具冲突
  * - 每个 server 注册一个工具分组 `mcp:<server-id>`
  * - 激活关闭时断开所有 client 连接（lifecycle.onDispose）
- * - 安全级别由 config 中按 server 配置（默认 safe）；高危 server 应显式设为 dangerous
+ * - 档位按 server 的 visibility 配置（默认 auto，按工具注解分档）
  */
 
 import { type HostConfig, hostConfig as hostConfigService } from '@aalis/api-host-config';

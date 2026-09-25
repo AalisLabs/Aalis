@@ -124,7 +124,8 @@ export function resolveCanvas(source: string, requestedWidth: number | undefined
 
 /**
  * 外壳文档：body 归零边距；SVG 模式用定宽定高容器把根 SVG 撑满（杜绝随视口伸缩）；
- * HTML 模式定宽、高度自流。字体栈兜底中文与 emoji（部署机 macOS；模型可在标记内自定覆盖）。
+ * HTML 模式定宽、高度自流。字体栈兜底中文与 emoji（macOS 自带；Linux 需装 Noto CJK 与 Noto Color Emoji，
+ * 见 docs/plugins/plugin-draw.md「系统依赖」；模型可在标记内自定覆盖）。
  */
 export function buildShell(source: string, mode: SourceMode, width: number, height: number | 'auto'): string {
   const base =

@@ -47,8 +47,6 @@ export class OneBotV11 implements OneBotProtocol {
       params: {
         ...actionParams,
         message_type: params.detailType,
-        user_id: params.detailType === 'private' ? Number(params.targetId) || params.targetId : undefined,
-        group_id: params.detailType === 'group' ? Number(params.targetId) || params.targetId : undefined,
       },
     };
   }
@@ -95,7 +93,6 @@ export class OneBotV11 implements OneBotProtocol {
 
     if (!text.trim()) return null;
 
-    // 提取图片 URL（老字段保留兼容）
     // 提取统一附件列表（image/record/video/file）
     const attachments: NonNullable<NormalizedMessageEvent['attachments']> = [];
     for (const seg of message) {
@@ -167,12 +164,10 @@ export class OneBotV11 implements OneBotProtocol {
   parseMetaEvent(raw: OneBotRawEvent): NormalizedMetaEvent {
     const subType = (raw.meta_event_type ?? '') as string;
     const selfId = raw.self_id != null ? String(raw.self_id) : undefined;
-    const status = raw.status as Record<string, unknown> | undefined;
 
     return {
       subType,
       selfId,
-      interval: (raw.interval as number) ?? (status?.interval as number) ?? undefined,
     };
   }
 

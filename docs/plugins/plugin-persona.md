@@ -19,7 +19,6 @@ export default definePlugin({
     logger,
     events,
     hooks,
-    lifecycle,
     platform: optional(platform),
     storage: optional(storage),
     sessionManager: optional(sessionManager),
@@ -40,7 +39,7 @@ export default definePlugin({
 
 ## 角色卡格式
 
-人设以 YAML 文件定义，文件名（不含 `.yaml` / `.yml` 后缀）即 `persona` 配置值。插件先查 `personasDir`；存储中存在 `configDir` 根时，再查 `configDir:/personas`。找不到指定人设时使用内置默认角色。插件监听上述目录（需存储支持 watch），文件变化后自动重新加载。
+人设以 YAML 文件定义，文件名（不含 `.yaml` / `.yml` 后缀）即 `persona` 配置值。插件先查 `personasDir`；存储中存在 `configDir` 根时，再查 `configDir:/personas`。找不到指定人设时使用内置默认角色。插件监听上述目录（需存储支持 watch），文件变化后自动重新加载；存储提供者重启、改配置或晚于启动上线时自动重挂监听并重新扫描。
 
 ```yaml
 name: Alice

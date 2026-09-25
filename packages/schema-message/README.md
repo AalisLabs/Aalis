@@ -1,10 +1,10 @@
 # @aalis/schema-message
 
-类型/接口/能力声明包（只导出 `type` 与 `*Capabilities`，不含运行时逻辑）
+消息契约：消息载体类型、事件签名增强，以及 WellKnownKinds、prepareLLMMessages、附件占位符等纯函数与常量（无服务）
 
 ## 角色
 
-类型/接口/能力声明包（只导出 `type` 与 `*Capabilities`，不含运行时逻辑）
+消息契约：消息载体类型、事件签名增强，以及 WellKnownKinds、prepareLLMMessages、附件占位符等纯函数与常量（无服务）
 
 ## 安装
 
@@ -15,10 +15,9 @@ pnpm add @aalis/schema-message
 ## 使用
 
 ```ts
-import type { /* ... */ } from '@aalis/schema-message';
+import type { IncomingMessage, Message } from '@aalis/schema-message';
+import { prepareLLMMessages, WellKnownKinds } from '@aalis/schema-message';
 ```
-
-本包为 *-api 类型包；实现见对应的运行时插件。
 
 ## 许可
 

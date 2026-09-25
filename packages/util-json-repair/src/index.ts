@@ -207,7 +207,6 @@ function findBalancedJsonObjectEnd(s: string, start: number): number {
     else if (c === '}') {
       depth--;
       if (depth === 0) return i;
-      if (depth < 0) return -1;
     }
   }
 

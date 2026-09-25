@@ -7,8 +7,8 @@ import type { LogEntry } from '@aalis/schema-log';
  * 解除订阅并清空——之后所有日志直接通过 LogHub.onEntry 走 sink 实时落盘 / 渲染。
  *
  * 设计要点：
- * - **进程级单例**：通过 module-level state 实现，必须由 `src/index.ts` 在最早
- *   时机调用 `installBootstrapBuffer()` 一次（在 Logger 第一次被调用之前）。
+ * - **进程级单例**：通过 module-level state 实现，由 `startAalis` 在最早时机
+ *   调用 `installBootstrapBuffer()` 一次（在 Logger 第一次被调用之前）。
  * - **多 sink 共享**：每个 sink 装载时调用 `snapshot()` 拿到当前已捕获条目副本
  *   并自行消费（写文件 / 渲染 stdout）；snapshot 不改变状态，可任意次。
  * - **显式 dispose**：所有 sink 装好后由 host 显式 `dispose()` —— 之后 buffer
@@ -26,7 +26,7 @@ interface BootstrapBuffer {
 let installed: BootstrapBuffer | null = null;
 
 /**
- * 安装 bootstrap buffer。必须在所有日志产生之前调用（即 `src/index.ts` 顶部）。
+ * 安装 bootstrap buffer。必须在所有日志产生之前调用（由 `startAalis` 最先调用）。
  * 重复调用返回同一实例。
  */
 export function installBootstrapBuffer(hub: LogHub = LogHub.default): BootstrapBuffer {

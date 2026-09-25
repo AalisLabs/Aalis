@@ -6,7 +6,7 @@
 
 ## 概述
 
-定义所有 LLM provider 必须满足的服务契约，以及 capability 框架（`chat / tool_calling / streaming / vision / thinking`）。每个 provider 用 `provide(llm, handle, { entryId: '${lifecycle.id}/${modelId}', label })` 为 **每个模型** 独立注册一个 entry。能力元数据在 handle 的 `capabilities` 字段上，不放进 `provide` 选项。Agent / Memory-summary / Image-recognition 等消费方仅依赖本契约。
+定义所有 LLM provider 必须满足的服务契约，以及 capability 框架（`chat / tool_calling / streaming / vision / thinking`）。每个 provider 用 `provide(llm, handle, { entryId: '${lifecycle.id}/${modelId}', label })` 为 **每个模型** 独立注册一个 entry。能力元数据在 handle 的 `capabilities` 字段上，不放进 `provide` 选项。Agent / Memory-summary 等消费方仅依赖本契约。
 
 ## 关键类型
 

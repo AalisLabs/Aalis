@@ -10,6 +10,7 @@ import {
   optional,
   provide,
 } from '../../packages/core/src/index.js';
+import { deferred } from '../helpers/deferred.js';
 import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
@@ -19,15 +20,6 @@ import { activationHost, createInspectableApp, rootActivation } from '../helpers
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const tick = () => new Promise<void>(r => setImmediate(r));
-function deferred() {
-  let resolve!: () => void;
-  let reject!: (err: unknown) => void;
-  const promise = new Promise<void>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
 
 interface Store {
   save(data: string): void;

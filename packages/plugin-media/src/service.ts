@@ -38,7 +38,6 @@ import {
 } from './cache.js';
 import { buildIncomingImageContext, type ContextCaps } from './context.js';
 import {
-  downloadToTemp,
   extractAudioTrack,
   extractFrames,
   getFrameCount,
@@ -111,7 +110,7 @@ export interface MediaConfigResolved {
     maxFrames: number;
     /** 抽帧后给 vision 模型的 hint，留空为内置默认 */
     framesHint?: string;
-    /** describeImage 动图分支的 fallback hint，留空为内置默认 */
+    /** describeImage 遇到动图时的整段描述 prompt（替换内置多图批量模板），留空使用内置多图批量模板 */
     animatedPrompt?: string;
     /** 综合描述中画面部分的前缀 */
     framePrefix: string;
@@ -196,7 +195,7 @@ export class MediaServiceImpl implements MediaService {
         if (exact) return exact;
       } else if (typeof prefer === 'object' && (prefer.provider || prefer.model)) {
         // ModelRef → 匹配 llm-adapter 生成的 processor name
-        // processor.name 格式：`llm:${provider}/${model}#${capShort}`
+        // processor.name 格式：`llm:${provider}/${model}#${cap}`
         const exact = candidates.find(p => {
           if (!p.name.startsWith('llm:')) return false;
           const ctxPart = p.name.slice('llm:'.length).split('#')[0];
@@ -340,10 +339,9 @@ export class MediaServiceImpl implements MediaService {
     if (attachments.length === 0) return report;
 
     // 多模态上下文：在进入任何 processor 调用前构造一次，后续复用。
-    const ctxText =
-      this.cfg.contextHistory.enabled && attachments.length > 0
-        ? await safeBuildContext(this.contextCaps, msg, this.cfg.contextHistory.maxMessages, this.cfg.senderContext)
-        : undefined;
+    const ctxText = this.cfg.contextHistory.enabled
+      ? await safeBuildContext(this.contextCaps, msg, this.cfg.contextHistory.maxMessages, this.cfg.senderContext)
+      : undefined;
 
     // 描述是否可跨会话复用：带了本会话对话上下文的描述属于「此群此刻的解读」，
     // 只在本会话内复用（键退回含会话目录的落盘路径），否则会把 A 群语境搬进 B 群。
@@ -657,8 +655,6 @@ export class MediaServiceImpl implements MediaService {
     const sig = all.map(e => `${e.contextId}:${e.instance.capabilities.join(',')}`).join('|');
     if (this.llmCache?.signature === sig) return this.llmCache.processors;
     const processors = scanLLMProcessors(this.caps, {
-      prompt: this.cfg.vision.prompt,
-      maxTokens: this.cfg.vision.maxTokens,
       vision: {
         prompt: this.cfg.vision.prompt,
         batchPrompt: this.cfg.vision.batchPrompt,
@@ -718,17 +714,9 @@ export class MediaServiceImpl implements MediaService {
 
     if (animated) {
       // 动图/视频：抽帧后 combined 描述
-      let local = opts.localPath ? { path: opts.localPath, cleanup: async () => {} } : null;
-      let downloaded: { path: string; cleanup: () => Promise<void> } | null = null;
-      if (!local) {
-        if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-          downloaded = await downloadToTemp(imageUrl);
-          if (downloaded) local = downloaded;
-        } else {
-          const mat = await materializeAttachment(imageUrl);
-          if (mat) local = mat;
-        }
-      }
+      const local = opts.localPath
+        ? { path: opts.localPath, cleanup: async () => {} }
+        : await materializeAttachment(imageUrl);
       if (local) {
         try {
           const frames = await this.framesFromLocal(local.path, this.cfg.animatedImage.maxFrames);
@@ -748,8 +736,8 @@ export class MediaServiceImpl implements MediaService {
             result = r.descriptions[0] ?? '';
           }
         } finally {
-          // 清理本地化产物：local 即 downloaded 或 materializeAttachment 的结果（opts.localPath 那个是 noop）。
-          if (local) await local.cleanup();
+          // 清理本地化产物：materializeAttachment 的结果（opts.localPath 那个是 noop）。
+          await local.cleanup();
         }
       }
     } else {

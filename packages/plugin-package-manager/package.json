@@ -12,7 +12,7 @@
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "插件包管理：从 npm 安装/卸载插件到 packages/",
+  "description": "插件包管理：从 npm 安装/卸载/更新到项目根 dependencies",
   "type": "module",
   "keywords": [
     "aalis",

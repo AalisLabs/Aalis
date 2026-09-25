@@ -5,7 +5,8 @@
 //   data:/{kind}s/{safeSessionId}/{sha256-16}.{ext}
 //
 // 设计要点：
-// - 只接受已下载好的 Buffer，下载/get_record/ffmpeg 由调用方负责
+// - cacheAttachmentBuffer 只接受 Buffer；cacheOneAttachment 负责下载与音频的 ffmpeg 转码；
+//   get_record 由调用方负责
 // - 单文件 size cap 由调用方传入，超限直接返回 null
 // - 文件名用 sha256(buffer) 前 16 字符做内容寻址，自然去重
 // - 返回的 ref 仍是相对路径（如 `data/audios/.../xxx.wav`）以兼容历史 ref:

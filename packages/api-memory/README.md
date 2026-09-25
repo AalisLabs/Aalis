@@ -15,10 +15,10 @@ pnpm add @aalis/api-memory
 ## 使用
 
 ```ts
-import type { /* ... */ } from '@aalis/api-memory';
-```
+import { memory } from '@aalis/api-memory';
 
-本包为 *-api 类型包；实现见对应的运行时插件。
+// uses: { memory }
+```
 
 ## 许可
 

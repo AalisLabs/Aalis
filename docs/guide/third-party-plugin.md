@@ -332,6 +332,7 @@ pnpm 可以直接引用根依赖的范围：
 
 ## 9. 进一步阅读
 
+- [脚手架上手指南](./scaffolding.md)：用 `create-aalis-plugin` 生成本文所述的包结构
 - [架构总览](../architecture.md)
 - [api 包设计](../design/api-packages.md)
 - [枢纽服务：第三方能力的登记契约](../design/hub-services.md)

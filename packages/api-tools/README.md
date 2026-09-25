@@ -15,10 +15,10 @@ pnpm add @aalis/api-tools
 ## 使用
 
 ```ts
-import type { /* ... */ } from '@aalis/api-tools';
-```
+import { tools } from '@aalis/api-tools';
 
-本包为 *-api 类型包；实现见对应的运行时插件。
+// uses: { tools }
+```
 
 ## 许可
 

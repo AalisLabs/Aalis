@@ -14,14 +14,7 @@ import {
   services,
 } from '../../packages/core/src/index.js';
 import type { PluginManager } from '../../packages/core/src/orchestration/plugin.js';
-
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>(done => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
+import { deferred } from '../helpers/deferred.js';
 
 const svcA = defineService<unknown>('qsc-a');
 const svcB = defineService<unknown>('qsc-b');

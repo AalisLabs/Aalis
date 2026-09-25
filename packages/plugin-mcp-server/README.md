@@ -17,20 +17,19 @@ HTTP + SSE。Aalis 是常驻进程，stdio 已被日志占用，因此不走 Ant
 - 默认 `allowRestricted: false`，可见性为 `restricted` 的工具一律拒绝
   - `ListTools` 与 `CallTool` 两端都过滤，防止 client 越界
 - `toolGroups` 白名单：仅暴露指定分组（空数组或 `'*'` = 全部允许，但仍受 `allowRestricted` 约束）
-- 工具执行仍走 Aalis 的 `ToolService.execute`，因此 authority guard / permissions resolver 全部生效
+- 工具执行仍走 Aalis 的 `ToolService.execute`，因此 authority 注入的 ExecutionGuard 同样生效
 
 ## 配置示例
 
 ```yaml
 plugins:
   "@aalis/plugin-mcp-server":
-    enabled: true
     port: 39870
     bind: 127.0.0.1
     toolGroups:
-      - websearch
-      - memory
-    allowDangerous: false
+      - search
+      - system
+    allowRestricted: false
 ```
 
 Claude Desktop 客户端配置（仅供参考；MCP client 配置因 host app 而异）：

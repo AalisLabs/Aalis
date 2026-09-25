@@ -65,6 +65,7 @@ import {
   computeSlpa,
   cosineSimilarity,
   edgeDedupKey,
+  edgeEndpoints,
   edgeInvolvesBoth,
   edgeReferences,
   effectiveWeight,
@@ -84,7 +85,6 @@ import {
   PERSON_ENTITY_ROLE_RANK,
   PERSON_EVENT_ROLE_RANK,
   pickCanonicalByMergeScore,
-  pickCanonicalForEvents,
   reinforceWeight,
   rewriteEdgeIds,
   roleDefaultWeight,
@@ -1286,14 +1286,14 @@ export class RelationService {
    *   瞬间跳回 1.0，离散跳跃，不符合"老朋友重逢慢慢回温"的人类直觉。
    * - Eager 回写后：raw 物理变成 0.3，下次 reinforce 从 0.3 出发 → 0.37 →
    *   0.43 …**渐进恢复**，活跃关系靠持续 reinforce 维持高位、长期不活跃的
-   *   关系自然回落到 floor 附近。每日压缩前调用一次，DB 字段就能反映
+   *   关系自然回落到 floor 附近。每次 evictByQuota 入口调用一次，DB 字段就能反映
    *   "当下真实强度"，便于调试 / 观察 / 跨时间快照对比。
    *
    * 语义合并（务实简化，避免新增 `lastDecayedAt` 字段）：
    * - `lastReinforcedAt` 在 eager 模式下含义统一为"上次 weight 字段被更新的
    *   时间"——reinforce* 方法与 rewriteWeights 都写它。物理上是衰减基准。
-   * - 调用方应理解：稳态下"长期不活跃节点"的 lastReinforcedAt 会被每日
-   *   rewrite 推到最近一次压缩时间，age 分子≈0；但它们的 effW 已收敛到 floor，
+   * - 调用方应理解：稳态下"长期不活跃节点"的 lastReinforcedAt 会被每次
+   *   evictByQuota 入口的 rewrite 推到最近一次压缩时间，age 分子≈0；但它们的 effW 已收敛到 floor，
    *   ageScore 排序退化为 `1 / (floor × PR)`——PR 边缘的依旧最先被淘汰。
    *
    * 副作用与正交性：
@@ -1306,7 +1306,7 @@ export class RelationService {
    *   age 更小受保护——"最近活跃的更新鲜，更应保留"。
    *
    * 调用方：
-   * - `evictByQuota` 入口自动调用一次（与每日 scheduler 压缩对齐）。
+   * - `evictByQuota` 入口自动调用一次（提取后超配额的自动淘汰，或手动 /relation compress / maintain）。
    * - `/relation rewrite-weights` 手动命令。
    *
    * 返回各类写回计数，便于日志 / 测试断言。
@@ -1578,22 +1578,6 @@ export class RelationService {
       if (refreshed.edges.length >= triggerCount(quota.maxEdges)) {
         const toDelete = refreshed.edges.length - targetCount(quota.maxEdges);
         if (toDelete > 0) {
-          const edgeEndpoints = (e: RelationEdge): [string, string] => {
-            switch (e.kind) {
-              case 'person-event':
-                return [e.fromPersonId, e.toEventId];
-              case 'person-entity':
-                return [e.fromPersonId, e.toEntityId];
-              case 'person-person':
-                return [e.fromPersonId, e.toPersonId];
-              case 'event-event':
-                return [e.fromEventId, e.toEventId];
-              case 'event-entity':
-                return [e.fromEventId, e.toEntityId];
-              case 'entity-entity':
-                return [e.fromEntityId, e.toEntityId];
-            }
-          };
           const edgeScore = (e: RelationEdge): number => {
             const [a, b] = edgeEndpoints(e);
             const prAvg = ((pr.get(a) ?? 0) + (pr.get(b) ?? 0)) / 2;
@@ -2264,7 +2248,7 @@ export class RelationService {
   }
 
   /**
-   * 按关键词搜索人物。匹配 displayName / userId / aliases / id（substring，不区分大小写）。
+   * 按关键词搜索人物。匹配 displayName / userId / id（substring，不区分大小写）。
    * - platform：可选，仅返回该平台下的人物
    * - limit：返回上限（默认 20）
    */
@@ -2333,18 +2317,10 @@ export class RelationService {
     const kindSet = opts.kinds && opts.kinds.length > 0 ? new Set(opts.kinds) : undefined;
     const relSet = opts.relationTypes && opts.relationTypes.length > 0 ? new Set(opts.relationTypes) : undefined;
     const roleSet = opts.roles && opts.roles.length > 0 ? new Set(opts.roles) : undefined;
-    const edgeEnds = (e: RelationEdge): { from: string; to: string } => {
-      if (e.kind === 'person-event') return { from: e.fromPersonId, to: e.toEventId };
-      if (e.kind === 'person-entity') return { from: e.fromPersonId, to: e.toEntityId };
-      if (e.kind === 'event-event') return { from: e.fromEventId, to: e.toEventId };
-      if (e.kind === 'event-entity') return { from: e.fromEventId, to: e.toEntityId };
-      if (e.kind === 'entity-entity') return { from: e.fromEntityId, to: e.toEntityId };
-      return { from: e.fromPersonId, to: e.toPersonId };
-    };
     const res = snapshot.edges.filter(e => {
       if (kindSet && !kindSet.has(e.kind)) return false;
       if (e.lastReinforcedAt < cutoff) return false;
-      const { from, to } = edgeEnds(e);
+      const [from, to] = edgeEndpoints(e);
       if (opts.nodeId && from !== opts.nodeId && to !== opts.nodeId) return false;
       if (opts.fromId && from !== opts.fromId) return false;
       if (opts.toId && to !== opts.toId) return false;
@@ -2399,7 +2375,7 @@ export class RelationService {
     return collected.slice(0, limit);
   }
 
-  // 1) 别名候选发现：人物 displayName 与 实体 name/aliases 的高相似对，给出候选
+  // 1) 别名候选发现：实体之间 name/aliases 的等价或高相似对，给出候选
   //    （不自动合并，只输出报告供用户决定；若 confidence 极高且开启 autoLink，则建 is-alias-of 边）
   // 2) PersonEventEdge 去重：按现行 addPersonEventEdge 吸收规则重排（修旧账）
   // 3) 报告：返回结构化结果，调用方按需展示
@@ -2493,6 +2469,16 @@ export class RelationService {
     }
 
     const snapshot = await this.store.loadAll();
+    // a、b 之间是否已有 evidence≥1 的 entity-entity part-of/contains 边（任一方向）：
+    // 严格等价段与宽召回段共用的 hierarchy 守门，只信任有证据的层级边。
+    const hasEvidencedHierarchy = (aId: string, bId: string): boolean =>
+      snapshot.edges.some(
+        e =>
+          e.kind === 'entity-entity' &&
+          (e.relationType === 'part-of' || e.relationType === 'contains') &&
+          (e.evidence?.length ?? 0) >= 1 &&
+          ((e.fromEntityId === aId && e.toEntityId === bId) || (e.fromEntityId === bId && e.toEntityId === aId)),
+      );
     const aliasCandidates: Array<{
       aId: string;
       bId: string;
@@ -2512,7 +2498,7 @@ export class RelationService {
     let summariesRewritten = 0;
 
     // 解析可选 LLM 模型（A: 别名核验；B: 合并后摘要重写）
-    const llmModel = opts.llm ? resolveConsolidateModel(opts.llm.models, { modelRef: opts.llm.modelRef }) : undefined;
+    const llmModel = opts.llm ? resolveConsolidateModel(opts.llm.models, opts.llm.modelRef) : undefined;
     const llmDisableThinking = opts.llm?.disableThinking ?? true;
     /** 待合并实体 id → 经过 LLM 确认（或未启用 LLM 时直接 true）的列表 */
     const mergedCanonicals = new Set<string>();
@@ -2553,15 +2539,7 @@ export class RelationService {
             // 注意：必须卡 evidence≥1——LLM 抽取阶段会产出大量 evidence=0 的幻觉层级边，
             // 无视 evidence 数会让这道安全网被污染（如 APEX ↔ 《Apex英雄》被锁住无法合并）。
             // 只信任 evidence≥1 的层级边：幻觉边不阻塞合并，真实层级仍守门。
-            const knownHierarchyEdge = snapshot.edges.some(
-              e =>
-                e.kind === 'entity-entity' &&
-                (e.relationType === 'part-of' || e.relationType === 'contains') &&
-                (e.evidence?.length ?? 0) >= 1 &&
-                ((e.fromEntityId === a.id && e.toEntityId === b.id) ||
-                  (e.fromEntityId === b.id && e.toEntityId === a.id)),
-            );
-            if (knownHierarchyEdge) {
+            if (hasEvidencedHierarchy(a.id, b.id)) {
               shouldMerge = false;
               this.logger?.info(
                 `[user-relation] consolidate 跳过严格等价合并 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边（evidence≥1）`,
@@ -2943,14 +2921,7 @@ export class RelationService {
           continue;
         }
         // hierarchy 守门（同严格等价段）：仅信任 evidence≥1 的真实层级边，幻觉边不再阻塞。
-        const knownHierarchy = snapshot.edges.some(
-          e =>
-            e.kind === 'entity-entity' &&
-            (e.relationType === 'part-of' || e.relationType === 'contains') &&
-            (e.evidence?.length ?? 0) >= 1 &&
-            ((e.fromEntityId === a.id && e.toEntityId === b.id) || (e.fromEntityId === b.id && e.toEntityId === a.id)),
-        );
-        if (knownHierarchy) {
+        if (hasEvidencedHierarchy(a.id, b.id)) {
           this.logger?.info(
             `[user-relation] consolidate 跳过宽召回候选 ${a.id} ↔ ${b.id}：已存在 part-of/contains 边（evidence≥1，层级关系优先）`,
           );
@@ -3474,12 +3445,12 @@ export class RelationService {
 
     // ─── (3) Event 重复合并 ─────────────────────────────────────────
     //   触发：autoLink && LLM 已配置（与 entity wide-recall 同口径）
-    //   边界：sessionScope 相同 或 双方均 'global' —— 跨 scope 由 mergeAlias 硬护栏（L537）兜底
+    //   边界：sessionScope 相同 或 双方均 'global' —— 跨 scope 不进入同池比对（pools 按 sessionScope 分组）
     //   召回：每个 scope 池内 O(N²) pair；任一阈值达成即进 LLM 评审（OR 关系）：
     //     有 embedding 服务：fused = 0.7·cos + 0.3·struct ≥ fusedThreshold（文本为主、结构为辅）
     //     OR jaccard(chars) ≥ 0.4 OR struct ≥ 0.5（无 embedding 或孤立事件的兜底）
     //   终判：verifyEventPair（必经 LLM；mergeReject 缓存命中跳过）
-    //   合并：并查集 → pickCanonicalForEvents → mergeAlias(kind:'event')
+    //   合并：并查集 → pickCanonicalByMergeScore → mergeAlias(kind:'event')
     //   注：本段以前面 entity 合并后的最新 snapshot 为准（重新 loadAll）。
     let eventDuplicateCandidates = 0;
     let eventDuplicatesMerged = 0;
@@ -3548,8 +3519,8 @@ export class RelationService {
    *  的主要信号，结构作为加成。
    *
    * sessionScope 隔离：
-   *  - 同 scope 池内才比对（含「都 'global'」、「同 sessionId」、「都 undefined → 兜底当 'global'」）；
-   *  - 跨 scope 永不比对，与 L537 mergeAlias 硬护栏一致
+   *  - 同 scope 池内才比对（含「都 'global'」、「同 sessionId」）；
+   *  - 跨 scope 永不比对
    *
    * Lazy embed：当 EventNode.embeddingHash !== computeEventEmbeddingHash(title, summary) 时，
    *  实时调 embedding.embed() 并写回（持久化），下次 consolidate 复用。
@@ -3900,11 +3871,10 @@ export class RelationService {
       const clusters = clusterEntitiesByPairs(yesPairs);
       for (const [, members] of clusters) {
         if (members.size < 2) continue;
-        const canonicalId = pickCanonicalForEvents(members, eventById, eventEdgeStats);
+        const canonicalId = pickCanonicalByMergeScore(members, eventById, eventEdgeStats);
         if (!canonicalId) continue;
         for (const memberId of members) {
           if (memberId === canonicalId) continue;
-          // mergeAlias 内部有跨 sessionScope 硬护栏，重复保险
           try {
             const r = await this.mergeAlias({ aliasId: memberId, canonicalId, kind: 'event' });
             if (r.aliasDeleted) {
@@ -3958,7 +3928,7 @@ export class RelationService {
     llmRejectCacheHits: number;
     embeddingAvailable: boolean;
   }> {
-    const llmModel = opts.llm ? resolveConsolidateModel(opts.llm.models, { modelRef: opts.llm.modelRef }) : undefined;
+    const llmModel = opts.llm ? resolveConsolidateModel(opts.llm.models, opts.llm.modelRef) : undefined;
     const embedding = this.embedding?.current;
     const r = await this._consolidateEventDuplicates({
       llmModel,
@@ -4041,7 +4011,7 @@ export class RelationService {
    *   - 0.3 ≤ weight < 0.5：可 weaken 或 remove
    *   - weight < 0.3：自由（含 strengthen 重建）
    * - **alias 边禁操作**：is-alias-of / alt-account-of 是结构性边，
-   *   修改会破坏 mergeAlias 不变量。需取消别名请走未来的 splitAlias 工具。
+   *   修改会破坏 mergeAlias 不变量。alias 边目前没有纠错入口（splitAlias 只处理 entity.aliases 字符串）。
    * - **必填 reason**（≤80 字），写入 weightHistory[] 留痕
    * - **物理删除清理干净**：deleteEdge 直接落盘，不留墓碑（避免脏数据）
    *
@@ -4076,7 +4046,7 @@ export class RelationService {
       const rt = edge.relationType;
       if (rt === 'is-alias-of' || rt === 'alt-account-of') {
         throw new Error(
-          `correctEdge: 禁止操作 alias 边 (relationType=${rt})。alias 是结构性边，错绑请走未来的 splitAlias 流程，不要直接 weaken/remove。`,
+          `correctEdge: 禁止操作 alias 边 (relationType=${rt})。alias 是结构性边，不要直接 weaken/remove；alias 边目前没有纠错入口（split_alias 只处理 entity.aliases 字符串）。`,
         );
       }
     }
@@ -4305,7 +4275,7 @@ export class RelationService {
   // ============================================================
   //  Agent 写工具：deleteNode / deleteEdge / mergeNodes / changeEntityKind
   //  设计要点（与 correctEdge / renameNode 对称）：
-  //    - Person 节点禁止 agent 物理删除（platform 身份只能由 user-profile 同步）
+  //    - Person 节点禁止 agent 物理删除（platform 身份由入站消息归档时的昵称同步（rename-watcher）并由提取阶段 observePerson 维护）
   //    - 阶梯保护：weight ≥ 0.8 或 evidence ≥ 5 视为强节点 / 强边 → 拒绝
   //    - alias 边（is-alias-of / alt-account-of）禁删（破坏身份合并）
   //    - 全部 logger.warn 记审计（含 by / reason / 影响范围）
@@ -4619,19 +4589,7 @@ export class RelationService {
     if (!target) return null;
 
     // 全图排名：对每个节点算一次 compositeScore 并按 kind/全局排序。
-    const allScores: { id: string; kind: 'person' | 'event' | 'entity'; score: number }[] = [];
-    for (const p of snap.persons) {
-      const s = this._computeSingleNodeScore(p.id, snap);
-      if (s) allScores.push({ id: p.id, kind: 'person', score: s.compositeScore });
-    }
-    for (const e of snap.events) {
-      const s = this._computeSingleNodeScore(e.id, snap);
-      if (s) allScores.push({ id: e.id, kind: 'event', score: s.compositeScore });
-    }
-    for (const e of snap.entities) {
-      const s = this._computeSingleNodeScore(e.id, snap);
-      if (s) allScores.push({ id: e.id, kind: 'entity', score: s.compositeScore });
-    }
+    const allScores = this._scoreAllNodes(snap);
     const sameKind = allScores.filter(s => s.kind === target.kind).sort((a, b) => b.score - a.score);
     const global = [...allScores].sort((a, b) => b.score - a.score);
     const rankK = sameKind.findIndex(s => s.id === nodeId) + 1;
@@ -4653,7 +4611,33 @@ export class RelationService {
   }
 
   /**
-   * 内部：单节点综合分计算（不含排名）。抽出复用：computeNodeScore 与 actions graph_data。
+   * 内部：对全图每个节点（人 / 事件 / 实体）各算一次 compositeScore（不含排名）。
+   * computeNodeScore 与 actions graph_data 共用；百分位与分级由调用方各自计算。
+   */
+  _scoreAllNodes(snap: {
+    persons: PersonNode[];
+    events: EventNode[];
+    entities: EntityNode[];
+    edges: RelationEdge[];
+  }): Array<{ id: string; kind: 'person' | 'event' | 'entity'; score: number }> {
+    const all: Array<{ id: string; kind: 'person' | 'event' | 'entity'; score: number }> = [];
+    for (const p of snap.persons) {
+      const s = this._computeSingleNodeScore(p.id, snap);
+      if (s) all.push({ id: p.id, kind: 'person', score: s.compositeScore });
+    }
+    for (const e of snap.events) {
+      const s = this._computeSingleNodeScore(e.id, snap);
+      if (s) all.push({ id: e.id, kind: 'event', score: s.compositeScore });
+    }
+    for (const e of snap.entities) {
+      const s = this._computeSingleNodeScore(e.id, snap);
+      if (s) all.push({ id: e.id, kind: 'entity', score: s.compositeScore });
+    }
+    return all;
+  }
+
+  /**
+   * 内部：单节点综合分计算（不含排名）。computeNodeScore、_scoreAllNodes 与 consolidate 宽召回复用。
    */
   _computeSingleNodeScore(
     nodeId: string,

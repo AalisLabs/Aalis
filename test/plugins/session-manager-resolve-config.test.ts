@@ -4,6 +4,7 @@ import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { fakeMemory } from '../fixtures/session-memory.js';
 
 // ════════════════════════════════════════════════════════════
 // resolveConfig 的继承链：会话 config > 父 sessionDefaults > 平台 profile > 全局 defaults。
@@ -14,22 +15,6 @@ import { registerHubs } from '../fixtures/hubs.js';
 // 落到首个注册的 entry。实况表现：配置里写着 qwen3.6:35b-mlx，实际跑 gemma4:e4b，
 // 全程零告警。契约：null 与 undefined 同义，都表示「未设置，继承上层」。
 // ════════════════════════════════════════════════════════════
-
-/** 只实现 SessionManager 用到的四个方法的假 memory。 */
-function fakeMemory() {
-  const meta = new Map<string, Record<string, unknown>>();
-  return {
-    listMetadata: async () => [...meta].map(([key, data]) => ({ key, data })),
-    commitMetadata: async (ops: Array<{ op: string; key: string; data?: Record<string, unknown> }>) => {
-      for (const o of ops) {
-        if (o.op === 'put' && o.data) meta.set(o.key, o.data);
-        else if (o.op === 'del') meta.delete(o.key);
-      }
-    },
-    getHistory: async () => [],
-    clearSession: async () => {},
-  };
-}
 
 async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });

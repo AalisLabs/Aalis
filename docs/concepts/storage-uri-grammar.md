@@ -139,18 +139,19 @@ toStorageUri('persona', 'data');    // 'data:/persona'
 > **单段裸名归一的设计动机**（`index.ts`）：如果把单段裸名当**根名**处理（→ `name:/`），
 > gateway 找不到这个根就抛「未知根」。所以约定单段名是 `data` 根下的相对路径——这通常是用户想要的。
 
-### `createStorageGateway(ctx): StorageService` — 跨根句柄
+### `createStorageGateway(storage): StorageService` — 跨根句柄
 
-`index.ts`。返回一个 `StorageService`，每次方法调用按 URI 自动路由到对应后端 entry。
-**它不注册进 ServiceContainer**——纯本地构造，没有 facade entry。适用于 tools / shell / checkpoint
+`index.ts`。参数是 `uses` 里声明的 `storage` 描述符绑定出的 `ServiceRef<StorageService>`；返回一个 `StorageService`，每次方法调用按 URI 自动路由到对应后端 entry。
+**它不注册为服务**——纯本地构造，没有 facade entry。适用于 tools / shell / checkpoint
 这类需要单一 storage 句柄、又要透明跨多个根调度的场景。
 
 ```ts
 import { createStorageGateway } from '@aalis/api-storage';
 
-const storage = createStorageGateway(ctx);
-await storage.writeFile('data:/notes/x.md', 'hi'); // 路由到提供 data 根的后端
-await storage.readFile('workspace:/a.txt');        // 路由到提供 workspace 根的后端
+// apply({ storage }) 内，storage 为 uses 里的 ServiceRef
+const gateway = createStorageGateway(storage);
+await gateway.writeFile('data:/notes/x.md', 'hi'); // 路由到提供 data 根的后端
+await gateway.readFile('workspace:/a.txt');        // 路由到提供 workspace 根的后端
 ```
 
 URI 即标识 + 路由 key，调用方无需关心哪个根由哪个后端提供。根不存在时抛
@@ -162,17 +163,17 @@ URI 即标识 + 路由 key，调用方无需关心哪个根由哪个后端提供
 
 ### 按根拆分 entry（per-root service granularity）
 
-0.5.0 之后**没有 router facade**：每个根注册成一个独立的 ServiceContainer entry，约定 entryId 为
-`${ctx.id}/${root.name}`（`plugin-storage-local/src/index.ts`）：
+0.5.0 之后**没有 router facade**：每个根注册成一个独立的服务 entry，约定 entryId 为
+`${lifecycle.id}/${root.name}`（`plugin-storage-local/src/index.ts`）：
 
 ```ts
-ctx.provide('storage', scopedStorageService, {
-  entryId: `${ctx.id}/${root.name}`,        // per-root 粒度
+provide(storage, scopedStorageService, {
+  entryId: `${lifecycle.id}/${root.name}`,  // per-root 粒度
   label: root.label || `本地根 ${root.name}`,
 });
 ```
 
-URI → 根 → entry 的路由由调用方的 `createStorageGateway(ctx)` 完成。后端只要：
+URI → 根 → entry 的路由由调用方的 `createStorageGateway(storage)` 完成。后端只要：
 
 - `listRoots()` 返回自己提供的根（含权限位）。
 - 每个数据方法收到 URI 后，自己 parse 出相对路径并校验根名归属（参考实现 `parseSelfUri`，`index.ts`）。
@@ -227,7 +228,7 @@ const cwd = await storage.resolveLocalPath('workspace:/proj', 'read');
    `toStorageUri` 的单段裸名归到 `data` 根，正是为了避免把裸名当根名后必然命中这个错误。
 
 6. **同名根冲突**：多个后端各自声明同名根时，gateway 按 entry 枚举顺序取首个，其余被遮蔽。
-   用 `getStorageRootConflicts(ctx)`（`index.ts`）做 doctor / 启动日志诊断。
+   用 `getStorageRootConflicts(storage)`（`index.ts`）做 doctor / 启动日志诊断。
 
 7. **`resolveLocalPath` / `watch` 可能不存在**：远程协议或纯虚拟根的后端可能不实现这两个可选方法
    （`index.ts`、`index.ts`）；gateway 会抛「不支持 local-path/watch」（`index.ts`）。
@@ -240,7 +241,7 @@ const cwd = await storage.resolveLocalPath('workspace:/proj', 'read');
 ## 交叉链接
 
 - 服务用法、内置 5 根的语义与配置：**`docs/services/storage.md`**（forward-ref，存储服务详解）。
-- DI 服务模型（同名多 provider 选优、per-entry 粒度、`getService`/`getAllServices`/`provide` 仅取 name）：
+- DI 服务模型（同名多 provider 选优、per-entry 粒度、`provide` / `ServiceRef.current|all()` / `services.get` 仅取 name）：
   `docs/core/service.md`。
 - 鉴权（数字等级 + HITL 确认；deniedCapabilities 硬禁；与存储根权限位正交）：
   `docs/plugins/plugin-authority.md`、`docs/services/authority.md`。

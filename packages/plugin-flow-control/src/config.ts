@@ -203,9 +203,9 @@ function parseScopePattern(s: string): ScopePattern {
 
 function matchScopeParts(pat: ScopePattern, p: string, t: string, tid: string): boolean {
   return (
-    (pat.platform === '*' || pat.platform === '' || pat.platform === p) &&
-    (pat.sessionType === '*' || pat.sessionType === '' || pat.sessionType === t) &&
-    (pat.targetId === '*' || pat.targetId === '' || pat.targetId === tid)
+    (pat.platform === '*' || pat.platform === p) &&
+    (pat.sessionType === '*' || pat.sessionType === t) &&
+    (pat.targetId === '*' || pat.targetId === tid)
   );
 }
 
@@ -214,11 +214,7 @@ function matchScopeString(raw: string, p: string, t: string, tid: string): boole
 }
 
 function scopeSpecificity(pat: ScopePattern): number {
-  return (
-    (pat.platform !== '*' && pat.platform !== '' ? 4 : 0) +
-    (pat.sessionType !== '*' && pat.sessionType !== '' ? 2 : 0) +
-    (pat.targetId !== '*' && pat.targetId !== '' ? 1 : 0)
-  );
+  return (pat.platform !== '*' ? 4 : 0) + (pat.sessionType !== '*' ? 2 : 0) + (pat.targetId !== '*' ? 1 : 0);
 }
 
 function parseOverrides(raw: unknown): ScopeOverride[] {

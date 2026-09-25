@@ -66,7 +66,7 @@ export default definePlugin({
 
 ## 截图的交付形态
 
-`browser_screenshot` 的 PNG **一律先落盘**到 `tmp:/browser/{会话目录}/shot-{内容 sha256 前 16 位}.png`（会话 id 里的 `:` `/` `\` 替换为 `_`），文本结果里恒带 `storage_uri`，附带的说明按两条路分写：调用方能把图交给主模型时（agent 工具循环，`acceptsImages`），PNG 随结果的 `images` 一并交出，说明是「图已随结果附上；若你看不到图，用 storage_uri 走 analyze_image / send_attachment」；接不住图的调用方拿不到 `images`，说明是「图未随结果附上，用 storage_uri 走 analyze_image / send_attachment 查看」。
+`browser_screenshot` 的 PNG **一律先落盘**到 `tmp:/browser/{会话目录}/shot-{内容 sha256 前 16 位}.png`（会话 id 里的 `:` `/` `\` 替换为 `_`），文本结果里恒带 `storage_uri`，附带的说明按两条路分写：调用方能把图交给主模型时（agent 工具循环，`acceptsImages`），PNG 随结果的 `images` 一并交出，说明是「图已随结果附上；若你看不到图，可把 storage_uri 交给看图工具（如有）或 send_attachment」；接不住图的调用方拿不到 `images`，说明是「图未随结果附上，可把 storage_uri 交给看图工具（如有）查看或 send_attachment 发送」。
 
 base64 任何情况下都不进文本结果：整张 PNG 的 base64 有几十万字符，主模型看不到图，还会灌满上下文并落进历史。落盘失败时才退回「只给 `images`」；若此时调用方也接不住图，工具直接返回错误。
 

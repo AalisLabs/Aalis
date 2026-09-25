@@ -15,10 +15,10 @@ pnpm add @aalis/api-webui
 ## 使用
 
 ```ts
-import type { /* ... */ } from '@aalis/api-webui';
-```
+import { webuiServer } from '@aalis/api-webui';
 
-本包为 *-api 类型包；实现见对应的运行时插件。
+// uses: { webui: webuiServer }
+```
 
 ## 许可
 

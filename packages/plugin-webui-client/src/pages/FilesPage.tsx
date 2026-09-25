@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { FolderOpen, File, Download, Trash2, Pencil, Info, RefreshCw, ChevronRight, ArrowLeft, X } from 'lucide-react';
 import { api } from '../api';
+import { formatSize } from '../utils/format';
 
 interface FileEntry {
   name: string;
@@ -19,15 +20,6 @@ interface FileStat {
   mtime: string;
   birthtime: string;
   ext: string;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes === 0) return '—';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let i = 0;
-  let size = bytes;
-  while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
-  return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
 function formatTime(iso: string): string {

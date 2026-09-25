@@ -44,6 +44,11 @@ export default definePlugin({
 | `animMaxFrames` | number | `160` | 动图帧数上限：时长×帧率超出时按帧数反推有效时长 |
 | `animMaxOutputMB` | number | `9` | GIF 体积上限 (MB)：超出即报错（OneBot 内联投递上限 10MB，留余量） |
 
+## 系统依赖
+
+- **中文与 emoji 字体**：外壳文档的字体栈为 PingFang SC / Hiragino Sans GB / Noto Sans CJK SC / Apple Color Emoji，macOS 自带前两者与 Apple Color Emoji。Linux 需自行安装 Noto CJK 与 Noto Color Emoji，否则中文与 emoji 会渲染成方块。Debian / Ubuntu：`apt install fonts-noto-cjk fonts-noto-color-emoji`。
+- **ffmpeg**：`draw_animation` 用 ffmpeg 把逐帧截图编码为 GIF，需在 `PATH` 中可用（Debian / Ubuntu：`apt install ffmpeg`）。只用 `draw_image` 时不需要。
+
 ## 相关
 
 - 工具服务契约：[api/api-tools.md](../api/api-tools.md)

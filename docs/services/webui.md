@@ -158,7 +158,7 @@ export default definePlugin({
 
 ### 4c. 替换整个后端（`webui-server`）
 
-罕见。核心要求此服务必须运行。实现全部 `WebUIService` 必须方法（`registerPage` / `registerAction` 必须真正维护表），用更高的 priority 或 `services.prefer` 压过默认实现。`definePlugin({ provides: [webuiServer], uses: { provide }, apply({ provide }) { provide(webuiServer, impl); } })`。同名胜出规则见 `docs/concepts/service-model.md`：偏好 > priority > 注册顺序。
+罕见。实现全部 `WebUIService` 必须方法（`registerPage` / `registerAction` 必须真正维护表），用更高的 priority 或 `services.prefer` 压过默认实现。`definePlugin({ provides: [webuiServer], uses: { provide }, apply({ provide }) { provide(webuiServer, impl); } })`。同名胜出规则见 `docs/concepts/service-model.md`：偏好 > priority > 注册顺序。
 
 ## 5. 标准消费方式
 

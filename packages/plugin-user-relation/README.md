@@ -13,7 +13,7 @@ pnpm add @aalis/plugin-user-relation
 `definePlugin` 默认导出：
 
 - provides：`userRelation`（服务名 `user-relation`；描述符由本包导出）
-- uses：`memory`、`logger`、`config`、`events`、`hooks`、`contributions`、`provide`；可选 `llm`、`platform`、`tools`、`commands`、`webui`（`webui-server`）、`embedding`、`agent`
+- uses：`memory`、`logger`、`config`、`events`、`hooks`、`contributions`、`provide`；可选 `llm`、`platform`、`tools`、`commands`、`webui`（`webui-server`）、`embedding`
 
 ## 文档
 

@@ -1,7 +1,6 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parse as parseYaml } from 'yaml';
 import type { AalisConfig } from '../../packages/api-host-config/src/index.js';
 import { App, type AppOptions, type LogLevel } from '../../packages/core/src/index.js';
 import {
@@ -10,27 +9,17 @@ import {
   createConfigStore,
   installHostConfig,
 } from '../../packages/runtime/src/config-store.js';
-import { createFsPluginLoader, createFsYamlConfigProvider } from '../../packages/runtime/src/providers.js';
+import { createFsYamlConfigProvider } from '../../packages/runtime/src/providers.js';
 
 /**
- * 测试用配置构造工具：
- *
- * - `inMemoryConfig(yaml)` —— 直接把 YAML 文本解析为 `AalisConfig`，
- *   完全不碰文件系统，适合不需要 save/watch 的纯逻辑测试。
- * - `tempConfig(yaml)` —— 写一个临时 yaml 文件并返回配置快照、provider 与清理句柄，
- *   适合需要 `config.save()` 写回 yaml 或扫描 packages 的集成测试。
+ * 测试用配置构造工具：`tempConfig(yaml)` 写一个临时 yaml 文件并返回配置快照、provider 与清理句柄，
+ * 适合需要 `config.save()` 写回 yaml 的集成测试。
  */
 
-export function inMemoryConfig(yaml: string): AalisConfig {
-  return (parseYaml(yaml) ?? {}) as AalisConfig;
-}
-
 export interface TempConfigHandle {
-  dir: string;
   path: string;
   config: AalisConfig;
   provider: ReturnType<typeof createFsYamlConfigProvider>['provider'];
-  pluginLoader: ReturnType<typeof createFsPluginLoader>;
   cleanup: () => void;
 }
 
@@ -40,11 +29,9 @@ export function tempConfig(yaml: string): TempConfigHandle {
   writeFileSync(path, yaml);
   const { config, provider } = createFsYamlConfigProvider(path);
   return {
-    dir,
     path,
     config,
     provider,
-    pluginLoader: createFsPluginLoader(),
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
 }

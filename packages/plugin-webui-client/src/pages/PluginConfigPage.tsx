@@ -4,7 +4,7 @@ import { api, errText } from '../api';
 import { SchemaForm, buildDraftFromSchema, flattenConfig, unflattenConfig, type LLMProviderEntry } from '../components/SchemaForm';
 import { ConfigValue } from '../components/ConfigValue';
 import { useConfirm } from '../components/ConfirmDialog';
-import type { PluginInfo, ConfigSchema, SchemaField, ServiceInfo } from '../types';
+import type { PluginInfo, ConfigSchema, SchemaField } from '../types';
 
 export function PluginConfigPage({
   plugins,
@@ -103,12 +103,7 @@ export function PluginConfigPage({
   }, [llmProviders]);
 
   const restoreDefaults = (plugin: PluginInfo) => {
-    const defaults = plugin.defaultConfig ?? {};
-    if (plugin.configSchema) {
-      setSchemaDraft(buildDraftFromSchema(plugin.configSchema, defaults));
-    } else {
-      setEditBuffer(flattenConfig(defaults));
-    }
+    setSchemaDraft(buildDraftFromSchema(plugin.configSchema!, plugin.defaultConfig ?? {}));
   };
 
   const savePluginConfig = async (instanceId: string, hasSchema: boolean) => {
@@ -167,11 +162,11 @@ export function PluginConfigPage({
     }
   };
 
-  // 卸载（删整个包）：不再前置禁卸名单——用户要切就让其切；服务端仅在「断别人服务依赖」时挡（409）。
+  // 卸载（删整个包）：不再前置禁卸名单——用户要切就让其切；是否放行由服务层卸载闸判定（拒绝时返回 200 + ok:false，含断别人服务依赖、来源与类型不符等情形）。
   const handleUninstall = async (p: PluginInfo) => {
     const ok = await confirm({
       title: `卸载插件「${p.displayName ?? p.name}」`,
-      body: `${p.name}\n\n将删除其代码目录并清除残留配置。不可恢复，但可从插件市场重新安装。`,
+      body: `${p.name}\n\n将删除其代码目录并清除残留配置。不可恢复，但可从插件市场重新安装。插件写入 data/ 等存储根的数据不会被删除，需要时请手动清理。`,
       confirmLabel: '卸载',
       danger: true,
     });
@@ -564,9 +559,6 @@ export function PluginConfigPage({
                     </div>
                     <div className="config-edit-actions">
                       <button className="btn btn-primary btn-sm" onClick={() => savePluginConfig(iid, false)} disabled={isBusy(iid)}>保存</button>
-                      {p.defaultConfig && Object.keys(p.defaultConfig).length > 0 && (
-                        <button className="btn btn-warn btn-sm" onClick={() => restoreDefaults(p)}>恢复默认</button>
-                      )}
                       <button className="btn btn-sm" onClick={() => setEditingPlugin(null)}>取消</button>
                     </div>
                   </>

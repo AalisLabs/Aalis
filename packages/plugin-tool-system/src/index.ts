@@ -19,7 +19,7 @@ const configSchema: ConfigSchema = {
     default: 'workspace:/',
     description:
       '进程启动时的初始 cwd（unix 心智模型）。agent 可用 cd 工具在会话内切换，不会写回本配置。' +
-      'shell/code-runner 仍使用各自独立的 workingDirectory 配置，不受 cd 影响。',
+      'shell 以本项初始值为基准、不受 cd 影响；code-runner 使用它自己的 workingDirectory 配置。',
   },
   shell: {
     label: 'Shell 工具',

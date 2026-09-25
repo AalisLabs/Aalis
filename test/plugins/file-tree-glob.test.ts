@@ -38,7 +38,7 @@ describe('matchGlob', () => {
     // `*?*?*?…*zz` 与文件名内容无关（`?` 匹配任意字符）。正则实现是指数级回溯，
     // 而 V8 正则同步执行 —— 事件循环被整段阻塞，进程内任何超时都打不断。
     // file_tree 对目录里每个 entry 各调一次，代价再乘条数。
-    const evil = '*?'.repeat(16) + '*zz';
+    const evil = `${'*?'.repeat(16)}*zz`;
     const t = Date.now();
     expect(matchGlob('authority-tools-guard-e2e.test.ts', evil)).toBe(false);
     expect(Date.now() - t, `病态 pattern 耗时 ${Date.now() - t}ms —— 回溯面又被打开了`).toBeLessThan(100);
@@ -103,7 +103,7 @@ describe('matchGlobPath（exclude / include 的路径级匹配）', () => {
   });
 
   it('病态 pattern 不触发灾难性回溯', () => {
-    const evil = '*?'.repeat(16) + '*zz';
+    const evil = `${'*?'.repeat(16)}*zz`;
     const t = Date.now();
     expect(hit('a'.repeat(40), evil)).toBe(false);
     expect(Date.now() - t, `耗时 ${Date.now() - t}ms —— 回溯面被打开了`).toBeLessThan(100);

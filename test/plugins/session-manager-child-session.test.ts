@@ -4,26 +4,11 @@ import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { fakeMemory } from '../fixtures/session-memory.js';
 
 // 背景：平台派生会话（cli-default、OneBot 的 `onebot:bot:group:x`）从不经 createSession 预建，
 // createChildSession 原本对未建档的父直接抛「父会话不存在」，create_subtask 在这些平台必败。
 // 契约：父档缺失时先 ensureSession 兜底建档，再挂子会话。
-
-/** 只实现 SessionManager 用到的四个方法的假 memory。 */
-function fakeMemory() {
-  const meta = new Map<string, Record<string, unknown>>();
-  return {
-    listMetadata: async () => [...meta].map(([key, data]) => ({ key, data })),
-    commitMetadata: async (ops: Array<{ op: string; key: string; data?: Record<string, unknown> }>) => {
-      for (const o of ops) {
-        if (o.op === 'put' && o.data) meta.set(o.key, o.data);
-        else if (o.op === 'del') meta.delete(o.key);
-      }
-    },
-    getHistory: async () => [],
-    clearSession: async () => {},
-  };
-}
 
 async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });

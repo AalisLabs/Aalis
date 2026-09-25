@@ -25,7 +25,6 @@ import {
   jaccardChars,
   normalizeRelationType,
   pickCanonicalByMergeScore,
-  pickCanonicalForEvents,
   reinforceWeight,
   trimEvidence,
 } from '../../packages/plugin-user-relation/src/utils.js';
@@ -1841,7 +1840,7 @@ describe('plugin-user-relation: event duplicate utils (pure)', () => {
     expect(stats.get('B')).toEqual({ weightSum: 0.4, edgeCount: 1 });
   });
 
-  it('pickCanonicalForEvents: 选 mergeScore 最高，平局取 id 字典序最小', () => {
+  it('pickCanonicalByMergeScore（事件簇）: 选 mergeScore 最高，平局取 id 字典序最小', () => {
     const eventById = new Map([
       ['ev-a', { id: 'ev-a', title: 'a', evidence: [{}, {}, {}] }],
       ['ev-b', { id: 'ev-b', title: 'b', evidence: [{}] }],
@@ -1853,7 +1852,7 @@ describe('plugin-user-relation: event duplicate utils (pure)', () => {
       ['ev-c', { weightSum: 0, edgeCount: 0 }],
     ]);
     // ev-a 多 evidence → 0.5*1 + 0.3*1 + 0.2*(3/3) = 1.0；ev-b = 0.5+0.3+0.2*1/3 ≈ 0.867
-    expect(pickCanonicalForEvents(new Set(['ev-a', 'ev-b', 'ev-c']), eventById, stats)).toBe('ev-a');
+    expect(pickCanonicalByMergeScore(new Set(['ev-a', 'ev-b', 'ev-c']), eventById, stats)).toBe('ev-a');
     // 完全平局时取字典序最小
     const equalStats = new Map([
       ['z', { weightSum: 1, edgeCount: 1 }],
@@ -1863,7 +1862,7 @@ describe('plugin-user-relation: event duplicate utils (pure)', () => {
       ['z', { id: 'z', title: 'z', evidence: [{}] }],
       ['a', { id: 'a', title: 'a', evidence: [{}] }],
     ] as unknown as [string, import('../../packages/plugin-user-relation/src/types.js').EventNode][]);
-    expect(pickCanonicalForEvents(new Set(['z', 'a']), equalEventById, equalStats)).toBe('a');
+    expect(pickCanonicalByMergeScore(new Set(['z', 'a']), equalEventById, equalStats)).toBe('a');
   });
 });
 

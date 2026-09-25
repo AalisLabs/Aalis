@@ -4,8 +4,8 @@
 
 `cron-engine` 是 Aalis 的**共享定时引擎原语**：把「cron 表达式 / 别名 / `@every` 间隔」解析为统一的订阅协议，所有周期型触发器（scheduler 任务、workflow 的 cron/interval 触发器）都挂接到它共享的一条整分钟 tick 上，而不是各自 `setInterval`。
 
-- 服务注册名：`cronEngine.current`（`packages/api-cron-engine/src/index.ts`）。
-- 契约包：`@aalis/api-cron-engine`（订阅协议：接口 + 服务访问器）。
+- 服务注册名：`'cron-engine'`（描述符 `cronEngine`，读 `cronEngine.current`；`packages/api-cron-engine/src/index.ts`）。
+- 契约包：`@aalis/api-cron-engine`（订阅协议：接口 + 描述符 `cronEngine`）。
 - 表达式算法：`@aalis/util-cron`（无状态纯函数，零依赖，与 Aalis 无关，可单独用）。
 - 参考实现：`@aalis/plugin-cron-engine`（`packages/plugin-cron-engine/src/index.ts`）。
 
@@ -57,7 +57,7 @@ export type ValidateResult =
 
 ### 2.3 无状态纯函数（`@aalis/util-cron`，可独立 import，不必经服务）
 
-表达式的解析与匹配是 POSIX cron 标准算法，与 Aalis 无关，故落在 util 层而非契约包——契约包只管订阅协议。scheduler / cron-engine 在编译期直接 import 它们做预处理。下表函数均定义在 `packages/util-cron/src/index.ts`（`useCronEngine` 例外，见表内说明）：
+表达式的解析与匹配是 POSIX cron 标准算法，与 Aalis 无关，故落在 util 层而非契约包——契约包只管订阅协议。scheduler / cron-engine 在编译期直接 import 它们做预处理。下表函数均定义在 `packages/util-cron/src/index.ts`：
 
 | 函数 | 签名 | 用途 |
 | --- | --- | --- |
@@ -67,7 +67,6 @@ export type ValidateResult =
 | `matchesCron` | `(expr, date, timeZone?) => boolean` | 判断某时刻是否命中（不处理 `@every`） |
 | `parseEverySeconds` | `(input: string) => number` | 把 `@every 30s/5m/2h` 解析为秒；不识别返回 0 |
 | `validateCronExpr` | `(input) => ValidateResult` | 见 §2.2 |
-| `useCronEngine` | `(ctx: Context) => CronEngine` | 取服务的便捷封装，缺失即抛（定义在契约包 `@aalis/api-cron-engine`，非 util） |
 
 支持的表达式：5 字段标准 cron、别名 `@hourly` `@daily` `@midnight` `@weekly` `@monthly` `@yearly` `@annually`、以及间隔 `@every Ns`/`Nm`/`Nh`。
 
@@ -87,7 +86,7 @@ export type ValidateResult =
 
 绝大多数作者**不需要**再写 provider——官方 `@aalis/plugin-cron-engine` 已是唯一实现，重复 provide 同名服务只会按 `preference > priority > 注册顺序` 决出一个赢家（见 [service-model](../concepts/service-model.md)）。仅当你要替换调度后端（例如换持久化的分布式定时）时才自行实现。
 
-最小必须实现 = 接口三个方法 `subscribe / validate / nextFireTime`。可选 = `timeZone` 支持（不支持时建议忽略该参数并按本地时区评估，行为退化但不报错）。可直接复用契约包的纯函数完成校验与匹配，骨架如下：
+最小必须实现 = 接口三个方法 `subscribe / validate / nextFireTime`。可选 = `timeZone` 支持（不支持时建议忽略该参数并按本地时区评估，行为退化但不报错）。可直接复用 `@aalis/util-cron` 的纯函数完成校验与匹配，骨架如下：
 
 ```ts
 import { cronEngine } from '@aalis/api-cron-engine';

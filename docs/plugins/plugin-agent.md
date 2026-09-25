@@ -47,7 +47,7 @@ definePlugin({
 |---|---|---|---|
 | `defaultLLM` | llm-ref | — | 默认对话模型：全局默认 LLM。apply 时经 `services.prefer(llm, \`${provider}/${model}\`)` 锁定偏好。会话 / 平台 profile 未覆盖时生效。 |
 | `systemPrompt` | textarea | `''` | 行为准则提示词：定义 Agent 的行为准则。当人设插件存在时，身份描述由人设提供，此处仅作为行为指令追加。 |
-| `memoryTokenBudget` | number | `4096` | 长期记忆预留 Token：为长期记忆注入的 system 消息预留的 token 额度，截断时不会删除这些消息 |
+| `memoryTokenBudget` | number | `4096` | 长期记忆预留 Token：为注入的 system 消息预留的 token 额度，超出时先按比例缩减，极端情况下（阶段 5）仍会删除 |
 | `historyLimit` | number | `50` | 历史消息条数：从记忆中加载的最近对话历史条数 |
 | `maxToolIterations` | number | `30` | 最大工具迭代：工具调用循环的最大迭代次数 |
 | `promptBuildTimeoutMs` | number | `10000` | 提示词贡献构建超时 (ms)：单个 agent:prompt 贡献 build 的等待上限。挂死的构建（如网络检索卡住）超时后本轮缺席、其余照常，避免拖住每次 LLM 调用。0 表示不设限。 |

@@ -5,12 +5,12 @@ import { safeFetch } from '@aalis/util-network-guard';
  * 从 URL 或 storage URI 加载图片为 Buffer。
  * - http/https URL：直接 fetch
  * - storage URI（含 `:/`）：通过 storage.readFile
- * - 其它（裸路径/相对路径）：若给了 baseUri，按 baseUri 拼接（不带尾部斜杠时自动补）
+ * - 其它（裸路径/相对路径）：按 baseUri 拼接（不带尾部斜杠时自动补）
  */
 export async function loadImage(
   storage: StorageService,
   source: string,
-  baseUri?: string,
+  baseUri: string,
 ): Promise<{ buffer: Buffer; mime: string }> {
   if (source.startsWith('http://') || source.startsWith('https://')) {
     const resp = await safeFetch(source);
@@ -20,12 +20,12 @@ export async function loadImage(
     return { buffer: Buffer.from(arrayBuf), mime };
   }
 
-  const uri = source.includes(':/') ? source : joinUri(baseUri ?? 'workspace:/', source);
+  const uri = source.includes(':/') ? source : joinUri(baseUri, source);
   const data = (await storage.readFile(uri)) as Uint8Array;
   return { buffer: Buffer.from(data), mime: guessMime(uri) };
 }
 
-function joinUri(base: string, rel: string): string {
+export function joinUri(base: string, rel: string): string {
   const b = base.endsWith('/') ? base : `${base}/`;
   return `${b}${rel.replace(/^\/+/, '')}`;
 }

@@ -1,12 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { hooks } from '../../packages/api-hooks/src/index.js';
-import type { LLMModel } from '../../packages/api-llm/src/index.js';
-import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
-import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
-import { App, events, provide, services } from '../../packages/core/src/index.js';
-import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
-import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
-import { registerHubs } from '../fixtures/hubs.js';
+import { beforeEach, describe, expect, it } from 'vitest';
+import type { MemoryService } from '../../packages/api-memory/src/index.js';
+import { fakeSummaryLLM, setupSummary } from '../fixtures/memory-summary.js';
 
 // ════════════════════════════════════════════════════════════
 // 摘要输入里的工具回合必须留痕：
@@ -20,37 +14,9 @@ import { registerHubs } from '../fixtures/hubs.js';
 const LONG_RESULT = `晴${'气温二十六度'.repeat(60)}`; // 远超每条上限
 
 const lastInput = { text: '' };
-
-function fakeLLM(): LLMModel {
-  return {
-    id: 'fake',
-    providerId: 'fake',
-    contextLength: 8192,
-    capabilities: [LLMCapabilities.Chat],
-    async chat(req) {
-      lastInput.text = req.messages.map(m => String(m.content ?? '')).join('\n');
-      return { content: 'SUMMARY-TEXT' };
-    },
-  };
-}
-
-async function setup(config: Record<string, unknown>) {
+beforeEach(() => {
   lastInput.text = '';
-  const app = new App({ name: 'T', logLevel: 'error' });
-  await registerHubs(app);
-  const host = app.bind({ provide, services, events, hooks });
-  await app.plugin(memoryInMemory);
-  host.provide(llm, fakeLLM());
-  await app.plugin(memorySummary, config);
-  await app.plugins.idle();
-  // 激活闸：required 依赖（memory / llm）缺席时插件停在 pending 且不报错，
-  // 摘要输入永远是空串——断言会红在渲染细节上、掩盖真实原因，故在此显式点名。
-  if (app.plugins.getPlugin('@aalis/plugin-memory-summary')?.state !== 'active')
-    throw new Error('plugin-memory-summary 未激活');
-  const store = host.services.get(memory);
-  if (!store) throw new Error('memory 服务未就绪');
-  return { app, host, memory: store };
-}
+});
 
 /** 一个真实形状的工具回合：user 提问 → assistant(toolCalls, content 空) → tool 结果 → assistant 回答 */
 async function seedToolTurn(store: MemoryService, sessionId: string, filler: number): Promise<void> {
@@ -82,7 +48,7 @@ function assertToolTurnRendered(text: string): void {
 
 describe('plugin-memory-summary: 工具回合进摘要输入', () => {
   it('generateSummary 路径：渲染工具调用与工具结果（每条硬截断）', async () => {
-    const { app, host, memory } = await setup({ threshold: 10, keepRecent: 4 });
+    const { app, host, memory } = await setupSummary({ threshold: 10, keepRecent: 4 }, fakeSummaryLLM(lastInput));
     await seedToolTurn(memory, 's-t0', 20);
 
     await host.hooks.run(
@@ -96,7 +62,7 @@ describe('plugin-memory-summary: 工具回合进摘要输入', () => {
   });
 
   it('session:compress 路径：同款渲染', async () => {
-    const { app, host, memory } = await setup({ threshold: 10, keepRecent: 4 });
+    const { app, host, memory } = await setupSummary({ threshold: 10, keepRecent: 4 }, fakeSummaryLLM(lastInput));
     await seedToolTurn(memory, 's-t1', 20);
 
     await host.events.emit('session:compress', { sessionId: 's-t1', reason: 'manual' });

@@ -7,9 +7,9 @@ import { AuthorityManager } from '../../packages/plugin-authority/src/authority-
 // ════════════════════════════════════════════════════════════
 // authority — 临时能力委托（restricted 能力的时限/限次放行）
 //
-// 新模型用「临时委托」替代旧的"危险操作确认"：用户触达未授予的 restricted 能力时，
-// 过 requestAccess —— ① restrictedPolicy 白名单（可限时）② 会话内临时授予复用
-// ③ 确认回调（owner 批准，可带 session 范围）。
+// 已授权但声明了 confirm 的操作经 requestAccess 做意图确认 —— ① restrictedPolicy 白名单（可限时）
+// ② 会话内临时授予复用 ③ 确认回调（可带 session 范围）；confirm='always' 只走确认回调。
+// 未授权的操作不经本方法：守卫只查 isPreApproved，查不中即拒。
 // ════════════════════════════════════════════════════════════
 
 function makeLogger(): Logger {

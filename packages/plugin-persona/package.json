@@ -62,7 +62,6 @@
         "config",
         "events",
         "hooks",
-        "lifecycle",
         "logger",
         "provide"
       ]

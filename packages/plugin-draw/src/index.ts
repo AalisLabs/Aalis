@@ -2,8 +2,8 @@
 // @aalis/plugin-draw — 让纯文本模型画图
 //
 // LLM 写标记（SVG 或 HTML+内联 CSS），本插件用硬化的无头浏览器渲染成
-// PNG（后续：CSS/SMIL 动画 → 逐帧 → GIF），落盘 data:/images/ 后由
-// send_attachment 投递进聊天。引擎与安全设计见 engine.ts 头注。
+// PNG，或把声明式动画（CSS/SMIL）逐帧截图合成 GIF（draw_animation），落盘
+// data:/images/ 后由 send_attachment 投递进聊天。引擎与安全设计见 engine.ts 头注。
 //
 // 格式分工（工具描述同步教给模型）：
 //   图形/图标/梗图/动画 → SVG（viewBox 定界精确、声明式动画现成）
@@ -264,7 +264,7 @@ function registerDraw(caps: Caps): void {
           '（首尾状态一致），GIF 默认无限循环播放。\n' +
           '**避坑**：同一元素不要同时挂 animateMotion 与位移类 animateTransform（位移复合会漂移）。\n' +
           '渲染成功即可**直接 send_attachment 发送**，不需要额外核对。结果里的 check_frames（首帧/中帧）' +
-          '仅在你对形态没把握时可选地用 analyze_image 看一眼——但视觉识别较慢，通常无必要，别默认调用；' +
+          '仅在你对形态没把握、且有看图工具可用时可选地看一眼——但视觉识别较慢，通常无必要，别默认核对；' +
           '即便核对，核对失败或超时也**不影响发送，直接发 GIF**，不要因核对不成而放弃发送。\n' +
           '选型与硬约束同 draw_image：图形动画写 SVG（必须带 viewBox）；外链资源一律被拦，只能内联。',
         parameters: {
@@ -352,7 +352,7 @@ function registerDraw(caps: Caps): void {
           ...(warnings.length > 0 ? { warnings } : {}),
           message:
             '已渲染并落盘，可直接用 send_attachment({ kind: "image", storage_uri: uri }) 发送到聊天。' +
-            'check_frames 仅供没把握时可选核对（analyze_image 较慢，通常无需调用）。',
+            'check_frames 仅供没把握时可选核对（视觉识别较慢，通常无需核对）。',
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

@@ -15,10 +15,10 @@ pnpm add @aalis/api-embedding
 ## 使用
 
 ```ts
-import type { /* ... */ } from '@aalis/api-embedding';
-```
+import { embedding } from '@aalis/api-embedding';
 
-本包为 *-api 类型包；实现见对应的运行时插件。
+// uses: { embedding }
+```
 
 ## 许可
 

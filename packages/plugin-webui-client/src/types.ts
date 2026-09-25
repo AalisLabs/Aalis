@@ -15,9 +15,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   /**
-   * 派生镜像：所有 reasoning_text 段拼接的字符串。
-   * 仅当无 segments（旧数据/老路径）时由历史构建器写入用于回退渲染。
-   * 渲染时优先用 segments；本字段保留以兼容仍读它的代码。
+   * 推理文本的扁平镜像，各构建路径随 segments 一起写入；渲染以 segments 为准，
+   * 仅当 segments 为空时（如 stream_resume 下发空时间线）用于两段式回退渲染。
    */
   reasoningContent?: string;
   /**
@@ -48,8 +47,6 @@ export type { LogEntry } from '@aalis/schema-log';
 export interface CommandInfo {
   name: string;
   description: string;
-  authority?: number;
-  safety?: string;
 }
 
 export interface SystemStatus {
@@ -94,10 +91,10 @@ export interface PluginInfo {
 }
 
 // ----- ConfigSchema 类型 -----
-// 镜像 server 侧合并后的 SchemaField（core 基础字段 + webui-api 注入的
-// secret/dynamicOptions/allowCustom + llm-api 注入的 'llm-ref' 类型）。
-// 前端有意不依赖任何 @aalis 包，schema 经 JSON 传输后在此用镜像类型接住；
-// server 侧合并声明变更时需手动同步本镜像。
+// 镜像 server 侧合并后的 SchemaField（@aalis/schema-config 的基础字段 + @aalis/api-webui 注入的
+// secret/dynamicOptions/allowCustom + @aalis/api-llm 注入的 'llm-ref' 类型）。
+// 前端不依赖服务端契约包：schema 经 JSON 传输后用镜像类型接住（仅以 type-only 或纯函数方式
+// 引用 schema-log / util-text-normalize）；server 侧合并声明变更时需手动同步本镜像。
 
 export type SchemaFieldType = 'string' | 'number' | 'boolean' | 'select' | 'multiselect' | 'textarea' | 'llm-ref';
 
@@ -180,7 +177,7 @@ export interface ToolGroupDetail {
   contributingPlugins?: string[];
 }
 
-// ----- 声明式页面类型 (镜像 core) -----
+// ----- 声明式页面类型 (镜像 @aalis/api-webui) -----
 
 export interface WebuiStatComponent { type: 'stat'; label: string; source: string; icon?: string }
 export interface WebuiTableComponent { type: 'table'; label?: string; source: string; columns: Array<{ key: string; label: string; render?: string; nowrap?: boolean; minWidth?: number; maxWidth?: number }>; actions?: Array<{ label: string; method: string; confirm?: string; danger?: boolean }>; refresh?: number; searchable?: boolean; searchPlaceholder?: string }

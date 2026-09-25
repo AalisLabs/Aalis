@@ -10,7 +10,7 @@ import type { Services } from '@aalis/core';
  *
  * 不直接绑定任何具体命令；所有命令由插件向 commands 服务注册。
  *
- * 抽离到独立模块以便单测（src/index.ts 有顶层副作用，直接 import 会触发）。
+ * 抽离到独立模块以便单测。
  */
 export async function tryDispatchSubcommand(
   services: Services,

@@ -15,10 +15,10 @@ pnpm add @aalis/api-authority
 ## 使用
 
 ```ts
-import type { /* ... */ } from '@aalis/api-authority';
-```
+import { authority } from '@aalis/api-authority';
 
-本包为 *-api 类型包；实现见对应的运行时插件。
+// uses: { authority }
+```
 
 ## 许可
 

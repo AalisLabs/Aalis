@@ -173,9 +173,8 @@ export default definePlugin({
 
 // ===== Builtin checks（同样走 registerCheck，所有 check 一视同仁）=====
 //
-// 此处只保留「与领域无关、纯 doctor 自身职能」的检查项。原本的 fs.data /
-// commands.overrides 已迁出到对应领域插件（plugin-storage-local / plugin-commands），
-// 它们经 doctor 契约自行注册——避免 doctor 反向硬依赖业务插件。
+// 此处只保留「与领域无关、纯 doctor 自身职能」的检查项。原本的 fs.data 已迁出到
+// plugin-storage-local，经 doctor 契约自行注册——避免 doctor 反向硬依赖业务插件。
 //
 // `plugins.status` 留在这里：它读 PluginManager（核心服务），不属于任何业务插件领域；
 // 若未来 PluginManager 自带 self-check，可一并迁走。

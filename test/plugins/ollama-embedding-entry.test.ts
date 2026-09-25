@@ -29,7 +29,7 @@ function stubOllama(caps: Record<string, string[] | null>): void {
   );
 }
 
-async function registeredIds(caps: Record<string, string[] | null>, config: Record<string, unknown> = {}) {
+async function registeredEntries(caps: Record<string, string[] | null>, config: Record<string, unknown> = {}) {
   stubOllama(caps);
   const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ llm });
@@ -38,9 +38,13 @@ async function registeredIds(caps: Record<string, string[] | null>, config: Reco
   // 插件没激活时 entry 表恒空，`toEqual([...])` 只会红在"少了谁"上；先点名真实原因。
   if (app.plugins.getPlugin('@aalis/plugin-llm-ollama')?.state !== 'active')
     throw new Error('plugin-llm-ollama 未激活');
-  const entries = host.llm.all().map(e => e.instance.id);
+  const entries = host.llm.all().map(e => ({ id: e.instance.id, capabilities: [...e.instance.capabilities] }));
   await app.stop();
   return entries;
+}
+
+async function registeredIds(caps: Record<string, string[] | null>, config: Record<string, unknown> = {}) {
+  return (await registeredEntries(caps, config)).map(e => e.id);
 }
 
 afterEach(() => {
@@ -67,5 +71,21 @@ describe('Ollama model entry 注册', () => {
       },
     );
     expect(ids).toEqual(['bge-m3:latest']);
+  });
+
+  it('探测失败时名称明示视觉的模型不被家族前缀抢先匹配（llama3.2-vision / qwen2.5vl 保留 vision）', async () => {
+    const entries = await registeredEntries({
+      'llama3.2-vision:11b': null,
+      'qwen2.5vl:7b': null,
+      'qwen3-vl:8b': null,
+      'qwen2.5:7b': null,
+    });
+    const caps = Object.fromEntries(entries.map(e => [e.id, e.capabilities]));
+    expect(caps['llama3.2-vision:11b']).toContain('vision');
+    expect(caps['qwen2.5vl:7b']).toContain('vision');
+    expect(caps['qwen3-vl:8b']).toContain('vision');
+    // 普通家族照旧走前缀表，不因名称判定误标 vision
+    expect(caps['qwen2.5:7b']).not.toContain('vision');
+    expect(caps['qwen2.5:7b']).toContain('tool_calling');
   });
 });

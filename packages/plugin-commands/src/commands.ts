@@ -116,7 +116,12 @@ function strictestConfirm(decls: readonly Decl[]): CapabilityConfirm | undefined
 }
 
 export class CommandRegistry implements CommandService {
-  /** 名字 → 声明栈。空栈 = 自动创建的分组节点。 */
+  /**
+   * 名字 → 声明栈。空栈 = 自动创建的分组节点。
+   *
+   * 不变式：每个节点的全部祖先都在表中（`ensureGroups` 先建祖先，注销只删无子节点的叶子），
+   * 所以「存在以 `x.` 开头的节点」蕴含「`x` 在表中」，查询只需 `nodes.has`。
+   */
   private readonly nodes = new Map<string, Decl[]>();
   /** 别名映射：aliasName → realName */
   private readonly aliases = new Map<string, string>();
@@ -332,12 +337,7 @@ export class CommandRegistry implements CommandService {
   }
 
   private hasTopSegment(name: string): boolean {
-    if (this.nodes.has(name) || this.aliases.has(name)) return true;
-    // 也许是 'memory.x' 的 'memory' 顶层段
-    for (const k of this.nodes.keys()) {
-      if (k === name || k.startsWith(`${name}.`)) return true;
-    }
-    return false;
+    return this.nodes.has(name) || this.aliases.has(name);
   }
 
   get(name: string): Command | undefined {
@@ -365,31 +365,20 @@ export class CommandRegistry implements CommandService {
    */
   private resolve(head: string, tokens: string[]): { name: string; remaining: string[] } | null {
     const realHead = this.aliases.get(head) ?? head;
-    // 不存在 realHead 节点也不存在以 realHead 开头：未命中
-    if (!this.nodes.has(realHead) && !this.findNodesPrefixed(realHead)) return null;
+    if (!this.nodes.has(realHead)) return null;
 
     let current = realHead;
     let consumed = 0;
     for (let i = 0; i < tokens.length; i++) {
       const candidate = `${current}.${tokens[i]}`;
-      // 候选要么本身存在，要么作为更深节点的前缀存在
-      if (this.nodes.has(candidate) || this.findNodesPrefixed(candidate)) {
+      if (this.nodes.has(candidate)) {
         current = candidate;
         consumed = i + 1;
       } else {
         break;
       }
     }
-    // 若当前不是真实节点（仅是别名首段而无 head 顶级节点），不应发生（已 ensure）
-    if (!this.nodes.has(current)) return null;
     return { name: current, remaining: tokens.slice(consumed) };
-  }
-
-  private findNodesPrefixed(prefix: string): boolean {
-    for (const k of this.nodes.keys()) {
-      if (k.startsWith(`${prefix}.`)) return true;
-    }
-    return false;
   }
 
   /**

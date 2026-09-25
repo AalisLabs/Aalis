@@ -9,7 +9,7 @@ import {
 import { commands as commandsService } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
 import { gateway as gatewayService } from '@aalis/api-gateway';
-import { hooks } from '@aalis/api-hooks';
+import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import type { ChatModelRequest, ChatResponse, LLMModel, LLMModelEntry } from '@aalis/api-llm';
 import { listLLMModels, llm as llmService, resolveLLMModel } from '@aalis/api-llm';
 import { media as mediaService } from '@aalis/api-media';
@@ -148,7 +148,7 @@ class DefaultAgent implements AgentService {
    */
   private tokenLogState = new Map<string, { count: number; lastRatioBucket: number }>();
 
-  /** 已注册的预处理器（name → { priority, dispose }） */
+  /** 已注册的预处理器（name → { dispose }） */
   private preprocessors = new Map<string, { dispose: () => void }>();
 
   constructor(caps: AgentCaps) {
@@ -259,6 +259,11 @@ class DefaultAgent implements AgentService {
     await Promise.allSettled([...this.inflightTurns]);
   }
 
+  /** 会话删除时丢弃其节流日志状态（订阅见 run() 的 session:deleted）。 */
+  dropTokenLogState(sessionId: string): void {
+    this.tokenLogState.delete(sessionId);
+  }
+
   /**
    * 注册输入预处理器（如图片识别、文件读取、用户画像等）。
    * 多个预处理器按注册顺序串行执行（Koa-style 洋葱模型）。
@@ -329,7 +334,6 @@ class DefaultAgent implements AgentService {
     request: ChatModelRequest,
     sessionId: string,
     platform: string,
-    signal?: AbortSignal,
   ): Promise<ChatResponse & { segments: ContentSegment[] }> {
     let content = '';
     let reasoningContent = '';
@@ -347,7 +351,7 @@ class DefaultAgent implements AgentService {
 
     for await (const chunk of llm.chatStream!(request)) {
       // 检查中止信号
-      if (signal?.aborted) {
+      if (request.signal?.aborted) {
         throw new DOMException('Generation aborted', 'AbortError');
       }
       if (chunk.contentDelta) {
@@ -576,9 +580,8 @@ class DefaultAgent implements AgentService {
       // trimThresholdRatio < 1 可提前触发裁剪，默认 1.0 = 用满扣除输出预留后的可用窗口
       const tokenBudget = Math.max(1024, Math.floor(contextLength * this.trimThresholdRatio) - maxTokens - 512);
 
-      // Bug B 防回溯：本回合中通过工具循环写入到 memory 的 (assistant+toolCalls + tool 结果) 消息时间戳。
-      // 用户中途点「停止生成」时，这些条目要从历史中删除——否则下一条消息发出后，agent 会再次
-      // 看到上一轮被中断的工具调用 + 半截 assistant 文本，导致「假回退」。
+      // 本回合经工具循环写入 memory 的 (assistant+toolCalls + tool 结果) 消息时间戳。
+      // 只用于中止日志里的条数：中止时这些已完成的工具调用记录保留不回滚（见下方 catch 分支）。
       const turnPersistedTimestamps: number[] = [];
 
       try {
@@ -680,7 +683,7 @@ class DefaultAgent implements AgentService {
         // 本轮初始时间与累加用量，用于最终 assistant 消息的 modelInfo 元数据。
         const turnStartTs = t0;
         // 注：缓存命中量（usage.cachedPromptTokens）不进这里——本对象只喂
-        // assistant 消息的 modelInfo，而其字段是逐个挑的（见下方 :896 附近），
+        // assistant 消息的 modelInfo，而其字段是逐个挑的（见下方 turnModelInfo），
         // 加进来也不会流到下游。命中率的观测出口是 LLM 响应日志那一行。
         const turnUsageAcc = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
         const accUsage = (
@@ -707,7 +710,6 @@ class DefaultAgent implements AgentService {
           },
           incoming.sessionId,
           incoming.platform,
-          signal,
         );
         accUsage(firstResult.usage);
 
@@ -791,68 +793,94 @@ class DefaultAgent implements AgentService {
 
               // Hook: agent:tool:before — 插件可以拦截或修改工具调用
               const toolBeforeData = { name: toolCall.function.name, args, toolCallContext: toolCtx };
-              await this.caps.hooks.run('agent:tool:before', toolBeforeData);
+              // 单个工具的链路异常（钩子 / 守卫 / 结果处理抛错）只算该工具失败，转成它自己的错误结果：
+              // 整批照常落定、整组落库，兄弟工具已发生的副作用不会因连坐而从历史里消失。
+              // executeDone 区分失败发生在执行前还是执行后——后者须明说「已执行」，免得模型重做有副作用的操作。
+              let executeDone = false;
+              let toolT0: number | undefined;
+              try {
+                await this.caps.hooks.run('agent:tool:before', toolBeforeData);
 
-              // 通知平台：工具开始执行
-              await this.caps.events.emit('tool:execute', {
-                sessionId: incoming.sessionId,
-                platform: incoming.platform,
-                toolName: toolBeforeData.name,
-                args: toolBeforeData.args,
-                phase: 'start',
-              });
+                // 通知平台：工具开始执行
+                await this.caps.events.emit('tool:execute', {
+                  sessionId: incoming.sessionId,
+                  platform: incoming.platform,
+                  toolName: toolBeforeData.name,
+                  args: toolBeforeData.args,
+                  phase: 'start',
+                });
 
-              this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${JSON.stringify(toolBeforeData.args)}`);
-              const toolT0 = Date.now();
-              const executed: ToolExecutionResult = await (this.caps.tools.current?.execute(
-                toolBeforeData.name,
-                toolBeforeData.args,
-                toolCtx,
-              ) ?? Promise.resolve({ content: JSON.stringify({ error: 'tools 服务不可用' }) }));
-              let result = executed.content;
-              // 工具交给主模型看的图：只随本回合的 tool 消息走（出口由 prepareLLMMessages 编码），
-              // 不进钩子/事件/时间线（那些面都是文本），也不落库（见 saveToolCallGroup）。
-              const resultImages = executed.images;
+                this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${JSON.stringify(toolBeforeData.args)}`);
+                toolT0 = Date.now();
+                const executed: ToolExecutionResult = await (this.caps.tools.current?.execute(
+                  toolBeforeData.name,
+                  toolBeforeData.args,
+                  toolCtx,
+                ) ?? Promise.resolve({ content: JSON.stringify({ error: 'tools 服务不可用' }) }));
+                executeDone = true;
+                let result = executed.content;
+                // 工具交给主模型看的图：只随本回合的 tool 消息走（出口由 prepareLLMMessages 编码），
+                // 不进钩子/事件/时间线（那些面都是文本），也不落库（见 saveToolCallGroup）。
+                const resultImages = executed.images;
 
-              // Hook: agent:tool:after — 插件可以处理工具执行结果
-              const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: toolCtx };
-              await this.caps.hooks.run('agent:tool:after', toolAfterData);
-              result = toolAfterData.result;
+                // Hook: agent:tool:after — 插件可以处理工具执行结果
+                const toolAfterData = { name: toolBeforeData.name, result, toolCallContext: toolCtx };
+                await this.caps.hooks.run('agent:tool:after', toolAfterData);
+                result = toolAfterData.result;
 
-              // 工具结果截断：按上下文窗口比例限制单条工具结果长度
-              if (result.length > toolResultMaxChars) {
-                this.logger.info(
-                  `工具结果过长 (${result.length} 字符)，截断至 ${toolResultMaxChars} 字符: ${toolBeforeData.name}`,
-                );
-                result = truncateChars(
+                // 工具结果截断：按上下文窗口比例限制单条工具结果长度
+                if (result.length > toolResultMaxChars) {
+                  this.logger.info(
+                    `工具结果过长 (${result.length} 字符)，截断至 ${toolResultMaxChars} 字符: ${toolBeforeData.name}`,
+                  );
+                  result = truncateChars(
+                    result,
+                    toolResultMaxChars,
+                    `\n... [工具输出已截断，原始长度 ${result.length} 字符]`,
+                  );
+                }
+                const toolEndTime = Date.now();
+
+                this.logger.debug(`工具完成: ${toolBeforeData.name} (${toolEndTime - toolT0}ms) 结果=${result}`);
+
+                // 通知平台：工具执行完成
+                await this.caps.events.emit('tool:execute', {
+                  sessionId: incoming.sessionId,
+                  platform: incoming.platform,
+                  toolName: toolBeforeData.name,
+                  args: toolBeforeData.args,
+                  phase: 'end',
                   result,
-                  toolResultMaxChars,
-                  `\n... [工具输出已截断，原始长度 ${result.length} 字符]`,
+                });
+
+                return {
+                  toolCall,
+                  result,
+                  resultImages,
+                  toolName: toolBeforeData.name,
+                  toolArgs: toolBeforeData.args,
+                  startTime: toolT0,
+                  endTime: toolEndTime,
+                };
+              } catch (err) {
+                // 执行后的失败不回退到原始结果（fail-closed）：after 钩子可能是脱敏钩子，失败时原始输出不能漏给模型
+                const reason = err instanceof Error ? err.message : String(err);
+                this.logger.warn(
+                  `工具${executeDone ? '已执行，但结果处理' : '调用'}失败: ${toolBeforeData.name} (${reason})`,
                 );
+                const failedAt = Date.now();
+                return {
+                  toolCall,
+                  result: JSON.stringify({
+                    error: executeDone ? `工具已执行，但结果处理失败：${reason}` : `工具调用失败：${reason}`,
+                  }),
+                  resultImages: undefined,
+                  toolName: toolBeforeData.name,
+                  toolArgs: toolBeforeData.args,
+                  startTime: toolT0 ?? failedAt,
+                  endTime: failedAt,
+                };
               }
-              const toolEndTime = Date.now();
-
-              this.logger.debug(`工具完成: ${toolBeforeData.name} (${toolEndTime - toolT0}ms) 结果=${result}`);
-
-              // 通知平台：工具执行完成
-              await this.caps.events.emit('tool:execute', {
-                sessionId: incoming.sessionId,
-                platform: incoming.platform,
-                toolName: toolBeforeData.name,
-                args: toolBeforeData.args,
-                phase: 'end',
-                result,
-              });
-
-              return {
-                toolCall,
-                result,
-                resultImages,
-                toolName: toolBeforeData.name,
-                toolArgs: toolBeforeData.args,
-                startTime: toolT0,
-                endTime: toolEndTime,
-              };
             }),
           );
 
@@ -935,7 +963,6 @@ class DefaultAgent implements AgentService {
             },
             incoming.sessionId,
             incoming.platform,
-            signal,
           );
           turnSegments.push(...nextResult.segments);
           response = nextResult;
@@ -965,19 +992,7 @@ class DefaultAgent implements AgentService {
 
         // Hook: agent:reply:before — 插件可以修改最终回复
         // JSON 解析/修复统一由 persona 的 agent:reply:before 钩子处理
-        type ReplyHookData = {
-          content: string;
-          archiveContent?: string;
-          sessionId: string;
-          platform?: string;
-          userId?: string;
-          triggerType?: typeof incoming.triggerType;
-          retryRequested?: boolean;
-          retryFeedback?: string;
-          attempt?: number;
-          maxRetries?: number;
-        };
-        const responseData: ReplyHookData = {
+        const responseData: HookContextMap['agent:reply:before'] = {
           content: replyContent,
           sessionId: incoming.sessionId,
           platform: incoming.platform,
@@ -1015,7 +1030,6 @@ class DefaultAgent implements AgentService {
             },
             incoming.sessionId,
             incoming.platform,
-            signal,
           );
           turnSegments.push(...retryResult.segments);
           response = retryResult;
@@ -1053,6 +1067,10 @@ class DefaultAgent implements AgentService {
           this.logger.warn(`检测到重复回复，跳过发送 (session=${incoming.sessionId})`);
           replyContent = '';
         }
+
+        // 提交点：此后的流结束标记、落库与外发成组执行。流结束后到这里之间（llm:after / 工具循环退出 /
+        // reply:before / 重试）被 latest-wins、手动停止或拆卸掐掉的回合，走下方 AbortError 收尾，不落库、不外发。
+        if (signal.aborted) throw new DOMException('Generation aborted', 'AbortError');
 
         // 发出流结束标记
         await this.caps.events.emit('outbound:stream', {
@@ -1120,9 +1138,9 @@ class DefaultAgent implements AgentService {
         //
         // 历史教训：早期版本会用 turnPersistedTimestamps 把"本轮已持久化的中间消息"全部删掉，
         // 注释里写的是防"半截 assistant 内容 / 假回退"。但实际审计 saveToolCallGroup（见下方）发现：
-        //   1. saveToolCallGroup 只在并行工具全部执行完毕后整组写入（assistant tool_call + 所有
-        //      tool result 一次性 push），catch 路径根本进不来；turnPersistedTimestamps 里只
-        //      可能是"已完成、副作用已发生"的工具调用对。
+        //   1. saveToolCallGroup 只在并行工具全部落定后整组写入（assistant tool_call + 所有
+        //      tool result 一次性 push；单个工具的异常已在闭包内转成它自己的错误结果），不存在
+        //      写了一半的组；turnPersistedTimestamps 里只可能是"已落定、副作用已发生"的工具调用对。
         //   2. 删除这些 = 让 agent 忘记自己刚刚做过的有副作用的事（戳一戳/发送消息/调度任务/…），
         //      下一轮 LLM 看不到自己的行为，会重复调用，外部观察就是"agent 一直以为戳不了"。
         //   3. 真正的 orphan 风险（assistant tool_calls 缺 tool result）由 sanitizeToolCallHistory
@@ -1416,13 +1434,12 @@ class DefaultAgent implements AgentService {
           // 与子会话侧 _tokenContributions.subtask 同桶，WebUI 才能看到父+子全貌
           subtaskTokens += t;
         } else if (source === 'persona' || !source) {
-          // persona 消息可能被 skills/subtask/toolPriority 追加了内容
+          // persona 消息可能被 subtask 追加内容
           if (contributions) {
             let contributionTokens = 0;
             for (const [key, charCount] of Object.entries(contributions)) {
               const ct = estimateTextTokens('x'.repeat(charCount as number));
-              if (key === 'skills') skillsTokens += ct;
-              else if (key === 'subtask') subtaskTokens += ct;
+              if (key === 'subtask') subtaskTokens += ct;
               else systemOtherTokens += ct;
               contributionTokens += ct;
             }
@@ -1955,7 +1972,7 @@ const configSchema: ConfigSchema = {
     type: 'number',
     label: '长期记忆预留 Token',
     default: 4096,
-    description: '为长期记忆注入的 system 消息预留的 token 额度，截断时不会删除这些消息',
+    description: '为注入的 system 消息预留的 token 额度：超出时先按比例缩减，极端情况下（最后阶段）仍会删除',
   },
   historyLimit: {
     type: 'number',
@@ -2019,6 +2036,8 @@ function run(caps: Caps): void {
   caps.lifecycle.onDrain(() => agentImpl.abortInflightAndSettle(), '中止在飞回合');
   // 清理段再 abort 一次：drain 超时或未走到收尾时的兜底，表空则空操作。
   caps.lifecycle.onDispose(() => agentImpl.abortAll(), '中止在飞回合（兜底）');
+  // 会话删除：丢弃该会话的 token 日志节流状态（与 todo-list / file-reader 走同一条会话清理路径）
+  caps.events.on('session:deleted', sessionId => agentImpl.dropTokenLogState(sessionId));
   const agent = agentImpl as unknown as InternalAgent;
 
   // 全局默认 LLM：通过 ServicePreference 锁定 llm 服务的首选 entry。

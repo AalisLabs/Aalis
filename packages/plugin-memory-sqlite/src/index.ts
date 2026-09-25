@@ -22,7 +22,8 @@ const configSchema: ConfigSchema = {
     type: 'string',
     label: '数据库路径',
     default: 'data/aalis.db',
-    description: 'SQLite 数据库文件路径，相对于项目根目录',
+    description:
+      "SQLite 数据库文件的 storage URI（如 data:/aalis.db；不含 ':/' 时首段视为存储根名，单段裸名归 data 根）",
   },
   rangeQueryLimit: {
     type: 'number',
@@ -37,17 +38,6 @@ const configSchema: ConfigSchema = {
     description: '跨会话最近消息查询允许的最大条数；调用方请求超过此值会被收窄到此上限',
   },
 };
-
-// ===== 配置 =====
-
-interface SQLiteMemoryConfig {
-  /** 数据库文件路径（相对于配置目录或绝对路径） */
-  path: string;
-  /** 区间消息查询返回上限（默认 500） */
-  rangeQueryLimit?: number;
-  /** 跨会话查询返回上限（默认 1000） */
-  crossSessionMaxLimit?: number;
-}
 
 // ===== SQLite MemoryService 实现 =====
 
@@ -407,13 +397,9 @@ export default definePlugin({
     config,
   },
   async apply(caps) {
-    const sqliteConfig: SQLiteMemoryConfig = {
-      path: (caps.config.path as string) ?? 'data:/aalis.db',
-    };
-
     // 解析数据库路径：storage URI → 本地路径
     const gateway = createStorageGateway(caps.storage);
-    const dbUri = toUri(sqliteConfig.path);
+    const dbUri = toUri(caps.config.path as string);
     if (!gateway.resolveLocalPath) {
       throw new Error('存储实现未提供 resolveLocalPath 能力，无法打开 SQLite 数据库');
     }

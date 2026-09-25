@@ -15,10 +15,9 @@ import { defineService, serviceRef } from '@aalis/core';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 
 /**
- * 插件分组信息（按子系统聚合，供 WebUI Dashboard 等使用）
+ * 插件分组信息（按子系统聚合）
  *
- * Agent 服务通过 `getPluginGroups()` 暴露当前活跃插件的分组结构，
- * 由 dashboard 据此把插件归入对应的子系统面板。
+ * Agent 服务通过 `getPluginGroups()` 暴露当前活跃插件的分组结构。
  */
 export interface PluginGroupInfo {
   /** 分组显示名称 */
@@ -48,7 +47,7 @@ export interface PreprocessorInfo {
  * 负责接收用户消息并编排完整的对话流程：
  * 组装系统提示、加载历史、调用 LLM、执行工具调用循环、发出回复。
  *
- * 默认由 plugin-agent-default 提供。
+ * 默认由 @aalis/plugin-agent 提供。
  * 外部插件可以注册自己的 AgentService 来完全接管或扩展对话编排逻辑。
  */
 export interface AgentService {
@@ -71,8 +70,8 @@ export interface AgentService {
   /**
    * 获取 Agent 子系统的插件分组
    *
-   * 基于 Agent 的 inject 声明，自动找出所有为 Agent 提供服务的插件，
-   * 返回分组信息供 Dashboard 使用。
+   * 按 Agent 域服务名（llm / memory / persona / message-archive，不含 platform）
+   * 找出提供这些服务的插件，返回分组信息。
    */
   getPluginGroups?(): PluginGroupInfo[];
 }
@@ -202,10 +201,11 @@ export interface PromptContributionView {
 }
 
 /**
- * `agent:prompt` 贡献点的 spec——经 `ctx.contribute('agent:prompt', spec)` 注册。
+ * `agent:prompt` 贡献点的 spec——经 `contributions.contribute('agent:prompt', spec)` 注册
+ * （描述符来自 @aalis/api-contributions）。
  *
- * - `id`：局部幂等键（如 'context'、`activation:${skillName}`），注册时被内核
- *   冠 `${ctx.id}/` 前缀成全局键；全局键即物化块的 `metadata.injector`
+ * - `id`：局部幂等键（如 'context'、`activation:${skillName}`），登记时由贡献点绑定层
+ *   冠以本激活 id 前缀成全局键 `${激活 id}/${id}`；全局键即物化块的 `metadata.injector`
  *   （token 统计 / 裁剪 / 幂等识别的归属标识）。
  * - `build`：每次 LLM 调用前被组装器调用（含工具循环各轮；已物化过的贡献
  *   按全局键跳过，不会重复 build）。返回 null = 本轮不交料；返回数组 =

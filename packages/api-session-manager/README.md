@@ -15,10 +15,10 @@ pnpm add @aalis/api-session-manager
 ## 使用
 
 ```ts
-import type { /* ... */ } from '@aalis/api-session-manager';
-```
+import { sessionManager } from '@aalis/api-session-manager';
 
-本包为 *-api 类型包；实现见对应的运行时插件。
+// uses: { sessionManager }
+```
 
 ## 许可
 

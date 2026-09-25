@@ -56,7 +56,7 @@ export default definePlugin({
 | `video.mode` | select | `'frames+asr'` | 模式 |
 | `video.maxFrames` | number | `5` | 最大关键帧数 |
 | `video.framesHint` | textarea | `''` | 抽帧描述 hint：抽帧后拼帧下发 vision 模型时的 hint。留空使用默认：“以下为同一视频的关键帧，按时间顺序排列。” |
-| `video.animatedPrompt` | textarea | `''` | 动图/短视频描述 prompt：`describeImage` 遇到动图时作为 vision.prompt 的 fallback hint。留空使用默认：“描述这个动图/视频。” |
+| `video.animatedPrompt` | textarea | `''` | 动图/短视频描述 prompt：`describeImage` 遇到动图时的整段描述 prompt（替换内置多图批量模板）；留空使用内置多图批量模板。 |
 | `video.framePrefix` | string | `'[画面] '` | 画面描述前缀：拼到抽帧综合描述前的标记，例如 “[画面] …”。 |
 | `video.audioTrackPrefix` | string | `'[音轨] '` | 音轨转写前缀：拼到视频音轨转写前的标记，例如 “[音轨] …”。 |
 | `animatedImage` | object | — | 动图 / GIF |

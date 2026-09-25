@@ -18,9 +18,9 @@ export const OWNER_RANK = Number.POSITIVE_INFINITY;
 // 等级常量与 (risk,visibility)→门槛 的映射住在契约包 `@aalis/api-authority`：
 // 判断「两份能力声明谁更严」的地方不止这里（plugin-commands 合并同名指令的多份声明时也要），
 // 两份实现必然漂移 —— 曾因此漏掉「risk 遮蔽 visibility」这条性质，酿成一条提权面。
-import { capabilityMinLevel, DEFAULT_AUTHORITY, RESTRICTED_LEVEL } from '@aalis/api-authority';
+import { capabilityMinLevel, DEFAULT_AUTHORITY } from '@aalis/api-authority';
 
-export { DEFAULT_AUTHORITY, RESTRICTED_LEVEL };
+export { DEFAULT_AUTHORITY };
 
 // ── glob（`*` 通配任意字符段）──────────────
 function capMatches(pattern: string, value: string): boolean {

@@ -1,8 +1,9 @@
-import { existsSync, mkdtempSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createFsYamlConfigProvider } from '../../packages/runtime/src/providers.js';
+import { atomicWrite, quiet, settle, sleep, waitFor } from '../helpers/fs-watch.js';
 
 // ════════════════════════════════════════════════════════════
 // FsYamlConfigProvider.watch —— 配置文件外部变更监听
@@ -12,36 +13,6 @@ import { createFsYamlConfigProvider } from '../../packages/runtime/src/providers
 // inode 上的 watcher 就永久失聪——无异常、无日志，文件说一套、进程做一套。
 // save() 现已同样是 tmp + rename（config-atomic-write.test.ts 钉住 inode 必变），自写回也会踩到。
 // ════════════════════════════════════════════════════════════
-
-const DEBOUNCE_MS = 300;
-
-const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));
-
-/** 轮询等待条件成立；成立即返回，超时返回最后一次判定。 */
-async function waitFor(cond: () => boolean, timeoutMs = 3000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (cond()) return true;
-    await sleep(25);
-  }
-  return cond();
-}
-
-/** 静默期：等足去抖 + 余量，用于断言「不该触发」。 */
-const quiet = (): Promise<void> => sleep(DEBOUNCE_MS + 500);
-
-/**
- * 等 fs.watch 真正武装完毕。macOS 的 FSEvents 后端建流是异步的，arm 之后立刻写
- * 有可能被漏掉——不等这一下，「没触发」既可能是缺陷也可能是竞态，测试就没有判别力了。
- */
-const settle = (): Promise<void> => sleep(250);
-
-/** 原子替换——编辑器/`sed -i`/`vim` 默认保存的做法，会换掉 inode。 */
-function atomicWrite(path: string, content: string): void {
-  const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, content, 'utf-8');
-  renameSync(tmp, path);
-}
 
 describe('FsYamlConfigProvider.watch', () => {
   let dir: string;

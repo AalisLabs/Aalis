@@ -2,11 +2,7 @@ import type { StorageService } from '@aalis/api-storage';
 import type { BoundTools } from '@aalis/api-tools';
 import ExcelJS from 'exceljs';
 import type { DocSessionManager } from '../session.js';
-
-function joinUri(base: string, rel: string): string {
-  const b = base.endsWith('/') ? base : `${base}/`;
-  return `${b}${rel.replace(/^\/+/, '')}`;
-}
+import { joinUri } from '../utils.js';
 
 /** 列字母转数字 A→1, B→2, ..., Z→26, AA→27 */
 function colToNum(col: string): number {
@@ -341,7 +337,7 @@ export function registerExcelTools(
       function: {
         name: 'excel_add_chart',
         description:
-          '提示：ExcelJS 不原生支持图表嵌入。此工具会在指定位置创建图表数据描述，建议在 Excel 中手动创建图表或使用 PPT 图表功能。',
+          '提示：ExcelJS 不原生支持图表嵌入。此工具不会创建图表，只返回手动插入图表的建议；可在 Excel 中手动创建图表或使用 PPT 图表功能。',
         parameters: {
           type: 'object',
           properties: {

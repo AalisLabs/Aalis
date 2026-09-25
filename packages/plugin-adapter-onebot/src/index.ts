@@ -687,28 +687,11 @@ function runAdapter(caps: Caps): void {
     return true;
   }
 
-  // ===== 桥接：会话元数据 + 平台 notice 入档 + 自禁言桥接 =====
+  // ===== 桥接：平台 notice 入档 + 自禁言桥接 =====
   //
-  // 流控/触发判定均已迁移；适配器只保留以下三类辅助：
-  //  1. sessionMeta —— advisor.listSessionCandidates 提供 hint
-  //  2. archivePlatformNotice —— 平台事件入档
-  //  3. recoverSelfMute / 群禁言 notice → flow-control.setMuted（由 flow-control 插件实际暂停触发）
-
-  /** 会话级元数据（仅用于 listSessionCandidates 时给 advisor 提供 hint） */
-  const sessionMeta = new Map<string, { sessionType: string; groupName?: string; partnerNickname?: string }>();
-
-  function noteSessionMeta(
-    sessionId: string,
-    sessionType: string,
-    opts?: { groupName?: string; partnerNickname?: string },
-  ): void {
-    const prev = sessionMeta.get(sessionId);
-    sessionMeta.set(sessionId, {
-      sessionType,
-      groupName: opts?.groupName ?? prev?.groupName,
-      partnerNickname: opts?.partnerNickname ?? prev?.partnerNickname,
-    });
-  }
+  // 流控/触发判定均已迁移；适配器只保留以下两类辅助：
+  //  1. archivePlatformNotice —— 平台事件入档
+  //  2. recoverSelfMute / 群禁言 notice → flow-control.setMuted（由 flow-control 插件实际暂停触发）
 
   /** 自禁言记录（sessionId → untilTs，毫秒），用于 adapter.getSelfMutes() */
   const selfMuted = new Map<string, number>();
@@ -717,11 +700,11 @@ function runAdapter(caps: Caps): void {
   /** 机器人自身近期发出消息记录，支撑 adapter.getSentMessages() / 撤回自己发的消息 */
   const sentTracker = new SentMessageTracker();
 
-  function setSelfMute(sessionId: string, durationSec: number, platform = 'onebot'): void {
+  function setSelfMute(sessionId: string, durationSec: number): void {
     const flow = flowControl.current;
     if (durationSec > 0) {
       selfMuted.set(sessionId, Date.now() + durationSec * 1000);
-      flow?.setMuted(sessionId, durationSec, platform);
+      flow?.setMuted(sessionId, durationSec, 'onebot');
     } else {
       selfMuted.delete(sessionId);
       flow?.setMuted(sessionId, 0);
@@ -825,7 +808,6 @@ function runAdapter(caps: Caps): void {
 
   interface GroupInfo {
     name: string;
-    memberCount?: number;
     fetchedAt: number;
   }
   const groupInfoCache = new Map<string, GroupInfo>();
@@ -842,7 +824,6 @@ function runAdapter(caps: Caps): void {
       })) as Record<string, unknown>;
       const info: GroupInfo = {
         name: String(data.group_name ?? ''),
-        memberCount: data.member_count != null ? Number(data.member_count) : undefined,
         fetchedAt: Date.now(),
       };
       if (info.name) groupInfoCache.set(groupId, info);
@@ -1015,7 +996,7 @@ function runAdapter(caps: Caps): void {
       // 3. 引用消息中的图片：仅查描述缓存复用，不主动触发视觉模型
       if (content.includes('[图片]')) {
         const mediaSvc = media.current;
-        if (mediaSvc?.lookupDescription) {
+        if (mediaSvc) {
           const imageUrls: string[] = [];
           for (const seg of segments) {
             const s = seg as unknown as Record<string, unknown>;
@@ -1058,8 +1039,7 @@ function runAdapter(caps: Caps): void {
     attachmentMaxBytes,
     sendAction,
   });
-  const { getCachedForward, setCachedForward, loadPersistedForward, fetchForwardOnce, expandForwardsInText } =
-    forwardExpander;
+  const { getOrLoadForward, fetchForwardOnce, expandForwardsInText } = forwardExpander;
 
   // ----- Action 发送 -----
 
@@ -1247,16 +1227,8 @@ function runAdapter(caps: Caps): void {
       if (action === 'get_forward_msg') {
         const id = String(params.id ?? params.message_id ?? params.res_id ?? params.m_resid ?? '');
         if (id) {
-          // 内存缓存
-          let entry = getCachedForward(id);
-          // 持久化兜底（重启后场景）
-          if (!entry) {
-            const persisted = await loadPersistedForward(id);
-            if (persisted) {
-              setCachedForward(id, persisted);
-              entry = persisted;
-            }
-          }
+          // 内存缓存，落空再读持久化层（重启后场景）
+          const entry = await getOrLoadForward(id);
           if (entry) {
             // 返回完整原文 + 摘要（如果有）。工具层会优先使用 fullText 渲染。
             return {
@@ -1758,14 +1730,6 @@ function runAdapter(caps: Caps): void {
       // 启动后/重连后通过 shut_up_timestamp 懒查询恢复禁言状态（每会话一次）
       if (sessionType === 'group') {
         void recoverSelfMuteIfNeeded(sessionId);
-      }
-
-      // 记录会话元数据（advisor.listSessionCandidates 用）
-      if (sessionType) {
-        noteSessionMeta(sessionId, sessionType, {
-          groupName,
-          partnerNickname: sessionType === 'private' ? event.nickname : undefined,
-        });
       }
 
       // 群消息：拉取 self 在该群的角色/头衔（带缓存），让 agent 正确认知自身权限

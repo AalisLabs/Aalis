@@ -6,6 +6,7 @@ import { platform, resolvePlatformBySession } from '@aalis/api-platform';
 import {
   type AccessChecker,
   type AccessCheckerDisposer,
+  type SessionHistoryReadResult,
   type SessionHistoryService,
   sessionHistory,
 } from '@aalis/api-tool-session';
@@ -32,10 +33,8 @@ interface RecentDelegationEntry {
   expiresAt: number;
   sourceSessionId: string;
   taskPreview: string; // 前 80 字
-  taskHash: string;
   status: 'pending' | 'replied' | 'fired-no-wait';
   lastReplyPreview?: string;
-  lastOutcome?: string;
 }
 type RecentDelegations = Map<string, RecentDelegationEntry>;
 
@@ -84,12 +83,10 @@ function findRecentDelegationsForTarget(
 
 function buildDelegationMetaBlock(
   sourceSessionId: string,
-  targetSessionId: string,
   task: string,
   recents: RecentDelegationEntry[],
   now: number,
 ): string {
-  void targetSessionId;
   const lines: string[] = [];
   lines.push('[跨会话委派 META]');
   lines.push(`· 来源会话：${sourceSessionId}`);
@@ -188,17 +185,7 @@ interface PluginConfig {
   crossSessionDefaultTimeoutSec: number;
 }
 
-interface SessionHistoryResult {
-  ok: true;
-  sessionId: string;
-  count: number;
-  limit: number;
-  includeArchived: boolean;
-  range?: { fromTs: number; toTs: number };
-  /** 区间模式：窗口内消息多于返回条数时为 true，提示「请缩小时间窗」 */
-  truncated?: boolean;
-  messages: Array<Record<string, unknown>>;
-}
+type SessionHistoryResult = Extract<SessionHistoryReadResult, { ok: true }>;
 
 /** 无原生区间查询的后端：区间检索退回扫描历史的最大条数（best-effort 上界，防 OOM） */
 const RANGE_FALLBACK_SCAN = 5000;
@@ -817,13 +804,12 @@ function registerCrossSessionTools(caps: CrossSessionCaps, cfg: PluginConfig): v
       const taskHash = hashTask(task);
       const dedupKey = recentDelegationKey(targetSessionId, taskHash);
       const recents = findRecentDelegationsForTarget(recentDelegations, targetSessionId, now);
-      const taskWithMeta = buildDelegationMetaBlock(callCtx.sessionId, targetSessionId, task, recents, now);
+      const taskWithMeta = buildDelegationMetaBlock(callCtx.sessionId, task, recents, now);
       const entry: RecentDelegationEntry = {
         firedAt: now,
         expiresAt: now + RECENT_DELEGATION_TTL_MS,
         sourceSessionId: callCtx.sessionId,
         taskPreview: task.length > 80 ? `${task.slice(0, 80)}...` : task,
-        taskHash,
         status: waitForResult ? 'pending' : 'fired-no-wait',
       };
       recentDelegations.set(dedupKey, entry);
@@ -911,7 +897,6 @@ function registerCrossSessionTools(caps: CrossSessionCaps, cfg: PluginConfig): v
       const entryAfter = recentDelegations.get(dedupKey);
       if (entryAfter) {
         entryAfter.status = 'replied';
-        entryAfter.lastOutcome = captured.outcome;
         const r = captured.reply ?? '';
         entryAfter.lastReplyPreview =
           r.length > 60 ? `${r.slice(0, 60).replace(/\n/g, ' ')}...` : r.replace(/\n/g, ' ');

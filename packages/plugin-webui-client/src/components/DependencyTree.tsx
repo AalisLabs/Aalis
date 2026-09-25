@@ -6,6 +6,7 @@
 // api/util 链下，全展开时装前弹窗噪音极大），含「将引入」的链路默认展开——那才是
 // 用户需要审视的部分；view（卸载警告）语境一律默认展开，警告不许折叠着送达。
 
+import { AlertTriangle } from 'lucide-react';
 import { useState } from 'react';
 
 export interface DepChainNode {
@@ -24,7 +25,7 @@ export interface DepGraph {
   downstream: DepChainNode;
   /** 目标自身的服务：需要哪些（含已装提供者解析）/ 提供哪些 */
   services: { required: Array<{ service: string; providedBy: string | null }>; provides: string[] };
-  /** 卸载会断服务的依赖者（与卸载 409 同口径） */
+  /** 卸载会断服务的依赖者（与服务层卸载闸同口径） */
   serviceDependents: string[];
 }
 
@@ -96,7 +97,7 @@ export function InstallDepDisclosure({ graph }: { graph: DepGraph }) {
           {required.map(r => (
             <span key={r.service} className={`dep-svc ${r.providedBy ? 'ok' : 'warn'}`}>
               {r.service}
-              {r.providedBy ? `（✓ ${r.providedBy}）` : '（⚠ 无提供者）'}
+              {r.providedBy ? `（由 ${r.providedBy} 提供）` : '（无提供者）'}
             </span>
           ))}
         </div>
@@ -107,7 +108,7 @@ export function InstallDepDisclosure({ graph }: { graph: DepGraph }) {
   );
 }
 
-/** 卸载弹窗里的依赖预警：服务依赖者（将被 409 拒）+ import 依赖者链路（删后可能起不来）。返回 null 表示无依赖者。 */
+/** 卸载弹窗里的依赖预警：服务依赖者（服务层卸载闸会拒绝）+ import 依赖者链路（删后可能起不来）。返回 null 表示无依赖者。 */
 export function UninstallDepWarning({ graph }: { graph: DepGraph }) {
   const importers = graph.downstream.children; // 下游链路树（传递），根=目标自身跳过
   if (importers.length === 0 && graph.serviceDependents.length === 0) return null;
@@ -115,13 +116,15 @@ export function UninstallDepWarning({ graph }: { graph: DepGraph }) {
     <div className="dep-uninstall-warn">
       {graph.serviceDependents.length > 0 && (
         <div className="dep-line dep-warn-block">
-          ⛔ 依赖它提供的服务且无替代：{graph.serviceDependents.join('、')}
+          <AlertTriangle size={12} /> 依赖它提供的服务且无替代：{graph.serviceDependents.join('、')}
           <br />（卸载会被拒绝，请先卸载它们或装替代提供者）
         </div>
       )}
       {importers.length > 0 && (
         <div className="dep-warn-block">
-          <div>⚠️ 这些已装插件 import 了它（删除后可能无法启动，需重新安装恢复）：</div>
+          <div>
+            <AlertTriangle size={12} /> 这些已装插件 import 了它（删除后可能无法启动，需重新安装恢复）：
+          </div>
           {importers.map(c => (
             <DependencyTree key={c.name} node={c} mode="view" />
           ))}

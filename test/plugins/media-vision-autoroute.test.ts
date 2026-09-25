@@ -1,4 +1,4 @@
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { DescribeInput, MediaProcessor } from '../../packages/api-media/src/index.js';
 import {
@@ -7,8 +7,9 @@ import {
   DEFAULT_VISION_PROFESSIONAL_PROMPT,
   DEFAULT_VISION_PROMPT,
 } from '../../packages/plugin-media/src/llm-adapter.js';
-import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
+import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
+import { emptyMediaCaps } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 视觉档位单次自路由——「取消前置分类推理」的结构定格。
@@ -23,22 +24,8 @@ import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 
 const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
 
-/** 无提供者的按激活绑定桩：本套用例只用外部注册的 processor */
-const empty = <P>(): ServiceRef<P> => ({
-  current: undefined,
-  require: () => {
-    throw new Error('无提供者');
-  },
-  all: () => [],
-  follow: () => () => {},
-});
-const caps: MediaServiceCaps = {
-  logger,
-  llm: empty(),
-  asr: empty(),
-  sessionManager: empty(),
-  memory: empty(),
-};
+/** 无提供者的能力桩：本套用例只用外部注册的 processor */
+const caps = emptyMediaCaps(logger);
 
 function makeSvc(visionPromptOverride = ''): { svc: MediaServiceImpl; calls: DescribeInput[] } {
   const calls: DescribeInput[] = [];

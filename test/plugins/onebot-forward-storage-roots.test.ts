@@ -11,6 +11,7 @@ import { createStorageGateway, type StorageService, storage } from '../../packag
 import { App, type Logger, type ServiceRef } from '../../packages/core/src/index.js';
 import { createForwardExpander, type ForwardConfig } from '../../packages/plugin-adapter-onebot/src/forward-expand.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 合并转发媒体落盘必须按 URI 路由到 data 根，不能只拿 storage 胜者。
@@ -35,19 +36,6 @@ const CFG: ForwardConfig = {
 
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52]);
 const PNG_DATA_URI = `data:image/png;base64,${PNG_BYTES.toString('base64')}`;
-
-/** 固定提供者（或缺席）的服务引用——展开器只读 `.current`。 */
-function fixedRef<P>(current: P | undefined): ServiceRef<P> {
-  return {
-    current,
-    require: () => {
-      if (!current) throw new Error('本夹具未提供该服务');
-      return current;
-    },
-    all: () => [],
-    follow: () => () => {},
-  };
-}
 
 const logger: Logger = {
   info() {},

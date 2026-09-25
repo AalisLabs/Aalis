@@ -1,10 +1,10 @@
 # @aalis/plugin-webui-client
 
-运行时插件
+WebUI 前端静态资源包（由 @aalis/plugin-webui-server 托管，不是运行时插件）
 
 ## 角色
 
-运行时插件
+WebUI 前端静态资源包（由 @aalis/plugin-webui-server 托管，不是运行时插件）
 
 ## 安装
 

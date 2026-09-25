@@ -13,6 +13,7 @@ import type { Logger } from '@aalis/core';
 import type { RelationService } from './service.js';
 import { scoreToTier } from './service.js';
 import type { EntityNode, EventNode, PersonNode, RelationEdge } from './types.js';
+import { edgeEndpoints } from './utils.js';
 
 /** 关系类型 → 中文显示（WebUI 渲染用；不影响存储里的英文 key） */
 const RELATION_LABEL_ZH: Record<string, string> = {
@@ -174,7 +175,7 @@ export function registerRelationActions(webui: BoundWebui, service: RelationServ
       const edgeMatch = fullSnap.edges.find(e => e.id === focusId);
       if (edgeMatch) {
         focusEdge = edgeMatch;
-        const endpointIds = edgeEndpointIds(edgeMatch);
+        const endpointIds = edgeEndpoints(edgeMatch);
         const sub = await service.traverseSubgraph({ startNodeIds: endpointIds, maxDepth, maxBreadth });
         persons = sub.persons;
         events = sub.events;
@@ -203,20 +204,7 @@ export function registerRelationActions(webui: BoundWebui, service: RelationServ
     const truncate = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max)}…` : text);
 
     // 给每个返回节点附 compositeScore + tier：用全图位置计算百分位，避免子图局部错觉。
-    const scoreOf = (id: string) => service._computeSingleNodeScore(id, fullSnap);
-    const allScored: { id: string; kind: 'person' | 'event' | 'entity'; score: number }[] = [];
-    for (const p of fullSnap.persons) {
-      const sc = scoreOf(p.id);
-      if (sc) allScored.push({ id: p.id, kind: 'person', score: sc.compositeScore });
-    }
-    for (const e of fullSnap.events) {
-      const sc = scoreOf(e.id);
-      if (sc) allScored.push({ id: e.id, kind: 'event', score: sc.compositeScore });
-    }
-    for (const e of fullSnap.entities) {
-      const sc = scoreOf(e.id);
-      if (sc) allScored.push({ id: e.id, kind: 'entity', score: sc.compositeScore });
-    }
+    const allScored = service._scoreAllNodes(fullSnap);
     const tierByNodeId = new Map<string, { compositeScore: number; tier: 'core' | 'active' | 'normal' | 'edge' }>();
     for (const kind of ['person', 'event', 'entity'] as const) {
       const sameKind = allScored.filter(s => s.kind === kind).sort((a, b) => b.score - a.score);
@@ -290,7 +278,7 @@ export function registerRelationActions(webui: BoundWebui, service: RelationServ
       const kept: RelationEdge[] = [];
       const danglingPairs: string[] = [];
       for (const e of edges) {
-        const [src, tgt] = edgeEndpointIds(e);
+        const [src, tgt] = edgeEndpoints(e);
         if (validNodeIds.has(src) && validNodeIds.has(tgt)) {
           kept.push(e);
         } else {
@@ -318,7 +306,7 @@ export function registerRelationActions(webui: BoundWebui, service: RelationServ
             firstSeenAt: focusEdge.firstSeenAt,
             lastReinforcedAt: focusEdge.lastReinforcedAt,
             evidence: focusEdge.evidence,
-            endpoints: edgeEndpointIds(focusEdge),
+            endpoints: edgeEndpoints(focusEdge),
             // 按 kind 暴露的额外语义字段（在前端面板里展示）
             relation:
               focusEdge.kind === 'person-event' || focusEdge.kind === 'person-entity'
@@ -666,22 +654,4 @@ function numArgOptional(v: unknown): number | undefined {
     if (Number.isFinite(n)) return n;
   }
   return undefined;
-}
-
-/** 给定一条边，返回它的两个端点 id（统一为字符串数组） */
-function edgeEndpointIds(e: RelationEdge): string[] {
-  switch (e.kind) {
-    case 'person-event':
-      return [e.fromPersonId, e.toEventId];
-    case 'person-person':
-      return [e.fromPersonId, e.toPersonId];
-    case 'person-entity':
-      return [e.fromPersonId, e.toEntityId];
-    case 'event-event':
-      return [e.fromEventId, e.toEventId];
-    case 'event-entity':
-      return [e.fromEventId, e.toEntityId];
-    case 'entity-entity':
-      return [e.fromEntityId, e.toEntityId];
-  }
 }

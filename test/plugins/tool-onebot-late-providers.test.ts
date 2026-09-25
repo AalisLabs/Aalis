@@ -45,11 +45,13 @@ async function setup() {
 
   const registered = new Set<string>();
   const registerCalls: string[] = [];
+  const handlers = new Map<string, RegisteredTool['handler']>();
   host.provide(tools, {
     register(tool: Omit<RegisteredTool, 'pluginName'>) {
       const name = tool.definition.function.name;
       registered.add(name);
       registerCalls.push(name);
+      handlers.set(name, tool.handler);
       return () => void registered.delete(name);
     },
     registerGroup: () => () => {},
@@ -64,7 +66,7 @@ async function setup() {
   };
   const onebotTools = () => [...registered].filter(name => name.startsWith('onebot_'));
 
-  return { app, host, registerCalls, readPrivateFromGroup, onebotTools };
+  return { app, host, registerCalls, handlers, readPrivateFromGroup, onebotTools };
 }
 
 const DENIED = { error: expect.stringContaining('不允许从群聊读取私聊历史') };
@@ -144,5 +146,35 @@ describe('tool-onebot 平台闸可重入', () => {
     host.provide(platform, adapter('onebot'));
     await flush();
     expect(registerCalls).toHaveLength(count);
+  });
+});
+
+describe('tool-onebot 在适配器缺非契约扩展时的回退文案', () => {
+  it('缺 getSentMessages / getSelfMutes：不发 delete_msg，文案不归因于「版本」', async () => {
+    const { app, host, handlers } = await setup();
+    const actions: string[] = [];
+    host.provide(platform, {
+      ...adapter('onebot'),
+      callAction: async (_sessionId: string, action: string) => {
+        actions.push(action);
+        return {};
+      },
+    });
+    await app.plugin(toolOnebot);
+    await app.start();
+    await app.plugins.idle();
+
+    const recallSelf = handlers.get('onebot_recall_self');
+    const listSelfMutes = handlers.get('onebot_list_self_mutes');
+    if (!recallSelf || !listSelfMutes) throw new Error('OneBot 工具未注册');
+
+    const recalled = String(await recallSelf({}, { sessionId: GROUP } as never));
+    expect(actions).toEqual([]);
+    expect(recalled).toContain('onebot_delete_msg');
+    expect(recalled).not.toContain('版本');
+
+    const mutes = JSON.parse(String(await listSelfMutes({}, { sessionId: GROUP } as never)));
+    expect(mutes.supported).toBe(false);
+    expect(mutes.reason).not.toContain('版本');
   });
 });

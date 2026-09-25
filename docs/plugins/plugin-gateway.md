@@ -4,7 +4,7 @@
 
 ## 定位
 
-Core 不再内置默认的消息路由逻辑。`plugin-gateway` 提供 `gateway` 服务，在 `inbound:message` 事件上按 `INBOUND_PHASE_ORDER` 顺序串行调度四个**命名生命周期相位**，并暴露 `dispatchOutbound()` 接口运行 `outbound:dispatch` 钩子链。所有"对消息流的横切关注"——命令拦截、流控、触发策略、脱敏、限速、审计——都应通过相位中间件参与。
+Core 不再内置默认的消息路由逻辑。`plugin-gateway` 提供 `gateway` 服务，在 `inbound:message` 事件上按 `INBOUND_PHASE_ORDER` 顺序串行调度五个**命名生命周期相位**，并暴露 `dispatchOutbound()` 接口运行 `outbound:dispatch` 钩子链。所有"对消息流的横切关注"——命令拦截、流控、触发策略、脱敏、限速、审计——都应通过相位中间件参与。
 
 ## 插件声明
 
@@ -35,10 +35,13 @@ export default definePlugin({
 
 | 相位（钩子键） | 数据 | 占据者 | 默认动作 |
 |---|---|---|---|
+| `inbound:confirm` | `InboundPhaseData` | plugin-session-confirm | （无）|
 | `inbound:command` | `InboundPhaseData` | plugin-commands | （无）|
 | `inbound:flow` | `InboundPhaseData` | plugin-flow-control | （无）|
 | `inbound:trigger` | `InboundPhaseData` | plugin-trigger-policy | （无）|
 | `inbound:dispatch` | `InboundPhaseData` | — | `agent.handleMessage(message)`；agent 缺失时兜底回复 |
+
+`inbound:confirm` 排在最前：会话内待确认回复命中后被吞掉，不进入后续相位，也就不会触发 agent 对在途生成的中止。
 
 `InboundPhaseData = { message: IncomingMessage; metadata: Record<string, unknown>; agent: AgentService | undefined }`
 

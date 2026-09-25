@@ -3,6 +3,7 @@ import type { StorageService } from '@aalis/api-storage';
 import type { BoundTools } from '@aalis/api-tools';
 import { PageSizes, PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import type { DocSessionManager } from '../session.js';
+import { joinUri } from '../utils.js';
 
 // pdf-lib 仅支持 ASCII 标准字体，中文等需要嵌入字体。
 // 这里提供基础 PDF 生成，复杂排版建议先生成 docx/pptx/xlsx 后通过 pdf_convert 转换。
@@ -10,7 +11,6 @@ import type { DocSessionManager } from '../session.js';
 interface PdfState {
   pdfDoc: PDFDocument;
   fontSize: number;
-  fontName: string;
   margin: number;
   cursorY: number;
   pageWidth: number;
@@ -24,10 +24,6 @@ export function registerPdfTools(
   outputUri: string,
   proc?: ProcessService,
 ) {
-  function joinUri(base: string, rel: string): string {
-    const b = base.endsWith('/') ? base : `${base}/`;
-    return `${b}${rel.replace(/^\/+/, '')}`;
-  }
   function parentUri(uri: string): string {
     const i = uri.lastIndexOf('/');
     return i > 0 ? uri.slice(0, i) : uri;
@@ -88,7 +84,6 @@ export function registerPdfTools(
       const state: PdfState = {
         pdfDoc,
         fontSize: 12,
-        fontName: 'Helvetica',
         margin,
         cursorY: h - margin,
         pageWidth: w,

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { ContentSegment } from './types';
 
 export interface DetailStreamState {
@@ -27,7 +27,6 @@ export function useDetailStream(
     isStreaming: false,
     done: false,
   });
-  const wsRef = useRef<WebSocket | null>(null);
   const shouldStream = !!(sessionId && (sessionStatus === 'active' || sessionStatus === 'waiting'));
 
   useEffect(() => {
@@ -38,7 +37,6 @@ export function useDetailStream(
 
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${location.host}/ws`);
-    wsRef.current = ws;
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ type: 'subscribe_session', sessionId }));
@@ -102,11 +100,8 @@ export function useDetailStream(
       } catch { /* ignore */ }
     };
 
-    ws.onclose = () => { wsRef.current = null; };
-
     return () => {
       ws.close();
-      wsRef.current = null;
     };
   }, [sessionId, shouldStream]);
 

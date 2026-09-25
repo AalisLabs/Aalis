@@ -36,7 +36,7 @@ const cache = createBoundedMap<string, string>({ max: MAX_ENTRIES, ttlMs: TTL_MS
  * 远端 URL）本身不含内容哈希，落盘后才有内容寻址路径可用。
  *
  * 键空间不变：别名只把来源映到**已有**的落盘键（descriptionKey 认的那种路径），
- * 不引入新键形态。纯派生、不进快照——快照里只有内容哈希键，重启后由新一轮落盘重登记。
+ * 不引入新键形态。纯派生、不进快照——快照里只有内容寻址键，重启后由新一轮落盘重登记。
  */
 const aliases = createBoundedMap<string, string>({ max: MAX_ENTRIES, ttlMs: TTL_MS });
 
@@ -84,7 +84,7 @@ function isFailurePlaceholder(raw: string): boolean {
  * 适配器落远端 URL 时经 MediaService.rememberDescriptionAlias 调进来），
  * 此后按原始来源串读写描述都经别名落到落盘 ref 的键上：同一张图经不同来源
  * （WebUI base64 / 适配器已落盘路径）进来只识别一次，且描述能进快照续命
- * （快照只收内容哈希键，原始 base64 串做键的条目重启即丢）。
+ * （快照只收内容寻址键，原始 base64 串做键的条目重启即丢）。
  *
  * 来源与 ref 相同（http URL 原样返回、storage URI 只换写法）时不登记——恒等别名无意义。
  *
@@ -173,6 +173,12 @@ export async function flushDescriptionCache(): Promise<void> {
   await persist();
 }
 
+/** 可进快照的键：内容哈希键（可带详略档后缀），或本地落盘路径键（内容寻址，只是带着会话目录）。 */
+function isDurableKey(key: string): boolean {
+  const base = key.replace(/#[a-z]+$/, '');
+  return /^[0-9a-f]{16}$/.test(base) || descriptionKey(base) !== base;
+}
+
 function schedulePersist(): void {
   if (!persistLogger || persistTimer !== undefined) return;
   persistTimer = setTimeout(() => {
@@ -188,9 +194,11 @@ async function persist(): Promise<void> {
   if (!logger) return;
   try {
     const { storage } = getMediaRuntime();
-    // 只落内容哈希键：非内容寻址的来源（WebUI 上传的整条 base64 data URI 可达数 MB）
-    // 写进快照会让这份纯派生缓存产生数量级的写放大，且重启后也无从复用。
-    const durable = cache.entries().filter(([k]) => /^[0-9a-f]{16}(#[a-z]+)?$/.test(k));
+    // 只落内容寻址的键：内容哈希键，以及带会话上下文的描述所用的本地落盘路径键
+    // （descriptionKey 认得的那种，体积可控，重启后同会话重发的图照样命中）。
+    // 非内容寻址的来源（WebUI 上传的整条 base64 data URI 可达数 MB、远端 URL）写进快照
+    // 会让这份纯派生缓存产生数量级的写放大，且重启后也无从复用。
+    const durable = cache.entries().filter(([k]) => isDurableKey(k));
     await storage.writeFile(SNAPSHOT_URI, JSON.stringify(durable));
   } catch (err) {
     logger.warn(`图片描述缓存落盘失败（仅影响重启后的复用）: ${err instanceof Error ? err.message : err}`);

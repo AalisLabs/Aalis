@@ -1,7 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import type { UserIdentity } from '@aalis/api-authority';
 import type { ProcessService } from '@aalis/api-process';
-import type { Logger } from '@aalis/core';
 import type { RequestHandler } from 'express';
 
 const TOKEN_COOKIE = 'aalis_webui_token';
@@ -88,16 +87,17 @@ export interface AuthSystem {
 /**
  * 创建单 token 认证系统（单 owner）。
  *
- * - token 由调用方传入（参见 index.ts resolveAuthToken，支持 ephemeral / persist / fixed 三种模式）
+ * - token 由调用方经 getToken 提供，每次校验现取：persist 模式下 storage 晚上线时，调用方会把
+ *   启动时的临时 token 换成读回的持久化 token（见 index.ts 的 token 解析）
  * - HttpOnly + SameSite=Strict cookie；`?token=` 一键登录；同源 POST /api/auth/login 提交
  * - 身份恒为 `webui:console`（owner 级，单人模式语义）
  */
-export function createAuthSystem(token: string, _logger: Logger): AuthSystem {
+export function createAuthSystem(getToken: () => string): AuthSystem {
   const cookieMaxAge = 30 * 24 * 3600; // 30d；进程重启 token 轮换后无效
 
   function tokenAuthed(req: Pick<IncomingMessage, 'headers'>): boolean {
     const cookieToken = parseCookieValue(req.headers.cookie, TOKEN_COOKIE);
-    return !!cookieToken && cookieToken === token;
+    return !!cookieToken && cookieToken === getToken();
   }
 
   function identify(req: Pick<IncomingMessage, 'headers'>): UserIdentity | undefined {
@@ -110,6 +110,7 @@ export function createAuthSystem(token: string, _logger: Logger): AuthSystem {
 
     // 1. ?token= 命中 → 设置 cookie → 302 到不带 query 的同路径
     if (req.method === 'GET' && qToken) {
+      const token = getToken();
       if (qToken === token) {
         res.setHeader('Set-Cookie', buildSetCookie(TOKEN_COOKIE, token, cookieMaxAge));
         res.redirect(302, url);
@@ -122,6 +123,7 @@ export function createAuthSystem(token: string, _logger: Logger): AuthSystem {
     // 2. 登录端点：{token}
     if (url === '/api/auth/login' && req.method === 'POST') {
       const body = (req as { body?: { token?: string } }).body ?? {};
+      const token = getToken();
       if (typeof body.token === 'string' && body.token === token) {
         res.setHeader('Set-Cookie', buildSetCookie(TOKEN_COOKIE, token, cookieMaxAge));
         res.json({ ok: true, identity: { platform: 'webui', userId: 'console' } });

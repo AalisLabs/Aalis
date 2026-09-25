@@ -1,7 +1,7 @@
 /**
  * @aalis/plugin-prompt-budget —— 暴露 Prompt 预算自检工具
  *
- * 设计动机：plugin-agent-default 已 emit `token:usage` 事件（含 12 桶 breakdown），
+ * 设计动机：@aalis/plugin-agent 已 emit `token:usage` 事件（含 12 桶 breakdown），
  * WebUI 通过 plugin-webui-server 订阅并渲染面板。但 AI 自己跑在工具循环里时，
  * 没有看 WebUI 的机会——需要一个**主动 query** 路径，让模型怀疑"是不是 prompt 太大了"
  * 时能立即查到当前 session 的最新预算消耗。

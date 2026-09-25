@@ -16,7 +16,6 @@
  * - view.*：WebUI / actions 查询用，给人看，可中等深度。
  */
 
-import { agent } from '@aalis/api-agent';
 import { commands } from '@aalis/api-commands';
 import { contributions } from '@aalis/api-contributions';
 import { embedding } from '@aalis/api-embedding';
@@ -29,7 +28,7 @@ import { type WebuiPage, webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { registerRelationActions } from './actions.js';
-import { registerRelationCommands } from './commands.js';
+import { type EvictionConfig, registerRelationCommands } from './commands.js';
 import { RelationExtractor } from './extractor.js';
 import { registerRelationContribution } from './middleware.js';
 import { startRenameWatcher } from './rename-watcher.js';
@@ -43,14 +42,13 @@ const configSchema: ConfigSchema = {
     type: 'boolean',
     label: '允许从对话中提取新关系（写入总开关）',
     description:
-      '**写入总开关**：关闭后插件停止生成任何新关系节点/边（自动触发、手动 /relation extract、Agent upsert_* 工具全部失效）；但 middleware 仍读取并注入旧关系、actions 仍可查/删。若只想停掉"自动触发"而保留手动命令，请用 triggerEveryNMessages=0 而非关此项。彻底卸载请整体停用该插件。',
+      '**写入总开关**：关闭后插件停止生成任何新关系节点/边；但 middleware 仍读取并注入旧关系、actions 仍可查/删。若只想停掉"自动触发"，请用 triggerEveryNMessages=0 而非关此项。彻底卸载请整体停用该插件。',
     default: true,
   },
   triggerEveryNMessages: {
     type: 'number',
     label: '自动触发阈值（每 N 条消息）',
-    description:
-      '**仅控制"自动触发"**：每会话累计 N 条入站消息后自动跑一次 LLM 提取。0=**仅手动**（slash 命令 /relation extract 仍可触发，Agent 工具仍可用——与 extractionEnabled 不同）。',
+    description: '**仅控制"自动触发"**：每会话累计 N 条入站消息后自动跑一次 LLM 提取。0=不自动触发。',
     default: 20,
   },
   readWindowSize: {
@@ -321,20 +319,22 @@ const configSchema: ConfigSchema = {
   toolsEnabled: {
     type: 'boolean',
     label: '向 Agent 暴露 dig 工具',
-    description: '允许 LLM 主动调用：expand_person / find_path / search_events / upsert_* / link / unlink',
+    description:
+      '允许 LLM 主动调用 user_relation_* 工具：检索 / 分析 / 社群，以及带保护门的写工具（改名、修边、删除、合并等）',
     default: true,
   },
   commandsEnabled: {
     type: 'boolean',
     label: '注册 /relation 指令',
-    description: '注册 show / orphans / cleanup 系列指令（cleanup 需 authority ≥ 3）',
+    description:
+      '注册 show / orphans / cleanup / consolidate / maintain 等 /relation 指令（cleanup 等写操作为 restricted，需 owner 授予）',
     default: true,
   },
   strictSelfAssertion: {
     type: 'boolean',
     label: '严格自证模式',
     description:
-      '开启后，提取/工具只允许把关系归到「说过那条原话的人」名下：每条人-* 边必须有 evidence，且至少一条 evidence.messageId 对应消息的发言者 == fromPersonId；agent 工具调用 link/upsert_person 时 from 必须 == 当前发言者。person-person 边的 to 必须已存在 PersonNode。',
+      '开启后，提取只允许把人际关系归到「说过那条原话的人」名下：仅 person-person 边要求 evidence 中至少一条由 from 方本人发出（evidence.messageId 对应消息的发言者 == fromPersonId）。person-person 边的 to 必须已存在 PersonNode。',
     default: true,
   },
   digToolDefaultMaxDepth: {
@@ -505,9 +505,26 @@ function start(caps: Caps): void {
 
   const debug = config.debug === true;
 
+  // 容量淘汰配置只解析一次，extractor 的自动淘汰与 /relation 指令共用
+  const rawCommunityAlgorithm = config.communityAlgorithm as string | undefined;
+  const eviction: EvictionConfig = {
+    maxPersons: numCfg(config.maxPersons, 1500),
+    maxEvents: numCfg(config.maxEvents, 2500),
+    maxEntities: numCfg(config.maxEntities, 1500),
+    maxEdges: numCfg(config.maxEdges, 10000),
+    pagerankDamping: numCfg(config.pagerankDamping, 0.85),
+    pagerankIterations: numCfg(config.pagerankIterations, 20),
+    pagerankEpsilon: numCfg(config.pagerankEpsilon, 0.0001),
+    hysteresisPct: numCfg(config.evictHysteresisPct, 0.2),
+    targetPct: numCfg(config.evictTargetPct, 0.8),
+    weightDecayHalfLifeDays: numCfg(config.weightDecayHalfLifeDays, 180),
+    weightDecayFloor: numCfg(config.weightDecayFloor, 0.3),
+    communityAlgorithm:
+      rawCommunityAlgorithm === 'leiden' || rawCommunityAlgorithm === 'slpa' ? rawCommunityAlgorithm : 'louvain',
+  };
+
   // ─── 提取（写入）─── 受 extractionEnabled 控制
-  // 注意：triggerEveryN=0 时不再绕过 extractor 构造，仅 disable 自动触发；
-  // 这样 slash 命令 /relation extract 与 Agent 工具仍能调用。
+  // 注意：triggerEveryN=0 时不绕过 extractor 构造，仅 disable 自动触发。
   const extractionEnabled = config.extractionEnabled !== false;
   const triggerEveryN = numCfg(config.triggerEveryNMessages, 20);
   if (extractionEnabled) {
@@ -539,21 +556,18 @@ function start(caps: Caps): void {
         disableThinking: config.extractionDisableThinking !== false,
         strictSelfAssertion: config.strictSelfAssertion !== false,
         evictionEnabled: config.evictionEnabled !== false,
-        maxPersons: numCfg(config.maxPersons, 1500),
-        maxEvents: numCfg(config.maxEvents, 2500),
-        maxEntities: numCfg(config.maxEntities, 1500),
-        maxEdges: numCfg(config.maxEdges, 10000),
-        pagerankDamping: numCfg(config.pagerankDamping, 0.85),
-        pagerankIterations: numCfg(config.pagerankIterations, 20),
-        pagerankEpsilon: numCfg(config.pagerankEpsilon, 0.0001),
-        evictHysteresisPct: numCfg(config.evictHysteresisPct, 0.2),
-        evictTargetPct: numCfg(config.evictTargetPct, 0.8),
-        weightDecayHalfLifeDays: numCfg(config.weightDecayHalfLifeDays, 180),
-        weightDecayFloor: numCfg(config.weightDecayFloor, 0.3),
-        communityAlgorithm: (() => {
-          const raw = config.communityAlgorithm as string | undefined;
-          return raw === 'leiden' || raw === 'slpa' ? raw : 'louvain';
-        })(),
+        maxPersons: eviction.maxPersons,
+        maxEvents: eviction.maxEvents,
+        maxEntities: eviction.maxEntities,
+        maxEdges: eviction.maxEdges,
+        pagerankDamping: eviction.pagerankDamping,
+        pagerankIterations: eviction.pagerankIterations,
+        pagerankEpsilon: eviction.pagerankEpsilon,
+        evictHysteresisPct: eviction.hysteresisPct,
+        evictTargetPct: eviction.targetPct,
+        weightDecayHalfLifeDays: eviction.weightDecayHalfLifeDays,
+        weightDecayFloor: eviction.weightDecayFloor,
+        communityAlgorithm: eviction.communityAlgorithm,
         consolidateAfterEviction: config.consolidateAfterEviction !== false,
         consolidateLLMModelRef: config.consolidationModel as { provider: string; model: string } | undefined,
         consolidateLLMDisableThinking: config.consolidationDisableThinking !== false,
@@ -570,7 +584,6 @@ function start(caps: Caps): void {
   // ─── Middleware 注入（读取）─── 受 agentInjection 控制
   if (config.agentInjection !== false) {
     registerRelationContribution({ contributions: caps.contributions, logger: caps.logger }, service, {
-      enabled: true,
       maxDepth: numCfg(config.injectionMaxDepth, 2),
       maxBreadth: numCfg(config.injectionMaxBreadth, 10),
       maxEvents: numCfg(config.maxInjectedEvents, 5),
@@ -587,8 +600,6 @@ function start(caps: Caps): void {
   // ─── Agent 工具 ─── 受 toolsEnabled 控制
   if (config.toolsEnabled !== false) {
     registerRelationTools({ tools: caps.tools, logger: caps.logger }, service, {
-      enabled: true,
-      group: 'user-relation',
       defaultMaxDepth: numCfg(config.digToolDefaultMaxDepth, 2),
       defaultMaxBreadth: numCfg(config.digToolDefaultMaxBreadth, 8),
       hardMaxDepth: numCfg(config.digToolHardMaxDepth, 4),
@@ -620,23 +631,7 @@ function start(caps: Caps): void {
               },
             }
           : {}),
-        eviction: {
-          maxPersons: numCfg(config.maxPersons, 1500),
-          maxEvents: numCfg(config.maxEvents, 2500),
-          maxEntities: numCfg(config.maxEntities, 1500),
-          maxEdges: numCfg(config.maxEdges, 10000),
-          pagerankDamping: numCfg(config.pagerankDamping, 0.85),
-          pagerankIterations: numCfg(config.pagerankIterations, 20),
-          pagerankEpsilon: numCfg(config.pagerankEpsilon, 0.0001),
-          hysteresisPct: numCfg(config.evictHysteresisPct, 0.2),
-          targetPct: numCfg(config.evictTargetPct, 0.8),
-          weightDecayHalfLifeDays: numCfg(config.weightDecayHalfLifeDays, 180),
-          weightDecayFloor: numCfg(config.weightDecayFloor, 0.3),
-          communityAlgorithm: (() => {
-            const raw = config.communityAlgorithm as string | undefined;
-            return raw === 'leiden' || raw === 'slpa' ? raw : 'louvain';
-          })(),
-        },
+        eviction,
         consolidateAutoLink: config.consolidationAutoLink === true,
         consolidateSkipLowScorePairs: config.consolidationSkipLowScorePairs !== false,
         consolidateLowScoreThreshold: numCfg(config.consolidationLowScoreThreshold, 0.2),
@@ -684,9 +679,8 @@ export { RelationService } from './service.js';
 export { RelationStore } from './store.js';
 export * from './types.js';
 
-// ----- 服务类型注册（declaration merging）-----
-// 无独立 `-api` 包：只有这一个实现，契约住在实现包里（同 web-search / scheduler 等）。
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
+// 无独立 `-api` 包：只有这一个实现，契约住在实现包里（同 web-search / scheduler 等）。
 export const userRelation = defineService<RelationService>('user-relation');
 
 const uses = {
@@ -703,7 +697,6 @@ const uses = {
   commands: optional(commands),
   webui: optional(webuiServer),
   embedding: optional(embedding),
-  agent: optional(agent),
 };
 type Caps = BoundOf<typeof uses>;
 

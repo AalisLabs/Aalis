@@ -10,7 +10,6 @@ interface ConfirmOptions {
   /** 正文，支持多行（CSS white-space: pre-wrap）或任意节点 */
   body?: ReactNode;
   confirmLabel?: string;
-  cancelLabel?: string;
   /** 危险操作 → 确认按钮用 danger 配色 */
   danger?: boolean;
 }
@@ -59,7 +58,7 @@ export function useConfirm(): { confirm: (opts: ConfirmOptions) => Promise<boole
           ))}
         <div className="confirm-actions">
           <button type="button" className="btn btn-sm" onClick={() => settle(false)}>
-            {pending.cancelLabel ?? '取消'}
+            取消
           </button>
           <button
             type="button"

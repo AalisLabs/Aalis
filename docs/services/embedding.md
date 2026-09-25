@@ -6,7 +6,7 @@
 
 - 服务注册名：`'embedding'`（`embedding.current`）。
 - 契约包：`@aalis/api-embedding`。
-- 该契约**有运行时服务**（非纯类型契约），但 `-api` 包本身只导出 interface + declaration merging，不含实现；实现来自 `plugin-embedding-*` 提供者插件。
+- 该契约**有运行时服务**（非纯类型契约），但 `-api` 包本身只导出接口类型与服务描述符 `embedding`（`defineService`），不含实现；实现来自 `plugin-embedding-*` 提供者插件。
 
 ## 2. 契约
 
@@ -14,24 +14,20 @@
 
 ```ts
 // packages/api-embedding/src/index.ts
+export interface EmbeddingRequestOptions {
+  /** 调用方取消或超时后停止请求，不再重试。 */
+  signal?: AbortSignal;
+}
+
 export interface EmbeddingService {
-  /** 将文本转为向量 */
-  embed(text: string): Promise<number[]>;
+  /** 将文本转为向量；支持取消的 provider 应将 signal 传至底层请求 */
+  embed(text: string, options?: EmbeddingRequestOptions): Promise<number[]>;
   /** 列出远端可用模型（用于前端下拉框）*/
   listModels?(): Promise<string[]>;
 }
 ```
 
-并通过 declaration merging 把服务名登记进核心的 `服务描述符`，使 `embedding.current` 拿到强类型：
-
-```ts
-// packages/api-embedding/src/index.ts
-declare module '@aalis/core' {
-  interface 服务描述符 {
-    embedding: EmbeddingService;
-  }
-}
-```
+服务描述符 `export const embedding = defineService<EmbeddingService>('embedding')` 携带类型，消费方把它写进 `uses` 后 `embedding.current` 即为强类型。
 
 要点：
 
@@ -39,7 +35,7 @@ declare module '@aalis/core' {
 - `listModels()` 可选，**仅服务于 WebUI 配置表单的动态下拉**（`configSchema` 里 `dynamicOptions: 'embedding'`，见 §4），不参与 embed 主链路。
 - 契约**没有批量接口**（如 `embedBatch`）。消费者要批量时需自行并发调 `embed()`（参考实现的连接细节见 §3）。
 
-`@aalis/api-embedding/package.json` 标记 `aalis.types: true` 且 `keywords` 含 `aalis-api`——是纯契约包，不是可加载插件。
+`@aalis/api-embedding/package.json` 的 `keywords` 含 `aalis-api`——是契约包，不是可加载插件。
 
 ## 3. 谁提供 / 谁消费
 
@@ -75,7 +71,7 @@ Ollama 实现（`packages/plugin-embedding-ollama/src/index.ts`）：
 - 取用：`const embedding = this.caps.embedding.current`（`packages/plugin-user-relation/src/service.ts`）。
 - 缺失即降级：`if (!embedding) return null;`（`ensureEntityEmbedding`），不报错、走非语义路径。
 
-**WebUI（`@aalis/plugin-webui-server`）** 通过 `listModels` 聚合下拉：对配置里 `dynamicOptions: 'embedding'` 的字段，调 `x.all('embedding')` 遍历所有提供者，逐个 `await provider.instance.listModels()` 汇总（`packages/plugin-webui-server/src/index.ts`）。单个提供者失败不影响整体。
+**WebUI（`@aalis/plugin-webui-server`）** 通过 `listModels` 聚合下拉：对配置里 `dynamicOptions: 'embedding'` 的字段，调 `services.all('embedding')` 遍历所有提供者，逐个 `await provider.instance.listModels()` 汇总（`packages/plugin-webui-server/src/index.ts`）。单个提供者失败不影响整体。
 
 ## 4. 写一个 provider
 
@@ -161,7 +157,7 @@ export default definePlugin({
 
 - `priority`：默认 `0`。同名服务竞争时，winner = **preference > priority > 注册顺序**；要默认压过普通后端取更高值（如 `50`）。普通第三方提供者保持 `0` 即可，让用户在 WebUI 里用 preference 选。
 - `entryId`：默认本次激活 id，**须以本次激活 id 为前缀（`/` 分隔）**，用于逻辑身份校验（`packages/core/src/composition/provide-validation.ts`）；卸载清理按激活身份归属，不依赖字符串前缀。一个插件想登记多个 embedding 实例（如多端点）时用 `${lifecycle.id}/${sub}`。
-- `label`：人类可读名，WebUI 选择器和 `getAllServices` 里展示（两个参考实现都用 `\`OpenAI / ${model}\`` 这种形态）。
+- `label`：人类可读名，WebUI 选择器和 `all()` 返回的条目里展示（两个参考实现都用 `\`OpenAI / ${model}\`` 这种形态）。
 
 详见 [service-model](../concepts/service-model.md) 与 [core/service](../core/service.md)。
 
@@ -207,7 +203,7 @@ const vec = await embedding.embed(text);
 
 - **「注册成功 ≠ 可用」**：连通性自检失败只 warn（§3），服务照样注册。消费者第一次 `embed` 才会真正暴露端点不可达 / key 错误，要做好首调错误处理。
 - **无批量 API**：契约只有单条 `embed`。大批量索引靠消费者并发，注意限流（memory-vector 的 `indexing.concurrency` / `maxQueueSize`）以免压垮本地服务。
-- **`listModels` 语义弱**：Ollama 实现把 `/api/tags` 的**所有**模型都返回（未真正过滤 embedding 类，见 `ollama/src/index.ts` 的注释「没有特征可辨别就全返回」），下拉里会混入非 embedding 模型，用户可能选错。
+- **`listModels` 语义弱**：Ollama 实现把 `/api/tags` 的**所有**模型原样返回，刻意不按名字筛（选错模型的代价小于选不到，模型不可用由 doctor 检查项报出，见 `plugin-embedding-ollama/src/index.ts` 的注释），下拉里会混入非 embedding 模型，用户可能选错。
 - **OpenAI 端点路径固定**：openai provider 在 `baseUrl`（完整前缀）后拼 `/embeddings`，仅适配 OpenAI 兼容协议；非兼容服务要单独写 provider。
 - **维度漂移**（承 §6）：换模型后老向量与新查询向量不可比，余弦相似度结果无意义；这是运维层最常见的问题，文档 / 配置项应显式提醒重建。
 

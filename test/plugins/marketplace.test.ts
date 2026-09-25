@@ -6,7 +6,6 @@ import {
   classifyPackage,
   classifySystemComponent,
   findPackageDependents,
-  findServiceDependents,
   type LocalPkgInfo,
   resolveLocalInfo,
   type SystemComponent,
@@ -103,28 +102,6 @@ describe('toMarketplacePackages（响应映射 + 已装 + 官方标注 + 富信�
   });
 });
 
-describe('findServiceDependents（卸载护栏：断服务依赖检测）', () => {
-  const status = [
-    { name: '@aalis/plugin-llm-openai', provides: ['llm'], requiredServices: [] },
-    { name: '@aalis/plugin-agent', provides: ['agent'], requiredServices: ['llm'] },
-    { name: '@aalis/plugin-llm-deepseek', provides: ['llm'], requiredServices: [] },
-  ];
-
-  it('删了某服务的唯一提供者 → 列出受影响的依赖方', () => {
-    const onlyProvider = [status[0], status[1]]; // 仅 openai 提供 llm，agent 需要 llm
-    expect(findServiceDependents('@aalis/plugin-llm-openai', onlyProvider)).toEqual(['@aalis/plugin-agent']);
-  });
-
-  it('还有别的提供者 → 删了不致命，无依赖方阻断', () => {
-    // openai 与 deepseek 都提供 llm；删 openai，deepseek 仍在
-    expect(findServiceDependents('@aalis/plugin-llm-openai', status)).toEqual([]);
-  });
-
-  it('目标不提供任何服务 → 空', () => {
-    expect(findServiceDependents('@aalis/plugin-agent', status)).toEqual([]);
-  });
-});
-
 describe('findPackageDependents（import 依赖：谁的 deps 含 target）', () => {
   const depMap = new Map<string, string[]>([
     ['@aalis/plugin-a', ['@aalis/plugin-b', 'express']],
@@ -197,9 +174,8 @@ describe('toManifest（packument → 装前能力清单）', () => {
     const packument = {
       'dist-tags': { latest: '1.2.0' },
       versions: {
-        '1.0.0': { description: '旧' },
+        '1.0.0': { dependencies: { 'zz-old-dep': '^1.0.0' } },
         '1.2.0': {
-          description: '新',
           aalis: { service: { required: ['llm'], optional: ['memory'], provides: ['x'] } },
           dependencies: { '@aalis/api-llm': 'workspace:^', zod: '^3.0.0' },
           peerDependencies: { '@aalis/core': '>=0.2.0 <1.0.0' },
@@ -207,17 +183,14 @@ describe('toManifest（packument → 装前能力清单）', () => {
       },
     };
     expect(toManifest(packument)).toEqual({
-      name: '',
-      version: '1.2.0',
-      description: '新',
       service: { required: ['llm'], optional: ['memory'], provides: ['x'] },
       dependencies: ['@aalis/api-llm', 'zod', '@aalis/core'], // deps+peer 并集去重、剔版本
     });
   });
 
-  it('无 aalis.service / 无依赖时 service=undefined、dependencies=[]（仍返回版本/描述）', () => {
-    const m = toManifest({ 'dist-tags': { latest: '1.0.0' }, versions: { '1.0.0': { description: 'd' } } });
-    expect(m).toEqual({ name: '', version: '1.0.0', description: 'd', service: undefined, dependencies: [] });
+  it('无 aalis.service / 无依赖时 service=undefined、dependencies=[]', () => {
+    const m = toManifest({ 'dist-tags': { latest: '1.0.0' }, versions: { '1.0.0': {} } });
+    expect(m).toEqual({ service: undefined, dependencies: [] });
   });
 
   it('不可信依赖键：非法包名剔除（含空格话术的伪官方名进不了装前弹窗）', () => {
@@ -278,7 +251,7 @@ describe('classifyPackage（按类型关键词分类）', () => {
     expect(classifyPackage([])).toBe('plugin');
   });
   it('augmentInstalled：已装的 api/前端经 resolve 补判为已安装（getStatus 漏掉它们）', () => {
-    // base = getStatus 仅含已加载运行时插件；api/client 带 marker 不在其中
+    // base = getStatus 仅含已加载运行时插件；api/client 不带 aalis-plugin 关键词，不在其中
     const base = new Set(['@aalis/plugin-llm-openai']);
     const names = ['@aalis/plugin-llm-openai', '@aalis/api-llm', '@aalis/plugin-webui-client', '@aalis/plugin-x'];
     // 模拟 node_modules：llm-api 与 webui-client 已装（可 resolve），plugin-x 未装

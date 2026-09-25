@@ -84,7 +84,7 @@ export class OneBotV12 implements OneBotProtocol {
 
     if (!text.trim()) return null;
 
-    // 提取图片 URL / file_id（老字段保留）+ 统一附件
+    // 提取统一附件列表
     const attachments: NonNullable<NormalizedMessageEvent['attachments']> = [];
     for (const seg of message) {
       const data = seg.data as Record<string, unknown>;
@@ -166,7 +166,6 @@ export class OneBotV12 implements OneBotProtocol {
             onebot_version: version.onebot_version as string | undefined,
           }
         : undefined,
-      interval: raw.interval as number | undefined,
     };
   }
 
