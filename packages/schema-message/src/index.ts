@@ -92,13 +92,13 @@ export interface Message {
    * - 让所有 role 共用同一个子类入口，避免 system.name / notice.metadata.noticeType / assistant.metadata.kind 三套互不相通的"伪子分类"。
    * - 统一过滤/渲染判断：`m.kind === 'event-marker'` 这种写法跨 role 通用。
    *
-   * 约定的语义类（详见 `WELL_KNOWN_KINDS` / `CONTROL_KINDS`）：
+   * 约定的语义类（详见 `WellKnownKinds` / `CONTROL_KINDS`）：
    * - `'event-marker'`              ：system 控制类标记（如压缩分隔条），不应进入 LLM 上下文。
    * - `'cross-session-delegation'`  ：notice 子类——来自另一会话的 agent 委派任务。
    * - `'outbound-image'`            ：assistant 子类——agent 已发出的图片。
    * - notice 的平台事件类型         ：`'poke' | 'group_recall' | 'group_increase' | ...`（取自 OneBot 等适配器）。
    *
-   * 第三方插件可定义自己的 kind 字符串，但请避开 `WELL_KNOWN_KINDS` 中已有的语义。
+   * 第三方插件可定义自己的 kind 字符串，但请避开 `WellKnownKinds` 中已有的语义。
    */
   kind?: string;
   timestamp?: number;

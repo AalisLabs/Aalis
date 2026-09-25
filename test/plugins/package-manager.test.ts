@@ -9,8 +9,10 @@ import packageManagerPlugin, {
   createPackageManager,
   declaresPlugin,
   extractPeerConflicts,
+  findServiceDependents,
   findUnmetPeers,
   hasWorkspaceProtocol,
+  nonMarketKind,
   type PackageManagerDeps,
   packageManager,
   stripVersion,
@@ -27,16 +29,14 @@ type ExecResult = Awaited<ReturnType<ProcessService['execFile']>>;
 // package-manager — install/uninstall 集成测试（mock process 网关）
 //
 // createPackageManager(deps) 只吃一张显式依赖表：所有文件操作走 process 子进程
-// （npm/tar/mkdir/rm/test），目标是真实 <cwd>/packages（不经 storage 沙盒——
-// 沙盒根是 workspace，够不到 packages，历史 bug 即源于此）。
-// 覆盖成功 / 已存在 / 失败回滚 / pack 解析失败 / 卸载（含目录不存在仍移除）。
+// （npm/cp/test），目标是项目根 package.json 与 node_modules（不经 storage 沙盒）。
 // ════════════════════════════════════════════════════════════
 
 const ROOT = '/abs';
 
 interface Harness {
   deps: PackageManagerDeps;
-  execCalls: Array<{ cmd: string; args: string[] }>;
+  execCalls: Array<{ cmd: string; args: string[]; env?: Record<string, string | undefined> }>;
   deleted: string[]; // rm 删除的路径
 }
 
@@ -48,8 +48,11 @@ interface Harness {
 function makeHarness(
   opts: {
     exists?: Set<string>;
-    packOut?: string;
-    failOn?: string; // npm/mkdir/tar/pnpm
+    /** `npm view <spec> keywords --json` 的原样输出（装前类型闸读它）；缺省为插件关键词。 */
+    viewOut?: string;
+    failOn?: string; // npm/cp/test
+    /** failOn 命中时的 stderr；缺省为「<cmd> 模拟失败」。 */
+    failStderr?: string;
     rescan?: string[];
     /** 运行时注册表里已有的插件名——settleInstall 的真正判据。 */
     registered?: string[];
@@ -63,34 +66,38 @@ function makeHarness(
     listPluginInstanceIds?: (definitionName: string) => string[];
   } = {},
 ): Harness {
-  const execCalls: Array<{ cmd: string; args: string[] }> = [];
+  const execCalls: Harness['execCalls'] = [];
   const deleted: string[] = [];
   const exists = new Set(opts.exists ?? []);
 
   const proc = {
     // 预检在副本目录里跑，避免 --dry-run 污染 live tree 的 hidden lockfile
     makeTempDir: vi.fn(async () => ({ path: '/tmp/fake-preflight', cleanup: async () => {} })),
-    execFile: vi.fn(async (cmd: string, args: readonly string[]): Promise<ExecResult> => {
-      execCalls.push({ cmd, args: [...args] });
-      if (cmd === 'test') {
-        // test -d|-f <path>：存在返回 0，否则 exit 1（抛错）
-        if (exists.has(args[1])) return { stdout: '', stderr: '', code: 0 } as ExecResult;
-        const e = new Error('test: 不存在') as Error & { result?: ExecResult };
-        e.result = { stdout: '', stderr: '', code: 1 } as ExecResult;
-        throw e;
-      }
-      if (cmd === 'rm') {
-        deleted.push(args[args.length - 1]); // rm -rf/-f <path>
+    execFile: vi.fn(
+      async (cmd: string, args: readonly string[], o?: { env?: Record<string, string> }): Promise<ExecResult> => {
+        execCalls.push({ cmd, args: [...args], env: o?.env });
+        if (cmd === 'test') {
+          // test -d|-f <path>：存在返回 0，否则 exit 1（抛错）
+          if (exists.has(args[1])) return { stdout: '', stderr: '', code: 0 } as ExecResult;
+          const e = new Error('test: 不存在') as Error & { result?: ExecResult };
+          e.result = { stdout: '', stderr: '', code: 1 } as ExecResult;
+          throw e;
+        }
+        if (cmd === 'rm') {
+          deleted.push(args[args.length - 1]); // rm -rf/-f <path>
+          return { stdout: '', stderr: '', code: 0 } as ExecResult;
+        }
+        if (cmd === 'npm' && args[0] === 'view') {
+          return { stdout: opts.viewOut ?? '["aalis","aalis-plugin"]', stderr: '', code: 0 } as ExecResult;
+        }
+        if (opts.failOn === cmd) {
+          const err = new Error(`${cmd} 失败`) as Error & { result?: ExecResult };
+          err.result = { stdout: '', stderr: opts.failStderr ?? `${cmd} 模拟失败`, code: 1 } as ExecResult;
+          throw err;
+        }
         return { stdout: '', stderr: '', code: 0 } as ExecResult;
-      }
-      if (opts.failOn === cmd) {
-        const err = new Error(`${cmd} 失败`) as Error & { result?: ExecResult };
-        err.result = { stdout: '', stderr: `${cmd} 模拟失败`, code: 1 } as ExecResult;
-        throw err;
-      }
-      const stdout = cmd === 'npm' ? (opts.packOut ?? '') : '';
-      return { stdout, stderr: '', code: 0 } as ExecResult;
-    }),
+      },
+    ),
   } as unknown as ProcessService;
 
   const deps: PackageManagerDeps = {
@@ -157,6 +164,41 @@ describe('纯函数判据', () => {
     expect(r.error).toContain('参数总长');
   });
 
+  it('nonMarketKind：只有插件与前端界面归市场装卸，其余给出拒绝时的类别名', () => {
+    expect(nonMarketKind(['aalis', 'aalis-plugin'])).toBeUndefined();
+    expect(nonMarketKind(['aalis', 'aalis-interface'])).toBeUndefined();
+    expect(nonMarketKind(['aalis-core'])).toBe('内核');
+    expect(nonMarketKind(['aalis-runtime'])).toBe('宿主');
+    expect(nonMarketKind(['aalis-api'])).toBe('服务契约');
+    expect(nonMarketKind(['aalis-schema'])).toBe('数据规范');
+    expect(nonMarketKind(['aalis-util'])).toBe('工具库');
+    expect(nonMarketKind(['odd', 'even'])).toBe('非插件包');
+    expect(nonMarketKind(undefined)).toBe('非插件包');
+    expect(nonMarketKind('aalis-plugin'), '非数组的 keywords 不算声明').toBe('非插件包');
+  });
+
+  describe('findServiceDependents（卸载护栏：断服务依赖检测）', () => {
+    const status = [
+      { name: '@aalis/plugin-llm-openai', provides: ['llm'], requiredServices: [] },
+      { name: '@aalis/plugin-agent', provides: ['agent'], requiredServices: ['llm'] },
+      { name: '@aalis/plugin-llm-deepseek', provides: ['llm'], requiredServices: [] },
+    ];
+
+    it('删了某服务的唯一提供者 → 列出受影响的依赖方', () => {
+      const onlyProvider = [status[0], status[1]]; // 仅 openai 提供 llm，agent 需要 llm
+      expect(findServiceDependents('@aalis/plugin-llm-openai', onlyProvider)).toEqual(['@aalis/plugin-agent']);
+    });
+
+    it('还有别的提供者 → 删了不致命，无依赖方阻断', () => {
+      // openai 与 deepseek 都提供 llm；删 openai，deepseek 仍在
+      expect(findServiceDependents('@aalis/plugin-llm-openai', status)).toEqual([]);
+    });
+
+    it('目标不提供任何服务 → 空', () => {
+      expect(findServiceDependents('@aalis/plugin-agent', status)).toEqual([]);
+    });
+  });
+
   it('stripVersion：剥版本保 scope', () => {
     expect(stripVersion('@scope/foo@1.2.3')).toBe('@scope/foo');
     expect(stripVersion('@scope/foo')).toBe('@scope/foo'); // scope 的 @ 在下标 0，不当版本分隔
@@ -175,12 +217,63 @@ describe('install（只有一条路径：写根依赖）', () => {
     });
     const r = await createPackageManager(h.deps).install('@scope/foo');
     expect(r.ok).toBe(true);
-    const npm = h.execCalls.filter(c => c.cmd === 'npm');
+    const npm = h.execCalls.filter(c => c.cmd === 'npm' && c.args[0] !== 'view'); // view 是装前类型闸
     expect(npm).toHaveLength(1);
     expect(npm[0].args[0]).toBe('install'); // 不是 pack
     expect(npm[0].args).toContain('@scope/foo');
     // 死目录路径的三件套一个都不该出现
     expect(h.execCalls.some(c => c.cmd === 'tar' || c.cmd === 'pnpm')).toBe(false);
+  });
+
+  // ── 装前类型闸：与卸载同一判据，只装插件与前端界面 ──
+  it.each([
+    ['["aalis","aalis-core"]', '内核'],
+    ['["aalis","aalis-api"]', '服务契约'],
+    ['["aalis","aalis-util"]', '工具库'],
+    ['["odd","even"]', '非插件包'],
+    ['', '非插件包'], // 包没有 keywords 字段时 npm view 什么都不输出
+  ])('装前类型闸拒装 keywords=%s（%s），不跑 npm install', async (viewOut, label) => {
+    const h = makeHarness({ viewOut, json: { [rootPkg]: { dependencies: {} } } });
+    const r = await createPackageManager(h.deps).install('@scope/foo');
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain(label);
+    expect(h.execCalls.find(c => c.cmd === 'npm')?.args).toEqual(['view', '@scope/foo', 'keywords', '--json']);
+    expect(h.execCalls.some(c => c.cmd === 'npm' && c.args[0] === 'install')).toBe(false);
+  });
+
+  it('装前类型闸：前端界面包放行', async () => {
+    const h = makeHarness({ viewOut: '["aalis","aalis-interface"]', json: { [rootPkg]: {} } });
+    const r = await createPackageManager(h.deps).install('@scope/ui');
+    expect(r.ok, r.message).toBe(true);
+    expect(h.execCalls.some(c => c.cmd === 'npm' && c.args[0] === 'install')).toBe(true);
+  });
+
+  it('装前类型闸：版本范围匹配到多个版本时逐版本判，任一版本不归市场即拒', async () => {
+    // spec 是范围时 npm view 按版本给出二维数组
+    const h = makeHarness({ viewOut: '[["aalis-plugin"],["aalis-api"]]', json: { [rootPkg]: {} } });
+    const r = await createPackageManager(h.deps).install('foo@1');
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('服务契约');
+    expect(h.execCalls.some(c => c.cmd === 'npm' && c.args[0] === 'install')).toBe(false);
+  });
+
+  it('npm install 压掉 legacy-peer-deps（与更新预检同一护栏）', async () => {
+    const h = makeHarness({ json: { [rootPkg]: {} } });
+    expect((await createPackageManager(h.deps).install('@scope/foo')).ok).toBe(true);
+    const install = h.execCalls.find(c => c.cmd === 'npm' && c.args[0] === 'install');
+    expect(install?.env?.npm_config_legacy_peer_deps).toBe('false');
+  });
+
+  it('peer 冲突（ERESOLVE）→ 失败文案点明市场安装不沿用 legacy-peer-deps', async () => {
+    const h = makeHarness({
+      failOn: 'npm',
+      failStderr: 'npm error code ERESOLVE\nnpm error peer react@"^19.0.0" from react-dom@19.0.0',
+      json: { [rootPkg]: {} },
+    });
+    const r = await createPackageManager(h.deps).install('@scope/foo');
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('legacy-peer-deps');
+    expect(r.message).toContain('peer react@"^19.0.0" from react-dom@19.0.0');
   });
 
   it('非法包名在**服务层**被拒，一次 npm 都不发', async () => {
@@ -625,6 +718,8 @@ describe('uninstall', () => {
     expect(h.deleted, '不再 rm -rf 任何目录——那条路径能删掉用户自己的源码').toHaveLength(0);
     expect(h.deps.unloadPlugin).toHaveBeenCalledWith('@scope/foo');
     expect(h.deps.cleanupConfig).toHaveBeenCalledWith('@scope/foo');
+    // 插件数据没有归属记录、无法安全判定该删哪些，故不清，只在成功消息里说明
+    expect(r.message).toContain('数据不会删除');
   });
 
   it('卸载按定义 name 枚举全部 instanceId（主 + name:suffix），逐个 unload + cleanupConfig', async () => {
@@ -693,6 +788,32 @@ describe('uninstall', () => {
   it('不在承载名单里的普通插件照常可卸', async () => {
     const h = harness(['aalis', 'aalis-plugin']);
     h.deps.recoveryChannelProviders = () => ['@aalis/plugin-webui-server'];
+    expect((await createPackageManager(h.deps).uninstall('@scope/foo')).ok).toBe(true);
+  });
+
+  // ── 闸三：服务依赖者（与市场卸载前预警同一份判定）──
+  it('卸掉某服务的唯一提供者会打断 required 它的插件 → 服务层拒绝，不跑 npm', async () => {
+    const h = harness(['aalis', 'aalis-plugin']);
+    h.deps.pluginStatus = () => [
+      { name: '@scope/foo', provides: ['llm'], requiredServices: [] },
+      { name: '@scope/agent', provides: ['agent'], requiredServices: ['llm'] },
+    ];
+    const pm = createPackageManager(h.deps);
+    expect(pm.serviceDependents('@scope/foo'), '预警查询与闸同一份判定').toEqual(['@scope/agent']);
+    const r = await pm.uninstall('@scope/foo');
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('@scope/agent');
+    expect(h.execCalls.some(c => c.cmd === 'npm')).toBe(false);
+    expect(h.deps.unloadPlugin).not.toHaveBeenCalled();
+  });
+
+  it('服务还有别的提供者 → 服务依赖者闸放行', async () => {
+    const h = harness(['aalis', 'aalis-plugin']);
+    h.deps.pluginStatus = () => [
+      { name: '@scope/foo', provides: ['llm'], requiredServices: [] },
+      { name: '@scope/other-llm', provides: ['llm'], requiredServices: [] },
+      { name: '@scope/agent', provides: ['agent'], requiredServices: ['llm'] },
+    ];
     expect((await createPackageManager(h.deps).uninstall('@scope/foo')).ok).toBe(true);
   });
 
@@ -939,6 +1060,51 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
     expect(host.services.get(tag), '枢纽上该包提供的服务应全部消失').toBeUndefined();
   });
 
+  it('服务依赖者闸读运行时注册表：卸掉唯一提供者被拒，提供者保持运行', async () => {
+    const PROVIDER = 'audit-pm-provider';
+    const CONSUMER = 'audit-pm-consumer';
+    const PAGE = '/abs-pm-dependents';
+    const dep = defineService<object>('audit-pm-dep');
+    const { app } = hostedApp({ name: 'PM' });
+    productionApps.push(app);
+    const host = app.bind({ provide, services });
+
+    await app.plugin(
+      definePlugin({
+        name: PROVIDER,
+        provides: [dep],
+        uses: { provide },
+        apply(caps) {
+          caps.provide(dep, {});
+        },
+      }),
+      {},
+    );
+    await app.plugin(definePlugin({ name: CONSUMER, uses: { dep }, apply() {} }), {});
+    await app.plugins.idle();
+
+    host.provide(
+      defineService<object>('process'),
+      mockProcess({
+        [`${PAGE}/package.json`]: JSON.stringify({ dependencies: { [PROVIDER]: '^1.0.0' } }),
+        [`${PAGE}/node_modules/${PROVIDER}/package.json`]: JSON.stringify({
+          name: PROVIDER,
+          keywords: ['aalis', 'aalis-plugin'],
+        }),
+      }),
+    );
+    await app.plugins.register(packageManagerPlugin, { projectRoot: PAGE });
+    await app.plugins.idle();
+    const svc = host.services.get(packageManager);
+    if (!svc) throw new Error('package-manager 未就绪');
+
+    expect(svc.serviceDependents(PROVIDER)).toEqual([CONSUMER]);
+    const r = await svc.uninstall(PROVIDER);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain(CONSUMER);
+    expect(app.plugins.getPlugin(PROVIDER)?.state).toBe('active');
+  });
+
   it('包名与 definition.name 不同：rescan 已落账则安装成功', async () => {
     const proj = mkdtempSync(join(tmpdir(), 'aalis-pm-mismatch-'));
     try {
@@ -968,7 +1134,12 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
             throw new Error(`ENOENT ${abs}`);
           }
         },
-        execFile: async () => ({ stdout: '', stderr: '', code: 0 }),
+        // 装前类型闸读 npm view 的 keywords
+        execFile: async (_cmd: string, args: readonly string[]) => ({
+          stdout: args[0] === 'view' ? '["aalis-plugin"]' : '',
+          stderr: '',
+          code: 0,
+        }),
         makeTempDir: async () => ({ path: '/tmp/fake-pm', cleanup: async () => undefined }),
       });
 

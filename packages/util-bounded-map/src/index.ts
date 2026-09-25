@@ -68,9 +68,7 @@ export function createBoundedMap<K, V>(opts: BoundedMapOptions<K, V>): BoundedMa
       // 超上限：逐出队首（最久未访问）
       while (store.size > max) {
         const oldestKey = store.keys().next().value as K;
-        const oldest = store.get(oldestKey);
-        if (oldest === undefined) break;
-        evict(oldestKey, oldest);
+        evict(oldestKey, store.get(oldestKey)!);
       }
     },
 

@@ -1,5 +1,3 @@
-import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { agent } from '../../packages/api-agent/src/index.js';
@@ -19,6 +17,7 @@ import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
 import webuiServerPlugin from '../../packages/plugin-webui-server/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // 枢纽服务的退订闭包必须按「这一次登记」比对，而不是按 name + contextId：
@@ -309,14 +308,6 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     expect(groupsOf('u'), '自带分组在前，默认分组追加在后').toEqual(['own', 'g']);
   });
 });
-
-async function freePort(): Promise<number> {
-  const probe = createServer();
-  await new Promise<void>(r => probe.listen(0, '127.0.0.1', r));
-  const { port } = probe.address() as AddressInfo;
-  await new Promise<void>(r => probe.close(() => r()));
-  return port;
-}
 
 describe('webui-server 页面退订按条目身份', () => {
   const apps: App[] = [];

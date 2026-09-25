@@ -1,10 +1,11 @@
 import { processService } from '@aalis/api-process';
 import { storage } from '@aalis/api-storage';
-import { App, type Logger, provide, type ServiceRef } from '@aalis/core';
+import { App, type Logger, provide } from '@aalis/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { emptyMediaCaps } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 两种交付形态的出口变换（transformModelImages + agent:llm:before 中间件）：
@@ -31,25 +32,11 @@ vi.mock(import('../../packages/plugin-media/src/ffmpeg.js'), async importOrigina
   };
 });
 
-import {
-  type MediaConfigResolved,
-  type MediaServiceCaps,
-  MediaServiceImpl,
-} from '../../packages/plugin-media/src/service.js';
+import { type MediaConfigResolved, MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 
 const GIF_DATA = 'data:image/gif;base64,R0lGODlh';
 const PLAIN_URL = 'https://example.invalid/img.jpg';
 const NOEXT_URL = 'https://example.invalid/rkey/pic?id=1';
-
-/** 无提供者的按激活绑定桩：动图判定与抽帧都不碰服务 */
-const empty = <P>(): ServiceRef<P> => ({
-  current: undefined,
-  require: () => {
-    throw new Error('无提供者');
-  },
-  all: () => [],
-  follow: () => () => {},
-});
 
 function makeSvc(recognizeOnArrival = false): MediaServiceImpl {
   const cfg = {
@@ -60,13 +47,8 @@ function makeSvc(recognizeOnArrival = false): MediaServiceImpl {
     contextHistory: { enabled: false },
     senderContext: false,
   } as unknown as MediaConfigResolved;
-  const caps: MediaServiceCaps = {
-    logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn() } as unknown as Logger,
-    llm: empty(),
-    asr: empty(),
-    sessionManager: empty(),
-    memory: empty(),
-  };
+  // 无提供者的能力桩：动图判定与抽帧都不碰服务
+  const caps = emptyMediaCaps({ info: vi.fn(), warn: vi.fn(), debug: vi.fn() } as unknown as Logger);
   return new MediaServiceImpl(caps, cfg);
 }
 

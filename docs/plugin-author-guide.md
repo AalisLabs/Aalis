@@ -71,7 +71,6 @@ dev 模式下，实际 `provide` 了但未在 `provides` 声明的服务名会 w
 
 ```typescript
 authority.follow(provider => {
-  if (!provider.setConfirmHandler) return;
   const off = provider.setConfirmHandler('*', handler);
   return off;
 });
@@ -403,8 +402,9 @@ Aalis 市场走**纯 npm 路线**，无自建服务器、无静态索引——�
    与 `definePlugin` 的 `uses` / `provides` 一致（描述符 `.name`；内置能力同样写）。装后市场仍会按实际定义聚合细化。
 4. **breaking change 记 changelog**：**1.0 之前 core 的公开面可能在次版本被删**。宽 peerDep 区间是为了让不用新 API 的插件不必随次版本频繁重发，不是兼容性承诺。
    稳定性承诺自 **1.0** 起生效，条款见 `docs/design/core-contract.md`。
-5. **发布**：`pnpm publish:all`（仓库根，递归拓扑序发 core→api→util→插件、跳 private、
-   转 workspace 协议）。单插件 `npm publish`。私有/未发布插件仍可走 monorepo 本地安装。
+5. **发布**：在插件包目录执行 `npm publish`。私有/未发布插件仍可走 monorepo 本地安装。
+   Aalis 仓库内的第一方包另由根目录的 `pnpm publish:all` 批量发布（递归拓扑序发 core→api→util→插件、
+   跳 private、转 workspace 协议），第三方插件用不到它。
 
 > 安全模型：市场是**透明披露 + 用户知情同意**，不是技术隔离。安装第三方插件
 > 等于授予它声明的能力；真正的执行隔离（如 code_runner 沙箱）由容器化层负责。

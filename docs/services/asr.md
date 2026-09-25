@@ -11,7 +11,7 @@
 
 ## 1. 契约
 
-`@aalis/api-asr` 只导出**类型 + 一个接口 + 一个取服务助手**，自身不注册任何运行时服务。
+`@aalis/api-asr` 只导出**类型 + 一个接口 + 服务描述符 `asr`（`defineService`）**，自身不注册任何运行时服务。
 
 服务接口（`packages/api-asr/src/index.ts`）：
 
@@ -45,9 +45,7 @@ export interface TranscribeResult {
 
 输入的 `attachment.data` 是一个字符串，约定承载多种来源（`packages/schema-message/src/index.ts`）：base64 data URL / `http(s)://` URL / `file://` URI / storage URI（`<root>:/path`）。provider 负责把它物化成可读字节，下文「写一个 provider」详述。
 
-接口经 declaration merging 登记到 `服务描述符`（`index.ts`），所以 `asr.current` 在装了本契约包的工程里能自动推断为 `ASRService | undefined`——无可用后端时即为 `undefined`。
-
-> 契约包头部注释（`index.ts`）写的 `('asr', ['audio'])`「按偏好 > 优先级 > capability 解析」是**过时措辞**：0.5.0 已删除内核的「服务能力选择层」，容器 `get(name)` 按名字解析（`packages/core/src/primitives/services.ts`），仲裁只看「偏好 > 优先级 > 注册顺序」。详见 `docs/concepts/service-model.md`。
+经 `defineService` 描述符 `asr` 取得强类型（`index.ts`）：`asr.current` 为 `ASRService | undefined`，无可用后端时即为 `undefined`。
 
 ---
 
@@ -66,16 +64,16 @@ export interface TranscribeResult {
 
 ### Consumer（标准消费点）
 
-唯一的内置消费方是 `@aalis/plugin-media`。它把 `asr` 声明为可选依赖（`plugin-media/src/index.ts`：`optional: ['llm','agent','asr']`），并在 `MediaServiceImpl.asrProcessors()` 里把**每个** asr provider 包成 `cap='audio'` 的 MediaProcessor，与「具备 audio 能力的 LLM」同池仲裁（`plugin-media/src/service.ts`）：
+唯一的内置消费方是 `@aalis/plugin-media`。它把 `asr` 声明为可选依赖（`plugin-media/src/index.ts` 的 `uses` 里 `asr: optional(asr)`），并在 `MediaServiceImpl.asrProcessors()` 里把**每个** asr provider 包成 `cap='audio'` 的 MediaProcessor，与「具备 audio 能力的 LLM」同池仲裁（`plugin-media/src/service.ts`）：
 
 ```ts
 private asrProcessors(): MediaProcessor[] {
-  return this.x.all('asr').map(e => {
-    const asr = e.instance as ASRService;
+  return this.caps.asr.all().map(e => {
+    const asr = e.instance;
     const name = `asr:${e.contextId}`;
     return {
       name, capabilities: ['audio'], priority: e.priority,
-      transcribe: async (input, ctx) => {
+      transcribe: async input => {
         const r = await asr.transcribe(input);
         return { text: r.text, segments: r.segments, language: r.language,
                  meta: { processor: name, model: r.meta?.model } };
@@ -85,7 +83,7 @@ private asrProcessors(): MediaProcessor[] {
 }
 ```
 
-它用 `getAllServices('asr')` 拿**全部** provider（不是单一胜者），让用户在 media 的 `audio.prefer` 里按 processor 名挑后端，再回退到按 priority 取最高（`service.ts`）。当 `name === 'asr'` 的 provider 注册/注销时，media 监听服务事件刷新候选（`plugin-media/src/index.ts`）。
+它用 `asr.all()` 拿**全部** provider（不是单一胜者），让用户在 media 的 `audio.prefer` 里按 processor 名挑后端，再回退到按 priority 取最高（`service.ts`）。当 `name === 'asr'` 的 provider 注册/注销时，media 监听服务事件刷新候选（`plugin-media/src/index.ts`）。
 
 ---
 
@@ -218,7 +216,6 @@ process/storage 经 gateway 注入：`createProcessGateway(process)` / `createSt
 
 ## 6. 注意事项与边界情形
 
-- **契约头注释过时**：`('asr', ['audio'])` + capability 仲裁是 0.5.0 前的描述，实际无 capability 选择（见 §1 末）。
 - **asr-openai 转写 POST 用裸 fetch**：仅附件下载走 safeFetch（详见 §5）。
 - **whisper-cpp 是重外部依赖**：需 `brew install whisper-cpp` + ffmpeg + 下载 GGML 模型（`plugin-asr-whisper-cpp/src/index.ts`），缺 `modelPath` 直接抛错。
 - **whisper-cpp 时间戳被丢**：它命令行带 `-nt`（no timestamps）只取纯文本（`plugin-asr-whisper-cpp/src/index.ts`），`TranscribeInput.withTimestamps` 在该后端**无效**，`TranscribeResult.segments` 永远为空。需要分段的消费方应优先选 openai 后端（`verbose_json`，`plugin-asr-openai/src/index.ts`）。

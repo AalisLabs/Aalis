@@ -61,7 +61,7 @@ describe('DisposableChain', () => {
   });
 
   it('回归：dispose 期间 disposer 移除同链其他项不破坏迭代（旧实现抛 _items[i] is not a function）', () => {
-    // 复现真实场景：ctx.dispose → 链上 provide/whenService 的 disposer 执行时会
+    // 复现真实场景：激活关闭 → 链上 provide/follow 的 disposer 执行时会
     // remove(自身/兄弟)。旧实现在迭代中 splice 活动数组 → 索引错位 → _items[i]
     // 取到 undefined 抛错（被 debug swallow，每个插件停机时刷屏）。
     const order: number[] = [];

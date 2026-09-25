@@ -5,9 +5,8 @@
  * 而门面的清理回调若把**原始名**（'memo.clear <key:string>'）传回 unregister，
  * 键不匹配 → 整条注销静默 no-op，留下幽灵指令。
  *
- * 用例走的是「commands 提供者下线」这条路：插件激活自身被拆时，core 的服务自清理协议
- * 会调 `unregisterByPlugin(contextId)` 把节点兜掉（实测），于是那条路径对本 bug 恒绿——
- * 只有提供者下线时，清理才**单独由**门面的跟随回调承重。
+ * 用例走的是「commands 提供者下线」这条路：插件拆卸和提供者下线都经门面的跟随回调注销，
+ * 这里选提供者下线，是为了不引入 required 依赖降级、拆激活带来的干扰。
  */
 import { App, definePlugin, optional, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
@@ -26,9 +25,8 @@ async function namesAfterProviderDown(declaration: string): Promise<string[]> {
   const registry = new CommandRegistry(mkLogger() as never);
   const handle = host.provide(commands, registry);
 
-  // commands 声明为**可选**依赖：提供者下线时探针保持激活，清理就只由门面的跟随回调
-  // 承重。声明为 required 的话 core 会连带把插件降级、拆掉它的激活，
-  // unregisterByPlugin 会把节点兜掉，本用例对那个 bug 就恒绿了。
+  // commands 声明为**可选**依赖：提供者下线时探针保持激活，清理只经门面的跟随回调。
+  // 声明为 required 的话 core 会连带把插件降级、拆掉它的激活，引入与本 bug 无关的干扰。
   const probe = definePlugin({
     name: 'dsl-probe',
     uses: { commands: optional(commands) },

@@ -83,8 +83,6 @@ const configSchema: ConfigSchema = {
 const defaultConfig = {
   prompt: 'You',
   sessionId: 'cli-default',
-  startupView: 'last',
-  lastView: 'chat',
   maxLogEntries: 50000,
 };
 
@@ -651,7 +649,7 @@ class CliTui {
     output.write(out.map(line => clearLine(line, width)).join('\n'));
     if (this.view === 'chat') {
       // 计算光标在多行输入中的 (row, col)
-      const { row: cRow, col: cCol } = this.cursorPosInInput(width);
+      const { row: cRow, col: cCol } = this.cursorPosInInput();
       // 行号布局（1-based）：1=header, 2=sep, 3..2+bodyHeight=body, 之后是 inputBox(顶/中.../底), 最后是 footer
       const inputMidStartRow = 2 + bodyHeight + 1 + 1; // header+sep+body+boxTop = 1+1+bodyHeight+1，再 +1 进入第一行内容
       const screenRow = inputMidStartRow + cRow;
@@ -680,7 +678,7 @@ class CliTui {
   }
 
   private renderBody(width: number, height: number): string[] {
-    const raw = this.getBodyLines(width, height);
+    const raw = this.getBodyLines(width);
     // 应用滚动 / 取末尾
     let visible: string[];
     if (this.view === 'chat') {
@@ -704,7 +702,7 @@ class CliTui {
     return visible.slice(0, height).map(line => clipAnsi(line, width));
   }
 
-  private getBodyLines(width: number, _height: number): string[] {
+  private getBodyLines(width: number): string[] {
     if (this.view === 'logs') return this.getLogViewLines(width);
     if (this.view === 'status') return this.getStatusViewLines();
     if (this.view === 'help') return this.getHelpViewLines();
@@ -891,7 +889,7 @@ class CliTui {
   }
 
   /** 根据 cursor 索引计算其在多行输入中的 (row, col)，col 为终端可见列宽 */
-  private cursorPosInInput(_width: number): { row: number; col: number } {
+  private cursorPosInInput(): { row: number; col: number } {
     if (this.view !== 'chat') return { row: 0, col: 0 };
     const before = this.inputLine.slice(0, this.cursor);
     const lines = before.split('\n');

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { Logger, PluginManagerService, PluginStatusEntry, ServiceRef, Services } from '@aalis/core';
+import type { Logger, PluginManagerService, ServiceRef, Services } from '@aalis/core';
 import type { PackageManagerService } from '@aalis/plugin-package-manager';
 import { classifyDepSpec, type DepOrigin, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec';
 import type express from 'express';
@@ -10,7 +10,7 @@ import type { LocalScanEntry } from '../client-discovery.js';
 import type { RouteGate } from '../gate.js';
 
 // 纯 npm 路线：npm registry 的 keyword 检索即天然索引，无自建服务器、无静态索引。
-// 分发走 package-manager 的 npm pack。
+// 安装/卸载/更新走 package-manager（npm install / uninstall）。
 // 注：npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），故 registry
 // 基址可配置（marketplaceRegistry），默认官方源；国内用户可配代理/支持 search 的镜像。
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
@@ -52,7 +52,7 @@ interface MarketplacePackage {
   updatable: boolean;
   /** @aalis/ scope = 官方插件；其余为社区（npm 自带信号，零额外维护） */
   official: boolean;
-  /** 组件类别（按包名分类，供前端分页/筛选）：功能插件 / api 契约 / 前端 */
+  /** 组件类别（按类型关键词分类，供前端分页/筛选） */
   category: PackageCategory;
   /** 关键词标签（已剔除 aalis-plugin/util/api/interface 约定词） */
   keywords?: string[];
@@ -89,9 +89,6 @@ interface NpmSearchResponse {
 
 /** 插件能力清单（来自 npm 包 package.json 的 aalis.service + 依赖，装前披露用） */
 interface PluginManifest {
-  name: string;
-  version: string;
-  description?: string;
   service?: { required?: string[]; optional?: string[]; provides?: string[] };
   /** 该版本声明的依赖名（dependencies+peer，已剔版本）；供装前依赖树的根种子。 */
   dependencies?: string[];
@@ -120,8 +117,8 @@ export function classifyPackage(keywords: string[]): PackageCategory {
 }
 
 /**
- * 补全「已安装」判定。getStatus() 只含**已加载的运行时插件**——api 契约 / 前端 / 核心
- * 带 aalis.{types,client,...} marker 不作为插件加载、不进 getStatus，但可能已 npm 装在
+ * 补全「已安装」判定。getStatus() 只含**已加载的运行时插件**——api 契约 / 前端 / 核心包
+ * 不带 `aalis-plugin` 关键词，不作为插件加载、不进 getStatus，但可能已 npm 装在
  * node_modules。否则它们在市场永远显示「未安装」、给出重复安装按钮。这里对结果包名用
  * `canResolve`（项目根能否 resolve 到其 package.json）补判已装。纯函数，便于单测。
  */
@@ -136,28 +133,6 @@ export function augmentInstalled(
     if (canResolve(name)) out.add(name);
   }
   return out;
-}
-
-/**
- * 找出"卸载 target 会断其服务依赖"的活跃插件：target 提供的某服务 S，没有别的
- * 插件也提供，且有别的插件 requiredServices 含 S → 这些插件会被打断。纯函数，便于单测。
- */
-export function findServiceDependents(
-  targetName: string,
-  status: ReadonlyArray<Pick<PluginStatusEntry, 'name' | 'provides' | 'requiredServices'>>,
-): string[] {
-  const target = status.find(p => p.name === targetName);
-  const provided = target?.provides ?? [];
-  if (provided.length === 0) return [];
-  const dependents = new Set<string>();
-  for (const svc of provided) {
-    const otherProvider = status.some(p => p.name !== targetName && (p.provides ?? []).includes(svc));
-    if (otherProvider) continue; // 还有别的提供者，删了不致命
-    for (const p of status) {
-      if (p.name !== targetName && (p.requiredServices ?? []).includes(svc)) dependents.add(p.name);
-    }
-  }
-  return [...dependents];
 }
 
 /** 直接 import 依赖者：哪些本地包的依赖名单里含 target（不含自身）。排序输出。纯函数，便于单测。 */
@@ -407,7 +382,6 @@ export function toManifest(packument: {
   versions?: Record<
     string,
     {
-      description?: string;
       aalis?: { service?: PluginManifest['service'] };
       dependencies?: Record<string, unknown>;
       peerDependencies?: Record<string, unknown>;
@@ -433,7 +407,7 @@ export function toManifest(packument: {
   const service = rawSvc
     ? { ...rawSvc, provides: strList(rawSvc.provides), required: strList(rawSvc.required) }
     : undefined;
-  return { name: '', version: latest, description: v?.description, service, dependencies };
+  return { service, dependencies };
 }
 
 /**
@@ -465,24 +439,24 @@ export function registerMarketplaceRoutes(
   expressApp: express.Express,
   caps: MarketplaceRoutesCaps,
   gate: RouteGate,
-  registryBase: string = DEFAULT_REGISTRY,
+  registryBase: string,
   /** 本地包扫描：`name → 依赖名[]`（含 monorepo 工作区包）。keys 补 require.resolve 在 pnpm 工作区的盲区；values 供依赖图。 */
-  getLocalPackages: () => Map<string, LocalScanEntry> = () => new Map(),
+  getLocalPackages: () => Map<string, LocalScanEntry>,
   /**
    * 装完一个包后重跑前端发现（幂等）。
    *
    * 必需而非锦上添花：`aalis-interface` 包**不是插件**，装完不会触发 rescanPlugins 那条
    * 通路，于是它不会出现在服务页的下拉里、必须重启才看得见——而重启恰恰是市场承诺不需要
-   * 用户手动做的事。缺省为 no-op，便于单测。
+   * 用户手动做的事。
    */
-  rediscoverClients: () => number = () => 0,
+  rediscoverClients: () => void,
 ): void {
   // 市场列表：npm registry keyword 检索 + 标注已装。网络失败降级为空列表 + warning，
   // 不阻塞 WebUI（管理读档，与 /api/plugins 同级）。
   expressApp.get('/api/marketplace', gate(), async (req, res) => {
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     const status = caps.plugins.current?.getStatus() ?? [];
-    // 已装判定独立于 getStatus（后者只含已加载运行时插件，漏掉带 marker 不加载的 api/前端/核心）。
+    // 已装判定独立于 getStatus（后者只含已加载运行时插件，漏掉不作为插件加载的 api/前端/核心）。
     // 同一次解析顺带取出本地版本：卡片上的 version 是 npm latest，只有拿到本地 resolved
     // 才能判「可更新」（版本序由服务端算进 updatable 下发，前端不自算）。
     const localPkgs = getLocalPackages();
@@ -657,8 +631,9 @@ export function registerMarketplaceRoutes(
       upstream,
       downstream,
       services: { required, provides: svcOf.get(name)?.provides ?? rootServices?.provides ?? [] },
-      // 卸载会断服务的依赖者（与卸载路由 409 同口径），供卸载弹窗装前预警。
-      serviceDependents: findServiceDependents(name, status),
+      // 卸载会断服务的依赖者，供卸载弹窗预警；与 package-manager 卸载闸同一份判定。
+      // 服务缺席时卸载本就不可用（503），不需要预警。
+      serviceDependents: caps.packageManager()?.serviceDependents(name) ?? [],
     });
   });
 
@@ -686,22 +661,12 @@ export function registerMarketplaceRoutes(
     }
   });
 
-  // 卸载：owner 级。这里只挡"删了会断别人服务依赖"的包（无替代提供者）——它需要运行时
-  // getStatus，只有路由这一层拿得到。**包类型与来源的两道闸在服务层**（见
-  // package-manager 的 uninstallOne）：市场只卸插件与前端界面，内核/宿主/契约/规范/工具库
-  // 不在职权内；非 registry 来源（工作区源码、file:/git、传递依赖）同样拒绝。
+  // 卸载：owner 级。闸全在服务层（见 package-manager 的 uninstallOne）：市场只卸插件与
+  // 前端界面；承载撤销通道的提供者、非 registry 来源、会断别人服务依赖的包同样拒绝。
   expressApp.post('/api/marketplace/uninstall', gate(), async (req, res) => {
     const name = req.body?.name;
     if (typeof name !== 'string') {
       res.status(400).json({ error: 'name 字段必须是字符串' });
-      return;
-    }
-    const status = caps.plugins.current?.getStatus() ?? [];
-    const dependents = findServiceDependents(name, status);
-    if (dependents.length > 0) {
-      res.status(409).json({
-        error: `卸载会破坏依赖：${dependents.join('、')} 依赖此插件提供的服务且无其他提供者。请先卸载它们或安装替代提供者。`,
-      });
       return;
     }
     const pkgMgr = caps.packageManager();

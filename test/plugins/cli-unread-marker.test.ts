@@ -1,6 +1,7 @@
 import { App, events } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
+import { fakeTty } from '../helpers/tty.js';
 
 // ════════════════════════════════════════════════════════════
 // 非 chat 视图期间进入聊天区的消息（意图确认提示走的就是 outbound:message）此前没有任何可见
@@ -12,31 +13,6 @@ const FRAME_SPLIT = '\x1b[?25l\x1b[H';
 const settle = () => new Promise<void>(r => setImmediate(() => setImmediate(r)));
 const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[A-Za-z]`, 'g');
 const stripAnsi = (s: string) => s.replace(ANSI_RE, '');
-
-function fakeTty(rows: number, columns: number): { restore(): void } {
-  const prev = {
-    out: process.stdout.isTTY,
-    in: process.stdin.isTTY,
-    rows: process.stdout.rows,
-    columns: process.stdout.columns,
-  };
-  const stdin = process.stdin as unknown as { setRawMode?: (v: boolean) => unknown };
-  const hadRawMode = typeof stdin.setRawMode === 'function';
-  if (!hadRawMode) stdin.setRawMode = () => stdin;
-  Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
-  Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
-  Object.defineProperty(process.stdout, 'rows', { value: rows, configurable: true });
-  Object.defineProperty(process.stdout, 'columns', { value: columns, configurable: true });
-  return {
-    restore() {
-      if (!hadRawMode) delete stdin.setRawMode;
-      Object.defineProperty(process.stdout, 'isTTY', { value: prev.out, configurable: true });
-      Object.defineProperty(process.stdin, 'isTTY', { value: prev.in, configurable: true });
-      Object.defineProperty(process.stdout, 'rows', { value: prev.rows, configurable: true });
-      Object.defineProperty(process.stdout, 'columns', { value: prev.columns, configurable: true });
-    },
-  };
-}
 
 afterEach(() => {
   vi.restoreAllMocks();

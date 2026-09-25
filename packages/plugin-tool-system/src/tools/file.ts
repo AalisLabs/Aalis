@@ -24,11 +24,11 @@ interface FileConfig {
   allowedRoots: string[];
   /** 共享的 cwd 状态（与 cwd/cd 工具同源），决定相对路径的解析基准 */
   cwdState: CwdState;
-  storage?: StorageService;
+  storage: StorageService;
 }
 
 function getKnownRoots(config: FileConfig) {
-  return config.storage?.listRoots() ?? [];
+  return config.storage.listRoots();
 }
 
 const ALL_ROOTS = '*';
@@ -82,11 +82,6 @@ function ensureRootAllowed(uri: string, config: FileConfig): void {
         : `本工具不允许访问 ${root}:/。允许的根: ${allowedRootsText(config)}（如需放开，改 file.allowedRoots 配置；可设为 ["*"] 允许全部可读根）`,
     );
   }
-}
-
-function requireStorage(config: FileConfig): StorageService {
-  if (!config.storage) throw new Error('storage 服务不可用，文件工具已进入安全停用状态');
-  return config.storage;
 }
 
 async function readText(storage: StorageService, uri: string): Promise<string> {
@@ -337,14 +332,6 @@ function resolveLineRange(startArg: unknown, endArg: unknown): { start: number; 
 }
 
 /**
- * 按行范围流式读取（与 searchTextStream 同一套 createReadStream + readline 模式）。
- *
- * - 只把 [start, end] 区间的行收进内存，maxBytes 是**返回内容**的上限（不是扫描上限，
- *   否则深处的行范围永远读不到）
- * - 区间读完后只在扫描预算内继续数总行数：小文件能给出准确 totalLines，
- *   大文件则省掉整篇扫描、不返回 totalLines
- */
-/**
  * 按行读取，且**单行自带字节上限**。
  *
  * 不用 node:readline：它在见到 \n 之前会把整条行累积成一个 JS 字符串，于是无换行的大文件
@@ -417,6 +404,14 @@ async function* iterLines(
   }
 }
 
+/**
+ * 按行范围流式读取（与 searchTextStream 同一套 createReadStream + iterLines 按行切分）。
+ *
+ * - 只把 [start, end] 区间的行收进内存，maxBytes 是**返回内容**的上限（不是扫描上限，
+ *   否则深处的行范围永远读不到）
+ * - 区间读完后只在扫描预算内继续数总行数：小文件能给出准确 totalLines，
+ *   大文件则省掉整篇扫描、不返回 totalLines
+ */
 async function readLineRange(
   storage: StorageService,
   uri: string,
@@ -654,7 +649,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
     risk: 'sensitive',
     handler: async (args, callCtx) => {
       try {
-        const storage = requireStorage(config);
+        const { storage } = config;
         const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const info = await storage.stat(uri);
@@ -701,7 +696,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
           return JSON.stringify({ uri, encoding: 'base64', size: info.size, content });
         }
 
-        // 与 readLineRange（readline）同口径：\n / \r\n 都算换行、行内容不带 \r，结尾换行不算多一行
+        // 与 readLineRange（iterLines）同口径：\n / \r\n 都算换行、行内容不带 \r，结尾换行不算多一行
         const lines = (await readText(storage, uri)).split(/\r?\n/);
         if (lines[lines.length - 1] === '') lines.pop();
         return JSON.stringify({
@@ -740,7 +735,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
     confirm: 'session',
     handler: async (args, callCtx) => {
       try {
-        const storage = requireStorage(config);
+        const { storage } = config;
         const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const content = args.content as string;
@@ -784,7 +779,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
     confirm: 'session',
     handler: async (args, callCtx) => {
       try {
-        const storage = requireStorage(config);
+        const { storage } = config;
         const fromUri = toStorageUri(args.from as string, config, callCtx.sessionId);
         const toUri = toStorageUri(args.to as string, config, callCtx.sessionId);
         // 与其余 file_* 工具同门槛：两端都必须落在 allowedRoots 内（审计抓的漏配——
@@ -825,7 +820,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
     visibility: 'restricted',
     handler: async (args, callCtx) => {
       try {
-        const storage = requireStorage(config);
+        const { storage } = config;
         const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const result = await storage.mkdir(uri);
@@ -861,7 +856,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
     confirm: 'session',
     handler: async (args, callCtx) => {
       try {
-        const storage = requireStorage(config);
+        const { storage } = config;
         const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const oldText = args.oldText as string;
@@ -929,7 +924,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
     confirm: 'session',
     handler: async (args, callCtx) => {
       try {
-        const storage = requireStorage(config);
+        const { storage } = config;
         const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const appendContent = args.content as string;
@@ -981,7 +976,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
     confirm: 'session',
     handler: async (args, callCtx) => {
       try {
-        const storage = requireStorage(config);
+        const { storage } = config;
         const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         return await withFileLock([uri], async () => {
@@ -1026,7 +1021,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
     risk: 'sensitive',
     handler: async (args, callCtx) => {
       try {
-        const storage = requireStorage(config);
+        const { storage } = config;
         const uri = toStorageUri((args.path as string | undefined) || undefined, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const result = await storage.list(uri);
@@ -1092,7 +1087,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
     risk: 'sensitive',
     handler: async (args, callCtx) => {
       try {
-        const storage = requireStorage(config);
+        const { storage } = config;
         const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const info = await storage.stat(uri);
@@ -1167,7 +1162,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
     risk: 'sensitive',
     handler: async (args, callCtx) => {
       try {
-        const storage = requireStorage(config);
+        const { storage } = config;
         const uri = toStorageUri(args.path as string, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const info = await storage.stat(uri);
@@ -1351,7 +1346,7 @@ export function registerFileTools(tools: BoundTools, config: FileConfig): void {
     risk: 'sensitive',
     handler: async (args, callCtx) => {
       try {
-        const storage = requireStorage(config);
+        const { storage } = config;
         const uri = toStorageUri(args.path as string | undefined, config, callCtx.sessionId);
         ensureRootAllowed(uri, config);
         const maxDepth = Math.min((args.maxDepth as number) || 3, 10);

@@ -9,10 +9,8 @@
 import type {
   CommunityMembership,
   EntityEntityEdge,
-  EntityNode,
   EventEntityEdge,
   EventEventEdge,
-  EventNode,
   EvidenceRef,
   PersonEntityEdge,
   PersonEventEdge,
@@ -541,6 +539,24 @@ export function edgeReferences(e: RelationEdge, id: string): boolean {
   }
 }
 
+/** 边的 [from, to] 端点 id（覆盖 6 种 edge kind） */
+export function edgeEndpoints(e: RelationEdge): [string, string] {
+  switch (e.kind) {
+    case 'person-event':
+      return [e.fromPersonId, e.toEventId];
+    case 'person-person':
+      return [e.fromPersonId, e.toPersonId];
+    case 'person-entity':
+      return [e.fromPersonId, e.toEntityId];
+    case 'event-event':
+      return [e.fromEventId, e.toEventId];
+    case 'event-entity':
+      return [e.fromEventId, e.toEntityId];
+    case 'entity-entity':
+      return [e.fromEntityId, e.toEntityId];
+  }
+}
+
 export function edgeInvolvesBoth(e: RelationEdge, a: string, b: string): boolean {
   return edgeReferences(e, a) && edgeReferences(e, b);
 }
@@ -711,7 +727,7 @@ export function chooseCanonicalDirection(
  * - 把所有节点（人/事件/实体）放进同一张图；边权重取 `edge.weight`（最低 0.05）。
  * - 无向边（is-alias-of 之外的 person-person/entity-entity directed=false）双向传播；
  *   directed=true 边只按 from→to 传播。
- * - 个性化向量按 kind 分配种子权重（默认 人=3 / 物=2 / 事=1），从而"重要性 人>物>事"
+ * - 个性化向量按 kind 分配种子权重（种子权由调用方给定，evictByQuota 默认 2/1.5/1），从而"重要性 人>物>事"
  *   不需要硬编码到打分，而是体现在 PR 的偏置上：人物附近的事件/实体 PR 更高。
  * - 迭代到 L1 误差 < epsilon 或达到 maxIter 终止。
  */
@@ -905,26 +921,6 @@ export function computePageRank(
 }
 
 /**
- * Louvain 社群发现（无向加权图，单次 coarsening）。
- *
- * 适用场景：在 PageRank 算完后顺手把节点聚类成"小圈子"——
- * - 群里有几个核心团体
- * - 某人最常一起出现的是谁
- *
- * 实现要点：
- * - 把全图视为无向加权图：所有边权重双向叠加；有向边只在 from→to 方向加权一次，无向边两端各加一次。
- * - 阶段 1：局部移动——每个节点尝试加入邻居社群，按 modularity 增益 ΔQ 贪心选最大；扫一轮无改进即收敛。
- * - 阶段 2：coarsening——把社群当超节点，社群间边权聚合，再跑一轮局部移动（标准 Louvain 多轮，
- *   实测两轮已经稳定；我们的图 < 1000 节点，再多收益边际递减）。
- * - 返回 `nodeId → communityId` 映射，communityId 是字符串（c0/c1/...）。
- *
- * 复杂度：O(E · iter)，iter ≤ 10。对 360 节点几乎 instant。
- *
- * 不做：
- * - 不返回 modularity 值（调用方暂不需要）
- * - 不暴露 resolution 参数（默认 1.0 已足够；社群过多/过少时再加）
- */
-/**
  * 把 RelationGraphSnapshot 收成无向加权邻接表（self-loop 跳过）。
  * Louvain / Leiden / modularity 共用此函数；directed 边只加一次但仍然双向贡献社群分配。
  */
@@ -946,34 +942,7 @@ function buildUndirectedAdj(snap: RelationGraphSnapshot): LouvainAdj {
   };
   for (const e of snap.edges) {
     const w = Math.max(e.weight ?? 0.5, 0.05);
-    let from = '';
-    let to = '';
-    switch (e.kind) {
-      case 'person-event':
-        from = e.fromPersonId;
-        to = e.toEventId;
-        break;
-      case 'person-entity':
-        from = e.fromPersonId;
-        to = e.toEntityId;
-        break;
-      case 'person-person':
-        from = e.fromPersonId;
-        to = e.toPersonId;
-        break;
-      case 'event-event':
-        from = e.fromEventId;
-        to = e.toEventId;
-        break;
-      case 'event-entity':
-        from = e.fromEventId;
-        to = e.toEntityId;
-        break;
-      case 'entity-entity':
-        from = e.fromEntityId;
-        to = e.toEntityId;
-        break;
-    }
+    const [from, to] = edgeEndpoints(e);
     addUndirected(from, to, w);
   }
   return adj;
@@ -1066,12 +1035,10 @@ export function computeAdaptiveResolution(snap: RelationGraphSnapshot): number {
  *   实现：把 ΔQ 公式里的 `kii * sigmaTot(C) / 2m` 项乘以 γ（标准做法，对应 RB 多分辨率模块度）。
  *   常用范围：0.5 ~ 3.0。极端值（< 0.1 / > 10）会导致全图一个社群 / 每节点自成社群。
  */
-export function computeLouvain(
-  snap: RelationGraphSnapshot,
-  opts?: { maxIterPerPass?: number; minImprovement?: number; resolution?: number },
-): Map<string, string> {
-  const maxIter = opts?.maxIterPerPass ?? 10;
-  const minImp = opts?.minImprovement ?? 1e-6;
+export function computeLouvain(snap: RelationGraphSnapshot, opts?: { resolution?: number }): Map<string, string> {
+  // 单轮局部移动的最大扫描次数与最小 ΔQ 改进阈值
+  const maxIter = 10;
+  const minImp = 1e-6;
   // resolution：clamp 到合理范围避免数值溢出 / 全图坍缩；超出仍允许但提示
   const gamma = (() => {
     const raw = opts?.resolution ?? 1.0;
@@ -1211,10 +1178,7 @@ export function computeLouvain(
  *
  * Agent 视角：当怀疑 Louvain 把两群明显没交集的人分到同一社群时，换 leiden 跑一次能看到更细的划分。
  */
-export function computeLeiden(
-  snap: RelationGraphSnapshot,
-  opts?: { maxIterPerPass?: number; minImprovement?: number; resolution?: number },
-): Map<string, string> {
+export function computeLeiden(snap: RelationGraphSnapshot, opts?: { resolution?: number }): Map<string, string> {
   // Step 1: 先跑 Louvain
   const louvain = computeLouvain(snap, opts);
   if (louvain.size === 0) return louvain;
@@ -1274,9 +1238,8 @@ export function computeLeiden(
  *   3. 后处理：每个节点 memory 中频率 ≥ r·(T+1) 的 label 才保留为它的社群隶属；
  *      然后按"出现次数"归一化为权重 ∈ (0, 1]，按 weight 降序排列。
  *
- * **本实现的加权扩展**（默认开启，`weightedSpeaker=true`）：
- * - speaker 抽样时：按邻居边权 `w` 对其 memory 频率加权（边越重的邻居"声音越大"）
- * - listener 计票时：每张票按边权计数（不是 +1 而是 +w），同样让重边邻居有更高影响力
+ * **本实现的加权扩展**：仅 listener 计票按边权加权，speaker 抽样不受边权影响。
+ * - listener 计票时：每张票按边权计数（不是 +1 而是 +w），让重边邻居有更高影响力
  * - 这与本仓库带权图（edge.weight ∈ [0.05, 1.0]）天然契合；纯无权图退化为论文原版
  *
  * **复杂度**：O(N · avgDeg · T)。对 400 节点 + T=20 几乎 instant；< 1000 节点都可放心用。
@@ -1285,25 +1248,16 @@ export function computeLeiden(
  * 完全可复现；避免 Math.random 让 evictByQuota 每次结果都漂移。
  *
  * **不做**：
- * - 不做社群间合并 / 拆分（论文里的 post-merge 步骤）；阈值 r 已能调粒度
+ * - 不做社群间合并 / 拆分（论文里的 post-merge 步骤）；阈值 r 已控制粒度
  * - 不返回 modularity（重叠社区的 modularity 没有标准定义；想看质量看 `bridges` 跨社群占比）
  *
  * @returns nodeId → CommunityMembership[]（按 weight 降序）；空图返回空 Map
  */
-export function computeSlpa(
-  snap: RelationGraphSnapshot,
-  opts?: {
-    /** 迭代轮数 T，默认 20。论文实测 20 已对 < 1000 节点稳定收敛；增大无明显收益。 */
-    iterations?: number;
-    /** 频率阈值 r ∈ [0, 0.5]，默认 0.1。频率 < r·(T+1) 的 label 会被剔除（噪声过滤）；r 越大社群越纯，重叠越少。 */
-    threshold?: number;
-    /** 是否启用加权 speaker 抽样 + 加权 listener 计票，默认 true。带权图建议开。 */
-    weightedSpeaker?: boolean;
-  },
-): Map<string, CommunityMembership[]> {
-  const T = Math.max(5, Math.floor(opts?.iterations ?? 20));
-  const r = Math.max(0, Math.min(opts?.threshold ?? 0.1, 0.5));
-  const weighted = opts?.weightedSpeaker ?? true;
+export function computeSlpa(snap: RelationGraphSnapshot): Map<string, CommunityMembership[]> {
+  /** 迭代轮数 T。论文实测 20 已对 < 1000 节点稳定收敛；增大无明显收益。 */
+  const T = 20;
+  /** 频率阈值 r：频率 < r·(T+1) 的 label 会被剔除（噪声过滤）；r 越大社群越纯，重叠越少。 */
+  const r = 0.1;
 
   const adj = buildUndirectedAdj(snap);
   const ids = Array.from(adj.keys());
@@ -1326,8 +1280,8 @@ export function computeSlpa(
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 
-  /** speaker 按 memory 频率分布抽一个 label；weight 是 listener 到 speaker 的边权（用于加权扩展） */
-  const speakerSample = (mem: Map<string, number>, _w: number): string => {
+  /** speaker 按 memory 频率分布抽一个 label */
+  const speakerSample = (mem: Map<string, number>): string => {
     // 频率分布抽样：边权不影响抽样概率（speaker 的"个人意志"），只影响 listener 计票
     let total = 0;
     for (const c of mem.values()) total += c;
@@ -1355,10 +1309,10 @@ export function computeSlpa(
       const votes = new Map<string, number>();
       for (const [speaker, w] of neighbors) {
         const speakerMem = memory.get(speaker)!;
-        const label = speakerSample(speakerMem, w);
+        const label = speakerSample(speakerMem);
         if (label === '') continue;
         // 加权计票：边重的邻居票更重
-        votes.set(label, (votes.get(label) ?? 0) + (weighted ? w : 1));
+        votes.set(label, (votes.get(label) ?? 0) + w);
       }
       // 选票数最高的 label，加进 listener.memory（票数并列时取字典序最小的 label，稳定可复现）
       let bestLabel = '';
@@ -1494,13 +1448,13 @@ export function clusterEntitiesByPairs(
  * 平局规则：分数并列时取 id 字典序最小者（稳定可复现）。
  *
  * @param members 簇内成员 id 集合
- * @param entityById 实体 id → EntityNode 映射（用于查 evidence 数量）
- * @param edgeStats 实体 id → {weightSum, edgeCount}（由调用方一次扫边表得到）
+ * @param nodeById 节点 id → 节点映射（实体或事件；只用于查 evidence 数量）
+ * @param edgeStats 节点 id → {weightSum, edgeCount}（由调用方一次扫边表得到）
  * @returns canonical 的 id；簇为空时返回 ''（调用方应过滤 size<2 簇，不应触发）
  */
 export function pickCanonicalByMergeScore(
   members: ReadonlySet<string>,
-  entityById: ReadonlyMap<string, EntityNode>,
+  nodeById: ReadonlyMap<string, { evidence?: readonly unknown[] }>,
   edgeStats: ReadonlyMap<string, { weightSum: number; edgeCount: number }>,
 ): string {
   if (members.size === 0) return '';
@@ -1510,7 +1464,7 @@ export function pickCanonicalByMergeScore(
   let maxEv = 0;
   for (const id of members) {
     const stat = edgeStats.get(id) ?? { weightSum: 0, edgeCount: 0 };
-    const node = entityById.get(id);
+    const node = nodeById.get(id);
     const evCount = node?.evidence?.length ?? 0;
     if (stat.weightSum > maxW) maxW = stat.weightSum;
     if (stat.edgeCount > maxE) maxE = stat.edgeCount;
@@ -1520,7 +1474,7 @@ export function pickCanonicalByMergeScore(
   let bestScore = -Infinity;
   for (const id of members) {
     const stat = edgeStats.get(id) ?? { weightSum: 0, edgeCount: 0 };
-    const node = entityById.get(id);
+    const node = nodeById.get(id);
     const evCount = node?.evidence?.length ?? 0;
     const wN = maxW > 0 ? stat.weightSum / maxW : 0;
     const eN = maxE > 0 ? stat.edgeCount / maxE : 0;
@@ -1625,12 +1579,10 @@ export function eventPairJaccard(
 }
 
 /**
- * 计算 EventNode embedding 的指纹（title + summary 的 sha1 前 16 hex）。
- * 当节点的 title/summary 发生变化时，hash 自动变 → consolidate 阶段触发重新 embed。
- * 使用 fnv1a + djb2 组合的 64bit 简化版（避免在浏览器/node 都依赖 crypto）。
+ * embedding 指纹：fnv1a-64 与 djb2-64 各 16 hex 拼接，共 32 位 hex
+ * （避免在浏览器/node 都依赖 crypto；第二段用于提高抗碰撞性）。
  */
-export function computeEventEmbeddingHash(title: string, summary?: string): string {
-  const input = `${(title || '').trim()}\n${(summary || '').trim()}`;
+function hash64x2(input: string): string {
   // fnv1a-64
   let h1 = 0xcbf29ce484222325n;
   const prime = 0x100000001b3n;
@@ -1638,7 +1590,7 @@ export function computeEventEmbeddingHash(title: string, summary?: string): stri
     h1 ^= BigInt(input.charCodeAt(i));
     h1 = (h1 * prime) & 0xffffffffffffffffn;
   }
-  // djb2-mix as second half for collision robustness
+  // djb2-64
   let h2 = 5381n;
   for (let i = 0; i < input.length; i++) {
     h2 = ((h2 << 5n) + h2 + BigInt(input.charCodeAt(i))) & 0xffffffffffffffffn;
@@ -1647,27 +1599,24 @@ export function computeEventEmbeddingHash(title: string, summary?: string): stri
 }
 
 /**
- * 计算 EntityNode embedding 的指纹（entityKind + name + summary 的 fnv1a+djb2 32 hex）。
+ * 计算 EventNode embedding 的指纹（title + summary 的 fnv1a-64 + djb2-64，32 位 hex）。
+ * 当节点的 title/summary 发生变化时，hash 自动变 → consolidate 阶段触发重新 embed。
+ */
+export function computeEventEmbeddingHash(title: string, summary?: string): string {
+  return hash64x2(`${(title || '').trim()}\n${(summary || '').trim()}`);
+}
+
+/**
+ * 计算 EntityNode embedding 的指纹（entityKind + name + summary 的 fnv1a-64 + djb2-64，32 位 hex）。
  * 当 entityKind / name / summary 任一变化时，hash 自动变 → consolidate 阶段触发重新 embed。
  * entityKind 加入 hash 是有意为之：同名跨 kind 视为不同实体，各自独立 embed。
  */
 export function computeEntityEmbeddingHash(name: string, summary?: string, entityKind?: string): string {
-  const input = `${entityKind ?? ''}\n${(name || '').trim()}\n${(summary || '').trim()}`;
-  let h1 = 0xcbf29ce484222325n;
-  const prime = 0x100000001b3n;
-  for (let i = 0; i < input.length; i++) {
-    h1 ^= BigInt(input.charCodeAt(i));
-    h1 = (h1 * prime) & 0xffffffffffffffffn;
-  }
-  let h2 = 5381n;
-  for (let i = 0; i < input.length; i++) {
-    h2 = ((h2 << 5n) + h2 + BigInt(input.charCodeAt(i))) & 0xffffffffffffffffn;
-  }
-  return h1.toString(16).padStart(16, '0') + h2.toString(16).padStart(16, '0');
+  return hash64x2(`${entityKind ?? ''}\n${(name || '').trim()}\n${(summary || '').trim()}`);
 }
 
 /**
- * 一次扫边表，为每个 event 节点聚合 weightSum + edgeCount，供 pickCanonicalForEvents 使用。
+ * 一次扫边表，为每个 event 节点聚合 weightSum + edgeCount，供 pickCanonicalByMergeScore 使用。
  * 统计范围：所有涉及 event 的边（event-event 两端均计入；person-event / event-entity 的 event 端计入）。
  */
 export function computeEventEdgeStats(
@@ -1692,44 +1641,4 @@ export function computeEventEdgeStats(
     }
   }
   return stats;
-}
-
-/**
- * 在一个 event 簇内挑选 canonical（合并后保留的代表）。
- * 算法与 pickCanonicalByMergeScore 一致：mergeScore = 0.5·weightSum + 0.3·edgeCount + 0.2·evidenceCount。
- * 平局取 id 字典序最小者。
- */
-export function pickCanonicalForEvents(
-  members: ReadonlySet<string>,
-  eventById: ReadonlyMap<string, EventNode>,
-  edgeStats: ReadonlyMap<string, { weightSum: number; edgeCount: number }>,
-): string {
-  if (members.size === 0) return '';
-  let maxW = 0;
-  let maxE = 0;
-  let maxEv = 0;
-  for (const id of members) {
-    const stat = edgeStats.get(id) ?? { weightSum: 0, edgeCount: 0 };
-    const node = eventById.get(id);
-    const evCount = node?.evidence?.length ?? 0;
-    if (stat.weightSum > maxW) maxW = stat.weightSum;
-    if (stat.edgeCount > maxE) maxE = stat.edgeCount;
-    if (evCount > maxEv) maxEv = evCount;
-  }
-  let canonicalId = '';
-  let bestScore = -Infinity;
-  for (const id of members) {
-    const stat = edgeStats.get(id) ?? { weightSum: 0, edgeCount: 0 };
-    const node = eventById.get(id);
-    const evCount = node?.evidence?.length ?? 0;
-    const wN = maxW > 0 ? stat.weightSum / maxW : 0;
-    const eN = maxE > 0 ? stat.edgeCount / maxE : 0;
-    const vN = maxEv > 0 ? evCount / maxEv : 0;
-    const score = wN * 0.5 + eN * 0.3 + vN * 0.2;
-    if (score > bestScore || (score === bestScore && (canonicalId === '' || id < canonicalId))) {
-      bestScore = score;
-      canonicalId = id;
-    }
-  }
-  return canonicalId;
 }

@@ -1,28 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { resolveCapabilityPolicy, riskDefaults } from '../../packages/api-authority/src/index.js';
-import type { HostConfig } from '../../packages/api-host-config/src/index.js';
-import type { StorageService } from '../../packages/api-storage/src/index.js';
-import type { Logger } from '../../packages/core/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
+import { mkConfig, noFileStorage, silentLogger } from '../fixtures/authority.js';
 
 // ════════════════════════════════════════════════════════════
 // 能力两轴正交模型：轴 A 授权(visibility) × 轴 B 确认(confirm) + risk 糖 + 自动判危
 // ════════════════════════════════════════════════════════════
 
-function mkConfig(cfg: Record<string, unknown> = {}): HostConfig {
-  const store = { ...cfg };
-  return { get: (k: string) => store[k], set: (k: string, v: unknown) => (store[k] = v) } as unknown as HostConfig;
-}
-function mkLogger(): Logger {
-  const l = { child: () => l, debug() {}, info() {}, warn() {}, error() {} };
-  return l as unknown as Logger;
-}
-const storage = {
-  readFile: async () => {
-    throw new Error('no file');
-  },
-  writeFile: async () => {},
-} as unknown as StorageService;
 const req = (confirm?: 'session' | 'always', cap = 'tool:x', sessionId = 's') => ({
   name: 'x',
   type: 'tool' as const,
@@ -66,7 +50,7 @@ describe('resolveCapabilityPolicy（risk 展开 + 显式覆盖 + 默认）', () 
 
 describe('requestAccess：confirm 语义 + "*" 通配 fallback', () => {
   it('精确平台 handler 优先于 "*" fallback', async () => {
-    const m = new AuthorityManager(mkConfig(), mkLogger(), storage);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage);
     m.setConfirmHandler('webui', async () => true);
     m.setConfirmHandler('*', async () => false);
     expect(await m.requestAccess({ ...req('session'), platform: 'webui' })).toBe(true); // 精确
@@ -74,7 +58,7 @@ describe('requestAccess：confirm 语义 + "*" 通配 fallback', () => {
   });
 
   it('confirm="session"：首次问、之后本会话内记住（不再问）', async () => {
-    const m = new AuthorityManager(mkConfig(), mkLogger(), storage);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage);
     let calls = 0;
     m.setConfirmHandler('*', async () => {
       calls++;
@@ -86,7 +70,7 @@ describe('requestAccess：confirm 语义 + "*" 通配 fallback', () => {
   });
 
   it('confirm="always"：每次都问，不接受会话记忆', async () => {
-    const m = new AuthorityManager(mkConfig(), mkLogger(), storage);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage);
     let calls = 0;
     m.setConfirmHandler('*', async () => {
       calls++;
@@ -98,7 +82,7 @@ describe('requestAccess：confirm 语义 + "*" 通配 fallback', () => {
   });
 
   it('无任何 handler → 拒（fail-closed）', async () => {
-    const m = new AuthorityManager(mkConfig(), mkLogger(), storage);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage);
     expect(await m.requestAccess(req('session'))).toBe(false);
   });
 });

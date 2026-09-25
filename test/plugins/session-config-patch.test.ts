@@ -4,25 +4,11 @@ import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import sessionManagerPlugin, { normalizeSessionConfigPatch } from '../../packages/plugin-session-manager/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { fakeMemory } from '../fixtures/session-memory.js';
 
 // WebUI 会话配置「重置为继承」：JSON 带不了 undefined，前端用 null 表示删除该键；
 // updateSession 是合并语义，键置为 undefined 后 resolveConfig 里就不再有它。
 // 旧行为：前端直接删掉键 → 请求体里没有 → 服务端保留旧值，「重置」永远不生效。
-
-function fakeMemory() {
-  const meta = new Map<string, Record<string, unknown>>();
-  return {
-    listMetadata: async () => [...meta].map(([key, data]) => ({ key, data })),
-    commitMetadata: async (ops: Array<{ op: string; key: string; data?: Record<string, unknown> }>) => {
-      for (const o of ops) {
-        if (o.op === 'put' && o.data) meta.set(o.key, o.data);
-        else if (o.op === 'del') meta.delete(o.key);
-      }
-    },
-    getHistory: async () => [],
-    clearSession: async () => {},
-  };
-}
 
 describe('normalizeSessionConfigPatch', () => {
   it('null → undefined（键保留、值为 undefined，合并时才能盖掉旧值），其余原样', () => {

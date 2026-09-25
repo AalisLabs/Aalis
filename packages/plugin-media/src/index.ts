@@ -102,7 +102,7 @@ const configSchema: ConfigSchema = {
       prefer: {
         type: 'select',
         label: '处理后端',
-        // options 在运行时由 media 据已注册的 Whisper/ASR 与音频 LLM 动态补全（见 index.ts refreshAudioPreferOptions）。
+        // options 在运行时由 media 据已注册的 Whisper/ASR 与音频 LLM 动态补全（见 index.ts refreshAudioPrefer）。
         options: [{ label: '自动（按优先级）', value: '' }],
         default: '',
         description: 'Whisper/ASR 与「能识别音频的 LLM」合在一个下拉里选；留空=按优先级自动。可选项随已装后端变化。',
@@ -158,8 +158,7 @@ const configSchema: ConfigSchema = {
         type: 'textarea',
         label: '动图/短视频描述 prompt',
         default: '',
-        description:
-          '`describeImage` 遇到动图时作为 vision.prompt 的 fallback hint。留空使用默认：“描述这个动图/视频。”',
+        description: '`describeImage` 遇到动图时的整段描述 prompt（替换内置多图批量模板）；留空使用内置多图批量模板。',
       },
       framePrefix: {
         type: 'string',
@@ -367,13 +366,10 @@ function run(caps: Caps): void {
   }
 
   // 注册 analyze_image / update_image_description 工具
-  registerMediaTools(caps, () => svc);
+  registerMediaTools(caps, svc);
 
   // 注册 preprocessor：agent 不在场时登记留在账上，它上线后自动补挂，随本次激活撤回
-  caps.agent.registerPreprocessor(
-    'media',
-    buildPreprocessor(caps, () => svc),
-  );
+  caps.agent.registerPreprocessor('media', buildPreprocessor(caps, svc));
   logger.info(
     `媒体识别预处理器已注册 (vision=${cfg.vision.recognizeOnArrival ? 'recognize-on-arrival' : 'pointer-only'}/${cfg.vision.delivery}, audio=${cfg.audio.mode}, video=${cfg.video.mode})`,
   );

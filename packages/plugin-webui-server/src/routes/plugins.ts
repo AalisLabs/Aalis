@@ -405,7 +405,7 @@ export function registerPluginRoutes(
     }
   });
 
-  // 重新扫描 packages/ 并加载新插件
+  // 经宿主 plugin-source 重新扫描并加载新插件
   expressApp.post('/api/plugins/scan', gate(), async (_req, res) => {
     const source = caps.source.current;
     if (!source) {

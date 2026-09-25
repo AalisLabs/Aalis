@@ -1,23 +1,28 @@
 /**
- * Agent 工具：让 LLM 在 reasoning 中主动深挖关系图。
+ * Agent 工具：让 LLM 在 reasoning 中检索、分析关系图，并在保护门内纠错。
  *
- * 设计原则（单写者 + 与 profile 对称）：
- * - 关系图的「新建 / 强化 / 删除」由 extractor 单线程被动归纳，agent **不能** 直接写或删。
- * - agent 暴露的工具全部 **只读**；纠错走 `/relation cleanup` slash 命令。
+ * agent 不能新建节点或边（新建由 extractor 提取与 consolidate 整理负责）。工具覆盖 6 类边、3 类节点，分四类：
  *
- * 这套工具覆盖 6 类边、3 类节点的检索/分析需求：
+ * 检索：
  *   resolve_node       —— 由关键词跨类解析节点 ID
  *   expand_node        —— 以任意节点为中心 BFS 子图（可限定 session_scope）
  *   find_path          —— 任意节点 ↔ 任意节点 最短路径
- *   score              —— 双节点联系分数（Katz + AA）
- *   recommend_persons  —— 给 person 推荐 top-K “想认识”的人（一步达成，避免多次 score）
- *   gossip             —— 某会话最近的“瓜”（事件热度榜）
- *   shared             —— 两节点共同邻居（共同兴趣/事件/朋友）
  *   search_persons     —— 按 platform/关键词列人
  *   search_entities    —— 按 kind/关键词列实体
  *   search_events      —— 按关键词/天数列事件（可限定 session_scope）
  *   list_edges         —— 多条件过滤边
  *   timeline           —— 节点时间线（可限定 session_scope）
+ * 分析：
+ *   score              —— 双节点联系分数（Katz + AA）
+ *   node_score         —— 单节点综合分、排名与分级
+ *   directional_degree —— 单节点有向出入度剖面
+ *   recommend_persons  —— 给 person 推荐 top-K “想认识”的人（一步达成，避免多次 score）
+ *   gossip             —— 某会话最近的“瓜”（事件热度榜）
+ *   shared             —— 两节点共同邻居（共同兴趣/事件/朋友）
+ * 社群：
+ *   community_peers / community_bridge / community_overview —— 同社群成员 / 两人是否同社群 / 全局社群概览
+ * 带保护门的写工具（risk: 'sensitive'，reason 必填）：
+ *   rename_node / correct_edge / delete_node / delete_edge / merge_nodes / change_entity_kind / split_alias
  *
  * 所有 depth/breadth/limit 参数会被 hardMax 截断，防止 Agent 一次拉满爆 token。
  */
@@ -39,9 +44,6 @@ import type {
 } from './types.js';
 
 interface ToolsConfig {
-  enabled: boolean;
-  /** 工具分组名（默认 'user-relation'） */
-  group: string;
   /** Agent 调用时的默认 depth（expand_node） */
   defaultMaxDepth: number;
   /** Agent 调用时的默认 breadth（expand_node） */
@@ -66,14 +68,13 @@ interface ToolsCaps {
 }
 
 export function registerRelationTools({ tools, logger }: ToolsCaps, service: RelationService, cfg: ToolsConfig): void {
-  if (!cfg.enabled) return;
-  const groupName = cfg.group || 'user-relation';
+  const groupName = 'user-relation';
 
   tools.registerGroup({
     name: groupName,
     label: '人物关系图',
     description: [
-      '查询用户关系图：跨类节点解析 / BFS 子图 / 任意节点最短路径 / 多类型筛选边 / 节点时间线。只读，纠错走 /relation cleanup。',
+      '查询用户关系图：跨类节点解析 / BFS 子图 / 任意节点最短路径 / 多类型筛选边 / 节点时间线。',
       '',
       '🔑 节点 ID 格式（**所有 node_id / from_node_id / to_node_id 参数都按此约定**）：',
       '- person 节点 ID：必须是 `<platform>:<userId>` 完整格式，例如 `onebot:10001`，**不能只填裸 userId**。',
@@ -183,7 +184,7 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
       function: {
         name: 'user_relation_expand_node',
         description:
-          '以任意节点（人 / 事件 / 实体）为中心做 BFS 展开子图。比 expand_person 更通用：可以从实体出发看"谁关心《三角洲》"，或从事件出发看"这件事牵连了谁"。',
+          '以任意节点（人 / 事件 / 实体）为中心做 BFS 展开子图。可以从实体出发看"谁关心《三角洲》"，或从事件出发看"这件事牵连了谁"。',
         parameters: {
           type: 'object',
           properties: {
@@ -397,7 +398,7 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
       function: {
         name: 'user_relation_search_persons',
         description:
-          '按关键词 / 平台筛选人。匹配 displayName / userId / aliases / id（substring，不区分大小写）。返回带 pagination 元信息，需翻页传 offset；查看 pagination.hint 了解还有多少结果。',
+          '按关键词 / 平台筛选人。匹配 displayName / userId / id（substring，不区分大小写）。返回带 pagination 元信息，需翻页传 offset；查看 pagination.hint 了解还有多少结果。',
         parameters: {
           type: 'object',
           properties: {
@@ -1097,7 +1098,7 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
       // 仅允许 event / entity；person id 形如 'platform:userId'，含冒号直接拒绝
       if (id.includes(':')) {
         return JSON.stringify({
-          error: 'Person.name = platform displayName，禁止改名。如需追加别名请走 add-alias 流程。',
+          error: 'Person.name = platform displayName，禁止改名。',
         });
       }
       // 先按 event 试，再按 entity 试
@@ -1131,7 +1132,7 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
           '- weight ≥ 0.5：禁止直接 remove，必须先 weaken 到 < 0.5（建议反复 weaken 至 < 0.3 再 remove）',
           '- 0.3 ≤ weight < 0.5：可 weaken / remove',
           '- weight < 0.3：自由',
-          '禁止操作 **alias 边**（relationType = is-alias-of / alt-account-of）—— 这是结构性边，错绑请走后续 splitAlias 流程，不要 weaken/remove。',
+          '禁止操作 **alias 边**（relationType = is-alias-of / alt-account-of）—— 这是结构性边，不要 weaken/remove；alias 边目前没有纠错入口（split_alias 只处理 entity.aliases 字符串）。',
           '使用准则：必须先用 list_edges / find_path 拿到具体 edge id；必填 reason（≤80 字）说明判断依据。',
         ].join('\n'),
         parameters: {
@@ -1198,7 +1199,7 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
       function: {
         name: 'user_relation_delete_node',
         description: [
-          '物理删除一个 **event / entity** 节点（级联删除所有相连边）。**Person 节点禁用**——人是 platform 身份，只能由 user-profile 同步。',
+          '物理删除一个 **event / entity** 节点（级联删除所有相连边）。**Person 节点禁用**——人是 platform 身份，由入站消息归档时的昵称同步（rename-watcher）并由提取阶段 observePerson 维护。',
           '保护门（任一命中则拒绝）：',
           '- weight ≥ 0.8 → 强节点保护',
           '- evidence.length ≥ 5 → 强证据保护',
@@ -1294,7 +1295,7 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
         description: [
           '把多个 **event / entity** 节点物理合并到一个 canonical 节点（搬移所有边并物理删除 alias 节点）。',
           '语义：所有 alias 节点的边被改写指向 canonical，重复边自动 dedup；alias 节点本身被删除（无残留）。',
-          'Person 节点的合并请走 /relation cleanup 命令（保留 alias 标记边，不物理删）。',
+          'Person 合并由 is-alias-of / alt-account-of 边触发 mergeAlias（物理合并），本工具不支持。',
           '使用场景：',
           '- 同一事件被 LLM 分成多个 title（"那次吵架" / "群里吵架" / "上周冲突"）→ 合并到一个 canonical',
           '- 同一实体（"DLT" / "三角洲行动" / "三角洲"）→ 合并到正式名',
@@ -1305,7 +1306,7 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
         parameters: {
           type: 'object',
           properties: {
-            kind: { type: 'string', enum: ['event', 'entity'], description: '节点类型（person 走 cleanup）' },
+            kind: { type: 'string', enum: ['event', 'entity'], description: '节点类型（person 不支持）' },
             canonical_id: { type: 'string', description: '保留的正式节点 ID' },
             alias_ids: {
               type: 'array',
@@ -1535,7 +1536,7 @@ export function registerRelationTools({ tools, logger }: ToolsCaps, service: Rel
 
   if (cfg.debug) {
     logger.debug(
-      `[user-relation] 已注册 21 个工具到分组 ${groupName}（resolve_node / expand_node / find_path / score / search_persons / search_entities / search_events / list_edges / timeline / recommend_persons / gossip / shared / rename_node / correct_edge / delete_node / delete_edge / merge_nodes / change_entity_kind / split_alias / node_score / directional_degree）`,
+      `[user-relation] 已注册 24 个工具到分组 ${groupName}（resolve_node / expand_node / find_path / score / search_persons / search_entities / search_events / list_edges / timeline / recommend_persons / gossip / shared / community_peers / community_bridge / community_overview / rename_node / correct_edge / delete_node / delete_edge / merge_nodes / change_entity_kind / split_alias / node_score / directional_degree）`,
     );
   }
 }
@@ -1553,7 +1554,7 @@ function clampNum(raw: unknown, fallback: number, min: number, max: number): num
  * 使用约定：
  * - 工具 schema 里 limit/offset 都是可选；默认 limit 由调用方传入；硬上限 hardMaxLimit 防止 LLM 一次拉满爆 token。
  * - 返回的 pagination.hint 以中文给 LLM 写明"还有几条 / 怎么翻页 / 怎么一次多拿"。
- * - 注意：分页发生在 service 计算完成之后，total 总是反映全量结果数量。
+ * - 注意：分页发生在 service 计算完成之后，total 为截断后的工具可见池大小，不一定是全库总数。
  */
 interface PaginationMeta {
   offset: number;

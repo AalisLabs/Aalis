@@ -23,7 +23,7 @@ export function getBotNames(persona: PersonaRef, cfg: TriggerPolicyConfig): stri
   const names = [...cfg.triggerNames];
   const service = persona.current;
   if (service) {
-    const personaName = service.getPersonaName?.();
+    const personaName = service.getPersonaName();
     if (personaName && !names.includes(personaName)) names.push(personaName);
     const nicks = service.getNickNames?.() ?? [];
     for (const n of nicks) {

@@ -39,5 +39,5 @@ export default definePlugin({
 - 调用 `/embeddings` 端点
 - `listModels()` 从 `/models` 获取可用模型
 - apiKey 缺失时抛错
-- 启动时用 `embed('ping')` 做一次连通性检查。apply 会等检查结束，但请求本身不设超时；检查失败只记警告，服务照常注册
+- 启动时用 `embed('ping')` 做一次连通性检查。apply 会等检查结束；检查失败只记警告，服务照常注册
 - 修改 `baseUrl` 可对接兼容 OpenAI 格式的其他 Embedding 服务（须写到完整前缀，如 `http://host/v1`）

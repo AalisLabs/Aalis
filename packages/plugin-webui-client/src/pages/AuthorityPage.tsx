@@ -8,7 +8,6 @@ import {
   effectiveConfirm,
   effectiveMinLevel,
   groupByPlugin,
-  groupMinLevel,
 } from './authority-page-util.js';
 
 const PLUGIN = '@aalis/plugin-authority';

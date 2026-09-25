@@ -483,7 +483,7 @@ function runBrowserTools(caps: Caps): void {
       function: {
         name: 'browser_screenshot',
         description:
-          '对当前浏览器页面截图。PNG 一律落盘，结果里恒带 storage_uri（可交给 analyze_image 看图或 send_attachment 发送）；你能看图时截图同时随结果呈现给你。',
+          '对当前浏览器页面截图。PNG 一律落盘，结果里恒带 storage_uri，可交给看图工具（如有）查看或用 send_attachment 发送；你能看图时截图同时随结果呈现给你。',
         parameters: {
           type: 'object',
           properties: {
@@ -534,14 +534,14 @@ function runBrowserTools(caps: Caps): void {
             return {
               content: JSON.stringify({
                 ...meta,
-                note: '图已随结果附上；若你看不到图，用 storage_uri 走 analyze_image / send_attachment',
+                note: '图已随结果附上；若你看不到图，可把 storage_uri 交给看图工具（如有）或 send_attachment',
               }),
               images: [`data:image/png;base64,${png.toString('base64')}`],
             };
           }
           return JSON.stringify({
             ...meta,
-            note: '图未随结果附上，用 storage_uri 走 analyze_image / send_attachment 查看',
+            note: '图未随结果附上，可把 storage_uri 交给看图工具（如有）查看或 send_attachment 发送',
           });
         }
         if (callCtx.acceptsImages) {
@@ -720,7 +720,7 @@ function validateUrl(rawUrl: string, config: BrowserConfig): string | null {
   if (config.blockPrivate) {
     const host = parsed.hostname.toLowerCase();
     if (config.allowedHosts.includes(host)) return null; // 白名单跳过
-    // 仅字符串级判定（不做 DNS 解析），与 plugin-tools 的 http 工具复用同一套 SSRF 判定。
+    // 仅字符串级快判（不做 DNS 解析）；DNS 级判定由请求拦截 isBlockedRequestUrl 负责。
     if (isPrivateHost(host)) {
       return `拒绝访问内网/本地地址 "${host}"（blockPrivate=true）`;
     }

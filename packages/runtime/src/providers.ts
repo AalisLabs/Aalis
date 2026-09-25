@@ -11,19 +11,17 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import type { AalisConfig } from '@aalis/api-host-config';
-import type { PluginDefinition, RestartStrategy } from '@aalis/core';
+import type { RestartStrategy } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { ConfigProvider } from './config-store.js';
 import {
-  assertSameCore,
   HOST_CORE_DIR,
+  importPluginDefinition,
   isLoadablePlugin,
-  loadPluginDefinition,
   warnLikelyPluginMissingKeyword,
 } from './node-modules-loader.js';
 import type { PluginDescriptor, PluginLoader } from './plugin-discovery.js';
@@ -286,21 +284,8 @@ export function createFsPluginLoader(packagesDir?: string): PluginLoader {
       return discovered;
     },
 
-    async load(desc): Promise<PluginDefinition | null> {
-      assertSameCore(HOST_CORE_DIR, desc.metadata?.dir, desc.name);
-      return loadPluginDefinition(await import(pathToFileURL(desc.source).href), desc.name, loaderLogger);
-    },
-
-    async reload(desc): Promise<PluginDefinition | null> {
-      assertSameCore(HOST_CORE_DIR, desc.metadata?.dir, desc.name);
-      let cacheKey = '';
-      try {
-        cacheKey = `?t=${(await stat(desc.source)).mtimeMs}`;
-      } catch {
-        /* stat 失败时用空 key，让 import 自己报错 */
-      }
-      return loadPluginDefinition(await import(pathToFileURL(desc.source).href + cacheKey), desc.name, loaderLogger);
-    },
+    load: desc => importPluginDefinition(desc, HOST_CORE_DIR, loaderLogger, false),
+    reload: desc => importPluginDefinition(desc, HOST_CORE_DIR, loaderLogger, true),
   };
 }
 

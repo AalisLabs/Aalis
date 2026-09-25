@@ -19,7 +19,7 @@ export type CapabilityId = string;
 /**
  * 能力默认可见性（轴 A · 授权：谁默认能用）：
  * - public：所有人默认拥有（除非被显式 deny），如查天气、查状态。
- * - restricted：默认禁止，须被 owner/上层委托授予，如关机、写 users.json。
+ * - restricted：门槛较高，无 risk 声明时最低等级为 RESTRICTED_LEVEL，如关机、写 users.json。
  */
 export type CapabilityVisibility = 'public' | 'restricted';
 
@@ -96,8 +96,7 @@ export function riskDefaults(risk?: CapabilityRisk): {
 /**
  * 把 (risk, visibility, confirm) 声明展开为生效的 (visibility, confirm)。纯函数。
  * 优先级：显式 visibility/confirm > risk 推导 > defaultVisibility。
- * @param defaultVisibility 三者皆缺省时的兜底可见性 —— tools/commands 传 'public'，
- *   WebUI actions 传 'restricted'（actions 默认拒，与 tool/command 相反）。
+ * @param defaultVisibility 三者皆缺省时的兜底可见性（缺省 'public'）。
  */
 export function resolveCapabilityPolicy(
   decl: CapabilityPolicyDecl,
@@ -123,9 +122,9 @@ export interface ExecutionGuardContext {
   name: string;
   /** 操作类型 */
   type: 'command' | 'tool';
-  /** 操作主能力的生效可见性（轴 A；注册时已由 resolveCapabilityPolicy 展开 risk/默认）。无 risk 时作 minTier 兜底 */
+  /** 操作主能力的生效可见性（轴 A；注册时已由 resolveCapabilityPolicy 展开 risk/默认）。无 risk 时据它兜底 minLevel */
   visibility: CapabilityVisibility;
-  /** 操作原始风险声明（透传，供 authority 派生 minTier：safe→访客/sensitive→朋友/dangerous→信任）；缺省回退 visibility */
+  /** 操作原始风险声明（透传，供 authority 派生 minLevel：safe→0 / sensitive→1 / dangerous→2）；缺省回退 visibility */
   risk?: CapabilityRisk;
   /** 操作的生效确认要求（轴 B，与 visibility/档位 正交、owner 也生效）；缺省=不确认 */
   confirm?: CapabilityConfirm;
@@ -146,8 +145,8 @@ export interface ExecutionGuardContext {
   /** 操作参数 */
   args?: Record<string, unknown>;
   /**
-   * 系统/受信源（如 scheduler，无人能点交互确认）：仍走 authorize 评估调用者能力，
-   * 仅跳过受限被拒后的交互确认弹窗（requestAccess）。**不**绕过 authorize（防提权）。
+   * 系统/受信源（如 scheduler，无人能点交互确认）：仍走 authorize 评估调用者能力，**不**绕过它（防提权）。
+   * 被拒时不走救援闸（isPreApproved）；已授权时跳过非 always 的确认，always 照常确认。
    */
   skipConfirm?: boolean;
   /** 调用方回合的中止信号：守卫把它透传给 requestAccess，中止后不再等确认（见 AccessRequest.signal）。 */
@@ -167,23 +166,25 @@ export type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | nu
 /**
  * 能力统一闸请求：一次敏感操作在边界处声明它触达的能力。
  *
- * 任何 surface（tool/command/WebUI action/REST/scheduler）的敏感操作都在操作边界
- * 调用 authorize 过同一闸。
+ * tools / commands 的执行守卫在操作边界调用 authorize 过这道闸。
  */
 export interface AuthorizeRequest {
   /** 操作主能力（tool:<name> / command:<name>） */
   capability: CapabilityId;
-  /** 主能力的默认可见性（操作声明；无 risk 时作 minTier 兜底） */
+  /** 主能力的默认可见性（操作声明；无 risk 时据它兜底 minLevel） */
   visibility: CapabilityVisibility;
-  /** 操作原始风险（透传，供 minTier 派生；缺省回退 visibility） */
+  /** 操作原始风险（透传，供 minLevel 派生；缺省回退 visibility） */
   risk?: CapabilityRisk;
 }
 
 // ============================================================
-// 临时能力委托（restricted 能力的时限/限次授予；替代旧"危险操作确认"）
+// 意图确认与临时能力委托（确认应答可附带会话级的时限/限次授予）
 // ============================================================
 
-/** 用户触达未授予的 restricted 能力时，向 owner/确认回调发起的请求 */
+/**
+ * 访问请求：操作已过授权、但声明了 confirm 时，经 requestAccess 发起意图确认；
+ * 守卫的救援闸 isPreApproved 也用它描述被 authorize 拒绝的操作。
+ */
 export interface AccessRequest {
   /** 操作名称 */
   name: string;
@@ -196,10 +197,9 @@ export interface AccessRequest {
   platform: string;
   userId?: string;
   /**
-   * 请求性质：
-   * - 'grant'（缺省）：非 owner 触达未授予的 restricted 能力，确认=授予。
-   * - 'confirm'：调用者已有权限（含 owner），仅因能力标了 confirm 轴需「意图确认」。
-   * confirm='always' 时不接受会话记忆（每次都问）。
+   * 操作的生效确认要求（见 CapabilityConfirm）：
+   * - 'session'：可按会话记住，白名单与本会话已有的授予可免问。
+   * - 'always'：每次都问，不接受白名单与会话记忆。
    */
   confirm?: CapabilityConfirm;
   /**
@@ -272,7 +272,7 @@ export interface AuthorityService {
   isOwner(platform: string, userId?: string): boolean;
 
   /**
-   * 统一权限闸 —— 任何 surface 的敏感操作在边界调用本方法。
+   * 统一权限闸 —— tools / commands 的执行守卫在操作边界调用本方法。
    * 数字等级裁决：deniedCapabilities(全局硬禁) > owner(∞) > 用户 level >= 操作 minLevel；
    * minLevel 由 request.risk/visibility/config.authorityOverrides 派生。
    * @returns null 放行；string 为拒绝原因（可直接展示）
@@ -288,13 +288,13 @@ export interface AuthorityService {
   /** 删除用户记录（等级一并清除，回退默认 0） */
   removeUser(platform: string, userId: string): void;
 
-  // ── 临时能力委托（restricted 能力的时限/限次授予）──
+  // ── 意图确认与临时能力委托 ──
   /**
    * 「未授权」分支专用闸：请求是否被 owner 预先放行（restrictedPolicy 白名单 / 该用户在本会话已有授予），
    * 且不触犯硬禁 / 资源保护。**绝不询问发起者本人**（杜绝自我确认提权）。守卫 authorize 拒绝后调本方法。
    */
   isPreApproved(request: AccessRequest): boolean;
-  /** 用户触达未授予的 restricted 能力时，过临时委托流程（白名单策略 → 会话临时授予 → 确认回调） */
+  /** 意图确认：操作已过授权、但声明了 confirm 时调用（白名单策略 → 会话临时授予 → 确认回调；confirm='always' 只走确认回调） */
   requestAccess(request: AccessRequest): Promise<boolean>;
   listTemporaryGrants(): TemporaryGrant[];
   /** 撤销某能力上所有未过期的会话授予（操作门槛变更时调用），返回撤销条数 */

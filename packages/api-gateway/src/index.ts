@@ -2,14 +2,14 @@
 //
 // Gateway 是 Aalis 的运行时编排中枢：
 //   - 入站：监听 `inbound:message`，按 INBOUND_PHASE_ORDER 顺序运行
-//           inbound:command → inbound:flow → inbound:trigger → inbound:dispatch
-//           四个命名相位，dispatch 的默认动作是调用 agent.handleMessage。
-//           前三相位任一被 swallow（handler 不调用 next）即停止后续调度。
+//           inbound:confirm → inbound:command → inbound:flow → inbound:trigger → inbound:dispatch
+//           五个命名相位，dispatch 的默认动作是调用 agent.handleMessage。
+//           dispatch 之前任一相位被 swallow（handler 不调用 next）即停止后续调度。
 //   - 出站：提供 `dispatchOutbound()` 接口，运行 `outbound:dispatch` 钩子链，
 //           默认动作是向 `outbound:message` 事件总线广播，平台插件接收并发送。
 //
 // core 不再绑定具体的路由实现，gateway 服务由 plugin-gateway 提供。
-// 需要 gateway 的插件经 `inject.required: ['gateway']` 声明依赖。core 无入站路由兜底：
+// 需要 gateway 的插件在 uses 里声明 `gateway` 描述符。core 无入站路由兜底：
 // 不加载 gateway 则 `inbound:message` 无人消费、消息静默丢弃，按必需件对待。
 
 import type { AgentService } from '@aalis/api-agent';
@@ -20,8 +20,8 @@ import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
 /**
  * 入站相位共享数据结构
  *
- * 同一条消息在 `inbound:command` → `inbound:flow` → `inbound:trigger`
- * → `inbound:dispatch` 四个相位间被同一对象引用传递。
+ * 同一条消息在 `inbound:confirm` → `inbound:command` → `inbound:flow` → `inbound:trigger`
+ * → `inbound:dispatch` 五个相位间被同一对象引用传递。
  */
 export interface InboundPhaseData {
   message: IncomingMessage;
@@ -94,7 +94,7 @@ export interface GatewayService {
   /**
    * 派发一条出站消息。
    *
-   * 替代 `ctx.emit('outbound:message', msg)` —— 后者将逐步迁移：
+   * 替代 `events.emit('outbound:message', msg)` —— 后者将逐步迁移：
    *   - 平台适配器仍可监听 `outbound:message` 接收最终发送指令；
    *   - 发出方应改用本接口，以经过 `outbound:dispatch` 钩子链。
    */

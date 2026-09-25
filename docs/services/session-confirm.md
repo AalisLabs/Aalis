@@ -47,7 +47,7 @@ export interface ConfirmChannel {
 }
 ```
 
-服务类型经 declaration merging 注册到 core：`服务描述符['session-confirm'] = SessionConfirmService`（`packages/api-session-confirm/src/index.ts`）。
+类型随描述符提供：`sessionConfirm = defineService<SessionConfirmService>('session-confirm')`（`packages/api-session-confirm/src/index.ts`），下游导入描述符并写进 `uses` 即得类型。
 
 ### 2.3 复用 api-authority 的类型
 

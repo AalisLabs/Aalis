@@ -10,6 +10,7 @@ import {
 import type { Activation } from '../../packages/core/src/orchestration/activation.js';
 import { activatePlugin, type PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
 import { createActivationFixture } from '../helpers/activation.js';
+import { deferred } from '../helpers/deferred.js';
 
 // ============================================================
 // disposeAsync 的时序承诺：「返回时异步清理已真正完成」。
@@ -40,14 +41,6 @@ function makeActivation(id = 'root') {
   const fixture = createActivationFixture({ id });
   activations.push(fixture.activation);
   return fixture;
-}
-
-function deferred(): { promise: Promise<void>; open: () => void } {
-  let open!: () => void;
-  const promise = new Promise<void>(resolve => {
-    open = resolve;
-  });
-  return { promise, open };
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -81,7 +74,7 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
 
     // 闸门未开 → apply 必定卡在获取里，此刻发起拆卸
     const disposing = ctx.disposeAsync();
-    acquire.open();
+    acquire.resolve();
     await disposing;
 
     // 这是本测试的全部意义：返回的那一刻资源必须已经关掉，
@@ -99,7 +92,7 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
     // disposer 即便赶在返回前挂上，也走 post-dispose 分支就地执行、返回值被丢弃，
     // 其跨宏任务的收尾必然落在 `await disposing` 之后 —— 承诺落空。
     const disposing = ctx.disposeAsync();
-    acquire.open();
+    acquire.resolve();
     await disposing;
     expect(state.released).toBe(false);
 
@@ -122,7 +115,7 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
     expect(elapsed).toBeLessThan(2000); // 而不是干等 apply
     expect(state.released).toBe(false); // 这一项确实没赶上，是超时的既定代价
 
-    acquire.open();
+    acquire.resolve();
   });
 
   it('apply 抛错也算落定，不把拆卸卡住', async () => {
@@ -141,7 +134,7 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
     applying.catch(() => {}); // 调用方自行处理失败（activatePlugin 的 catch）
 
     const disposing = ctx.disposeAsync(1000);
-    acquire.open();
+    acquire.resolve();
     await disposing;
     // 抛错前挂上的 disposer 仍应被等到
     expect(released).toBe(true);
@@ -154,7 +147,7 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
     const { applying, state, acquire } = startPlugin(child, true);
 
     const disposing = parent.disposeAsync();
-    acquire.open();
+    acquire.resolve();
     await disposing;
 
     expect(state.released).toBe(true);
@@ -205,7 +198,7 @@ describe('disposeAsync 与初始化在飞的竞态', () => {
     expect(ctx).toBeDefined();
 
     const disposing = ctx!.disposeAsync(1000);
-    acquire.open();
+    acquire.resolve();
     await disposing;
 
     expect(flushed).toBe(true);
@@ -299,7 +292,7 @@ describe('拆卸窗口内的 provides 校验归因', () => {
 
     const ctx = entry.activation;
     const disposing = ctx!.disposeAsync(1000);
-    acquire.open();
+    acquire.resolve();
     await disposing;
     await activating;
 

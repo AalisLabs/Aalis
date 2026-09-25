@@ -17,6 +17,7 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
+import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
 // 关停数据链：Agent 把最后的数据交给 Memory，Memory 等异步落盘，Storage 最后关。
@@ -26,15 +27,6 @@ import {
 // ════════════════════════════════════════════════════════════
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-function deferred() {
-  let resolve!: () => void;
-  let reject!: (err: unknown) => void;
-  const promise = new Promise<void>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
 
 interface Storage {
   write(data: string): Promise<void>;

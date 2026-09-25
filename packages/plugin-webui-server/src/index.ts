@@ -149,7 +149,6 @@ interface WebUIConfig {
   autoOpen: boolean;
   tokenMode: 'ephemeral' | 'persist' | 'fixed';
   fixedToken: string;
-  relationGraphDefaultSpacing: number;
   marketplaceRegistry: string;
 }
 
@@ -165,7 +164,6 @@ interface WSOutgoing {
     | 'message'
     | 'stream'
     | 'stream_resume'
-    | 'status'
     | 'log'
     | 'tool_call'
     | 'state_changed'
@@ -199,7 +197,6 @@ interface WSOutgoing {
     charsAccumulated: number;
     startedAt: number;
   }>;
-  status?: Record<string, unknown>;
   log?: LogEntry;
   toolName?: string;
   toolArgs?: Record<string, unknown>;
@@ -373,10 +370,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       ? (config.tokenMode as 'ephemeral' | 'fixed')
       : 'persist',
     fixedToken: (config.fixedToken as string) ?? '',
-    relationGraphDefaultSpacing: (() => {
-      const v = Number(config.relationGraphDefaultSpacing);
-      return Number.isFinite(v) && v > 0 ? v : 120;
-    })(),
     marketplaceRegistry: (config.marketplaceRegistry as string)?.trim() || 'https://registry.npmjs.org',
   };
 
@@ -390,30 +383,10 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 所有模式都会写出 data:/webui/access.txt 便于查找访问 URL
   const tokenFileUri = 'data:/webui/token';
   const accessFileUri = 'data:/webui/access.txt';
-
-  async function resolveAuthToken(): Promise<string> {
-    if (uiConfig.tokenMode === 'fixed' && uiConfig.fixedToken.trim()) {
-      return uiConfig.fixedToken.trim();
-    }
-    if (uiConfig.tokenMode === 'persist' || uiConfig.tokenMode === 'fixed') {
-      try {
-        const raw = await storage.readFile(tokenFileUri, 'utf-8');
-        const existing = (typeof raw === 'string' ? raw : raw.toString('utf-8')).trim();
-        if (existing) return existing;
-      } catch {
-        /* not exists or unreadable */
-      }
-      const fresh = Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString('hex');
-      try {
-        await storage.writeFile(tokenFileUri, fresh);
-      } catch (err) {
-        logger.warn(`持久化 token 失败，本次仍可使用但重启会再生成: ${(err as Error).message}`);
-      }
-      return fresh;
-    }
-    // ephemeral
-    return Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString('hex');
-  }
+  const fixedToken = uiConfig.tokenMode === 'fixed' ? uiConfig.fixedToken.trim() : '';
+  let authToken = fixedToken || Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString('hex');
+  /** 监听成功后的访问 URL；持久化 token 晚于监听读回时，据此重写 access.txt */
+  let listeningUrl: string | undefined;
 
   /** 返回是否真的写成了：调用方据此决定能不能宣称「凭据已写入」 */
   async function writeAccessFile(url: string, token: string): Promise<boolean> {
@@ -437,8 +410,41 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     }
   }
 
-  const authToken = await resolveAuthToken();
-  const auth = createAuthSystem(authToken, logger.child('auth'));
+  // persist 的读回跟随 storage：storage 是 optional、不参与激活拓扑，可能晚于本插件上线
+  // （加载顺序、启动时配置出错后修好、运行时才启用）。只在 apply 里读一次会读空：内存里是新随机
+  // token，持久化的那份不生效，已登录的浏览器全部被登出；没有 token 文件时也永远建不起来。
+  // follow 对已在线的 storage 同步首挂，晚上线时补读。持久化的那份优先（浏览器里 30 天的 cookie
+  // 就是它）；只认第一次成功，之后 storage 换人不再换 token。
+  let tokenSettled = uiConfig.tokenMode === 'ephemeral' || fixedToken !== '';
+  let tokenLoading: Promise<void> | undefined;
+  caps.storage.follow(() => {
+    if (tokenSettled) return;
+    tokenLoading = (async () => {
+      try {
+        const raw = await storage.readFile(tokenFileUri, 'utf-8');
+        const existing = (typeof raw === 'string' ? raw : raw.toString('utf-8')).trim();
+        if (existing) {
+          tokenSettled = true;
+          if (existing !== authToken) {
+            authToken = existing;
+            if (listeningUrl) void writeAccessFile(listeningUrl, authToken);
+          }
+          return;
+        }
+      } catch {
+        /* 不存在或读不了 */
+      }
+      try {
+        await storage.writeFile(tokenFileUri, authToken);
+        tokenSettled = true;
+      } catch (err) {
+        logger.warn(`持久化 token 失败，本次仍可使用但重启会再生成: ${(err as Error).message}`);
+      }
+    })();
+  });
+  // storage 已在线时 follow 是同步首挂：等读回完成再继续，认证从第一个请求起就用持久化的 token
+  if (tokenLoading) await tokenLoading;
+  const auth = createAuthSystem(() => authToken);
 
   const expressApp = express();
   expressApp.use(express.json({ limit: '10mb' }));
@@ -923,10 +929,6 @@ async function startWebuiServer(caps: Caps): Promise<void> {
   // 同 provider 下所有 model entries 共享同一份 refresh 闭包，调任一个 entry 即可。
   expressApp.post('/api/llm-providers/:contextId/refresh', gate(), async (req, res) => {
     const contextId = req.params.contextId;
-    if (!contextId) {
-      res.status(400).json({ error: 'contextId is required' });
-      return;
-    }
     try {
       const llmEntries = caps.llm.all();
       const target = llmEntries.find(e => e.contextId === contextId && typeof e.instance.refresh === 'function');
@@ -1590,7 +1592,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
 
   /**
    * 全动态发现前端：按 `aalis.client:true` 标记扫描，**不硬编码任何前端包名**
-   * （与 runtime 加载器的 marker 驱动一致；忒修斯之船——任意第三方前端带标记+dist 即被发现）。
+   * （忒修斯之船——任意第三方前端带标记+dist 即被发现）。
    * 覆盖三种拓扑：monorepo（扫 packages 同级目录）/ 独立项目（扫 node_modules/@aalis + 根 deps）。
    *
    * **幂等**，可重复调用：装完一个 `aalis-interface` 包后要立刻重跑，否则它不会出现在服务页
@@ -1599,10 +1601,8 @@ async function startWebuiServer(caps: Caps): Promise<void> {
    *
    * 只登记新候选，**不切换活跃前端**：换前端是用户在服务页的显式选择，装了个新的不该把
    * 他正在用的顶掉。
-   *
-   * @returns 本次新发现的候选数
    */
-  function discoverAndProvideClients(): number {
+  function discoverAndProvideClients(): void {
     const projectRequire = createRequire(pathToFileURL(resolve(process.cwd(), 'package.json')));
     const env: DiscoveryEnv = {
       ...fsScanEnv,
@@ -1670,11 +1670,13 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       );
       logger.info(`发现前端: ${candidate.label} (${candidate.dir})`);
     }
-    return fresh.length;
   }
 
   // 启动服务器
-  events.on('app:ready', () => {
+  events.on('app:ready', async () => {
+    // 冷启动时 storage 的激活在 app:ready 之前收敛；等晚到的读回落定，listen / autoOpen /
+    // access.txt 用的就是持久化的 token
+    if (tokenLoading) await tokenLoading;
     discoverAndProvideClients();
     // 活跃前端 = 解析后的 webui-client 服务（servicePreferences 偏好 > 优先级 > 注册顺序）；零前端则 404。
     const activeDir = currentClientDir();
@@ -1704,6 +1706,7 @@ async function startWebuiServer(caps: Caps): Promise<void> {
       // 展示/打开一律用回环；局域网访问地址由用户按本机 IP 自行替换。
       const displayHost = uiConfig.host === '0.0.0.0' || uiConfig.host === '::' ? '127.0.0.1' : uiConfig.host;
       const url = `http://${displayHost}:${uiConfig.port}/`;
+      listeningUrl = url;
       const accessUrl = `${url}?token=${authToken}`;
       logger.info(`WebUI 已启动: ${url}`);
       // 多前端时提示恢复页 URL：万一切到无切换 UI 的前端被卡住，可在此切回（详见 client-switch-page.ts）。

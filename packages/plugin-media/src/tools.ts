@@ -67,7 +67,7 @@ interface ToolsCaps {
   memory: ServiceRef<MemoryService>;
 }
 
-export function registerMediaTools(caps: ToolsCaps, getSvc: () => MediaServiceImpl): void {
+export function registerMediaTools(caps: ToolsCaps, svc: MediaServiceImpl): void {
   const { tools } = caps;
 
   tools.register({
@@ -117,7 +117,6 @@ export function registerMediaTools(caps: ToolsCaps, getSvc: () => MediaServiceIm
     },
     handler: async (args, callCtx) => {
       try {
-        const svc = getSvc();
         const imageInput = String(args.image);
         const customPrompt = (args.prompt as string) || undefined;
         const task = (args.task as string) || undefined;

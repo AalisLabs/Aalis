@@ -12,8 +12,8 @@ import { describe, expect, it } from 'vitest';
 // 由本测试设防，使"理论上可拆"始终成立（满足特定条件时可重新评估）。
 //
 // 分层即目录，自下而上，每层只许 import 本层与更低层：
-// - kernel/：资源生命周期与清理链，只认自己，不引用类型词汇、原语、Context 或编排层
-// - primitives/：原语注册表（事件总线与服务容器），只认 kernel 与类型词汇，不认识 Context、Logger、Config
+// - kernel/：资源生命周期与清理链，只认自己，不引用类型词汇、原语或编排层
+// - primitives/：原语注册表（事件总线与服务容器），只认 kernel 与类型词汇，不认识 Logger、Config
 //   （需要上报的诊断经注入的回调送出）
 // - infrastructure/：配置值拷贝、日志与资源账，只依赖资源内核、原语与基础词汇
 // - composition/：服务描述符、绑定与工厂、默认服务和插件定义，不依赖编排层

@@ -239,7 +239,6 @@ export function buildChatMessages(raw: RawMessage[]): ChatMessage[] {
 
 export interface SessionManager {
   pluginName: string | null;
-  sessionList: SessionItem[];
   activeSessionId: string;
   /** 当前活跃会话的显示标题（无会话时返回空串） */
   activeSessionTitle: string;
@@ -250,8 +249,6 @@ export interface SessionManager {
   refresh: () => void;
   /** 进入"新对话"状态（清空消息，不立即建 session） */
   startNewChat: () => void;
-  /** 创建新会话（可指定父会话），返回新 ID。会乐观更新列表。 */
-  createSession: (parentId?: string) => Promise<string | null>;
   /** 确保有活跃会话（无会话时自动新建），返回会话 ID */
   ensureSession: () => Promise<string>;
   switchSession: (newId: string) => void;
@@ -322,15 +319,12 @@ export function useSessionManager(pageDefs: WebuiPageDef[]): SessionManager {
   }, []);
 
   /** 创建新会话，乐观更新列表 */
-  const createSession = useCallback(async (parentId?: string): Promise<string | null> => {
+  const createSession = useCallback(async (): Promise<string | null> => {
     const plugin = pluginRef.current;
     if (!plugin) return null;
     const name = makeSessionName();
     try {
-      const result = await pageAction<SessionItem>(plugin, 'createSession', {
-        name,
-        ...(parentId ? { parentId } : {}),
-      });
+      const result = await pageAction<SessionItem>(plugin, 'createSession', { name });
       if (!result?.id) return null;
       const newId = result.id;
       // 乐观：立即把新会话加入列表
@@ -345,17 +339,10 @@ export function useSessionManager(pageDefs: WebuiPageDef[]): SessionManager {
           status: 'active',
           children: [],
           childCount: 0,
-          parentId,
           createdAt: Date.now(),
         };
         return [...prev, newItem];
       });
-      // 如果有 parentId，更新父节点的 children
-      if (parentId) {
-        setSessionList(prev => prev.map(s =>
-          s.id === parentId ? { ...s, children: [...s.children, newId], childCount: s.childCount + 1 } : s
-        ));
-      }
       // 缓存当前消息，切换到新会话
       if (messagesRef.current.length > 0) {
         messagesCache.current.set(activeIdRef.current, messagesRef.current);
@@ -467,7 +454,6 @@ export function useSessionManager(pageDefs: WebuiPageDef[]): SessionManager {
 
   return {
     pluginName,
-    sessionList,
     activeSessionId,
     activeSessionTitle,
     isNewChat,
@@ -475,7 +461,6 @@ export function useSessionManager(pageDefs: WebuiPageDef[]): SessionManager {
     setMessages,
     refresh,
     startNewChat,
-    createSession,
     ensureSession,
     switchSession,
     handleHistoryChanged,

@@ -129,6 +129,17 @@ option syntax 速查：
 - **沿点路径继承**
 - **`skipConfirm: true` 只跳确认弹窗，授权仍评估**
 
+声明写在 `commands.command` 的第三参 `meta` 上：
+
+```ts
+// risk 糖一次设定两轴默认：dangerous = restricted + confirm:'session'
+commands.command('weather.reset', '清空天气缓存', { risk: 'dangerous' }).action(async () => '已清空');
+// 显式声明覆盖 risk 推导：每次都确认
+commands.command('weather.purge', '删除全部天气数据', { risk: 'dangerous', confirm: 'always' }).action(async () => '已删除');
+// 只收紧可见性、不要求确认；子命令（weather.admin.*）沿点路径继承
+commands.command('weather.admin', '天气管理', { visibility: 'restricted' });
+```
+
 handler 内对外抓取须走 `safeFetch`；文件读写走 storage URI。storage 不是沙盒。
 
 ---

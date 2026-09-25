@@ -4,7 +4,6 @@ import {
   effectiveConfirm,
   effectiveMinLevel,
   groupByPlugin,
-  groupMinLevel,
   type Operation,
 } from '../../packages/plugin-webui-client/src/pages/authority-page-util.js';
 
@@ -59,17 +58,11 @@ describe('effectiveMinLevel（override > 后端下发的派生默认）', () => 
   });
 });
 
-describe('effectiveConfirm / groupMinLevel', () => {
+describe('effectiveConfirm', () => {
   it("confirm：'off'→无；override 优先；回退默认", () => {
     const o = op({ name: 'shell.exec', confirm: 'session' });
     expect(effectiveConfirm(o, {})).toBe('session');
     expect(effectiveConfirm(o, { 'tool:shell.exec': 'always' })).toBe('always');
     expect(effectiveConfirm(o, { 'tool:shell.exec': 'off' })).toBeUndefined();
-  });
-  it('groupMinLevel：全同→该等级；混合→mixed', () => {
-    const a = op({ name: 'a', risk: 'safe' });
-    const b = op({ name: 'b', risk: 'safe' });
-    expect(groupMinLevel([a, b], {})).toBe(0);
-    expect(groupMinLevel([a, b], { 'tool:b': 2 })).toBe('mixed');
   });
 });

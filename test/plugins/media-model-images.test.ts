@@ -1,13 +1,14 @@
 import { processService } from '@aalis/api-process';
 import { storage } from '@aalis/api-storage';
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger } from '@aalis/core';
 import { App, provide } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
-import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
+import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { emptyMediaCaps } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 出口形态变换：主模型 images 字段里绝不能出现裸路径 ref
@@ -23,22 +24,8 @@ import { registerHubs } from '../fixtures/hubs.js';
 
 const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
 
-/** 无提供者的按激活绑定桩：本套用例只考出口形态变换，不需要任何服务在场 */
-const empty = <P>(): ServiceRef<P> => ({
-  current: undefined,
-  require: () => {
-    throw new Error('无提供者');
-  },
-  all: () => [],
-  follow: () => () => {},
-});
-const caps: MediaServiceCaps = {
-  logger,
-  llm: empty(),
-  asr: empty(),
-  sessionManager: empty(),
-  memory: empty(),
-};
+/** 无提供者的能力桩：本套用例只考出口形态变换，不需要任何服务在场 */
+const caps = emptyMediaCaps(logger);
 
 const REF = 'data/images/onebot_1321759429_group_878279594/b4476ff0fcb7e633.gif';
 const DATA_URI = 'data:image/png;base64,iVBORw0KGgo=';

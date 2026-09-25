@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { File as FileIcon, Trash2, Download, X, RefreshCw } from 'lucide-react';
 import { api } from '../api';
+import { formatSize } from '../utils/format';
 
 interface UploadedFileInfo {
   id: string;
@@ -9,18 +10,6 @@ interface UploadedFileInfo {
   size: number;
   sessionId: string;
   uploadedAt: number;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes === 0) return '—';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let i = 0;
-  let size = bytes;
-  while (size >= 1024 && i < units.length - 1) {
-    size /= 1024;
-    i++;
-  }
-  return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
 function formatTime(ms: number): string {

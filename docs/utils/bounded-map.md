@@ -96,7 +96,7 @@ const handles = createBoundedMap<string, FileHandle>({
   `createBoundedMap<string, string>({ max: 5000, ttlMs: 30 天 })`，key 取落盘路径里的内容哈希，非内容寻址来源（远端 URL / data-URI）经落盘别名收敛到同一条，value 是 vision 识别结果。同一张图在聊天 + `analyze_image` + 引用消息里复用，避免重复识别（`cache.ts`）。注意它在 `set` 前先过滤空串与 `[图片: …]` / `[动图: …]` 占位符——不可缓存的值在入口处过滤，而不是依赖 Map（`cache.ts`）。
 
 - **文档会话管理** `packages/plugin-office/src/session.ts`
-  `createBoundedMap<string, DocSession>({ max: 50, ttlMs: 30min })`。value 持有 docx/ExcelJS/pptx 等底层文档对象。活跃文档（持续 `add → get`）因滑动 TTL 不会被逐出；只清理「创建后 30min 未操作」的废弃会话（`session.ts`）。`require()` 取不到时抛「已过期请重新 create」的提示（`session.ts`），插件卸载时 `clear()` 释放全部（`session.ts`）。
+  `createBoundedMap<string, DocSession>({ max: 50, ttlMs: 30min })`。value 持有 docx/ExcelJS/pptx 等底层文档对象。活跃文档（持续 `add → require`）因滑动 TTL 不会被逐出；只清理「创建后 30min 未操作」的废弃会话（`session.ts`）。`require()` 取不到时抛「已过期请重新 create」的提示（`session.ts`），插件卸载时 `clear()` 释放全部（`session.ts`）。
 
 - **Prompt 预算快照** `packages/plugin-prompt-budget/src/index.ts`
   `createBoundedMap<string, TokenUsage>({ max: 500, ttlMs: 6h })`，按 `sessionId` 缓存最近一次 `token:usage` 事件。注释点明了用它的理由——「派生只读，逐出后 AI 重查即重算；有界防长跑泄漏」（`index.ts`）。
@@ -133,6 +133,6 @@ const handles = createBoundedMap<string, FileHandle>({
 ## 6. 交叉链接
 
 - 概念 · [清单元数据](../concepts/manifest-metadata.md)——util 包靠 `aalis-util` 关键词识别、为何不进 DI 容器。
-- 概念 · [服务模型](../concepts/service-model.md)——对照：服务走 `ctx.provide`/`getService`，util 走 `package.json` 依赖 + 直接 import。
+- 概念 · [服务模型](../concepts/service-model.md)——对照：服务走 `provide(descriptor, impl)` 与 `uses` 里的描述符，util 走 `package.json` 依赖 + 直接 import。
 - 概念 · [安全模型](../concepts/security-model.md) / [消息 · LLM 管线](../concepts/message-llm-pipeline.md)——缓存内容出站时的审计边界。
 - 消费范例源码：`packages/plugin-media/src/cache.ts`、`packages/plugin-office/src/session.ts`、`packages/plugin-prompt-budget/src/index.ts`。

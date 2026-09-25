@@ -111,7 +111,7 @@ plugin-agent                             plugin-webui-server
 
 - 总代码 < 140 行
 - 0 业务逻辑、0 计算，仅缓存最近一次事件
-- 无运行时依赖（仅 `@aalis/core` + `@aalis/api-tools` 的 Context 扩展声明）
+- 运行时依赖：`@aalis/api-tools`（`tools` 描述符）、`@aalis/util-bounded-map`；`@aalis/core` 为 peer
 
 ## 何时启用
 

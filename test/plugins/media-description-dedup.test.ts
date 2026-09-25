@@ -1,4 +1,4 @@
-import type { Logger, ServiceRef } from '@aalis/core';
+import type { Logger } from '@aalis/core';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { MediaProcessor } from '../../packages/api-media/src/index.js';
 import {
@@ -9,9 +9,10 @@ import {
   rememberDescription,
 } from '../../packages/plugin-media/src/cache.js';
 import { setMediaRuntime } from '../../packages/plugin-media/src/runtime.js';
-import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
+import type { MediaConfigResolved } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { emptyMediaCaps } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 图片描述去重：内容寻址键 + 落盘续命
@@ -25,22 +26,8 @@ import type { IncomingMessage } from '../../packages/schema-message/src/index.js
 
 const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
 
-/** 无提供者的按激活绑定桩：识别走外部注册的 processor，其余能力一律缺席 */
-const empty = <P>(): ServiceRef<P> => ({
-  current: undefined,
-  require: () => {
-    throw new Error('无提供者');
-  },
-  all: () => [],
-  follow: () => () => {},
-});
-const caps: MediaServiceCaps = {
-  logger,
-  llm: empty(),
-  asr: empty(),
-  sessionManager: empty(),
-  memory: empty(),
-};
+/** 无提供者的能力桩：识别走外部注册的 processor，其余能力一律缺席 */
+const caps = emptyMediaCaps(logger);
 
 /** 内存 storage：只实现 cache.ts 用到的两个方法，够用即可。 */
 const files = new Map<string, string>();
@@ -170,6 +157,28 @@ describe('落盘续命', () => {
     await flushDescriptionCache();
     const dumped = JSON.parse(files.get(SNAPSHOT_URI) as string) as Array<[string, string]>;
     expect(dumped.some(([k, v]) => k === '5555666677778888' && v === '会跳舞的猫')).toBe(true);
+  });
+
+  it('带会话上下文的描述（本地落盘路径键）与详略档键也进快照；base64 / 远端 URL 键不进', async () => {
+    // contextHistory 默认开启，到达识别走的是会话私有键（落盘路径原串）；快照若只收内容哈希键，
+    // 这类描述重启即丢，缓存形同虚设。
+    const privatePath = 'data:/images/onebot_t_group_Y/1234abcd1234abcd.jpg';
+    const legacyPath = 'data/images/onebot_t_group_Y/abcd1234abcd1234.jpg';
+    rememberDescription(privatePath, '群里的截图', false);
+    rememberDescription(legacyPath, '群里的旧路径截图', false);
+    rememberDescription('data:image/png;base64,QUFBQQ==', '上传的图', false);
+    rememberDescription('https://example.invalid/pic/abcdef0123456789.jpg', '远端图', false);
+    // 详略档后缀（`#detailed`）接在键尾，判定前须剥掉，否则两种键形态都认不出
+    rememberDescription(privatePath, '群里的截图（详）', false, 'detailed');
+    rememberDescription('data:/images/onebot_t_group_Y/c0ffee00c0ffee00.jpg', '共享的图（详）', true, 'detailed');
+    await flushDescriptionCache();
+    const dumped = JSON.parse(files.get(SNAPSHOT_URI) as string) as Array<[string, string]>;
+    expect(dumped.some(([k, v]) => k === privatePath && v === '群里的截图')).toBe(true);
+    expect(dumped.some(([k, v]) => k === legacyPath && v === '群里的旧路径截图')).toBe(true);
+    expect(dumped.some(([k, v]) => k === `${privatePath}#detailed` && v === '群里的截图（详）')).toBe(true);
+    expect(dumped.some(([k, v]) => k === 'c0ffee00c0ffee00#detailed' && v === '共享的图（详）')).toBe(true);
+    expect(dumped.some(([k]) => k.startsWith('data:image/'))).toBe(false);
+    expect(dumped.some(([k]) => k.startsWith('https://'))).toBe(false);
   });
 
   it('占位符与空串不入快照（失败的识别不该被当成结果长期复用）', async () => {

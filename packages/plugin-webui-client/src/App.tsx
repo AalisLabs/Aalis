@@ -3,7 +3,7 @@ import { Menu, MessageSquare } from 'lucide-react';
 import 'highlight.js/styles/github-dark-dimmed.css';
 
 import { api, getSessionId, pageAction } from './api';
-import type { LogEntry, SystemStatus, PluginInfo, ServiceInfo, WebuiPageDef, ContentSegment, ChatMessage, PageTab, TodoItem } from './types';
+import type { LogEntry, SystemStatus, PluginInfo, ServiceInfo, WebuiPageDef, ContentSegment, PageTab, TodoItem } from './types';
 import { IconDashboard, IconMarketplace, IconPluginConfig, IconPlatform, IconAuthority, IconLogs, IconFiles } from './icons';
 import { useWebSocket } from './useWebSocket';
 import type { TokenUsageData } from './useWebSocket';
@@ -74,7 +74,6 @@ export function App() {
   /** 当前登录身份（/api/auth/status）：单 token 模式 authed ⟺ webui:console ⟺ owner；顶栏只显 owner 徽标 + 退出 */
   const [me, setMe] = useState<{
     identity: { platform: string; userId: string };
-    isOwner: boolean;
   } | null>(null);
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
@@ -574,9 +573,9 @@ export function App() {
 
   useEffect(() => {
     api<SystemStatus>('/api/status').then(setStatus).catch(() => {});
-    // 单 token 单 owner：authed ⟺ console ⟺ owner，故 isOwner 直接取 authed。
+    // 单 token 单 owner：authed 即 owner。
     api<{ authed: boolean; identity?: { platform: string; userId: string } }>('/api/auth/status')
-      .then(s => setMe(s.authed && s.identity ? { identity: s.identity, isOwner: true } : null))
+      .then(s => setMe(s.authed && s.identity ? { identity: s.identity } : null))
       .catch(() => {});
     refreshConfig();
     refreshPlugins();
@@ -745,7 +744,6 @@ export function App() {
       .map(p => ({
         key: p.key,
         label: p.label,
-        pluginDisplayName: p.pluginDisplayName,
         icon: resolveIcon(p.key, p.icon),
         order: p.order ?? 99,
       }))
@@ -833,7 +831,7 @@ export function App() {
           {isMobile && me && (
             <span className="drawer-user" title={`${me.identity.platform}:${me.identity.userId}`}>
               <span className="drawer-user-id">{me.identity.platform}:{me.identity.userId}</span>
-              {me.isOwner && <span className="content-user-level">owner</span>}
+              <span className="content-user-level">owner</span>
               <button className="btn-sm" onClick={handleLogout}>退出</button>
             </span>
           )}
@@ -852,7 +850,7 @@ export function App() {
               <span style={{ fontSize: 12, opacity: 0.7 }}>
                 {me.identity.platform}:{me.identity.userId}
               </span>
-              {me.isOwner && <span className="content-user-level">owner</span>}
+              <span className="content-user-level">owner</span>
               <button className="btn-sm" onClick={handleLogout}>退出</button>
             </span>
           )}

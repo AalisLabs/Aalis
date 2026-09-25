@@ -21,9 +21,9 @@ import { parseEverySeconds } from '@aalis/util-cron';
 // ════════════════════════════════════════════════════════════
 // plugin-scheduler — 让 AI 从"被动"变"主动"
 //
-// 支持 cron 表达式和固定间隔两种调度方式。
+// 支持三种调度方式：cron 表达式、固定间隔，以及 runAt 指定时刻执行一次。
 // 每个任务向指定 session 发送 inbound:message 事件，
-// source='scheduler' 使其绕过流控、且不打断用户会话。
+// source='scheduler' 使其不打断用户会话。
 // ════════════════════════════════════════════════════════════
 
 // ──────────── 配置类型 ────────────
@@ -76,7 +76,7 @@ interface SchedulerConfig {
 }
 
 // ──────────── Cron 解析 ────────────
-// 解析在 @aalis/api-cron-engine（normalizeCronExpr / parseEverySeconds / matchesCron）；
+// 解析在 @aalis/util-cron（parseEverySeconds 等）；
 // scheduler 声明 cronEngine 后调用 subscribe()/nextFireTime()。
 
 /** setTimeout 的 delay 上限（32 位有符号毫秒，约 24.8 天）；超过即溢出成立即触发 */
@@ -304,7 +304,7 @@ export default definePlugin({
   displayName: '定时任务',
   subsystem: 'scheduler',
   extends: {
-    events: ['scheduler:tick', 'scheduler:job:start', 'scheduler:job:done', 'scheduler:job:error'],
+    events: ['scheduler:job:start', 'scheduler:job:done', 'scheduler:job:error'],
   },
   configSchema,
   provides: [scheduler],
@@ -1141,7 +1141,7 @@ export function resolveConfig(raw: Record<string, unknown>): SchedulerConfig {
   };
 }
 
-// ----- 服务类型注册（declaration merging）-----
+// ----- 事件类型（declaration merging）-----
 declare module '@aalis/core' {
   interface AalisEvents {
     /** 任务开始执行 */

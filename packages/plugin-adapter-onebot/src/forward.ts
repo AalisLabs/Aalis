@@ -1,5 +1,5 @@
 /**
- * 合并转发（forward）展开、图片识别与摘要生成。
+ * 合并转发（forward）展开、图片识别与信封构造。
  *
  * 设计目标：让 agent 处理合并转发更接近"人类阅读"的方式：
  * - 进入对话上下文 / 历史归档的是一份摘要（信封），而非整块原文，
@@ -12,7 +12,7 @@
  *   onebot_get_forward_msg 工具 / 缓存命中拿回。
  *
  * 本模块仅做"纯逻辑"，不碰任何服务；适配器通过依赖注入提供
- * fetchForward / resolveMedia / summarize 三个能力函数。
+ * fetchForward / resolveMedia 两个能力函数。
  */
 
 import type { OneBotMessageSegment } from './types.js';
@@ -70,12 +70,8 @@ export interface ForwardExpandOptions {
   maxDepth: number;
   /** 单层节点数上限 */
   maxNodesPerLevel: number;
-  /** 是否启用图片识别 */
+  /** 是否启用图片识别（音频、视频识别随 resolveMedia 在场而启用） */
   imageRecognitionEnabled: boolean;
-  /** 是否启用音频识别（默认启用，随 resolveMedia 缺省而失效） */
-  audioRecognitionEnabled?: boolean;
-  /** 是否启用视频识别（默认启用，随 resolveMedia 缺省而失效） */
-  videoRecognitionEnabled?: boolean;
 }
 
 /** 各媒体类的占位符与识别成功时的包装 */
@@ -226,8 +222,8 @@ export async function expandForward(
   const tasks: ForwardMediaTask[] = [];
   const kindEnabled: Record<ForwardMediaTask['kind'], boolean> = {
     image: opts.imageRecognitionEnabled && !!opts.resolveMedia,
-    audio: opts.audioRecognitionEnabled !== false && !!opts.resolveMedia,
-    video: opts.videoRecognitionEnabled !== false && !!opts.resolveMedia,
+    audio: !!opts.resolveMedia,
+    video: !!opts.resolveMedia,
   };
   const collect: MediaCollector = (kind, src) => {
     if (!src || !kindEnabled[kind]) return MEDIA_LABEL[kind].placeholder;
@@ -349,15 +345,6 @@ export async function expandForward(
     truncatedDepth,
     truncatedNodes,
   };
-}
-
-// ===== 摘要 =====
-
-export interface SummarizeOptions {
-  /** 调用 LLM 生成摘要（输入完整 forward 文本，输出摘要文本）。返回 null 表示不生成。 */
-  summarize?: (text: string, hint: { count: number; participants: string[] }) => Promise<string | null>;
-  /** 摘要不可用 / 失败时的回退渲染：把完整文本截断为信封。 */
-  fallbackFullTextMaxChars: number;
 }
 
 /** 把展开结果包装成最终注入到 event.text 的"信封文本"。 */
