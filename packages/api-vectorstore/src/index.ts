@@ -1,7 +1,5 @@
 // ----- 向量数据库服务接口 -----
 
-// 触发 @aalis/core 模块解析，使文末 declare module 增强生效
-import type {} from '@aalis/core';
 import { defineService } from '@aalis/core';
 
 /** 向量搜索结果条目 */

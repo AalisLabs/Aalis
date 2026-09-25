@@ -2,7 +2,7 @@
 
 `@aalis/util-network-guard` 把「fetch 一个由用户、LLM 或入站消息影响到的 URL」这件危险操作收口成安全操作：协议白名单、私网/回环/元数据段封锁、DNS 全解析、逐跳重定向重校验。它是 Aalis 里唯一的「安全拉取外部 URL」助手——所有插件的外部 fetch 都应该走它，而不是裸 `fetch`。
 
-它是一个纯 util 库，不涉及服务注册与 DI，也不需要 `ctx`。你在 `package.json` 里依赖 `@aalis/util-network-guard`，然后直接 `import` 函数调用即可。
+它是一个纯 util 库，不涉及服务注册与 DI，也不经服务容器。你在 `package.json` 里依赖 `@aalis/util-network-guard`，然后直接 `import` 函数调用即可。
 
 包本身只做校验，不下载、不缓存、不限制体积。体积上限、超时、缓存留给调用方按自己的架构（流式代理、全 buffer 下载、内联 fetch）决定。
 
@@ -91,7 +91,7 @@ export interface NetworkPolicyConfig {
 默认策略是 `{ blockPrivate: true, denyCidrs: [], allowedPorts: null }`——也就是说，即使未注入，也默认拦截私网。`blockPrivate` 只有在显式传 `false` 时才关闭（判定条件是 `cfg.blockPrivate !== false`），`allowedPorts` 为空数组等同于不限，无效的 CIDR 会被静默过滤掉。
 
 ::: warning 由谁调用
-owner 在 core 配置 `network`，由 `plugin-authority` 在启动时注入一次。普通插件作者不要调用它——它是进程级单例，会覆盖全局策略。配置字段语义见 `api-authority`。
+策略来自宿主配置文档的 `network` 字段（由 `api-authority` 声明），由 `plugin-authority` 在启动时注入一次。普通插件作者不要调用它——它是进程级单例，会覆盖全局策略。配置字段语义见 `api-authority`。
 :::
 
 ---
@@ -145,7 +145,7 @@ await assertSafeHost(parsedUrl.hostname);
 | ASR（openai / whisper-cpp） | 拉远程音频转写 |
 | office | 拉远程文档解析 |
 | ollama | 探测/拉取 ollama 端点（带 30s 超时） |
-| 策略注入方 | `setNetworkPolicy(ctx.config.get('network') ?? {})` 启动一次 |
+| 策略注入方 | `plugin-authority` 读宿主配置文档：`setNetworkPolicy(config.get('network') ?? {})`，启动时注入一次 |
 
 其中两处做法值得参考：图片代理显式不带 cookie、只给一个伪 UA；media 与 http 工具在 `safeFetch` 之外自行做体积上限与流式累计——util 只负责校验、不限制体积，详见 §5。
 
@@ -175,7 +175,7 @@ await assertSafeHost(parsedUrl.hostname);
 
 **只挡 SSRF，不是全能网络闸。** 协议只放行 `http` 和 `https`（`file:`、`gopher:` 等被拒）。它不防范：数据外泄到公网上的受信域名、上游返回的恶意内容（例如 SVG XSS，那需要 CSP 与 Content-Type 校验）、应用层鉴权。它解决的只有一件事：别让用户或 LLM 把请求打到内网、元数据或回环。
 
-**`blockPrivate: false` 是 owner 的本地自动化逃生门，不是默认。** 关掉后，私网、回环、元数据全部放行——只在 owner 明确需要访问本机服务、且清楚风险时，由 core 配置开启。本地固定服务（ollama、onebot daemon）本就走裸 `fetch`、不过 `safeFetch`，不受策略影响。
+**`blockPrivate: false` 是 owner 的本地自动化逃生门，不是默认。** 关掉后，私网、回环、元数据全部放行——只在 owner 明确需要访问本机服务、且清楚风险时，在宿主配置文档（`aalis.config.yaml` 顶层 `network`，由 `api-authority` 声明）中开启。本地固定服务（ollama、onebot daemon）本就走裸 `fetch`、不过 `safeFetch`，不受策略影响。
 
 **`allowedPorts` 只对 IPv4/IPv6 默认端口推断生效：** URL 无显式端口时按协议推断（https → 443，http → 80），有显式端口时按显式值。`denyCidrs` 当前仅支持 IPv4（`inDenyCidrs` 在非 v4 时直接放行）。
 

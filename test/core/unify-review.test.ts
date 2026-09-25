@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { BindingPort } from '../../packages/core/src/index.js';
 import { type App, definePlugin, defineService, type Logger, provide } from '../../packages/core/src/index.js';
+import { deferred } from '../helpers/deferred.js';
 import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 // ════════════════════════════════════════════════════════════
@@ -8,13 +9,6 @@ import { activationHost, createInspectableApp, rootActivation } from '../helpers
 // ════════════════════════════════════════════════════════════
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>(r => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
 
 interface Item {
   name: string;

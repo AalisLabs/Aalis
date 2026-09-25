@@ -242,7 +242,7 @@ root 的 `readable/writable/deletable` 就是该根的访问策略。这与 auth
 1. **`browsable` 当前是部分生效的 hint**：`plugin-webui-server` 的文件页**只显示其 `fileRoot` 配置指向的那一个根**。
 2. **rename 仅同目录改名**。同根跨目录移动改用 `move`。
 3. **同名 root 静默遮蔽**：用 `getStorageRootConflicts(storage)` 暴露。
-4. **watch 去抖 + 平台降级**：事件统一为 `change`。消费者不应假定「一次写 = 一次事件」。
+4. **watch 去抖 + 平台降级**：事件统一为 `change`。消费者不应假定「一次写 = 一次事件」。参考实现的监听器归提供者的这次激活所有，提供者关闭（重启、改配置、卸载）时一并关闭；需要持续监听的消费者用 `storage.follow` 在新提供者上重挂。
 5. **checkpoint 写前快照耦合**：自定义后端若希望兼容 checkpoint 回滚，需复刻 `beforeMutate` 钩子。checkpoint 按根的 `kind` 决定是否记账：`data` / `tmp` / `pluginData` / `logs` 不记账。
 
 ---

@@ -273,7 +273,6 @@ async function executeNode(node: NodeSpec, ec: ExecCtx): Promise<string> {
 interface RunOptions extends EngineCaps {
   def: WorkflowDef;
   runId: string;
-  triggerSource: string;
   vars: Record<string, unknown>;
   toolCallContext: ToolCallContext;
   /** 取消信号容器；外部置 cancelled=true 后引擎不再调度新节点 */

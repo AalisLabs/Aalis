@@ -7,7 +7,7 @@ const OWNER = Symbol('owner');
 // `get()` 与「偏好 > 优先级 > 注册顺序」的一致性
 //
 // `get()` 走的是短路径（直接读 entries + preferences），不经 `resolveEntries` 的重排。
-// 两条路径必须给出同一个冠军，否则同一个服务名在 `getService` 与 `getAllServices`
+// 两条路径必须给出同一个冠军，否则同一个服务名在 `get()` 与 `getAll()`
 // 眼里会是两个不同的实例 —— 这类分歧不会报错，只会让调用方拿到意料之外的 provider。
 //
 // 这里穷举「几个 entry × 各种 priority × 偏好指向谁（含指向已不存在的 ctxId）」，

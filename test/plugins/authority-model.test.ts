@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { RESTRICTED_LEVEL } from '../../packages/api-authority/src/index.js';
 import {
   autoConfirmActive,
   DEFAULT_AUTHORITY,
   OWNER_RANK,
-  RESTRICTED_LEVEL,
   resolveAccess,
   resolveMinLevel,
   shouldSkipConfirm,

@@ -30,7 +30,7 @@ export default definePlugin({
 | `apiKey` | string | — | API Key：OpenAI API 密钥（本地服务可留空）（secret） |
 | `baseUrl` | string | `'https://api.openai.com/v1'` | API 地址：API 端点完整前缀（含版本段，如 https://api.openai.com/v1）；插件只在其后拼 /chat/completions 与 /models。可替换为任何兼容服务（如 Gemini 的 https://generativelanguage.googleapis.com/v1beta/openai）。 |
 | `customModels` | textarea | `''` | 自定义模型：手动添加的模型名称（每行一个或逗号分隔）。用于补充自动发现列表中未出现的模型。与自动发现重复时会提示去重。 |
-| `modelCapabilities` | textarea | `''` | 单模型能力覆盖：按行指定某个模型的能力集。有该模型的表项时**覆盖**插件启发式推断，与 adapter 默认能力仍取并集。 格式：`&lt;modelId&gt;: &lt;cap1&gt;,&lt;cap2&gt;,...`，每行一条。如：gpt-4o: chat,tool_calling,vision,streaming 可用能力：chat / tool_calling / vision / streaming / thinking / json_mode 等。 |
+| `modelCapabilities` | textarea | `''` | 单模型能力覆盖：按行指定某个模型的能力集。有该模型的表项时**覆盖**插件启发式推断，与 adapter 默认能力仍取并集。 格式：`&lt;modelId&gt;: &lt;cap1&gt;,&lt;cap2&gt;,...`，每行一条。如：gpt-4o: chat,tool_calling,vision,streaming 可用能力：chat / tool_calling / vision / streaming / thinking 等。 |
 | `providerCapabilities` | string | `''` | 适配器默认能力（逗号分隔）：为本适配器下所有模型额外补充的能力。最终某模型的能力 = 此处能力 ∪ 模型级别能力。例：chat,tool_calling,streaming |
 | `timeout` | number | `120` | 请求超时 (秒)：LLM 请求超时时间（秒）。思考模式或长文本建议适当调大。0 = 不限制。 |
 | `temperature` | number | `0.7` | 温度：0-2，越高越随机 |

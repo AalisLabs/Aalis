@@ -64,7 +64,6 @@
       "optional": [
         "llm",
         "webui-server",
-        "agent",
         "tools",
         "embedding",
         "commands",

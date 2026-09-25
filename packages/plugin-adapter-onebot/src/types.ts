@@ -64,7 +64,6 @@ export interface NormalizedNoticeEvent {
   noticeType: string;
   subType?: string;
   userId?: string;
-  nickname?: string;
   targetId?: string;
   groupId?: string;
   /** 附加数据（如上传文件的信息等） */
@@ -98,8 +97,6 @@ export interface NormalizedMetaEvent {
   selfId?: string;
   /** 实现端版本信息 (v12) */
   version?: { impl?: string; version?: string; onebot_version?: string };
-  /** 心跳间隔 */
-  interval?: number;
 }
 
 /** OneBot 消息段 */
@@ -307,7 +304,7 @@ export function normalizeOneBotMessage(message: unknown, rawMessage?: unknown): 
 
 /** 抽象消息段（协议无关） */
 export interface ParsedSegment {
-  type: 'text' | 'at' | 'face' | 'image' | 'audio' | 'reply' | 'video';
+  type: 'text' | 'at' | 'image' | 'audio' | 'reply' | 'video';
   data: Record<string, unknown>;
 }
 
@@ -350,7 +347,7 @@ export function collectForwardSegments(segments: OneBotMessageSegment[]): Array<
  * 支持的标记：
  * - `<at id="QQ">昵称</at>` / `<at self id="QQ">昵称</at>` → @提及（新格式）
  * - `<at>QQ</at>` / `<at self>QQ</at>` → @提及（旧格式/无昵称兼容）
- * - `<face id="N"/>` → QQ 表情
+ * - `<face …/>` → 丢弃（不产出消息段）
  * - `<image url="..."/>` → 图片
  * - `<record url="..."/>` → 语音
  * - `<video url="..."/>` → 视频
@@ -407,9 +404,6 @@ export function toV11Segments(segments: ParsedSegment[]): OneBotMessageSegment[]
       case 'at':
         result.push({ type: 'at', data: { qq: seg.data.id === 'all' ? 'all' : Number(seg.data.id) || seg.data.id } });
         break;
-      case 'face':
-        result.push({ type: 'face', data: { id: Number(seg.data.id) || 0 } });
-        break;
       case 'image':
         result.push({ type: 'image', data: { file: seg.data.url } });
         break;
@@ -441,10 +435,6 @@ export function toV12Segments(segments: ParsedSegment[]): OneBotMessageSegment[]
         } else {
           result.push({ type: 'mention', data: { user_id: String(seg.data.id) } });
         }
-        break;
-      case 'face':
-        // v12 无标准 face 类型，降级为文本
-        result.push({ type: 'text', data: { text: `[表情:${seg.data.id}]` } });
         break;
       case 'image':
         result.push({ type: 'image', data: { file_id: String(seg.data.url) } });

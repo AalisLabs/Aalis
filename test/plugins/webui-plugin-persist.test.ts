@@ -12,14 +12,12 @@ import {
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import { type ConfigProvider, createConfigStore } from '../../packages/runtime/src/config-store.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
+import { captureRoutes } from '../fixtures/webui-routes.js';
 
 // 管理动作只改运行态；WebUI 的启停与改配置路由在动作成功后自己写配置文档并落盘。
 // 这里用真实 App 与真实路由：按落盘的文档重建 App，状态要与重启前一致。
 // 路由挂在一个插件的激活上（与 webui-server 同样经 uses 取服务），也覆盖经自己的路由禁用自己。
 // 登记一律按文档取配置与禁用标记（与 runtime 发现驱动的登记同一口径），core 不读文档。
-
-type Handler = (req: unknown, res: unknown, next: () => Promise<void>) => unknown;
-type Reply = { status: number; body?: unknown };
 
 const silent: Logger = { debug() {}, info() {}, warn() {}, error() {}, child: () => silent };
 const apps: App[] = [];
@@ -48,23 +46,13 @@ function world(config: Partial<AalisConfig>, { provideDoc = true } = {}) {
         store: createConfigStore({ name: 'T', logLevel: 'error', plugins: {}, ...config }, provider),
       };
   apps.push(app);
-  const routes = new Map<string, Handler[]>();
-  const expressApp = new Proxy(
-    {},
-    {
-      get:
-        (_t, method: string) =>
-        (path: string, ...handlers: Handler[]) => {
-          routes.set(`${method.toUpperCase()} ${path}`, handlers);
-        },
-    },
-  );
+  const { expressApp, invoke } = captureRoutes();
   const panel = definePlugin({
     name: 'console',
     uses: { app: optional(appService), plugins: optional(pluginsService), hostConfig: optional(hostConfig) },
     apply(caps) {
       registerPluginRoutes(
-        expressApp as never,
+        expressApp,
         {
           ...caps,
           source: { current: undefined },
@@ -78,28 +66,8 @@ function world(config: Partial<AalisConfig>, { provideDoc = true } = {}) {
       );
     },
   });
-  const call = async (key: string, params: Record<string, string>, body: unknown = {}): Promise<Reply> => {
-    const handlers = routes.get(key);
-    if (!handlers) throw new Error(`${key} 未注册`);
-    const out: Reply = { status: 200 };
-    const res = {
-      status(code: number) {
-        out.status = code;
-        return res;
-      },
-      json(payload: unknown) {
-        out.body = payload;
-        return res;
-      },
-    };
-    let i = 0;
-    const next = async (): Promise<void> => {
-      const h = handlers[i++];
-      if (h) await h({ params, body, headers: {} }, res, next);
-    };
-    await next();
-    return out;
-  };
+  const call = (key: string, params: Record<string, string>, body: unknown = {}) =>
+    invoke(key, { params, body, headers: {} });
   return {
     app,
     store,

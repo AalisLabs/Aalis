@@ -232,6 +232,16 @@ describe('HookRegistry 卡链上报', () => {
     expect(calls).toEqual([['inbound:command', 'ctx-a', 1]]);
   });
 
+  it('未带 warnOnStall 时正常截停不上报：截停是中间件的正当语义', async () => {
+    const calls: unknown[][] = [];
+    const reg = new HookRegistry((...args) => void calls.push(args));
+    reg.register('inbound:command', stalled, 'ctx-a', ++seq);
+    reg.register('inbound:command', async (_d, n) => n(), 'ctx-b', ++seq);
+    expect(await reg.run('inbound:command', {} as never)).toBe(false);
+    expect(await reg.run('inbound:command', {} as never, undefined, {})).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
   it('onStall 自身抛错不打断 run：诊断回调不得否决业务流程', async () => {
     const reg = new HookRegistry(() => {
       throw new Error('sink broken');

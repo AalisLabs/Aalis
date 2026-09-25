@@ -18,7 +18,7 @@
 
 import { type CronEngine, type CronSubscribeOptions, cronEngine, type ValidateResult } from '@aalis/api-cron-engine';
 import { type BoundOf, definePlugin, lifecycle, logger, provide } from '@aalis/core';
-import { matchesCron, normalizeCronExpr, validateCronExpr } from '@aalis/util-cron';
+import { matchesCron, validateCronExpr } from '@aalis/util-cron';
 
 interface CronSubscription {
   id: number;
@@ -151,8 +151,7 @@ function startEngine({ provide, logger, lifecycle }: Caps): void {
         };
       }
       // cron
-      const normalized = normalizeCronExpr(expr);
-      if (!normalized) throw new Error(`非法 cron 表达式: ${expr}`);
+      const normalized = v.normalized;
       const tz = options?.timeZone?.trim() || undefined;
       // 提前验证 tz 可用，薄弱文本验证会静默接受乱填、到了分钟才报
       if (tz) {

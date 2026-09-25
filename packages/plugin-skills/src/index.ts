@@ -6,17 +6,7 @@ import { persona } from '@aalis/api-persona';
 import { createStorageGateway, type StorageService, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type WebuiPage, webuiServer } from '@aalis/api-webui';
-import {
-  type BoundOf,
-  config,
-  definePlugin,
-  defineService,
-  events,
-  lifecycle,
-  logger,
-  optional,
-  provide,
-} from '@aalis/core';
+import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
@@ -341,7 +331,6 @@ const uses = {
   contributions,
   hooks,
   events,
-  lifecycle,
   logger,
   config,
   provide,
@@ -359,7 +348,7 @@ export default definePlugin({
 });
 
 function run(caps: Caps): void {
-  const { tools, webui, persona, contributions, hooks, events, lifecycle, provide } = caps;
+  const { tools, webui, persona, contributions, hooks, events, provide } = caps;
   const logger = caps.logger.child('skills');
   const config = resolveConfig(caps.config);
 
@@ -579,6 +568,17 @@ function run(caps: Caps): void {
     });
   }
 
+  /** 写一个附属文件：校验相对路径与大小上限后落盘，返回规范化后的相对路径 */
+  async function writeSkillFile(dirUri: string, f: SkillFileInput): Promise<string> {
+    const rel = validateSkillRelPath(f.relPath);
+    const byteLen = typeof f.content === 'string' ? Buffer.byteLength(f.content, 'utf-8') : f.content.byteLength;
+    if (byteLen > config.maxSkillBytes) {
+      throw new Error(`附属文件 ${rel} 超出大小限制 ${byteLen}B > ${config.maxSkillBytes}B`);
+    }
+    await storage.writeFile(joinUri(dirUri, rel), typeof f.content === 'string' ? f.content : Buffer.from(f.content));
+    return rel;
+  }
+
   // ── 服务实现 ──
   const service: SkillsService = {
     listSkills() {
@@ -622,17 +622,7 @@ function run(caps: Caps): void {
       await storage.writeFile(joinUri(dirUri, 'SKILL.md'), md);
       // 写入附属文件
       if (input.files && input.files.length > 0) {
-        for (const f of input.files) {
-          const rel = validateSkillRelPath(f.relPath);
-          const byteLen = typeof f.content === 'string' ? Buffer.byteLength(f.content, 'utf-8') : f.content.byteLength;
-          if (byteLen > config.maxSkillBytes) {
-            throw new Error(`附属文件 ${rel} 超出大小限制 ${byteLen}B > ${config.maxSkillBytes}B`);
-          }
-          await storage.writeFile(
-            joinUri(dirUri, rel),
-            typeof f.content === 'string' ? f.content : Buffer.from(f.content),
-          );
-        }
+        for (const f of input.files) await writeSkillFile(dirUri, f);
       }
       const loaded = await loadSkillFromDir(dirUri);
       if (loaded) skillsCache.set(loaded.name, loaded);
@@ -666,17 +656,7 @@ function run(caps: Caps): void {
       }
       await storage.writeFile(joinUri(existing.uri, 'SKILL.md'), md);
       if (updates.files && updates.files.length > 0) {
-        for (const f of updates.files) {
-          const rel = validateSkillRelPath(f.relPath);
-          const byteLen = typeof f.content === 'string' ? Buffer.byteLength(f.content, 'utf-8') : f.content.byteLength;
-          if (byteLen > config.maxSkillBytes) {
-            throw new Error(`附属文件 ${rel} 超出大小限制 ${byteLen}B > ${config.maxSkillBytes}B`);
-          }
-          await storage.writeFile(
-            joinUri(existing.uri, rel),
-            typeof f.content === 'string' ? f.content : Buffer.from(f.content),
-          );
-        }
+        for (const f of updates.files) await writeSkillFile(existing.uri, f);
       }
       const reloaded = await loadSkillFromDir(existing.uri);
       if (reloaded) {
@@ -703,16 +683,7 @@ function run(caps: Caps): void {
     async addSkillFile(skillName, file) {
       const existing = skillsCache.get(skillName);
       if (!existing) return false;
-      const rel = validateSkillRelPath(file.relPath);
-      const byteLen =
-        typeof file.content === 'string' ? Buffer.byteLength(file.content, 'utf-8') : file.content.byteLength;
-      if (byteLen > config.maxSkillBytes) {
-        throw new Error(`附属文件 ${rel} 超出大小限制 ${byteLen}B > ${config.maxSkillBytes}B`);
-      }
-      await storage.writeFile(
-        joinUri(existing.uri, rel),
-        typeof file.content === 'string' ? file.content : Buffer.from(file.content),
-      );
+      const rel = await writeSkillFile(existing.uri, file);
       const reloaded = await loadSkillFromDir(existing.uri);
       if (reloaded) skillsCache.set(reloaded.name, reloaded);
       logger.info(`技能 ${skillName} 已写入附属文件: ${rel}`);
@@ -1199,39 +1170,48 @@ function run(caps: Caps): void {
     },
   });
 
-  // ── 启动：app:ready 后一次全量扫描 + 启用 storage watch 增量同步 ──
-  // 使用 sticky 'app:ready' 事件：bounce 后新实例仍能收到。
+  // ── 跟随 storage：在场即补建目录、挂监听、全量扫描；提供者换代（重启 / 改配置 / 晚上线）时重挂 ──
+  // 换代时 follow 先跑上次返回的清理，关掉挂在旧提供者上的监听。
+  // 首挂放在 sticky 的 app:ready 里并等它扫完，保持「start() 返回时技能已加载」；此刻 storage 不在场则等它上线再挂。
+  async function rescanAndLog(level: 'info' | 'debug', reason: string): Promise<void> {
+    try {
+      await service.rescan();
+      logger[level](`skills ${reason} uri=${skillsUri}，现有 ${skillsCache.size} 个技能`);
+    } catch (err) {
+      logger.warn(`扫描 skills 失败（${reason}）：${err}`);
+    }
+  }
   events.on('app:ready', async () => {
-    try {
-      await rescanSkills();
-      logger.info(`技能系统已启动 (Anthropic Agent Skills) uri=${skillsUri} 已加载 ${skillsCache.size} 个技能`);
-    } catch (err) {
-      logger.warn(`首次扫描 skills 失败：${err}`);
-    }
-    // 监听变化 → 标脏 → 按需重扫（去抖靠 storage 层）
-    // 首启目录尚不存在时 watch 会 ENOENT：先补建；与监听分开，mkdir 失败（只读根 / 符号链接）不连带放弃监听
-    try {
-      await storage.stat(skillsUri);
-    } catch {
-      try {
-        await storage.mkdir(skillsUri);
-      } catch {
-        /* 建不了就照旧：下面的监听会给出失败原因 */
-      }
-    }
-    try {
-      const unwatch = storage.watch?.(skillsUri, async () => {
+    let first: Promise<void> | undefined;
+    caps.storage.follow(() => {
+      let off: (() => void) | undefined;
+      let cancelled = false;
+      const task = (async () => {
+        // 首启目录尚不存在时 watch 会 ENOENT：先补建；与监听分开，mkdir 失败（只读根 / 符号链接）不连带放弃监听
         try {
-          await rescanSkills();
-          compiledTriggers.clear();
-          logger.debug(`skills 目录变化，已重新扫描，现有 ${skillsCache.size} 个技能`);
-        } catch (err) {
-          logger.warn(`重扫 skills 失败：${err}`);
+          await storage.stat(skillsUri);
+        } catch {
+          try {
+            await storage.mkdir(skillsUri);
+          } catch {
+            /* 建不了就照旧：下面的监听会给出失败原因 */
+          }
         }
-      });
-      if (unwatch) lifecycle.onDispose(unwatch);
-    } catch (err) {
-      logger.warn(`skills 目录监听启动失败，请手动调用 skill_rescan: ${err}`);
-    }
+        if (cancelled) return;
+        // 先挂监听再扫描：扫描期间的改动不会漏掉。去抖靠 storage 层
+        try {
+          off = storage.watch?.(skillsUri, () => void rescanAndLog('debug', '目录变化，已重新扫描'));
+        } catch (err) {
+          logger.warn(`skills 目录监听启动失败，请手动调用 skill_rescan: ${err}`);
+        }
+        await rescanAndLog('info', '已扫描');
+      })();
+      first ??= task;
+      return () => {
+        cancelled = true;
+        off?.();
+      };
+    });
+    await first;
   });
 }

@@ -119,12 +119,6 @@ interface OllamaMessage {
   content: string;
   thinking?: string;
   images?: string[];
-  /**
-   * 纯 base64 音频（不带 data: 前缀）。仅在“带音频”请求中使用：
-   * 这种请求会被本插件自动改路到 OpenAI 兼容的 /v1/chat/completions +
-   * input_audio 内容块（Ollama v0.20.0+）。原生 /api/chat 不支持音频。
-   */
-  audios?: string[];
   tool_calls?: OllamaToolCall[];
 }
 
@@ -263,13 +257,17 @@ class OllamaClient {
     }
   }
 
-  async chat(model: string, request: ChatModelRequest, defaultThinking: boolean): Promise<ChatResponse> {
-    // 包含音频输入 → 改走 OpenAI 兼容的 /v1/chat/completions（/api/chat 不支持 audios）
-    if (request.messages.some(m => m.audios && m.audios.length > 0)) {
-      return this.chatOpenAIWithAudio(model, request);
-    }
-    // 与 chatStream 一致先走 prepareLLMMessages（归一 role + 拼 kind/自定义 role 内容前缀），否则非流式丢
-    // [系统通知]/[跨会话委派] 等前缀。
+  /**
+   * chat / chatStream 共用的 /api/chat 请求体（两侧只差 stream 标志；分开写曾让两侧漂移）。
+   * 先走 prepareLLMMessages（归一 role + 拼 kind/自定义 role 内容前缀），否则丢
+   * [系统通知]/[跨会话委派] 等前缀。
+   */
+  private async buildRequestBody(
+    model: string,
+    request: ChatModelRequest,
+    defaultThinking: boolean,
+    stream: boolean,
+  ): Promise<{ body: Record<string, unknown>; messages: OllamaMessage[]; tools?: OllamaTool[]; shouldThink: boolean }> {
     const messages = await Promise.all(
       prepareLLMMessages(request.messages).map(m => this.toOllamaMessage(m, request.requireImages === true)),
     );
@@ -278,7 +276,7 @@ class OllamaClient {
     const body: Record<string, unknown> = {
       model,
       messages,
-      stream: false,
+      stream,
       options: {
         temperature: request.temperature ?? this.temperature,
         num_predict: request.maxTokens ?? this.maxTokens,
@@ -297,6 +295,15 @@ class OllamaClient {
     // 仅省略字段会被模型默认启用思考，导致 content 为空。
     const shouldThink = request.think !== undefined ? request.think : defaultThinking;
     body.think = shouldThink;
+    return { body, messages, tools, shouldThink };
+  }
+
+  async chat(model: string, request: ChatModelRequest, defaultThinking: boolean): Promise<ChatResponse> {
+    // 包含音频输入 → 改走 OpenAI 兼容的 /v1/chat/completions（/api/chat 不支持 audios）
+    if (request.messages.some(m => m.audios && m.audios.length > 0)) {
+      return this.chatOpenAIWithAudio(model, request);
+    }
+    const { body, messages, tools, shouldThink } = await this.buildRequestBody(model, request, defaultThinking, false);
 
     this.logger.debug(
       `请求 Ollama${shouldThink ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`,
@@ -370,31 +377,7 @@ class OllamaClient {
       };
       return;
     }
-    const messages = await Promise.all(
-      prepareLLMMessages(request.messages).map(m => this.toOllamaMessage(m, request.requireImages === true)),
-    );
-    const tools = request.tools?.map(t => this.toOllamaTool(t));
-
-    const body: Record<string, unknown> = {
-      model,
-      messages,
-      stream: true,
-      options: {
-        temperature: request.temperature ?? this.temperature,
-        num_predict: request.maxTokens ?? this.maxTokens,
-        num_ctx: this.contextLength,
-      },
-      keep_alive: this.keepAlive,
-    };
-
-    if (tools && tools.length > 0) {
-      body.tools = tools;
-    }
-
-    // 启用原生思考模式（调用方可通过 request.think === false 显式关闭）
-    // 必须显式传 think:false 才能关闭原生 thinking 模型的思考。
-    const shouldThink = request.think !== undefined ? request.think : defaultThinking;
-    body.think = shouldThink;
+    const { body, messages, shouldThink } = await this.buildRequestBody(model, request, defaultThinking, true);
 
     this.logger.debug(`流式请求 Ollama${shouldThink ? ' [think]' : ''}: ${body.model}, ${messages.length} 条消息`);
 
@@ -612,22 +595,13 @@ class OllamaClient {
 
   /**
    * 将图片字符串解析为 Ollama 所需的纯 base64 格式。
-   * 支持 data URI、HTTP(S) URL、纯 base64、文件路径。
-   * 返回 null 表示图片无法获取。
-   */
-  private resolveImage(img: string): Promise<string | null> {
-    return this.resolveBinary(img, 'image');
-  }
-
-  /**
-   * 通用二进制资源解析（图片 / 音频）。
-   * 支持 data URI、HTTP(S) URL、纯 base64、文件路径。返回 null 表示获取失败。
+   * 支持 data URI、HTTP(S) URL、纯 base64、文件路径。返回 null 表示图片无法获取。
    * 所有返回都会去除空白字符（Ollama 校验时不容忍 base64 内的换行/空格，
    * 否则会返回 `illegal base64 data at input byte N` 错误）。
    */
-  private async resolveBinary(data: string, label: 'image' | 'audio'): Promise<string | null> {
+  private async resolveImage(img: string): Promise<string | null> {
     const sanitize = (b64: string) => b64.replace(/[\s\r\n]+/g, '');
-    const trimmed = data.trim();
+    const trimmed = img.trim();
 
     // data URI → 提取 base64（兼容多参数格式如 data:image/png;charset=utf-8;base64,...）
     const dataMatch = trimmed.match(/^data:[^,]*;base64,(.+)$/);
@@ -639,19 +613,17 @@ class OllamaClient {
       try {
         const res = await safeFetch(trimmed, { signal: AbortSignal.timeout(30000) });
         if (!res.ok) {
-          this.logger.warn(`下载${label === 'image' ? '图片' : '音频'}失败 (${res.status}): ${trimmed}`);
+          this.logger.warn(`下载图片失败 (${res.status}): ${trimmed}`);
           return null;
         }
         const buf = await readBodyCapped(res, MAX_REMOTE_BINARY_BYTES);
         if (!buf) {
-          this.logger.warn(
-            `下载${label === 'image' ? '图片' : '音频'}超过体积上限 (${MAX_REMOTE_BINARY_BYTES}B)，已放弃: ${trimmed}`,
-          );
+          this.logger.warn(`下载图片超过体积上限 (${MAX_REMOTE_BINARY_BYTES}B)，已放弃: ${trimmed}`);
           return null;
         }
         return buf.toString('base64');
       } catch (err) {
-        this.logger.warn(`下载${label === 'image' ? '图片' : '音频'}异常: ${trimmed}`, err);
+        this.logger.warn(`下载图片异常: ${trimmed}`, err);
         return null;
       }
     }
@@ -715,12 +687,6 @@ class OllamaClient {
       if (valid.length > 0) ollamaMsg.images = valid;
     }
 
-    // 音频：Ollama 原生 /api/chat 不支持 audios，有音频时会在 chat() 中
-    // 改走 OpenAI 兼容的 /v1/chat/completions 路径。这里只透传字段。
-    if (msg.audios && msg.audios.length > 0 && msg.role === 'user') {
-      ollamaMsg.audios = msg.audios.map(stripAudioDataPrefix);
-    }
-
     // 传递工具调用（assistant 消息中的）
     if (msg.toolCalls && msg.toolCalls.length > 0) {
       ollamaMsg.tool_calls = msg.toolCalls.map(tc => ({
@@ -757,13 +723,10 @@ class OllamaClient {
         const role = toLLMRole(m.role);
         const blocks: Array<Record<string, unknown>> = [];
         // Modality order：Ollama 官方 best practice 要求 image/audio content
-        // 必须在 text 之前。参见 /memories/repo/aalis-ollama-gemma4-audio.md
+        // 必须在 text 之前。
         if (m.images && m.images.length > 0 && m.role === 'user') {
-          for (const url of await this.resolveImages(m.images, request.requireImages === true)) {
-            blocks.push({
-              type: 'image_url',
-              image_url: { url: url.startsWith('http') ? url : `data:image/png;base64,${url}` },
-            });
+          for (const b64 of await this.resolveImages(m.images, request.requireImages === true)) {
+            blocks.push({ type: 'image_url', image_url: { url: `data:image/png;base64,${b64}` } });
           }
         }
         if (m.audios && m.audios.length > 0 && m.role === 'user') {
@@ -791,7 +754,6 @@ class OllamaClient {
     // Ollama 0.20+ thinking 控制：OpenAI 兼容路径只认 reasoning_effort，
     // 不认 /api/chat 的 think 字段。think=false → reasoning_effort: "none"
     // 节省 ~5-8x completion tokens（实测 935 → 155）。
-    // 详见 /memories/repo/aalis-ollama-gemma4-audio.md
     if (request.think === false) {
       body.reasoning_effort = 'none';
     }
@@ -997,15 +959,17 @@ function resolveCapabilities(
     if (isGemma4Audio) out.add(Audio);
     return [...out];
   }
+  // 名称明示视觉（llava / vision / vl）的先于前缀匹配判定：否则 llama3.2-vision 会先命中
+  // llama3.2、qwen2.5vl 先命中 qwen2.5，丢掉 Vision
+  if (baseName.includes('llava') || baseName.includes('vision') || /(?:^|[\d._-])vl(?:$|[\d._-])/.test(baseName)) {
+    return [Chat, Streaming, Vision];
+  }
   for (const [known, caps] of Object.entries(MODEL_CAPABILITIES)) {
     if (baseName.startsWith(known)) {
       const out = new Set<LLMCapability>(caps);
       if (isGemma4Audio) out.add(Audio);
       return [...out];
     }
-  }
-  if (baseName.includes('llava') || baseName.includes('vision')) {
-    return [Chat, Streaming, Vision];
   }
   // 4. 最后兜底:provider 默认 + Chat
   const out = new Set<LLMCapability>(providerCaps ?? []);

@@ -5,26 +5,11 @@ import { memory } from '../../packages/api-memory/src/index.js';
 import { type SessionManagerService, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { fakeMemory } from '../fixtures/session-memory.js';
 
 // 背景（C11）：自动标题监听在「会话不存在」时只打一条 warn 就返回，而平台派生会话
 // （cli-default、OneBot 会话 id）从不经 createSession 预建 —— 于是 CLI 会话永远没有标题，
 // 且每条消息告警一次。契约：缺档时先 ensureSession 兜底建档再生成标题（与 createChildSession 同路）。
-
-/** 只实现 SessionManager 用到的方法的假 memory。 */
-function fakeMemory() {
-  const meta = new Map<string, Record<string, unknown>>();
-  return {
-    listMetadata: async () => [...meta].map(([key, data]) => ({ key, data })),
-    commitMetadata: async (ops: Array<{ op: string; key: string; data?: Record<string, unknown> }>) => {
-      for (const o of ops) {
-        if (o.op === 'put' && o.data) meta.set(o.key, o.data);
-        else if (o.op === 'del') meta.delete(o.key);
-      }
-    },
-    getHistory: async () => [],
-    clearSession: async () => {},
-  };
-}
 
 async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });

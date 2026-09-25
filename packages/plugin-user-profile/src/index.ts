@@ -335,14 +335,14 @@ interface UserProfileConfig {
   maxInstructionCharsPerItem: number;
 }
 
-/** 生成稳定短 ID（6 字符 base36，对 30 条以内规模碰撞概率极低） */
-function genFactId(existing: Set<string>): string {
+/** 生成稳定短 ID（6 字符 base36，对 30 条以内规模碰撞概率极低）；前缀 'f' 为事实、'i' 为指令 */
+function genShortId(prefix: 'f' | 'i', existing: Set<string>): string {
   for (let i = 0; i < 8; i++) {
-    const id = `f${Math.random().toString(36).slice(2, 7)}`;
+    const id = `${prefix}${Math.random().toString(36).slice(2, 7)}`;
     if (!existing.has(id)) return id;
   }
   // 极端兜底：加时间戳后缀
-  return `f${Date.now().toString(36).slice(-5)}`;
+  return `${prefix}${Date.now().toString(36).slice(-5)}`;
 }
 
 function decimalPlaces(value: number): number {
@@ -558,15 +558,6 @@ function registerUserProfile({
     return s.length > cfg.maxInstructionCharsPerItem ? `${s.slice(0, cfg.maxInstructionCharsPerItem)}…` : s;
   }
 
-  /** 生成 Instruction 短 ID（与 Fact 同前缀但带 'i' 区分，便于日志中识别） */
-  function genInstructionId(existing: Set<string>): string {
-    for (let i = 0; i < 8; i++) {
-      const id = `i${Math.random().toString(36).slice(2, 7)}`;
-      if (!existing.has(id)) return id;
-    }
-    return `i${Date.now().toString(36).slice(-5)}`;
-  }
-
   function parseInstructionArray(raw: unknown[]): Instruction[] {
     const usedIds = new Set<string>();
     const list: Instruction[] = [];
@@ -575,8 +566,8 @@ function registerUserProfile({
       const obj = item as Record<string, unknown>;
       const text = typeof obj.text === 'string' ? obj.text.trim() : '';
       if (!text) continue;
-      let id = typeof obj.id === 'string' && obj.id.trim() ? obj.id.trim() : genInstructionId(usedIds);
-      while (usedIds.has(id)) id = genInstructionId(usedIds);
+      let id = typeof obj.id === 'string' && obj.id.trim() ? obj.id.trim() : genShortId('i', usedIds);
+      while (usedIds.has(id)) id = genShortId('i', usedIds);
       usedIds.add(id);
       const updatedAt = typeof obj.updatedAt === 'number' ? obj.updatedAt : 0;
       const observedAt = typeof obj.observedAt === 'number' ? obj.observedAt : updatedAt || undefined;
@@ -651,7 +642,7 @@ function registerUserProfile({
     for (const a of add) {
       const text = clipInstructionText(a.text);
       if (textSet.has(text)) continue;
-      const id = genInstructionId(usedIds);
+      const id = genShortId('i', usedIds);
       usedIds.add(id);
       byId.set(id, {
         id,
@@ -735,7 +726,7 @@ function registerUserProfile({
         continue;
       }
       let id = obj.id.trim();
-      while (usedIds.has(id)) id = genFactId(usedIds);
+      while (usedIds.has(id)) id = genShortId('f', usedIds);
       usedIds.add(id);
       const cat =
         typeof obj.category === 'string' && (KNOWN_CATEGORIES as string[]).includes(obj.category)
@@ -817,6 +808,57 @@ function registerUserProfile({
   function normalizeCategory(v: unknown): FactCategory | undefined {
     if (typeof v !== 'string') return undefined;
     return (KNOWN_CATEGORIES as string[]).includes(v) ? (v as FactCategory) : undefined;
+  }
+
+  /** 解析 LLM 输出里的 add / update / remove 三类事实操作。sourceQuote 原样带出，是否校验由调用方决定；它不入库（mergeFactList 逐字段构造 Fact） */
+  function parseFactOps(parsed: unknown): ExtractResult {
+    const obj = parsed as { add?: unknown; update?: unknown; remove?: unknown };
+    const add: ExtractAddItem[] = Array.isArray(obj.add)
+      ? (obj.add as unknown[]).flatMap(x => {
+          if (!x || typeof x !== 'object') return [];
+          const o = x as Record<string, unknown>;
+          const t = typeof o.text === 'string' ? o.text.trim() : '';
+          if (!t) return [];
+          const category = normalizeCategory(o.category);
+          const sourceQuote = typeof o.sourceQuote === 'string' ? o.sourceQuote.trim() : '';
+          return [
+            {
+              text: t,
+              category,
+              temporality: normalizeTemporality(o.temporality, category),
+              timeHint: normalizeTextField(o.timeHint),
+              sourceQuote,
+            },
+          ];
+        })
+      : [];
+    const update: ExtractUpdateItem[] = Array.isArray(obj.update)
+      ? (obj.update as unknown[]).flatMap(x => {
+          if (!x || typeof x !== 'object') return [];
+          const o = x as Record<string, unknown>;
+          const id = typeof o.id === 'string' ? o.id.trim() : '';
+          const t = typeof o.text === 'string' ? o.text.trim() : '';
+          if (!id || !t) return [];
+          const category = normalizeCategory(o.category);
+          const sourceQuote = typeof o.sourceQuote === 'string' ? o.sourceQuote.trim() : '';
+          return [
+            {
+              id,
+              text: t,
+              category,
+              temporality: normalizeTemporality(o.temporality, category),
+              timeHint: normalizeTextField(o.timeHint),
+              sourceQuote,
+            },
+          ];
+        })
+      : [];
+    const remove: string[] = Array.isArray(obj.remove)
+      ? (obj.remove as unknown[])
+          .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+          .map(s => s.trim())
+      : [];
+    return { add, update, remove };
   }
 
   /** 调用 LLM 从历史中提取/修订事实，返回 add / update / remove 三类操作。 */
@@ -926,56 +968,7 @@ function registerUserProfile({
         }
         logger.debug('[user-profile] LLM 重试后解析成功');
       }
-      const parsedObj = parsed as {
-        add?: unknown;
-        update?: unknown;
-        remove?: unknown;
-      };
-      const add: ExtractAddItem[] = Array.isArray(parsedObj.add)
-        ? (parsedObj.add as unknown[]).flatMap(x => {
-            if (!x || typeof x !== 'object') return [];
-            const o = x as Record<string, unknown>;
-            const t = typeof o.text === 'string' ? o.text.trim() : '';
-            if (!t) return [];
-            const category = normalizeCategory(o.category);
-            const sourceQuote = typeof o.sourceQuote === 'string' ? o.sourceQuote.trim() : '';
-            return [
-              {
-                text: t,
-                category,
-                temporality: normalizeTemporality(o.temporality, category),
-                timeHint: normalizeTextField(o.timeHint),
-                sourceQuote,
-              },
-            ];
-          })
-        : [];
-      const update: ExtractUpdateItem[] = Array.isArray(parsedObj.update)
-        ? (parsedObj.update as unknown[]).flatMap(x => {
-            if (!x || typeof x !== 'object') return [];
-            const o = x as Record<string, unknown>;
-            const id = typeof o.id === 'string' ? o.id.trim() : '';
-            const t = typeof o.text === 'string' ? o.text.trim() : '';
-            if (!id || !t) return [];
-            const category = normalizeCategory(o.category);
-            const sourceQuote = typeof o.sourceQuote === 'string' ? o.sourceQuote.trim() : '';
-            return [
-              {
-                id,
-                text: t,
-                category,
-                temporality: normalizeTemporality(o.temporality, category),
-                timeHint: normalizeTextField(o.timeHint),
-                sourceQuote,
-              },
-            ];
-          })
-        : [];
-      const remove: string[] = Array.isArray(parsedObj.remove)
-        ? (parsedObj.remove as unknown[])
-            .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
-            .map(s => s.trim())
-        : [];
+      const { add, update, remove } = parseFactOps(parsed);
 
       // sourceQuote 校验：quote 可能跨多条消息（LLM 用 \n 拼接），
       // 因此按行拆分，每行（非空）都必须能在「目标用户」语料中找到 normalize 后的子串。
@@ -1006,18 +999,7 @@ function registerUserProfile({
       };
       const validatedAdd = add.filter(item => validateSourceQuote(item, 'add'));
       const validatedUpdate = update.filter(item => validateSourceQuote(item, 'update'));
-      // 剥除 sourceQuote，不入库
-      const stripQuote = <T extends { sourceQuote?: string }>(item: T): Omit<T, 'sourceQuote'> => {
-        const { sourceQuote: _omit, ...rest } = item;
-        void _omit;
-        return rest;
-      };
-
-      return {
-        add: validatedAdd.map(stripQuote) as ExtractAddItem[],
-        update: validatedUpdate.map(stripQuote) as ExtractUpdateItem[],
-        remove,
-      };
+      return { add: validatedAdd, update: validatedUpdate, remove };
     } catch (err) {
       logger.debug(`事实提取 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
       return empty;
@@ -1099,7 +1081,7 @@ function registerUserProfile({
           updatedAt: now,
         });
       } else {
-        const id = genFactId(usedIds);
+        const id = genShortId('f', usedIds);
         usedIds.add(id);
         byId.set(id, {
           id,
@@ -1118,7 +1100,7 @@ function registerUserProfile({
     for (const a of add) {
       const text = clipText(a.text);
       if (textSet.has(text)) continue;
-      const id = genFactId(usedIds);
+      const id = genShortId('f', usedIds);
       usedIds.add(id);
       byId.set(id, {
         id,
@@ -1142,11 +1124,6 @@ function registerUserProfile({
     return merged;
   }
 
-  /** 合并 facts 部分（向后兼容包装） */
-  function mergeFacts(existing: Fact[], ops: ExtractResult): Fact[] {
-    return mergeFactList(existing, ops.add, ops.update, ops.remove, cfg.maxFactsPerUser);
-  }
-
   /**
    * 后台触发一次事实提取（并发互斥）。
    * userId/platform/nickname 直接由调用方传入，不再从 history 里猜。
@@ -1163,7 +1140,7 @@ function registerUserProfile({
     inflightExtractions.add(userKey);
     const mem = memory.current;
     try {
-      if (!mem?.getHistory) return;
+      if (!mem) return;
       const rawHistory = await mem.getHistory(sessionId, cfg.historyForExtraction);
       // 跨会话委派是另一个 agent 实例发出的指令·不是该用户发言，不能作为他的用户存档提取语料
       const history = rawHistory.filter(m => m.kind !== WellKnownKinds.CrossSessionDelegation);
@@ -1178,7 +1155,7 @@ function registerUserProfile({
       const ops = await llmExtractFacts(history, profile.facts, nickname, userId, platform);
       const hasFactOps = ops.add.length > 0 || ops.update.length > 0 || ops.remove.length > 0;
       if (!hasFactOps) return;
-      const newFacts = mergeFacts(profile.facts, ops);
+      const newFacts = mergeFactList(profile.facts, ops.add, ops.update, ops.remove, cfg.maxFactsPerUser);
       // 重新读取最新档案，避免覆盖提取期间（LLM 调用时）已写入的 relationScore 等字段
       const freshProfile = (await loadProfile(mem, userKey)) ?? profile;
       await saveProfile(mem, userKey, {
@@ -1280,49 +1257,7 @@ function registerUserProfile({
         logger.warn(`[user-profile] 自反思 LLM 输出无法解析为 JSON，原文前 200 字：${text.slice(0, 200)}`);
         return empty;
       }
-      const obj = parsed as { add?: unknown; update?: unknown; remove?: unknown };
-      const add: ExtractAddItem[] = Array.isArray(obj.add)
-        ? (obj.add as unknown[]).flatMap(x => {
-            if (!x || typeof x !== 'object') return [];
-            const o = x as Record<string, unknown>;
-            const t = typeof o.text === 'string' ? o.text.trim() : '';
-            if (!t) return [];
-            const category = normalizeCategory(o.category);
-            return [
-              {
-                text: t,
-                category,
-                temporality: normalizeTemporality(o.temporality, category),
-                timeHint: normalizeTextField(o.timeHint),
-              },
-            ];
-          })
-        : [];
-      const update: ExtractUpdateItem[] = Array.isArray(obj.update)
-        ? (obj.update as unknown[]).flatMap(x => {
-            if (!x || typeof x !== 'object') return [];
-            const o = x as Record<string, unknown>;
-            const id = typeof o.id === 'string' ? o.id.trim() : '';
-            const t = typeof o.text === 'string' ? o.text.trim() : '';
-            if (!id || !t) return [];
-            const category = normalizeCategory(o.category);
-            return [
-              {
-                id,
-                text: t,
-                category,
-                temporality: normalizeTemporality(o.temporality, category),
-                timeHint: normalizeTextField(o.timeHint),
-              },
-            ];
-          })
-        : [];
-      const remove: string[] = Array.isArray(obj.remove)
-        ? (obj.remove as unknown[])
-            .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
-            .map(s => s.trim())
-        : [];
-      return { ...empty, add, update, remove };
+      return parseFactOps(parsed);
     } catch (err) {
       logger.debug(`自反思 LLM 调用失败：${err instanceof Error ? err.message : String(err)}`);
       return empty;
@@ -1336,7 +1271,7 @@ function registerUserProfile({
     selfReflectionInflight = true;
     try {
       const mem = memory.current;
-      if (!mem?.getHistory) return;
+      if (!mem) return;
       const rawHistory = await mem.getHistory(sessionId, cfg.selfReflectHistory);
       const history = rawHistory.filter(m => m.kind !== WellKnownKinds.CrossSessionDelegation);
       // 至少需要一些 assistant 发言作为"自反思"的材料
@@ -1564,7 +1499,7 @@ function registerUserProfile({
     instructionExtractionInflight = true;
     try {
       const mem = memory.current;
-      if (!mem?.getHistory) return;
+      if (!mem) return;
       const rawHistory = await mem.getHistory(sessionId, cfg.instructionHistoryForExtraction);
       const history = rawHistory.filter(m => m.kind !== WellKnownKinds.CrossSessionDelegation);
       if (history.length === 0) return;
@@ -1876,12 +1811,7 @@ function registerUserProfile({
         if (others.size > 0) {
           const snippets: string[] = [];
           for (const [key, info] of others) {
-            let profile: UserProfile | undefined;
-            try {
-              profile = await loadProfile(mem, key);
-            } catch {
-              /* 静默跳过 */
-            }
+            const profile = await loadProfile(mem, key);
             if (!profile?.facts.some(isFactActive)) continue;
             const label = info.nickname ? `${info.nickname}（${info.userId}）` : info.userId;
             const relationLine = renderRelationLine(profile);

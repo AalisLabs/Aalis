@@ -1,4 +1,3 @@
-import type { Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import { createAuthSystem } from '../../packages/plugin-webui-server/src/auth.js';
 import { createRouteGate, type RouteGate } from '../../packages/plugin-webui-server/src/gate.js';
@@ -8,12 +7,6 @@ import { createRouteGate, type RouteGate } from '../../packages/plugin-webui-ser
 //
 // 纯 middleware 单测：用最小 req/res mock 走登录/识别/注销流程，不起 HTTP 服务器。
 // ════════════════════════════════════════════════════════════
-
-function makeLogger(): Logger {
-  const noop = () => undefined;
-  const l = { debug: noop, info: noop, warn: noop, error: noop, child: () => l } as unknown as Logger;
-  return l;
-}
 
 interface MockRes {
   statusCode: number;
@@ -81,7 +74,7 @@ function extractCookie(res: MockRes, name: string): string | undefined {
 const TOKEN = 'test-token-abc';
 
 function makeAuth() {
-  return createAuthSystem(TOKEN, makeLogger());
+  return createAuthSystem(() => TOKEN);
 }
 
 async function run(

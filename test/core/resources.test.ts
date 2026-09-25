@@ -1,17 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Logger } from '../../packages/core/src/infrastructure/logger.js';
 import { Resources } from '../../packages/core/src/infrastructure/resources.js';
+import { deferred } from '../helpers/deferred.js';
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
-function deferred() {
-  let resolve!: () => void;
-  let reject!: (error: Error) => void;
-  const promise = new Promise<void>((done, fail) => {
-    resolve = done;
-    reject = fail;
-  });
-  return { promise, resolve, reject };
-}
 
 function world(options: { beforeCleanup?: () => void; afterCleanup?: () => void } = {}) {
   const warnings: unknown[][] = [];

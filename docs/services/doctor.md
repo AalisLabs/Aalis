@@ -43,7 +43,7 @@ export interface CheckSpec {
   category: CheckCategory;
   label?: string;        // 仅用于日志/调试显示
   pluginName?: string;   // 来源插件名；doctor.registerCheck 会自动注入 lifecycle.id
-  run(ctx: Context): Promise<CheckResult | CheckResult[]> | CheckResult | CheckResult[];
+  run(): Promise<CheckResult | CheckResult[]> | CheckResult | CheckResult[]; // 用到的能力由注册方闭包带入
 }
 ```
 
@@ -128,11 +128,7 @@ export default definePlugin({
 
 ### 必须同步两处清单元数据
 
-doctor 作为可选依赖，要让 PluginManager 在 doctor 上下线时正确联动，你需要在 `package.json` 的 `aalis.service.optional` 里也写上 `'doctor'`，与代码里的 `uses` 保持双源一致。双源规则见 [manifest-metadata](../concepts/manifest-metadata.md)。
-
-::: warning
-两处清单必须同时写。只在代码里声明 `uses optional` 而漏了 `package.json` 的 `aalis.service.optional`（或反之），PluginManager 在 doctor 上下线时的联动就会失效，且不会给出显式报错。
-:::
+运行时联动完全由代码里的 `uses` 决定。`package.json` 的 `aalis.service.optional` 也要写上 `'doctor'`：它供市场做装前披露，须与 `uses` 保持一致（第一方由 manifest-parity 测试守），不影响运行时联动。双源规则见 [manifest-metadata](../concepts/manifest-metadata.md)。
 
 ```jsonc
 // package.json
@@ -244,7 +240,7 @@ const report = await doctor.current?.runChecks();
 const checks = doctor.current?.getLastReport()?.checks ?? [];
 ```
 
-官方 doctor 页面的 `actions` 就是这个模式：`?.` 链式吞掉服务缺失，`?? []` 兜底空数组。订阅式 consumer 监听事件即可：
+第三方 consumer 用这个模式：`?.` 链式吞掉服务缺失，`?? []` 兜底空数组。官方 doctor 页面的 `actions` 则直接闭包本次激活的 registry，不去查当前胜出的 doctor。订阅式 consumer 监听事件即可：
 
 ```ts
 import type {} from '@aalis/api-doctor';   // 仅引入事件类型增强
@@ -258,7 +254,7 @@ events.on('doctor:updated', () => refresh());
 ## 6. 能力 / 风险 → 影响
 
 ::: warning 检查项不是隔离沙箱
-`run(ctx)` 拿到的是插件自身的 `Context`，其能力等于你这个插件能做的一切，doctor 不会替你降权。`runChecks` 由 `/doctor` 命令或 WebUI 触发，本质是「以触发者身份跑一遍所有已注册探测」。因此不要在 `run` 里做带副作用或危险的操作，它应当是只读探测。storage 的 `storage.roots` 检查只写一个临时探针文件、随即删除，这是探测可写性的克制做法。
+`run` 在注册方的闭包里执行，能力等于注册插件所能做的一切，doctor 不会替你降权。`runChecks` 由 `/doctor` 命令或 WebUI 触发，本质是「以触发者身份跑一遍所有已注册探测」。因此不要在 `run` 里做带副作用或危险的操作，它应当是只读探测。storage 的 `storage.roots` 检查只写一个临时探针文件、随即删除，这是探测可写性的克制做法。
 :::
 
 - 异常会被聚合器吞成 error 级结果，不向上抛出。`run` 抛错只会让该项显示为 error，不会中断其他检查；但不要依赖抛错来传递信息，正常路径应返回带 `level` 的 `CheckResult`。

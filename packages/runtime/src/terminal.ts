@@ -30,7 +30,7 @@ export function installTerminalStateRestorer(): void {
  * exit 钩子写出的 `\x1b[?1049l` 落在子进程已接管终端之后，把新实例的 TUI 当场踢出备用屏。
  *
  * 摘掉是安全的：父进程停机时 plugin-cli 自己的 `stop()` 已经复原过一次
- * （经 `ctx.onDispose`），这个钩子在该路径上本就是第二次复原。
+ * （经 `lifecycle.onDispose`），这个钩子在该路径上本就是第二次复原。
  * 失败分支（子进程夭折）不得摘——那条路没有别人接管终端。
  */
 export function disarmTerminalStateRestorer(): void {

@@ -1,10 +1,10 @@
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import * as core from '../../packages/core/src/index.js';
+import { runTscProbe } from '../helpers/tsc-probe.js';
 
 // ════════════════════════════════════════════════════════════
 // core 纯度守卫
@@ -17,7 +17,6 @@ import * as core from '../../packages/core/src/index.js';
 // ════════════════════════════════════════════════════════════
 
 const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../packages/core/src');
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 /** 呈现层/政策词汇黑名单：命中即说明词汇正在渗回内核 */
 const BANNED_TOKENS = [
@@ -110,34 +109,6 @@ function* walkTs(dir: string): Generator<string> {
     const p = join(dir, name);
     if (statSync(p).isDirectory()) yield* walkTs(p);
     else if (name.endsWith('.ts')) yield p;
-  }
-}
-
-function runTscProbe(source: string): string[] {
-  // 夹具必须在仓内：tsconfig.test.json 的 rootDir 是仓根，path-mapped 进来的 core 源码要在其下。
-  const dir = mkdtempSync(join(ROOT, 'node_modules', '.aalis-type-probe-'));
-  try {
-    writeFileSync(join(dir, 'fixture.ts'), source);
-    writeFileSync(
-      join(dir, 'tsconfig.json'),
-      JSON.stringify({
-        extends: join(ROOT, 'tsconfig.test.json'),
-        compilerOptions: { noEmit: true },
-        include: [join(dir, 'fixture.ts')],
-      }),
-    );
-    const res = spawnSync(
-      join(ROOT, 'node_modules/.bin/tsc'),
-      ['-p', join(dir, 'tsconfig.json'), '--pretty', 'false'],
-      {
-        cwd: ROOT,
-        encoding: 'utf-8',
-      },
-    );
-    if (res.error) throw res.error;
-    return `${res.stdout ?? ''}${res.stderr ?? ''}`.split('\n').filter(l => l.includes('error TS'));
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
   }
 }
 

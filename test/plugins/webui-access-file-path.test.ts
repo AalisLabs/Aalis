@@ -1,10 +1,11 @@
-import { createServer, request } from 'node:http';
-import type { AddressInfo, Socket } from 'node:net';
+import { request } from 'node:http';
+import type { Socket } from 'node:net';
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
+import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // 启动日志承诺给出 access.txt 的绝对路径（纯 CLI 用户唯一的找法）。
@@ -15,15 +16,6 @@ import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 // ════════════════════════════════════════════════════════════
 
 const ABS = '/tmp/aalis-test-root/webui/access.txt';
-
-/** 取一个空闲端口：webui-server 打日志用的是配置值，port:0 时拿不到真实端口 */
-async function freePort(): Promise<number> {
-  const probe = createServer();
-  await new Promise<void>(r => probe.listen(0, '127.0.0.1', r));
-  const { port } = probe.address() as AddressInfo;
-  await new Promise<void>(r => probe.close(() => r()));
-  return port;
-}
 
 function makeFakeStorage(opts: { failWrite?: boolean } = {}): StorageService & { written: Set<string> } {
   const written = new Set<string>();
@@ -145,6 +137,7 @@ describe('webui-server 启动日志里的 access.txt 绝对路径', () => {
     //
     // 这里不引 ws 客户端（它是 webui-server 的私有依赖，test/ 下既解析不到也没有类型），
     // 直接用 node:http 做升级握手拿到裸 socket，再断言服务端发来了 close 帧（opcode 0x8）。
+    // 预取空闲端口：webui-server 打日志用的是配置值，port:0 时拿不到真实端口。
     const port = await freePort();
     const token = 'test-fixed-token-placeholder';
     const app = new App({

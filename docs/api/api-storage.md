@@ -33,6 +33,9 @@ interface StorageEntry { name; path; uri; isDirectory; size; mtime; ext; }
 interface StorageStat  { ...StorageEntry; birthtime; }
 interface StorageListResult { root: StorageRootInfo; path: string; entries: StorageEntry[]; }
 interface StorageReadStreamResult { stream: Readable; stat: StorageStat; }
+interface StorageWatchEvent { type: 'change'; uri: string; path: string; }
+type StorageWatchListener = (event: StorageWatchEvent) => void;
+type StorageUnwatch = () => void;
 ```
 
 ## 服务接口
@@ -43,6 +46,7 @@ interface StorageService {
   list(uri: string): Promise<StorageListResult>;
   stat(uri: string): Promise<StorageStat>;
   readFile(uri: string, encoding?: BufferEncoding): Promise<string | Buffer>;
+  readFileRange?(uri: string, start: number, end: number): Promise<Buffer>;
   createReadStream(uri: string): Promise<StorageReadStreamResult>;
   writeFile(uri: string, data: string | Buffer): Promise<void>;
   rename(uri: string, newName: string): Promise<string>;
@@ -50,8 +54,11 @@ interface StorageService {
   mkdir(uri: string): Promise<string>;
   delete(uri: string): Promise<void>;
   resolveLocalPath?(uri: string, access?: 'read' | 'write' | 'delete'): Promise<string>;
+  watch?(uri: string, listener: StorageWatchListener): StorageUnwatch;
 }
 ```
+
+`readFileRange` 按字节区间 `[start, end)` 读取，供大文件窗口化访问；提供者未实现时网关抛错，调用方回退 `readFile`（`readTailLines` 已内置该回退）。`watch` 监听文件或目录（目录递归）的变化，返回取消函数；事件可能经过去抖，远程或虚拟根可能不支持。参考实现的监听器随提供者关闭而结束，需要持续监听的消费者用 `storage.follow` 在新提供者上重挂。
 
 描述符 `storage` 是普通调用型：绑定接口是 `ServiceRef<StorageService>`。每个 entry 只负责一个根，以 `entryId = '${激活id}/${rootName}'` 名义 `provide`。上层跨 root 调度用 `createStorageGateway(storage)`（第一参是 `ServiceRef`，不是激活记录）。gateway **不**注册进容器。
 
@@ -75,10 +82,11 @@ export default definePlugin({
 
 ```
 list          .list() + .listRoots()
-read          .readFile() / .createReadStream()
-write         .writeFile() / .rename()
+read          .readFile() / .readFileRange() / .createReadStream()
+write         .writeFile() / .rename() / .move() / .mkdir()
 delete        .delete()
 local-path    .resolveLocalPath() —— shell/code-runner 必需
+watch         .watch()
 ```
 
 这些是按 root 权限位 + 方法是否存在做过滤，不是 DI 能力声明。

@@ -79,4 +79,10 @@ describe('落盘别名跨 rkey 轮换命中', () => {
     rememberLandedAlias(spy, 'image', qq('EhQtwo', 'CAQSKAB1'), 'data/images/s/0123456789abcdef.jpg');
     expect(calls.slice(1)).toEqual([qq('EhQtwo', 'CAQSKAB1'), stripRkey(qq('EhQtwo', 'CAQSKAB1'))]);
   });
+
+  it('media 未装即跳过：不抛（调用点在 try 内，抛出会连带丢掉已落盘的 ref）', () => {
+    expect(() =>
+      rememberLandedAlias(undefined, 'image', qq('EhQnone', 'CAQSKAB1'), 'data/images/s/0123456789abcdef.jpg'),
+    ).not.toThrow();
+  });
 });

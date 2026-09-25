@@ -194,8 +194,8 @@ function platformLabel(platform: string | undefined): string {
   return platform;
 }
 
-/** 剖掉 agent 在某条消息开头注入的临时时间标签（如 "(刚刚) " / "(3 分钟前) "）。
- * 只剖首个括号对，保留后续内容（包括 [发送者] 前缀）。
+/** 剥掉 agent 在某条消息开头注入的临时时间标签（如 "(9/25 14:30) " / "(2025/12/31 23:59) "）。
+ * 只剥首个括号对，保留后续内容（包括 [发送者] 前缀）。
  */
 function stripTimeLabel(content: string): string {
   if (!content) return content;
@@ -252,11 +252,6 @@ function renderMessage(m: Message, max: number): string {
   return `${tag} ${truncate(cleanContent, max)}`;
 }
 
-/** 渲染向量命中（user 或 assistant，按 metadata.role 还原；存量旧向量无 role 按 user）。 */
-function renderMemoryEntry(m: Message, messageMax: number): string {
-  return renderMessage(m, messageMax);
-}
-
 /** 存量委派 META 噪音判据（精确形态）：曾有 proactive 委派文本入库（新增已在索引侧
  * 挡住），它们是 AI 撰写、无 userId，被语义命中会以匿名人形行回流——检索期整体剔除。 */
 function isLegacyDelegateMeta(meta: Record<string, unknown>): boolean {
@@ -270,11 +265,10 @@ function messageKey(sessionId: string, m: Message): string {
   return `${sessionId}|${m.timestamp ?? 0}|${m.role}`;
 }
 
-// ----- 服务类型注册（declaration merging）-----
+// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 // `semantic-memory` 是**能力标记**而非查询 API：它只声明「本实例具备语义检索能力」，
 // 供依赖声明与拓扑排序识别，以及消费方做能力探测。语义检索本身经工具与
 // memory 契约走，不从这里取。如实声明它的真实形状，不臆造一个没人实现的查询接口。
-// ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 /** 存在性标记服务：只表明「语义记忆已就绪」，检索本身走 memory 契约 */
 export const semanticMemory = defineService<{ name: string }>('semantic-memory');
 
@@ -770,7 +764,7 @@ async function run({
         // 5. 按时间排序混排
         const sortedAll = [...collected.values()].sort((a, b) => (a.msg.timestamp ?? 0) - (b.msg.timestamp ?? 0));
 
-        const lines = sortedAll.map(({ msg }) => renderMemoryEntry(msg, cfg.search.perItemMaxChars));
+        const lines = sortedAll.map(({ msg }) => renderMessage(msg, cfg.search.perItemMaxChars));
 
         // 片段含非 user 角色（扩窗带出的 Assistant/Notice/Tool）时在标题行内附加自指说明，
         // 防模型把自己的历史回复当他人发言引用（自我强化事故的入口形态）。
@@ -961,7 +955,7 @@ async function run({
                   ctxArr.push({
                     ts: m.timestamp ?? 0,
                     role: m.role,
-                    text: renderMemoryEntry(m, cfg.search.perItemMaxChars),
+                    text: renderMessage(m, cfg.search.perItemMaxChars),
                   });
                 }
                 if (ctxArr.length > 0) contextBySessionPivot.set(`${sid}|${pivotTs}`, ctxArr);
@@ -987,7 +981,7 @@ async function run({
           const ctxArr = contextBySessionPivot.get(`${sid}|${ts}`);
           const base: Record<string, unknown> = {
             score: Number(r.finalScore.toFixed(4)),
-            text: renderMemoryEntry(m, cfg.search.perItemMaxChars),
+            text: renderMessage(m, cfg.search.perItemMaxChars),
             sessionId: sid,
           };
           if (ctxArr && ctxArr.length > 0) {

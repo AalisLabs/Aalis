@@ -1,6 +1,4 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Logger } from '@aalis/core';
@@ -10,6 +8,7 @@ import { webuiClient } from '../../packages/api-webui/src/index.js';
 import { App, definePlugin, provide } from '../../packages/core/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // 切换前端偏好的处理器要做三件事：改服务偏好、写配置、重挂静态目录。前两件与第三件同属
@@ -17,14 +16,6 @@ import { hostedApp } from '../fixtures/app.js';
 // 「服务解析已选 B、HTTP 静态目录仍挂 A」的不一致，且处理器退出后无人修复。
 // 本文件真起 webui-server，用拒绝落盘的配置文档 provider 钉住「重挂不依赖落盘成功」。
 // ════════════════════════════════════════════════════════════
-
-async function freePort(): Promise<number> {
-  const probe = createServer();
-  await new Promise<void>(r => probe.listen(0, '127.0.0.1', r));
-  const { port } = probe.address() as AddressInfo;
-  await new Promise<void>(r => probe.close(() => r()));
-  return port;
-}
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 

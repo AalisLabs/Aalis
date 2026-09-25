@@ -316,14 +316,6 @@ function computeAccept(caps?: { image: boolean; file: boolean }): string {
   return parts.join(',');
 }
 
-/** 判断 mime 是否为 audio/video，用于送 WS 时分流到 attachments[] */
-function classifyMediaKind(mime?: string): 'audio' | 'video' | null {
-  if (!mime) return null;
-  if (mime.startsWith('audio/')) return 'audio';
-  if (mime.startsWith('video/')) return 'video';
-  return null;
-}
-
 /** 任务计划状态图标 */
 function TodoStatusIcon({ status }: { status: TodoItem['status'] }) {
   switch (status) {

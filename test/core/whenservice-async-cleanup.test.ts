@@ -114,7 +114,7 @@ describe('follow 异步 cleanup', () => {
     });
     expect(attached).toEqual(['A']);
     offA();
-    await sleep(0); // emitQuietly 对齐后，串行交接必须仍停在 A
+    await sleep(0); // notify 对齐后，串行交接必须仍停在 A
     expect(attached, '串行交接：旧 cleanup 还在飞时不得挂上 B').toEqual(['A']);
     expect(state.finished).toBe(false);
     await app.plugins.unload('watcher');
@@ -132,7 +132,7 @@ describe('follow 异步 cleanup', () => {
       return cleanup;
     });
     host.provide(svc, {});
-    await sleep(0); // emitQuietly 的对齐在微任务里，attach 必须先跑起来
+    await sleep(0); // notify 的对齐在微任务里，attach 必须先跑起来
     expect(state.finished).toBe(false);
     await app.plugins.unload('watcher');
     expect(state.finished, '关闭等到了它').toBe(true);

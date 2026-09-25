@@ -37,11 +37,7 @@ function NumberInput({ value, onChange, className }: { value: unknown; onChange:
         setInputStr(v);
         if (v === '' || v === '-') {
           onChange(undefined);
-        } else if (!v.endsWith('.') && !v.endsWith('0') && !isNaN(Number(v))) {
-          // 完整数字：立即通知
-          onChange(Number(v));
         } else if (!v.endsWith('.') && !isNaN(Number(v))) {
-          // 末尾带 0 的小数（如 0.10）也通知，但不改 inputStr
           onChange(Number(v));
         }
       }}
@@ -456,7 +452,7 @@ export function SchemaForm({
   modelCache: Record<string, Array<{ label: string; value: string }>>;
   onFetchModels: (service: string) => void;
   llmProviders?: LLMProviderEntry[];
-  onFetchLLMProviders?: () => void;
+  onFetchLLMProviders: () => void;
 }) {
   return (
     <div className="config-edit-form">
@@ -478,7 +474,7 @@ export function SchemaForm({
                 modelCache={modelCache}
                 onFetchModels={onFetchModels}
                 llmProviders={llmProviders}
-                onFetchLLMProviders={onFetchLLMProviders ?? (() => {})}
+                onFetchLLMProviders={onFetchLLMProviders}
               />
             </div>
           );
@@ -567,7 +563,7 @@ export function SchemaForm({
                         modelCache={modelCache}
                         onFetchModels={onFetchModels}
                         llmProviders={llmProviders}
-                        onFetchLLMProviders={onFetchLLMProviders ?? (() => {})}
+                        onFetchLLMProviders={onFetchLLMProviders}
                       />
                     </div>
                     );
@@ -602,7 +598,7 @@ export function SchemaForm({
                   modelCache={modelCache}
                   onFetchModels={onFetchModels}
                   llmProviders={llmProviders}
-                  onFetchLLMProviders={onFetchLLMProviders ?? (() => {})}
+                  onFetchLLMProviders={onFetchLLMProviders}
                 />
               </div>
               );

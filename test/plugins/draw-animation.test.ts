@@ -261,9 +261,11 @@ describe('draw_animation 工具全流（真运行时：lint 告警 + 检查帧�
           { sessionId: 'onebot:t:group:1' },
         ),
       );
-      // 引导必须是"直接发送"，且明确 analyze_image 非默认——防有人改回"发送前必先自检"（延迟根因）
+      // 引导必须是"直接发送"，核对非默认——防有人改回"发送前必先自检"（延迟根因）；
+      // draw 不依赖 media，看图工具未必在场，文案不点名 analyze_image
       expect(out.message).toMatch(/直接.*send_attachment|可直接.*发送/);
-      expect(out.message).not.toMatch(/发送前.*先.*analyze_image|建议先.*analyze_image/);
+      expect(out.message).not.toMatch(/发送前.*先.*(核对|看)|建议先.*(核对|看)/);
+      expect(out.message).not.toMatch(/analyze_image/);
     } finally {
       await app4.stop();
       rmSync(base4, { recursive: true, force: true });

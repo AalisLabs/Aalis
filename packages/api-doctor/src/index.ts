@@ -3,10 +3,10 @@
  *
  * 设计动机：
  *   plugin-doctor 是开放注册中心（DoctorService.registerCheck）。其它插件应
- *   贡献自己领域的检查项（例如 storage 检查存储根可写、commands 检查指令
- *   覆盖配置是否孤立），而不是把所有逻辑塞回 doctor 内部。
+ *   贡献自己领域的检查项（例如 storage 检查存储根可写、embedding-ollama 检查
+ *   模型可用），而不是把所有逻辑塞回 doctor 内部。
  *
- *   为避免 storage/commands 等下游插件直接 runtime depend 实现包 plugin-doctor
+ *   为避免 storage 等下游插件直接 runtime depend 实现包 plugin-doctor
  *   （会形成「实现包 ↔ 业务插件」的双向耦合），仿照 api-storage /
  *   api-commands 的模式抽出本 api 包，仅含类型 + 服务描述符 `doctor`
  *   （检查项的登记随激活撤回、doctor 未上线时排队到它上线）。

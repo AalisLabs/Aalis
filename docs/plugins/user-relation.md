@@ -29,7 +29,6 @@ export default definePlugin({
     commands: optional(commands),
     webui: optional(webuiServer),
     embedding: optional(embedding),
-    agent: optional(agent),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -235,8 +234,8 @@ $$
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `extractionEnabled` | boolean | `true` | 允许从对话中提取新关系（写入总开关）：**写入总开关**：关闭后插件停止生成任何新关系节点/边（自动触发、手动 /relation extract、Agent upsert_* 工具全部失效）；但 middleware 仍读取并注入旧关系、actions 仍可查/删。若只想停掉"自动触发"而保留手动命令，请用 triggerEveryNMessages=0 而非关此项。彻底卸载请整体停用该插件。 |
-| `triggerEveryNMessages` | number | `20` | 自动触发阈值（每 N 条消息）：**仅控制"自动触发"**：每会话累计 N 条入站消息后自动跑一次 LLM 提取。0=**仅手动**（slash 命令 /relation extract 仍可触发，Agent 工具仍可用——与 extractionEnabled 不同）。 |
+| `extractionEnabled` | boolean | `true` | 允许从对话中提取新关系（写入总开关）：**写入总开关**：关闭后插件停止生成任何新关系节点/边；但 middleware 仍读取并注入旧关系、actions 仍可查/删。若只想停掉"自动触发"，请用 triggerEveryNMessages=0 而非关此项。彻底卸载请整体停用该插件。 |
+| `triggerEveryNMessages` | number | `20` | 自动触发阈值（每 N 条消息）：**仅控制"自动触发"**：每会话累计 N 条入站消息后自动跑一次 LLM 提取。0=不自动触发。 |
 | `readWindowSize` | number | `30` | 提取读取窗口大小：每次提取时回读的最近消息数。建议略大于触发阈值（如阈值 20、窗口 30），让相邻批次窗口重叠 10 条左右、便于 LLM 跨批次稳定识别同一事件与关系 |
 | `mode` | select | `'incremental'` | 提取模式：incremental: 固定窗口；all-new: 一次性读所有累积（注意 context 上限） |
 | `allNewMaxMessages` | number | `200` | all-new 模式下的最大消息数：仅 mode=all-new 时生效；硬上限以防 context 溢出 |
@@ -276,9 +275,9 @@ $$
 | `maxGlobalHotEvents` | number | `5` | 注入：全局热点事件数：与当前用户子图无关，按全局 lastMentionedAt 排序的最近事件；0 关闭 |
 | `maxGlobalHotEntities` | number | `5` | 注入：全局热点实体数：与当前用户子图无关，按全局 lastMentionedAt 排序的最近实体；0 关闭 |
 | `groupOnly` | boolean | `false` | 仅在群聊中注入：私聊一般无需关系图上下文 |
-| `toolsEnabled` | boolean | `true` | 向 Agent 暴露 dig 工具：允许 LLM 主动调用：expand_person / find_path / search_events / upsert_* / link / unlink |
-| `commandsEnabled` | boolean | `true` | 注册 /relation 指令：注册 show / orphans / cleanup 系列指令（cleanup 需 authority ≥ 3） |
-| `strictSelfAssertion` | boolean | `true` | 严格自证模式：开启后，提取/工具只允许把关系归到「说过那条原话的人」名下：每条人-* 边必须有 evidence，且至少一条 evidence.messageId 对应消息的发言者 == fromPersonId；agent 工具调用 link/upsert_person 时 from 必须 == 当前发言者。person-person 边的 to 必须已存在 PersonNode。 |
+| `toolsEnabled` | boolean | `true` | 向 Agent 暴露 dig 工具：允许 LLM 主动调用 user_relation_* 工具：检索 / 分析 / 社群，以及带保护门的写工具（改名、修边、删除、合并等） |
+| `commandsEnabled` | boolean | `true` | 注册 /relation 指令：注册 show / orphans / cleanup / consolidate / maintain 等 /relation 指令（cleanup 等写操作为 restricted，需 owner 授予） |
+| `strictSelfAssertion` | boolean | `true` | 严格自证模式：开启后，提取只允许把人际关系归到「说过那条原话的人」名下：仅 person-person 边要求 evidence 中至少一条由 from 方本人发出（evidence.messageId 对应消息的发言者 == fromPersonId）。person-person 边的 to 必须已存在 PersonNode。 |
 | `digToolDefaultMaxDepth` | number | `2` | dig 工具：默认深度 |
 | `digToolDefaultMaxBreadth` | number | `8` | dig 工具：默认宽度 |
 | `digToolHardMaxDepth` | number | `4` | dig 工具：硬上限深度：Agent 传入更大值会被截断 |

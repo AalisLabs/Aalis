@@ -11,6 +11,7 @@ import {
 } from '../../packages/core/src/index.js';
 import type { PluginManager } from '../../packages/core/src/orchestration/plugin.js';
 import type { PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
+import { deferred } from '../helpers/deferred.js';
 import { activationHost, createInspectableApp, rootActivation } from '../helpers/inspectable-app.js';
 
 const dependency = defineService<{ value: number }>('activation-required-loss');
@@ -21,14 +22,6 @@ const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
 const apps: App[] = [];
 const releases: Array<() => void> = [];
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>(done => {
-    resolve = done;
-  });
-  releases.push(resolve);
-  return { promise, resolve };
-}
 function world() {
   const errors: unknown[] = [];
   const warnings: string[] = [];
@@ -64,6 +57,7 @@ describe('初始化期间 required 依赖消失', () => {
     const applyGate = deferred();
     const cleanupEntered = deferred();
     const cleanupGate = deferred();
+    releases.push(entered.resolve, applyGate.resolve, cleanupEntered.resolve, cleanupGate.resolve);
     const off = host.provide(dependency, { value: 1 });
     const live = new Set<number>();
     const cleaned: number[] = [];
@@ -154,6 +148,7 @@ describe('初始化期间 required 依赖消失', () => {
     const { app, host } = world();
     const cleanupEntered = deferred();
     const cleanupGate = deferred();
+    releases.push(cleanupEntered.resolve, cleanupGate.resolve);
     const off = host.provide(dependency, { value: 1 });
     const trace: string[] = [];
     let applies = 0;
@@ -360,6 +355,7 @@ describe('初始化期间 required 依赖消失', () => {
     const { app, host } = world();
     const entered = deferred();
     const gate = deferred();
+    releases.push(entered.resolve, gate.resolve);
     const off = host.provide(dependency, { value: 1 });
     let applies = 0;
     let cleaned = 0;

@@ -17,13 +17,10 @@ interface PreprocessorCaps {
   logger: Logger;
 }
 
-export function buildPreprocessor(caps: PreprocessorCaps, getService: () => MediaService): PreprocessorFn {
+export function buildPreprocessor(caps: PreprocessorCaps, svc: MediaService): PreprocessorFn {
   return async function mediaPreprocessor(message: IncomingMessage, next: () => Promise<void>) {
     if (!message) return next();
     if (!message.attachments || message.attachments.length === 0) return next();
-
-    const svc = getService();
-    if (!svc) return next();
 
     try {
       const report = await svc.processMessage(message);

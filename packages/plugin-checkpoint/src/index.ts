@@ -102,22 +102,6 @@ function run(caps: Caps): void {
   const service = new CheckpointServiceImpl(cfg, logger, gateway);
   provide(checkpoint, service);
 
-  // 注入回滚后端：gateway 按 URI 路由到各 root，调用时才枚举提供者，所以此刻 storage 还没到位也无妨
-  service.setBackend(
-    async (uri, data) => {
-      if (storage.all().length === 0) throw new Error('storage 服务不可用');
-      await gateway.writeFile(uri, data);
-    },
-    async uri => {
-      if (storage.all().length === 0) throw new Error('storage 服务不可用');
-      await gateway.delete(uri);
-    },
-    async (fromUri, toUri) => {
-      if (storage.all().length === 0) throw new Error('storage 服务不可用');
-      await gateway.move(fromUri, toUri);
-    },
-  );
-
   // 注入 chat 回滚所需依赖：memory 引用（每次调用解析当前提供者）+ 事件发出器
   service.setChatRollbackDeps({
     memory,

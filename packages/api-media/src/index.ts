@@ -6,7 +6,7 @@
 // （任意声明了 vision / audio 能力的 LLM 都自动暴露为对应 processor）。
 // 真正"非 LLM"的 backend（如 whisper.cpp / 云 ASR）则注册为独立 processor。
 //
-// 依赖：仅 @aalis/core 与 @aalis/schema-message。
+// 依赖：@aalis/core、@aalis/schema-message、@aalis/api-llm（仅 ModelRef 类型）。
 // ============================================================
 
 import type { ModelRef } from '@aalis/api-llm';

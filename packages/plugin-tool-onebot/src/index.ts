@@ -136,7 +136,7 @@ function findOneBotAdapter(platform: PlatformRef): PlatformAdapter | undefined {
 function getAnyOneBotSelfId(platform: PlatformRef): string | undefined {
   for (const a of getPlatformAdapters(platform)) {
     if (a.platform !== 'onebot') continue;
-    const conns = a.getConnections?.() ?? [];
+    const conns = a.getConnections();
     const online = conns.find(c => c.status === 'online' && c.selfId);
     if (online?.selfId) return online.selfId;
     const any = conns.find(c => c.selfId);
@@ -177,24 +177,6 @@ function resolveGroupTarget(
     return { selfId: parsed.selfId, groupId: parsed.targetId };
   }
   throw new Error('未提供 group_id，且当前不在 OneBot 群会话中。请在参数中显式传入 group_id。');
-}
-
-/**
- * 解析"目标用户"：args.user_id 优先；否则当前会话必须是 OneBot 私聊。
- */
-function _resolveUserTarget(
-  platform: PlatformRef,
-  callCtx: ToolCallContext,
-  args: Record<string, unknown>,
-): { selfId: string; userId: string } {
-  const argUserId = args.user_id != null && String(args.user_id).trim() ? String(args.user_id).trim() : '';
-  const selfId = resolveSelfId(platform, callCtx, args);
-  if (argUserId) return { selfId, userId: argUserId };
-  const parsed = parseOneBotSession(callCtx.sessionId);
-  if (parsed?.detailType === 'private' && parsed.targetId) {
-    return { selfId: parsed.selfId, userId: parsed.targetId };
-  }
-  throw new Error('未提供 user_id，且当前不在 OneBot 私聊会话中。请在参数中显式传入 user_id。');
 }
 
 function buildOneBotSessionId(selfId: string, detailType: string, targetId: string): string {
@@ -246,7 +228,6 @@ async function localImageToDataUri(storage: StorageService, path: string): Promi
 
 interface ForwardImageRef {
   source: string;
-  label: string;
   segment: Record<string, unknown>;
 }
 
@@ -280,7 +261,7 @@ function extractCqImageRefs(content: string): ForwardImageRef[] {
         .replace(/&#44;/g, ',');
     }
     const source = imageSourceFromSegment(params);
-    if (source) refs.push({ source, label: '[图片]', segment: params });
+    if (source) refs.push({ source, segment: params });
     match = re.exec(content);
   }
   return refs;
@@ -297,7 +278,7 @@ function extractImageRefsFromContent(content: unknown): ForwardImageRef[] {
     if (segment.type !== 'image') continue;
     const data = segment.data ?? {};
     const source = imageSourceFromSegment(data);
-    if (source) refs.push({ source, label: '[图片]', segment: data });
+    if (source) refs.push({ source, segment: data });
   }
   return refs;
 }
@@ -376,7 +357,7 @@ async function recognizeForwardImages(
 
   const { logger, media } = caps;
   const mediaService = media.current;
-  if (!mediaService?.describeImage) {
+  if (!mediaService) {
     logger.debug(`合并转发包含 ${refs.length} 张图片，但 media 服务不可用`);
     return { imageDescriptions };
   }
@@ -399,7 +380,6 @@ async function recognizeForwardImages(
 }
 
 function formatMessageContent(content: unknown, context?: ForwardFormatContext): string {
-  if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return content == null ? '' : JSON.stringify(content);
 
   return content
@@ -414,9 +394,7 @@ function formatMessageContent(content: unknown, context?: ForwardFormatContext):
           return data.qq === 'all' ? '@全体成员' : `@${String(data.qq ?? '')}`;
         case 'image': {
           const source = imageSourceFromSegment(data);
-          const desc = source
-            ? context?.imageDescriptions.get(imageRefKey({ source, label: '[图片]', segment: data }))
-            : undefined;
+          const desc = source ? context?.imageDescriptions.get(imageRefKey({ source, segment: data })) : undefined;
           return desc ? `[图片: ${desc}]` : '[图片]';
         }
         case 'face':
@@ -1007,7 +985,7 @@ function registerGroupManagementTools(caps: ToolCaps, bundle: OneBotToolBundle):
           })
         | undefined;
       if (!adapter?.getSentMessages) {
-        return '当前 OneBot 适配器版本未记录机器人发出的消息（不支持 getSentMessages）。如已知 message_id 可改用 onebot_delete_msg。';
+        return '未找到支持记录自身发出消息的 OneBot 适配器（getSentMessages 不在平台契约内，第三方适配器可不提供）。如已知 message_id 可改用 onebot_delete_msg。';
       }
 
       const count = Math.max(1, Math.min(10, Math.floor(Number(args.count) || 1)));
@@ -1310,7 +1288,10 @@ function registerGroupInfoTools(caps: ForwardCaps, storage: StorageService, bund
           })
         | undefined;
       if (!adapter?.getSelfMutes) {
-        return JSON.stringify({ supported: false, reason: '当前 OneBot 适配器版本不支持 getSelfMutes' });
+        return JSON.stringify({
+          supported: false,
+          reason: '未找到支持记录自身禁言状态的 OneBot 适配器（getSelfMutes 不在平台契约内，第三方适配器可不提供）',
+        });
       }
       const limit = Math.max(1, Math.min(200, Math.floor(Number(args.limit) || 30)));
       const offset = Math.max(0, Math.floor(Number(args.offset) || 0));

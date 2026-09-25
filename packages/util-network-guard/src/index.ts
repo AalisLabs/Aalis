@@ -1,8 +1,9 @@
 // ============================================================
 // @aalis/util-network-guard — SSRF / 私网地址防护纯函数
 //
-// 任何由 LLM / 用户输入触发的远程 fetch 都应在执行前调用 assertSafeHost()。
-// 该包不做下载、不做缓存，只提供同步/异步校验，方便不同子系统按各自架构
+// 由 LLM / 用户 / 入站消息触发的远程下载应走 safeFetch（逐跳复核 + pin 已校验 IP）；
+// assertSafeUrl / assertSafeHost 只用于自管连接的预检。
+// 除 safeFetch 外不做下载、不做缓存，其余只提供同步/异步校验，方便不同子系统按各自架构
 // （流式代理 / 全 buffer 下载 / 内联 fetch）复用。
 // ============================================================
 
@@ -18,9 +19,7 @@ export function isPrivateAddress(addr: string): boolean {
   const fam = isIP(addr);
   if (fam === 0) return true; // 解析失败按危险处理
   if (fam === 4) {
-    const parts = addr.split('.').map(Number);
-    if (parts.some(p => Number.isNaN(p))) return true;
-    const [a, b] = parts;
+    const [a, b] = addr.split('.').map(Number);
     if (a === 10) return true;
     if (a === 127) return true;
     if (a === 0) return true;
@@ -72,7 +71,7 @@ interface NetworkPolicyState {
 }
 let policy: NetworkPolicyState = { blockPrivate: true, denyCidrs: [], allowedPorts: null };
 
-/** 网络出口策略配置（core 配置 `network`，启动时注入）。 */
+/** 网络出口策略配置（宿主配置文档的 `network` 字段，由 api-authority 声明、plugin-authority 启动时注入）。 */
 export interface NetworkPolicyConfig {
   /** 是否拦私网/回环/链路本地/元数据段（默认 true）。本地自动化可显式关。 */
   blockPrivate?: boolean;
@@ -99,8 +98,7 @@ function parseV4Cidr(s: string): V4Cidr | null {
   const ip = slash < 0 ? s : s.slice(0, slash);
   const bits = slash < 0 ? 32 : Number(s.slice(slash + 1));
   if (isIP(ip) !== 4 || !Number.isInteger(bits) || bits < 0 || bits > 32) return null;
-  const n = v4ToInt(ip);
-  if (n === null) return null;
+  const n = v4ToInt(ip)!;
   const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
   return { base: (n & mask) >>> 0, mask };
 }
@@ -117,8 +115,7 @@ export function setNetworkPolicy(cfg: NetworkPolicyConfig): void {
 /** 解析出的 IPv4 地址是否命中配置的 denyCidrs。 */
 function inDenyCidrs(addr: string): boolean {
   if (policy.denyCidrs.length === 0 || isIP(addr) !== 4) return false;
-  const n = v4ToInt(addr);
-  if (n === null) return false;
+  const n = v4ToInt(addr)!;
   return policy.denyCidrs.some(c => (n & c.mask) >>> 0 === c.base);
 }
 

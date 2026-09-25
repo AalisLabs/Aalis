@@ -42,7 +42,6 @@ async function runMiddleware(
   },
 ): Promise<Message[]> {
   registerRelationContribution(host, service, {
-    enabled: true,
     maxDepth: opts.maxDepth ?? 1,
     maxBreadth: 5,
     maxEvents: 5,

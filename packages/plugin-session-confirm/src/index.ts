@@ -189,7 +189,6 @@ export default definePlugin({
 
     // authority 可能晚于本插件上线 → 跟随它的上线/换人注册 '*' fallback（精确平台 handler 优先）。
     authority.follow(provider => {
-      if (!provider.setConfirmHandler) return;
       const off = provider.setConfirmHandler('*', busChannel.handler);
       logger.debug('会话确认 fallback handler 已注册 (*)');
       return off; // 跟随清理：authority 换胜者或本次激活关闭时注销

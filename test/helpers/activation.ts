@@ -23,14 +23,14 @@ export function bindActivationFixture(host: ActivationHost, activation: Activati
   };
 }
 
-export function createActivationFixture(options: { id?: string; logger?: Logger; devMode?: boolean } = {}) {
+export function createActivationFixture(options: { id?: string; logger?: Logger } = {}) {
   const log = options.logger ?? new DefaultLogger('test', 'error');
   const bus = new EventBus();
   const host = new ActivationHost(
     {
       events: bus,
       services: new ServiceContainer(),
-      devMode: options.devMode ?? false,
+      devMode: false,
       notify: notify({ events: bus }, log),
     },
     log,

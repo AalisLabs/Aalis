@@ -1,12 +1,8 @@
-import { App, events, provide, services } from '@aalis/core';
-import { describe, expect, it } from 'vitest';
-import { hooks } from '../../packages/api-hooks/src/index.js';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
-import { LLMCapabilities, llm } from '../../packages/api-llm/src/index.js';
-import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
-import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
-import memorySummary from '../../packages/plugin-memory-summary/src/index.js';
-import { registerHubs } from '../fixtures/hubs.js';
+import { LLMCapabilities } from '../../packages/api-llm/src/index.js';
+import type { MemoryService } from '../../packages/api-memory/src/index.js';
+import { fakeSummaryLLM, setupSummary } from '../fixtures/memory-summary.js';
 
 // ════════════════════════════════════════════════════════════
 // 自动压缩的触发条件
@@ -18,39 +14,13 @@ import { registerHubs } from '../fixtures/hubs.js';
 
 /** 记下最后一次摘要请求的正文，用来数"这次摘要吃进去了多少条消息" */
 const lastSummaryInput = { text: '' };
-
-/** 假 LLM：摘要路径只需它能返回一段文本 */
-function fakeLLM(): LLMModel {
-  return {
-    id: 'fake',
-    providerId: 'fake',
-    contextLength: 8192,
-    capabilities: [LLMCapabilities.Chat],
-    async chat(req) {
-      lastSummaryInput.text = req.messages.map(m => String(m.content ?? '')).join('\n');
-      return { content: 'SUMMARY-TEXT' };
-    },
-  };
-}
+beforeEach(() => {
+  lastSummaryInput.text = '';
+});
 
 /** 摘要正文里出现了多少条 seed 消息（seed 内容形如「第 N 条消息」） */
 function summarizedCount(): number {
   return (lastSummaryInput.text.match(/第 \d+ 条消息/g) ?? []).length;
-}
-
-/** 装好两个插件、挂上桩 LLM（默认是会正常出摘要的那个），返回这次 App 的 memory 与宿主门面 */
-async function setup(config: Record<string, unknown>, model: LLMModel = fakeLLM()) {
-  lastSummaryInput.text = '';
-  const app = new App({ name: 'T', logLevel: 'error' });
-  await registerHubs(app);
-  const host = app.bind({ provide, services, hooks, events });
-  await app.plugin(memoryInMemory);
-  host.provide(llm, model);
-  await app.plugin(memorySummary, config);
-  await app.plugins.idle();
-  const service = host.services.get(memory);
-  if (!service) throw new Error('memory 服务未就绪');
-  return { app, host, memory: service };
 }
 
 async function seedMessages(memory: MemoryService, sessionId: string, count: number): Promise<void> {
@@ -66,7 +36,7 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
   it('threshold 大于历史探测条数时仍触发压缩并归档旧消息', async () => {
     const threshold = 240;
     const keepRecent = 40;
-    const { app, host, memory } = await setup({ threshold, keepRecent });
+    const { app, host, memory } = await setupSummary({ threshold, keepRecent }, fakeSummaryLLM(lastSummaryInput));
 
     await seedMessages(memory, 's-1', threshold + 5);
     expect((await memory.getHistory('s-1', 1000)).length).toBe(threshold + 5);
@@ -95,7 +65,10 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
     // 探测条数兼作单次摘要输入上界。若只按 threshold 推导，默认配置（30/20）
     // 单次只摘 10 条，而 trimHistory 仍按 keepRecent 归档全部活跃历史——
     // 超出探测窗的那批被归档却从未进摘要。
-    const { app, host, memory } = await setup({ threshold: 30, keepRecent: 20 });
+    const { app, host, memory } = await setupSummary(
+      { threshold: 30, keepRecent: 20 },
+      fakeSummaryLLM(lastSummaryInput),
+    );
     await seedMessages(memory, 's-3', 120);
 
     await host.hooks.run(
@@ -119,7 +92,10 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
   });
 
   it('消息数不足 threshold → 不压缩', async () => {
-    const { app, host, memory } = await setup({ threshold: 240, keepRecent: 40 });
+    const { app, host, memory } = await setupSummary(
+      { threshold: 240, keepRecent: 40 },
+      fakeSummaryLLM(lastSummaryInput),
+    );
     await seedMessages(memory, 's-2', 100);
 
     await host.hooks.run(
@@ -140,7 +116,7 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
 
   it('摘要 LLM 失败 → 降级为纯裁切，不滞留"涨破阈值原样重试"循环', async () => {
     // 失败路径专用装配：LLM 恒抛错（模拟慢模型超时）
-    const { app, host, memory } = await setup({ threshold: 240, keepRecent: 40 }, {
+    const { app, host, memory } = await setupSummary({ threshold: 240, keepRecent: 40 }, {
       id: 'boom',
       providerId: 'boom',
       contextLength: 8192,
@@ -172,7 +148,7 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
   });
 
   it('摘要 LLM 返回空串（不抛错）→ 同样降级纯裁切、不写空摘要', async () => {
-    const { app, host, memory } = await setup({ threshold: 240, keepRecent: 40 }, {
+    const { app, host, memory } = await setupSummary({ threshold: 240, keepRecent: 40 }, {
       id: 'empty',
       providerId: 'empty',
       contextLength: 8192,
@@ -197,7 +173,7 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
 
   it('session:compress 手动路径：LLM 失败同样降级裁切，事件 start→error，旧摘要保留', async () => {
     // compress handler 是 generateSummary 之外的第二份降级实现，必须单独钉住
-    const { app, host, memory } = await setup({ threshold: 240, keepRecent: 40 }, {
+    const { app, host, memory } = await setupSummary({ threshold: 240, keepRecent: 40 }, {
       id: 'boom2',
       providerId: 'boom2',
       contextLength: 8192,
@@ -232,7 +208,7 @@ describe('plugin-memory-summary: 自动压缩触发', () => {
   it('流式中途失败：半截输出不得入库为摘要，旧摘要原样保留（降级纯裁切）', async () => {
     // 生产主路径是 chatStream；provider 超时常在吐出部分内容后中断流。
     // 半截文本一旦 upsert，会成为后续增量摘要的权威基底，链条被永久污染。
-    const { app, host, memory } = await setup({ threshold: 240, keepRecent: 40 }, {
+    const { app, host, memory } = await setupSummary({ threshold: 240, keepRecent: 40 }, {
       id: 'partial',
       providerId: 'partial',
       contextLength: 8192,

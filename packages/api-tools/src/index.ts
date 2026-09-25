@@ -12,7 +12,7 @@
 // 注：`ToolCall`（assistant 消息携带的调用载荷）位于 @aalis/schema-message，
 // 与 Message 同源同生命周期。本包不依赖 message-api（双向解耦）。
 //
-// 实现见 @aalis/plugin-tool-system。
+// 实现见 @aalis/plugin-tools。
 
 import type { CapabilityConfirm, CapabilityRisk, CapabilityVisibility, ExecutionGuard } from '@aalis/api-authority';
 import type { ServiceRef } from '@aalis/core';

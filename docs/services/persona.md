@@ -6,8 +6,8 @@ persona 服务负责把「角色卡」渲染成 system prompt，并在回复链�
 
 - 服务注册名：`'persona'`，通过 `persona.current` 获取。
 - 契约包：`@aalis/api-persona`。
-- 这个契约带有运行时服务，不是纯类型契约。`-api` 包只导出 interface、类型与 declaration merging，不含实现；参考实现是 `@aalis/plugin-persona`，也是目前唯一的实现。
-- 角色卡按名分文件存放在 `personasDir`（一个 storage 路径，见 §6）。进程启动时全量预扫进缓存，并支持通过 `watch` 热重载。
+- 这个契约带有运行时服务，不是纯类型契约。`-api` 包只导出 interface、类型与服务描述符 `persona`，不含实现；参考实现是 `@aalis/plugin-persona`，也是目前唯一的实现。
+- 角色卡按名分文件存放在 `personasDir`（一个 storage 路径，见 §6）。storage 在场时全量预扫进缓存并挂监听热重载；storage 提供者重启、改配置或晚于启动上线时重挂监听并重扫。
 
 ## 2. 契约
 
@@ -18,6 +18,7 @@ persona 服务负责把「角色卡」渲染成 system prompt，并在回复链�
 ```ts
 export interface PersonaService {
   getSystemPrompt(options?: PersonaSessionOptions): string;
+  getVolatilePrompt?(options?: PersonaSessionOptions): string;
   getPersonaName(): string;
   getOutputFormat?(options?: PersonaSessionOptions): OutputFormat | undefined;
   isClientSideJsonRendering?(options?: PersonaSessionOptions): boolean;
@@ -31,7 +32,8 @@ export interface PersonaService {
 
 只有 `getSystemPrompt()` 与 `getPersonaName()` 是必须实现的（接口里非可选），其余方法全部带 `?`。消费者对可选方法都做了存在性判断（见 §3、§5）。各方法语义如下：
 
-- `getSystemPrompt(options?)` — 渲染当前生效角色卡的 system prompt 文本。参考实现在此之外还会拼入时间注入、会话环境（平台、群号、自身与发送者身份）、上一轮状态，以及 outputFormat 的 JSON 指令块。
+- `getSystemPrompt(options?)` — 渲染当前生效角色卡的静态人设：名字、描述、性格、prompt，以及 outputFormat 的 JSON 指令块。同一张卡下逐轮不变，以便命中 LLM provider 的前缀缓存。
+- `getVolatilePrompt(options?)` — 返回易变上下文：时间注入（`timeInjection`）、会话环境（平台、群号、自身与发送者身份、群聊身份判定规则）、上一轮状态（`statePersistence`）。无内容时返回空串。调用方应把它放在历史消息之后、当前用户消息之前；逐轮变化的内容不能放进 `getSystemPrompt`，否则前缀缓存整条失效。
 - `getPersonaName()` — 返回角色卡的 `name`，用于 CLI 标题、触发昵称，以及 user-profile 的分堆 key。
 - `getOutputFormat(options?)` — 返回角色卡声明的结构化输出格式。无定义时返回 `undefined`；`options.disableOutputFormat` 为真时也返回 `undefined`。
 - `isClientSideJsonRendering(options?)` — 该卡是否声明「JSON 由客户端渲染」。为真时服务端不提取回复字段，整段 JSON 透传给前端。
@@ -65,15 +67,13 @@ export interface PersonaSessionOptions {
 
 `PersonaSessionOptions` 的来源约定很关键：persona 服务自身不依赖 session-manager，它只根据传入的选项调整行为。会话级的覆盖由调用方（agent，或 persona 自己的 reply 钩子）从 `session-manager.resolveConfig()` 取出后构造，再传给 persona。
 
-通过 declaration merging，服务名被登记进核心的 `服务描述符`，使 `persona.current` 能拿到强类型：
+服务描述符随契约包导出，类型随描述符走：
 
 ```ts
-declare module '@aalis/core' {
-  interface 服务描述符 {
-    persona: PersonaService;
-  }
-}
+export const persona = defineService<PersonaService>('persona');
 ```
+
+消费方把描述符写进 `uses`，`persona.current` 即推断为 `PersonaService | undefined`。
 
 ## 3. 谁提供 / 谁消费
 
@@ -81,7 +81,7 @@ declare module '@aalis/core' {
 
 典型消费点如下，它们全部走可选依赖 + 存在性判断：
 
-- `@aalis/plugin-agent`（核心消费者）— `buildSystemPrompt()` 取 persona 拼进 system 块：先 `const persona = this.persona.current`，再 `persona.getSystemPrompt(personaOpts)`；`'persona'` 在其 `uses optional` 中。注意 JSON 解析与状态持久化并不在 agent 里做，而是由 persona 自己挂 `agent:reply:before` 钩子统一处理（见 §4）。
+- `@aalis/plugin-agent`（核心消费者）— `buildSystemPrompt()` 取 persona 拼进 system 块：先 `const persona = this.caps.persona.current`，再 `persona.getSystemPrompt(personaOpts)`；易变上下文由 `getVolatilePrompt?.(personaOpts)` 取出，作为 system 消息放在历史之后、当前用户消息之前；`'persona'` 在其 `uses optional` 中。注意 JSON 解析与状态持久化并不在 agent 里做，而是由 persona 自己挂 `agent:reply:before` 钩子统一处理（见 §4）。
 - `@aalis/plugin-skills` — `getAllowedSkills()` 用 `persona?.getPersonaSkills?.()` 过滤暴露给 LLM 的 skill 列表。
 - `@aalis/plugin-trigger-policy` — 用 `getPersonaName()` 与 `getNickNames()` 收集 bot 昵称，做唤起匹配。
 - `@aalis/plugin-tool-system` — 通过 `persona.current` 判断，已注入时间则跳过注册 `system_time` 工具。
@@ -188,7 +188,7 @@ export default definePlugin({
 
 **reply 字段回退是尽力而为。** 当模型用错字段名时，会按别名表 `['response','reply','content','answer','text','msg']` 回退；或者在只有单个字符串字段时直接取它。没有 outputFormat 时，如果内容以 `{` 开头，也会尝试解包同类字段。这是容错行为，不是契约保证。
 
-**角色卡加载是 cache-only + 启动预扫 + watch。** `loadCard` 只查缓存，缓存由 `app:ready` 事件里的 `scanAll` 预填，并由 storage 的 `watch` 做热更新。新增的卡文件在扫描或 watch 触发前不可见；当 `storage.watch` 不可用时（`watch?.` 为空），只有重启才会刷新。
+**角色卡加载是 cache-only + 跟随 storage 预扫 + watch。** `loadCard` 只查缓存。`app:ready` 起插件跟随 storage 提供者（`storage.follow`）：提供者在场即挂监听并用 `scanAll` 全量预填，提供者重启、改配置或晚于启动上线时先关旧监听再重挂、重扫；之后由 storage 的 `watch` 做热更新。新增的卡文件在扫描或 watch 触发前不可见；当 `storage.watch` 不可用时（`watch?.` 为空），只有 storage 换代或重启才会刷新。
 
 **YAML 解析失败会点名告警，但不会阻止启动。** `tryLoadCardFromUri` 把「读不到文件」与「读到了但解析不出对象」分开：前者是候选路径探测的正常结果（静默），后者 warn 出 uri 与原因后跳过该卡。顶层不是对象（标量/数组）的卡按解析失败处理，不再被当成全空卡加载。主角色卡解析失败时回退内置 default，日志说的是「存在但解析失败」而非「未找到」。
 

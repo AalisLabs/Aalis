@@ -65,6 +65,8 @@ WebUI 使用单个访问 token + HttpOnly cookie 认证。HTTP 请求与 WebSock
 | `persist`（默认） | 首次生成后写入 `data:/webui/token`，重启沿用 | 同时写出 `data:/webui/access.txt` |
 | `fixed` | 来自配置 `fixedToken`，不变；空则降级 persist | 同上 |
 
+persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（加载顺序、运行时才启用），WebUI 先用临时 token，storage 上线后读回 `data:/webui/token` 并改用它，同时重写 `access.txt`；没有 token 文件时把当前 token 写进去。已用临时 token 登录的浏览器此时需要重新登录。
+
 ### 访问凭据文件
 
 - **URI**: `data:/webui/access.txt`
@@ -123,7 +125,7 @@ WebUI 使用单个访问 token + HttpOnly cookie 认证。HTTP 请求与 WebSock
 | `/api/models/:service` · `/api/llm-models` · `/api/llm-providers` | GET | 按服务取模型列表 / LLM 模型与提供者 |
 | `/api/llm-providers/:contextId/refresh` | POST | 触发该 provider 重新探测模型列表（仅对支持运行时刷新的 provider 有效） |
 | `/api/marketplace` · `/api/marketplace/depgraph` | GET | 市场搜索（`?q=`）/ 依赖图 |
-| `/api/marketplace/install` · `/api/marketplace/uninstall` | POST | 体为 `{ name }`；需 `package-manager` 服务（缺失时 503）。安装后热加载，卸载后热卸载；若有其它插件依赖该包提供的服务且无其他提供者，卸载返回 409 |
+| `/api/marketplace/install` · `/api/marketplace/uninstall` | POST | 体为 `{ name }`；需 `package-manager` 服务（缺失时 503）。安装后热加载，卸载后热卸载。装卸只接受插件与前端界面包；若有其它插件依赖该包提供的服务且无其他提供者，卸载被拒绝。这些拒绝来自 `package-manager` 服务层，以 HTTP 200 返回 `{ ok: false, message }` |
 | `/api/marketplace/update` | POST | 体为 `{ targets: [{ name, version }] }`，整批更新，成功后重启进程 |
 | `/api/files*` · `/api/uploaded-files*` | GET / POST | 工作区文件管理 / 上传文件管理 |
 | `/api/logs` · `/api/logs/tail` · `/api/logs/range` | GET | 日志：最近 200 条（不接受分页参数）/ 尾部 N 条（`?limit=`，上限 5000）/ 向前翻页（`?before=<seq>&limit=`，返回 seq 小于 before 的记录） |

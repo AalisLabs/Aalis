@@ -101,7 +101,7 @@ const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
 | api 包 | 注入到 `HookContextMap` | 描述符（服务名） | 注入到 `ContributionPointMap` | 主要服务接口 |
 |---|---|---|---|---|
 | `api-llm` | — | `llm` | — | `LLMModel`, `ChatModelRequest`, `ChatResponse`, `ChatStreamChunk`, `ModelInfo`；导出 `resolveLLMModel` / `listLLMModels` helper（吃 `ServiceRef`，按能力过滤）；向 schema-config 注入 `'llm-ref'` 字段类型 |
-| `schema-config` | — | — | — | 配置表单词汇：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` + `SchemaFieldTypes` 扩展点、`CORE_CONFIG_SCHEMA`（零依赖纯类型包；经 declaration merging 把 `configSchema` 挂到 `PluginMeta`） |
+| `schema-config` | — | — | — | 配置表单词汇：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` + `SchemaFieldTypes` 扩展点、`CORE_CONFIG_SCHEMA`（零运行时依赖，对 `@aalis/core` 只有 type-only 锚点；另含对词汇的中立解释函数与配置危险键闸；经 declaration merging 把 `configSchema` 挂到 `PluginMeta`） |
 | `api-memory` | `memory:clear` | `memory` | — | `MemoryService` |
 | `api-storage` | — | `storage` | — | `StorageService`；导出 `resolveStorageByPath` / `createStorageGateway` helper（吃 `ServiceRef`） |
 | `api-embedding` | — | `embedding` | — | `EmbeddingService` |
@@ -191,10 +191,12 @@ await entry?.instance.chat({ messages });
 import '@aalis/api-agent'; // 激活 agent:* 类型增强
 // hooks 是 uses 里声明的绑定接口（描述符从 @aalis/api-hooks 导入）
 hooks.middleware('agent:llm:before', async (data, next) => {
-  data.messages.unshift({ role: 'system', content: '...' });
+  data.tools = data.tools.filter(tool => tool.function.name !== 'example_tool');
   await next();
 });
 ```
+
+往提示词里加内容不走钩子，而是交给 `agent:prompt` 贡献点（见 [api-contributions](../api/api-contributions.md)）。`agent:llm:before` 在一轮内每次调用模型前都会重跑，消息列表跨迭代沿用，在这里追加消息会重复注入；上例每次迭代拿到的 `tools` 都是全量，过滤天然幂等。
 
 如果同时 `import type { ChatResponse } from '@aalis/api-llm'`，则 api-llm 的副作用导入也会一并触发，无需额外 side-effect import。
 

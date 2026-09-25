@@ -13,7 +13,7 @@
 - **入站**：监听 `inbound:message` 事件，按 `INBOUND_PHASE_ORDER` 顺序串行运行 `inbound:confirm → inbound:command → inbound:flow → inbound:trigger → inbound:dispatch` 五个命名相位；终相 `dispatch` 的默认动作是调用 `agent.handleMessage`。前四相位任一被 swallow（handler 未调用 `next()`）即停止后续调度，消息不触达 agent（`packages/plugin-gateway/src/index.ts`）。
 - **出站**：提供 `dispatchOutbound()`，运行 `outbound:dispatch` 钩子链，默认动作是向 `outbound:message` 事件总线广播，由平台适配器接收并发送（`packages/plugin-gateway/src/index.ts`）。
 
-> core 自身不再绑定任何路由实现。`packages/core/src/orchestration/app.ts` 的注释明确：「消息路由由 `@aalis/plugin-gateway` 承担」。最小应用若不加载 gateway，则**没有人**监听 `inbound:message`，消息不会被处理 —— gateway 是路由的必要部件，不存在 core 兜底。
+> core 自身不再绑定任何路由实现。`packages/core/src/orchestration/app.ts` 的注释明确：「消息路由由网关插件承担，不在 core。」最小应用若不加载 gateway，则**没有人**监听 `inbound:message`，消息不会被处理 —— gateway 是路由的必要部件，不存在 core 兜底。
 
 ## 2. 契约
 
@@ -32,7 +32,7 @@ export interface GatewayService {
 }
 ```
 
-服务类型经 declaration merging 注册到 core：`服务描述符.gateway = GatewayService`（`packages/api-gateway/src/index.ts`）。
+契约包导出服务描述符 `gateway = defineService<GatewayService>('gateway')`（`packages/api-gateway/src/index.ts`），服务类型随描述符携带，不经 declaration merging。插件在 `uses` 里声明 `gateway` 后，`gateway.current` 推断为 `GatewayService | undefined`；按字符串名动态查询（`services.get('gateway')`）不带类型。
 
 ### 2.2 入站相位常量与相位数据
 
@@ -226,7 +226,7 @@ export default definePlugin({
 
 ## 8. 边界与注意事项
 
-- **没有 core 兜底路由**：`gateway-api` 头部注释提到「最小应用可不加载 gateway，由 core fallback 入站路由直接派发给 agent」（`packages/api-gateway/src/index.ts`），但**当前 core 已无此 fallback** —— `packages/core/src/orchestration/app.ts` 仅留注释「路由由 plugin-gateway 承担」，`start()` 不再注册任何 `inbound:message` 监听。结论：不加载 gateway，`inbound:message` 无人消费、消息静默丢弃。该注释是历史遗留，按「gateway 是必需件」对待。
+- **没有 core 兜底路由**：core 的 `start()` 不注册 `inbound:message` 监听，路由完全由 gateway 插件承担。不加载 gateway 时 `inbound:message` 无人消费，消息被静默丢弃，应把 gateway 视为必需件。
 - **`outbound:message` 直发仍被容忍但属旧路径**：契约注释说 emit 出站「将逐步迁移」（`packages/api-gateway/src/index.ts`）。现状是两条路并存，新代码一律走 `dispatchOutbound()`。
 - **相位顺序是单一真相，只在 gateway-api 改**：默认实现用 `INBOUND_PHASE_ORDER.filter(p => p !== DISPATCH)` 推导前置相位（`packages/plugin-gateway/src/index.ts`）。新增相位**只**改 `gateway-api` 的常量数组，调度方零改动；不要在自己插件里硬编码相位顺序。
 - **`ingressMessage` 走内部路径而非再 emit**：默认实现里 `ingressMessage` 直接调 `processInbound`，刻意避免「emit → 自己监听 → 再处理」的事件总线递归歧义（`packages/plugin-gateway/src/index.ts`）。你若重写 gateway 应保持这一点。

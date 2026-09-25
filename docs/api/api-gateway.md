@@ -8,9 +8,9 @@
 
 Gateway 是 Aalis 的运行时编排中枢，负责：
 
-- **入站**：监听 `inbound:message` 事件，按以下相位顺序串行触发钩子链：
+- **入站**：监听 `inbound:message` 事件，按 `INBOUND_PHASE_ORDER` 顺序串行触发五个相位的钩子链：
   ```
-  inbound:command → inbound:flow → inbound:trigger → inbound:dispatch
+  inbound:confirm → inbound:command → inbound:flow → inbound:trigger → inbound:dispatch
   ```
   任一相位 handler 不调用 `next()` 即"吞掉"消息，后续相位不再触发。`inbound:dispatch` 默认动作是调用 `agent.handleMessage(message)`。
 - **出站**：提供 `dispatchOutbound()` 接口，运行 `outbound:dispatch` 钩子链；默认动作是 emit `outbound:message` 给平台 adapter。
@@ -25,7 +25,7 @@ interface InboundPhaseData {
 }
 ```
 
-四个入站相位的 payload 都是 `InboundPhaseData`，**同一消息在四相位间共享同一对象引用**——可以在 command 相位写入 metadata 让 trigger 读到。
+五个入站相位的 payload 都是 `InboundPhaseData`，**同一消息在各相位间共享同一对象引用**——可以在 command 相位写入 metadata 让 trigger 读到。
 
 ## 服务接口
 

@@ -58,15 +58,7 @@ export interface SandboxPolicy {
 
 返回值 `ExecResult` 复用 `process` 契约，结构是 `{ code, signal, stdout, stderr, truncated? }`。非零退出会 reject，错误对象上挂 `.result`——这与 `ProcessService.execFile` 的约定一致，详见 §5 错误处理。
 
-契约包还为消费方导出一个 helper：
-
-```ts
-export function useCodeSandbox(ctx: Context): CodeSandboxService | undefined;
-```
-
-它取服务，在服务未就绪或实现未安装时返回 `undefined`。
-
-契约包的 `package.json` 没有 `aalis.service` 块，因为它是纯契约包（`keywords: ["aalis","aalis-api"]`）——只导出 interface、type 和 helper，不在运行时注册服务。真正的 `provides: ['code-sandbox']` 由实现包声明（见 §4）。
+契约包的 `package.json` 没有 `aalis.service` 块，因为它是契约包（`keywords: ["aalis","aalis-api"]`）——导出 interface、type 与描述符 `codeSandbox`（`defineService<CodeSandboxService>('code-sandbox')`），不在运行时注册服务。真正的 `provides: [codeSandbox]` 由实现包声明（见 §4）。消费方在 `uses` 里声明 `codeSandbox: optional(codeSandbox)`，读 `codeSandbox.current`，服务未就绪或实现未安装时为 `undefined`。
 
 ---
 
@@ -74,7 +66,7 @@ export function useCodeSandbox(ctx: Context): CodeSandboxService | undefined;
 
 | 角色 | 包 | 关键 API |
 |---|---|---|
-| 契约 | `@aalis/api-code-sandbox` | 导出 interface / type / `useCodeSandbox` |
+| 契约 | `@aalis/api-code-sandbox` | 导出 interface / type / `codeSandbox` 描述符 |
 | 参考实现 | `@aalis/plugin-code-sandbox-os` | `provide(codeSandbox, …)` |
 | 唯一消费方 | `@aalis/plugin-tool-code-runner` | `codeSandbox.current` → `codeSandbox.run(...)` |
 

@@ -175,13 +175,6 @@ body.is-dragging-chat .nav-rail:hover {
   line-height: 1.2;
 }
 
-.nav-item-plugin-name {
-  font-size: 0.6rem;
-  font-weight: 400;
-  color: var(--text-muted);
-  opacity: 0.7;
-}
-
 .nav-rail:hover .nav-item-label {
   opacity: 1;
 }
@@ -484,55 +477,6 @@ body.is-dragging-chat .nav-rail:hover {
   font-size: 0.72rem;
 }
 
-.service-slot-caps {
-  margin-top: 8px;
-}
-
-/* ---- 多 provider 折叠展示 ---- */
-.service-provider-row {
-  padding: 6px 0;
-  border-top: 1px solid var(--border);
-}
-.service-provider-row:first-child,
-.service-provider-row.winner {
-  border-top: none;
-}
-.service-provider-main {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.service-provider-name {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text);
-  font-family: 'SF Mono', 'Fira Code', monospace;
-}
-.service-provider-meta {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-top: 2px;
-}
-.service-priority {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  background: var(--bg);
-  padding: 1px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-}
-.service-router-badge {
-  font-size: 0.68rem;
-  background: rgba(99, 102, 241, 0.12);
-  color: #6366f1;
-  border: 1px solid rgba(99, 102, 241, 0.35);
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-weight: 600;
-}
 .service-winner-badge {
   font-size: 0.68rem;
   padding: 1px 6px;
@@ -549,45 +493,6 @@ body.is-dragging-chat .nav-rail:hover {
   color: var(--text-muted);
   border: 1px solid var(--border);
 }
-.service-prefer-btn {
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  padding: 2px 4px;
-  cursor: pointer;
-  color: var(--text-muted);
-  display: inline-flex;
-  align-items: center;
-}
-.service-prefer-btn:hover:not(:disabled) {
-  background: var(--bg);
-  color: var(--text);
-}
-.service-prefer-btn.preferred {
-  color: #ca8a04;
-}
-.service-prefer-btn:disabled {
-  cursor: wait;
-  opacity: 0.5;
-}
-.service-slot-toggle {
-  margin-top: 8px;
-  background: transparent;
-  border: none;
-  padding: 4px 0;
-  cursor: pointer;
-  color: var(--text-secondary);
-  font-size: 0.78rem;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.service-slot-toggle:hover {
-  color: var(--text);
-}
-.service-slot-rest {
-  margin-top: 6px;
-}
 
 /* 工具 */
 
@@ -597,35 +502,7 @@ body.is-dragging-chat .nav-rail:hover {
   gap: 6px;
 }
 
-/* ===== 插件市场占位 ===== */
-
-.marketplace-install-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.marketplace-install-input {
-  flex: 1;
-  padding: 6px 10px;
-  background: var(--bg-light);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-size: 0.85rem;
-  outline: none;
-}
-
-.marketplace-install-input:focus {
-  border-color: var(--accent);
-}
-
-.marketplace-plugin-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
+/* ===== 插件市场 ===== */
 
 .page-marketplace {
   display: flex;
@@ -974,14 +851,6 @@ a.marketplace-card-name:hover {
   overflow: hidden;
 }
 
-.chat-panel-session-name {
-  color: var(--text-muted);
-  font-weight: 400;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .chat-panel-new-btn {
   width: 28px;
   height: 28px;
@@ -1269,31 +1138,6 @@ a.marketplace-card-name:hover {
 }
 
 /* ===== 对话压缩状态气泡 ===== */
-.compress-bubble {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  margin: 4px 0;
-  border-radius: 8px;
-  font-size: 0.82rem;
-  color: var(--text-secondary);
-  background: rgba(99, 102, 241, 0.1);
-  border: 1px solid rgba(99, 102, 241, 0.2);
-}
-.compress-bubble.start {
-  color: var(--primary, #6366f1);
-}
-.compress-bubble.done {
-  color: #22c55e;
-  background: rgba(34, 197, 94, 0.1);
-  border-color: rgba(34, 197, 94, 0.2);
-}
-.compress-bubble.error {
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.2);
-}
 @keyframes compress-spin {
   to { transform: rotate(360deg); }
 }
@@ -1773,13 +1617,11 @@ a.marketplace-card-name:hover {
   cursor: not-allowed;
 }
 
-.send-btn.stop-btn,
 .send-btn.stop-mode {
   background: var(--danger, #e53935);
   font-size: 0.85rem;
 }
 
-.send-btn.stop-btn:hover:not(:disabled),
 .send-btn.stop-mode:hover:not(:disabled) {
   background: color-mix(in srgb, var(--danger, #e53935) 85%, black);
 }
@@ -2118,23 +1960,6 @@ a.marketplace-card-name:hover {
 
 /* ===== 消息中的文件 ===== */
 
-.message-attach-order {
-  position: absolute;
-  bottom: 3px;
-  left: 3px;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  font-size: 0.6rem;
-  min-width: 16px;
-  height: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0 var(--radius) 0 var(--radius);
-  padding: 0 3px;
-  pointer-events: none;
-}
-
 .message-files {
   display: flex;
   flex-direction: column;
@@ -2153,17 +1978,6 @@ a.marketplace-card-name:hover {
   font-size: 0.82rem;
   color: var(--text);
   max-width: fit-content;
-}
-
-.message-file-item .message-attach-order {
-  position: static;
-  background: none;
-  color: var(--text-muted);
-  font-size: 0.7rem;
-  min-width: unset;
-  height: unset;
-  border-radius: 0;
-  padding: 0;
 }
 
 /* ===== 待发送文件预览 ===== */
@@ -2518,13 +2332,6 @@ a.marketplace-card-name:hover {
   color: var(--text-muted);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-}
-
-.log-hint {
-  margin-left: auto;
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  align-self: center;
 }
 
 /* ===== 插件配置页 ===== */
@@ -3565,50 +3372,11 @@ details[open] > .tool-call-summary::before {
   gap: 3px;
 }
 
-.chip-badge {
-  font-size: 0.62rem;
-  line-height: 1;
-  vertical-align: middle;
-}
-
-.chip-badge.chip-auth {
-  color: #ffd700;
-}
-
-.chip-badge.chip-danger {
-  color: var(--danger);
-}
-
 /* ===== 权限管理页 ===== */
-
-.authority-add-form {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.authority-add-form .config-edit-input {
-  width: auto;
-  min-width: 120px;
-  flex: 1;
-}
 
 /* 指令权限列表 (grid-based) */
 .authority-cmd-list {
   font-size: 0.78rem;
-}
-
-.authority-cmd-header {
-  display: grid;
-  grid-template-columns: 1.2fr 1fr 0.7fr 0.7fr 1fr;
-  padding: 8px 12px;
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  font-weight: 600;
-  border-bottom: 1px solid var(--border);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .authority-cmd-row {
@@ -3632,26 +3400,6 @@ details[open] > .tool-call-summary::before {
   background: rgba(124, 111, 247, 0.04);
 }
 
-/* 子指令行：略淡背景 + 左侧细线表示从属关系 */
-.authority-cmd-row.is-sub {
-  background: rgba(0, 0, 0, 0.015);
-  border-left: 2px solid var(--border);
-}
-
-.authority-cmd-row.is-sub.overridden {
-  background: rgba(124, 111, 247, 0.06);
-}
-
-.authority-cmd-toggle {
-  font-size: 9px;
-  transition: transform 0.15s;
-  user-select: none;
-}
-
-.authority-cmd-toggle.open {
-  transform: rotate(90deg);
-}
-
 .authority-cmd-name {
   color: var(--primary);
   font-family: 'SF Mono', 'Fira Code', monospace;
@@ -3667,28 +3415,9 @@ details[open] > .tool-call-summary::before {
   white-space: nowrap;
 }
 
-/* Owner 表格 — 3 列 */
-.authority-owner-header {
-  grid-template-columns: 1fr 1.5fr 0.8fr;
-}
-
-.authority-owner-row {
-  grid-template-columns: 1fr 1.5fr 0.8fr;
-}
-
 /* 用户表格 — 4 列 */
-.authority-user-header {
-  grid-template-columns: 1fr 1.5fr 0.8fr 1fr;
-}
-
 .authority-user-row {
   grid-template-columns: 1fr 1.5fr 0.8fr 1fr;
-}
-
-.authority-cell-platform {
-  color: var(--primary);
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  font-size: 0.76rem;
 }
 
 .authority-cell-id {
@@ -3698,16 +3427,6 @@ details[open] > .tool-call-summary::before {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.authority-badge {
-  display: inline-block;
-  padding: 1px 8px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text-secondary);
 }
 
 /* 用户行内联小标记：账户（可登录）/ 授予计数 */
@@ -3720,77 +3439,7 @@ details[open] > .tool-call-summary::before {
   color: var(--text-secondary);
 }
 
-/* 用户行下方展开的内联编辑面板（授予 / 密码） */
-.authority-user-expand {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 16px 10px;
-  border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.authority-user-expand label {
-  font-size: 0.7rem;
-  color: var(--text-secondary);
-}
-
-.authority-badge.owner {
-  background: rgba(255, 215, 0, 0.15);
-  color: #ffd700;
-}
-
-.authority-badge.high {
-  background: rgba(124, 111, 247, 0.15);
-  color: var(--primary);
-}
-
-.authority-safety-tag {
-  display: inline-block;
-  padding: 1px 8px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  border-radius: 10px;
-}
-
-.authority-safety-tag.safe {
-  background: rgba(72, 199, 142, 0.12);
-  color: #48c78e;
-}
-
-.authority-safety-tag.dangerous {
-  background: rgba(255, 107, 107, 0.12);
-  color: var(--danger);
-}
-
-.authority-actions {
-  display: flex;
-  gap: 4px;
-}
-
-.authority-inline-input {
-  width: 70px !important;
-  padding: 2px 6px !important;
-  font-size: 0.76rem !important;
-}
-
-.authority-inline-select {
-  width: 100px !important;
-  padding: 2px 6px !important;
-  font-size: 0.76rem !important;
-}
-
 /* ===== 高危操作确认对话框 ===== */
-.confirm-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-  animation: fade-in 0.15s ease;
-}
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -3817,73 +3466,6 @@ details[open] > .tool-call-summary::before {
   text-align: center;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
   animation: modal-scale 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.confirm-dialog-icon {
-  font-size: 36px;
-  margin-bottom: 8px;
-}
-.confirm-dialog h3 {
-  margin: 0 0 8px;
-  font-size: 16px;
-  color: var(--text);
-}
-.confirm-dialog-desc {
-  font-size: 13px;
-  color: var(--muted);
-  margin: 0 0 12px;
-  line-height: 1.5;
-}
-.confirm-dialog-desc strong {
-  color: var(--text);
-  font-family: var(--mono);
-}
-.confirm-dialog-args {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px 12px;
-  font-size: 11px;
-  font-family: var(--mono);
-  color: var(--muted);
-  text-align: left;
-  max-height: 160px;
-  overflow: auto;
-  margin: 0 0 16px;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-.confirm-dialog-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: center;
-}
-.btn-confirm-danger {
-  padding: 8px 20px;
-  border-radius: 6px;
-  border: none;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  background: #e74c3c;
-  color: #fff;
-  transition: background 0.15s;
-}
-.btn-confirm-danger:hover {
-  background: #c0392b;
-}
-.btn-confirm-cancel {
-  padding: 8px 20px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  cursor: pointer;
-  font-size: 13px;
-  background: var(--card-bg);
-  color: var(--muted);
-  transition: all 0.15s;
-}
-.btn-confirm-cancel:hover {
-  border-color: var(--text);
-  color: var(--text);
 }
 
 /* ===== 重启中遮罩 ===== */
@@ -4356,67 +3938,6 @@ details[open] > .tool-call-summary::before {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-/* ===== 模型列表 ===== */
-
-.model-search-row {
-  position: relative;
-  margin-bottom: 12px;
-}
-
-.model-provider-group {
-  margin-bottom: 12px;
-}
-
-.model-provider-label {
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin-bottom: 6px;
-  padding-left: 2px;
-}
-
-.model-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.model-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  border-radius: 8px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  font-size: 0.78rem;
-  transition: border-color var(--transition);
-}
-
-.model-chip:hover {
-  border-color: var(--primary);
-}
-
-.model-chip-name {
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  color: var(--text);
-  font-size: 0.76rem;
-}
-
-.model-chip-caps {
-  display: inline-flex;
-  gap: 3px;
-}
-
-.model-cap-tag {
-  display: inline-block;
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 0.62rem;
-  background: rgba(124, 111, 247, 0.12);
-  color: var(--primary);
 }
 
 /* ===== 会话树页面 ===== */
@@ -5805,7 +5326,6 @@ td.col-actions { text-align: right; }
   .app-layout.mobile .authority-cmd-list {
     overflow-x: auto;
   }
-  .app-layout.mobile .authority-cmd-header,
   .app-layout.mobile .authority-cmd-row {
     min-width: 560px;
   }

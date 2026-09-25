@@ -15,10 +15,10 @@ pnpm add @aalis/api-storage
 ## 使用
 
 ```ts
-import type { /* ... */ } from '@aalis/api-storage';
-```
+import { storage } from '@aalis/api-storage';
 
-本包为 *-api 类型包；实现见对应的运行时插件。
+// uses: { storage }
+```
 
 ## 许可
 

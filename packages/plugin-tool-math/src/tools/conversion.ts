@@ -4,7 +4,6 @@ import type { BoundTools } from '@aalis/api-tools';
 
 interface UnitCategory {
   label: string;
-  baseUnit: string;
   units: Record<string, { factor: number; label: string }>;
 }
 
@@ -12,7 +11,6 @@ interface UnitCategory {
 const CATEGORIES: Record<string, UnitCategory> = {
   length: {
     label: '长度',
-    baseUnit: 'm',
     units: {
       km: { factor: 1000, label: '千米' },
       m: { factor: 1, label: '米' },
@@ -36,7 +34,6 @@ const CATEGORIES: Record<string, UnitCategory> = {
   },
   mass: {
     label: '质量',
-    baseUnit: 'kg',
     units: {
       t: { factor: 1000, label: '吨' },
       kg: { factor: 1, label: '千克' },
@@ -52,7 +49,6 @@ const CATEGORIES: Record<string, UnitCategory> = {
   },
   area: {
     label: '面积',
-    baseUnit: 'sqm',
     units: {
       sqkm: { factor: 1e6, label: '平方千米' },
       ha: { factor: 1e4, label: '公顷' },
@@ -68,7 +64,6 @@ const CATEGORIES: Record<string, UnitCategory> = {
   },
   volume: {
     label: '体积',
-    baseUnit: 'L',
     units: {
       m3: { factor: 1000, label: '立方米' },
       L: { factor: 1, label: '升' },
@@ -85,7 +80,6 @@ const CATEGORIES: Record<string, UnitCategory> = {
   },
   speed: {
     label: '速度',
-    baseUnit: 'mps',
     units: {
       mps: { factor: 1, label: '米/秒' },
       kmph: { factor: 1 / 3.6, label: '千米/时' },
@@ -98,7 +92,6 @@ const CATEGORIES: Record<string, UnitCategory> = {
   },
   time: {
     label: '时间',
-    baseUnit: 's',
     units: {
       y: { factor: 31557600, label: '年' },
       mo: { factor: 2629800, label: '月(30.44天)' },
@@ -114,7 +107,6 @@ const CATEGORIES: Record<string, UnitCategory> = {
   },
   data: {
     label: '数据量',
-    baseUnit: 'B',
     units: {
       bit: { factor: 0.125, label: '比特' },
       B: { factor: 1, label: '字节' },
@@ -131,7 +123,6 @@ const CATEGORIES: Record<string, UnitCategory> = {
   },
   pressure: {
     label: '压强',
-    baseUnit: 'Pa',
     units: {
       Pa: { factor: 1, label: '帕斯卡' },
       kPa: { factor: 1000, label: '千帕' },
@@ -145,7 +136,6 @@ const CATEGORIES: Record<string, UnitCategory> = {
   },
   energy: {
     label: '能量',
-    baseUnit: 'J',
     units: {
       J: { factor: 1, label: '焦耳' },
       kJ: { factor: 1000, label: '千焦' },
@@ -159,7 +149,6 @@ const CATEGORIES: Record<string, UnitCategory> = {
   },
   power: {
     label: '功率',
-    baseUnit: 'W',
     units: {
       W: { factor: 1, label: '瓦' },
       kW: { factor: 1000, label: '千瓦' },
@@ -170,7 +159,6 @@ const CATEGORIES: Record<string, UnitCategory> = {
   },
   angle: {
     label: '角度',
-    baseUnit: 'deg',
     units: {
       deg: { factor: 1, label: '度' },
       rad: { factor: 180 / Math.PI, label: '弧度' },

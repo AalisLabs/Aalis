@@ -4,7 +4,7 @@
 
 把**原始入站消息流 + 我方出站富文本 + 平台 notice 事件**持久化成 `Message` 历史条目，写入底层 `memory` 服务，供后续上下文渲染、向量检索、引用回复反查、用户档案事实提取等场景消费。它是「消息文本最终成形（发送者前缀 / 引用回复 / 图片描述 / 附件名）」的**唯一烘焙入口**——预处理器只写元信息，content 的拼接全在归档阶段一锤定音。
 
-- 服务注册名：`messageArchive.current`（字符串键）
+- 服务注册名：`'message-archive'`（描述符 `messageArchive`，读 `messageArchive.current`）
 - 契约包：`@aalis/api-message-archive`
 - 参考实现：`@aalis/plugin-message-archive`
 
@@ -29,30 +29,30 @@ export interface MessageArchiveService {
 
 - **`saveMessage`**（必需）：直写一条已成形的 `Message` 到指定会话。最薄的一层——直接转发给 `memory.saveMessage`，`options.debugLabel` 仅用于按配置打调试日志（`packages/plugin-message-archive/src/index.ts`）。用于出站消息回档（如 image-sender 的图片占位、subtask 的系统提示）。
 - **`archiveIncoming`**（必需，核心）：吃一条 `IncomingMessage`，做完整烘焙——调用 `media` 识别附件、拼接发送者前缀 / 引用回复 / 附件描述、抽取 @提及、写会话身份 `metadata`，落库后**发出 `inbound:message:archived` 事件**，返回最终 `Message` + content（`packages/plugin-message-archive/src/index.ts`）。
-- **`archiveNotice?`**（可选）：把平台 notice/事件（禁言、撤回、入群等）作为 `role:'notice'` 系统条目入档，`kind` 取 `noticeType`。返回 `null` 表示内容为空被跳过（）。
-- **`findByMessageId?`**（可选）：按平台侧 `messageId` 在最近 `scanLimit`（夹取 1..500，缺省 100）条历史里从新往旧反查归档原文，命中我方已烘焙的富文本（含图片描述）。未命中返回 `null`（）。
+- **`archiveNotice?`**（可选）：把平台 notice/事件（禁言、撤回、入群等）作为 `role:'notice'` 系统条目入档，`kind` 取 `noticeType`。返回 `null` 表示内容为空被跳过。
+- **`findByMessageId?`**（可选）：按平台侧 `messageId` 在最近 `scanLimit`（夹取 1..500，缺省 100）条历史里从新往旧反查归档原文，命中我方已烘焙的富文本（含图片描述）。未命中返回 `null`。
 
 重要类型（同文件）：
 
-- `ArchiveIncomingResult { message: Message; content: string }`（）——`message` 是落库实体，`content` 是烘焙后的纯文本，调用方常直接拿去喂 LLM。
-- `ArchiveNoticeOptions`（）：`sessionId` / `noticeType` / `content` 必填（`content` 为人类可读描述，作为 system 消息正文写入）；`subType` / `platform` / `userId` / `targetId` / `groupId` / `operatorId` / `timestamp` / `data` 可选，`data` 整体透传进 `metadata`。字段语义对齐 OneBot v11/v12 notice 规范。
+- `ArchiveIncomingResult { message: Message; content: string }`——`message` 是落库实体，`content` 是烘焙后的纯文本。
+- `ArchiveNoticeOptions`：`sessionId` / `noticeType` / `content` 必填（`content` 为人类可读描述，作为 system 消息正文写入）；`subType` / `platform` / `userId` / `targetId` / `groupId` / `operatorId` / `timestamp` / `data` 可选，`data` 整体透传进 `metadata`。字段语义对齐 OneBot v11/v12 notice 规范。
 - `Message`（来自 `@aalis/schema-message`，`packages/schema-message/src/index.ts`）：`role` + `content: string | null` + 可选 `name` / `kind` / `timestamp` / `metadata`。
 - `inbound:message:archived` 事件 payload（`packages/schema-message/src/index.ts`）：`{ sessionId, incoming: IncomingMessage, archivedMessage: Message }`。注意 `archivedMessage.content` 可能已不同于 `incoming.content`（已烘焙）。
 
-> `message-archive-api` 标了 `aalis.types: true`（纯类型/契约包，仅在 `@aalis/core` 的 `服务描述符` 上做 declaration merging，见 ），运行时服务由 `plugin-message-archive` 提供。
+> `@aalis/api-message-archive` 是契约包（keywords 含 `aalis-api`），导出类型与 `messageArchive` 描述符（`defineService<MessageArchiveService>('message-archive')`），不含实现；运行时服务由 `plugin-message-archive` 提供。
 
 ## 3. 谁提供 / 谁消费
 
-**提供方**：`@aalis/plugin-message-archive`，在 `apply` 末尾 `provide(messageArchive, service)`（`packages/plugin-message-archive/src/index.ts`）。manifest 见 `package.json` 的 `aalis.service.provides: ['message-archive']` + 源码 `provides: [messageArchive]`（）。
+**提供方**：`@aalis/plugin-message-archive`，在 `apply` 末尾 `provide(messageArchive, service)`（`packages/plugin-message-archive/src/index.ts`）。manifest 见 `package.json` 的 `aalis.service.provides: ['message-archive']` + 源码 `provides: [messageArchive]`。
 
 **典型消费点**（全部走 `messageArchive.current`，且都列为 `uses optional`）：
 
-- `plugin-agent`：主链路。`archiveIncomingMessageInOrder` 串行入档入站消息（`packages/plugin-agent/src/index.ts`），并用 `saveMessage` 回档 assistant 产物（）。
-- `plugin-adapter-onebot`：`archiveNotice` 入档群事件（）；`findByMessageId` 反查引用原文（）；`saveMessage` 入档投递失败提示（`:2265, 2275`）。
+- `plugin-agent`：主链路。`archiveIncomingMessageInOrder` 串行入档入站消息（`packages/plugin-agent/src/index.ts`），并用 `saveMessage` 回档 assistant 产物。
+- `plugin-adapter-onebot`：`archiveNotice` 入档群事件；`findByMessageId` 反查引用原文；`saveMessage` 入档投递失败提示（一处）。
 - `plugin-flow-control` / `plugin-trigger-policy`：把被流控/策略「吞掉」的入站消息做 **shadow 归档**（`plugin-flow-control/src/index.ts`，`plugin-trigger-policy/src/index.ts`）。
-- `plugin-image-sender`：`saveMessage` 回档发出的图片/语音/视频占位（）。
+- `plugin-image-sender`：`saveMessage` 回档发出的图片/语音/视频占位。
 - `plugin-subtask` / `plugin-memory-summary`：`saveMessage` 写系统/摘要条目（`plugin-subtask/src/index.ts`，`plugin-memory-summary/src/index.ts`）。
-- `plugin-user-profile`：不直接调服务，而是监听 `inbound:message:archived` 事件做后台事实提取（）。
+- `plugin-user-profile`：不直接调服务，而是监听 `inbound:message:archived` 事件做后台事实提取。
 
 ## 4. 写一个 provider
 
@@ -160,8 +160,8 @@ private async archiveIncomingMessageInOrder(lane: string, incoming: IncomingMess
 }
 ```
 
-- **lane key**：`${sessionId}::${source ?? 'user'}`（）——同会话同来源共用一条 lane，串行；不同来源（如用户输入 vs proactive 注入）互不阻塞。
-- 设计意图见 `MEMORY` 注释「同一 lane 的入站消息归档串行化，避免连续消息读取历史时漏掉前一条输入」（）。
+- **lane key**：`${sessionId}::${source ?? 'user'}`——同会话同来源共用一条 lane，串行；不同来源（如用户输入 vs proactive 注入）互不阻塞。
+- 设计意图见 `MEMORY` 注释「同一 lane 的入站消息归档串行化，避免连续消息读取历史时漏掉前一条输入」。
 
 > ⚠️ **审计 caveat——绕过串行队列的 shadow 归档会乱序。**
 > `plugin-flow-control` 与 `plugin-trigger-policy` 直接 `await archive.archiveIncoming(message)`（`plugin-flow-control/src/index.ts`、`plugin-trigger-policy/src/index.ts`），**没有经过 `archiveIncomingMessageInOrder` 的 per-lane 队列**。当 shadow 归档与 agent 主链路归档落在同一 `sessionId`/`source` 上并发触发时，两条写入彼此无序，可能造成归档时间线乱序（后吞的消息先落库、连续消息漏看前一条）。
@@ -174,10 +174,10 @@ private async archiveIncomingMessageInOrder(lane: string, incoming: IncomingMess
 
 ## 7. 能力 / 风险 → 影响
 
-- **跨会话隔离**：`sessionId` 是唯一隔离维度，provider 必须严格按 `sessionId` 分桶落库，绝不能把 A 会话的消息写进 B。proactive 跨会话委派被特殊标成 `role:'notice'` + `kind:'cross-session-delegation'`，避免 B 回看历史时把派发任务误读为「曾有用户说过」（）。
-- **审计溯源**：`archiveIncoming` 把 `triggerType` / `source` 写进 `metadata`（），用于区分真实用户消息 vs 系统注入，是事后审计「agent 在某群做过什么」的依据。provider 应保留这些字段。
+- **跨会话隔离**：`sessionId` 是唯一隔离维度，provider 必须严格按 `sessionId` 分桶落库，绝不能把 A 会话的消息写进 B。proactive 跨会话委派被特殊标成 `role:'notice'` + `kind:'cross-session-delegation'`，避免 B 回看历史时把派发任务误读为「曾有用户说过」。
+- **审计溯源**：`archiveIncoming` 把 `triggerType` / `source` 写进 `metadata`，用于区分真实用户消息 vs 系统注入，是事后审计「agent 在某群做过什么」的依据。provider 应保留这些字段。
 - **本服务无 authority/SSRF/沙盒语义**：它不发起网络请求、不做权限判定。但若你的归档实现要落到外部存储，写文件请走 `storage` 的 `'<root>:/path'` 文法（注意 storage 不是沙箱，见 `docs/concepts/storage-uri-grammar.md`），拉远端资源请走 `safeFetch`（SSRF 防护，见 `docs/concepts/security-model.md`）。
-- **附件富信息**：`archiveIncoming` 是图片/语音/视频描述合入对话文本的唯一入口（）。文件附件已被 `plugin-file-reader` 替换 `att.data` 为 `aalis-file://ID`，归档只保留 `att.name` 进 `metadata.fileNames`，避免 inline 内容污染气泡显示（）。
+- **附件富信息**：`archiveIncoming` 是图片/语音/视频描述合入对话文本的唯一入口。文件附件已被 `plugin-file-reader` 替换 `att.data` 为 `aalis-file://ID`，归档只保留 `att.name` 进 `metadata.fileNames`，避免 inline 内容污染气泡显示。
 
 ## 8. 交叉链接
 

@@ -1,7 +1,7 @@
 // 全动态前端发现（纯逻辑，注入 fs/path 便于单测）。
 //
-// 按 `aalis.client:true` 标记 + 存在 `dist/index.html` 收录前端候选——**不硬编码任何前端包名**，
-// 与 runtime 加载器的 marker 驱动一致（忒修斯之船：任意第三方前端，带标记+dist 即被发现）。
+// 按 `aalis.client:true` 标记 + 存在 `dist/index.html` 收录前端候选——**不硬编码任何前端包名**
+// （忒修斯之船：任意第三方前端，带标记+dist 即被发现）。
 // 覆盖三种拓扑：monorepo（扫 packages 同级目录）/ 独立项目（扫 node_modules/@aalis 作用域 + 根 deps）。
 
 interface ClientCandidate {
@@ -32,7 +32,8 @@ interface PkgLike {
 /**
  * 发现所有前端包：在 scanDirs 各目录下逐子目录、以及 depIds（项目根 deps）里，收录 package.json
  * 标了 `aalis.client:true` 且其 `dist/index.html` 存在的包。按包名去重，再按 id 排序（确定性输出）。
- * 默认活跃前端由调用方按 config 或「排序后第一个」决定——本函数不做偏好判断、不认任何具体名字。
+ * 活跃前端由 webui-client 服务解析决定（偏好 > 优先级 > 注册顺序），本函数只负责发现、不做偏好判断、
+ * 不认任何具体名字。
  */
 export function discoverClients(scanDirs: string[], depIds: string[], env: DiscoveryEnv): ClientCandidate[] {
   const out: ClientCandidate[] = [];

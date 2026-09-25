@@ -41,7 +41,7 @@ export interface WorkflowService {
 }
 ```
 
-并通过 declaration merging 把服务名登记进核心 `服务描述符`（`packages/api-workflow/src/index.ts`），使 `workflow.current` 得到强类型。
+服务经描述符 `workflow = defineService<WorkflowService>('workflow')` 登记（`packages/api-workflow/src/index.ts`），类型随描述符走，消费方写进 `uses` 即得类型；事件类型另经 declaration merging 增广 `AalisEvents`（见下文「事件契约」）。
 
 ### 工作流定义（DSL）
 
@@ -71,10 +71,10 @@ export type TriggerSpec =
 
 节点（`packages/api-workflow/src/index.ts`）。基础字段 `id` / `type` / `deps?`（上游依赖，空=根节点）/ `out?`（把结果存入 `outputs[out]` 供下游 `{{outputs.<out>}}` 插值）。四种类型：
 
-- `tool`：`{ tool: string; args?: Record<string, unknown> }`——调用已注册工具；`args` 内字符串值会被插值（）。
-- `send-message`：`{ sessionId: string; platform?: string; content: string }`——fire-and-forget 发一条消息（）。
-- `wait`：`{ seconds: number }`——等待 N 秒（）。
-- `agent`：`{ instruction: string; sessionId?: string; platform?: string; timeoutSeconds?: number }`——把指令派发给 agent **并等待本轮回复**，回复文本作为节点结果（，详见 §6）。
+- `tool`：`{ tool: string; args?: Record<string, unknown> }`——调用已注册工具；`args` 内字符串值会被插值。
+- `send-message`：`{ sessionId: string; platform?: string; content: string }`——fire-and-forget 发一条消息。
+- `wait`：`{ seconds: number }`——等待 N 秒。
+- `agent`：`{ instruction: string; sessionId?: string; platform?: string; timeoutSeconds?: number }`——把指令派发给 agent **并等待本轮回复**，回复文本作为节点结果（详见 §6）。
 
 ### 运行实例
 
@@ -104,7 +104,7 @@ export interface WorkflowRun {
 - `'workflow:run:start'` / `'workflow:run:done'` / `'workflow:run:error'`：以 `WorkflowRun` 为参数，**出站**——workflow 在运行各阶段 emit。
 - `'workflow:node:done'`：`{ runId, node: NodeRunInfo }`，每个节点完成时 emit。
 
-`@aalis/api-workflow/package.json` 标记 `aalis.types: true` 且 keywords 含 `aalis-api`——是纯契约包，非可加载插件。
+`@aalis/api-workflow/package.json` 的 keywords 含 `aalis-api`——是契约包，非可加载插件。
 
 ## 3. 谁提供 / 谁消费
 
@@ -113,7 +113,7 @@ export interface WorkflowRun {
 唯一一等实现 **`@aalis/plugin-workflow`**：
 - 注册：`provide(workflow, service)`（`packages/plugin-workflow/src/index.ts`）。
 - 模块拆分：`engine.ts`（DAG 拓扑调度 + 节点执行 + `{{...}}` 插值）、`triggers.ts`（`TriggerManager`，cron/interval/once/event 接线）、`loader.ts`（YAML 定义加载/持久化）、`persistence.ts`（`RunStore` 运行历史滚动写盘）、`index.ts`（服务装配 + AI 工具 + WebUI 页）。
-- 依赖（`package.json` `aalis.service` 与 `index.ts` 双源）：`required: ['cron-engine']`（周期型触发器全部委托 cron-engine，见 §6）；`optional: ['tools', 'storage', 'webui']`。
+- 依赖（`package.json` `aalis.service` 与 `index.ts` 双源）：`required: ['config', 'cron-engine', 'events', 'hooks', 'lifecycle', 'logger', 'provide']`（周期型触发器全部委托 cron-engine，见 §6）；`optional: ['storage', 'tools', 'webui-server']`。
 
 ### 触发源（trigger:fired 的 emit 者）
 
@@ -131,8 +131,8 @@ await events.emit('trigger:fired' as any, {
 
 ### 典型消费点
 
-- **AI 工具**（同插件内自我消费）：`enableTools` 开启时向 LLM 暴露 `workflow_define` / `workflow_list` / `workflow_run` / `workflow_get_runs` / `workflow_remove`（`packages/plugin-workflow/src/index.ts`），全部走 `tools` 服务注册（optional 依赖，`tools.current` 缺失则跳过，）。
-- **WebUI actions**（同插件内）：`workflowStats` / `listWorkflowsTable` / `listRunsTable` / `triggerWorkflow` / `toggleWorkflow` / `removeWorkflow` / `upsertWorkflowYaml` 等都以 `const svc = workflow.current` 取服务、判空降级（）——这是**每次读取 `.current` 重新解析** 的标准范例。
+- **AI 工具**（同插件内自我消费）：`enableTools` 开启时向 LLM 暴露 `workflow_define` / `workflow_list` / `workflow_run` / `workflow_get_runs` / `workflow_remove`（`packages/plugin-workflow/src/index.ts`），全部走 `tools` 服务注册（optional 依赖；登记口在 tools 提供者缺席时先挂账，上线后自动补挂）。
+- **WebUI actions**（同插件内）：`workflowStats` / `listWorkflowsTable` / `listRunsTable` / `triggerWorkflow` / `toggleWorkflow` / `removeWorkflow` / `upsertWorkflowYaml` 等是闭包，直接使用本次激活构造的 service，不按名回查容器（查到的可能是别人提供的同名服务）。
 - 跨插件外部消费者：当前仓内 workflow 服务的主要消费方就是 workflow 自身的工具/WebUI 层 + scheduler 的事件桥；第三方插件可经 `workflow.current` 编程式触发/查询。
 
 ## 4. 写一个 provider
@@ -157,8 +157,8 @@ DI 靠包清单 + 代码导出**双源**声明（见 [manifest-metadata](../conc
   "keywords": ["aalis", "aalis-plugin"],
   "aalis": {
     "service": {
-      "required": ["cron-engine"],
-      "optional": ["tools", "storage", "webui"],
+      "required": ["config", "cron-engine", "events", "hooks", "lifecycle", "logger", "provide"],
+      "optional": ["storage", "tools", "webui-server"],
       "provides": ["workflow"]
     }
   }
@@ -253,7 +253,7 @@ export default definePlugin({
 
 ### 惰性读取 `.current`（不要缓存实例）
 
-提供者重新 `provide` / 切换会使旧实例失效，所以**每次用都重新取**（见 [lazy-service-access](../concepts/lazy-service-access.md)）。参考实现的 WebUI action 就是逐次读取 `.current`：
+提供者重新 `provide` / 切换会使旧实例失效，所以第三方消费者**每次用都重新取**（见 [lazy-service-access](../concepts/lazy-service-access.md)）：
 
 ```ts
 const svc = workflow.current;
@@ -298,14 +298,14 @@ await events.emit('trigger:fired', {
 
 工作流定义是 owner 资产，但**「谁触发就按谁的权限裁决」**，杜绝借他人 workflow 提权（`packages/plugin-workflow/src/index.ts`）：
 
-- `workflow_run` 工具触发时把调用者 `{ platform, userId }` 透传给 `runWorkflow` 的 `caller`（），引擎再据此构造 `toolCallContext`，让工作流内部的 `tool` 节点按**调用者**等级过 authority 闸（`engine.ts` 把 `toolCallContext` 传给 `tools.execute`）。
+- `workflow_run` 工具触发时把调用者 `{ platform, userId }` 透传给 `runWorkflow` 的 `caller`，引擎再据此构造 `toolCallContext`，让工作流内部的 `tool` 节点按**调用者**等级过 authority 闸（`engine.ts` 把 `toolCallContext` 传给 `tools.execute`）。
 - cron / event / once / WebUI「立即运行」触发**无调用者** → 保持匿名（`platform: 'workflow'`、`userId: undefined`），只能跑 `public`（risk safe、minLevel 0）工具（`index.ts`）。
 - provider 作者重实现时**必须保留这条透传链**：否则匿名触发的工作流能跑 owner 才允许的危险工具，等于绕过 [authority](../plugins/plugin-authority.md)。risk{safe/sensitive/dangerous}→minLevel、确认（confirm 轴）等都在 `tools.execute` 那层裁决，workflow 只负责传对身份。
 
 ### agent 节点：join 串扰与隔离
 
 `agent` 节点复用 `delegate_to_session` 的 join 机制——emit `inbound:message`（`triggerType: 'proactive'`）前先注册 `agent:turn:after` middleware，按 `sessionId` 捕获首条回复（`engine.ts`）。约束：
-- **同一并行层内不要让多个 agent 节点指向相同的显式 `sessionId`**：`agent:turn:after` 按 sessionId 匹配会串扰捕获（A 拿到 B 的回复）。需要隔离子任务就**省略 sessionId**，引擎自动生成一次性子会话 `workflow:agent:<runId>:<nodeId>`（`engine.ts`，`-api:74-81` 文档）。
+- **同一并行层内不要让多个 agent 节点指向相同的显式 `sessionId`**：`agent:turn:after` 按 sessionId 匹配会串扰捕获（A 拿到 B 的回复）。需要隔离子任务就**省略 sessionId**，引擎自动生成一次性子会话 `workflow:agent:<runId>:<nodeId>`（`engine.ts`；契约 `AgentNodeSpec.sessionId` 的注释同此）。
 - `source` 含 nodeId（`workflow:<wf>:<nodeId>`）以隔离 agent 的并发 lane，避免同会话两回合互相 abort（`engine.ts`）。
 - 默认 `timeoutSeconds = 120`；超时或 `outcome=error/aborted` → 节点失败（`engine.ts`）。
 - 若目标 platform/sessionType 落入 trigger-policy / flow-control 生效 scope，proactive 消息可能被吞，节点会等满超时才失败——放宽 scope 时要为编排消息留通路（`engine.ts`）。

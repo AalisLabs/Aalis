@@ -1,9 +1,9 @@
 import { agent } from '@aalis/api-agent';
-import { hooks } from '@aalis/api-hooks';
+import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { listLLMModels, llm, resolveLLMModel } from '@aalis/api-llm';
 import { type MemoryService, type MetadataOp, memory } from '@aalis/api-memory';
 import { persona } from '@aalis/api-persona';
-import { platform } from '@aalis/api-platform';
+import { getPlatformNames, platform } from '@aalis/api-platform';
 import {
   type PlatformProfile,
   type SessionConfig,
@@ -93,13 +93,6 @@ const configSchema: ConfigSchema = {
 // ===== 常量 =====
 
 const METADATA_NAMESPACE = 'sessions';
-
-type MemoryClearData = {
-  scope: 'session' | 'all';
-  types?: string[];
-  sessionId?: string;
-  results: Array<{ source: string; success: boolean; message: string }>;
-};
 
 // ===== WebuiPages（声明式 UI） =====
 
@@ -429,7 +422,7 @@ class SessionManager implements SessionManagerService {
   }
 
   private async clearDeletedSessionData(id: string): Promise<void> {
-    const clearData: MemoryClearData = {
+    const clearData: HookContextMap['memory:clear'] = {
       scope: 'session',
       sessionId: id,
       results: [],
@@ -607,28 +600,11 @@ class SessionManager implements SessionManagerService {
    * 4. 全局 defaults（最低）
    */
   resolveConfig(sessionId: string, platform?: string): Omit<SessionConfig, 'sessionDefaults'> {
+    // 2-4 层即「继承默认」
+    const result = this.resolveInheritedDefaults(sessionId, platform);
+
     const session = this.sessions.get(sessionId);
-
-    const result: Omit<SessionConfig, 'sessionDefaults'> = {};
-
-    // 4. 全局 defaults（最低优先级）
-    Object.assign(result, stripUndefined(this.defaults));
-
-    // 3. 平台 profile —— 无论 session 是否存在都应用
-    if (platform) {
-      const profile = this.platformProfiles.get(platform);
-      if (profile) Object.assign(result, stripDefaults(profile));
-    }
-
     if (!session) return result;
-
-    // 2. 父会话 sessionDefaults
-    if (session.parentId) {
-      const parent = this.sessions.get(session.parentId);
-      if (parent?.config?.sessionDefaults) {
-        Object.assign(result, stripUndefined(parent.config.sessionDefaults));
-      }
-    }
 
     // 1. 会话自身 config（最高优先级）
     Object.assign(result, stripUndefined(session.config));
@@ -653,7 +629,7 @@ class SessionManager implements SessionManagerService {
     // 2. 平台 profile
     if (platform) {
       const profile = this.platformProfiles.get(platform);
-      if (profile) Object.assign(result, stripDefaults(profile));
+      if (profile) Object.assign(result, stripUndefined(profile));
     }
 
     // 1. 父会话 sessionDefaults（最高，覆盖 profile/defaults）
@@ -779,9 +755,6 @@ function stripUndefined(obj: object | undefined): Record<string, unknown> {
   return result;
 }
 
-/** stripDefaults 与 stripUndefined 功能相同 —— 只保留有值的字段 */
-const stripDefaults = stripUndefined;
-
 // ===== 页面动作 =====
 
 /** 页面动作用到的能力：登记口 webui、读历史的 memory，以及供下拉框枚举选项的 persona / llm / tools / platform */
@@ -905,11 +878,7 @@ function registerSessionActions(caps: ActionCaps, manager: SessionManager): void
     const toolGroups = tools.current?.getGroups().map(g => ({ name: g.name, label: g.label })) ?? [];
 
     // 已注册平台列表
-    const platforms: string[] = [];
-    for (const entry of platform.all()) {
-      const platformName = entry.instance.platform;
-      if (platformName && !platforms.includes(platformName)) platforms.push(platformName);
-    }
+    const platforms = getPlatformNames(platform);
 
     return { personas, models, toolGroups, platforms, profiles: manager.getPlatformProfiles() };
   });
@@ -1042,7 +1011,7 @@ async function run(caps: Caps): Promise<void> {
   events.on('outbound:message', (msg: { sessionId: string }) => {
     if (!msg.sessionId) return;
     const session = manager.getSession(msg.sessionId);
-    // 子会话（有 parentId）由 plugin-session-tools 的 agent:turn:after 中间件负责完成并提取 result
+    // 子会话（有 parentId）由 plugin-subtask 的 agent:turn:after 中间件负责完成并提取 result
     if (session && session.status === 'active' && !session.parentId) {
       manager.updateSession(msg.sessionId, { status: 'completed' }).catch(() => {});
     }
@@ -1056,7 +1025,7 @@ async function run(caps: Caps): Promise<void> {
     await next();
     if (!data.sessionId) return;
     const session = manager.getSession(data.sessionId);
-    // 子会话由 plugin-session-tools 负责完成并回传 result，这里只收口根会话。
+    // 子会话由 plugin-subtask 负责完成并回传 result，这里只收口根会话。
     if (session && session.status === 'active' && !session.parentId) {
       manager.updateSession(data.sessionId, { status: 'completed' }).catch(() => {});
     }

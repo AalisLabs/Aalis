@@ -350,7 +350,7 @@ export function MarketplacePage({
   };
 
   const handleUninstall = async (name: string) => {
-    // 卸前披露：拉依赖图，列出真实依赖者——服务依赖者（将被 409 拒）+ import 依赖者（删后可能起不来）。
+    // 卸前披露：拉依赖图，列出真实依赖者——服务依赖者（服务层卸载闸会拒绝）+ import 依赖者（删后可能起不来）。
     // 取代旧的「按类别拍脑袋」静态警告（既误报又漏报）。
     let graph: DepGraph | null = null;
     try {
@@ -363,7 +363,7 @@ export function MarketplacePage({
       body: (
         <>
           {graph && <UninstallDepWarning graph={graph} />}
-          <div className="dep-note">将删除其代码目录并清除残留配置。不可恢复，但可从市场重新安装。</div>
+          <div className="dep-note">将删除其代码目录并清除残留配置。不可恢复，但可从市场重新安装。插件写入 data/ 等存储根的数据不会被删除，需要时请手动清理。</div>
         </>
       ),
       confirmLabel: '卸载',

@@ -77,7 +77,7 @@ const FUNCTIONS_VAR: Record<string, (args: number[]) => number> = {
 
 // ===== 辅助数学函数 =====
 
-function factorial(n: number): number {
+export function factorial(n: number): number {
   if (n < 0 || !Number.isInteger(n)) throw new Error('阶乘仅支持非负整数');
   if (n > 170) throw new Error('阶乘溢出（最大支持 170!）');
   let result = 1;
@@ -85,7 +85,7 @@ function factorial(n: number): number {
   return result;
 }
 
-function gcd(a: number, b: number): number {
+export function gcd(a: number, b: number): number {
   a = Math.abs(Math.round(a));
   b = Math.abs(Math.round(b));
   while (b) {
@@ -94,13 +94,13 @@ function gcd(a: number, b: number): number {
   return a;
 }
 
-function lcm(a: number, b: number): number {
+export function lcm(a: number, b: number): number {
   a = Math.abs(Math.round(a));
   b = Math.abs(Math.round(b));
   return a === 0 || b === 0 ? 0 : (a / gcd(a, b)) * b;
 }
 
-function comb(n: number, k: number): number {
+export function comb(n: number, k: number): number {
   n = Math.round(n);
   k = Math.round(k);
   if (k < 0 || k > n) return 0;
@@ -116,7 +116,7 @@ function comb(n: number, k: number): number {
   return Math.round(result);
 }
 
-function perm(n: number, k: number): number {
+export function perm(n: number, k: number): number {
   n = Math.round(n);
   k = Math.round(k);
   if (k < 0 || k > n) return 0;

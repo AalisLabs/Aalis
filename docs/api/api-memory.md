@@ -2,11 +2,11 @@
 
 **包名**: `@aalis/api-memory`  
 **源码**: `packages/api-memory/src/index.ts`  
-**实现**: `@aalis/plugin-memory-inmemory`, `@aalis/plugin-memory-sqlite`, `@aalis/plugin-memory-mongodb`, `@aalis/plugin-memory-vector`
+**实现**: `@aalis/plugin-memory-inmemory`, `@aalis/plugin-memory-sqlite`, `@aalis/plugin-memory-mongodb`
 
 ## 概述
 
-`MemoryService` 是 Agent 的"长期记忆"——保存每轮 Message、按 sessionId 检索历史、提供结构化元数据 K/V 存储。多实现并存：通常 inmemory + sqlite 用作不同语义存储（短时/持久），vector 用作语义检索。描述符 `memory` 是普通调用型 `ServiceRef<MemoryService>`。
+`MemoryService` 是 Agent 的"长期记忆"——保存每轮 Message、按 sessionId 检索历史、提供结构化元数据 K/V 存储。可以同时装载多个实现，但 `memory` 服务按名只选一个胜者（偏好 > 优先级 > 注册顺序）；语义检索由 `plugin-memory-vector` 经 vectorstore 另行提供，不是 `MemoryService` 的实现。描述符 `memory` 是普通调用型 `ServiceRef<MemoryService>`。
 
 ## 核心方法
 
@@ -23,7 +23,9 @@ interface MemoryService {
     fromTs: number,
     toTs: number,
     roles?: Array<Message['role']>,
+    excludeKinds?: string[],
   ): Promise<Message[]>;
+  getRecentMessagesAcrossSessions?(query: RecentMessagesAcrossSessionsQuery): Promise<RecentMessageRecord[]>;
 
   saveMetadata(namespace: string, key: string, data: Record<string, unknown>): Promise<void>;
   getMetadata(namespace: string, key: string): Promise<Record<string, unknown> | undefined>;
@@ -36,16 +38,7 @@ interface MemoryService {
 }
 ```
 
-## Capability 框架
-
-```
-history           最基础：saveMessage + getHistory
-metadata          结构化元数据存储
-content-update    支持 updateMessageContent
-message-delete    支持 deleteMessagesByTimestamps
-```
-
-消费方：
+## 消费方式
 
 ```ts
 import { memory } from '@aalis/api-memory';
@@ -72,7 +65,6 @@ export default definePlugin({
   types?: string[];
   sessionId?: string;
   results: Array<{ source; success; message }>;
-  rollbacks: Array<{ source; fn: () => Promise<void> }>;
 }
 ```
 
@@ -83,7 +75,7 @@ export default definePlugin({
 - [@aalis/plugin-memory-inmemory](../plugins/plugin-memory-inmemory.md) — 进程内 Map
 - [@aalis/plugin-memory-sqlite](../plugins/plugin-memory-sqlite.md) — 持久化（默认）
 - [@aalis/plugin-memory-mongodb](../plugins/plugin-memory-mongodb.md) — 远端
-- [@aalis/plugin-memory-vector](../plugins/plugin-memory-vector.md) — 向量检索（依赖 embedding + vectorstore）
+- [@aalis/plugin-memory-vector](../plugins/plugin-memory-vector.md) — 向量检索（消费方，非实现方；提供 `semantic-memory`，依赖 embedding + vectorstore）
 - [@aalis/plugin-memory-summary](../plugins/plugin-memory-summary.md) — 压缩摘要插件（消费方，非实现方）
 
 ## 相关

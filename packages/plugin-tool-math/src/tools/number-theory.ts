@@ -1,4 +1,6 @@
 import type { BoundTools } from '@aalis/api-tools';
+import { comb, factorial, gcd, lcm, perm } from '../lib/expression.js';
+
 export function registerNumberTheoryTools(tools: BoundTools): void {
   tools.register({
     definition: {
@@ -118,17 +120,6 @@ export function registerNumberTheoryTools(tools: BoundTools): void {
 
 // ===== 数论辅助函数 =====
 
-function gcd(a: number, b: number): number {
-  while (b) {
-    [a, b] = [b, a % b];
-  }
-  return a;
-}
-
-function lcm(a: number, b: number): number {
-  return a === 0 || b === 0 ? 0 : Math.abs((a / gcd(a, b)) * b);
-}
-
 function isPrime(n: number): boolean {
   if (n < 2) return false;
   if (n < 4) return true;
@@ -187,33 +178,6 @@ function fibonacci(n: number): string {
     [a, b] = [b, a + b];
   }
   return b.toString();
-}
-
-function factorial(n: number): number {
-  let result = 1;
-  for (let i = 2; i <= n; i++) result *= i;
-  return result;
-}
-
-function comb(n: number, k: number): number {
-  if (k < 0 || k > n) return 0;
-  if (k === 0 || k === n) return 1;
-  if (k > n - k) k = n - k;
-  // 封顶迭代次数防超大 k 阻塞事件循环（有限结果需 k 极小，10^5 远超之，不误拒）。
-  if (k > 100000) throw new Error('组合数计算量过大（迭代上限 100000）');
-  let result = 1;
-  for (let i = 0; i < k; i++) {
-    result = (result * (n - i)) / (i + 1);
-  }
-  return Math.round(result);
-}
-
-function perm(n: number, k: number): number {
-  if (k < 0 || k > n) return 0;
-  if (k > 100000) throw new Error('排列数计算量过大（迭代上限 100000）');
-  let result = 1;
-  for (let i = 0; i < k; i++) result *= n - i;
-  return result;
 }
 
 function modPow(base: bigint, exp: bigint, mod: bigint): bigint {

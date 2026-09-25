@@ -55,14 +55,14 @@ export interface SessionHistoryService {
 
 判定语义：**any-deny 短路** —— 同一 platform 多个 checker，任一返回 `deny` 即拒绝（`index.ts`，实现见 `plugin-tool-session/src/index.ts`）。
 
-契约里还通过 declaration merging 把名字登记进 `服务描述符`（`index.ts`），所以 `sessionHistory.current` 无需手写泛型即有类型。消费方源码顶部要 `import '@aalis/api-tool-session'` 触发该 merge。
+契约导出描述符 `sessionHistory = defineService<SessionHistoryService>('session-history')`（`index.ts`），消费方把描述符写进 `uses` 即得类型，`sessionHistory.current` 无需手写泛型。
 
 ## A.3 谁提供 / 谁消费
 
 **唯一参考实现**：`@aalis/plugin-tool-session`（`packages/plugin-tool-session/src/index.ts`）
 
 ```ts
-const historyService = createSessionHistoryService(ctx, cfg);
+const historyService = createSessionHistoryService(caps, cfg);
 provide(sessionHistory, historyService, { label: '会话历史读取' });
 ```
 
@@ -179,7 +179,7 @@ const result = await history.getHistory({ sessionId, limit }, callCtx);
 
 **登记并按会话隔离地访问「用户上传的文件」的元信息与本地路径。** 取用名 `fileReader.current`，实现包 `@aalis/plugin-file-reader`。
 
-**没有独立的 `@aalis/api-file-reader` 契约包**——契约与实现同住一包：`@aalis/plugin-file-reader` 直接导出 `FileReaderService` 接口，并经 declaration merging 把 `'file-reader'` 登记进 `服务描述符`（`packages/plugin-file-reader/src/index.ts`）。因此消费方 `import type { FileReaderService } from '@aalis/plugin-file-reader'` 即可拿到完整类型，`fileReader.current` 也无需手写泛型。它与 `session-history` 的差异只在于「契约是否单独成包」，而非「有没有可 import 的接口」。
+**没有独立的 `@aalis/api-file-reader` 契约包**——契约与实现同住一包：`@aalis/plugin-file-reader` 直接导出 `FileReaderService` 接口与描述符 `fileReader = defineService<FileReaderService>('file-reader')`（`packages/plugin-file-reader/src/index.ts`）。消费方把描述符写进 `uses` 即得类型，`fileReader.current` 无需手写泛型。它与 `session-history` 的差异只在于「契约是否单独成包」，而非「有没有可 import 的接口」。
 
 ## B.2 契约（导出的 `FileReaderService` 接口）
 
@@ -215,10 +215,10 @@ LLM 侧工具（不在服务接口里，是插件内注册的）：`read_uploade
 
 ## B.3 谁提供 / 谁消费
 
-**提供**：`@aalis/plugin-file-reader`（`index.ts` `provides: [file_reader]`；`package.json` `aalis.service.provides: ['file-reader']`，required `storage`，optional `agent`/`memory`/`media`）。
+**提供**：`@aalis/plugin-file-reader`（`index.ts` `provides: [fileReader]`；`package.json` `aalis.service.provides: ['file-reader']`，required `storage`，optional `agent`/`memory`/`media`）。
 
 **消费**：`@aalis/plugin-webui-server`
-- 能力探测：`fileReader.current !== undefined` 决定前端是否显示文件上传按钮（`packages/plugin-webui-server/src/index.ts`）。
+- 能力探测：`services.get('file-reader') !== undefined` 按名动态探测（不声明依赖），决定前端是否显示文件上传按钮（`packages/plugin-webui-server/src/index.ts`）。
 - 删除同步：删文件后通知服务清内存索引（`packages/plugin-webui-server/src/routes/uploaded-files.ts`）——注意这里**故意只用 duck-typed 子集** `{ deleteFile?: ... }` 取用，避免 webui-server 反向依赖 file-reader 插件包（`uploaded-files.ts` 有注释，连 `FileMeta` 都是各自定义而非 import）。
 
 ## B.4 标准用法

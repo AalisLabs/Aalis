@@ -15,8 +15,6 @@
 // 服务名：'flow-control'
 // ============================================================
 
-// 触发 @aalis/core 模块解析，使文件末尾的 declare module 增强生效
-import type {} from '@aalis/core';
 import { defineService } from '@aalis/core';
 
 /** 单会话的流控状态快照（只读视图，便于 trigger-policy 计算） */

@@ -39,15 +39,16 @@ function runGateway({ events, hooks, logger, provide, agent }: Caps): void {
   }
 
   /**
-   * 入站处理：按 INBOUND_PHASE_ORDER 顺序运行四个命名相位。
+   * 入站处理：按 INBOUND_PHASE_ORDER 顺序运行五个命名相位。
    *
    * 相位规则（hooks.run 返回 false 即被某 handler swallow，整个管道立即停止）：
-   *   1. inbound:command  — plugin-commands 在此拦截命令；命中则不进入后续相位
-   *   2. inbound:flow     — plugin-flow-control 在此做禁言/冷却/限速闸门
-   *   3. inbound:trigger  — plugin-trigger-policy 在此判定是否触发 agent
-   *   4. inbound:dispatch — 默认动作：调用 agent.handleMessage（plugin-gateway 提供）
+   *   1. inbound:confirm  — plugin-session-confirm 在此拦截会话内确认回复
+   *   2. inbound:command  — plugin-commands 在此拦截命令；命中则不进入后续相位
+   *   3. inbound:flow     — plugin-flow-control 在此做禁言/冷却/限速闸门
+   *   4. inbound:trigger  — plugin-trigger-policy 在此判定是否触发 agent
+   *   5. inbound:dispatch — 默认动作：调用 agent.handleMessage（plugin-gateway 提供）
    *
-   * 任一中前三相位被 swallow 即视为"消息已被中间件处理"，不进入 dispatch。
+   * 前四相位任一被 swallow 即视为"消息已被中间件处理"，不进入 dispatch。
    */
   async function processInbound(message: IncomingMessage): Promise<void> {
     // 每条消息重新取当前胜者：agent 换人后下一条消息即跟上

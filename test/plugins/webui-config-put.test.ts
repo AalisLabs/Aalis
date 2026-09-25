@@ -2,13 +2,12 @@ import type { AppService, PluginManagerService, ServiceRef } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { HostConfig } from '../../packages/api-host-config/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
+import { captureRoutes } from '../fixtures/webui-routes.js';
 
 // PUT /api/config 只应用 CORE_CONFIG_SCHEMA 的键（name / logLevel）。其余顶层键一律不应用，但真有改动的
 // 要在响应里点名——不能静默丢弃却回复「已保存」（文档曾把 commandPrefix 记成顶层字段，用户照抄后 API 回 ok
 // 但什么都没发生）。也不能按键报 400：内置前端会把整份配置连同可能过期的 plugins 快照一起回传。
 // 路由注册器只调用 app.<method>(path, ...handlers)，这里用记录处理器的假 app 直接调用，不起端口。
-
-type Handler = (req: unknown, res: unknown, next: () => Promise<void>) => unknown;
 
 /** 最小 ServiceRef 桩：路由只经 current / require 取提供者 */
 function ref<T>(instance: unknown): ServiceRef<T> {
@@ -23,17 +22,7 @@ function setup(opts: { save?: () => Promise<void> } = {}) {
     disabledPlugins: [],
   };
   const calls: string[] = [];
-  const routes = new Map<string, Handler[]>();
-  const app = new Proxy(
-    {},
-    {
-      get:
-        (_t, method: string) =>
-        (path: string, ...handlers: Handler[]) => {
-          routes.set(`${method.toUpperCase()} ${path}`, handlers);
-        },
-    },
-  );
+  const { expressApp, invoke } = captureRoutes();
   const hostConfig = {
     set: (k: string, v: unknown) => {
       store[k] = v;
@@ -47,7 +36,7 @@ function setup(opts: { save?: () => Promise<void> } = {}) {
       }),
   };
   registerPluginRoutes(
-    app as never,
+    expressApp,
     {
       app: ref<AppService>({ restart: () => calls.push('restart') }),
       source: { current: undefined },
@@ -61,28 +50,7 @@ function setup(opts: { save?: () => Promise<void> } = {}) {
     () => (_req: unknown, _res: unknown, next: () => void) => next(),
     () => undefined,
   );
-  const put = async (body: unknown) => {
-    const handlers = routes.get('PUT /api/config');
-    if (!handlers) throw new Error('PUT /api/config 未注册');
-    const out: { status: number; body?: unknown } = { status: 200 };
-    const res = {
-      status(code: number) {
-        out.status = code;
-        return res;
-      },
-      json(payload: unknown) {
-        out.body = payload;
-        return res;
-      },
-    };
-    let i = 0;
-    const next = async (): Promise<void> => {
-      const h = handlers[i++];
-      if (h) await h({ body, headers: {} }, res, next);
-    };
-    await next();
-    return out;
-  };
+  const put = (body: unknown) => invoke('PUT /api/config', { body, headers: {} });
   return { store, calls, put };
 }
 

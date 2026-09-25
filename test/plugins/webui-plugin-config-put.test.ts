@@ -7,11 +7,10 @@ import { type App, appService, config, definePlugin, pluginsService } from '../.
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import type { ConfigStore } from '../../packages/runtime/src/config-store.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
+import { captureRoutes } from '../fixtures/webui-routes.js';
 
 // PUT /api/plugins/:name/config 必须与 YAML watch 同一政策：按 configSchema 裁未知键。
 // :name 非法时 core 抛 Error，路由映射为 400 并透出 message（不把管理面输入变成 500）。
-
-type Handler = (req: unknown, res: unknown, next: () => Promise<void>) => unknown;
 
 function refStub<T>(instance: unknown): ServiceRef<T> {
   return { current: instance as T, require: () => instance as T, all: () => [], follow: () => () => {} };
@@ -48,19 +47,9 @@ function attachRoutes(opts: {
   putPlugin: (name: string, body: unknown) => Promise<{ status: number; body?: unknown }>;
   getConfig: (name: string) => Promise<{ status: number; body?: unknown }>;
 } {
-  const routes = new Map<string, Handler[]>();
-  const expressApp = new Proxy(
-    {},
-    {
-      get:
-        (_t, method: string) =>
-        (path: string, ...handlers: Handler[]) => {
-          routes.set(`${method.toUpperCase()} ${path}`, handlers);
-        },
-    },
-  );
+  const { expressApp, invoke } = captureRoutes();
   registerPluginRoutes(
-    expressApp as never,
+    expressApp,
     {
       app: refStub(opts.app),
       source: { current: undefined },
@@ -76,38 +65,15 @@ function attachRoutes(opts: {
     () => undefined,
   );
 
-  const run = async (key: string, req: unknown) => {
-    const handlers = routes.get(key);
-    if (!handlers) throw new Error(`${key} 未注册`);
-    const out: { status: number; body?: unknown } = { status: 200 };
-    const res = {
-      status(code: number) {
-        out.status = code;
-        return res;
-      },
-      json(payload: unknown) {
-        out.body = payload;
-        return res;
-      },
-    };
-    let i = 0;
-    const next = async (): Promise<void> => {
-      const h = handlers[i++];
-      if (h) await h(req, res, next);
-    };
-    await next();
-    return out;
-  };
-
   return {
     putPlugin: (name, body) =>
-      run('PUT /api/plugins/:name/config', {
+      invoke('PUT /api/plugins/:name/config', {
         params: { name },
         body: { config: body },
         headers: {},
       }),
     getConfig: name =>
-      run('GET /api/plugins/:name/config', {
+      invoke('GET /api/plugins/:name/config', {
         params: { name },
         body: {},
         headers: {},

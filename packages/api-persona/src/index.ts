@@ -1,8 +1,6 @@
 // ----- 人格服务接口 -----
 // 由 @aalis/plugin-persona 拥有并导出。消费者从本包 import type。
 
-// 触发 @aalis/core 模块解析，使文末 declare module 增强生效
-import type {} from '@aalis/core';
 import { defineService } from '@aalis/core';
 
 /** 输出格式中单个字段的定义 */
@@ -29,7 +27,7 @@ export interface OutputFormat {
 }
 
 /**
- * 会话级选项，由调用方（如 agent-default）从 SessionConfig 构造后传入。
+ * 会话级选项，由调用方（如 @aalis/plugin-agent）从 SessionConfig 构造后传入。
  * PersonaService 本身不关心 session-manager，只根据传入的选项调整行为。
  */
 export interface PersonaSessionOptions {

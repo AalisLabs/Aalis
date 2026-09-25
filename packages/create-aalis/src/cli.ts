@@ -157,7 +157,7 @@ function fullCatalog(): string[] {
   return [...all];
 }
 
-/** 计算启用集（不含交互组与 live "其他插件"；二者由 main 补入）。 */
+/** 计算启用集（不含交互组；full 档的 live 目录由 main 补入）。 */
 function baseEnabled(tier: Tier): Set<string> {
   if (tier === 'full') return new Set(fullCatalog());
   if (tier === 'bare') return new Set();
@@ -166,7 +166,7 @@ function baseEnabled(tier: Tier): Set<string> {
   return set;
 }
 
-// ── live 插件目录（init 时实时查 npm，列全生态供选） ────────────
+// ── live 插件目录（full 档枚举 + 版本号复用） ────────────
 //
 // 搜索走官方源（keyword:aalis-plugin，同市场页约定）；npm 镜像（淘宝等）多不支持
 // search API，故这里固定官方源、可 --registry 覆盖。生成项目的 npm install 仍用
@@ -208,14 +208,13 @@ const STATIC_OTHERS = [
 
 interface CatalogEntry {
   name: string;
-  description: string;
   official: boolean;
   /** npm search 返回的最新版本（用于脚手架逐包写 `^<最新>`，省一次单独查询） */
   version?: string;
 }
 
 /**
- * npm search 响应 → 插件目录条目。脚手架只列**可装功能插件**。
+ * npm search 响应 → 插件目录条目。脚手架只收**可装功能插件**。
  *
  * 类型区分完全靠关键词，**不看包名**：检索用的是 `keywords:aalis-plugin`，而契约包带
  * `aalis-api`、前端带 `aalis-interface`、工具库带 `aalis-util`——它们根本不会出现在结果里。
@@ -227,7 +226,7 @@ interface CatalogEntry {
  * 纯函数，便于单测。
  */
 export function toPluginCatalog(data: {
-  objects?: Array<{ package: { name: string; description?: string; version?: string } }>;
+  objects?: Array<{ package: { name: string; version?: string } }>;
 }): CatalogEntry[] {
   return (
     (data.objects ?? [])
@@ -235,7 +234,6 @@ export function toPluginCatalog(data: {
       .filter(o => !/code-sandbox/.test(o.package.name.replace(/^@[^/]+\//, '')))
       .map(o => ({
         name: o.package.name,
-        description: o.package.description ?? '',
         official: o.package.name.startsWith('@aalis/'),
         version: o.package.version,
       }))

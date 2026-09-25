@@ -15,10 +15,10 @@ pnpm add @aalis/api-commands
 ## 使用
 
 ```ts
-import type { /* ... */ } from '@aalis/api-commands';
-```
+import { commands } from '@aalis/api-commands';
 
-本包为 *-api 类型包；实现见对应的运行时插件。
+// uses: { commands }
+```
 
 ## 许可
 

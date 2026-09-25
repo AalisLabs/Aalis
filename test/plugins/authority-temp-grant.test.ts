@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AccessRequest } from '../../packages/api-authority/src/index.js';
-import type { HostConfig } from '../../packages/api-host-config/src/index.js';
-import type { StorageService } from '../../packages/api-storage/src/index.js';
-import type { Logger } from '../../packages/core/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
+import { mkConfig, noFileStorage, silentLogger } from '../fixtures/authority.js';
 
 // ════════════════════════════════════════════════════════════
 // 会话临时授予（tempGrants）在**未授权救援闸**上的身份判据
@@ -25,27 +23,6 @@ import { AuthorityManager } from '../../packages/plugin-authority/src/authority-
 // 判据），下半截没动——半截修复。
 // ════════════════════════════════════════════════════════════
 
-type Cfg = Record<string, unknown>;
-function mkConfig(cfg: Cfg = {}): HostConfig {
-  const store: Cfg = { ...cfg };
-  return {
-    get: (k: string) => store[k],
-    set: (k: string, v: unknown) => {
-      store[k] = v;
-    },
-  } as unknown as HostConfig;
-}
-function mkLogger(): Logger {
-  const l = { child: () => l, debug() {}, info() {}, warn() {}, error() {} };
-  return l as unknown as Logger;
-}
-const storage = {
-  readFile: async () => {
-    throw new Error('no file');
-  },
-  writeFile: async () => {},
-} as unknown as StorageService;
-
 const req = (over: Partial<AccessRequest> = {}): AccessRequest =>
   ({
     name: 'shell.exec',
@@ -60,7 +37,11 @@ const req = (over: Partial<AccessRequest> = {}): AccessRequest =>
 
 /** 造一个实例，并让 alice 在 s1 会话里拿到一次 session 级授予。 */
 async function withGrant() {
-  const m = new AuthorityManager(mkConfig({ owners: [{ platform: 'onebot', userId: 'boss' }] }), mkLogger(), storage);
+  const m = new AuthorityManager(
+    mkConfig({ owners: [{ platform: 'onebot', userId: 'boss' }] }),
+    silentLogger(),
+    noFileStorage,
+  );
   m.setUserLevel({ platform: 'onebot', userId: 'alice' }, 2);
   m.setConfirmHandler('*', async () => ({ allowed: true, grant: { scope: 'session', durationSeconds: 600 } }));
   const ok = await m.requestAccess(req());
@@ -136,7 +117,7 @@ describe('会话临时授予不得成为救援闸上的绕过口', () => {
     // maxUses=1 的授予，让 A 平台用掉自己那份，然后看 B 平台那份还在不在。
     // 判据必须成对：只在**匹配端**加 platform 而消费端不加，会出现「命中的是 A 的授予、
     // 扣次数的是 B 的」——B 的授予凭空少一次，且下次真用时已被删。
-    const m = new AuthorityManager(mkConfig(), mkLogger(), storage);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), noFileStorage);
     m.setUserLevel({ platform: 'onebot', userId: 'dup' }, 2);
     m.setUserLevel({ platform: 'telegram', userId: 'dup' }, 2);
     m.setConfirmHandler('*', async () => ({ allowed: true, grant: { scope: 'session', maxUses: 1 } }));

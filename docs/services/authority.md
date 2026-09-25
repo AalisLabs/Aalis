@@ -8,8 +8,6 @@
 - 契约包：`@aalis/api-authority`（接口 + 类型 + `riskDefaults` / `resolveCapabilityPolicy` 纯函数 + 对 `@aalis/api-host-config` 的 `AalisConfig` 的 declaration merging）。
 - 参考实现包：`@aalis/plugin-authority`（`provides: [authority]`，见 `packages/plugin-authority/src/index.ts`）。
 
-> 注意：契约文件顶部的 `packages/api-authority/src/index.ts` 注释仍残留旧「纯能力委托模型」措辞，但**接口本体与参考实现已是数字等级单轴模型**（`level` / `setUserLevel` / `authorityOverrides` / `minLevel`）。以接口签名与 `authority-model.ts` 的裁决逻辑为准，详见第 7 节。
-
 ## 2. 契约（@aalis/api-authority）
 
 ### 2.1 两轴模型的类型
@@ -41,7 +39,7 @@ export function riskDefaults(risk?: CapabilityRisk): { visibility?; confirm? }
 export function resolveCapabilityPolicy(decl: CapabilityPolicyDecl, defaultVisibility = 'public'): { visibility; confirm? }
 ```
 
-`resolveCapabilityPolicy` 的优先级：**显式 visibility/confirm > risk 推导 > defaultVisibility**。tools/commands 传 `'public'`（默认放行），WebUI actions 传 `'restricted'`（默认拒）。
+`resolveCapabilityPolicy` 的优先级：**显式 visibility/confirm > risk 推导 > defaultVisibility**（缺省 `'public'`，即默认放行）。
 
 ### 2.2 服务接口 `AuthorityService`
 
@@ -50,30 +48,31 @@ export function resolveCapabilityPolicy(decl: CapabilityPolicyDecl, defaultVisib
 ```ts
 export interface AuthorityService {
   // 是否 owner（owners 配置命中 → 拥有 `*`）
-  isOwner(platform: string, userId?: string): boolean;                                    // :229
+  isOwner(platform: string, userId?: string): boolean;
 
   // 统一权限闸（轴 A）。返回 null 放行；string 为拒绝原因（可直接展示）。
   // 裁决：deniedCapabilities(全局硬禁) > owner(∞) > level >= minLevel
   authorize(identity: UserIdentity | { platform: string; userId?: string },
-            request: AuthorizeRequest): string | null;                                    // :237
+            request: AuthorizeRequest): string | null;
 
   // 设 target 外部身份等级（覆盖式整数；level=0 且无备注则清记录）。调用方自保仅 owner 可达。
-  setUserLevel(target: UserIdentity, level: number): void;                                // :243
-  removeUser(platform: string, userId: string): void;                                     // :246
+  setUserLevel(target: UserIdentity, level: number): void;
+  removeUser(platform: string, userId: string): void;
 
   // ── 临时能力委托 + 确认（轴 B）──
   // 「未授权」分支专用闸：是否被 owner 预先放行（白名单/本会话已有授予），绝不询问发起者本人
-  isPreApproved(request: AccessRequest): boolean;                                          // :253
-  // 触达未授予 restricted 能力 / 命中 confirm 时走确认流程（白名单 → 会话授予 → 确认回调）
-  requestAccess(request: AccessRequest): Promise<boolean>;                                 // :255
-  listTemporaryGrants(): TemporaryGrant[];                                                 // :256
-  revokeTemporaryGrant(id: string): boolean;                                               // :257
+  isPreApproved(request: AccessRequest): boolean;
+  // 已授权但声明 confirm 时的意图确认（白名单 → 会话授予 → 确认回调；always 只走确认回调）
+  requestAccess(request: AccessRequest): Promise<boolean>;
+  listTemporaryGrants(): TemporaryGrant[];
+  revokeGrantsOfCapability(capability: string): number;                                   // 撤销某能力上所有未过期的会话授予，返回撤销条数
+  revokeTemporaryGrant(id: string): boolean;
   setConfirmHandler(platform: string, handler: AccessConfirmHandler): () => void;          // 返回注销函数
   // 注：plugin-authority 的 AuthorityManager 另有 hasConfirmHandler(platform)，供其自身守卫区分
   // 「被拒」与「没有确认通道」；它是实现内部方法，不在本契约面上，第三方实现无需提供。
 
-  save(): void;                                                                            // :260
-  listUsers(): AuthorityUserEntry[];                                                       // :261
+  save(): void;
+  listUsers(): AuthorityUserEntry[];
 }
 ```
 
@@ -82,14 +81,12 @@ export interface AuthorityService {
 ```ts
 // packages/api-authority/src/index.ts
 interface AuthorizeRequest { capability: CapabilityId; visibility: CapabilityVisibility; risk?: CapabilityRisk; }
-// :149  —— requestAccess / isPreApproved 的入参；confirm='confirm' 性质见 :160
+// requestAccess / isPreApproved 的入参；confirm 为操作的生效确认要求（'session' | 'always'）
 interface AccessRequest { name; type: 'command'|'tool'; capability: CapabilityId; args?; sessionId; platform; userId?; confirm?: CapabilityConfirm; }
-// :199  —— 确认回调：boolean 最简允许/拒绝；对象可附临时委托范围
+// 确认回调：boolean 最简允许/拒绝；对象可附临时委托范围
 type AccessConfirmHandler = (request: AccessRequest) => Promise<boolean | AccessDecision>;
-// :170 / :178
 interface TemporaryGrantSpec { scope: 'once'|'session'; durationSeconds?: number; maxUses?: number; }
 interface AccessDecision { allowed: boolean; grant?: TemporaryGrantSpec; }
-// :206 / :212
 interface UserIdentity { platform: string; userId: string; }
 interface AuthorityUserEntry { platform; userId; isOwner: boolean; level: number; note?: string; }
 ```
@@ -108,9 +105,9 @@ interface ExecutionGuardContext {
   risk?: CapabilityRisk;             // 透传，供派生 minLevel；缺省回退 visibility
   confirm?: CapabilityConfirm;       // 轴 B，owner 也生效
   sessionId; platform; userId?; args?;
-  skipConfirm?: boolean;             // 系统/受信源（scheduler）：跳交互确认弹窗，但不绕 authorize
+  skipConfirm?: boolean;             // 系统/受信源（scheduler）：仍走 authorize；被拒时不走救援闸；已授权时跳过非 always 的确认
 }
-// :123  返回 null 放行；返回 string 拦截（值即拒绝原因/提示）
+// 返回 null 放行；返回 string 拦截（值即拒绝原因/提示）
 type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 ```
 
@@ -126,26 +123,26 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 | `confirmOverrides?: Record<string, CapabilityConfirm \| 'off'>` | 逐条覆盖确认要求；`'off'` 强制关闭确认 |
 | `restrictedPolicy?: { allow?: string[]; duration?: number }` | 受限能力临时白名单放行（自动化免确认）；`['*']` 全放 |
 | `autoConfirmUntil?: number` | owner 临时免 session 确认的截止 epoch ms；`-1` 一直/缺省 关 |
-| `network?: { blockPrivate?; denyCidrs?; allowedPorts? }` | SSRF 出口闸，注入进程级 `safeFetch` 策略（:304，见第 6 节） |
+| `network?: { blockPrivate?; denyCidrs?; allowedPorts? }` | SSRF 出口闸，注入进程级 `safeFetch` 策略（见第 6 节） |
 
 ## 3. 谁提供 / 谁消费
 
 **提供方（参考实现）**：`@aalis/plugin-authority`
 - 注册：`provide(authority, authority)`，`packages/plugin-authority/src/index.ts`（`new AuthorityManager(...)`）。
 - 裁决纯函数：`packages/plugin-authority/src/authority-model.ts`（`resolveAccess` / `resolveMinLevel` / `matchAnyCap` / `shouldSkipConfirm` / `autoConfirmActive`）；risk→等级的映射本身在 `@aalis/api-authority` 的 `capabilityMinLevel`。
-- 策略层 / 状态：`packages/plugin-authority/src/authority-manager.ts`（`AuthorityManager implements AuthorityService`，:25）。
+- 策略层 / 状态：`packages/plugin-authority/src/authority-manager.ts`（`AuthorityManager implements AuthorityService`）。
 - 数据层：`packages/plugin-authority/src/user-store.ts`（`users.json` 等级存储，经 storage 网关）。
 
 **消费方**：
 
-| 消费点 | 文件:行 | 用法 |
+| 消费点 | 文件 | 用法 |
 |---|---|---|
 | commands / tools 服务 | `packages/plugin-authority/src/index.ts` | `commands.follow` / `tools.follow` 调 `setExecutionGuard(guard)` 注入闸（反向注入，不返回 cleanup） |
 | plugin-tools 执行点 | `packages/plugin-tools/src/tools.ts` | 执行前 `resolveCapabilityPolicy(tool)` → 调 `this._guard({...})`，非 null 即拦截 |
-| plugin-session-confirm | `packages/plugin-session-confirm/src/index.ts` | `follow('authority')` → `setConfirmHandler('*', busChannel.handler)` 注册兜底确认通道 |
+| plugin-session-confirm | `packages/plugin-session-confirm/src/index.ts` | `authority.follow(provider => provider.setConfirmHandler('*', busChannel.handler))` 注册兜底确认通道 |
 | plugin-webui-server | `packages/plugin-webui-server/src/index.ts` | `setConfirmHandler('webui', ...)` 注册 WS 确认通道 |
 | plugin-cli | — | 无自有通道，落 session-confirm 的 `'*'` 兜底 |
-| WebUI actions | `packages/plugin-authority/src/index.ts` | `getOverview` / `setUserLevel` / `setOwners` 等管理面，均 `authority.current` |
+| WebUI actions | `packages/plugin-authority/src/index.ts` | `getOverview` / `setUserLevel` / `setOwners` 等管理面，经闭包里本次激活的 manager 调用 |
 
 ## 4. 写一个 provider（替换默认 authority 实现）
 
@@ -153,11 +150,11 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 
 ### 4.1 必须实现 vs 可选
 
-`AuthorityService` 全部方法都被消费方调用，没有「可选」方法，但行为侧最小可用集是：
+`AuthorityService` 没有「可选」方法。第一方插件跨包只调用 `isOwner`、`listUsers`、`setConfirmHandler`，其余方法由参考实现自己的守卫与管理面使用，是替换实现时需要提供的完整面。行为侧最小可用集是：
 
 - **必须**：`isOwner`、`authorize`（轴 A）、`requestAccess` + `setConfirmHandler`（轴 B，否则 confirm 能力永远拒）、`isPreApproved`（守卫拒绝后唯一补救路径）、`save`、`listUsers`。
 - **管理面用**：`setUserLevel`、`removeUser`、`listTemporaryGrants`、`revokeTemporaryGrant`（被 WebUI/CLI actions 调）。
-- **裁决不变量（必须保留）**：`deniedCapabilities` 硬禁 **压过 owner**；`isPreApproved` / `requestAccess` 的「未授权」分支**绝不询问发起者本人**（杜绝自我提权）；`confirm:'always'` 永不被任何 skip 跳过。
+- **裁决不变量（必须保留）**：`deniedCapabilities` 硬禁 **压过 owner**；守卫的「未授权」分支只调 `isPreApproved`，**绝不询问发起者本人**（杜绝自我提权）；`confirm:'always'` 永不被任何 skip 跳过。
 
 ### 4.2 注册（provide）
 
@@ -281,7 +278,7 @@ auth.setUserLevel({ platform, userId }, level);
 auth.save();
 ```
 
-参考真实兜底写法：`packages/plugin-authority/src/index.ts`（`setUserLevel` action）。新建确认通道的 surface 应 `follow('authority', a => a.setConfirmHandler('<platform>', handler))`——回调直接返回注销函数，作为 follow 的 cleanup，authority 换胜者或本插件 dispose 时自动注销（参考 `packages/plugin-session-confirm/src/index.ts`）。
+消费方判空的真实写法见 `packages/plugin-commands/src/index.ts`、`packages/plugin-user-profile/src/index.ts`（`authority.current` 缺席时，前者按非 owner、等级 0 处理，后者直接跳过指令提取）。新建确认通道的 surface 应 `authority.follow(provider => provider.setConfirmHandler('<platform>', handler))`——回调直接返回注销函数，作为 follow 的 cleanup，authority 换胜者或本插件 dispose 时自动注销（参考 `packages/plugin-session-confirm/src/index.ts`）。
 
 ### 5.3 错误边界
 
@@ -308,7 +305,7 @@ confirm 与等级**正交**，**只对已授权操作做意图确认**（不是�
 跳过规则 `shouldSkipConfirm`（`authority-model.ts`）：
 - `confirm:'always'` → **永不跳过**（cron 等无人确认即拒）。
 - `skipConfirm`（系统/受信源如 scheduler）→ 跳交互确认，但**不绕 `authorize`**（仍评估等级，防提权）。
-- `auto` 模式且**触发者是 owner 本人** → 跳过（`autoConfirmUntil`，`autoConfirmActive` :86）。
+- `auto` 模式且**触发者是 owner 本人** → 跳过（`autoConfirmUntil`，`autoConfirmActive`）。
 
 ### 6.3 临时委托的隔离不变量
 
@@ -320,7 +317,6 @@ authority 在 `apply` 时把 `config.network` 注入进程级 `safeFetch` 策略
 
 ## 7. 边界与注意事项
 
-- **契约注释与实现脱节（文档级，非运行时 bug）**：`packages/api-authority/src/index.ts`、 的注释仍以「纯能力委托 / public∪restricted / 委托加减」措辞描述模型，但接口（`authorize` 用 `level/minLevel`、`setUserLevel`、`authorityOverrides`）与参考实现已是**数字等级单轴**。写 provider/consumer 一律以 `AuthorityService` 签名 + `authority-model.ts` 裁决为准。
 - **`risk` 在两轴里走不同路径**：守卫把 `risk` 既透传给 `authorize`（派生 minLevel）又用 `resolveCapabilityPolicy` 展开出 `confirm`（`tools.ts`）。即 `risk:'dangerous'` 同时抬高最低等级到 2 **且**要求 session 确认；只想要其一时显式写 `visibility`/`confirm` 覆盖。
 - **守卫是反向注入，时序敏感**：authority 经 `commands.follow` / `tools.follow` 注入守卫（`packages/plugin-authority/src/index.ts`），confirm 通道经 `authority.follow` 反注（`packages/plugin-session-confirm/src/index.ts`）。任何一方未上线时另一方退化：没 authority → tools/commands 无守卫（全放行）；没 confirm 通道 → `requestAccess` 返回 false（confirm 能力全拒）。重写时保持 `follow`（provider 重启会重新触发），不要用一次性 `services.get`（无依赖边）。
 - **`autoConfirmUntil` / `restrictedPolicy.enabledAt` 是双状态**：`autoConfirmUntil` 持久化到 config；`policyEnabledAt` 是运行时态不持久化。重启后 `restrictedPolicy` 的 duration 计时归零（需再次触发 `markPolicyEnabled`，见 action `setRestrictedPolicy`，`src/index.ts`）。

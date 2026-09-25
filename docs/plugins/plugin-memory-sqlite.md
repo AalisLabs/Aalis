@@ -31,7 +31,7 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `path` | string | `'data/aalis.db'` | 数据库路径：SQLite 数据库文件路径，相对于项目根目录 |
+| `path` | string | `'data/aalis.db'` | 数据库路径：SQLite 数据库文件的 storage URI（如 `data:/aalis.db`；不含 `:/` 时首段视为存储根名，单段裸名归 `data` 根） |
 | `rangeQueryLimit` | number | `500` | 范围查询返回上限：区间消息查询（向量召回的上下文窗口扩展等）单次返回的最大条数。命中上限会静默截断 |
 | `crossSessionMaxLimit` | number | `1000` | 跨会话查询返回上限：跨会话最近消息查询允许的最大条数；调用方请求超过此值会被收窄到此上限 |
 

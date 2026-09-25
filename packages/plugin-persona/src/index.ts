@@ -18,7 +18,6 @@ import {
   config as configCap,
   definePlugin,
   events as eventsCap,
-  lifecycle as lifecycleCap,
   logger as loggerCap,
   optional,
   provide as provideCap,
@@ -86,7 +85,6 @@ interface PersonaCard {
   description: string;
   prompt: string;
   traits?: string[];
-  greeting?: string;
   outputFormat?: Record<string, { description: string; reply?: boolean }>;
   /** 角色卡自定义的「JSON 输出说明」，用于替换插件默认的强制提示文案。
    *  字段 schema 仍由插件根据 outputFormat.fields 自动渲染并附在文本之后。
@@ -111,12 +109,10 @@ class PersonaServiceImpl implements PersonaService {
   private statePersistence: boolean;
   private timeInjection: boolean;
   private timeZone: string;
-  /** 按名称缓存的角色卡（由启动扫描 + watch 预填） */
-  private cardCache = new Map<string, PersonaCard | null>();
+  /** 按名称缓存的角色卡（由启动扫描 + watch 预填；键集即 listModels 的结果） */
+  private cardCache = new Map<string, PersonaCard>();
   /** 按名称缓存的 OutputFormat */
   private formatCache = new Map<string, OutputFormat | null>();
-  /** 启动后扫描到的角色名称（用于 listModels，由启动 + watch 维护） */
-  private knownNames = new Set<string>();
 
   /** 每个 session 的持久化状态 */
   private sessionStates = new Map<string, Record<string, unknown>>();
@@ -141,21 +137,14 @@ class PersonaServiceImpl implements PersonaService {
   }
 
   /** 给外部调用：启动时预填 cache（代替原 sync 按需读盘） */
-  setCardCacheEntry(name: string, card: PersonaCard | null): void {
-    if (card) {
-      this.cardCache.set(name, card);
-      this.knownNames.add(name);
-    } else {
-      this.cardCache.set(name, null);
-      this.knownNames.delete(name);
-    }
+  setCardCacheEntry(name: string, card: PersonaCard): void {
+    this.cardCache.set(name, card);
     this.formatCache.delete(name);
   }
 
   removeCardCacheEntry(name: string): void {
     this.cardCache.delete(name);
     this.formatCache.delete(name);
-    this.knownNames.delete(name);
   }
 
   /** 重新加载“主角色卡”（fileName 对应的卡），供 watch 调用 */
@@ -167,10 +156,6 @@ class PersonaServiceImpl implements PersonaService {
         ? PersonaServiceImpl.parseRawOutputFormat(refreshed.outputFormat, refreshed.outputFormatRetries)
         : undefined;
     }
-  }
-
-  knownPersonaNames(): string[] {
-    return [...this.knownNames];
   }
 
   /** 解析原始 outputFormat 定义 → OutputFormat 结构 */
@@ -224,9 +209,7 @@ class PersonaServiceImpl implements PersonaService {
 
   /** 按名称动态加载角色卡（仅查 cache，启动时预填） */
   private loadCard(name: string): PersonaCard | undefined {
-    if (name === this.fileName) return this.card;
-    const cached = this.cardCache.get(name);
-    return cached ?? undefined;
+    return this.cardCache.get(name);
   }
 
   /** 获取指定角色卡的 OutputFormat（带缓存） */
@@ -449,7 +432,7 @@ class PersonaServiceImpl implements PersonaService {
   }
 
   async listModels(): Promise<string[]> {
-    return [...this.knownNames];
+    return [...this.cardCache.keys()];
   }
 }
 
@@ -461,7 +444,6 @@ const uses = {
   logger: loggerCap,
   events: eventsCap,
   hooks: hooksCap,
-  lifecycle: lifecycleCap,
   platform: optional(platformService),
   storage: optional(storageService),
   sessionManager: optional(sessionManagerService),
@@ -479,7 +461,7 @@ export default definePlugin({
 });
 
 async function run(caps: Caps): Promise<void> {
-  const { provide, config, logger, events, hooks, lifecycle } = caps;
+  const { provide, config, logger, events, hooks } = caps;
   const personaName = (config.persona as string) || 'default';
   const personasDirRaw = (config.personasDir as string) || 'data/personas';
   const statePersistence = (config.statePersistence as boolean) ?? false;
@@ -524,7 +506,6 @@ async function run(caps: Caps): Promise<void> {
       description: (parsed.description as string) ?? '',
       prompt: (parsed.prompt as string) ?? '',
       traits: parsed.traits as string[] | undefined,
-      greeting: parsed.greeting as string | undefined,
       outputFormat: parsed.outputFormat as PersonaCard['outputFormat'] | undefined,
       outputFormatPrompt: parsed.outputFormatPrompt as string | undefined,
       // 仅接受非负整数（0 = 不重试）；负数/小数/非数字按未设处理，交由解析处取缺省 1
@@ -612,84 +593,83 @@ async function run(caps: Caps): Promise<void> {
   });
   provide(persona, service);
 
-  // 启动时一次性预扫所有 personas → cache（用于 listModels / 动态切换）+ 启动 watch
-  events.on('app:ready', async () => {
+  /** 全量扫描 → cache（listModels / 动态切换用），剔除已消失的卡，并按 cache 刷新主卡 */
+  async function refresh(reason: string): Promise<void> {
     try {
       const known = await scanAll(service);
-      // 删除 cache 里那些已不存在的
-      for (const n of service.knownPersonaNames()) {
+      for (const n of await service.listModels()) {
         if (!known.has(n) && n !== personaName) service.removeCardCacheEntry(n);
       }
       service.reloadPrimaryCardFromCache();
-      logger.debug(`persona 启动扫描完成，已知 ${known.size} 张卡`);
+      logger.debug(`persona ${reason}，已知 ${known.size} 张卡`);
     } catch (err) {
-      logger.warn(`persona 启动扫描失败：${err}`);
+      logger.warn(`persona 扫描失败（${reason}）：${err}`);
     }
-    // 首启主目录尚不存在时 watch 会 ENOENT：先补建（只建本插件的主目录，configDir 等外部根不代建）。
-    // 与监听分开：只读根 / 符号链接目录上 mkdir 会抛，不能连带放弃对已存在目录的监听。
-    try {
-      await storage.stat(personasDir);
-    } catch {
-      try {
-        await storage.mkdir(personasDir);
-      } catch {
-        /* 建不了就照旧：下面的监听会给出失败原因 */
-      }
-    }
-    for (const dir of searchUris()) {
-      try {
-        const unwatch = storage.watch?.(dir, async () => {
+  }
+
+  // 跟随 storage：在场即补建主目录、挂监听、全量扫描；提供者换代（重启 / 改配置 / 晚上线）时重挂。
+  // 换代时 follow 先跑上次返回的清理，关掉挂在旧提供者上的监听。
+  // 首挂放在 sticky 的 app:ready 里并等它扫完，保持「start() 返回时主卡已按存储加载」；此刻 storage 不在场则等它上线再挂。
+  events.on('app:ready', async () => {
+    let first: Promise<void> | undefined;
+    caps.storage.follow(() => {
+      const offs: Array<() => void> = [];
+      let cancelled = false;
+      const task = (async () => {
+        // 首启主目录尚不存在时 watch 会 ENOENT：先补建（只建本插件的主目录，configDir 等外部根不代建）。
+        // 与监听分开：只读根 / 符号链接目录上 mkdir 会抛，不能连带放弃对已存在目录的监听。
+        try {
+          await storage.stat(personasDir);
+        } catch {
           try {
-            const known = await scanAll(service);
-            for (const n of service.knownPersonaNames()) {
-              if (!known.has(n) && n !== personaName) service.removeCardCacheEntry(n);
-            }
-            service.reloadPrimaryCardFromCache();
-            logger.debug(`persona 目录变化已重新加载（${dir}）`);
-          } catch (err) {
-            logger.warn(`persona 重扫失败：${err}`);
+            await storage.mkdir(personasDir);
+          } catch {
+            /* 建不了就照旧：下面的监听会给出失败原因 */
           }
-        });
-        if (unwatch) lifecycle.onDispose(unwatch);
-      } catch (err) {
-        logger.warn(`persona 目录监听失败（${dir}）：${err}`);
-      }
-    }
+        }
+        if (cancelled) return;
+        // 先挂监听再扫描：扫描期间的改动不会漏掉
+        for (const dir of searchUris()) {
+          try {
+            const off = storage.watch?.(dir, () => void refresh(`目录变化已重新加载（${dir}）`));
+            if (off) offs.push(off);
+          } catch (err) {
+            logger.warn(`persona 目录监听失败（${dir}）：${err}`);
+          }
+        }
+        await refresh('扫描完成');
+      })();
+      first ??= task;
+      return () => {
+        cancelled = true;
+        for (const off of offs.splice(0)) off();
+      };
+    });
+    await first;
   });
 
   // 参与 memory:clear 清除当前会话的 persona 状态
-  hooks.middleware(
-    'memory:clear',
-    async (
-      data: {
-        scope: 'session' | 'all';
-        types?: string[];
-        sessionId?: string;
-        results: Array<{ source: string; success: boolean; message: string }>;
-      },
-      next,
-    ) => {
-      // 类型过滤：仅在清除 context/persona/全部 时参与
-      if (data.types && !data.types.includes('context') && !data.types.includes('persona')) {
-        await next();
-        return;
-      }
-
-      try {
-        if (data.scope === 'all') {
-          service.clearAllStates();
-          data.results.push({ source: 'persona', success: true, message: '所有会话角色状态已清空' });
-        } else if (data.sessionId) {
-          service.clearSessionState(data.sessionId);
-          data.results.push({ source: 'persona', success: true, message: '当前会话角色状态已清空' });
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        data.results.push({ source: 'persona', success: false, message: `角色状态清空失败: ${msg}` });
-      }
+  hooks.middleware('memory:clear', async (data, next) => {
+    // 类型过滤：仅在清除 context/persona/全部 时参与
+    if (data.types && !data.types.includes('context') && !data.types.includes('persona')) {
       await next();
-    },
-  );
+      return;
+    }
+
+    try {
+      if (data.scope === 'all') {
+        service.clearAllStates();
+        data.results.push({ source: 'persona', success: true, message: '所有会话角色状态已清空' });
+      } else if (data.sessionId) {
+        service.clearSessionState(data.sessionId);
+        data.results.push({ source: 'persona', success: true, message: '当前会话角色状态已清空' });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      data.results.push({ source: 'persona', success: false, message: `角色状态清空失败: ${msg}` });
+    }
+    await next();
+  });
 
   // 跟踪当前会话信息（始终启用）：身份装进 AsyncLocalStorage 的异步上下文，
   // 穿透 await 不串、并发会话各自隔离——杜绝跨会话身份泄漏进他人 LLM 提示。

@@ -67,13 +67,6 @@ export interface StartAalisOptions {
 }
 
 /**
- * 启动一个 Aalis 实例：YAML 配置 + 插件加载 + 进程级重启 + 日志/终端/子命令宿主件。
- * 返回已启动的 App（便于测试或进一步操作）。
- *
- * 生命周期不变量：① `consoleHandle.bindEvents` 必须在 `new App` 之后（之前无 ctx）；
- * ② 子命令短路必须在 `app.start` 之前。
- */
-/**
  * 读取 @aalis/core 的实际安装版本，供 App 启动 banner 展示。
  * core 无 `exports` 限制，package.json 子路径可 require；解析失败则返回 undefined，
  * banner 自动省略版本段（不因版本读取失败而影响启动）。
@@ -86,6 +79,13 @@ function readCoreVersion(): string | undefined {
   }
 }
 
+/**
+ * 启动一个 Aalis 实例：YAML 配置 + 插件加载 + 进程级重启 + 日志/终端/子命令宿主件。
+ * 返回已启动的 App（便于测试或进一步操作）。
+ *
+ * 生命周期不变量：① `consoleHandle.bindEvents` 必须在 `new App` 之后（之前没有事件总线）；
+ * ② 子命令短路必须在 `app.start` 之前。
+ */
 export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   const { consoleSink = true, fileLog = true, terminalRestore = true } = opts;
   const subcommands = opts.subcommands ?? process.argv.slice(2);
@@ -94,7 +94,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   const bootstrap = installBootstrapBuffer();
   if (terminalRestore) installTerminalStateRestorer();
   const subcommandMode = subcommands.length > 0;
-  // console sink 在 App 之前装：此时无 ctx，sink 处于「无条件写」状态以打印早期启动日志，
+  // console sink 在 App 之前装：此时尚无事件总线（根绑定），sink 处于「无条件写」状态以打印早期启动日志，
   // 待 App 起来再 bindEvents 接管 terminal:claimed/released。子命令模式日志走 stderr，stdout 只留命令结果。
   // consoleSink: false 仍装 stderr + minLevel warn：加载器拒载「另一份 @aalis/core」的插件记 error，不能只剩下游「commands 服务不可用」。
   const consoleHandle: ConsoleSinkHandle = consoleSink

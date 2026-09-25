@@ -10,12 +10,11 @@
 
 定义三件事：
 
-1. **`AuthorityService.authorize`** —— capability 统一闸。任何 surface（tool /
-   command / WebUI action / REST / scheduler）的敏感操作在边界过同一裁决：
+1. **`AuthorityService.authorize`** —— capability 统一闸。tools / commands 的执行守卫在操作边界过这道裁决：
    数字等级裁决 `deniedCapabilities(全局硬禁) > owner(∞) > 用户 level >= 操作 minLevel`。
    模型详见 [docs/plugins/plugin-authority.md](../plugins/plugin-authority.md)。
-2. **`ExecutionGuard`** —— tools/commands surface 的适配器。`plugin-commands` 与 `plugin-tools` 在执行前调用；裁决委托 authorize，受限被拒后的临时委托/确认留在适配层。
-3. **身份与确认** —— `UserIdentity`（全 surface 统一身份类型）、受限能力的临时委托、平台 confirm 回调注册。
+2. **`ExecutionGuard`** —— tools/commands surface 的适配器。`plugin-commands` 与 `plugin-tools` 在执行前调用；裁决委托 authorize；被拒后的救援闸（`isPreApproved`）与已授权后的意图确认（`requestAccess`）留在适配层。
+3. **身份与确认** —— `UserIdentity`（全 surface 统一身份类型）、意图确认与会话临时授予、平台 confirm 回调注册。
 
 ## 两条正交轴
 
@@ -27,7 +26,7 @@
 ## 关键类型
 
 ```ts
-type CapabilityId = string;                          // 例: "tool:file.write" / "command:shutdown"
+type CapabilityId = string;                          // 例: "tool:file_write" / "command:shutdown"
 type CapabilityVisibility = 'public' | 'restricted'; // 操作默认可见性（轴 A）
 type CapabilityConfirm = 'session' | 'always';       // 确认要求（轴 B）
 type CapabilityRisk = 'safe' | 'sensitive' | 'dangerous'; // 风险糖：展开为 (visibility, confirm) 默认
@@ -41,8 +40,9 @@ interface ExecutionGuardContext {
   sessionId: string;
   platform: string;
   userId?: string;
+  actor?: { platform: string; userId: string }; // 被裁决身份（缺省=会话身份 platform/userId）
   args?: Record<string, unknown>;
-  skipConfirm?: boolean;             // 受信系统源（scheduler）：仍走 authorize，仅跳过交互确认弹窗，不绕过授权
+  skipConfirm?: boolean;             // 受信系统源（scheduler）：仍走 authorize；被拒时不走救援闸；已授权时跳过非 always 的确认
 }
 
 type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
@@ -59,7 +59,7 @@ type ExecutionGuard = (ctx: ExecutionGuardContext) => Promise<string | null>;
 | `sensitive` | restricted | （无） | owner 顺手的中危 |
 | `dangerous` | restricted | `session` | shell / 写删 / 改系统 |
 
-三者皆不声明 → tools/commands 兜底 `public`，WebUI actions 兜底 `restricted`。纯函数 `resolveCapabilityPolicy(decl, defaultVisibility)` / `riskDefaults(risk)` 导出供注册方使用。
+三者皆不声明 → 兜底 `public`。纯函数 `resolveCapabilityPolicy(decl, defaultVisibility)` / `riskDefaults(risk)` 导出供注册方使用。
 
 ## 服务接口
 
@@ -83,12 +83,13 @@ interface AuthorityService {
   // 删除用户记录（等级一并清除，回退默认 0）
   removeUser(platform: string, userId: string): void;
 
-  // ── 受限能力的临时委托 ──
+  // ── 意图确认与临时能力委托 ──
   // 「未授权」分支专用闸：是否被 owner 预先放行（restrictedPolicy 白名单 / 本会话已有授予）
   // 且不触犯硬禁。绝不询问发起者本人（杜绝自我确认提权）。
   isPreApproved(request: AccessRequest): boolean;
   requestAccess(request: AccessRequest): Promise<boolean>;
   listTemporaryGrants(): TemporaryGrant[];
+  revokeGrantsOfCapability(capability: string): number; // 撤销某能力上所有未过期的会话授予，返回撤销条数
   revokeTemporaryGrant(id: string): boolean;
   setConfirmHandler(platform: string, handler: AccessConfirmHandler): () => void; // 返回注销函数，注册方 dispose 时调用
 
@@ -97,13 +98,23 @@ interface AuthorityService {
 }
 ```
 
-## 受限能力临时委托流程
+## 守卫流程：救援闸与意图确认
 
-1. command/tool 声明 `visibility: 'restricted'`（主能力默认禁止）或经 risk 推导出 restricted
-2. 执行前 `ExecutionGuard` 委托 authorize；调用者 `level < minLevel` 被拒 → 触发 `requestAccess(request)`
-3. 临时委托流程：`restrictedPolicy` 白名单（`isPreApproved`）→ 会话内临时授予复用（按 sessionId 隔离）→ 平台 `AccessConfirmHandler`（由 `plugin-session-confirm` 提供）询问 owner
-4. owner 确认后可返回 `{ allowed: true, grant: { scope: 'session', durationSeconds, maxUses } }`，在该会话窗口内自动放行同名能力
-5. 确认回复约定：`Y`=本次允许；`YS`=本会话允许（限时）；其它=取消。`confirm:'always'` 每次都问，不接受会话记忆。
+执行前 `ExecutionGuard` 委托 `authorize` 裁决（轴 A），被裁决身份取 `actor`，缺省即会话身份（`platform` / `userId`）。之后按裁决结果分两条路径。
+
+**被拒（等级不够 / 硬禁）：救援闸**
+
+- 守卫只查 `isPreApproved`，不询问任何人，发起者无法靠自我确认提权；查不中就拒。
+- `isPreApproved` 先过硬禁：命中 `deniedCapabilities` 的能力不可救。再看是否被预先放行：`restrictedPolicy` 白名单（这条路径上只认 owner 本人），或该用户在本会话已有的临时授予。命中即放行，不再走意图确认。
+- 救援闸只在被裁决身份就是会话身份时适用。`actor` 覆盖了会话身份（委派、定时、自发回合）时直接拒，发言者的白名单与授予不能替另一个身份放行。
+- `skipConfirm` 的受信系统源被拒即拒，不走救援闸。
+
+**已授权且声明了 `confirm`（轴 B）：意图确认**
+
+- 先按 `shouldSkipConfirm` 判断能否跳过：`always` 永不跳过；非 `always` 在 `skipConfirm`、或 auto 模式开启且被裁决身份是 owner 时跳过。
+- 否则调 `requestAccess`：`restrictedPolicy` 白名单免确认 → 会话临时授予复用（按 platform + userId + sessionId + capability 匹配）→ 平台 `AccessConfirmHandler`（由 `plugin-session-confirm` 等提供）询问。`confirm:'always'` 只走确认回调。没有确认通道时返回 false，操作被拒。
+- 确认应答可返回 `{ allowed: true, grant: { scope: 'session', durationSeconds, maxUses } }`，在该会话窗口内对同一用户的同一能力免确认；`always` 不建立会话授予。
+- 确认回复约定：`Y`=本次允许；`YS`=本会话允许（限时）；其它=取消。
 
 ## 关键类型（请求 / 决策）
 
@@ -122,7 +133,7 @@ interface AccessRequest {
   sessionId: string;
   platform: string;
   userId?: string;
-  confirm?: CapabilityConfirm;      // 'grant'(缺省) 授予 / confirm 轴的意图确认；'always' 不接受会话记忆
+  confirm?: CapabilityConfirm;      // 'session' 可按会话记住；'always' 每次都问，不接受白名单与会话记忆
 }
 
 interface TemporaryGrantSpec {
@@ -142,10 +153,10 @@ type AccessConfirmHandler = (request: AccessRequest) => Promise<boolean | Access
 
 ## CapabilityId 命名约定
 
-- 工具：`tool:<group>.<name>`，例 `tool:file.write`
-- 指令：默认 `command:<path>`，例 `command:shutdown`
-- WebUI action：`action:<plugin>:<method>`（page-action 路由自动产出）
-- WebUI REST：`webui:<area>:<op>`（webui-server gate.ts 产出）
+守卫按 `${type}:${name}` 拼装能力串：
+
+- 工具：`tool:<工具名>`，例 `tool:file_write`
+- 指令：`command:<path>`，例 `command:shutdown`
 
 ## 配置字段（declaration merging 注入 `@aalis/api-host-config` 的 `AalisConfig`）
 

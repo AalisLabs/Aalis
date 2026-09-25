@@ -11,7 +11,7 @@
 
 `@aalis/util-text-normalize` 是一个**纯函数、零服务**的文本净化库：把 LLM 输出的 assistant `content` 在**展示/发送前**统一过一遍，修复下游 Markdown 渲染器（remark-gfm / KaTeX 等）会卡住的明确错误，并剥离漏到正文里的内部协议 token（如 DeepSeek 的 DSML 标记）。
 
-它带 `aalis-util` 关键词（`package.json` keywords），是 **util 库**——没有 `ctx`、不参与 DI、不注册服务。第三方插件的用法是：在 `package.json` 里依赖它，然后直接 `import` 函数调用（见 §3）。
+它带 `aalis-util` 关键词（`package.json` keywords），是 **util 库**——不经服务容器、不参与 DI、不注册服务。第三方插件的用法是：在 `package.json` 里依赖它，然后直接 `import` 函数调用（见 §3）。
 
 设计原则（`index.ts`）：
 

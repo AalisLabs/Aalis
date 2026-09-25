@@ -142,9 +142,7 @@ export function dateFieldsInTimeZone(
 export function matchesCron(expr: string, date: Date, timeZone?: string): boolean {
   const normalized = normalizeCronExpr(expr);
   if (!normalized || normalized.startsWith('@every')) return false;
-  const parts = normalized.split(/\s+/);
-  if (parts.length !== 5) return false;
-  const [minute, hour, day, month, weekday] = parts;
+  const [minute, hour, day, month, weekday] = normalized.split(/\s+/);
   const f = dateFieldsInTimeZone(date, timeZone);
   return (
     parseCronField(minute, 0, 59).has(f.minute) &&
@@ -193,7 +191,6 @@ export function validateCronExpr(input: string): ValidateResult {
   const normalized = normalizeCronExpr(s);
   if (!normalized) return { ok: false, reason: `非法 cron 表达式（需 5 字段或别名）: ${s}` };
   const fields = normalized.split(/\s+/);
-  if (fields.length !== 5) return { ok: false, reason: `cron 必须为 5 字段: ${normalized}` };
   // 逐字段校验：任一字段解析为空集（如 `abc`、`5-`、超界单值）即拒绝，避免静默生成永不触发的死任务。
   const ranges: Array<[number, number]> = [
     [0, 59],

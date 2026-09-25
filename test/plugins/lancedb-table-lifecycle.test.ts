@@ -37,7 +37,7 @@ describe('LanceDBVectorStore 表生命周期', () => {
     const db = (store as unknown as { db: { createTable: (...a: unknown[]) => Promise<unknown> } }).db;
     const realCreate = db.createTable.bind(db);
     let failures = 0;
-    db.createTable = async (...args: unknown[]) => {
+    db.createTable = async () => {
       failures++;
       db.createTable = realCreate;
       throw new Error("Table 'vectors' already exists");

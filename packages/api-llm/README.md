@@ -15,10 +15,10 @@ pnpm add @aalis/api-llm
 ## 使用
 
 ```ts
-import type { /* ... */ } from '@aalis/api-llm';
-```
+import { llm } from '@aalis/api-llm';
 
-本包为 *-api 类型包；实现见对应的运行时插件。
+// uses: { llm }
+```
 
 ## 许可
 

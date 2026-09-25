@@ -62,7 +62,6 @@
         "contributions",
         "events",
         "hooks",
-        "lifecycle",
         "logger",
         "provide"
       ]

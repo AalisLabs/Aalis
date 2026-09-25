@@ -1,8 +1,7 @@
 // ----- WebUI 服务接口与声明式页面组件 -----
 //
-// 此包提供 @aalis/core 中 WebuiPage skeleton 的完整扩展，
-// 以及所有声明式页面组件类型。
-// 任何需要声明 webuiPages 的插件应从本包导入相关类型。
+// WebUI 服务契约、声明式页面组件类型与服务描述符（WebuiPage 由本包直接导出）。
+// 需要登记 WebUI 页面的插件从本包导入相关类型。
 
 import type { UserIdentity } from '@aalis/api-authority';
 import type { ServiceRef } from '@aalis/core';
@@ -15,7 +14,6 @@ import type { ConfigSchema } from '@aalis/schema-config';
  * 负责启动 HTTP 服务器，提供 REST API（插件管理、配置、权限等）
  * 和 WebSocket（消息/日志推送），同时托管前端静态文件。
  *
- * 核心要求此服务必须运行。
  * 默认由 plugin-webui-server 提供，第三方可替换整个实现或仅替换前端部分。
  */
 export interface WebUIService {
@@ -41,7 +39,7 @@ export interface WebUIService {
 
 /**
  * 页面动作处理函数。caller 是路由层解析出的调用者身份，可用来做业务级检查
- * （如"不能委托超出自身持有的能力"）。
+ * （如 owner 自检）。
  */
 export type WebuiActionHandler = (args: Record<string, unknown>, caller?: UserIdentity) => Promise<unknown>;
 
@@ -253,12 +251,12 @@ export interface ExtendDeclaration {
  * - `core` 不解释 subsystem 的取值，插件定义上只有一个透传的字符串字段
  *   `subsystem?: string`（不读不解释，纯粹搬运给 WebUI）。
  * - 本表只描述 **展示元数据**（中文 label / 排序 / icon），**不再写死插件归属**。
- *   归属由每个插件自己在 index.ts 中声明：`export const subsystem = 'llm';`
+ *   归属由每个插件在 `definePlugin({ subsystem: 'llm' })` 中声明。
  *
  * 解耦收益：
- *   - 新增插件不需要改 webui-api（只改插件自身）
+ *   - 新增插件不需要改 api-webui（只改插件自身）
  *   - 新增子系统：只在本表加一行元数据即可（id 未匹配时回退为 id 直接展示）
- *   - webui-api 不再反向耦合具体插件 npm 名
+ *   - api-webui 不再反向耦合具体插件 npm 名
  */
 export interface SubsystemMetadata {
   /** subsystem id（与插件定义的 subsystem 字段对应） */
@@ -300,7 +298,7 @@ export const DEFAULT_SUBSYSTEM_METADATA: readonly SubsystemMetadata[] = Object.f
  * webui-server 托管。第三方前端两条接入：
  * - **纯静态包**：package.json 标 `aalis.client: true` + 含 `dist/index.html`，被
  *   webui-server 自动发现挂载（无需 `apply`，runtime 不会把它当插件加载）。
- * - **主动覆盖**：插件 `apply` 里 `ctx.provide('webui-client', impl)`，优先于自动发现。
+ * - **主动覆盖**：插件 `apply` 里 `provide(webuiClient, impl)`，优先于自动发现。
  */
 export interface WebuiClientProvider {
   /** 返回含 index.html 的前端静态目录绝对路径 */

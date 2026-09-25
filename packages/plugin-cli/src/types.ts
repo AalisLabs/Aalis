@@ -4,7 +4,6 @@
  * CLI 服务 —— 命令行交互界面
  *
  * 提供终端 REPL 交互，支持指令输入和对话。
- * 核心要求此服务必须运行。
  * 默认由 plugin-cli 提供，第三方可提供自己的 CLI 实现。
  */
 export interface CLIService {

@@ -51,17 +51,6 @@ export async function fileToDataUri(uri: string): Promise<string> {
   return `data:${mimeForExt(ext)};base64,${Buffer.from(buf).toString('base64')}`;
 }
 
-/**
- * 下载远程 URL 到临时文件。返回本地路径 + 清理函数；失败返回 null。
- * 仅用于 vision/视频帧提取等纯本地处理场景。
- *
- * 内部走 safe-fetch（带 SSRF 防护、20 MiB 上限、15s 超时），
- * 拒绝下载到 169.254.169.254 / 127.0.0.1 / 10.0.0.0/8 等内网地址。
- */
-export async function downloadToTemp(url: string): Promise<{ path: string; cleanup: () => Promise<void> } | null> {
-  return safeDownloadToTemp(url);
-}
-
 export function selectFrameIndices(totalFrames: number, maxFrames: number): number[] {
   if (totalFrames <= 0) return [];
   if (totalFrames === 1) return [0];
@@ -215,8 +204,7 @@ export async function materializeAttachment(
       return { path: data.slice('file://'.length), cleanup: async () => {} };
     }
     if (data.startsWith('http://') || data.startsWith('https://')) {
-      const r = await safeDownloadToTemp(data, { imageOnly: false });
-      return r;
+      return await safeDownloadToTemp(data);
     }
     // storage URI（如 data:/images/...）→ 解析到本地路径。
     // 同时兼容历史相对路径（如 `data/images/...`，缺少冒号），统一补成 storage URI。

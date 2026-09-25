@@ -10,7 +10,7 @@ import {
 } from '../../packages/api-storage/src/index.js';
 import { App } from '../../packages/core/src/index.js';
 import checkpointPlugin, { checkpoint } from '../../packages/plugin-checkpoint/src/index.js';
-import type { CheckpointServiceImpl } from '../../packages/plugin-checkpoint/src/service.js';
+import { CheckpointServiceImpl, resolveConfig } from '../../packages/plugin-checkpoint/src/service.js';
 import storageLocalPlugin from '../../packages/plugin-storage-local/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 
@@ -72,7 +72,7 @@ describe('checkpoint × storage (真 fs)', () => {
     const host = app.bind({ storage: storageService, checkpoint, hooks: hooksCap });
     storage = createStorageGateway(host.storage);
     hooks = host.hooks;
-    // beginTurn / endTurn / setBackend 是实现类上的驱动面，不在对外服务契约里
+    // beginTurn / endTurn 是实现类上的驱动面，不在对外服务契约里
     svc = host.checkpoint.require() as CheckpointServiceImpl;
   });
 
@@ -250,20 +250,27 @@ describe('checkpoint × storage (真 fs)', () => {
       await storage.move('ws:/p.txt', 'ws:/moved/p.txt');
     });
 
-    // 假后端：不给 move（强制走「写回源端 + 删目标」回落），删目标抛 EACCES——非 ENOENT，不该被豁免
-    svc.setBackend(
-      async (uri, data) => {
-        await storage.writeFile(uri, data);
+    // 故障 storage：move 抛错（强制走「写回源端 + 删目标」回落），删目标抛 EACCES——非 ENOENT，不该被豁免。
+    // 另起一个读同一 checkpoint 目录的服务实例，经构造参数注入它
+    const faulty: StorageService = {
+      ...storage,
+      move: async () => {
+        throw new Error('EEXIST: target already exists');
       },
-      async uri => {
+      delete: async uri => {
         const err = new Error(`EACCES: permission denied, unlink '${uri}'`) as Error & { code?: string };
         err.code = 'EACCES';
         throw err;
       },
-      undefined,
+    };
+    const logger = { debug() {}, info() {}, warn() {}, error() {} };
+    const faultySvc = new CheckpointServiceImpl(
+      resolveConfig({ rootDir: 'data:/checkpoints', scopes: ['*'], keepSessions: 0 }),
+      logger as never,
+      faulty,
     );
 
-    const result = await svc.rollback('s9', turnId);
+    const result = await faultySvc.rollback('s9', turnId);
     expect(result.restored).toEqual(['ws:/p.txt']); // 源端已复原
     expect(result.deleted).toEqual([]); // 没谎报删掉
     expect(result.errors).toHaveLength(1);

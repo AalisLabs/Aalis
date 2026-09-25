@@ -93,7 +93,7 @@ export const HOST_CORE_DIR: string | undefined = (() => {
  * @param hostCoreDir 宿主那份 core 的包目录（realpath）；undefined 时跳过
  * @param pluginDir 插件包目录，即两加载器 discover 写进描述符的 `metadata.dir`；缺失时跳过
  */
-export function assertSameCore(hostCoreDir: string | undefined, pluginDir: unknown, pluginName: string): void {
+function assertSameCore(hostCoreDir: string | undefined, pluginDir: unknown, pluginName: string): void {
   if (!hostCoreDir || typeof pluginDir !== 'string') return;
   const theirs = coreDirFrom(pluginDir);
   if (!theirs || theirs === hostCoreDir) return;
@@ -104,6 +104,28 @@ export function assertSameCore(hostCoreDir: string | undefined, pluginDir: unkno
       '插件应把 @aalis/core 写进 peerDependencies 而非 dependencies；本地目录安装改用 npm install --install-links 或 pnpm add file:；' +
       '排查用 npm query "#@aalis/core" / pnpm why @aalis/core',
   );
+}
+
+/**
+ * 两加载器共用的 load / reload：先经 {@link assertSameCore} 核对 core 是宿主那份，再动态 import 入口并取出定义。
+ * `fresh`（reload）时以入口文件 mtime 作 import URL 的 query，强制 ESM 缓存失效。
+ */
+export async function importPluginDefinition(
+  desc: PluginDescriptor,
+  hostCoreDir: string | undefined,
+  logger: Logger,
+  fresh: boolean,
+): Promise<PluginDefinition | null> {
+  assertSameCore(hostCoreDir, desc.metadata?.dir, desc.name);
+  let cacheKey = '';
+  if (fresh) {
+    try {
+      cacheKey = `?t=${(await stat(desc.source)).mtimeMs}`;
+    } catch {
+      /* stat 失败时用空 key，让 import 自己报错 */
+    }
+  }
+  return loadPluginDefinition(await import(pathToFileURL(desc.source).href + cacheKey), desc.name, logger);
 }
 
 /**
@@ -183,20 +205,7 @@ export function createNodeModulesPluginLoader(
       return discovered;
     },
 
-    async load(desc): Promise<PluginDefinition | null> {
-      assertSameCore(hostCoreDir, desc.metadata?.dir, desc.name);
-      return loadPluginDefinition(await import(pathToFileURL(desc.source).href), desc.name, logger);
-    },
-
-    async reload(desc): Promise<PluginDefinition | null> {
-      assertSameCore(hostCoreDir, desc.metadata?.dir, desc.name);
-      let cacheKey = '';
-      try {
-        cacheKey = `?t=${(await stat(desc.source)).mtimeMs}`;
-      } catch {
-        /* stat 失败时用空 key，让 import 自己报错 */
-      }
-      return loadPluginDefinition(await import(pathToFileURL(desc.source).href + cacheKey), desc.name, logger);
-    },
+    load: desc => importPluginDefinition(desc, hostCoreDir, logger, false),
+    reload: desc => importPluginDefinition(desc, hostCoreDir, logger, true),
   };
 }

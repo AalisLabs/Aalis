@@ -126,9 +126,9 @@ describe('browser_screenshot 的交付形态', () => {
     expect(result.content).not.toContain('base64');
     const out = JSON.parse(result.content);
     expect(out).toMatchObject({ ok: true });
-    // 接得住图也照样落盘给 URI：看不到图的下游（送去 analyze_image / 发出去）有路可走
+    // 接得住图也照样落盘给 URI：看不到图的下游（送去看图工具 / 发出去）有路可走
     expect(out.storage_uri).toMatch(/^tmp:\/browser\/onebot_t_group_1\/shot-[0-9a-f]{16}\.png$/);
-    expect(out.note).toBe('图已随结果附上；若你看不到图，用 storage_uri 走 analyze_image / send_attachment');
+    expect(out.note).toBe('图已随结果附上；若你看不到图，可把 storage_uri 交给看图工具（如有）或 send_attachment');
     expect(result.content.length).toBeLessThan(400);
   }, 60_000);
 
@@ -141,7 +141,7 @@ describe('browser_screenshot 的交付形态', () => {
     expect(out.storage_uri).toMatch(/^tmp:\/browser\/s\/shot-[0-9a-f]{16}\.png$/);
     // 接不住图的这一路没有 images，note 不能写成「图已随结果附上」
     expect(out.note).not.toContain('已随结果附上');
-    expect(out.note).toBe('图未随结果附上，用 storage_uri 走 analyze_image / send_attachment 查看');
+    expect(out.note).toBe('图未随结果附上，可把 storage_uri 交给看图工具（如有）查看或 send_attachment 发送');
     const png = await readFile(join(base, 'tmp', out.storage_uri.replace(/^tmp:\//, '')));
     expect(png.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
     expect(png.byteLength).toBe(out.size);

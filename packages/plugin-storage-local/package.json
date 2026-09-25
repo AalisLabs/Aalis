@@ -12,7 +12,7 @@
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "存储网关本地实现：沙盒化文件读写",
+  "description": "存储网关本地实现：命名根与路径解析（非沙箱）",
   "type": "module",
   "keywords": [
     "aalis",

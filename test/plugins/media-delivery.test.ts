@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Logger, ServiceRef, ServiceView } from '@aalis/core';
+import type { Logger, ServiceView } from '@aalis/core';
 import { App, services } from '@aalis/core';
 import { describe, expect, it, vi } from 'vitest';
 import type { LLMModel } from '../../packages/api-llm/src/index.js';
@@ -15,6 +15,7 @@ import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import { registerMediaTools } from '../../packages/plugin-media/src/tools.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
+import { ref } from '../fixtures/service-ref.js';
 
 /** analyze_image 直通分支的远端下载桩：只替换 safeDownloadToTemp，其余走原实现 */
 const download = vi.hoisted(() => ({
@@ -50,20 +51,6 @@ function cfgWith(vision: Partial<MediaConfigResolved['vision']>): MediaConfigRes
     contextHistory: { enabled: false, maxMessages: 0 },
     senderContext: { enabled: false, profileMaxChars: 0 },
   } as unknown as MediaConfigResolved;
-}
-
-/** 按激活绑定的服务桩：当前胜者取首个 entry */
-function ref<P>(entries: ServiceView<P>[] = []): ServiceRef<P> {
-  return {
-    current: entries[0]?.instance,
-    require: () => {
-      const provider = entries[0]?.instance;
-      if (provider === undefined) throw new Error('无提供者');
-      return provider;
-    },
-    all: () => entries,
-    follow: () => () => {},
-  };
 }
 
 /** MediaServiceImpl 的能力桩：可挂若干 LLM entry（带 capabilities）与一个 session-manager */
@@ -193,7 +180,7 @@ describe('analyze_image：按交付形态返回图片或文字', () => {
     await app.plugins.idle();
     const svc = new MediaServiceImpl(makeCaps([]), cfgWith(vision));
     const calls = withFakeVision(svc);
-    registerMediaTools(host, () => svc);
+    registerMediaTools(host, svc);
     const registry = host.services.get(tools);
     if (!registry) throw new Error('tools 服务未注册');
     const result = await registry.execute(

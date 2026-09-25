@@ -2,7 +2,7 @@ import type { StorageService } from '@aalis/api-storage';
 import type { BoundTools } from '@aalis/api-tools';
 import PptxGenJS from 'pptxgenjs';
 import type { DocSessionManager } from '../session.js';
-import { loadImage } from '../utils.js';
+import { joinUri, loadImage } from '../utils.js';
 
 interface PptState {
   pptx: PptxGenJS;
@@ -23,17 +23,16 @@ const LAYOUT_DIMS: Record<string, [number, number]> = {
 /** 将元素位置/尺寸钳制在幻灯片可见区域内 */
 function clampBounds(
   state: PptState,
-  x?: number | null,
-  y?: number | null,
-  w?: number | null,
-  h?: number | null,
-  defaults?: { x: number; y: number; w: number; h: number },
+  x: number | null | undefined,
+  y: number | null | undefined,
+  w: number | null | undefined,
+  h: number | null | undefined,
+  defaults: { x: number; y: number; w: number; h: number },
 ) {
-  const d = defaults || { x: 0.5, y: 0.5, w: 9, h: 1 };
-  let ex = x != null ? Number(x) : d.x;
-  let ey = y != null ? Number(y) : d.y;
-  let ew = w != null ? Number(w) : d.w;
-  let eh = h != null ? Number(h) : d.h;
+  let ex = x != null ? Number(x) : defaults.x;
+  let ey = y != null ? Number(y) : defaults.y;
+  let ew = w != null ? Number(w) : defaults.w;
+  let eh = h != null ? Number(h) : defaults.h;
 
   // 确保宽高不超过幻灯片尺寸
   ew = Math.min(ew, state.slideW);
@@ -335,10 +334,6 @@ export function registerPptTools(
   storage: StorageService,
   outputUri: string,
 ) {
-  function joinUri(base: string, rel: string): string {
-    const b = base.endsWith('/') ? base : `${base}/`;
-    return `${b}${rel.replace(/^\/+/, '')}`;
-  }
   function requireState(docId: string): PptState {
     return sessions.require(docId, 'pptx').doc as PptState;
   }
@@ -872,7 +867,8 @@ export function registerPptTools(
       type: 'function',
       function: {
         name: 'ppt_set_transition',
-        description: '设置 PPT 幻灯片的切换效果。',
+        description:
+          '提示：pptxgenjs 不支持幻灯片切换效果。如需切换效果，建议在 PPT 编辑器中手动设置。此工具仅作占位。',
         parameters: {
           type: 'object',
           properties: {
@@ -886,7 +882,6 @@ export function registerPptTools(
       },
     },
     async handler(args) {
-      // pptxgenjs 类型定义不暴露 transition 属性，但运行时支持
       return JSON.stringify({
         success: false,
         message: `pptxgenjs 的类型定义不支持设置幻灯片切换效果。建议在 PowerPoint 中手动设置 "${args.type}" 切换。`,
@@ -916,7 +911,7 @@ export function registerPptTools(
     async handler(args) {
       return JSON.stringify({
         success: false,
-        message: `pptxgenjs 暂不支持单元素动画。建议在 PowerPoint 编辑器中手动为元素添加 "${args.effect}" 动画效果。幻灯片切换动画请使用 ppt_set_transition 工具。`,
+        message: `pptxgenjs 暂不支持单元素动画。建议在 PowerPoint 编辑器中手动为元素添加 "${args.effect}" 动画效果。`,
       });
     },
   });

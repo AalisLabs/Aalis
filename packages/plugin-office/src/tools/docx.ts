@@ -21,10 +21,9 @@ import {
   WidthType,
 } from 'docx';
 import type { DocSessionManager } from '../session.js';
-import { loadImage } from '../utils.js';
+import { joinUri, loadImage } from '../utils.js';
 
 interface DocState {
-  doc: Document | null;
   sections: SectionChildren[];
   styles: DocStyles;
 }
@@ -129,10 +128,6 @@ export function registerDocxTools(
   storage: StorageService,
   outputUri: string,
 ) {
-  function joinUri(base: string, rel: string): string {
-    const b = base.endsWith('/') ? base : `${base}/`;
-    return `${b}${rel.replace(/^\/+/, '')}`;
-  }
   // ---- doc_create ----
   tools.register({
     definition: {
@@ -167,7 +162,6 @@ export function registerDocxTools(
       const presetName = args.preset ? (String(args.preset) as DocPresetName) : undefined;
       const preset = presetName && presetName in DOC_PRESETS ? DOC_PRESETS[presetName] : undefined;
       const state: DocState = {
-        doc: null,
         sections: [],
         styles: {
           defaultFontFamily: args.defaultFont ? String(args.defaultFont) : preset?.defaultFontFamily,
@@ -443,8 +437,7 @@ export function registerDocxTools(
       },
     },
     async handler(args) {
-      sessions.require(String(args.docId), 'docx');
-      const { state } = sessions.get(String(args.docId))!.doc as { state: DocState };
+      const { state } = sessions.require(String(args.docId), 'docx').doc as { state: DocState };
       const { buffer, mime } = await loadImage(storage, String(args.source), outputUri);
       const width = Number(args.width || 400);
       const height = Number(args.height || 300);

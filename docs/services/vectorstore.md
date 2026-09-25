@@ -4,7 +4,7 @@
 
 向量数据库服务：存放 embedding 向量 + 元数据，提供近邻检索（topK）。它是语义记忆等子系统的「底层向量存储后端」，本身不做 embedding、不懂消息语义——只认 `number[]` 与 `Record<string, unknown>`。
 
-- 服务注册名：`vectorstore.current`
+- 服务注册名：`'vectorstore'`（描述符 `vectorstore`，读 `vectorstore.current`）
 - 契约包：`@aalis/api-vectorstore`（`packages/api-vectorstore`）
 - 内置参考实现：`@aalis/plugin-vectorstore-flat`（零依赖，JSON 文件）、`@aalis/plugin-vectorstore-lancedb`（LanceDB 高性能）
 
@@ -23,16 +23,16 @@ export interface VectorSearchResult {
 
 // VectorStoreService（index.ts）
 export interface VectorStoreService {
-  add(vector: number[], metadata: Record<string, unknown>): Promise<void>;        // :17
-  search(queryVector: number[], topK: number): Promise<VectorSearchResult[]>;     // :19
-  size(): Promise<number>;                                                        // :21
-  clear(): Promise<void>;                                                         // :23
-  deleteByFilter?(filter: Record<string, unknown>): Promise<number>;             // :25（可选）
-  save(): Promise<void>;                                                          // :27
+  add(vector: number[], metadata: Record<string, unknown>): Promise<void>;
+  search(queryVector: number[], topK: number): Promise<VectorSearchResult[]>;
+  size(): Promise<number>;
+  clear(): Promise<void>;
+  deleteByFilter?(filter: Record<string, unknown>): Promise<number>; // 可选
+  save(): Promise<void>;
 }
 ```
 
-类型通过 declaration merging 注入内核映射（`index.ts`），因此 `vectorstore.current` 自动得到 `VectorStoreService` 类型——只要消费者 `import '@aalis/api-vectorstore'`（哪怕只是触发模块）即可。
+类型随描述符提供：`defineService<VectorStoreService>('vectorstore')`（`index.ts`），消费方把描述符写进 `uses` 即得类型，`vectorstore.current` 推断为 `VectorStoreService | undefined`。
 
 方法语义（以契约注释 + 参考实现为准）：
 
@@ -47,16 +47,16 @@ export interface VectorStoreService {
 
 提供方（`provides: [vectorstore]`）：
 
-- `@aalis/plugin-vectorstore-flat`：`FlatVectorStore`，`packages/plugin-vectorstore-flat/src/index.ts`，注册于 （默认 priority）。
-- `@aalis/plugin-vectorstore-lancedb`：`LanceDBVectorStore`，`packages/plugin-vectorstore-lancedb/src/index.ts`，注册于 （`{ priority: 10 }`，比 flat 高 → 同时装两个时 lancedb 胜出）。
+- `@aalis/plugin-vectorstore-flat`：`FlatVectorStore`，`packages/plugin-vectorstore-flat/src/index.ts`，按默认 priority 注册。
+- `@aalis/plugin-vectorstore-lancedb`：`LanceDBVectorStore`，`packages/plugin-vectorstore-lancedb/src/index.ts`，以 `{ priority: 10 }` 注册（比 flat 高 → 同时装两个时 lancedb 胜出）。
 
 消费方：
 
 - `@aalis/plugin-memory-vector`（向量记忆，提供 `semantic-memory`）：`packages/plugin-memory-vector/src/index.ts`
-  - 声明依赖：`uses required = ['vectorstore', 'embedding']`（）。
-  - 取服务：`vectorstore.current!`（，封装为 `getStore()`，每次用都重取）。
-  - 典型调用：索引时 `add` + `save`（）；按会话删 `deleteByFilter`（、）；清库 `clear` + `save`（）；检索 `search`（、），并对结果做 `score >= minScore` 过滤（、）。
-- `@aalis/plugin-commands` 仅探测可用性：`vectorstore.current !== undefined`（`packages/plugin-commands/src/index.ts`）。
+  - 声明依赖：`uses` 中 `vectorstore`、`embedding` 为必需。
+  - 取服务：`vectorstore.require()`（每次调用现取）。
+  - 典型调用：索引时 `add` + `save`；按会话删 `deleteByFilter`；清库 `clear` + `save`；检索 `search`，并对结果做 `score >= minScore` 过滤。
+- `@aalis/plugin-commands` 仅探测可用性：`services.get('vectorstore') !== undefined`（`packages/plugin-commands/src/index.ts`）。
 
 ## 4. 写一个 provider
 
@@ -167,23 +167,23 @@ export default definePlugin({
 });
 ```
 
-错误边界：`search` 在空库返回 `[]`（flat 、lancedb `:92/:95`）。`.current` 在 required 依赖下框架会保证就绪，`!` 断言安全；用 `optional` 则必须判 `undefined`。
+错误边界：`search` 在空库返回 `[]`（flat、lancedb 均如此）。`.current` 可能为 `undefined`（required 依赖丢失到调度收敛之间也可能短暂为空），需要非空时用 `require()`。
 
 ## 6. 跨后端可比性、风险与隔离
 
-- **score 必须是余弦相似度语义**。flat 用归一化点积（真余弦，//）；lancedb 显式用 `distanceType('cosine')` 后取 `1 - _distance`（`index.ts`），与 flat 量纲对齐。**provider 若返回别的度量（如 1 − L2、内积未归一），会破坏消费者跨后端通用的阈值** ——`memory-vector` 的 `minScore`（0~1）与时间加权融合（`search.timeWeight`）都假设 score 是余弦相似度。换后端不应要求用户重调阈值。
+- **score 必须是余弦相似度语义**。flat 用归一化点积（真余弦）；lancedb 显式用 `distanceType('cosine')` 后取 `1 - _distance`（`index.ts`），与 flat 量纲对齐。**provider 若返回别的度量（如 1 − L2、内积未归一），会破坏消费者跨后端通用的阈值** ——`memory-vector` 的 `minScore`（0~1）与时间加权融合（`search.timeWeight`）都假设 score 是余弦相似度。换后端不应要求用户重调阈值。
 - **跨会话/隔离不在本服务**。Aalis 是单 owner，但向量库会混装所有会话的数据；隔离由消费者写入 metadata（如 `{ sessionId }`）并用 `deleteByFilter`/检索过滤实现。provider 不得擅自基于 metadata 做可见性裁剪——它不懂业务语义。
 - 本服务不涉及 authority risk/visibility 标注、确认（session-confirm）、SSRF（safeFetch）——它不直接对外发请求，也不暴露危险动作。涉及落盘的安全边界归 storage（storage **不是沙箱**，见 docs/concepts/security-model.md / storage-uri-grammar.md）。LanceDB 的 `resolveLocalPath` 把绝对路径交给原生库，仍受 storage root 授权约束，但绕过了 storage 的 URI 边界——provider 应只用它指向自有数据目录。
 
 ## 7. 边界情形与注意事项
 
-- **跨后端 score 不严格等价（审计项）**。lancedb 取 `1 - _distance`（cosine 距离 → 相似度），与 flat 的归一化点积理论一致；但两后端浮点路径、归一化时机不同，**绝对分值在边界处可能有微小差异**，迁移后端后命中集合可能轻微漂移。早期 lancedb 曾用默认 L2（`1 - L2` 既非相似度也与 flat 不可比），现已改为显式 cosine（见  注释）——若你看到旧库/旧版本表现异常，先确认 `distanceType('cosine')` 生效。
+- **跨后端 score 不严格等价（审计项）**。lancedb 取 `1 - _distance`（cosine 距离 → 相似度），与 flat 的归一化点积理论一致；但两后端浮点路径、归一化时机不同，**绝对分值在边界处可能有微小差异**，迁移后端后命中集合可能轻微漂移。早期 lancedb 曾用默认 L2（`1 - L2` 既非相似度也与 flat 不可比），现已改为显式 cosine（见 lancedb `search` 的注释）——若你看到旧库/旧版本表现异常，先确认 `distanceType('cosine')` 生效。
 - **维度不匹配**（换了 embedding 模型却复用旧库）：
-  - flat：`dotProduct` 对长度不等返回 `Number.NEGATIVE_INFINITY`（），不匹配项被排到末尾并被下游 `minScore` 过滤，**不会读越界产 NaN、不会静默清空**；并一次性告警提示清库重建（）。注：审计早期记录的「flat dim-mismatch 产 NaN」已修复为 `-Infinity`。自研 provider 应照此处理（骨架里的 `cosine` 已对齐）。
+  - flat：`dotProduct` 对长度不等返回 `Number.NEGATIVE_INFINITY`，不匹配项被排到末尾并被下游 `minScore` 过滤，**不会读越界产 NaN、不会静默清空**；并一次性告警提示清库重建。注：审计早期记录的「flat dim-mismatch 产 NaN」已修复为 `-Infinity`。自研 provider 应照此处理（骨架里的 `cosine` 已对齐）。
   - lancedb：维度由表 schema 固定，写入不同维向量会由 LanceDB 自身报错。
-- **flat 并发写竞态（已加固）**：索引默认 `concurrency=10` 会并发 `save()`，裸 `writeFile` 同路径并发写可能交错损坏 JSON、致下次 `init` 解析失败而整库清空。flat 用 `saveChain` 串行化所有写（//），失败重标脏下次重试。自研「文件型」provider 必须同样串行化持久化。
+- **flat 并发写竞态（已加固）**：索引默认 `concurrency=10` 会并发 `save()`，裸 `writeFile` 同路径并发写可能交错损坏 JSON、致下次 `init` 解析失败而整库清空。flat 用 `saveChain` 串行化所有写，失败重标脏下次重试。自研「文件型」provider 必须同样串行化持久化。
 - **flat 全量内存 + 全量重写**：所有向量常驻内存、每次 save 整库 `JSON.stringify` 落盘——大规模数据用 lancedb。
-- **lancedb 建表 single-flight**：并发首批 `add` 复用同一建表 promise，避免「table already exists」吞掉向量（/）；`clear()` 必须同步重置 `tableInit`（），否则下次 `add` 会 await 到指向已删表的旧 promise 而崩。
+- **lancedb 建表 single-flight**：并发首批 `add` 复用同一建表 promise，避免「table already exists」吞掉向量；`clear()` 必须同步重置 `tableInit`，否则下次 `add` 会 await 到指向已删表的旧 promise 而崩。
 - **lancedb `deleteByFilter` 走原生 SQL 删除**：把 filter 各键拼成 `metadata_json` 上的 LIKE 谓词（`metaJsonFieldPredicate`：字符串值自带引号定界、数字值靠尾随 `,`/`}` 定界，杜绝「1751 误配 17510」这类数字前缀误删），交 LanceDB `table.delete()` 原地删除，**不把整表读进 JS**（旧实现 `query().toArray()` 全表载入 + 复制重建，在大库上会 OOM 硬崩，现已改）。删除经结构性串行锁与后台压实、`clear()` 互斥；空过滤器直接返回 0、不删（防误清全库）。谓词无索引，按 LIKE 全表扫并生成新版本待压实回收，频繁按会话删仍有成本。
 
 ## 8. 交叉链接

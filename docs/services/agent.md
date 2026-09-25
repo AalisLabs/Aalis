@@ -140,9 +140,11 @@ export default definePlugin({
 
 **`abort(sessionId)` 用 `startsWith` 匹配 lane**：lane key = `${sessionId}::${source}`。`abort('S')` 会一次性中止 `S` 的**所有** lane。若存在 sessionId 互为前缀的命名，`startsWith` 可能误伤——调用方需保证 sessionId 不互为前缀。
 
-**`abort` 中止不了已经进入 `execute` 的工具**：`AbortSignal` 在 LLM 流式消费和工具循环每次迭代头部被检查。一旦进入并行 `tools.execute()`，当前在飞的 handler 会跑完，副作用照常发生，只是下一轮 LLM 不再发起。默认实现把 `signal` 放进 `ToolCallContext`，工具 handler 可自行尊重它；契约不强制每个工具都中断。
+**`abort` 中止不了已经进入 `execute` 的工具**：`AbortSignal` 在 LLM 流式消费、工具循环每次迭代头部，以及流结束标记 / 落库 / 外发之前的提交点被检查；提交点之前被中止的回合不落库、不外发，按 `outcome=aborted` 收尾。一旦进入并行 `tools.execute()`，当前在飞的 handler 会跑完，副作用照常发生，只是下一轮 LLM 不再发起。默认实现把 `signal` 放进 `ToolCallContext`，工具 handler 可自行尊重它；契约不强制每个工具都中断。
 
 **abort 路径不回滚已完成的工具记录**（有意为之）：删除会让 agent「忘记自己刚做过的有副作用的事」导致下一轮重复调用。真正的 orphan 由 `sanitizeToolCallHistory` 在装载历史时兜底过滤。
+
+**工具链路异常只影响该工具**：同一批并行工具中，某个工具的 `agent:tool:before` / `agent:tool:after` 钩子、守卫或结果处理抛错时，该工具得到一条错误结果（执行前失败为「工具调用失败」；执行后失败为「工具已执行，但结果处理失败」，不回退到原始输出），同批其它工具的结果与整组记录照常落库，回合继续。
 
 **`getPluginGroups()` 硬编码子系统服务集**：只纳入 `llm/memory/persona/message-archive`，不含 `platform`。
 
