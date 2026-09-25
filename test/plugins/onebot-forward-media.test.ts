@@ -5,11 +5,12 @@ import type { MediaService } from '../../packages/api-media/src/index.js';
 import type { MemoryService } from '../../packages/api-memory/src/index.js';
 import type { ProcessService } from '../../packages/api-process/src/index.js';
 import { createStorageGateway, type StorageService } from '../../packages/api-storage/src/index.js';
-import type { Logger, ServiceRef } from '../../packages/core/src/index.js';
+import type { Logger } from '../../packages/core/src/index.js';
 import type { ForwardMediaTask } from '../../packages/plugin-adapter-onebot/src/forward.js';
 import { expandForward } from '../../packages/plugin-adapter-onebot/src/forward.js';
 import type { ForwardConfig } from '../../packages/plugin-adapter-onebot/src/forward-expand.js';
 import { createForwardExpander } from '../../packages/plugin-adapter-onebot/src/forward-expand.js';
+import { fixedRef } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // 合并转发媒体两阶段解析——「先落盘后识别」结构保证。
@@ -188,19 +189,6 @@ interface Harness {
   infoLogs: string[];
 }
 
-/** 固定提供者（或缺席）的服务引用——展开器只读 `.current`。 */
-function serviceRef<P>(current: P | undefined): ServiceRef<P> {
-  return {
-    current,
-    require: () => {
-      if (!current) throw new Error('本夹具未提供该服务');
-      return current;
-    },
-    all: () => [],
-    follow: () => () => {},
-  };
-}
-
 function makeHarness(overrides: Partial<ForwardConfig> = {}, opts: { brokenDownload?: boolean } = {}): Harness {
   const writes: string[] = [];
   const describeCalls: string[] = [];
@@ -272,15 +260,15 @@ function makeHarness(overrides: Partial<ForwardConfig> = {}, opts: { brokenDownl
   h.expander = createForwardExpander<object>({
     logger,
     // 本文件测的是两阶段解析结构：原文持久化与摘要模型缺席，展开只走内存缓存
-    memory: serviceRef<MemoryService>(undefined),
-    media: serviceRef(media as MediaService),
-    llm: serviceRef<LLMModel>(undefined),
+    memory: fixedRef<MemoryService>(undefined),
+    media: fixedRef(media as MediaService),
+    llm: fixedRef<LLMModel>(undefined),
     // 网关：缺席即一个根都没有（路由抛错）；在场时直接给本夹具的单根假 storage——两阶段结构与根路由无关，
     // 根路由见 onebot-forward-storage-roots.test.ts
     storage: opts.brokenDownload
-      ? createStorageGateway(serviceRef<StorageService>(undefined))
+      ? createStorageGateway(fixedRef<StorageService>(undefined))
       : (storage as unknown as StorageService),
-    processService: serviceRef(opts.brokenDownload ? undefined : (proc as unknown as ProcessService)),
+    processService: fixedRef(opts.brokenDownload ? undefined : (proc as unknown as ProcessService)),
     forwardCfg,
     attachmentMaxBytes: 20 * 1024 * 1024,
     sendAction: async (_state, action) => {

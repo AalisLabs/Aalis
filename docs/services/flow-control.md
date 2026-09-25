@@ -4,7 +4,7 @@
 
 `flow-control` 管理**每会话的「流控状态」**——决定缓冲中的入站消息何时（以及是否）有资格触发一次 agent 回合：计数器/活跃指数（间隔触发依据）、回复后冷却、限速窗口（防 DDoS/刷屏）、自禁言时段、闲置主动触发调度。它**不做触发判定本身**（触发判定是 `trigger-policy` 的职责），只维护被判定方读写的状态 + 在入站管线里把禁言/冷却/限速的消息直接「吞掉」。
 
-- 服务注册名：`flowControl.current`（字符串键）
+- 服务注册名：`'flow-control'`（描述符 `flowControl`，读 `flowControl.current`）
 - 契约包：`@aalis/api-flow-control`
 - 参考实现：`@aalis/plugin-flow-control`
 - 紧密协作的兄弟服务：`@aalis/plugin-trigger-policy`（`trigger-policy`），二者占据入站管线相邻两个相位。
@@ -63,7 +63,7 @@ export interface FlowSessionStateSnapshot {
 }
 ```
 
-类型绑定经 declaration merging 随 -api 包提供（`packages/api-flow-control/src/index.ts`），下游只 `import '@aalis/api-flow-control'` 即可让 `flowControl.current` 拿到类型，**不必硬依赖实现包**。
+类型随描述符提供：`defineService<FlowControlService>('flow-control')`（`packages/api-flow-control/src/index.ts`），下游导入描述符并写进 `uses` 即得类型，**不必硬依赖实现包**。
 
 要点：
 - `getStateSnapshot` / `getThreshold` 是**纯读**；其余方法带状态变更副作用。
@@ -93,16 +93,20 @@ export interface FlowSessionStateSnapshot {
 `package.json` → `aalis.service`：
 ```json
 { "aalis": { "service": {
-  "required": ["gateway"],
-  "optional": ["message-archive"],
+  "required": ["config", "events", "gateway", "hooks", "lifecycle", "logger", "provide"],
+  "optional": ["storage", "message-archive"],
   "provides": ["flow-control"]
 } } }
 ```
 
 `index.ts`（`packages/plugin-flow-control/src/index.ts`）：
 ```ts
-provides: [flowControl];
-uses: { gateway, messageArchive: optional(messageArchive) };
+provides: [flowControl],
+uses: {
+  logger, events, hooks, lifecycle, config, provide, gateway,
+  storage: optional(storage),
+  messageArchive: optional(messageArchive),
+},
 ```
 
 最小骨架（可编译，省略算法细节）：

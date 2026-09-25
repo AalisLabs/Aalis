@@ -5,6 +5,7 @@ import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/s
 import { App, events, provide, services } from '../../packages/core/src/index.js';
 import schedulerPlugin, { scheduler } from '../../packages/plugin-scheduler/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { memoryStorage } from '../fixtures/memory-storage.js';
 
 // ════════════════════════════════════════════════════════════
 // 一次性任务的远期 runAt：setTimeout 的 delay 超过 2^31-1ms（约 24.8 天）会溢出成立即触发，
@@ -13,23 +14,6 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 // ════════════════════════════════════════════════════════════
 
 const DAY = 86_400_000;
-
-function memoryStorage() {
-  const files = new Map<string, string>();
-  return {
-    listRoots: () => [
-      { name: 'data', label: 'data', kind: 'data', browsable: true, readable: true, writable: true, deletable: true },
-    ],
-    async readFile(uri: string) {
-      const v = files.get(uri);
-      if (v === undefined) throw new Error(`ENOENT: ${uri}`);
-      return v;
-    },
-    async writeFile(uri: string, data: string | Buffer) {
-      files.set(uri, typeof data === 'string' ? data : data.toString('utf-8'));
-    },
-  };
-}
 
 const cronEngineStub = {
   subscribe: () => () => {},
@@ -45,7 +29,7 @@ describe('scheduler 一次性任务的远期 runAt', () => {
   it('runAt = +30 天：推进 25 天不执行，到点执行一次并删除', async () => {
     const app = new App({ name: 'T', logLevel: 'error' });
     const host = app.bind({ provide, services, events });
-    host.provide(storage, memoryStorage() as never);
+    host.provide(storage, memoryStorage().service as never);
     host.provide(cronEngine, cronEngineStub as never);
     // 页面动作是本次激活的闭包，经 webui 登记；桩 webui 把登记表截下来按名调用
     const actions = new Map<string, WebuiActionHandler>();

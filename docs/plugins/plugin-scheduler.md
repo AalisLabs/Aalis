@@ -56,7 +56,7 @@ export default definePlugin({
 | `scheduler:job:start` | 定时任务开始执行 |
 | `scheduler:job:done` | 定时任务执行完成 |
 | `scheduler:job:error` | 定时任务执行出错 |
-| `trigger:fired` | 任务触发时广播的通用触发事件（`source` 为 `scheduler:<任务名>`），供 plugin-workflow 等订阅 |
+| `trigger:fired` | 任务触发时广播的通用触发事件（`source` 为 `scheduler:<任务名>`）；不带 `workflowId`，目前不会触发任何 workflow |
 
 ## 工作方式
 

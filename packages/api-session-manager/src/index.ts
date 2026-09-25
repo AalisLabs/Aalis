@@ -19,7 +19,7 @@ import { defineService } from '@aalis/core';
  * 1. 会话自身 config（手工覆盖 / /model 指令设置）
  * 2. 父会话默认配置（sessionDefaults，供子会话继承）
  * 3. 平台默认配置（platformProfiles[platform]）
- * 4. 全局默认（各插件的 defaultConfig）
+ * 4. 全局默认（getDefaults()，即 @aalis/plugin-session-manager 的 defaults 配置）
  */
 export interface SessionConfig {
   /**

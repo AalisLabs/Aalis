@@ -49,20 +49,20 @@ const configSchema: ConfigSchema = {
     type: 'number',
     label: '保留天数',
     default: 30,
-    description: '上传文件保留的最长天数，超过即清理（按文件 mtime）。0 表示不按时间清理。',
+    description: '上传文件保留的最长天数，超过即清理（按上传时间 uploadedAt）。0 表示不按时间清理。',
   },
   lruMaxTotalMB: {
     type: 'number',
     label: '磁盘总量上限 (MB)',
     default: 500,
-    description: '上传文件总目录占用超过该上限时，按 mtime 由旧到新淘汰直到回落到上限以下。0 表示不限。',
+    description: '上传文件总目录占用超过该上限时，按上传时间 uploadedAt 由旧到新淘汰直到回落到上限以下。0 表示不限。',
   },
   historyHintEnabled: {
     type: 'boolean',
-    label: '在本轮无新上传时注入历史文件清单提示',
+    label: '注入会话文件清单提示',
     default: true,
     description:
-      '开启后：仅当会话中存在历史上传文件且本轮没有新上传时，在 LLM 调用前注入一条 system 提示列出可用文件（含 ID），避免模型遗忘过往上传。本轮有新上传时跳过注入（user message 里已有 【文件: ...】 描述）以节省 token。',
+      '开启后：会话中存在上传文件时，在 LLM 调用前注入一条 system 提示列出可用文件（含 ID），避免模型遗忘过往上传。本轮有新上传时注入本轮清单与历史清单（本轮文件单独标出），否则只注入历史清单。',
   },
   recognizeDocImages: {
     type: 'boolean',
@@ -244,11 +244,11 @@ async function run(caps: Caps): Promise<void> {
   // 路由，否则 scoped entry 会报 'URI 根 "pluginData" 不属于本 entry'。
   const storage = createStorageGateway(caps.storage);
 
-  // 启动时确保根目录存在（写一个 placeholder 然后立即删——避免目录不存在导致 list 失败）
+  // 启动时确保根目录存在（写入 .keep 触发建目录——避免目录不存在导致 list 失败）
   try {
     await storage.list(ROOT_URI);
   } catch {
-    // 目录不存在，写入再删除一个 placeholder 触发自动建目录
+    // 目录不存在，写入 .keep 触发建目录
     try {
       await storage.writeFile(`${ROOT_URI}/.keep`, '');
     } catch (err) {
@@ -550,7 +550,7 @@ async function run(caps: Caps): Promise<void> {
   async function findCachedToolResult(fileId: string, sessionId?: string): Promise<string | null> {
     if (!sessionId) return null;
     const memoryService = memory.current;
-    if (!memoryService?.getHistory) return null;
+    if (!memoryService) return null;
     try {
       const history = await memoryService.getHistory(sessionId, 200);
       for (let i = history.length - 1; i >= 0; i--) {
@@ -791,7 +791,7 @@ async function run(caps: Caps): Promise<void> {
   }
 
   /** 根据 entry 生成给 LLM 的附件描述：
-   *   - 小文件（≤ autoInlineLimit）：直接 inline 全文，**不暴露 ID** —— 避免模型多此一举调工具
+   *   - 小文件（≤ autoInlineLimit）：直接 inline 全文 —— 避免模型多此一举调工具
    *   - 大文件：只给文件名/类型 + ID，提示用 read_uploaded_file 拉取
    */
   async function buildAttachmentDesc(entry: FileEntry): Promise<string> {

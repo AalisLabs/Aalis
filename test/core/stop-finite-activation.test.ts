@@ -9,16 +9,8 @@ import {
   services,
 } from '../../packages/core/src/index.js';
 import type { PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
+import { deferred } from '../helpers/deferred.js';
 
-function deferred() {
-  let resolve!: () => void;
-  let reject!: (error: Error) => void;
-  const promise = new Promise<void>((yes, no) => {
-    resolve = yes;
-    reject = no;
-  });
-  return { promise, resolve, reject };
-}
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
 describe('有限 apply 与停机接管', () => {

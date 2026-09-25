@@ -1,9 +1,9 @@
-import { createServer } from 'node:http';
-import { type AddressInfo, connect } from 'node:net';
+import { connect } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { tools } from '../../packages/api-tools/src/index.js';
 import { App, provide } from '../../packages/core/src/index.js';
 import mcpServer from '../../packages/plugin-mcp-server/src/index.js';
+import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // createServer 的 async 回调此前全程无 try/catch，且第一行用 Host 头拼 URL base。
@@ -11,14 +11,6 @@ import mcpServer from '../../packages/plugin-mcp-server/src/index.js';
 // 'http://' → ERR_INVALID_URL → 回调返回的 Promise 无人接 → runtime 的
 // unhandledRejection 处理器判为致命并结束进程。一行请求打死整个 bot。
 // ════════════════════════════════════════════════════════════
-
-async function freePort(): Promise<number> {
-  const probe = createServer();
-  await new Promise<void>(r => probe.listen(0, '127.0.0.1', r));
-  const { port } = probe.address() as AddressInfo;
-  await new Promise<void>(r => probe.close(() => r()));
-  return port;
-}
 
 /** 直接用裸 socket 发畸形请求：http.request 不允许构造空 Host */
 function rawRequest(port: number, raw: string): Promise<string> {
@@ -58,7 +50,6 @@ describe('plugin-mcp-server: 畸形 Host 不得打死进程', () => {
       getAll: () => [],
       getDefinitions: () => [],
       getSummaries: () => [],
-      listGroups: () => [],
       execute: async () => ({ content: '' }),
     } as never);
     await app.plugins.register(mcpServer, {

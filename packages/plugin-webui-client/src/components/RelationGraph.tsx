@@ -315,9 +315,9 @@ function buildStylesheet(
 interface Props {
   comp: WebuiGraphComponent;
   pluginName: string;
-  refreshTick?: number;
+  refreshTick: number;
   /** 同页其它组件（如 stat）的刷新回调；按下「刷新」/执行 action 时一并 bump 全页，避免规模数字与图脱节 */
-  onRefresh?: () => void;
+  onRefresh: () => void;
 }
 
 export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Props): JSX.Element {
@@ -735,20 +735,10 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
     if (payload.nodes.length > 0) hasLaidOutRef.current = true;
   }, [payload, focusId, spacing]);
 
-  // 搜索高亮 / dim。规则（见 README/相关讨论）：
+  // 搜索高亮 / dim。规则：
   //  - 空格分隔的多关键词，AND 语义（所有 token 都必须命中）；
-  //  - 每个 token 不区分大小写，对 label 或 type 做子串匹配；
-  //    （不参与 id —— id 多为 platform:userId，容易误命中）；
-  //  - 边：任一端命中则保留，否则 dim；
-  //  - 清空 / 零匹配：移除所有 dim，全图恢复可见；
-  //  - 不再阻塞 composition：某些 IME 删除时不发 compositionend，
-  //    若守门会把 effect 整段跳过，造成「全图卡死变灰 + 删字不扩展」。
-  //    拼音中间态可能造成一瞬闪烁，但 IME 完成后会自动归位，可接受。
-  //  - deps 加 payload：刷图后节点重建需重新应用 dim。
-  // 搜索高亮 / dim。规则（见 README/相关讨论）：
-  //  - 空格分隔的多关键词，AND 语义（所有 token 都必须命中）；
-  //  - 每个 token 不区分大小写，对节点的 label / kind / entityKind / category
-  //    任一字段做子串匹配；
+  //  - 每个 token 不区分大小写，对节点的 label / kind / entityKind / category /
+  //    title / name / displayName / summary / sessionScope 任一字段做子串匹配；
   //    （不参与 id —— id 多为 platform:userId，容易误命中）；
   //  - 边：任一端命中则保留，否则 dim；
   //  - 清空 / 零匹配：移除所有 dim，全图恢复可见；
@@ -842,22 +832,18 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
   }, []);
 
   // ── 操作按钮 ──────────────────────────────────────────────
-  // 触发 onRefresh（若提供）以同步刷新页面上的 stat 等组件；fallback 到本地 fetchGraph。
-  const triggerRefresh = useCallback(() => {
-    if (onRefresh) onRefresh();
-    else fetchGraph();
-  }, [onRefresh, fetchGraph]);
+  // 刷新走 onRefresh bump 全页：stat 等组件与本图（经 refreshTick）一起重拉。
   const runAction = useCallback(
     async (method: string, confirmText?: string) => {
       if (confirmText && !window.confirm(confirmText)) return;
       try {
         await pageAction(pluginName, method, { focusId });
-        triggerRefresh();
+        onRefresh();
       } catch (e) {
         alert(`操作失败: ${(e as Error).message}`);
       }
     },
-    [pluginName, focusId, triggerRefresh],
+    [pluginName, focusId, onRefresh],
   );
 
   // ── UI ────────────────────────────────────────────────────
@@ -1089,7 +1075,7 @@ export function RelationGraph({ comp, pluginName, refreshTick, onRefresh }: Prop
             ✕ 清除焦点
           </button>
         ) : null}
-        <button type="button" onClick={triggerRefresh} disabled={loading} style={{ padding: '4px 8px' }}>
+        <button type="button" onClick={onRefresh} disabled={loading} style={{ padding: '4px 8px' }}>
           {loading ? '加载中…' : '刷新'}
         </button>
         <button type="button" onClick={exportPng} style={{ padding: '4px 8px' }}>
@@ -1533,7 +1519,6 @@ function FieldGlossary(): JSX.Element {
 function FieldGlossaryModal({ onClose }: { onClose: () => void }): JSX.Element {
   // 用 React Portal 渲染到 document.body，绕开任何父容器的 transform / overflow:hidden / contain
   // 形成的 stacking context（这是之前「顶部 / 右侧被遮挡 + 调不出」的根因）。
-  // 同时顶部提供「查看完整文档」外链提示，避免某些环境下 modal 仍被裁剪。
   // 简易模态：固定全屏遮罩 + 居中卡片。点遮罩 / Esc / ✕ 都能关。
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -1544,7 +1529,7 @@ function FieldGlossaryModal({ onClose }: { onClose: () => void }): JSX.Element {
   }, [onClose]);
   const row: CSSProperties = { display: 'grid', gridTemplateColumns: '120px 1fr', columnGap: 12, rowGap: 4, fontSize: 12 };
   const h: CSSProperties = { margin: '12px 0 4px', fontSize: 13, color: 'var(--text-primary, #e4e4ef)' };
-  // README 路径：优先服务器静态托管（如果部署有），否则 fallback 到仓库相对路径提示。
+  // 文档链接（当前服务端不托管 /docs，此链接会落到 SPA 首页）。
   const docPath = '/docs/plugins/user-relation-graph.md';
   const body = (
     <div

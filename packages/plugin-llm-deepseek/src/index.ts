@@ -264,7 +264,15 @@ class DeepSeekClient {
     }
   }
 
-  async chat(model: string, request: ChatModelRequest, enableThinking: boolean): Promise<ChatResponse> {
+  /**
+   * chat / chatStream 共用的请求体（两侧只差 stream 标志；分开写曾让两侧漂移）。
+   */
+  private buildRequestBody(
+    model: string,
+    request: ChatModelRequest,
+    enableThinking: boolean,
+    stream: boolean,
+  ): { body: Record<string, unknown>; messages: APIMessage[]; tools?: APITool[]; shouldThink: boolean } {
     const messages = normalizeSystemPlacement(prepareLLMMessages(request.messages)).map(m => this.toAPIMessage(m));
     const tools = request.tools?.map(t => this.toAPITool(t));
 
@@ -273,6 +281,7 @@ class DeepSeekClient {
       messages,
       max_tokens: request.maxTokens ?? this.maxTokens,
     };
+    if (stream) body.stream = true;
 
     const shouldThink = request.think !== undefined ? request.think : enableThinking;
 
@@ -295,6 +304,11 @@ class DeepSeekClient {
     if (this.forceJsonOutput && !(tools && tools.length > 0)) {
       body.response_format = { type: 'json_object' };
     }
+    return { body, messages, tools, shouldThink };
+  }
+
+  async chat(model: string, request: ChatModelRequest, enableThinking: boolean): Promise<ChatResponse> {
+    const { body, messages, tools, shouldThink } = this.buildRequestBody(model, request, enableThinking, false);
 
     this.logger.debug(
       `请求 DeepSeek${shouldThink ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}: ${body.model}, ${messages.length} 条消息, ${tools?.length ?? 0} 个工具`,
@@ -387,35 +401,7 @@ class DeepSeekClient {
   }
 
   async *chatStream(model: string, request: ChatModelRequest, enableThinking: boolean): AsyncIterable<ChatStreamChunk> {
-    const messages = normalizeSystemPlacement(prepareLLMMessages(request.messages)).map(m => this.toAPIMessage(m));
-    const tools = request.tools?.map(t => this.toAPITool(t));
-
-    const body: Record<string, unknown> = {
-      model,
-      messages,
-      max_tokens: request.maxTokens ?? this.maxTokens,
-      stream: true,
-    };
-
-    const shouldThink = request.think !== undefined ? request.think : enableThinking;
-
-    if (shouldThink) {
-      body.thinking = { type: 'enabled' };
-      if (this.reasoningEffort !== 'auto') body.reasoning_effort = this.reasoningEffort;
-    } else {
-      body.thinking = { type: 'disabled' };
-      body.temperature = request.temperature ?? this.temperature;
-    }
-
-    if (tools && tools.length > 0) {
-      body.tools = tools;
-    }
-
-    // 强制 JSON 输出。带 tools 时必须不加 response_format：json_object 与 tool_calls 互斥会破坏工具循环，
-    // 兑现配置文案"工具调用阶段不受影响"的承诺。
-    if (this.forceJsonOutput && !(tools && tools.length > 0)) {
-      body.response_format = { type: 'json_object' };
-    }
+    const { body, messages, shouldThink } = this.buildRequestBody(model, request, enableThinking, true);
 
     this.logger.debug(
       `流式请求 DeepSeek${shouldThink ? ` (思考 effort=${this.reasoningEffort})` : ' (思考已关闭)'}: ${body.model}, ${messages.length} 条消息`,

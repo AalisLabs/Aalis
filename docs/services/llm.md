@@ -4,8 +4,8 @@
 
 `llm` 是 Aalis 的 **LLM 对话服务**：把一次「消息列表 + 工具定义 → 文本/思考/工具调用」的推理调用抽象成统一契约，屏蔽 OpenAI / DeepSeek / Ollama 等后端差异。
 
-- 服务注册名：`llm.current`（DI 容器里的字符串键）。
-- 契约包：`@aalis/api-llm`（`packages/api-llm/src/index.ts`，`aalis.types: true` 的纯类型契约包）。
+- 服务注册名：`'llm'`（描述符 `llm`，读 `llm.current`）。
+- 契约包：`@aalis/api-llm`（`packages/api-llm/src/index.ts`），导出 `llm` 描述符与 `resolveLLMModel` 等 helper。
 - 关键设计：**每个 model 是一个独立 entry**。一个 provider 插件（如 OpenAI）会按 `listModels()` 结果为**每个模型**单独 `provide(llm, handle, …)`，entry 已绑定具体 `(provider, model)`，`ChatModelRequest` 不再携带 `model` 字段（`packages/api-llm/src/index.ts`）。
 
 ## 2. 契约
@@ -77,7 +77,7 @@ interface ChatModelRequest {
 
 **典型消费方**：
 - `@aalis/plugin-agent`（`packages/plugin-agent/src/index.ts`，解析并消费 `chatStream`、用 `maxOutputTokens` 算 token 预算）——核心对话循环。
-- `@aalis/plugin-media`（`packages/plugin-media/src/llm-adapter.ts`）——扫描所有 `llm` entry，按 `capabilities` 把 vision/audio/video 模型包成 MediaProcessor（`chat({ messages, maxTokens, think })`）。
+- `@aalis/plugin-media`（`packages/plugin-media/src/llm-adapter.ts`）——扫描所有 `llm` entry，按 `capabilities` 把 vision/audio 模型包成 MediaProcessor（`chat({ messages, maxTokens, think })`）。
 - `@aalis/plugin-websearch-serper`（`packages/plugin-websearch-serper/src/index.ts`）——可选依赖 `llm` 压缩搜索结果。
 - 其它：`plugin-memory-summary` / `plugin-user-profile` / `plugin-user-relation` / `plugin-session-manager`。
 
@@ -148,7 +148,7 @@ export default definePlugin({
 
 要点：
 - **`entryId` 必须是 `${lifecycle.id}/${modelId}`**——`resolveLLMModel` 用 `contextId === \`${provider}/${model}\`` 精确命中（`packages/api-llm/src/index.ts`）；不按此约定会导致 `llm-ref` 选择失效。
-- 不要传 `priority`，默认 `0` 即可；用户通过 preference / persona 选默认 model（见 §5）。同名多 provider 并存由容器按 preference>priority>注册顺序裁决（[服务模型](../concepts/service-model.md)）。
+- 不要传 `priority`，默认 `0` 即可；用户通过 preference 选默认 model（见 §5）。同名多 provider 并存由容器按 preference>priority>注册顺序裁决（[服务模型](../concepts/service-model.md)）。
 - `capabilities` 要**如实**反映该 model 实际能力——它驱动 media 的多模态处理器注册与前端过滤（§6）。
 - `provide` 返回 dispose 函数；实现 `refresh()` 时缓存它以便增删 entry（`packages/plugin-llm-ollama/src/index.ts`）。
 
@@ -183,7 +183,7 @@ agent 直接调 `llm.chatStream!(request)`（`packages/plugin-agent/src/index.ts
 
 ### 选默认 model
 
-未传 ref 时，`resolveLLMModel` 取容器胜者。要锁定全局默认 model，用 `services.prefer('llm', contextId)`（contextId = `${provider}/${model}`）或 persona.yaml 的 `defaultServices`（`packages/api-llm/src/index.ts`）；会话级覆盖走 `session-manager.resolveConfig`（`packages/plugin-agent/src/index.ts`）。token 预算估算用 `maxOutputTokens`：`tokenBudget ≈ contextLength - maxOutputTokens - safetyMargin`。
+未传 ref 时，`resolveLLMModel` 取容器胜者。要锁定全局默认 model，用 `services.prefer('llm', contextId)`（contextId = `${provider}/${model}`）或宿主配置的 `servicePreferences`（见 [配置](../core/config.md)）；会话级覆盖走 `session-manager.resolveConfig`（`packages/plugin-agent/src/index.ts`）。token 预算估算用 `maxOutputTokens`：`tokenBudget ≈ contextLength - maxOutputTokens - safetyMargin`。
 
 ## 6. 能力 / 风险 → 影响
 
@@ -197,7 +197,7 @@ provider 在**序列化前**（流式与非流式两条路径都要）必须先�
 
 ### capabilities 是领域元数据，驱动下游发现
 
-`capabilities` 决定 media 是否把该 model 当 vision/audio/video 处理器（`packages/plugin-media/src/llm-adapter.ts`）。乱标会让不支持的 model 被喂多模态输入而报错；漏标则该能力不可用。Ollama 的正确做法是优先用 `/api/show` 的真实 `capabilities`，再回退家族表（`packages/plugin-llm-ollama/src/index.ts`）。
+`capabilities` 决定 media 是否把该 model 当 vision/audio 处理器（`packages/plugin-media/src/llm-adapter.ts`）。乱标会让不支持的 model 被喂多模态输入而报错；漏标则该能力不可用。Ollama 的正确做法是优先用 `/api/show` 的真实 `capabilities`，再回退家族表（`packages/plugin-llm-ollama/src/index.ts`）。
 
 ### 该服务**不涉及** authority/确认/沙盒
 

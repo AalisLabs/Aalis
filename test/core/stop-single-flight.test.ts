@@ -9,19 +9,13 @@ import {
   lifecycle,
   provide,
 } from '../../packages/core/src/index.js';
+import { deferred } from '../helpers/deferred.js';
 
 // stop() 单飞：重入汇入同一 Promise；app:stopping 派发期间再调不得无界重入。
 // 已静置时先冻 shuttingDown 再 await idle，避免微任务窗口里 bounce 抢跑留下 pending 幽灵。
 // 停机中 unload 在 disposed-join 之前汇入计划并立即 true。
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>(r => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
 
 function capturingLogger(): { logger: Logger; lines: string[] } {
   const lines: string[] = [];

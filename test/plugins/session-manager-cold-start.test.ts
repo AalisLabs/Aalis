@@ -4,26 +4,11 @@ import { memory } from '../../packages/api-memory/src/index.js';
 import { sessionManager } from '../../packages/api-session-manager/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { HUB_PLUGINS, registerHubs } from '../fixtures/hubs.js';
+import { fakeMemory } from '../fixtures/session-memory.js';
 
 // 会话表跟随 memory 胜者：运行中胜者换成另一个后端（新装或启用首选后端）时，先把旧表的未落盘变更写回
 // 旧后端，再从新后端读表整体替换（换后端即换库，不跨后端合并）。落盘只删本进程显式删除过的会话，
 // 不按差集清扫。冷启动整批登记时会话管理排在全部 memory 提供者之后激活，首轮就从首选后端加载。
-
-function fakeMemory(initial: Record<string, Record<string, unknown>> = {}) {
-  const meta = new Map(Object.entries(initial));
-  return {
-    meta,
-    listMetadata: async () => [...meta].map(([key, data]) => ({ key, data })),
-    commitMetadata: async (ops: Array<{ op: string; key: string; data?: Record<string, unknown> }>) => {
-      for (const o of ops) {
-        if (o.op === 'put' && o.data) meta.set(o.key, o.data);
-        else if (o.op === 'del') meta.delete(o.key);
-      }
-    },
-    getHistory: async () => [],
-    clearSession: async () => {},
-  };
-}
 
 const oldSession = {
   id: 'old-1',

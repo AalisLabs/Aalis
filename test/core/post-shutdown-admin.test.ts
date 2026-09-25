@@ -8,6 +8,7 @@ import {
   lifecycle,
   provide,
 } from '../../packages/core/src/index.js';
+import { deferred } from '../helpers/deferred.js';
 
 // 停机后管理动作：disposed 单向终态，register / enable / updateConfig / bounce 一律 false。
 // app:stopping 时停机已冻结，disable / unload / bounce 汇入停机计划，不得抢关提供者。
@@ -19,14 +20,6 @@ afterEach(async () => {
 
 interface Store {
   save(data: string): void;
-}
-
-function deferred<T = void>() {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>(r => {
-    resolve = r;
-  });
-  return { promise, resolve };
 }
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));

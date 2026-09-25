@@ -256,7 +256,6 @@ interface CapabilityUse {
   usesKey: string;
   descriptor: string;
   importLine: string;
-  param: string;
   bullet: string;
 }
 
@@ -267,7 +266,6 @@ function selectedCapabilityUses(features: Answers['features']): CapabilityUse[] 
       usesKey: 'tools',
       descriptor: 'optional(tools)',
       importLine: `import { tools } from '@aalis/api-tools';`,
-      param: 'tools',
       bullet: '- ✓ 注册 AI 工具（`uses: { tools: optional(tools) }`，从 `@aalis/api-tools` 导入描述符）',
     });
   }
@@ -276,7 +274,6 @@ function selectedCapabilityUses(features: Answers['features']): CapabilityUse[] 
       usesKey: 'commands',
       descriptor: 'optional(commands)',
       importLine: `import { commands } from '@aalis/api-commands';`,
-      param: 'commands',
       bullet: '- ✓ 注册斜杠命令（`uses: { commands: optional(commands) }`，从 `@aalis/api-commands` 导入描述符）',
     });
   }
@@ -285,7 +282,6 @@ function selectedCapabilityUses(features: Answers['features']): CapabilityUse[] 
       usesKey: 'webui',
       descriptor: 'optional(webuiServer)',
       importLine: `import { type WebuiPage, webuiServer } from '@aalis/api-webui';`,
-      param: 'webui',
       bullet: '- ✓ WebUI 页面（`uses: { webui: optional(webuiServer) }`，从 `@aalis/api-webui` 导入描述符）',
     });
   }
@@ -308,7 +304,7 @@ export function renderIndexTs(a: Answers): string {
     `import { ${coreImports.sort().join(', ')} } from '@aalis/core';`,
   ];
 
-  const params = ['logger', ...caps.map(c => c.param)];
+  const params = ['logger', ...caps.map(c => c.usesKey)];
   const body: string[] = [];
   if (a.features.tool) {
     body.push(`    // 注册 AI 可调用的工具。登记随这次激活撤回；tools 服务晚上线或换人时自动重挂

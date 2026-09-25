@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import schedulerPlugin, { type SchedulerService, scheduler } from '../../packages/plugin-scheduler/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { memoryStorage } from '../fixtures/memory-storage.js';
 
 // ════════════════════════════════════════════════════════════
 // scheduler 触发时的代理身份：owner 只能来自显式来源，绝不能由「字段缺失」推断
@@ -26,41 +27,6 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 
 type Actor = { platform: string; userId: string } | undefined;
 
-/**
- * 只够 scheduler 读写持久化文件的 storage —— **不是通用 fixture**，别拿去别处用。
- *
- * 必需而非锦上添花：没有它，`loadDynamicJobs` 的 `readFile` 必抛并被内层 catch 吞成 `[]`，
- * 那条分支在整个测试集里一次都不会执行。实测过：把它的 actor 缺省从 undefined 退回
- * `webui/console`（即持久化往返把匿名任务变回 owner 的那条腿），全量 903 个用例零转红。
- */
-function memoryStorage(seed: Record<string, string> = {}) {
-  const files = new Map<string, string>(Object.entries(seed));
-  return {
-    files,
-    service: {
-      listRoots: () => [
-        {
-          name: 'data',
-          label: 'data(内存)',
-          kind: 'data',
-          browsable: true,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
-      ],
-      async readFile(uri: string) {
-        const v = files.get(uri);
-        if (v === undefined) throw new Error(`ENOENT: ${uri}`);
-        return v;
-      },
-      async writeFile(uri: string, data: string | Buffer) {
-        files.set(uri, typeof data === 'string' ? data : data.toString('utf-8'));
-      },
-    },
-  };
-}
-
 /** 起一个装了 scheduler 的实例，触发指定任务，返回它发出的 inbound:message 上的 actor。 */
 async function actorOfTriggeredJob(
   schedulerConfig: Record<string, unknown>,
@@ -70,6 +36,9 @@ async function actorOfTriggeredJob(
 ): Promise<{ actor: Actor; emitted: boolean }> {
   const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide, services, events });
+  // 内存 storage 必需而非锦上添花：没有它，`loadDynamicJobs` 的 `readFile` 必抛并被内层 catch 吞成 `[]`，
+  // 那条分支在整个测试集里一次都不会执行。实测过：把它的 actor 缺省从 undefined 退回
+  // `webui/console`（即持久化往返把匿名任务变回 owner 的那条腿），全量 903 个用例零转红。
   host.provide(storage, memoryStorage(storageSeed).service as never);
   await app.plugins.register(toolsPlugin, {});
   await app.plugins.register(cronEnginePlugin, {});

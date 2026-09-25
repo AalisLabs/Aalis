@@ -781,36 +781,7 @@ function SessionDetailView({ detail, onSwitchSession, onRefresh }: { detail: Ses
               <div className="detail-message assistant streaming">
                 <div className="detail-msg-role">助手 <span className="streaming-indicator">●</span></div>
                 <div className="detail-msg-content detail-msg-md">
-                  {(() => {
-                    const blocks: React.ReactNode[] = [];
-                    let i = 0;
-                    while (i < stream.segments.length) {
-                      const seg = stream.segments[i];
-                      if (seg.type === 'reasoning_text') {
-                        let text = '';
-                        while (i < stream.segments.length && stream.segments[i].type === 'reasoning_text') {
-                          text += (stream.segments[i] as Extract<ContentSegment, { type: 'reasoning_text' }>).content;
-                          i++;
-                        }
-                        if (text) {
-                          blocks.push(
-                            <details key={`r-${i}`} className="thinking-block" open>
-                              <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
-                              <div className="thinking-content">
-                                <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
-                                  {preprocessLaTeX(text)}
-                                </ReactMarkdown>
-                              </div>
-                            </details>
-                          );
-                        }
-                        continue;
-                      }
-                      blocks.push(<DetailSegment key={i} seg={seg} />);
-                      i++;
-                    }
-                    return blocks;
-                  })()}
+                  {renderSegmentBlocks(stream.segments, true)}
                 </div>
               </div>
             )}
@@ -819,6 +790,38 @@ function SessionDetailView({ detail, onSwitchSession, onRefresh }: { detail: Ses
       </div>
     </div>
   );
+}
+
+/** 按统一时间线渲染 segments：相邻 reasoning_text 合并为折叠思考块，其余交给 DetailSegment */
+function renderSegmentBlocks(segments: ContentSegment[], thinkingOpen: boolean): React.ReactNode[] {
+  const blocks: React.ReactNode[] = [];
+  let i = 0;
+  while (i < segments.length) {
+    const seg = segments[i];
+    if (seg.type === 'reasoning_text') {
+      let text = '';
+      while (i < segments.length && segments[i].type === 'reasoning_text') {
+        text += (segments[i] as Extract<ContentSegment, { type: 'reasoning_text' }>).content;
+        i++;
+      }
+      if (text) {
+        blocks.push(
+          <details key={`r-${i}`} className="thinking-block" open={thinkingOpen}>
+            <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
+            <div className="thinking-content">
+              <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
+                {preprocessLaTeX(text)}
+              </ReactMarkdown>
+            </div>
+          </details>
+        );
+      }
+      continue;
+    }
+    blocks.push(<DetailSegment key={i} seg={seg} />);
+    i++;
+  }
+  return blocks;
 }
 
 /** 渲染单个 segment（文本用 Markdown，工具调用用折叠块） */
@@ -870,39 +873,12 @@ function DetailMessageView({ msg }: { msg: ChatMessage }) {
     );
   }
 
-  // 助手消息有 segments：按统一时间线渲染，相邻 reasoning_text 合并为折叠块
+  // 助手消息有 segments：按统一时间线渲染
   if (msg.role === 'assistant' && msg.segments && msg.segments.length > 0) {
-    const blocks: React.ReactNode[] = [];
-    let i = 0;
-    while (i < msg.segments.length) {
-      const seg = msg.segments[i];
-      if (seg.type === 'reasoning_text') {
-        let text = '';
-        while (i < msg.segments.length && msg.segments[i].type === 'reasoning_text') {
-          text += (msg.segments[i] as Extract<ContentSegment, { type: 'reasoning_text' }>).content;
-          i++;
-        }
-        if (text) {
-          blocks.push(
-            <details key={`r-${i}`} className="thinking-block">
-              <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
-              <div className="thinking-content">
-                <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
-                  {preprocessLaTeX(text)}
-                </ReactMarkdown>
-              </div>
-            </details>
-          );
-        }
-        continue;
-      }
-      blocks.push(<DetailSegment key={i} seg={seg} />);
-      i++;
-    }
     return (
       <div className={`detail-message ${msg.role}`}>
         <div className="detail-msg-role">{roleLabel}</div>
-        <div className="detail-msg-content detail-msg-md">{blocks}</div>
+        <div className="detail-msg-content detail-msg-md">{renderSegmentBlocks(msg.segments, false)}</div>
         {msg.timestamp > 0 && (
           <div className="detail-msg-time">{formatTime(msg.timestamp)}</div>
         )}
@@ -910,22 +886,10 @@ function DetailMessageView({ msg }: { msg: ChatMessage }) {
     );
   }
 
-  // 老数据 fallback：reasoning + content 两段式
-  const fallbackThinking = msg.role === 'assistant' && msg.reasoningContent ? (
-    <details className="thinking-block">
-      <summary className="thinking-summary"><BrainCircuit size={14} /> 思考过程</summary>
-      <div className="thinking-content">
-        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
-          {preprocessLaTeX(msg.reasoningContent)}
-        </ReactMarkdown>
-      </div>
-    </details>
-  ) : null;
-
+  // 无 segments：纯内容渲染
   return (
     <div className={`detail-message ${msg.role}`}>
       <div className="detail-msg-role">{roleLabel}</div>
-      {fallbackThinking}
       <div className="detail-msg-content detail-msg-md">
         <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
           {preprocessLaTeX(msg.content)}

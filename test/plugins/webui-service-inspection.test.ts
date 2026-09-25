@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { expect, it, vi } from 'vitest';
 import { type StorageService, storage } from '../../packages/api-storage/src/index.js';
 import { defineService, type Logger, provide } from '../../packages/core/src/index.js';
+import { type PackageManagerService, packageManager } from '../../packages/plugin-package-manager/src/index.js';
 import webuiServer from '../../packages/plugin-webui-server/src/index.js';
 import { createConfigStore, installHostConfig } from '../../packages/runtime/src/config-store.js';
 import { HUB_PLUGINS, registerHubs } from '../fixtures/hubs.js';
@@ -120,6 +121,7 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
     expect(currentGraph.status).toBe(200);
     const current = (await currentGraph.json()) as {
       services: { required: Array<{ service: string; providedBy: string | null }> };
+      serviceDependents: string[];
     };
     expect(current.services.required).toEqual(
       ['events', 'logger', 'lifecycle', 'config', 'provide', 'services'].map(service => ({
@@ -127,6 +129,16 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
         providedBy: '宿主',
       })),
     );
+    // 卸载前预警取 package-manager 的服务依赖者判定；服务缺席时为空
+    expect(current.serviceDependents).toEqual([]);
+    const serviceDependents = vi.fn((_name: string) => ['zz-dep']);
+    host.provide(packageManager, { serviceDependents } as unknown as PackageManagerService);
+    const managedGraph = await fetch(`${base}/api/marketplace/depgraph?name=${encodeURIComponent(webuiServer.name)}`, {
+      headers,
+    });
+    expect(managedGraph.status).toBe(200);
+    expect(((await managedGraph.json()) as typeof current).serviceDependents).toEqual(['zz-dep']);
+    expect(serviceDependents).toHaveBeenCalledWith(webuiServer.name);
 
     const defaults = [
       'events',

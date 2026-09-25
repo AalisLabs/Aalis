@@ -1,7 +1,5 @@
 // ----- Embedding 服务接口 -----
 
-// 触发 @aalis/core 模块解析，使下方 declare module 增强生效
-import type {} from '@aalis/core';
 import { defineService } from '@aalis/core';
 
 export interface EmbeddingRequestOptions {

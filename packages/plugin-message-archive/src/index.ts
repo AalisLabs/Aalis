@@ -107,7 +107,7 @@ function createArchiveService({ memory, media, events, logger, config }: Caps): 
       // 仅在 preprocessor 尚未运行（_attachmentDescriptions 未预设）时才调用，避免重复识别。
       if (working.attachments && working.attachments.length > 0 && !working._attachmentDescriptions) {
         const mediaSvc = media.current;
-        if (mediaSvc?.processMessage) {
+        if (mediaSvc) {
           const report = await mediaSvc.processMessage(working);
           if (debugLogs && report.total > 0) {
             logger.debug(`附件识别完成: ${report.successCount}/${report.total} 个成功 | ${working.content}`);

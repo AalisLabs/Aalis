@@ -1,12 +1,12 @@
 // ===== OKX API v5 客户端 =====
 
-export interface OkxCredentials {
+interface OkxCredentials {
   apiKey: string;
   secretKey: string;
   passphrase: string;
 }
 
-export interface OkxClientOptions {
+interface OkxClientOptions {
   credentials: OkxCredentials;
   baseUrl: string;
   /** 是否模拟盘 */
@@ -14,7 +14,7 @@ export interface OkxClientOptions {
   timeoutMs: number;
 }
 
-export interface OkxApiResponse<T = unknown> {
+interface OkxApiResponse<T = unknown> {
   code: string;
   msg: string;
   data: T;
@@ -424,21 +424,6 @@ export class OkxClient {
     return this.request('GET', '/api/v5/public/open-interest', { instType, instId });
   }
 
-  /** 获取永续合约当前资金费率排行 */
-  async getDiscountRateAndInterestFreeQuota(ccy?: string) {
-    return this.request('GET', '/api/v5/public/discount-rate-interest-free-quota', { ccy });
-  }
-
-  /** 获取系统时间 */
-  async getServerTime() {
-    return this.request('GET', '/api/v5/public/time');
-  }
-
-  /** 获取期权定价数据 */
-  async getOptSummary(instFamily: string) {
-    return this.request('GET', '/api/v5/public/opt-summary', { instFamily });
-  }
-
   // ========== 资金 ==========
 
   /** 查询资金账户余额 */
@@ -491,20 +476,6 @@ export class OkxClient {
   /** 合约持仓量及交易量 */
   async getContractOpenInterestVolume(ccy: string, period?: string) {
     return this.request('GET', '/api/v5/rubik/stat/contracts/open-interest-volume', { ccy, period });
-  }
-
-  /** 看涨看跌期权持仓比 */
-  async getOptionOpenInterestVolume(ccy: string, period?: string) {
-    return this.request('GET', '/api/v5/rubik/stat/option/open-interest-volume-ratio', { ccy, period });
-  }
-
-  /** 精英交易员多空比 */
-  async getTopTraderLongShortRatio(ccy: string, period?: string, instType?: string) {
-    return this.request('GET', '/api/v5/rubik/stat/contracts/long-short-account-ratio-contract-top-trader', {
-      ccy,
-      period,
-      instType,
-    });
   }
 
   /** Taker 主动买卖量 */

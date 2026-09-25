@@ -1,4 +1,4 @@
-import type { Logger, ServiceRef, ServiceView } from '@aalis/core';
+import type { Logger } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { ASRService } from '../../packages/api-asr/src/index.js';
 import { type LLMModel, llm, type ModelRef } from '../../packages/api-llm/src/index.js';
@@ -7,6 +7,7 @@ import { App, definePlugin, provide, services } from '../../packages/core/src/in
 import type { MediaConfigResolved, MediaServiceCaps } from '../../packages/plugin-media/src/service.js';
 import { MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import type { MessageAttachment } from '../../packages/schema-message/src/index.js';
+import { ref } from '../fixtures/service-ref.js';
 
 // ════════════════════════════════════════════════════════════
 // MediaService.pickProcessor — 模型选择
@@ -15,20 +16,6 @@ import type { MessageAttachment } from '../../packages/schema-message/src/index.
 // ════════════════════════════════════════════════════════════
 
 const logger = { info: () => {}, debug: () => {}, warn: () => {} } as unknown as Logger;
-
-/** 按激活绑定的服务桩：按 entries 解析当前胜者与全量提供者 */
-function ref<P>(entries: ServiceView<P>[] = []): ServiceRef<P> {
-  return {
-    current: entries[0]?.instance,
-    require: () => {
-      const provider = entries[0]?.instance;
-      if (provider === undefined) throw new Error('无提供者');
-      return provider;
-    },
-    all: () => entries,
-    follow: () => () => {},
-  };
-}
 
 function caps(over: Partial<MediaServiceCaps> = {}): MediaServiceCaps {
   return { logger, llm: ref(), asr: ref(), sessionManager: ref(), memory: ref(), ...over };
@@ -46,7 +33,7 @@ function proc(name: string, priority: number): MediaProcessor {
 
 function svc(): MediaServiceImpl {
   const s = new MediaServiceImpl(caps(), cfg);
-  // processor.name 模拟 llm-adapter 生成的 `llm:<provider>/<model>#<capShort>` 格式
+  // processor.name 模拟 llm-adapter 生成的 `llm:<provider>/<model>#<cap>` 格式
   s.registerProcessor(proc('llm:@aalis/plugin-llm-openai:main/gpt-4o#vis', 10));
   s.registerProcessor(proc('llm:@aalis/plugin-llm-deepseek:main/deepseek-vl#vis', 20));
   return s;

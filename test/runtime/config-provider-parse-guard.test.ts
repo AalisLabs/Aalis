@@ -1,9 +1,10 @@
-import { mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LogHub } from '../../packages/core/src/index.js';
 import { createFsYamlConfigProvider } from '../../packages/runtime/src/providers.js';
+import { atomicWrite, quiet, settle, waitFor } from '../helpers/fs-watch.js';
 
 // ════════════════════════════════════════════════════════════
 // FsYamlConfigProvider 解析守卫 —— 坏配置必须有信号，好配置不受影响。
@@ -13,28 +14,6 @@ import { createFsYamlConfigProvider } from '../../packages/runtime/src/providers
 // 契约：读不到安静返回；解析失败告警且不投递；空/非映射同一道闸拒收；
 // rawYaml 只在解析成功后推进（同一份坏内容每次保存都重新告警）。
 // ════════════════════════════════════════════════════════════
-
-const DEBOUNCE_MS = 300;
-const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));
-
-async function waitFor(cond: () => boolean, timeoutMs = 3000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (cond()) return true;
-    await sleep(25);
-  }
-  return cond();
-}
-
-const quiet = (): Promise<void> => sleep(DEBOUNCE_MS + 500);
-const settle = (): Promise<void> => sleep(250);
-
-/** 原子替换——编辑器默认保存的做法。 */
-function atomicWrite(path: string, content: string): void {
-  const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, content, 'utf-8');
-  renameSync(tmp, path);
-}
 
 describe('FsYamlConfigProvider 解析守卫', () => {
   let dir: string;

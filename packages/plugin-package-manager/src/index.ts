@@ -11,6 +11,7 @@ import {
   defineService,
   logger,
   optional,
+  type PluginStatusEntry,
   pluginsService,
   provide,
   services,
@@ -32,10 +33,15 @@ import { classifyDepSpec, isRegistryDep, isUpgrade } from '@aalis/util-dep-spec'
  * 底层子进程统一走 api-process。
  */
 export interface PackageManagerService {
-  /** 装进根 `dependencies` + node_modules，随后 rescan 让加载器发现它 */
+  /** 装进根 `dependencies` + node_modules，随后 rescan 让加载器发现它；只接受插件与前端界面包 */
   install(npmPkg: string): Promise<{ ok: boolean; message: string }>;
-  /** 从根 `dependencies` 摘掉并 npm uninstall；只接受插件与前端界面包（见 uninstallOne 的两道闸） */
+  /** 从根 `dependencies` 摘掉并 npm uninstall；闸见 uninstallOne（类型 / 撤销通道 / 来源 / 服务依赖者） */
   uninstall(pluginName: string): Promise<{ ok: boolean; message: string }>;
+  /**
+   * 卸载 name 会打断哪些活跃插件：name 提供的某服务没有别的提供者，而它们 required 该服务。
+   * 卸载闸与市场的卸载前预警共用这一份判定。name 按插件定义 name 查。
+   */
+  serviceDependents(name: string): string[];
   /**
    * 批量更新到指定版本，随后重启进程接管。
    *
@@ -67,7 +73,7 @@ export interface UpdateResult {
 
 // ===== 实现 =====
 
-/** 短命令（mkdir/tar/rm/test/npm pack）的超时。 */
+/** 短命令（cp、npm view 等）的超时。 */
 const QUICK_TIMEOUT_MS = 120_000;
 /**
  * 安装类命令的超时。`npm install` 要装全依赖树 + 原生编译（better-sqlite3、puppeteer
@@ -75,6 +81,12 @@ const QUICK_TIMEOUT_MS = 120_000;
  * 否则会在半装状态下被杀。
  */
 const INSTALL_TIMEOUT_MS = 600_000;
+/**
+ * 压掉 `legacy-peer-deps` 的环境变量。用户或项目 `.npmrc` 里的 `legacy-peer-deps=true`（React
+ * 生态常见的 workaround）会让 npm 对 peer 不满足**完全不报**，安装与更新预检的 peer 护栏就此
+ * 静默失效。环境变量优先于项目根的 `.npmrc`（install-chain 里有真 npm 用例）。
+ */
+const STRICT_PEERS_ENV = { npm_config_legacy_peer_deps: 'false' };
 
 async function execProc(
   proc: ProcessService,
@@ -139,6 +151,45 @@ export function hasWorkspaceProtocol(pkgJson: Record<string, unknown> | undefine
 export function declaresPlugin(pkgJson: Record<string, unknown> | undefined): boolean {
   const kw = pkgJson?.keywords;
   return Array.isArray(kw) && kw.includes('aalis-plugin');
+}
+
+/**
+ * 包类型是否归市场装卸：插件（判据同 {@link declaresPlugin}）与前端界面（`aalis-interface`）
+ * 归市场管，返回 `undefined`；其余返回拒绝时展示的类别名。装与卸共用这一份判据——同一件事
+ * 维护两份同义判据，正是本仓已出事四次的形态（依赖来源判据、定级数学、包名正则、关键词分类）。
+ * 纯函数，便于单测。
+ */
+export function nonMarketKind(keywords: unknown): string | undefined {
+  const kw: unknown[] = Array.isArray(keywords) ? keywords : [];
+  if (declaresPlugin({ keywords: kw }) || kw.includes('aalis-interface')) return undefined;
+  if (kw.includes('aalis-core')) return '内核';
+  if (kw.includes('aalis-runtime')) return '宿主';
+  if (kw.includes('aalis-api')) return '服务契约';
+  if (kw.includes('aalis-schema')) return '数据规范';
+  if (kw.includes('aalis-util')) return '工具库';
+  return '非插件包';
+}
+
+/**
+ * 找出「卸载 target 会断其服务依赖」的活跃插件：target 提供的某服务 S 没有别的插件也提供，
+ * 且有别的插件 requiredServices 含 S → 这些插件会被打断。纯函数，便于单测。
+ */
+export function findServiceDependents(
+  targetName: string,
+  status: ReadonlyArray<Pick<PluginStatusEntry, 'name' | 'provides' | 'requiredServices'>>,
+): string[] {
+  const target = status.find(p => p.name === targetName);
+  const provided = target?.provides ?? [];
+  if (provided.length === 0) return [];
+  const dependents = new Set<string>();
+  for (const svc of provided) {
+    const otherProvider = status.some(p => p.name !== targetName && (p.provides ?? []).includes(svc));
+    if (otherProvider) continue; // 还有别的提供者，删了不致命
+    for (const p of status) {
+      if (p.name !== targetName && (p.requiredServices ?? []).includes(svc)) dependents.add(p.name);
+    }
+  }
+  return [...dependents];
 }
 
 /** 从项目 node_modules 解析已装包入口并取出定义 name；解析失败返回 undefined。 */
@@ -246,6 +297,7 @@ function createService(caps: Caps): PackageManagerService {
     // plugins 服务缺席时保守返回 false——宁可让「声明为插件却没加载」的诊断多报一次，
     // 也不要在真没装上时谎报成功。
     isPluginRegistered: name => caps.plugins.current?.getStatus().some(p => p.name === name) ?? false,
+    pluginStatus: () => caps.plugins.current?.getStatus() ?? [],
     resolveDefinitionName: pkgName => resolveInstalledDefinitionName(projectRoot(), pkgName),
     listPluginInstanceIds: definitionName =>
       (caps.plugins.current?.getStatus() ?? []).filter(p => p.name === definitionName).map(p => p.instanceId),
@@ -296,7 +348,7 @@ function createService(caps: Caps): PackageManagerService {
 export interface PackageManagerDeps {
   proc: ProcessService;
   log: { info(msg: string): void; error(msg: string): void; warn?(msg: string): void };
-  /** 项目根绝对路径（= `<cwd>`）：形态探测、根 package.json 读取、npm 的 cwd。 */
+  /** 项目根绝对路径（= `<cwd>`）：根 package.json 读取、npm 的 cwd。 */
   projectRoot(): string;
   /** 读文本文件；不存在或读失败返回 undefined。注入以便单测。 */
   readText(absPath: string): Promise<string | undefined>;
@@ -314,6 +366,8 @@ export interface PackageManagerDeps {
    * 不是 npm 包名——二者可以不同。
    */
   isPluginRegistered(name: string): boolean;
+  /** 运行时插件状态，供服务依赖者判定（{@link findServiceDependents}）。缺省视为没有活跃插件。 */
+  pluginStatus?(): ReadonlyArray<Pick<PluginStatusEntry, 'name' | 'provides' | 'requiredServices'>>;
   /** 彻底卸载插件（dispose + 从注册表移除）。plugins 服务缺席则 no-op。 */
   unloadPlugin(name: string): Promise<void>;
   /**
@@ -479,8 +533,8 @@ export function findUnmetPeers(output: string, targetNames: readonly string[]): 
 
 /**
  * 包管理核心：install/uninstall 的纯依赖实现（不碰能力/网关，可单测）。
- * 所有文件操作走 process 网关（子进程：npm/tar/mkdir/rm/test），目标是真实
- * `<cwd>/packages`——不经 storage 沙盒（沙盒根是 workspace，够不到 packages）。
+ * 所有文件操作走 process 网关（子进程：npm/cp/test），目标是项目根 package.json 与
+ * node_modules——不经 storage 沙盒。
  * 能力组装层见 createService。
  */
 export function createPackageManager(deps: PackageManagerDeps): PackageManagerService {
@@ -569,6 +623,26 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
   }
 
   /**
+   * 装前类型闸：经 `npm view <spec> keywords --json` 读 registry 上的类型关键词（在项目根跑，
+   * 沿用项目与本机的 npm 源配置），判据与卸载同一份（{@link nonMarketKind}）。闸放服务层而非
+   * HTTP 路由——本服务对外公开，任何插件都能绕过路由直接调。返回拒绝理由，`undefined` = 放行。
+   */
+  async function installKindRefusal(npmPkg: string, root: string): Promise<string | undefined> {
+    const out = (await execProc(proc, 'npm', ['view', npmPkg, 'keywords', '--json'], root)).trim();
+    // 包没有 keywords 字段时 npm 什么都不输出；spec 是版本范围时按版本逐个给出、返回二维数组
+    const parsed: unknown = out ? JSON.parse(out) : [];
+    const perVersion = Array.isArray(parsed) && parsed.length > 0 && parsed.every(Array.isArray) ? parsed : [parsed];
+    const kind = perVersion.map(kw => nonMarketKind(kw)).find(k => k !== undefined);
+    if (!kind) return undefined;
+    return (
+      `${npmPkg} 是${kind}，不是可装卸的插件，市场不负责它的安装。` +
+      (kind === '非插件包'
+        ? '市场只安装带 aalis-plugin / aalis-interface 关键词的包。'
+        : '它随脚手架或依赖它的插件自动就位；要升级已装的版本，请在市场勾选它后用「更新所选」提交。')
+    );
+  }
+
+  /**
    * 装完的统一判定：rescan 出新插件即成功；没出新插件时按目标是否**声明自己是插件**分流。
    * 「声明了插件却没被发现」正是那条静默假成功——必须报失败，否则用户看到 ok 却什么也没装上。
    * 就位查的是加载器解析出的定义 name，不是 npm 包名。
@@ -610,6 +684,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
         message: '根依赖含 workspace: 协议，拒绝在此运行 npm install（会写出 package-lock.json 并搅坏 pnpm 工作区）',
       };
     }
+    const refused = await installKindRefusal(npmPkg, root);
+    if (refused) return { ok: false, message: refused };
     log.info(`正在安装: ${npmPkg} → 根依赖 + node_modules`);
     // **刻意不加 `--ignore-scripts`**：依赖树的 preinstall/install/postinstall 会照常执行。
     // 三条理由：脚手架自身就是裸 `npm install`（其生成的 README 也教用户裸装），加了会让
@@ -617,7 +693,25 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // （better-sqlite3，脚手架默认勾选）与 plugin-tool-browser（puppeteer）；而真正的增量
     // 风险只有传递依赖的 install 脚本这一片——入口是 owner 级、包名由用户自己点选、包本体
     // 反正会被动态 import 执行（插件与内核同进程同权限，见 docs/concepts/security-model.md §1）。
-    await execProc(proc, 'npm', ['install', npmPkg, '--no-audit', '--no-fund'], root, INSTALL_TIMEOUT_MS);
+    //
+    // peer 护栏与更新预检相同（STRICT_PEERS_ENV）。代价：本就靠 legacy-peer-deps 容忍既有
+    // peer 冲突的项目，市场安装会整体失败，故失败文案要点明原因。
+    try {
+      await execProcBoth(
+        proc,
+        'npm',
+        ['install', npmPkg, '--no-audit', '--no-fund'],
+        root,
+        INSTALL_TIMEOUT_MS,
+        STRICT_PEERS_ENV,
+      );
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      if (!raw.includes('ERESOLVE')) throw err;
+      throw new Error(
+        `peer 依赖冲突，未安装（市场安装不沿用 .npmrc 里的 legacy-peer-deps）：${extractPeerConflicts(raw).join('；')}`,
+      );
+    }
     const bare = stripVersion(npmPkg);
     return settleInstall(npmPkg, `${root}/node_modules/${bare}/package.json`, 'node_modules');
   }
@@ -636,11 +730,10 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
    *    配置；再用 `npm_config_legacy_peer_deps=false` 压掉用户级与全局配置（已实测：
    *    即便副本里放了 `legacy-peer-deps=true` 的 `.npmrc`，该环境变量也能翻回来）。
    *
-   * **不要把项目 `.npmrc` cp 进副本**。动机是对的——不带它，私有源用户的
-   * 预检会跑去公共源解析（包只在私有源上就 404/401 → 更新被永久挡住且报错文不对题）。但
-   * `test/integration/install-chain.test.ts` 的真实 npm 用例证伪了这条路：带上 `.npmrc` 后
-   * 上面第 2 条护栏失效，而隔离复现里 env 明明压得过项目级 `.npmrc`，**机制未查清**。
-   * 要做的话先解释清楚这个矛盾，别直接 cp。
+   * 项目 `.npmrc` 目前不拷进副本。代价：私有源用户的预检会跑去公共源解析（包只在私有源上
+   * 就 404/401 → 更新被挡住且报错文不对题）。早先 `test/integration/install-chain.test.ts` 的
+   * 真实 npm 用例显示「带上 `.npmrc` 后第 2 条护栏失效」，成因是当时测试夹具的进程桩没有转发
+   * `opts.env`，并非环境变量压不过项目级 `.npmrc`（见 STRICT_PEERS_ENV）。是否拷入另议。
    *
    * 判据只能是解析告警文本：`--dry-run --json` 实测只给 `{added, removed, changed,
    * audited, funding}`，无任何冲突信息；退出码在本场景恒为 0（npm 把命令行显式 spec
@@ -663,7 +756,7 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
         ['install', ...specs, '--dry-run', '--no-audit', '--no-fund'],
         tmp.path,
         INSTALL_TIMEOUT_MS,
-        { npm_config_legacy_peer_deps: 'false' },
+        STRICT_PEERS_ENV,
       );
       const unmet = findUnmetPeers(`${stderr}\n${stdout}`, specs.map(stripVersion));
       return unmet.length > 0 ? unmet : undefined;
@@ -844,10 +937,12 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
       }),
 
     uninstall: pluginName => exclusive(`卸载 ${pluginName}`, () => uninstallOne(pluginName)),
+
+    serviceDependents: name => findServiceDependents(name, deps.pluginStatus?.() ?? []),
   };
 
   /**
-   * 卸载：两道服务层闸 + npm uninstall。
+   * 卸载：服务层各道闸 + npm uninstall。
    *
    * 闸放服务层而非 HTTP 路由——本服务对外公开，任何插件都能绕过路由直接调
    * （与 `buildUpdateSpecs`、`isRegistryDep` 同一理由）。前端早就有正确策略
@@ -869,28 +964,14 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     // 「**这个操作会把你用来撤销它的那条通道一起销毁**」：卸掉插件，实例照常跑、市场里点
     // 一下就能装回来（带内可恢复）；卸掉内核或宿主，实例起不来、市场随之消失，只能开
     // shell 修（带外）。更新不在此列——它保留实例且失败会自动回滚。
-    const kw = Array.isArray(meta.keywords) ? (meta.keywords as unknown[]) : [];
-    // 走 declaresPlugin 而非再内联一次 `kw.includes('aalis-plugin')`：同一文件里维护两份
-    // 同义判据，正是本仓已出事四次的形态（依赖来源判据、定级数学、包名正则、关键词分类）。
-    const isPlugin = declaresPlugin(meta);
-    const isInterface = kw.includes('aalis-interface');
-    if (!isPlugin && !isInterface) {
-      const kind = kw.includes('aalis-core')
-        ? '内核'
-        : kw.includes('aalis-runtime')
-          ? '宿主'
-          : kw.includes('aalis-api')
-            ? '服务契约'
-            : kw.includes('aalis-schema')
-              ? '数据规范'
-              : kw.includes('aalis-util')
-                ? '工具库'
-                : '非插件包';
+    // 判据与安装同一份（nonMarketKind）。
+    const kind = nonMarketKind(meta.keywords);
+    if (kind) {
       return {
         ok: false,
         message:
           `${pluginName} 是${kind}，不是可装卸的插件，市场不负责它的卸载。` +
-          (kw.includes('aalis-core') || kw.includes('aalis-runtime')
+          (kind === '内核' || kind === '宿主'
             ? '删掉它实例将无法启动、市场也随之消失，只能在终端里恢复；确需如此请手动执行 npm uninstall。'
             : '它随依赖它的插件被 npm 自动剪枝；确需单独删除请手动执行 npm uninstall。'),
       };
@@ -939,6 +1020,17 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     const defName = await definitionNameFor(pluginName);
     const instanceIds = instanceIdsFor(defName);
 
+    // ── 闸三：服务依赖者 ──
+    // 卸掉某服务的唯一提供者会打断 required 它的活跃插件。与市场卸载前的预警同一份判定
+    // （serviceDependents），按加载器解析出的定义 name 查。
+    const dependents = findServiceDependents(defName, deps.pluginStatus?.() ?? []);
+    if (dependents.length > 0) {
+      return {
+        ok: false,
+        message: `卸载会破坏依赖：${dependents.join('、')} 依赖此插件提供的服务且无其他提供者。请先卸载它们或安装替代提供者。`,
+      };
+    }
+
     try {
       await execProc(proc, 'npm', ['uninstall', pluginName, '--no-audit', '--no-fund'], root, INSTALL_TIMEOUT_MS);
       for (const id of instanceIds) {
@@ -946,7 +1038,10 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
         deps.cleanupConfig?.(id); // 清残留配置（含禁用标记）
       }
       log.info(`${pluginName}: 已从根依赖与 node_modules 移除`);
-      return { ok: true, message: `插件 ${pluginName} 已卸载（已从根依赖与 node_modules 移除）` };
+      return {
+        ok: true,
+        message: `插件 ${pluginName} 已卸载（已从根依赖与 node_modules 移除）。它写入 data/ 等存储根的数据不会删除，需要时请手动清理。`,
+      };
     } catch (err) {
       return { ok: false, message: err instanceof Error ? err.message : String(err) };
     }

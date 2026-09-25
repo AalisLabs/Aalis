@@ -127,7 +127,7 @@ export class CheckpointServiceImpl implements CheckpointService {
 
   // ──────────── 生命周期 ────────────
 
-  beginTurn(sessionId: string): string {
+  beginTurn(sessionId: string): void {
     // 同会话已有未结束回合（异常未 endTurn / abort 重开）→ 先提交它避免遗失（仅影响本会话，不碰其它）
     const prev = this.turns.get(sessionId);
     if (prev) {
@@ -141,7 +141,6 @@ export class CheckpointServiceImpl implements CheckpointService {
       blobIndex: 0,
     });
     this.logger.debug(`checkpoint 回合开始 ${sessionId} turn=${turnId}`);
-    return turnId;
   }
 
   async endTurn(sessionId: string): Promise<void> {
@@ -265,7 +264,7 @@ export class CheckpointServiceImpl implements CheckpointService {
       if (original.size > this.cfg.maxFileSize) {
         t.manifest.files.push({
           uri,
-          action: op === 'rename' ? 'rename' : op,
+          action: op,
           toUri,
           originalSize: original.size,
           skipped: `文件过大 (${original.size} > ${this.cfg.maxFileSize})`,
@@ -278,7 +277,7 @@ export class CheckpointServiceImpl implements CheckpointService {
       await this.storage.writeFile(joinUri(turnDir, `blobs/${blobName}`), original.data);
       t.manifest.files.push({
         uri,
-        action: op === 'rename' ? 'rename' : op,
+        action: op,
         toUri,
         originalSize: original.size,
         blob: blobName,
@@ -337,12 +336,7 @@ export class CheckpointServiceImpl implements CheckpointService {
     if (!manifest) {
       return { ok: false, restored: [], deleted: [], errors: [{ uri: '', reason: 'checkpoint 不存在' }] };
     }
-    // 通过 storage service 来执行回滚操作，避免直接绕过权限
-    // 此处通过模块外部注入 writeBack/deleteBack 函数
     const result: RollbackResult = { ok: true, restored: [], deleted: [], errors: [] };
-    if (!this._backendWrite || !this._backendDelete) {
-      return { ok: false, restored: [], deleted: [], errors: [{ uri: '', reason: '回滚后端未注入' }] };
-    }
     const turnDir = this.turnDir(sessionId, turnId);
 
     // 逆序撤销（LIFO）：同回合内后发生的改动先回退，否则先前条目的复原会被后来条目再次覆盖。
@@ -356,27 +350,26 @@ export class CheckpointServiceImpl implements CheckpointService {
           // 新创建的文件 → 删除。已不存在即期望状态已达成（本回合新建后又删掉：delete 条目被按 URI
           // 去重吞掉，只剩这条 write-new），不算失败。
           try {
-            await this._backendDelete(file.uri);
+            await this.storage.delete(file.uri);
             result.deleted.push(file.uri);
           } catch (delErr) {
             if (!isNotFoundError(delErr)) throw delErr;
           }
         } else if (file.action === 'rename' && file.toUri) {
           // 改名/移动 → 优先原路移回：目录与超限大文件也能复原，且不会在目标端留一份重复。
-          // 移不动（目标已被占、后端不支持 move）才回落到「写回源端 + 删目标」。
+          // 移不动（目标已被占、后端 move 失败等）才回落到「写回源端 + 删目标」。
           try {
-            if (!this._backendMove) throw new Error('回滚 move 后端未注入');
-            await this._backendMove(file.toUri, file.uri);
+            await this.storage.move(file.toUri, file.uri);
             result.restored.push(file.uri);
           } catch (moveErr) {
             if (!file.blob) throw moveErr;
             const data = await this.storage.readFile(joinUri(turnDir, `blobs/${file.blob}`));
-            await this._backendWrite(file.uri, Buffer.from(data as Uint8Array));
+            await this.storage.writeFile(file.uri, Buffer.from(data as Uint8Array));
             result.restored.push(file.uri);
             // 源端复原即算成功；删目标是善后动作，单独 try：目标已不在（ENOENT——重复回滚、
             // 别处已清）就是期望状态，才忽略；其它失败（权限被拒等）如实入 errors，也不谎报 deleted。
             try {
-              await this._backendDelete(file.toUri);
+              await this.storage.delete(file.toUri);
               result.deleted.push(file.toUri);
             } catch (delErr) {
               const reason = (delErr as Error).message ?? String(delErr);
@@ -392,7 +385,7 @@ export class CheckpointServiceImpl implements CheckpointService {
           result.errors.push({ uri: file.uri, reason: file.skipped });
         } else if (file.blob) {
           const data = await this.storage.readFile(joinUri(turnDir, `blobs/${file.blob}`));
-          await this._backendWrite(file.uri, Buffer.from(data as Uint8Array));
+          await this.storage.writeFile(file.uri, Buffer.from(data as Uint8Array));
           result.restored.push(file.uri);
         }
       } catch (err) {
@@ -406,23 +399,10 @@ export class CheckpointServiceImpl implements CheckpointService {
     return result;
   }
 
-  // ──────────── 回滚后端注入 ────────────
-  private _backendWrite?: (uri: string, data: Buffer) => Promise<void>;
-  private _backendDelete?: (uri: string) => Promise<void>;
-  private _backendMove?: (fromUri: string, toUri: string) => Promise<void>;
+  // ──────────── 聊天回滚依赖注入 ────────────
   private _memory?: ServiceRef<MemoryService>;
   private _emitMessagesDeleted?: (sessionId: string, timestamps: number[]) => void;
   private _emitHistoryChanged?: (sessionId: string) => void;
-
-  setBackend(
-    write: (uri: string, data: Buffer) => Promise<void>,
-    del: (uri: string) => Promise<void>,
-    move?: (fromUri: string, toUri: string) => Promise<void>,
-  ): void {
-    this._backendWrite = write;
-    this._backendDelete = del;
-    this._backendMove = move;
-  }
 
   /** 注入聊天回滚所需的依赖：memory 引用（每次用时解析当前提供者）+ 事件发出器 */
   setChatRollbackDeps(deps: {

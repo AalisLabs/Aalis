@@ -25,7 +25,7 @@ runtime 不加载它；打包产物由 `@aalis/plugin-webui-server` 托管。
 
 ## 工作方式
 
-1. `vite build` 产出 `dist/index.html` 及静态资源
+1. 构建脚本 `tsc --noEmit && vite build` 先做类型检查，再产出 `dist/index.html` 及静态资源
 2. webui-server 在 `app:ready` 时由 `client-discovery.ts` 扫描：`package.json` 标了
    `aalis.client: true` 且存在 `dist/index.html` 的包即为前端候选（不认任何具体包名）
 3. webui-server 把每个候选注册成一条 `webui-client` 服务 provider（`getClientDir()`）
@@ -50,7 +50,7 @@ runtime 不加载它；打包产物由 `@aalis/plugin-webui-server` 托管。
 | Chat | 实时对话、流式输出、内联工具调用展示、待办事项面板 |
 | Plugins | 插件列表、启用/禁用、配置编辑 |
 | Platforms | 平台连接状态监控 |
-| Files | 文件管理器（拖拽上传、下载、预览） |
+| Files | 文件管理器（浏览、重命名、下载、详情、删除） |
 | Logs | 实时日志流 |
 | DynamicPage | 插件注册的动态页面（技能库等） |
 

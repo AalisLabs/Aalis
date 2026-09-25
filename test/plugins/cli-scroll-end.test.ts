@@ -1,6 +1,7 @@
 import { App } from '@aalis/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import cliPlugin from '../../packages/plugin-cli/src/index.js';
+import { fakeTty } from '../helpers/tty.js';
 
 // Help 页自己宣传「Home/End 滚动 Logs / Status / Help」，但 handleScrollKey 只认
 // home（End 只在 logs 页的 handleLogsKey 里实现过）——按 End 无任何反应，是个假按键。
@@ -10,35 +11,6 @@ const FRAME_SPLIT = '\x1b[?25l\x1b[H';
 
 /** 等两拍：queueRender 走 setImmediate */
 const settle = () => new Promise<void>(r => setImmediate(() => setImmediate(r)));
-
-interface TtyPatch {
-  restore(): void;
-}
-
-function fakeTty(rows: number, columns: number): TtyPatch {
-  const prev = {
-    out: process.stdout.isTTY,
-    in: process.stdin.isTTY,
-    rows: process.stdout.rows,
-    columns: process.stdout.columns,
-  };
-  const stdin = process.stdin as unknown as { setRawMode?: (v: boolean) => unknown };
-  const hadRawMode = typeof stdin.setRawMode === 'function';
-  if (!hadRawMode) stdin.setRawMode = () => stdin;
-  Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
-  Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
-  Object.defineProperty(process.stdout, 'rows', { value: rows, configurable: true });
-  Object.defineProperty(process.stdout, 'columns', { value: columns, configurable: true });
-  return {
-    restore() {
-      if (!hadRawMode) delete stdin.setRawMode;
-      Object.defineProperty(process.stdout, 'isTTY', { value: prev.out, configurable: true });
-      Object.defineProperty(process.stdin, 'isTTY', { value: prev.in, configurable: true });
-      Object.defineProperty(process.stdout, 'rows', { value: prev.rows, configurable: true });
-      Object.defineProperty(process.stdout, 'columns', { value: prev.columns, configurable: true });
-    },
-  };
-}
 
 afterEach(() => {
   vi.restoreAllMocks();

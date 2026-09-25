@@ -159,14 +159,13 @@ import { defineService } from '@aalis/core';
 //
 // 每个 storage 后端按 root 拆出独立 entry：
 //   contextId = `${plugin-instance-id}/${root.name}`
-//   capabilities = 反映该 root 的真实权限（read/write/delete/local-path）
 //
 // 没有 "router facade entry"。所有按 URI / root 名查询的逻辑都是纯函数。
 
 export interface AggregatedStorageRoot extends StorageRootInfo {
   /** 提供该根的 entry contextId（便于排查同名冲突） */
   providerId: string;
-  /** entry 的 label（来自 ctx.provide 的 label 选项） */
+  /** entry 的 label（来自 provide 的 label 选项） */
   provider?: string;
 }
 

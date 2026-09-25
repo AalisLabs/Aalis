@@ -13,7 +13,7 @@ pnpm add @aalis/plugin-tools
 
 ## 文档
 
-详见 [docs/plugins/plugin-tool-system.md](../../docs/plugins/plugin-tool-system.md)。
+详见 [docs/plugins/plugin-tools.md](../../docs/plugins/plugin-tools.md)。
 
 ## 许可
 

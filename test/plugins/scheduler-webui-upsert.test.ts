@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import cronEnginePlugin from '../../packages/plugin-cron-engine/src/index.js';
 import schedulerPlugin, { type SchedulerService, scheduler } from '../../packages/plugin-scheduler/src/index.js';
 import toolsPlugin from '../../packages/plugin-tools/src/index.js';
+import { memoryStorage } from '../fixtures/memory-storage.js';
 
 // ════════════════════════════════════════════════════════════
 // WebUI「计划任务」表单的两个字段曾是假开关：schema 声明了 delaySeconds 与 paused，
@@ -16,35 +17,6 @@ import toolsPlugin from '../../packages/plugin-tools/src/index.js';
 //
 // 页面动作是 apply 里的闭包，经 webui 登记；测试装上真插件、用桩 webui 截下登记表按名调用。
 // ════════════════════════════════════════════════════════════
-
-/** 只够 scheduler 读写持久化文件的 storage（非通用 fixture）。 */
-function memoryStorage() {
-  const files = new Map<string, string>();
-  return {
-    files,
-    service: {
-      listRoots: () => [
-        {
-          name: 'data',
-          label: 'data(内存)',
-          kind: 'data',
-          browsable: true,
-          readable: true,
-          writable: true,
-          deletable: true,
-        },
-      ],
-      async readFile(uri: string) {
-        const v = files.get(uri);
-        if (v === undefined) throw new Error(`ENOENT: ${uri}`);
-        return v;
-      },
-      async writeFile(uri: string, data: string | Buffer) {
-        files.set(uri, typeof data === 'string' ? data : data.toString('utf-8'));
-      },
-    },
-  };
-}
 
 /** 调度表里的一行（scheduler 服务自己的投影类型，测试不再手抄一份） */
 type JobView = ReturnType<SchedulerService['getJobs']>[number];

@@ -1,6 +1,6 @@
 /**
  * consolidate 阶段的可选 LLM 集成：
- *  (A) 别名候选语义核验：对 autoLink 待合并的实体对，让 LLM 二判 yes/no
+ *  (A) 别名候选语义核验：对 autoLink 待合并的实体对，让 LLM 三态判定（same / hierarchy / different）
  *  (B) 合并后摘要重写：合并完成后用大上下文模型重写 canonical 实体的 summary
  *
  * 这两步都是「可选」：仅当 consolidationModel 已配置时启用，否则保持原算法行为。
@@ -11,31 +11,11 @@ import type { Logger, ServiceRef } from '@aalis/core';
 
 import type { EntityNode, EventNode, PersonNode } from './types.js';
 
-interface ConsolidateLLMConfig {
-  modelRef: ModelRef;
-  disableThinking?: boolean;
-}
-
-/** 解析配置的 LLM 模型；未配置或不可用时返回 undefined。 */
-export function resolveConsolidateModel(
-  llm: ServiceRef<LLMModel>,
-  cfg: ConsolidateLLMConfig | undefined,
-): LLMModel | undefined {
-  if (!cfg) return undefined;
-  const entry = resolveLLMModel(llm, cfg.modelRef, [LLMCapabilities.Chat]);
+/** 解析配置的 LLM 模型；不可用时返回 undefined。 */
+export function resolveConsolidateModel(llm: ServiceRef<LLMModel>, modelRef: ModelRef): LLMModel | undefined {
+  const entry = resolveLLMModel(llm, modelRef, [LLMCapabilities.Chat]);
   return entry?.instance;
 }
-
-/**
- * (A) 判断两个实体是否为同一实体。LLM 输出 JSON：{"isSame": boolean, "reason": string}
- * 解析失败或 LLM 表示不是 → 返回 false。
- *
- * F2 / 统一改造：给 LLM 喂"对称且丰富"的上下文，便于科学判断是否合并：
- *   - 双方 ≤3 条 evidence 文本片段
- *   - 双方邻居 **总数 + top-K {name,weight}**（按 weight 倒序）
- *   - 可用的相似度分数（cosine / jaccard / structural / fused，任意子集）
- * 与 verifyEventPair 共用 PairNeighborProfile / PairScores 形态。
- */
 
 /** 邻居剖面：人/事件/实体三类，各含总数 + top-K (name, weight) */
 export interface PairNeighborProfile {
@@ -117,6 +97,18 @@ interface AliasPairResult {
   hierarchy?: { parentId: string; childId: string };
 }
 
+/**
+ * (A) 判断两个实体的关系。LLM 输出 JSON 三态 verdict：
+ *   {"verdict": "same" | "different", "reason": string} 或 {"verdict": "hierarchy", "parent": "A" | "B", "reason": string}；
+ *   兼容 LLM 偏离提示词、按 {"isSame": boolean, "reason": string} 返回的情况。
+ * 解析失败、verdict 非法或 hierarchy 缺 parent → isSame=false。
+ *
+ * F2 / 统一改造：给 LLM 喂"对称且丰富"的上下文，便于科学判断是否合并：
+ *   - 双方 ≤3 条 evidence 文本片段
+ *   - 双方邻居 **总数 + top-K {name,weight}**（按 weight 倒序）
+ *   - 可用的相似度分数（cosine / jaccard / structural / fused，任意子集）
+ * 与 verifyEventPair 共用 PairNeighborProfile / PairScores 形态。
+ */
 export async function verifyAliasPair(
   model: LLMModel,
   a: EntityNode,

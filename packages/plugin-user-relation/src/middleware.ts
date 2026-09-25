@@ -26,7 +26,6 @@ import type {
 } from './types.js';
 
 interface MiddlewareConfig {
-  enabled: boolean;
   /** BFS 最大深度（0=仅起点，1=直接邻居，2=同事件其他参与者 / 朋友的朋友） */
   maxDepth: number;
   /** 单节点展开邻居上限（按 weight 降序） */
@@ -59,7 +58,6 @@ export function registerRelationContribution(
   service: RelationService,
   cfg: MiddlewareConfig,
 ): void {
-  if (!cfg.enabled) return;
   contributions.contribute('agent:prompt', {
     id: 'user-relation',
     anchor: 'turn-context',
@@ -345,5 +343,3 @@ function truncate(s: string, n: number): string {
 function stringifyErr(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
-
-export type { EventNode };

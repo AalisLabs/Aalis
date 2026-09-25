@@ -1,4 +1,3 @@
-import type {} from '@aalis/core';
 import { defineService } from '@aalis/core';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
 

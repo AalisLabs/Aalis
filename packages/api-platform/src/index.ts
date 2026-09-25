@@ -32,7 +32,7 @@ export interface PlatformSelfIdentity {
  * 提供统一的平台抽象，使核心可以查询所有已接入平台的连接状态，
  * 也使其他插件可以向指定平台发送消息。
  *
- * 第三方平台接入只需实现此接口并通过 `ctx.provide('platform', adapter)` 注册即可。
+ * 第三方平台接入只需实现此接口，在 uses 中声明 provide，经 `provide(platform, adapter)` 注册即可。
  */
 export interface PlatformAdapter {
   /** 适配器显示名称 */
@@ -103,7 +103,7 @@ export interface PlatformAdapterEntry {
 
 /** 枚举所有 platform adapter 条目 */
 export function getPlatformAdapterEntries(source: ServiceRef<PlatformAdapter>): PlatformAdapterEntry[] {
-  return source.all().filter(e => typeof e.instance?.getConnections === 'function');
+  return source.all();
 }
 
 /** 枚举所有 platform adapter 实例 */

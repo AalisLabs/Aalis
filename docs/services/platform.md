@@ -4,7 +4,7 @@
 
 `platform` 是 Aalis 的**平台抽象服务**：每个聊天/终端平台（OneBot、CLI、WebUI、Telegram、Discord……）实现一个 `PlatformAdapter` 并以服务名 `platform` 注册。它统一了「查询连接状态 / 按 sessionId 发消息 / 调平台原生 API / 自报机器人身份」这几件事，使核心与其它插件无须知道具体平台细节。
 
-- 服务注册名（DI key）：`'platform'` —— `platform.current` 取胜者，`x.all('platform')` 取全部（**多 adapter 并存是常态**）。
+- 服务注册名（DI key）：`'platform'` —— `platform.current` 取胜者，`platform.all()` 取全部（**多 adapter 并存是常态**）。
 - 契约包：`@aalis/api-platform`（`packages/api-platform/src/index.ts`）。
 - 该契约包**既是 runtime 服务契约也带聚合/路由 helper 纯函数**：`PlatformAdapter` 接口是要 `provide(platform, …)` 注册的真实服务；而 `getPlatform*` / `resolvePlatformBySession` / `sendPlatformMessage` / `callPlatformAction` 等是消费方应优先使用的纯函数 helper（传描述符绑定的 `ServiceRef` 即可，没有 entry、无自递归隐患，取代了历史上的 `PlatformRouter` facade，见 `src/index.ts`）。
 
@@ -46,7 +46,7 @@ export interface PlatformAdapter {
 
 | helper | 作用 |
 | --- | --- |
-| `getPlatformAdapterEntries(source)` | 枚举所有 adapter 条目（过滤掉没有 `getConnections` 的非法 entry） |
+| `getPlatformAdapterEntries(source)` | 枚举所有 adapter 条目 |
 | `getPlatformAdapters(source)` | 枚举所有 adapter 实例 |
 | `getPlatformNames(source)` | 枚举所有平台名（`adapter.platform` 去重） |
 | `aggregatePlatformConnections(source)` | 聚合所有连接 |
@@ -56,27 +56,27 @@ export interface PlatformAdapter {
 | `sendPlatformMessage(source, sessionId, content, options?)` | 按 sessionId 路由发文本（无 adapter 接管则抛错） |
 | `callPlatformAction(source, sessionId, action, params)` | 按 sessionId 路由调原生 action（adapter 不支持 `callAction` 则抛错） |
 
-类型注册（declaration merging）让 `platform.current` 自动得到 `PlatformAdapter` 类型：`src/index.ts`。
+类型随描述符提供：`defineService<PlatformAdapter>('platform')`（`src/index.ts`），消费方把描述符写进 `uses` 即得类型，`platform.current` 推断为 `PlatformAdapter | undefined`。
 
 ## 3. 谁提供 / 谁消费
 
 ### 参考实现（provider）
 
 - **OneBot 适配器** `packages/plugin-adapter-onebot/src/index.ts` —— 协议类平台的完整范例：实现了全部可选方法（`getSelfIdentity`、`callAction`、`checkAndRecordProactiveSend`），`sessionTypes: ['group','private']`，在插件 `apply` 里注册。还附带若干**非标准扩展方法**（`getSelfMutes` / `getSentMessages` / `handleFriendRequest` 等），通过交叉类型暴露给特定消费者（`plugin-tool-onebot`），见 §6。
-- **CLI 适配器** `packages/plugin-cli/src/index.ts` —— 最小实现的范例：只实现 `adapterName` / `platform` / `getConnections` / `sendMessage` + **显式 `canHandle`**（因为它的 sessionId 是配置直给的 `cli-default`，不带 `cli:` 前缀，必须自报接管，）；`sessionTypes: []` 表示单会话不区分类型。
+- **CLI 适配器** `packages/plugin-cli/src/index.ts` —— 最小实现的范例：只实现 `adapterName` / `platform` / `getConnections` / `sendMessage` + **显式 `canHandle`**（因为它的 sessionId 是配置直给的 `cli-default`，不带 `cli:` 前缀，必须自报接管）；`sessionTypes: []` 表示单会话不区分类型。
 
 > 其它带 `provides: [..., 'platform']` 的插件：`plugin-webui-server`（`src/index.ts`）。注意它和 CLI 都同时 provide 别的服务名（`cli` / `webui-server`），一个插件提供多服务是允许的。
 
 ### 典型消费点
 
-- **plugin-agent**：`getPlatformSelfIdentity(this.ctx, incoming.platform, incoming.sessionId)` 给归档的 assistant 消息打 `userId`/`nickname` 元数据（`src/index.ts`）；`uses optional` 含 `'platform'`（）。
-- **plugin-persona**：在 `agent:input:before` 中间件里取 `getPlatformSelfIdentity`，把机器人自身身份装进 `PersonaIdentity` 注入人设 prompt（`src/index.ts`，`optional: ['platform']` ）。
+- **plugin-agent**：`getPlatformSelfIdentity(this.caps.platform, incoming.platform, incoming.sessionId)` 给归档的 assistant 消息打 `userId`/`nickname` 元数据（`src/index.ts`）；`uses` 中声明 `platform: optional(platform)`。
+- **plugin-persona**：在 `agent:input:before` 中间件里取 `getPlatformSelfIdentity`，把机器人自身身份装进 `PersonaIdentity` 注入人设 prompt（`src/index.ts`，`uses` 中声明 `platform: optional(platform)`）。
 - **plugin-tool-session**：跨会话委派工具 `delegate_to_session` 用 `resolvePlatformBySession(platform, targetSessionId)` 定位目标平台并调用其 `checkAndRecordProactiveSend` 限速闸门（`src/index.ts`）。
 - **plugin-user-relation**：用 `sendPlatformMessage(platform, sessionId, text)` 主动外发（`src/commands.ts`）；用 `getPlatformNames(platform)` 做「真实平台白名单」过滤伪造 person（`src/extractor.ts`、`src/service.ts`）。
 - **plugin-authority**：`getPlatformNames(platform)` 进可选作用域候选（`src/index.ts`）。
-- **plugin-webui-server**：`aggregatePlatformDetails(platform)` 喂平台面板（`src/index.ts`）；`getPlatformNames(platform)` 回 `/api/models/platform`（）；`getPlatformAdapters(platform)` + 各 adapter 的 `sessionTypes` 生成 `gateway-scopes` 笛卡尔积（）。
-- **plugin-session-manager**：`x.all<{platform:string}>('platform')` 汇总已注册平台名（`src/index.ts`）。
-- **plugin-tool-onebot**：`getPlatformAdapters(platform).find(a => a.platform==='onebot' && typeof a.callAction==='function')` 拿到 onebot adapter 调原生 action（`src/index.ts`、）。
+- **plugin-webui-server**：`aggregatePlatformDetails(platform)` 喂平台面板（`src/index.ts`）；`getPlatformNames(platform)` 回 `/api/models/platform`；`getPlatformAdapters(platform)` + 各 adapter 的 `sessionTypes` 生成 `gateway-scopes` 笛卡尔积。
+- **plugin-session-manager**：`getPlatformNames(platform)` 汇总已注册平台名，供页面下拉框使用（`src/index.ts`）。
+- **plugin-tool-onebot**：`getPlatformAdapters(platform).find(a => a.platform==='onebot' && typeof a.callAction==='function')` 拿到 onebot adapter 调原生 action（`src/index.ts`）。
 
 ## 4. 写一个 provider
 
@@ -134,21 +134,21 @@ export default definePlugin({
 
 - **priority**：普通数字，越大越优先。platform 通常用默认 `0`。
 - **entryId**：单插件多连接想拆成多 entry 时用 `'${lifecycle.id}/${sub}'`（per-entry provide，见 [service-model](../concepts/service-model.md)）；单 adapter 内自管多连接（如 OneBot 的 `states[]`）则不需要。
-- **label**：展示用，会进 `getAllServices` 的 `label` 字段。
+- **label**：展示用，会进 `all()` / `services.inspect` 返回条目的 `label`。
 - **双源同步**：`provides: [platform]` 与 `package.json` 的 `aalis.service.provides` 必须一致；激活后 core 会校验「声明了 `provides` 却没真 `provide`」直接打成 error，dev-mode 还会反向 warn「provide 了但没声明」。见 [manifest-metadata](../concepts/manifest-metadata.md)。
 
 ## 5. 标准消费方式
 
 - **优先用 helper，而非裸 `platform.current`**：要发消息用 `sendPlatformMessage(platform, sessionId, text)`；要按名取身份用 `getPlatformSelfIdentity(platform, name, sessionId)`；要列平台用 `getPlatformNames(platform)`；要调原生 API 用 `callPlatformAction(platform, sessionId, action, params)`。这些 helper 内部都走 `source.all()` 聚合，天然处理多 adapter。
 - **lazy 访问、勿缓存**：每次用时现取（helper 每次读 `source.all()` / `source.current`）。adapter 会随 provider bounce 失效，缓存住 instance 会指向僵尸。见 [lazy-service-access](../concepts/lazy-service-access.md)。
-- **platform 是可选依赖**：上面所有消费者都把它放在 `uses optional`。没有任何 adapter 时，`getPlatformNames` 返回 `[]`、`getPlatformSelfIdentity` 返回 `undefined`、`sendPlatformMessage`/`callPlatformAction` 抛错（无 adapter 接管 / 不支持 callAction）。消费方必须容忍这些：persona/agent 在 `identity?.selfId` 处用可选链优雅降级（`plugin-agent/src/index.ts`），session-manager 用 try/catch 包住（`src/index.ts`）。
+- **platform 是可选依赖**：上面所有消费者都在 `uses` 里以 `optional(platform)` 声明它。没有任何 adapter 时，`getPlatformNames` 返回 `[]`、`getPlatformSelfIdentity` 返回 `undefined`、`sendPlatformMessage`/`callPlatformAction` 抛错（无 adapter 接管 / 不支持 callAction）。消费方必须容忍这些：persona/agent 在 `identity?.selfId` 处用可选链优雅降级（`plugin-agent/src/index.ts`）。
 - **错误边界**：`resolvePlatformBySession` 内部对每个 adapter 的 `canHandle` 抛错只 `logger.warn` 不中断（`src/index.ts`）——你的 `canHandle` 抛错不会拖垮全局路由，但也意味着会被静默跳过，实现应保证稳健。
 
 ## 6. 能力 / 风险 → 影响
 
 - **主动发送限速（反 prompt-injection 骚扰）**：跨会话委派（`delegate_to_session`）在向外部平台 sessionId 派发合成消息前调 `checkAndRecordProactiveSend`，返回 `{ allowed:false, reason }` 即拒发（`plugin-tool-session/src/index.ts`）。**面向外部用户的平台 adapter 应实现此闸门**（OneBot 委托 `flow-control` 的 `isRateLimited`/`recordReply`，`adapter-onebot/src/index.ts`），否则该平台不做主动发送限速、任由委派外发。
-- **跨会话身份隔离**：`getSelfIdentity(sessionId?)` 必须按 `sessionId` 定位到**正确的连接**再返回身份（OneBot 用 `parseSessionId` → `findStateBySelfId`，）。多账号/多连接平台若忽略 `sessionId` 永远返回同一身份，会把 A 会话的机器人身份泄漏进 B 会话的 LLM prompt（persona 把它装进 `AsyncLocalStorage` 正是为防跨会话泄漏，`plugin-persona/src/index.ts`）。
-- **`callAction` 是平台原生权能的逃逸口**：它能调任意平台 Action（封禁、踢人等）。本服务**不在 adapter 层做 authority 校验**——风险/等级控制由调用工具侧（如 `plugin-tool-onebot` 的工具定义 + 其 `risk` 标注）经 authority 把关。provider 实现 `callAction` 时应假设调用方已鉴权，但要对 `sessionId` 解析失败/连接不可用做硬校验（OneBot 在不可用时 throw，）。authority 模型见 [security-model](../concepts/security-model.md) 与 `docs/plugins/plugin-authority.md`。
+- **跨会话身份隔离**：`getSelfIdentity(sessionId?)` 必须按 `sessionId` 定位到**正确的连接**再返回身份（OneBot 用 `parseSessionId` → `findStateBySelfId`）。多账号/多连接平台若忽略 `sessionId` 永远返回同一身份，会把 A 会话的机器人身份泄漏进 B 会话的 LLM prompt（persona 把它装进 `AsyncLocalStorage` 正是为防跨会话泄漏，`plugin-persona/src/index.ts`）。
+- **`callAction` 是平台原生权能的逃逸口**：它能调任意平台 Action（封禁、踢人等）。本服务**不在 adapter 层做 authority 校验**——风险/等级控制由调用工具侧（如 `plugin-tool-onebot` 的工具定义 + 其 `risk` 标注）经 authority 把关。provider 实现 `callAction` 时应假设调用方已鉴权，但要对 `sessionId` 解析失败/连接不可用做硬校验（OneBot 在不可用时 throw）。authority 模型见 [security-model](../concepts/security-model.md) 与 `docs/plugins/plugin-authority.md`。
 - **`platform` 不是沙盒**：它只是出口抽象；`sendMessage`/`callAction` 直达真实平台，没有任何隔离层。SSRF 安全出口请走 `safeFetch`（`util-network-guard`），不要在 adapter 里裸 `fetch` 外部 URL。
 
 ## 7. 边界与注意事项

@@ -93,8 +93,8 @@ DI 按名选出 winner：preference > priority > 注册顺序（见 `docs/concep
 
 - **`plugin-message-archive`**（写入唯一入口）：`saveMessage` 经它封装，是消息进库的标准路径。它声明 `uses: { memory }`。
 - **`plugin-agent`**（构建 LLM 上下文）：调用 `memory.getHistory(sessionId, historyLimit)` 拉历史，拼进 messages。
-- **`plugin-checkpoint`**（回滚）：通过惰性查询 Proxy 持有 memory，调用 `deleteMessagesByTimestamps`，并 emit `memory:messages-deleted` / `history:changed`。
-- **`plugin-memory-summary`**（压缩）：用 `getHistory(..., 200)` + `trimHistory` 裁剪，摘要本体存进 `saveMetadata` / `getMetadata`（namespace 为 `SUMMARY_NAMESPACE`）。
+- **`plugin-checkpoint`**（回滚）：以 `optional(memory)` 声明依赖、持有 ServiceRef，调用 `deleteMessagesByTimestamps`，并 emit `memory:messages-deleted` / `history:changed`。
+- **`plugin-memory-summary`**（压缩）：用 `getHistory(sessionId, max(threshold, keepRecent + 1, 200))` + `trimHistory` 裁剪，摘要本体存进 `saveMetadata` / `getMetadata`（namespace 为 `SUMMARY_NAMESPACE`）。
 - **`plugin-memory-vector`**（召回）：监听 `memory:messages-deleted` 清除同时间戳的向量，并用 `getMessagesBySessionRange` 扩窗。
 - 其余广泛消费：`session-manager`、`user-profile`、`user-relation`、`media`、`commands`、`todo-list`、`tool-session`、`file-reader`、`maimai`、`adapter-onebot`、`image-sender` 等。
 

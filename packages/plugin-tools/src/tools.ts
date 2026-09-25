@@ -18,12 +18,8 @@ import type { Logger } from '@aalis/core';
  *
  * 与 plugin-commands/CommandRegistry 同属"中心 Registry 模式"：
  * - 单一 Map<name, Registered> 存储，name 全局唯一（重名警告并覆盖）
- * - register() 返回退订，登记方的激活拆卸时按 contextId 自动注销
+ * - register() 返回退订，退订按条目身份，由绑定门面在激活撤回时调用
  * - 通过 setExecutionGuard() 注入统一权限/安全检查钩子
- *
- * 与 LLM/Storage/Platform 路由器（同名 facade 模式）的差异：
- * - 这里没有"多个底层 provider"概念——所有工具都直接落到这个 Map
- * - 因此不需要枚举 'tools' 的全部提供者，也不需要 'router' capability
  */
 export class ToolRegistry implements ToolService {
   private tools = new Map<string, RegisteredTool>();
@@ -68,11 +64,6 @@ export class ToolRegistry implements ToolService {
   }
 
   /**
-   * 分组过滤：无分组的通用工具恒可见；带分组的只在命中 `groups` 时可见，`'*'` 表示全部分组。
-   * 未指定（或为空）即只给通用工具——多人平台上 public 工具的可达性靠这道闸
-   * （docs/concepts/security-model.md）；owner 专用平台由平台档显式给 `['*']`。
-   */
-  /**
    * 某工具是否对「这组已启用分组」可见。列举面与执行面共用同一判据。
    *
    * 无分组的通用工具恒可见；`'*'` 放开全部分组。
@@ -83,11 +74,13 @@ export class ToolRegistry implements ToolService {
     return tool.groups.some(g => groups.includes(g));
   }
 
+  /**
+   * 分组过滤：无分组的通用工具恒可见；带分组的只在命中 `groups` 时可见，`'*'` 表示全部分组。
+   * 未指定（或为空）即只给通用工具——多人平台上 public 工具的可达性靠这道闸
+   * （docs/concepts/security-model.md）；owner 专用平台由平台档显式给 `['*']`。
+   */
   private filtered(filter?: { groups?: string[] }): RegisteredTool[] {
-    const tools = [...this.tools.values()];
-    const enabled = new Set(filter?.groups);
-    if (enabled.has('*')) return tools;
-    return tools.filter(t => !t.groups?.length || t.groups.some(g => enabled.has(g)));
+    return [...this.tools.values()].filter(t => this.groupAllowed(t, filter?.groups ?? []));
   }
 
   getAll(): Array<{

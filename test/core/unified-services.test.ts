@@ -14,6 +14,7 @@ import {
   services,
 } from '../../packages/core/src/index.js';
 import { ToolRegistry } from '../../packages/plugin-tools/src/tools.js';
+import { deferred } from '../helpers/deferred.js';
 
 declare module '@aalis/core' {
   interface AalisEvents {
@@ -30,13 +31,6 @@ function makeApp() {
   const app = new App({ name: 'unified', logLevel: 'error', logger: silent });
   apps.push(app);
   return app;
-}
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>(done => {
-    resolve = done;
-  });
-  return { promise, resolve };
 }
 
 /** 只为测试造的描述符：把资源口的身份交给 apply，供以调用者自身身份调用内置提供者 */

@@ -191,12 +191,6 @@ function registerWebuiActions(webui: BoundWebui, service: WorkflowService): void
   });
 
   webui.registerAction('listWorkflowsTable', async () => {
-    const runs = service.listRuns(200);
-    const lastByWf = new Map<string, number>();
-    for (const r of runs) {
-      const prev = lastByWf.get(r.workflowId) ?? 0;
-      if (r.startedAt > prev) lastByWf.set(r.workflowId, r.startedAt);
-    }
     return service.listWorkflows().map(d => ({
       id: d.id,
       name: d.name ?? d.id,
@@ -204,7 +198,6 @@ function registerWebuiActions(webui: BoundWebui, service: WorkflowService): void
       nodeCount: d.nodes.length,
       enabled: d.enabled === false ? '⏸ 禁用' : '✅ 启用',
       description: d.description ?? '',
-      lastRun: lastByWf.get(d.id) ?? 0,
     }));
   });
 
@@ -430,7 +423,6 @@ async function run(caps: Caps): Promise<void> {
         logger,
         def,
         runId,
-        triggerSource,
         vars,
         // 运行时身份：经 workflow_run 工具触发时以 actor 透传【调用者】授权身份，使工作流
         // 内部工具与 agent/send_message 节点按【调用者】的权限等级过 authority 闸（而非匿名

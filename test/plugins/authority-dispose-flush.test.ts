@@ -1,29 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
-import type { HostConfig } from '../../packages/api-host-config/src/index.js';
 import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
-import { type App, type Logger, provide } from '../../packages/core/src/index.js';
+import { type App, provide } from '../../packages/core/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
+import { mkConfig, silentLogger } from '../fixtures/authority.js';
 
 // users.json 落盘：save() 只把写挂到 saveChain 上就同步返回。拆卸路径必须 await flushed()，
 // 否则 CLI 子命令退出与 bounce 会丢掉封禁/等级。plugin-authority 在 lifecycle.onDispose 里
 // 先 save() 再 await flushed()，停机才能等到在飞写入。
-
-function mkConfig(): HostConfig {
-  const store: Record<string, unknown> = { owners: [] };
-  return {
-    get: (k: string) => store[k],
-    set: (k: string, v: unknown) => {
-      store[k] = v;
-    },
-  } as unknown as HostConfig;
-}
-function mkLogger(): Logger {
-  const l = { child: () => l, debug() {}, info() {}, warn() {}, error() {} };
-  return l as unknown as Logger;
-}
 
 /** 慢写 storage：不等待就一定观察得到（否则可能碰巧写完） */
 function slowStorage(done: { written: boolean }): StorageService {
@@ -70,7 +56,7 @@ afterEach(async () => {
 describe('authority 落盘必须可被拆卸路径等待', () => {
   it('flushed() 等到写真正完成；不等它则写还在飞', async () => {
     const done = { written: false };
-    const m = new AuthorityManager(mkConfig(), mkLogger(), slowStorage(done));
+    const m = new AuthorityManager(mkConfig({ owners: [] }), silentLogger(), slowStorage(done));
 
     m.setUserLevel({ platform: 'onebot', userId: 'alice' }, -5); // 封禁：安全语义，丢不得
     m.save();
@@ -83,7 +69,7 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
 
   it('没有待写内容时 flushed() 也能正常返回', async () => {
     const done = { written: false };
-    const m = new AuthorityManager(mkConfig(), mkLogger(), slowStorage(done));
+    const m = new AuthorityManager(mkConfig({ owners: [] }), silentLogger(), slowStorage(done));
     await expect(m.flushed()).resolves.toBeUndefined();
   });
 

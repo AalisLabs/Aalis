@@ -73,8 +73,8 @@ export default definePlugin({
 当请求未直接授权 / 需确认时，依次尝试（`isTemporarilyAllowed`，先过硬禁绝对闸 `deniedCapabilities`）：
 
 1. `restrictedPolicy` 时限白名单（`{ allow?, duration? }`）：命中即放行（自动化免确认）。`duration > 0` 时放行窗口是**运行时态**——只有 WebUI 保存策略（action `setRestrictedPolicy`）才调 `markPolicyEnabled` 开始计时，重启或直接改 `aalis.config.yaml` 都不会自动武装，此时白名单恒不生效；`duration` 缺省 / `<= 0` 则不限时。该白名单在未直接授权的救援路径（`isPreApproved`）**只对 owner 生效**；非 owner 只在已授权、仅差确认的路径上吃它（即免确认），白名单不是免授权。
-2. 会话内临时授予复用：按 **userId + sessionId + capability** 匹配，**不跨用户 / 不跨会话泄漏**（群内 sessionId 全群共享时不被白嫖）。
-3. 确认回调（`AccessConfirmHandler`）：可返回会话级临时授予（`scope:'session'`，带 `durationSeconds`（1–3600，缺省 600）/ `maxUses`）。`always` 不接受任何记忆。
+2. 会话内临时授予复用：按 **platform + userId + sessionId + capability** 匹配，**不跨用户 / 不跨会话 / 不跨平台**（群内 sessionId 全群共享时不被白嫖）。
+3. 确认回调（`AccessConfirmHandler`）：只在已授权、需确认的路径（`requestAccess`）上使用，未授权的救援路径止于前两步。可返回会话级临时授予（`scope:'session'`，带 `durationSeconds`（1–3600，缺省 600）/ `maxUses`）。`always` 不接受任何记忆。
 
 相关类型：请求 `AccessRequest`、决策 `AccessDecision { allowed, grant? }`、范围 `TemporaryGrantSpec { scope: 'once' | 'session', durationSeconds?, maxUses? }`。
 管理：`listTemporaryGrants()` / `revokeTemporaryGrant(id)`。

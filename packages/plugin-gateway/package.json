@@ -12,7 +12,7 @@
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "消息网关：入站/出站编排（指令→流控→触发→分发相位）",
+  "description": "消息网关：入站/出站编排（确认→指令→流控→触发→分发相位）",
   "type": "module",
   "keywords": [
     "aalis",

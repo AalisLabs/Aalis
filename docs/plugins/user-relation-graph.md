@@ -51,18 +51,20 @@
 
 ### `relation` 字段（仅人 → 人）
 
-| token            | 中文 | 有向？ |
-|------------------|------|--------|
-| `friend`         | 朋友 | 无向 |
-| `cp`             | CP   | 无向 |
-| `rival`          | 对手 | 无向 |
-| `mentor`         | 师徒 | 有向（from = 徒，to = 师） |
-| `colleague`      | 同事 | 无向 |
-| `familiar`       | 熟人 | 无向 |
-| `antagonist`     | 敌对 | 无向 |
-| `admirer`        | 仰慕者 | 有向 |
-| `is-alias-of`    | A 是 B 的别名 / 小号 | 有向 |
-| `alt-account-of` | A 是 B 的小号 | 有向 |
+人 → 人边默认有向（`directed` 缺省为 `true`，按单向声明记录），高低位（如师徒）由下文的 `hierarchy` 表达。
+
+| token            | 中文 |
+|------------------|------|
+| `friend`         | 朋友 |
+| `cp`             | CP   |
+| `rival`          | 对手 |
+| `mentor`         | 师徒 |
+| `colleague`      | 同事 |
+| `familiar`       | 熟人 |
+| `antagonist`     | 敌对 |
+| `admirer`        | 仰慕者 |
+| `is-alias-of`    | A 是 B 的别名 / 小号 |
+| `alt-account-of` | A 是 B 的小号 |
 
 ### `sentiment` 字段（可附加在任意角色边上）
 
@@ -81,15 +83,15 @@
 
 ### 合并强度 `weight`（0~1）
 
-节点 / 边被**重复合并**的累计程度：从 0.5 起步，每次合并
-`+(1 - prev) · 0.3` → 0.65 → 0.755 → 0.829 → …（clamp 1.0）。
+节点 / 边被**重复合并**的累计程度：事件 / 实体节点首建为 0.5，每次合并 `+0.3`（封顶 1）；
+边首次按 role 取默认权重（约 0.1~0.7），每次强化 `prev + (1 - prev) · 0.1`（封顶 1）。
 
 **语义 = 被强化次数，不是重要性。**
 
 ### 图重要性 `lastPageRank`
 
-最近一次 `/relation compress | maintain` 计算的全图 PageRank。
-个性化种子按 kind 加权：人 = 3 · 物 = 2 · 事 = 1。
+最近一次 `/relation compress | maintain`，或提取后超配额触发的自动淘汰计算的全图 PageRank。
+个性化种子按 kind 加权：人 = 2 · 物 = 1.5 · 事 = 1。
 越高越靠近"核心人物 · 热门事件"。未跑过压缩则为空。
 
 ### 边淘汰分（仅边详情）
@@ -108,6 +110,6 @@
    被删的 `person` 下次发言时会由 `observePerson` 重建，所以安全。
 2. **配额淘汰（仅在 `count > quota · (1+hysteresisPct)` 触发）**：
    按 `(now - lastReinforcedAt) / (max(weight, 0.05) · max(PR, ε))`
-   降序删，直到 `count ≤ floor(quota · targetPct)`。
-   `evidence.length ≥ 3` 或 `weight ≥ 0.8` 的节点**仅在此阶段**受保护。
+   降序删，直到 `count ≤ floor(quota · targetPct)`。不设硬豁免：重要性完全由 PageRank、
+   weight 衰减与 mentionCount 表达。
 3. **边按配额删**：保留 `合并强度 × 端点 PR 平均` 最高的。

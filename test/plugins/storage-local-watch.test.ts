@@ -14,6 +14,9 @@ import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 // watch 文件 URI 分支：曾直接 fs.watch 文件本身——回调给的 filename 是文件自己的名字，
 // 拼到相对路径后事件路径翻倍（notes/a.txt/a.txt）；且 watcher 绑定 inode，storage 的
 // 原子写（临时文件 rename 覆盖）换掉 inode 后再无事件。现改为监听父目录按文件名过滤。
+//
+// 监听器归属：watch 建的 fs 监听器曾只由调用方的退订关闭，提供者重启 / 卸载后旧监听器仍在，
+// 继续上报一个已不属于当前存储根的旧路径。现登记为提供者这次激活的清理项，随提供者一并关闭。
 // ════════════════════════════════════════════════════════════
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -26,7 +29,7 @@ const waitUntil = async (pred: () => boolean, timeoutMs = 4000): Promise<boolean
   return pred();
 };
 
-describe('storage-local watch 文件 URI', () => {
+describe('storage-local watch', () => {
   let base: string;
   let app: App;
   let storage: StorageService;
@@ -84,5 +87,26 @@ describe('storage-local watch 文件 URI', () => {
     } finally {
       unwatch();
     }
+  });
+
+  it.each(['bounce', 'unload'] as const)('提供者关闭（%s）后旧监听器不再报事件', async action => {
+    const events: StorageWatchEvent[] = [];
+    const unwatch = storage.watch!('data:/notes', e => {
+      events.push(e);
+    });
+    await sleep(100); // 等 watcher 就绪
+
+    if (action === 'bounce') await app.plugins.bounce(storageLocal.name);
+    else await app.plugins.unload(storageLocal.name);
+    await app.plugins.idle();
+    await sleep(100);
+    // 关闭前 FSEvents 可能迟到投递的事件不算，只看关闭之后
+    events.length = 0;
+
+    writeFileSync(join(base, 'data', 'notes', 'after-close.txt'), 'x');
+    await sleep(500);
+    expect(events, '旧监听器在提供者关闭后仍在上报').toEqual([]);
+    // 已被提供者关掉的监听，调用方再退订是空操作
+    expect(() => unwatch()).not.toThrow();
   });
 });

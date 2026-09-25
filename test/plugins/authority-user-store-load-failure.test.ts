@@ -2,28 +2,14 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { HostConfig } from '../../packages/api-host-config/src/index.js';
 import type { StorageService } from '../../packages/api-storage/src/index.js';
 import type { Logger } from '../../packages/core/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
+import { mkConfig, silentLogger } from '../fixtures/authority.js';
 
 // 背景：users.json 读/解析失败时只记一行日志、不留失败标记，而 save() 写的是**全量快照**——
 // 坏文件 load 之后任何一次等级改动都会把原有封禁/等级记录静默覆盖成「只剩新记录」。
 // 契约：区分「文件不存在」（全新，照写）与「文件在但读不出/解析不了」（拒写，保原文件）。
-
-function mkConfig(): HostConfig {
-  const store: Record<string, unknown> = {};
-  return {
-    get: (k: string) => store[k],
-    set: (k: string, v: unknown) => {
-      store[k] = v;
-    },
-  } as unknown as HostConfig;
-}
-function mkLogger(): Logger {
-  const l = { child: () => l, debug() {}, info() {}, warn() {}, error() {} };
-  return l as unknown as Logger;
-}
 
 let dir = '';
 /** 真 fs 存储：uri 末段即文件名，ENOENT 由真文件系统抛出 */
@@ -48,7 +34,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
     const broken = '{"version":5,"users":{"onebot:banned":{"level":-5}';
     await writeFile(file, broken);
 
-    const m = new AuthorityManager(mkConfig(), mkLogger(), fsStorage());
+    const m = new AuthorityManager(mkConfig(), silentLogger(), fsStorage());
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
@@ -67,7 +53,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
       writeFile: async (_uri: string, data: string) => writeFile(file, data),
     } as unknown as StorageService;
 
-    const m = new AuthorityManager(mkConfig(), mkLogger(), failing);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), failing);
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
@@ -80,7 +66,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
     const file = join(dir, 'users.json');
     await writeFile(file, '{"version":5,"users":{"onebot:banned":{"level":-5}');
 
-    const m = new AuthorityManager(mkConfig(), mkLogger(), fsStorage());
+    const m = new AuthorityManager(mkConfig(), silentLogger(), fsStorage());
     await m.init(); // 坏文件 → 拒写
     // 人工修好文件（或换上可读的 storage）后再 load：重读成功即恢复落盘
     await writeFile(file, '{"version":5,"users":{"onebot:banned":{"level":-5}}}');
@@ -104,7 +90,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
       writeFile: async (_uri: string, data: string) => writeFile(file, data),
     } as unknown as StorageService;
 
-    const m = new AuthorityManager(mkConfig(), mkLogger(), enoentish);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), enoentish);
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
@@ -123,7 +109,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
       writeFile: async (_uri: string, data: string) => writeFile(file, data),
     } as unknown as StorageService;
 
-    const m = new AuthorityManager(mkConfig(), mkLogger(), misleading);
+    const m = new AuthorityManager(mkConfig(), silentLogger(), misleading);
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
@@ -139,7 +125,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
     const broken = '{"version":5,"users":"onebot:banned"}';
     await writeFile(file, broken);
 
-    const m = new AuthorityManager(mkConfig(), mkLogger(), fsStorage());
+    const m = new AuthorityManager(mkConfig(), silentLogger(), fsStorage());
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();
@@ -172,7 +158,7 @@ describe('UserStore：加载失败后拒写，不让全量快照吃掉原数据'
   });
 
   it('文件不存在（ENOENT）仍照常写入：拒写闸不误伤全新安装', async () => {
-    const m = new AuthorityManager(mkConfig(), mkLogger(), fsStorage());
+    const m = new AuthorityManager(mkConfig(), silentLogger(), fsStorage());
     await m.init();
     m.setUserLevel({ platform: 'onebot', userId: 'newbie' }, 3);
     m.save();

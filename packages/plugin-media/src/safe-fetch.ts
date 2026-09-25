@@ -18,12 +18,6 @@ const DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 interface SafeFetchOptions {
-  /** 单次下载字节上限，默认 20 MiB */
-  maxBytes?: number;
-  /** 总超时（毫秒），默认 15s */
-  timeoutMs?: number;
-  /** 自定义 User-Agent */
-  userAgent?: string;
   /** 仅接受 image/* Content-Type；默认 false */
   imageOnly?: boolean;
 }
@@ -31,8 +25,6 @@ interface SafeFetchOptions {
 interface SafeFetchResult {
   buffer: Buffer;
   contentType: string;
-  /** 经过重定向后的最终 URL */
-  finalUrl: string;
 }
 
 /**
@@ -40,18 +32,14 @@ interface SafeFetchResult {
  * 仅支持 http/https；其他 scheme 抛错。
  */
 async function safeFetchBuffer(url: string, opts: SafeFetchOptions = {}): Promise<SafeFetchResult> {
-  const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const ua = opts.userAgent ?? 'Mozilla/5.0 (Aalis safe-fetch)';
-
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  const timer = setTimeout(() => ac.abort(), DEFAULT_TIMEOUT_MS);
   try {
     // safeFetch 内含协议/host/逐跳重定向校验（SSRF），杜绝 30x 跳内网。
     const res = await safeFetch(url, {
       signal: ac.signal,
       headers: {
-        'user-agent': ua,
+        'user-agent': 'Mozilla/5.0 (Aalis safe-fetch)',
         accept: opts.imageOnly ? 'image/*,*/*;q=0.8' : '*/*',
       },
     });
@@ -65,8 +53,8 @@ async function safeFetchBuffer(url: string, opts: SafeFetchOptions = {}): Promis
     const lenHeader = res.headers.get('content-length');
     if (lenHeader) {
       const len = Number(lenHeader);
-      if (Number.isFinite(len) && len > maxBytes) {
-        throw new Error(`资源过大 (${len} > ${maxBytes})`);
+      if (Number.isFinite(len) && len > DEFAULT_MAX_BYTES) {
+        throw new Error(`资源过大 (${len} > ${DEFAULT_MAX_BYTES})`);
       }
     }
     if (!res.body) throw new Error('上游无响应体');
@@ -79,14 +67,14 @@ async function safeFetchBuffer(url: string, opts: SafeFetchOptions = {}): Promis
       if (done) break;
       if (value) {
         received += value.byteLength;
-        if (received > maxBytes) {
+        if (received > DEFAULT_MAX_BYTES) {
           ac.abort();
-          throw new Error(`资源过大 (流式累计 > ${maxBytes})`);
+          throw new Error(`资源过大 (流式累计 > ${DEFAULT_MAX_BYTES})`);
         }
         chunks.push(Buffer.from(value));
       }
     }
-    return { buffer: Buffer.concat(chunks), contentType: ctype, finalUrl: res.url || url };
+    return { buffer: Buffer.concat(chunks), contentType: ctype };
   } finally {
     clearTimeout(timer);
   }
@@ -106,8 +94,8 @@ function guessExtFromMime(mime: string | null): string | undefined {
 }
 
 /**
- * 安全版本的 downloadToTemp：带 SSRF 防护、20 MiB cap、15s 超时。
- * 失败返回 null（与旧 downloadToTemp 行为一致，调用方按 null 降级）。
+ * 下载远程 URL 到临时文件：带 SSRF 防护、20 MiB cap、15s 超时。
+ * 返回本地路径、storage URI 与清理函数；失败返回 null，调用方按 null 降级。
  */
 export async function safeDownloadToTemp(
   url: string,

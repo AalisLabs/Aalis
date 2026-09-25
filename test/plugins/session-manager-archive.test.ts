@@ -5,25 +5,11 @@ import { sessionManager } from '../../packages/api-session-manager/src/index.js'
 import { type WebuiActionHandler, webuiServer } from '../../packages/api-webui/src/index.js';
 import sessionManagerPlugin from '../../packages/plugin-session-manager/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
+import { fakeMemory } from '../fixtures/session-memory.js';
 
 // 背景：archiveSession 曾用 `this.archiveSession(...)` 递归，而 webui-server 是把处理函数
 // 取出来单独调用的（没有 receiver）——有子会话时必抛 TypeError，父会话也没归档。
 // 契约：递归归档不依赖 this，处理函数脱离登记它的对象调用，照样把整棵子树连父一起归档。
-
-function fakeMemory() {
-  const meta = new Map<string, Record<string, unknown>>();
-  return {
-    listMetadata: async () => [...meta].map(([key, data]) => ({ key, data })),
-    commitMetadata: async (ops: Array<{ op: string; key: string; data?: Record<string, unknown> }>) => {
-      for (const o of ops) {
-        if (o.op === 'put' && o.data) meta.set(o.key, o.data);
-        else if (o.op === 'del') meta.delete(o.key);
-      }
-    },
-    getHistory: async () => [],
-    clearSession: async () => {},
-  };
-}
 
 async function setup() {
   const app = new App({ name: 'T', logLevel: 'error' });

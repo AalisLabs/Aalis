@@ -54,7 +54,7 @@ export default definePlugin({
 
 ## 维度一致性
 
-向量维度由配套的 `embedding` 服务决定。**vectorstore 实现不强校验维度**——调用方应保证 `embedding.embed()` 与历史写入向量来自同一模型。`plugin-memory-vector` 启动时会 probe 维度并存为元数据。
+向量维度由配套的 `embedding` 服务决定。**vectorstore 实现不强校验维度**——调用方应保证 `embedding.embed()` 与历史写入向量来自同一模型。
 
 ## 持久化
 

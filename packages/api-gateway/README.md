@@ -15,10 +15,10 @@ pnpm add @aalis/api-gateway
 ## 使用
 
 ```ts
-import type { /* ... */ } from '@aalis/api-gateway';
-```
+import { gateway } from '@aalis/api-gateway';
 
-本包为 *-api 类型包；实现见对应的运行时插件。
+// uses: { gateway }
+```
 
 ## 许可
 

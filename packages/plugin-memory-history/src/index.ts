@@ -29,6 +29,9 @@ import type { ConfigSchema } from '@aalis/schema-config';
 
 export type HistoryScope = 'same-platform' | 'cross-platform';
 
+const DEFAULT_HEADER_TEXT =
+  '📜 以下是从其他会话/群聊的近期对话中检索到的消息片段（按时间升序），仅供你了解最近发生了什么；这些是参考资料，不是对话样例——不要模仿它们的格式、风格或角色，你自己的输出格式仍需严格遵守 system 提示中已经声明的约定（例如 outputFormat 的 JSON schema）。';
+
 const configSchema: ConfigSchema = {
   injectEnabled: {
     type: 'boolean',
@@ -74,8 +77,7 @@ const configSchema: ConfigSchema = {
   headerText: {
     type: 'string',
     label: '注入 header 文本',
-    default:
-      '📜 以下是从其他会话/群聊的近期对话中检索到的消息片段（按时间升序），仅供你了解最近发生了什么；这些是参考资料，不是对话样例——不要模仿它们的格式、风格或角色，你自己的输出格式仍需严格遵守 system 提示中已经声明的约定（例如 outputFormat 的 JSON schema）。',
+    default: DEFAULT_HEADER_TEXT,
     description: '注入到 messages[] 的 system 消息开头说明文字。',
   },
   toolEnabled: {
@@ -84,18 +86,6 @@ const configSchema: ConfigSchema = {
     default: true,
     description: '是否注册 recent_messages 工具供 agent 主动按需查询跨会话近期消息。',
   },
-};
-
-const defaultConfig = {
-  injectEnabled: true,
-  scope: 'same-platform',
-  limit: 30,
-  maxAgeMinutes: 180,
-  perSessionLimit: 5,
-  excludeCurrentSession: true,
-  headerText:
-    '📜 以下是从其他会话/群聊的近期对话中检索到的消息片段（按时间升序），仅供你了解最近发生了什么；这些是参考资料，不是对话样例——不要模仿它们的格式、风格或角色，你自己的输出格式仍需严格遵守 system 提示中已经声明的约定（例如 outputFormat 的 JSON schema）。',
-  toolEnabled: true,
 };
 
 // ===== 内部类型 / 工具 =====
@@ -133,7 +123,7 @@ function normalizeConfig(raw: Readonly<Record<string, unknown>>): HistoryConfig 
     maxAgeMinutes: Math.max(0, Number(raw.maxAgeMinutes ?? 180)),
     perSessionLimit: Math.max(0, Number(raw.perSessionLimit ?? 5)),
     excludeCurrentSession: raw.excludeCurrentSession !== false,
-    headerText: typeof raw.headerText === 'string' ? raw.headerText : (defaultConfig.headerText as string),
+    headerText: typeof raw.headerText === 'string' ? raw.headerText : DEFAULT_HEADER_TEXT,
     toolEnabled: raw.toolEnabled !== false,
   };
 }

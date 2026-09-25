@@ -11,7 +11,7 @@
 
 LLM 被要求输出 JSON 时，实际输出常有格式问题：包了 ` ```json ` 代码块、前后夹了一段自然语言解释、字符串里写了没转义的英文引号、被 `max_tokens` 截断少了结尾的 `}`、尾部多了逗号。直接 `JSON.parse` 会抛出异常。
 
-`@aalis/util-json-repair` 把这些修复策略集中到一处，按「由轻到重」依次尝试，直到 `JSON.parse` 成功或全部用尽（`index.ts`）。它是一个**纯函数工具库**（`aalis-util` keyword，无 `ctx`、无 DI，见 `package.json` 的 `"aalis": { "util": true }`）——插件在 `package.json` 里依赖它、直接 `import` 函数即可。
+`@aalis/util-json-repair` 把这些修复策略集中到一处，按「由轻到重」依次尝试，直到 `JSON.parse` 成功或全部用尽（`index.ts`）。它是一个**纯函数工具库**（`aalis-util` keyword，不经服务容器、不参与 DI，见 `package.json` 的 `"aalis": { "util": true }`）——插件在 `package.json` 里依赖它、直接 `import` 函数即可。
 
 > **最重要的边界**：本库只解析**顶层 JSON 对象** `{...}`。顶层是 JSON **数组** `[...]` 的输出会被判为失败（返回 `null`）。详见 §5。
 
@@ -56,7 +56,7 @@ export interface RepairResult {
    - **字符串内部裸引号转义**（`index.ts`）：状态机识别字符串里没转义的 `"`，例如 `"message": "他说"你好"然后走了"`。
    - **XML 属性引号转义**（`index.ts`）：把 `<face id="14"/>` 这类标签属性里的引号转义。
    - **移除尾部多余逗号**（`index.ts`）：`{...,}` → `{...}`。
-   - **补全缺失的 `}` 与 `]`**（`index.ts`）：截断少括号时，在字符串外统计缺口并补齐（先补 `]` 再补 `}`）。
+   - **补全缺失的 `}` 与 `]`**（`index.ts`）：截断少括号时，用开括号栈记录字符串外未闭合的 `{` 与 `[`，在末尾按栈逆序（内层先闭）补齐。
 3. 全部用尽仍失败 → `parsed: null`（`index.ts`）。
 
 关键约束：`tryParse` 内部显式拒绝数组与原始值——只有 `typeof obj === 'object' && !Array.isArray(obj)` 才算成功（`index.ts`）。
@@ -72,15 +72,16 @@ export interface RepairResult {
 ```ts
 import { parseLLMJsonObject } from '@aalis/util-json-repair';
 
+// 以下在插件 apply 内，logger 取自 uses 解构
 const raw = await model.chat(/* ... */); // 模型可能输出 ```json{...}``` + 一段解释
 const { parsed, repairsApplied } = parseLLMJsonObject(typeof raw.content === 'string' ? raw.content : '');
 
 if (!parsed) {
-  ctx.logger.warn('LLM 输出无法解析为 JSON 对象');
+  logger.warn('LLM 输出无法解析为 JSON 对象');
   return;
 }
 if (repairsApplied.length > 0) {
-  ctx.logger.debug(`JSON 自动修复成功：${repairsApplied.join(' → ')}`);
+  logger.debug(`JSON 自动修复成功：${repairsApplied.join(' → ')}`);
 }
 // parsed 此时一定是 Record<string, unknown>
 const reply = typeof parsed.response === 'string' ? parsed.response : '';

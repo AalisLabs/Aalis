@@ -52,9 +52,3 @@ export function effectiveConfirm(op: Operation, confOverrides: Record<string, Co
   if (o === 'off') return undefined;
   return o ?? op.confirm;
 }
-
-/** 整组最低等级聚合：全同→该等级，否则 'mixed'。 */
-export function groupMinLevel(ops: Operation[], authorityOverrides: Record<string, number>): number | 'mixed' {
-  const set = new Set(ops.map(op => effectiveMinLevel(op, authorityOverrides)));
-  return set.size === 1 ? ([...set][0] as number) : 'mixed';
-}

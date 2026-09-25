@@ -1,7 +1,7 @@
 import { authority } from '@aalis/api-authority';
 import { type CommandArgv, commands as commandsService } from '@aalis/api-commands';
 import { gateway, INBOUND_PHASE } from '@aalis/api-gateway';
-import { hooks } from '@aalis/api-hooks';
+import { type HookContextMap, hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
 import { createStorageGateway, type StorageService, storage } from '@aalis/api-storage';
 import type { ToolService } from '@aalis/api-tools';
@@ -175,47 +175,34 @@ function registerCommands({
   // （四类必须齐清，漏掉任一类即留下残留文件）。
   //
   // types 语义：未指定=清全部附件；指定则只清命中的种类（如 /clear -t video）。
-  hooks.middleware(
-    'memory:clear',
-    async (
-      data: {
-        scope: 'session' | 'all';
-        types?: string[];
-        sessionId?: string;
-        results: Array<{ source: string; success: boolean; message: string }>;
-      },
-      next,
-    ) => {
-      const safeSessionId = data.sessionId?.replace(/[:/\\]/g, '_');
-      for (const k of ATTACHMENT_KINDS) {
-        if (data.types && !data.types.includes(k.type)) continue;
-        try {
-          if (data.scope === 'all') {
-            const removed = await removeDirCounted(storageGateway, `data:/${k.dir}`);
-            data.results.push({
-              source: `${k.type}-cache`,
-              success: true,
-              message:
-                removed >= 0
-                  ? `所有${k.label}缓存已清空（${removed} 个会话目录）`
-                  : `${k.label}缓存目录不存在，无需清空`,
-            });
-          } else if (safeSessionId) {
-            const removed = await removeDirCounted(storageGateway, `data:/${k.dir}/${safeSessionId}`);
-            data.results.push({
-              source: `${k.type}-cache`,
-              success: true,
-              message: removed >= 0 ? `当前会话${k.label}缓存已清空（${removed} 个）` : `当前会话无${k.label}缓存`,
-            });
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          data.results.push({ source: `${k.type}-cache`, success: false, message: `${k.label}缓存清空失败: ${msg}` });
+  hooks.middleware('memory:clear', async (data, next) => {
+    const safeSessionId = data.sessionId?.replace(/[:/\\]/g, '_');
+    for (const k of ATTACHMENT_KINDS) {
+      if (data.types && !data.types.includes(k.type)) continue;
+      try {
+        if (data.scope === 'all') {
+          const removed = await removeDirCounted(storageGateway, `data:/${k.dir}`);
+          data.results.push({
+            source: `${k.type}-cache`,
+            success: true,
+            message:
+              removed >= 0 ? `所有${k.label}缓存已清空（${removed} 个会话目录）` : `${k.label}缓存目录不存在，无需清空`,
+          });
+        } else if (safeSessionId) {
+          const removed = await removeDirCounted(storageGateway, `data:/${k.dir}/${safeSessionId}`);
+          data.results.push({
+            source: `${k.type}-cache`,
+            success: true,
+            message: removed >= 0 ? `当前会话${k.label}缓存已清空（${removed} 个）` : `当前会话无${k.label}缓存`,
+          });
         }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        data.results.push({ source: `${k.type}-cache`, success: false, message: `${k.label}缓存清空失败: ${msg}` });
       }
-      await next();
-    },
-  );
+    }
+    await next();
+  });
 
   // ===== inbound:command 相位：命令命中则执行并中断后续相位 =====
   //
@@ -274,7 +261,7 @@ function registerCommands({
       });
       if (result) {
         if (isSystemTrigger) {
-          // 系统触发器（scheduler/workflow）的 sessionId 通常是 internal 虚拟 session，
+          // 系统触发器（scheduler）的 sessionId 通常是 internal 虚拟 session，
           // 走 outbound 也无人接收；直接写日志便于排查。
           const preview = result.length > 500 ? `${result.slice(0, 500)}…` : result;
           logger.info(`[${message.source}] ${parsed.raw} → session=${message.sessionId} 结果:\n${preview}`);
@@ -371,11 +358,11 @@ function registerCommands({
     types: string[] | undefined,
   ): Promise<string> {
     const isGlobal = scope === 'all';
-    const clearData = {
+    const clearData: HookContextMap['memory:clear'] = {
       scope,
       types,
       sessionId: cmdCtx.sessionId,
-      results: [] as Array<{ source: string; success: boolean; message: string }>,
+      results: [],
     };
 
     await hooks.run('memory:clear', clearData, async () => {

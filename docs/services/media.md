@@ -2,7 +2,7 @@
 
 `media` 把「媒体 → 文本」的多模态识别（图片描述、音频转写描述、视频抽帧加音轨）抽象成一个统一调度器。上层——agent preprocessor、工具、适配器——只需要向 `media` 提问，由它在一个 processor 池里仲裁并执行。这个池由「vision/audio LLM」与「独立的 ASR/Whisper backend」共同组成。
 
-- **服务注册名**：`media.current`（字符串键 `media`，`服务描述符.media`）。
+- **服务注册名**：`'media'`（描述符 `media`，读 `media.current`）。
 - **契约包**：`@aalis/api-media`。契约除了服务本身，还导出底层的 `MediaProcessor` 抽象。你写「非 LLM 的媒体 backend」时实现 `MediaProcessor` 再 `registerProcessor`；写「服务消费」时只用 `MediaService`。
 - **参考实现**：`@aalis/plugin-media`，声明 `provides=['media']`，通过 `provide(media, svc)` 提供，实现类是 `MediaServiceImpl`。
 - **它不是沙箱**：媒体的下载与落盘走 `safeFetch`（SSRF 守卫）加 `storage`，但 storage 本身不是隔离边界，详见 [§6](#6-能力-风险-影响)。
@@ -51,8 +51,8 @@ export interface MediaProcessor {
   capabilities: MediaCapability[];
   displayName?: string;         // UI 用
   priority?: number;            // 数值大者优先（同 cap 多 processor 仲裁），默认 0
-  describe?(input: DescribeInput, ctx: Context): Promise<DescribeResult>;    // vision/document.image/video.passthrough
-  transcribe?(input: TranscribeInput, ctx: Context): Promise<TranscribeResult>; // audio
+  describe?(input: DescribeInput): Promise<DescribeResult>;    // vision/document.image/video.passthrough
+  transcribe?(input: TranscribeInput): Promise<TranscribeResult>; // audio
 }
 ```
 
@@ -89,7 +89,7 @@ export interface MediaProcessor {
 
 | 包 | 角色 |
 | --- | --- |
-| `@aalis/plugin-media` | 唯一的 `media` 服务提供者兼调度器。内置 LLM-as-Processor adapter，自动把所有在 `capabilities` 里声明了 vision/audio 的 LLM 包成 `MediaProcessor`（name 格式 `llm:${contextId}#${capShort}`）；同时把核心 `asr` 服务的每个 provider 桥接成 cap=`audio` 的 processor（name 格式 `asr:${contextId}`）。 |
+| `@aalis/plugin-media` | 唯一的 `media` 服务提供者兼调度器。内置 LLM-as-Processor adapter，自动把所有在 `capabilities` 里声明了 vision/audio 的 LLM 包成 `MediaProcessor`（name 格式 `llm:${contextId}#${cap}`，cap 为 vision 或 audio）；同时把核心 `asr` 服务的每个 provider 桥接成 cap=`audio` 的 processor（name 格式 `asr:${contextId}`）。 |
 | `@aalis/plugin-asr-whisper-cpp` / `@aalis/plugin-asr-openai` | 不直接 provide `media`，而是 provide 核心 `asr` 服务（`subsystem='media'`）。media 会自动把它们纳入 audio 池。写一个音频 backend 时应优先写成 `asr` provider，而非 `MediaProcessor`，见 [§4](#4-写一个-provider)。 |
 
 ### 典型消费点
@@ -192,7 +192,7 @@ export default definePlugin({
 }
 ```
 
-契约包本身（`api-media`）的 `package.json` 则是 `"aalis": { "types": true }` 加 `keywords:["aalis","aalis-api"]`——纯类型包不打 `aalis-plugin` 词。
+契约包本身（`api-media`）的 `keywords` 是 `["aalis","aalis-api"]`——契约包不打 `aalis-plugin` 词，不会被当作插件加载。
 
 ---
 
@@ -201,13 +201,13 @@ export default definePlugin({
 ```ts
 uses: { media: optional(media) };  // media 是可选增强时
 
-async function handle(ctx: Context, url: string) {
-  const media = media.current;        // 每次用都重新取，不要缓存
-  if (!media?.describeImage) {                   // 服务缺失 / 方法缺失双重保护
+async function handle(url: string) {   // 在 apply 内，media 为 uses 里的 ServiceRef
+  const svc = media.current;        // 每次用都重新取，不要缓存
+  if (!svc?.describeImage) {                   // 服务缺失 / 方法缺失双重保护
     return '未启用 media 服务';
   }
   // describeImage 失败返回空串（不抛），按空串降级即可
-  const desc = await media.describeImage(url, { detailLevel: 'casual', hint: '挑出有猫的图' });
+  const desc = await svc.describeImage(url, { detailLevel: 'casual', hint: '挑出有猫的图' });
   return desc || '（识别失败）';
 }
 ```
@@ -278,7 +278,7 @@ media 经 `storage` 写临时/缓存文件，但 storage 只是命名根加权�
 
 ## 7. 边界与注意事项
 
-- **runtime 单例依赖**：media 内部的 ffmpeg 与远程下载逻辑经模块级 `setMediaRuntime({proc,storage})` 注入依赖，在 `apply()` 时设置。若 `process`/`storage` 未启用，`getMediaRuntime()` 会抛错——因此 `uses required:['process','storage']`。第三方 backend 若要自己拿依赖，请走 `ctx`，不要依赖 media 的内部 runtime。
+- **runtime 单例依赖**：media 内部的 ffmpeg 与远程下载逻辑经模块级 `setMediaRuntime({proc,storage})` 注入依赖，在 `apply()` 时设置。若 `process`/`storage` 未启用，`getMediaRuntime()` 会抛错——因此 `uses required:['process','storage']`。第三方 backend 若要自己拿依赖，请在 `uses` 里声明 `process` / `storage`，不要依赖 media 的内部 runtime。
 - **audio.prefer 下拉是 live mutate 的**：`media` 监听 `service:registered`/`service:unregistered`（asr/llm），动态刷新 `configSchema.audio.fields.prefer.options`。新装 asr 或 audio-LLM 后，选项会自动出现。这意味着 `configSchema` 对象在运行时被改写，前端配置页读的是这个 live 对象。
 - **空音频描述不等于「非语音」**：模型的空响应可能是 maxTokens 不足、上下文超限或超时，这些都被统一标为 `[音频] 识别失败（…详见日志）`。不要据此判断「这段音频没人声」。
 - **图片是「识别模型 + 两个正交开关」**：`vision.prefer` 是识别模型；`vision.recognizeOnArrival`（默认开）决定图片到达是否立即识别落描述——描述进档案与向量库、可被召回，被吞掉的消息也留记忆；关掉则档案只留指针 `[图片 | ref:…]`，主模型需要时经 `analyze_image` 按需看，代价是图片内容不可被检索召回。`vision.delivery` 决定主模型需要看图（当轮附件、`analyze_image`）时怎么给：`auto`（默认）按本会话生效主模型的 vision 能力——有则直通原图，无则由识别模型转文字；也可显式钉死 `passthrough`/`describe`。`audio.mode='passthrough'` 仍是音频直通：不转写，保留原始 attachment 让主模型直接吃（需主模型 audio 能力）。

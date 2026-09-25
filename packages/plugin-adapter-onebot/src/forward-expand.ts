@@ -86,9 +86,8 @@ export interface ForwardExpanderDeps<TState> {
 }
 
 export interface ForwardExpander<TState> {
-  getCachedForward(id: string): ForwardEntry | undefined;
-  setCachedForward(id: string, entry: ForwardEntry): void;
-  loadPersistedForward(id: string): Promise<ForwardEntry | undefined>;
+  /** 取已展开的转发条目：先查内存缓存，落空再读持久化层并回填缓存 */
+  getOrLoadForward(id: string): Promise<ForwardEntry | undefined>;
   fetchForwardOnce(state: TState, id: string): Promise<unknown | null>;
   expandForwardsInText(
     state: TState,
@@ -248,6 +247,14 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     return undefined;
   }
 
+  async function getOrLoadForward(id: string): Promise<ForwardEntry | undefined> {
+    const cached = getCachedForward(id);
+    if (cached) return cached;
+    const persisted = await loadPersistedForward(id);
+    if (persisted) setCachedForward(id, persisted);
+    return persisted;
+  }
+
   /**
    * 拉取一条合并转发的内容，依次尝试多种参数键。
    * 不同 OneBot 实现接受的字段不同：标准为 id，NapCat/Lagrange 部分版本接受
@@ -367,10 +374,9 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
 
     const recognize = createConcurrencyLimited(
       async (input: { kind: ForwardMediaTask['kind']; src: string }): Promise<string | undefined> => {
-        if (input.kind === 'image') return mediaSvc.describeImage ? await mediaSvc.describeImage(input.src) : undefined;
-        if (input.kind === 'audio')
-          return mediaSvc.transcribe ? await mediaSvc.transcribe({ kind: 'audio', data: input.src }) : undefined;
-        return mediaSvc.describeVideo ? (await mediaSvc.describeVideo(input.src)) || undefined : undefined;
+        if (input.kind === 'image') return await mediaSvc.describeImage(input.src);
+        if (input.kind === 'audio') return await mediaSvc.transcribe({ kind: 'audio', data: input.src });
+        return (await mediaSvc.describeVideo(input.src)) || undefined;
       },
       concurrency,
     );
@@ -440,14 +446,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     // （envelopeMap 各写各键、缓存按 id、信号量在 resolver 闭包里共享），并行安全。
     await Promise.all(
       expandIds.map(async id => {
-        let entry = getCachedForward(id);
-        if (!entry) {
-          const persisted = await loadPersistedForward(id);
-          if (persisted) {
-            setCachedForward(id, persisted);
-            entry = persisted;
-          }
-        }
+        const entry = await getOrLoadForward(id);
         if (entry) {
           envelopeMap.set(
             id,
@@ -472,9 +471,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
             resolveMedia,
             maxDepth: forwardCfg.maxDepth,
             maxNodesPerLevel: forwardCfg.maxNodesPerLevel,
-            imageRecognitionEnabled: forwardCfg.imageRecognition && !!mediaSvc?.describeImage,
-            audioRecognitionEnabled: !!mediaSvc?.transcribe,
-            videoRecognitionEnabled: !!mediaSvc?.describeVideo,
+            imageRecognitionEnabled: forwardCfg.imageRecognition,
           });
 
           if (!expanded.fullText.trim()) {
@@ -521,9 +518,7 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
   }
 
   return {
-    getCachedForward,
-    setCachedForward,
-    loadPersistedForward,
+    getOrLoadForward,
     fetchForwardOnce,
     expandForwardsInText,
   };

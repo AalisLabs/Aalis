@@ -83,7 +83,6 @@ export default definePlugin({
   uses: { authority: optional(authority), logger },
   apply({ authority, logger }) {
     authority.follow(provider => {
-      if (!provider.setConfirmHandler) return;
       const off = provider.setConfirmHandler('*', async () => false);
       logger.debug('fallback handler 已注册');
       return off;

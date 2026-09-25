@@ -30,7 +30,7 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `workingDirectory` | string | `'workspace:/'` | 初始工作目录：进程启动时的初始 cwd（unix 心智模型）。agent 可用 cd 工具在会话内切换，不会写回本配置。shell/code-runner 仍使用各自独立的 workingDirectory 配置，不受 cd 影响。 |
+| `workingDirectory` | string | `'workspace:/'` | 初始工作目录：进程启动时的初始 cwd（unix 心智模型）。agent 可用 cd 工具在会话内切换，不会写回本配置。shell 以本项初始值为基准、不受 cd 影响；code-runner 使用它自己的 workingDirectory 配置。 |
 | `shell` | object | — | Shell 工具 |
 | `shell.enabled` | boolean | `true` | 启用 Shell 工具 |
 | `shell.defaultTimeout` | number | `30000` | 默认超时 (ms) |
@@ -59,7 +59,7 @@ export default definePlugin({
 
 `cwd` 工具返回当前目录 + 所有可用 storage 根的清单（含读/写/删权限），调用一次即可看清"我在哪、能去哪"。`cd` 工具切换当前 session 的 cwd（仅内存，进程重启回到 `workingDirectory` 配置值，不写配置文件）。
 
-`shell` 与 `code-runner` 仍使用各自独立的 `workingDirectory` 配置，**不**受 `cd` 影响 —— 子进程模型决定了它们只能在文件系统型根下执行。
+`shell` 以本插件 `workingDirectory` 的初始值为基准，**不**受 `cd` 影响；`code-runner` 使用它自己的 `workingDirectory` 配置。子进程模型决定了两者只能在文件系统型根下执行。
 
 
 ## 工具组
@@ -82,9 +82,9 @@ export default definePlugin({
 ### 默认排除（DEFAULT_EXCLUDE_PATTERNS）
 
 ```
-node_modules/**   dist/**    build/**    .git/**    .pnpm/**
-.next/**          .turbo/**  .yarn/**    coverage/**
-__pycache__/**    *.pyc      .DS_Store   Thumbs.db
+**/node_modules/**   **/dist/**     **/build/**      **/out/**
+**/.git/**           **/.next/**    **/.nuxt/**      **/.turbo/**
+**/.cache/**         **/coverage/** **/.venv/**      **/__pycache__/**
 ```
 
 调用方传入 `exclude` 时**替换**默认列表（不追加）；`exclude: []` 关闭全部默认，全量搜索。
@@ -103,7 +103,7 @@ __pycache__/**    *.pyc      .DS_Store   Thumbs.db
 
 ### 截断提示
 
-`file_search` 结果默认上限 200 条；超出时 `advice` 字段会建议缩小搜索范围或追加 `include`。
+`file_search` 结果默认 50 条，最多 200 条（`maxResults`）；超出时 `advice` 字段会建议缩小搜索范围或追加 `include`。
 
 目录模式下读不出来的文件（权限不足、枚举之后被删）不计入命中，但也不会被静默跳过：返回体带
 `skippedFiles` 计数，`advice` 里明确提示「不要据此断言找不到」。此前这类跳过完全无痕——

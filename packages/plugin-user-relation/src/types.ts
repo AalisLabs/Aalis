@@ -47,7 +47,7 @@ export interface PersonNode {
   id: string;
   platform: string;
   userId: string;
-  /** 显示名（昵称），可由 user-profile 同步更新 */
+  /** 显示名（昵称），由入站消息归档时的昵称同步（rename-watcher）并由提取阶段 observePerson 维护 */
   displayName?: string;
   /** 节点首次出现时间 */
   firstSeenAt: number;
@@ -139,7 +139,7 @@ export interface EventNode {
   communityIdAt?: number;
   /** 完整的社群隶属度列表（支持重叠）；louvain/leiden 永远单元素，slpa 可多元素。 */
   communityMemberships?: CommunityMembership[];
-  /** sha1(title + '\n' + summary) 截前 16 字节 hex；title/summary 变更后值变 → 触发重 embed。 */
+  /** fnv1a-64 + djb2-64(title + '\n' + summary)，32 位 hex；title/summary 变更后值变 → 触发重 embed。 */
   embeddingHash?: string;
 }
 
@@ -191,7 +191,7 @@ export interface EntityNode {
   mentionCount: number;
   /** rename 审计：每次改名追加一条 */
   nameHistory?: NodeNameAudit[];
-  /** sha1(entityKind + '\n' + name + '\n' + (summary ?? '')) 截前 16 字节 hex；任一变更后值变 → 触发重 embed。 */
+  /** fnv1a-64 + djb2-64(entityKind + '\n' + name + '\n' + (summary ?? ''))，32 位 hex；任一变更后值变 → 触发重 embed。 */
   embeddingHash?: string;
 }
 
@@ -246,7 +246,7 @@ export interface PersonEventEdge {
   role: PersonEventRole;
   /** 该人对该事件的态度倾向（如有可识别） */
   sentiment?: Sentiment;
-  /** 强度 0~1，反复强化累积：`reinforceWeight(prev, delta) = prev + (1-prev)·delta`，不做时间衰减 */
+  /** 强度 0~1，反复强化累积：`reinforceWeight(prev, delta) = prev + (1-prev)·delta`，并受 weightDecayHalfLifeDays 时间衰减回写 */
   weight: number;
   /** 可选人可读注释（LLM 提取时输出，<=40 字）。例：「发起讨论后被反驳」 */
   description?: string;
@@ -301,7 +301,7 @@ export interface PersonPersonEdge {
   toPersonId: string;
   /** 关系类型；推荐使用 RecommendedPersonRelationTypes 之一，但允许自创 */
   relationType: string;
-  /** 是否有向：'admirer' / 'mentor' 单向，'cp' / 'friend' / 'rival' 双向 */
+  /** 是否有向：默认 true（单向声明）；仅调用方显式传 false 时视为对称 */
   directed: boolean;
   /**
    * 人际层级（与 directed 正交）。未填视为 'unknown'。

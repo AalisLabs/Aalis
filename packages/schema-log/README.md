@@ -1,8 +1,8 @@
 # @aalis/schema-log
 
-日志记录与日志行格式的共享契约，不依赖 Core，不执行 I/O。
+日志记录与日志行格式的共享契约，以 peer 依赖引用 `@aalis/core` 的日志记录类型（仅类型导入），不执行 I/O。
 
-- `LogEntry`、`LogLevel`：Core 日志通道、宿主与前端共享的数据类型。
+- `LogEntry`、`LogLevel`：Core 日志通道、宿主与前端共享的数据类型，从 `@aalis/core` 原样转导出。
 - `formatLogLine`、`parseLogLine`：宿主写入、CLI 和 WebUI 读取日志文件时共用的编解码函数。
 
 日志通道 `LogHub` 与 `Logger` 接口仍由 `@aalis/core` 提供；文件写入、终端显示、历史分页由各消费者负责。

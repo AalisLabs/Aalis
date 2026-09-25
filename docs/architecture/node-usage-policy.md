@@ -27,8 +27,8 @@
 基于这条红线，对插件层给出以下默认建议：
 
 - **业务插件**（agent、memory、tools、persona、scheduler、websearch、image-recognition、…）建议**优先**通过以下网关访问宿主能力，而不是直接 import `node:*`：
-  - 文件系统 → `@aalis/api-storage`（`createStorageGateway(ctx)`，沙箱根 workspace/data/tmp/pluginData/logs）
-  - 子进程 / 外部文件 / 临时目录 → `@aalis/api-process`（`createProcessGateway(ctx)`，方法含 `spawn`/`execFile`/`makeTempDir`/`readExternalFile`）
+  - 文件系统 → `@aalis/api-storage`（`createStorageGateway(storage)`，`storage` 为 `uses` 里声明的 ServiceRef；沙箱根 workspace/data/tmp/pluginData/logs）
+  - 子进程 / 外部文件 / 临时目录 → `@aalis/api-process`（`createProcessGateway(proc)`，`proc` 为 `uses` 里声明的 ServiceRef；方法含 `spawn`/`execFile`/`makeTempDir`/`readExternalFile`）
   - 出站网络 → `useNetwork()` / fetch
   - 入站网络 → 服务端类插件（webui-server / mcp-server）
   - 系统信息（CPU/内存/用户名）→ `plugin-tool-system` 的 `system_info` 工具
@@ -78,7 +78,7 @@
 ### 基础设施（网关实现）
 
 - **`plugin-storage-local`** — `node:fs`（`createReadStream` / `watch`）+ `node:fs/promises`（CRUD）
-  本地文件系统后端，实现 `StorageService` 接口。其它插件落盘走 `createStorageGateway(ctx)` 即可，无需绕过它。
+  本地文件系统后端，实现 `StorageService` 接口。其它插件落盘走 `createStorageGateway(storage)` 即可，无需绕过它。
 
 - **`plugin-process-local`** — `node:child_process`（`spawn`）+ `node:fs/promises`（`readFile`）
   `ProcessService` 的当前实现：负责 `spawn`/`execFile`/`makeTempDir`/`readExternalFile`。`readExternalFile` 用于 OneBot 等推流场景，源端给的是 OS 直读路径（如 `/tmp/xxx.jpg`），不属于任何 storage 根，所以刻意绕过 storage 沙箱直接 `fs.readFile`；该方法不受沙箱约束，调用方自行保证路径安全。

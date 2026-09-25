@@ -153,6 +153,20 @@ export class DrawEngine {
     }
   }
 
+  /** 定界：HTML 模式实测内容高并按 maxPixels 收口，再按 scale 设视口；返回画布 CSS 高度。 */
+  private async fitCanvas(page: Page, plan: CanvasPlan, maxPixels: number, scale: number): Promise<number> {
+    let height = plan.height;
+    if (height === 'auto') {
+      const measured = await this.withTimeout(
+        page.evaluate<number>('Math.ceil(document.getElementById("aalis-draw").getBoundingClientRect().height)'),
+        'measure',
+      );
+      height = Math.max(16, Math.min(measured || 16, Math.floor(maxPixels / plan.width)));
+    }
+    await page.setViewport({ width: plan.width, height, deviceScaleFactor: scale });
+    return height;
+  }
+
   /** 静态渲染：定界（HTML 模式实测内容高）→ 设缩放视口 → clip 截图。 */
   async renderPng(
     plan: CanvasPlan,
@@ -161,15 +175,7 @@ export class DrawEngine {
   ): Promise<{ png: Buffer; width: number; height: number }> {
     const guessHeight = plan.height === 'auto' ? 600 : plan.height;
     return this.withPage(plan, guessHeight, async page => {
-      let height = plan.height;
-      if (height === 'auto') {
-        const measured = await this.withTimeout(
-          page.evaluate<number>('Math.ceil(document.getElementById("aalis-draw").getBoundingClientRect().height)'),
-          'measure',
-        );
-        height = Math.max(16, Math.min(measured || 16, Math.floor(maxPixels / plan.width)));
-      }
-      await page.setViewport({ width: plan.width, height, deviceScaleFactor: scale });
+      const height = await this.fitCanvas(page, plan, maxPixels, scale);
       const shot = await this.withTimeout(
         page.screenshot({ type: 'png', clip: { x: 0, y: 0, width: plan.width, height } }),
         'screenshot',
@@ -201,15 +207,7 @@ export class DrawEngine {
   ): Promise<{ frames: Buffer[]; width: number; height: number; animationCount: number; durationMs: number }> {
     const guessHeight = plan.height === 'auto' ? 600 : plan.height;
     return this.withPage(plan, guessHeight, async page => {
-      let height = plan.height;
-      if (height === 'auto') {
-        const measured = await this.withTimeout(
-          page.evaluate<number>('Math.ceil(document.getElementById("aalis-draw").getBoundingClientRect().height)'),
-          'measure',
-        );
-        height = Math.max(16, Math.min(measured || 16, Math.floor(opts.maxPixels / plan.width)));
-      }
-      await page.setViewport({ width: plan.width, height, deviceScaleFactor: opts.scale });
+      const height = await this.fitCanvas(page, plan, opts.maxPixels, opts.scale);
 
       // 暂停两套动画时钟；顺带数动画数与声明时长（0 动画 = 调用方该提示"这是静态图"）
       const probe = await page.evaluate<{ count: number; durationMs: number }>(

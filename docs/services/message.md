@@ -2,7 +2,7 @@
 
 > **这不是一个 DI 服务。** `@aalis/schema-message` 是**纯契约包**——只导出消息载体类型、`WellKnownRole`/`WellKnownKinds`、`prepareLLMMessages`/`toLLMRole`、附件占位符文法、发送者标识工具，外加经 declaration merging 注入的几个事件。**没有任何插件用 `provide(message, …)` 注册运行时服务，也没有 `message.current`**（已 grep 全仓确认：`provides/provide/getService` 均无 `'message'` 命中）。
 >
-> 包元数据也证明这一点：`packages/schema-message/package.json` 只有 `"aalis": { "types": true }`（**没有** `aalis.service` 字段），keyword 是 `aalis-schema`。第三方作者**不是"实现/消费 message 服务"**，而是 **import 这些类型/函数**来写自己的 LLM provider / 适配器 / 读历史的插件。
+> 包元数据也证明这一点：`packages/schema-message/package.json` **没有** `aalis.service` 字段，keyword 是 `aalis-schema`（不是 `aalis-plugin`，不会被当作插件加载）。第三方作者**不是"实现/消费 message 服务"**，而是 **import 这些类型/函数**来写自己的 LLM provider / 适配器 / 读历史的插件。
 
 ## 本页用途
 
@@ -97,7 +97,7 @@
 - **[`docs/concepts/message-llm-pipeline.md`](../concepts/message-llm-pipeline.md)** — 本契约的**权威语义文档**（role×kind、`prepareLLMMessages`、附件、`<at>`、流式、`actor`、注意事项）。本页是它的导出速查附录。
 - [`docs/services/llm.md`](./llm.md) — `LLMModel` / `ChatModelRequest` / `resolveLLMModel`：`Message[]` 真正被发出去的地方（forward-ref，可能尚未落地）。
 - [`docs/concepts/service-model.md`](../concepts/service-model.md) — `ServiceContainer` 按名注册与事件机制（本包只用事件增强，不注册服务）。
-- [`docs/concepts/manifest-metadata.md`](../concepts/manifest-metadata.md) — `aalis.types` vs `aalis.service` 双源约定（本包是 `types: true` 的纯契约包范例）。
+- [`docs/concepts/manifest-metadata.md`](../concepts/manifest-metadata.md) — `aalis.service` 双源约定与包类型关键词（本包以 `aalis-schema` 关键词标识，没有 `aalis.service`）。
 - [`docs/concepts/storage-uri-grammar.md`](../concepts/storage-uri-grammar.md) — `MessageAttachment.ref` / `AttachmentRef.ref` 可承载 `<root>:/path` storage URI。
 - [`docs/concepts/security-model.md`](../concepts/security-model.md) — `IncomingMessage.actor` 授权身份、防 LLM 提权（概念文档 §9.7）。
 

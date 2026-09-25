@@ -99,12 +99,11 @@ export function registerCalculusTools(tools: BoundTools): void {
           }
 
           case 'limit_sequence': {
-            // 用 n 替换 x，计算大 n 处的值来近似极限
-            const fn = buildEvalFunction(expr); // 用 x 变量，但代入大数
+            // 代入递增的大 n（仍以 x 为变量）近似极限
             const steps = Number(args.n ?? 100);
             const values: { n: number; value: number }[] = [];
             for (const n of [10, 100, 1000, 10000, 100000, steps]) {
-              values.push({ n, value: fn(n) });
+              values.push({ n, value: evalFn(n) });
             }
             // 取最后一个作为近似极限
             const approx = values[values.length - 1].value;

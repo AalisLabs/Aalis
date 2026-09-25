@@ -22,7 +22,6 @@ export default definePlugin({
     contributions,
     hooks,
     events,
-    lifecycle,
     logger,
     config,
     provide,

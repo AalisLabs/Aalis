@@ -7,7 +7,7 @@
 - 每个 server 在 config 中独立一项（`id` / `command` / `args` / `env`）
 - 工具名会加前缀 `mcp_<server-id>_<tool-name>` 避免与本地工具命名冲突
 - 每个 server 注册一个工具分组 `mcp:<server-id>`，可在 platform 配置中按需启用
-- `ctx.onDispose` 注册了 client 关闭回调，插件卸载时自动断开
+- `lifecycle.onDispose` 注册了 client 关闭回调，插件卸载时自动断开
 - 工具档位默认 `auto`——按 MCP 工具注解分档：自称只读（`readOnlyHint`）→ `sensitive`
   （等级 1），有破坏提示或未声明 → `restricted`（等级 2，未知按可破坏算）。
   server 级 `visibility` 可显式覆盖为 `public` / `sensitive` / `restricted`
@@ -34,7 +34,7 @@ plugins:
 ## 依赖
 
 - `@modelcontextprotocol/sdk`
-- inject.required: `tools`（api-tools / plugin-tools）
+- uses：`tools`（必需，api-tools / plugin-tools）；可选 `plugins`、`hostConfig`
 
 ## 注意
 

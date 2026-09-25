@@ -490,10 +490,6 @@ function registerSubtask(
         // 使用事件驱动 + 超时，替代轮询
         await new Promise<void>(resolve => {
           const pending = new Set(ids.filter(id => !isTerminal(id)));
-          if (pending.size === 0) {
-            resolve();
-            return;
-          }
 
           const cleanup = () => {
             clearTimeout(timer);

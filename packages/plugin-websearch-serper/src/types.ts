@@ -28,7 +28,7 @@ export interface WebSearchRequest {
   numResults?: number;
   /** 语言偏好（如 'zh' / 'en'），后端可忽略 */
   language?: string;
-  /** 搜索类型筛选（后端按 capability 声明的支持范围处理） */
+  /** 搜索类型筛选，后端可忽略不支持的类型 */
   kind?: 'web' | 'news' | 'images';
 }
 
@@ -49,7 +49,7 @@ export interface WebSearchResponse {
 /**
  * 网络搜索服务
  *
- * 实现者需至少提供 `search()`。`describeProvider()` 用于日志/WebUI 展示。
+ * 实现者需至少提供 `search()`。`providerName` 用于日志/排错。
  */
 export interface WebSearchService {
   /** 执行一次搜索 */

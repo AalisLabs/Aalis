@@ -11,7 +11,6 @@
 // 功能在插件、契约在本 -api，各平台经 DI 复用，零重复、零 plugin→plugin 依赖。
 
 import type { AccessConfirmHandler, AccessRequest } from '@aalis/api-authority';
-import type {} from '@aalis/core'; // declaration merging 锚点
 import { defineService } from '@aalis/core';
 
 /** 一条确认通道：handler 注册到 authority；feed 在平台拦截点喂回复。 */

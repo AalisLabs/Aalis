@@ -60,7 +60,7 @@ export interface ChatStreamChunk {
 export interface ModelInfo {
   id: string;
   /**
-   * Capability 字符串数组。注册时来自 ServiceContainer，因此使用宽松的 string[]
+   * Capability 字符串数组，取自 model handle 的 `instance.capabilities` 元数据。使用宽松的 string[]
    * 而不是 LLMCapability[]，便于跨插件共享（自定义 capability 也能照常上送给前端）。
    */
   capabilities: string[];
@@ -73,7 +73,8 @@ export interface ModelInfo {
 //
 // 每个 LLM model 是 ServiceContainer 'llm' 服务名下独立的 entry。
 //   - capability 声明 100% 反映该 model 的实际能力（无 router facade 谎言）
-//   - `getService('llm', ['vision'])` 直接命中合适 model 而非绕过路由
+//   - `resolveLLMModel(llm, ref, ['vision'])` 按 handle 元数据 `instance.capabilities` 直接命中合适 model
+//     （消费方过滤，不是 DI 选择）
 //   - ChatModelRequest 不含 model/provider 字段：entry 已绑定具体 (provider, model)
 
 /** Per-model chat request：不再含 model/provider —— entry 已绑定。 */
@@ -101,16 +102,15 @@ export interface ChatModelRequest {
 /**
  * 单个 LLM model 的 service entry。
  *
- * 一个 LLM provider 插件实例（如 plugin-llm-openai）会按其 listModels() 结果
- * 在 apply() 期间为**每个 model 单独**调用 `ctx.provide('llm', modelHandle, {...})`，
+ * 一个 LLM provider 插件实例（如 plugin-llm-openai）按其发现的模型列表，
+ * 在 apply() 期间为**每个 model 单独**调用 `provide(llm, modelHandle, { entryId })`，
  * model handle 上的 capabilities 字段诚实地反映该 model 的能力。
  *
  * 调用约定：
- *   const handle = resolveLLMModel(ctx, ref, ['vision'])?.instance;
+ *   const handle = resolveLLMModel(llm, ref, ['vision'])?.instance;
  *   await handle?.chat({ messages });   // entry 已知道是哪个 model
  *
- * 选择 default model：通过 ServiceContainer.setPreference('llm', preferredContextId)
- * 或 persona.yaml 的 defaultServices 配置（见 plugin-author-guide §11）。
+ * 选择默认 model：`services.prefer('llm', '<provider>/<model>')` 或宿主配置的 `servicePreferences`。
  */
 export interface LLMModel {
   /** model id（provider 内唯一，如 'gpt-4o'）。来源：provider plugin 注册时填入。 */
@@ -188,7 +188,7 @@ declare module '@aalis/schema-config' {
      * LLM 模型引用：值形如 `{ provider: string; model: string }`，前端渲染为
      * 联动 select（provider 列表来自 `/api/models/llm` 的 contextId 聚合；
      * model 列表由所选 provider 决定）。运行时由消费方用
-     * `resolveLLMModel(ctx, value, caps)` 解析。
+     * `resolveLLMModel(llm, value, caps)` 解析。
      */
     'llm-ref': true;
   }
@@ -196,7 +196,7 @@ declare module '@aalis/schema-config' {
 
 // ----- LLM model entry 解析助手 -----
 
-/** ServiceContainer 中一个 'llm' entry 的完整快照（与 ctx.getAllServices 返回的形状一致）。 */
+/** 一个 'llm' entry 的快照（ServiceRef.all() 所返 ServiceView 的 instance/contextId/label 子集）。 */
 export interface LLMModelEntry {
   instance: LLMModel;
   contextId: string;
@@ -257,8 +257,6 @@ export function resolveLLMModel(
   if (ref?.model) return all.find(e => e.instance.id === ref.model);
   return all[0];
 }
-
-// ----- 服务类型注册（declaration merging）-----
 
 // ----- 服务描述符（按激活绑定；调用型：绑定接口是 ServiceRef）-----
 export const llm = defineService<LLMModel>('llm');

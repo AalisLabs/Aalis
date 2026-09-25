@@ -2,6 +2,7 @@ import type { AppService, PluginManagerService, ServiceRef } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
 import type { HostConfig } from '../../packages/api-host-config/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
+import { captureRoutes } from '../fixtures/webui-routes.js';
 
 // ════════════════════════════════════════════════════════════
 // PUT /api/plugins/:name/config 曾以裸 defaults 打底：`{...defaultsFrom(schema), ...body}`。
@@ -11,8 +12,6 @@ import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/rou
 // 从内存态与 yaml 一起消失，且接口回 ok。
 // 修法是基线改用「默认值叠已存值」，语义才是真正的部分更新。
 // ════════════════════════════════════════════════════════════
-
-type Handler = (req: unknown, res: unknown, next: () => Promise<void>) => unknown;
 
 /** 最小 ServiceRef 桩：路由只经 current / require 取提供者 */
 function ref<T>(instance: unknown): ServiceRef<T> {
@@ -34,17 +33,7 @@ function setup() {
   };
   let received: Record<string, unknown> | undefined;
   let persisted: Record<string, unknown> | undefined;
-  const routes = new Map<string, Handler[]>();
-  const app = new Proxy(
-    {},
-    {
-      get:
-        (_t, method: string) =>
-        (path: string, ...handlers: Handler[]) => {
-          routes.set(`${method.toUpperCase()} ${path}`, handlers);
-        },
-    },
-  );
+  const { expressApp, invoke } = captureRoutes();
   const hostConfig = {
     set: () => {},
     getAll: () => ({}),
@@ -55,7 +44,7 @@ function setup() {
     save: async () => {},
   };
   registerPluginRoutes(
-    app as never,
+    expressApp,
     {
       app: ref<AppService>({ restart: () => {} }),
       source: { current: undefined },
@@ -79,28 +68,12 @@ function setup() {
     () => (_req: unknown, _res: unknown, next: () => void) => next(),
     () => undefined,
   );
-  const put = async (body: unknown) => {
-    const handlers = routes.get('PUT /api/plugins/:name/config');
-    if (!handlers) throw new Error('路由未注册');
-    const out: { status: number; body?: unknown } = { status: 200 };
-    const res = {
-      status(code: number) {
-        out.status = code;
-        return res;
-      },
-      json(payload: unknown) {
-        out.body = payload;
-        return res;
-      },
-    };
-    let i = 0;
-    const next = async (): Promise<void> => {
-      const h = handlers[i++];
-      if (h) await h({ params: { name: '@aalis/plugin-x' }, body: { config: body }, headers: {} }, res, next);
-    };
-    await next();
-    return out;
-  };
+  const put = (body: unknown) =>
+    invoke('PUT /api/plugins/:name/config', {
+      params: { name: '@aalis/plugin-x' },
+      body: { config: body },
+      headers: {},
+    });
   return { put, got: () => received, persisted: () => persisted };
 }
 

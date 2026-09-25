@@ -1,7 +1,7 @@
 // ============================================================
 // @aalis/plugin-asr-openai — OpenAI Whisper API 转写后端
 //
-// 注册一个 audio MediaProcessor，调用 OpenAI 兼容 /audio/transcriptions。
+// 以 asr 服务 provider 注册，调用 OpenAI 兼容 /audio/transcriptions。
 // 兼容 OpenAI、Groq、本地 ollama-asr 网关等所有 OpenAI 风格协议。
 // ============================================================
 
