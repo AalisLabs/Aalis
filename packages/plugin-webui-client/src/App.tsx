@@ -433,22 +433,13 @@ export function App() {
   const handleStreamResume = useCallback((
     content: string,
     reasoningContent: string,
-    serverSegments: ContentSegment[],
+    segments: ContentSegment[],
     done: boolean,
     resumeProgress?: Array<{ index: number; name: string; charsAccumulated: number; startedAt: number }>,
   ) => {
     setMessages(prev => {
       // 服务端 segments 已是按到达顺序的统一时间线（含 text / reasoning_text / tool_call）；
       // 直接采用，无需再按 reasoning 是否存在做分桶。
-      let segments: ContentSegment[] = serverSegments && serverSegments.length > 0
-        ? serverSegments
-        : [];
-      if (segments.length === 0) {
-        // 兼容：服务端未提供 segments（理论上不会发生），用扁平串重建两段式
-        if (reasoningContent) segments.push({ type: 'reasoning_text', content: reasoningContent });
-        if (content) segments.push({ type: 'text', content });
-      }
-
       const last = prev[prev.length - 1];
       if (last && last.role === 'assistant') {
         return [...prev.slice(0, -1), {

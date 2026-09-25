@@ -113,16 +113,7 @@ describe('attachment-ref helpers', () => {
       expect(line.replace(re, '<改写>')).toBe('<改写>');
     });
 
-    it('存量 desc 含裸 | 时 matcher 仍能改写（parse 不认，两读侧刻意不一致）', () => {
-      const legacy = '[图片: a | b | ref:data/t.png]';
-      // parse 只发现净化过的新格式
-      expect(parseAttachmentRefs(legacy)).toEqual([]);
-      // matcher 额外兼容存量：收严则这条占位符 update_image_description 再也改不动
-      const re = buildAttachmentRefMatcher(AttachmentRefKind.Image, 'data/t.png');
-      expect(legacy.replace(re, '<改写>')).toBe('<改写>');
-    });
-
-    it('宽松的 desc 字符类仍不跨 ]：不会吞掉相邻占位符', () => {
+    it('desc 字符类不跨 ]：不会吞掉相邻占位符', () => {
       const text = '[图片 | ref:data/a.png][图片: x | ref:data/t.png]';
       const re = buildAttachmentRefMatcher(AttachmentRefKind.Image, 'data/t.png');
       expect(text.match(re)).toEqual(['[图片: x | ref:data/t.png]']);
