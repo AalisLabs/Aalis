@@ -6,7 +6,7 @@ import { llm, resolveLLMModel } from '@aalis/api-llm';
 import type { MemoryService } from '@aalis/api-memory';
 import { memory } from '@aalis/api-memory';
 import { messageArchive } from '@aalis/api-message-archive';
-import type { BoundOf, ServiceRef } from '@aalis/core';
+import type { BoundOf } from '@aalis/core';
 import { config, definePlugin, events, lifecycle, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
@@ -176,31 +176,36 @@ interface SummaryRecord {
   summary: string;
 }
 
-/** 持有 ServiceRef 而非提供者实例：每次调用重新解析当前胜者，provider 重载后不会用到失效引用。 */
+/**
+ * 绑定一个提供者实例，按次构造：一次操作（读历史 → 调 LLM → 写摘要 → 裁切或回滚）全程只认开头
+ * 取到的那一个。memory 胜者可能在 LLM 调用期间换人而本插件不重启，每步现取胜者会从 A 读历史、
+ * 在 A 上裁切，摘要却写进 B。
+ */
 class SummaryStore {
-  constructor(private readonly memory: ServiceRef<MemoryService>) {}
+  constructor(private readonly provider: MemoryService) {}
 
   async getSummary(sessionId: string): Promise<SummaryRecord | null> {
-    const data = await this.memory.require().getMetadata(SUMMARY_NAMESPACE, sessionId);
+    const data = await this.provider.getMetadata(SUMMARY_NAMESPACE, sessionId);
     if (!data) return null;
     return { summary: String(data.summary ?? '') };
   }
 
   async upsertSummary(sessionId: string, summary: string): Promise<void> {
-    await this.memory.require().saveMetadata(SUMMARY_NAMESPACE, sessionId, {
+    await this.provider.saveMetadata(SUMMARY_NAMESPACE, sessionId, {
       summary,
       updatedAt: new Date().toISOString(),
     });
   }
 
   async clearSession(sessionId: string): Promise<void> {
-    await this.memory.require().deleteMetadata(SUMMARY_NAMESPACE, sessionId);
+    await this.provider.deleteMetadata(SUMMARY_NAMESPACE, sessionId);
   }
 
   async clearAll(): Promise<void> {
-    const provider = this.memory.require();
-    const items = await provider.listMetadata(SUMMARY_NAMESPACE);
-    await provider.commitMetadata(items.map(it => ({ op: 'del' as const, namespace: SUMMARY_NAMESPACE, key: it.key })));
+    const items = await this.provider.listMetadata(SUMMARY_NAMESPACE);
+    await this.provider.commitMetadata(
+      items.map(it => ({ op: 'del' as const, namespace: SUMMARY_NAMESPACE, key: it.key })),
+    );
   }
 }
 
@@ -250,7 +255,6 @@ async function run(caps: Caps): Promise<void> {
     logger.warn('memory 服务不可用，摘要插件将不会启动');
     return;
   }
-  const store = new SummaryStore(memory);
 
   logger.info('会话摘要插件已启动（摘要持久化经由 memory.metadata）');
 
@@ -335,6 +339,7 @@ async function run(caps: Caps): Promise<void> {
       const provider = memory.current;
       const summaryModel = resolveSummaryModel();
       if (!provider || !summaryModel) return;
+      const store = new SummaryStore(provider);
 
       // 获取较多的历史消息来判断是否需要摘要
       const allHistory = await provider.getHistory(sessionId, getHistoryProbeLimit());
@@ -499,7 +504,7 @@ async function run(caps: Caps): Promise<void> {
       const sessionId = view.sessionId;
       if (!sessionId) return null;
 
-      const existing = await store.getSummary(sessionId);
+      const existing = await new SummaryStore(memory.require()).getSummary(sessionId);
       if (!existing?.summary) return null;
 
       // 动态计算摘要 token 预算
@@ -574,6 +579,7 @@ async function run(caps: Caps): Promise<void> {
         events.emit('session:compressing', { sessionId: data.sessionId, status: 'error' }).catch(() => {});
         return;
       }
+      const store = new SummaryStore(provider);
 
       const allHistory = await provider.getHistory(data.sessionId, getHistoryProbeLimit());
       // 手动压缩：只要有 > keepRecent 条消息就压缩
@@ -755,6 +761,7 @@ async function run(caps: Caps): Promise<void> {
     }
 
     try {
+      const store = new SummaryStore(memory.require());
       if (data.scope === 'all') {
         await store.clearAll();
         data.results.push({ source: 'summary', success: true, message: '所有会话摘要已清空' });

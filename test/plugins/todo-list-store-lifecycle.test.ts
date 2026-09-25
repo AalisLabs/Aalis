@@ -74,3 +74,26 @@ describe('plugin-todo-list: 缓存随激活存亡', () => {
     await app.stop();
   });
 });
+
+describe('plugin-todo-list: memory 换胜者后页面读当前胜者', () => {
+  it('更高优先级的 memory 上线后，getTodos 返回新胜者里的清单，不命中旧后端读进来的缓存', async () => {
+    const { app, host, manage, getTodos } = await boot();
+    const first = host.services.get(memory) as MemoryService;
+    await first.saveMetadata('todo-list', 's-4', { items: [{ id: 1, title: 'A 的任务', status: 'in-progress' }] });
+    expect(await getTodos('s-4')).toEqual([{ id: 1, title: 'A 的任务', status: 'in-progress' }]);
+    // 经工具写入的会话同时落进本地 store：有 memory 时 store 也不得充当读缓存
+    await manage()({ todoList: [{ id: 1, title: 'A 上新写的', status: 'not-started' }] }, { sessionId: 's-5' });
+    expect(await getTodos('s-5')).toEqual([{ id: 1, title: 'A 上新写的', status: 'not-started' }]);
+
+    const second = new Map<string, Record<string, unknown>>([
+      ['todo-list/s-4', { items: [{ id: 1, title: 'B 的任务', status: 'completed' }] }],
+    ]);
+    host.provide(memory, { getMetadata: async (ns: string, key: string) => second.get(`${ns}/${key}`) } as never, {
+      priority: 10,
+    });
+    await app.plugins.idle();
+    expect(await getTodos('s-4')).toEqual([{ id: 1, title: 'B 的任务', status: 'completed' }]);
+    expect(await getTodos('s-5'), 'B 上没有 s-5').toEqual([]);
+    await app.stop();
+  });
+});
