@@ -4,17 +4,18 @@
 
 ## 设计哲学
 
-Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设施（事件、服务容器、中间件管道、插件生命周期），所有功能——LLM 调用、消息存储、对话编排、平台接入——由可插拔插件提供。可替换的是服务提供者；内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services` / `hooks` / `contributions`）不可经 `provide` 替换。
+Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设施（事件、服务容器、插件生命周期），所有功能——LLM 调用、消息存储、对话编排、平台接入——由可插拔插件提供，中间件钩子与贡献点也是插件提供的服务。可替换的是服务提供者；内置能力（`events` / `logger` / `config` / `lifecycle` / `provide` / `services`）不可经 `provide` 替换。
 
 插件的交界面是 `definePlugin({ name, uses, provides, apply(caps) })`：能力经描述符显式声明，按激活绑定。没有默认注入。业务服务接口由对应的 `@aalis/api-*` 包以描述符导出，core 不持有任何业务接口。详见 [api 包架构](design/api-packages.md)。
 
 `@aalis/core` 对外暴露：
 
-- 运行时基础设施：`App` / `definePlugin` / `defineService` / `ConfigManager` / `Logger`，以及内置能力描述符（`events` / `hooks` / `contributions` / `lifecycle` / `logger` / `config` / `provide` / `services`）
-- 三张扩展点表：`AalisEvents` / `HookContextMap` / `ContributionPointMap`（由 `@aalis/api-*` 经 declaration merging 注入业务键）。服务类型随描述符走，没有服务名类型表
-- 宿主入口：`app.plugin` / `app.bind` / `app.config` / `app.plugins`
-- `AalisConfig` 仅声明基础字段（`name` / `logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`）加 `[key: string]: unknown` 兜底；业务字段（owners / deniedCapabilities / authorityOverrides / confirmOverrides 等）由对应 api-* 通过 declaration merging 注入，core 不知晓其语义
-- `ConfigManager` 是纯内存配置中枢：自身不读写文件，`save()` 把整份配置快照原样委托给宿主注入的 `ConfigProvider.save()`（无 provider 时静默忽略），对所有顶层字段一视同仁、不含任何业务特例（合并默认值时 `mergeDefaultsConfig()` 也是先填 core 已知字段、再透传其余）
+- 运行时基础设施：`App` / `definePlugin` / `defineService` / `Logger`，以及内置能力描述符（`events` / `lifecycle` / `logger` / `config` / `provide` / `services`）
+- 扩展点 `AalisEvents`（由 `@aalis/api-*` 经 declaration merging 注入业务事件）。钩子与贡献点的扩展点 `HookContextMap` / `ContributionPointMap` 在各自的契约包 `@aalis/api-hooks` / `@aalis/api-contributions`。服务类型随描述符走，没有服务名类型表
+- 宿主入口：`app.plugin` / `app.pluginAll` / `app.bind` / `app.plugins`
+- 运行态：各实例的配置、禁用态与服务偏好。登记时交来的配置原样生效，core 不合并默认值、不读配置文档；管理动作（`plugins.enable` / `disable` / `updateConfig` / `bounce`）只改运行态，不写文档
+
+配置文档不在 core。契约在 `@aalis/api-host-config`：`HostConfig`（`host-config` 服务，文档读写加 `save()`）由宿主提供；`AalisConfig` 只声明宿主层字段（`name` / `logLevel` / `plugins` / `disabledPlugins` / `servicePreferences`）加 `[key: string]: unknown` 兜底，业务字段（owners / deniedCapabilities / authorityOverrides / confirmOverrides 等）由对应 api-* 经 declaration merging 注入。要跨重启保留管理动作的结果，调用方在动作成功后经 host-config 写文档并 `save()`。
 
 业务数据契约与领域类型一律不在 core：`Message` / `ContentSegment` / `ToolCall`（OpenAI 协议形状，跨载体复用）与 `getSenderLabel` / `prefixSender` / `getMessageName` 在 `@aalis/schema-message`，`ToolDefinition` / `ToolFunction` 在 `@aalis/api-tools`，`UserIdentity` 在 `@aalis/api-authority`，`ModelRef` / `resolveLLMModel` 在 `@aalis/api-llm`。
 
@@ -24,14 +25,16 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 
 > 业务插件同样受约束：直接 import `node:fs` / `node:child_process` / `node:os` / `node:http(s)` 被 biome 拦截，必须改走 `@aalis/api-storage` / `@aalis/api-process`。完整白名单与豁免理由见 [node-usage-policy](architecture/node-usage-policy.md)。
 
-环境耦合全部收敛在宿主层 `@aalis/runtime`（monorepo 由仓库根 `src/index.ts` 一行 `startAalis()` 拉起），通过 `new App({ ... })` 注入到 core：
+环境耦合全部收敛在宿主层 `@aalis/runtime`（monorepo 由仓库根 `src/index.ts` 一行 `startAalis()` 拉起）。重启策略与 dev 开关经 `new App({ ... })` 注入；插件发现与配置文档由宿主持有，插件定义连同各实例的配置、禁用标记经 `app.pluginAll` 交给 core，文档与热扫描以服务的形式登记在根激活上：
 
-| AppOption | 抽象（在 core） | 默认实现（在 `@aalis/runtime`） | 职责 |
+| 宿主件 | 接到 core 的方式 | 默认实现（在 `@aalis/runtime`） | 职责 |
 |---|---|---|---|
-| `config` / `configProvider` | `AalisConfig` / `ConfigProvider` | `createFsYamlConfigProvider()` | 配置读 / 写 / `fs.watch` 热重载 |
-| `pluginLoader` | `PluginLoader` | `createFsPluginLoader()` | 扫描 `packages/` + dynamic import |
-| `restartStrategy` | `RestartStrategy` | `createProcessRespawnStrategy()` | `child_process.spawn` 重启进程 |
-| `devMode` | `boolean` | `process.env.NODE_ENV !== 'production'` | dev 校验开关 |
+| 配置文档 | `host-config` 服务（`@aalis/api-host-config`） | `createFsYamlConfigProvider()` + `createConfigStore()` / `installHostConfig()` | 配置读 / 写 / `fs.watch` 热重载 |
+| 插件发现 | `app.pluginAll`；热扫描为 `plugin-source` 服务（`@aalis/api-plugin-source`） | `createFsPluginLoader()` / `createNodeModulesPluginLoader()` + `createPluginDiscovery()` | 扫描 `packages/` 或项目依赖 + dynamic import，整批登记 |
+| 重启策略 | `AppOptions.restartStrategy`（`RestartStrategy`） | `createProcessRespawnStrategy()` | `child_process.spawn` 重启进程 |
+| dev 开关 | `AppOptions.devMode`（`boolean`） | `process.env.NODE_ENV !== 'production'` | dev 校验开关 |
+
+`startAalis` 的装配顺序见 [@aalis/runtime](architecture/runtime.md)。
 
 另外 `@aalis/runtime` 的 `startAalis` 还负责 stdout/stderr console-sink、文件日志、终端状态恢复、子命令分发、SIGINT 优雅退出 —— 这些都是**纯宿主关切**，core 完全不知情。
 
@@ -56,14 +59,15 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 │                    服务层 (Service Layer)                      │
 │   LLM · Memory · Embedding · VectorStore · Persona · Tools   │
 │   Skills · ImageRecognition · WebSearch · Office              │
+│   Hooks · Contributions（钩子与贡献点）                       │
 │        接口由 api-* 提供，实现可多提供者并存                  │
 ├──────────────────────────────────────────────────────────────┤
 │                    核心框架层 (Core Layer)                     │
 │   App · definePlugin / defineService · PluginManager          │
-│   EventBus · ServiceContainer · HookRegistry · ConfigManager   │
+│   EventBus · ServiceContainer                                  │
 │   Logger · 内置能力描述符                                      │
 │   DisposableChain（资源内核，不导出）                         │
-│   扩展点：AalisEvents / HookContextMap / ContributionPointMap  │
+│   扩展点：AalisEvents                                          │
 │   （业务接口均在 api-*，类型随描述符走）                       │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -122,7 +126,7 @@ Aalis 提供四种互补的扩展手段，覆盖不同粒度的定制需求：
 
 ### 1. 中间件管道 (Hooks)
 
-插件通过 `hooks.middleware(hook, fn)` 注册中间件，拦截核心流程的各阶段。中间件可修改数据或中断流程。同一钩子内多个 handler 按注册顺序执行洋葱模型（无优先级数字）；跨钩子顺序由调度方（如 plugin-gateway）显式决定。
+插件通过 `hooks.middleware(hook, fn)` 注册中间件，拦截核心流程的各阶段。中间件可修改数据或中断流程。同一钩子内多个 handler 按注册顺序执行洋葱模型（无优先级数字）；跨钩子顺序由调度方（如 plugin-gateway）显式决定。`hooks` 描述符来自 `@aalis/api-hooks`，默认提供者是 `@aalis/plugin-hooks`。
 
 ```typescript
 // 拦截消息（不调用 next = 中断整个管道）
@@ -133,7 +137,7 @@ hooks.middleware('agent:input:before', async (data, next) => {
 });
 ```
 
-详见 [events.md — 中间件系统](core/events.md)
+详见 [api-hooks](api/api-hooks.md)
 
 ### 2. 服务替换 (Service IoC)
 
@@ -155,7 +159,7 @@ events.on('outbound:message', async (msg) => { /* 记录日志、统计等 */ })
 
 ### 4. 贡献点 (Contribution Points)
 
-向共享产物提交一块内容，排布权归收集方。与 hooks 的分工：**改写或截停既有流程 → hooks；向共享产物添加自己的一块 → 贡献点**。贡献者拿只读视图、不掌握控制流（无短路、无排序影响力、看不到他人产出），因此重复注入、排布漂移、错误连坐在 API 上无法表达。
+向共享产物提交一块内容，排布权归收集方。与 hooks 的分工：**改写或截停既有流程 → hooks；向共享产物添加自己的一块 → 贡献点**。贡献者拿只读视图、不掌握控制流（无短路、无排序影响力、看不到他人产出），因此重复注入、排布漂移、错误连坐在 API 上无法表达。`contributions` 描述符来自 `@aalis/api-contributions`，默认提供者是 `@aalis/plugin-contributions`。
 
 ```typescript
 contributions.contribute('agent:prompt', {
@@ -169,16 +173,20 @@ for (const { key, spec } of contributions.collect('my-plugin:panel')) { /* ... *
 
 ### 5. Declaration Merging
 
-第三方插件可通过 TypeScript 声明合并来扩展核心类型（事件 / 钩子 / 贡献点）。服务类型随描述符走，不往扩展点表里登记服务名。
+第三方插件可通过 TypeScript 声明合并扩展事件、钩子与贡献点的类型表。事件表 `AalisEvents` 在 core，钩子表与贡献点表在各自的契约包，增广的模块要分开写。服务类型随描述符走，不往扩展点表里登记服务名。
 
 ```typescript
 declare module '@aalis/core' {
   interface AalisEvents {
     'scheduler:tick': [jobId: string];
   }
+}
+declare module '@aalis/api-hooks' {
   interface HookContextMap {
     'schedule:before': { jobId: string; cron: string };
   }
+}
+declare module '@aalis/api-contributions' {
   interface ContributionPointMap {
     'my-plugin:panel': { id: string; render(): string };
   }
@@ -253,7 +261,7 @@ optional 上下线与胜者替换不改变目标态，不级联 bounce。有状�
 
 #### 单轮两阶段（拓扑保证）
 
-每轮 recompute 先按 provider→consumer 拓扑排序（Kahn），然后：
+每轮 recompute 先按 provider→consumer 拓扑排序（Kahn，同时就绪者按登记序），然后：
 
 1. **Phase A 成批关闭**：本轮目标不再是 active 的，它们之间的次序由关停编排按实际绑定决定。
 2. **Phase B 正向遍历 activate**（非 shutdown）：提供者先于消费者 active。
@@ -264,7 +272,7 @@ optional 上下线与胜者替换不改变目标态，不级联 bounce。有状�
 
 ### 隔离粒度
 
-- **完全隔离** — 需要独立事件总线、独立日志通道时，应直接 `createApp({ events, services, hooks, ... })` 创建新的 `App` 实例。`Logger` 可注入独立 `LogHub` 隔离日志缓冲。
+- **完全隔离** — 需要独立事件总线、独立日志通道时，应直接 `createApp(options)` 创建新的 `App` 实例（每个 `App` 自有事件总线与服务容器）。`Logger` 可注入独立 `LogHub` 隔离日志缓冲。
 - 按会话/租户**差异化配置**不需要激活隔离——用键控解析（参考 session-manager 的 `resolveConfig(sessionId)` 模式）。
 - `ServiceRef.follow(attach)`：在场即调 attach，换人时先跑上次返回的清理再用新实例调，下线与关闭时清理。attach 必须同步返回函数 cleanup（或不需要清理时不返回）；thenable 会被接住并 warn。这是消费枢纽型服务、建立有状态资源的入口（参见 [docs/core/context.md](core/context.md)）。
 
@@ -300,6 +308,7 @@ defaultAction()        ← 所有 handler 通过后执行
 **关键约定**：
 - 同一钩子内多个 handler 按 **注册顺序** 执行洋葱模型，无优先级数字
 - 不调用 `next()` 即中止整个管道（含 defaultAction）；`hooks.run()` 返回 `false`
+- 没有 `hooks` 提供者时 `hooks.run()` 返回被拒的 Promise，defaultAction 不执行
 - 跨钩子的顺序由调度方（如 plugin-gateway）显式决定
 
 ### Gateway 入站生命周期相位
@@ -436,7 +445,7 @@ WebUI authority 页（仅 owner）+ 指令 `/level`（设某用户等级）与 `
 
 core 自持的十一个基础设施事件（`app:*` 五个屏障、`service:*` / `plugin:*` / `plugins:changed` 六个通知）及其时序见
 [core/events.md](core/events.md)；业务事件由各 `-api` 包注入，按包查见[扩展点索引 §2](extensions/index.md)。
-总线上没有 `dispose` 事件，清理副作用用 `lifecycle.onDrain` / `lifecycle.onDispose`；`memory:clear` 是钩子不是事件，见 events.md 的钩子节。
+总线上没有 `dispose` 事件，清理副作用用 `lifecycle.onDrain` / `lifecycle.onDispose`；`memory:clear` 是钩子不是事件，见 [api-hooks](api/api-hooks.md)。
 
 ## 向量语义记忆
 

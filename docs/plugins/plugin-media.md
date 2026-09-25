@@ -29,7 +29,6 @@ export default definePlugin({
     memory: optional(memory),
     sessionManager: optional(sessionManager),
     hostConfig: optional(hostConfig),
-    app: optional(appService),
   },
   apply(caps) { /* 见源码 */ },
 });

@@ -20,6 +20,9 @@
 | --- | --- | --- | --- | --- | --- |
 | `app` | `@aalis/core` | App 实例 | n/a | n/a | 由 host 注入，永不 bounce |
 | `plugins` | `@aalis/core` | PluginManager | n/a | n/a | 由 host 注入，永不 bounce |
+| `host-config` | `@aalis/runtime`（宿主） | 配置文档 | `aalis.config.yaml` | n/a | 由宿主在根上提供，永不 bounce；管理动作不写文档，要跨重启保留由调用方写文档后 `save()` |
+| `hooks` | `@aalis/plugin-hooks` | 钩子链 | n/a | 否（由登记方重建） | bounce 时依赖它的插件先关闭，再按拓扑序重新激活并重新登记，链序与冷启动相同 |
+| `contributions` | `@aalis/plugin-contributions` | 贡献登记表 | n/a | 否（由登记方重建） | 同上；`collect` 顺序只由全局键决定，重建后不变 |
 | `commands` | `@aalis/plugin-commands` | 命令注册表（Map） | n/a | 否 | bounce 后由各插件 apply 时重新 `register` |
 | `agent` | `@aalis/plugin-agent` | preprocessor / processor 列表 | n/a | 否 | 同上，依赖下游插件 apply 时回注 |
 | `tools` | `@aalis/plugin-tool-system` | tool 定义 Map | n/a | 否 | 同上 |
@@ -27,7 +30,7 @@
 | `doctor` | `@aalis/plugin-doctor` | `lastReport` 单例 | n/a | 否 | 重载后报告丢失，需重新 `runChecks` |
 | `scheduler` | `@aalis/plugin-scheduler` | 任务调度状态 | `data/scheduler-jobs.json` | 是（持久部分） | bounce 后从 JSON 读回；运行中的 timer 会重建 |
 | `authority` | `@aalis/plugin-authority` | 角色规则 | 配置文件 | 是 | 规则随配置一起回填 |
-| `session-manager` | `@aalis/plugin-session-manager` | 活跃 session Map | 视下游 memory 插件 | 部分 | 历史走 memory 服务，活跃句柄丢失需重建 |
+| `session-manager` | `@aalis/plugin-session-manager` | 活跃 session Map | 视下游 memory 插件 | 部分 | 历史走 memory 服务，活跃句柄丢失需重建；会话表跟随 memory 胜者，换后端时先把未落盘的变更写回旧后端，再从新后端读表整体替换（不跨后端合并） |
 | `memory` | `@aalis/plugin-memory-sqlite` / `-mongodb` / `-summary` / `-inmemory` | LRU / 缓存 | SQLite / MongoDB（内存版除外） | 是（持久驱动）/ 否（inmemory） | inmemory 驱动 bounce 即清空 |
 | `vectorstore` | `@aalis/plugin-vectorstore-lancedb` / `-flat` | 索引句柄 | `data/lancedb/` / 平铺文件 | 是 | 句柄重建后数据可用 |
 | `embedding` | `@aalis/plugin-embedding-*` | HTTP client | n/a | n/a（无状态） | 重建即可用 |
@@ -49,7 +52,7 @@ provider bounce 时，此刻 required 解析到它的 active 下游（传递闭�
    安全 bounce；标注 "进程池 / 浏览器会话" 的服务 bounce 会断开外部资源，
    建议先停止依赖工作流再重载。
 
-3. **配置变更走 `updateConfig` 而非换代码**：前者把新配置写回后 bounce；换代码走 `unload` + `register`（宿主热加载见 `App.rescanPlugins` / `PluginLoader.reload`）。
+3. **配置变更走 `updateConfig` 而非换代码**：前者换上新的运行配置后 bounce，只改运行态，要跨重启保留由调用方经 host-config 写文档并 `save()`；换代码走 `unload` + `register`（宿主热加载见 `@aalis/runtime` 的 `PluginLoader.reload` 与 `plugin-source` 的 `rescan()`）。
 
 4. **多实例插件 (`name:suffix`) 仅作用于指定 instanceId**：同 module 的其
    他实例不受影响，需各自调用 `bounce(instanceId)`。
@@ -60,7 +63,7 @@ provider bounce 时，此刻 required 解析到它的 active 下游（传递闭�
 ## 增量重载的 API 速查
 
 ```ts
-// dispose + 重新 apply（不重新 import：从磁盘重载代码是宿主的事，见 App.rescanPlugins / PluginLoader.reload）
+// dispose + 重新 apply（不重新 import：从磁盘重载代码是宿主的事，见 @aalis/runtime 的 PluginLoader.reload）
 await plugins.require().bounce('@aalis/plugin-foo');
 
 // 配置变化后的标准入口（bounce(id, { config }) 的薄壳）

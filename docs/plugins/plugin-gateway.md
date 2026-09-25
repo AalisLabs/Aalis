@@ -54,7 +54,8 @@ export default definePlugin({
 
 ```ts
 import { INBOUND_PHASE } from '@aalis/api-gateway';
-import { definePlugin, hooks } from '@aalis/core';
+import { hooks } from '@aalis/api-hooks';
+import { definePlugin } from '@aalis/core';
 
 export default definePlugin({
   name: '@acme/plugin-example-gateway-mw',
@@ -95,9 +96,9 @@ events.on('gateway:phase:done', ({ phase, reachedEnd, durationMs, sessionId, pla
 
 ## 应用入口要求
 
-完整发行应加载 `@aalis/plugin-gateway`（提供 `gateway` 服务）。
+完整发行应加载 `@aalis/plugin-gateway`（提供 `gateway` 服务）。core 没有入站路由兜底：不加载 gateway 时 `inbound:message` 无人消费，消息被静默丢弃。
 
-否则 core 启动时会因缺少 `gateway` 服务而启用 fallback 路由（直接派发到 agent，不经过相位链）；该 fallback 仅适合最小化场景。
+本插件 required `hooks`，还须装上其提供者 [`@aalis/plugin-hooks`](./plugin-hooks.md)；缺少时本插件停在 pending，启动日志报「依赖未满足，未激活（缺少服务: hooks）」。
 
 ## 配置项
 

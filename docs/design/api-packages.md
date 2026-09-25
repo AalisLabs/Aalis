@@ -10,20 +10,20 @@
    - **api 包**（`@aalis/api-*`）：类型、服务描述符（值导出）与扩展点声明
    - **实现包**（`@aalis/plugin-*` 或多个具体实现）：依赖对应 api 包，提供运行时
 3. **单向依赖**：`实现包 → api 包 → core`，永不反向。多实现可共存。
-4. **扩展点显式化**：core 保留 `AalisEvents` / `HookContextMap` / `ContributionPointMap` 三张表，业务键由 api 包通过 declaration merging 注入。服务类型随描述符走，没有服务名类型表。领域能力（LLM 工具调用/视觉、storage 本地路径权限等）不是 core 扩展点——它们是服务实例 / model handle 上的元数据，由各领域 `*-api` 的 helper 函数（如 `resolveLLMModel`）过滤，不进内核 DI。
+4. **扩展点显式化**：core 只保留 `AalisEvents`；钩子与贡献点的扩展点 `HookContextMap` / `ContributionPointMap` 在各自的契约包 `@aalis/api-hooks` / `@aalis/api-contributions`。业务键由 api 包通过 declaration merging 注入。服务类型随描述符走，没有服务名类型表。领域能力（LLM 工具调用/视觉、storage 本地路径权限等）不是 core 扩展点——它们是服务实例 / model handle 上的元数据，由各领域 `*-api` 的 helper 函数（如 `resolveLLMModel`）过滤，不进内核 DI。
 
 ## 包分层
 
 ```mermaid
 flowchart TB
   impl["<b>实现包</b>（runtime + business logic）<br/>plugin-llm-deepseek / plugin-llm-openai / plugin-llm-ollama<br/>plugin-memory-sqlite / plugin-memory-mongodb / …<br/>plugin-tools / plugin-commands / plugin-gateway / …"]
-  api["<b>api 包</b>（types + 服务描述符 + 钩子/事件增强 + 领域 helper）<br/>api-llm / api-memory / api-storage<br/>api-embedding / api-vectorstore<br/>api-tools / api-commands / api-gateway<br/>api-webui / api-authority / api-agent"]
-  core["<b>@aalis/core</b>（runtime infra + 描述符 + 扩展点）<br/>App · definePlugin / defineService · EventBus · ServiceContainer · HookRegistry<br/>PluginManager · ConfigManager · Logger · ……<br/> <br/><b>扩展点</b>（由 api 包 declaration merging 注入）<br/>· AalisEvents（事件名 → 参数元组）<br/>· HookContextMap（钩子名 → 中间件上下文）<br/>· ContributionPointMap（贡献点名 → spec 类型）<br/>服务类型随描述符走"]
+  api["<b>api 包</b>（types + 服务描述符 + 钩子/事件增强 + 领域 helper）<br/>api-hooks / api-contributions / api-host-config / api-plugin-source<br/>api-llm / api-memory / api-storage<br/>api-embedding / api-vectorstore<br/>api-tools / api-commands / api-gateway<br/>api-webui / api-authority / api-agent"]
+  core["<b>@aalis/core</b>（runtime infra + 描述符 + 扩展点）<br/>App · createApp · definePlugin / defineService<br/>内置服务 events / lifecycle / logger / config / provide / services<br/>插件编排 · Logger · ……<br/> <br/><b>扩展点</b>（由 api 包 declaration merging 注入）<br/>· AalisEvents（事件名 → 参数元组）<br/>服务类型随描述符走"]
   impl -->|imports types| api
   api -->|imports types + augments| core
 ```
 
-## core 提供的扩展点
+## 扩展点
 
 ### 1. 服务描述符 — 类型与绑定随契约包走
 
@@ -48,11 +48,11 @@ declare module '@aalis/core' {
 }
 ```
 
-### 3. `HookContextMap` — 钩子名 → 中间件上下文数据
+### 3. `HookContextMap` — 钩子名 → 中间件上下文数据（`@aalis/api-hooks`）
 
 ```ts
 // api-agent 注入 agent:* 钩子
-declare module '@aalis/core' {
+declare module '@aalis/api-hooks' {
   interface HookContextMap {
     'agent:input:before': { message: IncomingMessage; metadata: Record<string, unknown> };
     'agent:llm:before':   { messages: Message[]; tools: ToolDefinition[]; sessionId: string };
@@ -62,6 +62,19 @@ declare module '@aalis/core' {
 ```
 
 任何在 `hooks.middleware('agent:llm:before', ...)` 处签名的消费插件，都需要 **side-effect import**（或常规 import）该 api 包以激活类型增强。
+
+### 4. `ContributionPointMap` — 贡献点名 → spec 类型（`@aalis/api-contributions`）
+
+```ts
+// api-agent 注入 agent:prompt 贡献点
+declare module '@aalis/api-contributions' {
+  interface ContributionPointMap {
+    'agent:prompt': PromptContribution;
+  }
+}
+```
+
+`AalisEvents` 与这两张表不在同一个模块里：同一文件要同时增广时，分成 `declare module '@aalis/core'` 与 `declare module '@aalis/api-hooks'` / `'@aalis/api-contributions'` 几个块。
 
 ## 领域能力 = handle 元数据（非 core 扩展点）
 
@@ -97,15 +110,19 @@ const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
 | `api-commands` | — | `commands` | — | `CommandService` |
 | `api-gateway` | `inbound:confirm` / `inbound:command` / `inbound:flow` / `inbound:trigger` / `inbound:dispatch` / `outbound:dispatch` | `gateway` | — | `GatewayService`, `InboundPhaseData`；注入事件 `gateway:phase:done` |
 | `api-webui` | — | `webui-server` / `webui-client` | — | `WebUIService`, `WebuiPage`, `WebuiComponent` 等；绑定门面 `registerPage` / `registerAction`；向 `PluginMeta` 注入 `extends`，向 schema-config 注入 SchemaField 表单交互属性 |
-| `api-authority` | — | `authority` | — | `AuthorityService`, `ExecutionGuard`, `ExecutionGuardContext`, `CapabilityVisibility`, `AccessConfirmHandler`, `TemporaryGrant` 等 |
+| `api-authority` | — | `authority` | — | `AuthorityService`, `ExecutionGuard`, `ExecutionGuardContext`, `CapabilityVisibility`, `AccessConfirmHandler`, `TemporaryGrant` 等；向 `AalisConfig`（`@aalis/api-host-config`）注入 `owners` 等字段 |
 | `api-agent` | `agent:input:before` / `agent:turn:after` / `agent:tool:before` / `agent:tool:after` / `agent:reply:before` / `agent:llm:before` / `agent:llm:after` | `agent` | `agent:prompt` | `AgentService`, `PreprocessorFn`, `PluginGroupInfo` |
+| `api-hooks` | （定义该扩展点） | `hooks` | — | `Hooks`, `HookRegistry`, `MiddlewareFn`, `MiddlewareNext`；默认提供者 plugin-hooks |
+| `api-contributions` | — | `contributions` | （定义该扩展点） | `Contributions`, `ContributionRegistry`, `ContributionSpec`, `ContributionHandle`；默认提供者 plugin-contributions |
+| `api-host-config` | — | `host-config` | — | `HostConfig`，配置文档类型 `AalisConfig`（declaration merging 目标）；由宿主提供 |
+| `api-plugin-source` | — | `plugin-source` | — | `PluginSourceService`；导出插件入口判定 `pluginDefinitionOf`；由宿主提供 |
 
 ## 何时需要新建 api 包
 
 满足任一条件即应建立 api 包：
 
 - 该领域有 **>1 个潜在实现**（多 LLM provider、多 memory backend）
-- 该领域要 **导出服务描述符**或 **augment** core 的 `HookContextMap` / `AalisEvents` / `ContributionPointMap`（或定义自己的能力枚举 + helper）
+- 该领域要 **导出服务描述符**或 **augment** `AalisEvents`（core）、`HookContextMap`（`@aalis/api-hooks`）、`ContributionPointMap`（`@aalis/api-contributions`）（或定义自己的能力枚举 + helper）
 - 该领域类型被 **>3 个其他插件**直接 import
 
 只有一个实现且无类型外溢的“叶子插件”（如 plugin-todo-list、plugin-image-sender 内部）不需要 api 包。
@@ -172,6 +189,7 @@ await entry?.instance.chat({ messages });
 
 ```ts
 import '@aalis/api-agent'; // 激活 agent:* 类型增强
+// hooks 是 uses 里声明的绑定接口（描述符从 @aalis/api-hooks 导入）
 hooks.middleware('agent:llm:before', async (data, next) => {
   data.messages.unshift({ role: 'system', content: '...' });
   await next();
@@ -182,10 +200,11 @@ hooks.middleware('agent:llm:before', async (data, next) => {
 
 ### 注册自己的服务与钩子
 
-导出描述符，并把钩子上下文挂进 `HookContextMap`（能力枚举留在自己 api 包里，不进 core）：
+导出描述符，并把钩子上下文挂进 `@aalis/api-hooks` 的 `HookContextMap`（能力枚举留在自己 api 包里，不进 core）：
 
 ```ts
 // my-service-api/src/index.ts
+import type {} from '@aalis/api-hooks'; // declaration merging 锚点
 import { defineService, type ServiceRef } from '@aalis/core';
 
 export type MyCapability = 'feature-a' | 'feature-b';
@@ -196,7 +215,7 @@ export interface MyService {
 
 export const myService = defineService<MyService>('my-service');
 
-declare module '@aalis/core' {
+declare module '@aalis/api-hooks' {
   interface HookContextMap {
     'my-service:before': { args: unknown; result?: unknown };
   }
@@ -209,7 +228,7 @@ export function resolveMyService(source: ServiceRef<MyService>, caps?: MyCapabil
 
 ### 提供一种可登记的能力
 
-工具、命令、页面这类"登记进某个服务、由它派活"的能力，由契约包、枢纽服务、按激活绑定门面组成；范本、与四原语的共同契约及允许的差异见
+工具、命令、页面这类"登记进某个服务、由它派活"的能力，由契约包、枢纽服务、按激活绑定门面组成；范本、与原语的共同契约及允许的差异见
 [枢纽服务](./hub-services.md)。
 
 ## CI 校验
