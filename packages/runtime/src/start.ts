@@ -88,8 +88,7 @@ function readCoreVersion(): string | undefined {
 
 export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   const { consoleSink = true, fileLog = true, terminalRestore = true } = opts;
-  // 非数组（缺省，或 JS 宿主仍传旧版 `true`）一律按 process.argv 分发
-  const subcommands = Array.isArray(opts.subcommands) ? opts.subcommands : process.argv.slice(2);
+  const subcommands = opts.subcommands ?? process.argv.slice(2);
 
   // ── 最早期：任何日志之前先装 bootstrap buffer，再装 terminal / console sink ──
   const bootstrap = installBootstrapBuffer();

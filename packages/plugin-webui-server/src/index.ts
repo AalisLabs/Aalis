@@ -1053,15 +1053,13 @@ async function startWebuiServer(caps: Caps): Promise<void> {
         try {
           const models = await provider.instance.listModels();
           for (const m of models) {
-            const isModelInfo = typeof m === 'object' && m !== null && 'id' in m;
-            const modelId = isModelInfo ? ((m as Record<string, unknown>).id as string) : String(m);
-            const modelCaps = isModelInfo ? ((m as Record<string, unknown>).capabilities as string[]) : [];
+            const modelId = String(m);
             aggregated.push({
               value: modelId,
               model: modelId,
               provider: provider.label ?? provider.contextId,
               contextId: provider.contextId,
-              capabilities: modelCaps,
+              capabilities: [],
             });
             flatValues.push(modelId);
           }

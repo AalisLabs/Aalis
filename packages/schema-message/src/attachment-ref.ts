@@ -56,8 +56,7 @@ export interface AttachmentRef {
  *
  * desc 会被净化：换行折成空格、`|` → `丨`、`]` → `］`。parseAttachmentRefs 的 desc
  * 字符类排除这三者，不净化则整条占位符再也解析不到——视觉模型输出带表格或多行时，
- * 历史引用解析会静默落空。（buildAttachmentRefMatcher 的字符类更宽，只排除 `]` 与
- * 换行，以便改写存量占位符，见其注释。）
+ * 历史引用解析会静默落空。
  */
 export function formatAttachmentRef(r: AttachmentRef): string {
   const desc = sanitizeDesc(r.desc);
@@ -105,9 +104,6 @@ export function parseAttachmentRefs(text: string): AttachmentRef[] {
 export function buildAttachmentRefMatcher(kind: AttachmentRefKind, ref: string): RegExp {
   const escapedKind = kind.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const escapedRef = ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // desc 字符类比 parseAttachmentRefs 宽松：只排除 `]` 与换行，允许裸 `|`。后缀
-  // ` | ref:<escapedRef>]` 是字面量，已足够锚定整条占位符。两个读侧因此**刻意不一致**：
-  // parse 只发现净化过的新格式，matcher 额外兼容 desc 带裸 `|` 的存量占位符——收严的话，
-  // 这些历史占位符 update_image_description 再也改不动，只能一直挂着过时描述。
-  return new RegExp(`\\[${escapedKind}(?:: [^\\]\\n]*?)? \\| ref:${escapedRef}\\]`, 'g');
+  // desc 字符类与 parseAttachmentRefs 相同：排除 `|`、`]` 与换行（formatAttachmentRef 写入时已净化）。
+  return new RegExp(`\\[${escapedKind}(?:: [^\\]\\n|]*?)? \\| ref:${escapedRef}\\]`, 'g');
 }

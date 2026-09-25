@@ -50,18 +50,8 @@ export function useDetailStream(
 
         if (data.type === 'stream_resume') {
           // 服务端在订阅瞬间给出的“当前累积时间线”——直接信任之
-          let segs: ContentSegment[] = [];
-          if (Array.isArray(data.segments) && data.segments.length > 0) {
-            segs = data.segments as ContentSegment[];
-          } else {
-            // 极老的服务端兼容：仅有字符串字段时退化展示，顺序信息已丢失
-            const r = data.reasoningContent ?? '';
-            const c = data.content ?? '';
-            if (r) segs.push({ type: 'reasoning_text', content: r });
-            if (c) segs.push({ type: 'text', content: c });
-          }
           setState({
-            segments: segs,
+            segments: (data.segments as ContentSegment[] | undefined) ?? [],
             isStreaming: !data.done,
             done: !!data.done,
           });
