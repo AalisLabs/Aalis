@@ -81,7 +81,7 @@ describe('trigger-policy state', () => {
 
   it('calculateScoreIncrement 用户高频时权重抬升', () => {
     const s = createState('p');
-    s.userInteractions.set('u1', { count: 20, lastTime: Date.now() });
+    s.userInteractions.set('u1', 20);
     const incHigh = calculateScoreIncrement(s, defaultTriggerPolicyConfig, 'u1');
     const incBase = calculateScoreIncrement(s, defaultTriggerPolicyConfig);
     expect(incHigh).toBeGreaterThan(incBase);

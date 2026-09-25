@@ -65,7 +65,6 @@ export interface TriggerScopeOverride {
   activityDecayMinutes?: number;
   scoreDecayMinutes?: number;
   idleTriggerScope?: IdleTriggerScope;
-  idleTriggerStrategy?: IdleTriggerStrategy;
   idleTriggerMinutes?: number;
   idleTriggerStyle?: IdleTriggerStyle;
   idleTriggerMaxMinutes?: number;
@@ -186,8 +185,6 @@ function parseOverrides(raw: unknown): TriggerScopeOverride[] {
     }
     const sScope = obj.idleTriggerScope;
     if (sScope === 'off' || sScope === 'session' || sScope === 'platform') o.idleTriggerScope = sScope;
-    const sStrat = obj.idleTriggerStrategy;
-    if (sStrat === 'all-quiet' || sStrat === 'fixed') o.idleTriggerStrategy = sStrat;
     const sStyle = obj.idleTriggerStyle;
     if (sStyle === 'exponential' || sStyle === 'fixed') o.idleTriggerStyle = sStyle;
     out.push(o);

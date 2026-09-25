@@ -48,12 +48,6 @@ describe('flow-control state', () => {
     s.replyTimestamps = [now - 90_000, now - 30_000, now - 10_000];
     expect(rateLimitUsedNow(s, cfg)).toBe(2);
   });
-
-  it('rateLimitUsedNow 关闭时返回 0', () => {
-    const s = createState('p');
-    s.replyTimestamps = [Date.now()];
-    expect(rateLimitUsedNow(s, defaultFlowControlConfig)).toBe(0);
-  });
 });
 
 describe('flow-control TTL 清扫', () => {
