@@ -18,14 +18,6 @@ import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 
-export type {
-  PlatformProfile,
-  SessionConfig,
-  SessionInfo,
-  SessionManagerService,
-  SessionTreeNode,
-} from '@aalis/api-session-manager';
-
 const configSchema: ConfigSchema = {
   defaults: {
     label: '全局默认配置',

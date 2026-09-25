@@ -5,7 +5,7 @@ import type { Logger } from '@aalis/core';
 // UserStore —— users.json v5 数据层（数字等级单轴存储）
 //
 // 单 owner 终态：每个外部身份恰好一个**整数等级**（默认 0，封禁=负数；owner 不入表）。
-// 无能力 glob、无密码、无绑定、无委托树。净化：非 v5 一律丢弃重来（0.5.0 未发，无迁移）。
+// 无能力 glob、无密码、无绑定、无委托树。非 v5 文件按加载失败处理（记 error、拒写），不做迁移。
 // 裁决在 authority-manager.ts；等级数字引擎在 authority-model.ts。
 // ════════════════════════════════════════════════════════════
 
@@ -49,7 +49,7 @@ export class UserStore {
     return this.users.entries();
   }
 
-  // ── 持久化（版本见 USERS_VERSION；非当前版本一律丢弃，净化无迁移）──
+  // ── 持久化（版本见 USERS_VERSION；非当前版本按加载失败拒写，无迁移）──
   save(): void {
     if (!this.dirty) return;
     if (this.loadFailed) {
@@ -118,14 +118,13 @@ export class UserStore {
           if (clean.level !== undefined || clean.note) this.users.set(key, clean);
         }
         this.logger.debug(`加载 ${this.users.size} 条用户等级记录`);
-      } else if (data.version !== USERS_VERSION) {
-        // 旧版本（v1-v4 能力/密码/档位模型）净化丢弃：0.5.0 未发，无迁移
-        this.logger.info(`users.json 版本 ${data.version ?? '未知'} 非 v5，按净化策略丢弃旧数据，重新开始`);
       } else {
-        // 版本对得上但 users 不是对象（截断/被外部工具写坏）：这不是「旧版本净化」，
+        // 版本不是 v5（旧的能力/密码/档位模型或更高版本）或 users 不是对象（截断/被外部工具写坏）：
         // 原表仍可能在文件里，等同解析失败按拒写处理，别让一次全量快照抹掉它。
         this.loadFailed = true;
-        this.logger.error('users.json 版本为 v5 但 users 字段结构非法，本次运行不再写入该文件');
+        this.logger.error(
+          `users.json 不是有效的 v5 结构（version: ${data.version ?? '未知'}），本次运行不再写入该文件；请人工修复，或删除/移走该文件后重启按全新开始`,
+        );
       }
     } catch (err) {
       // 解析失败同理：坏文件不能被一次全量快照覆盖掉
