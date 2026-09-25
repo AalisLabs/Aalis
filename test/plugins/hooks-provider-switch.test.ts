@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { contributions } from '../../packages/api-contributions/src/index.js';
 import { type Hooks, hooks } from '../../packages/api-hooks/src/index.js';
-import { App, definePlugin, type Logger, provide } from '../../packages/core/src/index.js';
+import { App, definePlugin, type Logger, provide, services } from '../../packages/core/src/index.js';
 import { Registry as ContributionTable } from '../../packages/plugin-contributions/src/index.js';
 import { Registry as HookTable } from '../../packages/plugin-hooks/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -37,12 +37,16 @@ function world(logger?: Logger): App {
   return app;
 }
 
-/** 以更高优先级提供第二份钩子登记表的插件（非独占，合法） */
+/** 以更高优先级提供第二份钩子登记表的插件（非独占，合法）；altTable 是最近一次激活提供的那份 */
+let altTable: HookTable | undefined;
 const altHooks = definePlugin({
   name: 'alt-hooks',
   uses: { provide },
   provides: [hooks],
-  apply: ({ provide }) => void provide(hooks, new HookTable(), { priority: 10 }),
+  apply: ({ provide }) => {
+    altTable = new HookTable();
+    provide(hooks, altTable, { priority: 10 });
+  },
 });
 
 /** 在 apply 里登记一条中间件的消费者；facade 留给测试在运行期再登记 */
@@ -161,6 +165,7 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
 
     await app.plugin(altHooks);
     await app.plugins.idle();
+    expect(app.bind({ services }).services.get(hooks), '胜者已换成新表').toBe(altTable);
     trail.length = 0;
     await host.hooks.run(H, {} as never);
     expect(applied, '消费者没有重启').toEqual(['a', 'b']);
@@ -265,15 +270,17 @@ describe('非独占热换（第二个提供者以更高优先级上线）', () =
     const host = app.bind({ contributions });
     const before = host.contributions.collect(POINT).map(h => h.key);
     expect(before).toEqual(['x/blk', 'y/blk']);
+    const alt = new ContributionTable();
     await app.plugin(
       definePlugin({
         name: 'alt-contributions',
         uses: { provide },
         provides: [contributions],
-        apply: ({ provide }) => void provide(contributions, new ContributionTable(), { priority: 10 }),
+        apply: ({ provide }) => void provide(contributions, alt, { priority: 10 }),
       }),
     );
     await app.plugins.idle();
+    expect(app.bind({ services }).services.get(contributions), '胜者已换成新表').toBe(alt);
     expect(host.contributions.collect(POINT).map(h => h.key)).toEqual(before);
   });
 
