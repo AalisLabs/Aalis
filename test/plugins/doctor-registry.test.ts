@@ -10,10 +10,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
-import { doctor } from '../../packages/api-doctor/src/index.js';
+import { type CheckResult, type DoctorService, doctor } from '../../packages/api-doctor/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
 import { App, provide, services } from '../../packages/core/src/index.js';
-import type { CheckResult, DoctorService } from '../../packages/plugin-doctor/src/index.js';
 import doctorPlugin, { formatReport } from '../../packages/plugin-doctor/src/index.js';
 
 // ===== helpers =====

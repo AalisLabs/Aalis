@@ -22,10 +22,6 @@ import {
   type ServiceRef,
 } from '@aalis/core';
 
-// 公共类型由 api-doctor 维护并增强 @aalis/core；本包从那里 re-export，
-// 让旧消费者 `import { CheckResult } from '@aalis/plugin-doctor'` 继续可用。
-export type { CheckCategory, CheckLevel, CheckResult, CheckSpec, DoctorReport, DoctorService };
-
 const PLUGIN_NAME = '@aalis/plugin-doctor';
 
 const uses = {

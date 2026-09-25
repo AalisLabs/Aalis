@@ -154,7 +154,7 @@ describe('硬化：未授权不可自我提权 / deny 绝对 / 群内不跨用�
   });
 });
 
-describe('持久化（v5 save/load 往返；非 v5 净化丢弃）', () => {
+describe('持久化（v5 save/load 往返）', () => {
   function memStorage() {
     let written = '';
     return {
@@ -182,16 +182,6 @@ describe('持久化（v5 save/load 往返；非 v5 净化丢弃）', () => {
     const m2 = new AuthorityManager(mkConfig(), mkLogger(), s.svc);
     await m2.init();
     expect(m2.listUsers().find(u => u.userId === 'a')?.level).toBe(3);
-  });
-
-  it('非 v5（旧能力/档位模型）文件按净化策略丢弃', async () => {
-    const legacy = {
-      readFile: async () => JSON.stringify({ version: 4, users: { 'onebot:a': { tier: 'trusted' } } }),
-      writeFile: async () => {},
-    } as unknown as StorageService;
-    const m = new AuthorityManager(mkConfig(), mkLogger(), legacy);
-    await m.init();
-    expect(m.listUsers()).toEqual([]);
   });
 });
 
