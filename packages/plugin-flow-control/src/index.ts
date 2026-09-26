@@ -206,8 +206,8 @@ async function run(caps: Caps): Promise<void> {
 
   /**
    * 手里没有会话类型时判作用域用的平台、类型与目标：先用状态里记下的，状态没有或缺类型（没有真人消息经过本相位的群、
-   * 只有禁言记录的群）再按会话 ID 约定推断，平台也先用状态里的。入站带 source 的内部注入（定时任务、workflow、
-   * 委派、闲置注入等合成回合）与出站回复记账都走这里，同一口径；推断结果只进本插件的状态、不回写消息。不符合约定的
+   * 只有禁言记录的群）再按会话 ID 约定推断，平台也先用状态里的。入站带 source 且不带会话类型的内部注入（定时任务、
+   * workflow、委派、闲置注入等合成回合）与出站回复记账都走这里，同一口径；推断结果只进本插件的状态、不回写消息。不符合约定的
    * （如 WebUI）类型未知，只有会话类型段为通配的作用域（onebot:*、*）命中
    */
   function knownScope(
@@ -306,11 +306,12 @@ async function run(caps: Caps): Promise<void> {
       return; // swallow
     }
 
-    // 带 source 的内部注入不带会话类型，与回复记账同一口径；其余消息（真人消息，含 WebUI、CLI 发进平台会话的）
-    // 按消息自身的平台、类型与目标判
-    const scope = message.source
-      ? knownScope(sessionId, message.platform)
-      : { platform: message.platform, sessionType: message.sessionType, targetId: extractTargetId(message) };
+    // 带 source 且不带会话类型的内部注入与回复记账同一口径；其余消息（真人消息，含 WebUI、CLI 发进平台会话的；
+    // 自带会话类型的注入）按消息自身的平台、类型与目标判
+    const scope =
+      message.source && !message.sessionType
+        ? knownScope(sessionId, message.platform)
+        : { platform: message.platform, sessionType: message.sessionType, targetId: extractTargetId(message) };
     if (!isScopeEnabled(cfg, scope.platform, scope.sessionType, scope.targetId)) return next();
 
     getOrCreate(sessionId, scope.platform, scope.sessionType, scope.targetId);

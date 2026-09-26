@@ -193,8 +193,8 @@ const DEFAULT_AGENT_TIMEOUT_SEC = 120;
  *   两个 agent 回合会因 lane 相同而互相 abort。但**显式指定相同 sessionId 的并行 agent 节点**仍会
  *   因 `agent:turn:after` 按 sessionId 匹配而串扰捕获——省略 sessionId（默认一次性子会话）可彻底避免。
  * - 等待期间不感知 run 取消（与 wait 节点一致），最长阻塞至 timeoutSeconds。
- * - 目标会话处于禁言期时（禁言不看作用域），消息会被 flow 相位吞掉而永不回 `agent:turn:after`，
- *   节点会等满超时才失败。带 source 的消息不经触发策略、不受回复后冷却；限速只在目标会话落入 flow-control 作用域时生效。
+ * - 目标会话处于禁言期时（禁言不看作用域），或落在 flow-control 作用域内且限速窗口已满时，消息会被 flow 相位
+ *   吞掉而永不回本节点的 `agent:turn:after`，节点会等到超时才失败。带 source 的消息不经触发策略、不受回复后冷却；限速只在目标会话落入 flow-control 作用域时生效。
  */
 async function execAgent(node: AgentNodeSpec, ec: ExecCtx): Promise<string> {
   const instruction = interpolateString(node.instruction, ec.vars, ec.outputs);
