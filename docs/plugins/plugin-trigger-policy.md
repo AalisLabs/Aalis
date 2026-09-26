@@ -38,7 +38,7 @@ export default definePlugin({
 inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flow 之前触发）
 ```
 
-判定流程（同步完成：记入站、判定、清零在同一拍做完，放行顺序即到达顺序，不需要 plugin-trigger-laya 那样放行前核对顺序）：
+判定流程（同步完成：记入站、判定、清零在同一拍做完，放行顺序即到达顺序）：
 
 0. 本插件不是生效的触发插件（`trigger` 服务的胜者另有其人）→ `next()`，什么都不做：不计数、不识别、不归档。胜者每次入站只取一次，判定途中切换偏好不会让同一条消息被判两次。
 1. 带 `source` 的内部注入（闲置触发、定时任务、workflow、跨会话委派）→ `next()` 跳过策略：不计数，不改写 `triggerType`（委派的 `proactive` 原样保留）。真人消息由平台适配器投递，不设 `source`。
