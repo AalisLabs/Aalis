@@ -45,6 +45,8 @@ interface IncomingMessage {
 | `idle` | 空闲自动触发，无 userId |
 | `proactive` | 另一会话的 agent 经跨会话委派发起，content 是任务描述而非用户消息 |
 
+真人消息的 `triggerType` 由 `inbound:trigger` 相位生效的触发插件写入（`immediate` / `interval`），平台适配器不设置；`idle`、`proactive` 由注入方自带。flow 相位对 `immediate` 不查回复后冷却与限速，入站消息上预设的 `immediate` 在触发插件的作用域外（或没装触发插件时）会原样生效。
+
 ## OutgoingMessage
 
 ```ts

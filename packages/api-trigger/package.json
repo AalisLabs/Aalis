@@ -23,7 +23,6 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@aalis/api-media": "workspace:>=0.11.0 <1.0.0",
     "@aalis/api-message-archive": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-persona": "workspace:>=0.8.0 <1.0.0",
     "@aalis/api-session-manager": "workspace:>=0.10.0 <1.0.0",
@@ -41,5 +40,5 @@
     "aalis",
     "aalis-api"
   ],
-  "description": "触发判定契约：trigger 服务描述符（选出当前生效的触发插件，二选一）与触发插件共用的宿主函数"
+  "description": "触发判定契约：trigger 服务描述符（选出当前生效的触发插件，二选一）与触发插件共用的函数"
 }
