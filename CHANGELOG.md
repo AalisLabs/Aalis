@@ -206,6 +206,12 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 
 **迁移**：需要受限工具或指令的部署安装 `@aalis/plugin-authority`（create-aalis 的 minimal 及以上各档已包含）。嵌入式宿主或测试可自行 `setExecutionGuard`。想保留 tool-onebot 旧行为，把对应 `allow*` 设为 true。
 
+### 浏览器工具的私网拦截改在浏览器级（@aalis/plugin-tool-browser）
+
+- `blockPrivate=true`（默认）时，私网与本机拦截从逐页的请求拦截改为浏览器级拦截。此前 SharedWorker、Service Worker 与页面自己 `window.open` 打开的窗口发出的请求不经本插件的拦截；现在与页面、dedicated worker 一样逐个判定，被拒的请求以 `net::ERR_BLOCKED_BY_CLIENT` 失败。WebSocket 连接仍不经过这道拦截。
+- 判定超过 10 秒未完成的请求按拒绝处理；此前没有时限，会一直挂到导航超时。
+- 请求拦截开启失败时关掉刚启动的浏览器并报错，浏览器不会在没有拦截的情况下运行。
+
 ### 市场装卸与 WebUI 接口（@aalis/plugin-package-manager、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-authority）
 
 - 市场安装前经 `npm view <spec> keywords --json` 检查类型关键词，只放行带 `aalis-plugin` 或 `aalis-interface` 的包；内核、宿主、契约、schema、工具库类包被拒，并提示改用「更新所选」。
