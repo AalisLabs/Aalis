@@ -138,7 +138,10 @@ const privateMsg = (content: string): IncomingMessage => ({
 
 const pokeMsg = (): IncomingMessage => groupMsg('[戳一戳: 甲(30001) 戳了你]', { noticeType: 'poke' });
 
-/** 窗口投影用的历史：system / tool / notice 行与非字符串正文应被丢弃，无昵称时 nick 回落 name */
+/**
+ * 窗口投影用的历史：system / tool / notice 行与非字符串正文应被丢弃，无昵称时 nick 回落 name；
+ * 只有工具调用的 assistant 行按 agent 落库的真实形态是空串，照常入窗（与 replay_data.py 一致，侧车渲染时丢弃）
+ */
 const HISTORY: Message[] = [
   { role: 'system', content: '系统提示' },
   { role: 'user', content: '乙: 早', name: '30002', metadata: { userId: '30002', nickname: '乙' } },
@@ -149,6 +152,12 @@ const HISTORY: Message[] = [
     toolCalls: [{ id: 't1', type: 'function', function: { name: 'x', arguments: '{}' } }],
   },
   { role: 'tool', content: '工具结果', toolCallId: 't1' },
+  {
+    role: 'assistant',
+    content: '',
+    toolCalls: [{ id: 't2', type: 'function', function: { name: 'x', arguments: '{}' } }],
+  },
+  { role: 'tool', content: '工具结果', toolCallId: 't2' },
   { role: 'assistant', content: '在的' },
   { role: 'notice', content: '[notice/poke] 丙 戳了戳 Aalis' },
 ];
@@ -156,6 +165,7 @@ const HISTORY: Message[] = [
 const EXPECTED_ROWS = [
   { role: 'user', content: '乙: 早', userId: '30002', nick: '乙' },
   { role: 'user', content: '30003: 在吗', userId: '30003', nick: '30003' },
+  { role: 'assistant', content: '' },
   { role: 'assistant', content: '在的' },
 ];
 

@@ -149,8 +149,9 @@ function str(v: unknown): string | undefined {
 
 /**
  * 历史 → 侧车窗口：只留 user / assistant 且正文是字符串的行，取最后 limit 行；nick 取 metadata.nickname，缺失回落
- * name（归档时为 userId）。先滤掉正文不是字符串的行再取行：正文为空的工具调用行不占名额（侧车本来也丢弃它们），
- * 这一点与侧车渲染回归 replay_data.py 只按角色过滤不同，差别只在侧车建昵称表时看到多少行
+ * name（归档时为 userId）。先过滤再取行，与侧车渲染回归 replay_data.py 的取法一致：只有工具调用的 assistant 行
+ * 以空串落库，照常计入窗口，到侧车渲染时才丢弃；正文不是字符串的行（目前只有 subtask 在子任务会话里合成的
+ * report 行）只在这里滤掉
  */
 function toRows(history: Message[], limit: number): LayaRow[] {
   const rows: LayaRow[] = [];
