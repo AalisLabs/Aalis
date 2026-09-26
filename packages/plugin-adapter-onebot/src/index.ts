@@ -1,6 +1,7 @@
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
 import { contributions } from '@aalis/api-contributions';
 import { flowControl } from '@aalis/api-flow-control';
+import { hooks } from '@aalis/api-hooks';
 import { llm } from '@aalis/api-llm';
 import { media } from '@aalis/api-media';
 import { memory } from '@aalis/api-memory';
@@ -597,6 +598,7 @@ const uses = {
   memory: optional(memory),
   messageArchive: optional(messageArchive),
   flowControl: optional(flowControl),
+  hooks: optional(hooks),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -1040,6 +1042,28 @@ function runAdapter(caps: Caps): void {
     sendAction,
   });
   const { getOrLoadForward, fetchForwardOnce, expandForwardsInText } = forwardExpander;
+
+  // 参与 memory:clear：转发原文是聊天内容，归入 context。条目没有会话维度，只在全局清理时清，
+  // 会话级清理不动它（靠持久化层的 7 天回收）。多实例共用同一命名空间、各有一份内存缓存：
+  // 每个实例都清自己的缓存（持久化层重复删是空操作），回显合并成一条——已有成功项时不再追加，
+  // 前一实例失败而本实例成功时改写那一条。
+  caps.hooks.middleware('memory:clear', async (data, next) => {
+    if (data.scope === 'all' && (!data.types || data.types.includes('context'))) {
+      const prev = data.results.find(r => r.source === 'onebot-forward');
+      try {
+        const removed = await forwardExpander.clearAll();
+        const done = { source: 'onebot-forward', success: true, message: `合并转发原文已清空（${removed} 条）` };
+        if (!prev) data.results.push(done);
+        else if (!prev.success) Object.assign(prev, done);
+      } catch (err) {
+        if (!prev) {
+          const msg = err instanceof Error ? err.message : String(err);
+          data.results.push({ source: 'onebot-forward', success: false, message: `合并转发原文清空失败: ${msg}` });
+        }
+      }
+    }
+    await next();
+  });
 
   // ----- Action 发送 -----
 

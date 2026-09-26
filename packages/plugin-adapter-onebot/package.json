@@ -41,7 +41,8 @@
     "@aalis/util-network-guard": "workspace:>=0.6.2 <1.0.0",
     "@aalis/util-text-normalize": "workspace:>=0.5.2 <1.0.0",
     "ws": "^8.18.0",
-    "@aalis/api-contributions": "workspace:>=0.1.0 <1.0.0"
+    "@aalis/api-contributions": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -68,6 +69,7 @@
       ],
       "optional": [
         "flow-control",
+        "hooks",
         "llm",
         "media",
         "memory",

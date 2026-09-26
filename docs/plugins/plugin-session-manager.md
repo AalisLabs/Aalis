@@ -44,7 +44,7 @@ export default definePlugin({
 
 ## 功能
 
-- **会话 CRUD**: 创建、查询、更新、归档、删除会话（删除会递归删除子会话，并经 `memory:clear` 钩子清空该会话的消息历史）
+- **会话 CRUD**: 创建、查询、更新、归档、删除会话（删除会递归删除子会话，并经 `memory:clear` 钩子以会话级、不带类型清理，该会话的消息历史、摘要、待办与向量随之清空）
 - **会话树**: 支持父子会话关系（用于子任务系统）
 - **平台配置**: 每个平台可独立设置 persona、默认模型（`llm`）、启用的工具分组、think 等，在解析会话配置时叠加
 - **事件发射**: `session:created`、`session:updated`、`session:deleted`、`session:completed`

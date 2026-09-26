@@ -9,6 +9,8 @@
 
 待办经 memory 服务的 metadata 接口持久化（namespace `todo-list`，key 为会话 ID）。memory 未装时不报错，但待办只存活于本次装载的内存缓存：插件卸载或重装即清空。
 
+待办属于会话级短期上下文，以 `context` 类型参与 `memory:clear`：会话级清理（`/clear` 与删除会话）删除本会话的待办，全局清理（`/clear all`）删除全部会话的待办。
+
 ## 插件声明
 
 ```typescript
@@ -22,6 +24,7 @@ export default definePlugin({
     config,
     memory: optional(memory),
     webui: optional(webuiServer),
+    hooks: optional(hooks),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -51,6 +54,6 @@ export default definePlugin({
 
 | 事件 | 载荷 | 说明 |
 |---|---|---|
-| `todo:updated` | `(sessionId: string, items: TodoItem[])` | `manage_todo_list` 写入或 `clearTodos` 清空时触发（清空时 `items` 为 `[]`） |
+| `todo:updated` | `(sessionId: string, items: TodoItem[])` | `manage_todo_list` 写入、`clearTodos` 清空或 `memory:clear` 清理时触发（后两者 `items` 为 `[]`，全局清理时每个被清的会话各触发一次） |
 
 WebUI 前端通过 WebSocket 接收 `todo_updated` 推送，实时显示任务进度面板。

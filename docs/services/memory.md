@@ -31,7 +31,7 @@ clearSession(sessionId: string): Promise<void>;
 ### 2.2 可选方法（`?` 修饰，按需实现）
 
 ```ts
-clearAll?(): Promise<void>;                                          // 清空所有会话 + 归档
+clearAll?(): Promise<void>;                                          // 清空所有会话 + 归档（不含元数据）
 trimHistory?(sessionId, keepRecent): Promise<number>;               // 归档旧消息，保留最近 keepRecent 条活跃，返回归档条数
 getFullHistory?(sessionId, limit?): Promise<Message[]>;             // 含已归档，供 UI 展示
 

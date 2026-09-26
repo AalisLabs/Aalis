@@ -42,5 +42,5 @@ export default definePlugin({
 - 自动创建 `messages` 表（含 `(sessionId, timestamp)` 与 `(archived, timestamp)` 两个索引）和 `metadata` 表
 - 启用 WAL 模式以提升并发性能
 - `getHistory()`（默认 50 条）只取未归档消息，倒序取最新 N 条后正序返回；`trimHistory()` 是把旧消息标记为归档，不做物理删除
-- `/clear` 经命令插件调用 `clearSession()`（删除该会话全部消息）；`/clear all` 调用 `clearAll()`，同时清空 `messages` 与 `metadata` 两张表。两者均仅在清理类型包含 `context` 时执行
+- `/clear` 经命令插件调用 `clearSession()`（删除该会话全部消息，含归档）；`/clear all` 调用 `clearAll()`，只清空 `messages` 表。两者均仅在清理类型为空或包含 `context` 时执行。`metadata` 表不经这两个方法清理，各命名空间由归属插件在 `memory:clear` 中间件里自行删除（见 [plugin-commands](./plugin-commands.md) 的「`/clear` 类型」一节）
 - dispose 时关闭数据库连接
