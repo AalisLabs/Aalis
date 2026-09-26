@@ -59,6 +59,19 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/**
+ * 往等级输入框里输入并失焦提交。首屏数据到达后，输入框按 value 重置草稿的挂载副作用可能还没跑；负载高时它晚于输入
+ * 执行，把草稿盖回原值，失焦就提交了旧值。输入没留住就重输，留住了在同一同步段里失焦提交。
+ */
+async function commitInput(title: string, value: string) {
+  const input = (await screen.findByTitle(title)) as HTMLInputElement;
+  await waitFor(() => {
+    fireEvent.change(input, { target: { value } });
+    expect(input.value, '输入被挂载副作用盖回').toBe(value);
+    fireEvent.blur(input);
+  });
+}
+
 describe('AuthorityPage 渲染 + 等级输入可用', () => {
   it('挂载后拉 getOverview，渲染「用户」「操作」两视图（不崩白）', async () => {
     render(<AuthorityPage />);
@@ -70,9 +83,7 @@ describe('AuthorityPage 渲染 + 等级输入可用', () => {
   it('改用户等级输入 → 触发 setUserLevel（输入不是死的）', async () => {
     render(<AuthorityPage />);
     await screen.findByText(/用户（外部身份/);
-    const input = await screen.findByTitle('整数；越大越高，负数=封禁');
-    fireEvent.change(input, { target: { value: '5' } });
-    fireEvent.blur(input);
+    await commitInput('整数；越大越高，负数=封禁', '5');
     await waitFor(() => expect(calls.some(c => c.method === 'setUserLevel')).toBe(true));
     expect(calls.find(c => c.method === 'setUserLevel')?.args).toMatchObject({
       platform: 'onebot',
@@ -84,9 +95,7 @@ describe('AuthorityPage 渲染 + 等级输入可用', () => {
   it('改整组等级 → 触发 setAuthorityOverride', async () => {
     render(<AuthorityPage />);
     await screen.findByText(/操作（指令/);
-    const groupInput = await screen.findByTitle('批量设置本组所有操作的最低等级');
-    fireEvent.change(groupInput, { target: { value: '3' } });
-    fireEvent.blur(groupInput);
+    await commitInput('批量设置本组所有操作的最低等级', '3');
     await waitFor(() => expect(calls.some(c => c.method === 'setAuthorityOverride')).toBe(true));
     expect(calls.find(c => c.method === 'setAuthorityOverride')?.args).toMatchObject({
       name: 'tool:weather',
@@ -108,11 +117,7 @@ describe('AuthorityPage 操作提示', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
   }
 
-  async function commitLevel(value: string) {
-    const input = await screen.findByTitle('整数；越大越高，负数=封禁');
-    fireEvent.change(input, { target: { value } });
-    fireEvent.blur(input);
-  }
+  const commitLevel = (value: string) => commitInput('整数；越大越高，负数=封禁', value);
 
   it('setUserLevel / deleteUser 返回带附注的 message：页面显示这段 message，而不是本地的成功提示', async () => {
     replies.setUserLevel = { message: `onebot:123 等级已更新为 -1${NOTE}` };
@@ -219,15 +224,9 @@ describe('AuthorityPage 整组设最低等级', () => {
   }
 
   async function commitGroupLevel(value: string) {
-    const input = (await screen.findByTitle('批量设置本组所有操作的最低等级')) as HTMLInputElement;
+    await screen.findByTitle('批量设置本组所有操作的最低等级');
     const overviews = calls.filter(c => c.method === 'getOverview').length;
-    // 首屏数据到达后，输入框按 value 重置草稿的挂载副作用可能还没跑；负载高时它晚于输入执行，把草稿盖回空值，
-    // 失焦就什么也不提交。输入没留住就重输，留住了在同一同步段里失焦提交
-    await waitFor(() => {
-      fireEvent.change(input, { target: { value } });
-      expect(input.value, '输入被挂载副作用盖回').toBe(value);
-      fireEvent.blur(input);
-    });
+    await commitInput('批量设置本组所有操作的最低等级', value);
     return overviews;
   }
 
