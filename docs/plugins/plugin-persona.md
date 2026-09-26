@@ -63,7 +63,7 @@ outputFormat:
 
 | 字段 | 说明 |
 |---|---|
-| `nick_name` | 昵称列表，供触发检测使用 |
+| `nick_name` | 昵称列表（字符串列表），供触发检测使用。各项去掉首尾空白，非字符串与空串的项丢弃；写成单个字符串时按一个昵称取；其它类型整项忽略，每次载入该卡记一条 warn |
 | `skills` | 可用 skill 白名单；缺省不限制，空数组表示禁用全部 skill |
 | `outputFormatPrompt` | 替换默认的输出格式说明与字段说明；JSON 字段骨架仍按 `outputFormat` 自动生成。仅在定义了 `outputFormat` 时生效 |
 | `outputFormatRetries` | `outputFormat` 校验失败时允许的重试次数（不含首次），缺省 `1`；`0` = 不重试，首次不合格即丢弃该回复。仅接受非负整数，其它值按未设处理 |

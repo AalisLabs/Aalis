@@ -497,15 +497,29 @@ async function run(caps: Caps): Promise<void> {
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
         throw new Error('YAML 顶层不是对象');
       }
-      return asCard(parsed as Record<string, unknown>);
+      return asCard(parsed as Record<string, unknown>, uri);
     } catch (err) {
       logger.warn(`角色卡解析失败，已跳过：${uri} —— ${err instanceof Error ? err.message : err}`);
       return INVALID;
     }
   }
 
+  /**
+   * 角色卡的 nick_name → 昵称列表：字符串列表的各项去空白，滤掉非字符串与空串；单个字符串按一个昵称取（不拆字：
+   * 名字表把昵称逐个展开做点名识别，拆成单字会让含其中任一个字的消息都算点名）；其它类型忽略并记一条 warn
+   */
+  function asNickNames(value: unknown, uri: string): string[] | undefined {
+    if (value === undefined || value === null) return undefined;
+    const list = typeof value === 'string' ? [value] : Array.isArray(value) ? (value as unknown[]) : undefined;
+    if (!list) {
+      logger.warn(`角色卡的 nick_name 应为字符串列表，已忽略：${uri}`);
+      return undefined;
+    }
+    return list.flatMap(n => (typeof n === 'string' && n.trim() ? [n.trim()] : []));
+  }
+
   /** YAML 对象 → PersonaCard（字段口径与角色卡文档一致） */
-  function asCard(parsed: Record<string, unknown>): PersonaCard {
+  function asCard(parsed: Record<string, unknown>, uri: string): PersonaCard {
     return {
       name: (parsed.name as string) ?? '',
       description: (parsed.description as string) ?? '',
@@ -520,7 +534,7 @@ async function run(caps: Caps): Promise<void> {
         parsed.outputFormatRetries >= 0
           ? parsed.outputFormatRetries
           : undefined,
-      nick_name: parsed.nick_name as string[] | undefined,
+      nick_name: asNickNames(parsed.nick_name, uri),
       clientSideJsonRendering: parsed.clientSideJsonRendering as boolean | undefined,
       skills: parsed.skills as string[] | undefined,
     };
