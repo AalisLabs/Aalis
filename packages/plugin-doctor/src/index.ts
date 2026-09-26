@@ -230,6 +230,8 @@ function registerBuiltinChecks(
       const errored = status.filter(s => s.state === 'error');
       const pending = status.filter(s => s.state === 'pending');
       const active = status.filter(s => s.state === 'active');
+      // 激活超过 core 慢操作阈值、已转入后台的（依赖它服务的插件在它完成前保持 pending）
+      const slow = status.filter(s => s.state === 'activating' && s.slow);
       // 与 runtime 启动收敛后的 pending 告警同一判据：required 服务当前没有任何提供者登记
       const describePending = (p: PluginStatusEntry): string => {
         const unmet = (p.requiredServices ?? []).filter(svc => services.inspect(svc).length === 0);
@@ -246,7 +248,8 @@ function registerBuiltinChecks(
           id: 'plugins.errored',
           category: 'plugins',
           level: errored.length === 0 ? 'ok' : 'error',
-          message: errored.length === 0 ? '无错误状态插件' : `${errored.length} 个插件 apply() 失败`,
+          message:
+            errored.length === 0 ? '无错误状态插件' : `${errored.length} 个插件处于 error（激活失败或未在宽限内停止）`,
           detail: errored.length > 0 ? errored.map(p => `${p.instanceId}: ${p.error}`).join('\n') : undefined,
         },
         {
@@ -255,6 +258,13 @@ function registerBuiltinChecks(
           level: pending.length === 0 ? 'ok' : 'warn',
           message: pending.length === 0 ? '无未就绪插件' : `${pending.length} 个插件 required deps 未满足`,
           detail: pending.length > 0 ? pending.map(describePending).join('\n') : undefined,
+        },
+        {
+          id: 'plugins.slow',
+          category: 'plugins',
+          level: slow.length === 0 ? 'ok' : 'warn',
+          message: slow.length === 0 ? '无激活超时的插件' : `${slow.length} 个插件激活超过阈值，仍在后台进行`,
+          detail: slow.length > 0 ? slow.map(p => p.instanceId).join('\n') : undefined,
         },
       ];
     },

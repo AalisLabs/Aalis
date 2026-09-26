@@ -34,10 +34,19 @@ export interface AppOptions {
   /**
    * 单个异步清理项（onDispose 返回的 promise）的等待上限（毫秒），默认 5000。
    * 用于插件 unload / bounce / 停机路径的 disposeAsync——网络类关闭（数据库/
-   * 浏览器/MCP 连接）卡死时放弃等待该项、继续后续清理并 warn 点名。该值不是整个停机的期限：
-   * apply 与屏障事件没有新增超时，仍可能阻塞管理流程。传 0 表示不设限。
+   * 浏览器/MCP 连接）卡死时放弃等待该项、继续后续清理并 warn 点名。
+   * 也是停用、卸载、重启、停机撞上仍在初始化的插件，或后台激活的 required 依赖下线时的宽限：abort 它的
+   * `lifecycle.signal` 后，自其收尾段开始至多再等这么久，到期仍未落定记 error（「未在宽限内停止」）、不再等待。
+   * 该值不是整个停机的期限。
+   * 传 0 表示不设限；超过 2³¹−1（定时器的最大延迟）按 2³¹−1 计。
    */
   disposeTimeoutMs?: number;
+  /**
+   * 慢操作阈值（毫秒），默认 60000。插件激活超过它仍未完成：记 warn 点名，转入后台继续（它提供的服务在激活
+   * 完成前不对依赖方开放），重算接着处理后面的插件，此后每隔同样时长提醒一次；`app:*` 屏障事件的单个监听器
+   * 超过它仍未返回：记 warn 点名，不再等它。传 0 表示不设限；超过 2³¹−1 按 2³¹−1 计。
+   */
+  slowThresholdMs?: number;
   /**
    * 注入自定义 LogHub。多 App 沙盒 / 集成测试 / 嵌入多实例场景下
    * 可以传入 `new LogHub()`使每个 App 拥有独立的日志通道，不互相串台。
@@ -124,7 +133,15 @@ export class App {
       this.logger.warn(`事件 "${event}" 的监听器抛错（已隔离${contextId ? `，来自 ${contextId}` : ''}）:`, err);
     };
     this.#restartStrategy = options.restartStrategy;
-    this.#disposeTimeoutMs = options.disposeTimeoutMs ?? 5000;
+    // 定时器的最大延迟是 2³¹−1ms，更大的值（含 Infinity）会被运行时当成 1ms
+    const cap = (ms: number): number => Math.min(ms, 2 ** 31 - 1);
+    this.#disposeTimeoutMs = cap(options.disposeTimeoutMs ?? 5000);
+    const slowMs = cap(options.slowThresholdMs ?? 60_000);
+    // 屏障（app:*，与 types/events.ts 的分节同一判据）的单个监听器至多等 slowMs
+    this.#events.handlerLimit = event => (event.startsWith('app:') ? slowMs : undefined);
+    this.#events.onHandlerSlow = (event, limit, contextId) => {
+      this.logger.warn(`事件 "${event}" 的监听器超过 ${limit}ms 未返回（来自 ${contextId}），不再等待，继续后续步骤`);
+    };
 
     // 1. 根激活
     const runtime = {
@@ -138,7 +155,7 @@ export class App {
     const caps = this.#host.bind(this.#root, { provide });
 
     // 2. 插件管理器
-    this.#plugins = new PluginManager(this.#host, this.logger, this.#disposeTimeoutMs);
+    this.#plugins = new PluginManager(this.#host, this.logger, this.#disposeTimeoutMs, slowMs);
     this.plugins = this.#plugins;
 
     // 3. 宿主服务：与内置六项同一登记规则（根激活、独占），只交出契约列出的方法
@@ -188,7 +205,8 @@ export class App {
    * （unload/disable/bounce 的拆卸窗口）时，本次请求排队并入其收尾，
    * resolve 时激活可能尚未发生（排队不丢失——单飞排队见 recompute）。需要
    * 「激活已落定」的确定时机，调用后 `await app.plugins.idle()`（不得在插件
-   * apply/onDispose 内这样做——自等死锁，见 idle）。
+   * apply/onDispose 内这样做——自等死锁，见 idle）。激活超过 `slowThresholdMs` 仍未完成的
+   * 插件转入后台（`activating`、`slow: true`），本方法与 idle 在阈值处返回，它落定后另触发一次重算。
    *
    * @param definition 插件定义（definePlugin 的产物）
    * @param config     实例配置，原样生效：core 不合并默认值，也不读配置文档（那是宿主的事）
@@ -261,7 +279,9 @@ export class App {
    * 否则同轮排队的 bounce 会在置位前过闸、停机后留下 pending 幽灵。
    *
    * 每次调用都返回完整停机的同一 Promise，包括屏障监听器与清理期间的调用。
-   * `app:stopping` 监听器与清理回调不得 await 或返回该 Promise，否则会等待自身。
+   * `app:stopping` 监听器与清理回调不得 await 或返回该 Promise，否则会等待自身（监听器至多等到
+   * `slowThresholdMs`、清理项至多等到 `disposeTimeoutMs` 后被放弃）。
+   * 仍在初始化的插件在 `beginShutdown()` 冻结时即 abort，flight 不再等它；两个上限都非 0 时停机总能结束。
    */
   stop(): Promise<void> {
     if (this.#stopping) return this.#stopping;

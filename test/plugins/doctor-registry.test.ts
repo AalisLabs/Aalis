@@ -8,6 +8,7 @@
  * - generatedAt / summary 正确生成
  * - formatReport 输出按 level 分组并包含换行（聊天栏可读性）
  * - plugins.pending 逐条列出缺的 required 服务（与 runtime 启动告警同一判据）
+ * - plugins.slow 点名激活超过阈值、已转入后台的插件
  */
 import { describe, expect, it } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
@@ -36,8 +37,8 @@ function makeCommandService(recorded: Array<{ name: string; description?: string
   };
 }
 
-async function boot() {
-  const app = new App({ name: 'T', logLevel: 'error' });
+async function boot(options: { slowThresholdMs?: number } = {}) {
+  const app = new App({ name: 'T', logLevel: 'error', ...options });
   const host = app.bind({ provide, services });
   const recordedCommands: Array<{ name: string; description?: string }> = [];
   host.provide(webuiServer, {
@@ -179,6 +180,27 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     const pending = report.checks.find(c => c.id === 'plugins.pending');
     expect(pending?.level).toBe('warn');
     expect(pending?.detail).toBe('zz-doctor-pending-probe: 缺少 zz-doctor-missing-a、zz-doctor-missing-b');
+    await app.stop();
+  });
+
+  it('plugins.slow 点名激活超过阈值、仍在后台进行的插件；没有时为 ok', async () => {
+    const { app, doctor } = await boot({ slowThresholdMs: 20 });
+    const quiet = await doctor.runChecks();
+    expect(quiet.checks.find(c => c.id === 'plugins.slow')).toMatchObject({ level: 'ok', message: '无激活超时的插件' });
+
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    await app.plugins.register(definePlugin({ name: 'zz-doctor-slow-probe', apply: () => gate }), {});
+    await app.plugins.idle();
+    const report = await doctor.runChecks();
+    expect(report.checks.find(c => c.id === 'plugins.slow')).toMatchObject({
+      level: 'warn',
+      message: '1 个插件激活超过阈值，仍在后台进行',
+      detail: 'zz-doctor-slow-probe',
+    });
+    release();
     await app.stop();
   });
 

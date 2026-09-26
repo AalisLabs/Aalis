@@ -71,8 +71,8 @@ function startEngine({ provide, logger, lifecycle }: Caps): void {
 
   /** 把下一轮 tick 排到下一个整分钟边界（多 20ms 余量，避免边界前一毫秒醒来空转一轮） */
   function scheduleNextTick(): void {
-    // 关闭一开始就不再排：清理段清掉的定时器不会被后续一轮重新排出来
-    if (lifecycle.closed) return;
+    // 收尾段一开始（signal 已断）就不再排：清理段清掉的定时器不会被后续一轮重新排出来
+    if (lifecycle.signal.aborted) return;
     if (tickTimer) return;
     const now = Date.now();
     tickTimer = setTimeout(cronTick, floorToMinute(now) + MINUTE_MS - now + 20);
@@ -125,7 +125,7 @@ function startEngine({ provide, logger, lifecycle }: Caps): void {
       if (!v.ok) throw new Error(v.reason);
       // 卸载后仍被握着的陈旧服务引用：cron 与 interval 两条通道一律不再建定时器
       // （interval 分支建出的 setInterval 没有任何东西会再清它，会越过卸载一直活着）
-      if (lifecycle.closed) {
+      if (lifecycle.signal.aborted) {
         logger.warn('cron-engine 已卸载，忽略迟到的 subscribe');
         return () => {};
       }

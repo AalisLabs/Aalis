@@ -4,7 +4,7 @@ import { ConfigSaveRefusedError, type HostConfig } from '../../packages/api-host
 import { registerPluginRoutes, saveAfterApply } from '../../packages/plugin-webui-server/src/routes/plugins.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 
-// PUT /api/config 只应用 CORE_CONFIG_SCHEMA 的键（name / logLevel）。其余顶层键一律不应用，但真有改动的
+// PUT /api/config 只应用 CORE_CONFIG_SCHEMA 的键（name / logLevel / slowThresholdMs）。其余顶层键一律不应用，但真有改动的
 // 要在响应里点名——不能静默丢弃却回复「已保存」（文档曾把 commandPrefix 记成顶层字段，用户照抄后 API 回 ok
 // 但什么都没发生）。也不能按键报 400：内置前端会把整份配置连同可能过期的 plugins 快照一起回传。
 // 路由注册器只调用 app.<method>(path, ...handlers)，这里用记录处理器的假 app 直接调用，不起端口。
@@ -132,6 +132,24 @@ describe('PUT /api/config 何时重启', () => {
     expect(calls).toEqual(['save']);
   });
 
+  it('改 slowThresholdMs → 写入、保存并重启（core 只在启动时读它）', async () => {
+    const { store, calls, put } = setup();
+    const r = await put({ slowThresholdMs: 30000 });
+    expect(r.status).toBe(200);
+    expect((r.body as { restart?: boolean }).restart).toBe(true);
+    expect(store.slowThresholdMs).toBe(30000);
+    expect(calls).toEqual(['save', 'restart']);
+  });
+
+  it('内置前端把文档里缺省的 slowThresholdMs 按默认值回填后回传：不算改动，不写进文档、不重启', async () => {
+    const { store, calls, put } = setup();
+    const r = await put({ ...structuredClone(store), _schema: {}, slowThresholdMs: 60000, name: 'Bot' });
+    expect(r.status).toBe(200);
+    expect(store.name).toBe('Bot');
+    expect('slowThresholdMs' in store).toBe(false);
+    expect(calls).toEqual(['save']);
+  });
+
   it('name 与 logLevel 一起改 → 保存并重启', async () => {
     const { store, calls, put } = setup();
     const r = await put({ name: 'Bot', logLevel: 'debug' });
@@ -143,6 +161,15 @@ describe('PUT /api/config 何时重启', () => {
 });
 
 describe('PUT /api/config 值校验', () => {
+  it.each(['60000', -1])('slowThresholdMs 不是不小于 0 的数字（%j）→ 400，不落盘、不重启', async value => {
+    const { store, calls, put } = setup();
+    const r = await put({ slowThresholdMs: value });
+    expect(r.status).toBe(400);
+    expect((r.body as { error: string }).error).toMatch(/slowThresholdMs/);
+    expect('slowThresholdMs' in store).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
   it('select 取值不在范围（logLevel: nope）→ 400，不落盘、不重启', async () => {
     const { store, calls, put } = setup();
     const r = await put({ logLevel: 'nope' });

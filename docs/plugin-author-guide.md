@@ -167,7 +167,7 @@ lifecycle.onDispose(() => {
 
 依赖交接放 `lifecycle.onDrain`（依赖仍可用）。`onDispose` 只释放自己的资源，**不能**假定 `x.current` 还在：拿不到就跳过，不要把只能在 dispose 时落盘的数据攒到最后（每次写点后就保存）。单独 unload / disable / bounce 提供者时，正在用它的 required 消费者先收尾再关，收尾时提供者仍在；随后消费者转 pending（bounce 后重新激活）。动态 `services.get` 不产生依赖边，关停期间可能取到空。
 
-`App.stop()` 先冻结新增绑定并进入停机态，再发 `app:stopping`（知会，不是清理通道），等监听器完成后执行停机计划。停机期间 `unload` 汇入计划后立即返回 true（不等拆卸完成）；`disable` 在停机拆卸开始后对已标 `disposed` 的条目返回 false，其余同 `unload`；`register` / `bounce` 返回 false。
+`App.stop()` 先冻结新增绑定并进入停机态，再发 `app:stopping`（知会，不是清理通道），等监听器完成（单个至多等 `slowThresholdMs`）后执行停机计划。停机期间 `unload` 汇入计划后立即返回 true（不等拆卸完成）；`disable` 在停机拆卸开始后对已标 `disposed` 的条目返回 false，其余同 `unload`；`register` / `bounce` 返回 false。
 
 ---
 
@@ -212,7 +212,9 @@ it('required 依赖到场后激活', async () => {
 });
 ```
 
-`createApp` 是同步的。配置经 `app.plugin(definition, config)` 传入，原样生效：core 不合并 schema 默认值。测试里登记的 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 放进 devDependencies。`plugin()` 的 true 只说明请求已受理；需要「激活已落定」必须 `await app.plugins.idle()`。不得在插件 `apply` / `onDispose` 内调用 `idle()`（互等死锁）。不要用 `setTimeout` 代替 `idle()`。
+`createApp` 是同步的。配置经 `app.plugin(definition, config)` 传入，原样生效：core 不合并 schema 默认值。测试里登记的 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` 放进 devDependencies。`plugin()` 的 true 只说明请求已受理；需要「激活已落定」必须 `await app.plugins.idle()`。`idle()` 不等超过 `slowThresholdMs`（默认 60 秒）转入后台的激活，测试里要等这类激活，按 `getStatus()` 的状态轮询，或把 `slowThresholdMs` 设为 0。不得在插件 `apply` / `onDispose` 内调用 `idle()`（互等死锁）。不要用 `setTimeout` 代替 `idle()`。
+
+用假定时器（`vi.useFakeTimers()`）时注意：激活在落定前挂着一个阈值定时器，`vi.getTimerCount()` 会把它算进去；`vi.runAllTimers()` 撞上永不落定的激活会在按轮重排的提醒定时器上空转直到上限。先 `await app.plugins.idle()` 让激活落定再装假定时器，或改用 `vi.runOnlyPendingTimers()`。
 
 ---
 
@@ -239,15 +241,23 @@ it('required 依赖到场后激活', async () => {
 - `x.follow(attach)` 跟随会换人的提供者
 - `tools.register` / `commands.command` / `webui.registerPage` / `agent.registerPreprocessor`（经 `uses` 拿到的绑定门面）
 - `lifecycle.onDispose` / `onDrain` 清理外部资源与交接
-- 启动后台 worker / 连接外部服务
+- 启动后台 worker / 连接外部服务（发起即可，不要在 apply 里等它就绪，见下）
 
 ### 不应该在 apply 里做
 
-- `await` 永久阻塞（apply 必须返回，否则 PluginManager 卡住）
+- 长时间下载、等外部服务就绪或其它可能很久不返回的 `await`。激活超过 `slowThresholdMs`（默认 60 秒）仍未完成会被告警、转入后台，依赖你所提供服务的插件一直等在 pending；停用、重启、停机或 required 依赖下线时 `lifecycle.signal` abort 之后只有 `disposeTimeoutMs`（默认 5 秒）的宽限，到期记为 error「未在宽限内停止」，依赖恢复后也不自动重试。做法见下文「长任务与取消」
 - 直接修改全局 process 状态（`process.env`、信号 handler）
 - 跨插件 import 实现细节（应只 import `@aalis/api-xxx`）
 - 绕过绑定门面直接打容器底层 API
 - 在 apply 内 throw —— 用 `logger.error` + 优雅降级；throw 会让 entry 进 `error` 态直到下次配置变更。**例外**：声明了 `provides` 却因缺配置无法真正 `provide` 时，静默 return 会变成更难懂的 provides 校验错，应抛清晰错误（见 `plugin-asr-openai`）
+
+### 长任务与取消
+
+- 长任务放后台：在 apply 里发起、不 `await`，就绪状态由服务自己表达（如 `isReady()`、首次调用时等就绪）；或推迟到首次使用时再做。apply 本身尽快返回。
+- 用 `lifecycle.signal` 取消：`fetch(url, { signal: lifecycle.signal })`、`lifecycle.signal.addEventListener('abort', …)`、循环里查 `lifecycle.signal.aborted`。定时器、重连等回调里判断「本激活是否已开始关闭」也查它。
+- abort 的两个时机：apply 尚未完成时被停机或停用、卸载、重启接手，或后台激活因 required 依赖下线被拆，关闭计划冻结后立即 abort；其余情形在本激活的收尾段开始时 abort（`onDrain` 执行时已断，依赖你的插件先关闭时你的 signal 仍未断）。reason 是 `AbortError`。
+- abort 监听器同步执行，不得抛错：Node 宿主把监听器的异常当成未捕获异常，runtime 会因此退出进程。
+- 转入后台期间，你经 `provide` 登记的服务不对外，经 `events.on` 挂的监听与经绑定门面（工具、指令、页面等）登记的条目照常生效：`app:ready` / `app:started` 监听器可能在 apply 完成之前被调用。需要自身就绪的逻辑放在 apply 末尾再挂（两者都是 sticky，晚挂照样收到），或在回调里自查就绪。
 
 ---
 
@@ -352,6 +362,8 @@ declare module '@aalis/core' {
 | `appService.rescanPlugins()` | `uses` 里声明 `optional(pluginSource)`（`@aalis/api-plugin-source`）后调 `rescan()` |
 | `pluginDefinitionOf` 从 `@aalis/core` 导入 | 从 `@aalis/api-plugin-source` 导入 |
 | 测试里 `createApp({ config: { … } })` | `createApp({ name, logLevel })`，配置经 `app.plugin(definition, config)` 传入；用到钩子或贡献点时先登记 `@aalis/plugin-hooks` / `@aalis/plugin-contributions` |
+| `if (lifecycle.closed)` | `if (lifecycle.signal.aborted)`。时机不同：`closed` 在关闭计划冻结时即为 true；`signal` 在本激活收尾段开始时 abort，apply 尚未完成的在冻结后立即 abort |
+| apply 里 `await` 长时间下载或外部服务就绪 | 发起后不等、或推迟到首次使用；用 `lifecycle.signal` 取消（见第 9 节「长任务与取消」）。超过 `slowThresholdMs` 的激活转入后台，停用、重启、停机或 required 依赖下线时 abort 后只有 `disposeTimeoutMs` 的宽限 |
 
 改用 `@aalis/api-hooks` / `@aalis/api-contributions` 的插件，core peer 下限抬到 `>=0.18.0 <1.0.0`（与这两个契约包的 peer 一致）。
 

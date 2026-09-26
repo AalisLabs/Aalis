@@ -22,9 +22,10 @@ const WRITE_RE = /\b(?:entry|other)\.(state|activation)\s*=(?!=)/g;
 
 /** 文件 → { state 写入点数, activation 写入点数 } 的定格。 */
 const FROZEN: Record<string, { state: number; activation: number }> = {
-  // retireBatch 写一次终态、清一次激活引用；
+  // retireBatch 写一次终态、清一次激活引用，abort 后超过宽限仍未落定的把本批终态改写为 error
+  // （2026-09-26 用户批准的 0.18 core 现代化批 C1「激活不阻塞与可取消」，与终态同一 CAS 卫、之间无 await）；
   // activatePlugin 写 activating / active 两个状态，挂一次激活。
-  'orchestration/plugin-activation.ts': { state: 3, activation: 2 },
+  'orchestration/plugin-activation.ts': { state: 4, activation: 2 },
   // enable：把 disabled/error 拉回 pending，随后交给 recompute 激活
   'orchestration/plugin.ts': { state: 1, activation: 0 },
   'orchestration/plugin-topology.ts': { state: 0, activation: 0 },
@@ -79,8 +80,8 @@ describe('插件状态机写入点定格', () => {
   it('正对照：额外状态写入或激活引用写入会改变定格', () => {
     const file = 'orchestration/plugin-activation.ts';
     const original = readFileSync(join(SRC, file), 'utf8');
-    expect(countWrites(`${original}\nentry.state = 'pending';`)).toEqual({ state: 4, activation: 2 });
-    expect(countWrites(`${original}\nother.activation = undefined;`)).toEqual({ state: 3, activation: 3 });
+    expect(countWrites(`${original}\nentry.state = 'pending';`)).toEqual({ state: 5, activation: 2 });
+    expect(countWrites(`${original}\nother.activation = undefined;`)).toEqual({ state: 4, activation: 3 });
     expect(countWrites(`${original}\nentry.activation = undefined;`)).not.toEqual(FROZEN[file]);
   });
 });

@@ -46,7 +46,7 @@ describe('App 生命周期', () => {
     });
     await app.stop();
     expect(seen).toEqual(['stopping', 'dispose']);
-    expect(host.lifecycle.closed).toBe(true);
+    expect(host.lifecycle.signal.aborted).toBe(true);
   });
 
   it('两个并存 App 实例互不干扰（service 与配置文档都隔离）', () => {

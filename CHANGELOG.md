@@ -297,6 +297,28 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - 按全文比对 `PluginEntry.error` 的代码，改为按前缀或正则匹配：带 cause 的错误后面多了 ` ← …` 摘要，AggregateError 后面多了 `: 子错误…`。按 `Error: 服务 "…" 不可用` 匹配日志或工具输出的，改为匹配 `ServiceUnavailableError:` 或消息本身。
 - 用 `Proxy` 包装 `app.plugins`、`DefaultLogger` 或 `LogHub` 的，改为另写对象把调用转发给原对象（管理面按 `PluginManagerService` 接口、日志器按 `Logger` 接口实现）。
 
+### 慢激活不再挡住启动，激活可取消（@aalis/core、@aalis/runtime、@aalis/schema-config、@aalis/plugin-doctor、@aalis/plugin-webui-server、@aalis/plugin-adapter-onebot、@aalis/plugin-cron-engine）
+
+- 新增 `AppOptions.slowThresholdMs`（慢操作阈值，默认 60000，0 表示不设限）。插件激活超过它仍未完成时记一条 warn 点名，转入后台继续，其余插件照常激活，`register` / `pluginAll` / `plugins.idle()` 在阈值处返回，启动流程不再卡在插件登记，此后每隔同样时长提醒一次「仍在激活」。此前一个不返回的 `apply` 会让启动、`idle()` 与 `stop()` 一直等下去。
+- 后台期间条目停在 `activating`，`getStatus()` 给出 `slow: true`（`PluginStatusEntry.slow`）。它经 `provide` 登记的服务不对外：`services.get` / `all` / `inspect` / `names` 与激活闸都看不到，阈值前已登记的在转入后台时撤下（发 `service:unregistered`），依赖它的插件保持 `pending`。它落定后：成功则转 `active` 并上线服务（发 `service:registered`），依赖方随之激活；失败进 `error`；都另触发一次重算。它的事件监听与经 `registrar` 登记到别处的条目（工具、指令、页面等）照常生效，`app:ready` / `app:started` 监听器可能在它的 `apply` 完成之前被调用。
+- `app:*` 屏障事件（启动、停机、重启）的单个监听器超过 `slowThresholdMs` 仍未返回时记 warn 点名登记者，不再等它；它之后的拒绝照常按监听器抛错上报。
+- 删除 `LifecycleCap.closed`，新增 `lifecycle.signal`（`AbortSignal`，reason 为 name 是 `AbortError` 的 `DOMException`）。`apply` 尚未完成时被停机或停用、卸载、重启接手，或后台激活因 required 依赖下线被拆，关闭计划冻结后立即 abort；其余在本激活的收尾段开始时（`onDrain` 之前）abort，依赖方先关闭时提供者的 `signal` 仍未断。abort 监听器同步执行，不得抛错：Node 宿主把监听器的异常当成未捕获异常，runtime 会因此退出进程。
+- 停用、卸载、重启或停机撞上仍在初始化的插件，或后台激活的 required 依赖下线：先 abort，自它的收尾段开始最多再等 `disposeTimeoutMs`；到期仍未落定记 error「未在宽限内停止」、不再等待，流程继续。停用与重启的主体、管理动作同批的下游、依赖下线被拆的后台激活改为 `error`（`apply` 仍在跑，不再起新实例：重启因此不会重新激活，依赖恢复后也不自动重试，需 `enable` / `bounce`），卸载与停机只记日志。`slowThresholdMs` 与 `disposeTimeoutMs` 都非 0 时 `stop()` 总能结束。此前在飞激活超过宽限时静默转成目标态。
+- 管理动作的同批拆卸扩到仍在初始化（在飞或后台）的 required 下游：提供者被停用、卸载、重启时这些下游先被 abort、先关，再按新实例重新激活，不再带着旧实例转 `active`。后台激活的 required 依赖下线时同样拆掉：宽限内落定的回到 `pending`，依赖恢复后重新激活；不响应 abort、超过宽限的转 `error`，依赖恢复后不自动重试（见上条）。
+- `services.names()` 只列当前有对外提供者的服务名，与 `get` / `inspect` 一致。
+- `disposeTimeoutMs` 与 `slowThresholdMs` 超过 2³¹−1（定时器的最大延迟）时按 2³¹−1 计；此前 `disposeTimeoutMs: Infinity` 会被运行时当成 1ms，清理几乎立刻被放弃等待。
+- runtime 读配置文件顶层的 `slowThresholdMs` 注入 core（重启生效）；不是非负有限数时记一条告警，按默认处理。`CORE_CONFIG_SCHEMA` 增加该键（默认 60000，最小 0），WebUI 设置页可改，保存后自动重启。`PUT /api/config` 对文档里没写的核心键按 schema 默认值比较：前端把默认值回填进草稿后回传不算改动，不写进文件、不触发重启。
+- plugin-doctor 新增 `plugins.slow` 检查：列出激活超过阈值、仍在后台进行的实例（warn）；`plugins.errored` 的文案改为「N 个插件处于 error（激活失败或未在宽限内停止）」。
+- adapter-onebot 与 cron-engine 的「已关闭就不再重连 / 排定时器」判断改读 `lifecycle.signal.aborted`，从本激活收尾段开始生效（此前从关闭计划冻结起）；两者的清理段照常清掉定时器与连接。
+
+**迁移**：
+- `if (lifecycle.closed)` 改为 `if (lifecycle.signal.aborted)`。时机不同：`closed` 在关闭计划冻结时即为 true；`signal` 在本激活收尾段开始时 abort，`apply` 尚未完成的在冻结后立即 abort。依赖「冻结即真」的（例如想在依赖方收尾期间就停止提供），改为在自己的收尾段处理。
+- 插件作者：不要在 `apply` 里做长时间下载或等待外部服务就绪。长任务在 `apply` 里发起、不等，或推迟到首次使用；用 `lifecycle.signal` 取消（`fetch(url, { signal })`、`signal.addEventListener('abort', …)`、循环里查 `signal.aborted`）。不接 `signal` 的慢 `apply` 在后台期间遇到停用、重启或 required 依赖下线，宽限后停在 `error`，依赖恢复后也要手动 `enable`。
+- 需要旧行为（无限等待激活与屏障监听器）的宿主传 `slowThresholdMs: 0`；配置文件里写 `slowThresholdMs: 0`。
+- 读 `PluginStatusEntry` 的工具：`activating` 现在可能持续很久，按 `slow` 区分。依赖某插件服务的插件在它后台激活期间报「缺少服务」，runtime 启动告警与 doctor 的 `plugins.pending` 同样这样列出，与 `plugins.slow` 对照着看。
+- 测试用 `vi.useFakeTimers()` 的：激活落定前挂着一个阈值定时器，`vi.getTimerCount()` 会把它算进去，`vi.runAllTimers()` 撞上不落定的激活会在提醒定时器上空转。先 `await app.plugins.idle()` 再装假定时器，或用 `vi.runOnlyPendingTimers()`。
+- runtime 的重启策略等新实例报就绪（默认 30 秒）才判定接管成功，报就绪在启动完成之后。`slowThresholdMs` 设得比 30 秒短时，新实例会带着仍在后台激活的插件报就绪，更新失败的回滚不再兜住卡住的激活；需要这层兜底就别把阈值调到 30 秒以下。
+
 ### 包清单元数据（41 个包）
 
 各包 `package.json` 里的 `aalis.types`、`aalis.util`、`aalis.core`、`aalis.tooling` 已移除，当前框架不读取它们（加载器与市场早已只看 keywords）。`aalis.service` 与 `aalis.client` 不变。
@@ -330,6 +352,7 @@ npm i $(node -p "Object.keys(require('./package.json').dependencies).filter(n =>
 - plugin-adapter-onebot 无条件调用 `rememberDescriptionAlias`：装有 plugin-media 时须为 0.13.1 及以上，否则调用失败被附件缓存吞掉（只有 debug 日志「OneBot 附件缓存异常」），入站附件丢掉落盘 ref。
 - plugin-memory-vector、plugin-memory-summary 与 plugin-agent、schema-message 同批升级（见 agent 一节）；plugin-user-relation 与 embedding 提供者同批升级后触发一次向量重算（见关系图一节）。
 - plugin-mcp-client 旧版在 `mcp_set_server_enabled` 里调用已删除的 `appService.saveConfig()`，配新 core 时该工具以 TypeError 失败。
+- plugin-cron-engine 与 plugin-adapter-onebot 旧版读已删除的 `lifecycle.closed`（配新 core 恒为 `undefined`）：卸载后仍被握着的 cron-engine 服务引用再 `subscribe` 会建出没人清的定时器，onebot 关闭期间断线会照常排重连。两者与 core 同批升级。
 
 混装的三类报错：
 

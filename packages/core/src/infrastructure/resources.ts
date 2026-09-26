@@ -30,6 +30,9 @@ export class Resources {
   #completion?: Promise<void>;
   #initialization?: Promise<void>;
   readonly #cuts = new Set<() => void>();
+  readonly #abort = new AbortController();
+  /** 取消信号：收尾段开始时 abort；初始化尚未落定的，编排者在冻结关闭计划后提前 abort（见 {@link abort}） */
+  readonly signal: AbortSignal = this.#abort.signal;
   readonly #id: string;
   readonly #logger: Logger;
   readonly #hooks: ResourceHooks;
@@ -49,6 +52,19 @@ export class Resources {
     return this.#closing;
   }
 
+  /** 跟踪中的初始化尚未落定 */
+  get initializing(): boolean {
+    return this.#initialization !== undefined;
+  }
+
+  /**
+   * 断开取消信号（幂等）。reason 为 `AbortError` 的 DOMException。监听器同步执行、属于宿主代码，
+   * 调用方不得在需要保持不变量的遍历途中调用。
+   */
+  abort(): void {
+    this.#abort.abort(new DOMException(`激活 "${this.#id}" 已开始关闭`, 'AbortError'));
+  }
+
   #timeout(what: string): (limit: number) => void {
     return limit => reportQuietly(() => this.#logger.warn(`Resources "${this.#id}": ${what}超过 ${limit}ms，放弃等待`));
   }
@@ -56,16 +72,16 @@ export class Resources {
   /**
    * 跟踪宿主的一次初始化。失败由宿主处理，关闭只等待它落定。
    * 至多 track 一次：再次调用会覆盖前一次，前一次不再被等待——调用方保证。
+   * 已开始关闭时（初始化的同步段里就被接手）立即 abort：与「冻结后对在飞初始化 abort」同一规则。
    */
   trackInitialization(initializing: Promise<unknown>): void {
-    const settled = initializing.then(
-      () => {},
-      () => {},
-    );
-    this.#initialization = settled;
-    settled.then(() => {
+    // 落定的第一拍就清：宿主随后的收尾（含失败回滚里的关闭）看到的已是「初始化已落定」
+    const done = (): void => {
       if (this.#initialization === settled) this.#initialization = undefined;
-    });
+    };
+    const settled = initializing.then(done, done);
+    this.#initialization = settled;
+    if (this.#closing) this.abort();
   }
 
   /**
@@ -82,13 +98,14 @@ export class Resources {
   }
 
   /**
-   * 提前执行收尾段（幂等）：置关闭位、等初始化落定、排空收尾链。撤回与清理不在此列——
+   * 提前执行收尾段（幂等）：置关闭位、断开取消信号、等初始化落定、排空收尾链。撤回与清理不在此列——
    * 编排层据此把「谁先收尾」与「谁先撤回」分开安排；不调用它时 disposeAsync 照旧自己收尾。
-   * 没有待等的东西时同栈完成、返回 undefined。
+   * 先断后收尾：收尾回调执行时信号已断。没有待等的东西时同栈完成、返回 undefined。
    */
   drain(timeoutMs?: number): Promise<void> | undefined {
     if (this.#drained) return this.#drained;
     this.#closing = true;
+    this.abort();
     if (!this.#initialization && this.draining.size === 0) {
       this.draining.seal();
       return undefined;

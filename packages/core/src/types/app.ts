@@ -35,6 +35,8 @@ export interface PluginStatusEntry {
   /** 不参与激活闸的依赖服务名（uses 里包了 optional 的） */
   optionalServices?: string[];
   error?: string;
+  /** 激活超过 `AppOptions.slowThresholdMs` 仍未完成、已转入后台（state 为 activating）时为 true，否则不给 */
+  slow?: boolean;
   // 配置详情（config / configSchema）不属状态摘要——
   // 消费者经 getPlugin(instanceId) 从 entry.config / entry.definition 读取。
 }
@@ -84,6 +86,7 @@ export interface PluginManagerService {
   /**
    * 等待插件状态机静置（无在飞/排队的 recompute）。变更 API 在 flight 在飞时
    * 排队早退，需要"尘埃落定后再观察"的调用方在变更后 await 本方法。
+   * 不等转入后台的激活（超过 slowThresholdMs 仍未完成的，以 activating、`slow: true` 可见）：它落定后另触发一次重算。
    * 不得在插件 apply / onDispose 内调用（互等死锁）。
    */
   idle(): Promise<void>;

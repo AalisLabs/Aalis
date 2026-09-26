@@ -37,7 +37,7 @@ core 自持的只有下面十一个基础设施事件（源码 `packages/core/sr
 
 十一个事件按「发射方等不等监听器」分两节，节由前缀判定：
 
-**屏障**（`app:*`）：emit 是 `App` 生命周期方法里的一步，监听器全部返回后才推进下一步。`app:stopping` 的时机见下表与后文。
+**屏障**（`app:*`）：emit 是 `App` 生命周期方法里的一步，逐个等监听器返回后才推进下一步。单个监听器至多等 `AppOptions.slowThresholdMs`（默认 60000；0 = 不设限）：超过即 warn 点名登记者（插件实例 id，宿主为 `root`），不再等它、转向下一个，它之后的拒绝照常按监听器抛错上报。下表「全部返回」均按此理解。`app:stopping` 的时机见下表与后文。
 
 | 事件 | 参数 | 时机 |
 |---|---|---|
@@ -53,15 +53,20 @@ core 自持的只有下面十一个基础设施事件（源码 `packages/core/sr
 
 | 事件 | 参数 | 时机 |
 |---|---|---|
-| `service:registered` | `name` | 某服务多了一个提供者（`provide(descriptor, impl)`） |
-| `service:unregistered` | `name` | 某服务少了一个提供者（退订闭包或激活拆卸） |
+| `service:registered` | `name` | 某服务多了一个对外可见的提供者（`provide(descriptor, impl)`；转入后台的激活完成时，上线它登记的服务） |
+| `service:unregistered` | `name` | 某服务少了一个对外可见的提供者（退订闭包、激活拆卸；激活转入后台时撤下它已登记的服务） |
 | `service:preference-changed` | `name` | 该服务的偏好 provider 切换（`services.prefer` / `services.unprefer`）；`follow` 借此按胜者变化重挂 |
 | `plugin:loaded` | `instanceId` | 插件实例已激活；同一轮 recompute 可能紧接着激活下一个插件 |
 | `plugin:unloaded` | `instanceId` | 插件实例已拆卸；激活失败的回滚与关机拆卸不发 |
 | `plugins:changed` | — | 一轮 recompute 收敛，插件状态集合可能已变；关机轮不发 |
 
-`app:ready` 与 `app:started` 是两个相位，不是同一里程碑的两个名字：`start()` 串行 await，`app:started` 严格晚于
-全部 `app:ready` 监听器完成。
+`app:ready` 与 `app:started` 是两个相位，不是同一里程碑的两个名字：`start()` 串行 await，`app:started` 晚于
+全部 `app:ready` 监听器完成（或超过阈值被放弃等待）。`start()` 不等转入后台的插件激活，它们在 `apply` 里挂的
+`app:ready` / `app:started` 监听器可能在自己的 `apply` 完成之前被调用；需要自身就绪的逻辑放在 `apply` 末尾再挂
+（两个事件都是 sticky，晚挂照样收到），或在监听器里自查就绪。
+
+后台激活期间它登记的服务不对外，服务事件按「对外可见」计：阈值前已登记的在转入后台时发一次 `service:unregistered`，
+后台期间的登记与退订不发事件，激活成功时对仍在的服务发 `service:registered`，失败或被拆卸时不再发。
 
 `app:stopping` 用于知会（打印告别语、切状态条），不是清理通道——清理副作用一律走 `lifecycle.onDrain` / `lifecycle.onDispose`，它们覆盖 bounce / unload / 停机全部路径。总线上没有 `dispose` 事件。本事件发出时停机计划已冻：窗口内 `unload` / `disable` 汇入该计划后立即返回 true；`register` / `bounce` 返回 false。`stop()` 在任何阶段都返回完整停机的同一 Promise。监听器不能 `await stop()` 或返回它，否则停机与正在执行的屏障监听器会互等；调用 `void stop()` 不会重复启动停机。
 

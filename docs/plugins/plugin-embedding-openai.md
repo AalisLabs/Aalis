@@ -33,7 +33,7 @@ export default definePlugin({
 
 ## 特性
 
-- `embed()` / `listModels()` 的请求都带 `AbortSignal.timeout(timeoutMs)`。这不是可选项：插件激活是串行的（`PluginManager.recompute` 逐个 `await activatePlugin`），而 `apply()` 会 await 一次启动连通性探测——对端不应答时整条引导链被钉住；索引路径上则是 `plugin-memory-vector` 的一个并发槽被无限期占用
+- `embed()` / `listModels()` 的请求都带 `AbortSignal.timeout(timeoutMs)`。这不是可选项：`apply()` 会 await 一次启动连通性探测，对端不应答时，排在它后面的插件要等到慢激活阈值（默认 60 秒）它转入后台才继续激活，它自己此后也一直停在激活中；索引路径上则是 `plugin-memory-vector` 的一个并发槽被无限期占用
 
 
 - 调用 `/embeddings` 端点

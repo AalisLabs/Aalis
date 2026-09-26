@@ -66,7 +66,7 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
             if (!lifecycleProvider) throw new Error('lifecycle 提供者缺席');
             const viaLookup = lifecycleProvider(me);
             expect(viaLookup.id).toBe(ownLifecycle.id);
-            expect(viaLookup.closed).toBe(false);
+            expect(viaLookup.signal.aborted).toBe(false);
             seen.set(name, { config: ownConfig, lifecycle: ownLifecycle, viaLookup });
           },
         }),
@@ -81,10 +81,10 @@ describe('统一服务：第一方和第三方经过相同的容器与消费者�
     expect(seen.get('right')?.lifecycle.id).toBe('right');
     expect(seen.get('left')?.lifecycle).not.toBe(seen.get('right')?.lifecycle);
     await app.plugins.unload('left');
-    expect(seen.get('left')?.lifecycle.closed).toBe(true);
-    expect(seen.get('left')?.viaLookup.closed).toBe(true);
-    expect(seen.get('right')?.lifecycle.closed).toBe(false);
-    expect(seen.get('right')?.viaLookup.closed).toBe(false);
+    expect(seen.get('left')?.lifecycle.signal.aborted).toBe(true);
+    expect(seen.get('left')?.viaLookup.signal.aborted).toBe(true);
+    expect(seen.get('right')?.lifecycle.signal.aborted).toBe(false);
+    expect(seen.get('right')?.viaLookup.signal.aborted).toBe(false);
   });
 
   it('follow 换提供者时等待旧清理，只挂最新提供者', async () => {

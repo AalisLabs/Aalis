@@ -545,7 +545,10 @@ describe('core 源码不含覆盖率 ignore 注释', () => {
 // 模板串含嵌套 ${}），再数非空行。
 // 2500 → 2530：2026-09-26 用户批准的 0.18 core 现代化批，C8「私有写法统一为 `#` 与可擦除语法」——17 处构造函数参数属性
 // 改为显式字段加赋值（erasableSyntaxOnly 不允许参数属性）。
-const CORE_CODE_LINE_CEILING = 2530;
+// 2530 → 2640：2026-09-26 用户批准的 0.18 core 现代化批，C1「激活不阻塞与可取消」——lifecycle.signal 与两个 abort
+// 时机、慢激活转入后台（阈值竞速、按轮提醒、落定补重算、slow 状态）、后台期间服务暂不对外（容器 hold）、abort 后的
+// 宽限与「未在宽限内停止」、屏障监听器限时。
+const CORE_CODE_LINE_CEILING = 2640;
 
 /** 去掉注释：字符串与模板串里的 `//` `/*` 不算注释 */
 function stripComments(src: string): string {
