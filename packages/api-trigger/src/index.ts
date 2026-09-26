@@ -1,55 +1,182 @@
 // ============================================================
 // @aalis/api-trigger — 触发判定契约（"要不要开口"）
 //
-// 'trigger' 是多提供者服务。相位宿主（plugin-trigger-policy，占据 inbound:trigger）负责
-// 作用域、禁言关键词、计数与闲置等公共部分，再把"这条消息要不要开口"逐个问提供者：
-// 按 trigger.all() 的顺序（偏好 > 优先级 > 注册顺序），第一个不弃权的提供者说了算。
-// 宿主自带规则提供者（计数/评分/点名，优先级 0），它不弃权，是兜底；模型提供者以更高
-// 优先级登记，未就绪、超时或处于影子模式时弃权，交给后面的提供者。
+// 'trigger' 服务标记当前生效的触发插件。触发插件（plugin-trigger-policy 的规则判定、
+// plugin-trigger-laya 的模型判定）各自是完整的判定：各自 provide 一个实例，各自在
+// inbound:trigger 相位挂中间件。服务胜者（偏好 > 优先级 > 注册顺序）即生效者，二选一：
+// 其余触发插件对每条消息直接放行，什么都不做。一个都不在时这个相位不做判定，消息照常往下走。
 //
-// 提供者只判定、不写状态：开口后的计数清零、triggerType 与授权主体由宿主统一写。
+// 本包另含触发插件共用的宿主函数：生效者判断、禁言关键词、点名识别、附件识别限时等待、
+// 放行收尾与吞掉时的影子归档。它们只读写传入的消息，不持有会话状态。
 //
 // 服务名：'trigger'
 // ============================================================
 
-import { defineService } from '@aalis/core';
-import type { IncomingMessage } from '@aalis/schema-message';
+import type { MediaService } from '@aalis/api-media';
+import type { MessageArchiveService } from '@aalis/api-message-archive';
+import type { PersonaService } from '@aalis/api-persona';
+import { defineService, type Logger, type ServiceRef } from '@aalis/core';
+import { type IncomingMessage, selfInitiatedActor, WellKnownNoticeTypes } from '@aalis/schema-message';
 
-/** 宿主交给提供者的一次判定输入 */
-export interface TriggerInput {
-  /** 当前入站消息。只读：triggerType、授权主体等由宿主在判定之后统一写 */
-  message: Readonly<IncomingMessage>;
-  /**
-   * 宿主识别的"被点名"：@ 自己、戳一戳、名字或别名命中（按宿主配置 triggerOnAt / triggerOnPoke /
-   * triggerNames 与人设名字）。规则提供者据此直接开口；模型提供者只把它当类别信息。
-   * 无论谁开口，宿主都按它定开口后的类别：点名为 immediate，否则为 interval。
-   */
-  addressed: boolean;
-  /**
-   * 需要附件描述时调用：宿主按需启动附件识别并等待，写好 message._attachmentDescriptions。
-   * 等待有上限，超时照常返回（识别在后台继续，描述可能仍缺），永不抛错；多次调用共享同一次识别。
-   * 等待的时间不计入宿主给本次判定的截止时间。不需要附件描述的提供者不要调用，免得拖慢判定。
-   */
-  awaitAttachmentDescriptions(): Promise<void>;
+/**
+ * 触发插件在 trigger 服务里的实例。服务只用来选出生效者：消费方拿胜者与自己的实例比身份，
+ * 不调用方法，所以接口只有名字，进日志与诊断（如「当前生效的是某某」）。WebUI 服务页显示的是
+ * provide 时传的 label，两处取同一个值。
+ */
+export interface TriggerService {
+  readonly label: string;
 }
 
-/** 一次判定结果 */
-export interface TriggerDecision {
-  /** 是否开口 */
-  speak: boolean;
-  /** 判定依据的简短说明，进宿主的判定日志；不要放消息原文 */
-  reason: string;
-  /** 可选的分数（如模型 logit），进宿主的判定日志 */
-  score?: number;
+export const trigger = defineService<TriggerService>('trigger');
+
+/** 只读当前胜者的那一面：这里的函数只在调用的那一刻读 current，不建立跟随状态 */
+type CurrentOf<P> = Pick<ServiceRef<P>, 'current'>;
+
+// ----- 生效者 -----
+
+/** 每次入站（inbound:trigger 的相位数据）取下的胜者 */
+const judgedBy = new WeakMap<object, TriggerService | undefined>();
+
+/**
+ * 这次入站是否由 self 判定。胜者每次入站只取一次：相位里先跑到的触发插件取下 trigger.current，
+ * 记在这次的相位数据上，后跑到的沿用它。判定途中切换偏好、停用或重载触发插件时，同一条消息
+ * 不会被两个触发插件各判一次。
+ */
+export function isActiveTrigger(phase: object, ref: CurrentOf<TriggerService>, self: TriggerService): boolean {
+  if (!judgedBy.has(phase)) judgedBy.set(phase, ref.current);
+  return judgedBy.get(phase) === self;
 }
 
-export interface TriggerProvider {
-  /**
-   * 判定这条消息要不要开口。返回 null 表示弃权，宿主转问下一个提供者；抛错或超过宿主的
-   * 截止时间都按弃权处理。仅供相位宿主调用：调用前宿主已记好这条入站（计数、评分），
-   * 提供者只读不写。
-   */
-  decide(input: TriggerInput): Promise<TriggerDecision | null>;
+// ----- 禁言关键词与点名 -----
+
+/**
+ * 正文是否包含任一禁言关键词。戳一戳通知恒不命中：它的正文是适配器合成的文案（内嵌戳者昵称），
+ * 与名字检测同理不当发言评估。
+ */
+export function hitsMuteKeyword(
+  message: Pick<IncomingMessage, 'content' | 'noticeType'>,
+  keywords: readonly string[],
+): boolean {
+  if (message.noticeType === WellKnownNoticeTypes.Poke) return false;
+  return keywords.some(kw => message.content.includes(kw));
 }
 
-export const trigger = defineService<TriggerProvider>('trigger');
+/** 点名识别的配置（触发插件的配置里都有这三项） */
+export interface AddressOptions {
+  /** @ 自己算点名 */
+  triggerOnAt: boolean;
+  /** 戳一戳等注意力动作（noticeType=poke）算点名 */
+  triggerOnPoke: boolean;
+  /** 人设名字与昵称之外的别名 */
+  triggerNames: readonly string[];
+}
+
+/**
+ * @ 检测：只认 `<at self>` 标记。
+ *
+ * OneBot 的字符串消息格式（含 `[CQ:at,…]`）由 adapter 入站规范化成消息段，再经
+ * segmentsToText 渲染成 `<at self id="…">`，CQ 码不会流到这里。其它平台适配器若要支持
+ * @ 判定，须同样把提及渲染成 `<at self …>`——这里只认这一种文法。
+ */
+function mentionsSelf(content: string): boolean {
+  return /<at self[\s>][\s\S]*?<\/at>/.test(content);
+}
+
+/**
+ * 名字表：别名 + 人设名字 + 人设昵称，去重。只在调用的那一刻读 persona 当前提供者。禁言关键词
+ * 不从 persona 读：避免角色卡措辞成为禁言开关，也避免进程级单例 persona 跨平台泄漏。
+ */
+function botNames(persona: CurrentOf<PersonaService>, triggerNames: readonly string[]): string[] {
+  const names = [...triggerNames];
+  const service = persona.current;
+  if (service) {
+    for (const n of [service.getPersonaName(), ...(service.getNickNames?.() ?? [])]) {
+      if (n && !names.includes(n)) names.push(n);
+    }
+  }
+  return names;
+}
+
+/**
+ * 是否被点名。戳一戳（能进到这里说明 adapter 已判断过目标是 bot：私聊戳全转入站，群聊戳仅目标是
+ * 自己才转）只看 triggerOnPoke，**不做** @ 与名字检测：它的正文是合成文案，内嵌戳者昵称，昵称含
+ * bot 名会被名字检测误判成提及——关掉 triggerOnPoke 后用户改个名就能让开关对自己失效（对抗审计
+ * 实测）。其余消息看 triggerOnAt 的 @ 自己，以及名字检测（别名与人设名字、昵称，正文包含即命中）。
+ *
+ * 名字检测会调 persona 当前提供者，它抛错时本函数照抛，由调用方处理（触发插件都是记 warn 后放行：
+ * 失败放行优于失败静默）。
+ */
+export function isAddressed(
+  message: Pick<IncomingMessage, 'content' | 'noticeType'>,
+  persona: CurrentOf<PersonaService>,
+  opts: AddressOptions,
+): boolean {
+  if (message.noticeType === WellKnownNoticeTypes.Poke) return opts.triggerOnPoke;
+  if (opts.triggerOnAt && mentionsSelf(message.content)) return true;
+  return botNames(persona, opts.triggerNames).some(name => name && message.content.includes(name));
+}
+
+// ----- 附件识别 -----
+
+/**
+ * 等这条消息的附件识别写好 `_attachmentDescriptions`，最多 waitMs 毫秒。带附件、尚无描述且 media 在场
+ * 才启动识别；超时照常返回（识别在后台继续，描述可能仍缺），识别失败记 warn，永不抛错。
+ *
+ * 放行与吞掉都不必等识别跑完：agent 预处理器与归档对同一个消息对象调 processMessage，media 按消息
+ * 对象记忆命中这次识别（在途则等它），不再识别第二遍。
+ */
+export async function waitForAttachmentDescriptions(
+  message: IncomingMessage,
+  media: CurrentOf<MediaService>,
+  waitMs: number,
+  logger: Logger,
+): Promise<void> {
+  const svc = media.current;
+  if (!svc || !message.attachments?.length || message._attachmentDescriptions) return;
+  const recognition = Promise.resolve()
+    .then(() => svc.processMessage(message))
+    .then(
+      () => undefined,
+      err => logger.warn(`[trigger] 附件识别失败: ${err}`),
+    );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>(resolve => {
+    timer = setTimeout(resolve, waitMs);
+  });
+  try {
+    await Promise.race([recognition, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ----- 放行与吞掉 -----
+
+/**
+ * 放行收尾：写 triggerType，点名为 immediate，否则为 interval。interval 回合无主发言者，在多人会话
+ * 且消息未带 actor 时回填无主体授权身份：不让「恰好撞上判定的那个人」（陌生人或 owner）的等级决定
+ * AI 自发行为能调什么工具。immediate 是被点名，点名者就是主体，维持缺省（actor 回退到会话身份）。
+ * 私聊可以被配进作用域，私聊里的 interval 只是频率闸，发言者就是唯一主体，不回填。
+ */
+export function markTriggered(message: IncomingMessage, addressed: boolean): void {
+  const kind = addressed ? 'immediate' : 'interval';
+  message.triggerType = kind;
+  if (kind === 'interval' && message.sessionType !== 'private' && !message.actor) {
+    message.actor = selfInitiatedActor(message.platform);
+  }
+}
+
+/** 吞掉前把消息影子归档（与 flow-control 吞掉时的归档对齐）。message-archive 缺席时跳过，归档失败记 warn，不抛错 */
+export async function archiveSwallowed(
+  message: IncomingMessage,
+  archive: CurrentOf<MessageArchiveService>,
+  logger: Logger,
+): Promise<void> {
+  const svc = archive.current;
+  if (!svc) return;
+  try {
+    await svc.archiveIncoming(message);
+  } catch (err) {
+    logger.warn(`[trigger] shadow 归档失败: ${err}`);
+  }
+}
