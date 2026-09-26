@@ -16,6 +16,10 @@ export interface PluginEntry {
   instanceId: string;
   config: Record<string, unknown>;
   state: PluginState;
+  /**
+   * 激活失败的说明：错误消息后接 cause 链摘要（各层消息首行，以 ` ← ` 相连，至多 5 层；AggregateError 层之后接子错误首行，
+   * 至多 3 条）。非 Error 的值只取首行、限 200 字符。
+   */
   error?: string;
   /** 参与激活闸的依赖服务名（uses 里未包 optional 的外部服务） */
   required: string[];

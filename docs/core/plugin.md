@@ -16,7 +16,7 @@ interface PluginEntry {
   instanceId: string;          // 单实例时与 definition.name 相同，多实例时为 `name:suffix`
   config: Record<string, unknown>;
   state: PluginState;
-  error?: string;
+  error?: string;              // 激活失败的说明：错误消息后接 cause 链摘要
   required: string[];          // 参与激活闸的依赖服务名（uses 里未包 optional 的外部服务）
   optional: string[];          // 不参与激活闸的依赖服务名
 }
@@ -35,7 +35,7 @@ interface PluginEntry {
 | `active` | 已激活，正常运行 |
 | `disabled` | 手动禁用 |
 | `disposed` | 已卸载（单向终态） |
-| `error` | 激活失败（带 `error` 信息；不会在后续 recompute 中自动重试，需 `enable` / `bounce`） |
+| `error` | 激活失败（带 `error` 信息：错误消息后接 cause 链各层的首行，以 ` ← ` 相连，至多 5 层；`AggregateError` 层之后接至多 3 条子错误的首行，以 `; ` 相连；上一层首行与本层首行相同，或以冒号接本层首行结尾时，省略本层；非 Error 的值只取首行、至多 200 字符。不会在后续 recompute 中自动重试，需 `enable` / `bounce`） |
 
 ## 生命周期流程
 

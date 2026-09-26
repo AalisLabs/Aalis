@@ -101,7 +101,9 @@ const MINTED = Symbol.for('aalis.core.minted');
 const THIS_COPY = Symbol('aalis.core.copy');
 
 /** @internal 来自另一份 @aalis/core 的对象：安装问题，注册期按 error 记 */
-export class ForeignCoreError extends Error {}
+export class ForeignCoreError extends Error {
+  override name = 'ForeignCoreError';
+}
 
 function mint<T extends object>(value: T): T {
   return Object.defineProperty(value, MINTED, { value: THIS_COPY });

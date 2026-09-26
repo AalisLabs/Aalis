@@ -18,7 +18,7 @@ import type { Activation } from './activation.js';
 import type { ActivationHost } from './activation-host.js';
 import { closeActivations } from './close-plan.js';
 import { isRequiredServiceUnavailable } from '../composition/binding.js';
-import type { Logger } from '../infrastructure/logger.js';
+import { type Logger, summarizeError } from '../infrastructure/logger.js';
 
 /** 注册表内部的记录：公开的 {@link PluginEntry} 加上这次激活（不进公开类型） */
 export interface PluginRecord extends PluginEntry {
@@ -158,7 +158,6 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     entry.error = undefined;
     logger.info(`插件已激活: ${entry.instanceId}`);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
     // apply 拒绝也不能夺回停机已接管的拆卸责任；资源由同一计划回滚。
     if (host.root.resources.disposed) return;
     // 接管让位同上：管理路径已持有终态与激活的拆卸责任，此处再写 error /
@@ -177,7 +176,7 @@ export async function activatePlugin(entry: PluginRecord, deps: ActivationDeps):
     // retireBatch 先写 'error' 再等清理——并发观察者（getStatus / 早退返回的
     // 调用方）依赖状态机即时转移，异步清理不该拖延 'error' 的可见时点。
     // 不发 unloaded：本插件从未 loaded 过，配对事件无从谈起。
-    entry.error = message;
+    entry.error = summarizeError(err);
     await retireBatch([entry], 'error', deps, { emitUnloaded: false });
     return;
   }

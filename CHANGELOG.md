@@ -285,11 +285,15 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - plugin-doctor 诊断报告里的 `plugins.pending` 逐个列出实例缺少的 required 服务（如 `@aalis/plugin-memory-vector: 缺少 embedding`），每行一个；此前只列实例名，以逗号分隔。
 - plugin-memory-sqlite：换了 Node 大版本后 better-sqlite3 原生模块加载失败（原始错误含 `NODE_MODULE_VERSION`）时，激活错误改为中文说明并给出两条出路：用装依赖时的 Node 启动，或在项目根执行 `npm rebuild better-sqlite3`（pnpm 工程用 `pnpm rebuild better-sqlite3`），末尾附原始错误首行。CPU 架构不符、缺系统库等其它原生加载失败报「better-sqlite3 原生模块无法加载：<原始错误>」，不给重编指引。原始错误都保留在 `cause` 里。
 - core 的 `DefaultLogger` 渲染附加参数时不再抛错：JSON 序列化与转字符串都失败的对象（如带循环引用或 BigInt 字段的 null 原型对象）输出 `[object Object]`；渲染过程本身抛错（已撤销的 Proxy、`stack` getter 或 Proxy 陷阱抛错）或结果转不成字符串（如 `Error.stack` 被赋成 null 原型对象）的参数输出 `[无法渲染的参数]`，其余参数照常输出。此前这些参数会让日志调用本身抛错，在 catch 与拆卸路径里盖掉原本要记的错误。`toJSON` 返回 `undefined` 的对象，由输出空串改为输出 `undefined`。
+- core 的 `DefaultLogger` 渲染错误参数时带出因果链：在 stack 之后沿 `cause` 逐层另起一行，每层以 `[cause] 名称: 消息` 开头，至多 5 层，循环引用与超出层数时末行写 `[循环引用]` / `[超过 5 层，其余省略]`；`AggregateError`（无论在最外层还是 cause 层）追加 `[errors] N 项` 并逐项另起一行、缩进两格列出，至多 10 条，其余写「…另 N 项」；多行消息原样续行。只有最外层带 stack，不展开错误对象的其它属性（如 `code`）；非 Error 的 cause 按附加参数规则渲染后取首行。例：`fetch` 连 localhost 被拒、localhost 解析出 IPv6 与 IPv4 两个地址时，`TypeError: fetch failed` 的 stack 之后列出 `[cause] AggregateError`、`[errors] 2 项` 与两条 `Error: connect ECONNREFUSED …`，此前只有 `TypeError: fetch failed` 与调用帧。
+- core 的 `PluginEntry.error`（WebUI 插件页、plugin-doctor 与 agent 插件状态里显示的激活失败说明）在错误消息后接 cause 链摘要：各层取消息首行，以 ` ← ` 相连，如 `fetch failed ← connect ECONNREFUSED 127.0.0.1:11434`，层数上限与收尾写法同日志；`AggregateError` 层（无论在最外层还是 cause 层）之后以 `: ` 接其子错误的首行，以 `; ` 相连，至多 3 条，其余写「…另 N 项」，如上一条里 localhost 那个 `fetch` 例子，摘要为 `fetch failed ← AggregateError: connect ECONNREFUSED ::1:11434; connect ECONNREFUSED 127.0.0.1:11434`。包装错误常把 cause 的消息拼在自己的消息末尾：上一层首行以本层首行结尾，且两者相同或其间以 `:` / `：`（其后可有空白）分隔时，省略本层（plugin-memory-sqlite 的开库错误因此不变）；本层首行只出现在上一层中间，或紧接在其它文字之后（如 `Request failed with status 500` 的 cause `500`）时照常列出。消息为空的错误显示其名称，此前为空串。非 Error 的值（抛出值本身、cause 层与子错误）按日志附加参数规则渲染后只取首行，超过 200 字符截断并以「…」结尾，带字符串 `stack` 的对象因此只留 stack 首行；抛出值为普通对象时显示 JSON，此前为 `[object Object]`，多行字符串此前整段显示。日志照旧完整输出。`apply` 抛出 null 原型对象等转不成字符串的值时，插件此前停在 `activating` 并记一条「recompute(…) 报错」，现在转为 `error`。注册校验失败的日志原因用同一规则；定义的字段 getter 抛出这类值时，`register` 此前以拒绝结束，现在兑现 `false`。
+- core 抛出的服务不可用错误与双副本错误带上名称 `ServiceUnavailableError` / `ForeignCoreError`，stack 首行与 `String(err)` 由 `Error: …` 变为 `<名称>: …`。
 
 **迁移**：
 - 直接 `npm uninstall` 过插件的部署，按告警删除残留配置段。
 - `startAalis`（或自行接了 `installConfigHotReload` 的宿主）下，插件或宿主代码里以 `name:suffix` 登记、配置文件里没有配置段的实例，会在任何一次配置热重载时被卸载；要保留的，先经 host-config 写入配置段并 `save()`，再登记。文件里新加的后缀实例仍需重启，或调用 WebUI 服务端的 `POST /api/plugins/scan`，才会登记。
 - 依赖 `math_calculus` 更大积分分段数的，改用 1000000 以内的偶数，或简化表达式。
+- 按全文比对 `PluginEntry.error` 的代码，改为按前缀或正则匹配：带 cause 的错误后面多了 ` ← …` 摘要，AggregateError 后面多了 `: 子错误…`。按 `Error: 服务 "…" 不可用` 匹配日志或工具输出的，改为匹配 `ServiceUnavailableError:` 或消息本身。
 
 ### 包清单元数据（41 个包）
 
