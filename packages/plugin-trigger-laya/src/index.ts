@@ -4,7 +4,7 @@
 // 经本机 HTTP 问 laya-listener 侧车"这条消息 Aalis 此刻该不该开口"，侧车返回 logit。
 // 只登记提供者、不挂钩子：作用域、禁言、计数与开口后的类别、授权主体都归相位宿主
 // plugin-trigger-policy。返回 null 即弃权，宿主转问下一个提供者（规则判定）：
-// mode=off、影子模式、会话不适用、memory 缺席、侧车失败或熔断时都弃权。
+// mode=off、影子模式、会话不适用、memory 缺席、请求体超限、侧车失败或熔断时都弃权。
 // ============================================================
 
 import { extractTargetId, resolveEffectiveConfig } from '@aalis/api-gateway';
@@ -48,7 +48,8 @@ const configSchema: ConfigSchema = {
     type: 'number',
     label: '历史行数',
     default: defaultLayaConfig.historyRows,
-    description: '从 memory 取该会话最近多少行作为窗口（先取行、再只留 user / assistant），与训练口径一致。',
+    description:
+      '窗口的行数，只算 user / assistant 行：从 memory 多取一倍，过滤后留最后这么多行，与侧车渲染回归的取法一致。',
   },
   priority: {
     type: 'number',
@@ -81,6 +82,8 @@ const configSchema: ConfigSchema = {
 const CIRCUIT_FAILURES = 3;
 /** 熔断时长：期间直接弃权，不发请求 */
 const CIRCUIT_OPEN_MS = 30_000;
+/** 请求体上限（字节）：侧车契约，见 models/listener-sidecar/README.md「接口」节（laya_listener.py 的 MAX_BODY），超过回 413 */
+const MAX_BODY_BYTES = 1 << 20;
 
 /** 侧车窗口的一行（`POST /v1/score` 的 rows 项） */
 interface LayaRow {
@@ -94,8 +97,8 @@ function str(v: unknown): string | undefined {
   return typeof v === 'string' && v ? v : undefined;
 }
 
-/** 历史 → 侧车窗口：只留 user / assistant 且正文是字符串的行；nick 取 metadata.nickname，缺失回落 name */
-function toRows(history: Message[]): LayaRow[] {
+/** 历史 → 侧车窗口：只留 user / assistant 且正文是字符串的行，取最后 limit 行；nick 取 metadata.nickname，缺失回落 name */
+function toRows(history: Message[], limit: number): LayaRow[] {
   const rows: LayaRow[] = [];
   for (const m of history) {
     if ((m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string') continue;
@@ -106,7 +109,7 @@ function toRows(history: Message[]): LayaRow[] {
       nick: str(m.metadata?.nickname) ?? m.name,
     });
   }
-  return rows;
+  return rows.slice(-limit);
 }
 
 /**
@@ -157,20 +160,24 @@ function run(caps: Caps): void {
   let failures = 0;
   let openUntil = 0;
 
-  /** 计一次失败：连续第 3 次起熔断（半开后再失败即重新熔断）。返回 null 供调用处直接弃权 */
+  /**
+   * 计一次失败：连续第 3 次起熔断（到期后再失败即重新熔断）。一次故障只在由正常转为熔断时记 warn，
+   * 之后的并发失败与重新熔断记 debug，恢复由 healthy() 记。返回 null 供调用处直接弃权
+   */
   function fail(why: string): null {
     failures++;
     logger.debug(`[laya] 侧车请求失败: ${why}`);
     if (failures >= CIRCUIT_FAILURES) {
       openUntil = Date.now() + CIRCUIT_OPEN_MS;
-      logger.warn(
-        `[laya] 侧车连续 ${failures} 次失败（最近一次: ${why}），熔断 ${CIRCUIT_OPEN_MS / 1000}s，期间弃权交给后面的提供者`,
-      );
+      const line = `[laya] 侧车连续 ${failures} 次失败（最近一次: ${why}），熔断 ${CIRCUIT_OPEN_MS / 1000}s，期间弃权交给后面的提供者`;
+      // 失败计数只在 healthy() 清零，恰好等于门限的那次就是这次故障的转入
+      if (failures === CIRCUIT_FAILURES) logger.warn(line);
+      else logger.debug(line);
     }
     return null;
   }
 
-  /** 侧车正常作答（含 422）：失败计数清零，熔断过则记恢复 */
+  /** 侧车正常作答（含 422、413）：失败计数清零，熔断过则记恢复 */
   function healthy(): void {
     if (failures >= CIRCUIT_FAILURES) logger.warn('[laya] 侧车恢复，熔断解除');
     failures = 0;
@@ -188,17 +195,26 @@ function run(caps: Caps): void {
         if (failures >= CIRCUIT_FAILURES && Date.now() < openUntil) return null;
 
         const sid = message.sessionId;
-        const history = await (mem.getFullHistory?.(sid, cfg.historyRows) ?? mem.getHistory(sid, cfg.historyRows));
+        // 窗口是最近 historyRows 条 user / assistant 行：多取一倍，过滤后再取，与侧车渲染回归的取法一致
+        const fetched = cfg.historyRows * 2;
+        const history = await (mem.getFullHistory?.(sid, fetched) ?? mem.getHistory(sid, fetched));
         // 当前消息与归档逐字一致：同一个 buildIncomingContent，附件描述先等宿主识别（有上限，超时照常判定）
         await awaitAttachmentDescriptions();
         const body = JSON.stringify({
-          rows: toRows(history),
+          rows: toRows(history, cfg.historyRows),
           cur: buildIncomingContent(message),
           curUserId: message.userId,
           curNick: message.nickname,
           replyTo: message.replyTo ? { userId: message.replyTo.userId, nickname: message.replyTo.nickname } : null,
           selfId,
         });
+        // 超过侧车上限直接弃权、不计失败：侧车不读体就回 413 并关连接，一部分请求在客户端表现为连接错误而非 413。
+        // 不截断行来压体积：侧车的发言人编号与截断都基于完整窗口，改窗口会偏离训练口径
+        const bytes = Buffer.byteLength(body);
+        if (bytes > MAX_BODY_BYTES) {
+          logger.debug(`[laya] 请求体 ${bytes} 字节超过侧车上限 ${MAX_BODY_BYTES}，弃权 | session=${sid}`);
+          return null;
+        }
 
         // 发请求并读完响应体，整体落在同一个超时窗口内（只限响应头的话，迟迟不发体的对端会绕过超时）
         const started = Date.now();
@@ -222,8 +238,9 @@ function run(caps: Caps): void {
         }
         const elapsed = Date.now() - started;
 
-        // 422：这条消息不适合交给模型（系统通知、空消息等），侧车本身正常，不计失败
-        if (status === 422) {
+        // 422：这条消息不适合交给模型（系统通知、空消息等）；413：请求体超限（发前已按上限判过，这里兜底）。
+        // 侧车本身正常，不计失败
+        if (status === 422 || status === 413) {
           healthy();
           return null;
         }

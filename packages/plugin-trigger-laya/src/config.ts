@@ -11,7 +11,7 @@ interface LayaConfig {
   endpoint: string;
   /** 单次请求的超时（毫秒），含读完响应体 */
   timeoutMs: number;
-  /** 从 memory 取的历史行数（过滤 user/assistant 之前的行数，与训练口径一致） */
+  /** 窗口行数，只算 user / assistant 行（从 memory 多取一倍，过滤后留最后这么多行，与侧车渲染回归的取法一致） */
   historyRows: number;
   /** 提供者优先级，越大越先问；规则提供者为 0 */
   priority: number;

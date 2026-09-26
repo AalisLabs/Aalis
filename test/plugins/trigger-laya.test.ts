@@ -138,11 +138,10 @@ const EXPECTED_ROWS = [
   { role: 'assistant', content: '在的' },
 ];
 
+/** 与真实后端一致：取最近 limit 行，按时间升序 */
 function fakeMemory(history: Message[] = HISTORY) {
-  return {
-    getHistory: vi.fn(async (_sid: string, _limit?: number) => history),
-    getFullHistory: vi.fn(async (_sid: string, _limit?: number) => history),
-  };
+  const recent = async (_sid: string, limit = 200) => history.slice(-limit);
+  return { getHistory: vi.fn(recent), getFullHistory: vi.fn(recent) };
 }
 
 interface SetupOptions {
@@ -218,7 +217,7 @@ describe('plugin-trigger-laya：请求与判定', () => {
     const { decision, awaited } = await ask(laya, message, true, ['[图片: 一只猫]']);
     expect(decision).toEqual({ speak: true, reason: 'Laya v-test 阈值=0', score: 1 });
     expect(awaited, '拼 cur 之前先等附件描述').toBe(1);
-    expect(mem.getFullHistory).toHaveBeenCalledWith('onebot:10000:group:20001', 80);
+    expect(mem.getFullHistory, '多取一倍，过滤后留 80 行').toHaveBeenCalledWith('onebot:10000:group:20001', 160);
     expect(sidecar.requests).toHaveLength(1);
     const { body, headers } = sidecar.requests[0];
     expect(headers['content-type']).toBe('application/json');
@@ -235,9 +234,41 @@ describe('plugin-trigger-laya：请求与判定', () => {
     const mem = { getHistory: vi.fn(async () => HISTORY) };
     const { laya } = await setup({ laya: { mode: 'live', historyRows: 20 }, memory: mem });
     await ask(laya, groupMsg('随便聊聊'));
-    expect(mem.getHistory).toHaveBeenCalledWith('onebot:10000:group:20001', 20);
+    expect(mem.getHistory).toHaveBeenCalledWith('onebot:10000:group:20001', 40);
     expect(sidecar.requests[0].body.rows).toEqual(EXPECTED_ROWS);
     expect(sidecar.requests[0].body.replyTo).toBeNull();
+  });
+
+  it('historyRows 只算 user / assistant 行：tool 等行占掉的额度靠多取补上，过滤后只留最后 historyRows 行', async () => {
+    const u = (content: string): Message => ({ role: 'user', content, name: '30002', metadata: { userId: '30002' } });
+    const mem = fakeMemory([
+      u('一'),
+      u('二'),
+      u('三'),
+      { role: 'assistant', content: '四' },
+      { role: 'tool', content: '工具结果', toolCallId: 't1' },
+      u('五'),
+      { role: 'notice', content: '[notice/poke] 丙 戳了戳 Aalis' },
+    ]);
+    const { laya } = await setup({ laya: { mode: 'live', historyRows: 3 }, memory: mem });
+    await ask(laya, groupMsg('x'));
+    expect(mem.getFullHistory).toHaveBeenCalledWith('onebot:10000:group:20001', 6);
+    expect(sidecar.requests[0].body.rows.map(r => r.content)).toEqual(['三', '四', '五']);
+  });
+
+  it('请求体超过侧车上限（1 MiB，按 UTF-8 字节计）：不发请求，直接弃权，不计失败', async () => {
+    // 40 万个汉字：字符数不到 1 MiB，UTF-8 编码后约 1.2 MB
+    const big: Message = { role: 'user', content: '字'.repeat(400_000), name: '30002', metadata: { userId: '30002' } };
+    const history = [big];
+    const { laya, logs } = await setup({ laya: { mode: 'live' }, memory: fakeMemory(history) });
+    for (let i = 0; i < 4; i++) expect((await ask(laya, groupMsg(`第 ${i} 条`))).decision).toBeNull();
+    expect(sidecar.requests).toHaveLength(0);
+    expect(warns(logs)).toEqual([]);
+
+    // 大行滚出窗口后照常请求：前面 4 次若计失败，这里已在熔断期
+    history.splice(0, 1, ...HISTORY);
+    expect((await ask(laya, groupMsg('照常'))).decision).toMatchObject({ speak: true });
+    expect(sidecar.requests).toHaveLength(1);
   });
 
   it('off：直接弃权，不等附件、不发请求', async () => {
@@ -334,7 +365,7 @@ describe('plugin-trigger-laya：请求与判定', () => {
     });
     expect((await ask(laya, groupMsg('x'))).decision).toBeNull();
     expect(sidecar.requests).toHaveLength(1);
-    expect(mem.getFullHistory).toHaveBeenCalledWith('onebot:10000:group:20001', 80);
+    expect(mem.getFullHistory).toHaveBeenCalledWith('onebot:10000:group:20001', 160);
     expect(logs.some(e => e.message.startsWith('[laya] 影子判定') && e.message.includes('阈值=1'))).toBe(true);
   });
 
@@ -358,18 +389,22 @@ describe('plugin-trigger-laya：请求与判定', () => {
 });
 
 describe('plugin-trigger-laya：失败与熔断', () => {
-  it('422（消息不适合交给模型）：弃权，不计失败，并把此前的失败计数清零', async () => {
-    let next: Reply = { status: 422, body: { error: 'system_notice' } };
+  const answered: Array<[what: string, reply: Reply]> = [
+    ['422（消息不适合交给模型）', { status: 422, body: { error: 'system_notice' } }],
+    ['413（请求体超限，发请求前判断的兜底）', { status: 413, body: { error: 'too_large' } }],
+  ];
+  it.each(answered)('%s：弃权，不计失败，并把此前的失败计数清零', async (_what, reply) => {
+    let next: Reply = reply;
     sidecar.reply = () => next;
     const { laya, logs } = await setup({ laya: { mode: 'live' } });
     for (let i = 0; i < 4; i++) expect((await ask(laya, groupMsg('[系统通知] x'))).decision).toBeNull();
     expect(sidecar.requests).toHaveLength(4);
 
-    // 失败 2 次 → 422 → 再失败 1 次：422 清零过，不熔断，下一条照常请求
+    // 失败 2 次 → 422 / 413 → 再失败 1 次：中间清零过，不熔断，下一条照常请求
     next = { status: 500, body: { error: 'internal' } };
     await ask(laya, groupMsg('a'));
     await ask(laya, groupMsg('b'));
-    next = { status: 422, body: { error: 'empty_cur' } };
+    next = reply;
     await ask(laya, groupMsg('c'));
     next = { status: 500, body: { error: 'internal' } };
     await ask(laya, groupMsg('d'));
@@ -386,6 +421,7 @@ describe('plugin-trigger-laya：失败与熔断', () => {
     ['HTTP 400', { status: 400, body: { error: 'bad_field:rows' } }],
     ['响应不是 JSON', { status: 200, body: 'not json' }],
     ['logit 不是有限数', { status: 200, body: { logit: null, threshold: 0, version: 'v-test' } }],
+    ['响应缺 threshold 且配置未填阈值', { status: 200, body: { logit: 1, version: 'v-test' } }],
   ];
   it.each(failures)('%s计一次失败：连续第 3 次熔断并记 warn，熔断期不发请求', async (_what, reply) => {
     sidecar.reply = () => reply;
@@ -431,17 +467,42 @@ describe('plugin-trigger-laya：失败与熔断', () => {
     expect(warns(logs).filter(m => m.includes('熔断 30s'))).toHaveLength(1);
   });
 
-  it('熔断恢复后第一次请求又失败：立即重新熔断', async () => {
+  it('熔断到期后再失败：立即重新熔断，同一次故障不再记 warn；恢复记一条，之后的新故障照常告警', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
-    sidecar.reply = () => ({ status: 500, body: { error: 'internal' } });
+    let next: Reply = { status: 500, body: { error: 'internal' } };
+    sidecar.reply = () => next;
     const { laya, logs } = await setup({ laya: { mode: 'live' } });
+    const tripped = () => warns(logs).filter(m => m.includes('熔断 30s'));
     for (let i = 0; i < 3; i++) await ask(laya, groupMsg(`失败 ${i}`));
     vi.setSystemTime(Date.now() + 30_001);
     await ask(laya, groupMsg('试探'));
     expect(sidecar.requests).toHaveLength(4);
     await ask(laya, groupMsg('又熔断'));
     expect(sidecar.requests).toHaveLength(4);
-    expect(warns(logs).filter(m => m.includes('熔断 30s'))).toHaveLength(2);
+    expect(tripped(), '同一次故障只在转入熔断时告警').toHaveLength(1);
+    expect(logs.some(e => e.level === 'debug' && e.message.includes('连续 4 次失败'))).toBe(true);
+
+    vi.setSystemTime(Date.now() + 30_001);
+    next = score(1);
+    expect((await ask(laya, groupMsg('恢复'))).decision).toMatchObject({ speak: true });
+    expect(warns(logs).filter(m => m.includes('熔断解除'))).toHaveLength(1);
+
+    next = { status: 500, body: { error: 'internal' } };
+    for (let i = 0; i < 3; i++) await ask(laya, groupMsg(`新故障 ${i}`));
+    expect(tripped(), '恢复后的新故障照常告警').toHaveLength(2);
+  });
+
+  it('并发失败：同一次故障只记一条熔断 warn；到期后并发到达的请求都会发出，再失败也只记 debug', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    sidecar.reply = () => 'hang';
+    const { laya, logs } = await setup({ laya: { mode: 'live', timeoutMs: 500 } });
+    const burst = (tag: string) => Promise.all(Array.from({ length: 5 }, (_, i) => ask(laya, groupMsg(`${tag} ${i}`))));
+    await burst('挂起');
+    expect(sidecar.requests).toHaveLength(5);
+    vi.setSystemTime(Date.now() + 30_001);
+    await burst('到期');
+    expect(sidecar.requests).toHaveLength(10);
+    expect(warns(logs).filter(m => m.includes('熔断 30s'))).toHaveLength(1);
   });
 });
 
