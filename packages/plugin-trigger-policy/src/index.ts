@@ -1,22 +1,22 @@
 import { flowControl } from '@aalis/api-flow-control';
 import { extractTargetId, gateway, INBOUND_PHASE, isScopeEnabled, resolveEffectiveConfig } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
-import { media } from '@aalis/api-media';
 import { messageArchive } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
-import { type TriggerDecision, type TriggerProvider, trigger } from '@aalis/api-trigger';
+import {
+  archiveSwallowed,
+  hitsMuteKeyword,
+  isActiveTrigger,
+  isAddressed,
+  markTriggered,
+  type TriggerService,
+  trigger,
+} from '@aalis/api-trigger';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import {
-  type IncomingMessage,
-  type OutgoingMessage,
-  selfInitiatedActor,
-  WellKnownNoticeTypes,
-} from '@aalis/schema-message';
+import type { OutgoingMessage } from '@aalis/schema-message';
 import { defaultTriggerPolicyConfig, resolveTriggerPolicyConfig, type TriggerPolicyConfig } from './config.js';
-import { type AttachmentRecognition, askProvider, createAttachmentRecognition } from './consult.js';
-import { checkImmediateTrigger, checkMuteKeyword } from './detector.js';
 import { clearSessionIdle, type IdleCaps, PlatformIdleScheduler, scheduleSessionIdle } from './idle-scheduler.js';
 import {
   applyScoreDecay,
@@ -53,8 +53,7 @@ const configSchema: ConfigSchema = {
     type: 'boolean',
     label: '检测 @ 提及',
     default: defaultTriggerPolicyConfig.triggerOnAt,
-    description:
-      '@ 自己算"被点名"（戳一戳、名字同理）：规则判定据此直接开口；点名的回合记为 immediate，点名者即授权主体。判定模型在位时只决定类别与授权主体，不决定开不开口。',
+    description: '@ 自己算"被点名"（戳一戳、名字同理）：点名直接开口，回合记为 immediate，点名者即授权主体。',
   },
   triggerOnPoke: {
     type: 'boolean',
@@ -130,18 +129,6 @@ const configSchema: ConfigSchema = {
     label: '闲置触发系统提示',
     default: defaultTriggerPolicyConfig.idleTriggerPrompt,
   },
-  decisionTimeoutMs: {
-    type: 'number',
-    label: '判定截止时间（毫秒）',
-    default: defaultTriggerPolicyConfig.decisionTimeoutMs,
-    description: '每个触发提供者的判定上限，超时按弃权处理，转问下一个提供者。提供者等附件识别的时间不计入。',
-  },
-  mediaWaitMs: {
-    type: 'number',
-    label: '附件识别等待上限（毫秒）',
-    default: defaultTriggerPolicyConfig.mediaWaitMs,
-    description: '提供者要看附件描述时，等识别的上限；超时照常判定，识别在后台继续。规则判定不看附件，不受影响。',
-  },
   overrides: {
     type: 'array',
     label: '分作用域覆盖',
@@ -202,8 +189,8 @@ const uses = {
   provide,
   gateway,
   /**
-   * trigger 由本插件自己提供（规则提供者），只能声明成 optional：写 required 会把激活闸架在
-   * 自己的产出上。宿主经它按序问全部提供者。
+   * trigger 由本插件自己提供，只能声明成 optional：写 required 会把激活闸架在自己的产出上。
+   * 经它判断本插件是不是生效的触发插件（服务胜者）。
    */
   trigger: optional(trigger),
   // 缺席时不设禁言：关键词照样吞掉本条，但不会写入禁言期
@@ -211,8 +198,6 @@ const uses = {
   persona: optional(persona),
   // 缺席时被吞掉的消息不进档，判定照常
   messageArchive: optional(messageArchive),
-  // 提供者要附件描述时宿主经它识别；缺席时直接返回，描述缺失
-  media: optional(media),
 };
 type Caps = BoundOf<typeof uses>;
 
@@ -230,19 +215,14 @@ function run(caps: Caps): void {
   const { logger, events, hooks, lifecycle, provide, persona, flowControl, messageArchive } = caps;
   const cfg = resolveTriggerPolicyConfig(caps.config);
   const states = new Map<string, TriggerSessionState>();
-  const idleCaps: IdleCaps = { logger, events, gateway: caps.gateway, flowControl };
-  const platformIdle = new PlatformIdleScheduler(idleCaps, cfg, states);
 
-  /** 把"被策略吞掉"的入站消息归档（与 flow-control 的 shadow 归档对齐） */
-  async function shadowArchive(message: IncomingMessage): Promise<void> {
-    const archive = messageArchive.current;
-    if (!archive) return;
-    try {
-      await archive.archiveIncoming(message);
-    } catch (err) {
-      logger.warn(`[trigger] shadow 归档失败: ${err}`);
-    }
-  }
+  // 本插件在 trigger 服务里的实例：服务胜者是它时本插件生效，否则对每条消息直接放行、闲置也不开口
+  const self: TriggerService = { label: '规则（计数/评分）' };
+  provide(trigger, self, { label: self.label });
+  const isActive = (): boolean => caps.trigger.current === self;
+
+  const idleCaps: IdleCaps = { logger, events, gateway: caps.gateway, flowControl, isActive };
+  const platformIdle = new PlatformIdleScheduler(idleCaps, cfg, states);
 
   /** 计数与活跃指数清零（禁言与判定放行时） */
   function resetCounters(s: TriggerSessionState | undefined): void {
@@ -268,8 +248,13 @@ function run(caps: Caps): void {
     s.activityScore += calculateScoreIncrement(s, e, userId);
   }
 
-  /** 按会话此刻的计数与评分做规则判定（不看点名） */
-  function ruleVerdict(s: TriggerSessionState, e: TriggerPolicyConfig): TriggerDecision {
+  /** 要不要开口：点名直接开口，否则按会话此刻的计数与评分判定 */
+  function decide(
+    s: TriggerSessionState,
+    e: TriggerPolicyConfig,
+    addressed: boolean,
+  ): { speak: boolean; reason: string } {
+    if (addressed) return { speak: true, reason: '点名' };
     const threshold = getCurrentThreshold(s, e);
     const fixedOk = s.messageCount >= e.fixedInterval;
     const dynamicOk = s.activityScore >= threshold;
@@ -290,40 +275,6 @@ function run(caps: Caps): void {
     return { speak, reason };
   }
 
-  /**
-   * 每条消息记入站那一刻的规则判定，按消息对象存。判定是异步的（规则前面可能还有提供者），同一会话
-   * 接连到达的消息若等轮到规则时再读会话状态，读到的都是后到的消息也记入之后的计数
-   */
-  const ruleVerdicts = new WeakMap<IncomingMessage, TriggerDecision>();
-
-  /** 规则提供者：点名直接开口，否则用宿主记入站时算好的判定 */
-  const ruleProvider: TriggerProvider = {
-    async decide({ message, addressed }) {
-      if (addressed) return { speak: true, reason: '点名' };
-      return ruleVerdicts.get(message) ?? null; // 宿主之外的调用：没有记入站时的判定
-    },
-  };
-  provide(trigger, ruleProvider, { label: '规则（计数/评分）' });
-
-  /** 按 trigger.all() 的顺序（偏好 > 优先级 > 注册顺序）逐个问，第一个不弃权的说了算 */
-  async function consult(
-    message: IncomingMessage,
-    addressed: boolean,
-    attachments: AttachmentRecognition,
-  ): Promise<{ decision?: TriggerDecision; decider?: string; byRule?: boolean; abstained: string[] }> {
-    const abstained: string[] = [];
-    for (const view of caps.trigger.all()) {
-      const label = view.label ?? view.contextId;
-      const answer = await askProvider(view.instance, { message, addressed }, attachments, cfg.decisionTimeoutMs);
-      if (answer.decision) {
-        return { decision: answer.decision, decider: label, byRule: view.instance === ruleProvider, abstained };
-      }
-      if (answer.abstain === '出错') logger.warn(`[trigger] 提供者 ${label} 判定出错，按弃权处理: ${answer.error}`);
-      abstained.push(`${label}(${answer.abstain})`);
-    }
-    return { abstained };
-  }
-
   logger.info(
     `[trigger] 已启用 (模式=${cfg.intervalMode}, 固定间隔=${cfg.fixedInterval}, ` +
       `阈值=${cfg.activityScoreLower}~${cfg.activityScoreUpper}, @提及=${cfg.triggerOnAt}, ` +
@@ -333,11 +284,12 @@ function run(caps: Caps): void {
   );
 
   // ===== inbound:trigger 相位：要不要开口 =====
-  // 由 plugin-gateway 在 inbound:command 之后、inbound:flow 之前触发。本插件是相位宿主：作用域、禁言、
-  // 禁言关键词、记入站、点名识别、开口后的清零与 triggerType 都在这里；"要不要开口"逐个问 trigger
-  // 服务的提供者（本插件自带的规则提供者兜底）。放行的消息写好 triggerType，交给 flow 相位做节流硬闸
-  //（immediate 穿透冷却与限速）。
+  // 由 plugin-gateway 在 inbound:command 之后、inbound:flow 之前触发。放行的消息写好 triggerType，
+  // 交给 flow 相位做节流硬闸（immediate 穿透冷却与限速）。判定是同步的：记入站、判定、清零在同一拍做完，
+  // 同一会话接连到达的消息逐条按计数判定。
   hooks.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
+    // 不是生效的触发插件：什么都不做（不计数、不识别、不归档），交给生效者或往下走
+    if (!isActiveTrigger(data, caps.trigger, self)) return next();
     const { message } = data;
     // 内部注入（闲置触发、定时任务、workflow、跨会话委派）都带 source，跳过策略：不计数、不改 triggerType。
     // 真人消息由平台适配器投递，不设 source。
@@ -359,14 +311,13 @@ function run(caps: Caps): void {
     }
 
     const e = resolveEffectiveConfig(cfg, message.platform, message.sessionType, tid);
-    const isPoke = message.noticeType === WellKnownNoticeTypes.Poke;
 
-    // 禁言关键词：设置自禁言、计数与评分当场清零，吞掉本条。poke 的 content 是合成文案，与名字检测一样不当发言评估。
-    if (!isPoke && checkMuteKeyword(e, message.content)) {
+    // 禁言关键词：设置自禁言、计数与评分当场清零，吞掉本条
+    if (hitsMuteKeyword(message, e.muteKeywords)) {
       logger.info(`[trigger] mute 关键词命中 → swallow + setMuted(${e.muteTimeSeconds}s): ${sessionId}`);
       flow?.setMuted(sessionId, e.muteTimeSeconds, message.platform);
       resetCounters(states.get(sessionId));
-      await shadowArchive(message);
+      await archiveSwallowed(message, messageArchive, logger);
       return; // swallow
     }
 
@@ -376,20 +327,13 @@ function run(caps: Caps): void {
       states.set(sessionId, s);
     }
     recordIncoming(s, e, message.userId);
-    // 规则判定与放行次数都在记入站的同一拍取下，判定返回后据此处理同一会话的突发（见下）
-    ruleVerdicts.set(message, ruleVerdict(s, e));
-    const releasesBefore = s.releases;
     // 真人活动：闲置退避复位，并从现在起重排 session 档 idle
     s.idleBackoff = 1;
     rescheduleIdle(sessionId);
 
-    // 被点名：注意力动作（well-known noticeType=poke）默认视同 @：能进到这里说明 adapter 已经判断过
-    // 目标是 bot（私聊戳全转 inbound / 群聊戳仅 target=self 才转）。triggerOnPoke 关闭时**跳过 @/名字检测**：
-    // poke 的 content 是合成文案（内嵌戳者昵称），昵称含 bot 名会被名字检测误判成提及——
-    // 用户改个名就能让开关对自己失效（对抗审计实测），元数据不当发言评估。
     let addressed: boolean;
     try {
-      addressed = isPoke ? e.triggerOnPoke : checkImmediateTrigger(persona, e, message.content);
+      addressed = isAddressed(message, persona, e);
     } catch (err) {
       // 名字检测会调外部 persona 提供者；抛错时放行而不是吞掉——失败放行优于失败静默
       logger.warn(`[trigger] 点名识别异常，默认放行: ${err}`);
@@ -397,52 +341,27 @@ function run(caps: Caps): void {
       return;
     }
 
-    const attachments = createAttachmentRecognition(message, caps.media, cfg.mediaWaitMs, logger);
-    const started = Date.now();
-    const verdict = await consult(message, addressed, attachments);
-    // 全部弃权（规则提供者只在宿主之外被调用时弃权，正常不会走到）：与判定异常同一原则，失败放行
-    let decision = verdict.decision ?? { speak: true, reason: '全部弃权，默认放行' };
-    if (!verdict.decision) logger.warn(`[trigger] 触发提供者全部弃权，默认放行: session=${sessionId}`);
-    // 同一会话的突发：规则判为开口，但这条判定期间本会话已有消息放行（计数已清零），这次开口作废。判定按
-    // 到达顺序返回时一簇消息只放行撞上阈值的那条；那条返回得晚时（如影子期等附件识别），放行的可能是后到的。
-    // 只约束规则的计数判定：点名照常放行，其它提供者的逐条判定不动
-    if (decision.speak && verdict.byRule && !addressed && s.releases !== releasesBefore) {
-      decision = { speak: false, reason: `${decision.reason}；判定期间本会话已放行` };
-    }
+    const decision = decide(s, e, addressed);
     // 判定日志：不含消息正文
     logger.debug(
-      `[trigger] 判定 | session=${sessionId} | 决定者=${verdict.decider ?? '无'} | speak=${decision.speak} | ` +
-        `addressed=${addressed} | reason=${decision.reason}` +
-        `${decision.score === undefined ? '' : ` | score=${decision.score}`} | 耗时=${Date.now() - started}ms` +
-        `${verdict.abstained.length > 0 ? ` | 弃权=${verdict.abstained.join(',')}` : ''}`,
+      `[trigger] 判定 | session=${sessionId} | speak=${decision.speak} | addressed=${addressed} | reason=${decision.reason}`,
     );
-
-    // 放行与吞掉都不等判定期间启动的附件识别：agent 预处理器与归档对同一个消息对象调
-    // processMessage，按对象记忆命中这次识别（在途则等它），不再识别第二遍
     if (!decision.speak) {
-      await shadowArchive(message);
+      await archiveSwallowed(message, messageArchive, logger);
       return; // swallow
     }
 
-    // 判定放行即复位（无论哪个提供者开口）：之后若被 flow 相位的冷却/限速吞掉，这次触发作废
+    // 判定放行即复位：之后若被 flow 相位的冷却/限速吞掉，这次触发作废
     resetCounters(s);
     s.lastTriggerTime = Date.now();
-    s.releases++;
-    const kind = addressed ? 'immediate' : 'interval';
-    message.triggerType = kind;
-    // interval 回合无主发言者：授权身份回填为无主体，不让「恰好撞阈值的那个人」
-    //（陌生人或 owner）的等级决定 AI 自发行为能调什么工具。immediate 是被点名，
-    // 点名者就是主体，维持缺省（actor 回退到会话身份）。只对多人会话：scope 可配成
-    // 把私聊纳入，私聊里的 interval 只是频率闸，发言者就是唯一主体，不存在歧义。
-    if (kind === 'interval' && message.sessionType !== 'private' && !message.actor) {
-      message.actor = selfInitiatedActor(message.platform);
-    }
+    markTriggered(message, addressed);
     await next();
   });
 
   // agent 真实回复：记为 bot 开口并重排 session 档 idle。不复位退避——bot 回复闲置提示不算真人活动。
+  // 不生效时不记（闲置也不开口）
   events.on('outbound:message', (msg: OutgoingMessage) => {
-    if (msg.source !== 'agent' || !msg.sessionId) return;
+    if (msg.source !== 'agent' || !msg.sessionId || !isActive()) return;
     const s = states.get(msg.sessionId);
     if (!s) return;
     s.lastBotActivityAt = Date.now();
@@ -462,8 +381,6 @@ function run(caps: Caps): void {
   }, SWEEP_INTERVAL_MS);
   if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
 
-  // 不清空 states：表随这次激活的闭包一起回收；重载时在途的判定用记入站时取下的 s 与 ruleVerdicts
-  // 收尾，不读这张表
   lifecycle.onDispose(() => {
     clearInterval(sweepTimer);
     platformIdle.stop();

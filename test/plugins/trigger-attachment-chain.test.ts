@@ -1,10 +1,11 @@
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { agent } from '../../packages/api-agent/src/index.js';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { hooks } from '../../packages/api-hooks/src/index.js';
 import { type MediaProcessor, media } from '../../packages/api-media/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
-import { trigger } from '../../packages/api-trigger/src/index.js';
 import { App, events, type Logger, provide } from '../../packages/core/src/index.js';
 import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
 import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
@@ -12,22 +13,22 @@ import { buildPreprocessor } from '../../packages/plugin-media/src/preprocessor.
 import { type MediaConfigResolved, MediaServiceImpl } from '../../packages/plugin-media/src/service.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
-import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
+import layaPlugin from '../../packages/plugin-trigger-laya/src/index.js';
 import type { IncomingMessage } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
 import { emptyMediaCaps } from '../fixtures/service-ref.js';
 import { deferred } from '../helpers/deferred.js';
 
 // ════════════════════════════════════════════════════════════
-// 附件识别整条链：判定模型启动的识别，放行与吞掉都不等它
+// 附件识别整条链：Laya 判定前启动的识别，放行与吞掉都不等它
 //
-// 判定模型要看附件描述时，trigger 宿主启动识别并最多等 mediaWaitMs；之后放行（交给 flow 相位与
-// agent）和吞掉（影子归档）都不等识别跑完。agent 预处理器与归档对同一个消息对象调 processMessage，
-// 按对象记忆命中这次识别（在途则等它），整条链只识别一次。
+// Laya 要看附件描述：判定前启动识别并最多等 mediaWaitMs；之后放行（交给 flow 相位与 agent）和吞掉
+// （影子归档）都不等识别跑完。agent 预处理器与归档对同一个消息对象调 processMessage，按对象记忆命中
+// 这次识别（在途则等它），整条链只识别一次。
 //
-// 真实插件：gateway + flow-control + trigger-policy + message-archive（内存 memory）。media 是真实的
-// MediaServiceImpl，识别模型换成可卡住的替身；agent 替身按真实 agent 的顺序先跑 media 预处理器、
-// 再归档。每个用例用不同的图片 URL，避开描述缓存。
+// 真实插件：gateway + flow-control + trigger-laya + message-archive（内存 memory）；侧车是本地假服务。
+// media 是真实的 MediaServiceImpl，识别模型换成可卡住的替身；agent 替身按真实 agent 的顺序先跑 media
+// 预处理器、再归档。每个用例用不同的图片 URL，避开描述缓存。
 // ════════════════════════════════════════════════════════════
 
 const AT = '<at self id="10000">Aalis</at> ';
@@ -64,10 +65,32 @@ async function eventually(cond: () => boolean, ms = 1000): Promise<boolean> {
 }
 
 const booted: App[] = [];
+const servers: Server[] = [];
 
 afterEach(async () => {
   for (const app of booted.splice(0)) await app.stop();
+  for (const s of servers.splice(0)) {
+    s.closeAllConnections();
+    await new Promise<void>(r => s.close(() => r()));
+  }
 });
+
+/** 假侧车：每次打分计数，按 speak 回 logit ±3（阈值 0） */
+async function startSidecar(speak: boolean) {
+  const state = { url: '', decided: 0 };
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      state.decided++;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ logit: speak ? 3 : -3, threshold: 0, version: 'v-test' }));
+    });
+  });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  servers.push(server);
+  state.url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  return state;
+}
 
 async function setup(opts: { speak: boolean; flow?: Record<string, unknown> }) {
   const app = new App({ name: 'T', logLevel: 'error' });
@@ -113,26 +136,14 @@ async function setup(opts: { speak: boolean; flow?: Record<string, unknown> }) {
     archived.push(archivedMessage.content ?? '');
   });
 
-  let decided = 0;
-  host.provide(
-    trigger,
-    {
-      async decide({ awaitAttachmentDescriptions }) {
-        await awaitAttachmentDescriptions();
-        decided++;
-        return { speak: opts.speak, reason: '模型' };
-      },
-    },
-    { priority: 10, label: '模型' },
-  );
+  const sidecar = await startSidecar(opts.speak);
 
-  const plugins = [memoryInMemory, messageArchivePlugin, gatewayPlugin, flowControlPlugin, triggerPolicyPlugin];
+  const plugins = [memoryInMemory, messageArchivePlugin, gatewayPlugin, flowControlPlugin, layaPlugin];
   await app.plugins.register(memoryInMemory, {});
   await app.plugins.register(messageArchivePlugin, { debugLogs: false });
   await app.plugins.register(gatewayPlugin, {});
   await app.plugins.register(flowControlPlugin, opts.flow ?? {});
-  // 规则提供者本会吞掉这些消息（计数 1/100）：放行都出自模型的判定
-  await app.plugins.register(triggerPolicyPlugin, { fixedInterval: 100, mediaWaitMs: 30 });
+  await app.plugins.register(layaPlugin, { endpoint: sidecar.url, mediaWaitMs: 30 });
   await app.plugins.idle();
   // 激活闸：required 依赖缺席时插件停在 pending 而不报错，不核状态会让整组用例伪装成绿
   for (const p of plugins) {
@@ -144,7 +155,7 @@ async function setup(opts: { speak: boolean; flow?: Record<string, unknown> }) {
     vision,
     entered,
     archived,
-    decided: () => decided,
+    decided: () => sidecar.decided,
     send: (msg: IncomingMessage) => host.gateway.require().ingressMessage(msg),
     reply: () =>
       host.gateway

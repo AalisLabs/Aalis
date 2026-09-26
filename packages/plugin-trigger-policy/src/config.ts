@@ -19,8 +19,7 @@ export interface TriggerPolicyConfig {
   overrides: TriggerScopeOverride[];
   /** 模式：fixed=按计数，dynamic=按评分阈值，both=任一满足 */
   intervalMode: 'fixed' | 'dynamic' | 'both';
-  // 以下三项决定"被点名"（addressed）：规则提供者据此直接开口；无论谁开口，点名的回合记为
-  // immediate（点名者即授权主体），否则记为 interval。模型提供者在位时它们不决定开不开口。
+  // 以下三项决定"被点名"：点名直接开口，回合记为 immediate（点名者即授权主体），否则按计数与评分判定、记为 interval
   /** 是否检测 @ 提及作为即时触发 */
   triggerOnAt: boolean;
   /** 戳一戳等注意力动作（noticeType=poke）是否视同 @ 即时触发；关闭后落回正常意愿评估 */
@@ -51,11 +50,6 @@ export interface TriggerPolicyConfig {
   idleTriggerJitter: boolean;
   /** 闲置触发注入的 system 提示文本 */
   idleTriggerPrompt: string;
-
-  /** 每个触发提供者的判定截止时间（毫秒），超时按弃权转问下一个；等附件识别的时间不计入。只看顶层 */
-  decisionTimeoutMs: number;
-  /** 提供者要附件描述时宿主等识别的上限（毫秒），超时照常判定、识别在后台继续。只看顶层 */
-  mediaWaitMs: number;
 }
 
 export interface TriggerScopeOverride {
@@ -100,8 +94,6 @@ export const defaultTriggerPolicyConfig: TriggerPolicyConfig = {
   idleTriggerMaxMinutes: 1440,
   idleTriggerJitter: true,
   idleTriggerPrompt: '',
-  decisionTimeoutMs: 2000,
-  mediaWaitMs: 8000,
 };
 
 function parseStringList(val: unknown): string[] {
@@ -147,11 +139,6 @@ export function resolveTriggerPolicyConfig(raw: Record<string, unknown>): Trigge
     idleTriggerMaxMinutes: (raw.idleTriggerMaxMinutes as number) ?? d.idleTriggerMaxMinutes,
     idleTriggerJitter: (raw.idleTriggerJitter as boolean) ?? d.idleTriggerJitter,
     idleTriggerPrompt: (raw.idleTriggerPrompt as string) || d.idleTriggerPrompt,
-    decisionTimeoutMs:
-      typeof raw.decisionTimeoutMs === 'number' && raw.decisionTimeoutMs > 0
-        ? raw.decisionTimeoutMs
-        : d.decisionTimeoutMs,
-    mediaWaitMs: typeof raw.mediaWaitMs === 'number' && raw.mediaWaitMs >= 0 ? raw.mediaWaitMs : d.mediaWaitMs,
   };
 }
 

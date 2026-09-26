@@ -2,6 +2,7 @@
 //
 // session 范围：每会话一个 setTimeout，触发时合成 system 提示注入 gateway。
 // platform 范围：跨平台一个 tick，挑"最久未联系"的 session 主动开聊。
+// 到点时本插件不是生效的触发插件（trigger 服务胜者）就不开口：不注入，也不记为 bot 开口。
 
 import type { FlowControlService } from '@aalis/api-flow-control';
 import { type GatewayService, resolveEffectiveConfig } from '@aalis/api-gateway';
@@ -10,12 +11,13 @@ import type { IncomingMessage } from '@aalis/schema-message';
 import type { TriggerPolicyConfig } from './config.js';
 import { lastActivityOf, type TriggerSessionState } from './state.js';
 
-/** 调度器用到的能力：日志、入站事件、网关引用、流控闸门（只读当前提供者） */
+/** 调度器用到的能力：日志、入站事件、网关引用、流控闸门（只读当前提供者），以及本插件此刻是否生效 */
 export interface IdleCaps {
   logger: Logger;
   events: Events;
   gateway: ServiceRef<GatewayService>;
   flowControl: Pick<ServiceRef<FlowControlService>, 'current'>;
+  isActive(): boolean;
 }
 
 const DEFAULT_PROMPT =
@@ -66,9 +68,10 @@ export function scheduleSessionIdle(
 
   state.idleTimer = setTimeout(async () => {
     try {
-      // 禁言期不开口：跳过本次并按原退避重排（flow 相位也会吞，这里省掉一次注入）
-      if (caps.flowControl.current?.isMuted(sessionId)) {
-        caps.logger.debug(`[trigger] 空闲触发跳过（禁言中）: session=${sessionId}`);
+      // 本插件不生效、或禁言期（flow 相位也会吞，这里省掉一次注入）不开口：跳过本次并按原退避重排
+      const skip = !caps.isActive() ? '触发策略未生效' : caps.flowControl.current?.isMuted(sessionId) ? '禁言中' : '';
+      if (skip) {
+        caps.logger.debug(`[trigger] 空闲触发跳过（${skip}）: session=${sessionId}`);
         reschedule();
         return;
       }
@@ -164,6 +167,10 @@ export class PlatformIdleScheduler {
     if (this.running) return;
     this.running = true;
     try {
+      if (!this.caps.isActive()) {
+        this.caps.logger.debug('[trigger] platform idle tick: 触发策略未生效，跳过');
+        return;
+      }
       const target = this.pickTarget();
       if (!target) {
         this.caps.logger.debug('[trigger] platform idle tick: 无可发送候选，跳过');

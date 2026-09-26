@@ -5,14 +5,6 @@ import {
   resolveTriggerPolicyConfig,
 } from '../../packages/plugin-trigger-policy/src/config.js';
 import {
-  checkImmediateMention,
-  checkImmediateTrigger,
-  checkMuteKeyword,
-  checkNameMention,
-  getBotNames,
-  type PersonaRef,
-} from '../../packages/plugin-trigger-policy/src/detector.js';
-import {
   applyScoreDecay,
   calculateScoreIncrement,
   createState,
@@ -20,9 +12,6 @@ import {
   SESSION_TTL_MS,
   sweepStaleStates,
 } from '../../packages/plugin-trigger-policy/src/state.js';
-
-/** 名字检测只读 persona 的当前提供者：给出 current 即可，不必伪造整个绑定接口 */
-const personaRef = (service?: PersonaService): PersonaRef => ({ current: service });
 
 describe('trigger-policy config', () => {
   it('resolve 默认值', () => {
@@ -64,18 +53,6 @@ describe('trigger-policy config', () => {
   it('intervalMode 非法值回退', () => {
     const c = resolveTriggerPolicyConfig({ intervalMode: 'bogus' as unknown });
     expect(c.intervalMode).toBe(defaultTriggerPolicyConfig.intervalMode);
-  });
-
-  it('判定截止与识别等待：默认 2000 / 8000 毫秒；非法值回退默认，识别等待允许 0', () => {
-    expect(resolveTriggerPolicyConfig({})).toMatchObject({ decisionTimeoutMs: 2000, mediaWaitMs: 8000 });
-    expect(resolveTriggerPolicyConfig({ decisionTimeoutMs: 0, mediaWaitMs: -1 })).toMatchObject({
-      decisionTimeoutMs: 2000,
-      mediaWaitMs: 8000,
-    });
-    expect(resolveTriggerPolicyConfig({ decisionTimeoutMs: 500, mediaWaitMs: 0 })).toMatchObject({
-      decisionTimeoutMs: 500,
-      mediaWaitMs: 0,
-    });
   });
 
   it('idleTriggerScope 非法值回退默认', () => {
@@ -166,96 +143,11 @@ describe('trigger-policy TTL 清扫', () => {
   });
 });
 
-describe('checkImmediateMention (@ 检测)', () => {
-  it('OneBot 内联 <at> 命中', () => {
-    expect(checkImmediateMention('<at self>123</at> hi')).toBe(true);
-    expect(checkImmediateMention('<at self qq="1">x</at>')).toBe(true);
-  });
-  it('裸 CQ 码不再命中（adapter 入站已规范化成 <at self>，CQ 码到不了这里）', () => {
-    expect(checkImmediateMention('[CQ:at,qq=12345] 你好')).toBe(false);
-  });
-  it('@别人（<at> 无 self）不命中', () => {
-    expect(checkImmediateMention('<at id="999">路人</at> 你好')).toBe(false);
-  });
-  it('普通文本 @nickname 不再视作 @ 提及（避免 @他人 误触发）', () => {
-    expect(checkImmediateMention('hi @aalis 帮我')).toBe(false);
-  });
-  it('无 @ 不命中', () => {
-    expect(checkImmediateMention('hello world')).toBe(false);
-  });
-});
-
-describe('checkNameMention', () => {
-  it('包含名字 → 命中', () => {
-    expect(checkNameMention('阿狸你好', ['阿狸'])).toBe(true);
-  });
-  it('未包含名字 → 不命中', () => {
-    expect(checkNameMention('随便聊聊', ['阿狸'])).toBe(false);
-  });
-  it('空名字数组', () => {
-    expect(checkNameMention('something', [])).toBe(false);
-  });
-  it('忽略空字符串名', () => {
-    expect(checkNameMention('hello', ['', 'hello'])).toBe(true);
-    expect(checkNameMention('hello', [''])).toBe(false);
-  });
-});
-
-describe('getBotNames', () => {
-  it('无 persona 服务时返回 cfg.triggerNames', () => {
-    const cfg = { ...defaultTriggerPolicyConfig, triggerNames: ['a', 'b'] };
-    expect(getBotNames(personaRef(), cfg)).toEqual(['a', 'b']);
-  });
-  it('有 persona 服务时合并 + 去重', () => {
-    const cfg = { ...defaultTriggerPolicyConfig, triggerNames: ['a'] };
-    const persona: PersonaService = {
-      getSystemPrompt: () => '',
-      getPersonaName: () => 'aalis',
-      getNickNames: () => ['a', 'amy'],
-    };
-    expect(getBotNames(personaRef(persona), cfg)).toEqual(['a', 'aalis', 'amy']);
-  });
-});
-
-describe('checkImmediateTrigger', () => {
-  it('triggerOnAt 关闭时不响应 @', () => {
-    const cfg = { ...defaultTriggerPolicyConfig, triggerOnAt: false, triggerNames: [] };
-    expect(checkImmediateTrigger(personaRef(), cfg, '@aalis hi')).toBe(false);
-  });
-  it('triggerOnAt 开启但仅纯文本 @ 时不命中（由名字检测兜底）', () => {
-    const cfg = { ...defaultTriggerPolicyConfig, triggerOnAt: true, triggerNames: [] };
-    expect(checkImmediateTrigger(personaRef(), cfg, '@aalis hi')).toBe(false);
-  });
-  it('triggerOnAt 开启且为 <at self> 时命中', () => {
-    const cfg = { ...defaultTriggerPolicyConfig, triggerOnAt: true, triggerNames: [] };
-    expect(checkImmediateTrigger(personaRef(), cfg, '<at self id="1">bot</at> hi')).toBe(true);
-  });
-  it('名字匹配也命中', () => {
-    const cfg = { ...defaultTriggerPolicyConfig, triggerOnAt: false, triggerNames: ['aalis'] };
-    expect(checkImmediateTrigger(personaRef(), cfg, 'aalis 你好')).toBe(true);
-  });
-});
-
-describe('checkMuteKeyword', () => {
-  it('cfg 关键词命中', () => {
-    const cfg = { ...defaultTriggerPolicyConfig, muteKeywords: ['闭嘴'] };
-    expect(checkMuteKeyword(cfg, '你给我闭嘴')).toBe(true);
-  });
-  it('只认 cfg 下发的关键词：persona 等别处的词不命中（避免单例 PersonaService 跨平台泄漏）', () => {
-    const cfg = { ...defaultTriggerPolicyConfig, muteKeywords: [] };
-    expect(checkMuteKeyword(cfg, 'please stop')).toBe(false);
-  });
-  it('全部不命中', () => {
-    const cfg = { ...defaultTriggerPolicyConfig, muteKeywords: ['x'] };
-    expect(checkMuteKeyword(cfg, 'hello world')).toBe(false);
-  });
-});
-
 // ════════════════════════════════════════════════════════════
 // inbound:trigger 相位（走真实插件装配，不装 gateway 插件 / flow-control）
 // ════════════════════════════════════════════════════════════
 
-import { App, provide } from '@aalis/core';
+import { App, type LogEntry, LogHub, provide } from '@aalis/core';
 import { gateway } from '../../packages/api-gateway/src/index.js';
 import { type Hooks, hooks } from '../../packages/api-hooks/src/index.js';
 import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
@@ -456,5 +348,57 @@ describe('trigger-policy inbound:trigger 授权身份', () => {
     await app.stop();
     expect(message.triggerType).toBe('interval');
     expect(message.actor).toEqual({ platform: 'webui', userId: 'console' });
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 判定是同步的：记入站、判定、清零在同一拍做完，同一会话接连到达的消息逐条按计数判定
+// （判定若在记入站之后异步进行，一簇消息会先全部记入再陆续判定，fixedInterval=2 的 4 条只放行第 2 条）
+// ════════════════════════════════════════════════════════════
+
+describe('trigger-policy inbound:trigger（同一会话突发）', () => {
+  const EVERY_TWO = { intervalMode: 'fixed', fixedInterval: 2 };
+  const AT = '<at self id="bot">Aalis</at> ';
+
+  it('同一 tick 发 4 条、fixedInterval=2：逐条计数，放行第 2、4 条', async () => {
+    const { app, host } = await setupPolicy(EVERY_TWO);
+    const results = await Promise.all([1, 2, 3, 4].map(i => runTriggerPhase(host.hooks, groupMsg(`第 ${i} 条`))));
+    await app.stop();
+    expect(results.map(r => r.reached)).toEqual([false, true, false, true]);
+    expect(results.map(r => r.message.triggerType)).toEqual([undefined, 'interval', undefined, 'interval']);
+  });
+
+  it('突发里被点名的消息照常放行（immediate），并清零计数', async () => {
+    const { app, host } = await setupPolicy(EVERY_TWO);
+    const contents = ['第 1 条', '第 2 条', `${AT}第 3 条`, '第 4 条', '第 5 条'];
+    const results = await Promise.all(contents.map(c => runTriggerPhase(host.hooks, groupMsg(c))));
+    await app.stop();
+    expect(results.map(r => r.reached)).toEqual([false, true, true, false, true]);
+    expect(results[2].message.triggerType).toBe('immediate');
+  });
+});
+
+describe('trigger-policy inbound:trigger（判定日志）', () => {
+  it('每条一行 debug：会话、speak、addressed、reason（计数与指数），不含正文', async () => {
+    const logHub = new LogHub();
+    const lines: LogEntry[] = [];
+    logHub.onEntry(e => {
+      if (e.message.startsWith('[trigger] 判定')) lines.push(e);
+    });
+    const app = new App({ name: 'T', logLevel: 'debug', logHub });
+    await registerHubs(app);
+    const host = app.bind({ provide, hooks });
+    host.provide(gateway, {} as never);
+    await app.plugins.register(triggerPolicyPlugin, { intervalMode: 'fixed', fixedInterval: 3 });
+    await app.plugins.idle();
+    await runTriggerPhase(host.hooks, groupMsg('这是一段不该进日志的正文'));
+    await runTriggerPhase(host.hooks, groupMsg('<at self id="bot">Aalis</at> 在吗'));
+    await app.stop();
+    expect(lines.map(e => e.level)).toEqual(['debug', 'debug']);
+    expect(lines[0].message).toMatch(
+      /^\[trigger\] 判定 \| session=onebot:bot:group:g1 \| speak=false \| addressed=false \| reason=计数=1\/3 指数=[\d.]+ \(阈值=0\.300\)$/,
+    );
+    expect(lines[0].message).not.toContain('不该进日志');
+    expect(lines[1].message).toContain('speak=true | addressed=true | reason=点名');
   });
 });

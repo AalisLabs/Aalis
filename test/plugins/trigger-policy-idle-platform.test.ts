@@ -4,7 +4,12 @@ import type { IncomingMessage } from '@aalis/schema-message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FlowControlService } from '../../packages/api-flow-control/src/index.js';
 import { resolveTriggerPolicyConfig } from '../../packages/plugin-trigger-policy/src/config.js';
-import { type IdleCaps, PlatformIdleScheduler } from '../../packages/plugin-trigger-policy/src/idle-scheduler.js';
+import {
+  clearSessionIdle,
+  type IdleCaps,
+  PlatformIdleScheduler,
+  scheduleSessionIdle,
+} from '../../packages/plugin-trigger-policy/src/idle-scheduler.js';
 import { createState, type TriggerSessionState } from '../../packages/plugin-trigger-policy/src/state.js';
 
 // 背景（A30）：platform 档 all-quiet 策略在「已达标但无候选」和「压根没有活动记录」两种情形下
@@ -15,6 +20,7 @@ import { createState, type TriggerSessionState } from '../../packages/plugin-tri
 // 背景（BQ）：stop() 只清当前 timer，飞行中的 tick 回来照样 schedule() —— 拆卸后留下僵尸定时器，
 // 一直把闲置消息注进已停的插件。契约：stop() 之后任何重排都是空操作。
 // 流控状态（禁言/冷却/限速）归 flow-control，调度器只经服务读取；这里用可控的假服务。
+// 触发策略是否生效（trigger 服务胜者）也经 caps 读取，这里用可控的开关。
 
 interface FakeFlow {
   muted: Set<string>;
@@ -27,6 +33,7 @@ function setup() {
   // 调度器要的能力由宿主侧绑定给出；无 gateway 提供者时它回落到直接发入站事件
   const bound = app.bind({ logger, events, gateway });
   const flow: FakeFlow = { muted: new Set(), cooling: new Set(), limited: new Set() };
+  const trigger = { active: true };
   const service: FlowControlService = {
     isMuted: sid => flow.muted.has(sid),
     isCoolingDown: sid => flow.cooling.has(sid),
@@ -38,12 +45,13 @@ function setup() {
     events: bound.events,
     gateway: bound.gateway,
     flowControl: { current: service },
+    isActive: () => trigger.active,
   };
   const seen: IncomingMessage[] = [];
   bound.events.on('inbound:message', (msg: IncomingMessage) => {
     seen.push(msg);
   });
-  return { app, caps, seen, flow, bound };
+  return { app, caps, seen, flow, bound, trigger };
 }
 
 /** 造一个「很久没动过」的状态（满足 all-quiet） */
@@ -197,6 +205,67 @@ describe('PlatformIdleScheduler：候选筛选', () => {
 
     expect(seen.map(m => m.sessionId)).toEqual(['S-A', 'S-B', 'S-A']);
     expect(states.get('S-A')?.lastBotActivityAt, '注入时刻应记为 bot 开口').toBeGreaterThan(0);
+    await app.stop();
+  });
+});
+
+describe('闲置触发只在触发策略生效时开口', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('platform 档：未生效时到点不注入、不记 bot 开口；重新生效后照常', async () => {
+    const { app, caps, seen, trigger } = setup();
+    const cfg = resolveTriggerPolicyConfig({
+      idleTriggerScope: 'platform',
+      idleTriggerStrategy: 'fixed',
+      idleTriggerMinutes: 1,
+    });
+    const states = new Map<string, TriggerSessionState>([['S1', quietState()]]);
+    trigger.active = false;
+    const sched = new PlatformIdleScheduler(caps, cfg, states);
+    sched.start();
+
+    await vi.advanceTimersByTimeAsync(60_500);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(seen).toHaveLength(0);
+    expect(states.get('S1')?.lastBotActivityAt, '没开口不记为 bot 开口').toBe(0);
+
+    trigger.active = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(seen.map(m => m.sessionId)).toEqual(['S1']);
+    sched.stop();
+    await app.stop();
+  });
+
+  it('session 档：未生效时到点跳过、按原退避重排，不记 bot 开口；重新生效后照常', async () => {
+    const { app, caps, seen, trigger } = setup();
+    const cfg = resolveTriggerPolicyConfig({
+      idleTriggerScope: 'session',
+      idleTriggerStyle: 'exponential',
+      idleTriggerMinutes: 1,
+      idleTriggerJitter: false,
+    });
+    const state = quietState();
+    const reschedule = () => scheduleSessionIdle(caps, cfg, state, 'S1', reschedule);
+    trigger.active = false;
+    reschedule();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(seen).toHaveLength(0);
+    expect(state.idleBackoff, '没开口不退避').toBe(1);
+    expect(state.lastBotActivityAt).toBe(0);
+    expect(state.idleTimer, '跳过后仍按原退避重排').not.toBeNull();
+
+    trigger.active = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(seen.map(m => m.sessionId)).toEqual(['S1']);
+    expect(state.idleBackoff).toBe(2);
+    clearSessionIdle(state);
     await app.stop();
   });
 });
