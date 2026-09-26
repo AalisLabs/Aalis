@@ -446,11 +446,12 @@ function run(caps: Caps): void {
   }, SWEEP_INTERVAL_MS);
   if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
 
+  // 不清空 states：重载时在途的判定仍在旧状态上收尾（清空会让规则提供者读不到状态而弃权，
+  // 在途消息落入「全部弃权、默认放行」）；表随这次激活的闭包一起回收
   lifecycle.onDispose(() => {
     clearInterval(sweepTimer);
     platformIdle.stop();
     for (const s of states.values()) clearSessionIdle(s);
-    states.clear();
   });
 }
 
