@@ -7,12 +7,13 @@
  * - spec.run 抛错时被收纳为 error 级别 check，不影响其它检查
  * - generatedAt / summary 正确生成
  * - formatReport 输出按 level 分组并包含换行（聊天栏可读性）
+ * - plugins.pending 逐条列出缺的 required 服务（与 runtime 启动告警同一判据）
  */
 import { describe, expect, it } from 'vitest';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { type CheckResult, type DoctorService, doctor } from '../../packages/api-doctor/src/index.js';
 import { webuiServer } from '../../packages/api-webui/src/index.js';
-import { App, provide, services } from '../../packages/core/src/index.js';
+import { App, definePlugin, defineService, logger, provide, services } from '../../packages/core/src/index.js';
 import doctorPlugin, { formatReport } from '../../packages/plugin-doctor/src/index.js';
 
 // ===== helpers =====
@@ -157,6 +158,27 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     expect(text).toMatch(/! 警告/);
     // 多行（聊天栏不是一坨）
     expect(text.split('\n').length).toBeGreaterThan(5);
+    await app.stop();
+  });
+
+  it('plugins.pending 逐条列出缺的 required 服务，已有提供者的服务不列', async () => {
+    const { app, doctor } = await boot();
+    const probe = definePlugin({
+      name: 'zz-doctor-pending-probe',
+      uses: {
+        logger,
+        a: defineService<unknown>('zz-doctor-missing-a'),
+        b: defineService<unknown>('zz-doctor-missing-b'),
+      },
+      apply() {},
+    });
+    await app.plugins.register(probe, {});
+    await app.plugins.idle();
+
+    const report = await doctor.runChecks();
+    const pending = report.checks.find(c => c.id === 'plugins.pending');
+    expect(pending?.level).toBe('warn');
+    expect(pending?.detail).toBe('zz-doctor-pending-probe: 缺少 zz-doctor-missing-a、zz-doctor-missing-b');
     await app.stop();
   });
 

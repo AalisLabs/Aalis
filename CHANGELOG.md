@@ -27,7 +27,7 @@ core 只做插件的注册、激活、关停与两种原语（事件、服务）
 - core 不再持有配置文档，只持三样运行态：各实例的配置、禁用态、服务偏好。删除 `ConfigManager` / `ConfigProvider` / `AalisConfig`、`App.config`、`AppOptions.config` / `configProvider` / `pluginDefaults`、`AppService.saveConfig`、`hostConfig` 描述符与 `HostConfig` 类型。`AppOptions` 新增可选的 `name`（启动横幅）与 `logLevel`（默认 Logger 级别）。
 - `app.plugin(definition, config?, instanceId?, { disabled })` 与 `plugins.register` 同形：传入的配置原样生效，core 不再合并「宿主 `pluginDefaults` ← 配置文件 ← 传入」，也不再读禁用名单，禁用态由调用方传入。
 - 管理动作（`plugins.enable` / `disable` / `updateConfig` / `bounce`）只改运行态，不再写配置文档。要跨重启保留，调用方在动作成功后经 host-config 写文档再 `save()`；WebUI 的启停与改配置路由、mcp-client 的自服务开关已这样做。
-- 新包 `@aalis/api-host-config`：`AalisConfig`（各域配置字段的 declaration merging 目标）、`HostConfig`（文档读写面加 `save()`）与 `hostConfig` 描述符，服务名仍是 `host-config`。`save()` 兑现即已落盘；失败时以拒绝传出，并已记一笔 error、标记为已处理。
+- 新包 `@aalis/api-host-config`：`AalisConfig`（各域配置字段的 declaration merging 目标）、`HostConfig`（文档读写面加 `save()`）、`hostConfig` 描述符，以及宿主拒写的错误类 `ConfigSaveRefusedError` 与判据 `isConfigSaveRefused(err)`；服务名仍是 `host-config`。`save()` 兑现即已落盘；失败时以拒绝传出，并已记一笔日志（拒写记告警，其它失败记 error）、标记为已处理。配置源有尚未生效的外部修改而拒写时，拒绝原因是 `ConfigSaveRefusedError`；`isConfigSaveRefused` 按错误名判定，进程里装有两份本包时也认得。
 - runtime 新增 `createConfigStore(initial, provider?)` 与 `installHostConfig(app, store)`（独占登记 host-config、应用文档里的服务偏好）；`ConfigProvider` 类型改由 `@aalis/runtime` 导出。`syncPluginDefaults` / `handleConfigChanged` / `installConfigHotReload` 改收 `store` 参数，`withPluginConfigSync(loader, app, store, opts)` 改为导出。`startAalis` 的装配序为：文档 → App → host-config → 加载政策 → 发现 → 热重载；热重载在 `app:stopping` 时停止监听。
 - authority、cli、mcp-client 删去只为落盘而声明的 `app` 依赖，改用 host-config 的 `save()`；webui-server 与 package-manager 同样改用 `save()`。host-config 不再由 core 保证在场：plugin-authority 缺它时激活失败；cli、package-manager 降级；mcp-client 的 `mcp_set_server_enabled` 不改动运行态并返回失败；WebUI 读写文档的路由与服务偏好路由返回 503。市场依赖图与 WebUI 服务页把根上的提供者标为「宿主」。
 
@@ -36,6 +36,7 @@ core 只做插件的注册、激活、关停与两种原语（事件、服务）
 - 向 `'@aalis/core'` 增广 `AalisConfig` 的，改为 `declare module '@aalis/api-host-config'`。
 - 直接调管理动作又要持久化的插件，动作成功后自己写文档并 `save()`。
 - 自组装宿主：`const store = createConfigStore(config, provider); const app = new App({ name: store.get('name'), logLevel: ... }); installHostConfig(app, store);`，登记插件时按文档传配置与 `{ disabled }`。默认值须深合并进配置（`withPluginConfigSync` 即此政策），不能顶层浅合并：只写了半块的嵌套组会把默认值整块顶掉。自定义配置来源的 `ConfigProvider` 类型改从 `@aalis/runtime` 导入。
+- 自定义 `ConfigProvider`（或自行实现 `HostConfig` 的宿主）为免覆盖外部修改而拒绝保存时，抛 `@aalis/api-host-config` 的 `ConfigSaveRefusedError`：宿主据此只记告警，WebUI 据此回 409；抛其它错误按写入失败处理（记 error，WebUI 回 500）。调用方区分两者用 `isConfigSaveRefused(err)`，不用 `instanceof`。
 - 不提供 host-config 的嵌入式宿主不能使用 plugin-authority。
 - JS 调用方仍向 `new App` 传 `config` 时会被静默忽略（TS 对对象字面量会报错）。
 
@@ -129,20 +130,23 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 
 - plugin-authority：`users.json` 不是有效的 v5 结构时（包括 v1–v4 旧模型与更高版本），不再静默丢弃并在下次保存时覆盖，改为记 error、本次运行拒写，等级改动只在内存生效。旧版本文件不做迁移。
 - plugin-authority 因加载失败而拒写期间，`/level` 的回复与 WebUI 权限管理页设置等级、删除记录的提示末尾注明「仅本次运行生效，未写入 users.json（加载失败，见日志）」。页面显示这段附注需要同批的新版 plugin-webui-client。
-- plugin-authority 读取 users.json 期间（storage 晚于本插件上线时的首次读取，以及 storage 重新上线触发的重读）发生的等级改动不再立即写盘，改为读完、与文件里的记录合并后再落盘，停机与卸载会等这次落盘完成。此前首次读取期间的一次改动会用只含这条改动的快照覆盖整个 users.json，重读期间的改动会覆盖读不懂的 users.json。读取期间改的若是文件里已有的用户，合并时以文件里的值为准，这次改动不会保留。读取过程出现意外异常（如存储抛出无法转成字符串的错误值）时按读不懂处理，本次运行拒写。
+- plugin-authority 首次读取 users.json 落定之前（storage 晚于本插件上线时，包括 storage 刚上线、读取尚未发起的间隙）与 storage 重新上线触发的重读期间不再写盘，读完后再落盘，停机与卸载会等进行中的读取与这次落盘完成。此前首次读取期间或 storage 刚上线的间隙里的一次改动会用只含这条改动的快照覆盖整个 users.json，重读期间的改动会覆盖读不懂的 users.json。storage 上线前改等级、删记录时，`/level` 的回复与 WebUI 设置等级、删除记录的提示末尾注明「未写入 users.json（等级表尚未载入），载入后写入」；首次读取发起之前（storage 未上线，或刚上线、读取尚未发起）停机或卸载，这些改动不写入。`/level` 与 WebUI 设置等级、删除记录先等进行中的读取完成再改，写入结束后才回复。读取过程出现意外异常（如存储抛出无法转成字符串的错误值）时按读不懂处理，本次运行拒写。
+- plugin-authority 读成功后以文件内容重建等级表，不再把文件里的记录并入内存：运行中从 users.json 删掉的记录随重读消失（此前仍留在内存）。自上次成功写入以来改过或删过的用户以内存为准，读完后一并写入，包括 storage 上线前（首次读取尚未开始）的改动与删除，以及读取开始时尚未写完的改动；此前文件里有的用户一律以文件为准，这些改动在内存里被撤回，删掉的记录随文件回来。以内存为准时，内存记录里没有的备注沿用文件里的；例外是首次读取前把等级降为 0，这时读不到文件里的备注，整条记录连同备注删除。重读时 users.json 不存在则保留内存里的等级表。
+- plugin-authority 写 users.json 失败（storage 不在线、权限不足、磁盘写满）时记 error（此前为 warn），`/level` 的回复与 WebUI 设置等级、删除记录的提示末尾注明「未写入 users.json（写入失败，见日志），下次保存时重试」，此前照常报成功。改动留在内存，下次保存（再次改等级、storage 重新上线后的重读、停机或卸载）时重写。
+- plugin-authority 的日志上报自身出错（日志订阅者同步抛错，或写入、加载 users.json 的错误值转不成字符串）时不再外抛；加载失败的错误值转不成字符串时照常记下告警。此前写 users.json 的保存链会停在拒绝：此后的保存都不再写盘，停机与卸载等待落盘时抛错，没人等待的拒绝还会被宿主当作致命错误退出进程；加载 users.json 的成功或失败日志抛错时，storage 已在线则 authority 激活失败，晚上线则同样以未处理的拒绝退出进程。
 - plugin-flow-control：禁言表 `data:/flow-control-mutes.json` 读不出、坏 JSON 或顶层不是对象时不再整表覆盖；storage 换人后重读成功即恢复落盘。optional 的 storage 晚于本插件上线时，读回的禁言表与内存里已有状态按较晚到期合并。
 - plugin-scheduler：动态任务文件读失败（含激活时 storage 不在场）、解析失败或合法 JSON 但不是数组时，本次运行不写该文件。
 - plugin-workflow：运行历史文件读失败（含激活时 storage 不在场）、解析失败或结构不对时，本次运行拒写该文件，也不安排任何 once 触发（含 runAt 在未来的）。0.11.x 及更早写出的顶层数组格式同样按读不懂处理。列定义目录报错带非 `ENOENT` 的 code 时按扫描失败处理，不再据此清空 once 记账。
 - plugin-vectorstore-flat：`vectors.json` 读不出、解析失败或不是数组时，本次运行按空库在内存中工作且不再写入，`clear` 也不写。此前文档写明的「坏文件不影响后续写入」不再成立。
-- runtime：保存配置文件前比对盘上内容，手改尚未生效或另一个进程写过时拒绝本次保存，报「配置文件有尚未生效的外部修改，为免覆盖已拒绝本次保存（<路径>）」，不再静默覆盖手改；拒写只记一条告警。拒写之后调用方的文档已领先于文件，下一次文件变更即使内容与上次生效的那份逐字节相同（例如把改坏的文件原样改回）也照常热重载，按文件重新对账。监听武装后立即对账一次；平台不支持文件监听时告警，此后手改需重启才生效。
+- runtime：保存配置文件前比对盘上内容，手改尚未生效或另一个进程写过时拒绝本次保存，报「配置文件有尚未生效的外部修改，为免覆盖已拒绝本次保存（<路径>）」，不再静默覆盖手改；拒写时抛 `@aalis/api-host-config` 的 `ConfigSaveRefusedError`，只记一条告警。拒写之后调用方的文档已领先于文件，下一次文件变更即使内容与上次生效的那份逐字节相同（例如把改坏的文件原样改回）也照常热重载，按文件重新对账。监听武装后立即对账一次；平台不支持文件监听时告警，此后手改需重启才生效。
 - 统一判据后，tool-system 的 `file_append`、checkpoint 回滚删除遇到带非 `ENOENT` code 的错误时如实报错。
 
 **迁移**：
 - 出现上述告警时修复或移走对应文件后重启。workflow 的 once 也可以用 `workflow_run` 手动执行。
 - `users.json` 仍是 v1–v4 格式的，删除或移走该文件后重启，即按全新开始。
-- `/level` 回复或 WebUI 提示带「仅本次运行生效」附注时，按日志修复或移走 users.json 后重启，再重做这些等级改动。storage 晚于 authority 上线、且在启动窗口里改过等级的旧版本部署，核对 users.json 是否缺了原有记录。
+- `/level` 回复或 WebUI 提示带「仅本次运行生效」附注时，按日志修复或移走 users.json 后重启，再重做这些等级改动。storage 晚于 authority 上线、且在启动窗口里改过等级的旧版本部署，核对 users.json 是否缺了原有记录。带「未写入 users.json（写入失败，见日志）」附注时，恢复 storage、修好写入权限或腾出磁盘空间即可，改动在下次保存时写入。带「等级表尚未载入」附注的改动在 storage 上线、读完 users.json 后写入，首次读取发起之前（storage 未上线或刚上线）就停机的需重做。
 - `workflow-runs.json` 顶层是数组的，改成 `{"runs": <原数组>}` 或删除。
-- 遇到配置保存被拒时，等热重载吸收手改或修正配置语法后重做该操作；进程没有监听配置文件时（子命令进程、平台不支持监听）重启后再做。直接调用 `createFsYamlConfigProvider().provider.save()` 的自定义宿主须接住这一抛错；经 host-config 的保存会记 error 日志。
+- 遇到配置保存被拒时，等热重载吸收手改或修正配置语法后重做该操作；进程没有监听配置文件时（子命令进程、平台不支持监听）重启后再做。直接调用 `createFsYamlConfigProvider().provider.save()` 的自定义宿主须接住这一抛错，用 `isConfigSaveRefused(err)` 与写入失败区分；经 host-config 的保存由宿主记日志，拒写记一条告警，其它失败记 error。
 
 ### 删除已发布版本的旧配置与旧数据兼容（@aalis/plugin-memory-history、@aalis/plugin-media、@aalis/plugin-llm-openai、@aalis/plugin-embedding-openai、@aalis/plugin-office、@aalis/runtime、@aalis/plugin-webui-server、@aalis/plugin-file-reader、@aalis/plugin-memory-vector）
 
@@ -187,7 +191,7 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 
 **迁移**：需要受限工具或指令的部署安装 `@aalis/plugin-authority`（create-aalis 的 minimal 及以上各档已包含）。嵌入式宿主或测试可自行 `setExecutionGuard`。想保留 tool-onebot 旧行为，把对应 `allow*` 设为 true。
 
-### 市场装卸与 WebUI 接口（@aalis/plugin-package-manager、@aalis/plugin-webui-server、@aalis/plugin-webui-client）
+### 市场装卸与 WebUI 接口（@aalis/plugin-package-manager、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-authority）
 
 - 市场安装前经 `npm view <spec> keywords --json` 检查类型关键词，只放行带 `aalis-plugin` 或 `aalis-interface` 的包；内核、宿主、契约、schema、工具库类包被拒，并提示改用「更新所选」。
 - 市场安装压掉 `legacy-peer-deps`（与更新预检同口径）：用户或项目 `.npmrc` 里的 `legacy-peer-deps=true` 不再作用于市场安装，peer 冲突时安装失败并列出冲突。
@@ -195,14 +199,19 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - 删除 `GET /api/logs`，改调 `GET /api/logs/tail`（默认 200 条，结果相同）。
 - `GET /api/status` 的响应不再包含 `services` 布尔表。webui-server 不再以可选依赖声明 memory 服务，WebUI 依赖展示里不再列出 memory。
 - persist 模式的访问令牌改为经 storage 跟随读回：storage 晚于 WebUI 上线时不再生成新令牌。
-- 启停插件、修改插件配置、新建或删除实例、设置或清除服务偏好的接口，在改动已生效、但保存配置文件失败（如文件里有尚未生效的外部修改而被拒写）时返回 409 与 JSON `{ error, applied: true }`，此前是 Express 默认的 HTML 500。`applied: true` 表示改动已在运行态生效、没有写进文件：修好配置文件后，插件配置随热重载回到文件里的值，没写进文件的新建实例随热重载卸载；启停、删除实例与服务偏好在重启时以文件为准。全局配置（`PUT /api/config`）保存失败时撤回文档里的改动并返回 409 `{ error }`（不带 `applied`），此前返回 500 且改动留在文档里，会被下一次任意保存写进文件。
+- 启停插件、修改插件配置、新建或删除实例、设置或清除服务偏好的接口，在改动已生效、但保存配置文件失败时返回 JSON `{ error, applied: true }`，此前是 Express 默认的 HTML 500。`applied: true` 表示改动已在运行态生效、没有写进文件。宿主拒写（文件里有尚未生效的外部修改）时返回 409：修好配置文件后，插件配置随热重载回到文件里的值，没写进文件的新建实例随热重载卸载；启停、删除实例与服务偏好在重启时以文件为准。其它失败（没有写权限、磁盘写满等）返回 500：文件没有变化，改动保留在配置文档里，下一次保存成功时一并写入。
+- 全局配置（`PUT /api/config`）保存失败时撤回文档里的改动，拒写返回 409、其它失败返回 500，响应为 `{ error }`（不带 `applied`）；此前一律返回 500 且改动留在文档里，会被下一次任意保存写进文件。`POST /api/config/save` 遇到拒写同样返回 409，其它失败仍返回 500。
+- `PUT /api/config` 只在 `logLevel` 变化时重启应用；只改 `name` 时保存即生效，不再整进程重启。WebUI 保存全局配置后立即重新拉取系统状态，界面上的名称随即更新（装有人设时界面显示人设名）。
+- `PUT /api/plugins/:name/config` 裁掉插件 schema 未声明的字段时不再只记日志：本次提交里的列在响应的 `ignored` 里；配置文档里原有、本次没有提交的照旧随保存从配置文件删除，列在 `removed` 里；两者都附在 `message` 末尾。插件运行中、且提交后的配置与运行态和配置文档都相同时，不再重载插件及其下游，只把配置文档写回文件，回复「插件 X 配置无改动，已写回配置文件」；上一次保存写文件失败（500）后原样重新提交，即可补写。写回时保留配置文件里该插件原有的键序，缺的默认键追加在末尾，此前按 schema 默认值的顺序重排。插件配置页保存成功后显示服务端返回的 `message`，不再固定显示「配置已更新，正在重载…」。
+- WebSocket 收到非 JSON 帧时只记一行告警「WebUI 收到协议违规消息: 非 JSON 帧」，不再记成「WebUI 消息处理失败」并带整段栈。
 - 权限管理页的操作提示改为显示服务端返回的回执，回执缺 `message` 时才用本地文案；提示停留时长按字数计算，至少 2.2 秒。例如撤销已不存在的临时委托时显示「不存在或已过期」，不再误报「已撤销」。
-- 会话历史里的附件引用改为按文件名之后的固定格式定界剥离：文件名含半角括号或方括号（如 `report (1).txt`、`data [v2].csv`）时，内联文件正文、大文件引用（含早期的单行格式）、超限、处理失败与降级引用都整块隐藏，用户气泡里不再露出文件正文、文件 ID 或「说明：…」残片；大文件引用之后的图片描述不再被一并隐藏。
+- plugin-authority 的页面动作 `setAuthorityOverride` 返回值新增 `revokedGrants`（因门槛变更撤销的会话授予条数）。权限管理页整组设最低等级时等全部请求落定再提示：按各条的 `revokedGrants` 合计撤销数，有失败时列出成功与失败条数及去重后的原因，无论成败都刷新页面。此前一条失败就只显示该条错误、不刷新，成功时也不提示撤销数。
+- 会话历史里的附件引用改为按文件名之后的固定格式定界剥离：文件名含半角括号或方括号（如 `report (1).txt`、`data [v2].csv`）时，内联文件正文、大文件引用（含早期的单行格式）、超限、处理失败与降级引用都整块隐藏，用户气泡里不再露出文件正文、文件 ID 或「说明：…」残片；大文件引用之后的图片描述不再被一并隐藏。最早那批文件头不带文件 ID 的内联文件块（`[文件: <名称>]` 下一行即「--- 文件内容 ---」）同样整块隐藏。
 
 **迁移**：
 - 依赖 `legacy-peer-deps` 才能从市场装上的插件，先升级冲突的包解决 peer 冲突；不要用 `--legacy-peer-deps` 绕过。
 - 自己实现 `PackageManagerService` 的第三方补上 `serviceDependents`。按状态码判断卸载被拒的脚本改为读响应的 `ok` 字段。
-- 自写客户端收到带 `applied: true` 的 409 时按「已生效、未落盘」处理，不要重试；服务偏好接口原有的 409（提供者拒绝该偏好）不带 `applied`。
+- 自写客户端收到带 `applied: true` 的 409 或 500 时按「已生效、未落盘」处理，不要当作改动失败：409 先修好配置文件，由热重载按文件对账；500 在修好写入条件后，下一次成功保存会把改动一并写入。服务偏好接口原有的 409（提供者拒绝该偏好）不带 `applied`。
 - 读过 `status.services` 的自写前端改为请求 `GET /api/services`，响应形如 `{ services: { <服务名>: { providers, preferred } } }`：某服务的键存在且 `providers` 非空即表示在场。原表的 llm、agent、memory、persona、cli 都对应同名服务；原 `webui-server` 一项在本插件运行时恒为 true，可直接删掉。
 
 ### 关系图（@aalis/plugin-user-relation、@aalis/api-embedding、@aalis/plugin-embedding-ollama、@aalis/plugin-embedding-openai）
@@ -236,6 +245,7 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - persona 的非主卡 `outputFormat` 改为按卡缓存：显示名相同的两张卡不再共用格式，热改非主卡的 `outputFormat` 后无需重启即生效。
 - 结构化输出（persona `outputFormat`）落库时，assistant 消息的 metadata 带解码后的可见正文（`visibleContent`），只在它与落库内容不同时写入。memory-vector 建索引、扩窗与召回的渲染优先读它，memory-summary 的摘要输入同样优先读它，JSON 信封与状态字段不再进入摘要；升级前落库的消息没有这个键，仍按原文呈现。
 - memory_recall 在 `crossSessionMode=user` 下与被动注入一致，对当前用户本人发言或被 @ 的命中乘 `search.userPriorityBoost`（此前工具路径不加权）；回合中止信号传给查询 embedding 与扩窗取数。
+- memory-vector 写入的向量带 embedding 提供者的 `modelId`，被动注入与 memory_recall 只召回与当前模型相同的向量：同维度换模型后，其它模型的向量不再混入检索。每个当前模型在一次运行中首次排除时记一条 warn，列出被排除向量的模型并写明处理办法（改回原模型、重新 embed，或 `/clear all -t vector` 清空向量库）。排除发生在取回候选之后、候选池不放大，其它模型的向量占多数时命中会变少。升级前写入的向量不带 `modelId`，升级后首次检索时记下当时的模型作为它们的模型（记忆元数据 namespace `memory-vector`、key `legacy-model`）；memory 服务不在或元数据读写出错时，本次按当前模型对待、下次检索再试，读写连续出错只记一次 warn。全局清空消息历史而不清向量库时（如 `/clear all -t context`），记忆后端会连元数据一起删除，存量标记在清空后原样写回，写回失败记一条 warn。提供者未声明 `modelId` 时不按模型过滤。
 - memory-summary：`keepRecent` 大于 `threshold`、历史条数介于两者之间时，自动摘要不再每轮重复摘要同一批消息；与 `session:compress` 一致，历史不多于 `keepRecent` 时不摘要。`session:compress` 路径的日志文案改为「会话已压缩 / 会话已裁切（无摘要）」。
 - user-profile：记忆后端读取档案或指令出错时，关系分更新、事实提取、自反思、指令提取以及 `/profile forget`、`/instruct add`、`/instruct remove` 放弃本次写入，这三条指令回复「添加失败」或「删除失败」及原因。此前读错按「无档案」处理，随后以空档案覆盖写回，一次瞬时读错即可清空整份档案或指令表。只读展示（提示注入、`user_profile_lookup`、`/profile`、`/instruct` 等）读失败仍按暂无档案处理。
 
@@ -243,6 +253,7 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - 自写 `agent:tool:before` / `agent:tool:after` 钩子的第三方：抛错现在只让当前工具失败（`agent:tool:before` 抛错等于拦截该工具），同批其它工具照常落定。
 - 放在 `configDir:/personas` 的人设卡移到 `personasDir`。按旧说明把 `personasDir` 写成相对项目根路径的，改写为 storage URI（如 `data:/personas`），或把人设卡移到该值实际指向的存储根下。
 - 要恢复 memory_recall 旧排序，把 `search.userPriorityBoost` 设为 1（同时影响被动注入）。
+- memory-vector 升级后先用原 embedding 模型完成至少一次检索（一轮对话即可）再更换模型；升级时同时换模型，存量向量会被记成新模型、与新向量混在一起检索，需清空向量库。
 - 升级前以 JSON 信封建索引的 assistant 向量不会自动更新；可停机后删除，由新消息重建。LanceDB 执行 ``table.delete(`metadata_json LIKE '%"role":"assistant"%' AND metadata_json LIKE '%"content":"{%'`)``。memory-vector、memory-summary 依赖 plugin-agent 写入的可见正文与 schema-message 的新导出，与这两个包同批升级。
 
 ### 模型与媒体（@aalis/plugin-llm-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-ollama、@aalis/plugin-media、@aalis/plugin-asr-openai、@aalis/plugin-asr-whisper-cpp、@aalis/plugin-file-reader、@aalis/plugin-image-sender）
@@ -259,7 +270,7 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - 所有 LLM 处理器优先级相同，`vision.prefer` 留空时由注册顺序最靠前的视觉模型胜出，新表项可能把识别切到计费的兼容端点。要固定识别模型，显式设置 `vision.prefer`；个别型号推断不准时用 `modelCapabilities` 覆盖。
 - 自行解析文件块的前端，按开头一行声明的编号配对结束标记，并继续兼容无编号的旧格式。`resolveLocalPath` 的调用方改为判 `null`。按原始文件名匹配 `getMeta` / `listFiles` 结果的代码改按文件 ID 匹配。
 
-### 运行中换提供者与其它修复（@aalis/plugin-session-manager、@aalis/plugin-todo-list、@aalis/plugin-memory-summary、@aalis/plugin-user-profile、@aalis/plugin-adapter-onebot、@aalis/plugin-agent、@aalis/plugin-storage-local、@aalis/plugin-skills、@aalis/plugin-persona、@aalis/runtime、@aalis/plugin-tool-math、@aalis/core）
+### 运行中换提供者与其它修复（@aalis/plugin-session-manager、@aalis/plugin-todo-list、@aalis/plugin-memory-summary、@aalis/plugin-user-profile、@aalis/plugin-adapter-onebot、@aalis/plugin-agent、@aalis/plugin-storage-local、@aalis/plugin-skills、@aalis/plugin-persona、@aalis/runtime、@aalis/plugin-tool-math、@aalis/plugin-doctor、@aalis/plugin-memory-sqlite、@aalis/core）
 
 - session-manager 的会话表跟随 memory 胜者：运行中换后端后显示新后端的会话，换人前未落盘的变更写回旧后端。换后端即换库，不跨后端合并。
 - todo-list、memory-summary、user-profile 一次操作只绑定开头取到的 memory 实例：WebUI 切换 memory 偏好时，不再出现 A 被裁剪、摘要写进 B，或把 A 的整张事实表写进 B 的情况。todo-list 有 memory 时每次读当前胜者。
@@ -269,7 +280,10 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - skills 与 persona 的目录重扫改为串行：同一时刻只跑一次，进行中再触发只排一次尾随重扫。persona 扫描期间新增的卡不再被并发的旧扫描剔除。skills 扫完后整体替换技能缓存，扫描期间读到的是上一版完整列表，扫描失败时保留上一版，不再出现并发扫描造成的虚假「重复 skill 名称」告警；任何一次重扫（含 `load_skill`、`list_skills` 的按需重扫）都会作废已编译的 triggers，改过的触发正则随之生效；扫描进行中经服务创建、更新、删除的技能与附属文件，不再被扫描收尾的整体替换盖掉（写入时排一次尾随重扫）。`SkillsService.rescan()` 在扫描进行中被调用时，等尾随那次重扫完成后返回。
 - runtime 冷启动时对 `plugins` 下找不到插件的单实例配置段逐段告警一次：「配置段 "<键>" 对应的插件未找到，已忽略；若已卸载可删除该段（其中可能含密钥）」。
 - runtime 配置热重载以文件为准处理后缀实例：`name:suffix` 实例在配置文件里没有配置段时（手动删掉了，或拒写期间经 WebUI 新建、没写进文件），热重载时卸载该实例，与冷启动只登记文件里有配置段的后缀实例一致。此前热重载会把它的运行态配置换成 schema 默认值（没有默认值时为 `{}`），并把默认值作为新配置段写回文件。主实例不受影响。
+- runtime 保存配置文件时，临时文件在创建时就沿用原文件的权限位，不再先以默认权限（通常 0644）建出再改权限；没有原文件时按 0600 创建，由保存首次创建的配置文件因此是 0600（此前按 umask，通常 0644）。写临时文件或改名失败时先删掉临时文件再报错，配置目录里不再留下含密钥的临时文件。
 - tool-math 的 `math_calculus` 单次调用的求值总时长上限为 2 秒，超时返回「计算超时（超过 2 秒），请简化表达式」（integral 为「…请简化表达式或减小 n」）；integral 的分段数 `n` 最大 1000000，超出直接返回错误。此前昂贵的表达式配上大 `n` 或迭代求根会同步占住事件循环，长时间卡住整个进程。
+- plugin-doctor 诊断报告里的 `plugins.pending` 逐个列出实例缺少的 required 服务（如 `@aalis/plugin-memory-vector: 缺少 embedding`），每行一个；此前只列实例名，以逗号分隔。
+- plugin-memory-sqlite：换了 Node 大版本后 better-sqlite3 原生模块加载失败（原始错误含 `NODE_MODULE_VERSION`）时，激活错误改为中文说明并给出两条出路：用装依赖时的 Node 启动，或在项目根执行 `npm rebuild better-sqlite3`（pnpm 工程用 `pnpm rebuild better-sqlite3`），末尾附原始错误首行。CPU 架构不符、缺系统库等其它原生加载失败报「better-sqlite3 原生模块无法加载：<原始错误>」，不给重编指引。原始错误都保留在 `cause` 里。
 - core 的 `DefaultLogger` 渲染附加参数时不再抛错：JSON 序列化与转字符串都失败的对象（如带循环引用或 BigInt 字段的 null 原型对象）输出 `[object Object]`；渲染过程本身抛错（已撤销的 Proxy、`stack` getter 或 Proxy 陷阱抛错）或结果转不成字符串（如 `Error.stack` 被赋成 null 原型对象）的参数输出 `[无法渲染的参数]`，其余参数照常输出。此前这些参数会让日志调用本身抛错，在 catch 与拆卸路径里盖掉原本要记的错误。`toJSON` 返回 `undefined` 的对象，由输出空串改为输出 `undefined`。
 
 **迁移**：

@@ -222,14 +222,32 @@ export function AuthorityPage() {
   const setOpLevel = (op: Operation, level: number | null) =>
     act('setAuthorityOverride', { name: capKey(op), level }, '已更新最低等级');
   const setOpConfirm = (op: Operation, c: ConfirmOverride | '') => act('setConfirmOverride', { name: capKey(op), confirm: c }, '已更新确认');
+  /**
+   * 整组设最低等级：逐条调 setAuthorityOverride，全部落定后汇总——各条回执的 revokedGrants（撤销的会话授予
+   * 条数）相加，失败原因去重列出；无论成败都刷新，部分失败时页面显示的也是实际生效的门槛。
+   */
   const setGroupLevel = async (groupOps: Operation[], level: number) => {
-    try {
-      await Promise.all(groupOps.map(op => pageAction(PLUGIN, 'setAuthorityOverride', { name: capKey(op), level })));
-      flash('整组最低等级已更新');
-      await refresh();
-    } catch (e) {
-      flash(errMsg(e));
+    const results = await Promise.allSettled(
+      groupOps.map(op => pageAction<{ revokedGrants?: unknown } | undefined>(PLUGIN, 'setAuthorityOverride', { name: capKey(op), level })),
+    );
+    let revoked = 0;
+    let failed = 0;
+    const reasons = new Set<string>();
+    for (const r of results) {
+      if (r.status === 'rejected') {
+        failed++;
+        reasons.add(errMsg(r.reason));
+      } else if (typeof r.value?.revokedGrants === 'number') {
+        revoked += r.value.revokedGrants;
+      }
     }
+    const note = revoked > 0 ? `（已撤销 ${revoked} 条相关会话授予）` : '';
+    flash(
+      failed === 0
+        ? `整组最低等级已更新${note}`
+        : `整组最低等级：${results.length - failed} 项已更新${note}，${failed} 项失败：${[...reasons].join('；')}`,
+    );
+    await refresh();
   };
   const applyDenied = (list: string[]) => act('setConfig', { deniedCapabilities: list }, '已更新硬禁');
   const applyAllow = (list: string[], duration: number) =>

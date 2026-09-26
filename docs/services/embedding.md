@@ -73,8 +73,8 @@ Ollama 实现（`packages/plugin-embedding-ollama/src/index.ts`）：
 
 **参考消费者 `@aalis/plugin-memory-vector`**（向量记忆，硬依赖）：
 - 声明依赖：`uses: { vectorstore, embedding, memory: optional(memory) }`（`packages/plugin-memory-vector/src/index.ts`），并同步写在 `package.json` 的 `aalis.service.required`。
-- 取用：`function getEmbedder() { return embedding.current!; }`——封装成函数，**每次读取 `.current` 重新解析**（lazy）。
-- 调用点：索引时 `await getEmbedder().embed(embedText)`，查询时 `await getEmbedder().embed(query)`，得到向量后交给 `vectorstore` 检索。
+- 取用与调用点：索引与查询各取一次 `embedding.require()`（每次重新解析当前提供者），用这一实例 `embed`，得到的向量交给 `vectorstore` 写入或检索。
+- 模型标识：写入的向量 metadata 带同一实例的 `modelId`；检索只保留与查询向量同模型的候选，升级前不带 `modelId` 的存量向量按记忆元数据里的存量标记认定模型（见 [plugin-memory-vector](../plugins/plugin-memory-vector.md)）。
 
 **可选消费者 `@aalis/plugin-user-relation`**（实体 / 事件去重的语义召回，软依赖）：
 - 取用：`const embedding = this.caps.embedding.current`（`packages/plugin-user-relation/src/service.ts`）。
@@ -174,29 +174,28 @@ export default definePlugin({
 
 ## 5. 标准消费方式
 
-### 惰性读取 `.current`（不要缓存实例）
+### 每次调用重新解析（不要缓存实例）
 
-提供者重新 `provide` / 切换会使旧实例失效，所以**每次用都重新取**（见 [lazy-service-access](../concepts/lazy-service-access.md)）。参考实现就是包成 getter 函数：
+提供者重新 `provide` / 切换会使旧实例失效，所以**每次用都重新取**（见 [lazy-service-access](../concepts/lazy-service-access.md)）。一次调用内取一次，用到底：
 
 ```ts
-function getEmbedder(): EmbeddingService {
-  return embedding.current!; // 硬依赖：uses required 已保证存在
-}
-// 每个调用点：await getEmbedder().embed(text)
+const provider = embedding.require();
+const vec = await provider.embed(text);
+// 需要向量空间标识时读同一实例的 provider.modelId，它与 vec 出自同一模型
 ```
 
 ### 硬依赖 vs 可选依赖
 
-- **硬依赖**：声明 `uses required = ['embedding']`（双源同步到 `package.json`）。运行时框架保证存在，取用可用 `!` 断言（如 memory-vector）。
+- **硬依赖**：声明 `uses required = ['embedding']`（双源同步到 `package.json`）。取用 `embedding.require()`（如 memory-vector），无提供者时抛错：required 依赖丢失到调度收敛之间也可能短暂缺席，由调用点的错误边界兜住（见下文）。
 - **可选依赖**：声明 `uses optional`（或干脆不声明），取用要判空降级：
 
 ```ts
-const embedding = embedding.current;
-if (!embedding) {
+const provider = embedding.current;
+if (!provider) {
   // 降级：跳过语义召回，走纯结构化路径（user-relation 的做法）
   return null;
 }
-const vec = await embedding.embed(text);
+const vec = await provider.embed(text);
 ```
 
 ### 错误边界

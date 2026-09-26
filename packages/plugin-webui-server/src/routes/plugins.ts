@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { UserIdentity } from '@aalis/api-authority';
 import type { CommandService } from '@aalis/api-commands';
-import type { HostConfig } from '@aalis/api-host-config';
+import { type HostConfig, isConfigSaveRefused } from '@aalis/api-host-config';
 import type { PluginSourceService } from '@aalis/api-plugin-source';
 import type { ToolService } from '@aalis/api-tools';
 import type { WebUIService, WebuiActionHandler, WebuiPage } from '@aalis/api-webui';
@@ -31,8 +31,9 @@ const RECONCILE = {
 } as const;
 
 /**
- * 管理动作改完运行态之后落盘。落盘被拒（典型：配置文件有尚未生效的外部修改，宿主为免覆盖而拒写）时
- * 回 409 + `applied: true` 并返回 false：改动已在运行态生效、只是没写进文件，调用方别当成「没改成」去重试。
+ * 管理动作改完运行态之后落盘；失败时回 `applied: true` 并返回 false：改动已在运行态生效、只是没写进文件，
+ * 调用方别当成「没改成」去重试。宿主拒写（配置文件有尚未生效的外部修改）回 409，之后以文件为准对账；
+ * 其它失败（权限、磁盘写满等）回 500，文件没变也不会触发重载，改动留在文档里，下一次成功保存时一并写入。
  */
 export async function saveAfterApply(
   doc: Pick<HostConfig, 'save'>,
@@ -43,10 +44,17 @@ export async function saveAfterApply(
     await doc.save();
     return true;
   } catch (err) {
-    res.status(409).json({
-      error: `已在运行态生效，但未写入配置文件（${errorMessage(err)}）；${RECONCILE[reconcile]}`,
-      applied: true,
-    });
+    if (isConfigSaveRefused(err)) {
+      res.status(409).json({
+        error: `已在运行态生效，但未写入配置文件（${errorMessage(err)}）；${RECONCILE[reconcile]}`,
+        applied: true,
+      });
+    } else {
+      res.status(500).json({
+        error: `已在运行态生效，但写入配置文件失败（${errorMessage(err)}）；改动保留在文档里，下次保存成功时一并写入`,
+        applied: true,
+      });
+    }
     return false;
   }
 }
@@ -268,8 +276,8 @@ export function registerPluginRoutes(
     }
     const previous = Object.fromEntries(changed.map(k => [k, current[k]]));
     for (const key of changed) doc.set(key, updates[key]);
-    // name / logLevel 都要重启才生效；值没变就不重启
-    const restartNeeded = changed.length > 0;
+    // logLevel 只在启动时读取，改了才重启；name 由 /api/status 每次实时读文档，保存即生效
+    const restartNeeded = changed.includes('logLevel');
     const note = ignored.length > 0 ? `（已忽略不可修改的字段: ${ignored.join(', ')}）` : '';
 
     try {
@@ -281,9 +289,12 @@ export function registerPluginRoutes(
         res.json({ ok: true, message: `全局配置已更新并保存${note}`, ignored });
       }
     } catch (err) {
-      // 全局字段要重启才生效，运行态没有改动：撤回文档里的改动，免得下一次任意保存把这次被拒的修改写进文件
+      // 拒写与写入失败都撤回文档里的改动，免得下一次任意保存把这次没存下的修改写进文件。
+      // logLevel 要重启才生效，name 由状态接口读文档：撤回后两者都回到修改前，运行态不留改动
       for (const key of changed) doc.set(key, previous[key]);
-      res.status(409).json({ error: `未写入配置文件（${errorMessage(err)}），本次修改已撤回` });
+      res
+        .status(isConfigSaveRefused(err) ? 409 : 500)
+        .json({ error: `未写入配置文件（${errorMessage(err)}），本次修改已撤回` });
     }
   });
 
@@ -321,31 +332,49 @@ export function registerPluginRoutes(
     // 补默认值再交给 updateConfig：后者是**整体替换**语义（core 的 orchestration/plugin.ts 里
     // entry.config = newConfig 直接顶掉）。不补的话，PUT 一个部分对象就会把未列出的
     // 字段从内存态和 yaml 里一起抹掉。默认值从 configSchema 派生（唯一声明来源）。
-    const schema = pm.getPlugin(pluginName)?.definition?.configSchema;
+    const entry = pm.getPlugin(pluginName);
+    const schema = entry?.definition?.configSchema;
     const defaults = defaultsFrom(schema);
     // 基线取「默认值叠已存值」而非裸默认值：defaultsFrom 只收录声明了 default 的键，
     // 而 apiKey / accessToken 这类 secret 多数**没有** default（deepseek、embedding-openai、
     // llm-openai、serper、onebot 皆是）。用裸 defaults 打底时，请求里没带 apiKey 就等于
     // merged 里根本没有这个键，整体替换后用户的密钥从内存态与 yaml 一起消失。
     // 叠上已存值后语义才是真正的部分更新：没提交的字段保持原样，要清空得显式传空串。
+    let docConfig: Record<string, unknown>;
     let stored: Record<string, unknown>;
     let merged: Record<string, unknown>;
+    const ignored: string[] = [];
+    const removed: string[] = [];
     try {
-      stored = { ...defaults, ...doc.getPluginConfig(pluginName) };
-      merged = { ...stored, ...(newConfig as Record<string, unknown>) };
+      docConfig = doc.getPluginConfig(pluginName);
+      // 先铺文档里的原配置、缺的默认键追加到末尾：写回时保留配置文件里原有的键序
+      stored = { ...docConfig };
+      for (const [key, value] of Object.entries(defaults)) {
+        if (!Object.hasOwn(stored, key)) stored[key] = value;
+      }
+      const submitted = newConfig as Record<string, unknown>;
+      merged = { ...stored, ...submitted };
       // 与 runtime config-sync 同一政策：有 schema 就裁掉未知键并 warn，避免 WebUI 把
       // 手滑字段写进 stored，而 YAML watch 路径却会裁掉——两边政策必须一致。
+      // 被裁的字段按来源回给调用方，不静默吞掉却回复「已更新」：本次提交里的记 ignored（与 PUT /api/config
+      // 同一口径）；文档里原有、本次没提交的不是用户这次写的，随整份写回从配置文件删掉，记 removed
       if (schema && Object.keys(schema).length > 0) {
-        const removed: string[] = [];
-        merged = removeExtraFields(merged, schema as Record<string, unknown>, removed);
-        if (removed.length > 0) {
-          caps.logger?.warn(`配置同步：${pluginName} 裁掉 schema 外字段 [${removed.join(', ')}]`);
+        const shape = schema as Record<string, unknown>;
+        for (const [key, value] of Object.entries(merged)) {
+          removeExtraFields({ [key]: value }, shape, Object.hasOwn(submitted, key) ? ignored : removed);
+        }
+        merged = removeExtraFields(merged, shape);
+        if (ignored.length + removed.length > 0) {
+          caps.logger?.warn(`配置同步：${pluginName} 裁掉 schema 外字段 [${[...ignored, ...removed].join(', ')}]`);
         }
       }
     } catch (err) {
       res.status(400).json({ error: errorMessage(err) });
       return;
     }
+    const note =
+      (ignored.length > 0 ? `（已忽略未声明的配置字段: ${ignored.join(', ')}）` : '') +
+      (removed.length > 0 ? `（已从配置文件移除未声明的字段: ${removed.join(', ')}）` : '');
 
     // 保存前校验，拦新不追旧：只拒绝本次编辑**新引入**的 invalid（配错了）。
     // 存量问题放行——否则带着历史脏值（或 schema 表达不了的多态字段，如 mcp-client
@@ -365,6 +394,15 @@ export function registerPluginRoutes(
       return;
     }
 
+    // 运行态与文档都已是这份配置：不重建插件（updateConfig 即 bounce，会连带重启依赖它所提供服务的下游）。
+    // 仍照常落盘：上一次保存可能写文件失败（500），文档与运行态已是新配置而文件没变，原样重试要能补写；
+    // 自写回不会触发 watch 重载。只认 active：error 态插件靠原样保存来重试激活，照旧走 updateConfig
+    if (entry?.state === 'active' && isDeepStrictEqual(merged, entry.config) && isDeepStrictEqual(merged, docConfig)) {
+      if (!(await saveAfterApply(doc, res, 'reload'))) return;
+      res.json({ ok: true, message: `插件 ${pluginName} 配置无改动，已写回配置文件${note}`, ignored, removed });
+      return;
+    }
+
     let success: boolean;
     try {
       success = await pm.updateConfig(pluginName, merged);
@@ -376,7 +414,7 @@ export function registerPluginRoutes(
       // 管理动作只改运行态；跨重启保留要本路由写文档并落盘
       doc.setPluginConfig(pluginName, merged);
       if (!(await saveAfterApply(doc, res, 'reload'))) return;
-      res.json({ ok: true, message: `插件 ${pluginName} 配置已更新` });
+      res.json({ ok: true, message: `插件 ${pluginName} 配置已更新${note}`, ignored, removed });
     } else if (pm.getPlugin(pluginName)?.state === 'disabled') {
       // 插件被禁用时这里也会走到，但「不存在」会把用户引向错误方向——区分「禁用」与「真不存在」并给出下一步。
       res.status(409).json({ error: `插件 ${pluginName} 已禁用，配置未写入——先启用插件再修改配置` });
@@ -532,7 +570,7 @@ export function registerPluginRoutes(
     res.json({ ok: true, message: `已删除实例 ${instanceId}` });
   });
 
-  // 保存配置到磁盘
+  // 保存配置到磁盘：与其它落盘路由同一口径，宿主拒写回 409、其它失败回 500
   expressApp.post('/api/config/save', gate(), async (_req, res) => {
     const doc = docOr503(res);
     if (!doc) return;
@@ -540,8 +578,7 @@ export function registerPluginRoutes(
       await doc.save();
       res.json({ ok: true, message: '配置已保存到磁盘' });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: msg });
+      res.status(isConfigSaveRefused(err) ? 409 : 500).json({ error: errorMessage(err) });
     }
   });
 }

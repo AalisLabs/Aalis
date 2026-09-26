@@ -1,7 +1,16 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFsYamlConfigProvider } from '../../packages/runtime/src/providers.js';
 
 // ════════════════════════════════════════════════════════════
@@ -12,7 +21,42 @@ import { createFsYamlConfigProvider } from '../../packages/runtime/src/providers
 //
 // 权限位是本修复自身的风险点：rename 会让目标继承 tmp 的 mode，用户 chmod 600 过的配置
 // （里面是密钥）不能因一次保存退回 0644。
+//
+// 临时文件建出来就要是收紧的权限（沿用原文件的权限位，没有原文件时 0600）：先按默认 umask 建、
+// 再 chmod 的话，其间或进程在 rename 前被杀时，目录里就有一份权限更宽的密钥副本。
+//
+// 写临时文件或改名失败时临时文件要删掉：它是整份配置（含密钥），不能留在配置目录里。
 // ════════════════════════════════════════════════════════════
+
+// 写满磁盘与改名失败在测试机上造不出来：只在打开开关时让它们失败，其余用例走真实实现。
+// `tmp` 记下出错时临时文件的路径，用来确认失败发生在临时文件已经建出之后。
+const fsFault = vi.hoisted(() => ({ write: false, rename: false, tmp: '' }));
+// 临时文件刚写完、还没来得及 chmod 时的权限位：看的是建出那一刻的实况，不是最终结果
+const tmpCreated = vi.hoisted(() => ({ mode: -1 }));
+vi.mock('node:fs', async importOriginal => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...fs,
+    writeFileSync: (...args: Parameters<typeof fs.writeFileSync>) => {
+      const [file, data] = args;
+      if (fsFault.write && String(file).includes('.tmp.')) {
+        // 写到一半磁盘满：临时文件已建出，只有半截内容
+        fs.writeFileSync(file, String(data).slice(0, 8));
+        fsFault.tmp = String(file);
+        throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
+      }
+      fs.writeFileSync(...args);
+      if (String(file).includes('.tmp.')) tmpCreated.mode = fs.statSync(String(file)).mode & 0o777;
+    },
+    renameSync: (...args: Parameters<typeof fs.renameSync>) => {
+      if (fsFault.rename) {
+        fsFault.tmp = String(args[0]);
+        throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+      }
+      return fs.renameSync(...args);
+    },
+  };
+});
 
 let dir: string;
 let cfgPath: string;
@@ -30,7 +74,11 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'aalis-cfg-atomic-'));
   cfgPath = join(dir, 'aalis.config.yaml');
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  Object.assign(fsFault, { write: false, rename: false, tmp: '' });
+  tmpCreated.mode = -1;
+  rmSync(dir, { recursive: true, force: true });
+});
 
 describe('配置文件原子写', () => {
   it('保存后不残留临时文件，内容可回读', () => {
@@ -74,5 +122,64 @@ describe('配置文件原子写', () => {
     save(provider, { name: 'Aalis', logLevel: 'info', plugins: {} });
     expect(existsSync(cfgPath)).toBe(true);
     expect(readdirSync(dir).filter(f => f.includes('.tmp.'))).toEqual([]);
+  });
+});
+
+describe('临时文件建出时即是收紧的权限', () => {
+  /** 固定 umask 跑一段：默认 umask 因机器而异，0077 的机器上旧写法也会建出 0600，用例就守不住 */
+  function withUmask(mask: number, fn: () => void): void {
+    const prev = process.umask(mask);
+    try {
+      fn();
+    } finally {
+      process.umask(prev);
+    }
+  }
+
+  it('原文件是 600：临时文件建出那一刻就是 600，不先以 644 存在', () => {
+    writeFileSync(cfgPath, 'name: Aalis\nplugins: {}\n', { encoding: 'utf-8', mode: 0o600 });
+    const { provider } = createFsYamlConfigProvider(cfgPath);
+    withUmask(0o022, () => save(provider, { name: 'Aalis', logLevel: 'info', plugins: {} }));
+
+    expect(tmpCreated.mode, '按默认 umask 建出的临时文件是 644，含密钥').toBe(0o600);
+    expect(statSync(cfgPath).mode & 0o777).toBe(0o600);
+  });
+
+  it('原文件不存在：按 600 建，保存出来的配置文件也是 600', () => {
+    const { provider } = createFsYamlConfigProvider(cfgPath);
+    withUmask(0o022, () => save(provider, { name: 'Aalis', logLevel: 'info', plugins: {} }));
+
+    expect(tmpCreated.mode).toBe(0o600);
+    expect(statSync(cfgPath).mode & 0o777).toBe(0o600);
+  });
+
+  it('umask 比原文件权限更严：建出时更窄，改名前仍对齐回原文件的权限位', () => {
+    writeFileSync(cfgPath, 'name: Aalis\nplugins: {}\n', 'utf-8');
+    chmodSync(cfgPath, 0o640);
+    const { provider } = createFsYamlConfigProvider(cfgPath);
+    withUmask(0o077, () => save(provider, { name: 'Aalis', logLevel: 'info', plugins: {} }));
+
+    expect(tmpCreated.mode, '建出时受 umask 收窄').toBe(0o600);
+    expect(statSync(cfgPath).mode & 0o777, '保存不改变用户设定的权限位').toBe(0o640);
+  });
+});
+
+describe('写入或改名失败时删掉临时文件', () => {
+  it.each([
+    ['写临时文件写到一半失败（磁盘写满）', 'write', /ENOSPC/],
+    ['改名失败', 'rename', /EPERM/],
+  ] as const)('%s：原错误照常抛出，目录里不留临时文件，原配置不动', (_label, fault, error) => {
+    const original = 'name: Aalis\nlogLevel: info\nplugins: {}\n';
+    writeFileSync(cfgPath, original, 'utf-8');
+    const { provider } = createFsYamlConfigProvider(cfgPath);
+
+    fsFault[fault] = true;
+    expect(() => save(provider, { name: 'Aalis', logLevel: 'debug', plugins: {} })).toThrow(error);
+    fsFault[fault] = false;
+
+    expect(fsFault.tmp, '前置：失败发生在临时文件建出之后').toContain('.tmp.');
+    expect(existsSync(fsFault.tmp), '含密钥的临时文件必须删掉').toBe(false);
+    expect(readdirSync(dir).filter(f => f.includes('.tmp.'))).toEqual([]);
+    expect(readFileSync(cfgPath, 'utf-8')).toBe(original);
   });
 });

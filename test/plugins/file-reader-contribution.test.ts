@@ -645,6 +645,16 @@ describe('plugin-file-reader: 内联全文的结束标记', () => {
       await fx.dispose();
     }
   });
+
+  it('最早的无 ID 内联格式归档（文件头只有名字）：整块剥净，文件正文不显示在用户气泡里', () => {
+    const block = (name: string, body: string) => `[文件: ${name}]\n--- 文件内容 ---\n${body}\n--- 文件内容结束 ---`;
+    for (const name of ['old.txt', 'data [v2].csv', 'report (1).txt']) {
+      const legacy = `帮我看看\n${block(name, '旧正文')}`;
+      expect(buildChatMessages([{ role: 'user', content: legacy }])[0].content, name).toBe('帮我看看');
+    }
+    const two = `帮我比较\n${block('a.txt', '甲')}\n${block('b.txt', '乙')}`;
+    expect(buildChatMessages([{ role: 'user', content: two }])[0].content).toBe('帮我比较');
+  });
 });
 
 // ════════════════════════════════════════════════════════════
@@ -768,11 +778,11 @@ describe('plugin-file-reader: resolveLocalPath', () => {
 });
 
 // ════════════════════════════════════════════════════════════
-// read_uploaded_file 跨会话越权：文件 ID 是按会话加盐的内容哈希，会话 ID 与内容都可能被猜到，
+// read_uploaded_file / delete_uploaded_file 跨会话越权：文件 ID 是按会话加盐的内容哈希，会话 ID 与内容都可能被猜到，
 // handler 必须校验归属本会话，他人会话的文件一律当作不存在。经真实工具服务 execute 调用，
 // 与 agent 工具循环同一入口；tools 提供者晚于 file-reader 上线，登记在上线后补挂。
 // ════════════════════════════════════════════════════════════
-describe('plugin-file-reader: read_uploaded_file 跨会话隔离', () => {
+describe('plugin-file-reader: 上传文件工具跨会话隔离', () => {
   it('别的会话拿到文件 ID 也读不到正文；本会话照常读', async () => {
     const fx = await setup();
     try {
@@ -788,6 +798,29 @@ describe('plugin-file-reader: read_uploaded_file 跨会话隔离', () => {
 
       const own = await toolService.execute('read_uploaded_file', { fileId: id }, { sessionId: 's-A' });
       expect(own.content).toContain('TOP-SECRET-BODY');
+    } finally {
+      await fx.dispose();
+    }
+  });
+
+  it('delete_uploaded_file：别的会话拿到文件 ID 也删不掉；本会话照常删', async () => {
+    const fx = await setup();
+    try {
+      await fx.app.plugin(toolsPlugin, {});
+      await fx.app.plugins.idle();
+      const toolService = fx.app.bind({ tools }).tools.current;
+      if (!toolService) throw new Error('tools 服务未注册');
+      // 删除工具是 restricted：没有 authority 时执行闸拒绝一切，这里放行以便走到 handler 自身的归属校验
+      toolService.setExecutionGuard(async () => null);
+      const { id } = await fx.upload('s-A', 'secret.txt', 'TOP-SECRET-BODY');
+
+      const other = await toolService.execute('delete_uploaded_file', { fileId: id }, { sessionId: 's-B' });
+      expect(other.content).toContain('文件不存在或已被删除');
+      const stillThere = await toolService.execute('read_uploaded_file', { fileId: id }, { sessionId: 's-A' });
+      expect(stillThere.content).toContain('TOP-SECRET-BODY');
+
+      const own = await toolService.execute('delete_uploaded_file', { fileId: id }, { sessionId: 's-A' });
+      expect(own.content).toContain('已删除文件');
     } finally {
       await fx.dispose();
     }

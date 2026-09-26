@@ -92,7 +92,7 @@ WebUI 默认监听 `http://127.0.0.1:3000`，并且**需要 token 登录**。tok
 |---|---|
 | `/help` | 列出顶层指令（子指令折成计数；`/help <指令名>` 看详情与选项） |
 | `/status` | 系统状态（哪些服务可用、注册了多少工具/指令） |
-| `/doctor` | 系统诊断（含插件 error / pending 清单） |
+| `/doctor` | 系统诊断（含插件 error / pending 清单，pending 条目注明缺少的服务） |
 | `/model` | 列出可用对话模型 |
 | `/session` | 查看当前会话生效的模型 / 人设 |
 | `/session.set -m <模型>` | 给当前会话换模型 |

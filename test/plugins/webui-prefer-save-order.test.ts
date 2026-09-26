@@ -12,9 +12,9 @@ import { freePort } from '../helpers/net.js';
 
 // ════════════════════════════════════════════════════════════
 // 切换前端偏好的处理器要做三件事：改服务偏好、写配置、重挂静态目录。前两件与第三件同属
-// 内存态，必须在等落盘之前一起生效。若重挂排在 await save 之后，保存拒绝时会留下
+// 内存态，必须在等落盘之前一起生效。若重挂排在 await save 之后，落盘失败时会留下
 // 「服务解析已选 B、HTTP 静态目录仍挂 A」的不一致，且处理器退出后无人修复。
-// 本文件真起 webui-server，用拒绝落盘的配置文档 provider 钉住「重挂不依赖落盘成功」。
+// 本文件真起 webui-server，用落盘写入失败的配置文档 provider 钉住「重挂不依赖落盘成功」。
 // ════════════════════════════════════════════════════════════
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -137,7 +137,7 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
     return { host, dirA, dirB, home, prefer, unprefer };
   }
 
-  it('保存拒绝：POST/DELETE prefer 都以错误返回，但静态目录已同步跟上', async () => {
+  it('落盘写入失败：POST/DELETE prefer 都以错误返回，但静态目录已同步跟上', async () => {
     const { app } = hostedApp(
       {},
       {
@@ -152,14 +152,14 @@ describe('webui-server 前端偏好切换：重挂不依赖落盘成功', () => 
     const { host, dirB, home, prefer, unprefer } = await boot(app);
 
     const res = await prefer();
-    expect(res.status, '落盘失败必须以错误响应传出，不能报 200').toBe(409);
+    expect(res.status, '落盘失败必须以错误响应传出，不能报 200；写入失败（非拒写）回 500').toBe(500);
     expect(await res.json(), '以 JSON 说明改动已在运行态生效、未写入文件').toMatchObject({ applied: true });
     expect(host.webuiClient.current?.getClientDir(), '服务解析已选 B').toBe(dirB);
     expect(await home(), '偏好已指向 B，静态目录必须同步切到 B').toContain('CLIENT-B');
 
-    // 清除偏好走同一条不变量：解析回落到 A，静态目录也必须同步回落，哪怕落盘仍然拒绝
+    // 清除偏好走同一条不变量：解析回落到 A，静态目录也必须同步回落，哪怕落盘仍然失败
     const del = await unprefer();
-    expect(del.status, '清除偏好同样在落盘失败时以错误响应传出').toBe(409);
+    expect(del.status, '清除偏好同样在落盘失败时以错误响应传出').toBe(500);
     expect(await del.json()).toMatchObject({ applied: true });
     expect(await home(), '偏好已清除，静态目录必须一起退回 A').toContain('CLIENT-A');
   });

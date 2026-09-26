@@ -13,11 +13,11 @@ import {
 } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
-import type { AalisConfig } from '@aalis/api-host-config';
+import { type AalisConfig, ConfigSaveRefusedError } from '@aalis/api-host-config';
 import type { RestartStrategy } from '@aalis/core';
 import { DefaultLogger } from '@aalis/core';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { type ConfigProvider, ConfigSaveRefusedError } from './config-store.js';
+import type { ConfigProvider } from './config-store.js';
 import {
   HOST_CORE_DIR,
   importPluginDefinition,
@@ -165,15 +165,33 @@ export function createFsYamlConfigProvider(configPath?: string): FsYamlConfigPro
       // 连「文件坏了」的现场都不留。同仓 plugin-storage-local 早已为同样的理由做原子写。
       // watch() 守的是目录而非文件（见下），所以 rename 换 inode 不会打断热重载。
       const tmp = `${absPath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
-      writeFileSync(tmp, yaml, 'utf-8');
-      // 沿用原文件权限位：chmod 打在 tmp 上而非 rename 后的目标，避开两步之间的窗口。
-      // 配置文件常含密钥，用户 chmod 600 过的不能因一次保存退回 0644。
+      // 临时文件建出来就是收紧的权限：沿用原文件的权限位，没有原文件（或取不到）时用 0o600。
+      // 配置文件常含密钥：按默认 umask（通常 0644）建出再 chmod，其间或进程在 rename 前被杀时，
+      // 目录里就有一份权限更宽的密钥副本；rename 让目标继承 tmp 的权限，用户 chmod 600 过的也不能退回 0644。
+      let mode = 0o600;
       try {
-        if (existsSync(absPath)) chmodSync(tmp, statSync(absPath).mode & 0o777);
+        mode = statSync(absPath).mode & 0o777;
       } catch {
-        /* 取不到原权限就用默认，不拖累写入本身 */
+        /* 原文件不存在或取不到权限：按 0o600 建 */
       }
-      renameSync(tmp, absPath);
+      try {
+        writeFileSync(tmp, yaml, { encoding: 'utf-8', mode });
+        // 建文件时的 mode 还会被 umask 收窄；对齐回目标权限位，至多放宽到原文件本就有的程度
+        try {
+          chmodSync(tmp, mode);
+        } catch {
+          /* 对不齐就保持建出时更窄的权限，不拖累写入本身 */
+        }
+        renameSync(tmp, absPath);
+      } catch (err) {
+        // 写入或改名失败：临时文件是整份配置（含密钥），不能留在配置目录里
+        try {
+          rmSync(tmp, { force: true });
+        } catch {
+          /* 删不掉也要把原始错误传出去 */
+        }
+        throw err;
+      }
       rawYaml = yaml;
       reconcilePending = false;
     },

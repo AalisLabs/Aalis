@@ -1,6 +1,6 @@
 import type { Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
-import { type AalisConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
+import { type AalisConfig, ConfigSaveRefusedError, hostConfig } from '../../packages/api-host-config/src/index.js';
 import {
   App,
   appService,
@@ -26,6 +26,7 @@ afterEach(async () => {
 });
 
 const SAVE_REJECTED = '配置文件有尚未生效的外部修改，为免覆盖已拒绝本次保存';
+const SAVE_FAILED = 'EACCES: permission denied';
 
 const target = definePlugin({
   name: 'target',
@@ -36,12 +37,15 @@ const target = definePlugin({
 /**
  * `provideDoc: false`：宿主持有文档、照它登记，但不把它作为 host-config 交给插件。
  * `rejectSave`：落盘一律被拒（同 runtime 在配置文件有尚未生效的外部修改时拒写）。
+ * `failSave`：落盘一律写入失败（权限、磁盘写满等，文件不变）。两个故障开关经返回的 `faults` 可中途改。
  */
-function world(config: Partial<AalisConfig>, { provideDoc = true, rejectSave = false } = {}) {
+function world(config: Partial<AalisConfig>, { provideDoc = true, rejectSave = false, failSave = false } = {}) {
   const saved: AalisConfig[] = [];
+  const faults = { rejectSave, failSave };
   const provider: ConfigProvider = {
     save: snapshot => {
-      if (rejectSave) throw new Error(SAVE_REJECTED);
+      if (faults.rejectSave) throw new ConfigSaveRefusedError(SAVE_REJECTED);
+      if (faults.failSave) throw new Error(SAVE_FAILED);
       saved.push(structuredClone(snapshot));
     },
   };
@@ -78,6 +82,7 @@ function world(config: Partial<AalisConfig>, { provideDoc = true, rejectSave = f
     app,
     store,
     saved,
+    faults,
     async boot(...definitions: PluginDefinition[]) {
       await app.pluginAll(
         [panel, ...definitions].map(definition => ({
@@ -225,6 +230,66 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     expect(w.saved).toHaveLength(0);
   });
 
+  it('落盘写入失败（非拒写）：回 500 + applied，改动留在文档里，下一次成功保存时一并写入', async () => {
+    const w = world({ name: 'T', logLevel: 'error', plugins: { target: { v: 1 } } }, { failSave: true });
+    await w.boot(target, multi);
+    const expectKept = (reply: { status: number; body?: unknown }) => {
+      expect(reply.status).toBe(500);
+      expect(reply.body).toEqual({
+        error: `已在运行态生效，但写入配置文件失败（${SAVE_FAILED}）；改动保留在文档里，下次保存成功时一并写入`,
+        applied: true,
+      });
+    };
+
+    expectKept(await w.disable('target'));
+    expect(w.store.isPluginDisabled('target')).toBe(true);
+    expectKept(await w.enable('target'));
+    await w.app.plugins.idle();
+    expect(w.store.isPluginDisabled('target')).toBe(false);
+    expectKept(await w.put('target', { v: 5 }));
+    await w.app.plugins.idle();
+    expect(w.app.plugins.getPlugin('target')?.config).toEqual({ v: 5 });
+    expect(w.store.getPluginConfig('target'), '文档保留这次改动').toEqual({ v: 5 });
+    expectKept(await w.createInstance('multi', 'x', { v: 3 }));
+    expect(w.store.getPluginConfig('multi:x')).toEqual({ v: 3 });
+    expectKept(await w.deleteInstance('multi:x'));
+    expect(Object.hasOwn(w.store.getAll().plugins, 'multi:x')).toBe(false);
+    expect(w.saved).toHaveLength(0);
+  });
+
+  it('写入失败后原样重试插件配置：不再重建插件，但补写进文件，重启后仍是新配置', async () => {
+    const w = world({ name: 'T', logLevel: 'error', plugins: { target: { v: 1 } } }, { failSave: true });
+    let applies = 0;
+    const counted = definePlugin({
+      name: 'target',
+      configSchema: { v: { type: 'number', label: 'V', default: 0 } },
+      apply() {
+        applies++;
+      },
+    });
+    await w.boot(counted);
+
+    expect((await w.put('target', { v: 5 })).status).toBe(500);
+    await w.app.plugins.idle();
+    expect(applies).toBe(2);
+    expect(w.saved).toHaveLength(0);
+
+    // 磁盘恢复后用户原样再点一次保存：运行态与文档都已是 {v:5}，文件里还是 {v:1}
+    w.faults.failSave = false;
+    const retry = await w.put('target', { v: 5 });
+    expect(retry.status).toBe(200);
+    expect(retry.body, '回复说明这次写了盘，不让人以为什么都没保存').toEqual({
+      ok: true,
+      message: '插件 target 配置无改动，已写回配置文件',
+      ignored: [],
+      removed: [],
+    });
+    await w.app.plugins.idle();
+    expect(applies, '配置没变，不该再重建').toBe(2);
+    expect(w.saved, '这次必须补写进文件，否则重启就丢').toHaveLength(1);
+    expect((await restartFrom(w.saved, target))?.config).toEqual({ v: 5 });
+  });
+
   it('全局配置落盘被拒：返回 409 并撤回文档里的改动，免得下一次保存把它写进文件', async () => {
     const w = world({ name: 'T', logLevel: 'error', plugins: {} }, { rejectSave: true });
     await w.boot();
@@ -232,6 +297,16 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     expect(reply.status).toBe(409);
     expect(reply.body).toEqual({ error: `未写入配置文件（${SAVE_REJECTED}），本次修改已撤回` });
     expect(w.store.get('logLevel'), '被拒的改动留在文档里').toBe('error');
+    expect(w.saved).toHaveLength(0);
+  });
+
+  it('全局配置落盘写入失败：返回 500，同样撤回文档里的改动', async () => {
+    const w = world({ name: 'T', logLevel: 'error', plugins: {} }, { failSave: true });
+    await w.boot();
+    const reply = await w.putGlobal({ logLevel: 'debug' });
+    expect(reply.status).toBe(500);
+    expect(reply.body).toEqual({ error: `未写入配置文件（${SAVE_FAILED}），本次修改已撤回` });
+    expect(w.store.get('logLevel')).toBe('error');
     expect(w.saved).toHaveLength(0);
   });
 });
