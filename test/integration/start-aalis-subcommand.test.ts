@@ -182,7 +182,7 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     const dir = project();
     writeFileSync(
       join(dir, 'aalis.config.yaml'),
-      'name: e2e\nlogLevel: info\nplugins:\n  e2e-probe:\n    known: 3\nservicePreferences:\n  commands: e2e-probe\n',
+      'name: e2e\nlogLevel: info\nplugins:\n  e2e-probe:\n    known: 3\n    stale: 1\nservicePreferences:\n  commands: e2e-probe\n',
     );
     // argv 非空但宿主显式传了 []：不分发、进守护——空 argv 与 [] 重合时测不出这条优先级
     const r = await run(dir, ['probe'], { AALIS_E2E_MODE: 'daemon' });
@@ -199,6 +199,11 @@ describe('startAalis 子命令模式（真实子进程）', () => {
       probeConfig: { known: 3, nested: { filled: 9 } },
       preferred: 'e2e-probe',
     });
+    // 配置同步裁掉 schema 外字段、回填默认值后落盘，服务偏好随文档写回，不被裁
+    const saved = readFileSync(join(dir, 'aalis.config.yaml'), 'utf8');
+    expect(saved).toContain('filled: 9');
+    expect(saved).not.toContain('stale');
+    expect(saved).toContain('servicePreferences:\n  commands: e2e-probe\n');
   });
 
   it('守护路径：pending 告警把仍在后台激活的插件所提供的服务报成等待，其余报缺少', async () => {
