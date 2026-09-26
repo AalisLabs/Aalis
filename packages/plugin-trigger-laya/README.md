@@ -21,7 +21,7 @@ Laya 触发判定：[`trigger` 服务](../../docs/services/trigger.md)的判定�
 2. 只接受 onebot 的群聊与私聊：从会话 ID `onebot:{selfId}:{group|private}:{targetId}` 取 bot 自己的账号作为 `selfId`。其它平台与频道会话弃权。
 3. memory 缺席或处于熔断期时弃权。
 4. 取窗口：`memory.getFullHistory(sessionId, historyRows)`（没有该方法时回落 `getHistory`），只留 `role` 为 `user` / `assistant` 且正文是字符串的行，投影为 `{role, content, userId, nick}`：`userId` 取 `metadata.userId`，`nick` 取 `metadata.nickname`，缺失时回落 `name`。
-5. 调用宿主的 `awaitAttachmentDescriptions()` 等附件识别（上限为宿主的 `mediaWaitMs`），再用 `@aalis/schema-message` 的 `buildIncomingContent` 拼当前消息 `cur`。归档用的是同一个函数，两边逐字一致；唯一的差异来源是识别超时：此时 `cur` 里没有附件描述，归档里有。
+5. 调用宿主的 `awaitAttachmentDescriptions()` 等附件识别（上限为宿主的 `mediaWaitMs`），再用 `@aalis/schema-message` 的 `buildIncomingContent` 拼当前消息 `cur`。归档用的是同一个函数，只在两种情况下不一致：识别超过等待上限时，`cur` 里没有这些描述而归档里有；文件附件的描述由 plugin-file-reader 在 agent 预处理阶段才写入，判定时还没有，放行的带文件消息归档里有文件描述而 `cur` 里没有。
 6. `POST {endpoint}/v1/score`，超时 `timeoutMs`（含读完响应体）。
 7. `speak = logit ≥ 阈值`，阈值取配置的 `threshold`，留空时用侧车随响应返回的模型阈值。`shadow` 记一行影子判定日志后弃权；`live` 返回 `{ speak, reason: 'Laya <版本> 阈值=<阈值>', score: logit }`。
 

@@ -55,7 +55,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 
 ## 触发提供者
 
-"开不开口"由 [`trigger` 服务](../services/trigger.md)的提供者判定，本插件是它唯一的调用方。
+"开不开口"由 [`trigger` 服务](../services/trigger.md)的提供者判定，本插件是它唯一的调用方。仓库内的私有插件 `@aalis/plugin-trigger-laya`（不发布到 npm）是一个判定模型提供者：经本机侧车调用 Laya 模型判定，默认影子模式，说明见仓库中的 `packages/plugin-trigger-laya/README.md`。
 
 **截止时间**：每个提供者限时 `decisionTimeoutMs`（默认 2000 毫秒），超时按弃权处理。宿主放弃后不取消提供者手里的请求，提供者应自带更短的超时。
 
