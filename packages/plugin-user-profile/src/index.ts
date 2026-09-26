@@ -1884,19 +1884,18 @@ function registerUserProfile({
     }
     // 同步清空第三方行为指令档案（per-persona）。指令是档案的兄弟概念，
     // memory:clear scope='all' 时一并清理；types 默认包含 user-profile 即也清。
-    if (cfg.enableInstructions) {
-      try {
-        const insItems = await mem.listMetadata(INSTRUCTIONS_NS);
-        await mem.commitMetadata(insItems.map(it => ({ op: 'del' as const, namespace: INSTRUCTIONS_NS, key: it.key })));
-        data.results.push({
-          source: 'user-profile-instructions',
-          success: true,
-          message: `第三方行为指令已清空 (${insItems.length} 条)`,
-        });
-      } catch (err) {
-        const m = err instanceof Error ? err.message : String(err);
-        data.results.push({ source: 'user-profile-instructions', success: false, message: `指令清空失败: ${m}` });
-      }
+    // 不看 enableInstructions：开关管功能用不用，不管已有数据能不能清。
+    try {
+      const insItems = await mem.listMetadata(INSTRUCTIONS_NS);
+      await mem.commitMetadata(insItems.map(it => ({ op: 'del' as const, namespace: INSTRUCTIONS_NS, key: it.key })));
+      data.results.push({
+        source: 'user-profile-instructions',
+        success: true,
+        message: `第三方行为指令已清空 (${insItems.length} 条)`,
+      });
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      data.results.push({ source: 'user-profile-instructions', success: false, message: `指令清空失败: ${m}` });
     }
     await next();
   });

@@ -68,7 +68,7 @@ export default definePlugin({
 }
 ```
 
-`plugin-memory-summary` / `plugin-memory-vector` 等通过订阅此钩子统一参与"清空对话"操作。
+`plugin-memory-summary` / `plugin-memory-vector` 等通过订阅此钩子统一参与"清空对话"操作。`clearAll` 只清消息与归档、不清元数据：在元数据里存了数据的插件，要挂这个中间件按 `scope` 与 `types` 清理自己的命名空间。
 
 ## 实现者
 

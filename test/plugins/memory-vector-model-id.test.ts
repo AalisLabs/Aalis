@@ -45,14 +45,19 @@ function hit(content: string, modelId?: string, offset = 0): VectorSearchResult 
 }
 
 /**
- * 只实现元数据读写与 clearAll 的记忆替身；clearAll 与真实后端一样连元数据一起删。
- * `readFailures` 次读取先抛错，`saveFails` 时写入一律抛错
+ * 只实现元数据读写删与 clearAll 的记忆替身；clearAll 按契约只清消息，替身不存消息，故不动元数据。
+ * `readFailures` 次读取先抛错，`saveFails` 时写入一律抛错，`deleteFails` 时删除一律抛错
  */
 function makeMetaMemory(
-  opts: { seed?: Record<string, Record<string, unknown>>; readFailures?: number; saveFails?: boolean } = {},
+  opts: {
+    seed?: Record<string, Record<string, unknown>>;
+    readFailures?: number;
+    saveFails?: boolean;
+    deleteFails?: boolean;
+  } = {},
 ) {
   const meta = new Map(Object.entries(opts.seed ?? {}));
-  const calls = { get: 0, save: 0 };
+  const calls = { get: 0, save: 0, del: 0 };
   let failuresLeft = opts.readFailures ?? 0;
   const service = {
     async getMetadata(namespace: string, key: string): Promise<Record<string, unknown> | undefined> {
@@ -68,11 +73,18 @@ function makeMetaMemory(
       if (opts.saveFails) throw new Error('元数据写入失败');
       meta.set(`${namespace}|${key}`, data);
     },
-    async clearAll(): Promise<void> {
-      meta.clear();
+    async deleteMetadata(namespace: string, key: string): Promise<void> {
+      calls.del++;
+      if (opts.deleteFails) throw new Error('元数据删除失败');
+      meta.delete(`${namespace}|${key}`);
     },
+    async clearAll(): Promise<void> {},
   } as unknown as MemoryService;
-  return { service, meta, calls };
+  /** 再让接下来 n 次读取抛错 */
+  const failReads = (n: number) => {
+    failuresLeft = n;
+  };
+  return { service, meta, calls, failReads };
 }
 
 const apps: App[] = [];
@@ -320,11 +332,11 @@ describe('plugin-memory-vector: embedding 模型标识', () => {
     expect(block).toContain('存量记忆');
     expect(block).toContain('甲模型记忆');
     expect(block).toContain('乙模型记忆');
-    expect(mem.calls).toEqual({ get: 0, save: 0 });
+    expect(mem.calls).toEqual({ get: 0, save: 0, del: 0 });
     expect(warns).toEqual([]);
   });
 
-  it('只全局清空消息历史：clearAll 删掉的存量标记原样写回，重启后存量向量仍按原模型排除', async () => {
+  it('只全局清空消息历史：不读写存量标记，标记保留，重启后存量向量仍按原模型排除', async () => {
     const mem = makeMetaMemory({ seed: { [MARKER]: { modelId: 'test:A' } } });
     const hits = [hit('存量记忆'), hit('新模型记忆', 'test:B', 1)];
     const first = await setup({ modelId: 'test:B', memory: mem.service, hits });
@@ -332,8 +344,8 @@ describe('plugin-memory-vector: embedding 模型标识', () => {
     const { completed, results } = await runClear(first.host, mem.service, 'all', ['context']);
     expect(completed).toBe(true);
     expect(results.map(r => r.source)).toEqual(['memory']);
-    expect(mem.meta.get(MARKER), '标记在清空后写回').toEqual({ modelId: 'test:A' });
-    expect(first.warns).toEqual([]);
+    expect(mem.calls).toEqual({ get: 0, save: 0, del: 0 });
+    expect(mem.meta.get(MARKER)).toEqual({ modelId: 'test:A' });
 
     // 重启：新运行不带缓存，按记忆元数据里的标记认定存量向量
     await first.app.stop();
@@ -344,31 +356,69 @@ describe('plugin-memory-vector: embedding 模型标识', () => {
     expect(mem.meta.get(MARKER)).toEqual({ modelId: 'test:A' });
   });
 
-  it('连向量库一起清、只清会话、提供者未声明 modelId：清空前后都不读写存量标记', async () => {
-    const cases: Array<{ modelId?: string; scope: 'session' | 'all'; types?: string[] }> = [
-      { modelId: 'test:B', scope: 'all', types: ['context', 'vector'] },
-      { modelId: 'test:B', scope: 'all' },
-      { modelId: 'test:B', scope: 'session', types: ['context'] },
-      { scope: 'all', types: ['context'] },
+  it('不清向量库或只按会话清：不读写存量标记；全局清向量库时删除标记，与是否声明 modelId 无关', async () => {
+    const cases: Array<{ modelId?: string; scope: 'session' | 'all'; types?: string[]; dropped: boolean }> = [
+      { modelId: 'test:B', scope: 'all', types: ['context', 'vector'], dropped: true },
+      { modelId: 'test:B', scope: 'all', dropped: true },
+      { scope: 'all', types: ['vector'], dropped: true },
+      { modelId: 'test:B', scope: 'session', dropped: false },
+      { modelId: 'test:B', scope: 'session', types: ['vector'], dropped: false },
+      { scope: 'all', types: ['context'], dropped: false },
     ];
     for (const c of cases) {
       const mem = makeMetaMemory({ seed: { [MARKER]: { modelId: 'test:A' } } });
       const { host } = await setup({ modelId: c.modelId, memory: mem.service });
       await runClear(host, mem.service, c.scope, c.types);
-      expect(mem.calls, JSON.stringify(c)).toEqual({ get: 0, save: 0 });
-      if (c.scope === 'all') expect(mem.meta.has(MARKER), JSON.stringify(c)).toBe(false);
+      expect(mem.calls, JSON.stringify(c)).toEqual({ get: 0, save: 0, del: c.dropped ? 1 : 0 });
+      expect(mem.meta.has(MARKER), JSON.stringify(c)).toBe(!c.dropped);
     }
   });
 
-  it('标记写回失败：只记一条 warn，清空照常完成', async () => {
-    const mem = makeMetaMemory({ seed: { [MARKER]: { modelId: 'test:A' } }, saveFails: true });
+  it('全局清空向量库：删掉存量标记并复位缓存，之后按届时的模型重新记下', async () => {
+    const mem = makeMetaMemory({ seed: { [MARKER]: { modelId: 'test:A' } } });
+    // 替身的检索结果不随清空变化，借此观察缓存是否复位
+    const { host, injected } = await setup({
+      modelId: 'test:B',
+      memory: mem.service,
+      hits: [hit('存量记忆'), hit('新模型记忆', 'test:B', 1)],
+    });
+    expect(await injected(), '清空前标记为 test:A 且已缓存').not.toContain('存量记忆');
+
+    const { completed, results } = await runClear(host, mem.service, 'all', ['vector']);
+    expect(completed).toBe(true);
+    expect(results).toEqual([{ source: 'vector', success: true, message: '所有向量记忆已清空' }]);
+    expect(mem.meta.has(MARKER)).toBe(false);
+
+    const after = await injected();
+    expect(mem.calls.get, '缓存已复位，重新读取').toBe(2);
+    expect(mem.meta.get(MARKER)).toEqual({ modelId: 'test:B' });
+    expect(after).toContain('存量记忆');
+  });
+
+  it('全局清空向量库后重新开始计失败段：之后的读取失败再告警一次', async () => {
+    const mem = makeMetaMemory({ seed: { [MARKER]: { modelId: 'test:B' } }, readFailures: 1 });
+    const { host, injected, warns } = await setup({ modelId: 'test:B', memory: mem.service, hits: [hit('存量记忆')] });
+    await injected();
+    await injected();
+    expect(warns, '第一段失败告警一次，随后读取成功').toHaveLength(1);
+
+    await runClear(host, mem.service, 'all', ['vector']);
+    mem.failReads(2);
+    await injected();
+    await injected();
+    expect(warns, '清空后的新一段失败再告警一次').toHaveLength(2);
+    expect(warns[1]).toContain('模型标记');
+  });
+
+  it('标记删除失败：只记一条 warn，清空照常报成功', async () => {
+    const mem = makeMetaMemory({ seed: { [MARKER]: { modelId: 'test:A' } }, deleteFails: true });
     const { host, warns } = await setup({ modelId: 'test:B', memory: mem.service });
 
-    const { completed, results } = await runClear(host, mem.service, 'all', ['context']);
+    const { completed, results } = await runClear(host, mem.service, 'all', ['vector']);
     expect(completed).toBe(true);
-    expect(results).toEqual([{ source: 'memory', success: true, message: '所有消息历史和归档已清空' }]);
-    expect(mem.calls.save).toBe(1);
+    expect(results).toEqual([{ source: 'vector', success: true, message: '所有向量记忆已清空' }]);
+    expect(mem.calls.del).toBe(1);
     expect(warns).toHaveLength(1);
-    expect(warns[0]).toContain('写回存量向量的模型标记失败');
+    expect(warns[0]).toContain('删除存量向量的模型标记失败');
   });
 });

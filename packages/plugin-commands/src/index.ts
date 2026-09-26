@@ -47,7 +47,7 @@ async function removeDirCounted(storage: StorageService, dirUri: string): Promis
 }
 
 export const CLEAR_TYPES = [
-  { id: 'context', label: '消息历史与会话上下文' },
+  { id: 'context', label: '消息历史与会话上下文（含摘要与待办）' },
   { id: 'summary', label: '会话摘要' },
   { id: 'vector', label: '向量记忆' },
   { id: 'image', label: '图片缓存' },
@@ -56,7 +56,7 @@ export const CLEAR_TYPES = [
   { id: 'file', label: '文件缓存' },
   { id: 'persona', label: '会话角色状态' },
   { id: 'checkpoint', label: '检查点（对话回滚存档）' },
-  { id: 'user-profile', label: '用户档案（仅全局清理）' },
+  { id: 'user-profile', label: '用户档案与第三方行为指令（仅全局清理）' },
   { id: 'user-relation', label: '用户关系图谱（仅全局清理）' },
 ] as const;
 
@@ -101,7 +101,7 @@ function renderClearTypeList(): string {
     ...CLEAR_TYPES.map(type => `- ${type.id}: ${type.label}`),
     '',
     '示例：',
-    '- /clear --type context,summary',
+    '- /clear --type context,vector',
     '- /clear -t vector -t image',
     '- /clear all --type all',
   ].join('\n');
@@ -436,7 +436,7 @@ function registerCommands({
     })
     .option('type', '-t <type:string[]>', { description: clearTypeOptDesc })
     .example('/clear')
-    .example('/clear --type context,summary')
+    .example('/clear --type context,vector')
     .example('/clear -t vector -t image')
     .example('/clear all --type all')
     .action(async argv => runClearFromOptions(argv, 'session'));

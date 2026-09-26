@@ -674,8 +674,8 @@ async function run(caps: Caps): Promise<void> {
 
   // 统一记忆清除：通过 memory:clear hook 参与编排
   hooks.middleware('memory:clear', async (data, next) => {
-    // 类型过滤：如果指定了 types 且不包含 summary，跳过
-    if (data.types && !data.types.includes('summary')) {
+    // 类型过滤：摘要是归档消息的压缩，随 context 一起清（也可单独选 summary）；两者都不含时跳过
+    if (data.types && !data.types.includes('summary') && !data.types.includes('context')) {
       await next();
       return;
     }

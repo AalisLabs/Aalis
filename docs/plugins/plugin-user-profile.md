@@ -5,7 +5,7 @@
 
 ## 概述
 
-通过 LLM 从对话中提取关于用户的长期事实（喜好、经历、关系、近况），按 `platform:userId` 落库到 memory metadata 的 `user:profile` namespace，并在 LLM 调用前以 system 消息的形式注入当前轮上下文（见下文 `turn-context` 槽）。`plugin-message-archive` 落库入站消息后发出 `inbound:message:archived` 事件，本插件据此按会话和用户计数（驱动事实提取），并累加旁观关系增量（`relationIncrementWitness` 为 0 时不加分，互动次数与最近互动时戳照记）；`agent:input:before` 中间件在触发回复时按 triggerType 叠加 direct / immediate / interval 增量。档案注入经 `agent:prompt` 贡献点的 `turn-context` 槽，顺序为第三方行为指令、Aalis 自档案、主发言者档案、其他参与者摘要。第三方行为指令存于独立 namespace `aalis:instructions`，按 persona 名分堆。另注册 `user_profile_lookup` 工具与 `profile` / `instruct` 两组命令，并以 type `user-profile` 参与统一的 `memory:clear`：仅在 scope 为 all 时清空全部档案（会话级清除不动档案），启用指令时一并清空 `aalis:instructions`。
+通过 LLM 从对话中提取关于用户的长期事实（喜好、经历、关系、近况），按 `platform:userId` 落库到 memory metadata 的 `user:profile` namespace，并在 LLM 调用前以 system 消息的形式注入当前轮上下文（见下文 `turn-context` 槽）。`plugin-message-archive` 落库入站消息后发出 `inbound:message:archived` 事件，本插件据此按会话和用户计数（驱动事实提取），并累加旁观关系增量（`relationIncrementWitness` 为 0 时不加分，互动次数与最近互动时戳照记）；`agent:input:before` 中间件在触发回复时按 triggerType 叠加 direct / immediate / interval 增量。档案注入经 `agent:prompt` 贡献点的 `turn-context` 槽，顺序为第三方行为指令、Aalis 自档案、主发言者档案、其他参与者摘要。第三方行为指令存于独立 namespace `aalis:instructions`，按 persona 名分堆。另注册 `user_profile_lookup` 工具与 `profile` / `instruct` 两组命令，并以 type `user-profile` 参与统一的 `memory:clear`：仅在 scope 为 all 时清空全部档案（会话级清除不动档案），并一并清空 `aalis:instructions`（与 `enableInstructions` 是否开启无关）。
 
 ## 插件声明
 

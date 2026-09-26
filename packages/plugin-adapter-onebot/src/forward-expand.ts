@@ -95,6 +95,11 @@ export interface ForwardExpander<TState> {
     rawSegments: OneBotMessageSegment[] | undefined,
     sessionId: string,
   ): Promise<string>;
+  /**
+   * 清空转发原文：本展开器的内存缓存与持久化层（/clear all 用），返回持久化层删除的条数。
+   * 条目没有会话维度，没有按会话清理的版本。
+   */
+  clearAll(): Promise<number>;
 }
 
 const FORWARD_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -230,6 +235,16 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     } catch (err) {
       logger.debug(`forward metadata 回收失败: ${err}`);
     }
+  }
+
+  async function clearAll(): Promise<number> {
+    forwardCache.clear();
+    const store = memory.current;
+    if (!store) return 0;
+    // 与 sweepPersisted 同样一次批量提交，原子性按后端分档（见 api-memory 契约）
+    const keys = (await store.listMetadata(FORWARD_METADATA_NS)).map(e => e.key);
+    await store.commitMetadata(keys.map(key => ({ op: 'del', namespace: FORWARD_METADATA_NS, key })));
+    return keys.length;
   }
 
   /** 从持久化层加载（缓存未命中时尝试） */
@@ -521,5 +536,6 @@ export function createForwardExpander<TState>(deps: ForwardExpanderDeps<TState>)
     getOrLoadForward,
     fetchForwardOnce,
     expandForwardsInText,
+    clearAll,
   };
 }

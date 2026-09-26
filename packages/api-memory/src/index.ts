@@ -71,7 +71,10 @@ export interface MemoryService {
   // 所以「另七个也补齐必填」不是欠债而是**倒退**：那会删掉上述九处真实降级路径，
   // 并把第三方后端的实现门槛一次抬满。要改这条判据，先说明这九处降级各自该怎么办。
 
-  /** 清空所有会话的所有消息和归档 */
+  /**
+   * 清空所有会话的所有消息和归档。**不含元数据**：各命名空间由归属插件挂 `memory:clear`
+   * 中间件自行清理（后端不知道哪个命名空间属于哪一层，一并删掉会连带清掉用户没选的类型）。
+   */
   clearAll?(): Promise<void>;
   /** 归档旧消息，仅保留最近 keepRecent 条为活跃状态，返回被归档的条数 */
   trimHistory?(sessionId: string, keepRecent: number): Promise<number>;

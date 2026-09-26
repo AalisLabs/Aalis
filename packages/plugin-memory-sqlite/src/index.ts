@@ -298,9 +298,9 @@ export class SQLiteMemoryService implements MemoryService {
     return rows.map(SQLiteMemoryService.rowToMessage);
   }
 
+  /** 只清消息（含归档）；元数据由归属插件经 memory:clear 自行清理（见 api-memory 的 clearAll 契约） */
   async clearAll(): Promise<void> {
     this.db.exec('DELETE FROM messages');
-    this.db.exec('DELETE FROM metadata');
   }
 
   // ----- 结构化元数据存储 -----

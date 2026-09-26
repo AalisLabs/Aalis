@@ -1,5 +1,5 @@
+import { hooks } from '@aalis/api-hooks';
 import { memory } from '@aalis/api-memory';
-import type {} from '@aalis/api-session-manager';
 import { type ToolCallContext, tools } from '@aalis/api-tools';
 import { webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, events, optional } from '@aalis/core';
@@ -31,7 +31,14 @@ declare module '@aalis/core' {
 
 // ===== 插件入口 =====
 
-const uses = { tools: optional(tools), events, config, memory: optional(memory), webui: optional(webuiServer) };
+const uses = {
+  tools: optional(tools),
+  events,
+  config,
+  memory: optional(memory),
+  webui: optional(webuiServer),
+  hooks: optional(hooks),
+};
 type Caps = BoundOf<typeof uses>;
 
 export default definePlugin({
@@ -46,7 +53,7 @@ export default definePlugin({
   },
 });
 
-function registerTodoList({ tools, events, memory, webui }: Caps): void {
+function registerTodoList({ tools, events, memory, webui, hooks }: Caps): void {
   /**
    * sessionId → TodoItem[]：随这次激活存亡，插件重载后不会命中陈旧条目。
    * 只在没有 memory 时充当存储，有 memory 时不作读缓存：memory 是 optional，胜者换人时
@@ -194,9 +201,36 @@ function registerTodoList({ tools, events, memory, webui }: Caps): void {
     },
   });
 
-  // 会话删除时清理
-  events.on('session:deleted', (sessionId: string) => {
-    store.delete(sessionId);
-    memory.current?.deleteMetadata(TODO_NAMESPACE, sessionId).catch(() => {});
+  // 参与 memory:clear：待办属会话级短期上下文，随 context 一起清。删除会话也经这条钩子（会话级、不带类型）
+  hooks.middleware('memory:clear', async (data, next) => {
+    if (data.types && !data.types.includes('context')) {
+      await next();
+      return;
+    }
+    try {
+      const mem = memory.current;
+      let cleared: string[] = [];
+      if (data.scope === 'all') {
+        const keys = mem ? (await mem.listMetadata(TODO_NAMESPACE)).map(e => e.key) : [];
+        await mem?.commitMetadata(keys.map(key => ({ op: 'del' as const, namespace: TODO_NAMESPACE, key })));
+        cleared = [...new Set([...keys, ...store.keys()])];
+        store.clear();
+        data.results.push({
+          source: 'todo-list',
+          success: true,
+          message: `所有会话待办已清空（${cleared.length} 个会话）`,
+        });
+      } else if (data.sessionId) {
+        await mem?.deleteMetadata(TODO_NAMESPACE, data.sessionId);
+        store.delete(data.sessionId);
+        cleared = [data.sessionId];
+        data.results.push({ source: 'todo-list', success: true, message: '当前会话待办已清空' });
+      }
+      for (const sessionId of cleared) await events.emit('todo:updated', sessionId, []);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      data.results.push({ source: 'todo-list', success: false, message: `待办清空失败: ${msg}` });
+    }
+    await next();
   });
 }

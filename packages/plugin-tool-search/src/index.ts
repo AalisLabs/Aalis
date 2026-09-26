@@ -278,10 +278,12 @@ function registerToolSearch({ tools, hooks, logger, config }: Caps): void {
   const alwaysDirectTools = normalizeToolNames(config.alwaysDirectTools);
   const maxDiscoveredKeep = Math.max(0, Math.floor(Number(config.maxDiscoveredKeep ?? 20)));
   const discoveredRegistry = new DiscoveredToolsRegistry(maxDiscoveredKeep);
-  // /clear 等记忆清除时同步遗忘发现集,与"会话重新开始"的语义对齐
+  // /clear 等记忆清除时同步遗忘发现集,与"会话重新开始"的语义对齐;发现集属会话上下文,只随 context 清
   hooks.middleware('memory:clear', async (data, next) => {
-    if (data.scope === 'all') discoveredRegistry.clear();
-    else if (data.sessionId) discoveredRegistry.clear(data.sessionId);
+    if (!data.types || data.types.includes('context')) {
+      if (data.scope === 'all') discoveredRegistry.clear();
+      else if (data.sessionId) discoveredRegistry.clear(data.sessionId);
+    }
     await next();
   });
   const warnedMissingDirectTools = new Set<string>();
