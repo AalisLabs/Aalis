@@ -36,7 +36,7 @@ pnpm -r build                   # 全仓构建
 pnpm dev                        # 运行 tsx src/index.ts
 ```
 
-`pnpm dev` 会发现并默认启用仓库内的私有插件 `@aalis/plugin-trigger-laya`，它优先于 trigger-policy 接管群聊判定，本机没有它的侧车时群里只回点名；不用时写进配置文件的 `disabledPlugins`（见 `packages/plugin-trigger-laya/README.md`）。
+`pnpm dev` 会发现并默认启用仓库内的私有插件 `@aalis/plugin-trigger-laya`，但它默认不生效，群聊判定仍由 trigger-policy 负责；想用它，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 服务页切换 `trigger` 的偏好，它生效而本机没有侧车时群里只回点名（见 `packages/plugin-trigger-laya/README.md`）。
 
 ## 2. 校验三件套
 
