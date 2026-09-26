@@ -7,6 +7,7 @@
 // @ 与叫名字不强制开口，开不开口由模型决定；点名只决定开口后的类别、授权主体与兜底。
 // 模型判定不了时兜底：只回点名，其余吞掉并归档，不回退到别的触发插件。判定不可用（侧车熔断、memory 缺席）
 // 由正常转入时记 error、恢复时记 warn，状态也经 doctor 检查项报告。
+// 判定是异步的（等附件识别与侧车），放行前核对同一会话的到达顺序：更晚到的消息已放行时，先到的这条不再放行。
 // 另监听入站归档事件做运行期自检（self-check.ts）。
 // ============================================================
 
@@ -177,6 +178,16 @@ function errorCode(text: string): string {
   }
 }
 
+/** 一个会话里判定在途的消息的到达与放行（见 run 的「同一会话的放行顺序」） */
+interface SessionOrder {
+  /** 已到达的消息数，到达序号从 1 起 */
+  arrived: number;
+  /** 已放行的消息里最大的到达序号 */
+  released: number;
+  /** 判定在途的消息数，归零时删除本条 */
+  inflight: number;
+}
+
 /** 一次判定：模型给出的，或兜底（speak = 是否被点名）及原因 */
 type Verdict =
   | { speak: boolean; fallback: string }
@@ -200,7 +211,7 @@ const uses = {
   sessionManager: optional(sessionManager),
   // 缺席时被吞掉的消息不进档，判定照常
   messageArchive: optional(messageArchive),
-  // 缺席时不等附件识别，cur 里缺附件描述
+  // 缺席时不等附件识别，cur 里缺附件描述；在场但图片到达不识别时诊断项报 warn
   media: optional(media),
   // 缺席时判定不可用：没有历史窗口无从判定，按兜底只回点名
   memory: optional(memory),
@@ -277,6 +288,37 @@ function run(caps: Caps): void {
   /** 处于熔断期：不发请求，直接兜底 */
   function circuitOpen(): boolean {
     return failures >= CIRCUIT_FAILURES && Date.now() < openUntil;
+  }
+
+  // ----- 同一会话的放行顺序 -----
+  // 判定要等附件识别（至多 mediaWaitMs）与侧车，同一会话里先到的消息可能晚于后到的判完。后到的已放行、agent
+  // 正在为它生成时再放行先到的，agent 按会话的 latest-wins 会中止后到那一轮，接替的回合以先到的为当前消息，
+  // 后到的就没人回了。所以放行前核对：同一会话里更晚到达的消息已经放行，这条就不再放行，归档后吞掉。
+  // 兜底判定同样核对。带 source 的内部注入不排序号：agent 按「会话 + 来源」分道，它们与真人消息互不中止。
+
+  /** 有判定在途的会话：该会话最后一条判定结束即删除，条目数不超过有判定在途的会话数 */
+  const orders = new Map<string, SessionOrder>();
+
+  /**
+   * 记下一条消息在会话里的到达序号，返回判定结束时调用的收尾（每条调用一次）：传入判定结果，返回 true 表示
+   * 这条要放行、但同一会话更晚到的消息已经放行过，作废
+   */
+  function arrive(sid: string): (speak: boolean) => boolean {
+    let order = orders.get(sid);
+    if (!order) {
+      order = { arrived: 0, released: 0, inflight: 0 };
+      orders.set(sid, order);
+    }
+    const o = order;
+    const seq = ++o.arrived;
+    o.inflight++;
+    return speak => {
+      if (--o.inflight === 0) orders.delete(sid);
+      if (!speak) return false;
+      if (o.released > seq) return true;
+      o.released = seq;
+      return false;
+    };
   }
 
   /** 已告警过的模型没见过的会话类别（平台:会话类型）：这类会话每条都兜底，每类只告警一次 */
@@ -438,6 +480,8 @@ function run(caps: Caps): void {
 
     const { threshold } = resolveEffectiveConfig(cfg, message.platform, message.sessionType, tid);
     const started = Date.now();
+    // 到达序号：从进入本中间件到这里都是同步的，序号的先后即到达本相位的先后
+    const settle = arrive(sid);
     let verdict: Verdict;
     try {
       verdict = await judge(message, addressed, names, threshold);
@@ -446,6 +490,7 @@ function run(caps: Caps): void {
       logger.warn(`[laya] 判定异常，本条按兜底只回点名: ${err}`);
       verdict = { speak: addressed, fallback: '判定异常' };
     }
+    const superseded = settle(verdict.speak);
     // 判定日志：不含正文与昵称
     const detail =
       'fallback' in verdict
@@ -453,11 +498,11 @@ function run(caps: Caps): void {
         : `logit=${verdict.logit.toFixed(3)} | 阈值=${verdict.threshold} | 版本=${verdict.version}`;
     logger.debug(
       `[laya] 判定 | session=${sid} | speak=${verdict.speak} | addressed=${addressed} | ${detail} | ` +
-        `耗时=${Date.now() - started}ms`,
+        `耗时=${Date.now() - started}ms${superseded ? ' | 作废=同会话更晚到的消息已放行' : ''}`,
     );
 
     // 放行与吞掉都不等判定期间启动的附件识别（见 waitForAttachmentDescriptions）
-    if (!verdict.speak) {
+    if (!verdict.speak || superseded) {
       await archiveSwallowed(message, caps.messageArchive, logger, '[laya]');
       return; // swallow
     }
@@ -492,20 +537,29 @@ function run(caps: Caps): void {
       if (!caps.memory.current) problems.push('memory 缺席');
       if (circuitOpen()) problems.push(`判定不可用（${down}）`);
       const parts =
-        problems.length > 0 ? [...problems] : [`侧车在线（版本 ${'version' in health ? health.version : '?'}）`];
+        problems.length > 0
+          ? [`${problems.join('；')}${active ? '，判定按兜底只回点名' : ''}`]
+          : [`侧车在线（版本 ${'version' in health ? health.version : '?'}）`];
       // down 只由成功的判定清除：熔断已到期、memory 已回来，但还没有请求确认恢复（本插件不生效时一直如此）。
       // 探活正常不代表 /v1/score 正常，照实报成上次的故障
       const stale = down !== undefined && !circuitOpen() && caps.memory.current !== undefined;
       if (stale) parts.push(`上次判定不可用（${down}），尚未经请求确认恢复`);
+      // 生效时 media 在图片到达时不识别：processMessage 只给图片写指针，判定看不到图里是什么。
+      // 未实现 isRecognizeOnArrivalEnabled 的 media 视为未知，不报；media 缺席时带图消息本来就没有描述，不报
+      const pointerOnly = active && caps.media.current?.isRecognizeOnArrivalEnabled?.() === false;
+      if (pointerOnly) {
+        parts.push('media 未开启图片到达即识别（vision.recognizeOnArrival）：带图消息判定时只有图片指针、没有内容描述');
+      }
       const role = active
         ? '生效中'
         : `未生效（${current ? `生效的触发插件是「${current.label}」` : '没有生效的触发插件'}）`;
       return {
         id: 'trigger.laya',
         category: 'service',
-        // 生效时判定不了会让群里只回点名，报 error；未生效时不影响回复、上次的故障未经确认恢复，报 warn
-        level: problems.length > 0 ? (active ? 'error' : 'warn') : stale ? 'warn' : 'ok',
-        message: `Laya 触发判定${role}：${parts.join('；')}${problems.length > 0 && active ? '，判定按兜底只回点名' : ''}`,
+        // 生效时判定不了会让群里只回点名，报 error；未生效时不影响回复、上次的故障未经确认恢复、
+        // 生效时图片到达不识别，报 warn
+        level: problems.length > 0 ? (active ? 'error' : 'warn') : stale || pointerOnly ? 'warn' : 'ok',
+        message: `Laya 触发判定${role}：${parts.join('；')}`,
         detail: `endpoint=${cfg.endpoint}`,
       };
     },

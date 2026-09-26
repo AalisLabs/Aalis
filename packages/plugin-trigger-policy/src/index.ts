@@ -292,7 +292,7 @@ function run(caps: Caps): void {
   // ===== inbound:trigger 相位：要不要开口 =====
   // 由 plugin-gateway 在 inbound:command 之后、inbound:flow 之前触发。放行的消息写好 triggerType，
   // 交给 flow 相位做节流硬闸（immediate 穿透冷却与限速）。判定是同步的：记入站、判定、清零在同一拍做完，
-  // 同一会话接连到达的消息逐条按计数判定。
+  // 同一会话接连到达的消息逐条按计数判定，放行顺序即到达顺序（不需要 plugin-trigger-laya 那样的顺序核对）。
   hooks.middleware(INBOUND_PHASE.TRIGGER, async (data, next) => {
     // 不是生效的触发插件：什么都不做（不计数、不识别、不归档），交给生效者或往下走
     if (!isActiveTrigger(data, caps.trigger, self)) return next();
