@@ -39,6 +39,7 @@ interface ScoreRequest {
   curNick?: string;
   replyTo: { userId?: string; nickname?: string } | null;
   selfId: string;
+  selfNames: string[];
 }
 
 /** 假侧车的一次应答：hang = 收下请求不应答；stall = 发完响应头、体只发一半就停住；body 为字符串时原样发出 */
@@ -183,7 +184,8 @@ interface SetupOptions {
   /** memory 替身；null = 不提供 memory */
   memory?: Partial<MemoryService> | null;
   media?: { processMessage(msg: IncomingMessage): Promise<unknown> };
-  persona?: PersonaService;
+  /** persona 提供者，按顺序登记（先登记者为胜者） */
+  personas?: PersonaService[];
   /** 装真实的 message-archive 与内存 memory（memory 选项随之不用，归档替身不装） */
   realArchive?: boolean;
 }
@@ -234,7 +236,7 @@ async function setup(opts: SetupOptions = {}) {
     } as never);
   }
   if (opts.media) host.provide(media, opts.media as never);
-  if (opts.persona) host.provide(persona, opts.persona);
+  for (const p of opts.personas ?? []) host.provide(persona, p);
   await app.plugins.register(layaPlugin, { endpoint: sidecar.url, ...opts.laya });
   await app.plugins.idle();
   // 激活闸：依赖缺席时插件停在 pending 而不报错，不核状态会让整组用例伪装成绿
@@ -289,11 +291,11 @@ describe('plugin-trigger-laya：请求与判定', () => {
     expect(body.cur).toBe(buildIncomingContent(message));
     expect(body.cur).toContain('[图片: 一只猫]');
     expect(body.cur).toContain('原话');
-    expect(body).toMatchObject({ curUserId: '30001', curNick: '甲', selfId: '10000' });
+    expect(body).toMatchObject({ curUserId: '30001', curNick: '甲', selfId: '10000', selfNames: [] });
     expect(body.replyTo).toEqual({ userId: '30002', nickname: '乙' });
   });
 
-  it('孤代理：请求体里的字符串先换成 U+FFFD 再发（侧车分词器不收孤代理，会回 500 计入熔断）', async () => {
+  it('孤代理：请求体里的字符串先换成 U+FFFD 再发（侧车分词器不收孤代理，整条只能兜底）', async () => {
     const lone = '😀'.slice(0, 1); // 截在 emoji 中间
     const mem = fakeMemory([
       { role: 'user', content: `乙: 转发${lone}`, name: '30002', metadata: { userId: '30002', nickname: `乙${lone}` } },
@@ -453,7 +455,7 @@ describe('plugin-trigger-laya：宿主各步骤', () => {
     let next = score(-3);
     sidecar.reply = () => next;
     const persona: PersonaService = { getSystemPrompt: () => '', getPersonaName: () => 'Aalis' };
-    const { send, archived } = await setup({ persona });
+    const { send, archived } = await setup({ personas: [persona] });
 
     expect((await send(groupMsg(`${AT}在吗`))).reached).toBe(false);
     expect((await send(groupMsg('Aalis 在吗'))).reached).toBe(false);
@@ -490,19 +492,58 @@ describe('plugin-trigger-laya：宿主各步骤', () => {
     expect(r.message.triggerType).toBe('interval');
   });
 
-  it('点名识别抛错（persona 故障）：放行、不写 triggerType、不判定', async () => {
+  it('名字表是别名与全部人设的名字、昵称：叫任何一个都算点名，同一份作为 selfNames 发给侧车', async () => {
+    const card = (name: string, nicks: string[]): PersonaService => ({
+      getSystemPrompt: () => '',
+      getPersonaName: () => name,
+      getNickNames: () => nicks,
+    });
+    // 判定不了时兜底 speak = 是否被点名：用 422 让判定落到兜底，放行与否即点名与否
+    sidecar.reply = () => ({ status: 422, body: { error: 'empty_cur' } });
+    const tooLong = '长'.repeat(33);
+    const { send } = await setup({
+      laya: { triggerNames: '阿狸' },
+      personas: [card('Aalis', ['小A', tooLong]), card('Bob', ['阿狸'])],
+    });
+    const byOther = await send(groupMsg('Bob 在吗'));
+    expect(byOther.reached, '第二个人设的名字也算点名').toBe(true);
+    expect(byOther.message.triggerType).toBe('immediate');
+    expect(sidecar.requests[0].body.selfNames, '别名在前，去重；超过 32 个字符的名字不发').toEqual([
+      '阿狸',
+      'Aalis',
+      '小A',
+      'Bob',
+    ]);
+    expect((await send(groupMsg('随便聊聊'))).reached).toBe(false);
+  });
+
+  it('selfNames 至多 32 个：多出的取前面的（别名与生效的人设在前）', async () => {
+    const aliases = Array.from({ length: 40 }, (_, i) => `别名${i}`);
+    const { send } = await setup({ laya: { triggerNames: aliases.join(',') } });
+    await send(groupMsg('随便聊聊'));
+    expect(sidecar.requests[0].body.selfNames).toEqual(aliases.slice(0, 32));
+  });
+
+  it('某个人设读名字抛错（persona 故障）：只跳过它的名字，照常问模型；同一原因只告警一次', async () => {
     const broken: PersonaService = {
       getSystemPrompt: () => '',
       getPersonaName: () => {
         throw new Error('persona 故障');
       },
     };
-    const { send, logs } = await setup({ persona: broken });
-    const r = await send(groupMsg('随便聊聊'));
-    expect(r.reached).toBe(true);
-    expect(r.message.triggerType).toBeUndefined();
-    expect(sidecar.requests).toHaveLength(0);
-    expect(byLevel(logs, 'warn').some(m => m.includes('点名识别异常'))).toBe(true);
+    const good: PersonaService = { getSystemPrompt: () => '', getPersonaName: () => 'Aalis' };
+    sidecar.reply = () => score(-1);
+    const { send, logs } = await setup({ personas: [broken, good] });
+    const r = await send(groupMsg('Aalis 在吗'));
+    expect(r.reached, '模型判不回就吞掉，不因人设故障直接放行').toBe(false);
+    expect(sidecar.requests).toHaveLength(1);
+    expect(sidecar.requests[0].body.selfNames).toEqual(['Aalis']);
+    expect(decisions(logs).at(-1)?.message).toContain('addressed=true');
+
+    await send(groupMsg('Aalis 还在吗'));
+    const warns = byLevel(logs, 'warn').filter(m => m.includes('读名字失败'));
+    expect(warns).toHaveLength(1);
+    expect(warns[0]).toMatch(/^\[laya\] 人设「.*」读名字失败.*persona 故障/);
   });
 
   it('附件识别超过 mediaWaitMs：照常判定（cur 缺描述），识别在后台继续，只识别一次', async () => {

@@ -20,6 +20,7 @@ import { messageArchive } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
 import {
   archiveSwallowed,
+  createBotNames,
   hitsMuteKeyword,
   isActiveTrigger,
   isAddressed,
@@ -124,6 +125,9 @@ const CIRCUIT_FAILURES = 3;
 const CIRCUIT_OPEN_MS = 30_000;
 /** 请求体上限（字节）：侧车契约，见 models/listener-sidecar/README.md「接口」节（laya_listener.py 的 MAX_BODY），超过回 413 */
 const MAX_BODY_BYTES = 1 << 20;
+/** selfNames 的个数与单个名字长度上限：侧车契约（laya_listener.py 的 MAX_SELF_NAMES / MAX_SELF_NAME_LEN），超过回 400 */
+const MAX_SELF_NAMES = 32;
+const MAX_SELF_NAME_LENGTH = 32;
 
 /** 侧车窗口的一行（`POST /v1/score` 的 rows 项） */
 interface LayaRow {
@@ -189,6 +193,7 @@ const uses = {
   trigger: optional(trigger),
   // 缺席时不设禁言：关键词照样吞掉本条，但不会写入禁言期
   flowControl: optional(flowControl),
+  // 名字检测与发给侧车的 selfNames 取全部人设的名字、昵称；缺席时只用 triggerNames
   persona: optional(persona),
   // 缺席时被吞掉的消息不进档，判定照常
   messageArchive: optional(messageArchive),
@@ -219,6 +224,8 @@ function run(caps: Caps): void {
   // 本插件在 trigger 服务里的实例：服务胜者是它时本插件生效，否则对每条消息直接放行
   const self: TriggerService = { label: 'Laya 模型' };
   caps.provide(trigger, self, { priority: cfg.priority, label: self.label });
+  /** 名字表：别名与全部人设的名字、昵称；某个人设读名字出错只跳过它的名字 */
+  const botNames = createBotNames(caps.persona, logger, '[laya]');
 
   // ----- 可用性：熔断与告警 -----
 
@@ -278,8 +285,16 @@ function run(caps: Caps): void {
     selfCheck.settle(sessionId, incoming.messageId, archivedMessage.content ?? ''),
   );
 
-  /** 问侧车；判定不了时兜底（speak = 是否被点名），不抛错之外的异常由调用处兜住 */
-  async function judge(message: IncomingMessage, addressed: boolean, threshold?: number): Promise<Verdict> {
+  /**
+   * 问侧车；判定不了时兜底（speak = 是否被点名），不抛错之外的异常由调用处兜住。names 是点名识别用的
+   * 名字表，作为 selfNames 发给侧车：侧车渲染时把正文里的这些名字换成模型认识的 bot 代号
+   */
+  async function judge(
+    message: IncomingMessage,
+    addressed: boolean,
+    names: readonly string[],
+    threshold?: number,
+  ): Promise<Verdict> {
     const fallback = (why: string): Verdict => ({ speak: addressed, fallback: why });
     const selfId = parseSelfId(message.sessionId);
     if (!selfId) {
@@ -306,12 +321,12 @@ function run(caps: Caps): void {
     const history = await (mem.getFullHistory?.(sid, fetched) ?? mem.getHistory(sid, fetched));
     // 当前消息与归档用同一个 buildIncomingContent 拼，附件描述先等识别（有上限，超时照常判定）；
     // 两边仍可能不一致（识别超时、文件描述晚写入等），由运行期自检计数
-    await waitForAttachmentDescriptions(message, caps.media, cfg.mediaWaitMs, logger);
+    await waitForAttachmentDescriptions(message, caps.media, cfg.mediaWaitMs, logger, '[laya]');
     // 取历史与等识别期间可能已熔断：熔断期不发请求
     if (circuitOpen()) return fallback('侧车熔断中');
     const cur = buildIncomingContent(message);
-    // 字符串里的孤代理换成 U+FFFD：侧车的分词器不接受孤代理（会回 500，计入熔断）；历史行经库往返后
-    // 本来也是 U+FFFD。自检记的仍是换之前的 cur，与归档事件带的原文同一口径
+    // 字符串里的孤代理换成 U+FFFD：侧车的分词器不接受孤代理（整条回 422 bad_text 只能兜底，更早的侧车回 500，
+    // 计入熔断）；历史行经库往返后本来也是 U+FFFD。自检记的仍是换之前的 cur，与归档事件带的原文同一口径
     const body = JSON.stringify(
       {
         rows: toRows(history, cfg.historyRows),
@@ -320,6 +335,8 @@ function run(caps: Caps): void {
         curNick: message.nickname,
         replyTo: message.replyTo ? { userId: message.replyTo.userId, nickname: message.replyTo.nickname } : null,
         selfId,
+        // 超过侧车上限的名字不发（截断后的名字会误换正文），超出个数的取前面的：别名与当前生效的人设在前
+        selfNames: names.filter(n => n.length <= MAX_SELF_NAME_LENGTH).slice(0, MAX_SELF_NAMES),
       },
       (_key, value: unknown) => (typeof value === 'string' ? toWellFormedText(value) : value),
     );
@@ -409,25 +426,18 @@ function run(caps: Caps): void {
     if (hitsMuteKeyword(message, cfg.muteKeywords)) {
       logger.info(`[laya] mute 关键词命中 → swallow + setMuted(${cfg.muteTimeSeconds}s): ${sid}`);
       flow?.setMuted(sid, cfg.muteTimeSeconds, message.platform);
-      await archiveSwallowed(message, caps.messageArchive, logger);
+      await archiveSwallowed(message, caps.messageArchive, logger, '[laya]');
       return; // swallow
     }
 
-    let addressed: boolean;
-    try {
-      addressed = isAddressed(message, caps.persona, cfg);
-    } catch (err) {
-      // 名字检测会调外部 persona 提供者；抛错时放行而不是吞掉——失败放行优于失败静默
-      logger.warn(`[laya] 点名识别异常，默认放行: ${err}`);
-      await next();
-      return;
-    }
+    const names = botNames(cfg.triggerNames);
+    const addressed = isAddressed(message, names, cfg);
 
     const { threshold } = resolveEffectiveConfig(cfg, message.platform, message.sessionType, tid);
     const started = Date.now();
     let verdict: Verdict;
     try {
-      verdict = await judge(message, addressed, threshold);
+      verdict = await judge(message, addressed, names, threshold);
     } catch (err) {
       // 取历史失败等意外：本条兜底，不计侧车失败
       logger.warn(`[laya] 判定异常，本条按兜底只回点名: ${err}`);
@@ -445,7 +455,7 @@ function run(caps: Caps): void {
 
     // 放行与吞掉都不等判定期间启动的附件识别（见 waitForAttachmentDescriptions）
     if (!verdict.speak) {
-      await archiveSwallowed(message, caps.messageArchive, logger);
+      await archiveSwallowed(message, caps.messageArchive, logger, '[laya]');
       return; // swallow
     }
     markTriggered(message, addressed);

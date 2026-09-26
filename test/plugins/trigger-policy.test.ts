@@ -157,12 +157,12 @@ import { registerHubs } from '../fixtures/hubs.js';
 /** 每条消息都达到计数阈值：非直触发的群消息一律判 interval，用来观察是否走到了意愿评估 */
 const EVERY_MESSAGE = { intervalMode: 'fixed', fixedInterval: 1 };
 
-async function setupPolicy(config: Record<string, unknown> = {}, personaService?: PersonaService) {
+async function setupPolicy(config: Record<string, unknown> = {}, personas: PersonaService[] = []) {
   const app = new App({ name: 'T', logLevel: 'error' });
   await registerHubs(app);
   const host = app.bind({ provide, hooks });
   host.provide(gateway, {} as never); // 满足 required 依赖；相位判定本身不经过 gateway
-  if (personaService) host.provide(persona, personaService);
+  for (const p of personas) host.provide(persona, p);
   await app.plugins.register(triggerPolicyPlugin, config);
   await app.plugins.idle();
   // 激活闸：required 依赖缺席时插件停在 pending 而不报错，不核状态会让整组用例伪装成绿
@@ -252,26 +252,30 @@ describe('trigger-policy inbound:trigger（poke）', () => {
   });
 });
 
-describe('trigger-policy inbound:trigger（判定异常）', () => {
-  it('名字检测调 persona 抛错时放行而不是吞掉', async () => {
+describe('trigger-policy inbound:trigger（人设故障）', () => {
+  it('某个人设读名字抛错：只跳过它的名字，照常判定，不直接放行', async () => {
     const broken: PersonaService = {
       getSystemPrompt: () => '',
       getPersonaName: () => {
         throw new Error('persona 故障');
       },
     };
-    const { app, host } = await setupPolicy({}, broken);
-    const { reached, message } = await runTriggerPhase(host.hooks, {
-      platform: 'onebot',
-      sessionType: 'group',
-      sessionId: 'onebot:bot:group:g1',
-      groupId: 'g1',
-      userId: 'u1',
-      content: '随便聊聊',
-    } as IncomingMessage);
+    const good: PersonaService = { getSystemPrompt: () => '', getPersonaName: () => 'Aalis' };
+    const { app, host } = await setupPolicy({ intervalMode: 'fixed', fixedInterval: 100 }, [broken, good]);
+    const msg = (content: string) =>
+      ({
+        platform: 'onebot',
+        sessionType: 'group',
+        sessionId: 'onebot:bot:group:g1',
+        groupId: 'g1',
+        userId: 'u1',
+        content,
+      }) as IncomingMessage;
+    const plain = await runTriggerPhase(host.hooks, msg('随便聊聊'));
+    const named = await runTriggerPhase(host.hooks, msg('Aalis 在吗'));
     await app.stop();
-    expect(reached, '判定失败应放行').toBe(true);
-    expect(message.triggerType, '未完成判定，不写 triggerType').toBeUndefined();
+    expect(plain.reached, '没点名、计数未到：照常判定后吞掉').toBe(false);
+    expect(named.message.triggerType, '另一个人设的名字照常算点名').toBe('immediate');
   });
 });
 

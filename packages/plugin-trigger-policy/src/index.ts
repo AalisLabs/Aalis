@@ -5,6 +5,7 @@ import { messageArchive } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
 import {
   archiveSwallowed,
+  createBotNames,
   hitsMuteKeyword,
   isActiveTrigger,
   isAddressed,
@@ -212,9 +213,11 @@ export default definePlugin({
 });
 
 function run(caps: Caps): void {
-  const { logger, events, hooks, lifecycle, provide, persona, flowControl, messageArchive } = caps;
+  const { logger, events, hooks, lifecycle, provide, flowControl, messageArchive } = caps;
   const cfg = resolveTriggerPolicyConfig(caps.config);
   const states = new Map<string, TriggerSessionState>();
+  /** 名字表：别名与全部人设的名字、昵称；某个人设读名字出错只跳过它的名字 */
+  const botNames = createBotNames(caps.persona, logger, '[trigger]');
 
   // 本插件在 trigger 服务里的实例：服务胜者是它时本插件生效，否则对每条消息直接放行、闲置也不开口
   const self: TriggerService = { label: '规则（计数/评分）' };
@@ -317,7 +320,7 @@ function run(caps: Caps): void {
       logger.info(`[trigger] mute 关键词命中 → swallow + setMuted(${e.muteTimeSeconds}s): ${sessionId}`);
       flow?.setMuted(sessionId, e.muteTimeSeconds, message.platform);
       resetCounters(states.get(sessionId));
-      await archiveSwallowed(message, messageArchive, logger);
+      await archiveSwallowed(message, messageArchive, logger, '[trigger]');
       return; // swallow
     }
 
@@ -331,23 +334,14 @@ function run(caps: Caps): void {
     s.idleBackoff = 1;
     rescheduleIdle(sessionId);
 
-    let addressed: boolean;
-    try {
-      addressed = isAddressed(message, persona, e);
-    } catch (err) {
-      // 名字检测会调外部 persona 提供者；抛错时放行而不是吞掉——失败放行优于失败静默
-      logger.warn(`[trigger] 点名识别异常，默认放行: ${err}`);
-      await next();
-      return;
-    }
-
+    const addressed = isAddressed(message, botNames(e.triggerNames), e);
     const decision = decide(s, e, addressed);
     // 判定日志：不含消息正文
     logger.debug(
       `[trigger] 判定 | session=${sessionId} | speak=${decision.speak} | addressed=${addressed} | reason=${decision.reason}`,
     );
     if (!decision.speak) {
-      await archiveSwallowed(message, messageArchive, logger);
+      await archiveSwallowed(message, messageArchive, logger, '[trigger]');
       return; // swallow
     }
 
