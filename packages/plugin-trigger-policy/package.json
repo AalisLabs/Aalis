@@ -34,7 +34,9 @@
     "@aalis/api-message-archive": "workspace:>=0.7.0 <1.0.0",
     "@aalis/api-persona": "workspace:>=0.8.0 <1.0.0",
     "@aalis/schema-message": "workspace:>=0.9.0 <1.0.0",
-    "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0"
+    "@aalis/api-hooks": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-media": "workspace:>=0.11.0 <1.0.0",
+    "@aalis/api-trigger": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
@@ -53,12 +55,18 @@
         "gateway",
         "hooks",
         "lifecycle",
-        "logger"
+        "logger",
+        "provide"
       ],
       "optional": [
         "flow-control",
         "persona",
-        "message-archive"
+        "message-archive",
+        "trigger",
+        "media"
+      ],
+      "provides": [
+        "trigger"
       ]
     }
   }

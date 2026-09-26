@@ -26,7 +26,7 @@ export interface MediaService {
   describe(attachments: MessageAttachment[], opts?: DescribeOptions): Promise<Array<string | undefined>>;
   transcribe(attachment: MessageAttachment, opts?: TranscribeOptions): Promise<string | undefined>;
 
-  // ----- 一站式：处理整条入站消息（preprocessor 内部用，外部一般不直接调）-----
+  // ----- 一站式：处理整条入站消息（preprocessor 与触发判定宿主用）-----
   processMessage(msg: IncomingMessage): Promise<MediaProcessReport>;             // 把每条附件描述写进 msg._attachmentDescriptions；同一消息对象只处理一次
 
   // ----- 单图/单视频主动识别 + 描述缓存 -----
@@ -97,6 +97,7 @@ export interface MediaProcessor {
 | 包 | 调用 | 说明 |
 | --- | --- | --- |
 | `plugin-media`（自身 preprocessor） | `svc.processMessage(msg)` | 经 `buildPreprocessor` 注册到 agent |
+| `plugin-trigger-policy` | `media.current.processMessage(msg)` | 触发提供者要看附件描述时提前识别（有等待上限）；之后预处理器与归档不再识别第二遍 |
 | `plugin-file-reader` | `media.describeImage(uri)` | 识别 DOCX 内嵌图；先判 `if (!media?.describeImage) return ''` |
 | `plugin-image-sender` | `media.describeImage(url, { detailLevel: 'casual' })` | 给候选图打描述以挑图 |
 | `plugin-adapter-onebot` | `media.lookupDescription(url)` | 只复用缓存、不触发识别 |
