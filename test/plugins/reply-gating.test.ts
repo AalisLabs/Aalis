@@ -473,6 +473,24 @@ describe('禁言', () => {
     expect(h.contents(), '禁言前的 2 条不应与解禁后的消息凑满阈值').not.toContain('解禁后第一条');
   });
 
+  it('平台禁言先于任何消息：禁言期的消息建起会话状态但不计数', async () => {
+    const h = await setup({ trigger: { intervalMode: 'fixed', fixedInterval: 3 } });
+    const G = '20001';
+
+    h.flow().setMuted(sid(G), 60, 'onebot'); // 本插件此时还没有该会话的状态
+    await h.send(groupMsg(G, '禁言期闲聊 1'));
+    await h.send(groupMsg(G, '禁言期闲聊 2'));
+    await advance(61_000); // 解禁
+
+    await h.send(groupMsg(G, '解禁后第一条'));
+    expect(h.contents(), '禁言期的 2 条不应计入间隔计数（解禁后计数应从 1 起）').not.toContain('解禁后第一条');
+
+    // 正向对照：继续发到阈值应触发
+    await h.send(groupMsg(G, '解禁后第二条'));
+    await h.send(groupMsg(G, '解禁后第三条'));
+    expect(h.contents()).toEqual(['解禁后第三条']);
+  });
+
   it('戳一戳者昵称含禁言关键词：不触发禁言，戳一戳照常直触发', async () => {
     const h = await setup({ trigger: { muteKeywords: '闭嘴', muteTimeSeconds: 600 } });
     const G = '20001';
@@ -1248,6 +1266,72 @@ describe('闲置触发', () => {
     await advance(601_000); // 解禁
     await advance(61_000);
     expect(h.idles().length, '解禁后一个基础间隔内应有 idle').toBeGreaterThan(0);
+  });
+
+  // 禁言期内的真人消息同样算闲置活动：只是不计数
+  /** 禁言期内每 30s 一条真人消息，t=30s 到 t=270s（调用前处于 t=0） */
+  async function chatDuringMute(h: Harness, groupId: string): Promise<void> {
+    for (let t = 30; t <= 270; t += 30) {
+      await advance(30_000);
+      await h.send(groupMsg(groupId, `禁言期闲聊 ${t}`));
+    }
+  }
+
+  it('关键词禁言期内的真人消息重排 session 档闲置：最后一条之后满间隔才发出', async () => {
+    const h = await setup({
+      trigger: sessionIdle('fixed', { idleTriggerMinutes: 3, muteKeywords: '闭嘴', muteTimeSeconds: 300 }),
+    });
+    const G = '20001';
+
+    await h.send(groupMsg(G, '随便聊聊')); // t=0，闲置排在 t=180s
+    await h.send(groupMsg(G, '你闭嘴吧')); // 禁言到 t=300s
+    await chatDuringMute(h, G); // 最后一条在 t=270s
+    await advance(179_000); // t=449s
+    expect(h.idles(), '最后一条真人消息之后不满 3 分钟不应有闲置提示').toHaveLength(0);
+    await advance(2_000); // t=451s
+    expect(h.idles()).toHaveLength(1);
+  });
+
+  it('命中禁言关键词的那条本身算真人活动：闲置从它起算', async () => {
+    const h = await setup({
+      trigger: sessionIdle('fixed', { idleTriggerMinutes: 3, muteKeywords: '闭嘴', muteTimeSeconds: 30 }),
+    });
+    const G = '20001';
+
+    await h.send(groupMsg(G, '随便聊聊')); // t=0，闲置排在 t=180s
+    await advance(60_000);
+    await h.send(groupMsg(G, '你闭嘴吧')); // t=60s，禁言到 t=90s，闲置改排在 t=240s
+    await advance(179_000); // t=239s
+    expect(h.idles(), '关键词那条之后不满 3 分钟不应有闲置提示').toHaveLength(0);
+    await advance(2_000); // t=241s
+    expect(h.idles()).toHaveLength(1);
+  });
+
+  it('平台禁言先于任何消息：禁言期的真人消息建起会话状态，解禁后从最后一条起满间隔发出闲置提示', async () => {
+    const h = await setup({ trigger: sessionIdle('fixed', { idleTriggerMinutes: 3 }) });
+    const G = '20001';
+
+    h.flow().setMuted(sid(G), 300, 'onebot'); // t=0，本插件此时还没有该会话的状态
+    await chatDuringMute(h, G);
+    await advance(179_000); // t=449s
+    expect(h.idles()).toHaveLength(0);
+    await advance(2_000); // t=451s
+    expect(h.idles(), '只在禁言期说过话的会话，解禁后同样有闲置提示').toHaveLength(1);
+  });
+
+  it('platform 档 all-quiet：禁言期内的真人消息推迟全部静默的计时', async () => {
+    const h = await setup({
+      trigger: { idleTriggerScope: 'platform', idleTriggerStrategy: 'all-quiet', idleTriggerMinutes: 3 },
+    });
+    const G = '20001';
+
+    await h.send(groupMsg(G, '随便聊聊')); // t=0
+    h.flow().setMuted(sid(G), 300, 'onebot'); // 平台禁言到 t=300s
+    await chatDuringMute(h, G);
+    await advance(179_000); // t=449s
+    expect(h.idles(), '最后一条真人消息之后不满 3 分钟不算全部静默').toHaveLength(0);
+    await advance(2_000); // t=451s
+    expect(h.idles().map(m => m.sessionId)).toEqual([sid(G)]);
   });
 
   it('真人消息把退避复位为 1', async () => {
