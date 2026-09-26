@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   App,
   definePlugin,
@@ -8,6 +8,7 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
+import { Activation } from '../../packages/core/src/orchestration/activation.js';
 import type { PluginRecord } from '../../packages/core/src/orchestration/plugin-activation.js';
 import { deferred } from '../helpers/deferred.js';
 
@@ -58,6 +59,14 @@ describe('有限 apply 与停机接管', () => {
     expect(app.plugins.getPlugin('next')?.state).toBe('pending');
     const lookup = app.bind({ services }).services;
     expect(lookup.get(owned.name)).toBeDefined();
+    // 停机冻树时各激活交出的完成信号（joinPlan 的返回值），只在反例失败时由 finally 释放
+    const planned: Array<() => void> = [];
+    const joinPlan = Activation.prototype.joinPlan;
+    const spy = vi.spyOn(Activation.prototype, 'joinPlan').mockImplementation(function (this: Activation) {
+      const done = joinPlan.call(this);
+      if (done) planned.push(done);
+      return done;
+    });
     const stopping = app.stop().then(() => {
       stopCompleted = true;
     });
@@ -83,11 +92,9 @@ describe('有限 apply 与停机接管', () => {
       gate.resolve();
       // 负向实现会自等已冻结的计划。仅在反例失败时释放测试持有的完成信号，
       // 让正常 stop 编排继续清资源；测试本身不能留下悬置 flight 或借超时假绿。
-      if (!stopCompleted) {
-        const manager = app.plugins as unknown as { shutdownSettle?: Map<unknown, () => void> };
-        for (const settle of manager.shutdownSettle?.values() ?? []) settle();
-      }
+      if (!stopCompleted) for (const settle of planned) settle();
       await Promise.allSettled([registering, stopping]);
+      spy.mockRestore();
     }
   });
 });

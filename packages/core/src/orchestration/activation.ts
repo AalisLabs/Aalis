@@ -22,41 +22,56 @@ interface Edge {
 
 /** 内部激活记录：身份、资源寿命与依赖边。不提供事件、服务、配置管理等能力门面。 */
 export class Activation {
+  readonly id: string;
+  readonly owner: symbol;
+  readonly logger: Logger;
+  readonly config: Readonly<Record<string, unknown>>;
+  readonly resources: Resources;
   readonly children = new Set<Activation>();
   readonly declared = new Map<string, boolean>();
+  readonly #services: ServiceContainer;
+  readonly #owners: Map<symbol, Activation>;
   /** 本激活挂出去的边：关停排序据此认提供者，撤回落定前一直在 */
-  private readonly outbound = new Set<Edge>();
+  readonly #outbound = new Set<Edge>();
   /** 挂在本激活所提供服务上的边：撤回段据此先让它们交接 */
-  private readonly inbound = new Set<Edge>();
-  private closing?: Promise<void>;
+  readonly #inbound = new Set<Edge>();
+  #closing?: Promise<void>;
 
   constructor(
-    readonly id: string,
-    readonly owner: symbol,
-    readonly logger: Logger,
-    readonly config: Readonly<Record<string, unknown>>,
-    readonly resources: Resources,
-    private readonly services: ServiceContainer,
-    private readonly owners: Map<symbol, Activation>,
-  ) {}
+    id: string,
+    owner: symbol,
+    logger: Logger,
+    config: Readonly<Record<string, unknown>>,
+    resources: Resources,
+    services: ServiceContainer,
+    owners: Map<symbol, Activation>,
+  ) {
+    this.id = id;
+    this.owner = owner;
+    this.logger = logger;
+    this.config = config;
+    this.resources = resources;
+    this.#services = services;
+    this.#owners = owners;
+  }
 
   /** 登记一条跟随边；释放时带上撤回的落定，边留到落定为止 */
   retainBinding(name: string, pump: () => void): (settling?: Promise<void>) => void {
     // 只在 pump 解析到提供者之后调用：条目存在，owner 必有
-    const owner = this.services.ownerOf(name)!;
-    const provider = this.owners.get(owner);
+    const owner = this.#services.ownerOf(name)!;
+    const provider = this.#owners.get(owner);
     const edge: Edge = {
       from: this,
       owner,
       required: this.declared.get(name) === true,
       pump,
       drop: () => {
-        this.outbound.delete(edge);
-        provider?.inbound.delete(edge);
+        this.#outbound.delete(edge);
+        if (provider) provider.#inbound.delete(edge);
       },
     };
-    this.outbound.add(edge);
-    provider?.inbound.add(edge);
+    this.#outbound.add(edge);
+    if (provider) provider.#inbound.add(edge);
     // 每次挂载只释放一次（binding 取出 releaseEdge 即清空）；drop 本身幂等
     return settling => {
       if (!settling) return edge.drop();
@@ -67,7 +82,7 @@ export class Activation {
 
   /** 本激活已关完：撤回仍未落定的边不再让提供者等——自己的撤回段已按超时放弃过 */
   dropOutbound(): void {
-    for (const edge of [...this.outbound]) edge.drop();
+    for (const edge of [...this.#outbound]) edge.drop();
   }
 
   /**
@@ -76,7 +91,7 @@ export class Activation {
    */
   handover(): Promise<unknown> | undefined {
     const pending: Promise<void>[] = [];
-    for (const edge of [...this.inbound]) {
+    for (const edge of [...this.#inbound]) {
       if (!edge.settling && !edge.from.resources.disposed) edge.pump();
       if (edge.settling) pending.push(edge.settling);
     }
@@ -86,19 +101,19 @@ export class Activation {
   closeInfo(): { children: Activation[]; providers: Map<Activation, boolean> } {
     const providers = new Map<Activation, boolean>();
     const depend = (owner: symbol | undefined, required: boolean): void => {
-      const provider = owner && this.owners.get(owner);
+      const provider = owner && this.#owners.get(owner);
       if (provider && provider !== this) providers.set(provider, required || providers.get(provider) === true);
     };
-    for (const [name, required] of this.declared) depend(this.services.ownerOf(name), required);
-    for (const edge of this.outbound) depend(edge.owner, edge.required);
+    for (const [name, required] of this.declared) depend(this.#services.ownerOf(name), required);
+    for (const edge of this.#outbound) depend(edge.owner, edge.required);
     return { children: [...this.children], providers };
   }
 
   joinPlan(): (() => void) | undefined {
-    if (this.closing) return undefined;
+    if (this.#closing) return undefined;
     this.resources.markClosing();
     let done!: () => void;
-    this.closing = new Promise<void>(resolve => {
+    this.#closing = new Promise<void>(resolve => {
       done = resolve;
     });
     return done;
@@ -109,8 +124,8 @@ export class Activation {
    * 未入关闭计划的两支（叶子直接拆资源、带子树时现组计划）只供测试夹具直接拆激活。
    */
   disposeAsync(timeoutMs?: number): Promise<void> {
-    if (this.closing)
-      return awaitWithTimeout(this.closing, timeoutMs, limit =>
+    if (this.#closing)
+      return awaitWithTimeout(this.#closing, timeoutMs, limit =>
         reportQuietly(() => this.logger.warn(`激活 "${this.id}": 等待在飞拆卸超过 ${limit}ms，放弃等待`)),
       );
     if (this.children.size === 0) return this.resources.disposeAsync(timeoutMs);

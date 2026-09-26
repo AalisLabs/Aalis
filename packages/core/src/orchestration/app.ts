@@ -101,10 +101,10 @@ export class App {
   /** 屏障事件（app:*）由 App 自己发；原语注册表不外露，插件与宿主都经描述符取用 */
   readonly #events: EventBus;
 
-  private readonly restartStrategy?: RestartStrategy;
-  private readonly disposeTimeoutMs: number;
+  readonly #restartStrategy?: RestartStrategy;
+  readonly #disposeTimeoutMs: number;
   /** 停机单飞：重入返回同一 Promise；完成后仍保留，再调 stop() 立即落定 */
-  private stopping?: Promise<void>;
+  #stopping?: Promise<void>;
 
   constructor(options: AppOptions) {
     this.#events = new EventBus();
@@ -123,8 +123,8 @@ export class App {
     this.#events.onHandlerError = (event, err, contextId) => {
       this.logger.warn(`事件 "${event}" 的监听器抛错（已隔离${contextId ? `，来自 ${contextId}` : ''}）:`, err);
     };
-    this.restartStrategy = options.restartStrategy;
-    this.disposeTimeoutMs = options.disposeTimeoutMs ?? 5000;
+    this.#restartStrategy = options.restartStrategy;
+    this.#disposeTimeoutMs = options.disposeTimeoutMs ?? 5000;
 
     // 1. 根激活
     const runtime = {
@@ -138,7 +138,7 @@ export class App {
     const caps = this.#host.bind(this.#root, { provide });
 
     // 2. 插件管理器
-    this.#plugins = new PluginManager(this.#host, this.logger, this.disposeTimeoutMs);
+    this.#plugins = new PluginManager(this.#host, this.logger, this.#disposeTimeoutMs);
     this.plugins = this.#plugins;
 
     // 3. 宿主服务：与内置六项同一登记规则（根激活、独占），只交出契约列出的方法
@@ -239,10 +239,10 @@ export class App {
    * 未注入策略时抛错（明确暴露"嵌入式宿主没声明重启能力"的事实）。
    */
   restart(opts?: { rollback?: unknown }): void {
-    if (!this.restartStrategy) {
+    if (!this.#restartStrategy) {
       throw new Error('App.restart() 不可用：未注入 restartStrategy。');
     }
-    const strategy = this.restartStrategy;
+    const strategy = this.#restartStrategy;
     // 防御性清掉全部 sticky 缓存（'app:ready' + 'app:started'）：strategy 可能走
     // "快速重启"路径不调 stop()，此时新一轮启动期间的早期订阅者会收到上一轮
     // 的 sticky 信号。stop() 内部会再清一次，重复调用无副作用。
@@ -256,7 +256,7 @@ export class App {
   /**
    * 停止应用。单飞：重入返回同一 Promise。
    *
-   * 先 `beginShutdown()` 置 shuttingDown（新 bounce/register 被拒），再 `idle()` 排干在飞者，
+   * 先 `beginShutdown()` 置 `#shuttingDown`（新 bounce/register 被拒），再 `idle()` 排干在飞者，
    * 然后发 `app:stopping`，最后 stopAll。已静置时 `idle()` 仍让出一轮微任务——必须先冻闸，
    * 否则同轮排队的 bounce 会在置位前过闸、停机后留下 pending 幽灵。
    *
@@ -264,20 +264,20 @@ export class App {
    * `app:stopping` 监听器与清理回调不得 await 或返回该 Promise，否则会等待自身。
    */
   stop(): Promise<void> {
-    if (this.stopping) return this.stopping;
+    if (this.#stopping) return this.#stopping;
     let resolve!: () => void;
     let reject!: (reason: unknown) => void;
     // 在调用宿主 logger 前发布完成对象，同步重入也只能加入本次停机。
-    this.stopping = new Promise<void>((res, rej) => {
+    this.#stopping = new Promise<void>((res, rej) => {
       resolve = res;
       reject = rej;
     });
     // 同步启动：不能延后一轮微任务，否则 bounce 可能抢在 beginShutdown 前过闸。
-    void this.runStop().then(resolve, reject);
-    return this.stopping;
+    void this.#runStop().then(resolve, reject);
+    return this.#stopping;
   }
 
-  private async runStop(): Promise<void> {
+  async #runStop(): Promise<void> {
     this.logger.info('正在停止...');
     this.#plugins.beginShutdown();
     await this.#plugins.idle();
@@ -289,7 +289,7 @@ export class App {
     // 复用过时的"已启动"标记
     this.#events.clearSticky();
     // 等待根激活的异步清理真正完成再宣告停止
-    await this.#root.disposeAsync(this.disposeTimeoutMs);
+    await this.#root.disposeAsync(this.#disposeTimeoutMs);
     this.logger.info('已停止');
   }
 }

@@ -24,7 +24,7 @@ export class EventBus {
   // 再删掉后登记者。归属是注册方本次激活的 symbol，让拆卸的注销段能与
   // services 同点整体切断（unregisterByOwner）；直接使用总线的无主
   // handler（owner=undefined）不受切断影响，由调用方自管。
-  private handlers = new Map<string, Set<EventEntry>>();
+  #handlers = new Map<string, Set<EventEntry>>();
 
   /**
    * handler 抛错时的上报回调（含 sticky 补发路径的同步/异步抛错）。
@@ -37,7 +37,7 @@ export class EventBus {
    */
   onHandlerError?: (event: string, error: unknown, contextId?: string) => void;
 
-  private reportHandlerError(event: string, error: unknown, owner?: symbol): void {
+  #reportHandlerError(event: string, error: unknown, owner?: symbol): void {
     reportQuietly(() => this.onHandlerError?.(event, error, owner?.description));
   }
 
@@ -53,15 +53,15 @@ export class EventBus {
    *   避免下一轮启动时被旧的 sticky 参数误触发
    */
   // biome-ignore lint/suspicious/noExplicitAny: 同上
-  private stickyArgs = new Map<string, any[]>();
-  private stickyEvents = new Set<string>();
+  #stickyArgs = new Map<string, any[]>();
+  #stickyEvents = new Set<string>();
 
   markSticky(event: string): void {
-    this.stickyEvents.add(event);
+    this.#stickyEvents.add(event);
   }
 
   clearSticky(): void {
-    this.stickyArgs.clear();
+    this.#stickyArgs.clear();
   }
 
   /**
@@ -77,16 +77,16 @@ export class EventBus {
     handler: EventHandler<AalisEvents[E]>,
     owner?: symbol,
   ): () => void {
-    let set = this.handlers.get(event);
+    let set = this.#handlers.get(event);
     if (!set) {
       set = new Set();
-      this.handlers.set(event, set);
+      this.#handlers.set(event, set);
     }
     const entry: EventEntry = { handler, owner };
     set.add(entry);
 
-    if (this.stickyEvents.has(event) && this.stickyArgs.has(event)) {
-      const args = this.stickyArgs.get(event) as AalisEvents[E];
+    if (this.#stickyEvents.has(event) && this.#stickyArgs.has(event)) {
+      const args = this.#stickyArgs.get(event) as AalisEvents[E];
       queueMicrotask(() => {
         // 注册可能在微任务执行前被立即 dispose；此时跳过补发
         if (!set?.has(entry)) return;
@@ -95,10 +95,10 @@ export class EventBus {
         try {
           const ret = handler(...args);
           if (ret && typeof (ret as Promise<void>).then === 'function') {
-            (ret as Promise<void>).catch(err => this.reportHandlerError(event, err, owner));
+            (ret as Promise<void>).catch(err => this.#reportHandlerError(event, err, owner));
           }
         } catch (err) {
-          this.reportHandlerError(event, err, owner);
+          this.#reportHandlerError(event, err, owner);
         }
       });
     }
@@ -108,7 +108,7 @@ export class EventBus {
       // 身份卫：本闭包捕获的是注册时刻的那张表。若事件键已被整体清掉又被
       // 他人重建（unregisterByOwner 扫空 → 新注册进新表），按键盲删会误杀
       // 新注册者的整张表——只有当前挂的仍是自己那张时才清空键。
-      if (set!.size === 0 && this.handlers.get(event) === set) this.handlers.delete(event);
+      if (set!.size === 0 && this.#handlers.get(event) === set) this.#handlers.delete(event);
     };
   }
 
@@ -120,11 +120,11 @@ export class EventBus {
    * @internal
    */
   unregisterByOwner(owner: symbol): void {
-    for (const [event, set] of this.handlers) {
+    for (const [event, set] of this.#handlers) {
       for (const entry of set) {
         if (entry.owner === owner) set.delete(entry);
       }
-      if (set.size === 0) this.handlers.delete(event);
+      if (set.size === 0) this.#handlers.delete(event);
     }
   }
 
@@ -138,17 +138,17 @@ export class EventBus {
    * 插件打成 error 终态）。
    */
   async emit<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): Promise<void> {
-    if (this.stickyEvents.has(event)) {
-      this.stickyArgs.set(event, args);
+    if (this.#stickyEvents.has(event)) {
+      this.#stickyArgs.set(event, args);
     }
-    const set = this.handlers.get(event);
+    const set = this.#handlers.get(event);
     if (!set) return;
     // 直接迭代活表：handler 中 dispose 尚未访问的条目会被正确跳过（Set 迭代语义）
     for (const { handler, owner } of set) {
       try {
         await handler(...args);
       } catch (err) {
-        this.reportHandlerError(event, err, owner);
+        this.#reportHandlerError(event, err, owner);
       }
     }
   }

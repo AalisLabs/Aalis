@@ -11,16 +11,15 @@ import { Resources } from '../infrastructure/resources.js';
 
 /** 装配与挂载协调器。能力实现留在各描述符，资源清理留在 Resources。 */
 export class ActivationHost {
+  readonly runtime: ServiceRuntime;
   readonly root: Activation;
-  private readonly owners = new Map<symbol, Activation>();
+  readonly #owners = new Map<symbol, Activation>();
 
-  constructor(
-    readonly runtime: ServiceRuntime,
-    logger: Logger,
-  ) {
+  constructor(runtime: ServiceRuntime, logger: Logger) {
+    this.runtime = runtime;
     this.root = this.create(undefined, 'root', {}, logger);
     const providers = coreProviders(runtime, (identity, name) => {
-      const activation = this.owners.get(identity);
+      const activation = this.#owners.get(identity);
       if (!activation?.declared.has(name)) throw new Error(`内置服务 "${name}" 只能由在 uses 里声明了它的激活取用`);
       return activation;
     });
@@ -51,12 +50,12 @@ export class ActivationHost {
       afterWithdraw: (): Promise<unknown> | undefined => activation.handover(),
       afterCleanup: () => {
         activation.dropOutbound();
-        this.owners.delete(owner);
+        this.#owners.delete(owner);
         parent?.children.delete(activation);
       },
     });
-    const activation = new Activation(id, owner, logger, config, resources, runtime.services, this.owners);
-    this.owners.set(owner, activation);
+    const activation = new Activation(id, owner, logger, config, resources, runtime.services, this.#owners);
+    this.#owners.set(owner, activation);
     parent?.children.add(activation);
     return activation;
   }

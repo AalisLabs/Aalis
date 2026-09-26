@@ -368,6 +368,32 @@ describe('保留的安全网：故障注入', () => {
     expect(app.plugins.getPlugin('solo')).toBeUndefined();
   });
 
+  it('服务下线触发的反应式重算抛错（宿主 logger 的 info 抛出）：记 error 点名触发事件，不外泄成未处理拒绝', async () => {
+    const errors: string[] = [];
+    let failInfo = false;
+    const logger: Logger = {
+      debug() {},
+      info() {
+        if (failInfo) throw new Error('注入的日志故障');
+      },
+      warn() {},
+      error: (...args: unknown[]) => void errors.push(args.map(String).join(' ')),
+      child: () => logger,
+    };
+    const app = createInspectableApp({ name: 'T', logLevel: 'debug', logger });
+    apps.push(app);
+    const dep = defineService<object>('t:edges:reactive-dep');
+    const withdraw = app.bind({ provide }).provide(dep, {});
+    await app.plugin(definePlugin({ name: 'consumer', uses: { dep }, apply() {} }));
+    await app.plugins.idle();
+    expect(stateOf(app, 'consumer')).toBe('active');
+    failInfo = true;
+    withdraw();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    failInfo = false;
+    expect(errors).toEqual([`recompute(service:unregistered:${dep.name}) 报错: Error: 注入的日志故障`]);
+  });
+
   it('不传 logger 直接建根激活：给出明确报错', () => {
     const { app } = world();
     expect(() => activationHost(app).create(undefined, 'orphan')).toThrow('根激活需要 logger');

@@ -27,7 +27,10 @@ class ServiceUnavailableError extends Error {
   }
 }
 
-/** @internal 初始化失败归因：来源身份随激活变化，重抛上一轮错误不能触发下一轮重试。 */
+/**
+ * 初始化失败归因：来源身份随激活变化，重抛上一轮错误不能触发下一轮重试。
+ * @internal
+ */
 export function isRequiredServiceUnavailable(
   error: unknown,
   resources: Resources,
@@ -53,7 +56,10 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
   return typeof (value as PromiseLike<unknown> | undefined)?.then === 'function';
 }
 
-/** @internal 为一次激活造某个服务的资源口 */
+/**
+ * 为一次激活造某个服务的资源口
+ * @internal
+ */
 export function createPort<P>(scope: BindingScope, name: string, required = false): BindingPort<P> {
   const withdraw = (off: () => unknown, what: string) => scope.resources.withdraw(off, what);
 
