@@ -41,7 +41,7 @@ export interface GatewayService {
 export const INBOUND_PHASE = {
   CONFIRM:  'inbound:confirm',  // 会话内待确认回复拦截（plugin-session-confirm）
   COMMAND:  'inbound:command',  // 指令解析与执行（plugin-commands）
-  TRIGGER:  'inbound:trigger',  // 要不要开口：禁言关键词/@/名字/计数评分（plugin-trigger-policy）
+  TRIGGER:  'inbound:trigger',  // 要不要开口：禁言关键词/点名识别/按序问 trigger 提供者（plugin-trigger-policy）
   FLOW:     'inbound:flow',     // 节流硬闸：禁言/冷却/限速（plugin-flow-control）
   DISPATCH: 'inbound:dispatch', // 默认派发到 agent.handleMessage（plugin-gateway 提供默认动作）
 } as const;
