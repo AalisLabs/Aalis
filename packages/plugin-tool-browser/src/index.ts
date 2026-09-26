@@ -211,31 +211,87 @@ function runBrowserTools(caps: Caps): void {
     if (browser?.connected) return browser;
     browser = null;
     pages.clear();
+    let instance: import('puppeteer').Browser;
     try {
       if (!config.executablePath) {
         await ensureChrome();
       }
       const puppeteer = await import('puppeteer');
       const launchFn = puppeteer.default?.launch ?? puppeteer.launch;
-      browser = await launchFn({
+      instance = await launchFn({
         headless: config.headless,
         defaultViewport: { width: config.viewportWidth, height: config.viewportHeight },
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
         ...(config.executablePath ? { executablePath: config.executablePath } : {}),
       });
-      const instance = browser;
-      instance.on('disconnected', () => {
-        // 只清自己那一代：迟到的旧实例事件不能把刚起来的新实例与它的页面一起清掉
-        if (browser !== instance) return;
-        browser = null;
-        pages.clear();
-      });
-      logger.info('浏览器已启动');
-      return browser;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(`启动浏览器失败: ${msg}`);
       throw new Error(`浏览器启动失败: ${msg}。请确保已安装 Chrome: npx puppeteer browsers install chrome`);
+    }
+    // 仅 blockPrivate 时装闸（关掉即零开销、本地全通，便于 owner 测本地）。
+    // 闸装不上就不交出这一代浏览器：先关掉再报错，不给后续调用留一个没有闸的实例
+    if (config.blockPrivate) {
+      try {
+        await installRequestGate(instance);
+      } catch (err) {
+        await instance.close().catch(() => {});
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`开启请求拦截失败，已关闭浏览器: ${msg}`);
+        throw new Error(`浏览器请求拦截开启失败，已关闭浏览器: ${msg}`);
+      }
+    }
+    browser = instance;
+    instance.on('disconnected', () => {
+      // 只清自己那一代：迟到的旧实例事件不能把刚起来的新实例与它的页面一起清掉
+      if (browser !== instance) return;
+      browser = null;
+      pages.clear();
+    });
+    logger.info('浏览器已启动');
+    return browser;
+  }
+
+  // ── SSRF 闸：浏览器级请求拦截 ──
+  // 在浏览器目标上开 Fetch 拦截：页面、页面自己 window.open 出的窗口，以及 dedicated / shared /
+  // service worker 的 http(s) 请求（导航、点击与表单提交、重定向的每一跳、子资源、fetch）都先暂停在这里，
+  // 逐个判定后放行或拒绝，运行中新建的标签页与 worker 同样经过它。validateUrl 只管 browser_navigate 的入口，
+  // 其余路径都靠这道闸。页面级拦截（page.setRequestInterception）管不到 SharedWorker、Service Worker
+  // 与 window.open 出的窗口，所以不用它。WebSocket 连接不经过 Fetch 拦截，不在闸内。
+  // biome-ignore lint/suspicious/noExplicitAny: puppeteer Browser 类型动态导入
+  async function installRequestGate(b: any): Promise<void> {
+    const session = await b.target().createCDPSession();
+    session.on('Fetch.requestPaused', ({ requestId, request }: { requestId: string; request: { url: string } }) => {
+      // 暂停的请求必须回应；判定抛错或超时一律拒绝（失败关闭）
+      void judgeRequest(request.url)
+        .then(
+          () => session.send('Fetch.continueRequest', { requestId }),
+          (err: unknown) => {
+            logger.debug(`已拦截 ${request.url}: ${err instanceof Error ? err.message : String(err)}`);
+            return session.send('Fetch.failRequest', { requestId, errorReason: 'BlockedByClient' });
+          },
+        )
+        // 回应失败多是请求已随页面关闭或浏览器断开而取消，没有可回应的对象了
+        .catch((err: unknown) =>
+          logger.debug(`回应暂停的请求失败 ${request.url}: ${err instanceof Error ? err.message : String(err)}`),
+        );
+    });
+    await session.send('Fetch.enable', { patterns: [{ urlPattern: 'http://*' }, { urlPattern: 'https://*' }] });
+  }
+
+  /** 单个请求的判定：放行则正常返回，拒绝则抛错；超过 REQUEST_JUDGE_TIMEOUT_MS 未判完同样按拒绝抛出 */
+  async function judgeRequest(url: string): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`判定超过 ${REQUEST_JUDGE_TIMEOUT_MS}ms 未完成`)),
+        REQUEST_JUDGE_TIMEOUT_MS,
+      );
+    });
+    try {
+      await Promise.race([assertRequestAllowed(url, config), timeout]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -269,22 +325,6 @@ function runBrowserTools(caps: Caps): void {
     const b = await ensureBrowser();
     const page = await b.newPage();
     page.setDefaultTimeout(config.defaultTimeout);
-    // SSRF 收口：请求级拦截，统一覆盖 navigate/click/submit/重定向/子资源——
-    // validateUrl 只在 browser_navigate 生效，click/表单提交/30x 都能绕过它，缺口由此补齐。
-    // 仅 blockPrivate 时挂拦截（关掉即零开销、本地全通，便于 owner 测本地）；
-    // 复用同一套 blockPrivate + allowedHosts 规则，host 白名单照样放行。
-    if (config.blockPrivate) {
-      await page.setRequestInterception(true);
-      // req 用最小结构类型，避免顶层 import puppeteer（与本文件 page:any 动态导入策略一致）。
-      // 异步：isBlockedRequestUrl 现做 DNS 级判定，需 await 后再 abort/continue。
-      page.on(
-        'request',
-        async (req: { url(): string; abort(reason?: string): Promise<void>; continue(): Promise<void> }) => {
-          if (await isBlockedRequestUrl(req.url(), config)) req.abort('blockedbyclient').catch(() => {});
-          else req.continue().catch(() => {});
-        },
-      );
-    }
     const newId = `page_${++pageCounter}`;
     const slot: PageSlot = { page, url: 'about:blank', title: '', lastAccess: Date.now() };
     pages.set(newId, slot);
@@ -720,7 +760,7 @@ function validateUrl(rawUrl: string, config: BrowserConfig): string | null {
   if (config.blockPrivate) {
     const host = parsed.hostname.toLowerCase();
     if (config.allowedHosts.includes(host)) return null; // 白名单跳过
-    // 仅字符串级快判（不做 DNS 解析）；DNS 级判定由请求拦截 isBlockedRequestUrl 负责。
+    // 仅字符串级快判（不做 DNS 解析）；DNS 级判定由浏览器级请求闸 assertRequestAllowed 负责。
     if (isPrivateHost(host)) {
       return `拒绝访问内网/本地地址 "${host}"（blockPrivate=true）`;
     }
@@ -728,30 +768,17 @@ function validateUrl(rawUrl: string, config: BrowserConfig): string | null {
   return null;
 }
 
+/** 浏览器级请求闸对单个请求的判定时限：DNS 解析卡住时也要按时回应暂停的请求 */
+const REQUEST_JUDGE_TIMEOUT_MS = 10_000;
+
 /**
- * 请求级 SSRF 判定（用于 page 请求拦截，覆盖 navigate/click/submit/重定向/子资源）。
- * 仅对 http(s) 请求做内网/本地封锁，复用 validateUrl 的同一套 blockPrivate + allowedHosts 规则；
- * 非 http(s)（data:/blob:/about: 等）一律放行，避免误伤正常页面资源。
- * @returns true = 应拦截
+ * 浏览器级请求闸的判定（Fetch 拦截只暂停 http(s) 请求）：放行则正常返回，拒绝则抛错。
+ * 复用 validateUrl 的同一套 blockPrivate + allowedHosts 规则：白名单主机直接放行，其余交 assertSafeHost
+ * 做 DNS 级判定——IP 字面量直接判私网，域名解析全部 A/AAAA 后逐一判，堵住「域名解析到内网/元数据 IP」
+ * 的 SSRF（字符串级 isPrivateHost 判定挡不住这类域名）；解析失败同样抛错，按拒绝处理。
  */
-async function isBlockedRequestUrl(rawUrl: string, config: BrowserConfig): Promise<boolean> {
-  if (!config.blockPrivate) return false;
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    return false;
-  }
-  const protocol = parsed.protocol.replace(/:$/, '').toLowerCase();
-  if (protocol !== 'http' && protocol !== 'https') return false;
-  const host = parsed.hostname.toLowerCase();
-  if (config.allowedHosts.includes(host)) return false;
-  // DNS 级判定：assertSafeHost 对 IP 字面量同步判私网，对域名解析全部 A/AAAA 后逐一判 —— 堵住
-  // 「域名解析到内网/元数据 IP」的 SSRF（字符串级 isPrivateHost 判定挡不住这类域名）。
-  try {
-    await assertSafeHost(parsed.hostname);
-    return false;
-  } catch {
-    return true;
-  }
+async function assertRequestAllowed(rawUrl: string, config: BrowserConfig): Promise<void> {
+  const host = new URL(rawUrl).hostname.toLowerCase();
+  if (config.allowedHosts.includes(host)) return;
+  await assertSafeHost(host);
 }

@@ -58,7 +58,9 @@ export default definePlugin({
 
 `browser_navigate` 打开 URL 前先做校验：协议须在 `allowedProtocols` 内；`blockPrivate=true` 时再用 `isPrivateHost` 做字符串级私网判定，这一步不解析域名。
 
-`blockPrivate=true` 时，每个新建页面还开启请求拦截，覆盖点击、表单提交、重定向和子资源：每个 http(s) 请求都经 `assertSafeHost` 做 DNS 级判定，未通过的请求被中止；非 http(s) 请求（`data:`、`blob:`、`about:` 等）直接放行。拦截内的判定遵循进程级网络策略（core 配置 `network` 的 `blockPrivate` / `denyCidrs`）。`blockPrivate=false` 时不做私网判定，也不开启请求拦截。
+`blockPrivate=true` 时，浏览器启动后在浏览器级开启请求拦截（CDP `Fetch` 域，只拦 http(s) 请求）。页面、页面用 `window.open` 打开的窗口，以及 dedicated / shared / service worker 发出的请求都经过它，包括导航、点击与表单提交、重定向的每一跳、子资源和 `fetch`；运行中新建的标签页与 worker 同样经过它。每个请求经 `assertSafeHost` 做 DNS 级判定，未通过的请求以 `net::ERR_BLOCKED_BY_CLIENT` 失败；判定抛错或 10 秒内未完成，同样按拒绝处理。非 http(s) 请求（`data:`、`blob:`、`about:` 等）不经拦截；WebSocket 连接也不经过这道拦截。拦截内的判定遵循进程级网络策略（core 配置 `network` 的 `blockPrivate` / `denyCidrs`）。拦截开启失败时关闭这次启动的浏览器并报错，下次调用重新启动；浏览器不会在没有拦截的情况下运行。`blockPrivate=false` 时不做私网判定，也不开启请求拦截。
+
+Chrome 自带的本地网络访问限制也会约束公网来源的页面访问本机与内网，但它只算额外一层，本插件的防护不以它为前提。
 
 两个判定函数均来自 `@aalis/util-network-guard`，私网段清单见 [network-guard](../utils/network-guard.md)。
 
