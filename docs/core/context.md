@@ -265,4 +265,4 @@ lifecycle.onDispose(async () => {
 | `composition/descriptors`、`plugin-definition` | 服务与插件定义、类型推导，以及资源口契约 |
 | `composition/binding` | 资源口：观察服务胜者变化，负责 `follow` 交接、`registrar` 登记与逐条撤回 |
 
-插件只使用 `apply` 收到的能力，宿主通过 `app.bind` 装配根激活的能力。上表中的内部类与深路径均不属于稳定公开 API。
+插件只使用 `apply` 收到的能力，宿主通过 `app.bind` 装配根激活的能力。上表中的内部类不属于公开 API，包的 `exports` 也不开放它们所在的深路径。

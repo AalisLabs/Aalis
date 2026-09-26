@@ -3,6 +3,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { runTscProbe } from '../helpers/tsc-probe.js';
 
 // ════════════════════════════════════════════════════════════
 // core 内部分层架构测试
@@ -418,6 +419,64 @@ describe('core 扩展点：增广只能用裸包名说明符', () => {
     }
     expect(offenders, '钩子与贡献点的扩展点只在契约包里声明为空接口，条目由 -api 包增广注入').toEqual([]);
     expect(eventsRegistered, 'AalisEvents 必须登记 core 自持的内置事件').toBe(true);
+  });
+});
+
+/**
+ * 宿主全局白名单：core 用到的、浏览器 / Node / Deno / Bun / Workers 都提供的 Web 标准全局。签名取规范的子集，
+ * 只列 core 用到的成员；core 要用新的宿主全局或新成员，先确认各目标运行时都提供，再在这里登记。
+ * 没有 console：core 的日志经 Logger 交给宿主注入的 sink。
+ */
+const HOST_GLOBALS = `
+declare function setTimeout(handler: () => void, timeout?: number): unknown;
+declare function clearTimeout(id: unknown): void;
+declare function queueMicrotask(callback: () => void): void;
+interface AbortSignal {
+  readonly aborted: boolean;
+  addEventListener(type: 'abort', listener: () => void, options?: { once?: boolean }): void;
+  removeEventListener(type: 'abort', listener: () => void): void;
+}
+interface AbortController {
+  readonly signal: AbortSignal;
+  abort(reason?: unknown): void;
+}
+declare var AbortController: { prototype: AbortController; new (): AbortController };
+interface DOMException extends Error {}
+declare var DOMException: { prototype: DOMException; new (message?: string, name?: string): DOMException };
+`;
+
+/** 探针自检：编译配置漏进 Node 或 DOM 类型（types、lib 或三斜线引用）时，这些名字会变得可见 */
+const HOST_ONLY = ['process', 'Buffer', 'require', '__dirname', 'console', 'window'];
+
+describe('core 环境无关：只用 ES 标准库与登记的宿主全局', () => {
+  // 继承 core 自己的编译配置，改两处：types 清空，不加载 @types/node；lib 只留 target 对应的 ES 标准库，
+  // 不随 core 配置里的 lib 走（那里加上 DOM 也拦得住）。process / Buffer / require / __dirname 等宿主专有全局
+  // 因此报「找不到名称」并给出位置。
+  const tsconfig = join(SRC_DIR, '../tsconfig.json');
+  const { target } = ts.getParsedCommandLineOfConfigFile(tsconfig, undefined, {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic: () => {},
+  })!.options;
+  const probeConfig = {
+    extends: tsconfig,
+    compilerOptions: { types: [], lib: [ts.ScriptTarget[target!]] },
+    include: [SRC_DIR],
+  };
+  const missingNames = (errs: string[]) => errs.map(e => /Cannot find name '(\w+)'/.exec(e)?.[1] ?? e).sort();
+
+  it('不加载 Node 与 DOM 类型编译 core 源码零错误', () => {
+    const errs = runTscProbe(`${HOST_GLOBALS}${HOST_ONLY.map(name => `void ${name};\n`).join('')}`, probeConfig);
+    const inCore = errs.filter(e => e.startsWith('packages/core/src/'));
+    expect(inCore, 'core 只用 ES 标准库与 HOST_GLOBALS 登记的宿主全局，环境专有件由宿主经 AppOptions 注入').toEqual([]);
+    const probe = missingNames(errs.filter(e => !inCore.includes(e)));
+    expect(probe, '探针只应在自检名单上报错，编译配置不得漏进 Node 或 DOM 类型').toEqual([...HOST_ONLY].sort());
+  });
+
+  it('去掉白名单时 core 缺的恰好是白名单登记的名字', () => {
+    // 证明 core 源码确实在编译范围内（否则上一条恒绿），且白名单没有 core 用不到的多余项
+    const registered = [...new Set([...HOST_GLOBALS.matchAll(/(?:function|interface|var) (\w+)/g)].map(m => m[1]))];
+    const inCore = runTscProbe('', probeConfig).filter(e => e.startsWith('packages/core/src/'));
+    expect([...new Set(missingNames(inCore))]).toEqual(registered.sort());
   });
 });
 

@@ -184,10 +184,6 @@ export class DisposableChain {
 
   /**
    * 等待单个清理 promise，可选超时护栏。
-   *
-   * 环境无关性记账：这是 core 首个计时器使用点。`setTimeout`/`clearTimeout`
-   * 是所有 JS 运行时（浏览器/Node/Deno/Worker）的共有全局，非 `node:` 专属，
-   * 不引入环境假设。
    */
   async #awaitWithTimeout(p: Promise<unknown>, timeoutMs?: number, who = ''): Promise<void> {
     await awaitWithTimeout(p, timeoutMs, () =>
@@ -199,8 +195,8 @@ export class DisposableChain {
 /**
  * 等待一个 promise，可选超时护栏；超时则放弃等待并调 `onTimeout` 上报。
  *
- * 环境无关性记账：`setTimeout`/`clearTimeout` 是所有 JS 运行时（浏览器/Node/
- * Deno/Worker）的共有全局，非 `node:` 专属，不引入环境假设。
+ * `setTimeout`/`clearTimeout` 是各 JS 运行时共有的宿主全局，登记在 core 的宿主全局白名单里
+ * （test/core/architecture.test.ts 守卫）。
  *
  * 仅供 core 内部（DisposableChain 逐项等待、激活合流等待在飞拆卸、事件总线限时等待监听器）复用，
  *   不从包根导出。
