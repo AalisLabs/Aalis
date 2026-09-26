@@ -73,6 +73,8 @@ afterEach(async () => {
 interface SetupOptions {
   policy?: Record<string, unknown> | false;
   laya?: Record<string, unknown> | false;
+  /** Laya 先登记：它的中间件在链上排在规则插件前面（缺省规则插件先登记） */
+  layaFirst?: boolean;
 }
 
 async function setup(opts: SetupOptions = {}) {
@@ -91,15 +93,12 @@ async function setup(opts: SetupOptions = {}) {
     },
   } as never);
   host.provide(memory, { getFullHistory: async () => [] } as never);
-  const defs = [];
-  if (opts.policy !== false) {
-    await app.plugins.register(triggerPolicyPlugin, opts.policy ?? {});
-    defs.push(triggerPolicyPlugin);
-  }
-  if (opts.laya !== false) {
-    await app.plugins.register(layaPlugin, { endpoint: sidecar.url, ...opts.laya });
-    defs.push(layaPlugin);
-  }
+  const plugins: Array<[typeof triggerPolicyPlugin | typeof layaPlugin, Record<string, unknown>]> = [];
+  if (opts.policy !== false) plugins.push([triggerPolicyPlugin, opts.policy ?? {}]);
+  if (opts.laya !== false) plugins.push([layaPlugin, { endpoint: sidecar.url, ...opts.laya }]);
+  if (opts.layaFirst) plugins.reverse();
+  for (const [def, config] of plugins) await app.plugins.register(def, config);
+  const defs = plugins.map(([def]) => def);
   await app.plugins.idle();
   // 激活闸：依赖缺席时插件停在 pending 而不报错，不核状态会让整组用例伪装成绿
   for (const def of defs) {
@@ -200,7 +199,9 @@ describe('触发插件二选一', () => {
     const gate = deferred();
     sidecar.hold = gate.promise;
     sidecar.logit = 3;
-    const h = await setup({ policy: { intervalMode: 'fixed', fixedInterval: 100 } });
+    // Laya 先登记：它放行时规则插件的中间件还没跑过，切换后若按当时的 current 再判一次，规则会接着判。
+    // 规则插件排在前面时它早已放行过这条，这个用例就验不到胜者记录
+    const h = await setup({ policy: { intervalMode: 'fixed', fixedInterval: 100 }, layaFirst: true });
     const pending = h.send(groupMsg('在途'));
     await vi.waitFor(() => expect(sidecar.requests).toBe(1));
     h.prefer(RULE_LABEL);
