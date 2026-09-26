@@ -34,7 +34,10 @@ interface LayaConfig {
   timeoutMs: number;
   /** 窗口行数，只算 user / assistant 且正文是字符串的行（从 memory 多取一倍，过滤后留最后这么多行；取法见 toRows） */
   historyRows: number;
-  /** 在 trigger 服务里的优先级，越大越优先；规则判定 trigger-policy 为 0 */
+  /**
+   * 在 trigger 服务里的优先级，越大越优先；规则判定 trigger-policy 为 0。默认 -10 低于它：从源码运行时本插件
+   * 被自动发现并启用，但两者都启用时默认由 trigger-policy 生效，要用本插件靠服务偏好
+   */
   priority: number;
 }
 
@@ -55,7 +58,7 @@ export const defaultLayaConfig: LayaConfig = {
   endpoint: 'http://127.0.0.1:17878',
   timeoutMs: 1000,
   historyRows: 80,
-  priority: 10,
+  priority: -10,
 };
 
 /** 有限数原样返回；留空（undefined / null / ''）与非法值都返回 undefined */

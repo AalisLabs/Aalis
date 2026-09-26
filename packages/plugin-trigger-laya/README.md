@@ -2,11 +2,11 @@
 
 Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trigger.md)。经本机 HTTP 调用 laya-listener 侧车，由 Laya 模型判定一条入站消息要不要开口。
 
-本包 `private: true`，只随仓库源码提供，不发布到 npm。从仓库源码运行时，工作区加载器按 `aalis-plugin` 关键词发现它并与其它插件一样默认启用；它的优先级高于 trigger-policy，启用即生效，本机没有侧车时判定不可用，群里只回点名（见「兜底与故障观测」）。不用时在 WebUI 插件管理里停用，或写进配置文件的 `disabledPlugins`，由 trigger-policy 接手。
+本包 `private: true`，只随仓库源码提供，不发布到 npm。从仓库源码运行时，工作区加载器按 `aalis-plugin` 关键词发现它并与其它插件一样默认启用，但默认不生效：它的默认优先级（-10）低于 trigger-policy（0），两者都启用时由 trigger-policy 判定，本插件什么都不做。要用本插件，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`（重启生效），或在 WebUI 服务页把 `trigger` 的偏好切到「Laya 模型」（见「切换与回滚」）。它生效而本机没有侧车时判定不可用，群里只回点名（见「兜底与故障观测」）。
 
 ## 定位
 
-- 向 `trigger` 服务提供自己的实例（标签「Laya 模型」，默认优先级 10），并在 `inbound:trigger` 相位挂中间件。与规则触发插件 [plugin-trigger-policy](../../docs/plugins/plugin-trigger-policy.md)（优先级 0）二选一：`trigger` 服务的胜者生效，两个都启用时本插件生效，trigger-policy 对每条消息直接放行，计数与闲置都停下。本插件不是胜者时同样什么都不做。
+- 向 `trigger` 服务提供自己的实例（标签「Laya 模型」，默认优先级 -10），并在 `inbound:trigger` 相位挂中间件。与规则触发插件 [plugin-trigger-policy](../../docs/plugins/plugin-trigger-policy.md)（优先级 0）二选一：`trigger` 服务的胜者生效，两个都启用、没有偏好时 trigger-policy 生效，本插件对每条消息直接放行、什么都不做；偏好指向本插件时本插件生效，trigger-policy 对每条消息直接放行，计数与闲置都停下。
 - 没有计数：作用域内的每条消息都交给模型判定，`logit ≥ 阈值` 即开口。
 - **@、叫名字、戳一戳不强制开口**：开不开口由模型决定。点名只决定开口后的类别（点名为 `immediate`，点名者即授权主体；否则为 `interval`，群聊回填无主体授权），以及判定不了时的兜底。
 - 模型判定不了时兜底：**只回点名**，其余消息吞掉并归档。不回退到 trigger-policy：本插件出问题不牵连它，它也不替本插件判定。
@@ -92,7 +92,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 | `endpoint` | string | `'http://127.0.0.1:17878'` | 侧车地址 |
 | `timeoutMs` | number | `1000` | 单次请求的超时（毫秒），含读完响应体；超时计一次失败。诊断项探活用同一个超时 |
 | `historyRows` | number | `80` | 窗口行数，只算 user / assistant 且正文是字符串的行：从 memory 取 `historyRows × 2` 行，过滤后留最后 `historyRows` 行（取法见「判定流程」第 8 步） |
-| `priority` | number | `10` | 在 `trigger` 服务里的优先级；trigger-policy 为 0，配到 0 以下则由它生效 |
+| `priority` | number | `-10` | 在 `trigger` 服务里的优先级；trigger-policy 为 0。默认低于它，两者都启用、没有偏好时由 trigger-policy 生效；要用本插件，改服务偏好（见「切换与回滚」），或把它配到大于 0 |
 | `overrides` | array | `[]` | 分作用域覆盖阈值：每项 `{scope, threshold}`，`scope` 格式同上；只取命中的最具体一条，留空沿用顶层。写一条覆盖即启用该作用域 |
 
 点名与禁言关键词的字段只看顶层，不按作用域覆盖。
@@ -134,6 +134,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 
 ## 切换与回滚
 
+- **启用模型判定**：默认由 trigger-policy 判定。WebUI 服务页把 `trigger` 的偏好切到「Laya 模型」，下一条消息起由本插件判定，trigger-policy 什么都不做（偏好同时写回配置文件的 `servicePreferences`）；也可以手改配置文件，在 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，重启生效。
 - **切到规则判定（即时）**：WebUI 服务页把 `trigger` 的偏好切到「规则（计数/评分）」，下一条消息起由 trigger-policy 判定，本插件什么都不做。切回同理。
 - **停用本插件**：WebUI 插件管理里停用，trigger-policy 在下一条消息接手。
 - **让某些会话不走模型**：把它们移出 `scopes`（作用域是白名单，要排除单个群就改为列出其余的群）。移出后这些消息直接放行、不经任何触发判定；要按规则判定，只能整体切到 trigger-policy。

@@ -41,9 +41,9 @@ export const trigger = defineService<TriggerService>('trigger');
 | 插件 | 标签 | 优先级 | 判定 |
 |---|---|---|---|
 | `@aalis/plugin-trigger-policy` | 「规则（计数/评分）」 | 0 | 点名直接开口，否则按计数与活跃指数；同步判定。另有闲置主动开口 |
-| `@aalis/plugin-trigger-laya`（私有） | 「Laya 模型」 | 10（`priority` 可配） | 模型分数 ≥ 阈值即开口，点名不强制开口；判定不了时只回点名 |
+| `@aalis/plugin-trigger-laya`（私有） | 「Laya 模型」 | -10（`priority` 可配） | 模型分数 ≥ 阈值即开口，点名不强制开口；判定不了时只回点名 |
 
-两个都启用时 Laya 生效。
+两个都启用、没有偏好时 trigger-policy 生效（见 §5）。
 
 **消费方**：只有触发插件自己，经 `isActiveTrigger` 判断是否生效；trigger-policy 的闲置主动开口到点时也查 `trigger.current` 是不是自己。
 
@@ -117,7 +117,7 @@ export default definePlugin({
 
 ## 5. 行为不变量
 
-- **二选一**。胜者按服务容器的规则解析：偏好 > 优先级 > 注册顺序。每条消息只由生效者判定；不生效的触发插件对这条消息不做任何事。
+- **二选一**。胜者按服务容器的规则解析：偏好 > 优先级 > 注册顺序。每条消息只由生效者判定；不生效的触发插件对这条消息不做任何事。两者都启用、没有偏好时由 trigger-policy 生效（Laya 的默认优先级 -10 低于它的 0；从源码运行时 Laya 会被自动发现并启用，但默认不生效）；想用 Laya，在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 服务页切换 `trigger` 的偏好。
 - **胜者每次入站只取一次**。`isActiveTrigger` 在相位里先跑到的触发插件处取下 `trigger.current`，以这次入站的相位数据为键记下（api-trigger 模块内的 `WeakMap`，经全局符号表取同一个对象：契约包装了两份、两个触发插件各用一份时仍共用这张表），后跑到的沿用它。判定途中切换偏好、停用或重载触发插件时，同一条消息不会被两个触发插件各判一次：在途消息由取下的那个判完；它若在轮到自己之前就被停用（中间件已从链上撤下），这条消息不经判定直接放行。
 - **切换即时生效**。WebUI 服务页把 `trigger` 的偏好切到另一个触发插件，下一条消息起由它判定；停用生效的触发插件，下一条消息由剩下的接手。手改 `aalis.config.yaml` 的 `servicePreferences` 只在启动时读取，需重启才生效。
 - **一个都不在时不做判定**。触发插件都停用或都没装时，`inbound:trigger` 相位不做判定，消息直接进入 flow 相位，不写 `triggerType`，与没装触发插件一致：agent 对每条消息都处理，只受 flow-control 的禁言、冷却与限速约束（冷却与限速只挡非 `immediate` 的消息，此时所有消息都不是 `immediate`）。

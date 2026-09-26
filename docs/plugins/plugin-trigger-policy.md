@@ -70,8 +70,9 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 
 ## 与模型触发插件二选一
 
-本插件与仓库内的私有插件 `@aalis/plugin-trigger-laya`（经本机侧车由 Laya 模型判定，不发布到 npm，说明见 `packages/plugin-trigger-laya/README.md`）都是完整的触发插件，由 `trigger` 服务的胜者决定哪个生效（偏好 > 优先级 > 注册顺序）。两个都启用时 Laya（优先级 10）生效，本插件对每条消息直接放行，计数与闲置都停下。切换方式：
+本插件与仓库内的私有插件 `@aalis/plugin-trigger-laya`（经本机侧车由 Laya 模型判定，不发布到 npm，说明见 `packages/plugin-trigger-laya/README.md`）都是完整的触发插件，由 `trigger` 服务的胜者决定哪个生效（偏好 > 优先级 > 注册顺序）。两个都启用、没有偏好时本插件生效（Laya 的默认优先级 -10 低于本插件的 0）；偏好指向 Laya 时 Laya 生效，本插件对每条消息直接放行，计数与闲置都停下。切换方式：
 
+- **切到 Laya**：在配置文件的 `servicePreferences` 写 `trigger: "@aalis/plugin-trigger-laya"`，或在 WebUI 服务页把 `trigger` 的偏好切到「Laya 模型」（即时生效）。
 - **切到规则判定（即时）**：WebUI 服务页把 `trigger` 的偏好切到「规则（计数/评分）」，下一条消息起由本插件判定。
 - **停用 Laya**：下一条消息起由本插件接手。
 - 手改 `aalis.config.yaml` 的 `servicePreferences` 只在启动时读取，需重启才生效。
