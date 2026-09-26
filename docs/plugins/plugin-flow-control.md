@@ -79,3 +79,11 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 ## 状态清理
 
 会话状态每天扫描一次：无挂起禁言/冷却且 30 天未见（入站过闸或 agent 回复）的会话被删除。
+
+## 已知局限
+
+本相位吞掉消息时不通知发起方，由此有以下局限：
+
+- 定时任务的消息被禁言或限速吞掉时，plugin-scheduler 仍把这次运行记为成功（`lastResult`），WebUI 上看不出提醒没有发出；被吞的消息只做影子归档，不重试。
+- plugin-workflow 的 agent 节点把指令发往目标会话后等回复。目标会话处于禁言期，或落在作用域内且限速窗口已满时，指令被吞掉，节点要等满 `timeoutSeconds` 才失败。
+- trigger-policy 的 session 档闲置触发到点时只查禁言（禁言期跳过、不翻倍）。闲置提示被限速吞掉时，`exponential` 风格下退避照样翻倍。
