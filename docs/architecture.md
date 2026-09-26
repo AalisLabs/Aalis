@@ -86,7 +86,7 @@ Platform 适配器接收 → 发出 inbound:message 事件
 plugin-gateway 入站相位链（任一相位吞掉即终止，消息不触达 agent）
   │     inbound:confirm   待确认回复拦截
   │     inbound:command   指令解析与执行
-  │     inbound:trigger   要不要开口：禁言关键词、@/戳一戳/名字直通、计数与评分
+  │     inbound:trigger   要不要开口：禁言关键词、点名识别，按序问 trigger 提供者（默认规则：点名、计数与评分）
   │     inbound:flow      节流硬闸：禁言、回复后冷却、限速
   │     inbound:dispatch  默认动作 → Agent.handleMessage(incoming)
   │

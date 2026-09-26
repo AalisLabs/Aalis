@@ -402,9 +402,11 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 
 **迁移**：从 `@aalis/core/dist/…` 深路径导入的，改为从包根 `@aalis/core` 导入；包根没有导出的内部模块不再能导入。用 `Parameters<App['pluginAll']>[0][number]` 推导条目类型的，可以改用 `PluginRegistration`。按 `@aalis/core/package.json` 读版本号的照常可用。用了 `optional()` 且开 `declaration` 的插件要在 core 0.18.0 下重新构建：旧产物 `.d.ts` 里的深路径在 `exports` 下解析不到。
 
-### 回复闸门职责重组（@aalis/plugin-flow-control、@aalis/plugin-trigger-policy、@aalis/api-flow-control、@aalis/api-gateway、@aalis/api-platform、@aalis/plugin-adapter-onebot、@aalis/plugin-tool-session、@aalis/schema-message、@aalis/plugin-message-archive、@aalis/api-media、@aalis/plugin-media）
+### 回复闸门职责重组（@aalis/plugin-flow-control、@aalis/plugin-trigger-policy、@aalis/api-flow-control、@aalis/api-gateway、@aalis/api-platform、@aalis/plugin-adapter-onebot、@aalis/plugin-tool-session、@aalis/schema-message、@aalis/plugin-message-archive、@aalis/api-media、@aalis/plugin-media、新包 @aalis/api-trigger）
 
 trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳一戳 / 名字直通、计数与活跃指数判定、闲置主动开口。flow-control 只做节流硬闸：禁言（含落盘与平台禁言同步）、回复后冷却、限速。入站相位随之对调为 `confirm → command → trigger → flow → dispatch`（顺序常量 `INBOUND_PHASE_ORDER` 在 `@aalis/api-gateway`）。
+
+trigger-policy 是 `inbound:trigger` 相位的宿主：作用域、禁言、禁言关键词、记入站、点名识别，以及开口后的清零、`triggerType` 与授权主体都在宿主。"开不开口"交给新服务 `trigger`（契约包 `@aalis/api-trigger`）的提供者按序判定（偏好 > 优先级 > 注册顺序），第一个不弃权的说了算。trigger-policy 自带规则提供者（点名、计数与活跃指数，优先级 0，不弃权），只装它时的判定与下文一致；判定模型等提供者以更高优先级登记在它前面，弃权、抛错或超过新配置 `decisionTimeoutMs`（默认 2000 毫秒）时回落到规则。此时 `triggerOnAt` / `triggerOnPoke` / `triggerNames` 只决定是否被点名，即开口后记 `immediate` 还是 `interval`、授权主体是谁，不决定开不开口。提供者要看附件描述时由宿主启动识别，最多等新配置 `mediaWaitMs`（默认 8000 毫秒），每条消息只识别一次；只有规则判定时不启动识别。每条判定记一行 debug 日志（不含正文）。回滚到规则判定：WebUI 服务页把 `trigger` 的偏好切到「规则（计数/评分）」即时生效；手改配置文件的 `servicePreferences` 需重启。
 
 行为变化：
 
@@ -433,7 +435,7 @@ trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳�
 - **minimal 模板档**（只装 flow-control、未装 trigger-policy）配置过闲置触发的，升级后须装 plugin-trigger-policy 才有闲置触发。装上后默认按计数与活跃指数判定是否开口；要保持此前逐条回复的节奏，设 `intervalMode: fixed`、`fixedInterval: 1`。注意授权主体不同：群聊里未被 @ 的消息走 interval 判定，授权身份回填为无主体（工具按匿名等级执行），此前按发言者等级执行。
 - **`@aalis/api-flow-control` 收窄**：`FlowControlService` 只剩 `isMuted` / `isCoolingDown` / `isRateLimited` / `setMuted`；删除 `ensureState` / `getStateSnapshot` / `recordIncoming` / `recordTriggered` / `recordReply` / `getThreshold` / `rescheduleIdle` 与 `FlowSessionStateSnapshot`。计数与阈值归 trigger-policy 内部；冷却与限速由 flow-control 监听 `outbound:message` 自行记账，自建主动发送通道发 `source: 'agent'` 的 `outbound:message` 即被计入。plugin-flow-control 入口不再转出 `FlowControlService` / `FlowSessionStateSnapshot` 类型，改从 `@aalis/api-flow-control` 导入前者。
 - **`@aalis/api-platform` 删除 `PlatformAdapter.checkAndRecordProactiveSend`**：跨会话委派改由 plugin-tool-session 直接查 flow-control（目标会话禁言中或限速已满即拒绝），适配器无需实现任何方法；自研适配器删掉该方法即可。自己调用过该方法做委派限速的第三方代码，改用 `flowControl.current?.isMuted(sessionId)` / `isRateLimited(sessionId)`（只检不记，限速按目标会话的真实回复计）。
-- **plugin-trigger-policy 不再注册 `trigger-policy` 服务**：运行时描述符 `triggerPolicy` 与类型 `TriggerPolicyService` / `TriggerDecision` / `TriggerKind` 随之删除，原服务没有外部消费者。判定结果仍写在 `message.triggerType`。
+- **plugin-trigger-policy 不再注册 `trigger-policy` 服务**：运行时描述符 `triggerPolicy` 与类型 `TriggerPolicyService` / `TriggerDecision` / `TriggerKind` 随之删除，原服务没有外部消费者。判定结果仍写在 `message.triggerType`。本插件改为提供新服务 `trigger`（见本节开头）；`@aalis/api-trigger` 里的 `TriggerDecision`（`{ speak, reason, score? }`）与删除的同名类型无关。
 - **相位顺序**：注册在 `inbound:flow` 的第三方 handler 现在运行在 `inbound:trigger` 之后，能读到 `triggerType`；注册在 `inbound:trigger` 的第三方 handler 现在先于禁言、冷却、限速执行。依赖"flow 先于 trigger"的 handler 需改挂相位。
 
 `@aalis/api-gateway` 0.7.0 另新增作用域纯函数 `extractTargetId` / `isScopeEnabled` / `resolveEffectiveConfig`，flow-control 与 trigger-policy 共用。
