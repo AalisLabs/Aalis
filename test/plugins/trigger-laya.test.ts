@@ -439,7 +439,9 @@ describe('plugin-trigger-laya：失败与熔断', () => {
   ];
   it.each(failures)('%s计一次失败：连续第 3 次熔断并记 warn，熔断期不发请求', async (_what, reply) => {
     sidecar.reply = () => reply;
-    const { laya, logs } = await setup({ laya: { mode: 'live', timeoutMs: 50 } });
+    // 超时留足余量：假侧车与客户端在同一进程，负载高时事件循环卡顿，超时过短会在请求送达假侧车之前就中止，
+    // 这次请求没被记下。改成收到请求即记也关不住这个窗口（中止可能早于请求送达）
+    const { laya, logs } = await setup({ laya: { mode: 'live', timeoutMs: 500 } });
     for (let i = 0; i < 3; i++) expect((await ask(laya, groupMsg(`第 ${i} 条`))).decision).toBeNull();
     expect(sidecar.requests).toHaveLength(3);
     expect(warns(logs).filter(m => m.includes('熔断 30s'))).toHaveLength(1);
@@ -695,6 +697,18 @@ describe('plugin-trigger-laya：运行期自检', () => {
     expect(c.lines.at(-1)).toBe(summary(2, 2, 1, 1, 0));
   });
 
+  it('缺附件描述按每个非文件附件判：描述表在、但有一张图没有描述也算缺', () => {
+    const c = selfCheck();
+    const two = groupMsg('x', {
+      messageId: '1',
+      attachments: [IMAGE, IMAGE],
+      _attachmentDescriptions: ['[图片: 一只猫]'],
+    });
+    c.record(two, 'cur-1');
+    c.settle('onebot:10000:group:20001', '1', 'cur-1\n[图片: 一只狗]');
+    expect(c.lines).toEqual([summary(0, 1, 0, 0, 0)]);
+  });
+
   it('没有消息 ID 的判定不记；没记过的键不计；取出即删，同一条再归档不再计', () => {
     const c = selfCheck(2);
     // 不同会话的三条无 ID 消息：若被记下会撑破上限 2、淘汰出「未归档」
@@ -735,6 +749,45 @@ describe('plugin-trigger-laya：运行期自检', () => {
     c.record(groupMsg('x', { messageId: '3' }), 'c');
     c.settle(sid, '3', 'x');
     expect(c.lines).toEqual([summary(1, 0, 0, 1, 1)]);
+  });
+
+  it('发请求前就记下：侧车回 422、请求失败、宿主不等了（侧车还没回）时照样比对', async () => {
+    const { host, laya, logs } = await setup({ realArchive: true, laya: { timeoutMs: 500 } });
+    const archive = host.messageArchive.require();
+    let n = 0;
+    const next = () => groupMsg(`第 ${++n} 条正文`, { messageId: String(1000 + n) });
+
+    // 宿主不等了：侧车收到请求、还没回，这条已归档（宿主放弃判定后照常往下走）
+    let arrived = () => {};
+    const reached = new Promise<void>(r => {
+      arrived = r;
+    });
+    sidecar.reply = () => {
+      arrived();
+      return 'hang';
+    };
+    const waiting = next();
+    const deciding = ask(laya, waiting);
+    await reached;
+    await archive.archiveIncoming(waiting);
+    expect((await deciding).decision, 'Laya 自己超时，计一次失败').toBeNull();
+
+    sidecar.reply = () => ({ status: 500, body: { error: 'internal' } });
+    const failed = next();
+    await ask(laya, failed);
+    await archive.archiveIncoming(failed);
+
+    // 其余侧车回 422（消息不适合交给模型），凑满 200 条结清
+    sidecar.reply = () => ({ status: 422, body: { error: 'system_notice' } });
+    for (let i = 0; i < 198; i++) {
+      const m = next();
+      await ask(laya, m);
+      await archive.archiveIncoming(m);
+    }
+    expect(sidecar.requests).toHaveLength(200);
+    expect(logs.filter(e => e.message.startsWith('[laya] 自检')).map(e => e.message)).toEqual([
+      summary(200, 0, 0, 0, 0),
+    ]);
   });
 
   it('真实归档：只比对向侧车发了请求的判定，每结清 200 条记一行 info，只含计数', async () => {
