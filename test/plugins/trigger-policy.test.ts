@@ -66,6 +66,18 @@ describe('trigger-policy config', () => {
     expect(c.intervalMode).toBe(defaultTriggerPolicyConfig.intervalMode);
   });
 
+  it('判定截止与识别等待：默认 2000 / 8000 毫秒；非法值回退默认，识别等待允许 0', () => {
+    expect(resolveTriggerPolicyConfig({})).toMatchObject({ decisionTimeoutMs: 2000, mediaWaitMs: 8000 });
+    expect(resolveTriggerPolicyConfig({ decisionTimeoutMs: 0, mediaWaitMs: -1 })).toMatchObject({
+      decisionTimeoutMs: 2000,
+      mediaWaitMs: 8000,
+    });
+    expect(resolveTriggerPolicyConfig({ decisionTimeoutMs: 500, mediaWaitMs: 0 })).toMatchObject({
+      decisionTimeoutMs: 500,
+      mediaWaitMs: 0,
+    });
+  });
+
   it('idleTriggerScope 非法值回退默认', () => {
     const c = resolveTriggerPolicyConfig({ idleTriggerScope: 'bogus' as unknown });
     expect(c.idleTriggerScope).toBe(defaultTriggerPolicyConfig.idleTriggerScope);

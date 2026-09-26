@@ -40,7 +40,7 @@ function items(subdir: string) {
 const SUBGROUPS: Record<string, { text: string; files: string[] }[]> = {
   services: [
     { text: '基础设施', files: ['storage', 'memory', 'vectorstore', 'embedding', 'process', 'code-sandbox'] },
-    { text: '消息与平台', files: ['gateway', 'platform', 'message', 'message-archive', 'flow-control'] },
+    { text: '消息与平台', files: ['gateway', 'platform', 'message', 'message-archive', 'trigger', 'flow-control'] },
     { text: '智能体核心', files: ['agent', 'llm', 'persona', 'commands', 'session-manager'] },
     { text: '安全与确认', files: ['authority', 'session-confirm'] },
     { text: '工具与媒体', files: ['tools', 'tool-session', 'media', 'asr'] },

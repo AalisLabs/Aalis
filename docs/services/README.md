@@ -23,6 +23,7 @@
 | [platform](platform.md) | 平台身份/self 识别 helper，供 adapter/persona 消费。 |
 | [message](message.md) | 契约（Message role×kind 模型）——详见[概念层 message-llm-pipeline](../concepts/message-llm-pipeline.md)，本篇为类型速查。 |
 | [message-archive](message-archive.md) | shadow 归档服务；串行归档契约。 |
+| [trigger](trigger.md) | 要不要开口：多提供者按序判定，第一个不弃权的说了算；相位宿主 plugin-trigger-policy 自带规则提供者兜底。 |
 | [flow-control](flow-control.md) | 会话级节流硬闸：禁言、回复后冷却、限速；要不要开口由 trigger-policy 判定。 |
 
 ## 智能体核心

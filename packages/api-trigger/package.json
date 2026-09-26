@@ -1,0 +1,41 @@
+{
+  "name": "@aalis/api-trigger",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AalisLabs/Aalis.git",
+    "directory": "packages/api-trigger"
+  },
+  "author": "Ace Nyan <ace@acenyan.com>",
+  "bugs": {
+    "url": "https://github.com/AalisLabs/Aalis/issues"
+  },
+  "homepage": "https://github.com/AalisLabs/Aalis#readme",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@aalis/schema-message": "workspace:>=0.9.0 <1.0.0"
+  },
+  "devDependencies": {
+    "@aalis/core": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@aalis/core": ">=0.18.0 <1.0.0"
+  },
+  "keywords": [
+    "aalis",
+    "aalis-api"
+  ],
+  "description": "触发判定契约：trigger 服务描述符，多提供者按序判定一条入站消息要不要开口（相位宿主 @aalis/plugin-trigger-policy）"
+}
