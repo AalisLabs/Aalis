@@ -335,9 +335,25 @@ async function connectAndProvide({ logger, config, lifecycle, provide }: Caps): 
     serverSelectionTimeoutMS: mongoConfig.connectTimeoutMs,
     connectTimeoutMS: mongoConfig.connectTimeoutMs,
   });
+  await openAndProvide(client, mongoConfig, { logger, lifecycle, provide });
+}
 
+/**
+ * 连接、建索引并发布服务。停用或停机（lifecycle.signal abort）时 `client.close()`，让在途的连接与建索引以错误返回。
+ * @internal 只为测试导出：以替身客户端直接调用（经 apply 会连真实的 mongod），不是公开 API
+ */
+export async function openAndProvide(
+  client: MongoClient,
+  mongoConfig: MongoMemoryConfig,
+  { logger, lifecycle, provide }: Omit<Caps, 'config'>,
+): Promise<void> {
+  // 监听器同步执行、不得抛错：close 的拒绝吞掉
+  const onAbort = (): void => void client.close().catch(() => {});
+  lifecycle.signal.addEventListener('abort', onAbort, { once: true });
   try {
     await client.connect();
+    // mongodb+srv 在 SRV 解析期间 close 不生效，连接会在 abort 之后照常建成：由这里抛出、下方 catch 关闭
+    lifecycle.signal.throwIfAborted();
     const db: Db = client.db(mongoConfig.database);
     const collection = db.collection<MessageDocument>(mongoConfig.collection!);
     const metaCollection = db.collection<MetadataDocument>('metadata');
@@ -347,6 +363,7 @@ async function connectAndProvide({ logger, config, lifecycle, provide }: Caps): 
     await collection.createIndex({ archived: 1, timestamp: -1 });
     await collection.createIndex({ 'metadata.platform': 1, timestamp: -1 });
     await metaCollection.createIndex({ namespace: 1, key: 1 }, { unique: true });
+    lifecycle.signal.throwIfAborted();
 
     const service = new MongoMemoryService(collection, metaCollection, {
       rangeQueryLimit: mongoConfig.rangeQueryLimit,
@@ -370,5 +387,7 @@ async function connectAndProvide({ logger, config, lifecycle, provide }: Caps): 
     const message = err instanceof Error ? err.message : String(err);
     await client.close().catch(() => {});
     throw new Error(`MongoDB 连接失败: ${message}`);
+  } finally {
+    lifecycle.signal.removeEventListener('abort', onAbort);
   }
 }

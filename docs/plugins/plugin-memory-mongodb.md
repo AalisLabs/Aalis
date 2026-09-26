@@ -36,7 +36,7 @@ export default definePlugin({
 
 ## 特性
 
-- `apply` 为异步函数，启动时连接数据库，在消息集合上创建 `{ sessionId: 1, timestamp: 1 }`、`{ archived: 1, timestamp: -1 }`、`{ 'metadata.platform': 1, timestamp: -1 }` 三个索引；结构化元数据存放在同库固定名为 `metadata` 的集合中（不受 `collection` 配置影响），并建有 `{ namespace: 1, key: 1 }` 唯一索引
+- `apply` 为异步函数，启动时连接数据库（停用或停机时关闭客户端，中止连接与建索引），在消息集合上创建 `{ sessionId: 1, timestamp: 1 }`、`{ archived: 1, timestamp: -1 }`、`{ 'metadata.platform': 1, timestamp: -1 }` 三个索引；结构化元数据存放在同库固定名为 `metadata` 的集合中（不受 `collection` 配置影响），并建有 `{ namespace: 1, key: 1 }` 唯一索引
 - 完整实现 `MemoryService`：消息读写（`saveMessage`、`getHistory`、`getFullHistory`、`clearSession`、`clearAll`，其中 `clearAll` 只清空消息集合，`metadata` 集合由各命名空间的归属插件经 `memory:clear` 自行清理）、区间与跨会话查询（`getMessagesBySessionRange` 受 `rangeQueryLimit` 限制，`getRecentMessagesAcrossSessions` 受 `crossSessionMaxLimit` 限制）、`trimHistory`（将较早的未归档消息标记为 `archived`，不删除）、`updateMessageContent`、`deleteMessagesByTimestamps`，以及结构化元数据（`saveMetadata` / `getMetadata` / `listMetadata` / `commitMetadata` / `deleteMetadata`）
 - `commitMetadata` 用有序 `bulkWrite` 批量写入，不是事务：遇错即停，失败点之前的写已生效
 - dispose 时关闭 MongoDB 连接

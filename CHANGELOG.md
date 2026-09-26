@@ -312,7 +312,7 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - 按全文比对 `PluginEntry.error` 的代码，改为按前缀或正则匹配：带 cause 的错误后面多了 ` ← …` 摘要，AggregateError 后面多了 `: 子错误…`。按 `Error: 服务 "…" 不可用` 匹配日志或工具输出的，改为匹配 `ServiceUnavailableError:` 或消息本身。
 - 用 `Proxy` 包装 `app.plugins`、`DefaultLogger` 或 `LogHub` 的，改为另写对象把调用转发给原对象（管理面按 `PluginManagerService` 接口、日志器按 `Logger` 接口实现）。
 
-### 慢激活不再挡住启动，激活可取消（@aalis/core、@aalis/runtime、@aalis/schema-config、@aalis/plugin-doctor、@aalis/plugin-webui-server、@aalis/plugin-adapter-onebot、@aalis/plugin-cron-engine）
+### 慢激活不再挡住启动，激活可取消（@aalis/core、@aalis/runtime、@aalis/schema-config、@aalis/plugin-doctor、@aalis/plugin-webui-server、@aalis/plugin-adapter-onebot、@aalis/plugin-cron-engine、@aalis/plugin-embedding-ollama、@aalis/plugin-embedding-openai、@aalis/plugin-llm-ollama、@aalis/plugin-llm-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-mcp-client、@aalis/plugin-memory-mongodb）
 
 - 新增 `AppOptions.slowThresholdMs`（慢操作阈值，默认 60000，0 表示不设限）。插件激活超过它仍未完成时记一条 warn 点名，转入后台继续，其余插件照常激活，`register` / `pluginAll` / `plugins.idle()` 在阈值处返回，启动流程不再卡在插件登记，此后每隔同样时长提醒一次「仍在激活」。此前一个不返回的 `apply` 会让启动、`idle()` 与 `stop()` 一直等下去。
 - 后台期间条目停在 `activating`，`getStatus()` 给出 `slow: true`（`PluginStatusEntry.slow`）。它经 `provide` 登记的服务不对外：`services.get` / `all` / `inspect` / `names` 与激活闸都看不到，阈值前已登记的在转入后台时撤下（发 `service:unregistered`），依赖它的插件保持 `pending`。它落定后：成功则转 `active` 并上线服务（发 `service:registered`），依赖方随之激活；失败进 `error`；都另触发一次重算。它的事件监听与经 `registrar` 登记到别处的条目（工具、指令、页面等）照常生效，`app:ready` / `app:started` 监听器可能在它的 `apply` 完成之前被调用。
@@ -325,6 +325,7 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - runtime 读配置文件顶层的 `slowThresholdMs` 注入 core（重启生效）；不是非负有限数时记一条告警，按默认处理。`CORE_CONFIG_SCHEMA` 增加该键（默认 60000，最小 0），WebUI 设置页可改，保存后自动重启。`PUT /api/config` 对文档里没写的核心键按 schema 默认值比较：前端把默认值回填进草稿后回传不算改动，不写进文件、不触发重启。
 - plugin-doctor 新增 `plugins.slow` 检查：列出激活超过阈值、仍在后台进行的实例（warn）；`plugins.errored` 的文案改为「N 个插件处于 error（激活失败或未在宽限内停止）」。
 - adapter-onebot 与 cron-engine 的「已关闭就不再重连 / 排定时器」判断改读 `lifecycle.signal.aborted`，从本激活收尾段开始生效（此前从关闭计划冻结起）；两者的清理段照常清掉定时器与连接。
+- 第一方插件 `apply` 里等待网络或子进程的步骤改为响应 `lifecycle.signal`，停用、重启或停机时在宽限内落定，不再因「未在宽限内停止」转 `error`。涉及 embedding-ollama 与 embedding-openai 的启动连通性检查，llm-ollama（`/api/tags` 与 `/api/show`）、llm-openai、llm-deepseek 的模型发现，mcp-client 各 server 的握手与列工具（握手中止时子进程随之关闭），memory-mongodb 的连接与建索引（中止时关闭客户端）。中止后 `apply` 不再往下走，不发布服务，也不记探测失败。mcp-client 的 `@modelcontextprotocol/sdk` 下限抬到已验证的 1.29.0（中止握手用到 `Client.connect` 的第二参数）；导出的 `bridgeClientToTools` 新增可选的第四参数 `signal`。
 
 **迁移**：
 - `if (lifecycle.closed)` 改为 `if (lifecycle.signal.aborted)`。时机不同：`closed` 在关闭计划冻结时即为 true；`signal` 在本激活收尾段开始时 abort，`apply` 尚未完成的在冻结后立即 abort。依赖「冻结即真」的（例如想在依赖方收尾期间就停止提供），改为在自己的收尾段处理。
