@@ -5,15 +5,17 @@
 // 只登记提供者、不挂钩子：作用域、禁言、计数与开口后的类别、授权主体都归相位宿主
 // plugin-trigger-policy。返回 null 即弃权，宿主转问下一个提供者（规则判定）：
 // mode=off、影子模式、会话不适用、memory 缺席、请求体超限、侧车失败或熔断时都弃权。
+// 另监听入站归档事件做运行期自检（self-check.ts）。
 // ============================================================
 
 import { extractTargetId, resolveEffectiveConfig } from '@aalis/api-gateway';
 import { memory } from '@aalis/api-memory';
 import { type TriggerProvider, trigger } from '@aalis/api-trigger';
-import { type BoundOf, config, definePlugin, logger, optional, provide } from '@aalis/core';
+import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { buildIncomingContent, type Message } from '@aalis/schema-message';
 import { defaultLayaConfig, resolveLayaConfig } from './config.js';
+import { createSelfCheck } from './self-check.js';
 
 // ----- 元数据 -----
 
@@ -137,6 +139,7 @@ function errorCode(text: string): string {
 const uses = {
   logger,
   config,
+  events,
   provide,
   // 缺席时弃权：没有历史窗口无从判定
   memory: optional(memory),
@@ -183,6 +186,12 @@ function run(caps: Caps): void {
     failures = 0;
   }
 
+  // 运行期自检：发请求前记下 cur，这条消息归档后与归档正文比对（归档事件带的 incoming 是拷贝，按键关联）
+  const selfCheck = createSelfCheck(line => logger.info(line));
+  caps.events.on('inbound:message:archived', ({ sessionId, incoming, archivedMessage }) =>
+    selfCheck.settle(sessionId, incoming.messageId, archivedMessage.content ?? ''),
+  );
+
   const provider: TriggerProvider = {
     async decide({ message, addressed, awaitAttachmentDescriptions }) {
       try {
@@ -198,11 +207,13 @@ function run(caps: Caps): void {
         // 窗口是最近 historyRows 条 user / assistant 行：多取一倍，过滤后再取，与侧车渲染回归的取法一致
         const fetched = cfg.historyRows * 2;
         const history = await (mem.getFullHistory?.(sid, fetched) ?? mem.getHistory(sid, fetched));
-        // 当前消息与归档逐字一致：同一个 buildIncomingContent，附件描述先等宿主识别（有上限，超时照常判定）
+        // 当前消息与归档用同一个 buildIncomingContent 拼，附件描述先等宿主识别（有上限，超时照常判定）；
+        // 两边仍可能不一致（识别超时、文件描述晚写入等），由运行期自检计数
         await awaitAttachmentDescriptions();
+        const cur = buildIncomingContent(message);
         const body = JSON.stringify({
           rows: toRows(history, cfg.historyRows),
-          cur: buildIncomingContent(message),
+          cur,
           curUserId: message.userId,
           curNick: message.nickname,
           replyTo: message.replyTo ? { userId: message.replyTo.userId, nickname: message.replyTo.nickname } : null,
@@ -215,6 +226,8 @@ function run(caps: Caps): void {
           logger.debug(`[laya] 请求体 ${bytes} 字节超过侧车上限 ${MAX_BODY_BYTES}，弃权 | session=${sid}`);
           return null;
         }
+        // 确实要发请求才记：off、在此之前弃权与超限的判定不参与自检
+        selfCheck.record(message, cur);
 
         // 发请求并读完响应体，整体落在同一个超时窗口内（只限响应头的话，迟迟不发体的对端会绕过超时）
         const started = Date.now();

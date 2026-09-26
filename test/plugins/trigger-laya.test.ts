@@ -8,7 +8,10 @@ import { type MemoryService, memory } from '../../packages/api-memory/src/index.
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
 import { type TriggerProvider, trigger } from '../../packages/api-trigger/src/index.js';
 import { App, type LogEntry, LogHub, provide, services } from '../../packages/core/src/index.js';
+import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
+import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
 import layaPlugin from '../../packages/plugin-trigger-laya/src/index.js';
+import { createSelfCheck } from '../../packages/plugin-trigger-laya/src/self-check.js';
 import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
 import { buildIncomingContent, type IncomingMessage, type Message } from '../../packages/schema-message/src/index.js';
 import { registerHubs } from '../fixtures/hubs.js';
@@ -18,8 +21,9 @@ import { freePort } from '../helpers/net.js';
 // plugin-trigger-laya：trigger 服务的 Laya 模型提供者。
 //
 // 侧车一律用本地 http.createServer 做的假侧车（不碰真实侧车）；memory 用内存替身。
-// 前半直接调提供者的 decide，验证请求体、模式、阈值、弃权与熔断；后半与相位宿主
-// plugin-trigger-policy 联调，验证影子期由规则判定、live 由模型判定及各种回落。
+// 前半直接调提供者的 decide，验证请求体、模式、阈值、弃权与熔断；中段与相位宿主
+// plugin-trigger-policy 联调，验证影子期由规则判定、live 由模型判定及各种回落；
+// 末段是运行期自检（判定时的 cur 与归档正文比对），联调用真实 message-archive 与内存 memory。
 // ════════════════════════════════════════════════════════════
 
 const LAYA_LABEL = 'Laya 模型';
@@ -153,6 +157,8 @@ interface SetupOptions {
   host?: Record<string, unknown>;
   archived?: string[];
   media?: { processMessage(msg: IncomingMessage): Promise<unknown> };
+  /** 装真实的 message-archive 与内存 memory（memory 选项随之不用） */
+  realArchive?: boolean;
 }
 
 async function setup(opts: SetupOptions = {}) {
@@ -162,8 +168,11 @@ async function setup(opts: SetupOptions = {}) {
   const app = new App({ name: 'T', logLevel: 'debug', logHub });
   booted.push(app);
   await registerHubs(app);
-  const host = app.bind({ provide, hooks, services });
-  if (opts.memory !== null) host.provide(memory, (opts.memory ?? fakeMemory()) as never);
+  const host = app.bind({ provide, hooks, services, messageArchive });
+  if (opts.realArchive) {
+    await app.plugins.register(memoryInMemory, {});
+    await app.plugins.register(messageArchivePlugin, { debugLogs: false });
+  } else if (opts.memory !== null) host.provide(memory, (opts.memory ?? fakeMemory()) as never);
   if (opts.media) host.provide(media, opts.media as never);
   const archived = opts.archived;
   if (archived) {
@@ -180,7 +189,12 @@ async function setup(opts: SetupOptions = {}) {
   }
   await app.plugins.idle();
   // 激活闸：依赖缺席时插件停在 pending 而不报错，不核状态会让整组用例伪装成绿
-  for (const def of opts.host ? [layaPlugin, triggerPolicyPlugin] : [layaPlugin]) {
+  const defs = [
+    layaPlugin,
+    ...(opts.host ? [triggerPolicyPlugin] : []),
+    ...(opts.realArchive ? [memoryInMemory, messageArchivePlugin] : []),
+  ];
+  for (const def of defs) {
     const state = app.plugins.getPlugin(def.name)?.state;
     if (state !== 'active') throw new Error(`${def.name} 未激活（state=${state}）`);
   }
@@ -619,7 +633,7 @@ describe('plugin-trigger-laya：与相位宿主 trigger-policy 联调', () => {
     expect(sidecar.requests).toHaveLength(0);
   });
 
-  it('带图消息：Laya 经宿主等识别，cur 带上描述；宿主往下传前描述已写好', async () => {
+  it('带图消息：Laya 经宿主启动识别并自己等到描述写好，cur 带上描述', async () => {
     const recognized: IncomingMessage[] = [];
     const svc = {
       async processMessage(msg: IncomingMessage) {
@@ -635,5 +649,148 @@ describe('plugin-trigger-laya：与相位宿主 trigger-policy 联调', () => {
     expect(recognized).toHaveLength(1);
     expect(sidecar.requests[0].body.cur).toBe(buildIncomingContent(message));
     expect(sidecar.requests[0].body.cur).toContain('[图片: 一只猫]');
+  });
+});
+
+describe('plugin-trigger-laya：运行期自检', () => {
+  const IMAGE = { kind: 'image', data: 'https://example.invalid/a.jpg' } as const;
+  const FILE = { kind: 'file', data: 'aalis-file://f1', name: 'a.txt' } as const;
+
+  /** 直接驱动自检表：每结清 reportEvery 条交出一行，这里收下所有行 */
+  function selfCheck(capacity = 1000, reportEvery = 1) {
+    const lines: string[] = [];
+    return { lines, ...createSelfCheck(line => lines.push(line), capacity, reportEvery) };
+  }
+
+  const summary = (match: number, missing: number, file: number, other: number, unarchived: number) =>
+    `[laya] 自检 | 一致=${match} | 不一致:缺附件描述=${missing} | 不一致:含文件附件=${file} | ` +
+    `不一致:其它=${other} | 未归档=${unarchived}`;
+
+  it('分桶：逐字一致；不一致按判定时缺附件描述、含文件附件、其它归类，两个原因都成立时计入缺附件描述', () => {
+    const c = selfCheck();
+    const sid = 'onebot:10000:group:20001';
+    const msg = (messageId: string, extra: Partial<IncomingMessage> = {}) => groupMsg('x', { messageId, ...extra });
+
+    c.record(msg('1'), 'cur-1');
+    c.settle(sid, '1', 'cur-1');
+    expect(c.lines.at(-1)).toBe(summary(1, 0, 0, 0, 0));
+
+    // 图片判定时还没有描述，归档时补上
+    c.record(msg('2', { attachments: [IMAGE] }), 'cur-2');
+    c.settle(sid, '2', 'cur-2\n[图片: 一只猫]');
+    // 文件描述到 agent 预处理阶段才写入
+    c.record(msg('3', { attachments: [FILE] }), 'cur-3');
+    c.settle(sid, '3', 'cur-3\n[文件 a.txt]');
+    // 长度相同、内容不同也算不一致（有描述的图片不算缺）
+    c.record(msg('4', { attachments: [IMAGE], _attachmentDescriptions: ['[图片: 一只猫]'] }), 'cur-4');
+    c.settle(sid, '4', 'cur-X');
+    // 文件与没识别完的图片同时在：计入缺附件描述
+    c.record(msg('5', { attachments: [FILE, IMAGE] }), 'cur-5');
+    c.settle(sid, '5', 'cur-5\n[文件 a.txt]\n[图片: 一只猫]');
+    expect(c.lines.at(-1)).toBe(summary(1, 2, 1, 1, 0));
+
+    // 带附件但归档与判定时一致（如识别失败两边都没有描述）：计一致
+    c.record(msg('6', { attachments: [IMAGE, FILE] }), 'cur-6');
+    c.settle(sid, '6', 'cur-6');
+    expect(c.lines.at(-1)).toBe(summary(2, 2, 1, 1, 0));
+  });
+
+  it('没有消息 ID 的判定不记；没记过的键不计；取出即删，同一条再归档不再计', () => {
+    const c = selfCheck(2);
+    // 不同会话的三条无 ID 消息：若被记下会撑破上限 2、淘汰出「未归档」
+    for (const gid of ['20001', '20002', '20003']) {
+      c.record(groupMsg('x', { sessionId: `onebot:10000:group:${gid}` }), 'cur');
+      c.settle(`onebot:10000:group:${gid}`, undefined, 'cur');
+    }
+    c.settle('onebot:10000:group:20001', '9', 'cur');
+    expect(c.lines).toEqual([]);
+
+    c.record(groupMsg('x', { messageId: '1' }), 'cur');
+    c.settle('onebot:10000:group:20002', '1', 'cur');
+    expect(c.lines, '键带会话 ID：别的会话同号消息不算').toEqual([]);
+    c.settle('onebot:10000:group:20001', '1', 'cur');
+    c.settle('onebot:10000:group:20001', '1', 'cur');
+    expect(c.lines).toEqual([summary(1, 0, 0, 0, 0)]);
+  });
+
+  it('超过上限按记下的先后淘汰最早的一条，计入未归档；被淘汰的再归档不计', () => {
+    const c = selfCheck(2);
+    const sid = 'onebot:10000:group:20001';
+    for (const id of ['1', '2', '3']) c.record(groupMsg('x', { messageId: id }), `cur-${id}`);
+    expect(c.lines).toEqual([summary(0, 0, 0, 0, 1)]);
+    c.settle(sid, '1', 'cur-1');
+    expect(c.lines).toHaveLength(1);
+    c.settle(sid, '2', 'cur-2');
+    c.settle(sid, '3', 'cur-3');
+    expect(c.lines.at(-1)).toBe(summary(2, 0, 0, 0, 1));
+  });
+
+  it('每结清 reportEvery 条记一行累计计数，比对与淘汰都算', () => {
+    const c = selfCheck(1, 3);
+    const sid = 'onebot:10000:group:20001';
+    c.record(groupMsg('x', { messageId: '1' }), 'a');
+    c.record(groupMsg('x', { messageId: '2' }), 'b'); // 淘汰 1
+    c.settle(sid, '2', 'b');
+    expect(c.lines).toEqual([]);
+    c.record(groupMsg('x', { messageId: '3' }), 'c');
+    c.settle(sid, '3', 'x');
+    expect(c.lines).toEqual([summary(1, 0, 0, 1, 1)]);
+  });
+
+  it('真实归档：只比对向侧车发了请求的判定，每结清 200 条记一行 info，只含计数', async () => {
+    const recognizer = {
+      async processMessage(msg: IncomingMessage) {
+        msg._attachmentDescriptions = msg.attachments?.map(a => (a.kind === 'file' ? undefined : '[图片: 一只猫]'));
+        return { total: 1, successCount: 1, items: [] };
+      },
+    };
+    const { host, laya, logs } = await setup({
+      realArchive: true,
+      media: recognizer,
+      laya: { overrides: [{ scope: 'onebot:group:20002', mode: 'off' }] },
+    });
+    const archive = host.messageArchive.require();
+    const lines = () => logs.filter(e => e.message.startsWith('[laya] 自检'));
+    let n = 0;
+    const next = (extra: Partial<IncomingMessage> = {}) =>
+      groupMsg(`第 ${++n} 条正文`, { messageId: String(1000 + n), ...extra });
+    const decideThenArchive = async (m: IncomingMessage, beforeArchive?: () => void) => {
+      await ask(laya, m);
+      beforeArchive?.();
+      await archive.archiveIncoming(m);
+    };
+
+    // 不发请求的判定不记：off 的会话、请求体超限（窗口里有一条 1.2 MB 的行）
+    await decideThenArchive(next({ sessionId: 'onebot:10000:group:20002', groupId: '20002' }));
+    await archive.archiveIncoming(groupMsg('字'.repeat(400_000), { sessionId: 'onebot:10000:group:20003' }));
+    await decideThenArchive(next({ sessionId: 'onebot:10000:group:20003', groupId: '20003' }));
+    // 没有消息 ID 的不记
+    await decideThenArchive(groupMsg('没有消息 ID'));
+    expect(sidecar.requests).toHaveLength(1);
+
+    // 图片识别在判定之后才写好描述（Laya 没等到），归档时经 media 补上
+    await decideThenArchive(next({ attachments: [IMAGE] }));
+    // 文件描述在归档前才写入（file-reader 在 agent 预处理阶段）
+    const file = next({ attachments: [FILE] });
+    await decideThenArchive(file, () => {
+      file._attachmentDescriptions = ['[文件 a.txt] 文件内容'];
+    });
+    // 判定后发送者昵称被改（同长度）：原因不明的不一致
+    const renamed = next();
+    await decideThenArchive(renamed, () => {
+      renamed.nickname = '乙';
+    });
+    for (let i = 0; i < 196; i++) await decideThenArchive(next());
+    expect(lines(), '结清 199 条时还不记').toEqual([]);
+
+    await decideThenArchive(next());
+    expect(sidecar.requests).toHaveLength(201);
+    const [line, ...rest] = lines();
+    expect(rest).toEqual([]);
+    expect(line.level).toBe('info');
+    expect(line.message).toBe(summary(197, 1, 1, 1, 0));
+    for (const secret of ['onebot', '20001', '1001', '甲', '乙', '正文', '猫', '文件内容']) {
+      expect(line.message).not.toContain(secret);
+    }
   });
 });
