@@ -68,6 +68,12 @@
 | `prefixSender(content, nickname?, userId?)` | `identity.ts` | 有标签 → `[label]: content`，否则原样 |
 | `getMessageName(userId?)` | `identity.ts` | 给 `Message.name` / OpenAI `name` 字段用的稳定标识符（用 userId 不用 nickname） |
 
+### 入站消息的归档文本 — `src/incoming-content.ts`（经 `index.ts` 转出）
+
+| 符号 | file:line | 说明 |
+| --- | --- | --- |
+| `buildIncomingContent(incoming)` | `incoming-content.ts` | 入站消息 → 归档文本：发送者前缀（webui、cli 除外）+ 引用回复 + `_attachmentDescriptions`。plugin-message-archive 落库与触发判定共用，保证判定时看到的当前消息与归档逐字一致；只拼接，不触发识别 |
+
 ### 事件（declaration merging 注入 `@aalis/core` 的 `AalisEvents`）— `src/index.ts`
 
 | 事件名 | payload | 说明 |
@@ -102,4 +108,4 @@
 - [`docs/concepts/storage-uri-grammar.md`](../concepts/storage-uri-grammar.md) — `MessageAttachment.ref` / `AttachmentRef.ref` 可承载 `<root>:/path` storage URI。
 - [`docs/concepts/security-model.md`](../concepts/security-model.md) — `IncomingMessage.actor` 授权身份、防 LLM 提权（概念文档 §9.7）。
 
-**权威源码**：`packages/schema-message/src/index.ts`、`packages/schema-message/src/attachment-ref.ts`、`packages/schema-message/src/identity.ts`。
+**权威源码**：`packages/schema-message/src/index.ts`、`packages/schema-message/src/attachment-ref.ts`、`packages/schema-message/src/identity.ts`、`packages/schema-message/src/incoming-content.ts`。
