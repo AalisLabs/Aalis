@@ -245,7 +245,7 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - persona 的非主卡 `outputFormat` 改为按卡缓存：显示名相同的两张卡不再共用格式，热改非主卡的 `outputFormat` 后无需重启即生效。
 - 结构化输出（persona `outputFormat`）落库时，assistant 消息的 metadata 带解码后的可见正文（`visibleContent`），只在它与落库内容不同时写入。memory-vector 建索引、扩窗与召回的渲染优先读它，memory-summary 的摘要输入同样优先读它，JSON 信封与状态字段不再进入摘要；升级前落库的消息没有这个键，仍按原文呈现。
 - memory_recall 在 `crossSessionMode=user` 下与被动注入一致，对当前用户本人发言或被 @ 的命中乘 `search.userPriorityBoost`（此前工具路径不加权）；回合中止信号传给查询 embedding 与扩窗取数。
-- memory-vector 写入的向量带 embedding 提供者的 `modelId`，被动注入与 memory_recall 只召回与当前模型相同的向量：同维度换模型后，其它模型的向量不再混入检索。每个当前模型在一次运行中首次排除时记一条 warn，列出被排除向量的模型并写明处理办法（改回原模型、重新 embed，或 `/clear all -t vector` 清空向量库）。排除发生在取回候选之后、候选池不放大，其它模型的向量占多数时命中会变少。升级前写入的向量不带 `modelId`，升级后首次检索时记下当时的模型作为它们的模型（记忆元数据 namespace `memory-vector`、key `legacy-model`）；memory 服务不在或元数据读写出错时，本次按当前模型对待、下次检索再试，读写连续出错只记一次 warn。全局清空消息历史而不清向量库时（如 `/clear all -t context`），记忆后端会连元数据一起删除，存量标记在清空后原样写回，写回失败记一条 warn。提供者未声明 `modelId` 时不按模型过滤。
+- memory-vector 写入的向量带 embedding 提供者的 `modelId`，被动注入与 memory_recall 只召回与当前模型相同的向量：同维度换模型后，其它模型的向量不再混入检索。每个当前模型在一次运行中首次排除时记一条 warn，列出被排除向量的模型并写明处理办法（改回原模型、重新 embed，或 `/clear all -t vector` 清空向量库）。排除发生在取回候选之后、候选池不放大，其它模型的向量占多数时命中会变少。升级前写入的向量不带 `modelId`，升级后首次检索时记下当时的模型作为它们的模型（记忆元数据 namespace `memory-vector`、key `legacy-model`）；memory 服务不在或元数据读写出错时，本次按当前模型对待、下次检索再试，读写连续出错只记一次 warn。全局清空向量库时（`/clear all -t vector`，或不带类型的 `/clear all`）一并删除存量标记，之后的检索按当时的模型重新记下；只清消息历史不影响存量标记。提供者未声明 `modelId` 时不按模型过滤。
 - memory-summary：`keepRecent` 大于 `threshold`、历史条数介于两者之间时，自动摘要不再每轮重复摘要同一批消息；与 `session:compress` 一致，历史不多于 `keepRecent` 时不摘要。`session:compress` 路径的日志文案改为「会话已压缩 / 会话已裁切（无摘要）」。
 - user-profile：记忆后端读取档案或指令出错时，关系分更新、事实提取、自反思、指令提取以及 `/profile forget`、`/instruct add`、`/instruct remove` 放弃本次写入，这三条指令回复「添加失败」或「删除失败」及原因。此前读错按「无档案」处理，随后以空档案覆盖写回，一次瞬时读错即可清空整份档案或指令表。只读展示（提示注入、`user_profile_lookup`、`/profile`、`/instruct` 等）读失败仍按暂无档案处理。
 
@@ -255,6 +255,21 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - 要恢复 memory_recall 旧排序，把 `search.userPriorityBoost` 设为 1（同时影响被动注入）。
 - memory-vector 升级后先用原 embedding 模型完成至少一次检索（一轮对话即可）再更换模型；升级时同时换模型，存量向量会被记成新模型、与新向量混在一起检索，需清空向量库。
 - 升级前以 JSON 信封建索引的 assistant 向量不会自动更新；可停机后删除，由新消息重建。LanceDB 执行 ``table.delete(`metadata_json LIKE '%"role":"assistant"%' AND metadata_json LIKE '%"content":"{%'`)``。memory-vector、memory-summary 依赖 plugin-agent 写入的可见正文与 schema-message 的新导出，与这两个包同批升级。
+
+### /clear 按层清理（@aalis/api-memory、@aalis/plugin-memory-sqlite、@aalis/plugin-memory-mongodb、@aalis/plugin-memory-inmemory、@aalis/plugin-memory-summary、@aalis/plugin-memory-vector、@aalis/plugin-todo-list、@aalis/plugin-adapter-onebot、@aalis/plugin-user-profile、@aalis/plugin-tool-search、@aalis/plugin-commands）
+
+- 记忆后端的 `clearAll` 只清消息与归档，不再连记忆元数据一起删除（sqlite 的 `metadata` 表、mongodb 的 `metadata` 集合、inmemory 的元数据）。此前 `/clear all -t context` 会连带删掉用户档案、第三方行为指令、关系图、摘要、待办、会话表与 maimai 绑定；现在各命名空间由归属插件在 `memory:clear` 中间件里按清理类型自行清理。
+- `context` 类型管会话级短期上下文：除消息（含归档）与角色状态外，还清会话摘要（memory-summary）、已发现工具集（tool-search）与待办（todo-list）；全局清理时另清 OneBot 合并转发原文（adapter-onebot 的 `onebot:forward` 与各实例的内存缓存）。转发原文没有会话归属，会话级清理不动它，靠 7 天回收。`summary` 仍可单独选。会话级 `/clear -t context` 因此多清本会话的摘要与待办。
+- 向量、用户档案与关系图属跨会话长期层，只在指定对应类型或不指定类型时清理。memory-vector 全局清空向量库时一并删除存量标记并复位缓存；user-profile 清档案时同时清第三方行为指令，不再看 `enableInstructions`。
+- 任何类型都不清会话表（`sessions`）与 maimai 绑定（`maimai-binding`）：`/clear all` 不再删除会话名称、父子关系、会话级配置与好友码绑定。
+- tool-search 只在清理类型为空或含 `context` 时重置已发现工具集，`/clear -t image` 这类无关清理不再重置。
+- todo-list 经 `memory:clear` 清理待办（删除会话同样经这条钩子），不再监听 `session:deleted`；每个被清的会话发一次 `todo:updated`（`items` 为 `[]`）。todo-list 与 adapter-onebot 新增对 `hooks` 服务的可选依赖（`@aalis/api-hooks`）。
+- `/clear list` 与 `/clear` 的帮助里 `context` 的说明注明含摘要与待办，示例 `--type context,summary` 改为 `--type context,vector`。
+
+**迁移**：
+- 把数据存在记忆元数据里、靠 `/clear all` 的 `clearAll` 顺带清掉的第三方插件，改为挂 `memory:clear` 中间件，按 `scope` 与 `types` 自行删除自己的命名空间。
+- 第三方记忆后端的 `clearAll` 只清消息与归档，不清元数据。
+- 插件未安装或未激活时，`/clear all` 不再清它留在记忆元数据里的数据（此前由 `clearAll` 一并删除）。
 
 ### 模型与媒体（@aalis/plugin-llm-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-llm-ollama、@aalis/plugin-media、@aalis/plugin-asr-openai、@aalis/plugin-asr-whisper-cpp、@aalis/plugin-file-reader、@aalis/plugin-image-sender）
 
@@ -367,6 +382,11 @@ npm i $(node -p "Object.keys(require('./package.json').dependencies).filter(n =>
 - 模块链接失败：`does not provide an export named ...`。旧插件导入 core 已删除的导出、旧版 agent / mcp-server / workflow 导入 `asToolExecutionResult` 时，日志为「加载插件 "X" 失败」，该插件不加载；旧 runtime 导入 `pluginDefinitionOf` 时进程启动即退出。
 - 运行时 TypeError：新 runtime 配旧 core 调 `pluginAll`、旧 mcp-client 调 `saveConfig`、新 webui-server 调旧 package-manager 的 `serviceDependents`。
 - 类型层增广落空：仍向 `'@aalis/core'` 增广 `HookContextMap` / `ContributionPointMap` / `AalisConfig` 的包，增广本身不报错（在源码或发布的 .d.ts 里都一样），但对新契约包不生效。以这些键调用 `hooks.middleware` / `hooks.run` / `contributions.contribute` / `contributions.collect` 时类型检查报错（TS2345，键不在可选范围内）；`hostConfig.get` 取这些配置字段得到 `unknown`，按原类型使用时才报错。
+
+下列混装不报错，只是 `/clear` 的清理结果与「/clear 按层清理」一节不同：
+
+- 新插件配旧记忆后端（升级前的 plugin-memory-sqlite / plugin-memory-mongodb / plugin-memory-inmemory）：`/clear all -t context` 仍由旧后端连记忆元数据一起删除，用户档案、第三方行为指令、关系图、会话表与 maimai 绑定照旧被连带删掉；memory-vector 的存量标记也随之删除，之后的检索按当时的模型重记。
+- 新记忆后端配旧插件：`/clear all` 不清旧 adapter-onebot 的合并转发原文与旧 todo-list 的待办；`/clear all -t context` 不清旧 memory-summary 的摘要；旧 user-profile 关闭 `enableInstructions` 时不清第三方行为指令。
 
 ---
 

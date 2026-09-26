@@ -412,7 +412,8 @@ async function run({
   const mismatchWarned = new Set<string>();
   /**
    * 存量标记读写失败是否已告警。后端持续出错时每轮检索都会重试，同一段连续失败只告警一次；
-   * 标记一经确定即缓存、此后不再经这里读写（全局清空后的写回失败另行告警），失败段随之结束，所以成功时无需复位。
+   * 标记一经确定即缓存、此后不再经这里读写，失败段随之结束，所以成功时无需复位。
+   * 全局清空向量库时缓存随标记一并复位（见 dropLegacyModel），本标志也随之复位。
    */
   let legacyFailureWarned = false;
 
@@ -439,6 +440,20 @@ async function run({
       }
       return undefined;
     }
+  }
+
+  /**
+   * 向量库全局清空后，存量向量已不复存在：删掉存量标记并复位缓存，之后按届时的模型重新确定。
+   * 删除失败只记 warn，不影响清空结果（残留的标记只作用于不带 modelId 的向量）。
+   */
+  async function dropLegacyModel(): Promise<void> {
+    try {
+      await memory.current?.deleteMetadata(LEGACY_MODEL_NAMESPACE, LEGACY_MODEL_KEY);
+    } catch (err) {
+      logger.warn(`删除存量向量的模型标记失败: ${formatError(err)}`);
+    }
+    legacyModel = undefined;
+    legacyFailureWarned = false;
   }
 
   /**
@@ -729,19 +744,7 @@ async function run({
 
   hooks.middleware('memory:clear', async (data, next) => {
     if (data.types && !data.types.includes('vector')) {
-      // 全局清空而向量库不清：清消息历史的默认动作（clearAll）会连记忆元数据一起删，存量标记随之丢失，
-      // 存量向量却还在。放行前确定标记，放行后原样写回，免得之后按届时的模型重记。
-      const modelId = data.scope === 'all' ? embedding.current?.modelId : undefined;
-      const legacy = modelId ? await legacyModelId(modelId) : undefined;
       await next();
-      const mem = memory.current;
-      if (legacy && mem) {
-        try {
-          await mem.saveMetadata(LEGACY_MODEL_NAMESPACE, LEGACY_MODEL_KEY, { modelId: legacy });
-        } catch (err) {
-          logger.warn(`清空后写回存量向量的模型标记失败，下次启动后标记将按届时的模型重记: ${formatError(err)}`);
-        }
-      }
       return;
     }
 
@@ -749,6 +752,7 @@ async function run({
       if (data.scope === 'all') {
         await vectorstore.require().clear();
         await vectorstore.require().save();
+        await dropLegacyModel();
         data.results.push({ source: 'vector', success: true, message: '所有向量记忆已清空' });
         logger.info('向量记忆已全部清空');
       } else if (data.sessionId) {

@@ -56,10 +56,10 @@ class InMemoryFallbackService implements MemoryService {
     this.archivedSessions.delete(sessionId);
   }
 
+  /** 只清消息（含归档）；元数据由归属插件经 memory:clear 自行清理（见 api-memory 的 clearAll 契约） */
   async clearAll(): Promise<void> {
     this.sessions.clear();
     this.archivedSessions.clear();
-    this.metadata.clear();
   }
 
   async trimHistory(sessionId: string, keepRecent: number): Promise<number> {

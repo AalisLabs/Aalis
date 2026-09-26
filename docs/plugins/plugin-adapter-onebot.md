@@ -27,6 +27,7 @@ export default definePlugin({
     memory: optional(memory),
     messageArchive: optional(messageArchive),
     flowControl: optional(flowControl),
+    hooks: optional(hooks),
   },
   apply(caps) { /* 见源码 */ },
 });
@@ -107,3 +108,9 @@ onebot:{selfId}:{detailType}:{targetId}
 入站和出站的图片、语音、视频、文件统一缓存到 `data/{kind}s/{session}/`，单文件超过 `attachmentCache.maxBytes` 时不落盘、保留原 URL。入站文本中的 `[图片]`、`[语音]` 等占位符会改写为带本地引用的形式。
 
 适配器不对普通入站图片调用视觉模型。合并转发内的图片在 `forward.imageRecognition` 开启时送 media 服务识别，语音与视频在 media 服务具备相应能力时一并识别。引用消息中的图片只复用 media 服务已有的描述缓存，写成 `[图片: 描述]`，查不到时保留 `[图片]`。
+
+## 合并转发原文
+
+合并转发展开后，完整原文在内存里缓存 1 小时，有 memory 服务时同时写入记忆元数据（namespace `onebot:forward`，key 为转发 id），`get_forward_msg` 先查内存、再查持久化层。持久化条目保留 7 天，由后续写入惰性回收，每小时至多扫描一次。
+
+原文是聊天内容，以 `context` 类型参与 `memory:clear`：全局清理（`/clear all` 不带类型或含 `context`）时清空持久化条目与内存缓存。条目没有会话归属，会话级 `/clear` 不动它，靠 7 天回收。多个适配器实例共用同一 namespace、各有一份内存缓存，清理时每个实例都清自己的缓存，回显合并为一条。
