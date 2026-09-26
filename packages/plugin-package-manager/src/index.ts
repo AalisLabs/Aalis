@@ -544,6 +544,25 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     }
   }
 
+  /** 安装源查询的缓存：只留成功的结果，失败时清掉，下次调用重查 */
+  let registryUrl: Promise<string> | undefined;
+  function registry(): Promise<string> {
+    if (!registryUrl) {
+      // 与 install / update 同一 cwd：项目根的 .npmrc 一并生效
+      registryUrl = execProc(proc, 'npm', ['config', 'get', 'registry'], deps.projectRoot()).then(out => {
+        const url = out.trim().replace(/\/+$/, '');
+        if (!/^https?:\/\/\S+$/i.test(url)) {
+          throw new Error(`npm config get registry 的输出不是 http(s) 地址: ${JSON.stringify(out.trim())}`);
+        }
+        return url;
+      });
+      registryUrl.catch(() => {
+        registryUrl = undefined;
+      });
+    }
+    return registryUrl;
+  }
+
   /** 路径存在性：`test -d|-f <abs>`（不存在 → exit 1 → 抛 → false）。绝对路径，cwd 无关。 */
   async function pathExists(absPath: string, kind: 'd' | 'f'): Promise<boolean> {
     try {
@@ -901,6 +920,8 @@ export function createPackageManager(deps: PackageManagerDeps): PackageManagerSe
     uninstall: pluginName => exclusive(`卸载 ${pluginName}`, () => uninstallOne(pluginName)),
 
     serviceDependents: name => findServiceDependents(name, deps.pluginStatus?.() ?? []),
+
+    registry,
   };
 
   /**

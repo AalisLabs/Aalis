@@ -333,6 +333,8 @@ async function run(caps: Caps): Promise<void> {
    * 此后一律拒写，否则下一次增删改就把原有动态任务冲掉。只在激活时读一次，storage 迟到也不重读。
    */
   let loadFailed = false;
+  /** 拒写期间新建或改动的任务只在内存、重启即失：回执末尾如实注明（AI 工具与 WebUI 表单同一附注），文件正常时为空串 */
+  const persistNote = () => (loadFailed ? `；仅本次运行生效，未写入 ${persistUri}（加载失败，见日志）` : '');
 
   async function loadDynamicJobs(): Promise<SchedulerJobConfig[]> {
     try {
@@ -846,7 +848,8 @@ async function run(caps: Caps): Promise<void> {
         enabled: args.enabled !== false,
         paused: args.paused === true,
       });
-      return { ok: true };
+      const note = persistNote();
+      return note ? { ok: true, message: `已保存${note}` } : { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -949,11 +952,9 @@ async function run(caps: Caps): Promise<void> {
           : job.runAt
             ? `一次性 @ ${job.runAt}`
             : '?';
-      // 持久化文件读不懂而拒写：新任务只在内存，重启即失，回执里如实说明
-      const persistNote = loadFailed ? `；仅本次运行生效，未写入 ${persistUri}（加载失败，见日志）` : '';
       return JSON.stringify({
         ok: true,
-        message: `任务 "${job.name}" 已创建 (${scheduleDesc})，目标会话: ${job.sessionId} (${job.platform})${persistNote}`,
+        message: `任务 "${job.name}" 已创建 (${scheduleDesc})，目标会话: ${job.sessionId} (${job.platform})${persistNote()}`,
       });
     },
   });

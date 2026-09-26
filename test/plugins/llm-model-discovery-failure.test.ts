@@ -10,6 +10,7 @@ import llmOpenai from '../../packages/plugin-llm-openai/src/index.js';
 // - 启动时按未发现远端模型继续（customModels 照常注册），但要记 warn 并带上真实原因。fetch 网络失败的消息
 //   固定是「fetch failed」，原因（拒绝连接、DNS、TLS）在 cause 上，只拼 message 就丢了。
 // - WebUI 触发的刷新要报错并保留已注册条目。按空列表处理会把自动发现的条目全部注销，路由还回成功。
+// - 启动时发现失败后，注册结果那行日志不能再说「已连接」。
 //
 // fetch 用替身，不发真实请求。
 // ════════════════════════════════════════════════════════════
@@ -52,17 +53,19 @@ function stubFetch(mode: Mode): { mode: Mode } {
 function world() {
   const hub = new LogHub();
   const warns: string[] = [];
+  const logs: string[] = [];
   hub.onEntry(entry => {
+    logs.push(entry.message);
     if (entry.level === 'warn') warns.push(entry.message);
   });
-  const app = new App({ name: 'T', logLevel: 'warn', logHub: hub });
+  const app = new App({ name: 'T', logLevel: 'info', logHub: hub });
   apps.push(app);
   const modelIds = (): string[] =>
     app
       .bind({ services })
       .services.all(llm)
       .map(e => e.instance.id);
-  return { app, warns, modelIds };
+  return { app, warns, logs, modelIds };
 }
 
 const OLLAMA = { baseUrl: 'http://127.0.0.1:11434' };
@@ -125,5 +128,35 @@ describe('刷新时模型发现失败：报错并带上原因，已注册条目�
     state.mode = mode;
     await expect(entry.instance.refresh()).rejects.toThrow(reason);
     expect(modelIds(), '发现失败被当成远端没有模型，自动发现的条目被注销').toEqual(before);
+  });
+});
+
+describe('启动时模型发现失败：日志不说「已连接」', () => {
+  const withoutCustom = startupCases.map(({ config: { customModels: _, ...config }, ...rest }) => ({
+    ...rest,
+    config,
+  }));
+  it.each(
+    [...startupCases, ...withoutCustom].flatMap(c => [
+      { ...c, mode: 'refused' as const, custom: 'customModels' in c.config },
+      { ...c, mode: 'ok' as const, custom: 'customModels' in c.config },
+    ]),
+  )('$name / $mode / customModels=$custom', async ({ plugin, config, mode, custom }) => {
+    stubFetch(mode);
+    const { app, logs } = world();
+    await app.plugin(plugin, config);
+    await app.plugins.idle();
+
+    const connected = logs.filter(m => m.includes('已连接'));
+    if (mode === 'ok') {
+      expect(connected, '对照：发现成功时照常说「已连接」').toHaveLength(1);
+      return;
+    }
+    expect(connected, `发现失败后日志仍说「已连接」: ${JSON.stringify(connected)}`).toEqual([]);
+    const summary = custom ? '注册 customModels 里的 1 个 model entry' : '模型发现失败且未配置 customModels';
+    expect(
+      logs.some(m => m.includes(summary)),
+      `注册结果没有说明发现失败: ${JSON.stringify(logs)}`,
+    ).toBe(true);
   });
 });

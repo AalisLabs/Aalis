@@ -85,4 +85,20 @@ describe('office loadImage：远程图片下载', () => {
     expect(i, '下载信号不是 AbortSignal.timeout 造的').toBeGreaterThanOrEqual(0);
     expect(timeoutSpy.mock.calls[i]).toEqual([15_000]);
   });
+
+  it('非 2xx 响应先取消响应体再报错，不占着连接', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull() {}, // 对端不再发数据：不取消的话流一直挂着
+      cancel() {
+        cancelled = true;
+      },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(body, { status: 404 })),
+    );
+    await expect(loadImage(noStorage, `${base}/missing.png`, 'data:/docs')).rejects.toThrow('图片下载失败: 404');
+    expect(cancelled, '没读的响应体没有取消').toBe(true);
+  });
 });

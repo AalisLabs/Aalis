@@ -2,7 +2,7 @@
 // config-sync —— 插件配置同步政策 + 配置热重载编排（宿主政策层）
 //
 //   - syncPluginDefaults：schema 派生默认值回填 + 按 configSchema 裁剪未知字段
-//   - handleConfigChanged / installConfigHotReload：配置外部变更的 diff + bounce 编排（文件里已删掉的后缀实例随之卸载）
+//   - handleConfigChanged / installConfigHotReload：配置外部变更的 diff + bounce 编排（后缀实例随文件增删登记或卸载）
 //
 // 这些是**政策**（要不要裁剪、怎么合并、何时 bounce）。配置文档在 config-store，core 只持有
 // 运行态与 updateConfig 机制。不接本模块的嵌入式宿主将没有自动配置同步与热重载——需要时用
@@ -13,7 +13,7 @@ import { isConfigSaveRefused } from '@aalis/api-host-config';
 import { type App, events, type PluginDefinition, parseInstanceId } from '@aalis/core';
 import { defaultsFrom, removeExtraFields, validateConfig } from '@aalis/schema-config';
 import type { ConfigStore } from './config-store.js';
-import type { PluginLoader } from './plugin-discovery.js';
+import type { PluginDiscovery, PluginLoader } from './plugin-discovery.js';
 
 export interface ConfigSyncOptions {
   /**
@@ -29,7 +29,7 @@ export interface ConfigSyncOptions {
  * 移除多余字段。返回发生变更的插件 instanceId 列表。
  *
  * 覆盖已登记的实例，以及文档里新出现、尚未登记的 `name:suffix` 实例（模块已登记且 reusable 时）：
- * 后者由热扫描按文档登记，先在这里规范化，首次 apply 拿到的就是带默认值的这一份。
+ * 后者随后由热重载按文档登记，先在这里规范化，首次 apply 拿到的就是带默认值的这一份。
  *
  * 副作用：对每个变化条目 setPluginConfig；若有变化最终落盘。
  * 插件的 configSchema 经 `getPlugin(instanceId).definition` 读取
@@ -96,12 +96,18 @@ export function withPluginConfigSync(loader: PluginLoader, app: App, store: Conf
 
 /**
  * 配置外部变更时的处理：先卸载文件里已没有配置段的 `name:suffix` 实例，再按启动路径同一政策同步，
- * 最后重新计算各插件配置并热重载差异（updateConfig → bounce）。
+ * 重新计算各插件配置并热重载差异（updateConfig → bounce），最后经发现驱动登记文件里新出现的后缀实例
+ * （判据同冷启动与热扫描）。
  */
-export async function handleConfigChanged(app: App, store: ConfigStore, opts?: ConfigSyncOptions): Promise<void> {
+export async function handleConfigChanged(
+  app: App,
+  store: ConfigStore,
+  discovery: Pick<PluginDiscovery, 'registerConfiguredInstances'>,
+  opts?: ConfigSyncOptions,
+): Promise<void> {
   app.logger.info('检测到配置变更，正在热重载...');
   try {
-    // 后缀实例由配置段定义，冷启动只登记文件里有的；重载同样以文件为准，没有配置段的就卸载。
+    // 后缀实例由配置段定义，冷启动只登记文件里有的；重载同样以文件为准，没有配置段的就卸载，新出现的在最后登记。
     // 留着不管的话，下面的同步会把它当成缺配置的实例：运行态配置被换成默认值（无默认值时是 {}），
     // 默认值还会作为一个新配置段写回文件。
     const plugins = store.get('plugins');
@@ -126,6 +132,8 @@ export async function handleConfigChanged(app: App, store: ConfigStore, opts?: C
         await app.plugins.updateConfig(status.instanceId, newConfig);
       }
     }
+    // 按上面已规范化的文档登记，首次 apply 即带默认值
+    await discovery.registerConfiguredInstances();
     app.logger.info('配置热重载完成');
   } catch (e) {
     app.logger.error('配置热重载失败:', e);
@@ -136,8 +144,13 @@ export async function handleConfigChanged(app: App, store: ConfigStore, opts?: C
  * 接管配置外部变更监听（provider 不支持 watch 时为 no-op），在 app:stopping（在飞动作排干后）停止监听。
  * startAalis 默认调用；嵌入式宿主可自行选择是否接。
  */
-export function installConfigHotReload(app: App, store: ConfigStore, opts?: ConfigSyncOptions): void {
-  store.watch(() => void handleConfigChanged(app, store, opts));
+export function installConfigHotReload(
+  app: App,
+  store: ConfigStore,
+  discovery: Pick<PluginDiscovery, 'registerConfiguredInstances'>,
+  opts?: ConfigSyncOptions,
+): void {
+  store.watch(() => void handleConfigChanged(app, store, discovery, opts));
   app.bind({ events }).events.on('app:stopping', () => store.unwatch());
 }
 

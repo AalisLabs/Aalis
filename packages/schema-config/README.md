@@ -1,6 +1,6 @@
 # @aalis/schema-config
 
-配置表单 Schema 词汇契约包：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` 及 `SchemaFieldTypes` 扩展点，另含对这套词汇的中立解释函数 `defaultsFrom` / `validateConfig` / `removeExtraFields`，以及配置危险键闸与拷贝 `isUnsafeConfigKey` / `cloneConfigObject`。
+配置表单 Schema 词汇契约包：`ConfigSchema` / `SchemaField` / `SchemaGroup` / `SchemaArray` 及 `SchemaFieldTypes` 扩展点，另含对这套词汇的中立解释函数 `defaultsFrom` / `validateConfig` / `removeExtraFields`，配置危险键闸与拷贝 `isUnsafeConfigKey` / `cloneConfigObject`，以及插件因配置问题无法激活时在 `apply` 里抛出的 `configError` / `missingConfigError`（后者用于缺必填项；name 为 `ConfigError`、不带 stack，激活失败日志只有一行，不像程序崩溃）。
 
 `@aalis/core` 把插件的 `configSchema` 当作 opaque 数据透传、不解释任何字段；表单词汇（label / options / textarea …）属呈现层，统一住在本包。插件用它给自己的 `configSchema` 做形状检查，渲染宿主（WebUI）与宿主政策（runtime 的配置同步）用它消费 schema。
 

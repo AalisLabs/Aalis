@@ -926,8 +926,9 @@ async function run(caps: Caps): Promise<void> {
         return await storage.resolveLocalPath(entry.dataUri, 'read');
       } catch (err) {
         // 契约只把这两种情况映射为 null：文件已不在磁盘，或存储根不支持本地路径（网关报「存储根 X 不支持 local-path」）。
-        // 其余错误（根不可读、路径不合法等）照常抛出，不能让调用方误判成「文件不存在」。
-        if (isStorageNotFound(err) || /不支持/.test(err instanceof Error ? err.message : String(err))) return null;
+        // 其余错误（根不可读、路径不合法、提供者报的其它「不支持」等）照常抛出，不能让调用方误判成「文件不存在」。
+        if (isStorageNotFound(err) || /不支持 local-path/.test(err instanceof Error ? err.message : String(err)))
+          return null;
         throw err;
       }
     },

@@ -5,7 +5,7 @@
 // 函数部分是对这套词汇的**中立解释**：默认值派生（defaultsFrom）、只读
 // 结构校验（validateConfig）、按 schema 键集裁未知字段（removeExtraFields）。
 // 三者都不属于 @aalis/core——core 只把 `PluginMeta.configSchema` 当作
-// opaque 数据透传，不解释任何字段。
+// opaque 数据透传，不解释任何字段。另有插件因配置问题无法激活时抛的错误（configError / missingConfigError）。
 //
 // 消费方：
 // - 插件：在 `definePlugin({ configSchema })` 的定义对象里声明
@@ -248,6 +248,28 @@ export function removeExtraFields(
     }
   }
   return result;
+}
+
+/**
+ * 配置错误：name 为 `ConfigError`，不带 stack。插件因配置缺失或不可用而无法激活时在 apply 里抛出。
+ *
+ * 实例照常转入 error 态，但这不是程序出错：core 的 DefaultLogger 对没有 stack 的错误只写「名称: 消息」，
+ * 激活失败日志因此只有一行，不像程序崩溃。缺必填项用 {@link missingConfigError}。
+ */
+export function configError(message: string): Error {
+  const error = new Error(message);
+  error.name = 'ConfigError';
+  // 定义成自有属性而不是 delete：有的引擎把 stack 做成原型上的访问器，删实例属性去不掉
+  Object.defineProperty(error, 'stack', { value: undefined, writable: true, configurable: true });
+  return error;
+}
+
+/**
+ * 缺少必填配置时的 {@link configError}：消息点名缺的字段（`note` 是放在字段名后括号里的补充说明），并说明
+ * 填入后生效——WebUI 保存或配置文件热重载会重建实例、重试激活。
+ */
+export function missingConfigError(field: string, note?: string): Error {
+  return configError(`缺少配置项 ${field}${note ? `（${note}）` : ''}，在 WebUI 或配置文件中填入后生效`);
 }
 
 function validateFields(

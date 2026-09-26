@@ -12,6 +12,7 @@
 ```typescript
 export default definePlugin({
   name: '@aalis/plugin-memory-mongodb',
+  reusable: true,
   provides: [memory],
   apply(caps) { /* 见源码 */ },
   uses: {
@@ -28,7 +29,7 @@ export default definePlugin({
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `uri` | string | `'mongodb://localhost:27017'` | MongoDB URI：MongoDB 连接字符串 |
-| `database` | string | `'aalis'` | 数据库名：存储消息历史的数据库 |
+| `database` | string | `''` | 数据库名：存储消息历史与元数据的数据库。留空按实例派生，见下 |
 | `collection` | string | `'messages'` | 集合名：消息集合名称 |
 | `connectTimeoutMs` | number | `5000` | 连接超时（毫秒）：建立连接与服务器选择（serverSelection）的超时时间，两者共用此值 |
 | `rangeQueryLimit` | number | `500` | 范围查询返回上限：区间消息查询（向量召回的上下文窗口扩展等）单次返回的最大条数。命中上限会静默截断 |
@@ -39,6 +40,7 @@ export default definePlugin({
 - `apply` 为异步函数，启动时连接数据库（停用或停机时关闭客户端，中止连接与建索引），在消息集合上创建 `{ sessionId: 1, timestamp: 1 }`、`{ archived: 1, timestamp: -1 }`、`{ 'metadata.platform': 1, timestamp: -1 }` 三个索引；结构化元数据存放在同库固定名为 `metadata` 的集合中（不受 `collection` 配置影响），并建有 `{ namespace: 1, key: 1 }` 唯一索引
 - 完整实现 `MemoryService`：消息读写（`saveMessage`、`getHistory`、`getFullHistory`、`clearSession`、`clearAll`，其中 `clearAll` 只清空消息集合，`metadata` 集合由各命名空间的归属插件经 `memory:clear` 自行清理）、区间与跨会话查询（`getMessagesBySessionRange` 受 `rangeQueryLimit` 限制，`getRecentMessagesAcrossSessions` 受 `crossSessionMaxLimit` 限制）、`trimHistory`（将较早的未归档消息标记为 `archived`，不删除）、`updateMessageContent`、`deleteMessagesByTimestamps`，以及结构化元数据（`saveMetadata` / `getMetadata` / `listMetadata` / `commitMetadata` / `deleteMetadata`）
 - `commitMetadata` 用有序 `bulkWrite` 批量写入，不是事务：遇错即停，失败点之前的写已生效
+- 可多实例（`@aalis/plugin-memory-mongodb:<后缀>`）。`database` 留空时按实例派生：主实例用 `aalis`，带后缀的实例在库名上加后缀（如 `:b` 实例用 `aalis-b`）；配置里写明的库名照用。`metadata` 集合与消息集合同库，所以同一连接串（按字面比较）下两个实例用同一个库时，即使 `collection` 不同也算共用：后激活的那个激活失败，报一行 `ConfigError`，点名占用该库的实例，不发起连接
 - dispose 时关闭 MongoDB 连接
 - 连接或建索引失败时关闭客户端，并抛出 `MongoDB 连接失败: <原因>`，不回退到其它存储
 - 日志中打印的 URI 会隐去密码段（`mongodb://user:***@host`）

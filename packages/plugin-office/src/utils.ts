@@ -21,7 +21,11 @@ export async function loadImage(
     // 慢速对端会挂住整轮工具调用，超大响应整块读进内存。体积按流式累计判定——
     // 无 Content-Length 的响应要全部读完才看得到大小。
     const resp = await safeFetch(source, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
-    if (!resp.ok) throw new Error(`图片下载失败: ${resp.status} ${source}`);
+    if (!resp.ok) {
+      // 响应体不读也要取消，释放底层连接
+      await resp.body?.cancel().catch(() => {});
+      throw new Error(`图片下载失败: ${resp.status} ${source}`);
+    }
     const declared = Number(resp.headers.get('content-length'));
     if (declared > DOWNLOAD_MAX_BYTES) {
       await resp.body?.cancel().catch(() => {});

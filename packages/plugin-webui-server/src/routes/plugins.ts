@@ -300,13 +300,18 @@ export function registerPluginRoutes(
       res.json({ ok: true, message: `全局配置已更新并保存${note}`, ignored });
       return;
     }
-    res.json({ ok: true, message: `全局配置已更新，正在重启应用以生效…${note}`, restart: true, ignored });
-    // 已写进文件，重启失败（宿主没注入重启策略）不撤回：改动在下次启动时生效
+    // 先发起重启再回复：宿主没注入重启策略时 restart() 同步抛错，据此回 restart:false，前端才不会进入等待重连
+    // 却永远等不到。发起之后的停机是异步的（core 先广播 app:restarting，何时停机由重启策略决定，Node 宿主延迟
+    // 500ms），这条回复来得及发出。已写进文件，重启失败不撤回：改动在下次启动时生效
     try {
       app.restart();
     } catch (err) {
-      caps.logger?.error(`全局配置已保存，但重启失败（${errorMessage(err)}），改动在下次启动时生效`);
+      const reason = `全局配置已保存，但重启失败（${errorMessage(err)}），改动在下次启动时生效`;
+      caps.logger?.error(reason);
+      res.json({ ok: true, message: `${reason}${note}`, restart: false, ignored });
+      return;
     }
+    res.json({ ok: true, message: `全局配置已更新，正在重启应用以生效…${note}`, restart: true, ignored });
   });
 
   // 获取单个插件的原始配置（未脱敏，给编辑器回写用）。
@@ -365,11 +370,11 @@ export function registerPluginRoutes(
       }
       const submitted = newConfig as Record<string, unknown>;
       merged = { ...stored, ...submitted };
-      // 与 runtime config-sync 同一政策：有 schema 就裁掉未知键并 warn，避免 WebUI 把
-      // 手滑字段写进 stored，而 YAML watch 路径却会裁掉——两边政策必须一致。
+      // 与宿主的配置同步同一政策（host-config 的 trimUnknownFields）：宿主裁剪且有 schema 时裁掉未知键并 warn，
+      // 避免 WebUI 把手滑字段写进 stored，而 YAML watch 路径却会裁掉；宿主保留未知字段时这里也不裁。
       // 被裁的字段按来源回给调用方，不静默吞掉却回复「已更新」：本次提交里的记 ignored（与 PUT /api/config
       // 同一口径）；文档里原有、本次没提交的不是用户这次写的，随整份写回从配置文件删掉，记 removed
-      if (schema && Object.keys(schema).length > 0) {
+      if (doc.trimUnknownFields !== false && schema && Object.keys(schema).length > 0) {
         const shape = schema as Record<string, unknown>;
         for (const [key, value] of Object.entries(merged)) {
           removeExtraFields({ [key]: value }, shape, Object.hasOwn(submitted, key) ? ignored : removed);

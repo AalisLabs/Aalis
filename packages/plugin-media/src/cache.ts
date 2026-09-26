@@ -59,9 +59,19 @@ let snapshotIO: Promise<void> = Promise.resolve();
 
 /**
  * 本地落盘布局 `data:/{kind}s/{会话目录}/{16 位十六进制}.{ext}` 与其历史相对形式。
- * 分组 1 为会话目录，分组 2 为内容哈希。
+ * 分组 1 为种类目录，分组 2 为会话目录，分组 3 为内容哈希。
  */
-const LANDED_PATH = /^data[:/](?:\/)?(?:images|videos|audios|files)\/([^/]+)\/([0-9a-f]{16})\.[a-z0-9]+$/;
+const LANDED_PATH = /^data[:/](?:\/)?(images|videos|audios|files)\/([^/]+)\/([0-9a-f]{16})\.[a-z0-9]+$/;
+
+/**
+ * 描述在 `/clear` 里归属的类型：describeVideo 的视频描述归 video，其余（静态图、动图）归 image。
+ * 视频描述的键带 {@link VIDEO_VARIANT} 后缀，与图片描述不共键，才分得开。
+ */
+export const DESCRIPTION_KINDS = ['image', 'video'] as const;
+export type DescriptionKind = (typeof DESCRIPTION_KINDS)[number];
+
+/** 视频描述的键后缀，与详略档共用后缀位（见 cacheKey）。 */
+export const VIDEO_VARIANT = 'video';
 
 /**
  * 本地落盘布局 → 内容哈希键；其余来源（远端 URL、data URI）原样返回。
@@ -73,7 +83,7 @@ const LANDED_PATH = /^data[:/](?:\/)?(?:images|videos|audios|files)\/([^/]+)\/([
  */
 export function descriptionKey(source: string): string {
   const m = LANDED_PATH.exec(source);
-  return m ? m[2] : source;
+  return m ? m[3] : source;
 }
 
 /**
@@ -142,6 +152,7 @@ export function lookupCachedDescription(key: string, shareable = true, variant?:
  * 最终缓存键：别名解析 → 内容哈希（shareable）→ 可选的变体后缀。
  * variant 是 describeImage 的非默认详略档（casual/detailed/professional）：同一张图按档位各存一条，
  * 默认档（auto）与到达识别共用无后缀的那条。后缀加在哈希之后，别名与跨会话共享对各档同样生效。
+ * describeVideo 的视频描述带 {@link VIDEO_VARIANT} 后缀。
  */
 function cacheKey(key: string, shareable: boolean, variant?: string): string {
   const src = resolveAlias(key);
@@ -194,22 +205,35 @@ export async function flushDescriptionCache(): Promise<void> {
 }
 
 /**
- * 清理描述缓存，返回删掉的条目数。/clear 与删除会话（memory:clear）用。
+ * 清理描述缓存里属于 kinds 的条目，返回删掉的条目数。/clear 与删除会话（memory:clear）用。
+ * 条目按键归类（视频描述带 {@link VIDEO_VARIANT} 后缀），别名按落盘 ref 归类（`videos/` 下的归 video）。
  *
- * 不传会话目录即全部清空：内存条目与别名全清，快照文件删掉——本次运行因读快照失败而禁写时
- * 同样删，那份旧快照里也有要清的描述。
+ * 不传会话目录即全局清理：删掉所选类型的全部条目与别名。两类都清时删掉快照文件；只清一类时重写快照，
+ * 另一类留在快照里。本次运行因读快照失败而禁写时，全局清理一律删掉快照文件：读不出就无从只删一类，
+ * 那份旧快照里也有要清的描述；另一类随之从磁盘上消失，代价只是重启后重新识别。
  *
  * 传会话目录（`sessionId` 中 `:` `/` `\` 换成 `_`，与落盘目录同名）只删带该会话语境的条目：
  * 它们以含会话目录的落盘路径为键；内容哈希键跨会话共享，无从按会话归属，保留。指向该会话目录的
  * 别名一并删掉（别名不进快照），删掉了条目时重写快照。禁写时磁盘上的旧快照无从改写，内存侧清完后
- * 抛错说明；本次运行里 /clear all 已删掉快照文件时不抛，那时磁盘上已没有会在重启时恢复的描述。
+ * 抛错说明；本次运行里全局清理已删掉快照文件时不抛，那时磁盘上已没有会在重启时恢复的描述。
  */
-export function clearDescriptionCache(sessionDir?: string): Promise<number> {
+export function clearDescriptionCache(
+  sessionDir: string | undefined,
+  kinds: readonly DescriptionKind[],
+): Promise<number> {
   return queueSnapshotIO(async () => {
-    if (sessionDir === undefined) {
-      const removed = cache.entries().length;
-      cache.clear();
-      aliases.clear();
+    const inScope = (landed: string) => sessionDir === undefined || sessionDirOf(landed) === sessionDir;
+    let removed = 0;
+    for (const [key] of cache.entries()) {
+      if (kinds.includes(kindOfKey(key)) && inScope(key.replace(/#[a-z]+$/, ''))) {
+        cache.delete(key);
+        removed++;
+      }
+    }
+    for (const [source, ref] of aliases.entries()) {
+      if (kinds.includes(kindOfRef(ref)) && inScope(ref)) aliases.delete(source);
+    }
+    if (sessionDir === undefined && (!persistLogger || DESCRIPTION_KINDS.every(k => kinds.includes(k)))) {
       try {
         await getMediaRuntime().storage.delete(SNAPSHOT_URI);
       } catch (err) {
@@ -217,16 +241,6 @@ export function clearDescriptionCache(sessionDir?: string): Promise<number> {
       }
       snapshotDeleted = true;
       return removed;
-    }
-    let removed = 0;
-    for (const [key] of cache.entries()) {
-      if (sessionDirOf(key.replace(/#[a-z]+$/, '')) === sessionDir) {
-        cache.delete(key);
-        removed++;
-      }
-    }
-    for (const [source, ref] of aliases.entries()) {
-      if (sessionDirOf(ref) === sessionDir) aliases.delete(source);
     }
     if (!persistLogger) {
       if (snapshotDeleted) return removed;
@@ -238,10 +252,18 @@ export function clearDescriptionCache(sessionDir?: string): Promise<number> {
 }
 
 function sessionDirOf(key: string): string | undefined {
-  return LANDED_PATH.exec(key)?.[1];
+  return LANDED_PATH.exec(key)?.[2];
 }
 
-/** 可进快照的键：内容哈希键（可带详略档后缀），或本地落盘路径键（内容寻址，只是带着会话目录）。 */
+function kindOfKey(key: string): DescriptionKind {
+  return key.endsWith(`#${VIDEO_VARIANT}`) ? 'video' : 'image';
+}
+
+function kindOfRef(ref: string): DescriptionKind {
+  return LANDED_PATH.exec(ref)?.[1] === 'videos' ? 'video' : 'image';
+}
+
+/** 可进快照的键：内容哈希键（可带详略档或视频后缀），或本地落盘路径键（内容寻址，只是带着会话目录）。 */
 function isDurableKey(key: string): boolean {
   const base = key.replace(/#[a-z]+$/, '');
   return /^[0-9a-f]{16}$/.test(base) || descriptionKey(base) !== base;

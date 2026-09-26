@@ -298,6 +298,37 @@ describe('热扫描', () => {
   });
 });
 
+describe('热重载登记配置里的后缀实例', () => {
+  it('模块取注册表里已登记的定义，配置与禁用标记取自文档；已注册的跳过，模块未登记的告警跳过', async () => {
+    const warns: string[] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn: (message: string) => void warns.push(message),
+      error() {},
+      child: () => logger,
+    };
+    const { app, store, discovery } = world({}, logger);
+    // 模块不经加载器、直接登记：加载器什么也发现不到，定义只能从注册表取
+    await app.plugin(definePlugin({ name: 'rs-hot', reusable: true, apply() {} }));
+    const d = discovery(memoryLoader([]));
+    store.setPluginConfig('rs-hot:a', { k: 1 });
+    store.setPluginConfig('rs-hot:off', { k: 2 });
+    store.setPluginEnabled('rs-hot:off', false);
+    store.setPluginConfig('rs-gone:x', {});
+
+    await d.registerConfiguredInstances();
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('rs-hot:a')?.state).toBe('active');
+    expect(app.plugins.getPlugin('rs-hot:a')?.config).toEqual({ k: 1 });
+    expect(app.plugins.getPlugin('rs-hot:off')?.state).toBe('disabled');
+    expect(warns.filter(w => w.includes('"rs-gone:x"'))).toHaveLength(1);
+
+    await d.registerConfiguredInstances();
+    expect(warns.filter(w => w.includes('已注册'))).toEqual([]);
+  });
+});
+
 describe('按配置文档登记', () => {
   it('冷启动与热扫描都按实例 id 从文档取配置与禁用标记，配置原样交给 core', async () => {
     const seen: Record<string, unknown> = {};

@@ -145,6 +145,8 @@ export interface LLMModel {
    *   就不显示"刷新"按钮。
    * - 同一 provider 下所有 model entries 共享同一份 refresh 闭包；webui 按 contextId
    *   找到任一 entry 调一次即可。
+   * - **失败语义**：发现失败（不可达、超时、非 2xx、响应不是模型列表）时抛错，消息带原因；已注册的
+   *   entries 原样保留、不增删——不得把失败当成远端没有模型而注销自动发现的条目。经停用或停机中止时同样抛错。
    */
   refresh?(): Promise<{ added: string[]; removed: string[]; total: number }>;
 }

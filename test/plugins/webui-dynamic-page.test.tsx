@@ -110,6 +110,15 @@ describe('DynamicPage 表单保存', () => {
     await waitFor(() => expect(screen.getByText('已保存')).toBeTruthy());
   });
 
+  it('action 返回 {ok:true,message}：显示服务端附注代替「已保存」（如拒写期间仅本次运行生效）', async () => {
+    const note = '已保存；仅本次运行生效，未写入 data:/scheduler-jobs.json（加载失败，见日志）';
+    replies = { getNewJobForm: { name: 'a' }, createJob: { ok: true, message: note } };
+    render(<DynamicPage page={formPage} />);
+    fireEvent.click(await screen.findByText('保存'));
+    await waitFor(() => expect(screen.getByText(note)).toBeTruthy());
+    expect(screen.queryByText('已保存'), '附注不能被笼统的「已保存」盖掉').toBeNull();
+  });
+
   it('action 抛错（路由 5xx）：显示错误文案', async () => {
     replies = { getNewJobForm: {}, createJob: new Error('处理器 createJob 不存在') };
     render(<DynamicPage page={formPage} />);
@@ -164,6 +173,14 @@ describe('DynamicPage 操作按钮组', () => {
     await waitFor(() => expect(screen.getByText('完成')).toBeTruthy());
   });
 
+  it('action 返回 {ok:true,message}：按钮旁显示服务端附注代替「完成」', async () => {
+    replies = { runNow: { ok: true, message: '已触发；仅本次运行生效' } };
+    render(<DynamicPage page={actionsPage} />);
+    fireEvent.click(await screen.findByText('立即执行'));
+    await waitFor(() => expect(screen.getByText('已触发；仅本次运行生效')).toBeTruthy());
+    expect(screen.queryByText('完成')).toBeNull();
+  });
+
   it('action 抛错：显示错误文案而非笼统「失败」', async () => {
     replies = { runNow: new Error('处理器 runNow 不存在') };
     render(<DynamicPage page={actionsPage} />);
@@ -199,6 +216,29 @@ describe('DynamicPage 表格行内操作', () => {
     fireEvent.click(screen.getByText('暂停'));
     await waitFor(() => expect(calls.filter(c => c.method === 'listJobs').length, '操作后应重拉表格').toBe(2));
     expect(screen.queryByText('详情'), '操作回执不是详情，不该弹窗').toBeNull();
+  });
+
+  it('普通操作返回 {ok:true,message}：先弹窗告知附注，再刷新表格', async () => {
+    const note = '已启用；once 记账读取失败（见日志），本次运行不会触发';
+    replies = { listJobs: [{ name: 'daily-report' }], pauseJob: { ok: true, message: note } };
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    render(<DynamicPage page={tablePage} />);
+    await screen.findByText('暂停');
+    await waitFor(() => expect(calls.filter(c => c.method === 'listJobs').length).toBe(1));
+    fireEvent.click(screen.getByText('暂停'));
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(note));
+    await waitFor(() => expect(calls.filter(c => c.method === 'listJobs').length).toBe(2));
+  });
+
+  it('普通操作只回 {ok:true}：不弹窗（反向锚）', async () => {
+    replies = { listJobs: [{ name: 'daily-report' }], pauseJob: { ok: true } };
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    render(<DynamicPage page={tablePage} />);
+    await screen.findByText('暂停');
+    await waitFor(() => expect(calls.filter(c => c.method === 'listJobs').length).toBe(1));
+    fireEvent.click(screen.getByText('暂停'));
+    await waitFor(() => expect(calls.filter(c => c.method === 'listJobs').length).toBe(2));
+    expect(alertSpy).not.toHaveBeenCalled();
   });
 
   it('查看类操作返回不带 ok 的对象：弹出详情，不刷新表格', async () => {

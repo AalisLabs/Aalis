@@ -1,7 +1,7 @@
 import { type EmbeddingRequestOptions, type EmbeddingService, embedding } from '@aalis/api-embedding';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigSchema, missingConfigError } from '@aalis/schema-config';
 
 // ===== 配置 =====
 
@@ -95,7 +95,7 @@ export default definePlugin({
   async apply({ config, logger, lifecycle, provide }) {
     const apiKey = config.apiKey as string;
     if (!apiKey) {
-      throw new Error('OpenAI Embedding 插件需要配置 apiKey');
+      throw missingConfigError('apiKey');
     }
 
     const baseUrl = (config.baseUrl as string) ?? 'https://api.openai.com/v1';

@@ -43,6 +43,7 @@ declare module '@aalis/api-host-config' {
 
 ```ts
 interface HostConfig {
+  readonly trimUnknownFields?: boolean;
   get<K extends keyof AalisConfig>(key: K): AalisConfig[K];
   getAll(): Readonly<AalisConfig>;
   set<K extends keyof AalisConfig>(key: K, value: AalisConfig[K]): void;
@@ -58,6 +59,7 @@ interface HostConfig {
 }
 ```
 
+- `trimUnknownFields`：宿主的裁剪政策。为 `true` 时宿主同步插件配置会按 `configSchema` 删掉 schema 外字段，不声明时按 `true` 处理；替宿主写插件配置的管理面（如 WebUI 保存插件配置）按它决定裁不裁，与宿主同一政策。Node 宿主取 `startAalis({ configSync })` 的 `trimUnknownFields`，缺省为 `true`；别的宿主保留未知字段时 provide 本服务须填 `false`。
 - 写方法只改文档，不改运行态。
 - 按实例 id 取放的方法遇到 `__proto__` / `constructor` / `prototype` 这类 id 抛「插件 id 不合法」。
 - `save()` 持久化当前文档。返回的 Promise 兑现时保存已完成（宿主不持久化时立即兑现、不写盘）；失败以拒绝传出，调用方应 `await`。配置源有尚未生效的外部修改而拒写时，拒绝原因是本包导出的 `ConfigSaveRefusedError`，调用方用本包的 `isConfigSaveRefused(err)` 把它与写入失败等其它原因区分（WebUI 前者回 409、后者回 500）。判据按错误的 `name` 判定，不用 `instanceof`：进程里装有两份本包时，宿主抛出的是它那份的类。失败时提供方已记一笔日志（拒写记告警，其它记 error）并把拒绝标记为已处理，不 `await` 的调用不会变成未处理拒绝。不保证并发保存的先后，也不负责与外部编辑合并。

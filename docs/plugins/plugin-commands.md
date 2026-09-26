@@ -77,7 +77,7 @@ export default definePlugin({
 | `summary` | 会话摘要 |
 | `vector` | 向量记忆 |
 | `image` | 图片缓存；plugin-media 在场时另清图片描述缓存（会话级只清带本会话语境的描述） |
-| `video` | 视频缓存 |
+| `video` | 视频缓存；plugin-media 在场时另清视频描述缓存（视频描述跨会话共享，会话级清理不删） |
 | `audio` | 语音缓存 |
 | `file` | 文件缓存 |
 | `persona` | 会话角色状态 |

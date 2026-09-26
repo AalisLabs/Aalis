@@ -134,7 +134,7 @@ const configSchema: ConfigSchema = {
     label: '插件市场 npm 源',
     default: 'https://registry.npmjs.org',
     description:
-      '插件市场检索用的 npm registry 基址。注意 npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），默认官方源；国内可填支持 search 的镜像或代理。安装走 package-manager（遵循本机 npm 配置）。',
+      '插件市场检索用的 npm registry 基址。注意 npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），默认官方源；国内可填支持 search 的镜像或代理。安装走 package-manager（遵循本机 npm 配置），卡片上的最新版与可更新也按安装使用的源查。',
   },
   // 活跃前端不在此配置：前端即 `webui-client` 服务的多 provider，活跃者由「服务偏好」
   // （servicePreferences['webui-client']）决定——在 WebUI「服务」页的下拉框切换。

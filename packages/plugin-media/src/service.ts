@@ -35,6 +35,7 @@ import {
   rememberDescription,
   rememberDescriptionAlias,
   VIDEO_FAILURE_TEXTS,
+  VIDEO_VARIANT,
 } from './cache.js';
 import { buildIncomingImageContext, type ContextCaps } from './context.js';
 import {
@@ -769,16 +770,16 @@ export class MediaServiceImpl implements MediaService {
 
   /**
    * 按 URL（或本地路径）描述单个视频。复用 processVideo 私有路径，
-   * 走帧抽样 + 可选音轨转写，结果命中视图描述缓存。
+   * 走帧抽样 + 可选音轨转写，结果进描述缓存（键带视频后缀，/clear 里归 video 类型）。
    */
   async describeVideo(videoUrl: string, opts: DescribeVideoOptions = {}): Promise<string> {
     if (!videoUrl) return '';
-    const cached = lookupCachedDescription(videoUrl);
+    const cached = lookupCachedDescription(videoUrl, true, VIDEO_VARIANT);
     if (cached) return cached;
     const att: MessageAttachment = { kind: 'video', data: opts.localPath ?? videoUrl };
     try {
       const text = await this.processVideo(att, opts.hint);
-      if (text) rememberDescription(videoUrl, text);
+      if (text) rememberDescription(videoUrl, text, true, VIDEO_VARIANT);
       return text ?? '';
     } catch (err) {
       this.logger.warn(`describeVideo 失败 url=${videoUrl}: ${err instanceof Error ? err.message : err}`);
