@@ -29,7 +29,7 @@ interface InboundPhaseData {
 
 ## 会话作用域匹配
 
-按会话作用域生效的相位插件（flow-control、trigger-policy）共用的纯函数。作用域写作 `platform:sessionType[:targetId]`，每段可写 `*` 或省略（均为通配）；插件配置约定 `scopes`（生效名单）与 `overrides`（分作用域覆盖，每项带 `scope` 与要覆盖的字段），写一条 override 即视为启用该作用域。`inferSessionScope` 用于消息上没有 sessionType 的场合（定时任务、委派等合成回合）：会话 ID 的这一约定来自适配器（如 OneBot），不是框架契约，推断结果只供调用方自己判断，不要写回消息（flow-control 用它给回复记账、给入站带 `source` 的内部注入判作用域，persona 用它写提示词里的会话类型）。
+按会话作用域生效的相位插件（flow-control、trigger-policy）共用的纯函数。作用域写作 `platform:sessionType[:targetId]`，每段可写 `*` 或省略（均为通配）；插件配置约定 `scopes`（生效名单）与 `overrides`（分作用域覆盖，每项带 `scope` 与要覆盖的字段），写一条 override 即视为启用该作用域。`inferSessionScope` 用于消息上没有 sessionType 的场合（定时任务、委派等合成回合）：会话 ID 的这一约定来自适配器（如 OneBot），不是框架契约，推断结果只供调用方自己判断，不要写回消息（flow-control 用它给回复记账、给入站不带会话类型的内部注入判作用域，persona 用它写提示词里的会话类型）。
 
 ```ts
 /** 群聊取 groupId，私聊取 userId，其他为空串 */
