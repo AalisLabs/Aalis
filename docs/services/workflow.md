@@ -308,7 +308,7 @@ await events.emit('trigger:fired', {
 - **同一并行层内不要让多个 agent 节点指向相同的显式 `sessionId`**：`agent:turn:after` 按 sessionId 匹配会串扰捕获（A 拿到 B 的回复）。需要隔离子任务就**省略 sessionId**，引擎自动生成一次性子会话 `workflow:agent:<runId>:<nodeId>`（`engine.ts`；契约 `AgentNodeSpec.sessionId` 的注释同此）。
 - `source` 含 nodeId（`workflow:<wf>:<nodeId>`）以隔离 agent 的并发 lane，避免同会话两回合互相 abort（`engine.ts`）。
 - 默认 `timeoutSeconds = 120`；超时或 `outcome=error/aborted` → 节点失败（`engine.ts`）。
-- 目标会话处于禁言期时，消息会被 flow 相位吞掉，节点会等满超时才失败。禁言期不看作用域一律吞；除此之外，带 `source` 的编排消息不经触发策略、不受冷却与限速，作用域不影响它（`engine.ts`）。
+- 目标会话处于禁言期时，消息会被 flow 相位吞掉，节点会等满超时才失败。禁言期不看作用域一律吞；除此之外，带 `source` 的编排消息不经触发策略、不受回复后冷却；限速只在目标会话落入 flow-control 作用域时生效（`engine.ts`）。
 
 ### 触发器全部委托 cron-engine
 

@@ -181,7 +181,11 @@ export interface IncomingMessage {
   _attachmentDescriptions?: Array<string | undefined>;
   /** 会话类型：群聊、私聊、频道等 */
   sessionType?: 'group' | 'private' | 'channel';
-  /** 消息来源标识（用于并发隔离：同一 session 不同来源互不打断） */
+  /**
+   * 系统侧注入者的来源标识（如 'idle-trigger'、'scheduler'、'workflow:<id>'、'proactive:from:<sid>'）。
+   * 平台适配器投递真人消息**不设置**此字段：带 source 的消息被视为内部注入——不经触发策略、
+   * 不过回复后冷却（禁言与限速照常生效）。同时用于并发隔离：同一 session 不同来源互不打断。
+   */
   source?: string;
   /** 群名称（仅群聊时可用） */
   groupName?: string;
