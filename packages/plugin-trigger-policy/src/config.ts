@@ -1,5 +1,9 @@
 // ----- 触发策略配置 -----
 
+export type IdleTriggerScope = 'off' | 'session' | 'platform';
+export type IdleTriggerStrategy = 'all-quiet' | 'fixed';
+export type IdleTriggerStyle = 'exponential' | 'fixed';
+
 export interface TriggerPolicyConfig {
   /**
    * 统一作用域名单：platform:sessionType[:targetId]，支持 *。
@@ -25,6 +29,26 @@ export interface TriggerPolicyConfig {
   muteKeywords: string[];
   /** mute 关键词命中时通知 flow-control 设置的禁言时长（秒） */
   muteTimeSeconds: number;
+
+  /** 固定间隔：每 N 条消息累计一次触发 */
+  fixedInterval: number;
+  /** 动态阈值上下限（刚触发后高、长时间未触发后低） */
+  activityScoreLower: number;
+  activityScoreUpper: number;
+  /** 阈值衰减分钟数：距上次触发越久，阈值越低 */
+  activityDecayMinutes: number;
+  /** 评分本身的衰减分钟数（0 表示评分不主动衰减） */
+  scoreDecayMinutes: number;
+
+  /** 闲置触发范围 */
+  idleTriggerScope: IdleTriggerScope;
+  idleTriggerStrategy: IdleTriggerStrategy;
+  idleTriggerMinutes: number;
+  idleTriggerStyle: IdleTriggerStyle;
+  idleTriggerMaxMinutes: number;
+  idleTriggerJitter: boolean;
+  /** 闲置触发注入的 system 提示文本 */
+  idleTriggerPrompt: string;
 }
 
 export interface TriggerScopeOverride {
@@ -35,6 +59,18 @@ export interface TriggerScopeOverride {
   triggerNames?: string[];
   muteKeywords?: string[];
   muteTimeSeconds?: number;
+  fixedInterval?: number;
+  activityScoreLower?: number;
+  activityScoreUpper?: number;
+  activityDecayMinutes?: number;
+  scoreDecayMinutes?: number;
+  idleTriggerScope?: IdleTriggerScope;
+  idleTriggerStrategy?: IdleTriggerStrategy;
+  idleTriggerMinutes?: number;
+  idleTriggerStyle?: IdleTriggerStyle;
+  idleTriggerMaxMinutes?: number;
+  idleTriggerJitter?: boolean;
+  idleTriggerPrompt?: string;
 }
 
 export const defaultTriggerPolicyConfig: TriggerPolicyConfig = {
@@ -46,6 +82,18 @@ export const defaultTriggerPolicyConfig: TriggerPolicyConfig = {
   triggerNames: [],
   muteKeywords: [],
   muteTimeSeconds: 60,
+  fixedInterval: 5,
+  activityScoreLower: 0.3,
+  activityScoreUpper: 0.85,
+  activityDecayMinutes: 10,
+  scoreDecayMinutes: 0,
+  idleTriggerScope: 'off',
+  idleTriggerStrategy: 'all-quiet',
+  idleTriggerMinutes: 180,
+  idleTriggerStyle: 'exponential',
+  idleTriggerMaxMinutes: 1440,
+  idleTriggerJitter: true,
+  idleTriggerPrompt: '',
 };
 
 function parseStringList(val: unknown): string[] {
@@ -76,6 +124,21 @@ export function resolveTriggerPolicyConfig(raw: Record<string, unknown>): Trigge
       typeof raw.muteTimeSeconds === 'number' && raw.muteTimeSeconds > 0
         ? Math.floor(raw.muteTimeSeconds)
         : d.muteTimeSeconds,
+    fixedInterval: (raw.fixedInterval as number) ?? d.fixedInterval,
+    activityScoreLower: (raw.activityScoreLower as number) ?? d.activityScoreLower,
+    activityScoreUpper: (raw.activityScoreUpper as number) ?? d.activityScoreUpper,
+    activityDecayMinutes: (raw.activityDecayMinutes as number) ?? d.activityDecayMinutes,
+    scoreDecayMinutes: (raw.scoreDecayMinutes as number) ?? d.scoreDecayMinutes,
+    idleTriggerScope: ((): IdleTriggerScope => {
+      const v = raw.idleTriggerScope;
+      return v === 'off' || v === 'session' || v === 'platform' ? v : d.idleTriggerScope;
+    })(),
+    idleTriggerStrategy: raw.idleTriggerStrategy === 'fixed' ? 'fixed' : 'all-quiet',
+    idleTriggerMinutes: (raw.idleTriggerMinutes as number) ?? d.idleTriggerMinutes,
+    idleTriggerStyle: (raw.idleTriggerStyle as IdleTriggerStyle) ?? d.idleTriggerStyle,
+    idleTriggerMaxMinutes: (raw.idleTriggerMaxMinutes as number) ?? d.idleTriggerMaxMinutes,
+    idleTriggerJitter: (raw.idleTriggerJitter as boolean) ?? d.idleTriggerJitter,
+    idleTriggerPrompt: (raw.idleTriggerPrompt as string) || d.idleTriggerPrompt,
   };
 }
 
@@ -105,6 +168,28 @@ function parseOverrides(raw: unknown): TriggerScopeOverride[] {
     if (typeof obj.muteTimeSeconds === 'number' && obj.muteTimeSeconds > 0) {
       o.muteTimeSeconds = Math.floor(obj.muteTimeSeconds);
     }
+    for (const k of [
+      'fixedInterval',
+      'activityScoreLower',
+      'activityScoreUpper',
+      'activityDecayMinutes',
+      'scoreDecayMinutes',
+      'idleTriggerMinutes',
+      'idleTriggerMaxMinutes',
+    ] as const) {
+      const v = obj[k];
+      if (typeof v === 'number') o[k] = v;
+    }
+    if (typeof obj.idleTriggerJitter === 'boolean') o.idleTriggerJitter = obj.idleTriggerJitter;
+    if (typeof obj.idleTriggerPrompt === 'string' && obj.idleTriggerPrompt !== '') {
+      o.idleTriggerPrompt = obj.idleTriggerPrompt;
+    }
+    const sScope = obj.idleTriggerScope;
+    if (sScope === 'off' || sScope === 'session' || sScope === 'platform') o.idleTriggerScope = sScope;
+    const sStrat = obj.idleTriggerStrategy;
+    if (sStrat === 'all-quiet' || sStrat === 'fixed') o.idleTriggerStrategy = sStrat;
+    const sStyle = obj.idleTriggerStyle;
+    if (sStyle === 'exponential' || sStyle === 'fixed') o.idleTriggerStyle = sStyle;
     out.push(o);
   }
   return out;

@@ -2,7 +2,7 @@
 //
 // Gateway 是 Aalis 的运行时编排中枢：
 //   - 入站：监听 `inbound:message`，按 INBOUND_PHASE_ORDER 顺序运行
-//           inbound:confirm → inbound:command → inbound:flow → inbound:trigger → inbound:dispatch
+//           inbound:confirm → inbound:command → inbound:trigger → inbound:flow → inbound:dispatch
 //           五个命名相位，dispatch 的默认动作是调用 agent.handleMessage。
 //           dispatch 之前任一相位被 swallow（handler 不调用 next）即停止后续调度。
 //   - 出站：提供 `dispatchOutbound()` 接口，运行 `outbound:dispatch` 钩子链，
@@ -20,7 +20,7 @@ import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
 /**
  * 入站相位共享数据结构
  *
- * 同一条消息在 `inbound:confirm` → `inbound:command` → `inbound:flow` → `inbound:trigger`
+ * 同一条消息在 `inbound:confirm` → `inbound:command` → `inbound:trigger` → `inbound:flow`
  * → `inbound:dispatch` 五个相位间被同一对象引用传递。
  */
 export interface InboundPhaseData {
@@ -113,8 +113,10 @@ export interface GatewayService {
  *   CONFIRM  → 会话内待确认回复拦截（Y/YS/否；由 plugin-session-confirm 占据）。命中即吞掉回复、
  *              不进入后续相位，从而**不触发 agent.handleMessage 对在途生成的 abort**（确认得以回送）。
  *   COMMAND  → 指令解析与执行（由 plugin-commands 占据）
- *   FLOW     → 流控前置闸门（禁言/冷却/限速；由 plugin-flow-control 占据）
- *   TRIGGER  → 触发策略判定（mute 关键词/@/计数评分；由 plugin-trigger-policy 占据）
+ *   TRIGGER  → 要不要开口：禁言关键词、@/戳一戳/名字直通、计数与评分判定，判定结果写入
+ *              message.triggerType（由 plugin-trigger-policy 占据）
+ *   FLOW     → 节流硬闸：禁言期一律吞；回复后冷却与限速只挡非 immediate 触发
+ *              （由 plugin-flow-control 占据）
  *   DISPATCH → 默认派发到 agent.handleMessage（plugin-gateway 提供 default action）
  *
  * 任一相位的 handler 不调用 next() 即视为"我已处理"，
@@ -129,8 +131,8 @@ export interface GatewayService {
 export const INBOUND_PHASE = {
   CONFIRM: 'inbound:confirm',
   COMMAND: 'inbound:command',
-  FLOW: 'inbound:flow',
   TRIGGER: 'inbound:trigger',
+  FLOW: 'inbound:flow',
   DISPATCH: 'inbound:dispatch',
 } as const;
 
@@ -138,8 +140,8 @@ export const INBOUND_PHASE = {
 export const INBOUND_PHASE_ORDER = [
   INBOUND_PHASE.CONFIRM,
   INBOUND_PHASE.COMMAND,
-  INBOUND_PHASE.FLOW,
   INBOUND_PHASE.TRIGGER,
+  INBOUND_PHASE.FLOW,
   INBOUND_PHASE.DISPATCH,
 ] as const;
 

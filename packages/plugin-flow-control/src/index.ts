@@ -1,23 +1,14 @@
-import { type FlowControlService, type FlowSessionStateSnapshot, flowControl } from '@aalis/api-flow-control';
-import { extractTargetId, gateway, INBOUND_PHASE, isScopeEnabled, resolveEffectiveConfig } from '@aalis/api-gateway';
+import { type FlowControlService, flowControl } from '@aalis/api-flow-control';
+import { extractTargetId, INBOUND_PHASE, isScopeEnabled, resolveEffectiveConfig } from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
 import { createStorageGateway, isStorageNotFound, storage } from '@aalis/api-storage';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import type { OutgoingMessage } from '@aalis/schema-message';
+import type { IncomingMessage, OutgoingMessage } from '@aalis/schema-message';
 import { defaultFlowControlConfig, type FlowControlConfig, resolveFlowControlConfig } from './config.js';
-import { clearSessionIdle, type IdleCaps, PlatformIdleScheduler, scheduleSessionIdle } from './idle-scheduler.js';
-import {
-  applyScoreDecay,
-  calculateScoreIncrement,
-  createState,
-  getCurrentThreshold,
-  type MutableFlowSessionState,
-  rateLimitUsedNow,
-  snapshot,
-} from './state.js';
+import { createState, type MutableFlowSessionState, rateLimitUsedNow, sweepStaleStates } from './state.js';
 
 // ----- 元数据 -----
 
@@ -29,20 +20,7 @@ const configSchema: ConfigSchema = {
     dynamicOptions: 'gateway-scopes',
     allowCustom: true,
     description:
-      '格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认 *:group 与历史 OneBot 行为一致。',
-  },
-  fixedInterval: { type: 'number', label: '固定间隔（每 N 条触发）', default: defaultFlowControlConfig.fixedInterval },
-  activityScoreLower: { type: 'number', label: '活跃指数下限', default: defaultFlowControlConfig.activityScoreLower },
-  activityScoreUpper: { type: 'number', label: '活跃指数上限', default: defaultFlowControlConfig.activityScoreUpper },
-  activityDecayMinutes: {
-    type: 'number',
-    label: '阈值衰减分钟',
-    default: defaultFlowControlConfig.activityDecayMinutes,
-  },
-  scoreDecayMinutes: {
-    type: 'number',
-    label: '评分衰减分钟（0=不衰减）',
-    default: defaultFlowControlConfig.scoreDecayMinutes,
+      '冷却与限速的生效范围。格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认 *:group 与历史 OneBot 行为一致。禁言不受此项限制。',
   },
   cooldownSeconds: { type: 'number', label: '回复后冷却（秒）', default: defaultFlowControlConfig.cooldownSeconds },
   rateLimitWindow: {
@@ -55,42 +33,6 @@ const configSchema: ConfigSchema = {
     label: '窗口内最大回复数',
     default: defaultFlowControlConfig.rateLimitMaxReplies,
   },
-  idleTriggerScope: {
-    type: 'select',
-    label: '闲置触发范围',
-    default: defaultFlowControlConfig.idleTriggerScope,
-    options: [
-      { label: 'off (关闭)', value: 'off' },
-      { label: 'session (每会话独立定时)', value: 'session' },
-      { label: 'platform (跨会话选举)', value: 'platform' },
-    ],
-  },
-  idleTriggerStrategy: {
-    type: 'select',
-    label: '闲置触发策略',
-    default: defaultFlowControlConfig.idleTriggerStrategy,
-    options: [
-      { label: 'all-quiet (所有会话都静默时)', value: 'all-quiet' },
-      { label: 'fixed (固定间隔)', value: 'fixed' },
-    ],
-  },
-  idleTriggerMinutes: { type: 'number', label: '闲置触发分钟', default: defaultFlowControlConfig.idleTriggerMinutes },
-  idleTriggerStyle: {
-    type: 'select',
-    label: '闲置触发风格',
-    default: defaultFlowControlConfig.idleTriggerStyle,
-    options: [
-      { label: 'exponential (指数退避)', value: 'exponential' },
-      { label: 'fixed (固定)', value: 'fixed' },
-    ],
-  },
-  idleTriggerMaxMinutes: {
-    type: 'number',
-    label: '闲置触发上限分钟',
-    default: defaultFlowControlConfig.idleTriggerMaxMinutes,
-  },
-  idleTriggerJitter: { type: 'boolean', label: '闲置触发抖动', default: defaultFlowControlConfig.idleTriggerJitter },
-  idleTriggerPrompt: { type: 'string', label: '闲置触发系统提示', default: defaultFlowControlConfig.idleTriggerPrompt },
   overrides: {
     type: 'array',
     label: '分作用域覆盖',
@@ -104,27 +46,9 @@ const configSchema: ConfigSchema = {
         description: '格式 platform:sessionType[:targetId]，支持 *',
         required: true,
       },
-      fixedInterval: { type: 'number', label: '固定间隔（每 N 条触发）' },
-      activityScoreLower: { type: 'number', label: '活跃指数下限' },
-      activityScoreUpper: { type: 'number', label: '活跃指数上限' },
-      activityDecayMinutes: { type: 'number', label: '阈值衰减分钟' },
-      scoreDecayMinutes: { type: 'number', label: '评分衰减分钟' },
       cooldownSeconds: { type: 'number', label: '回复后冷却（秒）' },
       rateLimitWindow: { type: 'number', label: '限速窗口（秒）' },
       rateLimitMaxReplies: { type: 'number', label: '窗口内最大回复数' },
-      idleTriggerScope: {
-        type: 'select',
-        label: '闲置触发范围',
-        options: [
-          { label: 'off', value: 'off' },
-          { label: 'session', value: 'session' },
-          { label: 'platform', value: 'platform' },
-        ],
-      },
-      idleTriggerMinutes: { type: 'number', label: '闲置触发分钟' },
-      idleTriggerMaxMinutes: { type: 'number', label: '闲置触发上限分钟' },
-      idleTriggerJitter: { type: 'boolean', label: '闲置触发抖动' },
-      idleTriggerPrompt: { type: 'string', label: '闲置触发系统提示' },
     },
   },
 };
@@ -138,7 +62,6 @@ const uses = {
   lifecycle,
   config,
   provide,
-  gateway,
   // 持久化禁言状态用；缺席时写失败只记 warn、流控照常跑；上线（含晚于本插件）时由 follow 读回，读不懂则本次运行拒写
   storage: optional(storage),
   messageArchive: optional(messageArchive),
@@ -159,12 +82,10 @@ async function run(caps: Caps): Promise<void> {
   const { logger, events, hooks, lifecycle, provide, messageArchive } = caps;
   const cfg = resolveFlowControlConfig(caps.config);
   const states = new Map<string, MutableFlowSessionState>();
-  const idleCaps: IdleCaps = { logger, events, gateway: caps.gateway };
-  const platformIdle = new PlatformIdleScheduler(idleCaps, cfg, states);
 
   // ===== mutedUntil 持久化（仅此字段） =====
-  // 其他运行时态（cooldownUntil/replyTimestamps/activityScore等）都是秒级短期，
-  // 重启后重建无危；但 mutedUntil 可能是小时级的「用户意图」，丢失会导致重启后静默解除。
+  // 冷却与限速都是秒级短期态，重启后重建无危；但 mutedUntil 可能是小时级的「用户意图」，
+  // 丢失会导致重启后静默解除。
   const storage = createStorageGateway(caps.storage);
   const muteStateUri = 'data:/flow-control-mutes.json';
   /**
@@ -257,6 +178,7 @@ async function run(caps: Caps): Promise<void> {
   // storage 已在线时 follow 是同步首挂：把读取等完再让 apply 返回；storage 晚上线时无从等待，仍异步
   if (loading) await loading;
 
+  /** 取或建状态：补全缺失的会话元数据（setMuted / 出站建出的状态可能缺 sessionType 等），刷新 lastSeenAt */
   function getOrCreate(sessionId: string, platform: string, sessionType = '', targetId = ''): MutableFlowSessionState {
     let s = states.get(sessionId);
     if (!s) {
@@ -266,28 +188,31 @@ async function run(caps: Caps): Promise<void> {
       if (!s.platform && platform) s.platform = platform;
       if (!s.sessionType && sessionType) s.sessionType = sessionType;
       if (!s.targetId && targetId) s.targetId = targetId;
+      s.lastSeenAt = Date.now();
     }
     return s;
   }
 
   /** 按 state 上下文解析生效 cfg（应用 overrides） */
-  function eff(s: MutableFlowSessionState | undefined): FlowControlConfig {
-    if (!s) return cfg;
+  function eff(s: MutableFlowSessionState): FlowControlConfig {
     return resolveEffectiveConfig(cfg, s.platform, s.sessionType, s.targetId);
   }
 
-  function logStatus(sessionId: string, s: MutableFlowSessionState, label: string): void {
+  /** agent 真实回复一次：设冷却、记限速时间戳 */
+  function recordReply(sessionId: string, platform: string): void {
+    const s = getOrCreate(sessionId, platform);
     const e = eff(s);
-    const threshold = getCurrentThreshold(s, e);
-    logger.debug(
-      `[flow] ${label} | session=${sessionId} | ` +
-        `计数=${s.messageCount}/${e.fixedInterval} | ` +
-        `指数=${s.activityScore.toFixed(3)} (阈值=${threshold.toFixed(3)})`,
-    );
+    const now = Date.now();
+    if (e.cooldownSeconds > 0) s.cooldownUntil = now + e.cooldownSeconds * 1000;
+    s.replyTimestamps.push(now);
+    // 裁剪：只留限速窗口内的，否则活跃会话会无界增长。限速关闭(window<=0)时根本不被读，直接清空。
+    s.replyTimestamps = e.rateLimitWindow > 0 ? s.replyTimestamps.filter(t => t > now - e.rateLimitWindow * 1000) : [];
   }
 
   /** 把"被流控吞掉"的入站消息归档到 message-archive，下次触发时作为上下文 */
-  async function shadowArchive(message: import('@aalis/schema-message').IncomingMessage): Promise<void> {
+  async function shadowArchive(message: IncomingMessage): Promise<void> {
+    // 闲置触发是合成的系统提示，不作为用户消息入档（与 agent 的归档规则一致）
+    if (message.source === 'idle-trigger') return;
     const archive = messageArchive.current;
     if (!archive) return;
     try {
@@ -300,53 +225,13 @@ async function run(caps: Caps): Promise<void> {
   // ===== Service 实现 =====
 
   const service: FlowControlService = {
-    getStateSnapshot(sessionId): FlowSessionStateSnapshot | undefined {
+    isMuted(sessionId) {
       const s = states.get(sessionId);
-      return s ? snapshot(s, eff(s)) : undefined;
-    },
-    recordIncoming(sessionId, platform, userId, sessionType, targetId) {
-      const s = getOrCreate(sessionId, platform, sessionType, targetId);
-      const e = eff(s);
-      const now = Date.now();
-      applyScoreDecay(s, e);
-      if (userId) {
-        const prev = s.userInteractions.get(userId) ?? { count: 0, lastTime: 0 };
-        s.userInteractions.set(userId, { count: prev.count + 1, lastTime: now });
-      }
-      s.lastMessageTime = now;
-      s.messageCount++;
-      s.activityScore += calculateScoreIncrement(s, e, userId);
-    },
-    recordTriggered(sessionId) {
-      const s = states.get(sessionId);
-      if (!s) return;
-      s.messageCount = 0;
-      s.activityScore = 0;
-      s.lastReplyTime = Date.now();
-      s.idleBackoff = 1;
-    },
-    recordReply(sessionId, platform) {
-      const s = getOrCreate(sessionId, platform);
-      const e = eff(s);
-      if (e.cooldownSeconds > 0) {
-        s.cooldownUntil = Date.now() + e.cooldownSeconds * 1000;
-      }
-      s.idleBackoff = 1;
-      const now = Date.now();
-      s.replyTimestamps.push(now);
-      // 裁剪：只留限速窗口内的，否则活跃会话(lastReplyTime 常新、够不着 TTL 清理)会无界增长。
-      // 限速关闭(window<=0)时 replyTimestamps 根本不被读，直接清空。
-      s.replyTimestamps =
-        e.rateLimitWindow > 0 ? s.replyTimestamps.filter(t => t > now - e.rateLimitWindow * 1000) : [];
-      this.rescheduleIdle(sessionId, platform);
+      return !!s && Date.now() < s.mutedUntil;
     },
     isCoolingDown(sessionId) {
       const s = states.get(sessionId);
       return !!s && Date.now() < s.cooldownUntil;
-    },
-    isMuted(sessionId) {
-      const s = states.get(sessionId);
-      return !!s && Date.now() < s.mutedUntil;
     },
     isRateLimited(sessionId) {
       const s = states.get(sessionId);
@@ -370,108 +255,74 @@ async function run(caps: Caps): Promise<void> {
         return;
       }
       s.mutedUntil = Date.now() + durationSec * 1000;
-      s.messageCount = 0;
-      s.activityScore = 0;
-      clearSessionIdle(s);
       saveMuteState();
       logger.info(`[flow] 已设置自禁言: session=${sessionId}, ${durationSec}s`);
-    },
-    getThreshold(sessionId) {
-      const s = states.get(sessionId);
-      if (!s) return cfg.activityScoreLower;
-      return getCurrentThreshold(s, eff(s));
-    },
-    rescheduleIdle(sessionId, platform) {
-      const s = states.get(sessionId);
-      if (!s) return;
-      scheduleSessionIdle(idleCaps, eff(s), s, sessionId, platform, () => this.rescheduleIdle(sessionId, platform));
     },
   };
 
   provide(flowControl, service);
 
   logger.info(
-    `[flow] 已启用 (固定间隔=${cfg.fixedInterval}, 阈值=${cfg.activityScoreLower}~${cfg.activityScoreUpper}, ` +
-      `冷却=${cfg.cooldownSeconds}s, 限速=${cfg.rateLimitWindow}s/${cfg.rateLimitMaxReplies}次, ` +
-      `idle=${cfg.idleTriggerScope}/${cfg.idleTriggerStrategy}, scopes=${cfg.scopes.join('|') || '<空>'}, ` +
-      `overrides=${cfg.overrides.length})`,
+    `[flow] 已启用 (冷却=${cfg.cooldownSeconds}s, 限速=${cfg.rateLimitWindow}s/${cfg.rateLimitMaxReplies}次, ` +
+      `scopes=${cfg.scopes.join('|') || '<空>'}, overrides=${cfg.overrides.length})`,
   );
 
-  // ===== inbound:flow 相位：流控前置闸门 =====
-  // 由 plugin-gateway 在 inbound:command 之后、inbound:trigger 之前触发。
-  // 默认 scopes=['*:group'] 与历史 OneBot ChatFlow 行为一致；
-  // overrides 中任一 scope 命中也视为启用（用于 *:private 等单独覆盖场景）。
+  // ===== inbound:flow 相位：节流硬闸 =====
+  // 由 plugin-gateway 在 inbound:trigger 之后、inbound:dispatch 之前触发，此时 trigger-policy
+  // 已判定要开口并写好 message.triggerType。
   hooks.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
     const { message } = data;
-    if (!isScopeEnabled(cfg, message.platform, message.sessionType, extractTargetId(message))) return next();
-    if (message.source === 'idle-trigger') return next(); // 内部注入不再过流控
+    const sessionId = message.sessionId;
 
-    const targetId = extractTargetId(message);
-    service.recordIncoming(message.sessionId, message.platform, message.userId, message.sessionType, targetId);
-
-    const s = states.get(message.sessionId)!;
-
+    // 禁言期一律吞：不看作用域、不看来源（idle、委派、调度消息同样不说话）。
+    // 禁言状态只由关键词或平台禁言针对具体会话写入，作用域之外的会话不会被误伤。
     // 禁言表可能还在读（storage 晚上线时 follow 补读）：读完再判禁言
     if (loading) await loading;
-    if (service.isMuted(message.sessionId)) {
-      // 禁言期不重置 idle timer：避免在禁言结束后被立即唤醒重复触发。
-      logStatus(message.sessionId, s, '禁言中 → 吞噬');
+    if (service.isMuted(sessionId)) {
+      logger.debug(`[flow] 禁言中 → 吞噬 | session=${sessionId}`);
       await shadowArchive(message);
       return; // swallow
     }
-    if (service.isCoolingDown(message.sessionId)) {
-      logStatus(message.sessionId, s, '冷却中 → 吞噬');
-      await shadowArchive(message);
-      service.rescheduleIdle(message.sessionId, message.platform);
-      return; // swallow
+
+    if (message.source === 'idle-trigger') return next(); // 闲置触发只受禁言约束
+    const targetId = extractTargetId(message);
+    if (!isScopeEnabled(cfg, message.platform, message.sessionType, targetId)) return next();
+
+    getOrCreate(sessionId, message.platform, message.sessionType, targetId);
+
+    // immediate（@/戳一戳/名字）穿透冷却与限速
+    if (message.triggerType !== 'immediate') {
+      if (service.isCoolingDown(sessionId)) {
+        logger.debug(`[flow] 冷却中 → 吞噬 | session=${sessionId}`);
+        await shadowArchive(message);
+        return; // swallow
+      }
+      if (service.isRateLimited(sessionId)) {
+        logger.debug(`[flow] 限速 → 吞噬 | session=${sessionId}`);
+        await shadowArchive(message);
+        return; // swallow
+      }
     }
-    if (service.isRateLimited(message.sessionId)) {
-      logStatus(message.sessionId, s, '限速 → 吞噬');
-      await shadowArchive(message);
-      service.rescheduleIdle(message.sessionId, message.platform);
-      return; // swallow
-    }
-    // 通过流控前置闸门：交给下一相位（inbound:trigger → inbound:dispatch）
     await next();
   });
 
-  // 出站消息后记录冷却 / 重置退避（同样仅对群会话计入流控）
+  // agent 真实回复后记冷却与限速。对任意会话生效：委派到私聊等从未入站过闸的目标也计入限速。
   events.on('outbound:message', (msg: OutgoingMessage) => {
     if (!msg.sessionId) return;
     if (msg.source !== 'agent') return; // 命令/系统回复不算"对话回复"
-    const s = states.get(msg.sessionId);
-    if (!s) return; // 没有 state 说明该 session 从未走过群流控（私聊/CLI 等），跳过
-    service.recordReply(msg.sessionId, s.platform);
+    recordReply(msg.sessionId, msg.platform ?? '');
   });
 
-  // 平台级 idle 启动
-  events.on('app:ready', () => {
-    platformIdle.start();
-  });
-
-  // 长寿进程下避免 states 无限增长：每天扫描一次，清理 30 天未活动且无禁言/冷却挂起的会话
-  const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+  // 长寿进程下避免 states 无限增长：每天扫描一次，清理 30 天未见且无禁言/冷却挂起的会话
   const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
   const sweepTimer = setInterval(() => {
-    const now = Date.now();
-    let cleaned = 0;
-    for (const [sid, s] of states) {
-      const lastActive = Math.max(s.lastMessageTime, s.lastReplyTime);
-      const hasPending = s.mutedUntil > now || s.cooldownUntil > now || !!s.idleTimer;
-      if (!hasPending && lastActive > 0 && now - lastActive > SESSION_TTL_MS) {
-        clearSessionIdle(s);
-        states.delete(sid);
-        cleaned++;
-      }
-    }
+    const cleaned = sweepStaleStates(states, Date.now());
     if (cleaned > 0) logger.debug(`[flow] TTL 清理已淘汰 ${cleaned} 个长期非活跃会话状态`);
   }, SWEEP_INTERVAL_MS);
   if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
 
   lifecycle.onDispose(async () => {
     clearInterval(sweepTimer);
-    platformIdle.stop();
-    for (const s of states.values()) clearSessionIdle(s);
     // 整表快照在写链里才取：先等排队的写落完再清表，否则清空后的空表会被写回磁盘
     await saveChain;
     states.clear();
