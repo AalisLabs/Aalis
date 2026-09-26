@@ -116,6 +116,22 @@ const target = resolveStorageByPath(storage, 'data:/foo', ['local-path']);
 | `api-contributions` | — | `contributions` | （定义该扩展点） | `Contributions`, `ContributionRegistry`, `ContributionSpec`, `ContributionHandle`；默认提供者 plugin-contributions |
 | `api-host-config` | — | `host-config` | — | `HostConfig`，配置文档类型 `AalisConfig`（declaration merging 目标）；由宿主提供 |
 | `api-plugin-source` | — | `plugin-source` | — | `PluginSourceService`；导出插件入口判定 `pluginDefinitionOf`；由宿主提供 |
+| `api-asr` | — | `asr` | — | `ASRService`, `TranscribeInput`, `TranscribeResult` |
+| `api-code-sandbox` | — | `code-sandbox` | — | `CodeSandboxService`, `SandboxPolicy`, `SandboxRunRequest`；默认提供者 plugin-code-sandbox-os |
+| `api-cron-engine` | — | `cron-engine` | — | `CronEngine`, `CronSubscribeOptions`；转出 `@aalis/util-cron` 的 `CronExprKind` / `ValidateResult` 类型 |
+| `api-doctor` | — | `doctor` | — | `DoctorService`, `CheckSpec`, `CheckResult`, `DoctorReport`；绑定门面 `registerCheck` |
+| `api-flow-control` | — | `flow-control` | — | `FlowControlService`, `FlowSessionStateSnapshot` |
+| `api-media` | — | `media` | — | `MediaService`, `MediaProcessor`, `MediaProcessReport` 等 |
+| `api-message-archive` | — | `message-archive` | — | `MessageArchiveService` |
+| `api-package-manager` | — | `package-manager` | — | `PackageManagerService`, `UpdateTarget`, `UpdateResult`；默认提供者 plugin-package-manager |
+| `api-persona` | — | `persona` | — | `PersonaService`, `OutputFormat`, `PersonaSessionOptions` |
+| `api-platform` | — | `platform` | — | `PlatformAdapter`, `PlatformConnection`；导出 `getPlatformAdapters` / `resolvePlatformBySession` / `sendPlatformMessage` 等 helper（吃 `ServiceRef`） |
+| `api-process` | — | `process` | — | `ProcessService`, `SpawnOptions`, `ExecResult`；导出 `createProcessGateway` / `makeTempDirViaStorage` helper |
+| `api-session-confirm` | — | `session-confirm` | — | `SessionConfirmService`, `ConfirmChannel` |
+| `api-session-history` | — | `session-history` | — | `SessionHistoryService`, `AccessChecker`；默认提供者 plugin-tool-session |
+| `api-session-manager` | — | `session-manager` | — | `SessionManagerService`, `SessionConfig`, `SessionInfo` |
+| `api-user-relation` | — | `user-relation` | — | `UserRelationService`；默认提供者 plugin-user-relation |
+| `api-workflow` | — | `workflow` | — | `WorkflowService`, `WorkflowDef`, `WorkflowRun`, `NodeSpec` 等 |
 
 ## 何时需要新建 api 包
 

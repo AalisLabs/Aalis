@@ -3,9 +3,9 @@ import type { ConfigSchema } from '@aalis/schema-config';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type AalisConfig, type HostConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
 import { assertValidInstanceId } from '../../packages/core/src/composition/plugin-definition.js';
-import { type App, appService, config, definePlugin, pluginsService } from '../../packages/core/src/index.js';
+import { App, appService, config, definePlugin, pluginsService } from '../../packages/core/src/index.js';
 import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/routes/plugins.js';
-import type { ConfigStore } from '../../packages/runtime/src/config-store.js';
+import { type ConfigStore, createConfigStore, installHostConfig } from '../../packages/runtime/src/config-store.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
 
@@ -221,6 +221,48 @@ describe('PUT /api/plugins/:name/config 与 watch 路径对齐', () => {
       removed: ['legacyKnob'],
     });
     expect(Object.hasOwn(store.getPluginConfig('target'), 'legacyKnob'), '照现有政策从文件删除').toBe(false);
+  });
+});
+
+describe('PUT /api/plugins/:name/config 按宿主的裁剪政策', () => {
+  it('宿主保留未知字段（trimUnknownFields=false）：WebUI 同样不裁、不附「已忽略」，原样再存判为无改动', async () => {
+    const store = createConfigStore({
+      name: 'T',
+      logLevel: 'error',
+      plugins: { target: { apiKey: 'sk-PLACEHOLDER', timeoutMs: 30000, legacyKnob: 1 } },
+    });
+    const app = new App({ name: 'T', logLevel: 'error', logger: silentLogger() });
+    apps.push(app);
+    installHostConfig(app, store, { trimUnknownFields: false });
+    let applies = 0;
+    await registerFromDoc(
+      app,
+      store,
+      definePlugin({
+        name: 'target',
+        configSchema: SCHEMA,
+        apply() {
+          applies++;
+        },
+      }),
+    );
+    await app.plugins.idle();
+    const bound = app.bind({ app: appService, plugins: pluginsService, hostConfig });
+    const host = bound.hostConfig.require();
+    expect(host.trimUnknownFields, 'host-config 如实声明宿主的裁剪政策').toBe(false);
+    const api = attachRoutes({ app: bound.app.require(), plugins: bound.plugins.require(), hostConfig: host });
+
+    const reply = await api.putPlugin('target', { timeoutMs: 60000, sneaky: true });
+    expect(reply.body).toEqual({ ok: true, message: '插件 target 配置已更新', ignored: [], removed: [] });
+    expect(store.getPluginConfig('target')).toMatchObject({ legacyKnob: 1, sneaky: true, timeoutMs: 60000 });
+    await app.plugins.idle();
+    expect(app.plugins.getPlugin('target')?.config).toMatchObject({ legacyKnob: 1, sneaky: true });
+
+    // 未知字段同在比较里：原样再存判为无改动，不重建插件
+    const before = applies;
+    const again = await api.putPlugin('target', { ...store.getPluginConfig('target') });
+    expect((again.body as { message: string }).message).toBe('插件 target 配置无改动，已写回配置文件');
+    expect(applies).toBe(before);
   });
 });
 

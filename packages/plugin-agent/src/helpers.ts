@@ -204,3 +204,15 @@ export function toPersonaOptions(
     systemPromptExtra: resolved.systemPromptExtra,
   };
 }
+
+/**
+ * 调试日志里的工具参数。参数经 `agent:tool:before` 钩子后可能含 JSON 序列化不了的值（BigInt、循环引用），
+ * 序列化失败时回落为说明文字：日志不能让工具调用失败。
+ */
+export function formatToolArgsForLog(args: unknown): string {
+  try {
+    return JSON.stringify(args);
+  } catch (err) {
+    return `（无法序列化：${err instanceof Error ? err.message : '未知原因'}）`;
+  }
+}

@@ -29,6 +29,12 @@ export interface PackageManagerService {
    */
   serviceDependents(name: string): string[];
   /**
+   * 安装与更新实际使用的 npm 源：在项目根执行 `npm config get registry` 的结果（去掉尾部斜杠），首次成功后缓存。
+   * 查询失败时拒绝且不缓存，下次调用重查。市场的最新版与「可更新」按它查，才与真正装到的版本一致；
+   * 作用域源（`@scope:registry`）不在此列。
+   */
+  registry(): Promise<string>;
+  /**
    * 批量更新到指定版本，随后重启进程接管。
    *
    * **必须整批提交**，不能每个包各调一次：
@@ -42,7 +48,7 @@ export interface PackageManagerService {
   update(targets: UpdateTarget[]): Promise<UpdateResult>;
 }
 
-/** 一个待更新目标：包名 + 目标版本（不带范围符，由调用方从市场卡片取 npm latest）。 */
+/** 一个待更新目标：包名 + 目标版本（不带范围符，由调用方从市场卡片取安装源上的 latest）。 */
 export interface UpdateTarget {
   name: string;
   version: string;

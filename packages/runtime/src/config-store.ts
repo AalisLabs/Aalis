@@ -10,6 +10,7 @@
 import { type AalisConfig, type HostConfig, hostConfig, isConfigSaveRefused } from '@aalis/api-host-config';
 import { type App, events, provide, services } from '@aalis/core';
 import { cloneConfigObject, isUnsafeConfigKey } from '@aalis/schema-config';
+import type { ConfigSyncOptions } from './config-sync.js';
 
 /**
  * 配置提供者：负责持久化层。文档由宿主在构造前自己加载好传入，provider 不必提供 load()。
@@ -30,8 +31,9 @@ export interface ConfigProvider {
  * `persist()` 是裸落盘，不记日志，兑现值表示是否交给了 provider 落盘（provider 不提供 save 时为 false），
  * 失败原样以拒绝传出。插件拿到的 `save()` 由 {@link installHostConfig}
  * 包上日志与「拒绝已处理」，两者名字不同，本对象因此不能被误当成 HostConfig 直接交出去。
+ * 裁剪政策 `trimUnknownFields` 是宿主的同步政策、不属文档，同样由 {@link installHostConfig} 填入。
  */
-export interface ConfigStore extends Omit<HostConfig, 'save'> {
+export interface ConfigStore extends Omit<HostConfig, 'save' | 'trimUnknownFields'> {
   persist(): Promise<boolean>;
   /** 订阅外部变更（新快照已过同一道闸替换进文档后回调）；单订阅者，返回退订 */
   watch(onChange: () => void): () => void;
@@ -118,14 +120,17 @@ export function createConfigStore(initial: Partial<AalisConfig>, provider?: Conf
 /**
  * 把文档接到 App：以 host-config 服务独占登记在根激活上，应用文档里的服务偏好，
  * 并在服务上线时记录它有无用户偏好。须在注册任何插件之前调用，偏好才先于全部提供者生效。
+ * `opts` 传交给配置同步（withPluginConfigSync / installConfigHotReload）的同一份：host-config 的
+ * `trimUnknownFields` 据此声明宿主的裁剪政策（缺省与配置同步一样按裁剪）。
  */
-export function installHostConfig(app: App, store: ConfigStore): void {
+export function installHostConfig(app: App, store: ConfigStore, opts?: ConfigSyncOptions): void {
   const host = app.bind({ events, provide, services });
   const { persist, watch: _watch, unwatch: _unwatch, ...doc } = store;
   host.provide(
     hostConfig,
     {
       ...doc,
+      trimUnknownFields: opts?.trimUnknownFields ?? true,
       // 失败在这里记一笔并标记已处理：不 await 的调用方不会因一次落盘失败变成未处理拒绝、被宿主当致命错误退出
       save: () => {
         const done = (async () => {

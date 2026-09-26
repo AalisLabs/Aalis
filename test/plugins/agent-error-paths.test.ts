@@ -4,7 +4,7 @@ import { hooks } from '../../packages/api-hooks/src/index.js';
 import type { ChatModelRequest, ChatResponse } from '../../packages/api-llm/src/index.js';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { tools } from '../../packages/api-tools/src/index.js';
-import { App, events, type PluginDefinition } from '../../packages/core/src/index.js';
+import { App, events, type Logger, type PluginDefinition } from '../../packages/core/src/index.js';
 import agentPlugin from '../../packages/plugin-agent/src/index.js';
 import memoryInMemoryPlugin from '../../packages/plugin-memory-inmemory/src/index.js';
 import messageArchivePlugin from '../../packages/plugin-message-archive/src/index.js';
@@ -322,5 +322,53 @@ describe('agent 错误路径：并行工具批次里单点异常不连坐', () =
     });
     expectWholeGroupKept(r);
     expect(r.guardedResult).toContain('权限不足');
+  });
+});
+
+describe('agent 错误路径：调试日志序列化不了工具参数', () => {
+  it('钩子往参数里放了 BigInt：调试日志回落为说明文字，工具照常执行', async () => {
+    const logs: string[] = [];
+    const push = (message: string) => {
+      logs.push(message);
+    };
+    const logger = { debug: push, info: push, warn: push, error: push, child: () => logger } as unknown as Logger;
+    const app = new App({ name: 'E2E', logLevel: 'debug', logger });
+    const recorder: ChatModelRequest[] = [];
+    const call: ChatResponse = {
+      content: null,
+      toolCalls: [{ id: 'call-big', type: 'function', function: { name: 'probe', arguments: '{"id":1}' } }],
+    };
+    await bootAgentStack(app, createMockLLMPlugin({ responses: [call, { content: '已收到' }], recorder }), true);
+    const host = app.bind({ agent, tools, hooks });
+
+    const big = BigInt('100000000000000000000');
+    host.hooks.middleware('agent:tool:before', async (data, next) => {
+      data.args.id = big;
+      await next();
+    });
+    let seen: unknown;
+    host.tools.register({
+      definition: {
+        type: 'function',
+        function: { name: 'probe', description: '探针', parameters: { type: 'object', properties: {} } },
+      },
+      handler: async args => {
+        seen = args.id;
+        return { content: '{"ok":true}' };
+      },
+    });
+
+    await host.agent.require().handleMessage({
+      content: '调工具',
+      sessionId: 'test:bigint-tool-args',
+      platform: 'test',
+      userId: 'u1',
+      sessionType: 'private',
+    });
+    await app.stop();
+
+    expect(seen, '工具应照常执行，拿到钩子改过的参数').toBe(big);
+    expect(recorder[1]?.messages.find(m => m.role === 'tool')?.content).toBe('{"ok":true}');
+    expect(logs.filter(l => /^工具执行: probe 参数=（无法序列化：.*BigInt.*）$/.test(l))).toHaveLength(1);
   });
 });

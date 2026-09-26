@@ -7,6 +7,7 @@ import {
   classifySystemComponent,
   findPackageDependents,
   type LocalPkgInfo,
+  matchesQuery,
   resolveLocalInfo,
   type SystemComponent,
   sortSystemComponents,
@@ -47,10 +48,12 @@ describe('toMarketplacePackages（响应映射 + 已装 + 官方标注 + 富信�
   };
 
   it('映射字段 + 已装标注 + @aalis scope 判官方（无 keyword 时为空数组）', () => {
-    const pkgs = toMarketplacePackages(resp, new Set(['@aalis/plugin-foo']));
+    // version 取安装源上的最新版，检索结果自带的 1.2.0 不用；安装源查不到的为空串
+    const latest = (n: string) => (n === '@aalis/plugin-foo' ? '1.3.0' : undefined);
+    const pkgs = toMarketplacePackages(resp, new Set(['@aalis/plugin-foo']), latest);
     expect(pkgs[0]).toMatchObject({
       name: '@aalis/plugin-foo',
-      version: '1.2.0',
+      version: '1.3.0',
       description: 'Foo',
       author: 'alice',
       installed: true,
@@ -59,7 +62,7 @@ describe('toMarketplacePackages（响应映射 + 已装 + 官方标注 + 富信�
     });
     expect(pkgs[1]).toMatchObject({
       name: 'someone-aalis-plugin-bar',
-      version: '0.1.0',
+      version: '',
       description: '',
       installed: false,
       official: false, // 非 @aalis scope = 社区
@@ -86,7 +89,7 @@ describe('toMarketplacePackages（响应映射 + 已装 + 官方标注 + 富信�
         },
       ],
     };
-    const [p] = toMarketplacePackages(rich, new Set());
+    const [p] = toMarketplacePackages(rich, new Set(), () => undefined);
     expect(p.keywords).toEqual(['memory', 'vector']); // aalis-plugin 被剔除
     expect(p.downloads).toBe(12345);
     expect(p.updated).toBe('2026-06-01T00:00:00.000Z'); // updated 优先于 package.date
@@ -97,8 +100,8 @@ describe('toMarketplacePackages（响应映射 + 已装 + 官方标注 + 富信�
   });
 
   it('空响应返回空数组（降级安全）', () => {
-    expect(toMarketplacePackages({}, new Set())).toEqual([]);
-    expect(toMarketplacePackages({ objects: [] }, new Set())).toEqual([]);
+    expect(toMarketplacePackages({}, new Set(), () => undefined)).toEqual([]);
+    expect(toMarketplacePackages({ objects: [] }, new Set(), () => undefined)).toEqual([]);
   });
 });
 
@@ -262,7 +265,11 @@ describe('classifyPackage（按类型关键词分类）', () => {
     expect(out.has('@aalis/plugin-webui-client')).toBe(true);
     expect(out.has('@aalis/plugin-x')).toBe(false); // 未装
     // 用于 toMarketplacePackages 时，api/client installed=true
-    const pkgs = toMarketplacePackages({ objects: names.map(n => ({ package: { name: n, version: '1.0.0' } })) }, out);
+    const pkgs = toMarketplacePackages(
+      { objects: names.map(n => ({ package: { name: n, version: '1.0.0' } })) },
+      out,
+      () => undefined,
+    );
     expect(pkgs.find(p => p.name === '@aalis/api-llm')?.installed).toBe(true);
     expect(pkgs.find(p => p.name === '@aalis/plugin-x')?.installed).toBe(false);
   });
@@ -277,6 +284,7 @@ describe('classifyPackage（按类型关键词分类）', () => {
         ],
       },
       new Set(),
+      () => undefined,
     );
     expect(pkgs.map(p => p.category)).toEqual(['plugin', 'api', 'interface']);
   });
@@ -369,23 +377,60 @@ describe('toMarketplacePackages 的本地实况注入', () => {
     ],
   };
 
-  it('version 保持 npm latest，resolved 才是本地已装版本——两者不可混同', () => {
-    const pkgs = toMarketplacePackages(data, new Set(['@aalis/plugin-x']), name =>
-      name === '@aalis/plugin-x' ? { version: '1.0.0', request: '^1.0.0', origin: 'registry' } : undefined,
-    );
+  const localX = (name: string): LocalPkgInfo | undefined =>
+    name === '@aalis/plugin-x' ? { version: '1.0.0', request: '^1.0.0', origin: 'registry' } : undefined;
+
+  it('version 是安装源上的 latest，resolved 才是本地已装版本——两者不可混同', () => {
+    const pkgs = toMarketplacePackages(data, new Set(['@aalis/plugin-x']), () => '1.2.0', localX);
     const x = pkgs.find(p => p.name === '@aalis/plugin-x');
-    expect(x?.version, 'version 必须仍是 npm latest').toBe('1.2.0');
+    expect(x?.version, 'version 必须是安装源上的 latest').toBe('1.2.0');
     expect(x?.resolved, 'resolved 必须是本地已装版本').toBe('1.0.0');
   });
 
+  it('可更新按安装源上的 latest 判：检索源版本更新、安装源还没有时不可更新', () => {
+    // 检索结果说 1.2.0，安装源（镜像未同步）的 latest 仍是本地的 1.0.0：更新只会装回 1.0.0
+    const lagging = toMarketplacePackages(data, new Set(['@aalis/plugin-x']), () => '1.0.0', localX);
+    expect(lagging.find(p => p.name === '@aalis/plugin-x')).toMatchObject({ version: '1.0.0', updatable: false });
+    const synced = toMarketplacePackages(data, new Set(['@aalis/plugin-x']), () => '1.1.0', localX);
+    expect(synced.find(p => p.name === '@aalis/plugin-x')).toMatchObject({ version: '1.1.0', updatable: true });
+  });
+
+  it('安装源查不到 latest：version 为空串、不可更新，不拿检索结果的版本号补', () => {
+    const pkgs = toMarketplacePackages(data, new Set(['@aalis/plugin-x']), () => undefined, localX);
+    expect(pkgs.find(p => p.name === '@aalis/plugin-x')).toMatchObject({ version: '', updatable: false });
+  });
+
   it('未装的包没有 resolved / origin（前端据此不显示任何版本落后提示）', () => {
-    const pkgs = toMarketplacePackages(data, new Set(), () => undefined);
+    const pkgs = toMarketplacePackages(
+      data,
+      new Set(),
+      () => '1.2.0',
+      () => undefined,
+    );
     expect(pkgs.every(p => p.resolved === undefined && p.origin === undefined)).toBe(true);
   });
 
-  it('不给 localOf 时保持旧行为（缺省参数，老调用点不受影响）', () => {
-    const pkgs = toMarketplacePackages(data, new Set(['@aalis/plugin-x']));
+  it('不给 localOf 时卡片没有 resolved（缺省参数）', () => {
+    const pkgs = toMarketplacePackages(data, new Set(['@aalis/plugin-x']), () => '1.2.0');
     expect(pkgs.find(p => p.name === '@aalis/plugin-x')?.resolved).toBeUndefined();
+  });
+});
+
+describe('matchesQuery（检索结果按搜索词本地过滤）', () => {
+  const pkg = { name: '@aalis/plugin-memory-vector', description: 'Vector recall', keywords: ['aalis-plugin', 'rag'] };
+
+  it('在包名、描述、关键词里做不区分大小写的包含匹配', () => {
+    expect(matchesQuery(pkg, 'memory')).toBe(true);
+    expect(matchesQuery(pkg, 'RECALL')).toBe(true);
+    expect(matchesQuery(pkg, 'rag')).toBe(true);
+    expect(matchesQuery(pkg, 'browser')).toBe(false);
+  });
+
+  it('空格分词后每个词都要命中；空搜索词全部保留', () => {
+    expect(matchesQuery(pkg, 'vector rag')).toBe(true);
+    expect(matchesQuery(pkg, 'vector browser')).toBe(false);
+    expect(matchesQuery(pkg, '')).toBe(true);
+    expect(matchesQuery({ name: 'x' }, '  ')).toBe(true);
   });
 });
 

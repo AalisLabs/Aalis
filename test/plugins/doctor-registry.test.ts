@@ -179,7 +179,7 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
     const report = await doctor.runChecks();
     const pending = report.checks.find(c => c.id === 'plugins.pending');
     expect(pending?.level).toBe('warn');
-    expect(pending?.detail).toBe('zz-doctor-pending-probe: 缺少 zz-doctor-missing-a、zz-doctor-missing-b');
+    expect(pending?.detail).toBe('zz-doctor-pending-probe: 缺少服务: zz-doctor-missing-a、zz-doctor-missing-b');
     await app.stop();
   });
 
@@ -210,7 +210,7 @@ describe('plugin-doctor — 开放检查项注册中心', () => {
 
     const pending = (await doctor.runChecks()).checks.find(c => c.id === 'plugins.pending');
     expect(pending?.detail).toBe(
-      'zz-doctor-waiting-probe: 缺少 zz-doctor-missing-c；等待 zz-doctor-slow-provider 激活完成',
+      'zz-doctor-waiting-probe: 缺少服务: zz-doctor-missing-c；等待 zz-doctor-slow-provider 激活完成',
     );
     release();
     await app.stop();

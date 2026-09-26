@@ -145,7 +145,14 @@ it('服务目录与偏好校验：核心服务可见，偏好只认已登记的�
     const install = vi.fn(async (_name: string) => refused);
     const uninstall = vi.fn(async (_name: string) => refused);
     const update = vi.fn(async (_targets: unknown) => refused);
-    host.provide(packageManager, { serviceDependents, install, uninstall, update } as unknown as PackageManagerService);
+    host.provide(packageManager, {
+      serviceDependents,
+      install,
+      uninstall,
+      update,
+      // 依赖图里未安装包的 packument 向安装源查：这里让安装源与检索源同址
+      registry: async () => 'https://registry.example.invalid',
+    } as unknown as PackageManagerService);
     for (const [path, body] of marketCalls) {
       const reply = await market(path, body);
       expect(reply.status, path).toBe(200);

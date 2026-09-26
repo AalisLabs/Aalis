@@ -24,7 +24,13 @@ import { createStorageGateway, storage as storageService } from '@aalis/api-stor
 import { tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import { clearDescriptionCache, flushDescriptionCache, loadDescriptionCache } from './cache.js';
+import {
+  clearDescriptionCache,
+  DESCRIPTION_KINDS,
+  type DescriptionKind,
+  flushDescriptionCache,
+  loadDescriptionCache,
+} from './cache.js';
 import { DEFAULT_AUDIO_PROMPT, DEFAULT_VISION_BATCH_PROMPT, DEFAULT_VISION_PROMPT } from './llm-adapter.js';
 import { buildPreprocessor } from './preprocessor.js';
 import { setMediaRuntime } from './runtime.js';
@@ -32,6 +38,9 @@ import { type MediaConfigResolved, MediaServiceImpl } from './service.js';
 import { registerMediaTools } from './tools.js';
 
 const name = '@aalis/plugin-media';
+
+/** /clear 回执里描述缓存类型的称呼 */
+const DESCRIPTION_KIND_LABELS: Record<DescriptionKind, string> = { image: '图片', video: '视频' };
 
 const configSchema: ConfigSchema = {
   vision: {
@@ -315,23 +324,26 @@ function run(caps: Caps): void {
   });
   caps.lifecycle.onDispose(() => flushDescriptionCache());
 
-  // 参与 memory:clear（/clear 与删除会话）：描述缓存归入 image 类型。全局清理清空内存条目与别名并删掉快照；
+  // 参与 memory:clear（/clear 与删除会话）：视频描述（describeVideo 写入）归 video 类型，其余描述归 image 类型，
+  // 按所选类型清理。全局清理删掉所选类型的内存条目与别名，两类都清时删掉快照、只清一类时重写快照；
   // 会话级只删带本会话语境的描述（以含会话目录的落盘路径为键），内容哈希键跨会话共享、无从按会话归属，保留。
   caps.hooks.middleware('memory:clear', async (data, next) => {
     const sessionDir = data.scope === 'all' ? undefined : data.sessionId?.replace(/[:/\\]/g, '_');
-    if ((!data.types || data.types.includes('image')) && (data.scope === 'all' || sessionDir)) {
+    const kinds = DESCRIPTION_KINDS.filter(k => !data.types || data.types.includes(k));
+    if (kinds.length > 0 && (data.scope === 'all' || sessionDir)) {
+      const label = kinds.map(k => DESCRIPTION_KIND_LABELS[k]).join('与');
       try {
-        const removed = await clearDescriptionCache(sessionDir);
+        const removed = await clearDescriptionCache(sessionDir, kinds);
         data.results.push({
           source: 'media-description',
           success: true,
           message: sessionDir
-            ? `当前会话图片描述缓存已清空（${removed} 条）`
-            : `所有图片描述缓存已清空（${removed} 条）`,
+            ? `当前会话${label}描述缓存已清空（${removed} 条）`
+            : `所有${label}描述缓存已清空（${removed} 条）`,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        data.results.push({ source: 'media-description', success: false, message: `图片描述缓存清空失败: ${msg}` });
+        data.results.push({ source: 'media-description', success: false, message: `${label}描述缓存清空失败: ${msg}` });
       }
     }
     await next();

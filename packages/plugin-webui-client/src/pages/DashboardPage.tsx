@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Sparkles, Zap, AlertTriangle, Wrench, Bot, Command } from 'lucide-react';
+import { Sparkles, Zap, AlertTriangle, Wrench, Bot, Command, Hourglass } from 'lucide-react';
 import { api } from '../api';
 import { ServiceCard } from '../components/ServiceCard';
 import type { SystemStatus, PluginInfo, ServiceInfo, ToolGroupDetail } from '../types';
@@ -30,6 +30,8 @@ export function DashboardPage({
   onRefreshServices?: () => void;
 }) {
   const activeCount = plugins.filter(p => p.state === 'active').length;
+  // 仍在激活（含超过慢激活阈值、转入后台的）：既不算活跃也不算出错，单列出来，免得总数对不上
+  const activatingCount = plugins.filter(p => p.state === 'activating').length;
   const errorCount = plugins.filter(p => p.state === 'error').length;
   const totalCount = plugins.length;
   const [toolGroups, setToolGroups] = useState<ToolGroupDetail[]>([]);
@@ -98,6 +100,15 @@ export function DashboardPage({
             <div className="overview-card-value">{activeCount} / {totalCount}</div>
           </div>
         </div>
+        {activatingCount > 0 && (
+          <div className="overview-card">
+            <div className="overview-card-icon"><Hourglass size={20} /></div>
+            <div className="overview-card-body">
+              <div className="overview-card-label">激活中插件</div>
+              <div className="overview-card-value">{activatingCount}</div>
+            </div>
+          </div>
+        )}
         {errorCount > 0 && (
           <div className="overview-card overview-card-error">
             <div className="overview-card-icon"><AlertTriangle size={20} /></div>

@@ -245,7 +245,7 @@ function registerBuiltinChecks(
           else missing.push(svc);
         }
         const reasons = [
-          ...(missing.length > 0 ? [`缺少 ${missing.join('、')}`] : []),
+          ...(missing.length > 0 ? [`缺少服务: ${missing.join('、')}`] : []),
           ...[...waiting].map(id => `等待 ${id} 激活完成`),
         ];
         return reasons.length > 0 ? `${p.instanceId}: ${reasons.join('；')}` : p.instanceId;

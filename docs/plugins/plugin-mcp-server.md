@@ -83,7 +83,7 @@ MCP 协议不传 session / user 概念，server 每次调用注入合成 `ToolCa
 
 ## 依赖
 
-- `@modelcontextprotocol/sdk` ^1.0.4
+- `@modelcontextprotocol/sdk` ^1.29.0
 - uses required: `tools`
 
 ## 已知限制

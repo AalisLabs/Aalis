@@ -21,6 +21,9 @@ function makeApp(pluginsConfig: Record<string, Record<string, unknown>>, disable
   return hostedApp({ plugins: pluginsConfig, disabledPlugins });
 }
 
+/** 不发现任何插件的加载器：热重载登记后缀实例时取注册表里已登记的定义，用不到加载器 */
+const NO_PLUGINS: PluginLoader = { discover: async () => [], load: async () => null };
+
 const p1Module = definePlugin({
   name: 'p1',
   configSchema: { known: { type: 'number', label: 'K', default: 0 } },
@@ -376,7 +379,7 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
     expect(seen).toEqual({ known: 1 });
 
     await app.start();
-    installConfigHotReload(app, store);
+    installConfigHotReload(app, store, createPluginDiscovery(app, NO_PLUGINS, store));
 
     // 模拟外部把 schema 外字段写进配置文件
     pushSnapshot?.({ name: 'T', logLevel: 'error', plugins: { p1: { known: 2, sneaky: true } } });
@@ -394,7 +397,7 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
     await app.stop();
   });
 
-  it('外部新增已登记模块的后缀实例：热重载先按政策补默认值，随后热扫描登记时首次 apply 即带默认值', async () => {
+  it('外部新增已登记模块的后缀实例：热重载按政策补默认值后直接登记，首次 apply 即带默认值', async () => {
     let push: ((next: Record<string, unknown>) => void) | undefined;
     const { app, store } = hostedApp(
       {},
@@ -429,7 +432,7 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
     const discovery = createPluginDiscovery(app, prepared.loader, store);
     await discovery.loadAll();
     prepared.finishInitialLoad();
-    installConfigHotReload(app, store);
+    installConfigHotReload(app, store, discovery);
 
     // 模拟外部编辑：给已登记的 reusable 模块加一个只写了半块嵌套组的实例
     push?.({
@@ -437,18 +440,18 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
       logLevel: 'error',
       plugins: { multi: store.getPluginConfig('multi'), 'multi:b': { server: {} } },
     });
+    // 不经热扫描：watch 回调同步进入重载，其间没有卸载与 bounce 要等，登记在首个 await 前已落账，idle 等到它激活
     await app.plugins.idle();
     const expected = { port: 8080, server: { host: 'localhost' } };
     expect(store.getPluginConfig('multi:b')).toEqual(expected);
-
-    await discovery.rescan();
-    await app.plugins.idle();
+    expect(app.plugins.getPlugin('multi:b')?.state).toBe('active');
     expect(app.plugins.getPlugin('multi:b')?.config).toEqual(expected);
-    expect(seen.at(-1)).toEqual(expected);
+    // 主实例冷启动 apply 一次；后缀实例登记即带规范化后的配置，也只 apply 一次
+    expect(seen).toEqual([expected, expected]);
     await app.stop();
   });
 
-  describe('文件里没有配置段的后缀实例：重载以文件为准，卸载', () => {
+  describe('后缀实例以配置文件为准：没有配置段的卸载，重新出现的登记', () => {
     function fixture(plugins: Record<string, Record<string, unknown>>) {
       let push: ((next: Record<string, unknown>) => void) | undefined;
       const saved: Array<{ plugins: Record<string, unknown> }> = [];
@@ -476,9 +479,10 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
         apply() {},
       });
       // 与 installConfigHotReload 同一接线，另外留住这次重载的 Promise，等它整段走完再断言
+      const discovery = createPluginDiscovery(app, NO_PLUGINS, store);
       let reloading: Promise<void> = Promise.resolve();
       store.watch(() => {
-        reloading = handleConfigChanged(app, store);
+        reloading = handleConfigChanged(app, store, discovery);
       });
       async function fileChanged(next: Record<string, Record<string, unknown>>) {
         push?.({ name: 'T', logLevel: 'error', plugins: next });
@@ -505,6 +509,23 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
       await f.app.stop();
     });
 
+    it('WebUI 删除后未能落盘的实例：配置段仍在文件里，修好配置文件后热重载按文件重新登记', async () => {
+      const f = fixture({ multi: { port: 8081 }, 'multi:b': { port: 9000, tag: 'mine' } });
+      await registerFromDoc(f.app, f.store, f.multi);
+      await registerFromDoc(f.app, f.store, f.multi, 'multi:b');
+      await f.app.plugins.idle();
+      // 与 WebUI 删实例同一编排：先卸载，再移除配置段与禁用标记；随后落盘被拒，配置文件里仍有这一段
+      await f.app.plugins.unload('multi:b');
+      f.store.removePluginConfig('multi:b');
+      f.store.setPluginEnabled('multi:b', true);
+      expect(f.app.plugins.getPlugin('multi:b')).toBeUndefined();
+
+      await f.fileChanged({ multi: { port: 8081 }, 'multi:b': { port: 9000, tag: 'mine' } });
+      expect(f.app.plugins.getPlugin('multi:b')?.state).toBe('active');
+      expect(f.app.plugins.getPlugin('multi:b')?.config).toEqual({ port: 9000, tag: 'mine' });
+      await f.app.stop();
+    });
+
     it('手动删掉配置段同一处理：后缀实例卸载；主实例没有配置段则按默认值重建（与冷启动一致）', async () => {
       const f = fixture({ multi: { port: 8081 }, 'multi:b': { port: 9000, tag: 'mine' } });
       await registerFromDoc(f.app, f.store, f.multi);
@@ -515,6 +536,21 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
       expect(f.app.plugins.getPlugin('multi:b')).toBeUndefined();
       expect(f.app.plugins.getPlugin('multi')?.config).toEqual({ port: 8080 });
       expect(f.saved.at(-1)?.plugins).toEqual({ multi: { port: 8080 } });
+      await f.app.stop();
+    });
+
+    it('外部编辑器半截写入卸掉的实例，随下一次完整写入按文件重新登记', async () => {
+      const f = fixture({ multi: { port: 8081 }, 'multi:b': { port: 9000, tag: 'mine' } });
+      await registerFromDoc(f.app, f.store, f.multi);
+      await registerFromDoc(f.app, f.store, f.multi, 'multi:b');
+      await f.app.plugins.idle();
+
+      await f.fileChanged({ multi: { port: 8081 } });
+      expect(f.app.plugins.getPlugin('multi:b')).toBeUndefined();
+
+      await f.fileChanged({ multi: { port: 8081 }, 'multi:b': { port: 9000, tag: 'mine' } });
+      expect(f.app.plugins.getPlugin('multi:b')?.state).toBe('active');
+      expect(f.app.plugins.getPlugin('multi:b')?.config).toEqual({ port: 9000, tag: 'mine' });
       await f.app.stop();
     });
   });
@@ -535,7 +571,7 @@ describe('配置热重载编排（watch → 同政策裁剪 → bounce）', () =
         },
       },
     );
-    installConfigHotReload(app, store);
+    installConfigHotReload(app, store, createPluginDiscovery(app, NO_PLUGINS, store));
     expect(push).toBeDefined();
     await app.stop();
     expect(stops).toBe(1);

@@ -8,7 +8,7 @@ import type { PluginInfo } from '../types';
 interface MarketPkg {
   name: string;
   description: string;
-  /** npm 上的最新版。**不是**本地已装版本，那是 resolved。 */
+  /** 安装源上的最新版，查不到为空串。**不是**本地已装版本，那是 resolved。 */
   version: string;
   /** 本地已装版本。未装或读不到则缺省。**判可更新看 updatable，别自己比版本。** */
   resolved?: string;
@@ -525,6 +525,7 @@ export function MarketplacePage({
           // (React 19 不净化 javascript: href，只 dev 警告) → owner 点卡片即 XSS。非 http(s) 退化为纯文本。
           const rawLink = pkg.links?.homepage || pkg.links?.repository || pkg.links?.npm;
           const homeLink = rawLink && /^https?:\/\//i.test(rawLink) ? rawLink : undefined;
+          const shownVersion = pkg.installed ? pkg.resolved : pkg.version;
           return (
             <div className="marketplace-card" key={pkg.name}>
             <div className="marketplace-card-info">
@@ -536,12 +537,12 @@ export function MarketplacePage({
                 <span className="marketplace-card-name">{pkg.name}</span>
               )}
               {/*
-                已装时展示本地版本（resolved），未装时展示 npm 最新版。两者混同会让用户以为自己装的就是最新版。
+                已装时展示本地版本（resolved），未装时展示安装源上的最新版。两者混同会让用户以为自己装的就是最新版。
                 已装但 resolved 缺失（版本号读不到）时显示「版本未知」而**不回退到 npm latest**——
-                回退正是这条注释要防的事：那会把远端版本号当成本地已装版本显示。
+                回退正是这条注释要防的事：那会把远端版本号当成本地已装版本显示。未装而安装源查不到最新版时同样显示「版本未知」。
               */}
               <span className="marketplace-card-version">
-                {pkg.installed ? (pkg.resolved ? `v${pkg.resolved}` : '版本未知') : `v${pkg.version}`}
+                {shownVersion ? `v${shownVersion}` : '版本未知'}
               </span>
               <span className={`badge ${pkg.official ? 'official' : 'community'}`}>{pkg.official ? '官方' : '社区'}</span>
               {pkg.category && pkg.category !== 'plugin' && (
@@ -573,7 +574,7 @@ export function MarketplacePage({
                 <label
                   className="badge"
                   style={{ background: 'var(--warning)', color: '#1a1a1a', cursor: 'pointer' }}
-                  title={`本地 v${pkg.resolved}（声明 ${pkg.request ?? '?'}），npm 最新 v${pkg.version}。勾选后用顶部「更新所选」批量提交`}
+                  title={`本地 v${pkg.resolved}（声明 ${pkg.request ?? '?'}），安装源最新 v${pkg.version}。勾选后用顶部「更新所选」批量提交`}
                 >
                   <input
                     type="checkbox"

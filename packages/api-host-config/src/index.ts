@@ -41,6 +41,11 @@ export interface AalisConfig {
  * 按实例 id 取放的方法遇到 `__proto__` / `constructor` / `prototype` 这类 id 抛「插件 id 不合法」。
  */
 export interface HostConfig {
+  /**
+   * 宿主的裁剪政策：为 true 时，宿主同步插件配置会按 configSchema 删掉 schema 外字段；宿主不声明时按 true 处理
+   * （与 Node 宿主的缺省一致）。替宿主写插件配置的管理面（如 WebUI）按它决定裁不裁，与宿主同一政策。
+   */
+  readonly trimUnknownFields?: boolean;
   get<K extends keyof AalisConfig>(key: K): AalisConfig[K];
   getAll(): Readonly<AalisConfig>;
   set<K extends keyof AalisConfig>(key: K, value: AalisConfig[K]): void;

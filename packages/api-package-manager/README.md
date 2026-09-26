@@ -5,7 +5,7 @@
 ## 角色
 
 - `packageManager`：服务描述符（服务名 `package-manager`）。WebUI 市场以 `optional(packageManager)` 声明，缺席时装、卸、更新三条路由返回 503。
-- `PackageManagerService`：`install` / `uninstall` / `serviceDependents` / `update`。装卸落在项目根 `dependencies`；类型、撤销通道、来源与服务依赖者这几道闸都在服务层。`update` 必须整批提交，成功后重启进程。
+- `PackageManagerService`：`install` / `uninstall` / `serviceDependents` / `registry` / `update`。装卸落在项目根 `dependencies`；类型、撤销通道、来源与服务依赖者这几道闸都在服务层。`registry` 返回安装实际使用的 npm 源，WebUI 市场按它查最新版与可更新。`update` 必须整批提交，成功后重启进程。
 
 ## 安装
 

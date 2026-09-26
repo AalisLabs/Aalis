@@ -21,7 +21,7 @@ import { memoryStorage } from '../fixtures/memory-storage.js';
 /** 调度表里的一行（scheduler 服务自己的投影类型，测试不再手抄一份） */
 type JobView = ReturnType<SchedulerService['getJobs']>[number];
 
-type UpsertResult = { ok: boolean; error?: string };
+type UpsertResult = { ok: boolean; error?: string; message?: string };
 
 interface Harness {
   app: App;
@@ -37,8 +37,8 @@ interface Harness {
 
 async function withScheduler(
   fn: (h: Harness) => Promise<void>,
-  /** 预置到持久化文件里的「存量」动态任务（模拟老版本写下的 JSON） */
-  persisted?: unknown[],
+  /** 预置到持久化文件里的「存量」内容（JSON 序列化后写入；不是数组即读不懂的坏文件） */
+  persisted?: unknown,
 ) {
   const hub = new LogHub();
   const warns: string[] = [];
@@ -234,6 +234,19 @@ describe('WebUI 计划任务表单 upsertJob', () => {
         },
       ],
     );
+  });
+
+  it('持久化文件读不懂而拒写：保存回执注明仅本次运行生效，与 scheduler_create_job 同一附注', async () => {
+    await withScheduler(async ({ upsert, jobs }) => {
+      expect(await upsert({ ...base, interval: 60 })).toEqual({
+        ok: true,
+        message: '已保存；仅本次运行生效，未写入 data:/scheduler-jobs.json（加载失败，见日志）',
+      });
+      expect(
+        jobs().find(j => j.name === 'j'),
+        '拒写不拒收：任务照常在内存里生效',
+      ).toBeTruthy();
+    }, {});
   });
 
   it('四个调度字段全空仍然报错', async () => {

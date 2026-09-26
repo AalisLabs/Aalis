@@ -55,6 +55,7 @@ import {
   estimateTextTokens,
   estimateTokens,
   formatTimeLabel,
+  formatToolArgsForLog,
   INPUT_CONVENTIONS,
   isSameMessage,
   toPersonaOptions,
@@ -811,7 +812,7 @@ class DefaultAgent implements AgentService {
                 // 紧随 start 赋值：catch 据此判断 start 已发出、要补发配对的 end
                 toolT0 = Date.now();
 
-                this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${JSON.stringify(toolBeforeData.args)}`);
+                this.logger.debug(`工具执行: ${toolBeforeData.name} 参数=${formatToolArgsForLog(toolBeforeData.args)}`);
                 const executed: ToolExecutionResult = await (this.caps.tools.current?.execute(
                   toolBeforeData.name,
                   toolBeforeData.args,

@@ -102,10 +102,10 @@ WebUI 的启停与改配置路由、mcp-client 的自服务开关按这种方式
 
 - `createConfigStore(initial, provider)`：文档的内存态、危险键闸与落盘委托。`ConfigProvider` 负责持久化（`save`）与外部变更监听（`watch`），`createFsYamlConfigProvider` 是读写 YAML 的实现。
 - `createFsYamlConfigProvider` 保存前比对盘上内容：文件里有尚未生效的外部修改（手改尚未热重载、改坏未能解析、另一个进程写过）时拒绝本次保存、不覆盖（拒绝原因为 `@aalis/api-host-config` 的 `ConfigSaveRefusedError`，用同包的 `isConfigSaveRefused` 判定；错误只带文件路径），宿主记一条告警。写入先写临时文件再改名替换，临时文件创建时即沿用原文件的权限位，没有原文件时为 0600；写临时文件或改名失败时删掉临时文件再传出原错误。拒绝之后调用方的文档已领先于文件，下一次文件变更即使内容与上次生效的那份相同也照常热重载，按文件重新对账；监听武装后立即对账一次，武装前的手改随之生效；平台不支持文件监听时记一条告警，此后手改需重启才生效。
-- `installHostConfig(app, store)`：把文档以 `host-config` 服务独占登记在根激活上，并经 `services.prefer` 应用文档里的服务偏好。须在登记任何插件之前调用，偏好才先于全部提供者生效。
+- `installHostConfig(app, store, opts)`：把文档以 `host-config` 服务独占登记在根激活上，并经 `services.prefer` 应用文档里的服务偏好。`opts` 与交给 `withPluginConfigSync` 的是同一份，`host-config` 的 `trimUnknownFields` 据此声明宿主是否裁剪 schema 外字段，WebUI 保存插件配置时按它行事。须在登记任何插件之前调用，偏好才先于全部提供者生效。
 - 插件发现驱动 `createPluginDiscovery(app, loader, doc)` 登记插件时，按实例 id 从文档取配置与禁用标记，交给 `app.pluginAll`（见 [App](app.md)）。冷启动时，`plugins` 下找不到对应插件的配置段（多为直接 `npm uninstall` 后的残留）逐段告警一次，提示已卸载的可删除该段（其中可能含密钥）；文档本身不改。
 - `withPluginConfigSync(loader, app, store, opts)`：导入定义后、登记前，把 `configSchema` 派生的默认值深合并进文档，并按 schema 裁剪未知字段（`configSync.trimUnknownFields=false` 可保留）。首次 apply 拿到的就是规范化后的配置。
-- `installConfigHotReload(app, store, opts)`：文档被外部修改后，先卸载文件里已没有配置段的 `name:suffix` 实例（冷启动同样不会登记它们），再按同一政策同步，对配置有差异的实例调用 `updateConfig`；文件里新出现的后缀实例由 `rescan()` 或重启登记。在 `app:stopping` 时停止监听。
+- `installConfigHotReload(app, store, discovery, opts)`：文档被外部修改后，先卸载文件里已没有配置段的 `name:suffix` 实例（冷启动同样不会登记它们），再按同一政策同步，对配置有差异的实例调用 `updateConfig`，最后经发现驱动的 `registerConfiguredInstances()` 登记文件里新出现的后缀实例，判据与冷启动、`rescan()` 相同。在 `app:stopping` 时停止监听。
 
 `startAalis` 的装配序为：文档 → App → host-config → 加载政策 → 发现 → 热重载。
 

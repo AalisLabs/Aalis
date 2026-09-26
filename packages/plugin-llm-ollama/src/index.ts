@@ -1104,8 +1104,9 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
   });
   const refresh = (): Promise<{ added: string[]; removed: string[]; total: number }> => refreshFn();
 
-  function registerOne(modelId: string, detected?: string[] | null): void {
-    if (registered.has(modelId)) return;
+  /** 登记一个 model entry；已登记（如并发的另一次刷新先登记了）或被跳过时返回 false */
+  function registerOne(modelId: string, detected?: string[] | null): boolean {
+    if (registered.has(modelId)) return false;
     const capabilities = resolveCapabilities(
       modelId,
       ollamaConfig.modelCapabilities.get(modelId),
@@ -1114,7 +1115,7 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
     );
     if (capabilities.length === 0) {
       logger.debug(`跳过 model entry "${modelId}": /api/show 未报告对话能力(embedding 等非对话模型)`);
-      return;
+      return false;
     }
     const handle = new OllamaModelHandle(
       client,
@@ -1131,6 +1132,7 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
       entryId: `${lifecycle.id}/${modelId}`,
     });
     registered.set(modelId, dispose);
+    return true;
   }
 
   function unregisterOne(modelId: string): void {
@@ -1157,8 +1159,10 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
 
   // 初次注册。停用或停机时中止探测：模型发现中止即抛出，能力探测把中止吞成空结果，所以每次 await 之后自己查。
   // 模型发现失败记 warn 后按未发现远端模型继续，customModels 照常注册
+  let discovered = true;
   const remoteIds = await client.fetchRemoteModelIds(lifecycle.signal).catch((err: unknown) => {
     lifecycle.signal.throwIfAborted();
+    discovered = false;
     // 只记消息：消息里已带 URL 与原因（cause 也内联在内），err 交给 logger 会按因果链把原因再记一遍
     logger.warn(`${err instanceof Error ? err.message : String(err)}；启动时只注册 customModels 里的模型`);
     return [];
@@ -1166,13 +1170,21 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
   lifecycle.signal.throwIfAborted();
   const initialIds = withCustomModels(remoteIds);
   if (initialIds.length === 0) {
-    logger.warn(`Ollama 已连接: ${ollamaConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
+    logger.warn(
+      discovered
+        ? `Ollama 已连接: ${ollamaConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`
+        : `Ollama 模型发现失败且未配置 customModels: ${ollamaConfig.baseUrl}，不注册任何 LLM entry`,
+    );
   } else {
     // 并行查每个模型的真实能力(顺序保留→注册顺序稳定→优先级稳定);失败者回退家族表。
     const detectedCaps = await Promise.all(initialIds.map(id => client.fetchModelCapabilities(id, lifecycle.signal)));
     lifecycle.signal.throwIfAborted();
     for (let i = 0; i < initialIds.length; i++) registerOne(initialIds[i], detectedCaps[i]);
-    logger.info(`Ollama 已连接: ${ollamaConfig.baseUrl}，注册 ${registered.size} 个 model entry`);
+    logger.info(
+      discovered
+        ? `Ollama 已连接: ${ollamaConfig.baseUrl}，注册 ${registered.size} 个 model entry`
+        : `Ollama 模型发现失败: ${ollamaConfig.baseUrl}，注册 customModels 里的 ${registered.size} 个 model entry`,
+    );
   }
 
   // 装配 refresh 真实实现：webui 触发时无需重启插件，按 diff 增删 entries。
@@ -1189,8 +1201,8 @@ async function start({ config, logger, lifecycle, provide, proc }: Caps): Promis
       if (!registered.has(id)) {
         const detected = await client.fetchModelCapabilities(id, lifecycle.signal);
         lifecycle.signal.throwIfAborted();
-        registerOne(id, detected);
-        if (registered.has(id)) added.push(id); // 非对话模型被跳过,不算新增
+        // 非对话模型被跳过、等能力探测期间并发的刷新已登记，都不算本次新增
+        if (registerOne(id, detected)) added.push(id);
       }
     }
     for (const id of [...registered.keys()]) {

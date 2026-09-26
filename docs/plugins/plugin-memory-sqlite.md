@@ -13,6 +13,7 @@
 export default definePlugin({
   name: '@aalis/plugin-memory-sqlite',
   subsystem: 'memory',
+  reusable: true,
   provides: [memory],
   uses: {
     storage,
@@ -31,13 +32,14 @@ export default definePlugin({
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `path` | string | `'data/aalis.db'` | 数据库路径：SQLite 数据库文件的 storage URI（如 `data:/aalis.db`；不含 `:/` 时首段视为存储根名，单段裸名归 `data` 根） |
+| `path` | string | `''` | 数据库路径：SQLite 数据库文件的 storage URI（如 `data:/aalis.db`；不含 `:/` 时首段视为存储根名，单段裸名归 `data` 根）。留空按实例派生，见下 |
 | `rangeQueryLimit` | number | `500` | 范围查询返回上限：区间消息查询（向量召回的上下文窗口扩展等）单次返回的最大条数。命中上限会静默截断 |
 | `crossSessionMaxLimit` | number | `1000` | 跨会话查询返回上限：跨会话最近消息查询允许的最大条数；调用方请求超过此值会被收窄到此上限 |
 
 ## 特性
 
 - `path` 按 storage URI 解析：首段路径视为存储根名（如 `data/aalis.db` 即 `data:/aalis.db`），也可以直接写 `data:/xxx.db`；对应存储根须支持写入和本地路径解析（`resolveLocalPath`），否则启动时报错
+- 可多实例（`@aalis/plugin-memory-sqlite:<后缀>`）。`path` 留空时按实例派生：主实例用 `data:/aalis.db`，带后缀的实例在文件名上加后缀（如 `:b` 实例用 `data:/aalis-b.db`）；配置里写明的 `path` 照用。两个实例解析到同一个文件（按本地路径比较）时，后激活的那个激活失败，报一行 `ConfigError`，点名占用该文件的实例
 - `better-sqlite3` 是原生模块，按装依赖时的 Node 版本编译。换了 Node 大版本后启动，插件激活失败并提示两条出路：用装依赖时的 Node 启动，或在项目根执行 `npm rebuild better-sqlite3`（pnpm 工程用 `pnpm rebuild better-sqlite3`），报错末尾附原始错误的首行。CPU 架构不符、缺系统库等其它原生加载失败不给这条提示，报错照录原始错误
 - 自动创建 `messages` 表（含 `(sessionId, timestamp)` 与 `(archived, timestamp)` 两个索引）和 `metadata` 表
 - 启用 WAL 模式以提升并发性能

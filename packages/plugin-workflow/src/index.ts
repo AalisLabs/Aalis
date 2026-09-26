@@ -12,7 +12,7 @@ import { createStorageGateway, isStorageUri, storage } from '@aalis/api-storage'
 import { type BoundTools, tools } from '@aalis/api-tools';
 import type { BoundWebui, WebuiPage } from '@aalis/api-webui';
 import { webuiServer } from '@aalis/api-webui';
-import type { NodeRunInfo, WorkflowRun, WorkflowService } from '@aalis/api-workflow';
+import type { NodeRunInfo, WorkflowDef, WorkflowRun, WorkflowService } from '@aalis/api-workflow';
 import { workflow } from '@aalis/api-workflow';
 import { type BoundOf, config, definePlugin, events, lifecycle, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
@@ -173,10 +173,24 @@ function fmtDuration(ms: number): string {
 }
 
 /**
+ * once 记账读不出时本次运行不安排 once：定义或启用一个 once 的回执据此如实说明（AI 工具与页面动作同一口径）。
+ * manualRun 是各自那一面手动执行的说法；不持久化的定义重启后就没了，「重启恢复」只对写了文件的定义成立。
+ */
+function onceSkippedNote(
+  def: WorkflowDef,
+  persist: boolean,
+  onceLedgerReadable: boolean,
+  manualRun: string,
+): string | undefined {
+  if (def.trigger.type !== 'once' || def.enabled === false || onceLedgerReadable) return undefined;
+  return `once 记账读取失败（见日志），本次运行不会触发；可用${manualRun}手动执行${persist ? '，修复运行历史文件后重启恢复' : ''}`;
+}
+
+/**
  * 页面动作：处理函数是闭包，直接用本次激活构造的 WorkflowService，
  * 不再按名回查容器（查到的可能是别人提供的同名服务）。
  */
-function registerWebuiActions(webui: BoundWebui, service: WorkflowService): void {
+function registerWebuiActions(webui: BoundWebui, service: WorkflowService, onceLedgerReadable: () => boolean): void {
   webui.registerAction('workflowStats', async () => {
     const defs = service.listWorkflows();
     const enabled = defs.filter(d => d.enabled !== false).length;
@@ -238,7 +252,8 @@ function registerWebuiActions(webui: BoundWebui, service: WorkflowService): void
     const next = { ...def, enabled: def.enabled === false };
     try {
       await service.defineWorkflow(next, { persist: true });
-      return { ok: true, enabled: next.enabled };
+      const note = onceSkippedNote(next, true, onceLedgerReadable(), '「立即运行」');
+      return { ok: true, enabled: next.enabled, ...(note ? { message: `已启用；${note}` } : {}) };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -250,10 +265,9 @@ function registerWebuiActions(webui: BoundWebui, service: WorkflowService): void
     return { id: def.id, yaml: stringify(def) };
   });
 
-  webui.registerAction('removeWorkflow', async args => {
-    const ok = await service.removeWorkflow(String(args.id));
-    return { ok, message: ok ? '已删除' : '不存在' };
-  });
+  webui.registerAction('removeWorkflow', async args =>
+    (await service.removeWorkflow(String(args.id))) ? { ok: true } : { ok: false, error: '工作流不存在' },
+  );
 
   webui.registerAction('newWorkflowDraft', async () => ({
     yaml: `id: my-workflow
@@ -284,9 +298,11 @@ nodes:
     }
     const def = normalizeDef(raw, `wf-${Date.now()}`);
     if (!def) return { ok: false, error: '定义不合法：缺少 trigger 或 nodes' };
+    const persist = args.persist !== false;
     try {
-      await service.defineWorkflow(def, { persist: args.persist !== false });
-      return { ok: true, id: def.id, nodes: def.nodes.length };
+      await service.defineWorkflow(def, { persist });
+      const note = onceSkippedNote(def, persist, onceLedgerReadable(), '「立即运行」');
+      return { ok: true, id: def.id, nodes: def.nodes.length, ...(note ? { message: `已保存；${note}` } : {}) };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -522,7 +538,7 @@ async function run(caps: Caps): Promise<void> {
 
   // ── WebUI ──
   for (const page of webuiPages) webui.registerPage(page);
-  registerWebuiActions(webui, service);
+  registerWebuiActions(webui, service, () => runStore.onceLedgerReadable());
 
   // ── 清理 ──
   lifecycle.onDispose(async () => {
@@ -585,18 +601,13 @@ function registerTools(tools: BoundTools, service: WorkflowService, onceLedgerRe
       } catch (e) {
         return JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
       }
-      const onceSkipped = def.trigger.type === 'once' && def.enabled !== false && !onceLedgerReadable();
+      const note = onceSkippedNote(def, persist, onceLedgerReadable(), ' workflow_run ');
       return JSON.stringify({
         ok: true,
         id: def.id,
         nodes: def.nodes.length,
         trigger: def.trigger.type,
-        // 不持久化的定义重启后就没了，「重启恢复」只对写了文件的定义成立
-        ...(onceSkipped
-          ? {
-              note: `once 记账读取失败（见日志），本次运行不会触发；可用 workflow_run 手动执行${persist ? '，修复运行历史文件后重启恢复' : ''}`,
-            }
-          : {}),
+        ...(note ? { note } : {}),
       });
     },
   });
