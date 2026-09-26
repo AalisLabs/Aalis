@@ -52,11 +52,11 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 
 ## 出站联动
 
-监听 `outbound:message`：`source === 'agent'` 的出站消息对**作用域内**会话记一次回复——按该会话的有效配置设置冷却（`cooldownSeconds > 0` 时）并记入限速时间戳。作用域按会话已记下的平台、sessionType、targetId 判；没有流控状态的会话（例如仅经委派抵达）类型未知，只有会话类型段为通配的作用域（如 `onebot:*`、`*`）命中，与入站不带 sessionType 的内部注入同一口径。因此默认 `*:group` 下，委派到私聊或 WebUI 的回复不计入，委派闸门对它们不设限；需要限制时在 `scopes` 里纳入。命令回复与系统回复不计入。
+监听 `outbound:message`：`source === 'agent'` 的出站消息对**作用域内**会话记一次回复——按该会话的有效配置设置冷却（`cooldownSeconds > 0` 时）并记入限速时间戳。作用域按会话已记下的平台、sessionType、targetId 判。没有真人消息经过本相位的会话（例如重启后没人说话的群、消息都被 trigger 吞掉的群、只收到委派或定时任务的会话）没有流控状态，或只有禁言建出的、缺会话类型的状态，此时按会话 ID 的 `<platform>:<self>:<type>:<target>` 约定推断类型与目标：只认前缀等于平台名的 id，子任务会话（`<父会话 id>::<uuid>`）不推断；目标与入站同口径，群取群号、私聊取对方 id，频道为空。推断结果只写进本插件的会话状态，用于回复记账与分作用域覆盖，不回写消息；入站过闸的作用域判定不用推断，仍看消息自带的 sessionType。会话 ID 不符合约定的（如 WebUI、CLI）类型未知，只有会话类型段为通配的作用域（如 `onebot:*`、`*`）命中。因此默认 `*:group` 下，委派、定时任务发往群的回复照常计入；发往私聊或 WebUI 的不计入，委派闸门对它们不设限，需要限制时在 `scopes` 里纳入。命令回复与系统回复不计入。
 
 冷却与限速按真实回复计，不按"判定放行"计。trigger-policy 在判定放行时即复位计数，放行后若恰好处于冷却或限速期，这次触发作废。
 
-分作用域覆盖按会话的 sessionType / targetId 匹配，这两项来自经过本相位的入站消息。只由出站建出状态的会话（例如仅经委派抵达、从未有真人消息经过本相位的私聊）没有这两项，按类型或目标写的覆盖对其不生效，冷却与限速走顶层配置。
+分作用域覆盖按会话的 sessionType / targetId 匹配，这两项来自经过本相位的入站消息，或回复记账时按会话 ID 约定的推断。两处都得不到的会话（从未有真人消息经过本相位、会话 ID 又不符合约定，如仅经委派抵达的 WebUI 会话）没有这两项，按类型或目标写的覆盖对其不生效，冷却与限速走顶层配置。
 
 ## 禁言
 
@@ -72,7 +72,7 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 | `cooldownSeconds` | number | `10` | 回复后冷却（秒） |
 | `rateLimitWindow` | number | `0` | 限速窗口（秒，0=关闭） |
 | `rateLimitMaxReplies` | number | `10` | 窗口内最大回复数 |
-| `overrides` | array | `[]` | 分作用域覆盖：每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段（`cooldownSeconds` / `rateLimitWindow` / `rateLimitMaxReplies`）；字段留空（或不填）= 沿用上方默认。最具体匹配优先（targetId &gt; sessionType &gt; platform &gt; 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却。只经出站建出状态的会话不吃按类型或目标写的覆盖，见「出站联动」。 |
+| `overrides` | array | `[]` | 分作用域覆盖：每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段（`cooldownSeconds` / `rateLimitWindow` / `rateLimitMaxReplies`）；字段留空（或不填）= 沿用上方默认。最具体匹配优先（targetId &gt; sessionType &gt; platform &gt; 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却。类型与目标都未知的会话不吃按类型或目标写的覆盖，见「出站联动」。 |
 
 评分类字段（`fixedInterval` / `activityScore*` / `*DecayMinutes`）与闲置触发字段（`idleTrigger*`）已移到 trigger-policy，迁移方法见根目录 `CHANGELOG.md`。
 

@@ -185,6 +185,26 @@ export function extractTargetId(message: Pick<IncomingMessage, 'sessionType' | '
   return '';
 }
 
+/**
+ * 按 `<platform>:<self>:<type>:<target>` 约定从会话 ID 推断会话类型与作用域里的 targetId，供消息上
+ * 没有 sessionType 的场合（定时任务、委派等合成回合）使用。这是适配器的命名约定而非契约：只认前缀等于
+ * platform 的 id，不符合约定返回 undefined；推断结果只供调用方自己判断，不要写回消息。
+ * 子任务会话（`<父会话 id>::<uuid>`）不推断：它沿用父会话的 platform，按段切分会把父会话的类型连同
+ * 带后缀的假目标安到子任务头上。targetId 与 {@link extractTargetId} 同口径：群聊取群号、私聊取对方 id，
+ * 频道的 id 段（`<guild>:<channel>`）与消息上的字段对不上，取空串。
+ */
+export function inferSessionScope(
+  platform: string | undefined,
+  sessionId: string,
+): { sessionType: NonNullable<IncomingMessage['sessionType']>; targetId: string } | undefined {
+  if (sessionId.includes('::')) return undefined;
+  const parts = sessionId.split(':');
+  if (parts.length < 4 || parts[0] !== platform) return undefined;
+  const t = parts[2];
+  if (t !== 'group' && t !== 'private' && t !== 'channel') return undefined;
+  return { sessionType: t, targetId: t === 'channel' ? '' : parts.slice(3).join(':') };
+}
+
 /** `(platform, sessionType, targetId)` 是否命中 `scopes` 或任一 `overrides[].scope`。 */
 export function isScopeEnabled(
   cfg: { scopes: readonly string[]; overrides: readonly { scope: string }[] },

@@ -324,10 +324,8 @@ describe('缺陷3 禁言期间 idle 不开口', () => {
 // ────────────────────────────────────────────────────────────
 describe('缺陷4 委派不双计、不预设冷却', () => {
   it('放行一次委派 + 目标真实回复一次，限速窗口内只计 1 次', async () => {
-    // 目标群没有真人消息经过 flow 相位、类型未知：回复记账只认会话类型段为通配的作用域，
-    // 作用域取 *，否则回复一次都不计，本用例的「只计 1 次」就成了空断言
     const h = await setup({
-      flow: { scopes: ['*'], rateLimitWindow: 60, rateLimitMaxReplies: 2 },
+      flow: { rateLimitWindow: 60, rateLimitMaxReplies: 2 },
       withDelegate: true,
     });
     const target = sid('20001');
@@ -581,9 +579,7 @@ describe('冷却与限速', () => {
     expect(h.contents()).toContain('冷却过后的第三句');
   });
 
-  // 按顶层配置生效。只经委派抵达的会话没有 sessionType / targetId，按 *:private 等写的 overrides
-  // 对它不生效——已知局限，文档注明，不在此断言。
-  it('作用域为 * 时，委派到无入站记录（类型未知）的私聊：真实回复计入限速，第 N+1 次委派被拒', async () => {
+  it('作用域为 * 时，委派到无入站记录的私聊：真实回复计入限速，第 N+1 次委派被拒', async () => {
     const N = 2;
     const h = await setup({
       flow: { scopes: ['*'], rateLimitWindow: 60, rateLimitMaxReplies: N },
@@ -624,10 +620,98 @@ describe('冷却与限速', () => {
     expect(h.flow().isCoolingDown(target)).toBe(false);
   });
 
-  it('回复记账：没有流控状态的会话按平台判，会话类型段为通配的作用域（*）照常计', async () => {
+  it('回复记账：作用域为 * 时，没有流控状态、类型未知的 WebUI 会话照常计', async () => {
     const h = await setup({ flow: { scopes: ['*'], cooldownSeconds: 30 } });
     await h.reply('webui-default', 'webui'); // 无任何入站经过 flow 相位
     expect(h.flow().isCoolingDown('webui-default')).toBe(true);
+  });
+
+  it('回复记账：没有真人消息经过 flow 的群按会话 ID 推断为群，委派回复计入冷却与限速', async () => {
+    // 旧行为：没有流控状态即类型未知，默认 *:group 下不记账，委派到这类群不受限速
+    const N = 2;
+    for (const swallowedFirst of [false, true]) {
+      const h = await setup({
+        flow: { cooldownSeconds: 30, rateLimitWindow: 60, rateLimitMaxReplies: N },
+        autoReply: () => true,
+        withDelegate: true,
+      });
+      const target = sid('20001');
+      const label = swallowedFirst ? '真人消息被 trigger 吞掉的群' : '安静群';
+      // 默认 fixedInterval=5：未点名的一条被 trigger 吞掉，到不了 flow 相位
+      if (swallowedFirst) await h.send(groupMsg('20001', '没到阈值'));
+
+      for (let i = 0; i < N; i++) {
+        const res = await h.delegate(target);
+        expect(res.delegated, `${label}：第 ${i + 1} 次委派应放行：${res.error ?? ''}`).toBe(true);
+      }
+      expect(h.flow().isCoolingDown(target), label).toBe(true);
+      const over = await h.delegate(target);
+      expect(over.error, label).toContain('限速');
+      expect(
+        h.received.filter(m => m.sessionId === target),
+        label,
+      ).toHaveLength(N);
+    }
+  });
+
+  it('回复记账：只有禁言记录、缺会话类型的群，回复时补全类型与目标并计入，按群号写的覆盖随之生效', async () => {
+    // 旧行为：平台禁言建出的状态只有平台，默认 *:group 下回复不计
+    const G = '20001';
+    const h = await setup({
+      flow: {
+        cooldownSeconds: 0,
+        rateLimitWindow: 60,
+        rateLimitMaxReplies: 1,
+        overrides: [{ scope: `onebot:group:${G}`, cooldownSeconds: 30 }],
+      },
+    });
+    h.flow().setMuted(sid(G), 1, 'onebot'); // 适配器同步平台禁言：只知道 sessionId 与平台
+    await advance(2_000); // 解禁
+
+    await h.reply(sid(G));
+    expect(h.flow().isRateLimited(sid(G)), '回复计入限速').toBe(true);
+    expect(h.flow().isCoolingDown(sid(G)), '按群号写的 30s 冷却生效（顶层为 0）').toBe(true);
+  });
+
+  it('回复记账：不符合会话 ID 约定的会话不推断，默认作用域下不计', async () => {
+    const h = await setup({ flow: { cooldownSeconds: 30 } });
+    for (const [sessionId, platform] of [
+      ['webui-default', 'webui'],
+      [sid('20001'), 'internal'], // 前缀与平台不符（如委派解析不到目标平台时的回落）
+    ]) {
+      await h.reply(sessionId, platform);
+      expect(h.flow().isCoolingDown(sessionId), `${platform} / ${sessionId}`).toBe(false);
+    }
+  });
+
+  it('回复记账：子任务会话（`<父会话 id>::<uuid>`）不按父会话的类型推断，默认作用域下不计', async () => {
+    const h = await setup({ flow: { cooldownSeconds: 30 } });
+    const sub = `${sid('20001')}::abcd1234`;
+    await h.reply(sub);
+    expect(h.flow().isCoolingDown(sub)).toBe(false);
+  });
+
+  it('回复记账：没有流控状态的会话按出站消息的平台判作用域，onebot:* 计入、webui 对照不计', async () => {
+    const target = privateSid('30009');
+    for (const [scopes, counted] of [
+      [['onebot:*'], true],
+      [['webui'], false],
+    ] as const) {
+      const h = await setup({ flow: { scopes, cooldownSeconds: 30 } });
+      await h.reply(target, 'onebot');
+      expect(h.flow().isCoolingDown(target), scopes.join()).toBe(counted);
+    }
+  });
+
+  it('回复记账：scopes 为空、只靠按群号写的覆盖启用的群，回复进入冷却', async () => {
+    const G = '20001';
+    const h = await setup({
+      flow: { scopes: [], cooldownSeconds: 0, overrides: [{ scope: `onebot:group:${G}`, cooldownSeconds: 30 }] },
+      autoReply: () => true,
+    });
+    await h.send(groupMsg(G, `${AT}在吗`));
+    expect(h.contents()).toEqual([`${AT}在吗`]);
+    expect(h.flow().isCoolingDown(sid(G))).toBe(true);
   });
 
   it('回复记账：作用域内的群照常计入冷却与限速，委派超限被拒', async () => {
