@@ -48,7 +48,7 @@ export default definePlugin({
 
 另有两道与深度无关的闸门：
 
-- **流控约束**：派发前查 `flow-control`，目标会话处于禁言期或限速窗口已满即拒绝，错误信息区分禁言与限速；`flow-control` 未加载时不设此闸。只检不记：限速按目标会话 agent 的真实回复计，派发到回复落地之间（通常 5~30 秒）对同一目标的突发委派不占限速槽，可能越过限速。
+- **流控约束**：派发前查 `flow-control`，目标会话处于禁言期或限速窗口已满即拒绝，错误信息区分禁言与限速；限速只对 flow-control 作用域内的会话生效（默认 `*:group`），作用域外的目标只受禁言约束；`flow-control` 未加载时不设此闸。只检不记：限速按目标会话 agent 的真实回复计，派发到回复落地之间（通常 5~30 秒）对同一目标的突发委派不占限速槽，可能越过限速。
 - **重复提醒**：同一目标会话 60 秒内的重复派发会在任务前注入 META 提醒（提醒型，不拦截派发本身）。
 
 ## 配置
@@ -61,7 +61,7 @@ export default definePlugin({
 | `scope` | select | `'platform'` | 允许读取范围 |
 | `includeArchivedDefault` | boolean | `false` | 默认包含已归档消息 |
 | `perMessageMaxChars` | number | `0` | 每条消息截断字数：返给 LLM 的每条历史消息的字符上限；0 = 不截断（推荐）。超出会以「剩余 N 字符未展示」明示。 |
-| `crossSessionEnabled` | boolean | `true` | 启用跨会话委派 (delegate_to_session / list_known_sessions)：允许 agent 列出其他活跃会话并向其派发任务（如私聊→群聊、跨平台委派）。受 proactive-depth 与流控禁言/限速保护。 |
+| `crossSessionEnabled` | boolean | `true` | 启用跨会话委派 (delegate_to_session / list_known_sessions)：允许 agent 列出其他活跃会话并向其派发任务（如私聊→群聊、跨平台委派）。受 proactive-depth 与流控禁言/限速保护；限速只对 flow-control 作用域内的会话生效（默认 *:group）。 |
 | `crossSessionDefaultTimeoutSec` | number | `60` | 跨会话委派默认等待秒数：delegate_to_session 在未显式指定 timeout_seconds 时使用的等待上限。 |
 
 ## 提供的服务

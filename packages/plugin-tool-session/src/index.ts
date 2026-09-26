@@ -149,7 +149,7 @@ const configSchema: ConfigSchema = {
     label: '启用跨会话委派 (delegate_to_session / list_known_sessions)',
     default: true,
     description:
-      '允许 agent 列出其他活跃会话并向其派发任务（如私聊→群聊、跨平台委派）。受 proactive-depth 与流控禁言/限速保护。',
+      '允许 agent 列出其他活跃会话并向其派发任务（如私聊→群聊、跨平台委派）。受 proactive-depth 与流控禁言/限速保护；限速只对 flow-control 作用域内的会话生效（默认 *:group）。',
   },
   crossSessionDefaultTimeoutSec: {
     type: 'number',
