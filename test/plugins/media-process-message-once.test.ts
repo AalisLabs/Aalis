@@ -202,4 +202,22 @@ describe('识别与 file-reader 预处理并发：写回只补不换', () => {
     expect(msg._attachmentDescriptions?.[0]).toContain('[文件: a.txt');
     expect(msg._attachmentDescriptions?.[1], '图片描述应保留').toContain('一只橘猫');
   });
+
+  it('识别在 file-reader 存盘途中补上文件的 mimeType：换引用时保留它', async () => {
+    const { svc } = makeSvc();
+    const fileReader = await fileReaderPreprocessor();
+    const { mimeType: _, ...noMime } = textFile(); // 缺 mimeType：识别按 data URL 头补成 text/plain
+    const msg = message([noMime]);
+
+    const writeGate = deferred();
+    fileReader.writes.gate = writeGate.promise;
+    const reading = fileReader.run(msg); // 开头取过附件，卡在存盘
+    await svc.processMessage(msg);
+    expect(msg.attachments?.[0].mimeType).toBe('text/plain');
+
+    writeGate.resolve();
+    await reading;
+    expect(msg.attachments?.[0].data).toMatch(/^aalis-file:\/\//);
+    expect(msg.attachments?.[0].mimeType, '识别补上的 mimeType 应保留').toBe('text/plain');
+  });
 });

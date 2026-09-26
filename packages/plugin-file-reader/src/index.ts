@@ -785,8 +785,9 @@ async function run(caps: Caps): Promise<void> {
         logger.debug(`文件已存储: ${entry.name} (ID: ${entry.id}, ${(buffer.length / 1024).toFixed(1)} KB)`);
 
         own.set(i, await buildAttachmentDesc(entry));
-        // 替换原始 data 为 ID 引用，避免下游链路重复携带大 buffer
-        msg.attachments[i] = { ...att, data: `aalis-file://${entry.id}` };
+        // 替换原始 data 为 ID 引用，避免下游链路重复携带大 buffer。按写回这一刻的附件展开：存盘期间
+        // 并发的媒体识别可能已补上 mimeType，展开开头取的 att 会把它丢掉
+        msg.attachments[i] = { ...msg.attachments[i], data: `aalis-file://${entry.id}` };
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         logger.warn(`文件处理失败 (${fileName}):`, errMsg);
