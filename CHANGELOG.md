@@ -406,7 +406,7 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 
 trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳一戳 / 名字直通、计数与活跃指数判定、闲置主动开口。flow-control 只做节流硬闸：禁言（含落盘与平台禁言同步）、回复后冷却、限速。入站相位随之对调为 `confirm → command → trigger → flow → dispatch`（顺序常量 `INBOUND_PHASE_ORDER` 在 `@aalis/api-gateway`）。
 
-trigger-policy 是 `inbound:trigger` 相位的宿主：作用域、禁言、禁言关键词、记入站、点名识别，以及开口后的清零、`triggerType` 与授权主体都在宿主。"开不开口"交给新服务 `trigger`（契约包 `@aalis/api-trigger`）的提供者按序判定（偏好 > 优先级 > 注册顺序），第一个不弃权的说了算。trigger-policy 自带规则提供者（点名、计数与活跃指数，优先级 0，不弃权），只装它时的判定与下文一致；判定模型等提供者以更高优先级登记在它前面，弃权、抛错或超过新配置 `decisionTimeoutMs`（默认 2000 毫秒）时回落到规则。此时 `triggerOnAt` / `triggerOnPoke` / `triggerNames` 只决定是否被点名，即开口后记 `immediate` 还是 `interval`、授权主体是谁，不决定开不开口。提供者要看附件描述时由宿主启动识别，最多等新配置 `mediaWaitMs`（默认 8000 毫秒），每条消息只识别一次；放行与吞掉都不等识别跑完，agent 预处理器与归档按消息对象复用这次识别；只有规则判定时不启动识别。每条判定记一行 debug 日志（不含正文）。回滚到规则判定：WebUI 服务页把 `trigger` 的偏好切到「规则（计数/评分）」即时生效；手改配置文件的 `servicePreferences` 需重启。
+要不要开口由**触发插件**判定，新服务 `trigger`（契约包 `@aalis/api-trigger`）选出生效的那一个：触发插件各自 `provide(trigger, 自己的实例)` 并在 `inbound:trigger` 相位挂中间件，服务胜者（偏好 > 优先级 > 注册顺序）即生效者，二选一，其余触发插件对每条消息直接放行、什么都不做；没有触发插件时这一相位不做判定，消息照常进入 flow 相位。trigger-policy 是规则触发插件（优先级 0），作用域、禁言、禁言关键词、计数与活跃指数、点名识别与闲置主动开口都在它内部，判定同步完成；只装它时的判定即下文所述。它的计数、活跃指数与闲置活动时间只统计它生效时经过的消息，闲置主动开口也只在它生效时注入。每条判定记一行 debug 日志（不含正文）。`@aalis/api-trigger` 另导出触发插件共用的宿主函数：生效者判断 `isActiveTrigger`、禁言关键词 `hitsMuteKeyword`、点名识别 `isAddressed`、附件识别限时等待 `waitForAttachmentDescriptions`、放行收尾 `markTriggered`、吞掉时的影子归档 `archiveSwallowed`。切换触发插件：WebUI 服务页把 `trigger` 的偏好切到另一个，即时生效；停用生效的触发插件，下一条消息由剩下的接手；手改配置文件的 `servicePreferences` 需重启。
 
 行为变化：
 
@@ -414,7 +414,6 @@ trigger-policy 是 `inbound:trigger` 相位的宿主：作用域、禁言、禁�
 - 禁言期内一律不说话：flow 相位先查禁言，不看作用域、不看来源，闲置触发、跨会话委派、定时任务注入的消息同样被吞。
 - 内部注入（带 `source` 的消息：闲置触发、定时任务、workflow、跨会话委派）不经触发策略，不计数，`triggerType` 不被改写（委派的 `proactive` 原样保留）；flow 相位对它不查回复后冷却，禁言与限速照常生效（限速仅在会话落入 flow-control 作用域时）。这些消息不带会话类型，flow 判作用域时与回复记账同一口径：先用会话已记下的平台与类型，没有再按会话 ID 约定推断（见下文回复记账一条）；此前只看消息自带的类型，默认 `*:group` 下算作用域外（作用域配成 `*`，或配成 `onebot:*` 且消息平台为 `onebot` 时本来就在作用域内）。因此默认作用域 `*:group` 下配置了限速时（`rateLimitWindow` 默认 0，即关闭），bot 在某个群的限速窗口已满，发往该群的定时提醒、workflow 输出会被吞掉并做影子归档，定时任务不重试；session 档闲置提示同样被吞（闲置提示不归档）；委派在派发前就被限速闸拒绝。此前 flow-control 的 `scopes` 配成 `*` 时，定时提醒会被回复后冷却静默吞掉；trigger-policy 的配成 `*` 时，还会被计数判定吞掉。真人消息由平台适配器投递，不设 `source`；第三方适配器投递真人消息**不得**设置 `source`（`schema-message` 的字段说明已据此更新），否则会被当作内部注入跳过触发策略与冷却。
 - 冷却期内的禁言关键词照常生效；平台禁言期内的关键词不再识别，不会缩短平台禁言。戳一戳通知不做禁言关键词匹配。
-- 同一会话的消息接连到达、前一条还在判定时，规则按每条消息记入站那一刻的计数与活跃指数判定；判为开口、但判定期间本会话已有消息放行的，这次开口作废（归档后吞掉）。点名照常放行，判定模型等其它提供者的判定不受此约束。只装规则提供者时，同一时刻到达的一簇消息（如断线重连后的补发）只放行撞上阈值的那一条：此前逐条同步判定，`fixedInterval` 为 2 时同时到达的 4 条放行第 2、4 条，现在只放行第 2 条。
 - 禁言期内的消息不累计计数。关键词禁言在命中时即清零本会话的计数与活跃指数；平台禁言在禁言期内有消息到来时清零——平台禁言期内若一条消息都没有，禁言前攒下的计数保留到解禁后。
 - session 档闲置触发的退避只由真人消息复位，agent 回复（包括回复闲置提示）不再复位。
 - platform 档闲置触发把注入本身记为 bot 开口，agent 沉默时不会反复挑中同一会话；禁言期内 session 档到点跳过。
@@ -437,14 +436,16 @@ trigger-policy 是 `inbound:trigger` 相位的宿主：作用域、禁言、禁�
 - **minimal 模板档**（只装 flow-control、未装 trigger-policy）配置过闲置触发的，升级后须装 plugin-trigger-policy 才有闲置触发。装上后默认按计数与活跃指数判定是否开口；要保持此前逐条回复的节奏，设 `intervalMode: fixed`、`fixedInterval: 1`。注意授权主体不同：群聊里未被 @ 的消息走 interval 判定，授权身份回填为无主体（工具按匿名等级执行），此前按发言者等级执行。
 - **`@aalis/api-flow-control` 收窄**：`FlowControlService` 只剩 `isMuted` / `isCoolingDown` / `isRateLimited` / `setMuted`；删除 `ensureState` / `getStateSnapshot` / `recordIncoming` / `recordTriggered` / `recordReply` / `getThreshold` / `rescheduleIdle` 与 `FlowSessionStateSnapshot`。计数与阈值归 trigger-policy 内部；冷却与限速由 flow-control 监听 `outbound:message` 自行记账，自建主动发送通道发 `source: 'agent'` 的 `outbound:message` 即被计入。plugin-flow-control 入口不再转出 `FlowControlService` / `FlowSessionStateSnapshot` 类型，改从 `@aalis/api-flow-control` 导入前者。
 - **`@aalis/api-platform` 删除 `PlatformAdapter.checkAndRecordProactiveSend`**：跨会话委派改由 plugin-tool-session 直接查 flow-control（目标会话禁言中或限速已满即拒绝），适配器无需实现任何方法；自研适配器删掉该方法即可。自己调用过该方法做委派限速的第三方代码，改用 `flowControl.current?.isMuted(sessionId)` / `isRateLimited(sessionId)`（只检不记，限速按目标会话的真实回复计）。
-- **plugin-trigger-policy 不再注册 `trigger-policy` 服务**：运行时描述符 `triggerPolicy` 与类型 `TriggerPolicyService` / `TriggerDecision` / `TriggerKind` 随之删除，原服务没有外部消费者。判定结果仍写在 `message.triggerType`。本插件改为提供新服务 `trigger`（见本节开头）；`@aalis/api-trigger` 里的 `TriggerDecision`（`{ speak, reason, score? }`）与删除的同名类型无关。
+- **plugin-trigger-policy 不再注册 `trigger-policy` 服务**：运行时描述符 `triggerPolicy` 与类型 `TriggerPolicyService` / `TriggerDecision` / `TriggerKind` 随之删除，原服务没有外部消费者。判定结果仍写在 `message.triggerType`。本插件改为向新服务 `trigger` 提供自己的实例（见本节开头）。
 - **相位顺序**：注册在 `inbound:flow` 的第三方 handler 现在运行在 `inbound:trigger` 之后，能读到 `triggerType`；注册在 `inbound:trigger` 的第三方 handler 现在先于禁言、冷却、限速执行。依赖"flow 先于 trigger"的 handler 需改挂相位。
 
 `@aalis/api-gateway` 0.7.0 另新增作用域纯函数 `extractTargetId` / `isScopeEnabled` / `resolveEffectiveConfig`，flow-control 与 trigger-policy 共用；以及 `inferSessionScope`：按会话 ID 约定推断会话类型与目标，从 plugin-persona 移入（persona 推断合成回合会话类型的行为不变，新增对 api-gateway 的依赖），flow-control 的入站过闸（带 `source` 且不带会话类型的内部注入）与回复记账也用它。
 
 `@aalis/schema-message` 0.9.0 新增 `buildIncomingContent`：入站消息拼成归档文本（发送者前缀、引用回复、附件描述）的函数，从 plugin-message-archive 原样移入，归档行为不变；供触发判定拼当前消息时与归档共用同一份拼法。
 
-另新增 `@aalis/plugin-trigger-laya` 0.1.0（`private: true`，不发布到 npm，不计入本批包数）：`trigger` 的判定模型提供者（优先级 10），经本机 HTTP 调用 laya-listener 侧车，由 Laya 模型判定开不开口。默认 `shadow`：照常请求并记一行 info 日志，然后弃权交给规则判定；`live` 时由模型判定，被点名的消息也交给模型。请求体超过侧车 1 MiB 上限时弃权，不计失败；侧车连续 3 次失败熔断 30 秒，期间弃权。运行期自检：向侧车发请求前记下当前消息的哈希与长度，这条消息归档后与归档正文比对，按「一致 / 判定时缺附件描述 / 含文件附件 / 其它 / 未归档」计数，每结清 200 条记一行只含计数的 info 日志。从仓库源码运行时它与其它插件一样被发现并默认启用。说明见该包 README。
+另新增 `@aalis/plugin-trigger-laya` 0.1.0（`private: true`，不发布到 npm，不计入本批包数）：模型触发插件，经本机 HTTP 调用 laya-listener 侧车，由 Laya 模型判定作用域内（`scopes` / `overrides`，默认 `*:group`）的消息开不开口，没有计数。它在 `trigger` 服务里的优先级为 10，与 trigger-policy 同时启用时由它生效。@、叫名字、戳一戳不强制开口，只决定开口后记 `immediate` 还是 `interval`、授权主体是谁。判定不了时（侧车连续 3 次失败后熔断 30 秒、memory 缺席、侧车回 422 / 413、请求体超过侧车 1 MiB 上限、会话不是 onebot 的群聊或私聊）只回点名，其余消息归档后吞掉，不回退到 trigger-policy；422、413 与请求体超限只让这一条兜底，不计入熔断。侧车熔断或 memory 缺席使判定由可用转为不可用时记一条 error，恢复时记一条 warn；诊断项 `trigger.laya` 报侧车状态。带附件的消息先等识别写好描述，最多 `mediaWaitMs`（默认 8000 毫秒）。运行期自检：向侧车发请求前记下当前消息的哈希与长度，这条消息归档后与归档正文比对，按「一致 / 判定时缺附件描述 / 含文件附件 / 其它 / 未归档」计数，每结清 200 条记一行只含计数的 info 日志。从仓库源码运行时它与其它插件一样被发现并默认启用，启用即生效：本机没有侧车时群里只回点名；不用时在 WebUI 插件管理里停用，或写进配置文件的 `disabledPlugins`。说明见该包 README。
+
+本批开发期间加入过、未随任何版本发布的配置已改：trigger-policy 删除 `decisionTimeoutMs` 与 `mediaWaitMs`（规则判定不看附件；等附件识别的上限改为 plugin-trigger-laya 自己的 `mediaWaitMs`）；plugin-trigger-laya 删除 `mode`（`off` / `shadow` / `live`，不想让某些会话走模型就把它们移出 `scopes`），`overrides` 只覆盖 `threshold`，新增 `scopes`、`triggerOnAt` / `triggerOnPoke` / `triggerNames`、`muteKeywords` / `muteTimeSeconds` 与 `mediaWaitMs`（此前由 trigger-policy 代管）。从开发分支升级的配置里残留的这几个顶层字段由 runtime 按 schema 裁掉并记一条 warn；plugin-trigger-laya `overrides` 各项里残留的 `mode` 不被裁剪，也不再生效，手动删除即可。
 
 ### 包清单元数据（41 个包）
 
