@@ -329,12 +329,15 @@ describe('慢激活转入后台', () => {
   it('阈值为 0：不转后台、不告警，登记等到 apply 落定为止（旧行为）', async () => {
     const w = world({ slowThresholdMs: 0 });
     await w.app.plugins.idle();
+    // apply 由手动放行而不是定时器落定：两个定时器比先后，在事件循环卡顿时会颠倒
+    const gate = deferred();
     let registered = false;
-    const registering = w.app.plugin(definePlugin({ name: 'patient', apply: () => sleep(60) })).then(() => {
+    const registering = w.app.plugin(definePlugin({ name: 'patient', apply: () => gate.promise })).then(() => {
       registered = true;
     });
     await sleep(40);
     expect(registered).toBe(false);
+    gate.resolve();
     await registering;
     expect(w.status('patient')?.state).toBe('active');
     expect(w.at('warn')).toEqual([]);
