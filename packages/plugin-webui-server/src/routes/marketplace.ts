@@ -11,8 +11,10 @@ import type { RouteGate } from '../gate.js';
 
 // 纯 npm 路线：npm registry 的 keyword 检索即天然索引，无自建服务器、无静态索引。
 // 安装/卸载/更新走 package-manager（npm install / uninstall）。
-// 注：npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），故 registry
-// 基址可配置（marketplaceRegistry），默认官方源；国内用户可配代理/支持 search 的镜像。
+// 注：npm 的 search API 并非所有镜像都支持（淘宝等国内源不支持），故检索源基址可配置
+// （marketplaceRegistry），默认官方源；国内用户可配代理/支持 search 的镜像。
+// 检索源只管「有哪些包」：卡片上的最新版、可更新、系统组件的 latest 与装前依赖图，一律按包名向
+// 安装实际使用的源（package-manager 报告的 npm registry）查，否则两源版本不同步时会显示装不到的版本。
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 // 市场收录五类：功能插件 aalis-plugin / 工具库 aalis-util / 契约 aalis-api / 数据规范 aalis-schema / 前端 aalis-interface。
 // npm search 的 keywords: 逗号分隔 = 任一命中（核心/工具链不带任何类型词，自然不进市场）。
@@ -30,7 +32,10 @@ const PKG_NAME_RE = /^(@[a-z0-9][a-z0-9\-_.]*\/)?[a-z0-9][a-z0-9\-_.]*$/i;
 
 interface MarketplacePackage {
   name: string;
-  /** npm 上的最新版（检索结果自带）。注意：**不是**本地已装版本，那是 resolved。 */
+  /**
+   * 安装源上的最新版（按包名查 dist-tags.latest），查不到为空串。检索结果自带的版本号来自检索源，不用。
+   * 注意：**不是**本地已装版本，那是 resolved。
+   */
   version: string;
   description: string;
   author?: string;
@@ -72,6 +77,7 @@ interface NpmSearchResponse {
   objects?: Array<{
     package: {
       name: string;
+      /** 检索源上的版本号，可能与安装源不同，卡片不用它（见文件头） */
       version: string;
       description?: string;
       keywords?: string[];
@@ -317,23 +323,36 @@ export function sortSystemComponents(list: SystemComponent[]): SystemComponent[]
   );
 }
 
+/**
+ * 检索结果按搜索词在 name、description、keywords 上做本地包含过滤：不区分大小写，按空白分词，每个词都要命中。
+ * npm search 的匹配范围由检索源决定（全文、相近词），会带回这三处都不含该词的包。空搜索词全部保留。纯函数，便于单测。
+ */
+export function matchesQuery(pkg: { name: string; description?: string; keywords?: string[] }, q: string): boolean {
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = `${pkg.name} ${pkg.description ?? ''} ${(pkg.keywords ?? []).join(' ')}`.toLowerCase();
+  return terms.every(t => hay.includes(t));
+}
+
 /** npm search 响应 → 市场卡片列表（标注已装 + 官方 + 富信息）。纯函数，便于单测。 */
 export function toMarketplacePackages(
   data: NpmSearchResponse,
   installed: Set<string>,
+  /** 安装源上的最新版；查不到返回 undefined，卡片的 version 为空串、不可更新。 */
+  latestOf: (name: string) => string | undefined,
   /** 本地实况查询。缺省则卡片无 resolved，前端退化为「已安装但版本未知」。 */
   localOf: (name: string) => LocalPkgInfo | undefined = () => undefined,
 ): MarketplacePackage[] {
   return (data.objects ?? []).map(o => {
     const local = localOf(o.package.name);
+    const latest = latestOf(o.package.name);
     return {
       name: o.package.name,
-      version: o.package.version,
+      version: latest ?? '',
       resolved: local?.version,
       request: local?.request,
       origin: local?.origin,
       // 与 package-manager 的更新闸同一份实现（@aalis/util-dep-spec），定义上不可能分岔。
-      updatable: isRegistryDep(local?.request) && isUpgrade(local?.version, o.package.version),
+      updatable: isRegistryDep(local?.request) && isUpgrade(local?.version, latest),
       description: o.package.description ?? '',
       author: o.package.publisher?.username,
       installed: installed.has(o.package.name),
@@ -421,6 +440,26 @@ export function buildSearchUrl(q: string, keyword: string, registryBase: string 
   return `${base}/-/v1/search?text=${encodeURIComponent(text)}&size=100`;
 }
 
+/**
+ * 按精确包名向 base 源查 dist-tags.latest。查不到（离线、源上没有该包、非 2xx、超时、格式不对）返回 undefined，
+ * 调用方当作「最新版未知」：不显示可更新。
+ * 带 npm 客户端同款的精简元数据 Accept 头：市场列表每次要查一批包，完整 packument 带全部版本的清单，体积大得多；
+ * 不认这个头的源照常回完整文档，两者都有 dist-tags。
+ */
+async function fetchLatest(base: string, name: string): Promise<string | undefined> {
+  try {
+    const r = await fetch(`${base}/${name.replace('/', '%2F')}`, {
+      headers: { accept: 'application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8' },
+      signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
+    });
+    if (!r.ok) return undefined;
+    const latest = ((await r.json()) as { 'dist-tags'?: { latest?: unknown } })['dist-tags']?.latest;
+    return typeof latest === 'string' ? latest : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** 市场路由用到的能力 */
 interface MarketplaceRoutesCaps {
   logger: Logger;
@@ -448,6 +487,22 @@ export function registerMarketplaceRoutes(
    */
   rediscoverClients: () => void,
 ): void {
+  const searchBase = registryBase.replace(/\/+$/, '') || DEFAULT_REGISTRY;
+  /**
+   * 查版本用的源。package-manager 在场时是它报告的安装源，最新版与「可更新」才与真正装到的一致；
+   * 不在场时装卸更新都不可用，退回检索源只作展示。安装源查不到时返回 error：调用方不查最新版，并如实说明。
+   */
+  const versionSource = async (): Promise<{ base: string } | { error: string }> => {
+    const pm = caps.packageManager.current;
+    if (!pm) return { base: searchBase };
+    try {
+      return { base: await pm.registry() };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      caps.logger.warn(`market: 查询安装源失败，不显示最新版与可更新: ${msg}`);
+      return { error: `无法确定安装源（${msg}），暂不显示最新版本与可更新` };
+    }
+  };
   // 市场列表：npm registry keyword 检索 + 标注已装。网络失败降级为空列表 + warning，
   // 不阻塞 WebUI（管理读档，与 /api/plugins 同级）。
   expressApp.get('/api/marketplace', gate(), async (req, res) => {
@@ -503,14 +558,30 @@ export function registerMarketplaceRoutes(
       return;
     }
     const byName = new Map<string, NonNullable<NpmSearchResponse['objects']>[number]>();
-    for (const r of okResults) for (const o of r.value.objects ?? []) byName.set(o.package.name, o);
+    for (const r of okResults) {
+      for (const o of r.value.objects ?? []) if (matchesQuery(o.package, q)) byName.set(o.package.name, o);
+    }
     const merged: NpmSearchResponse = { objects: [...byName.values()] };
     const installed = augmentInstalled(
       [...byName.keys()],
       new Set(status.map(p => p.name)),
       n => localOf(n) !== undefined,
     );
-    res.json({ packages: toMarketplacePackages(merged, installed, localOf) });
+    // 按包名并发查安装源上的最新版；任何一条失败只让该卡片缺最新版，不拖垮整页。
+    const source = await versionSource();
+    const latest = new Map<string, string>();
+    if ('base' in source) {
+      await Promise.all(
+        [...byName.keys()].map(async n => {
+          const v = await fetchLatest(source.base, n);
+          if (v !== undefined) latest.set(n, v);
+        }),
+      );
+    }
+    res.json({
+      packages: toMarketplacePackages(merged, installed, n => latest.get(n), localOf),
+      ...('error' in source ? { warning: source.error } : {}),
+    });
   });
 
   // 系统组件：内核 / 宿主 / 契约 / 规范 / 工具库。**列表只来自本地实况**（已装包 + 根依赖表），
@@ -547,28 +618,23 @@ export function registerMarketplaceRoutes(
       });
     }
 
-    // 按精确包名并发查 latest；任何一条失败只让该行缺 latest（显示"—"），不拖垮整页。
-    const base = registryBase.replace(/\/+$/, '') || DEFAULT_REGISTRY;
-    await Promise.all(
-      components.map(async c => {
-        try {
-          const r = await fetch(`${base}/${c.name.replace('/', '%2F')}`, {
-            signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
-          });
-          if (!r.ok) return;
-          const p = (await r.json()) as { 'dist-tags'?: { latest?: string } };
-          c.latest = p['dist-tags']?.latest;
-        } catch {
-          /* 离线/镜像不支持：该行不显示可更新，不报错 */
-        } finally {
-          // 版本序补判：来源合格还不够，latest 必须**严格新于**本地。dist-tags.latest 可以
-          // 低于本地已装版本（发布事故后回滚 tag，或用户装过预发布版），漏了这一判就会把
-          // 降级渲染成更新。查不到 latest 同样落 false。
-          c.updatable = c.updatable && isUpgrade(c.version, c.latest);
-        }
-      }),
-    );
-    res.json({ components: sortSystemComponents(components) });
+    // 按精确包名并发向安装源查 latest；任何一条失败只让该行缺 latest（显示"—"），不拖垮整页。
+    const source = await versionSource();
+    if ('base' in source) {
+      await Promise.all(
+        components.map(async c => {
+          c.latest = await fetchLatest(source.base, c.name);
+        }),
+      );
+    }
+    // 版本序补判：来源合格还不够，latest 必须**严格新于**本地。dist-tags.latest 可以
+    // 低于本地已装版本（发布事故后回滚 tag，或用户装过预发布版），漏了这一判就会把
+    // 降级渲染成更新。查不到 latest 同样落 false。
+    for (const c of components) c.updatable = c.updatable && isUpgrade(c.version, c.latest);
+    res.json({
+      components: sortSystemComponents(components),
+      ...('error' in source ? { warning: source.error } : {}),
+    });
   });
 
   // 依赖图：本地 import 依赖图（name→deps 扫描）+ 运行时服务图（getStatus）合成，供装/卸/装前展示。
@@ -586,13 +652,13 @@ export function registerMarketplaceRoutes(
     const svcOf = new Map(
       status.map(p => [p.name, { provides: p.provides ?? [], requires: p.requiredServices ?? [] }]),
     );
-    // target 本地没有（装前浏览）→ 拉 packument 取直接依赖 + 服务，注入工作图当根种子。
+    // target 本地没有（装前浏览）→ 向安装源拉 packument 取 latest 的直接依赖 + 服务，注入工作图当根种子。
     let rootServices: { provides: string[]; requires: string[] } | undefined;
     let upstreamMap = depMap;
-    if (!depMap.has(name)) {
+    const source = depMap.has(name) ? undefined : await versionSource();
+    if (source && 'base' in source) {
       try {
-        const base = registryBase.replace(/\/+$/, '') || DEFAULT_REGISTRY;
-        const r = await fetch(`${base}/${name.replace('/', '%2F')}`, {
+        const r = await fetch(`${source.base}/${name.replace('/', '%2F')}`, {
           signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
         });
         if (r.ok) {

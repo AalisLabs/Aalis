@@ -3,7 +3,7 @@ import { LLMCapabilities, llm } from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigSchema, missingConfigError } from '@aalis/schema-config';
 import type { Message, ToolCall } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole } from '@aalis/schema-message';
 
@@ -705,7 +705,7 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
     }
   })();
   if (!openaiConfig.apiKey && isOfficialOpenAI) {
-    throw new Error('使用 OpenAI 官方 API 需要配置 apiKey');
+    throw missingConfigError('apiKey', '使用 OpenAI 官方 API 时必填');
   }
 
   const client = new OpenAIClient(openaiConfig, logger);
@@ -768,8 +768,10 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
   }
 
   // 初次注册。停用或停机时中止探测（中止即抛出）；发现失败记 warn 后按未发现远端模型继续，customModels 照常注册
+  let discovered = true;
   const remoteIds = await client.fetchRemoteModelIds(lifecycle.signal).catch((err: unknown) => {
     lifecycle.signal.throwIfAborted();
+    discovered = false;
     // 只记消息：消息里已带 URL 与原因（cause 也内联在内），err 交给 logger 会按因果链把原因再记一遍
     logger.warn(`${err instanceof Error ? err.message : String(err)}；启动时只注册 customModels 里的模型`);
     return [];
@@ -777,10 +779,18 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
   lifecycle.signal.throwIfAborted();
   const initialIds = withCustomModels(remoteIds);
   if (initialIds.length === 0) {
-    logger.warn(`已连接: ${openaiConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
+    logger.warn(
+      discovered
+        ? `已连接: ${openaiConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`
+        : `模型发现失败且未配置 customModels: ${openaiConfig.baseUrl}，不注册任何 LLM entry`,
+    );
   } else {
     for (const modelId of initialIds) registerOne(modelId);
-    logger.info(`已连接: ${openaiConfig.baseUrl}，注册 ${initialIds.length} 个 model entry`);
+    logger.info(
+      discovered
+        ? `已连接: ${openaiConfig.baseUrl}，注册 ${initialIds.length} 个 model entry`
+        : `模型发现失败: ${openaiConfig.baseUrl}，注册 customModels 里的 ${initialIds.length} 个 model entry`,
+    );
   }
 
   // 装配 refresh 真实实现。与初次注册一样随停用或停机中止：中止即抛出，不再增删条目。

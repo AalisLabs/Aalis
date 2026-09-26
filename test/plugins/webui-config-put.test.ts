@@ -159,15 +159,22 @@ describe('PUT /api/config 何时重启', () => {
     expect(calls).toEqual(['save']);
   });
 
-  it('已落盘但重启失败（宿主没注入重启策略）→ 仍回 200，文档不撤回，重启失败记一笔 error', async () => {
+  it('已落盘但重启失败（宿主没注入重启策略）→ 回 200 与 restart:false 并说明下次启动生效，文档不撤回，记一笔 error', async () => {
     const { store, calls, errors, put } = setup({
       restart: () => {
         throw new Error('App.restart() 不可用：未注入 restartStrategy。');
       },
     });
-    const r = await put({ logLevel: 'debug' });
+    const r = await put({ logLevel: 'debug', commandPrefix: '!' });
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ ok: true, restart: true });
+    // restart:true 会让前端进入「正在重启」等待重连，而进程根本不会重启，遮罩永远不消失
+    expect(r.body).toEqual({
+      ok: true,
+      message:
+        '全局配置已保存，但重启失败（App.restart() 不可用：未注入 restartStrategy。），改动在下次启动时生效（已忽略不可修改的字段: commandPrefix）',
+      restart: false,
+      ignored: ['commandPrefix'],
+    });
     expect(store.logLevel, '文件里已是 debug，文档撤回的话下一次保存会把 info 写回文件').toBe('debug');
     expect(calls).toEqual(['save']);
     expect(errors).toEqual([

@@ -118,6 +118,8 @@ export class CheckpointServiceImpl implements CheckpointService {
   private turns = new Map<string, { manifest: TurnManifest; snapshotted: Set<string>; blobIndex: number }>();
   /** 回滚正在处理的 URI：回滚自身的写/删/移经 storage 写前钩子回到 beforeMutate，不得记进任何活跃回合 */
   private readonly rollingBack = new Set<string>();
+  /** 读失败的告警记录：位置（会话目录或 manifest URI）→ 已告警过的原因 */
+  private readonly readFailures = new Map<string, string>();
 
   constructor(
     private readonly cfg: ServiceConfig,
@@ -295,9 +297,10 @@ export class CheckpointServiceImpl implements CheckpointService {
       entries = listed.entries.filter(e => e.isDirectory).map(e => e.name);
     } catch (err) {
       // 目录不存在即该会话还没有检查点；其它失败（storage 不在线、权限被拒）要留痕，不能静默成空列表
-      if (!isStorageNotFound(err)) this.logger.warn(`checkpoint 列出回合失败 ${sessionDir}: ${(err as Error).message}`);
+      this.readFailed(sessionDir, '列出回合失败', err);
       return [];
     }
+    this.readFailures.delete(sessionDir);
     const summaries: TurnSummary[] = [];
     for (const turnId of entries) {
       const manifest = await this.getManifest(sessionId, turnId);
@@ -320,12 +323,29 @@ export class CheckpointServiceImpl implements CheckpointService {
     const uri = joinUri(this.turnDir(sessionId, turnId), 'manifest.json');
     try {
       const raw = await this.storage.readFile(uri, 'utf-8');
-      return JSON.parse(String(raw)) as TurnManifest;
+      const manifest = JSON.parse(String(raw)) as TurnManifest;
+      this.readFailures.delete(uri);
+      return manifest;
     } catch (err) {
       // 不向上抛：listTurns 逐个读，一个坏 manifest 不能拖垮整张列表。读失败与损坏要留痕
-      if (!isStorageNotFound(err)) this.logger.warn(`checkpoint 读取 manifest 失败 ${uri}: ${(err as Error).message}`);
+      this.readFailed(uri, '读取 manifest 失败', err);
       return null;
     }
+  }
+
+  /**
+   * 读失败留痕：「不存在」不算失败；其它原因告警，但同一位置同一原因只记一次——WebUI 每次消息变化都会列回合，
+   * storage 不在线或 manifest 损坏时不能每条消息记一条。读通（或确认不存在）即清掉记录，之后再失败会再记。
+   */
+  private readFailed(location: string, what: string, err: unknown): void {
+    if (isStorageNotFound(err)) {
+      this.readFailures.delete(location);
+      return;
+    }
+    const reason = err instanceof Error ? err.message : String(err);
+    if (this.readFailures.get(location) === reason) return;
+    this.readFailures.set(location, reason);
+    this.logger.warn(`checkpoint ${what} ${location}: ${reason}`);
   }
 
   // ──────────── 回滚 ────────────

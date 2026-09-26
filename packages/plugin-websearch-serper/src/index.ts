@@ -2,7 +2,7 @@ import { llm, resolveLLMModel } from '@aalis/api-llm';
 import { tools, wrapUntrustedContent } from '@aalis/api-tools';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { type BoundOf, config, definePlugin, defineService, logger, optional, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigSchema, missingConfigError } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import type { WebSearchRequest, WebSearchResponse, WebSearchResult, WebSearchService } from './types.js';
 
@@ -242,7 +242,7 @@ function registerSerper({ tools, logger, config, provide, llm }: Caps): void {
   const cfg = readConfig(config);
 
   if (!cfg.apiKey) {
-    throw new Error('未配置 Serper API Key，网络搜索不可用');
+    throw missingConfigError('apiKey');
   }
 
   const limiter = new RateLimiter(cfg);

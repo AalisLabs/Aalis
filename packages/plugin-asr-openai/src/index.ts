@@ -12,7 +12,7 @@ import { createProcessGateway, type ProcessService, processService } from '@aali
 import { createStorageGateway, isStorageUri, type StorageService, storage as storageService } from '@aalis/api-storage';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { config, definePlugin, logger, optional, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigSchema, missingConfigError } from '@aalis/schema-config';
 import { safeFetch } from '@aalis/util-network-guard';
 
 interface Cfg {
@@ -173,7 +173,7 @@ export default definePlugin({
     if (!cfg.apiKey) {
       // 与 openai/embedding-openai 一致：缺必填配置时抛清晰错误（而非静默 return，
       // 否则声明了提供 asr 却不注册会触发难懂的 provides 校验错）。
-      throw new Error('OpenAI Whisper ASR 需要配置 apiKey（不使用 OpenAI ASR 可在插件管理里禁用本插件）');
+      throw missingConfigError('apiKey', '不使用 OpenAI ASR 可在插件管理里禁用本插件');
     }
 
     const proc = createProcessGateway(caps.proc);

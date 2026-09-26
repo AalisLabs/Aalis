@@ -161,7 +161,7 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   }
 
   // 配置文档先于任何插件接上：文档里的服务偏好要在全部提供者上线前生效
-  installHostConfig(app, store);
+  installHostConfig(app, store, opts.configSync);
   // 默认值从 configSchema 派生（唯一声明来源），导入定义后、登记前深合并进文档；登记时原样交给 core
   const configLoader = withPluginConfigSync(
     opts.pluginLoader ?? createNodeModulesPluginLoader(opts.projectDir),
@@ -238,8 +238,8 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   // 握手完成后解除 IPC 对事件循环的持有——否则父进程退出前本进程无法自然结束。
   process.channel?.unref();
 
-  // 配置外部变更热重载（provider 不支持 watch 时为 no-op）。
-  installConfigHotReload(app, store, opts.configSync);
+  // 配置外部变更热重载（provider 不支持 watch 时为 no-op）；文件里新增的后缀实例经发现驱动登记。
+  installConfigHotReload(app, store, discovery, opts.configSync);
   let stopping = false;
   const shutdown = async () => {
     if (stopping) return;

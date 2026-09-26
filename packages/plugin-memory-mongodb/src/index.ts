@@ -6,8 +6,17 @@ import {
   type RecentMessageRecord,
   type RecentMessagesAcrossSessionsQuery,
 } from '@aalis/api-memory';
-import { type BoundOf, config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import {
+  type BoundOf,
+  config,
+  definePlugin,
+  type LifecycleCap,
+  lifecycle,
+  logger,
+  parseInstanceId,
+  provide,
+} from '@aalis/core';
+import { type ConfigSchema, configError } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import { type Collection, type Db, MongoClient } from 'mongodb';
 
@@ -22,9 +31,10 @@ const configSchema: ConfigSchema = {
   database: {
     type: 'string',
     label: '数据库名',
-    required: true,
-    default: 'aalis',
-    description: '存储消息历史的数据库',
+    default: '',
+    description:
+      '存储消息历史与元数据（固定名为 metadata 的集合）的数据库。留空按实例派生：主实例用 aalis，' +
+      '带后缀的实例在库名上加后缀（如 `:b` 实例用 aalis-b）。同一连接串下两个实例不能用同一个库，后激活的那个会报配置错误',
   },
   collection: { type: 'string', label: '集合名', default: 'messages', description: '消息集合名称' },
   connectTimeoutMs: {
@@ -51,6 +61,7 @@ const configSchema: ConfigSchema = {
 
 interface MongoMemoryConfig {
   uri: string;
+  /** 空串按实例派生（见 openAndProvide） */
   database: string;
   collection?: string;
   connectTimeoutMs?: number;
@@ -322,7 +333,7 @@ export default definePlugin({
 async function connectAndProvide({ logger, config, lifecycle, provide }: Caps): Promise<void> {
   const mongoConfig: MongoMemoryConfig = {
     uri: (config.uri as string) ?? 'mongodb://localhost:27017',
-    database: (config.database as string) ?? 'aalis',
+    database: String(config.database ?? '').trim(),
     collection: (config.collection as string) ?? 'messages',
     connectTimeoutMs: (config.connectTimeoutMs as number) ?? 5000,
     rangeQueryLimit: config.rangeQueryLimit as number | undefined,
@@ -339,7 +350,14 @@ async function connectAndProvide({ logger, config, lifecycle, provide }: Caps): 
 }
 
 /**
- * 连接、建索引并发布服务。停用或停机（lifecycle.signal abort）时 `client.close()`，让在途的连接与建索引以错误返回。
+ * 本进程里各库（连接串 + 库名）由哪次激活使用。元数据集合固定名为 metadata、与消息集合同库，
+ * 两个实例用同一个库就会共写，后激活的那个以配置错误失败；激活关闭时撤下自己的登记。
+ */
+const openedBy = new Map<string, LifecycleCap>();
+
+/**
+ * 库名留空时按实例派生（主实例 aalis，`name:b` 实例 aalis-b），登记占用后连接、建索引并发布服务。
+ * 停用或停机（lifecycle.signal abort）时 `client.close()`，让在途的连接与建索引以错误返回。
  * @internal 只为测试导出：以替身客户端直接调用（经 apply 会连真实的 mongod），不是公开 API
  */
 export async function openAndProvide(
@@ -347,6 +365,20 @@ export async function openAndProvide(
   mongoConfig: MongoMemoryConfig,
   { logger, lifecycle, provide }: Omit<Caps, 'config'>,
 ): Promise<void> {
+  const { suffix } = parseInstanceId(lifecycle.id);
+  const database = mongoConfig.database || (suffix ? `aalis-${suffix}` : 'aalis');
+  const location = `${mongoConfig.uri}\n${database}`;
+  const holder = openedBy.get(location);
+  if (holder && holder.id !== lifecycle.id) {
+    throw configError(
+      `MongoDB 库 ${database} 已被实例 ${holder.id} 使用（同一连接串），两个实例不能共用一个库：请给 ${lifecycle.id} 另配 database`,
+    );
+  }
+  openedBy.set(location, lifecycle);
+  lifecycle.onDispose(() => {
+    if (openedBy.get(location) === lifecycle) openedBy.delete(location);
+  });
+
   // 监听器同步执行、不得抛错：close 的拒绝吞掉
   const onAbort = (): void => void client.close().catch(() => {});
   lifecycle.signal.addEventListener('abort', onAbort, { once: true });
@@ -354,7 +386,7 @@ export async function openAndProvide(
     await client.connect();
     // mongodb+srv 在 SRV 解析期间 close 不生效，连接会在 abort 之后照常建成：由这里抛出、下方 catch 关闭
     lifecycle.signal.throwIfAborted();
-    const db: Db = client.db(mongoConfig.database);
+    const db: Db = client.db(database);
     const collection = db.collection<MessageDocument>(mongoConfig.collection!);
     const metaCollection = db.collection<MetadataDocument>('metadata');
 
@@ -376,7 +408,7 @@ export async function openAndProvide(
       priority: 5,
     });
 
-    logger.info(`MongoDB 已连接: ${mongoConfig.database}/${mongoConfig.collection}`);
+    logger.info(`MongoDB 已连接: ${database}/${mongoConfig.collection}`);
 
     // 连接握手跨 await，关闭可能已开始；迟到的清理照样被执行
     lifecycle.onDispose(async () => {

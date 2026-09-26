@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type AalisConfig, ConfigSaveRefusedError, hostConfig } from '../../packages/api-host-config/src/index.js';
 import {
-  type App,
+  App,
   config,
   definePlugin,
   defineService,
@@ -10,7 +10,7 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
-import { createConfigStore } from '../../packages/runtime/src/config-store.js';
+import { createConfigStore, installHostConfig } from '../../packages/runtime/src/config-store.js';
 import { hostedApp, registerFromDoc, type TempConfigHandle, tempConfig } from '../fixtures/app.js';
 
 // ════════════════════════════════════════════════════════════
@@ -324,6 +324,20 @@ describe('watch', () => {
   });
 });
 
+describe('host-config 的裁剪政策（installHostConfig 按配置同步选项填）', () => {
+  it('缺省与配置同步一样为裁剪；传 trimUnknownFields=false 即为 false', () => {
+    const policyOf = (opts?: { trimUnknownFields?: boolean }) => {
+      const app = new App({ name: 'T', logLevel: 'error' });
+      apps.push(app);
+      installHostConfig(app, emptyStore(), opts);
+      return app.bind({ hostConfig }).hostConfig.require().trimUnknownFields;
+    };
+    expect(policyOf()).toBe(true);
+    expect(policyOf({})).toBe(true);
+    expect(policyOf({ trimUnknownFields: false })).toBe(false);
+  });
+});
+
 describe('host-config 的 save 契约（installHostConfig 交给插件的那一份）', () => {
   function capture() {
     const errors: unknown[][] = [];
@@ -480,11 +494,12 @@ describe('host-config 的 save 契约（installHostConfig 交给插件的那一�
     expect(unhandled).toEqual([]);
   });
 
-  it('交给插件的只有文档读写与 save：宿主的 persist / watch / unwatch 不外露', () => {
+  it('交给插件的只有文档读写、save 与裁剪政策：宿主的 persist / watch / unwatch 不外露', () => {
     const { app } = track(hostedApp());
     const doc = docOf(app) as unknown as Record<string, unknown>;
     expect(Object.keys(doc).sort()).toEqual(
       [
+        'trimUnknownFields',
         'get',
         'getAll',
         'set',

@@ -133,7 +133,7 @@ toStorageUri('persona', 'data');    // 'data:/persona'
 ```
 
 输入还会先 `trim()` 并剥掉前导 `./` 和 `/`（`index.ts` 的 `replace(/^\.?\/+/, '')`）。
-真实用法：`plugin-memory-sqlite/src/index.ts` 的 `toStorageUri(s) : 'data:/aalis.db'`、
+真实用法：`plugin-memory-sqlite/src/index.ts` 的 `toUri`（非空走 `toStorageUri(s)`，留空按实例派生 `data:/aalis.db` / `data:/aalis-<后缀>.db`）、
 `plugin-persona/src/index.ts` 的 `toStorageUri(personasDirRaw)`。
 
 > **单段裸名归一的设计动机**（`index.ts`）：如果把单段裸名当**根名**处理（→ `name:/`），

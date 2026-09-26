@@ -30,7 +30,7 @@
   "dependencies": {
     "@aalis/schema-config": "workspace:>=0.13.0 <1.0.0",
     "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0",
-    "@modelcontextprotocol/sdk": "^1.0.4"
+    "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

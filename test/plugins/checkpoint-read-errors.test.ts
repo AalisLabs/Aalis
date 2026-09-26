@@ -11,7 +11,10 @@ function errno(code: string, message: string): Error {
   return Object.assign(new Error(message), { code });
 }
 
-/** readFile 按 URI 查表：字符串是文件内容，Error 是读取时抛出的错误；list 固定返回 turns 或抛 listError */
+/**
+ * readFile 按 URI 查表：字符串是文件内容，Error 是读取时抛出的错误（测试可中途改表）；list 返回 turns，
+ * 或抛 listError（可经 setListError 中途切换）
+ */
 function makeService(files: Record<string, string | Error>, turns: string[], listError?: Error) {
   const warns: string[] = [];
   const storage = {
@@ -30,7 +33,10 @@ function makeService(files: Record<string, string | Error>, turns: string[], lis
   const logger = { debug() {}, info() {}, warn: (msg: string) => void warns.push(msg), error() {} };
   const cfg = { rootUri: ROOT, maxFileSize: 1024, keepSessions: 0, scopes: ['*'] };
   const svc = new CheckpointServiceImpl(cfg, logger as never, storage as never);
-  return { svc, warns };
+  const setListError = (err: Error | undefined) => {
+    listError = err;
+  };
+  return { svc, warns, setListError };
 }
 
 const manifestUri = (turnId: string) => `${ROOT}/s1/${turnId}/manifest.json`;
@@ -79,5 +85,49 @@ describe('checkpoint 读取失败的留痕', () => {
     expect(warns).toHaveLength(1);
     expect(warns[0]).toContain(`${ROOT}/s1`);
     expect(warns[0]).toContain('未知存储根');
+  });
+
+  it('列目录一直失败（storage 不在线）：同一原因只告警一次；恢复后再失败再记', async () => {
+    const offline = new Error('未知存储根: ws');
+    const { svc, warns, setListError } = makeService({ [manifestUri('t1')]: manifest('t1') }, ['t1'], offline);
+    for (let i = 0; i < 3; i++) expect(await svc.listTurns('s1')).toEqual([]);
+    expect(warns).toHaveLength(1);
+
+    const denied = errno('EACCES', 'EACCES: permission denied');
+    setListError(denied);
+    await svc.listTurns('s1');
+    expect(warns, '原因变了照记').toHaveLength(2);
+
+    setListError(undefined);
+    expect((await svc.listTurns('s1')).map(t => t.turnId)).toEqual(['t1']);
+    setListError(denied);
+    await svc.listTurns('s1');
+    await svc.listTurns('s1');
+    expect(warns, '恢复后再失败记一次').toHaveLength(3);
+    expect(warns[2]).toContain('EACCES');
+  });
+
+  it('坏 manifest 反复列出只告警一次；修好后再坏再记', async () => {
+    const files: Record<string, string | Error> = { [manifestUri('t1')]: '{"turnId":' };
+    const { svc, warns } = makeService(files, ['t1']);
+    await svc.listTurns('s1');
+    await svc.listTurns('s1');
+    expect(warns).toHaveLength(1);
+
+    files[manifestUri('t1')] = manifest('t1');
+    expect((await svc.listTurns('s1')).map(t => t.turnId)).toEqual(['t1']);
+    files[manifestUri('t1')] = '{"turnId":';
+    await svc.listTurns('s1');
+    expect(warns).toHaveLength(2);
+  });
+
+  it('不同位置的失败各记各的', async () => {
+    const denied = errno('EACCES', 'EACCES: permission denied');
+    const { svc, warns } = makeService({ [manifestUri('a')]: denied, [manifestUri('b')]: denied }, ['a', 'b']);
+    await svc.listTurns('s1');
+    await svc.listTurns('s1');
+    expect(warns).toHaveLength(2);
+    expect(warns[0]).toContain(manifestUri('a'));
+    expect(warns[1]).toContain(manifestUri('b'));
   });
 });

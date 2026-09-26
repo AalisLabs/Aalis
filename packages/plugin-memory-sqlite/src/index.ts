@@ -7,15 +7,24 @@ import {
   type RecentMessagesAcrossSessionsQuery,
 } from '@aalis/api-memory';
 import { createStorageGateway, storage, toStorageUri } from '@aalis/api-storage';
-import { config, definePlugin, lifecycle, logger, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { config, definePlugin, type LifecycleCap, lifecycle, logger, parseInstanceId, provide } from '@aalis/core';
+import { type ConfigSchema, configError } from '@aalis/schema-config';
 import type { ContentSegment, Message } from '@aalis/schema-message';
 import Database from 'better-sqlite3';
 
-function toUri(input: string): string {
+/** 配置的 path 归一为 storage URI；留空按实例派生：主实例 data:/aalis.db，`name:b` 实例 data:/aalis-b.db */
+function toUri(input: string, instanceId: string): string {
   const s = String(input ?? '').trim();
-  return s ? toStorageUri(s) : 'data:/aalis.db';
+  if (s) return toStorageUri(s);
+  const { suffix } = parseInstanceId(instanceId);
+  return suffix ? `data:/aalis-${suffix}.db` : 'data:/aalis.db';
 }
+
+/**
+ * 本进程里各数据库文件（本地路径）由哪次激活打开。两个实例开同一个库会共写同一份消息与元数据，
+ * 后激活的那个以配置错误失败；激活关闭时撤下自己的登记。
+ */
+const openedBy = new Map<string, LifecycleCap>();
 
 /**
  * 开库失败的说明。better-sqlite3 在首次构造 Database 时才加载原生绑定，加载失败报 ERR_DLOPEN_FAILED：
@@ -41,9 +50,11 @@ const configSchema: ConfigSchema = {
   path: {
     type: 'string',
     label: '数据库路径',
-    default: 'data/aalis.db',
+    default: '',
     description:
-      "SQLite 数据库文件的 storage URI（如 data:/aalis.db；不含 ':/' 时首段视为存储根名，单段裸名归 data 根）",
+      "SQLite 数据库文件的 storage URI（如 data:/aalis.db；不含 ':/' 时首段视为存储根名，单段裸名归 data 根）。" +
+      '留空按实例派生：主实例用 data:/aalis.db，带后缀的实例在文件名上加后缀（如 `:b` 实例用 data:/aalis-b.db）。' +
+      '两个实例不能用同一个库，后激活的那个会报配置错误',
   },
   rangeQueryLimit: {
     type: 'number',
@@ -419,7 +430,7 @@ export default definePlugin({
   async apply(caps) {
     // 解析数据库路径：storage URI → 本地路径
     const gateway = createStorageGateway(caps.storage);
-    const dbUri = toUri(caps.config.path as string);
+    const dbUri = toUri(caps.config.path as string, caps.lifecycle.id);
     let dbPath: string;
     try {
       dbPath = await gateway.resolveLocalPath(dbUri, 'write');
@@ -427,6 +438,17 @@ export default definePlugin({
       const msg = err instanceof Error ? err.message : String(err);
       throw new Error(`无法解析数据库路径 ${dbUri}: ${msg}`, { cause: err });
     }
+
+    const holder = openedBy.get(dbPath);
+    if (holder && holder.id !== caps.lifecycle.id) {
+      throw configError(
+        `数据库文件 ${dbPath} 已被实例 ${holder.id} 使用，两个实例不能共用一个库：请给 ${caps.lifecycle.id} 另配 path`,
+      );
+    }
+    openedBy.set(dbPath, caps.lifecycle);
+    caps.lifecycle.onDispose(() => {
+      if (openedBy.get(dbPath) === caps.lifecycle) openedBy.delete(dbPath);
+    });
 
     caps.logger.info(`正在打开 SQLite 数据库: ${dbPath}`);
 

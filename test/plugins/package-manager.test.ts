@@ -1250,3 +1250,42 @@ describe('生产接线：装卸以定义 name 为准，卸载清理全部实例'
     }
   });
 });
+
+describe('registry()：安装实际使用的 npm 源', () => {
+  /** 按顺序吐出 `npm config get registry` 的输出（Error 即该次执行失败），记下每次调用 */
+  function withNpmConfig(outputs: Array<string | Error>) {
+    const calls: Array<{ cmd: string; args: string[]; cwd?: string }> = [];
+    const proc = {
+      makeTempDir: vi.fn(),
+      execFile: vi.fn(async (cmd: string, args: readonly string[], o?: { cwd?: string }): Promise<ExecResult> => {
+        calls.push({ cmd, args: [...args], cwd: o?.cwd });
+        const next = outputs.shift();
+        if (next === undefined || next instanceof Error) throw next ?? new Error('多余的调用');
+        return { stdout: next, stderr: '', code: 0 } as ExecResult;
+      }),
+    } as unknown as ProcessService;
+    const pm = createPackageManager({ ...makeHarness().deps, proc });
+    return { pm, calls };
+  }
+
+  it('在项目根执行 npm config get registry，去掉尾部斜杠；成功后缓存，不再重查', async () => {
+    const { pm, calls } = withNpmConfig(['https://registry.npmmirror.com/\n']);
+    expect(await pm.registry()).toBe('https://registry.npmmirror.com');
+    expect(await pm.registry()).toBe('https://registry.npmmirror.com');
+    expect(calls).toEqual([{ cmd: 'npm', args: ['config', 'get', 'registry'], cwd: ROOT }]);
+  });
+
+  it('查询失败时拒绝且不缓存：下一次调用重查', async () => {
+    const { pm, calls } = withNpmConfig([new Error('npm: command not found'), 'https://registry.npmjs.org/']);
+    await expect(pm.registry()).rejects.toThrow('npm: command not found');
+    expect(await pm.registry()).toBe('https://registry.npmjs.org');
+    expect(calls).toHaveLength(2);
+  });
+
+  it('输出不是 http(s) 地址：拒绝并说明，同样不缓存', async () => {
+    const { pm, calls } = withNpmConfig(['undefined\n', 'https://registry.npmjs.org']);
+    await expect(pm.registry()).rejects.toThrow('npm config get registry 的输出不是 http(s) 地址: "undefined"');
+    expect(await pm.registry()).toBe('https://registry.npmjs.org');
+    expect(calls).toHaveLength(2);
+  });
+});

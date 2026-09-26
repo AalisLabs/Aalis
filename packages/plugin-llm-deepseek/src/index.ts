@@ -3,7 +3,7 @@ import { LLMCapabilities, llm } from '@aalis/api-llm';
 import type { ToolDefinition } from '@aalis/api-tools';
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（secret/dynamicOptions/allowCustom）
 import { type BoundOf, config, definePlugin, type Logger, lifecycle, logger, provide } from '@aalis/core';
-import type { ConfigSchema } from '@aalis/schema-config';
+import { type ConfigSchema, missingConfigError } from '@aalis/schema-config';
 import type { Message, ToolCall } from '@aalis/schema-message';
 import { prepareLLMMessages, toLLMRole, WellKnownKinds } from '@aalis/schema-message';
 import { stripLeakedSpecialTokens } from '@aalis/util-text-normalize';
@@ -241,12 +241,12 @@ class DeepSeekClient {
     this.logger = logger;
   }
 
-  /** 发现远端模型 id 列表；signal 用于中止（中止同样返回空列表，不记 warn） */
-  async fetchRemoteModelIds(signal?: AbortSignal): Promise<string[]> {
+  /** 发现远端模型 id 列表；失败记 warn 并返回 null，与远端没有模型（空列表）区分；经 signal 中止也返回 null，不记 warn */
+  async fetchRemoteModelIds(signal?: AbortSignal): Promise<string[] | null> {
     const url = `${this.baseUrl}/models`;
     try {
       // 无超时会让 apply() 里的 await 在「接连接不回包」的端点上停摆到 undici 兜底,
-      // 插件按拓扑序串行卡住；失败语义不变（catch 成 warn + 空列表）
+      // 插件按拓扑序串行卡住；失败语义不变（catch 成 warn + null）
       const timeout = AbortSignal.timeout(10_000);
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${this.apiKey}` },
@@ -256,14 +256,14 @@ class DeepSeekClient {
         const body = await res.text().catch(() => '');
         if (!signal?.aborted)
           this.logger.warn(`fetchRemoteModelIds 失败 ${url}: HTTP ${res.status} ${res.statusText} - ${body}`);
-        return [];
+        return null;
       }
       const data = (await res.json()) as { data: { id: string }[] };
       return data.data.map(m => m.id);
     } catch (err) {
       // err 作参数交给 logger：fetch 网络失败的消息固定是「fetch failed」，真实原因在 cause 上，logger 渲染因果链
       if (!signal?.aborted) this.logger.warn(`fetchRemoteModelIds 异常 ${url}:`, err);
-      return [];
+      return null;
     }
   }
 
@@ -847,15 +847,18 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
   };
 
   if (!deepseekConfig.apiKey) {
-    throw new Error('未配置 apiKey，DeepSeek 插件无法启动');
+    throw missingConfigError('apiKey');
   }
 
   const thinkingMode = (config.thinkingMode as string) ?? 'auto';
   const client = new DeepSeekClient(deepseekConfig, logger);
 
-  // 探测远端 + 合并自定义模型。停用或停机时中止探测；探测把中止也吞成空列表，所以 await 之后自己查
-  const remoteIds = await client.fetchRemoteModelIds(lifecycle.signal);
+  // 探测远端 + 合并自定义模型。停用或停机时中止探测；探测把中止也吞成 null，所以 await 之后自己查。
+  // 发现失败（已由探测记 warn）按未发现远端模型继续，customModels 照常注册
+  const fetched = await client.fetchRemoteModelIds(lifecycle.signal);
   lifecycle.signal.throwIfAborted();
+  const discovered = fetched !== null;
+  const remoteIds = fetched ?? [];
   const remoteSet = new Set(remoteIds);
   for (const cm of deepseekConfig.customModels) {
     if (remoteSet.has(cm)) {
@@ -865,7 +868,11 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
   const allModelIds = [...remoteIds, ...deepseekConfig.customModels.filter(id => !remoteSet.has(id))];
 
   if (allModelIds.length === 0) {
-    logger.warn(`已连接: ${deepseekConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
+    logger.warn(
+      discovered
+        ? `已连接: ${deepseekConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`
+        : `模型发现失败且未配置 customModels: ${deepseekConfig.baseUrl}，不注册任何 LLM entry`,
+    );
     return;
   }
 
@@ -904,6 +911,8 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
   }
 
   logger.info(
-    `已连接: ${deepseekConfig.baseUrl}，注册 ${allModelIds.length} 个 model entry (thinkingMode=${thinkingMode})`,
+    discovered
+      ? `已连接: ${deepseekConfig.baseUrl}，注册 ${allModelIds.length} 个 model entry (thinkingMode=${thinkingMode})`
+      : `模型发现失败: ${deepseekConfig.baseUrl}，注册 customModels 里的 ${allModelIds.length} 个 model entry (thinkingMode=${thinkingMode})`,
   );
 }

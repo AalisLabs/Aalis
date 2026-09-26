@@ -99,6 +99,16 @@ function ExpandableTextCell({ text }: { text: string }) {
   );
 }
 
+/**
+ * 成功回执里的服务端附注：`{ ok: true, message }` 带非空 message 时返回它，组件用它代替自己的「已保存 / 完成」，
+ * 让「已保存但仅本次运行生效」这类附注出现在用户眼前。其它返回值一律没有附注。
+ */
+function successNote(r: unknown): string | undefined {
+  if (!r || typeof r !== 'object') return undefined;
+  const { ok, message } = r as { ok?: unknown; message?: unknown };
+  return ok === true && typeof message === 'string' && message ? message : undefined;
+}
+
 function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent; pluginName: string; refreshTick: number }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
@@ -136,6 +146,8 @@ function DynTable({ comp, pluginName, refreshTick }: { comp: WebuiTableComponent
       fetchData();
       return;
     }
+    const note = successNote(result);
+    if (note) window.alert(note);
     // 详情弹窗只给「查看类」action：返回的普通对象**不带 ok 字段**才算详情。
     // 带 ok 的（如 {ok:true}）是操作回执而非详情，弹出来只显示一行 ok 且表格不刷新。
     const isDetail =
@@ -290,7 +302,7 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState('');
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [modelCache, setModelCache] = useState<Record<string, Array<{ label: string; value: string }>>>({});
   const [llmProviders, setLLMProviders] = useState<LLMProviderEntry[] | undefined>(undefined);
 
@@ -304,14 +316,14 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
 
   const handleSave = async () => {
     setSaving(true);
-    setMsg('');
+    setMsg(null);
     try {
       // action 的业务失败走返回值 {ok:false,error}（HTTP 仍是 200），只看状态码会把
       // scheduler/workflow 的校验失败全显示成「已保存」。
       const r = await pageAction<{ ok?: boolean; error?: string } | undefined>(pluginName, comp.save, draft);
-      if (r && r.ok === false) setMsg(r.error ?? '保存失败');
-      else setMsg('已保存');
-    } catch (err) { setMsg(errText(err, '保存失败')); }
+      if (r && r.ok === false) setMsg({ text: r.error ?? '保存失败', ok: false });
+      else setMsg({ text: successNote(r) ?? '已保存', ok: true });
+    } catch (err) { setMsg({ text: errText(err, '保存失败'), ok: false }); }
     setSaving(false);
   };
 
@@ -354,7 +366,7 @@ function DynForm({ comp, pluginName }: { comp: WebuiFormComponent; pluginName: s
         <button className="btn btn-sm btn-primary" onClick={handleSave} disabled={saving}>
           {saving ? '保存中...' : '保存'}
         </button>
-        {msg && <span style={{ fontSize: 13, color: msg === '已保存' ? '#22c55e' : '#ef4444' }}>{msg}</span>}
+        {msg && <span style={{ fontSize: 13, color: msg.ok ? '#22c55e' : '#ef4444' }}>{msg.text}</span>}
       </div>
     </div>
   );
@@ -373,7 +385,7 @@ function DynActions({ comp, pluginName, onRefresh }: { comp: WebuiActionsCompone
         setActionMsg(prev => ({ ...prev, [item.method]: r.error ?? '失败' }));
         return;
       }
-      setActionMsg(prev => ({ ...prev, [item.method]: '完成' }));
+      setActionMsg(prev => ({ ...prev, [item.method]: successNote(r) ?? '完成' }));
       // 立即触发同页面其它组件刷新；不等待用户手动刷新
       onRefresh();
     } catch (err) {

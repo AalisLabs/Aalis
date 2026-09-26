@@ -788,6 +788,19 @@ describe('plugin-file-reader: resolveLocalPath', () => {
       await fx.dispose();
     }
   });
+
+  it('提供者报的其它「不支持」错误照常抛出：只有「不支持 local-path」才按契约返回 null', async () => {
+    const fx = await setup();
+    try {
+      const { id } = await fx.upload('s-path', 'a.txt', 'hello');
+      fx.store.resolveLocalPath = async () => {
+        throw new Error('路径含不支持的字符');
+      };
+      await expect(fx.service().resolveLocalPath(id)).rejects.toThrow('不支持的字符');
+    } finally {
+      await fx.dispose();
+    }
+  });
 });
 
 // ════════════════════════════════════════════════════════════
