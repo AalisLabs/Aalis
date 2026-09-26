@@ -281,16 +281,6 @@ export function settlePendingActions(
   return n;
 }
 
-// ===== 聊天流控类型（已迁移）=====
-//
-// 旧的 ChatFlowConfig / FlowSessionState / 流控函数已抽出到独立插件：
-//   - @aalis/plugin-trigger-policy （禁言关键词 / @ / 名字检测 + 计数评分判定 + idle 调度）
-//   - @aalis/plugin-flow-control   （禁言 / 冷却 / 限速）
-// 适配器只保留两个最小桥接：
-//   - 群禁言事件 → flow-control 的 setMuted()
-//   - shut_up_timestamp 启动恢复 → 同上
-// 其他路径全部走 inbound:command/trigger/flow/dispatch 生命周期相位。
-
 // ===== 工具函数 =====
 
 /** 撤回原文的时间标注：同日 HH:mm，跨日 M/D HH:mm（供撤回通知内嵌，纯函数）。 */
@@ -1631,7 +1621,7 @@ function runAdapter(caps: Caps): void {
             ? 'channel'
             : undefined;
 
-    // 异步获取群信息、引用消息，并执行流控判定
+    // 异步获取群信息、引用消息，然后送入 inbound:message
     (async () => {
       let groupName: string | undefined;
       let replyTo: { messageId: string; content?: string; userId?: string; nickname?: string } | undefined;

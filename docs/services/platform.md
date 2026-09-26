@@ -92,18 +92,16 @@ export interface PlatformAdapter {
 ### 注册（`provide`）
 
 ```ts
-import { flowControl } from '@aalis/api-flow-control';
 import { platform } from '@aalis/api-platform';
 import type { PlatformAdapter, PlatformConnection } from '@aalis/api-platform';
-import { definePlugin, events, optional, provide } from '@aalis/core';
+import { definePlugin, events, provide } from '@aalis/core';
 
 export default definePlugin({
   name: '@your-scope/plugin-adapter-foo',
   subsystem: 'platform',
   provides: [platform],
-  uses: { provide, events, flowControl: optional(flowControl) },
-  apply({ provide, events, flowControl }) {
-    void flowControl;
+  uses: { provide, events },
+  apply({ provide, events }) {
     void events;
     let online = false;
 

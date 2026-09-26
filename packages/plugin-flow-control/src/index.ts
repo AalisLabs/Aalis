@@ -20,7 +20,7 @@ const configSchema: ConfigSchema = {
     dynamicOptions: 'gateway-scopes',
     allowCustom: true,
     description:
-      '冷却与限速的生效范围。格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认 *:group 与历史 OneBot 行为一致。禁言不受此项限制。',
+      '只决定入站消息是否过冷却/限速闸；回复记账、委派闸门、闲置选会话不看作用域，禁言也不看。格式 platform:sessionType，支持通配 *；onebot:group / onebot:* / *:group / *。默认 *:group 与历史 OneBot 行为一致。',
   },
   cooldownSeconds: { type: 'number', label: '回复后冷却（秒）', default: defaultFlowControlConfig.cooldownSeconds },
   rateLimitWindow: {
@@ -37,7 +37,7 @@ const configSchema: ConfigSchema = {
     type: 'array',
     label: '分作用域覆盖',
     description:
-      '每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。最具体匹配优先（targetId > sessionType > platform > 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却，其他字段继续走默认。',
+      '每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。最具体匹配优先（targetId > sessionType > platform > 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却，其他字段继续走默认。只经出站建出状态、从未有入站的会话（如仅经委派抵达的私聊）没有会话类型与目标，按类型或目标写的覆盖对其不生效，走上方默认。',
     default: [],
     items: {
       scope: {

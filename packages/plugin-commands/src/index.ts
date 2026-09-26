@@ -207,7 +207,7 @@ function registerCommands({
   //
   // 命令拦截只在 inbound:command 命名相位做，适配器不内联拦截，
   // 所有平台共享同一套命令解析路径。
-  // plugin-gateway 的 INBOUND_PHASE_ORDER 把本相位放在 flow / trigger 之前。
+  // plugin-gateway 的 INBOUND_PHASE_ORDER 把本相位放在 trigger / flow 之前。
   //
   // 受信任系统源：scheduler 等内部触发器写入 message.source。
   // 这些来源的权限身份来自创建时固化的 message.actor（scheduler 在 setJob / addJob /
@@ -283,7 +283,7 @@ function registerCommands({
     } catch (err) {
       logger.warn(`指令执行失败: ${err}`);
     }
-    // 命令命中：不调用 next() —— 整个入站管道立即停止（不再进入 flow/trigger/dispatch）
+    // 命令命中：不调用 next() —— 整个入站管道立即停止（不再进入 trigger/flow/dispatch）
   });
 
   // ===== 内置指令 =====
