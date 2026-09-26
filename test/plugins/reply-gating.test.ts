@@ -775,6 +775,46 @@ describe('冷却与限速', () => {
     expect(h.contents(), 'immediate 应穿透限速').toContain(`${AT}限速中被点名`);
   });
 
+  it('入站作用域：WebUI、CLI 发进已预热 onebot 群会话的真人消息按消息自身字段判，默认作用域外，冷却期内照常放行', async () => {
+    // 这类消息不带 sessionType、也不带 source；若按状态里记下的 onebot / group 判，会落进 *:group，被默认 10s 冷却吞掉
+    const archived: IncomingMessage[] = [];
+    const h = await setup({ autoReply: () => true, archived });
+    const G = '20001';
+
+    await h.send(groupMsg(G, `${AT}在吗`)); // 真人 @ → 回复 → 默认 10s 冷却
+    expect(h.flow().isCoolingDown(sid(G))).toBe(true);
+    await advance(2_000);
+    await h.send({ content: 'WebUI 主人的指令', sessionId: sid(G), platform: 'webui', userId: 'owner-1' });
+    await h.send({ content: 'CLI 主人的指令', sessionId: sid(G), platform: 'cli', userId: 'owner-1' });
+    expect(h.contents()).toEqual([`${AT}在吗`, 'WebUI 主人的指令', 'CLI 主人的指令']);
+    expect(archived, '没有被吞、不做影子归档').toEqual([]);
+  });
+
+  it('入站作用域：带会话类型的真人消息按消息自身字段判，会话 ID 不符合约定的第三方适配器第一条群消息即在 *:group 内', async () => {
+    // 若按状态或会话 ID 推断判：没有状态、ID 推断不出类型，这个群永远在作用域外，回复也不计
+    const h = await setup({
+      flow: { cooldownSeconds: 30 },
+      trigger: { intervalMode: 'fixed', fixedInterval: 1 },
+      autoReply: () => true,
+    });
+    const room = 'example-room-20001';
+    const msg = (content: string): IncomingMessage => ({
+      content,
+      platform: 'example',
+      sessionType: 'group',
+      sessionId: room,
+      groupId: '20001',
+      userId: '30001',
+      nickname: '群友',
+    });
+
+    await h.send(msg('第一条')); // 作用域内：记下平台与群类型，回复按记下的计入 30s 冷却
+    expect(h.flow().isCoolingDown(room)).toBe(true);
+    await advance(1_000);
+    await h.send(msg('冷却中的第二条'));
+    expect(h.contents()).toEqual(['第一条']);
+  });
+
   it('非 agent 出站（命令回复）不设冷却', async () => {
     const h = await setup({ trigger: { intervalMode: 'fixed', fixedInterval: 1 } });
     const G = '20001';
@@ -961,6 +1001,13 @@ describe('内部注入（带 source）', () => {
     await h.send(internal('提醒 1')); // 放行；回复的平台是 internal，按记下的计入，占满 2 个名额
     await h.send(internal('限速中的提醒 2'));
     expect(h.contents()).toEqual([`${AT}在吗`, '提醒 1']);
+  });
+
+  it('定时注入到达 agent 时消息仍不带会话类型：按会话 ID 推断出的类型只进流控状态，不回写消息', async () => {
+    const h = await setup({ flow: { rateLimitWindow: 60, rateLimitMaxReplies: 1 } });
+    await h.send(scheduled(sid('20001'), '提醒'));
+    expect(h.contents()).toEqual(['提醒']);
+    expect(h.received[0]?.sessionType).toBeUndefined();
   });
 
   it('flow 相位：禁言期闲置注入也被吞，解禁后放行', async () => {

@@ -43,7 +43,7 @@ const configSchema: ConfigSchema = {
     type: 'array',
     label: '分作用域覆盖',
     description:
-      '每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。最具体匹配优先（targetId > sessionType > platform > 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却，其他字段继续走默认。从未有真人消息经过本相位的会话，入站不带会话类型的消息（定时任务等内部注入）与回复记账都按会话 ID 约定（platform:self:type:target）推断类型与目标；不符合约定的（如 WebUI）没有会话类型与目标，按类型或目标写的覆盖对其不生效，走上方默认。',
+      '每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。最具体匹配优先（targetId > sessionType > platform > 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却，其他字段继续走默认。从未有真人消息经过本相位的会话，入站带 source 的内部注入（定时任务等）与回复记账都按会话 ID 约定（platform:self:type:target）推断类型与目标；不符合约定的（如 WebUI）没有会话类型与目标，按类型或目标写的覆盖对其不生效，走上方默认。',
     default: [],
     items: {
       scope: {
@@ -206,8 +206,8 @@ async function run(caps: Caps): Promise<void> {
 
   /**
    * 手里没有会话类型时判作用域用的平台、类型与目标：先用状态里记下的，状态没有或缺类型（没有真人消息经过本相位的群、
-   * 只有禁言记录的群）再按会话 ID 约定推断，平台也先用状态里的。入站不带类型的消息（定时任务、workflow、委派、
-   * 闲置注入等合成回合）与出站回复记账都走这里，同一口径；推断结果只进本插件的状态、不回写消息。不符合约定的
+   * 只有禁言记录的群）再按会话 ID 约定推断，平台也先用状态里的。入站带 source 的内部注入（定时任务、workflow、
+   * 委派、闲置注入等合成回合）与出站回复记账都走这里，同一口径；推断结果只进本插件的状态、不回写消息。不符合约定的
    * （如 WebUI）类型未知，只有会话类型段为通配的作用域（onebot:*、*）命中
    */
   function knownScope(
@@ -306,10 +306,11 @@ async function run(caps: Caps): Promise<void> {
       return; // swallow
     }
 
-    // 带会话类型的（真人消息，适配器给出）按消息判；不带的与回复记账同一口径
-    const scope = message.sessionType
-      ? { platform: message.platform, sessionType: message.sessionType, targetId: extractTargetId(message) }
-      : knownScope(sessionId, message.platform);
+    // 带 source 的内部注入不带会话类型，与回复记账同一口径；其余消息（真人消息，含 WebUI、CLI 发进平台会话的）
+    // 按消息自身的平台、类型与目标判
+    const scope = message.source
+      ? knownScope(sessionId, message.platform)
+      : { platform: message.platform, sessionType: message.sessionType, targetId: extractTargetId(message) };
     if (!isScopeEnabled(cfg, scope.platform, scope.sessionType, scope.targetId)) return next();
 
     getOrCreate(sessionId, scope.platform, scope.sessionType, scope.targetId);
@@ -331,8 +332,8 @@ async function run(caps: Caps): Promise<void> {
     await next();
   });
 
-  // agent 真实回复后记冷却与限速，只对作用域内会话，委派闸门与闲置选会话读的就是这份记账。作用域与入站不带类型的
-  // 消息同一口径（knownScope）
+  // agent 真实回复后记冷却与限速，只对作用域内会话，委派闸门与闲置选会话读的就是这份记账。作用域与入站带 source 的
+  // 内部注入同一口径（knownScope）
   events.on('outbound:message', (msg: OutgoingMessage) => {
     if (!msg.sessionId) return;
     if (msg.source !== 'agent') return; // 命令/系统回复不算"对话回复"
