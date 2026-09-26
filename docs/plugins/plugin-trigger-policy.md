@@ -23,13 +23,14 @@ export default definePlugin({
     trigger: optional(trigger),
     flowControl: optional(flowControl),
     persona: optional(persona),
+    sessionManager: optional(sessionManager),
     messageArchive: optional(messageArchive),
   },
   apply(caps) { /* 见源码 */ },
 });
 ```
 
-本插件向 `trigger` 服务提供自己的实例（标签「规则（计数/评分）」，优先级 0），并以 optional 声明 `trigger` 本身：经它判断自己是不是生效的触发插件，写 required 会把激活闸架在自己的产出上。`flow-control` 缺席时不设禁言：禁言关键词照样吞掉当条消息，但不会写入禁言期。
+本插件向 `trigger` 服务提供自己的实例（标签「规则（计数/评分）」，优先级 0），并以 optional 声明 `trigger` 本身：经它判断自己是不是生效的触发插件，写 required 会把激活闸架在自己的产出上。`flow-control` 缺席时不设禁言：禁言关键词照样吞掉当条消息，但不会写入禁言期。`session-manager` 用来按会话取人设的名字（见「与 persona 的协作」），缺席时取全局默认的卡。
 
 ## 接入相位
 
@@ -45,7 +46,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 3. 会话处于禁言期（`flow.isMuted`）→ 本会话计数与活跃指数清零，`next()` 交给 flow 相位吞掉。禁言期内的消息不累计计数，也不再识别禁言关键词（不会缩短平台禁言）。平台禁言只能在这一步清零：平台禁言期内若一条消息都没有，禁言前攒下的计数保留到解禁后。
 4. 命中禁言关键词 → `flow.setMuted(sessionId, muteTimeSeconds, platform)`，本会话计数与活跃指数当场清零 → 影子归档 → 吞掉。戳一戳通知跳过这一步：其正文是合成文案，内嵌戳者昵称，与名字检测同理不当发言评估。
 5. 记入站：评分衰减、计数 +1、评分增量、用户交互次数、最近消息时间；闲置退避复位为 1，并按这次真人活动重排 session 档闲置触发。
-6. 识别点名：戳一戳按 `triggerOnPoke`；其余消息按 `triggerOnAt`（@ 自己）与名字检测（`triggerNames` 与全部已登记人设的名字、昵称）。`triggerOnPoke` 关闭时戳一戳不算点名，也不做 @ / 名字检测。
+6. 识别点名：戳一戳按 `triggerOnPoke`；其余消息按 `triggerOnAt`（@ 自己）与名字检测（`triggerNames` 与全部已登记人设按本会话取的名字、昵称）。`triggerOnPoke` 关闭时戳一戳不算点名，也不做 @ / 名字检测。
 7. 判定：点名直接开口；否则按 `intervalMode` 看此刻的计数与活跃指数是否达标。记一行判定日志（见下）。
 8. 开口：计数与活跃指数清零、记录触发时间；点名的写 `triggerType = 'immediate'`，否则写 `'interval'`；`next()`。`interval` 在多人会话且消息未带 `actor` 时回填无主体授权身份 `actor = selfInitiatedActor(platform)`：interval 回合没有主发言者，撞上阈值的那条消息的发言者不应决定 AI 自发行为的工具权限，authority 按默认等级裁决、不视为 owner，其白名单与会话授予也不替无主体回合解围。私聊纳入作用域后其 interval 只是频率闸，发言者仍是主体，不回填。不开口：影子归档后吞掉。
 
@@ -134,5 +135,5 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 
 ## 与 persona 的协作
 
-- 名字检测（`@aalis/api-trigger` 的 `createBotNames` 与 `isAddressed`）自动合并全部已登记人设的 `getPersonaName()` 与 `getNickNames()`，角色卡里声明的名字、昵称无需在触发名里重复配置。现状是 agent 只用当前生效的那一个人设，同时装了多个人设插件时，叫其中任何一个的名字都算点名。
+- 名字检测（`@aalis/api-trigger` 的 `createBotNames` 与 `isAddressed`）自动合并全部已登记人设的 `getPersonaName()` 与 `getNickNames()`，角色卡里声明的名字、昵称无需在触发名里重复配置。人设按会话取，与 agent 同一取法：session-manager 解析本会话的配置，其中的 `persona`（会话用的角色卡）传给这两个方法；会话改用别的角色卡时，算点名的是那张卡的名字、昵称，主卡的不算，别的会话不受影响。session-manager 缺席时取全局默认的卡。同时装了多个人设插件时，叫其中任何一个的名字都算点名。
 - 禁言关键词**不**合并 persona：统一由本插件配置下发，避免角色卡措辞意外成为禁言开关，也避免进程级单例 persona 跨平台泄漏。

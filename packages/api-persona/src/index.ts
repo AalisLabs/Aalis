@@ -27,7 +27,7 @@ export interface OutputFormat {
 }
 
 /**
- * 会话级选项，由调用方（如 @aalis/plugin-agent）从 SessionConfig 构造后传入。
+ * 会话级选项，由调用方（如 @aalis/plugin-agent、@aalis/api-trigger 的名字表）从 SessionConfig 构造后传入。
  * PersonaService 本身不关心 session-manager，只根据传入的选项调整行为。
  */
 export interface PersonaSessionOptions {
@@ -59,15 +59,19 @@ export interface PersonaService {
    * 无内容时返回空串，调用方据此跳过。
    */
   getVolatilePrompt?(options?: PersonaSessionOptions): string;
-  getPersonaName(): string;
+  /**
+   * 角色卡的名字。options.persona 指定了会话用的卡时返回那张卡的（找不到该卡时与其它方法一样回落主卡），
+   * 不传时返回主卡的。触发插件按会话取它做点名识别；CLI 标题等全局展示不传。
+   */
+  getPersonaName(options?: PersonaSessionOptions): string;
   /** 获取角色卡定义的结构化输出格式，无定义时返回 undefined */
   getOutputFormat?(options?: PersonaSessionOptions): OutputFormat | undefined;
   /** 该角色卡是否配置为客户端渲染 JSON */
   isClientSideJsonRendering?(options?: PersonaSessionOptions): boolean;
   /** 列出可用的人设卡（用于前端下拉框） */
   listModels?(): Promise<string[]>;
-  /** 获取角色卡定义的昵称列表（用于触发检测） */
-  getNickNames?(): string[];
+  /** 获取角色卡定义的昵称列表（用于触发检测）；按 options 取卡，同 getPersonaName */
+  getNickNames?(options?: PersonaSessionOptions): string[];
   /** 是否启用了时间注入（供其他插件判断是否需要注册时间相关工具） */
   isTimeInjectionEnabled?(): boolean;
   /**

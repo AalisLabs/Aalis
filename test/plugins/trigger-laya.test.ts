@@ -7,7 +7,8 @@ import { type Hooks, hooks } from '../../packages/api-hooks/src/index.js';
 import { media } from '../../packages/api-media/src/index.js';
 import { type MemoryService, memory } from '../../packages/api-memory/src/index.js';
 import { messageArchive } from '../../packages/api-message-archive/src/index.js';
-import { type PersonaService, persona } from '../../packages/api-persona/src/index.js';
+import { type PersonaService, type PersonaSessionOptions, persona } from '../../packages/api-persona/src/index.js';
+import { type SessionManagerService, sessionManager } from '../../packages/api-session-manager/src/index.js';
 import { trigger } from '../../packages/api-trigger/src/index.js';
 import { App, type LogEntry, LogHub, provide, services } from '../../packages/core/src/index.js';
 import memoryInMemory from '../../packages/plugin-memory-inmemory/src/index.js';
@@ -186,6 +187,8 @@ interface SetupOptions {
   media?: { processMessage(msg: IncomingMessage): Promise<unknown> };
   /** persona 提供者，按顺序登记（先登记者为胜者） */
   personas?: PersonaService[];
+  /** session-manager 替身：只用 resolveConfig */
+  sessionManager?: Pick<SessionManagerService, 'resolveConfig'>;
   /** 装真实的 message-archive 与内存 memory（memory 选项随之不用，归档替身不装） */
   realArchive?: boolean;
 }
@@ -237,6 +240,7 @@ async function setup(opts: SetupOptions = {}) {
   }
   if (opts.media) host.provide(media, opts.media as never);
   for (const p of opts.personas ?? []) host.provide(persona, p);
+  if (opts.sessionManager) host.provide(sessionManager, opts.sessionManager as SessionManagerService);
   await app.plugins.register(layaPlugin, { endpoint: sidecar.url, ...opts.laya });
   await app.plugins.idle();
   // 激活闸：依赖缺席时插件停在 pending 而不报错，不核状态会让整组用例伪装成绿
@@ -557,6 +561,35 @@ describe('plugin-trigger-laya：宿主各步骤', () => {
     gate.resolve();
     await vi.waitFor(() => expect(message._attachmentDescriptions).toEqual(['[图片: 一只猫]']));
     expect(calls).toHaveLength(1);
+  });
+
+  it('名字表按会话取人设：两个会话用不同的卡，点名识别与发给侧车的 selfNames 各用各的，不串', async () => {
+    const byCard: Record<string, [string, string[]]> = { bob: ['Bob', ['阿B']] };
+    const pick = (o?: PersonaSessionOptions): [string, string[]] =>
+      (o?.persona && byCard[o.persona]) || ['Aalis', ['小A']];
+    const card: PersonaService = {
+      getSystemPrompt: () => '',
+      getPersonaName: o => pick(o)[0],
+      getNickNames: o => pick(o)[1],
+    };
+    // 兜底 speak = 是否被点名：用 422 让判定落到兜底，放行与否即点名与否
+    sidecar.reply = () => ({ status: 422, body: { error: 'empty_cur' } });
+    const { send } = await setup({
+      personas: [card],
+      sessionManager: { resolveConfig: sid => (sid === GROUP_SID ? { persona: 'bob' } : {}) },
+    });
+    const inOther = (content: string) => groupMsg(content, { sessionId: 'onebot:10000:group:20002', groupId: '20002' });
+
+    expect((await send(groupMsg('Bob 在吗'))).reached).toBe(true);
+    expect((await send(groupMsg('Aalis 在吗'))).reached, '改用 bob 卡的会话里叫主卡名不算点名').toBe(false);
+    expect((await send(inOther('Aalis 在吗'))).reached).toBe(true);
+    expect((await send(inOther('Bob 在吗'))).reached, '用主卡的会话里叫 bob 不算点名').toBe(false);
+    expect(sidecar.requests.map(r => r.body.selfNames)).toEqual([
+      ['Bob', '阿B'],
+      ['Bob', '阿B'],
+      ['Aalis', '小A'],
+      ['Aalis', '小A'],
+    ]);
   });
 });
 

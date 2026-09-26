@@ -3,6 +3,7 @@ import { extractTargetId, gateway, INBOUND_PHASE, isScopeEnabled, resolveEffecti
 import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
 import { persona } from '@aalis/api-persona';
+import { sessionManager } from '@aalis/api-session-manager';
 import {
   archiveSwallowed,
   createBotNames,
@@ -197,6 +198,8 @@ const uses = {
   // 缺席时不设禁言：关键词照样吞掉本条，但不会写入禁言期
   flowControl: optional(flowControl),
   persona: optional(persona),
+  // 名字表按会话取人设：解析会话配置里的角色卡；缺席时取全局默认的卡
+  sessionManager: optional(sessionManager),
   // 缺席时被吞掉的消息不进档，判定照常
   messageArchive: optional(messageArchive),
 };
@@ -216,8 +219,8 @@ function run(caps: Caps): void {
   const { logger, events, hooks, lifecycle, provide, flowControl, messageArchive } = caps;
   const cfg = resolveTriggerPolicyConfig(caps.config);
   const states = new Map<string, TriggerSessionState>();
-  /** 名字表：别名与全部人设的名字、昵称；某个人设读名字出错只跳过它的名字 */
-  const botNames = createBotNames(caps.persona, logger, '[trigger]');
+  /** 名字表：别名与全部人设按会话取的名字、昵称；某个人设读名字出错只跳过它的名字 */
+  const botNames = createBotNames(caps.persona, caps.sessionManager, logger, '[trigger]');
 
   // 本插件在 trigger 服务里的实例：服务胜者是它时本插件生效，否则对每条消息直接放行、闲置也不开口
   const self: TriggerService = { label: '规则（计数/评分）' };
@@ -334,7 +337,7 @@ function run(caps: Caps): void {
     s.idleBackoff = 1;
     rescheduleIdle(sessionId);
 
-    const addressed = isAddressed(message, botNames(e.triggerNames), e);
+    const addressed = isAddressed(message, botNames(e.triggerNames, message), e);
     const decision = decide(s, e, addressed);
     // 判定日志：不含消息正文
     logger.debug(

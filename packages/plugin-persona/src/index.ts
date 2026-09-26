@@ -408,8 +408,9 @@ class PersonaServiceImpl implements PersonaService {
     return prompt.replace(/^\n+/, '');
   }
 
-  getPersonaName(): string {
-    return this.card.name || `${this.fileName}，未设置名字`;
+  getPersonaName(options?: PersonaSessionOptions): string {
+    const card = this.getEffectiveCard(options);
+    return card.name || `${card === this.card ? this.fileName : options?.persona}，未设置名字`;
   }
 
   /** 该角色卡是否配置为客户端渲染 JSON */
@@ -427,8 +428,8 @@ class PersonaServiceImpl implements PersonaService {
     return this.getCardOutputFormat(effectiveCard);
   }
 
-  getNickNames(): string[] {
-    return this.card.nick_name ?? [];
+  getNickNames(options?: PersonaSessionOptions): string[] {
+    return this.getEffectiveCard(options).nick_name ?? [];
   }
 
   isTimeInjectionEnabled(): boolean {
