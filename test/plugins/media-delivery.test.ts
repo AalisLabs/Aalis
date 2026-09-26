@@ -151,6 +151,15 @@ describe('recognizeOnArrival：到达即识别 vs 只留指针', () => {
     expect(m._attachmentDescriptions).toEqual([undefined]);
   });
 
+  it('isRecognizeOnArrivalEnabled 报告配置（供触发插件的诊断项提示）', () => {
+    expect(
+      new MediaServiceImpl(makeCaps([]), cfgWith({ recognizeOnArrival: true })).isRecognizeOnArrivalEnabled(),
+    ).toBe(true);
+    expect(
+      new MediaServiceImpl(makeCaps([]), cfgWith({ recognizeOnArrival: false })).isRecognizeOnArrivalEnabled(),
+    ).toBe(false);
+  });
+
   it('关 + WebUI 上传（base64、正文无 ref）：自己落盘并写指针，档案不留零痕迹', async () => {
     const written: string[] = [];
     setMediaRuntime({

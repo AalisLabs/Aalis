@@ -184,7 +184,7 @@ interface SetupOptions {
   laya?: Record<string, unknown>;
   /** memory 替身；null = 不提供 memory */
   memory?: Partial<MemoryService> | null;
-  media?: { processMessage(msg: IncomingMessage): Promise<unknown> };
+  media?: { processMessage(msg: IncomingMessage): Promise<unknown>; isRecognizeOnArrivalEnabled?(): boolean };
   /** persona 提供者，按顺序登记（先登记者为胜者） */
   personas?: PersonaService[];
   /** session-manager 替身：只用 resolveConfig */
@@ -593,6 +593,75 @@ describe('plugin-trigger-laya：宿主各步骤', () => {
   });
 });
 
+describe('plugin-trigger-laya：同一会话的放行顺序', () => {
+  const IMAGE = { kind: 'image', data: 'https://example.invalid/a.jpg' } as const;
+  const OTHER_SID = 'onebot:10000:group:20002';
+
+  it('先到的带图消息判完时，同会话更晚到的文字已放行：带图的不再放行，归档后吞掉，判定日志注明原因', async () => {
+    const gate = deferred();
+    const { svc, calls } = fakeMedia(() => gate.promise);
+    const { send, archived, logs } = await setup({ media: svc });
+    const image = send(groupMsg('看图', { attachments: [IMAGE] }));
+    await vi.waitFor(() => expect(calls).toHaveLength(1)); // 带图的在等识别
+    const text = await send(groupMsg('后到的文字'));
+    expect(text.reached, '后到的文字先判完、先放行').toBe(true);
+
+    gate.resolve();
+    const late = await image;
+    expect(late.reached).toBe(false);
+    expect(late.message.triggerType).toBeUndefined();
+    expect(archived).toEqual(['看图']);
+    expect(sidecar.requests, '两条都问了模型').toHaveLength(2);
+    expect(decisions(logs).at(-1)?.message).toMatch(/ \| speak=true \| .* \| 作废=同会话更晚到的消息已放行$/);
+    // 在途的判定都结束后照常：下一条放行
+    expect((await send(groupMsg('再来一条'))).reached).toBe(true);
+  });
+
+  it('兜底同样核对：先到的带图点名判完时，同会话更晚到的点名已放行，带图的不再放行', async () => {
+    sidecar.reply = () => ({ status: 422, body: { error: 'empty_cur' } });
+    const gate = deferred();
+    const { svc, calls } = fakeMedia(() => gate.promise);
+    const { send, archived, logs } = await setup({ laya: { triggerNames: '阿A' }, media: svc });
+    const image = send(groupMsg('阿A 看图', { attachments: [IMAGE] }));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    const named = await send(groupMsg('阿A 在吗'));
+    expect([named.reached, named.message.triggerType]).toEqual([true, 'immediate']);
+
+    gate.resolve();
+    expect((await image).reached).toBe(false);
+    expect(archived).toEqual(['阿A 看图']);
+    expect(decisions(logs).at(-1)?.message).toMatch(/兜底=侧车 422 empty_cur \| .* \| 作废=同会话更晚到的消息已放行$/);
+  });
+
+  it('对照：顺序没有倒置时照常放行（同会话两条都在途、按到达顺序判完；别的会话先放行不影响）', async () => {
+    const gates = new Map<string, ReturnType<typeof deferred<void>>>();
+    const { svc, calls } = fakeMedia(msg => gates.get(msg.content)?.promise ?? Promise.resolve());
+    const { send, archived, logs } = await setup({ media: svc });
+    const held = (content: string) => {
+      gates.set(content, deferred());
+      return send(groupMsg(content, { attachments: [IMAGE] }));
+    };
+
+    const first = held('第一张');
+    const second = held('第二张');
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    gates.get('第一张')?.resolve();
+    expect((await first).reached).toBe(true);
+    gates.get('第二张')?.resolve();
+    expect((await second).reached).toBe(true);
+
+    const mine = held('本群的图');
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    const other = await send(groupMsg('别的群的文字', { sessionId: OTHER_SID, groupId: '20002' }));
+    expect(other.reached).toBe(true);
+    gates.get('本群的图')?.resolve();
+    expect((await mine).reached).toBe(true);
+
+    expect(archived).toEqual([]);
+    expect(decisions(logs).some(e => e.message.includes('作废'))).toBe(false);
+  });
+});
+
 describe('plugin-trigger-laya：兜底（只回点名）', () => {
   const failures: Array<[what: string, reply: Reply]> = [
     ['超时', 'hang'],
@@ -906,6 +975,31 @@ describe('plugin-trigger-laya：诊断项', () => {
     host.services.prefer(trigger, laya?.contextId ?? '');
     expect((await send(groupMsg('恢复'))).reached).toBe(true);
     expect((await diagnose()).level).toBe('ok');
+  });
+
+  it('生效时 media 在图片到达时不识别：warn，说明判定看不到图片内容；开启、未实现该方法、未生效时不报', async () => {
+    const media = (enabled?: boolean) => ({
+      processMessage: async () => ({}),
+      ...(enabled === undefined ? {} : { isRecognizeOnArrivalEnabled: () => enabled }),
+    });
+    const off = await setup({ media: media(false) });
+    const r = await off.diagnose();
+    expect(r.level).toBe('warn');
+    expect(r.message).toBe(
+      'Laya 触发判定生效中：侧车在线（版本 v-test）；media 未开启图片到达即识别（vision.recognizeOnArrival）：' +
+        '带图消息判定时只有图片指针、没有内容描述',
+    );
+
+    expect((await (await setup({ media: media(true) })).diagnose()).level).toBe('ok');
+    expect((await (await setup({ media: media() })).diagnose()).level, '未实现视为未知').toBe('ok');
+
+    // 切到规则判定：本插件不判定，图片识不识别不影响它
+    off.host.provide(trigger, { label: '规则（计数/评分）' }, { label: '规则（计数/评分）' });
+    const rule = off.host.services.all(trigger).find(v => v.label === '规则（计数/评分）');
+    off.host.services.prefer(trigger, rule?.contextId ?? '');
+    const inactive = await off.diagnose();
+    expect(inactive.level).toBe('ok');
+    expect(inactive.message).not.toContain('recognizeOnArrival');
   });
 
   it('未生效时侧车不可达：warn，并点名当前生效的触发插件', async () => {
