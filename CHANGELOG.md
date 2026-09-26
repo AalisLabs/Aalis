@@ -410,7 +410,7 @@ trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳�
 
 - 被 @、戳一戳、叫名字（`immediate`）穿透冷却与限速；禁言期除外。
 - 禁言期内一律不说话：flow 相位先查禁言，不看作用域、不看来源，闲置触发、跨会话委派、定时任务注入的消息同样被吞。
-- 内部注入（带 `source` 的消息：闲置触发、定时任务、workflow、跨会话委派）不经触发策略，不计数，`triggerType` 不被改写（委派的 `proactive` 原样保留）；flow 相位对它只查禁言，冷却与限速不挡。此前 flow-control 的 `scopes` 配成 `*` 时，定时提醒会被回复后冷却静默吞掉；trigger-policy 的配成 `*` 时，还会被计数判定吞掉。真人消息由平台适配器投递，不设 `source`。
+- 内部注入（带 `source` 的消息：闲置触发、定时任务、workflow、跨会话委派）不经触发策略，不计数，`triggerType` 不被改写（委派的 `proactive` 原样保留）；flow 相位对它不查回复后冷却，禁言与限速照常生效（限速仅在会话落入 flow-control 作用域时）。此前 flow-control 的 `scopes` 配成 `*` 时，定时提醒会被回复后冷却静默吞掉；trigger-policy 的配成 `*` 时，还会被计数判定吞掉。真人消息由平台适配器投递，不设 `source`；第三方适配器投递真人消息**不得**设置 `source`（`schema-message` 的字段说明已据此更新），否则会被当作内部注入跳过触发策略与冷却。
 - 冷却期内的禁言关键词照常生效；平台禁言期内的关键词不再识别，不会缩短平台禁言。戳一戳通知不做禁言关键词匹配。
 - 禁言期内的消息不累计计数。关键词禁言在命中时即清零本会话的计数与活跃指数；平台禁言在禁言期内有消息到来时清零——平台禁言期内若一条消息都没有，禁言前攒下的计数保留到解禁后。
 - session 档闲置触发的退避只由真人消息复位，agent 回复（包括回复闲置提示）不再复位。
@@ -429,7 +429,7 @@ trigger-policy 收拢一切"要不要开口"：禁言关键词识别、@ / 戳�
 
   走插件市场的：市场更新会立即重启进程，flow-control 节的旧字段随之被裁掉。同批更新后在 trigger-policy 的配置页面重填第 2 步记下的值。
 - **作用域归属**：计数、活跃指数与闲置触发改按 trigger-policy 的 `scopes` / `overrides` 生效，不再看 flow-control 的作用域。把 override 从 flow-control 搬到 trigger-policy 会顺带在 trigger-policy 启用该作用域（写一条 override 即视为启用）。trigger-policy 里已有同一 `scope` 的条目时应合并进去，不要另起一条：具体度相同时只取先出现的一项。flow-control `overrides` 里残留的旧字段不会被 runtime 裁剪（数组项不按 schema 裁），插件也不告警，需手动删除。
-- **minimal 模板档**（只装 flow-control、未装 trigger-policy）配置过闲置触发的，升级后须装 plugin-trigger-policy 才有闲置触发。装上后默认按计数与活跃指数判定是否开口；要保持此前逐条回复的行为，设 `intervalMode: fixed`、`fixedInterval: 1`。
+- **minimal 模板档**（只装 flow-control、未装 trigger-policy）配置过闲置触发的，升级后须装 plugin-trigger-policy 才有闲置触发。装上后默认按计数与活跃指数判定是否开口；要保持此前逐条回复的节奏，设 `intervalMode: fixed`、`fixedInterval: 1`。注意授权主体不同：群聊里未被 @ 的消息走 interval 判定，授权身份回填为无主体（工具按匿名等级执行），此前按发言者等级执行。
 - **`@aalis/api-flow-control` 收窄**：`FlowControlService` 只剩 `isMuted` / `isCoolingDown` / `isRateLimited` / `setMuted`；删除 `ensureState` / `getStateSnapshot` / `recordIncoming` / `recordTriggered` / `recordReply` / `getThreshold` / `rescheduleIdle` 与 `FlowSessionStateSnapshot`。计数与阈值归 trigger-policy 内部；冷却与限速由 flow-control 监听 `outbound:message` 自行记账，自建主动发送通道发 `source: 'agent'` 的 `outbound:message` 即被计入。plugin-flow-control 入口不再转出 `FlowControlService` / `FlowSessionStateSnapshot` 类型，改从 `@aalis/api-flow-control` 导入前者。
 - **`@aalis/api-platform` 删除 `PlatformAdapter.checkAndRecordProactiveSend`**：跨会话委派改由 plugin-tool-session 直接查 flow-control（目标会话禁言中或限速已满即拒绝），适配器无需实现任何方法；自研适配器删掉该方法即可。自己调用过该方法做委派限速的第三方代码，改用 `flowControl.current?.isMuted(sessionId)` / `isRateLimited(sessionId)`（只检不记，限速按目标会话的真实回复计）。
 - **plugin-trigger-policy 不再注册 `trigger-policy` 服务**：运行时描述符 `triggerPolicy` 与类型 `TriggerPolicyService` / `TriggerDecision` / `TriggerKind` 随之删除，原服务没有外部消费者。判定结果仍写在 `message.triggerType`。
@@ -471,7 +471,7 @@ npm i $(node -p "Object.keys(require('./package.json').dependencies).filter(n =>
 - plugin-memory-vector、plugin-memory-summary 与 plugin-agent、schema-message 同批升级（见 agent 一节）；plugin-user-relation 与 embedding 提供者同批升级后触发一次向量重算（见关系图一节）。
 - plugin-mcp-client 旧版在 `mcp_set_server_enabled` 里调用已删除的 `appService.saveConfig()`，配新 core 时该工具以 TypeError 失败。
 - plugin-cron-engine 与 plugin-adapter-onebot 旧版读已删除的 `lifecycle.closed`（配新 core 恒为 `undefined`）：卸载后仍被握着的 cron-engine 服务引用再 `subscribe` 会建出没人清的定时器，onebot 关闭期间断线会照常排重连。两者与 core 同批升级。
-- plugin-flow-control 与 plugin-trigger-policy 同批升级（见回复闸门一节）：相位顺序常量在 `@aalis/api-gateway`，任一插件把 api-gateway 拉到 0.7.0 后，旧版二者会按新顺序运行而失常。plugin-adapter-onebot 与 plugin-tool-session 同批升级：旧版 tool-session 经适配器的 `checkAndRecordProactiveSend` 做委派限速，新版适配器已删除该方法，委派限速闸会静默失效。走插件市场的，这四个包须同一批勾选更新。
+- plugin-flow-control 与 plugin-trigger-policy 同批升级（见回复闸门一节）：相位顺序常量在 `@aalis/api-gateway`，任一插件把 api-gateway 拉到 0.7.0 后，旧版二者会按新顺序运行而失常。plugin-adapter-onebot 与 plugin-tool-session 同批升级：旧版 tool-session 经适配器的 `checkAndRecordProactiveSend` 做委派限速，新版适配器已删除该方法，委派限速闸会静默失效。暂不升级到本批的项目注意反方向：`npm update` 或无锁文件重装可能把传递依赖 `@aalis/api-gateway` 升到 0.7.0（多个依赖方写的是 `>=0.6.0 <1.0.0`），旧版 flow-control 与 trigger-policy 随即按新顺序失常，请用 `package.json` 的 `overrides` 把 `@aalis/api-gateway` 固定在 `<0.7.0`。走插件市场的，这四个包须同一批勾选更新。
 
 混装的三类报错：
 
