@@ -72,7 +72,7 @@ export interface MediaProcessor {
 - **`DescribeInput`**：`attachments`，加上 `basePrompt`（完整替换默认 base）/ `hint`（在 base+context 之后追加一条约束）/ `context`（对话上下文，processor 可拼进 prompt）/ `maxTokens` / `mode:'single'|'combined'`。
   - `basePrompt` 与 `hint` 的语义严格分离：要换整段 prompt 用 `basePrompt`，只加一条要求用 `hint`。把整段 prompt 塞进 `hint` 会与默认 base 冲突。
 - **`DescribeResult`**：`descriptions`（`mode=single` 时与 `attachments` 等长；`mode=combined` 时是单元素），加上 `meta?:{processor,model?,tokens?}`。
-- **`TranscribeInput`**：单条 `attachment`，加上 `language?`（ISO 639-1）/ `withTimestamps?` / `context?`（仅对 LLM-as-audio 有意义，传统 Whisper 忽略）。
+- **`TranscribeInput`**：单条 `attachment`，加上 `language?`（ISO 639-1）/ `withTimestamps?`（后端可忽略：第一方只有经 asr 桥接的 plugin-asr-openai 返回 `segments`，音频 LLM 与 plugin-asr-whisper-cpp 只给整段 `text`）/ `context?`（仅对 LLM-as-audio 有意义，传统 Whisper 忽略）。
 - **`TranscribeResult`**：`text` / `segments?` / `language?` / `meta?:{processor,model?}`。
 - **服务层 opts**：`DescribeImageOptions`（含 `detailLevel` 档位，详见 [§6](#6-能力-风险-影响)）、`DescribeVideoOptions`（`hint` / `localPath`）、`DescribeOptions`（含 `prefer`，强制选定 processor）、`TranscribeOptions`（`language`；音频 processor 由配置 `audio.prefer` 选定）、`BuildContextOptions`。
 - **`MediaProcessReport`**：`{ total, successCount, items[] }`，`items` 与 `msg.attachments` 等长，每条含 `{kind,cap?,processor?,description?,error?}`。
@@ -248,7 +248,9 @@ export default definePlugin({
 
 缓存基于 `@aalis/util-bounded-map`（有界，加滑动 TTL，加 LRU），配置为 `max=5000` 条、`ttlMs=30 天`（图片内容不变、描述也就不过期，长留才吃得到跨天的表情包复用）。key 取落盘路径里的内容哈希，非内容寻址的来源（远端 URL、data-URI）原样做键；值只存裸描述，ref 标记等包装由各消费点重建。
 
-**来源 → 落盘 ref 别名**：非内容寻址的来源串本身不含内容哈希，落盘后才有内容寻址路径。落盘方在落盘成功时登记一次「来源 → 落盘 ref」别名——本服务的 `cacheImageRef` 落 base64 data-URI 时自登记，服务外的落盘方（适配器把 QQ 媒体直链落到 `data/images/…`）经 `rememberDescriptionAlias(source, landedRef)` 登记。此后按原始来源串读写描述都落到落盘 ref 的那条内容哈希键上——**OneBot 引用消息只拿得到原始 URL**（适配器那条路径只查缓存、不主动触发识别）时经此命中，同一张图换来源进来也不重认，描述还进得了快照（快照只收内容哈希键）。别名按来源串相等命中；QQ 直链里的 rkey 是访问密钥，定期轮换但不改变文件，适配器登记时同时登记剥掉 rkey 的键，引用消息查询时也按剥掉 rkey 的键再查一次，轮换后仍命中。别名表纯派生、不落盘，重启后由新一轮落盘重新登记；键空间不变，别名只把来源映到已有的落盘键。登记之前已按原始来源串写入的条目不迁移（窄场景，代价只是多识别一次）。
+**快照与清理**：缓存防抖落盘到 `data:/media/descriptions.json`，启动时灌回。快照收两类内容寻址的键：内容哈希键（不带会话语境的描述，跨会话共享），以及带会话目录的本地落盘路径键（开启 `contextHistory` 后带着会话语境识别出的描述，只在本会话内复用；`senderContext` 只随 `contextHistory` 并入语境，单独开启不产生这类键）；远端 URL 与 data-URI 做键的条目不落盘。本插件参与 `memory:clear`，归入 `image` 类型：`/clear all` 清空内存条目与别名，并删掉快照文件；会话级 `/clear` 与删除会话只删键里带该会话目录的条目及指向该目录的别名，删掉了条目时重写快照。内容哈希键跨会话共享、无法归属到某个会话，会话级清理不删。启动时读快照失败（文件不存在以外的原因）的那次运行不写快照，此时会话级清理只能清内存，回执报失败；`/clear all` 照样删掉快照文件，此后本次运行的会话级清理不再报失败（磁盘上已没有会在重启时恢复的描述）。
+
+**来源 → 落盘 ref 别名**：非内容寻址的来源串本身不含内容哈希，落盘后才有内容寻址路径。落盘方在落盘成功时登记一次「来源 → 落盘 ref」别名——本服务的 `cacheImageRef` 落 base64 data-URI 时自登记，服务外的落盘方（适配器把 QQ 媒体直链落到 `data/images/…`）经 `rememberDescriptionAlias(source, landedRef)` 登记。此后按原始来源串读写描述都落到落盘 ref 的那条内容哈希键上——**OneBot 引用消息只拿得到原始 URL**（适配器那条路径只查缓存、不主动触发识别）时经此命中，同一张图换来源进来也不重认，描述还进得了快照（快照不收原始来源串做键，见上段）。别名按来源串相等命中；QQ 直链里的 rkey 是访问密钥，定期轮换但不改变文件，适配器登记时同时登记剥掉 rkey 的键，引用消息查询时也按剥掉 rkey 的键再查一次，轮换后仍命中。别名表纯派生、不落盘，重启后由新一轮落盘重新登记；键空间不变，别名只把来源映到已有的落盘键。登记之前已按原始来源串写入的条目不迁移（窄场景，代价只是多识别一次）。
 
 `describeImage` 只在「无 hint 且未 `noCache`」时读写缓存——**带 hint 不进缓存**，因为不同意图的结果不同。缓存按详略档分键：`'auto'`（默认）与到达识别共用同一条，`casual` / `detailed` / `professional` 各自一条（否则「详细分析」会直接命中到达时写下的简述）；档位后缀加在内容哈希之后，别名与跨会话共享对各档同样生效，快照也一并落盘。空串以及 `[图片:` / `[动图:` 这类占位都不会写入。`lookupDescription`/`rememberDescription`/`rememberDescriptionAlias` 则暴露给适配器做手动复用与别名登记。
 
@@ -295,7 +297,7 @@ media 经 `storage` 写临时/缓存文件，但 storage 只是命名根加权�
 - **describe 交付不向主模型交图**：识别是识别模型的职责，结果已作为文字拼进消息正文，出口会把末条 user 消息的 `images` 清空。再把原图递一份给主模型等于同一张图识别两遍——实测一张 57KB 的图额外多花约 1,090 token、4.7 秒预填充。`analyze_image` 在这条交付下返回文字描述。
 - **passthrough 交付的动图一律抽帧**：出口（`agent:llm:before` 中间件）把动图抽帧为多张静图（帧数上限 `animatedImage.maxFrames`）再交给主模型——主流视觉 API 对原始 GIF 只读首帧或拒收，抽帧是让"动"被看见的唯一通用形态；静图始终原样。变换只作用于末条 user 消息、每条消息只处理一次（成败皆不重来），dryRun 估算轮跳过。`analyze_image` 在这条交付下把图随工具结果交出（`ToolExecutionResult.images`，同一出口规范化与抽帧），不经识别模型。
 - **直通必须过形态规范化**：适配器给 `attachment.data` 的是内容寻址的相对路径 ref（`data/images/…`），而 provider 只认 data URI / http / `file://` / 绝对路径。裸路径会被当作 base64 送出去，触发 `illegal base64 data at input byte N`（整轮请求 400）。出口统一物化成 data URL，已是合法形态的逐字节原样；交不出合法形态的那一张丢弃并告警。
-- **描述缓存跨会话共享是有条件的**：缓存键取落盘路径里的内容哈希，同一张表情包跨群只识别一次；但当 `contextHistory`/`senderContext` 开启、描述里掺进了本会话的对话语境时，键退回含会话目录的原路径，只在本会话内复用——否则 A 群的语境会随描述串到 B 群。缓存有快照落盘（`data:/media/descriptions.json`），进程重启不必重认。
+- **描述缓存跨会话共享是有条件的**：缓存键取落盘路径里的内容哈希，同一张表情包跨群只识别一次；但当 `contextHistory` 开启、描述里掺进了本会话的对话语境（`senderContext` 开启时还有发送者画像）时，键退回含会话目录的原路径，只在本会话内复用——否则 A 群的语境会随描述串到 B 群。缓存有快照落盘（`data:/media/descriptions.json`），进程重启不必重认。
 - **视频只有「抽帧 → vision」一条路**：media 不再为声明 Video 能力的 LLM 注册 `video.passthrough` processor（service 从不按该 cap 选 processor），抽帧描述用的是 `vision.maxTokens`。`MediaCapability` 里保留该 cap 只为第三方 processor 契约兼容。
 - **缺 ffmpeg/ffprobe 时视频降级为占位**：抽帧或抽音轨失败时返回 `[视频] …` 占位串而非空串，让主 LLM 知道有视频到达但读不了，避免幻觉。
 

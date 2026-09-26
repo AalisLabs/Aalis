@@ -210,6 +210,26 @@ describe('WebUI 列表按 instanceId 归属工具 / 页面展示名', () => {
     expect((await rows()).find(p => p.name === 'slow-probe')?.slow).toBeUndefined();
   });
 
+  it('激活中但未超过慢激活阈值：列表是 activating，不带 slow', async () => {
+    const { app } = hostedApp({}, { slowThresholdMs: 60_000 });
+    apps.push(app);
+    const gate = deferred();
+    const { invoke } = mountPluginRoutes(app);
+    // 阈值未到时登记一直等着激活落定，不 await，趁它挂起时查列表
+    const registering = app.plugin(definePlugin({ name: 'hanging-probe', apply: () => gate.promise }));
+    try {
+      await vi.waitFor(() => expect(app.plugins.getPlugin('hanging-probe')?.state).toBe('activating'));
+      const row = ((await invoke('GET /api/plugins')).body as { plugins: Array<Record<string, unknown>> }).plugins.find(
+        p => p.name === 'hanging-probe',
+      );
+      expect(row?.state).toBe('activating');
+      expect(row?.slow, '未超过阈值不算慢激活').toBeUndefined();
+    } finally {
+      gate.resolve();
+      await registering;
+    }
+  });
+
   it('GET /api/plugins 的 tools/commands/capabilities 必须按 instanceId 索引，不能用 definition.name', async () => {
     const def = reusableDef();
     const app = silentApp();

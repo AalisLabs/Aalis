@@ -3,7 +3,7 @@ import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging �
 import { contributions } from '@aalis/api-contributions';
 import { hooks } from '@aalis/api-hooks';
 import { persona } from '@aalis/api-persona';
-import { createStorageGateway, type StorageService, storage } from '@aalis/api-storage';
+import { createStorageGateway, isStorageNotFound, type StorageService, storage } from '@aalis/api-storage';
 import { tools } from '@aalis/api-tools';
 import { type WebuiPage, webuiServer } from '@aalis/api-webui';
 import { type BoundOf, config, definePlugin, defineService, events, logger, optional, provide } from '@aalis/core';
@@ -101,11 +101,11 @@ export interface SkillsService {
       files?: SkillFileInput[];
     },
   ): Promise<boolean>;
-  /** 删除整个 skill 文件夹 */
+  /** 删除整个 skill 文件夹；删不掉（不是「不存在」）时抛错，技能保留 */
   deleteSkill(name: string): Promise<boolean>;
   /** 在某 skill 中添加/覆盖一个附属文件。 */
   addSkillFile(name: string, file: SkillFileInput): Promise<boolean>;
-  /** 删除某 skill 下的一个附属文件（不能是 SKILL.md）。 */
+  /** 删除某 skill 下的一个附属文件（不能是 SKILL.md）；skill 或文件不存在返回 false，其它删除失败抛错。 */
   removeSkillFile(name: string, relPath: string): Promise<boolean>;
   /** 列出某 skill 下的所有文件相对路径。 */
   listSkillFiles(name: string): Promise<string[]>;
@@ -438,7 +438,10 @@ function run(caps: Caps): void {
       let result: Awaited<ReturnType<StorageService['list']>>;
       try {
         result = await storage.list(uri);
-      } catch {
+      } catch (err) {
+        // 根目录列不出（storage 缺席、读错误）时整次扫描失败、保留上一版缓存，别拿空结果把技能全部替换掉；
+        // 根目录不存在算零个技能，子目录列不出照旧跳过
+        if (depth === 0 && !isStorageNotFound(err)) throw err;
         return;
       }
       for (const entry of result.entries) {
@@ -704,7 +707,10 @@ function run(caps: Caps): void {
       try {
         await storage.delete(existing.uri);
       } catch (err) {
-        logger.warn(`删除技能目录失败 ${existing.uri}: ${err}`);
+        // 删不掉就报错、缓存不动：照常移除的话技能从列表消失，重扫或重启后又回来
+        if (!isStorageNotFound(err)) {
+          throw new Error(`删除技能目录失败 ${existing.uri}: ${err instanceof Error ? err.message : err}`);
+        }
       }
       skillsCache.delete(skillName);
       compiledTriggers.delete(skillName);
@@ -730,8 +736,8 @@ function run(caps: Caps): void {
       try {
         await storage.delete(joinUri(existing.uri, rel));
       } catch (err) {
-        logger.warn(`删除附属文件失败 ${rel}: ${err}`);
-        return false;
+        if (isStorageNotFound(err)) return false;
+        throw new Error(`删除附属文件失败 ${rel}: ${err instanceof Error ? err.message : err}`);
       }
       const reloaded = await loadSkillFromDir(existing.uri);
       if (reloaded) skillsCache.set(reloaded.name, reloaded);
@@ -1234,7 +1240,7 @@ function run(caps: Caps): void {
         // 先挂监听再扫描：扫描期间的改动不会漏掉（由它触发的重扫排在本次扫描之后）。
         // storage 层只按路径去抖，多次触发的合并靠 rescanSkills 的串行化
         try {
-          off = storage.watch?.(skillsUri, () => void rescanAndLog('debug', '目录变化，已重新扫描'));
+          off = storage.watch(skillsUri, () => void rescanAndLog('debug', '目录变化，已重新扫描'));
         } catch (err) {
           logger.warn(`skills 目录监听启动失败，请手动调用 skill_rescan: ${err}`);
         }

@@ -384,12 +384,9 @@ export function registerTradeTools(reg: RegFn, client: OkxClient, modeLabel: str
     },
     handler: async args => {
       try {
-        const r = await client.getFillsArchive(
-          args.instType as string,
-          args.instId as string | undefined,
-          pickLimit(args, pageLimit),
-        );
-        return JSON.stringify(truncate(r.data));
+        const limit = pickLimit(args, pageLimit);
+        const r = await client.getFillsArchive(args.instType as string, args.instId as string | undefined, limit);
+        return JSON.stringify(truncate(r.data, limit));
       } catch (e) {
         return errJson(e);
       }

@@ -83,6 +83,11 @@ export class ActivationHost {
     });
   }
 
+  /** 该归属的激活已进关闭计划（容器里的条目都出自仍在册的激活：撤回先于除名） */
+  closing(owner: symbol): boolean {
+    return this.#owners.get(owner)!.resources.disposed;
+  }
+
   mount(activation: Activation, definition: PluginDefinition): void | Promise<void> {
     return definition.apply(this.bind(activation, definition.uses ?? {}));
   }

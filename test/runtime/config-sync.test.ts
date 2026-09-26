@@ -1,5 +1,6 @@
-import { type App, config, definePlugin, type PluginDefinition } from '@aalis/core';
+import { type App, config, definePlugin, type Logger, type PluginDefinition } from '@aalis/core';
 import { describe, expect, it } from 'vitest';
+import { ConfigSaveRefusedError } from '../../packages/api-host-config/src/index.js';
 import {
   handleConfigChanged,
   installConfigHotReload,
@@ -186,6 +187,42 @@ describe('加载前配置同步', () => {
     await new Promise(r => setTimeout(r, 0));
     expect(warns.filter(w => w.includes('配置同步落盘失败'))).toHaveLength(1);
     expect(app.plugins.getPlugin('p1')?.state).toBe('active');
+    await app.stop();
+  });
+
+  it('provider 拒写（盘上有尚未生效的外部修改）：只记一行告警、不带栈，与 host-config 的 save 同一口径', async () => {
+    const warns: unknown[][] = [];
+    const logger: Logger = {
+      debug() {},
+      info() {},
+      warn: (...args: unknown[]) => void warns.push(args),
+      error() {},
+      child: () => logger,
+    };
+    const { app, store } = hostedApp(
+      { plugins: { p1: { known: 1, unknown: true } } },
+      {
+        logger,
+        provider: {
+          save: () => {
+            throw new ConfigSaveRefusedError(
+              '配置文件有尚未生效的外部修改，为免覆盖已拒绝本次保存（/x/aalis.config.yaml）',
+            );
+          },
+        },
+      },
+    );
+    const prepared = withPluginConfigSync(
+      { discover: async () => [{ name: p1Module.name, source: 'memory' }], load: async () => p1Module },
+      app,
+      store,
+    );
+    await createPluginDiscovery(app, prepared.loader, store).loadAll();
+    prepared.finishInitialLoad();
+    await new Promise(r => setTimeout(r, 0));
+    expect(warns.filter(([msg]) => String(msg).includes('落盘'))).toEqual([
+      ['配置同步未落盘：配置文件有尚未生效的外部修改，为免覆盖已拒绝本次保存（/x/aalis.config.yaml）'],
+    ]);
     await app.stop();
   });
 

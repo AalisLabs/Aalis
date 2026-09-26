@@ -75,22 +75,21 @@ type Caps = BoundOf<typeof uses>;
 async function run({ tools, logger, lifecycle, config: rawConfig }: Caps): Promise<void> {
   const config = rawConfig as unknown as Config;
 
+  // 配置非法时抛出、激活失败：实例转入 error，WebUI 与 doctor 直接看得到原因（只记日志的话显示运行中，实际没有监听）
   if (!Number.isInteger(config.port) || config.port <= 0 || config.port > 65535) {
-    logger.error(
+    throw new Error(
       `plugin-mcp-server 端口非法：port=${config.port}。请设置 1-65535 之间的整数；要停服务请在插件列表里禁用本插件。`,
     );
-    return;
   }
 
   // 空数组 = 全部暴露，所以任何认不出的形态都不能退化成空数组（那是 fail-open）：
   // 非数组、含非字符串元素（包括旧版 WebUI 存下的 [{ name }]）一律报错不启动。
   const toolGroups: unknown = config.toolGroups;
   if (!Array.isArray(toolGroups) || toolGroups.some(g => typeof g !== 'string')) {
-    logger.error(
+    throw new Error(
       `plugin-mcp-server toolGroups 非法：必须是分组名的字符串数组（如 ['search', 'system']；全部暴露写 [] 或 ['*']），` +
         `当前值 ${JSON.stringify(toolGroups)}。旧版 WebUI 存下的 [{ name: ... }] 请改写为字符串数组。`,
     );
-    return;
   }
 
   // SSE 同时只支持一个活跃连接（标准约束）；新连接挤掉旧的

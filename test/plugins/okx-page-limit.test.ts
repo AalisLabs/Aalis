@@ -8,6 +8,7 @@ import okxTrading from '../../packages/plugin-okx-trading/src/index.js';
 // 分页查询条数统一走 defaultPageLimit / maxPageLimit：
 // trade / algo / transfer 里的 5 个分页查询与 account / orders 同口径，
 // 未传 limit 用默认条数，传入的 limit 被 cap 到最大条数。
+// 返回给模型的条数也按这个 limit 截断：此前固定只展示前 20 条，limit 超过 20 时多出的条目模型看不到。
 // ════════════════════════════════════════════════════════════
 
 const PAGED_TOOLS = [
@@ -28,13 +29,14 @@ type ToolSpec = Omit<RegisteredTool, 'pluginName'>;
 
 let registered: Map<string, ToolSpec>;
 
-beforeAll(async () => {
-  registered = new Map();
+/** 按给定分页配置激活插件，收下它登记的全部工具 */
+async function boot(defaultPageLimit: number, maxPageLimit: number): Promise<Map<string, ToolSpec>> {
+  const out = new Map<string, ToolSpec>();
   const app = new App({ name: 'T', logLevel: 'error' });
   const host = app.bind({ provide });
   host.provide(tools, {
     register(tool: ToolSpec) {
-      registered.set(tool.definition.function.name, tool);
+      out.set(tool.definition.function.name, tool);
       return () => {};
     },
     registerGroup: () => () => {},
@@ -47,11 +49,16 @@ beforeAll(async () => {
     enableTrading: true,
     enableAlgo: true,
     enableTransfer: true,
-    defaultPageLimit: 7,
-    maxPageLimit: 9,
+    defaultPageLimit,
+    maxPageLimit,
   });
   await app.plugins.idle();
   await app.stop();
+  return out;
+}
+
+beforeAll(async () => {
+  registered = await boot(7, 9);
 });
 
 afterEach(() => {
@@ -86,5 +93,52 @@ describe('OKX 分页查询条数跟随配置', () => {
     const limit = (registered.get(name)?.definition.function.parameters as { properties: Record<string, unknown> })
       .properties.limit as { description: string };
     expect(limit.description).toBe('条数，默认 7，最多 9');
+  });
+});
+
+describe('OKX 分页查询返回给模型的条数跟随 limit', () => {
+  const ALL_PAGED_TOOLS = [
+    'okx_get_bills',
+    'okx_get_bills_archive',
+    'okx_get_positions_history',
+    'okx_get_interest_accrued',
+    'okx_get_order_history',
+    'okx_get_fills',
+    'okx_get_algo_order_history',
+    'okx_get_fills_archive',
+    'okx_get_asset_bills',
+    'okx_get_deposit_history',
+    'okx_get_withdrawal_history',
+  ];
+  const REQUIRED: Record<string, Record<string, unknown>> = {
+    ...REQUIRED_ARGS,
+    okx_get_order_history: { instType: 'SPOT' },
+  };
+  let wide: Map<string, ToolSpec>;
+  beforeAll(async () => {
+    wide = await boot(25, 50);
+  });
+
+  /** OKX 桩按请求的 limit 回同样多的条目，返回工具交给模型的结果 */
+  async function visible(name: string, args: Record<string, unknown>): Promise<unknown[]> {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const n = Number(new URL(url).searchParams.get('limit'));
+        const data = Array.from({ length: n }, (_, i) => ({ id: String(i) }));
+        return new Response(JSON.stringify({ code: '0', msg: '', data }), { status: 200 });
+      }),
+    );
+    const tool = wide.get(name);
+    if (!tool) throw new Error(`${name} 未注册`);
+    const out = await tool.handler({ ...REQUIRED[name], ...args }, { sessionId: 's', enabledGroups: undefined });
+    return JSON.parse(out as string) as unknown[];
+  }
+
+  it.each(ALL_PAGED_TOOLS)('%s：默认 25 条与 limit=40 都整份交给模型，不在第 20 条截断', async name => {
+    const byDefault = await visible(name, {});
+    expect(byDefault).toHaveLength(25);
+    expect(byDefault.some(x => typeof x === 'string')).toBe(false);
+    expect(await visible(name, { limit: 40 })).toHaveLength(40);
   });
 });

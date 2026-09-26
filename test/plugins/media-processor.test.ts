@@ -155,6 +155,8 @@ describe('MediaService 音频统一池（asr 桥 + 音频 LLM 一个池）', () 
     const llmProc = s.listProcessors('audio').find(p => p.name.startsWith('llm:'));
     expect(llmProc).toBeDefined(); // scanLLMProcessors 确实把 audio LLM 包进了 audio 池
     expect(typeof llmProc?.transcribe).toBe('function'); // 真 proc 带 transcribe（曾经那段「死代码」的归宿）
+    // 音频处理器不挂 describe（调用只会抛错），与 asr 桥接出的音频处理器同形
+    expect(llmProc?.describe).toBeUndefined();
     // 下拉项 value = 此 name，pickProcessor 也按 name 命中 → 名字一致由同一 listProcessors 来源构造保证
     expect(s.pickProcessor('audio', llmProc?.name)?.name).toBe(llmProc?.name);
   });

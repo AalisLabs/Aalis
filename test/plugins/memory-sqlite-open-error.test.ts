@@ -20,11 +20,14 @@ vi.mock('better-sqlite3', () => ({
   },
 }));
 
-function fakeStorage(): StorageService {
+function fakeStorage(resolveError?: Error): StorageService {
   const roots = [{ name: 'data', readable: true, writable: true, deletable: true }] as unknown as StorageRootInfo[];
   return {
     listRoots: () => roots,
-    resolveLocalPath: async () => '/zz-memory-sqlite-test/aalis.db',
+    resolveLocalPath: async () => {
+      if (resolveError) throw resolveError;
+      return '/zz-memory-sqlite-test/aalis.db';
+    },
   } as unknown as StorageService;
 }
 
@@ -47,12 +50,12 @@ afterEach(async () => {
   for (const app of apps.splice(0)) await app.stop().catch(() => {});
 });
 
-async function activateWith(openError: Error) {
+async function activateWith(openError: Error, resolveError?: Error) {
   native.openError = openError;
   const logger = recordingLogger();
   const app = new App({ name: 'T', logger });
   apps.push(app);
-  app.bind({ provide }).provide(storage, fakeStorage());
+  app.bind({ provide }).provide(storage, fakeStorage(resolveError));
   await app.plugins.register(memorySqlite, {});
   await app.plugins.idle();
   const entry = app.plugins.getStatus().find(p => p.name === '@aalis/plugin-memory-sqlite');
@@ -91,6 +94,15 @@ describe('plugin-memory-sqlite 开库失败', () => {
 
     expect(entry?.state).toBe('error');
     expect(entry?.error).toBe(`SQLite 打开失败: better-sqlite3 原生模块无法加载：${original.message}`);
+    expect(thrown?.cause).toBe(original);
+  });
+
+  it('数据库路径解析失败：消息点名 URI 与原因，原错误作 cause', async () => {
+    const original = new Error('根 data 不可写');
+    const { entry, thrown } = await activateWith(new Error('不该开库'), original);
+
+    expect(entry?.state).toBe('error');
+    expect(entry?.error).toBe('无法解析数据库路径 data:/aalis.db: 根 data 不可写');
     expect(thrown?.cause).toBe(original);
   });
 

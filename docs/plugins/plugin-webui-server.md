@@ -112,20 +112,20 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 | `/api/auth/login` · `/api/auth/logout` · `/api/auth/status` | POST · POST · GET | 登录换 cookie / 登出 / 登录状态 |
 | `/api/status` | GET | 系统状态、上传能力检测 |
 | `/api/plugins` | GET | 插件列表（含状态、配置、Schema、错误信息）；激活超过慢激活阈值、已转入后台的插件带 `slow: true` |
-| `/api/plugins/:name/config` | GET / PUT | 单插件配置读写；PUT 体为 `{ config }`，热重载该插件后写回配置文档。插件有 `configSchema` 时裁掉未声明的字段：本次提交里的在响应 `ignored` 里点名；配置文档里原有、本次没有提交的随写回从配置文件删除，在响应 `removed` 里点名；两者都附在 `message` 末尾。插件运行中、且提交后的配置与运行态和配置文档都相同时，不重载插件，仍把配置文档写回文件（此前保存写文件失败时，原样重试即可补写），回复「配置无改动，已写回配置文件」 |
-| `/api/plugins/:name/enable` · `/api/plugins/:name/disable` | POST | 热启用 / 热禁用，写回 `disabledPlugins`。停用仍在初始化的插件而它未在宽限内停止、转为 `error` 态时，照样写回禁用，但返回 500，说明它未在宽限内停止、已转为 `error` 态 |
+| `/api/plugins/:name/config` | GET / PUT | 单插件配置读写；PUT 体为 `{ config }`，热重载该插件后写回配置文档。插件有 `configSchema` 时裁掉未声明的字段：本次提交里的在响应 `ignored` 里点名；配置文档里原有、本次没有提交的随写回从配置文件删除，在响应 `removed` 里点名；两者都附在 `message` 末尾。插件运行中、且提交后的配置与运行态和配置文档都相同时，不重载插件，仍把配置文档写回文件（此前保存写文件失败时，原样重试即可补写），回复「配置无改动，已写回配置文件」。按新配置重新激活失败、插件转为 `error` 态时，配置照样写回，但返回 500 并附失败原因 |
+| `/api/plugins/:name/enable` · `/api/plugins/:name/disable` | POST | 热启用 / 热禁用，写回 `disabledPlugins`。启用后激活失败、转为 `error` 态时，照样写回启用，但返回 500 并附失败原因；停用仍在初始化的插件而它未在宽限内停止、转为 `error` 态时，照样写回禁用，但返回 500，说明它未在宽限内停止、已转为 `error` 态 |
 | `/api/plugins/scan` | POST | 经宿主的 `plugin-source` 服务重新扫描插件源（范围由宿主的加载器决定），加载新发现且尚未注册的插件；宿主未提供插件来源时返回 503 |
-| `/api/plugins/:name/instances` · `/api/plugins/:instanceId/instance` | POST · DELETE | 多实例插件的创建 / 移除 |
+| `/api/plugins/:name/instances` · `/api/plugins/:instanceId/instance` | POST · DELETE | 多实例插件的创建 / 移除。停机进行中创建会被拒绝登记，返回 409，配置不写入；移除时一并清除该实例的禁用标记，同名重建以启用态登记 |
 | `/api/pages` | GET | 所有激活插件注册的 WebUI 页面（按 order 排序） |
 | `/api/page-action/:plugin/:method` | POST | 动态调用插件页面处理器（统一 RPC 入口） |
-| `/api/config` · `/api/config/save` | GET / PUT · POST | 全局配置：GET 读取；PUT 可改 `name`、`logLevel`、`slowThresholdMs`（`CORE_CONFIG_SCHEMA` 的键）；请求体里其余顶层键一律不应用，其中与当前值不同的会在响应 `ignored` 里点名（前端会把整份配置连同可能过期的快照回传，故不按键报错）；文档里没写的核心键按 schema 默认值比较（前端把默认值回填进草稿后回传，不算改动、不写进文件）；`logLevel` 或 `slowThresholdMs` 有变化时保存并自动重启应用，只改 `name` 时保存即生效（装有人设时界面显示人设名）；POST `/api/config/save` 把当前配置写回磁盘 |
+| `/api/config` · `/api/config/save` | GET / PUT · POST | 全局配置：GET 读取；PUT 可改 `name`、`logLevel`、`slowThresholdMs`（`CORE_CONFIG_SCHEMA` 的键）；请求体里其余顶层键一律不应用，其中与当前值不同的会在响应 `ignored` 里点名（前端会把整份配置连同可能过期的快照回传，故不按键报错）；文档里没写的核心键按 schema 默认值比较（前端把默认值回填进草稿后回传，不算改动、不写进文件）；`logLevel` 或 `slowThresholdMs` 有变化时保存并自动重启应用（宿主不支持重启时只记一条错误日志，改动已写入文件，下次启动生效），只改 `name` 时保存即生效（装有人设时界面显示人设名）；POST `/api/config/save` 把当前配置写回磁盘（宿主不持久化时不写盘，回执只说「配置已保存」） |
 | `/api/services` · `/api/services/:name/prefer` | GET · POST / DELETE | 服务列表 / 设置或清除服务偏好提供者（持久化到 `servicePreferences`） |
 | `/api/service-groups` · `/api/tool-groups` · `/api/system-components` | GET | 服务分组 / 工具分组 / 系统组件 |
 | `/api/platforms` | GET | 平台连接状态 |
 | `/api/models/:service` · `/api/llm-models` · `/api/llm-providers` | GET | 按服务取模型列表 / LLM 模型与提供者 |
 | `/api/llm-providers/:contextId/refresh` | POST | 触发该 provider 重新探测模型列表（仅对支持运行时刷新的 provider 有效） |
 | `/api/marketplace` · `/api/marketplace/depgraph` | GET | 市场搜索（`?q=`）/ 依赖图 |
-| `/api/marketplace/install` · `/api/marketplace/uninstall` | POST | 体为 `{ name }`；需 `package-manager` 服务（缺失时 503）。安装后热加载，卸载后热卸载。装卸只接受插件与前端界面包；若有其它插件依赖该包提供的服务且无其他提供者，卸载被拒绝。这些拒绝来自 `package-manager` 服务层，以 HTTP 200 返回 `{ ok: false, message }` |
+| `/api/marketplace/install` · `/api/marketplace/uninstall` | POST | 体为 `{ name }`；需 `package-manager` 服务（缺失时 503）。安装后热加载，卸载后热卸载。装卸只接受插件与前端界面包；若有其它插件依赖该包提供的服务，且没有别的插件正在提供该服务，卸载被拒绝。这些拒绝来自 `package-manager` 服务层，以 HTTP 200 返回 `{ ok: false, message }` |
 | `/api/marketplace/update` | POST | 体为 `{ targets: [{ name, version }] }`，整批更新，成功后重启进程；需 `package-manager` 服务（缺失时 503） |
 | `/api/files*` · `/api/uploaded-files*` | GET / POST | 工作区文件管理 / 上传文件管理 |
 | `/api/logs/tail` · `/api/logs/range` | GET | 日志：尾部 N 条（`?limit=`，默认 200，上限 5000）/ 向前翻页（`?before=<seq>&limit=`，返回 seq 小于 before 的记录） |

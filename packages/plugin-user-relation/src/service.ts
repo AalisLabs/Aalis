@@ -122,13 +122,22 @@ export class RelationService {
   // 组合出过一类事故：真合并删除节点后，同 pass 后续阶段拿快照旧拷贝做补丁式回写
   // （embedding hash / summary / PageRank），把死节点整个写回（复活）。僵尸节点使
   // consolidate 每轮重判同一批对、反复铸 part-of 边（2026-08「表情包星形」事故）。
-  // 凡「以快照旧拷贝为基底 spread + 补丁」的节点回写一律走这两个写口：
+  // 凡「以快照旧拷贝为基底 spread + 补丁」的节点回写一律走这三个写口：
   //   1. 落笔前单点核实节点在库中仍存活，死了就跳过——同 pass 内「删了就是删了」由此机器保证
   //      （核实与写入是两次 await，其它并发路径的删除若落在其间仍会复活）；
   //   2. 以**库中活文档**为基底套补丁（而非旧拷贝）——否则回写还会用陈旧字段
   //      压掉并发合并刚并入的 aliases 等新状态。
   // 豁免路径：facade 新建/强化、renameNode 等「先单点读活文档再改写」的读改写路径；
-  // evictByQuota 内 decay 回写（其快照在本函数自身删除动作之前 fresh 加载，无复活窗）。
+  // evictByQuota 内 decay 回写 rewriteWeights（其快照在本函数自身删除动作之前 fresh 加载，只对本函数
+  // 自身的删除无复活窗；与清空交叠（回写中开始清空，或清空进行中开始回写）时按 RelationStore.clearGeneration
+  // 停写，仅清空提交当口正在落笔的那一条可能写回；其它并发删除仍可能被写回）。
+  private async writeBackPersonIfLive(node: PersonNode, patch: Partial<PersonNode>): Promise<boolean> {
+    const live = await this.store.getPerson(node.platform, node.userId);
+    if (!live) return false;
+    await this.store.upsertPerson({ ...live, ...patch });
+    return true;
+  }
+
   private async writeBackEntityIfLive(node: EntityNode, patch: Partial<EntityNode>): Promise<boolean> {
     const live = await this.store.getEntity(node.id);
     if (!live) return false;
@@ -1160,6 +1169,10 @@ export class RelationService {
       return { events: 0, entities: 0, edges: 0, skipped: true };
     }
     const now = Date.now();
+    // 逐条写回快照拷贝，生产规模要跑十几秒到数分钟：期间关系图被清空（含启动时已在进行的清空）就停写，
+    // 不把快照剩余部分写回
+    const gen = this.store.clearGeneration;
+    const cleared = () => this.store.clearGeneration !== gen;
     const snap = await this.store.loadAll();
     let events = 0;
     let entities = 0;
@@ -1168,18 +1181,21 @@ export class RelationService {
     for (const ev of snap.events) {
       const newW = effectiveWeight(ev.weight, ev.lastReinforcedAt, now, decay);
       if (Math.abs(newW - ev.weight) < EPS) continue;
+      if (cleared()) return { events, entities, edges, skipped: false };
       await this.store.upsertEvent({ ...ev, weight: newW, lastReinforcedAt: now });
       events++;
     }
     for (const en of snap.entities) {
       const newW = effectiveWeight(en.weight, en.lastReinforcedAt, now, decay);
       if (Math.abs(newW - en.weight) < EPS) continue;
+      if (cleared()) return { events, entities, edges, skipped: false };
       await this.store.upsertEntity({ ...en, weight: newW, lastReinforcedAt: now });
       entities++;
     }
     for (const e of snap.edges) {
       const newW = effectiveWeight(e.weight, e.lastReinforcedAt, now, decay);
       if (Math.abs(newW - e.weight) < EPS) continue;
+      if (cleared()) return { events, entities, edges, skipped: false };
       await this.store.upsertEdge({ ...e, weight: newW, lastReinforcedAt: now });
       edges++;
     }
@@ -1467,13 +1483,13 @@ export class RelationService {
       this.logger?.info(
         `[user-relation] community algorithm=${alg} Q=${q.toFixed(4)} communities=${allCommIds.size} (nodes=${after.persons.length + after.events.length + after.entities.length})`,
       );
+      // 派生回写走活性写口：after 虽为 fresh 加载，逐条写回期间仍可能有清空或其它路径的删除
       for (const p of after.persons) {
         const score = pr.get(p.id);
         const list = memberships.get(p.id);
         const cid = list && list.length > 0 ? list[0].id : undefined;
         if (score === undefined && cid === undefined) continue;
-        await this.store.upsertPerson({
-          ...p,
+        await this.writeBackPersonIfLive(p, {
           ...(score !== undefined ? { lastPageRank: score, lastPageRankAt: now } : {}),
           ...(cid !== undefined ? { communityId: cid, communityIdAt: now, communityMemberships: list } : {}),
         });
@@ -1483,7 +1499,6 @@ export class RelationService {
         const list = memberships.get(ev.id);
         const cid = list && list.length > 0 ? list[0].id : undefined;
         if (score === undefined && cid === undefined) continue;
-        // 派生回写走活性写口（after 虽为 fresh 加载，统一收口以防未来插入删除动作后复活）
         await this.writeBackEventIfLive(ev, {
           ...(score !== undefined ? { lastPageRank: score, lastPageRankAt: now } : {}),
           ...(cid !== undefined ? { communityId: cid, communityIdAt: now, communityMemberships: list } : {}),

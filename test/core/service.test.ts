@@ -69,6 +69,14 @@ describe('ServiceContainer', () => {
     expect(off(), '再退订一次：条目已不在，报 false').toBe(false);
   });
 
+  it('没有任何提供者时 prefer 照收（返回 true），提供者登记后偏好生效', () => {
+    const c = new ServiceContainer();
+    expect(c.prefer('__t:late', 'late')).toBe(true);
+    c.register('__t:late', { v: 'early' }, 'early', OWNER, { priority: 10 });
+    c.register('__t:late', { v: 'late' }, 'late', OWNER);
+    expect(c.get('__t:late')).toEqual({ v: 'late' });
+  });
+
   it('多提供者按 priority + 注册顺序解析（偏好之外）', () => {
     const c = new ServiceContainer();
     c.register('__t:llm', { name: 'low' }, 'p1', OWNER);

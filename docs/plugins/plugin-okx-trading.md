@@ -37,7 +37,7 @@ export default definePlugin({
 | `enableAlgo` | boolean | `false` | 启用策略委托：启用止盈止损 / 计划委托工具 |
 | `enableTransfer` | boolean | `false` | 启用资金划转：启用资金账户划转工具 |
 | `defaultPageLimit` | number | `20` | 分页查询默认条数：查询订单/账单/成交明细等接口，LLM 未传 limit 时使用。 |
-| `maxPageLimit` | number | `100` | 分页查询最大条数：LLM 传入的 limit 会被 cap 到该值。OKX API 本身单页一般最多 100（个别接口 300）。 |
+| `maxPageLimit` | number | `100` | 分页查询最大条数：LLM 传入的 limit 会被 cap 到该值；查到的条目整份交给模型，调大会增加单次工具结果的体积。OKX API 本身单页一般最多 100（个别接口 300）。 |
 
 未配置 `apiKey` / `secretKey` / `passphrase` 时插件跳过初始化（仅打 warn）。
 

@@ -46,6 +46,8 @@ export default definePlugin({
 
 四类全部启用时共注册 38 个工具（Word 11、Excel 10、PowerPoint 12、PDF 5），均归入 `office` 工具组。
 
+Word 与 PowerPoint 插入图片时，来源为 http(s) 链接的图片限时 15 秒下载、最大 20 MiB，超出时工具返回失败。
+
 ### Word (docx)
 
 创建文档，添加标题、段落、列表、表格、图片、分页符、目录，设置页眉页脚与全局默认样式，保存到输出目录。转 PDF 使用 PDF 类的 `pdf_convert`。

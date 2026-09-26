@@ -41,6 +41,8 @@ export class WorkflowLoader {
   private dirUri: string;
   private logger: Logger;
   private loaded = new Map<string, WorkflowDef>();
+  /** 本次激活里确认有文件的 id（loadAll 载入的、saveDef 写过的）：只有它们删不掉文件时会在重启后被重新载入 */
+  private onDisk = new Set<string>();
 
   constructor(storage: StorageService, dirUri: string, logger: Logger) {
     this.storage = storage;
@@ -83,6 +85,7 @@ export class WorkflowLoader {
           continue;
         }
         this.loaded.set(def.id, def);
+        this.onDisk.add(def.id);
         this.logger.info(`已加载 workflow: ${def.id} (${def.nodes.length} 节点, trigger=${def.trigger.type})`);
       } catch (err) {
         this.logger.warn(`加载 workflow 文件 ${e.name} 失败: ${err}`);
@@ -95,21 +98,28 @@ export class WorkflowLoader {
   async saveDef(def: WorkflowDef): Promise<void> {
     const uri = joinUri(this.dirUri, `${def.id}.yaml`);
     await this.storage.writeFile(uri, stringify(def));
+    this.onDisk.add(def.id);
     this.loaded.set(def.id, def);
   }
 
-  /** 从内存与存储删除 */
+  /**
+   * 从存储与内存删除。确认有文件的定义删不掉文件（不是「不存在」）时抛错、内存不动——否则重启后定义又被载入；
+   * 只在内存里的定义与不存在的 id 删文件失败（如 storage 不在场、根不可删）只记 warn，照常从内存移除
+   */
   async removeDef(id: string): Promise<boolean> {
-    const had = this.loaded.delete(id);
     const uri = joinUri(this.dirUri, `${id}.yaml`);
     try {
       await this.storage.delete(uri);
     } catch (err) {
       if (!isStorageNotFound(err)) {
+        if (this.onDisk.has(id)) {
+          throw new Error(`删除 workflow 文件 ${id}.yaml 失败: ${err instanceof Error ? err.message : err}`);
+        }
         this.logger.warn(`删除 workflow 文件 ${id}.yaml 失败: ${err}`);
       }
     }
-    return had;
+    this.onDisk.delete(id);
+    return this.loaded.delete(id);
   }
 
   /** 仅放入内存（用于动态注册不持久化） */

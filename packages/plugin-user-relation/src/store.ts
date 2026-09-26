@@ -96,6 +96,18 @@ export class RelationStore {
    */
   constructor(private readonly memory: () => MemoryService) {}
 
+  private clearGen = 0;
+
+  /**
+   * 清空代数：clearAll 开始与结束（含失败）各加一。按快照逐条回写的长循环（rewriteWeights）开头记下它、
+   * 每次落笔前比对，变了即停——开始时加一拦住清空前已在跑的循环，结束时加一拦住清空进行中才启动、
+   * 读到清空前全图的循环；否则它们会把快照里剩下的节点与边写回。比对与落笔是两次 await，
+   * 清空提交当口正在落笔的那一条仍可能写回。
+   */
+  get clearGeneration(): number {
+    return this.clearGen;
+  }
+
   // ----- Person -----
 
   async getPerson(platform: string, userId: string): Promise<PersonNode | undefined> {
@@ -227,13 +239,18 @@ export class RelationStore {
    * mongodb 只保证按序执行遇错即停。不够原子时的兜底是幂等——再清一次即可，图本来就是要清空的。
    */
   async clearAll(): Promise<number> {
-    const entries = await this.memory().listMetadata(RELATION_NAMESPACE);
-    const vecEntries = await this.memory().listMetadata(RELATION_VECTOR_NAMESPACE);
-    await this.memory().commitMetadata([
-      ...entries.map(e => ({ op: 'del' as const, namespace: RELATION_NAMESPACE, key: e.key })),
-      ...vecEntries.map(e => ({ op: 'del' as const, namespace: RELATION_VECTOR_NAMESPACE, key: e.key })),
-    ]);
-    return entries.length;
+    this.clearGen++;
+    try {
+      const entries = await this.memory().listMetadata(RELATION_NAMESPACE);
+      const vecEntries = await this.memory().listMetadata(RELATION_VECTOR_NAMESPACE);
+      await this.memory().commitMetadata([
+        ...entries.map(e => ({ op: 'del' as const, namespace: RELATION_NAMESPACE, key: e.key })),
+        ...vecEntries.map(e => ({ op: 'del' as const, namespace: RELATION_VECTOR_NAMESPACE, key: e.key })),
+      ]);
+      return entries.length;
+    } finally {
+      this.clearGen++;
+    }
   }
 
   /** 级联删除人物：移除该人物所有相关边，然后删除人物本身 */

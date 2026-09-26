@@ -167,7 +167,10 @@ describe('运行期刷新随 lifecycle.signal 中止', () => {
     await until(() => state.hung.length > 0, `请求 ${hangOn}`);
     expect(await app.plugins.disable(plugin.name)).toBe(true);
 
-    await expect(within(refreshing, GRACE_MS)).rejects.toThrow('已开始关闭');
+    const settled = within(refreshing, GRACE_MS);
+    await expect(settled).rejects.toThrow('已开始关闭');
+    // 中止原样抛出，不包成「模型发现失败」：WebUI 会把它当成网关故障报出来
+    await expect(settled).rejects.not.toThrow('模型发现失败');
     await app.plugins.idle();
     expect(lines).toEqual([]);
     expect(app.plugins.getPlugin(plugin.name)?.state).toBe('disabled');

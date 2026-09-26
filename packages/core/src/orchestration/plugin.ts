@@ -361,7 +361,8 @@ export class PluginManager implements PluginManagerService {
     this.#suspendDepth++;
     try {
       await this.#retire(entry, 'disabled');
-      this.#logger.info(`插件已禁用: ${instanceId}`);
+      // 宽限内没停下来的已转 error，上一条 error 日志已说明
+      if (entry.state !== 'error') this.#logger.info(`插件已禁用: ${instanceId}`);
     } finally {
       this.#suspendDepth--;
     }
@@ -584,6 +585,9 @@ export class PluginManager implements PluginManagerService {
         if (entry.state !== 'pending' || entry.activation) continue;
         if (retryBudget.get(entry) === 0) continue;
         if (!requiredSatisfied(entry, this.#host.runtime.services)) continue;
+        // required 胜者已进关闭计划（如被管理动作接手、flight 已不再等的在飞激活）：激活到它上面拿到的是正在
+        // 关闭的实例。等它关完、服务下线触发重算再判定
+        if (entry.required.some(name => this.#host.closing(this.#host.runtime.services.ownerOf(name)!))) continue;
         const result = await this.#activate(entry);
         if (result === 'retry') {
           // 首次失败按当时图规模取额；后续新增插件也不能让失稳 entry 不断扩额。

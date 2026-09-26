@@ -117,7 +117,7 @@ export function UninstallDepWarning({ graph }: { graph: DepGraph }) {
       {graph.serviceDependents.length > 0 && (
         <div className="dep-line dep-warn-block">
           <AlertTriangle size={12} /> 依赖它提供的服务且无替代：{graph.serviceDependents.join('、')}
-          <br />（卸载会被拒绝，请先卸载它们或装替代提供者）
+          <br />（卸载会被拒绝，请先停用它们，或启用 / 安装替代提供者）
         </div>
       )}
       {importers.length > 0 && (

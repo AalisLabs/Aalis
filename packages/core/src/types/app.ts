@@ -66,15 +66,17 @@ export interface PluginManagerService {
   /**
    * 增量重载单个插件：拆掉当前激活 → 转 pending → 重算后重新激活。`opts.config` 换成新的运行配置。
    * 插件要重启自己就调它。不换代码——要换代码走 `unload` + `register`。
+   * 不得在插件 apply / onDrain / onDispose 内 await 针对自身或自身 required 提供者的本动作：拆卸要等这些回调返回，
+   * 两边至多互等到宽限超时，apply 被判「未在宽限内停止」。
    */
   bounce(instanceId: string, opts?: { config?: Record<string, unknown> }): Promise<boolean>;
-  /** 更新插件配置并热重载：`bounce(instanceId, { config })` 的薄壳 */
+  /** 更新插件配置并热重载：`bounce(instanceId, { config })` 的薄壳，调用约束同 bounce */
   updateConfig(instanceId: string, config: Record<string, unknown>): Promise<boolean>;
   /** 启用插件 */
   enable(instanceId: string): Promise<boolean>;
-  /** 禁用插件 */
+  /** 禁用插件。调用约束同 bounce */
   disable(instanceId: string): Promise<boolean>;
-  /** 彻底卸载插件：拆掉激活并从注册表移除（用于市场卸载，区别于 disable 仅置禁用态） */
+  /** 彻底卸载插件：拆掉激活并从注册表移除（用于市场卸载，区别于 disable 仅置禁用态）。调用约束同 bounce */
   unload(instanceId: string): Promise<boolean>;
   /** 注册并尝试激活一份插件定义（多实例经 instanceId 区分；供管理面基于 register/unload 组合实例编排） */
   register(

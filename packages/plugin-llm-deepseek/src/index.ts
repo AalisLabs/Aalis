@@ -261,7 +261,8 @@ class DeepSeekClient {
       const data = (await res.json()) as { data: { id: string }[] };
       return data.data.map(m => m.id);
     } catch (err) {
-      if (!signal?.aborted) this.logger.warn(`fetchRemoteModelIds 异常 ${url}: ${(err as Error).message}`);
+      // err 作参数交给 logger：fetch 网络失败的消息固定是「fetch failed」，真实原因在 cause 上，logger 渲染因果链
+      if (!signal?.aborted) this.logger.warn(`fetchRemoteModelIds 异常 ${url}:`, err);
       return [];
     }
   }
