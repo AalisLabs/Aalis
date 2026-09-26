@@ -12,7 +12,7 @@
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "平台无关流控：禁言/冷却/限速/闲置触发",
+  "description": "平台无关流控：禁言/冷却/限速",
   "type": "module",
   "keywords": [
     "aalis",
@@ -50,7 +50,6 @@
       "required": [
         "config",
         "events",
-        "gateway",
         "hooks",
         "lifecycle",
         "logger",

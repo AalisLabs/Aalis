@@ -31,6 +31,37 @@ describe('trigger-policy overrides (resolve)', () => {
     });
     expect(c.overrides[1]).toEqual({ scope: 'invalid_no_change' });
   });
+
+  it('overrides 解析评分与闲置触发字段（自 flow-control 迁入），丢弃未知字段与非法枚举', () => {
+    const c = resolveTriggerPolicyConfig({
+      overrides: [
+        {
+          scope: 'onebot:group:20002',
+          fixedInterval: 20,
+          activityScoreLower: 0.5,
+          scoreDecayMinutes: 5,
+          idleTriggerScope: 'session',
+          idleTriggerStyle: 'fixed',
+          idleTriggerMinutes: 30,
+          idleTriggerJitter: false,
+          idleTriggerPrompt: '本群提示',
+          cooldownSeconds: 99, // 节流字段属于 flow-control
+          idleTriggerStrategy: 'bogus',
+        },
+      ],
+    });
+    expect(c.overrides[0]).toEqual({
+      scope: 'onebot:group:20002',
+      fixedInterval: 20,
+      activityScoreLower: 0.5,
+      scoreDecayMinutes: 5,
+      idleTriggerScope: 'session',
+      idleTriggerStyle: 'fixed',
+      idleTriggerMinutes: 30,
+      idleTriggerJitter: false,
+      idleTriggerPrompt: '本群提示',
+    });
+  });
 });
 
 describe('trigger-policy overrides 经 resolveEffectiveConfig 生效', () => {
@@ -38,12 +69,16 @@ describe('trigger-policy overrides 经 resolveEffectiveConfig 生效', () => {
     const c = resolveTriggerPolicyConfig({
       triggerNames: 'aalis,bot',
       muteKeywords: 'mute',
+      idleTriggerPrompt: 'top-default-prompt',
+      fixedInterval: 8,
       overrides: [
         {
           scope: '*:private',
           triggerOnAt: false,
           triggerNames: '', // 空串 → 不覆盖
           muteKeywords: undefined, // undefined → 不覆盖
+          idleTriggerPrompt: '', // 空串 → 不覆盖
+          fixedInterval: null, // null → 不覆盖
         },
       ],
     });
@@ -53,5 +88,7 @@ describe('trigger-policy overrides 经 resolveEffectiveConfig 生效', () => {
     expect(eff.triggerOnAt).toBe(false); // 覆盖生效
     expect(eff.triggerNames).toEqual(['aalis', 'bot']); // 穿透
     expect(eff.muteKeywords).toEqual(['mute']); // 穿透
+    expect(eff.idleTriggerPrompt).toBe('top-default-prompt'); // 穿透
+    expect(eff.fixedInterval).toBe(8); // 穿透
   });
 });

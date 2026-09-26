@@ -1,0 +1,497 @@
+import { gateway } from '@aalis/api-gateway';
+import { processService } from '@aalis/api-process';
+import { storage } from '@aalis/api-storage';
+import { type RegisteredTool, tools } from '@aalis/api-tools';
+import { App, events, provide } from '@aalis/core';
+import type { IncomingMessage } from '@aalis/schema-message';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { agent } from '../../packages/api-agent/src/index.js';
+import { type FlowControlService, flowControl } from '../../packages/api-flow-control/src/index.js';
+import { hooks } from '../../packages/api-hooks/src/index.js';
+import onebotPlugin from '../../packages/plugin-adapter-onebot/src/index.js';
+import flowControlPlugin from '../../packages/plugin-flow-control/src/index.js';
+import gatewayPlugin from '../../packages/plugin-gateway/src/index.js';
+import sessionToolsPlugin from '../../packages/plugin-tool-session/src/index.js';
+import triggerPolicyPlugin from '../../packages/plugin-trigger-policy/src/index.js';
+import { registerHubs } from '../fixtures/hubs.js';
+
+// ════════════════════════════════════════════════════════════
+// 回复闸门：trigger-policy 决定要不要开口，flow-control 只做节流硬闸。
+//
+// 全部经真实插件（gateway + trigger-policy + flow-control，委派用例另加 tool-session 与
+// onebot 适配器）走 gateway 入站相位链驱动；agent 是记录型假件，只在测试指定时回复
+// （回复走 gateway.dispatchOutbound，source='agent'，与真实 agent 同路）。
+//
+// 「缺陷」与「相位」两组是重组前的复现用例：在旧代码（flow 先于 trigger、idle 在 flow-control、
+// 委派经适配器 checkAndRecordProactiveSend 预记一次回复）上逐条确认为断言失败。
+// 两个插件的配置分开下发：core 不按 schema 校验，混发会掩盖字段放错插件。
+// ════════════════════════════════════════════════════════════
+
+const SELF = '10000';
+const AT = `<at self id="${SELF}">Aalis</at> `;
+const sid = (groupId: string) => `onebot:${SELF}:group:${groupId}`;
+const privateSid = (userId: string) => `onebot:${SELF}:private:${userId}`;
+
+const groupMsg = (groupId: string, content: string, userId = '30001'): IncomingMessage => ({
+  content,
+  platform: 'onebot',
+  sessionType: 'group',
+  sessionId: sid(groupId),
+  groupId,
+  userId,
+  nickname: '群友',
+});
+
+const privateMsg = (userId: string, content: string): IncomingMessage => ({
+  content,
+  platform: 'onebot',
+  sessionType: 'private',
+  sessionId: privateSid(userId),
+  userId,
+  nickname: '网友',
+});
+
+/** 与 onebot 适配器合成的群聊戳一戳同形：昵称内嵌在 content 里，用户可控 */
+const pokeMsg = (groupId: string, nickname: string, userId = '30001'): IncomingMessage => ({
+  ...groupMsg(groupId, `[戳一戳: ${nickname}(${userId}) 戳了你]`, userId),
+  nickname,
+  noticeType: 'poke',
+});
+
+type ToolHandler = (args: Record<string, unknown>, ctx: Record<string, unknown>) => Promise<string>;
+
+interface Harness {
+  app: App;
+  /** 抵达 dispatch（agent.handleMessage）的全部消息 */
+  received: IncomingMessage[];
+  /** 抵达 agent 的消息正文（按内容比对，不依赖相位链是否透传同一对象引用） */
+  contents: () => string[];
+  /** 抵达 agent 的 idle 注入 */
+  idles: () => IncomingMessage[];
+  /** 真人入站：走 gateway.ingressMessage（等整条相位链跑完） */
+  send: (msg: IncomingMessage) => Promise<void>;
+  /** agent 对某会话的真实回复：gateway.dispatchOutbound，source='agent' */
+  reply: (sessionId: string) => Promise<void>;
+  /** 调 delegate_to_session（fire-and-forget）；仅 withDelegate 时可用 */
+  delegate: (target: string) => Promise<{ delegated?: boolean; error?: string }>;
+  /** 流控服务（模拟平台禁言、读禁言状态） */
+  flow: () => FlowControlService;
+}
+
+interface SetupOptions {
+  /** 下发给 plugin-flow-control 的配置 */
+  flow?: Record<string, unknown>;
+  /** 下发给 plugin-trigger-policy 的配置 */
+  trigger?: Record<string, unknown>;
+  /** agent 收到这条消息时是否立即回复 */
+  autoReply?: (msg: IncomingMessage) => boolean;
+  /** 装配 tool-session（delegate_to_session）与 onebot 适配器 */
+  withDelegate?: boolean;
+}
+
+const booted: App[] = [];
+
+/** 刷掉微任务与 fire-and-forget 的入站处理（setImmediate 不在假时钟内） */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 10; i++) await new Promise<void>(r => setImmediate(r));
+}
+
+async function advance(ms: number): Promise<void> {
+  await vi.advanceTimersByTimeAsync(ms);
+  await flush();
+}
+
+async function setup(opts: SetupOptions = {}): Promise<Harness> {
+  const app = new App({ name: 'T', logLevel: 'error' });
+  booted.push(app);
+  await registerHubs(app);
+  const host = app.bind({ provide, events, hooks, gateway, flowControl });
+
+  const received: IncomingMessage[] = [];
+  const reply = async (sessionId: string): Promise<void> => {
+    await host.gateway.require().dispatchOutbound({ content: '好的', sessionId, platform: 'onebot', source: 'agent' });
+  };
+  host.provide(agent, {
+    async handleMessage(msg: IncomingMessage) {
+      received.push(msg);
+      if (opts.autoReply?.(msg)) await reply(msg.sessionId);
+    },
+  } as never);
+
+  const handlers = new Map<string, ToolHandler>();
+  if (opts.withDelegate) {
+    host.provide(tools, {
+      register(tool: Omit<RegisteredTool, 'pluginName'>) {
+        const name = tool.definition.function.name;
+        handlers.set(name, tool.handler as unknown as ToolHandler);
+        return () => void handlers.delete(name);
+      },
+      registerGroup: () => () => {},
+    } as never);
+    // onebot 适配器的两个必需依赖：本测试不连 ws、不落盘，给占位即可
+    host.provide(storage, { listRoots: () => [] } as never);
+    host.provide(processService, {} as never);
+  }
+
+  const plugins: Array<{ name: string }> = [gatewayPlugin, flowControlPlugin, triggerPolicyPlugin];
+  await app.plugins.register(gatewayPlugin, {});
+  await app.plugins.register(flowControlPlugin, opts.flow ?? {});
+  await app.plugins.register(triggerPolicyPlugin, opts.trigger ?? {});
+  if (opts.withDelegate) {
+    await app.plugins.register(onebotPlugin, { connections: [] });
+    await app.plugins.register(sessionToolsPlugin, {});
+    plugins.push(onebotPlugin, sessionToolsPlugin);
+  }
+  await app.plugins.idle();
+  // 激活闸：required 依赖缺席时插件停在 pending 而不报错，不核状态会让整组用例伪装成绿
+  for (const p of plugins) {
+    const state = app.plugins.getPlugin(p.name)?.state;
+    if (state !== 'active') throw new Error(`${p.name} 未激活（state=${state}）`);
+  }
+  await app.start(); // app:ready → platform 档 idle 调度器启动
+
+  return {
+    app,
+    received,
+    contents: () => received.map(m => m.content),
+    idles: () => received.filter(m => m.source === 'idle-trigger'),
+    send: msg => host.gateway.require().ingressMessage(msg),
+    reply,
+    delegate: async target => {
+      const handler = handlers.get('delegate_to_session');
+      if (!handler) throw new Error('delegate_to_session 未注册');
+      const raw = await handler(
+        { target_session_id: target, task: '去群里发个公告', wait_for_result: false },
+        { sessionId: 'webui:console', platform: 'webui', userId: 'owner-1' },
+      );
+      await flush(); // 委派入站是 fire-and-forget，等它走完相位链
+      return JSON.parse(raw) as { delegated?: boolean; error?: string };
+    },
+    flow: () => host.flowControl.require(),
+  };
+}
+
+beforeEach(() => {
+  // setImmediate 留真，供 flush() 让出事件循环
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+});
+
+afterEach(async () => {
+  for (const app of booted.splice(0)) await app.stop();
+  vi.useRealTimers();
+});
+
+// ────────────────────────────────────────────────────────────
+// 缺陷 1：idle 退避被回复重置
+// 旧代码：agent 回复 idle 提示 → recordReply 把 idleBackoff 复位为 1 → 下一次 idle 仍按 1 倍间隔。
+// ────────────────────────────────────────────────────────────
+describe('缺陷1 idle 退避不被 agent 回复重置', () => {
+  it('session 档 exponential：回复 idle 后下一次按翻倍后的退避计算', async () => {
+    const h = await setup({
+      trigger: {
+        idleTriggerScope: 'session',
+        idleTriggerStyle: 'exponential',
+        idleTriggerMinutes: 1,
+        idleTriggerMaxMinutes: 60,
+        idleTriggerJitter: false,
+      },
+      autoReply: () => true,
+    });
+    const G = '20001';
+
+    // t=0：真人 @ → agent 回复 → 排下第一次 idle（退避 x1 = 60s）
+    await h.send(groupMsg(G, `${AT}在吗`));
+    expect(h.received).toHaveLength(1);
+
+    await advance(60_500); // t≈60.5s：第一次 idle 到点，agent 回复它
+    expect(h.idles(), '第一次 idle 应在 60s 到点').toHaveLength(1);
+
+    // 注入时退避已翻倍到 x2：下一次应在第一次之后 120s（t=180s），而不是 60s（t=120s）
+    await advance(89_500); // t=150s
+    expect(h.idles(), 'agent 回复 idle 不应把退避复位为 1（t=150s 时不该有第二次 idle）').toHaveLength(1);
+
+    await advance(35_000); // t=185s
+    expect(h.idles(), '退避 x2 到点后第二次 idle 应照常到来').toHaveLength(2);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// 缺陷 2：platform 档反复选同一会话
+// 旧代码：pickTarget 按 max(lastMessageTime, lastReplyTime) 选最久未活动者；agent 对 idle 提示
+// 沉默时两者都不刷新，下一轮仍选 A。
+// ────────────────────────────────────────────────────────────
+describe('缺陷2 platform 档不反复选同一会话', () => {
+  it('第一轮注入到最久未活动的 A、agent 沉默，第二轮应选 B', async () => {
+    const h = await setup({
+      trigger: { idleTriggerScope: 'platform', idleTriggerStrategy: 'fixed', idleTriggerMinutes: 1 },
+    });
+    const A = '20001';
+    const B = '20002';
+
+    // 两个会话各有一条真人消息（低于触发阈值被吞，agent 不回复），A 更早
+    await h.send(groupMsg(A, '随便聊聊'));
+    await advance(10_000);
+    await h.send(groupMsg(B, '随便聊聊'));
+    expect(h.received, '真人消息低于阈值，不应抵达 agent').toHaveLength(0);
+
+    await advance(51_000); // t≈61s：第一轮 tick
+    expect(h.idles().map(m => m.sessionId)).toEqual([sid(A)]);
+
+    await advance(60_000); // t≈121s：第二轮 tick（agent 对第一轮沉默，无任何出站）
+    expect(
+      h.idles().map(m => m.sessionId),
+      '刚被注入过的 A 应视为有活动，第二轮应选 B',
+    ).toEqual([sid(A), sid(B)]);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// 缺陷 3：禁言期间 idle 仍开口
+// 旧代码：idle 注入消息无 sessionType，flow 相位按作用域外直接放行，禁言检查够不到它。
+// ────────────────────────────────────────────────────────────
+describe('缺陷3 禁言期间 idle 不开口', () => {
+  it('session 档，muteTimeSeconds > idle 延迟，禁言期内无 idle 抵达 agent', async () => {
+    const h = await setup({
+      trigger: {
+        idleTriggerScope: 'session',
+        idleTriggerStyle: 'fixed',
+        idleTriggerMinutes: 1,
+        idleTriggerJitter: false,
+        muteKeywords: '闭嘴',
+        muteTimeSeconds: 600,
+      },
+    });
+    const G = '20001';
+
+    await h.send(groupMsg(G, '随便聊聊')); // 真人活动（低于阈值被吞）
+    await advance(1_000);
+    await h.send(groupMsg(G, '你闭嘴吧')); // 禁言 600s
+    expect(h.received).toHaveLength(0);
+
+    await advance(5 * 60_000); // 禁言期内走过 5 个 idle 周期
+    expect(h.idles(), '禁言期内不应有 idle 注入抵达 agent').toHaveLength(0);
+
+    // 非空转校验：禁言结束后 idle 应恢复（证明上面的「没有」不是因为 idle 根本没排上）
+    await advance(8 * 60_000);
+    expect(h.idles().length, '禁言结束后 idle 应恢复').toBeGreaterThan(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// 缺陷 4：委派双计 + 预设冷却
+// 旧代码：onebot.checkAndRecordProactiveSend 在放行时就调 recordReply（计 1 次限速 + 设冷却），
+// 目标会话真实回复时 outbound 再 recordReply 一次 → 同一次委派计 2 次；且回复落地前的冷却
+// 把目标群的真人消息吞掉。
+// ────────────────────────────────────────────────────────────
+describe('缺陷4 委派不双计、不预设冷却', () => {
+  it('放行一次委派 + 目标真实回复一次，限速窗口内只计 1 次', async () => {
+    const h = await setup({
+      flow: { rateLimitWindow: 60, rateLimitMaxReplies: 2 },
+      withDelegate: true,
+    });
+    const target = sid('20001');
+
+    const first = await h.delegate(target);
+    expect(first.delegated, `第一次委派应放行：${first.error ?? ''}`).toBe(true);
+    expect(
+      h.received.map(m => m.sessionId),
+      '委派消息应抵达目标会话 agent',
+    ).toEqual([target]);
+
+    await h.reply(target); // 目标会话对委派的真实回复
+
+    // 只计 1 次（上限 2）→ 窗口内第二次委派仍应放行；双计则已顶到上限
+    const second = await h.delegate(target);
+    expect(second.error, '一次委派 + 一次回复应只占 1 个限速槽').toBeUndefined();
+    expect(second.delegated).toBe(true);
+  });
+
+  it('放行委派后、目标回复前，目标群真人消息不被冷却吞掉', async () => {
+    const h = await setup({
+      flow: { rateLimitWindow: 60, rateLimitMaxReplies: 2 },
+      trigger: { intervalMode: 'fixed', fixedInterval: 1 },
+      withDelegate: true,
+    });
+    const G = '20001';
+
+    const res = await h.delegate(sid(G));
+    expect(res.delegated, `委派应放行：${res.error ?? ''}`).toBe(true);
+    expect(h.received).toHaveLength(1); // 委派消息，agent 尚未回复
+
+    // fixedInterval=1：这条真人消息本身满足 interval 触发
+    await h.send(groupMsg(G, '随便聊聊'));
+    expect(h.contents(), '委派放行不应给目标会话预设冷却').toContain('随便聊聊');
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// 相位对调（trigger 先于 flow）
+// ────────────────────────────────────────────────────────────
+describe('相位：immediate 穿透冷却、禁言关键词不被冷却吞、禁言期不计数', () => {
+  it('冷却期内 @bot 的消息到达 dispatch', async () => {
+    const h = await setup({ flow: { cooldownSeconds: 10 }, autoReply: () => true });
+    const G = '20001';
+
+    await h.send(groupMsg(G, `${AT}在吗`)); // agent 回复 → 进入 10s 冷却
+    await advance(2_000);
+    await h.send(groupMsg(G, `${AT}还在吗`));
+    expect(h.contents(), '冷却期内被 @ 应穿透冷却抵达 agent').toContain(`${AT}还在吗`);
+  });
+
+  it('冷却期内的禁言关键词使 bot 进入禁言', async () => {
+    const h = await setup({
+      flow: { cooldownSeconds: 10 },
+      trigger: { muteKeywords: '闭嘴', muteTimeSeconds: 600 },
+      autoReply: () => true,
+    });
+    const G = '20001';
+
+    await h.send(groupMsg(G, `${AT}在吗`)); // agent 回复 → 进入 10s 冷却
+    await advance(2_000);
+    await h.send(groupMsg(G, '你闭嘴吧')); // 冷却期内的禁言关键词
+
+    await advance(15_000); // 冷却已过，仍在 600s 禁言期内
+    await h.send(groupMsg(G, `${AT}说句话`));
+    expect(h.contents(), '禁言关键词应在冷却期内照样生效：禁言期内被 @ 也不说话').not.toContain(`${AT}说句话`);
+  });
+
+  it('禁言期间的消息不累计计数（解禁后第一条普通消息不立即 interval 触发）', async () => {
+    const h = await setup({
+      trigger: { intervalMode: 'fixed', fixedInterval: 3, muteKeywords: '闭嘴', muteTimeSeconds: 60 },
+    });
+    const G = '20001';
+
+    await h.send(groupMsg(G, '你闭嘴吧')); // 禁言 60s
+    for (let i = 0; i < 3; i++) {
+      await advance(1_000);
+      await h.send(groupMsg(G, `禁言期闲聊 ${i}`));
+    }
+    await advance(60_000); // 解禁
+
+    await h.send(groupMsg(G, '解禁后第一条'));
+    expect(h.contents(), '禁言期的 3 条不应计入间隔计数（解禁后计数应从 1 起）').not.toContain('解禁后第一条');
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// 禁言
+// ────────────────────────────────────────────────────────────
+describe('禁言', () => {
+  it('作用域错位：flow-control 作用域不含该群，关键词写入的禁言照样吞掉后续 @', async () => {
+    const h = await setup({
+      flow: { scopes: [] }, // 冷却与限速对任何会话都不生效
+      trigger: { muteKeywords: '闭嘴', muteTimeSeconds: 600 },
+    });
+    const G = '20001';
+
+    await h.send(groupMsg(G, '你闭嘴吧'));
+    expect(h.flow().isMuted(sid(G)), '关键词应写入禁言').toBe(true);
+
+    await advance(5_000);
+    await h.send(groupMsg(G, `${AT}说句话`));
+    expect(h.contents(), '禁言不看 flow-control 的作用域').not.toContain(`${AT}说句话`);
+
+    // 非空转：禁言结束后同一条 @ 能抵达
+    await advance(600_000);
+    await h.send(groupMsg(G, `${AT}说句话`));
+    expect(h.contents()).toContain(`${AT}说句话`);
+  });
+
+  it('平台禁言期间的禁言关键词不缩短禁言', async () => {
+    const h = await setup({ trigger: { muteKeywords: '闭嘴', muteTimeSeconds: 60 } });
+    const G = '20001';
+
+    h.flow().setMuted(sid(G), 3600, 'onebot'); // 平台禁言 1 小时（适配器收到 group_ban 时同样调用）
+    await h.send(groupMsg(G, '你闭嘴吧')); // 若被当作关键词处理，禁言会被改写为 60s
+
+    await advance(120_000);
+    expect(h.flow().isMuted(sid(G)), '平台禁言应仍在生效').toBe(true);
+    await h.send(groupMsg(G, `${AT}说句话`));
+    expect(h.contents()).not.toContain(`${AT}说句话`);
+  });
+
+  it('禁言前攒下的计数在禁言期清零（平台禁言同样适用）', async () => {
+    const h = await setup({ trigger: { intervalMode: 'fixed', fixedInterval: 3 } });
+    const G = '20001';
+
+    await h.send(groupMsg(G, '禁言前 1'));
+    await h.send(groupMsg(G, '禁言前 2')); // 计数 2/3
+    h.flow().setMuted(sid(G), 60, 'onebot');
+    await h.send(groupMsg(G, '禁言期闲聊'));
+    await advance(61_000); // 解禁
+
+    await h.send(groupMsg(G, '解禁后第一条'));
+    expect(h.contents(), '禁言前的 2 条不应与解禁后的消息凑满阈值').not.toContain('解禁后第一条');
+  });
+
+  it('戳一戳者昵称含禁言关键词：不触发禁言，戳一戳照常直触发', async () => {
+    const h = await setup({ trigger: { muteKeywords: '闭嘴', muteTimeSeconds: 600 } });
+    const G = '20001';
+
+    await h.send(pokeMsg(G, '闭嘴怪'));
+    expect(h.flow().isMuted(sid(G)), '合成文案里的昵称不当发言评估').toBe(false);
+    expect(
+      h.received.map(m => m.noticeType),
+      '戳一戳应直触发抵达 agent',
+    ).toEqual(['poke']);
+
+    // 对照：同样的词出现在真人发言里应禁言
+    await h.send(groupMsg(G, '你闭嘴吧'));
+    expect(h.flow().isMuted(sid(G))).toBe(true);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// 冷却与限速按真实回复计
+// ────────────────────────────────────────────────────────────
+describe('冷却与限速', () => {
+  it('*:private 覆盖的 cooldownSeconds 经 outbound 记冷却时生效', async () => {
+    const h = await setup({
+      flow: { cooldownSeconds: 0, overrides: [{ scope: '*:private', cooldownSeconds: 30 }] },
+      autoReply: () => true,
+    });
+    const U = '30009';
+
+    await h.send(privateMsg(U, '第一句')); // agent 回复 → 按私聊覆盖记 30s 冷却
+    await advance(5_000);
+    await h.send(privateMsg(U, '冷却中的第二句'));
+    expect(h.contents(), '私聊覆盖的 30s 冷却应生效（顶层为 0）').not.toContain('冷却中的第二句');
+
+    await advance(30_000);
+    await h.send(privateMsg(U, '冷却过后的第三句'));
+    expect(h.contents()).toContain('冷却过后的第三句');
+  });
+
+  it('委派到无入站记录的私聊：真实回复计入限速，第 N+1 次委派被拒', async () => {
+    const N = 2;
+    const h = await setup({
+      flow: { rateLimitWindow: 60, rateLimitMaxReplies: N },
+      autoReply: () => true, // 目标会话收到委派即回复
+      withDelegate: true,
+    });
+    const target = privateSid('30009');
+
+    for (let i = 0; i < N; i++) {
+      const res = await h.delegate(target);
+      expect(res.delegated, `第 ${i + 1} 次委派应放行：${res.error ?? ''}`).toBe(true);
+    }
+    const over = await h.delegate(target);
+    expect(over.delegated).toBeUndefined();
+    expect(over.error).toContain('限速');
+    expect(
+      h.received.filter(m => m.sessionId === target),
+      '被拒的委派不派发',
+    ).toHaveLength(N);
+  });
+
+  it('禁言中的会话拒绝委派', async () => {
+    const h = await setup({ withDelegate: true });
+    const target = sid('20001');
+
+    h.flow().setMuted(target, 600, 'onebot');
+    const res = await h.delegate(target);
+    expect(res.delegated).toBeUndefined();
+    expect(res.error).toContain('禁言');
+    expect(h.received, '被拒的委派不派发').toHaveLength(0);
+  });
+});

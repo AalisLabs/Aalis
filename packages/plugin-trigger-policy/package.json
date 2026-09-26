@@ -12,7 +12,7 @@
     "url": "https://github.com/AalisLabs/Aalis/issues"
   },
   "homepage": "https://github.com/AalisLabs/Aalis#readme",
-  "description": "触发策略：@/名字/关键词/计数/评分 决定是否回应",
+  "description": "触发策略：@/名字/关键词/计数/评分 决定是否回应，闲置时主动开口",
   "type": "module",
   "keywords": [
     "aalis",
@@ -49,18 +49,16 @@
     "service": {
       "required": [
         "config",
+        "events",
         "gateway",
         "hooks",
-        "logger",
-        "provide"
+        "lifecycle",
+        "logger"
       ],
       "optional": [
         "flow-control",
         "persona",
         "message-archive"
-      ],
-      "provides": [
-        "trigger-policy"
       ]
     }
   }

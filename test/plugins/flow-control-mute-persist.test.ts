@@ -205,15 +205,19 @@ describe('flow-control 禁言表：storage 晚于本插件上线', () => {
     await app.plugins.idle();
     const svc = svcOf();
     // storage 尚未上线：这次禁言只在内存里（写盘失败只记 warn）
+    const mutedAt = Date.now();
     svc.setMuted('zz-a', 3600, 'onebot');
-    const memoryUntil = svc.getStateSnapshot('zz-a')?.mutedUntil ?? 0;
-    expect(memoryUntil).toBeGreaterThan(soon);
 
     await app.pluginAll([storageLocal()]);
     await app.plugins.idle();
 
     await expect.poll(() => svc.isMuted('zz-b'), { timeout: 2000 }).toBe(true);
-    expect(svc.getStateSnapshot('zz-a')?.mutedUntil, '内存里较晚的禁言被磁盘上较早的值盖掉').toBe(memoryUntil);
+    // 服务只回答是否禁言：再禁言一个会话触发整表落盘，从盘上读合并后的到期时刻
+    svc.setMuted('zz-c', 600, 'onebot');
+    await expect.poll(() => Object.keys(readMutes()).sort(), { timeout: 2000 }).toEqual(['zz-a', 'zz-b', 'zz-c']);
+    expect(readMutes()['zz-a'].mutedUntil, '内存里较晚的禁言被磁盘上较早的值盖掉').toBeGreaterThanOrEqual(
+      mutedAt + 3600_000,
+    );
   });
 
   it('storage 离线期间解禁：恢复后重读不把文件里的旧禁言撤回，并补写落盘', async () => {
