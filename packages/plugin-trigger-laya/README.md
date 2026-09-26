@@ -25,7 +25,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 5. 命中禁言关键词（`muteKeywords`；戳一戳的合成文案不算）→ 设自禁言 `muteTimeSeconds` 秒、归档后吞掉，不问模型。
 6. 识别点名：戳一戳按 `triggerOnPoke`；其余消息按 `triggerOnAt`（@ 自己）与名字检测。名字表是 `triggerNames` 与全部已登记人设的名字、昵称的并集（`@aalis/api-trigger` 的 `createBotNames`）。人设按会话取，与 agent 同一取法：session-manager 解析本会话的配置，其中的 `persona`（会话用的角色卡）传给人设的 `getPersonaName` / `getNickNames`；会话改用别的角色卡时，算点名的是那张卡的名字、昵称，主卡的不算，别的会话不受影响。session-manager 缺席时取全局默认的卡。同时装了多个人设插件时，叫其中任何一个的名字都算点名。某个人设读名字抛错时只跳过它的名字，照常判定，记一条 warn（同一提供者同一原因只记一次）。
 7. 判定前检查：只接受 onebot 的群聊与私聊（从会话 ID `onebot:{selfId}:{group|private}:{targetId}` 取 bot 自己的账号作为 `selfId`），其它会话兜底，每类会话（平台与会话类型）首次遇到时记一条 warn；memory 缺席或侧车处于熔断期时兜底。
-8. 取窗口：`memory.getFullHistory(sessionId, historyRows × 2)`（没有该方法时回落 `getHistory`），只留 `role` 为 `user` / `assistant` 且正文是字符串的行，取其中最后 `historyRows` 行，投影为 `{role, content, userId, nick}`：`userId` 取 `metadata.userId`，`nick` 取 `metadata.nickname`，缺失时回落 `name`。先过滤再取行；最近 `historyRows × 2` 行里其它角色的行（tool、system、notice 等）与正文不是字符串的行多于 `historyRows` 条时，窗口不足 `historyRows` 行。侧车渲染回归（`replay_data.py`）只按角色过滤：正文为空的 assistant 工具调用行也占它的名额，到侧车才被丢弃，所以工具调用多的会话里，插件窗口的字符串正文行比回归所用的多。侧车渲染只取最后 20 行，两边的差别只在侧车建昵称表（用来把正文里的群友昵称换成代号）时看到多少行，渲染出的这 20 行里某个昵称是否被替换可能因此不同。
+8. 取窗口：`memory.getFullHistory(sessionId, historyRows × 2)`（没有该方法时回落 `getHistory`），只留 `role` 为 `user` / `assistant` 且正文是字符串的行，取其中最后 `historyRows` 行，投影为 `{role, content, userId, nick}`：`userId` 取 `metadata.userId`，`nick` 取 `metadata.nickname`，缺失时回落 `name`。先过滤再取行，与侧车渲染回归（`replay_data.py`）的取法一致：只有工具调用的 assistant 行以空串落库，两边都计入窗口，到侧车渲染时才丢弃；正文不是字符串的行只有本插件滤掉，目前只有 subtask 在子任务会话里合成的 report 行是这样。最近 `historyRows × 2` 行里其它角色的行（tool、system、notice 等）与正文不是字符串的行多于 `historyRows` 条时，窗口不足 `historyRows` 行。
 9. 带附件、尚无描述时启动附件识别并最多等 `mediaWaitMs`，再用 `@aalis/schema-message` 的 `buildIncomingContent` 拼当前消息 `cur`。归档用的是同一个函数，两者不一致的情况见「已知局限」。放行与吞掉都不等识别跑完，agent 预处理器与归档复用这次识别，不再识别第二遍。
 10. 取历史与等识别期间侧车已熔断的，本条兜底、不发请求。第 6 步的名字表作为 `selfNames` 随请求发出（见「侧车接口」）。请求体里字符串的孤代理换成 U+FFFD（侧车的分词器不接受孤代理：整条回 422 `bad_text`，这一条只能兜底；更早的侧车回 500 并计入熔断）。请求体按 UTF-8 字节数超过侧车的上限 1 MiB 时不发请求，本条兜底；否则记下 `cur` 的摘要供运行期自检（见「日志」），再 `POST {endpoint}/v1/score`，超时 `timeoutMs`（含读完响应体）。
 11. `speak = logit ≥ 阈值`，阈值取作用域生效的 `threshold`，留空时用侧车随响应返回的模型阈值。开口则写 `triggerType` 放行；不开口则归档后吞掉。
@@ -91,7 +91,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 | `mediaWaitMs` | number | `8000` | 带附件的消息等识别写好描述的上限（毫秒），超时照常判定 |
 | `endpoint` | string | `'http://127.0.0.1:17878'` | 侧车地址 |
 | `timeoutMs` | number | `1000` | 单次请求的超时（毫秒），含读完响应体；超时计一次失败。诊断项探活用同一个超时 |
-| `historyRows` | number | `80` | 窗口行数，只算 user / assistant 且正文是字符串的行：从 memory 取 `historyRows × 2` 行，过滤后留最后 `historyRows` 行（与侧车渲染回归取法的差别见「判定流程」第 8 步） |
+| `historyRows` | number | `80` | 窗口行数，只算 user / assistant 且正文是字符串的行：从 memory 取 `historyRows × 2` 行，过滤后留最后 `historyRows` 行（取法见「判定流程」第 8 步） |
 | `priority` | number | `10` | 在 `trigger` 服务里的优先级；trigger-policy 为 0，配到 0 以下则由它生效 |
 | `overrides` | array | `[]` | 分作用域覆盖阈值：每项 `{scope, threshold}`，`scope` 格式同上；只取命中的最具体一条，留空沿用顶层。写一条覆盖即启用该作用域 |
 
@@ -144,6 +144,6 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 
 - **文件描述不进 `cur`**：文件附件的描述由 plugin-file-reader 在 agent 预处理阶段才写入，判定时还没有，放行的带文件消息归档里有文件描述而 `cur` 里没有。自检汇总计入 `不一致:含文件附件`。
 - **识别超时时 `cur` 缺附件描述**：附件识别超过 `mediaWaitMs` 时照常判定，`cur` 里缺这些描述，归档时补上。自检汇总计入 `不一致:缺附件描述`。
-- **带附件的消息可能晚于同会话后到的消息放行**：等识别的那段（至多 `mediaWaitMs`）在判定之内，这期间同一会话后到、不用等识别的消息可能先判完、先放行。agent 按会话 latest-wins：先到的这条晚放行时，若后到那一轮仍在生成，agent 会中止它，改以先到的为当前消息；后到的那条在它的回合开始时已经归档，中止不回滚，在接替回合里是可见的历史，但得不到针对它的回复。按到达先后处理同一会话的消息由通道层负责（网关入口按到达先后编号，同一会话的消息按到达先后排队与合并，当前消息取最新到达的），通道层尚未实现；本插件不核对放行顺序。
+- **带附件的消息可能晚于同会话后到的消息放行**：等识别的那段（至多 `mediaWaitMs`）在判定之内，这期间同一会话后到、不用等识别的消息可能先判完、先放行。agent 按会话 latest-wins：先到的这条晚放行时，若后到那一轮仍在生成，agent 会中止它，改以先到的为当前消息；后到的那条在它的回合开始时已经归档，中止不回滚，在接替回合里是可见的历史，但得不到针对它的回复。先发图再说一句时，文字那一轮开始时带图的那条还没判完、没有归档，这一轮的回复看不到图；带图的那条判为不开口时要到判定结束才归档，只出现在之后回合的历史里；判为开口时它那一轮能同时看到两条（文字那一轮仍在生成则被它中止接替）。按到达先后处理同一会话的消息由通道层负责（网关入口按到达先后编号，同一会话的消息按到达先后排队与合并，当前消息取最新到达的），通道层尚未实现；本插件不核对放行顺序。
 - **超大窗口时只回点名**：请求体超过侧车的 1 MiB 上限时本条兜底。plugin-file-reader 默认把 10 万字以内的文件全文写进附件描述并随消息归档，窗口里有几条这样的消息就可能超限，直到它们滚出窗口。插件不截断行也不丢行：侧车的发言人编号与截断都基于完整窗口，客户端改窗口会偏离训练口径。未超限的大行也会拉长侧车的渲染耗时。
 - **突发会触发熔断**：侧车单线程串行处理请求。一时涌入的请求排队超过 `timeoutMs` 时，超时的请求计为失败，连续 3 次即熔断 30 秒，这期间所有作用域内的会话只回点名。这是设计内的降级。客户端超时放弃的请求，侧车仍会逐个算完。
