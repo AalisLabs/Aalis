@@ -444,7 +444,7 @@ trigger-policy 是 `inbound:trigger` 相位的宿主：作用域、禁言、禁�
 
 `@aalis/schema-message` 0.9.0 新增 `buildIncomingContent`：入站消息拼成归档文本（发送者前缀、引用回复、附件描述）的函数，从 plugin-message-archive 原样移入，归档行为不变；供触发判定拼当前消息时与归档共用同一份拼法。
 
-另新增 `@aalis/plugin-trigger-laya` 0.1.0（`private: true`，不发布到 npm，不计入本批包数）：`trigger` 的判定模型提供者（优先级 10），经本机 HTTP 调用 laya-listener 侧车，由 Laya 模型判定开不开口。默认 `shadow`：照常请求并记一行 info 日志，然后弃权交给规则判定；`live` 时由模型判定，被点名的消息也交给模型。侧车连续 3 次失败熔断 30 秒，期间弃权。从仓库源码运行时它与其它插件一样被发现并默认启用。说明见该包 README。
+另新增 `@aalis/plugin-trigger-laya` 0.1.0（`private: true`，不发布到 npm，不计入本批包数）：`trigger` 的判定模型提供者（优先级 10），经本机 HTTP 调用 laya-listener 侧车，由 Laya 模型判定开不开口。默认 `shadow`：照常请求并记一行 info 日志，然后弃权交给规则判定；`live` 时由模型判定，被点名的消息也交给模型。请求体超过侧车 1 MiB 上限时弃权，不计失败；侧车连续 3 次失败熔断 30 秒，期间弃权。运行期自检：向侧车发请求前记下当前消息的哈希与长度，这条消息归档后与归档正文比对，按「一致 / 判定时缺附件描述 / 含文件附件 / 其它 / 未归档」计数，每结清 200 条记一行只含计数的 info 日志。从仓库源码运行时它与其它插件一样被发现并默认启用。说明见该包 README。
 
 ### 包清单元数据（41 个包）
 
