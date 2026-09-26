@@ -7,7 +7,7 @@
 
 AI 可主动创建的定时任务系统，支持三种调度方式：cron 表达式（周期）、固定间隔秒数（周期），以及 `runAt` 指定时刻执行一次（一次性）。AI 工具与 WebUI 表单还接受 `delaySeconds`，会换算为 `runAt`。
 
-触发的消息带 `source='scheduler'`：plugin-agent 按来源分开管理生成，不会打断同会话的用户对话；plugin-commands 把它当作受信系统源（命令免交互确认，结果写入日志）。带 `source` 的内部注入不经 trigger-policy 的计数判定（与其 `scopes` 无关），也不受 flow-control 的回复后冷却约束；目标会话禁言期内一律不说话，会话落在 flow-control 作用域内时限速照常生效。
+触发的消息带 `source='scheduler'`：plugin-agent 按来源分开管理生成，不会打断同会话的用户对话；plugin-commands 把它当作受信系统源（命令免交互确认，结果写入日志）。带 `source` 的内部注入不经 trigger-policy 的计数判定（与其 `scopes` 无关），也不受 flow-control 的回复后冷却约束；目标会话禁言期内一律不说话；会话落在 flow-control 作用域内时限速照常生效，限速窗口已满时这次触发被吞掉（做影子归档），不重试。消息不带会话类型，flow-control 判作用域时先用会话已记下的类型，没有再按会话 ID 约定推断：默认 `*:group` 下，平台与会话 ID 前缀一致（如 `onebot`）的任务发往群时在作用域内；平台为默认 `internal` 的任务发往没有流控状态的群时不推断，算作用域外。
 
 ## 插件声明
 
