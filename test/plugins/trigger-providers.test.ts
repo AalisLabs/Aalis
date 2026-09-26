@@ -287,7 +287,7 @@ describe('trigger 宿主：同一会话突发', () => {
       pending.push(run(host.hooks, groupMsg(`第 ${i} 条`)));
       await sleep(5);
     }
-    // 读判定那一刻的状态时 3 条都已记入：第 1 条读到计数 3 被放行，撞上阈值的第 2 条反被吞掉
+    // 修复前按判定那一刻读状态，3 条都已记入：第 1 条读到计数 3 被放行，撞上阈值的第 2 条反被吞掉
     expect((await Promise.all(pending)).map(r => r.reached)).toEqual([false, true, false]);
   });
 

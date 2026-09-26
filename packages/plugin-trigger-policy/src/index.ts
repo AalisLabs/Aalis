@@ -403,8 +403,9 @@ function run(caps: Caps): void {
     // 全部弃权（规则提供者只在宿主之外被调用时弃权，正常不会走到）：与判定异常同一原则，失败放行
     let decision = verdict.decision ?? { speak: true, reason: '全部弃权，默认放行' };
     if (!verdict.decision) logger.warn(`[trigger] 触发提供者全部弃权，默认放行: session=${sessionId}`);
-    // 同一会话的突发：规则判为开口，但这条判定期间本会话已有消息放行（计数已清零），这次开口作废，
-    // 一簇消息只放行撞上阈值的那条。只约束规则的计数判定：点名照常放行，其它提供者的逐条判定不动
+    // 同一会话的突发：规则判为开口，但这条判定期间本会话已有消息放行（计数已清零），这次开口作废。判定按
+    // 到达顺序返回时一簇消息只放行撞上阈值的那条；那条返回得晚时（如影子期等附件识别），放行的可能是后到的。
+    // 只约束规则的计数判定：点名照常放行，其它提供者的逐条判定不动
     if (decision.speak && verdict.byRule && !addressed && s.releases !== releasesBefore) {
       decision = { speak: false, reason: `${decision.reason}；判定期间本会话已放行` };
     }
@@ -461,8 +462,8 @@ function run(caps: Caps): void {
   }, SWEEP_INTERVAL_MS);
   if (typeof sweepTimer.unref === 'function') sweepTimer.unref();
 
-  // 不清空 states：重载时在途的判定仍在旧状态上收尾（清空会让规则提供者读不到状态而弃权，
-  // 在途消息落入「全部弃权、默认放行」）；表随这次激活的闭包一起回收
+  // 不清空 states：表随这次激活的闭包一起回收；重载时在途的判定用记入站时取下的 s 与 ruleVerdicts
+  // 收尾，不读这张表
   lifecycle.onDispose(() => {
     clearInterval(sweepTimer);
     platformIdle.stop();
