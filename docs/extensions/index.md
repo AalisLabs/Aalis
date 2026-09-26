@@ -26,9 +26,9 @@
 
 一方契约包各导出一条描述符，服务名即包名去掉 `api-` 前缀（`agent` / `asr` / `authority` / `code-sandbox` / `commands` /
 `contributions` / `cron-engine` / `doctor` / `embedding` / `flow-control` / `gateway` / `hooks` / `host-config` / `llm` / `media` /
-`memory` / `message-archive` / `persona` / `platform` / `plugin-source` / `process` / `session-confirm` / `session-manager` /
-`storage` / `tools` / `vectorstore` / `workflow`），两个例外：
-`@aalis/api-tool-session` 为 `session-history`，`@aalis/api-webui` 为 `webui-server` 与 `webui-client`。
+`memory` / `message-archive` / `package-manager` / `persona` / `platform` / `plugin-source` / `process` / `session-confirm` /
+`session-history` / `session-manager` / `storage` / `tools` / `user-relation` / `vectorstore` / `workflow`），一个例外：
+`@aalis/api-webui` 导出 `webui-server` 与 `webui-client` 两条。
 
 没有独立契约包、在自己 `src/index.ts` 里就地 `defineService` 的插件：
 
@@ -38,11 +38,9 @@
 | `@aalis/plugin-cli` | `cli` |
 | `@aalis/plugin-file-reader` | `file-reader` |
 | `@aalis/plugin-memory-vector` | `semantic-memory` |
-| `@aalis/plugin-package-manager` | `package-manager` |
 | `@aalis/plugin-scheduler` | `scheduler` |
 | `@aalis/plugin-skills` | `skills` |
 | `@aalis/plugin-trigger-policy` | `trigger-policy` |
-| `@aalis/plugin-user-relation` | `user-relation` |
 | `@aalis/plugin-websearch-serper` | `web-search` |
 
 宿主管理面（须显式 uses）：`app` / `plugins` 由 core 在根激活上提供（`packages/core/src/orchestration/host-services.ts`）；

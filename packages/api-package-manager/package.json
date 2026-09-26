@@ -1,11 +1,11 @@
 {
-  "name": "@aalis/api-tool-session",
-  "version": "0.7.0",
+  "name": "@aalis/api-package-manager",
+  "version": "0.1.0",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/AalisLabs/Aalis.git",
-    "directory": "packages/api-tool-session"
+    "directory": "packages/api-package-manager"
   },
   "author": "Ace Nyan <ace@acenyan.com>",
   "bugs": {
@@ -22,9 +22,6 @@
     "build": "tsc",
     "dev": "tsc --watch"
   },
-  "dependencies": {
-    "@aalis/api-tools": "workspace:>=0.10.0 <1.0.0"
-  },
   "devDependencies": {
     "@aalis/core": "workspace:*",
     "@types/node": "^22.0.0",
@@ -36,5 +33,6 @@
   "keywords": [
     "aalis",
     "aalis-api"
-  ]
+  ],
+  "description": "包管理契约：package-manager 服务描述符与装卸、更新接口（默认提供者 @aalis/plugin-package-manager）"
 }

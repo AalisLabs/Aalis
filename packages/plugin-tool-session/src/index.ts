@@ -9,7 +9,7 @@ import {
   type SessionHistoryReadResult,
   type SessionHistoryService,
   sessionHistory,
-} from '@aalis/api-tool-session';
+} from '@aalis/api-session-history';
 import { type ToolCallContext, tools } from '@aalis/api-tools';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
