@@ -268,33 +268,39 @@ function run(caps: Caps): void {
     s.activityScore += calculateScoreIncrement(s, e, userId);
   }
 
-  /** 规则提供者：点名直接开口，否则按计数与评分判定。只读会话状态（宿主调用前已记好这条入站） */
+  /** 按会话此刻的计数与评分做规则判定（不看点名） */
+  function ruleVerdict(s: TriggerSessionState, e: TriggerPolicyConfig): TriggerDecision {
+    const threshold = getCurrentThreshold(s, e);
+    const fixedOk = s.messageCount >= e.fixedInterval;
+    const dynamicOk = s.activityScore >= threshold;
+    let speak = false;
+    switch (e.intervalMode) {
+      case 'fixed':
+        speak = fixedOk;
+        break;
+      case 'dynamic':
+        speak = dynamicOk;
+        break;
+      case 'both':
+        speak = fixedOk || dynamicOk;
+        break;
+    }
+    // 让运维一眼看到"还差多少条/多少分会触发"
+    const reason = `计数=${s.messageCount}/${e.fixedInterval} 指数=${s.activityScore.toFixed(3)} (阈值=${threshold.toFixed(3)})`;
+    return { speak, reason };
+  }
+
+  /**
+   * 每条消息记入站那一刻的规则判定，按消息对象存。判定是异步的（规则前面可能还有提供者），同一会话
+   * 接连到达的消息若等轮到规则时再读会话状态，读到的都是后到的消息也记入之后的计数
+   */
+  const ruleVerdicts = new WeakMap<IncomingMessage, TriggerDecision>();
+
+  /** 规则提供者：点名直接开口，否则用宿主记入站时算好的判定 */
   const ruleProvider: TriggerProvider = {
     async decide({ message, addressed }) {
       if (addressed) return { speak: true, reason: '点名' };
-      const s = states.get(message.sessionId);
-      if (!s) return null; // 宿主之外的调用：没有会话状态可判
-      const e = resolveEffectiveConfig(cfg, message.platform, message.sessionType, extractTargetId(message));
-      const threshold = getCurrentThreshold(s, e);
-      const fixedOk = s.messageCount >= e.fixedInterval;
-      const dynamicOk = s.activityScore >= threshold;
-      let speak = false;
-      switch (e.intervalMode) {
-        case 'fixed':
-          speak = fixedOk;
-          break;
-        case 'dynamic':
-          speak = dynamicOk;
-          break;
-        case 'both':
-          speak = fixedOk || dynamicOk;
-          break;
-      }
-      // 让运维一眼看到"还差多少条/多少分会触发"
-      const reason =
-        `计数=${s.messageCount}/${e.fixedInterval} 指数=${s.activityScore.toFixed(3)}` +
-        ` (阈值=${threshold.toFixed(3)})`;
-      return { speak, reason };
+      return ruleVerdicts.get(message) ?? null; // 宿主之外的调用：没有记入站时的判定
     },
   };
   provide(trigger, ruleProvider, { label: '规则（计数/评分）' });
@@ -304,12 +310,14 @@ function run(caps: Caps): void {
     message: IncomingMessage,
     addressed: boolean,
     attachments: AttachmentRecognition,
-  ): Promise<{ decision?: TriggerDecision; decider?: string; abstained: string[] }> {
+  ): Promise<{ decision?: TriggerDecision; decider?: string; byRule?: boolean; abstained: string[] }> {
     const abstained: string[] = [];
     for (const view of caps.trigger.all()) {
       const label = view.label ?? view.contextId;
       const answer = await askProvider(view.instance, { message, addressed }, attachments, cfg.decisionTimeoutMs);
-      if (answer.decision) return { decision: answer.decision, decider: label, abstained };
+      if (answer.decision) {
+        return { decision: answer.decision, decider: label, byRule: view.instance === ruleProvider, abstained };
+      }
       if (answer.abstain === '出错') logger.warn(`[trigger] 提供者 ${label} 判定出错，按弃权处理: ${answer.error}`);
       abstained.push(`${label}(${answer.abstain})`);
     }
@@ -368,6 +376,9 @@ function run(caps: Caps): void {
       states.set(sessionId, s);
     }
     recordIncoming(s, e, message.userId);
+    // 规则判定与放行次数都在记入站的同一拍取下，判定返回后据此处理同一会话的突发（见下）
+    ruleVerdicts.set(message, ruleVerdict(s, e));
+    const releasesBefore = s.releases;
     // 真人活动：闲置退避复位，并从现在起重排 session 档 idle
     s.idleBackoff = 1;
     rescheduleIdle(sessionId);
@@ -389,9 +400,14 @@ function run(caps: Caps): void {
     const attachments = createAttachmentRecognition(message, caps.media, cfg.mediaWaitMs, logger);
     const started = Date.now();
     const verdict = await consult(message, addressed, attachments);
-    // 全部弃权（规则提供者只在没有会话状态时弃权，正常不会走到）：与判定异常同一原则，失败放行
-    const decision = verdict.decision ?? { speak: true, reason: '全部弃权，默认放行' };
+    // 全部弃权（规则提供者只在宿主之外被调用时弃权，正常不会走到）：与判定异常同一原则，失败放行
+    let decision = verdict.decision ?? { speak: true, reason: '全部弃权，默认放行' };
     if (!verdict.decision) logger.warn(`[trigger] 触发提供者全部弃权，默认放行: session=${sessionId}`);
+    // 同一会话的突发：规则判为开口，但这条判定期间本会话已有消息放行（计数已清零），这次开口作废，
+    // 一簇消息只放行撞上阈值的那条。只约束规则的计数判定：点名照常放行，其它提供者的逐条判定不动
+    if (decision.speak && verdict.byRule && !addressed && s.releases !== releasesBefore) {
+      decision = { speak: false, reason: `${decision.reason}；判定期间本会话已放行` };
+    }
     // 判定日志：不含消息正文
     logger.debug(
       `[trigger] 判定 | session=${sessionId} | 决定者=${verdict.decider ?? '无'} | speak=${decision.speak} | ` +
@@ -410,6 +426,7 @@ function run(caps: Caps): void {
     // 判定放行即复位（无论哪个提供者开口）：之后若被 flow 相位的冷却/限速吞掉，这次触发作废
     resetCounters(s);
     s.lastTriggerTime = Date.now();
+    s.releases++;
     const kind = addressed ? 'immediate' : 'interval';
     message.triggerType = kind;
     // interval 回合无主发言者：授权身份回填为无主体，不让「恰好撞阈值的那个人」

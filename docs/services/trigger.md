@@ -49,7 +49,7 @@ export const trigger = defineService<TriggerProvider>('trigger');
 
 **提供方**：
 
-- `@aalis/plugin-trigger-policy` 的规则提供者：标签「规则（计数/评分）」，优先级 0（`packages/plugin-trigger-policy/src/index.ts`）。点名即开口，否则按 `intervalMode` 判定计数与活跃指数；只读会话状态，不弃权（宿主调用前已为这条消息建好会话状态），是兜底。
+- `@aalis/plugin-trigger-policy` 的规则提供者：标签「规则（计数/评分）」，优先级 0（`packages/plugin-trigger-policy/src/index.ts`）。点名即开口，否则按 `intervalMode` 判定这条消息记入站那一刻的计数与活跃指数（宿主记入站时即算好，不受之后到达的消息影响）；不弃权，是兜底。
 - 其它提供者（如判定模型）以更高优先级登记，排在规则提供者之前；未就绪、超时或处于影子模式时弃权，交给规则提供者。
 
 **消费方**：只有相位宿主 `@aalis/plugin-trigger-policy`。它以 `optional(trigger)` 声明（本插件自己提供，写 required 会把激活闸架在自己的产出上），每条消息经 `trigger.all()` 现取全部提供者。
@@ -114,7 +114,7 @@ export default definePlugin({
 
 ## 7. 注意事项与边界情形
 
-- 判定不加按会话的锁：模型提供者判定期间同一会话又来消息时，两次判定并行，规则提供者读到的计数可能已含后到的那条，因此可能早一条触发。
+- 判定不加按会话的锁：同一会话接连到达的消息可能同时在判定。规则提供者按每条消息记入站那一刻的计数与活跃指数判定；判为开口、但这条判定期间本会话已有消息放行（计数已清零）时，这次开口作废，影子归档后吞掉，一簇突发消息只放行撞上阈值的那一条。点名的消息照常放行，其它提供者的判定不受此约束，逐条各自生效。
 - 识别在判定期间启动时，宿主不等它跑完就把消息交给 flow 相位与 agent，余下的等待落在 agent 预处理器里，与没有模型提供者时相同。提供者自己等识别的那段（至多 `mediaWaitMs`）仍在判定之内，这期间同一会话后到的消息可能先抵达 agent。识别可能与 agent 的预处理链并发；media 与 file-reader 的写回都按写回那一刻的消息只补不换（media 只补 `mimeType` 与自己写的描述位，file-reader 只写文件附件的描述位），不会互相覆盖。
 - 宿主放弃一个提供者（超时或已给出结论）后，它再调用 `awaitAttachmentDescriptions()` 直接返回，不启动识别，也不再计时。
 
