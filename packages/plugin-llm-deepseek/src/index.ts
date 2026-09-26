@@ -241,25 +241,27 @@ class DeepSeekClient {
     this.logger = logger;
   }
 
-  /** 发现远端模型 id 列表 */
-  async fetchRemoteModelIds(): Promise<string[]> {
+  /** 发现远端模型 id 列表；signal 用于中止（中止同样返回空列表，不记 warn） */
+  async fetchRemoteModelIds(signal?: AbortSignal): Promise<string[]> {
     const url = `${this.baseUrl}/models`;
     try {
+      // 无超时会让 apply() 里的 await 在「接连接不回包」的端点上停摆到 undici 兜底,
+      // 插件按拓扑序串行卡住；失败语义不变（catch 成 warn + 空列表）
+      const timeout = AbortSignal.timeout(10_000);
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${this.apiKey}` },
-        // 无超时会让 apply() 里的 await 在「接连接不回包」的端点上停摆到 undici 兜底,
-        // 插件按拓扑序串行卡住；失败语义不变（catch 成 warn + 空列表）
-        signal: AbortSignal.timeout(10_000),
+        signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
       });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
-        this.logger.warn(`fetchRemoteModelIds 失败 ${url}: HTTP ${res.status} ${res.statusText} - ${body}`);
+        if (!signal?.aborted)
+          this.logger.warn(`fetchRemoteModelIds 失败 ${url}: HTTP ${res.status} ${res.statusText} - ${body}`);
         return [];
       }
       const data = (await res.json()) as { data: { id: string }[] };
       return data.data.map(m => m.id);
     } catch (err) {
-      this.logger.warn(`fetchRemoteModelIds 异常 ${url}: ${(err as Error).message}`);
+      if (!signal?.aborted) this.logger.warn(`fetchRemoteModelIds 异常 ${url}: ${(err as Error).message}`);
       return [];
     }
   }
@@ -850,8 +852,9 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
   const thinkingMode = (config.thinkingMode as string) ?? 'auto';
   const client = new DeepSeekClient(deepseekConfig, logger);
 
-  // 探测远端 + 合并自定义模型
-  const remoteIds = await client.fetchRemoteModelIds();
+  // 探测远端 + 合并自定义模型。停用或停机时中止探测；探测把中止也吞成空列表，所以 await 之后自己查
+  const remoteIds = await client.fetchRemoteModelIds(lifecycle.signal);
+  lifecycle.signal.throwIfAborted();
   const remoteSet = new Set(remoteIds);
   for (const cm of deepseekConfig.customModels) {
     if (remoteSet.has(cm)) {

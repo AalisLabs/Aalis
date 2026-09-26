@@ -198,14 +198,15 @@ class OpenAIClient {
     return h;
   }
 
-  /** 发现远端模型列表（仅含 id） */
-  async fetchRemoteModelIds(): Promise<string[]> {
+  /** 发现远端模型列表（仅含 id）；signal 用于中止（中止同样返回空列表） */
+  async fetchRemoteModelIds(signal?: AbortSignal): Promise<string[]> {
     try {
+      // 无超时会让 apply() 里的 await 在「接连接不回包」的端点上停摆到 undici 兜底,
+      // 插件按拓扑序串行卡住;失败语义不变(catch 成返回空列表)
+      const timeout = AbortSignal.timeout(10_000);
       const res = await fetch(`${this.baseUrl}/models`, {
         headers: this.headers,
-        // 无超时会让 apply() 里的 await 在「接连接不回包」的端点上停摆到 undici 兜底,
-        // 插件按拓扑序串行卡住;失败语义不变(catch 成返回空列表)
-        signal: AbortSignal.timeout(10_000),
+        signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
       });
       if (!res.ok) return [];
       const data = (await res.json()) as { data: { id: string }[] };
@@ -739,8 +740,8 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
     registered.delete(modelId);
   }
 
-  async function discoverAllModelIds(): Promise<string[]> {
-    const remoteIds = await client.fetchRemoteModelIds();
+  async function discoverAllModelIds(signal?: AbortSignal): Promise<string[]> {
+    const remoteIds = await client.fetchRemoteModelIds(signal);
     const remoteSet = new Set(remoteIds);
     for (const cm of openaiConfig.customModels) {
       if (remoteSet.has(cm)) {
@@ -750,8 +751,9 @@ async function registerModels({ config, logger, lifecycle, provide }: Caps): Pro
     return [...remoteIds, ...openaiConfig.customModels.filter(id => !remoteSet.has(id))];
   }
 
-  // 初次注册
-  const initialIds = await discoverAllModelIds();
+  // 初次注册。停用或停机时中止探测；探测把中止也吞成空列表，所以 await 之后自己查
+  const initialIds = await discoverAllModelIds(lifecycle.signal);
+  lifecycle.signal.throwIfAborted();
   if (initialIds.length === 0) {
     logger.warn(`已连接: ${openaiConfig.baseUrl}，但未发现任何可用模型；不注册任何 LLM entry`);
   } else {

@@ -49,4 +49,4 @@ export default definePlugin({
 
 1. 对话请求走 Ollama 原生 `/api/chat` 端点；消息含音频输入时改走 OpenAI 兼容的 `/v1/chat/completions`（原生 `/api/chat` 不支持音频）
 2. 支持流式输出：`/api/chat` 以换行分隔的 JSON（NDJSON）逐块返回；带音频的请求不走流式，整段结果作为单个块交付
-3. 启动时经 `/api/tags` 发现已安装模型，与 `customModels` 合并后注册；之后可经模型条目的 `refresh`（由 WebUI 触发）重新发现，按差异增删条目，无需重启插件
+3. 启动时经 `/api/tags` 发现已安装模型，与 `customModels` 合并后注册（发现与能力探测在停用或停机时中止）；之后可经模型条目的 `refresh`（由 WebUI 触发）重新发现，按差异增删条目，无需重启插件
