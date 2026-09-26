@@ -790,6 +790,20 @@ describe('冷却与限速', () => {
     expect(archived, '没有被吞、不做影子归档').toEqual([]);
   });
 
+  it('入站作用域：作用域为 onebot:* 时，WebUI 发进冷却中的 onebot 群会话按消息自身的平台判，照常放行', async () => {
+    // 若平台先取状态里记下的 onebot，这条会落进 onebot:*，被冷却吞掉
+    const archived: IncomingMessage[] = [];
+    const h = await setup({ flow: { scopes: ['onebot:*'] }, autoReply: () => true, archived });
+    const G = '20001';
+
+    await h.send(groupMsg(G, `${AT}在吗`)); // 回复 → 默认 10s 冷却
+    expect(h.flow().isCoolingDown(sid(G))).toBe(true);
+    await advance(2_000);
+    await h.send({ content: 'WebUI 主人的指令', sessionId: sid(G), platform: 'webui', userId: 'owner-1' });
+    expect(h.contents()).toEqual([`${AT}在吗`, 'WebUI 主人的指令']);
+    expect(archived).toEqual([]);
+  });
+
   it('入站作用域：带会话类型的真人消息按消息自身字段判，会话 ID 不符合约定的第三方适配器第一条群消息即在 *:group 内', async () => {
     // 若按状态或会话 ID 推断判：没有状态、ID 推断不出类型，这个群永远在作用域外，回复也不计
     const h = await setup({
@@ -1008,6 +1022,42 @@ describe('内部注入（带 source）', () => {
     await h.send(scheduled(sid('20001'), '提醒'));
     expect(h.contents()).toEqual(['提醒']);
     expect(h.received[0]?.sessionType).toBeUndefined();
+  });
+
+  it('自带会话类型的注入按消息自身字段判：会话 ID 不符合约定的第三方群，限速已满时同样被吞', async () => {
+    // 若一律按状态或会话 ID 推断判：没有状态、ID 推断不出类型，这个群永远在作用域外
+    const h = await setup({ flow: { rateLimitWindow: 60, rateLimitMaxReplies: 1 }, autoReply: () => true });
+    const room = 'example-room-20002';
+    const injected = (content: string): IncomingMessage => ({
+      content,
+      sessionId: room,
+      platform: 'example',
+      sessionType: 'group',
+      source: 'scheduler',
+    });
+
+    await h.send(injected('提醒 1')); // 放行并回复，占满 1 个名额
+    await advance(1_000);
+    await h.send(injected('限速中的提醒 2'));
+    expect(h.contents()).toEqual(['提醒 1']);
+  });
+
+  it('闲置注入与委派发往限速已满的群同样被吞（默认作用域，按会话 ID 推断为群）；闲置提示不做影子归档', async () => {
+    const archived: IncomingMessage[] = [];
+    const h = await setup({ flow: { rateLimitWindow: 60, rateLimitMaxReplies: 1 }, autoReply: () => true, archived });
+    const G = '20001';
+
+    await h.send(scheduled(sid(G), '提醒')); // 放行并回复，占满 1 个名额
+    await h.send({
+      content: 'idle',
+      sessionId: sid(G),
+      platform: 'onebot',
+      source: 'idle-trigger',
+      triggerType: 'idle',
+    });
+    await h.send(proactive(sid(G), '限速中的委派任务'));
+    expect(h.contents()).toEqual(['提醒']);
+    expect(archived.map(m => m.content)).toEqual(['限速中的委派任务']);
   });
 
   it('flow 相位：禁言期闲置注入也被吞，解禁后放行', async () => {
