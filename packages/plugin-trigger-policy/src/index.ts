@@ -231,8 +231,7 @@ function run(caps: Caps): void {
   const platformIdle = new PlatformIdleScheduler(idleCaps, cfg, states);
 
   /** 计数与活跃指数清零（禁言与判定放行时） */
-  function resetCounters(s: TriggerSessionState | undefined): void {
-    if (!s) return;
+  function resetCounters(s: TriggerSessionState): void {
     s.messageCount = 0;
     s.activityScore = 0;
   }
@@ -245,13 +244,22 @@ function run(caps: Caps): void {
     scheduleSessionIdle(idleCaps, e, s, sessionId, () => rescheduleIdle(sessionId));
   }
 
-  /** 记一条真人入站：评分衰减、计数、评分增量、用户交互 */
+  /** 记一条真人入站的计数：评分衰减、计数、评分增量、用户交互。衰减按上一条消息的时间算，须在 recordActivity 之前调用 */
   function recordIncoming(s: TriggerSessionState, e: TriggerPolicyConfig, userId: string | undefined): void {
     applyScoreDecay(s, e);
     if (userId) s.userInteractions.set(userId, (s.userInteractions.get(userId) ?? 0) + 1);
-    s.lastMessageTime = Date.now();
     s.messageCount++;
     s.activityScore += calculateScoreIncrement(s, e, userId);
+  }
+
+  /**
+   * 记一次真人活动：最近消息时间、闲置退避复位为 1，并从现在起重排 session 档 idle。
+   * 作用域内的真人消息都算，禁言期内与命中禁言关键词的也算（它们只是不计数）
+   */
+  function recordActivity(sessionId: string, s: TriggerSessionState): void {
+    s.lastMessageTime = Date.now();
+    s.idleBackoff = 1;
+    rescheduleIdle(sessionId);
   }
 
   /** 要不要开口：点名直接开口，否则按会话此刻的计数与评分判定 */
@@ -308,34 +316,35 @@ function run(caps: Caps): void {
 
     const sessionId = message.sessionId;
     const flow = flowControl.current;
-
-    // 禁言期：不累计计数，已攒的计数与评分清零（平台禁言只能在这里清：禁言期来消息时）；
-    // 也不再识别禁言关键词，避免缩短平台禁言。放行给 flow 相位吞掉并归档。
-    if (flow?.isMuted(sessionId)) {
-      resetCounters(states.get(sessionId));
-      return next();
-    }
-
-    const e = resolveEffectiveConfig(cfg, message.platform, message.sessionType, tid);
-
-    // 禁言关键词：设置自禁言、计数与评分当场清零，吞掉本条
-    if (hitsMuteKeyword(message, e.muteKeywords)) {
-      logger.info(`[trigger] mute 关键词命中 → swallow + setMuted(${e.muteTimeSeconds}s): ${sessionId}`);
-      flow?.setMuted(sessionId, e.muteTimeSeconds, message.platform);
-      resetCounters(states.get(sessionId));
-      await archiveSwallowed(message, messageArchive, logger, '[trigger]');
-      return; // swallow
-    }
-
+    // 作用域内的真人消息都是会话活动，禁言期内的也是：会话还没有状态（如平台禁言先于任何消息）就在这里建
     let s = states.get(sessionId);
     if (!s) {
       s = createState(message.platform, message.sessionType, tid);
       states.set(sessionId, s);
     }
+
+    // 禁言期：不累计计数，已攒的计数与评分清零（平台禁言只能在这里清：禁言期来消息时）；
+    // 也不再识别禁言关键词，避免缩短平台禁言。仍记为真人活动，放行给 flow 相位吞掉并归档。
+    if (flow?.isMuted(sessionId)) {
+      resetCounters(s);
+      recordActivity(sessionId, s);
+      return next();
+    }
+
+    const e = resolveEffectiveConfig(cfg, message.platform, message.sessionType, tid);
+
+    // 禁言关键词：设置自禁言、计数与评分当场清零，记为真人活动，吞掉本条
+    if (hitsMuteKeyword(message, e.muteKeywords)) {
+      logger.info(`[trigger] mute 关键词命中 → swallow + setMuted(${e.muteTimeSeconds}s): ${sessionId}`);
+      flow?.setMuted(sessionId, e.muteTimeSeconds, message.platform);
+      resetCounters(s);
+      recordActivity(sessionId, s);
+      await archiveSwallowed(message, messageArchive, logger, '[trigger]');
+      return; // swallow
+    }
+
     recordIncoming(s, e, message.userId);
-    // 真人活动：闲置退避复位，并从现在起重排 session 档 idle
-    s.idleBackoff = 1;
-    rescheduleIdle(sessionId);
+    recordActivity(sessionId, s);
 
     const addressed = isAddressed(message, botNames(e.triggerNames, message), e);
     const decision = decide(s, e, addressed);

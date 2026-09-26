@@ -43,9 +43,9 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 0. 本插件不是生效的触发插件（`trigger` 服务的胜者另有其人）→ `next()`，什么都不做：不计数、不识别、不归档。胜者每次入站只取一次，判定途中切换偏好不会让同一条消息被判两次。
 1. 带 `source` 的内部注入（闲置触发、定时任务、workflow、跨会话委派）→ `next()` 跳过策略：不计数，不改写 `triggerType`（委派的 `proactive` 原样保留）。真人消息由平台适配器投递，不设 `source`。
 2. 不在作用域内 → `next()` 放行。作用域判断先于禁言关键词，避免群聊的禁言关键词作用到 WebUI、私聊等不在作用域内的会话。
-3. 会话处于禁言期（`flow.isMuted`）→ 本会话计数与活跃指数清零，`next()` 交给 flow 相位吞掉。禁言期内的消息不累计计数，也不再识别禁言关键词（不会缩短平台禁言）。平台禁言只能在这一步清零：平台禁言期内若一条消息都没有，禁言前攒下的计数保留到解禁后。
-4. 命中禁言关键词 → `flow.setMuted(sessionId, muteTimeSeconds, platform)`，本会话计数与活跃指数当场清零 → 影子归档 → 吞掉。戳一戳通知跳过这一步：其正文是合成文案，内嵌戳者昵称，与名字检测同理不当发言评估。
-5. 记入站：评分衰减、计数 +1、评分增量、用户交互次数、最近消息时间；闲置退避复位为 1，并按这次真人活动重排 session 档闲置触发。
+3. 会话处于禁言期（`flow.isMuted`）→ 本会话计数与活跃指数清零，记为真人活动（见第 5 步），`next()` 交给 flow 相位吞掉。禁言期内的消息不累计计数，也不再识别禁言关键词（不会缩短平台禁言）。平台禁言只能在这一步清零：平台禁言期内若一条消息都没有，禁言前攒下的计数保留到解禁后。本插件还没有该会话的状态时（如平台禁言先于任何消息）照样建立。
+4. 命中禁言关键词 → `flow.setMuted(sessionId, muteTimeSeconds, platform)`，本会话计数与活跃指数当场清零，记为真人活动 → 影子归档 → 吞掉。戳一戳通知跳过这一步：其正文是合成文案，内嵌戳者昵称，与名字检测同理不当发言评估。
+5. 记入站：评分衰减、计数 +1、评分增量、用户交互次数；记为真人活动：更新最近消息时间，闲置退避复位为 1，并从这条消息起重排 session 档闲置触发。
 6. 识别点名：戳一戳按 `triggerOnPoke`；其余消息按 `triggerOnAt`（@ 自己）与名字检测（`triggerNames` 与全部已登记人设按本会话取的名字、昵称）。`triggerOnPoke` 关闭时戳一戳不算点名，也不做 @ / 名字检测。
 7. 判定：点名直接开口；否则按 `intervalMode` 看此刻的计数与活跃指数是否达标。记一行判定日志（见下）。
 8. 开口：计数与活跃指数清零、记录触发时间；点名的写 `triggerType = 'immediate'`，否则写 `'interval'`；`next()`。`interval` 在多人会话且消息未带 `actor` 时回填无主体授权身份 `actor = selfInitiatedActor(platform)`：interval 回合没有主发言者，撞上阈值的那条消息的发言者不应决定 AI 自发行为的工具权限，authority 按默认等级裁决、不视为 owner，其白名单与会话授予也不替无主体回合解围。私聊纳入作用域后其 interval 只是频率闸，发言者仍是主体，不回填。不开口：影子归档后吞掉。
@@ -94,7 +94,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 - `session`：每会话一个定时器，真人消息到来时退避复位为 1 并重排。到点时会话处于禁言期则跳过并按原退避重排；否则 `gateway.ingressMessage` 注入一条 `source='idle-trigger'` 消息，`exponential` 风格下退避翻倍（上限 `idleTriggerMaxMinutes`）。只有真人消息复位退避，agent 回复（包括回复闲置提示）不复位。
 - `platform`：跨会话共用一个定时器。`idleTriggerStrategy` 决定触发时机：`all-quiet` 在所有会话都静默满 `idleTriggerMinutes` 后触发，`fixed` 每隔 `idleTriggerMinutes` 触发一次。到点后，在不处于禁言、冷却或限速已满状态的会话中，选最近活动最早的一个注入闲置触发消息。候选还要过分作用域覆盖：该会话有效配置的 `idleTriggerScope` 不是 `platform`（被单独关成 `off` 或改成 `session`）就跳过，提示词也按候选会话的有效 `idleTriggerPrompt` 取。节奏只看顶层配置，`idleTriggerMinutes` 与 `idleTriggerStrategy` 在 `platform` 档下不吃分作用域覆盖。每轮之间至少隔一个阈值量级（`idleTriggerMinutes`，下限 60 秒）。进程内还没有任何活动记录时，以启动时刻为静默起点。
 
-会话的"最近活动"取真人消息与 bot 开口中较晚者；bot 开口指 agent 的真实回复或闲置注入本身。因此 agent 对闲置提示沉默时，刚被注入的会话在下一轮也不会再次当选。禁言期内的真人消息不算活动（判定流程第 3 步在记入站之前就放行给 flow 相位）：session 档的闲置计时不因它们重排，platform 档的静默计时与挑选候选看的最近活动也停在禁言前，所以解禁后闲置提示可能在群里刚有人说过话不久就发出。
+会话的"最近活动"取真人消息与 bot 开口中较晚者；bot 开口指 agent 的真实回复或闲置注入本身。因此 agent 对闲置提示沉默时，刚被注入的会话在下一轮也不会再次当选。禁言期内的真人消息与命中禁言关键词的那条同样算真人活动，只是不计数（判定流程第 3、4 步）：session 档从这条消息起重排、退避复位为 1，platform 档的静默计时与挑选候选看的最近活动也随之更新。
 
 注入的消息携带 `triggerType: 'idle'`、`source: 'idle-trigger'`：本相位跳过策略判定；flow 相位对它不查回复后冷却，禁言照常生效，会话落在 flow-control 作用域内时限速也照常生效（消息不带会话类型，flow-control 按会话已记下的类型或会话 ID 约定推断判作用域，默认 `*:group` 下发往群的闲置提示在限速窗口已满时被吞，闲置提示不做影子归档）。
 
