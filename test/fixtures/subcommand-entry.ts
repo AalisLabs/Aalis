@@ -5,6 +5,7 @@
 //   AALIS_E2E_MODE     'subcommand'（默认；按 process.argv 分发）| 'daemon'（传 subcommands: []，
 //                      startAalis 返回后自发 SIGTERM，验证守护路径的文件日志与优雅退出仍在）
 //   AALIS_E2E_SLOW_MS  内联插件 onDispose 的延迟毫秒数（>=500 即让 app.stop 慢过重启策略的等待窗口）
+//   AALIS_E2E_APPLY_MS 设了才多登记一个内联插件 e2e-slow，其 apply 延迟这么多毫秒（验证配置里的慢操作阈值）
 //
 // 代数护栏：cwd/gen.txt 记录本入口被启动的次数。若重启策略在子命令模式下被错误注入，`restart`
 // 子命令会 spawn 一个 argv 仍带 restart 的 detached 子进程——第二代在这里立刻退出，不再往下走，
@@ -55,12 +56,19 @@ const plugin = definePlugin({
 });
 export default plugin;
 
+const applyMs = process.env.AALIS_E2E_APPLY_MS;
+const slowPlugin = definePlugin({
+  name: 'e2e-slow',
+  apply: () => new Promise<void>(r => setTimeout(r, Number(applyMs))),
+});
+const inline = applyMs === undefined ? [plugin] : [plugin, slowPlugin];
+
 const pluginLoader = {
   async discover() {
-    return [{ name: plugin.name, source: 'inline' }];
+    return inline.map(p => ({ name: p.name, source: 'inline' }));
   },
-  async load() {
-    return plugin;
+  async load(descriptor: { name: string }) {
+    return inline.find(p => p.name === descriptor.name) ?? plugin;
   },
 };
 

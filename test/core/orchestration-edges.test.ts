@@ -225,6 +225,8 @@ describe('重算振荡', () => {
         apply: ({ provide }) => void provide(blocker, {}),
       }),
     );
+    // 先静置：closer 的登记另起一次重算，轮数从它起算，不随登记与在飞重算的交错漂移
+    await w.app.plugins.idle();
     await w.app.plugin(
       definePlugin({
         name: 'closer',

@@ -76,7 +76,7 @@ export default definePlugin({
 | 描述符 | 绑定接口 | 作用 |
 |---|---|---|
 | `events` | `Events` | `on` / `emit`，监听随这次激活撤回 |
-| `lifecycle` | `LifecycleCap` | `id`、`closed`、`onDrain`、`onDispose` |
+| `lifecycle` | `LifecycleCap` | `id`、`signal`、`onDrain`、`onDispose` |
 | `logger` | `Logger` | 这次激活的日志器 |
 | `config` | 只读对象 | 这次激活的插件配置视图。配置文档是宿主提供的另一项服务，见下方 `host-config` |
 | `provide` | `Provide` | 唯一的服务发布入口 |
@@ -188,6 +188,24 @@ apply({ services }) {
 
 `lifecycle.id` 是这次激活的实例 id（多实例为 `name:suffix`）：日志、展示、路由用的逻辑名，不是资源身份。归属用不透明激活身份，不从 id / `entryId` 字符串前缀猜。
 
+### `signal`
+
+`lifecycle.signal` 是这次激活的取消信号（`AbortSignal`），用来中止 `apply` 里发起的长任务，也可在定时器、重连等回调里查 `signal.aborted` 判断本激活是否已开始关闭：
+
+```typescript
+async apply({ lifecycle }) {
+  const res = await fetch(url, { signal: lifecycle.signal });
+  // ...
+}
+```
+
+两个 abort 时机：
+
+- `apply` 尚未完成时被停机或管理动作（`disable` / `unload` / `bounce`，或它的 required 提供者被这样处理）接手，或后台激活因 required 依赖下线被拆：关闭计划冻结完成后立即 abort。
+- 其余情形：在本激活的收尾段开始时 abort，`onDrain` 回调执行时已断。依赖方先关闭时，提供者的 `signal` 仍未断。
+
+reason 是 name 为 `'AbortError'` 的 `DOMException`。abort 监听器同步执行，不得抛错：监听器的异常由宿主运行时按未捕获异常处理（Node 下 runtime 会因此退出进程）。
+
 ### `onDrain` / `onDispose`
 
 ```typescript
@@ -215,13 +233,13 @@ lifecycle.onDispose(async () => {
 2. 根激活使用插件的服务（宿主经 `app.bind` 取用）：根 drain 先于该插件的 close；根 `onDrain` 期间该插件尚未关闭，但可能已执行 drain。到根 close 时插件已按归属关闭。
 3. 插件使用根激活登记的服务（基础服务、宿主服务，以及宿主经 `app.bind({ provide })` 发布的服务）：不额外增加依赖边。归属保证插件 close 先于根 close，因此插件 drain 时根尚未关闭；这不保证根还没执行 drain。根也依赖该插件时，按第 2 条安排根 drain，避免把互用变成两个 drain 互相等待。
 
-环：optional 边构成的强连通分量先让成员全部 drain，再任一 close（不告警）；环里只剩 required 边仍无解才告警并强行放行。环外与归属约束不松。单独 unload / disable / bounce 提供者时，正在用它的 required 下游（传递闭包）并入同一批关闭，上述交接同样成立；这只覆盖动作发起时处于 active 的 required 下游，并发管理动作里已在收尾的下游、正在激活或动作期间才激活的下游、动作进行中发生的停机，与本次动作彼此不排序。这里保证的是框架的调用顺序与等待：插件若在 drain 中自行撤回服务或关闭连接，框架无法维持该实现可用；业务交接仍须返回可等待的 Promise，并处理失败。
+环：optional 边构成的强连通分量先让成员全部 drain，再任一 close（不告警）；环里只剩 required 边仍无解才告警并强行放行。环外与归属约束不松。单独 unload / disable / bounce 提供者时，正在用它的 required 下游（传递闭包）并入同一批关闭，上述交接同样成立；这覆盖动作发起时处于 active 或仍在初始化（在飞或后台）的 required 下游，并发管理动作里已在收尾的下游、动作期间才开始激活的下游、动作进行中发生的停机，与本次动作彼此不排序。这里保证的是框架的调用顺序与等待：插件若在 drain 中自行撤回服务或关闭连接，框架无法维持该实现可用；业务交接仍须返回可等待的 Promise，并处理失败。
 
 关闭回调不能等待同一计划中排在自身之后的阶段。例如在 `onDrain` 中 `await app.stop()`（或返回这个 Promise）：停机要等这次收尾完成，收尾又在等停机完成，两者就会互等。收尾应等待数据交接本身完成，再由计划继续执行后续阶段。计划外的调用者仍可 `await app.stop()` 等实际关闭完成；重复请求加入已有关闭，不改变计划顺序，也不会提前兑现。
 
 单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 注入（默认 5000；0=不设限）：超时放弃该项、继续后续清理并 warn 点名。超时只是停止等待，不代表资源已释放。
 
-本次没有为插件 `apply` 或 `app:*` 屏障监听器新增超时。`disposeTimeoutMs` 不保证整个 `register()` / `stop()` 有统一上限：尚未进入清理阶段时，永不落定的初始化或屏障监听器仍可能阻止流程推进。
+`apply` 尚未完成就被关闭的激活，`signal` abort 之后自其收尾段开始至多再等 `disposeTimeoutMs` 让 `apply` 落定；到期记 error「未在宽限内停止」、不再等待，后续清理照常执行，`apply` 本身继续跑（迟到的登记被拒收、`onDispose` 就地执行）。激活超过 `AppOptions.slowThresholdMs`（默认 60000）仍未完成时转入后台，重算不再等它；`app:*` 屏障事件的单个监听器至多等同一阈值。两个值都非 0 时 `register()` / `stop()` 不会被永不落定的 `apply` 或屏障监听器挂住；任一为 0（不设限）时仍可能等待不返回。
 
 ## 宿主入口
 

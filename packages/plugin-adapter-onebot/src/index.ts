@@ -1378,7 +1378,7 @@ function runAdapter(caps: Caps): void {
   }
 
   function doConnect(state: ConnectionState): void {
-    if (lifecycle.closed) return;
+    if (lifecycle.signal.aborted) return;
 
     state.status = 'connecting';
     logger.info(`正在连接 OneBot: ${state.config.url} (协议: ${state.protocol?.version ?? '待检测'})`);
@@ -1547,7 +1547,7 @@ function runAdapter(caps: Caps): void {
   }
 
   function scheduleReconnect(state: ConnectionState): void {
-    if (lifecycle.closed) return;
+    if (lifecycle.signal.aborted) return;
     if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
     logger.info(`OneBot 将在 ${RECONNECT_INTERVAL / 1000}s 后尝试重连: ${state.config.url}`);
     state.reconnectTimer = setTimeout(() => {

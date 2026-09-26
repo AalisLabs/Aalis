@@ -91,7 +91,7 @@ export interface SchemaArray {
 export type ConfigSchema = Record<string, SchemaField | SchemaGroup | SchemaArray>;
 
 /**
- * core 基础设施配置（name / logLevel）的表单描述。
+ * core 基础设施配置（name / logLevel / slowThresholdMs）的表单描述。
  *
  * core 自身不持有任何 schema——这份呈现层描述由本包代管，
  * 渲染宿主（webui-server 设置页）从这里取。
@@ -114,6 +114,14 @@ export const CORE_CONFIG_SCHEMA: ConfigSchema = {
       { label: 'warn', value: 'warn' },
       { label: 'error', value: 'error' },
     ],
+  },
+  slowThresholdMs: {
+    type: 'number',
+    label: '慢操作阈值（毫秒）',
+    description:
+      '插件激活超过它仍未完成时告警并转入后台继续（它提供的服务在激活完成前不对依赖方开放），app 启动与停机阶段的单个事件监听器超过它时告警并不再等待；0 表示不设限；重启生效',
+    default: 60000,
+    min: 0,
   },
 };
 
