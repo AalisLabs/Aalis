@@ -633,6 +633,35 @@ describe('plugin-trigger-laya：同一会话的放行顺序', () => {
     expect(decisions(logs).at(-1)?.message).toMatch(/兜底=侧车 422 empty_cur \| .* \| 作废=同会话更晚到的消息已放行$/);
   });
 
+  it('后到的被吞时，先到的照常放行：只比已放行的消息', async () => {
+    sidecar.reply = body => score(body.cur.includes('不开口') ? -1 : 1);
+    const gate = deferred();
+    const { svc, calls } = fakeMedia(() => gate.promise);
+    const { send, archived } = await setup({ media: svc });
+    const image = send(groupMsg('看图', { attachments: [IMAGE] }));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect((await send(groupMsg('不开口的文字'))).reached).toBe(false);
+
+    gate.resolve();
+    expect((await image).reached).toBe(true);
+    expect(archived).toEqual(['不开口的文字']);
+  });
+
+  it('中间一条被吞、第三条放行时，第一条仍作废：中间那条判完不清掉会话的到达记录', async () => {
+    sidecar.reply = body => score(body.cur.includes('不开口') ? -1 : 1);
+    const gate = deferred();
+    const { svc, calls } = fakeMedia(() => gate.promise);
+    const { send, archived } = await setup({ media: svc });
+    const image = send(groupMsg('看图', { attachments: [IMAGE] }));
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect((await send(groupMsg('不开口的文字'))).reached).toBe(false);
+    expect((await send(groupMsg('第三条'))).reached).toBe(true);
+
+    gate.resolve();
+    expect((await image).reached).toBe(false);
+    expect(archived).toEqual(['不开口的文字', '看图']);
+  });
+
   it('对照：顺序没有倒置时照常放行（同会话两条都在途、按到达顺序判完；别的会话先放行不影响）', async () => {
     const gates = new Map<string, ReturnType<typeof deferred<void>>>();
     const { svc, calls } = fakeMedia(msg => gates.get(msg.content)?.promise ?? Promise.resolve());
