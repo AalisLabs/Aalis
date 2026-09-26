@@ -28,7 +28,6 @@ export interface MediaService {
 
   // ----- 一站式：处理整条入站消息（preprocessor 与触发插件用）-----
   processMessage(msg: IncomingMessage): Promise<MediaProcessReport>;             // 把每条附件描述写进 msg._attachmentDescriptions；同一消息对象只处理一次
-  isRecognizeOnArrivalEnabled?(): boolean;                                        // 图片到达时是否识别出内容描述（vision.recognizeOnArrival）；只读，供诊断
 
   // ----- 单图/单视频主动识别 + 描述缓存 -----
   describeImage(imageUrl: string, opts?: DescribeImageOptions): Promise<string>; // 带 30 天缓存；识别出错时抛出
@@ -99,7 +98,6 @@ export interface MediaProcessor {
 | --- | --- | --- |
 | `plugin-media`（自身 preprocessor） | `svc.processMessage(msg)` | 经 `buildPreprocessor` 注册到 agent |
 | `plugin-trigger-laya`（私有）经 `@aalis/api-trigger` 的 `waitForAttachmentDescriptions` | `media.current.processMessage(msg)` | 模型判定前提前识别（有等待上限）；之后预处理器与归档不再识别第二遍 |
-| `plugin-trigger-laya`（私有）的诊断项 | `media.current?.isRecognizeOnArrivalEnabled?.()` | 生效时返回 `false`（图片到达只写指针）报 warn：判定看不到图片内容 |
 | `plugin-file-reader` | `media.describeImage(uri)` | 识别 DOCX 内嵌图；先判 `if (!media?.describeImage) return ''` |
 | `plugin-image-sender` | `media.describeImage(url, { detailLevel: 'casual' })` | 给候选图打描述以挑图 |
 | `plugin-adapter-onebot` | `media.lookupDescription(url)` | 只复用缓存、不触发识别 |

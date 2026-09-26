@@ -34,7 +34,7 @@ import {
 import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表单属性（dynamicOptions/allowCustom）
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
-import { buildIncomingContent, type IncomingMessage, type Message } from '@aalis/schema-message';
+import { buildIncomingContent, type IncomingMessage, type Message, parseAttachmentRefs } from '@aalis/schema-message';
 import { toWellFormedText } from '@aalis/util-text-normalize';
 import { defaultLayaConfig, resolveLayaConfig } from './config.js';
 import { createSelfCheck } from './self-check.js';
@@ -178,6 +178,31 @@ function errorCode(text: string): string {
   }
 }
 
+// ----- 诊断：带图消息判定时有没有图片内容 -----
+
+/** 诊断项看最近这么多条计入的带图消息（口径见 imagesPointerOnly） */
+const IMAGE_WINDOW = 20;
+/** 其中图片只有指针的达到这么多条，生效时诊断项报 warn */
+const POINTER_ONLY_WARN = 10;
+
+/**
+ * 判定时这条消息的图片是否都只有指针、没有内容描述。只有指针：描述位为空（识别跑完了但没有描述，如没有可用的
+ * 识别模型），或只有不带描述的附件引用 `[图片 | ref:…]`（media 关了图片到达即识别时写的）。识别失败的占位不算
+ * （media 每次失败另记 warn）。附件识别还没写回（超过 mediaWaitMs、识别抛错、media 缺席）或没有图片附件时返回
+ * undefined，不计入：前者由自检汇总的「缺附件描述」反映，media 缺席见依赖说明
+ */
+function imagesPointerOnly(message: IncomingMessage): boolean | undefined {
+  const descs = message._attachmentDescriptions;
+  if (!descs) return undefined;
+  const images = (message.attachments ?? []).flatMap((a, i) => (a.kind === 'image' ? [descs[i]] : []));
+  if (images.length === 0) return undefined;
+  return images.every(d => {
+    if (!d?.trim()) return true;
+    const refs = parseAttachmentRefs(d);
+    return refs.length > 0 && refs.every(r => !r.desc);
+  });
+}
+
 /** 一个会话里判定在途的消息的到达与放行（见 run 的「同一会话的放行顺序」） */
 interface SessionOrder {
   /** 已到达的消息数，到达序号从 1 起 */
@@ -211,7 +236,7 @@ const uses = {
   sessionManager: optional(sessionManager),
   // 缺席时被吞掉的消息不进档，判定照常
   messageArchive: optional(messageArchive),
-  // 缺席时不等附件识别，cur 里缺附件描述；在场但图片到达不识别时诊断项报 warn
+  // 缺席时不等附件识别，cur 里缺附件描述
   media: optional(media),
   // 缺席时判定不可用：没有历史窗口无从判定，按兜底只回点名
   memory: optional(memory),
@@ -321,6 +346,9 @@ function run(caps: Caps): void {
     };
   }
 
+  /** 近期计入的带图消息（imagesPointerOnly）：图片是否都只有指针，最多 IMAGE_WINDOW 条，先进先出 */
+  const recentImages: boolean[] = [];
+
   /** 已告警过的模型没见过的会话类别（平台:会话类型）：这类会话每条都兜底，每类只告警一次 */
   const unsupported = new Set<string>();
 
@@ -367,6 +395,11 @@ function run(caps: Caps): void {
     // 当前消息与归档用同一个 buildIncomingContent 拼，附件描述先等识别（有上限，超时照常判定）；
     // 两边仍可能不一致（识别超时、文件描述晚写入等），由运行期自检计数
     await waitForAttachmentDescriptions(message, caps.media, cfg.mediaWaitMs, logger, '[laya]');
+    const pointerOnly = imagesPointerOnly(message);
+    if (pointerOnly !== undefined) {
+      recentImages.push(pointerOnly);
+      if (recentImages.length > IMAGE_WINDOW) recentImages.shift();
+    }
     // 取历史与等识别期间可能已熔断：熔断期不发请求
     if (circuitOpen()) return fallback('侧车熔断中');
     const cur = buildIncomingContent(message);
@@ -544,11 +577,14 @@ function run(caps: Caps): void {
       // 探活正常不代表 /v1/score 正常，照实报成上次的故障
       const stale = down !== undefined && !circuitOpen() && caps.memory.current !== undefined;
       if (stale) parts.push(`上次判定不可用（${down}），尚未经请求确认恢复`);
-      // 生效时 media 在图片到达时不识别：processMessage 只给图片写指针，判定看不到图里是什么。
-      // 未实现 isRecognizeOnArrivalEnabled 的 media 视为未知，不报；media 缺席时带图消息本来就没有描述，不报
-      const pointerOnly = active && caps.media.current?.isRecognizeOnArrivalEnabled?.() === false;
-      if (pointerOnly) {
-        parts.push('media 未开启图片到达即识别（vision.recognizeOnArrival）：带图消息判定时只有图片指针、没有内容描述');
+      // 生效时近期带图消息大多只有图片指针：模型判定带图消息时不知道图里是什么
+      const pointerOnlyCount = recentImages.filter(Boolean).length;
+      const blind = active && pointerOnlyCount >= POINTER_ONLY_WARN;
+      if (blind) {
+        parts.push(
+          `近 ${recentImages.length} 条带图消息有 ${pointerOnlyCount} 条判定时只有图片指针、没有内容描述：` +
+            'media 未开启图片到达即识别（vision.recognizeOnArrival），或没有可用的识别模型',
+        );
       }
       const role = active
         ? '生效中'
@@ -557,8 +593,8 @@ function run(caps: Caps): void {
         id: 'trigger.laya',
         category: 'service',
         // 生效时判定不了会让群里只回点名，报 error；未生效时不影响回复、上次的故障未经确认恢复、
-        // 生效时图片到达不识别，报 warn
-        level: problems.length > 0 ? (active ? 'error' : 'warn') : stale || pointerOnly ? 'warn' : 'ok',
+        // 生效时带图消息判定看不到图片内容，报 warn
+        level: problems.length > 0 ? (active ? 'error' : 'warn') : stale || blind ? 'warn' : 'ok',
         message: `Laya 触发判定${role}：${parts.join('；')}`,
         detail: `endpoint=${cfg.endpoint}`,
       };
