@@ -13,6 +13,7 @@ export default defineConfig({
     poolMatchGlobs: [
       ['**/test/plugins/draw-render.test.ts', 'threads'],
       ['**/test/plugins/draw-animation.test.ts', 'threads'],
+      ['**/test/plugins/tool-browser-ssrf-gate.test.ts', 'threads'],
       ['**/test/smoke/**', 'threads'],
     ],
     poolOptions: { threads: { singleThread: true } },
