@@ -10,14 +10,15 @@
 
 ## 未发布
 
-回复闸门职责重组、模型触发插件与随之的修复。各包版本号尚未提升，`package.json` 里仍是 0.18 批次的版本；发布时按源码与 npm 实况确定各包版本，用到本节新增接口的包间依赖（如 `@aalis/api-gateway` 的作用域函数、`@aalis/schema-message` 的 `buildIncomingContent`、`@aalis/api-persona` 的按会话取名字）下限抬到新版本。
+回复闸门职责重组、模型触发插件与随之的修复。各包版本号尚未提升，`package.json` 里仍是 0.18 批次的版本；发布时按源码与 npm 实况确定各包版本，并把用到本节新增接口的包间依赖下限抬到新版本：`@aalis/schema-message`（`buildIncomingContent`）由 plugin-message-archive、plugin-trigger-laya 抬；`@aalis/api-gateway`（`extractTargetId`、`inferSessionScope`、`isScopeEnabled`、`resolveEffectiveConfig`）由 plugin-flow-control、plugin-persona、plugin-trigger-laya、plugin-trigger-policy 抬；`@aalis/api-persona`（按会话取名字）由 api-trigger 抬，实现方 plugin-persona 一并抬。
 
 待发布的包：
 
 - 有代码或契约改动（14 个）：api-flow-control、api-gateway、api-media、api-persona、api-platform、schema-message、plugin-adapter-onebot、plugin-file-reader、plugin-flow-control、plugin-media、plugin-message-archive、plugin-persona、plugin-tool-session、plugin-trigger-policy
 - 新包：api-trigger 0.1.0
 - plugin-trigger-laya 0.1.0 是 `private` 包，不发布到 npm。
-- plugin-commands、plugin-gateway、plugin-scheduler、plugin-user-profile、plugin-workflow 只改了注释与说明文字，本批不单独发布。
+- plugin-gateway 只改了说明文字，但 `package.json` 的 description 与 README 写的是入站相位次序，随 api-gateway 的次序变化一并修正，按 patch 发布。
+- plugin-commands、plugin-scheduler、plugin-user-profile、plugin-workflow 只改了注释，本批不单独发布。
 
 ### 回复闸门职责重组（@aalis/plugin-flow-control、@aalis/plugin-trigger-policy、@aalis/api-flow-control、@aalis/api-gateway、@aalis/api-platform、@aalis/plugin-adapter-onebot、@aalis/plugin-tool-session、@aalis/schema-message、@aalis/plugin-message-archive、@aalis/api-media、@aalis/plugin-media、@aalis/plugin-file-reader、@aalis/plugin-persona、新包 @aalis/api-trigger）
 
