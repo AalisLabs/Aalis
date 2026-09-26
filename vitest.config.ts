@@ -8,6 +8,14 @@ export default defineConfig({
     environment: 'node',
     testTimeout: 15_000,
     pool: 'forks',
+    // 启动真浏览器的测试分到单线程池里依次跑，其余照旧在 forks 池并行：几个 Chrome 同时开、再叠上全量测试的负载，
+    // 浏览器测试会轮流超时
+    poolMatchGlobs: [
+      ['**/test/plugins/draw-render.test.ts', 'threads'],
+      ['**/test/plugins/draw-animation.test.ts', 'threads'],
+      ['**/test/smoke/**', 'threads'],
+    ],
+    poolOptions: { threads: { singleThread: true } },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary', 'html'],
