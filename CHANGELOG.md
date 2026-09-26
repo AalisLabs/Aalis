@@ -8,7 +8,7 @@
 
 ---
 
-## 未发布（core 0.17.0 → 0.18.0；101 个包：89 minor / 6 patch / 6 新包 api-plugin-source、api-host-config、api-hooks、api-contributions、plugin-hooks、plugin-contributions）
+## 未发布（core 0.17.0 → 0.18.0；103 个包：88 minor / 6 patch / 9 新包 api-plugin-source、api-host-config、api-hooks、api-contributions、plugin-hooks、plugin-contributions、api-user-relation、api-package-manager、api-session-history）
 
 core 只做插件的注册、激活、关停与两种原语（事件、服务）。插件从哪里来、配置存在哪里由宿主负责；钩子与贡献点改为普通插件提供的服务。同批各包删除对旧数据、旧配置与弃用接口的兼容，删除无人使用的公开接口，并收紧若干安全默认值。升级前请先读末尾「版本与必须同批升级的包」一节。
 
@@ -108,6 +108,17 @@ core 只做插件的注册、激活、关停与两种原语（事件、服务）
 | plugin-media | `legacyVisionMode` | 无替代（见下文 `vision.mode`） |
 
 **迁移**：按上表改导入来源。
+
+### 服务契约整理（新包 @aalis/api-user-relation、@aalis/api-package-manager；@aalis/api-tool-session 改名 @aalis/api-session-history；@aalis/plugin-user-relation、@aalis/plugin-user-profile、@aalis/plugin-package-manager、@aalis/plugin-webui-server、@aalis/plugin-tool-onebot、@aalis/plugin-tool-session）
+
+- 新包 `@aalis/api-user-relation`：`user-relation` 的描述符 `userRelation` 与查询接口 `UserRelationService`（目前只含 `getCommunityPeers`）。plugin-user-relation 改从这里导入描述符，不再导出 `userRelation`；实现类 `RelationService` 与图数据类型仍由它导出。plugin-user-profile 改用契约包的描述符，删去本地的同名定义。
+- 新包 `@aalis/api-package-manager`：`package-manager` 的描述符 `packageManager` 与 `PackageManagerService` / `UpdateTarget` / `UpdateResult`，plugin-package-manager 不再导出这四项。plugin-webui-server 在 `uses` 里以 `optional(packageManager)` 声明 package-manager，不再按服务名动态查询；插件页的依赖声明因此多出可选的 package-manager，服务缺席时市场的安装、卸载、更新仍返回 503。
+- `@aalis/api-tool-session` 改名为 `@aalis/api-session-history`，从 0.1.0 起版，导出与服务名 `session-history` 不变；旧包在 npm 上标为弃用，不再更新。服务按名寻址，仍依赖旧包的已发布插件与依赖新包的插件混装时照常互通。
+
+**迁移**：
+- `userRelation` 改从 `@aalis/api-user-relation` 导入，`packageManager` / `PackageManagerService` / `UpdateTarget` / `UpdateResult` 改从 `@aalis/api-package-manager` 导入，并把契约包加进 `dependencies`。两个描述符是运行时值：从实现包导入它们的已发布插件会在模块链接阶段失败（`does not provide an export named 'userRelation'`）。
+- 契约里的 `UserRelationService` 只含 `getCommunityPeers`。需要关系图的其它能力时请提需求扩充契约，不要改为依赖实现包。
+- 依赖 `@aalis/api-tool-session` 的包改依赖 `@aalis/api-session-history`，导入路径随之替换，其余不变。
 
 ### 存储路径只接受 storage URI（@aalis/plugin-checkpoint、@aalis/plugin-scheduler、@aalis/plugin-workflow、@aalis/plugin-office）
 
@@ -351,14 +362,14 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 
 ### 版本与必须同批升级的包
 
-本批共 101 个包：89 个 minor、6 个 patch、6 个新包。所有随本批发布、带 core peer 的包，peer 下限统一为 `>=0.18.0 <1.0.0`（schema-message 的 core peer 只为类型声明，仍为 `>=0.2.0`）；包间依赖的下限抬到本批的新版本。api-code-sandbox、plugin-code-sandbox-os、plugin-maimai、plugin-process-local、plugin-tool-code-runner 本批无改动，沿用已发布版本。
+本批共 103 个包：88 个 minor、6 个 patch、9 个新包。所有随本批发布、带 core peer 的包，peer 下限统一为 `>=0.18.0 <1.0.0`（schema-message 的 core peer 只为类型声明，仍为 `>=0.2.0`）；包间依赖的下限抬到本批的新版本。api-code-sandbox、plugin-code-sandbox-os、plugin-maimai、plugin-process-local、plugin-tool-code-runner 本批无改动，沿用已发布版本。
 
 - 基础（minor）：core 0.18.0、runtime 0.14.0、schema-config 0.13.0、schema-log 0.2.0、schema-message 0.9.0
-- 契约包（minor）：api-agent 0.9.0、api-asr 0.11.0、api-authority 0.10.0、api-commands 0.7.0、api-cron-engine 0.7.0、api-doctor 0.7.0、api-embedding 0.7.0、api-flow-control 0.7.0、api-gateway 0.7.0、api-llm 0.12.0、api-media 0.11.0、api-memory 0.7.0、api-message-archive 0.7.0、api-persona 0.8.0、api-platform 0.8.0、api-process 0.8.0、api-session-confirm 0.7.0、api-session-manager 0.10.0、api-storage 0.7.0、api-tool-session 0.7.0、api-tools 0.10.0、api-vectorstore 0.7.0、api-webui 0.11.0、api-workflow 0.11.0
+- 契约包（minor）：api-agent 0.9.0、api-asr 0.11.0、api-authority 0.10.0、api-commands 0.7.0、api-cron-engine 0.7.0、api-doctor 0.7.0、api-embedding 0.7.0、api-flow-control 0.7.0、api-gateway 0.7.0、api-llm 0.12.0、api-media 0.11.0、api-memory 0.7.0、api-message-archive 0.7.0、api-persona 0.8.0、api-platform 0.8.0、api-process 0.8.0、api-session-confirm 0.7.0、api-session-manager 0.10.0、api-storage 0.7.0、api-tools 0.10.0、api-vectorstore 0.7.0、api-webui 0.11.0、api-workflow 0.11.0
 - 插件（minor）：plugin-adapter-onebot 0.14.0、plugin-agent 0.15.0、plugin-asr-openai 0.11.0、plugin-asr-whisper-cpp 0.11.0、plugin-authority 0.13.0、plugin-checkpoint 0.13.0、plugin-cli 0.12.0、plugin-commands 0.12.0、plugin-cron-engine 0.8.0、plugin-doctor 0.7.0、plugin-draw 0.3.0、plugin-embedding-ollama 0.11.0、plugin-embedding-openai 0.12.0、plugin-file-reader 0.13.0、plugin-flow-control 0.11.0、plugin-gateway 0.7.0、plugin-image-sender 0.7.0、plugin-llm-deepseek 0.13.0、plugin-llm-ollama 0.11.0、plugin-llm-openai 0.13.0、plugin-mcp-client 0.12.0、plugin-mcp-server 0.12.0、plugin-media 0.15.0、plugin-memory-history 0.12.0、plugin-memory-inmemory 0.11.0、plugin-memory-mongodb 0.11.0、plugin-memory-sqlite 0.11.0、plugin-memory-summary 0.12.0、plugin-memory-vector 0.13.0、plugin-message-archive 0.12.0、plugin-office 0.11.0、plugin-okx-trading 0.11.0、plugin-package-manager 0.7.0、plugin-persona 0.11.0、plugin-prompt-budget 0.7.0、plugin-scheduler 0.13.0、plugin-session-confirm 0.7.0、plugin-session-manager 0.13.0、plugin-skills 0.12.0、plugin-storage-local 0.12.0、plugin-subtask 0.13.0、plugin-todo-list 0.11.0、plugin-tool-browser 0.12.0、plugin-tool-math 0.11.0、plugin-tool-onebot 0.11.0、plugin-tool-search 0.11.0、plugin-tool-session 0.13.0、plugin-tool-system 0.12.0、plugin-tools 0.9.0、plugin-trigger-policy 0.13.0、plugin-user-profile 0.13.0、plugin-user-relation 0.14.0、plugin-vectorstore-flat 0.12.0、plugin-vectorstore-lancedb 0.12.0、plugin-websearch-serper 0.11.0、plugin-webui-server 0.13.0、plugin-workflow 0.14.0
 - 脚手架与前端（minor）：create-aalis 0.6.0、create-aalis-plugin 0.11.0、plugin-webui-client 0.13.0
 - 工具库（patch）：util-bounded-map 0.6.1、util-cron 0.1.3、util-dep-spec 0.1.1、util-json-repair 0.5.4、util-network-guard 0.6.2、util-text-normalize 0.5.2
-- 新包（0.1.0）：api-contributions、api-hooks、api-host-config、api-plugin-source、plugin-contributions、plugin-hooks
+- 新包（0.1.0）：api-contributions、api-hooks、api-host-config、api-package-manager、api-plugin-source、api-session-history（原 api-tool-session）、api-user-relation、plugin-contributions、plugin-hooks
 
 已有项目在项目目录执行下面这条命令，一次把 package.json 里的全部 `@aalis` 包升到最新，并装上两个新插件：
 

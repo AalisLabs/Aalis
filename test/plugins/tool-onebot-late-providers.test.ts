@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { memory } from '../../packages/api-memory/src/index.js';
 import { type PlatformAdapter, platform } from '../../packages/api-platform/src/index.js';
-import { sessionHistory } from '../../packages/api-tool-session/src/index.js';
+import { sessionHistory } from '../../packages/api-session-history/src/index.js';
 import { type RegisteredTool, tools } from '../../packages/api-tools/src/index.js';
 import { App, optional, provide } from '../../packages/core/src/index.js';
 import toolOnebot from '../../packages/plugin-tool-onebot/src/index.js';

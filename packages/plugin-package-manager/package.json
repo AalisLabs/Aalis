@@ -31,7 +31,8 @@
     "@aalis/api-process": "workspace:>=0.8.0 <1.0.0",
     "@aalis/util-dep-spec": "workspace:>=0.1.1 <1.0.0",
     "@aalis/api-plugin-source": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/api-host-config": "workspace:>=0.1.0 <1.0.0"
+    "@aalis/api-host-config": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-package-manager": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",

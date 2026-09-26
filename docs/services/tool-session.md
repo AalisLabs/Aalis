@@ -9,7 +9,7 @@
 
 | 关注点 | 服务注册名 | 契约包 / 实现 | 性质 |
 | --- | --- | --- | --- |
-| 跨会话历史读取 + 平台访问规则 | `session-history` | 契约 `@aalis/api-tool-session`；实现 `@aalis/plugin-tool-session` | 有 `-api` 契约 + 运行时服务 |
+| 跨会话历史读取 + 平台访问规则 | `session-history` | 契约 `@aalis/api-session-history`；实现 `@aalis/plugin-tool-session` | 有 `-api` 契约 + 运行时服务 |
 | 上传文件登记（per-session 文件态） | `file-reader` | 实现 `@aalis/plugin-file-reader`（**无独立 `-api` 包**，接口住在实现包里） | 仅运行时服务，无独立契约包 |
 
 下面分两节讲。两者都遵循「`sessionId` 是会话隔离边界」这一共同约束，见 [§6 会话隔离](#6-会话隔离-访问控制provider-consumer-必守)。
@@ -20,11 +20,11 @@
 
 ## A.1 定位
 
-**按 Aalis `sessionId` 读取某会话的消息历史，并给平台插件提供注入「跨会话读取访问规则」的钩子。** 取用名 `sessionHistory.current`，契约包 `@aalis/api-tool-session`。
+**按 Aalis `sessionId` 读取某会话的消息历史，并给平台插件提供注入「跨会话读取访问规则」的钩子。** 取用名 `sessionHistory.current`，契约包 `@aalis/api-session-history`。
 
-它不是存储后端——历史数据来自 `memory` 服务；本服务是「读取入口 + 访问控制链 + 给 LLM 的工具壳（`session_get_history`）」。设计上保证**通用工具与平台专属工具都走同一条 access-checker 链，不存在绕过路径**（`packages/api-tool-session/src/index.ts`）。
+它不是存储后端——历史数据来自 `memory` 服务；本服务是「读取入口 + 访问控制链 + 给 LLM 的工具壳（`session_get_history`）」。设计上保证**通用工具与平台专属工具都走同一条 access-checker 链，不存在绕过路径**（`packages/api-session-history/src/index.ts`）。
 
-## A.2 契约（`@aalis/api-tool-session/src/index.ts`）
+## A.2 契约（`@aalis/api-session-history/src/index.ts`）
 
 核心接口（`index.ts`）：
 
@@ -79,8 +79,8 @@ provide(sessionHistory, historyService, { label: '会话历史读取' });
 通常你不需要重写 `session-history`——更常见的是**给已有 provider 注入平台访问规则**（见 A.5）。若确要替换实现（例如对接非 memory 的历史后端），最小骨架：
 
 ```ts
-import { sessionHistory } from '@aalis/api-tool-session';
-import type { SessionHistoryService } from '@aalis/api-tool-session';
+import { sessionHistory } from '@aalis/api-session-history';
+import type { SessionHistoryService } from '@aalis/api-session-history';
 import { definePlugin, provide } from '@aalis/core';
 
 export default definePlugin({
@@ -88,7 +88,7 @@ export default definePlugin({
   provides: [sessionHistory],
   uses: { provide },
   apply({ provide }) {
-    const checkers: import('@aalis/api-tool-session').AccessChecker[] = [];
+    const checkers: import('@aalis/api-session-history').AccessChecker[] = [];
     const svc: SessionHistoryService = {
       registerAccessChecker(checker) {
         checkers.push(checker);

@@ -7,8 +7,8 @@ import { llm, resolveLLMModel } from '@aalis/api-llm';
 import { type MemoryService, memory } from '@aalis/api-memory';
 import { persona } from '@aalis/api-persona';
 import { tools } from '@aalis/api-tools';
-import { type BoundOf, config, definePlugin, defineService, events, logger, optional } from '@aalis/core';
-import type { RelationService } from '@aalis/plugin-user-relation';
+import { userRelation } from '@aalis/api-user-relation';
+import { type BoundOf, config, definePlugin, events, logger, optional } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { Message } from '@aalis/schema-message';
 import { WellKnownKinds } from '@aalis/schema-message';
@@ -428,9 +428,6 @@ function renderHistoryForExtract(history: Message[], userId: string, platform: s
     .filter(Boolean)
     .join('\n');
 }
-
-// 同名描述符即同一服务：本地声明 optional 依赖，类型来自兄弟插件的 type-only 导入，不构成运行时包依赖。
-const userRelation = defineService<RelationService>('user-relation');
 
 const uses = {
   memory,
@@ -1741,9 +1738,8 @@ function registerUserProfile({
         if (profile?.facts.some(isFactActive)) {
           const body = renderProfileBlock(profile.facts, data.userId, false);
           const relationLine = renderRelationLine(profile);
-          // 可选：从 user-relation 服务取「同社群活跃成员」（Louvain 标签 + PageRank 排序）。
+          // 可选：从 user-relation 服务取「同社群活跃成员」（按配置的社群发现算法所得标签 + PageRank 排序）。
           // 服务不存在 / 节点没社群标签 / 报错都静默跳过；该字段是锦上添花，不破坏档案主体。
-          // 同名描述符声明 optional 依赖，类型来自兄弟插件的 type-only 导入，不构成运行时包依赖。
           let communityLine = '';
           try {
             const relation = userRelation.current;

@@ -47,14 +47,14 @@
     "zod": "^3.25.76",
     "@aalis/schema-log": "workspace:>=0.2.0 <1.0.0",
     "@aalis/api-plugin-source": "workspace:>=0.1.0 <1.0.0",
-    "@aalis/api-host-config": "workspace:>=0.1.0 <1.0.0"
+    "@aalis/api-host-config": "workspace:>=0.1.0 <1.0.0",
+    "@aalis/api-package-manager": "workspace:>=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@aalis/core": "workspace:*",
     "@aalis/api-doctor": "workspace:*",
     "@aalis/api-memory": "workspace:*",
     "@aalis/schema-message": "workspace:*",
-    "@aalis/plugin-package-manager": "workspace:*",
     "@aalis/api-session-manager": "workspace:*",
     "@aalis/plugin-todo-list": "workspace:*",
     "@types/express": "^5.0.0",
@@ -81,7 +81,8 @@
         "llm",
         "persona",
         "agent",
-        "plugin-source"
+        "plugin-source",
+        "package-manager"
       ],
       "provides": [
         "webui-server",

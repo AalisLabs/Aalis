@@ -14,6 +14,7 @@
 
 - **实现包**值导入自己的 `-api` 包，拿到描述符与类型
 - **消费方插件**只依赖 `-api`，不依赖实现包；在 `definePlugin` 的 `uses` 里声明描述符，`apply(caps)` 里经绑定接口取用
+- 每个服务名全仓只有一处 `defineService`，包的发布依赖（`dependencies` / `optionalDependencies` / `peerDependencies`）里不出现插件实现包；两条由 `test/architecture/service-contracts.test.ts` 守
 - 描述符是**运行时值**，必须进 `dependencies`，不能只放 `devDependencies` / `import type`
 - `-api` 包之间允许相互依赖（如 `api-tools` 依赖 `api-authority`）
 
@@ -32,11 +33,14 @@
 | [api-media](../services/media.md) | `media` 描述符 | plugin-media |
 | [api-llm](./api-llm.md) | `llm` 描述符（per-model handle）+ `listLLMModels` / `resolveLLMModel` | plugin-llm-openai / plugin-llm-ollama / plugin-llm-deepseek 等 |
 | [api-memory](./api-memory.md) | `memory` 描述符 | plugin-memory-inmemory / sqlite / mongodb / vector |
+| [api-package-manager](./api-package-manager.md) | `packageManager` 描述符（服务名 `package-manager`）+ `PackageManagerService` | plugin-package-manager |
 | [api-plugin-source](./api-plugin-source.md) | `pluginSource` 描述符（服务名 `plugin-source`）+ 插件入口判定 `pluginDefinitionOf` | 宿主提供（`@aalis/runtime`） |
 | [schema-message](./schema-message.md) | 消息数据契约（无 service） | 由各 adapter 直接 emit |
+| [api-session-history](../services/tool-session.md) | `sessionHistory` 描述符（服务名 `session-history`）+ 平台访问规则 `AccessChecker` | plugin-tool-session |
 | [api-session-manager](./api-session-manager.md) | `sessionManager` 描述符 | plugin-session-manager |
 | [api-storage](./api-storage.md) | `storage` 描述符 + `createStorageGateway` 等 helper（第一参吃 `ServiceRef`） | plugin-storage-local |
 | [api-tools](./api-tools.md) | `tools` 描述符 + `BoundTools` / `withToolGroups` | plugin-tools |
+| [api-user-relation](./api-user-relation.md) | `userRelation` 描述符（服务名 `user-relation`）+ 查询接口 `UserRelationService` | plugin-user-relation |
 | [api-vectorstore](./api-vectorstore.md) | `vectorstore` 描述符 | plugin-vectorstore-flat / plugin-vectorstore-lancedb |
 | [api-webui](./api-webui.md) | `webuiServer` / `webuiClient` 描述符 + `BoundWebui`（`registerPage` / `registerAction`） | plugin-webui-server |
 
