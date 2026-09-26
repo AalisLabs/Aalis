@@ -1,18 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { defaultFlowControlConfig, resolveFlowControlConfig } from '../../packages/plugin-flow-control/src/config.js';
 import {
-  applyScoreDecay,
-  calculateScoreIncrement,
   createState,
-  getCurrentThreshold,
   rateLimitUsedNow,
-  snapshot,
+  SESSION_TTL_MS,
+  sweepStaleStates,
 } from '../../packages/plugin-flow-control/src/state.js';
 
 describe('flow-control config', () => {
   it('resolve 缺省字段使用默认', () => {
     const c = resolveFlowControlConfig({});
-    expect(c.fixedInterval).toBe(defaultFlowControlConfig.fixedInterval);
+    expect(c.cooldownSeconds).toBe(defaultFlowControlConfig.cooldownSeconds);
     expect(c.scopes).toEqual(defaultFlowControlConfig.scopes);
   });
 
@@ -26,74 +24,21 @@ describe('flow-control config', () => {
     expect(c.scopes).toEqual(['onebot:private']);
   });
 
-  it('idleTriggerScope 非法值回退默认', () => {
-    const c = resolveFlowControlConfig({ idleTriggerScope: 'bogus' as unknown });
-    expect(c.idleTriggerScope).toBe(defaultFlowControlConfig.idleTriggerScope);
+  it('只保留节流字段：评分与闲置触发字段已归 trigger-policy', () => {
+    const c = resolveFlowControlConfig({ fixedInterval: 100, idleTriggerScope: 'session' });
+    expect(Object.keys(c).sort()).toEqual(
+      ['cooldownSeconds', 'overrides', 'rateLimitMaxReplies', 'rateLimitWindow', 'scopes'].sort(),
+    );
   });
 });
 
 describe('flow-control state', () => {
   it('createState 初始值合理', () => {
     const s = createState('cli');
-    expect(s.messageCount).toBe(0);
-    expect(s.activityScore).toBe(0);
     expect(s.platform).toBe('cli');
+    expect(s.mutedUntil).toBe(0);
+    expect(s.cooldownUntil).toBe(0);
     expect(s.replyTimestamps).toEqual([]);
-  });
-
-  it('calculateScoreIncrement 默认权重 = 1/fixedInterval', () => {
-    const s = createState('p');
-    const inc = calculateScoreIncrement(s, defaultFlowControlConfig);
-    expect(inc).toBeCloseTo(1 / defaultFlowControlConfig.fixedInterval, 5);
-  });
-
-  it('calculateScoreIncrement 用户高频时权重抬升', () => {
-    const s = createState('p');
-    s.userInteractions.set('u1', { count: 20, lastTime: Date.now() });
-    const incHigh = calculateScoreIncrement(s, defaultFlowControlConfig, 'u1');
-    const incBase = calculateScoreIncrement(s, defaultFlowControlConfig);
-    expect(incHigh).toBeGreaterThan(incBase);
-    // 上限 1.5×
-    expect(incHigh).toBeLessThanOrEqual(incBase * 1.5 + 1e-6);
-  });
-
-  it('applyScoreDecay 在 scoreDecayMinutes=0 时不衰减', () => {
-    const s = createState('p');
-    s.activityScore = 0.8;
-    s.lastMessageTime = Date.now() - 60_000;
-    applyScoreDecay(s, defaultFlowControlConfig);
-    expect(s.activityScore).toBe(0.8);
-  });
-
-  it('applyScoreDecay 时间过去半周期 ≈ 半值', () => {
-    const cfg = { ...defaultFlowControlConfig, scoreDecayMinutes: 10 };
-    const s = createState('p');
-    s.activityScore = 1.0;
-    s.lastMessageTime = Date.now() - 5 * 60 * 1000; // 半个衰减周期
-    applyScoreDecay(s, cfg);
-    expect(s.activityScore).toBeGreaterThan(0.4);
-    expect(s.activityScore).toBeLessThan(0.6);
-  });
-
-  it('applyScoreDecay 超过周期清零', () => {
-    const cfg = { ...defaultFlowControlConfig, scoreDecayMinutes: 1 };
-    const s = createState('p');
-    s.activityScore = 1.0;
-    s.lastMessageTime = Date.now() - 10 * 60 * 1000;
-    applyScoreDecay(s, cfg);
-    expect(s.activityScore).toBe(0);
-  });
-
-  it('getCurrentThreshold 首次回复前 = lower', () => {
-    const s = createState('p');
-    expect(getCurrentThreshold(s, defaultFlowControlConfig)).toBe(defaultFlowControlConfig.activityScoreLower);
-  });
-
-  it('getCurrentThreshold 刚回复后 ≈ upper', () => {
-    const s = createState('p');
-    s.lastReplyTime = Date.now();
-    const t = getCurrentThreshold(s, defaultFlowControlConfig);
-    expect(t).toBeGreaterThan(defaultFlowControlConfig.activityScoreUpper - 0.01);
   });
 
   it('rateLimitUsedNow 仅计窗口内', () => {
@@ -109,15 +54,40 @@ describe('flow-control state', () => {
     s.replyTimestamps = [Date.now()];
     expect(rateLimitUsedNow(s, defaultFlowControlConfig)).toBe(0);
   });
+});
 
-  it('snapshot 字段完整', () => {
-    const s = createState('p');
-    s.messageCount = 3;
-    s.activityScore = 0.5;
-    const snap = snapshot(s, defaultFlowControlConfig);
-    expect(snap.messageCount).toBe(3);
-    expect(snap.activityScore).toBe(0.5);
-    expect(snap.fixedInterval).toBe(defaultFlowControlConfig.fixedInterval);
-    expect(snap.userInteractions).toBe(s.userInteractions);
+describe('flow-control TTL 清扫', () => {
+  it('超过 TTL 未见且无挂起禁言/冷却的会话被删，其余保留', () => {
+    const now = Date.now();
+    const stale = createState('onebot');
+    stale.lastSeenAt = now - SESSION_TTL_MS - 1;
+    const recent = createState('onebot');
+    recent.lastSeenAt = now - SESSION_TTL_MS + 60_000;
+    const muted = createState('onebot');
+    muted.lastSeenAt = now - SESSION_TTL_MS - 1;
+    muted.mutedUntil = now + 60_000;
+    const cooling = createState('onebot');
+    cooling.lastSeenAt = now - SESSION_TTL_MS - 1;
+    cooling.cooldownUntil = now + 1_000;
+    const states = new Map([
+      ['stale', stale],
+      ['recent', recent],
+      ['muted', muted],
+      ['cooling', cooling],
+    ]);
+
+    expect(sweepStaleStates(states, now)).toBe(1);
+    expect([...states.keys()].sort()).toEqual(['cooling', 'muted', 'recent']);
+  });
+
+  it('禁言/冷却到期后同一会话在下一次清扫时被删', () => {
+    const now = Date.now();
+    const s = createState('onebot');
+    s.lastSeenAt = now - SESSION_TTL_MS - 1;
+    s.mutedUntil = now + 60_000;
+    const states = new Map([['S', s]]);
+    expect(sweepStaleStates(states, now)).toBe(0);
+    expect(sweepStaleStates(states, now + 60_001)).toBe(1);
+    expect(states.size).toBe(0);
   });
 });

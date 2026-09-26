@@ -284,12 +284,12 @@ export function settlePendingActions(
 // ===== 聊天流控类型（已迁移）=====
 //
 // 旧的 ChatFlowConfig / FlowSessionState / 流控函数已抽出到独立插件：
-//   - @aalis/plugin-flow-control   （计数 / 冷却 / 限速 / idle 调度）
-//   - @aalis/plugin-trigger-policy （@/名字检测 + 间隔/评分判定）
+//   - @aalis/plugin-trigger-policy （禁言关键词 / @ / 名字检测 + 计数评分判定 + idle 调度）
+//   - @aalis/plugin-flow-control   （禁言 / 冷却 / 限速）
 // 适配器只保留两个最小桥接：
 //   - 群禁言事件 → flow-control 的 setMuted()
 //   - shut_up_timestamp 启动恢复 → 同上
-// 其他路径全部走 inbound:command/flow/trigger/dispatch 生命周期相位。
+// 其他路径全部走 inbound:command/trigger/flow/dispatch 生命周期相位。
 
 // ===== 工具函数 =====
 
@@ -1730,7 +1730,7 @@ function runAdapter(caps: Caps): void {
       }
 
       // 适配器不再做流控/触发判定 —— 一律送入 inbound:message，
-      // 由 plugin-flow-control / plugin-trigger-policy 在 inbound:flow / inbound:trigger 相位
+      // 由 plugin-trigger-policy / plugin-flow-control 在 inbound:trigger / inbound:flow 相位
       // 决定是否吞噬、归档、或继续派发给 agent。
       // 启动后/重连后通过 shut_up_timestamp 懒查询恢复禁言状态（每会话一次）
       if (sessionType === 'group') {
@@ -2284,7 +2284,7 @@ function runAdapter(caps: Caps): void {
     }
     logger.debug(`OneBot 发送消息 [${msg.sessionId}]: ${content}`);
 
-    // 冷却 / 退避 / idle 调度由 plugin-flow-control 自行处理（监听 outbound:message）
+    // 冷却与限速由 plugin-flow-control、idle 调度由 plugin-trigger-policy 各自监听 outbound:message 处理
 
     adapter.sendMessage(msg.sessionId, content, { skipSplit: msg.source !== 'agent' }).catch(err => {
       logger.warn(`OneBot 发送消息失败(已重试): ${err}`);

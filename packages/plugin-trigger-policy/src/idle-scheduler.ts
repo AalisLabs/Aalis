@@ -3,17 +3,19 @@
 // session 范围：每会话一个 setTimeout，触发时合成 system 提示注入 gateway。
 // platform 范围：跨平台一个 tick，挑"最久未联系"的 session 主动开聊。
 
+import type { FlowControlService } from '@aalis/api-flow-control';
 import { type GatewayService, resolveEffectiveConfig } from '@aalis/api-gateway';
 import type { Events, Logger, ServiceRef } from '@aalis/core';
 import type { IncomingMessage } from '@aalis/schema-message';
-import type { FlowControlConfig } from './config.js';
-import type { MutableFlowSessionState } from './state.js';
+import type { TriggerPolicyConfig } from './config.js';
+import { lastActivityOf, type TriggerSessionState } from './state.js';
 
-/** 调度器用到的能力：日志、入站事件、网关引用 */
+/** 调度器用到的能力：日志、入站事件、网关引用、流控闸门（只读当前提供者） */
 export interface IdleCaps {
   logger: Logger;
   events: Events;
   gateway: ServiceRef<GatewayService>;
+  flowControl: Pick<ServiceRef<FlowControlService>, 'current'>;
 }
 
 const DEFAULT_PROMPT =
@@ -42,10 +44,9 @@ async function injectIdle(caps: IdleCaps, msg: IncomingMessage): Promise<void> {
 
 export function scheduleSessionIdle(
   caps: IdleCaps,
-  cfg: FlowControlConfig,
-  state: MutableFlowSessionState,
+  cfg: TriggerPolicyConfig,
+  state: TriggerSessionState,
   sessionId: string,
-  platform: string,
   reschedule: () => void,
 ): void {
   clearSessionIdle(state);
@@ -65,21 +66,28 @@ export function scheduleSessionIdle(
 
   state.idleTimer = setTimeout(async () => {
     try {
-      caps.logger.info(`[flow] 空闲触发: session=${sessionId} (退避 x${state.idleBackoff})`);
+      // 禁言期不开口：跳过本次并按原退避重排（flow 相位也会吞，这里省掉一次注入）
+      if (caps.flowControl.current?.isMuted(sessionId)) {
+        caps.logger.debug(`[trigger] 空闲触发跳过（禁言中）: session=${sessionId}`);
+        reschedule();
+        return;
+      }
+      caps.logger.info(`[trigger] 空闲触发: session=${sessionId} (退避 x${state.idleBackoff})`);
       if (cfg.idleTriggerStyle === 'exponential') {
         state.idleBackoff = Math.min(state.idleBackoff * 2, 64);
       }
-      await injectIdle(caps, buildIdleMessage(sessionId, platform, cfg.idleTriggerPrompt));
+      state.lastBotActivityAt = Date.now();
+      await injectIdle(caps, buildIdleMessage(sessionId, state.platform, cfg.idleTriggerPrompt));
       reschedule();
     } catch (err) {
       caps.logger.warn(`空闲触发执行失败: ${err}`);
     }
   }, delayMs);
 
-  caps.logger.debug(`[flow] 空闲触发已调度: session=${sessionId}, ${Math.round(delayMs / 60_000)}分钟后`);
+  caps.logger.debug(`[trigger] 空闲触发已调度: session=${sessionId}, ${Math.round(delayMs / 60_000)}分钟后`);
 }
 
-export function clearSessionIdle(state: MutableFlowSessionState): void {
+export function clearSessionIdle(state: TriggerSessionState): void {
   if (state.idleTimer) {
     clearTimeout(state.idleTimer);
     state.idleTimer = null;
@@ -101,8 +109,8 @@ export class PlatformIdleScheduler {
 
   constructor(
     private readonly caps: IdleCaps,
-    private readonly cfg: FlowControlConfig,
-    private readonly states: Map<string, MutableFlowSessionState>,
+    private readonly cfg: TriggerPolicyConfig,
+    private readonly states: Map<string, TriggerSessionState>,
   ) {}
 
   start(): void {
@@ -123,35 +131,29 @@ export class PlatformIdleScheduler {
   private timeUntilAllQuiet(thresholdMs: number): number {
     let maxLast = 0;
     for (const s of this.states.values()) {
-      const last = Math.max(s.lastMessageTime, s.lastReplyTime);
+      const last = lastActivityOf(s);
       if (last > maxLast) maxLast = last;
     }
-    // 没有任何活动记录（states 为空 / 全是恢复出来的空状态）≠「已达标」：直接返回 0 会让
-    // schedule 退化成每秒一 tick 的死转。改用 start() 时刻当基准——从启动起静默满一个阈值
-    // 才算达标。
+    // 没有任何活动记录（states 为空）≠「已达标」：直接返回 0 会让 schedule 退化成每秒一 tick
+    // 的死转。改用 start() 时刻当基准——从启动起静默满一个阈值才算达标。
     const since = maxLast || this.startedAt || Date.now();
     const elapsed = Date.now() - since;
     return Math.max(0, thresholdMs - elapsed);
   }
 
-  /** 选一个最适合主动开聊的 sessionId（带该会话的有效提示词） */
-  private pickTarget(): { sessionId: string; lastActivity: number; platform: string; prompt: string } | null {
-    const now = Date.now();
-    let best: { sessionId: string; lastActivity: number; platform: string; prompt: string } | null = null;
+  /** 选一个最适合主动开聊的会话（带该会话的有效提示词） */
+  private pickTarget(): { sessionId: string; state: TriggerSessionState; lastActivity: number; prompt: string } | null {
+    const flow = this.caps.flowControl.current;
+    let best: { sessionId: string; state: TriggerSessionState; lastActivity: number; prompt: string } | null = null;
     for (const [sid, s] of this.states) {
-      if (s.mutedUntil > now) continue;
-      if (s.cooldownUntil > now) continue;
+      // 过不了流控硬闸的会话不选：选了也会被 flow 相位吞掉，白占一轮
+      if (flow?.isMuted(sid) || flow?.isCoolingDown(sid) || flow?.isRateLimited(sid)) continue;
       const e = resolveEffectiveConfig(this.cfg, s.platform, s.sessionType, s.targetId);
       // per-scope 覆盖单独关掉（'off'）或改成 session 档的会话不能被 platform 档抓来开聊
       if (e.idleTriggerScope !== 'platform') continue;
-      if (e.rateLimitWindow > 0 && e.rateLimitMaxReplies > 0) {
-        const windowStart = now - e.rateLimitWindow * 1000;
-        const used = s.replyTimestamps.filter(t => t > windowStart).length;
-        if (used >= e.rateLimitMaxReplies) continue;
-      }
-      const lastActivity = Math.max(s.lastMessageTime, s.lastReplyTime);
+      const lastActivity = lastActivityOf(s);
       if (!best || lastActivity < best.lastActivity) {
-        best = { sessionId: sid, lastActivity, platform: s.platform, prompt: e.idleTriggerPrompt };
+        best = { sessionId: sid, state: s, lastActivity, prompt: e.idleTriggerPrompt };
       }
     }
     return best;
@@ -164,16 +166,18 @@ export class PlatformIdleScheduler {
     try {
       const target = this.pickTarget();
       if (!target) {
-        this.caps.logger.debug('[flow] platform idle tick: 无可发送候选，跳过');
+        this.caps.logger.debug('[trigger] platform idle tick: 无可发送候选，跳过');
         return;
       }
       this.caps.logger.info(
-        `[flow] platform idle tick: 主动开聊 → ${target.sessionId} ` +
+        `[trigger] platform idle tick: 主动开聊 → ${target.sessionId} ` +
           `(idle=${Math.round((Date.now() - target.lastActivity) / 60_000)}min)`,
       );
-      await injectIdle(this.caps, buildIdleMessage(target.sessionId, target.platform, target.prompt));
+      // 注入即记为 bot 开口：agent 对闲置提示沉默时，下一轮也不会再挑中同一会话
+      target.state.lastBotActivityAt = Date.now();
+      await injectIdle(this.caps, buildIdleMessage(target.sessionId, target.state.platform, target.prompt));
     } catch (err) {
-      this.caps.logger.warn(`[flow] platform idle tick 失败: ${err}`);
+      this.caps.logger.warn(`[trigger] platform idle tick 失败: ${err}`);
     } finally {
       this.running = false;
     }
@@ -207,9 +211,8 @@ export class PlatformIdleScheduler {
         }
       }
       await this.runOnce();
-      // 每轮之后**无条件**退避一个阈值量级：静默达标条件在 tick 之后仍然成立（发出去的那条
-      // 消息要等被处理才会刷新活动时间，无候选时更是压根没变），照 delay===0→1s 重排就是
-      // 1 Hz 死转。发没发出去都一样等，语义是「每轮之间至少隔一个阈值量级」。
+      // 每轮之后**无条件**退避一个阈值量级：无候选时静默达标条件在 tick 之后仍然成立，
+      // 照 delay===0→1s 重排就是 1 Hz 死转。发没发出去都一样等，语义是「每轮之间至少隔一个阈值量级」。
       this.schedule(Math.max(baseMs, IDLE_RETRY_MIN_MS));
     }, delay);
   }

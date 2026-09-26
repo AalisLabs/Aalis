@@ -20,12 +20,14 @@ describe('flow-control overrides (resolveFlowControlConfig)', () => {
     });
     expect(c.overrides).toHaveLength(2);
     expect(c.overrides[0]).toEqual({ scope: '*:private', cooldownSeconds: 10 });
-    expect(c.overrides[1].scope).toBe('onebot:group:20002');
+    expect(c.overrides[1]).toEqual({ scope: 'onebot:group:20002', rateLimitWindow: 60, rateLimitMaxReplies: 3 });
   });
 
-  it('overrides 只保留已知字段（防注入）', () => {
+  it('overrides 只保留已知字段（防注入；评分与闲置字段已不属于本插件）', () => {
     const c = resolveFlowControlConfig({
-      overrides: [{ scope: '*:private', cooldownSeconds: 10, malicious: 'x' } as Record<string, unknown>],
+      overrides: [
+        { scope: '*:private', cooldownSeconds: 10, fixedInterval: 3, malicious: 'x' } as Record<string, unknown>,
+      ],
     });
     expect(c.overrides[0]).toEqual({ scope: '*:private', cooldownSeconds: 10 });
   });
@@ -37,15 +39,13 @@ describe('flow-control overrides 经 resolveEffectiveConfig 生效', () => {
       cooldownSeconds: 5,
       rateLimitWindow: 60,
       rateLimitMaxReplies: 3,
-      idleTriggerPrompt: 'top-default-prompt',
       overrides: [
         {
           scope: '*:private',
           cooldownSeconds: 10,
-          // 其他字段全留空 / 显式空串 / undefined → 应沿用顶层
+          // 其他字段留空 / null / undefined → 应沿用顶层
           rateLimitWindow: undefined,
           rateLimitMaxReplies: null,
-          idleTriggerPrompt: '',
         },
       ],
     });
@@ -53,6 +53,5 @@ describe('flow-control overrides 经 resolveEffectiveConfig 生效', () => {
     expect(eff.cooldownSeconds).toBe(10); // override 生效
     expect(eff.rateLimitWindow).toBe(60); // 穿透
     expect(eff.rateLimitMaxReplies).toBe(3); // 穿透
-    expect(eff.idleTriggerPrompt).toBe('top-default-prompt'); // 空串也穿透
   });
 });
