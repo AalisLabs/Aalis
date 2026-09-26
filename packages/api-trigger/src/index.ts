@@ -7,7 +7,7 @@
 // 其余触发插件对每条消息直接放行，什么都不做。一个都不在时这个相位不做判定，消息照常往下走。
 //
 // 本包另含触发插件共用的宿主函数：生效者判断、禁言关键词、点名识别、附件识别限时等待、
-// 放行收尾与吞掉时的影子归档。它们只读写传入的消息，不持有会话状态。
+// 放行收尾与吞掉时的影子归档。除 isActiveTrigger 按每次入站记下胜者外，不持有状态。
 //
 // 服务名：'trigger'
 // ============================================================
@@ -20,8 +20,8 @@ import { type IncomingMessage, selfInitiatedActor, WellKnownNoticeTypes } from '
 
 /**
  * 触发插件在 trigger 服务里的实例。服务只用来选出生效者：消费方拿胜者与自己的实例比身份，
- * 不调用方法，所以接口只有名字，进日志与诊断（如「当前生效的是某某」）。WebUI 服务页显示的是
- * provide 时传的 label，两处取同一个值。
+ * 不调用方法，所以接口只有名字，进诊断（如 Laya 诊断项报「生效的触发插件是某某」）。WebUI 服务页
+ * 显示的是 provide 时传的 label，两处取同一个值。
  */
 export interface TriggerService {
   readonly label: string;
@@ -34,13 +34,13 @@ type CurrentOf<P> = Pick<ServiceRef<P>, 'current'>;
 
 // ----- 生效者 -----
 
-/** 每次入站（inbound:trigger 的相位数据）取下的胜者 */
+/** 每次入站取下的胜者，以 inbound:trigger 的相位数据对象为键 */
 const judgedBy = new WeakMap<object, TriggerService | undefined>();
 
 /**
  * 这次入站是否由 self 判定。胜者每次入站只取一次：相位里先跑到的触发插件取下 trigger.current，
- * 记在这次的相位数据上，后跑到的沿用它。判定途中切换偏好、停用或重载触发插件时，同一条消息
- * 不会被两个触发插件各判一次。
+ * 以这次的相位数据为键记在本模块的表里，后跑到的沿用它。判定途中切换偏好、停用或重载触发插件时，
+ * 同一条消息不会被两个触发插件各判一次。
  */
 export function isActiveTrigger(phase: object, ref: CurrentOf<TriggerService>, self: TriggerService): boolean {
   if (!judgedBy.has(phase)) judgedBy.set(phase, ref.current);
