@@ -45,8 +45,10 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 │                    平台层 (Platform Layer)                    │
 │   CLI  ·  WebUI (Express+WS+React)  ·  OneBot v11/v12       │
 ├──────────────────────────────────────────────────────────────┤
-│                    流控层 (Flow Control Layer)                │
-│   ChatFlow: 消息缓冲 → 触发评分 → 空闲检测 → 打字延迟        │
+│                  网关入站相位 (Gateway Phases)               │
+│   confirm → command → trigger → flow → dispatch              │
+│   trigger 要不要开口：@/名字/计数评分/闲置主动开口           │
+│   flow 节流硬闸：禁言/冷却/限速                              │
 ├──────────────────────────────────────────────────────────────┤
 │                    任务编排层 (Task Layer)                    │
 │   SessionManager: 会话树 · 子任务并行 · 平台配置继承     │
@@ -81,12 +83,16 @@ Aalis 核心遵循**忒修斯之船**原则：Core 只提供最小化基础设�
 Platform 适配器接收 → 发出 inbound:message 事件
   │
   ▼
-App 路由 → Agent.handleMessage(incoming) 作为中间件默认行为
+plugin-gateway 入站相位链（任一相位吞掉即终止，消息不触达 agent）
+  │     inbound:confirm   待确认回复拦截
+  │     inbound:command   指令解析与执行
+  │     inbound:trigger   要不要开口：禁言关键词、@/戳一戳/名字直通、计数与评分
+  │     inbound:flow      节流硬闸：禁言、回复后冷却、限速
+  │     inbound:dispatch  默认动作 → Agent.handleMessage(incoming)
   │
   ├─ 1. hooks.run('agent:input:before', { message, metadata }, defaultAction)
   │     │
-  │     ├─ [ChatFlow 中间件] 流控拦截/缓冲
-  │     ├─ [其他插件中间件]
+  │     ├─ [预处理中间件] 图像识别、文件提取等
   │     └─ 全部通过 → defaultAction() 进入 Agent 处理
   │
   ├─ 2. buildMessages()

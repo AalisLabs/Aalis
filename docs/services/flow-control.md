@@ -91,7 +91,7 @@ export default definePlugin({
     hooks.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
       const { message } = data;
       if (service.isMuted(message.sessionId)) return; // 禁言期一律不说话
-      if (message.source === 'idle-trigger') return next();
+      if (message.source) return next(); // 内部注入只受禁言约束
       if (message.triggerType !== 'immediate' && service.isCoolingDown(message.sessionId)) return;
       await next();
     });
@@ -119,7 +119,7 @@ if (flow?.isRateLimited(targetSessionId)) return JSON.stringify({ error: '委派
 ## 6. 行为不变量
 
 - **禁言不看作用域、不看来源**。`inbound:flow` 先查禁言：闲置触发、跨会话委派、定时任务注入的消息在禁言期同样被吞。禁言状态只由关键词或平台禁言针对具体会话写入，所以不会误伤作用域外的会话。
-- **immediate 穿透冷却与限速**。被 @、戳一戳、叫名字时即使处于冷却或限速窗口也放行；禁言期除外。
+- **immediate 穿透冷却与限速**。被 @、戳一戳、叫名字时即使处于冷却或限速窗口也放行；禁言期除外。带 `source` 的内部注入（闲置触发、定时任务、workflow、跨会话委派）同样不受冷却与限速约束，只受禁言约束。
 - **作用域先于关键词**。`scopes` / `overrides` 用 `platform:sessionType[:targetId]` 三段通配匹配（匹配函数在 `packages/api-gateway/src/index.ts`，默认 `*:group`）。trigger-policy 在识别禁言关键词之前先判作用域，否则群聊的禁言关键词会作用到 WebUI、私聊等不在作用域内的会话。
 - **禁言态要持久化**。禁言可能是小时级的用户意图，参考实现把 `mutedUntil` 落盘到 `data:/flow-control-mutes.json`，冷却与限速不落盘。该文件读不懂（不存在以外的读取错误、解析失败、顶层不是对象）时，本次运行不再整表回写，禁言改动只在内存生效，storage 换人重读时重新判定。换 provider 时若不持久化，重启会让被禁言的群立即恢复发言。
 - **限速是防刷屏与平台风控的护栏**。冷却与限速记在 agent 真实回复上，对任意会话生效：委派到私聊等从未入站过闸的目标，其回复同样计入限速。自建主动发送通道应发 `source: 'agent'` 的 `outbound:message`，才能被计入。

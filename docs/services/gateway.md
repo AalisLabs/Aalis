@@ -96,7 +96,7 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
   - `packages/plugin-agent/src/index.ts`：**主出站流** —— agent 生成回复后 `gateway.dispatchOutbound(message)` 把出站消息交给 gateway 运行出站钩子链（缺失时回退 `events.emit('outbound:message', message)`，中间件链被跳过）。
   - `packages/plugin-trigger-policy/src/idle-scheduler.ts`：idle 触发，`gateway.ingressMessage(msg)`，缺失时回退 `events.emit('inbound:message', msg)`。
   - `packages/plugin-session-confirm/src/index.ts`：取 gateway 走出站总线投递确认提示。
-- **注册到相位 hook（不直接持有服务，靠 `uses required: ['gateway']` 声明顺序依赖）** —— 各中间件占据一个语义相位：
+- **注册到相位 hook（不经服务接口；hook 键后期绑定，注册与 gateway 的加载先后无关）** —— 各中间件占据一个语义相位：
   - `plugin-session-confirm` → `INBOUND_PHASE.CONFIRM`（`packages/plugin-session-confirm/src/index.ts`）
   - `plugin-commands` → `INBOUND_PHASE.COMMAND`（`packages/plugin-commands/src/index.ts`）
   - `plugin-trigger-policy` → `INBOUND_PHASE.TRIGGER`
@@ -212,7 +212,7 @@ export default definePlugin({
 ## 6. 标准消费方式
 
 - **惰性读取 `.current`，每次用时重新取，不缓存**：`const gw = gateway.current`。provider bounce（卸载/重载）会让旧引用失效；缓存到模块/闭包变量是 bug。详见 `concepts/lazy-service-access.md`。
-- **gateway 视为可选依赖时给出回退**：idle-scheduler 的范式是 `gateway ? gateway.ingressMessage(msg) : events.emit('inbound:message', msg)`（`packages/plugin-trigger-policy/src/idle-scheduler.ts`）。若你的相位插件**必须**有 gateway 才有意义，则在 manifest 写 `uses required: ['gateway']`（如 session-confirm，`packages/plugin-session-confirm/src/index.ts`），让 core 保证加载顺序。
+- **gateway 视为可选依赖时给出回退**：plugin-agent 把 gateway 声明为 `optional`，出站时 `gateway ? gateway.dispatchOutbound(msg) : events.emit('outbound:message', msg)`，缺席时记一条 warn 后走事件总线（`packages/plugin-agent/src/index.ts`）。若插件**必须**调用 gateway 才有意义，则写成 `uses required: ['gateway']`（如 session-confirm 靠它投递确认提示，`packages/plugin-session-confirm/src/index.ts`），gateway 缺席时插件停在 pending、不激活。只注册相位 hook 不需要依赖 gateway。
 - **注册相位 = 用 `hooks.middleware(INBOUND_PHASE.X, (data, next) => ...)`**：洋葱模型，`await next()` 放行进入后续相位；**不调用 `next()`** 即「我已处理」，整条入站管道立即停止、不触达 agent（`packages/plugin-commands/src/index.ts`）。相位内多个 handler 按注册顺序执行，无需优先级数字。`hooks.middleware` 签名见 `packages/api-hooks/src/index.ts`（`Hooks`）。
 - **错误边界**：默认实现把 `processInbound` / `dispatchOutbound` 整体 try/catch 并降级为 `logger.warn`（`packages/plugin-gateway/src/index.ts`）—— 单条消息出错不拖垮总线。你的相位 handler 也应自行兜底，别让异常冒泡出相位链。
 
