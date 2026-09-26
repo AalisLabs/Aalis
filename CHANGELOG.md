@@ -223,7 +223,7 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - 经 `POST /api/page-action/:plugin/:method` 按名调用被删页面动作的脚本，改用 Agent 工具（`user_relation_expand_node` / `user_relation_find_path` / `user_relation_search_events` / `user_relation_delete_edge` 等）或 `/relation` 指令。
 - 被删服务方法的替代：`getPerson(platform, userId)` → `(await service.getNeighborhood('<platform>:<userId>')).person`，或在 `loadAll().persons` 里查找；`findEntityByName(name)` → 已知 kind 时用 `findEntityByKindAndName(kind, name)`（只比对 name、不看 aliases），跨 kind 或按别名查找时在 `loadAll().entities` 上自行比对；`findPersonEntityEdge` / `findPersonEventEdge` → 在 `loadAll().edges` 上按 kind、端点与 role 筛选；`deleteEdge(edgeId)` → `deleteEdgeWithGuard({ edgeId, reason })` 或 `correctEdge({ edgeId, action: 'remove', reason })`，两者都带保护（alias 边禁删；前者拒删 weight ≥ 0.8 或 evidence ≥ 5 的边，后者要求 weight < 0.5），已没有无保护的公开删边方法；`triggerExtraction` / `setTriggerExtractionHandler` 无替代。
 - 读 `crossCommunityDegree` 的改用 `communityWeights.length`。
-- 旧版留下的悬空 is-alias-of 边：`evictionEnabled` 开启（默认）时随提取后的自动清理移除，关闭的运行一次 `/relation cleanup orphans` 或 `/relation maintain`。
+- 旧版留下的悬空 is-alias-of 边：图超出配额、触发超配额淘汰时随其中的孤儿清理移除；图未超配额或关闭了淘汰的实例，运行一次 `/relation cleanup orphans` 或 `/relation maintain`。
 - 向量重算无需手动操作；使用计费 embedding API 的实例会看到一次性的调用量上升。
 
 ### agent、persona 与记忆（@aalis/plugin-agent、@aalis/plugin-persona、@aalis/plugin-memory-vector、@aalis/plugin-memory-summary、@aalis/plugin-user-profile）
