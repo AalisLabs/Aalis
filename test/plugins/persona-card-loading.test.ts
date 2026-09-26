@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type PersonaService, persona } from '../../packages/api-persona/src/index.js';
-import { App, services } from '../../packages/core/src/index.js';
+import { App, type LogEntry, LogHub, services } from '../../packages/core/src/index.js';
 import personaPlugin from '../../packages/plugin-persona/src/index.js';
 import storageLocal from '../../packages/plugin-storage-local/src/index.js';
 import { HUB_PLUGINS } from '../fixtures/hubs.js';
@@ -66,8 +66,8 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     return svc;
   };
 
-  /** storageFirst=false 时 persona 排在 storage-local 前面同批登记 */
-  async function boot(primary: string, storageFirst: boolean): Promise<PersonaService> {
+  /** storageFirst=false 时 persona 排在 storage-local 前面同批登记；传 logHub 时收 warn 及以上的日志 */
+  async function boot(primary: string, storageFirst: boolean, logHub?: LogHub): Promise<PersonaService> {
     const personaEntry = {
       definition: personaPlugin,
       config: { persona: primary, personasDir: 'data/personas', timeInjection: false },
@@ -76,7 +76,7 @@ describe('persona 角色卡载入（真 storage-local）', () => {
       definition: storageLocal,
       config: { roots: [root('workspace', join(base, 'workspace')), root('data', join(base, 'data'))] },
     };
-    app = new App({ name: 'T', logLevel: 'error' });
+    app = new App({ name: 'T', logLevel: logHub ? 'warn' : 'error', logHub });
     await app.pluginAll([
       ...HUB_PLUGINS.map(definition => ({ definition })),
       ...(storageFirst ? [storageEntry, personaEntry] : [personaEntry, storageEntry]),
@@ -133,6 +133,26 @@ describe('persona 角色卡载入（真 storage-local）', () => {
       [],
     ]);
     expect(svc.getPersonaName({ persona: 'missing' })).toBe('Main');
+  });
+
+  it('nick_name 写成单个字符串按一个昵称取、不拆成单字；列表各项去空白、滤掉非字符串与空串；其它类型忽略并记 warn', async () => {
+    writeCard('main.yaml', 'name: Main\nnick_name: 小明同学\ndescription: m\nprompt: m\n');
+    writeCard('b.yaml', "name: Bob\nnick_name: [' 阿B ', '', '  ', 233, 阿波]\ndescription: b\nprompt: b\n");
+    writeCard('c.yaml', 'name: Cat\nnick_name: {a: 1}\ndescription: c\nprompt: c\n');
+    const logHub = new LogHub();
+    const logs: LogEntry[] = [];
+    logHub.onEntry(e => logs.push(e));
+    const svc = await boot('main', true, logHub);
+    await app.start();
+    expect(svc.getNickNames?.()).toEqual(['小明同学']);
+    expect(svc.getNickNames?.({ persona: 'b' })).toEqual(['阿B', '阿波']);
+    expect(svc.getNickNames?.({ persona: 'c' })).toEqual([]);
+    const warns = logs.filter(e => e.level === 'warn').map(e => e.message);
+    expect(warns.some(m => m.includes('nick_name 应为字符串列表') && m.includes('c.yaml'))).toBe(true);
+    expect(
+      warns.filter(m => m.includes('nick_name')).every(m => m.includes('c.yaml')),
+      '只有 c 卡告警',
+    ).toBe(true);
   });
 
   it('热改非主卡的 outputFormat：重扫后提示词与回复字段都换成新的', async () => {

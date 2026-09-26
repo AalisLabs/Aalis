@@ -276,6 +276,7 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - 会话配置的额外系统提示（`SessionConfig.systemPromptExtra`，WebUI 的「额外提示」）开始生效：agent 透传给 persona，追加在人设提示之后、结构化输出格式说明之前；未装 persona 时不生效。
 - persona 不再搜索 `configDir:/personas`，只在 `personasDir`（默认 `data/personas`）查找人设卡。`personasDir` 的配置说明改正为 storage URI 口径（解析方式未变）：不含 `:/` 时首段视为存储根名，单段裸名归 `data` 根。scheduler 等合成回合按 sessionId 约定推断会话类型，只用于提示词、不回写消息；子任务会话（`<父会话 id>::<后缀>`）不推断。
 - persona 的 `getPersonaName` / `getNickNames` 按传入的 `options.persona` 取卡（找不到该卡时回落主卡；卡没写名字时报那张卡的文件名），与 `getSystemPrompt` 等方法同一取法。
+- persona 读角色卡的 `nick_name` 时校验类型：字符串列表的各项去掉首尾空白，非字符串与空串的项丢弃；写成单个字符串时按一个昵称取，此前触发插件的名字表把它拆成单字，含其中任一个字的消息都算点名；其它类型整项忽略，每次载入该卡记一条 warn。
 - persona 的非主卡 `outputFormat` 改为按卡缓存：显示名相同的两张卡不再共用格式，热改非主卡的 `outputFormat` 后无需重启即生效。
 - 结构化输出（persona `outputFormat`）落库时，assistant 消息的 metadata 带解码后的可见正文（`visibleContent`），只在它与落库内容不同时写入。memory-vector 建索引、扩窗与召回的渲染优先读它，memory-summary 的摘要输入同样优先读它，JSON 信封与状态字段不再进入摘要；升级前落库的消息没有这个键，仍按原文呈现。
 - memory_recall 在 `crossSessionMode=user` 下与被动注入一致，对当前用户本人发言或被 @ 的命中乘 `search.userPriorityBoost`（此前工具路径不加权）；回合中止信号传给查询 embedding 与扩窗取数，回合中止时工具返回「回合已中止」，不记 warn。
