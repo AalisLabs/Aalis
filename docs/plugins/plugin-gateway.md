@@ -37,7 +37,7 @@ export default definePlugin({
 |---|---|---|---|
 | `inbound:confirm` | `InboundPhaseData` | plugin-session-confirm | （无）|
 | `inbound:command` | `InboundPhaseData` | plugin-commands | （无）|
-| `inbound:trigger` | `InboundPhaseData` | plugin-trigger-policy | （无）|
+| `inbound:trigger` | `InboundPhaseData` | 生效的触发插件（如 plugin-trigger-policy） | （无）|
 | `inbound:flow` | `InboundPhaseData` | plugin-flow-control | （无）|
 | `inbound:dispatch` | `InboundPhaseData` | — | `agent.handleMessage(message)`；agent 缺失时兜底回复 |
 

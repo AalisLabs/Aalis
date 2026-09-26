@@ -41,7 +41,7 @@ export interface GatewayService {
 export const INBOUND_PHASE = {
   CONFIRM:  'inbound:confirm',  // 会话内待确认回复拦截（plugin-session-confirm）
   COMMAND:  'inbound:command',  // 指令解析与执行（plugin-commands）
-  TRIGGER:  'inbound:trigger',  // 要不要开口：禁言关键词/点名识别/按序问 trigger 提供者（plugin-trigger-policy）
+  TRIGGER:  'inbound:trigger',  // 要不要开口：禁言关键词/点名识别/判定（生效的触发插件，如 plugin-trigger-policy）
   FLOW:     'inbound:flow',     // 节流硬闸：禁言/冷却/限速（plugin-flow-control）
   DISPATCH: 'inbound:dispatch', // 默认派发到 agent.handleMessage（plugin-gateway 提供默认动作）
 } as const;
@@ -99,7 +99,7 @@ gateway 不持有消息类型，只搬运。`IncomingMessage` / `OutgoingMessage
 - **注册到相位 hook（不经服务接口；hook 键后期绑定，注册与 gateway 的加载先后无关）** —— 各中间件占据一个语义相位：
   - `plugin-session-confirm` → `INBOUND_PHASE.CONFIRM`（`packages/plugin-session-confirm/src/index.ts`）
   - `plugin-commands` → `INBOUND_PHASE.COMMAND`（`packages/plugin-commands/src/index.ts`）
-  - `plugin-trigger-policy` → `INBOUND_PHASE.TRIGGER`
+  - 触发插件（`plugin-trigger-policy` 等，只有 `trigger` 服务的胜者判定）→ `INBOUND_PHASE.TRIGGER`
   - `plugin-flow-control` → `INBOUND_PHASE.FLOW`
 
 **平台适配器既不直接调服务、也不注册相位**：它只往事件总线发 `inbound:message`、监听 `outbound:message`。例如 `@aalis/plugin-adapter-onebot`（`provides: [platform]`，`packages/plugin-adapter-onebot/src/index.ts`）在多处 `events.emit('inbound:message', {...})`，并 `events.on('outbound:message', ...)` 发送。这种「适配器只与事件总线交互，gateway 接管编排」是有意的解耦：适配器**不需要**把 `gateway` 写进 `uses`，加载顺序也无所谓（事件是后期绑定的）。
