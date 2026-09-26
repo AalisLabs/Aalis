@@ -75,9 +75,10 @@ interface OutgoingMessage {
 getSenderLabel(nickname?: string, userId?: string): string | undefined;
 prefixSender(content: string, nickname?: string, userId?: string): string;
 getMessageName(userId?: string): string | undefined;
+buildIncomingContent(incoming: IncomingMessage): string;
 ```
 
-用于在 LLM messages 里把发言者前缀化（群聊场景必要）。
+前三个用于在 LLM messages 里把发言者前缀化（群聊场景必要）。`buildIncomingContent` 把入站消息拼成归档文本（发送者前缀、引用回复、附件描述），归档与触发判定共用同一份拼法。
 
 ## 实现者
 

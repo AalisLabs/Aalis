@@ -506,3 +506,5 @@ export {
 } from './attachment-ref.js';
 // ----- 身份标识工具（cleanup-9 从 core 迁入） -----
 export { getMessageName, getSenderLabel, prefixSender } from './identity.js';
+// ----- 入站消息的归档文本（归档与触发判定共用） -----
+export { buildIncomingContent } from './incoming-content.js';

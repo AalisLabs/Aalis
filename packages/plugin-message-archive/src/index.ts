@@ -5,7 +5,7 @@ import { messageArchive } from '@aalis/api-message-archive';
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import type { IncomingMessage, Message } from '@aalis/schema-message';
-import { getMessageName, getSenderLabel, prefixSender, WellKnownKinds } from '@aalis/schema-message';
+import { buildIncomingContent, getMessageName, WellKnownKinds } from '@aalis/schema-message';
 
 const configSchema: ConfigSchema = {
   debugLogs: {
@@ -28,35 +28,6 @@ function extractMentions(text: string): string[] {
     m = re.exec(text);
   }
   return [...ids];
-}
-
-/** 单用户平台：无需发送者前缀（不存在多人说话歧义） */
-const SINGLE_USER_PLATFORMS = new Set(['webui', 'cli']);
-
-function buildIncomingContent(incoming: IncomingMessage): string {
-  const useSenderPrefix = !SINGLE_USER_PLATFORMS.has(incoming.platform);
-  let content = useSenderPrefix ? prefixSender(incoming.content, incoming.nickname, incoming.userId) : incoming.content;
-
-  // 引用回复：把被引用消息的标签 + 内容拼到末尾，作为不可分割的上下文
-  // 与图片描述、forward 摘要相同处理逻辑——把"非当前指令"的素材烘焙进归档文本，
-  // 这样下一轮从 memory 拉历史时仍能看到引用关系。
-  if (incoming.replyTo?.content) {
-    const replyLabel = getSenderLabel(incoming.replyTo.nickname, incoming.replyTo.userId) ?? '?';
-    content += `\n[引用 ${replyLabel} 的消息: ${incoming.replyTo.content}]`;
-  }
-
-  // 把 plugin-media 写入的 _attachmentDescriptions 按 attachments 顺序追加。
-  // 这里是图片/语音/视频描述合入对话文本的**唯一**入口——preprocessor 只负责写 descs，不改 content。
-  const attDescs = incoming._attachmentDescriptions;
-  if (attDescs && attDescs.length > 0) {
-    const lines = attDescs.filter((d): d is string => Boolean(d?.trim()));
-    if (lines.length > 0) {
-      const attachText = lines.join('\n');
-      content = content ? `${content}\n${attachText}` : attachText;
-    }
-  }
-
-  return content;
 }
 
 const uses = { memory, media: optional(media), events, logger, config, provide };
