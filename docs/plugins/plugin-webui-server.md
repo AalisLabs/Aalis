@@ -111,9 +111,9 @@ persist 模式的读回跟随 storage 服务：storage 晚于 WebUI 上线时（
 |---|---|---|
 | `/api/auth/login` · `/api/auth/logout` · `/api/auth/status` | POST · POST · GET | 登录换 cookie / 登出 / 登录状态 |
 | `/api/status` | GET | 系统状态、上传能力检测 |
-| `/api/plugins` | GET | 插件列表（含状态、配置、Schema、错误信息） |
+| `/api/plugins` | GET | 插件列表（含状态、配置、Schema、错误信息）；激活超过慢激活阈值、已转入后台的插件带 `slow: true` |
 | `/api/plugins/:name/config` | GET / PUT | 单插件配置读写；PUT 体为 `{ config }`，热重载该插件后写回配置文档。插件有 `configSchema` 时裁掉未声明的字段：本次提交里的在响应 `ignored` 里点名；配置文档里原有、本次没有提交的随写回从配置文件删除，在响应 `removed` 里点名；两者都附在 `message` 末尾。插件运行中、且提交后的配置与运行态和配置文档都相同时，不重载插件，仍把配置文档写回文件（此前保存写文件失败时，原样重试即可补写），回复「配置无改动，已写回配置文件」 |
-| `/api/plugins/:name/enable` · `/api/plugins/:name/disable` | POST | 热启用 / 热禁用，写回 `disabledPlugins` |
+| `/api/plugins/:name/enable` · `/api/plugins/:name/disable` | POST | 热启用 / 热禁用，写回 `disabledPlugins`。停用仍在初始化的插件而它未在宽限内停止、转为 `error` 态时，照样写回禁用，但返回 500，说明它未在宽限内停止、已转为 `error` 态 |
 | `/api/plugins/scan` | POST | 经宿主的 `plugin-source` 服务重新扫描插件源（范围由宿主的加载器决定），加载新发现且尚未注册的插件；宿主未提供插件来源时返回 503 |
 | `/api/plugins/:name/instances` · `/api/plugins/:instanceId/instance` | POST · DELETE | 多实例插件的创建 / 移除 |
 | `/api/pages` | GET | 所有激活插件注册的 WebUI 页面（按 order 排序） |

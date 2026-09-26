@@ -276,6 +276,7 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - tool-search 只在清理类型为空或含 `context` 时重置已发现工具集，`/clear -t image` 这类无关清理不再重置。
 - todo-list 经 `memory:clear` 清理待办（删除会话同样经这条钩子），不再监听 `session:deleted`；每个被清的会话发一次 `todo:updated`（`items` 为 `[]`）。todo-list 与 adapter-onebot 新增对 `hooks` 服务的可选依赖（`@aalis/api-hooks`）。
 - `/clear list` 与 `/clear` 的帮助里 `context` 的说明注明含摘要与待办，示例 `--type context,summary` 改为 `--type context,vector`。
+- 记忆后端没有实现 `clearAll` 时，`/clear all` 回报一条失败（记忆后端不支持全局清空，消息历史未清理），不再退化为只清当前会话并报成功。
 
 **迁移**：
 - 把数据存在记忆元数据里、靠 `/clear all` 的 `clearAll` 顺带清掉的第三方插件，改为挂 `memory:clear` 中间件，按 `scope` 与 `types` 自行删除自己的命名空间。
@@ -323,7 +324,7 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - 按全文比对 `PluginEntry.error` 的代码，改为按前缀或正则匹配：带 cause 的错误后面多了 ` ← …` 摘要，AggregateError 后面多了 `: 子错误…`。按 `Error: 服务 "…" 不可用` 匹配日志或工具输出的，改为匹配 `ServiceUnavailableError:` 或消息本身。
 - 用 `Proxy` 包装 `app.plugins`、`DefaultLogger` 或 `LogHub` 的，改为另写对象把调用转发给原对象（管理面按 `PluginManagerService` 接口、日志器按 `Logger` 接口实现）。
 
-### 慢激活不再挡住启动，激活可取消（@aalis/core、@aalis/runtime、@aalis/schema-config、@aalis/plugin-doctor、@aalis/plugin-webui-server、@aalis/plugin-adapter-onebot、@aalis/plugin-cron-engine、@aalis/plugin-embedding-ollama、@aalis/plugin-embedding-openai、@aalis/plugin-llm-ollama、@aalis/plugin-llm-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-mcp-client、@aalis/plugin-memory-mongodb）
+### 慢激活不再挡住启动，激活可取消（@aalis/core、@aalis/runtime、@aalis/schema-config、@aalis/plugin-doctor、@aalis/plugin-webui-server、@aalis/plugin-webui-client、@aalis/plugin-adapter-onebot、@aalis/plugin-cron-engine、@aalis/plugin-embedding-ollama、@aalis/plugin-embedding-openai、@aalis/plugin-llm-ollama、@aalis/plugin-llm-openai、@aalis/plugin-llm-deepseek、@aalis/plugin-mcp-client、@aalis/plugin-memory-mongodb）
 
 - 新增 `AppOptions.slowThresholdMs`（慢操作阈值，默认 60000，0 表示不设限）。插件激活超过它仍未完成时记一条 warn 点名，转入后台继续，其余插件照常激活，`register` / `pluginAll` / `plugins.idle()` 在阈值处返回，启动流程不再卡在插件登记，此后每隔同样时长提醒一次「仍在激活」。此前一个不返回的 `apply` 会让启动、`idle()` 与 `stop()` 一直等下去。
 - 后台期间条目停在 `activating`，`getStatus()` 给出 `slow: true`（`PluginStatusEntry.slow`）。它经 `provide` 登记的服务不对外：`services.get` / `all` / `inspect` / `names` 与激活闸都看不到，阈值前已登记的在转入后台时撤下（发 `service:unregistered`），依赖它的插件保持 `pending`。它落定后：成功则转 `active` 并上线服务（发 `service:registered`），依赖方随之激活；失败进 `error`；都另触发一次重算。它的事件监听与经 `registrar` 登记到别处的条目（工具、指令、页面等）照常生效，`app:ready` / `app:started` 监听器可能在它的 `apply` 完成之前被调用。
@@ -335,14 +336,16 @@ plugin-checkpoint 同时删除读取 manifest 时对旧条目的过滤（自指�
 - `disposeTimeoutMs` 与 `slowThresholdMs` 超过 2³¹−1（定时器的最大延迟）时按 2³¹−1 计；此前 `disposeTimeoutMs: Infinity` 会被运行时当成 1ms，清理几乎立刻被放弃等待。
 - runtime 读配置文件顶层的 `slowThresholdMs` 注入 core（重启生效）；不是非负有限数时记一条告警，按默认处理。`CORE_CONFIG_SCHEMA` 增加该键（默认 60000，最小 0），WebUI 设置页可改，保存后自动重启。`PUT /api/config` 对文档里没写的核心键按 schema 默认值比较：前端把默认值回填进草稿后回传不算改动，不写进文件、不触发重启。
 - plugin-doctor 新增 `plugins.slow` 检查：列出激活超过阈值、仍在后台进行的实例（warn）；`plugins.errored` 的文案改为「N 个插件处于 error（激活失败或未在宽限内停止）」。
+- runtime 启动收敛后的 pending 告警与 doctor 的 `plugins.pending`：缺的服务由仍在激活中（含已转入后台）的插件声明提供时，报「等待 <实例> 激活完成」，不再报成缺少服务。
+- plugin-webui-server 的插件列表透传 `slow`；插件卡片显示「激活中」，已转入后台的显示「激活中（超过阈值）」。停用路由遇到插件未在宽限内停止、转为 `error` 时返回 500 并说明实际状态，不再回报「已禁用」，配置文件照样记为禁用。
 - adapter-onebot 与 cron-engine 的「已关闭就不再重连 / 排定时器」判断改读 `lifecycle.signal.aborted`，从本激活收尾段开始生效（此前从关闭计划冻结起）；两者的清理段照常清掉定时器与连接。
-- 第一方插件 `apply` 里等待网络或子进程的步骤改为响应 `lifecycle.signal`，停用、重启或停机时在宽限内落定，不再因「未在宽限内停止」转 `error`。涉及 embedding-ollama 与 embedding-openai 的启动连通性检查，llm-ollama（`/api/tags` 与 `/api/show`）、llm-openai、llm-deepseek 的模型发现，mcp-client 各 server 的握手与列工具（握手中止时子进程随之关闭），memory-mongodb 的连接与建索引（中止时关闭客户端）。中止后 `apply` 不再往下走，不发布服务，也不记探测失败。mcp-client 的 `@modelcontextprotocol/sdk` 下限抬到已验证的 1.29.0（中止握手用到 `Client.connect` 的第二参数）；导出的 `bridgeClientToTools` 新增可选的第四参数 `signal`。
+- 第一方插件 `apply` 里等待网络或子进程的步骤改为响应 `lifecycle.signal`，停用、重启或停机时在宽限内落定，不再因「未在宽限内停止」转 `error`。涉及 embedding-ollama 与 embedding-openai 的启动连通性检查，llm-ollama（`/api/tags` 与 `/api/show`）、llm-openai、llm-deepseek 的模型发现，mcp-client 各 server 的握手与列工具（握手中止时子进程随之关闭），memory-mongodb 的连接与建索引（中止时关闭客户端）。中止后 `apply` 不再往下走，不发布服务，也不记探测失败。llm-ollama 与 llm-openai 由 WebUI 触发的模型刷新同样随停用或停机中止并报错，不再等满请求超时后往已关闭的激活上登记条目。mcp-client 的 `@modelcontextprotocol/sdk` 下限抬到已验证的 1.29.0（中止握手用到 `Client.connect` 的第二参数）；导出的 `bridgeClientToTools` 新增可选的第四参数 `signal`。
 
 **迁移**：
 - `if (lifecycle.closed)` 改为 `if (lifecycle.signal.aborted)`。时机不同：`closed` 在关闭计划冻结时即为 true；`signal` 在本激活收尾段开始时 abort，`apply` 尚未完成的在冻结后立即 abort。依赖「冻结即真」的（例如想在依赖方收尾期间就停止提供），改为在自己的收尾段处理。
 - 插件作者：不要在 `apply` 里做长时间下载或等待外部服务就绪。长任务在 `apply` 里发起、不等，或推迟到首次使用；用 `lifecycle.signal` 取消（`fetch(url, { signal })`、`signal.addEventListener('abort', …)`、循环里查 `signal.aborted`）。不接 `signal` 的慢 `apply` 在后台期间遇到停用、重启或 required 依赖下线，宽限后停在 `error`，依赖恢复后也要手动 `enable`。
 - 需要旧行为（无限等待激活与屏障监听器）的宿主传 `slowThresholdMs: 0`；配置文件里写 `slowThresholdMs: 0`。
-- 读 `PluginStatusEntry` 的工具：`activating` 现在可能持续很久，按 `slow` 区分。依赖某插件服务的插件在它后台激活期间报「缺少服务」，runtime 启动告警与 doctor 的 `plugins.pending` 同样这样列出，与 `plugins.slow` 对照着看。
+- 读 `PluginStatusEntry` 的工具：`activating` 现在可能持续很久，按 `slow` 区分。依赖某插件服务的插件在它后台激活期间保持 `pending`，runtime 启动告警与 doctor 的 `plugins.pending` 把这类缺口报成「等待 <实例> 激活完成」。
 - 测试用 `vi.useFakeTimers()` 的：激活落定前挂着一个阈值定时器，`vi.getTimerCount()` 会把它算进去，`vi.runAllTimers()` 撞上不落定的激活会在提醒定时器上空转。先 `await app.plugins.idle()` 再装假定时器，或用 `vi.runOnlyPendingTimers()`。
 - runtime 的重启策略等新实例报就绪（默认 30 秒）才判定接管成功，报就绪在启动完成之后。`slowThresholdMs` 设得比 30 秒短时，新实例会带着仍在后台激活的插件报就绪，更新失败的回滚不再兜住卡住的激活；需要这层兜底就别把阈值调到 30 秒以下。
 

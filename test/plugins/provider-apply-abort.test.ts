@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { App, type Logger, type PluginDefinition } from '../../packages/core/src/index.js';
+import { llm } from '../../packages/api-llm/src/index.js';
+import { App, type Logger, type PluginDefinition, services } from '../../packages/core/src/index.js';
 import embeddingOllama from '../../packages/plugin-embedding-ollama/src/index.js';
 import embeddingOpenai from '../../packages/plugin-embedding-openai/src/index.js';
 import deepseek from '../../packages/plugin-llm-deepseek/src/index.js';
@@ -102,5 +103,73 @@ describe('启动探测随 lifecycle.signal 中止', () => {
     expect(lines).toEqual([]);
     expect(app.plugins.getPlugin(plugin.name)?.state).toBe('disabled');
     expect(elapsed, '停用应在宽限内返回').toBeLessThan(GRACE_MS);
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// 运行期的模型刷新（WebUI 触发）同样接 lifecycle.signal。不接的话停用时在飞的刷新要等请求自己的
+// 10 秒超时，之后往已关闭的激活上登记条目，记一条「已 dispose」warn。
+//
+// 替身先答最小可用体让插件激活；armed 之后挂起 URL 含 hangOn 的请求，直到它的 signal abort。
+// Ollama 刷新时多报一个新模型，使刷新走到新模型的能力探测。
+// ════════════════════════════════════════════════════════════
+
+function stubFetchForRefresh(hangOn: string): { armed: boolean; hung: string[] } {
+  const state = { armed: false, hung: [] as string[] };
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (state.armed && u.includes(hangOn)) {
+        state.hung.push(u);
+        return new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+        });
+      }
+      const body = u.includes('/api/tags')
+        ? { models: [{ name: 'qwen3:8b' }, ...(state.armed ? [{ name: 'llama3:8b' }] : [])] }
+        : u.includes('/models')
+          ? { data: [{ id: 'gpt-4o' }] }
+          : { capabilities: ['completion'] };
+      return Promise.resolve(Response.json(body));
+    }),
+  );
+  return state;
+}
+
+/** ms 内未落定即以「未落定」拒绝 */
+function within<T>(pending: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${ms}ms 内未落定`)), ms);
+  });
+  return Promise.race([pending, expired]).finally(() => clearTimeout(timer));
+}
+
+const refreshCases: Array<{ name: string; plugin: PluginDefinition; config: Record<string, unknown>; hangOn: string }> =
+  [
+    { name: 'llm-ollama 模型发现', plugin: llmOllama, config: OLLAMA, hangOn: '/api/tags' },
+    { name: 'llm-ollama 新模型的能力探测', plugin: llmOllama, config: OLLAMA, hangOn: '/api/show' },
+    { name: 'llm-openai 模型发现', plugin: llmOpenai, config: GATEWAY, hangOn: '/models' },
+  ];
+
+describe('运行期刷新随 lifecycle.signal 中止', () => {
+  it.each(refreshCases)('$name：停用时在飞的刷新随之中止，不登记条目、不记告警', async ({ plugin, config, hangOn }) => {
+    const state = stubFetchForRefresh(hangOn);
+    const { app, lines } = world();
+    await app.plugin(plugin, config);
+    await app.plugins.idle();
+    const [entry] = app.bind({ services }).services.all(llm);
+    if (!entry?.instance.refresh) throw new Error(`${plugin.name} 未登记可刷新的条目`);
+
+    state.armed = true;
+    const refreshing = entry.instance.refresh();
+    await until(() => state.hung.length > 0, `请求 ${hangOn}`);
+    expect(await app.plugins.disable(plugin.name)).toBe(true);
+
+    await expect(within(refreshing, GRACE_MS)).rejects.toThrow('已开始关闭');
+    await app.plugins.idle();
+    expect(lines).toEqual([]);
+    expect(app.plugins.getPlugin(plugin.name)?.state).toBe('disabled');
   });
 });

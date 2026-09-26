@@ -5,14 +5,15 @@
 //   AALIS_E2E_MODE     'subcommand'（默认；按 process.argv 分发）| 'daemon'（传 subcommands: []，
 //                      startAalis 返回后自发 SIGTERM，验证守护路径的文件日志与优雅退出仍在）
 //   AALIS_E2E_SLOW_MS  内联插件 onDispose 的延迟毫秒数（>=500 即让 app.stop 慢过重启策略的等待窗口）
-//   AALIS_E2E_APPLY_MS 设了才多登记一个内联插件 e2e-slow，其 apply 延迟这么多毫秒（验证配置里的慢操作阈值）
+//   AALIS_E2E_APPLY_MS 设了才多登记两个内联插件：e2e-slow 提供 e2e-slow-svc，其 apply 延迟这么多毫秒（验证配置里的
+//                      慢操作阈值）；e2e-waiting 依赖 e2e-slow-svc 与没人提供的 e2e-missing-svc（验证启动收敛后的 pending 告警）
 //
 // 代数护栏：cwd/gen.txt 记录本入口被启动的次数。若重启策略在子命令模式下被错误注入，`restart`
 // 子命令会 spawn 一个 argv 仍带 restart 的 detached 子进程——第二代在这里立刻退出，不再往下走，
 // 测试据 gen.txt 断言只有一代。
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { config, definePlugin, lifecycle, provide, services } from '@aalis/core';
+import { config, definePlugin, defineService, lifecycle, provide, services } from '@aalis/core';
 import { commands } from '../../packages/api-commands/src/index.js';
 import { hostConfig } from '../../packages/api-host-config/src/index.js';
 import { pluginSource } from '../../packages/api-plugin-source/src/index.js';
@@ -57,11 +58,22 @@ const plugin = definePlugin({
 export default plugin;
 
 const applyMs = process.env.AALIS_E2E_APPLY_MS;
+const slowService = defineService<object>('e2e-slow-svc');
 const slowPlugin = definePlugin({
   name: 'e2e-slow',
-  apply: () => new Promise<void>(r => setTimeout(r, Number(applyMs))),
+  provides: [slowService],
+  uses: { provide },
+  async apply({ provide }) {
+    provide(slowService, {});
+    await new Promise<void>(r => setTimeout(r, Number(applyMs)));
+  },
 });
-const inline = applyMs === undefined ? [plugin] : [plugin, slowPlugin];
+const waitingPlugin = definePlugin({
+  name: 'e2e-waiting',
+  uses: { slow: slowService, missing: defineService<object>('e2e-missing-svc') },
+  apply() {},
+});
+const inline = applyMs === undefined ? [plugin] : [plugin, slowPlugin, waitingPlugin];
 
 const pluginLoader = {
   async discover() {

@@ -1,4 +1,4 @@
-import type { Logger } from '@aalis/core';
+import type { AppOptions, Logger } from '@aalis/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type AalisConfig, ConfigSaveRefusedError, hostConfig } from '../../packages/api-host-config/src/index.js';
 import {
@@ -13,6 +13,7 @@ import { registerPluginRoutes } from '../../packages/plugin-webui-server/src/rou
 import { type ConfigProvider, createConfigStore } from '../../packages/runtime/src/config-store.js';
 import { hostedApp, registerFromDoc } from '../fixtures/app.js';
 import { captureRoutes } from '../fixtures/webui-routes.js';
+import { deferred } from '../helpers/deferred.js';
 
 // 管理动作只改运行态；WebUI 的启停与改配置路由在动作成功后自己写配置文档并落盘。
 // 这里用真实 App 与真实路由：按落盘的文档重建 App，状态要与重启前一致。
@@ -38,8 +39,17 @@ const target = definePlugin({
  * `provideDoc: false`：宿主持有文档、照它登记，但不把它作为 host-config 交给插件。
  * `rejectSave`：落盘一律被拒（同 runtime 在配置文件有尚未生效的外部修改时拒写）。
  * `failSave`：落盘一律写入失败（权限、磁盘写满等，文件不变）。两个故障开关经返回的 `faults` 可中途改。
+ * `timing`：慢激活阈值与拆卸宽限，交给 App。
  */
-function world(config: Partial<AalisConfig>, { provideDoc = true, rejectSave = false, failSave = false } = {}) {
+function world(
+  config: Partial<AalisConfig>,
+  {
+    provideDoc = true,
+    rejectSave = false,
+    failSave = false,
+    timing = {} as Pick<AppOptions, 'slowThresholdMs' | 'disposeTimeoutMs'>,
+  } = {},
+) {
   const saved: AalisConfig[] = [];
   const faults = { rejectSave, failSave };
   const provider: ConfigProvider = {
@@ -50,9 +60,9 @@ function world(config: Partial<AalisConfig>, { provideDoc = true, rejectSave = f
     },
   };
   const { app, store } = provideDoc
-    ? hostedApp(config, { logger: silent, provider })
+    ? hostedApp(config, { logger: silent, provider, ...timing })
     : {
-        app: new App({ name: 'T', logLevel: 'error', logger: silent }),
+        app: new App({ name: 'T', logLevel: 'error', logger: silent, ...timing }),
         store: createConfigStore({ name: 'T', logLevel: 'error', plugins: {}, ...config }, provider),
       };
   apps.push(app);
@@ -167,6 +177,29 @@ describe('WebUI 管理路由自己写文档并落盘，重启后状态一致', (
     expect(w.app.plugins.getPlugin('console')?.state).toBe('disabled');
     expect(w.store.isPluginDisabled('console')).toBe(true);
     expect(w.saved).toHaveLength(1);
+  });
+
+  it('停用时插件未在宽限内停止、以 error 收场：回 500 按实际状态说明，文档仍记为禁用并落盘', async () => {
+    const w = world(
+      { name: 'T', logLevel: 'error', plugins: {} },
+      { timing: { slowThresholdMs: 20, disposeTimeoutMs: 20 } },
+    );
+    const gate = deferred();
+    try {
+      await w.boot(definePlugin({ name: 'deaf', apply: () => gate.promise }));
+      expect(w.app.plugins.getPlugin('deaf')?.state).toBe('activating');
+
+      const reply = await w.disable('deaf');
+      expect(w.app.plugins.getPlugin('deaf')?.state).toBe('error');
+      expect(reply.status).toBe(500);
+      expect(reply.body).toEqual({
+        error: '插件 deaf 未在宽限内停止，已转为 error 态，详见日志；配置文件已记为禁用',
+      });
+      expect(w.store.isPluginDisabled('deaf')).toBe(true);
+      expect(w.saved).toHaveLength(1);
+    } finally {
+      gate.resolve();
+    }
   });
 
   it('宿主没提供 host-config：启停与改配置路由 503，运行态与文档都不动', async () => {

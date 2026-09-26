@@ -140,6 +140,7 @@ export function registerPluginRoutes(
         instanceId: p.instanceId,
         displayName: p.displayName,
         state: p.state,
+        slow: p.slow,
         provides: p.provides ?? [],
         // 完整能力声明含内置能力与 apply 别名；外部依赖闸与工具/指令可见性仍是各自独立的事实。
         uses: p.uses,
@@ -471,8 +472,16 @@ export function registerPluginRoutes(
       return;
     }
     if (success) {
+      // 仍在初始化、不响应 abort 的插件，宽限到期转 error 而非 disabled：照样记为禁用（重启时不再激活），但按实际状态回报
+      const stuck = pm.getPlugin(pluginName)?.state === 'error';
       doc.setPluginEnabled(pluginName, false);
       if (!(await saveAfterApply(doc, res, 'restart'))) return;
+      if (stuck) {
+        res
+          .status(500)
+          .json({ error: `插件 ${pluginName} 未在宽限内停止，已转为 error 态，详见日志；配置文件已记为禁用` });
+        return;
+      }
       res.json({ ok: true, message: `插件 ${pluginName} 已禁用` });
     } else {
       res.status(404).json({ error: `插件 ${pluginName} 不在注册表或已处于终态，无法禁用` });

@@ -69,6 +69,8 @@ export interface PluginInfo {
   instanceId: string;
   displayName?: string;
   state: string;
+  /** 激活超过慢激活阈值仍未完成、已转入后台（state 为 activating）时为 true */
+  slow?: boolean;
   provides: string[];
   /** 该插件注册到全局工具表的工具名列表（用于搜索）。后端 /api/plugins 反向索引。 */
   tools?: string[];
