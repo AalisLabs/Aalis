@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { PersonaService } from '../../packages/api-persona/src/index.js';
+import type { PersonaService, PersonaSessionOptions } from '../../packages/api-persona/src/index.js';
+import type { SessionManagerService } from '../../packages/api-session-manager/src/index.js';
 import {
   type AddressOptions,
   archiveSwallowed,
@@ -25,6 +26,10 @@ const personasRef = (...services: PersonaService[]) => ({
   all: (): ServiceView<PersonaService>[] =>
     services.map((instance, i) => ({ instance, contextId: `persona-${i}`, priority: 0 })),
 });
+/** session-manager 缺席：名字表不带参数取（全局默认的卡） */
+const NO_SM = { current: undefined };
+/** 名字表按会话取时传的消息：只用 sessionId 与 platform */
+const AT_GROUP = { sessionId: 'onebot:10000:group:20001', platform: 'onebot' };
 const NO_NAMES: string[] = [];
 const opts = (extra: Partial<AddressOptions> = {}): AddressOptions => ({
   triggerOnAt: true,
@@ -87,12 +92,13 @@ describe('createBotNames', () => {
     const { logger } = recordingLogger();
     const names = createBotNames(
       personasRef(card('Aalis', ['', '小A', 'Aalis']), card('Bob', ['阿狸', 7])),
+      NO_SM,
       logger,
       '[t]',
     );
-    expect(names(['阿狸', ''])).toEqual(['阿狸', 'Aalis', '小A', 'Bob']);
-    expect(names([]), '每次调用现取').toEqual(['Aalis', '小A', 'Bob', '阿狸']);
-    expect(createBotNames(personasRef(), logger, '[t]')(['别名'])).toEqual(['别名']);
+    expect(names(['阿狸', ''], AT_GROUP)).toEqual(['阿狸', 'Aalis', '小A', 'Bob']);
+    expect(names([], AT_GROUP), '每次调用现取').toEqual(['Aalis', '小A', 'Bob', '阿狸']);
+    expect(createBotNames(personasRef(), NO_SM, logger, '[t]')(['别名'], AT_GROUP)).toEqual(['别名']);
   });
 
   it('某个人设读名字抛错：只跳过它的名字，其余照常；同一原因只告警一次，恢复后再出错再告警', () => {
@@ -105,28 +111,104 @@ describe('createBotNames', () => {
         return 'Carol';
       },
     };
-    const names = createBotNames(personasRef(flaky, card('Aalis', ['小A'])), logger, '[t]');
-    expect(names(['别名'])).toEqual(['别名', 'Aalis', '小A']);
-    expect(names(['别名'])).toEqual(['别名', 'Aalis', '小A']);
+    const names = createBotNames(personasRef(flaky, card('Aalis', ['小A'])), NO_SM, logger, '[t]');
+    expect(names(['别名'], AT_GROUP)).toEqual(['别名', 'Aalis', '小A']);
+    expect(names(['别名'], AT_GROUP)).toEqual(['别名', 'Aalis', '小A']);
     expect(warns).toHaveLength(1);
     expect(warns[0]).toMatch(/^\[t\] 人设「persona-0」读名字失败.*persona 故障/);
 
     reason = '另一个故障';
-    names([]);
+    names([], AT_GROUP);
     expect(warns, '原因变了再记一次').toHaveLength(2);
     reason = undefined;
-    expect(names([])).toEqual(['Carol', 'Aalis', '小A']);
+    expect(names([], AT_GROUP)).toEqual(['Carol', 'Aalis', '小A']);
     reason = '另一个故障';
-    names([]);
+    names([], AT_GROUP);
     expect(warns, '读成功一次后再出错，同一原因也再记').toHaveLength(3);
   });
 
   it('人设全部抛错时只剩别名，点名识别照常（不抛错）', () => {
     const { logger } = recordingLogger();
-    const names = createBotNames(personasRef(broken('故障甲'), broken('故障乙')), logger, '[t]');
-    expect(names(['阿狸'])).toEqual(['阿狸']);
-    expect(isAddressed(text('阿狸在吗'), names(['阿狸']), opts())).toBe(true);
-    expect(isAddressed(text('随便聊聊'), names(['阿狸']), opts())).toBe(false);
+    const names = createBotNames(personasRef(broken('故障甲'), broken('故障乙')), NO_SM, logger, '[t]');
+    expect(names(['阿狸'], AT_GROUP)).toEqual(['阿狸']);
+    expect(isAddressed(text('阿狸在吗'), names(['阿狸'], AT_GROUP), opts())).toBe(true);
+    expect(isAddressed(text('随便聊聊'), names(['阿狸'], AT_GROUP), opts())).toBe(false);
+  });
+
+  /** 按 options.persona 选卡的人设提供者（同 plugin-persona：没有该卡时回落主卡），记下每次调用收到的参数 */
+  function cards(primary: [string, string[]], others: Record<string, [string, string[]]>) {
+    const calls: Array<PersonaSessionOptions | undefined> = [];
+    const pick = (o?: PersonaSessionOptions) => (o?.persona && others[o.persona]) || primary;
+    const svc: PersonaService = {
+      getSystemPrompt: () => '',
+      getPersonaName: o => {
+        calls.push(o);
+        return pick(o)[0];
+      },
+      getNickNames: o => pick(o)[1],
+    };
+    return { svc, calls };
+  }
+
+  /** session-manager 替身：按会话 ID 给 persona，记下每次解析的参数 */
+  function sessionManagerOf(byId: Record<string, string>) {
+    const resolved: Array<[string, string | undefined]> = [];
+    const svc = {
+      resolveConfig: (sessionId: string, platform?: string) => {
+        resolved.push([sessionId, platform]);
+        return { persona: byId[sessionId] };
+      },
+    } as unknown as SessionManagerService;
+    return { ref: { current: svc }, resolved };
+  }
+
+  it('按会话取：session-manager 解析会话配置，其中的 persona 传给每个人设提供者；两个会话各用各的卡', () => {
+    const { logger } = recordingLogger();
+    const first = cards(['Aalis', ['小A']], { bob: ['Bob', ['阿B']] });
+    const second = cards(['Carol', []], {});
+    const sm = sessionManagerOf({ 'onebot:10000:group:1': 'bob' });
+    const names = createBotNames(personasRef(first.svc, second.svc), sm.ref, logger, '[t]');
+    const inBob = { sessionId: 'onebot:10000:group:1', platform: 'onebot' };
+    const inMain = { sessionId: 'onebot:10000:group:2', platform: 'onebot' };
+
+    expect(names(['别名'], inBob)).toEqual(['别名', 'Bob', '阿B', 'Carol']);
+    expect(names(['别名'], inMain)).toEqual(['别名', 'Aalis', '小A', 'Carol']);
+    expect(sm.resolved).toEqual([
+      ['onebot:10000:group:1', 'onebot'],
+      ['onebot:10000:group:2', 'onebot'],
+    ]);
+    expect(second.calls, '每个提供者收到同一份会话选项').toEqual([{ persona: 'bob' }, { persona: undefined }]);
+  });
+
+  it('session-manager 缺席：不带参数取（全局默认的卡）', () => {
+    const { logger } = recordingLogger();
+    const one = cards(['Aalis', []], { bob: ['Bob', []] });
+    expect(createBotNames(personasRef(one.svc), NO_SM, logger, '[t]')([], AT_GROUP)).toEqual(['Aalis']);
+    expect(one.calls).toEqual([undefined]);
+  });
+
+  it('session-manager 解析抛错：按全局默认的卡取、照常返回名字；同一原因只告警一次，解析成功后再出错再告警', () => {
+    const { logger, warns } = recordingLogger();
+    const one = cards(['Aalis', []], { bob: ['Bob', []] });
+    let failure: string | undefined = '会话库不可用';
+    const sm = {
+      current: {
+        resolveConfig: () => {
+          if (failure) throw new Error(failure);
+          return { persona: 'bob' };
+        },
+      } as unknown as SessionManagerService,
+    };
+    const names = createBotNames(personasRef(one.svc), sm, logger, '[t]');
+    expect(names(['别名'], AT_GROUP)).toEqual(['别名', 'Aalis']);
+    expect(names(['别名'], AT_GROUP)).toEqual(['别名', 'Aalis']);
+    expect(warns).toEqual(['[t] 解析会话配置失败，名字表按全局默认的人设取: Error: 会话库不可用']);
+
+    failure = undefined;
+    expect(names([], AT_GROUP)).toEqual(['Bob']);
+    failure = '会话库不可用';
+    names([], AT_GROUP);
+    expect(warns, '解析成功一次后再出错，同一原因也再记').toHaveLength(2);
   });
 });
 

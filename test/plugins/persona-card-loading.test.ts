@@ -120,6 +120,21 @@ describe('persona 角色卡载入（真 storage-local）', () => {
     expect(promptB).not.toContain('"msgA"');
   });
 
+  it('名字与昵称按 options 取卡：不传取主卡；指定的卡没写名字时报那张卡的文件名；找不到该卡时回落主卡', async () => {
+    writeCard('main.yaml', 'name: Main\nnick_name: [小M]\ndescription: m\nprompt: m\n');
+    writeCard('b.yaml', 'name: Bob\nnick_name: [阿B]\ndescription: b\nprompt: b\n');
+    writeCard('nameless.yaml', 'description: n\nprompt: n\n');
+    const svc = await boot('main', true);
+    await app.start();
+    expect([svc.getPersonaName(), svc.getNickNames?.()]).toEqual(['Main', ['小M']]);
+    expect([svc.getPersonaName({ persona: 'b' }), svc.getNickNames?.({ persona: 'b' })]).toEqual(['Bob', ['阿B']]);
+    expect([svc.getPersonaName({ persona: 'nameless' }), svc.getNickNames?.({ persona: 'nameless' })]).toEqual([
+      'nameless，未设置名字',
+      [],
+    ]);
+    expect(svc.getPersonaName({ persona: 'missing' })).toBe('Main');
+  });
+
   it('热改非主卡的 outputFormat：重扫后提示词与回复字段都换成新的', async () => {
     writeCard('main.yaml', 'name: Main\ndescription: m\nprompt: m\n');
     writeCard('a.yaml', formatCard('Alice', 'old'));

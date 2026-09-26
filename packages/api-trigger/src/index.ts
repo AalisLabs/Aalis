@@ -8,14 +8,15 @@
 //
 // 本包另含触发插件共用的宿主函数：生效者判断、禁言关键词、名字表与点名识别、附件识别限时等待、
 // 放行收尾与吞掉时的影子归档。模块状态只有 isActiveTrigger 按每次入站记下的胜者；createBotNames
-// 返回的名字表各自记着告警过的人设故障，归调用方的激活所有。日志前缀由调用方传入（如 '[laya]'）。
+// 返回的名字表各自记着告警过的故障，归调用方的激活所有。日志前缀由调用方传入（如 '[laya]'）。
 //
 // 服务名：'trigger'
 // ============================================================
 
 import type { MediaService } from '@aalis/api-media';
 import type { MessageArchiveService } from '@aalis/api-message-archive';
-import type { PersonaService } from '@aalis/api-persona';
+import type { PersonaService, PersonaSessionOptions } from '@aalis/api-persona';
+import type { SessionManagerService } from '@aalis/api-session-manager';
 import { defineService, type Logger, type ServiceRef } from '@aalis/core';
 import { type IncomingMessage, selfInitiatedActor, WellKnownNoticeTypes } from '@aalis/schema-message';
 
@@ -84,34 +85,59 @@ function mentionsSelf(content: string): boolean {
 }
 
 /**
- * 建一个名字表：每次调用现取，返回别名（triggerNames）与全部已登记人设的名字、昵称的并集，去重、去空，
- * 别名在前、人设按服务解析顺序在后。触发插件激活时建一个，点名识别与 Laya 发给侧车的 selfNames 用同一份。
+ * 建一个名字表：每次调用按这条消息的会话现取，返回别名（triggerNames）与全部已登记人设的名字、昵称的并集，
+ * 去重、去空，别名在前、人设按服务解析顺序在后。触发插件激活时建一个，点名识别与 Laya 发给侧车的 selfNames
+ * 用同一份。
  *
- * 取全部人设提供者（persona.all()）而不只取当前胜者：现状是 agent 只用当前生效的那一个人设
- * （getPersonaName 不带会话参数），同时装了多个人设插件时，叫其中任何一个的名字都算叫她。将来 persona
- * 能按会话取人设时，改为按会话取名字的只有这一处。
+ * 人设按会话取，与 agent 同一取法：session-manager 解析这个会话的配置（resolveConfig(sessionId, platform)），
+ * 其中的 persona（会话用的角色卡）传给每个人设提供者的 getPersonaName / getNickNames。会话改用别的角色卡时，
+ * 那张卡的名字、昵称算点名，主卡的不算。session-manager 缺席时不带参数取（全局默认的卡）；解析抛错时同样
+ * 不带参数取，记一条 warn，同一原因只记一次（解析成功一次后再出错会再记）。
  *
- * 某个人设提供者读名字抛错时只跳过它的名字，其余照常：记一条 warn，同一提供者同一原因只记一次
- * （它读成功一次后再出错会再记）。禁言关键词不从 persona 读：避免角色卡措辞成为禁言开关，也避免进程级
- * 单例 persona 跨平台泄漏。
+ * 取全部人设提供者（persona.all()）而不只取当前胜者：同时装了多个人设插件时，叫其中任何一个的名字都算点名。
+ * 某个人设提供者读名字抛错时只跳过它的名字，其余照常：记一条 warn，同一提供者同一原因只记一次（它读成功一次后
+ * 再出错会再记）。禁言关键词不从 persona 读：避免角色卡措辞成为禁言开关，也避免进程级单例 persona 跨平台泄漏。
  */
 export function createBotNames(
   persona: AllOf<PersonaService>,
+  sessionManager: CurrentOf<SessionManagerService>,
   logger: Logger,
   tag: string,
-): (triggerNames: readonly string[]) => string[] {
+): (triggerNames: readonly string[], message: Pick<IncomingMessage, 'sessionId' | 'platform'>) => string[] {
   /** 正在出错的提供者 → 已告警的原因 */
   const failing = new WeakMap<PersonaService, string>();
-  return triggerNames => {
+  /** session-manager 解析会话配置时已告警的原因；undefined = 上次解析成功 */
+  let resolveFailure: string | undefined;
+
+  /** 这个会话的人设选项；session-manager 缺席或解析抛错时为 undefined（全局默认的卡） */
+  function sessionOptions(message: Pick<IncomingMessage, 'sessionId' | 'platform'>): PersonaSessionOptions | undefined {
+    const sm = sessionManager.current;
+    if (!sm) return undefined;
+    try {
+      const options = { persona: sm.resolveConfig(message.sessionId, message.platform).persona };
+      resolveFailure = undefined;
+      return options;
+    } catch (err) {
+      const reason = `${err}`;
+      if (resolveFailure !== reason) {
+        resolveFailure = reason;
+        logger.warn(`${tag} 解析会话配置失败，名字表按全局默认的人设取: ${reason}`);
+      }
+      return undefined;
+    }
+  }
+
+  return (triggerNames, message) => {
     const names = new Set<string>();
     const add = (n: unknown) => {
       if (typeof n === 'string' && n) names.add(n);
     };
     for (const n of triggerNames) add(n);
+    const options = sessionOptions(message);
     for (const { instance, contextId, label } of persona.all()) {
       let own: unknown[];
       try {
-        own = [instance.getPersonaName(), ...(instance.getNickNames?.() ?? [])];
+        own = [instance.getPersonaName(options), ...(instance.getNickNames?.(options) ?? [])];
       } catch (err) {
         const reason = `${err}`;
         if (failing.get(instance) !== reason) {
