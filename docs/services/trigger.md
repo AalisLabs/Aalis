@@ -74,8 +74,8 @@ export default definePlugin({
         async decide({ message, addressed, awaitAttachmentDescriptions }) {
           if (message.attachments?.length) await awaitAttachmentDescriptions();
           const cur = buildIncomingContent(message); // 与归档逐字一致的当前消息文本
-          const score = await myModel(cur, addressed); // 自带超时；失败时返回 null 弃权
-          if (score === undefined) return null;
+          const score = await myModel(cur, addressed); // 自带超时；无法判定（未就绪、出错、超时）时返回 undefined
+          if (score === undefined) return null; // 弃权，交给后面的提供者
           return { speak: score >= 0, reason: 'my-model', score };
         },
       },
@@ -89,7 +89,7 @@ export default definePlugin({
 
 - `decide` 在宿主截止时间（`decisionTimeoutMs`，默认 2000 毫秒）内给出结论，否则按弃权处理；等附件识别的时间不计入。宿主放弃后不会取消提供者手里的请求，提供者应自带更短的超时。
 - 不写 `message`，不依赖宿主的会话状态；需要历史上下文的自己从 memory 取。`reason` 里不放消息原文。
-- 不能开口时返回 `null` 让后面的提供者判，而不是 `{ speak: false }`；后者会直接吞掉这条消息。
+- 无法判定（未就绪、出错、超时）时返回 `null`，交给后面的提供者；判定为不开口时返回 `{ speak: false }`，这条消息会被影子归档后吞掉，后面的提供者不再被问。
 
 ## 5. 标准消费方式
 
