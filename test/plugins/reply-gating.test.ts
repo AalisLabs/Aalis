@@ -714,6 +714,23 @@ describe('冷却与限速', () => {
     expect(h.flow().isCoolingDown(sid(G))).toBe(true);
   });
 
+  it('回复记账：scopes 为空、只靠按群号写的覆盖启用的安静群，按推断出的目标判作用域', async () => {
+    const G = '20001';
+    const h = await setup({
+      flow: { scopes: [], cooldownSeconds: 0, overrides: [{ scope: `onebot:group:${G}`, cooldownSeconds: 30 }] },
+    });
+    await h.reply(sid(G)); // 没有任何入站经过 flow 相位
+    expect(h.flow().isCoolingDown(sid(G))).toBe(true);
+  });
+
+  it('回复记账：推断先用状态里记下的平台，再回落出站平台（只有禁言记录的群，回复的平台为 internal）', async () => {
+    const h = await setup({ flow: { cooldownSeconds: 30 } });
+    h.flow().setMuted(sid('20001'), 1, 'onebot'); // 状态只有平台
+    await advance(2_000);
+    await h.reply(sid('20001'), 'internal');
+    expect(h.flow().isCoolingDown(sid('20001'))).toBe(true);
+  });
+
   it('回复记账：作用域内的群照常计入冷却与限速，委派超限被拒', async () => {
     const h = await setup({
       flow: { cooldownSeconds: 30, rateLimitWindow: 60, rateLimitMaxReplies: 1 },
@@ -793,7 +810,8 @@ describe('冷却与限速', () => {
 
 // ────────────────────────────────────────────────────────────
 // 内部注入：带 source 的消息（闲置触发、定时任务、workflow、跨会话委派）不经触发策略，
-// flow 相位对它不查回复后冷却，禁言与限速照常。真人消息由适配器投递，不设 source。
+// flow 相位对它不查回复后冷却，禁言与限速照常。这些消息不带会话类型，flow 判作用域时与回复记账同一口径：
+// 先用会话记下的平台与类型，没有再按会话 ID 约定推断。真人消息由适配器投递，不设 source。
 // ────────────────────────────────────────────────────────────
 describe('内部注入（带 source）', () => {
   /** 与 plugin-scheduler / plugin-workflow / plugin-tool-session 投递的消息同形：无 sessionType */
@@ -852,8 +870,8 @@ describe('内部注入（带 source）', () => {
     expect(h.idles()).toHaveLength(1);
   });
 
-  it('flow 作用域为 * 时，带 source 的消息不受冷却挡，但受禁言挡', async () => {
-    const h = await setup({ flow: { scopes: ['*'], cooldownSeconds: 60 }, autoReply: () => true });
+  it('flow：带 source 的消息不受冷却挡，但受禁言挡（默认作用域下按会话 ID 推断为群）', async () => {
+    const h = await setup({ flow: { cooldownSeconds: 60 }, autoReply: () => true });
     const G = '20001';
 
     await h.send(groupMsg(G, `${AT}在吗`)); // agent 回复 → 60s 冷却
@@ -867,20 +885,82 @@ describe('内部注入（带 source）', () => {
     expect(h.contents(), '禁言期内部注入同样不说话').not.toContain('禁言中的定时提醒');
   });
 
-  it('flow 作用域为 * 时，带 source 的消息仍受限速挡', async () => {
+  it('定时任务发往安静群（默认作用域，按会话 ID 推断为群）：不受冷却挡；限速窗口已满时被吞并影子归档，窗口过后放行', async () => {
+    // 旧行为：入站只看消息自带的 sessionType，内部注入不带，默认 *:group 下算作用域外、不过限速闸
+    const archived: IncomingMessage[] = [];
     const h = await setup({
-      flow: { scopes: ['*'], cooldownSeconds: 0, rateLimitWindow: 60, rateLimitMaxReplies: 1 },
+      flow: { cooldownSeconds: 60, rateLimitWindow: 60, rateLimitMaxReplies: 2 },
       autoReply: () => true,
+      archived,
     });
     const G = '20001';
 
-    await h.send(workflow(sid(G), '窗口内第一条')); // 放行并回复 → 占满 1 个名额
-    await h.send(workflow(sid(G), '窗口内第二条'));
-    expect(h.contents(), '限速窗口已满时内部注入被挡').toEqual(['窗口内第一条']);
+    await h.send(scheduled(sid(G), '提醒 1')); // 放行并回复 → 60s 冷却，占 1 个名额
+    await advance(1_000);
+    await h.send(scheduled(sid(G), '冷却中的提醒 2')); // 不受冷却挡；回复后占满 2 个名额
+    expect(h.contents()).toEqual(['提醒 1', '冷却中的提醒 2']);
 
-    await advance(61_000);
-    await h.send(workflow(sid(G), '窗口过后'));
-    expect(h.contents()).toContain('窗口过后');
+    await h.send(scheduled(sid(G), '限速中的提醒 3'));
+    await h.send(workflow(sid(G), '限速中的工作流通知'));
+    expect(h.contents(), '限速窗口已满时内部注入被吞').toEqual(['提醒 1', '冷却中的提醒 2']);
+    expect(
+      archived.map(m => m.content),
+      '被吞的做影子归档',
+    ).toEqual(['限速中的提醒 3', '限速中的工作流通知']);
+
+    await advance(60_000);
+    await h.send(scheduled(sid(G), '窗口过后的提醒 4'));
+    expect(h.contents()).toContain('窗口过后的提醒 4');
+  });
+
+  it('发往私聊与 WebUI 的定时任务不受影响：推断为私聊或类型未知，默认作用域外照常放行', async () => {
+    const h = await setup({
+      flow: { cooldownSeconds: 60, rateLimitWindow: 60, rateLimitMaxReplies: 1 },
+      autoReply: () => true,
+    });
+    const webui = (content: string): IncomingMessage => ({
+      content,
+      sessionId: 'webui-default',
+      platform: 'webui',
+      source: 'scheduler',
+    });
+
+    for (const i of [1, 2]) {
+      await h.send(scheduled(privateSid('30001'), `私聊提醒 ${i}`));
+      await h.send(webui(`WebUI 提醒 ${i}`));
+    }
+    expect(h.contents()).toEqual(['私聊提醒 1', 'WebUI 提醒 1', '私聊提醒 2', 'WebUI 提醒 2']);
+  });
+
+  it('平台为 internal、会话 ID 前缀为 onebot 的定时任务发往安静群：不推断，维持作用域外', async () => {
+    // WebUI 与配置文件里建的定时任务平台默认是 internal；回复沿用这个平台，同样不推断、不计
+    const h = await setup({
+      flow: { cooldownSeconds: 60, rateLimitWindow: 60, rateLimitMaxReplies: 1 },
+      autoReply: () => true,
+    });
+    const internal = (content: string): IncomingMessage => ({
+      ...scheduled(sid('20001'), content),
+      platform: 'internal',
+    });
+
+    await h.send(internal('提醒 1'));
+    await h.send(internal('提醒 2'));
+    expect(h.contents()).toEqual(['提醒 1', '提醒 2']);
+    expect(h.flow().isRateLimited(sid('20001'))).toBe(false);
+  });
+
+  it('会话已记下平台与类型时，平台为 internal 的定时任务按记下的判作用域，回复同样计入', async () => {
+    const h = await setup({
+      flow: { cooldownSeconds: 0, rateLimitWindow: 60, rateLimitMaxReplies: 2 },
+      autoReply: () => true,
+    });
+    const G = '20001';
+    const internal = (content: string): IncomingMessage => ({ ...scheduled(sid(G), content), platform: 'internal' });
+
+    await h.send(groupMsg(G, `${AT}在吗`)); // 真人消息记下 onebot / group；回复占 1 个名额
+    await h.send(internal('提醒 1')); // 放行；回复的平台是 internal，按记下的计入，占满 2 个名额
+    await h.send(internal('限速中的提醒 2'));
+    expect(h.contents()).toEqual([`${AT}在吗`, '提醒 1']);
   });
 
   it('flow 相位：禁言期闲置注入也被吞，解禁后放行', async () => {
