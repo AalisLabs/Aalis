@@ -400,9 +400,9 @@ function run(caps: Caps): void {
         `${verdict.abstained.length > 0 ? ` | 弃权=${verdict.abstained.join(',')}` : ''}`,
     );
 
+    // 放行与吞掉都不等判定期间启动的附件识别：agent 预处理器与归档对同一个消息对象调
+    // processMessage，按对象记忆命中这次识别（在途则等它），不再识别第二遍
     if (!decision.speak) {
-      // 判定期间启动过附件识别：等它跑完再归档，归档直接用写好的描述，不再识别一遍
-      await attachments.settle();
       await shadowArchive(message);
       return; // swallow
     }
@@ -419,8 +419,6 @@ function run(caps: Caps): void {
     if (kind === 'interval' && message.sessionType !== 'private' && !message.actor) {
       message.actor = selfInitiatedActor(message.platform);
     }
-    // 同上：往下传之前等识别跑完，agent 预处理器与归档直接用写好的描述
-    await attachments.settle();
     await next();
   });
 

@@ -5,7 +5,7 @@
 
 ## 概述
 
-持久化会话消息（入站消息、助手回复、平台 notice 等）以供检索；入站消息落库前会把发送者前缀（webui、cli 平台除外）、引用回复内容和附件描述合进归档文本。注册 `message-archive` 服务（`MessageArchiveService`，契约见 `@aalis/api-message-archive`），提供 `saveMessage` / `archiveIncoming` / `archiveNotice` / `findByMessageId` 四个方法。本插件不自行存储，所有写入与读取均委派给 `memory` 服务（必需依赖），且每次调用时懒查服务引用。入站消息带附件且 `_attachmentDescriptions` 尚未预设时，调用可选的 `media` 服务的 `processMessage` 识别附件。
+持久化会话消息（入站消息、助手回复、平台 notice 等）以供检索；入站消息落库前会把发送者前缀（webui、cli 平台除外）、引用回复内容和附件描述合进归档文本。注册 `message-archive` 服务（`MessageArchiveService`，契约见 `@aalis/api-message-archive`），提供 `saveMessage` / `archiveIncoming` / `archiveNotice` / `findByMessageId` 四个方法。本插件不自行存储，所有写入与读取均委派给 `memory` 服务（必需依赖），且每次调用时懒查服务引用。入站消息带附件且 `_attachmentDescriptions` 尚未预设时，调用可选的 `media` 服务的 `processMessage` 识别附件。识别对传入的消息对象做，结果写回入参：`processMessage` 按消息对象只处理一次，触发判定已启动的识别在这里命中（在途则等它），不再识别第二遍。
 
 ## 插件声明
 

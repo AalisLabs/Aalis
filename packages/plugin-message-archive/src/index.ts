@@ -66,6 +66,20 @@ function createArchiveService({ memory, media, events, logger, config }: Caps): 
     },
 
     async archiveIncoming(incoming: IncomingMessage) {
+      // 调用 plugin-media 一站式处理（识别 attachments 并写回 _attachmentDescriptions）
+      // 仅在 preprocessor 尚未运行（_attachmentDescriptions 未预设）时才调用，避免重复识别。
+      // 对传入的消息对象调用（识别结果随之写回入参）：processMessage 按消息对象只处理一次，
+      // 触发判定已启动的识别在这里命中（在途则等它），对拷贝调用会再识别一遍
+      if (incoming.attachments && incoming.attachments.length > 0 && !incoming._attachmentDescriptions) {
+        const mediaSvc = media.current;
+        if (mediaSvc) {
+          const report = await mediaSvc.processMessage(incoming);
+          if (debugLogs && report.total > 0) {
+            logger.debug(`附件识别完成: ${report.successCount}/${report.total} 个成功 | ${incoming.content}`);
+          }
+        }
+      }
+
       const working: IncomingMessage = {
         ...incoming,
         attachments: incoming.attachments ? incoming.attachments.map(a => ({ ...a })) : incoming.attachments,
@@ -73,18 +87,6 @@ function createArchiveService({ memory, media, events, logger, config }: Caps): 
           ? [...incoming._attachmentDescriptions]
           : incoming._attachmentDescriptions,
       };
-
-      // 调用 plugin-media 一站式处理（识别 attachments 并写回 _attachmentDescriptions）
-      // 仅在 preprocessor 尚未运行（_attachmentDescriptions 未预设）时才调用，避免重复识别。
-      if (working.attachments && working.attachments.length > 0 && !working._attachmentDescriptions) {
-        const mediaSvc = media.current;
-        if (mediaSvc) {
-          const report = await mediaSvc.processMessage(working);
-          if (debugLogs && report.total > 0) {
-            logger.debug(`附件识别完成: ${report.successCount}/${report.total} 个成功 | ${working.content}`);
-          }
-        }
-      }
 
       const content = buildIncomingContent(working);
 
