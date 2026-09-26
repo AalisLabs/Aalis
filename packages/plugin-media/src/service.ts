@@ -348,10 +348,6 @@ export class MediaServiceImpl implements MediaService {
     return pending;
   }
 
-  isRecognizeOnArrivalEnabled(): boolean {
-    return this.cfg.vision.recognizeOnArrival;
-  }
-
   private async recognizeMessage(msg: IncomingMessage): Promise<MediaProcessReport> {
     const attachments = normalizeAttachments(msg);
     const report: MediaProcessReport = { total: attachments.length, successCount: 0, items: [] };

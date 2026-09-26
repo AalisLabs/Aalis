@@ -184,7 +184,7 @@ interface SetupOptions {
   laya?: Record<string, unknown>;
   /** memory 替身；null = 不提供 memory */
   memory?: Partial<MemoryService> | null;
-  media?: { processMessage(msg: IncomingMessage): Promise<unknown>; isRecognizeOnArrivalEnabled?(): boolean };
+  media?: { processMessage(msg: IncomingMessage): Promise<unknown> };
   /** persona 提供者，按顺序登记（先登记者为胜者） */
   personas?: PersonaService[];
   /** session-manager 替身：只用 resolveConfig */
@@ -977,29 +977,72 @@ describe('plugin-trigger-laya：诊断项', () => {
     expect((await diagnose()).level).toBe('ok');
   });
 
-  it('生效时 media 在图片到达时不识别：warn，说明判定看不到图片内容；开启、未实现该方法、未生效时不报', async () => {
-    const media = (enabled?: boolean) => ({
-      processMessage: async () => ({}),
-      ...(enabled === undefined ? {} : { isRecognizeOnArrivalEnabled: () => enabled }),
+  describe('带图消息判定时只有图片指针', () => {
+    const IMAGE = { kind: 'image', data: 'https://example.invalid/a.jpg' } as const;
+    const POINTER = '[图片 | ref:data/images/a.png]';
+    const BLIND =
+      '条判定时只有图片指针、没有内容描述：media 未开启图片到达即识别（vision.recognizeOnArrival），或没有可用的识别模型';
+
+    /** 按给定写法写图片描述位的 media 替身（undefined = 识别跑完但没有描述） */
+    function describing(desc: () => string | undefined) {
+      return {
+        async processMessage(msg: IncomingMessage) {
+          msg._attachmentDescriptions = msg.attachments?.map(a => (a.kind === 'image' ? desc() : undefined));
+          return {};
+        },
+      };
+    }
+
+    it('近 20 条带图消息里只有指针的达到 10 条：生效时 warn 并说明两种可能原因；未生效不报；有描述的挤出窗口后恢复 ok', async () => {
+      let desc: string | undefined = POINTER;
+      const { host, send, diagnose } = await setup({ media: describing(() => desc) });
+      const image = (content: string) => send(groupMsg(content, { attachments: [IMAGE] }));
+
+      // 指针与空描述位都算只有指针；不带图的消息（没有附件、只带文件）不计
+      for (let i = 0; i < 5; i++) await image(`指针 ${i}`);
+      desc = undefined;
+      for (let i = 0; i < 4; i++) await image(`空 ${i}`);
+      await send(groupMsg('没有附件'));
+      await send(groupMsg('只带文件', { attachments: [{ kind: 'file', data: 'aalis-file://f1', name: 'a.txt' }] }));
+      expect((await diagnose()).level, '9 条还不到门限').toBe('ok');
+      await image('空 4');
+      const blind = await diagnose();
+      expect(blind.level).toBe('warn');
+      expect(blind.message).toBe(`Laya 触发判定生效中：侧车在线（版本 v-test）；近 10 条带图消息有 10 ${BLIND}`);
+
+      // 切到规则判定：本插件不判定，不报
+      host.provide(trigger, { label: '规则（计数/评分）' }, { label: '规则（计数/评分）' });
+      const rule = host.services.all(trigger).find(v => v.label === '规则（计数/评分）');
+      host.services.prefer(trigger, rule?.contextId ?? '');
+      const inactive = await diagnose();
+      expect(inactive.level).toBe('ok');
+      expect(inactive.message).not.toContain('指针');
+      const laya = host.services.all(trigger).find(v => v.label === LAYA_LABEL);
+      host.services.prefer(trigger, laya?.contextId ?? '');
+
+      // 有描述的、识别失败的占位都不算只有指针：再来 10 条，窗口 20 条里只有指针的仍是 10 条
+      desc = '[图片: 一只猫 | ref:data/images/a.png]';
+      for (let i = 0; i < 9; i++) await image(`有描述 ${i}`);
+      desc = '[图片：获取或识别失败，内容未知]';
+      await image('识别失败');
+      expect((await diagnose()).message).toContain(`近 20 条带图消息有 10 ${BLIND}`);
+      // 第 21 条把最早的一条挤出窗口
+      await image('再一条');
+      expect(await diagnose()).toMatchObject({ level: 'ok', message: 'Laya 触发判定生效中：侧车在线（版本 v-test）' });
     });
-    const off = await setup({ media: media(false) });
-    const r = await off.diagnose();
-    expect(r.level).toBe('warn');
-    expect(r.message).toBe(
-      'Laya 触发判定生效中：侧车在线（版本 v-test）；media 未开启图片到达即识别（vision.recognizeOnArrival）：' +
-        '带图消息判定时只有图片指针、没有内容描述',
-    );
 
-    expect((await (await setup({ media: media(true) })).diagnose()).level).toBe('ok');
-    expect((await (await setup({ media: media() })).diagnose()).level, '未实现视为未知').toBe('ok');
+    it('不计入：附件识别超过 mediaWaitMs 还没写回、media 缺席', async () => {
+      const gate = deferred();
+      const { svc } = fakeMedia(() => gate.promise);
+      const slow = await setup({ laya: { mediaWaitMs: 20 }, media: svc });
+      for (let i = 0; i < 10; i++) await slow.send(groupMsg(`慢 ${i}`, { attachments: [IMAGE] }));
+      expect((await slow.diagnose()).level).toBe('ok');
+      gate.resolve();
 
-    // 切到规则判定：本插件不判定，图片识不识别不影响它
-    off.host.provide(trigger, { label: '规则（计数/评分）' }, { label: '规则（计数/评分）' });
-    const rule = off.host.services.all(trigger).find(v => v.label === '规则（计数/评分）');
-    off.host.services.prefer(trigger, rule?.contextId ?? '');
-    const inactive = await off.diagnose();
-    expect(inactive.level).toBe('ok');
-    expect(inactive.message).not.toContain('recognizeOnArrival');
+      const noMedia = await setup();
+      for (let i = 0; i < 10; i++) await noMedia.send(groupMsg(`无 media ${i}`, { attachments: [IMAGE] }));
+      expect((await noMedia.diagnose()).level).toBe('ok');
+    });
   });
 
   it('未生效时侧车不可达：warn，并点名当前生效的触发插件', async () => {

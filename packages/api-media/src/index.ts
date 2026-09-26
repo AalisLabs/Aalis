@@ -135,13 +135,6 @@ export interface MediaService {
    */
   processMessage(msg: IncomingMessage): Promise<MediaProcessReport>;
 
-  /**
-   * 图片到达时是否识别出内容描述（plugin-media 的 vision.recognizeOnArrival）。false 时 processMessage 给图片
-   * 只写指针 `[图片 | ref:…]`，不写内容描述。只读，供要看附件描述的消费方诊断用（如 plugin-trigger-laya 的
-   * 诊断项）；未实现视为未知。
-   */
-  isRecognizeOnArrivalEnabled?(): boolean;
-
   // ===== 描述缓存 / 上下文构造（image-rec 合并而来）=====
 
   /**
