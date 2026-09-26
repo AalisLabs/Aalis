@@ -1107,8 +1107,16 @@ async function startWebuiServer(caps: Caps): Promise<void> {
     heartbeat.track(ws);
 
     ws.on('message', async data => {
+      // 非 JSON 帧与形状不对的帧同属协议违规：都只记一行告警，外层 catch 留给真正的处理失败
+      let raw: unknown;
       try {
-        const parseResult = WSIncomingSchema.safeParse(JSON.parse(data.toString()));
+        raw = JSON.parse(data.toString());
+      } catch {
+        logger.warn('WebUI 收到协议违规消息: 非 JSON 帧');
+        return;
+      }
+      try {
+        const parseResult = WSIncomingSchema.safeParse(raw);
         if (!parseResult.success) {
           logger.warn(
             `WebUI 收到协议违规消息: ${parseResult.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`,

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { authority } from '../../packages/api-authority/src/index.js';
 import { type StorageRootInfo, type StorageService, storage } from '../../packages/api-storage/src/index.js';
-import { type App, provide } from '../../packages/core/src/index.js';
+import { type App, type Logger, provide } from '../../packages/core/src/index.js';
 import { AuthorityManager } from '../../packages/plugin-authority/src/authority-manager.js';
 import authorityPlugin from '../../packages/plugin-authority/src/index.js';
 import { hostedApp } from '../fixtures/app.js';
@@ -57,6 +57,7 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
   it('flushed() 等到写真正完成；不等它则写还在飞', async () => {
     const done = { written: false };
     const m = new AuthorityManager(mkConfig({ owners: [] }), silentLogger(), slowStorage(done));
+    await m.init(); // 首次读取落定之前 save 不写盘
 
     m.setUserLevel({ platform: 'onebot', userId: 'alice' }, -5); // 封禁：安全语义，丢不得
     m.save();
@@ -99,6 +100,77 @@ describe('authority 落盘必须可被拆卸路径等待', () => {
     await m.flushed();
     expect(payloads, '第一次写失败后链仍能续上').toHaveLength(2);
     expect(JSON.parse(payloads[1] ?? '{}').users['onebot:alice'].level).toBe(-5);
+  });
+
+  // 写链回调里的上报本身也会失败：拒绝值转不成字符串（null 原型对象），或日志订阅者同步抛错。
+  // 链一旦停在 rejected，flushed() 抛、此后的写不再发出，load 收尾那次无人等待的保存还会成为未处理的拒绝。
+  it('写失败的拒绝值转不成字符串：照样记 error、置失败标记，flushed() 不抛', async () => {
+    const errors: unknown[][] = [];
+    const logger = {
+      child: () => logger,
+      debug() {},
+      info() {},
+      warn() {},
+      error: (...args: unknown[]) => errors.push(args),
+    } as unknown as Logger;
+    const storage = {
+      async readFile() {
+        throw new Error('不存在');
+      },
+      async writeFile() {
+        throw Object.create(null);
+      },
+    } as unknown as StorageService;
+    const m = new AuthorityManager(mkConfig({ owners: [] }), logger, storage);
+    await m.init();
+
+    m.setUserLevel({ platform: 'onebot', userId: 'alice' }, -5);
+    m.save();
+    await expect(m.flushed(), '失败回调拼接拒绝值时抛错，链停在拒绝').resolves.toBeUndefined();
+    expect(m.lastSaveFailed).toBe(true);
+    expect(errors, '写失败没有记下 error').toHaveLength(1);
+  });
+
+  it('日志订阅者同步抛错：写成功与写失败的上报都不让链停在拒绝', async () => {
+    const payloads: string[] = [];
+    let failing = false;
+    const storage = {
+      async readFile() {
+        throw new Error('不存在');
+      },
+      async writeFile(_uri: string, data: string) {
+        if (failing) throw new Error('ENOSPC');
+        payloads.push(data);
+      },
+    } as unknown as StorageService;
+    // 只让等级表那一层的日志抛：manager 自己的 debug 照常。首次读取落定之前 save 不写盘，
+    // 读取时的日志照常，读完才开始抛
+    let sinkBroken = false;
+    const sink = (): void => {
+      if (sinkBroken) throw new Error('sink 挂了');
+    };
+    const storeLogger = { child: () => storeLogger, debug: sink, info: sink, warn: sink, error: sink };
+    const logger = { child: () => storeLogger, debug() {}, info() {}, warn() {}, error() {} } as unknown as Logger;
+    const m = new AuthorityManager(mkConfig({ owners: [] }), logger, storage);
+    await m.init();
+    sinkBroken = true;
+    const alice = { platform: 'onebot', userId: 'alice' };
+
+    m.setUserLevel(alice, 3);
+    m.save();
+    await expect(m.flushed(), '写成功的上报抛错，链停在拒绝').resolves.toBeUndefined();
+
+    failing = true;
+    m.setUserLevel(alice, -5);
+    m.save();
+    await expect(m.flushed(), '写失败的上报抛错，链停在拒绝').resolves.toBeUndefined();
+    expect(m.lastSaveFailed).toBe(true);
+
+    failing = false;
+    m.setUserLevel(alice, -6);
+    m.save();
+    await m.flushed();
+    expect(JSON.parse(payloads.at(-1) ?? '{}').users['onebot:alice'].level, '链停在拒绝后不再真正写盘').toBe(-6);
   });
 
   it('装配真实 plugin-authority 后 app.stop 等到 onDispose 落盘', async () => {

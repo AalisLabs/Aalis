@@ -17,6 +17,26 @@ function toUri(input: string): string {
   return s ? toStorageUri(s) : 'data:/aalis.db';
 }
 
+/**
+ * 开库失败的说明。better-sqlite3 在首次构造 Database 时才加载原生绑定，加载失败报 ERR_DLOPEN_FAILED：
+ * 原文含 NODE_MODULE_VERSION 才是编译它的 Node 与当前 Node 的模块 ABI 不同，给出重编指引并附原文首行
+ * （含 .node 文件路径）；架构不符、缺系统库等其它加载失败，重编未必管用，只说明是原生模块加载失败并照录原文。
+ */
+function describeOpenError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message.includes('NODE_MODULE_VERSION')) {
+    return (
+      `better-sqlite3 原生模块的编译版本与当前 Node（${process.version}，NODE_MODULE_VERSION ${process.versions.modules}）` +
+      '不符，常见于装依赖后换了 Node 大版本。请用装依赖时的 Node 启动，或在项目根执行 npm rebuild better-sqlite3' +
+      `（pnpm 工程用 pnpm rebuild better-sqlite3）。原始错误：${message.split('\n', 1)[0]}`
+    );
+  }
+  if ((err as NodeJS.ErrnoException | undefined)?.code === 'ERR_DLOPEN_FAILED') {
+    return `better-sqlite3 原生模块无法加载：${message}`;
+  }
+  return message;
+}
+
 const configSchema: ConfigSchema = {
   path: {
     type: 'string',
@@ -432,8 +452,7 @@ export default definePlugin({
         caps.logger.info('SQLite 数据库已关闭');
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`SQLite 打开失败: ${message}`);
+      throw new Error(`SQLite 打开失败: ${describeOpenError(err)}`, { cause: err });
     }
   },
 });

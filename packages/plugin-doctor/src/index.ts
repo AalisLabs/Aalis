@@ -17,9 +17,12 @@ import {
   logger,
   optional,
   type PluginManagerService,
+  type PluginStatusEntry,
   pluginsService,
   provide,
   type ServiceRef,
+  type Services,
+  services,
 } from '@aalis/core';
 
 const PLUGIN_NAME = '@aalis/plugin-doctor';
@@ -28,6 +31,7 @@ const uses = {
   provide,
   logger,
   events,
+  services,
   plugins: optional(pluginsService),
   commands: optional(commands),
   webui: optional(webuiServer),
@@ -144,12 +148,12 @@ export default definePlugin({
   subsystem: 'platform',
   provides: [doctor],
   uses,
-  apply({ provide, logger, events, plugins, commands, webui }) {
+  apply({ provide, logger, events, services, plugins, commands, webui }) {
     const registry = new DoctorRegistry({ logger, events });
     provide(doctor, registry);
 
     // 注册 builtin 检查项（与第三方插件走同一条注册路径，自然出现在 listChecks 里）
-    registerBuiltinChecks(registry, plugins);
+    registerBuiltinChecks(registry, plugins, services);
 
     for (const page of webuiPages) webui.registerPage(page);
 
@@ -178,7 +182,11 @@ export default definePlugin({
 //
 // `plugins.status` 留在这里：它读 PluginManager（核心服务），不属于任何业务插件领域；
 // 若未来 PluginManager 自带 self-check，可一并迁走。
-function registerBuiltinChecks(reg: DoctorRegistry, plugins: ServiceRef<PluginManagerService>): void {
+function registerBuiltinChecks(
+  reg: DoctorRegistry,
+  plugins: ServiceRef<PluginManagerService>,
+  services: Services,
+): void {
   reg.registerCheck({
     id: 'env.node',
     category: 'env',
@@ -222,6 +230,11 @@ function registerBuiltinChecks(reg: DoctorRegistry, plugins: ServiceRef<PluginMa
       const errored = status.filter(s => s.state === 'error');
       const pending = status.filter(s => s.state === 'pending');
       const active = status.filter(s => s.state === 'active');
+      // 与 runtime 启动收敛后的 pending 告警同一判据：required 服务当前没有任何提供者登记
+      const describePending = (p: PluginStatusEntry): string => {
+        const unmet = (p.requiredServices ?? []).filter(svc => services.inspect(svc).length === 0);
+        return unmet.length > 0 ? `${p.instanceId}: 缺少 ${unmet.join('、')}` : p.instanceId;
+      };
       return [
         {
           id: 'plugins.active',
@@ -241,7 +254,7 @@ function registerBuiltinChecks(reg: DoctorRegistry, plugins: ServiceRef<PluginMa
           category: 'plugins',
           level: pending.length === 0 ? 'ok' : 'warn',
           message: pending.length === 0 ? '无未就绪插件' : `${pending.length} 个插件 required deps 未满足`,
-          detail: pending.length > 0 ? pending.map(p => p.instanceId).join(', ') : undefined,
+          detail: pending.length > 0 ? pending.map(describePending).join('\n') : undefined,
         },
       ];
     },

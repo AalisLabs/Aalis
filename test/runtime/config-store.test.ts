@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { type AalisConfig, hostConfig } from '../../packages/api-host-config/src/index.js';
+import { type AalisConfig, ConfigSaveRefusedError, hostConfig } from '../../packages/api-host-config/src/index.js';
 import {
   type App,
   config,
@@ -10,7 +10,7 @@ import {
   provide,
   services,
 } from '../../packages/core/src/index.js';
-import { ConfigSaveRefusedError, createConfigStore } from '../../packages/runtime/src/config-store.js';
+import { createConfigStore } from '../../packages/runtime/src/config-store.js';
 import { hostedApp, registerFromDoc, type TempConfigHandle, tempConfig } from '../fixtures/app.js';
 
 // ════════════════════════════════════════════════════════════
@@ -372,7 +372,15 @@ describe('host-config 的 save 契约（installHostConfig 交给插件的那一�
     await expect(docOf(app).save()).rejects.toThrow('disk full');
   });
 
-  it('provider 拒写（盘上有尚未生效的外部修改）：只记一行告警、不带栈，调用方仍拿到拒绝', async () => {
+  /** 进程里另一份 @aalis/api-host-config 的拒写类：类身份不同，名字相同 */
+  class ForeignCopyRefusedError extends Error {
+    override name = 'ConfigSaveRefusedError';
+  }
+
+  it.each([
+    ['本包的拒写类', ConfigSaveRefusedError],
+    ['另一份 api-host-config 的同名类', ForeignCopyRefusedError],
+  ] as const)('provider 拒写（盘上有尚未生效的外部修改，%s）：只记一行告警、不带栈，调用方仍拿到拒绝', async (_label, Refused) => {
     const { errors, warns, logger } = capture();
     const { app } = track(
       hostedApp(
@@ -381,15 +389,13 @@ describe('host-config 的 save 契约（installHostConfig 交给插件的那一�
           logger,
           provider: {
             save: () => {
-              throw new ConfigSaveRefusedError(
-                '配置文件有尚未生效的外部修改，为免覆盖已拒绝本次保存（/x/aalis.config.yaml）',
-              );
+              throw new Refused('配置文件有尚未生效的外部修改，为免覆盖已拒绝本次保存（/x/aalis.config.yaml）');
             },
           },
         },
       ),
     );
-    await expect(docOf(app).save()).rejects.toBeInstanceOf(ConfigSaveRefusedError);
+    await expect(docOf(app).save()).rejects.toBeInstanceOf(Refused);
     await new Promise(r => setTimeout(r, 0));
     expect(errors).toEqual([]);
     expect(warns).toEqual([

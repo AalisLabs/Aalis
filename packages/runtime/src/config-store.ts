@@ -7,17 +7,9 @@
 // 本模块不碰文件（无 node: import）：持久化与外部变更监听由注入的 ConfigProvider 完成。
 // ============================================================
 
-import { type AalisConfig, type HostConfig, hostConfig } from '@aalis/api-host-config';
+import { type AalisConfig, type HostConfig, hostConfig, isConfigSaveRefused } from '@aalis/api-host-config';
 import { type App, events, provide, services } from '@aalis/core';
 import { cloneConfigObject, isUnsafeConfigKey } from '@aalis/schema-config';
-
-/**
- * 提供者因配置源有尚未生效的外部修改而拒写：可预期的拒绝（盘上内容受保护），不是落盘故障。
- * 宿主据此只记一条告警，不当作错误上报。
- */
-export class ConfigSaveRefusedError extends Error {
-  override name = 'ConfigSaveRefusedError';
-}
 
 /**
  * 配置提供者：负责持久化层。文档由宿主在构造前自己加载好传入，provider 不必提供 load()。
@@ -140,7 +132,7 @@ export function installHostConfig(app: App, store: ConfigStore): void {
         done.catch(err => {
           try {
             // 拒写是保护盘上外部修改的预期结果，调用方已收到拒绝：一行告警即可，不带栈
-            if (err instanceof ConfigSaveRefusedError) app.logger.warn(`配置未保存：${err.message}`);
+            if (isConfigSaveRefused(err)) app.logger.warn(`配置未保存：${err.message}`);
             else app.logger.error('配置保存失败:', err);
           } catch {
             /* 上报器自身失败不再外抛 */

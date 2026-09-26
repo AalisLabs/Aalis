@@ -7,6 +7,7 @@
 - `hostConfig`：服务描述符。Node 宿主 `@aalis/runtime` 把配置文档（`aalis.config.yaml`）以它独占登记在根上；别的宿主要让插件读写文档，自己提供。管理类插件（WebUI、市场、CLI、authority）在 `uses` 里声明它。
 - `HostConfig`：文档读写面加 `save()`。写方法只改文档；管理动作只改运行态。要跨重启保留，调用方两边都写。
 - `AalisConfig`：配置文档类型，也是各域业务字段做 declaration merging 的目标。
+- `ConfigSaveRefusedError` / `isConfigSaveRefused(err)`：配置源有尚未生效的外部修改、宿主为免覆盖而拒写时 `save()` 的拒绝原因，以及用来把它与写入失败区分的判据。判据按错误的 `name` 判定，进程里装有两份本包时也认得。
 
 ## 安装
 

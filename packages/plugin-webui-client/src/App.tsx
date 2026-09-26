@@ -383,6 +383,12 @@ export function App() {
     api<Record<string, unknown>>('/api/config').then(setConfig).catch(() => {});
   }, []);
 
+  /** 全局配置保存后：只改应用名称时不重启，名称由 /api/status 实时读取，状态随配置一起重拉，界面上的名字随即更新 */
+  const handleConfigSaved = useCallback(() => {
+    refreshConfig();
+    api<SystemStatus>('/api/status').then(setStatus).catch(() => {});
+  }, [refreshConfig]);
+
   const refreshServices = useCallback(() => {
     api<{ services: Record<string, ServiceInfo> }>('/api/services')
       .then(d => setServicesData(d.services ?? null))
@@ -755,7 +761,7 @@ export function App() {
     switch (renderer) {
       case 'dashboard': return <DashboardPage status={status} connected={connected} plugins={plugins} servicesData={servicesData} onRefreshServices={refreshServices} />;
       case 'marketplace': return <MarketplacePage plugins={plugins} onRefresh={refreshPlugins} onRestart={(msg) => { setRestarting(true); setWasDisconnected(false); setRestartMessage(msg); }} />;
-      case 'plugin-config': return <PluginConfigPage plugins={plugins} config={config} onRefresh={refreshPlugins} onConfigSaved={refreshConfig} onRestart={() => { setRestarting(true); setWasDisconnected(false); setRestartMessage('正在重启…'); }} />;
+      case 'plugin-config': return <PluginConfigPage plugins={plugins} config={config} onRefresh={refreshPlugins} onConfigSaved={handleConfigSaved} onRestart={() => { setRestarting(true); setWasDisconnected(false); setRestartMessage('正在重启…'); }} />;
       case 'platforms': return <PlatformPage />;
       case 'authority': return <AuthorityPage />;
       case 'logs': return <LogPage logs={logs} onLoadOlder={loadOlderLogs} />;
