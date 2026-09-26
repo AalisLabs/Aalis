@@ -62,8 +62,14 @@ export const events = builtin<Events>('events');
 export interface LifecycleCap {
   /** 这次激活的实例 id（多实例为 `name:suffix`）：日志、展示、路由用的逻辑名 */
   readonly id: string;
-  /** 这次激活已开始关闭 */
-  readonly closed: boolean;
+  /**
+   * 这次激活的取消信号，用于中止 apply 里发起的长任务（`fetch(url, { signal })`、循环里查 `signal.aborted`）。
+   * 停机或停用、卸载、重启接手，或后台激活的 required 依赖下线被拆时，apply 尚未完成的激活在关闭计划冻结后
+   * 立即 abort；其余激活在各自的收尾段开始时 abort（`onDrain` 回调执行时已断）——依赖方先关时，提供者的信号
+   * 仍未断。reason 为 name 是 `'AbortError'` 的 `DOMException`。监听器同步执行，不得抛错：宿主会把监听器的异常
+   * 当成未捕获异常（runtime 因此退出进程）。
+   */
+  readonly signal: AbortSignal;
   /**
    * 登记收尾：在本激活撤回登记之前执行，用于停接新活、把在手数据交给下层并等待确认。
    * 依赖可用性取决于关停图：普通消费者先关，宿主根与循环依赖采用各自的阶段顺序；
@@ -114,7 +120,7 @@ export interface Services {
   /** 当前胜者。按名字查时没有类型可依凭，由调用方自行收窄 */
   get<K extends ServiceKey>(key: K): KeyedProvider<K> | undefined;
   all<K extends ServiceKey>(key: K): ServiceView<KeyedProvider<K>>[];
-  /** 当前已注册的全部服务名 */
+  /** 当前有提供者的全部服务名（与 get / all / inspect 同一口径：转入后台、尚未完成激活的提供者不算） */
   names(): string[];
   /** 只读登记元数据（不含实例） */
   inspect(key: ServiceKey): ServiceInfo[];
@@ -146,7 +152,7 @@ export function coreProviders(
   const shared: Services = {
     get: <K extends ServiceKey>(key: K) => container.get<KeyedProvider<K>>(keyName(key)),
     all: <K extends ServiceKey>(key: K) => container.getAll<KeyedProvider<K>>(keyName(key)),
-    names: () => container.getServiceNames(),
+    names: () => container.getServiceNames().filter(name => container.get(name) !== undefined),
     inspect: key => container.inspect(keyName(key)),
     preferred: key => container.getPreferred(keyName(key)),
     prefer: (key, contextId) => {
@@ -171,7 +177,8 @@ export function coreProviders(
         { services: container, logger: c.logger },
       );
     const off = container.register(name, implementation, entryId, c.owner, options);
-    runtime.notify('service:registered', name);
+    // 暂不对外的激活（转入后台的）登记照收，上线时才通知
+    if (!container.isHeld(c.owner)) runtime.notify('service:registered', name);
     // 一个激活登记多个条目（每个模型、每个存储根各一条）时带上条目 id，否则同名的登记行无从区分
     c.logger.debug(entryId === c.id ? `服务已注册: ${name}` : `服务已注册: ${name}（${entryId}）`);
     return () => {
@@ -187,9 +194,7 @@ export function coreProviders(
       })),
       entry<LifecycleCap>(lifecycle, c => ({
         id: c.id,
-        get closed() {
-          return c.resources.disposed;
-        },
+        signal: c.resources.signal,
         onDrain: (fn, label) => c.resources.onDrain(fn, label),
         onDispose: (fn, label) => c.resources.onDispose(fn, label),
       })),

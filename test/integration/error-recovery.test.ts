@@ -42,7 +42,7 @@ describe('插件错误恢复', () => {
       expect(status?.state).toBe('error');
       expect(status?.error).toMatch(/boom on apply/);
       // app 仍然可用
-      expect(host.lifecycle.closed).toBe(false);
+      expect(host.lifecycle.signal.aborted).toBe(false);
       // 后续注册其他插件正常
       const ok = definePlugin({
         name: '@test/ok',

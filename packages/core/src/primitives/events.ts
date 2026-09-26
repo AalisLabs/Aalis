@@ -1,6 +1,6 @@
 import type { AalisEvents } from '../types/events.js';
 
-import { reportQuietly } from '../kernel/disposable-chain.js';
+import { awaitWithTimeout, reportQuietly } from '../kernel/disposable-chain.js';
 
 type EventHandler<Args extends unknown[]> = (...args: Args) => void | Promise<void>;
 
@@ -40,6 +40,15 @@ export class EventBus {
   #reportHandlerError(event: string, error: unknown, owner?: symbol): void {
     reportQuietly(() => this.onHandlerError?.(event, error, owner?.description));
   }
+
+  /**
+   * 单个监听器的等待上限（毫秒），由宿主按事件给出；未设置、undefined 或非正数 = 不设限。
+   * 超过上限仍未返回的监听器经 {@link onHandlerSlow} 上报后不再等它，转向下一个；它之后的拒绝照常经
+   * {@link onHandlerError} 上报。App 用它给 `app:*` 屏障事件设上限。
+   */
+  handlerLimit?: (event: string) => number | undefined;
+  /** 监听器超过 {@link handlerLimit} 仍未返回时的上报回调；第三参同 onHandlerError */
+  onHandlerSlow?: (event: string, limitMs: number, contextId?: string) => void;
 
   /**
    * 一次性事件（sticky）：emit 后保留最近一次参数；后续 on 监听该事件时
@@ -135,7 +144,7 @@ export class EventBus {
    * 错误经 {@link onHandlerError} 上报，其余 handler 照常执行，emit 始终 resolve。
    * 事件是"通知多方"语义，一个旁观者失败不该连坐其他订阅者，更不该
    * 反向把失败传染给发射方（如 plugin:loaded 的 emit 不能把刚激活成功的
-   * 插件打成 error 终态）。
+   * 插件打成 error 终态）。有等待上限（{@link handlerLimit}）时单个 handler 至多等该时长。
    */
   async emit<E extends string & keyof AalisEvents>(event: E, ...args: AalisEvents[E]): Promise<void> {
     if (this.#stickyEvents.has(event)) {
@@ -143,10 +152,19 @@ export class EventBus {
     }
     const set = this.#handlers.get(event);
     if (!set) return;
+    const limit = this.handlerLimit?.(event);
     // 直接迭代活表：handler 中 dispose 尚未访问的条目会被正确跳过（Set 迭代语义）
     for (const { handler, owner } of set) {
       try {
-        await handler(...args);
+        if (!limit) {
+          await handler(...args);
+          continue;
+        }
+        // 先接住拒绝再限时：超时后才到的拒绝也要上报，不能被放弃等待吞掉
+        const settled = Promise.resolve(handler(...args)).catch(err => this.#reportHandlerError(event, err, owner));
+        await awaitWithTimeout(settled, limit, ms =>
+          reportQuietly(() => this.onHandlerSlow?.(event, ms, owner?.description)),
+        );
       } catch (err) {
         this.#reportHandlerError(event, err, owner);
       }

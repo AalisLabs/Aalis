@@ -49,6 +49,7 @@ function link(earlier: Stage, later: Stage, hard: boolean): void {
 /**
  * 截止点：本轮涉及的激活停止新增绑定、登记「正由本计划关闭」。
  * 真正的 drain/close 仍由 {@link closeActivations} 执行。已在别的计划里的节点跳过。
+ * 整张计划冻完后，初始化仍在进行的激活立即 abort；其余在各自收尾段开始时 abort（Resources.drain）。
  */
 export function freezeActivations(roots: Activation[]): Map<Activation, () => void> {
   const settle = new Map<Activation, () => void>();
@@ -59,6 +60,8 @@ export function freezeActivations(roots: Activation[]): Map<Activation, () => vo
     for (const child of ctx.closeInfo().children) freeze(child);
   };
   for (const root of roots) freeze(root);
+  // abort 监听器同步执行插件代码，放在遍历之后：它看到的是已冻完的整张计划
+  for (const ctx of settle.keys()) if (ctx.resources.initializing) ctx.resources.abort();
   return settle;
 }
 

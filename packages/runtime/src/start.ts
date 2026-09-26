@@ -132,9 +132,15 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
   // ── 组装 App：YAML 配置文档、按 loader 发现插件、用 spawn 重启 ──
   const { config, provider } = createFsYamlConfigProvider(opts.configPath);
   const store = createConfigStore(config, provider);
+  // core 的慢操作阈值：缺省交给 core 默认；不是非负有限数的写法告警后同样交给默认（启动时读取，改了要重启）
+  const slowThresholdMs = store.get('slowThresholdMs');
+  const slowThresholdValid =
+    slowThresholdMs === undefined ||
+    (typeof slowThresholdMs === 'number' && Number.isFinite(slowThresholdMs) && slowThresholdMs >= 0);
   const app = new App({
     name: store.get('name'),
     logLevel: store.get('logLevel') as LogLevel,
+    slowThresholdMs: slowThresholdValid ? (slowThresholdMs as number | undefined) : undefined,
     // 子命令进程没有重启能力，不注入策略：`app.restart()` 按 core 语义抛「不可用」，指令层折成失败文案。
     // 注入的话，`restart` 子命令在 app.stop 超过策略 500ms 等待时会 spawn 一个 argv 仍带 restart 的
     // detached 子进程，新进程再命中 restart……无限连环（实测 5 代，Ctrl+C 打不到）。
@@ -146,6 +152,12 @@ export async function startAalis(opts: StartAalisOptions = {}): Promise<App> {
     // 宿主读取 @aalis/core 的实际版本注入启动 banner——core 环境无关、不自读 package.json。
     version: readCoreVersion(),
   });
+
+  if (!slowThresholdValid) {
+    app.logger.warn(
+      `配置项 slowThresholdMs 应为不小于 0 的有限数字（毫秒），收到 ${JSON.stringify(slowThresholdMs)}，按默认 60000 处理`,
+    );
+  }
 
   // 配置文档先于任何插件接上：文档里的服务偏好要在全部提供者上线前生效
   installHostConfig(app, store);

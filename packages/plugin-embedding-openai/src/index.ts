@@ -55,9 +55,9 @@ class OpenAIEmbeddingService implements EmbeddingService {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({ model: this.model, input: text }),
-      // 没有 signal 的话这次请求永不自行了结：apply 的启动探测 await 它，而插件激活是串行的
-      // （PluginManager.recompute 逐个 await activatePlugin），一个卡住的 apply 会钉住整条引导链；
-      // 索引路径上则是 memory-vector 的一个并发槽被无限期占用。
+      // 没有 signal 的话这次请求永不自行了结：apply 的启动探测 await 它，卡住的 apply 要等到慢激活阈值
+      // 才转入后台、其间排在它后面的插件都在等，此后也一直停在激活中；索引路径上则是 memory-vector 的
+      // 一个并发槽被无限期占用。
       signal: options?.signal ? AbortSignal.any([timeoutSignal, options.signal]) : timeoutSignal,
     });
     if (!res.ok) {

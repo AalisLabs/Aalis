@@ -62,9 +62,11 @@ export default definePlugin({
 
 | 信号 | 触发 | 事件 |
 | --- | --- | --- |
-| provider 注册 | `provide(desc, impl)` | `service:registered` |
-| provider 注销 | 激活撤回 | `service:unregistered` |
+| provider 注册 | `provide(desc, impl)`；转入后台的激活完成时上线它登记的服务 | `service:registered` |
+| provider 注销 | 激活撤回；激活超过 `slowThresholdMs` 转入后台时撤下它已登记的服务 | `service:unregistered` |
 | 偏好切换 | `services.prefer` / `unprefer` | `service:preference-changed` |
+
+激活超过 `slowThresholdMs` 仍未完成的提供者在完成前不参与解析：`current` / `require()` / `all()` 都看不到它登记的服务。阈值之前它在 `apply` 里登记的服务照常可见，转入后台时撤下，`follow` 随之交接回其余提供者。
 
 偏好切换不改变实例集合，只改变谁是胜者。`follow` 对三种信号都跟随胜者。
 

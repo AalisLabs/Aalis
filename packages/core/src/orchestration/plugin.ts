@@ -49,7 +49,11 @@ export class PluginManager implements PluginManagerService {
   #logger: Logger;
   readonly #host: ActivationHost;
   /** 单个异步清理项的等待上限（毫秒；0=不设限），由 App 从 AppOptions 注入 */
-  readonly #disposeTimeoutMs?: number;
+  readonly #disposeTimeoutMs: number;
+  /** 激活超过它仍未完成即转入后台，此后每隔同样时长提醒一次（毫秒；非正数=不设限），由 App 注入 */
+  readonly #slowMs: number;
+  /** 已转入后台、尚未落定也未被接手的激活（getStatus 据此给出 slow） */
+  readonly #background = new Set<Activation>();
   /** 交给编排层自由函数（activatePlugin / retireBatch）的宿主注入件，构造一次 */
   readonly #deps: ActivationDeps;
   /** recompute 单飞标志：true 表示一次 recompute（含排队补跑）正在进行 */
@@ -106,6 +110,9 @@ export class PluginManager implements PluginManagerService {
    * 同步触发的变更调用上自我死锁）。需要"尘埃落定后再观察"的外部调用方
    * （宿主引导、WebUI 刷新、测试断言）在变更后 await 本方法。
    *
+   * 不等转入后台的激活：flight 对单个激活至多等到阈值（或它被停机、管理动作接手）为止。
+   * 后台激活落定时自己再触发一次重算。
+   *
    * **不得在插件 apply / onDispose 内调用**——flight 正等着你返回，
    * 等 flight 结束即互等死锁。
    */
@@ -123,9 +130,10 @@ export class PluginManager implements PluginManagerService {
     for (const w of waiters) w();
   }
 
-  constructor(host: ActivationHost, logger: Logger, disposeTimeoutMs?: number) {
+  constructor(host: ActivationHost, logger: Logger, disposeTimeoutMs: number, slowMs: number) {
     this.#host = host;
     this.#disposeTimeoutMs = disposeTimeoutMs;
+    this.#slowMs = slowMs;
     this.#logger = logger.child('plugins');
     this.#deps = { host, logger: this.#logger, disposeTimeoutMs };
 
@@ -133,12 +141,13 @@ export class PluginManager implements PluginManagerService {
     // 单飞/挂起/关机的取舍都在 recompute 内部处理（在飞期间排队，关机后跳过）。
     const boundEvents = host.bind(host.root, { events }).events;
     for (const event of ['service:registered', 'service:unregistered'] as const) {
-      boundEvents.on(event, name => {
-        this.recompute().catch(err =>
-          reportQuietly(() => this.#logger.error(`recompute(${event}:${name}) 报错:`, err)),
-        );
-      });
+      boundEvents.on(event, name => this.#kick(`${event}:${name}`));
     }
+  }
+
+  /** 不等结果地发起一次重算（反应式触发、后台激活落定）；报错点名触发原因，不外泄成未处理拒绝 */
+  #kick(why: string): void {
+    this.recompute().catch(err => reportQuietly(() => this.#logger.error(`recompute(${why}) 报错:`, err)));
   }
 
   /**
@@ -286,9 +295,10 @@ export class PluginManager implements PluginManagerService {
   }
 
   /**
-   * 管理动作的拆卸：依赖方正在用的提供者要走，依赖方先收尾再关，提供者之后。判据是活插件某个 required
-   * 服务此刻解析到的胜者归本批要关的激活所有（传递闭包）；空档里不切到后备提供者——依赖方对着旧实例
-   * 收尾，提供者重启后再回到首选。unload / disable / bounce 三者同一路径。
+   * 管理动作的拆卸：依赖方正在用的提供者要走，依赖方先收尾再关，提供者之后。判据是活插件（已激活，或仍在
+   * 初始化：在飞或后台）某个 required 服务此刻解析到的胜者归本批要关的激活所有（传递闭包）；空档里不切到后备
+   * 提供者——依赖方对着旧实例收尾，提供者重启后再回到首选。仍在初始化的依赖方同样拆掉重来，否则它 apply 里
+   * 拿到的是旧实例。unload / disable / bounce 三者同一路径。
    */
   #retire(entry: PluginRecord, target: PluginState): Promise<void> {
     const services = this.#host.runtime.services;
@@ -302,7 +312,7 @@ export class PluginManager implements PluginManagerService {
     for (let grew = true; grew; ) {
       grew = false;
       for (const other of this.#plugins.values()) {
-        if (other.state !== 'active' || !other.activation || batch.includes(other)) continue;
+        if (!running(other) || !other.activation || batch.includes(other)) continue;
         if (!other.required.some(stranded)) continue;
         batch.push(other);
         leaving.add(other.activation.owner);
@@ -321,9 +331,9 @@ export class PluginManager implements PluginManagerService {
     // 'disposed' 对管理路径单向（见 bounce 内注释）
     if (entry.state === 'disposed') return this.#refuse('enable', instanceId, '处于 disposed 终态');
     if (entry.state !== 'disabled' && entry.state !== 'error') return true; // 已经启用
-    // 依赖不变量：disabled/error 态的 entry 必然 activation 已清（disable 与激活失败
-    // 都经 retireBatch 清引用；锚在 admin-during-activation 测试）——否则此处转
-    // pending 后会被激活侧的「旧激活 未清」闸永久跳过。
+    // disabled/error 态的 entry 一般 activation 已清（disable 与激活失败都经 retireBatch 清引用；锚在
+    // admin-during-activation 测试）。例外是后台激活落定失败：状态先写成 error，回滚在单飞之外进行，
+    // 其间转 pending 会被激活侧的「旧激活未清」闸跳过——回滚完成后补跑的重算会把它接上。
     entry.state = 'pending';
     entry.error = undefined;
     this.#logger.info(`插件已启用: ${instanceId}`);
@@ -390,6 +400,7 @@ export class PluginManager implements PluginManagerService {
       requiredServices: entry.required.length > 0 ? entry.required : undefined,
       optionalServices: entry.optional.length > 0 ? entry.optional : undefined,
       error: entry.error,
+      slow: (entry.activation !== undefined && this.#background.has(entry.activation)) || undefined,
     }));
   }
 
@@ -538,7 +549,8 @@ export class PluginManager implements PluginManagerService {
     const maxRounds = (): number => this.#plugins.size * 2 + 8;
     let lastRoundFlips: string[] = [];
 
-    converge: while (changed && rounds < maxRounds()) {
+    // 停机后不再做普通状态转移：拆卸全归停机计划，这里再拆已冻进计划的激活会与计划互等
+    converge: while (changed && rounds < maxRounds() && !this.#shuttingDown) {
       changed = false;
       rounds++;
       lastRoundFlips = [];
@@ -546,10 +558,11 @@ export class PluginManager implements PluginManagerService {
       this.#order ??= topoSortByDeps([...this.#plugins.values()], this.#logger);
       const order = this.#order;
 
-      // Phase A: 本轮目标不再是 active 的，成批关闭——它们之间的次序由关停编排按实际依赖定
+      // Phase A: 本轮目标不再是 active 的，成批关闭——它们之间的次序由关停编排按实际依赖定。
+      // 后台激活同样看：required 不在了，它 apply 里拿到的已是旧实例（本 flight 此刻没有在飞的激活）
       const retiring: PluginRecord[] = [];
       for (const entry of [...order].reverse()) {
-        if (entry.state !== 'active') continue;
+        if (!running(entry)) continue;
         if (requiredSatisfied(entry, this.#host.runtime.services)) continue;
         const unmet = entry.required.find(name => this.#host.runtime.services.get(name) === undefined);
         this.#logger.info(`依赖 "${unmet}" 不可用，停用插件: ${entry.instanceId}`);
@@ -565,10 +578,13 @@ export class PluginManager implements PluginManagerService {
       for (const entry of order) {
         // 已进入停机：不再启动新的实例
         if (this.#shuttingDown) break converge;
-        if (entry.state !== 'pending') continue;
+        // 旧激活仍在拆卸中（bounce 先置 'pending'、后异步拆旧激活，拆完才清 entry.activation）：此刻重新激活
+        // 会让新旧实例同 instanceId 并存——同名服务重复 provide、偏好按 contextId 二义。跳过本轮，等管理路径
+        // 收尾后的 recompute 重新调度
+        if (entry.state !== 'pending' || entry.activation) continue;
         if (retryBudget.get(entry) === 0) continue;
         if (!requiredSatisfied(entry, this.#host.runtime.services)) continue;
-        const result = await activatePlugin(entry, this.#deps);
+        const result = await this.#activate(entry);
         if (result === 'retry') {
           // 首次失败按当时图规模取额；后续新增插件也不能让失稳 entry 不断扩额。
           const remaining = (retryBudget.get(entry) ?? maxRounds()) - 1;
@@ -598,4 +614,78 @@ export class PluginManager implements PluginManagerService {
 
     this.#host.runtime.notify('plugins:changed');
   }
+
+  /**
+   * 激活一个条目，flight 至多等到阈值：超过仍未完成就转入后台，flight 接着处理后面的插件；停机或管理动作
+   * 接手（signal 已断）时也不再等，拆卸方按宽限处理。flight 不再等的激活落定后补一次重算（成功、失败转 error、
+   * 回到 pending 都未必有服务事件触发重算）。
+   *
+   * 一个 abort 监听器、一个自我重排的定时器从激活开始一直看到落定或 abort：转入后台之后按同一间隔提醒
+   * 「仍在激活」，轮与轮之间没有空隙，不会漏掉 abort 而对已被接手的激活一直提醒。计时只用定时器，经过时长按轮数算。
+   */
+  #activate(entry: PluginRecord): Promise<'retry' | undefined> {
+    const landing = activatePlugin(entry, this.#deps);
+    // 同步段已挂上本次激活；清引用最早在一个微任务之后
+    const activation = entry.activation!;
+    const { signal } = activation.resources;
+    // 没有待落定的 apply（同步段里就失败了，正在回滚）：照旧等它收尾
+    if (!activation.resources.initializing) return landing;
+    return new Promise((resolve, reject) => {
+      let rounds = 0;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const letGo = (): void => {
+        resolve(undefined);
+        landing
+          .finally(() => this.#kick(`${entry.instanceId} 激活落定`))
+          .catch(err => reportQuietly(() => this.#logger.error(`插件 "${entry.instanceId}" 激活收尾报错:`, err)));
+      };
+      const unwatch = (): void => {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', onAbort);
+        this.#background.delete(activation);
+      };
+      // 只看 apply 在飞的阶段：apply 已落定时，abort 与到点都来自它自己的收尾（失败回滚，有界），照旧等落定
+      const onAbort = (): void => {
+        if (!activation.resources.initializing) return;
+        unwatch();
+        if (rounds === 0) letGo(); // 已转入后台的早已放开 flight
+      };
+      const arm = (): void => {
+        timer = setTimeout(() => {
+          if (!activation.resources.initializing) return;
+          arm();
+          if (++rounds === 1) {
+            letGo();
+            this.#toBackground(entry, activation);
+          } else {
+            const elapsed = rounds * this.#slowMs;
+            reportQuietly(() => this.#logger.warn(`插件 "${entry.instanceId}" 仍在激活（已超过 ${elapsed}ms）`));
+          }
+        }, this.#slowMs);
+      };
+      // 落定（含拒绝）原样交给 flight（已放开时无效果），并停止看守
+      landing.then(resolve, reject);
+      landing.then(unwatch, unwatch);
+      if (signal.aborted) return onAbort();
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (this.#slowMs > 0) arm();
+    });
+  }
+
+  /** 转入后台：它登记的服务在激活完成前不对依赖方开放（依赖方保持 pending），已对外的这里撤下 */
+  #toBackground(entry: PluginRecord, activation: Activation): void {
+    this.#background.add(activation);
+    const runtime = this.#host.runtime;
+    for (const name of runtime.services.hold(activation.owner)) runtime.notify('service:unregistered', name);
+    reportQuietly(() =>
+      this.#logger.warn(
+        `插件 "${entry.instanceId}" 激活超过 ${this.#slowMs}ms 仍未完成，转入后台继续；它提供的服务在激活完成前不对依赖方开放`,
+      ),
+    );
+  }
+}
+
+/** 有激活在跑、目标仍是 active 的条目：已激活的，与仍在初始化（在飞或后台）的 */
+function running(entry: PluginRecord): boolean {
+  return entry.state === 'active' || entry.state === 'activating';
 }

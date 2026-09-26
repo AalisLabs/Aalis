@@ -110,6 +110,8 @@ interface Services {
 
 有描述符就用描述符（带类型）；只有运行期字符串（URL、配置里的服务名）就用名字，类型由调用方收窄。
 
+`get` / `all` / `inspect` / `names` 与 `ServiceRef` 的读口同一口径：激活超过 `slowThresholdMs` 转入后台的提供者，在它激活完成前不参与解析，它登记的服务都看不到（`names` 只列有对外提供者的服务名）。
+
 动态查内置服务拿到的是提供者函数，不是门面：它只接受在 `uses` 里声明了该服务的激活身份，以其他身份调用即抛错。要用内置服务，在 `uses` 里声明它。
 
 `prefer(key, contextId)` 把该服务的胜者钉到指定逻辑身份，无视 priority。偏好可在目标 entry 注册前提前设置。切换偏好发出 `service:preference-changed`，驱动 `follow` 订阅者按胜者变化重挂。也可在 WebUI 的 Services 页设置；配置项为 `servicePreferences`。

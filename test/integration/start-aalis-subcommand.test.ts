@@ -122,6 +122,29 @@ describe('startAalis 子命令模式（真实子进程）', () => {
     expect(r.stderr).toContain('nested.typo');
   });
 
+  it('配置文件顶层的 slowThresholdMs 注入 core：激活超过它即转入后台；写错了告警并按默认处理', async () => {
+    // 每次运行一个新目录：夹具的代数护栏只放行每个目录的第一次启动
+    const runWith = (value: string) => {
+      const dir = project();
+      writeFileSync(
+        join(dir, 'aalis.config.yaml'),
+        `name: e2e\nlogLevel: info\nslowThresholdMs: ${value}\nplugins: {}\n`,
+      );
+      return run(dir, ['probe'], { AALIS_E2E_APPLY_MS: '400' });
+    };
+    const applied = await runWith('50');
+    expect(applied.code).toBe(0);
+    expect(applied.stdout).toContain('probe ok');
+    expect(applied.stderr).toContain('插件 "e2e-slow" 激活超过 50ms 仍未完成，转入后台继续');
+
+    for (const invalid of ['"abc"', '-1']) {
+      const r = await runWith(invalid);
+      expect(r.code).toBe(0);
+      expect(r.stderr).toContain('配置项 slowThresholdMs 应为不小于 0 的有限数字（毫秒）');
+      expect(r.stderr).not.toContain('转入后台继续');
+    }
+  }, 30_000);
+
   it('未命中：报错 exit 2，不进守护进程，不碰 data/latest.log', async () => {
     const dir = project();
     const r = await run(dir, ['nope']);

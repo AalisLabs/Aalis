@@ -16,8 +16,9 @@
  * ```
  *
  * core 自持的条目按「发射方等不等监听器」分两节，这是契约，节由前缀判定：
- * - **屏障**（`app:*`）：emit 是 `App` 生命周期方法里的一步，监听器全部返回后才推进下一步，
- *   监听器可以据此在「X 之前 / 之后」插入工作。
+ * - **屏障**（`app:*`）：emit 是 `App` 生命周期方法里的一步，逐个等监听器返回后才推进下一步，
+ *   监听器可以据此在「X 之前 / 之后」插入工作。单个监听器至多等 `AppOptions.slowThresholdMs`，
+ *   超过即 warn 点名、不再等它（它之后的拒绝照常上报）。
  * - **通知**（`service:*` / `plugin:*` / `plugins:changed`）：发射方经宿主注入的 `notify` 发出，**不等**
  *   监听器。发射点要么是同步的注册 / 拆卸收尾（`provide`、退订、teardown），要么在 `PluginManager` 的
  *   recompute flight 或挂起段内——那里等监听器会与 `plugins.idle()` 互等死锁。监听器因此不能假设
@@ -27,9 +28,12 @@
 export interface AalisEvents {
   // 业务事件由各契约包经 declaration merging 注入：消息事件在 @aalis/schema-message，
   // 工具事件在 @aalis/api-tools，网关相位事件在 @aalis/api-gateway。
-  /** 通知：某服务多了一个提供者（`provide(descriptor, implementation)`） */
+  /**
+   * 通知：某服务多了一个对外可见的提供者（`provide(descriptor, implementation)`，或转入后台的激活完成时
+   * 上线它登记的服务）
+   */
   'service:registered': [name: string];
-  /** 通知：某服务少了一个提供者（退订闭包或激活拆卸） */
+  /** 通知：某服务少了一个对外可见的提供者（退订闭包、激活拆卸，或激活转入后台时撤下它已登记的服务） */
   'service:unregistered': [name: string];
   /**
    * 通知：某服务的偏好 provider 发生切换（services.prefer / services.unprefer）。

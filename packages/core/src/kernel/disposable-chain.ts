@@ -202,7 +202,7 @@ export class DisposableChain {
  * 环境无关性记账：`setTimeout`/`clearTimeout` 是所有 JS 运行时（浏览器/Node/
  * Deno/Worker）的共有全局，非 `node:` 专属，不引入环境假设。
  *
- * 仅供 core 内部（DisposableChain 逐项等待、激活合流等待在飞拆卸）复用，
+ * 仅供 core 内部（DisposableChain 逐项等待、激活合流等待在飞拆卸、事件总线限时等待监听器）复用，
  *   不从包根导出。
  * @internal
  */

@@ -35,6 +35,8 @@ interface ServiceEntry {
   label?: string;
 }
 
+const NO_ENTRIES: readonly ServiceEntry[] = [];
+
 /**
  * 服务容器 —— 支持同名多实现
  *
@@ -43,19 +45,23 @@ interface ServiceEntry {
  * - 服务选择走「偏好 > 优先级 > 注册顺序」；领域级筛选（如按 LLM 模型能力）由各 -api 自理，不在内核 DI
  * - 经 provide 能力注册的条目带清理归属 owner，插件卸载时按它批量清理（unregisterByOwner）；
  *   contextId 只是逻辑身份（路由 / 显示 / 偏好 / 前缀查询），不参与清理
+ * - 归属可暂不对外（hold，编排层对转入后台的激活使用）：解析类读口一律看不见它的条目，
+ *   登记事实类读口（hasByContext / getServiceNames / 独占冲突）照常看得见
  */
 export class ServiceContainer {
   #entries = new Map<string, ServiceEntry[]>();
   /** 服务偏好：service name → preferred contextId（preferred 永远胜过 priority） */
   #preferences = new Map<string, string>();
+  /** 暂不对外的清理归属（见 {@link hold}） */
+  readonly #held = new Set<symbol>();
 
   /**
    * 注册一个服务实例。容器只按名字存取，不认识类型——实现是否满足契约由服务描述符在
    * `provide(descriptor, impl)` 处约束。
    *
    * @param owner 清理归属（注册方这次激活的身份），拆卸时按它整体摘除。
-   * @returns 退订闭包；返回这次是否真的摘掉了条目——同一条目退订两次、或已被 unregisterByOwner
-   *   清走时为 false，门面据此决定要不要发 `service:unregistered`。
+   * @returns 退订闭包；返回这次是否摘掉了一条对外可见的条目——同一条目退订两次、已被 unregisterByOwner
+   *   清走，或归属暂不对外（见 {@link hold}）时为 false，门面据此决定要不要发 `service:unregistered`。
    */
   register(
     name: string,
@@ -98,8 +104,44 @@ export class ServiceContainer {
       if (!current || idx < 0) return false;
       current.splice(idx, 1);
       if (current.length === 0) this.#entries.delete(name);
-      return true;
+      return !this.#held.has(owner);
     };
+  }
+
+  /**
+   * 暂不对外：该归属名下的条目照常登记、照常占独占位，但不参与解析（get / getAll / inspect / ownerOf），
+   * 直到 {@link release} 或整体摘除。返回该归属名下已有条目的服务名（它们此刻对外少了一个提供者）。
+   * @internal
+   */
+  hold(owner: symbol): string[] {
+    this.#held.add(owner);
+    return this.#namesOf(owner);
+  }
+
+  /**
+   * 恢复对外：返回该归属名下有条目的服务名（它们此刻对外多了一个提供者）；未暂扣时返回空。
+   * @internal
+   */
+  release(owner: symbol): string[] {
+    return this.#held.delete(owner) ? this.#namesOf(owner) : [];
+  }
+
+  /**
+   * 该归属是否暂不对外
+   * @internal
+   */
+  isHeld(owner: symbol): boolean {
+    return this.#held.has(owner);
+  }
+
+  #namesOf(owner: symbol): string[] {
+    return [...this.#entries].filter(([, list]) => list.some(entry => entry.owner === owner)).map(([name]) => name);
+  }
+
+  /** 参与解析的条目：暂不对外的归属不算。没有暂扣时原样返回登记数组，不另分配 */
+  #visible(name: string): readonly ServiceEntry[] {
+    const list = this.#entries.get(name) ?? NO_ENTRIES;
+    return this.#held.size === 0 ? list : list.filter(entry => !this.#held.has(entry.owner));
   }
 
   /**
@@ -110,9 +152,8 @@ export class ServiceContainer {
    *
    * 这是 get/getAll 的共同基础——保证「偏好 > 优先级 > 注册顺序」语义在所有读路径一致。
    */
-  #resolveEntries(name: string): ServiceEntry[] {
-    const list = this.#entries.get(name);
-    if (!list || list.length === 0) return [];
+  #resolveEntries(name: string): readonly ServiceEntry[] {
+    const list = this.#visible(name);
     const preferredCtxId = this.#preferences.get(name);
     if (!preferredCtxId) return list;
     const preferred = list.find(e => e.contextId === preferredCtxId);
@@ -129,16 +170,13 @@ export class ServiceContainer {
    *
    * 语义与 `#resolveEntries` 保持一致：偏好项存在则取它，否则取 `list[0]` ——
    * `list` 在 `register` 里就按 priority 降序排好（稳定排序，同优先级保持注册顺序）。
+   * 没有暂不对外的归属时 `#visible` 原样交回登记数组，这条路径不分配。
    */
   get<T = unknown>(name: string): T | undefined {
-    const list = this.#entries.get(name);
-    if (!list || list.length === 0) return undefined;
+    const list = this.#visible(name);
     const preferredCtxId = this.#preferences.get(name);
-    if (preferredCtxId) {
-      const preferred = list.find(e => e.contextId === preferredCtxId);
-      if (preferred) return preferred.instance as T;
-    }
-    return list[0].instance as T;
+    const preferred = preferredCtxId ? list.find(e => e.contextId === preferredCtxId) : undefined;
+    return (preferred ?? list[0])?.instance as T | undefined;
   }
 
   /**
@@ -155,7 +193,7 @@ export class ServiceContainer {
   }
 
   /**
-   * 按清理归属移除本次激活注册的所有 entry，返回被移除的服务名列表。
+   * 按清理归属移除本次激活注册的所有 entry，返回对外少了提供者的服务名列表（归属暂不对外时为空）。
    *
    * 按 owner 而非 contextId：同名激活（内部构造重名、拆卸在飞时同名新激活）各有各的
    * owner，互不误清。per-entry 子 entry（`id/sub`）与主 entry 同 owner，一并清掉——
@@ -171,11 +209,12 @@ export class ServiceContainer {
       if (list.length < before) removed.push(name);
       if (list.length === 0) this.#entries.delete(name);
     }
-    return removed;
+    // 暂不对外的条目从未（或已不再）对外可见：摘除不算对外少了提供者，暂扣随之解除
+    return this.#held.delete(owner) ? [] : removed;
   }
 
   /**
-   * 列出所有已注册的服务名
+   * 列出所有已登记的服务名，含暂不对外的归属名下的（登记事实：provides 反向检查要看得到自己）
    */
   getServiceNames(): string[] {
     return [...this.#entries.keys()];

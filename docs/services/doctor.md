@@ -93,7 +93,7 @@ export interface BoundDoctor extends ServiceRef<DoctorService> {
 
 内置检查项与第三方检查项走的是同一条 `registerCheck` 路径，在 `listChecks()` 和报告里一视同仁，第三方贡献者并非二等公民。
 
-`plugins.status` 在插件管理服务在场时产出三条结果：`plugins.active`、`plugins.errored`（逐个附 apply 失败原因）与 `plugins.pending`（逐个列出实例缺少的 required 服务，判据与 runtime 启动收敛后的「依赖未满足」告警相同）。为此 plugin-doctor 在 `uses` 里声明了 core 的 `services`。
+`plugins.status` 在插件管理服务在场时产出四条结果：`plugins.active`、`plugins.errored`（逐个附错误说明：激活失败原因，或停用、重启、后台激活的 required 依赖下线时「未在宽限内停止」；后者依赖恢复后不自动重试，需 `enable`）、`plugins.pending`（逐个列出实例缺少的 required 服务，判据与 runtime 启动收敛后的「依赖未满足」告警相同；为此 plugin-doctor 在 `uses` 里声明了 core 的 `services`）与 `plugins.slow`（逐个列出激活超过 core 慢操作阈值 `slowThresholdMs`、仍在后台进行的实例，即 `getStatus()` 里 `slow: true` 的条目；有则 warn）。后台激活的插件提供的服务在它完成前不对外，依赖它的插件会同时出现在 `plugins.pending` 里、被列为缺少该服务。
 
 ---
 

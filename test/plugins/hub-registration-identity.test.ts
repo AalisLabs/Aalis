@@ -253,7 +253,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     expect(names(reg), '只摘掉被卸载那次激活的登记').toEqual(['t-q']);
   });
 
-  it('拆卸窗口内（等在飞 apply）的登记与事件登记同口径：closed 即拒、warn、不进枢纽', async () => {
+  it('拆卸窗口内（等在飞 apply）的登记与事件登记同口径：关闭即拒、warn、不进枢纽', async () => {
     const { app, reg, refusals } = warningWorld();
     let release!: () => void;
     const gate = new Promise<void>(r => {
@@ -278,7 +278,7 @@ describe('tools 绑定：同名替换与整体重挂', () => {
     expect(names(reg)).toEqual(['early']);
 
     const unloading = app.plugins.unload('late-registrar');
-    expect(life.closed, '卸载一经发起，在飞的 apply 立刻看得到').toBe(true);
+    expect(life.signal.aborted, '卸载一经发起，在飞的 apply 立刻看得到').toBe(true);
     release();
     await mounting;
     await unloading;

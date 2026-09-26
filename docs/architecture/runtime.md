@@ -86,7 +86,8 @@ mcp-server）绑定失败并打一条 error 后降级；config-sync 可能按 sc
 ## 怎么为别的环境写宿主
 
 core 的 `App` 构造只接收环境无关的选项（`name` / `logLevel` / `restartStrategy` / `devMode` / `now` /
-`version` / `logHub` / `logger` / `disposeTimeoutMs`，全部可省），插件发现与配置文档都不经它注入。
+`version` / `logHub` / `logger` / `disposeTimeoutMs` / `slowThresholdMs`，全部可省），插件发现与配置文档都不经它注入。
+`startAalis` 从配置文件顶层读 `slowThresholdMs` 注入（改了要重启），其余时长用 core 默认值。
 `@aalis/runtime` 的包入口会引入 Node 模块，非 Node 宿主不能直接复用，要用该环境的 API 自备以下几样：
 
 - **插件发现驱动**：取得插件定义（例：Deno 用 import map、无 node_modules；浏览器打包成静态插件表），

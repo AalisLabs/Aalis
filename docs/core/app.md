@@ -27,9 +27,12 @@ Node 宿主 `@aalis/runtime` 的做法见文末与 [运行态与配置文档](co
 | `logHub` | `LogHub` | 自定义日志通道；缺省=`LogHub.default`（进程级共享） |
 | `logger` | `Logger` | 自定义 Logger 实现；缺省=`DefaultLogger`（写入 logHub） |
 | `devMode` | `boolean` | 传给根激活，决定 `provide` 与激活路径是否跑一致性校验；默认 `true` |
-| `disposeTimeoutMs` | `number` | 单个异步清理项的等待上限（毫秒），默认 5000；0=不设限 |
+| `disposeTimeoutMs` | `number` | 单个异步清理项的等待上限（毫秒），默认 5000；也是停用、卸载、重启、停机撞上仍在初始化的插件，或后台激活的 required 依赖下线时 abort 后的宽限（见下文）。0=不设限 |
+| `slowThresholdMs` | `number` | 慢操作阈值（毫秒），默认 60000：插件激活超过它仍未完成即告警、转入后台；`app:*` 屏障事件的单个监听器超过它即告警、不再等待。0=不设限 |
 | `now` | `() => Date` | 日志时间戳时钟；缺省墙上时间 |
 | `version` | `string` | 启动 banner 用的内核版本；core 不自读 package.json |
+
+两个时长上限超过 2³¹−1（定时器的最大延迟，约 24.8 天）时按 2³¹−1 计，`Infinity` 同样按它计；负数与 `NaN` 按不设限处理。
 
 构造时：
 
@@ -67,23 +70,23 @@ const { logger: log, events: bus } = app.bind({ logger, events });
 2. 发出 `app:ready` 事件（sticky）
 3. 发出 `app:started` 事件（sticky）
 
-每一步都等前一个事件的监听器全部返回后才推进。配置文档外部变更的热重载编排属宿主政策（runtime 的 `installConfigHotReload`），`start()` 不做。
+每一步都逐个等监听器返回后才推进；单个监听器至多等 `slowThresholdMs`，超过即 warn 点名登记者（插件实例 id，宿主为 `root`），不再等它、转向下一个，它之后的拒绝照常按监听器抛错上报。`start()` 不等转入后台的插件激活：它们的 `app:ready` / `app:started` 监听器可能在自己的 `apply` 完成之前就被调用。配置文档外部变更的热重载编排属宿主政策（runtime 的 `installConfigHotReload`），`start()` 不做。
 
 ### `app.stop()`
 
 单飞：重入返回同一 Promise。现序：
 
-1. `plugins.beginShutdown()`：置停机态并冻计划（之后 `register` / `bounce` 拒绝；对本树的 `disposeAsync` 汇入该计划）。已静置时仍须先冻闸——`idle()` 会让出一轮微任务，同轮排队的 bounce 否则会在置位前过闸、留下 pending 幽灵
-2. `plugins.idle()`：排干在飞的 bounce / unload recompute
-3. 发出 `app:stopping`（知会用；清理一律走 `lifecycle.onDrain` / `onDispose`）。监听器全部返回后才继续。期间再次调用 `stop()` 仍返回完整停机的同一 Promise，不提前兑现
+1. `plugins.beginShutdown()`：置停机态并冻计划（之后 `register` / `bounce` 拒绝；对本树的 `disposeAsync` 汇入该计划）。已静置时仍须先冻闸——`idle()` 会让出一轮微任务，同轮排队的 bounce 否则会在置位前过闸、留下 pending 幽灵。冻完后，`apply` 尚未完成的插件（在飞或后台）立即收到 `lifecycle.signal` 的 abort
+2. `plugins.idle()`：排干在飞的 bounce / unload recompute；重算不再等已 abort 的激活
+3. 发出 `app:stopping`（知会用；清理一律走 `lifecycle.onDrain` / `onDispose`）。逐个等监听器返回，单个至多等 `slowThresholdMs`。期间再次调用 `stop()` 仍返回完整停机的同一 Promise，不提前兑现
 4. 再 `plugins.idle()`
 5. `plugins.stopAll()`：执行已冻计划的 drain / close
 6. 清空 sticky 缓存（`app:ready` / `app:started`）
 7. `disposeAsync` 根激活（等待异步清理）
 
-监听器与清理回调不能 `await app.stop()`，也不能直接返回该 Promise：停机正等待这些回调返回，二者会互等。需要请求停机时可以调用 `void app.stop()`；完整停机完成由外部宿主等待。
+监听器与清理回调不能 `await app.stop()`，也不能直接返回该 Promise：停机正等待这些回调返回，二者会互等（监听器至多等到 `slowThresholdMs`、清理项至多等到 `disposeTimeoutMs` 后被放弃）。需要请求停机时可以调用 `void app.stop()`；完整停机完成由外部宿主等待。
 
-单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 控制，不是整个停机流程的总期限。本次没有为 `apply` 或屏障监听器新增超时；它们永不落定时，`register()` / `stop()` 仍可能等待不返回。边规则见 [插件定义与能力](context.md)。
+单个异步清理项的等待上限由 `AppOptions.disposeTimeoutMs` 控制，不是整个停机流程的总期限。仍在初始化的插件 abort 之后，自它的收尾段开始至多再等 `disposeTimeoutMs`，到期仍未落定记 error「未在宽限内停止」、不再等待，停机继续。`slowThresholdMs` 与 `disposeTimeoutMs` 都非 0 时 `stop()` 总能结束；任一为 0（不设限）时，永不落定的 `apply` 或屏障监听器仍可能让它等待不返回。边规则见 [插件定义与能力](context.md)。
 
 ### `app.plugin(definition, config?, instanceId?, options?)`
 
@@ -92,7 +95,7 @@ const { logger: log, events: bus } = app.bind({ logger, events });
 - `config` 原样生效：core 不合并默认值，也不读配置文档。入参会被拷贝（危险键 `__proto__` / `constructor` / `prototype` 跳过），调用方之后改它不影响实例。默认值回填是宿主政策：runtime 的 `withPluginConfigSync` 在登记前把 schema 派生默认值深合并进文档。
 - `options.disabled` 为 `true` 时以禁用态登记、不激活，之后经 `plugins.enable` 启用。core 不读禁用名单，由宿主按配置文档传入。
 
-resolve 语义 = 注册落账 + 尽力即时激活。有在飞 recompute 或手动 dispose 段时本次请求排队，resolve 时激活可能尚未发生。需要「激活已落定」则 `await app.plugins.idle()`（不得在插件 apply / onDispose 内）。
+resolve 语义 = 注册落账 + 尽力即时激活。有在飞 recompute 或手动 dispose 段时本次请求排队，resolve 时激活可能尚未发生。需要「激活已落定」则 `await app.plugins.idle()`（不得在插件 apply / onDispose 内）。激活超过 `slowThresholdMs` 仍未完成的插件转入后台，本方法与 `idle()` 在阈值处返回，见 [插件管理](plugin.md) 的慢激活一节。
 
 ### `app.pluginAll(items)`
 

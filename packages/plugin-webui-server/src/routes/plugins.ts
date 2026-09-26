@@ -257,7 +257,11 @@ export function registerPluginRoutes(
     // 所以不能按键报错：其余键一律不应用，但把真有改动的点名回给调用方——不静默吞掉却回复「已保存」。
     const allowed = Object.keys(CORE_CONFIG_SCHEMA);
     const current = doc.getAll() as Record<string, unknown>;
-    const differs = (k: string) => !isDeepStrictEqual(updates[k], current[k]);
+    // 文档里没写的核心键按 schema 默认值比较：内置前端把默认值回填进草稿后整份回传，不能据此判成改动（否则只改
+    // 名字也会把默认值写进文件并触发重启）
+    const currentOf = (k: string) =>
+      current[k] ?? (CORE_CONFIG_SCHEMA[k] as { default?: unknown } | undefined)?.default;
+    const differs = (k: string) => !isDeepStrictEqual(updates[k], currentOf(k));
     const ignored = Object.keys(updates).filter(k => k !== '_schema' && !allowed.includes(k) && differs(k));
     const changed = allowed.filter(k => k in updates && differs(k));
     // 与插件配置路径同一把尺子：类型不符的值（如 name 传数字）不落盘。select 的取值范围 validateConfig
@@ -276,8 +280,8 @@ export function registerPluginRoutes(
     }
     const previous = Object.fromEntries(changed.map(k => [k, current[k]]));
     for (const key of changed) doc.set(key, updates[key]);
-    // logLevel 只在启动时读取，改了才重启；name 由 /api/status 每次实时读文档，保存即生效
-    const restartNeeded = changed.includes('logLevel');
+    // logLevel 与 slowThresholdMs 只在启动时读取，改了才重启；name 由 /api/status 每次实时读文档，保存即生效
+    const restartNeeded = changed.some(k => k === 'logLevel' || k === 'slowThresholdMs');
     const note = ignored.length > 0 ? `（已忽略不可修改的字段: ${ignored.join(', ')}）` : '';
 
     try {
@@ -290,7 +294,7 @@ export function registerPluginRoutes(
       }
     } catch (err) {
       // 拒写与写入失败都撤回文档里的改动，免得下一次任意保存把这次没存下的修改写进文件。
-      // logLevel 要重启才生效，name 由状态接口读文档：撤回后两者都回到修改前，运行态不留改动
+      // logLevel / slowThresholdMs 要重启才生效，name 由状态接口读文档：撤回后都回到修改前，运行态不留改动
       for (const key of changed) doc.set(key, previous[key]);
       res
         .status(isConfigSaveRefused(err) ? 409 : 500)

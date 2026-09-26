@@ -1,4 +1,4 @@
-import { App, LogHub, services } from '@aalis/core';
+import { App, LogHub, lifecycle, services } from '@aalis/core';
 import type { LogEntry } from '@aalis/schema-log';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type CronEngine, cronEngine } from '../../packages/api-cron-engine/src/index.js';
@@ -172,6 +172,29 @@ describe('cron-engine 整分钟 tick', () => {
       h.engine.subscribe('* * * * *', () => {});
       expect(vi.getTimerCount(), 'dispose 后 subscribe 把 tick 循环起了回来，定时器越过卸载活着').toBe(0);
     });
+  });
+
+  it('收尾段开始后到点的 tick 不再排下一轮：lifecycle.signal 已断', async () => {
+    const app = new App({ name: 'T', logLevel: 'warn', logHub: new LogHub() });
+    try {
+      await app.plugin(cronEnginePlugin, {});
+      await app.plugins.idle();
+      // 根 required 绑定 cronEngine：根的收尾排在 cron-engine 收尾之后、撤回之前，窗口里 signal 已断、清理段未跑
+      const host = app.bind({ cronEngine, lifecycle });
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+      host.cronEngine.require().subscribe('* * * * *', () => {});
+      expect(vi.getTimerCount(), '订阅起了主循环').toBe(1);
+      let pending = -1;
+      host.lifecycle.onDrain(() => {
+        vi.runOnlyPendingTimers();
+        pending = vi.getTimerCount();
+      });
+      await app.stop();
+      expect(pending, '已开始关闭还排出了下一轮 tick').toBe(0);
+    } finally {
+      vi.useRealTimers();
+      await app.stop();
+    }
   });
 
   it('dispose 后 subscribe 的 @every 同样不建定时器：interval 没人再清它，会越过卸载一直活着', async () => {
