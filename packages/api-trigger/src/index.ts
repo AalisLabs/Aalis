@@ -6,8 +6,9 @@
 // inbound:trigger 相位挂中间件。服务胜者（偏好 > 优先级 > 注册顺序）即生效者，二选一：
 // 其余触发插件对每条消息直接放行，什么都不做。一个都不在时这个相位不做判定，消息照常往下走。
 //
-// 本包另含触发插件共用的宿主函数：生效者判断、禁言关键词、点名识别、附件识别限时等待、
-// 放行收尾与吞掉时的影子归档。除 isActiveTrigger 按每次入站记下胜者外，不持有状态。
+// 本包另含触发插件共用的宿主函数：生效者判断、禁言关键词、名字表与点名识别、附件识别限时等待、
+// 放行收尾与吞掉时的影子归档。模块状态只有 isActiveTrigger 按每次入站记下的胜者；createBotNames
+// 返回的名字表各自记着告警过的人设故障，归调用方的激活所有。日志前缀由调用方传入（如 '[laya]'）。
 //
 // 服务名：'trigger'
 // ============================================================
@@ -31,6 +32,8 @@ export const trigger = defineService<TriggerService>('trigger');
 
 /** 只读当前胜者的那一面：这里的函数只在调用的那一刻读 current，不建立跟随状态 */
 type CurrentOf<P> = Pick<ServiceRef<P>, 'current'>;
+/** 只读全部提供者的那一面，同样只在调用的那一刻枚举 */
+type AllOf<P> = Pick<ServiceRef<P>, 'all'>;
 
 // ----- 生效者 -----
 
@@ -61,14 +64,12 @@ export function hitsMuteKeyword(
   return keywords.some(kw => message.content.includes(kw));
 }
 
-/** 点名识别的配置（触发插件的配置里都有这三项） */
+/** 点名识别的开关（触发插件的配置里都有这两项；名字表由 createBotNames 取） */
 export interface AddressOptions {
   /** @ 自己算点名 */
   triggerOnAt: boolean;
   /** 戳一戳等注意力动作（noticeType=poke）算点名 */
   triggerOnPoke: boolean;
-  /** 人设名字与昵称之外的别名 */
-  triggerNames: readonly string[];
 }
 
 /**
@@ -83,37 +84,64 @@ function mentionsSelf(content: string): boolean {
 }
 
 /**
- * 名字表：别名 + 人设名字 + 人设昵称，去重。只在调用的那一刻读 persona 当前提供者。禁言关键词
- * 不从 persona 读：避免角色卡措辞成为禁言开关，也避免进程级单例 persona 跨平台泄漏。
+ * 建一个名字表：每次调用现取，返回别名（triggerNames）与全部已登记人设的名字、昵称的并集，去重、去空，
+ * 别名在前、人设按服务解析顺序在后。触发插件激活时建一个，点名识别与 Laya 发给侧车的 selfNames 用同一份。
+ *
+ * 取全部人设提供者（persona.all()）而不只取当前胜者：现状是 agent 只用当前生效的那一个人设
+ * （getPersonaName 不带会话参数），同时装了多个人设插件时，叫其中任何一个的名字都算叫她。将来 persona
+ * 能按会话取人设时，改为按会话取名字的只有这一处。
+ *
+ * 某个人设提供者读名字抛错时只跳过它的名字，其余照常：记一条 warn，同一提供者同一原因只记一次
+ * （它读成功一次后再出错会再记）。禁言关键词不从 persona 读：避免角色卡措辞成为禁言开关，也避免进程级
+ * 单例 persona 跨平台泄漏。
  */
-function botNames(persona: CurrentOf<PersonaService>, triggerNames: readonly string[]): string[] {
-  const names = [...triggerNames];
-  const service = persona.current;
-  if (service) {
-    for (const n of [service.getPersonaName(), ...(service.getNickNames?.() ?? [])]) {
-      if (n && !names.includes(n)) names.push(n);
+export function createBotNames(
+  persona: AllOf<PersonaService>,
+  logger: Logger,
+  tag: string,
+): (triggerNames: readonly string[]) => string[] {
+  /** 正在出错的提供者 → 已告警的原因 */
+  const failing = new WeakMap<PersonaService, string>();
+  return triggerNames => {
+    const names = new Set<string>();
+    const add = (n: unknown) => {
+      if (typeof n === 'string' && n) names.add(n);
+    };
+    for (const n of triggerNames) add(n);
+    for (const { instance, contextId, label } of persona.all()) {
+      let own: unknown[];
+      try {
+        own = [instance.getPersonaName(), ...(instance.getNickNames?.() ?? [])];
+      } catch (err) {
+        const reason = `${err}`;
+        if (failing.get(instance) !== reason) {
+          failing.set(instance, reason);
+          logger.warn(`${tag} 人设「${label ?? contextId}」读名字失败，点名识别跳过它的名字: ${reason}`);
+        }
+        continue;
+      }
+      failing.delete(instance);
+      for (const n of own) add(n);
     }
-  }
-  return names;
+    return [...names];
+  };
 }
 
 /**
  * 是否被点名。戳一戳（能进到这里说明 adapter 已判断过目标是 bot：私聊戳全转入站，群聊戳仅目标是
  * 自己才转）只看 triggerOnPoke，**不做** @ 与名字检测：它的正文是合成文案，内嵌戳者昵称，昵称含
  * bot 名会被名字检测误判成提及——关掉 triggerOnPoke 后用户改个名就能让开关对自己失效（对抗审计
- * 实测）。其余消息看 triggerOnAt 的 @ 自己，以及名字检测（别名与人设名字、昵称，正文包含即命中）。
- *
- * 名字检测会调 persona 当前提供者，它抛错时本函数照抛，由调用方处理（触发插件都是记 warn 后放行：
- * 失败放行优于失败静默）。
+ * 实测）。其余消息看 triggerOnAt 的 @ 自己，以及名字检测（names 里任一个出现在正文里即命中，
+ * names 通常取自 createBotNames）。
  */
 export function isAddressed(
   message: Pick<IncomingMessage, 'content' | 'noticeType'>,
-  persona: CurrentOf<PersonaService>,
+  names: readonly string[],
   opts: AddressOptions,
 ): boolean {
   if (message.noticeType === WellKnownNoticeTypes.Poke) return opts.triggerOnPoke;
   if (opts.triggerOnAt && mentionsSelf(message.content)) return true;
-  return botNames(persona, opts.triggerNames).some(name => name && message.content.includes(name));
+  return names.some(name => name && message.content.includes(name));
 }
 
 // ----- 附件识别 -----
@@ -130,6 +158,7 @@ export async function waitForAttachmentDescriptions(
   media: CurrentOf<MediaService>,
   waitMs: number,
   logger: Logger,
+  tag: string,
 ): Promise<void> {
   const svc = media.current;
   if (!svc || !message.attachments?.length || message._attachmentDescriptions) return;
@@ -137,7 +166,7 @@ export async function waitForAttachmentDescriptions(
     .then(() => svc.processMessage(message))
     .then(
       () => undefined,
-      err => logger.warn(`[trigger] 附件识别失败: ${err}`),
+      err => logger.warn(`${tag} 附件识别失败: ${err}`),
     );
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<void>(resolve => {
@@ -171,12 +200,13 @@ export async function archiveSwallowed(
   message: IncomingMessage,
   archive: CurrentOf<MessageArchiveService>,
   logger: Logger,
+  tag: string,
 ): Promise<void> {
   const svc = archive.current;
   if (!svc) return;
   try {
     await svc.archiveIncoming(message);
   } catch (err) {
-    logger.warn(`[trigger] shadow 归档失败: ${err}`);
+    logger.warn(`${tag} shadow 归档失败: ${err}`);
   }
 }

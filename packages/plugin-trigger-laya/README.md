@@ -13,7 +13,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 
 ## 依赖
 
-- 服务：`config`、`events`（监听 `inbound:message:archived` 做运行期自检）、`hooks`、`logger`、`provide`；optional：`trigger`（判断自己是否生效）、`memory`（历史窗口，缺席时判定不可用）、`flow-control`（禁言）、`persona`（名字检测）、`message-archive`（吞掉时归档）、`media`（附件识别）、`doctor`（诊断项）。
+- 服务：`config`、`events`（监听 `inbound:message:archived` 做运行期自检）、`hooks`、`logger`、`provide`；optional：`trigger`（判断自己是否生效）、`memory`（历史窗口，缺席时判定不可用）、`flow-control`（禁言）、`persona`（名字检测与发给侧车的 `selfNames`，缺席时只用 `triggerNames`）、`message-archive`（吞掉时归档）、`media`（附件识别）、`doctor`（诊断项）。
 - 侧车 laya-listener：本机 HTTP 服务，只监听 127.0.0.1，由 launchd 守护。构建、部署、换版本与回滚见本机 `models/listener-sidecar/README.md`（`models/` 在 `.gitignore` 里，不随仓库分发）。
 
 ## 判定流程
@@ -23,11 +23,11 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 3. 不在作用域（`scopes` / `overrides`，默认 `*:group`）→ 放行，不写 `triggerType`，由后面的 flow 与 agent 照常处理。私聊默认不在作用域内。
 4. 会话处于禁言期 → 放行给 flow 相位吞掉；不识别禁言关键词。
 5. 命中禁言关键词（`muteKeywords`；戳一戳的合成文案不算）→ 设自禁言 `muteTimeSeconds` 秒、归档后吞掉，不问模型。
-6. 识别点名：戳一戳按 `triggerOnPoke`；其余消息按 `triggerOnAt`（@ 自己）与名字检测（`triggerNames` 与人设名字、昵称）。识别抛错（persona 故障）时放行、不写 `triggerType`，不问模型：persona 持续故障期间，作用域内的消息逐条交给 agent，只受 flow-control 的冷却与限速约束。
+6. 识别点名：戳一戳按 `triggerOnPoke`；其余消息按 `triggerOnAt`（@ 自己）与名字检测。名字表是 `triggerNames` 与全部已登记人设的名字、昵称的并集（`@aalis/api-trigger` 的 `createBotNames`）：现状是 agent 只用当前生效的那一个人设，同时装了多个人设插件时，叫其中任何一个的名字都算点名。某个人设读名字抛错时只跳过它的名字，照常判定，记一条 warn（同一提供者同一原因只记一次）。
 7. 判定前检查：只接受 onebot 的群聊与私聊（从会话 ID `onebot:{selfId}:{group|private}:{targetId}` 取 bot 自己的账号作为 `selfId`），其它会话兜底，每类会话（平台与会话类型）首次遇到时记一条 warn；memory 缺席或侧车处于熔断期时兜底。
 8. 取窗口：`memory.getFullHistory(sessionId, historyRows × 2)`（没有该方法时回落 `getHistory`），只留 `role` 为 `user` / `assistant` 且正文是字符串的行，取其中最后 `historyRows` 行，投影为 `{role, content, userId, nick}`：`userId` 取 `metadata.userId`，`nick` 取 `metadata.nickname`，缺失时回落 `name`。先过滤再取行，与侧车渲染回归（`replay_data.py`）的取法一致；最近 `historyRows × 2` 行里其它角色的行（tool、system、notice 等）多于 `historyRows` 条时，窗口不足 `historyRows` 行。
 9. 带附件、尚无描述时启动附件识别并最多等 `mediaWaitMs`，再用 `@aalis/schema-message` 的 `buildIncomingContent` 拼当前消息 `cur`。归档用的是同一个函数，两者不一致的情况见「已知局限」。放行与吞掉都不等识别跑完，agent 预处理器与归档复用这次识别，不再识别第二遍。
-10. 取历史与等识别期间侧车已熔断的，本条兜底、不发请求。请求体里字符串的孤代理换成 U+FFFD（侧车的分词器不接受孤代理，会回 500 并计入熔断）。请求体按 UTF-8 字节数超过侧车的上限 1 MiB 时不发请求，本条兜底；否则记下 `cur` 的摘要供运行期自检（见「日志」），再 `POST {endpoint}/v1/score`，超时 `timeoutMs`（含读完响应体）。
+10. 取历史与等识别期间侧车已熔断的，本条兜底、不发请求。第 6 步的名字表作为 `selfNames` 随请求发出（见「侧车接口」）。请求体里字符串的孤代理换成 U+FFFD（侧车的分词器不接受孤代理：整条回 422 `bad_text`，这一条只能兜底；更早的侧车回 500 并计入熔断）。请求体按 UTF-8 字节数超过侧车的上限 1 MiB 时不发请求，本条兜底；否则记下 `cur` 的摘要供运行期自检（见「日志」），再 `POST {endpoint}/v1/score`，超时 `timeoutMs`（含读完响应体）。
 11. `speak = logit ≥ 阈值`，阈值取作用域生效的 `threshold`，留空时用侧车随响应返回的模型阈值。开口则写 `triggerType` 放行；不开口则归档后吞掉。
 
 兜底即 `speak = 是否被点名`：点名的消息记 `immediate` 放行，其余归档后吞掉。第 7 步就兜底的不等附件识别。
@@ -43,16 +43,17 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
   "curUserId": "...",
   "curNick": "...",
   "replyTo": { "userId": "...", "nickname": "..." },
-  "selfId": "..."
+  "selfId": "...",
+  "selfNames": ["..."]
 }
 ```
 
-`replyTo` 在消息不是引用回复时为 `null`。成功响应为 `200 {logit, threshold, version}`。诊断项另用 `GET /health`（`{ok, version}`）探活。
+`replyTo` 在消息不是引用回复时为 `null`。`selfNames` 是点名识别用的名字表（别名在前、人设按服务解析顺序在后），侧车渲染时把正文里的这些名字换成模型认识的 bot 代号，人设改了名，叫新名字也能被模型认出来。侧车的上限是 32 个、每个至多 32 个字符，超过回 400：超过 32 个字符的名字不发（截断后的名字会误换正文），多于 32 个时取前 32 个。不认识这个字段的旧侧车忽略它，照常判定，插件与侧车的升级顺序无关。成功响应为 `200 {logit, threshold, version}`。诊断项另用 `GET /health`（`{ok, version}`）探活。
 
 | 情形 | 处理 |
 |---|---|
 | 200 且 `logit` 与阈值都是有限数 | 按模型判定；失败计数清零 |
-| 422（`system_notice` / `empty_cur` / `bad_cur`：这条消息不适合交给模型）；413（`too_large`，发请求前已按上限判断，这里兜底） | 本条兜底，不计失败；侧车正常作答，失败计数清零 |
+| 422（`system_notice` / `empty_cur` / `bad_cur` / `bad_text`：这条消息不适合交给模型，`bad_text` 为分词失败）；413（`too_large`，发请求前已按上限判断，这里兜底） | 本条兜底，不计失败；侧车正常作答，失败计数清零 |
 | 请求体超过 1 MiB（发请求前判断） | 不发请求，本条兜底，不计失败，记一条 info |
 | 其它非 2xx、连不上、超时、响应不是 JSON、`logit` 或阈值不是有限数 | 本条兜底，计一次失败 |
 
@@ -83,7 +84,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 | `threshold` | number | 留空 | 开口阈值，`logit ≥ 阈值` 即开口；留空用侧车返回的模型阈值（随模型版本给出） |
 | `triggerOnAt` | boolean | `true` | @ 自己算点名 |
 | `triggerOnPoke` | boolean | `true` | 戳一戳算点名 |
-| `triggerNames` | string | `''` | 点名别名（逗号分隔），人设名字与昵称自动合并 |
+| `triggerNames` | string | `''` | 点名别名（逗号分隔），全部已登记人设的名字与昵称自动合并；同一份名字表作为 `selfNames` 发给侧车 |
 | `muteKeywords` | string | `''` | 禁言关键词（逗号分隔） |
 | `muteTimeSeconds` | number | `60` | 禁言关键词命中时长（秒） |
 | `mediaWaitMs` | number | `8000` | 带附件的消息等识别写好描述的上限（毫秒），超时照常判定 |
@@ -108,7 +109,7 @@ Laya 触发判定：一个自成一体的[触发插件](../../docs/services/trig
 
   耗时是整次判定：取历史、等附件识别与侧车往返。兜底原因：`会话不适用`、`memory 缺席`、`侧车熔断中`、`请求体超限`、`侧车请求失败`、`侧车 422 <错误码>` / `侧车 413 <错误码>`、`判定异常`。
 - 判定不可用（error）与恢复（warn），见「兜底与故障观测」。
-- 请求体超限（info，每条一行）；单次请求失败、熔断期间的重新熔断（debug）；取历史等意外异常（warn，本条兜底）；点名识别异常（warn，放行）；模型没见过的会话（warn，每类会话一次）。
+- 请求体超限（info，每条一行）；单次请求失败、熔断期间的重新熔断（debug）；取历史等意外异常（warn，本条兜底）；人设读名字失败（warn，同一提供者同一原因一次）；附件识别失败、吞掉时归档失败（warn，每次一行）；模型没见过的会话（warn，每类会话一次）。
 - 运行期自检汇总（info，每结清 200 条记一行，计数自插件激活起累计）：
 
   ```
