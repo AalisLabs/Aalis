@@ -113,8 +113,8 @@ export interface GatewayService {
  *   CONFIRM  → 会话内待确认回复拦截（Y/YS/否；由 plugin-session-confirm 占据）。命中即吞掉回复、
  *              不进入后续相位，从而**不触发 agent.handleMessage 对在途生成的 abort**（确认得以回送）。
  *   COMMAND  → 指令解析与执行（由 plugin-commands 占据）
- *   TRIGGER  → 要不要开口：禁言关键词、点名识别，再按序问 trigger 服务的提供者（默认规则：点名、
- *              计数与评分），判定结果写入 message.triggerType（由 plugin-trigger-policy 占据）
+ *   TRIGGER  → 要不要开口：禁言关键词、点名识别与判定，结果写入 message.triggerType（由生效的触发插件
+ *              占据，即 trigger 服务胜者，如 plugin-trigger-policy 的计数与评分）
  *   FLOW     → 节流硬闸：禁言期一律吞；回复后冷却与限速只挡非 immediate 触发，其中带 source 的
  *              内部注入不过冷却、仍受限速（由 plugin-flow-control 占据）
  *   DISPATCH → 默认派发到 agent.handleMessage（plugin-gateway 提供 default action）

@@ -4,7 +4,7 @@
 
 ## 定位
 
-只回答"现在能不能说"：会话处于禁言期、回复后冷却期或限速窗口已满时，把消息挡下。"要不要开口"（@、名字、计数与评分、闲置主动开口）由 [plugin-trigger-policy](./plugin-trigger-policy.md) 决定，本插件不参与。
+只回答"现在能不能说"：会话处于禁言期、回复后冷却期或限速窗口已满时，把消息挡下。"要不要开口"（@、名字、计数与评分、闲置主动开口）由生效的触发插件（见 [trigger 服务](../services/trigger.md)，如 [plugin-trigger-policy](./plugin-trigger-policy.md)）决定，本插件不参与。
 
 逻辑实现为 `inbound:flow` 相位的 handler 与 `flow-control` 服务，不依赖具体平台。`scopes`（以及写了 override 即视为启用的作用域）决定哪些会话受冷却与限速约束：入站过闸与回复记账都只对作用域内会话，委派闸门与闲置选会话读的是这份记账，因此同样只对作用域内会话生效；禁言不看作用域。默认 `*:group`；默认作用域不含 WebUI/CLI（它们的消息不带会话类型），如需纳入，在 `scopes` 里显式添加（如 `webui`、`cli` 或 `*`）。`overrides` 里的数值按会话记录的 sessionType / targetId 匹配。
 
@@ -40,7 +40,7 @@ export default definePlugin({
 inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispatch 之前触发）
 ```
 
-进入本相位时，trigger-policy 已判定要开口并写好 `message.triggerType`。处理顺序：
+进入本相位时，生效的触发插件已判定要开口并写好 `message.triggerType`。处理顺序：
 
 1. 会话处于禁言期 → 吞掉。不看作用域、不看来源：闲置触发、跨会话委派、定时任务注入的消息在禁言期同样不说话。禁言状态只由禁言关键词或平台禁言事件针对具体会话写入，作用域之外的会话不会被误伤。
 2. 不在作用域内 → `next()` 放行。带 `source` 的内部注入（闲置触发、定时任务、workflow、跨会话委派）不带会话类型，判作用域与回复记账同一口径：先用会话已记下的平台与类型，没有再按会话 ID 约定推断（见「出站联动」）。所以默认 `*:group` 下，bot 在某个群的限速窗口已满时（此时会话已记下群类型），发往该群的内部注入同样被第 4 步挡下。其余消息按消息自身的 platform / sessionType / targetId 判，包括 WebUI、CLI 发进平台会话的真人消息（它们不带会话类型，默认 `*:group` 下在作用域外），以及自带会话类型的内部注入。
@@ -61,7 +61,7 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 ## 禁言
 
 - `setMuted(sessionId, sec, platform)`：`sec > 0` 禁言到 `now + sec`，`sec <= 0` 解除。会话尚无状态时须给出 `platform` 才会建立状态。
-- 调用方：trigger-policy 命中禁言关键词时；OneBot 适配器收到 bot 自身被禁言/解禁的 notice，或重连后按 `shut_up_timestamp` 恢复时。
+- 调用方：触发插件命中禁言关键词时；OneBot 适配器收到 bot 自身被禁言/解禁的 notice，或重连后按 `shut_up_timestamp` 恢复时。
 - 禁言状态落盘到 `data:/flow-control-mutes.json`，重启后恢复未过期的禁言。冷却与限速是秒级短期状态，不落盘。
 
 ## 配置
@@ -86,4 +86,4 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 
 - 定时任务的消息被禁言或限速吞掉时，plugin-scheduler 仍把这次运行记为成功（`lastResult`），WebUI 上看不出提醒没有发出；被吞的消息只做影子归档，不重试。
 - plugin-workflow 的 agent 节点把指令发往目标会话后等回复。目标会话处于禁言期，或落在作用域内且限速窗口已满时，指令被吞掉，节点等到 `timeoutSeconds` 超时才失败；等待期间同一会话若有其它回合结束（例如有人 @ bot，immediate 穿透限速），节点会把那次回复当作自己的结果（按 sessionId 捕获回合结束，是 workflow 引擎原有的做法）。
-- trigger-policy 的 session 档闲置触发到点时只查禁言（禁言期跳过、不翻倍）。闲置提示被限速吞掉时，`exponential` 风格下退避照样翻倍。
+- trigger-policy 的 session 档闲置触发到点时只查禁言与自己是否生效（禁言期或不生效时跳过、不翻倍）。闲置提示被限速吞掉时，`exponential` 风格下退避照样翻倍。

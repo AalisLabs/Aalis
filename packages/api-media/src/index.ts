@@ -131,7 +131,7 @@ export interface MediaService {
    * 把每条附件的文本描述写入 msg._attachmentDescriptions（与 attachments 同长度；
    * 本服务不写描述的位，如文件，保留调用前已有的值）。
    * 同一消息对象重复调用共享同一次处理（进行中则等它、返回同一份报告），不重复识别。
-   * 由 plugin-media 的 preprocessor 调用；触发判定的提供者要看附件描述时，相位宿主也会提前调用。
+   * 由 plugin-media 的 preprocessor 调用；触发插件判定前要看附件描述时（如 plugin-trigger-laya）也会提前调用。
    */
   processMessage(msg: IncomingMessage): Promise<MediaProcessReport>;
 

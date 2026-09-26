@@ -1046,7 +1046,7 @@ function registerUserProfile({
     options: { countInteraction?: boolean } = {},
   ): UserProfile {
     // countInteraction：是否计入互动计数与更新 lastInteractionAt。
-    // 同一条入站消息会先走 witness 路径，若被 trigger-policy 判为需回复又会走
+    // 同一条入站消息会先走 witness 路径，若被触发插件判为需回复又会走
     // agent:input:before 路径。为避免 interactionCount/lastInteractionAt 被同一条
     // 消息计两次，计数与时戳只由 witness 路径负责，agent:input:before 仅叠加 score。
     const countInteraction = options.countInteraction ?? true;

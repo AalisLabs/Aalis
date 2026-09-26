@@ -84,7 +84,7 @@ export const persona = defineService<PersonaService>('persona');
 
 - `@aalis/plugin-agent`（核心消费者）— `buildSystemPrompt()` 取 persona 拼进 system 块：先 `const persona = this.caps.persona.current`，再 `persona.getSystemPrompt(personaOpts)`；易变上下文由 `getVolatilePrompt?.(personaOpts)` 取出，作为 system 消息放在历史之后、当前用户消息之前；`'persona'` 在其 `uses optional` 中。注意 JSON 解析与状态持久化并不在 agent 里做，而是由 persona 自己挂 `agent:reply:before` 钩子统一处理（见 §4）。
 - `@aalis/plugin-skills` — `getAllowedSkills()` 用 `persona?.getPersonaSkills?.()` 过滤暴露给 LLM 的 skill 列表。
-- `@aalis/plugin-trigger-policy` — 用 `getPersonaName()` 与 `getNickNames()` 收集 bot 昵称，做唤起匹配。
+- 触发插件（`@aalis/plugin-trigger-policy` 等，经 `@aalis/api-trigger` 的 `isAddressed`）— 用 `getPersonaName()` 与 `getNickNames()` 收集 bot 名字与昵称，做点名识别。
 - `@aalis/plugin-tool-system` — 通过 `persona.current` 判断，已注入时间则跳过注册 `system_time` 工具。
 - `@aalis/plugin-tool-session` — `delegate_to_session` 用 `getSessionState?.(targetSessionId)` 把目标会话的结构化状态附在委托结果里。
 - `@aalis/plugin-session-manager` — `listModels()` 拉取所有卡名给 WebUI 下拉框；`configSchema` 里的 `persona` 字段用 `dynamicOptions: 'persona'`。
@@ -183,7 +183,7 @@ export default definePlugin({
 
 ## 7. 边界与常见错误
 
-**「单例 PersonaService 跨平台」是真实约束。** trigger-policy 的注释明确指出：mute 关键词不再从 persona 读，以避免单例 PersonaService 跨平台泄漏。persona 是进程级单例，会话差异全部依靠 `PersonaSessionOptions` 与 `AsyncLocalStorage` 身份来承载；任何「当前会话状态」都不能写进裸字段。
+**「单例 PersonaService 跨平台」是真实约束。** 触发插件共用的点名识别（`@aalis/api-trigger`）的注释明确指出：mute 关键词不从 persona 读，以避免单例 PersonaService 跨平台泄漏。persona 是进程级单例，会话差异全部依靠 `PersonaSessionOptions` 与 `AsyncLocalStorage` 身份来承载；任何「当前会话状态」都不能写进裸字段。
 
 **结构化输出的逻辑不在 service 方法里，而在 reply 钩子里。** `getOutputFormat()` 只返回声明本身；真正的解析、对 `data.content` 的回填、状态持久化与重试，全在 `agent:reply:before` 中间件里完成。仅调用 `getOutputFormat()` 并不能得到结构化结果。
 

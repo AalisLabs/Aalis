@@ -290,7 +290,7 @@ async function run(caps: Caps): Promise<void> {
   );
 
   // ===== inbound:flow 相位：节流硬闸 =====
-  // 由 plugin-gateway 在 inbound:trigger 之后、inbound:dispatch 之前触发，此时 trigger-policy
+  // 由 plugin-gateway 在 inbound:trigger 之后、inbound:dispatch 之前触发，此时生效的触发插件
   // 已判定要开口并写好 message.triggerType。
   hooks.middleware(INBOUND_PHASE.FLOW, async (data, next) => {
     const { message } = data;

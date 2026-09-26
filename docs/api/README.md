@@ -40,7 +40,7 @@
 | [api-session-manager](./api-session-manager.md) | `sessionManager` 描述符 | plugin-session-manager |
 | [api-storage](./api-storage.md) | `storage` 描述符 + `createStorageGateway` 等 helper（第一参吃 `ServiceRef`） | plugin-storage-local |
 | [api-tools](./api-tools.md) | `tools` 描述符 + `BoundTools` / `withToolGroups` | plugin-tools |
-| [api-trigger](../services/trigger.md) | `trigger` 描述符（多提供者判定要不要开口） | plugin-trigger-policy（相位宿主 + 规则提供者） |
+| [api-trigger](../services/trigger.md) | `trigger` 描述符（选出生效的触发插件，二选一）与触发插件共用的宿主函数 | plugin-trigger-policy（规则判定） |
 | [api-user-relation](./api-user-relation.md) | `userRelation` 描述符（服务名 `user-relation`）+ 查询接口 `UserRelationService` | plugin-user-relation |
 | [api-vectorstore](./api-vectorstore.md) | `vectorstore` 描述符 | plugin-vectorstore-flat / plugin-vectorstore-lancedb |
 | [api-webui](./api-webui.md) | `webuiServer` / `webuiClient` 描述符 + `BoundWebui`（`registerPage` / `registerAction`） | plugin-webui-server |

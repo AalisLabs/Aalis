@@ -1,10 +1,10 @@
 # @aalis/plugin-trigger-policy
 
-> 平台无关的开口判定 —— `inbound:trigger` 相位宿主 + 规则判定（@ 提及 / 戳一戳 / 名字命中 / 计数 / 评分阈值）+ 禁言关键词 / 闲置主动开口
+> 平台无关的开口判定 —— 规则触发插件（@ 提及 / 戳一戳 / 名字命中 / 计数 / 评分阈值）+ 禁言关键词 / 闲置主动开口
 
 ## 定位
 
-回答"这条消息要不要让 agent 开口"。本插件是 `inbound:trigger` 相位的宿主：持有每会话的计数、活跃指数与闲置调度状态，处理作用域、禁言、禁言关键词与点名识别，再把"开不开口"交给 [`trigger` 服务](../services/trigger.md)的提供者逐个判定，放行时标记 `triggerType`。本插件自带规则提供者（点名 / 计数 / 评分）兜底；判定模型等其它提供者可以更高优先级登记在它前面。放行之后能不能说（禁言、冷却、限速）由下一相位的 [plugin-flow-control](./plugin-flow-control.md) 把关。
+回答"这条消息要不要让 agent 开口"。本插件是一个触发插件（见 [`trigger` 服务](../services/trigger.md)）：持有每会话的计数、活跃指数与闲置调度状态，在 `inbound:trigger` 相位处理作用域、禁言、禁言关键词、点名识别与规则判定，放行时标记 `triggerType`。它只在自己是 `trigger` 服务的胜者（生效的触发插件）时判定；与模型触发插件 `@aalis/plugin-trigger-laya` 二选一。放行之后能不能说（禁言、冷却、限速）由下一相位的 [plugin-flow-control](./plugin-flow-control.md) 把关。
 
 ## 插件声明
 
@@ -24,13 +24,12 @@ export default definePlugin({
     flowControl: optional(flowControl),
     persona: optional(persona),
     messageArchive: optional(messageArchive),
-    media: optional(media),
   },
   apply(caps) { /* 见源码 */ },
 });
 ```
 
-本插件登记 `trigger` 服务的规则提供者（标签「规则（计数/评分）」，优先级 0），并以 optional 声明 `trigger` 本身：宿主经它按序问全部提供者，写 required 会把激活闸架在自己的产出上。`flow-control` 缺席时不设禁言：禁言关键词照样吞掉当条消息，但不会写入禁言期。`media` 缺席时，提供者要附件描述也拿不到。
+本插件向 `trigger` 服务提供自己的实例（标签「规则（计数/评分）」，优先级 0），并以 optional 声明 `trigger` 本身：经它判断自己是不是生效的触发插件，写 required 会把激活闸架在自己的产出上。`flow-control` 缺席时不设禁言：禁言关键词照样吞掉当条消息，但不会写入禁言期。
 
 ## 接入相位
 
@@ -38,46 +37,41 @@ export default definePlugin({
 inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flow 之前触发）
 ```
 
-判定流程：
+判定流程（同步完成：记入站、判定、清零在同一拍做完）：
 
+0. 本插件不是生效的触发插件（`trigger` 服务的胜者另有其人）→ `next()`，什么都不做：不计数、不识别、不归档。胜者每次入站只取一次，判定途中切换偏好不会让同一条消息被判两次。
 1. 带 `source` 的内部注入（闲置触发、定时任务、workflow、跨会话委派）→ `next()` 跳过策略：不计数，不改写 `triggerType`（委派的 `proactive` 原样保留）。真人消息由平台适配器投递，不设 `source`。
 2. 不在作用域内 → `next()` 放行。作用域判断先于禁言关键词，避免群聊的禁言关键词作用到 WebUI、私聊等不在作用域内的会话。
 3. 会话处于禁言期（`flow.isMuted`）→ 本会话计数与活跃指数清零，`next()` 交给 flow 相位吞掉。禁言期内的消息不累计计数，也不再识别禁言关键词（不会缩短平台禁言）。平台禁言只能在这一步清零：平台禁言期内若一条消息都没有，禁言前攒下的计数保留到解禁后。
 4. 命中禁言关键词 → `flow.setMuted(sessionId, muteTimeSeconds, platform)`，本会话计数与活跃指数当场清零 → 影子归档 → 吞掉。戳一戳通知跳过这一步：其正文是合成文案，内嵌戳者昵称，与名字检测同理不当发言评估。
-5. 记入站：评分衰减、计数 +1、评分增量、用户交互次数、最近消息时间，同一拍按此刻的计数与活跃指数算好规则判定；闲置退避复位为 1，并按这次真人活动重排 session 档闲置触发。
-6. 识别点名（addressed）：戳一戳按 `triggerOnPoke`；其余消息按 `triggerOnAt`（@ 自己）与名字检测（`triggerNames` 与人设名字）。`triggerOnPoke` 关闭时戳一戳不算点名，也不做 @ / 名字检测。
-7. 按 `trigger.all()` 的顺序（偏好 > 优先级 > 注册顺序）逐个问提供者，每次限时 `decisionTimeoutMs`；返回 null、抛错、超时都算弃权，转问下一个，第一个给出结论的说了算。规则提供者：点名即开口，否则用第 5 步按 `intervalMode` 算好的判定（计数与活跃指数是否达标）；它不弃权。每次判定记一行判定日志（见「触发提供者」）。
-8. 开口（无论哪个提供者）：计数与活跃指数清零、记录触发时间；点名的写 `triggerType = 'immediate'`，否则写 `'interval'`；`next()`。`interval` 在多人会话且消息未带 `actor` 时回填无主体授权身份 `actor = selfInitiatedActor(platform)`：interval 回合没有主发言者，撞上阈值的那条消息的发言者不应决定 AI 自发行为的工具权限，authority 按默认等级裁决、不视为 owner，其白名单与会话授予也不替无主体回合解围。私聊纳入作用域后其 interval 只是频率闸，发言者仍是主体，不回填。不开口：影子归档后吞掉。
+5. 记入站：评分衰减、计数 +1、评分增量、用户交互次数、最近消息时间；闲置退避复位为 1，并按这次真人活动重排 session 档闲置触发。
+6. 识别点名：戳一戳按 `triggerOnPoke`；其余消息按 `triggerOnAt`（@ 自己）与名字检测（`triggerNames` 与人设名字、昵称）。`triggerOnPoke` 关闭时戳一戳不算点名，也不做 @ / 名字检测。
+7. 判定：点名直接开口；否则按 `intervalMode` 看此刻的计数与活跃指数是否达标。记一行判定日志（见下）。
+8. 开口：计数与活跃指数清零、记录触发时间；点名的写 `triggerType = 'immediate'`，否则写 `'interval'`；`next()`。`interval` 在多人会话且消息未带 `actor` 时回填无主体授权身份 `actor = selfInitiatedActor(platform)`：interval 回合没有主发言者，撞上阈值的那条消息的发言者不应决定 AI 自发行为的工具权限，authority 按默认等级裁决、不视为 owner，其白名单与会话授予也不替无主体回合解围。私聊纳入作用域后其 interval 只是频率闸，发言者仍是主体，不回填。不开口：影子归档后吞掉。
 
-点名识别抛错（例如名字检测调用的 persona 提供者异常）时记 warn 并放行，不写 `triggerType`，由 flow 相位按普通消息把关。全部提供者弃权时同样失败放行，按点名定类别；规则提供者在场，正常不会出现。
+点名识别抛错（例如名字检测调用的 persona 提供者异常）时记 warn 并放行，不写 `triggerType`，由 flow 相位按普通消息把关。
 
-同一会话接连到达的消息可能同时在判定（规则前面有提供者时判定要等它们）。规则判为开口、但这条判定期间本会话已有消息放行时，这次开口作废，影子归档后吞掉。判定按到达顺序返回时，一簇突发消息只放行撞上阈值的那一条；那条的判定返回得晚时（例如影子期撞上阈值的是等附件识别的消息），放行的可能是后到的那条。点名的消息照常放行，其它提供者的判定不受此约束。
+判定是同步的，同一会话接连到达的消息逐条按计数判定：`fixedInterval` 为 2 时同一时刻到达的 4 条放行第 2、4 条。
 
 计数在判定放行时即复位。放行后若被 flow 相位的冷却或限速吞掉，这次触发作废，动态阈值也回到上限；冷却通常只有十秒量级，这期间再次攒够阈值的概率很低，因此不做预判。
-
-## 触发提供者
-
-"开不开口"由 [`trigger` 服务](../services/trigger.md)的提供者判定，本插件是它唯一的调用方。仓库内的私有插件 `@aalis/plugin-trigger-laya`（不发布到 npm）是一个判定模型提供者：经本机侧车调用 Laya 模型判定，默认影子模式，说明见仓库中的 `packages/plugin-trigger-laya/README.md`。
-
-**截止时间**：每个提供者限时 `decisionTimeoutMs`（默认 2000 毫秒），超时按弃权处理。宿主放弃后不取消提供者手里的请求，提供者应自带更短的超时。
-
-**附件识别**：提供者要看附件描述时调用 `awaitAttachmentDescriptions()`。消息带附件、尚无描述且 `media` 在场时，宿主启动一次识别（`media.processMessage`，同一条消息只启动一次）并最多等 `mediaWaitMs`（默认 8000 毫秒）；等待的时间不计入截止时间，超时照常判定、识别在后台继续。无论开口还是吞掉，宿主都不等识别跑完：agent 预处理器与归档对同一个消息对象调 `processMessage`，命中这次识别（在途则等它），不再识别第二遍；余下的等待落在 agent 预处理器或归档里，与没有判定模型时相同。宿主放弃一个提供者（超时或已给出结论）后，它再调用 `awaitAttachmentDescriptions()` 直接返回，不启动识别。规则提供者不看附件，只有规则判定时图片消息的判定不等识别。
 
 **判定日志**：每条判定一行 debug 日志，不含消息正文：
 
 ```
-[trigger] 判定 | session=<会话> | 决定者=<label> | speak=<true|false> | addressed=<true|false> | reason=<reason>[ | score=<score>] | 耗时=<n>ms[ | 弃权=<label>(弃权|超时|出错),…]
+[trigger] 判定 | session=<会话> | speak=<true|false> | addressed=<true|false> | reason=<reason>
 ```
 
-规则提供者的 reason 形如 `计数=3/5 指数=0.412 (阈值=0.850)`，点名时为 `点名`。
+`reason` 形如 `计数=3/5 指数=0.412 (阈值=0.850)`，点名时为 `点名`。
 
-**判定模型在位时各配置项的含义**：
+## 与模型触发插件二选一
 
-- `triggerOnAt` / `triggerOnPoke` / `triggerNames`：只决定是否"被点名"，进而决定开口后的类别（`immediate` / `interval`）与授权主体，不决定开不开口——被点名的消息也由模型判定。
-- `intervalMode` / `fixedInterval` / `activityScore*` / `*DecayMinutes`：只在模型弃权、回落到规则提供者时生效。计数与活跃指数照常累计，任何提供者开口都清零。
-- `scopes` / `overrides` / `muteKeywords` / `muteTimeSeconds` / `idleTrigger*`：照常由宿主执行，与谁判定无关。
+本插件与仓库内的私有插件 `@aalis/plugin-trigger-laya`（经本机侧车由 Laya 模型判定，不发布到 npm，说明见 `packages/plugin-trigger-laya/README.md`）都是完整的触发插件，由 `trigger` 服务的胜者决定哪个生效（偏好 > 优先级 > 注册顺序）。两个都启用时 Laya（优先级 10）生效，本插件对每条消息直接放行，计数与闲置都停下。切换方式：
 
-**回滚到规则判定**：在 WebUI 服务页把 `trigger` 的偏好切到「规则（计数/评分）」，即时生效——规则提供者排到最前，它不弃权，模型不再被问。手改 `aalis.config.yaml` 的 `servicePreferences` 只在启动时读取，需重启才生效。
+- **切到规则判定（即时）**：WebUI 服务页把 `trigger` 的偏好切到「规则（计数/评分）」，下一条消息起由本插件判定。
+- **停用 Laya**：下一条消息起由本插件接手。
+- 手改 `aalis.config.yaml` 的 `servicePreferences` 只在启动时读取，需重启才生效。
+
+本插件的计数、活跃指数与闲置活动时间只统计它生效时经过的消息与 bot 回复；从不生效切回生效时，计数接着它上次生效时的状态算。
 
 ## 计数与评分
 
@@ -86,6 +80,8 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 - `intervalMode`：`fixed` 只看计数是否达到 `fixedInterval`；`dynamic` 只看活跃指数是否达到当前阈值；`both` 任一满足即可。`scoreDecayMinutes = 0` 且 `activityScoreUpper ≤ 1` 时，计数达标必然伴随活跃指数达标，`both` 与 `dynamic` 等价。
 
 ## 闲置触发
+
+闲置触发只在本插件生效时开口：到点时它不是生效的触发插件就跳过，不注入，也不记为 bot 开口（session 档按原退避重排）。
 
 `idleTriggerScope` 三档：
 
@@ -99,7 +95,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 
 ## 出站联动
 
-监听 `outbound:message`：`source === 'agent'` 且本插件持有该会话状态时，记为 bot 开口并重排 session 档闲置触发，不复位闲置退避。
+监听 `outbound:message`：`source === 'agent'`、本插件生效且持有该会话状态时，记为 bot 开口并重排 session 档闲置触发，不复位闲置退避。
 
 ## 配置
 
@@ -107,7 +103,7 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 |---|---|---|---|
 | `scopes` | multiselect | `["*:group"]` | 生效作用域：格式 platform:sessionType，支持通配 *；onebot:group / *:group / onebot:* / *。默认作用域不含 WebUI/CLI，如需纳入，在这里显式添加。 |
 | `intervalMode` | select | `'both'` | 间隔模式：`fixed` / `dynamic` / `both` |
-| `triggerOnAt` | boolean | `true` | 检测 @ 提及（决定是否被点名，见「触发提供者」） |
+| `triggerOnAt` | boolean | `true` | 检测 @ 提及：@ 自己算被点名，点名直接开口，回合记为 immediate |
 | `triggerOnPoke` | boolean | `true` | 戳一戳直触发：戳一戳等注意力动作视同 @ 即时触发；关闭后此类动作落回正常意愿评估，不强制回复。 |
 | `triggerNames` | string | `''` | 触发名别名（逗号分隔） |
 | `muteKeywords` | string | `''` | 禁言关键词（逗号分隔） |
@@ -124,8 +120,6 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 | `idleTriggerMaxMinutes` | number | `1440` | 闲置触发上限分钟 |
 | `idleTriggerJitter` | boolean | `true` | 闲置触发抖动（±10%，不低于 60 秒） |
 | `idleTriggerPrompt` | string | `''` | 闲置触发系统提示（留空用内置提示） |
-| `decisionTimeoutMs` | number | `2000` | 每个触发提供者的判定截止时间（毫秒），超时按弃权；等附件识别的时间不计入。只看顶层，不进 `overrides` |
-| `mediaWaitMs` | number | `8000` | 提供者要附件描述时等识别的上限（毫秒），超时照常判定。只看顶层，不进 `overrides` |
 | `overrides` | array | `[]` | 分作用域覆盖：每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。写一条 override 自动启用该 scope。 |
 
 计数、评分与闲置触发字段原属 flow-control，字段名与默认值不变，迁移方法见根目录 `CHANGELOG.md`。
@@ -136,5 +130,5 @@ inbound:trigger   （由 plugin-gateway 在 inbound:command 之后、inbound:flo
 
 ## 与 persona 的协作
 
-- 名字检测自动合并 `persona.getPersonaName()` 与 `persona.getNickNames()`，角色卡里声明的名字、昵称无需在触发名里重复配置。
+- 名字检测（`@aalis/api-trigger` 的 `isAddressed`）自动合并 `persona.getPersonaName()` 与 `persona.getNickNames()`，角色卡里声明的名字、昵称无需在触发名里重复配置。
 - 禁言关键词**不**合并 persona：统一由本插件配置下发，避免角色卡措辞意外成为禁言开关，也避免进程级单例 persona 跨平台泄漏。
