@@ -516,6 +516,16 @@ describe('禁言', () => {
     expect(h.flow().isMuted(sid('20001'))).toBe(true);
   });
 
+  it('按作用域覆盖的禁言关键词只在命中的作用域生效（顶层不配）', async () => {
+    const h = await setup({ trigger: { overrides: [{ scope: 'onebot:group:20001', muteKeywords: '闭嘴' }] } });
+
+    await h.send(groupMsg('20002', '你闭嘴吧'));
+    expect(h.flow().isMuted(sid('20002')), '别的群沿用顶层（没有禁言关键词）').toBe(false);
+
+    await h.send(groupMsg('20001', '你闭嘴吧'));
+    expect(h.flow().isMuted(sid('20001'))).toBe(true);
+  });
+
   it('禁言压过 immediate：预置 triggerType=immediate 的消息在禁言期同样被吞', async () => {
     const h = await setup();
     const U = '30009';

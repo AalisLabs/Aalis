@@ -136,6 +136,17 @@ describe('markTriggered', () => {
     expect(m.userId).toBe('10001');
   });
 
+  it('频道等其它多人会话的 interval 同样回填：条件是「不是私聊」，不是「是群聊」', () => {
+    const channel = group({
+      sessionType: 'channel',
+      sessionId: 'onebot:10000:channel:40001:50001',
+      groupId: undefined,
+    });
+    markTriggered(channel, false);
+    expect(channel.triggerType).toBe('interval');
+    expect(channel.actor).toEqual({ platform: 'onebot', userId: '' });
+  });
+
   it('私聊的 interval 不回填；消息已带 actor 时不覆盖', () => {
     const priv = group({ sessionType: 'private', sessionId: 'onebot:10000:private:10001', groupId: undefined });
     markTriggered(priv, false);

@@ -197,15 +197,19 @@ async function setup(opts: SetupOptions = {}) {
   await registerHubs(app);
   const host = app.bind({ provide, hooks, services, messageArchive });
 
-  // flow-control 替身：禁言表与 setMuted 调用
-  const flow = { muted: new Set<string>(), setMuted: [] as Array<[sessionId: string, seconds: number]> };
+  // flow-control 替身：禁言表与 setMuted 调用（连同 platform：真实实现在会话还没有流控状态时，
+  // 不带 platform 就什么都不做）
+  const flow = {
+    muted: new Set<string>(),
+    setMuted: [] as Array<[sessionId: string, seconds: number, platform?: string]>,
+  };
   host.provide(flowControl, {
     isMuted: sid => flow.muted.has(sid),
     isCoolingDown: () => false,
     isRateLimited: () => false,
-    setMuted: (sid, seconds) => {
+    setMuted: (sid, seconds, platform) => {
       flow.muted.add(sid);
-      flow.setMuted.push([sid, seconds]);
+      flow.setMuted.push([sid, seconds, platform]);
     },
   });
   // doctor 替身：收下登记的检查项
@@ -287,6 +291,25 @@ describe('plugin-trigger-laya：请求与判定', () => {
     expect(body.cur).toContain('原话');
     expect(body).toMatchObject({ curUserId: '30001', curNick: '甲', selfId: '10000' });
     expect(body.replyTo).toEqual({ userId: '30002', nickname: '乙' });
+  });
+
+  it('孤代理：请求体里的字符串先换成 U+FFFD 再发（侧车分词器不收孤代理，会回 500 计入熔断）', async () => {
+    const lone = '😀'.slice(0, 1); // 截在 emoji 中间
+    const mem = fakeMemory([
+      { role: 'user', content: `乙: 转发${lone}`, name: '30002', metadata: { userId: '30002', nickname: `乙${lone}` } },
+    ]);
+    const { send } = await setup({ memory: mem });
+    await send(
+      groupMsg(`转发摘要${lone}`, {
+        nickname: `甲${lone}`,
+        replyTo: { messageId: '1', content: '原话', userId: '30002', nickname: `乙${lone}` },
+      }),
+    );
+    const { body } = sidecar.requests[0];
+    const strings = [body.cur, body.curNick, body.replyTo?.nickname, ...body.rows.flatMap(r => [r.content, r.nick])];
+    for (const s of strings) expect(s).not.toMatch(/\p{Cs}/u);
+    expect(body.cur).toContain('转发摘要�');
+    expect(body.rows[0]).toMatchObject({ content: '乙: 转发�', nick: '乙�' });
   });
 
   it('没有 getFullHistory 的 memory 回落 getHistory；historyRows 可配；无引用时 replyTo 为 null', async () => {
@@ -402,11 +425,21 @@ describe('plugin-trigger-laya：宿主各步骤', () => {
     expect(sidecar.requests).toHaveLength(0);
   });
 
+  it('作用域外的禁言关键词：放行，不设禁言、不归档、不判定（作用域判断先于禁言关键词）', async () => {
+    const { send, flow, archived } = await setup({ laya: { muteKeywords: '闭嘴' } });
+    const r = await send(privateMsg('你闭嘴吧'));
+    expect(r.reached).toBe(true);
+    expect(flow.setMuted).toEqual([]);
+    expect(archived).toEqual([]);
+    expect(sidecar.requests).toHaveLength(0);
+  });
+
   it('禁言关键词：设自禁言、归档后吞掉，不判定；戳一戳的合成文案不当关键词', async () => {
     const { send, flow, archived } = await setup({ laya: { muteKeywords: '闭嘴,安静', muteTimeSeconds: 120 } });
     const r = await send(groupMsg('你们安静点'));
     expect(r.reached).toBe(false);
-    expect(flow.setMuted).toEqual([[GROUP_SID, 120]]);
+    // 带 platform：新群或重启后还没人回复过的群，flow-control 里还没有这个会话的状态
+    expect(flow.setMuted).toEqual([[GROUP_SID, 120, 'onebot']]);
     expect(archived).toEqual(['你们安静点']);
     expect(sidecar.requests).toHaveLength(0);
 
@@ -534,6 +567,36 @@ describe('plugin-trigger-laya：兜底（只回点名）', () => {
     expect(archived).toEqual(['带图闲聊']);
     expect(calls, '兜底不等附件识别').toHaveLength(0);
     expect(sidecar.requests).toHaveLength(3);
+    expect(decisions(logs).at(-1)?.message).toContain('兜底=侧车熔断中');
+  });
+
+  it('转入不可用的 error 不写死点名的类型：triggerOnPoke 关闭时不说戳一戳照常回复，戳一戳被吞', async () => {
+    sidecar.reply = () => ({ status: 500, body: { error: 'internal' } });
+    const { send, logs } = await setup({ laya: { triggerOnPoke: false } });
+    for (let i = 0; i < 3; i++) await send(groupMsg(`失败 ${i}`));
+    const [error, ...rest] = byLevel(logs, 'error');
+    expect(rest).toEqual([]);
+    expect(error).toContain('只回点名');
+    expect(error).not.toContain('戳一戳');
+    expect((await send(pokeMsg())).reached).toBe(false);
+  });
+
+  it('等附件识别期间熔断：等完不再发请求，本条兜底，也不把熔断往后推', async () => {
+    sidecar.reply = () => ({ status: 500, body: { error: 'internal' } });
+    const gate = deferred();
+    const { svc, calls } = fakeMedia(() => gate.promise);
+    const { send, logs } = await setup({ media: svc });
+    const withImage = send(
+      groupMsg('看图闲聊', { attachments: [{ kind: 'image', data: 'https://example.invalid/a.jpg' }] }),
+    );
+    // 进入识别等待时已过了判定前的熔断检查
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    for (let i = 0; i < 3; i++) await send(groupMsg(`失败 ${i}`));
+    expect(sidecar.requests).toHaveLength(3);
+    gate.resolve();
+    expect((await withImage).reached).toBe(false);
+    expect(sidecar.requests, '熔断期不发请求').toHaveLength(3);
+    expect(byLevel(logs, 'debug').some(m => m.includes('连续 4 次失败'))).toBe(false);
     expect(decisions(logs).at(-1)?.message).toContain('兜底=侧车熔断中');
   });
 
@@ -688,6 +751,23 @@ describe('plugin-trigger-laya：兜底（只回点名）', () => {
     expect((await send({ ...channel, content: `${AT}频道` })).reached).toBe(true);
     expect(sidecar.requests).toHaveLength(0);
   });
+
+  it('模型没见过的会话：每类（平台与会话类型）首次遇到记一条 warn，默认 info 级日志看得到', async () => {
+    const { send, logs } = await setup();
+    const other = (gid: string): IncomingMessage => ({
+      content: 'hi',
+      platform: 'discordx',
+      sessionType: 'group',
+      sessionId: `discordx:group:${gid}`,
+    });
+    await send(other('1'));
+    await send(other('2'));
+    await send(groupMsg('照常'));
+    const warns = byLevel(logs, 'warn').filter(m => m.includes('一律按兜底只回点名'));
+    expect(warns).toHaveLength(1);
+    expect(warns[0]).toContain('discordx:group');
+    expect(sidecar.requests).toHaveLength(1);
+  });
 });
 
 describe('plugin-trigger-laya：诊断项', () => {
@@ -719,6 +799,39 @@ describe('plugin-trigger-laya：诊断项', () => {
     const r2 = await noMemory.diagnose();
     expect(r2.level).toBe('error');
     expect(r2.message).toContain('memory 缺席');
+  });
+
+  it('熔断到期、还没有请求确认恢复：报探活结果与「上次判定不可用」，降为 warn；切走后侧车修好也不再报当前不可用', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    sidecar.reply = () => ({ status: 500, body: { error: 'internal' } });
+    const { host, send, diagnose } = await setup();
+    for (let i = 0; i < 3; i++) await send(groupMsg(`失败 ${i}`));
+    sidecar.reply = () => score(1);
+
+    vi.setSystemTime(Date.now() + 30_001);
+    const expired = await diagnose();
+    expect(expired.level).toBe('warn');
+    expect(expired.message).toBe(
+      'Laya 触发判定生效中：侧车在线（版本 v-test）；上次判定不可用（侧车连续 3 次失败，最近一次: HTTP 500 internal；' +
+        '熔断 30s 后重试），尚未经请求确认恢复',
+    );
+
+    // 按「切换与回滚」切到规则判定、修好侧车：本插件不再判定，锁存的故障不能写成当前不可用
+    host.provide(trigger, { label: '规则（计数/评分）' }, { label: '规则（计数/评分）' });
+    const rule = host.services.all(trigger).find(v => v.label === '规则（计数/评分）');
+    host.services.prefer(trigger, rule?.contextId ?? '');
+    vi.setSystemTime(Date.now() + 3_600_000);
+    const inactive = await diagnose();
+    expect(inactive.level).toBe('warn');
+    expect(inactive.message).toMatch(
+      /^Laya 触发判定未生效（生效的触发插件是「规则（计数\/评分）」）：侧车在线（版本 v-test）；上次判定不可用/,
+    );
+
+    // 切回后一次成功判定即确认恢复
+    const laya = host.services.all(trigger).find(v => v.label === LAYA_LABEL);
+    host.services.prefer(trigger, laya?.contextId ?? '');
+    expect((await send(groupMsg('恢复'))).reached).toBe(true);
+    expect((await diagnose()).level).toBe('ok');
   });
 
   it('未生效时侧车不可达：warn，并点名当前生效的触发插件', async () => {
@@ -884,11 +997,15 @@ describe('plugin-trigger-laya：运行期自检', () => {
     await decideThenArchive(renamed, () => {
       renamed.nickname = '乙';
     });
-    for (let i = 0; i < 196; i++) await decideThenArchive(next());
+    // 正文含孤代理：发给侧车的换成 U+FFFD，自检记的是原文（归档事件带的也是原文），计一致
+    await decideThenArchive(groupMsg(`转发摘要${'😀'.slice(0, 1)}`, { messageId: String(1000 + ++n) }));
+    for (let i = 0; i < 195; i++) await decideThenArchive(next());
     expect(lines(), '结清 199 条时还不记').toEqual([]);
 
     await decideThenArchive(next());
     expect(sidecar.requests).toHaveLength(201);
+    // JSON.stringify 把孤代理编成 \udXXX 转义：窗口行里（memory 原样保留）与 cur 里都不应出现
+    expect(sidecar.requests.filter(r => /\\ud[89a-f][0-9a-f]{2}/.test(JSON.stringify(r.body)))).toEqual([]);
     const [line, ...rest] = lines();
     expect(rest).toEqual([]);
     expect(line.level).toBe('info');

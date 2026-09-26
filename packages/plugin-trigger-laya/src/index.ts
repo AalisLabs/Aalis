@@ -32,6 +32,7 @@ import type {} from '@aalis/api-webui'; // declaration merging：SchemaField 表
 import { type BoundOf, config, definePlugin, events, logger, optional, provide } from '@aalis/core';
 import type { ConfigSchema } from '@aalis/schema-config';
 import { buildIncomingContent, type IncomingMessage, type Message } from '@aalis/schema-message';
+import { toWellFormedText } from '@aalis/util-text-normalize';
 import { defaultLayaConfig, resolveLayaConfig } from './config.js';
 import { createSelfCheck } from './self-check.js';
 
@@ -231,7 +232,9 @@ function run(caps: Caps): void {
   function goDown(reason: string): void {
     if (down === undefined) {
       downSince = Date.now();
-      logger.error(`[laya] 判定不可用（${reason}），已转为只回点名：@、叫名字、戳一戳照常回复，其余消息吞掉并归档`);
+      logger.error(
+        `[laya] 判定不可用（${reason}），已转为只回点名（按 triggerOnAt / triggerOnPoke / 名字识别），其余消息吞掉并归档`,
+      );
     }
     down = reason;
   }
@@ -261,6 +264,14 @@ function run(caps: Caps): void {
     down = undefined;
   }
 
+  /** 处于熔断期：不发请求，直接兜底 */
+  function circuitOpen(): boolean {
+    return failures >= CIRCUIT_FAILURES && Date.now() < openUntil;
+  }
+
+  /** 已告警过的模型没见过的会话类别（平台:会话类型）：这类会话每条都兜底，每类只告警一次 */
+  const unsupported = new Set<string>();
+
   // 运行期自检：发请求前记下 cur，这条消息归档后与归档正文比对（归档事件带的 incoming 是拷贝，按键关联）
   const selfCheck = createSelfCheck(line => logger.info(line));
   caps.events.on('inbound:message:archived', ({ sessionId, incoming, archivedMessage }) =>
@@ -271,13 +282,23 @@ function run(caps: Caps): void {
   async function judge(message: IncomingMessage, addressed: boolean, threshold?: number): Promise<Verdict> {
     const fallback = (why: string): Verdict => ({ speak: addressed, fallback: why });
     const selfId = parseSelfId(message.sessionId);
-    if (!selfId) return fallback('会话不适用');
+    if (!selfId) {
+      const kind = `${message.platform}:${message.sessionType ?? ''}`;
+      if (!unsupported.has(kind)) {
+        unsupported.add(kind);
+        logger.warn(
+          `[laya] ${kind} 的会话不是模型见过的 onebot 群聊或私聊，这类会话一律按兜底只回点名；` +
+            '要让它们照常回复，把它们移出 scopes，或切到 trigger-policy',
+        );
+      }
+      return fallback('会话不适用');
+    }
     const mem = caps.memory.current;
     if (!mem) {
       goDown('memory 缺席，没有历史窗口');
       return fallback('memory 缺席');
     }
-    if (failures >= CIRCUIT_FAILURES && Date.now() < openUntil) return fallback('侧车熔断中');
+    if (circuitOpen()) return fallback('侧车熔断中');
 
     const sid = message.sessionId;
     // 窗口是最近 historyRows 条 user / assistant 行：多取一倍，过滤后再取，与侧车渲染回归的取法一致
@@ -286,15 +307,22 @@ function run(caps: Caps): void {
     // 当前消息与归档用同一个 buildIncomingContent 拼，附件描述先等识别（有上限，超时照常判定）；
     // 两边仍可能不一致（识别超时、文件描述晚写入等），由运行期自检计数
     await waitForAttachmentDescriptions(message, caps.media, cfg.mediaWaitMs, logger);
+    // 取历史与等识别期间可能已熔断：熔断期不发请求
+    if (circuitOpen()) return fallback('侧车熔断中');
     const cur = buildIncomingContent(message);
-    const body = JSON.stringify({
-      rows: toRows(history, cfg.historyRows),
-      cur,
-      curUserId: message.userId,
-      curNick: message.nickname,
-      replyTo: message.replyTo ? { userId: message.replyTo.userId, nickname: message.replyTo.nickname } : null,
-      selfId,
-    });
+    // 字符串里的孤代理换成 U+FFFD：侧车的分词器不接受孤代理（会回 500，计入熔断）；历史行经库往返后
+    // 本来也是 U+FFFD。自检记的仍是换之前的 cur，与归档事件带的原文同一口径
+    const body = JSON.stringify(
+      {
+        rows: toRows(history, cfg.historyRows),
+        cur,
+        curUserId: message.userId,
+        curNick: message.nickname,
+        replyTo: message.replyTo ? { userId: message.replyTo.userId, nickname: message.replyTo.nickname } : null,
+        selfId,
+      },
+      (_key, value: unknown) => (typeof value === 'string' ? toWellFormedText(value) : value),
+    );
     // 超过侧车上限不发请求、不计失败：侧车不读体就回 413 并关连接，一部分请求在客户端表现为连接错误而非 413。
     // 不截断行来压体积：侧车的发言人编号与截断都基于完整窗口，改窗口会偏离训练口径。窗口里的大行要滚出
     // 窗口才恢复，期间这个会话每条都走兜底，记 info 让用户看得到
@@ -445,21 +473,26 @@ function run(caps: Caps): void {
       const current = caps.trigger.current;
       const active = current === self;
       const health = await probe();
+      // 当前的故障：探活失败、memory 缺席、熔断期
       const problems: string[] = [];
       if ('error' in health) problems.push(`侧车不可达（${health.error}）`);
       if (!caps.memory.current) problems.push('memory 缺席');
-      if (down !== undefined) problems.push(`判定不可用（${down}）`);
+      if (circuitOpen()) problems.push(`判定不可用（${down}）`);
+      const parts =
+        problems.length > 0 ? [...problems] : [`侧车在线（版本 ${'version' in health ? health.version : '?'}）`];
+      // down 只由成功的判定清除：熔断已到期、memory 已回来，但还没有请求确认恢复（本插件不生效时一直如此）。
+      // 探活正常不代表 /v1/score 正常，照实报成上次的故障
+      const stale = down !== undefined && !circuitOpen() && caps.memory.current !== undefined;
+      if (stale) parts.push(`上次判定不可用（${down}），尚未经请求确认恢复`);
       const role = active
         ? '生效中'
         : `未生效（${current ? `生效的触发插件是「${current.label}」` : '没有生效的触发插件'}）`;
-      const state =
-        problems.length > 0 ? problems.join('；') : `侧车在线（版本 ${'version' in health ? health.version : '?'}）`;
       return {
         id: 'trigger.laya',
         category: 'service',
-        // 生效时判定不了会让群里只回点名，报 error；未生效时不影响回复，报 warn
-        level: problems.length === 0 ? 'ok' : active ? 'error' : 'warn',
-        message: `Laya 触发判定${role}：${state}${problems.length > 0 && active ? '，判定按兜底只回点名' : ''}`,
+        // 生效时判定不了会让群里只回点名，报 error；未生效时不影响回复、上次的故障未经确认恢复，报 warn
+        level: problems.length > 0 ? (active ? 'error' : 'warn') : stale ? 'warn' : 'ok',
+        message: `Laya 触发判定${role}：${parts.join('；')}${problems.length > 0 && active ? '，判定按兜底只回点名' : ''}`,
         detail: `endpoint=${cfg.endpoint}`,
       };
     },
