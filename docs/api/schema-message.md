@@ -21,7 +21,7 @@ interface IncomingMessage {
   files?: Array<{ name; data; mimeType? }>;
   attachmentOrder?: Array<'image' | 'file'>;
   sessionType?: 'group' | 'private' | 'channel';
-  source?: string;                     // 并发隔离用：同 session 不同源互不打断
+  source?: string;                     // 系统侧注入者标识；真人消息不设。带 source 即内部注入（不经触发策略、不过冷却），并用于并发隔离
   groupName?: string;
   groupId?: string;
   replyTo?: { messageId; content?; userId?; nickname? };

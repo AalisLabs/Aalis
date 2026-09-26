@@ -6,7 +6,7 @@
 
 只回答"现在能不能说"：会话处于禁言期、回复后冷却期或限速窗口已满时，把消息挡下。"要不要开口"（@、名字、计数与评分、闲置主动开口）由 [plugin-trigger-policy](./plugin-trigger-policy.md) 决定，本插件不参与。
 
-逻辑实现为 `inbound:flow` 相位的 handler 与 `flow-control` 服务，不依赖具体平台。`scopes` / `overrides` 只决定入站消息是否过冷却/限速闸，默认只覆盖 `*:group`；CLI、WebUI 等不区分会话类型的平台，需要在 `scopes` 中另加 `cli`、`webui` 或 `*`。回复记账、委派闸门、闲置选会话不看作用域，禁言也不看。
+逻辑实现为 `inbound:flow` 相位的 handler 与 `flow-control` 服务，不依赖具体平台。`scopes`（以及写了 override 即视为启用的作用域）只决定入站消息是否过冷却/限速闸，默认只覆盖 `*:group`；CLI、WebUI 等不区分会话类型的平台，需要在 `scopes` 中另加 `cli`、`webui` 或 `*`。回复记账、委派闸门、闲置选会话不看作用域，禁言也不看；但 `overrides` 里的数值对它们同样生效（按会话记录的 sessionType / targetId 匹配）。
 
 ## 插件声明
 
@@ -43,9 +43,9 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 进入本相位时，trigger-policy 已判定要开口并写好 `message.triggerType`。处理顺序：
 
 1. 会话处于禁言期 → 吞掉。不看作用域、不看来源：闲置触发、跨会话委派、定时任务注入的消息在禁言期同样不说话。禁言状态只由禁言关键词或平台禁言事件针对具体会话写入，作用域之外的会话不会被误伤。
-2. 带 `source` 的内部注入（闲置触发、定时任务、workflow、跨会话委派）或不在作用域内 → `next()` 放行。内部注入只受禁言约束，冷却与限速不挡，定时提醒等不会被回复后冷却静默吞掉；真人消息由平台适配器投递，不设 `source`。
+2. 不在作用域内 → `next()` 放行。
 3. 记录会话元数据（platform / sessionType / targetId，供分作用域覆盖匹配）。
-4. `triggerType !== 'immediate'` 时，冷却期内或限速窗口已满 → 吞掉。被 @、戳一戳、叫名字（`immediate`）穿透冷却与限速。
+4. `triggerType !== 'immediate'` 时，冷却期内或限速窗口已满 → 吞掉。被 @、戳一戳、叫名字（`immediate`）穿透冷却与限速。带 `source` 的内部注入（闲置触发、定时任务、workflow、跨会话委派）不过冷却，定时提醒等不会被回复后冷却静默吞掉，但仍受限速约束；真人消息由平台适配器投递，不设 `source`。
 5. `next()` 进入 dispatch。
 
 被吞掉的消息在加载了 `message-archive` 时做影子归档（shadow archive），下次触发时作为上下文；闲置触发的合成提示不归档。
@@ -56,7 +56,7 @@ inbound:flow   （由 plugin-gateway 在 inbound:trigger 之后、inbound:dispat
 
 冷却与限速按真实回复计，不按"判定放行"计。trigger-policy 在判定放行时即复位计数，放行后若恰好处于冷却或限速期，这次触发作废。
 
-分作用域覆盖按会话的 sessionType / targetId 匹配，这两项来自经过本相位的入站消息。只由出站建出状态的会话（例如仅经委派抵达、从未有入站的私聊）没有这两项，按类型或目标写的覆盖对其不生效，冷却与限速走顶层配置。
+分作用域覆盖按会话的 sessionType / targetId 匹配，这两项来自经过本相位的入站消息。只由出站建出状态的会话（例如仅经委派抵达、从未有真人消息经过本相位的私聊）没有这两项，按类型或目标写的覆盖对其不生效，冷却与限速走顶层配置。
 
 ## 禁言
 
