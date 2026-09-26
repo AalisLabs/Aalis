@@ -1785,6 +1785,9 @@ importers:
 
   packages/plugin-persona:
     dependencies:
+      '@aalis/api-gateway':
+        specifier: workspace:>=0.7.0 <1.0.0
+        version: link:../api-gateway
       '@aalis/api-hooks':
         specifier: workspace:>=0.1.0 <1.0.0
         version: link:../api-hooks

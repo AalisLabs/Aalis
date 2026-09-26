@@ -6,8 +6,8 @@ export interface FlowControlConfig {
    * 支持 "*" 通配：onebot:group / onebot:* / *:group / * / onebot:private:10001 。
    * 默认 ['*:group'] 与历史 OneBot ChatFlow 行为一致；默认作用域不含 WebUI/CLI，如需纳入，显式添加。
    * 冷却与限速只对作用域内会话生效：入站过闸与回复记账都看它（委派闸门、闲置选会话读的是这份记账）；
-   * 禁言不看（禁言只由关键词或平台禁言针对具体会话写入）。只经出站见到、类型未知的会话
-   * 只有会话类型段为通配的作用域（onebot:*、*）命中。
+   * 禁言不看（禁言只由关键词或平台禁言针对具体会话写入）。没有真人消息经过本相位的会话，回复记账时按
+   * 会话 ID 约定推断类型；不符合约定、类型未知的只有会话类型段为通配的作用域（onebot:*、*）命中。
    * 空数组 = 冷却与限速对任何会话都不生效；但若存在任一 overrides[].scope 命中也视为启用。
    */
   scopes: string[];
@@ -17,8 +17,8 @@ export interface FlowControlConfig {
    * 仅在该 scope 命中时把列出的字段覆盖到顶层默认之上；未列字段穿透到顶层。
    * 命中时按"最具体优先"挑选（targetId > sessionType > platform > 通配）。
    * 写一条 override 即自动启用该 scope，无需重复在 scopes 中列出。
-   * 局限：只由出站建出状态的会话（例如仅经委派抵达、从未有真人消息经过本相位）没有 sessionType / targetId，
-   * 按类型或目标写的覆盖对其不生效，走顶层配置。
+   * 局限：从未有真人消息经过本相位、会话 ID 又不符合约定的会话（如仅经委派抵达的 WebUI 会话）没有
+   * sessionType / targetId，按类型或目标写的覆盖对其不生效，走顶层配置。
    * 例：private 单独 10 秒冷却而群聊不变 →
    *   overrides: [{ scope: '*:private', cooldownSeconds: 10 }]
    */

@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type {} from '@aalis/api-agent'; // 本包唯一的 declaration merging 激活点（agent:* 钩子与 agent:prompt 贡献点）——删掉会丢键类型，不可删
+import { inferSessionScope } from '@aalis/api-gateway';
 import { hooks as hooksCap } from '@aalis/api-hooks';
 import type {} from '@aalis/api-memory'; // 本包唯一的 declaration merging 激活点（memory:clear 钩子）——删掉会丢键类型，不可删
 import {
@@ -46,21 +47,6 @@ interface PersonaIdentity {
   selfTitle?: string;
   senderRole?: 'owner' | 'admin' | 'member';
   senderTitle?: string;
-}
-
-/**
- * 合成回合（scheduler / workflow / delegate / idle）不经适配器，消息上没有 sessionType：按
- * `<platform>:<self>:<type>:<target>` 约定从 sessionId 推断（与下方取群号同一约定），只认前缀等于
- * platform 的 id。子任务会话（`<父会话 id>::<uuid>`）不推断：它沿用父会话的 platform，按段切分会把
- * 父会话的类型连同带后缀的假群号安到子任务头上。只用于提示词、不回写消息——写回会把合成回合拖进
- * flow-control / trigger-policy 的 `*:group` 闸，定时群消息会被吞掉。
- */
-function inferSessionType(platform: string, sessionId: string): PersonaIdentity['sessionType'] {
-  if (sessionId.includes('::')) return undefined;
-  const parts = sessionId.split(':');
-  if (parts.length < 4 || parts[0] !== platform) return undefined;
-  const t = parts[2];
-  return t === 'group' || t === 'private' || t === 'channel' ? t : undefined;
 }
 
 // ===== 插件元数据 =====
@@ -711,7 +697,11 @@ async function run(caps: Caps): Promise<void> {
     const identity: PersonaIdentity = {
       sessionId: data.message.sessionId,
       platform: data.message.platform,
-      sessionType: data.message.sessionType ?? inferSessionType(data.message.platform, data.message.sessionId),
+      // 合成回合（scheduler / workflow / delegate / idle）不经适配器、没有 sessionType：按会话 ID 约定推断（与上方
+      // 取群号同一约定）。只用于提示词、不回写消息——写回会把合成回合拖进 flow-control / trigger-policy 的
+      // `*:group` 入站闸，定时群消息会被吞掉
+      sessionType:
+        data.message.sessionType ?? inferSessionScope(data.message.platform, data.message.sessionId)?.sessionType,
       selfId: selfIdentity?.selfId,
       selfNickname: selfIdentity?.nickname,
       userId: data.message.userId,

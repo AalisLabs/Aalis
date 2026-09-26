@@ -1,5 +1,11 @@
 import { type FlowControlService, flowControl } from '@aalis/api-flow-control';
-import { extractTargetId, INBOUND_PHASE, isScopeEnabled, resolveEffectiveConfig } from '@aalis/api-gateway';
+import {
+  extractTargetId,
+  INBOUND_PHASE,
+  inferSessionScope,
+  isScopeEnabled,
+  resolveEffectiveConfig,
+} from '@aalis/api-gateway';
 import { hooks } from '@aalis/api-hooks';
 import { messageArchive } from '@aalis/api-message-archive';
 import { createStorageGateway, isStorageNotFound, storage } from '@aalis/api-storage';
@@ -37,7 +43,7 @@ const configSchema: ConfigSchema = {
     type: 'array',
     label: '分作用域覆盖',
     description:
-      '每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。最具体匹配优先（targetId > sessionType > platform > 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却，其他字段继续走默认。只经出站建出状态、从未有真人消息经过本相位的会话（如仅经委派抵达的私聊）没有会话类型与目标，按类型或目标写的覆盖对其不生效，走上方默认。',
+      '每项 {scope: "platform:sessionType[:targetId]", ...} 仅在该 scope 命中时覆盖列出的字段；字段留空（或不填）= 沿用上方默认，不会被覆盖为 0/空。最具体匹配优先（targetId > sessionType > platform > 通配）。例：scope="*:private", cooldownSeconds=10 让所有平台私聊单独 10s 冷却，其他字段继续走默认。从未有真人消息经过本相位的会话，回复记账时按会话 ID 约定（platform:self:type:target）推断类型与目标；不符合约定的（如 WebUI）没有会话类型与目标，按类型或目标写的覆盖对其不生效，走上方默认。',
     default: [],
     items: {
       scope: {
@@ -198,9 +204,9 @@ async function run(caps: Caps): Promise<void> {
     return resolveEffectiveConfig(cfg, s.platform, s.sessionType, s.targetId);
   }
 
-  /** agent 真实回复一次：设冷却、记限速时间戳 */
-  function recordReply(sessionId: string, platform: string): void {
-    const s = getOrCreate(sessionId, platform);
+  /** agent 真实回复一次：补全会话元数据，设冷却、记限速时间戳 */
+  function recordReply(sessionId: string, platform: string, sessionType?: string, targetId?: string): void {
+    const s = getOrCreate(sessionId, platform, sessionType, targetId);
     const e = eff(s);
     const now = Date.now();
     if (e.cooldownSeconds > 0) s.cooldownUntil = now + e.cooldownSeconds * 1000;
@@ -306,15 +312,17 @@ async function run(caps: Caps): Promise<void> {
     await next();
   });
 
-  // agent 真实回复后记冷却与限速，只对作用域内会话：有状态的按记下的平台、会话类型与目标判；
-  // 没有状态的（如仅经委派抵达）类型未知，只有会话类型段为通配的作用域（onebot:*、*）命中，
-  // 与入站不带 sessionType 的内部注入同一口径。委派闸门与闲置选会话读的就是这份记账。
+  // agent 真实回复后记冷却与限速，只对作用域内会话，委派闸门与闲置选会话读的就是这份记账。没有状态或状态缺
+  // 类型的（没有真人消息经过本相位的群、只有禁言记录的群）按会话 ID 约定推断类型与目标，只写进本插件的状态、
+  // 不回写消息；不符合约定的（如 WebUI）类型未知，只有会话类型段为通配的作用域（onebot:*、*）命中
   events.on('outbound:message', (msg: OutgoingMessage) => {
     if (!msg.sessionId) return;
     if (msg.source !== 'agent') return; // 命令/系统回复不算"对话回复"
     const s = states.get(msg.sessionId);
-    if (!isScopeEnabled(cfg, s?.platform || msg.platform, s?.sessionType, s?.targetId)) return;
-    recordReply(msg.sessionId, msg.platform ?? '');
+    const platform = s?.platform || msg.platform || '';
+    const known = s?.sessionType ? s : inferSessionScope(platform, msg.sessionId);
+    if (!isScopeEnabled(cfg, platform, known?.sessionType, known?.targetId)) return;
+    recordReply(msg.sessionId, platform, known?.sessionType, known?.targetId);
   });
 
   // 长寿进程下避免 states 无限增长：每天扫描一次，清理 30 天未见且无禁言/冷却挂起的会话
